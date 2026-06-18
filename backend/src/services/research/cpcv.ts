@@ -129,7 +129,9 @@ export function combinatorialPurgedCV(
         return false;
       }
       // Embargo
-      const inEmbargo = test_intervals.some(it => e.entry_time > it.end && e.entry_time <= it.end + embargoSpan);
+      const inEmbargo = test_intervals.some(
+        it => e.entry_time > it.end && e.entry_time <= it.end + embargoSpan
+      );
       if (inEmbargo) {
         embargoedCount += 1;
         return false;

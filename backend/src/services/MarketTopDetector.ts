@@ -132,8 +132,7 @@ export function detectVolumeDivergence(
     closes[closes.length - shortDays];
   if (closeRet <= 0) return false; // price 没涨 不算背离
 
-  const shortAvgVol =
-    volumes.slice(-shortDays).reduce((s, v) => s + v, 0) / shortDays;
+  const shortAvgVol = volumes.slice(-shortDays).reduce((s, v) => s + v, 0) / shortDays;
   const longAvgVol = volumes.slice(-longDays).reduce((s, v) => s + v, 0) / longDays;
   if (longAvgVol <= 0) return false;
   // 短期均比长期均缩量 > 15%
@@ -168,7 +167,11 @@ export function scoreToLevel(score: number): MarketTopReport['level'] {
   return 'no_warning';
 }
 
-export function buildSummaryMessage(report: { top_score: number; level: string; signals: MarketTopSignal[] }): string {
+export function buildSummaryMessage(report: {
+  top_score: number;
+  level: string;
+  signals: MarketTopSignal[];
+}): string {
   const triggered = report.signals.filter(s => s.triggered);
   const levelTag: Record<string, string> = {
     no_warning: '✅ 无顶部信号',
@@ -217,9 +220,7 @@ export class MarketTopDetector {
           signal: 'rsi_divergence',
           triggered: rsiDiv,
           score_contribution: rsiDiv ? 20 : 0,
-          detail: rsiDiv
-            ? '指数创新高但 RSI 未创新高（顶背离）'
-            : 'RSI 与 price 同步，无背离',
+          detail: rsiDiv ? '指数创新高但 RSI 未创新高（顶背离）' : 'RSI 与 price 同步，无背离',
         });
 
         // 4. 高位震荡
@@ -287,8 +288,7 @@ export class MarketTopDetector {
 
       // new_high < new_low × 0.5
       highLowRev =
-        latest.new_60d_high_count < latest.new_60d_low_count * 0.5 &&
-        latest.new_60d_low_count > 10;
+        latest.new_60d_high_count < latest.new_60d_low_count * 0.5 && latest.new_60d_low_count > 10;
       signals.push({
         signal: 'new_high_low_reversal',
         triggered: highLowRev,
@@ -317,7 +317,8 @@ export class MarketTopDetector {
       rsi_divergence: rsiDiv,
       breadth_deterioration: breadthBad,
       new_high_low_reversal: highLowRev,
-      high_range_oscillation: signals.find(s => s.signal === 'high_range_oscillation')?.triggered || false,
+      high_range_oscillation:
+        signals.find(s => s.signal === 'high_range_oscillation')?.triggered || false,
       volume_divergence: signals.find(s => s.signal === 'volume_divergence')?.triggered || false,
     });
     const level = scoreToLevel(topScore);

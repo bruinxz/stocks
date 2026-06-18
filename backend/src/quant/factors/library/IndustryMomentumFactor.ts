@@ -26,9 +26,11 @@ import { Op } from 'sequelize';
 import { Factor } from '../types';
 import { factorRegistry } from '../FactorRegistry';
 import { IndustryFlow } from '../../../models/IndustryFlow';
-import { loadStocksByCodes, stripSuffix, isFiniteNumber, lookbackStartDate } from './_helpers';
+import { loadStocksByCodes, stripSuffix, isFiniteNumber } from './_helpers';
+import { tradingDayLookbackStartDate } from './_tradingDayWindow';
 
-const WINDOW_DAYS = 7; // 5 个交易日 ≈ 7 自然日
+/** 业务窗口: 近 5 个交易日 (audit M-9: 从 7 自然日改成精确 5 交易日) */
+const WINDOW_TRADING_DAYS = 5;
 
 export const industryMomentumFactor: Factor = {
   name: 'industry_momentum',
@@ -43,8 +45,8 @@ export const industryMomentumFactor: Factor = {
     const stockByCode = await loadStocksByCodes(ctx.universe, ['id', 'symbol', 'industry']);
     if (!stockByCode.size) return out;
 
-    // 2) 拉窗口内的 IndustryFlow
-    const startDate = lookbackStartDate(ctx.as_of_date, WINDOW_DAYS);
+    // 2) 拉窗口内的 IndustryFlow (audit M-9: 交易日窗口而非自然日)
+    const startDate = await tradingDayLookbackStartDate(ctx.as_of_date, WINDOW_TRADING_DAYS);
     const rows = (await IndustryFlow.findAll({
       attributes: ['trade_date', 'industry_name', 'change_pct', 'main_inflow_ratio'],
       where: {
@@ -61,10 +63,7 @@ export const industryMomentumFactor: Factor = {
     if (!rows.length) return out;
 
     // 3) 按 industry_name 聚合 mean(change_pct) + mean(main_inflow_ratio × 100)
-    const groupByIndustry = new Map<
-      string,
-      { changes: number[]; inflowRatios: number[] }
-    >();
+    const groupByIndustry = new Map<string, { changes: number[]; inflowRatios: number[] }>();
     for (const r of rows) {
       const name = String(r.industry_name || '').trim();
       if (!name) continue;

@@ -201,7 +201,7 @@ export function estimateExpectedIS(input: {
   const eta = (0.142 * input.daily_vol * input.spread_pct) / Math.max(1, input.avg_daily_volume);
   const gamma = (0.314 * input.daily_vol) / Math.max(1, input.avg_daily_volume);
   const v = input.order_qty;
-  const impact_pct = (input.spread_pct / 2) + eta * v + gamma * v;
+  const impact_pct = input.spread_pct / 2 + eta * v + gamma * v;
   const impact_bps = impact_pct * 10000;
 
   // Spread cost (half-spread for crossing)

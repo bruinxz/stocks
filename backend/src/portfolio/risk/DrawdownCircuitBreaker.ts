@@ -67,6 +67,31 @@ import { User } from '../../models/User';
 import { logger } from '../../utils/logger';
 
 // ---------------------------------------------------------------------------
+//  BETA-7 (2026-06-18, audit M-13): RiskGuardUnavailableError
+// ---------------------------------------------------------------------------
+
+/**
+ * 风控不可用错误 — fail-CLOSED 时抛出。
+ *
+ * caller (PaperTradingFacade.placeOrder / preTradeGuards.checkPreBuyGuards) catch
+ * 这个错误后必须 (a) 拒单 — err.statusCode=503, err.code='RISK_GUARD_UNAVAILABLE',
+ * (b) 写 RiskAlert HIGH 让运维感知风控不可用。
+ *
+ * 让风控 DB 抖动不悄悄放行 — 风控就该 fail-CLOSED, 用户体验上做"罕见 503"
+ * 优于"罕见但严重的资金风险敞口"。
+ */
+export class RiskGuardUnavailableError extends Error {
+  readonly statusCode = 503;
+  readonly code = 'RISK_GUARD_UNAVAILABLE';
+  readonly detail?: Record<string, any>;
+  constructor(message: string, detail?: Record<string, any>) {
+    super(message);
+    this.name = 'RiskGuardUnavailableError';
+    this.detail = detail;
+  }
+}
+
+// ---------------------------------------------------------------------------
 //  Config
 // ---------------------------------------------------------------------------
 
@@ -502,10 +527,7 @@ export class DefaultDrawdownBreakerDataSource implements DrawdownBreakerDataSour
         portfolio_id: { [Op.in]: portfolioIds },
         date: { [Op.between]: [startIso, endIso] },
       },
-      attributes: [
-        'date',
-        [sequelize.fn('SUM', sequelize.col('total_value')), 'total_value'],
-      ],
+      attributes: ['date', [sequelize.fn('SUM', sequelize.col('total_value')), 'total_value']],
       group: ['date'],
       order: [['date', 'ASC']],
       raw: true,
@@ -847,8 +869,11 @@ export class DrawdownCircuitBreaker {
    *   避免误伤已开仓的策略加仓动作）；
    * - SELL 永远不需要走此 hook（评估器只暂停 BUY，平仓总是允许）。
    *
-   * 失败时（DB outage）保守放行 — 风控不该 DB 故障一刀切阻断所有交易。
-   * 上层 placeOrder 仍有 cash check / position limit guard 兜底。
+   * BETA-7 (2026-06-18, audit M-13): 改为 **fail-CLOSED** — DB 抖动时抛
+   * `RiskGuardUnavailableError` 而非保守放行. 让 caller (PaperTradingFacade /
+   * preTradeGuards) catch 并按业务规则决定是阻塞 BUY (硬风控不可用 = 不下单)
+   * 或写 RiskAlert HIGH 告警. 避免"DB 抖动 → 风控失效 → 大撤回不暂停"的
+   * 风险传导 (与 memory sprint-27-28-29 fail-open 教训呼应).
    */
   async checkBuyAllowed(input: CheckBuyAllowedInput): Promise<CheckBuyAllowedResult> {
     try {
@@ -880,8 +905,14 @@ export class DrawdownCircuitBreaker {
         `DrawdownCircuitBreaker.checkBuyAllowed user=${input.user_id} ` +
           `symbol=${input.symbol}: ${(err as Error).message}`
       );
-      // Fail open — see jsdoc.
-      return { ok: true };
+      // BETA-7 (2026-06-18, audit M-13): fail-CLOSED — 抛 RiskGuardUnavailableError.
+      // caller 负责把它转成 "拒单 + 写 RiskAlert HIGH"。如果是已经是 RiskGuardUnavailableError
+      // (从 source 内部抛上来) 直接 re-throw，不二次包装。
+      if (err instanceof RiskGuardUnavailableError) throw err;
+      throw new RiskGuardUnavailableError(
+        `DrawdownCircuitBreaker 不可用: ${(err as Error).message}`,
+        { user_id: input.user_id, symbol: input.symbol, cause: (err as Error).message }
+      );
     }
   }
 

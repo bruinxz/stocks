@@ -117,7 +117,7 @@ export function topKPrincipalComponents(
   const eigenvalues: number[] = [];
   const eigenvectors: number[][] = [];
   // copy
-  let A = cov.map(row => row.slice());
+  const A = cov.map(row => row.slice());
 
   for (let i = 0; i < Math.min(k, n); i += 1) {
     const pi = powerIteration(A, options);
@@ -221,7 +221,14 @@ export function famaFrenchRegression(input: {
     let piv = i;
     for (let r = i + 1; r < k; r += 1) if (Math.abs(aug[r][i]) > Math.abs(aug[piv][i])) piv = r;
     if (Math.abs(aug[piv][i]) < 1e-12) {
-      return { alpha: NaN, beta_mkt: NaN, beta_smb: NaN, beta_hml: NaN, r_squared: NaN, n_samples: ys.length };
+      return {
+        alpha: NaN,
+        beta_mkt: NaN,
+        beta_smb: NaN,
+        beta_hml: NaN,
+        r_squared: NaN,
+        n_samples: ys.length,
+      };
     }
     if (piv !== i) [aug[i], aug[piv]] = [aug[piv], aug[i]];
     const d = aug[i][i];
@@ -235,7 +242,8 @@ export function famaFrenchRegression(input: {
   const beta = aug.map(row => row[k]);
   // R²
   const ymean = ys.reduce((s, v) => s + v, 0) / ys.length;
-  let ss_tot = 0, ss_res = 0;
+  let ss_tot = 0,
+    ss_res = 0;
   for (let i = 0; i < ys.length; i += 1) {
     const t = validIdx[i];
     const pred = beta[0] + beta[1] * input.mkt[t] + beta[2] * input.smb[t] + beta[3] * input.hml[t];
@@ -261,7 +269,12 @@ export function famaFrenchRegression(input: {
  * @param universe stocks with market_cap + book_to_market + return
  */
 export function constructFamaFrenchFactors(
-  universe: Array<{ symbol: string; market_cap: number; book_to_market: number; return_pct: number }>
+  universe: Array<{
+    symbol: string;
+    market_cap: number;
+    book_to_market: number;
+    return_pct: number;
+  }>
 ): { smb: number; hml: number } {
   // Sort by market_cap, split top/bottom 30%
   const byCap = [...universe].sort((a, b) => a.market_cap - b.market_cap);

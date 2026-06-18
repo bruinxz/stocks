@@ -597,11 +597,7 @@ export class LinkageStrategy extends QuantStrategy {
       expected_edge_pct: 14.0,
       expected_holding_days: 3,
       key_factors: ['industry_limit_up_leader', 'yesterday_change_pct', 'open_gap_pct'],
-      failure_modes: [
-        '题材热度散去 (1-2 天后联动失效)',
-        '龙头炸板带崩联动股',
-        '联动股本身有利空',
-      ],
+      failure_modes: ['题材热度散去 (1-2 天后联动失效)', '龙头炸板带崩联动股', '联动股本身有利空'],
       kill_switch_metric: 'win_rate_5d',
       kill_switch_threshold: 0.45,
     },

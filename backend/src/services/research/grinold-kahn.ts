@@ -71,7 +71,9 @@ export function pearsonCorrelation(x: number[], y: number[]): number {
   if (valid.length < 2) return NaN;
   const mX = valid.reduce((s, p) => s + p[0], 0) / valid.length;
   const mY = valid.reduce((s, p) => s + p[1], 0) / valid.length;
-  let num = 0, dX = 0, dY = 0;
+  let num = 0,
+    dX = 0,
+    dY = 0;
   for (const [xi, yi] of valid) {
     num += (xi - mX) * (yi - mY);
     dX += (xi - mX) ** 2;
@@ -118,7 +120,9 @@ export function computeIC(
   returns: number[],
   method: 'pearson' | 'spearman' = 'spearman'
 ): number {
-  return method === 'pearson' ? pearsonCorrelation(forecasts, returns) : spearmanCorrelation(forecasts, returns);
+  return method === 'pearson'
+    ? pearsonCorrelation(forecasts, returns)
+    : spearmanCorrelation(forecasts, returns);
 }
 
 /**
@@ -148,7 +152,10 @@ export function computeFundamentalLawIR(input: {
  * @param actual_weights 受约束实际权重 (N)
  * @param ideal_weights 无约束 optimal 权重 (N)
  */
-export function computeTransferCoefficient(actual_weights: number[], ideal_weights: number[]): number {
+export function computeTransferCoefficient(
+  actual_weights: number[],
+  ideal_weights: number[]
+): number {
   return pearsonCorrelation(actual_weights, ideal_weights);
 }
 
@@ -199,7 +206,13 @@ export function estimateICHalfLife(decay: Array<{ horizon_days: number; ic: numb
 } {
   const valid = decay.filter(d => d.ic > 0 && Number.isFinite(d.ic));
   if (valid.length < 3) {
-    return { half_life_days: NaN, decay_rate: NaN, ic_initial: NaN, r_squared: NaN, is_estimable: false };
+    return {
+      half_life_days: NaN,
+      decay_rate: NaN,
+      ic_initial: NaN,
+      r_squared: NaN,
+      is_estimable: false,
+    };
   }
   const t = valid.map(d => d.horizon_days);
   const lnIC = valid.map(d => Math.log(d.ic));
@@ -208,13 +221,22 @@ export function estimateICHalfLife(decay: Array<{ horizon_days: number; ic: numb
   const N = t.length;
   const mT = t.reduce((s, v) => s + v, 0) / N;
   const mL = lnIC.reduce((s, v) => s + v, 0) / N;
-  let num = 0, dT = 0, dL = 0;
+  let num = 0,
+    dT = 0,
+    dL = 0;
   for (let i = 0; i < N; i += 1) {
     num += (t[i] - mT) * (lnIC[i] - mL);
     dT += (t[i] - mT) ** 2;
     dL += (lnIC[i] - mL) ** 2;
   }
-  if (dT < 1e-12) return { half_life_days: NaN, decay_rate: NaN, ic_initial: NaN, r_squared: NaN, is_estimable: false };
+  if (dT < 1e-12)
+    return {
+      half_life_days: NaN,
+      decay_rate: NaN,
+      ic_initial: NaN,
+      r_squared: NaN,
+      is_estimable: false,
+    };
   const slope = num / dT;
   const intercept = mL - slope * mT;
   const decayRate = -slope; // positive lambda
@@ -239,7 +261,7 @@ export function estimateICHalfLife(decay: Array<{ horizon_days: number; ic: numb
  * @param active_returns alpha series (per period)
  * @param periods_per_year e.g. 252 daily, 12 monthly
  */
-export function computeRealizedIR(active_returns: number[], periods_per_year: number = 252): number {
+export function computeRealizedIR(active_returns: number[], periods_per_year = 252): number {
   const valid = active_returns.filter(v => Number.isFinite(v));
   if (valid.length < 2) return NaN;
   const m = valid.reduce((s, v) => s + v, 0) / valid.length;

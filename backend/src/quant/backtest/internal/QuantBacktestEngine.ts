@@ -20,6 +20,8 @@ import {
   RejectionReason,
   SlippageSettings,
 } from '../AShareConstraintEngine';
+import { logger } from '../../../utils/logger';
+import { incrementBacktestTradeCount } from '../../../metrics/PrometheusRegistry';
 
 function dateOnly(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
@@ -125,9 +127,37 @@ export class QuantBacktestEngine {
     const strategies = strategyRegistry.resolve(options.strategy_keys);
     const contextBySymbol = new Map(contexts.map(context => [context.symbol, context]));
     const dates = this.collectDates(contexts, options.start_date, options.end_date);
+    const executionTiming = (options.execution_timing as ExecutionTiming) || 'next_open';
+    // audit S-4 修复: 'same_close' 模式存在 evaluate() 拿到 T 日收盘价的 lookahead bias;
+    //   生产路径强制 'next_open', 同收模式仅保留兼容历史回测脚本但打一条 deprecation warn.
+    if (executionTiming === 'same_close') {
+      logger.warn(
+        '[QuantBacktestEngine] execution_timing="same_close" is @deprecated due to lookahead bias ' +
+          '(strategy.evaluate sees T 日 close, but order fills at T 日 close as well). ' +
+          'Engine will exclude T 日 bar from strategy input (evaluate sees up to T-1) to mitigate ' +
+          'the lookahead but撮合 still uses T 日 close. Switch to "next_open" for production.'
+      );
+    }
 
     return strategies.map(strategy => {
       const config = this.buildExecutionConfig(options);
+      const isCompositeStrategy = typeof (strategy as any).generateSignals === 'function';
+      const compositeSignalsForStrategy =
+        options.precomputed_composite_signals?.[strategy.definition.strategy_key];
+      const useCompositePath =
+        isCompositeStrategy &&
+        compositeSignalsForStrategy &&
+        Object.keys(compositeSignalsForStrategy).length > 0;
+      if (isCompositeStrategy && !useCompositePath) {
+        logger.warn(
+          `[QuantBacktestEngine] strategy "${strategy.definition.strategy_key}" 是组合级策略 ` +
+            `(实现了 generateSignals(date)); 当前回测引擎默认走 per-stock evaluate() 路径, ` +
+            `这条路径在组合级策略上退化为 'hold' 信号导致 trade_count=0. ` +
+            `要让其真正回测, caller 需要在 options.precomputed_composite_signals 里预填 ` +
+            `rebalanceDate → target_portfolio 信号 (audit S-1)。` +
+            `// TODO(composite-backtest): implement adapter for ${strategy.definition.strategy_key}`
+        );
+      }
       // 每个策略一个 constraint 引擎实例 —— constructor 拷贝 settings,
       // 互不干扰；可以在未来支持"按策略 override 部分约束"扩展。
       const constraintEngine = new AShareConstraintEngine(
@@ -179,87 +209,159 @@ export class QuantBacktestEngine {
 
         const sameDayCandidates: PendingOrder[] = [];
 
-        for (const context of contexts) {
-          const barsUntilDate = context.bars.filter(bar => dateOnly(bar.time) <= currentDate);
-          const todayBar = barsUntilDate[barsUntilDate.length - 1];
-          if (!todayBar || dateOnly(todayBar.time) !== currentDate) continue;
-          if (this.isSuspended(todayBar)) diagnostics.suspended_bar_count += 1;
-          if (barsUntilDate.length < Number(strategy.definition.default_params?.min_bars || 30)) {
-            continue;
-          }
-
-          const signal = strategy.evaluate(
-            { ...context, bars: barsUntilDate },
-            {
-              as_of: currentDate,
-              params: options.params_by_strategy?.[strategy.definition.strategy_key],
-            }
-          );
-
-          const open = positions.get(context.symbol);
-          const closePrice = todayBar.close;
-          const shouldExit =
-            open &&
-            (signal.signal === 'sell' ||
-              closePrice <= Number(signal.stop_loss_price || open.buy_price * 0.93) ||
-              closePrice >= Number(signal.take_profit_price || open.buy_price * 1.16) ||
-              this.diffDays(open.buy_date, currentDate) >=
-                Number(signal.target_holding_days || 20));
-
-          if (shouldExit && open) {
-            const exitReason = this.resolveExitReason(signal, closePrice, open, currentDate);
-            if (config.execution_timing === 'same_close') {
-              this.executeSellOrder({
-                currentDate,
-                bar: todayBar,
-                context,
-                signal,
-                exitReason,
-                strategy_key: strategy.definition.strategy_key,
-                positions,
-                config,
-                constraintEngine,
-                diagnostics,
-                trades,
-                rejectedOrders,
-                applyCashPatch: cashPatch => {
-                  cash += cashPatch;
-                },
-              });
-            } else if (!pendingExitOrders.some(order => order.symbol === context.symbol)) {
+        // audit S-1 修复: 组合级路径 — caller 预填了 generateSignals 输出, 引擎按 diff
+        // 当前持仓产生 BUY/SELL pending orders, 全部走 next_open 撮合。
+        if (useCompositePath && compositeSignalsForStrategy?.[currentDate]) {
+          const target = compositeSignalsForStrategy[currentDate]?.target_portfolio || [];
+          const targetSet = new Set(target.filter(s => typeof s === 'string' && s.length > 0));
+          const currentSymbols = new Set<string>([...positions.keys()]);
+          // SELL = 旧持仓 \ 目标
+          for (const symbol of currentSymbols) {
+            if (targetSet.has(symbol)) continue;
+            const context = contextBySymbol.get(symbol);
+            if (!context) continue;
+            const open = positions.get(symbol);
+            if (!open) continue;
+            const pseudoSignal = {
+              signal: 'sell',
+              score: 0,
+              confidence: 0,
+              reasons: ['composite SELL (跌出目标组合)'],
+            };
+            if (!pendingExitOrders.some(o => o.symbol === symbol)) {
               pendingExitOrders.push({
+                symbol,
+                signal_date: currentDate,
+                strategy_key: strategy.definition.strategy_key,
+                context,
+                signal: pseudoSignal,
+                exit_reason: '组合级 target 剔除 (audit S-1)',
+              });
+              diagnostics.pending_exit_signal_count += 1;
+            }
+          }
+          // BUY = 目标 \ 旧持仓
+          for (const symbol of targetSet) {
+            if (currentSymbols.has(symbol)) continue;
+            const context = contextBySymbol.get(symbol);
+            if (!context) {
+              // 候选无 bar / 上下文, 跳过 (caller 应保证 contexts 覆盖 target universe)
+              continue;
+            }
+            // 已 pendingOrders 里有同 symbol 不再追加
+            if (pendingOrders.some(p => p.symbol === symbol)) continue;
+            const todayCloseBar = context.bars.find(b => dateOnly(b.time) === currentDate);
+            if (!todayCloseBar) continue;
+            const pseudoSignal = {
+              signal: 'buy',
+              score: config.min_score,
+              confidence: 1,
+              reasons: ['composite BUY (新进 target 组合)'],
+            };
+            pendingOrders.push({
+              symbol,
+              signal_date: currentDate,
+              strategy_key: strategy.definition.strategy_key,
+              context,
+              signal: pseudoSignal,
+              ranking_score: config.min_score,
+            });
+            diagnostics.pending_signal_count += 1;
+          }
+          // 组合级路径不走 per-stock loop, 跳过下面的 evaluate
+        } else if (!useCompositePath) {
+          for (const context of contexts) {
+            const barsUntilDate = context.bars.filter(bar => dateOnly(bar.time) <= currentDate);
+            const todayBar = barsUntilDate[barsUntilDate.length - 1];
+            if (!todayBar || dateOnly(todayBar.time) !== currentDate) continue;
+            if (this.isSuspended(todayBar)) diagnostics.suspended_bar_count += 1;
+            if (barsUntilDate.length < Number(strategy.definition.default_params?.min_bars || 30)) {
+              continue;
+            }
+
+            // audit S-4 修复: 'same_close' 时让 evaluate 拿到截止 T-1 的 bars
+            // (排除当日 bar) 以消除 lookahead bias; 撮合仍在 T 日 close 完成。
+            const barsForEvaluate =
+              config.execution_timing === 'same_close' ? barsUntilDate.slice(0, -1) : barsUntilDate;
+            if (
+              barsForEvaluate.length < Number(strategy.definition.default_params?.min_bars || 30)
+            ) {
+              continue;
+            }
+
+            const signal = strategy.evaluate(
+              { ...context, bars: barsForEvaluate },
+              {
+                as_of: currentDate,
+                params: options.params_by_strategy?.[strategy.definition.strategy_key],
+              }
+            );
+
+            const open = positions.get(context.symbol);
+            const closePrice = todayBar.close;
+            const shouldExit =
+              open &&
+              (signal.signal === 'sell' ||
+                closePrice <= Number(signal.stop_loss_price || open.buy_price * 0.93) ||
+                closePrice >= Number(signal.take_profit_price || open.buy_price * 1.16) ||
+                this.diffDays(open.buy_date, currentDate) >=
+                  Number(signal.target_holding_days || 20));
+
+            if (shouldExit && open) {
+              const exitReason = this.resolveExitReason(signal, closePrice, open, currentDate);
+              if (config.execution_timing === 'same_close') {
+                this.executeSellOrder({
+                  currentDate,
+                  bar: todayBar,
+                  context,
+                  signal,
+                  exitReason,
+                  strategy_key: strategy.definition.strategy_key,
+                  positions,
+                  config,
+                  constraintEngine,
+                  diagnostics,
+                  trades,
+                  rejectedOrders,
+                  applyCashPatch: cashPatch => {
+                    cash += cashPatch;
+                  },
+                });
+              } else if (!pendingExitOrders.some(order => order.symbol === context.symbol)) {
+                pendingExitOrders.push({
+                  symbol: context.symbol,
+                  signal_date: currentDate,
+                  strategy_key: strategy.definition.strategy_key,
+                  context,
+                  signal,
+                  exit_reason: exitReason,
+                });
+                diagnostics.pending_exit_signal_count += 1;
+              }
+            }
+
+            if (
+              !positions.has(context.symbol) &&
+              signal.signal === 'buy' &&
+              signal.score >= config.min_score
+            ) {
+              const candidate: PendingOrder = {
                 symbol: context.symbol,
                 signal_date: currentDate,
                 strategy_key: strategy.definition.strategy_key,
                 context,
                 signal,
-                exit_reason: exitReason,
-              });
-              diagnostics.pending_exit_signal_count += 1;
+                ranking_score: Number(signal.score || 0),
+              };
+              diagnostics.pending_signal_count += 1;
+              if (config.execution_timing === 'same_close') {
+                sameDayCandidates.push(candidate);
+              } else {
+                pendingOrders.push(candidate);
+              }
             }
           }
-
-          if (
-            !positions.has(context.symbol) &&
-            signal.signal === 'buy' &&
-            signal.score >= config.min_score
-          ) {
-            const candidate: PendingOrder = {
-              symbol: context.symbol,
-              signal_date: currentDate,
-              strategy_key: strategy.definition.strategy_key,
-              context,
-              signal,
-              ranking_score: Number(signal.score || 0),
-            };
-            diagnostics.pending_signal_count += 1;
-            if (config.execution_timing === 'same_close') {
-              sameDayCandidates.push(candidate);
-            } else {
-              pendingOrders.push(candidate);
-            }
-          }
-        }
+        } // ← end of `else if (!useCompositePath)`
 
         if (sameDayCandidates.length) {
           this.executeCandidateOrders(
@@ -317,21 +419,75 @@ export class QuantBacktestEngine {
       diagnostics.total_slippage_cost = round(diagnostics.total_slippage_cost, 4);
       diagnostics.rejected_order_count = rejectedOrders.length;
 
+      // audit S-1 修复: 累计 trade 笔数到 Prometheus, 让 ops 能监测组合级策略
+      // trade_count=0 退化 (`backtest_trade_count_total{strategy_key=...}` 24h 增量 0 即异常).
+      incrementBacktestTradeCount(strategy.definition.strategy_key, trades.length);
+
+      // audit L-20 修复 (2026-06-18): annual_return_pct 改用 252 交易日年化, 与
+      // sharpe 的 sqrt(252) 口径统一. 老公式用 365 自然日, 跨年跨周末/节假日会让
+      // annual 系统性偏低 (年 252 实际 trading days < 365 calendar days);
+      // 同时新增 Calmar / Sortino / turnover / cost ratio 4 个指标 (audit S-22 缺失指标).
+      const TRADING_DAYS_PER_YEAR = 252;
+      const tradingDaysSpan = Math.max(equityCurve.length - 1, 1);
+      const annualReturn = round(
+        ((1 + totalReturn / 100) ** (TRADING_DAYS_PER_YEAR / tradingDaysSpan) - 1) * 100,
+        4
+      );
+      const maxDrawdownPct = round(
+        maxDrawdownFromValues(equityCurve.map(item => item.total_value)),
+        4
+      );
+      const sharpe = round(
+        stddev(dailyReturns)
+          ? (average(dailyReturns) / stddev(dailyReturns)) * Math.sqrt(TRADING_DAYS_PER_YEAR)
+          : 0,
+        4
+      );
+
+      // Calmar = annualReturn / |maxDrawdown|; max_drawdown_pct 已是百分点正数 (utils.maxDrawdownFromValues)
+      // mdd ≈ 0 时返回 99 与 profit_factor 哨兵一致 (避免 Infinity 污染 dashboard)
+      const calmarRatio = round(
+        maxDrawdownPct > 0.01 ? annualReturn / maxDrawdownPct : annualReturn > 0 ? 99 : 0,
+        4
+      );
+
+      // Sortino: 用下行波动 (negative returns std) 替代 stddev. 严格 mean / stdDown × sqrt(252)
+      const negativeReturns = dailyReturns.filter(r => r < 0);
+      const downsideStd = stddev(negativeReturns);
+      const sortinoRatio = round(
+        downsideStd > 0
+          ? (average(dailyReturns) / downsideStd) * Math.sqrt(TRADING_DAYS_PER_YEAR)
+          : 0,
+        4
+      );
+
+      // Turnover ratio: sum(trade.amount) / mean(equity) (单边交易额 / 平均净值);
+      // 业界更常见用 sum(buy_amount) / mean_equity. 这里采用 sum(trade.amount) 含买卖双边, 与
+      // diagnostics 中 commission / slippage 计算口径一致 (commission 是双边收的).
+      const sumTradeAmount = trades.reduce((sum, t) => sum + Math.abs(Number(t.amount || 0)), 0);
+      const meanEquity = equityCurve.length
+        ? equityCurve.reduce((s, p) => s + p.total_value, 0) / equityCurve.length
+        : config.initial_capital;
+      const turnoverRatio = round(meanEquity > 0 ? sumTradeAmount / meanEquity : 0, 4);
+
+      // Cost ratio: (commission + stamp_tax + transfer_fee + slippage_cost) / max(total_pnl, 1).
+      // 用 max(., 1) 防分母为负 / 零让 ratio 爆炸 - 与 profit_factor 同款哨兵.
+      // total_pnl 用 trades.pnl 累加 (含买卖配对的实际盈亏).
+      const totalCost =
+        diagnostics.total_commission +
+        diagnostics.total_stamp_tax +
+        diagnostics.total_transfer_fee +
+        diagnostics.total_slippage_cost;
+      const totalPnl = trades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
+      const costRatio = round(totalCost / Math.max(Math.abs(totalPnl), 1), 4);
+
       return {
         strategy_key: strategy.definition.strategy_key,
         strategy_name: strategy.definition.name,
         total_return_pct: round(totalReturn, 4),
-        annual_return_pct: round(((1 + totalReturn / 100) ** (365 / calendarDays) - 1) * 100, 4),
-        max_drawdown_pct: round(
-          maxDrawdownFromValues(equityCurve.map(item => item.total_value)),
-          4
-        ),
-        sharpe_ratio: round(
-          stddev(dailyReturns)
-            ? (average(dailyReturns) / stddev(dailyReturns)) * Math.sqrt(252)
-            : 0,
-          4
-        ),
+        annual_return_pct: annualReturn,
+        max_drawdown_pct: maxDrawdownPct,
+        sharpe_ratio: sharpe,
         win_rate: round(trades.length ? (wins.length / trades.length) * 100 : 0, 4),
         profit_factor: round(grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 99 : 0, 4),
         trade_count: trades.length,
@@ -346,6 +502,13 @@ export class QuantBacktestEngine {
           gross_profit: round(grossProfit, 4),
           gross_loss: round(grossLoss, 4),
           execution_diagnostics: diagnostics,
+          // audit L-20 + S-22 新指标 (2026-06-18)
+          calmar_ratio: calmarRatio,
+          sortino_ratio: sortinoRatio,
+          turnover_ratio: turnoverRatio,
+          cost_ratio: costRatio,
+          trading_days_span: tradingDaysSpan,
+          calendar_days_span: calendarDays,
         },
         equity_curve: equityCurve,
         drawdown_curve: equityCurve.map(item => ({
@@ -578,6 +741,8 @@ export class QuantBacktestEngine {
         bar,
         stock_name: context.name,
         trade_date: currentDate,
+        symbol: context.symbol,
+        prev_close: this.findPrevClose(context, currentDate),
       });
       if (!evaluation.ok) {
         const reason = evaluation.reason || 'buy_blocked';
@@ -681,6 +846,8 @@ export class QuantBacktestEngine {
       stock_name: options.context.name,
       buy_date: open.buy_date,
       trade_date: options.currentDate,
+      symbol: options.context.symbol,
+      prev_close: this.findPrevClose(options.context, options.currentDate),
     });
     if (!evaluation.ok) {
       const reason = evaluation.reason || 'sell_blocked';
@@ -770,6 +937,31 @@ export class QuantBacktestEngine {
       return '达到最长持有期（A股真实规则）';
     }
     return '策略退出（A股真实规则）';
+  }
+
+  /**
+   * 找出 currentDate 之前的最近一根 bar 的 close, 作为 prev_close 传给
+   * AShareConstraintEngine.evaluateOrder 用于按市场段算精确涨跌停价
+   * (audit S-2 修复)。
+   *
+   * 如果只有 currentDate 当天的 bar (新上市次日 / 数据缺失) → 返回 null
+   * (调用方会自动 fallback 到 change_percent legacy 路径 + warn log)。
+   */
+  private findPrevClose(context: QuantStockContext, currentDate: string): number | null {
+    if (!context?.bars?.length) return null;
+    let prev: QuantBar | undefined;
+    for (const bar of context.bars) {
+      const d = dateOnly(bar.time);
+      if (d < currentDate) {
+        // 取最近一条 (bars 通常 ASC, 但保险起见每次覆盖)
+        if (!prev || dateOnly(prev.time) < d) prev = bar;
+      } else if (d >= currentDate) {
+        break;
+      }
+    }
+    if (!prev) return null;
+    const close = Number(prev.close);
+    return Number.isFinite(close) && close > 0 ? close : null;
   }
 
   private collectDates(

@@ -14,6 +14,10 @@ router.get('/indicators', authController.authenticate, macroController.getIndica
 router.get('/qvix', authController.authenticate, macroController.getQvix);
 router.get('/regime-snapshot', authController.authenticate, macroController.getRegimeSnapshot);
 router.get('/block-trades', authController.authenticate, macroController.getBlockTrades);
-router.get('/fund-holdings/:stock_code', authController.authenticate, macroController.getFundHoldingsByStock);
+router.get(
+  '/fund-holdings/:stock_code',
+  authController.authenticate,
+  macroController.getFundHoldingsByStock
+);
 
 export default router;

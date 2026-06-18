@@ -24,7 +24,13 @@ export class RelativeStrengthMomentumStrategy extends QuantStrategy {
       category: 'momentum',
       expected_edge_pct: 6.0,
       expected_holding_days: 20,
-      key_factors: ['return_20d', 'return_60d', 'volatility_20d', 'volume_5_20_ratio', 'close_vs_ma20'],
+      key_factors: [
+        'return_20d',
+        'return_60d',
+        'volatility_20d',
+        'volume_5_20_ratio',
+        'close_vs_ma20',
+      ],
       evidence_link: 'Jegadeesh-Titman - Returns to Buying Winners (1993) / Momentum Anomaly',
       failure_modes: [
         '动量崩塌：bull → bear regime shift 时强势股集体下跌',

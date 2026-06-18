@@ -30,7 +30,8 @@ export const blockTradeSignalFactor: Factor = {
     const asOf = ctx.as_of_date;
     const lookbackDays = 20;
     const sinceDate = new Date(new Date(asOf).getTime() - lookbackDays * 86_400_000)
-      .toISOString().slice(0, 10);
+      .toISOString()
+      .slice(0, 10);
 
     // 拉近 20 日所有大宗交易，按 stock_code 聚合
     const rows = (await BlockTrade.findAll({

@@ -62,7 +62,10 @@ import { NorthboundHolding } from '../models/NorthboundHolding';
 // 常量
 // ---------------------------------------------------------------------------
 
-const TRADING_AGENTS_URL = process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000';
+// audit L-19: 集中常量, 不再硬编码 IP.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { TRADING_AGENTS_BASE_URL } = require('../config/externalServices');
+const TRADING_AGENTS_URL = TRADING_AGENTS_BASE_URL;
 
 /** AI 一句话观点的远端 axios timeout */
 export const REMOTE_TIMEOUT_MS = 30_000;

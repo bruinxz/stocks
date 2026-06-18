@@ -654,7 +654,9 @@ export class SettingsController {
       res.json({ success: true, data: result, message: '微信测试消息已派发 (dry_run 强制)' });
     } catch (error: any) {
       logger.error('发送测试微信消息失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   }
 
@@ -762,7 +764,9 @@ export class SettingsController {
       });
     } catch (error: any) {
       logger.error('发送测试 SMS / 实时告警失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   }
 }

@@ -2225,11 +2225,13 @@ export class QuantFusionService {
             quant_agent_fusion: true,
           },
           {
-            jobId: `ai-poll-quant-${
-              options.execution_log_id ? `log-${options.execution_log_id}` : 'manual'
-            }-${response.task_id}`,
+            // BETA-3 (2026-06-18, audit M-15): jobId 标准化为 ai-poll-${taskId}; Bull 自动
+            // dedup; removeOnComplete/Fail 显式覆盖 queue 默认。
+            jobId: `ai-poll-${response.task_id}`,
             attempts: 10,
             backoff: { type: 'fixed', delay: 3 * 60 * 1000 },
+            removeOnComplete: { count: 1000 },
+            removeOnFail: { count: 500 },
           }
         );
 

@@ -1,4 +1,12 @@
-import { Table, Column, Model, DataType, PrimaryKey, CreatedAt, UpdatedAt } from 'sequelize-typescript';
+import {
+  Table,
+  Column,
+  Model,
+  DataType,
+  PrimaryKey,
+  CreatedAt,
+  UpdatedAt,
+} from 'sequelize-typescript';
 
 /**
  * 公募基金重仓股 — 季报披露 (2026-06-11 新增).

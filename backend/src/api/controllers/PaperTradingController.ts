@@ -59,7 +59,9 @@ export class PaperTradingController {
       for (const flag of sensitiveFlags) {
         if (sanitized[flag] !== undefined) {
           logger.warn(
-            `[sanitizeAutomationBody] user=${user?.id} 非 admin 尝试传 ${flag}=${JSON.stringify(sanitized[flag])}, 已剥除`
+            `[sanitizeAutomationBody] user=${user?.id} 非 admin 尝试传 ${flag}=${JSON.stringify(
+              sanitized[flag]
+            )}, 已剥除`
           );
           delete sanitized[flag];
         }
@@ -910,10 +912,13 @@ export class PaperTradingController {
       // 参数解析
       const rawDays = req.query.days ? parseInt(String(req.query.days), 10) : 7;
       const days = Math.max(1, Math.min(90, Number.isFinite(rawDays) ? rawDays : 7));
-      const rawPortfolioId = req.query.portfolio_id ? parseInt(String(req.query.portfolio_id), 10) : null;
-      const explicitPortfolioId = Number.isFinite(rawPortfolioId as any) && (rawPortfolioId as any) > 0
-        ? (rawPortfolioId as number)
+      const rawPortfolioId = req.query.portfolio_id
+        ? parseInt(String(req.query.portfolio_id), 10)
         : null;
+      const explicitPortfolioId =
+        Number.isFinite(rawPortfolioId as any) && (rawPortfolioId as any) > 0
+          ? (rawPortfolioId as number)
+          : null;
 
       // 解析待查 portfolio_id 集合: 显式传 → 单 id; 否则查用户全部 portfolio.
       let portfolioIds: number[] = [];
@@ -949,7 +954,17 @@ export class PaperTradingController {
           portfolio_id: { [Op.in]: portfolioIds },
           intent_date: { [Op.gte]: sinceDate },
         },
-        attributes: ['id', 'portfolio_id', 'intent_date', 'symbol', 'name', 'status', 'reason_text', 'metadata', 'created_at'],
+        attributes: [
+          'id',
+          'portfolio_id',
+          'intent_date',
+          'symbol',
+          'name',
+          'status',
+          'reason_text',
+          'metadata',
+          'created_at',
+        ],
         order: [['created_at', 'DESC']],
       });
 
@@ -974,7 +989,7 @@ export const ACTIVATION_LAYERS = [
   'L7_governor',
   'L8_reflection',
 ] as const;
-export type ActivationLayerKey = typeof ACTIVATION_LAYERS[number];
+export type ActivationLayerKey = (typeof ACTIVATION_LAYERS)[number];
 
 interface ActivationLayerStat {
   layer: ActivationLayerKey;
@@ -1044,7 +1059,9 @@ export function buildEmptyActivationSummary(days: number): ActivationSummary {
  * 把一个 order_intent.metadata.l8_activation 压成 layer_marks (8 个图标),
  * 用于 recent_trades 行渲染. ★ 优先级 > ✓ > ✗ > —
  */
-export function buildLayerMarks(activation: any): Record<ActivationLayerKey, '✓' | '★' | '✗' | '—'> {
+export function buildLayerMarks(
+  activation: any
+): Record<ActivationLayerKey, '✓' | '★' | '✗' | '—'> {
   const marks: Record<string, '✓' | '★' | '✗' | '—'> = {};
   for (const layer of ACTIVATION_LAYERS) {
     const snap = activation?.[layer];
@@ -1095,7 +1112,10 @@ export function buildLayerDetails(
  * 但仅依赖 plain object 字段, 可在测试里传 mock 数组.
  */
 export function aggregateActivationSummary(intents: any[], days: number): ActivationSummary {
-  const layerStats: Record<ActivationLayerKey, { reached: number; blocked: number; contributed: number }> = {
+  const layerStats: Record<
+    ActivationLayerKey,
+    { reached: number; blocked: number; contributed: number }
+  > = {
     L1_data: { reached: 0, blocked: 0, contributed: 0 },
     L2_signal: { reached: 0, blocked: 0, contributed: 0 },
     L3_meta: { reached: 0, blocked: 0, contributed: 0 },
@@ -1107,7 +1127,10 @@ export function aggregateActivationSummary(intents: any[], days: number): Activa
   };
   const outcomes = { executed: 0, skipped: 0, rejected: 0, other: 0 };
   // (layer, reasonKey) → count + 原文 reason_text 样本
-  const blockReasonMap = new Map<string, { layer: ActivationLayerKey; reason: string; count: number }>();
+  const blockReasonMap = new Map<
+    string,
+    { layer: ActivationLayerKey; reason: string; count: number }
+  >();
 
   for (const intent of intents) {
     const md = intent?.metadata || {};

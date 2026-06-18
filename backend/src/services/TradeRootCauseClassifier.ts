@@ -142,8 +142,10 @@ export function classifyTradeRootCause(input: TradeRootCauseInput): TradeRootCau
   // (2) data_quality — 数据异常
   if (
     DATA_QUALITY_KEYWORDS.some(kw => exitReason.includes(kw)) ||
-    (input.entry_price !== undefined && (!Number.isFinite(input.entry_price) || input.entry_price <= 0)) ||
-    (input.exit_price !== undefined && (!Number.isFinite(input.exit_price) || input.exit_price <= 0))
+    (input.entry_price !== undefined &&
+      (!Number.isFinite(input.entry_price) || input.entry_price <= 0)) ||
+    (input.exit_price !== undefined &&
+      (!Number.isFinite(input.exit_price) || input.exit_price <= 0))
   ) {
     return {
       root_cause: 'data_quality',

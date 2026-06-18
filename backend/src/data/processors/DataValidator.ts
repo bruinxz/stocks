@@ -230,10 +230,7 @@ export class DataValidator {
   /**
    * 检测异常值（使用统计方法）
    */
-  detectOutliers(
-    bars: DailyBar[],
-    field: keyof DailyBar
-  ): DetectOutliersResult {
+  detectOutliers(bars: DailyBar[], field: keyof DailyBar): DetectOutliersResult {
     const values = bars
       .map(bar => bar[field] as number)
       .filter(value => value !== null && value !== undefined);

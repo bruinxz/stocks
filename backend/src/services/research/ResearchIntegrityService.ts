@@ -48,12 +48,7 @@ import {
   DSR_PASS_THRESHOLD,
   PBO_FAIL_THRESHOLD,
 } from '../../quant/backtest/OverfitMetrics';
-import {
-  combinatorialPurgedCV,
-  computePboFromPaths,
-  CpcvSampleEvent,
-  CpcvOptions,
-} from './cpcv';
+import { combinatorialPurgedCV, computePboFromPaths, CpcvSampleEvent, CpcvOptions } from './cpcv';
 import { logger } from '../../utils/logger';
 
 // ============================================================
@@ -67,9 +62,7 @@ export const OOS_DECAY_WARN_THRESHOLD = 1.5;
 export const OOS_DECAY_FAIL_THRESHOLD = 3.0;
 
 /** 默认扫描的策略源码目录 */
-export const DEFAULT_STRATEGY_SCAN_DIRS = [
-  'backend/src/quant/strategies',
-];
+export const DEFAULT_STRATEGY_SCAN_DIRS = ['backend/src/quant/strategies'];
 
 /** 未来函数 / 当前时间相关的可疑代码模式 */
 export const LOOKAHEAD_PATTERNS: Array<{
@@ -140,7 +133,11 @@ export interface LookaheadIssue {
 }
 
 export interface SurvivorshipIssue {
-  kind: 'delisted_in_current_universe' | 'unlisted_in_history' | 'index_change_ignored' | 'st_stock_ignored';
+  kind:
+    | 'delisted_in_current_universe'
+    | 'unlisted_in_history'
+    | 'index_change_ignored'
+    | 'st_stock_ignored';
   detail: string;
   severity: 'high' | 'medium' | 'low';
 }
@@ -375,7 +372,10 @@ export function detectSurvivorshipBias(input: {
  *   - oos_sharpe = 0 → 返回 +Infinity (调用方应识别)
  *   - 任一为 null → null
  */
-export function computeOOSDecayRatio(isSharpe: number | null, oosSharpe: number | null): number | null {
+export function computeOOSDecayRatio(
+  isSharpe: number | null,
+  oosSharpe: number | null
+): number | null {
   if (isSharpe === null || oosSharpe === null) return null;
   if (!Number.isFinite(isSharpe) || !Number.isFinite(oosSharpe)) return null;
   if (isSharpe <= 0) return null;
@@ -417,13 +417,23 @@ export function deriveResearchIntegrityVerdict(input: {
   if (hasHighSurv) return 'FAIL';
   if (dsr !== null && Number.isFinite(dsr) && dsr < DSR_PASS_THRESHOLD) return 'FAIL';
   if (pbo !== null && Number.isFinite(pbo) && pbo >= PBO_FAIL_THRESHOLD) return 'FAIL';
-  if (oos_decay_ratio !== null && Number.isFinite(oos_decay_ratio) && oos_decay_ratio > OOS_DECAY_FAIL_THRESHOLD) return 'FAIL';
+  if (
+    oos_decay_ratio !== null &&
+    Number.isFinite(oos_decay_ratio) &&
+    oos_decay_ratio > OOS_DECAY_FAIL_THRESHOLD
+  )
+    return 'FAIL';
   if (oos_decay_ratio === Number.POSITIVE_INFINITY) return 'FAIL';
 
   // WARN
   if (hasMediumLookahead) return 'WARN';
   if (hasMediumSurv) return 'WARN';
-  if (oos_decay_ratio !== null && Number.isFinite(oos_decay_ratio) && oos_decay_ratio > OOS_DECAY_WARN_THRESHOLD) return 'WARN';
+  if (
+    oos_decay_ratio !== null &&
+    Number.isFinite(oos_decay_ratio) &&
+    oos_decay_ratio > OOS_DECAY_WARN_THRESHOLD
+  )
+    return 'WARN';
 
   return 'PASS';
 }
@@ -462,18 +472,23 @@ export function buildIntegritySummary(report: {
   }
   if (oos_decay_ratio === Number.POSITIVE_INFINITY) {
     reasons.push(`OOS sharpe ≤ 0（样本外不赚钱）`);
-  } else if (oos_decay_ratio !== null && Number.isFinite(oos_decay_ratio) && oos_decay_ratio > OOS_DECAY_WARN_THRESHOLD) {
+  } else if (
+    oos_decay_ratio !== null &&
+    Number.isFinite(oos_decay_ratio) &&
+    oos_decay_ratio > OOS_DECAY_WARN_THRESHOLD
+  ) {
     reasons.push(`OOS decay=${oos_decay_ratio.toFixed(2)}（IS 与 OOS sharpe 差距过大）`);
   }
   if (lookahead_issues.length > 0) {
-    const counts = lookahead_issues.reduce(
-      (acc, i) => {
-        acc[i.severity] = (acc[i.severity] || 0) + 1;
-        return acc;
-      },
-      {} as Record<string, number>
+    const counts = lookahead_issues.reduce((acc, i) => {
+      acc[i.severity] = (acc[i.severity] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    reasons.push(
+      `代码扫描发现 ${lookahead_issues.length} 个 lookahead 嫌疑（high=${counts.high || 0} / med=${
+        counts.medium || 0
+      }）`
     );
-    reasons.push(`代码扫描发现 ${lookahead_issues.length} 个 lookahead 嫌疑（high=${counts.high || 0} / med=${counts.medium || 0}）`);
   }
   if (survivorship_issues.length > 0) {
     reasons.push(`Universe 检查发现 ${survivorship_issues.length} 个 survivorship 问题`);
@@ -510,7 +525,10 @@ export const PRODUCTION_RESEARCH_INTEGRITY_DATA_SOURCE: ResearchIntegrityDataSou
         if (!row) return null;
         const equity: any[] = Array.isArray(row.equity_curve_json) ? row.equity_curve_json : [];
         return {
-          observed_sharpe: row.sharpe_ratio !== null && row.sharpe_ratio !== undefined ? Number(row.sharpe_ratio) : null,
+          observed_sharpe:
+            row.sharpe_ratio !== null && row.sharpe_ratio !== undefined
+              ? Number(row.sharpe_ratio)
+              : null,
           oos_sharpe: null,
           num_trials: 1,
           sample_length: equity.length,
@@ -522,8 +540,14 @@ export const PRODUCTION_RESEARCH_INTEGRITY_DATA_SOURCE: ResearchIntegrityDataSou
         const { WalkForwardResult } = require('../../models/WalkForwardResult');
         const row = await WalkForwardResult.findByPk(backtest_id);
         if (!row) return null;
-        const trainSharpe = row.train_sharpe !== null && row.train_sharpe !== undefined ? Number(row.train_sharpe) : null;
-        const testSharpe = row.test_sharpe !== null && row.test_sharpe !== undefined ? Number(row.test_sharpe) : null;
+        const trainSharpe =
+          row.train_sharpe !== null && row.train_sharpe !== undefined
+            ? Number(row.train_sharpe)
+            : null;
+        const testSharpe =
+          row.test_sharpe !== null && row.test_sharpe !== undefined
+            ? Number(row.test_sharpe)
+            : null;
         return {
           observed_sharpe: trainSharpe,
           oos_sharpe: testSharpe,
@@ -568,7 +592,10 @@ export class ResearchIntegrityService {
 
     // 如有 backtest_id 且未提供统计量，从 DB 加载
     if (input.backtest_id && (observed_sharpe === null || sample_length === 0)) {
-      const stats = await dataSource.loadBacktestStats(input.backtest_id, input.source || 'quant_backtest_result');
+      const stats = await dataSource.loadBacktestStats(
+        input.backtest_id,
+        input.source || 'quant_backtest_result'
+      );
       if (stats) {
         observed_sharpe = observed_sharpe ?? stats.observed_sharpe;
         oos_sharpe = oos_sharpe ?? stats.oos_sharpe;
@@ -580,7 +607,12 @@ export class ResearchIntegrityService {
 
     // === 1. DSR ===
     let dsr: number | null = null;
-    if (observed_sharpe !== null && Number.isFinite(observed_sharpe) && sample_length > 1 && num_trials >= 1) {
+    if (
+      observed_sharpe !== null &&
+      Number.isFinite(observed_sharpe) &&
+      sample_length > 1 &&
+      num_trials >= 1
+    ) {
       try {
         dsr = deflatedSharpeRatio({
           observedSharpe: observed_sharpe,
@@ -616,7 +648,9 @@ export class ResearchIntegrityService {
         try {
           lookahead_issues.push(...scanDirForLookahead(absDir));
         } catch (err: any) {
-          logger.warn(`[research-integrity] scanDirForLookahead(${absDir}) failed: ${err?.message}`);
+          logger.warn(
+            `[research-integrity] scanDirForLookahead(${absDir}) failed: ${err?.message}`
+          );
         }
       }
     }
@@ -669,7 +703,9 @@ export class ResearchIntegrityService {
       metadata: {
         skew: input.skew ?? 0,
         kurt: input.kurt ?? 3,
-        scan_dirs: input.scan_strategy_code ? input.strategy_scan_dirs ?? DEFAULT_STRATEGY_SCAN_DIRS : null,
+        scan_dirs: input.scan_strategy_code
+          ? input.strategy_scan_dirs ?? DEFAULT_STRATEGY_SCAN_DIRS
+          : null,
       },
       persisted_id: null,
       generated_at: new Date(),
@@ -785,12 +821,14 @@ export class ResearchIntegrityService {
       allTrainMetrics.push(...p.train_metrics.filter(v => Number.isFinite(v)));
       allTestMetrics.push(...p.test_metrics.filter(v => Number.isFinite(v)));
     }
-    const avgTrain = allTrainMetrics.length > 0
-      ? allTrainMetrics.reduce((s, v) => s + v, 0) / allTrainMetrics.length
-      : 0;
-    const avgTest = allTestMetrics.length > 0
-      ? allTestMetrics.reduce((s, v) => s + v, 0) / allTestMetrics.length
-      : 0;
+    const avgTrain =
+      allTrainMetrics.length > 0
+        ? allTrainMetrics.reduce((s, v) => s + v, 0) / allTrainMetrics.length
+        : 0;
+    const avgTest =
+      allTestMetrics.length > 0
+        ? allTestMetrics.reduce((s, v) => s + v, 0) / allTestMetrics.length
+        : 0;
     return {
       pbo,
       n_paths: paths.length,
@@ -798,7 +836,11 @@ export class ResearchIntegrityService {
       k_test: input.cpcv_options?.k_test ?? 2,
       avg_train_metric: avgTrain,
       avg_test_metric: avgTest,
-      paths_summary: paths.map((p, i) => ({ fold: i, train_metrics: p.train_metrics, test_metrics: p.test_metrics })),
+      paths_summary: paths.map((p, i) => ({
+        fold: i,
+        train_metrics: p.train_metrics,
+        test_metrics: p.test_metrics,
+      })),
     };
   }
 }

@@ -75,9 +75,7 @@ export class SocialSentimentClient {
       )) as ConceptReverseRow[] | null;
       return Array.isArray(rows) ? rows : [];
     } catch (error) {
-      logger.error(
-        `SocialSentimentClient.fetchConceptReverse failed: ${(error as Error).message}`
-      );
+      logger.error(`SocialSentimentClient.fetchConceptReverse failed: ${(error as Error).message}`);
       return []; // 反向聚合非关键, 失败不抛
     }
   }

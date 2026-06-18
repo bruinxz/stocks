@@ -29,7 +29,9 @@ class TodayController {
       res.json({ success: true, data });
     } catch (error: any) {
       logger.error('获取今日作战台失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message || '获取今日作战台失败' });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message || '获取今日作战台失败' });
     }
   }
 

@@ -38,6 +38,14 @@
 
 import type { QuantBar } from '../types/QuantTypes';
 import { isSTName } from '../../utils/stNameUtils';
+import {
+  inferMarketSegment,
+  getLimitPrices,
+  isAtLimitUp as marketIsAtLimitUp,
+  isAtLimitDown as marketIsAtLimitDown,
+  roundToTick,
+  MarketSegment,
+} from '../marketLimits';
 
 // ---------------------------------------------------------------- 类型与常量
 
@@ -185,6 +193,20 @@ export interface EvaluateOrderContext {
   /** 当前评估日期（与 buy_date 比较算 T+1） */
   trade_date: string;
   settings?: Partial<ConstraintSettings>;
+  /**
+   * audit S-2 修复：股票代码。当 prev_close 也传入时, evaluateOrder 会按市场段
+   * (主板 10% / 创业板 20% / 科创板 20% / 北交所 30% / ST 5%) 算出真实涨跌停
+   * 价然后用 bar.open/high/low/close 比较, 而不是用单一 `limit_up_pct` + bar.
+   * change_percent (口径错且未来信息)。**强烈建议传入** — 不传时回退到旧的
+   * `change_percent` 估算路径并打一条 warn。
+   */
+  symbol?: string;
+  /**
+   * audit S-2/S-4 修复：T 日开盘前已知的 prev_close (前一交易日 close)。
+   * 用来按市场段算精确涨跌停价。**强烈建议传入** — 不传时只能用 bar.change_percent
+   * (这是当日收盘后才有的信息, 同 day 撮合本质上是 lookahead-bias)。
+   */
+  prev_close?: number | null;
 }
 
 // ---------------------------------------------------------------- 工具函数
@@ -259,25 +281,71 @@ export class AShareConstraintEngine {
       }
     }
 
-    // (4) 涨跌停
-    const changePercent = toNumber(ctx.bar.change_percent, 0);
-    if (ctx.side === 'buy' && settings.block_limit_up && changePercent >= settings.limit_up_pct) {
-      return {
-        ok: false,
-        reason: RejectionReason.LIMIT_UP_BLOCK_BUY,
-        detail: `涨幅 ${changePercent.toFixed(2)}% ≥ 阈值 ${settings.limit_up_pct}%`,
-      };
-    }
-    if (
-      ctx.side === 'sell' &&
-      settings.block_limit_down &&
-      changePercent <= settings.limit_down_pct
-    ) {
-      return {
-        ok: false,
-        reason: RejectionReason.LIMIT_DOWN_BLOCK_SELL,
-        detail: `跌幅 ${changePercent.toFixed(2)}% ≤ 阈值 ${settings.limit_down_pct}%`,
-      };
+    // (4) 涨跌停 (audit S-2 修复)
+    //   优先路径: 用 symbol + prev_close + market segment 算精确涨跌停价
+    //            (主板 10% / 创业板 20% / 科创板 20% / 北交所 30% / ST 5%)
+    //   回退路径: 单一 `limit_up_pct` + bar.change_percent (历史路径, 已 deprecated)
+    const isST = isSTName(ctx.stock_name);
+    const usePreciseLimit =
+      typeof ctx.symbol === 'string' &&
+      ctx.symbol.length > 0 &&
+      typeof ctx.prev_close === 'number' &&
+      Number.isFinite(ctx.prev_close) &&
+      ctx.prev_close > 0;
+
+    if (usePreciseLimit) {
+      const segment: MarketSegment = inferMarketSegment(ctx.symbol!);
+      // 严格用 prev_close-based limit price + bar.open/high/low/close 任一命中
+      if (ctx.side === 'buy' && settings.block_limit_up) {
+        const { upper } = getLimitPrices(ctx.prev_close as number, segment, isST);
+        if (marketIsAtLimitUp(ctx.bar, segment, isST, ctx.prev_close as number)) {
+          return {
+            ok: false,
+            reason: RejectionReason.LIMIT_UP_BLOCK_BUY,
+            detail: `涨停 (${segment}${isST ? '+ST' : ''}) prev_close=${(
+              ctx.prev_close as number
+            ).toFixed(2)} limit=${upper.toFixed(2)}`,
+          };
+        }
+      }
+      if (ctx.side === 'sell' && settings.block_limit_down) {
+        const { lower } = getLimitPrices(ctx.prev_close as number, segment, isST);
+        if (marketIsAtLimitDown(ctx.bar, segment, isST, ctx.prev_close as number)) {
+          return {
+            ok: false,
+            reason: RejectionReason.LIMIT_DOWN_BLOCK_SELL,
+            detail: `跌停 (${segment}${isST ? '+ST' : ''}) prev_close=${(
+              ctx.prev_close as number
+            ).toFixed(2)} limit=${lower.toFixed(2)}`,
+          };
+        }
+      }
+    } else {
+      // 回退路径: 用 change_percent (历史口径, lookahead-biased)。
+      // 任何调用方都应当传 symbol + prev_close，本路径仅为向后兼容旧测试。
+      const changePercent = toNumber(ctx.bar.change_percent, 0);
+      if (ctx.side === 'buy' && settings.block_limit_up && changePercent >= settings.limit_up_pct) {
+        return {
+          ok: false,
+          reason: RejectionReason.LIMIT_UP_BLOCK_BUY,
+          detail: `涨幅 ${changePercent.toFixed(2)}% ≥ 阈值 ${
+            settings.limit_up_pct
+          }% (legacy 路径, 建议传入 symbol+prev_close)`,
+        };
+      }
+      if (
+        ctx.side === 'sell' &&
+        settings.block_limit_down &&
+        changePercent <= settings.limit_down_pct
+      ) {
+        return {
+          ok: false,
+          reason: RejectionReason.LIMIT_DOWN_BLOCK_SELL,
+          detail: `跌幅 ${changePercent.toFixed(2)}% ≤ 阈值 ${
+            settings.limit_down_pct
+          }% (legacy 路径, 建议传入 symbol+prev_close)`,
+        };
+      }
     }
 
     // (5) T+1（仅卖出）
@@ -342,7 +410,9 @@ export class AShareConstraintEngine {
     }
 
     const slippageRate = this.resolveSlippageRate(bar);
-    const price = basePrice * (side === 'buy' ? 1 + slippageRate : 1 - slippageRate);
+    const rawPrice = basePrice * (side === 'buy' ? 1 + slippageRate : 1 - slippageRate);
+    // audit S-2 修复: 撮合价 round 到 A 股 0.01 tick (券商客户端口径)。
+    const price = roundToTick(rawPrice);
 
     return {
       base_price: basePrice,

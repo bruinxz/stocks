@@ -198,6 +198,22 @@ export interface QuantBacktestOptions {
   candidate_limit?: number;
   min_score?: number;
   params_by_strategy?: Record<string, Record<string, any>>;
+  /**
+   * audit S-1 修复: 组合级策略 (MultiFactorAlpha / DragonHead 等实现了
+   * generateSignals(date) 的策略) 的预计算信号; key=strategy_key, value 是
+   * rebalanceDate → target_portfolio 的映射。
+   *
+   * **当此字段提供且 strategy 是组合级时, QuantBacktestEngine 会走"组合级
+   * 撮合路径": 在每个 rebalanceDate 把 target_portfolio diff 当前持仓得到
+   * BUY/SELL 信号, 后续按 next_open 撮合**。否则回退到旧的 per-stock evaluate 路径
+   * (组合级策略在该路径下返回 'hold' 让 trade_count=0)。
+   *
+   * 调用方负责预先调 `strategy.generateSignals(date, {previousSelection})` 拉到
+   * 信号 (该调用通常需要 DB / factor_scores), 把结果填到本字段。这种"caller
+   * prefetch + engine 同步消费"的设计让回测引擎保持同步 + 易测, 同时让组合级
+   * 策略真正被回测撮合 (audit S-1)。
+   */
+  precomputed_composite_signals?: Record<string, Record<string, { target_portfolio: string[] }>>;
   validation_split?: {
     enabled?: boolean;
     train_pct?: number;

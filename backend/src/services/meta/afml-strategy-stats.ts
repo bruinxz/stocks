@@ -90,7 +90,8 @@ export function strategyEfficientFrontier(returns_matrix: number[][]): {
   // Max-sharpe: rough heuristic ∝ μ / σ²
   const max_sharpe_weights: number[] = mu.map((m, i) => Math.max(0, m / Math.max(1e-9, cov[i][i])));
   const sum_maxs = max_sharpe_weights.reduce((s, v) => s + v, 0);
-  for (let i = 0; i < N; i += 1) max_sharpe_weights[i] = sum_maxs > 0 ? max_sharpe_weights[i] / sum_maxs : 1 / N;
+  for (let i = 0; i < N; i += 1)
+    max_sharpe_weights[i] = sum_maxs > 0 ? max_sharpe_weights[i] / sum_maxs : 1 / N;
 
   return { expected_returns: mu, cov_matrix: cov, min_var_weights, max_sharpe_weights };
 }
@@ -103,11 +104,14 @@ export function strategyEfficientFrontier(returns_matrix: number[][]): {
  *   Top K principal components form "independent factors".
  *   Residuals = idiosyncratic alpha (strategy 真正不同的部分).
  */
-export function orthogonalizeStrategies(returns_matrix: number[][], n_components: number = 3): {
-  pc_scores: number[][];      // T × K
-  pc_loadings: number[][];    // K × N (eigenvectors)
+export function orthogonalizeStrategies(
+  returns_matrix: number[][],
+  n_components = 3
+): {
+  pc_scores: number[][]; // T × K
+  pc_loadings: number[][]; // K × N (eigenvectors)
   variance_explained: number[];
-  residuals: number[][];       // T × N
+  residuals: number[][]; // T × N
 } {
   const T = returns_matrix.length;
   const N = returns_matrix[0]?.length ?? 0;
@@ -228,16 +232,16 @@ export function timeUnderWater(returns: number[]): {
 export function probabilisticSharpeRatio(
   observed_sharpe: number,
   T: number,
-  skew: number = 0,
-  kurt: number = 3,
-  sr_benchmark: number = 0
+  skew = 0,
+  kurt = 3,
+  sr_benchmark = 0
 ): number {
   if (!Number.isFinite(observed_sharpe) || T <= 1) return NaN;
   const sr = observed_sharpe;
   const variance_factor = 1 - skew * sr + ((kurt - 1) / 4) * sr * sr;
   if (variance_factor <= 0) return NaN;
   const std_factor = Math.sqrt(variance_factor);
-  const z = (sr - sr_benchmark) * Math.sqrt(T - 1) / std_factor;
+  const z = ((sr - sr_benchmark) * Math.sqrt(T - 1)) / std_factor;
   return standardNormalCdf(z);
 }
 
@@ -248,7 +252,11 @@ export function probabilisticSharpeRatio(
  * @param sample_days backtest length in days
  * @param trading_days_per_year e.g. 252
  */
-export function frequencyOfBets(n_trades: number, sample_days: number, trading_days_per_year: number = 252): number {
+export function frequencyOfBets(
+  n_trades: number,
+  sample_days: number,
+  trading_days_per_year = 252
+): number {
   if (sample_days <= 0) return 0;
   return (n_trades / sample_days) * trading_days_per_year;
 }
@@ -260,7 +268,9 @@ export function frequencyOfBets(n_trades: number, sample_days: number, trading_d
  *
  * If trades have entry+exit, sum (exit - entry) / N.
  */
-export function averageHoldingPeriod(trades: Array<{ entry_idx: number; exit_idx: number }>): number {
+export function averageHoldingPeriod(
+  trades: Array<{ entry_idx: number; exit_idx: number }>
+): number {
   if (trades.length === 0) return 0;
   const total_days = trades.reduce((s, t) => s + (t.exit_idx - t.entry_idx), 0);
   return total_days / trades.length;

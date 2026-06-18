@@ -45,6 +45,8 @@ export type HttpRequestLabel = 'method' | 'route' | 'status';
 export type BacktestLabel = 'strategy' | 'result';
 export type AIRequestLabel = 'provider' | 'endpoint' | 'status';
 export type OrderLabel = 'direction' | 'status' | 'code';
+/** audit S-1 修复: 回测产生的 trade 数 — 区分组合级策略 trade_count=0 退化与正常运行 */
+export type BacktestTradeCountLabel = 'strategy_key';
 
 export interface PrometheusMetricsBundle {
   registry: Registry;
@@ -52,6 +54,8 @@ export interface PrometheusMetricsBundle {
   backtestTotal: Counter<BacktestLabel>;
   aiRequestDurationSeconds: Histogram<AIRequestLabel>;
   orderTotal: Counter<OrderLabel>;
+  /** audit S-1 修复: 单次回测累计 trade 笔数（按策略 key 分） */
+  backtestTradeCountTotal: Counter<BacktestTradeCountLabel>;
 }
 
 // ---------------------------------------------------------------------------
@@ -103,12 +107,20 @@ export function createPrometheusRegistry(
     registers: [registry],
   });
 
+  const backtestTradeCountTotal = new Counter<BacktestTradeCountLabel>({
+    name: 'backtest_trade_count_total',
+    help: '回测累计成交笔数（按策略 key 分组；audit S-1 修复 — 用于发现组合级策略 trade_count=0 退化）',
+    labelNames: ['strategy_key'],
+    registers: [registry],
+  });
+
   return {
     registry,
     httpRequestsTotal,
     backtestTotal,
     aiRequestDurationSeconds,
     orderTotal,
+    backtestTradeCountTotal,
   };
 }
 
@@ -289,6 +301,27 @@ export function incrementOrderTotal(
       status,
       code: code || (status === 'success' ? 'ok' : 'unknown'),
     });
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * 累加一次回测产出 trade 数 (audit S-1 修复)。
+ *
+ * 调用时机: QuantBacktestEngine.run() 收尾 — 把当前策略的 trades.length 加到
+ * `backtest_trade_count_total{strategy_key=<key>}` 上。线上看板报警 "MFA 策略
+ * 24h 内 trade_count_total 增量 = 0" 即可发现组合级策略退化为 evaluate() hold 的
+ * 隐形 bug。
+ */
+export function incrementBacktestTradeCount(
+  strategy_key: string,
+  count: number,
+  bundle: PrometheusMetricsBundle = getPrometheusBundle()
+): void {
+  if (!Number.isFinite(count) || count <= 0) return;
+  try {
+    bundle.backtestTradeCountTotal.inc({ strategy_key: strategy_key || 'unknown' }, count);
   } catch {
     // ignore
   }

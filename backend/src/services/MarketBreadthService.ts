@@ -68,10 +68,7 @@ export interface MarketBreadthReport {
  * 算 advance/decline ratio。decliners=0 时返大数 (>10 表示完全单边)，
  * 双 0 时 null。
  */
-export function computeAdvanceDeclineRatio(
-  advancers: number,
-  decliners: number
-): number | null {
+export function computeAdvanceDeclineRatio(advancers: number, decliners: number): number | null {
   if (advancers === 0 && decliners === 0) return null;
   if (decliners === 0) return advancers > 0 ? 99 : null;
   return advancers / decliners;
@@ -161,7 +158,7 @@ export function buildSummaryMessage(latest: BreadthSnapshot): string {
 const CACHE_TTL_MS = 5 * 60 * 1000;
 // Batch Y (2026-06-17, fact-2 fix): cache key 含 days, 之前全局 cache 不分 days
 // → 5min 内 days=30 调用拿到 days=7 的旧数据 (顶部预警 + UI dashboard 误报).
-let cache: Map<number, { data: MarketBreadthReport; ts: number }> = new Map();
+const cache: Map<number, { data: MarketBreadthReport; ts: number }> = new Map();
 
 export class MarketBreadthService {
   /** 强制清缓存 */
@@ -259,20 +256,23 @@ export class MarketBreadthService {
 
       // 2. 涨停 / 跌停 / new_60d_high / new_60d_low 单独查 (limit_up_stocks 表 + 60d 数据)
       const tradeDates = rows.map(r => r.trade_date);
-      const limitUpRows = (await sequelize.query(
-        `SELECT trade_date::date AS trade_date,
+      const limitUpRows = (await sequelize
+        .query(
+          `SELECT trade_date::date AS trade_date,
                 COUNT(*) FILTER (WHERE type = 'up')::int AS limit_up,
                 COUNT(*) FILTER (WHERE type = 'down')::int AS limit_down
          FROM limit_up_stocks
          WHERE trade_date::date = ANY(:dates)
          GROUP BY trade_date`,
-        { replacements: { dates: tradeDates }, type: QueryTypes.SELECT }
-      ).catch(() => [])) as any[];
+          { replacements: { dates: tradeDates }, type: QueryTypes.SELECT }
+        )
+        .catch(() => [])) as any[];
       const luMap = new Map<string, { up: number; down: number }>();
       for (const r of limitUpRows) {
-        const dateStr = typeof r.trade_date === 'string'
-          ? r.trade_date
-          : new Date(r.trade_date).toISOString().slice(0, 10);
+        const dateStr =
+          typeof r.trade_date === 'string'
+            ? r.trade_date
+            : new Date(r.trade_date).toISOString().slice(0, 10);
         luMap.set(dateStr, { up: Number(r.limit_up || 0), down: Number(r.limit_down || 0) });
       }
 
@@ -281,8 +281,9 @@ export class MarketBreadthService {
       const latestDate = rows[0].trade_date;
       const since60 = new Date(latestDate);
       since60.setDate(since60.getDate() - 90); // 60d trading days ≈ 90 calendar
-      const hlRows = (await sequelize.query(
-        `
+      const hlRows = (await sequelize
+        .query(
+          `
         WITH bars60 AS (
           SELECT stock_id, time::date AS d, close
           FROM daily_bars
@@ -300,16 +301,18 @@ export class MarketBreadthService {
           COUNT(*) FILTER (WHERE rk_latest = 1 AND rk_low = 1)::int AS new_low
         FROM ranks
         `,
-        { replacements: { since60, latest: latestDate }, type: QueryTypes.SELECT }
-      ).catch(() => [{ new_high: 0, new_low: 0 }])) as any[];
+          { replacements: { since60, latest: latestDate }, type: QueryTypes.SELECT }
+        )
+        .catch(() => [{ new_high: 0, new_low: 0 }])) as any[];
       const newHigh = Number(hlRows[0]?.new_high || 0);
       const newLow = Number(hlRows[0]?.new_low || 0);
 
       // 4. 组装 snapshots
       const snapshots: BreadthSnapshot[] = rows.map((r, idx) => {
-        const tradeDateStr = typeof r.trade_date === 'string'
-          ? r.trade_date
-          : new Date(r.trade_date).toISOString().slice(0, 10);
+        const tradeDateStr =
+          typeof r.trade_date === 'string'
+            ? r.trade_date
+            : new Date(r.trade_date).toISOString().slice(0, 10);
         const advancers = Number(r.advancers || 0);
         const decliners = Number(r.decliners || 0);
         const unchanged = Number(r.unchanged || 0);

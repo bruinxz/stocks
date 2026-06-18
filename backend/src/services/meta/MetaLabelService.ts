@@ -220,9 +220,7 @@ export function computeFeatureStats(rawRows: RawSignalFeatures[]): {
     const vals = rawRows.map(f.extract).filter(v => Number.isFinite(v));
     const m = vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : 0;
     const variance =
-      vals.length > 1
-        ? vals.reduce((s, v) => s + (v - m) * (v - m), 0) / (vals.length - 1)
-        : 1;
+      vals.length > 1 ? vals.reduce((s, v) => s + (v - m) * (v - m), 0) / (vals.length - 1) : 1;
     means[f.name] = m;
     stds[f.name] = Math.sqrt(Math.max(variance, 1e-9));
   }
@@ -336,7 +334,10 @@ export function trainLogisticRegression(
 /**
  * 用模型预测 confidence
  */
-export function predictConfidence(model: MetaLabelModel, raw: RawSignalFeatures): {
+export function predictConfidence(
+  model: MetaLabelModel,
+  raw: RawSignalFeatures
+): {
   confidence: number;
   contributions: Array<{ name: FeatureName; contribution: number; value: number }>;
 } {
@@ -377,7 +378,13 @@ export function fallbackConfidence(raw: RawSignalFeatures): {
 } {
   const base = Math.max(0, Math.min(1, raw.signal_score / 100));
   const mult =
-    raw.regime === 'bull' ? 1.1 : raw.regime === 'range' ? 1.0 : raw.regime === 'volatile' ? 0.85 : 0.7;
+    raw.regime === 'bull'
+      ? 1.1
+      : raw.regime === 'range'
+      ? 1.0
+      : raw.regime === 'volatile'
+      ? 0.85
+      : 0.7;
   const c = Math.max(0.05, Math.min(0.95, base * mult));
   return {
     confidence: c,
@@ -490,7 +497,11 @@ export class MetaLabelService {
       model_version = 'fallback-rule';
       reason = r;
       topFeatures = [
-        { name: 'signal_score', contribution: input.features.signal_score / 100, value: input.features.signal_score },
+        {
+          name: 'signal_score',
+          contribution: input.features.signal_score / 100,
+          value: input.features.signal_score,
+        },
         { name: 'regime', contribution: 0, value: input.features.regime },
       ];
     }

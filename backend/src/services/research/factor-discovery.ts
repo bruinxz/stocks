@@ -50,7 +50,17 @@
  *   完整 GP 留给 Python (deap / gplearn) — TypeScript 不适合大规模 evolution.
  */
 
-export type FactorOp = '+' | '-' | '*' | '/' | 'ts_mean' | 'ts_std' | 'rank' | 'log' | 'neg' | 'abs';
+export type FactorOp =
+  | '+'
+  | '-'
+  | '*'
+  | '/'
+  | 'ts_mean'
+  | 'ts_std'
+  | 'rank'
+  | 'log'
+  | 'neg'
+  | 'abs';
 export type FactorLeaf = 'close' | 'volume' | 'high' | 'low' | 'open' | 'returns';
 
 export interface FactorNode {
@@ -81,16 +91,26 @@ export function formatFactorTree(node: FactorNode): string {
   if (node.kind === 'leaf') return node.feature ?? '?';
   const c = (node.children ?? []).map(formatFactorTree);
   switch (node.kind) {
-    case '+': return `(${c[0]} + ${c[1]})`;
-    case '-': return `(${c[0]} - ${c[1]})`;
-    case '*': return `(${c[0]} * ${c[1]})`;
-    case '/': return `(${c[0]} / ${c[1]})`;
-    case 'ts_mean': return `ts_mean(${c[0]}, ${node.window})`;
-    case 'ts_std': return `ts_std(${c[0]}, ${node.window})`;
-    case 'rank': return `rank(${c[0]})`;
-    case 'log': return `log(${c[0]})`;
-    case 'neg': return `-${c[0]}`;
-    case 'abs': return `abs(${c[0]})`;
+    case '+':
+      return `(${c[0]} + ${c[1]})`;
+    case '-':
+      return `(${c[0]} - ${c[1]})`;
+    case '*':
+      return `(${c[0]} * ${c[1]})`;
+    case '/':
+      return `(${c[0]} / ${c[1]})`;
+    case 'ts_mean':
+      return `ts_mean(${c[0]}, ${node.window})`;
+    case 'ts_std':
+      return `ts_std(${c[0]}, ${node.window})`;
+    case 'rank':
+      return `rank(${c[0]})`;
+    case 'log':
+      return `log(${c[0]})`;
+    case 'neg':
+      return `-${c[0]}`;
+    case 'abs':
+      return `abs(${c[0]})`;
   }
 }
 
@@ -115,13 +135,20 @@ export function evaluateFactorTree(node: FactorNode, bars: BarHistory): number[]
   const c = (node.children ?? []).map(child => evaluateFactorTree(child, bars));
   const T = c[0]?.length ?? 0;
   switch (node.kind) {
-    case '+': return c[0].map((v, i) => v + c[1][i]);
-    case '-': return c[0].map((v, i) => v - c[1][i]);
-    case '*': return c[0].map((v, i) => v * c[1][i]);
-    case '/': return c[0].map((v, i) => (Math.abs(c[1][i]) > 1e-12 ? v / c[1][i] : NaN));
-    case 'log': return c[0].map(v => (v > 0 ? Math.log(v) : NaN));
-    case 'neg': return c[0].map(v => -v);
-    case 'abs': return c[0].map(v => Math.abs(v));
+    case '+':
+      return c[0].map((v, i) => v + c[1][i]);
+    case '-':
+      return c[0].map((v, i) => v - c[1][i]);
+    case '*':
+      return c[0].map((v, i) => v * c[1][i]);
+    case '/':
+      return c[0].map((v, i) => (Math.abs(c[1][i]) > 1e-12 ? v / c[1][i] : NaN));
+    case 'log':
+      return c[0].map(v => (v > 0 ? Math.log(v) : NaN));
+    case 'neg':
+      return c[0].map(v => -v);
+    case 'abs':
+      return c[0].map(v => Math.abs(v));
     case 'ts_mean': {
       const w = node.window ?? 5;
       const out: number[] = new Array(T).fill(NaN);
@@ -244,7 +271,8 @@ export function evaluateFactorFitness(
     }
   }
   const size = treeSize(tree);
-  if (xs.length < 5) return { fitness: 0, raw_ic: NaN, tree_size: size, n_valid_samples: xs.length };
+  if (xs.length < 5)
+    return { fitness: 0, raw_ic: NaN, tree_size: size, n_valid_samples: xs.length };
 
   // compute correlation
   let corr = 0;
@@ -252,7 +280,9 @@ export function evaluateFactorFitness(
     // inline pearson
     const mX = xs.reduce((s, v) => s + v, 0) / xs.length;
     const mY = ys.reduce((s, v) => s + v, 0) / ys.length;
-    let num = 0, dX = 0, dY = 0;
+    let num = 0,
+      dX = 0,
+      dY = 0;
     for (let i = 0; i < xs.length; i += 1) {
       num += (xs[i] - mX) * (ys[i] - mY);
       dX += (xs[i] - mX) ** 2;
@@ -265,7 +295,9 @@ export function evaluateFactorFitness(
     const rYs = computeRanksLocal(ys);
     const mX = rXs.reduce((s, v) => s + v, 0) / rXs.length;
     const mY = rYs.reduce((s, v) => s + v, 0) / rYs.length;
-    let num = 0, dX = 0, dY = 0;
+    let num = 0,
+      dX = 0,
+      dY = 0;
     for (let i = 0; i < rXs.length; i += 1) {
       num += (rXs[i] - mX) * (rYs[i] - mY);
       dX += (rXs[i] - mX) ** 2;
@@ -313,7 +345,13 @@ export function randomFactorSearch(
     parsimony_penalty?: number;
     top_k?: number;
   } = {}
-): Array<{ tree: FactorNode; formula: string; fitness: number; raw_ic: number; tree_size: number }> {
+): Array<{
+  tree: FactorNode;
+  formula: string;
+  fitness: number;
+  raw_ic: number;
+  tree_size: number;
+}> {
   const N = options.n_candidates ?? 100;
   const maxDepth = options.max_depth ?? 4;
   const topK = options.top_k ?? 10;
@@ -327,12 +365,18 @@ export function randomFactorSearch(
   };
 
   const candidates: Array<{
-    tree: FactorNode; formula: string; fitness: number; raw_ic: number; tree_size: number;
+    tree: FactorNode;
+    formula: string;
+    fitness: number;
+    raw_ic: number;
+    tree_size: number;
   }> = [];
 
   for (let i = 0; i < N; i += 1) {
     const tree = generateRandomTree(maxDepth, rng);
-    const ev = evaluateFactorFitness(tree, bars, forward_returns, { parsimony_penalty: options.parsimony_penalty });
+    const ev = evaluateFactorFitness(tree, bars, forward_returns, {
+      parsimony_penalty: options.parsimony_penalty,
+    });
     candidates.push({
       tree,
       formula: formatFactorTree(tree),
@@ -343,7 +387,7 @@ export function randomFactorSearch(
   }
 
   // dedupe by formula (random search 经常生成 syntactically 不同但语义同的)
-  const uniqueByFormula = new Map<string, typeof candidates[0]>();
+  const uniqueByFormula = new Map<string, (typeof candidates)[0]>();
   for (const c of candidates) {
     if (!uniqueByFormula.has(c.formula) || c.fitness > uniqueByFormula.get(c.formula)!.fitness) {
       uniqueByFormula.set(c.formula, c);

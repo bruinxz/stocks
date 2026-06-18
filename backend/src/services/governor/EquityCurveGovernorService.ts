@@ -96,9 +96,9 @@ export const DEFAULT_TIER_THRESHOLDS: TierThresholds = Object.freeze({
   sharpe_critical: -0.8,
   sharpe_defensive: -0.3,
   sharpe_cautious: 0.5,
-  winrate_critical: 0.30,
-  winrate_defensive: 0.40,
-  winrate_cautious: 0.50,
+  winrate_critical: 0.3,
+  winrate_defensive: 0.4,
+  winrate_cautious: 0.5,
 });
 
 // ============================================================
@@ -164,7 +164,9 @@ export interface EvaluateResult {
  *   - sharpe = mean / std × sqrt(252)
  *   - < 5 个有效收益 → null
  */
-export function computeRecentSharpe(snapshots: Array<{ date: string; total_value: number }>): number | null {
+export function computeRecentSharpe(
+  snapshots: Array<{ date: string; total_value: number }>
+): number | null {
   if (!snapshots || snapshots.length < 6) return null;
   const sorted = [...snapshots].sort((a, b) => a.date.localeCompare(b.date));
   const returns: number[] = [];
@@ -177,8 +179,7 @@ export function computeRecentSharpe(snapshots: Array<{ date: string; total_value
   }
   if (returns.length < 5) return null;
   const mean = returns.reduce((s, v) => s + v, 0) / returns.length;
-  const variance =
-    returns.reduce((s, v) => s + (v - mean) * (v - mean), 0) / (returns.length - 1);
+  const variance = returns.reduce((s, v) => s + (v - mean) * (v - mean), 0) / (returns.length - 1);
   const std = Math.sqrt(Math.max(variance, 1e-12));
   if (std === 0) return null;
   return (mean / std) * Math.sqrt(252);
@@ -230,7 +231,9 @@ export function deriveTier(
   if (drawdown_current !== null && drawdown_current >= thresholds.drawdown_observe_only) {
     return {
       tier: 'observe_only',
-      trigger_reason: `drawdown=${(drawdown_current * 100).toFixed(1)}% ≥ ${(thresholds.drawdown_observe_only * 100).toFixed(0)}%`,
+      trigger_reason: `drawdown=${(drawdown_current * 100).toFixed(1)}% ≥ ${(
+        thresholds.drawdown_observe_only * 100
+      ).toFixed(0)}%`,
     };
   }
   if (sharpe_30d !== null && sharpe_30d <= thresholds.sharpe_observe_only) {
@@ -244,7 +247,9 @@ export function deriveTier(
   if (drawdown_current !== null && drawdown_current >= thresholds.drawdown_critical) {
     return {
       tier: 'critical',
-      trigger_reason: `drawdown=${(drawdown_current * 100).toFixed(1)}% ≥ ${(thresholds.drawdown_critical * 100).toFixed(0)}%`,
+      trigger_reason: `drawdown=${(drawdown_current * 100).toFixed(1)}% ≥ ${(
+        thresholds.drawdown_critical * 100
+      ).toFixed(0)}%`,
     };
   }
   if (sharpe_30d !== null && sharpe_30d <= thresholds.sharpe_critical) {
@@ -256,7 +261,9 @@ export function deriveTier(
   if (winrate_30d !== null && winrate_30d <= thresholds.winrate_critical) {
     return {
       tier: 'critical',
-      trigger_reason: `30d win_rate=${(winrate_30d * 100).toFixed(0)}% ≤ ${(thresholds.winrate_critical * 100).toFixed(0)}%`,
+      trigger_reason: `30d win_rate=${(winrate_30d * 100).toFixed(0)}% ≤ ${(
+        thresholds.winrate_critical * 100
+      ).toFixed(0)}%`,
     };
   }
 
@@ -264,7 +271,9 @@ export function deriveTier(
   if (drawdown_current !== null && drawdown_current >= thresholds.drawdown_defensive) {
     return {
       tier: 'defensive',
-      trigger_reason: `drawdown=${(drawdown_current * 100).toFixed(1)}% ≥ ${(thresholds.drawdown_defensive * 100).toFixed(0)}%`,
+      trigger_reason: `drawdown=${(drawdown_current * 100).toFixed(1)}% ≥ ${(
+        thresholds.drawdown_defensive * 100
+      ).toFixed(0)}%`,
     };
   }
   if (sharpe_30d !== null && sharpe_30d <= thresholds.sharpe_defensive) {
@@ -276,7 +285,9 @@ export function deriveTier(
   if (winrate_30d !== null && winrate_30d <= thresholds.winrate_defensive) {
     return {
       tier: 'defensive',
-      trigger_reason: `30d win_rate=${(winrate_30d * 100).toFixed(0)}% ≤ ${(thresholds.winrate_defensive * 100).toFixed(0)}%`,
+      trigger_reason: `30d win_rate=${(winrate_30d * 100).toFixed(0)}% ≤ ${(
+        thresholds.winrate_defensive * 100
+      ).toFixed(0)}%`,
     };
   }
 
@@ -284,7 +295,9 @@ export function deriveTier(
   if (drawdown_current !== null && drawdown_current >= thresholds.drawdown_cautious) {
     return {
       tier: 'cautious',
-      trigger_reason: `drawdown=${(drawdown_current * 100).toFixed(1)}% ≥ ${(thresholds.drawdown_cautious * 100).toFixed(0)}%`,
+      trigger_reason: `drawdown=${(drawdown_current * 100).toFixed(1)}% ≥ ${(
+        thresholds.drawdown_cautious * 100
+      ).toFixed(0)}%`,
     };
   }
   if (sharpe_30d !== null && sharpe_30d <= thresholds.sharpe_cautious) {
@@ -296,7 +309,9 @@ export function deriveTier(
   if (winrate_30d !== null && winrate_30d <= thresholds.winrate_cautious) {
     return {
       tier: 'cautious',
-      trigger_reason: `30d win_rate=${(winrate_30d * 100).toFixed(0)}% ≤ ${(thresholds.winrate_cautious * 100).toFixed(0)}%`,
+      trigger_reason: `30d win_rate=${(winrate_30d * 100).toFixed(0)}% ≤ ${(
+        thresholds.winrate_cautious * 100
+      ).toFixed(0)}%`,
     };
   }
 
@@ -322,12 +337,12 @@ export function buildGovernorSummary(input: {
     tier === 'healthy'
       ? '✅'
       : tier === 'cautious'
-        ? '🟢'
-        : tier === 'defensive'
-          ? '🟡'
-          : tier === 'critical'
-            ? '🟠'
-            : '🔴';
+      ? '🟢'
+      : tier === 'defensive'
+      ? '🟡'
+      : tier === 'critical'
+      ? '🟠'
+      : '🔴';
   const change = tier_changed && previous_tier ? ` (从 ${previous_tier} 切换)` : '';
   const statsPart: string[] = [];
   if (stats.sharpe_30d !== null) statsPart.push(`sharpe30d=${stats.sharpe_30d.toFixed(2)}`);
@@ -493,7 +508,8 @@ export class EquityCurveGovernorService {
           tier,
           kelly_multiplier: multiplier,
           recent_sharpe_30d: stats.sharpe_30d,
-          current_drawdown_pct: stats.drawdown_current !== null ? stats.drawdown_current * 100 : null,
+          current_drawdown_pct:
+            stats.drawdown_current !== null ? stats.drawdown_current * 100 : null,
           recent_winrate_30d: stats.winrate_30d,
           trigger_reason,
           previous_tier,

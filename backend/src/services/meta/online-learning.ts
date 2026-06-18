@@ -45,7 +45,14 @@
  *   - 支持 momentum (默认 0.9, Nesterov 风格)
  */
 
-import { MetaLabelModel, RawSignalFeatures, buildFeatureVector, sigmoid, FEATURE_NAMES, FeatureName } from './MetaLabelService';
+import {
+  MetaLabelModel,
+  RawSignalFeatures,
+  buildFeatureVector,
+  sigmoid,
+  FEATURE_NAMES,
+  FeatureName,
+} from './MetaLabelService';
 
 export interface OnlineUpdateOptions {
   /** Initial learning rate (default 0.05) */

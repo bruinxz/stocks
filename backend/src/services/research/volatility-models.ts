@@ -79,7 +79,7 @@ export function garchNegLogLikelihood(returns: number[], params: GARCHParams): n
   const sigma2 = garchVolatility(returns, params);
   let nll = 0;
   for (let t = 0; t < returns.length; t += 1) {
-    nll += 0.5 * (Math.log(sigma2[t]) + (returns[t] ** 2) / sigma2[t]);
+    nll += 0.5 * (Math.log(sigma2[t]) + returns[t] ** 2 / sigma2[t]);
   }
   return nll;
 }
@@ -89,7 +89,11 @@ export function garchNegLogLikelihood(returns: number[], params: GARCHParams): n
  *
  * 简化版: 不用 BFGS, 用 coordinate descent.
  */
-export function fitGARCH(returns: number[]): { params: GARCHParams; log_likelihood: number; converged: boolean } {
+export function fitGARCH(returns: number[]): {
+  params: GARCHParams;
+  log_likelihood: number;
+  converged: boolean;
+} {
   const T = returns.length;
   if (T < 30) throw new Error(`fitGARCH: need ≥30 obs, got ${T}`);
 
@@ -100,8 +104,8 @@ export function fitGARCH(returns: number[]): { params: GARCHParams; log_likeliho
   let best_nll = garchNegLogLikelihood(returns, best);
 
   // Grid search around init
-  for (const alpha of [0.05, 0.08, 0.10, 0.12, 0.15, 0.20]) {
-    for (const beta of [0.70, 0.75, 0.80, 0.85, 0.88, 0.90]) {
+  for (const alpha of [0.05, 0.08, 0.1, 0.12, 0.15, 0.2]) {
+    for (const beta of [0.7, 0.75, 0.8, 0.85, 0.88, 0.9]) {
       if (alpha + beta >= 0.99) continue;
       const omega = sample_var * (1 - alpha - beta);
       const params = { omega, alpha, beta };
@@ -173,7 +177,11 @@ export function egarchVolatility(returns: number[], params: EGARCHParams): numbe
     const sigma_prev = Math.sqrt(Math.exp(log_sigma2[t - 1]));
     const eps = returns[t - 1] / Math.max(1e-12, sigma_prev);
     const abs_eps_minus_E = Math.abs(eps) - SQRT_2_OVER_PI;
-    log_sigma2[t] = params.omega + params.alpha * abs_eps_minus_E + params.gamma * eps + params.beta * log_sigma2[t - 1];
+    log_sigma2[t] =
+      params.omega +
+      params.alpha * abs_eps_minus_E +
+      params.gamma * eps +
+      params.beta * log_sigma2[t - 1];
   }
   return log_sigma2.map(v => Math.exp(v));
 }
@@ -183,7 +191,7 @@ export function egarchNegLogLikelihood(returns: number[], params: EGARCHParams):
   const sigma2 = egarchVolatility(returns, params);
   let nll = 0;
   for (let t = 0; t < returns.length; t += 1) {
-    nll += 0.5 * (Math.log(sigma2[t]) + (returns[t] ** 2) / sigma2[t]);
+    nll += 0.5 * (Math.log(sigma2[t]) + returns[t] ** 2 / sigma2[t]);
   }
   return nll;
 }
@@ -191,7 +199,11 @@ export function egarchNegLogLikelihood(returns: number[], params: EGARCHParams):
 /**
  * Fit EGARCH via simple grid + coordinate descent.
  */
-export function fitEGARCH(returns: number[]): { params: EGARCHParams; log_likelihood: number; converged: boolean } {
+export function fitEGARCH(returns: number[]): {
+  params: EGARCHParams;
+  log_likelihood: number;
+  converged: boolean;
+} {
   const T = returns.length;
   if (T < 30) throw new Error(`fitEGARCH: need ≥30 obs, got ${T}`);
 
@@ -265,7 +277,11 @@ export function realizedVariance(returns: number[]): number[] {
  *
  * 需要 T ≥ 22 + 5 = 27 obs.
  */
-export function fitHARRV(rv: number[]): { params: HARRVParams; r_squared: number; n_samples: number } {
+export function fitHARRV(rv: number[]): {
+  params: HARRVParams;
+  r_squared: number;
+  n_samples: number;
+} {
   const T = rv.length;
   if (T < 30) throw new Error(`fitHARRV: need ≥30 obs, got ${T}`);
 
@@ -296,7 +312,11 @@ export function fitHARRV(rv: number[]): { params: HARRVParams; r_squared: number
     let piv = i;
     for (let r = i + 1; r < k; r += 1) if (Math.abs(aug[r][i]) > Math.abs(aug[piv][i])) piv = r;
     if (Math.abs(aug[piv][i]) < 1e-12) {
-      return { params: { beta_0: NaN, beta_d: NaN, beta_w: NaN, beta_m: NaN }, r_squared: NaN, n_samples: targets.length };
+      return {
+        params: { beta_0: NaN, beta_d: NaN, beta_w: NaN, beta_m: NaN },
+        r_squared: NaN,
+        n_samples: targets.length,
+      };
     }
     if (piv !== i) [aug[i], aug[piv]] = [aug[piv], aug[i]];
     const d = aug[i][i];
@@ -310,9 +330,11 @@ export function fitHARRV(rv: number[]): { params: HARRVParams; r_squared: number
   const beta = aug.map(row => row[k]);
   // R²
   const ymean = targets.reduce((s, v) => s + v, 0) / targets.length;
-  let ss_tot = 0, ss_res = 0;
+  let ss_tot = 0,
+    ss_res = 0;
   for (let i = 0; i < targets.length; i += 1) {
-    const pred = beta[0] + beta[1] * features[i][1] + beta[2] * features[i][2] + beta[3] * features[i][3];
+    const pred =
+      beta[0] + beta[1] * features[i][1] + beta[2] * features[i][2] + beta[3] * features[i][3];
     ss_res += (targets[i] - pred) ** 2;
     ss_tot += (targets[i] - ymean) ** 2;
   }

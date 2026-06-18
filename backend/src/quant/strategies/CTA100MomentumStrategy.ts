@@ -315,11 +315,7 @@ export class CTA100MomentumStrategy extends QuantStrategy {
       expected_holding_days: 22,
       key_factors: ['momentum_60_minus_5', 'index_membership_csi1000'],
       evidence_link: 'Jegadeesh & Titman 1993 momentum',
-      failure_modes: [
-        '动量切换期 (高 dispersion)',
-        '小盘股集体崩盘',
-        '指数调仓期成份股变动大',
-      ],
+      failure_modes: ['动量切换期 (高 dispersion)', '小盘股集体崩盘', '指数调仓期成份股变动大'],
       kill_switch_metric: 'mean_test_sharpe_30d',
       kill_switch_threshold: 0.3,
     },

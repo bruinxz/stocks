@@ -70,19 +70,19 @@ export interface MarketEnvironmentSnapshot {
   };
   /** 新增：宏观经济指标快照 — PMI / M2 增速 / 10Y 国债 / SHIBOR */
   macro?: {
-    pmi_latest: number | null;          // 最新 PMI 值 (50 是荣枯线)
-    pmi_change_3m: number | null;        // 近 3 个月 PMI 变化 (+/-)
-    m2_yoy: number | null;               // M2 同比 (%)
-    treasury_10y: number | null;         // 10Y 国债收益率 (%)
-    shibor_overnight: number | null;     // 隔夜 shibor (%)
-    cpi_yoy: number | null;              // CPI 同比 (%)
+    pmi_latest: number | null; // 最新 PMI 值 (50 是荣枯线)
+    pmi_change_3m: number | null; // 近 3 个月 PMI 变化 (+/-)
+    m2_yoy: number | null; // M2 同比 (%)
+    treasury_10y: number | null; // 10Y 国债收益率 (%)
+    shibor_overnight: number | null; // 隔夜 shibor (%)
+    cpi_yoy: number | null; // CPI 同比 (%)
   };
   /** 新增：QVIX 期权波动率指数 — 300ETF QVIX 是 A 股"恐慌指数" */
   qvix?: {
-    qvix_300etf_latest: number | null;       // 最新 300ETF QVIX
+    qvix_300etf_latest: number | null; // 最新 300ETF QVIX
     qvix_300etf_change_5d_pct: number | null; // 近 5 日变化 %
     qvix_300etf_percentile_60d: number | null; // 近 60 日分位 (0-100)
-    is_panic: boolean;                        // QVIX 显著上行 → 恐慌信号
+    is_panic: boolean; // QVIX 显著上行 → 恐慌信号
   };
   industry?: {
     name?: string;
@@ -298,7 +298,9 @@ class MarketEnvironmentService {
           order: [['observation_date', 'DESC']],
           raw: true,
         })) as any;
-        return row ? { value: Number(row.value), date: row.observation_date, yoy: row.yoy_pct } : null;
+        return row
+          ? { value: Number(row.value), date: row.observation_date, yoy: row.yoy_pct }
+          : null;
       };
       const fetchNthBefore = async (key: string, n: number) => {
         const rows = (await MacroIndicator.findAll({
@@ -321,8 +323,7 @@ class MarketEnvironmentService {
 
       return {
         pmi_latest: pmi ? roundNumber(pmi.value, 2) : null,
-        pmi_change_3m:
-          pmi && pmi3m != null ? roundNumber(pmi.value - pmi3m, 2) : null,
+        pmi_change_3m: pmi && pmi3m != null ? roundNumber(pmi.value - pmi3m, 2) : null,
         m2_yoy: m2 && m2.yoy != null ? roundNumber(Number(m2.yoy), 2) : null,
         treasury_10y: treas10y ? roundNumber(treas10y.value, 4) : null,
         shibor_overnight: shibor ? roundNumber(shibor.value, 4) : null,

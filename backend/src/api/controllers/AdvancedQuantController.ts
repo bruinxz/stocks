@@ -719,7 +719,9 @@ export class AdvancedQuantController {
         logger.warn(
           `[composite-rebalance] user=${reqUser?.id} 尝试 rebalance portfolio=${portfolio_id} (owner=${ownerCheck.user_id}), 拒绝`
         );
-        return res.status(403).json({ success: false, message: '无权对该 portfolio 执行 rebalance' });
+        return res
+          .status(403)
+          .json({ success: false, message: '无权对该 portfolio 执行 rebalance' });
       }
       const trade_date = body.trade_date || new Date().toISOString().slice(0, 10);
       const result = await compositeRebalanceService.rebalance({

@@ -996,7 +996,10 @@ export class DefaultEnhancedTradingJournalDataSource implements EnhancedTradingJ
     tags?: string[];
     error?: string;
   }> {
-    const TRADING_AGENTS_URL = process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000';
+    // audit L-19: 集中常量, 不再硬编码 IP.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { TRADING_AGENTS_BASE_URL } = require('../config/externalServices');
+    const TRADING_AGENTS_URL = TRADING_AGENTS_BASE_URL;
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const axios = require('axios');

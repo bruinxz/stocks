@@ -92,10 +92,7 @@ if (aiPollingWorkerDisabled) {
 } else {
   // Batch Q (2026-06-17, F2 fix): worker concurrency 5 (默认 1, 单 hang job 卡死整 pipeline).
   // 可通过 AI_POLLING_WORKER_CONCURRENCY env var override (ops 按 TradingAgents 容量调).
-  const concurrency = Math.max(
-    1,
-    Number(process.env.AI_POLLING_WORKER_CONCURRENCY) || 5
-  );
+  const concurrency = Math.max(1, Number(process.env.AI_POLLING_WORKER_CONCURRENCY) || 5);
   aiPollingQueue.process(concurrency, async (job: Job<AIPollingJobData>) => {
     const {
       taskId,

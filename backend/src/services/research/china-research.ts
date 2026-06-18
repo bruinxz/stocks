@@ -90,15 +90,15 @@ export interface BarraExposure {
 
 export interface BarraStockData {
   symbol: string;
-  market_cap: number;        // in 元
-  beta_252d: number;          // pre-computed regression beta
+  market_cap: number; // in 元
+  beta_252d: number; // pre-computed regression beta
   return_252d_ex_last_month: number;
   vol_90d_annualized: number;
   book_value_per_share: number;
   price: number;
   monthly_turnover: number;
   earnings_per_share: number;
-  growth_5y: number;          // 5-year earnings CAGR
+  growth_5y: number; // 5-year earnings CAGR
   debt_to_equity: number;
 }
 
@@ -131,8 +131,16 @@ export function computeBarraExposure(stock: BarraStockData): BarraExposure {
 export function zScoreExposures(exposures: BarraExposure[]): BarraExposure[] {
   if (exposures.length === 0) return [];
   const keys: (keyof BarraExposure)[] = [
-    'size', 'beta', 'momentum', 'volatility', 'non_linear_size',
-    'book_to_price', 'liquidity', 'earnings_yield', 'growth', 'leverage',
+    'size',
+    'beta',
+    'momentum',
+    'volatility',
+    'non_linear_size',
+    'book_to_price',
+    'liquidity',
+    'earnings_yield',
+    'growth',
+    'leverage',
   ];
   const means: Record<string, number> = {};
   const stds: Record<string, number> = {};
@@ -140,7 +148,8 @@ export function zScoreExposures(exposures: BarraExposure[]): BarraExposure[] {
     const vals = exposures.map(e => (e as any)[k] as number).filter(Number.isFinite);
     if (vals.length === 0) continue;
     const m = vals.reduce((s, v) => s + v, 0) / vals.length;
-    const variance = vals.length > 1 ? vals.reduce((s, v) => s + (v - m) ** 2, 0) / (vals.length - 1) : 1;
+    const variance =
+      vals.length > 1 ? vals.reduce((s, v) => s + (v - m) ** 2, 0) / (vals.length - 1) : 1;
     means[k] = m;
     stds[k] = Math.sqrt(Math.max(1e-9, variance));
   }
@@ -160,15 +169,15 @@ export function zScoreExposures(exposures: BarraExposure[]): BarraExposure[] {
 
 export interface IndustryProsperityInput {
   industry: string;
-  upstream_price_change: number;     // pct change 12m
-  downstream_demand_change: number;   // pct change 12m
-  revenue_growth: number;             // YoY %
-  net_margin: number;                  // %
-  roe: number;                          // %
-  northbound_change_pct: number;       // 北上资金变化 / 流通市值
-  active_fund_holding_change: number;  // 主动基金加减仓
-  pe_ttm: number;                       // current PE
-  pe_historical_avg: number;           // 5-year avg PE
+  upstream_price_change: number; // pct change 12m
+  downstream_demand_change: number; // pct change 12m
+  revenue_growth: number; // YoY %
+  net_margin: number; // %
+  roe: number; // %
+  northbound_change_pct: number; // 北上资金变化 / 流通市值
+  active_fund_holding_change: number; // 主动基金加减仓
+  pe_ttm: number; // current PE
+  pe_historical_avg: number; // 5-year avg PE
   pb: number;
   pb_historical_avg: number;
 }
@@ -184,23 +193,41 @@ export interface IndustryProsperityInput {
  */
 export function computeIndustryProsperity(input: IndustryProsperityInput): {
   score: number;
-  components: { upstream_downstream: number; financial: number; capital: number; valuation: number };
+  components: {
+    upstream_downstream: number;
+    financial: number;
+    capital: number;
+    valuation: number;
+  };
   recommendation: 'overweight' | 'neutral' | 'underweight';
 } {
   // Upstream/downstream score (0-100): 上游降价 + 下游需求增 = good
-  const ud_score = Math.max(0, Math.min(100, 50 - input.upstream_price_change * 10 + input.downstream_demand_change * 10));
+  const ud_score = Math.max(
+    0,
+    Math.min(100, 50 - input.upstream_price_change * 10 + input.downstream_demand_change * 10)
+  );
 
   // Financial score: revenue growth + margin + ROE
-  const fin_score = Math.max(0, Math.min(100,
-    25 + input.revenue_growth * 2 + input.net_margin * 2 + input.roe * 2,
-  ));
+  const fin_score = Math.max(
+    0,
+    Math.min(100, 25 + input.revenue_growth * 2 + input.net_margin * 2 + input.roe * 2)
+  );
 
   // Capital flow score
-  const cap_score = Math.max(0, Math.min(100, 50 + input.northbound_change_pct * 20 + input.active_fund_holding_change * 20));
+  const cap_score = Math.max(
+    0,
+    Math.min(100, 50 + input.northbound_change_pct * 20 + input.active_fund_holding_change * 20)
+  );
 
   // Valuation score: lower PE vs historical = good
-  const pe_premium = input.pe_historical_avg > 0 ? (input.pe_historical_avg - input.pe_ttm) / input.pe_historical_avg : 0;
-  const pb_premium = input.pb_historical_avg > 0 ? (input.pb_historical_avg - input.pb) / input.pb_historical_avg : 0;
+  const pe_premium =
+    input.pe_historical_avg > 0
+      ? (input.pe_historical_avg - input.pe_ttm) / input.pe_historical_avg
+      : 0;
+  const pb_premium =
+    input.pb_historical_avg > 0
+      ? (input.pb_historical_avg - input.pb) / input.pb_historical_avg
+      : 0;
   const val_score = Math.max(0, Math.min(100, 50 + pe_premium * 50 + pb_premium * 30));
 
   const score = 0.4 * ud_score + 0.3 * fin_score + 0.2 * cap_score + 0.1 * val_score;
@@ -209,7 +236,12 @@ export function computeIndustryProsperity(input: IndustryProsperityInput): {
 
   return {
     score,
-    components: { upstream_downstream: ud_score, financial: fin_score, capital: cap_score, valuation: val_score },
+    components: {
+      upstream_downstream: ud_score,
+      financial: fin_score,
+      capital: cap_score,
+      valuation: val_score,
+    },
     recommendation,
   };
 }
@@ -246,7 +278,8 @@ export function computeGuosenScore(input: {
   technical_zscore: number;
   sentiment_zscore: number;
 }): { score: number; rank_decile: number } {
-  const combined = 0.4 * input.fundamental_zscore + 0.4 * input.technical_zscore + 0.2 * input.sentiment_zscore;
+  const combined =
+    0.4 * input.fundamental_zscore + 0.4 * input.technical_zscore + 0.2 * input.sentiment_zscore;
   // Normalize z in [-3, +3] to score 0-100
   const score = Math.max(0, Math.min(100, 50 + combined * 16));
   const rank_decile = Math.floor(score / 10);
@@ -291,7 +324,10 @@ function tsArgmax(series: number[], window: number): number[] {
     let max_val = -Infinity;
     let max_idx = 0;
     for (let k = 0; k < window; k += 1) {
-      if (series[i - k] > max_val) { max_val = series[i - k]; max_idx = k; }
+      if (series[i - k] > max_val) {
+        max_val = series[i - k];
+        max_idx = k;
+      }
     }
     out[i] = max_idx;
   }
@@ -310,7 +346,7 @@ export function alphaWQ1(returns_matrix: number[][], close_matrix: number[][]): 
     const closes = close_matrix[i];
     const std_ret = rollingStd(rets, 20);
     return rets.map((r, t) => {
-      const base = r < 0 ? (std_ret[t] || 0) : closes[t];
+      const base = r < 0 ? std_ret[t] || 0 : closes[t];
       return Math.sign(base) * base * base;
     });
   });
@@ -344,7 +380,9 @@ export function alphaWQ6(close_matrix: number[][], volume_matrix: number[][]): n
       const vs = volume_matrix[i].slice(t - window + 1, t + 1);
       const mc = cs.reduce((s, v) => s + v, 0) / window;
       const mv = vs.reduce((s, v) => s + v, 0) / window;
-      let num = 0, dc = 0, dv = 0;
+      let num = 0,
+        dc = 0,
+        dv = 0;
       for (let k = 0; k < window; k += 1) {
         num += (cs[k] - mc) * (vs[k] - mv);
         dc += (cs[k] - mc) ** 2;
@@ -370,7 +408,7 @@ export function alphaWQ12(close_matrix: number[][], volume_matrix: number[][]): 
     for (let t = 1; t < T; t += 1) {
       const dvol = volume_matrix[i][t] - volume_matrix[i][t - 1];
       const dclose = close_matrix[i][t] - close_matrix[i][t - 1];
-      out[i][t] = Math.sign(dvol) * (-dclose);
+      out[i][t] = Math.sign(dvol) * -dclose;
     }
   }
   return out;
@@ -435,11 +473,12 @@ function avg(values: number[]): number {
  */
 export function detectStyleSwitch(
   style_returns: Array<{ date: string; smb: number; hml: number; momentum: number; vol: number }>,
-  window: number = 20
+  window = 20
 ): Record<string, { switch_date: string; new_regime: 'positive' | 'negative' } | null> {
   if (style_returns.length < 2 * window) return { smb: null, hml: null, momentum: null, vol: null };
   const factors = ['smb', 'hml', 'momentum', 'vol'] as const;
-  const out: Record<string, { switch_date: string; new_regime: 'positive' | 'negative' } | null> = {};
+  const out: Record<string, { switch_date: string; new_regime: 'positive' | 'negative' } | null> =
+    {};
 
   for (const f of factors) {
     const values = style_returns.map(s => s[f]);

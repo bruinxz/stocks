@@ -374,9 +374,7 @@ export class QuantController {
         return res.status(400).json({ success: false, message: '缺少 strategy_key' });
       }
       if (!body.start_date || !body.end_date) {
-        return res
-          .status(400)
-          .json({ success: false, message: '缺少 start_date 或 end_date' });
+        return res.status(400).json({ success: false, message: '缺少 start_date 或 end_date' });
       }
       const result = await backtestEngine.runWalkForwardValidation(
         {
@@ -444,11 +442,7 @@ export class QuantController {
   async listOptimizationRuns(req: AuthenticatedRequest, res: Response) {
     try {
       const optimizerType = req.query.optimizer_type
-        ? (String(req.query.optimizer_type) as
-            | 'grid_search'
-            | 'bayesian'
-            | 'walk_forward'
-            | 'all')
+        ? (String(req.query.optimizer_type) as 'grid_search' | 'bayesian' | 'walk_forward' | 'all')
         : 'all';
       const runs = await backtestEngine.listOptimizationRuns({
         optimizer_type: optimizerType,
@@ -785,9 +779,19 @@ export class QuantController {
       // 取每个 strategy_key 最新的 backtest
       const rows = await QuantBacktestResult.findAll({
         attributes: [
-          'strategy_key', 'strategy_name', 'task_id', 'total_return_pct', 'annual_return_pct',
-          'max_drawdown_pct', 'sharpe_ratio', 'win_rate', 'profit_factor',
-          'trade_count', 'benchmark_return_pct', 'excess_return_pct', 'created_at',
+          'strategy_key',
+          'strategy_name',
+          'task_id',
+          'total_return_pct',
+          'annual_return_pct',
+          'max_drawdown_pct',
+          'sharpe_ratio',
+          'win_rate',
+          'profit_factor',
+          'trade_count',
+          'benchmark_return_pct',
+          'excess_return_pct',
+          'created_at',
         ],
         order: [['created_at', 'DESC']],
         raw: true,
@@ -801,13 +805,39 @@ export class QuantController {
         }
       }
       const items = Array.from(latestByKey.values()).filter(r => {
-        const v = Number(r[sortBy === 'annual' ? 'annual_return_pct' : sortBy === 'sharpe' ? 'sharpe_ratio' : 'total_return_pct']);
+        const v = Number(
+          r[
+            sortBy === 'annual'
+              ? 'annual_return_pct'
+              : sortBy === 'sharpe'
+              ? 'sharpe_ratio'
+              : 'total_return_pct'
+          ]
+        );
         return Number.isFinite(v);
       });
       // 排序
       items.sort((a, b) => {
-        const va = Number(a[sortBy === 'annual' ? 'annual_return_pct' : sortBy === 'sharpe' ? 'sharpe_ratio' : 'total_return_pct']) || 0;
-        const vb = Number(b[sortBy === 'annual' ? 'annual_return_pct' : sortBy === 'sharpe' ? 'sharpe_ratio' : 'total_return_pct']) || 0;
+        const va =
+          Number(
+            a[
+              sortBy === 'annual'
+                ? 'annual_return_pct'
+                : sortBy === 'sharpe'
+                ? 'sharpe_ratio'
+                : 'total_return_pct'
+            ]
+          ) || 0;
+        const vb =
+          Number(
+            b[
+              sortBy === 'annual'
+                ? 'annual_return_pct'
+                : sortBy === 'sharpe'
+                ? 'sharpe_ratio'
+                : 'total_return_pct'
+            ]
+          ) || 0;
         return vb - va;
       });
       res.json({ success: true, data: { items, sort_by: sortBy, count: items.length } });

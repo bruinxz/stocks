@@ -818,7 +818,9 @@ export const PRODUCTION_DISABLED_STRATEGY_LOADER: () => Promise<Set<string>> = a
     });
     return new Set<string>(rows.map((r: any) => r.strategy_key));
   } catch (err: any) {
-    logger.warn(`[EnsembleStrategy] PRODUCTION_DISABLED_STRATEGY_LOADER failed: ${err?.message || err}`);
+    logger.warn(
+      `[EnsembleStrategy] PRODUCTION_DISABLED_STRATEGY_LOADER failed: ${err?.message || err}`
+    );
     return new Set<string>();
   }
 };

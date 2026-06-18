@@ -20,8 +20,12 @@ export class AuthController {
     // P0 review：生产环境绝不允许 JWT_SECRET / JWT_REFRESH_SECRET 使用硬编码兜底。
     // 否则任何人都能拿到 fallback secret 自签 admin token。
     const isProd = process.env.NODE_ENV === 'production';
-    const fallbackAccess = isProd ? '' : (process.env.LIVE_DEV_JWT_SECRET || 'dev-only-access-secret');
-    const fallbackRefresh = isProd ? '' : (process.env.LIVE_DEV_JWT_REFRESH_SECRET || 'dev-only-refresh-secret');
+    const fallbackAccess = isProd
+      ? ''
+      : process.env.LIVE_DEV_JWT_SECRET || 'dev-only-access-secret';
+    const fallbackRefresh = isProd
+      ? ''
+      : process.env.LIVE_DEV_JWT_REFRESH_SECRET || 'dev-only-refresh-secret';
     this.jwtSecret = process.env.JWT_SECRET || fallbackAccess;
     this.refreshTokenSecret = process.env.JWT_REFRESH_SECRET || fallbackRefresh;
     if (!this.jwtSecret || !this.refreshTokenSecret) {

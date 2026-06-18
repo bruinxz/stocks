@@ -474,12 +474,13 @@ export class GameTraderRelayStrategy extends QuantStrategy {
       category: 'momentum',
       expected_edge_pct: 13.0,
       expected_holding_days: 3,
-      key_factors: ['famous_yz_accumulated_net_buy', 'relay_day_count', 'today_change_pct', 'circulating_market_cap'],
-      failure_modes: [
-        '游资接力中断 (席位反向)',
-        '高位炸板',
-        '次日大跌 (>-3%)',
+      key_factors: [
+        'famous_yz_accumulated_net_buy',
+        'relay_day_count',
+        'today_change_pct',
+        'circulating_market_cap',
       ],
+      failure_modes: ['游资接力中断 (席位反向)', '高位炸板', '次日大跌 (>-3%)'],
       kill_switch_metric: 'win_rate_5d',
       kill_switch_threshold: 0.45,
     },

@@ -755,13 +755,7 @@ export class FactorController {
         Math.round((new Date(todayIso).getTime() - new Date(tradeDate).getTime()) / 86_400_000)
       );
       const dataStaleness =
-        lagDays === 0
-          ? 'fresh'
-          : lagDays <= 2
-            ? 'recent'
-            : lagDays <= 7
-              ? 'stale'
-              : 'very_stale';
+        lagDays === 0 ? 'fresh' : lagDays <= 2 ? 'recent' : lagDays <= 7 ? 'stale' : 'very_stale';
 
       // 7) 近 2 日市场要闻 (Batch AG) — 同一 endpoint 给前端时间线用
       let recentNews: Array<{
@@ -789,9 +783,7 @@ export class FactorController {
         recentNews = newsRows.map(n => ({
           title: n.title,
           publish_time:
-            n.publish_time instanceof Date
-              ? n.publish_time.toISOString()
-              : String(n.publish_time),
+            n.publish_time instanceof Date ? n.publish_time.toISOString() : String(n.publish_time),
           source: n.source,
           category: n.category,
           url: n.url,
@@ -1052,12 +1044,34 @@ export class FactorController {
       // 2e) recent_sentiment_news — MarketNews 关键词过滤
       const newsKeywordsRaw = String(req.query.news_keywords_csv || '').trim();
       const defaultKw = [
-        '情绪', '关注', '抢筹', '炒作', '热度', '躁动', '人气', '风口', '逼空',
-        '机构', '游资', '主力', '调研', '增持', '减持', '券商', '研报',
-        '热门', '板块', '题材', '概念', '龙头',
+        '情绪',
+        '关注',
+        '抢筹',
+        '炒作',
+        '热度',
+        '躁动',
+        '人气',
+        '风口',
+        '逼空',
+        '机构',
+        '游资',
+        '主力',
+        '调研',
+        '增持',
+        '减持',
+        '券商',
+        '研报',
+        '热门',
+        '板块',
+        '题材',
+        '概念',
+        '龙头',
       ];
       const newsKeywords = newsKeywordsRaw
-        ? newsKeywordsRaw.split(',').map(s => s.trim()).filter(Boolean)
+        ? newsKeywordsRaw
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean)
         : defaultKw;
       let recent_sentiment_news: any[] = [];
       try {
@@ -1092,9 +1106,7 @@ export class FactorController {
         recent_sentiment_news = newsRows.map(n => ({
           title: n.title,
           publish_time:
-            n.publish_time instanceof Date
-              ? n.publish_time.toISOString()
-              : String(n.publish_time),
+            n.publish_time instanceof Date ? n.publish_time.toISOString() : String(n.publish_time),
           source: n.source,
           category: n.category,
           url: n.url,
@@ -1114,13 +1126,7 @@ export class FactorController {
         Math.round((new Date(todayIso).getTime() - new Date(tradeDate).getTime()) / 86_400_000)
       );
       const dataStaleness =
-        lagDays === 0
-          ? 'fresh'
-          : lagDays <= 2
-            ? 'recent'
-            : lagDays <= 7
-              ? 'stale'
-              : 'very_stale';
+        lagDays === 0 ? 'fresh' : lagDays <= 2 ? 'recent' : lagDays <= 7 ? 'stale' : 'very_stale';
 
       const payload = {
         trade_date: tradeDate,
@@ -1222,7 +1228,10 @@ export class FactorController {
       });
       const latest = (latestRow as any)?.latest_trade_date;
       if (!latest) {
-        return res.json({ success: true, data: { stock_code: code, trade_date: null, factors: [] } });
+        return res.json({
+          success: true,
+          data: { stock_code: code, trade_date: null, factors: [] },
+        });
       }
       const tradeDate = normalizeDateIso(latest);
       const rows = await FactorScore.findAll({

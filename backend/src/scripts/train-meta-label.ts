@@ -68,18 +68,24 @@ function parseArgs(argv: string[]): CliArgs {
   for (const arg of argv) {
     if (arg === '--no-persist') opts.persist = false;
     else if (arg === '--show') opts.show = true;
-    else if (arg.startsWith('--since-days=')) opts.sinceDays = parseInt(arg.slice('--since-days='.length), 10);
-    else if (arg.startsWith('--max-iter=')) opts.maxIter = parseInt(arg.slice('--max-iter='.length), 10);
-    else if (arg.startsWith('--learning-rate=')) opts.learningRate = parseFloat(arg.slice('--learning-rate='.length));
+    else if (arg.startsWith('--since-days='))
+      opts.sinceDays = parseInt(arg.slice('--since-days='.length), 10);
+    else if (arg.startsWith('--max-iter='))
+      opts.maxIter = parseInt(arg.slice('--max-iter='.length), 10);
+    else if (arg.startsWith('--learning-rate='))
+      opts.learningRate = parseFloat(arg.slice('--learning-rate='.length));
     else if (arg.startsWith('--l2=')) opts.l2 = parseFloat(arg.slice('--l2='.length));
-    else if (arg.startsWith('--output=')) opts.outputPath = path.resolve(arg.slice('--output='.length));
+    else if (arg.startsWith('--output='))
+      opts.outputPath = path.resolve(arg.slice('--output='.length));
   }
   return opts;
 }
 
 async function loadTrainingRows(sinceDays: number): Promise<TrainingRow[]> {
   const cutoff = new Date(Date.now() - sinceDays * 24 * 3600 * 1000);
-  logger.info(`[train-meta-label] loading closed outcomes since ${cutoff.toISOString().slice(0, 10)}`);
+  logger.info(
+    `[train-meta-label] loading closed outcomes since ${cutoff.toISOString().slice(0, 10)}`
+  );
 
   const outcomes: any[] = await RecommendationTradeOutcome.findAll({
     where: {
@@ -93,7 +99,9 @@ async function loadTrainingRows(sinceDays: number): Promise<TrainingRow[]> {
   logger.info(`[train-meta-label] found ${outcomes.length} closed outcomes`);
 
   // 拉 signal 详情补 features
-  const signalIds = outcomes.map((o: any) => o.signal_id).filter((id: any) => Number.isFinite(Number(id)));
+  const signalIds = outcomes
+    .map((o: any) => o.signal_id)
+    .filter((id: any) => Number.isFinite(Number(id)));
   const signalsMap = new Map<number, any>();
   if (signalIds.length > 0) {
     const signals = await AIInvestmentSignal.findAll({
@@ -116,7 +124,7 @@ async function loadTrainingRows(sinceDays: number): Promise<TrainingRow[]> {
     const intents = await PaperTradingOrderIntent.findAll({
       where: { signal_id: { [Op.in]: signalIds } },
       attributes: ['portfolio_id', 'signal_id', 'metadata'],
-      order: [['id', 'DESC']],  // 最新一条优先
+      order: [['id', 'DESC']], // 最新一条优先
     });
     for (const it of intents) {
       const k = `${(it as any).portfolio_id}::${(it as any).signal_id}`;
@@ -124,7 +132,9 @@ async function loadTrainingRows(sinceDays: number): Promise<TrainingRow[]> {
         intentMetaMap.set(k, (it as any).metadata || {});
       }
     }
-    logger.info(`[train-meta-label] join 到 ${intentMetaMap.size} 条 order_intent metadata (含 l8_activation)`);
+    logger.info(
+      `[train-meta-label] join 到 ${intentMetaMap.size} 条 order_intent metadata (含 l8_activation)`
+    );
   }
 
   const rows: TrainingRow[] = [];
@@ -139,15 +149,15 @@ async function loadTrainingRows(sinceDays: number): Promise<TrainingRow[]> {
     // 缺失则 fallback 到 outcome / signal metadata 旧路径.
     const intentMeta = intentMetaMap.get(`${o.portfolio_id}::${o.signal_id}`) || {};
     const liveFeatures = intentMeta?.l8_activation?.L3_meta?.detail?.features_used || {};
-    const signalScore = Number(sig?.confidence_score ?? meta?.final_score ?? meta?.signal_score ?? 75);
+    const signalScore = Number(
+      sig?.confidence_score ?? meta?.final_score ?? meta?.signal_score ?? 75
+    );
     const features: RawSignalFeatures = {
       signal_score: Number.isFinite(signalScore) ? signalScore : 75,
       signal_source: String(sig?.source_type || meta?.signal_source || 'unknown'),
       regime: String(meta?.market_regime || meta?.regime || 'range'),
       // Sprint 40: 优先 live features_used.breadth_score (Sprint 28 起真值)
-      market_breadth_score: Number(
-        liveFeatures.breadth_score ?? meta?.market_breadth_score ?? 0
-      ),
+      market_breadth_score: Number(liveFeatures.breadth_score ?? meta?.market_breadth_score ?? 0),
       strategy_recent_winrate_30d: Number(
         liveFeatures.winrate ?? meta?.strategy_recent_winrate ?? 0.5
       ),
@@ -156,7 +166,10 @@ async function loadTrainingRows(sinceDays: number): Promise<TrainingRow[]> {
       ),
       // Sprint 40: 优先 market_vol_atr_used (含 Sprint 34 真 ATR 或 drawdown 兜底)
       market_vol_atr: Number(
-        liveFeatures.market_vol_atr_used ?? liveFeatures.benchmark_drawdown_pct ?? meta?.market_vol_atr ?? 4
+        liveFeatures.market_vol_atr_used ??
+          liveFeatures.benchmark_drawdown_pct ??
+          meta?.market_vol_atr ??
+          4
       ),
       // Sprint 34: 新增第 13 dim — 该 symbol 历史 feasibility composite_score 均值
       pre_check_feasibility_score: Number.isFinite(Number(liveFeatures.pre_check_feasibility_score))
@@ -166,7 +179,9 @@ async function loadTrainingRows(sinceDays: number): Promise<TrainingRow[]> {
     rows.push({ features, label });
   }
   logger.info(
-    `[train-meta-label] built ${rows.length} training rows (positive=${rows.filter(r => r.label === 1).length}, negative=${rows.filter(r => r.label === 0).length})`
+    `[train-meta-label] built ${rows.length} training rows (positive=${
+      rows.filter(r => r.label === 1).length
+    }, negative=${rows.filter(r => r.label === 0).length})`
   );
   return rows;
 }
@@ -193,7 +208,9 @@ async function main() {
     }
     const inMem = metaLabelService.getModel();
     console.log('\n=== In-process model ===');
-    console.log(inMem ? `${inMem.version} (acc=${inMem.insample_accuracy})` : '(none, will use fallback rule)');
+    console.log(
+      inMem ? `${inMem.version} (acc=${inMem.insample_accuracy})` : '(none, will use fallback rule)'
+    );
     process.exit(0);
   }
 
@@ -224,7 +241,9 @@ async function main() {
   console.log(`trained_samples: ${model.trained_samples}`);
   console.log(`insample_accuracy: ${model.insample_accuracy.toFixed(4)}`);
   console.log(`baseline_accuracy: ${model.baseline_accuracy.toFixed(4)}`);
-  console.log(`improvement: ${((model.insample_accuracy - model.baseline_accuracy) * 100).toFixed(2)}%`);
+  console.log(
+    `improvement: ${((model.insample_accuracy - model.baseline_accuracy) * 100).toFixed(2)}%`
+  );
   console.log(`bias: ${model.bias.toFixed(4)}`);
   console.log('Top features by |weight|:');
   const sortedWeights = Object.entries(model.weights)

@@ -70,7 +70,9 @@ class FeishuTaskReportService {
     logger.debug(`[FeishuTaskReport] ${method} called (bitable disabled, no-op)`);
   }
 
-  async reportStockAnalysis(_payload: StockAnalysisReportPayload): Promise<{ success: boolean; message?: string }> {
+  async reportStockAnalysis(
+    _payload: StockAnalysisReportPayload
+  ): Promise<{ success: boolean; message?: string }> {
     this.logOnce('reportStockAnalysis');
     // 返回 success=true 让旧 caller (NotificationService) 不会误报失败
     return { success: true };

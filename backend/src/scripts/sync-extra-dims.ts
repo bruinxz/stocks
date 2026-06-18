@@ -21,12 +21,7 @@ import { spawn } from 'child_process';
 import sequelize from '../config/database';
 import '../models';
 import { logger } from '../utils/logger';
-import {
-  MacroIndicator,
-  OptionQvix,
-  BlockTrade,
-  FundTopHolding,
-} from '../models';
+import { MacroIndicator, OptionQvix, BlockTrade, FundTopHolding } from '../models';
 
 const PYTHON = process.env.PYTHON_BIN || '/opt/stocks/shared/venv/bin/python';
 const HELPER = process.env.AKSHARE_HELPER || `${process.cwd()}/python/akshare_helper.py`;
@@ -36,13 +31,13 @@ function callPython(command: string, args: string[] = [], timeoutMs = 120_000): 
     const proc = spawn(PYTHON, [HELPER, command, ...args]);
     let stdout = '';
     let stderr = '';
-    proc.stdout.on('data', (d) => (stdout += d));
-    proc.stderr.on('data', (d) => (stderr += d));
+    proc.stdout.on('data', d => (stdout += d));
+    proc.stderr.on('data', d => (stderr += d));
     const timer = setTimeout(() => {
       proc.kill();
       reject(new Error(`Python timeout (${timeoutMs}ms): ${command}`));
     }, timeoutMs);
-    proc.on('close', (code) => {
+    proc.on('close', code => {
       clearTimeout(timer);
       if (code !== 0) {
         return reject(new Error(`Python exit ${code}: ${stderr.substring(0, 500)}`));
@@ -92,8 +87,7 @@ async function syncMacro() {
       if (value == null || !Number.isFinite(value)) continue;
 
       // treasury_10y 单独存 china_10y 主值; raw 含其他 maturity
-      const indicatorKey =
-        seriesKey === 'treasury_10y' ? 'treasury_10y_china' : seriesKey;
+      const indicatorKey = seriesKey === 'treasury_10y' ? 'treasury_10y_china' : seriesKey;
 
       records.push({
         indicator_key: indicatorKey,
@@ -122,8 +116,8 @@ async function syncQvix() {
   for (const [underlying, rows] of Object.entries(result)) {
     if (!Array.isArray(rows)) continue;
     const records = (rows as any[])
-      .filter((r) => r.date && r.close != null && Number.isFinite(r.close))
-      .map((r) => ({
+      .filter(r => r.date && r.close != null && Number.isFinite(r.close))
+      .map(r => ({
         underlying,
         observation_date: r.date,
         open: r.open,
@@ -150,8 +144,8 @@ async function syncBlockTrades(startDate: string, endDate: string) {
     return 0;
   }
   const records = rows
-    .filter((r) => r.trade_date && r.stock_code && r.amount && Number.isFinite(r.amount))
-    .map((r) => ({
+    .filter(r => r.trade_date && r.stock_code && r.amount && Number.isFinite(r.amount))
+    .map(r => ({
       trade_date: r.trade_date,
       stock_code: r.stock_code,
       stock_name: r.stock_name || null,
@@ -184,7 +178,11 @@ async function syncFundHoldings(fundCodes: string[], date: string) {
     return 0;
   }
   const reportDate =
-    date.length === 4 ? `${date}-12-31` : (date.length === 8 ? `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}` : date);
+    date.length === 4
+      ? `${date}-12-31`
+      : date.length === 8
+      ? `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`
+      : date;
   // 去重: 同一 (fund_code, stock_code, report_date) 在 helper 返回里可能有多条
   // (不同季报披露顺序), 同 batch 内 PK 冲突会触发 ON CONFLICT DO UPDATE row affected 2 times
   const seenPK = new Set<string>();
@@ -245,11 +243,24 @@ const opts = program.opts();
     if (opts.dim === 'fund') {
       // 默认 universe = 12 只有代表性的主动权益/灵活配置基金
       const DEFAULT_FUNDS = [
-        '110011', '161725', '519005', '001186', '005827', '270002',
-        '003095', '163406', '002251', '519066', '110022', '161005',
+        '110011',
+        '161725',
+        '519005',
+        '001186',
+        '005827',
+        '270002',
+        '003095',
+        '163406',
+        '002251',
+        '519066',
+        '110022',
+        '161005',
       ];
       const codes = opts.funds
-        ? String(opts.funds).split(',').map((s: string) => s.trim()).filter(Boolean)
+        ? String(opts.funds)
+            .split(',')
+            .map((s: string) => s.trim())
+            .filter(Boolean)
         : DEFAULT_FUNDS;
       total += await syncFundHoldings(codes, opts.date);
     }

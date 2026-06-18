@@ -39,10 +39,20 @@ export class LiveBrokerAccount extends Model {
   @Column({ type: DataType.STRING(80), allowNull: false, field: 'account_no_masked' })
   declare account_no_masked: string;
 
-  @Column({ type: DataType.STRING(30), allowNull: false, defaultValue: 'main', field: 'account_role' })
+  @Column({
+    type: DataType.STRING(30),
+    allowNull: false,
+    defaultValue: 'main',
+    field: 'account_role',
+  })
   declare account_role: string;
 
-  @Column({ type: DataType.STRING(40), allowNull: false, defaultValue: 'read_only', field: 'permission_scope' })
+  @Column({
+    type: DataType.STRING(40),
+    allowNull: false,
+    defaultValue: 'read_only',
+    field: 'permission_scope',
+  })
   declare permission_scope: string;
 
   @Column({

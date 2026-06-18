@@ -57,7 +57,10 @@ import { QuantBacktestResult } from '../models/QuantBacktestResult';
  * Copilot 对话每条问句都是独立上下文，缓存反而误导用户；故不复用 US-061 TTL 模式。
  */
 
-const TRADING_AGENTS_URL = process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000';
+// audit L-19: 集中常量, 不再硬编码 IP.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { TRADING_AGENTS_BASE_URL } = require('../config/externalServices');
+const TRADING_AGENTS_URL = TRADING_AGENTS_BASE_URL;
 
 // ---------------------------------------------------------------------------
 // 常量

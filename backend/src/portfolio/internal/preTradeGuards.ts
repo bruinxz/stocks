@@ -21,7 +21,8 @@ import moment from 'moment-timezone';
 import { sequelize } from '../../config/database';
 import { PaperTradingTrade } from '../../models/PaperTradingTrade';
 import { positionLimitGuard } from '../risk/PositionLimitGuard';
-import { drawdownCircuitBreaker } from '../risk/DrawdownCircuitBreaker';
+import { drawdownCircuitBreaker, RiskGuardUnavailableError } from '../risk/DrawdownCircuitBreaker';
+import { logger } from '../../utils/logger';
 
 /**
  * 检查当日 BUY 累计量, 算出 today_buy_qty 与 available_for_sell.
@@ -79,10 +80,60 @@ export async function checkPreBuyGuards(input: {
   proposed_value: number;
 }): Promise<{ ok: true } | { ok: false; code: string; reason: string; detail?: any }> {
   // DrawdownCircuitBreaker (LEVEL_1 pause)
-  const drawdownResult = await drawdownCircuitBreaker.checkBuyAllowed({
-    user_id: input.user_id,
-    symbol: input.symbol,
-  });
+  // BETA-7 (2026-06-18, audit M-13): fail-CLOSED — DB 抖动时 drawdownCircuitBreaker
+  // 会抛 RiskGuardUnavailableError. 这里 catch 后写 HIGH RiskAlert + 转 ok=false 拒单,
+  // 让 automation BUY 路径与 facade 主路径口径一致 (硬风控不可用 = 不下单)。
+  let drawdownResult: {
+    ok: boolean;
+    reason?: string;
+    paused_until?: any;
+    is_new_holding?: boolean;
+  };
+  try {
+    drawdownResult = await drawdownCircuitBreaker.checkBuyAllowed({
+      user_id: input.user_id,
+      symbol: input.symbol,
+    });
+  } catch (guardErr: any) {
+    if (guardErr instanceof RiskGuardUnavailableError) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { RiskAlert } = require('../../models/RiskAlert');
+        await RiskAlert.create({
+          user_id: input.user_id,
+          symbol: 'SYSTEM:RISK_GUARD_UNAVAILABLE',
+          name: '风控不可用 — DrawdownCircuitBreaker',
+          level: 'HIGH',
+          rule_id: 'drawdown_breaker',
+          message: `⚠️ DrawdownCircuitBreaker DB 抖动: ${guardErr.message}. 拒绝 automation BUY ${input.symbol} (fail-CLOSED).`,
+          metadata: { guard: 'drawdown_breaker', symbol: input.symbol, detail: guardErr.detail },
+        });
+      } catch (alertErr: any) {
+        logger.warn(
+          `[preTradeGuards] RiskAlert.create RISK_GUARD_UNAVAILABLE failed: ${
+            alertErr?.message || alertErr
+          }`
+        );
+      }
+      return {
+        ok: false,
+        code: 'RISK_GUARD_UNAVAILABLE',
+        reason: `风控不可用: ${guardErr.message}`,
+        detail: guardErr.detail,
+      };
+    }
+    // 其它 unexpected 错误 fail-CLOSED 处理：拒单 + log
+    logger.warn(
+      `[preTradeGuards] drawdownCircuitBreaker.checkBuyAllowed unexpected err: ${
+        guardErr?.message || guardErr
+      }`
+    );
+    return {
+      ok: false,
+      code: 'RISK_GUARD_UNAVAILABLE',
+      reason: `风控异常: ${guardErr?.message || guardErr}`,
+    };
+  }
   if (!drawdownResult.ok && drawdownResult.reason) {
     return {
       ok: false,

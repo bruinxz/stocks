@@ -1,4 +1,12 @@
-import { Table, Column, Model, DataType, PrimaryKey, CreatedAt, UpdatedAt } from 'sequelize-typescript';
+import {
+  Table,
+  Column,
+  Model,
+  DataType,
+  PrimaryKey,
+  CreatedAt,
+  UpdatedAt,
+} from 'sequelize-typescript';
 
 /**
  * 大宗交易明细 — 折溢价 + 营业部信息 (2026-06-11 新增).

@@ -220,7 +220,9 @@ async function test_entry_fail_profit_change_too_low() {
 }
 
 async function test_entry_fail_northbound_missing() {
-  // 北向 Map 里没这只股票 → fail_northbound_missing
+  // 北向 Map 里没这只股票 → 计入 fail_northbound_missing 但 fail-OPEN 仍入场
+  // (2026-06 改动：当 AKShare northbound_holdings 接口失效全市场空时, 不应让整条策略瘫痪;
+  //  双确认降级为单确认 (业绩超预期即可入场), 仅 delta != null 且 ≤ 0 才真过滤)
   const ds = new FakeDataSource({
     forecasts: [
       {
@@ -237,8 +239,8 @@ async function test_entry_fail_northbound_missing() {
     dailyClose: new Map([['600519', 1700]]),
   });
   const r = await new EarningsSurpriseStrategy(ds).generateSignals('2024-10-15');
-  expectEqual('no eligible', r.eligible_count, 0);
-  expectEqual('filtered.fail_northbound_missing=1', r.filtered.fail_northbound_missing, 1);
+  expectEqual('fail-OPEN: 仍 eligible=1', r.eligible_count, 1);
+  expectEqual('filtered.fail_northbound_missing 计入=1 (但放行)', r.filtered.fail_northbound_missing, 1);
 }
 
 async function test_entry_fail_northbound_not_increased() {

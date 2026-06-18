@@ -131,7 +131,9 @@ export class RiskAlertController {
       });
     } catch (error: any) {
       logger.error('获取风控告警数据失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   }
 
@@ -250,7 +252,9 @@ export class RiskAlertController {
       });
     } catch (error: any) {
       logger.error('获取风控告警列表失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   }
 
@@ -295,7 +299,9 @@ export class RiskAlertController {
       });
     } catch (error: any) {
       logger.error('更新风控配置失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   }
 
@@ -314,7 +320,9 @@ export class RiskAlertController {
       res.json({ success: true, message: '已标记为已读' });
     } catch (error: any) {
       logger.error('标记已读失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   }
 
@@ -328,7 +336,9 @@ export class RiskAlertController {
       res.json({ success: true, message: '所有告警已标记为已读' });
     } catch (error: any) {
       logger.error('一键标记已读失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   }
 
@@ -390,7 +400,9 @@ export class RiskAlertController {
       });
     } catch (error: any) {
       logger.error('批量标记已读失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   }
 }

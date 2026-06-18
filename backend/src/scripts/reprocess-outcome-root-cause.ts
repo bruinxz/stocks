@@ -22,10 +22,7 @@ import sequelize from '../config/database';
 import '../models';
 import { logger } from '../utils/logger';
 import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
-import {
-  classifyTradeRootCause,
-  TradeRootCauseInput,
-} from '../services/TradeRootCauseClassifier';
+import { classifyTradeRootCause, TradeRootCauseInput } from '../services/TradeRootCauseClassifier';
 
 const program = new Command();
 program
@@ -87,9 +84,7 @@ program
             const metadata = (row.metadata as any) || {};
             const signalMetadata = (metadata.signal_metadata as any) || {};
 
-            const totalPnlPct = Number(
-              (row as any).total_pnl_pct ?? row.realized_pnl_pct ?? 0
-            );
+            const totalPnlPct = Number((row as any).total_pnl_pct ?? row.realized_pnl_pct ?? 0);
 
             const input: TradeRootCauseInput = {
               return_pct: totalPnlPct,
@@ -107,9 +102,7 @@ program
                 (metadata.market_environment as any)?.market_regime ||
                 null,
               signal_catalyst:
-                (metadata.signal_catalyst as string) ||
-                (row.source_type as string) ||
-                null,
+                (metadata.signal_catalyst as string) || (row.source_type as string) || null,
               max_drawdown_during_hold_pct:
                 Math.abs(Number(row.max_adverse_excursion_pct || 0)) || undefined,
             };
@@ -135,9 +128,7 @@ program
             updated++;
           } catch (err: any) {
             failed++;
-            logger.warn(
-              `[reprocess-root-cause] FAIL row#${row.id}: ${err?.message || err}`
-            );
+            logger.warn(`[reprocess-root-cause] FAIL row#${row.id}: ${err?.message || err}`);
           }
         }
 

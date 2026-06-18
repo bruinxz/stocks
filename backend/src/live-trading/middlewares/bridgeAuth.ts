@@ -58,7 +58,10 @@ function computeSignature(secret: string, baseString: string): string {
 }
 
 function hashBody(rawBody: string | undefined): string {
-  return crypto.createHash('sha256').update(rawBody || '', 'utf8').digest('hex');
+  return crypto
+    .createHash('sha256')
+    .update(rawBody || '', 'utf8')
+    .digest('hex');
 }
 
 /**
@@ -117,7 +120,10 @@ let cleanupStarted = false;
 function startNonceCleanup() {
   if (cleanupStarted) return;
   cleanupStarted = true;
-  const interval = Math.max(Number(process.env.LIVE_BRIDGE_NONCE_CLEANUP_INTERVAL_MS || 60_000), 10_000);
+  const interval = Math.max(
+    Number(process.env.LIVE_BRIDGE_NONCE_CLEANUP_INTERVAL_MS || 60_000),
+    10_000
+  );
   setInterval(async () => {
     try {
       await LiveBridgeNonce.destroy({
@@ -142,12 +148,16 @@ export async function bridgeAuthMiddleware(
   startNonceCleanup();
 
   if (isBridgeDisabled()) {
-    return res.status(503).json({ success: false, message: 'bridge 接入已被 LIVE_BRIDGE_ENABLED=false 禁用' });
+    return res
+      .status(503)
+      .json({ success: false, message: 'bridge 接入已被 LIVE_BRIDGE_ENABLED=false 禁用' });
   }
 
   // 写请求必须 application/json，且只接受前缀匹配；防止 multipart 等让 verify 不触发拿空 body hash 通过
   if (req.method !== 'GET') {
-    const ct = String(req.headers['content-type'] || '').toLowerCase().trim();
+    const ct = String(req.headers['content-type'] || '')
+      .toLowerCase()
+      .trim();
     if (!/^application\/json(\s*;|$)/.test(ct)) {
       return res
         .status(415)
@@ -223,7 +233,8 @@ export async function bridgeAuthMiddleware(
   }
 
   // 签名 + 账户都通过后，再 INSERT nonce 行：冲突=重放（DB PK 兜底，跨进程跨重启）
-  const nonceWindowMs = Math.max(Number(process.env.LIVE_BRIDGE_NONCE_WINDOW_SECONDS || 300), 60) * 1000;
+  const nonceWindowMs =
+    Math.max(Number(process.env.LIVE_BRIDGE_NONCE_WINDOW_SECONDS || 300), 60) * 1000;
   try {
     await LiveBridgeNonce.create({
       nonce,

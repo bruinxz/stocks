@@ -17,22 +17,22 @@ import iconv from 'iconv-lite';
 import { logger } from '../utils/logger';
 
 export interface IndexRealtime {
-  symbol: string;        // sh.000300
-  code: string;          // 000300
-  name: string;          // 沪深300
-  current: number;       // 现价
-  open: number;          // 今开
-  prev_close: number;    // 昨收
-  high: number;          // 今高
-  low: number;           // 今低
-  volume: number;        // 成交量
-  amount: number;        // 成交额
-  change_pct: number;    // 涨跌幅 %
-  change: number;        // 涨跌点数
-  date: string;          // 2026-06-10
-  time: string;          // 14:49:14
+  symbol: string; // sh.000300
+  code: string; // 000300
+  name: string; // 沪深300
+  current: number; // 现价
+  open: number; // 今开
+  prev_close: number; // 昨收
+  high: number; // 今高
+  low: number; // 今低
+  volume: number; // 成交量
+  amount: number; // 成交额
+  change_pct: number; // 涨跌幅 %
+  change: number; // 涨跌点数
+  date: string; // 2026-06-10
+  time: string; // 14:49:14
   source: 'sina' | 'tencent';
-  fetched_at: string;    // ISO
+  fetched_at: string; // ISO
 }
 
 const CACHE_TTL_MS = 5_000;
@@ -82,9 +82,10 @@ class RealtimeIndexService {
       }
     }
     const date = dateIdx >= 0 ? cleanFields[dateIdx] : '';
-    const time = dateIdx >= 0 && cleanFields[dateIdx + 1] && /^\d{1,2}:\d{2}/.test(cleanFields[dateIdx + 1])
-      ? cleanFields[dateIdx + 1]
-      : '';
+    const time =
+      dateIdx >= 0 && cleanFields[dateIdx + 1] && /^\d{1,2}:\d{2}/.test(cleanFields[dateIdx + 1])
+        ? cleanFields[dateIdx + 1]
+        : '';
 
     if (!Number.isFinite(current) || !Number.isFinite(prevClose) || prevClose === 0) {
       return null;

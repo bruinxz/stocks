@@ -364,7 +364,8 @@ export function buildCheckupMessage(input: {
       lines.push('🔧 系统健康（Phase 2/4/5）:');
       // Phase 2 sizing
       if (sh.sizing_7d_count > 0) {
-        const methodTag = sh.sizing_methods_active === '—' ? '' : ` method=${sh.sizing_methods_active}`;
+        const methodTag =
+          sh.sizing_methods_active === '—' ? '' : ` method=${sh.sizing_methods_active}`;
         const hardTag = sh.sizing_7d_hard_count > 0 ? ` · ${sh.sizing_7d_hard_count} hard` : '';
         lines.push(`  ⚖️ Sizing：7d ${sh.sizing_7d_count} 决策${hardTag}${methodTag}`);
       } else {
@@ -385,7 +386,9 @@ export function buildCheckupMessage(input: {
         const cov = sh.root_cause_coverage_pct;
         const covTag = cov >= 80 ? '✅' : cov >= 50 ? '⚠️' : '❌';
         lines.push(
-          `  🔬 根因覆盖：${covTag} ${cov.toFixed(1)}% (${sh.outcomes_with_root_cause}/${sh.outcomes_closed_count} 闭环) · ${sh.outcomes_with_postmortem} 自动复盘`
+          `  🔬 根因覆盖：${covTag} ${cov.toFixed(1)}% (${sh.outcomes_with_root_cause}/${
+            sh.outcomes_closed_count
+          } 闭环) · ${sh.outcomes_with_postmortem} 自动复盘`
         );
       }
     }

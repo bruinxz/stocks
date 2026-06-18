@@ -95,7 +95,11 @@ export interface DecisionStump {
   polarity: 1 | -1; // +1: predict +1 if feature > thresh; -1: predict +1 if feature < thresh
 }
 
-export function trainDecisionStump(X: number[][], y: number[], weights: number[]): { stump: DecisionStump; error: number } {
+export function trainDecisionStump(
+  X: number[][],
+  y: number[],
+  weights: number[]
+): { stump: DecisionStump; error: number } {
   const N = X.length;
   const D = X[0]?.length ?? 0;
   let best_err = Infinity;
@@ -108,7 +112,7 @@ export function trainDecisionStump(X: number[][], y: number[], weights: number[]
       for (const polarity of [1, -1] as const) {
         let err = 0;
         for (let i = 0; i < N; i += 1) {
-          const pred = polarity === 1 ? (X[i][d] > t ? 1 : -1) : (X[i][d] < t ? 1 : -1);
+          const pred = polarity === 1 ? (X[i][d] > t ? 1 : -1) : X[i][d] < t ? 1 : -1;
           if (pred !== y[i]) err += weights[i];
         }
         if (err < best_err) {
@@ -132,12 +136,16 @@ export function predictStump(stump: DecisionStump, x: number[]): number {
  *
  * @returns ensemble: M stumps + α weights
  */
-export function adaBoost(X: number[][], y: number[], M: number = 50): {
+export function adaBoost(
+  X: number[][],
+  y: number[],
+  M = 50
+): {
   stumps: DecisionStump[];
   alphas: number[];
 } {
   const N = X.length;
-  let weights = new Array(N).fill(1 / N);
+  const weights = new Array(N).fill(1 / N);
   const stumps: DecisionStump[] = [];
   const alphas: number[] = [];
 
@@ -160,7 +168,10 @@ export function adaBoost(X: number[][], y: number[], M: number = 50): {
   return { stumps, alphas };
 }
 
-export function predictAdaBoost(ensemble: { stumps: DecisionStump[]; alphas: number[] }, x: number[]): number {
+export function predictAdaBoost(
+  ensemble: { stumps: DecisionStump[]; alphas: number[] },
+  x: number[]
+): number {
   let score = 0;
   for (let m = 0; m < ensemble.stumps.length; m += 1) {
     score += ensemble.alphas[m] * predictStump(ensemble.stumps[m], x);
@@ -175,7 +186,10 @@ export function predictAdaBoost(ensemble: { stumps: DecisionStump[]; alphas: num
 /**
  * Train regression stump (single split that minimizes squared loss).
  */
-export function trainRegressionStump(X: number[][], y: number[]): { feature_idx: number; threshold: number; left_value: number; right_value: number } {
+export function trainRegressionStump(
+  X: number[][],
+  y: number[]
+): { feature_idx: number; threshold: number; left_value: number; right_value: number } {
   const N = X.length;
   const D = X[0]?.length ?? 0;
   let best_ss = Infinity;
@@ -187,7 +201,8 @@ export function trainRegressionStump(X: number[][], y: number[]): { feature_idx:
       const left_y: number[] = [];
       const right_y: number[] = [];
       for (let j = 0; j < N; j += 1) {
-        if (X[j][d] <= t) left_y.push(y[j]); else right_y.push(y[j]);
+        if (X[j][d] <= t) left_y.push(y[j]);
+        else right_y.push(y[j]);
       }
       if (left_y.length === 0 || right_y.length === 0) continue;
       const lm = left_y.reduce((s, v) => s + v, 0) / left_y.length;
@@ -204,7 +219,10 @@ export function trainRegressionStump(X: number[][], y: number[]): { feature_idx:
   return best;
 }
 
-export function predictRegressionStump(stump: { feature_idx: number; threshold: number; left_value: number; right_value: number }, x: number[]): number {
+export function predictRegressionStump(
+  stump: { feature_idx: number; threshold: number; left_value: number; right_value: number },
+  x: number[]
+): number {
   return x[stump.feature_idx] <= stump.threshold ? stump.left_value : stump.right_value;
 }
 
@@ -217,16 +235,30 @@ export function predictRegressionStump(stump: { feature_idx: number; threshold: 
  *     h_m = fit stump to residuals
  *     F_m = F_{m-1} + ν × h_m
  */
-export function gradientBoostingRegressor(X: number[][], y: number[], options: { M?: number; learning_rate?: number } = {}): {
+export function gradientBoostingRegressor(
+  X: number[][],
+  y: number[],
+  options: { M?: number; learning_rate?: number } = {}
+): {
   initial_prediction: number;
-  stumps: Array<{ feature_idx: number; threshold: number; left_value: number; right_value: number }>;
+  stumps: Array<{
+    feature_idx: number;
+    threshold: number;
+    left_value: number;
+    right_value: number;
+  }>;
   learning_rate: number;
 } {
   const M = options.M ?? 50;
   const nu = options.learning_rate ?? 0.1;
   const F0 = y.reduce((s, v) => s + v, 0) / y.length;
-  const stumps: Array<{ feature_idx: number; threshold: number; left_value: number; right_value: number }> = [];
-  let current_pred = new Array(y.length).fill(F0);
+  const stumps: Array<{
+    feature_idx: number;
+    threshold: number;
+    left_value: number;
+    right_value: number;
+  }> = [];
+  const current_pred = new Array(y.length).fill(F0);
   for (let m = 0; m < M; m += 1) {
     const residuals = y.map((v, i) => v - current_pred[i]);
     const stump = trainRegressionStump(X, residuals);
@@ -238,7 +270,10 @@ export function gradientBoostingRegressor(X: number[][], y: number[], options: {
   return { initial_prediction: F0, stumps, learning_rate: nu };
 }
 
-export function predictGradientBoosting(model: { initial_prediction: number; stumps: any[]; learning_rate: number }, x: number[]): number {
+export function predictGradientBoosting(
+  model: { initial_prediction: number; stumps: any[]; learning_rate: number },
+  x: number[]
+): number {
   let pred = model.initial_prediction;
   for (const stump of model.stumps) pred += model.learning_rate * predictRegressionStump(stump, x);
   return pred;
@@ -258,8 +293,14 @@ export function predictGradientBoosting(model: { initial_prediction: number; stu
  *
  *   Predict: mean across B stumps
  */
-export function randomForestRegressor(X: number[][], y: number[], options: { B?: number; m_features?: number; seed?: number } = {}): {
-  trees: Array<{ stump: { feature_idx: number; threshold: number; left_value: number; right_value: number } }>;
+export function randomForestRegressor(
+  X: number[][],
+  y: number[],
+  options: { B?: number; m_features?: number; seed?: number } = {}
+): {
+  trees: Array<{
+    stump: { feature_idx: number; threshold: number; left_value: number; right_value: number };
+  }>;
 } {
   const B = options.B ?? 100;
   const N = X.length;
@@ -267,7 +308,10 @@ export function randomForestRegressor(X: number[][], y: number[], options: { B?:
   const m = options.m_features ?? Math.max(1, Math.floor(Math.sqrt(D)));
   let state = (options.seed ?? 42) % 2147483647;
   if (state <= 0) state += 2147483646;
-  const rng = (): number => { state = (state * 16807) % 2147483647; return state / 2147483647; };
+  const rng = (): number => {
+    state = (state * 16807) % 2147483647;
+    return state / 2147483647;
+  };
 
   const trees: Array<{ stump: any }> = [];
   for (let b = 0; b < B; b += 1) {
@@ -310,7 +354,10 @@ export function predictRandomForest(forest: { trees: Array<{ stump: any }> }, x:
  *
  *   α typically 0.1-0.3.
  */
-export function simpleExponentialSmoothing(y: number[], alpha: number = 0.3): {
+export function simpleExponentialSmoothing(
+  y: number[],
+  alpha = 0.3
+): {
   level_series: number[];
   forecast: number;
 } {
@@ -330,7 +377,11 @@ export function simpleExponentialSmoothing(y: number[], alpha: number = 0.3): {
  *   b_t = β × (l_t - l_{t-1}) + (1 - β) × b_{t-1}
  *   ŷ_{t+h} = l_t + h × b_t
  */
-export function holtsLinear(y: number[], alpha: number = 0.3, beta: number = 0.1): {
+export function holtsLinear(
+  y: number[],
+  alpha = 0.3,
+  beta = 0.1
+): {
   level_series: number[];
   trend_series: number[];
   forecast_1step: number;
@@ -381,7 +432,10 @@ export function autocovariance(y: number[], lag: number): number {
  *
  *   System: R φ = r  where R is p×p Toeplitz of autocov, r = (γ_1, ..., γ_p)
  */
-export function fitARp(y: number[], p: number): { coefficients: number[]; intercept: number; sigma2: number } {
+export function fitARp(
+  y: number[],
+  p: number
+): { coefficients: number[]; intercept: number; sigma2: number } {
   const N = y.length;
   if (N < p + 5) throw new Error(`fitARp: need ≥${p + 5} obs`);
   const m = y.reduce((s, v) => s + v, 0) / N;
@@ -420,7 +474,10 @@ export function fitARp(y: number[], p: number): { coefficients: number[]; interc
  *
  *   ŷ_{T+1} = c + Σ_k φ_k × y_{T+1-k}
  */
-export function arPForecast(y: number[], model: { coefficients: number[]; intercept: number }): number {
+export function arPForecast(
+  y: number[],
+  model: { coefficients: number[]; intercept: number }
+): number {
   let pred = model.intercept;
   for (let k = 0; k < model.coefficients.length; k += 1) {
     pred += model.coefficients[k] * y[y.length - 1 - k];
@@ -435,7 +492,10 @@ export function arPForecast(y: number[], model: { coefficients: number[]; interc
  *
  *   Pick p ∈ [1, p_max] minimizing AIC.
  */
-export function autoSelectARorder(y: number[], p_max: number = 5): { best_p: number; aic: number; model: any } {
+export function autoSelectARorder(
+  y: number[],
+  p_max = 5
+): { best_p: number; aic: number; model: any } {
   let best_aic = Infinity;
   let best_p = 1;
   let best_model: any = null;
@@ -445,7 +505,7 @@ export function autoSelectARorder(y: number[], p_max: number = 5): { best_p: num
       const N = y.length - p;
       // Approx log L = -N/2 × log(2π σ²) - SS_residuals / (2σ²)
       // SS = N × σ² for fitted residuals → log L ≈ -N/2 × log(2π σ²) - N/2
-      const logL = -N / 2 * Math.log(2 * Math.PI * Math.max(1e-12, m.sigma2)) - N / 2;
+      const logL = (-N / 2) * Math.log(2 * Math.PI * Math.max(1e-12, m.sigma2)) - N / 2;
       const aic = -2 * logL + 2 * (p + 1);
       if (aic < best_aic) {
         best_aic = aic;
@@ -479,7 +539,7 @@ export function qrDecomposition(A: number[][]): { Q: number[][]; R: number[][] }
 
   for (let j = 0; j < n; j += 1) {
     // Start with column j of A
-    let v = A.map(row => row[j]);
+    const v = A.map(row => row[j]);
     for (let i = 0; i < j; i += 1) {
       // R[i][j] = Q[:,i]^T × A[:,j]
       let r_ij = 0;

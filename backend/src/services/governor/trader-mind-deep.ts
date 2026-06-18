@@ -41,11 +41,11 @@
 // ============================================================
 
 export interface TradeReasonTriplet {
-  entry_score: number;       // 0-100
-  exit_score: number;        // 0-100
-  size_score: number;        // 0-100
-  composite_dqs: number;     // 0-100
-  weaknesses: string[];      // 具体扣分原因
+  entry_score: number; // 0-100
+  exit_score: number; // 0-100
+  size_score: number; // 0-100
+  composite_dqs: number; // 0-100
+  weaknesses: string[]; // 具体扣分原因
 }
 
 /**
@@ -55,48 +55,85 @@ export interface TradeReasonTriplet {
  */
 export function computeReasonTriplet(input: {
   // Entry inputs
-  thesis_recorded_pre_trade: boolean;     // 是否提前写 thesis
-  data_support_count: number;             // 几个独立数据点支持
-  entry_at_planned_price: boolean;        // 入场价是否 = plan
+  thesis_recorded_pre_trade: boolean; // 是否提前写 thesis
+  data_support_count: number; // 几个独立数据点支持
+  entry_at_planned_price: boolean; // 入场价是否 = plan
   // Exit inputs
-  exit_per_plan: boolean;                  // 是否按 plan 退出
-  stop_loss_honored: boolean;              // 是否守 stop
-  emotional_exit_flag: boolean;            // 是否情绪化 (大涨/大跌追/砍)
+  exit_per_plan: boolean; // 是否按 plan 退出
+  stop_loss_honored: boolean; // 是否守 stop
+  emotional_exit_flag: boolean; // 是否情绪化 (大涨/大跌追/砍)
   // Size inputs
-  conviction_level: number;                // 0-10 自评
-  position_size_pct: number;               // 实际仓位
-  vol_target_size_pct: number;             // vol-adjusted 推荐
+  conviction_level: number; // 0-10 自评
+  position_size_pct: number; // 实际仓位
+  vol_target_size_pct: number; // vol-adjusted 推荐
 }): TradeReasonTriplet {
   const weaknesses: string[] = [];
 
   // Entry score
   let entry = 100;
-  if (!input.thesis_recorded_pre_trade) { entry -= 40; weaknesses.push('入场前未记录 thesis'); }
-  if (input.data_support_count === 0) { entry -= 30; weaknesses.push('无独立数据支持'); }
-  else if (input.data_support_count === 1) { entry -= 15; weaknesses.push('仅 1 个数据点支持'); }
-  if (!input.entry_at_planned_price) { entry -= 15; weaknesses.push('追涨入场 (价格 > plan)'); }
+  if (!input.thesis_recorded_pre_trade) {
+    entry -= 40;
+    weaknesses.push('入场前未记录 thesis');
+  }
+  if (input.data_support_count === 0) {
+    entry -= 30;
+    weaknesses.push('无独立数据支持');
+  } else if (input.data_support_count === 1) {
+    entry -= 15;
+    weaknesses.push('仅 1 个数据点支持');
+  }
+  if (!input.entry_at_planned_price) {
+    entry -= 15;
+    weaknesses.push('追涨入场 (价格 > plan)');
+  }
   entry = Math.max(0, entry);
 
   // Exit score
   let exit = 100;
-  if (!input.exit_per_plan) { exit -= 30; weaknesses.push('未按 plan 退出'); }
-  if (!input.stop_loss_honored) { exit -= 50; weaknesses.push('破纪律 — 没守 stop loss'); }
-  if (input.emotional_exit_flag) { exit -= 25; weaknesses.push('情绪化退出 (追/砍)'); }
+  if (!input.exit_per_plan) {
+    exit -= 30;
+    weaknesses.push('未按 plan 退出');
+  }
+  if (!input.stop_loss_honored) {
+    exit -= 50;
+    weaknesses.push('破纪律 — 没守 stop loss');
+  }
+  if (input.emotional_exit_flag) {
+    exit -= 25;
+    weaknesses.push('情绪化退出 (追/砍)');
+  }
   exit = Math.max(0, exit);
 
   // Size score
   let size = 100;
   // Conviction-size mismatch
-  const expected_size_pct = (input.conviction_level / 10) * 0.10; // 10 conviction → 10% max
-  const size_diff_pct = Math.abs(input.position_size_pct - expected_size_pct) / Math.max(0.001, expected_size_pct);
-  if (size_diff_pct > 0.5) { size -= 30; weaknesses.push(`仓位与 conviction 不匹配 (实=${(input.position_size_pct * 100).toFixed(1)}%, 期=${(expected_size_pct * 100).toFixed(1)}%)`); }
+  const expected_size_pct = (input.conviction_level / 10) * 0.1; // 10 conviction → 10% max
+  const size_diff_pct =
+    Math.abs(input.position_size_pct - expected_size_pct) / Math.max(0.001, expected_size_pct);
+  if (size_diff_pct > 0.5) {
+    size -= 30;
+    weaknesses.push(
+      `仓位与 conviction 不匹配 (实=${(input.position_size_pct * 100).toFixed(1)}%, 期=${(
+        expected_size_pct * 100
+      ).toFixed(1)}%)`
+    );
+  }
   // Vol-adjusted check
-  const vol_diff = Math.abs(input.position_size_pct - input.vol_target_size_pct) / Math.max(0.001, input.vol_target_size_pct);
-  if (vol_diff > 0.5) { size -= 20; weaknesses.push(`忽略 vol target (实=${(input.position_size_pct * 100).toFixed(1)}%, vol-adj=${(input.vol_target_size_pct * 100).toFixed(1)}%)`); }
+  const vol_diff =
+    Math.abs(input.position_size_pct - input.vol_target_size_pct) /
+    Math.max(0.001, input.vol_target_size_pct);
+  if (vol_diff > 0.5) {
+    size -= 20;
+    weaknesses.push(
+      `忽略 vol target (实=${(input.position_size_pct * 100).toFixed(1)}%, vol-adj=${(
+        input.vol_target_size_pct * 100
+      ).toFixed(1)}%)`
+    );
+  }
   size = Math.max(0, size);
 
   // Composite DQS = weighted average (exit 最重要 — 守纪律比 entry 更难)
-  const composite = Math.round(0.30 * entry + 0.45 * exit + 0.25 * size);
+  const composite = Math.round(0.3 * entry + 0.45 * exit + 0.25 * size);
 
   return {
     entry_score: Math.round(entry),
@@ -137,7 +174,7 @@ export function checkDruckenmiller(trade: {
       wizard_name: 'Druckenmiller',
       rule: '保护本金 — 单笔亏损 ≤ 5%',
       violated: true,
-      severity: trade.realized_pnl_pct < -0.10 ? 'high' : 'medium',
+      severity: trade.realized_pnl_pct < -0.1 ? 'high' : 'medium',
       detail: `实亏 ${(trade.realized_pnl_pct * 100).toFixed(1)}% < -5%`,
     });
   }
@@ -148,7 +185,9 @@ export function checkDruckenmiller(trade: {
       rule: '重仓 (≥5%) 必须 conviction ≥ 8/10',
       violated: true,
       severity: 'medium',
-      detail: `仓位 ${(trade.position_size_pct * 100).toFixed(1)}% with conviction=${trade.conviction_level}/10`,
+      detail: `仓位 ${(trade.position_size_pct * 100).toFixed(1)}% with conviction=${
+        trade.conviction_level
+      }/10`,
     });
   }
   return out;
@@ -182,7 +221,9 @@ export function checkPaulTudorJones(trade: {
       rule: '高 vol (>40% annualized) 仓位不过周末',
       violated: true,
       severity: 'medium',
-      detail: `realized vol=${(trade.realized_vol_during_hold * 100).toFixed(1)}% 但 held over weekend`,
+      detail: `realized vol=${(trade.realized_vol_during_hold * 100).toFixed(
+        1
+      )}% 但 held over weekend`,
     });
   }
   return out;
@@ -208,7 +249,9 @@ export function checkMichaelMarcus(trade: {
       rule: 'Risk per trade ≤ 5%',
       violated: true,
       severity: 'high',
-      detail: `max_risk = ${(max_risk * 100).toFixed(1)}% (仓位 ${(trade.position_size_pct * 100).toFixed(1)}% × stop ${(trade.stop_loss_distance_pct * 100).toFixed(1)}%)`,
+      detail: `max_risk = ${(max_risk * 100).toFixed(1)}% (仓位 ${(
+        trade.position_size_pct * 100
+      ).toFixed(1)}% × stop ${(trade.stop_loss_distance_pct * 100).toFixed(1)}%)`,
     });
   }
   // Counter-trend BUY in down-trend
@@ -253,7 +296,9 @@ export function checkBruceKovner(trade: {
         rule: 'Reward/Risk ≥ 3:1',
         violated: true,
         severity: 'low',
-        detail: `RR = ${rr.toFixed(2)}, target ${(trade.expected_target_pct * 100).toFixed(1)}% / stop ${(trade.expected_stop_pct * 100).toFixed(1)}%`,
+        detail: `RR = ${rr.toFixed(2)}, target ${(trade.expected_target_pct * 100).toFixed(
+          1
+        )}% / stop ${(trade.expected_stop_pct * 100).toFixed(1)}%`,
       });
     }
   }
@@ -351,12 +396,12 @@ export function checkAllWizards(trade: {
 // ============================================================
 
 export interface QuantPostmortemScore {
-  thesis_validity: number;         // 0-100: 原 thesis 是否事后看仍合理
-  execution_quality: number;       // 0-100: 撮合时机
-  sizing_appropriateness: number;  // 0-100: 仓位是否合适
-  exit_timing: number;             // 0-100: 退出时机
-  learning_extraction: number;     // 0-100: 是否记录 learnings
-  composite_score: number;         // 0-100 weighted
+  thesis_validity: number; // 0-100: 原 thesis 是否事后看仍合理
+  execution_quality: number; // 0-100: 撮合时机
+  sizing_appropriateness: number; // 0-100: 仓位是否合适
+  exit_timing: number; // 0-100: 退出时机
+  learning_extraction: number; // 0-100: 是否记录 learnings
+  composite_score: number; // 0-100 weighted
   classification: 'true_alpha' | 'variance_loss' | 'lucky_win' | 'bad_execution';
   improvement_areas: string[];
 }
@@ -370,14 +415,14 @@ export function computeQuantPostmortemScore(input: {
   thesis_predicted_magnitude_pct: number;
   actual_magnitude_pct: number;
   // Execution
-  entry_slippage_bps: number;        // entry actual vs plan
+  entry_slippage_bps: number; // entry actual vs plan
   exit_slippage_bps: number;
   // Sizing
   position_size_pct: number;
-  optimal_size_pct: number;          // ex-post optimal
+  optimal_size_pct: number; // ex-post optimal
   // Exit
   exit_at_optimal_window: boolean;
-  hold_too_long_days: number;        // beyond optimal hold
+  hold_too_long_days: number; // beyond optimal hold
   hold_too_short_days: number;
   // Learning
   learnings_documented: boolean;
@@ -386,7 +431,9 @@ export function computeQuantPostmortemScore(input: {
   // Thesis validity
   let thesis = 100;
   if (!input.thesis_predicted_direction_correct) thesis -= 50;
-  const mag_error = Math.abs(input.thesis_predicted_magnitude_pct - input.actual_magnitude_pct) / Math.max(0.01, Math.abs(input.thesis_predicted_magnitude_pct));
+  const mag_error =
+    Math.abs(input.thesis_predicted_magnitude_pct - input.actual_magnitude_pct) /
+    Math.max(0.01, Math.abs(input.thesis_predicted_magnitude_pct));
   thesis -= Math.min(50, mag_error * 30);
   thesis = Math.max(0, thesis);
 
@@ -398,7 +445,9 @@ export function computeQuantPostmortemScore(input: {
 
   // Sizing
   let sizing = 100;
-  const size_diff = Math.abs(input.position_size_pct - input.optimal_size_pct) / Math.max(0.001, input.optimal_size_pct);
+  const size_diff =
+    Math.abs(input.position_size_pct - input.optimal_size_pct) /
+    Math.max(0.001, input.optimal_size_pct);
   sizing -= Math.min(60, size_diff * 50);
   sizing = Math.max(0, sizing);
 
@@ -416,12 +465,15 @@ export function computeQuantPostmortemScore(input: {
   learning = Math.max(0, learning);
 
   const composite = Math.round(
-    0.30 * thesis + 0.20 * execution + 0.20 * sizing + 0.20 * exit_score + 0.10 * learning,
+    0.3 * thesis + 0.2 * execution + 0.2 * sizing + 0.2 * exit_score + 0.1 * learning
   );
 
   // Classification (decision quality + outcome)
   const dq_high = composite >= 70;
-  const outcome_positive = (input.thesis_predicted_direction_correct ? input.actual_magnitude_pct : -input.actual_magnitude_pct) > 0;
+  const outcome_positive =
+    (input.thesis_predicted_direction_correct
+      ? input.actual_magnitude_pct
+      : -input.actual_magnitude_pct) > 0;
   let classification: 'true_alpha' | 'variance_loss' | 'lucky_win' | 'bad_execution';
   if (dq_high && outcome_positive) classification = 'true_alpha';
   else if (dq_high && !outcome_positive) classification = 'variance_loss';
@@ -479,7 +531,7 @@ export function autoApplyDqsToClosedTrade(outcome: {
     data_support_count: outcome.data_support_count ?? 1,
     entry_at_planned_price: true, // default assume yes if no data
     exit_per_plan: outcome.exit_date !== null,
-    stop_loss_honored: outcome.stop_loss_honored ?? (outcome.total_pnl_pct > -0.10),
+    stop_loss_honored: outcome.stop_loss_honored ?? outcome.total_pnl_pct > -0.1,
     emotional_exit_flag: outcome.holding_days < 2 && Math.abs(outcome.total_pnl_pct) < 0.02,
     conviction_level: outcome.conviction_level ?? 5,
     position_size_pct: outcome.position_size_pct ?? 0.05,
@@ -489,7 +541,8 @@ export function autoApplyDqsToClosedTrade(outcome: {
   let summary: string;
   if (triplet.composite_dqs >= 80) summary = '✅ 高质量决策 (DQS≥80)';
   else if (triplet.composite_dqs >= 60) summary = '🟢 决策质量 OK';
-  else if (triplet.composite_dqs >= 40) summary = '🟠 决策质量待改进 — ' + triplet.weaknesses.slice(0, 2).join('; ');
+  else if (triplet.composite_dqs >= 40)
+    summary = '🟠 决策质量待改进 — ' + triplet.weaknesses.slice(0, 2).join('; ');
   else summary = '🔴 决策质量差 — ' + triplet.weaknesses.slice(0, 3).join('; ');
 
   return { triplet, postmortem_summary: summary };

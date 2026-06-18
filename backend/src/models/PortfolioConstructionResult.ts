@@ -47,11 +47,21 @@ export class PortfolioConstructionResult extends Model {
   declare weights_json: number[];
 
   /** 每只股票的 risk_contribution（占组合 variance 的比例；与 weights 对齐） */
-  @Column({ type: DataType.JSONB, allowNull: true, defaultValue: [], field: 'risk_contributions_json' })
+  @Column({
+    type: DataType.JSONB,
+    allowNull: true,
+    defaultValue: [],
+    field: 'risk_contributions_json',
+  })
   declare risk_contributions_json?: number[];
 
   /** 行业 exposure {industry: pct} */
-  @Column({ type: DataType.JSONB, allowNull: true, defaultValue: {}, field: 'industry_exposure_json' })
+  @Column({
+    type: DataType.JSONB,
+    allowNull: true,
+    defaultValue: {},
+    field: 'industry_exposure_json',
+  })
   declare industry_exposure_json?: Record<string, number>;
 
   /** 总仓位占比（< 1 表示留现金） */

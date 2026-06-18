@@ -23,7 +23,11 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
     { fields: ['account_id'] },
     { fields: ['bridge_key'] },
     // client_order_id NOT NULL，直接全列 unique；runtime schema 重复创建无副作用
-    { unique: true, fields: ['client_order_id'], name: 'idx_live_broker_commands_client_order_id_unique' },
+    {
+      unique: true,
+      fields: ['client_order_id'],
+      name: 'idx_live_broker_commands_client_order_id_unique',
+    },
     { fields: ['parent_command_id'] },
     { fields: ['command_type'] },
     { fields: ['status'] },
@@ -64,7 +68,14 @@ export class LiveBrokerCommand extends Model {
   @Column({ type: DataType.INTEGER, allowNull: true, field: 'parent_command_id' })
   declare parent_command_id?: number;
 
-  /** 命令状态机 pending/dispatched/submitted/partially_filled/filled/cancelled/failed/expired */
+  /**
+   * 命令状态机 pending/dispatched/submitted/partially_filled/filled/cancelled/failed/expired/aborted
+   *
+   * audit M-6 (2026-06-18): 加 `aborted` 终态. `KillSwitchService.abortPendingCommands`
+   * 在 KillSwitch 激活时把仍处于 pending 的命令一次性标 aborted. 与 cancelled /
+   * failed / expired 并列, **是终态, 不再进入 TTL 巡检** (BridgeCommandExpiryService
+   * 的 WHERE status IN ('pending','dispatching','dispatched') 不覆盖 aborted).
+   */
   @Column({ type: DataType.STRING(30), allowNull: false, defaultValue: 'pending' })
   declare status: string;
 

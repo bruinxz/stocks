@@ -45,7 +45,9 @@ function readFileSafe(p: string): string {
 
 function checkShortFall1(): AuditCheck {
   const adapterFile = path.join(SRC, 'portfolio/internal/PortfolioConstructionAdapter.ts');
-  const automation = readFileSafe(path.join(SRC, 'portfolio/internal/PaperTradingAutomationService.ts'));
+  const automation = readFileSafe(
+    path.join(SRC, 'portfolio/internal/PaperTradingAutomationService.ts')
+  );
   const evidence: string[] = [];
   let pass = true;
   if (fileExists(adapterFile)) {
@@ -72,7 +74,9 @@ function checkShortFall1(): AuditCheck {
 }
 
 function checkShortFall2(): AuditCheck {
-  const automation = readFileSafe(path.join(SRC, 'portfolio/internal/PaperTradingAutomationService.ts'));
+  const automation = readFileSafe(
+    path.join(SRC, 'portfolio/internal/PaperTradingAutomationService.ts')
+  );
   const evidence: string[] = [];
   let pass = true;
   // 检查是否还有 'market_breadth_score: 0' 或 'market_vol_atr: 4' 硬编码
@@ -108,7 +112,9 @@ function checkShortFall2(): AuditCheck {
 }
 
 function checkShortFall3(): AuditCheck {
-  const automation = readFileSafe(path.join(SRC, 'portfolio/internal/PaperTradingAutomationService.ts'));
+  const automation = readFileSafe(
+    path.join(SRC, 'portfolio/internal/PaperTradingAutomationService.ts')
+  );
   const evidence: string[] = [];
   let pass = true;
   if (automation.includes('market_snapshot:')) {
@@ -136,7 +142,9 @@ function checkShortFall3(): AuditCheck {
 }
 
 function checkShortFall4(): AuditCheck {
-  const automation = readFileSafe(path.join(SRC, 'portfolio/internal/PaperTradingAutomationService.ts'));
+  const automation = readFileSafe(
+    path.join(SRC, 'portfolio/internal/PaperTradingAutomationService.ts')
+  );
   const evidence: string[] = [];
   let pass = true;
   // 检查 governor multiplier 是否在 sizing block 外 (短板 #4 解法)
@@ -149,12 +157,12 @@ function checkShortFall4(): AuditCheck {
   // 找第 2 个 evaluateEntryRiskGuard occurrence (跳过 preTradeRisk)
   const firstRiskIdx = automation.indexOf('this.evaluateEntryRiskGuard');
   const tradeRiskIdx =
-    firstRiskIdx > 0
-      ? automation.indexOf('this.evaluateEntryRiskGuard', firstRiskIdx + 1)
-      : -1;
+    firstRiskIdx > 0 ? automation.indexOf('this.evaluateEntryRiskGuard', firstRiskIdx + 1) : -1;
   if (sizingCatchIdx > 0 && governorIdx > 0 && tradeRiskIdx > 0) {
     if (sizingCatchIdx < governorIdx && governorIdx < tradeRiskIdx) {
-      evidence.push('✓ Governor multiplier 已移出 sizing block (在 sizing-catch 之后, tradeRisk 之前)');
+      evidence.push(
+        '✓ Governor multiplier 已移出 sizing block (在 sizing-catch 之后, tradeRisk 之前)'
+      );
       evidence.push('✓ 所有 sizing method (含默认 equal_pct) 都过 governor');
     } else {
       evidence.push(
@@ -180,7 +188,10 @@ function checkShortFall5(): AuditCheck {
   const evidence: string[] = [];
   let pass = true;
   const activationFile = path.join(SRC, 'portfolio/internal/l8-activation.ts');
-  const dashboardFile = path.join(__dirname, '../../../frontend/src/components/data/ActivationDashboard.tsx');
+  const dashboardFile = path.join(
+    __dirname,
+    '../../../frontend/src/components/data/ActivationDashboard.tsx'
+  );
   const controllerFile = path.join(SRC, 'api/controllers/PaperTradingController.ts');
   if (fileExists(activationFile)) {
     evidence.push(`✓ l8-activation.ts 存在 (${fs.statSync(activationFile).size}B)`);
@@ -199,7 +210,9 @@ function checkShortFall5(): AuditCheck {
   } else {
     pass = false;
   }
-  const automation = readFileSafe(path.join(SRC, 'portfolio/internal/PaperTradingAutomationService.ts'));
+  const automation = readFileSafe(
+    path.join(SRC, 'portfolio/internal/PaperTradingAutomationService.ts')
+  );
   if (automation.includes('l8_activation: activation')) {
     evidence.push('✓ buy-decision loop 注入 l8_activation 到 orderIntentMetadata');
   } else {

@@ -340,7 +340,11 @@ export class PaperTradingAttributionService {
         : null;
       // Batch K: 若 sell_trade_id 已被前一条 signal 算过, 跳过这条 (会重复加)
       const sellTradeIdNum = paperTrading.sell_trade_id ? Number(paperTrading.sell_trade_id) : null;
-      if (sellTradeIdNum && Number.isFinite(sellTradeIdNum) && accountedSellTradeIds.has(sellTradeIdNum)) {
+      if (
+        sellTradeIdNum &&
+        Number.isFinite(sellTradeIdNum) &&
+        accountedSellTradeIds.has(sellTradeIdNum)
+      ) {
         // skip — 已被 sibling signal 计入 closedTrades
         continue;
       }

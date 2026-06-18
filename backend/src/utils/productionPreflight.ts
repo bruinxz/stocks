@@ -36,7 +36,12 @@ const KNOWN_LEAKED_SECRETS = new Set([
 
 const WEAK_PASSWORDS = new Set(['666', '123456', 'password', 'admin']);
 
-function requireEnv(ctx: RuleCtx, key: string, message?: string, level: 'error' | 'warn' = 'error'): void {
+function requireEnv(
+  ctx: RuleCtx,
+  key: string,
+  message?: string,
+  level: 'error' | 'warn' = 'error'
+): void {
   const value = ctx.env[key];
   if (!value || !String(value).trim()) {
     ctx.results.push({
@@ -260,7 +265,9 @@ function checkBrokerGateway(ctx: RuleCtx): void {
     ctx.results.push({
       key: 'LIVE_BROKER_GATEWAY',
       level: 'error',
-      message: `真实下单必须 LIVE_BROKER_GATEWAY ∈ {qmt_bridge, ptrade_bridge}，当前 ${gateway || 'unset'}`,
+      message: `真实下单必须 LIVE_BROKER_GATEWAY ∈ {qmt_bridge, ptrade_bridge}，当前 ${
+        gateway || 'unset'
+      }`,
     });
   }
 }

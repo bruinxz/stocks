@@ -289,14 +289,11 @@ class SchedulerService {
       // 旧实现只在 boot 跑一次, task 卡死后 RUNNING 状态永不清. 现在每 10 分钟扫一次
       // 把 RUNNING 超 30min 的标 FAILED, 让 dashboard 能反映真实状态.
       if (this.reconcileTimer) clearInterval(this.reconcileTimer);
-      this.reconcileTimer = setInterval(
-        () => {
-          this.reconcileStaleRunningTasks().catch(err =>
-            logger.warn(`[scheduler] periodic reconcileStaleRunningTasks failed: ${err?.message}`)
-          );
-        },
-        10 * 60 * 1000
-      ).unref();
+      this.reconcileTimer = setInterval(() => {
+        this.reconcileStaleRunningTasks().catch(err =>
+          logger.warn(`[scheduler] periodic reconcileStaleRunningTasks failed: ${err?.message}`)
+        );
+      }, 10 * 60 * 1000).unref();
 
       // Batch AH review (2026-06-18): catch-up — server 启动 (deploy 重启) 后,
       // 找出 "今日 cron 窗口已过 + last_run_at 是空 / 早于今日凌晨" 的 sync task,
@@ -305,6 +302,25 @@ class SchedulerService {
       void this.catchUpMissedTasks(tasks).catch(err =>
         logger.warn(`[scheduler] catchUpMissedTasks failed: ${err?.message}`)
       );
+
+      // BETA-5 (2026-06-18, audit M-14): boot 巡检 STRATEGY_KILL_SWITCH_CHECK 等
+      // "应该真跑"的 task 是否被显式 dry_run=true 覆盖。找到 → 写 RiskAlert MEDIUM
+      // 让运维确认。不修改任何配置（read-only）；失败不阻塞 boot。
+      void (async () => {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const { auditTaskParametersDryRun } = require('../scripts/audit-task-parameters-dry-run');
+          const res = await auditTaskParametersDryRun();
+          if (res.matches.length > 0) {
+            logger.warn(
+              `[scheduler] boot dry_run audit: ${res.matches.length} task(s) flagged ` +
+                `(RiskAlert ${res.alert_written ? 'written' : 'NOT written'})`
+            );
+          }
+        } catch (auditErr: any) {
+          logger.warn(`[scheduler] boot dry_run audit failed: ${auditErr?.message || auditErr}`);
+        }
+      })();
     } catch (error) {
       logger.error('Failed to initialize scheduler:', error);
       // Batch M (2026-06-17): 旧实现 swallow error 让进程"健康"启动但 0 cron 在跑.
@@ -467,9 +483,7 @@ class SchedulerService {
     // SUCCESS → consecutive_failure_count = 0
     // FAILED → +1, ≥ FAILURE_KILL_THRESHOLD (5) 自动 is_active=false + 报警.
     // 防告警淹没 + 防 task 一直 fail 仍 retry 浪费资源.
-    const FAILURE_KILL_THRESHOLD = Number(
-      process.env.SCHEDULER_FAILURE_KILL_THRESHOLD || 5
-    );
+    const FAILURE_KILL_THRESHOLD = Number(process.env.SCHEDULER_FAILURE_KILL_THRESHOLD || 5);
     const updates: any = { last_run_status: status };
     if (status === 'SUCCESS') {
       if ((task.consecutive_failure_count || 0) > 0) {
@@ -501,7 +515,9 @@ class SchedulerService {
             is_read: false,
           });
         } catch (alertErr: any) {
-          logger.warn(`[scheduler] 写 kill alert 失败 (吞错继续): ${alertErr?.message || alertErr}`);
+          logger.warn(
+            `[scheduler] 写 kill alert 失败 (吞错继续): ${alertErr?.message || alertErr}`
+          );
         }
         // 立即 stop in-memory cron 防下一次 tick 又跑
         try {
@@ -1795,7 +1811,9 @@ class SchedulerService {
               if (r.skipped_items) aggregated.skipped_items.push(...r.skipped_items);
             } catch (err: any) {
               logger.warn(
-                `[AUTO_SYNC all_portfolios] portfolio ${port.id} (${port.name}) 失败: ${err?.message || err}`
+                `[AUTO_SYNC all_portfolios] portfolio ${port.id} (${port.name}) 失败: ${
+                  err?.message || err
+                }`
               );
             }
           }
@@ -2248,8 +2266,7 @@ class SchedulerService {
         // Batch J (2026-06-17): US-054 MorningRiskCheckupService cron 接入
         // (之前完全没注册, service 永远不跑). 推荐 cron: 30 8 * * 1-5 (08:30).
         const targetUserId = parameters.user_id || parameters.userId;
-        const dryRun =
-          parameters.dry_run !== undefined ? Boolean(parameters.dry_run) : false;
+        const dryRun = parameters.dry_run !== undefined ? Boolean(parameters.dry_run) : false;
         const result = await morningRiskCheckupService.runMorningCheckup({
           user_id: targetUserId ? Number(targetUserId) : undefined,
           dry_run: dryRun,
@@ -2278,8 +2295,7 @@ class SchedulerService {
         // Batch J (2026-06-17): US-089 RestrictedShareWatchdog cron 接入
         // (之前完全没注册). 推荐 cron: 0 9 * * 1-5 (开盘前提前预警).
         const targetUserId = parameters.user_id || parameters.userId;
-        const dryRun =
-          parameters.dry_run !== undefined ? Boolean(parameters.dry_run) : false;
+        const dryRun = parameters.dry_run !== undefined ? Boolean(parameters.dry_run) : false;
         const result = await restrictedShareWatchdog.evaluateAfterOpen({
           user_id: targetUserId ? Number(targetUserId) : undefined,
           dry_run: dryRun,
@@ -2313,8 +2329,7 @@ class SchedulerService {
         // 注: 这里只评估 + 写 MEDIUM RiskAlert, 不自动 rebalance — rebalance 是 user
         // 手动一键 (POST /api/portfolio/rebalance-industry).
         const targetUserId = parameters.user_id || parameters.userId;
-        const dryRun =
-          parameters.dry_run !== undefined ? Boolean(parameters.dry_run) : false;
+        const dryRun = parameters.dry_run !== undefined ? Boolean(parameters.dry_run) : false;
         const result = await industryConcentrationGuard.evaluateAfterClose({
           user_id: targetUserId ? Number(targetUserId) : undefined,
           dry_run: dryRun,
@@ -2535,11 +2550,11 @@ class SchedulerService {
         const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
         const date = parameters.date || today;
         const limit = parameters.universe_limit ? Number(parameters.universe_limit) : 200;
-        const lookback = parameters.rank_lookback_days
-          ? Number(parameters.rank_lookback_days)
-          : 5;
+        const lookback = parameters.rank_lookback_days ? Number(parameters.rank_lookback_days) : 5;
         // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { socialSentimentSyncService } = require('../data/services/SocialSentimentSyncService');
+        const {
+          socialSentimentSyncService,
+        } = require('../data/services/SocialSentimentSyncService');
         const result = await socialSentimentSyncService.syncDate(date, {
           universeLimit: limit,
           rankLookbackDays: lookback,
@@ -2570,7 +2585,9 @@ class SchedulerService {
         const date = parameters.date || today;
         const limit = parameters.limit ? Number(parameters.limit) : 50;
         // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { marketHotSearchSyncService } = require('../data/services/MarketHotSearchSyncService');
+        const {
+          marketHotSearchSyncService,
+        } = require('../data/services/MarketHotSearchSyncService');
         const result = await marketHotSearchSyncService.syncDate(date, { limit });
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: result.fetched || 0,
@@ -2827,9 +2844,11 @@ class SchedulerService {
         });
 
         logger.info(
-          `推荐交易收益闭环刷新完成。刷新 ${result.refreshed}，写入 ${result.created_or_updated}，闭环 ${
-            (result.dashboard as any)?.summary?.closed_count ?? '—'
-          }，总盈亏 ${(result.dashboard as any)?.summary?.total_pnl ?? '—'}`
+          `推荐交易收益闭环刷新完成。刷新 ${result.refreshed}，写入 ${
+            result.created_or_updated
+          }，闭环 ${(result.dashboard as any)?.summary?.closed_count ?? '—'}，总盈亏 ${
+            (result.dashboard as any)?.summary?.total_pnl ?? '—'
+          }`
         );
       } else if (task.type === 'PAPER_TRADING_DAILY_PLAN') {
         const result = await paperTradingPlanService.generatePlan({
@@ -3766,11 +3785,12 @@ class SchedulerService {
                   agent_session: parameters.agent_session,
                 },
                 {
-                  jobId: `ai-poll-${isManual ? 'manual-' : ''}${
-                    executionLog?.id ? `log-${executionLog.id}` : `task-${task.id}-no-log`
-                  }-${res.task_id}`,
+                  // BETA-3 (2026-06-18, audit M-15): 标准 jobId + dedup + bounded retention
+                  jobId: `ai-poll-${res.task_id}`,
                   attempts: 10,
                   backoff: { type: 'fixed', delay: 3 * 60 * 1000 },
+                  removeOnComplete: { count: 1000 },
+                  removeOnFail: { count: 500 },
                 }
               );
               count++;
@@ -4219,7 +4239,12 @@ class SchedulerService {
         const { spawnSync } = require('child_process');
         const path = require('path');
         /* eslint-enable @typescript-eslint/no-var-requires */
-        const scriptPath = path.resolve(__dirname, '..', 'scripts', 'compute-factor-correlation.ts');
+        const scriptPath = path.resolve(
+          __dirname,
+          '..',
+          'scripts',
+          'compute-factor-correlation.ts'
+        );
         const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
         const lookbackDays: number = this.toPositiveInt(parameters.lookback_days, 30, 365);
         const startDate = moment(today)
@@ -4404,6 +4429,48 @@ class SchedulerService {
           },
         });
         logger.info(`[PAPER_TRADING_DAILY_SNAPSHOT] ${ok}/${portfolios.length} OK`);
+      } else if (task.type === 'LIVE_RECONCILIATION_GUARD') {
+        // BETA-2 (2026-06-18, audit S-12): 对账主动告警 cron — 阈值评估 →
+        // RiskAlert HIGH/MEDIUM → RealtimeAlertDispatcher 飞书推送。
+        // 推荐 cron: '31 10,14,15 * * 1-5' (盘中 3 次) + '1 16 * * 1-5' (收盘后).
+        // dry_run=true 仅评估不写 RiskAlert; window='intraday'|'eod' 仅 message 标签。
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const {
+          reconciliationAlertService,
+        } = require('../live-trading/services/ReconciliationAlertService');
+        const win = (parameters.window === 'eod' ? 'eod' : 'intraday') as 'intraday' | 'eod';
+        const dryRun = parameters.dry_run === true;
+        const targetUserId = parameters.user_id || parameters.userId;
+        const result = await reconciliationAlertService.runOnce({
+          window: win,
+          dry_run: dryRun,
+          user_id: targetUserId ? Number(targetUserId) : undefined,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.total_users,
+          completed_items: result.scanned_users,
+          failed_items: result.per_user.filter(u => u.error).length,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'live_reconciliation_guard',
+            window: win,
+            dry_run: dryRun,
+            total_users: result.total_users,
+            scanned_users: result.scanned_users,
+            high_count: result.high_count,
+            medium_count: result.medium_count,
+            deduped_count: result.deduped_count,
+            alerts_written: result.alerts_written,
+          },
+        });
+        logger.info(
+          `[LIVE_RECONCILIATION_GUARD ${win}] users=${result.scanned_users}/${result.total_users} ` +
+            `HIGH=${result.high_count} MEDIUM=${result.medium_count} ` +
+            `written=${result.alerts_written} deduped=${result.deduped_count}` +
+            (dryRun ? ' (dry_run)' : '')
+        );
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }

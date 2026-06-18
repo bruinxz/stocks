@@ -89,21 +89,34 @@ export interface BrinsonAttribution {
 
 export function brinsonAttribution(input: BrinsonInput): BrinsonAttribution {
   const N = input.industries.length;
-  if (input.portfolio_weights.length !== N || input.benchmark_weights.length !== N || input.stock_returns.length !== N) {
+  if (
+    input.portfolio_weights.length !== N ||
+    input.benchmark_weights.length !== N ||
+    input.stock_returns.length !== N
+  ) {
     throw new Error('brinsonAttribution: length mismatch');
   }
   // Aggregate by industry
-  const industryMap = new Map<string, {
-    industry: string;
-    p_weight: number;
-    b_weight: number;
-    p_value_weighted_return: number;
-    b_value_weighted_return: number;
-  }>();
+  const industryMap = new Map<
+    string,
+    {
+      industry: string;
+      p_weight: number;
+      b_weight: number;
+      p_value_weighted_return: number;
+      b_value_weighted_return: number;
+    }
+  >();
   for (let i = 0; i < N; i += 1) {
     const ind = input.industries[i];
     if (!industryMap.has(ind)) {
-      industryMap.set(ind, { industry: ind, p_weight: 0, b_weight: 0, p_value_weighted_return: 0, b_value_weighted_return: 0 });
+      industryMap.set(ind, {
+        industry: ind,
+        p_weight: 0,
+        b_weight: 0,
+        p_value_weighted_return: 0,
+        b_value_weighted_return: 0,
+      });
     }
     const e = industryMap.get(ind)!;
     e.p_weight += input.portfolio_weights[i];
@@ -112,8 +125,11 @@ export function brinsonAttribution(input: BrinsonInput): BrinsonAttribution {
     e.b_value_weighted_return += input.benchmark_weights[i] * input.stock_returns[i];
   }
 
-  let total_alloc = 0, total_select = 0, total_inter = 0;
-  let total_p_return = 0, total_b_return = 0;
+  let total_alloc = 0,
+    total_select = 0,
+    total_inter = 0;
+  let total_p_return = 0,
+    total_b_return = 0;
   const industry_attribution: BrinsonAttribution['industry_attribution'] = [];
 
   for (const e of industryMap.values()) {
@@ -199,13 +215,17 @@ export function topRiskContributors(
   weights: number[],
   cov: number[][],
   symbols: string[],
-  top_n: number = 5
+  top_n = 5
 ): {
   top_contributors: Array<{ symbol: string; pct_contribution: number; mcr: number }>;
   top_hedgers: Array<{ symbol: string; pct_contribution: number; mcr: number }>;
 } {
   const r = marginalContributionToRisk(weights, cov);
-  const indexed = symbols.map((s, i) => ({ symbol: s, pct_contribution: r.pct_contribution[i], mcr: r.mcr[i] }));
+  const indexed = symbols.map((s, i) => ({
+    symbol: s,
+    pct_contribution: r.pct_contribution[i],
+    mcr: r.mcr[i],
+  }));
   const sorted_desc = [...indexed].sort((a, b) => b.pct_contribution - a.pct_contribution);
   const sorted_asc = [...indexed].sort((a, b) => a.pct_contribution - b.pct_contribution);
   return {
@@ -218,7 +238,14 @@ export function topRiskContributors(
 // Style Exposure Cap
 // ============================================================
 
-export type StyleFactor = 'size' | 'momentum' | 'value' | 'volatility' | 'growth' | 'quality' | 'beta';
+export type StyleFactor =
+  | 'size'
+  | 'momentum'
+  | 'value'
+  | 'volatility'
+  | 'growth'
+  | 'quality'
+  | 'beta';
 
 /**
  * Compute portfolio's exposure to each style factor.
@@ -322,7 +349,9 @@ export function crowdingScore(input: {
   const N = input.signal.length;
   const ms = input.signal.reduce((s, v) => s + v, 0) / N;
   const mc = input.market_consensus.reduce((s, v) => s + v, 0) / N;
-  let num = 0, ds = 0, dc = 0;
+  let num = 0,
+    ds = 0,
+    dc = 0;
   for (let i = 0; i < N; i += 1) {
     num += (input.signal[i] - ms) * (input.market_consensus[i] - mc);
     ds += (input.signal[i] - ms) ** 2;
@@ -331,12 +360,16 @@ export function crowdingScore(input: {
   const corr = ds * dc > 0 ? num / Math.sqrt(ds * dc) : 0;
 
   // Crowding score 0-100
-  const score = Math.max(0, Math.min(100,
-    50 +
-    Math.abs(corr) * 30 +
-    input.fund_concentration_change * 100 +
-    input.margin_balance_change * 50,
-  ));
+  const score = Math.max(
+    0,
+    Math.min(
+      100,
+      50 +
+        Math.abs(corr) * 30 +
+        input.fund_concentration_change * 100 +
+        input.margin_balance_change * 50
+    )
+  );
 
   let warning: string;
   if (score > 75) warning = '🔴 高度拥挤 — alpha 半衰期可能 < 30 天';
@@ -388,7 +421,7 @@ export function computeTargetLeverage(realized_vol: number, vol_target: number):
 export function bufferedLeverageUpdate(
   current_leverage: number,
   target_leverage: number,
-  buffer_pct: number = 0.10
+  buffer_pct = 0.1
 ): { new_leverage: number; changed: boolean } {
   const buffer = current_leverage * buffer_pct;
   const diff = target_leverage - current_leverage;
@@ -429,7 +462,7 @@ export function portfolioVolTargeting(input: {
   let final_leverage = capped;
   let changed = true;
   if (input.prev_leverage !== undefined) {
-    const buffered = bufferedLeverageUpdate(input.prev_leverage, capped, input.buffer_pct ?? 0.10);
+    const buffered = bufferedLeverageUpdate(input.prev_leverage, capped, input.buffer_pct ?? 0.1);
     final_leverage = buffered.new_leverage;
     changed = buffered.changed;
   }

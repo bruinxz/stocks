@@ -33,9 +33,7 @@ export const authenticateInternalApi = (req: Request, res: Response, next: NextF
     process.env.NODE_ENV === 'production' &&
     KNOWN_LEAKED_INTERNAL_KEYS.has(String(configuredKey).trim())
   ) {
-    logger.warn(
-      '[internalAuth] production 检测到已泄露的旧 INTERNAL_API_KEY 默认值，请尽快轮换。'
-    );
+    logger.warn('[internalAuth] production 检测到已泄露的旧 INTERNAL_API_KEY 默认值，请尽快轮换。');
     // 不 return —— 继续后续 key 校验
   }
 

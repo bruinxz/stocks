@@ -1425,8 +1425,8 @@ export class QuantStrategyParamVersionService {
       undefined,
       undefined,
       strategyRiskByKey,
-      undefined,  // Phase 1: wf 验证暂不在 dashboard preview 中要求（避免阻塞展示），lifecycle apply 时才强制
-      undefined  // Phase 4: edge_hypothesis 同理
+      undefined, // Phase 1: wf 验证暂不在 dashboard preview 中要求（避免阻塞展示），lifecycle apply 时才强制
+      undefined // Phase 4: edge_hypothesis 同理
     );
     const environmentAttribution = buildEnvironmentAttribution(plainValidations, versionByKey);
     const champion =
@@ -1695,7 +1695,9 @@ export class QuantStrategyParamVersionService {
         });
       }
     } catch (error: any) {
-      logger.warn(`[ParamVersionService] loadRecentWalkForwardVerdicts 失败: ${error?.message || error}`);
+      logger.warn(
+        `[ParamVersionService] loadRecentWalkForwardVerdicts 失败: ${error?.message || error}`
+      );
       // 失败时返回空 map，promotion 门禁会按 "缺少 wf" 拒绝（保守失败）
     }
 
@@ -1737,13 +1739,20 @@ export class QuantStrategyParamVersionService {
           verdict: row.verdict,
           dsr: row.dsr !== null && row.dsr !== undefined ? Number(row.dsr) : null,
           pbo: row.pbo !== null && row.pbo !== undefined ? Number(row.pbo) : null,
-          oos_decay: row.oos_decay_ratio !== null && row.oos_decay_ratio !== undefined ? Number(row.oos_decay_ratio) : null,
-          lookahead_count: Array.isArray(row.lookahead_issues_json) ? row.lookahead_issues_json.length : 0,
+          oos_decay:
+            row.oos_decay_ratio !== null && row.oos_decay_ratio !== undefined
+              ? Number(row.oos_decay_ratio)
+              : null,
+          lookahead_count: Array.isArray(row.lookahead_issues_json)
+            ? row.lookahead_issues_json.length
+            : 0,
           age_days: ageMs / (24 * 3600 * 1000),
         });
       }
     } catch (error: any) {
-      logger.warn(`[ParamVersionService] loadRecentResearchIntegrityVerdicts 失败: ${error?.message || error}`);
+      logger.warn(
+        `[ParamVersionService] loadRecentResearchIntegrityVerdicts 失败: ${error?.message || error}`
+      );
     }
 
     return result;
@@ -2014,7 +2023,9 @@ export class QuantStrategyParamVersionService {
           wfBlockReason = `缺少最近 ${effectivePolicy.wf_max_age_days} 天内的 walk-forward 验证`;
         } else if (wfInfo.age_days > effectivePolicy.wf_max_age_days) {
           wfGateSatisfied = false;
-          wfBlockReason = `walk-forward 验证已过期 (${Math.floor(wfInfo.age_days)} 天 > ${effectivePolicy.wf_max_age_days} 天)`;
+          wfBlockReason = `walk-forward 验证已过期 (${Math.floor(wfInfo.age_days)} 天 > ${
+            effectivePolicy.wf_max_age_days
+          } 天)`;
         } else {
           const requiredSet =
             effectivePolicy.wf_required_verdict === 'PASS_OR_INSUFFICIENT'
@@ -2039,7 +2050,7 @@ export class QuantStrategyParamVersionService {
       let edgeGateSatisfied = true;
       let edgeBlockReason: string | null = null;
       if (effectivePolicy.edge_hypothesis_required) {
-        const hypo = (edgeHypo && typeof edgeHypo === 'object') ? edgeHypo : {};
+        const hypo = edgeHypo && typeof edgeHypo === 'object' ? edgeHypo : {};
         const thesis = typeof hypo.thesis === 'string' ? hypo.thesis.trim() : '';
         const category = typeof hypo.category === 'string' ? hypo.category.trim() : '';
         const killSwitch =
@@ -2064,7 +2075,9 @@ export class QuantStrategyParamVersionService {
           riBlockReason = `缺少最近 ${effectivePolicy.ri_max_age_days} 天内的 research-integrity 审计`;
         } else if (riInfo.age_days > effectivePolicy.ri_max_age_days) {
           riGateSatisfied = false;
-          riBlockReason = `research-integrity 审计已过期 (${Math.floor(riInfo.age_days)} 天 > ${effectivePolicy.ri_max_age_days} 天)`;
+          riBlockReason = `research-integrity 审计已过期 (${Math.floor(riInfo.age_days)} 天 > ${
+            effectivePolicy.ri_max_age_days
+          } 天)`;
         } else {
           const allowedVerdicts =
             effectivePolicy.ri_required_verdict === 'PASS_OR_WARN'
@@ -2072,7 +2085,9 @@ export class QuantStrategyParamVersionService {
               : new Set(['PASS']);
           if (!allowedVerdicts.has(riInfo.verdict)) {
             riGateSatisfied = false;
-            riBlockReason = `research-integrity verdict=${riInfo.verdict} (DSR ${riInfo.dsr?.toFixed(3) ?? 'NaN'}, lookahead=${riInfo.lookahead_count})`;
+            riBlockReason = `research-integrity verdict=${riInfo.verdict} (DSR ${
+              riInfo.dsr?.toFixed(3) ?? 'NaN'
+            }, lookahead=${riInfo.lookahead_count})`;
           }
         }
       }
@@ -2093,9 +2108,13 @@ export class QuantStrategyParamVersionService {
         const wfNote = wfInfo
           ? `walk-forward ${wfInfo.verdict} (DSR ${wfInfo.dsr?.toFixed(3) ?? 'NaN'})`
           : 'walk-forward 门禁未启用';
-        const edgeNote = edgeHypo?.thesis ? `edge: "${String(edgeHypo.thesis).slice(0, 40)}..."` : 'edge 门禁未启用';
+        const edgeNote = edgeHypo?.thesis
+          ? `edge: "${String(edgeHypo.thesis).slice(0, 40)}..."`
+          : 'edge 门禁未启用';
         const riNote = riInfo
-          ? `RI ${riInfo.verdict} (DSR ${riInfo.dsr?.toFixed(3) ?? 'NaN'}, lookahead=${riInfo.lookahead_count})`
+          ? `RI ${riInfo.verdict} (DSR ${riInfo.dsr?.toFixed(3) ?? 'NaN'}, lookahead=${
+              riInfo.lookahead_count
+            })`
           : 'RI 门禁未启用';
         promotions.push({
           ...compact,

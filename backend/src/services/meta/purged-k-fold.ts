@@ -116,7 +116,9 @@ export function purgedKFoldSplits(
       const e = eventMap.get(id)!;
       const overlapsTest =
         (e.entry_time < testStart && e.exit_time >= testStart) ||
-        (e.entry_time < testEnd && e.exit_time > testEnd && !(e.entry_time >= testStart && e.entry_time < testEnd));
+        (e.entry_time < testEnd &&
+          e.exit_time > testEnd &&
+          !(e.entry_time >= testStart && e.entry_time < testEnd));
       if (overlapsTest) {
         purgedCount += 1;
         return false;
@@ -159,8 +161,7 @@ export function sampleUniquenessWeights(events: SampleEvent[]): number[] {
   for (let i = 0; i < N; i += 1) {
     for (let j = i + 1; j < N; j += 1) {
       const overlaps =
-        events[i].entry_time <= events[j].exit_time &&
-        events[j].entry_time <= events[i].exit_time;
+        events[i].entry_time <= events[j].exit_time && events[j].entry_time <= events[i].exit_time;
       if (overlaps) {
         overlapCount[i] += 1;
         overlapCount[j] += 1;
@@ -173,7 +174,9 @@ export function sampleUniquenessWeights(events: SampleEvent[]): number[] {
 /**
  * Aggregate purged k-fold metrics across folds
  */
-export function aggregateFoldMetrics(foldMetrics: Array<{ fold: number; accuracy: number; auc?: number }>): {
+export function aggregateFoldMetrics(
+  foldMetrics: Array<{ fold: number; accuracy: number; auc?: number }>
+): {
   mean_accuracy: number;
   std_accuracy: number;
   mean_auc: number | null;
@@ -183,7 +186,9 @@ export function aggregateFoldMetrics(foldMetrics: Array<{ fold: number; accuracy
   const accs = foldMetrics.map(f => f.accuracy).filter(v => Number.isFinite(v));
   const aucs = foldMetrics.map(f => f.auc).filter((v): v is number => Number.isFinite(v as number));
   const meanAcc = accs.reduce((s, v) => s + v, 0) / accs.length;
-  const stdAcc = Math.sqrt(accs.reduce((s, v) => s + (v - meanAcc) ** 2, 0) / Math.max(1, accs.length - 1));
+  const stdAcc = Math.sqrt(
+    accs.reduce((s, v) => s + (v - meanAcc) ** 2, 0) / Math.max(1, accs.length - 1)
+  );
   const meanAuc = aucs.length > 0 ? aucs.reduce((s, v) => s + v, 0) / aucs.length : null;
   const stdAuc =
     aucs.length > 1

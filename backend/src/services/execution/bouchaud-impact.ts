@@ -58,12 +58,7 @@
  *
  * @returns impact as fraction of price (e.g. 0.005 = 50 bps)
  */
-export function bouchaudImpact(
-  order_qty: number,
-  adv: number,
-  daily_vol: number,
-  Y: number = 1.0
-): number {
+export function bouchaudImpact(order_qty: number, adv: number, daily_vol: number, Y = 1.0): number {
   if (adv <= 0 || daily_vol <= 0 || order_qty <= 0) return 0;
   return Y * daily_vol * Math.sqrt(order_qty / adv);
 }
@@ -75,7 +70,7 @@ export function bouchaudImpactBps(
   order_qty: number,
   adv: number,
   daily_vol: number,
-  Y: number = 1.0
+  Y = 1.0
 ): number {
   return bouchaudImpact(order_qty, adv, daily_vol, Y) * 10000;
 }
@@ -90,14 +85,17 @@ export function bouchaudImpactBps(
  *
  *   或 OLS:  realized_impact = Y · σ · √(Q/V)  → Y = Σ(impact · sqrt_term) / Σ(sqrt_term²)
  */
-export function calibrateBouchaudY(trades: Array<{
-  realized_impact_fraction: number; // (avg_fill - decision_price) / decision_price
-  order_qty: number;
-  adv: number;
-  daily_vol: number;
-}>): { Y_median: number; Y_ols: number; n_valid: number } {
+export function calibrateBouchaudY(
+  trades: Array<{
+    realized_impact_fraction: number; // (avg_fill - decision_price) / decision_price
+    order_qty: number;
+    adv: number;
+    daily_vol: number;
+  }>
+): { Y_median: number; Y_ols: number; n_valid: number } {
   const ys: number[] = [];
-  let num = 0, denom = 0;
+  let num = 0,
+    denom = 0;
   for (const t of trades) {
     if (t.adv <= 0 || t.daily_vol <= 0 || t.order_qty <= 0) continue;
     const sqrt_term = t.daily_vol * Math.sqrt(t.order_qty / t.adv);
@@ -110,9 +108,10 @@ export function calibrateBouchaudY(trades: Array<{
   }
   if (ys.length === 0) return { Y_median: NaN, Y_ols: NaN, n_valid: 0 };
   ys.sort((a, b) => a - b);
-  const Y_median = ys.length % 2 === 0
-    ? (ys[ys.length / 2 - 1] + ys[ys.length / 2]) / 2
-    : ys[Math.floor(ys.length / 2)];
+  const Y_median =
+    ys.length % 2 === 0
+      ? (ys[ys.length / 2 - 1] + ys[ys.length / 2]) / 2
+      : ys[Math.floor(ys.length / 2)];
   const Y_ols = denom > 0 ? num / denom : 0;
   return { Y_median, Y_ols, n_valid: ys.length };
 }
@@ -156,15 +155,21 @@ export function compareACvsBouchaud(input: {
   const ac_pct = input.spread_pct / 2 + eta * v + gamma * v;
   const ac_bps = ac_pct * 10000;
 
-  const bc_bps = bouchaudImpactBps(input.order_qty, input.adv, input.daily_vol, input.Y_bouchaud ?? 1.0);
+  const bc_bps = bouchaudImpactBps(
+    input.order_qty,
+    input.adv,
+    input.daily_vol,
+    input.Y_bouchaud ?? 1.0
+  );
 
   const delta = bc_bps - ac_bps;
   const delta_ratio = ac_bps > 0 ? delta / ac_bps : 0;
   let rec = 'AC ≈ BC: 两个模型一致';
   if (Math.abs(delta_ratio) > 0.5) {
-    rec = bc_bps > ac_bps
-      ? 'BC > AC: 大单 / 高 participation; 用 Bouchaud 更保守'
-      : 'BC < AC: 小单 / 低 participation; AC 高估了 impact';
+    rec =
+      bc_bps > ac_bps
+        ? 'BC > AC: 大单 / 高 participation; 用 Bouchaud 更保守'
+        : 'BC < AC: 小单 / 低 participation; AC 高估了 impact';
   }
   return {
     almgren_chriss_bps: ac_bps,

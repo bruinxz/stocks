@@ -174,7 +174,7 @@ async function test_default_params_match_AC() {
   expectEqual('holdingDaysLimit=3 (AC 持有 3 日强制)', p.holdingDaysLimit, 3);
   expectEqual('highOpenSellHalfPct=0.05 (AC 高开 5%+)', p.highOpenSellHalfPct, 0.05);
   expectEqual('excludeOneWordBoard=true', p.excludeOneWordBoard, true);
-  expectEqual('US-082 minMarketSentiment=60', p.minMarketSentiment, 60);
+  expectEqual('US-082 minMarketSentiment=30 (2026-06-10: 60→30 lowered)', p.minMarketSentiment, 30);
 }
 
 async function test_strategy_definition_metadata() {
@@ -853,14 +853,14 @@ async function test_us082_sentiment_above_threshold_passes() {
   expectEqual('eligible 1', r.eligible_count, 1);
   expectEqual('market_sentiment.value = 75', r.market_sentiment.value, 75);
   expectEqual('market_sentiment.blocked = false', r.market_sentiment.blocked, false);
-  expectEqual('market_sentiment.threshold = 60 (default)', r.market_sentiment.threshold, 60);
+  expectEqual('market_sentiment.threshold = 30 (default, lowered 60→30 on 2026-06-10)', r.market_sentiment.threshold, 30);
   expectEqual('filtered.sentiment_blocked = 0', r.filtered.sentiment_blocked, 0);
 }
 
 async function test_us082_sentiment_at_threshold_passes() {
-  // 边界值: 情绪 = 60 = threshold → 正常入场（≥ 通过，严格 < 才阻断）
+  // 边界值: 情绪 = 30 = threshold → 正常入场（≥ 通过，严格 < 才阻断）
   const tradeDate = '2026-06-05';
-  const ds = buildSentimentScenario(tradeDate, 60);
+  const ds = buildSentimentScenario(tradeDate, 30);
   const s = new DragonHeadMomentumStrategy(ds);
   const r = await s.generateSignals(tradeDate);
   expectEqual('情绪 == threshold → BUY 1', r.signals.filter(x => x.signal === 'buy').length, 1);
@@ -868,15 +868,15 @@ async function test_us082_sentiment_at_threshold_passes() {
 }
 
 async function test_us082_sentiment_below_threshold_blocks_entry() {
-  // 情绪 = 45 < 60 → 跳过新开仓
+  // 情绪 = 20 < 30 → 跳过新开仓 (默认阈值 2026-06-10 由 60→30 调低)
   const tradeDate = '2026-06-05';
-  const ds = buildSentimentScenario(tradeDate, 45);
+  const ds = buildSentimentScenario(tradeDate, 20);
   const s = new DragonHeadMomentumStrategy(ds);
   const r = await s.generateSignals(tradeDate);
-  expectEqual('情绪 45 < 60 → BUY 0', r.signals.filter(x => x.signal === 'buy').length, 0);
+  expectEqual('情绪 20 < 30 → BUY 0', r.signals.filter(x => x.signal === 'buy').length, 0);
   expectEqual('eligible_count = 0', r.eligible_count, 0);
   expectEqual('target_positions 空', r.target_positions.length, 0);
-  expectEqual('market_sentiment.value = 45', r.market_sentiment.value, 45);
+  expectEqual('market_sentiment.value = 20', r.market_sentiment.value, 20);
   expectEqual('market_sentiment.blocked = true', r.market_sentiment.blocked, true);
   expectEqual('limit_up_pool_size 仍 = 1', r.filtered.limit_up_pool_size, 1);
   expectEqual('sentiment_blocked = 1 (1 涨停股被跳过)', r.filtered.sentiment_blocked, 1);

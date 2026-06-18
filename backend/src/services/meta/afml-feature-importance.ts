@@ -32,7 +32,14 @@
  *   - 无需 RF (我们当前 MetaLabel 用 LR, 不支持 MDI tree-based)
  */
 
-import { TrainingRow, sigmoid, FeatureName, FEATURE_NAMES, buildFeatureVector, MetaLabelModel } from './MetaLabelService';
+import {
+  TrainingRow,
+  sigmoid,
+  FeatureName,
+  FEATURE_NAMES,
+  buildFeatureVector,
+  MetaLabelModel,
+} from './MetaLabelService';
 
 /** Park-Miller LCG for reproducible permutation */
 class PermutationRng {
@@ -111,7 +118,13 @@ export function mdaImportance(
 
   const importances: Record<string, number> = {};
   // 6 raw numeric features to permute (与 signal_score / breadth / winrate / payoff / atr 对应)
-  const numericFeatures = ['signal_score', 'market_breadth_score', 'strategy_recent_winrate_30d', 'strategy_recent_payoff_30d', 'market_vol_atr'];
+  const numericFeatures = [
+    'signal_score',
+    'market_breadth_score',
+    'strategy_recent_winrate_30d',
+    'strategy_recent_payoff_30d',
+    'market_vol_atr',
+  ];
 
   for (const feat of numericFeatures) {
     let totalDelta = 0;
@@ -165,7 +178,13 @@ export function sfiImportance(
   options: { feature_means?: Record<string, number> } = {}
 ): Record<string, number> {
   const importances: Record<string, number> = {};
-  const numericFeatures = ['signal_score', 'market_breadth_score', 'strategy_recent_winrate_30d', 'strategy_recent_payoff_30d', 'market_vol_atr'];
+  const numericFeatures = [
+    'signal_score',
+    'market_breadth_score',
+    'strategy_recent_winrate_30d',
+    'strategy_recent_payoff_30d',
+    'market_vol_atr',
+  ];
 
   for (const feat of numericFeatures) {
     const values = rows.map(r => (r.features as any)[feat] as number);
