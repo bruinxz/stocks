@@ -10,7 +10,7 @@ cd "$SCRIPT_DIR"
 LOG_FILE="$SCRIPT_DIR/ralph-run.log"
 STUCK_MINUTES=20  # 超过这么多分钟没更新就视为卡死
 CHECK_INTERVAL=120  # 每 2 分钟检查一次
-WORKTREE_PATH="/Users/bytedance/go/src/github.com/bruinxz/stocks/.claude/worktrees/zen-khorana-13679b"
+WORKTREE_PATH="/Users/bytedance/go/src/github.com/bruinxz/stocks"
 
 # 心跳：每次循环写入一个时间戳到一个独立文件，方便外部检测看门狗是否还活着
 HEARTBEAT_FILE="$SCRIPT_DIR/ralph-watchdog.heartbeat"
