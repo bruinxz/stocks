@@ -139,6 +139,69 @@ export async function getIndustryHeatmap(date?: string): Promise<FactorIndustryH
   return res.data.data as FactorIndustryHeatmapResponse;
 }
 
+// ---------- /api/factors/industry-board (Batch AF 2026-06-18) --------------
+
+export interface IndustryBoardIndustryToday {
+  change_pct: number | null;
+  main_inflow: number | null;
+  main_inflow_ratio: number | null;
+  limit_up_count: number;
+  advancing_count: number | null;
+  declining_count: number | null;
+  leader_stock_code: string | null;
+  leader_stock_name: string | null;
+  leader_stock_change_pct: number | null;
+}
+
+export interface IndustryBoardSeriesPoint {
+  trade_date: string;
+  change_pct: number | null;
+  main_inflow_ratio: number | null;
+}
+
+export interface IndustryBoardIndustry {
+  industry_code: string;
+  industry_name: string;
+  today: IndustryBoardIndustryToday;
+  series: IndustryBoardSeriesPoint[];
+}
+
+export interface IndustryBoardHotConcept {
+  keyword: string;
+  heat_score: number;
+  rank: number | null;
+  is_new: boolean;
+  related_stocks: Array<{ stock_code: string; stock_name: string }>;
+}
+
+export interface IndustryBoardResponse {
+  trade_date: string | null;
+  dates: string[];
+  industries: IndustryBoardIndustry[];
+  hot_concepts: IndustryBoardHotConcept[];
+  universe_size: number;
+  limit_up_today?: number;
+  note?: string;
+}
+
+export async function getIndustryBoard(opts?: {
+  date?: string;
+  top?: number;
+  lookback?: number;
+}): Promise<IndustryBoardResponse> {
+  const params: Record<string, string | number> = {};
+  if (opts?.date) params.date = opts.date;
+  if (opts?.top) params.top = opts.top;
+  if (opts?.lookback) params.lookback = opts.lookback;
+  const res = await api.get('/factors/industry-board', {
+    params: Object.keys(params).length > 0 ? params : undefined,
+  });
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '获取行业决策面板失败');
+  }
+  return res.data.data as IndustryBoardResponse;
+}
+
 // ---------- /api/factors/:name/detail (US-094) -----------------------------
 
 export interface FactorICHistoryPoint {
@@ -201,6 +264,7 @@ export const factorService = {
   previewFactorSelection,
   getLatestMultiFactorPicks,
   getIndustryHeatmap,
+  getIndustryBoard,
   getFactorDetail,
 };
 

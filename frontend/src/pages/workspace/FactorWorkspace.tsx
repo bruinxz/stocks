@@ -52,6 +52,7 @@ import {
   FactorOverviewResponse,
   FactorPreviewResponse,
   FactorPreviewSignal,
+  IndustryBoardResponse,
 } from '../../services/factorService';
 
 const { Text } = Typography;
@@ -108,7 +109,8 @@ const FactorWorkspace: React.FC = () => {
     { key: 'overview', label: '因子总览', icon: <FundOutlined /> },
     { key: 'weights', label: '权重调参', icon: <SlidersOutlined /> },
     { key: 'picks', label: '今日选股清单', icon: <OrderedListOutlined /> },
-    { key: 'heatmap', label: '行业热力', icon: <AppstoreOutlined /> },
+    { key: 'board', label: '行业决策', icon: <ThunderboltOutlined /> },
+    { key: 'heatmap', label: '因子热力 (旧)', icon: <AppstoreOutlined /> },
     { key: 'macro', label: '宏观环境', icon: <FundOutlined /> },
     { key: 'block', label: '大宗交易', icon: <FundOutlined /> },
   ];
@@ -234,6 +236,33 @@ const FactorWorkspace: React.FC = () => {
     void loadHeatmap();
   }, [activeKey, heatmap, heatmapLoading, heatmapError, loadHeatmap]);
 
+  // --- 行业决策面板 (Batch AF 2026-06-18) — lazy on first tab activation ---
+  // 替代老的因子 z_score 热力, 直接展示 IndustryFlow + LimitUp + 热门概念 真盘口数据。
+  // 同款 lazy 三态判定: data || loading || error 短路, 仅在用户首次切到 'board' tab 时拉。
+  const [board, setBoard] = useState<IndustryBoardResponse | null>(null);
+  const [boardLoading, setBoardLoading] = useState(false);
+  const [boardError, setBoardError] = useState<string | null>(null);
+
+  const loadBoard = useCallback(async () => {
+    setBoardLoading(true);
+    setBoardError(null);
+    try {
+      const data = await factorService.getIndustryBoard({ top: 40, lookback: 5 });
+      setBoard(data);
+    } catch (err: unknown) {
+      const messageStr = err instanceof Error ? err.message : String(err);
+      setBoardError(messageStr);
+    } finally {
+      setBoardLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeKey !== 'board') return;
+    if (board || boardLoading || boardError) return;
+    void loadBoard();
+  }, [activeKey, board, boardLoading, boardError, loadBoard]);
+
   // --- US-094 因子详情抽屉 ---
   // 点击因子卡片 → 弹出 Drawer 展示：因子描述 / IC 历史曲线 / 5 等分组合净值曲线。
   // detail 数据缓存为 (factor_name → response) 一次拉取后切换其它卡片再回来不重复 fetch；
@@ -354,6 +383,15 @@ const FactorWorkspace: React.FC = () => {
         loading={heatmapLoading}
         error={heatmapError}
         onReload={loadHeatmap}
+      />
+    );
+  } else if (activeKey === 'board') {
+    body = (
+      <IndustryBoardTab
+        data={board}
+        loading={boardLoading}
+        error={boardError}
+        onReload={loadBoard}
       />
     );
   } else if (activeKey === 'macro') {
@@ -777,6 +815,372 @@ const PicksTab: React.FC<{
 // ============================================================================
 // Tab 4 — 行业热力 (US-074)
 // ============================================================================
+
+/**
+ * IndustryBoardTab — Batch AF (2026-06-18) 行业决策面板.
+ *
+ * 取代老的"行业 × 因子 z_score 热力": 用户在该 tab 一眼看到
+ *   - 今日哪些板块在涨 + 主力净流入 (表格按 main_inflow desc)
+ *   - 每个板块的"龙头股 + 涨幅 + 涨停个数" (能跟谁)
+ *   - 近 5 日板块涨跌幅小型 sparkline (辨"持续轮动" vs "一日游")
+ *   - 今日热门概念榜 (跨行业主题, 比如 'AI 算力' / '半导体存储')
+ *
+ * 数据来自后端 GET /api/factors/industry-board (IndustryFlow + LimitUpStock + SnowballHotKeyword).
+ */
+const IndustryBoardTab: React.FC<{
+  data: IndustryBoardResponse | null;
+  loading: boolean;
+  error: string | null;
+  onReload: () => void;
+}> = ({ data, loading, error, onReload }) => {
+  if (loading && !data) {
+    return (
+      <Card>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 64 }}>
+          <Spin tip="加载行业决策面板…" />
+        </div>
+      </Card>
+    );
+  }
+  if (error && !data) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        message="加载行业决策面板失败"
+        description={error}
+        action={
+          <Button size="small" onClick={onReload}>
+            重试
+          </Button>
+        }
+      />
+    );
+  }
+  if (!data || data.industries.length === 0) {
+    return (
+      <Card>
+        <Empty
+          description={
+            data?.note ||
+            'industry_flows 表为空 — 请在 SchedulerService 启用 INDUSTRY_FLOW_SYNC 任务后再访问'
+          }
+        />
+      </Card>
+    );
+  }
+
+  // 单元格颜色: 涨幅越正越红, 越负越绿 (中国 A 股配色)
+  const pctColor = (pct: number | null): string => {
+    if (pct == null || !Number.isFinite(pct)) return '#999';
+    return pct > 0 ? '#cf1322' : pct < 0 ? '#389e0d' : '#666';
+  };
+  const flowColor = (val: number | null): string => {
+    if (val == null || !Number.isFinite(val)) return '#999';
+    return val > 0 ? '#cf1322' : val < 0 ? '#389e0d' : '#666';
+  };
+  const fmtBigMoney = (val: number | null): string => {
+    if (val == null || !Number.isFinite(val)) return '—';
+    const abs = Math.abs(val);
+    if (abs >= 1e8) return `${(val / 1e8).toFixed(2)} 亿`;
+    if (abs >= 1e4) return `${(val / 1e4).toFixed(1)} 万`;
+    return val.toFixed(0);
+  };
+  const fmtPct = (pct: number | null): string =>
+    pct == null || !Number.isFinite(pct) ? '—' : `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
+
+  return (
+    <Space direction="vertical" size={12} style={{ width: '100%' }}>
+      {error && (
+        <Alert
+          type="warning"
+          showIcon
+          message="数据刷新失败 (展示上次缓存)"
+          description={error}
+          action={
+            <Button size="small" onClick={onReload}>
+              重试
+            </Button>
+          }
+        />
+      )}
+
+      {/* KPI Strip */}
+      <Card size="small">
+        <Space size={32} wrap>
+          <Statistic title="交易日" value={data.trade_date ?? '—'} />
+          <Statistic title="今日板块数" value={data.universe_size} suffix="个" />
+          <Statistic title="今日涨停" value={data.limit_up_today ?? '—'} suffix="只" />
+          <Statistic title="热门概念" value={data.hot_concepts.length} suffix="条" />
+          <Button icon={<ReloadOutlined />} loading={loading} onClick={onReload}>
+            刷新
+          </Button>
+        </Space>
+      </Card>
+
+      <Row gutter={[16, 16]}>
+        {/* 左侧 — 行业排行榜 */}
+        <Col xs={24} lg={16}>
+          <Card
+            title={
+              <Space>
+                <ThunderboltOutlined />
+                今日板块强度榜 (按主力净流入排序)
+                {data.trade_date && <Tag color="blue">{data.trade_date}</Tag>}
+                <Tag>{data.industries.length} 个板块</Tag>
+              </Space>
+            }
+            size="small"
+          >
+            <Table
+              size="small"
+              rowKey="industry_code"
+              dataSource={data.industries}
+              pagination={{ pageSize: 20, size: 'small' }}
+              scroll={{ x: 'max-content' }}
+              columns={[
+                {
+                  title: '板块',
+                  dataIndex: 'industry_name',
+                  width: 120,
+                  fixed: 'left',
+                  render: (name: string, row) => (
+                    <div>
+                      <div style={{ fontWeight: 500 }}>{name}</div>
+                      <div style={{ fontSize: 11, color: '#999' }}>{row.industry_code}</div>
+                    </div>
+                  ),
+                },
+                {
+                  title: '涨跌幅',
+                  dataIndex: ['today', 'change_pct'],
+                  width: 90,
+                  align: 'right',
+                  sorter: (a, b) =>
+                    (a.today.change_pct ?? -Infinity) - (b.today.change_pct ?? -Infinity),
+                  render: (v: number | null) => (
+                    <span style={{ color: pctColor(v), fontWeight: 600 }}>{fmtPct(v)}</span>
+                  ),
+                },
+                {
+                  title: '主力净流入',
+                  dataIndex: ['today', 'main_inflow'],
+                  width: 110,
+                  align: 'right',
+                  sorter: (a, b) =>
+                    (a.today.main_inflow ?? -Infinity) - (b.today.main_inflow ?? -Infinity),
+                  render: (v: number | null) => (
+                    <span style={{ color: flowColor(v), fontWeight: 500 }}>{fmtBigMoney(v)}</span>
+                  ),
+                },
+                {
+                  title: '占比',
+                  dataIndex: ['today', 'main_inflow_ratio'],
+                  width: 70,
+                  align: 'right',
+                  render: (v: number | null) => (
+                    <span style={{ color: flowColor(v) }}>{fmtPct(v)}</span>
+                  ),
+                },
+                {
+                  title: '涨停',
+                  dataIndex: ['today', 'limit_up_count'],
+                  width: 60,
+                  align: 'center',
+                  sorter: (a, b) => a.today.limit_up_count - b.today.limit_up_count,
+                  render: (v: number) =>
+                    v > 0 ? <Tag color="red">{v}</Tag> : <span style={{ color: '#999' }}>0</span>,
+                },
+                {
+                  title: '上涨/下跌',
+                  width: 90,
+                  align: 'center',
+                  render: (_v, row) => {
+                    const up = row.today.advancing_count ?? 0;
+                    const dn = row.today.declining_count ?? 0;
+                    return (
+                      <span style={{ fontSize: 12 }}>
+                        <span style={{ color: '#cf1322' }}>{up}</span>
+                        <span style={{ color: '#999' }}> / </span>
+                        <span style={{ color: '#389e0d' }}>{dn}</span>
+                      </span>
+                    );
+                  },
+                },
+                {
+                  title: '板块龙头',
+                  width: 160,
+                  render: (_v, row) => {
+                    if (!row.today.leader_stock_name) {
+                      return <span style={{ color: '#999' }}>—</span>;
+                    }
+                    return (
+                      <div>
+                        <div style={{ fontWeight: 500, fontSize: 12 }}>
+                          {row.today.leader_stock_name}{' '}
+                          <span style={{ color: '#999', fontSize: 11 }}>
+                            {row.today.leader_stock_code}
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: pctColor(row.today.leader_stock_change_pct),
+                          }}
+                        >
+                          {fmtPct(row.today.leader_stock_change_pct)}
+                        </div>
+                      </div>
+                    );
+                  },
+                },
+                {
+                  title: `近 ${data.dates.length} 日涨跌幅`,
+                  width: 200,
+                  render: (_v, row) => (
+                    <SparklinePctRow points={row.series} dates={data.dates} />
+                  ),
+                },
+              ]}
+              expandable={{
+                expandedRowRender: (row) => (
+                  <div style={{ padding: '8px 0', fontSize: 12 }}>
+                    <Typography.Paragraph style={{ marginBottom: 4 }}>
+                      <Text strong>{row.industry_name}</Text> · 近 {row.series.length} 日资金流向 (主力净占比):
+                    </Typography.Paragraph>
+                    <Space wrap>
+                      {row.series.map((p) => (
+                        <Tag
+                          key={p.trade_date}
+                          color={
+                            p.main_inflow_ratio == null
+                              ? 'default'
+                              : p.main_inflow_ratio > 0
+                                ? 'red'
+                                : 'green'
+                          }
+                        >
+                          {p.trade_date.slice(5)}: {fmtPct(p.main_inflow_ratio)}
+                        </Tag>
+                      ))}
+                    </Space>
+                  </div>
+                ),
+              }}
+            />
+            <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 12 }}>
+              排序逻辑: 今日主力净流入 desc. 板块龙头股 = 当日涨幅最大且非一字板.
+              展开行查看近 {data.dates.length} 日板块资金流强度.
+            </Typography.Paragraph>
+          </Card>
+        </Col>
+
+        {/* 右侧 — 今日热门概念 */}
+        <Col xs={24} lg={8}>
+          <Card
+            title={
+              <Space>
+                <RobotOutlined />
+                今日热门概念
+              </Space>
+            }
+            size="small"
+          >
+            {data.hot_concepts.length === 0 ? (
+              <Empty
+                description="今日 snowball_hot_keywords 无数据 — 请在 SchedulerService 启用 SNOWBALL_HOT_KEYWORD_SYNC"
+              />
+            ) : (
+              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                {data.hot_concepts.map((c, i) => (
+                  <Card key={`${c.keyword}-${i}`} size="small" bodyStyle={{ padding: 12 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <div>
+                        <Text strong>{c.keyword}</Text>
+                        {c.is_new && (
+                          <Tag color="red" style={{ marginLeft: 6 }}>
+                            新进
+                          </Tag>
+                        )}
+                        {c.rank != null && (
+                          <Tag style={{ marginLeft: 4 }}>#{c.rank}</Tag>
+                        )}
+                      </div>
+                      <Tag color="purple">{c.heat_score.toLocaleString()}</Tag>
+                    </div>
+                    {c.related_stocks.length > 0 && (
+                      <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+                        关联:{' '}
+                        {c.related_stocks.map((s) => (
+                          <Tag key={s.stock_code} style={{ marginBottom: 2 }}>
+                            {s.stock_name || s.stock_code}
+                          </Tag>
+                        ))}
+                      </div>
+                    )}
+                  </Card>
+                ))}
+              </Space>
+            )}
+            <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 12 }}>
+              数据源: 雪球关注榜 top {data.hot_concepts.length}. heat_score = 当下关注人数,
+              "新进" 标签表示前一交易日榜内无此关键词.
+            </Typography.Paragraph>
+          </Card>
+        </Col>
+      </Row>
+
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+        💡 本面板为决策导向: <Text strong>板块强度榜</Text> 告诉你"今天主力在哪个板块",{' '}
+        <Text strong>龙头股</Text> 告诉你"能跟谁", <Text strong>近 N 日序列</Text>{' '}
+        告诉你"是日内异动还是持续轮动", <Text strong>热门概念</Text> 告诉你"市场在炒哪个主题".
+        数据每日盘后由 SchedulerService 定时 sync 入库 (INDUSTRY_FLOW_SYNC / LIMIT_UP_SYNC /
+        SNOWBALL_HOT_KEYWORD_SYNC).
+      </Typography.Paragraph>
+    </Space>
+  );
+};
+
+/** 极简 sparkline: 5 个柱子, 红绿对照. 高度按 |pct| / max(|pct|) 归一. */
+const SparklinePctRow: React.FC<{
+  points: Array<{ trade_date: string; change_pct: number | null }>;
+  dates: string[];
+}> = ({ points, dates }) => {
+  if (!points.length) return <span style={{ color: '#999' }}>—</span>;
+  const max = Math.max(
+    1,
+    ...points.map((p) => (p.change_pct == null ? 0 : Math.abs(p.change_pct)))
+  );
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', height: 28, gap: 3 }}>
+      {dates.map((d) => {
+        const p = points.find((x) => x.trade_date === d);
+        const v = p?.change_pct ?? null;
+        const h = v == null ? 4 : Math.max(2, (Math.abs(v) / max) * 24);
+        const color = v == null ? '#e0e0e0' : v >= 0 ? '#cf1322' : '#389e0d';
+        return (
+          <div
+            key={d}
+            title={`${d}: ${v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(2) + '%'}`}
+            style={{
+              width: 14,
+              height: h,
+              background: color,
+              borderRadius: 2,
+              opacity: v == null ? 0.4 : 0.85,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+};
 
 /**
  * IndustryHeatmapTab — echarts heatmap：行业 × 因子的 z_score 平均值。

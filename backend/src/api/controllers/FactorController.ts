@@ -6,6 +6,9 @@ import { factorRegistry } from '../../quant/factors/FactorRegistry';
 import '../../quant/factors/library';
 import { FactorScore } from '../../models/FactorScore';
 import { Stock } from '../../models/Stock';
+import { IndustryFlow } from '../../models/IndustryFlow';
+import { LimitUpStock } from '../../models/LimitUpStock';
+import { SnowballHotKeyword } from '../../models/SnowballHotKeyword';
 import {
   MultiFactorAlphaStrategy,
   DEFAULT_MULTI_FACTOR_ALPHA_WEIGHTS,
@@ -502,6 +505,263 @@ export class FactorController {
     }
   }
 
+  // ---------- GET /api/factors/industry-board --------------------------------
+  /**
+   * Batch AF (2026-06-18) — 行业决策面板 (面向"今天买什么板块/什么股").
+   *
+   * 和老 industry-heatmap (因子 z_score 平均) 完全不同：本端点直接读
+   * IndustryFlow / LimitUpStock / SnowballHotKeyword 真盘口数据,
+   * 让用户在一个屏幕看到:
+   *   - "今天哪些板块在涨 + 主力在流入" (industries — 按今日 main_inflow desc)
+   *   - "板块龙头股 + 涨停个数" (一眼看到能跟谁)
+   *   - "近 5 日的连续表现" (per industry 时间序列, 用于辨"持续轮动" vs "一日游")
+   *   - "今日热门概念 / 关联股" (跨行业主题, 比如 'AI 算力')
+   *
+   * Query:
+   *   - date?: YYYY-MM-DD  缺省 = IndustryFlow 最新交易日
+   *   - top?:  number       行业行数 (按今日 main_inflow desc), 默认 30, 上限 100
+   *   - lookback?: number   时间序列窗口, 默认 5 个交易日, 范围 [1, 20]
+   *
+   * Response:
+   *   {
+   *     trade_date: '2026-06-18',
+   *     dates: ['2026-06-12', ..., '2026-06-18'],   // 由近到远顺序 ASC
+   *     industries: [{
+   *       industry_code, industry_name,
+   *       today: { change_pct, main_inflow, main_inflow_ratio, limit_up_count,
+   *                advancing_count, declining_count,
+   *                leader_stock_code, leader_stock_name, leader_stock_change_pct },
+   *       series: Array<{ trade_date, change_pct, main_inflow_ratio }>   // 长度 = lookback
+   *     }],
+   *     hot_concepts: [{
+   *       keyword, heat_score, rank, is_new,
+   *       related_stocks: [{stock_code, stock_name}]   // 截断 top 5
+   *     }],
+   *     universe_size: number,    // 当日 IndustryFlow 行数
+   *     note?: string,
+   *   }
+   *
+   * 设计:
+   *   - 不做 join: IndustryFlow 已宽表 (含 leader stock + limit_up_count), 一次查就够
+   *   - hot_concepts 来自 SnowballHotKeyword 当日榜单 (按 heat_score desc, 取 top 12)
+   *   - 缓存 5min (盘中只在 15:30 sync 后变化, 缓存命中率高)
+   */
+  async getIndustryBoard(req: Request, res: Response) {
+    try {
+      const dateParam = typeof req.query.date === 'string' ? req.query.date.trim() : '';
+      const topParam = Number(req.query.top);
+      const lookbackParam = Number(req.query.lookback);
+
+      if (dateParam && !/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+        res.status(400).json({ success: false, message: 'date 必须为 YYYY-MM-DD 格式' });
+        return;
+      }
+      const topN = Number.isInteger(topParam) && topParam > 0 ? Math.min(topParam, 100) : 30;
+      const lookback =
+        Number.isInteger(lookbackParam) && lookbackParam > 0 ? Math.min(lookbackParam, 20) : 5;
+
+      const cacheKey = `industry-board:${dateParam || 'auto'}:${topN}:${lookback}`;
+      const cached = this.getCached<any>(cacheKey);
+      if (cached) {
+        res.json({ success: true, data: cached });
+        return;
+      }
+
+      // 1) 确定 trade_date — 缺省取 IndustryFlow 最新一日
+      let tradeDate: string | null;
+      if (dateParam) {
+        tradeDate = dateParam;
+      } else {
+        const row = (await IndustryFlow.findOne({
+          attributes: [[fn('MAX', col('trade_date')), 'd']],
+          raw: true,
+        })) as unknown as { d?: string | Date | null } | null;
+        tradeDate = normalizeDateIso(row?.d ?? null);
+      }
+
+      if (!tradeDate) {
+        res.json({
+          success: true,
+          data: {
+            trade_date: null,
+            dates: [],
+            industries: [],
+            hot_concepts: [],
+            universe_size: 0,
+            note: 'industry_flows 表为空 — 请在 SchedulerService 启用 INDUSTRY_FLOW_SYNC 后再访问',
+          },
+        });
+        return;
+      }
+
+      // 2) 今日全部 IndustryFlow 行 → 按 main_inflow desc 取 topN
+      const todayRows = (await IndustryFlow.findAll({
+        where: { trade_date: tradeDate },
+        raw: true,
+      })) as unknown as Array<{
+        industry_code: string;
+        industry_name: string;
+        change_pct: number | string | null;
+        main_inflow: number | string | null;
+        main_inflow_ratio: number | string | null;
+        limit_up_count: number | string | null;
+        leader_stock_code: string | null;
+        leader_stock_name: string | null;
+        leader_stock_change_pct: number | string | null;
+        advancing_count: number | string | null;
+        declining_count: number | string | null;
+      }>;
+
+      if (todayRows.length === 0) {
+        res.json({
+          success: true,
+          data: {
+            trade_date: tradeDate,
+            dates: [],
+            industries: [],
+            hot_concepts: [],
+            universe_size: 0,
+            note: `${tradeDate} 当日 industry_flows 无数据 — 该日可能未做 sync`,
+          },
+        });
+        return;
+      }
+
+      // 排序: 按今日主力净流入 desc; null 视作 -Infinity 排尾
+      todayRows.sort((a, b) => {
+        const av = toNum(a.main_inflow);
+        const bv = toNum(b.main_inflow);
+        const an = av === null ? Number.NEGATIVE_INFINITY : av;
+        const bn = bv === null ? Number.NEGATIVE_INFINITY : bv;
+        return bn - an;
+      });
+      const topRows = todayRows.slice(0, topN);
+      const topCodes = topRows.map(r => r.industry_code);
+
+      // 3) 近 lookback 个 distinct trade_date (含今日)
+      const distinctDates = (await IndustryFlow.findAll({
+        attributes: [[fn('DISTINCT', col('trade_date')), 'trade_date']],
+        where: { trade_date: { [Op.lte]: tradeDate } },
+        order: [['trade_date', 'DESC']],
+        limit: lookback,
+        raw: true,
+      })) as unknown as Array<{ trade_date: string | Date }>;
+      const dates = distinctDates
+        .map(r => normalizeDateIso(r.trade_date))
+        .filter((d): d is string => !!d)
+        .sort(); // ASC
+
+      // 4) 拉这些日期里 topCodes 的 series
+      const seriesRows = (await IndustryFlow.findAll({
+        attributes: ['trade_date', 'industry_code', 'change_pct', 'main_inflow_ratio'],
+        where: {
+          trade_date: { [Op.in]: dates },
+          industry_code: { [Op.in]: topCodes },
+        },
+        raw: true,
+      })) as unknown as Array<{
+        trade_date: string | Date;
+        industry_code: string;
+        change_pct: number | string | null;
+        main_inflow_ratio: number | string | null;
+      }>;
+
+      const seriesByCode = new Map<
+        string,
+        Map<string, { change_pct: number | null; main_inflow_ratio: number | null }>
+      >();
+      for (const r of seriesRows) {
+        const dt = normalizeDateIso(r.trade_date);
+        if (!dt) continue;
+        let m = seriesByCode.get(r.industry_code);
+        if (!m) {
+          m = new Map();
+          seriesByCode.set(r.industry_code, m);
+        }
+        m.set(dt, {
+          change_pct: toNum(r.change_pct),
+          main_inflow_ratio: toNum(r.main_inflow_ratio),
+        });
+      }
+
+      const industries = topRows.map(row => {
+        const m = seriesByCode.get(row.industry_code) ?? new Map();
+        const series = dates.map(d => {
+          const cell = m.get(d);
+          return {
+            trade_date: d,
+            change_pct: cell?.change_pct ?? null,
+            main_inflow_ratio: cell?.main_inflow_ratio ?? null,
+          };
+        });
+        return {
+          industry_code: row.industry_code,
+          industry_name: row.industry_name,
+          today: {
+            change_pct: toNum(row.change_pct),
+            main_inflow: toNum(row.main_inflow),
+            main_inflow_ratio: toNum(row.main_inflow_ratio),
+            limit_up_count: toNum(row.limit_up_count) ?? 0,
+            advancing_count: toNum(row.advancing_count),
+            declining_count: toNum(row.declining_count),
+            leader_stock_code: row.leader_stock_code,
+            leader_stock_name: row.leader_stock_name,
+            leader_stock_change_pct: toNum(row.leader_stock_change_pct),
+          },
+          series,
+        };
+      });
+
+      // 5) 今日热门概念 (top 12 by heat_score)
+      // SnowballHotKeyword 表里 keyword = 股票简称 (按数据源约定), 用户在前端能直观
+      // 看到当下市场关注度排前的标的。
+      const conceptRows = (await SnowballHotKeyword.findAll({
+        where: { trade_date: tradeDate },
+        attributes: ['keyword', 'heat_score', 'rank', 'is_new', 'related_stocks_json'],
+        order: [['heat_score', 'DESC']],
+        limit: 12,
+        raw: true,
+      })) as unknown as Array<{
+        keyword: string;
+        heat_score: number | string | null;
+        rank: number | string | null;
+        is_new: boolean;
+        related_stocks_json: any;
+      }>;
+      const hot_concepts = conceptRows.map(r => {
+        const related = Array.isArray(r.related_stocks_json) ? r.related_stocks_json : [];
+        return {
+          keyword: r.keyword,
+          heat_score: toNum(r.heat_score) ?? 0,
+          rank: toNum(r.rank),
+          is_new: Boolean(r.is_new),
+          related_stocks: related.slice(0, 5).map((s: any) => ({
+            stock_code: String(s?.stock_code ?? ''),
+            stock_name: String(s?.stock_name ?? ''),
+          })),
+        };
+      });
+
+      // 6) 今日涨停统计 (附加 KPI)
+      const limitUpToday = await LimitUpStock.count({ where: { trade_date: tradeDate } });
+
+      const payload = {
+        trade_date: tradeDate,
+        dates,
+        industries,
+        hot_concepts,
+        universe_size: todayRows.length,
+        limit_up_today: limitUpToday,
+      };
+      this.setCached(cacheKey, payload);
+      res.json({ success: true, data: payload });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('FactorController.getIndustryBoard failed:', error);
+      res.status(500).json({ success: false, message });
+    }
+  }
+
   // ---------- GET /api/factors/:name/detail ----------------------------------
   /**
    * 因子详情聚合 — US-094 因子卡片"点击 → 弹出抽屉"使用。
@@ -673,6 +933,13 @@ function stripSymbolSuffix(symbol: string | null | undefined): string {
   if (!symbol) return '';
   const i = symbol.indexOf('.');
   return i < 0 ? symbol : symbol.slice(0, i);
+}
+
+/** number|string|null → number|null (NaN/Infinity 也归 null) */
+function toNum(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const n = typeof value === 'string' ? Number(value) : value;
+  return Number.isFinite(n) ? n : null;
 }
 
 // Re-export the default weights so factor.routes.ts (and tests) can advertise them
