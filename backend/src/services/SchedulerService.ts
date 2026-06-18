@@ -2482,6 +2482,39 @@ class SchedulerService {
         logger.info(
           `[stock-sentiment-sync] universe=${universe} limit=${limit} 完成: succeeded=${result.succeeded} failed=${result.failed}`
         );
+      } else if (task.type === 'MARKET_NEWS_SYNC') {
+        // Batch AG (2026-06-18): 市场新闻 / 财经事件 sync.
+        // 多源 (财联社电报 / 东财全球 / 新浪) fallback + 去重入库 market_news 表.
+        // 推荐 cron: '*/30 9-15 * * 1-5' (盘中每 30min) + '0 17,21 * * 1-5' (盘后).
+        // 可选 parameters.limit 控制单次拉取行数 (默认 80).
+        // 可选 parameters.prune_days 触发 pruneOld (默认不裁剪, 设 30 表示删 30 天前).
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { marketNewsSyncService } = require('../data/services/MarketNewsSyncService');
+        const limit = parameters.limit ? Number(parameters.limit) : 80;
+        const result = await marketNewsSyncService.syncOnce({ limit });
+        let pruneDeleted = 0;
+        if (parameters.prune_days) {
+          const pruneRes = await marketNewsSyncService.pruneOld(Number(parameters.prune_days));
+          pruneDeleted = pruneRes.deleted;
+        }
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.fetched || 0,
+          success_count: result.upserted || 0,
+          failed_count: result.error ? 1 : 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: result.error || null,
+          result_summary: {
+            scenario: 'market_news_sync',
+            fetched: result.fetched,
+            upserted: result.upserted,
+            skipped: result.skipped,
+            prune_deleted: pruneDeleted,
+          },
+        });
+        logger.info(
+          `[market-news-sync] 完成: fetched=${result.fetched} upserted=${result.upserted} skipped=${result.skipped} pruned=${pruneDeleted}`
+        );
       } else if (task.type === 'STRATEGY_KILL_SWITCH_CHECK') {
         // Phase 4+ 策略熔断监控 — 评估每个策略的 kill_switch_metric (定义在
         // edge_hypothesis 内)；低于 kill_switch_threshold 触发自动 enabled=false。
@@ -5454,6 +5487,22 @@ class SchedulerService {
         cron_expression: '30 16 * * 1-5',
         is_active: true,
         parameters: { universe: 'market', limit: 200 },
+      },
+      // Batch AG (2026-06-18): 市场新闻 / 财经事件 — 让 TradingAgents prompt 注入
+      // 'recent_news[]' 上下文 + 行业决策面板时间线展示. 高频(30 min/盘中) + 收尾裁剪.
+      {
+        name: '市场新闻 sync — 盘中每 30 分钟 (Batch AG)',
+        type: 'MARKET_NEWS_SYNC',
+        cron_expression: '7,37 9-15 * * 1-5',
+        is_active: true,
+        parameters: { limit: 80 },
+      },
+      {
+        name: '市场新闻 sync — 收盘整理 + 裁剪 30 天前 (Batch AG)',
+        type: 'MARKET_NEWS_SYNC',
+        cron_expression: '17 17 * * *',
+        is_active: true,
+        parameters: { limit: 80, prune_days: 30 },
       },
     ];
 

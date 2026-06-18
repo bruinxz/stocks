@@ -860,6 +860,36 @@ export class AIAdvisorService {
       } catch (err: any) {
         logger.warn(`buildAnalyzeContext SnowballHotKeyword 失败: ${err?.message}`);
       }
+
+      // 6) 近期市场要闻 — Batch AG (2026-06-18) MarketNews top 5
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { MarketNews } = require('../models/MarketNews');
+        const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000)
+          .toISOString()
+          .slice(0, 10);
+        const newsRows = (await MarketNews.findAll({
+          attributes: ['title', 'publish_time', 'source'],
+          where: {
+            publish_date: { [Op.gte]: twoDaysAgo },
+          },
+          order: [['publish_time', 'DESC']],
+          limit: 5,
+          raw: true,
+        })) as Array<{ title: string; publish_time: Date | string; source: string }>;
+        if (newsRows.length) {
+          ctx.recent_news = newsRows.map(n => ({
+            title: n.title,
+            date:
+              n.publish_time instanceof Date
+                ? n.publish_time.toISOString().slice(0, 16).replace('T', ' ')
+                : String(n.publish_time).slice(0, 16),
+            source: n.source,
+          }));
+        }
+      } catch (err: any) {
+        logger.warn(`buildAnalyzeContext MarketNews 失败: ${err?.message}`);
+      }
     } catch (err: any) {
       logger.warn(`buildAnalyzeContext 顶层失败: ${err?.message}`);
     }

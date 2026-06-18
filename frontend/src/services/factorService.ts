@@ -174,6 +174,14 @@ export interface IndustryBoardHotConcept {
   related_stocks: Array<{ stock_code: string; stock_name: string }>;
 }
 
+export interface IndustryBoardNewsItem {
+  title: string;
+  publish_time: string;
+  source: string;
+  category: string | null;
+  url: string | null;
+}
+
 export interface IndustryBoardResponse {
   trade_date: string | null;
   dates: string[];
@@ -181,6 +189,7 @@ export interface IndustryBoardResponse {
   hot_concepts: IndustryBoardHotConcept[];
   universe_size: number;
   limit_up_today?: number;
+  recent_news?: IndustryBoardNewsItem[];
   note?: string;
 }
 

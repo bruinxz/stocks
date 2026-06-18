@@ -26,6 +26,7 @@ router.get('/market-breadth', authController.authenticate, dataController.getMar
 router.get('/quality-deep-check', authController.authenticate, dataController.getQualityDeepCheck);
 router.get('/dragon-tiger', authController.authenticate, dataController.listDragonTiger);
 router.get('/etf-flow', authController.authenticate, dataController.listEtfFlow);
+router.get('/market-news', authController.authenticate, dataController.listMarketNews);
 router.post('/sync/:source', authController.authenticate, dataController.triggerSync);
 
 export default router;

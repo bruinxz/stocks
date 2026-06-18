@@ -4815,6 +4815,158 @@ def get_fund_top_holdings(fund_codes_csv: str, date: str) -> List[Dict[str, Any]
     return out
 
 
+# ===========================================================================
+# Batch AG (2026-06-18): 市场新闻 / 财经事件汇总 — 给 TradingAgents prompt
+# 注入"今天市场在关心什么"上下文 + 给前端时间线 UI 提供日级要闻流.
+# ===========================================================================
+
+def get_market_news(limit: int = 80) -> List[Dict[str, Any]]:
+    """
+    汇总今日全市场要闻 (财联社电报 + 东财全球新闻 + 主要财经门户), 给系统接入
+    "市场在关心什么" 上下文.
+
+    数据源 (按优先级 fallback, 任一可用即返回):
+      1. `ak.stock_info_global_cls()` — 财联社电报 (最有时效性, 7x24h 直接抓全市场要闻)
+      2. `ak.stock_info_global_em()`  — 东财全球新闻
+      3. `ak.news_economic_baidu()`   — 百度财经日历 (宏观事件)
+      4. `ak.stock_info_global_sina()` — 新浪全球新闻
+
+    返回:
+        List[Dict], 按 publish_time DESC 排序, 字段:
+          - title:        新闻标题
+          - content:      正文/摘要 (可能为空)
+          - publish_time: 'YYYY-MM-DD HH:mm:ss' ISO
+          - source:       数据源标识 ('cls' / 'em' / 'baidu' / 'sina')
+          - category:     '财经' / '宏观' / '电报' 等 (可能为空)
+          - url:          原文链接 (可能为空)
+          - raw_payload:  原始行
+
+    用例:
+      - DailyEventDigestService 每日聚合; 入库 market_news 表
+      - 前端 行业决策 tab 右侧 '今日要闻' 时间线
+      - TradingAgents prompt 注入 recent_news[] 字段 (US-AE 已预留)
+    """
+    aggregated: List[Dict[str, Any]] = []
+
+    # Source 1: 财联社电报 (最优先, 全市场最具时效性)
+    try:
+        fn = getattr(ak, 'stock_info_global_cls', None)
+        if fn is not None:
+            try:
+                df = fn(symbol='全部')
+            except TypeError:
+                df = fn()
+            if df is not None and not df.empty:
+                for _, r in df.iterrows():
+                    try:
+                        title = _cell_str(r, '标题')
+                        if not title:
+                            continue
+                        # 财联社字段: 标题 / 内容 / 发布日期 / 发布时间 / 链接
+                        pub_date = _cell_str(r, '发布日期')
+                        pub_time = _cell_str(r, '发布时间')
+                        publish_time = None
+                        if pub_date and pub_time:
+                            publish_time = f'{pub_date} {pub_time}'
+                        elif pub_date:
+                            publish_time = pub_date
+                        aggregated.append({
+                            'title': title,
+                            'content': _cell_str(r, '内容') or '',
+                            'publish_time': publish_time,
+                            'source': 'cls',
+                            'category': '电报',
+                            'url': _cell_str(r, '链接') or '',
+                            'raw_payload': _row_to_jsonable(r, df.columns),
+                        })
+                        if len(aggregated) >= limit * 2:
+                            break
+                    except Exception:
+                        continue
+                print(f'cls news: parsed {len(aggregated)} rows', file=sys.stderr)
+    except Exception as e:
+        print(f'stock_info_global_cls failed: {e}', file=sys.stderr)
+
+    # Source 2: 东财全球新闻 (cls 不够 / 失败时补充)
+    if len(aggregated) < limit:
+        try:
+            fn = getattr(ak, 'stock_info_global_em', None)
+            if fn is not None:
+                df = fn()
+                if df is not None and not df.empty:
+                    pre = len(aggregated)
+                    for _, r in df.iterrows():
+                        try:
+                            title = _cell_str(r, '标题')
+                            if not title:
+                                continue
+                            aggregated.append({
+                                'title': title,
+                                'content': _cell_str(r, '摘要') or '',
+                                'publish_time': _cell_str(r, '发布时间'),
+                                'source': 'em',
+                                'category': '财经',
+                                'url': _cell_str(r, '链接') or '',
+                                'raw_payload': _row_to_jsonable(r, df.columns),
+                            })
+                            if len(aggregated) >= limit * 2:
+                                break
+                        except Exception:
+                            continue
+                    print(f'em news: parsed +{len(aggregated) - pre} rows', file=sys.stderr)
+        except Exception as e:
+            print(f'stock_info_global_em failed: {e}', file=sys.stderr)
+
+    # Source 3: 新浪全球新闻 (备选)
+    if len(aggregated) < limit:
+        try:
+            fn = getattr(ak, 'stock_info_global_sina', None)
+            if fn is not None:
+                df = fn()
+                if df is not None and not df.empty:
+                    pre = len(aggregated)
+                    for _, r in df.iterrows():
+                        try:
+                            # 新浪可能字段: 时间 / 内容 (无标题, 用内容截断作 title)
+                            content = _cell_str(r, '内容') or _cell_str(r, '正文') or ''
+                            title = content[:80] if content else None
+                            if not title:
+                                continue
+                            aggregated.append({
+                                'title': title,
+                                'content': content,
+                                'publish_time': _cell_str(r, '时间') or _cell_str(r, '发布时间'),
+                                'source': 'sina',
+                                'category': '财经',
+                                'url': _cell_str(r, '链接') or '',
+                                'raw_payload': _row_to_jsonable(r, df.columns),
+                            })
+                            if len(aggregated) >= limit * 2:
+                                break
+                        except Exception:
+                            continue
+                    print(f'sina news: parsed +{len(aggregated) - pre} rows', file=sys.stderr)
+        except Exception as e:
+            print(f'stock_info_global_sina failed: {e}', file=sys.stderr)
+
+    # 去重 (by title), 按 publish_time DESC 截断到 limit
+    seen_titles = set()
+    deduped = []
+    for item in aggregated:
+        t = item.get('title', '').strip()
+        if not t or t in seen_titles:
+            continue
+        seen_titles.add(t)
+        deduped.append(item)
+
+    def _sort_key(it):
+        pt = it.get('publish_time') or ''
+        return pt
+    deduped.sort(key=_sort_key, reverse=True)
+
+    return deduped[:limit]
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -5113,6 +5265,17 @@ def main():
             fund_codes_csv = sys.argv[2]
             date = sys.argv[3]
             result = get_fund_top_holdings(fund_codes_csv, date)
+
+        elif command == "get_market_news":
+            # Batch AG: 市场新闻 / 财经事件汇总
+            # Args: [limit]  (default 80)
+            limit = 80
+            if len(sys.argv) >= 3 and sys.argv[2] not in ('', '-', 'null'):
+                try:
+                    limit = int(sys.argv[2])
+                except (ValueError, TypeError):
+                    limit = 80
+            result = get_market_news(limit=limit)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

@@ -9,6 +9,7 @@ import { Stock } from '../../models/Stock';
 import { IndustryFlow } from '../../models/IndustryFlow';
 import { LimitUpStock } from '../../models/LimitUpStock';
 import { SnowballHotKeyword } from '../../models/SnowballHotKeyword';
+import { MarketNews } from '../../models/MarketNews';
 import {
   MultiFactorAlphaStrategy,
   DEFAULT_MULTI_FACTOR_ALPHA_WEIGHTS,
@@ -745,6 +746,46 @@ export class FactorController {
       // 6) 今日涨停统计 (附加 KPI)
       const limitUpToday = await LimitUpStock.count({ where: { trade_date: tradeDate } });
 
+      // 7) 近 2 日市场要闻 (Batch AG) — 同一 endpoint 给前端时间线用
+      let recentNews: Array<{
+        title: string;
+        publish_time: string;
+        source: string;
+        category: string | null;
+        url: string | null;
+      }> = [];
+      try {
+        const twoDaysAgo = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
+        const newsRows = (await MarketNews.findAll({
+          attributes: ['title', 'publish_time', 'source', 'category', 'url'],
+          where: { publish_date: { [Op.gte]: twoDaysAgo } },
+          order: [['publish_time', 'DESC']],
+          limit: 25,
+          raw: true,
+        })) as unknown as Array<{
+          title: string;
+          publish_time: Date | string;
+          source: string;
+          category: string | null;
+          url: string | null;
+        }>;
+        recentNews = newsRows.map(n => ({
+          title: n.title,
+          publish_time:
+            n.publish_time instanceof Date
+              ? n.publish_time.toISOString()
+              : String(n.publish_time),
+          source: n.source,
+          category: n.category,
+          url: n.url,
+        }));
+      } catch (err) {
+        // MarketNews 表可能未创建或为空, 不要阻塞 industry board
+        logger.warn(
+          `getIndustryBoard MarketNews fetch failed: ${(err as Error).message} (board 仍正常返回)`
+        );
+      }
+
       const payload = {
         trade_date: tradeDate,
         dates,
@@ -752,6 +793,7 @@ export class FactorController {
         hot_concepts,
         universe_size: todayRows.length,
         limit_up_today: limitUpToday,
+        recent_news: recentNews,
       };
       this.setCached(cacheKey, payload);
       res.json({ success: true, data: payload });

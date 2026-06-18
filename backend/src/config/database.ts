@@ -76,6 +76,7 @@ import { RestrictedShareRelease } from '../models/RestrictedShareRelease';
 import { ShareholderTradeRecord } from '../models/ShareholderTradeRecord';
 import { MarginTradingBalance } from '../models/MarginTradingBalance';
 import { ETFFlow } from '../models/ETFFlow';
+import { MarketNews } from '../models/MarketNews';
 // 2026-06-11 新增 4 个数据维度
 import { MacroIndicator } from '../models/MacroIndicator';
 import { FundTopHolding } from '../models/FundTopHolding';
@@ -199,6 +200,7 @@ const sequelize = new Sequelize({
     ShareholderTradeRecord,
     MarginTradingBalance,
     ETFFlow,
+    MarketNews,
     // 2026-06-11 新增 4 个数据维度
     MacroIndicator,
     FundTopHolding,

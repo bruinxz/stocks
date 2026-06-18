@@ -10,6 +10,7 @@ import { LimitUpSyncService } from '../../data/services/LimitUpSyncService';
 import { IndustrySyncService } from '../../data/services/IndustrySyncService';
 import { SnowballHotKeywordSyncService } from '../../data/services/SnowballHotKeywordSyncService';
 import { ETFFlowSyncService, ListFlowOptions } from '../../data/services/ETFFlowSyncService';
+import { MarketNews } from '../../models/MarketNews';
 import { getAllETFIndustries } from '../../constants/etfIndustry';
 import { isValidSeatType, SeatType } from '../../constants/famousSeats';
 import { logger } from '../../utils/logger';
@@ -37,6 +38,7 @@ export class DataController {
     this.triggerSync = this.triggerSync.bind(this);
     this.listDragonTiger = this.listDragonTiger.bind(this);
     this.listEtfFlow = this.listEtfFlow.bind(this);
+    this.listMarketNews = this.listMarketNews.bind(this);
   }
 
   /**
@@ -726,6 +728,87 @@ export class DataController {
       return res.status(500).json({
         success: false,
         error: error?.message ?? 'ETF 资金流查询失败',
+      });
+    }
+  }
+
+  /**
+   * GET /api/data/market-news
+   * Batch AG (2026-06-18) — 市场新闻 / 财经事件查询.
+   *
+   * Query:
+   *   - days?: number (1..30, default 1)        取近 N 天
+   *   - source?: string ('cls'|'em'|'sina'|'baidu')  仅一个数据源
+   *   - limit?: number (1..200, default 80)     上限行数
+   *
+   * Response: { success, count, filters, data: [{title, publish_time, source, category, url, content}] }
+   */
+  async listMarketNews(req: Request, res: Response) {
+    try {
+      const daysRaw = req.query.days != null ? Number(req.query.days) : 1;
+      const days = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(30, Math.floor(daysRaw)) : 1;
+      const limitRaw = req.query.limit != null ? Number(req.query.limit) : 80;
+      const limit =
+        Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(200, Math.floor(limitRaw)) : 80;
+      const sourceParam =
+        typeof req.query.source === 'string' && req.query.source.trim()
+          ? String(req.query.source).trim().toLowerCase()
+          : undefined;
+      const validSources = new Set(['cls', 'em', 'sina', 'baidu']);
+      const source = sourceParam && validSources.has(sourceParam) ? sourceParam : undefined;
+
+      // publish_date >= today-days+1 (含 today)
+      const today = todayIso();
+      const startDate = new Date(Date.now() - (days - 1) * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+
+      const where: any = { publish_date: { [Op.gte]: startDate } };
+      if (source) where.source = source;
+
+      const rows = (await MarketNews.findAll({
+        where,
+        attributes: ['title', 'content', 'publish_time', 'publish_date', 'source', 'category', 'url'],
+        order: [['publish_time', 'DESC']],
+        limit,
+        raw: true,
+      })) as unknown as Array<{
+        title: string;
+        content: string | null;
+        publish_time: Date | string;
+        publish_date: string | Date;
+        source: string;
+        category: string | null;
+        url: string | null;
+      }>;
+
+      const data = rows.map(r => ({
+        title: r.title,
+        content: r.content,
+        publish_time:
+          r.publish_time instanceof Date
+            ? r.publish_time.toISOString()
+            : String(r.publish_time),
+        publish_date:
+          r.publish_date instanceof Date
+            ? r.publish_date.toISOString().slice(0, 10)
+            : String(r.publish_date),
+        source: r.source,
+        category: r.category,
+        url: r.url,
+      }));
+
+      return res.json({
+        success: true,
+        count: data.length,
+        filters: { days, source: source ?? null, limit, start_date: startDate, today },
+        data,
+      });
+    } catch (error: any) {
+      logger.error(`DataController.listMarketNews failed: ${error?.message ?? error}`);
+      return res.status(500).json({
+        success: false,
+        error: error?.message ?? '市场新闻查询失败',
       });
     }
   }
