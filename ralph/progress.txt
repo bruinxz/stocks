@@ -24,3 +24,21 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - `env -i PATH HOME NODE_ENV=production` 在 macOS / Ubuntu runner 都生效，注意必须保留 `HOME` 不然 ts-node 解析 tsconfig 会爆。
   - 不要把 schema required 字段加到 `buildBaseSchema` 同时漏更新 `.env.example` —— CI happy-path 会立刻挂。
 ---
+
+## 2026/06/19 03:10 - US-002
+- 实现 [OPS-002] SchedulerService cron 注册中心
+- Files changed:
+  - backend/src/constants/cronRegistry.ts (新): 54 个 cron type 集中登记 (category / owner / recommendedCron / intraday / dryRunDefault); 暴露 CRON_REGISTRY / buildCronRegistryDump / findUnregisteredTypes / isRegisteredCronType / getCronTaskDefinition / listRegisteredCronTypes
+  - backend/src/services/SchedulerService.ts: initialize() 新增 dumpCronRegistry() 启动落代码白名单; dumpActiveTaskSchedule() 用 node-cron@4 getNextRun() 把每个 active task 下一次触发时间 (Asia/Shanghai) + registered flag 落日志, 并双向对账 (DB->registry warn = drift; registry->DB info = 本环境未启用)
+  - backend/tests/constants/cron-registry.test.ts (新): 514 assert 覆盖 5 个维度 — 形态校验 / dump 稳定排序 / 查询函数 / findUnregisteredTypes 行为 / **CRON_REGISTRY ↔ SchedulerService._executeTaskLogic 双向一致性 guard** (用正则扫源文件提取 `task.type === '...'` 与 registry 比对)
+  - ralph/prd.json: US-002 passes=true + notes
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npm test -- --filter=cron-registry` exit 0, 514 ok / 0 failed
+  - `eslint src/constants/cronRegistry.ts` exit 0 (1 warn = 项目通用 non-null assertion warn, 跟 EnvValidator 风格一致)
+- **Learnings for future iterations:**
+  - 项目里 SchedulerService._executeTaskLogic 用 `} else if (task.type === '...')` 长 if-else dispatch 54 种类型,任何"加 cron"必须 (a) 在 CRON_REGISTRY 添一行 + (b) 在 SchedulerService 添 else if + (c) DB 写 ScheduledTask。tests/constants/cron-registry.test.ts 的 [5] 双向一致性 guard 会强制 (a)+(b) 必须同步,漏一边立刻挂。
+  - node-cron@4 的 ScheduledTask 实例有 `getNextRun(): Date` runtime 方法,但 cron@3 / cron@4 的 TypeScript type def 里都没暴露,需用 `(cronJob as any)?.getNextRun?.()` 兜底,且要 try-catch 包住——升级 node-cron 时这是第一个会断的地方。
+  - SchedulerService.initialize() 已积累 5 个 boot-time 旁路子任务 (reconcileStaleRunningTasks / catchUpMissedTasks / dry_run audit / dump cron registry / dump active task schedule)。每个都必须 try-catch 自吞或 .catch() 包裹,绝不能 throw 阻塞 boot——否则一个非核心子任务挂了整个 service 起不来,损失远大于。
+  - 测试 [5] 用 fs.readFileSync + 正则扫源文件这种"meta-test"模式非常有用,可以用同样套路 guard 任何"枚举 A ↔ dispatch table B"的一致性问题 (例如 task type ↔ permission scope, route ↔ handler 表)。
+---

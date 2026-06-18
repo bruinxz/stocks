@@ -32,8 +32,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": "依赖: OPS-001"
+      "passes": true,
+      "notes": "已实现 src/constants/cronRegistry.ts (54 type + buildCronRegistryDump + findUnregisteredTypes 漂移检测) + SchedulerService.initialize() 启动时 dumpCronRegistry() / dumpActiveTaskSchedule() 把代码白名单 + 每个 active task 的 next run time (Asia/Shanghai) + drift 双向告警 (DB 有 type 但 registry 没登记 = warn; registry 有但 DB 没启用 = info) 一并落日志。tests/constants/cron-registry.test.ts 514 assert 全过 (形态 / 排序 / 查询 / drift / 双向一致性 guard)。"
     },
     {
       "id": "US-003",

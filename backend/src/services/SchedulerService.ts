@@ -1,5 +1,11 @@
 import cron, { ScheduledTask as CronScheduledTask } from 'node-cron';
 import { ScheduledTask } from '../models/ScheduledTask';
+import {
+  buildCronRegistryDump,
+  findUnregisteredTypes,
+  isRegisteredCronType,
+  CRON_REGISTRY,
+} from '../constants/cronRegistry';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
 import { logger } from '../utils/logger';
@@ -272,6 +278,11 @@ class SchedulerService {
     try {
       await this.reconcileStaleRunningTasks();
 
+      // US-002 (OPS-002, 2026-06-19): 启动时把 CRON_REGISTRY 完整 dump 到日志,
+      // 让运维 grep "cron registry" 能秒看到"系统认为自己应该跑哪些 cron 任务"。
+      // 这是"代码白名单"侧的事实源 (DB 里有几条 + 实际 schedule 成功几条是另一组数字)。
+      this.dumpCronRegistry();
+
       const tasks = await ScheduledTask.findAll({ where: { is_active: true } });
       logger.info(`Found ${tasks.length} active scheduled tasks`);
 
@@ -284,6 +295,11 @@ class SchedulerService {
         `[scheduler] initialize complete: active_count=${this.activeTasks.size}/${tasks.length} ` +
           `(${tasks.length - this.activeTasks.size} 个未 schedule, 通常是 cron expression 非法)`
       );
+
+      // US-002 (OPS-002, 2026-06-19): schedule 完后 dump 每个 active task 的下一次
+      // 触发时间 + 跟 CRON_REGISTRY 对账。让运维一行日志看到"这个 task 下次什么时候触发"
+      // (而不是去问 DB / 手算 cron), 同时把"DB 有 type 但代码没登记"的漂移暴露出来。
+      this.dumpActiveTaskSchedule(tasks);
 
       // Batch O (2026-06-17, C-S5): 启动周期性 reconcile timer.
       // 旧实现只在 boot 跑一次, task 卡死后 RUNNING 状态永不清. 现在每 10 分钟扫一次
@@ -386,6 +402,89 @@ class SchedulerService {
     logger.info(
       `Scheduled task ${task.id} (${task.name}) registered with cron: ${task.cron_expression}`
     );
+  }
+
+  /**
+   * US-002 (OPS-002, 2026-06-19): 启动时把 CRON_REGISTRY (代码白名单) 完整 dump 到日志。
+   * 这是"代码层认为系统应该跑哪些 cron 任务"的事实源, 用于:
+   *   - 运维查"我重启完, 系统认为自己会跑些什么", grep "[scheduler] cron registry"
+   *   - 跟 /health/detail 里的 scheduler_active_tasks 对照, 漏 schedule 一眼看到
+   *   - 新人 onboarding (省去翻 SchedulerService._executeTaskLogic 5000 行)
+   * 失败不阻塞 boot — 仅 warn。
+   */
+  private dumpCronRegistry(): void {
+    try {
+      const lines = buildCronRegistryDump();
+      logger.info(`[scheduler] cron registry: ${lines.length} type(s) declared in code`);
+      for (const line of lines) {
+        const flags: string[] = [];
+        if (line.intraday) flags.push('intraday');
+        const tag = flags.length ? ` [${flags.join(',')}]` : '';
+        const rec = line.recommendedCron ? ` recommendedCron="${line.recommendedCron}"` : '';
+        logger.info(
+          `[scheduler] cron registry/${line.category} ${line.type}${tag} owner=${line.owner}${rec} — ${line.description}`
+        );
+      }
+    } catch (err: any) {
+      logger.warn(`[scheduler] dumpCronRegistry failed (non-fatal): ${err?.message || err}`);
+    }
+  }
+
+  /**
+   * US-002 (OPS-002, 2026-06-19): 把每个 active scheduled task 的 (id, name, type,
+   * cron_expression, nextRunAt) dump 到日志, 并跟 CRON_REGISTRY 对账漂移项。
+   *   - nextRunAt: 优先用 node-cron@4 的 getNextRun() (runtime 字段, 类型 def 没有);
+   *     缺失就降级为空字符串, 不抛错。
+   *   - 漂移项: DB 里 type 不在 CRON_REGISTRY 的, 单独打 warn (UNREGISTERED), 因为
+   *     这意味着代码 / 文档没登记但 DB 在跑, 是配置漂移。
+   * 失败不阻塞 boot — 仅 warn。
+   */
+  private dumpActiveTaskSchedule(allTasks: ScheduledTask[]): void {
+    try {
+      const tz = 'Asia/Shanghai';
+      const activeIds = new Set(this.activeTasks.keys());
+      const sorted = [...allTasks].sort((a, b) =>
+        (a.type || '').localeCompare(b.type || '') || a.id - b.id
+      );
+      for (const task of sorted) {
+        const scheduled = activeIds.has(task.id);
+        const cronJob = this.activeTasks.get(task.id) as any;
+        let nextRunStr = '';
+        try {
+          const next = cronJob?.getNextRun?.();
+          if (next instanceof Date && !Number.isNaN(next.getTime())) {
+            nextRunStr = moment(next).tz(tz).format('YYYY-MM-DD HH:mm:ss z');
+          }
+        } catch {
+          /* runtime 没有 getNextRun 时降级为空 */
+        }
+        const registered = isRegisteredCronType(task.type);
+        const prefix = scheduled ? '[scheduler] cron task' : '[scheduler] cron task NOT_SCHEDULED';
+        logger.info(
+          `${prefix} id=${task.id} type=${task.type} name="${task.name}" cron="${task.cron_expression}" nextRunAt=${nextRunStr || 'n/a'} registered=${registered}`
+        );
+      }
+      const unregistered = findUnregisteredTypes(allTasks.map(t => t.type));
+      if (unregistered.length > 0) {
+        logger.warn(
+          `[scheduler] cron registry drift: ${unregistered.length} DB type(s) NOT in CRON_REGISTRY ` +
+            `→ ${unregistered.join(', ')} (请加到 src/constants/cronRegistry.ts)`
+        );
+      }
+      // 反向: registry 有但 DB 没启用 → 提示 (不告警, 因为允许"代码登记但环境未启用")
+      const dbTypes = new Set(allTasks.map(t => t.type));
+      const missingInDb = CRON_REGISTRY.map(d => d.type)
+        .filter(t => !dbTypes.has(t))
+        .sort();
+      if (missingInDb.length > 0) {
+        logger.info(
+          `[scheduler] cron registry note: ${missingInDb.length} registered type(s) without active DB row ` +
+            `(可能本环境未启用): ${missingInDb.join(', ')}`
+        );
+      }
+    } catch (err: any) {
+      logger.warn(`[scheduler] dumpActiveTaskSchedule failed (non-fatal): ${err?.message || err}`);
+    }
   }
 
   private getChinaDate(): string {
