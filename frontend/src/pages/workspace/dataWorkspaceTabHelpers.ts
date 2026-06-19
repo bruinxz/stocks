@@ -727,3 +727,246 @@ export function buildSlaDashboardViewModel(
     loading: false,
   };
 }
+
+// ============================================================================
+// US-062 [FE-023] DataWorkspace 数据缺失独立告警 helpers
+// ----------------------------------------------------------------------------
+// 数据缺失 (data missing) 与 SLA 违约 (US-061) 是两个独立维度: SLA 是"晚了
+// 几天", 数据缺失是"压根没拿到 / 链路抛错 / 状态完全未知". 两者会有交集
+// (lag=null 的源 SLA unknown + 数据缺失 unknown), 但 UI 要分开告警 —
+// SLA 看板看"达成率%", 数据缺失告警看"具体哪些源没数据 + 为啥 + 影响什么
+// 业务". 这条卡片让 ops 一眼看到 "今天 northbound 链路挂了" 而不需要去看
+// SLA 百分比反推. category 字段固定为 'data' 与 US-077 RiskAlert
+// 三大 category (position/market/individual) 平级 + 独立; 任何下游
+// (告警中心 / 待办 tab / 飞书 push) 通过 category==='data' 直接过滤本类.
+//
+// 形态对偶 [[buildSlaDashboardViewModel]] (US-061) — N 维度 → 各自 classify
+// → 合并到 K 档 + ready=bool + blockers, 但本卡片输出 list 而非 category 矩阵.
+// ============================================================================
+
+/** 数据缺失告警的 category 字段固定值 — 与 US-077 RiskAlert.category 平级. */
+export const DATA_MISSING_ALERT_CATEGORY = 'data' as const;
+
+/** 数据缺失告警三档严重度 — critical=链路挂, warning=滞后≥SLA, info=状态未知. */
+export type DataMissingAlertSeverity = 'critical' | 'warning' | 'info';
+
+/** 单条数据缺失告警 (一条对应一个 source). */
+export interface DataMissingAlert {
+  /** 固定 'data' — 与 RiskAlert.category 平级, 让告警中心可按 category 过滤. */
+  category: typeof DATA_MISSING_ALERT_CATEGORY;
+  /** 数据源 key (e.g. 'northbound' / 'dragon_tiger'). */
+  source_key: string;
+  /** 数据源中文名 (display_name). */
+  display_name: string;
+  /** 源类别 (daily/periodic/event). */
+  source_category: DataSourceCategory;
+  /** 严重度 — 决定 Tag 颜色与排序权重. */
+  severity: DataMissingAlertSeverity;
+  /** 简短原因文案 (1-2 句, 给 ops 直接看). */
+  reason: string;
+  /** lag_trading_days (回写, null=未知). */
+  lag_trading_days: number | null;
+  /** 最近一次同步时间 (ISO string 或 null). */
+  last_sync_at: string | null;
+  /** 当前累计记录数 (回写, 0 表示从未抓到). */
+  record_count: number;
+  /** 触发该告警的具体类型 (sync_error / severe_lag / unknown / no_record). */
+  trigger: 'sync_error' | 'severe_lag' | 'unknown' | 'no_record';
+}
+
+/** 数据缺失告警的视图模型 — 给 DataMissingAlertsCard 一次性 destructure. */
+export interface DataMissingAlertsViewModel {
+  /** 告警列表 (按严重度倒序 + key 字母序稳定). */
+  alerts: DataMissingAlert[];
+  /** critical 数. */
+  critical: number;
+  /** warning 数. */
+  warning: number;
+  /** info 数. */
+  info: number;
+  /** 总告警数 (= critical + warning + info). */
+  total: number;
+  /** healthResponse 未加载 → true. */
+  loading: boolean;
+  /** 参考交易日 (回写, 给 caller 副标题用). */
+  reference_trade_date: string | null;
+}
+
+/** "严重滞后" 阈值 — lag > 此值算 severe (与 DataHealthDashboard red 阈值一致). */
+export const DATA_MISSING_SEVERE_LAG = 3;
+
+/** 严重度排序权重 — 数字越大越靠前. */
+const SEVERITY_ORDER: Readonly<Record<DataMissingAlertSeverity, number>> = Object.freeze({
+  critical: 3,
+  warning: 2,
+  info: 1,
+});
+
+/** 严重度 → antd Tag color (与 SLA / health 配色家族保持一致). */
+export const DATA_MISSING_SEVERITY_COLOR: Readonly<Record<DataMissingAlertSeverity, string>> =
+  Object.freeze({
+    critical: DATA_HEALTH_COLOR.red,
+    warning: DATA_HEALTH_COLOR.yellow,
+    info: DATA_HEALTH_COLOR.unknown,
+  });
+
+/** 严重度 → 中文标签 (Tag text). */
+export const DATA_MISSING_SEVERITY_LABEL: Readonly<Record<DataMissingAlertSeverity, string>> =
+  Object.freeze({
+    critical: '链路中断',
+    warning: '严重滞后',
+    info: '状态未知',
+  });
+
+/**
+ * 单条 card → DataMissingAlert | null (无缺失返 null).
+ *
+ * 触发条件 (按优先级):
+ *   1. error 非空字符串 → critical / 'sync_error'
+ *   2. lag_trading_days > DATA_MISSING_SEVERE_LAG → warning / 'severe_lag'
+ *   3. level==='unknown' 且 lag_trading_days===null → info / 'unknown'
+ *   4. record_count===0 且 category∈{daily,event} → info / 'no_record'
+ *
+ * Pure, 接受 null/undefined 兜底返 null.
+ */
+export function classifyDataMissingAlert(
+  card: DataSourceHealthCard | null | undefined
+): DataMissingAlert | null {
+  if (!card || typeof card !== 'object') return null;
+  const sourceCategory = card.category;
+  if (sourceCategory !== 'daily' && sourceCategory !== 'periodic' && sourceCategory !== 'event') {
+    return null;
+  }
+  const display_name = card.display_name || card.key || '未命名数据源';
+  const lag =
+    typeof card.lag_trading_days === 'number' && Number.isFinite(card.lag_trading_days)
+      ? card.lag_trading_days
+      : null;
+  const recordCount =
+    typeof card.record_count === 'number' &&
+    Number.isFinite(card.record_count) &&
+    card.record_count > 0
+      ? card.record_count
+      : 0;
+  const last_sync_at =
+    typeof card.last_sync_at === 'string' && card.last_sync_at.length > 0
+      ? card.last_sync_at
+      : null;
+
+  // 1. sync 链路异常 (最严重, error 非空就 critical)
+  if (typeof card.error === 'string' && card.error.length > 0) {
+    return {
+      category: DATA_MISSING_ALERT_CATEGORY,
+      source_key: card.key,
+      display_name,
+      source_category: sourceCategory,
+      severity: 'critical',
+      reason: `同步链路报错: ${card.error.slice(0, 80)}`,
+      lag_trading_days: lag,
+      last_sync_at,
+      record_count: recordCount,
+      trigger: 'sync_error',
+    };
+  }
+
+  // 2. 严重滞后 (lag > 3 trading days)
+  if (lag !== null && lag > DATA_MISSING_SEVERE_LAG) {
+    return {
+      category: DATA_MISSING_ALERT_CATEGORY,
+      source_key: card.key,
+      display_name,
+      source_category: sourceCategory,
+      severity: 'warning',
+      reason: `数据落后 ${lag} 个交易日 (> ${DATA_MISSING_SEVERE_LAG} 天阈值)`,
+      lag_trading_days: lag,
+      last_sync_at,
+      record_count: recordCount,
+      trigger: 'severe_lag',
+    };
+  }
+
+  // 3. 状态未知 (lag=null + level unknown)
+  if (card.level === 'unknown' && lag === null) {
+    return {
+      category: DATA_MISSING_ALERT_CATEGORY,
+      source_key: card.key,
+      display_name,
+      source_category: sourceCategory,
+      severity: 'info',
+      reason: '状态未知 — 没有最近一次同步数据可参考',
+      lag_trading_days: lag,
+      last_sync_at,
+      record_count: recordCount,
+      trigger: 'unknown',
+    };
+  }
+
+  // 4. 零记录 (daily/event 类源理应有数据, periodic 季报型可能本身没几条)
+  if (recordCount === 0 && (sourceCategory === 'daily' || sourceCategory === 'event')) {
+    return {
+      category: DATA_MISSING_ALERT_CATEGORY,
+      source_key: card.key,
+      display_name,
+      source_category: sourceCategory,
+      severity: 'info',
+      reason: '累计记录为 0 — 该数据源从未抓到任何数据',
+      lag_trading_days: lag,
+      last_sync_at,
+      record_count: 0,
+      trigger: 'no_record',
+    };
+  }
+
+  return null;
+}
+
+/**
+ * 主入口: healthResponse → 数据缺失告警视图模型.
+ *
+ * - healthResponse=null/undefined → loading=true 占位空列表
+ * - alerts 按 (severity desc, source_key asc) 稳定排序 — React key 稳定 + UI 可预期
+ * - 永不抛, 永远返合法 vm. component 直接 destructure 渲染.
+ */
+export function buildDataMissingAlertsViewModel(
+  healthResponse: DataHealthStatusResponse | null | undefined
+): DataMissingAlertsViewModel {
+  if (!healthResponse) {
+    return {
+      alerts: [],
+      critical: 0,
+      warning: 0,
+      info: 0,
+      total: 0,
+      loading: true,
+      reference_trade_date: null,
+    };
+  }
+  const cards = Array.isArray(healthResponse.cards) ? healthResponse.cards : [];
+  const alerts: DataMissingAlert[] = [];
+  for (const c of cards) {
+    const a = classifyDataMissingAlert(c);
+    if (a) alerts.push(a);
+  }
+  alerts.sort((x, y) => {
+    const so = SEVERITY_ORDER[y.severity] - SEVERITY_ORDER[x.severity];
+    if (so !== 0) return so;
+    return x.source_key.localeCompare(y.source_key);
+  });
+  let critical = 0;
+  let warning = 0;
+  let info = 0;
+  for (const a of alerts) {
+    if (a.severity === 'critical') critical += 1;
+    else if (a.severity === 'warning') warning += 1;
+    else info += 1;
+  }
+  return {
+    alerts,
+    critical,
+    warning,
+    info,
+    total: alerts.length,
+    loading: false,
+    reference_trade_date: healthResponse.reference_trade_date ?? null,
+  };
+}

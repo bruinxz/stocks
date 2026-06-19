@@ -14,6 +14,7 @@ import StockExplorer from '../../components/data/StockExplorer';
 import SystemTopologyMap from '../../components/data/SystemTopologyMap';
 import ActivationDashboard from '../../components/data/ActivationDashboard';
 import SlaDashboardCard from '../../components/data/SlaDashboardCard';
+import DataMissingAlertsCard from '../../components/data/DataMissingAlertsCard';
 import { DataHealthStatusResponse, getDataHealthStatus } from '../../services/dataHealthService';
 import {
   DataWorkspaceTabKey,
@@ -129,6 +130,7 @@ const DataWorkspace: React.FC = () => {
           <>
             {overviewBar}
             <SlaDashboardCard healthData={healthData} />
+            <DataMissingAlertsCard healthData={healthData} />
             <SystemTopologyMap />
             <ActivationDashboard />
             <DataHealthDashboard />

@@ -1681,3 +1681,26 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **跨类别整体达成率 = sum(on_time) / sum(total - unknown)** 而非 "三类 attainment 平均". 平均会让 daily(50%) + periodic(100%) + event(100%) = 83% 看似还好, 实际 daily 真的崩了. sum/sum 让权重天然按 source 数走, 哪类源多哪类的 SLA 主导整体. 这条与 evaluateShadowRunReadiness 不一样 (那边是 worst case 直接取最差), 选哪种看业务 — SLA 是 "几个不达标" 这种数字直觉, 用 sum/sum 更对.
   - **全 unknown 整体返 null 而非 0**: overall_denom=0 时 attainment_pct=null, UI 渲 '—' 而非 0%. 0% 会误读为 "完全没达成", null 表 "没数据可判". 同款适用任何 "rate = a/b 但 b=0" 场景 — null > 0 > NaN.
 ---
+
+
+
+## 2026/06/20 05:05 - US-062
+- 实现 [FE-023] DataWorkspace 数据缺失独立告警
+- Files changed:
+  - frontend/src/pages/workspace/dataWorkspaceTabHelpers.ts (新增 US-062 段, ~230 行): 5 个 export (DATA_MISSING_ALERT_CATEGORY='data' / DATA_MISSING_SEVERE_LAG=3 / DATA_MISSING_SEVERITY_COLOR / DATA_MISSING_SEVERITY_LABEL frozen + DataMissingAlert / DataMissingAlertsViewModel type) + classifyDataMissingAlert (single card → alert|null, 4 触发: sync_error/severe_lag/unknown/no_record, 优先级链 critical→warning→info, 永不抛) + buildDataMissingAlertsViewModel (response → vm, 按 severity desc + key asc 稳定排序, null/undefined → loading=true). category 字段固定字面量 'data' 与 US-077 RiskAlert (position/market/individual) 平级 + 独立.
+  - frontend/src/components/data/DataMissingAlertsCard.tsx (新, ~180 行): 嵌在 DataWorkspace 'health' tab, 与 SlaDashboardCard 并列. 顶部 Tag 显示 "X 条 (严重 N / 滞后 N / 未知 N)" + category=data 标识 Tooltip. critical/warning 时分别渲染 Alert (red/orange) + List 显示每条告警 (Tag 严重度 / display_name / source_category / reason / last_sync_at). 无告警渲染 success Alert "所有数据源均有数据". healthData prop 可选, 缺省自拉一次 (与 SlaDashboardCard 同模式).
+  - frontend/src/pages/workspace/DataWorkspace.tsx: import DataMissingAlertsCard + 'health' case renderTab 在 SlaDashboardCard 后插 <DataMissingAlertsCard healthData={healthData} />.
+  - backend/tests/services/data-workspace-tab-helpers.test.ts (+~250 行): [9] US-062 helper 单测 (常量 sanity + classify 触发优先级 + 边界 lag=3 vs lag=4 + buildVm 混合 cards 排序 + 同输入同输出 + null/undefined cards 不抛 + reference_trade_date 回写 + 全部 alert.category='data' 守约) + [10] META-GUARD DataMissingAlertsCard.tsx 接通 helper (import + 调 + alerts 渲染 + category Tag + testid + healthData prop) + [11] META-GUARD DataWorkspace.tsx 渲染本卡 + [12] META-GUARD helper export 完整性. 共新增 95+ assert.
+  - ralph/prd.json: US-062 passes=true
+- 验证:
+  - `frontend && npx tsc --noEmit` exit 0
+  - `backend && npx tsc --noEmit` exit 0
+  - `backend && npx ts-node tests/services/data-workspace-tab-helpers.test.ts` 276 ok / 0 failed
+  - `eslint src/components/data/DataMissingAlertsCard.tsx + helpers + DataWorkspace.tsx` 0 err 0 warn
+- **Learnings for future iterations:**
+  - **category='data' 字面量是跨 story 的语义合约**, 不只是 UI 字符串. US-077 RiskAlert 已经定义 position/market/individual 三大 category, 本 story 加 'data' 是平级第 4 大类 — 未来 US-070 AlertsBell / US-071 AlertsPanel filter 必须显式认 'data' 类才能让数据缺失告警出现在告警中心. 加新 category 必须同步扩 `AlertCategory` union (backend/src/api/controllers/RiskAlertController.ts deriveAlertCategory) + `safeType` 接受字符串 + 前端 filter UI. 本 story 仅落 UI 卡片 + helper export 常量, **未碰 RiskAlert 模型** (后续 US-070/077 类 story 才真正写表). DATA_MISSING_ALERT_CATEGORY 常量是 single source of truth, 任何下游 import 它而非自创字符串.
+  - **"三张卡职责互不重叠" 是 UI 信息架构的关键**: SLA 看百分比 / 数据缺失看具体源 / DataHealthDashboard 看操作入口 — 三张卡共用同一份 healthData snapshot, 但视图维度完全不同, 用户认知零跨页. 任何新加 dashboard 卡片必须先想清楚: 与既有卡的"派生维度差异"在哪? 派生不出来就别加, 否则 UI 噪音. 与 [[buildSlaDashboardViewModel]] 同款"派生而非新拉"思想.
+  - **触发条件优先级链顺序敏感** (sync_error > severe_lag > unknown > no_record): 一个 card 可能同时满足 4 个条件 (e.g. error 非空 + lag=10 + record=0), 必须按 critical-first 短路返第一个匹配, 否则 ops 看到 "info: 累计记录 0" 但实际是链路挂了根本没拉到. 单测 [9.23] [9.24] 明确守这条 — error 优先于 lag/record. 与 US-026 EVENT_TYPE_KEYWORDS / US-028 EARNINGS_DIRECTION 同款 "最严重优先" 思想.
+  - **periodic 类 record_count=0 不算告警** (季报型本身可能数据少), 只 daily/event 才触发 no_record — 边界条件必须显式单测 [9.22]. 不然 ops 半夜被叫醒 "财报数据 0 条" 实际只是 Q4 还没发. 任何 "因为是 X 类源所以不告警" 的特殊路径都必须有显式测试守住.
+  - **DataHealthStatusResponse cards 可能含 null/undefined 元素** (后端 race condition 时空对象), helper 必须 Array.isArray + per-item null check. 单测用直接构造 response 绕过 makeResponse (后者预设 cards 非 null) 才能验这条边界 [9.48].
+---

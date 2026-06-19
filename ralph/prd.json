@@ -960,8 +960,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 62,
-      "passes": false,
-      "notes": "依赖: D-028"
+      "passes": true,
+      "notes": "依赖: D-028 | DONE 2026-06-20: DataMissingAlertsCard 嵌 health tab, helper classifyDataMissingAlert + buildDataMissingAlertsViewModel (frontend pure), category=\"data\" 与 RiskAlert position/market/individual 平级, 276 单测全过 (+95 新 case)."
     },
     {
       "id": "US-063",

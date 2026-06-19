@@ -676,6 +676,307 @@ assert('[3.8] sumRecordCount([])=0', sumRecordCount([]) === 0);
   }
 }
 
+// ---- [9] US-062 数据缺失独立告警 helpers ---------------------------------
+{
+  const {
+    DATA_MISSING_ALERT_CATEGORY,
+    DATA_MISSING_SEVERE_LAG,
+    DATA_MISSING_SEVERITY_COLOR,
+    DATA_MISSING_SEVERITY_LABEL,
+    classifyDataMissingAlert,
+    buildDataMissingAlertsViewModel,
+  } = require('../../../frontend/src/pages/workspace/dataWorkspaceTabHelpers');
+
+  // [9.1-9.5] 常量 sanity
+  assert(
+    '[9.1] DATA_MISSING_ALERT_CATEGORY === "data" (与 RiskAlert.category 平级)',
+    DATA_MISSING_ALERT_CATEGORY === 'data'
+  );
+  assert('[9.2] DATA_MISSING_SEVERE_LAG > 0', DATA_MISSING_SEVERE_LAG > 0);
+  assert('[9.3] DATA_MISSING_SEVERITY_COLOR frozen', Object.isFrozen(DATA_MISSING_SEVERITY_COLOR));
+  assert('[9.4] DATA_MISSING_SEVERITY_LABEL frozen', Object.isFrozen(DATA_MISSING_SEVERITY_LABEL));
+  assert(
+    '[9.5] DATA_MISSING_SEVERITY_LABEL 三档全有',
+    Boolean(
+      DATA_MISSING_SEVERITY_LABEL.critical &&
+        DATA_MISSING_SEVERITY_LABEL.warning &&
+        DATA_MISSING_SEVERITY_LABEL.info
+    )
+  );
+
+  // [9.6] classify: null/undefined → null
+  assert('[9.6] classify null → null', classifyDataMissingAlert(null) === null);
+  assert('[9.7] classify undefined → null', classifyDataMissingAlert(undefined) === null);
+  // @ts-expect-error 测试非法 category
+  assert(
+    '[9.8] classify 未知 category → null',
+    classifyDataMissingAlert(makeCard({ category: 'bogus' as any })) === null
+  );
+
+  // [9.9] sync_error → critical
+  {
+    const alert = classifyDataMissingAlert(
+      makeCard({ key: 'k1', error: 'DB timeout', lag_trading_days: 0 })
+    );
+    assert('[9.9] error 非空 → critical', alert !== null && alert.severity === 'critical');
+    assert('[9.10] trigger=sync_error', alert?.trigger === 'sync_error');
+    assert('[9.11] category=data', alert?.category === 'data');
+    assert('[9.12] reason 含 错误片段', alert?.reason.includes('DB timeout'));
+  }
+
+  // [9.13] severe_lag → warning (lag > 3)
+  {
+    const alert = classifyDataMissingAlert(
+      makeCard({ key: 'k2', category: 'daily', lag_trading_days: 5 })
+    );
+    assert('[9.13] lag>3 → warning', alert !== null && alert.severity === 'warning');
+    assert('[9.14] trigger=severe_lag', alert?.trigger === 'severe_lag');
+    assert('[9.15] reason 含 落后', alert?.reason.includes('落后'));
+  }
+
+  // [9.16] lag=3 (boundary) → null (不触发, 因为 > 3 才触发)
+  {
+    const alert = classifyDataMissingAlert(
+      makeCard({ category: 'daily', lag_trading_days: 3, level: 'yellow' })
+    );
+    assert('[9.16] lag=3 边界 → null (恰好等于阈值)', alert === null);
+  }
+
+  // [9.17] lag=4 (boundary+1) → warning
+  {
+    const alert = classifyDataMissingAlert(
+      makeCard({ category: 'daily', lag_trading_days: 4, level: 'red' })
+    );
+    assert('[9.17] lag=4 → warning (> 阈值)', alert !== null && alert.severity === 'warning');
+  }
+
+  // [9.18] unknown level + lag=null → info
+  {
+    const alert = classifyDataMissingAlert(
+      makeCard({ key: 'k3', category: 'event', lag_trading_days: null, level: 'unknown' })
+    );
+    assert('[9.18] unknown+lag=null → info', alert !== null && alert.severity === 'info');
+    assert('[9.19] trigger=unknown', alert?.trigger === 'unknown');
+  }
+
+  // [9.20] no_record (daily + record_count=0) → info
+  {
+    const alert = classifyDataMissingAlert(
+      makeCard({
+        key: 'k4',
+        category: 'daily',
+        record_count: 0,
+        lag_trading_days: 0,
+        level: 'green',
+      })
+    );
+    assert('[9.20] record=0 daily → info', alert !== null && alert.severity === 'info');
+    assert('[9.21] trigger=no_record', alert?.trigger === 'no_record');
+  }
+
+  // [9.22] no_record periodic 不触发 (季报本身可能很少)
+  {
+    const alert = classifyDataMissingAlert(
+      makeCard({
+        category: 'periodic',
+        record_count: 0,
+        lag_trading_days: 1,
+        level: 'green',
+      })
+    );
+    assert('[9.22] periodic record=0 但 lag 正常 → null', alert === null);
+  }
+
+  // [9.23] 优先级: sync_error > severe_lag > unknown > no_record
+  {
+    const alert = classifyDataMissingAlert(
+      makeCard({
+        category: 'daily',
+        error: 'fetch failed',
+        lag_trading_days: 10, // 也满足 severe_lag
+        record_count: 0, // 也满足 no_record
+      })
+    );
+    assert('[9.23] error 优先于 lag/record → critical', alert?.severity === 'critical');
+    assert('[9.24] trigger 优先选 sync_error', alert?.trigger === 'sync_error');
+  }
+
+  // [9.25] 健康源 (green + lag=0 + 有记录 + 无 error) → null
+  {
+    const alert = classifyDataMissingAlert(
+      makeCard({ category: 'daily', lag_trading_days: 0, level: 'green', record_count: 100 })
+    );
+    assert('[9.25] 健康源 → null', alert === null);
+  }
+
+  // [9.26] buildVm null → loading=true
+  {
+    const vm = buildDataMissingAlertsViewModel(null);
+    assert('[9.26] null → loading=true', vm.loading === true);
+    assert('[9.27] null → alerts=[]', Array.isArray(vm.alerts) && vm.alerts.length === 0);
+    assert('[9.28] null → total=0', vm.total === 0);
+    assert('[9.29] null → reference_trade_date=null', vm.reference_trade_date === null);
+  }
+  {
+    const vm = buildDataMissingAlertsViewModel(undefined);
+    assert('[9.30] undefined → loading=true', vm.loading === true);
+  }
+
+  // [9.31] buildVm 混合 cards: 排序 (critical > warning > info)
+  {
+    const cards: DataSourceHealthCard[] = [
+      makeCard({ key: 'a-info', category: 'daily', record_count: 0, lag_trading_days: 0 }),
+      makeCard({ key: 'b-critical', category: 'daily', error: 'fail' }),
+      makeCard({ key: 'c-warning', category: 'daily', lag_trading_days: 10 }),
+      makeCard({ key: 'd-healthy', category: 'daily', record_count: 5 }),
+      makeCard({ key: 'e-info', category: 'event', lag_trading_days: null, level: 'unknown' }),
+    ];
+    const vm = buildDataMissingAlertsViewModel(makeResponse(cards));
+    assert('[9.31] alerts.length=4 (排除 healthy)', vm.alerts.length === 4);
+    assert('[9.32] total=4', vm.total === 4);
+    assert('[9.33] critical=1', vm.critical === 1);
+    assert('[9.34] warning=1', vm.warning === 1);
+    assert('[9.35] info=2', vm.info === 2);
+    assert('[9.36] loading=false', vm.loading === false);
+    assert('[9.37] 第一条是 critical', vm.alerts[0].severity === 'critical');
+    assert('[9.38] 第二条是 warning', vm.alerts[1].severity === 'warning');
+    assert(
+      '[9.39] info 内按 source_key 字母序 (a-info before e-info)',
+      vm.alerts[2].source_key === 'a-info' && vm.alerts[3].source_key === 'e-info'
+    );
+    assert('[9.40] reference_trade_date 回写', vm.reference_trade_date === '2026-06-19');
+    // 全部 category='data'
+    assert(
+      '[9.41] 全部 alert.category === "data"',
+      vm.alerts.every((a: any) => a.category === 'data')
+    );
+  }
+
+  // [9.42] 同输入同输出 (useMemo 友好)
+  {
+    const resp = makeResponse([makeCard({ error: 'x' })]);
+    const vm1 = buildDataMissingAlertsViewModel(resp);
+    const vm2 = buildDataMissingAlertsViewModel(resp);
+    assert('[9.42] 同输入 total 相同', vm1.total === vm2.total);
+    assert('[9.43] 同输入 alerts.length 相同', vm1.alerts.length === vm2.alerts.length);
+    assert(
+      '[9.44] 同输入 第一条 source_key 相同',
+      vm1.alerts[0]?.source_key === vm2.alerts[0]?.source_key
+    );
+  }
+
+  // [9.45] 空 cards 数组 → 全 0 alerts 但 loading=false
+  {
+    const vm = buildDataMissingAlertsViewModel(makeResponse([]));
+    assert('[9.45] 空 cards → total=0', vm.total === 0);
+    assert('[9.46] 空 cards → loading=false', vm.loading === false);
+    assert('[9.47] 空 cards → reference 回写', vm.reference_trade_date === '2026-06-19');
+  }
+
+  // [9.48] cards 含 null 不抛
+  {
+    // 直接构造 response, 不走 makeResponse (makeResponse 不接受 null cards)
+    const resp: DataHealthStatusResponse = {
+      reference_trade_date: '2026-06-19',
+      cards: [null as any, makeCard({ error: 'x' }), undefined as any],
+      summary: { green: 0, yellow: 0, red: 0, unknown: 0 },
+      generated_at: '2026-06-19T09:00:00Z',
+    };
+    const vm = buildDataMissingAlertsViewModel(resp);
+    assert('[9.48] cards 含 null/undefined 不抛', vm.total === 1);
+  }
+
+  // [9.49] error 极长字符串被 slice 到 80 字
+  {
+    const longErr = 'X'.repeat(200);
+    const alert = classifyDataMissingAlert(makeCard({ error: longErr }));
+    assert('[9.49] error 极长 reason 控制长度', alert !== null && alert.reason.length < 120);
+  }
+
+  // ---- [10] META-GUARD DataMissingAlertsCard.tsx 接通 helper ---------------
+  {
+    const cardPath = join(
+      __dirname,
+      '../../../frontend/src/components/data/DataMissingAlertsCard.tsx'
+    );
+    const src = readFileSync(cardPath, 'utf8');
+    assert(
+      '[10.1] DataMissingAlertsCard.tsx import buildDataMissingAlertsViewModel',
+      /import\s*\{[\s\S]*?buildDataMissingAlertsViewModel[\s\S]*?\}\s*from\s*['"][^'"]*dataWorkspaceTabHelpers/.test(
+        src
+      )
+    );
+    assert(
+      '[10.2] DataMissingAlertsCard.tsx 调用 buildDataMissingAlertsViewModel',
+      /buildDataMissingAlertsViewModel\(/.test(src)
+    );
+    assert(
+      '[10.3] DataMissingAlertsCard.tsx 渲染 vm.alerts (List dataSource)',
+      /dataSource=\{vm\.alerts\}/.test(src) || /vm\.alerts\.map/.test(src)
+    );
+    assert(
+      '[10.4] DataMissingAlertsCard.tsx 显式 category=data Tag',
+      /category=\{DATA_MISSING_ALERT_CATEGORY\}/.test(src) ||
+        /category=\{?["']data["']/.test(src)
+    );
+    assert(
+      '[10.5] DataMissingAlertsCard.tsx data-testid=data-missing-alerts-card',
+      /data-testid=["']data-missing-alerts-card["']/.test(src)
+    );
+    assert(
+      '[10.6] DataMissingAlertsCard.tsx 接收 healthData prop',
+      /healthData\??:\s*DataHealthStatusResponse/.test(src)
+    );
+  }
+
+  // ---- [11] META-GUARD DataWorkspace.tsx 在 health tab 渲染本卡 ------------
+  {
+    const dwPath = join(__dirname, '../../../frontend/src/pages/workspace/DataWorkspace.tsx');
+    const src = readFileSync(dwPath, 'utf8');
+    assert(
+      '[11.1] DataWorkspace.tsx import DataMissingAlertsCard',
+      /import\s+DataMissingAlertsCard\s+from\s+['"][^'"]*DataMissingAlertsCard['"]/.test(src)
+    );
+    assert(
+      '[11.2] DataWorkspace.tsx 渲染 DataMissingAlertsCard 传 healthData',
+      /<DataMissingAlertsCard[\s\S]{0,80}healthData=\{healthData\}/.test(src)
+    );
+  }
+
+  // ---- [12] META-GUARD helper export 完整性 -------------------------------
+  {
+    const helperPath = join(
+      __dirname,
+      '../../../frontend/src/pages/workspace/dataWorkspaceTabHelpers.ts'
+    );
+    const src = readFileSync(helperPath, 'utf8');
+    assert(
+      '[12.1] helper export DATA_MISSING_ALERT_CATEGORY',
+      /export\s+const\s+DATA_MISSING_ALERT_CATEGORY\b/.test(src)
+    );
+    assert(
+      '[12.2] helper export DATA_MISSING_SEVERE_LAG',
+      /export\s+const\s+DATA_MISSING_SEVERE_LAG\b/.test(src)
+    );
+    assert(
+      '[12.3] helper export DATA_MISSING_SEVERITY_COLOR',
+      /export\s+const\s+DATA_MISSING_SEVERITY_COLOR\b/.test(src)
+    );
+    assert(
+      '[12.4] helper export DATA_MISSING_SEVERITY_LABEL',
+      /export\s+const\s+DATA_MISSING_SEVERITY_LABEL\b/.test(src)
+    );
+    assert(
+      '[12.5] helper export classifyDataMissingAlert',
+      /export\s+function\s+classifyDataMissingAlert/.test(src)
+    );
+    assert(
+      '[12.6] helper export buildDataMissingAlertsViewModel',
+      /export\s+function\s+buildDataMissingAlertsViewModel/.test(src)
+    );
+  }
+}
+
 // ---- summary ---------------------------------------------------------------
 console.log(`\ndata-workspace-tab-helpers: ${passed} ok / ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
