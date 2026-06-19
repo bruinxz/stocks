@@ -1650,3 +1650,34 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **HealthMonitor / TaskScheduler 等 legacy 页保留**: 不强求把 legacy 页内逻辑也吸到 helper, 因为 (a) 它们有独立 endpoint + 内部 polling + 完整功能; (b) "加厚" 不等于 "重写". KPI strip + overviewBar 让 tab 切换有 "headline + 数字" 的视觉锚, 用户立刻知道 "这个 tab 是干嘛的 + 当下系统状态如何", 已经足够 PRD "真内容" 验收. 真正 deep refactor 留给后续 US-061 SLA dashboard / US-062 数据缺失告警 / US-063 补抓按钮 各自一个 story.
   - **DataHealthLevel/DataSourceCategory 是 frontend service 的 sole source of truth**: 跨 monorepo import 时直接 `import type { DataSourceHealthCard } from '../../../frontend/src/services/dataHealthService'` 复用类型, 不要在 backend 重定义. 与 [[industry-concentration-kpi-helpers test]] (US-057) 跨包 import IndustryConcentrationSummary 同款.
 ---
+
+
+
+## 2026/06/20 04:50 - US-061
+- 实现 [FE-022] DataWorkspace SLA dashboard — 时效 SLA 可视化卡 + 三类分组达成率 + blockers
+- Files changed:
+  - frontend/src/pages/workspace/dataWorkspaceTabHelpers.ts: 追加 US-061 SLA 段 (~210 行)
+    * 阈值常量: SLA_TARGET_LAG_DAYS={daily:1, periodic:15, event:3} / SLA_ATTAIN_HEALTHY_MIN=95 / SLA_ATTAIN_DEGRADED_MIN=80 / SLA_LEVEL_COLOR / SLA_LEVEL_LABEL / SLA_CATEGORY_LABEL — 全 frozen
+    * pure helpers: isCardOnTime(card, target) 返 'on_time'|'breached'|'unknown' / buildSlaCategorySummary(category, cards) 单类摘要 / worstSlaLevel(levels) critical>degraded>unknown>healthy / buildSlaDashboardViewModel(healthResponse) 主入口返 SlaDashboardViewModel
+    * SlaCategorySummary + SlaDashboardViewModel interface 全 export
+    * view model 含 categories[3] / total_sources / total_on_time / total_breached / overall_attainment_pct / overall_level / ready / blockers[] / reference_trade_date / loading
+  - frontend/src/components/data/SlaDashboardCard.tsx (新, ~210 行):
+    * 顶部 4 个 Statistic (总数据源 / 整体达成率 / 按时达成 / SLA 违约) + 中间 3 列分组卡 + 底部 blockers Alert / 全绿 success Alert
+    * caller 不传 healthData 时自己 fetch 一次 (DB-less 兼容); 传了直接复用 (避免与 DataHealthDashboard 双拉)
+    * useMemo 包 vm 计算, 同 healthResponse 渲染稳定
+  - frontend/src/pages/workspace/DataWorkspace.tsx: import SlaDashboardCard + health tab 渲染 `<SlaDashboardCard healthData={healthData} />` (顺序: overviewBar → SlaDashboardCard → SystemTopologyMap → ActivationDashboard → DataHealthDashboard)
+  - backend/tests/services/data-workspace-tab-helpers.test.ts: 新增 [7.20-7.27] + [8.1-8.76] 共 83 assert 覆盖 — 阈值常量 frozen+sanity / isCardOnTime 边界 / buildSlaCategorySummary 单类/全 healthy/全 unknown/空/degraded 边界 / worstSlaLevel 优先级 / buildSlaDashboardViewModel happy + 含违约 + null/undefined + 排除 unknown + 全 unknown + useMemo 稳定 / META-GUARD SlaDashboardCard 接通 helper + DataWorkspace 渲染
+  - ralph/prd.json: US-061 passes=true + notes
+- 验证:
+  - `npm test -- --filter=data-workspace` exit 0, 213 ok / 0 failed (706ms) — 原 130 + 新 83
+  - `npx tsc --noEmit` (frontend) exit 0
+  - `npx tsc --noEmit` (backend) exit 0
+  - `npx eslint --fix` 后 0 warn 0 err (自动 prettier 格式化)
+- **Learnings for future iterations:**
+  - **"X 看板" 类 UI story 的 3 件套 (component + helper + 嵌入)**: SLA dashboard 模板适用未来任何 "派生 KPI 卡" — 不要新接 endpoint 让 ops 又多一个 monitor 入口, 把 healthResponse 这种已经稳的 snapshot 派生出来零运维成本. helper 在 `<workspace>TabHelpers.ts` 追加 (而不是新建 `<workspace>SlaHelpers.ts`), 让 test runner 一处覆盖, 同 file 复用 makeCard/makeResponse 测试 fixture.
+  - **caller 传 healthData props vs 自拉 fallback 的双模式**: SlaDashboardCard 同时支持 `<SlaDashboardCard />` (独立挂载, 自己拉) 和 `<SlaDashboardCard healthData={state} />` (复用上层 state). 单测 / Storybook / 临时挂载场景走前者; 真生产 (DataWorkspace 已经为 DataHealthDashboard 拉过一次) 走后者. **关键**: useEffect 用 `if (healthData) return` 短路, 不再 setState/refetch, 避免双拉. 同款适用任何 "可独立 / 可嵌入" 的卡片组件.
+  - **"派生 → 决策表 → ready+blockers" 三件套与 US-051 同构**: SlaDashboardViewModel 沿用 [[evaluateShadowRunReadiness]] 的 `{ready, blockers[], level}` 三件套, 让 caller 直接 ul 渲染 blockers + 选 Alert type (success/warning/error) + 决定整体 Tag color. blocker 文案必须含 *为什么*: "X 类 SLA 达成率 67% < 95% (目标 lag ≤ 1 交易日)" 比 "X 类违约" 信息量大 5x — ops 看了直接知道改阈值还是补抓.
+  - **"按时" 包含 = target 边界**: isCardOnTime 用 `lag <= target` 而非 `lag < target`. 同款适用任何 "阈值满足" 判断 — 把边界算作满足是 ops 友好默认 (差 1 个交易日还在 SLA 内); 若 PRD 要求严格 < 必须单测显式守, 否则 reviewer 很难看出来.
+  - **跨类别整体达成率 = sum(on_time) / sum(total - unknown)** 而非 "三类 attainment 平均". 平均会让 daily(50%) + periodic(100%) + event(100%) = 83% 看似还好, 实际 daily 真的崩了. sum/sum 让权重天然按 source 数走, 哪类源多哪类的 SLA 主导整体. 这条与 evaluateShadowRunReadiness 不一样 (那边是 worst case 直接取最差), 选哪种看业务 — SLA 是 "几个不达标" 这种数字直觉, 用 sum/sum 更对.
+  - **全 unknown 整体返 null 而非 0**: overall_denom=0 时 attainment_pct=null, UI 渲 '—' 而非 0%. 0% 会误读为 "完全没达成", null 表 "没数据可判". 同款适用任何 "rate = a/b 但 b=0" 场景 — null > 0 > NaN.
+---

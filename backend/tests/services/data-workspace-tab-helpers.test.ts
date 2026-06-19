@@ -427,13 +427,253 @@ assert('[3.8] sumRecordCount([])=0', sumRecordCount([]) === 0);
     '[7.15] helper export buildDataWorkspaceTabViewModel',
     /export\s+function\s+buildDataWorkspaceTabViewModel/.test(src)
   );
-  assert(
-    '[7.16] helper export bucketCardsByCategory',
-    /export\s+function\s+bucketCardsByCategory/.test(src)
-  );
+  assert('[7.16] helper export bucketCardsByCategory', /export\s+function\s+bucketCardsByCategory/.test(src));
   assert('[7.17] helper export classifyOverallTag', /export\s+function\s+classifyOverallTag/.test(src));
   assert('[7.18] helper export classifySyncTag', /export\s+function\s+classifySyncTag/.test(src));
   assert('[7.19] helper export classifyLogsTag', /export\s+function\s+classifyLogsTag/.test(src));
+  // US-061 SLA helpers
+  assert('[7.20] helper export SLA_TARGET_LAG_DAYS', /export\s+const\s+SLA_TARGET_LAG_DAYS\b/.test(src));
+  assert('[7.21] helper export SLA_ATTAIN_HEALTHY_MIN', /export\s+const\s+SLA_ATTAIN_HEALTHY_MIN\b/.test(src));
+  assert('[7.22] helper export SLA_ATTAIN_DEGRADED_MIN', /export\s+const\s+SLA_ATTAIN_DEGRADED_MIN\b/.test(src));
+  assert('[7.23] helper export SLA_LEVEL_COLOR', /export\s+const\s+SLA_LEVEL_COLOR\b/.test(src));
+  assert('[7.24] helper export SLA_LEVEL_LABEL', /export\s+const\s+SLA_LEVEL_LABEL\b/.test(src));
+  assert('[7.25] helper export buildSlaDashboardViewModel', /export\s+function\s+buildSlaDashboardViewModel/.test(src));
+  assert('[7.26] helper export buildSlaCategorySummary', /export\s+function\s+buildSlaCategorySummary/.test(src));
+  assert('[7.27] helper export isCardOnTime', /export\s+function\s+isCardOnTime/.test(src));
+}
+
+// ---- [8] US-061 SLA helpers ------------------------------------------------
+{
+  const {
+    SLA_TARGET_LAG_DAYS,
+    SLA_ATTAIN_HEALTHY_MIN,
+    SLA_ATTAIN_DEGRADED_MIN,
+    SLA_LEVEL_COLOR,
+    SLA_LEVEL_LABEL,
+    SLA_CATEGORY_LABEL,
+    isCardOnTime,
+    buildSlaCategorySummary,
+    buildSlaDashboardViewModel,
+    worstSlaLevel,
+  } = require('../../../frontend/src/pages/workspace/dataWorkspaceTabHelpers');
+
+  // [8.1] 阈值常量 sanity
+  assert('[8.1] SLA_TARGET_LAG_DAYS.daily=1', SLA_TARGET_LAG_DAYS.daily === 1);
+  assert('[8.2] SLA_TARGET_LAG_DAYS.periodic=15', SLA_TARGET_LAG_DAYS.periodic === 15);
+  assert('[8.3] SLA_TARGET_LAG_DAYS.event=3', SLA_TARGET_LAG_DAYS.event === 3);
+  assert('[8.4] SLA_TARGET_LAG_DAYS frozen', Object.isFrozen(SLA_TARGET_LAG_DAYS) === true);
+  assert(
+    '[8.5] SLA_ATTAIN_HEALTHY_MIN > SLA_ATTAIN_DEGRADED_MIN',
+    SLA_ATTAIN_HEALTHY_MIN > SLA_ATTAIN_DEGRADED_MIN
+  );
+  assert('[8.6] SLA_ATTAIN_HEALTHY_MIN ∈ (0,100]', SLA_ATTAIN_HEALTHY_MIN > 0 && SLA_ATTAIN_HEALTHY_MIN <= 100);
+  assert('[8.7] SLA_LEVEL_COLOR frozen', Object.isFrozen(SLA_LEVEL_COLOR) === true);
+  assert('[8.8] SLA_LEVEL_LABEL frozen', Object.isFrozen(SLA_LEVEL_LABEL) === true);
+  assert(
+    '[8.9] SLA_LEVEL_COLOR 4 档全有',
+    SLA_LEVEL_COLOR.healthy && SLA_LEVEL_COLOR.degraded && SLA_LEVEL_COLOR.critical && SLA_LEVEL_COLOR.unknown
+  );
+  assert('[8.10] SLA_LEVEL_LABEL.healthy 含 达标', SLA_LEVEL_LABEL.healthy.includes('达标'));
+  assert('[8.11] SLA_CATEGORY_LABEL frozen', Object.isFrozen(SLA_CATEGORY_LABEL) === true);
+
+  // [8.12] isCardOnTime
+  assert('[8.12] lag=0 on_time', isCardOnTime(makeCard({ lag_trading_days: 0 }), 1) === 'on_time');
+  assert('[8.13] lag=1 on_time (恰好等于 target)', isCardOnTime(makeCard({ lag_trading_days: 1 }), 1) === 'on_time');
+  assert('[8.14] lag=2 > target=1 breached', isCardOnTime(makeCard({ lag_trading_days: 2 }), 1) === 'breached');
+  assert('[8.15] lag=null unknown', isCardOnTime(makeCard({ lag_trading_days: null }), 1) === 'unknown');
+  assert('[8.16] lag=NaN unknown', isCardOnTime(makeCard({ lag_trading_days: NaN }), 1) === 'unknown');
+  assert('[8.17] null card unknown', isCardOnTime(null, 1) === 'unknown');
+  assert('[8.18] undefined card unknown', isCardOnTime(undefined, 1) === 'unknown');
+
+  // [8.19] buildSlaCategorySummary — daily 单类
+  {
+    const cards: DataSourceHealthCard[] = [
+      makeCard({ category: 'daily', lag_trading_days: 0 }),
+      makeCard({ category: 'daily', lag_trading_days: 1 }),
+      makeCard({ category: 'daily', lag_trading_days: 5 }), // breached
+      makeCard({ category: 'periodic', lag_trading_days: 0 }), // 跨类不计
+    ];
+    const summary = buildSlaCategorySummary('daily', cards);
+    assert('[8.19] daily total=3', summary.total === 3);
+    assert('[8.20] daily on_time=2', summary.on_time === 2);
+    assert('[8.21] daily breached=1', summary.breached === 1);
+    assert('[8.22] daily unknown=0', summary.unknown === 0);
+    assert('[8.23] daily target=1', summary.target_lag_days === 1);
+    // 2/3 = 66.67% → 67% → < healthy_min (95) but >= degraded_min (80)? 67<80 → critical
+    assert('[8.24] daily attainment=67', summary.attainment_pct === 67);
+    assert('[8.25] daily level=critical (67 < 80)', summary.level === 'critical');
+  }
+  {
+    // 全 healthy
+    const cards: DataSourceHealthCard[] = Array.from({ length: 10 }, (_, i) =>
+      makeCard({ category: 'event', lag_trading_days: i % 4 }) // 全 <=3
+    );
+    const summary = buildSlaCategorySummary('event', cards);
+    assert('[8.26] event 全 on_time → attainment=100', summary.attainment_pct === 100);
+    assert('[8.27] event 全 on_time → level=healthy', summary.level === 'healthy');
+  }
+  {
+    // 全 unknown
+    const cards: DataSourceHealthCard[] = [
+      makeCard({ category: 'periodic', lag_trading_days: null }),
+      makeCard({ category: 'periodic', lag_trading_days: null }),
+    ];
+    const summary = buildSlaCategorySummary('periodic', cards);
+    assert('[8.28] periodic 全 null → unknown=2', summary.unknown === 2);
+    assert('[8.29] periodic 全 null → attainment=null', summary.attainment_pct === null);
+    assert('[8.30] periodic 全 null → level=unknown', summary.level === 'unknown');
+  }
+  {
+    // 空类
+    const summary = buildSlaCategorySummary('daily', []);
+    assert('[8.31] 空类 total=0 + level=unknown', summary.total === 0 && summary.level === 'unknown');
+  }
+  {
+    // degraded 边界 (恰好 80%)
+    const cards: DataSourceHealthCard[] = [
+      ...Array.from({ length: 8 }, () => makeCard({ category: 'daily', lag_trading_days: 0 })),
+      ...Array.from({ length: 2 }, () => makeCard({ category: 'daily', lag_trading_days: 5 })),
+    ];
+    const summary = buildSlaCategorySummary('daily', cards);
+    assert('[8.32] degraded 边界 attainment=80', summary.attainment_pct === 80);
+    assert('[8.33] degraded 边界 level=degraded (>=80 <95)', summary.level === 'degraded');
+  }
+
+  // [8.34] worstSlaLevel
+  assert('[8.34] worstSlaLevel critical 最差', worstSlaLevel(['healthy', 'critical', 'degraded']) === 'critical');
+  assert('[8.35] worstSlaLevel 全 healthy → healthy', worstSlaLevel(['healthy', 'healthy']) === 'healthy');
+  assert('[8.36] worstSlaLevel degraded vs healthy → degraded', worstSlaLevel(['degraded', 'healthy']) === 'degraded');
+  assert('[8.37] worstSlaLevel unknown vs healthy → unknown', worstSlaLevel(['unknown', 'healthy']) === 'unknown');
+  assert('[8.38] worstSlaLevel 空数组 → healthy', worstSlaLevel([]) === 'healthy');
+
+  // [8.39] buildSlaDashboardViewModel — happy
+  {
+    const cards: DataSourceHealthCard[] = [
+      makeCard({ category: 'daily', lag_trading_days: 0 }),
+      makeCard({ category: 'daily', lag_trading_days: 0 }),
+      makeCard({ category: 'periodic', lag_trading_days: 5 }),
+      makeCard({ category: 'event', lag_trading_days: 2 }),
+    ];
+    const resp = makeResponse(cards);
+    const vm = buildSlaDashboardViewModel(resp);
+    assert('[8.39] vm.total_sources=4', vm.total_sources === 4);
+    assert('[8.40] vm.total_on_time=4 (全部 lag<=target)', vm.total_on_time === 4);
+    assert('[8.41] vm.total_breached=0', vm.total_breached === 0);
+    assert('[8.42] vm.overall_attainment=100', vm.overall_attainment_pct === 100);
+    assert('[8.43] vm.overall_level=healthy', vm.overall_level === 'healthy');
+    assert('[8.44] vm.ready=true', vm.ready === true);
+    assert('[8.45] vm.blockers 空', vm.blockers.length === 0);
+    assert('[8.46] vm.categories 3 项', vm.categories.length === 3);
+    assert('[8.47] vm.categories 顺序 daily/periodic/event', vm.categories[0].category === 'daily' && vm.categories[1].category === 'periodic' && vm.categories[2].category === 'event');
+    assert('[8.48] vm.loading=false', vm.loading === false);
+    assert('[8.49] vm.reference_trade_date 透传', vm.reference_trade_date === '2026-06-19');
+  }
+
+  // [8.50] vm — 含违约
+  {
+    const cards: DataSourceHealthCard[] = [
+      makeCard({ category: 'daily', lag_trading_days: 0 }),
+      makeCard({ category: 'daily', lag_trading_days: 10 }), // breached daily (>1)
+      makeCard({ category: 'periodic', lag_trading_days: 20 }), // breached periodic (>15)
+    ];
+    const vm = buildSlaDashboardViewModel(makeResponse(cards));
+    assert('[8.50] 含违约 total_breached=2', vm.total_breached === 2);
+    assert('[8.51] 含违约 overall_level=critical (daily 50%)', vm.overall_level === 'critical');
+    assert('[8.52] 含违约 ready=false', vm.ready === false);
+    assert('[8.53] 含违约 blockers 含违约说明', vm.blockers.some((b: string) => b.includes('SLA 违约')));
+    assert('[8.54] 含违约 blockers 含 daily 达成率提示', vm.blockers.some((b: string) => b.includes('日级行情')));
+    assert('[8.55] 含违约 blockers 含 event 缺源提示', vm.blockers.some((b: string) => b.includes('事件流') && b.includes('无任何数据源')));
+  }
+
+  // [8.56] vm — null healthResponse → loading
+  {
+    const vm = buildSlaDashboardViewModel(null);
+    assert('[8.56] null → loading=true', vm.loading === true);
+    assert('[8.57] null → categories 3 项占位', vm.categories.length === 3);
+    assert('[8.58] null → total_sources=0', vm.total_sources === 0);
+    assert('[8.59] null → overall_attainment=null', vm.overall_attainment_pct === null);
+    assert('[8.60] null → overall_level=unknown', vm.overall_level === 'unknown');
+    assert('[8.61] null → ready=false + blockers 含未加载', vm.ready === false && vm.blockers[0].includes('尚未加载'));
+  }
+  {
+    const vm = buildSlaDashboardViewModel(undefined);
+    assert('[8.62] undefined → loading=true', vm.loading === true);
+  }
+
+  // [8.63] vm — 跨类别整体达成率算法 (排除 unknown)
+  {
+    const cards: DataSourceHealthCard[] = [
+      makeCard({ category: 'daily', lag_trading_days: 0 }),
+      makeCard({ category: 'daily', lag_trading_days: 0 }),
+      makeCard({ category: 'periodic', lag_trading_days: null }), // unknown 不计入分母
+      makeCard({ category: 'event', lag_trading_days: 10 }), // breached
+    ];
+    const vm = buildSlaDashboardViewModel(makeResponse(cards));
+    // total=4, unknown=1, denom=3, on_time=2 → 67%
+    assert('[8.63] 排除 unknown 后 attainment=67', vm.overall_attainment_pct === 67);
+  }
+
+  // [8.64] vm — 全 unknown 整体达成率 null
+  {
+    const cards: DataSourceHealthCard[] = [
+      makeCard({ category: 'daily', lag_trading_days: null }),
+      makeCard({ category: 'periodic', lag_trading_days: null }),
+      makeCard({ category: 'event', lag_trading_days: null }),
+    ];
+    const vm = buildSlaDashboardViewModel(makeResponse(cards));
+    assert('[8.64] 全 unknown → overall_attainment=null', vm.overall_attainment_pct === null);
+    assert('[8.65] 全 unknown → overall_level=unknown', vm.overall_level === 'unknown');
+    assert('[8.66] 全 unknown → ready=false', vm.ready === false);
+  }
+
+  // [8.67] vm — 同输入同输出 (useMemo 友好)
+  {
+    const resp = makeResponse([makeCard({ category: 'daily', lag_trading_days: 0 })]);
+    const vm1 = buildSlaDashboardViewModel(resp);
+    const vm2 = buildSlaDashboardViewModel(resp);
+    assert('[8.67] 同输入 overall_attainment 相同', vm1.overall_attainment_pct === vm2.overall_attainment_pct);
+    assert('[8.68] 同输入 blockers 长度相同', vm1.blockers.length === vm2.blockers.length);
+  }
+
+  // [8.69] META-GUARD SlaDashboardCard.tsx 接通 helper
+  {
+    const slaCardPath = join(__dirname, '../../../frontend/src/components/data/SlaDashboardCard.tsx');
+    const src = readFileSync(slaCardPath, 'utf8');
+    assert(
+      '[8.69] SlaDashboardCard.tsx import buildSlaDashboardViewModel',
+      /import\s*\{[\s\S]*?buildSlaDashboardViewModel[\s\S]*?\}\s*from\s*['"][^'"]*dataWorkspaceTabHelpers/.test(src)
+    );
+    assert(
+      '[8.70] SlaDashboardCard.tsx 调用 buildSlaDashboardViewModel',
+      /buildSlaDashboardViewModel\(/.test(src)
+    );
+    assert(
+      '[8.71] SlaDashboardCard.tsx 用 vm.categories.map (按类别渲染)',
+      /vm\.categories\.map/.test(src)
+    );
+    assert(
+      '[8.72] SlaDashboardCard.tsx 渲染 blockers',
+      /vm\.blockers\.map/.test(src)
+    );
+    assert(
+      '[8.73] SlaDashboardCard.tsx 数据测试 id sla-dashboard-card',
+      /data-testid=['"]sla-dashboard-card['"]/.test(src)
+    );
+  }
+
+  // [8.74] META-GUARD DataWorkspace.tsx 在 health tab 渲染 SlaDashboardCard
+  {
+    const dwPath = join(__dirname, '../../../frontend/src/pages/workspace/DataWorkspace.tsx');
+    const src = readFileSync(dwPath, 'utf8');
+    assert(
+      '[8.74] DataWorkspace.tsx import SlaDashboardCard',
+      /import\s+SlaDashboardCard\s+from\s+['"][^'"]*SlaDashboardCard['"]/.test(src)
+    );
+    assert(
+      '[8.75] DataWorkspace.tsx 渲染 SlaDashboardCard 传 healthData',
+      /<SlaDashboardCard[\s\S]{0,80}healthData=\{healthData\}/.test(src)
+    );
+  }
 }
 
 // ---- summary ---------------------------------------------------------------

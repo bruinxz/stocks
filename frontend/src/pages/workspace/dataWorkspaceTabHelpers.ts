@@ -495,3 +495,235 @@ export const TAB_SUBTITLE: Readonly<Record<DataWorkspaceTabKey, string>> = Objec
   logs: '近 1h / 近 24h 同步异常 + 滞后告警条目; 颜色编码与健康度看板一致.',
   monitoring: '健康率 / 不健康源 / 状态未知三件套; Prometheus 告警拉同款.',
 });
+
+// ============================================================================
+// US-061 [FE-022] SLA dashboard helpers
+// ----------------------------------------------------------------------------
+// 时效 SLA 可视化 — 每类数据源 (daily/periodic/event) 有自己的 lag 阈值,
+// 把 healthResponse 的 cards 派生成 "按类别 SLA 达成率" 视图模型, 给
+// SlaDashboardCard 直接渲染. 形态对偶 [[evaluateShadowRunReadiness]]
+// (US-051) — N 维度 → 各自 classify → 合并到 K 档 + ready=bool + blockers.
+//
+// 阈值依据 backend/src/services/DataHealthStatusService.ts 的 red/yellow/green
+// 切分: lag <= 0 green / 1-3 yellow / >3 red. 不同类别都用同套阈值, 但 SLA
+// "可接受 lag" 上限按类别区分: daily=1 个交易日 (T+1), periodic=15 (季报周期),
+// event=3 (公告/KOL). 超过即 SLA 违约.
+// ============================================================================
+
+/** 每类数据源的 SLA "可接受 lag 上限" (交易日). 超过即 SLA breach (违约). */
+export const SLA_TARGET_LAG_DAYS: Readonly<Record<DataSourceCategory, number>> = Object.freeze({
+  daily: 1,
+  periodic: 15,
+  event: 3,
+});
+
+/** 类别中文标签 (与 DataHealthDashboard.CATEGORY_LABEL 同源). */
+export const SLA_CATEGORY_LABEL: Readonly<Record<DataSourceCategory, string>> = Object.freeze({
+  daily: '日级行情',
+  periodic: '周期披露',
+  event: '事件流',
+});
+
+/** SLA 达成率 → "档位" 的阈值 (百分比). 与 [[evaluateShadowRunReadiness]] 同思想. */
+export const SLA_ATTAIN_HEALTHY_MIN = 95;
+export const SLA_ATTAIN_DEGRADED_MIN = 80;
+
+/** 单个类别的 SLA 摘要. */
+export interface SlaCategorySummary {
+  category: DataSourceCategory;
+  label: string;
+  /** 该类总源数 (含 unknown/缺数据). */
+  total: number;
+  /** lag <= target (含 null 视为未知不计入达标也不计入违约). */
+  on_time: number;
+  /** lag > target → SLA 违约. */
+  breached: number;
+  /** lag = null/unknown → 未知, 既不算达标也不算违约. */
+  unknown: number;
+  /** 该类的 target lag (交易日). */
+  target_lag_days: number;
+  /** on_time / (total - unknown), 全 unknown 返 null. 百分比 0-100 整数. */
+  attainment_pct: number | null;
+  /** 三档: healthy >= HEALTHY_MIN / degraded >= DEGRADED_MIN / critical < DEGRADED_MIN / unknown 全无数据. */
+  level: 'healthy' | 'degraded' | 'critical' | 'unknown';
+}
+
+/** SLA dashboard 整体视图模型 — 给 SlaDashboardCard 一次性 destructure. */
+export interface SlaDashboardViewModel {
+  /** 三类摘要 (顺序固定 daily → periodic → event). */
+  categories: SlaCategorySummary[];
+  /** 全部源数 (含 unknown). */
+  total_sources: number;
+  /** 全部 on_time 数 (跨类别累加). */
+  total_on_time: number;
+  /** 全部 breached 数 (跨类别累加). */
+  total_breached: number;
+  /** 跨类别整体达成率 (排除 unknown). 全 unknown 返 null. */
+  overall_attainment_pct: number | null;
+  /** 整体档位: 取最差类别 level. */
+  overall_level: 'healthy' | 'degraded' | 'critical' | 'unknown';
+  /** ready=true 当所有类别都 >= HEALTHY_MIN 且 breached === 0. */
+  ready: boolean;
+  /** ready=false 的原因列表 (UL 直接渲染). */
+  blockers: string[];
+  /** 参考交易日 (回写, 给 caller subtitle 用). */
+  reference_trade_date: string | null;
+  /** healthResponse 缺数据 → loading=true. */
+  loading: boolean;
+}
+
+/** 判断单个 card 是否达成 SLA — pure. */
+export function isCardOnTime(
+  card: DataSourceHealthCard | null | undefined,
+  targetLag: number
+): 'on_time' | 'breached' | 'unknown' {
+  if (!card || typeof card !== 'object') return 'unknown';
+  const lag = card.lag_trading_days;
+  if (typeof lag !== 'number' || !Number.isFinite(lag)) return 'unknown';
+  if (lag <= targetLag) return 'on_time';
+  return 'breached';
+}
+
+/** 计算单类别 SLA 摘要 — pure. */
+export function buildSlaCategorySummary(
+  category: DataSourceCategory,
+  cards: DataSourceHealthCard[]
+): SlaCategorySummary {
+  const target = SLA_TARGET_LAG_DAYS[category];
+  const label = SLA_CATEGORY_LABEL[category];
+  let total = 0;
+  let on_time = 0;
+  let breached = 0;
+  let unknown = 0;
+  if (Array.isArray(cards)) {
+    for (const c of cards) {
+      if (!c || c.category !== category) continue;
+      total += 1;
+      const status = isCardOnTime(c, target);
+      if (status === 'on_time') on_time += 1;
+      else if (status === 'breached') breached += 1;
+      else unknown += 1;
+    }
+  }
+  const denom = total - unknown;
+  const attainment_pct = denom > 0 ? Math.round((on_time / denom) * 100) : null;
+  let level: SlaCategorySummary['level'];
+  if (total === 0 || attainment_pct === null) level = 'unknown';
+  else if (attainment_pct >= SLA_ATTAIN_HEALTHY_MIN) level = 'healthy';
+  else if (attainment_pct >= SLA_ATTAIN_DEGRADED_MIN) level = 'degraded';
+  else level = 'critical';
+  return {
+    category,
+    label,
+    total,
+    on_time,
+    breached,
+    unknown,
+    target_lag_days: target,
+    attainment_pct,
+    level,
+  };
+}
+
+/** 取整体档位 = 三类最差 (critical > degraded > unknown > healthy 排序; healthy 最好). */
+export function worstSlaLevel(levels: SlaCategorySummary['level'][]): SlaCategorySummary['level'] {
+  if (levels.includes('critical')) return 'critical';
+  if (levels.includes('degraded')) return 'degraded';
+  if (levels.includes('unknown')) return 'unknown';
+  return 'healthy';
+}
+
+/** SLA 档位 → antd Tag color / Statistic valueStyle.color. */
+export const SLA_LEVEL_COLOR: Readonly<Record<SlaCategorySummary['level'], string>> = Object.freeze(
+  {
+    healthy: DATA_HEALTH_COLOR.green,
+    degraded: DATA_HEALTH_COLOR.yellow,
+    critical: DATA_HEALTH_COLOR.red,
+    unknown: DATA_HEALTH_COLOR.unknown,
+  }
+);
+
+/** SLA 档位 → 中文标签 (Tag text). */
+export const SLA_LEVEL_LABEL: Readonly<Record<SlaCategorySummary['level'], string>> = Object.freeze(
+  {
+    healthy: 'SLA 达标',
+    degraded: 'SLA 轻微违约',
+    critical: 'SLA 严重违约',
+    unknown: '数据不足',
+  }
+);
+
+/**
+ * 主入口: healthResponse → SLA dashboard 视图模型.
+ *
+ * - healthResponse=null/undefined → loading=true 占位 (三类全 unknown)
+ * - 跨类别整体达成率 = sum(on_time) / sum(total - unknown), 全 unknown 返 null
+ * - ready=true 当 (a) 所有类别 attainment >= HEALTHY_MIN 且 (b) 跨类别 breached === 0
+ *
+ * Pure, 永不抛, useMemo 安全.
+ */
+export function buildSlaDashboardViewModel(
+  healthResponse: DataHealthStatusResponse | null | undefined
+): SlaDashboardViewModel {
+  if (!healthResponse) {
+    const placeholders: SlaCategorySummary[] = (['daily', 'periodic', 'event'] as const).map(c =>
+      buildSlaCategorySummary(c, [])
+    );
+    return {
+      categories: placeholders,
+      total_sources: 0,
+      total_on_time: 0,
+      total_breached: 0,
+      overall_attainment_pct: null,
+      overall_level: 'unknown',
+      ready: false,
+      blockers: ['尚未加载数据健康状态'],
+      reference_trade_date: null,
+      loading: true,
+    };
+  }
+  const cards = Array.isArray(healthResponse.cards) ? healthResponse.cards : [];
+  const categories: SlaCategorySummary[] = (['daily', 'periodic', 'event'] as const).map(c =>
+    buildSlaCategorySummary(c, cards)
+  );
+  const total_sources = categories.reduce((s, c) => s + c.total, 0);
+  const total_on_time = categories.reduce((s, c) => s + c.on_time, 0);
+  const total_breached = categories.reduce((s, c) => s + c.breached, 0);
+  const total_unknown = categories.reduce((s, c) => s + c.unknown, 0);
+  const overall_denom = total_sources - total_unknown;
+  const overall_attainment_pct =
+    overall_denom > 0 ? Math.round((total_on_time / overall_denom) * 100) : null;
+  const overall_level = worstSlaLevel(categories.map(c => c.level));
+  const blockers: string[] = [];
+  for (const c of categories) {
+    if (c.total === 0) {
+      blockers.push(`${c.label} 类无任何数据源注册`);
+      continue;
+    }
+    if (c.attainment_pct === null) {
+      blockers.push(`${c.label} 全部数据源 lag 未知`);
+    } else if (c.attainment_pct < SLA_ATTAIN_HEALTHY_MIN) {
+      blockers.push(
+        `${c.label} SLA 达成率 ${c.attainment_pct}% < ${SLA_ATTAIN_HEALTHY_MIN}% (目标 lag ≤ ${c.target_lag_days} 交易日)`
+      );
+    }
+    if (c.breached > 0) {
+      blockers.push(`${c.label} 有 ${c.breached} 个源 lag > ${c.target_lag_days} 交易日, SLA 违约`);
+    }
+  }
+  const ready =
+    total_breached === 0 &&
+    categories.every(c => c.attainment_pct !== null && c.attainment_pct >= SLA_ATTAIN_HEALTHY_MIN);
+  return {
+    categories,
+    total_sources,
+    total_on_time,
+    total_breached,
+    overall_attainment_pct,
+    overall_level,
+    ready,
+    blockers,
+    reference_trade_date: healthResponse.reference_trade_date ?? null,
+    loading: false,
+  };
+}
