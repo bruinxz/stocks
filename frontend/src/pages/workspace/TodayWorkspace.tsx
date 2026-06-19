@@ -61,6 +61,18 @@ import {
   sourceLabel,
 } from './todayPlanHelpers';
 import {
+  buildSellSuggestions,
+  SellSuggestionRow,
+  SellSuggestionPriority,
+  SellSuggestionSource,
+  reasonLabel,
+  reasonTagColor,
+  sellPriorityLabel,
+  sellPriorityTagColor,
+  sellSourceLabel,
+} from './todaySellHelpers';
+import { PositionRow, getPortfolio } from '../../services/portfolioWorkspaceService';
+import {
   getMarketBriefToday,
   MarketBriefResult,
   truncateAIView,
@@ -117,6 +129,9 @@ const TodayWorkspace: React.FC = () => {
   const [data, setData] = useState<TodaySignalsData | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // US-044 / FE-005: 当前持仓 (供 SellSuggestionCard 计算硬触发止损/止盈).
+  // 与 todaySignals 一起拉, 任一失败仅本卡片降级, 不阻塞其它面板.
+  const [positions, setPositions] = useState<PositionRow[] | null>(null);
 
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<ApplySignalsData | null>(null);
@@ -129,11 +144,31 @@ const TodayWorkspace: React.FC = () => {
     // Batch L (2026-06-17): 切盘 race 保护, 同 PortfolioWorkspace.
     const callPortfolioId = selectedPortfolioId;
     try {
-      const result = await todayWorkspaceService.getTodaySignals({
-        portfolio_id: selectedPortfolioId,
-      });
+      // US-044: positions 与 todaySignals 并行拉, positions 失败仅 SellSuggestionCard
+      // 降级显示 "持仓加载失败" 不影响 BUY 计划/策略卡 — 与 MarketJudgment / CallAuction
+      // 卡片同款 fail-OPEN 思想.
+      const [signalsResult, portfolioResult] = await Promise.allSettled([
+        todayWorkspaceService.getTodaySignals({
+          portfolio_id: selectedPortfolioId,
+        }),
+        getPortfolio(selectedPortfolioId ?? undefined),
+      ]);
       if (callPortfolioId !== selectedPortfolioId) return;
-      setData(result);
+      if (signalsResult.status === 'fulfilled') {
+        setData(signalsResult.value);
+      } else {
+        const msg =
+          signalsResult.reason instanceof Error
+            ? signalsResult.reason.message
+            : String(signalsResult.reason);
+        setLoadError(msg);
+      }
+      if (portfolioResult.status === 'fulfilled') {
+        setPositions(portfolioResult.value.positions ?? []);
+      } else {
+        // positions 加载失败不阻塞其它面板, 卡片自己降级
+        setPositions(null);
+      }
     } catch (err: unknown) {
       if (callPortfolioId !== selectedPortfolioId) return;
       const msg = err instanceof Error ? err.message : String(err);
@@ -287,7 +322,7 @@ const TodayWorkspace: React.FC = () => {
       </Card>
     );
   } else if (activeKey === 'signals') {
-    body = <SignalsPanel data={data} />;
+    body = <SignalsPanel data={data} positions={positions} />;
   } else if (activeKey === 'events') {
     body = <EventsPanel events={data.key_events} tradeDate={data.trade_date} />;
   } else if (activeKey === 'alerts') {
@@ -1521,10 +1556,291 @@ function planSourceTagColor(s: TradingPlanSource): string {
   return 'blue'; // multi_factor 与 MultiFactorCard 同色
 }
 
-const SignalsPanel: React.FC<{ data: TodaySignalsData }> = ({ data }) => {
+// ---------------------------------------------------------------------------
+// SellSuggestionCard (US-044 / FE-005) — 今日卖出建议卡
+// ---------------------------------------------------------------------------
+
+/**
+ * 「今日卖出建议」把当前持仓 + 今日 3 策略 SELL 信号合并 → 去重 → 优先级排序成
+ * 一条"今日可减仓清单"。
+ *
+ * 设计 (与 TradingPlanCard US-042 对偶):
+ *   - 数据 = positions (PortfolioWithPositions.positions) + props.data (3 策略 sell);
+ *   - 同股多 source 命中合并到一行, reason 取最严重 (止损 > 止盈 > 减持);
+ *   - priority 排序: high (止损必卖, 红) → medium (止盈考虑, 绿) → low (减持, 橙);
+ *   - 操作: 点击代码/名称 → /stock/{symbol}; 减仓按钮 → /workspace/portfolio (用户
+ *     去当前持仓页用现有止损/止盈编辑或手动 SELL 下单, 本卡片只提示不撮合 —
+ *     与 backend PerStockStopLossGuard / RebalanceEngine 真撮合路径解耦);
+ *   - 默认阈值 -7% 止损 / +20% 止盈 与 backend PerStockStopLossGuard.DEFAULT
+ *     对齐, 避免 UI 与后台行为不一致.
+ *
+ * 容错:
+ *   - positions=null (加载失败) → 卡片显示 Alert "持仓加载失败, 卖出建议暂不可
+ *     用", 不阻塞下方策略卡;
+ *   - 持仓非空但无任何卖出触发 → Empty "今日无卖出建议 (持仓健康)".
+ */
+const SellSuggestionCard: React.FC<{
+  data: TodaySignalsData;
+  positions: PositionRow[] | null;
+}> = ({ data, positions }) => {
+  const isMobile = useIsMobile();
+  const navigate = useNavigate();
+
+  const rows = useMemo(() => buildSellSuggestions(positions, data), [positions, data]);
+
+  const counts = useMemo(() => {
+    let high = 0;
+    let medium = 0;
+    let low = 0;
+    for (const r of rows) {
+      if (r.priority === 'high') high += 1;
+      else if (r.priority === 'medium') medium += 1;
+      else low += 1;
+    }
+    return { total: rows.length, high, medium, low };
+  }, [rows]);
+
+  return (
+    <Card
+      size="small"
+      title={
+        <Space>
+          <WarningOutlined style={{ color: '#cf1322' }} />
+          <span>今日卖出建议</span>
+          <Tag color="red">{counts.total} 只</Tag>
+        </Space>
+      }
+      extra={
+        <Space size={8}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            止损 / 止盈 / 减持
+          </Text>
+        </Space>
+      }
+    >
+      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Space size={24} wrap>
+          <Statistic
+            title="必卖止损"
+            value={counts.high}
+            valueStyle={{ color: '#cf1322', fontSize: 18 }}
+          />
+          <Statistic
+            title="考虑止盈"
+            value={counts.medium}
+            valueStyle={{ color: '#52c41a', fontSize: 18 }}
+          />
+          <Statistic
+            title="渐进减持"
+            value={counts.low}
+            valueStyle={{ color: '#fa8c16', fontSize: 18 }}
+          />
+        </Space>
+        {positions == null ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="持仓数据加载失败"
+            description="卖出建议依赖当前持仓 + 实时价, 请稍后刷新页面重试。"
+          />
+        ) : rows.length === 0 ? (
+          <Empty
+            description="今日无卖出建议 (持仓健康, 无止损/止盈/减持触发)"
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+          />
+        ) : isMobile ? (
+          <div className="workspace-mobile-card-list">
+            {rows.map(row => (
+              <Card key={row.stock_code} size="small">
+                <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                  <Space size={8} wrap>
+                    <Tag color={sellPriorityTagColor(row.priority)}>
+                      {sellPriorityLabel(row.priority)}
+                    </Tag>
+                    <Tag color={reasonTagColor(row.reason)}>{reasonLabel(row.reason)}</Tag>
+                    <Text strong style={{ fontSize: 14 }}>
+                      {row.name ?? row.stock_code}
+                    </Text>
+                    <Text code style={{ fontSize: 11 }}>
+                      {row.stock_code}
+                    </Text>
+                  </Space>
+                  <Space size={4} wrap>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      持仓 {row.quantity} 股
+                    </Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      浮动{' '}
+                      <span style={{ color: pnlColor(row.unrealized_pnl) }}>
+                        {row.unrealized_pnl_pct != null
+                          ? `${(row.unrealized_pnl_pct * 100).toFixed(1)}%`
+                          : '—'}
+                      </span>
+                    </Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      建议卖 {Math.round(row.suggested_sell_ratio * 100)}%
+                    </Text>
+                  </Space>
+                  {row.reason_text && (
+                    <Paragraph style={{ margin: '4px 0 0 0', fontSize: 12 }} type="secondary">
+                      {row.reason_text}
+                    </Paragraph>
+                  )}
+                  <div className="workspace-mobile-card-actions">
+                    <Button
+                      size="small"
+                      type="primary"
+                      danger
+                      onClick={() => navigate('/workspace/portfolio')}
+                    >
+                      去减仓
+                    </Button>
+                  </div>
+                </Space>
+              </Card>
+            ))}
+          </div>
+        ) : (
+          <Table<SellSuggestionRow>
+            size="small"
+            rowKey="stock_code"
+            dataSource={rows}
+            pagination={false}
+            scroll={{ x: 'max-content', y: 360 }}
+            columns={[
+              {
+                title: '优先级',
+                dataIndex: 'priority',
+                width: 80,
+                render: (v: SellSuggestionPriority) => (
+                  <Tag color={sellPriorityTagColor(v)}>{sellPriorityLabel(v)}</Tag>
+                ),
+                filters: [
+                  { text: '必卖', value: 'high' },
+                  { text: '考虑', value: 'medium' },
+                  { text: '减持', value: 'low' },
+                ],
+                onFilter: (val, row) => row.priority === val,
+              },
+              {
+                title: '原因',
+                dataIndex: 'reason',
+                width: 70,
+                render: (v: SellSuggestionRow['reason']) => (
+                  <Tag color={reasonTagColor(v)}>{reasonLabel(v)}</Tag>
+                ),
+              },
+              {
+                title: '代码',
+                dataIndex: 'stock_code',
+                width: 92,
+                render: (v: string) => (
+                  <a onClick={() => navigate(`/stock/${v}`)}>
+                    <Text code>{v}</Text>
+                  </a>
+                ),
+              },
+              {
+                title: '名称',
+                dataIndex: 'name',
+                width: 110,
+                ellipsis: true,
+                render: (v: string | null, row: SellSuggestionRow) =>
+                  v ? <a onClick={() => navigate(`/stock/${row.stock_code}`)}>{v}</a> : '—',
+              },
+              {
+                title: '持仓',
+                dataIndex: 'quantity',
+                width: 80,
+                align: 'right' as const,
+                render: (v: number) => `${v} 股`,
+              },
+              {
+                title: '成本/现价',
+                key: 'price',
+                width: 110,
+                align: 'right' as const,
+                render: (_: unknown, row: SellSuggestionRow) =>
+                  `${row.avg_cost.toFixed(2)} / ${row.current_price.toFixed(2)}`,
+              },
+              {
+                title: '浮动',
+                dataIndex: 'unrealized_pnl_pct',
+                width: 90,
+                align: 'right' as const,
+                sorter: (a, b) => (a.unrealized_pnl_pct ?? 0) - (b.unrealized_pnl_pct ?? 0),
+                render: (v: number | null, row: SellSuggestionRow) => (
+                  <span style={{ color: pnlColor(row.unrealized_pnl) }}>
+                    {v != null && Number.isFinite(v) ? `${(v * 100).toFixed(1)}%` : '—'}
+                  </span>
+                ),
+              },
+              {
+                title: '来源',
+                dataIndex: 'sources',
+                width: 200,
+                render: (sources: SellSuggestionSource[]) => (
+                  <Space size={4} wrap>
+                    {sources.map(s => (
+                      <Tag key={s}>{sellSourceLabel(s)}</Tag>
+                    ))}
+                  </Space>
+                ),
+              },
+              {
+                title: '理由',
+                dataIndex: 'reason_text',
+                ellipsis: { showTitle: false },
+                render: (v: string) =>
+                  v ? (
+                    <Tooltip title={v} placement="topLeft">
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {v}
+                      </Text>
+                    </Tooltip>
+                  ) : (
+                    <Text type="secondary">—</Text>
+                  ),
+              },
+              {
+                title: '建议卖出',
+                dataIndex: 'suggested_sell_ratio',
+                width: 90,
+                align: 'right' as const,
+                render: (v: number) => `${Math.round(v * 100)}%`,
+              },
+              {
+                title: '操作',
+                key: 'actions',
+                width: 90,
+                fixed: 'right' as const,
+                render: (_: unknown, _row: SellSuggestionRow) => (
+                  <Button
+                    size="small"
+                    type="link"
+                    danger
+                    onClick={() => navigate('/workspace/portfolio')}
+                  >
+                    去减仓
+                  </Button>
+                ),
+              },
+            ]}
+          />
+        )}
+      </Space>
+    </Card>
+  );
+};
+
+const SignalsPanel: React.FC<{ data: TodaySignalsData; positions: PositionRow[] | null }> = ({
+  data,
+  positions,
+}) => {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <TradingPlanCard data={data} />
+      <SellSuggestionCard data={data} positions={positions} />
       <Row gutter={[16, 16]}>
         <Col xs={24}>
           <MultiFactorCard
