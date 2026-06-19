@@ -34,7 +34,7 @@
  *     而是通过 `createPrometheusRegistry()` factory 单独构造 fresh registry 验证语义。
  */
 
-import { collectDefaultMetrics, Counter, Histogram, Registry } from 'prom-client';
+import { collectDefaultMetrics, Counter, Gauge, Histogram, Registry } from 'prom-client';
 import type { NextFunction, Request, Response } from 'express';
 
 // ---------------------------------------------------------------------------
@@ -54,6 +54,19 @@ export type BacktestTradeCountLabel = 'strategy_key';
  */
 export type SchedulerTaskLabel = 'task_type' | 'status';
 
+/**
+ * US-017 [EX-003] Reconciliation 看板维度。
+ *
+ * - `user_id`: 多账户独立曲线（典型 ≤ 50 用户，远低于 cardinality 红线）。
+ *   绝不要加 `account_id` / `symbol` —— 会让 Grafana per-user 曲线无法叠加。
+ * - `side`: 'live_only' | 'paper_only' | 'live_overweight' | 'live_underweight'.
+ * - `severity`: 'HIGH' | 'MEDIUM' | 'NONE' （NONE 也记 0 让 Grafana 看健康曲线）。
+ * - `window`: 'intraday' | 'eod'.
+ */
+export type ReconciliationGaugeLabel = 'user_id';
+export type ReconciliationDriftLabel = 'user_id' | 'side';
+export type ReconciliationAlertLabel = 'severity' | 'window';
+
 export interface PrometheusMetricsBundle {
   registry: Registry;
   httpRequestsTotal: Counter<HttpRequestLabel>;
@@ -66,6 +79,14 @@ export interface PrometheusMetricsBundle {
   schedulerTaskRunsTotal: Counter<SchedulerTaskLabel>;
   /** US-004: 调度任务执行耗时（秒） */
   schedulerTaskDurationSeconds: Histogram<SchedulerTaskLabel>;
+  /** US-017 [EX-003]: 实盘/模拟对账 alignment_score（0-100；null/未绑定不记） */
+  reconciliationAlignmentScore: Gauge<ReconciliationGaugeLabel>;
+  /** US-017 [EX-003]: 对账漂移持仓数（按 side 分；每次评估覆盖写入） */
+  reconciliationDriftPositions: Gauge<ReconciliationDriftLabel>;
+  /** US-017 [EX-003]: 对账快照过期分钟数（snapshot_age_minutes；null 不记） */
+  reconciliationSnapshotAgeMinutes: Gauge<ReconciliationGaugeLabel>;
+  /** US-017 [EX-003]: 实际写出的 ReconciliationAlert 累计数（按 severity + window 分） */
+  reconciliationAlertsTotal: Counter<ReconciliationAlertLabel>;
 }
 
 // ---------------------------------------------------------------------------
@@ -144,6 +165,40 @@ export function createPrometheusRegistry(
     registers: [registry],
   });
 
+  // US-017 [EX-003]: reconciliation 域 — 对账主动监控的看板数据源.
+  // 命名约定 `<domain>_<verb>_<unit>` (reconciliation / alignment_score / 无量纲 → gauge,
+  // reconciliation / drift_positions / 无量纲 → gauge,
+  // reconciliation / snapshot_age_minutes → gauge,
+  // reconciliation / alerts / total → counter).
+  // 与既有 ReconciliationAlertService 阈值对偶: <70 HIGH, [70,85) MEDIUM.
+  const reconciliationAlignmentScore = new Gauge<ReconciliationGaugeLabel>({
+    name: 'reconciliation_alignment_score',
+    help: '实盘/模拟对账 alignment_score（0-100；按 user_id；ReconciliationAlertService 每跑一次覆盖写）',
+    labelNames: ['user_id'],
+    registers: [registry],
+  });
+
+  const reconciliationDriftPositions = new Gauge<ReconciliationDriftLabel>({
+    name: 'reconciliation_drift_positions',
+    help: '对账漂移持仓数（按 user_id + side ∈ {live_only,paper_only,live_overweight,live_underweight}）',
+    labelNames: ['user_id', 'side'],
+    registers: [registry],
+  });
+
+  const reconciliationSnapshotAgeMinutes = new Gauge<ReconciliationGaugeLabel>({
+    name: 'reconciliation_snapshot_age_minutes',
+    help: '对账快照过期分钟数（snapshot_age_minutes；按 user_id；>stale_threshold 触发 HIGH 告警）',
+    labelNames: ['user_id'],
+    registers: [registry],
+  });
+
+  const reconciliationAlertsTotal = new Counter<ReconciliationAlertLabel>({
+    name: 'reconciliation_alerts_total',
+    help: '实际写出的 ReconciliationAlert 累计数（按 severity=HIGH/MEDIUM/NONE + window=intraday/eod 分组；NONE 用于校验"健康跑过")',
+    labelNames: ['severity', 'window'],
+    registers: [registry],
+  });
+
   return {
     registry,
     httpRequestsTotal,
@@ -153,6 +208,10 @@ export function createPrometheusRegistry(
     backtestTradeCountTotal,
     schedulerTaskRunsTotal,
     schedulerTaskDurationSeconds,
+    reconciliationAlignmentScore,
+    reconciliationDriftPositions,
+    reconciliationSnapshotAgeMinutes,
+    reconciliationAlertsTotal,
   };
 }
 
@@ -390,12 +449,114 @@ export function recordSchedulerTaskRun(
 }
 
 // ---------------------------------------------------------------------------
-//  /metrics endpoint contract
+//  US-017 [EX-003] Reconciliation helpers — preferred by ReconciliationAlertService
 // ---------------------------------------------------------------------------
 
 /**
- * 取整个 registry 的 Prometheus text 格式 dump，供 /metrics endpoint 使用。
+ * 把任意 user_id 归一化为稳定 label 字符串（防 cardinality 漂移）。
+ *  - number > 0       → String(number)
+ *  - 其它（null/0/NaN/非数字字符串） → 'unknown'
+ *
+ * 不允许传 user.email / user.username —— PII 不进 metric label.
  */
+export function normalizeUserIdLabel(user_id: unknown): string {
+  if (typeof user_id === 'number' && Number.isFinite(user_id) && user_id > 0) {
+    return String(user_id);
+  }
+  if (typeof user_id === 'string') {
+    const n = Number(user_id);
+    if (Number.isFinite(n) && n > 0) return String(n);
+  }
+  return 'unknown';
+}
+
+/**
+ * 把对账 side 归一化为稳定 label string。
+ * 仅接受四个值: live_only / paper_only / live_overweight / live_underweight.
+ */
+export function normalizeDriftSideLabel(side: unknown): string {
+  if (typeof side !== 'string') return 'unknown';
+  if (
+    side === 'live_only' ||
+    side === 'paper_only' ||
+    side === 'live_overweight' ||
+    side === 'live_underweight'
+  ) {
+    return side;
+  }
+  return 'unknown';
+}
+
+/**
+ * 一次性记录单个用户的对账快照（让 Grafana 看 alignment / drift / age 三联）。
+ *
+ * @param user_id        用户 ID
+ * @param alignmentScore 0-100；null 表示 paper-only 用户/未绑定 (跳过 set, 否则上次值会被冻结)
+ * @param driftBySide    各 side 的漂移持仓数 (典型 {live_only: 2, paper_only: 1, ...})
+ *                       未列出的 side 不写; 已列出的 side 一定要 set (覆盖式语义)
+ * @param snapshotAgeMinutes  null 表示快照不存在 (跳过 set)
+ */
+export function recordReconciliationSnapshot(
+  user_id: number | string,
+  alignmentScore: number | null,
+  driftBySide: Partial<Record<string, number>>,
+  snapshotAgeMinutes: number | null,
+  bundle: PrometheusMetricsBundle = getPrometheusBundle()
+): void {
+  const uid = normalizeUserIdLabel(user_id);
+  try {
+    if (alignmentScore !== null && Number.isFinite(alignmentScore)) {
+      bundle.reconciliationAlignmentScore.set({ user_id: uid }, Number(alignmentScore));
+    }
+  } catch {
+    // ignore
+  }
+  for (const [side, count] of Object.entries(driftBySide || {})) {
+    const sideLabel = normalizeDriftSideLabel(side);
+    if (sideLabel === 'unknown') continue;
+    const n = Number(count);
+    if (!Number.isFinite(n) || n < 0) continue;
+    try {
+      bundle.reconciliationDriftPositions.set({ user_id: uid, side: sideLabel }, n);
+    } catch {
+      // ignore
+    }
+  }
+  try {
+    if (snapshotAgeMinutes !== null && Number.isFinite(snapshotAgeMinutes)) {
+      bundle.reconciliationSnapshotAgeMinutes.set({ user_id: uid }, Number(snapshotAgeMinutes));
+    }
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * 累加一次 ReconciliationAlert 写出事件（counter；监测告警频率）。
+ * - severity: 'HIGH' | 'MEDIUM' | 'NONE' （NONE 也记，用于"健康跑过"曲线）
+ * - window: 'intraday' | 'eod'
+ *
+ * 与 recordReconciliationSnapshot 配套：snapshot 是覆盖式状态，alert 是事件累积；
+ * Grafana 上一个看当前状态，一个看历史趋势 / 告警风暴检测。
+ */
+export function incrementReconciliationAlert(
+  severity: 'HIGH' | 'MEDIUM' | 'NONE' | string,
+  window: 'intraday' | 'eod' | string,
+  bundle: PrometheusMetricsBundle = getPrometheusBundle()
+): void {
+  const sev =
+    severity === 'HIGH' || severity === 'MEDIUM' || severity === 'NONE' ? severity : 'NONE';
+  const win = window === 'intraday' || window === 'eod' ? window : 'intraday';
+  try {
+    bundle.reconciliationAlertsTotal.inc({ severity: sev, window: win });
+  } catch {
+    // ignore
+  }
+}
+
+// ---------------------------------------------------------------------------
+//  /metrics endpoint contract
+// ---------------------------------------------------------------------------
 export async function getMetricsContent(
   bundle: PrometheusMetricsBundle = getPrometheusBundle()
 ): Promise<string> {

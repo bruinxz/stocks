@@ -22,6 +22,10 @@
 
 import crypto from 'crypto';
 import { logger } from '../../utils/logger';
+import {
+  incrementReconciliationAlert,
+  recordReconciliationSnapshot,
+} from '../../metrics/PrometheusRegistry';
 import { liveTradingService } from './LiveTradingService';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -227,7 +231,36 @@ export class ReconciliationAlertService {
         status: String(reconciliation.status || ''),
       });
 
+      // US-017 [EX-003]: 把当前对账快照写入 Prometheus gauge 系列（无论 severity 如何，
+      // 让 Grafana 即使 NONE 也有曲线）。recordReconciliationSnapshot 已 fail-OPEN
+      // (内部 try/catch)，主流程不会被 metric 拖死.
+      // 漂移按 4 个 side 聚合：position_matches.filter(status).reduce(...).
+      // live_only / paper_only 用 summary 中已聚合的 count；overweight / underweight
+      // 走 position_matches 二次聚合 (LiveTradingService 不在 summary 暴露).
+      try {
+        const driftBySide: Record<string, number> = {
+          live_only: liveOnly,
+          paper_only: paperOnly,
+          live_overweight: 0,
+          live_underweight: 0,
+        };
+        for (const pm of reconciliation.position_matches || []) {
+          if (pm.status === 'live_overweight') driftBySide.live_overweight += 1;
+          else if (pm.status === 'live_underweight') driftBySide.live_underweight += 1;
+        }
+        recordReconciliationSnapshot(user_id, alignmentScore, driftBySide, snapshotAge);
+      } catch (e: any) {
+        logger.warn(
+          `[ReconciliationAlert] metric record user=${user_id} failed (fail-open): ${
+            e?.message || e
+          }`
+        );
+      }
+
       if (classification.severity === 'NONE') {
+        // US-017 [EX-003]: 健康跑过也记 counter，让 Grafana 看"上次 evaluate 是几分钟前"
+        // (e.g. `time() - (max(rate(reconciliation_alerts_total[1h])) > 0)` 报警 cron 卡死).
+        incrementReconciliationAlert('NONE', window);
         return {
           user_id,
           scanned: true,
@@ -311,6 +344,10 @@ export class ReconciliationAlertService {
 
       seen.push({ sig: signature, pushed_at_ms: nowMs });
       await saveSeen(user_id, seen);
+
+      // US-017 [EX-003]: 写出告警的 severity 计数（HIGH / MEDIUM），window 维度区分
+      // 盘中 vs 收盘后告警风暴.
+      incrementReconciliationAlert(classification.severity, window);
 
       return {
         user_id,

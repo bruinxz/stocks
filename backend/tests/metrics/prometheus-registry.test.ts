@@ -50,9 +50,13 @@ import {
   httpMetricsMiddleware,
   incrementBacktestTotal,
   incrementOrderTotal,
+  incrementReconciliationAlert,
+  normalizeDriftSideLabel,
   normalizeMethodLabel,
   normalizeStatusLabel,
+  normalizeUserIdLabel,
   observeAIRequestDuration,
+  recordReconciliationSnapshot,
   recordSchedulerTaskRun,
   resolveRouteLabel,
 } from '../../src/metrics/PrometheusRegistry';
@@ -656,13 +660,276 @@ async function testRecordSchedulerTaskRun(): Promise<void> {
   );
 }
 
+async function testNormalizeUserIdLabel(): Promise<void> {
+  // US-017 [EX-003]: user_id label 必须稳定且禁止 PII.
+  assertEqual('normalizeUserIdLabel(42) → "42"', normalizeUserIdLabel(42), '42');
+  assertEqual('normalizeUserIdLabel("42") → "42"', normalizeUserIdLabel('42'), '42');
+  assertEqual('normalizeUserIdLabel(0) → unknown', normalizeUserIdLabel(0), 'unknown');
+  assertEqual('normalizeUserIdLabel(-1) → unknown', normalizeUserIdLabel(-1), 'unknown');
+  assertEqual('normalizeUserIdLabel(null) → unknown', normalizeUserIdLabel(null), 'unknown');
+  assertEqual('normalizeUserIdLabel(NaN) → unknown', normalizeUserIdLabel(NaN), 'unknown');
+  assertEqual(
+    'normalizeUserIdLabel("alice@example.com") → unknown (PII rejected)',
+    normalizeUserIdLabel('alice@example.com'),
+    'unknown'
+  );
+  assertEqual('normalizeUserIdLabel(undefined) → unknown', normalizeUserIdLabel(undefined), 'unknown');
+}
+
+async function testNormalizeDriftSideLabel(): Promise<void> {
+  assertEqual('drift side live_only ok', normalizeDriftSideLabel('live_only'), 'live_only');
+  assertEqual('drift side paper_only ok', normalizeDriftSideLabel('paper_only'), 'paper_only');
+  assertEqual(
+    'drift side live_overweight ok',
+    normalizeDriftSideLabel('live_overweight'),
+    'live_overweight'
+  );
+  assertEqual(
+    'drift side live_underweight ok',
+    normalizeDriftSideLabel('live_underweight'),
+    'live_underweight'
+  );
+  assertEqual('drift side aligned → unknown', normalizeDriftSideLabel('aligned'), 'unknown');
+  assertEqual('drift side null → unknown', normalizeDriftSideLabel(null), 'unknown');
+  assertEqual('drift side random → unknown', normalizeDriftSideLabel('foo'), 'unknown');
+}
+
+async function testRecordReconciliationSnapshot(): Promise<void> {
+  // US-017 [EX-003]: 单 user 一次 snapshot → alignment / age / 4 个 side 都覆盖写.
+  const bundle = createPrometheusRegistry();
+  recordReconciliationSnapshot(
+    42,
+    87.5,
+    { live_only: 1, paper_only: 2, live_overweight: 0, live_underweight: 3 },
+    12,
+    bundle
+  );
+
+  assertEqual(
+    'alignment_score user=42 → 87.5',
+    await metricValue(bundle, 'reconciliation_alignment_score', { user_id: '42' }),
+    87.5
+  );
+  assertEqual(
+    'snapshot_age_minutes user=42 → 12',
+    await metricValue(bundle, 'reconciliation_snapshot_age_minutes', { user_id: '42' }),
+    12
+  );
+  assertEqual(
+    'drift live_only user=42 → 1',
+    await metricValue(bundle, 'reconciliation_drift_positions', {
+      user_id: '42',
+      side: 'live_only',
+    }),
+    1
+  );
+  assertEqual(
+    'drift paper_only user=42 → 2',
+    await metricValue(bundle, 'reconciliation_drift_positions', {
+      user_id: '42',
+      side: 'paper_only',
+    }),
+    2
+  );
+  assertEqual(
+    'drift live_overweight user=42 → 0',
+    await metricValue(bundle, 'reconciliation_drift_positions', {
+      user_id: '42',
+      side: 'live_overweight',
+    }),
+    0
+  );
+  assertEqual(
+    'drift live_underweight user=42 → 3',
+    await metricValue(bundle, 'reconciliation_drift_positions', {
+      user_id: '42',
+      side: 'live_underweight',
+    }),
+    3
+  );
+
+  // 覆盖式语义: 再 set 一次新值 — alignment 从 87.5 → 50, drift 从 3 → 0.
+  recordReconciliationSnapshot(
+    42,
+    50,
+    { live_underweight: 0 },
+    7,
+    bundle
+  );
+  assertEqual(
+    'alignment_score overwrite → 50',
+    await metricValue(bundle, 'reconciliation_alignment_score', { user_id: '42' }),
+    50
+  );
+  assertEqual(
+    'drift live_underweight overwrite → 0',
+    await metricValue(bundle, 'reconciliation_drift_positions', {
+      user_id: '42',
+      side: 'live_underweight',
+    }),
+    0
+  );
+  assertEqual(
+    'drift live_only NOT overwritten (still 1)',
+    await metricValue(bundle, 'reconciliation_drift_positions', {
+      user_id: '42',
+      side: 'live_only',
+    }),
+    1
+  );
+
+  // 多用户隔离: user=99 不影响 user=42.
+  recordReconciliationSnapshot(99, 10, { live_only: 5 }, null, bundle);
+  assertEqual(
+    'multi-user isolation: user=99 alignment=10',
+    await metricValue(bundle, 'reconciliation_alignment_score', { user_id: '99' }),
+    10
+  );
+  assertEqual(
+    'multi-user isolation: user=42 alignment unchanged (50)',
+    await metricValue(bundle, 'reconciliation_alignment_score', { user_id: '42' }),
+    50
+  );
+
+  // null alignment / null age 跳过 set (保留前值).
+  recordReconciliationSnapshot(42, null, {}, null, bundle);
+  assertEqual(
+    'null alignment NOT overwriting (still 50)',
+    await metricValue(bundle, 'reconciliation_alignment_score', { user_id: '42' }),
+    50
+  );
+
+  // 非法 side 默默丢弃，不污染.
+  recordReconciliationSnapshot(42, 95, { weird_side: 99, live_only: 7 }, 1, bundle);
+  assertEqual(
+    'unknown side dropped (no series created)',
+    await metricValue(bundle, 'reconciliation_drift_positions', {
+      user_id: '42',
+      side: 'unknown',
+    }),
+    0
+  );
+  assertEqual(
+    'valid side still set in same call',
+    await metricValue(bundle, 'reconciliation_drift_positions', {
+      user_id: '42',
+      side: 'live_only',
+    }),
+    7
+  );
+
+  // 负数 / NaN drift 不写
+  recordReconciliationSnapshot(42, 95, { paper_only: -1 }, 1, bundle);
+  assertEqual(
+    'negative drift count rejected (still 2)',
+    await metricValue(bundle, 'reconciliation_drift_positions', {
+      user_id: '42',
+      side: 'paper_only',
+    }),
+    2
+  );
+}
+
+async function testIncrementReconciliationAlert(): Promise<void> {
+  // US-017 [EX-003]: 告警 counter 按 severity × window 分隔离.
+  const bundle = createPrometheusRegistry();
+  incrementReconciliationAlert('HIGH', 'intraday', bundle);
+  incrementReconciliationAlert('HIGH', 'intraday', bundle);
+  incrementReconciliationAlert('HIGH', 'eod', bundle);
+  incrementReconciliationAlert('MEDIUM', 'intraday', bundle);
+  incrementReconciliationAlert('NONE', 'intraday', bundle);
+
+  assertEqual(
+    'HIGH intraday = 2',
+    await metricValue(bundle, 'reconciliation_alerts_total', {
+      severity: 'HIGH',
+      window: 'intraday',
+    }),
+    2
+  );
+  assertEqual(
+    'HIGH eod = 1',
+    await metricValue(bundle, 'reconciliation_alerts_total', {
+      severity: 'HIGH',
+      window: 'eod',
+    }),
+    1
+  );
+  assertEqual(
+    'MEDIUM intraday = 1',
+    await metricValue(bundle, 'reconciliation_alerts_total', {
+      severity: 'MEDIUM',
+      window: 'intraday',
+    }),
+    1
+  );
+  assertEqual(
+    'NONE intraday = 1',
+    await metricValue(bundle, 'reconciliation_alerts_total', {
+      severity: 'NONE',
+      window: 'intraday',
+    }),
+    1
+  );
+
+  // 非法 severity → 归 NONE, 非法 window → 归 intraday (label cardinality 守门).
+  incrementReconciliationAlert('CRITICAL' as any, 'intraday', bundle);
+  incrementReconciliationAlert('HIGH', 'random_window', bundle);
+  assertEqual(
+    'invalid severity routes to NONE (now 2)',
+    await metricValue(bundle, 'reconciliation_alerts_total', {
+      severity: 'NONE',
+      window: 'intraday',
+    }),
+    2
+  );
+  assertEqual(
+    'invalid window routes to intraday (now 3)',
+    await metricValue(bundle, 'reconciliation_alerts_total', {
+      severity: 'HIGH',
+      window: 'intraday',
+    }),
+    3
+  );
+}
+
+async function testReconciliationMetricsInTextOutput(): Promise<void> {
+  // US-017 AC: dashboard 完成 — 4 个 reconciliation metric 都在 /metrics 文本输出可见.
+  const bundle = createPrometheusRegistry({ enableDefaultMetrics: false });
+  recordReconciliationSnapshot(1, 95, { live_only: 0 }, 5, bundle);
+  incrementReconciliationAlert('HIGH', 'intraday', bundle);
+  const text = await getMetricsContent(bundle);
+  assert(
+    'reconciliation_alignment_score gauge HELP exposed',
+    text.includes('# TYPE reconciliation_alignment_score gauge')
+  );
+  assert(
+    'reconciliation_drift_positions gauge HELP exposed',
+    text.includes('# TYPE reconciliation_drift_positions gauge')
+  );
+  assert(
+    'reconciliation_snapshot_age_minutes gauge HELP exposed',
+    text.includes('# TYPE reconciliation_snapshot_age_minutes gauge')
+  );
+  assert(
+    'reconciliation_alerts_total counter HELP exposed',
+    text.includes('# TYPE reconciliation_alerts_total counter')
+  );
+  assert(
+    'value sample for alignment_score user=1',
+    text.includes('reconciliation_alignment_score{user_id="1"} 95')
+  );
+}
+
 async function testTwentyMetricsVisible(): Promise<void> {
   // US-004 AC: "至少 20 个 metric 在 /metrics 可见".
   // 单 createPrometheusRegistry({enableDefaultMetrics:true}) 已注册:
   //   - 26 个 prom-client 默认 process_ / nodejs_ 系列 metric
-  //   - 7 个业务 metric (http_requests_total, backtest_total, ai_request_duration_seconds,
+  //   - 11 个业务 metric (http_requests_total, backtest_total, ai_request_duration_seconds,
   //     order_total, backtest_trade_count_total, scheduler_task_runs_total,
-  //     scheduler_task_duration_seconds)
+  //     scheduler_task_duration_seconds, reconciliation_alignment_score,
+  //     reconciliation_drift_positions, reconciliation_snapshot_age_minutes,
+  //     reconciliation_alerts_total)
   // 触发各 metric 让 HELP / TYPE 都暴露 (counter 不 inc 不会 emit 行).
   const bundle = createPrometheusRegistry({ enableDefaultMetrics: true });
   bundle.httpRequestsTotal.inc({ method: 'GET', route: '/x', status: '200' });
@@ -671,6 +938,8 @@ async function testTwentyMetricsVisible(): Promise<void> {
   incrementOrderTotal('BUY', 'success', 'ok', bundle);
   bundle.backtestTradeCountTotal.inc({ strategy_key: 'mfa' }, 1);
   recordSchedulerTaskRun('DAILY_UPDATE', 'success', 1.0, bundle);
+  recordReconciliationSnapshot(1, 90, { live_only: 0 }, 3, bundle);
+  incrementReconciliationAlert('HIGH', 'intraday', bundle);
 
   const text = await getMetricsContent(bundle);
   const helpLines = text.split('\n').filter(l => l.startsWith('# HELP '));
@@ -708,6 +977,11 @@ async function main() {
   await testMetricsTextFormat();
   await testContentType();
   await testRecordSchedulerTaskRun();
+  await testNormalizeUserIdLabel();
+  await testNormalizeDriftSideLabel();
+  await testRecordReconciliationSnapshot();
+  await testIncrementReconciliationAlert();
+  await testReconciliationMetricsInTextOutput();
   await testTwentyMetricsVisible();
 
   console.log(`\n${passed} ok, ${failed} failed`);

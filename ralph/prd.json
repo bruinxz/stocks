@@ -260,8 +260,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 17,
-      "passes": false,
-      "notes": "依赖: D-001"
+      "passes": true,
+      "notes": "依赖: D-001 | done 2026-06-19: 4 Prometheus metric (alignment_score gauge, drift_positions gauge, snapshot_age gauge, alerts_total counter) + ReconciliationAlertService 接通 + 41 单测 + monitoring.md 看板段 + alerting rules."
     },
     {
       "id": "US-018",

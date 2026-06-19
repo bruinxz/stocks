@@ -159,6 +159,74 @@ topk(5, sum by (code) (rate(order_total{status="failed"}[1h])))
 sum(rate(order_total{code="POSITION_LIMIT_VIOLATION"}[5m]))
 ```
 
+### 5. Reconciliation 看板 (US-017 [EX-003])
+
+**4 个 metric** 为实盘/模拟对账主动监控 (`ReconciliationAlertService`) 提供 Grafana 数据源；
+配合现有 `RiskAlert` 告警链路把"alignment_score 漂移"从一次性告警升级为可视化趋势看板。
+
+| Metric                                  | 类型      | Labels                | 含义                                                              |
+| --------------------------------------- | --------- | --------------------- | ----------------------------------------------------------------- |
+| `reconciliation_alignment_score`        | Gauge     | `user_id`             | 0-100；每次 `runForUser` 覆盖写；越低越漂                          |
+| `reconciliation_drift_positions`        | Gauge     | `user_id`, `side`     | 漂移持仓数；`side` ∈ `live_only`/`paper_only`/`live_overweight`/`live_underweight` |
+| `reconciliation_snapshot_age_minutes`   | Gauge     | `user_id`             | 快照过期分钟数；超过 `stale_threshold_minutes` 触发 HIGH 告警      |
+| `reconciliation_alerts_total`           | Counter   | `severity`, `window`  | 实际写出 RiskAlert 数；`severity` ∈ `HIGH`/`MEDIUM`/`NONE`；`window` ∈ `intraday`/`eod` |
+
+**埋点位置**: `backend/src/live-trading/services/ReconciliationAlertService.ts::runForUser`
+（NONE 分支 + 写出告警分支都打点；snapshot gauge 每次跑都覆盖，确保 Grafana 曲线连续）。
+
+**Cardinality 估算**: ≤ 50 用户 × 4 side ≈ 200 时间序列 + per-user gauges 100 序列 +
+2 × 3 severity × 2 window = 12 counter 序列。远低于 Prometheus per-job 10k 红线。
+
+**常见查询**：
+
+```promql
+# 当前对账分数 < 70（HIGH 阈值）的用户
+reconciliation_alignment_score < 70
+
+# 任意用户 alignment 6h 趋势（看是不是越漂越大）
+avg_over_time(reconciliation_alignment_score{user_id="42"}[6h])
+
+# 漂移持仓总数 by side
+sum by (side) (reconciliation_drift_positions)
+
+# 快照过期 30 分钟以上的用户
+reconciliation_snapshot_age_minutes > 30
+
+# HIGH 告警风暴（intraday + eod 合计 1h 速率）
+sum(rate(reconciliation_alerts_total{severity="HIGH"}[1h]))
+
+# Cron 健康：NONE 分支也记 counter，长时间 0 增量 → cron 卡死
+sum(rate(reconciliation_alerts_total[1h])) == 0
+```
+
+**Alerting rule 建议**:
+
+```yaml
+- alert: ReconciliationAlignmentLow
+  expr: reconciliation_alignment_score < 70
+  for: 15m
+  labels:
+    severity: critical
+  annotations:
+    summary: '用户 {{ $labels.user_id }} 对账 alignment_score 低于 70（HIGH 阈值）持续 15 分钟'
+
+- alert: ReconciliationSnapshotStale
+  expr: reconciliation_snapshot_age_minutes > 180
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: '用户 {{ $labels.user_id }} 对账快照过期 > 180 分钟（stale_threshold）'
+
+- alert: ReconciliationGuardSilent
+  expr: sum(increase(reconciliation_alerts_total[1h])) == 0
+  for: 1h
+  labels:
+    severity: warning
+  annotations:
+    summary: '过去 1h 没有任何对账 evaluate（cron 卡死或 LiveBrokerAccount 全部 skip？）'
+```
+
 ## 内置默认指标
 
 启用 `collectDefaultMetrics`，自动暴露 Node.js 进程级指标：
@@ -217,12 +285,15 @@ groups:
 
 ## Grafana Dashboard 建议
 
-推荐 4 个核心面板：
+推荐 5 个核心面板：
 
 1. **流量 & 错误率** — `http_requests_total` 按 route 分组的 stacked area，叠加 5xx 红线
 2. **API 延迟** — `ai_request_duration_seconds` P50 / P95 / P99 多曲线
 3. **回测吞吐** — `backtest_total` 按 strategy 分组的 daily bar，叠加 failed 红条
 4. **风控触发** — `order_total{status="failed"}` 按 code 分组的 stacked area
+5. **实盘/模拟对账** (US-017 [EX-003]) — `reconciliation_alignment_score` 按 user_id 多曲线 +
+   `reconciliation_drift_positions` 按 side stacked + `reconciliation_alerts_total` 速率 +
+   `reconciliation_snapshot_age_minutes` 单值警戒线（180 min）
 
 可从 [grafana.com/dashboards](https://grafana.com/grafana/dashboards/) 搜索 `prom-client` 现成模板。
 
