@@ -1232,3 +1232,21 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **frontend 没有 jest test infra**: react-scripts test 配置在但没有任何 .test.* 文件, frontend lint 也只能跑 eslint. 当前 frontend 单测无标准走 backend pattern, 临时 sanity 用 `npx tsc out → node 跑` 离线编译. 未来若做 frontend 测试基建, 建议从 todayPlanHelpers / todaySellHelpers 这类 pure helper 起步 (无 React 渲染依赖, 最容易接 jest), 而不是从 React 组件起步 (要装 testing-library + jsdom).
   - **mobile vs desktop dual layout 模板**: AntD 复杂 Table 在 mobile 自动 horizontal scroll 不友好, 用 useIsMobile() hook → 三元运算符把同份数据 rows 渲染成 mobile Card list / desktop Table. 这是项目里所有 Workspace 卡片的标准模板 (TradingPlanCard / MultiFactorCard / DragonHeadCard 全用同款), 新增 UI 卡按这个走避免 mobile UX 退化.
 ---
+
+## 2026/06/19 21:30 - US-045
+- Implemented [FE-006] FactorWorkspace 因子健康列 — IC_90d / IC_IR / classification 三件套 让操盘手在因子总览页一眼判断"今天还能信哪几个因子".
+- 文件改动:
+  - backend/src/api/controllers/FactorController.ts: 新增 FACTOR_HEALTH_THRESHOLDS 常量 (Object.freeze, 4 阈值: IC_HEALTH_LOOK_FORWARD_DAYS=20 / IC_HEALTH_LOOKBACK_DAYS=90 / IC_ALPHA_THRESHOLD=0.03 / IC_IR_ALPHA_THRESHOLD=0.3 / IC_WEAK_THRESHOLD=0.01), 4 个 pure helpers (FactorHealthClass type / classifyFactorHealth / computeFactorICHealth / loadFactorHealthMap), getOverview() 中接入 loadFactorHealthMap 把 healthByFactor 拼到 factorStats 上.
+  - backend/tests/services/factor-health.test.ts (新): 56 case (常量冻结 + classifyFactorHealth 4 档全分支 + computeFactorICHealth 聚合 + META-GUARD fs+regex 校验前后端 wiring).
+  - frontend/src/services/factorService.ts: FactorOverviewItem 新增 ic_90d / ic_ir / ic_sample_count / health_class 4 字段.
+  - frontend/src/pages/workspace/FactorWorkspace.tsx: FACTOR_HEALTH_DISPLAY (alpha=green/unstable=gold/weak=red/unknown=default Tag 表) + ic90dColor / icIrColor 数值染色 + FactorOverviewTab 卡片渲染 Tag + IC_90d/IC_IR Statistic 行 + AntTooltip 阈值说明.
+- 质量检查:
+  - cd backend && npx ts-node --transpile-only tests/services/factor-health.test.ts → 56 ok / 0 failed
+  - cd backend && npx tsc --noEmit → 0 errors
+  - cd frontend && npx tsc --noEmit → 0 errors
+- **Learnings for future iterations:**
+  - **fail-OPEN 模板再次应用**: loadFactorHealthMap 顶层 try/catch + logger.warn 吞错返空 Map, caller 用 'unknown' 占位 — IC 表查询挂了 /overview 主流程仍可用 (与 Sprint 27/28/29 L8 activation 同思想); 任何"附属数据增强"加到主接口时, 必须独立 try/catch, 不阻塞主响应.
+  - **后端 Decimal 字段 Sequelize raw 模式返字符串**: FactorICResult.ic_mean / ic_ir 是 DECIMAL, attributes 列表 + raw:true 会返字符串 (e.g. "0.0530"), computeFactorICHealth 用 toFiniteNum (typeof string → Number) 显式转换, 测试 case [3.7] 专门覆盖. 后续任何 raw:true 查 DECIMAL 列都要做同样的转换.
+  - **前后端 health_class 4 档严格对齐**: backend FactorHealthClass = 'alpha' | 'weak' | 'unstable' | 'unknown'; frontend factorService.ts FactorOverviewItem.health_class 字面量四档完全一致; FACTOR_HEALTH_DISPLAY map 同 4 key + 兜底用 FACTOR_HEALTH_DISPLAY.unknown ?? — 改后端 4 档时一定同步前端 (META-GUARD 测试自动 fail-fast).
+  - **AntTooltip 别名导入**: FactorWorkspace 已用 recharts 的 Tooltip, 引入 antd Tooltip 必须 alias `Tooltip as AntTooltip` 否则同名 shadowing 导致 recharts 图表 hover 工具提示消失. 同款适用未来任何混用 recharts + antd 的组件.
+---
