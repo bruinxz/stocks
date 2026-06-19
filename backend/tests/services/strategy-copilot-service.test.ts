@@ -43,6 +43,9 @@ import {
   RemoteCopilotPayload,
   CopilotIntent,
   COPILOT_INTENTS,
+  TASK_INTENTS,
+  ALL_COPILOT_INTENTS,
+  isTaskIntent,
   NLP_ENGINES,
   DEFAULT_BACKTEST_LOOKBACK,
   MAX_BACKTEST_LOOKBACK,
@@ -58,6 +61,17 @@ import {
   buildResponseFromPayload,
   extractKeyDelta,
   buildConversationId,
+  // CO-002 / US-033 EntityExtractor
+  inferStockMarket,
+  extractStocks,
+  extractIndustries,
+  extractIndicators,
+  extractNumbers,
+  extractDates,
+  extractStrategyParams,
+  extractEntities,
+  INDUSTRY_KEYWORDS,
+  INDICATOR_ALIASES,
 } from '../../src/services/StrategyCopilotService';
 
 let failed = 0;
@@ -203,6 +217,62 @@ async function testConstantsFrozen(): Promise<void> {
 
   assertEqual('DEFAULT_BACKTEST_LOOKBACK = 5', DEFAULT_BACKTEST_LOOKBACK, 5);
   assertEqual('MAX_BACKTEST_LOOKBACK = 20', MAX_BACKTEST_LOOKBACK, 20);
+
+  // CO-001: 11 个 intent 字面量稳定 (4 v1 dialog + 7 v2 task)
+  assertEqual('COPILOT_INTENTS.QUERY_STOCKS', COPILOT_INTENTS.QUERY_STOCKS, 'query_stocks');
+  assertEqual('COPILOT_INTENTS.RUN_BACKTEST', COPILOT_INTENTS.RUN_BACKTEST, 'run_backtest');
+  assertEqual('COPILOT_INTENTS.QUERY_POSITIONS', COPILOT_INTENTS.QUERY_POSITIONS, 'query_positions');
+  assertEqual('COPILOT_INTENTS.EXPLAIN_PICK', COPILOT_INTENTS.EXPLAIN_PICK, 'explain_pick');
+  assertEqual('COPILOT_INTENTS.WHAT_IF', COPILOT_INTENTS.WHAT_IF, 'what_if');
+  assertEqual('COPILOT_INTENTS.SET_ALERT', COPILOT_INTENTS.SET_ALERT, 'set_alert');
+  assertEqual('COPILOT_INTENTS.GET_DIAGNOSIS', COPILOT_INTENTS.GET_DIAGNOSIS, 'get_diagnosis');
+  assertEqual(
+    'COPILOT_INTENTS 共 11 个 intent (4 dialog + 7 task)',
+    Object.keys(COPILOT_INTENTS).length,
+    11
+  );
+
+  // ALL_COPILOT_INTENTS = 11 个 intent 全集 (单一事实源)
+  assertEqual('ALL_COPILOT_INTENTS.size = 11', ALL_COPILOT_INTENTS.size, 11);
+  for (const v of Object.values(COPILOT_INTENTS)) {
+    assert(
+      `ALL_COPILOT_INTENTS 包含 ${v}`,
+      (ALL_COPILOT_INTENTS as Set<string>).has(v as string)
+    );
+  }
+
+  // TASK_INTENTS = 7 个 v2 执行式
+  assertEqual('TASK_INTENTS.size = 7', TASK_INTENTS.size, 7);
+  assert('TASK_INTENTS 含 QUERY_STOCKS', TASK_INTENTS.has(COPILOT_INTENTS.QUERY_STOCKS));
+  assert('TASK_INTENTS 含 RUN_BACKTEST', TASK_INTENTS.has(COPILOT_INTENTS.RUN_BACKTEST));
+  assert('TASK_INTENTS 含 QUERY_POSITIONS', TASK_INTENTS.has(COPILOT_INTENTS.QUERY_POSITIONS));
+  assert('TASK_INTENTS 含 EXPLAIN_PICK', TASK_INTENTS.has(COPILOT_INTENTS.EXPLAIN_PICK));
+  assert('TASK_INTENTS 含 WHAT_IF', TASK_INTENTS.has(COPILOT_INTENTS.WHAT_IF));
+  assert('TASK_INTENTS 含 SET_ALERT', TASK_INTENTS.has(COPILOT_INTENTS.SET_ALERT));
+  assert('TASK_INTENTS 含 GET_DIAGNOSIS', TASK_INTENTS.has(COPILOT_INTENTS.GET_DIAGNOSIS));
+
+  // dialog-style 不能落到 TASK_INTENTS
+  assert(
+    'TASK_INTENTS 不含 EXPLAIN_BACKTEST',
+    !TASK_INTENTS.has(COPILOT_INTENTS.EXPLAIN_BACKTEST)
+  );
+  assert(
+    'TASK_INTENTS 不含 SUGGEST_PARAMS',
+    !TASK_INTENTS.has(COPILOT_INTENTS.SUGGEST_PARAMS)
+  );
+  assert(
+    'TASK_INTENTS 不含 GENERATE_DRAFT',
+    !TASK_INTENTS.has(COPILOT_INTENTS.GENERATE_DRAFT)
+  );
+  assert('TASK_INTENTS 不含 GENERAL', !TASK_INTENTS.has(COPILOT_INTENTS.GENERAL));
+
+  // isTaskIntent 兼容非字符串 / 未知字符串
+  assert('isTaskIntent(query_stocks) = true', isTaskIntent('query_stocks'));
+  assert('isTaskIntent(explain_backtest) = false', !isTaskIntent('explain_backtest'));
+  assert('isTaskIntent(unknown) = false', !isTaskIntent('foobar'));
+  assert('isTaskIntent(null) = false', !isTaskIntent(null));
+  assert('isTaskIntent(123) = false', !isTaskIntent(123));
+  assert('isTaskIntent(undefined) = false', !isTaskIntent(undefined));
 }
 
 // ---------------------------------------------------------------------------
@@ -288,6 +358,269 @@ async function testNormalizeIntent(): Promise<void> {
     normalizeIntent('调整参数让 sharpe 更高'),
     'suggest_params'
   );
+}
+
+// ---------------------------------------------------------------------------
+// CO-001 / US-032 — 7 个 v2 task-style intent 识别
+// ---------------------------------------------------------------------------
+
+async function testNormalizeIntentTaskStyle(): Promise<void> {
+  // override 走白名单：7 个 task intent 都能 override
+  assertEqual(
+    'intent override query_stocks',
+    normalizeIntent('随便什么', 'query_stocks'),
+    'query_stocks'
+  );
+  assertEqual(
+    'intent override run_backtest',
+    normalizeIntent('随便什么', 'run_backtest'),
+    'run_backtest'
+  );
+  assertEqual(
+    'intent override query_positions',
+    normalizeIntent('随便什么', 'query_positions'),
+    'query_positions'
+  );
+  assertEqual(
+    'intent override explain_pick',
+    normalizeIntent('随便什么', 'explain_pick'),
+    'explain_pick'
+  );
+  assertEqual(
+    'intent override what_if',
+    normalizeIntent('随便什么', 'what_if'),
+    'what_if'
+  );
+  assertEqual(
+    'intent override set_alert',
+    normalizeIntent('随便什么', 'set_alert'),
+    'set_alert'
+  );
+  assertEqual(
+    'intent override get_diagnosis',
+    normalizeIntent('随便什么', 'get_diagnosis'),
+    'get_diagnosis'
+  );
+
+  // 大小写 / 空格在 override 不敏感
+  assertEqual(
+    'intent override 大小写 + 空格 (RUN_BACKTEST)',
+    normalizeIntent('随便什么', '  RUN_BACKTEST  '),
+    'run_backtest'
+  );
+
+  // RUN_BACKTEST — "跑回测" / "跑 MFA 策略 topN=50" / "回测 multi_factor" / "run backtest"
+  assertEqual(
+    'intent 跑回测',
+    normalizeIntent('帮我跑一次回测'),
+    'run_backtest'
+  );
+  assertEqual(
+    'intent 跑 MFA 策略 topN=50',
+    normalizeIntent('跑 multi_factor 策略 topN=50 lookback=20'),
+    'run_backtest'
+  );
+  assertEqual(
+    'intent 回测 multi_factor',
+    normalizeIntent('回测 multi_factor 看看效果'),
+    'run_backtest'
+  );
+  assertEqual(
+    'intent run backtest 英文',
+    normalizeIntent('please run a backtest for me'),
+    'run_backtest'
+  );
+
+  // SET_ALERT — "提醒我" / "告警" / "set alert"
+  assertEqual(
+    'intent 设置提醒',
+    normalizeIntent('如果 002230 跌破 50 提醒我'),
+    'set_alert'
+  );
+  assertEqual(
+    'intent 设置告警',
+    normalizeIntent('设置告警条件'),
+    'set_alert'
+  );
+  assertEqual(
+    'intent alert me 英文',
+    normalizeIntent('alert me when AAPL drops 5%'),
+    'set_alert'
+  );
+
+  // WHAT_IF — "假如 / 假设 / 如果...会..."
+  assertEqual(
+    'intent 假如全清',
+    normalizeIntent('假如我现在全清 ZX 行业 pnl 会变多少'),
+    'what_if'
+  );
+  assertEqual(
+    'intent 假设清仓',
+    normalizeIntent('假设我现在清仓所有持仓'),
+    'what_if'
+  );
+  assertEqual(
+    'intent what if 英文',
+    normalizeIntent('what if I sell half my position'),
+    'what_if'
+  );
+  assertEqual(
+    'intent 如果加仓会怎样',
+    normalizeIntent('如果加仓 600519 净值会怎么变'),
+    'what_if'
+  );
+
+  // EXPLAIN_PICK — "为什么 600519 被推荐"
+  assertEqual(
+    'intent 为什么 600519 被推荐',
+    normalizeIntent('为什么 600519 今天被推荐'),
+    'explain_pick'
+  );
+  assertEqual(
+    'intent 为啥推荐 002230',
+    normalizeIntent('为啥 002230 被选中'),
+    'explain_pick'
+  );
+  assertEqual(
+    'intent why was 600519 picked',
+    normalizeIntent('why was 600519 recommended today'),
+    'explain_pick'
+  );
+  assertEqual(
+    'intent 解释 600519 推荐理由',
+    normalizeIntent('解释 600519 入选理由'),
+    'explain_pick'
+  );
+
+  // QUERY_POSITIONS — "我现在哪些持仓"
+  assertEqual(
+    'intent 我的持仓行业集中度',
+    normalizeIntent('我现在哪些持仓行业集中度 > 25%'),
+    'query_positions'
+  );
+  assertEqual(
+    'intent 我的仓位',
+    normalizeIntent('我的仓位中哪些今天涨幅最大'),
+    'query_positions'
+  );
+  assertEqual(
+    'intent 查看我的持仓',
+    normalizeIntent('查看我的持仓'),
+    'query_positions'
+  );
+
+  // GET_DIAGNOSIS — "为什么跑输基准 / 诊断策略"
+  assertEqual(
+    'intent 跑输基准',
+    normalizeIntent('为什么我最近 30 天跑输基准'),
+    'get_diagnosis'
+  );
+  assertEqual(
+    'intent 跑输 underperform',
+    normalizeIntent('我的组合为什么 underperform 沪深300'),
+    'get_diagnosis'
+  );
+  assertEqual(
+    'intent 诊断策略',
+    normalizeIntent('帮我诊断一下策略'),
+    'get_diagnosis'
+  );
+
+  // QUERY_STOCKS — "找今天 ... 的票 / 筛选 / 选股"
+  assertEqual(
+    'intent 找今天北向加仓的票',
+    normalizeIntent('找今天北向加仓 + RSI 超卖 + 行业 hot 的票'),
+    'query_stocks'
+  );
+  assertEqual(
+    'intent 筛选股票',
+    normalizeIntent('筛选出 RSI 小于 30 的股'),
+    'query_stocks'
+  );
+  assertEqual(
+    'intent list stocks with',
+    normalizeIntent('list stocks with RSI below 30'),
+    'query_stocks'
+  );
+  assertEqual(
+    'intent 选股条件',
+    normalizeIntent('选股条件 MACD 金叉'),
+    'query_stocks'
+  );
+
+  // 优先级冲突 case — task 强模式 > v1 dialog 弱模式
+  // "跑 MFA 回测看 sharpe" 该是 run_backtest 而非 explain_backtest
+  assertEqual(
+    'intent task RUN_BACKTEST 优先于 dialog EXPLAIN_BACKTEST',
+    normalizeIntent('跑 multi_factor 回测看 sharpe'),
+    'run_backtest'
+  );
+  // "提醒我 sharpe 跌破 1" 该是 set_alert 而非 explain_backtest
+  assertEqual(
+    'intent task SET_ALERT 优先于 dialog EXPLAIN_BACKTEST',
+    normalizeIntent('提醒我 sharpe 跌破 1'),
+    'set_alert'
+  );
+  // "假如我把 topN 改成 50 sharpe 会怎样" → WHAT_IF 而非 SUGGEST_PARAMS
+  assertEqual(
+    'intent task WHAT_IF 优先于 dialog SUGGEST_PARAMS',
+    normalizeIntent('假如我把 topN 改成 50 sharpe 会怎样'),
+    'what_if'
+  );
+  // "为什么 600519 被推荐 sharpe" → EXPLAIN_PICK 而非 EXPLAIN_BACKTEST
+  assertEqual(
+    'intent task EXPLAIN_PICK 优先于 dialog EXPLAIN_BACKTEST',
+    normalizeIntent('为什么 600519 被推荐看 sharpe'),
+    'explain_pick'
+  );
+
+  // 不应误判: 纯对话 dialog intent 仍能落到原 v1 类
+  assertEqual(
+    'intent 纯 explain 仍 explain_backtest (无 task 关键词)',
+    normalizeIntent('为什么 sharpe 这么低'),
+    'explain_backtest'
+  );
+  assertEqual(
+    'intent 纯 generate 仍 generate_draft',
+    normalizeIntent('帮我写一个 RSI 反转策略'),
+    'generate_draft'
+  );
+  assertEqual(
+    'intent 纯 suggest 仍 suggest_params',
+    normalizeIntent('参数能不能改一下'),
+    'suggest_params'
+  );
+
+  // buildResponseFromPayload — 远端返回任意 task intent 都能透传 (白名单)
+  const ctx = {
+    conversation_id: 'COP-test',
+    strategy_key: null,
+    intent: COPILOT_INTENTS.GENERAL,
+    prompt: '',
+    promptContext: buildPromptContext({
+      strategy: null,
+      backtests: [],
+      user_prompt: '',
+      intent: COPILOT_INTENTS.GENERAL,
+    }),
+    metadata: {},
+    now: new Date('2026-06-19T00:00:00Z'),
+  };
+  const taskRes = buildResponseFromPayload(
+    { status: 'COMPLETED', data: { reply: 'ok', intent: 'query_stocks' } },
+    ctx
+  );
+  assertEqual('远端 intent=query_stocks 透传', taskRes.intent, 'query_stocks');
+  const setAlertRes = buildResponseFromPayload(
+    { status: 'COMPLETED', data: { reply: 'ok', intent: 'SET_ALERT' } },
+    ctx
+  );
+  assertEqual('远端 intent=SET_ALERT (大写) 仍透传', setAlertRes.intent, 'set_alert');
+  const bogusRes = buildResponseFromPayload(
+    { status: 'COMPLETED', data: { reply: 'ok', intent: 'made_up_intent' } },
+    ctx
+  );
+  assertEqual('远端未知 intent 回退到 ctx.intent', bogusRes.intent, 'general');
 }
 
 // ---------------------------------------------------------------------------
@@ -995,6 +1328,373 @@ async function testLoadContext(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// CO-002 / US-033 EntityExtractor pure functions
+// ---------------------------------------------------------------------------
+
+async function testInferStockMarket(): Promise<void> {
+  // sh
+  assertEqual('inferStockMarket 600519 → sh', inferStockMarket('600519'), 'sh');
+  assertEqual('inferStockMarket 601318 → sh', inferStockMarket('601318'), 'sh');
+  assertEqual('inferStockMarket 603259 → sh', inferStockMarket('603259'), 'sh');
+  assertEqual('inferStockMarket 688981 → sh', inferStockMarket('688981'), 'sh');
+  assertEqual('inferStockMarket 900901 → sh', inferStockMarket('900901'), 'sh');
+  // sz
+  assertEqual('inferStockMarket 000001 → sz', inferStockMarket('000001'), 'sz');
+  assertEqual('inferStockMarket 002230 → sz', inferStockMarket('002230'), 'sz');
+  assertEqual('inferStockMarket 300750 → sz', inferStockMarket('300750'), 'sz');
+  assertEqual('inferStockMarket 200001 → sz', inferStockMarket('200001'), 'sz');
+  // bj
+  assertEqual('inferStockMarket 430139 → bj', inferStockMarket('430139'), 'bj');
+  assertEqual('inferStockMarket 830799 → bj', inferStockMarket('830799'), 'bj');
+  assertEqual('inferStockMarket 832145 → bj', inferStockMarket('832145'), 'bj');
+  // 容错
+  assertEqual('inferStockMarket 短串 → sh 兜底', inferStockMarket('12345'), 'sh');
+  assertEqual('inferStockMarket 非字符串 → sh 兜底', inferStockMarket(undefined as any), 'sh');
+  assertEqual('inferStockMarket 7 位 → sh 兜底', inferStockMarket('1234567'), 'sh');
+}
+
+async function testExtractStocks(): Promise<void> {
+  // null / 非字符串 / 空 → []
+  assertEqual('extractStocks null → []', extractStocks(null), []);
+  assertEqual('extractStocks undefined → []', extractStocks(undefined), []);
+  assertEqual('extractStocks 非字符串 → []', extractStocks(123 as any), []);
+  assertEqual('extractStocks 空字符串 → []', extractStocks(''), []);
+  assertEqual('extractStocks 全空格 → []', extractStocks('   '), []);
+
+  // 单个
+  assertEqual('extractStocks 单 600519', extractStocks('看看 600519 怎么样'), [
+    { code: '600519', market: 'sh', raw: '600519' },
+  ]);
+
+  // 多个 + 顺序
+  assertEqual(
+    'extractStocks 多个 顺序保留',
+    extractStocks('对比 002230 和 600519 的差距'),
+    [
+      { code: '002230', market: 'sz', raw: '002230' },
+      { code: '600519', market: 'sh', raw: '600519' },
+    ]
+  );
+
+  // 去重
+  assertEqual(
+    'extractStocks 重复去重',
+    extractStocks('600519 涨了 5%, 600519 创新高'),
+    [{ code: '600519', market: 'sh', raw: '600519' }]
+  );
+
+  // 7 位数字不抽
+  assertEqual('extractStocks 7 位不抽', extractStocks('订单号 1234567'), []);
+
+  // 5 位数字不抽
+  assertEqual('extractStocks 5 位不抽', extractStocks('编号 12345'), []);
+
+  // 边界: 6 位前后有非数字才抽
+  assertEqual(
+    'extractStocks 多位数字串中切',
+    extractStocks('123456 和 78901234'),
+    [{ code: '123456', market: 'sh', raw: '123456' }] // 78901234 是 8 位, 不抽
+  );
+
+  // 北交所
+  assertEqual('extractStocks 430139 bj', extractStocks('北交所 430139'), [
+    { code: '430139', market: 'bj', raw: '430139' },
+  ]);
+}
+
+async function testExtractIndustries(): Promise<void> {
+  assertEqual('extractIndustries null → []', extractIndustries(null), []);
+  assertEqual('extractIndustries 无命中 → []', extractIndustries('今天天气真好'), []);
+
+  // 单命中
+  assertEqual('extractIndustries 单 光伏', extractIndustries('光伏板块涨停'), ['光伏']);
+
+  // 大小写不敏感
+  assertEqual('extractIndustries AI 大写', extractIndustries('AI 是风口'), ['AI']);
+  assertEqual('extractIndustries ai 小写', extractIndustries('ai 是风口'), ['AI']);
+
+  // 多个 + 顺序
+  assertEqual(
+    'extractIndustries 顺序按命中位置',
+    extractIndustries('新能源里我看好光伏和锂电'),
+    ['新能源', '光伏', '锂电']
+  );
+
+  // 去重 (同一行业关键词反复出现)
+  assertEqual(
+    'extractIndustries 去重',
+    extractIndustries('光伏强势, 光伏再上涨, 光伏 ETF'),
+    ['光伏']
+  );
+
+  // INDUSTRY_KEYWORDS 不能 push
+  assert(
+    'INDUSTRY_KEYWORDS 已 frozen (Object.freeze)',
+    Object.isFrozen(INDUSTRY_KEYWORDS),
+    `isFrozen=${Object.isFrozen(INDUSTRY_KEYWORDS)}`
+  );
+}
+
+async function testExtractIndicators(): Promise<void> {
+  assertEqual('extractIndicators null → []', extractIndicators(null), []);
+  assertEqual('extractIndicators 无命中 → []', extractIndicators('随便聊聊'), []);
+
+  // 单命中
+  assertEqual('extractIndicators RSI', extractIndicators('RSI 超卖'), ['rsi']);
+
+  // 别名归一: 夏普 / sharpe 都 → sharpe; 同 canonical 只取一次
+  assertEqual(
+    'extractIndicators 夏普 → sharpe canonical',
+    extractIndicators('夏普值不错'),
+    ['sharpe']
+  );
+  assertEqual(
+    'extractIndicators sharpe + 夏普 同 canonical 一次',
+    extractIndicators('sharpe 高夏普也高'),
+    ['sharpe']
+  );
+
+  // 多个 canonical 按首次命中顺序
+  assertEqual(
+    'extractIndicators 多个排序',
+    extractIndicators('MACD 金叉, RSI 超卖, sharpe 也好'),
+    ['macd', 'rsi', 'sharpe']
+  );
+
+  // 最大回撤 → max_drawdown
+  assertEqual(
+    'extractIndicators 最大回撤 → max_drawdown',
+    extractIndicators('最大回撤太大'),
+    ['max_drawdown']
+  );
+
+  // 胜率 → win_rate
+  assertEqual('extractIndicators 胜率', extractIndicators('胜率 60%'), ['win_rate']);
+
+  // INDICATOR_ALIASES frozen
+  assert(
+    'INDICATOR_ALIASES 已 frozen',
+    Object.isFrozen(INDICATOR_ALIASES),
+    `isFrozen=${Object.isFrozen(INDICATOR_ALIASES)}`
+  );
+}
+
+async function testExtractNumbers(): Promise<void> {
+  assertEqual('extractNumbers null → []', extractNumbers(null), []);
+  assertEqual('extractNumbers 空 → []', extractNumbers(''), []);
+  assertEqual('extractNumbers 无数字 → []', extractNumbers('我爱学习'), []);
+
+  // 纯数字 (无单位)
+  assertEqual('extractNumbers 纯整数', extractNumbers('数量 30'), [
+    { value: 30, unit: null, raw: '30' },
+  ]);
+
+  // 小数
+  assertEqual('extractNumbers 小数', extractNumbers('sharpe 是 1.45'), [
+    { value: 1.45, unit: null, raw: '1.45' },
+  ]);
+
+  // 百分比
+  assertEqual('extractNumbers 5% pct', extractNumbers('涨了 5%'), [
+    { value: 5, unit: 'pct', raw: '5%' },
+  ]);
+
+  // 单位归一
+  assertEqual('extractNumbers 100 万', extractNumbers('100万股'), [
+    { value: 100, unit: 'wan', raw: '100万' },
+  ]);
+  assertEqual('extractNumbers 3 亿', extractNumbers('成交额 3 亿').filter(n => n.unit === 'yi'), [
+    { value: 3, unit: 'yi', raw: '3亿' },
+  ]);
+  assertEqual('extractNumbers 50 元', extractNumbers('股价 50元'), [
+    { value: 50, unit: 'yuan', raw: '50元' },
+  ]);
+  assertEqual('extractNumbers 2 倍', extractNumbers('涨 2倍'), [
+    { value: 2, unit: 'x', raw: '2倍' },
+  ]);
+  assertEqual('extractNumbers 7 天', extractNumbers('持仓 7 天').filter(n => n.unit === 'day'), [
+    { value: 7, unit: 'day', raw: '7天' },
+  ]);
+  assertEqual(
+    'extractNumbers 3 个月',
+    extractNumbers('未来 3 个月').filter(n => n.unit === 'month'),
+    [{ value: 3, unit: 'month', raw: '3个月' }]
+  );
+
+  // 多数字按位置
+  const multi = extractNumbers('topN=30 lookback=20');
+  assert('extractNumbers 多个长度 2', multi.length === 2, `len=${multi.length}`);
+  assertEqual('extractNumbers 第一个 value', multi[0].value, 30);
+  assertEqual('extractNumbers 第二个 value', multi[1].value, 20);
+
+  // 负数
+  const neg = extractNumbers('回撤 -8.2%');
+  assertEqual('extractNumbers 负数', neg, [{ value: -8.2, unit: 'pct', raw: '-8.2%' }]);
+}
+
+async function testExtractDates(): Promise<void> {
+  assertEqual('extractDates null → []', extractDates(null), []);
+  assertEqual('extractDates 无日期 → []', extractDates('随便聊'), []);
+
+  // 绝对 YYYY-MM-DD
+  const a1 = extractDates('从 2026-06-19 开始');
+  assert('extractDates abs 1 个', a1.length === 1);
+  assertEqual('extractDates abs iso', a1[0].iso, '2026-06-19');
+  assertEqual('extractDates abs kind', a1[0].kind, 'absolute');
+  assertEqual('extractDates abs offset null', a1[0].offset_days, null);
+
+  // 绝对 YYYY/MM/DD
+  const a2 = extractDates('2026/6/19');
+  assertEqual('extractDates 斜杠 iso', a2[0].iso, '2026-06-19');
+
+  // 绝对 YYYY年M月D日
+  const a3 = extractDates('2026年6月19日');
+  assertEqual('extractDates 中文年月日 iso', a3[0].iso, '2026-06-19');
+
+  // M月D日 (无年, iso null)
+  const a4 = extractDates('6月19日的会议');
+  assertEqual('extractDates 无年 kind', a4[0].kind, 'absolute');
+  assertEqual('extractDates 无年 iso=null', a4[0].iso, null);
+  assertEqual('extractDates 无年 raw', a4[0].raw, '6月19日');
+
+  // 相对词
+  const r1 = extractDates('今天大涨');
+  assertEqual('extractDates 今天 kind', r1[0].kind, 'relative');
+  assertEqual('extractDates 今天 offset 0', r1[0].offset_days, 0);
+
+  const r2 = extractDates('昨天');
+  assertEqual('extractDates 昨天 -1', r2[0].offset_days, -1);
+
+  const r3 = extractDates('前天');
+  assertEqual('extractDates 前天 -2', r3[0].offset_days, -2);
+
+  const r4 = extractDates('明天和后天');
+  assertEqual('extractDates 明天 +1', r4[0].offset_days, 1);
+  assertEqual('extractDates 后天 +2', r4[1].offset_days, 2);
+
+  // 最近 N 天
+  const r5 = extractDates('最近 30 天');
+  assertEqual('extractDates 最近30天 offset', r5[0].offset_days, -30);
+  assertEqual('extractDates 最近30天 raw', r5[0].raw, '最近 30 天');
+
+  // 最近 N 个月 → -N*30
+  const r6 = extractDates('最近 3 个月');
+  assertEqual('extractDates 最近3个月 offset -90', r6[0].offset_days, -90);
+
+  // 混合: 绝对 + 相对 + 排序
+  const mix = extractDates('从 2026-06-01 到今天, 最近 7 天');
+  assertEqual('extractDates 混合 len 3', mix.length, 3);
+  assertEqual('extractDates 混合 第 1 绝对', mix[0].kind, 'absolute');
+  assertEqual('extractDates 混合 第 2 相对', mix[1].kind, 'relative');
+  assertEqual('extractDates 混合 第 3 相对', mix[2].kind, 'relative');
+}
+
+async function testExtractStrategyParams(): Promise<void> {
+  assertEqual('extractStrategyParams null → {}', extractStrategyParams(null), {});
+  assertEqual('extractStrategyParams 空 → {}', extractStrategyParams(''), {});
+  assertEqual('extractStrategyParams 无 kv → {}', extractStrategyParams('随便聊'), {});
+
+  // 单 key=value
+  assertEqual('extractStrategyParams topN=30', extractStrategyParams('topN=30'), { topN: 30 });
+
+  // 多个 key=value
+  assertEqual(
+    'extractStrategyParams 多个 kv',
+    extractStrategyParams('调整 topN=30 lookback=20'),
+    { topN: 30, lookback: 20 }
+  );
+
+  // key:value 也支持
+  assertEqual('extractStrategyParams key:value 形态', extractStrategyParams('topN:30'), {
+    topN: 30,
+  });
+
+  // 浮点
+  assertEqual('extractStrategyParams 浮点', extractStrategyParams('threshold=0.5'), {
+    threshold: 0.5,
+  });
+
+  // 负数
+  assertEqual('extractStrategyParams 负数', extractStrategyParams('shift=-1'), { shift: -1 });
+
+  // 字符串 value
+  assertEqual('extractStrategyParams 字符串 value', extractStrategyParams('mode=hard'), {
+    mode: 'hard',
+  });
+
+  // 同 key 后覆盖
+  assertEqual(
+    'extractStrategyParams 同 key 后覆盖',
+    extractStrategyParams('topN=10 topN=30'),
+    { topN: 30 }
+  );
+
+  // 纯数字开头的"key"不抽 (避免抽 "30=value")
+  assertEqual(
+    'extractStrategyParams 纯数字 key 不抽',
+    extractStrategyParams('30=abc'),
+    {}
+  );
+
+  // 大小写敏感
+  const cs = extractStrategyParams('topN=10 TopN=20');
+  assertEqual('extractStrategyParams 大小写敏感 topN', cs.topN, 10);
+  assertEqual('extractStrategyParams 大小写敏感 TopN', cs.TopN, 20);
+}
+
+async function testExtractEntities(): Promise<void> {
+  // 综合: 一句话同时含 6 类
+  const result = extractEntities(
+    '跑 multi_factor 策略 topN=30 lookback=20, 看看 600519 在光伏板块的 RSI 表现, 最近 30 天 sharpe 是否 > 1.5'
+  );
+  assert(
+    'extractEntities 综合 stocks 含 600519',
+    result.stocks.some(s => s.code === '600519')
+  );
+  assert(
+    'extractEntities 综合 industries 含 光伏',
+    result.industries.includes('光伏')
+  );
+  assert(
+    'extractEntities 综合 indicators 含 rsi + sharpe',
+    result.indicators.includes('rsi') && result.indicators.includes('sharpe')
+  );
+  assert(
+    'extractEntities 综合 numbers 非空',
+    result.numbers.length > 0
+  );
+  assert(
+    'extractEntities 综合 dates 含 relative',
+    result.dates.some(d => d.kind === 'relative' && d.offset_days === -30)
+  );
+  assertEqual(
+    'extractEntities 综合 strategy_params',
+    result.strategy_params,
+    { topN: 30, lookback: 20 }
+  );
+
+  // 空输入 → 6 空切片
+  const empty = extractEntities('');
+  assertEqual('extractEntities 空 stocks', empty.stocks, []);
+  assertEqual('extractEntities 空 industries', empty.industries, []);
+  assertEqual('extractEntities 空 indicators', empty.indicators, []);
+  assertEqual('extractEntities 空 numbers', empty.numbers, []);
+  assertEqual('extractEntities 空 dates', empty.dates, []);
+  assertEqual('extractEntities 空 strategy_params', empty.strategy_params, {});
+
+  // null 输入 → 6 空切片
+  const nullRes = extractEntities(null);
+  assertEqual('extractEntities null shape', Object.keys(nullRes).sort(), [
+    'dates',
+    'indicators',
+    'industries',
+    'numbers',
+    'stocks',
+    'strategy_params',
+  ]);
+}
+
+// ---------------------------------------------------------------------------
 // 入口
 // ---------------------------------------------------------------------------
 
@@ -1003,6 +1703,7 @@ async function main(): Promise<void> {
   await testNullableNumber();
   await testNormalizeBacktestLookback();
   await testNormalizeIntent();
+  await testNormalizeIntentTaskStyle();
   await testFormatBacktestSummary();
   await testSafeJsonStringify();
   await testParseStrategyDraft();

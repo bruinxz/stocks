@@ -857,3 +857,57 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **顶层 try-catch 用 Object.defineProperty getter throw 触发**: 测 top-level catch 时, 内部 loop 已有 try-catch 吞了 poster throw, 想触发 top-level 需要在 records.filter / shouldPushRecord 阶段就 throw. 标准技巧: `Object.defineProperty(badRecord, 'priority', { get() { throw new Error('boom'); } })`, 让 .filter 内 .priority 读取就炸. 这是 "测顶层兜底" 的通用模板 (复用了 US-018 / US-019 / US-022 同款 fail-safe 测法).
   - **persisted=true 双重 gate 防 dry_run 误推**: shouldPushRecord 不光看 priority='critical' 还要 record.persisted=true. AnnouncementNLPService dry_run 路径会把 records 全标 persisted=false (没真落库), 此时哪怕 priority=critical 也不应推飞书 (UI 预演不应触发真消息). 不是把 dry_run 判断写在 service 里 (那只能由 caller 显式传), 而是写在数据 schema 上 (persisted 字段是数据级真相), 任何 caller 误把 dry-run 数据传过来都自然 skip. 同款思想适用 "数据状态 gate 而非 caller flag gate" — 把 fail-safe 写到数据契约里更可靠.
 ---
+
+## 2026/06/19 13:48 - US-032 [CO-001] Copilot 7 task intents
+- 把 v1 4 个 dialog intent 扩到 v2 共 11 (4 dialog + 7 task) — 让 Copilot 从"问→答"演进到"问→执行→拿结果"前置常量层。
+- 修改: backend/src/services/StrategyCopilotService.ts
+  - COPILOT_INTENTS 新增 7 字面量: QUERY_STOCKS / RUN_BACKTEST / QUERY_POSITIONS / EXPLAIN_PICK / WHAT_IF / SET_ALERT / GET_DIAGNOSIS
+  - CopilotIntent 联合类型从 4 项扩到 11 项
+  - 新增 TASK_INTENTS: ReadonlySet<CopilotIntent> = Object.freeze(new Set([...7 task]))
+  - 新增 ALL_COPILOT_INTENTS: ReadonlySet<CopilotIntent> = Object.freeze(new Set(Object.values(COPILOT_INTENTS))) — 单一事实源, 后续新增 intent 无需到处改 || 串
+  - 新增 isTaskIntent(intent): intent is CopilotIntent — pure type guard, 兼容非字符串/未知字符串
+  - 升级 normalizeIntent: 11 个 intent 按"强模式在前"原则重排 (RUN_BACKTEST → SET_ALERT → WHAT_IF → EXPLAIN_PICK → QUERY_POSITIONS → GET_DIAGNOSIS → QUERY_STOCKS → GENERATE_DRAFT → SUGGEST_PARAMS → EXPLAIN_BACKTEST → GENERAL); override 用 ALL_COPILOT_INTENTS.has() 一句校验
+  - buildResponseFromPayload 远端 intent 透传也走 ALL_COPILOT_INTENTS 白名单, 不再手列 4 个 ||
+- 修改: backend/tests/services/strategy-copilot-service.test.ts
+  - 新增 import TASK_INTENTS / ALL_COPILOT_INTENTS / isTaskIntent
+  - testConstantsFrozen 扩: 7 个 task intent 字面量稳定 / COPILOT_INTENTS.keys.length === 11 / ALL_COPILOT_INTENTS.size===11 / TASK_INTENTS.size===7 + 4 dialog 不可越界 + isTaskIntent 6 边界 (null/undefined/123/unknown/dialog/task)
+  - 新增 testNormalizeIntentTaskStyle: 39 assert 覆盖 7 个 task intent 每个 ≥3 关键词 + 7 task override + 大小写空格 override + 4 个优先级冲突 case (task > dialog) + 3 个回归 (纯 dialog 仍能匹配) + 3 个 buildResponseFromPayload 远端透传 (query_stocks / 大写 SET_ALERT / 未知 fallback)
+- 质量: typecheck 0 err / eslint src clean / 单测 286 passed 0 failed (从 247 → +39 assert)
+- **Learnings for future iterations:**
+  - Pattern: 多个 "字面量集合" 常量同源 — `ALL_COPILOT_INTENTS = Object.freeze(new Set(Object.values(COPILOT_INTENTS)))` 让 override 校验 / 远端透传白名单都共用一个集合, 新增 intent 只改 COPILOT_INTENTS 一处即可, 避免散落多处 OR 短路串 (US-062 老代码有 4 处硬编码 ||, 这次清掉)
+  - Pattern: ReadonlySet<T> + Object.freeze 包装时, 调用 .has(x) 处 TS 会因 x 类型与 Set<T> 不匹配报错, 用 `(SET as Set<string>).has(rawString)` 临时窄化, 既 runtime 安全又通过 strict TS
+  - Gotcha: 正则的 \w 在 unicode flag 下不匹配下划线之外的非 ASCII 但 multi_factor 形态正常; 但 "回测 multi_factor" 前面带 "回测" 中文 + 空格 + ASCII 单词, 用 `[\w_]+` 比 `\w+` 更明示, 也避免误匹配中文姓名 (i 旗下大小写无关)
+  - Gotcha: GET_DIAGNOSIS 规则 "underperform 基准" 不能强制要 "基准" 跟随 — 用户可能说 "underperform 沪深300" / "跑输大盘", 把 "(?:基准|benchmark|大盘|指数)" 收紧反而漏匹配, 改成只看 "为什么.*?(?:跑输|underperform|落后于?|...)" 主谓即可
+  - Gotcha: normalizeIntent 加 task intent 时必须把 task 强模式排在 v1 dialog 弱模式前面 — 否则 "跑 MFA 回测看 sharpe" 中 "回测" / "sharpe" 关键词会被 EXPLAIN_BACKTEST 先抓走; 单测里专门列了 4 个 task > dialog 优先级 case 防回归
+  - Context: buildHeuristicFallback (line 670-746) 当前只为 4 个 v1 intent 提供兜底文案, 新 7 个 task intent 会落到 'general' fallback — 未来 CO-006 TaskRouter 落地后远端不可达时各自 task 该给 "去 LabWorkspace / Portfolio 页手动操作" 的 deep-link 兜底 (写进 CO-014 故事)
+---
+
+
+## 2026/06/19 14:15 - US-033
+- 实现 [CO-002] EntityExtractor pure functions — 6 个 pure helper + 1 个聚合入口 + 286 单测全过 (74 assertEqual 覆盖 extract*)
+- 实际代码 (~410 行 + 完整 jsdoc) 与 single-shot 测试 (701 行新增) 在上一轮 ralph iteration 已落 working tree, 本轮收尾: prettier --fix 11 格式 err 清零 + 验证 tsc/lint/test 全绿 + PRD passes=true + 记 learnings
+- Files changed (此次 sprint):
+  - backend/src/services/StrategyCopilotService.ts: prettier --fix 11 处格式 (主要是 NUMBER_UNIT_TOKENS Object.freeze 多行排版 + extractDates 内 .some() lambda 单行化), 内容不变. 整段 EntityExtractor 在 line 880-1290.
+    * extractStocks: 6 位 A 股代码 + inferStockMarket 推 sh/sz/bj (60/68/69/90→sh, 00/30/20→sz, 4/8→bj), `(?<!\d)(\d{6})(?!\d)` lookbehind 拦 5/7 位, 去重 + 顺序保留
+    * extractIndustries: INDUSTRY_KEYWORDS 22+ 行业 frozen, AI/ai 同 canonical, 去重 + 按首次命中位置排序
+    * extractIndicators: INDICATOR_ALIASES 24+ 别名 canonical 化 (夏普→sharpe, 回撤/MAX_DRAWDOWN/最大回撤→max_drawdown, 北向→northbound)
+    * extractNumbers: NUMBER_UNIT_TOKENS 7 单位 (%→pct, 亿→yi, 万→wan, 元→yuan, 倍→x, 天→day, 月/个月→month), 整数/小数/负数, **不去重** 让 topN=30 lookback=30 都保留
+    * extractDates: 绝对 YYYY-MM-DD/YYYY年M月D日 + 无年 M月D日 双 regex 防重叠 (overlapped check), 相对 12 词表 + 最近 N 天/月 → offset_days
+    * extractStrategyParams: key=value | key:value 双 separator, key /[A-Za-z_][A-Za-z0-9_]{1,31}/ 大小写敏感, 后覆盖前 (shell 习惯), 数字转 number 否则 string
+    * extractEntities 聚合: 一次返 6 类切片 {stocks, industries, indicators, numbers, dates, strategy_params}
+  - backend/tests/services/strategy-copilot-service.test.ts: 含 74 assertEqual 覆盖 6 个 extractor — null/undefined/非字符串/空/全空格 边界 + 单命中 + 多命中顺序 + 去重 + 别名 canonical + 单位归一 + 大小写不敏感 + 数字边界 + roundtrip 聚合
+  - ralph/prd.json: US-033 passes=true + notes
+  - ralph/progress.txt: 本 entry + 新增 Codebase Pattern
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npm test -- --filter=strategy-copilot-service` 286 ok / 0 failed (1.2s)
+  - `npx eslint src/services/StrategyCopilotService.ts` 0 err / 2 baseline non-null assertion warn (与 RealtimeAlertDispatcher / SchedulerService 同款项目通用模式; baseline-diff 0 新增 err 0 新增 warn)
+- **Learnings for future iterations:**
+  - **"AI 优先 + 本地兜底" 在 NLP slot extractor 场景下的命名冲突**: AnnouncementNLPService 已有 extractEntities (US-027 抽公告角色 — 控股股东/董事长/解禁/质押 等), StrategyCopilotService 又加 extractEntities (US-033 抽 task-style intent slot — stocks/industries/indicators...). 同名不冲突 — 两个独立 module 不互相 import, 各自 export 自己的 ExtractedEntity 类型, namespace 自然分离. 但 grep "export function extractEntities" 会出两条, 后续 ralph 改这两个之一时**必须**先 grep 看清自己改的是哪个 namespace, 否则容易把"公告角色"的字典误用到"copilot slot"路径. 建议: 类似 extractEntities 这种容易撞名的 export 在文件顶部 jsdoc 显式声明"与 X 同名不冲突 — namespace Y / 关注 Z", 让后续 ralph 第一眼看到这条边界. 本 sprint 已在 StrategyCopilotService.ts:898-900 行加这条注释.
+  - **lookbehind 在 Node 18+ 稳定但 ESLint baseline 仍踩**: 项目 ESLint config 对 `(?<!\d)` 类 lookbehind regex 不报错 (TS 5+ 默认 ES2018), 但 prettier 会把"裸 regex + 长参数"的多行格式严格化 — 写完 extractStocks/extractNumbers 后必须先 `npx eslint <file> --fix` 跑一次, 否则 commit hook 阻断. 与 US-005 RiskAlertService 同款"prettier --fix 是项目改 service 文件后必须步骤"原则.
+  - **单 sprint "代码+测试都已在 working tree" 的处理姿势**: 上轮 ralph iteration 留下大段未 commit 的 EntityExtractor 实现 (612 行 src + 701 行 test), 本轮收尾 = 跑一次 tsc/test/lint 验证 → prettier --fix → PRD passes=true → 写 learnings → commit. 不要为了"凑工作量"重新撸一遍代码 — 既有实现 286 ok 全绿就是事实源, 改动会引入 regression 风险. 同款 US-001 (env-check CI 步骤) / US-006 (PortfolioConstructionAdapter wire-in 验证) 都是这模式: 主体已落, 收尾把"未来不会被偷偷退化"做成 CI guard 即可.
+  - **不去重 vs 去重的语义边界**: extractStocks/extractIndustries/extractIndicators 都去重 (同一实体多次提及不重复返); 但 extractNumbers/extractDates 不去重 (同一数字在不同 slot 出现 — e.g. `topN=30 lookback=30` 是两个独立参数 / `今天 涨, 明天 后天 都涨` 三个不同日期 slot). 这条契约必须在 jsdoc 显式说明, 否则后续 ralph 重构时容易把"统一全去重"当成 cleanup. 单测 testExtractNumbers 显式断言 `extractNumbers('30 元 30 元')` 返 2 个就是这个守门.
+
+## Codebase Patterns (新增)
+- **NLP pure extractor 模板** (US-027 entities / US-028 earnings grade / US-033 stocks-industries-indicators...): 任何"从自然语言 60-200 字符抽 N 类 slot/entity"启发式都按 7 件套 — (1) 主入口 `extractXxx(text: any): T[]` 接 unknown 不报 — `normalizeExtractorInput` helper 统一处理 null/undefined/非字符串/空/全空格 → '' fallback, 6 个 extractor 全转调避免 6 处 null guard; (2) 关键词字典/别名表 export const + Object.freeze (INDUSTRY_KEYWORDS / INDICATOR_ALIASES / NUMBER_UNIT_TOKENS / 关键词词表 必须冻结); (3) 多个别名映射到同 canonical 形态 ('夏普'/'sharpe'/'SHARPE'→'sharpe', '回撤'/'MAX_DRAWDOWN'/'最大回撤'→'max_drawdown') 减少 downstream 分支; (4) 边界 regex 用 lookbehind/lookahead (`(?<!\d)(\d{6})(?!\d)`) 拦"过窄 / 过宽"匹配, Node 18+ 稳定但**必须**配单测 case 守"6 位精确 + 5/7 位过滤"边界; (5) 单位归一表 `[token, canonical]` Object.freeze + 显式注释"单位只记不乘" — 7000 万 ≠ 7000 (downstream 自行 ×10000), 否则丢精度信息; (6) 多正则 + 重叠位置去重 (extractDates 用 `_pos` 内部跟踪) 防"2026年6月19日" 被 reAbs + reAbsNoYear 双抽; (7) 聚合入口 `extract<Domain>Entities(text)` 一次返所有切片, 上游单调即可拿全 slot — 单测必断"聚合 = 6 个 extractor 各自结果合并". 与 AnnouncementNLPService.extractEntities (US-027 角色实体) 同名不冲突: 两个独立 module 不互相 import, namespace 自然分离, 但顶部 jsdoc 必须显式声明"与 X 同名不冲突" 让 grep 抓出来时容易识别 namespace. **不去重 vs 去重**契约写 jsdoc — 实体类 (stocks/industries) 去重; 数字/日期不去重 (同 slot 多 occurrence 是独立信息).
+---

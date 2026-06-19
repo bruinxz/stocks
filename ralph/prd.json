@@ -486,8 +486,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 32,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "依赖: — | DONE 2026/06/19: COPILOT_INTENTS 从 4 (dialog) 扩到 11 (4 dialog + 7 task: QUERY_STOCKS / RUN_BACKTEST / QUERY_POSITIONS / EXPLAIN_PICK / WHAT_IF / SET_ALERT / GET_DIAGNOSIS). 新增 TASK_INTENTS Set + ALL_COPILOT_INTENTS Set + isTaskIntent type guard, 让 CO-006 TaskRouter 一句 isTaskIntent(intent) 判断走执行式分支. normalizeIntent 优先级重排: task 强模式 (RUN_BACKTEST / SET_ALERT / WHAT_IF / EXPLAIN_PICK / QUERY_POSITIONS / GET_DIAGNOSIS / QUERY_STOCKS) 全部排在 v1 dialog (GENERATE_DRAFT / SUGGEST_PARAMS / EXPLAIN_BACKTEST) 之前, 与 US-055 \"强类>普通类\" 原则一致, 保证 \"跑 MFA 回测看 sharpe\" → run_backtest 而非 explain_backtest. override 走单一白名单 ALL_COPILOT_INTENTS 校验, buildResponseFromPayload 同步走白名单, 新增 intent 无需多处改硬编码 OR 串. 单测 286 ok / 0 failed (+39 新增: 11 个 intent 字面量稳定 / TASK_INTENTS 7 项 + 4 项 dialog 不可越界 / isTaskIntent 非字符串边界 / 7 个 task intent 关键词 + override 全覆盖 / 4 优先级冲突 case / 远端 intent 透传 query_stocks + SET_ALERT 大写 + 未知 fallback). tsc 0 err, eslint clean."
     },
     {
       "id": "US-033",
@@ -501,8 +501,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 33,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DONE 2026/06/19: 6 个 EntityExtractor pure helpers + 1 个聚合入口已落 backend/src/services/StrategyCopilotService.ts (line 880-1290, ~410 行 + 完整 jsdoc): extractStocks (6 位 A 股代码 + inferStockMarket 推断 sh/sz/bj, lookbehind/lookahead 拦 5/7 位 + 去重 + 顺序保留) / extractIndustries (INDUSTRY_KEYWORDS 22+ 行业 frozen 大小写不敏感 + AI/ai 同 canonical + 去重) / extractIndicators (INDICATOR_ALIASES 24+ 别名 canonical 化 — 夏普/sharpe→sharpe, 回撤/MAX_DRAWDOWN/最大回撤→max_drawdown) / extractNumbers (NUMBER_UNIT_TOKENS frozen 7 单位 % 元 万 亿 倍 天 月/个月 → pct/yuan/wan/yi/x/day/month + 整数/小数/负数 + 不去重让 topN=30 lookback=30 都保留) / extractDates (绝对 YYYY-MM-DD/YYYY年M月D日 + 无年 M月D日 双 regex 防重叠 + 相对 12 词表 前天/昨天/今天/明天/后天/上周/下周/上月/下月 + 最近 N 天/月 → offset_days) / extractStrategyParams (key=value | key:value 双 separator, key /[A-Za-z_][A-Za-z0-9_]{1,31}/ 大小写敏感, 后覆盖前 shell 习惯, 数字 value 转 number 否则 string) + extractEntities 聚合入口一次返 6 类切片. ExtractedStock/ExtractedNumber/ExtractedDate/ExtractedEntities 4 interface + INDUSTRY_KEYWORDS/INDICATOR_ALIASES 2 const + inferStockMarket 全 export. 与 AnnouncementNLPService.extractEntities (US-027 角色实体) 不冲突 — 此处关注 task-style intent (US-032) 的 \"执行 slot\" 而非\"股东角色\", 不同 namespace. 单测 tests/services/strategy-copilot-service.test.ts 286 ok / 0 failed (74 assertEqual extract* — 6 个 extractor 各自 8-12 case 覆盖 null/undefined/非字符串/空/全空格 + 单命中 + 多命中顺序 + 去重 + 别名 canonical + 单位归一 + 大小写不敏感 + 边界数字 + roundtrip 聚合). tsc 0 err / lint 0 新增 err (2 baseline non-null assertion warn 与项目 RealtimeAlertDispatcher 同款). 后续 US-040~077 frontend Copilot 类 story 可直接 import 6 个 extractor + extractEntities 一次拿全 slot."
     },
     {
       "id": "US-034",
