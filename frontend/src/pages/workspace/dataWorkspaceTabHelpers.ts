@@ -970,3 +970,258 @@ export function buildDataMissingAlertsViewModel(
     reference_trade_date: healthResponse.reference_trade_date ?? null,
   };
 }
+
+// ============================================================================
+// US-063 [FE-024] DataWorkspace 一键补抓 helpers
+// ----------------------------------------------------------------------------
+// 既有 [[DataHealthDashboard]] 每张数据源卡片自带 "手动触发同步" 按钮 (走
+// POST /api/data/sync/:source), 但 ops 一旦看到 SLA 看板红了 / 数据缺失告警
+// 多条, 需要逐张卡片点击补抓 — 卡片越多, 误操作 / 漏点的概率越高.
+// 本 helper 派生 "一键补抓" 入口的视图模型: 从 healthResponse 选出全部
+// 可一键补抓 (sync_source ∈ DAILY_SYNC_SOURCES) 且 (lag > 0 / error 非空 /
+// record=0) 的目标, 按严重度排序, 给 UI 一次性显示 + 一键串行触发.
+//
+// 与 [[DataHealthDashboard]] 的 DAILY_SYNC_KEYS 必须保持一致 — 哪些 source
+// 支持 web 端一键触发由后端 DataController.triggerSync `dailyRoutes` 决定;
+// 周期性 / per-stock 源 (财报 / 分析师 / 公告) 后端会返 400 让 ops 走 CLI,
+// 本 helper 直接在前端就过滤掉, 不让用户点完才发现 400.
+//
+// 形态对偶 [[buildDataMissingAlertsViewModel]] (US-062) — 同样从 cards 派生
+// list, 但筛选条件 = "可补抓 + 真的需要补抓", 不含 'unknown' 状态 (链路状
+// 态未知时点补抓没意义, 应先排查为什么 last_sync_at 是 null).
+// ============================================================================
+
+/**
+ * 后端 DataController.triggerSync `dailyRoutes` 接受的 sync_source 集合.
+ * 与 frontend DataHealthDashboard 内 DAILY_SYNC_KEYS 一致, 单测守同步.
+ * 新增 daily 源时三处同步更新:
+ *   1. backend/src/api/controllers/DataController.ts dailyRoutes
+ *   2. frontend/src/components/data/DataHealthDashboard.tsx DAILY_SYNC_KEYS
+ *   3. 本常量
+ */
+export const BULK_BACKFILL_DAILY_SOURCES: ReadonlySet<string> = Object.freeze(
+  new Set<string>(['northbound', 'dragon_tiger', 'limit_up', 'industry_flow', 'snowball_hot'])
+);
+
+/** 一键补抓的优先级 — critical=链路报错, warning=lag>SLA, info=零记录, low=正常但 lag>0. */
+export type BulkBackfillReason = 'sync_error' | 'severe_lag' | 'no_record' | 'mild_lag';
+
+/** 一条补抓目标 (回写够 UI 用). */
+export interface BulkBackfillTarget {
+  /** sync_source — POST /api/data/sync/:source 用. */
+  sync_source: string;
+  /** 数据源中文名 (display_name). */
+  display_name: string;
+  /** 数据源 key (与 card.key 一致, React key 用). */
+  source_key: string;
+  /** 类别 (daily/event/periodic). */
+  source_category: DataSourceCategory;
+  /** lag_trading_days (回写, null=未知). */
+  lag_trading_days: number | null;
+  /** 触发原因 (决定排序权重). */
+  reason: BulkBackfillReason;
+  /** UI 显示用的简短原因文案. */
+  reason_text: string;
+}
+
+/** 一键补抓视图模型 — 给 BulkBackfillButton 一次性 destructure. */
+export interface BulkBackfillPlan {
+  /** 排序后的目标列表 (按严重度倒序 + source_key asc). */
+  targets: BulkBackfillTarget[];
+  /** 各原因的目标数. */
+  counts: Readonly<Record<BulkBackfillReason, number>>;
+  /** 总目标数 (=可一键补抓且需要补抓的数据源数). */
+  total: number;
+  /** 已注册的 daily 类源总数 (分母, 用于 "X/Y 需要补抓" 文案). */
+  daily_sources_total: number;
+  /** 不可用原因 (loading / 全部正常 / 全部不可一键补抓) — UI 用作 disabled 提示. */
+  disabled_reason: string | null;
+}
+
+/** 优先级权重 — 数字越大越靠前. */
+const BULK_BACKFILL_REASON_ORDER: Readonly<Record<BulkBackfillReason, number>> = Object.freeze({
+  sync_error: 4,
+  severe_lag: 3,
+  no_record: 2,
+  mild_lag: 1,
+});
+
+/** 单条 card → BulkBackfillTarget | null. 不满足 (不可一键补抓 / 无需补抓) 返 null. */
+export function classifyBulkBackfillTarget(
+  card: DataSourceHealthCard | null | undefined
+): BulkBackfillTarget | null {
+  if (!card || typeof card !== 'object') return null;
+  if (!BULK_BACKFILL_DAILY_SOURCES.has(card.sync_source)) return null;
+  const sourceCategory = card.category;
+  if (sourceCategory !== 'daily' && sourceCategory !== 'event' && sourceCategory !== 'periodic') {
+    return null;
+  }
+  const lag =
+    typeof card.lag_trading_days === 'number' && Number.isFinite(card.lag_trading_days)
+      ? card.lag_trading_days
+      : null;
+  const recordCount =
+    typeof card.record_count === 'number' &&
+    Number.isFinite(card.record_count) &&
+    card.record_count > 0
+      ? card.record_count
+      : 0;
+  const display_name = card.display_name || card.sync_source || card.key || '未命名数据源';
+  // 优先级链 — 与 [[classifyDataMissingAlert]] 同款 (sync_error > severe_lag > no_record > mild_lag).
+  if (typeof card.error === 'string' && card.error.length > 0) {
+    return {
+      sync_source: card.sync_source,
+      display_name,
+      source_key: card.key,
+      source_category: sourceCategory,
+      lag_trading_days: lag,
+      reason: 'sync_error',
+      reason_text: `链路报错: ${card.error.slice(0, 60)}`,
+    };
+  }
+  if (lag !== null && lag > DATA_MISSING_SEVERE_LAG) {
+    return {
+      sync_source: card.sync_source,
+      display_name,
+      source_key: card.key,
+      source_category: sourceCategory,
+      lag_trading_days: lag,
+      reason: 'severe_lag',
+      reason_text: `落后 ${lag} 个交易日 (> ${DATA_MISSING_SEVERE_LAG} 天阈值)`,
+    };
+  }
+  if (recordCount === 0) {
+    return {
+      sync_source: card.sync_source,
+      display_name,
+      source_key: card.key,
+      source_category: sourceCategory,
+      lag_trading_days: lag,
+      reason: 'no_record',
+      reason_text: '累计记录为 0 — 从未抓到任何数据',
+    };
+  }
+  if (lag !== null && lag > 0) {
+    return {
+      sync_source: card.sync_source,
+      display_name,
+      source_key: card.key,
+      source_category: sourceCategory,
+      lag_trading_days: lag,
+      reason: 'mild_lag',
+      reason_text: `落后 ${lag} 个交易日`,
+    };
+  }
+  return null;
+}
+
+/**
+ * 主入口: healthResponse → BulkBackfillPlan.
+ *
+ * - healthResponse=null/undefined → 全 0 plan + disabled_reason='loading'
+ * - cards 全 green/lag=0 → 全 0 plan + disabled_reason='无需补抓'
+ * - 无任何 daily 源注册 → disabled_reason='无可一键补抓的数据源'
+ * - 排序: (reason desc by weight, source_key asc) 稳定
+ *
+ * Pure, 永不抛, useMemo 安全.
+ */
+export function buildBulkBackfillPlan(
+  healthResponse: DataHealthStatusResponse | null | undefined
+): BulkBackfillPlan {
+  const emptyCounts: Record<BulkBackfillReason, number> = {
+    sync_error: 0,
+    severe_lag: 0,
+    no_record: 0,
+    mild_lag: 0,
+  };
+  if (!healthResponse) {
+    return {
+      targets: [],
+      counts: Object.freeze({ ...emptyCounts }),
+      total: 0,
+      daily_sources_total: 0,
+      disabled_reason: '数据健康状态加载中…',
+    };
+  }
+  const cards = Array.isArray(healthResponse.cards) ? healthResponse.cards : [];
+  let daily_sources_total = 0;
+  const targets: BulkBackfillTarget[] = [];
+  for (const c of cards) {
+    if (!c || typeof c !== 'object') continue;
+    if (BULK_BACKFILL_DAILY_SOURCES.has(c.sync_source)) daily_sources_total += 1;
+    const t = classifyBulkBackfillTarget(c);
+    if (t) targets.push(t);
+  }
+  targets.sort((x, y) => {
+    const ro = BULK_BACKFILL_REASON_ORDER[y.reason] - BULK_BACKFILL_REASON_ORDER[x.reason];
+    if (ro !== 0) return ro;
+    return x.source_key.localeCompare(y.source_key);
+  });
+  const counts: Record<BulkBackfillReason, number> = { ...emptyCounts };
+  for (const t of targets) counts[t.reason] += 1;
+  let disabled_reason: string | null = null;
+  if (daily_sources_total === 0) {
+    disabled_reason = '当前无任何可一键补抓的数据源 (周期性 / per-stock 源请走运维 CLI)';
+  } else if (targets.length === 0) {
+    disabled_reason = '所有可补抓的数据源均健康, 无需补抓';
+  }
+  return {
+    targets,
+    counts: Object.freeze(counts),
+    total: targets.length,
+    daily_sources_total,
+    disabled_reason,
+  };
+}
+
+/** 单次补抓结果 (caller 串行调用 triggerDataSync 后填回). */
+export interface BulkBackfillResult {
+  sync_source: string;
+  display_name: string;
+  ok: boolean;
+  /** ok=true 时为后端返的 result; ok=false 时为 error string. */
+  message?: string;
+}
+
+/** 一次批量补抓的汇总 — 给 UI 渲染 "完成 N / 成功 X / 失败 Y" 摘要. */
+export interface BulkBackfillSummary {
+  total: number;
+  success: number;
+  failed: number;
+  /** 是否全部成功 (success === total 且 total > 0). */
+  all_ok: boolean;
+  /** 失败的 sync_source 列表 (按出现顺序, 给 ops 直接看). */
+  failed_sources: string[];
+}
+
+/**
+ * 汇总一批补抓结果 — Pure, 不依赖外部. 在 BulkBackfillButton 串行 await 完
+ * triggerDataSync 后调.
+ */
+export function summarizeBulkBackfillResults(
+  results: ReadonlyArray<BulkBackfillResult | null | undefined>
+): BulkBackfillSummary {
+  const list = Array.isArray(results) ? results : [];
+  let success = 0;
+  let failed = 0;
+  const failed_sources: string[] = [];
+  let total = 0;
+  for (const r of list) {
+    if (!r || typeof r !== 'object') continue;
+    total += 1;
+    if (r.ok) success += 1;
+    else {
+      failed += 1;
+      if (typeof r.sync_source === 'string' && r.sync_source.length > 0) {
+        failed_sources.push(r.sync_source);
+      }
+    }
+  }
+  return {
+    total,
+    success,
+    failed,
+    all_ok: total > 0 && success === total,
+    failed_sources,
+  };
+}

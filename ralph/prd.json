@@ -976,8 +976,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 63,
-      "passes": false,
-      "notes": "依赖: D-027"
+      "passes": true,
+      "notes": "依赖: D-027 | DONE 2026/06/20: 新增 frontend/src/components/data/BulkBackfillButton.tsx (~270 行) — 嵌 DataWorkspace health tab, 与 SlaDashboardCard/DataMissingAlertsCard 并列. helper [[buildBulkBackfillPlan]] + [[classifyBulkBackfillTarget]] + [[summarizeBulkBackfillResults]] + BULK_BACKFILL_DAILY_SOURCES 常量加在 dataWorkspaceTabHelpers.ts (~230 行). 视图模型派生自 healthResponse 不引第二个 endpoint, 按 reason 优先级 sync_error>severe_lag>no_record>mild_lag 排序. UI 流程: 卡片显示需补抓 N 个 + Tag 分类 → 主按钮 Tooltip + disabled 提示 → Modal.confirm 列出全部目标 + reason → 串行 await triggerDataSync (并发会被外网 rate limit) → Progress 进度条 → Modal.success/error 汇总 → onBackfillDone callback 让上层 refresh. DataWorkspace 加 refreshHealthData callback + 传 onBackfillDone. 单测 backend/tests/services/data-workspace-tab-helpers.test.ts 从 276 扩到 349 (+73 assert): [13] 13.1-13.61 helper 单元+边界 (BULK_BACKFILL_DAILY_SOURCES 集合 / classify null/undefined/per-stock/健康 边界 / lag=3 vs lag=4 严格 > 阈值 / 优先级 sync_error>severe_lag>no_record>mild_lag / 主入口 null/全健康/无 daily 源 disabled_reason / 混合 5 cards 4 targets 排序 + counts / 同 reason 内 source_key asc / cards 含 null/undefined 不抛 / pure 同输入等价 / summarizeBulkBackfillResults 空/全成功/部分失败/null 元素跳过); [14] META-GUARD BulkBackfillButton.tsx 接通 helper + 调 triggerDataSync + Modal.confirm + 串行循环 + data-testid + DataWorkspace 渲染 + onBackfillDone=refreshHealthData; [15] helper export 完整性. tsc(fe)+tsc(be)+test 全过, eslint --fix 后 0 err 0 warn."
     },
     {
       "id": "US-064",

@@ -38,6 +38,10 @@ import {
   countSyncErrors,
   emptyBucket,
   sumRecordCount,
+  BULK_BACKFILL_DAILY_SOURCES,
+  buildBulkBackfillPlan,
+  classifyBulkBackfillTarget,
+  summarizeBulkBackfillResults,
 } from '../../../frontend/src/pages/workspace/dataWorkspaceTabHelpers';
 import type {
   DataHealthStatusResponse,
@@ -975,6 +979,380 @@ assert('[3.8] sumRecordCount([])=0', sumRecordCount([]) === 0);
       /export\s+function\s+buildDataMissingAlertsViewModel/.test(src)
     );
   }
+}
+
+// ============================================================================
+// [13] US-063 [FE-024] DataWorkspace 一键补抓 helpers — 单元 + 边界 + 主验收
+// ============================================================================
+{
+  // ---- [13.1-7] BULK_BACKFILL_DAILY_SOURCES 集合稳定性 + 与 DataHealthDashboard 同步 ----
+  assert(
+    '[13.1] BULK_BACKFILL_DAILY_SOURCES 是 ReadonlySet',
+    BULK_BACKFILL_DAILY_SOURCES instanceof Set
+  );
+  assert(
+    '[13.2] BULK_BACKFILL_DAILY_SOURCES 含 northbound',
+    BULK_BACKFILL_DAILY_SOURCES.has('northbound')
+  );
+  assert(
+    '[13.3] BULK_BACKFILL_DAILY_SOURCES 含 dragon_tiger',
+    BULK_BACKFILL_DAILY_SOURCES.has('dragon_tiger')
+  );
+  assert(
+    '[13.4] BULK_BACKFILL_DAILY_SOURCES 含 limit_up',
+    BULK_BACKFILL_DAILY_SOURCES.has('limit_up')
+  );
+  assert(
+    '[13.5] BULK_BACKFILL_DAILY_SOURCES 含 industry_flow',
+    BULK_BACKFILL_DAILY_SOURCES.has('industry_flow')
+  );
+  assert(
+    '[13.6] BULK_BACKFILL_DAILY_SOURCES 含 snowball_hot',
+    BULK_BACKFILL_DAILY_SOURCES.has('snowball_hot')
+  );
+  assert(
+    '[13.7] BULK_BACKFILL_DAILY_SOURCES 不含 financial_report (per-stock 类必须走 CLI)',
+    !BULK_BACKFILL_DAILY_SOURCES.has('financial_report')
+  );
+
+  // ---- [13.8-13.14] classifyBulkBackfillTarget 边界 ----------
+  assert('[13.8] classify null → null', classifyBulkBackfillTarget(null) === null);
+  assert('[13.9] classify undefined → null', classifyBulkBackfillTarget(undefined) === null);
+  assert(
+    '[13.10] classify 非 daily 源 → null (financial_report)',
+    classifyBulkBackfillTarget(
+      makeCard({
+        key: 'fr',
+        sync_source: 'financial_report',
+        category: 'periodic',
+        lag_trading_days: 100,
+      })
+    ) === null
+  );
+  assert(
+    '[13.11] classify 健康源 (lag=0 + green) → null (无需补抓)',
+    classifyBulkBackfillTarget(
+      makeCard({ sync_source: 'northbound', lag_trading_days: 0, level: 'green', record_count: 100 })
+    ) === null
+  );
+  {
+    const t = classifyBulkBackfillTarget(
+      makeCard({
+        sync_source: 'northbound',
+        lag_trading_days: 5,
+        level: 'red',
+        record_count: 100,
+        error: '',
+      })
+    );
+    assert('[13.12] classify lag=5 (>3) → severe_lag', t?.reason === 'severe_lag');
+    assert(
+      '[13.13] classify severe_lag reason_text 含 "落后 5"',
+      Boolean(t?.reason_text?.includes('落后 5'))
+    );
+  }
+  {
+    const t = classifyBulkBackfillTarget(
+      makeCard({
+        sync_source: 'dragon_tiger',
+        lag_trading_days: 1,
+        level: 'yellow',
+        record_count: 100,
+        error: 'tushare timeout',
+      })
+    );
+    assert('[13.14a] error 非空 → sync_error 优先', t?.reason === 'sync_error');
+    assert(
+      '[13.14b] sync_error reason_text 含 "链路报错"',
+      Boolean(t?.reason_text?.includes('链路报错'))
+    );
+  }
+  {
+    const t = classifyBulkBackfillTarget(
+      makeCard({
+        sync_source: 'limit_up',
+        lag_trading_days: 0,
+        level: 'green',
+        record_count: 0,
+      })
+    );
+    assert('[13.15] record=0 + lag=0 → no_record', t?.reason === 'no_record');
+  }
+  {
+    const t = classifyBulkBackfillTarget(
+      makeCard({
+        sync_source: 'industry_flow',
+        lag_trading_days: 2,
+        level: 'yellow',
+        record_count: 100,
+      })
+    );
+    assert('[13.16] 0<lag<=3 + record>0 → mild_lag', t?.reason === 'mild_lag');
+  }
+  {
+    // 边界: lag === DATA_MISSING_SEVERE_LAG (3) 不算 severe_lag, 算 mild_lag
+    const t = classifyBulkBackfillTarget(
+      makeCard({ sync_source: 'northbound', lag_trading_days: 3, level: 'yellow', record_count: 1 })
+    );
+    assert('[13.17] lag=3 (== 阈值) → mild_lag (严格 > 才 severe)', t?.reason === 'mild_lag');
+  }
+  {
+    // 边界: lag === 4 (> 3) → severe_lag
+    const t = classifyBulkBackfillTarget(
+      makeCard({ sync_source: 'northbound', lag_trading_days: 4, level: 'red', record_count: 1 })
+    );
+    assert('[13.18] lag=4 (> 3) → severe_lag', t?.reason === 'severe_lag');
+  }
+
+  // ---- [13.20-13.30] buildBulkBackfillPlan 主入口 ----------
+  {
+    const plan = buildBulkBackfillPlan(null);
+    assert('[13.20] null response → total=0', plan.total === 0);
+    assert(
+      '[13.21] null response → disabled_reason 非 null',
+      typeof plan.disabled_reason === 'string' && plan.disabled_reason.length > 0
+    );
+    assert(
+      '[13.22] null response → counts 全 0',
+      plan.counts.sync_error === 0 &&
+        plan.counts.severe_lag === 0 &&
+        plan.counts.no_record === 0 &&
+        plan.counts.mild_lag === 0
+    );
+    assert('[13.23] null response → targets 是空数组', Array.isArray(plan.targets) && plan.targets.length === 0);
+    assert('[13.24] null response → daily_sources_total=0', plan.daily_sources_total === 0);
+  }
+  {
+    // 所有 daily 源都健康 → total=0 + disabled_reason='无需补抓'
+    const plan = buildBulkBackfillPlan(
+      makeResponse([
+        makeCard({ key: 'a', sync_source: 'northbound', lag_trading_days: 0, record_count: 100 }),
+        makeCard({ key: 'b', sync_source: 'dragon_tiger', lag_trading_days: 0, record_count: 100 }),
+        makeCard({ key: 'c', sync_source: 'limit_up', lag_trading_days: 0, record_count: 100 }),
+      ])
+    );
+    assert('[13.25] 全健康 → total=0', plan.total === 0);
+    assert(
+      '[13.26] 全健康 → daily_sources_total=3',
+      plan.daily_sources_total === 3
+    );
+    assert(
+      '[13.27] 全健康 → disabled_reason 含 "无需补抓"',
+      typeof plan.disabled_reason === 'string' && plan.disabled_reason.includes('无需补抓')
+    );
+  }
+  {
+    // 无任何 daily 源注册 (全 financial_report periodic)
+    const plan = buildBulkBackfillPlan(
+      makeResponse([
+        makeCard({ key: 'fr1', sync_source: 'financial_report', category: 'periodic' }),
+      ])
+    );
+    assert('[13.28] 无 daily 源 → total=0', plan.total === 0);
+    assert(
+      '[13.29] 无 daily 源 → disabled_reason 含 "无任何可一键补抓"',
+      typeof plan.disabled_reason === 'string' && plan.disabled_reason.includes('无任何可一键补抓')
+    );
+    assert('[13.30] 无 daily 源 → daily_sources_total=0', plan.daily_sources_total === 0);
+  }
+  {
+    // 混合: 1 个 sync_error + 1 个 severe_lag + 1 个 no_record + 1 个 mild_lag + 1 个健康
+    const plan = buildBulkBackfillPlan(
+      makeResponse([
+        makeCard({ key: 'a', sync_source: 'northbound', lag_trading_days: 2, level: 'yellow', record_count: 10 }), // mild_lag
+        makeCard({ key: 'b', sync_source: 'dragon_tiger', lag_trading_days: 10, level: 'red', record_count: 10 }), // severe_lag
+        makeCard({ key: 'c', sync_source: 'limit_up', lag_trading_days: 0, level: 'yellow', record_count: 0 }), // no_record
+        makeCard({
+          key: 'd',
+          sync_source: 'industry_flow',
+          lag_trading_days: 1,
+          level: 'yellow',
+          record_count: 10,
+          error: 'http 502',
+        }), // sync_error
+        makeCard({ key: 'e', sync_source: 'snowball_hot', lag_trading_days: 0, level: 'green', record_count: 100 }), // 健康
+      ])
+    );
+    assert('[13.31] 混合 → total=4 (4 个需补抓)', plan.total === 4);
+    assert('[13.32] 混合 → daily_sources_total=5', plan.daily_sources_total === 5);
+    assert('[13.33] 混合 → sync_error count=1', plan.counts.sync_error === 1);
+    assert('[13.34] 混合 → severe_lag count=1', plan.counts.severe_lag === 1);
+    assert('[13.35] 混合 → no_record count=1', plan.counts.no_record === 1);
+    assert('[13.36] 混合 → mild_lag count=1', plan.counts.mild_lag === 1);
+    // 排序: sync_error > severe_lag > no_record > mild_lag
+    assert('[13.37] 混合 → 第 1 个 reason=sync_error', plan.targets[0].reason === 'sync_error');
+    assert('[13.38] 混合 → 第 2 个 reason=severe_lag', plan.targets[1].reason === 'severe_lag');
+    assert('[13.39] 混合 → 第 3 个 reason=no_record', plan.targets[2].reason === 'no_record');
+    assert('[13.40] 混合 → 第 4 个 reason=mild_lag', plan.targets[3].reason === 'mild_lag');
+    assert('[13.41] 混合 → disabled_reason 为 null (有可补抓项)', plan.disabled_reason === null);
+  }
+  {
+    // 同 reason 下按 source_key asc 排序
+    const plan = buildBulkBackfillPlan(
+      makeResponse([
+        makeCard({ key: 'zz', sync_source: 'northbound', lag_trading_days: 10, level: 'red', record_count: 1 }),
+        makeCard({ key: 'aa', sync_source: 'dragon_tiger', lag_trading_days: 10, level: 'red', record_count: 1 }),
+      ])
+    );
+    assert('[13.42] 同 reason 排序 → 第 1 个 source_key=aa', plan.targets[0].source_key === 'aa');
+    assert('[13.43] 同 reason 排序 → 第 2 个 source_key=zz', plan.targets[1].source_key === 'zz');
+  }
+  {
+    // cards 含 null/undefined 元素不抛
+    const raw: DataHealthStatusResponse = {
+      reference_trade_date: '2026-06-19',
+      cards: [
+        null as unknown as DataSourceHealthCard,
+        makeCard({ key: 'k', sync_source: 'northbound', lag_trading_days: 5, level: 'red', record_count: 1 }),
+        undefined as unknown as DataSourceHealthCard,
+      ],
+      summary: { green: 0, yellow: 0, red: 1, unknown: 0 },
+      generated_at: '2026-06-19T09:00:00Z',
+    };
+    const plan = buildBulkBackfillPlan(raw);
+    assert('[13.44] cards 含 null/undefined → 不抛 + total=1', plan.total === 1);
+  }
+  {
+    // 同输入两次 plan 结构等价 (pure)
+    const r = makeResponse([
+      makeCard({ key: 'a', sync_source: 'northbound', lag_trading_days: 5, level: 'red', record_count: 1 }),
+    ]);
+    const a = buildBulkBackfillPlan(r);
+    const b = buildBulkBackfillPlan(r);
+    assert(
+      '[13.45] pure: 同输入两次 plan 等价',
+      JSON.stringify(a) === JSON.stringify(b)
+    );
+  }
+
+  // ---- [13.50-13.60] summarizeBulkBackfillResults ----------
+  {
+    const s = summarizeBulkBackfillResults([]);
+    assert('[13.50] empty → total=0', s.total === 0);
+    assert('[13.51] empty → all_ok=false', s.all_ok === false);
+    assert('[13.52] empty → failed_sources=[]', s.failed_sources.length === 0);
+  }
+  {
+    const s = summarizeBulkBackfillResults([
+      { sync_source: 'northbound', display_name: '北向资金', ok: true },
+      { sync_source: 'dragon_tiger', display_name: '龙虎榜', ok: true },
+    ]);
+    assert('[13.53] 全成功 → success=2', s.success === 2);
+    assert('[13.54] 全成功 → all_ok=true', s.all_ok === true);
+    assert('[13.55] 全成功 → failed=0', s.failed === 0);
+  }
+  {
+    const s = summarizeBulkBackfillResults([
+      { sync_source: 'northbound', display_name: '北向', ok: true },
+      { sync_source: 'dragon_tiger', display_name: '龙虎榜', ok: false, message: '502' },
+      { sync_source: 'limit_up', display_name: '涨停板', ok: false, message: 'timeout' },
+    ]);
+    assert('[13.56] 混合 → total=3', s.total === 3);
+    assert('[13.57] 混合 → success=1', s.success === 1);
+    assert('[13.58] 混合 → failed=2', s.failed === 2);
+    assert('[13.59] 混合 → all_ok=false', s.all_ok === false);
+    assert(
+      '[13.60] 混合 → failed_sources 按顺序含 dragon_tiger,limit_up',
+      s.failed_sources.length === 2 &&
+        s.failed_sources[0] === 'dragon_tiger' &&
+        s.failed_sources[1] === 'limit_up'
+    );
+  }
+  {
+    // null/undefined 元素 不抛
+    const s = summarizeBulkBackfillResults([
+      null as unknown as undefined,
+      { sync_source: 'a', display_name: 'a', ok: true },
+      undefined,
+    ]);
+    assert('[13.61] null/undefined 元素 → total=1 (跳过 null/undefined)', s.total === 1);
+  }
+}
+
+// ---- [14] META-GUARD BulkBackfillButton.tsx 接通 helper + DataWorkspace 渲染 ----
+{
+  const cardPath = join(
+    __dirname,
+    '../../../frontend/src/components/data/BulkBackfillButton.tsx'
+  );
+  const src = readFileSync(cardPath, 'utf8');
+  assert(
+    '[14.1] BulkBackfillButton.tsx import buildBulkBackfillPlan',
+    /import[\s\S]{0,200}buildBulkBackfillPlan/.test(src)
+  );
+  assert(
+    '[14.2] BulkBackfillButton.tsx import summarizeBulkBackfillResults',
+    /import[\s\S]{0,200}summarizeBulkBackfillResults/.test(src)
+  );
+  assert(
+    '[14.3] BulkBackfillButton.tsx 调 buildBulkBackfillPlan',
+    /buildBulkBackfillPlan\(/.test(src)
+  );
+  assert(
+    '[14.4] BulkBackfillButton.tsx 调 triggerDataSync (串行触发)',
+    /triggerDataSync\(/.test(src)
+  );
+  assert(
+    '[14.5] BulkBackfillButton.tsx data-testid=bulk-backfill-card',
+    /data-testid=["']bulk-backfill-card["']/.test(src)
+  );
+  assert(
+    '[14.6] BulkBackfillButton.tsx data-testid=bulk-backfill-trigger-btn',
+    /data-testid=["']bulk-backfill-trigger-btn["']/.test(src)
+  );
+  assert(
+    '[14.7] BulkBackfillButton.tsx 含 Modal.confirm (二次确认)',
+    /Modal\.confirm\(/.test(src)
+  );
+  assert(
+    '[14.8] BulkBackfillButton.tsx 串行循环 (for...await...triggerDataSync)',
+    /for\s*\([\s\S]{0,80}\)\s*\{[\s\S]{0,400}await\s+triggerDataSync/.test(src)
+  );
+  assert(
+    '[14.9] BulkBackfillButton.tsx 接 healthData prop',
+    /healthData\??:\s*DataHealthStatusResponse/.test(src)
+  );
+}
+{
+  const dwPath = join(__dirname, '../../../frontend/src/pages/workspace/DataWorkspace.tsx');
+  const src = readFileSync(dwPath, 'utf8');
+  assert(
+    '[14.10] DataWorkspace.tsx import BulkBackfillButton',
+    /import\s+BulkBackfillButton\s+from\s+['"][^'"]*BulkBackfillButton['"]/.test(src)
+  );
+  assert(
+    '[14.11] DataWorkspace.tsx 在 health tab 渲染 BulkBackfillButton',
+    /<BulkBackfillButton[\s\S]{0,160}healthData=\{healthData\}/.test(src)
+  );
+  assert(
+    '[14.12] DataWorkspace.tsx 把 refreshHealthData 传给 onBackfillDone',
+    /<BulkBackfillButton[\s\S]{0,200}onBackfillDone=\{refreshHealthData\}/.test(src)
+  );
+}
+
+// ---- [15] META-GUARD helper export 完整性 ----
+{
+  const helperPath = join(
+    __dirname,
+    '../../../frontend/src/pages/workspace/dataWorkspaceTabHelpers.ts'
+  );
+  const src = readFileSync(helperPath, 'utf8');
+  assert(
+    '[15.1] helper export BULK_BACKFILL_DAILY_SOURCES',
+    /export\s+const\s+BULK_BACKFILL_DAILY_SOURCES\b/.test(src)
+  );
+  assert(
+    '[15.2] helper export classifyBulkBackfillTarget',
+    /export\s+function\s+classifyBulkBackfillTarget/.test(src)
+  );
+  assert(
+    '[15.3] helper export buildBulkBackfillPlan',
+    /export\s+function\s+buildBulkBackfillPlan/.test(src)
+  );
+  assert(
+    '[15.4] helper export summarizeBulkBackfillResults',
+    /export\s+function\s+summarizeBulkBackfillResults/.test(src)
+  );
 }
 
 // ---- summary ---------------------------------------------------------------

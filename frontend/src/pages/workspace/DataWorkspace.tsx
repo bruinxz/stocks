@@ -15,6 +15,7 @@ import SystemTopologyMap from '../../components/data/SystemTopologyMap';
 import ActivationDashboard from '../../components/data/ActivationDashboard';
 import SlaDashboardCard from '../../components/data/SlaDashboardCard';
 import DataMissingAlertsCard from '../../components/data/DataMissingAlertsCard';
+import BulkBackfillButton from '../../components/data/BulkBackfillButton';
 import { DataHealthStatusResponse, getDataHealthStatus } from '../../services/dataHealthService';
 import {
   DataWorkspaceTabKey,
@@ -62,6 +63,16 @@ const DataWorkspace: React.FC = () => {
       .catch(() => {
         // 失败保持 null；下游 helper 返 loading view model
         setHealthData(null);
+      });
+  }, []);
+
+  // US-063: 一键补抓完成后让本 Workspace 主动 refresh healthData, 让三张
+  // 派生卡 (SLA / 数据缺失告警 / 一键补抓本身) 立刻反映新 lag.
+  const refreshHealthData = React.useCallback(() => {
+    getDataHealthStatus()
+      .then(data => setHealthData(data))
+      .catch(() => {
+        /* 静默 — 既有 60s polling 兜底 */
       });
   }, []);
 
@@ -129,6 +140,7 @@ const DataWorkspace: React.FC = () => {
         return (
           <>
             {overviewBar}
+            <BulkBackfillButton healthData={healthData} onBackfillDone={refreshHealthData} />
             <SlaDashboardCard healthData={healthData} />
             <DataMissingAlertsCard healthData={healthData} />
             <SystemTopologyMap />

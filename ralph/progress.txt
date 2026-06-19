@@ -1704,3 +1704,51 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **periodic 类 record_count=0 不算告警** (季报型本身可能数据少), 只 daily/event 才触发 no_record — 边界条件必须显式单测 [9.22]. 不然 ops 半夜被叫醒 "财报数据 0 条" 实际只是 Q4 还没发. 任何 "因为是 X 类源所以不告警" 的特殊路径都必须有显式测试守住.
   - **DataHealthStatusResponse cards 可能含 null/undefined 元素** (后端 race condition 时空对象), helper 必须 Array.isArray + per-item null check. 单测用直接构造 response 绕过 makeResponse (后者预设 cards 非 null) 才能验这条边界 [9.48].
 ---
+
+
+## 2026/06/20 05:30 - US-063
+- 实现 [FE-024] DataWorkspace 一键补抓按钮 — 串行批量触发所有需补抓的 daily 数据源
+- Files changed:
+  - frontend/src/pages/workspace/dataWorkspaceTabHelpers.ts (追加 US-063 段, ~230 行):
+    * BULK_BACKFILL_DAILY_SOURCES (ReadonlySet, frozen) — 与后端 DataController.triggerSync `dailyRoutes` + 前端 DataHealthDashboard DAILY_SYNC_KEYS 严格同步. 唯一事实源.
+    * type BulkBackfillReason = 'sync_error'|'severe_lag'|'no_record'|'mild_lag'
+    * BulkBackfillTarget / BulkBackfillPlan / BulkBackfillResult / BulkBackfillSummary 4 interface 全 export
+    * classifyBulkBackfillTarget(card) — pure, null/非 daily 源/per-stock/健康 全返 null; 优先级链 sync_error > severe_lag (lag>3) > no_record > mild_lag (0<lag<=3) 与 [[classifyDataMissingAlert]] (US-062) 同款
+    * buildBulkBackfillPlan(healthResponse) — pure, null → disabled_reason='loading' / 无 daily 源 → '无任何可一键补抓' / 全健康 → '无需补抓' / 排序 (reason desc by weight + source_key asc) 稳定; 跳过 null/undefined cards 不抛
+    * summarizeBulkBackfillResults(results) — pure, 空/全成功/混合, all_ok = (total > 0 && success === total), failed_sources 按顺序
+  - frontend/src/components/data/BulkBackfillButton.tsx (新, ~270 行 + 完整 jsdoc):
+    * 与 SlaDashboardCard / DataMissingAlertsCard 同款 healthData prop 双模式 (caller 传或自拉 fallback)
+    * 卡片 header: Tag 显示 "N 个待补抓 (异常 X / 严重滞后 Y / 零记录 Z / 轻微 W)"
+    * 主按钮 Tooltip + disabled_reason — total=0 时 disabled + 提示原因
+    * Modal.confirm 二次确认 — 列出全部 targets + Tag 标 reason + source_key + reason_text + 文案注明 "仅触发当日补抓, 历史回填走 CLI"
+    * **串行 await triggerDataSync** 而非 Promise.all — 同步链路是外网调用 + DB 写, 并发会被 rate limit / 触发 anti-bot. for + setProgress + try/catch 单独捕获每个 await
+    * Progress 进度条 (current/total) 实时显示串行进度
+    * 全部完成后 Modal.success (all_ok) 或 Modal.error (含 failed_sources 列表 + 引导走 CLI)
+    * onBackfillDone callback 让上层 refresh healthData (不 await, 让 UI 优先呈现 Modal)
+    * data-testid: bulk-backfill-card / bulk-backfill-trigger-btn / bulk-backfill-targets-list / bulk-backfill-progress / bulk-backfill-target-${sync_source}
+  - frontend/src/pages/workspace/DataWorkspace.tsx:
+    * import BulkBackfillButton
+    * 新增 refreshHealthData callback (useCallback) — 在 onBackfillDone 时主动 refresh, 让三张卡 (SLA / 数据缺失 / 一键补抓) 立刻反映新 lag, 不等 60s polling
+    * 'health' tab 渲染顺序: overviewBar → BulkBackfillButton (放最前, 让 ops 一眼能动手) → SlaDashboardCard → DataMissingAlertsCard → SystemTopologyMap → ActivationDashboard → DataHealthDashboard
+  - backend/tests/services/data-workspace-tab-helpers.test.ts (+~290 行, 73 新 assert): 276→349
+    * [13.1-13.7] BULK_BACKFILL_DAILY_SOURCES 集合稳定性 + 5 个 daily 源 + financial_report 不在集合 (per-stock 类强制走 CLI)
+    * [13.8-13.18] classifyBulkBackfillTarget 边界 — null/undefined/per-stock/健康 全返 null + 优先级链 sync_error > severe_lag > no_record > mild_lag + 边界 lag=3 → mild_lag (严格 > 才 severe_lag) + lag=4 → severe_lag
+    * [13.20-13.45] buildBulkBackfillPlan 主入口 — null/全健康/无 daily 源 三种 disabled_reason + 混合 5 cards 4 targets 排序 + counts 分类 + 同 reason 内 source_key asc + cards 含 null/undefined 不抛 + pure 同输入两次等价 JSON
+    * [13.50-13.61] summarizeBulkBackfillResults — 空/全成功/混合 (3 个 1 成功 2 失败)/null 跳过
+    * [14.1-14.12] META-GUARD: BulkBackfillButton 接通 helper + import + 调 triggerDataSync + Modal.confirm + 串行循环 (for + await triggerDataSync 正则) + healthData prop + DataWorkspace 渲染 + onBackfillDone=refreshHealthData
+    * [15.1-15.4] helper export 完整性
+  - ralph/prd.json: US-063 passes=true + notes
+- 验证:
+  - `frontend && npx tsc --noEmit` exit 0
+  - `backend && npx tsc --noEmit` exit 0
+  - `backend && npx ts-node --transpile-only tests/services/data-workspace-tab-helpers.test.ts` 349 ok / 0 failed
+  - `frontend && eslint --fix` 后 0 err 0 warn (3 文件: BulkBackfillButton / helpers / DataWorkspace)
+- **Learnings for future iterations:**
+  - **批量入口的价值 ≠ 重复既有按钮**: PRD 看 "一键补抓按钮" 第一反应可能是 "DataHealthDashboard 每张卡都有手动同步按钮了, 加这个干嘛?". 但 ops 真实场景: SLA 看板红了 → 看数据缺失告警 → 在 24 张数据源卡片里逐张找需要补抓的点 → 漏点. **批量入口的价值是 "ops 不需要决策哪个要补抓"** — helper 自动按 reason 分级筛选 (sync_error/severe_lag/no_record/mild_lag) + 串行触发 + 失败逐条告知. 同款适用未来任何 "已有 per-X 操作, 加批量入口" 类 story (e.g. US-070 AlertsBell 全部已读 / US-080 全部 dry-run 切实盘). 关键: 不是 wrap 一个 Promise.all 就完事, 而是 helper 派生 "哪些该做" + UI 显式列出 + 串行执行 + 进度可视化 + 汇总结果. 4 件套缺一不可.
+  - **同源 const 集合三处同步必须有单测守**: BULK_BACKFILL_DAILY_SOURCES 必须与 (a) 后端 DataController.triggerSync `dailyRoutes` 字典 keys (b) 前端 DataHealthDashboard 内 DAILY_SYNC_KEYS Set 三处保持完全一致 — 任一处漂移就导致用户点了按钮收 404. 本 sprint 单测 [13.2-13.7] 显式守 5 个 daily 源 + [13.7] 反向守 financial_report 不在集合. 任何 "前端集合 = 后端集合 = 第三处集合" 的常量都按这范式: 一处 export 作为唯一事实源 + 三处都 import 它 (理想) 或单测 hardcode 元素守 (退化但够). 与 cron-registry [5] / EntityExtractor INDUSTRY_KEYWORDS 同款 "唯一事实源 + 双向 guard" 思想.
+  - **串行触发外网 sync 必须显式而非默认 Promise.all**: 后端 NorthboundSyncService / DragonTigerSyncService 内部都是 axios 调 tushare / 雪球 / 东方财富, 这些数据源对单 IP 都有 QPS 限制 (tushare 60/min, 东方财富 anti-bot 触发 30s 内 5 req). 5 个 daily 源并发 fire-and-forget, 第 2 个开始 90% 概率被 limit. UI 串行不仅是 "好看", 是 "能用". 任何 "fan-out 到外网" 的 UI 流程默认串行, 除非显式确认下游有 rate-limit 容忍. 与 backend [[bulkScrapeKeywords]] (US-005 PRE 阶段) 同款 for+await 而非 map+Promise.all.
+  - **Modal.confirm 列出全部目标 + reason_text 比 "确认补抓 N 个?" 信息量大 10x**: ops 点按钮前必须看到 "哪 5 个 + 为什么". reason_text 含具体 lag 天数 / error 摘要前 60 字 / 触发链路, 比 "确认?" 多 5 倍内容但只多 1 个 Modal 高度. 任何 "批量操作前 confirm" 都按 List + dataSource={targets} + renderItem 渲 Tag+reason 三件套, 不要图省事直接 "确认 N 个?".
+  - **disabled_reason 是 UI 显式语义而非 disabled=true 隐式**: BulkBackfillPlan.disabled_reason: string|null 让 UI 同时拿到 "是否 disabled" + "为什么 disabled" — Tooltip 直接渲染 reason 文案. 任何 "条件 disable" 的按钮 helper 都返 `disabled_reason: string|null` 而非 `can_run: boolean`. 用户看到 "无可一键补抓的数据源" 比看到一个灰色按钮立刻明白原因.
+  - **onBackfillDone callback 不 await 让 UI 优先呈现**: 串行补抓完成 → Modal.success 立刻显示 → 然后 onBackfillDone?.() → 上层 refreshHealthData (不 await). 如果 await 会让 Modal 延迟到 healthData fetch 完才显示, 用户感受 "卡了 2 秒". 任何 "操作完成 + 父级 refresh" 都按 fire-and-forget 父级 callback, 不要让父级 refresh 阻塞当前 Modal/Toast.
+---
+
