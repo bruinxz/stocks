@@ -9,6 +9,10 @@ import { AISignalSourceType } from '../models/AIInvestmentSignal';
 import { User } from '../models/User';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
 import { buildAIPollingJobOptions } from '../jobs/aiPollingEnqueue';
+import {
+  runAnalysisEngineHardFollowup,
+  PRODUCTION_ANALYSIS_ENGINE_HARD_FOLLOWUP_DATA_SOURCE,
+} from './recommendationLoop/analysisEngineHardFollowup';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
 import { recommendationLoopPolicySnapshotService } from './RecommendationLoopPolicySnapshotService';
 import { paperTradingRiskProfileService } from '../portfolio/internal/PaperTradingRiskProfileService';
@@ -95,6 +99,15 @@ export interface AutomatedRecommendationLoopOptions {
   block_limit_down?: boolean;
   block_suspended?: boolean;
   use_environment_policy_feedback?: boolean;
+  /**
+   * US-023 [AE-004]: 主 QUANT_RECOMMENDATION 跟单完成后, 追加一轮以
+   * `source_type=analysis_engine` 为唯一过滤的 autoBuyFromSignals,
+   * 把 hard mode 多维引擎 (US-021/US-022) 落库的信号也送进跟单流水线.
+   * 默认 true; 显式 false 直接 skip 本步骤 (loop result 仍含 paper_trading=QUANT).
+   * 与本块的其它风控参数 / sizing / strategy gate 全复用 — 见
+   * `runAnalysisEngineHardFollowup` 的 buildAnalysisEngineFollowupOptions.
+   */
+  use_analysis_engine_followup?: boolean;
 }
 
 function toNumber(value: any, fallback = 0): number {
@@ -1880,6 +1893,72 @@ class AutomatedRecommendationLoopService {
         top_reasons: [],
         categories: {},
       };
+
+      // US-023 [AE-004]: 追加一轮 analysis_engine 源跟单 — 把 hard mode (US-021/US-022)
+      // 落库的 AIInvestmentSignal(source_type=ANALYSIS_ENGINE) 也送进 autoBuyFromSignals.
+      // 复用主 quant 跟单的全部风控/sizing/strategy gate, 仅锁 source_type + 清 signal_ids.
+      // fail-OPEN: helper 内部任何异常都返 {ok:false, reason} 不阻塞主 loop.
+      const analysisEngineFollowup = await runAnalysisEngineHardFollowup(
+        PRODUCTION_ANALYSIS_ENGINE_HARD_FOLLOWUP_DATA_SOURCE,
+        {
+          enabled: options.use_analysis_engine_followup !== false,
+          base_options: {
+            user_id: paper_trading?.user_id,
+            username: options.username,
+            portfolio_name: options.portfolio_name,
+            initial_capital: options.initial_capital,
+            limit: loop_policy.effective_paper_trade_limit,
+            scan_limit: toPositiveInt(
+              options.paper_trade_scan_limit,
+              Math.max(archive.total, 100),
+              500
+            ),
+            min_score: loop_policy.effective_min_score,
+            max_positions: toPositiveInt(options.max_positions, 8, 30),
+            default_position_pct: loop_policy.effective_default_position_pct,
+            max_position_pct: loop_policy.effective_max_position_pct,
+            min_trade_amount: Number(options.min_trade_amount || 3000),
+            allowed_risk_levels: ['low', 'medium'],
+            require_action_buy: true,
+            use_attribution_feedback: true,
+            use_profit_gate: options.use_profit_gate !== false,
+            profit_gate_horizon: options.profit_gate_horizon || '5d',
+            profit_gate_min_samples: toPositiveInt(options.profit_gate_min_samples, 5, 100),
+            profit_gate_min_quality_score: Number(options.profit_gate_min_quality_score || 45),
+            profit_gate_allow_deprioritized: false,
+            use_entry_risk_guard: options.use_entry_risk_guard !== false,
+            max_daily_new_positions: toPositiveInt(options.max_daily_new_positions, 3, 20),
+            max_daily_new_exposure_pct: Number(options.max_daily_new_exposure_pct || 12),
+            max_total_exposure_pct: Number(options.max_total_exposure_pct || 60),
+            max_industry_exposure_pct: Number(options.max_industry_exposure_pct || 25),
+            min_cash_reserve_pct: Number(options.min_cash_reserve_pct || 8),
+            max_portfolio_drawdown_pct: Number(options.max_portfolio_drawdown_pct || 12),
+            max_single_stock_volatility_pct: Number(options.max_single_stock_volatility_pct || 7),
+            max_position_correlation: Number(options.max_position_correlation || 0.82),
+            max_portfolio_var_pct: Number(options.max_portfolio_var_pct || 10),
+            min_avg_turnover_yuan: Number(options.min_avg_turnover_yuan || 30000000),
+            cooldown_days_after_loss: toPositiveInt(options.cooldown_days_after_loss, 12, 120),
+            block_limit_up: options.block_limit_up !== false,
+            block_limit_down: options.block_limit_down !== false,
+            block_suspended: options.block_suspended !== false,
+            external_environment_policy: environment_policy,
+            environment_policy_snapshot_id: environment_policy.snapshot_id,
+            risk_profile_gate: riskGate,
+            dry_run: Boolean(options.dry_run),
+          },
+        }
+      );
+      (paper_trading as any).analysis_engine_followup = analysisEngineFollowup.ok
+        ? {
+            ok: true,
+            executed: analysisEngineFollowup.result?.executed || 0,
+            planned: analysisEngineFollowup.result?.planned || 0,
+            skipped: analysisEngineFollowup.result?.skipped || 0,
+            trades: Array.isArray(analysisEngineFollowup.result?.trades)
+              ? analysisEngineFollowup.result.trades.length
+              : 0,
+          }
+        : { ok: false, reason: analysisEngineFollowup.reason };
 
       trade_outcomes = await recommendationTradeOutcomeService.refreshPortfolioOutcomes({
         username: options.username,

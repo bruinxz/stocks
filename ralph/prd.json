@@ -350,8 +350,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 23,
-      "passes": false,
-      "notes": "依赖: AE-001"
+      "passes": true,
+      "notes": "依赖: AE-001 | DONE 2026/06/19: 新增 backend/src/services/recommendationLoop/analysisEngineHardFollowup.ts (~170 行 + 完整 jsdoc) — 主 QUANT_RECOMMENDATION 跟单完成后追加一轮 source_type=analysis_engine 的 autoBuyFromSignals, 让 hard mode (US-021/US-022) 落库的 AIInvestmentSignal(ANALYSIS_ENGINE) 真触发跟单. 纯函数 buildAnalysisEngineFollowupOptions 从 base options 派生 — source_type 锁 ANALYSIS_ENGINE / signal_ids 清空 / report_to_feishu+notify_to_feishu_bot 强制 false, 其它字段全透传. DataSource DI seam + createProductionAnalysisEngineHardFollowupDataSource lazy require + 4 个 reason 枚举 (DISABLED / NO_USER / AUTOBUY_FAILED / EMPTY_BASE). fail-OPEN — autoBuyFromSignals throw 返 {ok:false, reason:autobuy_failed} 不 re-throw. AutomatedRecommendationLoopService.run 接入: 加 use_analysis_engine_followup option (默认 true), import + 在 paper_trading 块后调 helper, 把结果挂 paper_trading.analysis_engine_followup (executed/planned/skipped/trades.length 摘要). 单测 tests/services/recommendationLoop/analysisEngineHardFollowup.test.ts 62 ok / 0 failed 覆盖 5 大模块 (常量冻结 / buildOptions 锁+清+透传+immutability / 主入口 8 路径含 AC 主验收 enabled+happy 真调 1 次 + source_type=analysis_engine + 5 fail-OPEN 路径 / PRODUCTION smoke / META-GUARD fs+regex 含正向 import+调用+option 默认值 + 反向不裸调). 新增 src/services/recommendationLoop/CLAUDE.md 抽 helper 5 步模板. tsc 0 err / eslint 0 new err."
     },
     {
       "id": "US-024",
