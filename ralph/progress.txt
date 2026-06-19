@@ -1445,3 +1445,30 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **promotion readiness 3 个 AND 条件**: 与 [[shadowRunHelpers.evaluateShadowPromotionReadiness]] 同款 — (1) 样本量 ≥ PROMOTE_MIN_RUNS; (2) passRate ≥ 0.5 (低于此即 hasCritical=true → level=critical); (3) 任何单 run pboLevel='critical' 立刻 block + level=critical. 与 shadow 的 "consistency overall + buy/sell + analyzer critical" 三 AND 形态对偶 — 都是"任意维度 critical 就 critical, 否则数维度损坏数"逻辑.
   - **prettier --fix 后 ts-node 测必须重跑**: autofix 改 2 文件 (helper + tab), 之前测过的 147 assert 必须再跑一遍验证 import 路径 + export 名一字未变. 这是 "lint --fix 也可能改 export 字面量" 边界 (实际 prettier 仅改换行); 但养成 "改完文件回归" 习惯.
 ---
+
+## 2026/06/19 22:35 - US-053
+- 实现 [FE-014] LabWorkspace 快速 grid 模板 — walk-forward 新建验证表单的 param_grid JSON 字段不再要手敲, 提供 4 套内置预设 + 用户可保存自定义 (localStorage), Select onChange 自动注入 param_grid_json 字段
+- Files changed:
+  - frontend/src/pages/workspace/walkForwardGridTemplateHelpers.ts (新, ~420 行 + 完整 jsdoc):
+    * 6 export 常量 GRID_TEMPLATES_STORAGE_KEY='lab_grid_templates_v1' / GRID_TEMPLATE_SCHEMA_VERSION=1 / GRID_TEMPLATE_NAME_MAX_LEN=60 / GRID_TEMPLATE_MAX_COUNT=20 / GRID_TEMPLATE_PARAM_VALUES_MAX=12 / GRID_TEMPLATE_PARAM_KEYS_MAX=8
+    * 4 个 BUILTIN_GRID_TEMPLATES (Object.freeze 全嵌套): 动量趋势 topN×stopLoss / 反转均值 period×oversold/overbought / 突破 window×volume×ATR / 多因子 topN×maxPerIndustry, 每套带 forStrategies 适配清单
+    * GridTemplate / ParamGrid / GridTemplateStorage 3 个 interface/type 全 export
+    * defaultStorage() 工厂 (window.localStorage 默认 + in-memory map 兜底)
+    * pure helpers: normalizeTemplateName / sanitizeParamGrid (超 PARAM_VALUES_MAX 截断 + 丢 NaN/Infinity/非数组) / countGridCombinations / isValidTemplateShape
+    * storage 操作: listUserGridTemplates / listAllGridTemplates (builtin 在前, 按 strategy_key 命中上浮, user 按 savedAt 倒序) / saveGridTemplate (校验 + builtin 撞名拒绝 + 上限拒绝, savedAt 注入) / deleteGridTemplate (builtin 不可删 noop) / findGridTemplate / paramGridToJsonString
+  - frontend/src/pages/workspace/LabWorkspace.WalkForwardTab.tsx: import helper + 新建验证表单的 grid_search 分支新增 Form.Item "快速 grid 模板", Select option 文案 = "📋/⭐ name (N 组合)", onChange 用 setFieldsValue 注入 param_grid_json + message.success 报组合数; shouldUpdate 加 strategy_key 触发让模板列表跟随选中策略上浮; data-testid="grid-template-picker"/"grid-template-select"
+  - frontend/src/utils/sessionCleanup.ts: USER_SCOPED_LOCAL_STORAGE_KEYS 加 'lab_grid_templates_v1' (与 'fw_combo_templates_v1' 同款 user-scoped)
+  - backend/tests/services/walk-forward-grid-template.test.ts (新, ~330 行 / 90 assert): 13 模块 — [1] 常量 sanity / [2] BUILTIN 4 套形态 + frozen / [3-5] pure helpers / [6] isValidTemplateShape / [7] listUserGridTemplates 4 种容错 / [8] listAllGridTemplates builtin/user 顺序 + strategy_key 上浮 / [9] saveGridTemplate happy + 同名覆盖 + 6 种校验抛错 + 满载覆盖允许 / [10] deleteGridTemplate 3 种 / [11] findGridTemplate / [12] paramGridToJsonString / [13] META-GUARD fs+regex (WalkForwardTab.tsx import + setFieldsValue + data-testid + paramGridToJsonString + sessionCleanup key + helper 13 export 全在)
+  - ralph/prd.json: US-053 passes=true + notes
+- 验证:
+  - `npx tsc --noEmit` (frontend + backend) 均 exit 0
+  - `npm test -- --filter=walk-forward-grid` 90 ok / 0 failed (774ms)
+  - `npm test -- --filter=factor-combo` 51 ok / 0 failed — 引用范式模板未 regression
+  - lint: helper 1 个 non-null assertion warn (与 factorComboTemplateHelpers.ts:88 同款 in-memory map fallback, 接受为 baseline), WalkForwardTab.tsx / sessionCleanup.ts 0 warn 0 err
+- **Learnings for future iterations:**
+  - **"对偶问题" 抄模板加速 (US-044 patterns 第 27 条) 在 helper 文件之间也成立**: factorComboTemplateHelpers (FE-008 US-047) 与 walkForwardGridTemplateHelpers (FE-014 US-053) 是同款 "localStorage user 模板 + pure schema helpers + ts-node 跨 monorepo 单测" 范式. 后者 5 分钟搭好骨架, 主要差异 — (a) 加 BUILTIN_X_TEMPLATES frozen 提供开箱即用 (前者用户必须手动存第一条), 加 source: 'builtin'|'user' 区分; (b) listAll vs listUser 分两个 API, listAll 接 currentStrategyKey 让 builtin 按命中策略上浮; (c) delete 端 builtin 不可删强制 noop; (d) save 端校验 builtin 撞名 (避免被遮蔽). 这 4 个差异在所有 "内置预设 + 用户自定义" 双源模板类 story 都适用.
+  - **antd Form.Item shouldUpdate render-prop 第一参是 FormInstance 解构**: 写 `{({ getFieldValue, setFieldsValue }) => ...}` 可以同时拿 get/set, 不需要给 helper 单独传 form ref. 但要让 setFieldsValue 触发 shouldUpdate 重渲染 — 当 onChange 改 param_grid_json 时, 外层 shouldUpdate 比对的不是 param_grid_json 而是别的字段 (optimizer_type/strategy_key) — Form 自己会 propagate field 变更到 TextArea, 不依赖 shouldUpdate. 这条理解错可能导致 "Select 选了但 TextArea 没刷新" 类 bug — 实际不会, 因为 setFieldsValue 是 Form 内部 state 同步, TextArea 是 controlled by Form 不依赖外层 re-render.
+  - **strategy_key 关联的 builtin 上浮**: forStrategies?: string[] 字段让 builtin 模板带"我适合什么策略"的元信息, listAllGridTemplates 接 currentStrategyKey 按是否命中 sort, 命中的浮顶. 同款适用任何 "预设 + 当前上下文" 列表 — e.g. 行业模板按当前选中股票所属行业排序, 因子模板按当前 strategy 类别排序 (FE-008 当前没做这个 — 后续可补).
+  - **Object.freeze 嵌套数组的 TypeScript cast**: `Object.freeze([1,2,3]) as unknown as number[]` 是 TS strict mode 下让"运行时 frozen + 类型签名仍写 mutable number[]" 共存的桥. 不 cast 会爆 TS2322 (readonly 不能赋给 mutable). 接受这个 ceremony 是必要的, 不要在 type 里写 ReadonlyArray<number> — 那会迫使 caller 全链路改成只读, 风险扩散.
+  - **GridSearch 组合数 UI 即时反馈**: 选模板时 message.success 显示 "共 N 个 GridSearch 组合" 让操盘手立刻看到 grid 维度乘积, 避免 "选了一个 3 维 27 组合的模板但不知道会跑 27 次 backtest" 的认知断裂. 与 max_combos=256 的默认硬上限配合, 让用户主动调小.
+---

@@ -816,8 +816,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 53,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "walkForwardGridTemplateHelpers.ts: BUILTIN_GRID_TEMPLATES (4 套预设: 动量/反转/突破/多因子) + listAllGridTemplates / saveGridTemplate / deleteGridTemplate / findGridTemplate + 注入式 storage. LabWorkspace.WalkForwardTab.tsx: 新建验证表单的 GridSearch 路径新增 \"快速 grid 模板\" Select, 按当前 strategy_key 上浮命中的预设, onChange 用 setFieldsValue 注入 param_grid (JSON) 字段并提示组合数. sessionCleanup.ts: 登记 lab_grid_templates_v1. 测试 backend/tests/services/walk-forward-grid-template.test.ts 13 模块 90 assert (含 META-GUARD 守 import + setFieldsValue + data-testid + sessionCleanup key + helper export)."
     },
     {
       "id": "US-054",
