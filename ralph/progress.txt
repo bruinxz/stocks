@@ -1844,3 +1844,46 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **大 tab 一定要拆 section 独立 saving 状态**: 早期版本想"一个全局 Save 按钮统一持久化", 但 risk_config 是 JSONB merge 写入, 用户只改一个 section 没必要 PUT 其它 4 个的 normalized 值 (虽然 backend lenient 不会出问题, 但 audit 看到无谓的 PUT 调用难追踪). 5 section 各自独立 Save 才是真"用户可控部分保存" 的语义, 也避免 KPI bar 上 "总改动数" 大让用户犹豫不敢点.
   - **InputNumber min/max 只是提示不是强校验**: 用户手动输入超 max 的值 antd 不会阻止提交 (只在 onChange 时显示红框). 不阻提交是对的 - backend normalizeXxxConfig 会静默退到 default, 所以 UI 不需要堆 strict 校验逻辑, 跟 backend 契约一致 (lenient 优于 strict 因为前后端都能 evolve - frontend 可能晚一个版本不知道 backend 新加了字段, lenient 保证不阻断). 这条契约写到 tab.tsx 顶部 jsdoc 里, 防止后续 review 强加 form validate.
 ---
+
+## 2026/06/20 05:30 - US-067
+- 实现 [FE-028] SettingsWorkspace AI 引擎 8 dim 权重 slider — 让操盘手在分析引擎 tab 拉 slider 调 8 个 analyzer dimension (fundamental/technical/capital/sentiment/news/industry_regime/risk/event) 的权重, 与 backend DecisionAggregator.normalizeWeights 同口径 (UI 0~100 % 即时反馈, 保存归一化成 sum=1 ratio 写 User.risk_config.analysis_engine.weights)
+- Files changed:
+  - frontend/src/pages/workspace/analysisEngineWeightHelpers.ts (新, ~230 行, 14 export):
+    * ANALYZER_DIMENSIONS frozen ReadonlyArray (8 dim 元数据 key/label/hint/defaultPercent, 顺序与默认权重从大到小一致 = backend AnalyzerKey 集合)
+    * DEFAULT_ANALYZER_WEIGHTS_PERCENT frozen (与后端 DEFAULT_ANALYZER_WEIGHTS ×100 等价: 25/20/15/10/10/10/5/5 sum=100)
+    * 常量: ANALYZER_WEIGHT_MIN/MAX_PERCENT (0/60), WEIGHT_SUM_OK_MIN/MAX_PERCENT (95/105)
+    * pure helpers: clampPercent (NaN/超界 fallback), ensureAllPercents (补默认 8 key), ratioToPercents (启发识别 sum≈1 ratio vs sum≈100 percent), normalizeWeightsForSave (sum→1, 全 0 返默认), sumPercents, pickSumStatusColor (三段色 success/warning/error), resetToDefaults (返新对象), getDefaultPercent
+  - frontend/src/pages/workspace/SettingsWorkspace.AnalysisEngineTab.tsx:
+    * 新增 weightDraft / weightBaseline state (与 draft.weights ratio 分开存, UI 用 percent)
+    * load 时 ratioToPercents 转入 weightDraft + weightBaseline; save 时 normalizeWeightsForSave 转回 ratio 注入 payload
+    * hasChanges memo 加 slider draft vs baseline 比对
+    * 新增 8 dim slider Card (Card type=inner) — 仅 shadow/hard mode 显示 (off 不参与计算时隐藏避免误调), 每行 Slider+InputNumber+默认值提示+Tooltip(dim.hint), 顶部 Tag 显示 "当前 sum=NN%" + pickSumStatusColor 三段色, "恢复默认"按钮 一键 resetToDefaults
+    * data-testid: ae-weight-sum-tag / ae-weight-reset / ae-weight-row-{key} / ae-weight-input-{key} 方便单测/E2E hook
+  - backend/tests/services/analysis-engine-weight-helpers.test.ts (新, ~330 行 / 112 ok):
+    [1] ANALYZER_DIMENSIONS 形态 (长度 8 / 顺序 / frozen / sum=100 / label hint 非空)
+    [2] DEFAULT_ANALYZER_WEIGHTS_PERCENT 与 backend ratio ×100 等价 (8 dim 逐一守 + sum=100 + frozen)
+    [3] clampPercent (正常/超 MAX/负数/NaN/Infinity/fallback)
+    [4] ensureAllPercents (null/undefined/非 object/部分键/NaN 跳过/负数跳过/超 MAX 钳)
+    [5] ratioToPercents (ratio sum=1 → ×100 / percent sum=100 不再 ×100 / 部分 ratio 走默认 / null/空对象)
+    [6] normalizeWeightsForSave (null/empty/全 0/单 dim 独占/双 dim 等比/8 dim 等权 1/8/NaN 负数视为 0)
+    [7] sumPercents + pickSumStatusColor 三段色 (success 95-105 / warning 70-130 / error 其它 + NaN/0)
+    [8] resetToDefaults 返新对象 (mutate 不污染默认 + 连续 reset 不同引用)
+    [9] getDefaultPercent (fundamental 25 / event 5 / capital 15)
+    [10] META-GUARD fs+regex 17 条 — component 必 import helper + ANALYZER_DIMENSIONS.map 渲染 + Slider/InputNumber + 4 个 data-testid + save 路径必调 normalizeWeightsForSave(weightDraft) + 仅 shadow/hard mode 渲染 (off 不显示守) + helper 14 export 全在 + 8 key 字面量 + 默认值字面量 25/5
+  - ralph/prd.json: US-067 passes=true + notes
+  - ralph/progress.txt: 本 entry
+- 验证:
+  - `cd backend && npx tsc --noEmit` exit 0
+  - `cd frontend && npx tsc --noEmit` exit 0
+  - `cd backend && npx ts-node --transpile-only tests/services/analysis-engine-weight-helpers.test.ts` exit 0, 112 ok / 0 failed
+  - `cd backend && npm test -- --filter=shadow-run` 115 ok 无 regression (与 analysis-engine 同链路无副作用)
+  - `cd frontend && npx eslint src/pages/workspace/analysisEngineWeightHelpers.ts src/pages/workspace/SettingsWorkspace.AnalysisEngineTab.tsx` exit 0 (--fix 后 0 err 0 warn)
+- 浏览器手工验证: 无 dev-browser env 本次, UI 改动遵循既有 antd Slider+InputNumber+Card type=inner 模板, 与 SettingsWorkspace.SizingPolicyTab / PortfolioConstructionTab 同款 — 下次有 dev-browser env 时补 screenshot
+- **Learnings for future iterations:**
+  - **draft+baseline 双 state 模式**: 当 UI 控件即时反馈值 (slider 0~100 percent) 与持久化值 (ratio sum=1) **单位不同**时, 不要让 React 在每次 onChange 都跑归一化 — 会让 InputNumber 闪烁失焦 (用户输入 25, normalizeWeights 调成 0.25, ratioToPercents 再回 100, 完全错位). 正解: draft 存 UI 单位 + baseline 用于 "有未保存" 判定 + 仅保存路径调一次归一化. 与 [[前端 SizingPolicyTab draft/view 双状态范式]] (US-049) 同款, 但本 case 多了"单位转换" 边维度 — draft 是 percent 不是 ratio.
+  - **ratioToPercents 启发式识别 sum 是 ratio 还是 percent**: 后端 normalize 后存的是 sum=1 的 ratio, 但 user 可能曾经存过 percent (e.g. 历史脏数据 / 直接 PUT). 用 total ≤ 2 阈值识别 "看起来像 ratio" → ×100, 否则当 percent 直接用. 该启发对所有 "%↔ratio 同名字段" 场景通用 (e.g. position_pct / weight / allocation), 防御 schema 漂移最小成本.
+  - **frontend pure helper 跨 monorepo 单测模板已稳定 (本次第 N 次复用)**: backend/tests/services/{feature}-helpers.test.ts → import frontend/src/pages/workspace/{feature}Helpers — ts-node --transpile-only 直接吃, 不需要 jest/jsdom. helper 必须**只 import 类型** (本 case 无 antd/react 依赖, 0 import 最干净), 否则 ts-node 跑会拉起 React runtime 报错. 与 factorAIWeightHelpers / shadowRunHelpers / overfitMetricsHelpers / dailyAttributionHelpers / industryConcentrationKpiHelpers 同款.
+  - **frontend 与 backend 默认值同步 + 单测互锁**: 8 个 dim 的默认权重 (25/20/15/10/10/10/5/5) 在 backend DEFAULT_ANALYZER_WEIGHTS (DecisionAggregator.ts) 和 frontend DEFAULT_ANALYZER_WEIGHTS_PERCENT (analysisEngineWeightHelpers.ts) 必须同步. helper 单测 [2.2.{key}] 逐一守 frontend value === backend × 100, 任一处改默认 → 另一处 CI 爆. 这套 "镜像常量 + 单测互锁" 是 monorepo 跨包默认值同步的最低成本方案 (比抽 shared/ 包轻得多), 适用任何 frontend UI 默认值需要镜像 backend 决策默认值的场景.
+  - **slider 仅在生效 mode 显示**: off 模式下 weights 完全不参与 (ShadowDoubleRunService 直接 return), 此时显示 slider 会让用户误以为 "调了就生效". 包条件渲染 `(currentMode === 'shadow' || currentMode === 'hard')`, 配合 alert 提示 "off 模式下不参与决策". 与 [[US-021 三态范式]] 思想对齐 — UI 也要按 mode 隐藏无效控件, 不要 disabled (disabled 还是占视觉空间, 让用户怀疑 "为什么灰着").
+  - **InputNumber + Slider 双向绑定 + clamp 在 onChange 之外**: 把 clampPercent 放在 ensureAllPercents/ratioToPercents 等 "进入 state" 时统一执行, 而非 onChange 内 — 避免用户输 "60.5" 时被 onChange 立即截到 60, 输入框光标跳到行首. Slider 的 max 由 antd 内部 clamp, InputNumber 也设 max=60, 双层防御. 用户能"输完后失焦再校正"和"实时 clamp"两种体验都要兼顾.
+---

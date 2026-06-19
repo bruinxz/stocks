@@ -20,9 +20,41 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Form, Radio, Space, Tag, Tooltip, Typography, message } from 'antd';
-import { QuestionCircleOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons';
+import {
+  Alert,
+  Button,
+  Card,
+  Col,
+  Form,
+  InputNumber,
+  Radio,
+  Row,
+  Slider,
+  Space,
+  Tag,
+  Tooltip,
+  Typography,
+  message,
+} from 'antd';
+import {
+  QuestionCircleOutlined,
+  ReloadOutlined,
+  RollbackOutlined,
+  SaveOutlined,
+} from '@ant-design/icons';
 import api from '../../services/api';
+import {
+  ANALYZER_DIMENSIONS,
+  ANALYZER_WEIGHT_MAX_PERCENT,
+  ANALYZER_WEIGHT_MIN_PERCENT,
+  ensureAllPercents,
+  normalizeWeightsForSave,
+  pickSumStatusColor,
+  ratioToPercents,
+  resetToDefaults,
+  sumPercents,
+  type AnalyzerKey,
+} from './analysisEngineWeightHelpers';
 
 const { Text, Paragraph } = Typography;
 
@@ -70,6 +102,21 @@ export const MODE_OPTIONS: ReadonlyArray<{
 const AnalysisEngineTab: React.FC = () => {
   const [view, setView] = useState<AEConfigResponse | null>(null);
   const [draft, setDraft] = useState<AnalysisEngineConfig | null>(null);
+  /**
+   * US-067 [FE-028] 8 dim 权重 slider 本地 draft (UI 用 0~100 % 显示).
+   * 与 draft.weights (ratio sum=1) 分开存, 因为 InputNumber/Slider 端要
+   * 即时反馈每个 dim 0~100 整数, 归一化只在保存时做一次. 同步规则:
+   *   - load 后用 ratioToPercents 转入;
+   *   - resetToDefaults / 用户 slider onChange 直接改 weightDraft;
+   *   - 保存时 normalizeWeightsForSave → 写回 draft.weights → PUT.
+   */
+  const [weightDraft, setWeightDraft] = useState<Record<AnalyzerKey, number>>(() =>
+    ensureAllPercents(null)
+  );
+  /** 保存基线 — 用于 "有未保存的改动" 判定. load/save 后跟随 view 同步重置. */
+  const [weightBaseline, setWeightBaseline] = useState<Record<AnalyzerKey, number>>(() =>
+    ensureAllPercents(null)
+  );
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +129,9 @@ const AnalysisEngineTab: React.FC = () => {
       const data: AEConfigResponse = resp.data?.data;
       setView(data);
       setDraft(data?.config || null);
+      const percents = ensureAllPercents(ratioToPercents(data?.config?.weights as any));
+      setWeightDraft(percents);
+      setWeightBaseline(percents);
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || String(err));
     } finally {
@@ -95,14 +145,20 @@ const AnalysisEngineTab: React.FC = () => {
 
   const hasChanges = useMemo(() => {
     if (!view || !draft) return false;
-    return JSON.stringify(draft) !== JSON.stringify(view.config);
-  }, [draft, view]);
+    if (JSON.stringify(draft) !== JSON.stringify(view.config)) return true;
+    // US-067 — slider 改动也算 "有改动"
+    if (JSON.stringify(weightDraft) !== JSON.stringify(weightBaseline)) return true;
+    return false;
+  }, [draft, view, weightDraft, weightBaseline]);
 
   const save = useCallback(async () => {
     if (!draft) return;
     setSaving(true);
     try {
-      const resp = await api.put('/risk/analysis-engine-config', draft);
+      // US-067 — 把 slider draft 归一化成 ratio 写回 weights 字段
+      const normalizedWeights = normalizeWeightsForSave(weightDraft);
+      const payload: AnalysisEngineConfig = { ...draft, weights: normalizedWeights };
+      const resp = await api.put('/risk/analysis-engine-config', payload);
       const next: { config: AnalysisEngineConfig } = resp.data?.data;
       // 重置 view + draft 用 server 归一化后值 — 防止 lenient normalize 让 hasChanges 永真
       setView(prev =>
@@ -111,16 +167,34 @@ const AnalysisEngineTab: React.FC = () => {
           : { config: next.config, is_default: false, default: next.config }
       );
       setDraft(next.config);
+      const nextPercents = ensureAllPercents(ratioToPercents(next.config?.weights as any));
+      setWeightDraft(nextPercents);
+      setWeightBaseline(nextPercents);
       message.success(resp.data?.message || '已保存');
     } catch (err: any) {
       message.error(err?.response?.data?.message || err?.message || '保存失败');
     } finally {
       setSaving(false);
     }
-  }, [draft]);
+  }, [draft, weightDraft]);
 
   const currentMode = draft?.mode || 'off';
   const currentModeInfo = MODE_OPTIONS.find(o => o.value === currentMode);
+
+  // US-067 — 8 dim 权重 sum 与状态色 (绿/黄/红)
+  const weightSum = useMemo(() => sumPercents(weightDraft), [weightDraft]);
+  const weightSumColor = useMemo(() => pickSumStatusColor(weightSum), [weightSum]);
+
+  const onWeightChange = useCallback((key: AnalyzerKey, value: number | null) => {
+    setWeightDraft(prev => ({
+      ...prev,
+      [key]: typeof value === 'number' && Number.isFinite(value) ? value : 0,
+    }));
+  }, []);
+
+  const onResetWeights = useCallback(() => {
+    setWeightDraft(resetToDefaults());
+  }, []);
 
   return (
     <Card
@@ -238,6 +312,89 @@ const AnalysisEngineTab: React.FC = () => {
                 </Text>
               }
             />
+          )}
+
+          {/* US-067 [FE-028] 8 dim 权重 slider — 仅 shadow/hard 显示, off 模式
+              下不参与计算所以隐藏避免误调. */}
+          {(currentMode === 'shadow' || currentMode === 'hard') && (
+            <Card
+              size="small"
+              type="inner"
+              style={{ marginTop: 16 }}
+              title={
+                <Space>
+                  <span>8 维度权重调参 (analyzer weights)</span>
+                  <Tooltip title="保存时归一化为 sum=1 的 ratio 写入 User.risk_config.analysis_engine.weights, 后端 DecisionAggregator.normalizeWeights 再做一次 sum=1 归一化防腐蚀.">
+                    <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                  </Tooltip>
+                  <Tag color={weightSumColor} data-testid="ae-weight-sum-tag">
+                    当前 sum = {weightSum}%
+                  </Tag>
+                </Space>
+              }
+              extra={
+                <Button
+                  size="small"
+                  icon={<RollbackOutlined />}
+                  onClick={onResetWeights}
+                  data-testid="ae-weight-reset"
+                >
+                  恢复默认
+                </Button>
+              }
+            >
+              <Paragraph style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+                每个 dim 取值 0~{ANALYZER_WEIGHT_MAX_PERCENT}%, sum 接近 100% 时落 sum=1 的 ratio.
+                任何非默认权重都会被
+                <code>DecisionAggregator.normalizeWeights</code> 重做一次归一化, sum 偏离 ±5% 时 Tag
+                变黄/红仅作提醒, 后端不会拒绝.
+              </Paragraph>
+
+              {ANALYZER_DIMENSIONS.map(dim => {
+                const value = weightDraft[dim.key];
+                return (
+                  <Row
+                    key={dim.key}
+                    gutter={[12, 4]}
+                    align="middle"
+                    style={{ marginBottom: 8 }}
+                    data-testid={`ae-weight-row-${dim.key}`}
+                  >
+                    <Col xs={24} sm={7} md={6}>
+                      <Tooltip title={dim.hint}>
+                        <Text strong>{dim.label}</Text>
+                      </Tooltip>
+                      <br />
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        默认 {dim.defaultPercent}%
+                      </Text>
+                    </Col>
+                    <Col xs={18} sm={13} md={14}>
+                      <Slider
+                        min={ANALYZER_WEIGHT_MIN_PERCENT}
+                        max={ANALYZER_WEIGHT_MAX_PERCENT}
+                        step={1}
+                        value={value}
+                        onChange={v => onWeightChange(dim.key, v as number)}
+                        marks={{ 0: '0', [dim.defaultPercent]: `${dim.defaultPercent}` }}
+                      />
+                    </Col>
+                    <Col xs={6} sm={4} md={4}>
+                      <InputNumber
+                        min={ANALYZER_WEIGHT_MIN_PERCENT}
+                        max={ANALYZER_WEIGHT_MAX_PERCENT}
+                        step={1}
+                        value={value}
+                        onChange={v => onWeightChange(dim.key, v as number | null)}
+                        addonAfter="%"
+                        style={{ width: '100%' }}
+                        data-testid={`ae-weight-input-${dim.key}`}
+                      />
+                    </Col>
+                  </Row>
+                );
+              })}
+            </Card>
           )}
         </Form>
       )}

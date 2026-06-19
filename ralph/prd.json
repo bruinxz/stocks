@@ -1040,8 +1040,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 67,
-      "passes": false,
-      "notes": "依赖: AE-009"
+      "passes": true,
+      "notes": "依赖: AE-009 | DONE 2026/06/20: 在 SettingsWorkspace.AnalysisEngineTab 加 8 dim 权重 slider+InputNumber+sum tag+恢复默认 (仅 shadow/hard mode 显示), draft 用 0~100 percent 即时反馈, 保存时 normalizeWeightsForSave 转 sum=1 ratio 写回 User.risk_config.analysis_engine.weights, 与 backend DecisionAggregator.normalizeWeights 同口径. 新增 frontend/src/pages/workspace/analysisEngineWeightHelpers.ts (pure, 14 export — ANALYZER_DIMENSIONS frozen 8 dim 元数据 / DEFAULT_ANALYZER_WEIGHTS_PERCENT 与 backend ratio×100 等价 / clamp / ensureAllPercents / ratioToPercents 启发识别 sum≈1 vs sum≈100 / normalizeWeightsForSave / sumPercents / pickSumStatusColor 三段色 / resetToDefaults / getDefaultPercent). 单测 backend/tests/services/analysis-engine-weight-helpers.test.ts 112 ok 覆盖 ANALYZER_DIMENSIONS 形态+默认权重与 backend 同步+clamp 边界+ensureAllPercents 部分键+ratioToPercents 启发+normalizeWeightsForSave 全 0/单 dim/多 dim 等比例 + sum color 三段 + META-GUARD fs+regex 17 条 (component import + Slider/InputNumber data-testid + sum tag + reset button + save 调 normalizeWeightsForSave + 仅 shadow/hard mode 渲染 + helper 14 export + 8 key 字面量 + 默认值字面量 25/5). fe tsc 0 err / be tsc 0 err / lint 0 err / shadow-run 115 ok 无 regression."
     },
     {
       "id": "US-068",
