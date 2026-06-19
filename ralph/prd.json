@@ -275,8 +275,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 18,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DONE 2026/06/19: 新增 backend/src/live-trading/services/bridgeFailSafe.ts (~210 行 + 完整 jsdoc) — 把 KillSwitchService.abortPendingCommands 的内联实现抽到独立 module 让 DB-less 单测能完整覆盖 fail-safe 边界. (1) 主入口 abortBridgeCommandsOnKillSwitch(source, params) — pending → status='aborted' + metadata.killed=true, dispatching/dispatched → 只标 metadata.killed=true 让 bridge 自识别; (2) BridgeFailSafeDataSource interface (DI seam) + createProductionBridgeFailSafeDataSource (lazy require LiveBrokerCommand / sequelize / LiveExecutionAuditLog, 与原方法行为完全等价); (3) buildKilledMetadataLiteral helper 三级 escape fallback (Model.sequelize → sequelize → 内部 '' 转义); (4) 常量 ABORTABLE_COMMAND_STATUS / IN_FLIGHT_COMMAND_STATUSES / FAILED_BRIDGE_STATUSES 全 export. KillSwitchService.abortPendingCommands 退化为薄 wrapper 委托 helper, 行为语义不变. 单测 tests/live-trading/bridge-fail-safe.test.ts 79 ok / 0 failed: [1] 常量冻结契约 / [2] AC 主验收 happy path 4 case (full hits / 0 hits / 仅 pending / 仅 inflight) — fake DataSource 注入验 aborted+marked counts + audit input 透传 / [3] fail-safe 边界 5 case (pending throw 短路 marked+audit / inflight throw 短路 audit / audit throw 不 re-throw ok=true / empty reason 'unknown' fallback / 非 string coerce) / [4] buildKilledMetadataLiteral 3 escape 路径 / [5] 生产 DataSource smoke / [6] **META-GUARD fs+regex** 扫 KillSwitchService.ts: 必须 import helper + 必须 await abortBridgeCommandsOnKillSwitch + 不再 inline 写 LiveBrokerCommand.update + 不再 inline 拼 jsonb_build_object SQL + helper SQL literal 仅出现 1 次 (单事实源). 回归无 regression (strategy-kill-switch-monitor 44 ok). 新增 src/live-trading/services/CLAUDE.md 收录 helper 设计 + 未来扩展指引. tsc 0 err / lint 0 err 0 warn."
     },
     {
       "id": "US-019",
