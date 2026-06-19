@@ -59,6 +59,7 @@ import LeaderboardTab from './LabWorkspace.LeaderboardTab';
 import WalkForwardTab from './LabWorkspace.WalkForwardTab';
 import AdvancedQuantTab from './LabWorkspace.AdvancedQuantTab';
 import QuarterlyRetrainTab from './LabWorkspace.QuarterlyRetrainTab';
+import ShadowRunTab from './LabWorkspace.ShadowRunTab';
 import {
   labService,
   QuantStrategyItem,
@@ -104,6 +105,7 @@ const LabWorkspace: React.FC = () => {
     { key: 'walk_forward', label: 'Walk-Forward', icon: <SafetyCertificateOutlined /> },
     { key: 'optimization', label: '优化历史', icon: <NodeIndexOutlined /> },
     { key: 'quarterly_retrain', label: '季度参数重训', icon: <ExperimentOutlined /> },
+    { key: 'shadow_run', label: 'Shadow Run', icon: <SwapOutlined /> },
     { key: 'advanced_quant', label: '高级量化', icon: <SafetyCertificateOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('mine');
@@ -419,6 +421,8 @@ const LabWorkspace: React.FC = () => {
         }
       />
     );
+  } else if (activeKey === 'shadow_run') {
+    body = <ShadowRunTab />;
   } else if (activeKey === 'advanced_quant') {
     body = <AdvancedQuantTab />;
   } else {

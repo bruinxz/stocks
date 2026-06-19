@@ -662,6 +662,50 @@ export async function listOptimizationRuns(
   return (res.data.data || []) as OptimizationRunSummary[];
 }
 
+// ---------- /api/admin/analysis-engine/shadow-stats (US-051) ---------------
+//
+// 后端 AnalysisEngineShadowController.getShadowStats: shadow vs 生产决策一致率 + analyzer 健康度
+// (复用 GAMMA 2026-06-18 已落 endpoint, 不新加 API). 该端点的响应是
+// { ok: true, data: {...} }, 与 quant/* 系列的 { success, data } 信封略有差异,
+// 这里把两路兼容: 先 success 再 ok, 任一为 true 视为成功.
+
+export interface AnalysisEngineShadowConsistency {
+  buy_class: number;
+  sell_class: number;
+  hold_class: number;
+  overall: number;
+}
+
+export interface AnalysisEngineShadowAnalyzerHealth {
+  key: string;
+  samples: number;
+  error_rate: number;
+  mean_confidence: number;
+  data_missing_rate: number;
+}
+
+export interface AnalysisEngineShadowStatsResponse {
+  since: string;
+  total_shadow_reports: number;
+  consistency_rate: AnalysisEngineShadowConsistency;
+  analyzer_health: AnalysisEngineShadowAnalyzerHealth[];
+  forward_return_5d: { samples: number; mean_pct: number | null; note?: string };
+}
+
+export async function getAnalysisEngineShadowStats(
+  sinceYyyyMmDd?: string
+): Promise<AnalysisEngineShadowStatsResponse> {
+  const res = await api.get('/admin/analysis-engine/shadow-stats', {
+    params: sinceYyyyMmDd ? { since: sinceYyyyMmDd } : undefined,
+  });
+  const envelope = res.data || {};
+  const ok = envelope.success === true || envelope.ok === true;
+  if (!ok) {
+    throw new Error(envelope.message || envelope.error || '获取 shadow 统计失败');
+  }
+  return (envelope.data || {}) as AnalysisEngineShadowStatsResponse;
+}
+
 // ---------- bundled export -------------------------------------------------
 
 export const labService = {
@@ -683,6 +727,8 @@ export const labService = {
   getWalkForwardWindows,
   deleteWalkForwardRun,
   listOptimizationRuns,
+  // US-051: analysis-engine shadow stats
+  getAnalysisEngineShadowStats,
 };
 
 export default labService;

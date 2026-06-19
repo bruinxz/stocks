@@ -784,8 +784,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 51,
-      "passes": false,
-      "notes": "依赖: S-006"
+      "passes": true,
+      "notes": "依赖: S-006 | DONE 2026/06/19: 新增 frontend/src/pages/workspace/shadowRunHelpers.ts (pure helpers: ShadowConsistencyRate/ShadowAnalyzerHealth/ShadowStatsResponse types + 9 阈值常量 export + HealthLevel 三档 + classifyConsistencyLevel/classifyAnalyzerLevel 分级 + HEALTH_LEVEL_COLOR/LABEL frozen 表 + evaluateShadowPromotionReadiness AND 5 条决策表 + buildShadowRunViewModel 主入口 + formatPercent/formatSinceDate UI helper) + LabWorkspace.ShadowRunTab.tsx (DatePicker since + 刷新按钮 + 4 KPI: Shadow 报告数 / 整体一致率 + tag / 买卖侧一致率 + 升级 hard 综合 Alert (ready/blocker 列表) + analyzer 健康度 Table (按 critical→degraded→healthy 排序, 单元格按阈值红/黄/绿渲染) + forward_return_5d 卡片) + labService.getAnalysisEngineShadowStats (复用 GAMMA 2026-06-18 落的 /api/admin/analysis-engine/shadow-stats endpoint, 兼容 envelope.ok / envelope.success 双信封). LabWorkspace.tsx 顶部 tabs 数组追加 shadow_run (位于 quarterly_retrain 与 advanced_quant 之间) + activeKey 分支接入. 升级 hard 综合判定 AND 5 条: 样本 >= PROMOTE_HARD_MIN_SAMPLES(50) + overall >= CONSISTENCY_HEALTHY_MIN(0.85) + buy_class/sell_class >= CONSISTENCY_DEGRADED_MIN(0.7) + 无 analyzer level=critical. analyzer 取最差档 (error_rate/mean_confidence/data_missing_rate 任一 critical → critical). 单测 backend/tests/services/shadow-run-helpers.test.ts 115 ok / 0 failed; frontend tsc 0; backend tsc 0; eslint 0 err 0 warn (prettier --fix 后); META-GUARD 20 条 fs+regex 守 LabWorkspace tabs/activeKey/render + tab import helper + 4 testid + labService 函数注册到 bundle."
     },
     {
       "id": "US-052",
