@@ -41,12 +41,14 @@ import {
   ApartmentOutlined,
   ThunderboltOutlined,
   SafetyOutlined,
+  BulbOutlined,
 } from '@ant-design/icons';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import SizingPolicyTab from './SettingsWorkspace.SizingPolicyTab';
 import PortfolioConstructionTab from './SettingsWorkspace.PortfolioConstructionTab';
 import AnalysisEngineTab from './SettingsWorkspace.AnalysisEngineTab';
 import RiskParametersCenterTab from './SettingsWorkspace.RiskParametersCenterTab';
+import TodoSuggestionsTab from './SettingsWorkspace.TodoSuggestionsTab';
 import {
   loadNotificationChannels,
   updateNotificationChannels,
@@ -123,6 +125,7 @@ const SettingsWorkspace: React.FC = () => {
     { key: 'portfolio-construction', label: '组合构建', icon: <ApartmentOutlined /> },
     { key: 'analysis-engine', label: '分析引擎', icon: <ThunderboltOutlined /> },
     { key: 'risk-parameters', label: '风控参数中心', icon: <SafetyOutlined /> },
+    { key: 'todo-suggestions', label: '待办建议', icon: <BulbOutlined /> },
     { key: 'users', label: '用户管理', icon: <TeamOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('push-channels');
@@ -279,6 +282,8 @@ const SettingsWorkspace: React.FC = () => {
       <Tag color="volcano">US-065 分析引擎接入</Tag>
     ) : activeKey === 'risk-parameters' ? (
       <Tag color="red">US-066 风控参数中心</Tag>
+    ) : activeKey === 'todo-suggestions' ? (
+      <Tag color="gold">US-068 待办建议</Tag>
     ) : (
       <Tag color="processing">待迁移现有个人中心 / 用户管理页</Tag>
     );
@@ -1636,6 +1641,8 @@ const SettingsWorkspace: React.FC = () => {
         <AnalysisEngineTab />
       ) : activeKey === 'risk-parameters' ? (
         <RiskParametersCenterTab />
+      ) : activeKey === 'todo-suggestions' ? (
+        <TodoSuggestionsTab />
       ) : (
         renderPlaceholder()
       )}

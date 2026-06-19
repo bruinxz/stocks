@@ -1056,8 +1056,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 68,
-      "passes": false,
-      "notes": "依赖: PR-013, EV-008"
+      "passes": true,
+      "notes": "US-068 [FE-029] SettingsWorkspace 待办建议 tab — 实现 (a) frontend pure helper todoSuggestionsHelpers.ts (3 类 builder + 主入口 view model, 全 export 常量 + cap/Tag 颜色/标签); (b) TodoSuggestionsTab.tsx — Promise.allSettled 并行拉 /risk-alerts + /tasks/automation-health, fail-OPEN 双 error state 单路失败不阻塞另一路; UI 6 个 KPI Statistic + Table 排序 priority+category+occurred_at; (c) SettingsWorkspace.tsx 5 处接入 (import / icon BulbOutlined / tabs / headerActions / render); (d) backend/tests/risk/todo-suggestions-helpers.test.ts 130 assert / 8 模块全过 (常量 frozen / truncateText 3 边界 / normalizeAlertLevelToPriority / 3 类 builder happy+空安全+cap / 主入口 聚合+排序+计数 / META-GUARD fs+regex 跨 monorepo 守 tab.tsx + SettingsWorkspace.tsx 5 处接入). tsc/eslint clean, 15 risk tests 全过无 regression."
     },
     {
       "id": "US-069",

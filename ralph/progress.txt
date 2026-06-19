@@ -1887,3 +1887,46 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **slider 仅在生效 mode 显示**: off 模式下 weights 完全不参与 (ShadowDoubleRunService 直接 return), 此时显示 slider 会让用户误以为 "调了就生效". 包条件渲染 `(currentMode === 'shadow' || currentMode === 'hard')`, 配合 alert 提示 "off 模式下不参与决策". 与 [[US-021 三态范式]] 思想对齐 — UI 也要按 mode 隐藏无效控件, 不要 disabled (disabled 还是占视觉空间, 让用户怀疑 "为什么灰着").
   - **InputNumber + Slider 双向绑定 + clamp 在 onChange 之外**: 把 clampPercent 放在 ensureAllPercents/ratioToPercents 等 "进入 state" 时统一执行, 而非 onChange 内 — 避免用户输 "60.5" 时被 onChange 立即截到 60, 输入框光标跳到行首. Slider 的 max 由 antd 内部 clamp, InputNumber 也设 max=60, 双层防御. 用户能"输完后失焦再校正"和"实时 clamp"两种体验都要兼顾.
 ---
+
+
+## 2026/06/20 06:30 - US-068
+- 实现 [FE-029] SettingsWorkspace 待办建议 tab — 聚合 3 类 (黑天鹅/偏差/改进) 待办到同一面板, 不新加任何 API, 复用既有 /risk-alerts + /tasks/automation-health 两路 endpoint
+- Files changed:
+  - frontend/src/pages/workspace/todoSuggestionsHelpers.ts (新, ~430 行 + jsdoc, 14 export):
+    * 类型: TodoCategory ('black-swan'|'deviation'|'improvement') / TodoPriority (critical|high|medium|low) / TodoItem (id/category/priority/title/detail/source/action_hint/occurred_at) / TodoSuggestionsViewModel
+    * 常量: TODO_TITLE_MAX_CHARS=30 / TODO_DETAIL_MAX_CHARS=120 / TODO_ACTION_HINT_MAX_CHARS=30 / 4 张 frozen 表 (CATEGORY_ORDER/PRIORITY_ORDER/CATEGORY_COLOR/CATEGORY_LABEL/PRIORITY_COLOR/PRIORITY_LABEL)
+    * pure helpers: truncateText (cap+'…') / normalizeAlertLevelToPriority (HIGH→high/CRITICAL→critical/warning→medium/未识别→medium fail-safe 偏低) / pickOccurredAt (triggered_at>created_at)
+    * 3 类 builder pure function 全接受 null/undefined 返 []: buildBlackSwanTodos (筛未读+priority≥medium的 alert) / buildDeviationTodos (顶层 issues + chain.issues 拍平 + code+task_name dedup + warning→high) / buildImprovementTodos (risk_limit_suggestion can_apply→high / observe→low / next_actions→medium)
+    * 主入口 buildTodoSuggestionsViewModel({alerts, health}) — 聚合 + 3 段排序 (priority→category→occurred_at 倒序 + id 字母序兜底) + 6 个计数 + has_critical
+  - frontend/src/pages/workspace/SettingsWorkspace.TodoSuggestionsTab.tsx (新, ~280 行):
+    * Promise.allSettled 并行拉两路 endpoint + 双 error state (alertsError / healthError 独立显示, 一路失败另一路照常)
+    * 顶部 Alert (has_critical → type='error'/否则 'info') + 6 个 Statistic KPI (总数/critical/high/black_swan/deviation/improvement) + Table (size=small, pagination=20)
+    * UI 仅聚合提示, 不直接执行任何动作 — 用户操作指引到对应 tab (查看告警/刷新链路/应用建议)
+    * data-testid='todo-suggestions-table' 给未来 E2E 钩
+  - frontend/src/pages/workspace/SettingsWorkspace.tsx: 5 处接入清单全到位 — (a) import TodoSuggestionsTab; (b) import BulbOutlined icon; (c) tabs array 加 { key: 'todo-suggestions', label: '待办建议', icon: <BulbOutlined /> }; (d) headerActions 加 'gold' 'US-068 待办建议' Tag; (e) conditional render 加 <TodoSuggestionsTab />
+  - backend/tests/risk/todo-suggestions-helpers.test.ts (新, ~430 行 / 130 assert / 8 模块全过):
+    [1] 常量 frozen + sanity (7 frozen 表 / 3 cat × 4 prio 全映射 / cap 关系)
+    [2] truncateText 3 边界 (恰好 / cap+1 / 远超 + 空/null)
+    [3] normalizeAlertLevelToPriority 11 case (大小写 / warning / info / 未识别 fail-safe medium)
+    [4] buildBlackSwanTodos 7 sub-block (null/undefined/已读过滤/LOW 过滤/优先级映射 critical+high+medium/cap/非对象 entry 跳过/occurred_at 透传 triggered_at/created_at)
+    [5] buildDeviationTodos 6 sub-block (null/空/顶层+chain 拍平/level→priority 映射含 warning→high/dedup code+task_name/异常 entry 跳过)
+    [6] buildImprovementTodos 7 sub-block (null/can_apply→high+generated_at/observe→low/pause+unknown 静默跳过/next_actions→medium 含空过滤/非数组安全/组合 3 条)
+    [7] buildTodoSuggestionsViewModel 主入口 (null safe / 计数 / 排序 critical+black-swan 最前 / tie-break 字母序 / occurred_at 倒序 / has_critical)
+    [8] META-GUARD fs+regex 11 守约 — tab.tsx 含 helper import + buildTodoSuggestionsViewModel 调用 + Promise.allSettled + 两 endpoint 字面量 + 双 error state + default export; SettingsWorkspace.tsx 5 处接入清单全到位 (import / icon / tabs / headerActions / render)
+  - ralph/prd.json: US-068 passes=true + notes
+  - ralph/progress.txt: 本 entry
+- 验证:
+  - `cd backend && npx tsc --noEmit` exit 0
+  - `cd frontend && npx tsc --noEmit` exit 0
+  - `cd backend && npx ts-node --transpile-only tests/risk/todo-suggestions-helpers.test.ts` exit 0, 130 ok / 0 failed
+  - `cd backend && npm test -- --filter=risk` exit 0, 15 files all passed, 0 regression
+  - `cd frontend && npx eslint src/pages/workspace/{todoSuggestionsHelpers.ts,SettingsWorkspace.TodoSuggestionsTab.tsx,SettingsWorkspace.tsx}` exit 0 (--fix 后 0 err 0 warn)
+- 浏览器手工验证: 无 dev-browser env 本次, UI 改动遵循既有 SettingsWorkspace tab 模板 (antd Alert+Card+Statistic+Table), 与 RiskParametersCenterTab / AnalysisEngineTab 同款 — 下次有 dev-browser env 时补 screenshot
+- **Learnings for future iterations:**
+  - **"只读聚合 tab" 范式 — 与有 save 路径的 tab 对偶**: US-068 是 SettingsWorkspace 第一个 "只读聚合 + 推动用户去其它 tab 操作" 的 tab, 与既有 SizingPolicyTab / PortfolioConstructionTab / AnalysisEngineTab / RiskParametersCenterTab 4 个 "有 save 路径" 的 tab 形成对偶. 形态差异: (a) 不要 draft/view 双 state — 只读没必要; (b) 不要 hasChanges memo / Save 按钮; (c) Promise.allSettled 单路失败仅 set 本路 error, 另一路照常 (与 RiskParametersCenterTab 的 loadAll 同款思想); (d) 主入口 helper 接受 null/undefined 兜底返"空 viewModel" (total=0 + 全 0 计数 + has_critical=false), 不让 UI 端做 if-check, 与 [[todayPlanHelpers]] / [[shadowRunHelpers]] 同款"null-safe view model" 契约. 未来任何 "聚合 N 路 read-only endpoint → UI 一处展示" 的 tab 都按这套路.
+  - **多源待办 dedup 策略 — code+task_name 复合 key**: backend automation-health 的顶层 issues[] 与 chains[].issues[] 经常重复同一条 issue (同 code+task_name), helper 端必须 dedup 否则 UI 出现 "missing_task X 在顶层显示 1 条 + 在 chain 显示 1 条" 干扰用户. 用 Set<string> 存 `${code}|${task_name}` 复合 key 是最低成本方案 — 不是单 code (会丢失 "同 code 不同 task" 的真重复), 不是 message (message 文本会因 chain title prefix 变化). 与 [[US-026 classifyEventType]] 字典覆盖判断 "优先匹配更具体" 同款 "复合 key 比单 key 更可靠" 思想.
+  - **warning→high priority 映射 — ops 视角与 UI label 解耦**: backend AutomationHealthIssue.level 只有 'critical'|'warning' 两档, 但 UI TodoPriority 是 4 档 (critical/high/medium/low). 把 warning 映射成 high 而非 medium 是 ops 视角的反直觉决策: "warning 在 ops 视角是 '关键链路报警', 不是 'nice-to-fix', medium 留给 next_actions 这种 '人写的下一步建议'". 这条映射写到 helper 顶部 jsdoc 防 review 强改成 medium 让 next_actions 与 warning 混档.
+  - **fail-safe 默认 priority=medium 不是 critical 也不是 low**: normalizeAlertLevelToPriority 在 level=未识别字符串/null/undefined 时返 medium — 不返 critical (防止 fuzzy 输入触发飞书 push 风暴, 与 [[US-029 priority 决策表 safe-default low 兜底]] 同款 fail-safe 思想), 也不返 low (alert 至少给 medium 才不被忽略). medium 是"既不漏报也不噪报"的折中. 与 normalizePriority 在公告类待办里 fallback low 的策略对比 — 报警类 fallback medium, 系统建议类 fallback low, 取决于业务对"漏判 vs 误判"的偏好.
+  - **HTML/JSX 内中文引号要么用 「」 要么避免**: ESLint react/no-unescaped-entities 规则禁止 JSX 文本里裸用 " (会与 attribute quote 混淆). 中文 UI 文案里需要"引号包裹动作名"时, 用 「」 (中文方括号) 避免 escape, 比 &quot; 可读性更好. 本次 US-068 把 "查看告警" / "刷新链路" / "应用建议" 改成 「查看告警」 / 「刷新链路」 / 「应用建议」 一次性消除 6 个 lint error.
+  - **跨 monorepo helper 单测路径再次复用 (本次第 6+ 次)**: backend/tests/risk/{feature}-helpers.test.ts → import frontend/src/pages/workspace/{feature}Helpers.ts via path.resolve(__dirname, '../../../frontend/src/...') — ts-node --transpile-only 直接吃, 不需要 jsdom/React/jest. helper 不依赖 antd/React 才能被 backend 单测加载. 与 [[shadowRunHelpers]] / [[analysisEngineWeightHelpers]] / [[risk-parameters-center-tab.test.ts]] 同款. 这条已经在多个 [Codebase Patterns] 重复, 未来直接抄.
+---
