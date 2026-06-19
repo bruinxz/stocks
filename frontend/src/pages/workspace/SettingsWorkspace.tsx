@@ -42,6 +42,7 @@ import {
   ThunderboltOutlined,
   SafetyOutlined,
   BulbOutlined,
+  PoweroffOutlined,
 } from '@ant-design/icons';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import SizingPolicyTab from './SettingsWorkspace.SizingPolicyTab';
@@ -49,6 +50,7 @@ import PortfolioConstructionTab from './SettingsWorkspace.PortfolioConstructionT
 import AnalysisEngineTab from './SettingsWorkspace.AnalysisEngineTab';
 import RiskParametersCenterTab from './SettingsWorkspace.RiskParametersCenterTab';
 import TodoSuggestionsTab from './SettingsWorkspace.TodoSuggestionsTab';
+import StrategyKillSwitchTab from './SettingsWorkspace.StrategyKillSwitchTab';
 import {
   loadNotificationChannels,
   updateNotificationChannels,
@@ -125,6 +127,7 @@ const SettingsWorkspace: React.FC = () => {
     { key: 'portfolio-construction', label: '组合构建', icon: <ApartmentOutlined /> },
     { key: 'analysis-engine', label: '分析引擎', icon: <ThunderboltOutlined /> },
     { key: 'risk-parameters', label: '风控参数中心', icon: <SafetyOutlined /> },
+    { key: 'strategy-kill-switch', label: '策略 kill-switch', icon: <PoweroffOutlined /> },
     { key: 'todo-suggestions', label: '待办建议', icon: <BulbOutlined /> },
     { key: 'users', label: '用户管理', icon: <TeamOutlined /> },
   ];
@@ -282,6 +285,8 @@ const SettingsWorkspace: React.FC = () => {
       <Tag color="volcano">US-065 分析引擎接入</Tag>
     ) : activeKey === 'risk-parameters' ? (
       <Tag color="red">US-066 风控参数中心</Tag>
+    ) : activeKey === 'strategy-kill-switch' ? (
+      <Tag color="red">US-069 策略 kill-switch</Tag>
     ) : activeKey === 'todo-suggestions' ? (
       <Tag color="gold">US-068 待办建议</Tag>
     ) : (
@@ -1641,6 +1646,8 @@ const SettingsWorkspace: React.FC = () => {
         <AnalysisEngineTab />
       ) : activeKey === 'risk-parameters' ? (
         <RiskParametersCenterTab />
+      ) : activeKey === 'strategy-kill-switch' ? (
+        <StrategyKillSwitchTab />
       ) : activeKey === 'todo-suggestions' ? (
         <TodoSuggestionsTab />
       ) : (

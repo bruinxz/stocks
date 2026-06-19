@@ -411,6 +411,40 @@ export async function getStrategySource(strategyKey: string): Promise<StrategySo
   return res.data.data as StrategySourceResponse;
 }
 
+// ---------- /api/quant/strategies/:id PATCH (US-069 kill-switch toggle) ---
+
+/**
+ * US-069 [FE-030] 策略 kill-switch — 单独 enable / disable 一只策略。
+ *
+ * 后端 QuantController.updateStrategyConfig 接受顶层 `enabled` boolean,
+ * 落到 quant_strategies.enabled 字段。一旦 enabled=false:
+ *   - strategyEngine.resolveStrategyKeys() 不会再纳入这只策略;
+ *   - daily pipeline / signal 生成 / shadow run 全部对它停掉;
+ *   - 已存仓位不会自动卖出 (走风控独立路径), 用户需要自己平仓.
+ *
+ * 与 [[setStrategyDryRun]] 互补: dry-run 是 "产信号不下单", kill-switch 是
+ * "策略整体停摆". 大多数场景先 dry-run 一段时间观察, 真要彻底下线再调
+ * 本接口 disable.
+ *
+ * 与后端自动熔断 [[strategy-kill-switch-monitor]] 解耦: 自动熔断走
+ * live_kill_switch_states 表 + RiskAlert (订单失败率 / 连败), 是 live-trading
+ * 维度; 本接口走 quant_strategies.enabled, 是策略级别的 "明天还要不要扫描".
+ *
+ * 返回更新后的策略对象 (含最新 enabled 值).
+ */
+export async function setStrategyEnabled(
+  strategyKey: string,
+  enabled: boolean
+): Promise<QuantStrategyItem> {
+  const res = await api.patch(`/quant/strategies/${encodeURIComponent(strategyKey)}`, {
+    enabled,
+  });
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '更新策略启用状态失败');
+  }
+  return res.data.data;
+}
+
 // ---------- /api/quant/strategies/:id PATCH (US-083 dry-run toggle) --------
 
 /**

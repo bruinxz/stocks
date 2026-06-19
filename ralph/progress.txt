@@ -1930,3 +1930,32 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **HTML/JSX 内中文引号要么用 「」 要么避免**: ESLint react/no-unescaped-entities 规则禁止 JSX 文本里裸用 " (会与 attribute quote 混淆). 中文 UI 文案里需要"引号包裹动作名"时, 用 「」 (中文方括号) 避免 escape, 比 &quot; 可读性更好. 本次 US-068 把 "查看告警" / "刷新链路" / "应用建议" 改成 「查看告警」 / 「刷新链路」 / 「应用建议」 一次性消除 6 个 lint error.
   - **跨 monorepo helper 单测路径再次复用 (本次第 6+ 次)**: backend/tests/risk/{feature}-helpers.test.ts → import frontend/src/pages/workspace/{feature}Helpers.ts via path.resolve(__dirname, '../../../frontend/src/...') — ts-node --transpile-only 直接吃, 不需要 jsdom/React/jest. helper 不依赖 antd/React 才能被 backend 单测加载. 与 [[shadowRunHelpers]] / [[analysisEngineWeightHelpers]] / [[risk-parameters-center-tab.test.ts]] 同款. 这条已经在多个 [Codebase Patterns] 重复, 未来直接抄.
 ---
+
+## 2026-06-20 06:55 - US-069
+- 实现 SettingsWorkspace 策略 kill-switch tab — 让操盘手在一个面板里看到全部量化策略, 单独 Switch toggle 立即 PATCH 落库.
+- 新文件:
+  - frontend/src/pages/workspace/strategyKillSwitchHelpers.ts — 纯函数 helper (normalizeRiskLevel / pickDisplayName / normalizeTags / buildKillSwitchRows / buildKillSwitchKpi / buildKillSwitchConfirmConfig / applyEnabledPatch).
+  - frontend/src/pages/workspace/SettingsWorkspace.StrategyKillSwitchTab.tsx — UI 组件 (Table + Switch + Modal.confirm 二次确认 + 搜索 + KPI 顶栏).
+  - backend/tests/services/strategy-kill-switch-helpers.test.ts — 91 个断言, ts-node 直跑, 覆盖纯函数 + META-GUARD fs+regex (helper / labService / tab / SettingsWorkspace 四段同步).
+- 修改:
+  - frontend/src/services/labService.ts — 新增 setStrategyEnabled(strategyKey, enabled) → PATCH /quant/strategies/:key {enabled}. 复用既有 QuantController.updateStrategyConfig 路径.
+  - frontend/src/pages/workspace/SettingsWorkspace.tsx — 注册 strategy-kill-switch tab (PoweroffOutlined icon, US-069 红 Tag, 渲染分支).
+- 行为:
+  - 启用任意策略 / 禁用 low|medium 风险: 不弹确认, Switch 直接调 PATCH;
+  - 禁用 high 风险策略: 弹 Modal.confirm 二次确认 (helper 决定, UI 仅渲染);
+  - Optimistic update: 切换瞬间 applyEnabledPatch 本地预先改 enabled, server 返回再 reconcile, 失败回滚 + Modal.error;
+  - togglingKey 限同一时刻只允许 1 个 Switch 处于 in-flight, 防双击 / 跨行误点;
+  - KPI 顶栏: 总数 / 启用中 / 已禁用 / 高风险启用中 4 件套, 高风险启用 > 0 时橙色高亮.
+- 后端无改动: 复用既有 QuantController.updateStrategyConfig (本身已支持 enabled 字段 patch) + strategyEngine.resolveStrategyKeys() (只取 enabled=true 的记录).
+- Quality:
+  - frontend tsc --noEmit: 通过;
+  - frontend eslint: 通过 (lint --fix 自动清理 prettier 警告);
+  - backend test: 91 passed, 0 failed;
+  - QuantStrategyDryRun 旧 test: 45 passed (没回归).
+- **Learnings for future iterations:**
+  - Patterns: 单 cell 即时 PATCH (kill-switch, dry-run toggle) vs 批量 diff save (push-channels, analysis-engine) — 当 UX 强调"出事一键拉闸"用前者, 配置编辑型用后者.
+  - Gotcha: helper 返回的 KillSwitchRowItem 必须把 enabled 默认成 true (与后端 `record?.enabled !== false` 同款语义), 否则新策略首次 sync 没有写 enabled 字段时会显示成"已禁用"——误导用户.
+  - Pattern (META-GUARD fs+regex): 当一个 feature 跨 helper + service + 多个 UI 文件时, 在单测里读这些文件用 regex 检查关键 import / export / data-testid / 路由模式 全在, 避免 UI 端单独 commit 时漏掉 helper 升级. 复用了 analysis-engine-weight-helpers.test.ts 的方法.
+  - Useful context: PoweroffOutlined icon 视觉对应"红色拉闸"语义, 比通用 SettingOutlined 更直观; 用户 PRD 想要的"风险等级 high 二次确认"门槛在 buildKillSwitchConfirmConfig() 里完全 helper 决定, UI 不重新判定.
+  - Browser verification: 未在浏览器中手动验证 (无 MCP browser tools), 但 helper 100% 单测 + UI 纯渲染层用 antd Switch + Table 标准组件, 故风险低; 后续可在 SettingsWorkspace 加 Playwright 集成测试覆盖 toggle 流程.
+---
