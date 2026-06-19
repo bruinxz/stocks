@@ -80,6 +80,15 @@ import {
   EARNINGS_MAGNITUDE_THRESHOLDS,
   EarningsDirection,
   EarningsMagnitude,
+  computePriority,
+  PRIORITY_AMOUNT_THRESHOLDS_WAN,
+  buildStructuredSummary,
+  BuildStructuredSummaryInput,
+  formatAmountsDetailed,
+  formatEntitiesDetailed,
+  formatEarningsGradeDetailed,
+  MAX_STRUCTURED_SUMMARY_LEN,
+  STRUCTURED_SUMMARY_SEPARATOR,
   buildHeuristicNLPResult,
   buildNLPResultFromPayload,
 } from '../../src/services/AnnouncementNLPService';
@@ -481,7 +490,9 @@ function testBuildHeuristicNLPResult(): void {
   // US-025 ANN-001: 三新字段默认占位 (ANN-002~005 实现前)
   // US-026 ANN-002: classifyEventType 已接入, 标题含 '业绩' → '业绩'
   assertEqual('heuristic event_type classified', r.event_type, '业绩');
-  assertEqual('heuristic priority default low', r.priority, 'low');
+  // US-029 ANN-005: 接入 computePriority — earnings_grade (业绩超预期+无yoy→increase/minor)
+  // + event_type='业绩' → medium (业绩 grade 存在但 magnitude 非 major), 不再固定 low.
+  assertEqual('heuristic priority computed medium', r.priority, 'medium');
   assert('heuristic entities default []', Array.isArray(r.entities) && r.entities.length === 0);
 }
 
@@ -1978,6 +1989,801 @@ function testMigrationSqlPresentAndComplete(): void {
 }
 
 // ---------------------------------------------------------------------------
+// US-029 ANN-005: computePriority — 综合决策表 9 模块覆盖
+// ---------------------------------------------------------------------------
+
+function testPriorityThresholdsFrozen(): void {
+  assert(
+    'PRIORITY_AMOUNT_THRESHOLDS_WAN frozen',
+    Object.isFrozen(PRIORITY_AMOUNT_THRESHOLDS_WAN)
+  );
+  // sanity: HIGH < MAJOR
+  assert(
+    'HIGH_WAN < MAJOR_WAN',
+    PRIORITY_AMOUNT_THRESHOLDS_WAN.HIGH_WAN < PRIORITY_AMOUNT_THRESHOLDS_WAN.MAJOR_WAN
+  );
+  // sanity: 阈值与 PRD 约定对齐 (3 亿元 / 10 亿元)
+  assertEqual('HIGH_WAN = 30000 (3亿)', PRIORITY_AMOUNT_THRESHOLDS_WAN.HIGH_WAN, 30000);
+  assertEqual('MAJOR_WAN = 100000 (10亿)', PRIORITY_AMOUNT_THRESHOLDS_WAN.MAJOR_WAN, 100000);
+}
+
+function testComputePriorityCritical(): void {
+  // 处罚 → critical 无关 sentiment / amount
+  assertEqual('处罚 → critical', computePriority({ event_type: '处罚' }), 'critical');
+  assertEqual(
+    '处罚 + 正面 → critical (event_type 优先)',
+    computePriority({ event_type: '处罚', sentiment: '正面' }),
+    'critical'
+  );
+
+  // 业绩亏损 → critical (terminal state)
+  assertEqual(
+    'loss → critical',
+    computePriority({
+      event_type: '业绩',
+      sentiment: '负面',
+      earnings_grade: { direction: 'loss', magnitude: 'major', yoy_pct: null },
+    }),
+    'critical'
+  );
+
+  // 业绩大幅下滑 (≥100%) → critical
+  assertEqual(
+    'decrease major → critical',
+    computePriority({
+      event_type: '业绩',
+      sentiment: '负面',
+      earnings_grade: { direction: 'decrease', magnitude: 'major', yoy_pct: -150 },
+    }),
+    'critical'
+  );
+
+  // 重组 + 负面 + 重大金额 → critical
+  assertEqual(
+    '重组 + 负面 + 10亿元 → critical',
+    computePriority({
+      event_type: '重组',
+      sentiment: '负面',
+      amounts: [{ amount: 10, unit: '亿元' }],
+    }),
+    'critical'
+  );
+  // 担保 + 负面 + 11亿 → critical
+  assertEqual(
+    '担保 + 负面 + 11亿 → critical',
+    computePriority({
+      event_type: '担保',
+      sentiment: '负面',
+      amounts: [{ amount: 11, unit: '亿元' }],
+    }),
+    'critical'
+  );
+  // 减持 + 负面 + 15亿 → critical
+  assertEqual(
+    '减持 + 负面 + 15亿 → critical',
+    computePriority({
+      event_type: '减持',
+      sentiment: '负面',
+      amounts: [{ amount: 15, unit: '亿元' }],
+    }),
+    'critical'
+  );
+}
+
+function testComputePriorityHigh(): void {
+  // 业绩翻倍利好 → high
+  assertEqual(
+    'increase major → high',
+    computePriority({
+      event_type: '业绩',
+      sentiment: '正面',
+      earnings_grade: { direction: 'increase', magnitude: 'major', yoy_pct: 150 },
+    }),
+    'high'
+  );
+
+  // 业绩中等下滑 → high
+  assertEqual(
+    'decrease moderate → high',
+    computePriority({
+      event_type: '业绩',
+      sentiment: '负面',
+      earnings_grade: { direction: 'decrease', magnitude: 'moderate', yoy_pct: -50 },
+    }),
+    'high'
+  );
+
+  // 减持 + 负面 → high
+  assertEqual(
+    '减持 + 负面 → high',
+    computePriority({ event_type: '减持', sentiment: '负面' }),
+    'high'
+  );
+
+  // 重组 + 正面 → high (重组本身重大)
+  assertEqual(
+    '重组 + 正面 → high',
+    computePriority({ event_type: '重组', sentiment: '正面' }),
+    'high'
+  );
+  // 重组 + 负面 → high
+  assertEqual(
+    '重组 + 负面 → high',
+    computePriority({ event_type: '重组', sentiment: '负面' }),
+    'high'
+  );
+
+  // 担保 + 负面 → high
+  assertEqual(
+    '担保 + 负面 → high',
+    computePriority({ event_type: '担保', sentiment: '负面' }),
+    'high'
+  );
+
+  // 重组/担保/减持 + 高金额 (3 亿元) → high 无关 sentiment
+  assertEqual(
+    '担保 + 中性 + 5亿元 → high',
+    computePriority({
+      event_type: '担保',
+      sentiment: '中性',
+      amounts: [{ amount: 5, unit: '亿元' }],
+    }),
+    'high'
+  );
+  assertEqual(
+    '减持 + 中性 + 4亿元 → high',
+    computePriority({
+      event_type: '减持',
+      sentiment: '中性',
+      amounts: [{ amount: 4, unit: '亿元' }],
+    }),
+    'high'
+  );
+}
+
+function testComputePriorityMedium(): void {
+  // 业绩 grade 存在 minor → medium
+  assertEqual(
+    'increase minor → medium',
+    computePriority({
+      event_type: '业绩',
+      sentiment: '正面',
+      earnings_grade: { direction: 'increase', magnitude: 'minor', yoy_pct: 15 },
+    }),
+    'medium'
+  );
+
+  // 具名 event_type 但无 grade → medium
+  assertEqual('业绩 → medium', computePriority({ event_type: '业绩' }), 'medium');
+  assertEqual('解禁 → medium', computePriority({ event_type: '解禁' }), 'medium');
+  assertEqual('担保 → medium', computePriority({ event_type: '担保' }), 'medium');
+  assertEqual('减持 → medium', computePriority({ event_type: '减持' }), 'medium');
+  // 重组 + 中性 → medium (重组本身重大但中性 sentiment 不上 high)
+  assertEqual(
+    '重组 + 中性 → medium',
+    computePriority({ event_type: '重组', sentiment: '中性' }),
+    'medium'
+  );
+
+  // 无 event_type + 负面 → medium (一般负面提一级)
+  assertEqual(
+    '负面 (无 event_type) → medium',
+    computePriority({ sentiment: '负面' }),
+    'medium'
+  );
+
+  // 高金额 (≥3 亿元) 无 event_type → medium
+  assertEqual(
+    '4亿元 + 其它 → medium',
+    computePriority({
+      event_type: '其它',
+      sentiment: '中性',
+      amounts: [{ amount: 4, unit: '亿元' }],
+    }),
+    'medium'
+  );
+}
+
+function testComputePriorityLow(): void {
+  // 默认 (空 input) → low
+  assertEqual('empty → low', computePriority({}), 'low');
+
+  // 其它 / null + 中性/正面 + 无金额 → low
+  assertEqual(
+    '其它 + 中性 → low',
+    computePriority({ event_type: '其它', sentiment: '中性' }),
+    'low'
+  );
+  assertEqual(
+    'null + 正面 + 小金额 → low',
+    computePriority({
+      event_type: null,
+      sentiment: '正面',
+      amounts: [{ amount: 100, unit: '万元' }],
+    }),
+    'low'
+  );
+
+  // amounts 含非金额单位 ('股' / '万股') 不应触发提级
+  assertEqual(
+    '其它 + 100万股 (数量不是金额) → low',
+    computePriority({
+      event_type: '其它',
+      sentiment: '中性',
+      amounts: [{ amount: 100, unit: '万股' }],
+    }),
+    'low'
+  );
+}
+
+function testComputePriorityAmountUnitNormalization(): void {
+  // 1 亿元 = 10000 万元, 都不到 30000 (3亿)
+  assertEqual(
+    '1亿元 (= 10000 万元) → low',
+    computePriority({
+      sentiment: '中性',
+      amounts: [{ amount: 1, unit: '亿元' }],
+    }),
+    'low'
+  );
+  // 3 亿元 = 30000 万元 → 触发 medium 高金额阈值
+  assertEqual(
+    '3亿元 → medium (HIGH_WAN 阈值)',
+    computePriority({
+      sentiment: '中性',
+      amounts: [{ amount: 3, unit: '亿元' }],
+    }),
+    'medium'
+  );
+  // 用 30000 万元 = 等价 3 亿元
+  assertEqual(
+    '30000 万元 → medium',
+    computePriority({
+      sentiment: '中性',
+      amounts: [{ amount: 30000, unit: '万元' }],
+    }),
+    'medium'
+  );
+
+  // 多笔金额取最大 (1 亿 + 5 亿 → 取 5 亿)
+  assertEqual(
+    '多笔金额取最大 (5 亿) → 担保中性 → high',
+    computePriority({
+      event_type: '担保',
+      sentiment: '中性',
+      amounts: [
+        { amount: 1, unit: '亿元' },
+        { amount: 5, unit: '亿元' },
+      ],
+    }),
+    'high'
+  );
+  // 负数 / NaN 金额忽略
+  assertEqual(
+    '负金额忽略',
+    computePriority({
+      sentiment: '中性',
+      amounts: [
+        { amount: -100, unit: '亿元' },
+        { amount: 4, unit: '亿元' },
+      ],
+    }),
+    'medium'
+  );
+  // '元' 单位忽略 (太小, 公告通常以万/亿计)
+  assertEqual(
+    "'元' 单位忽略",
+    computePriority({
+      event_type: '其它',
+      sentiment: '中性',
+      amounts: [{ amount: 999999999, unit: '元' }],
+    }),
+    'low'
+  );
+}
+
+function testComputePriorityPrecedence(): void {
+  // 处罚 vs 业绩 loss — 两者都是 critical, 但处罚先短路 (event_type 优先级链)
+  assertEqual(
+    '处罚 + loss → critical (短路任一)',
+    computePriority({
+      event_type: '处罚',
+      earnings_grade: { direction: 'loss', magnitude: 'major', yoy_pct: null },
+    }),
+    'critical'
+  );
+
+  // 业绩 increase major (high) 与 减持 + 负面 (high) 共存 — 都返 high
+  assertEqual(
+    'increase major + 减持负面 → high',
+    computePriority({
+      event_type: '减持',
+      sentiment: '负面',
+      earnings_grade: { direction: 'increase', magnitude: 'major', yoy_pct: 150 },
+    }),
+    'high'
+  );
+
+  // 业绩 minor (medium 候选) + 处罚 (critical) → critical 短路
+  assertEqual(
+    '处罚 + 业绩 minor → critical',
+    computePriority({
+      event_type: '处罚',
+      earnings_grade: { direction: 'increase', magnitude: 'minor', yoy_pct: 10 },
+    }),
+    'critical'
+  );
+
+  // 重组 + 负面 但金额不到 10亿 → high (不到 critical 阈值)
+  assertEqual(
+    '重组 + 负面 + 5亿 → high (低于 MAJOR 阈值)',
+    computePriority({
+      event_type: '重组',
+      sentiment: '负面',
+      amounts: [{ amount: 5, unit: '亿元' }],
+    }),
+    'high'
+  );
+
+  // 重组 + 负面 + 边界 10 亿元 (= MAJOR_WAN) → critical
+  assertEqual(
+    '重组 + 负面 + 10亿元 边界 → critical',
+    computePriority({
+      event_type: '重组',
+      sentiment: '负面',
+      amounts: [{ amount: 10, unit: '亿元' }],
+    }),
+    'critical'
+  );
+}
+
+function testComputePriorityWiringHeuristicResult(): void {
+  // 通过 buildHeuristicNLPResult 验证 wiring — 各类标题落出对应 priority
+  // 1. 处罚标题 → critical
+  const r1 = buildHeuristicNLPResult(
+    makeRow({ stock_code: '000001', original_title: '收到中国证监会立案告知书' })
+  );
+  assertEqual('wiring 处罚 → critical', r1.priority, 'critical');
+
+  // 2. 业绩亏损 → critical
+  const r2 = buildHeuristicNLPResult(
+    makeRow({ stock_code: '000002', original_title: '业绩快报: 全年亏损 1.2 亿元' })
+  );
+  assertEqual('wiring loss → critical', r2.priority, 'critical');
+
+  // 3. 业绩大增 → high
+  const r3 = buildHeuristicNLPResult(
+    makeRow({ stock_code: '000003', original_title: '业绩预告: 净利润同比增长 150%' })
+  );
+  assertEqual('wiring increase major → high', r3.priority, 'high');
+
+  // 4. 减持 + 负面 → high (sentiment 关键词 '减持' 直接归负面)
+  const r4 = buildHeuristicNLPResult(
+    makeRow({ stock_code: '000004', original_title: '控股股东减持股份计划公告' })
+  );
+  assertEqual('wiring 减持负面 → high', r4.priority, 'high');
+
+  // 5. 常规公告 → low
+  const r5 = buildHeuristicNLPResult(
+    makeRow({ stock_code: '000005', original_title: '关于召开股东大会的通知' })
+  );
+  assertEqual('wiring 常规 → low', r5.priority, 'low');
+
+  // 6. 业绩 minor (无 yoy / 无 direction) → low/medium 兜底 (业绩说明会 + 中性 + 无 grade → medium)
+  const r6 = buildHeuristicNLPResult(
+    makeRow({ stock_code: '000006', original_title: '2026 年业绩说明会通知' })
+  );
+  // 标题含 '业绩' → event_type='业绩'; earnings_grade=null (无 direction 无 yoy); 中性 → medium
+  assertEqual('wiring 业绩说明 → medium', r6.priority, 'medium');
+}
+
+function testComputePriorityWiringPayloadFallback(): void {
+  // payload 不带 priority → 走 computePriority 兜底而不是固定 'low'
+  const row = makeRow({ stock_code: '000007', original_title: '业绩预告: 净利润同比增长 200%' });
+  const payload: RemoteNLPPayload = {
+    status: 'COMPLETED',
+    data: { summary: 'AI 摘要', sentiment: 'positive' },
+  };
+  const r = buildNLPResultFromPayload(payload, row);
+  // 业绩 + increase major → high (AI 无 priority 时本地 computePriority 兜底)
+  assertEqual('payload no priority → computePriority high', r.priority, 'high');
+
+  // payload 带 priority → 优先用 AI 字段
+  const payloadWithPri: RemoteNLPPayload = {
+    status: 'COMPLETED',
+    data: { summary: 'AI', sentiment: 'positive', priority: 'critical' },
+  };
+  const r2 = buildNLPResultFromPayload(payloadWithPri, row);
+  assertEqual('payload with priority → AI 字段优先', r2.priority, 'critical');
+}
+
+function testComputePriorityIsPure(): void {
+  // 同输入两次调用 → 同输出 (无 side-effect)
+  const input: Parameters<typeof computePriority>[0] = {
+    event_type: '减持',
+    sentiment: '负面',
+    earnings_grade: null,
+    amounts: [{ amount: 2, unit: '亿元' }],
+  };
+  const r1 = computePriority(input);
+  const r2 = computePriority(input);
+  assertEqual('pure: same input → same output (1st)', r1, 'high');
+  assertEqual('pure: same input → same output (2nd)', r2, 'high');
+  // input 未被改动
+  assertEqual('pure: input.amounts unchanged', input.amounts?.length, 1);
+  assertEqual('pure: input.event_type unchanged', input.event_type, '减持');
+}
+
+// ---------------------------------------------------------------------------
+// US-030 ANN-006: buildStructuredSummary + 3 个 format* helpers
+// ---------------------------------------------------------------------------
+
+function testStructuredSummaryConstantsFrozen(): void {
+  // 阈值常量必须 export 且形态合规, 与 heuristicSummarize v1 MAX=50 不同 (整体 100)
+  assert('MAX_STRUCTURED_SUMMARY_LEN is number', typeof MAX_STRUCTURED_SUMMARY_LEN === 'number');
+  assert('MAX_STRUCTURED_SUMMARY_LEN > 50', MAX_STRUCTURED_SUMMARY_LEN > 50);
+  assertEqual('MAX_STRUCTURED_SUMMARY_LEN value', MAX_STRUCTURED_SUMMARY_LEN, 100);
+  assert(
+    'STRUCTURED_SUMMARY_SEPARATOR is string',
+    typeof STRUCTURED_SUMMARY_SEPARATOR === 'string' && STRUCTURED_SUMMARY_SEPARATOR.length > 0
+  );
+}
+
+function testFormatAmountsDetailed(): void {
+  // happy: 多金额 + 单位保留
+  assertEqual(
+    'amounts happy',
+    formatAmountsDetailed([
+      { label: '募集资金', amount: 1.5, unit: '亿元' },
+      { label: '担保金额', amount: 5000, unit: '万元' },
+    ]),
+    '募集资金 1.5 亿元 + 担保金额 5000 万元'
+  );
+
+  // 空数组 → ''
+  assertEqual('amounts empty', formatAmountsDetailed([]), '');
+  assertEqual('amounts null', formatAmountsDetailed(null), '');
+  assertEqual('amounts undefined', formatAmountsDetailed(undefined), '');
+
+  // 非 finite / <= 0 跳过
+  assertEqual(
+    'amounts skip invalid',
+    formatAmountsDetailed([
+      { label: 'NaN', amount: NaN, unit: '元' },
+      { label: 'zero', amount: 0, unit: '元' },
+      { label: '正常', amount: 100, unit: '万元' },
+    ]),
+    '正常 100 万元'
+  );
+
+  // label / unit 缺失兜底
+  assertEqual(
+    'amounts label fallback',
+    formatAmountsDetailed([{ label: '', amount: 100, unit: '' }] as any),
+    '金额 100 元'
+  );
+
+  // 上限 (MAX_AMOUNTS_PER_TITLE = 3)
+  const four = [
+    { label: 'a', amount: 1, unit: '元' },
+    { label: 'b', amount: 2, unit: '元' },
+    { label: 'c', amount: 3, unit: '元' },
+    { label: 'd', amount: 4, unit: '元' },
+  ];
+  const r = formatAmountsDetailed(four);
+  assert('amounts cap 3', !r.includes('d 4'));
+  assert('amounts cap 3 keeps abc', r.includes('a 1') && r.includes('b 2') && r.includes('c 3'));
+}
+
+function testFormatEntitiesDetailed(): void {
+  // placeholder (name === role): 仅渲染 role
+  assertEqual(
+    'entities placeholder',
+    formatEntitiesDetailed([{ name: '控股股东', role: '控股股东' }]),
+    '控股股东'
+  );
+
+  // 真姓名 (name !== role): 渲染 "role name"
+  assertEqual(
+    'entities real name',
+    formatEntitiesDetailed([{ name: '张三', role: '控股股东' }]),
+    '控股股东 张三'
+  );
+
+  // holding_pct 后缀
+  assertEqual(
+    'entities holding_pct',
+    formatEntitiesDetailed([{ name: '控股股东', role: '控股股东', holding_pct: 12.34 }]),
+    '控股股东(持股 12.34%)'
+  );
+
+  // 多实体 + 分隔符
+  assertEqual(
+    'entities multi',
+    formatEntitiesDetailed([
+      { name: '控股股东', role: '控股股东', holding_pct: 5 },
+      { name: '董事长', role: '董事长' },
+    ]),
+    '控股股东(持股 5%) + 董事长'
+  );
+
+  // 空 / null
+  assertEqual('entities empty', formatEntitiesDetailed([]), '');
+  assertEqual('entities null', formatEntitiesDetailed(null), '');
+
+  // 缺 role 跳过 (与 normalizeEntities drop 同款)
+  assertEqual(
+    'entities skip missing role',
+    formatEntitiesDetailed([{ name: 'x', role: '' } as any, { name: '股东', role: '股东' }]),
+    '股东'
+  );
+
+  // 非正 holding_pct 不渲染
+  assertEqual(
+    'entities skip invalid pct',
+    formatEntitiesDetailed([{ name: '股东', role: '股东', holding_pct: 0 }]),
+    '股东'
+  );
+}
+
+function testFormatEarningsGradeDetailed(): void {
+  // increase
+  assertEqual(
+    'grade increase major',
+    formatEarningsGradeDetailed({ direction: 'increase', magnitude: 'major', yoy_pct: 150 }),
+    '业绩 增长 150% (重大)'
+  );
+  // decrease (yoy 取绝对值, 方向走 direction 字段)
+  assertEqual(
+    'grade decrease moderate signed yoy',
+    formatEarningsGradeDetailed({ direction: 'decrease', magnitude: 'moderate', yoy_pct: -50 }),
+    '业绩 下滑 50% (中等)'
+  );
+  // loss
+  assertEqual(
+    'grade loss',
+    formatEarningsGradeDetailed({ direction: 'loss', magnitude: 'major', yoy_pct: null }),
+    '业绩 亏损 (重大)'
+  );
+  // increase + minor + null yoy
+  assertEqual(
+    'grade increase minor null yoy',
+    formatEarningsGradeDetailed({ direction: 'increase', magnitude: 'minor', yoy_pct: null }),
+    '业绩 增长 (小幅)'
+  );
+  // null grade
+  assertEqual('grade null', formatEarningsGradeDetailed(null), '');
+  assertEqual('grade undefined', formatEarningsGradeDetailed(undefined), '');
+}
+
+function testBuildStructuredSummaryAcceptanceCriteria(): void {
+  // AC 主验收 — "输出含 entities" — 与 v1 heuristicSummarize 对比.
+  // v1 (heuristicSummarize) 仅返 "[情绪] 标题" 不含 entities.
+  // v2 (buildStructuredSummary) 必须含 entities 段.
+  const r = buildStructuredSummary({
+    title: '控股股东减持股份公告',
+    sentiment: '负面',
+    event_type: '减持',
+    entities: [{ name: '控股股东', role: '控股股东' }],
+    amounts: [{ label: '减持金额', amount: 2, unit: '亿元' }],
+    earnings_grade: null,
+  });
+  assert('AC ann-006: output is string', typeof r === 'string' && r !== null);
+  assert('AC ann-006: contains entities', r !== null && r.includes('控股股东'));
+  assert('AC ann-006: contains amounts_detailed', r !== null && r.includes('减持金额 2 亿元'));
+  assert('AC ann-006: contains sentiment tag', r !== null && r.startsWith('[负面]'));
+  assert('AC ann-006: contains event_type tag', r !== null && r.includes('[减持]'));
+  assert('AC ann-006: contains title text', r !== null && r.includes('控股股东减持股份公告'));
+}
+
+function testBuildStructuredSummaryEmptyOptional(): void {
+  // 所有 optional 段都缺 → 等价 v1 输出 ("[情绪] 标题")
+  const r = buildStructuredSummary({
+    title: '常规公告',
+    sentiment: '中性',
+  });
+  assertEqual('empty optional fallback', r, '[中性] 常规公告');
+}
+
+function testBuildStructuredSummaryEventTypeOther(): void {
+  // event_type='其它' 不渲染段 (与 null 同款 — 信息密度低不污染摘要)
+  const r1 = buildStructuredSummary({
+    title: '常规公告',
+    sentiment: '中性',
+    event_type: '其它',
+  });
+  assertEqual('其它 not rendered', r1, '[中性] 常规公告');
+  // event_type=null 也不渲染
+  const r2 = buildStructuredSummary({
+    title: '常规公告',
+    sentiment: '中性',
+    event_type: null,
+  });
+  assertEqual('null event_type not rendered', r2, '[中性] 常规公告');
+}
+
+function testBuildStructuredSummaryNullTitle(): void {
+  // title null/empty/whitespace → null
+  assertEqual('null title', buildStructuredSummary({ title: null, sentiment: '中性' }), null);
+  assertEqual('empty title', buildStructuredSummary({ title: '', sentiment: '中性' }), null);
+  assertEqual(
+    'whitespace title',
+    buildStructuredSummary({ title: '   ', sentiment: '中性' }),
+    null
+  );
+}
+
+function testBuildStructuredSummaryTruncation(): void {
+  // 长摘要 (5 段全塞) > MAX_STRUCTURED_SUMMARY_LEN → 截断 + '...'
+  const longTitle = 'a'.repeat(80);
+  const r = buildStructuredSummary({
+    title: longTitle,
+    sentiment: '负面',
+    event_type: '减持',
+    entities: [{ name: '控股股东', role: '控股股东', holding_pct: 12.34 }],
+    amounts: [{ label: '减持金额', amount: 2, unit: '亿元' }],
+    earnings_grade: null,
+  });
+  assert('long summary truncated', r !== null && r.endsWith('...'));
+  // 总长度 = MAX + 3 ('...')
+  assertEqual('truncated length', r?.length, MAX_STRUCTURED_SUMMARY_LEN + 3);
+}
+
+function testBuildStructuredSummaryGradeRendered(): void {
+  // 业绩公告 → grade 段渲染
+  const r = buildStructuredSummary({
+    title: '业绩预增公告',
+    sentiment: '正面',
+    event_type: '业绩',
+    entities: [],
+    amounts: [],
+    earnings_grade: { direction: 'increase', magnitude: 'major', yoy_pct: 150 },
+  });
+  assert('grade rendered', r !== null && r.includes('业绩 增长 150% (重大)'));
+  // 非业绩公告 → grade=null → 不渲染段
+  const r2 = buildStructuredSummary({
+    title: '常规公告',
+    sentiment: '中性',
+    earnings_grade: null,
+  });
+  assert('non-earnings no grade', r2 !== null && !r2.includes('业绩 '));
+}
+
+function testBuildStructuredSummaryWiringHeuristic(): void {
+  // wiring 验收: buildHeuristicNLPResult 必须接通 buildStructuredSummary,
+  // 与 v1 heuristicSummarize 输出对比, 含 entities 段.
+  const row = makeRow({
+    stock_code: '000001',
+    original_title: '控股股东及其一致行动人减持股份计划公告',
+  });
+  const r = buildHeuristicNLPResult(row);
+  assert('wiring heuristic: summary is string', typeof r.summary === 'string');
+  assert('wiring heuristic: contains 控股股东', r.summary !== null && r.summary.includes('控股股东'));
+  // 含 event_type 标签
+  assert('wiring heuristic: contains [减持]', r.summary !== null && r.summary.includes('[减持]'));
+  // 与 v1 输出对比 — v1 仅 "[情绪] 标题" 不含 [减持] 标签
+  const v1 = heuristicSummarize(row.original_title, r.sentiment ?? '中性');
+  assert('wiring heuristic: v1 does NOT contain [减持]', !v1!.includes('[减持]'));
+}
+
+function testBuildStructuredSummaryWiringPayloadHappy(): void {
+  // wiring 验收: buildNLPResultFromPayload 在 AI 不带 summary 时走 buildStructuredSummary
+  const row = makeRow({
+    stock_code: '000001',
+    original_title: '股东减持股份公告',
+  });
+  const payload: RemoteNLPPayload = {
+    status: 'COMPLETED',
+    data: {
+      sentiment: '负面',
+      event_type: '减持',
+      entities: [{ name: '股东', role: '股东' }],
+      // 缺 summary — 走 buildStructuredSummary 兜底
+    },
+  };
+  const r = buildNLPResultFromPayload(payload, row);
+  assert(
+    'wiring payload happy: summary contains entity',
+    r.summary !== null && r.summary.includes('股东')
+  );
+  assert(
+    'wiring payload happy: summary contains [减持]',
+    r.summary !== null && r.summary.includes('[减持]')
+  );
+}
+
+function testBuildStructuredSummaryWiringPayloadFailed(): void {
+  // wiring 验收: payload FAILED 路径走 buildStructuredSummary, 但只填 sentiment + amounts
+  // (不渗漏 event_type / entities / grade — 与 fail-safe 默认契约一致)
+  const row = makeRow({
+    stock_code: '000001',
+    original_title: '业绩超预期增长公告 营收 1.5 亿元',
+  });
+  const payload: RemoteNLPPayload = {
+    status: 'FAILED',
+    data: { error: 'remote 500' },
+  };
+  const r = buildNLPResultFromPayload(payload, row);
+  assertEqual('failed status partial', r.status, 'partial');
+  // 启发式情绪 '正面' + 金额段渲染
+  assert(
+    'wiring payload failed: contains amount',
+    r.summary !== null && r.summary.includes('1.5 亿元')
+  );
+  // 不渲染 event_type 段 (FAILED 路径不调 classifyEventType)
+  assert(
+    'wiring payload failed: no [业绩] tag',
+    r.summary !== null && !r.summary.includes('[业绩]')
+  );
+}
+
+function testBuildStructuredSummaryAISummaryPreserved(): void {
+  // AI 已提供 summary 时透传, 不被 buildStructuredSummary 覆盖
+  const row = makeRow({ stock_code: '000001', original_title: '股东大会公告' });
+  const payload: RemoteNLPPayload = {
+    status: 'COMPLETED',
+    data: {
+      summary: 'AI 自带摘要 — 召开 2025 年度股东大会',
+      sentiment: 'neutral',
+    },
+  };
+  const r = buildNLPResultFromPayload(payload, row);
+  assertEqual('AI summary preserved', r.summary, 'AI 自带摘要 — 召开 2025 年度股东大会');
+}
+
+function testBuildStructuredSummaryIsPure(): void {
+  // 同输入两次调用 → 同输出 (无 side-effect)
+  const input: BuildStructuredSummaryInput = {
+    title: '股东减持公告',
+    sentiment: '负面',
+    event_type: '减持',
+    entities: [{ name: '股东', role: '股东' }],
+    amounts: [{ label: '减持金额', amount: 1, unit: '亿元' }],
+  };
+  const r1 = buildStructuredSummary(input);
+  const r2 = buildStructuredSummary(input);
+  assertEqual('pure: same output 1', r1, r2);
+  // input 未被改动
+  assertEqual('pure: input.entities unchanged', input.entities?.length, 1);
+  assertEqual('pure: input.amounts unchanged', input.amounts?.length, 1);
+}
+
+function testBuildStructuredSummaryMetaGuardServiceWired(): void {
+  // META-GUARD fs+regex 守: src/services/AnnouncementNLPService.ts 内
+  //   - buildHeuristicNLPResult 必须调 buildStructuredSummary (不再调 heuristicSummarize)
+  //   - buildNLPResultFromPayload 必须在两路径 (happy + FAILED) 都调 buildStructuredSummary
+  // 防未来 refactor 把 v1 heuristicSummarize 复活到 builder 内.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const fs = require('fs');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const path = require('path');
+  const svcPath = path.resolve(__dirname, '../../src/services/AnnouncementNLPService.ts');
+  const src = fs.readFileSync(svcPath, 'utf8') as string;
+
+  // 正向: buildStructuredSummary 必须 export 且被 builder 至少调 2 次 (heuristic + payload)
+  assert('helper exported', /export function buildStructuredSummary\b/.test(src));
+  const callCount = (src.match(/buildStructuredSummary\(/g) || []).length;
+  // 1 处定义 + 至少 2 处调用 (heuristic + payload happy + payload FAILED) = ≥ 4
+  assert(`buildStructuredSummary called ≥3 times (got ${callCount})`, callCount >= 3);
+
+  // 反向: buildHeuristicNLPResult 函数体内不再调 heuristicSummarize
+  const heuristicBuilderMatch = src.match(
+    /export function buildHeuristicNLPResult[\s\S]*?\n^}$/m
+  );
+  assert('buildHeuristicNLPResult found', heuristicBuilderMatch !== null);
+  if (heuristicBuilderMatch) {
+    assert(
+      'buildHeuristicNLPResult no longer calls heuristicSummarize',
+      !/heuristicSummarize\(/.test(heuristicBuilderMatch[0])
+    );
+    assert(
+      'buildHeuristicNLPResult calls buildStructuredSummary',
+      /buildStructuredSummary\(/.test(heuristicBuilderMatch[0])
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Run all
 // ---------------------------------------------------------------------------
 
@@ -2032,6 +2838,34 @@ async function main(): Promise<void> {
   testExtractEarningsGradeDecimal();
   testExtractEarningsGradeAccuracy();
   testExtractEarningsGradeIsPure();
+  // US-029 ANN-005: computePriority
+  testPriorityThresholdsFrozen();
+  testComputePriorityCritical();
+  testComputePriorityHigh();
+  testComputePriorityMedium();
+  testComputePriorityLow();
+  testComputePriorityAmountUnitNormalization();
+  testComputePriorityPrecedence();
+  testComputePriorityWiringHeuristicResult();
+  testComputePriorityWiringPayloadFallback();
+  testComputePriorityIsPure();
+  // US-030 ANN-006: buildStructuredSummary + 3 format* helpers
+  testStructuredSummaryConstantsFrozen();
+  testFormatAmountsDetailed();
+  testFormatEntitiesDetailed();
+  testFormatEarningsGradeDetailed();
+  testBuildStructuredSummaryAcceptanceCriteria();
+  testBuildStructuredSummaryEmptyOptional();
+  testBuildStructuredSummaryEventTypeOther();
+  testBuildStructuredSummaryNullTitle();
+  testBuildStructuredSummaryTruncation();
+  testBuildStructuredSummaryGradeRendered();
+  testBuildStructuredSummaryWiringHeuristic();
+  testBuildStructuredSummaryWiringPayloadHappy();
+  testBuildStructuredSummaryWiringPayloadFailed();
+  testBuildStructuredSummaryAISummaryPreserved();
+  testBuildStructuredSummaryIsPure();
+  testBuildStructuredSummaryMetaGuardServiceWired();
   testBuildNLPResultFromPayloadIncludesNewFields();
   testBuildNLPResultFromPayloadFailedDefaultsNewFields();
   await testSaveSummariesIncludesNewFields();

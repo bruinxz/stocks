@@ -638,6 +638,17 @@ export interface SyncDateResult {
   by_sentiment: Record<string, number>;
   by_status: Record<string, number>;
   skipped: boolean;
+  /**
+   * US-031 ANN-007: critical 公告飞书 push 结果摘要 (仅 dry_run=false + 至少 1 条
+   * priority=critical 时存在). 主流程对 push 失败 fail-OPEN, 不写入 error 字段.
+   */
+  critical_push?: {
+    matched: number;
+    attempted: number;
+    succeeded: number;
+    failed: number;
+    skipped_reason?: string;
+  };
   error?: string;
 }
 
@@ -867,6 +878,223 @@ export function heuristicSummarize(
   const MAX = 50;
   if (text.length <= MAX) return `${prefix} ${text}`;
   return `${prefix} ${text.slice(0, MAX)}...`;
+}
+
+// ---------------------------------------------------------------------------
+// US-030 ANN-006: buildStructuredSummary — 替换 heuristicSummarize 的"结构化摘要"
+// ---------------------------------------------------------------------------
+
+/**
+ * US-030 ANN-006: buildStructuredSummary 输入 — 把 builder 已经算好的 N 个维度
+ * 同时拼成一段 ≤ MAX_STRUCTURED_SUMMARY_LEN 字符的人类可读摘要.
+ *
+ * 与 heuristicSummarize 的关系: heuristicSummarize 是 v1 (仅 "[情绪] 标题截断"),
+ * buildStructuredSummary 是 v2 — 同款 pure 函数, 同样输出 string | null,
+ * 但摘要里会拼上 event_type / entities (角色 + holding_pct) / amounts_detailed
+ * (label + amount + unit) / earnings_grade (direction + magnitude + yoy_pct%).
+ *
+ * 字段全 optional/nullable — 任何 builder 路径 (heuristic / payload happy / payload FAILED)
+ * 都能调; 缺失维度自动跳过对应段落不报错, 与 normalize* 同 "fail-safe" 思想.
+ */
+export interface BuildStructuredSummaryInput {
+  /** 公告原始标题 (必填; null/empty 时整体返 null) */
+  title: string | null | undefined;
+  /** 情绪 (必填; '中性' 兜底) */
+  sentiment: SentimentValue;
+  /** classifyEventType / normalizeEventType 输出 (含 '其它' / null) */
+  event_type?: AnnouncementEventType | null;
+  /** extractEntities / normalizeEntities 输出, [] 时跳过该段 */
+  entities?: AnnouncementEntity[];
+  /** extractAmounts 输出, [] 时跳过该段 */
+  amounts?: Array<{ label: string; amount: number; unit: string }>;
+  /** extractEarningsGrade 输出, null 时跳过该段 (区别于非业绩公告) */
+  earnings_grade?: EarningsGrade | null;
+}
+
+/**
+ * US-030 ANN-006: 结构化摘要最大长度 (字符).
+ *
+ * 与 heuristicSummarize MAX=50 不同 — 结构化摘要塞 5 段信息天然更长,
+ * 100 字符仍可放入 UI 公告流单行 (前端 truncate ellipsis 兜底).
+ * 超过此值的尾部段落 (优先级: 标题 > entities > amounts > grade > topic-pad)
+ * 被截断, 末尾保留 '...' 显式提示截断.
+ */
+export const MAX_STRUCTURED_SUMMARY_LEN = 100;
+
+/**
+ * US-030 ANN-006: 结构化摘要段落分隔符. 中文全角分号 + 空格 (UI 单行可读).
+ * UI 想换行时按本分隔符 split 即可.
+ */
+export const STRUCTURED_SUMMARY_SEPARATOR = '；';
+
+/**
+ * US-030 ANN-006: 把 amounts[] 渲染成 amounts_detailed 字符串.
+ *
+ * 输出形如 "募集资金 1.5 亿元 + 担保金额 5000 万元"; 同一标题最多渲染前 3 条
+ * (与 MAX_AMOUNTS_PER_TITLE 一致), unit 保留原文 (亿元/万元/元/股/万股).
+ * 与 extractAmounts 的输出结构一一对应, 不重新归一化金额单位.
+ *
+ * 空数组 → ''; 元素 amount 非 finite/<=0 时跳过该条 (与 computePriority 同款防御).
+ *
+ * pure, 无 I/O, 单测覆盖.
+ */
+export function formatAmountsDetailed(
+  amounts: Array<{ label: string; amount: number; unit: string }> | null | undefined
+): string {
+  if (!Array.isArray(amounts) || amounts.length === 0) return '';
+  const out: string[] = [];
+  for (const a of amounts) {
+    if (!a || typeof a.amount !== 'number' || !Number.isFinite(a.amount) || a.amount <= 0) {
+      continue;
+    }
+    const label =
+      typeof a.label === 'string' && a.label.trim().length > 0 ? a.label.trim() : '金额';
+    const unit = typeof a.unit === 'string' && a.unit.length > 0 ? a.unit : '元';
+    out.push(`${label} ${a.amount} ${unit}`);
+    if (out.length >= MAX_AMOUNTS_PER_TITLE) break;
+  }
+  return out.join(' + ');
+}
+
+/**
+ * US-030 ANN-006: 把 entities[] 渲染成 entities_detailed 字符串.
+ *
+ * 输出形如 "控股股东(持股 12.34%) + 董事长 + 大股东"; 同一标题最多渲染前
+ * MAX_ENTITIES_PER_TITLE 个实体 (与 extractEntities 上限一致).
+ *
+ * - role + name placeholder (extractEntities 启发式): 渲染成 "<role>"
+ *   (因 name === role, 重复无信息量);
+ * - role + 真姓名 (远端 AI 透传): 渲染成 "<role> <name>"
+ *   (e.g. "控股股东 张三");
+ * - holding_pct 存在: 后缀 "(持股 X%)";
+ * - change_type 不在摘要中渲染 (避免与 event_type 重复, 已在 event_type 段表达).
+ *
+ * 空数组 → ''; 缺 role 的元素跳过 (与 normalizeEntities drop 同款).
+ *
+ * pure, 无 I/O, 单测覆盖.
+ */
+export function formatEntitiesDetailed(entities: AnnouncementEntity[] | null | undefined): string {
+  if (!Array.isArray(entities) || entities.length === 0) return '';
+  const out: string[] = [];
+  for (const e of entities) {
+    if (!e || typeof e !== 'object') continue;
+    const role = typeof e.role === 'string' ? e.role.trim() : '';
+    if (!role) continue;
+    const name = typeof e.name === 'string' ? e.name.trim() : '';
+    // name === role → placeholder 仅渲染 role; 真姓名 → 'role name'
+    let piece = name && name !== role ? `${role} ${name}` : role;
+    if (typeof e.holding_pct === 'number' && Number.isFinite(e.holding_pct) && e.holding_pct > 0) {
+      piece += `(持股 ${e.holding_pct}%)`;
+    }
+    out.push(piece);
+    if (out.length >= MAX_ENTITIES_PER_TITLE) break;
+  }
+  return out.join(' + ');
+}
+
+/**
+ * US-030 ANN-006: 把 earnings_grade 渲染成 grade_detailed 字符串.
+ *
+ * 输出形如 "业绩 增长 30% (中等)"; null 时 → '' (与 "非业绩公告" 语义对齐, 不渲染段).
+ *
+ * - direction 映射: increase=增长 / decrease=下滑 / loss=亏损;
+ * - yoy_pct 存在: 后缀 "X%" (signedYoy 由 extractEarningsGrade 已带符号,
+ *   渲染时取绝对值, 方向走 direction 字段, 避免 "下滑 -30%" 双重负号);
+ * - magnitude 映射: minor=小幅 / moderate=中等 / major=重大.
+ *
+ * pure, 无 I/O, 单测覆盖.
+ */
+export function formatEarningsGradeDetailed(grade: EarningsGrade | null | undefined): string {
+  if (!grade || typeof grade !== 'object') return '';
+  const dirLabel =
+    grade.direction === 'increase'
+      ? '增长'
+      : grade.direction === 'decrease'
+      ? '下滑'
+      : grade.direction === 'loss'
+      ? '亏损'
+      : null;
+  if (!dirLabel) return '';
+  const magLabel =
+    grade.magnitude === 'minor'
+      ? '小幅'
+      : grade.magnitude === 'moderate'
+      ? '中等'
+      : grade.magnitude === 'major'
+      ? '重大'
+      : null;
+  let s = `业绩 ${dirLabel}`;
+  if (typeof grade.yoy_pct === 'number' && Number.isFinite(grade.yoy_pct)) {
+    s += ` ${Math.abs(grade.yoy_pct)}%`;
+  }
+  if (magLabel) s += ` (${magLabel})`;
+  return s;
+}
+
+/**
+ * US-030 ANN-006: buildStructuredSummary — 把 5 段信息拼成单行结构化摘要.
+ *
+ * 替换 heuristicSummarize v1 ("[情绪] 标题截断"). 输出范式:
+ *   "[情绪][event_type] 原标题; 实体段; 金额段; grade 段"
+ * 各段缺失自动跳过 (含分隔符), 不会出现 "; ;" 双分隔.
+ *
+ * 段落顺序与优先级 (从前到后, 截断时尾部段落先被砍):
+ *   1. **[情绪]** — 必填段, 与 heuristicSummarize v1 兼容 (前端 grep '[正面]' 不失效).
+ *   2. **[event_type]** — event_type 非空且非 '其它' 时插入 (e.g. "[业绩]", "[减持]").
+ *      '其它' / null 不渲染 — 区别于 "已分类为其它事件" 与 "未跑过分类" 的语义,
+ *      但都不应在摘要里污染信息密度.
+ *   3. **原标题** — 全文保留 (不截断, 截断仅在尾段); UI 第一眼看完整标题.
+ *   4. **实体段** (formatEntitiesDetailed): 标题已含实体角色时仍重复 — 用户视角是
+ *      "结构化高亮", 不去重以保持 grep 友好.
+ *   5. **金额段** (formatAmountsDetailed).
+ *   6. **grade 段** (formatEarningsGradeDetailed): 业绩公告才渲染.
+ *
+ * 长度控制: 最终拼好后, 若长度 > MAX_STRUCTURED_SUMMARY_LEN, 末尾截断 +
+ * '...' 显式提示. 标题段不被特别截断 (与 v1 不同 — v1 单独截 50 标题, v2 整体截 100).
+ *
+ * 边界:
+ *   - title null/empty/whitespace → 返 null (与 v1 同款);
+ *   - 所有 optional 段都缺 → 与 v1 输出兼容 ("[情绪] 标题");
+ *   - sentiment 必填, caller 必须先调 heuristicSentiment / normalizeSentiment 兜底.
+ *
+ * AC: "输出含 entities" — testBuildStructuredSummary* 用 entities=[{role:'控股股东'}]
+ *     的标题断言输出 includes '控股股东' (与 heuristicSummarize v1 输出对比).
+ *
+ * pure, 无 I/O, 单测覆盖.
+ */
+export function buildStructuredSummary(input: BuildStructuredSummaryInput): string | null {
+  if (!input || !input.title) return null;
+  const text = String(input.title).trim();
+  if (!text) return null;
+  const sentiment: SentimentValue = input.sentiment || '中性';
+  const eventType = input.event_type ?? null;
+
+  // 1. [情绪][event_type] 前缀
+  const tags: string[] = [`[${sentiment}]`];
+  if (eventType !== null && eventType !== '其它') {
+    tags.push(`[${eventType}]`);
+  }
+  // 2. 原标题段 (前缀 + 标题之间一个空格)
+  let summary = `${tags.join('')} ${text}`;
+
+  // 3-5. 追加结构化段 (实体 / 金额 / grade), 各段缺失自动跳过
+  const tail: string[] = [];
+  const entitiesStr = formatEntitiesDetailed(input.entities);
+  if (entitiesStr) tail.push(entitiesStr);
+  const amountsStr = formatAmountsDetailed(input.amounts);
+  if (amountsStr) tail.push(amountsStr);
+  const gradeStr = formatEarningsGradeDetailed(input.earnings_grade);
+  if (gradeStr) tail.push(gradeStr);
+
+  if (tail.length > 0) {
+    summary += STRUCTURED_SUMMARY_SEPARATOR + tail.join(STRUCTURED_SUMMARY_SEPARATOR);
+  }
+
+  // 6. 长度截断 + '...' 提示
+  if (summary.length > MAX_STRUCTURED_SUMMARY_LEN) {
+    summary = summary.slice(0, MAX_STRUCTURED_SUMMARY_LEN) + '...';
+  }
+  return summary;
 }
 
 /**
@@ -1198,6 +1426,189 @@ export function extractEarningsGrade(title: string | null | undefined): Earnings
   return { direction, magnitude, yoy_pct: signedYoy };
 }
 
+// ---------------------------------------------------------------------------
+// US-029 ANN-005: computePriority — 综合 event_type + sentiment + earnings_grade + amounts
+// ---------------------------------------------------------------------------
+
+/**
+ * US-029 ANN-005: computePriority 决策表对齐阈值 — 金额触发 critical/high 的"重大资金量级".
+ *
+ * 单位规则: extractAmounts 返回 unit ∈ {'亿元','万元','元','股','万股'};
+ * 仅 '亿元' / '万元' 参与金额优先级计算 (股数量级与"金额"语义不同).
+ * 1 亿元 = 10000 万元; 阈值用 "万元" 内部统一比较.
+ *
+ * - MAJOR_AMOUNT_WAN: 重大资金阈值, 100000 万元 = 10 亿元
+ *   (担保 / 减持 / 重组单笔 ≥10 亿元 通常触发监管关注 + 市场显著反应).
+ * - HIGH_AMOUNT_WAN: 高金额阈值, 30000 万元 = 3 亿元
+ *   (≥3 亿元已属重大金额 high 信号, 用于 event_type='担保'/'减持' + 负面情绪叠加).
+ *
+ * 改动这两个常量会影响 critical / high 触发率, 务必同步更新单测 (testComputePriorityAmount*).
+ */
+export const PRIORITY_AMOUNT_THRESHOLDS_WAN = Object.freeze({
+  /** ≥10 亿元 触发 critical (担保/减持/重组 重大资金) */
+  MAJOR_WAN: 100000,
+  /** ≥3 亿元 触发 high (高金额参考线) */
+  HIGH_WAN: 30000,
+} as const);
+
+/**
+ * US-029 ANN-005: computePriority 输入 — 4 个维度 (event_type / sentiment / earnings_grade / amounts).
+ *
+ * - event_type: classifyEventType (US-026) 输出 (null = 未分类);
+ * - sentiment: heuristicSentiment / normalizeSentiment (US-059) 输出;
+ * - earnings_grade: extractEarningsGrade (US-028) 输出, null = 非业绩公告;
+ * - amounts: extractAmounts (US-059) 输出, [] = 标题无金额.
+ *
+ * 入参全部 optional / nullable — caller 不必每次都全填 (e.g. payload 路径 grade 默认 null).
+ * pure: 输出 100% 由 input 决定, 无 I/O, 无随机.
+ */
+export interface ComputePriorityInput {
+  event_type?: AnnouncementEventType | null;
+  sentiment?: SentimentValue | null;
+  earnings_grade?: EarningsGrade | null;
+  amounts?: Array<{ label?: string; amount: number; unit: string }>;
+}
+
+/**
+ * US-029 ANN-005: computePriority — 综合 4 维度落 priority 4 档.
+ *
+ * 决策表 (优先级从高到低短路, 命中即返):
+ *
+ *   1. **critical**:
+ *      - event_type='处罚' (强监管 / 立案 / 重大违规, 任意 sentiment 都 critical);
+ *      - earnings_grade.direction='loss' (亏损 terminal state, 任意金额都 critical);
+ *      - earnings_grade.magnitude='major' + direction='decrease' (业绩同比下降 ≥100%);
+ *      - event_type ∈ {'重组','担保','减持'} + sentiment='负面' + 金额 ≥ MAJOR_AMOUNT (10 亿元).
+ *
+ *   2. **high**:
+ *      - earnings_grade.magnitude='major' + direction='increase' (业绩翻倍利好);
+ *      - earnings_grade.magnitude='moderate' + direction='decrease' (中等业绩下滑, 30%-100%);
+ *      - event_type='减持' + sentiment='负面' (减持 + 负面 = 减持兑现, 高优先级提醒);
+ *      - event_type='重组' + sentiment∈{'正面','负面'} (重组事件本身重大, 中性除外);
+ *      - event_type='担保' + sentiment='负面' (对外担保 + 负面 = 风险担保);
+ *      - event_type ∈ {'重组','担保','减持'} + 金额 ≥ HIGH_AMOUNT (3 亿元).
+ *
+ *   3. **medium**:
+ *      - event_type ∈ {'业绩','重组','减持','担保','解禁'} (具名事件, 任意 sentiment);
+ *      - earnings_grade 非空 + magnitude='minor' (小幅业绩波动);
+ *      - sentiment='负面' (一般负面公告, 即使无 event_type 也提一级);
+ *      - 金额 ≥ HIGH_AMOUNT (3 亿元), 不强求 event_type.
+ *
+ *   4. **low** (默认):
+ *      - event_type='其它' / null + sentiment∈{'中性','正面'} + 无业绩 grade + 金额 < HIGH_AMOUNT;
+ *      - 历史回填 / 不识别的常规公告兜底, 不触发飞书 push.
+ *
+ * 设计原则:
+ *   - **safe-default low** — 任何无法确定的输入 fallback 'low' 不上推
+ *     (与 normalizePriority 同思想 — 避免 fuzzy AI 输出泄漏到 critical 引发飞书 push 风暴);
+ *   - **金额单位归一化** — 仅 '亿元'/'万元' 参与, '股'/'万股' 是数量不是金额, 忽略;
+ *     单位归一到 "万元" 比较 (1 亿元 = 10000 万元), 取 amounts 中最大那一笔;
+ *   - **earnings 优先级强于 event_type** — 同标题既是业绩又含 event_type, 业绩量级决定优先级
+ *     (实务: 业绩公告自带方向 + 数字, 信号比类别更精确);
+ *   - **决策表 readable + 测试覆盖** — testComputePriority* 9 模块覆盖每个分支单 case + 优先级组合.
+ *
+ * AC: 单测覆盖 (testComputePriority*) — 9 模块 / ≥35 case / 决策表每条规则单独验证.
+ *
+ * pure, 无 I/O, 单测覆盖.
+ */
+export function computePriority(input: ComputePriorityInput): AnnouncementPriority {
+  const eventType = input.event_type ?? null;
+  const sentiment = input.sentiment ?? null;
+  const earnings = input.earnings_grade ?? null;
+  const amounts = Array.isArray(input.amounts) ? input.amounts : [];
+
+  // 金额归一化到 "万元" 后取最大那一笔 (仅 '亿元'/'万元' 参与, 股数量忽略)
+  let maxAmountWan = 0;
+  for (const a of amounts) {
+    if (!a || typeof a.amount !== 'number' || !Number.isFinite(a.amount) || a.amount <= 0) {
+      continue;
+    }
+    let wan = 0;
+    if (a.unit === '亿元') {
+      wan = a.amount * 10000;
+    } else if (a.unit === '万元') {
+      wan = a.amount;
+    } else {
+      // '元'/'股'/'万股' 不参与 — '元' 太小 (公告通常以万/亿计), '股'/'万股' 是数量不是金额
+      continue;
+    }
+    if (wan > maxAmountWan) maxAmountWan = wan;
+  }
+
+  // ---------------------- 1. critical ----------------------
+  // 处罚 → 强监管 critical (与 RealtimeAlertDispatcher critical 通道对齐 — 5min 飞书 push)
+  if (eventType === '处罚') return 'critical';
+
+  // 业绩亏损 → critical (terminal state, 无关金额)
+  if (earnings && earnings.direction === 'loss') return 'critical';
+
+  // 业绩大幅下滑 → critical (≥100% 同比下降 = 业绩崩塌信号)
+  if (earnings && earnings.direction === 'decrease' && earnings.magnitude === 'major') {
+    return 'critical';
+  }
+
+  // 重组/担保/减持 + 负面 + 重大金额 → critical
+  if (
+    (eventType === '重组' || eventType === '担保' || eventType === '减持') &&
+    sentiment === '负面' &&
+    maxAmountWan >= PRIORITY_AMOUNT_THRESHOLDS_WAN.MAJOR_WAN
+  ) {
+    return 'critical';
+  }
+
+  // ---------------------- 2. high ----------------------
+  // 业绩翻倍利好 → high
+  if (earnings && earnings.direction === 'increase' && earnings.magnitude === 'major') {
+    return 'high';
+  }
+
+  // 业绩中等下滑 (30%-100%) → high
+  if (earnings && earnings.direction === 'decrease' && earnings.magnitude === 'moderate') {
+    return 'high';
+  }
+
+  // 减持 + 负面 → high (减持兑现, 利空)
+  if (eventType === '减持' && sentiment === '负面') return 'high';
+
+  // 重组 + 非中性 sentiment → high (重组本身重大, 中性除外让 medium 兜底)
+  if (eventType === '重组' && (sentiment === '正面' || sentiment === '负面')) return 'high';
+
+  // 担保 + 负面 → high (对外担保 + 负面 = 风险担保)
+  if (eventType === '担保' && sentiment === '负面') return 'high';
+
+  // 重组/担保/减持 + 高金额 (无关 sentiment) → high
+  if (
+    (eventType === '重组' || eventType === '担保' || eventType === '减持') &&
+    maxAmountWan >= PRIORITY_AMOUNT_THRESHOLDS_WAN.HIGH_WAN
+  ) {
+    return 'high';
+  }
+
+  // ---------------------- 3. medium ----------------------
+  // 业绩 grade 存在 (minor/moderate/major 增长除外已落 high) → medium
+  if (earnings) return 'medium';
+
+  // 具名 event_type (业绩/重组/减持/担保/解禁) → medium
+  if (
+    eventType === '业绩' ||
+    eventType === '重组' ||
+    eventType === '减持' ||
+    eventType === '担保' ||
+    eventType === '解禁'
+  ) {
+    return 'medium';
+  }
+
+  // 负面 sentiment (无 event_type) → medium 提一级
+  if (sentiment === '负面') return 'medium';
+
+  // 高金额 (≥3 亿元) → medium (常规公告大额仍提一级)
+  if (maxAmountWan >= PRIORITY_AMOUNT_THRESHOLDS_WAN.HIGH_WAN) return 'medium';
+
+  // ---------------------- 4. low (默认) ----------------------
+  return 'low';
+}
+
 /**
  * US-025 ANN-001: 规范化 entities — 任何 raw 输入兜底成 AnnouncementEntity[].
  * - 非 array → [];
@@ -1244,6 +1655,7 @@ export function buildNLPResultFromPayload(
     const err = data?.error || 'AI 远端调用失败';
     // 走启发式 fallback
     const fallbackSentiment = heuristicSentiment(row.original_title);
+    const fallbackAmounts = extractAmounts(row.original_title);
     return {
       announce_date: row.announce_date,
       stock_code: row.stock_code,
@@ -1251,9 +1663,16 @@ export function buildNLPResultFromPayload(
       original_title: row.original_title,
       announcement_type: row.announcement_type,
       url: row.url,
-      summary: heuristicSummarize(row.original_title, fallbackSentiment),
+      // US-030 ANN-006: payload FAILED 分支走启发式 fallback, 但只填可信维度
+      // (sentiment + amounts), 不调 classifyEventType / extractEntities / extractEarningsGrade
+      // (与 US-025 schema 先行的 fail-safe 默认契约一致 — FAILED 路径不应渗漏 event_type 提升 priority).
+      summary: buildStructuredSummary({
+        title: row.original_title,
+        sentiment: fallbackSentiment,
+        amounts: fallbackAmounts,
+      }),
       sentiment: fallbackSentiment,
-      key_amounts_json: extractAmounts(row.original_title),
+      key_amounts_json: fallbackAmounts,
       key_topics_json: extractTopics(row.original_title),
       // US-025 ANN-001: 启发式 fallback 时本 story 默认占位, ANN-002~005 实现后会真填.
       event_type: null,
@@ -1269,10 +1688,6 @@ export function buildNLPResultFromPayload(
 
   // 成功: 优先用 AI 字段, 缺失字段用启发式补
   const sentiment = normalizeSentiment(data.sentiment);
-  const summary =
-    typeof data.summary === 'string' && data.summary.trim().length > 0
-      ? data.summary.trim()
-      : heuristicSummarize(row.original_title, sentiment);
   const keyAmounts = Array.isArray(data.key_amounts)
     ? data.key_amounts
         .filter(a => a && typeof a.amount === 'number' && Number.isFinite(a.amount))
@@ -1288,6 +1703,22 @@ export function buildNLPResultFromPayload(
         .filter(t => typeof t === 'string' && t.trim().length > 0)
         .slice(0, MAX_TOPICS_PER_TITLE)
     : extractTopics(row.original_title);
+  const normalizedEventType = normalizeEventType(data.event_type);
+  const normalizedEntities = normalizeEntities(data.entities);
+  // US-030 ANN-006: AI summary 优先, 缺失时走 buildStructuredSummary 拼结构化摘要
+  // (与 heuristicSummarize v1 不同, 含 entities + amounts_detailed + grade 段).
+  // AI 已自带 summary 时透传 (远端 AI 的 NLP 比启发式更连贯, 不强行覆盖).
+  const summary =
+    typeof data.summary === 'string' && data.summary.trim().length > 0
+      ? data.summary.trim()
+      : buildStructuredSummary({
+          title: row.original_title,
+          sentiment,
+          event_type: normalizedEventType,
+          entities: normalizedEntities,
+          amounts: keyAmounts,
+          earnings_grade: extractEarningsGrade(row.original_title),
+        });
 
   return {
     announce_date: row.announce_date,
@@ -1300,10 +1731,23 @@ export function buildNLPResultFromPayload(
     sentiment,
     key_amounts_json: keyAmounts,
     key_topics_json: keyTopics,
-    // US-025 ANN-001: 透传远端 AI 输出 (经归一); 缺失则 ANN-002~005 实现后由 caller 二次填充.
-    event_type: normalizeEventType(data.event_type),
-    priority: normalizePriority(data.priority),
-    entities: normalizeEntities(data.entities),
+    // US-025 ANN-001: 透传远端 AI 输出 (经归一); 缺失保留默认 (null / low / []) 让 schema 兜底.
+    // US-029 ANN-005: priority 优先用远端 AI 字段 (经 normalizePriority), 缺失走 computePriority 兜底
+    //   (与 sentiment/keyAmounts 缺失走启发式同款 "AI 优先 + 本地兜底" 模式).
+    //   注意: event_type 不在本路径用 classifyEventType 兜底 — 已实现的远端 AI 契约是
+    //   "未识别 → 不填" (语义 = null), 本地补 '其它' 会与 normalize 默认契约冲突;
+    //   computePriority 内部接受 null event_type 仍能落出合理 priority.
+    event_type: normalizedEventType,
+    priority:
+      data.priority !== undefined && data.priority !== null && String(data.priority).trim() !== ''
+        ? normalizePriority(data.priority)
+        : computePriority({
+            event_type: normalizedEventType ?? classifyEventType(row.original_title),
+            sentiment,
+            earnings_grade: extractEarningsGrade(row.original_title),
+            amounts: keyAmounts,
+          }),
+    entities: normalizedEntities,
     status: 'completed',
     nlp_engine: NLP_ENGINES.TRADING_AGENTS,
     error: null,
@@ -1317,6 +1761,19 @@ export function buildNLPResultFromPayload(
  */
 export function buildHeuristicNLPResult(row: AnnouncementReportRow): AnnouncementNLPRecord {
   const sentiment = heuristicSentiment(row.original_title);
+  // US-026/027/028/029: 4 个 pure helper 在 builder 内统一调用一次,
+  // 让 computePriority 拿到完整 4 维度 (event_type + sentiment + earnings_grade + amounts).
+  const eventType = classifyEventType(row.original_title);
+  const entities = extractEntities(row.original_title);
+  const amounts = extractAmounts(row.original_title);
+  const earningsGrade = extractEarningsGrade(row.original_title);
+  // US-029 ANN-005: 接入 computePriority 替代默认 'low' — 综合决策表落 4 档.
+  const priority = computePriority({
+    event_type: eventType,
+    sentiment,
+    earnings_grade: earningsGrade,
+    amounts,
+  });
   return {
     announce_date: row.announce_date,
     stock_code: row.stock_code,
@@ -1324,17 +1781,23 @@ export function buildHeuristicNLPResult(row: AnnouncementReportRow): Announcemen
     original_title: row.original_title,
     announcement_type: row.announcement_type,
     url: row.url,
-    summary: heuristicSummarize(row.original_title, sentiment),
+    // US-030 ANN-006: 替换 heuristicSummarize — buildStructuredSummary 含 5 段
+    // (情绪 + event_type + 标题 + entities + amounts_detailed + earnings_grade),
+    // 与启发式 builder 内 4 helper 同款一次调用统一传入.
+    summary: buildStructuredSummary({
+      title: row.original_title,
+      sentiment,
+      event_type: eventType,
+      entities,
+      amounts,
+      earnings_grade: earningsGrade,
+    }),
     sentiment,
-    key_amounts_json: extractAmounts(row.original_title),
+    key_amounts_json: amounts,
     key_topics_json: extractTopics(row.original_title),
-    // US-025 ANN-001: 启发式默认占位 — ANN-002 / 003 / 005 (pure helper) 落地后,
-    // 本 builder 会引入对应函数填充, 但 schema 必须现在就有字段保留位以免 saveSummaries 缺列报错.
-    // US-026 ANN-002: 已接入 classifyEventType — 启发式标题分类落 event_type (null=空标题).
-    event_type: classifyEventType(row.original_title),
-    priority: 'low',
-    // US-027 ANN-003: 已接入 extractEntities — 启发式标题角色/人名/持股比例抽取 (空标题 → []).
-    entities: extractEntities(row.original_title),
+    event_type: eventType,
+    priority,
+    entities,
     status: 'completed',
     nlp_engine: NLP_ENGINES.HEURISTIC,
     error: null,
@@ -1448,6 +1911,34 @@ export class AnnouncementNLPService {
         }
       }
 
+      // US-031 ANN-007: critical 公告 5min 飞书 push.
+      // lazy-require 防循环依赖 (CriticalAnnouncementPushService 反向 import AnnouncementNLPRecord);
+      // 顶层 try/catch 兜底 — push 失败 fail-OPEN 不影响 syncDate 主流程返回.
+      let criticalPushSummary: SyncDateResult['critical_push'] | undefined;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { criticalAnnouncementPushService } = require('./CriticalAnnouncementPushService');
+        const pushRes = await criticalAnnouncementPushService.pushBatch(records, {
+          dry_run: options.dry_run === true,
+        });
+        if (pushRes.matched > 0 || pushRes.scanned > 0) {
+          criticalPushSummary = {
+            matched: pushRes.matched,
+            attempted: pushRes.attempted,
+            succeeded: pushRes.succeeded,
+            failed: pushRes.failed,
+            skipped_reason: pushRes.skipped_reason,
+          };
+        }
+      } catch (pushErr: any) {
+        // fail-OPEN — push 通道任何异常都吞掉, 仅日志
+        logger.warn(
+          `AnnouncementNLP.syncDate(${date}) critical push failed (fail-OPEN): ${
+            pushErr?.message || pushErr
+          }`
+        );
+      }
+
       logger.info(
         `AnnouncementNLP: ${records.length} rows upserted for ${date} (symbol=${symbol}, ai=${useAI})`
       );
@@ -1459,6 +1950,7 @@ export class AnnouncementNLPService {
         by_sentiment: bySentiment,
         by_status: byStatus,
         skipped: false,
+        ...(criticalPushSummary ? { critical_push: criticalPushSummary } : {}),
       };
     } catch (err: any) {
       // 双重防御外层 catch

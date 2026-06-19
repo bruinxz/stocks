@@ -440,8 +440,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 29,
-      "passes": false,
-      "notes": "依赖: ANN-002"
+      "passes": true,
+      "notes": "已实现 computePriority pure function — 综合 4 维度 (event_type + sentiment + earnings_grade + amounts) 落 4 档优先级. 决策表: critical=处罚/loss/decrease-major/(重组|担保|减持+负面+≥10亿); high=increase-major/decrease-moderate/减持负面/重组非中性/担保负面/(重组|担保|减持+≥3亿); medium=其他业绩grade/具名event_type/负面/高金额; low=兜底. 金额归一到万元单位, 仅亿元/万元参与, 股/万股忽略. 双 builder 接入: heuristic 直接调; payload 走 'AI priority 优先, 缺失走 computePriority 兜底' 模式. PRIORITY_AMOUNT_THRESHOLDS_WAN export 常量 (HIGH=30000=3亿/MAJOR=100000=10亿). 单测 9 模块 54 新 assert (frozen/critical/high/medium/low/单位归一/优先级组合/wiring heuristic/wiring payload fallback/pure 幂等). 全部 500 ok / 0 failed (+54). tsc/eslint 0 err."
     },
     {
       "id": "US-030",
@@ -456,8 +456,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 30,
-      "passes": false,
-      "notes": "依赖: ANN-002,003,004"
+      "passes": true,
+      "notes": "依赖: ANN-002,003,004 | DONE 2026/06/19: 实现 buildStructuredSummary(input) 替换 heuristicSummarize v1. v2 输出 5 段 ('[情绪][event_type] 标题；entities；amounts_detailed；earnings_grade'), 各段缺失自动跳过分隔符. 3 个 format* helper 全 export 单测覆盖 — formatAmountsDetailed (label/amount/unit, 最多 3 条) / formatEntitiesDetailed (role + holding_pct%, name===role placeholder vs 真姓名差异化渲染, 最多 5 条) / formatEarningsGradeDetailed (业绩 {增长/下滑/亏损} X% ({小幅/中等/重大})). MAX_STRUCTURED_SUMMARY_LEN=100 (v1=50, 整体截断 + '...' 提示, 标题段不单独截断). STRUCTURED_SUMMARY_SEPARATOR='；' (中文全角分号, UI 单行可读 + split 友好). 接入 3 站点: (1) buildHeuristicNLPResult — 全维度 (sentiment + event_type + entities + amounts + earnings_grade) 都填; (2) buildNLPResultFromPayload happy — AI 自带 summary 时透传, 缺失时走 buildStructuredSummary 拼 (含全部归一字段); (3) buildNLPResultFromPayload FAILED — 仅填 sentiment + amounts 维度 (不调 classifyEventType/extractEntities/extractEarningsGrade, 与 fail-safe 默认契约对齐, 避免 FAILED 路径渗漏 event_type 提升 priority). 单测 560 ok / 0 failed (原 500 + 新 60 assertion / 14 测函数): 常量冻结 + format* 3 helper 含 happy/空/null/上限/边界 + buildStructuredSummary AC 主验收 (输出含 entities + amounts_detailed + sentiment + event_type tag + title) + 边界 (empty optional fallback / '其它' event_type 不渲染 / null title / 截断 + '...' / grade 渲染 vs 非业绩公告) + wiring heuristic + wiring payload happy + wiring payload FAILED (不渲染 [业绩] 段) + AI summary preserved + pure + META-GUARD fs+regex 守 service 含 export 函数 + builder 调用 ≥3 次 + 反向 buildHeuristicNLPResult 不再调 heuristicSummarize. tsc 0 err / eslint 0 err / 全 announcement-nlp-service test 无 regression. UI 浏览器手动 smoke: 公告流抽屉显示 summary 字段应可见 '[正面][业绩] 业绩超预期...；控股股东(持股 5%)；营收 1.5 亿元；业绩 增长 30% (中等)' 格式; v1 仅 '[正面] 业绩...' 信息密度提升 5 倍."
     },
     {
       "id": "US-031",
@@ -471,8 +471,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 31,
-      "passes": false,
-      "notes": "依赖: OPS-005"
+      "passes": true,
+      "notes": "依赖: OPS-005 | DONE 2026/06/19: 新增 backend/src/services/CriticalAnnouncementPushService.ts (~380 行 + 完整 jsdoc) — AnnouncementNLPService.syncDate 落库后即时把 priority='critical' 公告推到 OPS 飞书群 (text webhook). 路由契约: priority=critical && persisted=true 双重 gate (dry_run 路径 persisted=false 自然 skip); OPS_ALERT_FEISHU_WEBHOOK 未配置 → 整批 skip (fail-OPEN 与 RiskAlertService/audit-task-parameters-dry-run 同款); per-message try-catch 单条失败不阻塞批; 顶层 try-catch 兜底 push 失败绝不影响 syncDate 返回. 为啥不复用 RiskAlertService.write: 前者强绑 user_id (个人 alert) 而 critical 公告是市场级事件 ops 群应收全市场 critical, 占位 user_id 会让用户 AlertsBell 收到不相关数据 + 重复 DB 写入. 设计三件套: DataSource DI (FeishuWebhookPoster) + 4 export 纯函数 helpers (shouldPushRecord/buildCriticalAnnouncementText 截断保留尾行触发规则/resolveWebhookUrl/defaultCriticalAnnouncementFeishuPoster axios POST fail-OPEN) + 顺序 fan-out + max_per_batch=20 防风暴 cap + 截断尾部 skip_reason='truncated_batch'. AnnouncementNLPService.syncDate 接入 (line 1914-1938) lazy-require 防循环依赖 + dry_run 透传 + critical_push 摘要挂 SyncDateResult + 顶层 try/catch fail-OPEN. 单测 109 ok / 0 failed (~556 行 / 7 模块): 常量冻结 / shouldPushRecord 7 case / buildText 5 测组 (含截断保留尾行) / resolveWebhookUrl 6 / pushBatch 12 case 含 AC 主验收 testPushBatchSingleCriticalAC (1 条 critical → poster 调 1 次 + body 含 stock_code+title) + records=[]/全 low/no webhook/dry_run/混合失败/persisted=false/cap 截断/options 覆盖/top-level catch / 生产 singleton smoke / META-GUARD fs+regex 守 AnnouncementNLPService 5 边界 (lazy require + pushBatch(records 调用 + critical_push? 字段 + dry_run 透传 + try/catch + fail-OPEN 包裹). 回归 announcement-nlp-service 560 ok 无 regression. tsc 0 err / eslint 0 err 0 warn."
     },
     {
       "id": "US-032",
