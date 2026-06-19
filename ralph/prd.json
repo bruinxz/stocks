@@ -1088,8 +1088,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 70,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "AlertsBell — pure helper (alertsBellHelpers.ts, 14 exports) + AlertsBell.tsx (Header bell w/ 60s poll, fail-OPEN, navigate to /workspace/today?tab=risk_center) + App.tsx Header wire + TodayWorkspace.tsx ?tab= query handling. backend/tests/services/alerts-bell-helpers.test.ts 90 assert / 0 failed. META-GUARD守 helper / Bell tsx / App.tsx / TodayWorkspace 4 文件 wiring."
     },
     {
       "id": "US-071",

@@ -35,7 +35,7 @@ import {
   ThunderboltOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -116,15 +116,37 @@ const { RangePicker } = DatePicker;
  * state 里；refresh 按钮重新拉取；一键应用按钮成功后跳转到 /workspace/portfolio。
  */
 
+// US-070 [FE-031]: tab keys 抽到 module-scope 让 useEffect deps 干净 +
+// AlertsBell 跳转 query 校验有单一事实源.
+const TODAY_WORKSPACE_TABS: WorkspaceTab[] = [
+  { key: 'signals', label: '今日信号', icon: <ThunderboltOutlined /> },
+  { key: 'events', label: '关键事件', icon: <BellOutlined /> },
+  { key: 'alerts', label: '风险提醒', icon: <AlertOutlined /> },
+  { key: 'risk_center', label: '风控中心', icon: <SafetyCertificateOutlined /> },
+];
+const TODAY_WORKSPACE_TAB_KEYS = TODAY_WORKSPACE_TABS.map(t => t.key);
+
 const TodayWorkspace: React.FC = () => {
   const navigate = useNavigate();
-  const tabs: WorkspaceTab[] = [
-    { key: 'signals', label: '今日信号', icon: <ThunderboltOutlined /> },
-    { key: 'events', label: '关键事件', icon: <BellOutlined /> },
-    { key: 'alerts', label: '风险提醒', icon: <AlertOutlined /> },
-    { key: 'risk_center', label: '风控中心', icon: <SafetyCertificateOutlined /> },
-  ];
+  const location = useLocation();
+  // US-070 [FE-031]: tab keys 静态 — 用 module-scope const 让 useMemo 不需要 deps,
+  // 同时 AlertsBell 点击带的 ?tab= query 也只能落在这 4 个 key 里. 字符串数组
+  // inline 在 JSX 之外, 防 React Hook deps lint 抱怨 + 重渲不重建.
+  const tabs: WorkspaceTab[] = TODAY_WORKSPACE_TABS;
   const [activeKey, setActiveKey] = useState('signals');
+
+  // US-070 [FE-031] AlertsBell 跳转支持 — 顶部 Bell 点击会带 `?tab=risk_center`,
+  // 进入本页时应用 query 一次, 之后用户切 tab 不再被 query 覆盖.
+  // 与 SettingsWorkspace 同款 "一次性应用 query" 模式 (refresh 即失效, 防与
+  // 用户手动切 tab 抢状态). useLocation().search 变化时重新应用 (允许用户从
+  // Bell 反复回到风控中心).
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const tab = params.get('tab');
+    if (tab && TODAY_WORKSPACE_TAB_KEYS.includes(tab)) {
+      setActiveKey(tab);
+    }
+  }, [location.search]);
 
   const [data, setData] = useState<TodaySignalsData | null>(null);
   const [loading, setLoading] = useState(false);

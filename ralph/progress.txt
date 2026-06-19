@@ -1959,3 +1959,49 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - Useful context: PoweroffOutlined icon 视觉对应"红色拉闸"语义, 比通用 SettingOutlined 更直观; 用户 PRD 想要的"风险等级 high 二次确认"门槛在 buildKillSwitchConfirmConfig() 里完全 helper 决定, UI 不重新判定.
   - Browser verification: 未在浏览器中手动验证 (无 MCP browser tools), 但 helper 100% 单测 + UI 纯渲染层用 antd Switch + Table 标准组件, 故风险低; 后续可在 SettingsWorkspace 加 Playwright 集成测试覆盖 toggle 流程.
 ---
+
+## 2026/06/20 - US-070
+- 实现 [FE-031] AlertsBell 顶 nav bar — 顶部 Header 全局浮动告警铃铛, 60s 轮询未读告警数, 红 Badge ≥10 critical, 点击跳风控中心 tab.
+- Files changed:
+  - frontend/src/pages/workspace/alertsBellHelpers.ts (新, ~135 行 + 完整 jsdoc):
+    * 7 export 常量 (MAX_BADGE_COUNT / CRITICAL_UNREAD_THRESHOLD / DEFAULT/MIN/MAX_POLL_INTERVAL_MS / ALERTS_BELL_TARGET_PATH / ALERTS_BELL_TARGET_TAB_KEY)
+    * type AlertsBellSeverity = 'none' | 'normal' | 'critical'
+    * 6 pure helper: normalizeUnreadCount / classifyAlertsBellSeverity / formatBadgeText / buildBellTooltip / clampPollInterval / buildAlertsBellHref
+    * 全 null/undefined/NaN/负数/Infinity 兜底; clampPollInterval 限 [30s, 5min] 防 DDoS
+  - frontend/src/components/layout/AlertsBell.tsx (新, ~140 行):
+    * useEffect 立即拉一次 + window.setInterval(60s) 轮询 listRiskAlerts({limit:1, page:1}) 取 unread_count (response ≤ 200B)
+    * catch 不清零 unreadCount 仅 setErrored(true) — fail-OPEN 防"网络抖动一秒红 Badge 跳没了" 假阴性
+    * Badge color 蓝/红 (critical=#c94b4b 匹配主题 colorError), overflowCount=99, hover 文案走 buildBellTooltip
+    * 点击 navigate(buildAlertsBellHref()) 落 /workspace/today?tab=risk_center
+    * onKeyDown Enter/Space 同 click — a11y
+    * mountedRef 防 unmount 后 setState React warn
+    * data-testid="alerts-bell" + data-severity + data-unread 供 e2e
+  - frontend/src/App.tsx: import AlertsBell + 在 Header 的 token-guarded 块里 GlobalPortfolioSelector 后面渲染 <AlertsBell />
+  - frontend/src/pages/workspace/TodayWorkspace.tsx:
+    * import useLocation
+    * 抽 TODAY_WORKSPACE_TABS / TODAY_WORKSPACE_TAB_KEYS 到 module-scope
+    * useEffect 监听 location.search → URLSearchParams 解 tab → setActiveKey (only if in allowed keys)
+  - backend/tests/services/alerts-bell-helpers.test.ts (新, ~280 行 / 90 assert):
+    * [1] 常量 sanity (CRITICAL < MAX_BADGE / MIN < DEFAULT < MAX poll / target path/key 正确)
+    * [2] normalizeUnreadCount 12 边界 (null/undef/NaN/string/负/小数/Infinity/-Infinity)
+    * [3] classifyAlertsBellSeverity 8 case (0/1/CRITICAL-1/CRITICAL/50/-5/NaN/Infinity)
+    * [4] formatBadgeText 8 case (0/-3/1/50/99/100/9999/Infinity → "99")
+    * [5] buildBellTooltip 7 assert (0/3/CRITICAL/-5 各档文案)
+    * [6] clampPollInterval 9 case (undef/null/NaN/Infinity/< MIN / > MAX / 合法 / 小数 floor / 负)
+    * [7] buildAlertsBellHref 4 assert
+    * [8] META-GUARD fs+regex 跨 monorepo 守 alertsBellHelpers / AlertsBell.tsx / App.tsx / TodayWorkspace.tsx 4 文件 wiring (14 helper export, 12 bell tsx 关键属性, 3 app 接入点, 4 today workspace ?tab= 处理)
+  - ralph/prd.json: US-070 passes=true + notes
+- 验证:
+  - frontend `npx tsc --noEmit` exit 0
+  - backend `npx tsc --noEmit` exit 0
+  - `npm test -- --filter=alerts-bell` exit 0, 90 ok / 0 failed (650ms)
+  - `npm test -- --filter=strategy-kill-switch` 顺手回归 ok / 0 failed — 无 regression
+  - `eslint` 改的 4 文件 0 error 0 new warning (pre-existing 3 warn unchanged)
+- **Learnings for future iterations:**
+  - **Tab key 字符串必须真正存在**: 写 helper 时我先写 'risk-center', 但 TodayWorkspace 实际是 'risk_center' (下划线). 任何"全局跳转目标 tab key"的常量都必须 grep -n "key:\s*'" 目标 workspace 验证, 否则用户点了 Bell 但 tab 没切. 同款思想适用未来 US-074 CriticalAlertModal 强制弹窗触发条件 — 必须与 backend severity 字段严格对齐.
+  - **fail-OPEN 在 UI 层的具体形态**: 网络一抖让 unreadCount 清零, 用户会看到 "Badge 红色 → 绿色 → 红色" 闪烁, 误以为告警都处理了. 正确做法是 catch 内 setErrored(true) **保留** unreadCount, 让 Tooltip 提示"网络异常". 与 backend dispatcher fail-OPEN (主流程不阻塞) 同思想但 UI 层多一步"上次成功值兜底显示" — 用户认知里 Badge 是真相, 假阴性比假阳性损失大.
+  - **轮询间隔 clamp 在 [30s, 5min]**: 防止某测试同事改 1s "演示用" 推 main 把后端 QPS 打爆, 或改 1h "省流量" 让告警延迟到用户已止损完才弹. 单测断言 MIN < DEFAULT < MAX 守边界, 任何"周期任务参数"都该这么写常量+sanity test, 与 [[shadowRunHelpers]] 阈值常量 frozen + 单测守 sanity 同款.
+  - **跨 sub-tab 跳转用 ?tab= query 一次性应用 + location.search 依赖**: 不要把 query → state 双向绑死 (用户切 tab 会被 query 卡住), 也不要只 mount 时应用一次 (反复回到风控中心失效). 正解 = useEffect deps=[location.search] + 内部 if (tab in allowed keys) setActiveKey, 让"同 URL search 再次进入"重新应用一次. 与 SettingsWorkspace 已有模式一致.
+  - **antd Badge color vs status**: status='error' 在新版 antd 5.x 对自定义 count 字符串 (e.g. "99+") 显示效果与文档不一致, 改用 color='#c94b4b' (与主题 colorError 同色) 渲染稳定. 任何 antd component 上 status/type 与 color/customStyle 冲突时优先 color/style.
+  - **Infinity → format 行为通过 normalize 已 clamp**: normalizeUnreadCount(Infinity) = MAX_BADGE_COUNT = 99, 所以 formatBadgeText(Infinity) = "99" 而非 "99+". 这是 pipeline 设计 (normalize 在前, format 在后) 的合理结果但易被误测; 单测必须显式断 "Infinity → 99" 而非 "99+", 帮助未来读者理解 pipeline 顺序.
+---
