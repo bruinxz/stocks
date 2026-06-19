@@ -1,5 +1,5 @@
-import React, { lazy, Suspense, useEffect, useState } from 'react';
-import { Card, Empty, Statistic, Space, Tag, Spin } from 'antd';
+import React, { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { Card, Empty, Statistic, Space, Tag, Spin, Tooltip, Typography } from 'antd';
 import {
   CloudSyncOutlined,
   ScheduleOutlined,
@@ -13,9 +13,14 @@ import DataHealthDashboard from '../../components/data/DataHealthDashboard';
 import StockExplorer from '../../components/data/StockExplorer';
 import SystemTopologyMap from '../../components/data/SystemTopologyMap';
 import ActivationDashboard from '../../components/data/ActivationDashboard';
-import { getDataHealthStatus } from '../../services/dataHealthService';
+import { DataHealthStatusResponse, getDataHealthStatus } from '../../services/dataHealthService';
+import {
+  DataWorkspaceTabKey,
+  DataWorkspaceTabViewModel,
+  buildDataWorkspaceTabViewModel,
+} from './dataWorkspaceTabHelpers';
 
-// 4 个 tab 都接入 legacy 页面（仍在使用 + 数据真实），用 lazy 减少初始 bundle
+// 6 个 tab 都接入 legacy 页面（仍在使用 + 数据真实），用 lazy 减少初始 bundle
 const DataUpdateStatus = lazy(() => import('../DataUpdateStatus'));
 const TaskScheduler = lazy(() => import('../TaskScheduler'));
 const SystemLogs = lazy(() => import('../SystemLogs'));
@@ -31,7 +36,9 @@ const HealthMonitor = lazy(() => import('../HealthMonitor'));
  * - 'logs'       → 系统日志（legacy SystemLogs）
  * - 'monitoring' → 运行健康监控（HealthMonitor）
  *
- * KPI 从 /api/data/health-status 实时计算，不再 hardcode。
+ * US-060: 顶部 KPI / 副标题 / 状态 Tag 现在按 tab 切换 — 由
+ * `dataWorkspaceTabHelpers.buildDataWorkspaceTabViewModel(activeKey, health)`
+ * 派生, 每个 tab 都有 "真内容" 的上下文 KPI, 不再共用同一组固定 statistic.
  */
 const DataWorkspace: React.FC = () => {
   const tabs: WorkspaceTab[] = [
@@ -42,53 +49,52 @@ const DataWorkspace: React.FC = () => {
     { key: 'logs', label: '系统日志', icon: <FileDoneOutlined /> },
     { key: 'monitoring', label: '健康监控', icon: <MonitorOutlined /> },
   ];
-  const [activeKey, setActiveKey] = useState('health');
-  const [kpi, setKpi] = useState<{ total: number; red: number; yellow: number }>({
-    total: 0,
-    red: 0,
-    yellow: 0,
-  });
+  const [activeKey, setActiveKey] = useState<DataWorkspaceTabKey>('health');
+  const [healthData, setHealthData] = useState<DataHealthStatusResponse | null>(null);
 
   useEffect(() => {
     getDataHealthStatus()
-      .then((data) => {
-        const cards = data?.cards || [];
-        setKpi({
-          total: cards.length,
-          red: cards.filter((c) => c.level === 'red').length,
-          yellow: cards.filter((c) => c.level === 'yellow').length,
-        });
+      .then(data => {
+        setHealthData(data);
       })
       .catch(() => {
-        // 失败保持 0；DataHealthDashboard 自己也会显示错误
+        // 失败保持 null；下游 helper 返 loading view model
+        setHealthData(null);
       });
   }, []);
 
+  // US-060: tab-aware view model — 切 tab 时 kpiSlot 内容变, 不再永远显示 health 三件套
+  const vm: DataWorkspaceTabViewModel = useMemo(
+    () => buildDataWorkspaceTabViewModel(activeKey, healthData),
+    [activeKey, healthData]
+  );
+
   const kpiSlot = (
     <Space size={32}>
-      <Statistic title="数据源" value={kpi.total} suffix="个" />
-      <Statistic
-        title="严重滞后"
-        value={kpi.red}
-        valueStyle={{ color: kpi.red > 0 ? '#cf1322' : '#3f8600' }}
-      />
-      <Statistic
-        title="轻微滞后"
-        value={kpi.yellow}
-        valueStyle={{ color: kpi.yellow > 0 ? '#fa8c16' : '#3f8600' }}
-      />
+      {vm.kpis.map((k, idx) => {
+        const stat = (
+          <Statistic
+            title={k.title}
+            value={k.value}
+            suffix={k.suffix}
+            valueStyle={k.color ? { color: k.color } : undefined}
+          />
+        );
+        if (k.tooltip) {
+          return (
+            <Tooltip key={`${vm.tabKey}-${idx}-${k.title}`} title={k.tooltip}>
+              {stat}
+            </Tooltip>
+          );
+        }
+        return <React.Fragment key={`${vm.tabKey}-${idx}-${k.title}`}>{stat}</React.Fragment>;
+      })}
     </Space>
   );
 
-  const headerActions = (
-    <Tag color={kpi.red > 0 ? 'red' : kpi.yellow > 0 ? 'orange' : 'green'}>
-      {kpi.red > 0
-        ? `${kpi.red} 个数据源严重滞后`
-        : kpi.yellow > 0
-        ? `${kpi.yellow} 个数据源待补`
-        : '全部数据源正常'}
-    </Tag>
-  );
+  const headerActions = vm.tag ? (
+    <Tag color={vm.tag.color === 'default' ? undefined : vm.tag.color}>{vm.tag.text}</Tag>
+  ) : null;
 
   const fallback = (
     <div style={{ textAlign: 'center', padding: 48 }}>
@@ -96,44 +102,85 @@ const DataWorkspace: React.FC = () => {
     </div>
   );
 
+  // US-060: 每个 tab 上方都加一行 "概览条" Card — 主副标题 + 当前 tab 的语义提示
+  const overviewBar = (
+    <Card
+      size="small"
+      style={{ marginBottom: 12 }}
+      bodyStyle={{ padding: '10px 16px' }}
+      data-testid={`data-workspace-overview-${vm.tabKey}`}
+    >
+      <Space direction="vertical" size={2} style={{ width: '100%' }}>
+        <Typography.Text strong style={{ fontSize: 14 }}>
+          {vm.headline}
+        </Typography.Text>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {vm.subtitle}
+        </Typography.Text>
+      </Space>
+    </Card>
+  );
+
   const renderTab = () => {
     switch (activeKey) {
       case 'health':
         return (
           <>
+            {overviewBar}
             <SystemTopologyMap />
             <ActivationDashboard />
             <DataHealthDashboard />
           </>
         );
       case 'stocks':
-        return <StockExplorer />;
+        return (
+          <>
+            {overviewBar}
+            <StockExplorer />
+          </>
+        );
       case 'sync':
         return (
-          <Suspense fallback={fallback}>
-            <DataUpdateStatus />
-          </Suspense>
+          <>
+            {overviewBar}
+            <Suspense fallback={fallback}>
+              <DataUpdateStatus />
+            </Suspense>
+          </>
         );
       case 'tasks':
         return (
-          <Suspense fallback={fallback}>
-            <TaskScheduler />
-          </Suspense>
+          <>
+            {overviewBar}
+            <Suspense fallback={fallback}>
+              <TaskScheduler />
+            </Suspense>
+          </>
         );
       case 'logs':
         return (
-          <Suspense fallback={fallback}>
-            <SystemLogs />
-          </Suspense>
+          <>
+            {overviewBar}
+            <Suspense fallback={fallback}>
+              <SystemLogs />
+            </Suspense>
+          </>
         );
       case 'monitoring':
         return (
-          <Suspense fallback={fallback}>
-            <HealthMonitor />
-          </Suspense>
+          <>
+            {overviewBar}
+            <Suspense fallback={fallback}>
+              <HealthMonitor />
+            </Suspense>
+          </>
         );
       default:
-        return <Card><Empty description={`未知 tab: ${activeKey}`} /></Card>;
+        return (
+          <Card>
+            <Empty description={`未知 tab: ${activeKey as string}`} />
+          </Card>
+        );
     }
   };
 
@@ -143,7 +190,7 @@ const DataWorkspace: React.FC = () => {
       subtitle="行情、北向资金、龙虎榜、涨停板等数据同步与质量监控。"
       tabs={tabs}
       activeKey={activeKey}
-      onTabChange={setActiveKey}
+      onTabChange={k => setActiveKey(k as DataWorkspaceTabKey)}
       kpiSlot={kpiSlot}
       headerActions={headerActions}
     >

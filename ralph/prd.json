@@ -928,8 +928,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 60,
-      "passes": false,
-      "notes": "依赖: D-001"
+      "passes": true,
+      "notes": "依赖: D-001; 抽 dataWorkspaceTabHelpers (TAB_HEADLINE/TAB_SUBTITLE + 6 tab-aware view model + bucketCardsByCategory + classifyOverallTag/SyncTag/LogsTag), DataWorkspace.tsx 接通 tab-aware kpiSlot/headerActions + overviewBar Card, 跨 monorepo 单测 130 ok / 0 failed (tests/services/data-workspace-tab-helpers.test.ts), frontend+backend tsc 0 err, lint --fix 后 0 新增 warn"
     },
     {
       "id": "US-061",

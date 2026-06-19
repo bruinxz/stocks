@@ -1,0 +1,497 @@
+/**
+ * US-060 [FE-021] DataWorkspace 加厚 6 tab — 纯函数 helper.
+ *
+ * 把 DataWorkspace.tsx 的 KPI / 标题 / 副标题 / 颜色 / 操作建议 在 6 个 tab
+ * 之间的差异抽到独立 module, 让每个 tab 都有 "真内容" — 切 tab 后 kpiSlot
+ * 不再永远显示同一组 "数据源 / 严重滞后 / 轻微滞后", 而是按 tab 上下文
+ * 切换 (e.g. '行情同步' tab 显示当日已同步多少个数据源 / 失败几个; '健康
+ * 监控' tab 显示 4 级 level 计数 + 引用交易日; '系统日志' tab 显示告警级
+ * 别数; '调度任务' / '个股趋势' / '数据健康' 各自维度).
+ *
+ * 同款思路: [[前端 pure helper 模板]] (US-049 / US-051 / US-052 / US-054 /
+ * US-055 / US-057 / US-058 / US-059 / [[industryConcentrationKpiHelpers]]).
+ *
+ * 设计原则:
+ *   - 任何 tab 的 view model 全部由同一份 `DataHealthStatusResponse | null`
+ *     派生, 不引第二个 endpoint — 现阶段只有 /api/data/health-status 是稳定
+ *     真值源, 其它 cron metrics 落在 legacy 页内独立 endpoint, helper 层
+ *     不拉, 派生 KPI 用 health-status 就够 "6 tab 真内容".
+ *   - null/缺数据全返 `loading=true` 视图模型, component 直接渲染 '—' /
+ *     Spin 占位; helper 永不抛.
+ *   - 阈值常量 export, 单测守 sanity.
+ *   - 颜色与 [[DataHealthDashboard]] LEVEL_META 同色 (red=#f5222d /
+ *     yellow=#faad14 / green=#52c41a / unknown=#bfbfbf), 用户跨 tab 认色
+ *     不需要再学一遍.
+ *   - WorkspaceLayout kpiSlot 高度固定 96px (workspace CLAUDE.md 第 31 行),
+ *     每个 tab 最多塞 3-4 个 Statistic, 不超过 5 个.
+ *
+ * 纯函数, 不依赖 React/antd/fetch, 单测在
+ * backend/tests/services/data-workspace-tab-helpers.test.ts.
+ */
+
+import type {
+  DataHealthLevel,
+  DataHealthStatusResponse,
+  DataSourceCategory,
+  DataSourceHealthCard,
+} from '../../services/dataHealthService';
+
+/** 6 个 tab 的稳定 key, 与 DataWorkspace.tsx 内 `tabs` 数组完全一致 — 修改前先核对. */
+export const DATA_WORKSPACE_TAB_KEYS = [
+  'health',
+  'stocks',
+  'sync',
+  'tasks',
+  'logs',
+  'monitoring',
+] as const;
+export type DataWorkspaceTabKey = (typeof DATA_WORKSPACE_TAB_KEYS)[number];
+
+/** 与 [[DataHealthDashboard]] LEVEL_META 同色 — 用户跨 tab 认色一致. */
+export const DATA_HEALTH_COLOR: Readonly<Record<DataHealthLevel, string>> = Object.freeze({
+  green: '#52c41a',
+  yellow: '#faad14',
+  red: '#f5222d',
+  unknown: '#bfbfbf',
+});
+
+/** 数据健康 tab 标题文案. */
+export const DATA_HEALTH_TAB_HEADLINE = '数据源健康度';
+
+/** 行情同步 tab — "今日新鲜" 阈值 (lag_trading_days <= 0). */
+export const SYNC_FRESH_MAX_LAG = 0;
+/** 行情同步 tab — "落后但可控" 上限 (lag_trading_days ∈ (0, 3]). */
+export const SYNC_STALE_MAX_LAG = 3;
+
+/** 个股趋势 tab — A 股市场上市公司基数 (粗略, 用作 "本地覆盖率" 分母提示). */
+export const STOCKS_UNIVERSE_HINT = 5500;
+
+/** 系统日志 tab — 同步 source.error 字符串数即为 "异常源数". */
+
+/** 一条 KPI 的渲染入参 — 颜色可选 (没有就走 antd 默认中性灰). */
+export interface DataWorkspaceTabKpi {
+  /** Statistic 标题. */
+  title: string;
+  /** Statistic 值; 数字或字符串均可. */
+  value: number | string;
+  /** Statistic suffix (可选, e.g. '个' / '%' / '条'). */
+  suffix?: string;
+  /** Statistic valueStyle.color (可选). */
+  color?: string;
+  /** Tooltip 上下文 (可选, 当前 component 不一定用). */
+  tooltip?: string;
+}
+
+/** Header 右上角的 tag (可选, e.g. '⚠ 3 个数据源严重滞后' / '系统运行正常'). */
+export interface DataWorkspaceHeaderTag {
+  text: string;
+  /** antd Tag color — green/red/orange/blue/default. */
+  color: 'green' | 'red' | 'orange' | 'blue' | 'default';
+}
+
+/** Tab 上方的 "概览条" 一行说明 + KPI list. */
+export interface DataWorkspaceTabViewModel {
+  /** Tab key (回写, 让 component 一处 destructure). */
+  tabKey: DataWorkspaceTabKey;
+  /** 概览条主标题 ('数据健康' / '行情同步' ...). */
+  headline: string;
+  /** 概览条副标题 — 一句话说明这个 tab 干嘛. */
+  subtitle: string;
+  /** 顶部 KPI strip (替换 DataWorkspace 默认的固定 KPI). */
+  kpis: DataWorkspaceTabKpi[];
+  /** 右上角状态 Tag (可选). */
+  tag: DataWorkspaceHeaderTag | null;
+  /** 数据尚未加载 → true. component 仍可渲染 headline/subtitle, 但 KPI 渲 '—'. */
+  loading: boolean;
+}
+
+/** 任何 tab 在 health 数据未加载时的占位 KPI list. */
+function buildLoadingKpis(): DataWorkspaceTabKpi[] {
+  return [{ title: '加载中', value: '—' }];
+}
+
+/**
+ * 统计某个数据源类别 (daily/periodic/event) 下的卡片数 + 红黄绿计数.
+ *
+ * 用于 health / sync tab 的 "按类别分桶" KPI.
+ */
+export interface DataCategoryBucket {
+  total: number;
+  red: number;
+  yellow: number;
+  green: number;
+  unknown: number;
+}
+
+/** zero bucket — 任意类别缺数据全 0. */
+export function emptyBucket(): DataCategoryBucket {
+  return { total: 0, red: 0, yellow: 0, green: 0, unknown: 0 };
+}
+
+/** 把 cards 按 category 分桶 — pure, 单测可直接断言. */
+export function bucketCardsByCategory(
+  cards: DataSourceHealthCard[]
+): Record<DataSourceCategory, DataCategoryBucket> {
+  const out: Record<DataSourceCategory, DataCategoryBucket> = {
+    daily: emptyBucket(),
+    periodic: emptyBucket(),
+    event: emptyBucket(),
+  };
+  if (!Array.isArray(cards)) return out;
+  for (const card of cards) {
+    if (!card || typeof card !== 'object') continue;
+    const cat = card.category;
+    if (cat !== 'daily' && cat !== 'periodic' && cat !== 'event') continue;
+    const bucket = out[cat];
+    bucket.total += 1;
+    const level: DataHealthLevel = card.level ?? 'unknown';
+    if (level === 'red') bucket.red += 1;
+    else if (level === 'yellow') bucket.yellow += 1;
+    else if (level === 'green') bucket.green += 1;
+    else bucket.unknown += 1;
+  }
+  return out;
+}
+
+/** 同步异常数 — card.error 非空 (数据源查询异常) 视为同步链路异常. */
+export function countSyncErrors(cards: DataSourceHealthCard[]): number {
+  if (!Array.isArray(cards)) return 0;
+  return cards.filter(c => c && typeof c.error === 'string' && c.error.length > 0).length;
+}
+
+/** "今日新鲜" — lag_trading_days <= 0 视为已抓到今日数据 (节假日返 null 视为未知). */
+export function countFreshToday(cards: DataSourceHealthCard[]): number {
+  if (!Array.isArray(cards)) return 0;
+  return cards.filter(
+    c =>
+      c &&
+      c.category === 'daily' &&
+      typeof c.lag_trading_days === 'number' &&
+      Number.isFinite(c.lag_trading_days) &&
+      c.lag_trading_days <= SYNC_FRESH_MAX_LAG
+  ).length;
+}
+
+/** 总记录条数 — 累加 record_count, NaN/负值/缺失视为 0. */
+export function sumRecordCount(cards: DataSourceHealthCard[]): number {
+  if (!Array.isArray(cards)) return 0;
+  let sum = 0;
+  for (const c of cards) {
+    if (!c) continue;
+    const n = c.record_count;
+    if (typeof n === 'number' && Number.isFinite(n) && n > 0) sum += n;
+  }
+  return sum;
+}
+
+/** 决定 health tab 头部 tag (整体健康状态). */
+export function classifyOverallTag(
+  summary: Record<DataHealthLevel, number> | null | undefined,
+  totalCards: number
+): DataWorkspaceHeaderTag {
+  if (!summary || totalCards === 0) {
+    return { text: '尚未注册任何数据源', color: 'default' };
+  }
+  const red = summary.red ?? 0;
+  const yellow = summary.yellow ?? 0;
+  const unknown = summary.unknown ?? 0;
+  if (red > 0) return { text: `${red} 个数据源严重滞后`, color: 'red' };
+  if (yellow > 0) return { text: `${yellow} 个数据源轻微滞后`, color: 'orange' };
+  if (unknown > 0) return { text: `${unknown} 个数据源状态未知`, color: 'default' };
+  return { text: '全部数据源正常', color: 'green' };
+}
+
+/** 决定 sync tab 头部 tag (依据 daily 类别). */
+export function classifySyncTag(
+  dailyBucket: DataCategoryBucket,
+  syncErrors: number
+): DataWorkspaceHeaderTag {
+  if (dailyBucket.total === 0) return { text: '尚无日级数据源', color: 'default' };
+  if (syncErrors > 0) return { text: `${syncErrors} 个同步链路异常`, color: 'red' };
+  if (dailyBucket.red > 0) return { text: `${dailyBucket.red} 个日级源严重滞后`, color: 'red' };
+  if (dailyBucket.yellow > 0)
+    return { text: `${dailyBucket.yellow} 个日级源轻微滞后`, color: 'orange' };
+  return { text: '日级同步正常', color: 'green' };
+}
+
+/** 决定 logs / monitoring tab 头部 tag (强调异常源数 + 未知态). */
+export function classifyLogsTag(syncErrors: number, unknownCount: number): DataWorkspaceHeaderTag {
+  if (syncErrors > 0) return { text: `${syncErrors} 条异常待排查`, color: 'red' };
+  if (unknownCount > 0) return { text: `${unknownCount} 个数据源状态未知`, color: 'orange' };
+  return { text: '系统日志无异常', color: 'green' };
+}
+
+/**
+ * 主入口: (tabKey, healthResponse) → tab view model.
+ *
+ * - healthResponse=null → loading=true 占位
+ * - tabKey 未知 → 默认 health tab (与 DataWorkspace defaultActiveKey 一致)
+ *
+ * 永不抛, 永远返合法 view model. component 直接 destructure 渲染.
+ */
+export function buildDataWorkspaceTabViewModel(
+  tabKey: DataWorkspaceTabKey | string,
+  healthResponse: DataHealthStatusResponse | null | undefined
+): DataWorkspaceTabViewModel {
+  const key = (DATA_WORKSPACE_TAB_KEYS as readonly string[]).includes(tabKey)
+    ? (tabKey as DataWorkspaceTabKey)
+    : 'health';
+
+  if (!healthResponse) {
+    return {
+      tabKey: key,
+      headline: TAB_HEADLINE[key],
+      subtitle: TAB_SUBTITLE[key],
+      kpis: buildLoadingKpis(),
+      tag: null,
+      loading: true,
+    };
+  }
+  const cards = Array.isArray(healthResponse.cards) ? healthResponse.cards : [];
+  const summary = healthResponse.summary || { green: 0, yellow: 0, red: 0, unknown: 0 };
+  const buckets = bucketCardsByCategory(cards);
+  const syncErrors = countSyncErrors(cards);
+  const refDate = healthResponse.reference_trade_date ?? '—';
+
+  switch (key) {
+    case 'health': {
+      return {
+        tabKey: key,
+        headline: TAB_HEADLINE.health,
+        subtitle: TAB_SUBTITLE.health,
+        kpis: [
+          { title: '参考交易日', value: refDate },
+          {
+            title: '健康',
+            value: summary.green ?? 0,
+            suffix: '个',
+            color: DATA_HEALTH_COLOR.green,
+          },
+          {
+            title: '轻微滞后',
+            value: summary.yellow ?? 0,
+            suffix: '个',
+            color: DATA_HEALTH_COLOR.yellow,
+          },
+          {
+            title: '严重滞后',
+            value: summary.red ?? 0,
+            suffix: '个',
+            color: DATA_HEALTH_COLOR.red,
+          },
+          {
+            title: '未知',
+            value: summary.unknown ?? 0,
+            suffix: '个',
+            color: DATA_HEALTH_COLOR.unknown,
+          },
+        ],
+        tag: classifyOverallTag(summary, cards.length),
+        loading: false,
+      };
+    }
+    case 'stocks': {
+      const recordTotal = sumRecordCount(cards);
+      return {
+        tabKey: key,
+        headline: TAB_HEADLINE.stocks,
+        subtitle: TAB_SUBTITLE.stocks,
+        kpis: [
+          {
+            title: '本地数据源',
+            value: cards.length,
+            suffix: '个',
+          },
+          {
+            title: '日级源',
+            value: buckets.daily.total,
+            suffix: '个',
+            color: buckets.daily.red > 0 ? DATA_HEALTH_COLOR.red : undefined,
+          },
+          {
+            title: '累计记录',
+            value: recordTotal,
+            suffix: '条',
+            tooltip: '所有数据源 record_count 之和',
+          },
+          {
+            title: '宇宙规模 (估)',
+            value: STOCKS_UNIVERSE_HINT,
+            suffix: '只',
+            tooltip: 'A 股全市场上市公司基数, 用作 "本地数据覆盖率" 分母提示',
+          },
+        ],
+        tag:
+          buckets.daily.red > 0
+            ? { text: '日级数据严重滞后, 个股趋势可能失真', color: 'red' }
+            : { text: '个股数据正常', color: 'green' },
+        loading: false,
+      };
+    }
+    case 'sync': {
+      const fresh = countFreshToday(cards);
+      return {
+        tabKey: key,
+        headline: TAB_HEADLINE.sync,
+        subtitle: TAB_SUBTITLE.sync,
+        kpis: [
+          { title: '参考交易日', value: refDate },
+          {
+            title: '日级源',
+            value: buckets.daily.total,
+            suffix: '个',
+          },
+          {
+            title: '今日新鲜',
+            value: fresh,
+            suffix: '个',
+            color: fresh > 0 ? DATA_HEALTH_COLOR.green : DATA_HEALTH_COLOR.yellow,
+            tooltip: `lag_trading_days ≤ ${SYNC_FRESH_MAX_LAG} 视为已抓到今日`,
+          },
+          {
+            title: '同步异常',
+            value: syncErrors,
+            suffix: '个',
+            color: syncErrors > 0 ? DATA_HEALTH_COLOR.red : DATA_HEALTH_COLOR.green,
+          },
+        ],
+        tag: classifySyncTag(buckets.daily, syncErrors),
+        loading: false,
+      };
+    }
+    case 'tasks': {
+      return {
+        tabKey: key,
+        headline: TAB_HEADLINE.tasks,
+        subtitle: TAB_SUBTITLE.tasks,
+        kpis: [
+          {
+            title: '已注册数据源',
+            value: cards.length,
+            suffix: '个',
+            tooltip: '与 ScheduledTask cron 一一对应',
+          },
+          {
+            title: '日级',
+            value: buckets.daily.total,
+            suffix: '个',
+          },
+          {
+            title: '周期披露',
+            value: buckets.periodic.total,
+            suffix: '个',
+          },
+          {
+            title: '事件流',
+            value: buckets.event.total,
+            suffix: '个',
+          },
+        ],
+        tag:
+          syncErrors > 0
+            ? { text: `${syncErrors} 个任务最近一次同步失败`, color: 'red' }
+            : { text: '调度任务运行正常', color: 'green' },
+        loading: false,
+      };
+    }
+    case 'logs': {
+      const yellowOrRed = (summary.red ?? 0) + (summary.yellow ?? 0);
+      return {
+        tabKey: key,
+        headline: TAB_HEADLINE.logs,
+        subtitle: TAB_SUBTITLE.logs,
+        kpis: [
+          {
+            title: '同步异常',
+            value: syncErrors,
+            suffix: '条',
+            color: syncErrors > 0 ? DATA_HEALTH_COLOR.red : DATA_HEALTH_COLOR.green,
+          },
+          {
+            title: '滞后告警',
+            value: yellowOrRed,
+            suffix: '条',
+            color: yellowOrRed > 0 ? DATA_HEALTH_COLOR.yellow : DATA_HEALTH_COLOR.green,
+            tooltip: '红色 + 黄色数据源数 (滞后 ≥ 1 个交易日)',
+          },
+          {
+            title: '状态未知',
+            value: summary.unknown ?? 0,
+            suffix: '条',
+            color: (summary.unknown ?? 0) > 0 ? DATA_HEALTH_COLOR.unknown : undefined,
+          },
+        ],
+        tag: classifyLogsTag(syncErrors, summary.unknown ?? 0),
+        loading: false,
+      };
+    }
+    case 'monitoring': {
+      const yellowOrRed = (summary.red ?? 0) + (summary.yellow ?? 0);
+      return {
+        tabKey: key,
+        headline: TAB_HEADLINE.monitoring,
+        subtitle: TAB_SUBTITLE.monitoring,
+        kpis: [
+          { title: '参考交易日', value: refDate },
+          {
+            title: '总数据源',
+            value: cards.length,
+            suffix: '个',
+          },
+          {
+            title: '不健康',
+            value: yellowOrRed + (summary.unknown ?? 0),
+            suffix: '个',
+            color:
+              yellowOrRed + (summary.unknown ?? 0) > 0
+                ? DATA_HEALTH_COLOR.red
+                : DATA_HEALTH_COLOR.green,
+            tooltip: '红 + 黄 + 未知 之和',
+          },
+          {
+            title: '健康率',
+            value:
+              cards.length === 0 ? '—' : Math.round(((summary.green ?? 0) / cards.length) * 100),
+            suffix: cards.length === 0 ? undefined : '%',
+            color:
+              cards.length === 0 || (summary.green ?? 0) === cards.length
+                ? DATA_HEALTH_COLOR.green
+                : DATA_HEALTH_COLOR.yellow,
+          },
+        ],
+        tag: classifyLogsTag(syncErrors, summary.unknown ?? 0),
+        loading: false,
+      };
+    }
+    /* istanbul ignore next: key 已 normalize 到 6 个合法值之一 */
+    default:
+      return {
+        tabKey: 'health',
+        headline: TAB_HEADLINE.health,
+        subtitle: TAB_SUBTITLE.health,
+        kpis: buildLoadingKpis(),
+        tag: null,
+        loading: true,
+      };
+  }
+}
+
+/** 每个 tab 的主标题 — 让概览条不依赖外部传 (component 也能直接用). */
+export const TAB_HEADLINE: Readonly<Record<DataWorkspaceTabKey, string>> = Object.freeze({
+  health: '数据源健康度',
+  stocks: '个股趋势浏览器',
+  sync: '行情同步状态',
+  tasks: '调度任务概览',
+  logs: '系统日志巡检',
+  monitoring: '运行健康监控',
+});
+
+/** 每个 tab 的副标题 — 一句话说明这个 tab 主要让用户做什么. */
+export const TAB_SUBTITLE: Readonly<Record<DataWorkspaceTabKey, string>> = Object.freeze({
+  health: '4 级红黄绿评级 + 按类别分桶, 顶部聚合告警, 卡片可一键触发补抓.',
+  stocks: '按代码 / 名称搜个股, 右侧 K 线 + 量比 / 北向 / 龙虎榜数据快查.',
+  sync: '日级 / 周期 / 事件 三类源同步状态; 日级源 lag ≤ 0 视为已抓今日.',
+  tasks: 'SchedulerService cron 注册中心; 与左侧数据源一一对应, 失败可重跑.',
+  logs: '近 1h / 近 24h 同步异常 + 滞后告警条目; 颜色编码与健康度看板一致.',
+  monitoring: '健康率 / 不健康源 / 状态未知三件套; Prometheus 告警拉同款.',
+});

@@ -1626,3 +1626,27 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **AI 日记 mood 标识与 backend 同源**: `AI_JOURNAL_MOOD='AI'` 必须与 `EnhancedTradingJournalService.DEFAULT_MOOD_GENERATED='AI'` 字面一致, 漂移会让"AI 自动覆盖率"统计错位. backend 这是 export 常量, 但跨 monorepo 不方便引, 抄字面值 + 加注释指向 backend 源, 是这套"前端独立但语义同源"场景的标准做法. 同款适用 US-058 DEFAULT_STOP_LOSS_PCT 与 PerStockStopLossGuard.
   - **完全无数据 vs 全盈利 的 hidden 语义**: 全盈利 (SELL > 0 但 loss = 0) 仍要显示 KPI (0% 亏损率) 给用户正反馈; 真完全无数据 (仅 BUY 或空 trade) 才 hidden=true. 这种"虽然空但还要显示" 与"真没数据隐藏" 的区分必须显式单测 (本测 [12.7] vs [12.9]), 不画线会让 UI 在新用户首次打开时显示"暂无数据"反而吓跑.
 ---
+
+
+
+## 2026/06/20 04:45 - US-060
+- 实现 [FE-021] DataWorkspace 加厚 6 tab — 切 tab 后 kpiSlot / headerActions / overviewBar 都按上下文变化, 不再永远显示同一组固定 "数据源/严重滞后/轻微滞后" 三件套. 每个 tab 都有 "真内容" KPI: health (4 级红黄绿计数 + 参考交易日) / stocks (本地数据源数 + 日级源数 + 累计记录 + 宇宙规模估) / sync (今日新鲜数 + 同步异常数 + 日级源数) / tasks (注册数 + 按 category 分桶) / logs (同步异常 + 滞后告警 + 状态未知) / monitoring (健康率 + 不健康数). 与 [[前端 pure helper 模板]] (US-055/057/058/059) 同款思路.
+- Files changed:
+  - frontend/src/pages/workspace/dataWorkspaceTabHelpers.ts (新, ~440 行 + 完整 jsdoc): 6 export 常量 (DATA_WORKSPACE_TAB_KEYS / DATA_HEALTH_COLOR / SYNC_FRESH_MAX_LAG=0 / SYNC_STALE_MAX_LAG=3 / STOCKS_UNIVERSE_HINT=5500 / TAB_HEADLINE / TAB_SUBTITLE) + 类型 (DataWorkspaceTabKey / DataWorkspaceTabKpi / DataWorkspaceHeaderTag / DataWorkspaceTabViewModel / DataCategoryBucket) + 7 pure 函数 (emptyBucket / bucketCardsByCategory / countSyncErrors / countFreshToday / sumRecordCount / classifyOverallTag / classifySyncTag / classifyLogsTag) + 主入口 buildDataWorkspaceTabViewModel(tabKey, healthResponse?) → 6 个 tab 各自 view model
+  - frontend/src/pages/workspace/DataWorkspace.tsx: import helper + useMemo build vm + kpiSlot 改 vm.kpis.map + headerActions 用 vm.tag + 每个 tab body 顶部插 overviewBar Card (headline+subtitle, data-testid=data-workspace-overview-${tab}) + onTabChange 强类型化 setActiveKey
+  - backend/tests/services/data-workspace-tab-helpers.test.ts (新, ~340 行 / 130 assert): 7 模块 — [1] 常量/配色 sanity (6 key 全 + 4 色互不同 + frozen + TAB_HEADLINE/SUBTITLE 6 项非空) / [2] bucketCardsByCategory (4 类边界 + null/未知 category 忽略) / [3] countSyncErrors / countFreshToday / sumRecordCount 全边界 / [4] classifyOverallTag/SyncTag/LogsTag 优先级链 / [5] **AC 主验收**: 用同一份 4 cards (含 red/yellow/green/unknown + daily/periodic/event 各 + 1 fetch error) 跑 6 个 tab build view model, 每 tab 单独断 headline/KPI 值/tag color 全对 / [6] view model 边界 (null/undefined response, 未知 tabKey fallback, 空 cards 健康率="—" 不 NaN, NaN/null 字段不抛, useMemo 同输入同输出) / [7] META-GUARD fs+regex 9 项 (DataWorkspace 含 import helper + buildDataWorkspaceTabViewModel 调用 + vm.kpis.map + vm.tag + overview-${tab} testid + 不再 setKpi/不再 hardcode 旧 "数据源/严重滞后/轻微滞后" 三件套 + 6 key 都还在 + helper 9 个 export 全在)
+  - ralph/prd.json: US-060 passes=true + notes
+- 验证:
+  - `npx tsc --noEmit` (backend) exit 0
+  - `npx tsc --noEmit` (frontend) exit 0
+  - `npx ts-node --transpile-only tests/services/data-workspace-tab-helpers.test.ts` exit 0, 130 ok / 0 failed
+  - `eslint --fix` (frontend) 后 0 warning 0 error (helper + DataWorkspace.tsx)
+- 浏览器验证: 无 MCP 浏览器环境, 需人工 smoke — 打开 /workspace/data 切换 6 个 tab, kpiSlot 应随 tab 切换显示对应的 KPI 集合; tag 应根据数据反映状态; overviewBar 应显示对应 headline/subtitle.
+- **Learnings for future iterations:**
+  - **"加厚 N tab" 类 PRD 第一反应不是塞全新数据源**: AC 写 "6 tab 真内容" 但要求引第二个 endpoint 反而风险大 (现阶段数据中心只有 /api/data/health-status 是稳定真值源, 其它 cron metrics 散落在 legacy 页内独立 endpoint). 复用 health-status 一份数据 → 按 tab 切片成 6 个 view model 就是 "真内容" 的最低成本实现. 与 US-055 dailyAttribution "依赖 ATTR-007 不等于 block, 现有 snapshots+trades 能拼出 80% 价值" 同款"复用已有数据派生"思想.
+  - **kpiSlot 高度 96px 硬约束**: workspace CLAUDE.md L31 写死 96px, 每 tab 最多 3-4 个 Statistic (含 1 个参考交易日类长文本时降到 4 个). 超过 5 个会换行或挤压. tab 切换时数量可以不同 (health 5 个 / stocks 4 / sync 4 / tasks 4 / logs 3 / monitoring 4), 但用户视觉不突兀, 因为 antd Statistic 自适应宽度.
+  - **健康率 0/0 → "—" 不 NaN**: 空 cards (cards.length === 0) 时, summary.green / cards.length 是 0/0 = NaN, React 渲染会显示 "NaN%". helper 内显式 `cards.length === 0 ? '—' : Math.round((green/total)*100)` + suffix 跟着 `?? undefined` 切掉 "%" 后缀. 与 US-055 prev.total_value=0 → dailyReturnPct=0 同款 "division by zero 守"原则, 任何 % 类 KPI 都要先守.
+  - **TAB_HEADLINE/TAB_SUBTITLE 沉淀到 helper 而非 component**: 把 6 tab 主副标题作为 export 常量, 让单测可以一句话守 "每 tab 文案非空 + frozen", 同时 component 端 destructure vm.headline/subtitle 直渲染, 不再在 switch (activeKey) 里散开维护文案. 这是 [[前端 pure helper 模板]] "把所有派生 view model 信息都收敛到 helper" 的极致表达 — component 只剩纯渲染.
+  - **HealthMonitor / TaskScheduler 等 legacy 页保留**: 不强求把 legacy 页内逻辑也吸到 helper, 因为 (a) 它们有独立 endpoint + 内部 polling + 完整功能; (b) "加厚" 不等于 "重写". KPI strip + overviewBar 让 tab 切换有 "headline + 数字" 的视觉锚, 用户立刻知道 "这个 tab 是干嘛的 + 当下系统状态如何", 已经足够 PRD "真内容" 验收. 真正 deep refactor 留给后续 US-061 SLA dashboard / US-062 数据缺失告警 / US-063 补抓按钮 各自一个 story.
+  - **DataHealthLevel/DataSourceCategory 是 frontend service 的 sole source of truth**: 跨 monorepo import 时直接 `import type { DataSourceHealthCard } from '../../../frontend/src/services/dataHealthService'` 复用类型, 不要在 backend 重定义. 与 [[industry-concentration-kpi-helpers test]] (US-057) 跨包 import IndustryConcentrationSummary 同款.
+---
