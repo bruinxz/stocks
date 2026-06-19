@@ -57,6 +57,8 @@ import {
   NLP_ENGINES,
   ANN_SENTIMENT_KEYWORDS,
   TOPIC_KEYWORDS,
+  ANNOUNCEMENT_PRIORITY_VALUES,
+  ANNOUNCEMENT_EVENT_TYPES,
   parseIsoDate,
   sleep,
   heuristicSentiment,
@@ -64,6 +66,9 @@ import {
   extractTopics,
   heuristicSummarize,
   normalizeSentiment,
+  normalizePriority,
+  normalizeEventType,
+  normalizeEntities,
   buildHeuristicNLPResult,
   buildNLPResultFromPayload,
 } from '../../src/services/AnnouncementNLPService';
@@ -130,6 +135,10 @@ interface FakeRowState {
   sentiment?: string | null;
   key_amounts_json?: unknown;
   key_topics_json?: unknown;
+  // US-025 ANN-001: 让 fake store 也记录新列, 用于断言 saveSummaries 真把字段透传到 bulkCreate.
+  event_type?: string | null;
+  priority?: string;
+  entities?: unknown;
   status?: string;
   nlp_engine?: string | null;
   error?: string | null;
@@ -458,6 +467,10 @@ function testBuildHeuristicNLPResult(): void {
   assert('heuristic topics present', r.key_topics_json.length >= 2);
   assertEqual('heuristic no error', r.error, null);
   assertEqual('heuristic stock_code', r.stock_code, '600519');
+  // US-025 ANN-001: 三新字段默认占位 (ANN-002~005 实现前)
+  assertEqual('heuristic event_type default null', r.event_type, null);
+  assertEqual('heuristic priority default low', r.priority, 'low');
+  assert('heuristic entities default []', Array.isArray(r.entities) && r.entities.length === 0);
 }
 
 function testBuildNLPResultFromPayloadSuccess(): void {
@@ -482,6 +495,10 @@ function testBuildNLPResultFromPayloadSuccess(): void {
   assertEqual('AI amounts', r.key_amounts_json.length, 1);
   assertEqual('AI amount 100', r.key_amounts_json[0].amount, 100);
   assertEqual('AI topic 治理', r.key_topics_json[0], '治理');
+  // US-025 ANN-001: payload 未带新字段时, normalize 默认 null/low/[]
+  assertEqual('AI payload no event_type → null', r.event_type, null);
+  assertEqual('AI payload no priority → low', r.priority, 'low');
+  assert('AI payload no entities → []', Array.isArray(r.entities) && r.entities.length === 0);
 }
 
 function testBuildNLPResultFromPayloadFailed(): void {
@@ -931,6 +948,356 @@ async function testListByDateSentiment(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// US-025 ANN-001: 新字段 + 归一函数 + saveSummaries 透传 + migration 形态 + meta-guard
+// ---------------------------------------------------------------------------
+
+function testAnnouncementPriorityValuesFrozen(): void {
+  assert(
+    'ANNOUNCEMENT_PRIORITY_VALUES frozen',
+    Object.isFrozen(ANNOUNCEMENT_PRIORITY_VALUES)
+  );
+  assertEqual('ANNOUNCEMENT_PRIORITY_VALUES count', ANNOUNCEMENT_PRIORITY_VALUES.length, 4);
+  assertEqual('critical first', ANNOUNCEMENT_PRIORITY_VALUES[0], 'critical');
+  assertEqual('low last', ANNOUNCEMENT_PRIORITY_VALUES[3], 'low');
+}
+
+function testAnnouncementEventTypesFrozen(): void {
+  assert('ANNOUNCEMENT_EVENT_TYPES frozen', Object.isFrozen(ANNOUNCEMENT_EVENT_TYPES));
+  assertEqual('ANNOUNCEMENT_EVENT_TYPES count', ANNOUNCEMENT_EVENT_TYPES.length, 7);
+  for (const t of ['业绩', '重组', '减持', '担保', '处罚', '解禁', '其它']) {
+    assert(
+      `event_type contains ${t}`,
+      (ANNOUNCEMENT_EVENT_TYPES as readonly string[]).includes(t)
+    );
+  }
+}
+
+function testNormalizePriority(): void {
+  assertEqual('priority direct critical', normalizePriority('critical'), 'critical');
+  assertEqual('priority direct high', normalizePriority('high'), 'high');
+  assertEqual('priority direct medium', normalizePriority('medium'), 'medium');
+  assertEqual('priority direct low', normalizePriority('low'), 'low');
+  // 中文别名
+  assertEqual('priority 关键 → critical', normalizePriority('关键'), 'critical');
+  assertEqual('priority 紧急 → critical', normalizePriority('紧急'), 'critical');
+  assertEqual('priority 高 → high', normalizePriority('高'), 'high');
+  assertEqual('priority 中 → medium', normalizePriority('中'), 'medium');
+  assertEqual('priority 低 → low', normalizePriority('低'), 'low');
+  // 大小写不敏感 (走 toLowerCase + includes)
+  assertEqual('priority CRITICAL → critical', normalizePriority('CRITICAL'), 'critical');
+  assertEqual('priority High → high', normalizePriority('High'), 'high');
+  // 兜底 — 未识别 / 空 / null 一律 low (绝不擅自 escalate 到 critical)
+  assertEqual('priority null → low', normalizePriority(null), 'low');
+  assertEqual('priority undefined → low', normalizePriority(undefined), 'low');
+  assertEqual('priority empty → low', normalizePriority(''), 'low');
+  assertEqual('priority 随便 → low', normalizePriority('xxx-random'), 'low');
+  assertEqual('priority number 1 → low', normalizePriority(1 as any), 'low');
+}
+
+function testNormalizeEventType(): void {
+  // 直接枚举
+  assertEqual('event 业绩', normalizeEventType('业绩'), '业绩');
+  assertEqual('event 重组', normalizeEventType('重组'), '重组');
+  assertEqual('event 减持', normalizeEventType('减持'), '减持');
+  assertEqual('event 担保', normalizeEventType('担保'), '担保');
+  assertEqual('event 处罚', normalizeEventType('处罚'), '处罚');
+  assertEqual('event 解禁', normalizeEventType('解禁'), '解禁');
+  assertEqual('event 其它', normalizeEventType('其它'), '其它');
+  // 英文别名
+  assertEqual('event earnings → 业绩', normalizeEventType('earnings'), '业绩');
+  assertEqual('event RESTRUCTURE → 重组', normalizeEventType('RESTRUCTURE'), '重组');
+  assertEqual('event reduction → 减持', normalizeEventType('reduction'), '减持');
+  assertEqual('event guarantee → 担保', normalizeEventType('guarantee'), '担保');
+  assertEqual('event penalty → 处罚', normalizeEventType('penalty'), '处罚');
+  assertEqual('event unlock → 解禁', normalizeEventType('unlock'), '解禁');
+  assertEqual('event 违规 → 处罚', normalizeEventType('违规'), '处罚');
+  assertEqual('event 并购 → 重组', normalizeEventType('并购'), '重组');
+  // 未识别 → '其它' (区别于 null)
+  assertEqual('event 随便 → 其它', normalizeEventType('完全不认识的事件'), '其它');
+  // null / empty → null
+  assertEqual('event null → null', normalizeEventType(null), null);
+  assertEqual('event undefined → null', normalizeEventType(undefined), null);
+  assertEqual('event empty → null', normalizeEventType(''), null);
+  assertEqual('event whitespace → null', normalizeEventType('   '), null);
+}
+
+function testNormalizeEntities(): void {
+  // happy path — 必填 name + role
+  const r = normalizeEntities([
+    { name: '张三', role: '股东', holding_pct: 5.2 },
+    { name: '李四', role: '高管' },
+  ]);
+  assertEqual('entities length', r.length, 2);
+  assertEqual('entity 0 name', r[0].name, '张三');
+  assertEqual('entity 0 role', r[0].role, '股东');
+  assertEqual('entity 0 holding_pct', r[0].holding_pct, 5.2);
+  assertEqual('entity 1 no holding_pct', r[1].holding_pct, undefined);
+
+  // 缺 name / role 即 drop, 不报错
+  const r2 = normalizeEntities([
+    { name: '', role: '股东' },
+    { name: '王五', role: '' },
+    { role: '高管' } as any,
+    { name: '张三' } as any,
+    { name: '正常', role: '股东' },
+  ]);
+  assertEqual('entities drop invalid → 1 kept', r2.length, 1);
+  assertEqual('entities kept normal', r2[0].name, '正常');
+
+  // holding_pct 非 finite 即丢
+  const r3 = normalizeEntities([
+    { name: '张三', role: '股东', holding_pct: NaN },
+    { name: '李四', role: '股东', holding_pct: Infinity },
+    { name: '王五', role: '股东', holding_pct: '5%' as any },
+  ]);
+  assertEqual('entities count 3', r3.length, 3);
+  assertEqual('entities NaN holding dropped', r3[0].holding_pct, undefined);
+  assertEqual('entities Infinity holding dropped', r3[1].holding_pct, undefined);
+  assertEqual('entities string holding dropped', r3[2].holding_pct, undefined);
+
+  // 额外字段透传
+  const r4 = normalizeEntities([
+    { name: '张三', role: '股东', change_type: '增持', change_shares: 1000 },
+  ]);
+  assertEqual('entities change_type passthrough', r4[0].change_type, '增持');
+  assertEqual('entities change_shares passthrough', r4[0].change_shares, 1000);
+
+  // 非 array 兜底
+  assertEqual('entities null → []', normalizeEntities(null).length, 0);
+  assertEqual('entities undefined → []', normalizeEntities(undefined).length, 0);
+  assertEqual('entities string → []', normalizeEntities('xxx' as any).length, 0);
+  assertEqual('entities object → []', normalizeEntities({ name: 'x' } as any).length, 0);
+  assertEqual('entities empty → []', normalizeEntities([]).length, 0);
+  // null 元素不崩
+  const r5 = normalizeEntities([null, undefined, 'x', { name: '张三', role: '股东' }] as any);
+  assertEqual('entities skip non-objects', r5.length, 1);
+}
+
+function testBuildNLPResultFromPayloadIncludesNewFields(): void {
+  const row = makeRow({ stock_code: '000001', original_title: '减持公告' });
+  const payload: RemoteNLPPayload = {
+    status: 'COMPLETED',
+    data: {
+      summary: 'AI 摘要',
+      sentiment: 'negative',
+      event_type: 'reduction',
+      priority: 'critical',
+      entities: [{ name: '张三', role: '股东', holding_pct: 3.5 }],
+    },
+  };
+  const r = buildNLPResultFromPayload(payload, row);
+  assertEqual('payload event_type → 减持', r.event_type, '减持');
+  assertEqual('payload priority → critical', r.priority, 'critical');
+  assertEqual('payload entities 1', r.entities.length, 1);
+  assertEqual('payload entity name', r.entities[0].name, '张三');
+}
+
+function testBuildNLPResultFromPayloadFailedDefaultsNewFields(): void {
+  const row = makeRow({ stock_code: '000001', original_title: '业绩超预期' });
+  const payload: RemoteNLPPayload = { status: 'FAILED', data: { error: 'oops' } };
+  const r = buildNLPResultFromPayload(payload, row);
+  // partial 路径不调 normalize, 必须直接是默认占位 (与 model 默认一致)
+  assertEqual('failed fallback event_type null', r.event_type, null);
+  assertEqual('failed fallback priority low', r.priority, 'low');
+  assertEqual('failed fallback entities []', r.entities.length, 0);
+}
+
+async function testSaveSummariesIncludesNewFields(): Promise<void> {
+  // 保证 saveSummaries 把三新列真的写入 fake store, 防 ANN-002~005 实现后字段丢失看不见.
+  resetStore();
+  const rows = [
+    makeRow({ stock_code: '600519', original_title: 'a' }),
+    makeRow({ stock_code: '000001', original_title: 'b' }),
+  ];
+  const state = makeFakeDSState({
+    fetchByDate: { '2026-06-06': rows },
+  });
+  const ds = makeFakeDS(state);
+  // 用 Default 实现的 saveSummaries (走真模型 stub), 让 fake DS 顺道捕一份 records 作 dual 验证
+  // 这里我们直接用 service.syncDate → dataSource.saveSummaries 是 fake 的, 已捕到 state.saveCalls.
+  // 但 AC 验收 = "三新列在 bulkCreate 入参里出现", 所以再单独走一次真 Default.saveSummaries.
+  const service = new AnnouncementNLPService(ds);
+  await service.syncDate('2026-06-06');
+  // fake DS saveSummaries 收到的记录数
+  assertEqual('saveSummaries called once', state.saveCalls.length, 1);
+  const records = state.saveCalls[0];
+  assertEqual('saveSummaries 2 records', records.length, 2);
+  for (const r of records) {
+    assert('record has event_type key', 'event_type' in r);
+    assert('record has priority key', 'priority' in r);
+    assert('record has entities key', 'entities' in r);
+    assertEqual('record event_type default null', r.event_type, null);
+    assertEqual('record priority default low', r.priority, 'low');
+    assert('record entities default []', Array.isArray(r.entities) && r.entities.length === 0);
+  }
+
+  // 现在用真 Default DataSource (走 monkey-patched AnnouncementSummary.bulkCreate fake) 验证
+  // 同款字段会传到 model — 这是"saveSummaries → bulkCreate"的契约最重要环节.
+  resetStore();
+  const realService = new AnnouncementNLPService(); // 用 PRODUCTION_ANNOUNCEMENT_NLP_DATA_SOURCE
+  await realService['dataSource'].saveSummaries([
+    {
+      announce_date: '2026-06-06',
+      stock_code: '600519',
+      stock_name: '茅台',
+      original_title: 't',
+      announcement_type: null,
+      url: null,
+      summary: 's',
+      sentiment: '正面',
+      key_amounts_json: [],
+      key_topics_json: [],
+      event_type: '业绩',
+      priority: 'critical',
+      entities: [{ name: '张三', role: '股东', holding_pct: 5 }],
+      status: 'completed',
+      nlp_engine: 'trading_agents',
+      error: null,
+      raw_payload: {},
+      persisted: false,
+    },
+  ]);
+  assertEqual('store has 1 row', store.length, 1);
+  const stored = store[0];
+  assertEqual('store event_type 业绩', stored.event_type, '业绩');
+  assertEqual('store priority critical', stored.priority, 'critical');
+  assert(
+    'store entities array',
+    Array.isArray(stored.entities) && (stored.entities as any[]).length === 1
+  );
+}
+
+function testSaveSummariesUpdateOnDuplicateIncludesNewFields(): void {
+  // META-GUARD: AnnouncementNLPService.saveSummaries 的 updateOnDuplicate 必须包含三新列,
+  // 否则 ANN-002~005 实现后 re-sync 同一标题会被 partial upsert 漂回旧值.
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(
+    path.resolve(__dirname, '../../src/services/AnnouncementNLPService.ts'),
+    'utf8'
+  );
+  // 三新列必须出现在 updateOnDuplicate array 内 (正则跨多行)
+  const m = src.match(/updateOnDuplicate:\s*\[([^\]]+)\]/);
+  assert('updateOnDuplicate block found', !!m);
+  const block = m ? m[1] : '';
+  assert("updateOnDuplicate has 'event_type'", /'event_type'/.test(block));
+  assert("updateOnDuplicate has 'priority'", /'priority'/.test(block));
+  assert("updateOnDuplicate has 'entities'", /'entities'/.test(block));
+
+  // bulkCreate map 必须列出三新列 (否则 record 字段不传到 DB)
+  assert(
+    'bulkCreate map includes event_type',
+    /event_type:\s*r\.event_type/.test(src)
+  );
+  assert(
+    'bulkCreate map includes priority',
+    /priority:\s*r\.priority/.test(src)
+  );
+  assert(
+    'bulkCreate map includes entities',
+    /entities:\s*r\.entities/.test(src)
+  );
+}
+
+function testAnnouncementSummaryModelHasNewColumns(): void {
+  // META-GUARD: model 文件必须声明三新列 + 索引 (否则迁移和代码漂移)
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(
+    path.resolve(__dirname, '../../src/models/AnnouncementSummary.ts'),
+    'utf8'
+  );
+  // 字段声明
+  assert('model declares event_type', /declare event_type:/.test(src));
+  assert('model declares priority', /declare priority:/.test(src));
+  assert('model declares entities', /declare entities:/.test(src));
+  // event_type STRING(40) nullable
+  assert(
+    "model event_type STRING(40) nullable",
+    /field:\s*'event_type'[\s\S]*?type:\s*DataType\.STRING\(40\)[\s\S]*?allowNull:\s*true/.test(
+      src
+    ) ||
+      /type:\s*DataType\.STRING\(40\)[\s\S]*?allowNull:\s*true[\s\S]*?field:\s*'event_type'/.test(
+        src
+      )
+  );
+  // priority default 'low'
+  assert("model priority defaultValue 'low'", /defaultValue:\s*'low'/.test(src));
+  // entities default []
+  assert(
+    'model entities JSONB defaultValue []',
+    /type:\s*DataType\.JSONB[\s\S]{1,400}defaultValue:\s*\[\][\s\S]{1,400}declare entities:/.test(src)
+  );
+  // 索引登记
+  assert(
+    'model has priority+date index',
+    /idx_announcement_summaries_priority_date/.test(src)
+  );
+  assert(
+    'model has event_type+date index',
+    /idx_announcement_summaries_event_type_date/.test(src)
+  );
+}
+
+function testMigrationSqlPresentAndComplete(): void {
+  // AC #1: "migration 跑通" — 用 fs 校验 up + down SQL 存在且包含核心语句.
+  // (不真执行 SQL — CI 无 PG. 但 schema 错漏会让 ANN-002~007 全挂.)
+  const fs = require('fs');
+  const path = require('path');
+  const migDir = path.resolve(__dirname, '../../scripts/migrations');
+  const upPath = path.join(
+    migDir,
+    '2026-06-19-announcement-nlp-event-priority-entities.sql'
+  );
+  const downPath = path.join(
+    migDir,
+    '2026-06-19-announcement-nlp-event-priority-entities-rollback.sql'
+  );
+  assert('migration up exists', fs.existsSync(upPath));
+  assert('migration down exists', fs.existsSync(downPath));
+
+  const up = fs.readFileSync(upPath, 'utf8');
+  // BEGIN / COMMIT 包裹
+  assert('up wrapped in BEGIN', /BEGIN;/.test(up));
+  assert('up wrapped in COMMIT', /COMMIT;/.test(up));
+  // 三新列
+  assert(
+    'up adds event_type IF NOT EXISTS',
+    /ADD COLUMN IF NOT EXISTS event_type VARCHAR\(40\)/i.test(up)
+  );
+  assert(
+    'up adds priority IF NOT EXISTS DEFAULT low',
+    /ADD COLUMN IF NOT EXISTS priority VARCHAR\(20\) NOT NULL DEFAULT 'low'/i.test(up)
+  );
+  assert(
+    'up adds entities IF NOT EXISTS JSONB DEFAULT []',
+    /ADD COLUMN IF NOT EXISTS entities JSONB NOT NULL DEFAULT/i.test(up)
+  );
+  // 两索引
+  assert(
+    'up creates priority index IF NOT EXISTS',
+    /CREATE INDEX IF NOT EXISTS idx_announcement_summaries_priority_date/.test(up)
+  );
+  assert(
+    'up creates event_type index IF NOT EXISTS',
+    /CREATE INDEX IF NOT EXISTS idx_announcement_summaries_event_type_date/.test(up)
+  );
+  // 注释 (helps ops 看 schema)
+  assert('up adds COMMENT ON event_type', /COMMENT ON COLUMN.+event_type/i.test(up));
+  assert('up adds COMMENT ON priority', /COMMENT ON COLUMN.+priority/i.test(up));
+  assert('up adds COMMENT ON entities', /COMMENT ON COLUMN.+entities/i.test(up));
+
+  const down = fs.readFileSync(downPath, 'utf8');
+  assert('down wrapped in BEGIN', /BEGIN;/.test(down));
+  assert('down wrapped in COMMIT', /COMMIT;/.test(down));
+  assert('down drops event_type', /DROP COLUMN IF EXISTS event_type/.test(down));
+  assert('down drops priority', /DROP COLUMN IF EXISTS priority/.test(down));
+  assert('down drops entities', /DROP COLUMN IF EXISTS entities/.test(down));
+  assert('down drops priority index', /DROP INDEX IF EXISTS idx_announcement_summaries_priority_date/.test(down));
+  assert('down drops event_type index', /DROP INDEX IF EXISTS idx_announcement_summaries_event_type_date/.test(down));
+}
+
+// ---------------------------------------------------------------------------
 // Run all
 // ---------------------------------------------------------------------------
 
@@ -951,6 +1318,19 @@ async function main(): Promise<void> {
   testBuildNLPResultFromPayloadFailed();
   testBuildNLPResultFromPayloadMissingData();
   testBuildNLPResultFromPayloadInvalidAmounts();
+
+  // US-025 ANN-001: 新字段 + 归一函数 + meta-guard + migration 形态
+  testAnnouncementPriorityValuesFrozen();
+  testAnnouncementEventTypesFrozen();
+  testNormalizePriority();
+  testNormalizeEventType();
+  testNormalizeEntities();
+  testBuildNLPResultFromPayloadIncludesNewFields();
+  testBuildNLPResultFromPayloadFailedDefaultsNewFields();
+  await testSaveSummariesIncludesNewFields();
+  testSaveSummariesUpdateOnDuplicateIncludesNewFields();
+  testAnnouncementSummaryModelHasNewColumns();
+  testMigrationSqlPresentAndComplete();
 
   // service.summarize
   await testSummarizeHeuristic();

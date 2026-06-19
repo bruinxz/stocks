@@ -177,3 +177,36 @@ audit-task-parameters-dry-run.ts 共享同一 env，避免运维多配一份）
 
 跑全部: `cd backend && npm test`（runner 顺序跑全部 .test.ts）
 跑单个: `npx ts-node --transpile-only tests/services/research-integrity-service.test.ts`
+
+## AnnouncementNLP — ANN-001 (US-025) 新字段约定
+
+`AnnouncementSummary` 表 + `AnnouncementNLPRecord` 在 2026-06-19 ANN-001 落地后**多出三列**，
+任何后续 ANN-002~007 / 新接入 caller 都必须同时填充：
+
+| 列 | 类型 | 默认 | 由谁填 | 注意 |
+|---|---|---|---|---|
+| `event_type` | VARCHAR(40) NULL | NULL | US-026 `classifyEventType` | NULL = 未跑过分类；`'其它'` = 跑过且不属于前 6 类 (语义不同！) |
+| `priority` | VARCHAR(20) NOT NULL | `'low'` | US-029 `computePriority` | `'critical'` 触发 US-031 5min 飞书 push — 任何 normalizer 默认必须返 `'low'`，绝不擅自 escalate |
+| `entities` | JSONB NOT NULL | `[]` | US-027 `extractEntities` | 元素必须 `{name, role, holding_pct?}`；额外字段透传 |
+
+**接入清单**（任何新建/扩展 NLP record 的代码 6 处必须改）：
+1. `AnnouncementNLPRecord` interface 字段（`backend/src/services/AnnouncementNLPService.ts`）
+2. `buildHeuristicNLPResult()` 默认占位
+3. `buildNLPResultFromPayload()` — 成功路径走 `normalize*()`，FAILED fallback 走默认值
+4. `DefaultAnnouncementNLPDataSource.saveSummaries()` 的 `bulkCreate` map + `updateOnDuplicate` 数组（漏一处 = re-sync 漂回默认值）
+5. 测试 fake store + `installModelStubs()` 的 `FakeRowState`（不加新列 → 字段消失但测试不挂）
+6. Model：`backend/src/models/AnnouncementSummary.ts` `@Column` + indexes
+
+**归一函数 (`normalizePriority` / `normalizeEventType` / `normalizeEntities`) 安全默认**：
+
+- `normalizePriority(raw)`: 未识别 → `'low'`（**绝不 escalate 到 `'critical'`**，否则远端 AI 返垃圾会触发飞书 push 风暴）
+- `normalizeEventType(raw)`: 未识别字符串 → `'其它'`；null/empty → `null`（区分"跑过没识别"与"没跑过"）
+- `normalizeEntities(raw)`: 非 array → `[]`；缺 name 或 role 的元素直接 drop（不报错）
+
+**Migration**：`backend/scripts/migrations/2026-06-19-announcement-nlp-event-priority-entities.sql`
+（+ 同名 `-rollback.sql`）— `IF NOT EXISTS` + `IF EXISTS` 幂等，可重复跑；
+**生产执行**：`psql $DATABASE_URL -f backend/scripts/migrations/2026-06-19-announcement-nlp-event-priority-entities.sql`。
+
+测试守护：`tests/services/announcement-nlp-service.test.ts` 内
+`testSaveSummariesUpdateOnDuplicateIncludesNewFields` + `testAnnouncementSummaryModelHasNewColumns` +
+`testMigrationSqlPresentAndComplete` 三处 META-GUARD（fs+regex 扫源文件 + SQL）— 漏改任何一处立刻挂。

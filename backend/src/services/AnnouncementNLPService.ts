@@ -75,6 +75,50 @@ export const NLP_ENGINES = Object.freeze({
 });
 
 /**
+ * US-025 ANN-001: priority 枚举 (与 AnnouncementSummary.priority 列一致).
+ * computePriority (US-029 ANN-005) 输出落到这 4 档:
+ *   - critical → ANN-007 (US-031) 5min 飞书 push 强制入队;
+ *   - high     → 前端 "今日重要" 优先展示;
+ *   - medium   → 普通流;
+ *   - low      → 默认 (含历史回填行).
+ * 顺序 fix 让 sortPriorityDesc / 比较函数有稳定基准.
+ */
+export const ANNOUNCEMENT_PRIORITY_VALUES = Object.freeze([
+  'critical',
+  'high',
+  'medium',
+  'low',
+] as const);
+export type AnnouncementPriority = (typeof ANNOUNCEMENT_PRIORITY_VALUES)[number];
+
+/**
+ * US-025 ANN-001: event_type 枚举 (与 AnnouncementSummary.event_type 列一致).
+ * classifyEventType (US-026 ANN-002) 输出落到这 7 档 (再加 NULL=未分类);
+ * '其它' 表示 "已尝试分类但不属于前 6 类", 与 NULL ("没跑过 ANN-002") 语义不同.
+ */
+export const ANNOUNCEMENT_EVENT_TYPES = Object.freeze([
+  '业绩',
+  '重组',
+  '减持',
+  '担保',
+  '处罚',
+  '解禁',
+  '其它',
+] as const);
+export type AnnouncementEventType = (typeof ANNOUNCEMENT_EVENT_TYPES)[number];
+
+/**
+ * US-025 ANN-001: entity 实体 shape (extractEntities US-027 输出元素).
+ * name / role 必填; holding_pct 仅 role='股东'/'高管' 时填; 其它字段自由扩展.
+ */
+export interface AnnouncementEntity {
+  name: string;
+  role: string;
+  holding_pct?: number;
+  [k: string]: unknown;
+}
+
+/**
  * 情绪关键词字典 (与 KOLAggregatorService 同款 4 强度划分; 单文件保留方便公告语境调优).
  * 优先级: 强空 > 强多 > 弱空 > 弱多 > 中性.
  */
@@ -228,6 +272,21 @@ export interface AnnouncementNLPRecord {
   sentiment: SentimentValue | null;
   key_amounts_json: Array<{ label: string; amount: number; unit: string }>;
   key_topics_json: string[];
+  /**
+   * US-025 ANN-001: 事件类型 — classifyEventType (US-026) 输出, NULL = 未分类.
+   * 本 story 默认 null, 由 ANN-002 实现填充.
+   */
+  event_type: AnnouncementEventType | null;
+  /**
+   * US-025 ANN-001: 优先级 — computePriority (US-029) 输出, 默认 'low'.
+   * 本 story 默认 'low', 由 ANN-005 实现填充.
+   */
+  priority: AnnouncementPriority;
+  /**
+   * US-025 ANN-001: 实体抽取 — extractEntities (US-027) 输出, 默认 [].
+   * 本 story 默认 [], 由 ANN-003 实现填充.
+   */
+  entities: AnnouncementEntity[];
   status: 'completed' | 'partial' | 'failed' | 'pending';
   nlp_engine: string | null;
   error: string | null;
@@ -244,6 +303,10 @@ export interface RemoteNLPPayload {
     sentiment?: string; // '正面' / '中性' / '负面' / 'positive' / 'negative' / 'neutral'
     key_amounts?: Array<{ label?: string; amount?: number; unit?: string }>;
     key_topics?: string[];
+    /** US-025 ANN-001: 占位让远端 AI 与本地 ANN-002~005 实现可互替, 当前默认 null. */
+    event_type?: string;
+    priority?: string;
+    entities?: Array<Record<string, unknown>>;
     error?: string;
     [k: string]: unknown;
   };
@@ -363,6 +426,11 @@ export class DefaultAnnouncementNLPDataSource implements AnnouncementNLPDataSour
         sentiment: r.sentiment,
         key_amounts_json: r.key_amounts_json,
         key_topics_json: r.key_topics_json,
+        // US-025 ANN-001: 三新列必须随 bulkCreate 一起写, 否则 partial upsert 把已有行的
+        // event_type / priority / entities 漂回默认值 (low / [] / null).
+        event_type: r.event_type,
+        priority: r.priority,
+        entities: r.entities,
         status: r.status,
         nlp_engine: r.nlp_engine,
         error: r.error,
@@ -377,6 +445,10 @@ export class DefaultAnnouncementNLPDataSource implements AnnouncementNLPDataSour
           'sentiment',
           'key_amounts_json',
           'key_topics_json',
+          // US-025 ANN-001: 三新列加入 updateOnDuplicate 让 ANN-002~005 re-sync 能覆盖旧值.
+          'event_type',
+          'priority',
+          'entities',
           'status',
           'nlp_engine',
           'error',
@@ -515,6 +587,97 @@ export function normalizeSentiment(raw: unknown): SentimentValue {
 }
 
 /**
+ * US-025 ANN-001: 规范化 priority — 任何 raw 输入兜底成枚举值.
+ * - 严格大小写匹配 ANNOUNCEMENT_PRIORITY_VALUES 后返回;
+ * - 中文别名: '关键'/'紧急'→critical, '高'→high, '中'→medium, '低'→low;
+ * - 未识别 → 'low' (与历史行默认一致, 不让模糊输入提升到 critical 触发飞书 push).
+ *
+ * ANN-005 (US-029) 真正实现 computePriority 后会直接返回枚举值,
+ * 但 RemoteNLPPayload.priority 可能是远端 AI 自由文本, 必须经过本归一.
+ */
+export function normalizePriority(raw: unknown): AnnouncementPriority {
+  if (raw === null || raw === undefined) return 'low';
+  const text = String(raw).trim().toLowerCase();
+  if (!text) return 'low';
+  if ((ANNOUNCEMENT_PRIORITY_VALUES as readonly string[]).includes(text)) {
+    return text as AnnouncementPriority;
+  }
+  if (text.includes('critical') || text.includes('关键') || text.includes('紧急')) {
+    return 'critical';
+  }
+  if (text.includes('high') || text === '高') return 'high';
+  if (text.includes('medium') || text === '中') return 'medium';
+  if (text.includes('low') || text === '低') return 'low';
+  return 'low';
+}
+
+/**
+ * US-025 ANN-001: 规范化 event_type — 任何 raw 输入兜底成枚举值或 null.
+ * - 严格匹配 ANNOUNCEMENT_EVENT_TYPES 后返回;
+ * - 英文别名 (earnings/restructure/reduction/...) 容错;
+ * - 未识别字符串 → '其它' (区别于 null = 未跑过分类);
+ * - null / undefined / 空串 → null.
+ *
+ * ANN-002 (US-026) classifyEventType 直接返回枚举, 但远端 AI / 历史脚本仍走本归一.
+ */
+export function normalizeEventType(raw: unknown): AnnouncementEventType | null {
+  if (raw === null || raw === undefined) return null;
+  const text = String(raw).trim();
+  if (!text) return null;
+  if ((ANNOUNCEMENT_EVENT_TYPES as readonly string[]).includes(text)) {
+    return text as AnnouncementEventType;
+  }
+  const lower = text.toLowerCase();
+  if (lower.includes('earning') || text.includes('业绩')) return '业绩';
+  if (lower.includes('restructur') || text.includes('重组') || text.includes('并购')) return '重组';
+  if (lower.includes('reduction') || lower.includes('reduce') || text.includes('减持')) {
+    return '减持';
+  }
+  if (lower.includes('guarantee') || text.includes('担保')) return '担保';
+  if (
+    lower.includes('penalt') ||
+    lower.includes('punish') ||
+    text.includes('处罚') ||
+    text.includes('违规')
+  ) {
+    return '处罚';
+  }
+  if (lower.includes('unlock') || lower.includes('lockup') || text.includes('解禁')) return '解禁';
+  return '其它';
+}
+
+/**
+ * US-025 ANN-001: 规范化 entities — 任何 raw 输入兜底成 AnnouncementEntity[].
+ * - 非 array → [];
+ * - 元素必须含 string name + string role (缺一即 drop, 不报错);
+ * - holding_pct 仅当数字且 finite 时保留;
+ * - 其它字段透传 (extractEntities US-027 后续可能扩 'change_type' 等).
+ *
+ * ANN-003 (US-027) extractEntities 直接返回合法 shape, 但远端 AI / migration 兜底走本归一.
+ */
+export function normalizeEntities(raw: unknown): AnnouncementEntity[] {
+  if (!Array.isArray(raw)) return [];
+  const out: AnnouncementEntity[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    const name = typeof rec.name === 'string' ? rec.name.trim() : '';
+    const role = typeof rec.role === 'string' ? rec.role.trim() : '';
+    if (!name || !role) continue;
+    const entity: AnnouncementEntity = { name, role };
+    if (typeof rec.holding_pct === 'number' && Number.isFinite(rec.holding_pct)) {
+      entity.holding_pct = rec.holding_pct;
+    }
+    for (const k of Object.keys(rec)) {
+      if (k === 'name' || k === 'role' || k === 'holding_pct') continue;
+      entity[k] = rec[k];
+    }
+    out.push(entity);
+  }
+  return out;
+}
+
+/**
  * 从远端 AI payload 构建 NLPRecord; payload 为 null / 失败时由 caller 走启发式 fallback.
  * pure transform, 不写库.
  */
@@ -540,6 +703,10 @@ export function buildNLPResultFromPayload(
       sentiment: fallbackSentiment,
       key_amounts_json: extractAmounts(row.original_title),
       key_topics_json: extractTopics(row.original_title),
+      // US-025 ANN-001: 启发式 fallback 时本 story 默认占位, ANN-002~005 实现后会真填.
+      event_type: null,
+      priority: 'low',
+      entities: [],
       status: 'partial',
       nlp_engine: NLP_ENGINES.HEURISTIC,
       error: typeof err === 'string' ? err : '远端 AI 异常 — 已走启发式 fallback',
@@ -581,6 +748,10 @@ export function buildNLPResultFromPayload(
     sentiment,
     key_amounts_json: keyAmounts,
     key_topics_json: keyTopics,
+    // US-025 ANN-001: 透传远端 AI 输出 (经归一); 缺失则 ANN-002~005 实现后由 caller 二次填充.
+    event_type: normalizeEventType(data.event_type),
+    priority: normalizePriority(data.priority),
+    entities: normalizeEntities(data.entities),
     status: 'completed',
     nlp_engine: NLP_ENGINES.TRADING_AGENTS,
     error: null,
@@ -605,6 +776,11 @@ export function buildHeuristicNLPResult(row: AnnouncementReportRow): Announcemen
     sentiment,
     key_amounts_json: extractAmounts(row.original_title),
     key_topics_json: extractTopics(row.original_title),
+    // US-025 ANN-001: 启发式默认占位 — ANN-002 / 003 / 005 (pure helper) 落地后,
+    // 本 builder 会引入对应函数填充, 但 schema 必须现在就有字段保留位以免 saveSummaries 缺列报错.
+    event_type: null,
+    priority: 'low',
+    entities: [],
     status: 'completed',
     nlp_engine: NLP_ENGINES.HEURISTIC,
     error: null,

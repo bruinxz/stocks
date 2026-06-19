@@ -380,8 +380,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 25,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DONE 2026/06/19: 落 AnnouncementSummary 3 新列 (event_type VARCHAR(40) NULL / priority VARCHAR(20) NOT NULL DEFAULT 'low' / entities JSONB NOT NULL DEFAULT []) + 双向 migration SQL up/down (含 IF [NOT] EXISTS 幂等 + 2 复合索引 priority/announce_date DESC / event_type/announce_date DESC + 3 COMMENT). 服务侧加 2 export 常量 (ANNOUNCEMENT_PRIORITY_VALUES 4 档 / ANNOUNCEMENT_EVENT_TYPES 7 类) + AnnouncementEntity interface + 3 normalize* 函数 (normalizePriority 默认 'low' 绝不擅自 escalate / normalizeEventType '其它' vs null 语义区分 / normalizeEntities 缺 name|role drop + holding_pct 非 finite 丢). AnnouncementNLPRecord/builder (heuristic + payload 两路) + DefaultDataSource.saveSummaries (bulkCreate map + updateOnDuplicate array) 全接入 3 新字段. 284 ok / 0 failed (原 207 + 新增 77 assertions, 含 9 新测函数 + 3 META-GUARD fs+regex 守 model/saveSummaries/migration 形态). 本地 PG 14.22 临时表 sandbox 真跑 migration up/down 双向验证 — \\d+ 见列/默认/索引/comment 全对. tsc 0 err, lint 0 新增 err. ANN-002~007 (US-026~031) 可以直接基于本 schema 实现, 默认值已保证 fail-safe 不触发 push 风暴. CLAUDE.md src/services/ 新增 ANN-001 接入清单 6 处."
     },
     {
       "id": "US-026",
