@@ -591,8 +591,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 39,
-      "passes": false,
-      "notes": "依赖: QA-002"
+      "passes": true,
+      "notes": "依赖: QA-002 | DONE 2026/06/19: 新增 backend/src/services/qa/QALeadingSignalDetector.ts (~480 行 + 完整 jsdoc) — 消费 EastMoneyQAStat 周聚合输出 3 类 leading signal: earnings_bullish (questions_growth>+200% AND answer_rate>50%) / earnings_bearish (questions_growth>+200% AND answer_rate<10%) / earnings_forecast_leading (top_subtopic=earnings_forecast AND template_score<0.3 AND answer_count≥3). 6 项 AI feature checklist 全打: DataSource DI seam (生产走 qaStatAggregator.listByStock) / pure helpers 全 export (computeQuestionsGrowthPct + classifySignalLevel + detectForStat + detectForStockStats + rowToStatLike + clampLookbackDays + getCutoffIso) / plain-object 返回类型 / 阈值 Object.freeze 单 source-of-truth / fail-OPEN per-stock try/catch / 双重防御外层 catch. AC 主验收: tests/services/qa/qa-leading-signal-detector.test.ts 93 ok / 0 failed, 含专测 testDetectForStocksAcAtLeast5Signals 用 5 stock fixture 复现 90 天内至少 5 信号 (实际生成 6+). 严格 > / < 比较防边界假信号 (200%/50%/10%/0.3 全测边界 = 阈值不触发). prev=null/undefined → growth=null 区别于 prev=0 curr>0=+Inf (两者语义不同). tsc 0 err / lint 0 err / qa 三 test 文件全过 (east-money-qa-topic-service + qa-stat-aggregator + qa-leading-signal-detector)."
     },
     {
       "id": "US-040",

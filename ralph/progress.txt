@@ -1039,3 +1039,22 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - DECIMAL(5,3) Sequelize 默认 NULL 显式 allowNull:true (avg_answer_sentiment + answer_template_score 列), 区分 "无回答=null" 与 "中性=0" 语义边界, downstream null-check 必须显式 (raw_payload doc 已强调)
   - in-memory model stub 模式 (installModelStubs): monkey-patch model.bulkCreate / findAll, 不需要真 DB — 与 east-money-qa-topic-service 同款; 注意 fake DataSource 的 saveStats 不走 model, 只看 state.saveCalls, 不要 assert store.length
 ---
+
+## 2026/06/19 18:30 - US-039
+- Implemented QALeadingSignalDetector (QA-003): new backend/src/services/qa/QALeadingSignalDetector.ts
+- 3 leading signal types (earnings_bullish / earnings_bearish / earnings_forecast_leading) per docs 83 §B.2
+- Consumes EastMoneyQAStat via qaStatAggregator.listByStock (no re-fetching, no NLP duplication)
+- Pure helpers all exported for unit testing without DB: computeQuestionsGrowthPct / detectForStat / detectForStockStats / rowToStatLike / clampLookbackDays / getCutoffIso
+- DataSource DI seam + per-stock fail-OPEN try/catch + outer double-defense catch
+- Files changed:
+  - NEW backend/src/services/qa/QALeadingSignalDetector.ts (~480 lines, full jsdoc)
+  - NEW backend/tests/services/qa/qa-leading-signal-detector.test.ts (93 assertions)
+  - prd.json US-039 → passes: true
+- AC verification: testDetectForStocksAcAtLeast5Signals sets up 5-stock fixtures and verifies ≥5 signals in 90-day window (actual: 6). Boundary tests confirm strict > / < at thresholds (200%/50%/10%/0.3) — equal-to-threshold does NOT trigger (防边界假信号).
+- **Learnings for future iterations:**
+  - prev=null/undefined ≠ prev=0: when no baseline week exists, growth_pct must be null (skip growth-class signals). prev=0 + curr>0 = +Infinity is valid and triggers (genuine "0 to N" surge). My first cut conflated them and over-triggered.
+  - Sequelize DECIMAL columns return strings (e.g. "0.500") — rowToStatLike must Number()-coerce every numeric field (already covered by testRowToStatLikeStringTemplate).
+  - Test for a `null` template_score guard: top_subtopic = earnings_forecast does NOT trigger leading if answer_count=0 or template_score=null. Null = "no answers this week", not "zero quality".
+  - Detector intentionally does NOT write RiskAlert / DB (QA-009/QA-010 own alerting + factor wiring). Derived view only — keep services single-purpose.
+  - `npm test -- --filter=qa` runs 3 qa tests (~3.3s) — fast enough to verify per-story without full suite.
+---

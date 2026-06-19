@@ -231,3 +231,30 @@ audit-task-parameters-dry-run.ts 共享同一 env，避免运维多配一份）
 AC，已记录 1 例已知 misclassification（"出口管制" 中 'export' 比 'tariff' 命中先且数高）— 改进需引入
 "否定词上下文 / 多词 phrase 优先" 启发，目前 99.1% 准确率不阻塞 AC。
 
+---
+
+## QALeadingSignalDetector — QA-003 业绩 leading 信号（2026-06-19）
+
+`services/qa/QALeadingSignalDetector.ts` 是 **derived view**：消费 `EastMoneyQAStat`
+（QA-002 已落表的按周聚合）→ 输出 3 类 leading signal（earnings_bullish /
+earnings_bearish / earnings_forecast_leading）。**不写库 / 不写 RiskAlert / 不重拉远端 /
+不重跑 NLP** —— 告警通路与 factor 接入分别由 QA-009 / QA-010 owner。
+
+**新增信号 4 步**：
+1. `SIGNAL_TYPES` 加常量 + `QALeadingSignalType` union 加成员
+2. `SIGNAL_THRESHOLDS` 加数值阈值（**严格 > / <**，等于阈值不触发，防默认值 = 阈值误报）
+3. `detectForStat()` 加 if 分支 push 到 `out[]`（同周多信号都返回，全局排序在 service 层）
+4. `qa-leading-signal-detector.test.ts` 加 happy + 边界 + null 兜底 + AC 主验收
+
+**`prev=null` vs `prev=0` 严格区分**（首坑）：
+- `prev=null/undefined` → growth=null → 不触发 growth-class 信号（无 baseline week 存在）
+- `prev=0 curr>0` → growth=+Infinity → 触发 growth-class（合法的 "0 → N" 暴增）
+- 任一混淆都会过/漏触发。`detectForStat` 内有显式 prev null-check（短路 computeQuestionsGrowthPct）。
+
+**`top_subtopic = earnings_forecast` 但 `template_score=null` 必须不触发 leading**：
+NULL = 当周无任何回答（合法语义状态），≠ "回答模板分 0"。`detectForStat` 显式
+`templateScore !== null` guard。
+
+**Sequelize DECIMAL 字符串坑**：`EastMoneyQAStat.answer_rate / answer_template_score`
+等 DECIMAL 列在原生 sequelize-typescript 返回字符串。`rowToStatLike()` 是统一入口，
+对每个 numeric 字段 `Number()` 转一遍（带 string→0.5 + null→null 单测覆盖）。
