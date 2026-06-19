@@ -6,6 +6,7 @@ import { automatedRecommendationLoopService } from '../../services/AutomatedReco
 import { recommendationLoopPolicySnapshotService } from '../../services/RecommendationLoopPolicySnapshotService';
 import { AISignalSourceType } from '../../models/AIInvestmentSignal';
 import { aiPollingQueue } from '../../jobs/aiPollingQueue';
+import { buildAIPollingJobOptions } from '../../jobs/aiPollingEnqueue';
 import { logger } from '../../utils/logger';
 
 export class QuantRecommendationController {
@@ -98,6 +99,11 @@ export class QuantRecommendationController {
         try {
           const result = await aiAdvisorService.analyzeStock(symbol, target_date, true);
           if (result?.task_id) {
+            const pollingJobOptions = buildAIPollingJobOptions({ taskId: result.task_id });
+            if (!pollingJobOptions) {
+              failed.push({ symbol, name, error: 'TradingAgents 返回的 task_id 非法' });
+              continue;
+            }
             await aiPollingQueue.add(
               {
                 taskId: result.task_id,
@@ -115,14 +121,9 @@ export class QuantRecommendationController {
                 recommendation_source:
                   typeof item === 'string' ? 'manual_recommendation' : item.source,
               },
-              {
-                // BETA-3 (2026-06-18, audit M-15): 标准 jobId + dedup + bounded retention
-                jobId: `ai-poll-${result.task_id}`,
-                attempts: 10,
-                backoff: { type: 'fixed', delay: 3 * 60 * 1000 },
-                removeOnComplete: { count: 1000 },
-                removeOnFail: { count: 500 },
-              }
+              // US-019 / EX-005: jobId/attempts/backoff/retention 统一由 aiPollingEnqueue 单点供给;
+              // Bull 内置 Redis Lua dedup (同 jobId EXISTS → return existing jobId), 持久化由 Redis 兜底.
+              pollingJobOptions
             );
             submitted.push({ symbol, name, task_id: result.task_id, status: result.status });
           } else {

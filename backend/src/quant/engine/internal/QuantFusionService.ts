@@ -9,6 +9,7 @@ import {
 import { quantSignalService } from './QuantSignalService';
 import { aiAdvisorService } from '../../../services/AIAdvisorService';
 import { aiPollingQueue } from '../../../jobs/aiPollingQueue';
+import { buildAIPollingJobOptions } from '../../../jobs/aiPollingEnqueue';
 import { paperTradingAutomationService } from '../../../portfolio/internal/PaperTradingAutomationService';
 import { paperTradingRiskProfileService } from '../../../portfolio/internal/PaperTradingRiskProfileService';
 import { normalizeSymbol } from '../../../utils/stockSymbol';
@@ -2150,6 +2151,15 @@ export class QuantFusionService {
         }
 
         const archivedSignal = recordsBySymbol.get(normalizeSymbol(candidate.symbol));
+        const pollingJobOptions = buildAIPollingJobOptions({ taskId: response.task_id });
+        if (!pollingJobOptions) {
+          failed.push({
+            symbol: candidate.symbol,
+            name: candidate.name,
+            error: 'TradingAgents 返回的 task_id 非法',
+          });
+          continue;
+        }
         await aiPollingQueue.add(
           {
             taskId: response.task_id,
@@ -2225,13 +2235,9 @@ export class QuantFusionService {
             quant_agent_fusion: true,
           },
           {
-            // BETA-3 (2026-06-18, audit M-15): jobId 标准化为 ai-poll-${taskId}; Bull 自动
-            // dedup; removeOnComplete/Fail 显式覆盖 queue 默认。
-            jobId: `ai-poll-${response.task_id}`,
-            attempts: 10,
-            backoff: { type: 'fixed', delay: 3 * 60 * 1000 },
-            removeOnComplete: { count: 1000 },
-            removeOnFail: { count: 500 },
+            // US-019 / EX-005: jobId/attempts/backoff/retention 统一由 aiPollingEnqueue 单点供给;
+            // Bull Redis Lua dedup (EXISTS ai-poll-${taskId}) 是持久化的事实源, 重复入队短路返同 jobId.
+            ...pollingJobOptions,
           }
         );
 

@@ -12,6 +12,7 @@ import { logger } from '../utils/logger';
 import { LIVE_AUDIT_EVENT_TYPES } from '../live-trading/auditEvents';
 import { dataUpdateQueue } from '../jobs/dataUpdateQueue';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
+import { buildAIPollingJobOptions } from '../jobs/aiPollingEnqueue';
 import { aiAdvisorService } from './AIAdvisorService';
 import { quantRecommendationService } from './QuantRecommendationService';
 import { quantFusionService } from '../quant/engine/internal/QuantFusionService';
@@ -3878,6 +3879,14 @@ class SchedulerService {
           try {
             const res = await aiAdvisorService.analyzeStock(candidate.symbol, targetDate, true);
             if (res && res.task_id) {
+              const pollingJobOptions = buildAIPollingJobOptions({ taskId: res.task_id });
+              if (!pollingJobOptions) {
+                logger.warn(
+                  `跳过股票 ${candidate.symbol} 入队: TradingAgents 返回的 task_id 非法`
+                );
+                failed++;
+                continue;
+              }
               await aiPollingQueue.add(
                 {
                   taskId: res.task_id,
@@ -3896,14 +3905,8 @@ class SchedulerService {
                   recommendation_source: universe,
                   agent_session: parameters.agent_session,
                 },
-                {
-                  // BETA-3 (2026-06-18, audit M-15): 标准 jobId + dedup + bounded retention
-                  jobId: `ai-poll-${res.task_id}`,
-                  attempts: 10,
-                  backoff: { type: 'fixed', delay: 3 * 60 * 1000 },
-                  removeOnComplete: { count: 1000 },
-                  removeOnFail: { count: 500 },
-                }
+                // US-019 / EX-005: jobId/attempts/backoff/retention 统一由 aiPollingEnqueue 单点供给.
+                pollingJobOptions
               );
               count++;
             }

@@ -8,6 +8,7 @@ import { logger } from '../utils/logger';
 import { AISignalSourceType } from '../models/AIInvestmentSignal';
 import { User } from '../models/User';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
+import { buildAIPollingJobOptions } from '../jobs/aiPollingEnqueue';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
 import { recommendationLoopPolicySnapshotService } from './RecommendationLoopPolicySnapshotService';
 import { paperTradingRiskProfileService } from '../portfolio/internal/PaperTradingRiskProfileService';
@@ -2162,6 +2163,15 @@ class AutomatedRecommendationLoopService {
           continue;
         }
 
+        const pollingJobOptions = buildAIPollingJobOptions({ taskId: response.task_id });
+        if (!pollingJobOptions) {
+          failed.push({
+            symbol: candidate.symbol,
+            name: candidate.name,
+            error: 'TradingAgents 返回的 task_id 非法',
+          });
+          continue;
+        }
         await aiPollingQueue.add(
           {
             taskId: response.task_id,
@@ -2215,15 +2225,9 @@ class AutomatedRecommendationLoopService {
             data_quality: candidate.data_quality,
           },
           {
-            // BETA-3 (2026-06-18, audit M-15): jobId 加 task_id 作为 Bull 自动 dedup
-            // 主键 (同 jobId 不重复入队); 加 removeOnComplete/Fail 显式覆盖默认 (200/500)
-            // 让 single-source-of-truth 在 add 点而非 queue 默认配置, ops 改阈值时无需
-            // 滚动重启 Bull queue.
-            jobId: `ai-poll-${response.task_id}`,
-            attempts: 10,
-            backoff: { type: 'fixed', delay: 3 * 60 * 1000 },
-            removeOnComplete: { count: 1000 },
-            removeOnFail: { count: 500 },
+            // US-019 / EX-005: jobId/attempts/backoff/retention 统一由 aiPollingEnqueue 单点供给;
+            // 同 task_id 二次入队由 Bull Redis Lua dedup 短路, 持久化与多进程一致性靠 Redis EXISTS 自然兜底.
+            ...pollingJobOptions,
           }
         );
 
