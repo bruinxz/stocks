@@ -84,6 +84,15 @@ import {
   findBucket,
   groupJournalsByPeriod,
 } from './journalPeriodHelpers';
+import {
+  buildPositionMetricsViewModel,
+  POSITION_RISK_LEVEL_COLOR,
+  POSITION_RISK_LEVEL_LABEL,
+  DAYS_HELD_LEVEL_COLOR,
+  DAYS_HELD_LEVEL_LABEL,
+  formatPctOrDash as formatPositionPct,
+  formatDaysHeld,
+} from './positionMetricsHelpers';
 import { usePortfolio } from '../../contexts/PortfolioContext';
 import { translateAxiosTradingError, translateTradingError } from '../../utils/tradingErrorMap';
 
@@ -634,6 +643,96 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
       },
     },
     {
+      // US-058 [FE-019] — ATR(14) % 列, 反映当前波动率 (backend 用 30 天 bars 算).
+      // 三档分级与 PerStockStopLossGuard / Donchian/Turtle 拒入门槛 8% 对齐.
+      title: (
+        <Tooltip title="ATR(14) 相对最新 close 的百分比 — 反映持仓近期波动率. ≥8%=极高 / 5-8%=警戒 / <5%=正常">
+          ATR%
+        </Tooltip>
+      ),
+      key: 'atr_pct',
+      width: 100,
+      align: 'right' as const,
+      render: (_: any, row: PositionRow) => {
+        const vm = buildPositionMetricsViewModel({
+          atr_pct: row.atr_pct ?? null,
+          current_price: row.current_price,
+          highest_price: row.highest_price ?? null,
+          created_at: row.created_at,
+        });
+        if (vm.atrLevel === 'unknown') {
+          return <Text type="secondary">—</Text>;
+        }
+        return (
+          <Tooltip title={POSITION_RISK_LEVEL_LABEL[vm.atrLevel]}>
+            <Tag color={POSITION_RISK_LEVEL_COLOR[vm.atrLevel]}>{formatPositionPct(vm.atrPct)}</Tag>
+          </Tooltip>
+        );
+      },
+    },
+    {
+      // US-058 [FE-019] — 当前回撤 % = (highest_price - current_price) / highest_price
+      // highest_price 由 TrailingStopGuard 每日收盘后写; 新仓首日没跑 guard 显示 "—".
+      title: (
+        <Tooltip title="当前回撤 = (持仓期间最高价 - 现价) / 最高价 × 100%. ≥15%=深度 / 8-15%=警戒 / <8%=健康">
+          回撤
+        </Tooltip>
+      ),
+      key: 'dd_pct',
+      width: 100,
+      align: 'right' as const,
+      render: (_: any, row: PositionRow) => {
+        const vm = buildPositionMetricsViewModel({
+          atr_pct: row.atr_pct ?? null,
+          current_price: row.current_price,
+          highest_price: row.highest_price ?? null,
+          created_at: row.created_at,
+        });
+        if (vm.ddLevel === 'unknown') {
+          return <Text type="secondary">—</Text>;
+        }
+        return (
+          <Tooltip title={POSITION_RISK_LEVEL_LABEL[vm.ddLevel]}>
+            <Tag color={POSITION_RISK_LEVEL_COLOR[vm.ddLevel]}>{formatPositionPct(vm.ddPct)}</Tag>
+          </Tooltip>
+        );
+      },
+    },
+    {
+      // US-058 [FE-019] — 持仓天数 (自然日, 不扣周末). 新仓蓝色 / 长期 (>180天) 灰色.
+      title: (
+        <Tooltip title="持仓天数 (自然日, 不扣周末/节假日). <7=新仓 / 7-180=正常 / >180=长期">
+          持仓天数
+        </Tooltip>
+      ),
+      key: 'days_held',
+      width: 110,
+      align: 'right' as const,
+      render: (_: any, row: PositionRow) => {
+        const vm = buildPositionMetricsViewModel({
+          atr_pct: row.atr_pct ?? null,
+          current_price: row.current_price,
+          highest_price: row.highest_price ?? null,
+          created_at: row.created_at,
+        });
+        if (vm.daysHeldLevel === 'unknown') {
+          return <Text type="secondary">—</Text>;
+        }
+        const label = DAYS_HELD_LEVEL_LABEL[vm.daysHeldLevel];
+        const color = DAYS_HELD_LEVEL_COLOR[vm.daysHeldLevel];
+        // normal 档不显示额外 Tag (避免视觉噪音), 仅显示天数; fresh/long 用 Tag 高亮.
+        if (vm.daysHeldLevel === 'normal') {
+          return <span>{formatDaysHeld(vm.daysHeld)}</span>;
+        }
+        return (
+          <Space size={4}>
+            <span>{formatDaysHeld(vm.daysHeld)}</span>
+            {label && <Tag color={color}>{label}</Tag>}
+          </Space>
+        );
+      },
+    },
+    {
       title: '止损价',
       key: 'stop_loss',
       width: 200,
@@ -835,7 +934,7 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
           dataSource={positions}
           columns={columns as any}
           pagination={false}
-          scroll={{ x: 1480 }}
+          scroll={{ x: 1800 }}
         />
       )}
       {aiTarget && (
@@ -945,6 +1044,47 @@ const PositionMobileCard: React.FC<PositionMobileCardProps> = ({
             {row.created_at ? dayjs(row.created_at).format('YYYY-MM-DD') : '-'}
           </span>
         </div>
+
+        {/* US-058 [FE-019] — 高级指标 ATR / DD / 持仓天数 (mobile 一行展示) */}
+        {(() => {
+          const vm = buildPositionMetricsViewModel({
+            atr_pct: row.atr_pct ?? null,
+            current_price: row.current_price,
+            highest_price: row.highest_price ?? null,
+            created_at: row.created_at,
+          });
+          return (
+            <div className="workspace-mobile-card-row">
+              <span className="label">ATR / 回撤 / 天数</span>
+              <span className="value">
+                <Space size={4} wrap>
+                  {vm.atrLevel === 'unknown' ? (
+                    <Text type="secondary">ATR —</Text>
+                  ) : (
+                    <Tag color={POSITION_RISK_LEVEL_COLOR[vm.atrLevel]}>
+                      ATR {formatPositionPct(vm.atrPct)}
+                    </Tag>
+                  )}
+                  {vm.ddLevel === 'unknown' ? (
+                    <Text type="secondary">回撤 —</Text>
+                  ) : (
+                    <Tag color={POSITION_RISK_LEVEL_COLOR[vm.ddLevel]}>
+                      DD {formatPositionPct(vm.ddPct)}
+                    </Tag>
+                  )}
+                  <span>{formatDaysHeld(vm.daysHeld)}</span>
+                  {vm.daysHeldLevel !== 'unknown' &&
+                    vm.daysHeldLevel !== 'normal' &&
+                    DAYS_HELD_LEVEL_LABEL[vm.daysHeldLevel] && (
+                      <Tag color={DAYS_HELD_LEVEL_COLOR[vm.daysHeldLevel]}>
+                        {DAYS_HELD_LEVEL_LABEL[vm.daysHeldLevel]}
+                      </Tag>
+                    )}
+                </Space>
+              </span>
+            </div>
+          );
+        })()}
 
         <div className="workspace-mobile-card-row">
           <span className="label">止损价</span>

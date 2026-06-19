@@ -42,6 +42,21 @@ export interface PositionRow {
   unrealized_pnl: number;
   stop_loss_price: number | null;
   take_profit_price: number | null;
+  /**
+   * 追踪止损 — 持仓期间观察到的最高收盘价 (US-048).
+   * 由 TrailingStopGuard 每日收盘后写; 新仓首日尚未跑 guard 之前为 null.
+   * US-058 用作"当前回撤" 的分母 (DD% = (highest - current) / highest * 100).
+   */
+  highest_price?: number | null;
+  /** 追踪止损回撤比例 (US-048), 0-1 间. */
+  trailing_stop_pct?: number | null;
+  /** 追踪止损触发价 = highest_price * (1 - effective_pct), US-048 写入. */
+  trailing_stop_price?: number | null;
+  /**
+   * 当日 ATR(14) / current_price * 100, % 单位.  由 PaperTradingFacade.getPortfolio
+   * 在 US-058 加入: 服务端读 30 天日 bars 算 ATR(14), 缺数据返 null.
+   */
+  atr_pct?: number | null;
   created_at: string;
   updated_at: string;
 }

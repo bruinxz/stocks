@@ -1583,3 +1583,24 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - 月底/季底边界用 "下月 1 日 - 1 ms" (本质 -24h) 而不是写死 31 天, 自然覆盖 28/29/30/31; 跨年用
     `mo === 12 ? y+1 : y` switch 一句搞定, 闰年 2024-02-29 / 2025-02-28 单测都过.
 ---
+
+
+## 2026/06/20 04:20 - US-058
+- 实现 [FE-019] PortfolioWorkspace 持仓 ATR/DD/days_held 列 — 上一迭代已落 helper + 后端 ATR helper + facade.toJSON 挂 atr_pct + PortfolioWorkspace 3 列接入 + 完整单测; 本迭代验证全链路并定型: typecheck 通过 (frontend + backend tsc 0 err) / `npm test --filter=position-metrics` 108 ok 0 failed / lint 0 新增 err 0 新增 warn (与 baseline 完全对齐)
+- Files (前一迭代已写, 本迭代仅核验未改):
+  - frontend/src/pages/workspace/positionMetricsHelpers.ts (新, 230 行): 6 export 常量 (ATR_HIGH_PCT=8 / ATR_WATCH_PCT=5 / DD_HIGH_PCT=15 / DD_WATCH_PCT=8 / DAYS_HELD_FRESH=7 / DAYS_HELD_LONG=180) + 2 type (PositionRiskLevel / DaysHeldLevel) + 4 frozen color/label 表 + 4 pure compute/classify helpers + buildPositionMetricsViewModel + formatPctOrDash/formatDaysHeld
+  - backend/src/portfolio/internal/positionAtrHelpers.ts (新, 64 行): computeAtrPctFromBars(bars, period=14) Wilder smoothing 与 TechnicalIndicators.ATR 同公式, 数据不足/close≤0 返 null
+  - backend/src/portfolio/PaperTradingFacade.ts: import + re-export computeAtrPctFromBars; getPortfolio() 内每个 position 拉过去 30 天 KlineData → computeAtrPctFromBars → 挂到 json.atr_pct (model 列不存 ATR — 它是日级派生量, 每次返实时计算)
+  - frontend/src/services/portfolioWorkspaceService.ts: PositionRow 加 highest_price + atr_pct
+  - frontend/src/pages/workspace/PortfolioWorkspace.tsx: import buildPositionMetricsViewModel 等 + 3 列 (ATR%/DD/持仓天数) 用 useMemo + Tag color 落档显示 + table scroll x 加宽到 1800
+  - backend/tests/services/position-metrics-helpers.test.ts (新, 410 行 / 108 assert): 9 模块 — [1] 阈值 sanity / [2] computeDaysHeld 9 边界 / [3] computeDrawdownPct 10 边界 / [4] classify*Level 三档 + null/NaN/负值 / [5] frozen color/label 表完整性 / [6] buildPositionMetricsViewModel happy/缺 highest/缺 atr/全 null/同输入同输出 / [7] formatter 边界 / [8] computeAtrPctFromBars empty/不足/平稳 16 根/close=0 / [9] META-GUARD fs+regex 守 PortfolioWorkspace 含 import + 3 列 key + scroll x≥1700 + service PositionRow 含 atr_pct/highest_price + facade 含 computeAtrPctFromBars 调用 + 30 天窗口 + json.atr_pct 挂载
+- 验证:
+  - `npx tsc --noEmit` (backend + frontend) exit 0
+  - `npm test -- --filter=position-metrics` exit 0, 108 ok / 0 failed (761ms)
+  - `eslint` baseline diff: backend Facade 5 problem 全为 pre-existing (Op/moment unused / no-var-requires / 2 unused _); frontend PortfolioWorkspace + service 8 warn 全为 pre-existing (3 non-null-assertion + 5 prettier insert) — 本次新增 0 err 0 warn (与 baseline 字面 1:1, 仅行号 ±9 是 import 加行的预期)
+- **Learnings for future iterations:**
+  - **跨 monorepo 单测 pure helper 复用模式**: backend tests/services/*.test.ts 用相对路径 `import { ... } from '../../../frontend/src/pages/workspace/positionMetricsHelpers'` 直接 import frontend 的 pure helper, ts-node --transpile-only 不需 frontend 的 tsconfig — 前提是 helper 严格 pure (无 React / antd / window 依赖). 已经是项目标准范式 (US-051 shadowRunHelpers / US-057 industryConcentrationKpiHelpers 同款), 本 story 复用. 跨 monorepo 单测让"前端 UI 决策表"也吃 backend `npm test` CI 守护, 不需要前端单独跑 jest.
+  - **派生量 vs 持久列的边界**: atr_pct 是 "30 天 KlineData → Wilder smoothing → / lastClose" 派生量, **不要**加到 Position 模型当持久列, 否则同步成本飙升 (每日 close 后重算 + 历史回填 + 字段漂)— 直接在 facade.getPortfolio() toJSON 后挂, 每次返实时计算. 30 天窗口 cost ≈ 30 * N_positions 行 KlineData 一次性 IN-clause 查 (本实现一行行查, 后续可优化); UI 渲染时拿到的就是当日值. 同款适用任何 "可由历史数据派生 + 不需要历史快照" 的指标 (e.g. 当前 volatility / 当前 momentum / 当前 RSI).
+  - **多列共用 view-model 用 useMemo**: PortfolioWorkspace 三列 ATR/DD/days 都调 `buildPositionMetricsViewModel(row)`, render 函数内调 3 次同输入 → 3 次返同对象但每次新建. 用 useMemo 按 row.id key 缓存能省, 但本 story 直接 inline 调 (3 次 pure function 调用成本可忽略 + cell render 路径不在 hot loop). 同款 "pure helper 调多次" 范式不需要预先 useMemo, 除非 render 进入万行表格. 真要优化, view-model 加到 row 上 (data 转换层一次性算好) 而非组件层 memo. 不要因为 useMemo 听起来"应该用"就过早优化.
+  - **lint baseline-diff 行号偏移是 import 加行的预期**: PortfolioWorkspace 加 1 行 import 让既有 3 个 non-null-assertion warning 行号从 461/495/528 全 +9 到 470/504/537, content 完全一致只是行偏 — 用 `git stash` 对比验证 "content 未变只是 line 偏移", 与 US-019 / US-004 同思路. 行号偏移不是新 regression.
+---

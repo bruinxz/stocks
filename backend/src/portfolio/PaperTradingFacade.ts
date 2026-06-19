@@ -241,6 +241,11 @@ const toNumber = (value: any, fallback = 0): number => {
 
 const roundMoney = (value: any): number => Math.round(toNumber(value, 0) * 100) / 100;
 
+// US-058 [FE-019] — ATR% 计算抽到 ./internal/positionAtrHelpers.ts 让 ts-node
+// 单测能 DB-less import. 这里 re-export 保留 back-compat (外部若引用走 facade).
+export { computeAtrPctFromBars } from './internal/positionAtrHelpers';
+import { computeAtrPctFromBars } from './internal/positionAtrHelpers';
+
 const withAutonomousPortfolio = (payload: Record<string, any> = {}) => {
   // Batch I (2026-06-17): 防 body 注入 portfolio_id/portfolio_name 劫持 autonomous 盘.
   // 之前 spread payload 后只硬编码 portfolio_name; 但 portfolio_id 仍可被 body 注入 →
@@ -648,10 +653,14 @@ export class PaperTradingFacade {
     let totalMarketValue = 0;
     const updatedPositions = await Promise.all(
       positions.map(async pos => {
+        // US-058 [FE-019]: 把日 bars window 从 7 天扩到 30 天 (≈ 22 个交易日) — ATR(14)
+        // 需要至少 15 根 bar, 7 天 (3-5 个交易日) 不够. 同时把 close-price 取最后一
+        // 根的逻辑保留, 新增 atr_pct 计算挂到 toJSON 输出里供 UI "ATR%" 列消费.
+        let atr_pct: number | null = null;
         try {
           const bars = await this.dataService.getDailyBars(
             pos.symbol,
-            new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+            new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
             new Date()
           );
           if (bars && bars.length > 0) {
@@ -668,14 +677,22 @@ export class PaperTradingFacade {
             pos.market_value = market_value;
             pos.unrealized_pnl = unrealized_pnl;
             await pos.save();
+
+            atr_pct = computeAtrPctFromBars(bars as Array<{ high: any; low: any; close: any }>, 14);
           }
           totalMarketValue += toNumber(pos.market_value);
-          return pos;
         } catch (e) {
           logger.error(`获取股票 ${pos.symbol} 价格失败`, e);
           totalMarketValue += toNumber(pos.market_value);
-          return pos;
         }
+
+        // 把 model.toJSON 串成普通 object + 挂 atr_pct (model 列没存 ATR — 它是
+        // 实时算的; 不污染 DB).  highest_price / trailing_stop_pct / trailing_stop_price
+        // 已是 model 字段, toJSON 天然带出, 无需另加.  US-058 持仓表前端需要这 4 个
+        // 字段一起渲染"ATR% / DD% / 持仓天数" 三列.
+        const json = pos.toJSON() as Record<string, any>;
+        json.atr_pct = atr_pct;
+        return json;
       })
     );
 

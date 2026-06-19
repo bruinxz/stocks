@@ -896,8 +896,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 58,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "helper + 后端 ATR helper + facade.toJSON 挂 atr_pct + PortfolioWorkspace 3 列 ATR/DD/days_held + 108 单测 + META-GUARD 守 PortfolioWorkspace/service/facade 接入"
     },
     {
       "id": "US-059",
