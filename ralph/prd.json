@@ -688,7 +688,7 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 45,
-      "passes": false,
+      "passes": true,
       "notes": "依赖: F-014"
     },
     {

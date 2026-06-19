@@ -5,6 +5,7 @@ import { factorRegistry } from '../../quant/factors/FactorRegistry';
 // Side-effect import: register all 8 factors into the singleton (US-010).
 import '../../quant/factors/library';
 import { FactorScore } from '../../models/FactorScore';
+import { FactorICResult } from '../../models/FactorICResult';
 import { Stock } from '../../models/Stock';
 import { IndustryFlow } from '../../models/IndustryFlow';
 import { LimitUpStock } from '../../models/LimitUpStock';
@@ -172,9 +173,23 @@ export class FactorController {
         })
       );
 
+      // 4) 加载最近 IC_HEALTH_LOOKBACK_DAYS 内 (look_forward_days=IC_HEALTH_LOOK_FORWARD_DAYS)
+      //    的 FactorICResult，按因子聚合成 (ic_90d, ic_ir, health_class)。一次批查
+      //    所有因子，避免 N 次 round-trip。
+      const healthByFactor = await loadFactorHealthMap(factorNames, latestDateIso);
+      const factorStatsWithHealth = factorStats.map(stat => {
+        const h = healthByFactor.get(stat.name) ?? {
+          ic_90d: null,
+          ic_ir: null,
+          ic_sample_count: 0,
+          health_class: 'unknown' as FactorHealthClass,
+        };
+        return { ...stat, ...h };
+      });
+
       const payload = {
         latest_trade_date: latestDateIso,
-        factors: factorStats,
+        factors: factorStatsWithHealth,
       };
       this.setCached('overview', payload);
       res.json({ success: true, data: payload });
@@ -1336,5 +1351,193 @@ function toNum(value: number | string | null | undefined): number | null {
 
 // Re-export the default weights so factor.routes.ts (and tests) can advertise them
 export { DEFAULT_MULTI_FACTOR_ALPHA_WEIGHTS };
+
+// ---------- US-045 因子健康列 (FE-006) ------------------------------------
+//
+// 在 GET /api/factors/overview 的每个因子卡片上展示 (IC_90d / IC_IR /
+// classification) 三件套, 让操盘手在因子总览页一眼判断"今天还能信哪几个因子".
+//
+// 来源: FactorICResult 表 (US-041 写入, 每日 FACTOR_IC_COMPUTE scheduler 跑).
+//
+// 设计:
+//   - look_forward_days 固定取 IC_HEALTH_LOOK_FORWARD_DAYS (=20, 与 MFA
+//     ic_weighted 默认窗口对齐, 也是 PRD 默认的"月度 IC");
+//   - 90 天窗口 = period_end ∈ [latestDateIso - IC_HEALTH_LOOKBACK_DAYS,
+//     latestDateIso], 取该因子在该窗口内的全部 IC report 行,
+//     ic_mean 加权平均得 ic_90d, ic_ir 取最新一条 (period_end DESC,
+//     computed_at DESC), 与前端"健康度滚动"语义一致;
+//   - classification 4 档 (alpha / weak / unstable / unknown):
+//       alpha     : |ic_90d| ≥ IC_ALPHA_THRESHOLD 且 |ic_ir| ≥ IC_IR_ALPHA_THRESHOLD;
+//       weak      : |ic_90d| < IC_WEAK_THRESHOLD (失效);
+//       unstable  : 其它 (有方向但不够稳);
+//       unknown   : 没有 IC 数据 (因子刚上线 / scheduler 未跑);
+//     - 阈值用 |ic| 因为短期反转因子 ic_mean 是负数, 同样有 alpha;
+//   - 顶层 try/catch 兜底: IC 表查询挂了, 整个 overview 仍返 (factors 列表
+//     不带健康度即可), 不阻塞用户看其他卡片. fail-OPEN.
+//
+// 全部 pure helpers 都 export, 让 backend/tests/services/factor-health.test.ts
+// 直接断言, 不依赖 DB/网络.
+
+/** IC 健康度分类 — UI Tag 颜色 / 文案靠它决定 */
+export type FactorHealthClass = 'alpha' | 'weak' | 'unstable' | 'unknown';
+
+/** 把 IC 健康度阈值集中起来便于调参 / 测试 freeze */
+export const FACTOR_HEALTH_THRESHOLDS = Object.freeze({
+  /** look_forward_days 过滤值 — 与 MFA ic_weighted 默认对齐 */
+  IC_HEALTH_LOOK_FORWARD_DAYS: 20,
+  /** period_end 区间起点 = latest - N 自然日 (近 N 日滚动) */
+  IC_HEALTH_LOOKBACK_DAYS: 90,
+  /** |ic_90d| ≥ 此值才有"显著 alpha" 资格 */
+  IC_ALPHA_THRESHOLD: 0.03,
+  /** |ic_ir| ≥ 此值才算"信息比率稳健" */
+  IC_IR_ALPHA_THRESHOLD: 0.3,
+  /** |ic_90d| < 此值视为 "已经失效" (即使 ir 高也是噪声) */
+  IC_WEAK_THRESHOLD: 0.01,
+});
+
+/** 单因子健康度聚合结果 — 拼到 FactorOverviewItem 上 */
+export interface FactorHealthEntry {
+  ic_90d: number | null;
+  ic_ir: number | null;
+  ic_sample_count: number;
+  health_class: FactorHealthClass;
+}
+
+/**
+ * 4 档分类规则 — pure function, 仅依赖 (ic_90d, ic_ir) 与阈值常量.
+ *
+ * 优先级:
+ *   1) ic_90d == null → unknown (没数据);
+ *   2) |ic_90d| < WEAK → weak (即使 ir 大也只是噪声);
+ *   3) |ic_90d| ≥ ALPHA 且 |ic_ir| ≥ IR_ALPHA → alpha;
+ *   4) 其它 → unstable (有方向但 IR 不够).
+ */
+export function classifyFactorHealth(ic90d: number | null, icIr: number | null): FactorHealthClass {
+  if (ic90d === null || !Number.isFinite(ic90d)) return 'unknown';
+  const absIc = Math.abs(ic90d);
+  if (absIc < FACTOR_HEALTH_THRESHOLDS.IC_WEAK_THRESHOLD) return 'weak';
+  const absIr = icIr !== null && Number.isFinite(icIr) ? Math.abs(icIr) : 0;
+  if (
+    absIc >= FACTOR_HEALTH_THRESHOLDS.IC_ALPHA_THRESHOLD &&
+    absIr >= FACTOR_HEALTH_THRESHOLDS.IC_IR_ALPHA_THRESHOLD
+  ) {
+    return 'alpha';
+  }
+  return 'unstable';
+}
+
+/**
+ * 把同因子在 [period_start, period_end] 窗口内的多条 IC report 聚合成
+ * (ic_90d, ic_ir, sample_count, health_class).
+ *
+ *   ic_90d  = 所有 ic_mean 算术均值 (跳过 null / 非 finite);
+ *   ic_ir   = 最新一条 (rows 已按 period_end DESC + computed_at DESC 排序后传入)
+ *             的 ic_ir; 缺 / 非 finite 时 null;
+ *   sample_count = ic_mean 真正进了聚合的行数.
+ *
+ * rows 来源: FactorICResult.findAll(... look_forward_days=N, period_end ∈ [from, to])
+ *           order: [period_end DESC, computed_at DESC]. 同一 factor / 同一窗口
+ *           可能多次重跑覆盖同一行 (idempotent upsert), 故 rows 一般每个
+ *           period_end 只一条; 即使有重复也按"最新 computed_at 优先"自然处理.
+ */
+export function computeFactorICHealth(
+  rows: Array<{
+    ic_mean?: number | string | null;
+    ic_ir?: number | string | null;
+    period_end?: string | Date;
+    computed_at?: string | Date;
+  }>
+): FactorHealthEntry {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { ic_90d: null, ic_ir: null, ic_sample_count: 0, health_class: 'unknown' };
+  }
+  let sum = 0;
+  let cnt = 0;
+  for (const r of rows) {
+    const v = toFiniteNum(r.ic_mean);
+    if (v === null) continue;
+    sum += v;
+    cnt += 1;
+  }
+  const ic90d = cnt > 0 ? sum / cnt : null;
+  // rows 已按 period_end DESC + computed_at DESC 排序, 第一条就是 "最新一条"
+  const icIr = toFiniteNum(rows[0]?.ic_ir);
+  return {
+    ic_90d: ic90d,
+    ic_ir: icIr,
+    ic_sample_count: cnt,
+    health_class: classifyFactorHealth(ic90d, icIr),
+  };
+}
+
+/**
+ * 一次性把 factorNames 全跑 IC 健康度查询, 返回 Map<factor_name, entry>.
+ *
+ * 顶层 try/catch fail-OPEN: 查询挂了返回空 Map, caller 用 unknown 占位,
+ * 不阻塞 /overview 主流程.
+ *
+ * asOfDate=null (factor_scores 表全空) 时直接返回空 Map — 没有最新日就无从
+ * 算 lookback 窗口.
+ */
+export async function loadFactorHealthMap(
+  factorNames: string[],
+  asOfDate: string | null
+): Promise<Map<string, FactorHealthEntry>> {
+  const out = new Map<string, FactorHealthEntry>();
+  if (!factorNames.length || !asOfDate) return out;
+  try {
+    const from = new Date(`${asOfDate}T00:00:00Z`);
+    if (!Number.isFinite(from.getTime())) return out;
+    from.setUTCDate(from.getUTCDate() - FACTOR_HEALTH_THRESHOLDS.IC_HEALTH_LOOKBACK_DAYS);
+    const fromIso = from.toISOString().slice(0, 10);
+
+    const rows = (await FactorICResult.findAll({
+      attributes: ['factor_name', 'ic_mean', 'ic_ir', 'period_end', 'computed_at'],
+      where: {
+        factor_name: { [Op.in]: factorNames },
+        look_forward_days: FACTOR_HEALTH_THRESHOLDS.IC_HEALTH_LOOK_FORWARD_DAYS,
+        period_end: { [Op.between]: [fromIso, asOfDate] },
+      },
+      order: [
+        ['period_end', 'DESC'],
+        ['computed_at', 'DESC'],
+      ],
+      raw: true,
+    })) as unknown as Array<{
+      factor_name: string;
+      ic_mean: number | string | null;
+      ic_ir: number | string | null;
+      period_end: string | Date;
+      computed_at: string | Date;
+    }>;
+
+    // 按 factor_name 分组 (保持原顺序 = period_end DESC)
+    const grouped = new Map<string, typeof rows>();
+    for (const r of rows) {
+      const arr = grouped.get(r.factor_name);
+      if (arr) arr.push(r);
+      else grouped.set(r.factor_name, [r]);
+    }
+    for (const name of factorNames) {
+      const g = grouped.get(name) ?? [];
+      out.set(name, computeFactorICHealth(g));
+    }
+    return out;
+  } catch (err) {
+    logger.warn(
+      `FactorController.loadFactorHealthMap fail-OPEN: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+    return out;
+  }
+}
+
+/** number|string|null → number|null (NaN/Infinity → null) — 与 toNum 同语义，本节内部用 */
+function toFiniteNum(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const n = typeof value === 'string' ? Number(value) : value;
+  return Number.isFinite(n) ? n : null;
+}
 
 export const factorController = new FactorController();

@@ -22,6 +22,14 @@ export interface FactorOverviewItem {
   latest_trade_date: string | null;
   universe_size: number;
   non_neutral_count: number;
+  /** US-045 因子健康列 (FE-006): 近 90 日 IC 均值 (look_forward=20); 缺数据 null */
+  ic_90d: number | null;
+  /** US-045 因子健康列: 最新一条 IC report 的 ic_ir (信息比率); 缺数据 null */
+  ic_ir: number | null;
+  /** US-045 因子健康列: 进入 ic_90d 聚合的 IC report 行数 */
+  ic_sample_count: number;
+  /** US-045 因子健康列: 4 档分类 - alpha=有效/weak=失效/unstable=方向但不稳/unknown=无数据 */
+  health_class: 'alpha' | 'weak' | 'unstable' | 'unknown';
 }
 
 export interface FactorOverviewResponse {

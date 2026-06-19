@@ -16,6 +16,7 @@ import {
   Switch,
   Table,
   Tag,
+  Tooltip as AntTooltip,
   Typography,
   message,
 } from 'antd';
@@ -110,6 +111,53 @@ const CATEGORY_DISPLAY: Record<string, { label: string; color: string }> = {
   event: { label: '事件', color: 'volcano' },
   other: { label: '其他', color: 'default' },
 };
+
+/**
+ * US-045 因子健康列 (FE-006) — 4 档分类的 UI 表达 (Tag 颜色 + 中文 + 提示).
+ *
+ * 与后端 FactorController.classifyFactorHealth 4 档 (alpha/weak/unstable/unknown)
+ * 严格一一对应; 颜色挑选:
+ *   - alpha=green: 操盘手"放心用"
+ *   - unstable=gold: 有方向但 IR 低, "谨慎用"
+ *   - weak=red: 已失效, "停用"
+ *   - unknown=default: 无数据, "先 compute IC"
+ */
+const FACTOR_HEALTH_DISPLAY: Record<
+  'alpha' | 'weak' | 'unstable' | 'unknown',
+  { label: string; color: string; tip: string }
+> = {
+  alpha: {
+    label: '有效',
+    color: 'green',
+    tip: '|IC_90d| ≥ 0.03 且 |IC_IR| ≥ 0.3，因子稳定有 alpha',
+  },
+  unstable: {
+    label: '不稳',
+    color: 'gold',
+    tip: '有方向但 IC_IR 不够稳健，谨慎使用',
+  },
+  weak: { label: '失效', color: 'red', tip: '|IC_90d| < 0.01，因子已失效，建议停用' },
+  unknown: {
+    label: '无数据',
+    color: 'default',
+    tip: '近 90 日无 IC 报告，请等 FACTOR_IC_COMPUTE 跑完',
+  },
+};
+
+/** IC_90d 数值染色: ≥0.03 绿 / ≤-0.03 红 (反向有效) / 其它默认; null → undefined 让组件用默认色 */
+function ic90dColor(v: number | null): string | undefined {
+  if (v === null || !Number.isFinite(v)) return undefined;
+  if (v >= 0.03) return '#52c41a';
+  if (v <= -0.03) return '#cf1322';
+  return undefined;
+}
+
+/** IC_IR 数值染色: |ir|≥0.5 绿稳健 / |ir|≥0.3 不染色 (灰区) / |ir|<0.3 灰; null → undefined */
+function icIrColor(v: number | null): string | undefined {
+  if (v === null || !Number.isFinite(v)) return undefined;
+  if (Math.abs(v) >= 0.5) return '#52c41a';
+  return undefined;
+}
 
 const FactorWorkspace: React.FC = () => {
   const tabs: WorkspaceTab[] = [
@@ -502,6 +550,7 @@ const FactorOverviewTab: React.FC<{
         const category = CATEGORY_DISPLAY[factor.category] ?? CATEGORY_DISPLAY.other;
         const coverageRatio =
           factor.universe_size > 0 ? factor.non_neutral_count / factor.universe_size : 0;
+        const health = FACTOR_HEALTH_DISPLAY[factor.health_class] ?? FACTOR_HEALTH_DISPLAY.unknown;
         return (
           <Col xs={24} sm={12} lg={8} xxl={6} key={factor.name}>
             <Card
@@ -512,6 +561,11 @@ const FactorOverviewTab: React.FC<{
                 <Space>
                   <Text strong>{factor.name}</Text>
                   <Tag color={category.color}>{category.label}</Tag>
+                  <AntTooltip title={health.tip}>
+                    <Tag color={health.color} data-testid={`factor-health-tag-${factor.name}`}>
+                      {health.label}
+                    </Tag>
+                  </AntTooltip>
                 </Space>
               }
             >
@@ -533,6 +587,33 @@ const FactorOverviewTab: React.FC<{
                     suffix="只"
                     valueStyle={{ fontSize: 14 }}
                   />
+                </Col>
+              </Row>
+              {/* US-045 因子健康列 (FE-006): IC_90d + IC_IR 双指标 */}
+              <Row gutter={8} style={{ marginTop: 8 }}>
+                <Col span={12}>
+                  <AntTooltip title="近 90 日 IC 均值 (look_forward=20)；> 0.05 一般认为有 alpha">
+                    <Statistic
+                      title="IC_90d"
+                      value={factor.ic_90d !== null ? factor.ic_90d.toFixed(3) : '—'}
+                      valueStyle={{
+                        fontSize: 14,
+                        color: ic90dColor(factor.ic_90d),
+                      }}
+                    />
+                  </AntTooltip>
+                </Col>
+                <Col span={12}>
+                  <AntTooltip title="最新 IC report 的 IC_IR (信息比率)；|IC_IR| > 0.5 算稳健、> 1.0 优秀">
+                    <Statistic
+                      title="IC_IR"
+                      value={factor.ic_ir !== null ? factor.ic_ir.toFixed(2) : '—'}
+                      valueStyle={{
+                        fontSize: 14,
+                        color: icIrColor(factor.ic_ir),
+                      }}
+                    />
+                  </AntTooltip>
                 </Col>
               </Row>
               <div style={{ marginTop: 12 }}>
@@ -952,7 +1033,9 @@ const IndustryBoardTab: React.FC<{
         <Alert
           type={data.data_staleness === 'very_stale' ? 'error' : 'warning'}
           showIcon
-          message={`⚠ 数据滞后 ${data.lag_days} 天 (当前 ${data.today_iso ?? '?'}, 数据 ${data.trade_date})`}
+          message={`⚠ 数据滞后 ${data.lag_days} 天 (当前 ${data.today_iso ?? '?'}, 数据 ${
+            data.trade_date
+          })`}
           description={
             data.data_staleness === 'very_stale'
               ? '行业资金流数据已超过 1 周未更新. 可能 AKShare 上游 endpoint 临时故障 (stock_sector_fund_flow_rank). 等待自动 cron 修复或手动 sync.'
@@ -1107,27 +1190,26 @@ const IndustryBoardTab: React.FC<{
                 {
                   title: `近 ${data.dates.length} 日涨跌幅`,
                   width: 200,
-                  render: (_v, row) => (
-                    <SparklinePctRow points={row.series} dates={data.dates} />
-                  ),
+                  render: (_v, row) => <SparklinePctRow points={row.series} dates={data.dates} />,
                 },
               ]}
               expandable={{
-                expandedRowRender: (row) => (
+                expandedRowRender: row => (
                   <div style={{ padding: '8px 0', fontSize: 12 }}>
                     <Typography.Paragraph style={{ marginBottom: 4 }}>
-                      <Text strong>{row.industry_name}</Text> · 近 {row.series.length} 日资金流向 (主力净占比):
+                      <Text strong>{row.industry_name}</Text> · 近 {row.series.length} 日资金流向
+                      (主力净占比):
                     </Typography.Paragraph>
                     <Space wrap>
-                      {row.series.map((p) => (
+                      {row.series.map(p => (
                         <Tag
                           key={p.trade_date}
                           color={
                             p.main_inflow_ratio == null
                               ? 'default'
                               : p.main_inflow_ratio > 0
-                                ? 'red'
-                                : 'green'
+                              ? 'red'
+                              : 'green'
                           }
                         >
                           {p.trade_date.slice(5)}: {fmtPct(p.main_inflow_ratio)}
@@ -1139,8 +1221,8 @@ const IndustryBoardTab: React.FC<{
               }}
             />
             <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 12 }}>
-              排序逻辑: 今日主力净流入 desc. 板块龙头股 = 当日涨幅最大且非一字板.
-              展开行查看近 {data.dates.length} 日板块资金流强度.
+              排序逻辑: 今日主力净流入 desc. 板块龙头股 = 当日涨幅最大且非一字板. 展开行查看近{' '}
+              {data.dates.length} 日板块资金流强度.
             </Typography.Paragraph>
           </Card>
         </Col>
@@ -1157,9 +1239,7 @@ const IndustryBoardTab: React.FC<{
             size="small"
           >
             {data.hot_concepts.length === 0 ? (
-              <Empty
-                description="今日 snowball_hot_keywords 无数据 — 请在 SchedulerService 启用 SNOWBALL_HOT_KEYWORD_SYNC"
-              />
+              <Empty description="今日 snowball_hot_keywords 无数据 — 请在 SchedulerService 启用 SNOWBALL_HOT_KEYWORD_SYNC" />
             ) : (
               <Space direction="vertical" size={8} style={{ width: '100%' }}>
                 {data.hot_concepts.map((c, i) => (
@@ -1178,16 +1258,14 @@ const IndustryBoardTab: React.FC<{
                             新进
                           </Tag>
                         )}
-                        {c.rank != null && (
-                          <Tag style={{ marginLeft: 4 }}>#{c.rank}</Tag>
-                        )}
+                        {c.rank != null && <Tag style={{ marginLeft: 4 }}>#{c.rank}</Tag>}
                       </div>
                       <Tag color="purple">{c.heat_score.toLocaleString()}</Tag>
                     </div>
                     {c.related_stocks.length > 0 && (
                       <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
                         关联:{' '}
-                        {c.related_stocks.map((s) => (
+                        {c.related_stocks.map(s => (
                           <Tag key={s.stock_code} style={{ marginBottom: 2 }}>
                             {s.stock_name || s.stock_code}
                           </Tag>
@@ -1255,11 +1333,7 @@ const IndustryBoardTab: React.FC<{
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                  <Text
-                    strong
-                    style={{ fontSize: 13 }}
-                    ellipsis={{ tooltip: n.title }}
-                  >
+                  <Text strong style={{ fontSize: 13 }} ellipsis={{ tooltip: n.title }}>
                     {n.url ? (
                       <a href={n.url} target="_blank" rel="noopener noreferrer">
                         {n.title}
@@ -1268,7 +1342,9 @@ const IndustryBoardTab: React.FC<{
                       n.title
                     )}
                   </Text>
-                  <Tag color={n.source === 'cls' ? 'orange' : n.source === 'em' ? 'blue' : 'default'}>
+                  <Tag
+                    color={n.source === 'cls' ? 'orange' : n.source === 'em' ? 'blue' : 'default'}
+                  >
                     {n.source}
                   </Tag>
                 </div>
@@ -1290,14 +1366,11 @@ const SparklinePctRow: React.FC<{
   dates: string[];
 }> = ({ points, dates }) => {
   if (!points.length) return <span style={{ color: '#999' }}>—</span>;
-  const max = Math.max(
-    1,
-    ...points.map((p) => (p.change_pct == null ? 0 : Math.abs(p.change_pct)))
-  );
+  const max = Math.max(1, ...points.map(p => (p.change_pct == null ? 0 : Math.abs(p.change_pct))));
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', height: 28, gap: 3 }}>
-      {dates.map((d) => {
-        const p = points.find((x) => x.trade_date === d);
+      {dates.map(d => {
+        const p = points.find(x => x.trade_date === d);
         const v = p?.change_pct ?? null;
         const h = v == null ? 4 : Math.max(2, (Math.abs(v) / max) * 24);
         const color = v == null ? '#e0e0e0' : v >= 0 ? '#cf1322' : '#389e0d';
@@ -1423,7 +1496,9 @@ const SentimentBoardTab: React.FC<{
         <Alert
           type={data.data_staleness === 'very_stale' ? 'error' : 'warning'}
           showIcon
-          message={`⚠ 数据滞后 ${data.lag_days} 天 (当前 ${data.today_iso ?? '?'}, 数据 ${data.trade_date})`}
+          message={`⚠ 数据滞后 ${data.lag_days} 天 (当前 ${data.today_iso ?? '?'}, 数据 ${
+            data.trade_date
+          })`}
           description="社媒/舆情数据未更新到最新交易日, 决策时请留意时间差."
           style={{ marginBottom: 8 }}
         />
@@ -1477,10 +1552,7 @@ const SentimentBoardTab: React.FC<{
               />
             )}
             {data.today_hot_rank_top20.length === 0 ? (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="今日人气榜无数据"
-              />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="今日人气榜无数据" />
             ) : (
               <Table
                 size="small"
@@ -1495,7 +1567,10 @@ const SentimentBoardTab: React.FC<{
                     width: 56,
                     align: 'center',
                     render: (v: number) => (
-                      <Tag color={rankColor(v) === '#999' ? 'default' : undefined} style={{ background: rankColor(v), color: 'white', border: 'none' }}>
+                      <Tag
+                        color={rankColor(v) === '#999' ? 'default' : undefined}
+                        style={{ background: rankColor(v), color: 'white', border: 'none' }}
+                      >
                         {v}
                       </Tag>
                     ),
@@ -1578,7 +1653,10 @@ const SentimentBoardTab: React.FC<{
                     width: 56,
                     align: 'center',
                     render: (v: number) => (
-                      <Tag color={rankColor(v) === '#999' ? 'default' : undefined} style={{ background: rankColor(v), color: 'white', border: 'none' }}>
+                      <Tag
+                        color={rankColor(v) === '#999' ? 'default' : undefined}
+                        style={{ background: rankColor(v), color: 'white', border: 'none' }}
+                      >
                         {v}
                       </Tag>
                     ),
@@ -1591,7 +1669,9 @@ const SentimentBoardTab: React.FC<{
                       <div>
                         <div style={{ fontSize: 12, fontWeight: 500 }}>{v}</div>
                         {row.related_stock_code && (
-                          <div style={{ fontSize: 11, color: '#1890ff' }}>{row.related_stock_code}</div>
+                          <div style={{ fontSize: 11, color: '#1890ff' }}>
+                            {row.related_stock_code}
+                          </div>
                         )}
                       </div>
                     ),
@@ -1602,9 +1682,7 @@ const SentimentBoardTab: React.FC<{
                     width: 90,
                     align: 'right',
                     render: (v: number | null) => (
-                      <span style={{ fontSize: 12 }}>
-                        {v == null ? '—' : v.toLocaleString()}
-                      </span>
+                      <span style={{ fontSize: 12 }}>{v == null ? '—' : v.toLocaleString()}</span>
                     ),
                   },
                   {
@@ -1681,9 +1759,7 @@ const SentimentBoardTab: React.FC<{
                     dataIndex: 'hot_rank_em',
                     width: 60,
                     align: 'center',
-                    render: (v: number | null) => (
-                      <Tag color="red">{v ?? '—'}</Tag>
-                    ),
+                    render: (v: number | null) => <Tag color="red">{v ?? '—'}</Tag>,
                   },
                   {
                     title: '5日均',
@@ -1699,8 +1775,7 @@ const SentimentBoardTab: React.FC<{
                     dataIndex: 'rank_breakout_delta',
                     width: 80,
                     align: 'right',
-                    sorter: (a, b) =>
-                      (a.rank_breakout_delta ?? 0) - (b.rank_breakout_delta ?? 0),
+                    sorter: (a, b) => (a.rank_breakout_delta ?? 0) - (b.rank_breakout_delta ?? 0),
                     render: (v: number | null) => (
                       <span style={{ fontSize: 12, fontWeight: 600, color: '#cf1322' }}>
                         +{fmtNum(v)}
@@ -1745,10 +1820,7 @@ const SentimentBoardTab: React.FC<{
               />
             )}
             {data.sentiment_scatter.length === 0 ? (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="今日无数据"
-              />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="今日无数据" />
             ) : (
               (() => {
                 const top30 = [...data.sentiment_scatter]
@@ -1798,9 +1870,7 @@ const SentimentBoardTab: React.FC<{
                               <div style={{ fontWeight: 500 }}>
                                 {p.label} <span style={{ color: '#999' }}>{p.code}</span>
                               </div>
-                              <div style={{ color: '#722ed1' }}>
-                                综合评分: {p.comment_score}
-                              </div>
+                              <div style={{ color: '#722ed1' }}>综合评分: {p.comment_score}</div>
                               <div style={{ color: '#fa8c16' }}>
                                 机构参与: {p.institution_participation}%
                               </div>
@@ -1896,15 +1966,17 @@ const SentimentBoardTab: React.FC<{
                           n.title
                         )}
                       </Text>
-                      <Tag color={n.source === 'cls' ? 'orange' : n.source === 'em' ? 'blue' : 'default'}>
+                      <Tag
+                        color={
+                          n.source === 'cls' ? 'orange' : n.source === 'em' ? 'blue' : 'default'
+                        }
+                      >
                         {n.source}
                       </Tag>
                     </div>
                     <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>
                       {formatNewsTime(n.publish_time)}
-                      {n.category && (
-                        <Tag style={{ marginLeft: 4 }}>{n.category}</Tag>
-                      )}
+                      {n.category && <Tag style={{ marginLeft: 4 }}>{n.category}</Tag>}
                     </div>
                   </div>
                 ))}
@@ -1916,11 +1988,10 @@ const SentimentBoardTab: React.FC<{
 
       <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
         💡 舆情雷达: <Text strong>东财人气榜</Text> 告诉你「全市场散户在看哪只」,{' '}
-        <Text strong>百度搜索</Text> 是跨平台搜索热度的「散户视角」,{' '}
-        <Text strong>Rank 突变</Text> 找今日关注度突增的「异动股」,{' '}
-        <Text strong>散点</Text> 看机构参与 vs 综合评分的分布找洼地,{' '}
-        <Text strong>情绪要闻</Text> 提供宏观情绪上下文. 数据每日盘后由 SchedulerService
-        定时 sync (SOCIAL_SENTIMENT_SYNC 16:20 / MARKET_HOT_SEARCH_SYNC 16:40).
+        <Text strong>百度搜索</Text> 是跨平台搜索热度的「散户视角」, <Text strong>Rank 突变</Text>{' '}
+        找今日关注度突增的「异动股」, <Text strong>散点</Text> 看机构参与 vs 综合评分的分布找洼地,{' '}
+        <Text strong>情绪要闻</Text> 提供宏观情绪上下文. 数据每日盘后由 SchedulerService 定时 sync
+        (SOCIAL_SENTIMENT_SYNC 16:20 / MARKET_HOT_SEARCH_SYNC 16:40).
       </Typography.Paragraph>
     </Space>
   );
@@ -1966,7 +2037,7 @@ const IndustryHeatmapTab: React.FC<{
       cellMap.set(k, c.avg_z);
       sampleMap.set(k, c.sample_size ?? 0);
     }
-    return data.industries.map((ind) => {
+    return data.industries.map(ind => {
       const row: Record<string, any> = { industry: ind };
       let totalSample = 0;
       let factorSum = 0;
@@ -1981,7 +2052,8 @@ const IndustryHeatmapTab: React.FC<{
         }
         totalSample += sampleMap.get(k) || 0;
       }
-      row._sample_count = totalSample > 0 ? Math.round(totalSample / Math.max(1, data.factors.length)) : 0;
+      row._sample_count =
+        totalSample > 0 ? Math.round(totalSample / Math.max(1, data.factors.length)) : 0;
       row._intensity = factorN > 0 ? factorSum / factorN : 0;
       return row;
     });
@@ -1991,7 +2063,9 @@ const IndustryHeatmapTab: React.FC<{
     if (!sortFactor || sortFactor === '_intensity') {
       return [...tableRows].sort((a, b) => (b._intensity || 0) - (a._intensity || 0));
     }
-    return [...tableRows].sort((a, b) => (b[sortFactor] ?? -Infinity) - (a[sortFactor] ?? -Infinity));
+    return [...tableRows].sort(
+      (a, b) => (b[sortFactor] ?? -Infinity) - (a[sortFactor] ?? -Infinity)
+    );
   }, [tableRows, sortFactor]);
 
   // 颜色映射: z 越正越红, 越负越绿
@@ -2046,10 +2120,16 @@ const IndustryHeatmapTab: React.FC<{
           <Space>
             {data?.universe_size != null && <Tag color="purple">命中 {data.universe_size} 只</Tag>}
             <Button.Group size="small">
-              <Button type={viewMode === 'table' ? 'primary' : 'default'} onClick={() => setViewMode('table')}>
+              <Button
+                type={viewMode === 'table' ? 'primary' : 'default'}
+                onClick={() => setViewMode('table')}
+              >
                 表格
               </Button>
-              <Button type={viewMode === 'chart' ? 'primary' : 'default'} onClick={() => setViewMode('chart')}>
+              <Button
+                type={viewMode === 'chart' ? 'primary' : 'default'}
+                onClick={() => setViewMode('chart')}
+              >
                 热力图
               </Button>
             </Button.Group>
@@ -2089,7 +2169,7 @@ const IndustryHeatmapTab: React.FC<{
                 >
                   综合强度
                 </Button>
-                {data.factors.slice(0, 8).map((f) => (
+                {data.factors.slice(0, 8).map(f => (
                   <Button
                     key={f}
                     type={sortFactor === f ? 'primary' : 'default'}
@@ -2104,7 +2184,12 @@ const IndustryHeatmapTab: React.FC<{
               size="small"
               rowKey="industry"
               dataSource={sortedRows}
-              pagination={{ pageSize: 30, size: 'small', showSizeChanger: true, pageSizeOptions: ['20', '30', '50', '100'] }}
+              pagination={{
+                pageSize: 30,
+                size: 'small',
+                showSizeChanger: true,
+                pageSizeOptions: ['20', '30', '50', '100'],
+              }}
               scroll={{ x: 'max-content', y: 600 }}
               columns={[
                 {
@@ -2119,7 +2204,7 @@ const IndustryHeatmapTab: React.FC<{
                     </div>
                   ),
                 },
-                ...data.factors.map((f) => ({
+                ...data.factors.map(f => ({
                   title: <span style={{ fontSize: 12 }}>{f}</span>,
                   dataIndex: f,
                   width: 78,
