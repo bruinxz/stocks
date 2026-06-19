@@ -8,6 +8,7 @@ Started: Fri Jun 19 02:25:41 CST 2026
 - CI workflow (`.github/workflows/ci.yml`) `backend-check` job 顺序：install → env-check(happy) → env-check(fail) → typecheck → lint → test，失败上传日志并在 PR 评论。
 - 多通道 dispatcher (任何"fan-out 到飞书/邮件/短信/inbox"的 service) 复用同款模板: (1) DataSource interface + Production 实现 lazy-require model/service 单例; (2) 纯函数 helpers (normalizeXxx / buildChannelPlan / buildOpsAlertText / buildXxxSubject) 全 export 便于单测; (3) Promise.allSettled 并行 fan-out + 每个 channel adapter 内部 try-catch 返 {success,message} 而非 throw; (4) 顶层 try/catch 兜底 + logger.warn 吞错 — 主流程绝不被告警链路阻塞; (5) options.dry_run=true 强制空 plan 让 UI 预览不实际发. 参考 RealtimeAlertDispatcher / RiskAlertService / audit-task-parameters-dry-run.
 - Risk guard pre-trade fail-CLOSED 统一三件套 (US-011): (1) **guard-side** `wrapFailClosed('guard_name', async () => {...}, detail?)` 包整个 method body — RiskGuardUnavailableError re-throw, 任何其它 Error (含 programmer-error TypeError) 自动转 503; (2) **caller-side** `handleRiskGuardUnavailable({err, user_id, symbol, callerLabel, dataSource})` 写 HIGH RiskAlert + 返结构化 payload, alert write 失败仅 log 不 re-throw; (3) **back-compat re-export** RiskGuardUnavailableError 放在 RiskGuardFailClosed.ts 作单一事实源, 原文件 (DrawdownCircuitBreaker) `export {...} from './RiskGuardFailClosed'` 保住外部 import 路径. Caller 的 try/catch + `instanceof RiskGuardUnavailableError` 必须保留 (caller 需把异常 map 成业务态). 新接 guard 步骤: GUARD_LABELS 加 1 行 + method body 套 wrapFailClosed + caller catch 调 handleRiskGuardUnavailable. 参考 backend/src/portfolio/risk/RiskGuardFailClosed.ts.
+- Event-driven watchdog 多维度优先级形态 (US-013, BlackSwanWatchdog): 单 position 多维度按 `let hit = false` 链式短路 (ST → SUSPENDED → NEWS → REDUCTION...), 最后一个 `if (!hit)` push no_event. 新加维度 6 件套: (a) BlackSwanEventType union 扩 + signatureForEvent 加分支 (持续状态用 symbol-only; N-日累计窗口型必须 windowStartDate 进 sig 让窗口推进自然重发); (b) pure helpers (summarize / shouldTrigger / windowStart / message) 全 export 单测; (c) normalize 加默认 + safePosNumber vs safePosInt 选对 (比率用前者, 整数计数用后者); (d) DataSource 接口 + 生产实现 try/catch fail-OPEN; (e) evaluateOneUser 嵌优先级链 — 注意 dedup-hit 分支必须 `hit = true` 短路防 fall-through 双触发; (f) test 5 件套 (e2e happy / below-threshold / scan_off / dedup / priority-tie). 同维度内 per-user 批量数据用 `positions.map(strip) → 去重 → IN-clause 批查 → summarize 成 Map → per-position O(1) lookup`, 与 ST/SUSPENDED 共享市场快照 + news per-stock 都是不同 fetch 模板, 任何"per-user 自有数据集"维度复用本模板.
 
 ## 2026/06/19 02:30 - US-001
 - 实现 [OPS-001] env 校验脚本（之前迭代已落 EnvValidator + check-env CLI + index.ts 启动接入；本次补齐 CI env-check 步骤完成验收）
@@ -305,4 +306,31 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - 顶 KPI fetch 必须独立 fire-and-forget (.then/.catch 链), 不能塞进主 Promise.all — 否则 KPI 接口 500 整页变红 (loadError 设置), 主面板看不见. 已有 portfolio race-protect snapshot 模式 (callPortfolioId !== selectedPortfolioId) 必须沿用, 切盘后丢响应.
   - Express 顺序匹配: 任何新的固定字符串 GET route (如 /industry-concentration-summary) 必须注册在 `/:id` 之前, 否则被 catchall 拦. 看 portfolio.routes.ts 里 /correlation /exposure /behavior-bias 都有 `// IMPORTANT: ... 必须在 /:id 之前注册` 注释, 沿用此 pattern.
   - frontend lint baseline: PortfolioWorkspace.tsx 自带 11 个 prettier/no-non-null-assertion warning (跨 5 处 trade error handler + journal 表), 都是 pre-existing. 加新代码时, 用同款 baseline-diff 模式 (eslint 输出按行号比对)确认"本次新增 0 warning", 而非误以为是新引入的 regression.
+---
+
+## 2026/06/19 08:15 - US-013
+- 实现 [PR-008] BlackSwanWatchdog 增强 — 减持暴增 / 重大诉讼 / 退市预警检测扩展
+- Files changed:
+  - backend/src/portfolio/risk/BlackSwanWatchdog.ts:
+    - DEFAULT_BLACK_SWAN_CONFIG.news_keywords 从 5 → 9 (新增 '诉讼' '仲裁' '终止上市' '退市风险', 覆盖重大诉讼 + 退市预警)
+    - BlackSwanConfig 新增 4 个字段: scan_shareholder_reduction / shareholder_reduction_lookback_days / shareholder_reduction_amount_threshold / shareholder_reduction_pct_threshold
+    - BlackSwanEventType 加 'SHAREHOLDER_REDUCTION' 第 4 类
+    - 新增 pure helpers: summarizeShareholderReductions (Map<stock_code, summary> 聚合 trade_amount/pct/top_contributors) + shouldTriggerShareholderReduction (任一阈值满足即触发, ≤0 阈值视为禁用) + shareholderReductionWindowStart (asOfDate - N 天 → YYYY-MM-DD) + buildShareholderReductionMessage (中文 message)
+    - signatureForEvent 新增 SHAREHOLDER_REDUCTION 路径含 windowStartDate (窗口推进自然重新触发, 同 SUSPENDED 持续状态期间不重复发)
+    - normalizeBlackSwanConfig 加 4 个字段校验 (safePosNumber 容纳浮点 pct 阈值)
+    - BlackSwanDataSource.fetchShareholderReductions 新接口 (per-user 批量 Op.in stockCodes + announce_date >= windowStart + trade_direction='减持'); DefaultBlackSwanDataSource 实现 (try/catch fail-OPEN 缺表返 [])
+    - evaluateOneUser 维护 4 级优先级 ST > SUSPENDED > NEWS > REDUCTION; per-user 一次性 batch fetch reductions (heldCodes 去重后 IN clause), 然后 per-position O(1) lookup; news 路径修复 dedup hit 必须 hit=true 短路防止 fall through
+  - backend/tests/risk/black-swan-watchdog.test.ts: 16 新测试 (testSummarizeShareholderReductions / testShouldTriggerShareholderReduction / testShareholderReductionWindowStart / testBuildShareholderReductionMessage / testSignatureShareholderReduction / testNormalizeShareholderFields + 7 个 e2e: happy path / below threshold / pct-only / scan_off / dedup / ST 优先级 / 多持仓 batched fetch + testNewsExtendedKeywordsLitigationAndDelisting); 顺带把 testConstants 9 keyword + 4 reduction 默认值都断言. Fake source 实现 fetchShareholderReductions 投喂 + reductionFetchCalls 计数验 batch
+  - ralph/prd.json: US-013 passes=true + notes
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `eslint src/portfolio/risk/BlackSwanWatchdog.ts` 0 err 0 warn (auto-fix prettier)
+  - 单测 135 → 208 ok / 0 failed
+  - full backend test suite: 146 files, 146 passed, 0 failed (178.6s)
+- **Learnings for future iterations:**
+  - BlackSwanWatchdog 这种"多维度按优先级链式短路"形态用 `let hit = false` 跨多个 `if (!hit && ...)` 块串联, 最后一个 `if (!hit)` push no_event. 新加一种维度时必须 (a) 升级 BlackSwanEventType union; (b) 加 signature 分支 + dedup key (注意永久性 vs 窗口型: ST/SUSPENDED 持续状态期间只发一次 → 只用 symbol; SHAREHOLDER_REDUCTION 是 N-日累计 → 必须把 windowStartDate 进 sig 让推进自然重发); (c) helper 全 export 单测; (d) normalize 配置项默认值; (e) DataSource 接口 + 生产实现 try/catch fail-OPEN; (f) evaluateOneUser 嵌进优先级链; (g) test 全维度 + 优先级 + scan_off + dedup + batched-fetch 五件套.
+  - 修 dedup-hit 路径必须 hit=true 短路: 原 news 检查里 dedup hit 只设了 `newsHit=true` 但没设 `hit=true`, 旧代码靠 `if (!newsHit && !hit) push no_event` 兜底正确, 但新加 step 4 后会让 dedup hit 落到 step 4 双重触发. 加链路时这是最容易踩的坑 — 把"已知该位置不再继续"的中断信号统一 (newsHit 私有 vs hit 跨步级) 是关键. 已在 US-013 修复.
+  - 减持暴增是首个"per-user 批量查 → per-position O(1) lookup"形态, 与 ST/SUSPENDED 共享市场快照 + 与 news per-stock 调用都不同; 新加任何"per-user 数据集 + per-position 命中"维度 (例如未来 KOL 观点 / 主力净流出) 都可复用同模板: positions.map(stripSymbol) 去重后批查 → summarize 成 Map → 持仓循环里 Map.get O(1).
+  - safePosNumber vs safePosInt: pct 阈值 (0.5 / 1.0 / 1.5) 必须支持浮点, safePosNumber 用 `Number.isFinite + > 0`; integer 字段 (lookback_days / news_per_stock_limit) 用 safePosInt `Number.isInteger + >= 1`. 任何"百分比 / 比率 / 价格阈值"用前者, "次数 / 天数 / 条数"用后者.
+  - SHAREHOLDER_REDUCTION sig 进 windowStartDate 是窗口型 dedup 标杆: 窗口推进 (asOfDate +1 天 → windowStart +1 天) sig 变 → 自然重新触发; 同一窗口内反复跑同样数据 sig 不变 → dedup 静默. 任何"N 日累计阈值"风控维度都按此模板做 sig.
 ---

@@ -200,8 +200,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 13,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "[PR-008] BlackSwanWatchdog 增强 — 1) DEFAULT_BLACK_SWAN_CONFIG.news_keywords 5→9 (新增 '诉讼' / '仲裁' / '终止上市' / '退市风险' 覆盖重大诉讼 + 退市预警); 2) 新增第 4 个事件类型 SHAREHOLDER_REDUCTION (减持暴增) — 按 stock_code 聚合 ShareholderTradeRecord (US-090) trade_direction=减持 N 日窗口，默认 30 日 / 1 亿元 / 占流通股 1.0% 阈值任一命中即触发, signature 含 windowStartDate 让窗口推进自然重新触发; 3) 新增 pure helpers (summarizeShareholderReductions / shouldTriggerShareholderReduction / shareholderReductionWindowStart / buildShareholderReductionMessage) 全 export 便于单测; 4) DataSource.fetchShareholderReductions 新接口 per-user 批量查 (held codes IN clause + announce_date >= windowStart) fail-OPEN 缺数据/缺表返 []; 5) evaluateOneUser 维护 4 级优先级 (ST > SUSPENDED > NEWS > REDUCTION), 同股每日只发一次最高优先级; 6) updateConfig normalize 全新增字段支持 scan_shareholder_reduction / lookback_days / amount_threshold / pct_threshold 校验. 单测 135 → 208 ok; typecheck pass; eslint clean."
     },
     {
       "id": "US-014",

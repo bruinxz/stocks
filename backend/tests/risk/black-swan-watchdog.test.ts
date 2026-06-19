@@ -49,8 +49,10 @@ import {
   BlackSwanTrigger,
   BlackSwanWatchdog,
   DEFAULT_BLACK_SWAN_CONFIG,
+  ShareholderReductionRow,
   buildNewsKeywordMessage,
   buildSTMessage,
+  buildShareholderReductionMessage,
   buildSuspendedMessage,
   computeNewsRecencyHours,
   detectKeywordHits,
@@ -58,8 +60,11 @@ import {
   mergeSeenSignatures,
   normalizeBlackSwanConfig,
   pickDistinctEvents,
+  shareholderReductionWindowStart,
+  shouldTriggerShareholderReduction,
   signatureForEvent,
   stripSymbolSuffix,
+  summarizeShareholderReductions,
 } from '../../src/portfolio/risk/BlackSwanWatchdog';
 import {
   STStockRow,
@@ -128,6 +133,12 @@ interface FakeState {
   notifyShouldThrow?: boolean;
   /** If true, fetchSTList throws (fail-OPEN test). */
   fetchSTShouldThrow?: boolean;
+  /** US-013 shareholder reductions list returned from fetchShareholderReductions. */
+  reductionRows?: ShareholderReductionRow[];
+  /** If true, fetchShareholderReductions throws (fail-OPEN test). */
+  reductionShouldThrow?: boolean;
+  /** Number of times fetchShareholderReductions called (for shared-fetch test). */
+  reductionFetchCalls?: number;
 }
 
 function makeFakeSource(state: FakeState): BlackSwanDataSource {
@@ -178,6 +189,17 @@ function makeFakeSource(state: FakeState): BlackSwanDataSource {
         (state.newsFetchCallsByCode[stock_code] || 0) + 1;
       return (state.newsByCode[stock_code] || []).map(r => ({ ...r }));
     },
+    async fetchShareholderReductions(stockCodes, _windowStartDate) {
+      state.reductionFetchCalls = (state.reductionFetchCalls || 0) + 1;
+      if (state.reductionShouldThrow) {
+        // Production DataSource swallows + returns []; mirror that.
+        return [];
+      }
+      const set = new Set(stockCodes);
+      return (state.reductionRows || [])
+        .filter(r => set.has(r.stock_code))
+        .map(r => ({ ...r }));
+    },
     async writeAlert(input) {
       if (state.writeAlertShouldThrow) {
         throw new Error('fake alert outage');
@@ -213,6 +235,8 @@ function emptyState(overrides: Partial<FakeState> = {}): FakeState {
     stFetchCalls: 0,
     suspendedFetchCalls: 0,
     newsFetchCallsByCode: {},
+    reductionRows: [],
+    reductionFetchCalls: 0,
     ...overrides,
   };
 }
@@ -236,10 +260,11 @@ async function testConstants() {
   assertEqual('DEFAULT scan_st == true', DEFAULT_BLACK_SWAN_CONFIG.scan_st, true);
   assertEqual('DEFAULT scan_suspended == true', DEFAULT_BLACK_SWAN_CONFIG.scan_suspended, true);
   assertEqual('DEFAULT scan_news == true', DEFAULT_BLACK_SWAN_CONFIG.scan_news, true);
+  // US-013 expanded keyword list to 9 (added 诉讼 / 仲裁 / 终止上市 / 退市风险)
   assertEqual(
-    'DEFAULT news_keywords == 5 items',
+    'DEFAULT news_keywords == 9 items (US-013 expanded)',
     DEFAULT_BLACK_SWAN_CONFIG.news_keywords.length,
-    5
+    9
   );
   assert(
     'DEFAULT news_keywords contains 立案',
@@ -253,8 +278,45 @@ async function testConstants() {
     'DEFAULT news_keywords contains 重大违规',
     DEFAULT_BLACK_SWAN_CONFIG.news_keywords.includes('重大违规')
   );
+  assert(
+    'DEFAULT news_keywords contains 诉讼 (US-013)',
+    DEFAULT_BLACK_SWAN_CONFIG.news_keywords.includes('诉讼')
+  );
+  assert(
+    'DEFAULT news_keywords contains 仲裁 (US-013)',
+    DEFAULT_BLACK_SWAN_CONFIG.news_keywords.includes('仲裁')
+  );
+  assert(
+    'DEFAULT news_keywords contains 终止上市 (US-013)',
+    DEFAULT_BLACK_SWAN_CONFIG.news_keywords.includes('终止上市')
+  );
+  assert(
+    'DEFAULT news_keywords contains 退市风险 (US-013)',
+    DEFAULT_BLACK_SWAN_CONFIG.news_keywords.includes('退市风险')
+  );
   assertEqual('DEFAULT news_lookback_hours == 24', DEFAULT_BLACK_SWAN_CONFIG.news_lookback_hours, 24);
   assertEqual('DEFAULT news_per_stock_limit == 50', DEFAULT_BLACK_SWAN_CONFIG.news_per_stock_limit, 50);
+  // US-013 shareholder reduction defaults
+  assertEqual(
+    'DEFAULT scan_shareholder_reduction == true (US-013)',
+    DEFAULT_BLACK_SWAN_CONFIG.scan_shareholder_reduction,
+    true
+  );
+  assertEqual(
+    'DEFAULT shareholder_reduction_lookback_days == 30',
+    DEFAULT_BLACK_SWAN_CONFIG.shareholder_reduction_lookback_days,
+    30
+  );
+  assertEqual(
+    'DEFAULT shareholder_reduction_amount_threshold == 1 亿',
+    DEFAULT_BLACK_SWAN_CONFIG.shareholder_reduction_amount_threshold,
+    100_000_000
+  );
+  assertEqual(
+    'DEFAULT shareholder_reduction_pct_threshold == 1.0',
+    DEFAULT_BLACK_SWAN_CONFIG.shareholder_reduction_pct_threshold,
+    1.0
+  );
   assertEqual('DEFAULT dedupe_enabled == true', DEFAULT_BLACK_SWAN_CONFIG.dedupe_enabled, true);
   assertEqual('BLACK_SWAN_SEEN_LRU_LIMIT == 200', BLACK_SWAN_SEEN_LRU_LIMIT, 200);
 
@@ -1063,6 +1125,539 @@ async function testEventPriority() {
 }
 
 // ---------------------------------------------------------------------------
+//  US-013 — shareholder reduction (减持暴增) helpers
+// ---------------------------------------------------------------------------
+
+async function testSummarizeShareholderReductions() {
+  const rows: ShareholderReductionRow[] = [
+    {
+      announce_date: '2026-06-01',
+      stock_code: '600519',
+      shareholder_name: '股东A',
+      trade_amount: 50_000_000,
+      pct_of_float_shares: 0.4,
+    },
+    {
+      announce_date: '2026-06-05',
+      stock_code: '600519',
+      shareholder_name: '股东B',
+      trade_amount: 80_000_000,
+      pct_of_float_shares: 0.6,
+    },
+    {
+      announce_date: '2026-06-06',
+      stock_code: '600519',
+      shareholder_name: '股东A',
+      trade_amount: 20_000_000,
+      pct_of_float_shares: 0.1,
+    },
+    {
+      announce_date: '2026-06-02',
+      stock_code: '000001',
+      shareholder_name: '股东C',
+      trade_amount: 5_000_000,
+      pct_of_float_shares: 0.05,
+    },
+  ];
+  const out = summarizeShareholderReductions(rows);
+  assertEqual('summarize: 2 stock_code buckets', out.size, 2);
+  const s600519 = out.get('600519')!;
+  assertEqual('600519 total_amount sums', s600519.total_amount, 150_000_000);
+  assertClose('600519 total_pct_of_float sums', s600519.total_pct_of_float, 1.1, 1e-9);
+  assertEqual('600519 unique_shareholders == 2', s600519.unique_shareholders, 2);
+  assertEqual('600519 row_count == 3', s600519.row_count, 3);
+  assertEqual(
+    '600519 top contributor name (largest)',
+    s600519.top_contributors[0].shareholder_name,
+    '股东B'
+  );
+  assertEqual(
+    '600519 top contributor amount',
+    s600519.top_contributors[0].trade_amount,
+    80_000_000
+  );
+
+  // null / NaN guarded
+  const messy: ShareholderReductionRow[] = [
+    {
+      announce_date: '2026-06-01',
+      stock_code: '300750',
+      shareholder_name: 'X',
+      trade_amount: null,
+      pct_of_float_shares: null,
+    },
+    {
+      announce_date: '2026-06-02',
+      stock_code: '300750',
+      shareholder_name: 'X',
+      trade_amount: Number.NaN as any,
+      pct_of_float_shares: 0.5,
+    },
+  ];
+  const messyOut = summarizeShareholderReductions(messy);
+  const s300750 = messyOut.get('300750')!;
+  assertEqual('messy: total_amount 0 (null + NaN ignored)', s300750.total_amount, 0);
+  assertClose('messy: pct sums 0.5 (null ignored)', s300750.total_pct_of_float, 0.5, 1e-9);
+  assertEqual('messy: unique_shareholders == 1', s300750.unique_shareholders, 1);
+
+  // Empty input
+  assertEqual('summarize empty → 0 entries', summarizeShareholderReductions([]).size, 0);
+
+  // Defensive: bad row missing stock_code skipped
+  const bad: any[] = [
+    {
+      stock_code: '',
+      shareholder_name: 'X',
+      trade_amount: 100,
+      pct_of_float_shares: 0.1,
+    },
+    null,
+    {
+      stock_code: '600000',
+      shareholder_name: 'Y',
+      trade_amount: 200,
+      pct_of_float_shares: 0.2,
+    },
+  ];
+  const badOut = summarizeShareholderReductions(bad);
+  assertEqual('bad rows: only 1 bucket (600000)', badOut.size, 1);
+  assert('bad rows: 600000 present', badOut.has('600000'));
+}
+
+async function testShouldTriggerShareholderReduction() {
+  const summary = {
+    stock_code: '600519',
+    total_amount: 120_000_000,
+    total_pct_of_float: 0.5,
+    unique_shareholders: 2,
+    row_count: 3,
+    top_contributors: [],
+  };
+  assert(
+    'amount over threshold → trigger',
+    shouldTriggerShareholderReduction(summary, 100_000_000, 1.0)
+  );
+  assert(
+    'amount under + pct under → no trigger',
+    !shouldTriggerShareholderReduction(summary, 200_000_000, 1.0)
+  );
+  // Pct path
+  const summary2 = {
+    ...summary,
+    total_amount: 50_000_000,
+    total_pct_of_float: 2.0,
+  };
+  assert(
+    'pct over threshold → trigger (amount under)',
+    shouldTriggerShareholderReduction(summary2, 100_000_000, 1.0)
+  );
+  // Either disabled threshold (<=0) is ignored
+  assert(
+    'amount threshold 0 ignored, pct hits',
+    shouldTriggerShareholderReduction(summary2, 0, 1.0)
+  );
+  assert(
+    'both thresholds 0 → never trigger',
+    !shouldTriggerShareholderReduction(summary2, 0, 0)
+  );
+}
+
+async function testShareholderReductionWindowStart() {
+  const asOf = new Date('2026-06-30T15:00:00Z');
+  assertEqual(
+    '30-day window from 2026-06-30 == 2026-05-31',
+    shareholderReductionWindowStart(asOf, 30),
+    '2026-05-31'
+  );
+  assertEqual(
+    '1-day window from 2026-06-30 == 2026-06-29',
+    shareholderReductionWindowStart(asOf, 1),
+    '2026-06-29'
+  );
+  // 0 or negative clamps to 1
+  assertEqual(
+    '0-day window clamps to 1 → 2026-06-29',
+    shareholderReductionWindowStart(asOf, 0),
+    '2026-06-29'
+  );
+}
+
+async function testBuildShareholderReductionMessage() {
+  const msg = buildShareholderReductionMessage({
+    symbol: '600519.SH',
+    name: '茅台',
+    lookback_days: 30,
+    total_amount: 250_000_000,
+    total_pct_of_float: 1.85,
+    unique_shareholders: 4,
+    top_contributors: [
+      { shareholder_name: '股东A', trade_amount: 150_000_000, pct_of_float_shares: 1.0 },
+      { shareholder_name: '股东B', trade_amount: 80_000_000, pct_of_float_shares: 0.6 },
+    ],
+  });
+  assert('msg contains symbol', msg.includes('600519.SH'));
+  assert('msg contains 30 日', msg.includes('30'));
+  assert('msg contains 2.50 亿', msg.includes('2.50'));
+  assert('msg contains 1.85%', msg.includes('1.85'));
+  assert('msg contains 股东A', msg.includes('股东A'));
+  assert('msg contains 减持暴增', msg.includes('减持暴增'));
+}
+
+async function testSignatureShareholderReduction() {
+  const a = signatureForEvent({
+    event_type: 'SHAREHOLDER_REDUCTION',
+    symbol: '600519',
+    windowStartDate: '2026-05-31',
+  });
+  const b = signatureForEvent({
+    event_type: 'SHAREHOLDER_REDUCTION',
+    symbol: '600519',
+    windowStartDate: '2026-05-31',
+  });
+  const c = signatureForEvent({
+    event_type: 'SHAREHOLDER_REDUCTION',
+    symbol: '600519',
+    windowStartDate: '2026-06-01',
+  });
+  assertEqual('same window → same sig', a, b);
+  assert('different window → different sig', a !== c);
+  assert('sig contains type', a.startsWith('SHAREHOLDER_REDUCTION::'));
+}
+
+async function testNormalizeShareholderFields() {
+  // Defaults when absent
+  const def = normalizeBlackSwanConfig({});
+  assertEqual(
+    'normalize default scan_shareholder_reduction',
+    def.scan_shareholder_reduction,
+    true
+  );
+  assertEqual('normalize default lookback_days', def.shareholder_reduction_lookback_days, 30);
+  assertEqual(
+    'normalize default amount_threshold',
+    def.shareholder_reduction_amount_threshold,
+    100_000_000
+  );
+  assertEqual(
+    'normalize default pct_threshold',
+    def.shareholder_reduction_pct_threshold,
+    1.0
+  );
+
+  // Custom valid
+  const c = normalizeBlackSwanConfig({
+    scan_shareholder_reduction: false,
+    shareholder_reduction_lookback_days: 7,
+    shareholder_reduction_amount_threshold: 50_000_000,
+    shareholder_reduction_pct_threshold: 0.5,
+  });
+  assertEqual('normalize custom scan flag false', c.scan_shareholder_reduction, false);
+  assertEqual('normalize custom lookback 7', c.shareholder_reduction_lookback_days, 7);
+  assertEqual(
+    'normalize custom amount 50M',
+    c.shareholder_reduction_amount_threshold,
+    50_000_000
+  );
+  assertEqual('normalize custom pct 0.5', c.shareholder_reduction_pct_threshold, 0.5);
+
+  // Bad input → defaults
+  const bad = normalizeBlackSwanConfig({
+    scan_shareholder_reduction: 'yes',
+    shareholder_reduction_lookback_days: -5,
+    shareholder_reduction_amount_threshold: -100,
+    shareholder_reduction_pct_threshold: 0,
+  });
+  assertEqual('bad scan flag → default true', bad.scan_shareholder_reduction, true);
+  assertEqual('bad lookback → default 30', bad.shareholder_reduction_lookback_days, 30);
+  assertEqual(
+    'bad amount → default 1 亿',
+    bad.shareholder_reduction_amount_threshold,
+    100_000_000
+  );
+  assertEqual('bad pct 0 → default 1.0', bad.shareholder_reduction_pct_threshold, 1.0);
+}
+
+async function testHappyPathShareholderReduction() {
+  const asOf = new Date('2026-06-30T15:00:00Z');
+  const state = emptyState({
+    userIds: [1],
+    positionsByUser: { 1: [makePosition({ symbol: '600519.SH', name: '茅台' })] },
+    // 150M > 100M default → trigger
+    reductionRows: [
+      {
+        announce_date: '2026-06-15',
+        stock_code: '600519',
+        shareholder_name: '股东A',
+        trade_amount: 90_000_000,
+        pct_of_float_shares: 0.5,
+      },
+      {
+        announce_date: '2026-06-25',
+        stock_code: '600519',
+        shareholder_name: '股东B',
+        trade_amount: 70_000_000,
+        pct_of_float_shares: 0.4,
+      },
+    ],
+  });
+  const guard = new BlackSwanWatchdog(makeFakeSource(state));
+  const result = await guard.evaluateAfterOpen({ asOfDate: asOf });
+  assertEqual('reduction: 1 trigger', result.triggers.length, 1);
+  assertEqual(
+    'reduction: event_type SHAREHOLDER_REDUCTION',
+    result.triggers[0].event_type,
+    'SHAREHOLDER_REDUCTION'
+  );
+  assertEqual(
+    'reduction: total_amount in detail',
+    (result.triggers[0].detail as any).total_amount,
+    160_000_000
+  );
+  assertEqual(
+    'reduction: unique_shareholders in detail',
+    (result.triggers[0].detail as any).unique_shareholders,
+    2
+  );
+  assertEqual('reduction: 1 alert written', state.alerts.length, 1);
+  // signature should be persisted for dedup
+  assertEqual('reduction: 1 seen sig persisted', state.savedSeenByUser[1]?.length, 1);
+  // single-call batch fetch across positions (per user, once)
+  assertEqual('reduction: fetchShareholderReductions called once', state.reductionFetchCalls, 1);
+}
+
+async function testReductionBelowThreshold() {
+  const state = emptyState({
+    userIds: [1],
+    positionsByUser: { 1: [makePosition({ symbol: '600519.SH', name: '茅台' })] },
+    // 50M < 100M default + 0.3% < 1.0% default → no trigger
+    reductionRows: [
+      {
+        announce_date: '2026-06-15',
+        stock_code: '600519',
+        shareholder_name: '股东A',
+        trade_amount: 50_000_000,
+        pct_of_float_shares: 0.3,
+      },
+    ],
+  });
+  const guard = new BlackSwanWatchdog(makeFakeSource(state));
+  const result = await guard.evaluateAfterOpen();
+  assertEqual('reduction below: 0 triggers', result.triggers.length, 0);
+  assertEqual(
+    'reduction below: no_event',
+    result.per_user[0].per_position[0].status,
+    'no_event'
+  );
+}
+
+async function testReductionPctThresholdOnly() {
+  const state = emptyState({
+    userIds: [1],
+    positionsByUser: { 1: [makePosition({ symbol: '600519.SH', name: '茅台' })] },
+    // amount 30M < 100M but pct 1.5% >= 1.0% → trigger via pct path
+    reductionRows: [
+      {
+        announce_date: '2026-06-15',
+        stock_code: '600519',
+        shareholder_name: '股东A',
+        trade_amount: 30_000_000,
+        pct_of_float_shares: 1.5,
+      },
+    ],
+  });
+  const guard = new BlackSwanWatchdog(makeFakeSource(state));
+  const result = await guard.evaluateAfterOpen();
+  assertEqual('reduction pct: 1 trigger', result.triggers.length, 1);
+  assertEqual(
+    'reduction pct: event_type',
+    result.triggers[0].event_type,
+    'SHAREHOLDER_REDUCTION'
+  );
+}
+
+async function testReductionScanOff() {
+  const cfg: BlackSwanConfig = {
+    ...DEFAULT_BLACK_SWAN_CONFIG,
+    scan_shareholder_reduction: false,
+    news_keywords: [...DEFAULT_BLACK_SWAN_CONFIG.news_keywords],
+  };
+  const state = emptyState({
+    userIds: [1],
+    configs: { 1: cfg },
+    positionsByUser: { 1: [makePosition({ symbol: '600519.SH', name: '茅台' })] },
+    reductionRows: [
+      {
+        announce_date: '2026-06-15',
+        stock_code: '600519',
+        shareholder_name: '股东A',
+        trade_amount: 500_000_000,
+        pct_of_float_shares: 10,
+      },
+    ],
+  });
+  const guard = new BlackSwanWatchdog(makeFakeSource(state));
+  const result = await guard.evaluateAfterOpen();
+  assertEqual('reduction scan off: 0 triggers', result.triggers.length, 0);
+  assertEqual(
+    'reduction scan off: fetchShareholderReductions NOT called',
+    state.reductionFetchCalls,
+    0
+  );
+}
+
+async function testReductionDedup() {
+  const asOf = new Date('2026-06-30T15:00:00Z');
+  const windowStart = shareholderReductionWindowStart(asOf, 30);
+  const sig = signatureForEvent({
+    event_type: 'SHAREHOLDER_REDUCTION',
+    symbol: '600519',
+    windowStartDate: windowStart,
+  });
+  const state = emptyState({
+    userIds: [1],
+    positionsByUser: { 1: [makePosition({ symbol: '600519.SH', name: '茅台' })] },
+    reductionRows: [
+      {
+        announce_date: '2026-06-15',
+        stock_code: '600519',
+        shareholder_name: '股东A',
+        trade_amount: 200_000_000,
+        pct_of_float_shares: 2.0,
+      },
+    ],
+    seenByUser: { 1: [sig] },
+  });
+  const guard = new BlackSwanWatchdog(makeFakeSource(state));
+  const result = await guard.evaluateAfterOpen({ asOfDate: asOf });
+  assertEqual('reduction dedup: 0 triggers', result.triggers.length, 0);
+  assertEqual(
+    'reduction dedup: skipped_seen',
+    result.per_user[0].per_position[0].status,
+    'skipped_seen'
+  );
+}
+
+async function testReductionEventLowerPriorityThanST() {
+  // ST + REDUCTION both hit → ST wins (priority order)
+  const state = emptyState({
+    userIds: [1],
+    positionsByUser: { 1: [makePosition({ symbol: '600519.SH', name: '茅台' })] },
+    stList: [
+      {
+        stock_code: '600519',
+        stock_name: 'ST 茅台',
+        latest_price: 1200,
+        change_pct: -9.99,
+        raw_payload: {},
+      },
+    ],
+    reductionRows: [
+      {
+        announce_date: '2026-06-15',
+        stock_code: '600519',
+        shareholder_name: '股东A',
+        trade_amount: 500_000_000,
+        pct_of_float_shares: 5,
+      },
+    ],
+  });
+  const guard = new BlackSwanWatchdog(makeFakeSource(state));
+  const result = await guard.evaluateAfterOpen();
+  assertEqual('priority: 1 trigger', result.triggers.length, 1);
+  assertEqual('priority: ST wins over REDUCTION', result.triggers[0].event_type, 'ST');
+}
+
+async function testReductionBatchedPerUser() {
+  // 2 held positions, both with reductions → still 1 batch fetch per user (not N)
+  const state = emptyState({
+    userIds: [1],
+    positionsByUser: {
+      1: [
+        makePosition({ id: 1, symbol: '600519.SH', name: '茅台' }),
+        makePosition({ id: 2, symbol: '000001.SZ', name: '平安' }),
+      ],
+    },
+    reductionRows: [
+      {
+        announce_date: '2026-06-15',
+        stock_code: '600519',
+        shareholder_name: '股东A',
+        trade_amount: 200_000_000,
+        pct_of_float_shares: 2,
+      },
+      {
+        announce_date: '2026-06-20',
+        stock_code: '000001',
+        shareholder_name: '股东B',
+        trade_amount: 150_000_000,
+        pct_of_float_shares: 1.5,
+      },
+    ],
+  });
+  const guard = new BlackSwanWatchdog(makeFakeSource(state));
+  const result = await guard.evaluateAfterOpen();
+  assertEqual('batched: 2 triggers (one per held code)', result.triggers.length, 2);
+  assertEqual('batched: fetch called only once for user', state.reductionFetchCalls, 1);
+}
+
+async function testNewsExtendedKeywordsLitigationAndDelisting() {
+  // US-013 expanded keywords: '诉讼' and '终止上市' should now match.
+  const asOf = new Date('2026-06-08T10:00:00Z');
+  const state = emptyState({
+    userIds: [1],
+    positionsByUser: { 1: [makePosition({ symbol: '600519.SH', name: '茅台' })] },
+    newsByCode: {
+      '600519': [
+        {
+          title: '公司收到法院重大诉讼通知',
+          content: null,
+          publish_time: '2026-06-08T09:00:00Z',
+          source: '财联社',
+          url: null,
+          raw_payload: {},
+        },
+      ],
+    },
+  });
+  const guard = new BlackSwanWatchdog(makeFakeSource(state));
+  const result = await guard.evaluateAfterOpen({ asOfDate: asOf });
+  assertEqual('litigation keyword: 1 trigger', result.triggers.length, 1);
+  assertEqual(
+    'litigation: keyword in detail',
+    (result.triggers[0].detail as any).keyword,
+    '诉讼'
+  );
+
+  // Reset + try 终止上市
+  const state2 = emptyState({
+    userIds: [1],
+    positionsByUser: { 1: [makePosition({ symbol: '600519.SH', name: '茅台' })] },
+    newsByCode: {
+      '600519': [
+        {
+          title: '深交所启动终止上市程序',
+          content: null,
+          publish_time: '2026-06-08T09:00:00Z',
+          source: '证监会',
+          url: null,
+          raw_payload: {},
+        },
+      ],
+    },
+  });
+  const guard2 = new BlackSwanWatchdog(makeFakeSource(state2));
+  const result2 = await guard2.evaluateAfterOpen({ asOfDate: asOf });
+  assertEqual('delisting keyword: 1 trigger', result2.triggers.length, 1);
+  // text '深交所启动终止上市程序' contains '终止上市' but not '退市', so the
+  // first matching keyword in the default array is '终止上市'.
+  assertEqual(
+    'delisting: keyword in detail',
+    (result2.triggers[0].detail as any).keyword,
+    '终止上市'
+  );
+}
+
+// ---------------------------------------------------------------------------
 //  Runner
 // ---------------------------------------------------------------------------
 
@@ -1097,6 +1692,22 @@ async function main() {
   await testGetConfigDefault();
   await testUpdateConfigNormalize();
   await testEventPriority();
+
+  // US-013 — shareholder reduction + extended keywords
+  await testSummarizeShareholderReductions();
+  await testShouldTriggerShareholderReduction();
+  await testShareholderReductionWindowStart();
+  await testBuildShareholderReductionMessage();
+  await testSignatureShareholderReduction();
+  await testNormalizeShareholderFields();
+  await testHappyPathShareholderReduction();
+  await testReductionBelowThreshold();
+  await testReductionPctThresholdOnly();
+  await testReductionScanOff();
+  await testReductionDedup();
+  await testReductionEventLowerPriorityThanST();
+  await testReductionBatchedPerUser();
+  await testNewsExtendedKeywordsLitigationAndDelisting();
 
   console.log('\n──────────────────────────────────────────────');
   console.log(`✅ passed=${passed}  ❌ failed=${failed}`);
