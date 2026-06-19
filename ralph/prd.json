@@ -1024,8 +1024,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 66,
-      "passes": false,
-      "notes": "依赖: PR-020"
+      "passes": true,
+      "notes": "依赖: PR-020 | DONE 06/20: 5 endpoint 合并 tab + draft/view 双状态 + Promise.allSettled fail-OPEN + META-GUARD test 39/39"
     },
     {
       "id": "US-067",
