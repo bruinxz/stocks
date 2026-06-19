@@ -320,8 +320,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 21,
-      "passes": false,
-      "notes": "依赖: AE-001"
+      "passes": true,
+      "notes": "依赖: AE-001 | DONE 2026/06/19: ShadowDoubleRunService 真支持 hard 模式 — 在 cfg.mode==hard 时, runShadowAsync 走完 persistShadowReport 后追加调 dataSource.archiveHardSignal(decision, prod_report_id, user_id), 生产实现 (PRODUCTION_SHADOW_DATA_SOURCE.archiveHardSignal) 委托 createProductionAnalysisEngineArchiveDataSource + archiveAnalysisEngineResult (US-020 helper), extra_metadata 自带 source_user_id + archived_from=shadow_double_run_hard 让 attribution 区分两类 archive 来源. 删 v1 仅 shadow 退化 warn 文案 + 增 ShadowDataSource interface 第 3 个 method (archiveHardSignal) + index.ts re-export 类型. fail-OPEN 三层: (1) helper 返 ok=false 仅 logger.warn 不阻塞; (2) prod adapter 内 try/catch 把 throw 转 {ok:false, reason:db_failure}; (3) runShadowAsync 顶层 catch 兜底返 null. tests/services/analysis-engine/ShadowDoubleRunService.test.ts 从 12→35 ok, 新增 6 组: hard mode normalize / off+shadow 不调 archive (强对比) / hard AC 主验收 双调 + 入参三件套 / archive 返 ok=false fail-OPEN 仍返 decision / archive throw 顶层 catch 吞错返 null / META-GUARD fs+regex 8 条 (含 import / hard 分支 / dataSource.archiveHardSignal 调用 / PRODUCTION 实现含 archiveHardSignal / 反向 v1 仅 shadow 文案删干净). analysisEngineSignalArchive.test.ts 99 ok 无 regression, 全 analysis-engine 6 文件 ok. tsc 0 err / eslint ShadowDoubleRunService.ts 0 err."
     },
     {
       "id": "US-022",

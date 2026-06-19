@@ -35,6 +35,8 @@ export {
   PRODUCTION_SHADOW_DATA_SOURCE,
   type AnalysisEngineMode,
   type AnalysisEngineUserConfig,
+  type ShadowDataSource,
+  type MaybeRunShadowInput,
 } from './ShadowDoubleRunService';
 
 export { BaseAnalyzer, zScoreToScore, clampScore, clamp01 } from './analyzers/BaseAnalyzer';

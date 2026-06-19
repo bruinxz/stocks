@@ -36,8 +36,15 @@ Runbook (灰度切量): `docs/audit/analysis_engine_runbook.md`.
 - **`shadow`**: 旧路径主返给前端; **异步** 调 `AnalysisEngineService.analyzeStock` 并写
   `AIStockAnalysisReport(engine_variant='multi_dim_v1', shadow_of_report_id=<prod_id>)`.
   不影响主路径; 错误吞掉. Dashboard 用 `engine_variant + shadow_of_report_id` 比对.
-- **`hard`** (v1 不实现): 见 runbook W4+. 当前 ShadowDoubleRunService 收到 `hard`
-  会 warn + 退化为 `shadow` 行为.
+- **`hard`** (US-021/AE-002 已落): 在 `shadow` 行为基础上 **追加** 调
+  `archiveAnalysisEngineResult` 把决策落 `AIInvestmentSignal`
+  (`source_type=AISignalSourceType.ANALYSIS_ENGINE`), 让
+  `PaperTradingAutomationService.autoBuyFromSignals` 真的能跟单 +
+  Dashboard / Attribution 看板可视化. archive 失败 fail-OPEN
+  (仅 logger.warn 不阻塞主路径); shadow report 仍照写. 当前实现入口
+  是 `ShadowDataSource.archiveHardSignal`, 生产实现委托
+  `createProductionAnalysisEngineArchiveDataSource()` + `archiveAnalysisEngineResult`,
+  测试可注入 fake 覆盖 ok/fail-open/throw 三路径.
 
 **怎么开**: 在 SettingsWorkspace (或 API `PUT /api/admin/...`) 改 user 的
 `risk_config.analysis_engine = {mode:'shadow'}`. 必须 `user.changed('risk_config', true)`
@@ -99,7 +106,10 @@ Runbook (灰度切量): `docs/audit/analysis_engine_runbook.md`.
 - `tests/services/analysis-engine/types.test.ts` — 接口契约编译检查.
 - `tests/services/analysis-engine/*Analyzer.test.ts` (8 个) — 每个 happy + data_missing 2 case.
 - `tests/services/analysis-engine/DecisionAggregator.test.ts` — 5 case (veto/dampen/critical/各 action).
-- `tests/services/analysis-engine/ShadowDoubleRunService.test.ts` — off/shadow path.
+- `tests/services/analysis-engine/ShadowDoubleRunService.test.ts` — off/shadow/**hard** 三态全覆盖
+  (US-021 [AE-002]: hard mode AC 主验收 双调 persistShadowReport+archiveHardSignal,
+  archive 失败 fail-OPEN 不阻塞, archive throw 顶层 catch 吞错; META-GUARD fs+regex
+  守 source 含 hard 分支 + 反向不再含 v1 仅 shadow 文案; 35 ok).
 - `tests/services/analysis-engine/integration_300750.test.ts` — 端到端 mock fixtures.
 - `tests/services/analysis-engine/analysisEngineSignalArchive.test.ts` — US-020 [AE-001]
   archiveAnalysisEngineResult 4 模块 99 ok (纯函数 helpers + DataSource DI 主入口 5 路径
@@ -115,6 +125,27 @@ Runbook (灰度切量): `docs/audit/analysis_engine_runbook.md`.
   在 trade lifecycle 中回写, 重 archive 必须保留 (与 `archiveTradingAgentsResult` 同款).
 - 返回: `{ok, reason?, signal?, created?, payload, error?}` — 4 种 reason: `dry_run` /
   `invalid_input` / `db_failure`; 调用方按业务决定 throw / log / skip, helper 自身不抛.
+
+## hard mode 入口 (US-021 [AE-002])
+
+`ShadowDoubleRunService` 在 `cfg.mode==='hard'` 时, 走完
+`persistShadowReport` 之后追加调 `dataSource.archiveHardSignal(decision, prod_report_id, user_id)`.
+默认 `PRODUCTION_SHADOW_DATA_SOURCE.archiveHardSignal` 用
+`createProductionAnalysisEngineArchiveDataSource()` 构造生产 DataSource, 然后委托
+`archiveAnalysisEngineResult` — extra_metadata 自动加
+`{source_user_id, archived_from:'shadow_double_run_hard'}` 让下游 attribution
+能区分 hard mode archive 与 AutomatedRecommendationLoop archive.
+
+**边界**:
+- `off` / `shadow` 模式完全不调 `archiveHardSignal`, 不污染 AIInvestmentSignal.
+- archive ok=false (db_failure / invalid_input) 仅 logger.warn, 主路径 fail-OPEN.
+- archive throw (lazy require 模块加载失败 / 其它意外) 被
+  `PRODUCTION_SHADOW_DATA_SOURCE.archiveHardSignal` 内部 try/catch 转成
+  {ok:false, reason:'db_failure'}; 测试 fake 直接 throw 则被 `runShadowAsync`
+  顶层 catch 兜底 (返 null).
+- 想完全替换 archive 路径 (e.g. shadow paper trader, integration 测) 实现自己的
+  `ShadowDataSource` 注入 `new ShadowDoubleRunService(myDS)` 即可, 不要直接改
+  `PRODUCTION_SHADOW_DATA_SOURCE`.
 
 跑: `cd backend && npx ts-node --transpile-only tests/services/analysis-engine/<file>.test.ts`
 或 `npm test` (runner 跑全部 .test.ts).

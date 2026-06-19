@@ -8,12 +8,23 @@
  *     - 'off' (默认): 立即返回, 零开销.
  *     - 'shadow': 异步 setImmediate 调 AnalysisEngineService.analyzeStock, 写入
  *       AIStockAnalysisReport(engine_variant='multi_dim_v1', shadow_of_report_id=prod_id).
- *       任何错误吞掉, 不影响 prod 主路径.
- *     - 'hard': v1 不实现, 留 warn log + 走 'off' 行为. 见 runbook W4+.
+ *       任何错误吞掉, 不影响 prod 主路径. **不** 写 AIInvestmentSignal (不污染跟单).
+ *     - 'hard' (US-021/AE-002): 在 shadow 行为基础上, **追加** 调
+ *       `archiveAnalysisEngineResult` 把决策落 `AIInvestmentSignal`
+ *       (source_type=ANALYSIS_ENGINE), 让 PaperTradingAutomationService
+ *       autoBuyFromSignals 真的能跟单 + Dashboard/Attribution 可视化.
+ *       archive 失败 fail-OPEN — 仅 logger.warn 不阻塞主路径; 主路径错误同样吞掉.
+ *       见 docs/audit/analysis_engine_runbook.md W4+.
  */
 
 import { logger } from '../../utils/logger';
 import { analysisEngineService } from './AnalysisEngineService';
+import {
+  archiveAnalysisEngineResult,
+  createProductionAnalysisEngineArchiveDataSource,
+  type AnalysisEngineArchiveDataSource,
+  type ArchiveAnalysisEngineResultOutput,
+} from './analysisEngineSignalArchive';
 import type { RecommendationDecision } from './AnalyzerTypes';
 
 export type AnalysisEngineMode = 'off' | 'shadow' | 'hard';
@@ -49,6 +60,17 @@ export interface ShadowDataSource {
   loadUserConfig(user_id: number | null | undefined): Promise<AnalysisEngineUserConfig>;
   /** 把 shadow decision 持久化为 AIStockAnalysisReport(engine_variant=multi_dim_v1). */
   persistShadowReport(decision: RecommendationDecision, prodReportId: string): Promise<void>;
+  /**
+   * hard mode 专用 — 把 decision archive 到 AIInvestmentSignal
+   * (source_type=ANALYSIS_ENGINE). 默认实现委托 `archiveAnalysisEngineResult`
+   * + 生产 DataSource. 测试可注入 fake 复刻 findOrCreate / db_failure 路径.
+   * 返 ArchiveAnalysisEngineResultOutput 让 caller 决定 logger.warn 哪种 reason.
+   */
+  archiveHardSignal(
+    decision: RecommendationDecision,
+    prodReportId: string,
+    user_id?: number | null
+  ): Promise<ArchiveAnalysisEngineResultOutput>;
 }
 
 export const PRODUCTION_SHADOW_DATA_SOURCE: ShadowDataSource = {
@@ -105,6 +127,29 @@ export const PRODUCTION_SHADOW_DATA_SOURCE: ShadowDataSource = {
       );
     }
   },
+  async archiveHardSignal(decision, prodReportId, user_id) {
+    // US-021 [AE-002] hard mode 落 AIInvestmentSignal — 委托 US-020 helper.
+    // helper 内部已 fail-LOUD (返 {ok:false, reason}), 这里再套 try/catch 拦
+    // 极端 throw (e.g. lazy-require 模块加载失败), 让 caller 拿到统一形态.
+    try {
+      const ds: AnalysisEngineArchiveDataSource = createProductionAnalysisEngineArchiveDataSource();
+      return await archiveAnalysisEngineResult(ds, {
+        decision,
+        shadow_of_report_id: prodReportId,
+        extra_metadata: {
+          source_user_id: user_id ?? null,
+          archived_from: 'shadow_double_run_hard',
+        },
+      });
+    } catch (e: any) {
+      return {
+        ok: false,
+        reason: 'db_failure',
+        payload: null,
+        error: { message: String(e?.message || e) },
+      };
+    }
+  },
 };
 
 function pickRiskLevel(d: RecommendationDecision): string {
@@ -152,13 +197,6 @@ export class ShadowDoubleRunService {
     try {
       const cfg = await this.dataSource.loadUserConfig(input.user_id);
       if (cfg.mode === 'off') return null;
-      if (cfg.mode === 'hard') {
-        // v1: 不实现 hard mode; 退化为 shadow 行为 + warn (避免用户误开 hard 后 silent)
-        logger.warn(
-          `[analysis-engine.shadow] user_id=${input.user_id} mode=hard 不支持 (v1 仅 shadow); ` +
-            '走 shadow 行为. 见 runbook W4+.'
-        );
-      }
       const decision = await analysisEngineService.analyzeStock(input.stock_code, {
         as_of: input.as_of,
         user_id: input.user_id ?? undefined,
@@ -166,7 +204,25 @@ export class ShadowDoubleRunService {
         enabled_analyzers: cfg.enabled_analyzers as any,
         weights: cfg.weights,
       });
+      // shadow + hard 都写 AIStockAnalysisReport (engine_variant 标签 + 看板对照)
       await this.dataSource.persistShadowReport(decision, input.prod_report_id);
+      // US-021 [AE-002] hard mode: **追加** archive 到 AIInvestmentSignal
+      // 让 PaperTradingAutomationService.autoBuyFromSignals 真的能跟单.
+      // shadow mode 完全不调 archive — 不污染 AIInvestmentSignal (与 README 边界一致).
+      if (cfg.mode === 'hard') {
+        const archive = await this.dataSource.archiveHardSignal(
+          decision,
+          input.prod_report_id,
+          input.user_id ?? null
+        );
+        if (!archive.ok) {
+          // fail-OPEN: archive 失败仅 warn, 不阻塞主路径 (shadow report 已写).
+          logger.warn(
+            `[analysis-engine.hard] archive failed for ${input.stock_code} ` +
+              `reason=${archive.reason || 'unknown'} msg=${archive.error?.message || ''}`
+          );
+        }
+      }
       return decision;
     } catch (e: any) {
       logger.warn(`[analysis-engine.shadow] failed for ${input.stock_code}: ${e?.message || e}`);
