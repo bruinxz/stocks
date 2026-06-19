@@ -111,6 +111,33 @@ Runbook (灰度切量): `docs/audit/analysis_engine_runbook.md`.
   archive 失败 fail-OPEN 不阻塞, archive throw 顶层 catch 吞错; META-GUARD fs+regex
   守 source 含 hard 分支 + 反向不再含 v1 仅 shadow 文案; 35 ok).
 - `tests/services/analysis-engine/integration_300750.test.ts` — 端到端 mock fixtures.
+- `tests/services/analysis-engine/newsAnalyzerKOL.test.ts` — US-036 [KOL-004]
+  NewsAnalyzer 接 KOLAggregator 真输出: weightedAvgKOLSentiment (权威源主导) /
+  buildKOLEvidenceDetail (top-N by authority × |sentiment|) / formatKOLSourceLabel
+  (5 enum + fallback 'KOL') / toSixDigitStockCode (strip 交易所前缀) /
+  KOL_SOURCE_LABEL 常量冻结 / AC 端到端 evidence + 加权与裸算术 avg 差异显著 /
+  PRODUCTION 路径 dryRun:true 透传不触发 saveOpinions / META-GUARD 反向守
+  KOL 段不再 `scored.reduce` 裸均值. 87 ok.
+
+## NewsAnalyzer KOL 段约定 (US-036 [KOL-004])
+
+- 入口 `NewsAnalyzerDataSource.aggregateKOLForStock(stockCode)` 返
+  `NewsAnalyzerKOLRecord[]` (KOLOpinionRecord 子集), 必带 `kol_name` + `kol_source` +
+  `sentiment_score`, 可选 `opinion_date` / `opinion_summary`.
+- KOLAggregator 严格要求 6 位 stock_code — 调用前必须 `toSixDigitStockCode()` strip
+  `sz.` / `sh.` / `bj.` / `SH` / `SZ` 前缀; 非法形态直接返 `[]` 入 data_missing 而非 throw.
+- `aggregateForStock(code, { dryRun: true })` — analyzer 是只读端, 不应触发
+  KOLAggregator.saveOpinions 落库; 旧实现传非法 option 走 persist 路径已修.
+- 加权用 `authorityWeightedSentiment` (= |sentiment_score| × SOURCE_AUTHORITY[kol_source]),
+  与 KOLAggregator dedupeAndSort / weightedAvgKOLSentiment / buildKOLEvidenceDetail 三处
+  同源, 让 evidence top N 与加权 avg 的"信号主导项"完全一致 (研报 / 政策 自然排前).
+- evidence detail 形态 `[研报] 中信证券:+0.80 | [政策] 国务院:+0.70 | [财经新闻] 财联社:-0.40`
+  — tag 走 `formatKOLSourceLabel(kol_source)`, name 截 24 字符防爆, sentiment 显式带符号 +/-.
+- 数据状态三态:
+  - `kol.length === 0` → `data_missing.push('kol')` (无数据).
+  - `kol.length > 0` 但 weightedAvgKOLSentiment 返 null (全 sentiment_score=null/0) →
+    `data_missing.push('kol_sentiment_score')` (有数据无信号), 与"无 KOL 数据"区分.
+  - 否则 `kolScore = clamp(avg * 80, -40, 40)` 占 0.25 权重.
 - `tests/services/analysis-engine/analysisEngineSignalArchive.test.ts` — US-020 [AE-001]
   archiveAnalysisEngineResult 4 模块 99 ok (纯函数 helpers + DataSource DI 主入口 5 路径
   + service 集成 fs+regex + META-GUARD enum/Dashboard/Attribution 标签).

@@ -960,3 +960,36 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **Stock.symbol 兜底用 LIKE**: Stock 表里 symbol 通常含 .SH/.SZ 后缀但 stockCode 是 6 位裸码, 用 `{ symbol: { [Op.like]: ${stockCode}% } }` 兜底 + `attributes:['industry']` raw query 比 findByPk(symbol) 少绑 model 实例化开销.
   - **fetchETFFlow 三层短路**: stock 缺 industry 返 []; getETFCodesByIndustry 返 [] 也返 [] (行业无对应 ETF 白名单); ETFFlow.findAll 抛错 fail-OPEN 返 [] — 三层都 fail-OPEN, 让 5 类来源中即便 ETF 无对应行业映射也不影响其他 4 类聚合.
 ---
+
+
+## 2026/06/19 17:05 - US-036
+- 实现 [KOL-004] NewsAnalyzer 接 KOLAggregator 真输出 — 替换占位 (旧 KOL 段裸 `scored.reduce((a,b)=>a+b,0)/scored.length`), 改走 KOLAggregator.aggregateForStock + authorityWeightedSentiment 加权 + evidence top 3 显式带 kol_name + source tag
+- Files changed:
+  - backend/src/services/analysis-engine/analyzers/NewsAnalyzer.ts:
+    * import authorityWeightedSentiment / KOLOpinionRecord / KOLSource from KOLAggregatorService
+    * export NewsAnalyzerKOLRecord = Pick<KOLOpinionRecord, 'kol_name'|'kol_source'|'sentiment_score'> & Partial<Pick<...,'opinion_date'|'opinion_summary'>>
+    * export toSixDigitStockCode(rawCode) — strip 'sz.'/'sh.'/'bj.'/'SH'/'SZ' 前缀, 非 6 位返 null
+    * export KOL_SOURCE_LABEL Object.freeze({research_report:'研报',east_money_news:'财经新闻',xq_hot_concept:'热门概念',etf_flow:'ETF 资金',policy_doc:'政策'})
+    * export formatKOLSourceLabel(source) — fallback 'KOL' 不抛
+    * export weightedAvgKOLSentiment(records) — 权威源加权, sumW>0 才返, 否则 null (= 与 kol.length===0 区分的"有数据无信号"态)
+    * export buildKOLEvidenceDetail(records, topN=3) — `[研报] 中信证券:+0.80 | [政策] 国务院:+0.70 | [财经新闻] 财联社:-0.40` 形态, slice() 复制后排不污染上游
+    * PRODUCTION_NEWS_ANALYZER_SOURCE.aggregateKOLForStock — strip 前缀 + dryRun:true 透传不触发 saveOpinions
+    * NewsAnalyzer.run() KOL 段 — kol.length===0 → data_missing.push('kol'); weightedAvg===null → data_missing.push('kol_sentiment_score'); 否则 kolScore=clamp(avg*80, -40, 40) 占 0.25 权重; evidence label 含按 kol_source 分桶计数 (`研报 3 / 政策 1 / 财经新闻 6`) + detail 走 buildKOLEvidenceDetail
+  - backend/tests/services/analysis-engine/newsAnalyzerKOL.test.ts (新, 457 行 / 87 assert): 8 模块 — [1] KOL_SOURCE_LABEL 冻结 + 5 enum 覆盖 / [2] toSixDigitStockCode 5 形态 (sz./SH/bj./纯 6 位/非法) / [3] formatKOLSourceLabel 5 enum + null + 未识别 'KOL' fallback / [4] weightedAvgKOLSentiment 权威源主导 + 中性 0/null/非数字不入分母 / [5] buildKOLEvidenceDetail 排序 + 形态 + topN 截断 + 不污染上游 / [6] AC 主验收 NewsAnalyzer 端到端 evidence label/detail + 加权 avg 与裸算术 avg 差异显著 / [7] PRODUCTION 路径 stock_code 前缀 strip + dryRun:true 透传 (mock require KOLAggregatorService 验入参) / [8] META-GUARD fs+regex 正反双守 — 正向 import + 调 weightedAvgKOLSentiment + 调 buildKOLEvidenceDetail + PRODUCTION 路径 dryRun:true; 反向 KOL 段不再含 `scored.reduce((a, b) => a + b, 0) / scored.length` (news 段保留)
+  - backend/tests/services/analysis-engine/analyzers.test.ts: testNewsAnalyzerHappy 的 aggregateKOLForStock mock 升级 — 旧 `[{ sentiment_score: 0.3 }, { sentiment_score: 0.5 }]` 改为带 kol_name+kol_source (`中信证券/research_report` + `国务院/policy_doc`), 与新 NewsAnalyzerKOLRecord 契约对齐
+  - backend/src/services/analysis-engine/CLAUDE.md: 测试段补 newsAnalyzerKOL.test.ts 描述 + 新增 "NewsAnalyzer KOL 段约定 (US-036 [KOL-004])" 整段 — DataSource 入口 / 6 位 stock_code 严格要求 / dryRun:true 透传 / 加权同源公式 / evidence detail 形态 / 数据状态三态 (空 / sentiment_score 全空 / 正常)
+  - ralph/prd.json: US-036 passes=true + notes
+  - ralph/progress.txt: 本 entry
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npm test -- --filter=newsAnalyzerKOL` exit 0, 87 ok / 0 failed (1.3s)
+  - `npm test -- --filter=analyzers` exit 0, 40 ok / 0 failed (1.2s) — 无 regression
+  - `eslint src/services/analysis-engine/analyzers/NewsAnalyzer.ts` exit 0
+- **Learnings for future iterations:**
+  - **"接真聚合产物" 类 story 的隐性子任务清单**: 把 mock/裸算术替换成真 service 调用时, 至少要同步落 5 件事 — (a) DataSource interface 返回类型升级 (这里 NewsAnalyzerKOLRecord 从 `{sentiment_score}` 升到 Pick<KOLOpinionRecord, ...>); (b) PRODUCTION 实现里调底层 service 的入参约束 (KOLAggregator 严格 6 位 stock_code, 不 strip 直接 error='Invalid stock_code format' 全段静默失败); (c) read-only flag 透传 (dryRun:true), 否则 analyzer 这种"只读端"反而触发底层 saveOpinions 落脏数据 — 是这类 story 最容易踩的坑; (d) 算法升级 (从裸算术均值 → authorityWeightedSentiment 加权); (e) 既有同模块的 testHappy mock 必须同步升级 (新字段 kol_name+kol_source 必备), 否则原 happy test 在 TypeScript 严格模式下编不过.
+  - **`{dryRun: true}` 形态 vs 字面量"dry_run"**: KOLAggregatorService.aggregateForStock 第二参约束是 `{dryRun?: boolean}` (camelCase), 不是项目主流的 `dry_run` (snake_case). 这类底层 service 入参 casing 不一致是历史遗留, 不要假设统一; 改前先 grep `aggregateForStock(` 看现有 caller 形态. 同样需求 reasonability check 适用任何"切到真 service" 的 wiring.
+  - **数据状态三态 (无数据 / 有数据但无信号 / 正常) 是 evidence-heavy analyzer 的统一范式**: NewsAnalyzer KOL 段 `kol.length===0 → 'kol'` vs `weightedAvg===null → 'kol_sentiment_score'` 这种二级区分让下游 dashboard 能分辨"上游 ETL 卡死" vs "上游有数但全中性". 同款思想适用 news 段 (`!news.length` vs `scored.length===0` → `'news_sentiment_score'`), 任何"加权 helper 返 null" 都该升二态而非合并一态.
+  - **`authorityWeightedSentiment` 同源公式三处共用**: weightedAvgKOLSentiment (加权 avg) / buildKOLEvidenceDetail (top-N 排序 key) / dedupeAndSort (上游去重) 三处必须共享同一权重函数, 让 "evidence detail 显示的 top 3" 与 "汇总分主导项" 与 "上游去重后保留项" 完全一致. 如果排序 key 和加权公式漂移, evidence 显示的 top 3 可能与汇总分主导项不一致, ops 反查时无法对账.
+  - **META-GUARD 正反双守用 fs+regex 不依赖 ts-morph/AST**: `fs.readFileSync(path, 'utf8')` + `/import \{[^}]*weightedAvgKOLSentiment/.test(src)` + 反向 `/scored\.reduce\([^)]+,\s*\(?a,\s*b\)?\s*=>\s*a\s*\+\s*b/.test(kolSection)` (用 indexOf('// 3) KOL') 切片让反向 guard 只扫 KOL 段, 不误伤 news 段同款裸均值. 这是项目 meta-test 的标准姿势 — 任何"局部不再含旧路径"反向 guard 都要先 substring 切片定位段落再 regex.
+  - **PRODUCTION 路径单测的 require mock pattern**: `delete require.cache[require.resolve('../../../src/services/KOLAggregatorService')]` + `jest.mock` 不可用, 改用纯 Node `Module.prototype.require` proxy — 直接 `(require('module') as any)._cache[require.resolve(p)] = { exports: { kolAggregatorService: { aggregateForStock: ... } } }` 注入 fake 单例, 验完 restore. 这是 backend 无 jest 环境下"测 lazy-require + 单例 service" 的标准模板.
+---

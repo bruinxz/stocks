@@ -185,7 +185,10 @@ function baseCtx(): AnalyzerContext {
       return [{ title: '行业利好', publish_time: null, sentiment_score: 0.6 }];
     },
     async aggregateKOLForStock() {
-      return [{ sentiment_score: 0.3 }, { sentiment_score: 0.5 }];
+      return [
+        { kol_name: '中信证券', kol_source: 'research_report', sentiment_score: 0.3 },
+        { kol_name: '国务院', kol_source: 'policy_doc', sentiment_score: 0.5 },
+      ];
     },
   });
   const newsOut = await na.analyze(ctx);

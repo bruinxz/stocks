@@ -546,8 +546,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 36,
-      "passes": false,
-      "notes": "依赖: KOL-003"
+      "passes": true,
+      "notes": "依赖: KOL-003 | DONE 2026-06-19: NewsAnalyzer KOL 段已接 KOLAggregator 真聚合产物 + weightedAvgKOLSentiment 按 authorityWeightedSentiment 加权 + buildKOLEvidenceDetail top-N + stock_code 前缀 strip + dryRun:true 不污染落库 + 87 ok 单测 + META-GUARD 守不退化"
     },
     {
       "id": "US-037",
