@@ -1104,8 +1104,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 71,
-      "passes": false,
-      "notes": "依赖: FE-031"
+      "passes": true,
+      "notes": "依赖: FE-031 | DONE 2026/06/20: 新增 frontend/src/pages/workspace/alertsPanelHelpers.ts (~410 行 + jsdoc) 含 7 export 常量 (LEVEL_RANK / LEVEL_LABEL / DERIVED_CATEGORY_LABEL / DERIVED_CATEGORY_TAG_COLOR / POSITION_KEYWORDS / MARKET_KEYWORDS / DATA_KEYWORDS / SYMBOL_PREFIX_CATEGORY / MIN_SEARCH_QUERY_LENGTH=1 / MAX_SEARCH_RESULTS=200) + 9 pure helper (normalizeAlertLevel / deriveAlertCategoryFromMessage / enrichAlerts / filterAlerts / sortAlertsBySeverityThenTime / summarizeAlertsByCategory / summarizeAlertsByLevel / emptyAlertsPanelFilterState / hasActiveFilter) + 6 interface/type. AlertsPanel (TodayWorkspace.tsx) 从 thin RiskAlertsList 升级为 完整面板: 顶部 4 category KPI 卡 (点击 toggle filter) + level/category/search 过滤栏 + 一键重置 + 列表按 (level desc, time desc, id asc) 重排 + 空集文案分情景. data-testid 9 个让 webapp-testing skill 可验收. 单测 backend/tests/services/alerts-panel-helpers.test.ts 136 ok / 0 failed (10 维度覆盖 含 SYSTEM:/DATA: 前缀 → market/data 映射 + DATA 优先于 POSITION 关键词 + MAX_SEARCH_RESULTS cap + null/undefined 全兜底 + META-GUARD 守 25 export + UI 9 data-testid + US-071 注释). tsc 0 err (frontend+backend) / eslint 仅 prettier warning (--fix 已应用) / 既有 alerts-bell helpers 仍 90 ok. 与 [[alertsBellHelpers]] (US-070) / RiskAlertCenterPanel (US-077) 形成 3 层告警面板梯队 — Bell 看数 / AlertsPanel 就地过滤 / 风控中心全量分页, 用户认知零跨页."
     },
     {
       "id": "US-072",

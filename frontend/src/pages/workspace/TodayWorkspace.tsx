@@ -71,6 +71,19 @@ import {
   sellPriorityTagColor,
   sellSourceLabel,
 } from './todaySellHelpers';
+import {
+  AlertLevel,
+  AlertsPanelFilterState,
+  DerivedAlertCategory,
+  DERIVED_CATEGORY_LABEL,
+  DERIVED_CATEGORY_TAG_COLOR,
+  emptyAlertsPanelFilterState,
+  enrichAlerts,
+  filterAlerts,
+  hasActiveFilter,
+  sortAlertsBySeverityThenTime,
+  summarizeAlertsByCategory,
+} from './alertsPanelHelpers';
 import { PositionRow, getPortfolio } from '../../services/portfolioWorkspaceService';
 import {
   getMarketBriefToday,
@@ -2532,22 +2545,189 @@ const KeyEventsList: React.FC<{ events: KeyEventItem[]; compact?: boolean }> = (
   );
 };
 
+/**
+ * US-071 [FE-032] AlertsPanel — filter + search + 分类 完整面板.
+ *
+ * 升级前 (US-018 baseline): 仅 RiskAlertsList 列表无任何过滤;
+ * 升级后:
+ *   - 顶部 4 个 category KPI Tag (持仓/市场/单股/数据) + 各自 high/medium/low 数;
+ *   - 过滤栏: level 单选 / category 单选 / search 关键词输入;
+ *   - 一键重置过滤 (仅当有 active filter 显示);
+ *   - 列表按 (level desc, time desc) 重排;
+ *   - 空结果显示 "无符合条件的告警".
+ *
+ * 与 RiskAlertCenterPanel (risk_center sub-tab) 的边界 — 见
+ * [[alertsPanelHelpers]] 顶部 jsdoc. 简言之: 本组件消费 /api/today/signals
+ * 返的 unread_alerts (cap=20) 做就地过滤, 不再次访问 backend; 重操作走
+ * "风控中心" tab. data-testid 让 webapp-testing skill 可验收.
+ */
 const AlertsPanel: React.FC<{ alerts: UnreadRiskAlertItem[]; totalCount: number }> = ({
   alerts,
   totalCount,
 }) => {
+  const [filterState, setFilterState] = useState<AlertsPanelFilterState>(() =>
+    emptyAlertsPanelFilterState()
+  );
+
+  // enrich 一次, 过滤 / 排序 / 分类 全消费 EnrichedAlert (避免重复 derive).
+  const enriched = useMemo(() => enrichAlerts(alerts), [alerts]);
+  const categorySummary = useMemo(() => summarizeAlertsByCategory(enriched), [enriched]);
+  const visibleAlerts = useMemo(
+    () => sortAlertsBySeverityThenTime(filterAlerts(enriched, filterState)),
+    [enriched, filterState]
+  );
+  const hasFilter = hasActiveFilter(filterState);
+
   return (
     <Card
       size="small"
+      data-testid="alerts-panel"
       title={
-        <Space>
+        <Space wrap>
           <AlertOutlined style={{ color: '#f5222d' }} />
           <span>风险告警未读列表</span>
           <Tag color="red">{totalCount}</Tag>
+          {hasFilter && (
+            <Tag color="blue" data-testid="alerts-panel-filtered-count">
+              过滤后 {visibleAlerts.length}
+            </Tag>
+          )}
         </Space>
       }
     >
-      <RiskAlertsList alerts={alerts} />
+      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        {/* category KPI bar */}
+        <Row gutter={[8, 8]} data-testid="alerts-panel-category-kpi">
+          {categorySummary.map(c => (
+            <Col key={c.category} xs={12} sm={6}>
+              <Card
+                size="small"
+                hoverable
+                data-testid={`alerts-panel-category-${c.category}`}
+                style={{
+                  borderColor: filterState.category === c.category ? '#1677ff' : undefined,
+                  background:
+                    filterState.category === c.category ? 'rgba(22,119,255,0.04)' : undefined,
+                }}
+                onClick={() => {
+                  // 单击 KPI 卡 toggle 该 category 过滤; 再次点击同 category 清除.
+                  setFilterState(s => ({
+                    ...s,
+                    category: s.category === c.category ? undefined : c.category,
+                  }));
+                }}
+              >
+                <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                  <Space size={4}>
+                    <Tag color={DERIVED_CATEGORY_TAG_COLOR[c.category]}>{c.label}</Tag>
+                    <Text strong style={{ fontSize: 18 }}>
+                      {c.total}
+                    </Text>
+                  </Space>
+                  <Text type="secondary" style={{ fontSize: 11 }}>
+                    高 {c.high} · 中 {c.medium} · 低 {c.low}
+                  </Text>
+                </Space>
+              </Card>
+            </Col>
+          ))}
+        </Row>
+
+        {/* 过滤栏 */}
+        <Row gutter={[8, 8]} align="middle" data-testid="alerts-panel-filters">
+          <Col xs={12} md={6}>
+            <Select<AlertLevel>
+              placeholder="级别"
+              allowClear
+              style={{ width: '100%' }}
+              value={filterState.level}
+              onChange={v => setFilterState(s => ({ ...s, level: v }))}
+              options={[
+                { label: '高 (HIGH)', value: 'HIGH' },
+                { label: '中 (MEDIUM)', value: 'MEDIUM' },
+                { label: '低 (LOW)', value: 'LOW' },
+              ]}
+              data-testid="alerts-panel-filter-level"
+            />
+          </Col>
+          <Col xs={12} md={6}>
+            <Select<DerivedAlertCategory>
+              placeholder="分类"
+              allowClear
+              style={{ width: '100%' }}
+              value={filterState.category}
+              onChange={v => setFilterState(s => ({ ...s, category: v }))}
+              options={[
+                { label: '持仓', value: 'position' },
+                { label: '市场', value: 'market' },
+                { label: '单股', value: 'individual' },
+                { label: '数据', value: 'data' },
+              ]}
+              data-testid="alerts-panel-filter-category"
+            />
+          </Col>
+          <Col xs={24} md={9}>
+            <Input.Search
+              placeholder="代码 / 名称 / 内容 关键词搜索"
+              allowClear
+              value={filterState.search ?? ''}
+              onChange={e => setFilterState(s => ({ ...s, search: e.target.value }))}
+              onSearch={v => setFilterState(s => ({ ...s, search: v }))}
+              data-testid="alerts-panel-filter-search"
+            />
+          </Col>
+          <Col xs={24} md={3}>
+            <Button
+              size="small"
+              disabled={!hasFilter}
+              onClick={() => setFilterState(emptyAlertsPanelFilterState())}
+              data-testid="alerts-panel-reset-filter"
+              block
+            >
+              重置
+            </Button>
+          </Col>
+        </Row>
+
+        {/* 列表 */}
+        {visibleAlerts.length === 0 ? (
+          <Empty
+            description={hasFilter ? '无符合条件的告警' : '暂无未读风险告警'}
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+          />
+        ) : (
+          <List
+            size="default"
+            dataSource={visibleAlerts}
+            data-testid="alerts-panel-list"
+            renderItem={item => (
+              <List.Item style={{ padding: '10px 0' }} data-testid={`alerts-panel-item-${item.id}`}>
+                <Space align="start" style={{ width: '100%' }}>
+                  {levelIcon(item.derived_level)}
+                  <div style={{ flex: 1 }}>
+                    <Space size={6} wrap>
+                      <Text code>{item.symbol}</Text>
+                      <Text strong>{item.name || '—'}</Text>
+                      {levelTag(item.derived_level)}
+                      <Tag color={DERIVED_CATEGORY_TAG_COLOR[item.derived_category]}>
+                        {DERIVED_CATEGORY_LABEL[item.derived_category]}
+                      </Tag>
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        {dayjs(item.created_at).format('MM-DD HH:mm')}
+                      </Text>
+                    </Space>
+                    <div>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {item.message}
+                      </Text>
+                    </div>
+                  </div>
+                </Space>
+              </List.Item>
+            )}
+          />
+        )}
+      </Space>
     </Card>
   );
 };
