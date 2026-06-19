@@ -2036,3 +2036,44 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **UnreadRiskAlertItem 不带 rule_id 是边界事实**: 这条 5 字段 (id/symbol/name/level/message/created_at) 是 /api/today/signals.unread_alerts cap=20 的子集 — backend TodaySignalsService.loadUnreadAlerts 没 SELECT rule_id (cap=20 + 单次响应控本). 所以 AlertsPanel 派生 category 只能从 symbol+message 启发式, 与 RiskAlertCenterPanel (用后端 rule_id 精确派生) 是两套. 任何 "为什么 AlertsPanel 不直接复用 deriveAlertCategory" 的 review 提问回答: rule_id 不在数据流里. 加 rule_id 到 unread_alerts 是 backend 另一个 story 的事 (本 story 范围控制不动 backend).
   - **KPI 卡双向控制 = UI 信息架构 + 操作入口的合并**: 顶部 4 个 category KPI 卡同时是 "展示统计" 和 "filter 入口" — 选中状态用蓝边 + 浅蓝背景, 再点同 category 清除. 用户不需要先看 KPI 再去下面 Select 切, 直接点卡就过滤. 同款适用任何 "聚合视图 + 过滤" 的 panel — KPI bar 默认就是过滤入口, 而不是再多一个无用的图表. 与 [[BulkBackfillButton]] (US-063) 同款 "helper 派生'哪些该做' + UI 直接列出" 思想.
 ---
+
+## 2026/06/20 - US-072
+- 实现 [FE-033] AlertItem snooze + 一键执行 (Today Workspace "风险提醒" tab 内 AlertsPanel)
+- 文件:
+  - 新增 frontend/src/pages/workspace/alertItemActionHelpers.ts (~480 行) — 纯函数 helper:
+    SnoozeStorage DI seam (默认 window.localStorage / fail-OPEN null storage),
+    readSnoozeMap / writeSnoozeMap (脏 JSON 顺手清, quota 失败返 false 不抛),
+    addSnooze / removeSnooze (immutable), pruneExpiredSnoozes, filterOutSnoozedAlerts (空 map 短路),
+    computeSnoozeUntil + isAlertSnoozed (NaN now 兜底), buildAlertActionDescriptor (4 category 决策表),
+    looksLikeAShareSymbol (6 位数字 / .SH/.SZ/.BJ), formatSnoozeRemaining (4 档分钟/小时/天).
+  - 改 frontend/src/pages/workspace/TodayWorkspace.tsx — AlertsPanel 集成 (60s tick 倒计 +
+    snoozedCount Tag + 单条 Dropdown 静音 + primary Button 一键执行按 actionType 跳路由 +
+    跳前 fire-and-forget markSingleRiskAlertRead + 已静音 inner 卡片可恢复显示).
+    新增 imports: Dropdown, ClockCircleOutlined, RightOutlined, markSingleRiskAlertRead + 全 helper.
+  - 新增 backend/tests/services/alert-item-action-helpers.test.ts — 119 assert / 0 fail
+    覆盖 11 大模块 (常量 / computeSnoozeUntil / isAlertSnoozed / addSnooze/remove / prune /
+    filterOut / read/writeSnoozeMap with fake storage / buildAlertActionDescriptor 决策表 /
+    looksLikeAShareSymbol / formatSnoozeRemaining 4 档 / META-GUARD 守 helper export + UI 接入).
+- 验收:
+  - frontend tsc: 0 err
+  - backend tsc: 0 err
+  - npm test --filter=alert: 6 files / 6 passed (含 risk-alert-service 123 ok / alerts-panel 169 ok /
+    alerts-bell 102 ok / alert-item-action 119 ok / realtime-alert-dispatcher 187 ok / risk-alert-evaluator)
+  - lint: 0 new error (仅 3 个 pre-existing TodayWorkspace.tsx 警告 unrelated)
+  - 浏览器: 未在本次跑 dev-browser (需 manual smoke / 与 US-073 WebSocket 一起验更高效)
+- **Learnings for future iterations:**
+  - 前端 helper 单测 → backend ts-node 跨 monorepo import 是项目惯用模式:
+    backend/tests/services/*.test.ts import '../../../frontend/src/pages/workspace/xxx'
+    run-tests.ts 用 --filter=<substring> 选子集; tsc strict 跨 monorepo 也能过.
+  - localStorage 通过 SnoozeStorage interface DI 进 helper 是关键, 让单测可注入 in-memory fake
+    而不必起 jsdom — 与 alertsBellHelpers 不依赖 setInterval 一致.
+  - AlertsPanel 是 [[AlertsPanel]] 组件名 + jsdoc 内 [[xxx]] 链接做交叉引用; 每个 story 增改
+    jsdoc 历史段 (US-018 → US-071 → US-072) 保持组件演进可追溯.
+  - data-testid 命名: 用模板字符串 `alerts-panel-item-action-${item.id}` —
+    META-GUARD 测试只需 src.includes('alerts-panel-item-action-') 不需精确 id, 与
+    alerts-panel-helpers.test.ts 10.2 段同款.
+  - antd Dropdown 用 menu={{ items: [...] }} (不再用 deprecated overlay 写法);
+    Button 套 Dropdown trigger=['click'] placement='bottomRight' 是项目惯用 pattern.
+  - Snooze 设计取舍: localStorage 单设备无跨设备一致性是已知 trade-off, 待 US-073
+    WebSocket /ws/alerts 引入后再考虑后端持久化 alert_snoozes 表.
+---

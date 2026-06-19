@@ -1120,8 +1120,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 72,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "依赖: US-070/US-071 | DONE 2026/06/20: 新增 frontend/src/pages/workspace/alertItemActionHelpers.ts (~480 行 + 完整 jsdoc) — 纯函数 helper 提供 snooze 1h/1d/1w (localStorage 持久化, SnoozeStorage DI seam fail-OPEN) + 一键执行 ActionDescriptor (4 category 决策表: position→/workspace/portfolio, market/data→risk_center tab, individual+合法 A 股 6 位代码→/stock/{symbol} 否则降级 risk_center). TodayWorkspace.tsx AlertsPanel 集成: 60s tick 让 snooze 剩余时间自动倒计 + filterOutSnoozedAlerts 走在 KPI/filter 前 + 单条 AlertItem 右侧 Dropdown(静音 1h/1d/1w) + 一键执行 primary Button (按 actionType 跳路由, 跳前 fire-and-forget markSingleRiskAlertRead) + 已静音内卡片可恢复显示. 单测 backend/tests/services/alert-item-action-helpers.test.ts 119 ok / 0 failed 覆盖 11 大模块 (常量 sanity / computeSnoozeUntil / isAlertSnoozed / addSnooze/removeSnooze immutable / pruneExpiredSnoozes / filterOutSnoozedAlerts 短路 / readSnoozeMap/writeSnoozeMap 脏数据 fail-OPEN+quota / buildAlertActionDescriptor 4 category × symbol 合法/非法决策表 / looksLikeAShareSymbol 6 位+.SH/.SZ/.BJ / formatSnoozeRemaining 4 档 / META-GUARD 守 helper 全 export + TodayWorkspace import + 7 个 data-testid 模板). frontend tsc / backend tsc / 6 个 alert-related test files (123+119+其它) 全过, lint 0 new error (仅 prettier 警告已 --fix)."
     },
     {
       "id": "US-073",
