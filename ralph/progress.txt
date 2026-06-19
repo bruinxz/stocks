@@ -1347,3 +1347,42 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **"inline 显示 + Tooltip 全文" 是 table cell 受限宽度场景的标准范式**: 主 cell 短文 (60 字硬 cap), 鼠标悬停 Tooltip 显示完整 backend reason. Tooltip mouseEnterDelay=0.2 防一扫表格全是 tooltip 闪烁, 比 0 友好 (实际操作鼠标会扫过多个 cell, 200ms 内不停留就不弹). 同款适用任何"表格 cell 显示截断文本"场景: AI 解读 / 操作日志 / 错误消息 / commit message.
   - **frontend pure helper 的单测路径已固化**: `backend/tests/services/<feature>.test.ts` import `../../../frontend/src/pages/workspace/<helper>.ts`, ts-node --transpile-only 跑, 与 US-042/043/046/047 同款. 不依赖 jest/jsdom, 跨 monorepo import 走相对路径. META-GUARD fs+regex 守住"组件确实接入了 helper + helper export 没被误删", 与 backend US-019/022/023 同款思想.
 ---
+
+
+## 2026/06/19 22:00 - US-050
+- 实现 [FE-011] LabWorkspace 季度参数重训 tab — 按季度 + 策略两维聚合既有 OptimizationRun, 让用户一眼看到"本季哪些策略被重训, top-5 候选参数评分如何, 哪些仍跑在 shadow"
+- Files changed:
+  - frontend/src/pages/workspace/quarterlyRetrainHelpers.ts (新, ~330 行, 9 pure helpers + 6 export const):
+    * QUARTER_LABELS (Object.freeze Q1..Q4 中文) / DEFAULT_QUARTERS_WINDOW=4 / DEFAULT_CANDIDATES_PER_BUCKET=5 / SHADOW_BADGE_TEXT='Shadow' / HARD_BADGE_TEXT='生产'
+    * getQuarterKey(date|iso|null) → 'YYYY-Q1' | null — 非法返 null 不静默 fallback (防污染历史聚合)
+    * getRecentQuarters(now, count) — 倒序 [本季, 本季-1, ...], 内部跨年逻辑 (q<1 → q=4 year--)
+    * parseQuarterKey('2026-Q3') → {year, quarter}
+    * RetrainCandidate interface (run_id/optimizer_type/strategy_name/status/primary_metric/primary_metric_kind/verdict/total_combos/completed_combos/failed_combos/created_at/finished_at/quarter_key)
+    * toRetrainCandidate(run) — 主指标三路兜底 DSR > mean_test_sharpe > deflated_sharpe + 各路 isFinite 校验防 NaN 渗透; quarter_key 来自 created_at
+    * groupCandidatesByQuarterAndStrategy(candidates) → Map<QuarterKey, Map<strategy_name, RetrainCandidate[]>>; 桶内排序 primary_metric DESC tie -> finished_at DESC tie -> run_id DESC
+    * topKCandidates(bucket, k=5) — slice 边界守 (k=0/超长 兜底默认值)
+    * isShadowStrategy(strategy) — 严格判 lifecycle_policy.dry_run === true (字符串 'true'/数字 1 不算)
+    * lookupShadowByStrategyName(strategies, name) — 与 setStrategyDryRun (US-083) 同源
+    * buildQuarterlyRetrainViewModel({runs, strategies, now, activeQuarter, windowSize, topK}) → QuarterlyRetrainViewModel — 主入口, useMemo 调一次
+  - frontend/src/pages/workspace/LabWorkspace.QuarterlyRetrainTab.tsx (新, ~300 行):
+    * useEffect 拉 listOptimizationRuns({optimizer_type:'all', limit:100}) + listQuantStrategies (复用既有端点, 零新接口)
+    * 季度 Select (默认本季) + 刷新按钮; 3 个 Statistic [候选总数 / 本季重训策略数 / Shadow 模式数 (X/Y)]
+    * 按 strategy 卡片渲染 — 每张卡片 header 含 Shadow/生产 Tag + 候选数 Tag, 主体 Table 显示 (类型/主指标 [带 Tooltip 显示完整 4 位小数和 kind 标签]/verdict/完成-总数/完成时间/run_id)
+    * formatPrimaryMetric 颜色: >0.5 绿 / >0 蓝 / ≤0 红
+    * 父组件未传 strategies 时本地 fallback 拉一次, 父优先 (避免初始空数组覆盖刚拉到的 lifecycle_policy)
+  - frontend/src/pages/workspace/LabWorkspace.tsx: import + tabs 数组追加 quarterly_retrain (位于 optimization 与 advanced_quant 之间) + activeKey 分支
+  - backend/tests/services/quarterly-retrain.test.ts (新, ~430 行, 104 assert): 10 模块 — [1] 常量 frozen + 数值 / [2] getQuarterKey 12 case (Q 边界 3/31 vs 4/1 / 9/30 vs 10/1 / Date 实例 / null/undefined/垃圾) / [3] getRecentQuarters 跨年 / count<1 兜底 / 非法 now / [4] parseQuarterKey 含 'Q5' 非法 / [5] toRetrainCandidate 6 路径 (null/undef/缺id/DSR/meanSharpe/deflated/none + NaN 不采纳) / [6] groupCandidatesByQuarterAndStrategy 多季度+多策略+排序 tie-break / [7] topKCandidates 边界 / [8] shadow 判定 13 case (含 dry_run='true' 字符串严格拒) / [9] buildQuarterlyRetrainViewModel happy + 空 + 历史季度无数据 / [10] META-GUARD fs+regex — LabWorkspace.tsx 含 import + key='quarterly_retrain' + activeKey 分支 + <QuarterlyRetrainTab; tab 组件含 import helper + 调 buildQuarterlyRetrainViewModel + lookupShadowByStrategyName + SHADOW_BADGE_TEXT + 2 个 data-testid; helper 11 个 export 全在
+  - ralph/prd.json: US-050 passes=true + notes
+- 验证:
+  - `cd frontend && npx tsc --noEmit` exit 0
+  - `cd backend && npx tsc --noEmit` exit 0
+  - `cd backend && npx ts-node --transpile-only tests/services/quarterly-retrain.test.ts` exit 0 (104 ok / 0 failed)
+  - `npm test -- --filter=factor` 20 files all pass — 无 regression
+  - `eslint quarterlyRetrainHelpers.ts LabWorkspace.QuarterlyRetrainTab.tsx LabWorkspace.tsx --fix` → 0 errors (7 warning 全为 pre-existing baseline: 6 个 non-null assertion + 1 个 react-hooks/exhaustive-deps 都在 LabWorkspace.tsx 既有代码段)
+- **Learnings for future iterations:**
+  - **"复用既有端点 + 纯函数聚合" 比 "新加 backend API" 更轻**: PRD AC 只要 UI 出现 "候选 + shadow" 两类信息, 没规定数据从哪来. listOptimizationRuns 已能拉所有 GS/Bayesian/WF run, listQuantStrategies 已带 lifecycle_policy — 季度聚合纯属 UI 视角的 reshape, 完全可以在 frontend 纯函数搞定. 新加 backend GET /api/quant/quarterly-retrain 会引入新表 schema / cache 失效 / 跨服务一致性问题, 性价比极低. 任何"按维度聚合既有数据"类 frontend story 都先试纯函数路径.
+  - **主指标三路兜底必须 isFinite 守门**: backend WalkForwardValidator / DeflatedSharpe 在样本不足时返 NaN / null, 直接 toFixed 会得 "NaN" 文案污染 UI. `Number.isFinite(v)` 守门后落到下一路兜底是项目通用做法, 与 [[factorPickReasonHelpers]] 同款思想.
+  - **Map 的 deterministic 输出顺序 vs object key 顺序**: JS Map 保持插入顺序 (V8 spec), 但 Object.entries(obj) 顺序在数字 key vs string key 混合时未定义. 任何"按 X 排序后输出 N 个 group"逻辑必须用 Map 而不是 plain object, 否则 React key 跳 + 单测 flaky (与 [[factorPickReasonHelpers]] tie-break 同款警示).
+  - **shadow 判定严格 === true 而非 truthy**: lifecycle_policy.dry_run 来自 JSONB 字段, 历史数据可能含 'true' 字符串 / 1 数字 / null / undefined. 用 === true 强类型守, 让"真心想跑 shadow 的策略"和"配错字段"明确分开 — 错配的当作生产 (fail-safe), 用户自己看到 "生产" Tag 反应过来 dry_run 字段没生效再去改. 同款适用任何"敏感开关"类 boolean (kill_switch / auto_buy_enabled / require_compliance).
+  - **frontend pure helper 单测路径已固化为项目范式**: `backend/tests/services/<feature>.test.ts` import `../../../frontend/src/pages/workspace/<helper>.ts`, ts-node --transpile-only 跑, 与 US-042/043/046/047/049 全同款. 不依赖 jest/jsdom/happy-dom, 跨 monorepo 走相对路径. META-GUARD fs+regex 守 4 类: helper 主要 export + 主组件 import helper + 组件 testid (e2e 钩) + 组件实际调函数 (而不仅 import) — 后两者比 "import 检查" 更难被 refactor 误删.
+---

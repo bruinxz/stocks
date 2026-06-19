@@ -58,6 +58,7 @@ import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/Workspace
 import LeaderboardTab from './LabWorkspace.LeaderboardTab';
 import WalkForwardTab from './LabWorkspace.WalkForwardTab';
 import AdvancedQuantTab from './LabWorkspace.AdvancedQuantTab';
+import QuarterlyRetrainTab from './LabWorkspace.QuarterlyRetrainTab';
 import {
   labService,
   QuantStrategyItem,
@@ -102,6 +103,7 @@ const LabWorkspace: React.FC = () => {
     { key: 'compare', label: '回测对比', icon: <SwapOutlined /> },
     { key: 'walk_forward', label: 'Walk-Forward', icon: <SafetyCertificateOutlined /> },
     { key: 'optimization', label: '优化历史', icon: <NodeIndexOutlined /> },
+    { key: 'quarterly_retrain', label: '季度参数重训', icon: <ExperimentOutlined /> },
     { key: 'advanced_quant', label: '高级量化', icon: <SafetyCertificateOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('mine');
@@ -409,6 +411,14 @@ const LabWorkspace: React.FC = () => {
     body = <WalkForwardTab strategies={strategies} />;
   } else if (activeKey === 'optimization') {
     body = <OptimizationRunsTab />;
+  } else if (activeKey === 'quarterly_retrain') {
+    body = (
+      <QuarterlyRetrainTab
+        strategies={
+          strategies as Array<QuantStrategyItem & { lifecycle_policy?: Record<string, any> }>
+        }
+      />
+    );
   } else if (activeKey === 'advanced_quant') {
     body = <AdvancedQuantTab />;
   } else {
@@ -1878,9 +1888,16 @@ const OptimizationRunsTab: React.FC = () => {
           message="三种 optimizer 统一视图"
           description={
             <Space direction="vertical" size={2}>
-              <Text style={{ fontSize: 12 }}>• <Text code>Grid Search</Text>：穷举参数网格找最优 in-sample 表现</Text>
-              <Text style={{ fontSize: 12 }}>• <Text code>Bayesian</Text>：GP + EI 高效搜索连续参数空间</Text>
-              <Text style={{ fontSize: 12 }}>• <Text code>Walk-Forward</Text>：滚动 train→test 验证 + DSR/PBO 过拟合检测，最严格的真实样本外检验</Text>
+              <Text style={{ fontSize: 12 }}>
+                • <Text code>Grid Search</Text>：穷举参数网格找最优 in-sample 表现
+              </Text>
+              <Text style={{ fontSize: 12 }}>
+                • <Text code>Bayesian</Text>：GP + EI 高效搜索连续参数空间
+              </Text>
+              <Text style={{ fontSize: 12 }}>
+                • <Text code>Walk-Forward</Text>：滚动 train→test 验证 + DSR/PBO
+                过拟合检测，最严格的真实样本外检验
+              </Text>
             </Space>
           }
         />
@@ -1921,7 +1938,10 @@ const OptimizationRunsTab: React.FC = () => {
               render: (_: any, r: OptimizationRunSummary) => (
                 <span style={{ fontSize: 12 }}>
                   {r.completed_combos}
-                  <Text type={r.failed_combos > 0 ? 'danger' : 'secondary'}> / {r.failed_combos}</Text>
+                  <Text type={r.failed_combos > 0 ? 'danger' : 'secondary'}>
+                    {' '}
+                    / {r.failed_combos}
+                  </Text>
                 </span>
               ),
             },
@@ -1987,7 +2007,9 @@ const OptimizationRunsTab: React.FC = () => {
                 const sig = r.metadata_json?.deflated_sharpe?.is_significant;
                 return (
                   <Tooltip title={r.metadata_json?.deflated_sharpe?.explanation || ''}>
-                    <Text style={{ color: sig ? '#3f8600' : '#cf1322', fontWeight: sig ? 600 : 400 }}>
+                    <Text
+                      style={{ color: sig ? '#3f8600' : '#cf1322', fontWeight: sig ? 600 : 400 }}
+                    >
                       {Number(v).toFixed(3)}
                       {sig ? ' ✓' : ' ✗'}
                     </Text>
@@ -2069,7 +2091,9 @@ const OptimizationRunsTab: React.FC = () => {
             ),
           }}
           locale={{
-            emptyText: <Empty description="暂无 optimization run。在 Walk-Forward 或 CLI 触发后会出现。" />,
+            emptyText: (
+              <Empty description="暂无 optimization run。在 Walk-Forward 或 CLI 触发后会出现。" />
+            ),
           }}
         />
       </Card>

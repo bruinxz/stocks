@@ -768,8 +768,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 50,
-      "passes": false,
-      "notes": "依赖: S-008"
+      "passes": true,
+      "notes": "依赖: S-008 | DONE 2026/06/19: 新增 frontend/src/pages/workspace/quarterlyRetrainHelpers.ts (pure helpers: getQuarterKey/getRecentQuarters/parseQuarterKey/toRetrainCandidate/groupCandidatesByQuarterAndStrategy/topKCandidates/isShadowStrategy/lookupShadowByStrategyName/buildQuarterlyRetrainViewModel) + LabWorkspace.QuarterlyRetrainTab.tsx (季度 Select + 3 KPI Statistic [候选总数/本季重训策略数/shadow 数] + 按 strategy 卡片渲染 top-5 候选表格, 含 Shadow/生产 badge). LabWorkspace.tsx 顶部 tabs 数组追加 quarterly_retrain (位于 optimization 与 advanced_quant 之间) + activeKey 分支接入. 主指标按 DSR > mean_test_sharpe > deflated_sharpe 三路兜底排序 (与 OptimizationRunsTab 同款语义). Shadow 模式判定走 lifecycle_policy.dry_run === true (与 US-083 setStrategyDryRun 同源). 单测 backend/tests/services/quarterly-retrain.test.ts 104 ok / 0 failed; frontend tsc 0; backend tsc 0; eslint 0 err (7 pre-existing baseline warning)."
     },
     {
       "id": "US-051",
