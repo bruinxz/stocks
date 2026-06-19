@@ -71,6 +71,7 @@ import { MarketBrief } from '../models/MarketBrief';
 import { SnowballHotKeyword } from '../models/SnowballHotKeyword';
 import { AnnouncementSummary } from '../models/AnnouncementSummary';
 import { EastMoneyQATopic } from '../models/EastMoneyQATopic';
+import { EastMoneyQAStat } from '../models/EastMoneyQAStat';
 import { TechnicalAnalysisReport } from '../models/TechnicalAnalysisReport';
 import { RestrictedShareRelease } from '../models/RestrictedShareRelease';
 import { ShareholderTradeRecord } from '../models/ShareholderTradeRecord';
@@ -197,6 +198,7 @@ const sequelize = new Sequelize({
     SnowballHotKeyword,
     AnnouncementSummary,
     EastMoneyQATopic,
+    EastMoneyQAStat,
     TechnicalAnalysisReport,
     RestrictedShareRelease,
     ShareholderTradeRecord,

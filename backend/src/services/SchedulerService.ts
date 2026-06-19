@@ -4544,6 +4544,76 @@ class SchedulerService {
           },
         });
         logger.info(`[PAPER_TRADING_DAILY_SNAPSHOT] ${ok}/${portfolios.length} OK`);
+      } else if (task.type === 'WEEKLY_QA_STAT_AGGREGATE') {
+        // US-038 QA-002 (2026-06-19): 周一 02:00 (≤ AC 04:00 截止) 聚合上周投资者
+        // 问答 → east_money_qa_stats. parameters.stock_codes 显式 list 或 fallback
+        // 取 PaperTradingPosition 当前持仓 + 关注表 union (避免空跑). fail-OPEN: 单股
+        // 失败 continue_on_error=true 不阻塞 batch.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { qaStatAggregator } = require('./qa/QAStatAggregator');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const explicitCodes: string[] = Array.isArray(parameters.stock_codes)
+          ? parameters.stock_codes.filter((s: unknown) => typeof s === 'string')
+          : [];
+        const limit = this.toPositiveInt(parameters.limit, 200, 1000);
+        const intervalMs = this.toPositiveInt(parameters.interval_ms, 500, 60000);
+        const dryRun = parameters.dry_run === true;
+        const sinceDate: string | undefined =
+          typeof parameters.since_date === 'string' ? parameters.since_date : undefined;
+        let codes: string[] = explicitCodes;
+        if (codes.length === 0) {
+          // fallback: 取当前 paper trading 持仓 union 关注表; 失败兜底空跑.
+          try {
+            /* eslint-disable @typescript-eslint/no-var-requires */
+            const { PaperTradingPosition } = require('../models/PaperTradingPosition');
+            const { FavoriteStock } = require('../models/FavoriteStock');
+            /* eslint-enable @typescript-eslint/no-var-requires */
+            const positions = await PaperTradingPosition.findAll({
+              attributes: ['stock_code'],
+              group: ['stock_code'],
+              raw: true,
+            });
+            const favorites = await FavoriteStock.findAll({
+              attributes: ['stock_code'],
+              group: ['stock_code'],
+              raw: true,
+            });
+            const set = new Set<string>();
+            for (const r of positions) if (r.stock_code) set.add(String(r.stock_code));
+            for (const r of favorites) if (r.stock_code) set.add(String(r.stock_code));
+            codes = Array.from(set).filter(c => /^\d{6}$/.test(c));
+          } catch (e: any) {
+            logger.warn(`[WEEKLY_QA_STAT_AGGREGATE] fallback codes 获取失败: ${e?.message || e}`);
+            codes = [];
+          }
+        }
+
+        const result = await qaStatAggregator.aggregateForStocks(codes, {
+          limit,
+          dry_run: dryRun,
+          since_date: sinceDate,
+          continue_on_error: true,
+          interval_ms: intervalMs,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: result.total_stocks,
+          completed_items: result.succeeded,
+          failed_items: result.failed,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'weekly_qa_stat_aggregate',
+            dry_run: dryRun,
+            total_stocks: result.total_stocks,
+            succeeded: result.succeeded,
+            failed: result.failed,
+          },
+        });
+        logger.info(
+          `[WEEKLY_QA_STAT_AGGREGATE] stocks=${result.total_stocks} ok=${result.succeeded} ` +
+            `fail=${result.failed}${dryRun ? ' (dry_run)' : ''}`
+        );
       } else if (task.type === 'LIVE_RECONCILIATION_GUARD') {
         // BETA-2 (2026-06-18, audit S-12): 对账主动告警 cron — 阈值评估 →
         // RiskAlert HIGH/MEDIUM → RealtimeAlertDispatcher 飞书推送。

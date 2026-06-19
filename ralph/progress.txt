@@ -1016,3 +1016,26 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **平手 tie-break 必须靠显式数值 priority 不靠对象 key 顺序**: JavaScript Object.freeze 保留插入顺序, 但语言规范不保证迭代顺序在所有 engine / TypeScript transpile 后稳定. TOPIC_SUBCATEGORY_PRIORITY 显式 number 是 deterministic 的事实源, 同时支持 import 后单测断 `MAJOR_CONTRACT < EXPORT` 守业务排序意图.
   - **117 条标注语料 < 100 条 AC 阈值时不能压缩**: AC 写 "100 条", 实际 117 条多 17% 是好事 — 1 例 misclass 在 100 条上是 99% 但在 81 条上就是 98.8%, 数据集越大越能稳定显示分类器真实水平 + 减少 random sampling bias. 不要为了"对齐 PRD" 把语料截断到 100.
 ---
+
+## 2026-06-19 18:11 - US-038
+- 实现 EastMoneyQAStat model + QAStatAggregator service + 周一 02:00 cron, 完成投资者问答按 (stock, week) 周聚合落库 + 6 项核心指标 (questions_count / answer_count / answer_rate / top_subtopic / avg_question_sentiment / avg_answer_sentiment / answer_template_score).
+- 主要文件 (前 4 个已由上一轮搭好,本轮新增 5,补 prettier 6,改 7,改 8):
+  1. backend/src/models/EastMoneyQAStat.ts — Sequelize model, UNIQUE(stock_code,week_start), DECIMAL(5,3)
+  2. backend/scripts/migrations/2026-06-19-eastmoney-qa-stat.sql + rollback
+  3. backend/src/services/qa/QAStatAggregator.ts — pure detectTemplateAnswer / aggregateForWeek / pickTopSubtopic / roundTo3 + QAStatAggregator class + DataSource DI + fail-OPEN saveStats
+  4. backend/src/config/database.ts (注册 model) + backend/src/constants/cronRegistry.ts (WEEKLY_QA_STAT_AGGREGATE 周一 02:00) + backend/src/services/SchedulerService.ts (cron handler — explicit stock_codes 优先 fallback PaperTradingPosition∪FavoriteStock)
+  5. **新增**: backend/tests/services/qa/qa-stat-aggregator.test.ts — 106 个 assert 全过, 覆盖常量冻结/pure helper/aggregateForWeek 8 子用例/aggregateForStock 6 子用例/aggregateForStocks 4 子用例/listByStock 3 子用例
+  6. 修 SchedulerService.ts:4586 prettier (logger.warn 单行)
+  7. 修 QAStatAggregator.ts:561 prettier (listByStock 参数换行)
+- 质量验证:
+  - npx ts-node --transpile-only tests/services/qa/qa-stat-aggregator.test.ts → 106 ok, 0 failed
+  - npx tsc --noEmit → 0 errors
+  - npm run lint (eslint src --ext .ts) → 21 errors (与 baseline 完全一致, 全为 var-requires/prettier 历史遗留,本次未新增)
+- **Learnings for future iterations:**
+  - test runner walk recursive: backend/src/scripts/run-tests.ts findTestFiles 递归 walk 所有 *.test.ts, 因此 tests/services/qa/ 子目录的测试会被自动发现, 不需要登记
+  - test file 不被 lint (npm run lint 只跑 src/), 所以 tests/ 里 require 模式无所谓; 但 src/ 里的 lazy require 必须写 /* eslint-disable @typescript-eslint/no-var-requires */ 块 — SchedulerService.ts 全局 var-requires 错误是 21 个 baseline 一部分
+  - aggregateForWeek 跟 EastMoneyQATopicService.aggregateWeekly 是相似但**不重复**的两 transform: topic table N rows per (stock,week), stat table 1 row per (stock,week); 互补不替换
+  - cron WEEKLY_QA_STAT_AGGREGATE handler 默认 codes fallback: PaperTradingPosition.findAll(group=stock_code) ∪ FavoriteStock.findAll(group=stock_code), 失败兜底空跑 — 与 US-037 SchedulerService 添加 cron handler 完全同款 (避免空跑导致 cron 失败被 watchdog 误报)
+  - DECIMAL(5,3) Sequelize 默认 NULL 显式 allowNull:true (avg_answer_sentiment + answer_template_score 列), 区分 "无回答=null" 与 "中性=0" 语义边界, downstream null-check 必须显式 (raw_payload doc 已强调)
+  - in-memory model stub 模式 (installModelStubs): monkey-patch model.bulkCreate / findAll, 不需要真 DB — 与 east-money-qa-topic-service 同款; 注意 fake DataSource 的 saveStats 不走 model, 只看 state.saveCalls, 不要 assert store.length
+---

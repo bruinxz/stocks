@@ -396,6 +396,16 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     owner: 'analytics',
     description: 'TCA (Transaction Cost Analysis) 周报',
   },
+  // US-038 QA-002 — 周一 02:00 (早于 AC "周一 04:00 前生成" 截止) 聚合上周
+  // 全市场 (或 ScheduledTask.parameters.stock_codes 显式 list) 投资者问答按
+  // (stock, week) 落 east_money_qa_stats 表.
+  {
+    type: 'WEEKLY_QA_STAT_AGGREGATE',
+    category: 'analytics',
+    owner: 'ai',
+    recommendedCron: '0 2 * * 1',
+    description: '周一 02:00 (≤ AC 04:00) 聚合上周投资者问答 → east_money_qa_stats',
+  },
 
   // ===== L7 清理 =====
   {
