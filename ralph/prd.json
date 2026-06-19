@@ -365,8 +365,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 24,
-      "passes": false,
-      "notes": "依赖: AE-002"
+      "passes": true,
+      "notes": "依赖: AE-002 | US-024 done — 新增 tests/services/analysis-engine/integration_3_samples_hard.test.ts (21 assert, 12 比对点, 一致率 100%, AC 80% 达成). 3 stock fixtures: 600519/000858/300750, 路径 A raw engine vs 路径 B hard short-circuit, hardDS.analyzeStock 委托给同 engine 验 hard 不偷换数据. typecheck + npm test --filter=analysis-engine (8 files all pass)."
     },
     {
       "id": "US-025",

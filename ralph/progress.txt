@@ -666,3 +666,31 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **paper_trading.analysis_engine_followup 摘要字段保持轻量**: 挂全量 result.trades 会让 loop 返回 payload 膨胀 (主 quant_recommendation 的 trades 已经 1-8 笔, followup 可能再加 1-N 笔), 前端 webhook 摘要解析必崩. 只挂 executed/planned/skipped 数字 + trades.length 计数, full payload 想看走 PaperTradingAttributionService 查 portfolio_id + source_type='analysis_engine'. 这是任何"加 followup result 字段" 的标准压缩模板.
   - **prettier 解构跨行 + eslint-disable-next-line 不友好**: `const { foo, } = require('...')` 多行解构 + ` // eslint-disable-next-line @typescript-eslint/no-var-requires` 会失效 (disable 只覆盖 `const {` 那一行, require 实际行是下一行). 重构成 `const mod = require('...'); return mod.foo.bar(...)` 单行, 或者把 disable 改成 `/* */` 块注释包整段. 这个是 prettier `--fix` 与 typescript-eslint 互动的常见坑.
 ---
+
+
+## 2026/06/19 11:13 - US-024
+- 实现 [AE-011] 3 样本股 hard 集成测试 — 同 fixtures 两条路径比对一致率 ≥ 80% AC
+- Files changed:
+  - backend/tests/services/analysis-engine/integration_3_samples_hard.test.ts (新, ~530 行 / 21 assert)
+    * 3 fixture builder: buildSample600519 (sh.600519 主板白马 bullish 60d 平稳 +27%) / buildSample000858 (sz.000858 主板震荡 ±5% 因子中性) / buildSample300750 (sz.300750 创业板强势 + 北向 boost, 与 integration_300750 同 baseline)
+    * 每股 5 件: ds (loadStock/loadDailyBars/loadRealtimeQuote/loadMarketEnv/loadFactorSnapshot) + 8 analyzer 注入套件 (FundamentalAnalyzer/TechnicalAnalyzer/CapitalAnalyzer/NewsAnalyzer/SentimentAnalyzer/IndustryRegimeAnalyzer/RiskAnalyzer/EventAnalyzer)
+    * runSample: 路径 A = `new AnalysisEngineService(fx.ds, fx.analyzers).analyzeStock(...)`; 路径 B = `maybeRunHardShortCircuit(hardDS, ...)` 其中 hardDS.analyzeStock **委托给同 engine** — 这是关键, 保证 hard 不偷换决策, 同时 fake persist/archive 验 wire-in
+    * 每股 4 比对点 (3×4=12): [1] action 同向 (raw.action 经 mapActionToRecommendation → hard.recommendation) [2] risk_level 一致 (pickHardRiskLevel(raw) === hard.risk_level) [3] confidence_score 一致 (round(raw.overall_confidence*100) === hard.confidence_score) [4] key_points 维度一致 (raw evidence 有 ↔ hard.key_points 非空) 5 legacy dim 全对
+    * 跨股 sanity: stock_code 透传 / per_dimension 8 个 / status 非 failed / dimensions = 5 legacy / metadata.hard_short_circuit=true / persist + archive 各调 1 次 / 至少 2 个 bullish stock action ∈ {buy,add,strong_buy}
+    * 主验收: 一致率 ≥ 0.8 (实测 100%)
+  - ralph/prd.json: US-024 passes=true + notes
+  - ralph/progress.txt: 本 entry
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npx ts-node --transpile-only tests/services/analysis-engine/integration_3_samples_hard.test.ts` exit 0, 21 ok / 0 failed (实测 12/12 = 100% 一致, 远超 80% AC)
+  - `npm test -- --filter=integration_3` exit 0, 2 files all pass
+  - `npm test -- --filter=analysis-engine` exit 0, **8 files all pass** (DecisionAggregator / ShadowDoubleRunService / analysisEngineSignalArchive / analyzers / hardShortCircuit / integration_300750 / integration_3_samples_hard / types) — 无 regression
+  - ESLint 老问题: tests/**/*.test.ts 被 tsconfig exclude, ESLint parserOptions.project 解析失败 (与 cron-registry / audit-task-parameters-dry-run 同款 baseline, 已在 US-003 learnings 标注)
+- **Learnings for future iterations:**
+  - **"hard mode 不偷换决策" 的契约最简验法**: 让 hardDS.analyzeStock 委托回同一个 AnalysisEngineService 实例 (`async analyzeStock(c,o) { return engine.analyzeStock(c,o); }`), 然后比对 hardResult 与 raw decision 经 mapActionToRecommendation/pickHardRiskLevel 转换后是否完全一致. 这比"分别构造两份独立 mock 决策然后期望两者相等" 更强 — 后者只验"转换函数对" 不验"hard 没接错 engine", 前者把"raw → hard" 整条 wire-in 链路一起验, 任何未来 refactor 把 analyzeStock 换成别的算法 (e.g. 简化版 / fallback 版) 这测立刻挂.
+  - **一致率"作为 AC"的最简结构化模式**: ComparePoint[] 数组 + `consistent: boolean` flag + 最后 `rate = consistent.length / total`. 比"硬断每条都相等" 灵活 — 允许少数 path 不完全一致 (e.g. 浮点 round 偏 1), 又能用 `rate >= 0.8` 一次断完. 同样套路适用任何 "version A vs B" / "shadow vs prod" / "main vs candidate" 比对类 AC.
+  - **多股 fixture builder 的复用模板**: 每股一个 `build<Stock>() => SampleFixture` 函数返 5 件套 (stockCode/stockName/industry/marketSegment/ds/analyzers), main runner 收 SampleFixture[] 用 for-of 跑统一比对. 加新股只加一个 builder + push 到 fixtures 数组 — 不改 runSample 也不改比对逻辑. 比"3 段并列的 (async () => {})()" IIFE 大块复制粘贴干净一倍.
+  - **fixture 的 "intentionally diverse" 设计**: 3 股不要都用同款 bullish (那是 1 个 case ×3 不是 3 个 case). 600519 主板 bullish + 000858 主板震荡 hold + 300750 创业板 bullish + boost — 不同 market_segment + 不同 trend + 不同 event_action 覆盖 hard mode 的 dispatch 边界. 单独验单 case 易漏 "震荡时 hard 是否 hold 而非误判 buy" 这类边界. 主板 vs 创业板 也验 inferMarketSegmentFromSymbol 在 hard 路径下用对了.
+  - **fake DataSource 委托 vs 独立**: 当目的是 "证 boundary 没接错", 委托给 real impl 比独立 mock 更强 (本测 hardDS.analyzeStock 委托); 当目的是 "证 fail-OPEN 分支", 独立 mock throw 才能触 (本测 [2.4]/[2.5]/[2.6]/[2.7] 模式). 同测文件可两者混用 — 主路径用委托, 分支用 throw mock.
+  - **整数比较 vs 浮点比较的注意**: confidence_score 已经在 buildHardShortCircuitResult 内 `Math.round(decision.overall_confidence * 100)`, 比对侧也走同款 round, 这是为何 12/12 比对全 100% 一致 (没有浮点漂). 任何 round 后的整数字段比对都安全用 ===; 浮点字段比对要用 `Math.abs(a-b) < epsilon` (本测无此需求).
+---
