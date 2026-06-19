@@ -993,3 +993,26 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **META-GUARD 正反双守用 fs+regex 不依赖 ts-morph/AST**: `fs.readFileSync(path, 'utf8')` + `/import \{[^}]*weightedAvgKOLSentiment/.test(src)` + 反向 `/scored\.reduce\([^)]+,\s*\(?a,\s*b\)?\s*=>\s*a\s*\+\s*b/.test(kolSection)` (用 indexOf('// 3) KOL') 切片让反向 guard 只扫 KOL 段, 不误伤 news 段同款裸均值. 这是项目 meta-test 的标准姿势 — 任何"局部不再含旧路径"反向 guard 都要先 substring 切片定位段落再 regex.
   - **PRODUCTION 路径单测的 require mock pattern**: `delete require.cache[require.resolve('../../../src/services/KOLAggregatorService')]` + `jest.mock` 不可用, 改用纯 Node `Module.prototype.require` proxy — 直接 `(require('module') as any)._cache[require.resolve(p)] = { exports: { kolAggregatorService: { aggregateForStock: ... } } }` 注入 fake 单例, 验完 restore. 这是 backend 无 jest 环境下"测 lazy-require + 单例 service" 的标准模板.
 ---
+
+
+## 2026/06/19 17:36 - US-037
+- 实现 [QA-001] TOPIC_SUBCATEGORIES + classifySubtopic — 已在 EastMoneyQATopicService.ts 落地 26 subcategory 字典 + classifySubtopic 主入口 + 117 条标注语料单测; 本次补齐 PRD/CLAUDE.md/progress 文档闭环, 验证 typecheck/test/lint baseline 全过
+- Files changed:
+  - backend/src/services/EastMoneyQATopicService.ts: (已落实, 本 iter 无代码改动) — line 310-431 TOPIC_SUBCATEGORIES 26 项 + SubtopicCategory union + SUBTOPIC_VALUES + TOPIC_SUBCATEGORY_OF (1:1) + TOPIC_SUBCATEGORY_PRIORITY (deterministic tie-break); line 486-870 TOPIC_SUBCATEGORY_KEYWORDS 字典 (每 actionable subtopic ≥3 keyword); line 1083-1115 classifySubtopic + line 1121-1140 deriveTopicFromSubtopic / detectSubtopicByKeyword
+  - backend/tests/services/east-money-qa-topic-service.test.ts: (已落实) line 467-820 QA-001 测试组 — SUBTOPIC_LABELED_CORPUS 117 条 + 准确率 ≥ 80% AC 验收 + null/empty/whitespace 兜底 + (topic, subtopic) parent-child 一致性 + tie-break 优先级
+  - backend/src/services/CLAUDE.md: 追加 "EastMoneyQATopicService — QA-001 subcategory 细化" 章节, 4 步新增 subtopic 流程 + 字典顺序坑提示
+  - ralph/prd.json: US-037 passes=true + notes
+  - ralph/progress.txt: 本 entry
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npm test -- --filter=east-money-qa-topic` exit 0, 316 ok / 0 failed (1.1s)
+    - QA-001 subtopic accuracy: 116/117 = 99.1% (AC: ≥80%, 远超阈值)
+    - Misclassifications: 1 例 — "出口管制是否影响业务" expected=tariff got=export (子串 '出口' 同时命中 export 字典且 priority 高于 tariff)
+  - lint baseline-diff: src 1 pre-existing non-null assertion warning (US-019 baseline 记录过), tests 1 pre-existing parsing error (services/east-money-qa-topic-service.test.ts 未进 tsconfig — 与 stash 前完全相同), **本次新增 0 err 0 warn**
+- **Learnings for future iterations:**
+  - **"AC ≥ 24 subcategory + 准确率 ≥ 80%" 类指标 PRD 已先行实现, 本 iter 只补文档/闭环**: ralph autonomous 推进时遇到 "passes:false 但代码已落实" 的 story 第一步先跑 typecheck + test 验现状, 若全过且 AC 达标只需 PRD/CLAUDE.md/progress 闭环 commit. 这避免了"重复实现已存在的功能"的浪费, 也保留之前 iter 的工作.
+  - **sub-first 启发式范式**: 父类字典稀疏 (e.g. 财务/订单 父类 keyword 总数 < subtopic 合集), 用 subtopic 细字典命中数反推 parent 比"父类先分 + 子类再分"召回更高. 关键: subtopic 字典必须比 parent 字典更具体 (e.g. '一季报' 仅在 quarterly_report 不在 FINANCE 父类), 否则父子表达冗余, classifyTopic + classifySubtopic 双路径相互打架.
+  - **(topic, subtopic) parent-child 严格性靠 TOPIC_SUBCATEGORY_OF 1:1 映射 + deriveTopicFromSubtopic 包装而非 classifyTopic + classifySubtopic 双计算**: aggregateWeekly 写库时只要 caller 调 `const sub = classifySubtopic(q); const topic = deriveTopicFromSubtopic(sub)`, 数据库行 (topic, subtopic) 一定一致. 若 caller 各自调一次 classifyTopic + classifySubtopic, 在 fallback 分支 (subtopic *_other 走 classifyTopic) 会偶现不一致.
+  - **平手 tie-break 必须靠显式数值 priority 不靠对象 key 顺序**: JavaScript Object.freeze 保留插入顺序, 但语言规范不保证迭代顺序在所有 engine / TypeScript transpile 后稳定. TOPIC_SUBCATEGORY_PRIORITY 显式 number 是 deterministic 的事实源, 同时支持 import 后单测断 `MAJOR_CONTRACT < EXPORT` 守业务排序意图.
+  - **117 条标注语料 < 100 条 AC 阈值时不能压缩**: AC 写 "100 条", 实际 117 条多 17% 是好事 — 1 例 misclass 在 100 条上是 99% 但在 81 条上就是 98.8%, 数据集越大越能稳定显示分类器真实水平 + 减少 random sampling bias. 不要为了"对齐 PRD" 把语料截断到 100.
+---

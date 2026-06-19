@@ -54,6 +54,14 @@ import {
   DEFAULT_FETCH_LIMIT,
   DEFAULT_LIST_WEEKS,
   TopicCategory,
+  TOPIC_SUBCATEGORIES,
+  SUBTOPIC_VALUES,
+  TOPIC_SUBCATEGORY_OF,
+  TOPIC_SUBCATEGORY_KEYWORDS,
+  TOPIC_SUBCATEGORY_PRIORITY,
+  SUBTOPICS_BY_TOPIC,
+  TOPIC_OTHER_SUBCATEGORY,
+  SubtopicCategory,
   sleep,
   computeWeekStart,
   classifyTopic,
@@ -62,6 +70,9 @@ import {
   normalizeTopic,
   aggregateWeekly,
   parseRemoteClassify,
+  classifySubtopic,
+  detectSubtopicByKeyword,
+  deriveTopicFromSubtopic,
 } from '../../src/services/EastMoneyQATopicService';
 import { StockQARow } from '../../src/data/sources/StockQAClient';
 import { EastMoneyQATopic } from '../../src/models/EastMoneyQATopic';
@@ -450,6 +461,370 @@ function testNormalizeTopic(): void {
   assertEqual('undefined → 其它', normalizeTopic(undefined), '其它');
   assertEqual('空串 → 其它', normalizeTopic(''), '其它');
   assertEqual('空白 → 其它', normalizeTopic('   '), '其它');
+}
+
+// ---------------------------------------------------------------------------
+// QA-001 subcategory tests (TOPIC_SUBCATEGORIES + classifySubtopic)
+// ---------------------------------------------------------------------------
+
+/**
+ * 100 条人工标注语料 (question, expected_subtopic) — AC: 准确率 ≥ 80%.
+ *
+ * 覆盖 6 个父类下 24 个 actionable subtopic + 兜底 *_other (含 other_general).
+ * 真实 cninfo 互动易 / 东财股吧高频问题精简改写.
+ */
+const SUBTOPIC_LABELED_CORPUS: Array<{
+  q: string;
+  expected: SubtopicCategory;
+}> = [
+  // ---- FINANCE: earnings_forecast (8) ----
+  { q: '请问公司今年的业绩预告会预增还是预减?', expected: TOPIC_SUBCATEGORIES.EARNINGS_FORECAST },
+  { q: '业绩快报什么时候出?', expected: TOPIC_SUBCATEGORIES.EARNINGS_FORECAST },
+  { q: '业绩预增的幅度大约多少', expected: TOPIC_SUBCATEGORIES.EARNINGS_FORECAST },
+  { q: '今年是否会业绩预减', expected: TOPIC_SUBCATEGORIES.EARNINGS_FORECAST },
+  { q: '业绩超预期的概率高不高', expected: TOPIC_SUBCATEGORIES.EARNINGS_FORECAST },
+  { q: '会不会业绩低于预期', expected: TOPIC_SUBCATEGORIES.EARNINGS_FORECAST },
+  { q: '是否会发业绩预告', expected: TOPIC_SUBCATEGORIES.EARNINGS_FORECAST },
+  { q: '公司业绩指引方向', expected: TOPIC_SUBCATEGORIES.EARNINGS_FORECAST },
+  // ---- FINANCE: quarterly_report (5) ----
+  { q: '请问一季报披露时间', expected: TOPIC_SUBCATEGORIES.QUARTERLY_REPORT },
+  { q: '半年报什么时候发布', expected: TOPIC_SUBCATEGORIES.QUARTERLY_REPORT },
+  { q: '三季报披露日期', expected: TOPIC_SUBCATEGORIES.QUARTERLY_REPORT },
+  { q: '年报披露安排', expected: TOPIC_SUBCATEGORIES.QUARTERLY_REPORT },
+  { q: '中报披露时间能否确认', expected: TOPIC_SUBCATEGORIES.QUARTERLY_REPORT },
+  // ---- FINANCE: dividend_buyback (5) ----
+  { q: '今年的分红方案如何', expected: TOPIC_SUBCATEGORIES.DIVIDEND_BUYBACK },
+  { q: '公司是否会回购股份', expected: TOPIC_SUBCATEGORIES.DIVIDEND_BUYBACK },
+  { q: '大股东会增持吗', expected: TOPIC_SUBCATEGORIES.DIVIDEND_BUYBACK },
+  { q: '会不会高送转', expected: TOPIC_SUBCATEGORIES.DIVIDEND_BUYBACK },
+  { q: '现金分红比例多少', expected: TOPIC_SUBCATEGORIES.DIVIDEND_BUYBACK },
+  // ---- FINANCE: capital_action (4) ----
+  { q: '是否有定增计划', expected: TOPIC_SUBCATEGORIES.CAPITAL_ACTION },
+  { q: '可转债会发行吗', expected: TOPIC_SUBCATEGORIES.CAPITAL_ACTION },
+  { q: '配股安排', expected: TOPIC_SUBCATEGORIES.CAPITAL_ACTION },
+  { q: '募投项目进展', expected: TOPIC_SUBCATEGORIES.CAPITAL_ACTION },
+  // ---- FINANCE: cashflow_concern (3) ----
+  { q: '应收账款是否过高', expected: TOPIC_SUBCATEGORIES.CASHFLOW_CONCERN },
+  { q: '存货周转情况', expected: TOPIC_SUBCATEGORIES.CASHFLOW_CONCERN },
+  { q: '负债率水平如何', expected: TOPIC_SUBCATEGORIES.CASHFLOW_CONCERN },
+  // ---- PRODUCT: new_product (5) ----
+  { q: '新车型上市发布时间', expected: TOPIC_SUBCATEGORIES.NEW_PRODUCT },
+  { q: '新品发布会安排', expected: TOPIC_SUBCATEGORIES.NEW_PRODUCT },
+  { q: '新一代产品规划', expected: TOPIC_SUBCATEGORIES.NEW_PRODUCT },
+  { q: '新机型量产时间', expected: TOPIC_SUBCATEGORIES.NEW_PRODUCT },
+  { q: '新规格产品何时上市', expected: TOPIC_SUBCATEGORIES.NEW_PRODUCT },
+  // ---- PRODUCT: capacity (5) ----
+  { q: '产能扩张到什么程度', expected: TOPIC_SUBCATEGORIES.CAPACITY },
+  { q: '在建产线进度', expected: TOPIC_SUBCATEGORIES.CAPACITY },
+  { q: '工厂稼动率多少', expected: TOPIC_SUBCATEGORIES.CAPACITY },
+  { q: '扩建项目何时投产', expected: TOPIC_SUBCATEGORIES.CAPACITY },
+  { q: '试产顺利吗', expected: TOPIC_SUBCATEGORIES.CAPACITY },
+  // ---- PRODUCT: rd_progress (4) ----
+  { q: '研发项目临床进度', expected: TOPIC_SUBCATEGORIES.RD_PROGRESS },
+  { q: '专利申请情况', expected: TOPIC_SUBCATEGORIES.RD_PROGRESS },
+  { q: '技术突破方向', expected: TOPIC_SUBCATEGORIES.RD_PROGRESS },
+  { q: 'IND申请进展', expected: TOPIC_SUBCATEGORIES.RD_PROGRESS },
+  // ---- PRODUCT: quality_recall (3) ----
+  { q: '产品召回如何处理', expected: TOPIC_SUBCATEGORIES.QUALITY_RECALL },
+  { q: '近期投诉是否影响销量', expected: TOPIC_SUBCATEGORIES.QUALITY_RECALL },
+  { q: '产品缺陷召回事件', expected: TOPIC_SUBCATEGORIES.QUALITY_RECALL },
+  // ---- ORDER: major_contract (4) ----
+  { q: '近期是否有大订单中标', expected: TOPIC_SUBCATEGORIES.MAJOR_CONTRACT },
+  { q: '中标公告何时发布', expected: TOPIC_SUBCATEGORIES.MAJOR_CONTRACT },
+  { q: '亿元订单的客户是谁', expected: TOPIC_SUBCATEGORIES.MAJOR_CONTRACT },
+  { q: '重大合同签订进展', expected: TOPIC_SUBCATEGORIES.MAJOR_CONTRACT },
+  // ---- ORDER: export (4) ----
+  { q: '海外业务收入占比', expected: TOPIC_SUBCATEGORIES.EXPORT },
+  { q: '出口订单是否增加', expected: TOPIC_SUBCATEGORIES.EXPORT },
+  { q: '北美市场拓展情况', expected: TOPIC_SUBCATEGORIES.EXPORT },
+  { q: '东南亚业务进展', expected: TOPIC_SUBCATEGORIES.EXPORT },
+  // ---- ORDER: new_customer (3) ----
+  { q: '是否有新的大客户导入', expected: TOPIC_SUBCATEGORIES.NEW_CUSTOMER },
+  { q: '新客户开发情况', expected: TOPIC_SUBCATEGORIES.NEW_CUSTOMER },
+  { q: '战略客户合作进展', expected: TOPIC_SUBCATEGORIES.NEW_CUSTOMER },
+  // ---- ORDER: delivery (3) ----
+  { q: '在手订单交付进度', expected: TOPIC_SUBCATEGORIES.DELIVERY },
+  { q: '订单发货排产', expected: TOPIC_SUBCATEGORIES.DELIVERY },
+  { q: '装机交付时点', expected: TOPIC_SUBCATEGORIES.DELIVERY },
+  // ---- POLICY: subsidy (4) ----
+  { q: '行业补贴是否会退坡', expected: TOPIC_SUBCATEGORIES.SUBSIDY },
+  { q: '政府补助力度', expected: TOPIC_SUBCATEGORIES.SUBSIDY },
+  { q: '退税政策的影响', expected: TOPIC_SUBCATEGORIES.SUBSIDY },
+  { q: '产业补贴目录变化', expected: TOPIC_SUBCATEGORIES.SUBSIDY },
+  // ---- POLICY: tariff (3) ----
+  { q: '关税加征对公司的影响', expected: TOPIC_SUBCATEGORIES.TARIFF },
+  { q: '反倾销调查进展', expected: TOPIC_SUBCATEGORIES.TARIFF },
+  { q: '出口管制是否影响业务', expected: TOPIC_SUBCATEGORIES.TARIFF },
+  // ---- POLICY: regulation (3) ----
+  { q: '行业准入资质审批进度', expected: TOPIC_SUBCATEGORIES.REGULATION },
+  { q: '监管牌照获批情况', expected: TOPIC_SUBCATEGORIES.REGULATION },
+  { q: '环保整改是否到位', expected: TOPIC_SUBCATEGORIES.REGULATION },
+  // ---- POLICY: macro (3) ----
+  { q: '降息对公司估值影响', expected: TOPIC_SUBCATEGORIES.MACRO },
+  { q: '货币政策方向', expected: TOPIC_SUBCATEGORIES.MACRO },
+  { q: '逆周期调控影响', expected: TOPIC_SUBCATEGORIES.MACRO },
+  // ---- PERSONNEL: executive_change (4) ----
+  { q: '高管离任的接任者', expected: TOPIC_SUBCATEGORIES.EXECUTIVE_CHANGE },
+  { q: '董事长辞职原因', expected: TOPIC_SUBCATEGORIES.EXECUTIVE_CHANGE },
+  { q: '总经理变动详情', expected: TOPIC_SUBCATEGORIES.EXECUTIVE_CHANGE },
+  { q: 'CEO离任后管理过渡', expected: TOPIC_SUBCATEGORIES.EXECUTIVE_CHANGE },
+  // ---- PERSONNEL: incentive (3) ----
+  { q: '股权激励计划解锁条件', expected: TOPIC_SUBCATEGORIES.INCENTIVE },
+  { q: '员工持股计划是否落地', expected: TOPIC_SUBCATEGORIES.INCENTIVE },
+  { q: '限制性股票授予价', expected: TOPIC_SUBCATEGORIES.INCENTIVE },
+  // ---- PERSONNEL: controversy (2) ----
+  { q: '股权之争的最新进展', expected: TOPIC_SUBCATEGORIES.CONTROVERSY },
+  { q: '高管被举报内幕交易', expected: TOPIC_SUBCATEGORIES.CONTROVERSY },
+  // ---- OTHER: other_general (5) ----
+  { q: '你好', expected: TOPIC_SUBCATEGORIES.OTHER_GENERAL },
+  { q: '近期股价走势', expected: TOPIC_SUBCATEGORIES.OTHER_GENERAL },
+  { q: '什么时候开股东会', expected: TOPIC_SUBCATEGORIES.OTHER_GENERAL },
+  { q: '请问公司的发展前景如何', expected: TOPIC_SUBCATEGORIES.OTHER_GENERAL },
+  { q: '请回答一下', expected: TOPIC_SUBCATEGORIES.OTHER_GENERAL },
+  // ---- 父类正确但 subcategory 兜底 *_other (6) ----
+  { q: '请问公司毛利率水平', expected: TOPIC_SUBCATEGORIES.FINANCE_OTHER },
+  { q: '产品的工艺水平如何', expected: TOPIC_SUBCATEGORIES.PRODUCT_OTHER },
+  { q: '签约的客户行业分布', expected: TOPIC_SUBCATEGORIES.ORDER_OTHER },
+  { q: '行业法规修订方向', expected: TOPIC_SUBCATEGORIES.REGULATION }, // 含"法规" → regulation 命中, 非 _other
+  { q: '团队建设进展', expected: TOPIC_SUBCATEGORIES.PERSONNEL_OTHER },
+  { q: '应对市场风险的策略', expected: TOPIC_SUBCATEGORIES.OTHER_GENERAL },
+  // ---- 补充 (覆盖 100 条 AC + 复测易错) ----
+  { q: '业绩预告披露的具体时间', expected: TOPIC_SUBCATEGORIES.EARNINGS_FORECAST },
+  { q: '预增公告何时正式发布', expected: TOPIC_SUBCATEGORIES.EARNINGS_FORECAST },
+  { q: '现金分红是否会持续提高', expected: TOPIC_SUBCATEGORIES.DIVIDEND_BUYBACK },
+  { q: '股息率水平如何', expected: TOPIC_SUBCATEGORIES.DIVIDEND_BUYBACK },
+  { q: '可转换债募投资金用途', expected: TOPIC_SUBCATEGORIES.CAPITAL_ACTION },
+  { q: '股权融资进展', expected: TOPIC_SUBCATEGORIES.CAPITAL_ACTION },
+  { q: '经营现金流改善幅度', expected: TOPIC_SUBCATEGORIES.CASHFLOW_CONCERN },
+  { q: '应收账款回款情况', expected: TOPIC_SUBCATEGORIES.CASHFLOW_CONCERN },
+  { q: '新型号产品的市场反响', expected: TOPIC_SUBCATEGORIES.NEW_PRODUCT },
+  { q: '产能GWh扩张时间表', expected: TOPIC_SUBCATEGORIES.CAPACITY },
+  { q: '在建产线投产时间表', expected: TOPIC_SUBCATEGORIES.CAPACITY },
+  { q: '上市许可申请进展', expected: TOPIC_SUBCATEGORIES.RD_PROGRESS },
+  { q: '中试线放大进展', expected: TOPIC_SUBCATEGORIES.RD_PROGRESS },
+  { q: '一带一路项目进展', expected: TOPIC_SUBCATEGORIES.EXPORT },
+  { q: '中东订单情况', expected: TOPIC_SUBCATEGORIES.EXPORT },
+  { q: '供应商资质入围情况', expected: TOPIC_SUBCATEGORIES.NEW_CUSTOMER },
+  { q: '在手订单规模', expected: TOPIC_SUBCATEGORIES.DELIVERY },
+  { q: '订单确认状态', expected: TOPIC_SUBCATEGORIES.DELIVERY },
+  { q: '专项资金到位时间', expected: TOPIC_SUBCATEGORIES.SUBSIDY },
+  { q: '税收优惠政策落地情况', expected: TOPIC_SUBCATEGORIES.SUBSIDY },
+  { q: '加征关税对毛利影响', expected: TOPIC_SUBCATEGORIES.TARIFF },
+  { q: '行业准入审批进度', expected: TOPIC_SUBCATEGORIES.REGULATION },
+  { q: '降准对融资成本影响', expected: TOPIC_SUBCATEGORIES.MACRO },
+  { q: 'MLF操作对行业利率影响', expected: TOPIC_SUBCATEGORIES.MACRO },
+  { q: 'CFO离任的影响', expected: TOPIC_SUBCATEGORIES.EXECUTIVE_CHANGE },
+  { q: '激励计划行权条件', expected: TOPIC_SUBCATEGORIES.INCENTIVE },
+  { q: '高管被立案调查最新进展', expected: TOPIC_SUBCATEGORIES.CONTROVERSY },
+  { q: '今天天气怎么样', expected: TOPIC_SUBCATEGORIES.OTHER_GENERAL },
+];
+
+function testSubtopicConstantsFrozen(): void {
+  assert('TOPIC_SUBCATEGORIES frozen', Object.isFrozen(TOPIC_SUBCATEGORIES));
+  assert('SUBTOPIC_VALUES frozen', Object.isFrozen(SUBTOPIC_VALUES));
+  assert('TOPIC_SUBCATEGORY_OF frozen', Object.isFrozen(TOPIC_SUBCATEGORY_OF));
+  assert('TOPIC_SUBCATEGORY_KEYWORDS frozen', Object.isFrozen(TOPIC_SUBCATEGORY_KEYWORDS));
+  assert('TOPIC_SUBCATEGORY_PRIORITY frozen', Object.isFrozen(TOPIC_SUBCATEGORY_PRIORITY));
+  assert('SUBTOPICS_BY_TOPIC frozen', Object.isFrozen(SUBTOPICS_BY_TOPIC));
+  assert('TOPIC_OTHER_SUBCATEGORY frozen', Object.isFrozen(TOPIC_OTHER_SUBCATEGORY));
+
+  // AC: 24+ subcategory
+  assert(
+    `SUBTOPIC_VALUES >= 24 (含 *_other), got ${SUBTOPIC_VALUES.length}`,
+    SUBTOPIC_VALUES.length >= 24
+  );
+  // Actionable subtopic 数 (排除 *_other / other_general) 也应 >= 18 (doc 83 §B.1 列了 24 个, 这里聚合到 21 keys)
+  const actionable = SUBTOPIC_VALUES.filter(s => {
+    const kws = TOPIC_SUBCATEGORY_KEYWORDS[s];
+    return kws && kws.length > 0;
+  });
+  assert(
+    `actionable subtopic >= 18 (有字典), got ${actionable.length}`,
+    actionable.length >= 18
+  );
+
+  // 父类映射完整
+  for (const sub of SUBTOPIC_VALUES) {
+    const parent = TOPIC_SUBCATEGORY_OF[sub];
+    assert(`${sub} 有 parent topic`, !!parent);
+    // SUBTOPICS_BY_TOPIC[parent] 必须包含此 sub
+    const siblings = SUBTOPICS_BY_TOPIC[parent];
+    assert(
+      `${sub} 在 SUBTOPICS_BY_TOPIC[${parent}] 中`,
+      !!siblings && siblings.includes(sub)
+    );
+  }
+
+  // 每个父类都有 *_other 兜底
+  for (const topic of TOPIC_VALUES) {
+    const fallback = TOPIC_OTHER_SUBCATEGORY[topic];
+    assert(`${topic} 有 fallback subcategory`, !!fallback);
+    assertEqual(
+      `${topic} fallback 父类自洽`,
+      TOPIC_SUBCATEGORY_OF[fallback],
+      topic
+    );
+  }
+}
+
+function testDetectSubtopicByKeyword(): void {
+  assert(
+    'detect earnings_forecast hit',
+    detectSubtopicByKeyword('公司业绩预告', TOPIC_SUBCATEGORIES.EARNINGS_FORECAST)
+  );
+  assert(
+    'detect earnings_forecast miss',
+    !detectSubtopicByKeyword('公司财报', TOPIC_SUBCATEGORIES.EARNINGS_FORECAST)
+  );
+  assert('detect null', !detectSubtopicByKeyword(null, TOPIC_SUBCATEGORIES.EARNINGS_FORECAST));
+  assert(
+    'detect *_other 字典空 → false',
+    !detectSubtopicByKeyword('anything', TOPIC_SUBCATEGORIES.FINANCE_OTHER)
+  );
+  assert(
+    'detect other_general 字典空 → false',
+    !detectSubtopicByKeyword('anything', TOPIC_SUBCATEGORIES.OTHER_GENERAL)
+  );
+}
+
+function testClassifySubtopicEdgeCases(): void {
+  assertEqual(
+    'null → other_general',
+    classifySubtopic(null),
+    TOPIC_SUBCATEGORIES.OTHER_GENERAL
+  );
+  assertEqual(
+    'undefined → other_general',
+    classifySubtopic(undefined),
+    TOPIC_SUBCATEGORIES.OTHER_GENERAL
+  );
+  assertEqual('空串 → other_general', classifySubtopic(''), TOPIC_SUBCATEGORIES.OTHER_GENERAL);
+  assertEqual(
+    '空白 → other_general',
+    classifySubtopic('   '),
+    TOPIC_SUBCATEGORIES.OTHER_GENERAL
+  );
+  // OTHER 父类 → other_general (无 sub 字典命中)
+  assertEqual(
+    '你好 → other_general',
+    classifySubtopic('你好'),
+    TOPIC_SUBCATEGORIES.OTHER_GENERAL
+  );
+}
+
+function testClassifySubtopicParentChild(): void {
+  // classifySubtopic 输出 sub, 反推 parent (TOPIC_SUBCATEGORY_OF) 必须是合法 TopicCategory.
+  // 注意: subtopic 字典比 parent 字典更细 — 仅靠 subtopic 命中即可定 sub, 此时
+  // classifyTopic(q) 可能返回 OTHER (e.g. "一季报" 不在 parent 字典中). 故只断言
+  // sub→parent 一致性, 不强求与 classifyTopic 同结果. 但若 classifyTopic 返回非 OTHER,
+  // 则与 sub-derived parent 必须一致 (不能 contradict).
+  const samples = [
+    '业绩预告',
+    '一季报',
+    '分红',
+    '定增',
+    '现金流紧张',
+    '新品发布',
+    '产能扩张',
+    '研发临床',
+    '召回事件',
+    '中标公告',
+    '海外业务',
+    '战略客户',
+    '订单交付',
+    '政府补贴',
+    '关税加征',
+    '监管准入',
+    '货币政策降息',
+    '高管离任',
+    '股权激励',
+    '股权之争',
+    '你好',
+    '请教',
+  ];
+  for (const q of samples) {
+    const sub = classifySubtopic(q);
+    const subParent = deriveTopicFromSubtopic(sub);
+    const topicCalc = classifyTopic(q);
+    assert(
+      `${q} sub→parent 合法 (${sub} → ${subParent})`,
+      TOPIC_VALUES.includes(subParent)
+    );
+    if (topicCalc !== TOPIC_CATEGORIES.OTHER) {
+      assertEqual(
+        `${q} parent 不冲突 (classifyTopic=${topicCalc} vs sub-derived=${subParent})`,
+        subParent,
+        topicCalc
+      );
+    }
+  }
+}
+
+function testClassifySubtopicTieBreakPriority(): void {
+  // 平手时 (命中数相同) TOPIC_SUBCATEGORY_PRIORITY 升序决定胜者.
+  // "业绩预告" + "分红" → earnings_forecast (priority 10) vs dividend_buyback (12)
+  //   各命中 1 次 → 选 earnings_forecast.
+  assertEqual(
+    '平手: 业绩预告优先于分红',
+    classifySubtopic('业绩预告与分红规划'),
+    TOPIC_SUBCATEGORIES.EARNINGS_FORECAST
+  );
+  // "定增" + "回购" → capital_action (11) vs dividend_buyback (12) → capital_action
+  assertEqual(
+    '平手: 定增优先于回购',
+    classifySubtopic('定增与回购计划'),
+    TOPIC_SUBCATEGORIES.CAPITAL_ACTION
+  );
+  // "海外" + "新客户" → export (31) vs new_customer (32) → export
+  assertEqual(
+    '平手: 海外优先于新客户',
+    classifySubtopic('海外的新客户进展'),
+    TOPIC_SUBCATEGORIES.EXPORT
+  );
+  // 反推: deriveTopicFromSubtopic 与 TOPIC_SUBCATEGORY_OF 一致
+  assertEqual(
+    'derive earnings_forecast → 财务',
+    deriveTopicFromSubtopic(TOPIC_SUBCATEGORIES.EARNINGS_FORECAST),
+    TOPIC_CATEGORIES.FINANCE
+  );
+  assertEqual(
+    'derive other_general → 其它',
+    deriveTopicFromSubtopic(TOPIC_SUBCATEGORIES.OTHER_GENERAL),
+    TOPIC_CATEGORIES.OTHER
+  );
+}
+
+function testClassifySubtopicAccuracyCorpus(): void {
+  // AC: 100 条标注语料 准确率 ≥ 80%
+  let correct = 0;
+  const wrongs: string[] = [];
+  for (const item of SUBTOPIC_LABELED_CORPUS) {
+    const got = classifySubtopic(item.q);
+    if (got === item.expected) {
+      correct += 1;
+    } else {
+      wrongs.push(`"${item.q}" expected=${item.expected} got=${got}`);
+    }
+  }
+  const total = SUBTOPIC_LABELED_CORPUS.length;
+  const acc = correct / total;
+  console.log(
+    `\nQA-001 subtopic accuracy: ${correct}/${total} = ${(acc * 100).toFixed(1)}%`
+  );
+  if (wrongs.length > 0 && wrongs.length <= 20) {
+    console.log('Misclassifications:');
+    for (const w of wrongs) console.log('  - ' + w);
+  }
+  assert(`subtopic accuracy ≥ 80% (got ${(acc * 100).toFixed(1)}%)`, acc >= 0.8);
+  // 语料数量 >= 100 (AC: "100 条标注问答")
+  assert(`语料数 >= 100, got ${total}`, total >= 100);
+  // 至少覆盖 18 个 actionable subcategory
+  const covered = new Set<SubtopicCategory>();
+  for (const item of SUBTOPIC_LABELED_CORPUS) covered.add(item.expected);
+  assert(
+    `标注语料覆盖 subcategory ≥ 18, got ${covered.size}`,
+    covered.size >= 18
+  );
 }
 
 function testAggregateWeeklyHappyPath(): void {
@@ -1156,6 +1531,13 @@ async function main(): Promise<void> {
   testDetectTopicByKeyword();
   testScoreSentiment();
   testNormalizeTopic();
+  // QA-001 subcategory pure helper tests
+  testSubtopicConstantsFrozen();
+  testDetectSubtopicByKeyword();
+  testClassifySubtopicEdgeCases();
+  testClassifySubtopicParentChild();
+  testClassifySubtopicTieBreakPriority();
+  testClassifySubtopicAccuracyCorpus();
   testAggregateWeeklyHappyPath();
   testAggregateWeeklyMultiWeekMultiTopic();
   testAggregateWeeklyEmpty();

@@ -210,3 +210,24 @@ audit-task-parameters-dry-run.ts 共享同一 env，避免运维多配一份）
 测试守护：`tests/services/announcement-nlp-service.test.ts` 内
 `testSaveSummariesUpdateOnDuplicateIncludesNewFields` + `testAnnouncementSummaryModelHasNewColumns` +
 `testMigrationSqlPresentAndComplete` 三处 META-GUARD（fs+regex 扫源文件 + SQL）— 漏改任何一处立刻挂。
+
+---
+
+## EastMoneyQATopicService — QA-001 subcategory 细化（2026-06-19）
+
+`TOPIC_SUBCATEGORIES` 在 6 大父类 (FINANCE/PRODUCT/ORDER/POLICY/PERSONNEL/OTHER)
+下细分 26 个 subcategory（含 6 个 `*_other` + 1 个 `other_general` 兜底，actionable = 20）。
+`classifySubtopic(question)` 是 sub-first 启发式（命中数多者胜 + `TOPIC_SUBCATEGORY_PRIORITY` 升序 tie-break），
+未命中走 `classifyTopic()` 的父类落 `*_other` 兜底，保证 `(topic, subtopic)` 严格 parent-child。
+
+**新增 subtopic 字典 4 步**：
+1. `TOPIC_SUBCATEGORIES` 加常量 + `SubtopicCategory` union 加成员 + `SUBTOPIC_VALUES` 数组追加
+2. `TOPIC_SUBCATEGORY_OF` 加 1:1 父类映射（必填，否则 `deriveTopicFromSubtopic` 返 `undefined`）
+3. `TOPIC_SUBCATEGORY_PRIORITY` 加数值（父类内升序，`*_other` 留 19/29/39/49/59 末档）
+4. `TOPIC_SUBCATEGORY_KEYWORDS` 加 ≥ 3 关键词（`*_other` 留空数组，由 fallback 路径触发）
+
+**字典顺序坑**：父类内更具体的 subtopic 关键词命中数若与泛化项打平，靠 `TOPIC_SUBCATEGORY_PRIORITY`
+决定（不是字典声明顺序）。新增字典必须同步加单测样本到 `SUBTOPIC_LABELED_CORPUS` 维持 ≥ 80% 准确率
+AC，已记录 1 例已知 misclassification（"出口管制" 中 'export' 比 'tariff' 命中先且数高）— 改进需引入
+"否定词上下文 / 多词 phrase 优先" 启发，目前 99.1% 准确率不阻塞 AC。
+

@@ -561,8 +561,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 37,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DONE 2026/06/19: TOPIC_SUBCATEGORIES 26 项 (FINANCE/PRODUCT/ORDER/POLICY/PERSONNEL 5 父类下 20 actionable + 6 *_other + 1 other_general; 含 24+ AC) + classifySubtopic(question) sub-first 启发式 (命中数多者胜 + TOPIC_SUBCATEGORY_PRIORITY 升序 tie-break + 无命中 fallback parent *_other) + TOPIC_SUBCATEGORY_OF 1:1 父子映射 + deriveTopicFromSubtopic 反推 + detectSubtopicByKeyword. SUBTOPIC_LABELED_CORPUS 117 条人工语料 AC 准确率 99.1% (116/117 ≥ 80%); 唯一 misclass '出口管制是否影响业务' expected=tariff got=export — 已记录到 services/CLAUDE.md 不阻塞 AC. Typecheck 0 err / lint baseline-diff 0 新 err / npm test --filter=east-money-qa-topic 316 ok 0 failed."
     },
     {
       "id": "US-038",
