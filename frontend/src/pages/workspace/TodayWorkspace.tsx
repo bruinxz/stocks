@@ -5,6 +5,7 @@ import {
   Card,
   Col,
   DatePicker,
+  Dropdown,
   Empty,
   Input,
   List,
@@ -26,9 +27,11 @@ import {
   AlertOutlined,
   BellOutlined,
   CheckCircleOutlined,
+  ClockCircleOutlined,
   FireOutlined,
   FundOutlined,
   ReloadOutlined,
+  RightOutlined,
   RiseOutlined,
   RobotOutlined,
   SafetyCertificateOutlined,
@@ -84,6 +87,20 @@ import {
   sortAlertsBySeverityThenTime,
   summarizeAlertsByCategory,
 } from './alertsPanelHelpers';
+import {
+  addSnooze,
+  buildAlertActionDescriptor,
+  filterOutSnoozedAlerts,
+  formatSnoozeRemaining,
+  pruneExpiredSnoozes,
+  readSnoozeMap,
+  removeSnooze,
+  SnoozeDuration,
+  SNOOZE_DURATION_LABEL,
+  SNOOZE_DURATION_ORDER,
+  SnoozeMap,
+  writeSnoozeMap,
+} from './alertItemActionHelpers';
 import { PositionRow, getPortfolio } from '../../services/portfolioWorkspaceService';
 import {
   getMarketBriefToday,
@@ -107,6 +124,7 @@ import {
   listRiskAlerts,
   markAlertsAsRead,
   markAllRiskAlertsRead,
+  markSingleRiskAlertRead,
   RiskAlertItem,
   RiskAlertListParams,
   AlertCategory,
@@ -2546,37 +2564,125 @@ const KeyEventsList: React.FC<{ events: KeyEventItem[]; compact?: boolean }> = (
 };
 
 /**
- * US-071 [FE-032] AlertsPanel — filter + search + 分类 完整面板.
+ * AlertsPanel — "今日作战" 风险提醒 tab 的核心面板.
  *
- * 升级前 (US-018 baseline): 仅 RiskAlertsList 列表无任何过滤;
- * 升级后:
- *   - 顶部 4 个 category KPI Tag (持仓/市场/单股/数据) + 各自 high/medium/low 数;
- *   - 过滤栏: level 单选 / category 单选 / search 关键词输入;
- *   - 一键重置过滤 (仅当有 active filter 显示);
- *   - 列表按 (level desc, time desc) 重排;
- *   - 空结果显示 "无符合条件的告警".
+ * 历史 (US-018 → US-071 → US-072):
+ *   - US-018: 仅 RiskAlertsList 无过滤
+ *   - US-071: 4 个 category KPI Tag + level/category/search 过滤 + reset
+ *   - US-072: 每条 AlertItem 加 snooze 1h/1d/1w + 一键执行 (Dropdown + Button)
  *
  * 与 RiskAlertCenterPanel (risk_center sub-tab) 的边界 — 见
  * [[alertsPanelHelpers]] 顶部 jsdoc. 简言之: 本组件消费 /api/today/signals
- * 返的 unread_alerts (cap=20) 做就地过滤, 不再次访问 backend; 重操作走
+ * 返的 unread_alerts (cap=20) 做就地过滤 + snooze, 不再次访问 backend; 重操作走
  * "风控中心" tab. data-testid 让 webapp-testing skill 可验收.
+ *
+ * Snooze 持久化 = localStorage (单设备), 与 [[alertItemActionHelpers]] 顶部
+ * jsdoc 同款 trade-off. 一键执行根据 derived_category 派发到不同路由 — 详见
+ * [[buildAlertActionDescriptor]].
  */
 const AlertsPanel: React.FC<{ alerts: UnreadRiskAlertItem[]; totalCount: number }> = ({
   alerts,
   totalCount,
 }) => {
+  const navigate = useNavigate();
   const [filterState, setFilterState] = useState<AlertsPanelFilterState>(() =>
     emptyAlertsPanelFilterState()
   );
+  // snoozeMap 初始化时顺手 prune 一次, 不让 localStorage 无限膨胀.
+  // 与 [[pruneExpiredSnoozes]] jsdoc 推荐的"挂载先 prune" 一致.
+  const [snoozeMap, setSnoozeMap] = useState<SnoozeMap>(() => {
+    const raw = readSnoozeMap();
+    const pruned = pruneExpiredSnoozes(raw, Date.now());
+    if (Object.keys(pruned).length !== Object.keys(raw).length) {
+      writeSnoozeMap(pruned);
+    }
+    return pruned;
+  });
+  // 每 60s tick 强制重渲 — 让 "snooze 剩余时间" Tag 和 "已过期自动恢复"
+  // 不依赖外部事件. 与 AlertsBell 60s 轮询同步, 视觉一致.
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => forceTick(x => x + 1), 60 * 1000);
+    return () => window.clearInterval(t);
+  }, []);
 
   // enrich 一次, 过滤 / 排序 / 分类 全消费 EnrichedAlert (避免重复 derive).
   const enriched = useMemo(() => enrichAlerts(alerts), [alerts]);
-  const categorySummary = useMemo(() => summarizeAlertsByCategory(enriched), [enriched]);
+  // snooze 过滤要走在 category KPI 之前, 让 KPI bar 也不计入 snoozed alerts —
+  // 与 PRD 验收"snooze 后该 alert 在 panel 消失" 同语义.
+  const visibleAfterSnooze = useMemo(
+    () => filterOutSnoozedAlerts(enriched, snoozeMap, Date.now()),
+    // snoozeMap 变化 (snooze / 取消) 立即重新过滤; enriched 是上一层 alerts 派生.
+    // 故意不把 Date.now() 加进 deps — 60s tick 已经 forceTick 触发重渲.
+    [enriched, snoozeMap]
+  );
+  const categorySummary = useMemo(
+    () => summarizeAlertsByCategory(visibleAfterSnooze),
+    [visibleAfterSnooze]
+  );
   const visibleAlerts = useMemo(
-    () => sortAlertsBySeverityThenTime(filterAlerts(enriched, filterState)),
-    [enriched, filterState]
+    () => sortAlertsBySeverityThenTime(filterAlerts(visibleAfterSnooze, filterState)),
+    [visibleAfterSnooze, filterState]
   );
   const hasFilter = hasActiveFilter(filterState);
+  const snoozedCount = useMemo(
+    () => Math.max(0, enriched.length - visibleAfterSnooze.length),
+    [enriched.length, visibleAfterSnooze.length]
+  );
+
+  // ------- snooze action handlers -------
+
+  /**
+   * 执行 snooze — 更新 state + 持久化 + toast 反馈. 失败 (quota / private mode)
+   * fail-OPEN 不抛, 仅 toast.warning.
+   */
+  const handleSnooze = useCallback((alertId: number, duration: SnoozeDuration) => {
+    setSnoozeMap(prev => {
+      const next = addSnooze(prev, alertId, duration, Date.now());
+      const ok = writeSnoozeMap(next);
+      if (!ok) {
+        message.warning('静音状态未能持久化 (浏览器存储不可用), 仅当前会话生效');
+      } else {
+        message.success(`已${SNOOZE_DURATION_LABEL[duration]}`);
+      }
+      return next;
+    });
+  }, []);
+
+  /** 取消 snooze (用户主动撤回). */
+  const handleUnsnooze = useCallback((alertId: number) => {
+    setSnoozeMap(prev => {
+      const next = removeSnooze(prev, alertId);
+      writeSnoozeMap(next);
+      return next;
+    });
+    message.success('已恢复显示');
+  }, []);
+
+  /**
+   * 一键执行 — 根据 derived_category 跳路由, 可选自动 mark-read.
+   *
+   * mark-read 失败不阻塞跳转 (fail-OPEN); 失败仅 console, 不弹 toast 干扰用户.
+   */
+  const handleExecuteAction = useCallback(
+    (
+      enrichedItem: { id: number } & {
+        derived_category: DerivedAlertCategory;
+        symbol: string;
+      }
+    ) => {
+      const action = buildAlertActionDescriptor(enrichedItem as never);
+      if (action.markReadOnAction) {
+        markSingleRiskAlertRead(enrichedItem.id).catch(err => {
+          // 与 alertsBell fail-OPEN 思想一致: mark-read 失败仅日志.
+          // eslint-disable-next-line no-console
+          console.warn('[AlertsPanel] markSingleRiskAlertRead failed', err);
+        });
+      }
+      navigate(action.href);
+    },
+    [navigate]
+  );
 
   return (
     <Card
@@ -2590,6 +2696,11 @@ const AlertsPanel: React.FC<{ alerts: UnreadRiskAlertItem[]; totalCount: number 
           {hasFilter && (
             <Tag color="blue" data-testid="alerts-panel-filtered-count">
               过滤后 {visibleAlerts.length}
+            </Tag>
+          )}
+          {snoozedCount > 0 && (
+            <Tag color="purple" data-testid="alerts-panel-snoozed-count">
+              已静音 {snoozedCount}
             </Tag>
           )}
         </Space>
@@ -2700,32 +2811,115 @@ const AlertsPanel: React.FC<{ alerts: UnreadRiskAlertItem[]; totalCount: number 
             size="default"
             dataSource={visibleAlerts}
             data-testid="alerts-panel-list"
-            renderItem={item => (
-              <List.Item style={{ padding: '10px 0' }} data-testid={`alerts-panel-item-${item.id}`}>
-                <Space align="start" style={{ width: '100%' }}>
-                  {levelIcon(item.derived_level)}
-                  <div style={{ flex: 1 }}>
-                    <Space size={6} wrap>
-                      <Text code>{item.symbol}</Text>
-                      <Text strong>{item.name || '—'}</Text>
-                      {levelTag(item.derived_level)}
-                      <Tag color={DERIVED_CATEGORY_TAG_COLOR[item.derived_category]}>
-                        {DERIVED_CATEGORY_LABEL[item.derived_category]}
-                      </Tag>
-                      <Text type="secondary" style={{ fontSize: 11 }}>
-                        {dayjs(item.created_at).format('MM-DD HH:mm')}
-                      </Text>
-                    </Space>
-                    <div>
-                      <Text type="secondary" style={{ fontSize: 12 }}>
-                        {item.message}
-                      </Text>
+            renderItem={item => {
+              const action = buildAlertActionDescriptor(item);
+              // 注意: visibleAlerts 已经 filterOutSnoozedAlerts, 渲染到的 item
+              // 此刻必然 NOT snoozed (snoozeMap[item.id] 要么不存在要么已过期).
+              // snooze 状态 Tag 仅在 toolbar 用 snoozedCount 显示, 单条 item 不必再画.
+              const snoozeMenuItems = SNOOZE_DURATION_ORDER.map(d => ({
+                key: d,
+                label: SNOOZE_DURATION_LABEL[d],
+                onClick: () => handleSnooze(item.id, d),
+              }));
+              return (
+                <List.Item
+                  style={{ padding: '10px 0' }}
+                  data-testid={`alerts-panel-item-${item.id}`}
+                >
+                  <Space align="start" style={{ width: '100%' }}>
+                    {levelIcon(item.derived_level)}
+                    <div style={{ flex: 1 }}>
+                      <Space size={6} wrap>
+                        <Text code>{item.symbol}</Text>
+                        <Text strong>{item.name || '—'}</Text>
+                        {levelTag(item.derived_level)}
+                        <Tag color={DERIVED_CATEGORY_TAG_COLOR[item.derived_category]}>
+                          {DERIVED_CATEGORY_LABEL[item.derived_category]}
+                        </Tag>
+                        <Text type="secondary" style={{ fontSize: 11 }}>
+                          {dayjs(item.created_at).format('MM-DD HH:mm')}
+                        </Text>
+                      </Space>
+                      <div>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {item.message}
+                        </Text>
+                      </div>
                     </div>
-                  </div>
-                </Space>
-              </List.Item>
-            )}
+                    <Space size={4} direction="vertical" align="end">
+                      <Button
+                        size="small"
+                        type="primary"
+                        icon={<RightOutlined />}
+                        data-testid={`alerts-panel-item-action-${item.id}`}
+                        data-action-type={action.actionType}
+                        onClick={() => {
+                          handleExecuteAction(item);
+                        }}
+                      >
+                        {action.label}
+                      </Button>
+                      <Dropdown
+                        menu={{ items: snoozeMenuItems }}
+                        trigger={['click']}
+                        placement="bottomRight"
+                      >
+                        <Button
+                          size="small"
+                          icon={<ClockCircleOutlined />}
+                          data-testid={`alerts-panel-item-snooze-${item.id}`}
+                        >
+                          静音
+                        </Button>
+                      </Dropdown>
+                    </Space>
+                  </Space>
+                </List.Item>
+              );
+            }}
           />
+        )}
+        {snoozedCount > 0 && (
+          <Card
+            size="small"
+            type="inner"
+            data-testid="alerts-panel-snoozed-list"
+            title={
+              <Space size={4}>
+                <ClockCircleOutlined />
+                <span>已静音告警 ({snoozedCount})</span>
+              </Space>
+            }
+          >
+            <List
+              size="small"
+              dataSource={enriched.filter(a => snoozeMap[String(a.id)])}
+              renderItem={item => {
+                const entry = snoozeMap[String(item.id)];
+                if (!entry) return null;
+                return (
+                  <List.Item
+                    style={{ padding: '6px 0' }}
+                    data-testid={`alerts-panel-snoozed-item-${item.id}`}
+                  >
+                    <Space wrap style={{ width: '100%' }}>
+                      <Text code>{item.symbol}</Text>
+                      <Text>{item.name || '—'}</Text>
+                      <Tag color="purple">{formatSnoozeRemaining(Date.now(), entry.until)}</Tag>
+                      <Button
+                        size="small"
+                        type="link"
+                        data-testid={`alerts-panel-unsnooze-${item.id}`}
+                        onClick={() => handleUnsnooze(item.id)}
+                      >
+                        恢复显示
+                      </Button>
+                    </Space>
+                  </List.Item>
+                );
+              }}
+            />
+          </Card>
         )}
       </Space>
     </Card>
