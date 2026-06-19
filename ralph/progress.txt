@@ -23,6 +23,7 @@ Started: Fri Jun 19 02:25:41 CST 2026
 - "yoy% 抽取 + 多档分级" 模板 (US-028 extractEarningsGrade / 未来任何"从中文短文本抽数字 + 按阈值落档"启发式): 5 件套 — (1) **守门关键词** (EARNINGS_TITLE_KEYWORDS) 让 "非业绩公告" 直接返 null, 避免 "重大资产重组同比变动 30%" 被误算业绩; 与 classifyEventType 互补 (event_type='业绩' + grade!==null 才算"深度解析业绩公告"). (2) **direction 优先级链** — terminal state (loss) > 退步 (decrease) > 进步 (increase); "亏损 + 下降 30%" 必返 loss/major 而非 decrease/moderate, 与 EVENT_TYPE_KEYWORDS 处罚>减持>... 同款"最严重负面优先"思想; 单测必须显式 priority case 不能只测单关键词. (3) **direction 缺失但有 yoy% 的兜底语义** — 公告语境下裸 "净利润同比 80%" 默认 increase (负面会显式带方向词); direction=null + yoy%≠null → 默认 increase 是符合直觉的, 不要返 null 让 caller 丢失数字. (4) **yoy_pct 有符号约定** — decrease/loss 返负 (e.g. "下降 30%" → -30), increase 返正; 给 downstream priority 计算用 (computePriority 看 grade.yoy_pct < 0 触发 high). 不要返绝对值让 caller 自己判方向 (违反 single source of truth + caller 容易漏负号). 与 holding_pct 永远正数 (US-027 entities) 对偶 — entity 是状态, grade 是动作 (方向天然有符号). (5) **magnitude 阈值与下游决策表对齐** — MINOR_MAX=30 / MAJOR_MIN=100 是 US-029 priority critical/high 触发线 (loss 永远 critical; major+decrease 触发 high). 改动这两个常量必须配套更新 ANN-005 测试; 用 export 常量 + 单测断 `MINOR_MAX < MAJOR_MIN` 守边界 sanity. **中文 regex 滑窗坑** — `\d{1,4}%` 在 "50000%" 之类标题上会子串匹配到合法子串 ("0000"), 接受这是已知边界, 单测样本用空格 / 边界字符隔离 (e.g. "10000 %") 而非依赖 regex 拒绝完整数字; 否则会误以为"sanity guard 失效".
 - "多维度决策表 priority" 综合模板 (US-029 computePriority / 未来任何"N 个 pure helper 输出综合落 K 档"启发式 — risk score / signal grade / alert level): 6 件套 — (1) **输入显式 interface + 全 optional**: `ComputePriorityInput { event_type?, sentiment?, earnings_grade?, amounts? }` — caller 不必每次填全, payload 路径只有部分维度也能正常落档. 不要把 4 个参数当 positional args (调用方易传错顺序), 也不要把 builder 内 helper 输出绕一圈拼对象再传 (直接 inline pass), 让 builder 只调一次 helper. (2) **决策表代码内显式注释 + readable 短路链** — 4 档从高到低分组, 每档内规则 `if (...) return 'X'`, **不要**写 score-based weighted sum (无法 debug 单 case + 阈值漂移无单测可守). 与 EVENT_TYPE_KEYWORDS / EARNINGS_DIRECTION 字典优先级链同款思想. (3) **safe-default low 兜底** — 任何无法确定的输入 fallback 'low' 不上推, 与 normalizePriority 同思想; 防止 fuzzy AI 输出泄漏到 critical 引发飞书 push 风暴 (与 US-031 ANN-007 critical=5min push 直接挂钩, 这条不守 ops 半夜被叫醒). (4) **金额单位归一化** — 仅 '亿元'/'万元' 参与计算, 内部统一到 "万元" 比较 (1 亿 = 10000 万), '股'/'万股' 是数量不是金额必须忽略 (extractAmounts 输出含混). 取 amounts[] 中最大单笔. 阈值用 export 常量 + Object.freeze + 单测断 `HIGH_WAN < MAJOR_WAN` 守 sanity. (5) **builder 双路接入差异**: heuristic builder **直接调** computePriority (本地 4 helper 输出全有); payload builder 走 **"AI 字段优先 + 缺失走 computePriority 兜底"** — `data.priority` 非空 → normalizePriority 透传, 否则 computePriority({ classifyEventType ?? normalizeEventType, ...heuristic-derived }) 兜底. 注意 event_type 不在 payload 路径做本地兜底 (远端 AI 契约是 "未识别→不填", 本地补 '其它' 会破坏 normalize 默认契约); 但 computePriority **内部参数**可以用 classifyEventType 兜底 (那是 priority 计算的私事). 这条边界是 "AI 优先 + 本地兜底" 在 multi-field 输出场景下最易踩的坑. (6) **wiring 测试两路必测** — testComputePriorityWiringHeuristicResult (传 5 类标题进 builder 验对应 priority) + testComputePriorityWiringPayloadFallback (payload 不带 priority → computePriority 兜底, payload 带 priority → AI 字段优先). 不测 wiring 只测 pure function 会让 "改动决策表但忘 wire 到 builder" 的 regression 完全检测不出 (与 US-026 testClassifyEventTypeWiringHeuristicResult 同款防御).
 - 前端 pure helper 模板 (US-042 todayPlanHelpers — 与 backend US-026/028/029 形态对偶): 任何"把 N 路输入合并 → 决策表 → 排序"类 UI 逻辑都不要 inline 在 React 组件里, 抽到独立 `frontend/src/pages/<area>/<feature>Helpers.ts`. 5 件套 — (1) 主入口 `build<Verb>(input: TInput | null | undefined): TOut[]` 接受 null/undefined + 单 block error 全部容错返 []; (2) 决策表用 `compute<Verb>Priority(input)` 短路链, 阈值用 export 常量 (e.g. HIGH_PRIORITY_EARNINGS_PROFIT_PCT) 调一处生效; (3) 同 entity 多 source 命中走 upsertRow 模板 — Set 去重 sources / 兜底补缺 name/industry 不覆盖 / reason parts 单独 Map 累加 (与 US-027 entities normalize "属性可叠加" 同款); (4) 排序 3 段稳定: priority rank → score 降序 → entity key 字母序 (字母序兜底是 React key 稳定 + UI tie 可预期的关键); (5) 同输入永远同输出 → useMemo 安全, 不依赖 React render path. 与 backend pure helper 命名风格保持一致 (compute*/build*/sort*/normalize*). UI 跨卡片色谱一致性 (e.g. planSourceTagColor 与 3 策略卡 header 同色) 是 design system 的低成本高 ROI — 用户认色比认字快, 不同卡片同业务实体必须同色, 否则用户跨卡片认知断裂. **es5 target 坑**: TS target='es5' 不支持 `for ([k,v] of map)` 解构 iter, 必须 `map.forEach((v,k)=>...)`; tsc 报 TS2802 即此 — 改成 forEach 最简.
+- "≤ N 字 / ≥ N / ∈ [a,b]" 类 AC 落代码模板 (US-043 AI_VIEW_MAX_CHARS): 任何 PRD AC 含"≤ N 字"/"≥ N 条"/数值阈值, 单"代码守 cap" 不够, 落 5 件套 — (1) **export 常量 + 同源跨边界** (backend + frontend 同名同值常量, 不依赖 schema-sync 工具); 改一处必须手动 grep 另一端核对. (2) **3 处守约** — 上游 (告诉 LLM/调用方 cap)、中游 (接收返值时 hard-cap 截断)、下游 (启发式/fallback 路径也守同款 cap). 漏一处足够让真实数据破约 — e.g. 旧 prompt 写"60 字" 但常量改 150, 远端 LLM 仍按 60 输出. (3) **prompt/UI 文案含数字时 单测 guard 数字本身** — `assert prompt.includes(String(AI_VIEW_MAX_CHARS))` 防止 typo "改了常量但没改模板里写死的数字"; 同款适用任何"模板字符串里出现的硬编码 vs 常量"对齐场景. (4) **前端兜底截断 不能省** — backend 已 3 处守约不等于"前端不用守", 因为 cache/历史数据/老 DB 行会绕过新 cap. 前端 truncateXxx() 是"切常量当天 UI 不破" 的关键, 与 US-018 fail-safe / US-019 dedup 双源校验同款思想. UI 截断符号选择 `slice(0, cap-1) + '…'` 比直接 slice 更友好 (视觉提示"被截了"); 总长仍守 cap. (5) **边界单测必含 3 case** — 恰好 N (不截)、N+1 (截到 N)、远超 N (截到 N). 不测边界只测"很长截到 N" 会让 "off-by-one cap (e.g. > vs ≥)" 完全检测不出. 同款适用未来任何数值/长度类 AC.
 
 
 ## 2026/06/19 09:50 - US-019
@@ -1157,4 +1158,39 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **planSourceTagColor 与策略卡 header 色谱对齐**: 用户跨卡片认色比认字快 — dragon_head 在策略卡 header 是 orange / earnings_surprise 是 green / multi_factor 是 blue, 本卡片 source Tag 必须用同一组色, 否则用户看到 "多因子" 红 Tag 会以为是不同策略. 跨 UI 卡片色谱一致性是 design system 的低成本高 ROI 投入.
   - **AC "Verify in browser using dev-browser skill" 在 ralph 自主推进时无 browser env**: 与 US-040/041 同 — typecheck + lint + 把 browser smoke 写到 progress + PRD notes, 不强行启动 dev server (3000 端口冲突 + 依赖后端).
   - **es5 target 限制**: TS target='es5' 不支持 `for (const [k,v] of map)` 解构 iter, 必须用 `map.forEach((v,k)=>...)` 或 `Array.from(map.values())`. tsc 报 TS2802 时即此问题. 同款适用 Set/Map iter, 改成 forEach 最简.
+---
+
+
+## 2026/06/19 19:50 - US-043
+- 实现 [FE-004] TodayWorkspace AI 大盘 brief ≤ 150 字硬上限验收闭环
+- Files changed:
+  - backend/src/services/MarketBriefService.ts:
+    * 新增 AI_VIEW_MAX_CHARS = 150 export 常量 (与前端同源)
+    * buildPromptForAI: 把硬编码的"不超过 60 字"换成 `不超过 ${AI_VIEW_MAX_CHARS} 字, 目标 60-100 字` — 让远端 LLM 真正看到 cap
+    * pickAIViewFromPayload: 老 200 字截断收紧到 AI_VIEW_MAX_CHARS — 远端违约也不会渗到 UI
+    * buildHeuristicAIView: parts.join('，') 后再 slice 到 cap — 启发式 fallback 同款守约
+  - frontend/src/services/marketBriefService.ts:
+    * 新增 AI_VIEW_MAX_CHARS = 150 export 常量 (与 backend 同源)
+    * 新增 truncateAIView(view): 超 cap 时截到 (cap - 1) + '…' (总长仍 = cap), null/空串保留
+    * marketBriefService bundled export 含 truncateAIView
+  - frontend/src/pages/workspace/TodayWorkspace.tsx:
+    * MarketBriefCard.aiView 渲染前调 truncateAIView(brief.ai_view) — 防 DB 历史脏数据 / 老 200 字 cache 绕过新后端 cap
+  - backend/tests/services/market-brief-service.test.ts:
+    * import 加 AI_VIEW_MAX_CHARS
+    * testConstants 新增 AI_VIEW_MAX_CHARS=150 + buildPromptForAI 输出含 '150' 数字 guard (防 typo "150" prompt 没真改到)
+    * testPickAIViewFromPayload 老 200 truncation test 改为 AI_VIEW_MAX_CHARS truncation, 新增 2 边界 (恰好 cap 不截 / cap+1 截到 cap)
+    * testBuildHeuristicAIView 末尾对 5 个 case (bull/bear/neutral/flat/partial) 全断言 length ≤ AI_VIEW_MAX_CHARS
+  - ralph/prd.json: US-043 passes=true + notes
+- 验证:
+  - `cd backend && npx tsc --noEmit` exit 0
+  - `cd frontend && npx tsc --noEmit` exit 0
+  - `cd backend && npm test -- --filter=market-brief` exit 0, 144 ok / 0 failed (1.5s)
+  - `eslint MarketBriefService.ts` 0 new err/warn
+  - `eslint marketBriefService.ts TodayWorkspace.tsx` 仅 3 pre-existing warn (applying/handleApplyAll unused + useCallback deps), 0 new err
+- **Learnings for future iterations:**
+  - **"≤ N 字" 类 AC 单测除了断结果长度还要 guard prompt 文本含数字**: 老 prompt 写死"不超过 60 字" 与 AC 说的 150 字脱节, 远端 LLM 按 prompt 走 — 单纯改 hard-cap 不改 prompt 等于"代码守 150 但 LLM 还以为 60". 单测 `assert prompt.includes(String(AI_VIEW_MAX_CHARS))` 是 cheap 保证两侧同步的方法. 同样适用任何"模板里写死的数字/单位/枚举值 vs 常量"对齐场景.
+  - **前端兜底截断为啥不能省**: backend 已经 3 处守约 (prompt + remote pick + heuristic), 看起来前端不用再守. 但 MarketBrief 走 DB cache 路径 (briefModelToResult), 老数据是 200 字写进去的, 切换 AI_VIEW_MAX_CHARS=150 后 cache 命中仍是 200 字; 让前端 truncateAIView 兜底是"切常量当天 UI 不破" 的关键 (与 US-018 fail-safe / US-019 dedup 持久化"双源校验"同款思想). 真要彻底, 写 migration 把老行 ai_view 截到 cap, 但代价远大于前端一行 slice.
+  - **UI 截断符号选择 (… 替换最后 1 字 vs 直接 slice)**: 用 `slice(0, cap-1) + '…'` 让用户看到"被截了" 的视觉提示, 比直接 slice 看起来像"句子戛然而止" 更友好. 总长仍守 cap. 适用所有 ≤ N 字 UI 渲染.
+  - **同源常量跨语言同步**: backend export 一个 TS 常量, frontend 也 export 同名 + 同值常量, 不引第三方 schema-sync 工具. ralph 改一处必须查另一处 (本次 grep 'AI_VIEW_MAX_CHARS' / '150' 两边手动核对). 未来若同源常量超过 3 个, 考虑 backend export 一个 .d.ts 给前端 import. 暂不需要.
+  - **既有 MarketBriefCard 早就有 aiView 渲染, 本 story 实际是补 AC**: 前端组件 (FE-001/002/003) + AI brief (US-073) 都是 prior sprint 已落; 本 story 名字"TodayWorkspace AI 大盘 brief" 看起来要新增组件, 实际是把"≤150 字" AC 真正落到代码 + 测试. 之前 ralph 写"已实现 brief" 但没写"≤150 字 hard-cap" — 易把 PRD AC 的"≤ N 字" 当成自然语言而非可测断言. 同款坑适用未来任何"X ≤ N" / "X ≥ N" / "X ∈ [a, b]" 类 AC.
 ---

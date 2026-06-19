@@ -34,6 +34,7 @@ import {
   RemoteMarketBriefPayload,
   BENCHMARK_SYMBOL,
   NLP_ENGINES,
+  AI_VIEW_MAX_CHARS,
   normalizeDateOnly,
   parsePctChange,
   safeRound,
@@ -125,6 +126,21 @@ function testConstants(): void {
   assertEqual('BENCHMARK_SYMBOL=sh.000300', BENCHMARK_SYMBOL, 'sh.000300');
   assertEqual('NLP_ENGINES.TRADING_AGENTS', NLP_ENGINES.TRADING_AGENTS, 'trading_agents');
   assertEqual('NLP_ENGINES.HEURISTIC', NLP_ENGINES.HEURISTIC, 'heuristic_fallback');
+  // US-043 / FE-004 AC 主验收: ≤ 150 字
+  assertEqual('AI_VIEW_MAX_CHARS=150', AI_VIEW_MAX_CHARS, 150);
+  // 防 typo: prompt 模板必须真正告诉 LLM 这个数字 (与 hard-cap 同源)
+  const promptPreview = buildPromptForAI({
+    trade_date: '2026-06-08',
+    prev_close: 3850,
+    today_open: 3870,
+    open_change_pct: 0.52,
+    northbound_net_yi: 12,
+    limit_up_count: 65,
+  });
+  assert(
+    'prompt 中包含 AI_VIEW_MAX_CHARS 数字',
+    promptPreview.includes(String(AI_VIEW_MAX_CHARS))
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -256,10 +272,29 @@ function testPickAIViewFromPayload(): void {
   assertEqual('whitespace only → null', pickAIViewFromPayload({ status: 'OK', data: { view: '   ' } }), null);
   // 无 data → null
   assertEqual('no data field', pickAIViewFromPayload({ status: 'OK' }), null);
-  // 超长截断到 200 字符
+  // 超长截断到 AI_VIEW_MAX_CHARS (US-043 / FE-004 AC: ≤ 150 字)
   const longView = '观点'.repeat(150); // 300 chars
   const picked = pickAIViewFromPayload({ status: 'OK', data: { view: longView } });
-  assert('long view truncated to 200', picked !== null && picked.length === 200);
+  assert(
+    `long view truncated to AI_VIEW_MAX_CHARS (${AI_VIEW_MAX_CHARS})`,
+    picked !== null && picked.length === AI_VIEW_MAX_CHARS
+  );
+  // 边界: 恰好 AI_VIEW_MAX_CHARS 字 → 原文返回, 不截
+  const exactView = '观'.repeat(AI_VIEW_MAX_CHARS);
+  const pickedExact = pickAIViewFromPayload({ status: 'OK', data: { view: exactView } });
+  assertEqual(
+    `view length === AI_VIEW_MAX_CHARS 不截断`,
+    pickedExact?.length,
+    AI_VIEW_MAX_CHARS
+  );
+  // 边界: AI_VIEW_MAX_CHARS+1 字 → 截到 AI_VIEW_MAX_CHARS
+  const overByOne = '观'.repeat(AI_VIEW_MAX_CHARS + 1);
+  const pickedOver = pickAIViewFromPayload({ status: 'OK', data: { view: overByOne } });
+  assertEqual(
+    `view length === AI_VIEW_MAX_CHARS+1 截到 AI_VIEW_MAX_CHARS`,
+    pickedOver?.length,
+    AI_VIEW_MAX_CHARS
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -323,6 +358,16 @@ function testBuildHeuristicAIView(): void {
   });
   assert('partial: 单字段输出', partial.includes('小幅高开'));
   assert('partial: 无北向描述', !partial.includes('北向'));
+
+  // US-043 / FE-004 AC: 启发式 fallback 不会超过 AI_VIEW_MAX_CHARS
+  // — 即便未来增加更多维度, 拼出来的字串也守住 hard-cap.
+  const allCases = [bull, bear, neutral, flat, partial];
+  for (const sentence of allCases) {
+    assert(
+      `heuristic ≤ AI_VIEW_MAX_CHARS (len=${sentence.length}, AI_VIEW_MAX_CHARS=${AI_VIEW_MAX_CHARS})`,
+      sentence.length <= AI_VIEW_MAX_CHARS
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

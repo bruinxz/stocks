@@ -60,7 +60,11 @@ import {
   priorityLabel,
   sourceLabel,
 } from './todayPlanHelpers';
-import { getMarketBriefToday, MarketBriefResult } from '../../services/marketBriefService';
+import {
+  getMarketBriefToday,
+  MarketBriefResult,
+  truncateAIView,
+} from '../../services/marketBriefService';
 import {
   getMarketJudgmentToday,
   MarketJudgmentResult,
@@ -1082,7 +1086,9 @@ const MarketBriefCard: React.FC = () => {
   const benchmark = brief.components?.benchmark;
   const northbound = brief.components?.northbound;
   const limitUp = brief.components?.limit_up;
-  const aiView = brief.ai_view || '今日观点暂无';
+  // US-043 / FE-004 AC: ≤ 150 字 — 后端已 hard-cap, 前端再加一层 hint 截断防御
+  // (DB 历史脏数据 / 老缓存绕过后端 cap 时 UI 不会撑爆).
+  const aiView = truncateAIView(brief.ai_view) || '今日观点暂无';
 
   return (
     <Card size="small" title={titleNode} extra={extra}>

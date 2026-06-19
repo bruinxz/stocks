@@ -17,6 +17,15 @@ import api from './api';
 
 export type MarketBriefStatus = 'ok' | 'partial' | 'failed';
 
+/**
+ * AI 一句话观点字符上限 (US-043 / FE-004 验收: ≤ 150 字).
+ *
+ * 与 backend MarketBriefService.AI_VIEW_MAX_CHARS 同源 — 后端 prompt 显式声明、
+ * pickAIViewFromPayload + buildHeuristicAIView 双侧硬截断, 前端再加一层 hint 截断
+ * 防御 (老缓存 / DB 历史脏数据走 cache 路径绕过新 cap 时 UI 不会撑爆).
+ */
+export const AI_VIEW_MAX_CHARS = 150;
+
 export interface MarketBriefBenchmarkComponent {
   symbol: string;
   prev_close: number | null;
@@ -96,6 +105,22 @@ export async function getMarketBriefToday(
 
 export const marketBriefService = {
   getMarketBriefToday,
+  truncateAIView,
 };
 
 export default marketBriefService;
+
+/**
+ * 把 AI 一句话观点截断到 AI_VIEW_MAX_CHARS — 防御 DB 历史脏数据 / 老缓存绕过后端 cap.
+ *
+ * - null / 空串保持原样;
+ * - 长度 ≤ AI_VIEW_MAX_CHARS 原文返回;
+ * - 超出时硬截断 + 末尾追加 '…' (替换最后 1 字, 总长仍 = AI_VIEW_MAX_CHARS).
+ */
+export function truncateAIView(view: string | null | undefined): string | null {
+  if (view == null) return null;
+  const s = String(view);
+  if (!s.trim()) return s.trim() || null;
+  if (s.length <= AI_VIEW_MAX_CHARS) return s;
+  return s.slice(0, AI_VIEW_MAX_CHARS - 1) + '…';
+}

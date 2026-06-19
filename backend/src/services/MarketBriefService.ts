@@ -70,6 +70,18 @@ const TRADING_AGENTS_URL = TRADING_AGENTS_BASE_URL;
 /** AI 一句话观点的远端 axios timeout */
 export const REMOTE_TIMEOUT_MS = 30_000;
 
+/**
+ * AI 一句话观点字符上限 (US-043 / FE-004 验收: ≤ 150 字).
+ *
+ * 同时作用于:
+ *   - buildPromptForAI: 显式告知远端 LLM 上限;
+ *   - pickAIViewFromPayload: 远端违约超出时 hard-cap 截断 (防御 fail-OPEN);
+ *   - buildHeuristicAIView: 启发式拼装也 hard-cap (兜底自洽).
+ *
+ * 数值与前端 MarketBriefCard 渲染时的截断常量同源 (frontend 用同一阈值, 不会展示不同上限).
+ */
+export const AI_VIEW_MAX_CHARS = 150;
+
 /** 基准指数 symbol（沪深300 — AC 描述"今日开盘"） */
 export const BENCHMARK_SYMBOL = 'sh.000300';
 
@@ -236,7 +248,7 @@ export function buildPromptForAI(ctx: {
   limit_up_count: number | null;
 }): string {
   const lines = [
-    '你是一名 A 股市场每日早盘速读编辑。请基于以下数据，用 1-2 句简短中文给出当日大盘观点（不超过 60 字）。',
+    `你是一名 A 股市场每日早盘速读编辑。请基于以下数据，用 1-2 句简短中文给出当日大盘观点（不超过 ${AI_VIEW_MAX_CHARS} 字, 越精炼越好, 目标 60-100 字）。`,
     '只输出观点本身，不要加 "观点：" 等前缀。',
     `日期：${ctx.trade_date}`,
     `沪深300 上日收盘：${ctx.prev_close ?? '—'}`,
@@ -250,7 +262,8 @@ export function buildPromptForAI(ctx: {
   return lines.join('\n');
 }
 
-/** 从远端 payload 抓取 ai view 文本（兼容 view / summary / text 三种字段命名） */
+/** 从远端 payload 抓取 ai view 文本（兼容 view / summary / text 三种字段命名）。
+ *  超出 AI_VIEW_MAX_CHARS (150 字, AC) 时硬截断 — 远端 LLM 违约也不会撑爆 UI. */
 export function pickAIViewFromPayload(payload: RemoteMarketBriefPayload): string | null {
   const statusRaw = String(payload?.status || '').toUpperCase();
   if (statusRaw === 'FAILED') return null;
@@ -258,7 +271,7 @@ export function pickAIViewFromPayload(payload: RemoteMarketBriefPayload): string
   const view = data.view || data.summary || data.text || '';
   const trimmed = String(view || '').trim();
   if (!trimmed) return null;
-  return trimmed.length > 200 ? trimmed.slice(0, 200) : trimmed;
+  return trimmed.length > AI_VIEW_MAX_CHARS ? trimmed.slice(0, AI_VIEW_MAX_CHARS) : trimmed;
 }
 
 /**
@@ -307,7 +320,9 @@ export function buildHeuristicAIView(ctx: {
   if (parts.length === 0) {
     return '今日大盘数据待补，请稍后刷新';
   }
-  return parts.join('，');
+  const joined = parts.join('，');
+  // 启发式 fallback 也守 AI_VIEW_MAX_CHARS — 维度未来扩到 5+ 段时不会撑爆 UI.
+  return joined.length > AI_VIEW_MAX_CHARS ? joined.slice(0, AI_VIEW_MAX_CHARS) : joined;
 }
 
 /** 构造人类可读中文摘要（saveBrief.message 字段） */

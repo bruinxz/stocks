@@ -656,8 +656,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 43,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "依赖: FE-001/002/003 | DONE 2026/06/19: 把 ai_view ≤150 字 AC 主验收落实成可测的 hard-cap. backend/src/services/MarketBriefService.ts 新增 AI_VIEW_MAX_CHARS=150 常量, 3 处同源使用 — (1) buildPromptForAI 显式告诉远端 LLM 上限, (2) pickAIViewFromPayload 远端违约时 slice 截断 (老 200 字 fallback 收紧到 150), (3) buildHeuristicAIView 启发式拼装也守同款 cap (未来加维度也不会撑爆). frontend/src/services/marketBriefService.ts 暴露 AI_VIEW_MAX_CHARS + truncateAIView 双向同源, MarketBriefCard 渲染层加一层 hint 截断 (DB 历史脏数据 / 老缓存绕过后端 cap 时 UI 不会撑爆) — 超出末尾 … 替换最后 1 字保持总长. 单测从 130 ok 扩到 144 ok: testConstants 新增 AI_VIEW_MAX_CHARS=150 + prompt 含数字 guard; testPickAIViewFromPayload 新增 3 边界 (200→AI_VIEW_MAX_CHARS / 恰好 cap / cap+1 截断); testBuildHeuristicAIView 新增 5 case ≤cap 全断言. tsc 0 err / lint 0 new err / npm test --filter=market-brief 144 ok 0 failed."
     },
     {
       "id": "US-044",
