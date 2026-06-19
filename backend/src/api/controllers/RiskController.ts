@@ -462,6 +462,94 @@ export class RiskController {
       res.status(500).json({ success: false, message: error?.message || '获取失败' });
     }
   }
+
+  // ============================================================
+  // US-065 [FE-026] AnalysisEngine off/shadow/hard mode 切换
+  // ============================================================
+
+  /**
+   * GET /api/risk/analysis-engine-config  (US-065)
+   *
+   * 读取当前 user 的 analysis-engine 接入模式 + 配置。
+   * 字段存于 `User.risk_config.analysis_engine` JSONB:
+   *   { mode: 'off'|'shadow'|'hard', enabled_analyzers?: string[], weights?: object }
+   *
+   * 未配置时返回 default (mode='off') 并标 is_default=true 让 UI 显示 “系统默认”。
+   *
+   * Response: { success, data: { config, is_default, default } }
+   */
+  async getAnalysisEngineConfig(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { User } = require('../../models/User');
+      /* eslint-disable @typescript-eslint/no-var-requires */
+      const {
+        normalizeAnalysisEngineConfig,
+        DEFAULT_ANALYSIS_ENGINE_CONFIG,
+      } = require('../../services/analysis-engine/ShadowDoubleRunService');
+      /* eslint-enable @typescript-eslint/no-var-requires */
+      const userRow = await User.findByPk(user_id);
+      if (!userRow) {
+        return res.status(404).json({ success: false, message: 'user 不存在' });
+      }
+      const raw = (userRow.risk_config || {})['analysis_engine'];
+      const normalized = normalizeAnalysisEngineConfig(raw);
+      return res.json({
+        success: true,
+        data: {
+          config: normalized,
+          is_default: !raw,
+          default: DEFAULT_ANALYSIS_ENGINE_CONFIG,
+        },
+      });
+    } catch (error: any) {
+      logger.error('获取 AnalysisEngine 配置失败:', error);
+      res.status(500).json({ success: false, message: error?.message || '获取失败' });
+    }
+  }
+
+  /**
+   * PUT /api/risk/analysis-engine-config  (US-065)
+   *
+   * 持久化用户 analysis-engine 接入模式。
+   *   body: { mode, enabled_analyzers?, weights? }
+   * 字段全 lenient — 走 normalizeAnalysisEngineConfig 把 invalid mode/字段静默
+   * 退回 'off' / undefined, 防腐蚀 risk_config JSONB.
+   */
+  async updateAnalysisEngineConfig(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { User } = require('../../models/User');
+      /* eslint-disable @typescript-eslint/no-var-requires */
+      const {
+        normalizeAnalysisEngineConfig,
+      } = require('../../services/analysis-engine/ShadowDoubleRunService');
+      /* eslint-enable @typescript-eslint/no-var-requires */
+      const userRow = await User.findByPk(user_id);
+      if (!userRow) {
+        return res.status(404).json({ success: false, message: 'user 不存在' });
+      }
+      const normalized = normalizeAnalysisEngineConfig(req.body || {});
+      const nextRiskConfig = {
+        ...(userRow.risk_config || {}),
+        analysis_engine: normalized,
+      };
+      userRow.risk_config = nextRiskConfig;
+      // US-017 lesson: JSONB 改动必须显式 changed()
+      userRow.changed('risk_config', true);
+      await userRow.save();
+      return res.json({
+        success: true,
+        data: { config: normalized },
+        message: `AnalysisEngine 模式已设为 ${normalized.mode}`,
+      });
+    } catch (error: any) {
+      logger.error('更新 AnalysisEngine 配置失败:', error);
+      res.status(500).json({ success: false, message: error?.message || '更新失败' });
+    }
+  }
 }
 
 export const riskController = new RiskController();

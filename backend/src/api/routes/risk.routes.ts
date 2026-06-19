@@ -426,4 +426,49 @@ router.get('/kill-switch-status', authController.authenticate, riskController.ge
  */
 router.get('/market-top-status', authController.authenticate, riskController.getMarketTopStatus);
 
+/**
+ * @openapi
+ * /api/risk/analysis-engine-config:
+ *   get:
+ *     tags: [风控 Risk]
+ *     summary: 读取 AnalysisEngine 接入模式配置 (US-065)
+ *     description: |
+ *       返回用户 risk_config.analysis_engine 的 normalized 配置 (off/shadow/hard),
+ *       附带 system default 与 is_default 标记便于 UI "恢复默认" 按钮。
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 配置 + 默认值 }
+ *       401: { description: 未授权 }
+ *   put:
+ *     tags: [风控 Risk]
+ *     summary: 更新 AnalysisEngine 接入模式 (US-065; off/shadow/hard)
+ *     description: |
+ *       字段全 lenient，invalid 会被 normalize 退回 off。
+ *       下一次 AIAdvisorService.analyzeSingleStock 末尾的 maybeRunShadow 调用生效。
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               mode: { type: string, enum: [off, shadow, hard] }
+ *               enabled_analyzers: { type: array, items: { type: string } }
+ *               weights: { type: object }
+ *     responses:
+ *       200: { description: 已保存 }
+ *       401: { description: 未授权 }
+ */
+router.get(
+  '/analysis-engine-config',
+  authController.authenticate,
+  riskController.getAnalysisEngineConfig
+);
+router.put(
+  '/analysis-engine-config',
+  authController.authenticate,
+  riskController.updateAnalysisEngineConfig
+);
+
 export default router;

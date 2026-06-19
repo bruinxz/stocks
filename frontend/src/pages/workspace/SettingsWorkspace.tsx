@@ -39,10 +39,12 @@ import {
   MessageOutlined,
   CalculatorOutlined,
   ApartmentOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import SizingPolicyTab from './SettingsWorkspace.SizingPolicyTab';
 import PortfolioConstructionTab from './SettingsWorkspace.PortfolioConstructionTab';
+import AnalysisEngineTab from './SettingsWorkspace.AnalysisEngineTab';
 import {
   loadNotificationChannels,
   updateNotificationChannels,
@@ -117,6 +119,7 @@ const SettingsWorkspace: React.FC = () => {
     { key: 'notifications', label: '通知设置', icon: <BellOutlined /> },
     { key: 'sizing', label: '仓位策略', icon: <CalculatorOutlined /> },
     { key: 'portfolio-construction', label: '组合构建', icon: <ApartmentOutlined /> },
+    { key: 'analysis-engine', label: '分析引擎', icon: <ThunderboltOutlined /> },
     { key: 'users', label: '用户管理', icon: <TeamOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('push-channels');
@@ -265,6 +268,12 @@ const SettingsWorkspace: React.FC = () => {
         </Button>
         <Tag color="purple">US-080 推送渠道</Tag>
       </Space>
+    ) : activeKey === 'sizing' ? (
+      <Tag color="cyan">仓位策略 (Sprint 26+)</Tag>
+    ) : activeKey === 'portfolio-construction' ? (
+      <Tag color="geekblue">组合构建 (Sprint 29+)</Tag>
+    ) : activeKey === 'analysis-engine' ? (
+      <Tag color="volcano">US-065 分析引擎接入</Tag>
     ) : (
       <Tag color="processing">待迁移现有个人中心 / 用户管理页</Tag>
     );
@@ -1610,15 +1619,19 @@ const SettingsWorkspace: React.FC = () => {
       kpiSlot={kpiSlot}
       headerActions={headerActions}
     >
-      {activeKey === 'notifications'
-        ? renderNotifications()
-        : activeKey === 'push-channels'
-        ? renderPushChannels()
-        : activeKey === 'sizing'
-        ? <SizingPolicyTab />
-        : activeKey === 'portfolio-construction'
-        ? <PortfolioConstructionTab />
-        : renderPlaceholder()}
+      {activeKey === 'notifications' ? (
+        renderNotifications()
+      ) : activeKey === 'push-channels' ? (
+        renderPushChannels()
+      ) : activeKey === 'sizing' ? (
+        <SizingPolicyTab />
+      ) : activeKey === 'portfolio-construction' ? (
+        <PortfolioConstructionTab />
+      ) : activeKey === 'analysis-engine' ? (
+        <AnalysisEngineTab />
+      ) : (
+        renderPlaceholder()
+      )}
       <DigestPreviewModal
         open={previewOpen}
         result={previewResult}

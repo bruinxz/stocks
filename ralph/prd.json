@@ -1008,8 +1008,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 65,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added GET/PUT /api/risk/analysis-engine-config (RiskController.getAnalysisEngineConfig/updateAnalysisEngineConfig) reusing existing normalizeAnalysisEngineConfig + DEFAULT_ANALYSIS_ENGINE_CONFIG from ShadowDoubleRunService. Added SettingsWorkspace.AnalysisEngineTab.tsx (off/shadow/hard mode toggle with draft/view双状态范式 抄 PortfolioConstructionTab); registered in SettingsWorkspace.tsx with ThunderboltOutlined icon. 36 unit assertions covering normalize contract + controller mirror logic + META-GUARD route mounting."
     },
     {
       "id": "US-066",
