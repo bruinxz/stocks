@@ -752,8 +752,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 49,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "抽 frontend/src/pages/workspace/factorPickReasonHelpers.ts (5 export const + pickTopFactorContributors/formatFactorContrib/buildShortPickReason/truncatePickReason 4 pure func), PicksTab buildLatestPickColumns 加 inline_reason 列 (Tooltip 全文 + 短文截到 60 字), 59 assert 单测 (5 模块 + META-GUARD), tsc/lint clean."
     },
     {
       "id": "US-050",

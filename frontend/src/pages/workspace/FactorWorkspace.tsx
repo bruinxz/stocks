@@ -67,6 +67,7 @@ import {
   listComboTemplates,
   saveComboTemplate,
 } from './factorComboTemplateHelpers';
+import { buildShortPickReason } from './factorPickReasonHelpers';
 import {
   factorService,
   FactorDetailResponse,
@@ -2776,6 +2777,25 @@ function buildLatestPickColumns(
         ) : (
           <Tag color="blue">持有</Tag>
         ),
+    },
+    {
+      title: '理由',
+      key: 'inline_reason',
+      width: 260,
+      render: (_: unknown, record: FactorPreviewSignal) => {
+        const short = buildShortPickReason(record);
+        // Tooltip 显示 backend 原始 reason + composite (展开行也有, 这里给"不点展开"
+        // 的用户兜底); 列默认显示 inline 短理由 (top-2 因子贡献), 与 US-049 PRD AC
+        // "列表内嵌短理由"对齐.
+        const fullTip = record.reason || short;
+        return (
+          <AntTooltip title={fullTip} mouseEnterDelay={0.2}>
+            <Text style={{ fontSize: 12 }} type="secondary">
+              {short}
+            </Text>
+          </AntTooltip>
+        );
+      },
     },
     ...(onAnalyze
       ? [

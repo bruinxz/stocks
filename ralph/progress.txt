@@ -1320,3 +1320,30 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - 前端 lazy fetch 三态模式 (loading && !data → Spin, error && !data → Alert+重试, error && data → 顶部 warning+陈旧数据) 已是 FactorWorkspace 子 tab 标准, 不要发明新形态
   - META-GUARD 单测里走 fs+regex 守住 "新文件存在 + 关键 export + 关键 data-testid + 反向断言 (字典不被 inline 进 tab)" 是 frontend 改造的事实级回归保险
 ---
+
+## 2026/06/19 21:35 - US-049
+- 实现 [FE-010] FactorWorkspace picks inline 理由 — PicksTab 表格新增"理由"列, 不点 expandable row 也能扫到每只股票"为什么入选" (top-2 因子贡献 + 动作前缀), Tooltip 显示完整 backend reason 兜底.
+- Files changed:
+  - frontend/src/pages/workspace/factorPickReasonHelpers.ts (新, ~140 行, 4 pure helper + 4 export const):
+    * PICK_REASON_MAX_CHARS=60 / PICK_REASON_FALLBACK='无理由数据' / FACTOR_NAME_LABELS (8 因子中文) / ACTION_PREFIX (buy/sell/hold → 新进/剔除/保留)
+    * pickTopFactorContributors(zScores, k) — |z| 降序 + name 字母序 tie-break, NaN/Infinity/0 排除, 全空兜底返 []
+    * formatFactorContrib(name, z) — "动量 +1.84" / "价值 -0.95", 2 位小数显式带正负号, 未知 name fallback 原名
+    * buildShortPickReason(signal) — 主入口 3 级降级: top-2 因子 > composite > fallback; 自动拼 "新进 · ..." 前缀; 接 null/undefined/任意垃圾输入永远不抛
+    * truncatePickReason(text) — Array.from codepoint 截断防中文 surrogate, 超 cap 切到 cap-1 + '…'
+  - frontend/src/pages/workspace/FactorWorkspace.tsx:
+    * 顶部新 import { buildShortPickReason } from './factorPickReasonHelpers'
+    * buildLatestPickColumns() 在 '上次调仓动作' 与 'AI 解读' 之间插入新 column key='inline_reason', width=260, render 调 AntTooltip 包 Text (Tooltip 显示 record.reason 完整文案, cell 显示 buildShortPickReason 短文)
+  - backend/tests/services/factor-pick-reason.test.ts (新, ~230 行, 59 assert): 6 模块 — [1] 4 个常量 sanity / [2] pickTopFactorContributors 10 case (null/全 0/NaN/Infinity/k≤0/tie-break) / [3] formatFactorContrib 4 case / [4] truncatePickReason 6 case (空/cap/cap+1/中文 codepoint) / [5] buildShortPickReason 7 path (buy/sell/hold + composite 降级 + fallback + null 兜底 + 超长截断) / [6] META-GUARD fs+regex — FactorWorkspace.tsx 含 import + key='inline_reason' + 调 buildShortPickReason(record) + title='理由', helper 7 个 export 都在
+  - ralph/prd.json: US-049 passes=true + notes
+- 验证:
+  - `npx tsc --noEmit` (backend + frontend 各跑) exit 0
+  - `npm test -- --filter=factor-pick-reason` exit 0, 59 ok / 0 failed (751ms)
+  - `npm test -- --filter=factor` exit 0, 20 files / 全过 — 无 regression
+  - `eslint frontend/src/pages/workspace/factorPickReasonHelpers.ts FactorWorkspace.tsx` 0 errors (FactorWorkspace 7 个 warn 全为 pre-existing baseline; helper 1 个 prettier warn 已 --fix)
+- **Learnings for future iterations:**
+  - **"inline 理由" 别直接复用 backend `signal.reason`**: backend MultiFactorAlphaStrategy 输出的 reason 形如 "新进入选：composite=0.785", 对人类没解释力 (用户看不懂"为什么是 0.785"). 真正有解释力的是"每只股票在 8 个因子上贡献最大的 top-2", 拼成 "动量 +1.84 / 价值 +1.20" 让用户一眼看到主要 alpha 来源. UI 短理由 vs backend 决策 reason 是两件事 — backend reason 是审计/回溯用 (Tooltip 全文兜底显示), UI 短理由是认知用 (主 cell). 后续任何"给表格加 inline 解释" 类 story 都先问"backend 字段对人类直觉吗", 不直觉就抽 UI 专用 helper.
+  - **PickTopContributors 的 tie-break 必须是 deterministic**: |z| 相等时 (e.g. value=1.5 / momentum=1.5) 按 name 字母升序, 否则 Object.entries 的顺序在不同 V8 build 上不稳, React key 会跳 + 单测 flaky. 同款适用任何"按 score 排序 + 截 top-K" 类 helper, tie-break 永远用 deterministic 字段 (id/name/timestamp), 别依赖 insertion order.
+  - **中文截断必须用 Array.from(text) 算 codepoint**: 直接 `text.length` 把 surrogate pair (rare 中文如 𠀋 / 表情符号) 算成 2 字符, 截断位置错位; `text.slice(0, N)` 也会切到 surrogate 中间产生乱码. Array.from(text) → 真 codepoint 数组, slice 后 join — 正确做法. 与 [[AI_VIEW_MAX_CHARS 落代码模板]] (US-043) 同款思想, 任何长度 cap helper 都按这模板.
+  - **"inline 显示 + Tooltip 全文" 是 table cell 受限宽度场景的标准范式**: 主 cell 短文 (60 字硬 cap), 鼠标悬停 Tooltip 显示完整 backend reason. Tooltip mouseEnterDelay=0.2 防一扫表格全是 tooltip 闪烁, 比 0 友好 (实际操作鼠标会扫过多个 cell, 200ms 内不停留就不弹). 同款适用任何"表格 cell 显示截断文本"场景: AI 解读 / 操作日志 / 错误消息 / commit message.
+  - **frontend pure helper 的单测路径已固化**: `backend/tests/services/<feature>.test.ts` import `../../../frontend/src/pages/workspace/<helper>.ts`, ts-node --transpile-only 跑, 与 US-042/043/046/047 同款. 不依赖 jest/jsdom, 跨 monorepo import 走相对路径. META-GUARD fs+regex 守住"组件确实接入了 helper + helper export 没被误删", 与 backend US-019/022/023 同款思想.
+---
