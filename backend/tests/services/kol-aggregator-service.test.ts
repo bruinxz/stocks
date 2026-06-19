@@ -28,6 +28,8 @@
  *   - service.aggregateForStocks(): 批量串行 + interval, succeeded/failed 计数.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   KOLAggregatorService,
   KOLAggregatorDataSource,
@@ -38,6 +40,10 @@ import {
   KOL_SOURCES,
   RATING_SENTIMENT_MAP,
   SENTIMENT_KEYWORDS,
+  SOURCE_AUTHORITY,
+  SOURCE_AUTHORITY_DEFAULT,
+  getSourceAuthority,
+  authorityWeightedSentiment,
   ratingToSentiment,
   scoreNewsSentiment,
   conceptRankToSentiment,
@@ -291,19 +297,43 @@ function testDedupeAndSort(): void {
     ['2026-06-05', '2026-06-03', '2026-06-01']
   );
 
-  // === source priority: research > news > concept (同日) ===
+  // === source authority desc: research(0.6) > concept(0.4) > news(0.3) (同日, US-034) ===
   const sourceSort = dedupeAndSort(
     [
-      makeRec({ kol_name: 'A', kol_source: KOL_SOURCES.XQ_HOT_CONCEPT }),
-      makeRec({ kol_name: 'B', kol_source: KOL_SOURCES.EAST_MONEY_NEWS }),
+      makeRec({ kol_name: 'A', kol_source: KOL_SOURCES.EAST_MONEY_NEWS }),
+      makeRec({ kol_name: 'B', kol_source: KOL_SOURCES.XQ_HOT_CONCEPT }),
       makeRec({ kol_name: 'C', kol_source: KOL_SOURCES.RESEARCH_REPORT }),
     ],
     10
   );
   assertEqual(
-    'dedupe sort source priority',
+    'dedupe sort source authority desc',
     sourceSort.map(r => r.kol_source),
-    ['research_report', 'east_money_news', 'xq_hot_concept']
+    ['research_report', 'xq_hot_concept', 'east_money_news']
+  );
+
+  // === 同 authority 同 date, 强观点 (|sentiment| 大) 优先 (US-034) ===
+  const weakStrong = dedupeAndSort(
+    [
+      makeRec({
+        kol_name: 'weak',
+        opinion_date: '2026-06-01',
+        kol_source: KOL_SOURCES.RESEARCH_REPORT,
+        sentiment_score: 0.0,
+      }),
+      makeRec({
+        kol_name: 'strong',
+        opinion_date: '2026-06-01',
+        kol_source: KOL_SOURCES.RESEARCH_REPORT,
+        sentiment_score: 1.0,
+      }),
+    ],
+    10
+  );
+  assertEqual(
+    'dedupe 同权威同日 强观点优先',
+    weakStrong.map(r => r.kol_name),
+    ['strong', 'weak']
   );
 
   // === 去重: composite PK (stock_code|kol_name|opinion_date) ===
@@ -899,6 +929,145 @@ function testTodayLocalIso(): void {
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
+// US-034 [KOL-002] SOURCE_AUTHORITY 权重 — 显式契约 + helper + META-GUARD
+// ---------------------------------------------------------------------------
+
+function testSourceAuthorityConstants(): void {
+  // === AC: research 0.6 / news 0.3 / kol 0.4 / etf 0.5 / policy 0.8 ===
+  assertEqual('SOURCE_AUTHORITY research_report', SOURCE_AUTHORITY.research_report, 0.6);
+  assertEqual('SOURCE_AUTHORITY east_money_news', SOURCE_AUTHORITY.east_money_news, 0.3);
+  assertEqual('SOURCE_AUTHORITY xq_hot_concept', SOURCE_AUTHORITY.xq_hot_concept, 0.4);
+  assertEqual('SOURCE_AUTHORITY kol', SOURCE_AUTHORITY.kol, 0.4);
+  assertEqual('SOURCE_AUTHORITY etf_flow', SOURCE_AUTHORITY.etf_flow, 0.5);
+  assertEqual('SOURCE_AUTHORITY policy_doc', SOURCE_AUTHORITY.policy_doc, 0.8);
+  assertEqual('SOURCE_AUTHORITY_DEFAULT', SOURCE_AUTHORITY_DEFAULT, 0.3);
+
+  // 冻结契约 — 用户/上游不能擅自改权重值 (改了就要走 PR review)
+  let mutated = false;
+  try {
+    (SOURCE_AUTHORITY as Record<string, number>).research_report = 0.99;
+    mutated = SOURCE_AUTHORITY.research_report === 0.99;
+  } catch {
+    /* frozen → throw 也算契约成立 */
+  }
+  assert('SOURCE_AUTHORITY frozen 不可变', !mutated);
+
+  // 政策口径权威性最大 (与 dedupeAndSort 文档注释一致)
+  const max = Math.max(
+    SOURCE_AUTHORITY.research_report,
+    SOURCE_AUTHORITY.east_money_news,
+    SOURCE_AUTHORITY.xq_hot_concept,
+    SOURCE_AUTHORITY.kol,
+    SOURCE_AUTHORITY.etf_flow,
+    SOURCE_AUTHORITY.policy_doc
+  );
+  assertEqual('policy_doc is max authority', SOURCE_AUTHORITY.policy_doc, max);
+}
+
+function testGetSourceAuthority(): void {
+  assertEqual('known source research', getSourceAuthority('research_report'), 0.6);
+  assertEqual('known source policy', getSourceAuthority('policy_doc'), 0.8);
+  // 未识别 source → fallback default, 不 throw
+  assertEqual('unknown source fallback', getSourceAuthority('alien_source'), 0.3);
+  assertEqual('null source fallback', getSourceAuthority(null), 0.3);
+  assertEqual('undefined source fallback', getSourceAuthority(undefined), 0.3);
+  assertEqual('empty string fallback', getSourceAuthority(''), 0.3);
+}
+
+function testAuthorityWeightedSentiment(): void {
+  // |sentiment| * authority
+  assertEqual(
+    'weighted research +1.0',
+    authorityWeightedSentiment(
+      makeRec({ kol_source: KOL_SOURCES.RESEARCH_REPORT, sentiment_score: 1.0 })
+    ),
+    0.6
+  );
+  assertEqual(
+    'weighted news -0.5 (abs)',
+    authorityWeightedSentiment(
+      makeRec({ kol_source: KOL_SOURCES.EAST_MONEY_NEWS, sentiment_score: -0.5 })
+    ),
+    0.15
+  );
+  // null sentiment → 0 (不抢 ranking)
+  assertEqual(
+    'weighted null sentiment → 0',
+    authorityWeightedSentiment(
+      makeRec({ kol_source: KOL_SOURCES.RESEARCH_REPORT, sentiment_score: null })
+    ),
+    0
+  );
+  // NaN sentiment → 0
+  assertEqual(
+    'weighted NaN sentiment → 0',
+    authorityWeightedSentiment(
+      makeRec({ kol_source: KOL_SOURCES.RESEARCH_REPORT, sentiment_score: NaN })
+    ),
+    0
+  );
+}
+
+/**
+ * META-GUARD — 用 fs+regex 守 KOLAggregatorService.ts 的关键契约, 防止有人改 dedupeAndSort 时
+ * 漏掉 SOURCE_AUTHORITY 接入. 与 cron-registry / sizing-limit-consistency / feasibility-gate
+ * 测里的 META-GUARD 同款套路.
+ */
+function testSourceAuthorityMetaGuard(): void {
+  const src = fs.readFileSync(
+    path.resolve(__dirname, '../../src/services/KOLAggregatorService.ts'),
+    'utf8'
+  );
+
+  // 必须 export 三件套
+  assert(
+    'service exports SOURCE_AUTHORITY',
+    /export\s+const\s+SOURCE_AUTHORITY/.test(src)
+  );
+  assert(
+    'service exports getSourceAuthority',
+    /export\s+function\s+getSourceAuthority/.test(src)
+  );
+  assert(
+    'service exports authorityWeightedSentiment',
+    /export\s+function\s+authorityWeightedSentiment/.test(src)
+  );
+
+  // dedupeAndSort 必须真的调 getSourceAuthority / authorityWeightedSentiment
+  // (而非沿用旧 SOURCE_PRIORITY 表)
+  const dedupeFn = src.match(/export function dedupeAndSort[\s\S]+?\n\}\n/);
+  assert('dedupeAndSort 函数被找到', !!dedupeFn);
+  if (dedupeFn) {
+    assert(
+      'dedupeAndSort 调 getSourceAuthority',
+      /getSourceAuthority\(/.test(dedupeFn[0])
+    );
+    assert(
+      'dedupeAndSort 调 authorityWeightedSentiment',
+      /authorityWeightedSentiment\(/.test(dedupeFn[0])
+    );
+    // 反向: 旧 SOURCE_PRIORITY 字面量已下线
+    assert(
+      'dedupeAndSort 不再用旧 SOURCE_PRIORITY 表',
+      !/SOURCE_PRIORITY/.test(dedupeFn[0])
+    );
+  }
+
+  // Object.freeze 守不可变契约
+  assert(
+    'SOURCE_AUTHORITY 用 Object.freeze',
+    /SOURCE_AUTHORITY[\s\S]{0,200}Object\.freeze\(\{/.test(src)
+  );
+
+  // AC 5 来源权重值必须在源文件中显式出现
+  assert('source value research_report 0.6 in src', /research_report:\s*0\.6/.test(src));
+  assert('source value east_money_news 0.3 in src', /east_money_news:\s*0\.3/.test(src));
+  assert('source value kol 0.4 in src', /\bkol:\s*0\.4/.test(src));
+  assert('source value etf_flow 0.5 in src', /etf_flow:\s*0\.5/.test(src));
+  assert('source value policy_doc 0.8 in src', /policy_doc:\s*0\.8/.test(src));
+}
+
+// ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
   // Pure functions
@@ -913,6 +1082,12 @@ async function main(): Promise<void> {
   testMapNewsToOpinions();
   testMapHotConceptsToOpinions();
   testTodayLocalIso();
+
+  // US-034 source_authority 权重
+  testSourceAuthorityConstants();
+  testGetSourceAuthority();
+  testAuthorityWeightedSentiment();
+  testSourceAuthorityMetaGuard();
 
   // End-to-end with fake DataSource
   await testAggregate_HappyPath();

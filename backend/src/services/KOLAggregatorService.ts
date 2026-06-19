@@ -147,6 +147,50 @@ export interface KOLOpinionRecord {
   raw_payload: Record<string, unknown>;
 }
 
+/**
+ * **source_authority 权重 (US-034)** — 不同来源的可信度 / 影响力先验.
+ *
+ * 用于 (a) dedupeAndSort 同日多条时优先级排序 (authority × |sentiment| 越大越靠前)
+ * 与 (b) 下游 NewsAnalyzer / 多维分析 (US-036+) 加权汇总情绪. 直接对外暴露常量
+ * 而非藏在闭包里, 让任何使用 KOLOpinion 的消费者都能拿同一份权重做加权.
+ *
+ * 当前 3 个 enum 来源已落地; 'kol' / 'etf_flow' / 'policy_doc' 是为 US-035 / US-036
+ * 预留的占位 — 之后引入新 kol_source 枚举时直接读这张表, 不需要再改 dedupeAndSort.
+ *
+ * 缺省 fallback = 0.3 (与 east_money_news 等同, 即 "普通消息" 等级).
+ */
+export const SOURCE_AUTHORITY: Readonly<Record<string, number>> = Object.freeze({
+  research_report: 0.6,
+  east_money_news: 0.3,
+  xq_hot_concept: 0.4,
+  kol: 0.4,
+  etf_flow: 0.5,
+  policy_doc: 0.8,
+});
+
+export const SOURCE_AUTHORITY_DEFAULT = 0.3;
+
+/** 拿单个来源的权威权重 — 未识别 source 走 SOURCE_AUTHORITY_DEFAULT 而非 throw. */
+export function getSourceAuthority(source: string | null | undefined): number {
+  if (!source) return SOURCE_AUTHORITY_DEFAULT;
+  const v = SOURCE_AUTHORITY[source];
+  return typeof v === 'number' ? v : SOURCE_AUTHORITY_DEFAULT;
+}
+
+/**
+ * 一条意见的"权威加权情绪强度" — `|sentiment_score| * authority`.
+ *
+ * 给 dedupeAndSort 当同日多条排序的二级 key — 强观点 (买入 / 立案) + 权威来源
+ * (券商研报 / 政策) 排最前; 中性 0 分意见自然沉底.
+ *
+ * sentiment_score=null → 视为 0 (无明确观点不抢 ranking, 但不影响 authority 自身).
+ */
+export function authorityWeightedSentiment(rec: KOLOpinionRecord): number {
+  const s = rec.sentiment_score;
+  const absS = s !== null && Number.isFinite(s) ? Math.abs(s as number) : 0;
+  return absS * getSourceAuthority(rec.kol_source);
+}
+
 export interface AggregateOptions {
   /** 取近 N 天 (默认 90)。研报 / 新闻 / 概念 均按此窗口过滤。 */
   lookbackDays?: number;
@@ -457,7 +501,7 @@ export function normalizeDateOnly(raw: string | null | undefined, fallback: stri
 }
 
 /**
- * 把候选 opinions 排序 (opinion_date desc, kol_source 优先级) 并裁到 limit。
+ * 把候选 opinions 排序 (opinion_date desc, authority 权重) 并裁到 limit。
  *
  * **去重规则** (composite key = stock_code|kol_name|opinion_date):
  *   - 同 KOL 同日多条 → "信息量更大" 的优先:
@@ -465,18 +509,18 @@ export function normalizeDateOnly(raw: string | null | undefined, fallback: stri
  *     2. opinion_summary 长度更长的优先;
  *     3. 后出现的覆盖前出现的 (与 bulkCreate updateOnDuplicate 行为一致).
  *
- * **排序优先级**:
+ * **排序优先级** (US-034 升级 — 引入 source_authority 权重):
  *   1. opinion_date desc (最新优先);
- *   2. kol_source priority: research_report > east_money_news > xq_hot_concept
- *      (券商研报 > 媒体新闻 > 概念代理 — AC 期望"5-10 条最新", 优质内容靠前);
- *   3. kol_name 字典序 (稳定 tie-break, 同 quant strategies stable sort 范式).
+ *   2. authority 权重 desc: SOURCE_AUTHORITY[kol_source] 越大越靠前
+ *      (research_report 0.6 > etf_flow 0.5 > xq_hot_concept / kol 0.4 >
+ *      east_money_news 0.3, policy_doc 0.8 最高 — 政策口径权威性最大);
+ *   3. authority × |sentiment_score| desc: 同权威级别下"强观点 (买入/立案)" 排前面,
+ *      把"召开股东大会"这类 0 分中性意见沉底;
+ *   4. kol_name 字典序 (稳定 tie-break, 同 quant strategies stable sort 范式).
+ *
+ * 与下游 NewsAnalyzer (US-036) 共享 SOURCE_AUTHORITY 常量, 确保排序优先级与
+ * 加权汇总情绪用同一组先验, 避免"前端展示顺序 ≠ 加权信号" 的口径漂移.
  */
-const SOURCE_PRIORITY: Record<KOLSource, number> = {
-  research_report: 0,
-  east_money_news: 1,
-  xq_hot_concept: 2,
-};
-
 export function dedupeAndSort(records: KOLOpinionRecord[], limit: number): KOLOpinionRecord[] {
   const byKey = new Map<string, KOLOpinionRecord>();
   for (const rec of records) {
@@ -495,11 +539,15 @@ export function dedupeAndSort(records: KOLOpinionRecord[], limit: number): KOLOp
     if (a.opinion_date !== b.opinion_date) {
       return a.opinion_date < b.opinion_date ? 1 : -1;
     }
-    // 2. source priority
-    const ap = SOURCE_PRIORITY[a.kol_source] ?? 99;
-    const bp = SOURCE_PRIORITY[b.kol_source] ?? 99;
-    if (ap !== bp) return ap - bp;
-    // 3. kol_name 稳定 tie-break
+    // 2. authority desc — 权威来源排前面
+    const aa = getSourceAuthority(a.kol_source);
+    const ba = getSourceAuthority(b.kol_source);
+    if (aa !== ba) return ba - aa;
+    // 3. authority-weighted |sentiment| desc — 强观点排前面 (同权威级别下)
+    const aw = authorityWeightedSentiment(a);
+    const bw = authorityWeightedSentiment(b);
+    if (aw !== bw) return bw - aw;
+    // 4. kol_name 稳定 tie-break
     return a.kol_name.localeCompare(b.kol_name, 'zh-CN');
   });
   return sorted.slice(0, limit);

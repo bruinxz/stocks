@@ -516,8 +516,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 34,
-      "passes": false,
-      "notes": "依赖: D-011, D-020"
+      "passes": true,
+      "notes": "依赖: D-011, D-020 | DONE 2026/06/19: KOLAggregatorService 加 source_authority 权重表 (research_report 0.6 / east_money_news 0.3 / xq_hot_concept 0.4 / kol 0.4 / etf_flow 0.5 / policy_doc 0.8 — 5 来源含 US-035 占位 + Object.freeze + fallback 0.3 与 east_money_news 等同 = '普通消息' 等级) + 3 export 纯函数 (SOURCE_AUTHORITY 常量 / getSourceAuthority(source) 未识别 fallback / authorityWeightedSentiment(rec) = |sentiment|×authority, null/NaN→0). dedupeAndSort 升级排序优先级 (US-034): 1) opinion_date desc; 2) authority desc (policy_doc 0.8 > research 0.6 > etf 0.5 > kol/concept 0.4 > news 0.3); 3) authority × |sentiment| desc (同权威级别下强观点'买入/立案'排前面, 0分中性意见沉底); 4) kol_name 字典序 stable tie-break. 旧 SOURCE_PRIORITY enum 表删, 新表对外暴露让下游 NewsAnalyzer (US-036) 加权汇总用同一组先验避免'前端展示顺序≠加权信号'口径漂移. 单测 174 ok / 0 failed (原 142 + 新 32 assertion / 4 函数: testSourceAuthorityConstants 7 案 含 frozen 契约 + policy 最大; testGetSourceAuthority 6 案 含 unknown/null/undefined/empty fallback; testAuthorityWeightedSentiment 4 案 含 null/NaN→0; testSourceAuthorityMetaGuard fs+regex 守 — 3 export 必在 + dedupeAndSort 必调 getSourceAuthority + 必调 authorityWeightedSentiment + 反向不再用 SOURCE_PRIORITY + Object.freeze + 5 来源权重数值显式出现 src). tsc 0 err / lint 0 err. 既有 dedupeAndSort 2 测组也更新 (source authority desc + 同权威同日强观点优先)."
     },
     {
       "id": "US-035",

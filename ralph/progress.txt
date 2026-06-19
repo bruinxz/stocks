@@ -911,3 +911,22 @@ Started: Fri Jun 19 02:25:41 CST 2026
 ## Codebase Patterns (新增)
 - **NLP pure extractor 模板** (US-027 entities / US-028 earnings grade / US-033 stocks-industries-indicators...): 任何"从自然语言 60-200 字符抽 N 类 slot/entity"启发式都按 7 件套 — (1) 主入口 `extractXxx(text: any): T[]` 接 unknown 不报 — `normalizeExtractorInput` helper 统一处理 null/undefined/非字符串/空/全空格 → '' fallback, 6 个 extractor 全转调避免 6 处 null guard; (2) 关键词字典/别名表 export const + Object.freeze (INDUSTRY_KEYWORDS / INDICATOR_ALIASES / NUMBER_UNIT_TOKENS / 关键词词表 必须冻结); (3) 多个别名映射到同 canonical 形态 ('夏普'/'sharpe'/'SHARPE'→'sharpe', '回撤'/'MAX_DRAWDOWN'/'最大回撤'→'max_drawdown') 减少 downstream 分支; (4) 边界 regex 用 lookbehind/lookahead (`(?<!\d)(\d{6})(?!\d)`) 拦"过窄 / 过宽"匹配, Node 18+ 稳定但**必须**配单测 case 守"6 位精确 + 5/7 位过滤"边界; (5) 单位归一表 `[token, canonical]` Object.freeze + 显式注释"单位只记不乘" — 7000 万 ≠ 7000 (downstream 自行 ×10000), 否则丢精度信息; (6) 多正则 + 重叠位置去重 (extractDates 用 `_pos` 内部跟踪) 防"2026年6月19日" 被 reAbs + reAbsNoYear 双抽; (7) 聚合入口 `extract<Domain>Entities(text)` 一次返所有切片, 上游单调即可拿全 slot — 单测必断"聚合 = 6 个 extractor 各自结果合并". 与 AnnouncementNLPService.extractEntities (US-027 角色实体) 同名不冲突: 两个独立 module 不互相 import, namespace 自然分离, 但顶部 jsdoc 必须显式声明"与 X 同名不冲突" 让 grep 抓出来时容易识别 namespace. **不去重 vs 去重**契约写 jsdoc — 实体类 (stocks/industries) 去重; 数字/日期不去重 (同 slot 多 occurrence 是独立信息).
 ---
+
+## 2026-06-19 - US-034 [KOL-002] KOLAggregator 加 source_authority 权重
+- Implemented:
+  - 新增 SOURCE_AUTHORITY frozen 权重表 (research_report 0.6 / east_money_news 0.3 / xq_hot_concept 0.4 / kol 0.4 / etf_flow 0.5 / policy_doc 0.8) — 5 来源含 US-035/036 占位.
+  - 新增 getSourceAuthority(source) helper (未识别 → SOURCE_AUTHORITY_DEFAULT=0.3, 不 throw) + authorityWeightedSentiment(rec) = |sentiment|×authority (null/NaN→0).
+  - dedupeAndSort 升级 4 级排序: opinion_date desc → authority desc → authority × |sentiment| desc → kol_name 字典序 stable tie-break. 旧 SOURCE_PRIORITY enum 表移除.
+  - 32 新增 assertion (testSourceAuthorityConstants/GetSourceAuthority/AuthorityWeightedSentiment/MetaGuard) — 单测 142→174 ok.
+- Files changed:
+  - backend/src/services/KOLAggregatorService.ts (+44 -8)
+  - backend/tests/services/kol-aggregator-service.test.ts (+~170 lines including META-GUARD)
+  - ralph/prd.json (US-034 passes=true)
+- **Learnings for future iterations:**
+  - **多通道权重表抽常量到 export**: 任何"前端排序权重 = 下游加权信号" 的场景都把权重表 Object.freeze + export, 避免下游 NewsAnalyzer / 多维分析复制副本然后漂移. 与 OPS-005 RiskAlert SEVERITY_CHANNELS, US-009 RebalanceEngine DEFAULT_REBALANCE_OPTIONS 同款.
+  - **META-GUARD fs+regex 在 dedupe 函数体内扫**: 不用 import 也不用真跑 — 把 `export function dedupeAndSort[\\s\\S]+?\\n\\}\\n` regex 抓函数体, 然后在子串内扫 `getSourceAuthority\\(` / `authorityWeightedSentiment\\(` 双正向 + `!/SOURCE_PRIORITY/` 反向. 改 dedupeAndSort 时漏接 helper 立刻红.
+  - **frozen 不可变契约测**: try { obj.x = 99; } catch {} 然后 assert !mutated — 兼容 strict mode throw 与 non-strict silent fail 两种情况.
+  - **fallback 默认值与最低档来源等同**: SOURCE_AUTHORITY_DEFAULT=0.3 与 east_money_news 等同, 让未识别源不被歧视性低估 (与 announcement-nlp priority default='low' 而非 'none' 同款思路).
+  - 占位字段 'kol' / 'etf_flow' / 'policy_doc' 提前 enum 化, 避免 US-035 / US-036 加 fetchETFFlow / fetchPolicyDirectives 时还要改 dedupeAndSort 二次回流.
+  - 既有 dedupeAndSort 测组 'source priority' 必须随升级同步重命名 + 顺序断言改 (research > concept > news), 否则旧契约硬编码 silent fail.
+---
