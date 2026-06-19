@@ -71,6 +71,11 @@ import {
   INDUSTRY_KPI_WARN_PCT,
   INDUSTRY_KPI_WARN_COLOR,
 } from './industryConcentrationKpiHelpers';
+import {
+  buildDailyAttributionViewModel,
+  DailyAttributionViewModel,
+  DailyAttributionTradeRow,
+} from './dailyAttributionHelpers';
 import { usePortfolio } from '../../contexts/PortfolioContext';
 import { translateAxiosTradingError, translateTradingError } from '../../utils/tradingErrorMap';
 
@@ -102,6 +107,7 @@ const PortfolioWorkspace: React.FC = () => {
   const tabs: WorkspaceTab[] = [
     { key: 'positions', label: '当前持仓', icon: <WalletOutlined /> },
     { key: 'equity', label: '资金曲线', icon: <LineChartOutlined /> },
+    { key: 'attribution', label: '日归因', icon: <RobotOutlined /> },
     { key: 'trades', label: '交易明细', icon: <UnorderedListOutlined /> },
     { key: 'journal', label: '复盘日记', icon: <ReadOutlined /> },
     { key: 'correlation', label: '相关性矩阵', icon: <RadarChartOutlined /> },
@@ -275,6 +281,8 @@ const PortfolioWorkspace: React.FC = () => {
     );
   } else if (activeKey === 'equity') {
     body = <EquityCurveTab snapshots={snapshots} kpis={kpis} />;
+  } else if (activeKey === 'attribution') {
+    body = <DailyAttributionTab snapshots={snapshots} trades={trades} />;
   } else if (activeKey === 'trades') {
     body = <TradesTab trades={trades} />;
   } else if (activeKey === 'journal') {
@@ -1240,7 +1248,214 @@ const EquityCurveTab: React.FC<EquityCurveTabProps> = ({ snapshots, kpis }) => {
 };
 
 // ===========================================================================
-//  Tab 3: 交易明细
+//  Tab 3 (US-055): 日归因卡
+// ===========================================================================
+/**
+ * US-055 [FE-016] PortfolioWorkspace 日归因卡 — 把"最近交易日的资金变化
+ * + realized/unrealized 拆解 + top contributor/detractor"汇总到一张卡.
+ *
+ * 数据源: 复用顶层已加载的 `snapshots` + `trades`, 不再单独打 attribution
+ * API (ATTR-007 backend 还没提供 daily endpoint, 等真值落地后可再加 followup
+ * helper 把 backend daily 字段并入同 view model).
+ *
+ * 渲染逻辑全部在 `dailyAttributionHelpers.buildDailyAttributionViewModel`,
+ * 本 component 只负责绘制 KPI + 表格 — 与 [[前端 pure helper 模板]] 同款.
+ */
+interface DailyAttributionTabProps {
+  snapshots: SnapshotRow[];
+  trades: TradeRow[];
+}
+
+const DailyAttributionTab: React.FC<DailyAttributionTabProps> = ({ snapshots, trades }) => {
+  const vm: DailyAttributionViewModel = useMemo(
+    () => buildDailyAttributionViewModel(snapshots, trades),
+    [snapshots, trades]
+  );
+
+  if (vm.hidden) {
+    return (
+      <Card title="日归因">
+        <Empty
+          description={
+            <Space direction="vertical" align="center">
+              <Text>暂无足够数据计算日归因。</Text>
+              <Text type="secondary">至少需要 2 个交易日的资金快照才能算出当日变化。</Text>
+            </Space>
+          }
+        />
+      </Card>
+    );
+  }
+
+  return (
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Card
+        title={
+          <Space>
+            <RobotOutlined />
+            <span>
+              {vm.anchorDate} 日归因（对比 {vm.prevDate}）
+            </span>
+          </Space>
+        }
+      >
+        <Row gutter={[16, 16]}>
+          <Col xs={12} sm={8} md={5}>
+            <Statistic
+              title="当日 P&L"
+              value={vm.dailyPnl}
+              precision={2}
+              prefix="¥"
+              valueStyle={{ color: vm.pnlColor }}
+            />
+          </Col>
+          <Col xs={12} sm={8} md={5}>
+            <Statistic
+              title="当日收益率"
+              value={vm.dailyReturnPct}
+              precision={2}
+              suffix="%"
+              valueStyle={{ color: vm.pnlColor }}
+            />
+          </Col>
+          <Col xs={12} sm={8} md={5}>
+            <Tooltip title="当日 SELL 单的 realized_pnl 之和">
+              <Statistic
+                title="已实现盈亏"
+                value={vm.realizedPnl}
+                precision={2}
+                prefix="¥"
+                valueStyle={{ color: pnlColor(vm.realizedPnl) }}
+              />
+            </Tooltip>
+          </Col>
+          <Col xs={12} sm={8} md={5}>
+            <Tooltip title="当日 P&L − 已实现 = 持仓 mark-to-market 变化 + 当日 BUY 的浮动盈亏">
+              <Statistic
+                title="浮动盈亏变化"
+                value={vm.unrealizedChange}
+                precision={2}
+                prefix="¥"
+                valueStyle={{ color: pnlColor(vm.unrealizedChange) }}
+              />
+            </Tooltip>
+          </Col>
+          <Col xs={12} sm={8} md={4}>
+            <Statistic
+              title="成交笔数"
+              value={vm.tradeCount}
+              suffix={vm.tradeCount > 0 ? `（买 ${vm.buyCount} / 卖 ${vm.sellCount}）` : undefined}
+            />
+          </Col>
+        </Row>
+      </Card>
+
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12}>
+          <Card title={<span style={{ color: DAILY_PNL_POSITIVE_COLOR_LOCAL }}>Top 正贡献</span>}>
+            {vm.topContributors.length === 0 ? (
+              <Empty description="今日无盈利平仓" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            ) : (
+              <Table<DailyAttributionTradeRow>
+                dataSource={vm.topContributors}
+                pagination={false}
+                size="small"
+                rowKey="id"
+                columns={[
+                  {
+                    title: '标的',
+                    dataIndex: 'name',
+                    key: 'name',
+                    render: (_, row) => (
+                      <Space direction="vertical" size={0}>
+                        <Text strong>{row.name || row.symbol}</Text>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {row.symbol}
+                        </Text>
+                      </Space>
+                    ),
+                  },
+                  {
+                    title: 'Realized P&L',
+                    dataIndex: 'realized_pnl',
+                    key: 'realized_pnl',
+                    align: 'right',
+                    render: (v: number) => (
+                      <Text strong style={{ color: DAILY_PNL_POSITIVE_COLOR_LOCAL }}>
+                        +¥{v.toFixed(2)}
+                      </Text>
+                    ),
+                  },
+                  {
+                    title: '成交额',
+                    dataIndex: 'amount',
+                    key: 'amount',
+                    align: 'right',
+                    render: (v: number) => `¥${v.toFixed(2)}`,
+                  },
+                ]}
+              />
+            )}
+          </Card>
+        </Col>
+        <Col xs={24} md={12}>
+          <Card title={<span style={{ color: DAILY_PNL_NEGATIVE_COLOR_LOCAL }}>Top 负贡献</span>}>
+            {vm.topDetractors.length === 0 ? (
+              <Empty description="今日无亏损平仓" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            ) : (
+              <Table<DailyAttributionTradeRow>
+                dataSource={vm.topDetractors}
+                pagination={false}
+                size="small"
+                rowKey="id"
+                columns={[
+                  {
+                    title: '标的',
+                    dataIndex: 'name',
+                    key: 'name',
+                    render: (_, row) => (
+                      <Space direction="vertical" size={0}>
+                        <Text strong>{row.name || row.symbol}</Text>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {row.symbol}
+                        </Text>
+                      </Space>
+                    ),
+                  },
+                  {
+                    title: 'Realized P&L',
+                    dataIndex: 'realized_pnl',
+                    key: 'realized_pnl',
+                    align: 'right',
+                    render: (v: number) => (
+                      <Text strong style={{ color: DAILY_PNL_NEGATIVE_COLOR_LOCAL }}>
+                        ¥{v.toFixed(2)}
+                      </Text>
+                    ),
+                  },
+                  {
+                    title: '成交额',
+                    dataIndex: 'amount',
+                    key: 'amount',
+                    align: 'right',
+                    render: (v: number) => `¥${v.toFixed(2)}`,
+                  },
+                ]}
+              />
+            )}
+          </Card>
+        </Col>
+      </Row>
+    </Space>
+  );
+};
+
+// Card title 颜色 — 与 helper 内部常量同步, 避免 component 内再 import 一遍.
+const DAILY_PNL_POSITIVE_COLOR_LOCAL = '#3f8600';
+const DAILY_PNL_NEGATIVE_COLOR_LOCAL = '#cf1322';
+
+// ===========================================================================
+//  Tab 4: 交易明细
 // ===========================================================================
 interface TradesTabProps {
   trades: TradeRow[];

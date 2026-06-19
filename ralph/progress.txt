@@ -1525,3 +1525,26 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **单事实源 0.25 字面量计数**: 单测 [9.14] regex 计算 helper 内 `= 0.25` 出现次数必须 == 1, 防止有人 inline 拷一份阈值. 比"只有一个 export"的间接约束更直接 — 数字字面量重复 = 单事实源破裂. 适合任何 magic number (阈值 / 上限 / cap) 类常量.
   - **frontend helper 跨 monorepo 单测路径**: 从 `backend/tests/services/foo.test.ts` 用相对路径 `../../../frontend/src/pages/workspace/fooHelpers.ts` import — 三层 `..` 出 services/tests/backend, 进 frontend. `ts-node --transpile-only` 直接跑不需要 jest/babel 配置, 但 helper 必须**只 import 类型** from React/antd (本例 `import type IndustryConcentrationSummary`), 否则跑 ts-node 时会拉起 React runtime 报错. 这个分层在 [[前端 pure helper 模板]] 已稳定.
 ---
+
+## 2026/06/19 23:30 - US-055
+- 实现 [FE-016] PortfolioWorkspace 日归因卡 — 在 PortfolioWorkspace 加 "日归因" tab, 复用顶层已加载 snapshots + trades 算 view model (anchor=最新 snapshot, 日 P&L = anchor.total_value - prev.total_value, realized=anchor 日 SELL realized_pnl 之和, unrealized 变化 = dailyPnl - realized, top contributor/detractor 取 SELL realized_pnl 降序/升序前 3); 不依赖 ATTR-007 backend daily endpoint (尚未提供, 用本地差分够答 "今天赚多少 + 谁贡献最多/谁拖累最多" 三问)
+- Files changed:
+  - frontend/src/pages/workspace/dailyAttributionHelpers.ts (新, 纯函数 helper, 0 antd/React 依赖): 5 export 常量 (DAILY_PNL_POSITIVE/NEGATIVE/NEUTRAL_COLOR + DAILY_TOP_TRADE_LIMIT=3) + 6 export 函数 (extractTradeDate / pickDailyPnlColor / pickAnchorSnapshots / filterTradesOnDate / buildTopTrades / buildDailyAttributionViewModel) + DailyAttributionViewModel/TradeRow 2 interface
+  - frontend/src/pages/workspace/PortfolioWorkspace.tsx: import buildDailyAttributionViewModel; tabs 加 attribution key (label="日归因", RobotOutlined); activeKey==='attribution' 分支渲染 <DailyAttributionTab snapshots={snapshots} trades={trades} />; 新增 DailyAttributionTab component (~210 行) — 顶 KPI 卡 (5 项: 当日 P&L / 收益率 / 已实现 / 浮动盈亏变化 / 成交笔数+买卖拆分) + 双 Card (Top 正贡献 / Top 负贡献) 用 Table 渲染; 空态 (snapshots<2) Empty 兜底, hidden=true 不渲染数字
+  - backend/tests/services/daily-attribution-helpers.test.ts (新, 88 assert): 9 模块 — [1] 常量 sanity / [2] extractTradeDate 7 边界 / [3] pickDailyPnlColor 5 边界 / [4] pickAnchorSnapshots 8 (空/单/多乱序) / [5] filterTradesOnDate 多日混合+边界 / [6] buildTopTrades 9 (limit 切 + 降序/升序 + BUY/0/null 过滤) / [7] buildDailyAttributionViewModel AC 主验收 4 case (happy + snapshots<2 + 无 trade + 仅 BUY) / [8] view model 边界 (null/undefined / 非法 created_at / prev=0 不爆 NaN) / [9] META-GUARD fs+regex (PortfolioWorkspace 含 import + tabs attribution key + 渲染 DailyAttributionTab + 7 项 helper export 存在)
+  - ralph/prd.json: US-055 passes=true + notes
+- 验证:
+  - `cd backend && npm test -- --filter=daily-attribution` exit 0, 88 ok / 0 failed (755ms)
+  - `cd frontend && npx tsc --noEmit` exit 0
+  - `cd backend && npx tsc --noEmit` exit 0
+  - `cd backend && npm test -- --filter=industry-concentration` exit 0 (223+86 ok, 无 regression)
+  - `eslint --fix dailyAttributionHelpers.ts PortfolioWorkspace.tsx` — 修复 4 prettier 警告; 剩 3 项均为 pre-existing baseline warning (US-017 inline non-null assertion line 453/487/520, 本次未改)
+- **Learnings for future iterations:**
+  - **"依赖 X-NNN" 不等于"必须等 X-NNN 落地才能做": ATTR-007 backend daily endpoint 尚未提供, 但 frontend 已有 snapshots (US-017 EquityCurveTab 用) + trades (TradesTab 用), 两者差分就够算 "今天赚了多少 / 谁贡献最多 / 谁拖累最多" 三大主问题. backend 真值落地后, helper 形态不变, 加 followup buildDailyAttributionViewModelFromBackend(payload) 二选一即可 — 与 [[shadow→hard 三态范式]] (US-021) "新增的 hard 行为抽到 DataSource 新 method" 思想对偶. **第一反应不应该是 block, 而是问 "现有数据能不能拼出 80% 价值"**.
+  - **anchor date 不写死 today**: 周末 / 节假日 snapshot 不会写 (PaperTradingFacade 仅交易日跑), 写死 today 会让 "周一打开" 看到 "0 P&L + 空表" 误以为 bug. 取 snapshots 排序后最后一条 date 作 anchor, 与 EquityCurveTab "最近交易日" 语义一致 — 这是任何 "日级 ops view" 类前端组件的共性原则, 适用 US-058 ATR 列 / US-059 AI 日记 / 未来任何 daily dashboard.
+  - **realized vs unrealized 拆解口径**: realized = anchor 日 SELL realized_pnl 之和 (BUY 当日不结算 realized, 字面应为 null/0, 但 guard `realized_pnl === null/undefined → 0` 兜底); unrealized 变化 = dailyPnl - realized (含持仓 mark-to-market + 当日 BUY 的浮动). 这与 backend PaperTradingAttributionService 的 total_pnl = realized + unrealized 三套口径一致, 用户跨 UI/backend dashboard 看到的数加起来不漂移. **避免在前端用 position.unrealized_pnl 求和算 unrealized** — backend dashboard 用 (current - cost), 前端 snapshot 差分用 (today - yesterday total), 两者口径不同, 直接展示 backend snapshot 差分语义最干净.
+  - **top contributor/detractor 仅 SELL realized_pnl 不混 BUY**: BUY 当日 realized_pnl 应为 null, 若放进 top 列表用户会误读 "买就是赚 X 元", 这是金融 UI 最常见的"语义错位"误导. 单测 [6.5] 显式守 BUY 过滤. 未来若要加 "open position mark-to-market 贡献度", 走 backend ATTR-007 真值 (避免与持仓表 unrealized_pnl 漂移), 不要在前端瞎算.
+  - **realized_pnl===0 也过滤 (不入 top 列表)**: 等本金平 (commission 抵消盈亏后 0) 既非贡献也非拖累, 放进 top 0 列表挤掉真正赚/亏的标的, UI 上看着像 bug. 单测 [6.6] 守.
+  - **prev.total_value=0 → dailyReturnPct=0 不爆 NaN**: 初始化 portfolio 第一天 total_value 可能为 0 (净入金尚未结算), 直接 dailyPnl/prevTotal 会 division by zero → Infinity → React 渲染 "NaN%". 单测 [8.5] 显式守.
+  - **`for ([k,v] of map)` ts target=es5 不支持** (已知坑, US-042 也踩过): 本次 buildTopTrades 用 filter+map+sort 链式避开 iter 解构. 任何 helper 内对 Map 迭代必须 forEach.
+---

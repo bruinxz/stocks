@@ -848,8 +848,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 55,
-      "passes": false,
-      "notes": "依赖: ATTR-007"
+      "passes": true,
+      "notes": "依赖: ATTR-007 (backend daily endpoint 未提供, 复用已加载 snapshots+trades 算 view model). dailyAttributionHelpers + DailyAttributionTab + 88 单测 + META-GUARD"
     },
     {
       "id": "US-056",
