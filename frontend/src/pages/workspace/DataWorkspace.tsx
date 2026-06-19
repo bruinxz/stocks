@@ -16,6 +16,7 @@ import ActivationDashboard from '../../components/data/ActivationDashboard';
 import SlaDashboardCard from '../../components/data/SlaDashboardCard';
 import DataMissingAlertsCard from '../../components/data/DataMissingAlertsCard';
 import BulkBackfillButton from '../../components/data/BulkBackfillButton';
+import DataSourceSwitchCard from '../../components/data/DataSourceSwitchCard';
 import { DataHealthStatusResponse, getDataHealthStatus } from '../../services/dataHealthService';
 import {
   DataWorkspaceTabKey,
@@ -143,6 +144,7 @@ const DataWorkspace: React.FC = () => {
             <BulkBackfillButton healthData={healthData} onBackfillDone={refreshHealthData} />
             <SlaDashboardCard healthData={healthData} />
             <DataMissingAlertsCard healthData={healthData} />
+            <DataSourceSwitchCard />
             <SystemTopologyMap />
             <ActivationDashboard />
             <DataHealthDashboard />

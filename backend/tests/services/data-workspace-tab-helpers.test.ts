@@ -42,10 +42,23 @@ import {
   buildBulkBackfillPlan,
   classifyBulkBackfillTarget,
   summarizeBulkBackfillResults,
+  DATA_SOURCE_FOCUS_FEATURES,
+  DATA_SOURCE_FEATURE_LABEL,
+  DATA_SOURCE_STATUS_COLOR,
+  DATA_SOURCE_STATUS_LABEL,
+  DATA_SOURCE_STATUS_TAG_COLOR,
+  PRIMARY_COVERAGE_DEGRADED_MIN,
+  PRIMARY_COVERAGE_HEALTHY_MIN,
+  buildDataSourceSwitchViewModel,
+  buildFeatureRoutingSummary,
+  summarizeProvider,
 } from '../../../frontend/src/pages/workspace/dataWorkspaceTabHelpers';
 import type {
   DataHealthStatusResponse,
+  DataSourceHealthBundle,
   DataSourceHealthCard,
+  DataSourceProvider,
+  DataSourceRoutingEntry,
 } from '../../../frontend/src/services/dataHealthService';
 
 let failed = 0;
@@ -1352,6 +1365,546 @@ assert('[3.8] sumRecordCount([])=0', sumRecordCount([]) === 0);
   assert(
     '[15.4] helper export summarizeBulkBackfillResults',
     /export\s+function\s+summarizeBulkBackfillResults/.test(src)
+  );
+}
+
+// ---- [16] US-064 数据源切换 helpers — constants / pure helpers / vm / META ----
+{
+  // 配色 / 标签 sanity
+  assert(
+    '[16.1] DATA_SOURCE_FOCUS_FEATURES 含 history_k / stock_list',
+    DATA_SOURCE_FOCUS_FEATURES.includes('history_k') &&
+      DATA_SOURCE_FOCUS_FEATURES.includes('stock_list')
+  );
+  assert(
+    '[16.2] DATA_SOURCE_FOCUS_FEATURES frozen',
+    Object.isFrozen(DATA_SOURCE_FOCUS_FEATURES) === true
+  );
+  assert(
+    '[16.3] DATA_SOURCE_FEATURE_LABEL.history_k 非空',
+    typeof DATA_SOURCE_FEATURE_LABEL.history_k === 'string' &&
+      DATA_SOURCE_FEATURE_LABEL.history_k.length > 0
+  );
+  assert(
+    '[16.4] DATA_SOURCE_STATUS_COLOR 4 hex (healthy/degraded/unhealthy/unknown)',
+    /^#[0-9a-fA-F]{6}$/.test(DATA_SOURCE_STATUS_COLOR.healthy) &&
+      /^#[0-9a-fA-F]{6}$/.test(DATA_SOURCE_STATUS_COLOR.degraded) &&
+      /^#[0-9a-fA-F]{6}$/.test(DATA_SOURCE_STATUS_COLOR.unhealthy) &&
+      /^#[0-9a-fA-F]{6}$/.test(DATA_SOURCE_STATUS_COLOR.unknown)
+  );
+  assert(
+    '[16.5] DATA_SOURCE_STATUS_LABEL 5 项 (healthy/degraded/unhealthy/disabled/unknown)',
+    typeof DATA_SOURCE_STATUS_LABEL.healthy === 'string' &&
+      typeof DATA_SOURCE_STATUS_LABEL.degraded === 'string' &&
+      typeof DATA_SOURCE_STATUS_LABEL.unhealthy === 'string' &&
+      typeof DATA_SOURCE_STATUS_LABEL.disabled === 'string' &&
+      typeof DATA_SOURCE_STATUS_LABEL.unknown === 'string'
+  );
+  assert(
+    '[16.6] DATA_SOURCE_STATUS_TAG_COLOR.healthy === green',
+    DATA_SOURCE_STATUS_TAG_COLOR.healthy === 'green'
+  );
+  assert(
+    '[16.7] DATA_SOURCE_STATUS_TAG_COLOR.unhealthy === red',
+    DATA_SOURCE_STATUS_TAG_COLOR.unhealthy === 'red'
+  );
+  assert(
+    '[16.8] PRIMARY_COVERAGE_HEALTHY_MIN > PRIMARY_COVERAGE_DEGRADED_MIN',
+    PRIMARY_COVERAGE_HEALTHY_MIN > PRIMARY_COVERAGE_DEGRADED_MIN
+  );
+  assert(
+    '[16.9] PRIMARY_COVERAGE 上下限合理 (0-100)',
+    PRIMARY_COVERAGE_DEGRADED_MIN > 0 && PRIMARY_COVERAGE_HEALTHY_MIN <= 100
+  );
+
+  // summarizeProvider
+  const provHealthy: DataSourceProvider = {
+    provider_name: 'akshare',
+    provider_label: 'AKShare',
+    provider_type: 'python',
+    status: 'healthy',
+    priority: 30,
+    is_enabled: true,
+    supported_features: ['history_k', 'stock_list'],
+    health_score: 87.6,
+    success_count: 10,
+    failure_count: 1,
+    consecutive_failures: 0,
+    last_latency_ms: 1234,
+    last_error: null,
+    last_success_at: '2026-06-19T08:00:00Z',
+    last_failure_at: null,
+    last_checked_at: '2026-06-19T08:00:00Z',
+  };
+  const s1 = summarizeProvider(provHealthy);
+  assert('[16.10] summarizeProvider provider_name', s1.provider_name === 'akshare');
+  assert('[16.11] summarizeProvider 健康分四舍五入', s1.health_score === 88);
+  assert('[16.12] summarizeProvider latency 透传', s1.last_latency_ms === 1234);
+  assert('[16.13] summarizeProvider is_enabled', s1.is_enabled === true);
+
+  // summarizeProvider 边界 — 缺字段全兜底
+  const provBroken: any = {
+    provider_name: 'sina',
+    // provider_label 缺失 → fallback name
+    status: null, // null → unknown
+    health_score: 'bad', // NaN → 0
+    last_latency_ms: undefined,
+    last_error: '', // 空 string → null
+    consecutive_failures: NaN,
+    priority: 'oops',
+  };
+  const s2 = summarizeProvider(provBroken);
+  assert('[16.14] summarizeProvider fallback label', s2.provider_label === 'sina');
+  assert('[16.15] summarizeProvider status null → unknown', s2.status === 'unknown');
+  assert('[16.16] summarizeProvider NaN score → 0', s2.health_score === 0);
+  assert('[16.17] summarizeProvider undefined latency → null', s2.last_latency_ms === null);
+  assert('[16.18] summarizeProvider 空 error → null', s2.last_error === null);
+  assert('[16.19] summarizeProvider NaN failures → 0', s2.consecutive_failures === 0);
+  assert('[16.20] summarizeProvider 非数字 priority → 999', s2.priority === 999);
+  assert('[16.21] summarizeProvider is_enabled falsy → false', s2.is_enabled === false);
+
+  // 长 error 截断
+  const provLongErr: any = {
+    provider_name: 'sina',
+    provider_label: 'Sina',
+    status: 'unhealthy',
+    health_score: 12,
+    is_enabled: true,
+    priority: 50,
+    last_error: 'x'.repeat(200),
+  };
+  const s3 = summarizeProvider(provLongErr);
+  assert('[16.22] summarizeProvider error 截断 ≤ 80 字', (s3.last_error?.length ?? 0) === 80);
+
+  // health score clamp 上下限
+  const provClamp: any = {
+    provider_name: 'tushare',
+    provider_label: 'Tushare',
+    status: 'healthy',
+    health_score: 150,
+    is_enabled: true,
+    priority: 10,
+  };
+  assert('[16.23] summarizeProvider health_score clamp 100', summarizeProvider(provClamp).health_score === 100);
+  const provClampNeg: any = { ...provClamp, health_score: -10 };
+  assert('[16.24] summarizeProvider health_score clamp 0', summarizeProvider(provClampNeg).health_score === 0);
+
+  // buildFeatureRoutingSummary
+  const makeRoute = (overrides: Partial<DataSourceRoutingEntry>): DataSourceRoutingEntry => ({
+    provider_name: overrides.provider_name || 'akshare',
+    provider_label: overrides.provider_label || 'AKShare',
+    provider_type: overrides.provider_type || 'python',
+    status: overrides.status || 'healthy',
+    priority: overrides.priority ?? 30,
+    is_enabled: overrides.is_enabled ?? true,
+    supported_features: overrides.supported_features || ['history_k'],
+    health_score: overrides.health_score ?? 80,
+    success_count: overrides.success_count ?? 0,
+    failure_count: overrides.failure_count ?? 0,
+    consecutive_failures: overrides.consecutive_failures ?? 0,
+    rank: overrides.rank ?? 1,
+    feature: overrides.feature || 'history_k',
+    route_score: overrides.route_score ?? 100,
+    last_latency_ms: overrides.last_latency_ms ?? null,
+    last_success_at: overrides.last_success_at ?? null,
+    last_failure_at: overrides.last_failure_at ?? null,
+    last_error: overrides.last_error ?? null,
+    last_checked_at: overrides.last_checked_at ?? null,
+    is_preferred: overrides.is_preferred,
+    preference_rank: overrides.preference_rank ?? null,
+    route_reason: overrides.route_reason,
+  });
+  const fr = buildFeatureRoutingSummary('history_k', [
+    makeRoute({ provider_name: 'akshare', rank: 1, status: 'healthy', is_enabled: true }),
+    makeRoute({
+      provider_name: 'tushare',
+      provider_label: 'Tushare',
+      rank: 2,
+      status: 'degraded',
+      is_enabled: true,
+    }),
+    makeRoute({
+      provider_name: 'sina',
+      provider_label: 'Sina',
+      rank: 3,
+      status: 'unhealthy',
+      is_enabled: true,
+    }),
+    makeRoute({
+      provider_name: 'baostock',
+      provider_label: 'Baostock',
+      rank: 4,
+      status: 'disabled',
+      is_enabled: false,
+    }),
+  ]);
+  assert('[16.25] buildFeatureRoutingSummary primary=akshare', fr.primary?.provider_name === 'akshare');
+  assert('[16.26] buildFeatureRoutingSummary primary_healthy=true', fr.primary_healthy === true);
+  assert(
+    '[16.27] buildFeatureRoutingSummary backups 仅 enabled (2 个)',
+    fr.backups.length === 2 &&
+      fr.backups[0].provider_name === 'tushare' &&
+      fr.backups[1].provider_name === 'sina'
+  );
+  assert('[16.28] buildFeatureRoutingSummary has_backup=true', fr.has_backup === true);
+  assert('[16.29] buildFeatureRoutingSummary total_routes=4 (含 disabled)', fr.total_routes === 4);
+  assert(
+    '[16.30] buildFeatureRoutingSummary feature_label = "历史 K 线"',
+    fr.feature_label === '历史 K 线'
+  );
+
+  // 空路由
+  const frEmpty = buildFeatureRoutingSummary('history_k', []);
+  assert('[16.31] buildFeatureRoutingSummary 空数组 → primary=null', frEmpty.primary === null);
+  assert('[16.32] buildFeatureRoutingSummary 空数组 → has_backup=false', frEmpty.has_backup === false);
+  assert('[16.33] buildFeatureRoutingSummary undefined → primary=null', buildFeatureRoutingSummary('history_k', undefined).primary === null);
+
+  // 只有 disabled 主源 — primary=null + has_backup=false
+  const frAllDisabled = buildFeatureRoutingSummary('history_k', [
+    makeRoute({ provider_name: 'akshare', rank: 1, status: 'disabled', is_enabled: false }),
+    makeRoute({ provider_name: 'sina', rank: 2, status: 'disabled', is_enabled: false }),
+  ]);
+  assert('[16.34] 全 disabled → primary=null', frAllDisabled.primary === null);
+  assert('[16.35] 全 disabled → has_backup=false', frAllDisabled.has_backup === false);
+  assert('[16.36] 全 disabled → primary_healthy=false', frAllDisabled.primary_healthy === false);
+
+  // 主源 degraded — primary_healthy=false 但 primary 不为 null
+  const frDegradedPrimary = buildFeatureRoutingSummary('history_k', [
+    makeRoute({ provider_name: 'akshare', rank: 1, status: 'degraded', is_enabled: true }),
+  ]);
+  assert(
+    '[16.37] degraded primary → primary 非 null',
+    frDegradedPrimary.primary !== null && frDegradedPrimary.primary.provider_name === 'akshare'
+  );
+  assert(
+    '[16.38] degraded primary → primary_healthy=false',
+    frDegradedPrimary.primary_healthy === false
+  );
+
+  // backups 截前 3 个 (避免 UI 撑爆)
+  const frMany = buildFeatureRoutingSummary(
+    'history_k',
+    Array.from({ length: 6 }, (_, i) =>
+      makeRoute({ provider_name: `p${i}`, rank: i + 1, is_enabled: true })
+    )
+  );
+  assert('[16.39] backups 截 3 个', frMany.backups.length === 3);
+
+  // ---- buildDataSourceSwitchViewModel ----
+  // null → loading 占位
+  const vmNull = buildDataSourceSwitchViewModel(null);
+  assert('[16.40] vm null → loading=true', vmNull.loading === true);
+  assert('[16.41] vm null → providers=[]', vmNull.providers.length === 0);
+  assert(
+    '[16.42] vm null → features 长度 = focus 个数',
+    vmNull.features.length === DATA_SOURCE_FOCUS_FEATURES.length
+  );
+  assert('[16.43] vm null → coverage=null + level=unknown', vmNull.primary_coverage_pct === null && vmNull.primary_coverage_level === 'unknown');
+  assert('[16.44] vm null → blockers 含 "尚未加载"', vmNull.blockers.some(b => b.includes('尚未加载')));
+  assert('[16.45] vm null → ready=false', vmNull.ready === false);
+
+  // 全健康场景
+  const makeProv = (overrides: Partial<DataSourceProvider>): DataSourceProvider => ({
+    provider_name: overrides.provider_name || 'p',
+    provider_label: overrides.provider_label || 'P',
+    provider_type: overrides.provider_type || 'api',
+    status: overrides.status || 'healthy',
+    priority: overrides.priority ?? 30,
+    is_enabled: overrides.is_enabled ?? true,
+    supported_features: overrides.supported_features || ['history_k'],
+    health_score: overrides.health_score ?? 90,
+    success_count: overrides.success_count ?? 0,
+    failure_count: overrides.failure_count ?? 0,
+    consecutive_failures: overrides.consecutive_failures ?? 0,
+    last_latency_ms: overrides.last_latency_ms ?? 100,
+    last_success_at: overrides.last_success_at ?? null,
+    last_failure_at: overrides.last_failure_at ?? null,
+    last_error: overrides.last_error ?? null,
+    last_checked_at: overrides.last_checked_at ?? null,
+  });
+  const allHealthyBundle: DataSourceHealthBundle = {
+    status: 'healthy',
+    summary: {
+      total_providers: 2,
+      enabled_providers: 2,
+      healthy_providers: 2,
+      degraded_providers: 0,
+      unhealthy_providers: 0,
+      disabled_providers: 0,
+      avg_health_score: 90,
+    },
+    providers: [
+      makeProv({ provider_name: 'akshare', provider_label: 'AKShare', priority: 30 }),
+      makeProv({ provider_name: 'tushare', provider_label: 'Tushare', priority: 10 }),
+    ],
+    routing_plans: DATA_SOURCE_FOCUS_FEATURES.reduce((acc, f) => {
+      acc[f] = [
+        makeRoute({ provider_name: 'tushare', provider_label: 'Tushare', rank: 1, status: 'healthy', is_enabled: true, feature: f }),
+        makeRoute({ provider_name: 'akshare', provider_label: 'AKShare', rank: 2, status: 'healthy', is_enabled: true, feature: f }),
+      ];
+      return acc;
+    }, {} as Record<string, DataSourceRoutingEntry[]>),
+  };
+  const vmAllHealthy = buildDataSourceSwitchViewModel(allHealthyBundle);
+  assert('[16.46] all-healthy → ready=true', vmAllHealthy.ready === true);
+  assert('[16.47] all-healthy → primary_coverage_pct=100', vmAllHealthy.primary_coverage_pct === 100);
+  assert(
+    '[16.48] all-healthy → level=healthy',
+    vmAllHealthy.primary_coverage_level === 'healthy'
+  );
+  assert('[16.49] all-healthy → blockers=[]', vmAllHealthy.blockers.length === 0);
+  assert('[16.50] all-healthy → healthy_providers=2', vmAllHealthy.healthy_providers === 2);
+  assert('[16.51] all-healthy → unhealthy_providers=0', vmAllHealthy.unhealthy_providers === 0);
+  assert('[16.52] all-healthy → providers sorted by priority asc (tushare<akshare)', vmAllHealthy.providers[0].provider_name === 'tushare' && vmAllHealthy.providers[1].provider_name === 'akshare');
+  assert('[16.53] all-healthy → avg_health_score=90', vmAllHealthy.avg_health_score === 90);
+
+  // 半坏场景 — 一半 feature 主源 unhealthy
+  const halfBundle: DataSourceHealthBundle = {
+    status: 'degraded',
+    summary: {
+      total_providers: 2,
+      enabled_providers: 2,
+      healthy_providers: 1,
+      degraded_providers: 0,
+      unhealthy_providers: 1,
+      disabled_providers: 0,
+      avg_health_score: 50,
+    },
+    providers: [
+      makeProv({ provider_name: 'akshare', provider_label: 'AKShare', priority: 30, status: 'healthy', health_score: 80 }),
+      makeProv({
+        provider_name: 'tushare',
+        provider_label: 'Tushare',
+        priority: 10,
+        status: 'unhealthy',
+        health_score: 20,
+        consecutive_failures: 5,
+        last_error: 'rate limited',
+      }),
+    ],
+    routing_plans: {
+      history_k: [
+        makeRoute({ provider_name: 'tushare', provider_label: 'Tushare', rank: 1, status: 'unhealthy', is_enabled: true, feature: 'history_k' }),
+        makeRoute({ provider_name: 'akshare', provider_label: 'AKShare', rank: 2, status: 'healthy', is_enabled: true, feature: 'history_k' }),
+      ],
+      stock_list: [
+        makeRoute({ provider_name: 'akshare', provider_label: 'AKShare', rank: 1, status: 'healthy', is_enabled: true, feature: 'stock_list' }),
+      ],
+      // 其他 feature 缺路由 → primary=null
+    },
+  };
+  const vmHalf = buildDataSourceSwitchViewModel(halfBundle);
+  assert('[16.54] half-bad → ready=false', vmHalf.ready === false);
+  assert(
+    '[16.55] half-bad → primary_coverage_pct = (1 healthy / 8 focus) * 100 ≈ 13',
+    vmHalf.primary_coverage_pct === Math.round((1 / DATA_SOURCE_FOCUS_FEATURES.length) * 100)
+  );
+  assert('[16.56] half-bad → level=critical (< 50%)', vmHalf.primary_coverage_level === 'critical');
+  assert(
+    '[16.57] half-bad → unhealthy_providers=1',
+    vmHalf.unhealthy_providers === 1
+  );
+  assert(
+    '[16.58] half-bad → blockers 含 Tushare unhealthy',
+    vmHalf.blockers.some(b => b.includes('Tushare') && b.includes('异常'))
+  );
+  assert(
+    '[16.59] half-bad → blockers 含连续失败次数',
+    vmHalf.blockers.some(b => b.includes('5'))
+  );
+  assert(
+    '[16.60] half-bad → blockers 含 "无可用主链路"',
+    vmHalf.blockers.some(b => b.includes('无可用主链路'))
+  );
+  assert('[16.61] half-bad → avg_health_score=50', vmHalf.avg_health_score === 50);
+
+  // disabled provider 不算入 avg, 不算入 unhealthy
+  const mixedBundle: DataSourceHealthBundle = {
+    status: 'healthy',
+    summary: {
+      total_providers: 3,
+      enabled_providers: 2,
+      healthy_providers: 2,
+      degraded_providers: 0,
+      unhealthy_providers: 0,
+      disabled_providers: 1,
+      avg_health_score: 85,
+    },
+    providers: [
+      makeProv({ provider_name: 'akshare', priority: 30, status: 'healthy', health_score: 90 }),
+      makeProv({ provider_name: 'tushare', priority: 10, status: 'healthy', health_score: 80 }),
+      makeProv({ provider_name: 'baostock', priority: 20, status: 'disabled', is_enabled: false, health_score: 0 }),
+    ],
+    routing_plans: DATA_SOURCE_FOCUS_FEATURES.reduce((acc, f) => {
+      acc[f] = [
+        makeRoute({ provider_name: 'tushare', rank: 1, status: 'healthy', is_enabled: true, feature: f, health_score: 80 }),
+      ];
+      return acc;
+    }, {} as Record<string, DataSourceRoutingEntry[]>),
+  };
+  const vmMixed = buildDataSourceSwitchViewModel(mixedBundle);
+  assert('[16.62] mixed → enabled_providers=2', vmMixed.enabled_providers === 2);
+  assert('[16.63] mixed → total_providers=3', vmMixed.total_providers === 3);
+  assert(
+    '[16.64] mixed → avg_health_score 仅 enabled 均值 = (90+80)/2 = 85',
+    vmMixed.avg_health_score === 85
+  );
+  assert('[16.65] mixed → ready=true (主链路全覆盖且 unhealthy=0)', vmMixed.ready === true);
+
+  // providers 为 null/undefined / 内有 null 元素 → 不抛
+  const badBundle: any = {
+    summary: {},
+    providers: [null, undefined, { provider_name: 'good', provider_label: 'Good', status: 'healthy', is_enabled: true, health_score: 50, priority: 1, supported_features: [], success_count: 0, failure_count: 0, consecutive_failures: 0 }],
+    routing_plans: null,
+  };
+  const vmBad = buildDataSourceSwitchViewModel(badBundle);
+  assert('[16.66] bad bundle → providers 仅 1 (null/undefined 跳过)', vmBad.providers.length === 1);
+  assert('[16.67] bad bundle → 不抛, loading=false', vmBad.loading === false);
+
+  // degraded 区间 (PRIMARY_COVERAGE_DEGRADED_MIN <= coverage < HEALTHY_MIN)
+  // 8 个 focus, 取 5 个 healthy → 62%, 落入 degraded 区间
+  const degradedRoutes: Record<string, DataSourceRoutingEntry[]> = {};
+  for (let i = 0; i < DATA_SOURCE_FOCUS_FEATURES.length; i++) {
+    const f = DATA_SOURCE_FOCUS_FEATURES[i];
+    degradedRoutes[f] = [
+      makeRoute({
+        provider_name: 'akshare',
+        rank: 1,
+        status: i < 5 ? 'healthy' : 'degraded',
+        is_enabled: true,
+        feature: f,
+      }),
+    ];
+  }
+  const degradedBundle: DataSourceHealthBundle = {
+    status: 'degraded',
+    summary: {
+      total_providers: 1,
+      enabled_providers: 1,
+      healthy_providers: 0,
+      degraded_providers: 1,
+      unhealthy_providers: 0,
+      disabled_providers: 0,
+      avg_health_score: 60,
+    },
+    providers: [makeProv({ provider_name: 'akshare', priority: 30, status: 'degraded' })],
+    routing_plans: degradedRoutes,
+  };
+  const vmDeg = buildDataSourceSwitchViewModel(degradedBundle);
+  assert(
+    '[16.68] degraded coverage = 5/8 = 63%',
+    vmDeg.primary_coverage_pct === Math.round((5 / DATA_SOURCE_FOCUS_FEATURES.length) * 100)
+  );
+  assert(
+    '[16.69] degraded level=degraded (>= 50% < 80%)',
+    vmDeg.primary_coverage_level === 'degraded'
+  );
+}
+
+// ---- [17] META-GUARD DataSourceSwitchCard + DataWorkspace 接通 ----
+{
+  const cardPath = join(
+    __dirname,
+    '../../../frontend/src/components/data/DataSourceSwitchCard.tsx'
+  );
+  const src = readFileSync(cardPath, 'utf8');
+  assert(
+    '[17.1] DataSourceSwitchCard 含 import buildDataSourceSwitchViewModel',
+    /import[\s\S]{0,400}buildDataSourceSwitchViewModel/.test(src)
+  );
+  assert(
+    '[17.2] DataSourceSwitchCard 含 import getDataSourceProvidersStatus',
+    /import[\s\S]{0,400}getDataSourceProvidersStatus/.test(src)
+  );
+  assert(
+    '[17.3] DataSourceSwitchCard 调 getDataSourceProvidersStatus',
+    /getDataSourceProvidersStatus\(/.test(src)
+  );
+  assert(
+    '[17.4] DataSourceSwitchCard data-testid=data-source-switch-card',
+    /data-testid=["']data-source-switch-card["']/.test(src)
+  );
+  assert(
+    '[17.5] DataSourceSwitchCard data-testid=data-source-switch-refresh-btn',
+    /data-testid=["']data-source-switch-refresh-btn["']/.test(src)
+  );
+  assert(
+    '[17.6] DataSourceSwitchCard data-testid=data-source-switch-features',
+    /data-testid=["']data-source-switch-features["']/.test(src)
+  );
+  assert(
+    '[17.7] DataSourceSwitchCard data-testid=data-source-switch-providers',
+    /data-testid=["']data-source-switch-providers["']/.test(src)
+  );
+  assert(
+    '[17.8] DataSourceSwitchCard 接 healthBundle prop',
+    /healthBundle\??:\s*DataSourceHealthBundle/.test(src)
+  );
+  assert(
+    '[17.9] DataSourceSwitchCard 用 useMemo 包 vm (避免 render churn)',
+    /useMemo\([\s\S]{0,200}buildDataSourceSwitchViewModel/.test(src)
+  );
+}
+{
+  const dwPath = join(__dirname, '../../../frontend/src/pages/workspace/DataWorkspace.tsx');
+  const src = readFileSync(dwPath, 'utf8');
+  assert(
+    '[17.10] DataWorkspace.tsx import DataSourceSwitchCard',
+    /import\s+DataSourceSwitchCard\s+from\s+['"][^'"]*DataSourceSwitchCard['"]/.test(src)
+  );
+  assert(
+    '[17.11] DataWorkspace.tsx 在 health tab 渲染 DataSourceSwitchCard',
+    /<DataSourceSwitchCard\s*\/?>/.test(src)
+  );
+}
+{
+  // service 层 export
+  const svcPath = join(__dirname, '../../../frontend/src/services/dataHealthService.ts');
+  const src = readFileSync(svcPath, 'utf8');
+  assert(
+    '[17.12] dataHealthService export getDataSourceProvidersStatus',
+    /export\s+async\s+function\s+getDataSourceProvidersStatus/.test(src)
+  );
+  assert(
+    '[17.13] dataHealthService 调 /market/data-sources/health endpoint',
+    /\/market\/data-sources\/health/.test(src)
+  );
+  assert(
+    '[17.14] dataHealthService 导出 DataSourceHealthBundle / DataSourceProvider 类型',
+    /export\s+interface\s+DataSourceHealthBundle\b/.test(src) &&
+      /export\s+interface\s+DataSourceProvider\b/.test(src)
+  );
+}
+{
+  // helper export 完整性
+  const helperPath = join(
+    __dirname,
+    '../../../frontend/src/pages/workspace/dataWorkspaceTabHelpers.ts'
+  );
+  const src = readFileSync(helperPath, 'utf8');
+  assert(
+    '[17.15] helper export DATA_SOURCE_FOCUS_FEATURES',
+    /export\s+const\s+DATA_SOURCE_FOCUS_FEATURES\b/.test(src)
+  );
+  assert(
+    '[17.16] helper export DATA_SOURCE_STATUS_COLOR',
+    /export\s+const\s+DATA_SOURCE_STATUS_COLOR\b/.test(src)
+  );
+  assert(
+    '[17.17] helper export DATA_SOURCE_STATUS_LABEL',
+    /export\s+const\s+DATA_SOURCE_STATUS_LABEL\b/.test(src)
+  );
+  assert(
+    '[17.18] helper export buildDataSourceSwitchViewModel',
+    /export\s+function\s+buildDataSourceSwitchViewModel/.test(src)
+  );
+  assert(
+    '[17.19] helper export buildFeatureRoutingSummary',
+    /export\s+function\s+buildFeatureRoutingSummary/.test(src)
+  );
+  assert(
+    '[17.20] helper export summarizeProvider',
+    /export\s+function\s+summarizeProvider/.test(src)
   );
 }
 

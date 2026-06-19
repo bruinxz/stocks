@@ -33,7 +33,10 @@ import type {
   DataHealthLevel,
   DataHealthStatusResponse,
   DataSourceCategory,
+  DataSourceHealthBundle,
   DataSourceHealthCard,
+  DataSourceProvider,
+  DataSourceRoutingEntry,
 } from '../../services/dataHealthService';
 
 /** 6 个 tab 的稳定 key, 与 DataWorkspace.tsx 内 `tabs` 数组完全一致 — 修改前先核对. */
@@ -1223,5 +1226,367 @@ export function summarizeBulkBackfillResults(
     failed,
     all_ok: total > 0 && success === total,
     failed_sources,
+  };
+}
+
+// ============================================================================
+// US-064 [FE-025] DataWorkspace 数据源切换 — provider 主备状态可视化
+// ----------------------------------------------------------------------------
+// 数据健康 tab 顶部已有 4 张卡片 (SLA / 数据缺失 / 一键补抓 / DataHealthDashboard),
+// 全部基于 /api/data/health-status (cards 列表 — 业务源维度). 但 cards 维度
+// 看不到 "主备数据源" — 每个能力 (history_k / stock_list / fundamental_factor
+// 等) 后端 DataSourceHealthService.getRankedProviders 都会按 route_score 排序
+// 出主 / 备 / 兜底链路 (rank=1/2/3...). 本卡片暴露这套路由计划:
+//   - 顶部 KPI: 已注册 provider 数 / 健康数 / 主链路覆盖率
+//   - 中间 features 矩阵: 8 个核心 feature 每个一行, 主用源 + 备用源 + 状态 Tag
+//   - 底部 providers 列表: 每个 provider 的健康分 / 状态 / latency / 最近错误
+//
+// 形态对偶 [[buildSlaDashboardViewModel]] / [[buildDataMissingAlertsViewModel]]
+// — 同样从 healthBundle 派生 + ready/blockers 模式. 与 US-061 / US-062 共享
+// "纯函数 helper + selfFetch 兜底 + Tag color 与配色家族一致" 模板.
+//
+// 与 [[DataUpdateStatus]] (legacy 长页) 的差异: 那页是 ops 维护视角 (一次性
+// 看全部 health / quality / factors / quant_readiness), 本卡片是 trader 视
+// 角"主备源是否在切换 / 我是否要换源", 只看 routing 不看 quality / factor
+// coverage. 两条 endpoint 都用同一份 /api/market/data-sources/health, 不重
+// 复请求 (component 内 useEffect 自己拉一次).
+// ============================================================================
+
+/** 本卡片展示的核心能力 (feature) 顺序 — 与 backend getRoutingPlans 默认参数对齐. */
+export const DATA_SOURCE_FOCUS_FEATURES: readonly string[] = Object.freeze([
+  'history_k',
+  'stock_list',
+  'stock_basic',
+  'fundamental_factor',
+  'money_flow',
+  'valuation',
+  'realtime_quote',
+  'intraday_bar',
+]);
+
+/** feature key → 中文标签. */
+export const DATA_SOURCE_FEATURE_LABEL: Readonly<Record<string, string>> = Object.freeze({
+  history_k: '历史 K 线',
+  stock_list: '股票列表',
+  stock_basic: '基础资料',
+  fundamental_factor: '基本面因子',
+  money_flow: '资金流向',
+  valuation: '估值口径',
+  realtime_quote: '实时行情',
+  intraday_bar: '分钟级行情',
+  trade_calendar: '交易日历',
+  index_constituents: '指数成分',
+  health_probe: '健康探测',
+});
+
+/** provider.status → DataMissing/SLA 配色家族同色. */
+export const DATA_SOURCE_STATUS_COLOR: Readonly<Record<string, string>> = Object.freeze({
+  healthy: DATA_HEALTH_COLOR.green,
+  degraded: DATA_HEALTH_COLOR.yellow,
+  unhealthy: DATA_HEALTH_COLOR.red,
+  disabled: DATA_HEALTH_COLOR.unknown,
+  unknown: DATA_HEALTH_COLOR.unknown,
+});
+
+/** provider.status → 中文标签. */
+export const DATA_SOURCE_STATUS_LABEL: Readonly<Record<string, string>> = Object.freeze({
+  healthy: '健康',
+  degraded: '降级',
+  unhealthy: '异常',
+  disabled: '未启用',
+  unknown: '未知',
+});
+
+/** provider.status → antd Tag color name. */
+export const DATA_SOURCE_STATUS_TAG_COLOR: Readonly<
+  Record<string, 'green' | 'orange' | 'red' | 'default' | 'blue'>
+> = Object.freeze({
+  healthy: 'green',
+  degraded: 'orange',
+  unhealthy: 'red',
+  disabled: 'default',
+  unknown: 'default',
+});
+
+/** 主链路覆盖率档位阈值 (% — 几个 focus feature 已有 rank=1 healthy 主源). */
+export const PRIMARY_COVERAGE_HEALTHY_MIN = 80;
+export const PRIMARY_COVERAGE_DEGRADED_MIN = 50;
+
+/** provider 单条精简视图 (顶部 chart + 底部列表共享). */
+export interface ProviderSummary {
+  /** provider_name 唯一 key (e.g. 'akshare' / 'tushare'). */
+  provider_name: string;
+  /** 中文显示名. */
+  provider_label: string;
+  /** 状态 (healthy / degraded / unhealthy / disabled / unknown). */
+  status: string;
+  /** 健康分 0-100. */
+  health_score: number;
+  /** 是否启用 (env / config). */
+  is_enabled: boolean;
+  /** 优先级 (越小越优先, backend DEFAULT_DATA_PROVIDERS). */
+  priority: number;
+  /** 最近一次延迟 (ms), null 表示从未探测. */
+  last_latency_ms: number | null;
+  /** 最近一次错误 (前 80 字). */
+  last_error: string | null;
+  /** 最近一次成功时间 ISO. */
+  last_success_at: string | null;
+  /** 最近一次失败时间 ISO. */
+  last_failure_at: string | null;
+  /** 连续失败次数. */
+  consecutive_failures: number;
+  /** 累计成功次数. */
+  success_count: number;
+  /** 累计失败次数. */
+  failure_count: number;
+}
+
+/** 单个 feature 的主/备路由摘要 (供矩阵行渲染). */
+export interface FeatureRoutingSummary {
+  /** feature key (history_k / stock_list ...). */
+  feature: string;
+  /** 中文标签. */
+  feature_label: string;
+  /** 主用 provider (rank=1), null 表示无可用主链路 (全 unhealthy/disabled). */
+  primary: DataSourceRoutingEntry | null;
+  /** 备用 providers (rank>=2 enabled). 截前 3 个避免 UI 撑爆. */
+  backups: DataSourceRoutingEntry[];
+  /** 总路由条数 (含 disabled, 仅作排错提示). */
+  total_routes: number;
+  /** 主链路是否健康 (primary?.status === 'healthy'). */
+  primary_healthy: boolean;
+  /** 是否有任何 enabled fallback (备用源至少 1 个 enabled). */
+  has_backup: boolean;
+}
+
+/** 整体卡片视图模型 — 给 DataSourceSwitchCard 一次性 destructure. */
+export interface DataSourceSwitchViewModel {
+  /** 8 个 focus feature 的路由摘要 (顺序固定, 与 DATA_SOURCE_FOCUS_FEATURES 一致). */
+  features: FeatureRoutingSummary[];
+  /** 全 provider 列表 (按 priority asc + provider_name asc 稳定排序). */
+  providers: ProviderSummary[];
+  /** 已注册 provider 总数. */
+  total_providers: number;
+  /** 启用 provider 数. */
+  enabled_providers: number;
+  /** healthy 状态 provider 数. */
+  healthy_providers: number;
+  /** degraded 状态 provider 数. */
+  degraded_providers: number;
+  /** unhealthy 状态 provider 数. */
+  unhealthy_providers: number;
+  /** 平均健康分 (启用 provider 均值, 0-100). 无启用源返 0. */
+  avg_health_score: number;
+  /** 主链路覆盖率 (% — focus features 中 primary_healthy=true 占比), null=无 feature. */
+  primary_coverage_pct: number | null;
+  /** 主链路覆盖率档位. */
+  primary_coverage_level: 'healthy' | 'degraded' | 'critical' | 'unknown';
+  /** ready=true 当 primary_coverage_level==='healthy' 且 unhealthy_providers===0. */
+  ready: boolean;
+  /** ready=false 的原因列表 (UL 直接渲染). */
+  blockers: string[];
+  /** healthBundle 缺数据 → loading=true. */
+  loading: boolean;
+}
+
+/** 把 DataSourceProvider → 精简 ProviderSummary — pure. */
+export function summarizeProvider(provider: DataSourceProvider): ProviderSummary {
+  const status =
+    typeof provider.status === 'string' && provider.status.length > 0 ? provider.status : 'unknown';
+  const lat =
+    typeof provider.last_latency_ms === 'number' && Number.isFinite(provider.last_latency_ms)
+      ? provider.last_latency_ms
+      : null;
+  const errStr =
+    typeof provider.last_error === 'string' && provider.last_error.length > 0
+      ? provider.last_error.slice(0, 80)
+      : null;
+  const healthScore =
+    typeof provider.health_score === 'number' && Number.isFinite(provider.health_score)
+      ? Math.max(0, Math.min(100, Math.round(provider.health_score)))
+      : 0;
+  return {
+    provider_name: provider.provider_name,
+    provider_label: provider.provider_label || provider.provider_name,
+    status,
+    health_score: healthScore,
+    is_enabled: Boolean(provider.is_enabled),
+    priority:
+      typeof provider.priority === 'number' && Number.isFinite(provider.priority)
+        ? provider.priority
+        : 999,
+    last_latency_ms: lat,
+    last_error: errStr,
+    last_success_at: provider.last_success_at ?? null,
+    last_failure_at: provider.last_failure_at ?? null,
+    consecutive_failures:
+      typeof provider.consecutive_failures === 'number' &&
+      Number.isFinite(provider.consecutive_failures)
+        ? provider.consecutive_failures
+        : 0,
+    success_count:
+      typeof provider.success_count === 'number' && Number.isFinite(provider.success_count)
+        ? provider.success_count
+        : 0,
+    failure_count:
+      typeof provider.failure_count === 'number' && Number.isFinite(provider.failure_count)
+        ? provider.failure_count
+        : 0,
+  };
+}
+
+/**
+ * 把单个 feature 的 routing entries → FeatureRoutingSummary.
+ *
+ * routes 已按 backend route_score 降序排好 (rank=1 主用); 本 helper 只做:
+ *   - 过滤 disabled (主备视图不展示, 列表里再现身)
+ *   - 选主用 = enabled 且 supported 中 rank 最小者 (= 第一个)
+ *   - 备用 = 剩余 enabled, 截前 3 个
+ *
+ * routes=空数组 → primary=null + has_backup=false (无可用主链路).
+ */
+export function buildFeatureRoutingSummary(
+  feature: string,
+  routes: DataSourceRoutingEntry[] | undefined
+): FeatureRoutingSummary {
+  const label = DATA_SOURCE_FEATURE_LABEL[feature] || feature;
+  if (!Array.isArray(routes) || routes.length === 0) {
+    return {
+      feature,
+      feature_label: label,
+      primary: null,
+      backups: [],
+      total_routes: 0,
+      primary_healthy: false,
+      has_backup: false,
+    };
+  }
+  const enabled = routes.filter(r => r && r.is_enabled);
+  const primary = enabled[0] ?? null;
+  const backups = enabled.slice(1, 4);
+  return {
+    feature,
+    feature_label: label,
+    primary,
+    backups,
+    total_routes: routes.length,
+    primary_healthy: Boolean(primary && primary.status === 'healthy'),
+    has_backup: enabled.length > 1,
+  };
+}
+
+/**
+ * 主入口: healthBundle → DataSourceSwitchViewModel.
+ *
+ * - healthBundle=null/undefined → loading=true 占位
+ * - providers 按 (priority asc, provider_name asc) 排序保稳定
+ * - primary_coverage = focus features 中 primary_healthy 占比
+ * - primary_coverage_level: healthy >= 80% / degraded >= 50% / critical < 50% / unknown (无 feature)
+ * - ready = primary_coverage_level==='healthy' 且 unhealthy_providers===0
+ * - blockers: 列出 primary 缺失或 unhealthy 的 feature + unhealthy provider 列表
+ *
+ * Pure, 永不抛, useMemo 安全.
+ */
+export function buildDataSourceSwitchViewModel(
+  healthBundle: DataSourceHealthBundle | null | undefined
+): DataSourceSwitchViewModel {
+  if (!healthBundle) {
+    return {
+      features: DATA_SOURCE_FOCUS_FEATURES.map(f => buildFeatureRoutingSummary(f, [])),
+      providers: [],
+      total_providers: 0,
+      enabled_providers: 0,
+      healthy_providers: 0,
+      degraded_providers: 0,
+      unhealthy_providers: 0,
+      avg_health_score: 0,
+      primary_coverage_pct: null,
+      primary_coverage_level: 'unknown',
+      ready: false,
+      blockers: ['尚未加载数据源健康状态'],
+      loading: true,
+    };
+  }
+  const providersRaw = Array.isArray(healthBundle.providers) ? healthBundle.providers : [];
+  const routingPlans = healthBundle.routing_plans || {};
+
+  // 1. 8 个 focus feature 的路由摘要
+  const features = DATA_SOURCE_FOCUS_FEATURES.map(f =>
+    buildFeatureRoutingSummary(f, routingPlans[f])
+  );
+
+  // 2. provider 精简列表 (priority asc + name asc)
+  const providers = providersRaw
+    .filter(p => p && typeof p === 'object' && typeof p.provider_name === 'string')
+    .map(summarizeProvider)
+    .sort((a, b) => {
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      return a.provider_name.localeCompare(b.provider_name);
+    });
+
+  // 3. 汇总计数
+  const total_providers = providers.length;
+  const enabled_providers = providers.filter(p => p.is_enabled).length;
+  const healthy_providers = providers.filter(p => p.status === 'healthy').length;
+  const degraded_providers = providers.filter(p => p.status === 'degraded').length;
+  const unhealthy_providers = providers.filter(p => p.status === 'unhealthy').length;
+  const enabledList = providers.filter(p => p.is_enabled);
+  const avg_health_score =
+    enabledList.length > 0
+      ? Math.round(enabledList.reduce((s, p) => s + p.health_score, 0) / enabledList.length)
+      : 0;
+
+  // 4. 主链路覆盖率
+  const coverable = features.length;
+  const covered = features.filter(f => f.primary_healthy).length;
+  const primary_coverage_pct = coverable > 0 ? Math.round((covered / coverable) * 100) : null;
+  let primary_coverage_level: DataSourceSwitchViewModel['primary_coverage_level'];
+  if (primary_coverage_pct === null) primary_coverage_level = 'unknown';
+  else if (primary_coverage_pct >= PRIMARY_COVERAGE_HEALTHY_MIN) primary_coverage_level = 'healthy';
+  else if (primary_coverage_pct >= PRIMARY_COVERAGE_DEGRADED_MIN)
+    primary_coverage_level = 'degraded';
+  else primary_coverage_level = 'critical';
+
+  // 5. blockers — 让 ops 一眼看到要处理什么
+  const blockers: string[] = [];
+  for (const f of features) {
+    if (!f.primary) {
+      blockers.push(`${f.feature_label} 无可用主链路 (全部 ${f.total_routes} 个 provider 已禁用)`);
+    } else if (!f.primary_healthy) {
+      const lab = DATA_SOURCE_STATUS_LABEL[f.primary.status] || f.primary.status || 'unknown';
+      blockers.push(
+        `${f.feature_label} 主用源 ${f.primary.provider_label} 状态 ${lab}${
+          !f.has_backup ? ' (无备用)' : ''
+        }`
+      );
+    }
+  }
+  for (const p of providers) {
+    if (p.status === 'unhealthy') {
+      blockers.push(
+        `${p.provider_label} 状态异常${
+          p.consecutive_failures > 0 ? ` (连续失败 ${p.consecutive_failures} 次)` : ''
+        }`
+      );
+    }
+  }
+
+  const ready = primary_coverage_level === 'healthy' && unhealthy_providers === 0;
+
+  return {
+    features,
+    providers,
+    total_providers,
+    enabled_providers,
+    healthy_providers,
+    degraded_providers,
+    unhealthy_providers,
+    avg_health_score,
+    primary_coverage_pct,
+    primary_coverage_level,
+    ready,
+    blockers,
+    loading: false,
   };
 }

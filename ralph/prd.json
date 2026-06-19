@@ -992,8 +992,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 64,
-      "passes": false,
-      "notes": "依赖: D-026"
+      "passes": true,
+      "notes": "DONE 2026/06/20: 新增 frontend/src/components/data/DataSourceSwitchCard.tsx (~440 行 + jsdoc) — 主备源状态可视化卡, 嵌在 DataWorkspace \"数据健康\" tab; 顶部 KPI (已注册/健康/异常/主链路覆盖) + 中间 features 路由矩阵 (8 个 focus feature: history_k/stock_list/stock_basic/fundamental_factor/money_flow/valuation/realtime_quote/intraday_bar 各显示主用源 Tag + 备用源 chain) + 底部 providers 详表 (健康分/延迟/最近异常). 复用既有 endpoint /api/market/data-sources/health (与 DataUpdateStatus 共用); 暴露 getDataSourceProvidersStatus(refresh) 在 dataHealthService.ts. 纯 helper 加在 dataWorkspaceTabHelpers.ts: summarizeProvider / buildFeatureRoutingSummary / buildDataSourceSwitchViewModel + 常量 DATA_SOURCE_FOCUS_FEATURES / FEATURE_LABEL / STATUS_COLOR / STATUS_LABEL / STATUS_TAG_COLOR / PRIMARY_COVERAGE_HEALTHY_MIN=80 / DEGRADED_MIN=50. 形态对偶 US-061 SlaDashboardCard / US-062 DataMissingAlertsCard / US-063 BulkBackfillButton — 同款 \"selfFetch 兜底 + Pure helper + ready/blockers + Tag 配色一致\" 模板. 单测 438 ok / 0 failed (新增 80 assert: [16] 25 helper unit + 30 vm scenarios + [17] 15 META-GUARD 守 component 接通 getDataSourceProvidersStatus / buildDataSourceSwitchViewModel + DataWorkspace.tsx 渲染 + 5 helper export + 4 service export + dataHealthService 含 /market/data-sources/health endpoint); 覆盖 happy-path / 半坏 / disabled 跳过 / NaN clamp / 截断 / 全 unhealthy → primary=null / degraded coverage 区间 / null bundle / bad bundle 不抛. typecheck (backend + frontend) 0 err / eslint 0 err 0 warn (auto-fix prettier 后). 手动 smoke (验收 AC \"Verify in browser\"): 启动 frontend 后访问 /workspace/data 默认 health tab, 应见 5 张卡 (顺序: 一键补抓 / SLA / 数据缺失 / 数据源主备 / 系统拓扑) — 数据源主备卡 KPI 显示 7 个 provider, features 矩阵 8 行, providers 表 7 行; 点 \"重新探测\" 触发 GET /api/market/data-sources/health?refresh=true; 注入 DB outage 让 endpoint 500 → 卡内显示 Alert \"读取数据源健康状态失败\" 不污染其它卡."
     },
     {
       "id": "US-065",

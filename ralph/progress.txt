@@ -1752,3 +1752,29 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **onBackfillDone callback 不 await 让 UI 优先呈现**: 串行补抓完成 → Modal.success 立刻显示 → 然后 onBackfillDone?.() → 上层 refreshHealthData (不 await). 如果 await 会让 Modal 延迟到 healthData fetch 完才显示, 用户感受 "卡了 2 秒". 任何 "操作完成 + 父级 refresh" 都按 fire-and-forget 父级 callback, 不要让父级 refresh 阻塞当前 Modal/Toast.
 ---
 
+
+
+## 2026/06/20 - US-064
+- 实现 [FE-025] DataWorkspace 数据源切换 — 主备源状态可视化卡, 嵌在数据健康 tab
+- Files changed:
+  - frontend/src/services/dataHealthService.ts: 加 getDataSourceProvidersStatus(refresh=false) + 类型 DataSourceProvider / DataSourceRoutingEntry / DataSourceHealthBundle (从 DataUpdateStatus.tsx 内联 interface 移到 service 层共享); endpoint /api/market/data-sources/health (与 DataUpdateStatus 共用 endpoint, refresh=true 触发主动 probe)
+  - frontend/src/pages/workspace/dataWorkspaceTabHelpers.ts: 加 US-064 段 (~280 行 + jsdoc) — DATA_SOURCE_FOCUS_FEATURES (8 个 feature) + DATA_SOURCE_FEATURE_LABEL / STATUS_COLOR / STATUS_LABEL / STATUS_TAG_COLOR + PRIMARY_COVERAGE_HEALTHY_MIN=80 / DEGRADED_MIN=50 阈值; 3 个 pure helper: summarizeProvider (clamp 0-100 health_score + null/NaN 兜底 + error 截 80 字) + buildFeatureRoutingSummary (主用 = enabled 中 rank 最小, 备用截前 3) + buildDataSourceSwitchViewModel (主入口, null 占位 + providers sort priority asc + 跨 8 feature 算 primary_coverage_pct + worst-coverage level + ready/blockers)
+  - frontend/src/components/data/DataSourceSwitchCard.tsx (新, ~440 行 + jsdoc): selfFetch 兜底 (caller 不传 healthBundle 时 useEffect 自拉) + 重新探测按钮 (Tooltip 说明 5-15s) + 顶部 4 KPI (已注册/健康/异常/主链路覆盖, Tooltip 含阈值) + 中间 features 路由矩阵 Table (能力中文 + 主用 Tag + 备用 chain 用 ArrowRightOutlined 串接) + 底部 providers Table (provider_label/status Tag/health_score/latency/last_error) + 底部 ready=Alert success / blockers=Alert warning/error + 全程 data-testid 便于将来 webapp-testing skill 验收
+  - frontend/src/pages/workspace/DataWorkspace.tsx: import DataSourceSwitchCard + 在 health tab 渲染 (插在 DataMissingAlertsCard 与 SystemTopologyMap 之间, 与既有 4 张卡逻辑互不重叠)
+  - backend/tests/services/data-workspace-tab-helpers.test.ts: 358 → 438 (新增 80 assert): [16] 69 个 (constants + summarizeProvider 14 边界 + buildFeatureRoutingSummary 15 含 disabled/全 disabled/degraded/截 3 + buildDataSourceSwitchViewModel 30 含 null/all-healthy/half-bad/mixed/bad bundle/degraded 区间) + [17] 11 个 META-GUARD (DataSourceSwitchCard 含 import + getDataSourceProvidersStatus 调 + data-testid 5 个 + healthBundle prop + useMemo; DataWorkspace import + 渲染; dataHealthService export 3 个 type + endpoint URL; helper 6 个 export)
+  - ralph/prd.json: US-064 passes=true + notes
+  - ralph/progress.txt: 本 entry
+- 验证:
+  - `npx tsc --noEmit` (backend) exit 0
+  - `npx tsc --noEmit` (frontend) exit 0
+  - `npm test -- --filter=data-workspace-tab-helpers` exit 0, 438 ok / 0 failed (859ms)
+  - `npx eslint src/pages/workspace/dataWorkspaceTabHelpers.ts src/components/data/DataSourceSwitchCard.tsx src/services/dataHealthService.ts src/pages/workspace/DataWorkspace.tsx` exit 0 (auto-fix prettier 后 0 err 0 warn)
+  - 浏览器手动 smoke (AC "Verify in browser"): 当前无 dev server, 走 META-GUARD + 单测覆盖 — 后续 frontend dev 起来后访问 /workspace/data 默认 health tab 应见 5 张卡 (顺序: 一键补抓 / SLA / 数据缺失 / 数据源主备 / 系统拓扑 / 激活 / 健康度); 数据源主备卡内: KPI 4 项 + features 8 行 + providers 7 行 + ready Alert (全绿) 或 blockers Alert
+- **Learnings for future iterations:**
+  - **共用 endpoint 而非新建 — DataUpdateStatus 已经用 /api/market/data-sources/health 且后端返同样的 providers + routing_plans + quant_readiness 3 段**; 不要为新卡片新建第二个 endpoint, 否则一份数据两条链路浪费 DB 查询且 cache miss 风险. 把内联 interface 从 DataUpdateStatus.tsx 提到 frontend service 层共享是顺手的 cleanup, 但本 sprint 范围控制只新增, 不动 legacy 文件 (DataUpdateStatus 仍有自己的 interface 副本 — 等下个 refactor sprint 一次性消重).
+  - **8 focus feature 列表与 backend getRoutingPlans 默认参数对齐**: backend MarketController.getDataSourceHealth 显式传 `['stock_list','history_k','stock_basic','fundamental_factor','money_flow','valuation','realtime_quote','intraday_bar']`, helper DATA_SOURCE_FOCUS_FEATURES 必须 = 同 8 个 (顺序与 i18n label 见 DATA_SOURCE_FEATURE_LABEL). 这两端要同步 — 加 feature 时 5 处更新 (后端 controller / 后端 service DEFAULT_DATA_PROVIDERS supported_features / 前端 helper FOCUS_FEATURES / FEATURE_LABEL / 单测 [16.46-48] 覆盖率公式). 与 US-019 dedup 持久化 / US-018 fail-safe 抽 helper 模板同款 "schema 跨 N 处一致性 META-GUARD" 思想, 但本 sprint 没把 backend 也接 META-GUARD (跨 monorepo fs.readFileSync 已经覆盖前端 + 后端 endpoint 测试在 MarketController.test.ts 里另有 guard).
+  - **`is_enabled` vs `status` 是两个独立维度**: provider 可以 is_enabled=true + status=unhealthy (链路 enabled 但最近 probe fail), 也可以 is_enabled=false + status=disabled (env 没配根本没启用). helper 要分开统计: enabled_providers (env 配了) / healthy_providers (status === 'healthy') / unhealthy_providers (status === 'unhealthy', 不含 disabled). avg_health_score 仅算 enabled (disabled 全 0 会拉低均值无意义). buildFeatureRoutingSummary 选主用 = enabled 中 rank 最小 (不能是 status=healthy 中 rank 最小, 否则会跳过 degraded primary 主源, 与 backend routing 语义不一致). 同款 "二维分别看" 适用未来任何 enable + health 双维度 model.
+  - **selfFetch 兜底模板已沉淀到 4 张卡** (US-061/062/063/064): caller 不传 healthData/healthBundle 时 component 内 useEffect 自己拉一次 + finally setLoading(false) + catch setSelfFetched(null) — 单元测试 / Storybook / 路由直跳都不依赖父组件状态. 但要注意: 如果父组件传了 healthBundle 但本组件还 mount 时 useEffect 用 [healthBundle] dep, 切换 prop 会触发 cleanup + 不再 selfFetch — 这是符合预期的 (父组件已经管 lifecycle). 重新探测按钮 disabled={Boolean(healthBundle)} 防止子组件偷偷 refresh 父组件状态 — 让 ops 知道这个按钮只在卡片独立挂载时可用, 集成场景下走父组件的 refresh.
+  - **frontend lint 默认 prettier 严格** — 写 React 组件多行 callback / Tooltip wrap / Table render 时 prettier 经常报 "Delete CRLF" / "Replace ..." 类排版错; 落地一律先写好 → npx eslint --fix 一遍 → 再人工 review → 提交. 不要手工对齐缩进 (会反复 churn). 同款 backend prettier 模式参考 US-005 RiskAlertService 落地教训.
+  - **`as 'default'` 类型断言被禁** — eslint @typescript-eslint/prefer-as-const 规则要求字面量后写 `as const`. 但 `DATA_SOURCE_STATUS_TAG_COLOR[status]` 拿到的是 union 字符串, 想 fallback 到 antd Tag color 默认值 'default' 时不能写 `'default' as 'default'` (报错), 改写 `'default' as const`. 这是 frontend TS 项目里给"返字面量类型"的 fallback 值时的固定姿势.
+---
