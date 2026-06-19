@@ -1250,3 +1250,25 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **前后端 health_class 4 档严格对齐**: backend FactorHealthClass = 'alpha' | 'weak' | 'unstable' | 'unknown'; frontend factorService.ts FactorOverviewItem.health_class 字面量四档完全一致; FACTOR_HEALTH_DISPLAY map 同 4 key + 兜底用 FACTOR_HEALTH_DISPLAY.unknown ?? — 改后端 4 档时一定同步前端 (META-GUARD 测试自动 fail-fast).
   - **AntTooltip 别名导入**: FactorWorkspace 已用 recharts 的 Tooltip, 引入 antd Tooltip 必须 alias `Tooltip as AntTooltip` 否则同名 shadowing 导致 recharts 图表 hover 工具提示消失. 同款适用未来任何混用 recharts + antd 的组件.
 ---
+
+## 2026/06/19 22:00 - US-046
+- Implemented [FE-007] FactorWorkspace AI 权重对照 — slider 旁固定宽 chip 显示 "AI N% / Δ ±M%", Card extra 加 "应用 AI 建议" 按钮一键覆盖 weights.
+- 文件改动:
+  - frontend/src/pages/workspace/factorAIWeightHelpers.ts (新, ~130 行): 4 个 pure helper (computeAIRawScore / normalizeAIWeights / computeAIWeights / computeWeightDeltas) + 常量 AI_WEIGHT_SUM_EPS=0.1.
+    * computeAIRawScore: health_class gate (只允 alpha + unstable) + max(0, |ic_90d|) × max(0, |ic_ir|) — abs() 让短期反转因子(负 IC)也能进入.
+    * normalizeAIWeights: 转 0.1 精度单元 + largest-remainder 法补 deficit, 保证 sum=100±EPS.
+    * computeWeightDeltas: user - ai per factor, 只看 ai 中存在的 key.
+  - frontend/src/pages/workspace/FactorWorkspace.tsx: 顶部 useMemo 算 aiWeights (基于 overview?.factors) + handleApplyAIWeights useCallback (空则 message.warning) → 透传给 WeightsTab; WeightsTab Props 加 aiWeights + onApplyAIWeights; Card extra 加 RobotOutlined 应用按钮 (disabled 当 AI 暂无建议); per-slider 右侧 minWidth=110 chip 显示 AI 推荐 + delta 染色 (|Δ|<2% 灰 / >0 红 / <0 绿).
+  - backend/tests/services/factor-ai-weight.test.ts (新): 38 case (常量 + computeAIRawScore 10 case 全分支 + normalizeAIWeights 9 case (含 NaN/负值排除 + 余数法 sum=100) + computeAIWeights 6 case + computeWeightDeltas 4 case + META-GUARD 8 case fs+regex 校验前端 wiring). 跨 monorepo 用 `../../../frontend/...` 相对路径直接 import helper, 不需要复制源码.
+- 质量检查:
+  - cd backend && npx ts-node --transpile-only tests/services/factor-ai-weight.test.ts → 38 ok / 0 failed
+  - cd backend && npx tsc --noEmit → 0 errors
+  - cd frontend && npx tsc --noEmit → 0 errors
+  - cd backend && npm test → 161/162 passed; 1 failure 是 tests/services/aiPollingQueue.dedup.test.ts (与本次改动无关, baseline 已 fail, git stash 对比确认)
+- **Learnings for future iterations:**
+  - **跨 monorepo 单测 pure helper 范式**: frontend 没有 jest infra, 但 backend npx ts-node 完全能跑 frontend 的 .ts (前提: 该文件无 React/antd 导入). 写 frontend pure helper 时刻意只 import type-only 的 frontend interface (factorService.ts), ts-node --transpile-only 就能直接吃, 跨 monorepo 相对路径 `../../../frontend/src/...` 跑就行, 不需要重复 setup. 适用于所有未来纯逻辑 helper (todayPlanHelpers / todaySellHelpers / factorAIWeightHelpers).
+  - **AI 权重建议公式 |IC|×|IR| + health_class gate**: 这是项目内 MFA strategy ic_weighted 模式的等价 UI 表达 (backend 已用 abs(ic_mean) 加权), 不引入新统计模型. 短期反转因子的 IC 是负数, 必须 abs 否则会得负权重 (不合法). health_class 'weak'/'unknown' 直接 0 权 (而不是给 epsilon), 因为操盘手看到 Tag '失效' 还出现在 AI 建议里会困惑.
+  - **归一化精度修正用 largest-remainder 法**: 简单地 `round((rawScore/total)*100, 1)` 求和会 ±0.3 飘, 后端 normalizeFactorWeights 会再次缩放反扰动用户视觉. 转 0.1 精度单元数 (×10 后 floor), 余数项升序补 deficit, 输出 sum 精确 = 100.0 ±0.1. 这套适用未来所有"前端展示百分比 + 后端再归一化"的场景 (risk_config target_pct / allocation 等).
+  - **AntTooltip 包按钮的写法**: antd Button 即使 disabled 也可被 Tooltip 包外层 — Tooltip 自动绑到 wrapper, hover 仍能展示, 这样"AI 暂无建议"按钮 disabled 时仍能告诉用户为什么. 同款适用任何 disabled 按钮 (eg portfolio rebalance 按钮 "数据陈旧不能下单").
+  - **chip 固定 minWidth 防错位**: WeightsTab 8 个 slider 排两列, 右侧 AI chip 如果只在有建议时渲染, 没建议的因子那行右边会塌陷, 视觉对不齐. 固定 minWidth=110 + textAlign=right, 无建议时占位 "AI —" 而不是 null. 适用所有 "条件渲染的右侧 chip / 标签".
+---

@@ -51,6 +51,7 @@ import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/Workspace
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
 import MacroEnvTab from './FactorWorkspace.MacroEnvTab';
 import BlockTradesTab from './FactorWorkspace.BlockTradesTab';
+import { computeAIWeights, computeWeightDeltas } from './factorAIWeightHelpers';
 import {
   factorService,
   FactorDetailResponse,
@@ -266,6 +267,31 @@ const FactorWorkspace: React.FC = () => {
     setExcludeNew60d(true);
   }, []);
 
+  // US-046 因子 AI 权重对照 (FE-007): 基于 overview 返的 (ic_90d, ic_ir, health_class)
+  // 算 AI 推荐权重. useMemo cache 避免每次 render 重算 (factors 变才会重算).
+  // 空 Map 等价于 "AI 暂无建议" — UI 那一侧 Tag 显示 '—'.
+  const aiWeights = useMemo(
+    () => computeAIWeights(overview?.factors ?? []),
+    [overview?.factors]
+  );
+
+  /** "一键应用 AI 建议": 把 aiWeights 全套覆盖到 weights state, 其它参数不动 */
+  const handleApplyAIWeights = useCallback(() => {
+    if (Object.keys(aiWeights).length === 0) {
+      message.warning('AI 暂无权重建议 — 请等 FACTOR_IC_COMPUTE 跑完最新一日 IC 报告');
+      return;
+    }
+    setWeights(prev => {
+      // 把所有当前 weights key 先归零, 再用 aiWeights 覆盖; 这样 prev 中存在但
+      // aiWeights 不推荐的因子会被设成 0, 用户看到的就是"AI 视角的完整套用".
+      const next: Record<string, number> = {};
+      for (const k of Object.keys(prev)) next[k] = 0;
+      for (const [k, v] of Object.entries(aiWeights)) next[k] = v;
+      return next;
+    });
+    message.success(`已应用 AI 推荐 (${Object.keys(aiWeights).length} 个因子)`);
+  }, [aiWeights]);
+
   // --- 行业热力 (US-074) — lazy on first tab activation ---
   const [heatmap, setHeatmap] = useState<FactorIndustryHeatmapResponse | null>(null);
   const [heatmapLoading, setHeatmapLoading] = useState(false);
@@ -438,6 +464,7 @@ const FactorWorkspace: React.FC = () => {
         factors={overview?.factors ?? []}
         weights={weights}
         weightSum={weightSum}
+        aiWeights={aiWeights}
         topN={topN}
         industryNeutral={industryNeutral}
         maxPerIndustry={maxPerIndustry}
@@ -455,6 +482,7 @@ const FactorWorkspace: React.FC = () => {
         onExcludeNew60dChange={setExcludeNew60d}
         onPreview={handlePreview}
         onReset={handleResetWeights}
+        onApplyAIWeights={handleApplyAIWeights}
       />
     );
   } else if (activeKey === 'heatmap') {
@@ -641,6 +669,8 @@ interface WeightsTabProps {
   factors: FactorOverviewItem[];
   weights: Record<string, number>;
   weightSum: number;
+  /** US-046 因子 AI 权重对照 (FE-007): 按 |IC_90d|×|IC_IR| 算出的归一化权重 %; 空 = AI 暂无建议 */
+  aiWeights: Record<string, number>;
   topN: number;
   industryNeutral: boolean;
   maxPerIndustry: number;
@@ -656,12 +686,15 @@ interface WeightsTabProps {
   onExcludeNew60dChange: (b: boolean) => void;
   onPreview: () => void;
   onReset: () => void;
+  /** US-046: 一键把所有 slider 设成 AI 推荐值 */
+  onApplyAIWeights: () => void;
 }
 
 const WeightsTab: React.FC<WeightsTabProps> = ({
   factors,
   weights,
   weightSum,
+  aiWeights,
   topN,
   industryNeutral,
   maxPerIndustry,
@@ -677,6 +710,7 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
   onExcludeNew60dChange,
   onPreview,
   onReset,
+  onApplyAIWeights,
 }) => {
   const [aiTarget, setAiTarget] = useState<{ symbol: string; name: string | null } | null>(null);
 
@@ -691,6 +725,9 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
     Object.keys(weights).filter(k => weights[k] > 0),
     (row: FactorPreviewSignal) => setAiTarget({ symbol: row.stock_code, name: row.name || null })
   );
+  // US-046 AI 权重对照: 当前用户权重 vs AI 权重的差额. 仅 AI 推荐过的因子有 delta.
+  const weightDeltas = computeWeightDeltas(weights, aiWeights);
+  const aiHasRecommendation = Object.keys(aiWeights).length > 0;
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card
@@ -702,6 +739,24 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
         }
         extra={
           <Space>
+            <AntTooltip
+              title={
+                aiHasRecommendation
+                  ? `按 |IC_90d|×|IC_IR| 算的归一化建议 (${
+                      Object.keys(aiWeights).length
+                    } 个有效因子). 点击后会覆盖所有 slider.`
+                  : 'AI 暂无建议: 需要至少一个 health=alpha/unstable 的因子才能推荐, 请等 FACTOR_IC_COMPUTE 跑完'
+              }
+            >
+              <Button
+                icon={<RobotOutlined />}
+                onClick={onApplyAIWeights}
+                disabled={!aiHasRecommendation}
+                data-testid="apply-ai-weights-btn"
+              >
+                应用 AI 建议
+              </Button>
+            </AntTooltip>
             <Button onClick={onReset}>重置为默认</Button>
             <Button
               type="primary"
@@ -718,6 +773,17 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
           {factors.map(factor => {
             const category = CATEGORY_DISPLAY[factor.category] ?? CATEGORY_DISPLAY.other;
             const value = weights[factor.name] ?? 0;
+            // US-046 AI 权重对照: 右侧显示 "AI N%" + "Δ +M%" 的 chip
+            const aiVal = aiWeights[factor.name];
+            const aiSuggested = typeof aiVal === 'number';
+            const delta = aiSuggested ? weightDeltas[factor.name] ?? 0 : null;
+            // delta 颜色: |delta| < 2% 灰色 (基本一致) / 正值 (用户高于 AI) 红 / 负值 (用户低于 AI) 绿
+            const deltaColor =
+              delta === null || Math.abs(delta) < 2
+                ? '#999'
+                : delta > 0
+                ? '#cf1322'
+                : '#52c41a';
             return (
               <Col xs={24} md={12} key={factor.name}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -743,6 +809,35 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
                     style={{ width: 80 }}
                     addonAfter="%"
                   />
+                  {/* US-046 AI 权重对照: slider 右侧固定宽度 chip, 即使没建议也占位防错位 */}
+                  <div
+                    style={{
+                      minWidth: 110,
+                      textAlign: 'right',
+                      fontSize: 11,
+                      lineHeight: 1.4,
+                    }}
+                    data-testid={`ai-weight-chip-${factor.name}`}
+                  >
+                    {aiSuggested ? (
+                      <>
+                        <div>
+                          <Text type="secondary">AI</Text>{' '}
+                          <Text strong style={{ color: '#722ed1' }}>
+                            {aiVal.toFixed(1)}%
+                          </Text>
+                        </div>
+                        <div style={{ color: deltaColor }}>
+                          Δ {delta! > 0 ? '+' : ''}
+                          {delta!.toFixed(1)}%
+                        </div>
+                      </>
+                    ) : (
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        AI —
+                      </Text>
+                    )}
+                  </div>
                 </div>
               </Col>
             );
