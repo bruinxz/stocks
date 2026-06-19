@@ -64,3 +64,21 @@ export {
   type ArchiveAnalysisEngineResultOutput,
   type BuildAnalysisEngineSignalPayloadInput,
 } from './analysisEngineSignalArchive';
+
+export {
+  HARD_SHORT_CIRCUIT_DIMENSIONS,
+  ANALYZER_TO_LEGACY_DIMENSION,
+  PRODUCTION_HARD_SHORT_CIRCUIT_DATA_SOURCE,
+  buildHardModeSummary,
+  buildHardShortCircuitResult,
+  buildKeyPointsFromDecision,
+  createProductionHardShortCircuitDataSource,
+  mapActionToRecommendation,
+  maybeRunHardShortCircuit,
+  pickAnalyzerEvidenceLabels,
+  pickHardRiskLevel,
+  type HardShortCircuitDataSource,
+  type HardShortCircuitDimension,
+  type HardShortCircuitResult,
+  type MaybeRunHardShortCircuitInput,
+} from './hardShortCircuit';

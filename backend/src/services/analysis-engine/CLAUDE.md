@@ -147,5 +147,43 @@ Runbook (灰度切量): `docs/audit/analysis_engine_runbook.md`.
   `ShadowDataSource` 注入 `new ShadowDoubleRunService(myDS)` 即可, 不要直接改
   `PRODUCTION_SHADOW_DATA_SOURCE`.
 
+## hard 短路入口 (US-022 [AE-003])
+
+`AIAdvisorService.analyzeSingleStock` 在调 TradingAgents 旧 5-维度路径之前先调
+`maybeRunHardShortCircuit(PRODUCTION_HARD_SHORT_CIRCUIT_DATA_SOURCE, {stock_code, user_id, ...})`:
+
+- `cfg.mode !== 'hard'` (off / shadow / 未知) → 返 null, caller 必须 fall-through 旧路径
+  (shadow 仍由末尾 `shadowDoubleRunService.maybeRunShadow` trigger 处理, 本助手不接管).
+- `cfg.mode === 'hard'` → 直接调 `AnalysisEngineService.analyzeStock` → 转
+  `HardShortCircuitResult` (1:1 对齐 `AnalyzeSingleStockResult`) → 写
+  `AIStockAnalysisReport(engine_variant='multi_dim_v1', shadow_of_report_id=null)` →
+  调 `archiveAnalysisEngineResult` 写 `AIInvestmentSignal(source_type=ANALYSIS_ENGINE)` →
+  caller 直接 `return hardResult`, 末尾 shadow trigger **整段跳过**, 不会双写 archive.
+- `isAsync=true` 不走 hard 短路 (异步任务语义靠 TradingAgents). dry_run=true 跑完
+  pure 转换但 **不** 写 report / 不 archive.
+
+**与 ShadowDoubleRunService 边界**:
+
+- shadow path **异步** 双跑 (旧路径主返 + 后台 setImmediate); hard path **同步** 接管.
+- hard 模式下两者**不共存**: AIAdvisorService 见 `hardResult` 即 return, 末尾 shadow
+  trigger 跳过, 所以 shadow 的 archiveHardSignal 在用户走 AIAdvisor 入口时不会触发.
+- 但 PortfolioConstructionAdapter / 其它 caller 仍可独立走 ShadowDoubleRunService
+  hard 分支, 两者各自有自己的 archive idempotency key (source_id = `${symbol}_${as_of}`
+  夹 loop_run_id), 不会真重复.
+
+**fail-OPEN 三层防御** (与 US-021 / US-018 同模式):
+- helper 内 `try/catch` analyzeStock throw → 返 `status='failed'` result + error 字段
+  (不静默 fallback 到 TradingAgents 否则破坏 hard 语义).
+- persist throw → `metadata.save_error` + `persisted=false`, 仍返决策.
+- archive throw / ok=false → 仅 `logger.warn` + `metadata.archive_error`.
+- AIAdvisorService caller 自己再套一层 try/catch — helper 完全 crash 也 fall-through 旧路径 (生产 archive 写一行 audit 即可).
+
+**接入新 caller** (未来若有别的服务想接 hard 短路, e.g. AutomatedRecommendationLoop):
+1. Import `maybeRunHardShortCircuit` 与 `PRODUCTION_HARD_SHORT_CIRCUIT_DATA_SOURCE`.
+2. 在 caller 的"调 TradingAgents 之前"加 `if (!isAsync) { const r = await maybeRunHardShortCircuit(...); if (r) return r; }`.
+3. caller 自己套 try/catch 兜底 (helper crash 必须 fall-through, 不能阻塞主流程).
+4. 更新 META-GUARD: 在 caller 对应单测加 fs+regex 守 import + 调用 + return short-circuit + 反向不再含 v1 仅 shadow 文案.
+5. 若 caller 用自定义 `HardShortCircuitDataSource` (e.g. 集成测试注入 fake), `archiveHardSignal` 内的 fail-OPEN 三件套必须实现到位 (返 `{ok:false, reason}` 不 throw).
+
 跑: `cd backend && npx ts-node --transpile-only tests/services/analysis-engine/<file>.test.ts`
 或 `npm test` (runner 跑全部 .test.ts).

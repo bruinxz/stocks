@@ -335,8 +335,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 22,
-      "passes": false,
-      "notes": "依赖: AE-002"
+      "passes": true,
+      "notes": "依赖: AE-002 | done 2026-06-19 — maybeRunHardShortCircuit helper + AIAdvisorService 早 short-circuit + 118 ok 单测 + META-GUARD"
     },
     {
       "id": "US-023",

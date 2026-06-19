@@ -1011,6 +1011,43 @@ export class AIAdvisorService {
       requested_at: now.toISOString(),
     };
 
+    // US-022 [AE-003] hard 短路: mode='hard' 时直接调多维引擎 + 写 AIInvestmentSignal
+    // 跳过 TradingAgents 旧 5-维度路径与末尾 shadow trigger.
+    // off / shadow / 未知 mode → 返 null fall-through 旧路径 (shadow 仍由末尾 trigger 处理).
+    // isAsync=true 不走 hard 短路 (异步任务语义靠 TradingAgents).
+    if (!isAsync) {
+      try {
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const hardModule = require('./analysis-engine/hardShortCircuit');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const hardResult = await hardModule.maybeRunHardShortCircuit(
+          hardModule.PRODUCTION_HARD_SHORT_CIRCUIT_DATA_SOURCE,
+          {
+            stock_code: normalizedCode,
+            user_id: options.user_id ?? null,
+            target_date: options.target_date,
+            stock_name: stockName,
+            task_label: options.task_label ?? null,
+            dry_run: dryRun,
+            report_id: reportId,
+            metadata,
+            now,
+          }
+        );
+        if (hardResult) {
+          // hard 模式已接管 — 不调 TradingAgents, 不调末尾 shadow trigger
+          return hardResult as AnalyzeSingleStockResult;
+        }
+      } catch (hardErr: any) {
+        logger.warn(
+          `[analysis-engine.hard] short-circuit trigger failed for ${reportId}: ${
+            hardErr?.message || hardErr
+          }`
+        );
+        // fall-through 旧路径
+      }
+    }
+
     // 调远端（同步/异步）
     let payload: RemoteAnalyzePayload;
     try {
