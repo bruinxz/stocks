@@ -640,8 +640,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 42,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "依赖: 无 | DONE 2026/06/19: 新增 frontend/src/pages/workspace/todayPlanHelpers.ts (pure helper buildTradingPlan: 把 3 策略 BUY 信号合并去重排序成统一计划; export 4 helper + 3 常量 + 6 类型, 与 backend US-026/028/029 同款 pure builder 形态便于 future 单测) + frontend/src/pages/workspace/TodayWorkspace.tsx 新增 TradingPlanCard 组件 (~220 行) 置于 SignalsPanel 顶部, 含 3 KPI Statistic + Table/Mobile dual layout (priority/代码/名称/行业/来源策略 tags/理由/参考价/AI 解读), priority 决策表 high (龙头 / 业绩 100%+) / medium (业绩 / mfa≥0.6) / low (mfa 弱 alpha), 同股多策略合并 sources array, planSourceTagColor 与 3 策略卡 header 色谱对齐. typecheck 0 err, eslint 0 新 err 0 新 warn (3 个 pre-existing TodayWorkspace warn 沿用 US-040). 无 backend 改动 (TodaySignalsData shape 复用)."
     },
     {
       "id": "US-043",

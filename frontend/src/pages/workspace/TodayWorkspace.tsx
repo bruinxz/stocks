@@ -51,6 +51,15 @@ import {
   KeyEventItem,
   UnreadRiskAlertItem,
 } from '../../services/todayWorkspaceService';
+import {
+  buildTradingPlan,
+  TradingPlanRow,
+  TradingPlanSource,
+  TradingPlanPriority,
+  priorityTagColor,
+  priorityLabel,
+  sourceLabel,
+} from './todayPlanHelpers';
 import { getMarketBriefToday, MarketBriefResult } from '../../services/marketBriefService';
 import {
   getMarketJudgmentToday,
@@ -1245,9 +1254,271 @@ const MarketBriefCard: React.FC = () => {
 // SignalsPanel — 中部 3 列卡片 + 底部 2 列（事件 + 告警预览）
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// TradingPlanCard (US-042 / FE-003) — 今日交易计划卡 (统一 BUY 清单)
+// ---------------------------------------------------------------------------
+
+/**
+ * 「今日交易计划」把 3 个策略 (multi_factor / dragon_head / earnings_surprise)
+ * 当日 BUY 信号合并 → 去重 → 优先级排序成一条统一的"今日可下单清单"。
+ *
+ * 设计:
+ *   - 数据全部来自 props.data, 不发请求 — buildTradingPlan 是 pure helper, 同
+ *     输入永远同输出 (便于 React render 一致性);
+ *   - 同股多策略命中合并到一行, sources Tag 展示所有命中来源;
+ *   - priority 排序: high (龙头 / 业绩 100%+) → medium (业绩 / mfa 强 alpha) →
+ *     low (mfa 弱 alpha);
+ *   - 跳转: 点击代码/名称 → /stock/{symbol}; AI 解读按钮 → AIStockAnalysisModal.
+ *
+ * 与下方 3 张策略卡的边界: 策略卡展示"为什么进选" (因子分 / 连板数 / 业绩增幅
+ * 等策略私有信息), 本卡片是"今天我要买这些股" 的工作流入口 — 用户先看本卡决
+ * 定下单清单, 不需要在 3 张卡之间来回切.
+ */
+const TradingPlanCard: React.FC<{ data: TodaySignalsData }> = ({ data }) => {
+  const isMobile = useIsMobile();
+  const navigate = useNavigate();
+  const [aiTarget, setAiTarget] = useState<{ symbol: string; name: string | null } | null>(null);
+
+  const rows = useMemo(() => buildTradingPlan(data), [data]);
+
+  const counts = useMemo(() => {
+    let high = 0;
+    let medium = 0;
+    let low = 0;
+    for (const r of rows) {
+      if (r.priority === 'high') high += 1;
+      else if (r.priority === 'medium') medium += 1;
+      else low += 1;
+    }
+    return { total: rows.length, high, medium, low };
+  }, [rows]);
+
+  return (
+    <Card
+      size="small"
+      title={
+        <Space>
+          <ThunderboltOutlined style={{ color: '#722ed1' }} />
+          <span>今日交易计划</span>
+          <Tag color="purple">{counts.total} 只</Tag>
+        </Space>
+      }
+      extra={
+        <Space size={8}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            合并 3 策略 BUY 信号
+          </Text>
+        </Space>
+      }
+    >
+      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Space size={24} wrap>
+          <Statistic
+            title="强烈推荐"
+            value={counts.high}
+            valueStyle={{ color: '#cf1322', fontSize: 18 }}
+          />
+          <Statistic
+            title="建议关注"
+            value={counts.medium}
+            valueStyle={{ color: '#1677ff', fontSize: 18 }}
+          />
+          <Statistic
+            title="可选加仓"
+            value={counts.low}
+            valueStyle={{ color: '#999', fontSize: 18 }}
+          />
+        </Space>
+        {rows.length === 0 ? (
+          <Empty
+            description="今日 3 策略均无 BUY 信号 (空仓观望)"
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+          />
+        ) : isMobile ? (
+          <div className="workspace-mobile-card-list">
+            {rows.map(row => (
+              <Card key={row.stock_code} size="small">
+                <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                  <Space size={8} wrap>
+                    <Tag color={priorityTagColor(row.priority)}>{priorityLabel(row.priority)}</Tag>
+                    <Text strong style={{ fontSize: 14 }}>
+                      {row.name ?? row.stock_code}
+                    </Text>
+                    <Text code style={{ fontSize: 11 }}>
+                      {row.stock_code}
+                    </Text>
+                    {row.industry && <Tag color="geekblue">{row.industry}</Tag>}
+                  </Space>
+                  <Space size={4} wrap>
+                    {row.sources.map(s => (
+                      <Tag key={s} color={planSourceTagColor(s)}>
+                        {sourceLabel(s)}
+                      </Tag>
+                    ))}
+                  </Space>
+                  {row.reason && (
+                    <Paragraph style={{ margin: '4px 0 0 0', fontSize: 12 }} type="secondary">
+                      {row.reason}
+                    </Paragraph>
+                  )}
+                  <div className="workspace-mobile-card-actions">
+                    <Button
+                      icon={<RobotOutlined />}
+                      onClick={() =>
+                        setAiTarget({
+                          symbol: row.stock_code,
+                          name: row.name,
+                        })
+                      }
+                    >
+                      AI 解读
+                    </Button>
+                  </div>
+                </Space>
+              </Card>
+            ))}
+          </div>
+        ) : (
+          <Table<TradingPlanRow>
+            size="small"
+            rowKey="stock_code"
+            dataSource={rows}
+            pagination={false}
+            scroll={{ x: 'max-content', y: 360 }}
+            columns={[
+              {
+                title: '优先级',
+                dataIndex: 'priority',
+                width: 80,
+                render: (v: TradingPlanPriority) => (
+                  <Tag color={priorityTagColor(v)}>{priorityLabel(v)}</Tag>
+                ),
+                filters: [
+                  { text: '强烈', value: 'high' },
+                  { text: '建议', value: 'medium' },
+                  { text: '可选', value: 'low' },
+                ],
+                onFilter: (val, row) => row.priority === val,
+              },
+              {
+                title: '代码',
+                dataIndex: 'stock_code',
+                width: 92,
+                render: (v: string) => (
+                  <a onClick={() => navigate(`/stock/${v}`)}>
+                    <Text code>{v}</Text>
+                  </a>
+                ),
+              },
+              {
+                title: '名称',
+                dataIndex: 'name',
+                width: 110,
+                ellipsis: true,
+                render: (v: string | null, row: TradingPlanRow) =>
+                  v ? <a onClick={() => navigate(`/stock/${row.stock_code}`)}>{v}</a> : '—',
+              },
+              {
+                title: '行业',
+                dataIndex: 'industry',
+                width: 100,
+                ellipsis: true,
+                render: (v: string | null) => (v ? <Tag color="geekblue">{v}</Tag> : '—'),
+              },
+              {
+                title: '来源策略',
+                dataIndex: 'sources',
+                width: 200,
+                render: (sources: TradingPlanSource[]) => (
+                  <Space size={4} wrap>
+                    {sources.map(s => (
+                      <Tag key={s} color={planSourceTagColor(s)}>
+                        {sourceLabel(s)}
+                      </Tag>
+                    ))}
+                  </Space>
+                ),
+              },
+              {
+                title: '理由',
+                dataIndex: 'reason',
+                ellipsis: { showTitle: false },
+                render: (v: string) =>
+                  v ? (
+                    <Tooltip title={v} placement="topLeft">
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {v}
+                      </Text>
+                    </Tooltip>
+                  ) : (
+                    <Text type="secondary">—</Text>
+                  ),
+              },
+              {
+                title: '参考价',
+                dataIndex: 'reference_price',
+                width: 80,
+                align: 'right' as const,
+                render: (v: number | null) =>
+                  v != null && Number.isFinite(v) ? v.toFixed(2) : '—',
+              },
+              {
+                title: '操作',
+                key: 'actions',
+                width: 110,
+                fixed: 'right' as const,
+                render: (_: unknown, row: TradingPlanRow) => (
+                  <Space size={4}>
+                    <Button
+                      size="small"
+                      type="link"
+                      onClick={() => navigate(`/stock/${row.stock_code}`)}
+                    >
+                      详情
+                    </Button>
+                    <Button
+                      size="small"
+                      icon={<RobotOutlined />}
+                      onClick={() =>
+                        setAiTarget({
+                          symbol: row.stock_code,
+                          name: row.name,
+                        })
+                      }
+                    >
+                      AI
+                    </Button>
+                  </Space>
+                ),
+              },
+            ]}
+          />
+        )}
+      </Space>
+      {aiTarget && (
+        <AIStockAnalysisModal
+          open={!!aiTarget}
+          onClose={() => setAiTarget(null)}
+          stockCode={aiTarget.symbol}
+          stockName={aiTarget.name}
+          taskLabel="today_trading_plan"
+        />
+      )}
+    </Card>
+  );
+};
+
+/** US-042 source → Tag 颜色: 与策略卡 header 图标色一致, UI 跨卡片一眼对应 */
+function planSourceTagColor(s: TradingPlanSource): string {
+  if (s === 'dragon_head') return 'orange'; // 与 DragonHeadCard 同色
+  if (s === 'earnings_surprise') return 'green'; // 与 EarningsSurpriseCard 同色
+  return 'blue'; // multi_factor 与 MultiFactorCard 同色
+}
+
 const SignalsPanel: React.FC<{ data: TodaySignalsData }> = ({ data }) => {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <TradingPlanCard data={data} />
       <Row gutter={[16, 16]}>
         <Col xs={24}>
           <MultiFactorCard
