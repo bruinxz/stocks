@@ -35,4 +35,11 @@ router.get(
   todayController.getMarketJudgment.bind(todayController)
 );
 
+// US-041 — 集合竞价异动卡片 (9:25 后展示一字/高开/低开)
+router.get(
+  '/call-auction',
+  authController.authenticate,
+  todayController.getCallAuctionAnomalies.bind(todayController)
+);
+
 export default router;

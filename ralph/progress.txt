@@ -1085,3 +1085,40 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **status banner 三态**: ok 不显示 Alert; partial 黄色 Alert 显示 message ("部分数据缺失（外盘 或 regime）..."); failed 红色 Alert. tag 也同步 ("部分数据待补" / "数据全缺"). 不要只在 header 显示状态 tag 而省掉 banner — banner 行可读性远高于 8px tag.
   - **AC "Verify in browser using dev-browser skill" 在 ralph 自主推进时无浏览器 env**: 仍要打 typecheck + lint + backend 单测 + 把 "浏览器 smoke 待 dev 环境" 写到 progress + PRD notes, 下次人工部署时 cherry-pick smoke 验证. 不强行启动 dev server (3000 端口冲突 + 依赖后端 + 时间长).
 ---
+
+
+## 2026/06/19 19:25 - US-041
+- 实现 [FE-002] TodayWorkspace 集合竞价异动卡片 — 9:25 后展示一字/高开/低开异动. backend service + frontend card 全套.
+- Files changed:
+  - backend/src/services/CallAuctionAnomalyService.ts (新, 765 行 + 完整 jsdoc):
+    * 常量: GAP_UP_PCT_THRESHOLD=3 / GAP_DOWN_PCT_THRESHOLD=-3 / ONE_WORD_PRICE_EPSILON=0.001 / CALL_AUCTION_END_HOUR=9 / CALL_AUCTION_END_MINUTE=25 / MAX_BRIEF_LEN=100 / MAX_UNIVERSE_SIZE=60
+    * 类型: AuctionAnomalyType union 'one_word'|'gap_up'|'gap_down'|'normal', AuctionUniverseSource 'limit_up_pool'|'position', AuctionUniverseEntry / AuctionQuoteRow / AuctionAnomalyItem / AuctionAnomalySummary / CallAuctionAnomalyResult / CallAuctionAnomalyOptions / CallAuctionAnomalyDataSource 全 export
+    * pure helpers (全 export 单测): normalizeAuctionTradeDate / isAfterCallAuction / getServerClockShanghai / classifyAuctionAnomaly (4 档决策表 — 一字判定需 open=high=low + |pct - limit_pct| < 0.5%, 否则 fall-through gap_up/gap_down/normal; ST 5% 一字也正确归入 one_word) / sortAnomalies (one_word→gap_up→gap_down, 组内按 |pct| 降序) / summarizeAnomalies / buildAnomalyNote / buildBrief (中文 100 字一句话)
+    * DataSource DI seam: CallAuctionAnomalyDataSource interface, PRODUCTION_DATA_SOURCE 实现 loadUniverse (LimitUpStock 昨日涨停池 + PaperTradingPosition 当前持仓 join + dedup) + loadRealtimeQuotes (realtimeQuoteService.fetchSnapshots)
+    * 主入口 callAuctionAnomalyService.getTodayAuction(options) — fail-OPEN 三层 (universe / quotes / timing 各自 try/catch 单维错落 components.<x>.error, 顶层 try/catch 兜底永远返完整 shape, status='ok'|'partial'|'failed'). 9:25 前 timing.error='集合竞价未结束' + is_after_auction=false; force_after_auction 单测兜底.
+  - backend/src/api/controllers/TodayController.ts: 加 getCallAuctionAnomalies(req, res) — 接入 callAuctionAnomalyService, 透传 trade_date/portfolio_id query, service 自己 fail-OPEN, controller 仅防框架层异常
+  - backend/src/api/routes/today.routes.ts: 加 router.get('/call-auction', authController.authenticate, todayController.getCallAuctionAnomalies)
+  - frontend/src/services/callAuctionService.ts (新, 99 行): API client + 类型镜像 (CallAuctionAnomalyResult / AuctionAnomalyItem / AuctionAnomalyType / CallAuctionComponents) — getCallAuctionToday(options) GET /today/call-auction
+  - frontend/src/pages/workspace/TodayWorkspace.tsx: import CallAuctionCard + 在 MarketJudgmentCard 后接入. CallAuctionCard 组件 (~339 行新):
+    * 9:25 前 timing 提示, 不展示行情;
+    * 9:25-9:35 之间每 20s 自动 refresh (集合竞价后开盘前的关键窗口);
+    * 4 个 KPI Statistic (观察池/一字/高开/低开) — count > 0 高亮红 (一字/高开)/绿 (低开);
+    * Table 展示命中异动股票, 列: symbol/name (持仓/连板 Tag) / 开盘价 / 涨跌 % (带颜色) / note (一句话)
+    * status partial/failed banner 显式 components.error 让用户知道哪个维度缺数据
+  - backend/tests/services/call-auction-anomaly-service.test.ts (新, 643 行 / 99 assert): 12 模块覆盖 — [1] 常量冻结 / [2] normalizeAuctionTradeDate / [3] isAfterCallAuction (含 9:24/9:25/9:26 边界) / [4] classifyAuctionAnomaly (4 档 + ST 5% 一字 + 创业板 20% 一字 + 北交所 30% 一字 + 缺数据 fallback normal + open=prev_close 等价 0) / [5] sortAnomalies (priority + magnitude tie) / [6] summarizeAnomalies / [7] buildAnomalyNote / [8] buildBrief / [9-12] service e2e (happy / partial universe-fail / partial quotes-fail / 9:25 前 timing.error 不调 loadRealtimeQuotes / force_after_auction / skip_universe / skip_quotes / fake DataSource throw → fail-OPEN)
+  - ralph/prd.json: US-041 passes=true + notes
+  - ralph/progress.txt: 本 entry
+- 验证:
+  - `cd backend && npx tsc --noEmit` exit 0
+  - `cd frontend && npx tsc --noEmit` exit 0
+  - `cd backend && npm test -- --filter=call-auction` exit 0, 99 ok / 0 failed (1.5s)
+  - lint baseline-diff: frontend TodayWorkspace.tsx 仅 3 个 pre-existing warning (applying unused / handleApplyAll unused / useCallback exhaustive-deps), 本次新增 0 err 0 warn; backend 新文件全 clean
+  - 手动 smoke note (无 dev-browser env): UI 卡片接入位置 = MarketJudgmentCard 后, 与 US-040 同款 fail-OPEN partial/failed banner 形态; 真 PG/Redis 可达时需手测: (a) 9:25 前打开 → 看到 "集合竞价未结束" Tag 灰色; (b) 9:25 后 → 看到一字/高开/低开 KPI + Table; (c) 关 db → universe.error banner 黄色 partial; (d) 关行情服务 → quotes.error 黄色 partial.
+- **Learnings for future iterations:**
+  - **TodayWorkspace 卡片接入位置统一在 MarketJudgmentCard 后**: TodayWorkspace.tsx 的 layout container 是 `<Space direction="vertical" size={16}>` 包 MarketJudgmentCard + CallAuctionCard + MarketBriefCard + body. 后续 FE-003 ~ FE-005 (今日交易计划 / AI 大盘 brief / 今日卖出建议) 都按同一模式插入. 不要嵌进 MarketJudgmentCard 内, 它是独立卡片.
+  - **9:25 时机 service 必须有 force_after_auction 单测兜底**: timing 判定走 wall-clock (moment().tz('Asia/Shanghai').hour()*60+minute()), 单测在 14:00 跑会全部走 "9:25 后" 分支, 但 9:25 前的 "components.timing.error='集合竞价未结束'" 分支永远测不到. 必须加 options.force_after_auction=false 强制走前分支, 否则 timing 边界 case (9:24:59 / 9:25:00 / 9:25:01) 永远是 untested. 同款适用任何"wall-clock 决策"类 service.
+  - **classifyAuctionAnomaly 一字判定要先检 limit_pct 再 fall-through gap_up**: 决策表顺序 → 一字 (三价相等 + |pct - limit_pct| < 0.5) → gap_up (pct ≥ 3) → gap_down (pct ≤ -3) → normal. 如果先判 gap_up 会把 ST 股 5% 一字 / 创业板 20% 一字误归为 gap_up. 单测必须覆盖 ST 5% / 主板 10% / 创业板 20% / 北交所 30% 4 种 limit_pct 的一字 case, getLimitPct(segment, st) 是事实源 (复用 quant/marketLimits, 不要在本 service 内 hardcode).
+  - **dedup universe 时 sources array 要合并不能覆盖**: PaperTradingPosition 持仓股可能同时在 LimitUpStock 昨日池里 (强势股我自己也买了). dedup 时按 symbol key, sources array push 两次去重 (Set → Array), 不能 second-source 覆盖 first-source 否则 UI 上 "是否持仓" Tag 会丢. 与 US-027 entities normalize 同款 "属性可叠加" 思想.
+  - **集合竞价 9:25-9:35 关键窗口前端要自动 20s refresh**: 用户开盘前看的就是这 10 分钟, 行情快速变化. setInterval 在 useEffect 内, isAuctionWindow() 判 wall-clock 是否在区间, 不在区间不起 interval (省 timer + 避免乱发请求). cleanup 必须 clearInterval. 同款适用任何 "盘口窗口期" 类 UI: 开盘前 9:15-9:30 / 尾盘 14:50-15:00 / 集合竞价 9:25-9:35 都应有 mini-interval auto-refresh.
+  - **realtimeQuoteService.fetchSnapshots 是当前行情 API 入口**: 不要写 axios 直连腾讯/akshare. fetchSnapshots(symbols) 自带 cache + dedup + 多源 fallback, 是与 RealtimeQuote model 串通的事实源. 任何 "拿一批股的当前价" 全走它.
+---

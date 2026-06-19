@@ -624,8 +624,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 41,
-      "passes": false,
-      "notes": "依赖: D-014"
+      "passes": true,
+      "notes": "依赖: D-014 ✓ implemented — CallAuctionAnomalyService (765L) + callAuctionService.ts + CallAuctionCard 接 TodayWorkspace, 99 单测全过, fail-OPEN 三层 (timing/universe/quotes), 9:25 后 universe = LimitUpStock + Position, classifyAuctionAnomaly 决策表 5 档."
     },
     {
       "id": "US-042",
