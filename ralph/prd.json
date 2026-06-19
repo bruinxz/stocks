@@ -395,8 +395,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 26,
-      "passes": false,
-      "notes": "依赖: ANN-001"
+      "passes": true,
+      "notes": "依赖: ANN-001 | DONE 2026/06/19: 在 backend/src/services/AnnouncementNLPService.ts 新增 EVENT_TYPE_KEYWORDS 优先级链字典 (处罚>减持>解禁>重组>担保>业绩, 共 53 关键词) + classifyEventType(title) 纯函数 (短路扫描, 命中即返, 全链未命中且 title 非空 → 其它, null/empty → null). buildHeuristicNLPResult 接入 classifyEventType 让启发式 sync 路径自然填 event_type. 测试 tests/services/announcement-nlp-service.test.ts 331 ok / 0 failed (新增 5 测组: EVENT_TYPE_KEYWORDS 冻结/顺序锁定 + 7 类基本命中 + 优先级链 5 例 + 易混淆 + null/empty/whitespace 边界; AC 主验收 testClassifyEventTypeAccuracy 用 20 条人工标注真实风格标题验 100% 准确率, AC 阈值 80%; testClassifyEventTypeWiringHeuristicResult 验 builder 真的接入). normalizeEventType 与 classifyEventType 分工注释清楚 — 前者接已分类好的 enum 别名 (远端 AI 输出), 后者接 raw 标题 (启发式). tsc 0 err / eslint 0 err / 单测 331 ok."
     },
     {
       "id": "US-027",

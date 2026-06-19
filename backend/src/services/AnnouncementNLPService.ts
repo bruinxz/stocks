@@ -202,6 +202,110 @@ export const ANN_SENTIMENT_KEYWORDS: Readonly<{
 });
 
 /**
+ * US-026 ANN-002: classifyEventType 关键词字典 (扫描公告标题).
+ *
+ * 7 大事件类型按"优先级从高到低"扫描 — 命中即返回, 不再继续匹配后续类型.
+ *   1. 处罚    — 强监管事件, 安全派优先 (业绩 + 处罚同标题先归处罚, e.g. "业绩快报 + 被立案调查").
+ *   2. 减持    — 股东行为, 与"业绩"标题易混淆 (e.g. "业绩预增 + 股东减持") 但减持是触发动作.
+ *   3. 解禁    — 限售股解禁公告, 与减持邻近但语义不同.
+ *   4. 重组    — 并购重组 / 资产重组 / 重大资产购买.
+ *   5. 担保    — 对外担保 / 关联担保.
+ *   6. 业绩    — 业绩预告 / 业绩快报 / 季报年报 / 业绩说明会.
+ *   7. 其它    — 上述 6 类均未命中但仍非 null (e.g. 选举 / 分红 / 回购) 兜底.
+ *
+ * 字典命中 = 全字符串 includes (与 normalizeEventType / heuristicSentiment 同款),
+ * 不用正则避免歧义; 顺序锁定让"含多类关键词"的标题归到优先级更高的类.
+ *
+ * 与 normalizeEventType 的分工:
+ *   - classifyEventType 接 raw 标题 (启发式分类); 默认走本路径.
+ *   - normalizeEventType 接 raw 字符串 (已分类好的 enum / 别名); 走远端 AI 时用.
+ */
+export const EVENT_TYPE_KEYWORDS: readonly Readonly<{
+  type: AnnouncementEventType;
+  keywords: readonly string[];
+}>[] = Object.freeze([
+  Object.freeze({
+    type: '处罚' as AnnouncementEventType,
+    keywords: Object.freeze([
+      '处罚',
+      '行政处罚',
+      '立案调查',
+      '立案',
+      '违规',
+      '违法',
+      '警示函',
+      '监管函',
+      '问询函',
+      '风险警示',
+      '退市风险',
+      '*ST',
+      '被诉',
+      '诉讼',
+    ]),
+  }),
+  Object.freeze({
+    type: '减持' as AnnouncementEventType,
+    keywords: Object.freeze([
+      '减持',
+      '股东减持',
+      '减持计划',
+      '减持股份',
+      '高管减持',
+      '股份减持',
+      '协议转让',
+      '大宗交易',
+    ]),
+  }),
+  Object.freeze({
+    type: '解禁' as AnnouncementEventType,
+    keywords: Object.freeze(['解禁', '限售股解禁', '股份解禁', '解除限售', '限售解除']),
+  }),
+  Object.freeze({
+    type: '重组' as AnnouncementEventType,
+    keywords: Object.freeze([
+      '重组',
+      '资产重组',
+      '重大资产重组',
+      '并购重组',
+      '并购',
+      '资产购买',
+      '购买资产',
+      '资产出售',
+      '出售资产',
+      '吸收合并',
+      '换股合并',
+      '借壳',
+    ]),
+  }),
+  Object.freeze({
+    type: '担保' as AnnouncementEventType,
+    keywords: Object.freeze(['担保', '对外担保', '关联担保', '提供担保', '担保协议', '反担保']),
+  }),
+  Object.freeze({
+    type: '业绩' as AnnouncementEventType,
+    keywords: Object.freeze([
+      '业绩',
+      '业绩预告',
+      '业绩预增',
+      '业绩预减',
+      '业绩快报',
+      '业绩说明',
+      '业绩说明会',
+      '业绩报告',
+      '年度报告',
+      '季度报告',
+      '一季报',
+      '半年报',
+      '三季报',
+      '年报',
+      '中报',
+      '净利润',
+      '营业收入',
+    ]),
+  }),
+]);
+
+/**
  * 业务/行业主题关键词字典 (扫描公告标题).
  * 命中后作为 key_topics_json 数组写入; 同一标题去重后最多 5 个.
  */
@@ -647,6 +751,33 @@ export function normalizeEventType(raw: unknown): AnnouncementEventType | null {
 }
 
 /**
+ * US-026 ANN-002: classifyEventType — 启发式 7 大事件分类.
+ *
+ * 接 raw 公告标题, 按 EVENT_TYPE_KEYWORDS 优先级链扫描:
+ *   - 命中任一关键词 → 返回该类 (短路, 不再继续匹配后续类);
+ *   - 全链未命中但 title 非空 → '其它';
+ *   - title null/empty/whitespace → null (= "未跑过分类", 与 ANN-001 schema 默认一致).
+ *
+ * 输出范围与 normalizeEventType 一致 (`AnnouncementEventType | null`),
+ * 与 buildHeuristicNLPResult / buildNLPResultFromPayload 二者衔接.
+ *
+ * AC: 准确率 ≥ 80% — 用 testClassifyEventTypeAccuracy 中的 20 条人工标注集验证.
+ *
+ * pure, 无 I/O, 单测覆盖.
+ */
+export function classifyEventType(title: string | null | undefined): AnnouncementEventType | null {
+  if (title === null || title === undefined) return null;
+  const text = String(title).trim();
+  if (!text) return null;
+  for (const { type, keywords } of EVENT_TYPE_KEYWORDS) {
+    for (const kw of keywords) {
+      if (text.includes(kw)) return type;
+    }
+  }
+  return '其它';
+}
+
+/**
  * US-025 ANN-001: 规范化 entities — 任何 raw 输入兜底成 AnnouncementEntity[].
  * - 非 array → [];
  * - 元素必须含 string name + string role (缺一即 drop, 不报错);
@@ -778,7 +909,8 @@ export function buildHeuristicNLPResult(row: AnnouncementReportRow): Announcemen
     key_topics_json: extractTopics(row.original_title),
     // US-025 ANN-001: 启发式默认占位 — ANN-002 / 003 / 005 (pure helper) 落地后,
     // 本 builder 会引入对应函数填充, 但 schema 必须现在就有字段保留位以免 saveSummaries 缺列报错.
-    event_type: null,
+    // US-026 ANN-002: 已接入 classifyEventType — 启发式标题分类落 event_type (null=空标题).
+    event_type: classifyEventType(row.original_title),
     priority: 'low',
     entities: [],
     status: 'completed',

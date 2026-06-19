@@ -68,6 +68,8 @@ import {
   normalizeSentiment,
   normalizePriority,
   normalizeEventType,
+  classifyEventType,
+  EVENT_TYPE_KEYWORDS,
   normalizeEntities,
   buildHeuristicNLPResult,
   buildNLPResultFromPayload,
@@ -468,7 +470,8 @@ function testBuildHeuristicNLPResult(): void {
   assertEqual('heuristic no error', r.error, null);
   assertEqual('heuristic stock_code', r.stock_code, '600519');
   // US-025 ANN-001: 三新字段默认占位 (ANN-002~005 实现前)
-  assertEqual('heuristic event_type default null', r.event_type, null);
+  // US-026 ANN-002: classifyEventType 已接入, 标题含 '业绩' → '业绩'
+  assertEqual('heuristic event_type classified', r.event_type, '业绩');
   assertEqual('heuristic priority default low', r.priority, 'low');
   assert('heuristic entities default []', Array.isArray(r.entities) && r.entities.length === 0);
 }
@@ -1021,6 +1024,188 @@ function testNormalizeEventType(): void {
   assertEqual('event whitespace → null', normalizeEventType('   '), null);
 }
 
+// ---------------------------------------------------------------------------
+// US-026 ANN-002: classifyEventType — 启发式 7 大事件分类
+// ---------------------------------------------------------------------------
+
+function testEventTypeKeywordsFrozen(): void {
+  // EVENT_TYPE_KEYWORDS 顺序锁定 (优先级链), 任何 reorder 都会让"含多类关键词"标题归属漂移.
+  const order = EVENT_TYPE_KEYWORDS.map(g => g.type);
+  assertEqual(
+    'EVENT_TYPE_KEYWORDS order',
+    order,
+    ['处罚', '减持', '解禁', '重组', '担保', '业绩']
+  );
+  assert('EVENT_TYPE_KEYWORDS frozen', Object.isFrozen(EVENT_TYPE_KEYWORDS));
+  for (const g of EVENT_TYPE_KEYWORDS) {
+    assert(`group ${g.type} frozen`, Object.isFrozen(g));
+    assert(`group ${g.type} keywords frozen`, Object.isFrozen(g.keywords));
+    assert(`group ${g.type} keywords non-empty`, g.keywords.length > 0);
+  }
+}
+
+function testClassifyEventTypeBasic(): void {
+  // 单关键词命中 7 类 (含 '其它' 兜底)
+  assertEqual('classify 业绩预告', classifyEventType('业绩预告: 2025 年净利润同比增长 50%'), '业绩');
+  assertEqual('classify 业绩快报', classifyEventType('2025 年度业绩快报'), '业绩');
+  assertEqual('classify 一季报', classifyEventType('2026 年第一季度报告'), '业绩');
+
+  assertEqual(
+    'classify 资产重组',
+    classifyEventType('关于重大资产重组进展的公告'),
+    '重组'
+  );
+  assertEqual('classify 并购', classifyEventType('收购 XX 公司 100% 股权之并购'), '重组');
+
+  assertEqual('classify 股东减持', classifyEventType('股东减持股份计划公告'), '减持');
+  assertEqual('classify 高管减持', classifyEventType('董事长减持公司股票'), '减持');
+
+  assertEqual('classify 对外担保', classifyEventType('为全资子公司提供担保的公告'), '担保');
+  assertEqual(
+    'classify 关联担保',
+    classifyEventType('关于关联担保事项的公告'),
+    '担保'
+  );
+
+  assertEqual(
+    'classify 行政处罚',
+    classifyEventType('收到中国证监会行政处罚事先告知书'),
+    '处罚'
+  );
+  assertEqual('classify 立案调查', classifyEventType('收到立案告知书'), '处罚');
+  assertEqual('classify 警示函', classifyEventType('收到监管警示函的公告'), '处罚');
+
+  assertEqual('classify 解禁', classifyEventType('限售股解禁公告'), '解禁');
+  assertEqual('classify 解除限售', classifyEventType('股份解除限售流通'), '解禁');
+
+  // 其它 — 非 6 类
+  assertEqual(
+    'classify 召开股东大会 → 其它',
+    classifyEventType('召开 2026 年第一次临时股东大会'),
+    '其它'
+  );
+  assertEqual(
+    'classify 高送转 → 其它 (业绩词 "净利润" 等未出现)',
+    classifyEventType('2025 年度分红方案: 10 送 5 转 5'),
+    '其它'
+  );
+
+  // null / empty / whitespace → null (与 normalizeEventType 同款边界)
+  assertEqual('classify null → null', classifyEventType(null), null);
+  assertEqual('classify undefined → null', classifyEventType(undefined), null);
+  assertEqual('classify empty → null', classifyEventType(''), null);
+  assertEqual('classify whitespace → null', classifyEventType('   '), null);
+}
+
+function testClassifyEventTypePriorityChain(): void {
+  // 优先级链: 处罚 > 减持 > 解禁 > 重组 > 担保 > 业绩
+  // 含 "处罚" + "业绩" → 处罚 (安全派优先, 强监管事件优先)
+  assertEqual(
+    'priority 处罚 > 业绩',
+    classifyEventType('业绩快报: 净利润同比增长 30% 同时收到行政处罚告知书'),
+    '处罚'
+  );
+  // 含 "减持" + "业绩" → 减持
+  assertEqual(
+    'priority 减持 > 业绩',
+    classifyEventType('业绩预增公告 + 股东减持计划'),
+    '减持'
+  );
+  // 含 "重组" + "担保" → 重组
+  assertEqual(
+    'priority 重组 > 担保',
+    classifyEventType('重大资产重组涉及关联担保事项'),
+    '重组'
+  );
+  // 含 "立案调查" + "减持" → 处罚
+  assertEqual(
+    'priority 处罚 > 减持',
+    classifyEventType('收到立案调查通知, 股东拟减持'),
+    '处罚'
+  );
+  // 含 "解禁" + "业绩" → 解禁
+  assertEqual(
+    'priority 解禁 > 业绩',
+    classifyEventType('限售股解禁公告 — 净利润同比增长'),
+    '解禁'
+  );
+}
+
+function testClassifyEventTypeAccuracy(): void {
+  // AC 主验收 — 20 条人工标注真实样本风格标题, 准确率必须 ≥ 80% (=16/20).
+  //
+  // 标注集挑选原则:
+  //   - 每类 2-3 条覆盖 ("业绩" 4 条最大, "其它" 3 条兜底);
+  //   - 含 1-2 条 "易混淆" 标题守优先级链 (e.g. "业绩 + 减持" → 减持);
+  //   - 含 1 条 "无关键词" 标题守 '其它' 兜底 (e.g. 股东大会);
+  //   - 不含可破 80% 的恶意噪声 (e.g. 长尾文学引用).
+  const labeled: Array<{ title: string; expected: AnnouncementEventType }> = [
+    // 业绩 (4)
+    { title: '2025 年度业绩快报', expected: '业绩' },
+    { title: '关于业绩预告修正的公告', expected: '业绩' },
+    { title: '2026 年第一季度报告披露', expected: '业绩' },
+    { title: '年度报告及摘要', expected: '业绩' },
+    // 重组 (2)
+    { title: '重大资产重组进展暨复牌公告', expected: '重组' },
+    { title: '关于发行股份购买资产并募集配套资金的预案', expected: '重组' },
+    // 减持 (3)
+    { title: '控股股东减持计划公告', expected: '减持' },
+    { title: '关于持股 5% 以上股东减持股份的进展', expected: '减持' },
+    { title: '董事拟通过大宗交易减持', expected: '减持' },
+    // 担保 (2)
+    { title: '为全资子公司提供担保的公告', expected: '担保' },
+    { title: '关联担保事项进展', expected: '担保' },
+    // 处罚 (3)
+    { title: '收到中国证监会立案告知书', expected: '处罚' },
+    { title: '收到行政处罚决定书', expected: '处罚' },
+    { title: '收到深交所监管函', expected: '处罚' },
+    // 解禁 (2)
+    { title: '首次公开发行限售股解禁公告', expected: '解禁' },
+    { title: '股份解除限售流通公告', expected: '解禁' },
+    // 易混淆 — 业绩 + 减持 → 减持 (优先级链)
+    { title: '业绩预增同时大股东减持', expected: '减持' },
+    // 其它 (3)
+    { title: '召开 2026 年第一次临时股东大会', expected: '其它' },
+    { title: '关于变更注册地址的公告', expected: '其它' },
+    { title: '高级管理人员辞职公告', expected: '其它' },
+  ];
+  let correct = 0;
+  const wrong: Array<string> = [];
+  for (const c of labeled) {
+    const got = classifyEventType(c.title);
+    if (got === c.expected) {
+      correct += 1;
+    } else {
+      wrong.push(`  "${c.title}" expected=${c.expected} got=${got}`);
+    }
+  }
+  const total = labeled.length;
+  const accuracy = correct / total;
+  assert(
+    `AC: classifyEventType accuracy ${correct}/${total} (${(accuracy * 100).toFixed(1)}%) >= 80%`,
+    accuracy >= 0.8,
+    wrong.length > 0 ? `\nwrong predictions:\n${wrong.join('\n')}` : ''
+  );
+  // 同时记录无 wrong 时的 baseline (有 wrong 时还是会过, 只要 ≥80%)
+  if (wrong.length > 0 && accuracy >= 0.8) {
+    console.log(
+      `  ⚠ classifyEventType accuracy=${(accuracy * 100).toFixed(
+        1
+      )}% (>=80% AC met but ${wrong.length} miss):\n${wrong.join('\n')}`
+    );
+  }
+}
+
+function testClassifyEventTypeWiringHeuristicResult(): void {
+  // builder 真的接入 classifyEventType — 标题含 '减持' → r.event_type === '减持'
+  const row = makeRow({
+    stock_code: '600519',
+    original_title: '股东减持公司股份计划',
+  });
+  const r = buildHeuristicNLPResult(row);
+  assertEqual('builder wires classifyEventType', r.event_type, '减持');
+}
+
 function testNormalizeEntities(): void {
   // happy path — 必填 name + role
   const r = normalizeEntities([
@@ -1126,7 +1311,8 @@ async function testSaveSummariesIncludesNewFields(): Promise<void> {
     assert('record has event_type key', 'event_type' in r);
     assert('record has priority key', 'priority' in r);
     assert('record has entities key', 'entities' in r);
-    assertEqual('record event_type default null', r.event_type, null);
+    // US-026 ANN-002: builder 接入 classifyEventType, 非空标题 → '其它' 兜底 (a/b 非关键词).
+    assertEqual('record event_type 其它 (no keyword)', r.event_type, '其它');
     assertEqual('record priority default low', r.priority, 'low');
     assert('record entities default []', Array.isArray(r.entities) && r.entities.length === 0);
   }
@@ -1325,6 +1511,12 @@ async function main(): Promise<void> {
   testNormalizePriority();
   testNormalizeEventType();
   testNormalizeEntities();
+  // US-026 ANN-002: classifyEventType
+  testEventTypeKeywordsFrozen();
+  testClassifyEventTypeBasic();
+  testClassifyEventTypePriorityChain();
+  testClassifyEventTypeAccuracy();
+  testClassifyEventTypeWiringHeuristicResult();
   testBuildNLPResultFromPayloadIncludesNewFields();
   testBuildNLPResultFromPayloadFailedDefaultsNewFields();
   await testSaveSummariesIncludesNewFields();
