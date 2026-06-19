@@ -360,6 +360,69 @@ const MAX_AMOUNTS_PER_TITLE = 3;
 /** 单条公告启发式抽取最多 topic 数 */
 const MAX_TOPICS_PER_TITLE = 5;
 
+/**
+ * US-027 ANN-003: extractEntities 启发式 — 单条公告标题最多抽取的实体数.
+ * 公告标题里出现 3+ 个不同实体已属罕见 (e.g. "张三、李四、王五减持股份"),
+ * 上限避免误匹配把整段中文文本识别成实体名.
+ */
+const MAX_ENTITIES_PER_TITLE = 5;
+
+/**
+ * US-027 ANN-003: 角色关键词字典 — 按"具体度"优先级排序 (具体 > 泛化).
+ *
+ * 命中即取该角色, 不再继续匹配后续角色 (避免 "控股股东" 命中 "股东" 两次).
+ * 优先级链:
+ *   1. **控股股东 / 实际控制人 / 实控人** — 最具体, 强信号 (减持/质押影响最大);
+ *   2. **持股 X% 股东**  — 含百分比的特定股东 (e.g. "持股 5% 以上股东");
+ *   3. **董事长 / 总经理** — 高管中最具体的两个角色;
+ *   4. **董事 / 监事 / 高管** — 一般高管;
+ *   5. **大股东 / 股东** — 泛化, 兜底.
+ *
+ * holding_pct 字段仅在标题里同时出现 "持股 X%" 或 "X% 以上" 等模式时填充,
+ * 与角色绑定 (角色锚点附近 10 字符内的百分数才认作该实体持股比例).
+ */
+export const ENTITY_ROLE_KEYWORDS: readonly string[] = Object.freeze([
+  '控股股东',
+  '实际控制人',
+  '实控人',
+  '董事长',
+  '总经理',
+  '财务总监',
+  '董事会秘书',
+  '董秘',
+  '董事',
+  '监事',
+  '高级管理人员',
+  '高管',
+  '大股东',
+  '股东',
+]);
+
+/**
+ * US-027 ANN-003: 变更类型关键词字典 — 命中即作为 change_type 字段填充.
+ *
+ * 顺序锁定 — 与 EVENT_TYPE_KEYWORDS 同款 (含多类时取优先级更高的);
+ * "解除质押" 必须在 "质押" 前 (否则 "解除质押" 标题会被 "质押" 抢走);
+ * "增持" 比 "减持" 更优先 (因 "拟减持后再增持" 类标题主语义是增持回流).
+ */
+export const ENTITY_CHANGE_TYPE_KEYWORDS: readonly string[] = Object.freeze([
+  '解除质押',
+  '增持',
+  '减持',
+  '质押',
+  '协议转让',
+  '大宗交易',
+]);
+
+/**
+ * US-027 ANN-003: 持股比例正则 — 同时支持 "持股 X%" / "X% 以上" / "占总股本 X%".
+ *
+ * 数字部分支持 1-2 位整数 + 0-2 位小数 (e.g. 5 / 5.2 / 12.34),
+ * 上下文窗口 (anchor 前后 12 字符) 与角色锚点关联.
+ */
+const HOLDING_PCT_REGEX =
+  /(?:持股|占总股本|占股本|占比)\s*(\d+(?:\.\d+)?)\s*%|(\d+(?:\.\d+)?)\s*%\s*(?:以上|的)/g;
+
 // ---------------------------------------------------------------------------
 // 类型
 // ---------------------------------------------------------------------------
@@ -778,6 +841,109 @@ export function classifyEventType(title: string | null | undefined): Announcemen
 }
 
 /**
+ * US-027 ANN-003: extractEntities — 启发式从公告标题抽取实体 (角色/持股比例/变更类型).
+ *
+ * 因为公告标题大多不含完整人名 (e.g. "股东张三减持" 是少数, 多数是 "控股股东减持"),
+ * 且单凭正则可靠地从中文标题里切出 2-3 字真姓名几乎不可能 (会把动词"变更"/"减持"
+ * 当成名字), 本启发式只输出 "角色 placeholder" 实体 — name = role, 不强求真姓名.
+ * downstream 真姓名解析交给远端 AI (US-027 后续扩 trading_agents NLP), 透传不被覆盖.
+ *
+ * 输出含 3 类信息:
+ *   - role        — 命中的角色锚点 (ENTITY_ROLE_KEYWORDS 优先级链);
+ *   - holding_pct — 角色锚点附近 12 字符窗口内的持股比例 (持股 X% / X% 以上);
+ *   - change_type — 全标题命中的变更类型 (ENTITY_CHANGE_TYPE_KEYWORDS 优先级链).
+ *
+ * 优先级链 (角色):
+ *   - 按"具体度"从高到低扫 — 命中即取最具体角色;
+ *   - 同一角色锚点只取首个命中位置 (避免 "股东大会股东" 出两个);
+ *   - 子串覆盖判断 — '控股股东' 命中后 '股东' 子串落在其窗口内, 不再独立产生新实体.
+ *
+ * 边界:
+ *   - 空 / null / 全 whitespace → [];
+ *   - 整段无角色锚点 → []; 不强行造实体;
+ *   - 单标题最多 MAX_ENTITIES_PER_TITLE (5) 个实体;
+ *   - holding_pct 仅接受 (0, 100] 范围, 否则丢弃.
+ *
+ * AC: 单测覆盖 (testExtractEntities*) — 含 happy / 持股比例 / 变更类型 /
+ * 多角色去重 / 边界 / 与 buildHeuristicNLPResult 接入验收.
+ *
+ * pure, 无 I/O, 单测覆盖.
+ */
+export function extractEntities(title: string | null | undefined): AnnouncementEntity[] {
+  if (title === null || title === undefined) return [];
+  const text = String(title).trim();
+  if (!text) return [];
+
+  // 1. 标题级 change_type (全标题命中一次, 按优先级链短路)
+  let titleChangeType: string | null = null;
+  for (const kw of ENTITY_CHANGE_TYPE_KEYWORDS) {
+    if (text.includes(kw)) {
+      titleChangeType = kw;
+      break;
+    }
+  }
+
+  // 2. 按"具体度"优先级扫角色锚点; 同一角色最多取首个 "非重叠" 命中位置.
+  //    对于泛化角色 (e.g. '股东'), 若第一次命中落入更具体角色 (e.g. '控股股东') 的窗口,
+  //    继续往后找下一个命中位置 — 让 '控股股东及 5% 以上股东' 能识别出两个独立股东锚点.
+  const out: Array<AnnouncementEntity & { _idx?: number }> = [];
+  const seenRoles = new Set<string>();
+  for (const role of ENTITY_ROLE_KEYWORDS) {
+    if (seenRoles.has(role)) continue;
+    let searchFrom = 0;
+    let idx = -1;
+    while (searchFrom <= text.length) {
+      const candidate = text.indexOf(role, searchFrom);
+      if (candidate < 0) break;
+      const overlapped = out.some(e => {
+        const eIdx = e._idx;
+        if (typeof eIdx !== 'number') return false;
+        return candidate >= eIdx && candidate < eIdx + (e.role as string).length;
+      });
+      if (!overlapped) {
+        idx = candidate;
+        break;
+      }
+      searchFrom = candidate + role.length;
+    }
+    if (idx < 0) continue;
+    seenRoles.add(role);
+
+    // name = role placeholder (真姓名留给远端 AI / normalizeEntities 接受 payload 时透传)
+    const entity: AnnouncementEntity & { _idx?: number } = { name: role, role };
+
+    // 持股比例: 锚点前后 12 字符窗口内的百分数 (持股 X% / X% 以上 / 占总股本 X%)
+    const afterStart = idx + role.length;
+    const pctWindowStart = Math.max(0, idx - 12);
+    const pctWindowEnd = Math.min(text.length, afterStart + 12);
+    const pctWindow = text.slice(pctWindowStart, pctWindowEnd);
+    const pctRegex = new RegExp(HOLDING_PCT_REGEX.source, 'g');
+    let pctMatch: RegExpExecArray | null;
+    while ((pctMatch = pctRegex.exec(pctWindow)) !== null) {
+      const pctNum = Number(pctMatch[1] || pctMatch[2]);
+      if (Number.isFinite(pctNum) && pctNum > 0 && pctNum <= 100) {
+        entity.holding_pct = pctNum;
+        break;
+      }
+    }
+
+    if (titleChangeType) {
+      entity.change_type = titleChangeType;
+    }
+
+    entity._idx = idx;
+    out.push(entity);
+    if (out.length >= MAX_ENTITIES_PER_TITLE) break;
+  }
+
+  // 删 _idx 内部辅助字段
+  for (const e of out) {
+    delete e._idx;
+  }
+  return out;
+}
+
+/**
  * US-025 ANN-001: 规范化 entities — 任何 raw 输入兜底成 AnnouncementEntity[].
  * - 非 array → [];
  * - 元素必须含 string name + string role (缺一即 drop, 不报错);
@@ -912,7 +1078,8 @@ export function buildHeuristicNLPResult(row: AnnouncementReportRow): Announcemen
     // US-026 ANN-002: 已接入 classifyEventType — 启发式标题分类落 event_type (null=空标题).
     event_type: classifyEventType(row.original_title),
     priority: 'low',
-    entities: [],
+    // US-027 ANN-003: 已接入 extractEntities — 启发式标题角色/人名/持股比例抽取 (空标题 → []).
+    entities: extractEntities(row.original_title),
     status: 'completed',
     nlp_engine: NLP_ENGINES.HEURISTIC,
     error: null,

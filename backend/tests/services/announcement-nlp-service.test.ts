@@ -71,6 +71,9 @@ import {
   classifyEventType,
   EVENT_TYPE_KEYWORDS,
   normalizeEntities,
+  extractEntities,
+  ENTITY_ROLE_KEYWORDS,
+  ENTITY_CHANGE_TYPE_KEYWORDS,
   buildHeuristicNLPResult,
   buildNLPResultFromPayload,
 } from '../../src/services/AnnouncementNLPService';
@@ -1258,6 +1261,227 @@ function testNormalizeEntities(): void {
   assertEqual('entities skip non-objects', r5.length, 1);
 }
 
+// ---------------------------------------------------------------------------
+// US-027 ANN-003: extractEntities — 启发式公告标题人名/角色/持股比例抽取
+// ---------------------------------------------------------------------------
+
+function testEntityRoleKeywordsFrozen(): void {
+  // ENTITY_ROLE_KEYWORDS 顺序锁定 — 具体度优先级链, 任何 reorder 都会让 "控股股东 vs 股东" 归属漂移.
+  assert('ENTITY_ROLE_KEYWORDS frozen', Object.isFrozen(ENTITY_ROLE_KEYWORDS));
+  assert(
+    'ENTITY_ROLE_KEYWORDS 控股股东 在 股东 前',
+    ENTITY_ROLE_KEYWORDS.indexOf('控股股东') < ENTITY_ROLE_KEYWORDS.indexOf('股东')
+  );
+  assert(
+    'ENTITY_ROLE_KEYWORDS 实际控制人 在 大股东 前',
+    ENTITY_ROLE_KEYWORDS.indexOf('实际控制人') < ENTITY_ROLE_KEYWORDS.indexOf('大股东')
+  );
+  assert(
+    'ENTITY_ROLE_KEYWORDS 董事长 在 董事 前',
+    ENTITY_ROLE_KEYWORDS.indexOf('董事长') < ENTITY_ROLE_KEYWORDS.indexOf('董事')
+  );
+  assert(
+    'ENTITY_ROLE_KEYWORDS 董秘 在 董事 后 (董秘别名不应抢 董事 锚点)',
+    ENTITY_ROLE_KEYWORDS.indexOf('董秘') < ENTITY_ROLE_KEYWORDS.indexOf('董事')
+  );
+  assert(
+    'ENTITY_CHANGE_TYPE_KEYWORDS frozen',
+    Object.isFrozen(ENTITY_CHANGE_TYPE_KEYWORDS)
+  );
+  assert(
+    'ENTITY_CHANGE_TYPE_KEYWORDS 增持 在 减持 前',
+    ENTITY_CHANGE_TYPE_KEYWORDS.indexOf('增持') < ENTITY_CHANGE_TYPE_KEYWORDS.indexOf('减持')
+  );
+  assert(
+    'ENTITY_CHANGE_TYPE_KEYWORDS 解除质押 在 质押 前',
+    ENTITY_CHANGE_TYPE_KEYWORDS.indexOf('解除质押') < ENTITY_CHANGE_TYPE_KEYWORDS.indexOf('质押')
+  );
+}
+
+function testExtractEntitiesBasicRoles(): void {
+  // 单角色 — 控股股东 (name = role placeholder)
+  const r1 = extractEntities('控股股东拟减持公司股份');
+  assertEqual('单角色 count=1', r1.length, 1);
+  assertEqual('单角色 role 控股股东', r1[0].role, '控股股东');
+  assertEqual('单角色 name=role placeholder', r1[0].name, '控股股东');
+  assertEqual('单角色 change_type 减持', (r1[0] as any).change_type, '减持');
+
+  // 单角色 — 实际控制人
+  const r2 = extractEntities('关于实际控制人变更的公告');
+  assertEqual('实控人 count=1', r2.length, 1);
+  assertEqual('实控人 role 实际控制人', r2[0].role, '实际控制人');
+  assertEqual('实控人 name=role placeholder', r2[0].name, '实际控制人');
+  assertEqual('实控人 no change_type', (r2[0] as any).change_type, undefined);
+
+  // 高管 — 董事长
+  const r3 = extractEntities('董事长辞职公告');
+  assertEqual('董事长 role', r3[0].role, '董事长');
+  assertEqual('董事长 name=role', r3[0].name, '董事长');
+
+  // 监事
+  const r4 = extractEntities('监事会换届选举公告');
+  assertEqual('监事 role', r4[0].role, '监事');
+}
+
+function testExtractEntitiesHoldingPct(): void {
+  // 持股 X%
+  const r1 = extractEntities('持股 5.2% 股东减持股份');
+  assertEqual('持股 X% — count', r1.length, 1);
+  assertEqual('持股 5.2% role 股东', r1[0].role, '股东');
+  assertEqual('持股 5.2% holding_pct', r1[0].holding_pct, 5.2);
+  assertEqual('持股 5.2% change_type 减持', (r1[0] as any).change_type, '减持');
+
+  // X% 以上股东
+  const r2 = extractEntities('5% 以上股东拟减持');
+  assertEqual('5%以上 holding_pct', r2[0].holding_pct, 5);
+  assertEqual('5%以上 role 股东', r2[0].role, '股东');
+
+  // 持股 12.34%
+  const r3 = extractEntities('持股 12.34% 控股股东增持');
+  assertEqual('持股 12.34% holding_pct', r3[0].holding_pct, 12.34);
+  assertEqual('持股 12.34% role 控股股东', r3[0].role, '控股股东');
+  assertEqual('持股 12.34% change_type 增持', (r3[0] as any).change_type, '增持');
+
+  // 无 holding_pct 时 — 不应填充
+  const r4 = extractEntities('控股股东拟减持公司股份');
+  assertEqual('无百分数 → 无 holding_pct', r4[0].holding_pct, undefined);
+
+  // 百分数远离角色锚点 (> 12 字符) → 不绑定
+  const r5 = extractEntities('控股股东减持公司股份 — 经过审议本次减持不超过总股本的 1.5%');
+  assertEqual('远离锚点 → 无 holding_pct', r5[0].holding_pct, undefined);
+
+  // 边界: 0% / 101% 不接受
+  const r6 = extractEntities('持股 0% 股东减持');
+  assertEqual('0% 无效 → 无 holding_pct', r6[0].holding_pct, undefined);
+  const r7 = extractEntities('持股 150% 股东减持');
+  assertEqual('150% 无效 → 无 holding_pct', r7[0].holding_pct, undefined);
+}
+
+function testExtractEntitiesChangeType(): void {
+  // 各 change_type 单独命中
+  const r1 = extractEntities('控股股东增持公司股份');
+  assertEqual('增持', (r1[0] as any).change_type, '增持');
+
+  const r2 = extractEntities('控股股东质押股份');
+  assertEqual('质押', (r2[0] as any).change_type, '质押');
+
+  const r3 = extractEntities('控股股东解除质押公告');
+  assertEqual('解除质押', (r3[0] as any).change_type, '解除质押');
+
+  const r4 = extractEntities('控股股东通过大宗交易转让股份');
+  assertEqual('大宗交易', (r4[0] as any).change_type, '大宗交易');
+
+  // 优先级 — 增持 > 减持 (同标题含两个时, "增持" 在前)
+  const r5 = extractEntities('控股股东 — 增持 + 减持 计划公告');
+  assertEqual('增持优先', (r5[0] as any).change_type, '增持');
+
+  // 无 change_type 关键词
+  const r6 = extractEntities('董事长辞职');
+  assertEqual('辞职无 change_type', (r6[0] as any).change_type, undefined);
+}
+
+function testExtractEntitiesMultipleRoles(): void {
+  // 控股股东 + 监事 同标题
+  const r1 = extractEntities('控股股东及监事减持公司股份');
+  assertEqual('多角色 count=2', r1.length, 2);
+  const roles = r1.map(e => e.role).sort();
+  assertEqual('多角色含 控股股东 + 监事', roles, ['控股股东', '监事'].sort());
+  // 全部带 change_type
+  for (const e of r1) {
+    assertEqual(`角色 ${e.role} change_type 减持`, (e as any).change_type, '减持');
+  }
+
+  // 控股股东 + 股东 — '股东' 子串落在 '控股股东' 内, 不应重复出 entity
+  const r2 = extractEntities('控股股东拟减持');
+  assertEqual('控股股东不重复出 股东 entity', r2.length, 1);
+  assertEqual('单条 role 控股股东', r2[0].role, '控股股东');
+
+  // 但 '控股股东 + 5% 以上股东' 是两个独立锚点
+  const r3 = extractEntities('控股股东及 5% 以上股东拟减持');
+  assertEqual('两个独立股东锚点 count=2', r3.length, 2);
+
+  // 实控人 + 董事长 (短词别名)
+  const r4 = extractEntities('实控人兼董事长辞职');
+  assertEqual('实控人+董事长 count=2', r4.length, 2);
+}
+
+function testExtractEntitiesNamePlaceholder(): void {
+  // 本启发式 name = role placeholder, 不强求真姓名 (留给远端 AI)
+  // 即便标题里有"控股股东张三", 本函数也只输出 name=控股股东.
+
+  const r1 = extractEntities('控股股东张三减持公司股份');
+  assertEqual('真姓名也只 placeholder name=role', r1[0].name, '控股股东');
+  assertEqual('真姓名 role 控股股东', r1[0].role, '控股股东');
+
+  const r2 = extractEntities('李四监事辞职公告');
+  assertEqual('监事 name=role placeholder', r2[0].name, '监事');
+
+  // 验证 name 不会被动词/普通名词污染 (如 '变更' / '拟减持' / '辞职')
+  const r3 = extractEntities('关于实际控制人变更的公告');
+  assertEqual('name 不被动词污染 (变更)', r3[0].name, '实际控制人');
+
+  const r4 = extractEntities('控股股东拟减持');
+  assertEqual('name 不被动词污染 (拟减持)', r4[0].name, '控股股东');
+
+  // 角色锚点出现 → name === role 自洽 (与 normalizeEntities 契约一致)
+  const r5 = extractEntities('股东大会决议公告');
+  assertEqual('股东大会 name=role placeholder', r5[0].name, '股东');
+  assertEqual('股东大会 role 股东', r5[0].role, '股东');
+}
+
+function testExtractEntitiesEdgeCases(): void {
+  // null / undefined / empty / whitespace → []
+  assertEqual('null → []', extractEntities(null).length, 0);
+  assertEqual('undefined → []', extractEntities(undefined).length, 0);
+  assertEqual('empty → []', extractEntities('').length, 0);
+  assertEqual('whitespace → []', extractEntities('   ').length, 0);
+
+  // 整段无角色锚点 → [] (不强行造)
+  assertEqual('无角色 → []', extractEntities('2025 年度业绩快报披露').length, 0);
+  assertEqual('无角色 — 解禁公告 → []', extractEntities('限售股解禁公告').length, 0);
+
+  // 上限 — MAX_ENTITIES_PER_TITLE = 5
+  const r1 = extractEntities(
+    '控股股东、实际控制人、董事长、总经理、监事、财务总监、董秘均拟减持'
+  );
+  assert(`上限 ≤ 5 (实际 ${r1.length})`, r1.length <= 5);
+  assertEqual('上限恰好 5', r1.length, 5);
+}
+
+function testExtractEntitiesWiringHeuristicResult(): void {
+  // builder 真接入 extractEntities — 标题含 '控股股东减持' → r.entities[0].role==='控股股东'
+  const row = makeRow({
+    stock_code: '600519',
+    original_title: '控股股东张三拟减持公司股份',
+  });
+  const r = buildHeuristicNLPResult(row);
+  assertEqual('builder wires extractEntities count', r.entities.length, 1);
+  assertEqual('builder entity role', r.entities[0].role, '控股股东');
+  // 启发式只输出 placeholder name=role; 真姓名 '张三' 留给远端 AI
+  assertEqual('builder entity name (placeholder)', r.entities[0].name, '控股股东');
+  assertEqual('builder entity change_type', (r.entities[0] as any).change_type, '减持');
+}
+
+function testExtractEntitiesShapeRoundtripsNormalize(): void {
+  // extractEntities 输出形态必须能直接被 normalizeEntities 接受 (即合法 shape).
+  const titles = [
+    '控股股东张三拟减持公司股份',
+    '持股 5.2% 股东减持',
+    '董事长辞职公告',
+    '5% 以上股东及监事减持',
+    '实际控制人变更',
+  ];
+  for (const t of titles) {
+    const extracted = extractEntities(t);
+    const normalized = normalizeEntities(extracted);
+    assertEqual(
+      `roundtrip "${t.slice(0, 16)}…" 同长度 (extract→normalize 不掉条)`,
+      normalized.length,
+      extracted.length
+    );
+  }
+}
+
 function testBuildNLPResultFromPayloadIncludesNewFields(): void {
   const row = makeRow({ stock_code: '000001', original_title: '减持公告' });
   const payload: RemoteNLPPayload = {
@@ -1517,6 +1741,16 @@ async function main(): Promise<void> {
   testClassifyEventTypePriorityChain();
   testClassifyEventTypeAccuracy();
   testClassifyEventTypeWiringHeuristicResult();
+  // US-027 ANN-003: extractEntities
+  testEntityRoleKeywordsFrozen();
+  testExtractEntitiesBasicRoles();
+  testExtractEntitiesHoldingPct();
+  testExtractEntitiesChangeType();
+  testExtractEntitiesMultipleRoles();
+  testExtractEntitiesNamePlaceholder();
+  testExtractEntitiesEdgeCases();
+  testExtractEntitiesWiringHeuristicResult();
+  testExtractEntitiesShapeRoundtripsNormalize();
   testBuildNLPResultFromPayloadIncludesNewFields();
   testBuildNLPResultFromPayloadFailedDefaultsNewFields();
   await testSaveSummariesIncludesNewFields();

@@ -410,8 +410,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 27,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "依赖: ANN-001 | DONE 2026/06/19: 新增 extractEntities(title) 纯函数 — 启发式从公告标题抽取实体 (角色/持股比例/变更类型, name=role placeholder, 真姓名留给远端 AI). 字典 ENTITY_ROLE_KEYWORDS 14 个角色按具体度优先级链 (控股股东>实控人>董事长>...>大股东>股东), ENTITY_CHANGE_TYPE_KEYWORDS 6 个变更类型 (解除质押前置避免被'质押'抢, 增持>减持), HOLDING_PCT_REGEX 同时支持 '持股 X%' / 'X% 以上' / '占总股本 X%' 三种格式, 锚点附近 12 字符窗口内的百分数才绑定为该实体的 holding_pct, 范围限 (0,100]. 多角色去重 — 子串覆盖判断 (控股股东命中后 '股东' 子串落在窗口内不再独立产生), 但 '控股股东及 5% 以上股东' 类标题用 indexOf-from-position 循环找下一个非重叠锚点支持两个独立股东实体. 单标题上限 MAX_ENTITIES_PER_TITLE=5. buildHeuristicNLPResult 接入 — 启发式 sync 路径自然填 entities (US-026 classifyEventType + US-027 extractEntities 共同补齐 ANN-001 占位字段 2/3). 单测 401 ok / 0 failed (新增 9 测组 / ~50 assertion: ENTITY_ROLE_KEYWORDS+ENTITY_CHANGE_TYPE_KEYWORDS 冻结+优先级 / basicRoles 5 角色 / holdingPct 含 12.34% 边界+0%/150%/远离锚点过滤 / changeType 6 类含优先级链 / multipleRoles '控股股东+监事'/'控股股东+5%股东' 双锚点 / namePlaceholder 验真姓名不被动词污染 / edgeCases null/empty/whitespace/无角色锚点/MAX 上限 5 / wiring 接入 buildHeuristicNLPResult / shapeRoundtripsNormalize 验输出可被 normalizeEntities 接受). tsc 0 err / eslint 0 err."
     },
     {
       "id": "US-028",
