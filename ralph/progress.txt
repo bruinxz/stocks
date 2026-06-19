@@ -1413,3 +1413,35 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **DatePicker 用户输入边界**: dayjs(formatSinceDate(new Date(), 7)) 初始值, 用户改了 DatePicker 后不立即触发请求 (避免输入过程频繁 fire), 让用户点"刷新"才请求. useEffect 依赖 [load] 而 load 依赖 [sinceDate] — sinceDate 改了 useCallback 重建 load 触发 useEffect 自动加载, 这是 React 状态管理的标准姿势; 如果想"用户必须点刷新", 把 load 改成 useRef + 仅按钮触发即可.
 ---
 
+
+
+## 2026/06/19 22:30 - US-052
+- 实现 [FE-013] LabWorkspace OverfitMetrics 显示 — 跨 GridSearch/Bayesian/Walk-Forward 的 DSR+PBO 看板, 抽 pure helper + ts-node 单测
+- Files changed:
+  - frontend/src/pages/workspace/overfitMetricsHelpers.ts (新, ~440 行 + 完整 jsdoc):
+    * 7 export 常量: DSR_PASS_THRESHOLD=0.95 / DSR_DEGRADED_MIN=0.8 / PBO_FAIL_THRESHOLD=0.5 / PBO_DEGRADED_MIN=0.3 / DEFAULT_RUNS_LIMIT=50 / PROMOTE_MIN_RUNS=5 (与 backend OverfitMetrics.ts 同源)
+    * classifyDsrLevel / classifyPboLevel 三档分级 (healthy/degraded/critical/unknown), null/NaN/Infinity 一律 unknown 不假绿
+    * deriveOverfitVerdict — 镜像 backend deriveWalkForwardVerdict (DSR≥0.95 且 PBO 缺失或<0.5 → PASS; DSR NaN → INSUFFICIENT)
+    * extractOverfitMetric — wf_summary.{dsr,pbo,verdict} 优先 + grid_search/bayesian metadata_json.deflated_sharpe.deflated_sharpe 兜底; wf_summary.verdict hint 优先于 derive
+    * evaluatePromotionReadiness {ready,blockers,level} — AND 短路链: 样本量 + passRate≥0.5 + 无 PBO critical 任一不满足 push blocker
+    * buildOverfitMetricsViewModel — 排序 FAIL→PASS→INSUFFICIENT + tie-break created_at desc + id desc; 均值仅含非 null; 分布 PASS/FAIL/INSUFFICIENT + passRate=PASS/(PASS+FAIL)
+    * HEALTH_LEVEL_COLOR / LABEL / VERDICT_COLOR / LABEL 4 张 frozen 表给 UI 直接用
+    * formatRatio / formatPercent 边界
+  - frontend/src/pages/workspace/LabWorkspace.OverfitMetricsTab.tsx (新, ~390 行): 头部 optimizer 类型 filter (all/grid_search/bayesian/walk_forward) + 最近 N InputNumber + 刷新; KPI strip (run 总数/PASS/FAIL/INSUFFICIENT/通过率/平均 DSR-PBO); Promotion 就绪 Alert (success/warning/error 三态由 vm.promotion.level 决定, blockers 列表渲染); 最近 N run 表含 verdict Tag / optimizer 类型 Tag / 策略名 / DSR+pboLevel Tag / PBO+pboLevel Tag / 状态 / 创建时间. testid: overfit-metrics-refresh / overfit-metrics-promotion-alert
+  - frontend/src/pages/workspace/LabWorkspace.tsx: tabs 新增 {key:'overfit_metrics', label:'OverfitMetrics'} 在 shadow_run 与 advanced_quant 之间; import OverfitMetricsTab; activeKey==='overfit_metrics' 分支 render
+  - backend/tests/services/overfit-metrics-helpers.test.ts (新, ~440 行): 10 模块 / 147 assert — [1] 常量 sanity+frozen+与 backend 同源 / [2-3] 两 classifier 三档边界 + null/NaN/Infinity / [4] verdict 全分支 (PASS/FAIL/INSUFFICIENT 各 case) / [5] extract 8 case (null/wf_summary/wf hint 优先/wf 无 verdict 兜底/grid_search/wf 双源 wf 优先/summary 顶层别名) / [6] HEALTH_LEVEL+VERDICT 映射完整 / [7] promotion 5 路径 (null/空/样本不足/多数 FAIL/PBO critical/全 INSUFFICIENT) / [8] vm null+happy+排序+均值+脏 filter+tie-break / [9] fmt 边界 / [10] META-GUARD 19 条扫 LabWorkspace.tsx import+key+activeKey+渲染; tab 组件 import helper+调 build/listOptimizationRuns+testid+HEALTH/VERDICT 引用; helper 6 主 export + 2 阈值常量
+  - ralph/prd.json: US-052 passes=true + notes
+- 验证:
+  - `npx ts-node tests/services/overfit-metrics-helpers.test.ts` exit 0, 147 ok / 0 failed
+  - `npm test --filter=overfit-metrics` exit 0, 含既有 backend 59 + 新增 147 = 206 ok / 0 failed
+  - `cd frontend && npx tsc --noEmit` exit 0
+  - `cd backend && npx tsc --noEmit` exit 0
+  - `eslint` 改 3 文件: 0 err / 0 warn (autofix prettier 后干净)
+- **Learnings for future iterations:**
+  - **跨 monorepo pure helper 模式持续验证**: backend 测 ts-node 直接 import frontend/src/...../<helper>.ts (无 React/antd 依赖), 与 [[shadow-run-helpers]] / [[quarterly-retrain]] / [[overfit-metrics]] 一脉相承. 任何 LabWorkspace tab 类 story 都按这个模板走 — helper 放 frontend/src/pages/workspace, 测放 backend/tests/services. **关键: helper 顶部 import 仅来自 npm built-in 或同目录 pure 模块**, 不能 import antd/react/dayjs 否则 ts-node 报错或拉慢; 本次 helper 完全 0 外部依赖.
+  - **antd Statistic 的 value prop 不接受 null**: TS2322 显式提醒 'number | null' 不能传 — 必须 fallback 到 string ('—') 或不传; 解决方式 = `value={x != null ? x.toFixed(1)+'%' : '—'}` (preformatted string 比 precision+suffix 更自由). 之前 LabWorkspace.WalkForwardTab.tsx 第 513 行用了 `value={summary?.dsr ?? (null as any)}` 是 escape hatch — 学术上 antd 5+ 这接口已严格化, 新代码就老老实实预格式化, 不要 `as any` 转义.
+  - **"双源字段冲突" 默认优先 wf_summary**: extractOverfitMetric 遇到 wf_summary.dsr 和 metadata_json.deflated_sharpe.deflated_sharpe 同时存在时优先 wf_summary — 因为 wf_summary 是 WalkForwardValidator 在 fold 循环里直接算的 (T = test 期天数), deflated_sharpe 字段是 GridSearch/Bayesian post-hoc 算的 (T = train 期). 单 run 双源不该信任 grid 的 train 期估计. 但 wf_summary.dsr=null + deflated_sharpe 存在 → 用 deflated_sharpe (兜底).  这条边界写到 helper 注释里 + 单测 [5.17-5.19] 显式守.
+  - **verdict hint 优先于 derive**: 后端 deriveWalkForwardVerdict 在 wf 内部用 ResearchValidation 综合规则推 verdict — 直接信任 wf_summary.verdict, 即使前端 deriveOverfitVerdict 重新推会冲突 (e.g. backend 用更严格阈值或额外因子). 单测 [5.11] 显式守 "wf_summary.verdict=FAIL 即使 DSR/PBO 看起来 PASS 也透传 FAIL".
+  - **promotion readiness 3 个 AND 条件**: 与 [[shadowRunHelpers.evaluateShadowPromotionReadiness]] 同款 — (1) 样本量 ≥ PROMOTE_MIN_RUNS; (2) passRate ≥ 0.5 (低于此即 hasCritical=true → level=critical); (3) 任何单 run pboLevel='critical' 立刻 block + level=critical. 与 shadow 的 "consistency overall + buy/sell + analyzer critical" 三 AND 形态对偶 — 都是"任意维度 critical 就 critical, 否则数维度损坏数"逻辑.
+  - **prettier --fix 后 ts-node 测必须重跑**: autofix 改 2 文件 (helper + tab), 之前测过的 147 assert 必须再跑一遍验证 import 路径 + export 名一字未变. 这是 "lint --fix 也可能改 export 字面量" 边界 (实际 prettier 仅改换行); 但养成 "改完文件回归" 习惯.
+---

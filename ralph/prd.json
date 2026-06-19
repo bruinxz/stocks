@@ -800,8 +800,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 52,
-      "passes": false,
-      "notes": "依赖: S-010"
+      "passes": true,
+      "notes": "DONE 2026/06/19: [FE-013] LabWorkspace OverfitMetrics 显示. 新建 frontend/src/pages/workspace/overfitMetricsHelpers.ts (pure helpers, 与 backend OverfitMetrics.ts 同源 DSR_PASS_THRESHOLD=0.95 / PBO_FAIL_THRESHOLD=0.5). 抽 7 个常量 + classifyDsrLevel / classifyPboLevel 三档分级 (healthy/degraded/critical/unknown) + deriveOverfitVerdict (镜像 backend deriveWalkForwardVerdict) + extractOverfitMetric (兼容 walk_forward.wf_summary / grid_search.deflated_sharpe 两种 metadata 形状) + evaluatePromotionReadiness (样本量+passRate+PBO critical AND 短路链) + buildOverfitMetricsViewModel (排序 FAIL→PASS→INSUFFICIENT + tie-break id desc + 均值 + 分布). 新建 LabWorkspace.OverfitMetricsTab.tsx (复用 GET /api/quant/optimization-runs, 头部 optimizer 类型 filter + KPI strip + promotion 就绪 Alert + 最近 N run 表). LabWorkspace.tsx 新增 overfit_metrics tab + import + activeKey 分支. backend/tests/services/overfit-metrics-helpers.test.ts 新增 147 assert (10 维度 — 常量 sanity / 两 classifier 三档边界 / verdict 全分支 / extract 8 case wf 优先 grid 兜底 / 颜色映射 / promotion 5 路径 / vm null+happy+sort+均值 / fmt / META-GUARD 19 条扫 import+activeKey+helper export). tsc 0 err, lint 0 err 0 warn (autofix prettier 后干净), npm test --filter=overfit-metrics 通过 (含既有 backend 59 + 新增 147 = 206 ok / 0 failed). 依赖: S-010 已 done."
     },
     {
       "id": "US-053",
