@@ -1290,3 +1290,33 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **schemaVersion 强校验, 不匹配返空数组**: 比起"尝试迁移"+异常分支, 直接当作"没数据"让用户重新保存简单可靠 — 反正模板本身用户能 1 分钟内重建, 没价值搞复杂迁移.
   - **样本测试 8 case 覆盖 save 边界**: 新增 / 覆盖同名 / 空白 name / 空 weights / topN<1 / 满上限+新名 (拒) / 满上限+覆盖 (允) / sanitize NaN — 这 8 条把 "保存什么时候应该拒 / 应该静默 sanitize" 全锁死, 改 helper 再加字段时不会回归.
 ---
+
+## 2026-06-19 21:30 - US-048
+- 实现 [FE-009] FactorWorkspace ETF + 政策 tab
+- 在 FactorWorkspace.tsx 顶部 tabs 数组追加 'etf' / 'policy' 两个新 key, activeKey 分支渲染对应组件
+- 新增 frontend/src/pages/workspace/FactorWorkspace.ETFFlowTab.tsx — 调 GET /api/data/etf-flow (US-092 已落)
+  - 顶部 KPI 控件 (行业 select + 近 N 日 InputNumber + 刷新按钮) + 3 个 Statistic (覆盖 ETF/累计净流入/累计 AUM)
+  - 双栏 top inflow / top outflow Top 5 (排序由 aggregateETFFlow 聚合)
+  - 主明细表 per-row (日期+ETF+净流入+AUM+NAV+二级成交额)
+  - 三态 loading/error/stale 短路, 与既有 MacroEnvTab / BlockTradesTab 同款
+- 新增 frontend/src/pages/workspace/FactorWorkspace.PolicyNewsTab.tsx — 调 GET /api/data/market-news
+  - 前端用关键字字典 filter 出 policy 子集 (不改 backend schema)
+  - 6 档 topic chip (CheckableTag) + 计数 + topic 单选过滤
+  - 时间线视图 (左色条按 topic 着色, source tag + matched_keywords tooltip)
+- 新增 frontend/src/pages/workspace/etfFlowHelpers.ts — pure helper (aggregateETFFlow / fmtETFMoney / inflowColor)
+- 新增 frontend/src/pages/workspace/policyNewsHelpers.ts — pure helper (POLICY_KEYWORDS 字典 + isPolicyNews / classifyPolicyTopic / filterPolicyNews / countPolicyByTopic)
+- 新增 backend/tests/services/policy-news-helpers.test.ts — 64 个 assert, 覆盖字典 sanity / 三纯函数 / aggregateETFFlow / META-GUARD fs+regex 守住 4 个新文件 + FactorWorkspace.tsx 改造
+- 验证: backend ts-node test 64/64 ok; frontend tsc --noEmit clean; eslint clean (--fix 后 0 warning); backend tsc --noEmit clean
+- Files changed:
+  - frontend/src/pages/workspace/FactorWorkspace.tsx (M, +9 行 import/tab/activeKey)
+  - frontend/src/pages/workspace/FactorWorkspace.ETFFlowTab.tsx (NEW)
+  - frontend/src/pages/workspace/FactorWorkspace.PolicyNewsTab.tsx (NEW)
+  - frontend/src/pages/workspace/etfFlowHelpers.ts (NEW)
+  - frontend/src/pages/workspace/policyNewsHelpers.ts (NEW)
+  - backend/tests/services/policy-news-helpers.test.ts (NEW)
+- **Learnings for future iterations:**
+  - 跨 monorepo 直接 import frontend pure-helper 到 backend tests/ 是已建立的范式 (与 factor-ai-weight / factor-combo-template / etfFlowHelpers 同款) — 只要 helper 不 import React/antd, ts-node --transpile-only 就能直吃
+  - 添加 FactorWorkspace 新 tab 的 3 处统一改动: (1) `tabs` 数组 push 一项; (2) `activeKey === 'xxx'` 加分支; (3) 把子组件文件命名为 `FactorWorkspace.XxxTab.tsx` 与既有 MacroEnvTab / BlockTradesTab 一致
+  - 前端 lazy fetch 三态模式 (loading && !data → Spin, error && !data → Alert+重试, error && data → 顶部 warning+陈旧数据) 已是 FactorWorkspace 子 tab 标准, 不要发明新形态
+  - META-GUARD 单测里走 fs+regex 守住 "新文件存在 + 关键 export + 关键 data-testid + 反向断言 (字典不被 inline 进 tab)" 是 frontend 改造的事实级回归保险
+---

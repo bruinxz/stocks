@@ -57,6 +57,8 @@ import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/Workspace
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
 import MacroEnvTab from './FactorWorkspace.MacroEnvTab';
 import BlockTradesTab from './FactorWorkspace.BlockTradesTab';
+import ETFFlowTab from './FactorWorkspace.ETFFlowTab';
+import PolicyNewsTab from './FactorWorkspace.PolicyNewsTab';
 import { computeAIWeights, computeWeightDeltas } from './factorAIWeightHelpers';
 import {
   ComboTemplate,
@@ -194,6 +196,9 @@ const FactorWorkspace: React.FC = () => {
     { key: 'sentiment', label: '舆情雷达', icon: <RobotOutlined /> },
     { key: 'macro', label: '宏观环境', icon: <FundOutlined /> },
     { key: 'block', label: '大宗交易', icon: <FundOutlined /> },
+    // US-048 (FE-009) — 行业 ETF 申赎资金流 + 政策要闻 2 个新 tab
+    { key: 'etf', label: 'ETF 资金流', icon: <FundOutlined /> },
+    { key: 'policy', label: '政策要闻', icon: <FundOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('overview');
 
@@ -620,6 +625,12 @@ const FactorWorkspace: React.FC = () => {
     body = <MacroEnvTab />;
   } else if (activeKey === 'block') {
     body = <BlockTradesTab />;
+  } else if (activeKey === 'etf') {
+    // US-048 (FE-009): 行业 ETF 申赎资金流 — 内部 lazy fetch, 第一次切到该 tab 才拉
+    body = <ETFFlowTab />;
+  } else if (activeKey === 'policy') {
+    // US-048 (FE-009): 政策要闻 — 从 market-news 流前端关键字过滤出政策类
+    body = <PolicyNewsTab />;
   } else {
     // 'picks'
     body = <PicksTab picks={latestPicks} loading={loading} />;
