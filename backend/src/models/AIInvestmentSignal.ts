@@ -5,6 +5,14 @@ export enum AISignalSourceType {
   TRADING_AGENTS = 'tradingagents',
   QUANT_RECOMMENDATION = 'quant_recommendation',
   MANUAL_ANALYSIS = 'manual_analysis',
+  /**
+   * US-020 [AE-001] 多维分析引擎 hard mode 产物 — 由
+   * `AIInvestmentSignalService.archiveAnalysisEngineResult` 落库,
+   * 让 PaperTradingAutomationService / Dashboard / Attribution 能识别
+   * `analysis_engine` 来源并在 hard mode 下跟单. 不破坏 shadow mode 行为
+   * (后者写 AIStockAnalysisReport, 不写本表).
+   */
+  ANALYSIS_ENGINE = 'analysis_engine',
 }
 
 export enum AISignalDecision {
@@ -52,7 +60,7 @@ export class AIInvestmentSignal extends Model {
     allowNull: false,
     field: 'source_type',
     comment:
-      '信号来源类型：daily_screener / tradingagents / quant_recommendation / manual_analysis',
+      '信号来源类型：daily_screener / tradingagents / quant_recommendation / manual_analysis / analysis_engine',
   })
   declare source_type: string;
 

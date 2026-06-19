@@ -934,6 +934,7 @@ function sourceTypeLabel(value: string): string {
     [AISignalSourceType.TRADING_AGENTS]: 'TradingAgents',
     [AISignalSourceType.DAILY_SCREENER]: 'AI每日优选',
     [AISignalSourceType.MANUAL_ANALYSIS]: '人工分析',
+    [AISignalSourceType.ANALYSIS_ENGINE]: '多维分析引擎',
     manual_trade: '手动交易',
     unknown: '未标注来源',
   };

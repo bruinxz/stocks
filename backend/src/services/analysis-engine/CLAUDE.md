@@ -64,7 +64,11 @@ Runbook (灰度切量): `docs/audit/analysis_engine_runbook.md`.
 - 直接修改 18 个 factor 实现 (只复用).
 - 在 analyzer 内部抛错 — 抛错由 `BaseAnalyzer` 捕获并转 `error` 字段.
 - 改 `AIAdvisorService.analyzeSingleStock` 主路径 (只在末尾 1 行加 shadow trigger).
-- 替换 `AIInvestmentSignal.source_type='analysis_engine'` 由 hard 阶段才落, v1 不写.
+- ~~替换 `AIInvestmentSignal.source_type='analysis_engine'` 由 hard 阶段才落, v1 不写.~~
+  **2026-06-19 US-020 [AE-001] 起**: helper 已落 `analysisEngineSignalArchive.ts`,
+  暴露 `archiveAnalysisEngineResult(source, input)` 主入口 + `AIInvestmentSignalService.archiveAnalysisEngineResult(input, source?)`
+  薄 wrapper. Shadow mode 仍走 `ShadowDoubleRunService.persistShadowReport`
+  写 `AIStockAnalysisReport` **不** 调本助手. Hard mode (US-021/AE-002) 才会同时调.
 
 ## 复用清单
 
@@ -97,6 +101,20 @@ Runbook (灰度切量): `docs/audit/analysis_engine_runbook.md`.
 - `tests/services/analysis-engine/DecisionAggregator.test.ts` — 5 case (veto/dampen/critical/各 action).
 - `tests/services/analysis-engine/ShadowDoubleRunService.test.ts` — off/shadow path.
 - `tests/services/analysis-engine/integration_300750.test.ts` — 端到端 mock fixtures.
+- `tests/services/analysis-engine/analysisEngineSignalArchive.test.ts` — US-020 [AE-001]
+  archiveAnalysisEngineResult 4 模块 99 ok (纯函数 helpers + DataSource DI 主入口 5 路径
+  + service 集成 fs+regex + META-GUARD enum/Dashboard/Attribution 标签).
+
+## `archiveAnalysisEngineResult` 调用约定 (US-020 [AE-001])
+
+- 入参: `{decision, stock_name?, loop_run_id?, loop_policy_snapshot_id?,
+  shadow_of_report_id?, market_environment?, extra_metadata?, dry_run?}`.
+- source_id 命名: `${symbol}_${as_of}[_${loop_run_id}]` — 同 (symbol, as_of) 复跑 dedup 到同一行
+  (findOrCreate path); 闭环对照 (AutomatedRecommendationLoop) 同一日多次重训用 `loop_run_id` 区分.
+- metadata 保留 key: `paper_trading` + `paper_trading_by_portfolio` 由 PaperTradingFacade
+  在 trade lifecycle 中回写, 重 archive 必须保留 (与 `archiveTradingAgentsResult` 同款).
+- 返回: `{ok, reason?, signal?, created?, payload, error?}` — 4 种 reason: `dry_run` /
+  `invalid_input` / `db_failure`; 调用方按业务决定 throw / log / skip, helper 自身不抛.
 
 跑: `cd backend && npx ts-node --transpile-only tests/services/analysis-engine/<file>.test.ts`
 或 `npm test` (runner 跑全部 .test.ts).
