@@ -1272,3 +1272,21 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **AntTooltip 包按钮的写法**: antd Button 即使 disabled 也可被 Tooltip 包外层 — Tooltip 自动绑到 wrapper, hover 仍能展示, 这样"AI 暂无建议"按钮 disabled 时仍能告诉用户为什么. 同款适用任何 disabled 按钮 (eg portfolio rebalance 按钮 "数据陈旧不能下单").
   - **chip 固定 minWidth 防错位**: WeightsTab 8 个 slider 排两列, 右侧 AI chip 如果只在有建议时渲染, 没建议的因子那行右边会塌陷, 视觉对不齐. 固定 minWidth=110 + textAlign=right, 无建议时占位 "AI —" 而不是 null. 适用所有 "条件渲染的右侧 chip / 标签".
 ---
+
+## 2026-06-19 - US-047
+- Implemented [FE-008] FactorWorkspace 组合模板 save/load — 操盘手在权重调参 tab 可把当前 (weights + topN + industryNeutral + maxPerIndustry + excludeST + excludeNew60d) 一套打包成命名模板存到 localStorage, 后续一键加载/删除.
+- 范式: localStorage-only (与 PortfolioContext / StockExplorer pinned 同类), schema 版本化 (schemaVersion: 1), nameMaxLen=60, maxCount=20 拒绝 silent FIFO, weights sanitize NaN/负/Infinity, name trim+非空校验, savedAt ISO 时间戳由 helper 当场写.
+- 文件:
+  - frontend/src/pages/workspace/factorComboTemplateHelpers.ts: 新文件 8 个 export — COMBO_TEMPLATES_STORAGE_KEY / SCHEMA_VERSION / NAME_MAX_LEN / MAX_COUNT + ComboTemplate interface + ComboTemplateStorage 接口 (单测注入 in-memory mock) + normalizeTemplateName / sanitizeWeights / isValidTemplateShape / listComboTemplates / saveComboTemplate / deleteComboTemplate / findComboTemplate.
+  - frontend/src/pages/workspace/FactorWorkspace.tsx: 顶部 useState 引入 templates / saveModalOpen / pendingTemplateName / loadModalOpen + refreshTemplates / openSaveModal / handleConfirmSave / handleLoadTemplate / handleDeleteTemplate 5 个 useCallback; WeightsTabProps 加 templates / onOpenSaveTemplate / onOpenLoadTemplate 3 个 prop; Card extra 加 "保存模板" + "加载模板 (N)" Button; 底部 + Save Modal (Input + showCount + onPressEnter 提交) + Load Modal (List + Popconfirm 删除) + formatSavedAt helper.
+  - frontend/src/utils/sessionCleanup.ts: USER_SCOPED_LOCAL_STORAGE_KEYS 加 'fw_combo_templates_v1' (logout/401 时自动清).
+  - backend/tests/services/factor-combo-template.test.ts: 新文件 51 assertions ts-node 跑 — 常量 + normalize/sanitize/isValid + list 4 种损坏 storage 防御 + save 8 case (新增/覆盖/name/weights/topN/上限/上限+覆盖/sanitize) + delete + find + META-GUARD fs+regex 7 条 (helpers export + Workspace import/按钮 testid + sessionCleanup key 登记).
+  - frontend/src/pages/workspace/CLAUDE.md: 加 "User-scoped localStorage pattern (US-047)" 段, 把 schemaVersion + sessionCleanup 白名单 + max-count + load 一次性灌状态 5 条规则固化, 供后续 "用户隐藏列 / 排序偏好 / 最近选择" 复用.
+- 验证: `cd frontend && npx tsc --noEmit` (0 error) + `npx eslint src/pages/workspace/FactorWorkspace.tsx src/pages/workspace/factorComboTemplateHelpers.ts` (0 error, 8 warning 均为 pre-existing) + `cd backend && npx ts-node --transpile-only tests/services/factor-combo-template.test.ts` (passed=51 failed=0); 同时复跑 factor-ai-weight.test.ts (38 ok) 确认旧测试不受影响.
+- **Learnings for future iterations:**
+  - **localStorage-only 是这种 "工作区私有 view 状态" 的合理选择**: 不要为每个 "保存我自己的偏好" feature 加后端表, 走 localStorage + sessionCleanup 白名单更轻量, 后续真要云同步时 GET /api/factors/combo-templates 是 strict superset 的升级路径.
+  - **Helper-first + storage 注入接口**: 写 `(storage: ComboTemplateStorage = defaultStorage())` 而不是直接 `localStorage.getItem`, 让单测在 ts-node (无 jsdom) 里能用 in-memory map 跑, 不必引 happy-dom 之类大包. 与 [[factorAIWeightHelpers]] 同款.
+  - **antd Modal okButtonProps 传 data-testid 要用对象属性语法**: `okButtonProps={{ 'data-testid': 'xxx', disabled: ... }}` 而不是 `<Button data-testid=...>` 写在 JSX 里 — META-GUARD regex 不能只匹配 `data-testid=` 字面, 还要兼容对象 key 形式.
+  - **schemaVersion 强校验, 不匹配返空数组**: 比起"尝试迁移"+异常分支, 直接当作"没数据"让用户重新保存简单可靠 — 反正模板本身用户能 1 分钟内重建, 没价值搞复杂迁移.
+  - **样本测试 8 case 覆盖 save 边界**: 新增 / 覆盖同名 / 空白 name / 空 weights / topN<1 / 满上限+新名 (拒) / 满上限+覆盖 (允) / sanitize NaN — 这 8 条把 "保存什么时候应该拒 / 应该静默 sanitize" 全锁死, 改 helper 再加字段时不会回归.
+---

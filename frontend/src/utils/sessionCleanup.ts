@@ -27,6 +27,8 @@ export const USER_SCOPED_LOCAL_STORAGE_KEYS: ReadonlyArray<string> = [
   'aiAdvisor_analyzing',
   // 收藏 / pinned 类
   'stocks_pinned_symbols', // PINNED_KEY in StockExplorer
+  // US-047 FactorWorkspace 组合模板 (FE-008) — 用户自定义因子组合 (权重 + 选股参数), localStorage-only
+  'fw_combo_templates_v1',
 ];
 
 /**

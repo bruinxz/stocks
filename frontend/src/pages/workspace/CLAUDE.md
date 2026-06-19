@@ -188,3 +188,15 @@ When a workspace renders a wide antd `<Table>` (many columns, `scroll={{x: 1000+
 6. **WorkspaceLayout drawer auto-handles the secondary nav** (mobile = top-anchored Drawer triggered by 「☰ 切换标签」button, desktop = 220px left rail). Workspaces don't have to manage drawer state themselves.
 
 Reference implementations: `PortfolioWorkspace.PositionsTab` + `PositionMobileCard`, `PortfolioWorkspace.TradesTab` + `TradeMobileCard`, `TodayWorkspace.{MultiFactorCard,DragonHeadCard,EarningsSurpriseCard}` — all read `useIsMobile()` once and branch the inner `<Table>` rendering. Next mobile responsiveness story should reuse `workspace-mobile-card-list` CSS classes and the same `useIsMobile()` hook, NOT introduce a new media-query approach.
+
+## User-scoped localStorage pattern (US-047 因子组合模板 / pinned 等)
+
+工作区里那些 "用户私有的 view 状态" — 已固定订阅 / 选盘 id / 因子组合模板 — 不应该立刻倒上后端表, 走 **localStorage + sessionCleanup 白名单** 的轻量范式即可:
+
+1. **纯 helper 抽离**: 把 storage I/O 抽到 `<workspace>XxxHelpers.ts` 文件 (与 [[factorAIWeightHelpers]] 同款), 暴露 storage 接口让单测注入 in-memory mock. UI 组件只调 `listXxx() / saveXxx() / deleteXxx()`, 不直接 `localStorage.setItem`. 这样单测不依赖 jsdom — `backend/tests/services/<feature>.test.ts` 跑 ts-node 即可.
+2. **payload 顶层 schemaVersion**: 永远 `{ schemaVersion: N, items: [...] }`, 不要直接 `JSON.stringify(array)`. Load 端校验 `schemaVersion === EXPECTED`, 不匹配返 `[]` (旧/新版本一律忽略), 不会误覆盖. 字段扩展时 +1, load 做迁移即可.
+3. **写白名单**: 任何新加的 user-scoped localStorage key 必须登记到 `frontend/src/utils/sessionCleanup.ts USER_SCOPED_LOCAL_STORAGE_KEYS`. 否则 logout / 401-refresh fail / 切换用户时不会被清, 上一个用户的私有视图会泄漏给下一个登录用户. 这条规则被 BackendTests META-GUARD 覆盖 (regex fs 校验), 漏写会被测试拦下.
+4. **加 max-count + name 校验 + sanitize**: 上限拒绝保存 (不是 silent FIFO), 让用户主动整理; name trim 后非空 + 长度限制 (UTF-8 char 数, 不是 byte); weights/数值类字段 sanitize 时丢 NaN/Infinity/负值. 这些放在 helper 而不是 UI 校验, 单测能直接验.
+5. **load 时一次性灌全状态**: 比如 ComboTemplate 包含 (weights + topN + industryNeutral + maxPerIndustry + excludeST + excludeNew60d) 6 个字段, `handleLoadTemplate` 一次性调 6 个 setter; UI 不需要让用户再点 "应用" 二次确认, 直接生效 + message.success.
+
+适用: 收藏 / 模板 / pinned / 隐藏列 / 排序偏好 / 最近选择 — 任何"用户改了, 但只需要本地记住"的 view 状态. **不适用**: 需要跨设备 / 跨人协作 / 审计 / 推送的状态, 那些必须上数据库 (如 portfolio_simulation / quant_strategy_weight).

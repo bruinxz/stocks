@@ -7,7 +7,11 @@ import {
   Descriptions,
   Drawer,
   Empty,
+  Input,
   InputNumber,
+  List,
+  Modal,
+  Popconfirm,
   Row,
   Slider,
   Space,
@@ -22,7 +26,9 @@ import {
 } from 'antd';
 import {
   AppstoreOutlined,
+  DeleteOutlined,
   FundOutlined,
+  SaveOutlined,
   SlidersOutlined,
   OrderedListOutlined,
   ReloadOutlined,
@@ -52,6 +58,13 @@ import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal'
 import MacroEnvTab from './FactorWorkspace.MacroEnvTab';
 import BlockTradesTab from './FactorWorkspace.BlockTradesTab';
 import { computeAIWeights, computeWeightDeltas } from './factorAIWeightHelpers';
+import {
+  ComboTemplate,
+  COMBO_TEMPLATE_NAME_MAX_LEN,
+  deleteComboTemplate,
+  listComboTemplates,
+  saveComboTemplate,
+} from './factorComboTemplateHelpers';
 import {
   factorService,
   FactorDetailResponse,
@@ -158,6 +171,18 @@ function icIrColor(v: number | null): string | undefined {
   if (v === null || !Number.isFinite(v)) return undefined;
   if (Math.abs(v) >= 0.5) return '#52c41a';
   return undefined;
+}
+
+/**
+ * US-047 因子组合模板 (FE-008): 把 ISO 时间戳转成 "MM-DD HH:mm" 给 List item 副标题用.
+ * 解析失败 / 空 返 "—". UI 兜底, 不抛错.
+ */
+function formatSavedAt(raw: string | null | undefined): string {
+  if (!raw) return '—';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return '—';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 const FactorWorkspace: React.FC = () => {
@@ -270,10 +295,7 @@ const FactorWorkspace: React.FC = () => {
   // US-046 因子 AI 权重对照 (FE-007): 基于 overview 返的 (ic_90d, ic_ir, health_class)
   // 算 AI 推荐权重. useMemo cache 避免每次 render 重算 (factors 变才会重算).
   // 空 Map 等价于 "AI 暂无建议" — UI 那一侧 Tag 显示 '—'.
-  const aiWeights = useMemo(
-    () => computeAIWeights(overview?.factors ?? []),
-    [overview?.factors]
-  );
+  const aiWeights = useMemo(() => computeAIWeights(overview?.factors ?? []), [overview?.factors]);
 
   /** "一键应用 AI 建议": 把 aiWeights 全套覆盖到 weights state, 其它参数不动 */
   const handleApplyAIWeights = useCallback(() => {
@@ -291,6 +313,82 @@ const FactorWorkspace: React.FC = () => {
     });
     message.success(`已应用 AI 推荐 (${Object.keys(aiWeights).length} 个因子)`);
   }, [aiWeights]);
+
+  // --- US-047 因子组合模板 save/load (FE-008) ---
+  // localStorage-only 私有模板库. 与 [[factorAIWeightHelpers]] 同款纯 helper 模式,
+  // FactorWorkspace 只负责 state + UI; 校验 / 落盘 / 解析 / 上限统一在
+  // factorComboTemplateHelpers 里. 模板里包含全套权重 + 选股参数 (topN / industryNeutral
+  // / maxPerIndustry / excludeST / excludeNew60d), load 时一次性灌回所有 setXxx,
+  // 不需要再点 "预览" 之外的其他按钮就能复现该模板的选股逻辑.
+  const [templates, setTemplates] = useState<ComboTemplate[]>(() => listComboTemplates());
+  const [saveModalOpen, setSaveModalOpen] = useState(false);
+  const [pendingTemplateName, setPendingTemplateName] = useState('');
+  const [loadModalOpen, setLoadModalOpen] = useState(false);
+
+  const refreshTemplates = useCallback(() => {
+    setTemplates(listComboTemplates());
+  }, []);
+
+  /** 弹出保存对话框. 当前若已选中某个模板 (pendingTemplateName 残留), 复用作默认名. */
+  const openSaveModal = useCallback(() => {
+    setPendingTemplateName(prev => prev || '');
+    setSaveModalOpen(true);
+  }, []);
+
+  const handleConfirmSave = useCallback(() => {
+    try {
+      const list = saveComboTemplate({
+        name: pendingTemplateName,
+        weights,
+        topN,
+        industryNeutral,
+        maxPerIndustry,
+        excludeST,
+        excludeNew60d,
+      });
+      setTemplates(list);
+      setSaveModalOpen(false);
+      message.success(`已保存模板「${pendingTemplateName.trim()}」`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      message.error(msg);
+    }
+  }, [
+    pendingTemplateName,
+    weights,
+    topN,
+    industryNeutral,
+    maxPerIndustry,
+    excludeST,
+    excludeNew60d,
+  ]);
+
+  /** 把模板应用到当前 state: 一次性更新所有 6 个相关 setter. */
+  const handleLoadTemplate = useCallback((tpl: ComboTemplate) => {
+    setWeights(prev => {
+      // 与 handleApplyAIWeights 同款做法: 先把 prev 已知的因子置 0, 再灌 tpl.weights,
+      // 这样 tpl 没覆盖到的旧因子会变 0 (= "完整切到这个模板的视角"); 反之 tpl 中存在
+      // 但 overview 还没 fetch 回来的新因子也能正确灌入, 等 overview 拉回后 UI 自然展示.
+      const next: Record<string, number> = {};
+      for (const k of Object.keys(prev)) next[k] = 0;
+      for (const [k, v] of Object.entries(tpl.weights)) next[k] = v;
+      return next;
+    });
+    setTopN(tpl.topN);
+    setIndustryNeutral(tpl.industryNeutral);
+    setMaxPerIndustry(tpl.maxPerIndustry);
+    setExcludeST(tpl.excludeST);
+    setExcludeNew60d(tpl.excludeNew60d);
+    setPendingTemplateName(tpl.name);
+    setLoadModalOpen(false);
+    message.success(`已加载模板「${tpl.name}」`);
+  }, []);
+
+  const handleDeleteTemplate = useCallback((name: string) => {
+    const list = deleteComboTemplate(name);
+    setTemplates(list);
+    message.success(`已删除模板「${name}」`);
+  }, []);
 
   // --- 行业热力 (US-074) — lazy on first tab activation ---
   const [heatmap, setHeatmap] = useState<FactorIndustryHeatmapResponse | null>(null);
@@ -483,6 +581,12 @@ const FactorWorkspace: React.FC = () => {
         onPreview={handlePreview}
         onReset={handleResetWeights}
         onApplyAIWeights={handleApplyAIWeights}
+        templates={templates}
+        onOpenSaveTemplate={openSaveModal}
+        onOpenLoadTemplate={() => {
+          refreshTemplates();
+          setLoadModalOpen(true);
+        }}
       />
     );
   } else if (activeKey === 'heatmap') {
@@ -543,6 +647,103 @@ const FactorWorkspace: React.FC = () => {
         error={detailError}
         onRetry={drawerFactor ? () => loadFactorDetail(drawerFactor) : undefined}
       />
+      {/* US-047 因子组合模板 — Save 对话框 */}
+      <Modal
+        title="保存因子组合模板"
+        open={saveModalOpen}
+        onCancel={() => setSaveModalOpen(false)}
+        onOk={handleConfirmSave}
+        okText="保存"
+        cancelText="取消"
+        okButtonProps={{
+          disabled: pendingTemplateName.trim().length === 0,
+          'data-testid': 'combo-template-save-confirm-btn',
+        }}
+        destroyOnClose
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size={12}>
+          <Input
+            placeholder="例如：高分红低估值 / 短期反转 / 成长动量"
+            value={pendingTemplateName}
+            onChange={e => setPendingTemplateName(e.target.value)}
+            maxLength={COMBO_TEMPLATE_NAME_MAX_LEN}
+            showCount
+            onPressEnter={handleConfirmSave}
+            data-testid="combo-template-name-input"
+          />
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            模板包含全部因子权重 + 选股参数 (Top-N / 行业中性 / 单行业上限 / 剔除 ST / 剔除次新).
+            同名模板会被覆盖. 上限 20 个.
+          </Text>
+        </Space>
+      </Modal>
+      {/* US-047 因子组合模板 — Load 对话框 */}
+      <Modal
+        title="加载因子组合模板"
+        open={loadModalOpen}
+        onCancel={() => setLoadModalOpen(false)}
+        footer={null}
+        destroyOnClose
+        width={560}
+      >
+        {templates.length === 0 ? (
+          <Empty description="还没有保存过模板 — 调整 slider 后点 “保存模板” 即可创建" />
+        ) : (
+          <List
+            dataSource={templates}
+            data-testid="combo-template-list"
+            renderItem={tpl => (
+              <List.Item
+                actions={[
+                  <Button
+                    key="load"
+                    type="link"
+                    onClick={() => handleLoadTemplate(tpl)}
+                    data-testid={`combo-template-load-btn-${tpl.name}`}
+                  >
+                    加载
+                  </Button>,
+                  <Popconfirm
+                    key="del"
+                    title={`确定删除模板「${tpl.name}」？`}
+                    okText="删除"
+                    okButtonProps={{ danger: true }}
+                    cancelText="取消"
+                    onConfirm={() => handleDeleteTemplate(tpl.name)}
+                  >
+                    <Button
+                      type="link"
+                      danger
+                      icon={<DeleteOutlined />}
+                      data-testid={`combo-template-delete-btn-${tpl.name}`}
+                    >
+                      删除
+                    </Button>
+                  </Popconfirm>,
+                ]}
+              >
+                <List.Item.Meta
+                  title={tpl.name}
+                  description={
+                    <Space wrap size={[6, 4]} style={{ fontSize: 12 }}>
+                      <Tag>
+                        {Object.keys(tpl.weights).filter(k => tpl.weights[k] > 0).length} 因子
+                      </Tag>
+                      <Tag>Top {tpl.topN}</Tag>
+                      {tpl.industryNeutral && <Tag color="blue">行业中性</Tag>}
+                      {tpl.excludeST && <Tag color="orange">剔除 ST</Tag>}
+                      {tpl.excludeNew60d && <Tag color="orange">剔除次新</Tag>}
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        保存于 {formatSavedAt(tpl.savedAt)}
+                      </Text>
+                    </Space>
+                  }
+                />
+              </List.Item>
+            )}
+          />
+        )}
+      </Modal>
     </>
   );
 };
@@ -688,6 +889,12 @@ interface WeightsTabProps {
   onReset: () => void;
   /** US-046: 一键把所有 slider 设成 AI 推荐值 */
   onApplyAIWeights: () => void;
+  /** US-047 因子组合模板 (FE-008): 已保存的模板数, 仅 用于 "加载模板" 按钮上的 Badge 显示 */
+  templates: ComboTemplate[];
+  /** US-047: 点 "保存模板" 唤起 Save Modal */
+  onOpenSaveTemplate: () => void;
+  /** US-047: 点 "加载模板" 唤起 Load Modal (内部 refreshTemplates 后弹出) */
+  onOpenLoadTemplate: () => void;
 }
 
 const WeightsTab: React.FC<WeightsTabProps> = ({
@@ -711,6 +918,9 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
   onPreview,
   onReset,
   onApplyAIWeights,
+  templates,
+  onOpenSaveTemplate,
+  onOpenLoadTemplate,
 }) => {
   const [aiTarget, setAiTarget] = useState<{ symbol: string; name: string | null } | null>(null);
 
@@ -758,6 +968,21 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
               </Button>
             </AntTooltip>
             <Button onClick={onReset}>重置为默认</Button>
+            {/* US-047 因子组合模板 (FE-008): Save + Load 入口 */}
+            <Button
+              icon={<SaveOutlined />}
+              onClick={onOpenSaveTemplate}
+              data-testid="combo-template-save-btn"
+            >
+              保存模板
+            </Button>
+            <Button
+              icon={<AppstoreOutlined />}
+              onClick={onOpenLoadTemplate}
+              data-testid="combo-template-load-btn"
+            >
+              加载模板{templates.length > 0 ? ` (${templates.length})` : ''}
+            </Button>
             <Button
               type="primary"
               icon={<ThunderboltOutlined />}
@@ -779,11 +1004,7 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
             const delta = aiSuggested ? weightDeltas[factor.name] ?? 0 : null;
             // delta 颜色: |delta| < 2% 灰色 (基本一致) / 正值 (用户高于 AI) 红 / 负值 (用户低于 AI) 绿
             const deltaColor =
-              delta === null || Math.abs(delta) < 2
-                ? '#999'
-                : delta > 0
-                ? '#cf1322'
-                : '#52c41a';
+              delta === null || Math.abs(delta) < 2 ? '#999' : delta > 0 ? '#cf1322' : '#52c41a';
             return (
               <Col xs={24} md={12} key={factor.name}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
