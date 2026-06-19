@@ -38,12 +38,15 @@
 import {
   DEFAULT_RESTRICTED_SHARE_CONFIG,
   RESTRICTED_SHARE_SEEN_LRU_LIMIT,
+  RESTRICTED_SHARE_HALVE_TARGET_RATIO,
+  RESTRICTED_SHARE_LOT_SIZE,
   RestrictedShareConfig,
   RestrictedShareDataSource,
   RestrictedShareWatchdog,
   aggregateReleaseByStock,
   buildRestrictedShareMessage,
   computeReleaseRatio,
+  computeSuggestedReduction,
   computeWindowEndDate,
   mergeSeenSignatures,
   normalizeRestrictedShareConfig,
@@ -82,6 +85,7 @@ interface FakePosition {
   portfolio_id: number;
   symbol: string;
   name: string;
+  quantity: number;
   circulating_market_cap: number | null;
 }
 
@@ -179,6 +183,7 @@ function makePosition(over: Partial<FakePosition> = {}): FakePosition {
     portfolio_id: 1001,
     symbol: '600519.SH',
     name: '贵州茅台',
+    quantity: 1000,
     circulating_market_cap: 1_000_000_000, // 10 亿元
     ...over,
   };
@@ -420,6 +425,9 @@ async function testBuildRestrictedShareMessage() {
     batch_count: 2,
     earliest_ex_date: '2026-06-15',
     lookforward_trading_days: 5,
+    current_quantity: 1000,
+    suggested_reduce_quantity: 500,
+    suggested_remaining_quantity: 500,
   });
   assert('message contains symbol', msg.includes('600519.SH'));
   assert('message contains name', msg.includes('贵州茅台'));
@@ -428,6 +436,12 @@ async function testBuildRestrictedShareMessage() {
   assert('message contains 亿元 (large value)', msg.includes('亿元'));
   assert('message contains ratio 12.50%', msg.includes('12.50%'));
   assert('message contains earliest ex_date', msg.includes('2026-06-15'));
+  // US-014 / PR-009 — 减半建议
+  assert('message contains 减半', msg.includes('减半'));
+  assert('message contains 提前 5 个交易日', msg.includes('提前 5 个交易日'));
+  assert('message contains 当前 1000 股', msg.includes('当前 1000 股'));
+  assert('message contains 保留 500 股', msg.includes('保留 500 股'));
+  assert('message contains 建议减仓 500 股', msg.includes('建议减仓 500 股'));
 
   // small value uses 万元
   const small = buildRestrictedShareMessage({
@@ -439,8 +453,102 @@ async function testBuildRestrictedShareMessage() {
     batch_count: 1,
     earliest_ex_date: '2026-06-15',
     lookforward_trading_days: 5,
+    current_quantity: 1000,
+    suggested_reduce_quantity: 500,
+    suggested_remaining_quantity: 500,
   });
   assert('small value uses 万元', small.includes('万元'));
+
+  // 缺 current_quantity → 降级为 "保留 ≤ 50%" 文字
+  const noQty = buildRestrictedShareMessage({
+    symbol: '600519.SH',
+    name: '贵州茅台',
+    total_release_market_value: 1.25e9,
+    current_float_market_cap: 1e10,
+    release_ratio: 0.125,
+    batch_count: 2,
+    earliest_ex_date: '2026-06-15',
+    lookforward_trading_days: 5,
+    current_quantity: null,
+  });
+  assert('no-qty message still has 减半', noQty.includes('减半'));
+  assert('no-qty message has 保留 ≤ 50%', noQty.includes('≤ 50%'));
+  assert('no-qty message has 提前 5 个交易日', noQty.includes('提前 5 个交易日'));
+}
+
+async function testComputeSuggestedReduction() {
+  // happy path: 1000 → 减 500 / 留 500
+  const r1 = computeSuggestedReduction({ current_quantity: 1000 });
+  assertEqual('reduce 500 / remain 500 for 1000', r1, {
+    reduce_quantity: 500,
+    remaining_quantity: 500,
+  });
+  // 300 → keep = floor(150/100)*100=100, reduce = 200
+  const r2 = computeSuggestedReduction({ current_quantity: 300 });
+  assertEqual('300 shares → reduce 200 / remain 100', r2, {
+    reduce_quantity: 200,
+    remaining_quantity: 100,
+  });
+  // 150 → keep = floor(75/100)*100=0, reduce = 150 (全清, lot 限制下)
+  const r3 = computeSuggestedReduction({ current_quantity: 150 });
+  assertEqual('150 shares → reduce 150 / remain 0', r3, {
+    reduce_quantity: 150,
+    remaining_quantity: 0,
+  });
+  // 100 → keep = floor(50/100)*100=0, reduce = 100
+  const r4 = computeSuggestedReduction({ current_quantity: 100 });
+  assertEqual('100 shares → reduce 100 / remain 0', r4, {
+    reduce_quantity: 100,
+    remaining_quantity: 0,
+  });
+  // null / 0 / NaN / negative → both null
+  assertEqual('null qty → null', computeSuggestedReduction({ current_quantity: null }), {
+    reduce_quantity: null,
+    remaining_quantity: null,
+  });
+  assertEqual(
+    'undefined qty → null',
+    computeSuggestedReduction({ current_quantity: undefined }),
+    { reduce_quantity: null, remaining_quantity: null }
+  );
+  assertEqual('0 qty → null', computeSuggestedReduction({ current_quantity: 0 }), {
+    reduce_quantity: null,
+    remaining_quantity: null,
+  });
+  assertEqual('NaN qty → null', computeSuggestedReduction({ current_quantity: NaN }), {
+    reduce_quantity: null,
+    remaining_quantity: null,
+  });
+  assertEqual('negative qty → null', computeSuggestedReduction({ current_quantity: -100 }), {
+    reduce_quantity: null,
+    remaining_quantity: null,
+  });
+  // keep_ratio override (e.g. 0.3 keep, 实际更激进减仓)
+  const r5 = computeSuggestedReduction({ current_quantity: 1000, keep_ratio: 0.3 });
+  assertEqual('keep_ratio=0.3 → keep 300, reduce 700', r5, {
+    reduce_quantity: 700,
+    remaining_quantity: 300,
+  });
+  // 越界 keep_ratio → fallback 0.5
+  const r6 = computeSuggestedReduction({ current_quantity: 1000, keep_ratio: 1.5 });
+  assertEqual('keep_ratio=1.5 → fallback 0.5', r6, {
+    reduce_quantity: 500,
+    remaining_quantity: 500,
+  });
+  const r7 = computeSuggestedReduction({ current_quantity: 1000, keep_ratio: 0 });
+  assertEqual('keep_ratio=0 → fallback 0.5', r7, {
+    reduce_quantity: 500,
+    remaining_quantity: 500,
+  });
+  // lot_size override (e.g. 10 股 lot for 北交所未来扩展)
+  const r8 = computeSuggestedReduction({ current_quantity: 350, lot_size: 10 });
+  assertEqual('lot=10 → 350 keep=floor(175/10)*10=170, reduce 180', r8, {
+    reduce_quantity: 180,
+    remaining_quantity: 170,
+  });
+  // 常量校验
+  assertEqual('RESTRICTED_SHARE_HALVE_TARGET_RATIO == 0.5', RESTRICTED_SHARE_HALVE_TARGET_RATIO, 0.5);
+  assertEqual('RESTRICTED_SHARE_LOT_SIZE == 100', RESTRICTED_SHARE_LOT_SIZE, 100);
 }
 
 // ---------------------------------------------------------------------------
@@ -474,9 +582,18 @@ async function testHappyPath() {
   assertEqual('trigger.batch_count = 2', t.batch_count, 2);
   assertEqual('trigger.earliest_ex_date = 2026-06-12', t.earliest_ex_date, '2026-06-12');
   assertEqual('trigger.signature contains symbol', t.signature.includes('600519.SH'), true);
+  // US-014 / PR-009: 减半建议在 trigger payload 上
+  assertClose('trigger.suggested_reduce_target_ratio = 0.5', t.suggested_reduce_target_ratio, 0.5);
+  assertEqual('trigger.current_quantity = 1000 (default)', t.current_quantity, 1000);
+  assertEqual('trigger.suggested_reduce_quantity = 500', t.suggested_reduce_quantity, 500);
+  assertEqual('trigger.suggested_remaining_quantity = 500', t.suggested_remaining_quantity, 500);
+  assert('trigger.message contains 减半', t.message.includes('减半'));
+  assert('trigger.message contains "保留 500 股"', t.message.includes('保留 500 股'));
+  assert('trigger.message contains "建议减仓 500 股"', t.message.includes('建议减仓 500 股'));
   // alert written
   assertEqual('1 alert written', state.alerts.length, 1);
   assertEqual('alert.user_id = 1', state.alerts[0].user_id, 1);
+  assert('alert.message contains 减半', state.alerts[0].message.includes('减半'));
   // seen signature persisted
   assert('saved seen signatures', !!state.savedSeenByUser[1]);
   assertEqual('saved 1 signature', state.savedSeenByUser[1].length, 1);
@@ -775,6 +892,70 @@ async function testCustomThresholdConfig() {
   assertEqual('custom threshold 5%: 6% triggers', res.triggered_users, 1);
 }
 
+async function testHalveAdviceWithOddLot() {
+  // current_quantity = 300 → keep = floor(150/100)*100 = 100, reduce = 200
+  const state = emptyState({
+    userIds: [1],
+    positionsByUser: {
+      1: [makePosition({ quantity: 300, circulating_market_cap: 1e10 })],
+    },
+    releases: [{ stock_code: '600519', ex_date: '2026-06-12', release_market_value: 2e9 }],
+  });
+  const guard = new RestrictedShareWatchdog(makeFakeSource(state));
+  const res = await guard.evaluateAfterOpen({ asOfDate: new Date('2026-06-08T00:00:00Z') });
+  assertEqual('odd-lot: 1 trigger', res.triggered_users, 1);
+  const t = res.triggers[0];
+  assertEqual('odd-lot trigger.current_quantity = 300', t.current_quantity, 300);
+  assertEqual('odd-lot trigger.suggested_reduce_quantity = 200', t.suggested_reduce_quantity, 200);
+  assertEqual('odd-lot trigger.suggested_remaining_quantity = 100', t.suggested_remaining_quantity, 100);
+  assert('odd-lot message has 保留 100 股', t.message.includes('保留 100 股'));
+  assert('odd-lot message has 建议减仓 200 股', t.message.includes('建议减仓 200 股'));
+  // alert message also has halve advice
+  assert('odd-lot alert has 减半', state.alerts[0].message.includes('减半'));
+}
+
+async function testHalveAdviceMissingQuantityFallback() {
+  // 持仓数量缺失 (loaderImpl 历史路径不返 quantity) — message 降级为 "≤ 50%"
+  // 我们用一个 ad-hoc source 把 quantity 模拟成 undefined。
+  const baseState = emptyState({
+    userIds: [1],
+    positionsByUser: {},
+    releases: [{ stock_code: '600519', ex_date: '2026-06-12', release_market_value: 2e9 }],
+  });
+  const baseSrc = makeFakeSource(baseState);
+  const legacySrc: RestrictedShareDataSource = {
+    ...baseSrc,
+    async loadOpenPositionsWithMarketCap(_user_id) {
+      // Legacy fake that doesn't include quantity (mimics caller that hasn't
+      // been migrated to the new contract). TS narrows by interface so we
+      // bypass type check with `as any`.
+      return [
+        {
+          id: 10,
+          portfolio_id: 1001,
+          symbol: '600519.SH',
+          name: '贵州茅台',
+          circulating_market_cap: 1e10,
+        } as any,
+      ];
+    },
+  };
+  const guard = new RestrictedShareWatchdog(legacySrc);
+  const res = await guard.evaluateAfterOpen({ asOfDate: new Date('2026-06-08T00:00:00Z') });
+  assertEqual('legacy: 1 trigger despite missing quantity', res.triggered_users, 1);
+  const t = res.triggers[0];
+  assertEqual('legacy trigger.current_quantity = null', t.current_quantity, null);
+  assertEqual('legacy trigger.suggested_reduce_quantity = null', t.suggested_reduce_quantity, null);
+  assertEqual(
+    'legacy trigger.suggested_remaining_quantity = null',
+    t.suggested_remaining_quantity,
+    null
+  );
+  assertClose('legacy trigger.suggested_reduce_target_ratio still 0.5', t.suggested_reduce_target_ratio, 0.5);
+  assert('legacy message still has 减半', t.message.includes('减半'));
+  assert('legacy message has 保留 ≤ 50%', t.message.includes('≤ 50%'));
+}
+
 // ---------------------------------------------------------------------------
 //  Main
 // ---------------------------------------------------------------------------
@@ -789,6 +970,7 @@ async function main() {
   await testSignatureForRelease();
   await testMergeSeenSignatures();
   await testBuildRestrictedShareMessage();
+  await testComputeSuggestedReduction();
   await testHappyPath();
   await testBelowThreshold();
   await testExactThresholdNotTriggered();
@@ -806,6 +988,8 @@ async function main() {
   await testNonHeldStockNotTriggered();
   await testUserIdScoping();
   await testCustomThresholdConfig();
+  await testHalveAdviceWithOddLot();
+  await testHalveAdviceMissingQuantityFallback();
 
   console.log(`\n${passed} ok / ${failed} failed`);
   if (failed > 0) process.exit(1);

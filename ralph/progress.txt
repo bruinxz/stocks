@@ -334,3 +334,34 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - safePosNumber vs safePosInt: pct 阈值 (0.5 / 1.0 / 1.5) 必须支持浮点, safePosNumber 用 `Number.isFinite + > 0`; integer 字段 (lookback_days / news_per_stock_limit) 用 safePosInt `Number.isInteger + >= 1`. 任何"百分比 / 比率 / 价格阈值"用前者, "次数 / 天数 / 条数"用后者.
   - SHAREHOLDER_REDUCTION sig 进 windowStartDate 是窗口型 dedup 标杆: 窗口推进 (asOfDate +1 天 → windowStart +1 天) sig 变 → 自然重新触发; 同一窗口内反复跑同样数据 sig 不变 → dedup 静默. 任何"N 日累计阈值"风控维度都按此模板做 sig.
 ---
+
+## 2026/06/19 08:25 - US-014
+- 实现 [PR-009] 限售解禁预警提前 5 日 — 在既有 RestrictedShareWatchdog (US-089 5 日 / 10% 阈值 / MEDIUM 告警) 基础上, 落地 AC 显式 "仓位减半建议"
+- Files changed:
+  - backend/src/portfolio/risk/RestrictedShareWatchdog.ts:
+    - 2 新常量: RESTRICTED_SHARE_HALVE_TARGET_RATIO=0.5 + RESTRICTED_SHARE_LOT_SIZE=100
+    - 新 export 纯函数 computeSuggestedReduction({current_quantity, keep_ratio?, lot_size?}) — 100 股 lot floor 在 keep 端 (减仓侧偏多保守); 边界 (null/NaN/0/负数) 全返 {null,null}; keep_ratio 越界 → 0.5 fallback; lot_size 可注入支持北交所未来扩展
+    - buildRestrictedShareMessage 扩 3 可选字段 (current_quantity / suggested_reduce_quantity / suggested_remaining_quantity); 文案从 "建议提前评估持仓压力" → "建议提前 N 个交易日仓位减半（当前 X 股 → 保留 Y 股，建议减仓 Z 股）"; 缺持仓数 → 降级 "保留 ≤ 50%"
+    - RestrictedShareTrigger interface 新增 4 字段: suggested_reduce_target_ratio (固定 0.5) + current_quantity + suggested_reduce_quantity + suggested_remaining_quantity
+    - DataSource.loadOpenPositionsWithMarketCap 契约新增 quantity: number; 生产 impl 从 PaperTradingPosition.quantity 取 + Number.isFinite 兜底
+    - evaluateOneUser 内每 trigger 都调 computeSuggestedReduction + 把 4 字段灌入 trigger payload + message
+  - backend/tests/risk/restricted-share-watchdog.test.ts:
+    - FakePosition 加 quantity: number; makePosition 默认 1000 股
+    - testComputeSuggestedReduction (新, 14 assertion): 1000/300/150/100 happy path + null/undefined/0/NaN/negative 边界 + keep_ratio 越界 fallback + lot_size override + 常量校验
+    - testBuildRestrictedShareMessage 扩: 减半 / 提前 5 个交易日 / 当前 1000 股 / 保留 500 股 / 建议减仓 500 股 markers; no-qty fallback path "≤ 50%" 单测
+    - testHappyPath 扩: trigger.suggested_* 4 字段 + alert.message 含减半
+    - testHalveAdviceWithOddLot (新): 300 股 → reduce 200 / remain 100 e2e
+    - testHalveAdviceMissingQuantityFallback (新): legacy DataSource 不返 quantity → trigger.* null + message 降级
+    - tests 总数 129 → 174 (+45 assertion)
+  - ralph/prd.json: US-014 passes=true + notes
+  - ralph/progress.txt: 本 entry
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npx ts-node --transpile-only tests/risk/restricted-share-watchdog.test.ts` 174 ok / 0 failed
+  - `npx eslint src/portfolio/risk/RestrictedShareWatchdog.ts` exit 0 (0 err 0 warn, prettier --fix 已收尾 1 处换行)
+- **Learnings for future iterations:**
+  - **既有 watchdog 上加 "建议减仓 N 股" 模板**: 4 件套 — (a) 抽 magic number 出来 `XXX_HALVE_TARGET_RATIO=0.5` 常量 + `XXX_LOT_SIZE=100` 常量 (与 RebalanceEngine `MIN_TRADE_LOT_SIZE` 命名对齐, 未来若动其中一个会被全文 grep 揪出); (b) 新纯函数 `computeSuggestedReduction({current_quantity, keep_ratio?, lot_size?})` 全 export 单测覆盖边界 (null/0/NaN/负数/越界 keep_ratio/小 lot), 让 helper 与 guard 解耦; (c) DataSource interface 加 `quantity` 字段是 breaking 但 legacy caller 仍能跑 (代码用 `(pos as any).quantity` + isFinite 兜底, 缺时 trigger 仍发 message 降级); (d) Trigger payload 加 `suggested_*` 4 字段 (target_ratio / current_quantity / reduce_quantity / remaining_quantity), 未来 UI / 飞书卡片可直接拿不用再算 — 把 "推送建议" 收敛到 watchdog 内部, 不让 UI 重新实现一次 lot floor 算法.
+  - **lot 量化方向选择**: SELL 减仓建议 用 floor 在 keep 端 = "保留偏少, 减仓偏多" = 与 "减半且保守" 语义对齐 (与 RebalanceEngine.quantizeSellQuantity 用 ceil 在 sell 端是同一回事的两个写法, 数学等价). 极端 case (current=150 股, 减半理论 75 → floor(75/100)*100=0) 会建议全清, 这是 lot 限制下的必然 — 不要试图"少减一点" (违反保守原则) 也不要 throw (UI 应该看到清晰的"建议清仓 150 股"). 同理 current=100 → 全清. 用户在 UI 上仍可手动只减一手.
+  - **fake DataSource 添字段时 sweep 全文件**: TS 编译器会揪出 makePosition 等 fixture 必须加新字段, 但 `loadOpenPositionsWithMarketCap` 内联返回的 ad-hoc object (testHalveAdviceMissingQuantityFallback) 是有意 cast `as any` 模拟 legacy caller 不传该字段的场景. 这种 "legacy fallback 单测" 比 try/catch 强 — 显式编码 "缺字段时 trigger 仍发 message 降级", 未来 refactor 不会无意中 breaking caller.
+  - **CLAUDE.md 不需要本次新增**: US-089 已有详尽 doc + US-014 只是文案 / 字段扩展, 没有引入新模式. 若未来再来一个 watchdog 也要 "减仓 N 股", 复用本次的 4 件套就行.
+---

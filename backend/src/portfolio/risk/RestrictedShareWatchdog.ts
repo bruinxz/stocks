@@ -127,6 +127,20 @@ export const DEFAULT_RESTRICTED_SHARE_CONFIG: RestrictedShareConfig = Object.fre
 /** LRU dedup buffer 上限 — 防 JSONB 无限增长（US-053 同款）。 */
 export const RESTRICTED_SHARE_SEEN_LRU_LIMIT = 200;
 
+/**
+ * A 股最小交易批次（手）。SELL 操作必须以 100 股的倍数下单（北交所等
+ * 5/10 股阶梯暂不支持）；与 RebalanceEngine `MIN_TRADE_LOT_SIZE` 同款。
+ */
+export const RESTRICTED_SHARE_LOT_SIZE = 100;
+
+/**
+ * AC (US-014 / PR-009): "提前 5 日仓位减半建议" —— 减仓目标比例固定 0.5
+ * (即建议保留当前持仓的 50%)。未来若改为"减仓比例随解禁压力分级" (例
+ * release_ratio > 30% 建议减仓 70%) 把这里抽成 helper, 不要让 magic
+ * number 散落多处。
+ */
+export const RESTRICTED_SHARE_HALVE_TARGET_RATIO = 0.5;
+
 // ---------------------------------------------------------------------------
 //  Domain types
 // ---------------------------------------------------------------------------
@@ -157,6 +171,31 @@ export interface RestrictedShareTrigger {
   signature: string;
   /** 中文消息（已渲染）。 */
   message: string;
+  /**
+   * **AC (US-014 / PR-009) — 减仓建议: "提前 5 日仓位减半建议"**
+   * 建议保留比例 (0..1)。默认 0.5 = 仓位减半。固定值, 不随
+   * release_ratio 浮动 (AC 只要求"减半")。
+   */
+  suggested_reduce_target_ratio: number;
+  /**
+   * 当前持仓数量 (股)。`null` = caller 没有传 `current_quantity` 进
+   * `evaluateAfterOpen` 的 position payload (旧路径), watchdog 仍发
+   * alert 但不算具体减仓股数 (UI 只能拿建议比例自己再算)。
+   */
+  current_quantity: number | null;
+  /**
+   * **建议减仓的股数** = `current_quantity - quantize(current_quantity * 0.5)`。
+   * - 100 股舍入 (A 股最小手数, 与 RebalanceEngine 同款 lot=100);
+   * - SELL 用 ceil 让减仓不少于"半数" (与 RebalanceEngine.quantizeSellQuantity
+   *   ceil 同款保守语义);
+   * - `current_quantity` 缺失 → null。
+   */
+  suggested_reduce_quantity: number | null;
+  /**
+   * 减仓后预计保留股数 = `current_quantity - suggested_reduce_quantity`。
+   * `null` 同上。
+   */
+  suggested_remaining_quantity: number | null;
 }
 
 /** per-position evaluation result. */
@@ -393,11 +432,54 @@ export function mergeSeenSignatures(
 }
 
 /**
- * 拼装解禁触发 message（中文）— 提示用户提前规避。
+ * 计算 "建议减仓 N 股 + 保留 M 股" — AC 减半语义 (US-014 / PR-009)。
+ *
+ * - `current_quantity = null / NaN / ≤ 0` → 全部返 null (caller 无持仓数)。
+ * - 减仓股数 = `current - quantize(current * keep_ratio)` 其中 quantize 用
+ *   100 股 floor (保留偏少 → 减仓偏多, 与"建议减半且保守减仓"语义一致)；
+ *   极端例: current=150 → keep=floor(75/100)*100=0 → reduce=150 (全卖);
+ *   current=300 → keep=floor(150/100)*100=100 → reduce=200 (减 200 保 100,
+ *   比理论 150/150 多减 50 股)。这把 round 误差留给 reduce 一侧 = 安全。
+ * - `keep_ratio` 必须 (0,1)。范围外 → 默认 0.5。
+ *
+ * 返回 {reduce_quantity, remaining_quantity} 或 {null, null}。
+ */
+export function computeSuggestedReduction(input: {
+  current_quantity: number | null | undefined;
+  keep_ratio?: number;
+  lot_size?: number;
+}): { reduce_quantity: number | null; remaining_quantity: number | null } {
+  const q = Number(input.current_quantity);
+  if (!Number.isFinite(q) || q <= 0) {
+    return { reduce_quantity: null, remaining_quantity: null };
+  }
+  const rawKeep = Number(input.keep_ratio);
+  const keep =
+    Number.isFinite(rawKeep) && rawKeep > 0 && rawKeep < 1
+      ? rawKeep
+      : RESTRICTED_SHARE_HALVE_TARGET_RATIO;
+  const lotRaw = Number(input.lot_size);
+  const lot = Number.isInteger(lotRaw) && lotRaw >= 1 ? lotRaw : RESTRICTED_SHARE_LOT_SIZE;
+  // SELL 偏多 (减仓侧) — 用 floor 在 keep 端, 让 keep 不超过理论一半。
+  const keepRaw = Math.floor(q * keep);
+  const remaining = Math.floor(keepRaw / lot) * lot;
+  const reduce = q - remaining;
+  return {
+    reduce_quantity: reduce >= 0 ? reduce : 0,
+    remaining_quantity: remaining,
+  };
+}
+
+/**
+ * 拼装解禁触发 message（中文）— **AC US-014: 仓位减半建议**。
  *
  * 例：'600519（贵州茅台）未来 5 个交易日内将有 2 批限售股解禁，
  *      合计市值约 12.5 亿元，占当前流通市值 12.3%。最早解禁日：2026-06-15。
- *      建议提前评估持仓。'
+ *      **建议提前 5 个交易日仓位减半**（当前 1000 股 → 保留 500 股，
+ *      建议减仓 500 股）。'
+ *
+ * - `current_quantity` 缺失时降级为"建议提前减半至 ≤ 50%" 文字提示, 不
+ *   附具体股数 (UI 仍可独立计算)。
  */
 export function buildRestrictedShareMessage(input: {
   symbol: string;
@@ -408,18 +490,37 @@ export function buildRestrictedShareMessage(input: {
   batch_count: number;
   earliest_ex_date: string;
   lookforward_trading_days: number;
+  current_quantity?: number | null;
+  suggested_reduce_quantity?: number | null;
+  suggested_remaining_quantity?: number | null;
 }): string {
   const valueYi = input.total_release_market_value / 1e8;
   const valueStr =
     valueYi >= 1 ? `${valueYi.toFixed(2)} 亿元` : `${(valueYi * 10000).toFixed(0)} 万元`;
   const ratioPct = (input.release_ratio * 100).toFixed(2);
   const earliest = input.earliest_ex_date || '近期';
-  return (
+  const head =
     `${input.symbol}（${input.name}）未来 ${input.lookforward_trading_days} 个交易日内` +
     `将有 ${input.batch_count} 批限售股解禁，合计市值约 ${valueStr}，` +
-    `占当前流通市值 ${ratioPct}%。最早解禁日：${earliest}。` +
-    `建议提前评估持仓压力。`
-  );
+    `占当前流通市值 ${ratioPct}%。最早解禁日：${earliest}。`;
+
+  const cur = input.current_quantity;
+  const reduce = input.suggested_reduce_quantity;
+  const remaining = input.suggested_remaining_quantity;
+  const hasQty =
+    typeof cur === 'number' &&
+    Number.isFinite(cur) &&
+    cur > 0 &&
+    typeof reduce === 'number' &&
+    Number.isFinite(reduce) &&
+    typeof remaining === 'number' &&
+    Number.isFinite(remaining);
+
+  const halveAdvice = hasQty
+    ? `建议提前 ${input.lookforward_trading_days} 个交易日仓位减半` +
+      `（当前 ${cur} 股 → 保留 ${remaining} 股，建议减仓 ${reduce} 股）。`
+    : `建议提前 ${input.lookforward_trading_days} 个交易日仓位减半（保留 ≤ 50%）。`;
+  return head + halveAdvice;
 }
 
 // ---------------------------------------------------------------------------
@@ -438,6 +539,9 @@ export interface RestrictedShareDataSource {
   /**
    * Load all open positions (quantity > 0) for the user, with name + current
    * float market cap (joined from Stock).
+   *
+   * **`quantity`** (US-014) — caller 用来算"减仓 N 股"建议; 缺失时
+   * trigger 仍发但 message 降级为"建议减半（保留 ≤ 50%）"无具体股数。
    */
   loadOpenPositionsWithMarketCap(user_id: number): Promise<
     Array<{
@@ -445,6 +549,7 @@ export interface RestrictedShareDataSource {
       portfolio_id: number;
       symbol: string;
       name: string;
+      quantity: number;
       circulating_market_cap: number | null;
     }>
   >;
@@ -533,6 +638,7 @@ export class DefaultRestrictedShareDataSource implements RestrictedShareDataSour
       portfolio_id: number;
       symbol: string;
       name: string;
+      quantity: number;
       circulating_market_cap: number | null;
     }>
   > {
@@ -569,11 +675,13 @@ export class DefaultRestrictedShareDataSource implements RestrictedShareDataSour
     return positions.map(p => {
       const sym = String(p.symbol);
       const entry = stockMap.get(sym);
+      const qtyRaw = Number(p.quantity);
       return {
         id: Number(p.id),
         portfolio_id: Number(p.portfolio_id),
         symbol: sym,
         name: entry?.name ?? sym,
+        quantity: Number.isFinite(qtyRaw) ? qtyRaw : 0,
         circulating_market_cap: entry?.cap ?? null,
       };
     });
@@ -879,6 +987,17 @@ export class RestrictedShareWatchdog {
         continue;
       }
 
+      // US-014 / PR-009: 减半建议 — 用持仓量 + 100 股 lot 算具体减仓股数
+      const curQty =
+        typeof (pos as any).quantity === 'number' && Number.isFinite((pos as any).quantity)
+          ? Number((pos as any).quantity)
+          : null;
+      const reduction = computeSuggestedReduction({
+        current_quantity: curQty,
+        keep_ratio: RESTRICTED_SHARE_HALVE_TARGET_RATIO,
+        lot_size: RESTRICTED_SHARE_LOT_SIZE,
+      });
+
       const message = buildRestrictedShareMessage({
         symbol: pos.symbol,
         name: pos.name,
@@ -888,6 +1007,9 @@ export class RestrictedShareWatchdog {
         batch_count: agg.batch_count,
         earliest_ex_date: agg.earliest_ex_date,
         lookforward_trading_days: config.lookforward_trading_days,
+        current_quantity: curQty,
+        suggested_reduce_quantity: reduction.reduce_quantity,
+        suggested_remaining_quantity: reduction.remaining_quantity,
       });
 
       const trigger: RestrictedShareTrigger = {
@@ -905,6 +1027,10 @@ export class RestrictedShareWatchdog {
         earliest_ex_date: agg.earliest_ex_date,
         signature,
         message,
+        suggested_reduce_target_ratio: RESTRICTED_SHARE_HALVE_TARGET_RATIO,
+        current_quantity: curQty,
+        suggested_reduce_quantity: reduction.reduce_quantity,
+        suggested_remaining_quantity: reduction.remaining_quantity,
       };
       triggers.push(trigger);
       newSignatures.push(signature);
