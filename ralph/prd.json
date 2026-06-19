@@ -531,7 +531,7 @@
         "Relevant unit tests pass"
       ],
       "priority": 35,
-      "passes": false,
+      "passes": true,
       "notes": "依赖: KOL-002"
     },
     {

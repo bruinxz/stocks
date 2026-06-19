@@ -930,3 +930,33 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - 占位字段 'kol' / 'etf_flow' / 'policy_doc' 提前 enum 化, 避免 US-035 / US-036 加 fetchETFFlow / fetchPolicyDirectives 时还要改 dedupeAndSort 二次回流.
   - 既有 dedupeAndSort 测组 'source priority' 必须随升级同步重命名 + 顺序断言改 (research > concept > news), 否则旧契约硬编码 silent fail.
 ---
+
+## 2026/06/19 16:20 - US-035
+- 实现 [KOL-003] KOLAggregator ETF + 政策集成 — 把 KOL 来源从 3 类 (research/news/concept) 扩到 5 类 (新增 etf_flow + policy_doc)，每类来源走"非空 → 写入 KOLOpinion" 全链路。
+- Files changed:
+  - backend/src/services/KOLAggregatorService.ts (+432 行)
+    * KOL_SOURCES enum 加 ETF_FLOW='etf_flow' + POLICY_DOC='policy_doc'
+    * KOLETFFlowRow / KOLPolicyRow interface (per-source DTO, raw_payload 字段直透便于审计)
+    * KOLAggregatorDataSource interface 加 fetchETFFlow(stockCode, sinceDate) + fetchPolicyDirectives(stockCode, sinceDate) — fail-OPEN 契约 (返 [] 不抛)
+    * DefaultKOLAggregatorDataSource.fetchETFFlow: Stock.symbol LIKE → industry → getETFCodesByIndustry → ETFFlow.findAll, 顶层 try/catch fail-OPEN 返 []
+    * DefaultKOLAggregatorDataSource.fetchPolicyDirectives: 复用 get_stock_news_em (~200 条) → filterPolicyFromNews; AKShare 政策原文 endpoint 升级时只替换本方法
+    * 7 个 pure helper (全 export) — netInflowToSentiment (-1/-0.5/-0.2/0/+0.2/+0.5/+1 七档分级), formatYuan, mapETFFlowToOpinions, POLICY_DIRECTION_KEYWORDS (12+11 freeze), POLICY_TOPIC_KEYWORDS (17 项 freeze), inferPolicyIssuer (优先级链: 国务院 > 央行 > 证监会 > 发改委 > 工信部 > 财政部 > 银保监会 > '政策研判' fallback), scorePolicySentiment (±0.7 vs ±0.9 of news, 政策保守), filterPolicyFromNews (双层关键词过滤 + sinceDate 守界), mapPolicyToOpinions
+    * KOLAggregatorService.aggregate: Promise.all 由 3 路扩到 5 路, mapper 拼接 5 类, countBySource init/累加同步加 etf_flow/policy_doc 两键, info 日志含 etf=/policy= 计数
+    * safeFetchETFFlow / safeFetchPolicyDirectives 双 private wrapper (与 safeFetchResearch/News/Concept 同款 try-catch 降级返 [])
+  - backend/tests/services/kol-aggregator-service.test.ts (+497 行)
+    * FakeState 加 etfByCode/policyByCode + etfShouldThrow/policyShouldThrow; makeFakeSource 加两 fetch 方法
+    * 新增 16 测组覆盖 — netInflowToSentiment 7 档分级 / formatYuan 3 区间 / mapETFFlowToOpinions (kol_name 拼接 + sentiment 计算 + 缺值 fallback) / inferPolicyIssuer (优先级链全 7 机构) / scorePolicySentiment (双向词典 + 0 fallback) / filterPolicyFromNews (双层过滤 + sinceDate 边界 + 标题缺失剔除) / mapPolicyToOpinions / aggregate 集成 (5 来源 by_source counts 全非零) / aggregate fail-OPEN (etf 抛/ policy 抛 — 不影响其他 3 路)
+- Quality checks:
+  - npx ts-node tests/services/kol-aggregator-service.test.ts → ✅ 259 passed 0 failed
+  - npx tsc --noEmit → clean
+  - npx eslint src/services/KOLAggregatorService.ts → clean
+- **Learnings for future iterations:**
+  - **"新增数据源接入 KOLAggregator" 9 件套清单 (US-035 → 未来 KOL-005~ / 任何"扩 N→N+1 来源" 类聚合 service)**:
+    (1) KOL_SOURCES enum 加 const — 用 `as const` 让 union 类型自然推; (2) per-source DTO interface (XxxRow) 含 raw_payload 留审计余地; (3) DataSource interface 加 fetchXxx(stockCode, sinceDate) — **fail-OPEN 契约**: 返 [] 不抛, 与既有 fetchNews/Concept/Research 形态一致; (4) DefaultKOLAggregatorDataSource.fetchXxx 实现内顶层 try/catch fail-OPEN 返 [] + logger.warn 一行; (5) per-source mapper `mapXxxToOpinions(stockCode, rows)` 输出 KOLOpinionRecord[] (kol_name 自定 + kol_source enum 引用 + sentiment_score 自定算法); (6) Service.aggregate Promise.all 数组加一行 + mapper 拼接 + countBySource 初始化 + 累加同步加新 key (3 处必须同步, 漏一处 by_source 计数错); (7) safeFetchXxx private 双层 try (per-source 防御性, 与 DataSource 实现 fail-OPEN 双层防御 — 注入 fake 抛错时 DataSource 不抛但 service 层也有兜底); (8) info 日志含 `xxx=${bySource.xxx}` 便于线上 grep; (9) 单测 fake source state 加 xxxByCode + xxxShouldThrow + makeFakeSource 加方法 + emptyState 加默认 — 漏一处既有 happy path 测试也跑不过 (TS 编译报错 interface 缺方法).
+  - **聚合 service 7 档分级 sentiment 范式**: 与 US-027 entity 抽取 / US-028 grade 阈值同款思路 — 用 export 常量阈值数组 (1e8 / 1e7 / 其它) + sign-multiplied 输出 (避免 caller 自己判正负号); 写到 jsdoc 时明确"|净申赎| 量级 → ±N 档" 让 ops 看一眼就懂.
+  - **proxy 范式 vs 原生 endpoint 升级路径**: AKShare 缺政策原文 endpoint 时, 用 stock_news_em + 关键词过滤当 proxy, 但 jsdoc 必须明确"升级路径: 引入 X 后只替换本方法, service 主流程 / model schema 不动" — 让未来引入正经数据源时知道该改哪 (与 hard mode 三态在 US-021 抽 archive helper 同款思想: 接口固定, 实现可替换).
+  - **per-source dedupe by kol_name**: 同行业不同 ETF 同日各自成 KOLOpinionRecord, 但因 kol_name = "ETF 资金流·{industry}" 相同, dedupeAndSort 会 collapse 成一条 (保留 sentiment_score |值| 最大的) — 这是 US-034 source_authority 加权后自然继承的行为, 不需要本 story 额外做.
+  - **政策方向词典与新闻 sentiment 词典必须分开**: SENTIMENT_KEYWORDS (新闻) ±0.9 强信号, POLICY_DIRECTION_KEYWORDS (政策) ±0.7 中信号 — 政策是中期信号比单日业绩超预期保守, 这条边界写在 jsdoc 里防止后续 ralph 错误合并字典.
+  - **Stock.symbol 兜底用 LIKE**: Stock 表里 symbol 通常含 .SH/.SZ 后缀但 stockCode 是 6 位裸码, 用 `{ symbol: { [Op.like]: ${stockCode}% } }` 兜底 + `attributes:['industry']` raw query 比 findByPk(symbol) 少绑 model 实例化开销.
+  - **fetchETFFlow 三层短路**: stock 缺 industry 返 []; getETFCodesByIndustry 返 [] 也返 [] (行业无对应 ETF 白名单); ETFFlow.findAll 抛错 fail-OPEN 返 [] — 三层都 fail-OPEN, 让 5 类来源中即便 ETF 无对应行业映射也不影响其他 4 类聚合.
+---

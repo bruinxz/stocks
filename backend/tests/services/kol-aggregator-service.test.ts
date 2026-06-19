@@ -37,11 +37,15 @@ import {
   KOLNewsRow,
   KOLHotConceptRow,
   KOLResearchRow,
+  KOLETFFlowRow,
+  KOLPolicyRow,
   KOL_SOURCES,
   RATING_SENTIMENT_MAP,
   SENTIMENT_KEYWORDS,
   SOURCE_AUTHORITY,
   SOURCE_AUTHORITY_DEFAULT,
+  POLICY_DIRECTION_KEYWORDS,
+  POLICY_TOPIC_KEYWORDS,
   getSourceAuthority,
   authorityWeightedSentiment,
   ratingToSentiment,
@@ -53,6 +57,12 @@ import {
   mapResearchToOpinions,
   mapNewsToOpinions,
   mapHotConceptsToOpinions,
+  mapETFFlowToOpinions,
+  mapPolicyToOpinions,
+  netInflowToSentiment,
+  scorePolicySentiment,
+  inferPolicyIssuer,
+  filterPolicyFromNews,
   todayLocalIso,
 } from '../../src/services/KOLAggregatorService';
 
@@ -81,11 +91,15 @@ interface FakeState {
   researchByCode: Record<string, KOLResearchRow[]>;
   newsByCode: Record<string, KOLNewsRow[]>;
   conceptsByCode: Record<string, KOLHotConceptRow[]>;
+  etfByCode: Record<string, KOLETFFlowRow[]>;
+  policyByCode: Record<string, KOLPolicyRow[]>;
   saves: KOLOpinionRecord[][];
   saveShouldThrow?: boolean;
   researchShouldThrow?: boolean;
   newsShouldThrow?: boolean;
   conceptsShouldThrow?: boolean;
+  etfShouldThrow?: boolean;
+  policyShouldThrow?: boolean;
 }
 
 function makeFakeSource(state: FakeState): KOLAggregatorDataSource {
@@ -102,6 +116,14 @@ function makeFakeSource(state: FakeState): KOLAggregatorDataSource {
       if (state.conceptsShouldThrow) throw new Error('fake concepts outage');
       return state.conceptsByCode[stockCode] || [];
     },
+    async fetchETFFlow(stockCode, _sinceDate) {
+      if (state.etfShouldThrow) throw new Error('fake etf outage');
+      return state.etfByCode[stockCode] || [];
+    },
+    async fetchPolicyDirectives(stockCode, _sinceDate) {
+      if (state.policyShouldThrow) throw new Error('fake policy outage');
+      return state.policyByCode[stockCode] || [];
+    },
     async saveOpinions(records) {
       if (state.saveShouldThrow) throw new Error('fake DB outage');
       state.saves.push([...records]);
@@ -114,6 +136,8 @@ function emptyState(overrides: Partial<FakeState> = {}): FakeState {
     researchByCode: {},
     newsByCode: {},
     conceptsByCode: {},
+    etfByCode: {},
+    policyByCode: {},
     saves: [],
     ...overrides,
   };
@@ -127,6 +151,8 @@ function testConstants(): void {
   assertEqual('KOL_SOURCES.RESEARCH_REPORT', KOL_SOURCES.RESEARCH_REPORT, 'research_report');
   assertEqual('KOL_SOURCES.EAST_MONEY_NEWS', KOL_SOURCES.EAST_MONEY_NEWS, 'east_money_news');
   assertEqual('KOL_SOURCES.XQ_HOT_CONCEPT', KOL_SOURCES.XQ_HOT_CONCEPT, 'xq_hot_concept');
+  assertEqual('KOL_SOURCES.ETF_FLOW', KOL_SOURCES.ETF_FLOW, 'etf_flow');
+  assertEqual('KOL_SOURCES.POLICY_DOC', KOL_SOURCES.POLICY_DOC, 'policy_doc');
   assertEqual('rating map 买入', RATING_SENTIMENT_MAP['买入'], 1.0);
   assertEqual('rating map 减持', RATING_SENTIMENT_MAP['减持'], -0.6);
   assertEqual('rating map 卖出', RATING_SENTIMENT_MAP['卖出'], -1.0);
@@ -654,6 +680,8 @@ async function testAggregate_AllSourcesFailure(): Promise<void> {
     researchShouldThrow: true,
     newsShouldThrow: true,
     conceptsShouldThrow: true,
+    etfShouldThrow: true,
+    policyShouldThrow: true,
   });
   const service = new KOLAggregatorService(makeFakeSource(state));
   const result = await service.aggregateForStock('600519', { asOfDate: '2026-06-08' });
@@ -927,6 +955,464 @@ function testTodayLocalIso(): void {
 }
 
 // ---------------------------------------------------------------------------
+// US-035 [KOL-003] ETF flow + 政策集成
+// ---------------------------------------------------------------------------
+
+function testNetInflowToSentiment(): void {
+  // 阈值: 1e8 → ±1.0, 1e7 → ±0.5, 其它非零 → ±0.2
+  assertEqual('netInflow null → 0', netInflowToSentiment(null), 0);
+  assertEqual('netInflow undefined → 0', netInflowToSentiment(undefined), 0);
+  assertEqual('netInflow NaN → 0', netInflowToSentiment(NaN), 0);
+  assertEqual('netInflow 0 → 0', netInflowToSentiment(0), 0);
+  // 强信号 (>= 1 亿)
+  assertEqual('netInflow +2 亿 → +1.0', netInflowToSentiment(2e8), 1.0);
+  assertEqual('netInflow -1.5 亿 → -1.0', netInflowToSentiment(-1.5e8), -1.0);
+  // 中信号 (>= 1000 万 < 1 亿)
+  assertEqual('netInflow +3000 万 → +0.5', netInflowToSentiment(3e7), 0.5);
+  assertEqual('netInflow -1500 万 → -0.5', netInflowToSentiment(-1.5e7), -0.5);
+  // 弱信号
+  assertEqual('netInflow +100 万 → +0.2', netInflowToSentiment(1e6), 0.2);
+  assertEqual('netInflow -50 万 → -0.2', netInflowToSentiment(-5e5), -0.2);
+  // 边界值: 恰好等于 1e7 / 1e8 → 取强档
+  assertEqual('netInflow 1e7 → +0.5', netInflowToSentiment(1e7), 0.5);
+  assertEqual('netInflow 1e8 → +1.0', netInflowToSentiment(1e8), 1.0);
+}
+
+function testMapETFFlowToOpinions(): void {
+  const rows: KOLETFFlowRow[] = [
+    {
+      trade_date: '2026-06-08',
+      etf_code: '159995',
+      etf_name: '芯片ETF华夏',
+      underlying_industry: '半导体',
+      net_inflow: 2e8, // 强多
+      aum: 1.2e10,
+      raw_payload: { source: 'ETFFlow' },
+    },
+    {
+      trade_date: '2026-06-08',
+      etf_code: '512760',
+      etf_name: '芯片ETF国联安',
+      underlying_industry: '半导体',
+      net_inflow: -5e7, // 强空
+      aum: 8e9,
+      raw_payload: {},
+    },
+    {
+      trade_date: '2026-06-07',
+      etf_code: '510050',
+      etf_name: '上证50ETF',
+      underlying_industry: '宽基',
+      net_inflow: null,
+      aum: null,
+      raw_payload: {},
+    },
+    // 必填项缺失 → 跳过
+    {
+      trade_date: '',
+      etf_code: '',
+      etf_name: 'bad',
+      underlying_industry: '',
+      net_inflow: 0,
+      aum: 0,
+      raw_payload: {},
+    },
+  ];
+  const opinions = mapETFFlowToOpinions('600519', rows);
+  assertEqual('etf mapper 跳过必填缺失', opinions.length, 3);
+  assertEqual('etf mapper kol_source', opinions[0].kol_source, 'etf_flow');
+  assertEqual(
+    'etf mapper kol_name prefix',
+    opinions[0].kol_name,
+    'ETF 资金流·半导体'
+  );
+  assertEqual('etf mapper net inflow → sentiment', opinions[0].sentiment_score, 1.0);
+  assertEqual('etf mapper net outflow → -sentiment', opinions[1].sentiment_score, -0.5);
+  assertEqual('etf mapper null inflow sentiment=0', opinions[2].sentiment_score, 0);
+  assert(
+    'etf mapper summary 含 "净申购"',
+    opinions[0].opinion_summary.includes('净申购')
+  );
+  assert(
+    'etf mapper summary 含 "净赎回"',
+    opinions[1].opinion_summary.includes('净赎回')
+  );
+  assert(
+    'etf mapper null inflow summary 含 "数据缺失"',
+    opinions[2].opinion_summary.includes('数据缺失')
+  );
+  assert(
+    'etf mapper opinion_date YYYY-MM-DD',
+    /^\d{4}-\d{2}-\d{2}$/.test(opinions[0].opinion_date)
+  );
+}
+
+function testScorePolicySentiment(): void {
+  assertEqual('policy null → 0', scorePolicySentiment(null), 0);
+  assertEqual('policy 空字符串 → 0', scorePolicySentiment(''), 0);
+  assertEqual(
+    'policy 正向 支持/鼓励',
+    scorePolicySentiment('国务院发文支持半导体产业发展'),
+    0.7
+  );
+  assertEqual(
+    'policy 正向 减税',
+    scorePolicySentiment('财政部减税降费持续推进'),
+    0.7
+  );
+  assertEqual(
+    'policy 负向 收紧',
+    scorePolicySentiment('监管收紧网游审批节奏'),
+    -0.7
+  );
+  assertEqual(
+    'policy 负向 禁止',
+    scorePolicySentiment('禁止外资进入战略行业'),
+    -0.7
+  );
+  // 负向词在正向词前命中 → 取负 (负向优先 = 安全)
+  assertEqual(
+    'policy 正负兼有 → 取负 (安全派)',
+    scorePolicySentiment('鼓励发展但限制规模'),
+    -0.7
+  );
+  assertEqual('policy 无关 → 0', scorePolicySentiment('某公司高管离职'), 0);
+}
+
+function testInferPolicyIssuer(): void {
+  assertEqual('issuer 国务院', inferPolicyIssuer('国务院发布产业规划'), '国务院');
+  assertEqual('issuer 央行', inferPolicyIssuer('央行降准 0.5pct'), '中国人民银行');
+  assertEqual(
+    'issuer 人民银行',
+    inferPolicyIssuer('中国人民银行公开市场操作'),
+    '中国人民银行'
+  );
+  assertEqual('issuer 证监会', inferPolicyIssuer('证监会修订上市规则'), '证监会');
+  assertEqual('issuer 发改委', inferPolicyIssuer('国家发改委推进示范工程'), '国家发改委');
+  assertEqual('issuer 工信部', inferPolicyIssuer('工信部部署专项规划'), '工信部');
+  assertEqual('issuer 财政部', inferPolicyIssuer('财政部加大补贴力度'), '财政部');
+  assertEqual('issuer 银保监', inferPolicyIssuer('银保监会出台办法'), '银保监会');
+  assertEqual('issuer fallback', inferPolicyIssuer('行业出现新政策'), '政策研判');
+  assertEqual('issuer null fallback', inferPolicyIssuer(null), '政策研判');
+}
+
+function testFilterPolicyFromNews(): void {
+  const news: KOLNewsRow[] = [
+    {
+      title: '国务院发布支持半导体产业政策',
+      content: '推进国产替代',
+      publish_time: '2026-06-05',
+      source: '财联社',
+      url: 'http://news/1',
+      raw_payload: {},
+    },
+    {
+      title: '公司发布Q3季报',
+      content: null,
+      publish_time: '2026-06-05',
+      source: null,
+      url: null,
+      raw_payload: {},
+    },
+    {
+      title: '工信部出台办法收紧网游审批',
+      content: null,
+      publish_time: '2026-06-04',
+      source: null,
+      url: null,
+      raw_payload: {},
+    },
+    // since 之前 → 应被过滤
+    {
+      title: '财政部发布意见',
+      content: null,
+      publish_time: '2025-01-01',
+      source: null,
+      url: null,
+      raw_payload: {},
+    },
+  ];
+  const policies = filterPolicyFromNews(news, '2026-01-01');
+  assertEqual('filterPolicy 命中政策标题数', policies.length, 2);
+  assertEqual('filterPolicy 第 1 条 issuing_org', policies[0].issuing_org, '国务院');
+  assertEqual('filterPolicy 第 1 条 sentiment', policies[0].sentiment, 'positive');
+  assertEqual('filterPolicy 第 2 条 sentiment 负向', policies[1].sentiment, 'negative');
+}
+
+function testMapPolicyToOpinions(): void {
+  const rows: KOLPolicyRow[] = [
+    {
+      publish_date: '2026-06-08',
+      issuing_org: '国务院',
+      title: '国务院发布支持半导体产业政策',
+      summary: '推进国产替代,加大投入',
+      sentiment: 'positive',
+      url: 'http://gov/1',
+      raw_payload: {},
+    },
+    {
+      publish_date: '2026-06-07',
+      issuing_org: '工信部',
+      title: '工信部收紧网游审批',
+      summary: null,
+      sentiment: 'negative',
+      url: null,
+      raw_payload: {},
+    },
+    {
+      publish_date: '2026-06-06',
+      issuing_org: '政策研判',
+      title: '产业资讯',
+      summary: '行业最新动态',
+      sentiment: 'neutral',
+      url: null,
+      raw_payload: {},
+    },
+    // 必填项缺失 → 跳过
+    {
+      publish_date: '',
+      issuing_org: '应被跳过',
+      title: 'skip me',
+      summary: null,
+      sentiment: 'neutral',
+      url: null,
+      raw_payload: {},
+    },
+  ];
+  const opinions = mapPolicyToOpinions('600519', rows);
+  assertEqual('policy mapper 跳过缺失', opinions.length, 3);
+  assertEqual('policy mapper kol_source', opinions[0].kol_source, 'policy_doc');
+  assertEqual('policy mapper kol_name = issuing_org', opinions[0].kol_name, '国务院');
+  assertEqual('policy mapper positive sentiment_score', opinions[0].sentiment_score, 0.7);
+  assertEqual('policy mapper negative sentiment_score', opinions[1].sentiment_score, -0.7);
+  assertEqual('policy mapper neutral sentiment_score', opinions[2].sentiment_score, 0);
+  assert(
+    'policy mapper summary 含 title',
+    opinions[0].opinion_summary.includes('国务院发布支持半导体产业政策')
+  );
+  assert(
+    'policy mapper summary 含 summary tail',
+    opinions[0].opinion_summary.includes('推进国产替代')
+  );
+}
+
+function testPolicyKeywordsConstants(): void {
+  assert('POLICY_TOPIC_KEYWORDS contains 政策', POLICY_TOPIC_KEYWORDS.includes('政策'));
+  assert('POLICY_TOPIC_KEYWORDS contains 国务院', POLICY_TOPIC_KEYWORDS.includes('国务院'));
+  assert(
+    'POLICY_DIRECTION_KEYWORDS.positive 含 支持',
+    POLICY_DIRECTION_KEYWORDS.positive.includes('支持')
+  );
+  assert(
+    'POLICY_DIRECTION_KEYWORDS.negative 含 收紧',
+    POLICY_DIRECTION_KEYWORDS.negative.includes('收紧')
+  );
+}
+
+/**
+ * US-035 AC 主验收: "5 类来源非空".
+ *
+ * 注入 fake 在 5 种来源各自非空, aggregate 应返 by_source 5 项全 > 0,
+ * total_collected 等于 5 项之和.
+ */
+async function testAggregate_FiveSourcesNonEmpty(): Promise<void> {
+  const state = emptyState({
+    researchByCode: {
+      '600519': [
+        {
+          report_date: '2026-06-05',
+          analyst_firm: '中信证券',
+          rating: '买入',
+          report_title: '高端白酒龙头',
+          report_pdf_url: 'http://pdf/test',
+          raw_payload: {},
+        },
+      ],
+    },
+    newsByCode: {
+      '600519': [
+        {
+          title: '业绩超预期',
+          content: '营收稳定',
+          publish_time: '2026-06-04',
+          source: '财联社',
+          url: 'http://news/1',
+          raw_payload: {},
+        },
+      ],
+    },
+    conceptsByCode: {
+      '600519': [
+        {
+          snapshot_time: '2026-06-08',
+          concept_name: '白酒',
+          concept_code: 'BK0896',
+          heat: 10000,
+          rank: 1,
+          raw_payload: {},
+        },
+      ],
+    },
+    etfByCode: {
+      '600519': [
+        {
+          trade_date: '2026-06-08',
+          etf_code: '512690',
+          etf_name: '酒ETF',
+          underlying_industry: '白酒',
+          net_inflow: 2e8,
+          aum: 5e9,
+          raw_payload: {},
+        },
+      ],
+    },
+    policyByCode: {
+      '600519': [
+        {
+          publish_date: '2026-06-07',
+          issuing_org: '财政部',
+          title: '财政部减税降费扶持消费',
+          summary: '加大行业补贴',
+          sentiment: 'positive',
+          url: 'http://gov/1',
+          raw_payload: {},
+        },
+      ],
+    },
+  });
+  const service = new KOLAggregatorService(makeFakeSource(state));
+  const result = await service.aggregateForStock('600519', {
+    limit: 20,
+    asOfDate: '2026-06-08',
+  });
+  // 5 类来源全非空
+  assert('5-source research_report > 0', result.by_source.research_report > 0);
+  assert('5-source east_money_news > 0', result.by_source.east_money_news > 0);
+  assert('5-source xq_hot_concept > 0', result.by_source.xq_hot_concept > 0);
+  assert('5-source etf_flow > 0', result.by_source.etf_flow > 0);
+  assert('5-source policy_doc > 0', result.by_source.policy_doc > 0);
+  assertEqual('5-source total_collected = 5', result.total_collected, 5);
+  // 排序: opinion_date desc → concept @ 06-08 / etf @ 06-08 同日, policy_doc(auth 0.8) > etf_flow(0.5) > concept(0.4)
+  // 因为 etf 和 concept 都 06-08, etf authority 0.5 > concept 0.4, etf 先;
+  // 不强断顺序细节, 只断 5 来源各 1 条
+  assertEqual('5-source persisted=true', result.persisted, true);
+  assert('5-source no error', result.error === undefined);
+}
+
+/**
+ * US-035: ETF / Policy 单源失败时仍出其余 4 类来源结果, 不抛.
+ */
+async function testAggregate_ETFAndPolicySourceFailure(): Promise<void> {
+  const state = emptyState({
+    etfShouldThrow: true,
+    policyShouldThrow: true,
+    newsByCode: {
+      '600519': [
+        {
+          title: 'n',
+          content: null,
+          publish_time: '2026-06-05',
+          source: '财联社',
+          url: null,
+          raw_payload: {},
+        },
+      ],
+    },
+  });
+  const service = new KOLAggregatorService(makeFakeSource(state));
+  const result = await service.aggregateForStock('600519', { asOfDate: '2026-06-08' });
+  assertEqual('etf+policy 失败 etf=0', result.by_source.etf_flow, 0);
+  assertEqual('etf+policy 失败 policy=0', result.by_source.policy_doc, 0);
+  assertEqual('etf+policy 失败 news 仍出', result.by_source.east_money_news, 1);
+  assert('etf+policy 失败 无 outer error', result.error === undefined);
+}
+
+/**
+ * META-GUARD — 守 US-035 的 5 来源接入清单:
+ * 1. KOL_SOURCES 含 ETF_FLOW / POLICY_DOC;
+ * 2. DataSource interface 含 fetchETFFlow / fetchPolicyDirectives 方法;
+ * 3. aggregateForStock 主流程并发 fetch 5 来源 + map 5 来源;
+ * 4. safeFetchETFFlow / safeFetchPolicyDirectives 私有方法存在 (try/catch fail-OPEN);
+ * 5. countBySource / emptyBySource 含 etf_flow / policy_doc 0 兜底.
+ */
+function testFiveSourceMetaGuard(): void {
+  const src = fs.readFileSync(
+    path.resolve(__dirname, '../../src/services/KOLAggregatorService.ts'),
+    'utf8'
+  );
+
+  // 1. KOL_SOURCES 含新两类
+  assert('KOL_SOURCES 含 ETF_FLOW', /ETF_FLOW:\s*'etf_flow'/.test(src));
+  assert('KOL_SOURCES 含 POLICY_DOC', /POLICY_DOC:\s*'policy_doc'/.test(src));
+
+  // 2. DataSource interface 含 5 方法
+  assert(
+    'DataSource interface 含 fetchETFFlow',
+    /fetchETFFlow\(stockCode: string, sinceDate: string\): Promise<KOLETFFlowRow\[\]>/.test(
+      src
+    )
+  );
+  assert(
+    'DataSource interface 含 fetchPolicyDirectives',
+    /fetchPolicyDirectives\(stockCode: string, sinceDate: string\): Promise<KOLPolicyRow\[\]>/.test(
+      src
+    )
+  );
+
+  // 3. aggregateForStock 主流程并发 5 来源 + map 5 来源
+  const aggregateFn = src.match(/async aggregateForStock\([\s\S]+?\n  \}\n/);
+  assert('aggregateForStock 函数被找到', !!aggregateFn);
+  if (aggregateFn) {
+    assert(
+      'aggregateForStock 主流程并发 safeFetchETFFlow',
+      /safeFetchETFFlow\(/.test(aggregateFn[0])
+    );
+    assert(
+      'aggregateForStock 主流程并发 safeFetchPolicyDirectives',
+      /safeFetchPolicyDirectives\(/.test(aggregateFn[0])
+    );
+    assert(
+      'aggregateForStock map mapETFFlowToOpinions',
+      /mapETFFlowToOpinions\(/.test(aggregateFn[0])
+    );
+    assert(
+      'aggregateForStock map mapPolicyToOpinions',
+      /mapPolicyToOpinions\(/.test(aggregateFn[0])
+    );
+  }
+
+  // 4. safeFetchETFFlow / safeFetchPolicyDirectives 私有方法存在
+  assert(
+    'safeFetchETFFlow private method 存在',
+    /private async safeFetchETFFlow/.test(src)
+  );
+  assert(
+    'safeFetchPolicyDirectives private method 存在',
+    /private async safeFetchPolicyDirectives/.test(src)
+  );
+
+  // 5. countBySource / emptyBySource 含 etf_flow / policy_doc 0 兜底
+  assert(
+    'countBySource 含 etf_flow: 0',
+    /(?:emptyBySource|countBySource)[\s\S]{0,400}etf_flow:\s*0/.test(src)
+  );
+  assert(
+    'countBySource 含 policy_doc: 0',
+    /(?:emptyBySource|countBySource)[\s\S]{0,400}policy_doc:\s*0/.test(src)
+  );
+
+  // 6. DefaultKOLAggregatorDataSource 含 5 个 fetch 实现
+  assert(
+    'Default DataSource 含 fetchETFFlow 实现',
+    /async fetchETFFlow\(stockCode: string, sinceDate: string\)/.test(src)
+  );
+  assert(
+    'Default DataSource 含 fetchPolicyDirectives 实现',
+    /async fetchPolicyDirectives\(stockCode: string, sinceDate: string\)/.test(src)
+  );
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 // US-034 [KOL-002] SOURCE_AUTHORITY 权重 — 显式契约 + helper + META-GUARD
@@ -1089,6 +1575,16 @@ async function main(): Promise<void> {
   testAuthorityWeightedSentiment();
   testSourceAuthorityMetaGuard();
 
+  // US-035 [KOL-003] ETF + 政策集成
+  testNetInflowToSentiment();
+  testMapETFFlowToOpinions();
+  testScorePolicySentiment();
+  testInferPolicyIssuer();
+  testFilterPolicyFromNews();
+  testMapPolicyToOpinions();
+  testPolicyKeywordsConstants();
+  testFiveSourceMetaGuard();
+
   // End-to-end with fake DataSource
   await testAggregate_HappyPath();
   await testAggregate_DryRun();
@@ -1101,6 +1597,10 @@ async function main(): Promise<void> {
   await testAggregate_AsOfDate();
   await testAggregate_BySourceCounter();
   await testAggregateBatch();
+
+  // US-035 [KOL-003] aggregateForStock e2e with ETF + policy
+  await testAggregate_FiveSourcesNonEmpty();
+  await testAggregate_ETFAndPolicySourceFailure();
 
   console.log(
     `\n✅ ${passed} passed  ${failed > 0 ? '❌ ' + failed + ' failed' : '0 failed'}  ` +

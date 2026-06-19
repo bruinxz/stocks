@@ -2,7 +2,10 @@ import { spawn } from 'child_process';
 import path from 'path';
 import { Op } from 'sequelize';
 import { AnalystForecast } from '../models/AnalystForecast';
+import { ETFFlow } from '../models/ETFFlow';
 import { KOLOpinion } from '../models/KOLOpinion';
+import { Stock } from '../models/Stock';
+import { getETFCodesByIndustry } from '../constants/etfIndustry';
 import { logger } from '../utils/logger';
 
 /**
@@ -52,6 +55,10 @@ export const KOL_SOURCES = Object.freeze({
   RESEARCH_REPORT: 'research_report' as const,
   EAST_MONEY_NEWS: 'east_money_news' as const,
   XQ_HOT_CONCEPT: 'xq_hot_concept' as const,
+  /** US-035: 行业 ETF 资金流向 (净申购为多 / 净赎回为空) */
+  ETF_FLOW: 'etf_flow' as const,
+  /** US-035: 行业政策指引 (政策利好/利空文档摘要) */
+  POLICY_DOC: 'policy_doc' as const,
 });
 
 export type KOLSource = (typeof KOL_SOURCES)[keyof typeof KOL_SOURCES];
@@ -245,10 +252,64 @@ export interface KOLResearchRow {
   raw_payload: Record<string, unknown>;
 }
 
+/**
+ * US-035: ETFFlow 简化视图 (per-ETF 日度净申赎 + AUM, 取聚合需要的列).
+ *
+ * 一条 KOLETFFlowRow = `etf_flows` 表内一行 (trade_date, etf_code) 二元 PK.
+ * 来源:
+ *   - underlying_industry 由 ETF 白名单 (constants/etfIndustry.ts) 提供;
+ *   - net_inflow / aum 由 day-to-day diff 推算 (US-092 同款 proxy);
+ * Service 把 "该股票所属行业的 ETF 申赎情况" 反向映射成 KOL 观点
+ * — 净申购大额 = 行业被看多, 净赎回大额 = 行业被看空.
+ */
+export interface KOLETFFlowRow {
+  trade_date: string;
+  etf_code: string;
+  etf_name: string;
+  underlying_industry: string;
+  net_inflow: number | null;
+  aum: number | null;
+  raw_payload: Record<string, unknown>;
+}
+
+/**
+ * US-035: 政策指引文档简化视图 (一条 KOLPolicyRow = 一条行业政策摘要).
+ *
+ * 数据源 (proxy 范式, AKShare 政策原文 endpoint 不可得):
+ *   - 用 stock_news_em / get_stock_news_em 提取标题含 "政策 / 监管 / 利好 /
+ *     补贴 / 规划 / 指引" 等政策关键词的新闻条目;
+ *   - kol_name = 政策发布机构 (e.g. "国务院" / "证监会" / "国家发改委") 或
+ *     "政策研判·{发布机构}" fallback.
+ *
+ * 升级路径: 若引入 Wind / Tushare Pro / 国务院文件库 endpoint, 替换 Default
+ * fetchPolicyDirectives 实现, service 层 / model schema 不变.
+ */
+export interface KOLPolicyRow {
+  publish_date: string;
+  issuing_org: string;
+  title: string;
+  summary: string | null;
+  sentiment: 'positive' | 'negative' | 'neutral';
+  url: string | null;
+  raw_payload: Record<string, unknown>;
+}
+
 export interface KOLAggregatorDataSource {
   fetchNews(stockCode: string, limit: number): Promise<KOLNewsRow[]>;
   fetchHotConcepts(stockCode: string, limit: number): Promise<KOLHotConceptRow[]>;
   loadResearchReports(stockCode: string, sinceDate: string): Promise<KOLResearchRow[]>;
+  /**
+   * US-035: 取股票所属行业的 ETF 日度申赎 + AUM (近 N 天).
+   * 实现可走 ETFFlow + Stock.industry → ETF 白名单映射, 也可注入 fake.
+   * 返回 [] = 该股票无对应行业 ETF / 数据缺失 (fail-OPEN, 不抛).
+   */
+  fetchETFFlow(stockCode: string, sinceDate: string): Promise<KOLETFFlowRow[]>;
+  /**
+   * US-035: 取股票所属行业的政策指引文档摘要 (近 N 天).
+   * 默认实现走 Python helper (get_stock_news_em + 政策关键词过滤);
+   * 升级到原生政策库后替换该方法即可.
+   */
+  fetchPolicyDirectives(stockCode: string, sinceDate: string): Promise<KOLPolicyRow[]>;
   saveOpinions(records: KOLOpinionRecord[]): Promise<void>;
 }
 
@@ -333,6 +394,107 @@ export class DefaultKOLAggregatorDataSource implements KOLAggregatorDataSource {
     } catch (error) {
       logger.warn(
         `KOLAggregator.loadResearchReports(${stockCode}) failed: ${
+          (error as Error).message
+        } — falling back to []`
+      );
+      return [];
+    }
+  }
+
+  /**
+   * US-035: 取该股票所属行业的 ETF 日度申赎 / AUM (近 N 天).
+   *
+   * 流程:
+   *   1. 查 Stock.industry → 行业标签;
+   *   2. ETF 白名单 getETFCodesByIndustry(industry) → 同行业 ETF 代码列表;
+   *   3. ETFFlow.findAll where etf_code IN [...] AND trade_date >= sinceDate.
+   *
+   * fail-OPEN: stock 缺 industry / 行业无 ETF 映射 / DB 故障 → 返 [], 不抛.
+   */
+  async fetchETFFlow(stockCode: string, sinceDate: string): Promise<KOLETFFlowRow[]> {
+    try {
+      // 1. 取股票所属行业 (Stock.symbol 通常带 .SH/.SZ 后缀, 用 LIKE 兜底)
+      const stock = (await Stock.findOne({
+        where: { symbol: { [Op.like]: `${stockCode}%` } },
+        attributes: ['industry'],
+        raw: true,
+      })) as { industry?: string } | null;
+      const industry = stock?.industry?.trim();
+      if (!industry) return [];
+
+      // 2. 同行业 ETF 白名单
+      const etfCodes = getETFCodesByIndustry(industry);
+      if (etfCodes.length === 0) return [];
+
+      // 3. 拉取近 N 天的 ETF flow
+      const rows = (await ETFFlow.findAll({
+        where: {
+          etf_code: { [Op.in]: etfCodes },
+          trade_date: { [Op.gte]: sinceDate },
+        },
+        attributes: [
+          'trade_date',
+          'etf_code',
+          'etf_name',
+          'underlying_industry',
+          'net_inflow',
+          'aum',
+        ],
+        order: [['trade_date', 'DESC']],
+        raw: true,
+      })) as unknown as Array<{
+        trade_date: string;
+        etf_code: string;
+        etf_name: string;
+        underlying_industry: string;
+        net_inflow: number | null;
+        aum: number | null;
+      }>;
+
+      return rows.map(r => ({
+        trade_date: r.trade_date,
+        etf_code: r.etf_code,
+        etf_name: r.etf_name,
+        underlying_industry: r.underlying_industry,
+        net_inflow: r.net_inflow !== null ? Number(r.net_inflow) : null,
+        aum: r.aum !== null ? Number(r.aum) : null,
+        raw_payload: {
+          trade_date: r.trade_date,
+          etf_code: r.etf_code,
+          etf_name: r.etf_name,
+          underlying_industry: r.underlying_industry,
+          source: 'ETFFlow',
+        },
+      }));
+    } catch (error) {
+      logger.warn(
+        `KOLAggregator.fetchETFFlow(${stockCode}) failed: ${
+          (error as Error).message
+        } — falling back to []`
+      );
+      return [];
+    }
+  }
+
+  /**
+   * US-035: 取该股票所属行业的政策指引文档摘要 (近 N 天).
+   *
+   * **proxy 范式**: AKShare 政策原文 endpoint 不可得, 当前实现复用
+   * `get_stock_news_em` + 政策关键词过滤. 升级到原生政策库后只替换本方法,
+   * service 主流程 / model schema 不动.
+   *
+   * fail-OPEN: Python 调用失败 / 无命中 → 返 [], 不抛.
+   */
+  async fetchPolicyDirectives(stockCode: string, sinceDate: string): Promise<KOLPolicyRow[]> {
+    try {
+      const rows = (await this.callPython('get_stock_news_em', stockCode, '200')) as
+        | KOLNewsRow[]
+        | null;
+      if (!Array.isArray(rows) || rows.length === 0) return [];
+      return filterPolicyFromNews(rows, sinceDate);
+    } catch (error) {
+      logger.warn(
+        `KOLAggregator.fetchPolicyDirectives(${stockCode}) failed: ${
           (error as Error).message
         } — falling back to []`
       );
@@ -639,6 +801,239 @@ export function mapHotConceptsToOpinions(
     });
 }
 
+// ---------------------------------------------------------------------------
+// US-035: ETF flow / Policy directive helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * US-035: 把 net_inflow (元) 映射到情绪分 [-1, +1].
+ *
+ * 阈值取行业 ETF "显著申赎" 经验值 (单日):
+ *   - |net_inflow| >= 1 亿元 (1e8): ±1.0 (强信号 — 板块明显被买入/赎回);
+ *   - |net_inflow| >= 1000 万元 (1e7): ±0.5 (中信号);
+ *   - 其它非零: ±0.2 (弱信号);
+ *   - 0 / null: 0 (中性).
+ *
+ * 正负号: 净申购 (>0) = 多, 净赎回 (<0) = 空, 与 KOLOpinion sentiment 语义一致.
+ */
+export function netInflowToSentiment(netInflow: number | null | undefined): number {
+  if (netInflow === null || netInflow === undefined || !Number.isFinite(netInflow)) return 0;
+  if (netInflow === 0) return 0;
+  const abs = Math.abs(netInflow);
+  const sign = netInflow > 0 ? 1 : -1;
+  if (abs >= 1e8) return sign * 1.0;
+  if (abs >= 1e7) return sign * 0.5;
+  return sign * 0.2;
+}
+
+/** 千分位格式化金额 (用于 ETF flow summary 可读性). */
+function formatYuan(n: number): string {
+  if (Math.abs(n) >= 1e8) return `${(n / 1e8).toFixed(2)} 亿元`;
+  if (Math.abs(n) >= 1e4) return `${(n / 1e4).toFixed(1)} 万元`;
+  return `${n.toFixed(0)} 元`;
+}
+
+/**
+ * US-035: ETFFlow → KOLOpinionRecord (etf_flow 来源).
+ *
+ * 每条 ETF 行映射成一条 KOL 观点:
+ *   - kol_name = "ETF 资金流·{underlying_industry}";
+ *   - opinion_summary = "{trade_date} {etf_name}({etf_code}) 净申赎 ±N 万/亿元".
+ *
+ * 多只同行业 ETF 同日各自成行 (dedupe by kol_name+date 在 dedupeAndSort 处理:
+ * 同行业不同 ETF 因 kol_name 相同会保留信息量最大的一条 — 即 |net_inflow| 最强的).
+ */
+export function mapETFFlowToOpinions(stockCode: string, rows: KOLETFFlowRow[]): KOLOpinionRecord[] {
+  return rows
+    .filter(r => !!r.trade_date && !!r.etf_code && !!r.underlying_industry)
+    .map<KOLOpinionRecord>(r => {
+      const date = normalizeDateOnly(r.trade_date, r.trade_date);
+      const inflow = r.net_inflow;
+      const inflowLabel =
+        inflow === null || inflow === undefined || !Number.isFinite(inflow)
+          ? '净申赎数据缺失'
+          : inflow > 0
+          ? `净申购 ${formatYuan(inflow)}`
+          : inflow < 0
+          ? `净赎回 ${formatYuan(Math.abs(inflow))}`
+          : '净申赎持平';
+      const aumLabel =
+        r.aum !== null && r.aum !== undefined && Number.isFinite(r.aum)
+          ? `, AUM ${formatYuan(r.aum)}`
+          : '';
+      const summary = `${date} ${r.etf_name}(${r.etf_code}) ${inflowLabel}${aumLabel}`;
+      return {
+        stock_code: stockCode,
+        kol_name: `ETF 资金流·${r.underlying_industry}`.slice(0, 120),
+        opinion_date: date,
+        kol_source: KOL_SOURCES.ETF_FLOW,
+        opinion_summary: summary.slice(0, 500),
+        sentiment_score: netInflowToSentiment(inflow),
+        url: null,
+        raw_payload: r.raw_payload || {},
+      };
+    });
+}
+
+/**
+ * US-035: 政策方向关键词 — 用于把新闻标题分类成政策正/负/中性.
+ *
+ * 与 SENTIMENT_KEYWORDS 同款 Object.freeze 模板, 但更聚焦"政策语境":
+ * 利好关键词命中 → positive (+0.7); 利空 → negative (-0.7); 否则 neutral (0).
+ */
+export const POLICY_DIRECTION_KEYWORDS: Readonly<{
+  positive: readonly string[];
+  negative: readonly string[];
+}> = Object.freeze({
+  positive: Object.freeze([
+    '支持',
+    '鼓励',
+    '减税',
+    '补贴',
+    '扶持',
+    '推进',
+    '加大投入',
+    '专项规划',
+    '利好',
+    '示范',
+    '试点',
+    '放开',
+  ]),
+  negative: Object.freeze([
+    '收紧',
+    '禁止',
+    '限制',
+    '清理',
+    '整顿',
+    '出清',
+    '问责',
+    '处罚',
+    '加税',
+    '管控',
+    '取消优惠',
+  ]),
+});
+
+/**
+ * US-035: 政策识别关键词 — 用于从一堆新闻里识别"政策类条目".
+ *
+ * 命中其一即视为政策条目. 与 POLICY_DIRECTION_KEYWORDS 是两层过滤:
+ *   - 第一层: POLICY_TOPIC_KEYWORDS 决定 "这条是不是政策";
+ *   - 第二层: POLICY_DIRECTION_KEYWORDS 决定 "政策的方向".
+ */
+export const POLICY_TOPIC_KEYWORDS: readonly string[] = Object.freeze([
+  '政策',
+  '监管',
+  '指引',
+  '规划',
+  '规定',
+  '办法',
+  '通知',
+  '意见',
+  '指导意见',
+  '部委',
+  '国务院',
+  '证监会',
+  '银保监',
+  '发改委',
+  '工信部',
+  '财政部',
+  '央行',
+]);
+
+/**
+ * 把标题里出现的 "政策发布机构" 抽出来当 kol_name; 没识别到则 fallback.
+ *
+ * 优先级: 国务院 > 央行 > 证监会 > 发改委 > 工信部 > 财政部 > 银保监会;
+ * 都没匹配到 → '政策研判' fallback.
+ */
+export function inferPolicyIssuer(title: string | null | undefined): string {
+  if (!title) return '政策研判';
+  const t = String(title);
+  if (t.includes('国务院')) return '国务院';
+  if (t.includes('央行') || t.includes('人民银行')) return '中国人民银行';
+  if (t.includes('证监会')) return '证监会';
+  if (t.includes('发改委') || t.includes('国家发改委')) return '国家发改委';
+  if (t.includes('工信部')) return '工信部';
+  if (t.includes('财政部')) return '财政部';
+  if (t.includes('银保监')) return '银保监会';
+  return '政策研判';
+}
+
+/**
+ * US-035: 政策方向打分 (与 scoreNewsSentiment 形态对偶, 但语义更窄).
+ *
+ * 政策正向词 → +0.7 (政策利好通常是中期信号, 比业绩超预期保守);
+ * 政策负向词 → -0.7;
+ * 无命中 → 0.
+ */
+export function scorePolicySentiment(title: string | null | undefined): number {
+  if (!title) return 0;
+  const text = String(title);
+  for (const kw of POLICY_DIRECTION_KEYWORDS.negative) {
+    if (text.includes(kw)) return -0.7;
+  }
+  for (const kw of POLICY_DIRECTION_KEYWORDS.positive) {
+    if (text.includes(kw)) return 0.7;
+  }
+  return 0;
+}
+
+/**
+ * US-035: 从新闻列表里筛 "政策类条目" → KOLPolicyRow[].
+ *
+ * 用法: Default fetchPolicyDirectives 内复用 get_stock_news_em 拉 ~200 条新闻,
+ * 用本 helper 过滤出政策项. 单测可直接传 fake 新闻数组验过滤逻辑.
+ */
+export function filterPolicyFromNews(newsRows: KOLNewsRow[], sinceDate: string): KOLPolicyRow[] {
+  return newsRows
+    .filter(r => !!r.title && POLICY_TOPIC_KEYWORDS.some(kw => r.title.includes(kw)))
+    .map<KOLPolicyRow>(r => {
+      const publishDate = normalizeDateOnly(r.publish_time, sinceDate);
+      const score = scorePolicySentiment(r.title);
+      const sentiment: KOLPolicyRow['sentiment'] =
+        score > 0 ? 'positive' : score < 0 ? 'negative' : 'neutral';
+      return {
+        publish_date: publishDate,
+        issuing_org: inferPolicyIssuer(r.title),
+        title: r.title.trim(),
+        summary: r.content ? r.content.trim().slice(0, 200) : null,
+        sentiment,
+        url: r.url,
+        raw_payload: r.raw_payload || {},
+      };
+    })
+    .filter(p => p.publish_date >= sinceDate);
+}
+
+/**
+ * US-035: KOLPolicyRow → KOLOpinionRecord (policy_doc 来源).
+ *
+ * 每条政策条目映射成一条 KOL 观点:
+ *   - kol_name = issuing_org (国务院 / 证监会 / 政策研判 ...);
+ *   - opinion_summary = title (+ 可选 summary tail);
+ *   - sentiment_score = scorePolicySentiment(title) (-0.7 / 0 / +0.7).
+ */
+export function mapPolicyToOpinions(stockCode: string, rows: KOLPolicyRow[]): KOLOpinionRecord[] {
+  return rows
+    .filter(r => !!r.title && !!r.publish_date)
+    .map<KOLOpinionRecord>(r => {
+      const tail = r.summary ? ` — ${r.summary.slice(0, 100)}` : '';
+      const summary = (r.title + tail).slice(0, 500);
+      const score = r.sentiment === 'positive' ? 0.7 : r.sentiment === 'negative' ? -0.7 : 0;
+      return {
+        stock_code: stockCode,
+        kol_name: r.issuing_org.slice(0, 120),
+        opinion_date: r.publish_date,
+        kol_source: KOL_SOURCES.POLICY_DOC,
+        opinion_summary: summary,
+        sentiment_score: score,
+        url: r.url,
+        raw_payload: r.raw_payload || {},
+      };
+    });
+}
+
 /** 取本地今天 ISO 日期 (YYYY-MM-DD), 仅用于无时间戳的来源兜底。 */
 export function todayLocalIso(): string {
   const now = new Date();
@@ -697,6 +1092,8 @@ export class KOLAggregatorService {
       research_report: 0,
       east_money_news: 0,
       xq_hot_concept: 0,
+      etf_flow: 0,
+      policy_doc: 0,
     };
 
     if (!/^\d{6}$/.test(stockCode)) {
@@ -711,11 +1108,13 @@ export class KOLAggregatorService {
     }
 
     try {
-      // === 1. 并发拉 3 来源 (per-source fallback 到 [] - service 总是返回结果) ===
-      const [researchRows, newsRows, conceptRows] = await Promise.all([
+      // === 1. 并发拉 5 来源 (per-source fallback 到 [] - service 总是返回结果) ===
+      const [researchRows, newsRows, conceptRows, etfRows, policyRows] = await Promise.all([
         this.safeFetchResearch(stockCode, sinceDate),
         this.safeFetchNews(stockCode, Math.max(20, limit * 4)),
         this.safeFetchHotConcepts(stockCode, 5),
+        this.safeFetchETFFlow(stockCode, sinceDate),
+        this.safeFetchPolicyDirectives(stockCode, sinceDate),
       ]);
 
       // === 2. mapper ===
@@ -723,6 +1122,8 @@ export class KOLAggregatorService {
         ...mapResearchToOpinions(stockCode, researchRows),
         ...mapNewsToOpinions(stockCode, newsRows, asOf),
         ...mapHotConceptsToOpinions(stockCode, conceptRows, asOf),
+        ...mapETFFlowToOpinions(stockCode, etfRows),
+        ...mapPolicyToOpinions(stockCode, policyRows),
       ];
 
       // === 3. 过滤 lookback 窗口 (研报已按 sinceDate 过滤; 新闻 / 概念可能跨界) ===
@@ -751,7 +1152,8 @@ export class KOLAggregatorService {
       logger.info(
         `[KOLAggregator] stock=${stockCode} collected ${finalOpinions.length} ` +
           `(research=${bySource.research_report} news=${bySource.east_money_news} ` +
-          `concept=${bySource.xq_hot_concept}) persisted=${persisted}`
+          `concept=${bySource.xq_hot_concept} etf=${bySource.etf_flow} ` +
+          `policy=${bySource.policy_doc}) persisted=${persisted}`
       );
       return {
         stock_code: stockCode,
@@ -834,6 +1236,31 @@ export class KOLAggregatorService {
     }
   }
 
+  /** US-035: 防御性 fetch ETF flow — 任一来源失败不影响其他 */
+  private async safeFetchETFFlow(stockCode: string, sinceDate: string): Promise<KOLETFFlowRow[]> {
+    try {
+      return await this.dataSource.fetchETFFlow(stockCode, sinceDate);
+    } catch (error) {
+      logger.warn(`KOLAggregator: fetchETFFlow(${stockCode}) failed: ${(error as Error).message}`);
+      return [];
+    }
+  }
+
+  /** US-035: 防御性 fetch policy directives — 任一来源失败不影响其他 */
+  private async safeFetchPolicyDirectives(
+    stockCode: string,
+    sinceDate: string
+  ): Promise<KOLPolicyRow[]> {
+    try {
+      return await this.dataSource.fetchPolicyDirectives(stockCode, sinceDate);
+    } catch (error) {
+      logger.warn(
+        `KOLAggregator: fetchPolicyDirectives(${stockCode}) failed: ${(error as Error).message}`
+      );
+      return [];
+    }
+  }
+
   /**
    * 查询已落库的 KOL 观点 (按 stock_code + 时间 desc 取 limit)。
    * 前端 GET /api/ai/kol-opinions 的读取路径; **不触发 fetch**。
@@ -858,6 +1285,8 @@ function countBySource(records: KOLOpinionRecord[]): Record<KOLSource, number> {
     research_report: 0,
     east_money_news: 0,
     xq_hot_concept: 0,
+    etf_flow: 0,
+    policy_doc: 0,
   };
   for (const r of records) {
     result[r.kol_source] = (result[r.kol_source] ?? 0) + 1;
