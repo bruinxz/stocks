@@ -77,6 +77,16 @@ import {
   DailyAttributionTradeRow,
 } from './dailyAttributionHelpers';
 import {
+  buildErrorPatternsViewModel,
+  ErrorPatternsViewModel,
+  ErrorPatternRow,
+  ERROR_PATTERN_PRIORITY_COLOR,
+  ERROR_PATTERN_PRIORITY_LABEL,
+  ERROR_PATTERN_KIND_LABEL,
+  formatMoney as formatPatternMoney,
+  formatRatioPct as formatPatternRatio,
+} from './errorPatternsHelpers';
+import {
   JOURNAL_PERIOD_LABEL,
   JOURNAL_PERIOD_VALUES,
   JournalPeriod,
@@ -127,6 +137,7 @@ const PortfolioWorkspace: React.FC = () => {
     { key: 'attribution', label: '日归因', icon: <RobotOutlined /> },
     { key: 'trades', label: '交易明细', icon: <UnorderedListOutlined /> },
     { key: 'journal', label: '复盘日记', icon: <ReadOutlined /> },
+    { key: 'error-patterns', label: 'AI 日记 + 错误模式', icon: <ExclamationCircleOutlined /> },
     { key: 'correlation', label: '相关性矩阵', icon: <RadarChartOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState<string>('positions');
@@ -304,6 +315,8 @@ const PortfolioWorkspace: React.FC = () => {
     body = <TradesTab trades={trades} />;
   } else if (activeKey === 'journal') {
     body = <JournalTab list={journalList} onListRefresh={() => void refresh()} />;
+  } else if (activeKey === 'error-patterns') {
+    body = <ErrorPatternsTab trades={trades} journalList={journalList} />;
   } else if (activeKey === 'correlation') {
     body = <CorrelationTab portfolioId={portfolioData?.portfolio?.id} />;
   } else {
@@ -2219,6 +2232,199 @@ const JournalSection: React.FC<JournalSectionProps> = ({ title, content }) => (
     </Paragraph>
   </div>
 );
+
+// ===========================================================================
+//  Tab 5: AI 日记 + 错误模式 (US-059 [FE-020])
+// ===========================================================================
+/**
+ * AC 关键点 (US-059 [FE-020] 落地; 渲染逻辑抽到 `errorPatternsHelpers`):
+ *   - 数据源完全复用已加载的 trades + journalList — 不打新 API. backend
+ *     TradeRootCauseClassifier 已存在但 trade_root_cause endpoint 未挂在
+ *     paper_trading 路径上, 待 followup. 当前用现有字段推 4 类 pattern:
+ *     repeat_loss (反复踩雷) / large_loss (大额亏损) / same_day_streak
+ *     (单日连亏) / chronic_loss (慢性失血).
+ *   - AI 日记摘要: 算 mood='AI' (与 EnhancedTradingJournalService 同源) /
+ *     用户手写 / 未填三态计数 + 近 7/30 天活跃度 + tag top-10.
+ *   - 配色复用 SellSuggestionCard 业务语义 (critical=红/high=橙/medium=黄/
+ *     low=灰), 与 [[前端 pure helper 模板]] 排序 3 段稳定一致.
+ *   - hidden=true (无 SELL 且无 journal) → 显示 Empty 占位; 全盈利但 SELL>0
+ *     → 显示 KPI 0% 亏损率 + "无错误模式" 提示.
+ *   - **UI 提示 + backend 独立执行 二元结构** (与 US-044 SellSuggestionCard
+ *     同思想): 本 tab 只展示 + 让用户点 trade 跳交易明细, 不调任何写接口.
+ */
+interface ErrorPatternsTabProps {
+  trades: TradeRow[];
+  journalList: JournalSummary[];
+}
+
+const ErrorPatternsTab: React.FC<ErrorPatternsTabProps> = ({ trades, journalList }) => {
+  const vm: ErrorPatternsViewModel = useMemo(
+    () => buildErrorPatternsViewModel(trades, journalList),
+    [trades, journalList]
+  );
+  if (vm.hidden) {
+    return (
+      <Empty
+        description={
+          <Space direction="vertical" align="center">
+            <Text type="secondary">暂无足够数据生成错误模式分析。</Text>
+            <Text type="secondary">
+              建议先建立持仓与交易, 待 AI 日记 (US-087 cron) 跑起来后再回看。
+            </Text>
+          </Space>
+        }
+      />
+    );
+  }
+  return (
+    <Row gutter={[16, 16]}>
+      {/* 顶部 KPI: 亏损率 / 亏损笔数 / 总亏损金额 */}
+      <Col xs={24}>
+        <Card size="small" title="盘后复盘 KPI">
+          <Row gutter={16}>
+            <Col xs={12} md={6}>
+              <Statistic
+                title="已结仓亏损率"
+                value={vm.lossRate * 100}
+                precision={1}
+                suffix="%"
+                valueStyle={
+                  vm.lossRate > 0.5 ? { color: ERROR_PATTERN_PRIORITY_COLOR.critical } : undefined
+                }
+              />
+            </Col>
+            <Col xs={12} md={6}>
+              <Statistic
+                title="亏损笔数"
+                value={vm.lossTradeCount}
+                suffix={`/ ${vm.sellTradeCount}`}
+              />
+            </Col>
+            <Col xs={12} md={6}>
+              <Statistic
+                title="累计亏损金额"
+                value={vm.totalRealizedLoss}
+                precision={2}
+                prefix="¥"
+                valueStyle={
+                  vm.totalRealizedLoss > 0
+                    ? { color: ERROR_PATTERN_PRIORITY_COLOR.critical }
+                    : undefined
+                }
+              />
+            </Col>
+            <Col xs={12} md={6}>
+              <Statistic
+                title="识别错误模式"
+                value={vm.patterns.length}
+                suffix={`种 / 共 ${vm.lossTradeCount} 笔亏损`}
+              />
+            </Col>
+          </Row>
+        </Card>
+      </Col>
+
+      {/* 错误模式列表 */}
+      <Col xs={24} lg={16}>
+        <Card
+          size="small"
+          title="错误模式"
+          extra={<Text type="secondary">基于已结仓 SELL 推算</Text>}
+        >
+          {vm.patterns.length === 0 ? (
+            <Empty description="未检测到典型错误模式 (赞 👍)" />
+          ) : (
+            <List
+              size="small"
+              dataSource={vm.patterns}
+              renderItem={(row: ErrorPatternRow) => (
+                <List.Item key={row.key}>
+                  <Space direction="vertical" style={{ width: '100%' }} size={2}>
+                    <Space>
+                      <Tag color={ERROR_PATTERN_PRIORITY_COLOR[row.priority]}>
+                        {ERROR_PATTERN_PRIORITY_LABEL[row.priority]}
+                      </Tag>
+                      <Tag>{ERROR_PATTERN_KIND_LABEL[row.kind]}</Tag>
+                      <Text strong>{row.title}</Text>
+                    </Space>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {row.detail}
+                      {row.tradeIds.length > 0 && (
+                        <span style={{ marginLeft: 8 }}>
+                          (涉及 trade id: {row.tradeIds.slice(0, 5).join(', ')}
+                          {row.tradeIds.length > 5 ? `, +${row.tradeIds.length - 5}` : ''})
+                        </span>
+                      )}
+                    </Text>
+                  </Space>
+                </List.Item>
+              )}
+            />
+          )}
+        </Card>
+      </Col>
+
+      {/* AI 日记摘要 */}
+      <Col xs={24} lg={8}>
+        <Card size="small" title="AI 日记摘要">
+          {vm.journalSummary.hidden ? (
+            <Empty description="暂无 AI 日记" />
+          ) : (
+            <Space direction="vertical" style={{ width: '100%' }} size={12}>
+              <Row gutter={8}>
+                <Col span={12}>
+                  <Statistic
+                    title="AI 自动覆盖"
+                    value={formatPatternRatio(vm.journalSummary.aiCoverageRatio, 1)}
+                  />
+                </Col>
+                <Col span={12}>
+                  <Statistic
+                    title="总日记数"
+                    value={vm.journalSummary.totalCount}
+                    suffix={`AI ${vm.journalSummary.aiCount} / 手写 ${vm.journalSummary.handCount}`}
+                  />
+                </Col>
+              </Row>
+              <Row gutter={8}>
+                <Col span={12}>
+                  <Statistic title="近 7 天" value={vm.journalSummary.last7dCount} suffix="天" />
+                </Col>
+                <Col span={12}>
+                  <Statistic title="近 30 天" value={vm.journalSummary.last30dCount} suffix="天" />
+                </Col>
+              </Row>
+              {vm.journalSummary.topTags.length > 0 && (
+                <div>
+                  <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
+                    高频标签 Top {vm.journalSummary.topTags.length}：
+                  </Text>
+                  <Space wrap size={[4, 4]}>
+                    {vm.journalSummary.topTags.map(t => (
+                      <Tag key={t.tag}>
+                        {t.tag} <Text type="secondary">({t.count})</Text>
+                      </Tag>
+                    ))}
+                  </Space>
+                </div>
+              )}
+              {vm.journalSummary.unlabeledCount > 0 && (
+                <Alert
+                  type="info"
+                  showIcon
+                  message={`${vm.journalSummary.unlabeledCount} 条未标 mood`}
+                  description={`建议给历史日记补 mood/tag 让 AI 模式识别更准 (用 ¥${formatPatternMoney(
+                    vm.totalRealizedLoss
+                  )} 的代价学到的教训别浪费)`}
+                />
+              )}
+            </Space>
+          )}
+        </Card>
+      </Col>
+    </Row>
+  );
+};
 
 // ===========================================================================
 //  Helpers

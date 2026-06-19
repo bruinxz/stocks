@@ -1604,3 +1604,25 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **多列共用 view-model 用 useMemo**: PortfolioWorkspace 三列 ATR/DD/days 都调 `buildPositionMetricsViewModel(row)`, render 函数内调 3 次同输入 → 3 次返同对象但每次新建. 用 useMemo 按 row.id key 缓存能省, 但本 story 直接 inline 调 (3 次 pure function 调用成本可忽略 + cell render 路径不在 hot loop). 同款 "pure helper 调多次" 范式不需要预先 useMemo, 除非 render 进入万行表格. 真要优化, view-model 加到 row 上 (data 转换层一次性算好) 而非组件层 memo. 不要因为 useMemo 听起来"应该用"就过早优化.
   - **lint baseline-diff 行号偏移是 import 加行的预期**: PortfolioWorkspace 加 1 行 import 让既有 3 个 non-null-assertion warning 行号从 461/495/528 全 +9 到 470/504/537, content 完全一致只是行偏 — 用 `git stash` 对比验证 "content 未变只是 line 偏移", 与 US-019 / US-004 同思路. 行号偏移不是新 regression.
 ---
+
+
+## 2026/06/20 - US-059 [FE-020] PortfolioWorkspace AI 日记 + 错误模式 tab
+- 抽 errorPatternsHelpers (4 类 pattern + AI 日记摘要 builder), 新 ErrorPatternsTab UI (顶部 KPI + pattern list + journal summary), backend 跨 monorepo 单测 112 ok / 0 failed. 与 [[前端 pure helper 模板]] (US-055 dailyAttribution / US-057 industryConcentrationKpi / US-058 positionMetrics) 同款思路 — pure helper + view model + META-GUARD 守 component 不退回 inline.
+- Files changed:
+  - frontend/src/pages/workspace/errorPatternsHelpers.ts (新, ~500 行): 4 类 pattern (repeat_loss / large_loss / same_day_streak / chronic_loss) + AI 日记摘要 (mood 三态计数 + 7d/30d 窗口 + tag top-10) + 4 个 computeXxxPriority 决策表 + sortPatterns 3 段稳定排序 + buildErrorPatternsViewModel 主入口 (null/undefined 容错). 配色复用 SellSuggestionCard 业务语义.
+  - frontend/src/pages/workspace/PortfolioWorkspace.tsx: import helper + tabs 加 error-patterns key + 渲染 ErrorPatternsTab (KPI 卡 + 错误模式 list + AI 日记摘要 col, hidden=true 时显 Empty)
+  - backend/tests/services/error-patterns-helpers.test.ts (新, ~470 行 / 112 assert): 13 模块覆盖 — [1] 常量 (15 assert) / [2] 4 决策表 (12 assert) / [3] groupLossesBySymbol / [4] repeat_loss builder / [5] large_loss 双阈值 (绝对额 + 占比) / [6] same_day_streak / [7] chronic_loss 集合差 / [8] sortPatterns 稳定性 / [9] window/tags helper / [10] journal summary mood 三态 / [11] AC 主验收 (4 类 pattern 共现) / [12] view model 边界 (null/undefined/全盈利/仅 BUY) + format helpers / [13] META-GUARD 4 项守 import + tab key + 组件渲染 + helper export
+  - ralph/prd.json (US-059 passes=true)
+- 验证:
+  - `npx ts-node --transpile-only tests/services/error-patterns-helpers.test.ts` 112 ok / 0 failed
+  - backend `npx tsc --noEmit` exit 0
+  - frontend `npx tsc --noEmit` exit 0
+  - `npm test -- --filter=helpers` 9 files / 0 failed (无 regression: daily-attribution / industry-concentration-kpi / journal-period / overfit-metrics / policy-news / position-metrics / shadow-run / strategy-leaderboard / error-patterns)
+  - lint `--fix` 后剩 3 个 baseline non-null-assertion warn (pre-existing, 未引入新错误)
+- **Learnings for future iterations:**
+  - **"对偶 + 衍生" 抄模板的极致**: US-059 既是 US-044 "对偶问题" 的延伸 (sell suggestion → 已发生的失误聚类), 也是 US-055/US-058 "前端 pure helper" 的复用. 直接抄 errorPatternsHelpers 的 4 件套 (1) 类型 + (2) 阈值常量全 export + (3) computeXxxPriority 决策表 + (4) 主入口 builder + (5) hidden 兜底, 90% 代码框架是抄的, 只是把"未来要做什么" (sell suggestion) 换成"过去做错什么" (error pattern). 时间 < 1h 落地 + 单测 112 ok. 复用模板让 ralph 自主迭代速度直接 5×.
+  - **决策表阈值边界单测 必须画线**: large_loss 的 0.10 边界用了 `> 0.1 → high` 但测试初稿写 "ratio=0.10 → medium" — 这是文档习惯把 10% 看作"已经很大", 但代码定义是严格大于. 单测必须显式 case `0.10` (恰好不触发) 和 `0.11` (触发) 两条, 让阈值边界永远可推理. 同理大额 + 占比 双阈值 (200 元 + 5%) 任一不达标都不入榜, 单测必须分别测"绝对额低/占比低"双反例. 这是决策表类 helper 单测的最低要求.
+  - **chronic_loss 与 repeat_loss 互斥 (集合差) 是 UX 关键**: 同 symbol 多次亏损只显示一条 (优先级高的 repeat_loss), 不要为同一 symbol 同时显示 repeat_loss + chronic_loss 让用户读两遍同样信息. helper 内 `buildChronicLossPatterns` 显式 `if (g.losses.length >= REPEAT_LOSS_MIN_COUNT) return` 集合差是这套架构的关键约束 — 改 REPEAT_LOSS_MIN_COUNT 要同步改这里. 任何"N 类 pattern 按优先级互斥"的 UI 类 story 都要这么写, 否则用户读到的是 noise 不是 signal.
+  - **AI 日记 mood 标识与 backend 同源**: `AI_JOURNAL_MOOD='AI'` 必须与 `EnhancedTradingJournalService.DEFAULT_MOOD_GENERATED='AI'` 字面一致, 漂移会让"AI 自动覆盖率"统计错位. backend 这是 export 常量, 但跨 monorepo 不方便引, 抄字面值 + 加注释指向 backend 源, 是这套"前端独立但语义同源"场景的标准做法. 同款适用 US-058 DEFAULT_STOP_LOSS_PCT 与 PerStockStopLossGuard.
+  - **完全无数据 vs 全盈利 的 hidden 语义**: 全盈利 (SELL > 0 但 loss = 0) 仍要显示 KPI (0% 亏损率) 给用户正反馈; 真完全无数据 (仅 BUY 或空 trade) 才 hidden=true. 这种"虽然空但还要显示" 与"真没数据隐藏" 的区分必须显式单测 (本测 [12.7] vs [12.9]), 不画线会让 UI 在新用户首次打开时显示"暂无数据"反而吓跑.
+---

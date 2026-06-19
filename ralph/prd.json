@@ -912,8 +912,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 59,
-      "passes": false,
-      "notes": "依赖: EV-014"
+      "passes": true,
+      "notes": "依赖: EV-014; 抽 errorPatternsHelpers (4 类 pattern + AI 日记摘要), 加 ErrorPatternsTab UI (KPI + pattern list + journal summary), backend 跨 monorepo 单测 112 ok / 0 failed (tests/services/error-patterns-helpers.test.ts), frontend+backend tsc 0 err, lint --fix 后 0 新增 warn (剩 3 个 baseline non-null-assertion)"
     },
     {
       "id": "US-060",
