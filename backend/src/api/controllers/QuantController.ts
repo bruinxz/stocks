@@ -771,14 +771,30 @@ export class QuantController {
    * GET /api/quant/strategy-leaderboard
    * 策略排行榜：按 sharpe / annual_return / max_drawdown 综合排序所有策略
    * 每个策略取它最新的 backtest 结果
+   *
+   * US-054 [FE-015]：每行额外返回 `benchmark_attributions[]`，按
+   * BENCHMARK_DISPLAY_ORDER (沪深300 → 中证500 → 中证1000) 排好；让 LabWorkspace
+   * leaderboard tab 渲染「vs HS300 / ZZ500 / CSI1000」三列超额收益。
+   * 历史无归因的 run 该字段为空数组 → 前端兜底 '—'，不阻塞主流程。
    */
   async getStrategyLeaderboard(req: AuthenticatedRequest, res: Response) {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { QuantBacktestResult } = require('../../models/QuantBacktestResult');
-      const sortBy = (req.query.sort_by as string) || 'sharpe';
-      // 取每个 strategy_key 最新的 backtest
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { BenchmarkAttributionResult } = require('../../models/BenchmarkAttributionResult');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { buildStrategyLeaderboardItems } = require('./internal/StrategyLeaderboardHelpers');
+
+      // sort_by 校验 — 非白名单输入归一到 'sharpe' (与原行为一致)
+      const rawSortBy = String(req.query.sort_by || 'sharpe');
+      const sortBy: 'sharpe' | 'annual' | 'total' =
+        rawSortBy === 'annual' || rawSortBy === 'total' ? rawSortBy : 'sharpe';
+
+      // 取每个 strategy_key 最新的 backtest — 多查 id（让 attribution JOIN 用）
       const rows = await QuantBacktestResult.findAll({
         attributes: [
+          'id',
           'strategy_key',
           'strategy_name',
           'task_id',
@@ -797,49 +813,32 @@ export class QuantController {
         raw: true,
         limit: 500,
       });
-      // 按 strategy_key 去重，保留最新
-      const latestByKey = new Map<string, any>();
-      for (const r of rows as any[]) {
-        if (!latestByKey.has(r.strategy_key)) {
-          latestByKey.set(r.strategy_key, r);
-        }
+
+      // 按已物化的 BenchmarkAttributionResult 拉 — 仅查 rows 中可能用到的 run_ids
+      // (整页 leaderboard ~50 策略 → 至多 ~150 行 attribution，单查避免再发 N+1)。
+      const runIds = (rows as any[])
+        .map(r => r?.id)
+        .filter((id): id is number => typeof id === 'number');
+      let attributions: any[] = [];
+      if (runIds.length > 0) {
+        attributions = await BenchmarkAttributionResult.findAll({
+          where: { run_id: runIds },
+          // period_end DESC 让同 (run_id, benchmark_symbol) 多 period 时
+          // helper 端 "首条 wins" 自然取最新一次归因
+          order: [
+            ['period_end', 'DESC'],
+            ['created_at', 'DESC'],
+          ],
+          raw: true,
+        });
       }
-      const items = Array.from(latestByKey.values()).filter(r => {
-        const v = Number(
-          r[
-            sortBy === 'annual'
-              ? 'annual_return_pct'
-              : sortBy === 'sharpe'
-              ? 'sharpe_ratio'
-              : 'total_return_pct'
-          ]
-        );
-        return Number.isFinite(v);
+
+      const items = buildStrategyLeaderboardItems({
+        rows: rows as any[],
+        attributions,
+        sort_by: sortBy,
       });
-      // 排序
-      items.sort((a, b) => {
-        const va =
-          Number(
-            a[
-              sortBy === 'annual'
-                ? 'annual_return_pct'
-                : sortBy === 'sharpe'
-                ? 'sharpe_ratio'
-                : 'total_return_pct'
-            ]
-          ) || 0;
-        const vb =
-          Number(
-            b[
-              sortBy === 'annual'
-                ? 'annual_return_pct'
-                : sortBy === 'sharpe'
-                ? 'sharpe_ratio'
-                : 'total_return_pct'
-            ]
-          ) || 0;
-        return vb - va;
-      });
+
       res.json({ success: true, data: { items, sort_by: sortBy, count: items.length } });
     } catch (error: any) {
       logger.error('获取策略排行榜失败:', error);

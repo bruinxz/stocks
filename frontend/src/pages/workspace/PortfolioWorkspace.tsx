@@ -65,8 +65,12 @@ import {
   CorrelationReport,
   getCorrelationReport,
   IndustryConcentrationSummary,
-  UNKNOWN_INDUSTRY_LABEL,
 } from '../../services/portfolioWorkspaceService';
+import {
+  buildIndustryConcentrationKpiViewModel,
+  INDUSTRY_KPI_WARN_PCT,
+  INDUSTRY_KPI_WARN_COLOR,
+} from './industryConcentrationKpiHelpers';
 import { usePortfolio } from '../../contexts/PortfolioContext';
 import { translateAxiosTradingError, translateTradingError } from '../../utils/tradingErrorMap';
 
@@ -299,12 +303,12 @@ const PortfolioWorkspace: React.FC = () => {
 export default PortfolioWorkspace;
 
 // ===========================================================================
-//  US-012: 行业集中度 KPI（顶 KPI 卡）
+//  US-012 / US-057: 行业集中度 KPI（顶 KPI 卡）
 // ===========================================================================
 /**
- * AC 关键点：
+ * AC 关键点（US-057 [FE-018] 落地; 渲染逻辑抽到 `industryConcentrationKpiHelpers`）：
  *   - 顶 KPI 显示最大行业集中度（按持仓市值聚合，分母 = 持仓市值之和，
- *     **不含 cash** — 与后端 US-052 IndustryConcentrationGuard 同款分母，
+ *     **不含 cash** — 与后端 US-012 IndustryConcentrationGuard 同款分母，
  *     保证 KPI / 告警 / 再平衡三处口径一致）；
  *   - **> 25% 红色**（AC 显示阈值；与后端 alert_pct=35% 解耦：25% 是 *提示*
  *     用户关注的早期 warning，35% 是 *写 RiskAlert* 的真正阈值）；
@@ -312,49 +316,41 @@ export default PortfolioWorkspace;
  *   - 接口失败或 portfolio_id=null → KPI 隐藏（避免顶 KPI 卡掉链子）；
  *   - 空持仓 → 显示 0.00% 灰色（max_industry_pct=null）。
  */
-export const INDUSTRY_KPI_WARN_PCT = 0.25;
-export const INDUSTRY_KPI_WARN_COLOR = '#cf1322';
-const INDUSTRY_KPI_NEUTRAL_COLOR = '#1f1f1f';
+// 重新 export 以保持向后兼容 (其它 component 可能 import 这些常量).
+export { INDUSTRY_KPI_WARN_PCT, INDUSTRY_KPI_WARN_COLOR };
 
 interface IndustryConcentrationKpiProps {
   summary: IndustryConcentrationSummary | null;
 }
 
 const IndustryConcentrationKpi: React.FC<IndustryConcentrationKpiProps> = ({ summary }) => {
+  const vm = buildIndustryConcentrationKpiViewModel(summary);
   // 接口失败 / 还未加载 → 隐藏 KPI（避免显示 NaN 或撑空位）
-  if (!summary || summary.portfolio_id === null) {
-    return null;
-  }
-  const rawPct = summary.max_industry_pct ?? 0;
-  const pctNum = rawPct * 100;
-  const overWarn = rawPct > INDUSTRY_KPI_WARN_PCT;
-  const industryLabel =
-    summary.max_industry_name === UNKNOWN_INDUSTRY_LABEL
-      ? '未分类'
-      : summary.max_industry_name || '—';
-  // tooltip 把后端 alert_pct（35%）与 UI 提示阈值（25%）讲清楚，避免用户看到
-  // 红色误以为"立刻就要爆仓"。
+  if (vm.hidden) return null;
   const tooltip = (
     <div style={{ minWidth: 220 }}>
-      <div>最大行业：{industryLabel}</div>
-      <div>当前占比：{pctNum.toFixed(2)}%</div>
-      <div>UI 提示阈值：{(INDUSTRY_KPI_WARN_PCT * 100).toFixed(0)}%（超出转红）</div>
-      <div>系统告警阈值：{(summary.alert_pct * 100).toFixed(0)}%（超出写 RiskAlert）</div>
-      {summary.over_alert && (
-        <div style={{ color: INDUSTRY_KPI_WARN_COLOR, marginTop: 4 }}>
-          ⚠ 当前已超系统告警阈值，建议一键再平衡。
+      {vm.tooltipLines.map((line, idx) => (
+        <div
+          key={idx}
+          style={
+            vm.overAlert && line.startsWith('⚠')
+              ? { color: INDUSTRY_KPI_WARN_COLOR, marginTop: 4 }
+              : undefined
+          }
+        >
+          {line}
         </div>
-      )}
+      ))}
     </div>
   );
   return (
     <Tooltip title={tooltip} placement="bottom">
       <Statistic
         title="行业集中度"
-        value={pctNum}
+        value={vm.pctNum}
         precision={2}
-        suffix={industryLabel === '—' ? '%' : `% · ${industryLabel}`}
-        valueStyle={{ color: overWarn ? INDUSTRY_KPI_WARN_COLOR : INDUSTRY_KPI_NEUTRAL_COLOR }}
+        suffix={vm.suffix}
+        valueStyle={{ color: vm.color }}
       />
     </Tooltip>
   );
@@ -442,7 +438,9 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
       );
       handleCancelEdit();
     } catch (err: any) {
-      const info = err?.response ? translateAxiosTradingError(err) : translateTradingError({ message: err?.message || String(err) });
+      const info = err?.response
+        ? translateAxiosTradingError(err)
+        : translateTradingError({ message: err?.message || String(err) });
       message.error(info.title);
       if (info.hint) setTimeout(() => message.info(info.hint!, 5), 150);
     } finally {
@@ -474,7 +472,9 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
       );
       handleCancelEdit();
     } catch (err: any) {
-      const info = err?.response ? translateAxiosTradingError(err) : translateTradingError({ message: err?.message || String(err) });
+      const info = err?.response
+        ? translateAxiosTradingError(err)
+        : translateTradingError({ message: err?.message || String(err) });
       message.error(info.title);
       if (info.hint) setTimeout(() => message.info(info.hint!, 5), 150);
     } finally {
@@ -505,7 +505,9 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
       );
       onAfterTrade();
     } catch (err: any) {
-      const info = err?.response ? translateAxiosTradingError(err) : translateTradingError({ message: err?.message || String(err) });
+      const info = err?.response
+        ? translateAxiosTradingError(err)
+        : translateTradingError({ message: err?.message || String(err) });
       message.error(info.title);
       if (info.hint) setTimeout(() => message.info(info.hint!, 5), 150);
     } finally {
@@ -898,10 +900,7 @@ const PositionMobileCard: React.FC<PositionMobileCardProps> = ({
 
         <div className="workspace-mobile-card-row">
           <span className="label">浮盈</span>
-          <span
-            className="value"
-            style={{ color: pnlColor(pnl), fontWeight: 600 }}
-          >
+          <span className="value" style={{ color: pnlColor(pnl), fontWeight: 600 }}>
             {pnl >= 0 ? '+' : ''}¥{pnl.toFixed(2)}{' '}
             <Tag color={pnl >= 0 ? 'green' : 'red'} style={{ marginLeft: 4 }}>
               {pct >= 0 ? '+' : ''}
@@ -926,7 +925,9 @@ const PositionMobileCard: React.FC<PositionMobileCardProps> = ({
 
         <div className="workspace-mobile-card-row">
           <span className="label">买入日</span>
-          <span className="value">{row.created_at ? dayjs(row.created_at).format('YYYY-MM-DD') : '-'}</span>
+          <span className="value">
+            {row.created_at ? dayjs(row.created_at).format('YYYY-MM-DD') : '-'}
+          </span>
         </div>
 
         <div className="workspace-mobile-card-row">
@@ -1439,11 +1440,7 @@ const TradeMobileCard: React.FC<{ row: TradeRow }> = ({ row }) => {
     <Card size="small">
       <Space direction="vertical" size={2} style={{ width: '100%' }}>
         <Space size={8} align="center" style={{ marginBottom: 4 }}>
-          {row.direction === 'BUY' ? (
-            <Tag color="green">买入</Tag>
-          ) : (
-            <Tag color="red">卖出</Tag>
-          )}
+          {row.direction === 'BUY' ? <Tag color="green">买入</Tag> : <Tag color="red">卖出</Tag>}
           <Text strong style={{ fontSize: 14 }}>
             {row.name || row.symbol}
           </Text>
@@ -1996,7 +1993,15 @@ const CorrelationTab: React.FC<{ portfolioId?: number }> = ({ portfolioId }) => 
                 >
                   色阶:
                   <span style={{ background: 'rgb(0,0,255)', padding: '2px 8px' }}>-1</span>
-                  <span style={{ background: 'rgb(255,255,255)', padding: '2px 8px', border: '1px solid #ddd' }}>0</span>
+                  <span
+                    style={{
+                      background: 'rgb(255,255,255)',
+                      padding: '2px 8px',
+                      border: '1px solid #ddd',
+                    }}
+                  >
+                    0
+                  </span>
                   <span style={{ background: 'rgb(255,0,0)', padding: '2px 8px' }}>+1</span>
                 </div>
               </div>
@@ -2060,7 +2065,9 @@ const CorrelationTab: React.FC<{ portfolioId?: number }> = ({ portfolioId }) => 
                     />
                   </Col>
                   <Col xs={24} md={6}>
-                    {c.dominant_industry && <Tag color="volcano">主导行业: {c.dominant_industry}</Tag>}
+                    {c.dominant_industry && (
+                      <Tag color="volcano">主导行业: {c.dominant_industry}</Tag>
+                    )}
                   </Col>
                 </Row>
               </Card>

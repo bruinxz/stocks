@@ -832,8 +832,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 54,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DONE 2026/06/19: 新增 backend/src/api/controllers/internal/StrategyLeaderboardHelpers.ts (~290 行 + 完整 jsdoc) 提供 5 个 pure helper + 主入口 buildStrategyLeaderboardItems({rows, attributions, sort_by}) — 把 controller 内 dedup/filter/sort 全部抽出来 + 新增 enrichWithBenchmarkAttributions 把已物化的 BenchmarkAttributionResult 按 BENCHMARK_DISPLAY_ORDER (沪深300/中证500/中证1000) 挂到每条 leaderboard item; QuantController.getStrategyLeaderboard 重写为薄 wrapper 调 helper + 多查 BenchmarkAttributionResult.findAll (run_id IN [...]) 拉归因, order by period_end DESC 让 helper 首条 wins 自然取最新一次归因; 历史无归因的 run benchmark_attributions=[] 前端兜底 \"—\". 前端 LabWorkspace.LeaderboardTab.tsx 新增 BENCHMARK_COLUMNS 常量 + benchmarkAttrRender(row, sym, label) helper (Tooltip 展示 alpha/IR/beta/sample/period) + 3 列 vs HS300/vs ZZ500/vs CSI1000 插在总收益与最大回撤之间, 颜色 A 股语义红涨绿跌, 列 sorter 把 null 当 -Infinity 排尾. 单测 tests/services/strategy-leaderboard-helpers.test.ts 68 ok / 0 failed 覆盖 8 大模块 — 常量冻结 / toFiniteNumber 全分支 / dedup / filter / sort 稳定性 / enrich (JOIN/DISPLAY_ORDER/extras 兜底/缺 run_id/string 数字解析) / 主入口端到端 / META-GUARD (正向 controller import+调用+查 BenchmarkAttributionResult+runIds; 反向不再 inline latestByKey Map + items.sort 主排序). tsc 0 err / eslint 0 err (controller 既有 var-require 也被本次重写顺手清掉) / 前端 lint 顺手 prettier autofix."
     },
     {
       "id": "US-055",
@@ -880,8 +880,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 57,
-      "passes": false,
-      "notes": "依赖: PR-007"
+      "passes": true,
+      "notes": "依赖: PR-007 | DONE 2026/06/19: 把 PortfolioWorkspace.tsx 内联的 IndustryConcentrationKpi 渲染逻辑抽到 frontend/src/pages/workspace/industryConcentrationKpiHelpers.ts (~195 行 + 完整 jsdoc) 提供 5 export + 主入口 buildIndustryConcentrationKpiViewModel. 把 25% UI 提示阈值与 35% 后端 alert_pct 双阈值解耦的 design intent 写到 jsdoc + 验证到单测 (避免后续重构被合并误导成单一阈值). API: INDUSTRY_KPI_WARN_PCT=0.25 / INDUSTRY_KPI_WARN_COLOR=#cf1322 / INDUSTRY_KPI_NEUTRAL_COLOR=#1f1f1f / INDUSTRY_UNKNOWN_HUMAN_LABEL='未分类' / INDUSTRY_EMPTY_PLACEHOLDER='—' + 5 纯函数 (shouldHideIndustryKpi / isOverIndustryWarn / formatIndustryLabel / buildIndustryKpiSuffix / buildIndustryKpiTooltipLines) + 主入口 buildIndustryConcentrationKpiViewModel → view model 一次拿全 (hidden/rawPct/pctNum/overWarn/overAlert/industryLabel/suffix/color/tooltipLines). PortfolioWorkspace.tsx 的 IndustryConcentrationKpi 组件改为薄 wrapper 调 vm + .map 渲染 tooltipLines, 不再 inline 算 5 字段. 单测 backend/tests/services/industry-concentration-kpi-helpers.test.ts 86 ok / 0 failed (9 维度: 常量 sanity / shouldHideIndustryKpi 5 case / isOverIndustryWarn 10 case 含边界 0.25 严格大于 + NaN/Infinity / formatIndustryLabel 7 case 含 trim+UNKNOWN sentinel / buildIndustryKpiSuffix 3 / buildIndustryKpiTooltipLines 10 case 含 over_alert true/false + null pct / AC 主验收 buildIndustryConcentrationKpiViewModel 4 case (>25% red / =25% 仍 neutral 严格大于 / <25% neutral / null 空持仓 0% '—' '%' 后缀) / 边界 8 含 UNKNOWN→未分类 / META-GUARD fs+regex 14 条 — import + 调用 buildIndustryConcentrationKpiViewModel(summary) + 反向不再 inline summary.max_industry_pct ?? 0 + 反向不再 inline rawPct > INDUSTRY_KPI_WARN_PCT + helper 全 export + helper 内 0.25 字面量仅 1 次 单事实源). 既有 industry-concentration-guard 223 ok + industry-attribution-service 18 ok 无 regression. tsc 0 err (前后端) / eslint 0 err 0 新增 warn. 浏览器手动 smoke 待 dev 环境: 顶 KPI strip 应显示 '行业集中度 30.00% · 银行' (红) / '15.00% · 医药' (灰) / 空持仓 0.00% (灰); tooltip 4 行 (over_alert=true 时 5 行含 ⚠ 再平衡建议)."
     },
     {
       "id": "US-058",

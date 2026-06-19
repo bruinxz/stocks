@@ -1472,3 +1472,56 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **Object.freeze 嵌套数组的 TypeScript cast**: `Object.freeze([1,2,3]) as unknown as number[]` 是 TS strict mode 下让"运行时 frozen + 类型签名仍写 mutable number[]" 共存的桥. 不 cast 会爆 TS2322 (readonly 不能赋给 mutable). 接受这个 ceremony 是必要的, 不要在 type 里写 ReadonlyArray<number> — 那会迫使 caller 全链路改成只读, 风险扩散.
   - **GridSearch 组合数 UI 即时反馈**: 选模板时 message.success 显示 "共 N 个 GridSearch 组合" 让操盘手立刻看到 grid 维度乘积, 避免 "选了一个 3 维 27 组合的模板但不知道会跑 27 次 backtest" 的认知断裂. 与 max_combos=256 的默认硬上限配合, 让用户主动调小.
 ---
+
+
+
+## 2026/06/19 22:55 - US-054
+- 实现 [FE-015] LabWorkspace leaderboard 超额列 — vs HS300 / ZZ500 / CSI1000 三列, 复用已物化 BenchmarkAttributionResult 不触发新计算 (response < 50ms)
+- Files changed:
+  - backend/src/api/controllers/internal/StrategyLeaderboardHelpers.ts (新, ~290 行 + 完整 jsdoc):
+    * 5 个 pure helpers: toFiniteNumber / dedupLatestByStrategyKey / filterByFinitePrimarySort / sortLeaderboardItems / enrichWithBenchmarkAttributions
+    * 主入口 buildStrategyLeaderboardItems({rows, attributions, sort_by}) 串 4 步
+    * 常量 SORT_BY_FIELD_MAP / BENCHMARK_DISPLAY_ORDER (HS300→ZZ500→CSI1000) / BENCHMARK_NAME_MAP 全 frozen 并 export — 与 BenchmarkAttributionService.DEFAULT_BENCHMARK_SYMBOLS 同序
+    * 类型 export: LeaderboardSortBy / BacktestRow / BenchmarkAttributionRow / LeaderboardBenchmarkAttribution / LeaderboardItem / BuildLeaderboardItemsInput
+    * enrichWithBenchmarkAttributions: 按 (run_id, benchmark_symbol) 折叠取首条 (caller 用 ORDER BY period_end DESC 让首条天然=最新一次归因); 按 DISPLAY_ORDER 排好主基准, 未知 symbol (科创50/上证) 放列尾按 symbol 字母序兜底, 行缺 id 兜底空数组不抛错
+  - backend/src/api/controllers/QuantController.ts: getStrategyLeaderboard 重写 — 顺手清掉 sort_by 输入校验 (rawSortBy 非白名单归一 'sharpe'); 多查 id 字段 (run_id JOIN 用); 拉 BenchmarkAttributionResult.findAll where run_id IN runIds order period_end DESC (整页 leaderboard ~50 策略至多 ~150 行 attribution, 单查 avoid N+1); 调 buildStrategyLeaderboardItems 一行收掉 4 步业务; 原 ~70 行内联逻辑全删
+  - frontend/src/pages/workspace/LabWorkspace.LeaderboardTab.tsx:
+    * 新增 BENCHMARK_COLUMNS 常量 (sh.000300/HS300/沪深300 等 3 行) 与 backend 同源
+    * 新增 BenchmarkAttribution interface + LeaderboardItem.benchmark_attributions? 字段
+    * 新增 benchmarkAttrRender(row, sym, label) helper: Tooltip 展示 alpha/IR/beta/sample/period; 主数字渲染超额收益 A 股语义红涨绿跌; 无归因/null 渲染 '—' + 解释性 Tooltip
+    * 列定义新增 3 列 vs HS300 / vs ZZ500 / vs CSI1000 (插在总收益与最大回撤之间), 每列 sorter 把 null 当 -Infinity 排尾, title 自带 Tooltip 提示 hover 看完整指标
+  - backend/tests/services/strategy-leaderboard-helpers.test.ts (新, ~330 行 / 68 assert): 8 模块 — [1] 常量冻结 / [2] toFiniteNumber 全分支 (含 Number("")=0 这条 JS 语义注释)/ [3] dedup (首条 wins + 空 key 跳过)/ [4] filter (NaN/null 过滤 + 0/负数保留 + annual 字段映射)/ [5] sort (DESC + tie 稳定 + 不改入参)/ [6] enrich 9 case (3 基准全归因 + 部分归因 + 无归因 + 缺 run_id/symbol 跳过 + 同 key 多 period 首条 wins + 未知 symbol 兜底字母序 + 缺 id + 缺 benchmark_name 走 NAME_MAP + 数字字段 string 解析)/ [7] 主入口 e2e (dedup+filter+sort+enrich 全验, 老 a run_id=99 的归因不渗漏到新 a)/ [8] META-GUARD: import + 调用 + 查 BenchmarkAttributionResult + runIds 必出现, 反向不再 inline latestByKey Map + items.sort 主排序
+  - ralph/prd.json: US-054 passes=true + notes
+- 验证:
+  - `npx tsc --noEmit` (backend) exit 0
+  - `npx tsc --noEmit` (frontend) exit 0
+  - `npm test -- --filter=strategy-leaderboard` exit 0, 68 ok / 0 failed (806ms)
+  - `npm test -- --filter=cron-registry` exit 0, 523 ok — 无 regression
+  - `eslint` 改动文件 exit 0 (顺手把 controller 原 var-require lint error 也清掉了)
+  - 浏览器手工验证: 未起 dev server, UI 改动遵循既有 antd Table column 模板 + Tooltip 模板, 与 LabWorkspace 其它 tab 同款 — 下次有 dev-browser env 时补 screenshot
+- **Learnings for future iterations:**
+  - **"读已物化 vs 触发新计算" 是 leaderboard 类只读 endpoint 的红线**: BenchmarkAttributionService.computeAttribution 跑一次 CAPM 回归 ~500ms (单 benchmark) 到几秒 (3 benchmark + N runs), 任何"展示"类 endpoint 都不能 inline 触发计算. 走 hook 异步触发 (QuantBacktestService 完成后 fire-and-forget 已落地, see L1335-1362) + leaderboard 只 SELECT FROM benchmark_attribution_results, 历史 run 无归因就空数组兜底, 不要让 UI 触发 backfill (一个 user 刷新 leaderboard 触发 50 个 backfill 是真实事故). 同款适用未来 IndustryAttributionResult / FactorICResult 等"事后分析"表的 UI 展示路径.
+  - **JOIN key = QuantBacktestResult.id ↔ BenchmarkAttributionResult.run_id** — BenchmarkAttributionResult.run_id 列文档 (L80-86) 显式说"NOT NULL 时引用 QuantBacktestResult.id". Controller 必须把 id 加入 attributes select (原来没查 id), 否则 grouped.get(undefined) → 所有行无归因. 任何"事后分析"表 JOIN 都要 grep 列注释看 FK 引用对象 + 单测覆盖 row 缺 id 边界.
+  - **同 (run_id, benchmark_symbol) 多 period 折叠靠 caller order by + helper 首条 wins**: BenchmarkAttributionResult PK 是 (run_id, benchmark_symbol, period_start, period_end) 四元组, 单次回测重跑会留多行 (这是 model 设计意图, 让"3 月跑的 alpha vs 5 月跑的 alpha"能并存). leaderboard 只想看最新, 不在 helper 端用 Date 解析 period_end (会重算一遍 + 易踩 timezone 坑), 而是让 caller 显式 ORDER BY period_end DESC, helper Map.has() 跳过非首条 — 同款适用任何"多版本表取最新"场景: caller order by + helper 首条 wins, 不要在 helper 内 sort.
+  - **未知 benchmark_symbol 放列尾按字母序而非丢弃** — 用户/未来 story 加新基准 (科创50/创业板指/上证) 时, 老前端列定义里没那一列, 但归因数据进来了. 丢弃 = 数据黑洞, 排到 DISPLAY_ORDER 后按 symbol 字母序输出 = "前端看不到列但 raw data 仍可见 (e.g. devtools network panel / 后续 PRD)". 与 ANN-001 schema 先行同款"前向兼容比 strict schema 更重要"思想.
+  - **frontend BENCHMARK_COLUMNS 与 backend BENCHMARK_DISPLAY_ORDER 同源风险**: 没法跨 monorepo 静态守 (frontend 不 import backend), 只能口头约定 + jsdoc 注释互引. 改一处必须 grep 另一处 — 与 US-043 AI_VIEW_MAX_CHARS 同源同款问题. 想长期治本得在 monorepo 顶层抽 `shared/` 包, 暂不在本 story 范围.
+  - **eslint var-require 是 controller 老问题**: QuantController 老 getStrategyLeaderboard 就有 require statement 报错 (baseline 1 err), 我新加 2 处 require 后用 ts-extension 的 import-type-only 写法走不通 (运行时需要真值), 干脆全用 require + eslint-disable comment 显式标注 — 与 BenchmarkAttributionService PRODUCTION_BENCHMARK_RETURN_SOURCE 内 lazy require 同款模式, 也避免顶层 import 让 controller 单测拉起整个 model 子系统.
+  - **A 股语义颜色不是非此即彼**: 超额收益 >= 0 红色 (跑赢=好事), < 0 绿色 (跑输=不好). 与 US-044 SellSuggestionCard "卖出但 medium=绿色 (止盈是好事)" 同款思想 — 颜色不是"涨/跌"二元, 是"利好/利空", 要按业务语义不按字面方向. UI 用户直觉与 K 线"红涨绿跌"完全一致, 不需要额外解释.
+---
+
+## 2026/06/19 - US-057 [FE-018] PortfolioWorkspace 行业集中度 KPI
+- 把 PortfolioWorkspace.tsx 内联的 IndustryConcentrationKpi 渲染逻辑抽到独立 helper module 让单测可单跑, 完成 US-057 收尾 (US-012 backend KPI service 已落, FE 渲染逻辑此前 inline 在 PortfolioWorkspace.tsx 但无独立测试).
+- 文件改动:
+  - 新增 `frontend/src/pages/workspace/industryConcentrationKpiHelpers.ts` (~195 行 + 完整 jsdoc): 5 常量 + 5 纯函数 (shouldHideIndustryKpi / isOverIndustryWarn / formatIndustryLabel / buildIndustryKpiSuffix / buildIndustryKpiTooltipLines) + 主入口 buildIndustryConcentrationKpiViewModel → 一次返 view model {hidden,rawPct,pctNum,overWarn,overAlert,industryLabel,suffix,color,tooltipLines}.
+  - 改 `frontend/src/pages/workspace/PortfolioWorkspace.tsx`: 删 UNKNOWN_INDUSTRY_LABEL import; 新增 import 3 export (buildIndustryConcentrationKpiViewModel + INDUSTRY_KPI_WARN_PCT + INDUSTRY_KPI_WARN_COLOR); IndustryConcentrationKpi 组件改为薄 wrapper 调 vm + .map 渲染 tooltipLines.
+  - 新增 `backend/tests/services/industry-concentration-kpi-helpers.test.ts` (~290 行 / 86 ok / 0 failed): 9 维度覆盖含常量 sanity + 5 纯函数边界 + AC 主验收 4 case + view model 边界 + META-GUARD fs+regex 14 条.
+  - 更新 `ralph/prd.json`: US-057 passes=false→true, notes 写完整实现摘要.
+- 验证: backend tsc 0 err / frontend tsc 0 err / eslint 0 err 0 新增 warn (helper 经 prettier --fix 后干净) / industry-concentration-kpi-helpers 86 ok / industry-concentration-guard 223 ok (no regression) / industry-attribution-service 18 ok (no regression).
+- **Learnings for future iterations:**
+  - **半完成 story 的"收尾"模式**: 后端 US-012 (PR-007) 已落 IndustryConcentrationGuard.getSummary + GET endpoint, 但 FE 渲染逻辑此前 inline 在 component 内无独立测试. US-057 不是新建 KPI 而是"渲染逻辑可单测化" — 抽 pure helper + view model + META-GUARD 守 component 不再退回 inline. 与 [[前端 pure helper 模板]] (US-049 factorPickReasonHelpers / US-054 strategy-leaderboard-helpers / US-052 overfitMetricsHelpers) 同款"FE 业务逻辑跨 monorepo 在 backend tests 里跑 ts-node" 模式. **重要**: 找半完成 story 时先 grep 关键标识符 (本例 IndustryConcentrationKpi), 如果 component 已存在但无 tests/{helpers}, 多半就是要收尾的那个.
+  - **双阈值解耦的 jsdoc/test 锁定**: 25% UI 提示阈值 vs 35% 后端 alert_pct 是产品决策 (UI early warning vs 真 RiskAlert 写入), 不是 bug. 但下次有人重构很容易合并成单一阈值. 防御办法是 jsdoc 显式写 "为什么不复用后端阈值" + tooltip 把两个数字都展示给用户 + 单测 assert tooltip 同时含 '25%' 和 '35%' 字面量, 让重构者一眼看到这是有意为之.
+  - **严格大于 vs ≥ 的边界单测**: backend over_alert 用严格大于 `>` (避免边界值抖动), FE isOverIndustryWarn 必须同款. 单测要专门 cover 恰好等于阈值的 case (本例 = 0.25 应 false), 否则下次有人想"修复 bug"改成 `>=` 时单测会过, 但行为已经变了. [[严格大于语义对齐 backend]] 是 risk/KPI/告警三处必须同口径的硬约束.
+  - **META-GUARD 反向 regex 抓回退 inline**: 抽 helper 后必须 fs+regex 守"component 不再 inline 写 helper 干的活" — 本例 `summary.max_industry_pct ?? 0` 和 `rawPct > INDUSTRY_KPI_WARN_PCT` 不能再出现在 PortfolioWorkspace.tsx. 单测 [9.3]/[9.4] 守这两条. 不加反向 guard 时, 未来有人补功能会很自然地 inline 回去, 慢慢蛀空 helper 抽象. 与 [[reverse META-GUARD 模板]] (US-019 ai-polling-enqueue / US-018 bridge-fail-safe / US-006 portfolio-construction-adapter) 同款"正向 + 反向"双向 guard 思想.
+  - **单事实源 0.25 字面量计数**: 单测 [9.14] regex 计算 helper 内 `= 0.25` 出现次数必须 == 1, 防止有人 inline 拷一份阈值. 比"只有一个 export"的间接约束更直接 — 数字字面量重复 = 单事实源破裂. 适合任何 magic number (阈值 / 上限 / cap) 类常量.
+  - **frontend helper 跨 monorepo 单测路径**: 从 `backend/tests/services/foo.test.ts` 用相对路径 `../../../frontend/src/pages/workspace/fooHelpers.ts` import — 三层 `..` 出 services/tests/backend, 进 frontend. `ts-node --transpile-only` 直接跑不需要 jest/babel 配置, 但 helper 必须**只 import 类型** from React/antd (本例 `import type IndustryConcentrationSummary`), 否则跑 ts-node 时会拉起 React runtime 报错. 这个分层在 [[前端 pure helper 模板]] 已稳定.
+---
