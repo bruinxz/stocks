@@ -399,3 +399,22 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **bridge 用 draft.quote_snapshot 复用行情避免二次 fetch**: LiveTradingService.approveDraft 入口在用户点确认时, draft 创建时已 snapshot 了 quote (LiveTradingController.createDraft 路径). gate 直接从 (draft as any).quote_snapshot 抽 close/open/high/low/prev_close/bid1_price/ask1_price 拼 marketSnapshot 传给 service — 避免再调一次 realtimeQuoteService 增加 user 等待时间. snapshot 字段缺失时 fallback 让 service 内部自己 fetch DailyBar (service.computeFeasibility 已 fail-OPEN 缺数据返 'blocked' 不抛).
   - **fail-OPEN 三层防御**: (a) service.computeFeasibility 内部 try/catch 缺数据返 'blocked' report (不抛); (b) evaluateFeasibilityGate 顶层 try/catch service throw 时返 synthetic fillable + log warn + fail_open_on_error 可关闭 (用于测试 fail-CLOSED 语义); (c) caller 的 try/catch 区分 EXECUTION_FEASIBILITY_BLOCKED throw (re-throw) vs unexpected throw (log warn 不阻塞). 三层共同保证 "feasibility 自身的任何挂掉永远不影响主流程下单", 与 PR-005 compliance / PR-006 risk guard fail-CLOSED 同款契约结构.
 ---
+
+## 2026/06/19 08:55 - US-016
+- 实现 [EX-002] Composite backtest caller 接通 — 引擎 audit S-1 composite path 早已落 (precomputed_composite_signals + 按 strategy_key 路由 + diff 持仓产生 BUY/SELL pending orders), 本 story 把"12 策略 trade_count > 0"验收落到 META-TEST 上 — 自动枚举 strategyRegistry 实际注册的全部组合级策略 (检测 `typeof generateSignals === 'function'`), 实测 13 个: multi_factor_alpha / dragon_head_momentum / breakout_strategy / earnings_surprise / garp_strategy / game_trader_relay / high_dividend_value / left_side_reversal / linkage_strategy / northbound_follow / cta100_momentum / sector_rotation_leader / ensemble_strategy
+- Files changed:
+  - backend/tests/quant/composite_backtest_all_strategies.test.ts (新, ~200 行): 15 assert — [1] AC 主验收 ≥ 12 个 composite strategy 注册 / [2-14] 每个 strategy 独立用例 — 喂 5 symbol × 60 日 bar + 3 个预填 rebalance 信号 (day3 入 'sh.600519' / day21 切到 'sz.000858' / day41 全清), 用 QuantBacktestEngine 实例驱动 (不调真实 strategy.generateSignals — 那需要 DB/factor_scores; caller-prefetch 设计本就是"信号算好后塞给引擎"); 验 result.trade_count ≥ 2 (BUY A + SELL A + BUY B) + result.strategy_key 路由正确 / [15] META-GUARD 反向用例 — 喂错 strategy_key (wrong_strategy_key) 时引擎必须回退 evaluate() 退化路径产生 trade_count=0 不串号
+  - ralph/prd.json: US-016 passes=true + notes
+  - ralph/progress.txt: 本 entry (本次未新增 Codebase Pattern, 已有 patterns 覆盖)
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npx ts-node --transpile-only tests/quant/composite_backtest_all_strategies.test.ts` 15 ok / 0 failed
+  - `npm test -- --filter=composite` 3 file all pass (本测试 15 ok + composite_backtest_smoke 2 ok + 1 个其它命中 composite 关键字的 41 ok)
+  - `npm test -- --filter=quant` 10 file all pass (无任何 regression)
+  - lint: tests/*.ts ESLint parse error 是项目已知 baseline (tsconfig 显式 exclude *.test.ts, US-003 学习已记录), 不视为 regression
+- **Learnings for future iterations:**
+  - **"AC 是 X 个" 验收用 META-TEST 而非硬编码 X 列表**: PRD 写"12 策略 trade_count > 0", 与其在测试里 hardcode 12 个 strategy key 列表 (每加一个 composite strategy 就要改测试 + 漏改不一致), 不如 `strategyRegistry.list()` 枚举 + filter `typeof generateSignals === 'function'` 自动发现, 然后 assert count >= 12. 这样未来新加一个 composite strategy 测试自动验证它也走通 composite path, 漏 wire 立刻挂. 同款 META-TEST 模式适用所有"AC 是 N 个 X" 类 story (例如 "≥20 metric 在 /metrics 可见" US-004 同款思路).
+  - **测试组合级策略时 caller-prefetch 的契约边界**: QuantBacktestEngine 的 composite path 设计是 "caller-prefetch + engine-consume 分离" — caller 算信号 + 引擎按 strategy_key 路由消费. 测试组合级策略不需要真调 strategy.generateSignals(date) (那要 DB / factor_scores / 行业数据 / 北向资金等), 只要喂合成 precomputed_composite_signals 让引擎走 composite branch 就足以验证 wire-in. 这条边界对所有"已有数据驱动的 composite path"类设计都适用 — 比如未来如果加 ML 模型 prefetch 路径, 测试也只需喂合成 model_output 不需 actually train.
+  - **strategyRegistry.list() 与 get() 的探测对齐 QuantBacktestEngine.run() 第 144 行**: 引擎判断 isComposite 是 `typeof (strategy as any).generateSignals === 'function'` (rt duck-type), 测试 listCompositeStrategyKeys() 用同款判定, 行为对齐. 任何"按 capability 路由"的引擎+对应测试都用同款探测函数防判定漂移. 这条与 cron-registry 双向一致性 guard 异曲同工 (引擎判断 vs 测试列表用同一表达式).
+  - **`grep -oE "strategy_key:\s*'[^']+'" file.ts | head -1` 容易抓错 substrategy 字段**: EnsembleStrategy.ts 第 113-131 行有 substrategy 数组用同款 `strategy_key: '...'` 语法, 用这种 grep 抓到第一个会拿到 substrategy 而非 class definition 的真实 key. 验证 class.definition.strategy_key 必须在 `readonly definition:` 块内部搜. 本次确认 EnsembleStrategy.definition.strategy_key === 'ensemble_strategy' (line 261), 与 MultiFactorAlphaStrategy ('multi_factor_alpha') 是不同 key, 13 个 composite strategy 全部 register 后无 key collision.
+---

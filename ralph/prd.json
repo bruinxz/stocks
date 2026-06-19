@@ -245,8 +245,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 16,
-      "passes": false,
-      "notes": "依赖: S-003"
+      "passes": true,
+      "notes": "依赖: S-003 | DONE 2026/06/19: QuantBacktestEngine 已落 audit S-1 组合级路径 (precomputed_composite_signals + 按 strategy_key 路由 + diff 持仓产生 BUY/SELL pending orders); 本 story 把 12 策略验收落到 META-TEST 上 — 新建 tests/quant/composite_backtest_all_strategies.test.ts 枚举 strategyRegistry, 过滤 `typeof generateSignals === 'function'` 的策略 (实测 13 个: multi_factor_alpha / dragon_head_momentum / breakout_strategy / earnings_surprise / garp_strategy / game_trader_relay / high_dividend_value / left_side_reversal / linkage_strategy / northbound_follow / cta100_momentum / sector_rotation_leader / ensemble_strategy), 对每个真实策略 (非 mock) 喂 5 symbol × 60 日 bar + 3 个预填 rebalance 信号 (day3 入 A, day21 切 B, day41 全清), 期望 trade_count ≥ 2. 同时落 1 个 META-GUARD 用例: 喂错 strategy_key 时引擎必须回退 evaluate() 退化路径不串号. 验证: tsc 0 err / npm test --filter=composite 3 file all pass (15 ok + 2 ok + composite_backtest_smoke 2 ok) / npm test --filter=quant 10 file all pass / Codebase Pattern: tests/*.ts ESLint parse error 是项目已知 baseline (tsconfig 显式 exclude *.test.ts)."
     },
     {
       "id": "US-017",
