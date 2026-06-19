@@ -52,6 +52,12 @@ import {
   UnreadRiskAlertItem,
 } from '../../services/todayWorkspaceService';
 import { getMarketBriefToday, MarketBriefResult } from '../../services/marketBriefService';
+import {
+  getMarketJudgmentToday,
+  MarketJudgmentResult,
+  MarketRegime,
+  OvernightForeignQuote,
+} from '../../services/marketJudgmentService';
 import api from '../../services/api';
 import {
   listRiskAlerts,
@@ -266,9 +272,7 @@ const TodayWorkspace: React.FC = () => {
   } else if (activeKey === 'events') {
     body = <EventsPanel events={data.key_events} tradeDate={data.trade_date} />;
   } else if (activeKey === 'alerts') {
-    body = (
-      <AlertsPanel alerts={data.unread_alerts} totalCount={data.unread_alert_count} />
-    );
+    body = <AlertsPanel alerts={data.unread_alerts} totalCount={data.unread_alert_count} />;
   } else if (activeKey === 'risk_center') {
     body = <RiskAlertCenterPanel onUnreadCountChange={refresh} />;
   }
@@ -289,6 +293,7 @@ const TodayWorkspace: React.FC = () => {
         headerActions={headerActions}
       >
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <MarketJudgmentCard />
           <MarketBriefCard />
           {body}
         </Space>
@@ -302,6 +307,280 @@ const TodayWorkspace: React.FC = () => {
         }}
       />
     </>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// MarketJudgmentCard (US-040 / FE-001) — 今日大盘判断
+// ---------------------------------------------------------------------------
+
+/**
+ * 「今日大盘判断」开盘前一张卡片。
+ *
+ * 3 段（AC）:
+ *   - 昨夜外盘   4 个海外指数（恒指/纳指/标普/道指）涨跌幅 + 均值
+ *   - 大盘 regime   bull/bear/range/rebound/stress/unknown + ATR 高波动调整
+ *   - 仓位建议   regime → 默认仓位 + ATR 调整后 0..1 百分比 + 人话原因
+ *
+ * 状态语义（与 MarketBriefCard 同款）：
+ *   - ok       全部成功，淡蓝 banner;
+ *   - partial  单维失败，黄色 Alert 显示 components.<x>.error;
+ *   - failed   全失败，红色 Alert + brief 仍展示 fallback 文案.
+ *
+ * 容错: getMarketJudgmentToday throw → 卡片内 Alert + 重试按钮, 不影响下方信号面板.
+ */
+const MarketJudgmentCard: React.FC = () => {
+  const [data, setData] = useState<MarketJudgmentResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await getMarketJudgmentToday();
+      setData(result);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const titleNode = (
+    <Space size={8}>
+      <FundOutlined style={{ color: '#1677ff' }} />
+      <span>今日大盘判断</span>
+      {data?.trade_date && <Tag color="blue">{data.trade_date}</Tag>}
+      {data?.status === 'partial' && <Tag color="orange">部分数据待补</Tag>}
+      {data?.status === 'failed' && <Tag color="red">数据全缺</Tag>}
+      {data && (
+        <Tag color={regimeTagColor(data.regime)}>
+          {data.regime_label || regimeLabelFallback(data.regime)}
+        </Tag>
+      )}
+    </Space>
+  );
+
+  const extra = (
+    <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
+      刷新
+    </Button>
+  );
+
+  if (loading && !data) {
+    return (
+      <Card size="small" title={titleNode} extra={extra}>
+        <div style={{ textAlign: 'center', padding: 24 }}>
+          <Spin tip="加载今日大盘判断..." />
+        </div>
+      </Card>
+    );
+  }
+
+  if (error && !data) {
+    return (
+      <Card size="small" title={titleNode} extra={extra}>
+        <Alert
+          type="error"
+          showIcon
+          message="今日大盘判断加载失败"
+          description={error}
+          action={
+            <Button size="small" onClick={() => void load()}>
+              重试
+            </Button>
+          }
+        />
+      </Card>
+    );
+  }
+
+  if (!data) {
+    return (
+      <Card size="small" title={titleNode} extra={extra}>
+        <Empty description="暂无数据" />
+      </Card>
+    );
+  }
+
+  const regimeError = data.components?.regime?.error || null;
+  const foreignError = data.components?.overnight_foreign?.error || null;
+  const positionPctDisplay = Number.isFinite(data.suggested_position_pct)
+    ? `${Math.round(data.suggested_position_pct * 100)}%`
+    : '—';
+  const positionColor = positionPctColor(data.suggested_position_pct);
+
+  return (
+    <Card size="small" title={titleNode} extra={extra}>
+      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        {/* 第一行：建议仓位 + regime KPI + ATR + 20d return */}
+        <Row gutter={[12, 8]} align="middle">
+          <Col xs={12} md={6}>
+            <Tooltip title={data.suggested_position_reason}>
+              <Statistic
+                title={
+                  <Space size={4}>
+                    <span style={{ fontSize: 12 }}>建议仓位</span>
+                    <Tag color={positionColor.tag} style={{ fontSize: 10, padding: '0 4px' }}>
+                      {data.suggested_position_label}
+                    </Tag>
+                  </Space>
+                }
+                value={positionPctDisplay}
+                valueStyle={{ fontSize: 22, fontWeight: 600, color: positionColor.text }}
+              />
+            </Tooltip>
+          </Col>
+          <Col xs={12} md={6}>
+            <Tooltip title={regimeError || '基准: 沪深 300'}>
+              <Statistic
+                title="大盘环境"
+                value={data.regime_label || regimeLabelFallback(data.regime)}
+                valueStyle={{ fontSize: 16, color: regimeStatColor(data.regime) }}
+              />
+            </Tooltip>
+          </Col>
+          <Col xs={12} md={6}>
+            <Tooltip
+              title={
+                data.benchmark_atr_14d_pct == null
+                  ? '基准 ATR 数据缺失'
+                  : data.benchmark_atr_14d_pct >= 5
+                  ? '极高波动（已下调建议仓位 10%）'
+                  : data.benchmark_atr_14d_pct >= 3
+                  ? '高波动（已下调建议仓位 5%）'
+                  : '波动正常'
+              }
+            >
+              <Statistic
+                title="基准 ATR 14d"
+                value={
+                  data.benchmark_atr_14d_pct == null
+                    ? '—'
+                    : `${data.benchmark_atr_14d_pct.toFixed(2)}%`
+                }
+                valueStyle={{ fontSize: 16, color: atrColor(data.benchmark_atr_14d_pct) }}
+              />
+            </Tooltip>
+          </Col>
+          <Col xs={12} md={6}>
+            <Statistic
+              title="基准 20d 收益"
+              value={
+                data.benchmark_return_20d_pct == null
+                  ? '—'
+                  : `${
+                      data.benchmark_return_20d_pct >= 0 ? '+' : ''
+                    }${data.benchmark_return_20d_pct.toFixed(2)}%`
+              }
+              valueStyle={{
+                fontSize: 16,
+                color:
+                  data.benchmark_return_20d_pct == null
+                    ? undefined
+                    : data.benchmark_return_20d_pct >= 0
+                    ? '#cf1322'
+                    : '#3f8600',
+              }}
+            />
+          </Col>
+        </Row>
+
+        {/* 第二行：昨夜外盘 4 个海外指数 */}
+        <div>
+          <Space size={4} style={{ marginBottom: 6 }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              昨夜外盘
+            </Text>
+            {data.overnight_summary?.count > 0 && (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                · 均值{' '}
+                <span style={{ color: overnightAvgColor(data.overnight_summary.avg_change_pct) }}>
+                  {data.overnight_summary.avg_change_pct >= 0 ? '+' : ''}
+                  {data.overnight_summary.avg_change_pct.toFixed(2)}%
+                </span>
+              </Text>
+            )}
+            {foreignError && (
+              <Tooltip title={foreignError}>
+                <Tag color="orange" style={{ fontSize: 10 }}>
+                  数据缺失
+                </Tag>
+              </Tooltip>
+            )}
+          </Space>
+          {data.overnight_foreign.length > 0 ? (
+            <Row gutter={[12, 8]}>
+              {data.overnight_foreign.map((idx: OvernightForeignQuote) => (
+                <Col xs={12} md={6} key={idx.symbol}>
+                  <Tooltip
+                    title={
+                      <>
+                        <div>收盘: {idx.current.toFixed(2)}</div>
+                        <div>涨跌: {idx.change.toFixed(2)}</div>
+                        <div>涨跌幅: {idx.change_pct.toFixed(2)}%</div>
+                      </>
+                    }
+                  >
+                    <Statistic
+                      title={<span style={{ fontSize: 12 }}>{idx.name}</span>}
+                      value={idx.current}
+                      precision={2}
+                      suffix={
+                        <span
+                          style={{
+                            fontSize: 12,
+                            marginLeft: 6,
+                            color: idx.change_pct >= 0 ? '#cf1322' : '#3f8600',
+                          }}
+                        >
+                          {idx.change_pct >= 0 ? '+' : ''}
+                          {idx.change_pct.toFixed(2)}%
+                        </span>
+                      }
+                      valueStyle={{
+                        fontSize: 15,
+                        fontWeight: 600,
+                        color: idx.change_pct >= 0 ? '#cf1322' : '#3f8600',
+                      }}
+                    />
+                  </Tooltip>
+                </Col>
+              ))}
+            </Row>
+          ) : (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              —
+            </Text>
+          )}
+        </div>
+
+        {/* 第三行：一句话 brief */}
+        <div style={{ paddingLeft: 8, borderLeft: '3px solid #1677ff' }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            今日小结
+          </Text>
+          <Paragraph style={{ margin: '4px 0 0', fontSize: 13, lineHeight: 1.5, color: '#262626' }}>
+            {data.brief}
+          </Paragraph>
+        </div>
+
+        {data.status !== 'ok' && (
+          <Alert
+            type={data.status === 'failed' ? 'error' : 'warning'}
+            showIcon
+            message={data.message}
+            style={{ marginBottom: 0 }}
+          />
+        )}
+      </Space>
+    </Card>
   );
 };
 
@@ -329,18 +608,20 @@ const MarketBriefCard: React.FC = () => {
   const [brief, setBrief] = useState<MarketBriefResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [realtimeIndexes, setRealtimeIndexes] = useState<Array<{
-    symbol: string;
-    name: string;
-    current: number;
-    change_pct: number;
-    change: number;
-    open: number;
-    high: number;
-    low: number;
-    prev_close: number;
-    time: string;
-  }>>([]);
+  const [realtimeIndexes, setRealtimeIndexes] = useState<
+    Array<{
+      symbol: string;
+      name: string;
+      current: number;
+      change_pct: number;
+      change: number;
+      open: number;
+      high: number;
+      low: number;
+      prev_close: number;
+      time: string;
+    }>
+  >([]);
 
   const loadBrief = useCallback(async (refresh = false) => {
     setLoading(true);
@@ -479,7 +760,7 @@ const MarketBriefCard: React.FC = () => {
         <Row gutter={[12, 8]} align="middle">
           {realtimeIndexes.length > 0 ? (
             <>
-              {realtimeIndexes.map((idx) => (
+              {realtimeIndexes.map(idx => (
                 <Col xs={12} md={6} lg={4} key={idx.symbol}>
                   <Tooltip
                     title={
@@ -566,7 +847,9 @@ const MarketBriefCard: React.FC = () => {
                   <Statistic
                     title={
                       brief.open_change_pct != null
-                        ? `今日开盘 (${brief.open_change_pct >= 0 ? '+' : ''}${brief.open_change_pct.toFixed(2)}%)`
+                        ? `今日开盘 (${
+                            brief.open_change_pct >= 0 ? '+' : ''
+                          }${brief.open_change_pct.toFixed(2)}%)`
                         : '今日开盘'
                     }
                     value={brief.today_open ?? '—'}
@@ -748,11 +1031,7 @@ const MultiFactorCard: React.FC<{
               value={newPicks}
               valueStyle={{ color: '#cf1322', fontSize: 18 }}
             />
-            <Statistic
-              title="保留"
-              value={keeps}
-              valueStyle={{ color: '#1677ff', fontSize: 18 }}
-            />
+            <Statistic title="保留" value={keeps} valueStyle={{ color: '#1677ff', fontSize: 18 }} />
             <Statistic title="剔除" value={drops} valueStyle={{ color: '#999', fontSize: 18 }} />
           </Space>
           {buys.length > 0 && (
@@ -837,7 +1116,9 @@ const MultiFactorCard: React.FC<{
                       sorter: (a: MultiFactorAlphaSignal, b: MultiFactorAlphaSignal) =>
                         (a.composite_score ?? 0) - (b.composite_score ?? 0),
                       render: (v: number) => (
-                        <Text strong style={{ color: '#cf1322' }}>{v?.toFixed(3)}</Text>
+                        <Text strong style={{ color: '#cf1322' }}>
+                          {v?.toFixed(3)}
+                        </Text>
                       ),
                     },
                     {
@@ -854,10 +1135,7 @@ const MultiFactorCard: React.FC<{
                         return (
                           <Space size={4} wrap>
                             {sorted.map(([k, v]) => (
-                              <Tag
-                                key={k}
-                                color={(v as number) > 0 ? 'red' : 'green'}
-                              >
+                              <Tag key={k} color={(v as number) > 0 ? 'red' : 'green'}>
                                 {k}: {(v as number).toFixed(2)}
                               </Tag>
                             ))}
@@ -945,14 +1223,25 @@ const DragonHeadCard: React.FC<{
   marketSentimentBlocked?: boolean;
   filterStats?: Record<string, number>;
   error?: string;
-}> = ({ tradeDate, candidates, eligibleCount, limitUpPoolSize, marketSentimentValue, marketSentimentBlocked, filterStats, error }) => {
+}> = ({
+  tradeDate,
+  candidates,
+  eligibleCount,
+  limitUpPoolSize,
+  marketSentimentValue,
+  marketSentimentBlocked,
+  filterStats,
+  error,
+}) => {
   const isMobile = useIsMobile();
   const navigate = useNavigate();
   // 自动诊断 0 候选原因
   const diagnosisReason = useMemo(() => {
     if (candidates.length > 0) return null;
     if (marketSentimentBlocked) {
-      return `市场情绪指数 ${marketSentimentValue?.toFixed(1)} 低于阈值，已暂停新开仓。已有持仓正常出场。`;
+      return `市场情绪指数 ${marketSentimentValue?.toFixed(
+        1
+      )} 低于阈值，已暂停新开仓。已有持仓正常出场。`;
     }
     if (limitUpPoolSize === 0) {
       return `当日无涨停股。等待今日盘后龙虎榜 + 涨停板数据同步。`;
@@ -972,11 +1261,19 @@ const DragonHeadCard: React.FC<{
           one_word_board: '一字板（无法参与）',
           sentiment_blocked: '市场情绪低被阻塞',
         };
-        return `涨停池 ${limitUpPoolSize} 股，全部被过滤。主要原因: ${labelMap[topFail[0]] || topFail[0]}（${topFail[1]} 只）`;
+        return `涨停池 ${limitUpPoolSize} 股，全部被过滤。主要原因: ${
+          labelMap[topFail[0]] || topFail[0]
+        }（${topFail[1]} 只）`;
       }
     }
     return null;
-  }, [candidates.length, limitUpPoolSize, marketSentimentBlocked, marketSentimentValue, filterStats]);
+  }, [
+    candidates.length,
+    limitUpPoolSize,
+    marketSentimentBlocked,
+    marketSentimentValue,
+    filterStats,
+  ]);
 
   return (
     <Card
@@ -1046,10 +1343,7 @@ const DragonHeadCard: React.FC<{
                       {row.industry && <Tag color="geekblue">{row.industry}</Tag>}
                     </Space>
                     {row.reason && (
-                      <Paragraph
-                        style={{ margin: '4px 0 0 0', fontSize: 12 }}
-                        type="secondary"
-                      >
+                      <Paragraph style={{ margin: '4px 0 0 0', fontSize: 12 }} type="secondary">
                         {row.reason}
                       </Paragraph>
                     )}
@@ -1179,10 +1473,7 @@ const EarningsSurpriseCard: React.FC<{
                       {row.forecast_type && <Tag color="green">{row.forecast_type}</Tag>}
                     </Space>
                     {row.reason && (
-                      <Paragraph
-                        style={{ margin: '4px 0 0 0', fontSize: 12 }}
-                        type="secondary"
-                      >
+                      <Paragraph style={{ margin: '4px 0 0 0', fontSize: 12 }} type="secondary">
                         {row.reason}
                       </Paragraph>
                     )}
@@ -1603,9 +1894,7 @@ const RiskAlertCenterPanel: React.FC<{ onUnreadCountChange?: () => void }> = ({
             <Select<'all' | 'unread' | 'read'>
               placeholder="读取状态"
               style={{ width: '100%' }}
-              value={
-                filterIsRead === undefined ? 'all' : filterIsRead ? 'read' : 'unread'
-              }
+              value={filterIsRead === undefined ? 'all' : filterIsRead ? 'read' : 'unread'}
               onChange={v => {
                 setFilterIsRead(v === 'all' ? undefined : v === 'read');
                 setPage(1);
@@ -1817,6 +2106,79 @@ const ApplyResultModal: React.FC<{
 function pnlColor(value: number | null): string {
   if (value == null || value === 0) return undefined as unknown as string;
   return value > 0 ? '#cf1322' : '#52c41a';
+}
+
+/** US-040 regime → tag 颜色（与建议仓位强度同源色谱） */
+function regimeTagColor(regime: MarketRegime): string {
+  switch (regime) {
+    case 'bull':
+      return 'red';
+    case 'rebound':
+      return 'orange';
+    case 'range':
+      return 'blue';
+    case 'bear':
+      return 'green';
+    case 'stress':
+      return 'magenta';
+    case 'unknown':
+    default:
+      return 'default';
+  }
+}
+
+/** US-040 regime → statistic 文字色 */
+function regimeStatColor(regime: MarketRegime): string | undefined {
+  switch (regime) {
+    case 'bull':
+      return '#cf1322';
+    case 'rebound':
+      return '#fa8c16';
+    case 'range':
+      return '#1677ff';
+    case 'bear':
+      return '#52c41a';
+    case 'stress':
+      return '#a8071a';
+    default:
+      return undefined;
+  }
+}
+
+/** US-040 regime 英文 → 中文兜底（后端 regime_label 通常已给, 兜底防 null） */
+function regimeLabelFallback(regime: MarketRegime): string {
+  const map: Record<MarketRegime, string> = {
+    bull: '强势上行',
+    rebound: '反弹修复',
+    range: '震荡均衡',
+    bear: '下行弱势',
+    stress: '极端压力',
+    unknown: '未知环境',
+  };
+  return map[regime] || '未知环境';
+}
+
+/** US-040 建议仓位百分比 → 颜色（重 red / 中 blue / 谨慎 orange / 空 gray） */
+function positionPctColor(pct: number): { text: string; tag: string } {
+  if (!Number.isFinite(pct)) return { text: '#999', tag: 'default' };
+  if (pct >= 0.7) return { text: '#cf1322', tag: 'red' };
+  if (pct >= 0.4) return { text: '#1677ff', tag: 'blue' };
+  if (pct >= 0.1) return { text: '#fa8c16', tag: 'orange' };
+  return { text: '#8c8c8c', tag: 'default' };
+}
+
+/** US-040 ATR 颜色：极高紫 / 高橙 / 正常默认 / null 灰 */
+function atrColor(value: number | null): string | undefined {
+  if (value == null || !Number.isFinite(value)) return undefined;
+  if (value >= 5) return '#722ed1';
+  if (value >= 3) return '#fa8c16';
+  return undefined;
+}
+
+/** US-040 外盘均值色：>0 红 / <0 绿 / 0 默认 */
+function overnightAvgColor(value: number): string {
+  if (!Number.isFinite(value) || value === 0) return '#8c8c8c';
+  return value > 0 ? '#cf1322' : '#3f8600';
 }
 
 /** US-073 沪深300 开盘涨跌色：>0 红涨，<0 绿跌，0/null 中性 */

@@ -607,8 +607,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 40,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DONE 2026/06/19: 后端 MarketJudgmentService (564 行 + 170 单测) + GET /api/today/market-judgment route/controller 已落在更早迭代; 本次补齐前端 — frontend/src/pages/workspace/TodayWorkspace.tsx 新增 MarketJudgmentCard 组件 (~240 行) 插在 MarketBriefCard 上方, 复用 marketJudgmentService.ts client. 卡片 3 段: (1) 第一行 KPI 行 = 建议仓位 (重/中/谨慎/空 tag + Tooltip 显示 reason) / 大盘环境 (regime_label + tag) / 基准 ATR 14d (极高紫>5%, 高橙>3%, Tooltip 解释调整逻辑) / 基准 20d 收益 (红涨绿跌); (2) 第二行 = 4 个海外指数 (恒指/纳指/标普/道指 收盘+涨跌幅, 顺序锁定, Tooltip 显示明细+涨跌点), summary 均值在 header; (3) 第三行 = brief 一句小结 + status!==ok 时 Alert 显示 message. 容错: getMarketJudgmentToday throw → Alert + 重试按钮, 不影响下方 MarketBrief/SignalsPanel. 6 个新 helper (regimeTagColor / regimeStatColor / regimeLabelFallback / positionPctColor / atrColor / overnightAvgColor) 在文件底部 helpers 段. typecheck 0 err, lint 仅 pre-existing warn 0 新增, backend 单测 170/170 全过, 浏览器手动 smoke 待 dev 环境验证."
     },
     {
       "id": "US-041",

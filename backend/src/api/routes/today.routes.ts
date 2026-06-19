@@ -28,4 +28,11 @@ router.post(
   todayController.applyTodaySignals.bind(todayController)
 );
 
+// US-040 — 今日大盘判断卡片 (regime + 仓位建议 + 昨夜外盘)
+router.get(
+  '/market-judgment',
+  authController.authenticate,
+  todayController.getMarketJudgment.bind(todayController)
+);
+
 export default router;

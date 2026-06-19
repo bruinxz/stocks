@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../../middlewares/auth';
 import { todayCommandCenterService } from '../../services/TodayCommandCenterService';
 import { openingReadinessService } from '../../services/OpeningReadinessService';
 import { todaySignalsService } from '../../services/TodaySignalsService';
+import { marketJudgmentService } from '../../services/MarketJudgmentService';
 import { logger } from '../../utils/logger';
 
 function optionalNumber(value: any): number | undefined {
@@ -111,6 +112,29 @@ class TodayController {
       res.status((error as any)?.statusCode || 500).json({
         success: false,
         message: error.message || '一键应用今日信号失败',
+      });
+    }
+  }
+  /**
+   * GET /api/today/market-judgment
+   *
+   * US-040 / FE-001 「今日大盘判断卡片」开盘前一目了然 — 昨夜外盘 + regime + 仓位建议.
+   * 详见 MarketJudgmentService. service 顶层 try/catch fail-OPEN, 永远 200.
+   */
+  async getMarketJudgment(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await marketJudgmentService.getTodayJudgment({
+        trade_date: req.query.trade_date as string | undefined,
+        skip_overnight_foreign: req.query.skip_overnight_foreign === 'true',
+        skip_regime: req.query.skip_regime === 'true',
+      });
+      res.json({ success: true, data });
+    } catch (error: any) {
+      // service 已经 fail-OPEN, 这里只防 controller 框架层级异常.
+      logger.error('获取今日大盘判断失败:', error);
+      res.status((error as any)?.statusCode || 500).json({
+        success: false,
+        message: error.message || '获取今日大盘判断失败',
       });
     }
   }

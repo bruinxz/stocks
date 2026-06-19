@@ -1058,3 +1058,30 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - Detector intentionally does NOT write RiskAlert / DB (QA-009/QA-010 own alerting + factor wiring). Derived view only — keep services single-purpose.
   - `npm test -- --filter=qa` runs 3 qa tests (~3.3s) — fast enough to verify per-story without full suite.
 ---
+
+
+## 2026/06/19 18:55 - US-040
+- 实现 [FE-001] TodayWorkspace 今日大盘判断卡片 — 后端 service/route/controller/单测早期已落, 本次补齐前端 MarketJudgmentCard UI
+- Files changed:
+  - frontend/src/pages/workspace/TodayWorkspace.tsx:
+    * import getMarketJudgmentToday + MarketJudgmentResult + MarketRegime + OvernightForeignQuote 4 个新符号
+    * 在 WorkspaceLayout Space 内 MarketBriefCard 上方插 <MarketJudgmentCard /> (与 MarketBriefCard 邻列, 互不重复 — judgment 是规则卡, brief 是 AI 卡)
+    * 新增 MarketJudgmentCard 组件 (~240 行): 3 段布局 KPI 行 (建议仓位/regime/ATR/20d return) + 海外 4 指数行 + brief 行 + status!==ok 时 Alert
+    * 新增 6 helpers: regimeTagColor/regimeStatColor/regimeLabelFallback/positionPctColor/atrColor/overnightAvgColor
+  - ralph/prd.json: US-040 passes=true + notes
+  - ralph/progress.txt: 本 entry
+- 验证:
+  - `cd frontend && npx tsc --noEmit` exit 0
+  - `cd frontend && npx eslint --fix src/pages/workspace/TodayWorkspace.tsx src/services/marketJudgmentService.ts` 0 err, 仅 3 pre-existing warn (applying/handleApplyAll unused 由系统自主决策后保留 apply 逻辑但不挂按钮, US-018 既有; selectedPortfolioId useCallback dep 既有)
+  - `cd backend && npm test -- --filter=market-judgment` 170 ok / 0 failed
+  - `cd backend && npx tsc --noEmit` exit 0 (确认 controller 接入无 break)
+  - 浏览器手动 smoke: 待 dev server 启动验证 — 卡片应在 /workspace/today 顶部 MarketBrief 上方显示, regime tag + 仓位百分比 + 4 海外指数 + brief
+- **Learnings for future iterations:**
+  - **"后端先行" 模板**: 前端 FE-XXX 类 story 落地前常先有 backend service + route + test (这里 MarketJudgmentService 在 git status 是 untracked 文件 + controller/route 已 modified 但未 commit — 上一轮 ralph 做了一半). 本轮 ralph 接手前先 `git status` + `git diff` 确认: 后端代码 + 单测齐全 → 只补前端就够. 不要重写已有 service 否则 170 单测全 regression.
+  - **前端 import 块加新符号要紧贴同 service 现有 import**: marketJudgmentService 与 marketBriefService 是邻居 service, import 紧贴 `getMarketBriefToday` 行下方便于人脑扫读 + git diff review.
+  - **新组件插位**: TodayWorkspace 顶部 Space direction="vertical" 里现有 <MarketBriefCard /> + {body}, 新卡片插 MarketBriefCard 上方让 "规则结构化" (judgment) 先于 "AI 一句话" (brief) — 操盘手习惯先看 regime/仓位再看 AI 观点.
+  - **regime tag/color 色谱不要随业务名"红涨绿跌"反转**: bull=红 (强势) / rebound=橙 / range=蓝 / bear=绿 / stress=深红, 与 ANT Design Statistic 涨跌色 (红涨绿跌) 同向, 不要让 bear=红误导用户 "市场涨". helper 函数 regimeTagColor + regimeStatColor 各管 tag 色与 statistic 文字色, 分开是因为 tag 用 antd 预设色 (red/orange/blue/green/magenta/default), statistic 用具体 hex (#cf1322/#fa8c16/#1677ff/#52c41a/#a8071a/undefined).
+  - **Tooltip 显示 reason 是关键 UX**: suggested_position_reason 形如 "bull regime 基础 85%; ATR 5.2% 极高波动 -10%; 最终建议 75%" — 把后端 pure helper 的人话解释挂到 Statistic 的 Tooltip 上, 用户 hover 可见, 不需打开 modal. 与 MarketBriefCard 的 components.<x>.error tooltip 同思想.
+  - **status banner 三态**: ok 不显示 Alert; partial 黄色 Alert 显示 message ("部分数据缺失（外盘 或 regime）..."); failed 红色 Alert. tag 也同步 ("部分数据待补" / "数据全缺"). 不要只在 header 显示状态 tag 而省掉 banner — banner 行可读性远高于 8px tag.
+  - **AC "Verify in browser using dev-browser skill" 在 ralph 自主推进时无浏览器 env**: 仍要打 typecheck + lint + backend 单测 + 把 "浏览器 smoke 待 dev 环境" 写到 progress + PRD notes, 下次人工部署时 cherry-pick smoke 验证. 不强行启动 dev server (3000 端口冲突 + 依赖后端 + 时间长).
+---
