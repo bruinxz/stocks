@@ -423,6 +423,142 @@ export const ENTITY_CHANGE_TYPE_KEYWORDS: readonly string[] = Object.freeze([
 const HOLDING_PCT_REGEX =
   /(?:持股|占总股本|占股本|占比)\s*(\d+(?:\.\d+)?)\s*%|(\d+(?:\.\d+)?)\s*%\s*(?:以上|的)/g;
 
+/**
+ * US-028 ANN-004: 业绩公告判定关键词 — 标题命中任一才认作 "业绩相关",
+ * 否则 extractEarningsGrade 返 null (避免把"重大资产重组 同比 100%" 误算业绩).
+ *
+ * 包含覆盖率:
+ *   - 业绩预告 / 业绩快报 / 业绩报告 / 业绩说明会 / 业绩暴雷;
+ *   - 一/半/三季报 + 年报 + 中报 (周期性披露窗口);
+ *   - 净利润 / 营业收入 / 营收 / 利润总额 / 归母净利 (常见 KPI 字面).
+ */
+export const EARNINGS_TITLE_KEYWORDS: readonly string[] = Object.freeze([
+  '业绩',
+  '业绩预告',
+  '业绩预增',
+  '业绩预减',
+  '业绩快报',
+  '业绩说明',
+  '业绩说明会',
+  '业绩报告',
+  '业绩暴雷',
+  '业绩低于预期',
+  '业绩超预期',
+  '年度报告',
+  '季度报告',
+  '一季报',
+  '半年报',
+  '三季报',
+  '年报',
+  '中报',
+  '净利润',
+  '归母净利',
+  '归属于母公司',
+  '营业收入',
+  '营收',
+  '利润总额',
+]);
+
+/**
+ * US-028 ANN-004: 方向关键词字典 — 按"具体度 / 强度"优先级.
+ *
+ * 顺序锁定 — "亏损 / 转亏" 优先级最高 (无论是否有 yoy% 都强归 loss),
+ * 然后 decrease 关键词 (下降 / 下滑 / 减少 / 预减), 最后 increase (增长 / 增加 / 预增).
+ *
+ * "减少 50%" 形态被 decrease 命中, 不会误归 loss; "亏损 5000 万" 不需要 yoy% 即归 loss.
+ */
+export const EARNINGS_DIRECTION_KEYWORDS: Readonly<{
+  loss: readonly string[];
+  decrease: readonly string[];
+  increase: readonly string[];
+}> = Object.freeze({
+  loss: Object.freeze([
+    '亏损',
+    '转亏',
+    '由盈转亏',
+    '净亏损',
+    '亏损扩大',
+    '业绩暴雷',
+    '巨亏',
+    '预亏',
+  ]),
+  decrease: Object.freeze([
+    '业绩预减',
+    '业绩下滑',
+    '同比下降',
+    '同比下滑',
+    '同比减少',
+    '同比降低',
+    '下降',
+    '下滑',
+    '减少',
+    '降低',
+    '低于预期',
+  ]),
+  increase: Object.freeze([
+    '业绩预增',
+    '业绩大增',
+    '业绩超预期',
+    '同比增长',
+    '同比增加',
+    '同比上升',
+    '增长',
+    '增加',
+    '上升',
+    '提升',
+  ]),
+});
+
+/**
+ * US-028 ANN-004: yoy_pct 抽取正则 — 命中 "同比 X%" / "增长 X%" / "下降 X%" / 裸 "X%" 各形态.
+ *
+ * 数字支持 1-4 位整数 + 0-2 位小数, 上界 9999 (净利润同比 9999% 已超极端 IPO 案例),
+ * 大于 9999 的 % 数字必视为噪声 (e.g. 报表年份末位粘连).
+ *
+ * pure 正则不分组 direction — direction 单独由 EARNINGS_DIRECTION_KEYWORDS 判定,
+ * 让 "净利润同比下降 30%" 不必依赖正则提取 "下降" (字典更易扩别名).
+ */
+const EARNINGS_YOY_REGEX =
+  /(?:同比|环比|较上年同期|较去年同期|预计)?\s*(?:增长|增加|上升|下降|下滑|减少|降低|变动|变化)?\s*(\d{1,4}(?:\.\d{1,2})?)\s*%/g;
+
+/**
+ * US-028 ANN-004: magnitude 分级阈值 — 按 |yoy_pct| 落档.
+ *
+ * 阈值含义 (与 ANN-005 computePriority 决策表上对齐):
+ *   - minor    — |yoy| < 30%       (常规波动 / 季节因素);
+ *   - moderate — 30% ≤ |yoy| < 100% (明显信号);
+ *   - major    — |yoy| ≥ 100%      (重大反转 / 翻倍);
+ * direction='loss' 不依赖阈值, 强行落 'major' (亏损都是重大信号).
+ *
+ * 调整阈值会影响 computePriority 触发 critical / high 的频次, 改动需配套 ANN-005 测试.
+ */
+export const EARNINGS_MAGNITUDE_THRESHOLDS = Object.freeze({
+  MINOR_MAX: 30,
+  MAJOR_MIN: 100,
+} as const);
+
+/** yoy_pct sanity 上限 — 超过此值的提取视为噪声 (与正则上界一致). */
+const EARNINGS_YOY_PCT_MAX = 9999;
+
+/**
+ * US-028 ANN-004: extractEarningsGrade 返回结构.
+ *
+ * - direction: 'increase' | 'decrease' | 'loss' — 主语义方向;
+ * - magnitude: 'minor' | 'moderate' | 'major' — 按 |yoy_pct| 分档, loss 强落 'major';
+ * - yoy_pct: 抽取到的同比百分比 (有符号; decrease/loss 取负值), 无 yoy 字面时 null.
+ *
+ * 当标题非业绩相关 (EARNINGS_TITLE_KEYWORDS 全未命中), extractEarningsGrade 返 null,
+ * 让 caller 区分 "不属于业绩公告" (null) vs "属于但 yoy 缺失" (`{direction, magnitude, yoy_pct=null}`).
+ */
+export type EarningsDirection = 'increase' | 'decrease' | 'loss';
+export type EarningsMagnitude = 'minor' | 'moderate' | 'major';
+
+export interface EarningsGrade {
+  direction: EarningsDirection;
+  magnitude: EarningsMagnitude;
+  yoy_pct: number | null;
+}
+
 // ---------------------------------------------------------------------------
 // 类型
 // ---------------------------------------------------------------------------
@@ -941,6 +1077,125 @@ export function extractEntities(title: string | null | undefined): AnnouncementE
     delete e._idx;
   }
   return out;
+}
+
+/**
+ * US-028 ANN-004: extractEarningsGrade — 业绩公告 yoy_pct 抽取 + 分级 (pure).
+ *
+ * 接 raw 公告标题, 输出业绩方向 (increase/decrease/loss) + 量级 (minor/moderate/major) + yoy_pct.
+ *
+ * 主流程:
+ *   1. **业绩相关守门** — 标题不命中 EARNINGS_TITLE_KEYWORDS 任一关键词 → 返 null
+ *      (区别于 ANN-006 buildStructuredSummary 把 null 视作 "不是业绩公告" 不渲染 grade 字段).
+ *   2. **direction 判定** — 按 loss > decrease > increase 优先级链命中关键词:
+ *        - 命中 loss 关键词 (亏损/转亏/巨亏/...) → direction='loss', magnitude='major'
+ *          (亏损天然重大信号, 不依赖 yoy% 大小);
+ *        - 命中 decrease 关键词 → direction='decrease';
+ *        - 命中 increase 关键词 → direction='increase';
+ *        - 全无 → 若有 yoy_pct 默认 increase (公告语境下裸 "同比 X%" 多为正面),
+ *                  无 yoy_pct 则返 null (没有方向也没有数字, 不算业绩 grade).
+ *   3. **yoy_pct 提取** — EARNINGS_YOY_REGEX 扫多个百分数, 取首个落 (0, EARNINGS_YOY_PCT_MAX] 范围;
+ *      direction='decrease'/'loss' 时取负号 (e.g. "下降 30%" → yoy_pct=-30);
+ *      direction='increase' 取正号.
+ *   4. **magnitude 分级** — loss 强落 'major'; 否则按 |yoy_pct|:
+ *        - |yoy| < MINOR_MAX (30) → minor;
+ *        - MINOR_MAX ≤ |yoy| < MAJOR_MIN (100) → moderate;
+ *        - |yoy| ≥ MAJOR_MIN → major;
+ *      yoy_pct=null 时按 direction 兜底 (loss=major; decrease/increase=minor — 没数字保守归 minor,
+ *      避免 "业绩预增" 没数字就触发 high priority).
+ *
+ * 边界:
+ *   - null / undefined / 全 whitespace → null;
+ *   - 标题非业绩相关 → null (不强行分级);
+ *   - direction 无法识别 + 无 yoy_pct → null;
+ *   - direction='increase' 但 yoy% 字段在 "下降 X%" 后出现 → 按 direction 取负, 让字典优先级覆盖正则;
+ *   - yoy% > 9999 噪声 → 视为 yoy_pct=null + 按 direction 兜底 magnitude;
+ *   - 同 "下降 50% / 增长 30%" 多向冲突标题 → 按 direction 优先级链取首个命中方向 (loss > decrease > increase),
+ *     yoy% 取首个匹配 (不会同时返多个量级).
+ *
+ * AC: 准确率 ≥ 80% — 用 testExtractEarningsGradeAccuracy 中的 20 条人工标注集验证.
+ *
+ * pure, 无 I/O, 单测覆盖.
+ */
+export function extractEarningsGrade(title: string | null | undefined): EarningsGrade | null {
+  if (title === null || title === undefined) return null;
+  const text = String(title).trim();
+  if (!text) return null;
+
+  // 1. 业绩相关守门
+  let isEarnings = false;
+  for (const kw of EARNINGS_TITLE_KEYWORDS) {
+    if (text.includes(kw)) {
+      isEarnings = true;
+      break;
+    }
+  }
+  if (!isEarnings) return null;
+
+  // 2. direction 判定 (loss > decrease > increase 优先级链)
+  let direction: EarningsDirection | null = null;
+  for (const kw of EARNINGS_DIRECTION_KEYWORDS.loss) {
+    if (text.includes(kw)) {
+      direction = 'loss';
+      break;
+    }
+  }
+  if (direction === null) {
+    for (const kw of EARNINGS_DIRECTION_KEYWORDS.decrease) {
+      if (text.includes(kw)) {
+        direction = 'decrease';
+        break;
+      }
+    }
+  }
+  if (direction === null) {
+    for (const kw of EARNINGS_DIRECTION_KEYWORDS.increase) {
+      if (text.includes(kw)) {
+        direction = 'increase';
+        break;
+      }
+    }
+  }
+
+  // 3. yoy_pct 提取 (取首个落 sanity 范围的数字)
+  let yoyPct: number | null = null;
+  const regex = new RegExp(EARNINGS_YOY_REGEX.source, 'g');
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    const num = Number(match[1]);
+    if (Number.isFinite(num) && num > 0 && num <= EARNINGS_YOY_PCT_MAX) {
+      yoyPct = num;
+      break;
+    }
+  }
+
+  // direction 缺失 + 无 yoy → 不算业绩 grade
+  if (direction === null && yoyPct === null) return null;
+  // direction 缺失 + 有 yoy → 默认 increase (公告语境下裸 "同比 X%" 多为正面)
+  if (direction === null) direction = 'increase';
+
+  // 4. 方向决定 yoy_pct 符号
+  let signedYoy: number | null = null;
+  if (yoyPct !== null) {
+    signedYoy = direction === 'decrease' || direction === 'loss' ? -yoyPct : yoyPct;
+  }
+
+  // 5. magnitude 分级
+  let magnitude: EarningsMagnitude;
+  if (direction === 'loss') {
+    magnitude = 'major';
+  } else if (yoyPct === null) {
+    // 没数字保守归 minor — 避免 "业绩预增" 没数字就触发 high priority
+    magnitude = 'minor';
+  } else if (yoyPct < EARNINGS_MAGNITUDE_THRESHOLDS.MINOR_MAX) {
+    magnitude = 'minor';
+  } else if (yoyPct < EARNINGS_MAGNITUDE_THRESHOLDS.MAJOR_MIN) {
+    magnitude = 'moderate';
+  } else {
+    magnitude = 'major';
+  }
+
+  return { direction, magnitude, yoy_pct: signedYoy };
 }
 
 /**

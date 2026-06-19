@@ -425,8 +425,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 28,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "已实现 extractEarningsGrade pure function — 业绩相关守门 (EARNINGS_TITLE_KEYWORDS 25 词) + direction 判定 (loss > decrease > increase 优先级链) + yoy_pct 提取 (EARNINGS_YOY_REGEX, sanity 0<x<=9999) + magnitude 分级 (minor<30%, moderate<100%, major; loss 强落 major). 单测 9 组 46 assert (frozen/basic/3 direction/优先级/边界/decimal/20 条标注 ≥80% 准确率/pure 幂等). 全部 446 ok / 0 failed. tsc/eslint 0 err 0 warn."
     },
     {
       "id": "US-029",

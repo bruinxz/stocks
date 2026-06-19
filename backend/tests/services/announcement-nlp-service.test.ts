@@ -74,6 +74,12 @@ import {
   extractEntities,
   ENTITY_ROLE_KEYWORDS,
   ENTITY_CHANGE_TYPE_KEYWORDS,
+  extractEarningsGrade,
+  EARNINGS_TITLE_KEYWORDS,
+  EARNINGS_DIRECTION_KEYWORDS,
+  EARNINGS_MAGNITUDE_THRESHOLDS,
+  EarningsDirection,
+  EarningsMagnitude,
   buildHeuristicNLPResult,
   buildNLPResultFromPayload,
 } from '../../src/services/AnnouncementNLPService';
@@ -1482,6 +1488,270 @@ function testExtractEntitiesShapeRoundtripsNormalize(): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// US-028 ANN-004: extractEarningsGrade — 业绩 yoy_pct 抽取 + 分级
+// ---------------------------------------------------------------------------
+
+function testEarningsKeywordsFrozen(): void {
+  assert('EARNINGS_TITLE_KEYWORDS frozen', Object.isFrozen(EARNINGS_TITLE_KEYWORDS));
+  assert('EARNINGS_DIRECTION_KEYWORDS frozen', Object.isFrozen(EARNINGS_DIRECTION_KEYWORDS));
+  assert('EARNINGS_DIRECTION_KEYWORDS.loss frozen', Object.isFrozen(EARNINGS_DIRECTION_KEYWORDS.loss));
+  assert(
+    'EARNINGS_DIRECTION_KEYWORDS.decrease frozen',
+    Object.isFrozen(EARNINGS_DIRECTION_KEYWORDS.decrease)
+  );
+  assert(
+    'EARNINGS_DIRECTION_KEYWORDS.increase frozen',
+    Object.isFrozen(EARNINGS_DIRECTION_KEYWORDS.increase)
+  );
+  assert(
+    'EARNINGS_MAGNITUDE_THRESHOLDS frozen',
+    Object.isFrozen(EARNINGS_MAGNITUDE_THRESHOLDS)
+  );
+  // sanity: MINOR_MAX < MAJOR_MIN
+  assert(
+    'MINOR_MAX < MAJOR_MIN',
+    EARNINGS_MAGNITUDE_THRESHOLDS.MINOR_MAX < EARNINGS_MAGNITUDE_THRESHOLDS.MAJOR_MIN
+  );
+  // 顺序锁定: loss 关键词中"亏损"位于"由盈转亏"之前 (字典扫描语义无关, 但 frozen 保护避免被改)
+  assert(
+    'loss keywords contains 亏损',
+    EARNINGS_DIRECTION_KEYWORDS.loss.includes('亏损')
+  );
+  assert(
+    'decrease keywords contains 同比下降',
+    EARNINGS_DIRECTION_KEYWORDS.decrease.includes('同比下降')
+  );
+  assert(
+    'increase keywords contains 同比增长',
+    EARNINGS_DIRECTION_KEYWORDS.increase.includes('同比增长')
+  );
+}
+
+function testExtractEarningsGradeBasic(): void {
+  // null / empty / whitespace → null
+  assertEqual('earnings null', extractEarningsGrade(null), null);
+  assertEqual('earnings undefined', extractEarningsGrade(undefined), null);
+  assertEqual('earnings empty', extractEarningsGrade(''), null);
+  assertEqual('earnings whitespace', extractEarningsGrade('   '), null);
+
+  // 非业绩相关 → null
+  assertEqual(
+    'earnings 非业绩公告 → null',
+    extractEarningsGrade('股东大会决议公告'),
+    null
+  );
+  assertEqual(
+    'earnings 重组同比 → null (无业绩关键词)',
+    extractEarningsGrade('重大资产重组同比变动 30%'),
+    null
+  );
+}
+
+function testExtractEarningsGradeIncrease(): void {
+  // 业绩预告 + 增长 + yoy%
+  assertEqual(
+    'earnings 业绩预增 50%',
+    extractEarningsGrade('业绩预增公告 — 净利润同比增长 50%'),
+    { direction: 'increase', magnitude: 'moderate', yoy_pct: 50 }
+  );
+  // 业绩 + minor (< 30%)
+  assertEqual(
+    'earnings 业绩预增 20% → minor',
+    extractEarningsGrade('业绩预告: 净利润同比增长 20%'),
+    { direction: 'increase', magnitude: 'minor', yoy_pct: 20 }
+  );
+  // 业绩 + major (≥ 100%)
+  assertEqual(
+    'earnings 业绩大增 150% → major',
+    extractEarningsGrade('业绩预告 — 净利润同比增长 150%'),
+    { direction: 'increase', magnitude: 'major', yoy_pct: 150 }
+  );
+  // 业绩 + direction 缺失 + 有 yoy% → 默认 increase
+  assertEqual(
+    'earnings 业绩快报 同比 80%',
+    extractEarningsGrade('业绩快报: 净利润同比 80%'),
+    { direction: 'increase', magnitude: 'moderate', yoy_pct: 80 }
+  );
+}
+
+function testExtractEarningsGradeDecrease(): void {
+  // 业绩预减 + yoy%
+  assertEqual(
+    'earnings 业绩预减 40%',
+    extractEarningsGrade('业绩预减公告 — 净利润同比下降 40%'),
+    { direction: 'decrease', magnitude: 'moderate', yoy_pct: -40 }
+  );
+  // 减少 + 业绩相关 + 小幅
+  assertEqual(
+    'earnings 营业收入下降 15% → minor',
+    extractEarningsGrade('一季报: 营业收入下降 15%'),
+    { direction: 'decrease', magnitude: 'minor', yoy_pct: -15 }
+  );
+  // 业绩下滑 + 大幅
+  assertEqual(
+    'earnings 业绩下滑 120% → major',
+    extractEarningsGrade('业绩报告: 净利润同比下滑 120%'),
+    { direction: 'decrease', magnitude: 'major', yoy_pct: -120 }
+  );
+}
+
+function testExtractEarningsGradeLoss(): void {
+  // 亏损不依赖 yoy% 强落 major
+  assertEqual(
+    'earnings 亏损 → loss/major (无 yoy)',
+    extractEarningsGrade('业绩快报: 净利润亏损 5000 万元'),
+    { direction: 'loss', magnitude: 'major', yoy_pct: null }
+  );
+  // 由盈转亏 + 有 yoy → loss + 负 yoy
+  assertEqual(
+    'earnings 由盈转亏 200%',
+    extractEarningsGrade('业绩预告: 由盈转亏, 净利润同比下降 200%'),
+    { direction: 'loss', magnitude: 'major', yoy_pct: -200 }
+  );
+  // 业绩暴雷 — loss 强落 major (无 yoy 也 major)
+  assertEqual(
+    'earnings 业绩暴雷 → loss/major',
+    extractEarningsGrade('业绩暴雷: 全年亏损扩大'),
+    { direction: 'loss', magnitude: 'major', yoy_pct: null }
+  );
+}
+
+function testExtractEarningsGradeDirectionPriority(): void {
+  // loss > decrease — 含 "亏损" + "下降" → loss (亏损是 terminal state)
+  const r1 = extractEarningsGrade('业绩预告: 净利润亏损 同比下降 30%');
+  assertEqual('priority loss > decrease (direction)', r1?.direction, 'loss');
+  assertEqual('priority loss > decrease (magnitude)', r1?.magnitude, 'major');
+  // decrease > increase — 含 "下降" + "增长" → decrease (先匹配 decrease 优先级)
+  const r2 = extractEarningsGrade('业绩报告: 净利润同比下降 50% 营收同比增长 20%');
+  assertEqual('priority decrease > increase', r2?.direction, 'decrease');
+  // direction='increase' 但 yoy% 字面在标题里多个 → 取首个
+  const r3 = extractEarningsGrade('业绩预增: 营收同比增长 40% 净利润同比增长 80%');
+  assertEqual('multiple yoy% picks first', r3?.yoy_pct, 40);
+  assertEqual('multiple yoy% magnitude', r3?.magnitude, 'moderate');
+}
+
+function testExtractEarningsGradeBoundaries(): void {
+  // 阈值边界: 29% → minor, 30% → moderate
+  const r29 = extractEarningsGrade('业绩预告: 净利润同比增长 29%');
+  assertEqual('threshold 29% → minor', r29?.magnitude, 'minor');
+  const r30 = extractEarningsGrade('业绩预告: 净利润同比增长 30%');
+  assertEqual('threshold 30% → moderate', r30?.magnitude, 'moderate');
+  // 99% → moderate, 100% → major
+  const r99 = extractEarningsGrade('业绩预告: 净利润同比增长 99%');
+  assertEqual('threshold 99% → moderate', r99?.magnitude, 'moderate');
+  const r100 = extractEarningsGrade('业绩预告: 净利润同比增长 100%');
+  assertEqual('threshold 100% → major', r100?.magnitude, 'major');
+  // yoy% sanity 上限 — 大数 (50000%) 部分匹配 1-4 位子串落 sanity 范围内会被接受;
+  // 这是 "中文无 word boundary + 数字单位混合" 启发式的已知边界 — 50000% 标题里
+  // regex 滑动后可在偏移 1 处匹配到 "0000" 或类似子串. 用一个直接超过 sanity 上限的
+  // 整数 (中间留空格阻断子串拼接) 验证 "完整数字 > MAX → null" 路径.
+  const rNoise = extractEarningsGrade('业绩快报: 净利润同比增长 10000 %');
+  assertEqual('yoy% > MAX → yoy_pct=null', rNoise?.yoy_pct, null);
+  assertEqual('yoy% > MAX → minor (direction 兜底)', rNoise?.magnitude, 'minor');
+  // 业绩相关 + 无 direction + 无 yoy → null
+  assertEqual(
+    'earnings 无 direction 无 yoy → null',
+    extractEarningsGrade('2025 年业绩说明会通知'),
+    null
+  );
+  // 业绩相关 + direction='increase' + 无 yoy → minor 兜底
+  assertEqual(
+    'earnings 业绩预增 (无 yoy) → minor',
+    extractEarningsGrade('业绩预增公告'),
+    { direction: 'increase', magnitude: 'minor', yoy_pct: null }
+  );
+}
+
+function testExtractEarningsGradeDecimal(): void {
+  // 小数 yoy%
+  assertEqual(
+    'earnings 12.5% → minor',
+    extractEarningsGrade('业绩报告: 净利润同比增长 12.5%'),
+    { direction: 'increase', magnitude: 'minor', yoy_pct: 12.5 }
+  );
+  // 边界 29.99% → minor
+  const r2999 = extractEarningsGrade('业绩报告: 同比增长 29.99%');
+  assertEqual('decimal 29.99% → minor', r2999?.magnitude, 'minor');
+}
+
+function testExtractEarningsGradeAccuracy(): void {
+  // AC 主验收 — 20 条标题, 准确率 ≥ 80%.
+  // 标注: direction + magnitude 必须同时正确算 1 条, 否则 0.
+  const labeled: Array<{ title: string; expected: { direction: EarningsDirection; magnitude: EarningsMagnitude } }> = [
+    // increase / minor
+    { title: '业绩预告: 净利润同比增长 15%', expected: { direction: 'increase', magnitude: 'minor' } },
+    { title: '一季报: 营业收入同比增加 8%', expected: { direction: 'increase', magnitude: 'minor' } },
+    // increase / moderate
+    { title: '业绩预增公告 — 净利润同比增长 50%', expected: { direction: 'increase', magnitude: 'moderate' } },
+    { title: '半年报: 归母净利同比增长 80%', expected: { direction: 'increase', magnitude: 'moderate' } },
+    // increase / major
+    { title: '业绩大增: 净利润同比增长 120%', expected: { direction: 'increase', magnitude: 'major' } },
+    { title: '业绩预告 — 净利润同比上升 200%', expected: { direction: 'increase', magnitude: 'major' } },
+    // decrease / minor
+    { title: '业绩报告: 营业收入同比下降 10%', expected: { direction: 'decrease', magnitude: 'minor' } },
+    { title: '三季报: 净利润同比下滑 20%', expected: { direction: 'decrease', magnitude: 'minor' } },
+    // decrease / moderate
+    { title: '业绩预减: 净利润同比下降 50%', expected: { direction: 'decrease', magnitude: 'moderate' } },
+    { title: '业绩快报: 净利润同比降低 70%', expected: { direction: 'decrease', magnitude: 'moderate' } },
+    // decrease / major
+    { title: '业绩下滑: 净利润同比下降 150%', expected: { direction: 'decrease', magnitude: 'major' } },
+    // loss / major
+    { title: '业绩快报: 全年亏损 1.2 亿元', expected: { direction: 'loss', magnitude: 'major' } },
+    { title: '业绩预告: 由盈转亏', expected: { direction: 'loss', magnitude: 'major' } },
+    { title: '业绩暴雷: 亏损扩大', expected: { direction: 'loss', magnitude: 'major' } },
+    { title: '业绩预亏公告', expected: { direction: 'loss', magnitude: 'major' } },
+    // increase / minor (无数字兜底)
+    { title: '业绩预增公告', expected: { direction: 'increase', magnitude: 'minor' } },
+    // increase moderate — 同比 形态
+    { title: '业绩快报: 净利润同比 60%', expected: { direction: 'increase', magnitude: 'moderate' } },
+    // decrease — 业绩预减 + 无 yoy → minor 兜底
+    { title: '业绩预减公告', expected: { direction: 'decrease', magnitude: 'minor' } },
+    // increase / major — 三季报
+    { title: '三季报: 归母净利同比增长 300%', expected: { direction: 'increase', magnitude: 'major' } },
+    // increase / minor — 年报小幅
+    { title: '年报: 营业收入同比上升 5%', expected: { direction: 'increase', magnitude: 'minor' } },
+  ];
+  let correct = 0;
+  const wrong: Array<string> = [];
+  for (const c of labeled) {
+    const got = extractEarningsGrade(c.title);
+    const ok =
+      got !== null && got.direction === c.expected.direction && got.magnitude === c.expected.magnitude;
+    if (ok) {
+      correct += 1;
+    } else {
+      wrong.push(
+        `  "${c.title}" expected=${JSON.stringify(c.expected)} got=${JSON.stringify(got)}`
+      );
+    }
+  }
+  const total = labeled.length;
+  const accuracy = correct / total;
+  assert(
+    `AC: extractEarningsGrade accuracy ${correct}/${total} (${(accuracy * 100).toFixed(1)}%) >= 80%`,
+    accuracy >= 0.8,
+    wrong.length > 0 ? `\nwrong predictions:\n${wrong.join('\n')}` : ''
+  );
+  if (wrong.length > 0 && accuracy >= 0.8) {
+    console.log(
+      `  ⚠ extractEarningsGrade accuracy=${(accuracy * 100).toFixed(
+        1
+      )}% (>=80% AC met but ${wrong.length} miss):\n${wrong.join('\n')}`
+    );
+  }
+}
+
+function testExtractEarningsGradeIsPure(): void {
+  // pure: 同输入同输出, 不修改输入
+  const title = '业绩预告: 净利润同比增长 50%';
+  const r1 = extractEarningsGrade(title);
+  const r2 = extractEarningsGrade(title);
+  assertEqual('pure: same input → same output (1st)', r1?.yoy_pct, 50);
+  assertEqual('pure: same input → same output (2nd)', r2?.yoy_pct, 50);
+  assertEqual('pure: title unchanged', title, '业绩预告: 净利润同比增长 50%');
+}
+
 function testBuildNLPResultFromPayloadIncludesNewFields(): void {
   const row = makeRow({ stock_code: '000001', original_title: '减持公告' });
   const payload: RemoteNLPPayload = {
@@ -1751,6 +2021,17 @@ async function main(): Promise<void> {
   testExtractEntitiesEdgeCases();
   testExtractEntitiesWiringHeuristicResult();
   testExtractEntitiesShapeRoundtripsNormalize();
+  // US-028 ANN-004: extractEarningsGrade
+  testEarningsKeywordsFrozen();
+  testExtractEarningsGradeBasic();
+  testExtractEarningsGradeIncrease();
+  testExtractEarningsGradeDecrease();
+  testExtractEarningsGradeLoss();
+  testExtractEarningsGradeDirectionPriority();
+  testExtractEarningsGradeBoundaries();
+  testExtractEarningsGradeDecimal();
+  testExtractEarningsGradeAccuracy();
+  testExtractEarningsGradeIsPure();
   testBuildNLPResultFromPayloadIncludesNewFields();
   testBuildNLPResultFromPayloadFailedDefaultsNewFields();
   await testSaveSummariesIncludesNewFields();
