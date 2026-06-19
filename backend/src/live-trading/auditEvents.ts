@@ -28,6 +28,10 @@ export const LIVE_AUDIT_EVENT_TYPES = {
   ORDER_SHADOW_EXECUTED: 'live_order_shadow_executed',
   ORDER_UNATTENDED_REAL_SUBMIT_BLOCKED: 'live_order_unattended_real_submit_blocked',
   ORDER_PRE_SUBMIT_RECHECK_BLOCKED: 'live_order_pre_submit_recheck_blocked',
+  // US-015 (EX-001) — ExecutionFeasibility gate 在 approveDraft 内的两个出口.
+  // BLOCKED = composite_score < 60 / decision='blocked' 直接拒草稿; WARN = risky 放行留痕.
+  ORDER_BLOCKED_BY_FEASIBILITY: 'live_order_blocked_by_feasibility',
+  ORDER_FEASIBILITY_WARN: 'live_order_feasibility_warn',
 
   // ----- 命令队列 / bridge -----
   ORDER_ENQUEUED: 'live_order_enqueued',

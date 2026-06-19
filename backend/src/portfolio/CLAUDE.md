@@ -1088,3 +1088,60 @@ DB-less 单测里 import 也不挂. caller 传 `dataSource = loadProductionRiskA
 加一行映射 (`new_guard: 'NewGuardClassName'`), method body 套
 `wrapFailClosed('new_guard', ...)`, caller catch RiskGuardUnavailableError
 后调 `handleRiskGuardUnavailable({callerLabel: 'caller-X', ...})`. 三件套.
+
+## `internal/feasibilityGate.ts` — US-015 (EX-001)
+
+**ExecutionFeasibility pre-trade gate 统一 helper** — 之前
+`ExecutionFeasibilityService.computeFeasibility` 只在
+`PaperTradingAutomationService.autoBuyFromSignals` 一处接入. US-015 AC
+要求 "composite_score < 60 不下单 + 接到 PaperTradingFacade + Bridge",
+本 module 抽出 3 处共享的 gate / alert / audit 模板.
+
+**API 三件套**:
+  - **`FEASIBILITY_BLOCK_THRESHOLD = 60`** — 严格 `<` (60.0 放行). PRD AC
+    主条款字面对齐; tests/portfolio/feasibility-gate.test.ts 有常量守卫.
+  - **`evaluateFeasibilityGate(input, options?)`** — caller 入口, 返
+    `{ ok, decision, composite_score, block_reasons, reason, alert_level?, report }`.
+    决策矩阵: `decision='blocked'` → ok=false MEDIUM / `score < 60` → ok=false
+    MEDIUM / `risky+score≥60` → ok=true LOW / `fillable` → ok=true. **fail-OPEN**:
+    service 抛错时返 synthetic fillable report + log warn.
+  - **`emitFeasibilityGateAlert(input, options?)`** — 走 `RiskAlertService.write`
+    (US-005, severity='medium' 仅 inbox). MEDIUM tag=`feasibility_blocked` /
+    LOW tag=`feasibility_passed_with_warning`. write 失败仅 log 不 re-throw.
+
+**接入清单 (2026/06/19)**:
+  - `PaperTradingFacade._placeOrderInner` BUY 路径 (UI 手动 / Rebalance /
+    CompositeRebalance / 任何 facade.placeOrder caller). `bypass_feasibility=true`
+    时跳过 (closePosition 默认 `!== false`).
+  - `LiveTradingService.approveDraft` — 实盘 bridge 命令发送前, audit
+    `ORDER_BLOCKED_BY_FEASIBILITY` (critical) / `ORDER_FEASIBILITY_WARN` (warning).
+  - `PaperTradingAutomationService.autoBuyFromSignals` (历史既有, **沿用 inline**
+    调 `executionFeasibilityService.computeFeasibility` 不切换 — automation 用
+    service decision 而非 gate cutoff: `risky` 在 automation 是放行让 sizing 决策,
+    facade/bridge 是放行+留痕, 用户体感语义不同). 改 automation feasibility
+    逻辑时**不要顺手**改 gate threshold (60 vs service 70/30 阈值彼此独立).
+
+**为啥 gate 在 service 之外加 60 cutoff?** service 内部 `BLOCKED_THRESHOLD=30 /
+FILLABLE_THRESHOLD=70` 决定 decision; 改这两个会影响 automation 链路 +
+ExecutionFeasibilityRecord 历史聚合 (dashboard / MetaLabel preCheckFeasibilityScore).
+gate 层加一道 60 cutoff 是 facade/bridge 独有的"用户视角严格", AC 显式要求
+"< 60 不下单", 不改 service 阈值就能满足.
+
+**为啥不和 compliance / risk guard 合并成 mega-gate?** 三类 gate 触发场景 /
+受众 / alert 形态各异: compliance (wizard 规则) / risk guard (用户配置阻拦) /
+feasibility (市场微观结构评分). 合并会让告警可追溯性下降, 与 PR-005/PR-006
+并列保留是项目既有模式.
+
+**SELL 路径不调 gate**: 与 automation 一致 — SELL 是 stop loss / rebalance
+风控守护的; feasibility 评分主要解决 BUY 流动性/涨跌停问题. 未来若扩 SELL
+gate, `evaluateFeasibilityGate` 已支持 side='SELL', 把 facade SELL 段加
+同款调用即可; bypass_feasibility flag 已留好 escape hatch.
+
+**META-TEST 守 (tests/portfolio/feasibility-gate.test.ts [6])**: fs+regex 扫
+四源文件 — feasibilityGate.ts 含常量; PaperTradingFacade.ts 必须 import +
+call + throw EXECUTION_FEASIBILITY_BLOCKED + 不再 inline 调
+`executionFeasibilityService.computeFeasibility` + PlaceOrderOptions 含
+`bypass_feasibility`; LiveTradingService.ts 必须 import + call + audit
+ORDER_BLOCKED_BY_FEASIBILITY/WARN; auditEvents.ts 含两个事件常量.
+任一 refactor 破坏其中一条 → CI 立刻挂.
+

@@ -35,6 +35,10 @@ import { killSwitchService } from './KillSwitchService';
 import { sendLiveAuditAlert } from './LiveAuditAlertService';
 import { LIVE_AUDIT_EVENT_TYPES } from '../auditEvents';
 import { logger } from '../../utils/logger';
+import {
+  evaluateFeasibilityGate,
+  emitFeasibilityGateAlert,
+} from '../../portfolio/internal/feasibilityGate';
 // main 上 PAPER_PORTFOLIO_FAMILIES 位于 portfolio/internal/，dev_lym 旧路径 services/ 已不存在
 import { PAPER_PORTFOLIO_FAMILIES } from '../../portfolio/internal/PaperTradingPortfolioFamilies';
 
@@ -1857,6 +1861,93 @@ export class LiveTradingService {
         }
         logger.warn(
           `[LiveTradingService.approveDraft] pre-trade compliance check failed (fail-open): ${
+            err?.message || err
+          }`
+        );
+      }
+
+      // US-015 (EX-001): ExecutionFeasibility gate — 实盘 bridge 命令发送前最后一道.
+      // composite_score < 60 拒草稿 + 写 ORDER_BLOCKED_BY_FEASIBILITY audit (critical);
+      // risky 放行 + 写 ORDER_FEASIBILITY_WARN audit (warning); fillable 静默通过.
+      // fail-OPEN: gate 自身 throw 时 logger.warn 不阻塞 approveDraft 链路.
+      try {
+        const sideUpper =
+          String((draft as any).side || 'BUY').toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
+        const quoteSnap: any = (draft as any).quote_snapshot || {};
+        // 从 draft.quote_snapshot 抽 market snapshot — 草稿生成时已 snapshot 行情
+        // (LiveTradingController.createDraft 路径), 直接复用避免二次 fetch.
+        const marketSnapshot = {
+          close: Number(quoteSnap.current_price || (draft as any).limit_price || 0),
+          open: quoteSnap.open !== undefined ? Number(quoteSnap.open) : null,
+          high: quoteSnap.high !== undefined ? Number(quoteSnap.high) : null,
+          low: quoteSnap.low !== undefined ? Number(quoteSnap.low) : null,
+          prev_close: quoteSnap.prev_close !== undefined ? Number(quoteSnap.prev_close) : null,
+          volume: quoteSnap.volume !== undefined ? Number(quoteSnap.volume) : null,
+          bid1_price: quoteSnap.bid1_price ?? null,
+          ask1_price: quoteSnap.ask1_price ?? null,
+          bid1_volume: quoteSnap.bid1_volume ?? null,
+          ask1_volume: quoteSnap.ask1_volume ?? null,
+        };
+        const feasResult = await evaluateFeasibilityGate({
+          user_id,
+          symbol: (draft as any).symbol,
+          side: sideUpper as 'BUY' | 'SELL',
+          target_qty: Number((draft as any).quantity || 0),
+          target_price: Number((draft as any).limit_price || 0),
+          market_snapshot: marketSnapshot.close > 0 ? marketSnapshot : undefined,
+        });
+        if (!feasResult.ok) {
+          await this.audit({
+            user_id,
+            account_id: (draft as any).account_id,
+            draft_id,
+            event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_BLOCKED_BY_FEASIBILITY,
+            severity: 'critical',
+            message: `ExecutionFeasibility 拒单: ${feasResult.reason}`,
+            before_state: before,
+            after_state: this.toPlain(draft),
+            metadata: {
+              feasibility: {
+                decision: feasResult.decision,
+                composite_score: feasResult.composite_score,
+                block_reasons: feasResult.block_reasons,
+                report_id: feasResult.report.persisted_id ?? null,
+              },
+            },
+          });
+          await emitFeasibilityGateAlert({
+            user_id,
+            symbol: (draft as any).symbol,
+            side: sideUpper as 'BUY' | 'SELL',
+            result: feasResult,
+            callerLabel: 'LiveTradingService.approveDraft',
+          });
+          throw new Error(`ExecutionFeasibility 拒单: ${feasResult.reason}`);
+        }
+        if (feasResult.alert_level === 'LOW') {
+          await this.audit({
+            user_id,
+            account_id: (draft as any).account_id,
+            draft_id,
+            event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_FEASIBILITY_WARN,
+            severity: 'warning',
+            message: `ExecutionFeasibility risky 放行: ${feasResult.reason}`,
+            metadata: {
+              feasibility: {
+                decision: feasResult.decision,
+                composite_score: feasResult.composite_score,
+                block_reasons: feasResult.block_reasons,
+                report_id: feasResult.report.persisted_id ?? null,
+              },
+            },
+          });
+        }
+      } catch (err: any) {
+        if (err?.message && err.message.startsWith('ExecutionFeasibility 拒单')) {
+          throw err;
+        }
+        logger.warn(
+          `[LiveTradingService.approveDraft] feasibility gate check failed (fail-open): ${
             err?.message || err
           }`
         );

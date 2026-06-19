@@ -56,6 +56,7 @@ import {
   handleRiskGuardUnavailable,
   loadProductionRiskAlertCreator,
 } from './risk/RiskGuardFailClosed';
+import { evaluateFeasibilityGate, emitFeasibilityGateAlert } from './internal/feasibilityGate';
 import { perStockStopLossGuard, pickEffectivePct } from './risk/PerStockStopLossGuard';
 import { incrementOrderTotal } from '../metrics/PrometheusRegistry';
 import {
@@ -116,6 +117,16 @@ export interface PlaceOrderOptions {
    */
   bypass_compliance?: boolean;
   /**
+   * 跳过 ExecutionFeasibility gate (US-015 / EX-001). 仅给系统级强制路径用:
+   *   - GuardSellExecutor 强平 (止损/止盈/集中度), feasibility 阻止不了实际需要的清仓
+   *   - closePosition (用户已显式选择平仓)
+   *   - IndustryConcentrationGuard.rebalance 等再平衡 SELL 链
+   * 普通 UI BUY / TodaySignals shadow autopilot / RebalanceEngine BUY **不要**传.
+   * SELL 路径目前不调 gate (与 PaperTradingAutomationService 同款), 该 flag 主要给
+   * 未来扩 SELL gate 时留 escape hatch.
+   */
+  bypass_feasibility?: boolean;
+  /**
    * 可选 pre-trade compliance 上下文 — 由 caller (策略层) 注入信号元数据,
    * facade 内不再二次查 DB. 缺省时仅跑 wizard 子规则中不依赖元数据的分支
    * (NEXT_DAY_CHASE / FREQUENT_TRADING / MIN_HOLDING_PERIOD 仍能命中).
@@ -149,6 +160,8 @@ export interface ClosePositionOptions {
   bypass_trading_hours?: boolean;
   bypass_t_plus_1?: boolean;
   bypass_compliance?: boolean;
+  /** US-015 (EX-001): closePosition 默认 bypass=true (强平 SELL 不该被 feasibility gate 拦) */
+  bypass_feasibility?: boolean;
 }
 
 export type GetDailySnapshotAction = 'list' | 'trades' | 'refresh';
@@ -1049,6 +1062,92 @@ export class PaperTradingFacade {
         }
       }
 
+      // ============ ExecutionFeasibility gate (US-015 / EX-001) ============
+      // 之前仅 PaperTradingAutomationService.autoBuyFromSignals 接入. facade.placeOrder
+      // 覆盖 UI 手动 BUY / RebalanceEngine / CompositeRebalanceService 全链, 把
+      // "composite_score < 60 不下单" AC 真正变成三入口全覆盖.
+      //
+      // gate 决策矩阵 (详见 internal/feasibilityGate.ts):
+      //   service decision='blocked'                → throw EXECUTION_FEASIBILITY_BLOCKED + MEDIUM 告警
+      //   composite_score < 60 (FEASIBILITY_BLOCK_THRESHOLD) → 同上
+      //   decision='risky' + score ≥ 60             → 放行 + LOW 告警
+      //   decision='fillable'                       → 放行
+      //
+      // 仅 BUY 路径生效; SELL 与 automation 同款不调 gate (强平 / rebalance SELL 不该被
+      // 流动性评分拦). bypass_feasibility=true 时跳过 (closePosition / 系统级强制路径).
+      // fail-OPEN: gate 自身 throw 时 logger.warn 不阻塞主流程.
+      if (!(options as any).bypass_feasibility) {
+        try {
+          // Sprint 34 复用 — 优先把 facade 已知的 bars + RealtimeQuote 拼成 snapshot,
+          // 让 feasibility 评分用与下单同源行情, 避免"按 A 价格决策按 B 数据评估"漂移.
+          const latest = bars[bars.length - 1];
+          const prev = bars.length >= 2 ? bars[bars.length - 2] : null;
+          // 复用 staleness 检查路径里已 fetch 的 quote (避免二次 RPC). 简化: 这里再
+          // try 一次 cheap fetch, 失败也无所谓 — service 内有 fallback.
+          let liveQuote: any = null;
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { realtimeQuoteService } = require('../data/services/RealtimeQuoteService');
+            const q = await realtimeQuoteService.getLatestQuotes([symbol]);
+            liveQuote = Array.isArray(q) && q.length > 0 ? q[0] : null;
+          } catch {
+            liveQuote = null;
+          }
+          const marketSnapshot = {
+            close: Number(latest.close),
+            open: latest.open !== undefined ? Number(latest.open) : null,
+            high: latest.high !== undefined ? Number(latest.high) : null,
+            low: latest.low !== undefined ? Number(latest.low) : null,
+            prev_close: prev ? Number(prev.close) : null,
+            volume: latest.volume !== undefined ? Number(latest.volume) : null,
+            bid1_price: liveQuote?.bid1_price ?? null,
+            ask1_price: liveQuote?.ask1_price ?? null,
+            bid1_volume: liveQuote?.bid1_volume ?? null,
+            ask1_volume: liveQuote?.ask1_volume ?? null,
+          };
+          const feasibilityResult = await evaluateFeasibilityGate({
+            user_id,
+            symbol,
+            side: 'BUY',
+            target_qty: quantity,
+            target_price: execute_price,
+            market_snapshot: marketSnapshot,
+          });
+          if (!feasibilityResult.ok) {
+            await emitFeasibilityGateAlert({
+              user_id,
+              symbol,
+              side: 'BUY',
+              result: feasibilityResult,
+              callerLabel: 'facade.placeOrder',
+            });
+            const err: any = new Error(`ExecutionFeasibility 拒单: ${feasibilityResult.reason}`);
+            err.statusCode = 400;
+            err.code = 'EXECUTION_FEASIBILITY_BLOCKED';
+            err.detail = {
+              decision: feasibilityResult.decision,
+              composite_score: feasibilityResult.composite_score,
+              block_reasons: feasibilityResult.block_reasons,
+            };
+            throw err;
+          }
+          if (feasibilityResult.alert_level === 'LOW') {
+            await emitFeasibilityGateAlert({
+              user_id,
+              symbol,
+              side: 'BUY',
+              result: feasibilityResult,
+              callerLabel: 'facade.placeOrder',
+            });
+          }
+        } catch (err: any) {
+          if (err?.code === 'EXECUTION_FEASIBILITY_BLOCKED') throw err;
+          logger.warn(
+            `[facade.placeOrder] feasibility gate check failed (fail-open): ${err?.message || err}`
+          );
+        }
+      }
+
       if (portfolio.current_cash < totalCost) {
         throw new Error('可用资金不足');
       }
@@ -1363,6 +1462,10 @@ export class PaperTradingFacade {
       // 跳过, 即便不传 bypass_compliance 也不会被拦. 但显式传 true 表达"用户已确认
       // 平仓, 跳过任何 pre-trade 软合规", 与 GuardSellExecutor 强平语义一致.
       bypass_compliance: options.bypass_compliance !== false,
+      // US-015 (EX-001): 同款语义 — closePosition 走 ExecutionFeasibility gate 没有意义
+      // (SELL 路径 facade 本来就不调 gate; 但显式 bypass=true 表达系统级强制路径,
+      // 与未来若扩 SELL gate 时的契约一致).
+      bypass_feasibility: options.bypass_feasibility !== false,
     });
   }
 
