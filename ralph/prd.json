@@ -864,8 +864,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 56,
-      "passes": false,
-      "notes": "依赖: WK-012"
+      "passes": true,
+      "notes": "DONE 2026/06/20: 抽 frontend/src/pages/workspace/journalPeriodHelpers.ts (360 行 + 完整 jsdoc) 把 day/week/month/quarter 4 维聚合做成纯函数 — getISOWeekKey (经典 ISO-8601 周一起始算法, 无 dayjs/plugin 依赖, 跨年正确) + getMonthKey/getQuarterKey + parsePeriodKey 反解 start/end/label + pickDominantMood (平局字典序兜底) + groupJournalsByPeriod 主入口 (空集兜底/非法日期跳过/非法 period 退 day/'未生成' mood 视为空/桶按 startDate 降序/期内 journals 按 date 升序). PortfolioWorkspace.tsx JournalTab 顶部 Segmented<JournalPeriod> 切换, 左列在 day 时走原日历表, 在 week/month/quarter 时改渲染桶列表 (label + journalCount Tag + dominantMood + top 3 tags); 右列在桶模式下顶部插入 '期内概览' Card (情绪分布 + 高频标签 8 + 期内日记 chip 可下钻具体日). 单测 backend/tests/services/journal-period-helpers.test.ts 110 ok / 0 failed (覆盖 9 大模块: 常量 sanity / ISO 周跨年 / 月跨年 / 闰年 / 4 季边界 / parsePeriodKey 4 period / pickDominantMood 平局 / findBucket null 兜底 / groupJournalsByPeriod AC 主验收 11 case + 永不抛 guard + META-GUARD fs+regex 16 项). frontend tsc 0 err / backend tsc 0 err / helpers 全套 7 个测试文件无回归."
     },
     {
       "id": "US-057",

@@ -76,6 +76,14 @@ import {
   DailyAttributionViewModel,
   DailyAttributionTradeRow,
 } from './dailyAttributionHelpers';
+import {
+  JOURNAL_PERIOD_LABEL,
+  JOURNAL_PERIOD_VALUES,
+  JournalPeriod,
+  JournalPeriodBucket,
+  findBucket,
+  groupJournalsByPeriod,
+} from './journalPeriodHelpers';
 import { usePortfolio } from '../../contexts/PortfolioContext';
 import { translateAxiosTradingError, translateTradingError } from '../../utils/tradingErrorMap';
 
@@ -1721,6 +1729,30 @@ const JournalTab: React.FC<JournalTabProps> = ({ list, onListRefresh }) => {
   const [noteContent, setNoteContent] = useState('');
   const [appending, setAppending] = useState(false);
 
+  // US-056 [FE-017]: 周/月/季 聚合 — period='day' 时直接走原日历表;
+  // 选 week/month/quarter 时 helper 把 list 分桶, 用户先选桶再下钻具体日.
+  const [periodKey, setPeriodKey] = useState<JournalPeriod>('day');
+  const [selectedBucketKey, setSelectedBucketKey] = useState<string | null>(null);
+  const periodBuckets = useMemo<JournalPeriodBucket[]>(
+    () => (periodKey === 'day' ? [] : groupJournalsByPeriod(list, periodKey)),
+    [list, periodKey]
+  );
+  const currentBucket = useMemo<JournalPeriodBucket | null>(
+    () => (periodKey === 'day' ? null : findBucket(periodBuckets, selectedBucketKey)),
+    [periodKey, periodBuckets, selectedBucketKey]
+  );
+  // period 切换时默认选中第一个桶 (最近期)
+  useEffect(() => {
+    if (periodKey === 'day') return;
+    if (periodBuckets.length === 0) {
+      setSelectedBucketKey(null);
+      return;
+    }
+    if (!selectedBucketKey || !periodBuckets.some(b => b.key === selectedBucketKey)) {
+      setSelectedBucketKey(periodBuckets[0].key);
+    }
+  }, [periodKey, periodBuckets, selectedBucketKey]);
+
   useEffect(() => {
     if (!selectedDate) {
       setDetail(null);
@@ -1769,7 +1801,9 @@ const JournalTab: React.FC<JournalTabProps> = ({ list, onListRefresh }) => {
           title={
             <Space>
               <ReadOutlined />
-              <span>日期列表</span>
+              <span>
+                {periodKey === 'day' ? '日期列表' : `${JOURNAL_PERIOD_LABEL[periodKey]}聚合`}
+              </span>
             </Space>
           }
           extra={
@@ -1782,7 +1816,64 @@ const JournalTab: React.FC<JournalTabProps> = ({ list, onListRefresh }) => {
             />
           }
         >
-          {list.length === 0 ? (
+          {/* US-056 [FE-017]: 维度切换 — day/week/month/quarter */}
+          <Segmented<JournalPeriod>
+            block
+            size="small"
+            options={JOURNAL_PERIOD_VALUES.map(v => ({
+              label: JOURNAL_PERIOD_LABEL[v],
+              value: v,
+            }))}
+            value={periodKey}
+            onChange={v => setPeriodKey(v as JournalPeriod)}
+            style={{ marginBottom: 8 }}
+          />
+          {periodKey !== 'day' ? (
+            periodBuckets.length === 0 ? (
+              <Empty
+                description={
+                  <Text type="secondary">暂无可聚合的复盘记录。先在「日」维度下追加手记。</Text>
+                }
+              />
+            ) : (
+              <List
+                size="small"
+                dataSource={periodBuckets}
+                renderItem={(bucket: JournalPeriodBucket) => (
+                  <List.Item
+                    onClick={() => setSelectedBucketKey(bucket.key)}
+                    style={{
+                      cursor: 'pointer',
+                      background: selectedBucketKey === bucket.key ? '#e6f4ff' : 'transparent',
+                      padding: '6px 12px',
+                      borderRadius: 6,
+                    }}
+                  >
+                    <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                      <Space wrap>
+                        <Text strong style={{ fontSize: 13 }}>
+                          {bucket.label}
+                        </Text>
+                        <Tag>{bucket.journalCount} 篇</Tag>
+                      </Space>
+                      <Space wrap size={4}>
+                        {bucket.dominantMood && (
+                          <Tag color="purple" style={{ marginInlineEnd: 0 }}>
+                            {bucket.dominantMood}
+                          </Tag>
+                        )}
+                        {bucket.topTags.slice(0, 3).map(t => (
+                          <Tag key={t} style={{ marginInlineEnd: 0 }}>
+                            {t}
+                          </Tag>
+                        ))}
+                      </Space>
+                    </Space>
+                  </List.Item>
+                )}
+              />
+            )
+          ) : list.length === 0 ? (
             <Empty
               description={
                 <Text type="secondary">
@@ -1819,6 +1910,60 @@ const JournalTab: React.FC<JournalTabProps> = ({ list, onListRefresh }) => {
         </Card>
       </Col>
       <Col xs={24} md={16} lg={18}>
+        {periodKey !== 'day' && currentBucket && (
+          <Card
+            size="small"
+            style={{ marginBottom: 12 }}
+            title={
+              <Space>
+                <ReadOutlined />
+                <span>{currentBucket.label} · 期内概览</span>
+                <Tag>{currentBucket.journalCount} 篇</Tag>
+              </Space>
+            }
+          >
+            <Space direction="vertical" size={8} style={{ width: '100%' }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {currentBucket.startDate} ~ {currentBucket.endDate}
+              </Text>
+              {Object.keys(currentBucket.moodCounts).length > 0 && (
+                <Space wrap>
+                  <Text type="secondary">情绪分布:</Text>
+                  {Object.entries(currentBucket.moodCounts).map(([m, c]) => (
+                    <Tag key={m} color={m === currentBucket.dominantMood ? 'purple' : undefined}>
+                      {m} × {c}
+                    </Tag>
+                  ))}
+                </Space>
+              )}
+              {currentBucket.topTags.length > 0 && (
+                <Space wrap>
+                  <Text type="secondary">高频标签:</Text>
+                  {currentBucket.topTags.slice(0, 8).map(t => (
+                    <Tag key={t}>{t}</Tag>
+                  ))}
+                </Space>
+              )}
+              <div>
+                <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
+                  期内日记 (点击下钻):
+                </Text>
+                <Space wrap>
+                  {currentBucket.journals.map(j => (
+                    <Button
+                      key={j.id}
+                      size="small"
+                      type={selectedDate === j.date ? 'primary' : 'default'}
+                      onClick={() => setSelectedDate(j.date)}
+                    >
+                      {j.date}
+                    </Button>
+                  ))}
+                </Space>
+              </div>
+            </Space>
+          </Card>
+        )}
         <Card
           size="small"
           title={

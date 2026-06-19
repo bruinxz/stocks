@@ -1548,3 +1548,38 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **prev.total_value=0 → dailyReturnPct=0 不爆 NaN**: 初始化 portfolio 第一天 total_value 可能为 0 (净入金尚未结算), 直接 dailyPnl/prevTotal 会 division by zero → Infinity → React 渲染 "NaN%". 单测 [8.5] 显式守.
   - **`for ([k,v] of map)` ts target=es5 不支持** (已知坑, US-042 也踩过): 本次 buildTopTrades 用 filter+map+sort 链式避开 iter 解构. 任何 helper 内对 Map 迭代必须 forEach.
 ---
+
+## 2026/06/20 - US-056 [FE-017] PortfolioWorkspace weekly/monthly/quarterly tab
+- 新增 frontend/src/pages/workspace/journalPeriodHelpers.ts (360 行 + 完整 jsdoc): 纯函数 helper
+  抽离 day/week/month/quarter 4 维聚合 — getISOWeekKey (经典 ISO-8601 周一起始算法, 跨年正确)
+  + getMonthKey/getQuarterKey + parsePeriodKey 反解 start/end/label + pickDominantMood
+  (平局字典序兜底) + groupJournalsByPeriod 主入口 + findBucket.
+- 改 frontend/src/pages/workspace/PortfolioWorkspace.tsx JournalTab: 顶部 Segmented<JournalPeriod>
+  切换; day → 原日历表; week/month/quarter → 左列改桶列表 (label + journalCount Tag + dominantMood
+  + top 3 tags), 右列顶部插入 '期内概览' Card (起止日 + 情绪分布 + 高频标签 8 + 期内日记 chip 可
+  下钻具体日 setSelectedDate).
+- 单测 backend/tests/services/journal-period-helpers.test.ts (110 ok / 0 failed) 覆盖 9 大模块:
+  [1] 常量 sanity (含 Object.isFrozen 双向 guard) [2] ISO 周跨年 (2025-12-31→2026-W01) [3] 月跨年
+  [4] 4 季边界 + 闰年 (2024-02 vs 2025-02) [5] parsePeriodKey 4 period start/end/label
+  [6] pickDominantMood 平局 [7] findBucket null 兜底 [8] groupJournalsByPeriod AC 主验收 11 case
+  + 异常 mood/tags/date 永不抛 guard [9] META-GUARD fs+regex 16 项 (双向校验 helper export +
+  PortfolioWorkspace import + Segmented + setPeriodKey + US-056 注释).
+- 文件变更:
+  - frontend/src/pages/workspace/PortfolioWorkspace.tsx (+148 / -2)
+  - frontend/src/pages/workspace/journalPeriodHelpers.ts (NEW, 360 行)
+  - backend/tests/services/journal-period-helpers.test.ts (NEW, 110 assertions)
+  - ralph/prd.json (US-056 passes=true)
+- **Learnings for future iterations:**
+  - 复盘日记的 list:[{id,date,mood,tags}] 顶部由 PortfolioWorkspace useEffect listJournals
+    一次性 fetch, 不分页, 所以客户端聚合在数据量级 O(几百天) 内零压力, 不必加 API.
+  - ISO-8601 周自实现算法用 getUTCDay (0=Sun → 把 0 当 7 处理) + setUTCDate +4-day 移位避开
+    各 dayjs/plugin/isoWeek 这种额外依赖, 与 [[前端 pure helper 模板]] 零依赖原则一致.
+  - dayjs 项目内目前没启用任何 plugin (grep 'dayjs/plugin' 无 import), 新前端 helper 想要
+    isoWeek/quarterOfYear 这类切片建议直接用 UTC Date 算; 引 plugin 要全局 dayjs.extend 注册.
+  - antd Segmented 在 PortfolioWorkspace 已有 WindowKey 用法 (line 1149), 再加一个直接复用,
+    style={{ marginBottom: 8 }} 与现有间距一致.
+  - JournalTab 内 '未生成' 是 backend 占位文案 (line 1809 已渲染), 聚合时也要排除 (helper line 294),
+    否则 dominantMood 会被 '未生成' 顶掉. 与其他 mood 占位语义保持一致.
+  - 月底/季底边界用 "下月 1 日 - 1 ms" (本质 -24h) 而不是写死 31 天, 自然覆盖 28/29/30/31; 跨年用
+    `mo === 12 ? y+1 : y` switch 一句搞定, 闰年 2024-02-29 / 2025-02-28 单测都过.
+---
