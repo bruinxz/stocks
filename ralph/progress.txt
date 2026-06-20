@@ -3518,3 +3518,34 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - top_opinions 重排不复用 dedupeAndSort 的 (time desc + source priority): 它按 |decayed weight| desc 才能让"最重要的少数条"浮到前面, 适合前端"行业风向卡片"
   - 跨股 dedupe: 不同 stockCode 的相同 KOL/同一日 (e.g. 中信证券同日发 2 家公司研报) 会算 1 条共识, 这是有意的; 若改成 by-stock 计数, 修 dedupeAndSort 的 PK 字段
 ---
+
+## 2026-06-20 21:25 - US-121 [QA-004] IndustryQAHeatService
+- 新增 backend/src/services/qa/IndustryQAHeatService.ts (~470 行) — 行业级 QA 热度榜.
+  - 消费 EastMoneyQAStat + Stock.industry, 输出某行业 lookback (默认 7d) top N (默认 10) 活跃股票.
+  - active_score = questions_count_7d * (1 + 0.5 * answer_rate_7d); 不归一化, 跨行业不可比.
+  - 6 项 AI feature checklist 全配 (DataSource DI / pure helpers 全 export / plain-object 返回 /
+    签名稳定 now 注入 / fail-OPEN / 双重防御 try/catch).
+- 新增 controller endpoint GET /api/sentiment/qa-industry-heat?industry=&lookback_days=&top=
+  + openapi 注解 + 路由挂载.
+- 修改文件:
+  - backend/src/services/qa/IndustryQAHeatService.ts (新增)
+  - backend/src/api/controllers/SentimentController.ts (新增 getIndustryQAHeat 方法 + import)
+  - backend/src/api/routes/sentiment.routes.ts (新增 /qa-industry-heat 路由 + openapi 注解)
+  - backend/tests/services/qa/industry-qa-heat-service.test.ts (新增, 108 ok / 0 failed)
+- tsc 0 err / eslint 0 err. 相邻 qa-leading-signal-detector (93 ok) + qa-stat-aggregator (106 ok) 双绿无 regression.
+- **Learnings for future iterations:**
+  - **行业级 ranking 反模式: 别归一化跨行业指标.** 电池行业 vs 银行行业 QA 总量天然差几十倍, sigmoid/zscore
+    归一化会把"小行业小热点"压成 0, "大行业小活跃"虚高. 设计上直接保留 active_score ∈ [0, ∞), 让 caller
+    各行业独立排.
+  - **answer_rate 加成必须用乘法而非加法.** 加法权重 (q + W*rate) 会让 "0 提问 + 答复率虚高" 注水;
+    乘法 (q * (1 + W*rate)) 保证 q=0 时 active=0, q>0 时再乘加成. 同款适用于其他"主指标 + 辅助加成" 场景.
+  - **top_subtopic 多周聚合应优先 raw_payload.subtopic_distribution 而非 top_subtopic.**
+    QAStatAggregator 把 26 类分布完整存在 raw_payload, 直接 sum distribution 比靠 top_subtopic 出现次数
+    (有信息损失) 准. 写过滤函数 isKnownSubtopic + extractSubtopicDistribution 处理脏数据.
+  - **跨行业脏数据 guard.** listStatsForStocksSince 收 stockCodes 后, 仍要在 service 层用 stockMeta
+    Set 二次过滤 (防 DB 上游某只股票改行业后, stat 表残留跨行业脏 stat). 这是 fail-OPEN 与数据正确性并存的关键.
+  - **stock_name 取最近一周非空** 是聚合时的小细节 — 股票改名后只有近期 stat 携带新名, 不能用 `stats[0].stock_name`
+    (输入顺序无保证), 必须显式 sort by week_start desc 再取首个非空. 同款适用于任何"实体属性可能变迁"的多周聚合.
+  - **service 层 DataSource DI seam 一律 now: Date 注入** (而非 Date.now()) — 单测要算 sinceIso
+    必须能 mock 时间. getSinceIso(lookbackDays, now = new Date()) 是当前 qa/ 目录统一签名.
+---

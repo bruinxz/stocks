@@ -1862,8 +1862,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 121,
-      "passes": false,
-      "notes": "依赖: QA-002"
+      "passes": true,
+      "notes": "依赖: QA-002 | DONE 2026/06/20: 新增 backend/src/services/qa/IndustryQAHeatService.ts (~470 行 + 完整 jsdoc) — 消费 EastMoneyQAStat + Stock (industry), 输出某行业内 lookback 窗 (默认 7d) top N (默认 10) 活跃股票. active_score = questions_count_7d * (1 + 0.5 * answer_rate_7d), 不归一化 (跨行业不可比). 6 项 AI feature checklist 全配: DataSource DI (listStocksByIndustry/listStatsForStocksSince) + pure helpers 全 export (computeActiveScore / clampLookbackDays / clampTopN / pickTopSubtopicFromStats / aggregateStatsByStock / rankTopActive / rowToStatLike / stripSymbolSuffix / getSinceIso) + plain-object 返回类型 StockActiveSnapshot / IndustryQAHeatResult + 签名稳定 (now: Date 注入 无 Date.now) + 双重防御 fail-OPEN (内层 listStatsForStocksSince catch + 外层 service catch). 新增 controller endpoint GET /api/sentiment/qa-industry-heat?industry=&lookback_days=&top= + openapi 注解 + 路由挂载. 单测 tests/services/qa/industry-qa-heat-service.test.ts 108 ok / 0 failed 覆盖 10 大模块 (常量冻结 / computeActiveScore 边界 / clamp 边界 / pickTopSubtopic raw_payload 优先 + 降级 + 平票 + 未知 sub 跳过 + 多周 sum / aggregateStatsByStock answer>question clamp + stock_name 取最近周非空 / rankTopActive 多级 tie-break + 零分剔除 + top N 截取 / rowToStatLike + stripSymbolSuffix + getSinceIso / service happy path AC 主验收 + top 限制 + 空 industry throw + 无 stock + 无 stat + listStats throw + listStocks throw + 跨行业脏数据 guard + stock_name fallback + lookback option 透传). tsc 0 err / eslint 0 err / qa-leading-signal-detector & qa-stat-aggregator 同跑 93 + 106 双绿无 regression."
     },
     {
       "id": "US-122",
