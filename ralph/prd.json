@@ -1230,8 +1230,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 79,
-      "passes": false,
-      "notes": "依赖: PM-001"
+      "passes": true,
+      "notes": "依赖: PM-001 | done 2026-06-20: AttributionEngine.ts (Brinson-Fachler pure helper, 8 helpers + computeBrinsonFachler 主入口) + wired into buildDailyAttributionReport via optional attribution_engine_input; 89 unit assertions covering AC ±5% invariant via residual reconciliation; 4 attribution test files all green."
     },
     {
       "id": "US-080",

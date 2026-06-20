@@ -5,10 +5,10 @@
  * timing / selection / sizing / execution_cost) + best/worst 3 + 静态 AI summary.
  *
  * 本 story (PM-001) 是 L8 链路的"主入口 + 6 维框架 + DataSource DI seam", 真
- * Brinson-Fachler 拆解 (PM-002 / US-079) / Model 持久化 (PM-003) / Execution
- * cost aggregator (PM-004) / AIAttributionSummary (PM-005) / cron (PM-006) /
- * route (PM-007) / bias (PM-008) / 飞书 push (PM-009) 由后续 story 各自填充
- * 对应 DataSource method 即可, 主入口契约不变.
+ * Brinson-Fachler 拆解 (PM-002 / US-079 — 已接入, 见 AttributionEngine.ts) /
+ * Model 持久化 (PM-003) / Execution cost aggregator (PM-004) / AIAttributionSummary
+ * (PM-005) / cron (PM-006) / route (PM-007) / bias (PM-008) / 飞书 push (PM-009)
+ * 由后续 story 各自填充对应 DataSource method 即可, 主入口契约不变.
  *
  * 设计遵循 services/CLAUDE.md 的 DataSource DI 模式 + fail-open 默认:
  *   (1) DailyAttributionDataSource interface 把所有 I/O 抽干净
@@ -49,6 +49,11 @@
  */
 
 import { logger } from '../../utils/logger';
+import {
+  AttributionEngineInput,
+  AttributionEngineResult,
+  computeBrinsonFachler,
+} from './AttributionEngine';
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -489,27 +494,48 @@ export function topPnL(
  *   - residual — total_pnl - industry_total - execution_cost (其它 4 维占位)
  *   - factor_contrib / timing / selection / sizing — 全 0 placeholder
  * PM-002 (AttributionEngine) 真接入 Brinson-Fachler 后改 residual 公式即可.
+ *
+ * PM-002 接入 (US-079): 当 caller 传入 attribution_engine_result 时,
+ *   - sizing_contrib    ← allocation_contrib  (行业 β over/underweight)
+ *   - selection_contrib ← selection_contrib   (行业内 α)
+ *   - timing_contrib    ← interaction_contrib (交叉项)
+ *   - residual 重算 = total - industry - allocation - selection - interaction + execution_cost
+ *   让 AC §E.2 ±5% 不变量 trivially 成立.
  */
 export function sixDimBreakdown(input: {
   trades: DailyAttributionTradeRow[];
   symbolToIndustry: Record<string, string>;
   totalPnL: number;
+  attribution_engine_result?: AttributionEngineResult | null;
 }): DailyAttributionBreakdown {
-  const { trades, symbolToIndustry, totalPnL } = input;
+  const { trades, symbolToIndustry, totalPnL, attribution_engine_result } = input;
   const buckets = bucketByIndustry(trades, symbolToIndustry);
   const industry_contrib = rankIndustryContrib(buckets, totalPnL);
   const industry_total = buckets.reduce((s, b) => s + b.pnl, 0);
   const execution_cost = computeExecutionCost(trades);
-  // execution_cost 是负向, 但当前列存正值; residual 计算时减掉
   const safeTotal = Number.isFinite(totalPnL) ? totalPnL : 0;
-  const residual = round2(safeTotal - industry_total + execution_cost);
+  // PM-002 4 维 — caller 传 engine_result 时填真值, 否则 placeholder=0 兼容 PM-001
+  const allocation = attribution_engine_result
+    ? safeNumber(attribution_engine_result.allocation_contrib)
+    : 0;
+  const selection = attribution_engine_result
+    ? safeNumber(attribution_engine_result.selection_contrib)
+    : 0;
+  const interaction = attribution_engine_result
+    ? safeNumber(attribution_engine_result.interaction_contrib)
+    : 0;
+  // residual = total - industry - 4 维 - execution_cost; execution_cost 是支出 (正值列存),
+  // 物理上拉低 total 故 residual 公式 += execution_cost 抵消.
+  const residual = round2(
+    safeTotal - industry_total - allocation - selection - interaction + execution_cost
+  );
   return {
     factor_contrib: [],
     factor_contrib_total: 0,
     industry_contrib,
-    timing_contrib: 0,
-    selection_contrib: 0,
-    sizing_contrib: 0,
+    timing_contrib: round2(interaction),
+    selection_contrib: round2(selection),
+    sizing_contrib: round2(allocation),
     execution_cost,
     residual,
   };
@@ -543,6 +569,10 @@ export function heuristicSummary(report: DailyAttributionReport): string {
 /**
  * 主入口纯函数. 接 4 路输入 (trades / snapshots / positions / industry map) +
  * portfolio_id + date → 完整 6 维 report.
+ *
+ * PM-002 接入 (US-079): 可选传 `attribution_engine_input` (含 industry-level
+ * portfolio/benchmark weight + return). 传了就调 Brinson-Fachler engine 把
+ * sizing/selection/timing 4 维填真值; 不传保持 PM-001 placeholder=0 行为.
  */
 export function buildDailyAttributionReport(input: {
   portfolio_id: number;
@@ -552,6 +582,7 @@ export function buildDailyAttributionReport(input: {
   positions: DailyAttributionPositionRow[];
   symbolToIndustry: Record<string, string>;
   generated_at?: string;
+  attribution_engine_input?: AttributionEngineInput | null;
 }): DailyAttributionReport {
   const anchorDate = normalizeAttributionDate(input.date);
   // 仅保留 anchor date 当日的 trade
@@ -561,10 +592,14 @@ export function buildDailyAttributionReport(input: {
   const { pnl, pct } = computeDailyPnL(input.snapshots || []);
   const totalPnL = Number.isFinite(pnl) ? pnl : 0;
   const realized = computeRealizedPnL(tradesToday);
+  const engineResult = input.attribution_engine_input
+    ? computeBrinsonFachler(input.attribution_engine_input)
+    : null;
   const breakdown = sixDimBreakdown({
     trades: tradesToday,
     symbolToIndustry: input.symbolToIndustry || {},
     totalPnL,
+    attribution_engine_result: engineResult,
   });
   const buyCount = tradesToday.filter(t => t.direction === 'BUY').length;
   const sellCount = tradesToday.filter(t => t.direction === 'SELL').length;
@@ -600,6 +635,12 @@ export interface GenerateDailyReportOptions {
   date?: string;
   /** override generated_at (单测用) */
   generated_at?: string;
+  /**
+   * PM-002 接入: caller (e.g. cron) 准备好 industry-level benchmark + return 后
+   * 传入, 让 Brinson-Fachler engine 填 sizing/selection/timing 真值.
+   * 不传保持 PM-001 placeholder=0 行为.
+   */
+  attribution_engine_input?: AttributionEngineInput | null;
 }
 
 export class DailyAttributionService {
@@ -656,6 +697,7 @@ export class DailyAttributionService {
         positions: positions || [],
         symbolToIndustry: symbolToIndustry || {},
         generated_at: options.generated_at,
+        attribution_engine_input: options.attribution_engine_input ?? null,
       });
       return { status: DAILY_ATTRIBUTION_STATUS.OK, report };
     } catch (err) {
@@ -688,4 +730,9 @@ function round2(n: number): number {
 function round4(n: number): number {
   if (!Number.isFinite(n)) return 0;
   return Math.round(n * 10000) / 10000;
+}
+
+function safeNumber(n: unknown): number {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return 0;
+  return n;
 }

@@ -7,10 +7,10 @@
 
 ```
 DailyAttributionService.ts   — PM-001 主入口 + 6 维框架 + DataSource DI seam
+AttributionEngine.ts         — PM-002 Brinson-Fachler 拆解 (pure helper, no DB)
 ```
 
 后续 story 在本目录新增:
-- PM-002 (US-079): `AttributionEngine.ts` — Brinson-Fachler 真拆解
 - PM-003 (US-080): 持久化走 `backend/src/models/DailyAttributionReport.ts` + migration
 - PM-004 (US-081): `ExecutionCostAggregator.ts` — 滑点 + 手续费 + 印花税
 - PM-005 (US-082): `AIAttributionSummary.ts` — LLM 替换 heuristicSummary
@@ -34,6 +34,33 @@ sum(industry_contrib.pnl) + selection_contrib + timing_contrib + sizing_contrib
 PM-001 当前 4 个 placeholder 字段 = 0, residual = `total - industry + execution_cost`
 让等式 trivially 成立. PM-002 接入真因子模型时, 改 residual 公式即可, 主入口签名
 和返回 shape 全保留.
+
+### PM-002 AttributionEngine 接入 (US-079, 已落地)
+
+`AttributionEngine.ts` 是纯函数 Brinson-Fachler 拆解, **不接任何 model/DB**.
+主入口 `computeBrinsonFachler(input)`, 输入 `{portfolio_value, rows[]}` (每行含
+`portfolio_weight / benchmark_weight / portfolio_return / benchmark_return`),
+输出 `{allocation_contrib, selection_contrib, interaction_contrib, total_active_return, by_industry[], meta}`.
+
+`buildDailyAttributionReport` 可选接 `attribution_engine_input` — 传了就调
+engine 把 4 维 placeholder 替换成 sizing/selection/timing 真值:
+
+- `sizing_contrib`    ← `allocation_contrib`  (行业 β over/underweight)
+- `selection_contrib` ← `selection_contrib`   (行业内 α)
+- `timing_contrib`    ← `interaction_contrib` (交叉项)
+- `factor_*` 仍 placeholder=0 (留 PM-005)
+
+`residual` 公式重算 = `total - industry - alloc - sel - inter + execution_cost`,
+让 AC §E.2 ±5% 不变量永远 trivially 成立.
+
+**fail-safe**: rows 空/V<=0/NaN/Infinity 全自动 0; 同 industry 重复行自动合并
+(`mergeAttributionRowsByIndustry`); 没给 `benchmark_weight` 走 universe 等权
+(`fillBenchmarkWeightsEqual`, `meta.used_equal_weight_benchmark=true`).
+
+**caller 何时传**: 当 caller (PM-006 cron / route) 准备好"每行业 portfolio
+weight + portfolio return + benchmark weight + benchmark return" 4 路 input 后
+才传; 否则 (e.g. benchmark 不可达, 行业数据缺失) 不传即可, 保持 PM-001
+placeholder=0 行为.
 
 ### DataSource 接口扩展
 
