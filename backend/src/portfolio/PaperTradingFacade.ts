@@ -50,12 +50,9 @@ import { paperTradingRiskProfileService } from './internal/PaperTradingRiskProfi
 import { paperTradingOrderIntentService } from './internal/PaperTradingOrderIntentService';
 import { paperTradingTuningApplyService } from './internal/PaperTradingTuningApplyService';
 import { recommendationTradeOutcomeService } from '../services/RecommendationTradeOutcomeService';
-import { positionLimitGuard } from './risk/PositionLimitGuard';
-import { drawdownCircuitBreaker, RiskGuardUnavailableError } from './risk/DrawdownCircuitBreaker';
-import {
-  handleRiskGuardUnavailable,
-  loadProductionRiskAlertCreator,
-} from './risk/RiskGuardFailClosed';
+// US-136 [EX-011] (2026-06-21): drawdownCircuitBreaker / positionLimitGuard / RiskGuardUnavailableError /
+// handleRiskGuardUnavailable / loadProductionRiskAlertCreator 不再在 facade 直接调 —
+// 全部走 internal/preTradeGuards.checkAllPreTradeGates 统一入口 (七闸门统一入口).
 import { evaluateFeasibilityGate, emitFeasibilityGateAlert } from './internal/feasibilityGate';
 import { perStockStopLossGuard, pickEffectivePct } from './risk/PerStockStopLossGuard';
 import { incrementOrderTotal } from '../metrics/PrometheusRegistry';
@@ -930,85 +927,34 @@ export class PaperTradingFacade {
         throw err;
       }
 
-      // ---- US-049: Drawdown circuit breaker LEVEL_1 pause ----
-      // If the portfolio is in an active LEVEL_1 pause window (peak-drawdown
-      // ≥ 10% triggered by the EOD evaluator), block NEW openings.  Adding to
-      // existing positions is allowed (covers策略 add-on without forcing
-      // operators to manually clear the pause for every routine top-up).
-      // US-011 (PR-006): fail-CLOSED handling extracted to the shared
-      // `handleRiskGuardUnavailable` helper (was BETA-7 inline catch-and-write
-      // duplicated in 3 places). Same alert shape, same statusCode=503 throw,
-      // but single source of truth for RiskAlert payload + rule_id.
-      let breakerResult: { ok: boolean; reason?: string; paused_until?: any };
-      try {
-        breakerResult = await drawdownCircuitBreaker.checkBuyAllowed({
-          user_id,
-          symbol,
-        });
-      } catch (guardErr: any) {
-        if (guardErr instanceof RiskGuardUnavailableError) {
-          await handleRiskGuardUnavailable({
-            err: guardErr,
-            user_id,
-            symbol,
-            callerLabel: 'facade.placeOrder',
-            dataSource: loadProductionRiskAlertCreator(),
-          });
-          throw guardErr;
-        }
-        // 其它 unexpected 错误也按 fail-CLOSED 处理 — `wrapFailClosed` 在 guard
-        // 层应该已经把 unexpected error 包成 RiskGuardUnavailableError, 这里
-        // 只是兜底防御性 re-throw.
-        logger.warn(
-          `[facade.placeOrder] drawdownCircuitBreaker.checkBuyAllowed unexpected err: ${
-            guardErr?.message || guardErr
-          }`
-        );
-        throw guardErr;
-      }
-      if (!breakerResult.ok && breakerResult.reason) {
-        const err: any = new Error(breakerResult.reason);
-        err.statusCode = 400;
-        err.code = 'DRAWDOWN_BREAKER_PAUSED';
-        err.paused_until = breakerResult.paused_until;
-        throw err;
-      }
-
-      // ---- US-047: Position limit guard ----
-      // Run BEFORE the cash check so that a position-limit violation is
-      // reported as a "仓位上限" issue rather than an "可用资金不足" one.
-      // `cost` (execute_price × quantity, ex-commission) is the right
-      // notional to compare against `max_single_stock_pct` since commission
-      // doesn't accrue to the position's market value.
-      // US-011 (PR-006): same fail-CLOSED wrap as drawdown breaker — DB
-      // outage in loadPortfolio/loadPositions now bubbles up as
-      // RiskGuardUnavailableError instead of raw Sequelize 500.
-      let guardResult: { ok: boolean; violation?: any; config: any };
-      try {
-        guardResult = await positionLimitGuard.checkBuyOrder({
-          user_id,
-          symbol,
-          proposed_value: cost,
-        });
-      } catch (guardErr: any) {
-        if (guardErr instanceof RiskGuardUnavailableError) {
-          await handleRiskGuardUnavailable({
-            err: guardErr,
-            user_id,
-            symbol,
-            callerLabel: 'facade.placeOrder',
-            dataSource: loadProductionRiskAlertCreator(),
-          });
-          throw guardErr;
-        }
-        throw guardErr;
-      }
-      if (!guardResult.ok && guardResult.violation) {
-        const err: any = new Error(guardResult.violation.message);
-        err.statusCode = 400;
-        err.code = 'POSITION_LIMIT_VIOLATION';
-        err.rule = guardResult.violation.rule;
-        err.detail = guardResult.violation.detail;
+      // ---- US-049 + US-047: Drawdown circuit breaker + PositionLimitGuard ----
+      // US-136 [EX-011] (2026-06-21): 七闸门统一入口 — 把 drawdown + position-limit
+      // 两道硬风控合到 `checkAllPreTradeGates(side='BUY')`, 三 caller (facade /
+      // automation / LiveTradingService) 通过同一个 helper 走. 之前 facade 串
+      // drawdownCircuitBreaker.checkBuyAllowed + positionLimitGuard.checkBuyOrder
+      // 两段重复代码, 与 automation.preTradeGuards.checkPreBuyGuards 同款逻辑
+      // 双份维护; 现在统一到 checkAllPreTradeGates → checkPreBuyGuards.
+      //
+      // fail-CLOSED 行为: RISK_GUARD_UNAVAILABLE 由内部 handleRiskGuardUnavailable
+      // 写好 RiskAlert 后返 ok=false, caller 拼 statusCode=503 throw; 业务级拒单
+      // (DRAWDOWN_BREAKER_PAUSED / POSITION_LIMIT_VIOLATION) 走 statusCode=400.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const _preTradeGuardsBuy = require('./internal/preTradeGuards');
+      const buyGateResult = await _preTradeGuardsBuy.checkAllPreTradeGates({
+        side: 'BUY',
+        user_id,
+        symbol,
+        proposed_value: cost,
+        caller_label: 'facade.placeOrder',
+      });
+      if (!buyGateResult.ok) {
+        const err: any = new Error(buyGateResult.reason);
+        err.statusCode = buyGateResult.code === 'RISK_GUARD_UNAVAILABLE' ? 503 : 400;
+        err.code = buyGateResult.code;
+        if (buyGateResult.detail) err.detail = buyGateResult.detail;
+        if (buyGateResult.detail?.paused_until)
+          err.paused_until = buyGateResult.detail.paused_until;
+        if (buyGateResult.detail?.rule) err.rule = buyGateResult.detail.rule;
         throw err;
       }
 
@@ -1286,25 +1232,30 @@ export class PaperTradingFacade {
     }
 
     // ============= T+1 拦截 (修复 CRITICAL C5) =============
-    // A 股当日 BUY 不可当日 SELL. Batch I (2026-06-17): 抽到 preTradeGuards.checkTPlus1
-    // 共享, automation createSellTrade 同款用. bypass_t_plus_1=true 时跳过.
+    // A 股当日 BUY 不可当日 SELL. Batch I (2026-06-17): 抽到 preTradeGuards.checkTPlus1.
+    // US-136 [EX-011] (2026-06-21): 七闸门统一入口 — SELL 路径走 checkAllPreTradeGates
+    // (side='SELL'), 与 BUY 路径同一个 helper, 三 caller (facade / automation /
+    // LiveTradingService) 全通过它. bypass_t_plus_1=true 时跳过.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { checkTPlus1 } = require('./internal/preTradeGuards');
-    const tPlus1 = await checkTPlus1({
+    const _preTradeGuardsSell = require('./internal/preTradeGuards');
+    const sellGateResult = await _preTradeGuardsSell.checkAllPreTradeGates({
+      side: 'SELL',
+      user_id,
       portfolio_id: portfolio.id,
       symbol,
       held_quantity: Number(position.quantity) || 0,
       sell_quantity: quantity,
-      bypass: options.bypass_t_plus_1 === true,
+      bypass_t_plus_1: options.bypass_t_plus_1 === true,
+      caller_label: 'facade.placeOrder',
     });
-    if (!tPlus1.ok) {
-      const err: any = new Error(tPlus1.reason || 'T+1 violation');
+    if (!sellGateResult.ok) {
+      const err: any = new Error(sellGateResult.reason);
       err.statusCode = 400;
-      err.code = 'T_PLUS_1_VIOLATION';
+      err.code = sellGateResult.code;
       err.detail = {
         holding: position.quantity,
-        today_buy: tPlus1.today_buy_qty,
-        available: tPlus1.available_for_sell,
+        today_buy: sellGateResult.detail?.today_buy,
+        available: sellGateResult.detail?.available,
         requested: quantity,
       };
       throw err;

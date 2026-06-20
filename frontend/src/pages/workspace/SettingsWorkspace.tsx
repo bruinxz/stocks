@@ -43,6 +43,7 @@ import {
   SafetyOutlined,
   BulbOutlined,
   PoweroffOutlined,
+  AlertOutlined,
 } from '@ant-design/icons';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import SizingPolicyTab from './SettingsWorkspace.SizingPolicyTab';
@@ -51,6 +52,7 @@ import AnalysisEngineTab from './SettingsWorkspace.AnalysisEngineTab';
 import RiskParametersCenterTab from './SettingsWorkspace.RiskParametersCenterTab';
 import TodoSuggestionsTab from './SettingsWorkspace.TodoSuggestionsTab';
 import StrategyKillSwitchTab from './SettingsWorkspace.StrategyKillSwitchTab';
+import BlackSwanHistoryTab from './SettingsWorkspace.BlackSwanHistoryTab';
 import {
   loadNotificationChannels,
   updateNotificationChannels,
@@ -129,6 +131,7 @@ const SettingsWorkspace: React.FC = () => {
     { key: 'risk-parameters', label: '风控参数中心', icon: <SafetyOutlined /> },
     { key: 'strategy-kill-switch', label: '策略 kill-switch', icon: <PoweroffOutlined /> },
     { key: 'todo-suggestions', label: '待办建议', icon: <BulbOutlined /> },
+    { key: 'black-swan', label: '黑天鹅历史', icon: <AlertOutlined /> },
     { key: 'users', label: '用户管理', icon: <TeamOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('push-channels');
@@ -289,6 +292,8 @@ const SettingsWorkspace: React.FC = () => {
       <Tag color="red">US-069 策略 kill-switch</Tag>
     ) : activeKey === 'todo-suggestions' ? (
       <Tag color="gold">US-068 待办建议</Tag>
+    ) : activeKey === 'black-swan' ? (
+      <Tag color="red">US-133 PR-018 黑天鹅历史</Tag>
     ) : (
       <Tag color="processing">待迁移现有个人中心 / 用户管理页</Tag>
     );
@@ -1650,6 +1655,8 @@ const SettingsWorkspace: React.FC = () => {
         <StrategyKillSwitchTab />
       ) : activeKey === 'todo-suggestions' ? (
         <TodoSuggestionsTab />
+      ) : activeKey === 'black-swan' ? (
+        <BlackSwanHistoryTab />
       ) : (
         renderPlaceholder()
       )}
@@ -2078,20 +2085,21 @@ const WeeklyReviewPreviewModal: React.FC<WeeklyReviewPreviewModalProps> = ({
                 {p}
               </Paragraph>
             ))}
-            {payload.ai_opinion.recommendations && payload.ai_opinion.recommendations.length > 0 && (
-              <>
-                <Paragraph style={{ marginTop: 8, marginBottom: 4, fontWeight: 600 }}>
-                  💡 操作建议
-                </Paragraph>
-                <ul style={{ margin: 0, paddingLeft: 20, color: '#475569' }}>
-                  {payload.ai_opinion.recommendations.map((r, i) => (
-                    <li key={i} style={{ marginBottom: 4 }}>
-                      {r}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
+            {payload.ai_opinion.recommendations &&
+              payload.ai_opinion.recommendations.length > 0 && (
+                <>
+                  <Paragraph style={{ marginTop: 8, marginBottom: 4, fontWeight: 600 }}>
+                    💡 操作建议
+                  </Paragraph>
+                  <ul style={{ margin: 0, paddingLeft: 20, color: '#475569' }}>
+                    {payload.ai_opinion.recommendations.map((r, i) => (
+                      <li key={i} style={{ marginBottom: 4 }}>
+                        {r}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
           </Card>
 
           <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8 }}>

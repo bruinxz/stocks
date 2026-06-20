@@ -3930,3 +3930,25 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - "MEDIUM 阈值 < HIGH 阈值时静默 swap" 是 multi-level severity 配置的必要 normalize 守门. 用户把 HIGH 设到 80 / MEDIUM 设到 50 → MEDIUM 永被 HIGH 决策覆盖 (因为 alignment < 50 时已经先命中 HIGH 分支 < 80). normalize 时静默拉齐 (medium = high) 保 MEDIUM 分支至少 reachable. 与 sizing_limit_consistency [PR-003] 双向 audit 思想同源.
   - "RiskParametersCenterTab 9-section 模板" 已完全成熟, 未来新增第 10 个 risk config 章节直接 4 步 + 1 测: (a) 加 interface (与 backend 对齐), (b) useState + loadAll 加一条 endpoint, (c) hasSectionChanges 派生 + KPI 统计加一项, (d) Card 复用 morning-checkup 模板 (Switch + InputNumber 列). (e) tests/risk/risk-parameters-center-tab.test.ts 加一组 endpoint + saving state assertion. 总耗时 ~30 min / 60 行 + 5 测.
 ---
+
+## 2026-06-21 - US-138 [EX-013] 实盘 fill 异常分类
+- 实现一个纯函数分类器 `fillAnomalyClassifier.ts` 把 `live_broker_commands` 终态映射成 10 个归一化类别 (filled_full / partial_only / cancelled_unfilled / cancelled_partial / rejected / failed / expired / aborted / in_flight / unknown). 提供 `classifyFillAnomaly` + `aggregateFillAnomalies` + `FILL_ANOMALY_CATEGORIES` (frozen) + `FILL_ANOMALY_CATEGORY_LABELS` (frozen) + `ANOMALY_CATEGORIES` Set.
+- 新增 `LiveTradingService.getFillAnomalyStats(user_id, {since_hours, sample_per_category})`: 默认 24h, 上限 30 天, 返回 stats counts + anomaly_rate + per-category 最近 5 条样本 (含 client_order_id / symbol / status / finalized_at / reason_code).
+- 新增 controller `getFillAnomalyStats` + route `GET /api/live-trading/fill-anomaly-stats` (走用户 JWT 鉴权).
+- 单测 `tests/live-trading/fill-anomaly-classifier.test.ts` 52 ok DB-less 覆盖: 全枚举映射 + rejected metadata 三种触发条件 (error_kind / reason_code / rejected=true) + cancel_order 单独分支 + aggregate counters + 不变量 (frozen / label key 对齐).
+- 文件变更:
+  - 新增 `backend/src/live-trading/services/fillAnomalyClassifier.ts`
+  - 新增 `backend/tests/live-trading/fill-anomaly-classifier.test.ts`
+  - 修改 `backend/src/live-trading/services/LiveTradingService.ts` (import + getFillAnomalyStats 方法)
+  - 修改 `backend/src/live-trading/controllers/LiveTradingController.ts` (getFillAnomalyStats action)
+  - 修改 `backend/src/live-trading/routes/liveTrading.routes.ts` (新路由 + OpenAPI doc)
+  - 修改 `docs/openapi.json` (regenerated via npm run docs:openapi)
+  - 更新 `backend/src/live-trading/services/CLAUDE.md` 增加 US-138 章节
+- **Learnings for future iterations:**
+  - cancel_order command 必须单独分类 — 它的 status (cancelled / filled / failed) 描述的是"撤单这条指令本身的归宿", 不是"被撤的 place_order 是否部分成交". 不区分就会双计 cancelled_partial: 既算 place_order 的撤单异常, 又算 cancel command 的"成功". 解法: classifier 在最前面 if (command_type === 'cancel_order') return ... 直接路由独立分支.
+  - rejected vs failed 在数据层无法 query 区分 — BridgeService 现在把"券商显式拒单"和"网络/bridge 异常"都映射到 status='failed', 唯一区分点是 metadata.error_kind / metadata.reason_code 前缀. 分类器必须接受 metadata 入参做二次分流, 否则 stats 里 "rejected" 桶永远为 0, 运营看不到真异常.
+  - "Object.freeze 枚举数组 + label 字典" 是 fill anomaly / reconciliation alert 等所有 multi-category UI 的通用模板. 加新 category 不仅要更新数组, 还要同步 label 字典 + ANOMALY_CATEGORIES Set + 单测里的 "labels.key 集与 enum 集对齐" assertion (否则前端打开 fill-anomaly-stats 时 label 显示 undefined).
+  - OpenAPI drift 是隐形的 CI 门 — 新加 router.get('/xxx') 后必须 `npm run docs:openapi` 重新生成 `docs/openapi.json`, 否则 `tests/scripts/check-openapi-drift.test.ts` 失败. 不更新 openapi.json 单测会"突然失败"让人困惑, 写 route 时顺手跑 docs:openapi 已是 muscle memory.
+  - service 层 since_hours 必须 clamp (1 ≤ x ≤ 720) — 不 clamp 就是 DoS 入口 (用户传 since_hours=99999 一次扫几年数据 + 全表 sequence scan). LiveBrokerCommand.findAll 还应该 limit 5000 兜底, 防极端 user 单窗口出 50k+ row 拖崩 service.
+  - sample_per_category 提供 per-category 样本是"统计 + 实例"双视图必备 — 只给 counts 用户看到 cancelled_partial=8 但点不进去看具体哪 8 单是哪个 symbol / 什么时候发生. 提供前 5 条样本 + 后端按 created_at DESC 排序, 让 UI 可以"点击柱状图直接看明细".
+---

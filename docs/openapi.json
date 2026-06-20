@@ -2693,6 +2693,68 @@
         }
       }
     },
+    "/api/sentiment/qa-industry-heat": {
+      "get": {
+        "tags": [
+          "情绪 Sentiment"
+        ],
+        "summary": "行业 QA 热度榜 — 某行业内最近 N 天最活跃的 top N 股票 (US-121 QA-004)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "industry",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "行业名 (与 Stock.industry 一致)"
+          },
+          {
+            "in": "query",
+            "name": "lookback_days",
+            "schema": {
+              "type": "integer",
+              "default": 7,
+              "maximum": 365
+            },
+            "description": "回看天数"
+          },
+          {
+            "in": "query",
+            "name": "top",
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "maximum": 100
+            },
+            "description": "top N 上限"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "行业 QA 热度榜",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数错误"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
     "/api/risk-alerts": {
       "get": {
         "tags": [
@@ -3531,6 +3593,90 @@
           },
           "400": {
             "description": "参数错误"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/risk/reconciliation-alert": {
+      "get": {
+        "tags": [
+          "风控 Risk"
+        ],
+        "summary": "获取当前用户的对账告警阈值配置 (US-137 EX-012)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "对账告警阈值配置"
+          },
+          "400": {
+            "description": "参数错误"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "风控 Risk"
+        ],
+        "summary": "更新当前用户的对账告警阈值配置 (US-137 EX-012)",
+        "description": "lenient normalize — 非法字段沉默回退默认, 不抛 4xx. 与\n/position-limits / /trailing-stop 等 8 个 guard endpoint 同款形态.\n下一次 ReconciliationAlertService.runForUser 调用即生效.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "alignment_score_high_threshold": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "alignment_score_medium_threshold": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "drift_count_high_threshold": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "drift_count_medium_threshold": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "dedupe_window_minutes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1440
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "已保存"
           },
           "401": {
             "description": "未授权"
@@ -8497,6 +8643,90 @@
         ]
       }
     },
+    "/api/me/improvement-suggestions/{id}/apply": {
+      "post": {
+        "tags": [
+          "改进建议 ImprovementSuggestion"
+        ],
+        "summary": "US-126 PM-024 — 应用一条改进建议 (status='open' → 'applied' + 写 applied_at)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "improvement_suggestions.id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "应用成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "applied"
+                          ]
+                        },
+                        "applied_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "action_type": {
+                          "type": "string",
+                          "enum": [
+                            "noop",
+                            "tune_risk_param",
+                            "enable_kill_switch",
+                            "open_workspace_tab"
+                          ]
+                        },
+                        "action": {
+                          "type": "object"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "id 非法"
+          },
+          "401": {
+            "description": "未登录"
+          },
+          "404": {
+            "description": "建议不存在 (亦兼容跨用户访问)"
+          },
+          "409": {
+            "description": "建议非 'open' 状态 (已 applied / dismissed / expired)"
+          }
+        }
+      }
+    },
     "/api/factors/overview": {
       "get": {
         "tags": [
@@ -8833,6 +9063,219 @@
           },
           "404": {
             "description": "因子未注册"
+          }
+        }
+      }
+    },
+    "/api/black-swan/events": {
+      "get": {
+        "tags": [
+          "黑天鹅 BlackSwan"
+        ],
+        "summary": "US-133 PR-018 — 黑天鹅事件分页列表 (按 detected_at DESC)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "event_type",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ST",
+                "SUSPENDED",
+                "NEWS_KEYWORD",
+                "SHAREHOLDER_REDUCTION",
+                "MARKET_REGIME",
+                "OTHER"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "severity",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "symbol",
+                "sector",
+                "market",
+                "portfolio"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "resolved",
+                "expired"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "symbol",
+            "schema": {
+              "type": "string"
+            },
+            "description": "模糊匹配 symbol"
+          },
+          {
+            "in": "query",
+            "name": "date_from",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "default": 30,
+              "minimum": 1,
+              "maximum": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "分页事件列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        },
+                        "total": {
+                          "type": "integer"
+                        },
+                        "page": {
+                          "type": "integer"
+                        },
+                        "limit": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/black-swan/events/{id}": {
+      "get": {
+        "tags": [
+          "黑天鹅 BlackSwan"
+        ],
+        "summary": "US-133 PR-018 — 黑天鹅事件详情 + 关联 postmortem 报告 (可能 null)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "事件详情 + postmortem 4 段 JSONB (可能 null 表示待生成)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "event": {
+                          "type": "object"
+                        },
+                        "postmortem": {
+                          "type": "object",
+                          "nullable": true
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "id 非法"
+          },
+          "401": {
+            "description": "未授权"
+          },
+          "404": {
+            "description": "事件不存在"
           }
         }
       }
@@ -10248,6 +10691,57 @@
           },
           "400": {
             "description": "参数错误"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/live-trading/fill-anomaly-stats": {
+      "get": {
+        "tags": [
+          "实盘 LiveTrading"
+        ],
+        "summary": "实盘 fill 异常分类统计 (US-138 EX-013)",
+        "description": "按 partial / canceled / rejected / failed / expired / aborted 等 10 类目聚合, 返回 counts + anomaly_rate + per-category 样本",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "since_hours",
+            "schema": {
+              "type": "integer",
+              "default": 24,
+              "minimum": 1,
+              "maximum": 720
+            }
+          },
+          {
+            "in": "query",
+            "name": "sample_per_category",
+            "schema": {
+              "type": "integer",
+              "default": 5,
+              "minimum": 1,
+              "maximum": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "统计结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
           },
           "401": {
             "description": "未授权"

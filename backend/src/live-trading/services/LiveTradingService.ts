@@ -33,6 +33,13 @@ import { liveRiskGuardService } from './LiveRiskGuardService';
 import { LIVE_ORDER_CONFIRM_TEXT, liveTradingSafetyService } from './LiveTradingSafetyService';
 import { killSwitchService } from './KillSwitchService';
 import { sendLiveAuditAlert } from './LiveAuditAlertService';
+// US-138 [EX-013]: 实盘 fill 异常分类 — 纯函数 helper + stats aggregator
+import {
+  aggregateFillAnomalies,
+  classifyFillAnomaly,
+  FillAnomalyCategory,
+  FillAnomalyStatsCounts,
+} from './fillAnomalyClassifier';
 import { LIVE_AUDIT_EVENT_TYPES } from '../auditEvents';
 import { logger } from '../../utils/logger';
 import {
@@ -1995,6 +2002,90 @@ export class LiveTradingService {
         );
       }
 
+      // ============ US-136 [EX-011] (2026-06-21): 七闸门统一入口 ============
+      // 与 facade.placeOrder / automation.createBuyTrade|createSellTrade 同一个 helper.
+      // 之前实盘 path 完全不调 paper-trading 那两条 path 的 drawdown + position-limit +
+      // T+1 三道硬风控 (实盘单独走 LiveRiskGuardService.evaluateAllRules + KillSwitch +
+      // TradeComplianceChecker + ExecutionFeasibility), 但 drawdown circuit breaker
+      // 跨账户保护 + 实盘当日 BUY 后当日 SELL 的 T+1 拦截在实盘也应生效 (broker 侧
+      // qmt/ptrade 当日 SELL 也会被拒, server 先拒避免一次浪费的 bridge round trip).
+      //
+      // fail-OPEN: gate 内部 throw 时 logger.warn 不阻塞 (与上面 compliance / feasibility
+      // 同款), 业务级拒单 throw 后写 ORDER_BLOCKED_BY_PRE_TRADE_GATE audit.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { checkAllPreTradeGates } = require('../../portfolio/internal/preTradeGuards');
+        const sideUpper2 =
+          String((draft as any).side || 'BUY').toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
+        const limitPriceRaw2 = Number((draft as any).limit_price || 0);
+        const quantityRaw2 = Number((draft as any).quantity || 0);
+        let gateInput: any;
+        if (sideUpper2 === 'BUY') {
+          gateInput = {
+            side: 'BUY',
+            user_id,
+            symbol: (draft as any).symbol,
+            proposed_value: limitPriceRaw2 * quantityRaw2,
+            caller_label: 'LiveTradingService.approveDraft',
+          };
+        } else {
+          // SELL: T+1 check needs portfolio_id + held_quantity. 实盘 LiveOrderDraft
+          // 不直接挂 paper-trading portfolio_id, 这里允许 metadata.paper_portfolio_id
+          // 显式传; 缺则 skip T+1 (实盘 broker 侧自带 T+1, 不会让 SELL 当日 BUY 通过).
+          const meta2: any = (draft as any).metadata || {};
+          const paperPortfolioId = Number(meta2?.paper_portfolio_id || 0);
+          if (paperPortfolioId > 0) {
+            gateInput = {
+              side: 'SELL',
+              user_id,
+              portfolio_id: paperPortfolioId,
+              symbol: (draft as any).symbol,
+              held_quantity: Number(meta2?.held_quantity || quantityRaw2),
+              sell_quantity: quantityRaw2,
+              bypass_t_plus_1: !!meta2?.bypass_t_plus_1,
+              caller_label: 'LiveTradingService.approveDraft',
+            };
+          } else {
+            gateInput = null;
+          }
+        }
+        if (gateInput) {
+          const preTradeGateResult = await checkAllPreTradeGates(gateInput);
+          if (!preTradeGateResult.ok) {
+            await this.audit({
+              user_id,
+              account_id: (draft as any).account_id,
+              draft_id,
+              event_type: 'live_order_blocked_by_pre_trade_gate',
+              severity: 'critical',
+              message: `七闸门统一入口拒单 (${preTradeGateResult.gate}/${preTradeGateResult.code}): ${preTradeGateResult.reason}`,
+              before_state: before,
+              after_state: this.toPlain(draft),
+              metadata: {
+                pre_trade_gate: {
+                  side: sideUpper2,
+                  gate: preTradeGateResult.gate,
+                  code: preTradeGateResult.code,
+                  detail: preTradeGateResult.detail,
+                },
+              },
+            });
+            throw new Error(
+              `七闸门拒单 (${preTradeGateResult.code}): ${preTradeGateResult.reason}`
+            );
+          }
+        }
+      } catch (err: any) {
+        if (err?.message && err.message.startsWith('七闸门拒单')) {
+          throw err;
+        }
+        logger.warn(
+          `[LiveTradingService.approveDraft] checkAllPreTradeGates failed (fail-open): ${
+            err?.message || err
+          }`
+        );
+      }
+
       await draft.update(
         { status: 'approved', approved_by: user_id, approved_at: new Date() },
         { transaction: t }
@@ -2354,6 +2445,120 @@ export class LiveTradingService {
       limit: Math.min(Math.max(Number(limit || 50), 1), 200),
     });
     return rows.map(item => this.toPlain(item));
+  }
+
+  /**
+   * US-138 [EX-013] 实盘 fill 异常分类统计.
+   *
+   * 扫描指定 user 在 `since_hours` 内的 `live_broker_commands`, 按 fillAnomalyClassifier
+   * 的 10 类目逐条归类后聚合 counts + anomaly_rate + 最近 N 条样本.
+   *
+   * 设计:
+   *   - 默认窗口 24h (与 reconciliation / overview 默认一致), 可通过 since_hours 参数覆盖
+   *     (上限 720h = 30 天, 防超大 scan)
+   *   - 只读, 不写 DB, 不发告警 (告警走 ReconciliationAlertService / sendLiveAuditAlert)
+   *   - per-category 提供最近 5 条样本 (client_order_id + symbol + side + qty + filled +
+   *     finalized_at + reason_code) 让前端可以"点 cancelled_partial 看具体单"
+   *   - 包含 in_flight 计数但分母排除, 与 classifier 设计一致
+   *
+   * @returns {window: {since_hours, since_at, until_at}, stats: FillAnomalyStatsCounts,
+   *          samples: Partial per-category list}
+   */
+  async getFillAnomalyStats(
+    user_id: number,
+    options: { since_hours?: number; sample_per_category?: number } = {}
+  ): Promise<{
+    window: { since_hours: number; since_at: string; until_at: string };
+    stats: FillAnomalyStatsCounts;
+    samples: Array<{
+      category: FillAnomalyCategory;
+      items: Array<{
+        command_id: number;
+        client_order_id: string;
+        symbol: string;
+        side: string | null;
+        command_type: string;
+        quantity: number;
+        filled_quantity: number;
+        status: string;
+        finalized_at: string | null;
+        created_at: string;
+        reason_code: string | null;
+      }>;
+    }>;
+  }> {
+    if (!user_id || !Number.isFinite(user_id)) {
+      throw new Error('user_id 必填');
+    }
+    const sinceHoursRaw = Number(options.since_hours);
+    const sinceHours = Number.isFinite(sinceHoursRaw) && sinceHoursRaw > 0 ? sinceHoursRaw : 24;
+    // 上限 30 天, 防超大 scan; 下限 1h
+    const sinceHoursClamped = Math.min(Math.max(sinceHours, 1), 24 * 30);
+    const samplePerCategory = Math.min(Math.max(Number(options.sample_per_category) || 5, 1), 20);
+
+    const until = new Date();
+    const since = new Date(until.getTime() - sinceHoursClamped * 3600 * 1000);
+
+    const rows = await LiveBrokerCommand.findAll({
+      where: {
+        user_id,
+        created_at: { [Op.gte]: since },
+      },
+      order: [['created_at', 'DESC']],
+      limit: 5000,
+    });
+
+    const plainRows = rows.map(item => this.toPlain(item)) as any[];
+    const categorized = plainRows.map(row => ({
+      row,
+      category: classifyFillAnomaly({
+        status: row.status,
+        quantity: row.quantity,
+        filled_quantity: row.filled_quantity,
+        command_type: row.command_type,
+        metadata: row.metadata,
+      }),
+    }));
+
+    const stats = aggregateFillAnomalies(categorized.map(c => c.category));
+
+    // per-category 采样: 已按 created_at DESC 排序, 取前 N
+    const samplesMap = new Map<FillAnomalyCategory, any[]>();
+    for (const { row, category } of categorized) {
+      const list = samplesMap.get(category) || [];
+      if (list.length < samplePerCategory) {
+        list.push({
+          command_id: Number(row.id),
+          client_order_id: String(row.client_order_id || ''),
+          symbol: String(row.symbol || ''),
+          side: row.side || null,
+          command_type: String(row.command_type || ''),
+          quantity: Number(row.quantity || 0),
+          filled_quantity: Number(row.filled_quantity || 0),
+          status: String(row.status || ''),
+          finalized_at: row.finalized_at ? new Date(row.finalized_at).toISOString() : null,
+          created_at: new Date(row.created_at).toISOString(),
+          reason_code:
+            (row.metadata && (row.metadata.reason_code || row.metadata.error_kind)) || null,
+        });
+        samplesMap.set(category, list);
+      }
+    }
+
+    const samples = stats.by_category.map(b => ({
+      category: b.category,
+      items: samplesMap.get(b.category) || [],
+    }));
+
+    return {
+      window: {
+        since_hours: sinceHoursClamped,
+        since_at: since.toISOString(),
+        until_at: until.toISOString(),
+      },
+      stats,
+      samples,
+    };
   }
 
   async getQuotes(symbols: string[]) {

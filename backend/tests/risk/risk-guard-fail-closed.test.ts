@@ -298,12 +298,20 @@ function testMetaGuard() {
     'utf-8'
   );
 
-  // (a) Facade + preTradeGuards must import handleRiskGuardUnavailable
+  // (a) preTradeGuards must import handleRiskGuardUnavailable.
+  //
+  // US-136 [EX-011] (2026-06-21): facade.placeOrder no longer imports
+  // handleRiskGuardUnavailable directly — it routes through the unified
+  // `checkAllPreTradeGates` entry in preTradeGuards (七闸门统一入口), which
+  // itself calls handleRiskGuardUnavailable inside checkPreBuyGuards. The
+  // single-source-of-truth intent (one RiskAlert payload shape for
+  // SYSTEM:RISK_GUARD_UNAVAILABLE) is preserved one level deeper. We assert
+  // (a1) facade DOES go through checkAllPreTradeGates and (a2) preTradeGuards
+  // still imports handleRiskGuardUnavailable.
   assert(
-    'facade imports handleRiskGuardUnavailable',
-    /import\s*\{[^}]*handleRiskGuardUnavailable[^}]*\}\s*from\s*['"]\.\/risk\/RiskGuardFailClosed['"]/.test(
-      facadeSrc
-    )
+    'facade routes through checkAllPreTradeGates (preTradeGuards unified entry)',
+    /checkAllPreTradeGates/.test(facadeSrc) &&
+      /require\(['"]\.\/internal\/preTradeGuards['"]\)/.test(facadeSrc)
   );
   assert(
     'preTradeGuards imports handleRiskGuardUnavailable',

@@ -6719,18 +6719,23 @@ class PaperTradingAutomationService {
     // Batch I (2026-06-17, C2-pos-limit): pre-trade guards. 之前 automation BUY
     // 完全跳过 PositionLimitGuard / DrawdownCircuitBreaker, 与 facade.placeOrder
     // 双轨制 + 自动跟单失去组合级硬风控. 在 transaction 外先 check, 失败抛 err.code.
+    // US-136 [EX-011] (2026-06-21): 七闸门统一入口 — BUY 路径改走 checkAllPreTradeGates
+    // (side='BUY'), 与 facade / LiveTradingService 同款 helper, 内部仍调
+    // checkPreBuyGuards (drawdown + position-limit).
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { checkPreBuyGuards } = require('./preTradeGuards');
-    const guardResult = await checkPreBuyGuards({
+    const { checkAllPreTradeGates } = require('./preTradeGuards');
+    const buyGateResult = await checkAllPreTradeGates({
+      side: 'BUY',
       user_id: portfolio.user_id,
       symbol,
       proposed_value: amount, // = execute_price × quantity, ex-commission
+      caller_label: 'automation.createBuyTrade',
     });
-    if (!guardResult.ok) {
-      const err: any = new Error(guardResult.reason);
-      err.statusCode = 400;
-      err.code = guardResult.code;
-      err.detail = guardResult.detail;
+    if (!buyGateResult.ok) {
+      const err: any = new Error(buyGateResult.reason);
+      err.statusCode = buyGateResult.code === 'RISK_GUARD_UNAVAILABLE' ? 503 : 400;
+      err.code = buyGateResult.code;
+      err.detail = buyGateResult.detail;
       throw err;
     }
 
@@ -6926,23 +6931,28 @@ class PaperTradingAutomationService {
     // 模拟盘可以当日 BUY → 当日 SELL, 违反 A 股实盘规则, EV 系统性高估短线策略.
     // 现在显式 check; bypass_t_plus_1 仅在 EOD guard 接的真卖路径下由 caller 显式置 true
     // (因为 EOD trigger 是 next-day open 前评估, 已天然 T+1 通过).
+    // US-136 [EX-011] (2026-06-21): 七闸门统一入口 — SELL 路径改走 checkAllPreTradeGates
+    // (side='SELL'), 与 facade.placeOrder / LiveTradingService.approveDraft 同一个 helper.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { checkTPlus1 } = require('./preTradeGuards');
-    const tPlus1 = await checkTPlus1({
+    const { checkAllPreTradeGates } = require('./preTradeGuards');
+    const sellGateResult = await checkAllPreTradeGates({
+      side: 'SELL',
+      user_id: portfolio.user_id,
       portfolio_id: portfolio.id,
       symbol,
       held_quantity: Number(position.quantity) || 0,
       sell_quantity: quantity,
-      bypass: params.bypass_t_plus_1 === true,
+      bypass_t_plus_1: params.bypass_t_plus_1 === true,
+      caller_label: 'automation.createSellTrade',
     });
-    if (!tPlus1.ok) {
-      const err: any = new Error(tPlus1.reason || 'T+1 violation');
+    if (!sellGateResult.ok) {
+      const err: any = new Error(sellGateResult.reason);
       err.statusCode = 400;
-      err.code = 'T_PLUS_1_VIOLATION';
+      err.code = sellGateResult.code;
       err.detail = {
         holding: position.quantity,
-        today_buy: tPlus1.today_buy_qty,
-        available: tPlus1.available_for_sell,
+        today_buy: sellGateResult.detail?.today_buy,
+        available: sellGateResult.detail?.available,
         requested: quantity,
       };
       throw err;

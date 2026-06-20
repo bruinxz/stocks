@@ -72,3 +72,39 @@ inline 拼 SQL). DB-less, 79 ok.
 frozen / normalize empty / lenient invalid / happy / swap inverted thresholds / custom
 threshold HIGH branch / custom threshold drift_relaxed / backward compat / extreme
 threshold disables alerts (63 ok 总).
+
+
+## US-138 [EX-013] fillAnomalyClassifier — 实盘 fill 异常分类
+
+把 `live_broker_commands` 终态映射成 10 个归一化类别 (`filled_full` / `partial_only` /
+`cancelled_unfilled` / `cancelled_partial` / `rejected` / `failed` / `expired` / `aborted`
+/ `in_flight` / `unknown`), 是"运营 / 风控关注的 fill 异常率" 的事实源.
+
+**主入口**: `classifyFillAnomaly(cmd)` 纯函数 + `aggregateFillAnomalies(iter)` 聚合; service
+层 `LiveTradingService.getFillAnomalyStats(user_id, {since_hours, sample_per_category})`
+查表后归类 + 提供 per-category 最近 N 条样本. HTTP: `GET /api/live-trading/fill-anomaly-stats`.
+
+**关键设计**:
+- 区分 `cancelled_partial` (撤单部分成交, 用户主动) 和 `expired` (TTL 过期, 系统被动) —
+  filled>0 但 status='expired' 仍归 `expired`, 不归 `cancelled_partial`
+- `failed` 状态走 metadata 二次分类: `error_kind='rejected_by_broker'` /
+  `reason_code='reject_*'` / `rejected=true` → `rejected`; 其余 → `failed`. 与"网络/bridge
+  异常"区分开, 让运营能识别"是券商拒了还是 bridge 挂了"
+- `cancel_order` command 单独分支: 它的 status 描述的是"撤单这条指令的归宿", 不是"被撤的
+  place_order 是否部分成交". cancel + cancelled/filled = `filled_full` (达成意图), cancel +
+  failed = `failed`. 防 stats 双计.
+- `ANOMALY_CATEGORIES` Set 显式排除 `filled_full` / `in_flight` / `unknown`, anomaly_rate =
+  anomaly_total / terminal_total (in_flight 不进分母).
+- 全部 `Object.freeze` (枚举数组 + label 字典) 防意外 mutate (与 US-137 reconciliation 同款)
+
+**未来扩展提醒**:
+- 新加终态 status (e.g. `auto_cancelled_by_market_close`) 必须同步加到 `classifyFillAnomaly`
+  switch 分支 + `FILL_ANOMALY_CATEGORIES` + `FILL_ANOMALY_CATEGORY_LABELS` + 单测覆盖,
+  否则会落到 `unknown` 桶 (告警没法 wireup)
+- 想把 fill 异常率写入 RiskAlert / 飞书告警 → 参 ReconciliationAlertService 套路新加
+  `FillAnomalyAlertService`, 不要在 `LiveTradingService.getFillAnomalyStats` 里硬塞告警逻辑
+  (HTTP only-read 入口与定时 alert scan 应该解耦)
+
+**单测**: `tests/live-trading/fill-anomaly-classifier.test.ts` 52 ok DB-less, 覆盖全枚举映射 +
+rejected metadata 三种触发条件 + cancel_order 单独分支 + aggregate counters + 不变量
+(frozen / label key 对齐 / ANOMALY_CATEGORIES 排除集).

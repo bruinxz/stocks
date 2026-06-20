@@ -264,6 +264,33 @@ class LiveTradingController {
     }
   }
 
+  /**
+   * US-138 [EX-013] 实盘 fill 异常分类统计.
+   * Query: since_hours (default 24, max 720), sample_per_category (default 5, max 20)
+   */
+  async getFillAnomalyStats(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await liveTradingService.getFillAnomalyStats(Number(req.user?.id), {
+        since_hours: req.query.since_hours ? Number(req.query.since_hours) : undefined,
+        sample_per_category: req.query.sample_per_category
+          ? Number(req.query.sample_per_category)
+          : undefined,
+      });
+      res.json({
+        success: true,
+        data,
+        message: `近 ${data.window.since_hours}h 异常率 ${(data.stats.anomaly_rate * 100).toFixed(
+          1
+        )}% (${data.stats.anomaly_total}/${data.stats.terminal_total})`,
+      });
+    } catch (error: any) {
+      logger.error('获取实盘 fill 异常分类失败:', error);
+      res
+        .status(500)
+        .json({ success: false, message: error.message || '获取实盘 fill 异常分类失败' });
+    }
+  }
+
   async getQuotes(req: AuthenticatedRequest, res: Response) {
     try {
       const symbols = String(req.query.symbols || req.query.symbol || '')

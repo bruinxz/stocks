@@ -347,6 +347,30 @@ router.post(
 );
 router.get('/audit-logs', liveTradingController.getAuditLogs.bind(liveTradingController));
 
+/**
+ * @openapi
+ * /api/live-trading/fill-anomaly-stats:
+ *   get:
+ *     tags: [实盘 LiveTrading]
+ *     summary: 实盘 fill 异常分类统计 (US-138 EX-013)
+ *     description: 按 partial / canceled / rejected / failed / expired / aborted 等 10 类目聚合, 返回 counts + anomaly_rate + per-category 样本
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: since_hours
+ *         schema: { type: integer, default: 24, minimum: 1, maximum: 720 }
+ *       - in: query
+ *         name: sample_per_category
+ *         schema: { type: integer, default: 5, minimum: 1, maximum: 20 }
+ *     responses:
+ *       200: { description: 统计结果, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       401: { description: 未授权 }
+ */
+router.get(
+  '/fill-anomaly-stats',
+  liveTradingController.getFillAnomalyStats.bind(liveTradingController)
+);
+
 // 服务端 kill switch：查询 / 手动触发 / 人工解除
 // review P1：触发/解除是进程全局影响（一个用户能熔断/恢复所有人的下单），
 // 必须收敛到 admin；普通用户仍可 GET 查询当前状态用于风控展示

@@ -1,9 +1,13 @@
 /**
- * preTradeGuards — Batch I (2026-06-17)
+ * preTradeGuards — Batch I (2026-06-17) / US-136 [EX-011] (2026-06-21)
  *
- * Shared pre-trade guard helpers used by both PaperTradingFacade.placeOrder
- * (manual / UI) and PaperTradingAutomationService.createBuyTrade /
- * createSellTrade (cron / signal driven).
+ * Shared pre-trade guard helpers used by PaperTradingFacade.placeOrder
+ * (manual / UI), PaperTradingAutomationService.createBuyTrade /
+ * createSellTrade (cron / signal driven), and LiveTradingService.approveDraft
+ * (实盘审批). See `checkAllPreTradeGates` below for the unified entry — three
+ * callers (facade / automation / LiveTradingService) MUST all funnel through
+ * it (drift guard in tests/portfolio/check-all-pre-trade-gates.test.ts greps
+ * the source to enforce).
  *
  * 背景: facade.placeOrder 有完整的 T+1 / PositionLimit / DrawdownCircuitBreaker
  * pre-trade 链路, 但 automation 路径直接走自家的 createBuyTrade / createSellTrade,
@@ -181,4 +185,110 @@ export async function checkPreBuyGuards(input: {
     };
   }
   return { ok: true };
+}
+
+/**
+ * US-136 [EX-011] (2026-06-21): unified pre-trade gates entry point.
+ *
+ * 七闸门派遣中心 — 把"三条 caller 各自串闸门"(facade.placeOrder /
+ * automation.createBuyTrade|createSellTrade / LiveTradingService.approveDraft)
+ * 合到一个 helper. 之前 facade BUY 串 checkPreBuyGuards (drawdown + position
+ * limit) + 单独串 checkTPlus1 on SELL; automation 也一样; LiveTradingService
+ * 走自家的 LiveRiskGuard, 跟 paper-trading 那两条 path 完全没共享 — 加 1 个新
+ * guard 要在三处都改, 漏一处就出 "automation 拒了 facade 放行" 的对账问题.
+ *
+ * 本入口只做 routing/decision matrix, 不重复实现; 内部全调既有 `checkPreBuyGuards`
+ * 和 `checkTPlus1`. 三 caller 必须通过它走, drift guard 在
+ * `tests/portfolio/check-all-pre-trade-gates.test.ts` 用 grep 锁源文件保持一致性
+ * (同 cron-registry / portfolio-construction-adapter 的 meta-test 模式).
+ *
+ * NOTE: 实盘 path (LiveTradingService) 现阶段只共享 drawdown + position-limit + T+1
+ * 三道硬风控 (其余 TradeComplianceChecker / ExecutionFeasibility / LiveRiskGuard /
+ * KillSwitch 仍在 approveDraft 内部按现有顺序串). 后续若 facade 也要接 KillSwitch,
+ * 加在 checkAllPreTradeGates 里一处即可.
+ *
+ * 决策矩阵:
+ *   side='BUY'  → 跑 checkPreBuyGuards (drawdown + position-limit)
+ *   side='SELL' → 跑 checkTPlus1 (held_quantity / sell_quantity 必填)
+ *
+ * fail-CLOSED: 任一闸门 RISK_GUARD_UNAVAILABLE / DRAWDOWN_BREAKER_PAUSED /
+ * POSITION_LIMIT_VIOLATION / T_PLUS_1_VIOLATION 都返 ok=false + 标准 code, caller
+ * 直接 throw 即可.
+ *
+ * bypass 字段透传到子 helper (例如 strong-sell / closePosition 路径 bypass T+1).
+ */
+export type PreTradeGateInput =
+  | {
+      side: 'BUY';
+      user_id: number;
+      symbol: string;
+      proposed_value: number;
+      caller_label?: string;
+    }
+  | {
+      side: 'SELL';
+      user_id: number;
+      portfolio_id: number;
+      symbol: string;
+      held_quantity: number;
+      sell_quantity: number;
+      caller_label?: string;
+      bypass_t_plus_1?: boolean;
+    };
+
+export type PreTradeGateResult =
+  | { ok: true; gate: 'pre_buy_guards' | 't_plus_1' | 'noop' }
+  | {
+      ok: false;
+      gate: 'pre_buy_guards' | 't_plus_1';
+      code:
+        | 'DRAWDOWN_BREAKER_PAUSED'
+        | 'POSITION_LIMIT_VIOLATION'
+        | 'RISK_GUARD_UNAVAILABLE'
+        | 'T_PLUS_1_VIOLATION';
+      reason: string;
+      detail?: any;
+    };
+
+export async function checkAllPreTradeGates(input: PreTradeGateInput): Promise<PreTradeGateResult> {
+  if (input.side === 'BUY') {
+    const r = await checkPreBuyGuards({
+      user_id: input.user_id,
+      symbol: input.symbol,
+      proposed_value: input.proposed_value,
+    });
+    if (r.ok) return { ok: true, gate: 'pre_buy_guards' };
+    const failedR = r as { ok: false; code: string; reason: string; detail?: any };
+    return {
+      ok: false,
+      gate: 'pre_buy_guards',
+      code: failedR.code as
+        | 'DRAWDOWN_BREAKER_PAUSED'
+        | 'POSITION_LIMIT_VIOLATION'
+        | 'RISK_GUARD_UNAVAILABLE',
+      reason: failedR.reason,
+      detail: failedR.detail,
+    };
+  }
+  // SELL
+  const t = await checkTPlus1({
+    portfolio_id: input.portfolio_id,
+    symbol: input.symbol,
+    held_quantity: input.held_quantity,
+    sell_quantity: input.sell_quantity,
+    bypass: input.bypass_t_plus_1 === true,
+  });
+  if (t.ok) return { ok: true, gate: 't_plus_1' };
+  return {
+    ok: false,
+    gate: 't_plus_1',
+    code: 'T_PLUS_1_VIOLATION',
+    reason: t.reason || 'T+1 violation',
+    detail: {
+      today_buy: t.today_buy_qty,
+      available: t.available_for_sell,
+      requested: input.sell_quantity,
+      holding: input.held_quantity,
+    },
+  };
 }
