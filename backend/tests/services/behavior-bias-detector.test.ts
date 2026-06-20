@@ -6,6 +6,8 @@ import {
   detectOvertrading,
   detectAnchoringLoss,
   detectLossAversionEarlyTake,
+  detectStyleDrift,
+  detectTimeBias,
   computeSeverity,
   computeOverallHealth,
   buildSummary,
@@ -100,6 +102,83 @@ function testLossAversionEarlyTake() {
   expectClose('triggered (< 3%) = 2', r.triggered, 2);
   // avg = (1+2.5+8+15)/4 = 6.625
   expectClose('avg_winner_return = 6.625', r.avg_winner_return, 6.625, 0.01);
+}
+
+function testStyleDrift() {
+  console.log('\n## detectStyleDrift');
+  // 样本不足 -> total = 0
+  const tooFew: any[] = [
+    { trade_status: 'closed', entry_date: '2026-05-01', source_type: 'KOL' },
+    { trade_status: 'closed', entry_date: '2026-05-02', source_type: 'KOL' },
+  ];
+  const r0 = detectStyleDrift(tooFew);
+  expectClose('tooFew -> total=0', r0.total, 0);
+
+  // 稳定: 前后两半 source_type 完全相同 -> tvd 接近 0
+  const stable: any[] = Array.from({ length: 8 }, (_, i) => ({
+    trade_status: 'closed',
+    entry_date: `2026-05-${String(i + 1).padStart(2, '0')}`,
+    source_type: i % 2 === 0 ? 'KOL' : 'ANN',
+  }));
+  const r1 = detectStyleDrift(stable);
+  assert('stable tvd < 0.2', r1.tvd < 0.2, `tvd=${r1.tvd}`);
+  expectClose('stable triggered=0', r1.triggered, 0);
+
+  // 显著漂移: 前半 4 笔 KOL, 后半 4 笔 ANN -> TVD = 1.0
+  const drift: any[] = [
+    { trade_status: 'closed', entry_date: '2026-05-01', source_type: 'KOL' },
+    { trade_status: 'closed', entry_date: '2026-05-02', source_type: 'KOL' },
+    { trade_status: 'closed', entry_date: '2026-05-03', source_type: 'KOL' },
+    { trade_status: 'closed', entry_date: '2026-05-04', source_type: 'KOL' },
+    { trade_status: 'closed', entry_date: '2026-05-05', source_type: 'ANN' },
+    { trade_status: 'closed', entry_date: '2026-05-06', source_type: 'ANN' },
+    { trade_status: 'closed', entry_date: '2026-05-07', source_type: 'ANN' },
+    { trade_status: 'closed', entry_date: '2026-05-08', source_type: 'ANN' },
+  ];
+  const r2 = detectStyleDrift(drift);
+  expectClose('drift tvd=1.0', r2.tvd, 1.0, 0.01);
+  expectClose('drift triggered=2', r2.triggered, 2);
+  expectClose('drift total=2', r2.total, 2);
+}
+
+function testTimeBias() {
+  console.log('\n## detectTimeBias');
+  // 全胜率均匀 -> 不触发 (worst_dow 可能选最低胜率, 但 gap < 0.2)
+  const balanced: any[] = [
+    { trade_status: 'closed', entry_date: '2026-06-01', total_pnl_pct: 5 },  // 周一 win
+    { trade_status: 'closed', entry_date: '2026-06-02', total_pnl_pct: 3 },  // 周二 win
+    { trade_status: 'closed', entry_date: '2026-06-03', total_pnl_pct: 4 },  // 周三 win
+    { trade_status: 'closed', entry_date: '2026-06-08', total_pnl_pct: -2 }, // 周一 loss
+    { trade_status: 'closed', entry_date: '2026-06-09', total_pnl_pct: 2 },  // 周二 win
+    { trade_status: 'closed', entry_date: '2026-06-10', total_pnl_pct: 1 },  // 周三 win
+  ];
+  const rb = detectTimeBias(balanced);
+  expectClose('balanced triggered=0', rb.triggered, 0);
+
+  // 周一系统性败 — 周一 3 笔 0 胜, 其他天高胜率
+  const biased: any[] = [
+    { trade_status: 'closed', entry_date: '2026-06-01', total_pnl_pct: -5 }, // 周一 loss
+    { trade_status: 'closed', entry_date: '2026-06-08', total_pnl_pct: -4 }, // 周一 loss
+    { trade_status: 'closed', entry_date: '2026-06-15', total_pnl_pct: -3 }, // 周一 loss
+    { trade_status: 'closed', entry_date: '2026-06-02', total_pnl_pct: 5 },  // 周二 win
+    { trade_status: 'closed', entry_date: '2026-06-03', total_pnl_pct: 4 },  // 周三 win
+    { trade_status: 'closed', entry_date: '2026-06-04', total_pnl_pct: 3 },  // 周四 win
+    { trade_status: 'closed', entry_date: '2026-06-05', total_pnl_pct: 2 },  // 周五 win
+  ];
+  const r = detectTimeBias(biased);
+  assert('biased worst_dow = 1 (周一)', r.worst_dow === 1, `got=${r.worst_dow}`);
+  expectClose('biased worst_winrate=0', r.worst_winrate, 0);
+  expectClose('biased triggered=3', r.triggered, 3);
+  expectClose('biased total=3 (周一样本)', r.total, 3);
+  assert('global winrate > worst', r.global_winrate - r.worst_winrate >= 0.2);
+
+  // 样本不足 (某 dow < 3) -> 不触发
+  const tiny: any[] = [
+    { trade_status: 'closed', entry_date: '2026-06-01', total_pnl_pct: -5 },
+    { trade_status: 'closed', entry_date: '2026-06-02', total_pnl_pct: 5 },
+  ];
+  const rt = detectTimeBias(tiny);
+  expectClose('tiny triggered=0', rt.triggered, 0);
 }
 
 function testComputeOverallHealth() {
@@ -283,6 +362,8 @@ async function main() {
   testOvertrading();
   testAnchoringLoss();
   testLossAversionEarlyTake();
+  testStyleDrift();
+  testTimeBias();
   testComputeOverallHealth();
   testBuildSummary();
   await testGetReport();

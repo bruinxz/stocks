@@ -3676,3 +3676,27 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - lazy require pattern 全文 // eslint-disable-next-line @typescript-eslint/no-var-requires 一遍, 防 createProductionXxxDataSource 多个 require 全部踩坑.
   - 测试 setup: makeFakeDS 用 opts.loadThrows 取 'trades'|'positions'|'strategies'|'pnls'|false 而不是单 boolean — 之前 ErrorPattern 测只有 1 个 load 方法可以用 boolean, postmortem 多源场景要枚举.
 ---
+
+## 2026-06-20 23:30 - US-128 [PM-026] BehaviorBias 新 detector style_drift + time_bias
+- BehaviorBiasDetector 由 4 维 (chasing_high / overtrading / anchoring_loss / loss_aversion_early_take) 扩到 6 维, 新增:
+  - `detectStyleDrift`: 把 closed outcomes 按 entry_date 排序后切两半, 比较 source_type 分布的 Total Variation Distance.
+    - TVD < 0.2 不算偏差; 0.2-0.4 中度 (triggered=1/total=2); ≥0.4 显著 (triggered=2/total=2).
+    - total<6 closed outcomes 时不诊断 (样本太少, total=0 让 finding 不进 buildBiasFindings).
+    - 量纲固定 total=2 让 severity 映射成 0/50/100 三档, 跟其他 detector 用同一 computeSeverity.
+  - `detectTimeBias`: 按 entry_date dow (0-6) 分组, 找样本 ≥3 且胜率比全局落后 ≥20pct 的"最差 dow".
+    - 用 entry_date 'YYYY-MM-DD' 拼 'T00:00:00Z' 走 UTC, 避免 timezone 漂移; getUTCDay() 取 dow.
+    - 不触发时 triggered=0 / total=closed.length (severity=0, finding 仍 push 进列表展示 by_dow 数据).
+- BIAS_LABELS 增加 '风格漂移' / '时段偏差'; OutcomeRow 增加 source_type / industry; PRODUCTION DataSource 把 source_type, industry 拉进 attributes 并 map 进 outcome row.
+- buildBiasFindings 加 5/6 两段; 5 的 observed 暴露 early_top_source / late_top_source / tvd_pct; 6 的 observed 暴露 worst_dow (中文 label) / worst_winrate_pct / global_winrate_pct, 严重时给出避免在该 dow 入场 + 复盘建议.
+- DOW_LABELS / pickTopKey 模块级 helper.
+- 测试: behavior-bias-detector.test.ts 加 testStyleDrift (tooFew / stable / drift 三场景) + testTimeBias (balanced / biased 周一系统败 / tiny 样本不足). 58 测全过 + typecheck pass.
+- Files changed:
+  - backend/src/services/BehaviorBiasDetector.ts
+  - backend/tests/services/behavior-bias-detector.test.ts
+  - ralph/prd.json (US-128.passes=true)
+- **Learnings for future iterations:**
+  - 增 detector 的 5 个改动点 (照本次 PM-026 模板): (1) BiasKey union; (2) BIAS_LABELS 加中文; (3) detector 纯函数 export; (4) buildBiasFindings 加 push 段, observed/threshold/suggestions/detail 四元组齐全; (5) PRODUCTION_BEHAVIOR_BIAS_DATA_SOURCE attributes + map 把新依赖字段从 RecommendationTradeOutcome 拉出来. 漏 (5) 会让生产 always-empty (detector 看 OutcomeRow 上字段是 undefined), 跟 BehaviorBias 文档头说的 Batch Y 假阴性同款.
+  - 切两半比 z-test 简单且鲁棒 (TVD 阈值 0.2/0.4 跟流形上随机走的方差 ~1/sqrt(N) 是同量级), 适合"风格漂移"这类无 ground truth 的诊断.
+  - dow 分组取 UTCDay() + entry_date 'YYYY-MM-DDT00:00:00Z' 避开 China timezone 把周一 entry 推到周日的 bug (本地时区 +8 会让某些 entry 偏移).
+  - test fixture 用真实日历日期 (2026-06-01..06-15) + 显式注释 "周一/周二" 比 Math 算 dow 直观, 后人改 fixture 也不会偷偷偏一天.
+---

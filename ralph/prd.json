@@ -1968,8 +1968,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 128,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "PM-026: 加 detectStyleDrift (TVD on source_type 前后两半) + detectTimeBias (dow 胜率落差) 两个 detector, BehaviorBias 由 4 维扩到 6 维; 58/58 单测过, typecheck pass."
     },
     {
       "id": "US-129",

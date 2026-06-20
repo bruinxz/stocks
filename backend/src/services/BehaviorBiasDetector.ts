@@ -23,6 +23,14 @@
  *      vs 同期 winners 平均能跑 5-10%
  *      → 行为模式: 怕回吐 / 厌恶损失
  *
+ *   5. style_drift (风格漂移 — PM-026)
+ *      前半 vs 后半 closed outcomes 的 source_type 分布 TVD ≥ 0.2 / 0.4
+ *      → 行为模式: 被某类信号源 (KOL / ANN) 裹挟, 偏离原 mix
+ *
+ *   6. time_bias (时段偏差 — PM-026)
+ *      某 entry day-of-week 胜率比全局落后 ≥ 20 pct (且样本 ≥ 3)
+ *      → 行为模式: 系统性在不利时段入场
+ *
  * 设计:
  *   - 纯函数 detectors 全 export 单测
  *   - DataSource 注入 (生产 RecommendationTradeOutcome / 测试 fake)
@@ -41,7 +49,9 @@ export type BiasKey =
   | 'chasing_high'
   | 'overtrading'
   | 'anchoring_loss'
-  | 'loss_aversion_early_take';
+  | 'loss_aversion_early_take'
+  | 'style_drift'
+  | 'time_bias';
 
 export interface BiasFinding {
   bias_key: BiasKey;
@@ -103,6 +113,10 @@ export interface OutcomeRow {
   realized_pnl_pct?: number | null;
   holding_days?: number | null;
   trade_status?: string;
+  /** 信号来源 (KOL / ANN / AE / PM ...) — PM-026 style_drift 用 */
+  source_type?: string | null;
+  /** 行业 / sector — PM-026 style_drift 备用维度 */
+  industry?: string | null;
 }
 
 const BIAS_LABELS: Record<BiasKey, string> = {
@@ -110,6 +124,8 @@ const BIAS_LABELS: Record<BiasKey, string> = {
   overtrading: '过度交易',
   anchoring_loss: '套牢死扛',
   loss_aversion_early_take: '落袋为安过早',
+  style_drift: '风格漂移',
+  time_bias: '时段偏差',
 };
 
 // ============================================================
@@ -219,7 +235,137 @@ export function detectLossAversionEarlyTake(outcomes: OutcomeRow[]): {
 }
 
 /**
- * 综合 health_score = 100 - mean(severity of all 4 biases)
+ * 检测 style_drift — 风格漂移 / 系统性偏离原 strategy mix.
+ *
+ * PM-026: 把 outcomes 按 entry_date 排序后切两段 (前半 vs 后半),
+ * 比较 source_type (KOL/ANN/AE/PM/MM ...) 分布的 Total Variation Distance.
+ *
+ *   TVD = 0.5 × Σ |p_late(s) - p_early(s)|
+ *
+ *   - TVD < 0.20 → 风格稳定, 不算偏差 (triggered = 0)
+ *   - 0.20 ≤ TVD < 0.40 → 中度漂移 (triggered = 1)
+ *   - TVD ≥ 0.40 → 显著漂移 (triggered = 2)
+ *   - total 始终 = 2 (设计上让 severity 0/50/100 三档 — 与其他 detector 输出量纲一致)
+ *
+ * total < 6 笔 closed outcomes 时不诊断 (样本太少).
+ */
+export function detectStyleDrift(outcomes: OutcomeRow[]): {
+  triggered: number;
+  total: number;
+  tvd: number;
+  early_dist: Record<string, number>;
+  late_dist: Record<string, number>;
+} {
+  const closed = outcomes
+    .filter(o => o.trade_status === 'closed' && o.source_type && o.entry_date)
+    .slice()
+    .sort((a, b) => String(a.entry_date || '').localeCompare(String(b.entry_date || '')));
+  if (closed.length < 6) {
+    return { triggered: 0, total: 0, tvd: 0, early_dist: {}, late_dist: {} };
+  }
+  const mid = Math.floor(closed.length / 2);
+  const early = closed.slice(0, mid);
+  const late = closed.slice(mid);
+  const distOf = (rows: OutcomeRow[]): Record<string, number> => {
+    const counts: Record<string, number> = {};
+    for (const r of rows) {
+      const k = String(r.source_type || 'unknown');
+      counts[k] = (counts[k] || 0) + 1;
+    }
+    const n = rows.length || 1;
+    const dist: Record<string, number> = {};
+    for (const k of Object.keys(counts)) dist[k] = counts[k] / n;
+    return dist;
+  };
+  const earlyDist = distOf(early);
+  const lateDist = distOf(late);
+  const keys = new Set<string>([...Object.keys(earlyDist), ...Object.keys(lateDist)]);
+  let tvd = 0;
+  for (const k of keys) tvd += Math.abs((lateDist[k] || 0) - (earlyDist[k] || 0));
+  tvd = tvd / 2;
+  const total = 2;
+  let triggered = 0;
+  if (tvd >= 0.4) triggered = 2;
+  else if (tvd >= 0.2) triggered = 1;
+  return { triggered, total, tvd, early_dist: earlyDist, late_dist: lateDist };
+}
+
+/**
+ * 检测 time_bias — 系统性时段偏差 (按入场 day-of-week 分组的胜率差距).
+ *
+ * PM-026: 按 entry_date 的 dow (0=周日 ... 6=周六) 分组, 找胜率最差的那天.
+ * 若某 dow 的样本数 ≥ 3, 且其胜率比全局胜率落后 ≥ 20pct,
+ * 则视为"时段偏差" → triggered = 该 dow 的 loss 数, total = 该 dow 的样本数.
+ *
+ * 没有触发任何 dow → triggered=0, total = closed.length (severity = 0).
+ * 用 entry_date 'YYYY-MM-DD' 直接 new Date 取 dow, 避免 timezone 复杂化.
+ */
+export function detectTimeBias(outcomes: OutcomeRow[]): {
+  triggered: number;
+  total: number;
+  worst_dow: number | null;
+  worst_winrate: number;
+  global_winrate: number;
+  by_dow: Record<number, { count: number; wins: number; winrate: number }>;
+} {
+  const closed = outcomes.filter(o => {
+    if (o.trade_status !== 'closed') return false;
+    if (!o.entry_date) return false;
+    const pnl = Number(o.total_pnl_pct ?? o.realized_pnl_pct ?? NaN);
+    return Number.isFinite(pnl);
+  });
+  const byDow: Record<number, { count: number; wins: number; winrate: number }> = {};
+  let globalWins = 0;
+  for (const o of closed) {
+    const d = new Date(String(o.entry_date).slice(0, 10) + 'T00:00:00Z');
+    if (Number.isNaN(d.getTime())) continue;
+    const dow = d.getUTCDay();
+    if (!byDow[dow]) byDow[dow] = { count: 0, wins: 0, winrate: 0 };
+    byDow[dow].count += 1;
+    const pnl = Number(o.total_pnl_pct ?? o.realized_pnl_pct ?? 0);
+    if (pnl > 0) {
+      byDow[dow].wins += 1;
+      globalWins += 1;
+    }
+  }
+  for (const k of Object.keys(byDow)) {
+    const dow = Number(k);
+    byDow[dow].winrate = byDow[dow].count > 0 ? byDow[dow].wins / byDow[dow].count : 0;
+  }
+  const globalWR = closed.length > 0 ? globalWins / closed.length : 0;
+  let worstDow: number | null = null;
+  let worstWR = 1;
+  for (const k of Object.keys(byDow)) {
+    const dow = Number(k);
+    const b = byDow[dow];
+    if (b.count >= 3 && b.winrate < worstWR) {
+      worstWR = b.winrate;
+      worstDow = dow;
+    }
+  }
+  if (worstDow === null || globalWR - worstWR < 0.2) {
+    return {
+      triggered: 0,
+      total: closed.length,
+      worst_dow: worstDow,
+      worst_winrate: worstDow === null ? 0 : worstWR,
+      global_winrate: globalWR,
+      by_dow: byDow,
+    };
+  }
+  const losses = byDow[worstDow].count - byDow[worstDow].wins;
+  return {
+    triggered: losses,
+    total: byDow[worstDow].count,
+    worst_dow: worstDow,
+    worst_winrate: worstWR,
+    global_winrate: globalWR,
+    by_dow: byDow,
+  };
+}
+
+/**
+ * 综合 health_score = 100 - mean(severity of all biases) — PM-026 起 6 类.
  */
 export function computeOverallHealth(findings: BiasFinding[]): number {
   if (findings.length === 0) return 100;
@@ -376,7 +522,97 @@ export function buildBiasFindings(outcomes: OutcomeRow[]): BiasFinding[] {
     });
   }
 
+  // 5. style_drift (PM-026)
+  const styleDrift = detectStyleDrift(outcomes);
+  if (styleDrift.total > 0) {
+    const sev = computeSeverity(styleDrift.triggered, styleDrift.total);
+    const tvdPct = Math.round(styleDrift.tvd * 100);
+    findings.push({
+      bias_key: 'style_drift',
+      bias_label: BIAS_LABELS.style_drift,
+      severity: sev,
+      triggered_count: styleDrift.triggered,
+      total_count: styleDrift.total,
+      threshold: { tvd_warn: 0.2, tvd_severe: 0.4, condition: 'TVD(early, late) ≥ 0.2 / 0.4' },
+      observed: {
+        tvd_pct: tvdPct,
+        early_top_source: pickTopKey(styleDrift.early_dist),
+        late_top_source: pickTopKey(styleDrift.late_dist),
+      },
+      suggestions:
+        sev >= 50
+          ? [
+              `近期 source_type 主导从 ${pickTopKey(styleDrift.early_dist)} 漂到 ${pickTopKey(
+                styleDrift.late_dist
+              )} — TVD=${tvdPct}%`,
+              '复盘 strategy mix 是否被某类信号源（如 KOL 热门票）裹挟',
+              '若漂移确属主动调整, 把它写进操盘手 playbook; 否则回归原 mix',
+            ]
+          : sev > 0
+          ? ['source_type 分布有轻度偏移, 关注是否会继续放大']
+          : [],
+      detail: `比较前后两半 closed outcomes 的 source_type 分布, TVD=${tvdPct}%`,
+    });
+  }
+
+  // 6. time_bias (PM-026)
+  const timeBias = detectTimeBias(outcomes);
+  if (timeBias.total > 0) {
+    const sev = computeSeverity(timeBias.triggered, timeBias.total);
+    const dowLabel = timeBias.worst_dow !== null ? DOW_LABELS[timeBias.worst_dow] : '—';
+    findings.push({
+      bias_key: 'time_bias',
+      bias_label: BIAS_LABELS.time_bias,
+      severity: sev,
+      triggered_count: timeBias.triggered,
+      total_count: timeBias.total,
+      threshold: {
+        winrate_gap: 0.2,
+        condition: 'dow_count ≥ 3 AND (global_winrate - dow_winrate) ≥ 0.2',
+      },
+      observed: {
+        worst_dow: dowLabel,
+        worst_winrate_pct: Math.round(timeBias.worst_winrate * 100),
+        global_winrate_pct: Math.round(timeBias.global_winrate * 100),
+      },
+      suggestions:
+        sev >= 50
+          ? [
+              `${dowLabel} 入场胜率 ${Math.round(
+                timeBias.worst_winrate * 100
+              )}%, 全局 ${Math.round(timeBias.global_winrate * 100)}% — 显著落后`,
+              `避免在 ${dowLabel} 入场, 或对 ${dowLabel} 信号加更严格的过滤`,
+              '复盘该时段的市场环境 (流动性 / 情绪) 是否系统性不利于本策略',
+            ]
+          : sev > 0
+          ? [`${dowLabel} 略低于全局胜率, 观察期`]
+          : [],
+      detail:
+        timeBias.worst_dow === null
+          ? '未发现显著时段偏差'
+          : `${dowLabel} ${timeBias.total} 笔 / ${
+              timeBias.triggered
+            } 亏损; 胜率 ${Math.round(
+              timeBias.worst_winrate * 100
+            )}% vs 全局 ${Math.round(timeBias.global_winrate * 100)}%`,
+    });
+  }
+
   return findings;
+}
+
+const DOW_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+function pickTopKey(dist: Record<string, number>): string {
+  let best = '';
+  let bestV = -1;
+  for (const k of Object.keys(dist)) {
+    if (dist[k] > bestV) {
+      bestV = dist[k];
+      best = k;
+    }
+  }
+  return best || 'unknown';
 }
 
 /**
@@ -441,6 +677,8 @@ export const PRODUCTION_BEHAVIOR_BIAS_DATA_SOURCE: BehaviorBiasDataSource = {
           'realized_pnl_pct',
           'holding_days',
           'trade_status',
+          'source_type',
+          'industry',
           'metadata',
           'portfolio_id',
         ],
@@ -462,6 +700,8 @@ export const PRODUCTION_BEHAVIOR_BIAS_DATA_SOURCE: BehaviorBiasDataSource = {
           realized_pnl_pct: Number(r.realized_pnl_pct ?? NaN),
           holding_days: Number(r.holding_days ?? NaN),
           trade_status: r.trade_status,
+          source_type: r.source_type ?? null,
+          industry: (r as any).industry ?? null,
         };
       });
     } catch (err: any) {
