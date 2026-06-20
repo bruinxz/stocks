@@ -65,6 +65,7 @@ import { BenchmarkAttributionResult } from '../models/BenchmarkAttributionResult
 import { IndustryAttributionResult } from '../models/IndustryAttributionResult';
 import { DailyAttributionReport } from '../models/DailyAttributionReport';
 import { AIDiaryEntry } from '../models/AIDiaryEntry';
+import { ErrorPatternReport } from '../models/ErrorPatternReport';
 import { MorningRiskCheckup } from '../models/MorningRiskCheckup';
 import { AIStockAnalysisReport } from '../models/AIStockAnalysisReport';
 import { KOLOpinion } from '../models/KOLOpinion';
@@ -194,6 +195,7 @@ const sequelize = new Sequelize({
     IndustryAttributionResult,
     DailyAttributionReport,
     AIDiaryEntry,
+    ErrorPatternReport,
     MorningRiskCheckup,
     AIStockAnalysisReport,
     KOLOpinion,

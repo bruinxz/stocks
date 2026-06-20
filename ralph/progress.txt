@@ -2642,3 +2642,38 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **explicit user_ids 过滤非法 (NaN/0/负数) 要在 runner 端做不是 service 端**: ScheduledTask.parameters.user_ids 是 ops 手填 JSON, 可能传错类型. service 端假设 user_id 是合法正整数; runner 接 parameters 必须 `filter(Number.isFinite(n) && n > 0)` 一道过滤, 否则 user_id=NaN 传到 service.generateForUser 会让 DB query 全空 + 落 log 难诊断. 同款适用所有 "parameters → typed input" 边界的 runner.
   - **cron_run_id 默认含时间戳 (Date.now()) 让重跑可区分 + ops 显式 override 让 idempotent**: 默认 `ai_diary_cron_${date}_${Date.now()}` 让同日两次 cron 跑 (e.g. 17:30 trigger + 19:00 ops 手动 replay) 各自一个 ID 落 metadata.cron_run_id, ops grep 一目了然. 但显式 override (e.g. 'manual_replay_20260620_001') 让"重跑覆盖" 时 metadata 一致 — 与 sequelize upsert (ON CONFLICT DO UPDATE) 配合达到完整 idempotent. 这是 cron metadata 设计的标准范式, [[Codebase Patterns]] 后续可扩到 "cron metadata 6 字段集" 标准.
 ---
+
+
+## 2026/06/20 13:20 - US-092
+- 实现 [PM-021] ErrorPatternReport model + Aggregator 90 天 bias/outcome/attribution 聚合 (model + migration + service 已有, 本次补 PRODUCTION DataSource 工厂 + 完整单测)
+- Files changed:
+  - backend/src/services/postmortem/ErrorPatternAggregator.ts: 新增 createProductionErrorPatternAggregatorDataSource() 工厂 — lazy require DailyAttributionReport + ErrorPatternReport + Op.between, 双 try/catch 内部兜底返 [] / {ok:false} 让 DB-less 单测 require 本 service 不被拽起 sequelize
+  - backend/tests/postmortem/error-pattern-aggregator.test.ts (新, ~600 行 / 129 ok / 0 failed):
+    * [1] 常量+枚举 frozen sanity (LOOKBACK=90 / SUMMARY_MAX=500 / MIN_DATA_DAYS / 三态枚举)
+    * [2] date math — computePeriodStart 90/1 天+跨月跨年 + classifyDataCompleteness 三档边界 + isoWeekKey + classifyTrending 5 边界
+    * [3] aggregateBiasPatterns — 30 天前 20/后 10 → up trending + total_count + weeks_active + sample_trades cap
+    * [4] aggregateOutcomePatterns — 单一/多 outcome_type + worst_examples 排序 + cap
+    * [5] aggregateAttributionPatterns — 7 维全在 + |total_contrib| 降序 + worst_day + sign_consistency
+    * [6] extractDimensionContrib — industry 数组 sum + factor total 优先 + 同名 _contrib + NaN/null 安全
+    * [7] buildTopFindings — 三类合并 score 降序 + 正 attribution 过滤 + cap ≤ 5
+    * [8] buildSummaryStats — win_rate + avg_pnl_pct null 跳过 + sparse 分级
+    * [9] buildHeuristicSummary — ≤ MAX + 含起止日期 + 空数据降级 + 截断
+    * [10] **aggregateForUser AC 主验收 PRD '周日生成'** 6 路径 — happy/sparse/load throw/upsert ok=false/upsert throw/cron_run_id+lookback override
+    * [11] PRODUCTION DataSource 工厂 DB-less 不抛 (返 [] / {ok:false})
+    * [12] META-GUARD fs+regex 守 model + migration up/down + database.ts import + models/index.ts re-export
+  - backend/src/config/database.ts + backend/src/models/index.ts: 注册 ErrorPatternReport (之前迭代已落, 本次保留)
+  - backend/src/models/ErrorPatternReport.ts + backend/scripts/migrations/2026-06-20-error-pattern-reports*.sql: 之前迭代已落 (本次保留)
+  - ralph/prd.json: US-092 passes=true + notes
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npm test -- --filter=error-pattern` exit 0 — 2 files 241 ok / 0 failed (error-pattern-aggregator 129 + error-patterns-helpers 112)
+  - `npm test -- --filter=postmortem` exit 0 — 4 files all pass 无 regression
+  - lint: 0 新增 err 0 新增 warn (1 baseline non-null assertion warn 与本次改动无关)
+- **Learnings for future iterations:**
+  - **"先建框架 + 后填实"模板再加一例 (与 PM-002 daily-attribution-service / PM-001 attribution-engine 同款)**: PM-021 一个 story 同时含 model + migration + service + 单测, 但 LLM summary (US-094 PM-023) 留给后续. service 用 heuristic summary 让 AC "周日生成 + ≤ 500 字" 第一个 story trivially 成立; PRODUCTION DataSource 工厂必须实装 (写 `async () => []` 应付编译让生产 silent 跑空, 看起来全对实际啥都没干 — 同款警告参考 [[shadow→hard 三态范式]] US-021).
+  - **fail-OPEN 三层在聚合类 service 的标准接法**: (1) loadAttributionReports throw → status='failed' reason='load_threw' 仍尝试 upsert 留痕行; (2) records.length < MIN_DATA_DAYS → status='skipped' reason='data_too_sparse' 留痕 (PRD AC "周日生成" 强语义 — 任何 cron 跑过都必须留行让 ops dashboard 写 `count(*)=user_count` 不变量监控); (3) upsert ok=false 或 throw → status='failed' persisted=false 返不抛. 三层全跑通才真满足"周日 cron 跑完即在表里看到 N 行"的 AC, 漏任一层让 ops 看到"今日 5 user 但 3 行"无法判断是 cron 没跑还是 service 失败. 与 [[DailyAttributionCronRunner]] (US-083) persist 失败也持久化留痕思想一脉相承.
+  - **测试要显式覆盖 sign_consistency 边界**: industry 两天 (50, -500) sign_consistency = negative_days/n = 1/2 = 0.5, 不是 1; 第一次写测试断 1 直接 fail. 这类"分母 n=2 时单边触发"是 sign_consistency 类指标最容易写错的边界 — 单边 0/0.5/1 三档都该有显式 case 不能只测全负的.
+  - **AC 主验收的 "lookback override + period_start 联动" 必测**: ops 想用 30 天窗口 ad-hoc 复盘, lookback=30 + period_end=2026-06-30 应 period_start=2026-06-01 (含末日). 这是 computePeriodStart 与主入口 wiring 的隐性契约, 漏测会让 "改 period 数学但忘 wire 到 upsert row" 完全检测不出 (与 US-026 testClassifyEventTypeWiringHeuristicResult 同款 wiring 防御).
+  - **DB-less PRODUCTION DataSource 单测姿势**: 调 PRODUCTION 工厂的 method 必走 lazy-require → Sequelize "Model not initialized" throw → 内部 try/catch 兜底返 [] / {ok:false}. 单测只验"不抛 + 返结构对" 而非"真有数据" — 跟 [[ai-diary-cron]] / [[daily-attribution-service]] 同款"DB-less 不能验真数据, 只能验降级契约"思想.
+  - **(user_id, period_end) UNIQUE + sequelize upsert** 是 idempotent 周日重跑的关键 — PG 走 ON CONFLICT (user_id, period_end) DO UPDATE 自动覆盖最新结果. 历史保留靠不同 period_end 的多行 + created_at 时间戳. 想做 "周内多次重跑只保留最新" 不需要额外 dedup 逻辑, 让 UNIQUE 索引和 upsert 原语自然守, 与 [[Bull queue dedup]] (US-019) "让底层组件的原子保证生效" 同款思想.
+---

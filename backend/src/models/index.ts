@@ -66,6 +66,7 @@ export * from './BenchmarkAttributionResult';
 export * from './IndustryAttributionResult';
 export * from './DailyAttributionReport';
 export * from './AIDiaryEntry';
+export * from './ErrorPatternReport';
 export * from './MorningRiskCheckup';
 export * from './AIStockAnalysisReport';
 export * from './KOLOpinion';
