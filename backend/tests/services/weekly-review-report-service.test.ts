@@ -60,6 +60,14 @@ import {
   buildHeuristicWeeklyOpinion,
   buildReportId,
   buildWeeklyReviewEmail,
+  buildCorrelationMatrixHtml,
+  buildCorrelationMatrixPayload,
+  computeCorrelationMatrix,
+  computePearson,
+  dailyReturnsFromCloses,
+  selectCorrelationSymbols,
+  CORRELATION_MAX_SYMBOLS,
+  CORRELATION_MIN_RETURNS,
   formatMoney,
   WeeklyReviewPayload,
   IndustryContributionRow,
@@ -70,6 +78,8 @@ import {
   UpcomingEventRow,
   AIWeeklyOpinion,
   PrevWeekRange,
+  CorrelationMatrixPayload,
+  DailyCloseRow,
 } from '../../src/services/WeeklyReviewReportService';
 import {
   EmailNotificationService,
@@ -125,6 +135,8 @@ interface FakeState {
   trades?: Record<number, any[]>;
   /** US-087 PM-011 — portfolio_id → Map<trade_id, strategy_key> */
   tradeStrategyMap?: Record<number, Map<number, string>>;
+  /** US-088 PM-012 — symbol → DailyCloseRow[] (与 PRODUCTION loadDailyCloses 返值同形态) */
+  dailyCloses?: Map<string, DailyCloseRow[]>;
   stockMeta?: Map<string, { name: string; industry: string | null }>;
   upcomingEvents?: UpcomingEventRow[];
   aiOpinion?: AIWeeklyOpinion;
@@ -138,6 +150,7 @@ interface FakeState {
     loadTradeStrategyMap: boolean;
     loadStockMetadata: boolean;
     loadUpcomingEvents: boolean;
+    loadDailyCloses: boolean;
     generateAIWeeklyOpinion: boolean;
     sendEmail: boolean;
   }>;
@@ -173,6 +186,10 @@ function makeFakeDataSource(state: FakeState): WeeklyReviewDataSource {
     async loadStockMetadata(_symbols) {
       if (state.throwOn?.loadStockMetadata) throw new Error('FAKE loadStockMetadata');
       return state.stockMeta || new Map();
+    },
+    async loadDailyCloses(_symbols, _start, _end) {
+      if (state.throwOn?.loadDailyCloses) throw new Error('FAKE loadDailyCloses');
+      return state.dailyCloses || new Map<string, DailyCloseRow[]>();
     },
     async loadUpcomingEvents(_symbols, _from, _to) {
       if (state.throwOn?.loadUpcomingEvents) throw new Error('FAKE loadUpcomingEvents');
@@ -495,6 +512,343 @@ function testAggregateStrategyContribution(): void {
   assertEqual('tie second', tie[1].strategy_key, 'zzz');
 }
 
+// ---------------------------------------------------------------------------
+// US-088 PM-012 — correlation matrix pure helpers
+// ---------------------------------------------------------------------------
+
+function testComputePearsonEdges(): void {
+  // 完全正相关
+  assertEqual('identical', computePearson([1, 2, 3, 4], [1, 2, 3, 4]), 1);
+  // 完全负相关
+  assertEqual('opposite', computePearson([1, 2, 3, 4], [4, 3, 2, 1]), -1);
+  // 线性放大
+  assertEqual('scaled positive', computePearson([1, 2, 3, 4], [2, 4, 6, 8]), 1);
+  // 短输入 (len<2)
+  assertEqual('too short empty', computePearson([], []), null);
+  assertEqual('too short single', computePearson([1], [1]), null);
+  // 常数序列 (方差 0) → null
+  assertEqual('constant a', computePearson([5, 5, 5, 5], [1, 2, 3, 4]), null);
+  assertEqual('constant b', computePearson([1, 2, 3, 4], [7, 7, 7, 7]), null);
+  // NaN / Inf 污染 → null
+  assertEqual('NaN', computePearson([1, NaN, 3, 4], [1, 2, 3, 4]), null);
+  assertEqual('Inf', computePearson([1, 2, 3, 4], [1, Infinity, 3, 4]), null);
+  // 长度不等 → 取较短
+  assertEqual('len mismatch', computePearson([1, 2, 3, 4, 5], [1, 2, 3, 4]), 1);
+  // 已知中等正相关 case (手算: r≈0.913)
+  const r = computePearson([1, 2, 3, 4, 5], [2, 4, 5, 7, 9]);
+  assert('moderate positive', r !== null && r > 0.9 && r <= 1, `got ${r}`);
+  // 不相关
+  const r2 = computePearson([1, 2, 3, 4], [3, 1, 4, 2]);
+  assert('weak/none', r2 !== null && Math.abs(r2) < 0.5, `got ${r2}`);
+}
+
+function testDailyReturnsFromCloses(): void {
+  // 空 / 单点
+  assertEqual('empty closes', dailyReturnsFromCloses([]), []);
+  assertEqual(
+    'single close',
+    dailyReturnsFromCloses([{ date: '2026-06-01', close: 10 }]),
+    []
+  );
+  // 双点 +10%
+  const rd1 = dailyReturnsFromCloses([
+    { date: '2026-06-01', close: 10 },
+    { date: '2026-06-02', close: 11 },
+  ]);
+  assertEqual('double close 1 return', rd1.length, 1);
+  assert('double close +10%', Math.abs(rd1[0] - 0.1) < 1e-9, `got ${rd1[0]}`);
+  // 5 点
+  const r = dailyReturnsFromCloses([
+    { date: '2026-06-01', close: 100 },
+    { date: '2026-06-02', close: 102 },
+    { date: '2026-06-03', close: 102 },
+    { date: '2026-06-04', close: 100 },
+    { date: '2026-06-05', close: 105 },
+  ]);
+  assertEqual('5 points returns count', r.length, 4);
+  assert('day1 +2%', Math.abs(r[0] - 0.02) < 1e-9);
+  assert('day2 0%', Math.abs(r[1]) < 1e-9);
+  assert('day3 -1.96%', Math.abs(r[2] - -0.01960784313725492) < 1e-9);
+  // 0 / 负 close → 跳过 + 重置 prev (后续不与之前对算)
+  const rd2 = dailyReturnsFromCloses([
+    { date: '2026-06-01', close: 100 },
+    { date: '2026-06-02', close: 0 }, // 跳过
+    { date: '2026-06-03', close: 110 }, // 与 0 之前不再对算 (prev 重置)
+  ]);
+  assertEqual('zero close skips', rd2.length, 0);
+  // NaN close → 跳过
+  const rd3 = dailyReturnsFromCloses([
+    { date: '2026-06-01', close: 100 },
+    { date: '2026-06-02', close: NaN as any },
+    { date: '2026-06-03', close: 110 },
+  ]);
+  assertEqual('NaN close skips', rd3.length, 0);
+  // 输入非数组 → 空
+  assertEqual('null input', dailyReturnsFromCloses(null as any), []);
+}
+
+function testSelectCorrelationSymbols(): void {
+  // 空入 → 空选
+  const r1 = selectCorrelationSymbols([], []);
+  assertEqual('empty positions empty trades', r1.selected.length, 0);
+  assertEqual('empty capped_n', r1.capped_n, 0);
+
+  // 仅持仓: 按 market_value 降序
+  const r2 = selectCorrelationSymbols(
+    [
+      { symbol: 'A', market_value: 1000 },
+      { symbol: 'B', market_value: 5000 },
+      { symbol: 'C', market_value: 2000 },
+    ],
+    []
+  );
+  assertEqual('mv desc order', r2.selected, ['B', 'C', 'A']);
+  assertEqual('mv capped_n', r2.capped_n, 3);
+
+  // 持仓 + 交易股 (交易股 mv=0 排最后)
+  const r3 = selectCorrelationSymbols(
+    [{ symbol: 'A', market_value: 1000 }],
+    ['B', 'C']
+  );
+  assertEqual('held first then traded asc', r3.selected, ['A', 'B', 'C']);
+  assertEqual('held+traded capped_n', r3.capped_n, 3);
+
+  // cap 截断
+  const positions = Array.from({ length: 15 }, (_, i) => ({
+    symbol: `S${String(i).padStart(2, '0')}`,
+    market_value: 1000 - i, // 降序: S00=1000, S01=999, ...
+  }));
+  const r4 = selectCorrelationSymbols(positions, [], CORRELATION_MAX_SYMBOLS);
+  assertEqual('cap to MAX', r4.selected.length, CORRELATION_MAX_SYMBOLS);
+  assertEqual('cap capped_n', r4.capped_n, 15);
+  assertEqual('cap first', r4.selected[0], 'S00');
+  assertEqual('cap last', r4.selected[CORRELATION_MAX_SYMBOLS - 1], `S0${CORRELATION_MAX_SYMBOLS - 1}`);
+
+  // 同 symbol 在 positions 和 trades 重复 → dedup
+  const r5 = selectCorrelationSymbols(
+    [{ symbol: 'A', market_value: 1000 }],
+    ['A', 'B']
+  );
+  assertEqual('dedup A+B', r5.selected, ['A', 'B']);
+  assertEqual('dedup capped_n', r5.capped_n, 2);
+
+  // 空 symbol / null mv 兜底
+  const r6 = selectCorrelationSymbols(
+    [
+      { symbol: '', market_value: 999 } as any,
+      { symbol: 'A', market_value: null as any },
+    ],
+    [' ', 'B']
+  );
+  assert('A in selected', r6.selected.includes('A'));
+  assert('empty symbol filtered', !r6.selected.includes(''));
+}
+
+function testComputeCorrelationMatrix(): void {
+  // 空 / 单 symbol — 仍合法返 1x1 矩阵 (对角线)
+  const closes = new Map<string, DailyCloseRow[]>();
+  closes.set('A', [
+    { date: '2026-06-01', close: 100 },
+    { date: '2026-06-02', close: 102 },
+    { date: '2026-06-03', close: 103 },
+    { date: '2026-06-04', close: 105 },
+    { date: '2026-06-05', close: 107 },
+  ]);
+  closes.set('B', [
+    { date: '2026-06-01', close: 50 },
+    { date: '2026-06-02', close: 51 },
+    { date: '2026-06-03', close: 51.5 },
+    { date: '2026-06-04', close: 52.5 },
+    { date: '2026-06-05', close: 53.5 },
+  ]);
+  closes.set('C', [
+    { date: '2026-06-01', close: 200 },
+    { date: '2026-06-02', close: 196 },
+    { date: '2026-06-03', close: 194 },
+    { date: '2026-06-04', close: 190 },
+    { date: '2026-06-05', close: 186 },
+  ]);
+
+  const m1 = computeCorrelationMatrix(['A'], closes);
+  assert('single symbol matrix', m1 !== null);
+  assertEqual('single len', m1!.symbols, ['A']);
+  assertEqual('single diag', m1!.matrix[0].values[0], 1);
+  assertEqual('single window', m1!.window_days, 4);
+  assertEqual('single sample_size', m1!.sample_size, 1);
+
+  // A 与 B 同方向, A 与 C 反方向
+  const m2 = computeCorrelationMatrix(['A', 'B', 'C'], closes);
+  assert('m2 not null', m2 !== null);
+  assertEqual('m2 dim', m2!.symbols, ['A', 'B', 'C']);
+  // 对角线 = 1
+  assertEqual('m2 diag A', m2!.matrix[0].values[0], 1);
+  assertEqual('m2 diag B', m2!.matrix[1].values[1], 1);
+  assertEqual('m2 diag C', m2!.matrix[2].values[2], 1);
+  // 对称: A-B == B-A
+  assertEqual('symmetric AB=BA', m2!.matrix[0].values[1], m2!.matrix[1].values[0]);
+  assertEqual('symmetric AC=CA', m2!.matrix[0].values[2], m2!.matrix[2].values[0]);
+  // A 与 B 高正相关 (>0.9)
+  const rAB = m2!.matrix[0].values[1]!;
+  assert('A-B high positive', rAB > 0.9, `rAB=${rAB}`);
+  // A 与 C 高负相关 (<-0.9)
+  const rAC = m2!.matrix[0].values[2]!;
+  assert('A-C high negative', rAC < -0.9, `rAC=${rAC}`);
+
+  // 空 symbols / 空 closesMap → null
+  assertEqual('empty symbols', computeCorrelationMatrix([], closes), null);
+  assertEqual('null closesMap', computeCorrelationMatrix(['A'], null as any), null);
+
+  // 数据不足 (1 个 close) → null
+  const shortCloses = new Map<string, DailyCloseRow[]>();
+  shortCloses.set('A', [{ date: '2026-06-01', close: 100 }]);
+  assertEqual('1 close → null', computeCorrelationMatrix(['A'], shortCloses), null);
+
+  // 不重叠日期 → intersect 不足 → null
+  const noOverlap = new Map<string, DailyCloseRow[]>();
+  noOverlap.set('A', [
+    { date: '2026-06-01', close: 100 },
+    { date: '2026-06-02', close: 101 },
+    { date: '2026-06-03', close: 102 },
+    { date: '2026-06-04', close: 103 },
+  ]);
+  noOverlap.set('B', [
+    { date: '2026-06-10', close: 200 },
+    { date: '2026-06-11', close: 201 },
+    { date: '2026-06-12', close: 202 },
+    { date: '2026-06-13', close: 203 },
+  ]);
+  assertEqual('no date overlap → null', computeCorrelationMatrix(['A', 'B'], noOverlap), null);
+
+  // 常数序列 (方差 0) — 仍有矩阵, 但 A 与 D 那行/列为 null
+  const constCloses = new Map<string, DailyCloseRow[]>(closes);
+  constCloses.set('D', [
+    { date: '2026-06-01', close: 100 },
+    { date: '2026-06-02', close: 100 },
+    { date: '2026-06-03', close: 100 },
+    { date: '2026-06-04', close: 100 },
+    { date: '2026-06-05', close: 100 },
+  ]);
+  const m3 = computeCorrelationMatrix(['A', 'D'], constCloses);
+  assert('m3 not null (has A & D rows)', m3 !== null);
+  assertEqual('m3 diag A', m3!.matrix[0].values[0], 1);
+  assertEqual('m3 diag D', m3!.matrix[1].values[1], 1);
+  assertEqual('A-D constant → null', m3!.matrix[0].values[1], null);
+  assertEqual('D-A constant → null', m3!.matrix[1].values[0], null);
+}
+
+function testBuildCorrelationMatrixPayload(): void {
+  const closes = new Map<string, DailyCloseRow[]>();
+  closes.set('A', [
+    { date: '2026-06-01', close: 100 },
+    { date: '2026-06-02', close: 101 },
+    { date: '2026-06-03', close: 102 },
+    { date: '2026-06-04', close: 103 },
+  ]);
+  closes.set('B', [
+    { date: '2026-06-01', close: 50 },
+    { date: '2026-06-02', close: 51 },
+    { date: '2026-06-03', close: 52 },
+    { date: '2026-06-04', close: 53 },
+  ]);
+  // 完整 happy path
+  const p = buildCorrelationMatrixPayload(
+    [
+      { symbol: 'A', market_value: 1000 },
+      { symbol: 'B', market_value: 500 },
+    ],
+    [],
+    closes
+  );
+  assert('payload not null', p !== null);
+  assertEqual('symbols order', p!.symbols, ['A', 'B']);
+  assertEqual('capped_n', p!.capped_n, 2);
+  assertEqual('sample_size', p!.sample_size, 2);
+  assertEqual('window_days', p!.window_days, 3);
+
+  // 空持仓 / 空交易股 → null
+  assertEqual('empty input', buildCorrelationMatrixPayload([], [], closes), null);
+
+  // capped_n > sample_size (持仓多, closes 只覆盖部分)
+  const partialCloses = new Map<string, DailyCloseRow[]>();
+  partialCloses.set('A', closes.get('A')!);
+  // B 没数据
+  const p2 = buildCorrelationMatrixPayload(
+    [
+      { symbol: 'A', market_value: 1000 },
+      { symbol: 'B', market_value: 500 },
+    ],
+    [],
+    partialCloses
+  );
+  assert('p2 not null (A 可单独算)', p2 !== null);
+  assertEqual('p2 only A', p2!.symbols, ['A']);
+  assertEqual('p2 capped_n=2', p2!.capped_n, 2);
+  assertEqual('p2 sample_size=1', p2!.sample_size, 1);
+}
+
+function testBuildCorrelationMatrixHtml(): void {
+  // null → 空字符串 (整 section 不渲染)
+  assertEqual('null → empty', buildCorrelationMatrixHtml(null), '');
+  // 空 symbols → 空字符串
+  const emptyP: CorrelationMatrixPayload = {
+    symbols: [],
+    matrix: [],
+    window_days: 0,
+    sample_size: 0,
+    capped_n: 0,
+  };
+  assertEqual('empty symbols → empty', buildCorrelationMatrixHtml(emptyP), '');
+
+  // 2x2 完整
+  const p: CorrelationMatrixPayload = {
+    symbols: ['A', 'B'],
+    matrix: [
+      { symbol: 'A', values: [1, 0.85] },
+      { symbol: 'B', values: [0.85, 1] },
+    ],
+    window_days: 4,
+    sample_size: 2,
+    capped_n: 2,
+  };
+  const html = buildCorrelationMatrixHtml(p);
+  assert('html includes header A', html.includes('A'));
+  assert('html includes header B', html.includes('B'));
+  assert('html includes corr value', html.includes('+0.85'));
+  assert('html includes window_days', html.includes('4 日'));
+  assert('html includes correlation icon', html.includes('🔗'));
+  assert('html includes high-positive bg', html.includes('#fca5a5'));
+  // 对角线深色
+  assert('html includes diag styling', html.includes('1.00'));
+
+  // capped_n > sample_size 触发"前 N 名 / 共 M 只" 提示
+  const cappedP: CorrelationMatrixPayload = {
+    ...p,
+    capped_n: 5,
+  };
+  const cappedHtml = buildCorrelationMatrixHtml(cappedP);
+  assert('html includes cap note', cappedHtml.includes('前 2 只') && cappedHtml.includes('共 5 只'));
+
+  // null cell 渲染为 '—'
+  const pNull: CorrelationMatrixPayload = {
+    symbols: ['A', 'B'],
+    matrix: [
+      { symbol: 'A', values: [1, null] },
+      { symbol: 'B', values: [null, 1] },
+    ],
+    window_days: 4,
+    sample_size: 2,
+    capped_n: 2,
+  };
+  const htmlNull = buildCorrelationMatrixHtml(pNull);
+  assert('html includes — for null', htmlNull.includes('—'));
+}
+
+function testCorrelationConstantsFrozen(): void {
+  assert('MAX_SYMBOLS > 0', CORRELATION_MAX_SYMBOLS > 0);
+  assert('MIN_RETURNS >= 2', CORRELATION_MIN_RETURNS >= 2);
+  // 不冻结 (常量本来就 const), 这里只断"暴露给单测"
+}
+
 function testBuildEquityCurveSparkline(): void {
   // empty / single → ''
   assertEqual('empty sparkline', buildEquityCurveSparkline([]), '');
@@ -661,6 +1015,16 @@ function testBuildWeeklyReviewEmail(): void {
         loss_count: 1,
       },
     ],
+    correlation_matrix: {
+      symbols: ['600519.SH', '000858.SZ'],
+      matrix: [
+        { symbol: '600519.SH', values: [1, 0.78] },
+        { symbol: '000858.SZ', values: [0.78, 1] },
+      ],
+      window_days: 4,
+      sample_size: 2,
+      capped_n: 2,
+    },
     top_winners: [
       { symbol: '600519.SH', name: '茅台', industry: '白酒', realized_pnl: 3000, trade_count: 1 },
     ],
@@ -708,6 +1072,12 @@ function testBuildWeeklyReviewEmail(): void {
   assert('text 含 策略贡献 section', !!mail.text && mail.text.includes('策略贡献'));
   assert('text 含 量化推荐 line', !!mail.text && mail.text.includes('量化推荐'));
   assert('text 含 手动交易 line', !!mail.text && mail.text.includes('手动交易'));
+  // US-088 PM-012 — correlation matrix 渲染
+  assert('html 含 相关性矩阵 section', mail.html.includes('持仓相关性矩阵'));
+  assert('html 含 600519 列头', mail.html.includes('600519.SH'));
+  assert('html 含 +0.78 corr', mail.html.includes('+0.78'));
+  assert('html 含 日收益 window', mail.html.includes('4 日'));
+  assert('text 含 相关性 section', !!mail.text && mail.text.includes('持仓相关性矩阵'));
 }
 
 function testFormatMoney(): void {
@@ -1169,6 +1539,100 @@ async function testSendStrategyLookupFailureFallsBackManual(): Promise<void> {
   assertEqual('strategy throw → pnl', strat[0].realized_pnl, 100);
 }
 
+// ---------------------------------------------------------------------------
+// US-088 PM-012 — correlation matrix e2e
+// ---------------------------------------------------------------------------
+async function testSendCorrelationMatrixPropagates(): Promise<void> {
+  // 持仓 A + B (同方向上涨), 上周 5 日 close 数据完整 → matrix 含 A/B 两 symbol
+  const dailyCloses = new Map<string, DailyCloseRow[]>();
+  dailyCloses.set('600519.SH', [
+    { date: '2026-06-01', close: 1800 },
+    { date: '2026-06-02', close: 1810 },
+    { date: '2026-06-03', close: 1815 },
+    { date: '2026-06-04', close: 1825 },
+    { date: '2026-06-05', close: 1830 },
+  ]);
+  dailyCloses.set('000858.SZ', [
+    { date: '2026-06-01', close: 150 },
+    { date: '2026-06-02', close: 151 },
+    { date: '2026-06-03', close: 151.5 },
+    { date: '2026-06-04', close: 152.5 },
+    { date: '2026-06-05', close: 153 },
+  ]);
+  const state: FakeState = {
+    users: [eligibleUser(1, 'lym')],
+    portfolios: {
+      1: {
+        portfolio: { id: 100 },
+        positions: [
+          { symbol: '600519.SH', market_value: 90000 },
+          { symbol: '000858.SZ', market_value: 30000 },
+        ],
+      },
+    },
+    snapshots: { 100: [{ date: '2026-06-01', total_value: 100000 }] },
+    trades: { 100: [] },
+    dailyCloses,
+  };
+  const svc = new WeeklyReviewReportService(makeFakeDataSource(state));
+  const r = await svc.sendWeeklyReviewReports({ reference_date: '2026-06-08', dry_run: true });
+  const cm = r.per_user[0].payload!.correlation_matrix;
+  assert('correlation_matrix not null', cm !== null);
+  assertEqual('cm symbols order', cm!.symbols, ['600519.SH', '000858.SZ']);
+  assertEqual('cm sample_size', cm!.sample_size, 2);
+  assertEqual('cm capped_n', cm!.capped_n, 2);
+  assertEqual('cm window_days', cm!.window_days, 4);
+  // 对角线 = 1
+  assertEqual('cm diag A', cm!.matrix[0].values[0], 1);
+  assertEqual('cm diag B', cm!.matrix[1].values[1], 1);
+  // A 与 B 同方向上涨 → 高正相关
+  const rAB = cm!.matrix[0].values[1]!;
+  assert('cm AB high positive', rAB > 0.8, `rAB=${rAB}`);
+  // 对称
+  assertEqual('cm symmetric AB=BA', cm!.matrix[0].values[1], cm!.matrix[1].values[0]);
+}
+
+async function testSendCorrelationMatrixFailureNull(): Promise<void> {
+  // loadDailyCloses throw → fail-OPEN → correlation_matrix=null, 主流程不挂
+  const state: FakeState = {
+    users: [eligibleUser(1, 'lym')],
+    portfolios: {
+      1: {
+        portfolio: { id: 100 },
+        positions: [{ symbol: '600519.SH', market_value: 100 }],
+      },
+    },
+    snapshots: { 100: [{ date: '2026-06-01', total_value: 100000 }] },
+    trades: { 100: [] },
+    throwOn: { loadDailyCloses: true },
+  };
+  const svc = new WeeklyReviewReportService(makeFakeDataSource(state));
+  const r = await svc.sendWeeklyReviewReports({ reference_date: '2026-06-08', dry_run: true });
+  // 主流程不挂 + correlation_matrix=null
+  assertEqual('throw → dry_run sent', r.sent_count, 1);
+  assertEqual('throw → correlation_matrix=null', r.per_user[0].payload!.correlation_matrix, null);
+  // strategy_contribution 仍 OK (独立链路)
+  assert(
+    'throw → strategy_contribution still present',
+    Array.isArray(r.per_user[0].payload!.strategy_contribution)
+  );
+}
+
+async function testSendCorrelationEmptyPositionsNull(): Promise<void> {
+  // 持仓为空 + 交易也空 → 不调 loadDailyCloses, correlation_matrix=null
+  const state: FakeState = {
+    users: [eligibleUser(1, 'lym')],
+    portfolios: { 1: { portfolio: { id: 100 }, positions: [] } },
+    snapshots: { 100: [{ date: '2026-06-01', total_value: 100000 }] },
+    trades: { 100: [] },
+    // 故意设 dailyCloses (但因为没 selected symbols 不应被调用)
+    dailyCloses: new Map([['X', [{ date: '2026-06-01', close: 100 }]]]),
+  };
+  const svc = new WeeklyReviewReportService(makeFakeDataSource(state));
+  const r = await svc.sendWeeklyReviewReports({ reference_date: '2026-06-08', dry_run: true });
+  assertEqual('empty positions → null', r.per_user[0].payload!.correlation_matrix, null);
+}
+
 async function testSendEmailThrows(): Promise<void> {
   const state: FakeState = {
     users: [eligibleUser(1, 'lym')],
@@ -1333,6 +1797,12 @@ async function testSendUserIdFilter(): Promise<void> {
     async loadWeeklyTrades() {
       return [] as any;
     },
+    async loadTradeStrategyMap() {
+      return new Map<number, string>();
+    },
+    async loadDailyCloses() {
+      return new Map<string, DailyCloseRow[]>();
+    },
     async loadStockMetadata() {
       return new Map();
     },
@@ -1432,6 +1902,13 @@ async function main(): Promise<void> {
   testAggregateSymbolContribution();
   testStrategyLabel();
   testAggregateStrategyContribution();
+  testComputePearsonEdges();
+  testDailyReturnsFromCloses();
+  testSelectCorrelationSymbols();
+  testComputeCorrelationMatrix();
+  testBuildCorrelationMatrixPayload();
+  testBuildCorrelationMatrixHtml();
+  testCorrelationConstantsFrozen();
   testBuildEquityCurveSparkline();
   testBuildHeuristicWeeklyOpinion();
   testBuildReportId();
@@ -1462,6 +1939,9 @@ async function main(): Promise<void> {
   await testSendDryRun();
   await testSendStrategyContributionPropagates();
   await testSendStrategyLookupFailureFallsBackManual();
+  await testSendCorrelationMatrixPropagates();
+  await testSendCorrelationMatrixFailureNull();
+  await testSendCorrelationEmptyPositionsNull();
   await testSendEmailThrows();
   await testSendEmailReturnsFailure();
   await testSendEmailHappyPath();

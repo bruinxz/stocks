@@ -41,6 +41,7 @@ import { PaperTradingTrade } from '../models/PaperTradingTrade';
 import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
 import { Stock } from '../models/Stock';
 import { EarningsForecast } from '../models/EarningsForecast';
+import { DailyBar } from '../models/DailyBar';
 import { AIInvestmentSignal, AISignalSourceType } from '../models/AIInvestmentSignal';
 import {
   normalizeNotificationConfig,
@@ -130,6 +131,64 @@ export interface StrategyTradeRow {
   strategy_key: string;
 }
 
+/**
+ * US-088 PM-012 — 持仓股相关性矩阵 (周报内).
+ *
+ * 维度: 上周 (Mon-Sun) 持仓股 + 上周交易过的股 ∪ 集合, 按"上周 (实际不超 N=10
+ * cap, 防 30×30 矩阵把邮件正文撑爆) 单股日收益率" 的 N×N pearson 相关. 给操盘
+ * 手看"持仓是否过度集中在同方向" — 红色 = 高正相关 (黑天鹅时一起跌);
+ * 绿色 = 高负相关 (天然对冲); 灰色 = 弱相关 (健康的多样化).
+ *
+ * 字段语义:
+ *   - symbols: 行/列对应的 symbol 顺序 (与 matrix 索引一一对应), 由
+ *     selectCorrelationSymbols 按 "上周末持仓 value 大→小 + tie-break symbol asc"
+ *     稳定选出 (Top-N, N=CORRELATION_MAX_SYMBOLS).
+ *   - matrix: N×N 实数矩阵, 对角线恒 1; 主对角线之外对称; 任一 symbol 序列方差为 0
+ *     (上周价格全相同 / 数据点不足) → 那一行/列全填 null (NaN 替身), UI 渲染为 '—'.
+ *   - window_days: 实际使用的日收益序列长度 (= unique 交易日数 - 1; 一周 5 交易日
+ *     则 window_days=4); 不足 MIN_RETURNS (=3) 整个 payload 返 null.
+ *   - sample_size: 实际进入计算的 symbols 数 (≤ MAX_SYMBOLS, 数据缺失的 symbol 被
+ *     提前剔除); UI 显示 "基于 N 只持仓股" 帮用户判断置信度.
+ *   - capped_n: 候选 symbol 总数 (持仓 + 交易过), 若 > MAX_SYMBOLS 在 UI 显示
+ *     "前 N 名 (共 M 只)" 提示截断.
+ */
+export interface CorrelationMatrixRow {
+  symbol: string;
+  /** 对应矩阵每列的相关系数, 长度 == symbols.length, null = 数据不足无法计算 */
+  values: Array<number | null>;
+}
+
+export interface CorrelationMatrixPayload {
+  symbols: string[];
+  matrix: CorrelationMatrixRow[];
+  window_days: number;
+  sample_size: number;
+  capped_n: number;
+}
+
+/** US-088 PM-012 — 单股日 close 输入, 由 PRODUCTION DataSource 提供 */
+export interface DailyCloseRow {
+  /** YYYY-MM-DD (上海时区) */
+  date: string;
+  /** 当日 close 价 */
+  close: number;
+}
+
+/**
+ * US-088 PM-012 — 矩阵规模 cap. 一封邮件正文里 N×N 表格 N=10 已经接近视觉上限
+ * (10 行 × 10 列 + 表头), 再大邮件 client 会横向滚动很难看. 真要看完整矩阵走
+ * frontend 看板. 改这个数必须同步改下面 `MIN_RETURNS` 注释里关于"4 = 一周 5
+ * 交易日 - 1" 的解释和 buildCorrelationMatrixHtml 的 column-count 注释.
+ */
+export const CORRELATION_MAX_SYMBOLS = 10;
+
+/**
+ * US-088 PM-012 — pearson 计算的最小日收益数. 一周满 5 交易日才能算出 4 个日收
+ * 益, 不足意味着上周市场休市 / portfolio 新建. 阈值定 3 = 周三新建账户也能算
+ * (但置信度低, UI 标 "数据不足" 提示).
+ */
+export const CORRELATION_MIN_RETURNS = 3;
+
 /** 单股贡献（top winners / losers 用） */
 export interface SymbolContributionRow {
   symbol: string;
@@ -176,6 +235,11 @@ export interface WeeklyReviewPayload {
    * 重新聚合. 无关联 signal 的 SELL trade → strategy_key='__MANUAL__'.
    */
   strategy_contribution: StrategyContributionRow[];
+  /**
+   * US-088 PM-012 — 持仓股 N×N pearson 相关矩阵.
+   * 数据不足 (无持仓 / 上周休市 / DailyBar 抓取失败) → null, UI 直接 hide section.
+   */
+  correlation_matrix: CorrelationMatrixPayload | null;
   top_winners: SymbolContributionRow[];
   top_losers: SymbolContributionRow[];
   trade_count: number;
@@ -259,6 +323,19 @@ export interface WeeklyReviewDataSource {
    * 失败 / 缺数据时返空 Map (caller 走 fail-OPEN, 缺映射 → '__MANUAL__').
    */
   loadTradeStrategyMap(portfolio_id: number, trade_ids: number[]): Promise<Map<number, string>>;
+  /**
+   * US-088 PM-012 — 取上周 (start_date 到 end_date) 这批 symbol 的日 close.
+   *
+   * 返回 Map<symbol, Array<{date, close}>> (按日期升序). 数据缺失的 symbol 在
+   * Map 中 absent (不返空 array, 让 caller 用 has() 区分 "失败" vs "停牌").
+   * PRODUCTION 实现: Stock.symbol IN (...) JOIN DailyBar.time BETWEEN ... 单次
+   * 查询. fail-OPEN: throw → caller 顶层 catch → correlation_matrix=null.
+   */
+  loadDailyCloses(
+    symbols: string[],
+    start_date: string,
+    end_date: string
+  ): Promise<Map<string, DailyCloseRow[]>>;
   /** 取 symbol → {industry, name} mapping */
   loadStockMetadata(
     symbols: string[]
@@ -464,6 +541,261 @@ export function strategyLabel(key: string): string {
     __UNKNOWN__: '未标注策略',
   };
   return labels[key] || key || '未标注策略';
+}
+
+// ---------------------------------------------------------------------------
+// US-088 PM-012 — 持仓股相关性矩阵 (pure helpers)
+// ---------------------------------------------------------------------------
+
+/**
+ * Pearson 相关系数. 满足:
+ *   - 任一向量 len < 2 → null (无法算 σ)
+ *   - 两向量长度不等 → 取较短长度 (上层应保证对齐, 此处兜底)
+ *   - 任一向量方差为 0 (常数序列) → null (corr 未定义, 数学上 0/0)
+ *   - 任一元素 NaN/Inf → null (污染算子, 不静默 fallback 到 0)
+ *
+ * 返回值 clamp 到 [-1, 1] (浮点误差可能让 1.0 算到 1.00000000001).
+ * round 到 3 位小数让邮件展示稳定 (绝对值 ≥0.001 才显示, 否则当 0).
+ */
+export function computePearson(a: number[], b: number[]): number | null {
+  if (!Array.isArray(a) || !Array.isArray(b)) return null;
+  const n = Math.min(a.length, b.length);
+  if (n < 2) return null;
+  let sumA = 0;
+  let sumB = 0;
+  for (let i = 0; i < n; i++) {
+    if (!Number.isFinite(a[i]) || !Number.isFinite(b[i])) return null;
+    sumA += a[i];
+    sumB += b[i];
+  }
+  const meanA = sumA / n;
+  const meanB = sumB / n;
+  let cov = 0;
+  let varA = 0;
+  let varB = 0;
+  for (let i = 0; i < n; i++) {
+    const da = a[i] - meanA;
+    const db = b[i] - meanB;
+    cov += da * db;
+    varA += da * da;
+    varB += db * db;
+  }
+  if (varA === 0 || varB === 0) return null;
+  const r = cov / Math.sqrt(varA * varB);
+  if (!Number.isFinite(r)) return null;
+  const clamped = Math.max(-1, Math.min(1, r));
+  return Math.round(clamped * 1000) / 1000;
+}
+
+/**
+ * 从 close 序列算日收益率 r_t = (close_t - close_{t-1}) / close_{t-1}.
+ *
+ * 输入: 按 date 升序的 close 行 (PRODUCTION 已 ORDER BY time ASC).
+ * 返回: 长度 = closes.length - 1 的收益数组, 不足 2 个有效 close → 空数组.
+ * 任一 close <= 0 或非有限 → 该位置跳过 (returns 长度仍按"成功对" 累加),
+ * 让单个 spike 不污染整段序列.
+ */
+export function dailyReturnsFromCloses(closes: DailyCloseRow[]): number[] {
+  if (!Array.isArray(closes) || closes.length < 2) return [];
+  const out: number[] = [];
+  let prev: number | null = null;
+  for (const row of closes) {
+    const v = Number(row?.close);
+    if (!Number.isFinite(v) || v <= 0) {
+      // 不重置 prev — 让 close 偶发缺失时与下一日依然能算一对, 但代价是
+      // 收益率会变成 2-day return. 选当前简化方案 = 重置 prev, 跳过中
+      // 间缺口防止 2-day return 污染单日方差; 上层在 dataPointCount 不
+      // 足 MIN_RETURNS 时会兜底 null.
+      prev = null;
+      continue;
+    }
+    if (prev !== null && prev > 0) {
+      out.push((v - prev) / prev);
+    }
+    prev = v;
+  }
+  return out;
+}
+
+/**
+ * 从持仓 + 交易股 ∪ 集合里挑相关矩阵参与者. 按"上周末持仓 market_value 大→小"
+ * (越大说明在 portfolio 里占比越高, 越值得被分析相关性). 平手或缺持仓走 symbol
+ * 字母升序兜底 (与排序稳定性同思想).
+ *
+ * 输入:
+ *   - positions: 当前持仓 (snapshot), 各含 symbol + market_value (or quantity*price)
+ *   - tradedSymbols: 上周交易过但已平的股 (避免漏掉 "buy-sell 同周 round-trip")
+ *   - cap: Top-N cap (= CORRELATION_MAX_SYMBOLS)
+ *
+ * 输出: 去重的 symbol 列表 (顺序 = 优先级降序). 同时返回 capped_n = 候选总数,
+ * 让 UI 知道是否被 cap (展示 "前 N 名 / 共 M 只" 帮助用户判断截断).
+ */
+export function selectCorrelationSymbols(
+  positions: Array<{ symbol: string; market_value?: number | null }>,
+  tradedSymbols: string[],
+  cap: number = CORRELATION_MAX_SYMBOLS
+): { selected: string[]; capped_n: number } {
+  const valueMap = new Map<string, number>();
+  for (const p of positions || []) {
+    const sym = safeString(p?.symbol);
+    if (!sym) continue;
+    const mv = Number(p?.market_value);
+    valueMap.set(sym, Math.max(valueMap.get(sym) || 0, Number.isFinite(mv) ? mv : 0));
+  }
+  for (const sym of tradedSymbols || []) {
+    const s = safeString(sym);
+    if (!s) continue;
+    if (!valueMap.has(s)) valueMap.set(s, 0);
+  }
+  const all = Array.from(valueMap.entries());
+  // 排序: market_value 降序 + symbol 字母升序 tie-break (稳定)
+  all.sort((a, b) => {
+    const diff = b[1] - a[1];
+    if (diff !== 0) return diff;
+    return a[0].localeCompare(b[0]);
+  });
+  const safeCap = Math.max(1, Math.floor(Number(cap) || CORRELATION_MAX_SYMBOLS));
+  return {
+    selected: all.slice(0, safeCap).map(([s]) => s),
+    capped_n: all.length,
+  };
+}
+
+/**
+ * 主入口: 用 symbols + closes 算 N×N pearson 相关矩阵.
+ *
+ * 算法:
+ *   1. 用 selectCorrelationSymbols 输出的 symbols 作为行/列顺序;
+ *   2. 每个 symbol 通过 dailyReturnsFromCloses 得日收益序列, 取所有 symbol 序列
+ *      共同的有效日 (intersect by date 防停牌 / 缺口让 pearson 用错位窗口);
+ *   3. 对齐后, 若 intersect 长度 < CORRELATION_MIN_RETURNS → 整个 payload 返 null
+ *      (不返"半矩阵" — 一部分 symbol 能算一部分不能会让 UI 解读困难);
+ *   4. 任一 symbol 的对齐序列方差为 0 (上周价格全相同 / 全停牌) → 该行/列全 null;
+ *   5. 对角线恒 1; 对称矩阵, 只算上三角再镜像减一半开销.
+ *
+ * 任何 throw / 空入 → null, 让 caller 不需 try/catch.
+ */
+export function computeCorrelationMatrix(
+  symbols: string[],
+  closesMap: Map<string, DailyCloseRow[]>,
+  options: { minReturns?: number } = {}
+): CorrelationMatrixPayload | null {
+  if (!Array.isArray(symbols) || symbols.length === 0) return null;
+  if (!closesMap || typeof closesMap.get !== 'function') return null;
+  const minReturns = Math.max(2, Math.floor(options.minReturns || CORRELATION_MIN_RETURNS));
+
+  // 用各 symbol 的 closes 算 dateSet 交集 (let pearson 都在同一组日期)
+  const validSymbols: string[] = [];
+  const closesPerSymbol = new Map<string, DailyCloseRow[]>();
+  for (const sym of symbols) {
+    const rows = closesMap.get(sym);
+    if (!Array.isArray(rows) || rows.length < 2) continue;
+    closesPerSymbol.set(sym, rows);
+    validSymbols.push(sym);
+  }
+  if (validSymbols.length === 0) return null;
+
+  // 交集日期 (每个 symbol 都有 close 的日子) — 先按 symbol 把 (date → close) 建好,
+  // 再用 size 最小的当种子做交集 (降低 Set 拷贝成本), 顺道把 closeByDate 缓存复用.
+  const closeByDatePerSymbol = new Map<string, Map<string, number>>();
+  for (const sym of validSymbols) {
+    const rows = closesPerSymbol.get(sym) || [];
+    const closeByDate = new Map<string, number>();
+    for (const r of rows) {
+      const d = safeString(r.date);
+      const v = Number(r.close);
+      if (d && Number.isFinite(v) && v > 0) closeByDate.set(d, v);
+    }
+    closeByDatePerSymbol.set(sym, closeByDate);
+  }
+  const seedSym = validSymbols
+    .slice()
+    .sort(
+      (a, b) => (closeByDatePerSymbol.get(a)?.size || 0) - (closeByDatePerSymbol.get(b)?.size || 0)
+    )[0];
+  const seed = closeByDatePerSymbol.get(seedSym) || new Map<string, number>();
+  const intersect = new Set<string>(seed.keys());
+  for (const sym of validSymbols) {
+    if (sym === seedSym) continue;
+    const cbd = closeByDatePerSymbol.get(sym) || new Map<string, number>();
+    for (const d of Array.from(intersect)) {
+      if (!cbd.has(d)) intersect.delete(d);
+    }
+  }
+  const sortedDates = Array.from(intersect).sort();
+  if (sortedDates.length < minReturns + 1) {
+    // 收益数 = closes 数 - 1, 要算 pearson 至少 minReturns 个收益 → 至少 minReturns+1 个 close
+    return null;
+  }
+
+  // 对每个 valid symbol 算对齐后的日收益 — 交集后所有 sortedDates 在 cbd 里必然 has
+  const returnsPerSymbol = new Map<string, number[]>();
+  for (const sym of validSymbols) {
+    const cbd = closeByDatePerSymbol.get(sym) || new Map<string, number>();
+    const aligned: DailyCloseRow[] = [];
+    for (const d of sortedDates) {
+      const v = cbd.get(d);
+      if (v !== undefined) aligned.push({ date: d, close: v });
+    }
+    returnsPerSymbol.set(sym, dailyReturnsFromCloses(aligned));
+  }
+
+  // 再次过滤掉收益不够的 symbol (intersect 后还可能某 symbol 收益 < minReturns)
+  const finalSymbols = validSymbols.filter(
+    s => (returnsPerSymbol.get(s) || []).length >= minReturns
+  );
+  if (finalSymbols.length === 0) return null;
+
+  // 计算上三角 + 镜像
+  const rows: CorrelationMatrixRow[] = finalSymbols.map(sym => ({
+    symbol: sym,
+    values: finalSymbols.map(() => null as number | null),
+  }));
+  for (let i = 0; i < finalSymbols.length; i++) {
+    rows[i].values[i] = 1;
+    const ri = returnsPerSymbol.get(finalSymbols[i]) || [];
+    for (let j = i + 1; j < finalSymbols.length; j++) {
+      const rj = returnsPerSymbol.get(finalSymbols[j]) || [];
+      const r = computePearson(ri, rj);
+      rows[i].values[j] = r;
+      rows[j].values[i] = r;
+    }
+  }
+
+  return {
+    symbols: finalSymbols,
+    matrix: rows,
+    window_days: Math.min(...finalSymbols.map(s => (returnsPerSymbol.get(s) || []).length)),
+    sample_size: finalSymbols.length,
+    capped_n: symbols.length,
+  };
+}
+
+/**
+ * US-088 PM-012 — 主入口: 把 selectCorrelationSymbols + closesMap 串起来算矩阵.
+ * 任何空入 / throw → 返 null. caller 一次调用就能拿完整 payload.
+ */
+export function buildCorrelationMatrixPayload(
+  positions: Array<{ symbol: string; market_value?: number | null }>,
+  tradedSymbols: string[],
+  closesMap: Map<string, DailyCloseRow[]>,
+  options: { cap?: number; minReturns?: number } = {}
+): CorrelationMatrixPayload | null {
+  try {
+    const cap = options.cap || CORRELATION_MAX_SYMBOLS;
+    const minReturns = options.minReturns || CORRELATION_MIN_RETURNS;
+    const { selected, capped_n } = selectCorrelationSymbols(positions, tradedSymbols, cap);
+    if (selected.length === 0) return null;
+    const matrix = computeCorrelationMatrix(selected, closesMap, { minReturns });
+    if (!matrix) return null;
+    // 用 buildCorrelationMatrixPayload 已知的 capped_n 覆盖 computeCorrelationMatrix
+    // 内部计算的 (后者只看到入参 symbols.length, 而真正的"候选总数" 是 positions
+    // + tradedSymbols ∪).
+    return { ...matrix, capped_n };
+  } catch (err) {
+    // pure helper 永不 throw — 返 null 让 caller 顶层 try/catch 不必再包.
+    return null;
+  }
 }
 
 /**
@@ -721,6 +1053,9 @@ export function buildWeeklyReviewEmail(payload: WeeklyReviewPayload): EmailPaylo
         .join('')
     : '<tr><td colspan="4" style="padding:12px;color:#94a3b8;text-align:center;">本周无已实现交易</td></tr>';
 
+  // US-088 PM-012 — 相关性矩阵 HTML (correlation_matrix=null 时 hide section)
+  const correlationSectionHtml = buildCorrelationMatrixHtml(payload.correlation_matrix);
+
   const winnerRowsHtml = payload.top_winners.length
     ? payload.top_winners.map(r => buildSymbolRowHtml(r, '#16a34a')).join('')
     : '<tr><td colspan="4" style="padding:12px;color:#94a3b8;text-align:center;">本周无盈利兑现</td></tr>';
@@ -805,6 +1140,7 @@ export function buildWeeklyReviewEmail(payload: WeeklyReviewPayload): EmailPaylo
         <tbody>${strategyTableHtml}</tbody>
       </table>
     </td></tr>
+    ${correlationSectionHtml}
     <tr><td style="padding:0 24px 16px 24px;">
       <h2 style="margin:8px 0;font-size:15px;font-weight:600;color:#0f172a;">🏆 盈利 TOP ${
         payload.top_winners.length
@@ -856,6 +1192,81 @@ function buildSymbolRowHtml(row: SymbolContributionRow, color: string): string {
   )}</td></tr>`;
 }
 
+/**
+ * US-088 PM-012 — 把相关矩阵渲染成 HTML 表格 section.
+ *
+ * 颜色规则 (操盘手认知): 红色 = 高正相关 (黑天鹅风险), 浅色 = 弱相关 (健康),
+ * 绿色 = 高负相关 (天然对冲). 与"涨绿跌红" 配色保持一致 (邮件场景按国际惯例).
+ *   - |r| < 0.3 → 中性灰 #f1f5f9
+ *   - 0.3 ≤ r < 0.6 → 暖橙 #fde68a
+ *   - 0.6 ≤ r ≤ 1.0 → 深红 #fca5a5 (高风险)
+ *   - -0.6 < r ≤ -0.3 → 浅绿 #bbf7d0
+ *   - r ≤ -0.6 → 深绿 #86efac
+ *   - null (数据不足) → '—' 灰底
+ *
+ * payload=null → 返空字符串 (整个 section 不渲染), caller 用 ${} 占位即可.
+ */
+export function buildCorrelationMatrixHtml(payload: CorrelationMatrixPayload | null): string {
+  if (!payload || !Array.isArray(payload.symbols) || payload.symbols.length === 0) return '';
+  const { symbols, matrix } = payload;
+  const cellPad = 'padding:4px 6px;border:1px solid #e2e8f0;text-align:center;font-size:11px;';
+  const headerHtml =
+    `<tr><th style="${cellPad}background:#f8fafc;color:#64748b;font-weight:500;">代码</th>` +
+    symbols
+      .map(
+        s =>
+          `<th style="${cellPad}background:#f8fafc;color:#64748b;font-weight:500;font-family:monospace;">${escapeHtml(
+            s
+          )}</th>`
+      )
+      .join('') +
+    '</tr>';
+  const bodyHtml = matrix
+    .map((row, i) => {
+      const cells = row.values
+        .map((v, j) => {
+          if (v === null || !Number.isFinite(v)) {
+            return `<td style="${cellPad}background:#f1f5f9;color:#94a3b8;">—</td>`;
+          }
+          // 对角线单独标记 (深蓝底 + 白字 1.00)
+          if (i === j) {
+            return `<td style="${cellPad}background:#1e293b;color:#fff;font-weight:600;">1.00</td>`;
+          }
+          const bg = correlationCellColor(v);
+          const fg = Math.abs(v) >= 0.6 ? '#0f172a' : '#475569';
+          return `<td style="${cellPad}background:${bg};color:${fg};font-weight:${
+            Math.abs(v) >= 0.6 ? 600 : 500
+          };">${v >= 0 ? '+' : ''}${v.toFixed(2)}</td>`;
+        })
+        .join('');
+      return `<tr><th style="${cellPad}background:#f8fafc;color:#475569;font-weight:500;font-family:monospace;text-align:left;">${escapeHtml(
+        row.symbol
+      )}</th>${cells}</tr>`;
+    })
+    .join('');
+  const cappedNote =
+    payload.capped_n > payload.sample_size
+      ? ` <span style="font-size:11px;color:#94a3b8;font-weight:400;">(前 ${payload.sample_size} 只 / 共 ${payload.capped_n} 只)</span>`
+      : '';
+  return `
+    <tr><td style="padding:0 24px 16px 24px;">
+      <h2 style="margin:8px 0;font-size:15px;font-weight:600;color:#0f172a;">🔗 持仓相关性矩阵${cappedNote}</h2>
+      <div style="font-size:11px;color:#94a3b8;margin-bottom:6px;">基于上周 ${payload.window_days} 日日收益率 Pearson 相关 · 红=高正相关(齐涨齐跌) / 绿=负相关(对冲) / 灰=弱相关(健康)</div>
+      <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;">
+        <thead>${headerHtml}</thead>
+        <tbody>${bodyHtml}</tbody>
+      </table>
+    </td></tr>`.trim();
+}
+
+function correlationCellColor(r: number): string {
+  if (r >= 0.6) return '#fca5a5'; // 深红 高正相关
+  if (r >= 0.3) return '#fde68a'; // 暖橙 中等正相关
+  if (r > -0.3) return '#f1f5f9'; // 中性灰
+  if (r > -0.6) return '#bbf7d0'; // 浅绿 中等负相关
+  return '#86efac'; // 深绿 高负相关
+}
+
 function buildPlainTextFallback(payload: WeeklyReviewPayload): string {
   const lines: string[] = [];
   const sign = payload.pnl.pnl_amount > 0 ? '+' : '';
@@ -903,6 +1314,28 @@ function buildPlainTextFallback(payload: WeeklyReviewPayload): string {
     }
   }
   lines.push('');
+  // US-088 PM-012 — 持仓相关性矩阵
+  if (payload.correlation_matrix && payload.correlation_matrix.symbols.length > 0) {
+    const cm = payload.correlation_matrix;
+    lines.push(`持仓相关性矩阵 (基于 ${cm.window_days} 日收益)：`);
+    if (cm.capped_n > cm.sample_size) {
+      lines.push(`  (前 ${cm.sample_size} 只 / 共 ${cm.capped_n} 只)`);
+    }
+    // 列宽以 symbol 最长 + 2 为基准
+    const colW = Math.max(8, ...cm.symbols.map(s => s.length)) + 1;
+    const fmt = (s: string) => s.padEnd(colW);
+    // 表头
+    lines.push('  ' + fmt('') + cm.symbols.map(fmt).join(''));
+    for (let i = 0; i < cm.matrix.length; i++) {
+      const row = cm.matrix[i];
+      const cells = row.values.map(v => {
+        if (v === null || !Number.isFinite(v)) return fmt('—');
+        return fmt(`${v >= 0 ? '+' : ''}${v.toFixed(2)}`);
+      });
+      lines.push('  ' + fmt(row.symbol) + cells.join(''));
+    }
+    lines.push('');
+  }
   lines.push('AI 周观点：');
   lines.push(`  ${payload.ai_opinion.headline}`);
   for (const p of payload.ai_opinion.paragraphs) {
@@ -1115,6 +1548,65 @@ export class DefaultWeeklyReviewDataSource implements WeeklyReviewDataSource {
       map.set(s.symbol, { name: s.name || '', industry: s.industry || null });
     }
     return map;
+  }
+
+  /**
+   * US-088 PM-012 — 取上周 [start_date, end_date] 区间内每只 symbol 的日 close.
+   *
+   * 实现:
+   *   1. Stock.symbol IN (...) 取 stock_id ↔ symbol 映射;
+   *   2. DailyBar 按 stock_id IN (...) AND time BETWEEN [start, end] 拉所有日线;
+   *   3. 按 stock_id 分组聚合, 按 symbol 重新归并到 Map.
+   *
+   * fail-OPEN 不在本层 try/catch — caller (runForUser 内 ---- US-088 块) 有顶层
+   * try/catch, helper throw 让 caller 把 correlation_matrix 置 null. 单测验证
+   * caller 顶层 catch 真的能兜底 (testSendDailyClosesThrowsCorrelationNull).
+   *
+   * NOTE: DailyBar.time 是 DATE 类型 (含时分秒), 上海时区. 用 moment.tz +
+   * startOf/endOf('day') 算 [00:00:00, 23:59:59] 区间防边界丢点.
+   */
+  async loadDailyCloses(
+    symbols: string[],
+    start_date: string,
+    end_date: string
+  ): Promise<Map<string, DailyCloseRow[]>> {
+    const out = new Map<string, DailyCloseRow[]>();
+    if (!symbols || symbols.length === 0) return out;
+    const unique = Array.from(new Set(symbols.filter(s => !!s)));
+    if (unique.length === 0) return out;
+
+    const stocks = (await Stock.findAll({
+      where: { symbol: { [Op.in]: unique } },
+      attributes: ['id', 'symbol'],
+      raw: true,
+    })) as unknown as Array<{ id: number; symbol: string }>;
+    if (stocks.length === 0) return out;
+    const idToSymbol = new Map<number, string>();
+    for (const s of stocks) idToSymbol.set(Number(s.id), s.symbol);
+
+    const dayStart = moment.tz(start_date, 'Asia/Shanghai').startOf('day').toDate();
+    const dayEnd = moment.tz(end_date, 'Asia/Shanghai').endOf('day').toDate();
+    const bars = (await DailyBar.findAll({
+      where: {
+        stock_id: { [Op.in]: Array.from(idToSymbol.keys()) },
+        time: { [Op.gte]: dayStart, [Op.lte]: dayEnd },
+      },
+      attributes: ['stock_id', 'time', 'close'],
+      order: [['time', 'ASC']],
+      raw: true,
+    })) as unknown as Array<{ stock_id: number; time: Date | string; close: number | string }>;
+
+    for (const bar of bars) {
+      const symbol = idToSymbol.get(Number(bar.stock_id));
+      if (!symbol) continue;
+      const close = Number(bar.close);
+      if (!Number.isFinite(close)) continue;
+      const date = moment.tz(bar.time, 'Asia/Shanghai').format('YYYY-MM-DD');
+      const arr = out.get(symbol) || [];
+      arr.push({ date, close });
+      out.set(symbol, arr);
+    }
+    return out;
   }
 
   async loadUpcomingEvents(symbols: string[], from_date: string, to_date: string) {
@@ -1490,6 +1982,32 @@ export class WeeklyReviewReportService {
       });
     }
 
+    // ---- US-088 PM-012: 持仓股相关性矩阵 (fail-OPEN, throw → correlation_matrix=null) ----
+    let correlationMatrix: CorrelationMatrixPayload | null = null;
+    try {
+      const tradedSymbols = Array.from(new Set(tradeRows.map(t => t.symbol).filter(s => !!s)));
+      const positionInputs = (summary.positions || []).map(p => ({
+        symbol: p.symbol,
+        market_value: Number((p as any).market_value),
+      }));
+      const { selected } = selectCorrelationSymbols(positionInputs, tradedSymbols);
+      if (selected.length > 0) {
+        const closesMap = await this.dataSource.loadDailyCloses(
+          selected,
+          week.start_date,
+          week.end_date
+        );
+        correlationMatrix = buildCorrelationMatrixPayload(positionInputs, tradedSymbols, closesMap);
+      }
+    } catch (err: any) {
+      logger.warn(
+        `[WeeklyReview] loadDailyCloses/computeCorrelationMatrix user=${user_id} 失败: ${
+          err?.message || err
+        }`
+      );
+      correlationMatrix = null;
+    }
+
     const payload: WeeklyReviewPayload = {
       user_id,
       username,
@@ -1498,6 +2016,7 @@ export class WeeklyReviewReportService {
       equity_curve: snapshots,
       industry_contribution: industryContrib,
       strategy_contribution: strategyContrib,
+      correlation_matrix: correlationMatrix,
       top_winners: topWinners,
       top_losers: topLosers,
       trade_count: tradeCount,
