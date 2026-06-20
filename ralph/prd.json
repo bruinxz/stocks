@@ -1697,8 +1697,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 110,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DONE 2026/06/20: 三处事实源 — (a) docs/broker_bridge_compat_matrix.md (~140 行 ~50 行表格: order_type 4 / event 8 / QMT status 11 / 错误码 5 + 服务器侧 lookup snippet + 变更流程); (b) backend/src/live-trading/brokers/brokerCompatMatrix.ts (单一事实源 ts 常量 — BrokerKey/OrderType/BrokerEventKind union + QMT_CAPABILITY/PTRADE_CAPABILITY frozen 实例 + getBrokerCapability/isOrderTypeSupported/isEventSupported/mapQmtStatusCode helper + QMT_STATUS_MAP 11 项); (c) integrations/broker-bridge/ptrade_bridge/ptrade_adapter.py 由 1 行注释升级到 PtradeAdapter stub class 与 QmtAdapter 接口对齐, 全部方法显式拒服务返结构化 error. 60_execution_overview.md §C.5 由 ⚠️ 翻 ✅ 加 5 条说明指引 server-side lookup. 单测 tests/live-trading/broker-compat-matrix.test.ts 143 ok / 0 failed 覆盖 9 模块 — 常量冻结/QMT 快照/PTrade 快照/lookup helper/QMT status map/adapter 文件存在/ts↔py drift guard/PTrade stub class 形态/docs↔代码 drift guard. typecheck 0 err / 全部 4 live-trading 单测过."
     },
     {
       "id": "US-111",

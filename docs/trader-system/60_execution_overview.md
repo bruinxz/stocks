@@ -149,10 +149,13 @@ sha256(body)
 - Bridge 端: `config.yaml` 加 `signature_method: ed25519` + `ed25519_private_key: <hex>`, 调 `bridge_common.auth.derive_ed25519_pubkey_hex()` 派生公钥配到 server
 - 测试: `backend/tests/live-trading/bridge-ed25519.test.ts` 覆盖两 method round-trip + 错误 pubkey/secret/sig 长度/篡改 base 全部 fail + Python ↔ Node 字节对齐契约
 
-### C.5 ⚠️ qmt vs ptrade 差异未文档化
+### C.5 ✅ qmt vs ptrade 差异已文档化 (US-110 [EX-010])
 
-- `integrations/broker-bridge/qmt_bridge/qmt_adapter.py` + `ptrade_bridge/ptrade_adapter.py` 实现略有差异
-- 哪些 order_type 两边都支持、哪些只 qmt 支持（如 iceberg）—— 缺统一兼容表
+- 文档：`docs/broker_bridge_compat_matrix.md` 列出全部 order_type / event / status / 错误码两 broker 的支持差异
+- 代码事实源：`backend/src/live-trading/brokers/brokerCompatMatrix.ts` (BROKER_COMPAT_MATRIX) — 服务器派 `LiveBrokerCommand` 前查 `getBrokerCapability(broker_key)` + `isOrderTypeSupported(broker_key, order_type)` 决定能否派单
+- adapter 内 fallback：非 LIMIT 的 order_type 直接返 error，不允许"猜测降级"
+- PTrade 当前为 stub（`PtradeAdapter` 类已就位，所有方法显式拒绝 + 错误字段；接入真 SDK 时按表更新 `trading_supported`）
+- drift guard：`backend/tests/live-trading/broker-compat-matrix.test.ts` 同时锁 ts 常量 + qmt_adapter.py status map + docs/broker_bridge_compat_matrix.md 三处对齐
 
 ### C.6 七闸门入口在两条 path（facade vs LiveTradingService.approveDraft）
 
