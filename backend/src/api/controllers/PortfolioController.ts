@@ -12,6 +12,8 @@ import { industryConcentrationGuard } from '../../portfolio/risk/IndustryConcent
 import { portfolioCorrelationService } from '../../services/PortfolioCorrelationService';
 import { exposureCoachService } from '../../services/ExposureCoachService';
 import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
+import { DailyAttributionReport } from '../../models/DailyAttributionReport';
+import { normalizeAttributionDate } from '../../services/attribution/DailyAttributionService';
 
 export class PortfolioController {
   private simulator: PortfolioReturnSimulator;
@@ -25,6 +27,7 @@ export class PortfolioController {
     this.getSimulationDetail = this.getSimulationDetail.bind(this);
     this.rebalanceIndustry = this.rebalanceIndustry.bind(this);
     this.getIndustryConcentrationSummary = this.getIndustryConcentrationSummary.bind(this);
+    this.getDailyAttribution = this.getDailyAttribution.bind(this);
   }
 
   /**
@@ -588,6 +591,71 @@ export class PortfolioController {
       res.status(500).json({
         success: false,
         message: error?.message || '获取 behavior bias 失败',
+      });
+    }
+  }
+
+  /**
+   * GET /api/portfolio/:id/attribution/daily?date=YYYY-MM-DD
+   * US-084 [PM-007] — DailyAttribution route + controller.
+   *
+   * 读取 DailyAttributionReport 表 (PM-003 schema), 不在线再算 — 计算由 cron
+   * (PM-006 / US-083 DAILY_ATTRIBUTION_GENERATE) 在 17:00 工作日触发 upsert.
+   *
+   * Path: :id = PaperTradingPortfolio.id
+   * Query: ?date=YYYY-MM-DD (默认今日 Asia/Shanghai; normalizeAttributionDate 容错)
+   *
+   * 鉴权: 必须登录 + portfolio.user_id 必须等于请求 user (与 getCorrelation /
+   * getExposure 同款 owner check; 403 优先于 404 防 user enumeration)
+   *
+   * 响应:
+   *   200 { success: true, data: <report row> }
+   *   401 未登录
+   *   400 portfolio id 非法
+   *   403 portfolio 非本人
+   *   404 portfolio 不存在 / 当日无报告 (cron 未跑完 / 当日新建账户)
+   *   500 兜底
+   *
+   * fail-OPEN: 任何 DB / runtime error → 500 + logger.error, 永不 throw.
+   */
+  async getDailyAttribution(req: Request, res: Response) {
+    try {
+      const user_id = (req as any).user?.id;
+      if (!user_id) {
+        return res.status(401).json({ success: false, message: '未登录' });
+      }
+      const rawId = req.params.id;
+      const portfolioId = parseInt(String(rawId), 10);
+      if (!Number.isFinite(portfolioId) || portfolioId <= 0) {
+        return res.status(400).json({ success: false, message: 'portfolio id 非法' });
+      }
+      // owner check — 同 getCorrelation/getExposure 模板, 403 优先于 404
+      const portfolio = await PaperTradingPortfolio.findByPk(portfolioId, {
+        attributes: ['id', 'user_id'],
+      });
+      if (!portfolio) {
+        return res.status(404).json({ success: false, message: 'portfolio 不存在' });
+      }
+      if ((portfolio as any).user_id !== user_id) {
+        return res.status(403).json({ success: false, message: '无权访问' });
+      }
+      const date = normalizeAttributionDate(req.query.date);
+      const row = await DailyAttributionReport.findOne({
+        where: { portfolio_id: portfolioId, date },
+      });
+      if (!row) {
+        return res.status(404).json({
+          success: false,
+          message: '当日归因报告不存在',
+          data: { portfolio_id: portfolioId, date },
+        });
+      }
+      return res.json({ success: true, data: row });
+    } catch (error: any) {
+      logger.error('获取 daily attribution 失败:', error);
+      return res.status(500).json({
+        success: false,
+        message: error?.message || '获取 daily attribution 失败',
       });
     }
   }

@@ -1305,8 +1305,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 84,
-      "passes": false,
-      "notes": "依赖: PM-006"
+      "passes": true,
+      "notes": "依赖: PM-006 | DONE 2026/06/20: 实现 GET /api/portfolio/:id/attribution/daily — backend/src/api/controllers/PortfolioController.ts 新增 getDailyAttribution method (owner check 优先于 report 查询防 enumeration, normalizeAttributionDate 容错 query.date, DailyAttributionReport.findOne 走 PM-003 schema 不在线再算), backend/src/api/routes/portfolio.routes.ts 挂 GET /:id/attribution/daily + authenticate + openapi doc. tests/api/portfolio-daily-attribution.test.ts 36 ok / 0 failed (镜像 controller 主流程 + 8 个分支路径 [200/401/400×3/404-portfolio/403-owner/404-report/默认日期/非法日期 lenient] + META-GUARD 8 件套 fs+regex 守 controller method + DailyAttributionReport model 引用 + normalizeAttributionDate 引用 + findByPk owner check + 403 顺序优先于 findReport + bind(this) + routes GET 注册 + authenticate). tsc 0 err / eslint 0 err / attribution test suite 10 files all pass 无 regression."
     },
     {
       "id": "US-085",

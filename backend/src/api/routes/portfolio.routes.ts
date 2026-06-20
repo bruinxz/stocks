@@ -201,6 +201,40 @@ router.get('/:id', authController.authenticate, portfolioController.getSimulatio
 
 /**
  * @openapi
+ * /api/portfolio/{id}/attribution/daily:
+ *   get:
+ *     tags: [组合 Portfolio]
+ *     summary: 获取单 portfolio 当日归因报告 (US-084 / PM-007)
+ *     description: |
+ *       读取 daily_attribution_reports 表 (PM-003 schema), 由 cron
+ *       DAILY_ATTRIBUTION_GENERATE (US-083 / PM-006) 在 17:00 工作日 upsert.
+ *       owner check — portfolio.user_id 必须等于请求 user, 否则 403.
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: integer, minimum: 1 }
+ *       - in: query
+ *         name: date
+ *         required: false
+ *         schema: { type: string, format: date }
+ *         description: YYYY-MM-DD, 默认今日 (Asia/Shanghai)
+ *     responses:
+ *       200: { description: 报告内容 }
+ *       400: { description: portfolio id 非法 }
+ *       401: { description: 未登录 }
+ *       403: { description: 非本人 portfolio }
+ *       404: { description: portfolio / 当日报告不存在 }
+ */
+router.get(
+  '/:id/attribution/daily',
+  authController.authenticate,
+  portfolioController.getDailyAttribution
+);
+
+/**
+ * @openapi
  * /api/portfolio/validate-stocks:
  *   post:
  *     tags: [组合 Portfolio]

@@ -2453,3 +2453,26 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **ai_summary_source 默认 'off'** 在 cron 里很关键: 17:00 cron 给几十个 portfolio 跑归因, 每个调 LLM 网络往返 + 重试要几十秒, 整 batch 几分钟才结束; heuristicSummary 是同步纯函数零开销. ops 想启 AI 可改 ScheduledTask.parameters 显式传(PM-006 当前 wiring 没透传这字段, 等 PM-009 飞书推送时一并接入 ai_summary_source = 'PRODUCTION_AI_ATTRIBUTION_SUMMARY_DATA_SOURCE'). cron 默认零外网链路是 ops 健壮性原则.
   - **lint baseline-diff (git stash 对比) 是改大文件的标准姿势**: SchedulerService.ts 已有 27 个 pre-existing lint 错误(主要是 require/prettier 历史债务), 新加分支必然受波及; `git stash && npx eslint <file> | wc -l && git stash pop` 对比 stash 前后 errcount 是 "本次 0 regression" 的唯一可靠证明. 同款适用所有有历史 lint 债务的文件 (与 US-002 / US-019 的 baseline-diff 模式一致).
 ---
+
+## 2026/06/20 10:32 - US-084
+- 实现 [PM-007] DailyAttribution route + controller — GET /api/portfolio/:id/attribution/daily 读 PM-003 schema (DailyAttributionReport 表 by cron PM-006 17:00 upsert), 不在线再算
+- Files changed:
+  - backend/src/api/controllers/PortfolioController.ts: + import DailyAttributionReport + normalizeAttributionDate; constructor +bind(this) getDailyAttribution; 新增 async getDailyAttribution(req, res) method (~50 行 + jsdoc) — 401 未登录 / 400 portfolio id 非法 / PaperTradingPortfolio.findByPk owner check (403 优先于 404 防 user enumeration) / DailyAttributionReport.findOne by (portfolio_id, date) / 404 当日无报告带 payload 让前端可降级渲染 / 200 返完整 report row / 500 catch all
+  - backend/src/api/routes/portfolio.routes.ts: 在 router.get('/:id') 之后挂 GET '/:id/attribution/daily' + authController.authenticate + portfolioController.getDailyAttribution + openapi doc (path id / query date / 5 响应码)
+  - backend/tests/api/portfolio-daily-attribution.test.ts (新, ~250 行 / 36 ok): T1 normalizeAttributionDate 行为契约 5 case (透传/ISO/非法/undefined/null) / T2 controller 主流程镜像 8 路径 (happy 200 / 401 未登录 / 400 id 非法 3 case / 404 portfolio 不存在 / 403 非本人 + 验 findReport 0 次调防 enumeration / 404 当日无报告含 payload / 默认日期 normalize / 非法 date lenient) / T3 META-GUARD fs+regex 守 controller 8 件 (含 getDailyAttribution method + DailyAttributionReport import + normalizeAttributionDate import + findByPk + user_id !== 比较 + 403 必须早于 findReport 顺序检查 + bind(this)) + routes 3 件 (GET 路径 + 绑定 controller method + authenticate 中间件)
+  - ralph/prd.json: US-084 passes=true + notes
+  - ralph/progress.txt: 本 entry
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npx eslint backend/src/api/controllers/PortfolioController.ts backend/src/api/routes/portfolio.routes.ts` 0 err
+  - `npm test -- --filter=portfolio-daily` exit 0, 36 ok / 0 failed (826ms)
+  - `npm test -- --filter=attribution` exit 0, 10 files all pass — 无 regression
+- **Learnings for future iterations:**
+  - **owner check 顺序优先于资源查询防 user enumeration**: 不能写 `findReport → if (!report) 404 → owner check`, 必须 `findPortfolio → owner check → 403 → findReport`. 前者让攻击者通过 "404 vs 403" 区分 portfolio_id 是否存在 + 是否归别人. test [e] 显式断言 findReportCalled === false + META-GUARD 用 indexOf 比较两段代码出现顺序 (idxOwnerCheck < idxReportFind) 守住. 与 [[Sprint 27/28/29 L8 activation results]] fail-CLOSED 顺序敏感同款思想.
+  - **同款 mirror 复刻 + META-GUARD 模板第 N 次复用**: PortfolioController 顶层 import service singleton 拽起 sequelize, 单测进程不可加载 — 与 [[risk-parameters-center-tab]] (US-066) / [[analysis-engine-config]] (US-065) / [[ai-polling-enqueue]] (US-019) Bull Lua EXISTS 复刻同款"复刻底层语义而非起真依赖". 镜像函数与 controller 主体字字对应, regex 守形态不退化. 任何"controller 顶层 import 拽起 DB" 类 story 都按这个范式.
+  - **express 路径注册顺序**: '/:id/attribution/daily' 必须挂在 '/:id' 之后吗? 否. Express 按"第一个匹配 pattern" 走, '/:id' 仅匹配 single segment (/42 不匹配 /42/attribution/daily). 加在 /:id 之后是 sanity 习惯, 不是必须. 但放在 /correlation /:id 之前要小心 — 多段路径必须在 single-segment :id 之后, 否则真要解决的是 /correlation 类被 :id 拦的问题. portfolio.routes.ts 注释里已有 "IMPORTANT: /correlation 必须在 /:id 之前注册" 写明.
+  - **404 携带 payload 让前端可降级渲染**: 当日无报告 (cron 未跑完 / 当日新建账户) 返 404 但 data 字段含 {portfolio_id, date}, 前端可直接渲染 "今日 N 尚未生成报告, 请稍后" 而不是空白. 类似 Sprint 34 fail-safe 思想 — 失败路径不是只返错误码, 给消费方足够上下文降级.
+  - **query.date 非法用 lenient normalize 而非 400**: normalizeAttributionDate 非法字符串 / undefined / null 全退到今日, 让"前端 typo / URL 截断 / 旧链接" 不阻塞用户. 与 [[RiskController PUT 非法 mode 退到 off]] (US-065) 同款 lenient 思想 — 边界容错让 UI 平滑.
+  - **setImmediate 等 IIFE 微任务排干**: T2 8 个 IIFE async 同步在 module 顶层启动, 直接同步 `process.exit` 会让 assertion 还没跑完就退出 (pass=0). 包在 `setImmediate(() => process.exit())` 让所有 microtask 排完再退. 这是 "ts-node 直跑 + 自带 assert 框架" 测试范式的隐性坑 — 单测里如果有 async IIFE 必须 setImmediate 兜底.
+---
+
