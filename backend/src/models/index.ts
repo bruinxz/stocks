@@ -64,6 +64,7 @@ export * from './MonteCarloResult';
 export * from './StrategyPortfolioResult';
 export * from './BenchmarkAttributionResult';
 export * from './IndustryAttributionResult';
+export * from './DailyAttributionReport';
 export * from './MorningRiskCheckup';
 export * from './AIStockAnalysisReport';
 export * from './KOLOpinion';

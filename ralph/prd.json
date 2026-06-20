@@ -1245,8 +1245,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 80,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DONE 2026/06/20: backend/src/models/DailyAttributionReport.ts (243 行 + 完整 jsdoc), 18 业务列 + 5 索引: (portfolio_id,date) UNIQUE + portfolio_id/date/status/generated_at 单列. PRD AC §E.1-3 全过 — (portfolio_id, date) 业务唯一 / breakdown JSONB / ai_summary TEXT. JSONB 字段 (breakdown / best_trades / worst_trades / bias_findings / recommendations / metadata) 默认 {} 或 [] 与 DailyAttributionService.DailyAttributionReport interface 业务字段一一对得上 (16 字段双向 guard). 已挂 backend/src/config/database.ts (import + models 数组) + backend/src/models/index.ts (export *). 单测 backend/tests/models/daily-attribution-report.test.ts 采用本仓 fs+regex META-GUARD 模式 (与 cron-registry / portfolio-construction-adapter 同款), 不依赖 jest / DB / sequelize singleton, 98 assert / 0 failed 覆盖 [1] @Table 配置 [2] 索引 5 个 [3] 22 列定义类型 / nullable / default [4] 业务列 comment 强制 [5] PRD AC 主验收 [6] service interface 双向兼容 [7] META-GUARD 三处挂载. typecheck 0 err / eslint src 0 err / npm test --filter=attribution 6 files all OK (含 daily-attribution-service / attribution-engine / benchmark/industry / daily-attribution-helpers)."
     },
     {
       "id": "US-081",
