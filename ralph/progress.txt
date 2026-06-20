@@ -2904,3 +2904,34 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **PR-010 model UNIQUE 复合键设计的 detected_at 列选择**: UNIQUE (event_type, signature, detected_at) 而非 (event_type, signature, detected_at::date), 但 cron 30min 跑两次理论上 detected_at 不同 → 会重插. 实际 PR-010 jsdoc + migration 用的是表达式索引 (detected_at::date) 让"同日内重复 INSERT 静默跳过, 跨日重新落行". 本 story 接入时**不显式传 detected_at 当日 00:00**, 而是直接传 NOW() 让 DB unique idx 在 day-level 上做去重 — 这是设计点, 防本服务硬编码"取整到 day"漏在测试套件外. 测试 (8e) 通过 insertInserted=1 模拟实际只插 1 行 (1 行被 unique idx 拦) 守这语义, 而不是真跑 SQL.
   - **新 cron type 5 件套清单**: (a) cronRegistry.ts 加 CronTaskDefinition (含 recommendedCron + 与其它 cron 错峰说明); (b) SchedulerService._executeTaskLogic 加 `} else if (task.type === 'XX')` 分支 (lazy-require + 透传 parameters.dry_run/user_id + safeUpdateExecutionLog 含 scenario 字段 + logger.info success / logger.warn fail); (c) META-GUARD test 守 registry ↔ scheduler dispatch 双向一致 (项目已有 cron-registry.test.ts 577 assert, 加新 type 它自动覆盖); (d) 服务本身永不 throw, 失败返 success=false + error 让 cron tick 不崩; (e) recommendedCron 避 :00/:30 整点 (与其它 cron 错峰, 与 ScheduleWakeup "避免 :00/:30" 思想同款).
 ---
+
+## 2026-06-20 16:10 - US-101 [PR-012] BlackSwanPostmortemReport model
+- 新增 BlackSwanPostmortemReport sequelize model (一事件一份最新 postmortem)
+  - FK 到 BlackSwanEvent (@ForeignKey + @BelongsTo), UNIQUE(black_swan_event_id) 作业务键
+  - 4 段 JSONB (PRD US-101 AC 核心): event_summary / counterfactual_baselines / event_timeline / improvement_suggestions
+    各自对应后续 PR-013/014/015/016 填充
+  - status 四态 pending/ok/partial/failed (与 ErrorPatternReport 同款 fail-OPEN)
+  - source 三态 service_auto/manual/external
+- 挂载到 backend/src/config/database.ts + backend/src/models/index.ts (两处必挂)
+- 新增 migration up/down: 2026-06-20-black-swan-postmortem-reports{,-rollback}.sql
+  - 4 段 JSONB DEFAULT '{}'::jsonb + status DEFAULT 'pending' + source DEFAULT 'service_auto' fail-safe
+  - 4 个索引: UNIQUE(black_swan_event_id) / status / source / generated_at
+- 单测 94 ok / 0 failed (fs+regex META-GUARD, 同 black-swan-event.test.ts 模式)
+- backend typecheck pass
+- 文件:
+  - backend/src/models/BlackSwanPostmortemReport.ts (new)
+  - backend/src/config/database.ts (+2 lines)
+  - backend/src/models/index.ts (+1 line)
+  - backend/scripts/migrations/2026-06-20-black-swan-postmortem-reports.sql (new)
+  - backend/scripts/migrations/2026-06-20-black-swan-postmortem-reports-rollback.sql (new)
+  - backend/tests/models/black-swan-postmortem-report.test.ts (new)
+- **Learnings for future iterations:**
+  - 一事件一报告的"业务键 = FK 列"是常见 idempotent UPSERT 范式: 直接对单列 INTEGER FK 建 UNIQUE
+    比复合键简单且 PR-013 cron 重跑直接 ON CONFLICT(black_swan_event_id) 就行.
+  - 4 段 JSONB 各自独立 NOT NULL DEFAULT '{}'::jsonb 让 PR-013 主入口先 INSERT 占位
+    (status=pending), 后续 PR-014/015/016 各自 UPDATE 自己那段, 互不阻塞 (并发友好).
+  - status 四态 vs 三态: 当流程多 stage 各段可独立失败时, 用 'partial' 额外态比硬塞 'failed'
+    更可观测 (ops 知道哪些段没填), 与 ErrorPatternReport 3 态形成对比.
+  - 1M tokens model 一次性 review 整套范式: model + 2 个 migration + test + database.ts + index.ts
+    的 5 处同步, 比逐文件 grep 高效很多 (沿用 PR-010 同款套路, 避免回归).
+---

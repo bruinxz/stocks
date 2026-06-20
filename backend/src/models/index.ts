@@ -69,6 +69,7 @@ export * from './AIDiaryEntry';
 export * from './ErrorPatternReport';
 export * from './ImprovementSuggestion';
 export * from './BlackSwanEvent';
+export * from './BlackSwanPostmortemReport';
 export * from './WebhookFallbackLog';
 export * from './MorningRiskCheckup';
 export * from './AIStockAnalysisReport';

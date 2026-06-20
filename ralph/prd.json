@@ -1562,8 +1562,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 101,
-      "passes": false,
-      "notes": "依赖: PR-010"
+      "passes": true,
+      "notes": "依赖: PR-010 | DONE 2026-06-20: BlackSwanPostmortemReport model + (black_swan_event_id) UNIQUE + 4 段 JSONB (event_summary / counterfactual_baselines / event_timeline / improvement_suggestions) + FK BlackSwanEvent + migration up/down + 94 单测全过, 等 PR-013 主入口接入."
     },
     {
       "id": "US-102",
