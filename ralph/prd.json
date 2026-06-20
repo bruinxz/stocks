@@ -1712,8 +1712,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 111,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "AE-005: FundamentalAnalyzer peer rank — value/growth/quality 三因子同行业横向排名, evidence 显式带百分位 0~100; 抽 computePeerRank pure helper + 50 个新 assert (边界/排序/同分/null/throw fail-OPEN/industry null)."
     },
     {
       "id": "US-112",

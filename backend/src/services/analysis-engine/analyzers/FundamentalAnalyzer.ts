@@ -2,24 +2,27 @@
  * FundamentalAnalyzer — 复用 ValueFactor / GrowthFactor / QualityFactor /
  * QualityHighFactor / AnalystConsensusFactor / EarningsSurpriseFactor z-score.
  *
- * 新加: 同行业 peer rank (调 dataSource.loadIndustryPeerScores) —— 可选,
- * 拿不到时降级为单独因子分.
+ * 同行业 peer rank — 对 PE/PB (value) / 营收利润 yoy (growth) / ROE (quality)
+ * 三个核心因子各做一次同行业横向排名, evidence 显式含 percentile (0~100).
+ * 任一因子拿不到 peer 时降级为 data_missing 标记, 不阻塞其它因子.
  *
- * 输出 evidence: 因子值 + peer 排名 + 整体分析师一致预期方向.
+ * 输出 evidence: 因子值 z-score + 三因子 peer percentile + 整体分析师一致预期方向.
  */
 
 import { BaseAnalyzer, RawAnalyzerResult, weightedMean, zScoreToScore } from './BaseAnalyzer';
 import type { AnalyzerContext, AnalyzerKey, EvidenceItem } from '../AnalyzerTypes';
 
+export type FundamentalPeerFactor = 'value' | 'growth' | 'quality';
+
 export interface FundamentalPeerSource {
   /**
-   * 返回同行业 peer 的 (stock_code, value_z) 列表 (含目标股); analyzer 算 rank.
-   * 拿不到 → 返回空数组, analyzer 标 data_missing=['peer_rank'].
+   * 返回同行业 peer 的 (stock_code, z) 列表 (含目标股); analyzer 算 rank / percentile.
+   * 拿不到 → 返回空数组, analyzer 标 data_missing=['peer_rank.<factor>'].
    */
   loadIndustryPeerScores(
     industry: string | null,
     as_of: string,
-    factor: 'value' | 'growth' | 'quality'
+    factor: FundamentalPeerFactor
   ): Promise<Array<{ stock_code: string; z: number | null }>>;
 }
 
@@ -68,6 +71,68 @@ const FACTOR_LABELS: Record<string, string> = {
   earnings_surprise: '业绩超预期',
 };
 
+/**
+ * 同行业 peer rank 因子展示名 (中文, 给 UI evidence 用).
+ */
+export const PEER_FACTOR_LABELS: Record<FundamentalPeerFactor, string> = {
+  value: 'PE/PB',
+  growth: '营收/利润 yoy',
+  quality: 'ROE',
+};
+
+const PEER_FACTORS: readonly FundamentalPeerFactor[] = ['value', 'growth', 'quality'];
+
+/**
+ * 单因子同行业 peer rank 结果, evidence 显式带 percentile (0~100).
+ * 排名越靠前 → percentile 越接近 100. 同分按相对位置稳定.
+ */
+export interface PeerRankResult {
+  factor: FundamentalPeerFactor;
+  rank: number;
+  total: number;
+  /** 百分位, 0~100. 100 = 行业第一, 0 = 行业垫底. */
+  percentile: number;
+  /** 衍生分数, [-100, +100]. percentile=50 → 0, 100 → +100, 0 → -100. */
+  peerScore: number;
+}
+
+/**
+ * 给定 peer z-score 列表 + 目标股 code, 计算其在同行业的排名 + percentile.
+ * - peerList 含 z=null 的成员视为无数据, 不参与排序;
+ * - 至少需 2 个有效成员 + 目标股 z 不为 null 才能算;
+ * - 同分按数组出现顺序稳定 (sort stable);
+ * 返回 null 表示无法计算 (拿不到 peer / 自己不在行业内 / 仅 1 个 peer).
+ */
+export function computePeerRank(
+  peerList: Array<{ stock_code: string; z: number | null }>,
+  myCode: string,
+  factor: FundamentalPeerFactor
+): PeerRankResult | null {
+  if (!peerList || peerList.length <= 1) return null;
+  const valid = peerList.filter(
+    (p): p is { stock_code: string; z: number } => p.z !== null && p.z !== undefined
+  );
+  if (valid.length < 2) return null;
+  // value / growth / quality 三因子的 z-score 都是越高越好 (低 PE 对应高 value z-score).
+  const sorted = [...valid].sort((a, b) => b.z - a.z);
+  const idx = sorted.findIndex(p => p.stock_code === myCode);
+  if (idx < 0) return null;
+  const rank = idx + 1;
+  const total = sorted.length;
+  // percentile: rank=1 → 100, rank=total → 0; 中位 (rank ≈ total/2) → ≈50.
+  // 公式 `(total - rank) / (total - 1) * 100` 让边界恰好命中 100/0, 中间分数线性插值.
+  const percentile = total > 1 ? ((total - rank) / (total - 1)) * 100 : 50;
+  // peerScore = (percentile - 50) * 2, 让 50 → 0, 100 → +100, 0 → -100.
+  const peerScore = (percentile - 50) * 2;
+  return {
+    factor,
+    rank,
+    total,
+    percentile: Math.round(percentile * 10) / 10,
+    peerScore: Math.round(peerScore * 10) / 10,
+  };
+}
+
 export class FundamentalAnalyzer extends BaseAnalyzer {
   readonly key: AnalyzerKey = 'fundamental';
 
@@ -112,43 +177,33 @@ export class FundamentalAnalyzer extends BaseAnalyzer {
       });
     }
 
-    // peer rank (value 因子, 同行业横向)
-    try {
-      const peerList = await this.peerSource.loadIndustryPeerScores(
-        ctx.stock.industry,
-        ctx.as_of,
-        'value'
-      );
-      if (peerList.length > 1) {
-        const myCode = ctx.stock.code.replace(/[a-zA-Z.]/g, '');
-        const valid = peerList.filter(p => p.z !== null) as Array<{
-          stock_code: string;
-          z: number;
-        }>;
-        if (valid.length >= 2) {
-          const sorted = [...valid].sort((a, b) => b.z - a.z); // value 因子越高越好 (低 PE)
-          const idx = sorted.findIndex(p => p.stock_code === myCode);
-          if (idx >= 0) {
-            const rank = idx + 1;
-            const pct = 1 - rank / sorted.length; // 排名靠前 → pct 接近 1
-            const peerScore = (pct - 0.5) * 200; // 0.5 → 0, 1 → 100, 0 → -100
-            partials.push({ value: peerScore, weight: 0.15 });
-            evidence.push({
-              label: `同行业价值排名 ${rank}/${sorted.length}`,
-              detail: `行业=${ctx.stock.industry || '未知'}`,
-              metric_value: peerScore,
-              direction: peerScore > 0 ? 'bullish' : 'bearish',
-              weight: 0.15,
-            });
-          } else {
-            dataMissing.push('peer_rank.self_not_in_industry');
-          }
+    // 同行业 peer rank — value/growth/quality 三因子各做一次, evidence 显式带 percentile.
+    // 单因子 peer 权重 0.05 (三因子合计 0.15, 与原单 value peer 权重保持一致, 不改 caller score 平均水平).
+    const myCode = ctx.stock.code.replace(/[a-zA-Z.]/g, '');
+    for (const factor of PEER_FACTORS) {
+      try {
+        const peerList = await this.peerSource.loadIndustryPeerScores(
+          ctx.stock.industry,
+          ctx.as_of,
+          factor
+        );
+        const ranked = computePeerRank(peerList, myCode, factor);
+        if (!ranked) {
+          dataMissing.push(`peer_rank.${factor}`);
+          continue;
         }
-      } else {
-        dataMissing.push('peer_rank');
+        partials.push({ value: ranked.peerScore, weight: 0.05 });
+        evidence.push({
+          label: `同行业 ${PEER_FACTOR_LABELS[factor]} 排名 ${ranked.rank}/${ranked.total}`,
+          detail: `百分位 ${ranked.percentile.toFixed(1)} (行业=${ctx.stock.industry || '未知'})`,
+          metric_value: ranked.percentile,
+          direction:
+            ranked.peerScore > 0 ? 'bullish' : ranked.peerScore < 0 ? 'bearish' : 'neutral',
+          weight: 0.05,
+        });
+      } catch (_e) {
+        dataMissing.push(`peer_rank.${factor}`);
       }
-    } catch (_e) {
-      dataMissing.push('peer_rank');
     }
 
     const score = weightedMean(partials) ?? 0;

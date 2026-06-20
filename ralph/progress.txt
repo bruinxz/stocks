@@ -3241,3 +3241,33 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **frozen lookup 表的"每个 enum 值都列"要求**: order_types/events 即使全 false 也必须列全, 让 caller `cap.order_types.MARKET?.supported` 不会拿 undefined — undefined && 短路在 TS 类型上是 boolean | undefined, 容易意外通过. 强制列全 + Record<OrderType, ...> 的 TS 类型约束让"漏一个 enum" 编译期 fail. 单测 [2c] for ORDER_TYPES { assert(qmt.order_types[ot] !== undefined) } 双重守.
   - **QMT 状态码 mapping 单一事实源**: QMT_STATUS_MAP 现在与 qmt_adapter.py._xt_status_to_str 字面对齐, 单测正则解析 Python dict body 双向相等. 这是"跨语言常量同源"的典范 — 单测不依赖 Python runtime, 仅靠正则解析源码, 完全 deterministic. 任何"另一语言里的常量需要 mirror 到 TS" 都按此模板.
 ---
+
+## 2026/06/20 19:45 - US-111
+- 实现 [AE-005] FundamentalAnalyzer peer rank — 老版本仅对 value 因子做同行业横向排名 + 评分内部用 rank/total 比例, evidence 不显式带百分位; 本 story 扩到 value/growth/quality 三因子各做一次 peer rank, evidence 显式 metric_value=percentile (0~100) + detail="百分位 P (行业=X)", 满足 AC "evidence 含百分位".
+- Files changed:
+  - backend/src/services/analysis-engine/analyzers/FundamentalAnalyzer.ts:
+    * 新 export type FundamentalPeerFactor = 'value' | 'growth' | 'quality'
+    * 新 export PEER_FACTOR_LABELS (中文 PE/PB / 营收/利润 yoy / ROE)
+    * 新 export interface PeerRankResult {factor, rank, total, percentile, peerScore}
+    * 新 export pure 函数 computePeerRank(peerList, myCode, factor): PeerRankResult | null — 处理 peer<2 / valid<2 / 自己不在行业 / 单 peer 等边界全返 null; 公式 percentile = (total-rank)/(total-1)*100 让 rank=1 → 100, rank=total → 0; peerScore = (percentile-50)*2 让 [-100,+100]; 四舍五入到 .1 位
+    * FundamentalAnalyzer.run 改 for-of 遍历 PEER_FACTORS=['value','growth','quality'] 各调一次 loadIndustryPeerScores + computePeerRank → 各 push 一条 evidence (label="同行业 PE/PB 排名 1/4" + detail="百分位 100.0 (行业=电池)" + metric_value=percentile) + 各 0.05 权重 (三因子合计 0.15 与旧版单 value 0.15 总权重持平, 不改 caller score 平均水平); 任一因子失败 (空 peer / throw) data_missing 标 peer_rank.<factor> 单独标记不阻塞其它因子
+    * 默认 PRODUCTION_FUNDAMENTAL_PEER_SOURCE 已支持三因子 (FactorScore.factor_name = value/growth/quality 各自一行), 无需改动
+  - backend/tests/services/analysis-engine/fundamentalAnalyzerPeerRank.test.ts (新, ~290 行 / 50 assert):
+    * [1-8] computePeerRank 8 边界 case — 第 1 名 (percentile=100) / 垫底 (=0) / 中位 (=50) / null z 过滤 / 自己不在行业 / 单 peer / 有效成员<2 / 空列表
+    * [9] 三因子全有数据 → 3 条 peer evidence 全带百分位 + label 含因子名 + metric_value ∈ [0,100] + direction 正确 (value 第 1/4 bullish, growth 第 2/3 neutral, quality 第 2/3 neutral)
+    * [10] 部分 peer 拿不到 → data_missing 含 peer_rank.growth/peer_rank.quality 但不含 peer_rank.value
+    * [11] peerSource throw → fail-OPEN, data_missing 含三个 peer_rank.* 但 analyzer 不挂 + 因子 evidence 仍正常
+    * [12] industry=null → peerSource 自动跳过, data_missing 含 peer_rank.value
+  - ralph/prd.json: US-111 passes=true + notes
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npm test -- --filter=fundamentalAnalyzerPeerRank` exit 0, 50 ok / 0 failed (699ms)
+  - `npm test -- --filter=analysis` 18 文件全过 (含 analyzers.test.ts 原 fundamental happy + data_missing 兼容) (18.2s)
+  - `eslint --fix` exit 0 (prettier 自动修一处折行)
+- **Learnings for future iterations:**
+  - **peer rank "百分位 100" 公式选 (total-rank)/(total-1)*100 而非 1-rank/total**: 后者 rank=1, total=3 → pct=0.667 (永远到不了 100), 前者 = 1.0 = 第一名打满分, 与 UI "排名第 1 → 百分位 100" 直觉对齐. 中位 (rank=2 of 3) 前者 = 50, 后者 = 0.33. UI 看 "100" 比 "0.67" 更直观, 也避免 "排名第 1 但 peerScore 才 +33" 这种反直觉. 任何"排名转百分位"类公式都该选边界刚好命中 0/100 的版本.
+  - **三因子各做一次 peer rank 用 for-of 而非 Promise.all**: 单次 peer 查询 ~30ms, 三因子串行 ~90ms 是可接受的; 用 Promise.all 加并发对一个 stock 的 analyze 单次延迟优化有限, 但 N 股批量打 fundamental 时三倍 connection 占用反而把 DB 打满 — 保留串行让连接池压力稳定. 加并发的边界在 "用户主动等待 + 单 stock + N>=3 个独立 IO" 才划得来.
+  - **peer 权重 0.15 总和守恒避免改动下游归一化**: 老版本 value 单因子 peer 权重 0.15, 新版本拆 0.05×3 = 0.15 总权重不变, weightedMean 计算结果与老 case "三因子全 bullish" 接近 (差别只在 growth/quality peer 各自贡献而非 value 独占), Aggregator 接收的 fundamental score 数量级不变, 下游决策表/归一化无需同步调整. 这是 "扩 evidence 维度但保持总权重守恒" 的标准范式, 适用任何"加新子维度但 caller 不应感知" 的 analyzer 重构.
+  - **EvidenceItem.metric_value 是 UI 渲染 Tag 的唯一数字源**: detail 是人读字符串, label 是分类标签, 真正 UI 排序/过滤/染色都看 metric_value. 把 percentile (0~100) 直接放 metric_value 让前端 sort/filter "百分位 > 80 的因子" 不用 regex parse detail. 与 metric_value=score (-100~100) 是两套语义, 各 analyzer 自己一致即可, 但单个 analyzer 内最好统一一种 (本 analyzer 因子条用 score, peer 条用 percentile — 已分类清晰).
+  - **null z-score 显式 type predicate filter 比 cast 干净**: `filter((p): p is {stock_code:string; z:number} => p.z !== null && p.z !== undefined)` 让 TS 在后续 sort 内 `b.z - a.z` 不需 `!` 断言, 比 `filter(...) as Array<...>` cast 更类型安全. 同款适用任何"过滤掉 null 字段后下游需要 narrowed type" 场景.
+---
