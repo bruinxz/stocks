@@ -1320,8 +1320,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 85,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "detectIncremental + filterIncrementalOutcomes + buildBiasFindings 拆解; 9 个新增 assert; 全 45 pass; getReport 重构走共享纯函数"
     },
     {
       "id": "US-086",

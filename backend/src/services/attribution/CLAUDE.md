@@ -19,7 +19,7 @@ DailyAttributionCronRunner.ts — PM-006 工作日 17:00 批量 cron 入口 + pe
 - PM-005 (US-082): `AIAttributionSummary.ts` — LLM 替换 heuristicSummary  ✔ 已落
 - PM-006 (US-083): `DailyAttributionCronRunner.ts` + SchedulerService.DAILY_ATTRIBUTION_GENERATE cron  ✔ 已落
 - PM-007 (US-084): `api/controllers/DailyAttributionController.ts` + route
-- PM-008 (US-085): BehaviorBiasDetector.detectIncremental 接入 bias_findings
+- PM-008 (US-085): BehaviorBiasDetector.detectIncremental 接入 bias_findings  ✔ 已落 (method 就绪, caller 后续接)
 - PM-009 (US-086): 飞书推送 attribution 卡片
 
 ## 接入约定 (PM-002~009 共同遵守)

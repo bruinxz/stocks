@@ -2476,3 +2476,19 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **setImmediate 等 IIFE 微任务排干**: T2 8 个 IIFE async 同步在 module 顶层启动, 直接同步 `process.exit` 会让 assertion 还没跑完就退出 (pass=0). 包在 `setImmediate(() => process.exit())` 让所有 microtask 排完再退. 这是 "ts-node 直跑 + 自带 assert 框架" 测试范式的隐性坑 — 单测里如果有 async IIFE 必须 setImmediate 兜底.
 ---
 
+
+## 2026-06-20 10:42 - US-085 [PM-008] BehaviorBiasDetector.detectIncremental
+- 实现增量诊断: 在 BehaviorBiasDetector 上加 `detectIncremental(user_id, anchor_date, lookback_days=7)`, 只在当日新平仓 (exit_date === anchor_date) 的 outcomes 上跑 4 维 bias 检测.
+- 拆解纯函数: 新增 `buildBiasFindings(outcomes)` 把原本 inline 在 getReport 里的 ~140 行 4 段 detector → finding 装配代码抽成 export 纯函数, getReport / detectIncremental 共享. 新增 `filterIncrementalOutcomes(outcomes, anchor_date)` 单一职责筛选当日新平仓, 兼容 'YYYY-MM-DD' 与 'YYYY-MM-DDTHH...' 两种 exit_date 形态 (slice 10 字符).
+- 新增 `IncrementalBiasResult` 类型 (anchor_date / user_id / new_closed_count / findings), 与 `BiasReport` 区分: 后者全 90 天 lookback 给操盘手画像, 前者只看当日新增, 用于 DailyAttributionReport.bias_findings (PM-008 文案明确"同一笔套牢 trade 在 95 天里每天都会触发 anchoring_loss, 增量只在它真正平仓那天报一次").
+- findings 过滤: detectIncremental 只返 `triggered_count > 0` 的 findings (severity=0 的偏差不打扰用户), 而 getReport 仍保留 0-trigger findings 给 health_score 平均.
+- 文件改动:
+  - backend/src/services/BehaviorBiasDetector.ts (新增 IncrementalBiasResult, buildBiasFindings, filterIncrementalOutcomes; getReport 重构走共享纯函数; 新增 detectIncremental method; prettier 自动修一处)
+  - backend/tests/services/behavior-bias-detector.test.ts (新增 testFilterIncrementalOutcomes / testBuildBiasFindings / testDetectIncremental 共 +9 assertions; 全 45 pass)
+- Typecheck (npx tsc --noEmit) ✓, eslint ✓, behavior-bias-detector 测试 ✓.
+- **Learnings for future iterations:**
+  - Patterns discovered: 「报告 builder 纯函数 + service method 共享」是 DailyAttribution 这条线的通用形态 — 当老 service method 内 inline 大段装配代码、后续要加同形态的"增量/精简/外部数据源驱动"变体时, 优先把 inline 拆纯函数 export, 新 method 走共享代码而不复制. (与 attribution/CLAUDE.md PM-002 ~ PM-005 的 "pure helper + DataSource DI" 同款.)
+  - Gotchas: prettier 在 80 char 行上反复要求把多行模板字符串里的 `${...}` 重排, 直接 `--fix` 即可. tsc 项目有 ts-node 编译器配置, 路径 tsconfig.json 自动找到, 不要传 `-p tsconfig.json` (那 path 是相对当前 cwd).
+  - Useful context: PM-008 的下游 (PM-006 DailyAttributionCronRunner / PM-009 飞书 push) 拿 `IncrementalBiasResult.findings` 直接灌进 `DailyAttributionReport.bias_findings` JSONB 字段, 不需要再过任何 schema 转换; severity 已 0-100 数值, suggestions 已数组, 任何 UI/卡片层直接渲染.
+  - Useful context: `exit_date` 列在 DB 是 `DATEONLY` 但走 sequelize raw query 可能拿到 ISO 字符串带时间戳; `filterIncrementalOutcomes` 用 `.slice(0, 10)` 兜底两种形态, 不需 dayjs/timezone.
+---

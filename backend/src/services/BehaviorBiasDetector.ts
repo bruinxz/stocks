@@ -74,6 +74,24 @@ export interface BiasReport {
   summary_message: string;
 }
 
+/**
+ * 增量诊断结果 — PM-008: 只在当日新平仓 outcomes 上跑诊断 (用于 DailyAttributionReport.bias_findings).
+ *
+ * 与 `BiasReport` 区别:
+ *   - getReport: 全 lookback (默认 90 天) 所有 closed outcomes — 用于周度复盘 / 操盘手画像
+ *   - detectIncremental: 只筛 exit_date === anchor_date 的 outcomes — 用于"今日新增了什么偏差信号"
+ *     ⇒ 同一笔套牢 trade 在 95 天里每天都会触发 anchoring_loss; 增量只在它真正平仓那天报一次
+ *     ⇒ DailyAttribution 17:00 cron 拿这个塞进 report.bias_findings, 不重复打扰用户
+ */
+export interface IncrementalBiasResult {
+  anchor_date: string;
+  user_id: number;
+  /** 当日新平仓 outcomes 数 (exit_date === anchor_date) */
+  new_closed_count: number;
+  /** 当日新触发的 bias 列表 (仅有 triggered_count > 0 的 finding 才返) */
+  findings: BiasFinding[];
+}
+
 // 简化 outcome 接口（避免 RecommendationTradeOutcome 庞大字段）
 export interface OutcomeRow {
   entry_date?: string;
@@ -225,6 +243,162 @@ export function buildSummary(findings: BiasFinding[], healthScore: number): stri
   return `🟠 健康度 ${healthScore} — 主要偏差: ${top.bias_label} (severity=${top.severity})`;
 }
 
+/**
+ * 从 outcomes 数组构 4 维 findings 列表 — 纯函数, getReport / detectIncremental 共享.
+ *
+ * 与原本 inline 在 getReport 里的逻辑等价: 每个 detector 只在 total > 0 时产出 finding;
+ * `triggered === 0` 时 severity = 0, suggestions = []. 调用方可再过滤"仅有 triggered"
+ * 的 findings (detectIncremental 走这条路, 避免 0 触发的偏差污染当日 bias_findings).
+ */
+export function buildBiasFindings(outcomes: OutcomeRow[]): BiasFinding[] {
+  const findings: BiasFinding[] = [];
+
+  // 1. chasing_high
+  const chasing = detectChasingHigh(outcomes);
+  if (chasing.total > 0) {
+    const sev = computeSeverity(chasing.triggered, chasing.total);
+    findings.push({
+      bias_key: 'chasing_high',
+      bias_label: BIAS_LABELS.chasing_high,
+      severity: sev,
+      triggered_count: chasing.triggered,
+      total_count: chasing.total,
+      threshold: { entry_ratio: 0.95, condition: '入场价 ≥ 5d high × 95% AND 最终 loss' },
+      observed: {
+        triggered_pct:
+          chasing.total > 0 ? Math.round((chasing.triggered / chasing.total) * 100) : 0,
+      },
+      suggestions:
+        sev >= 50
+          ? [
+              '入场前检查 5 日内是否已大涨（>5%）— 大涨后入场命中追高陷阱',
+              '加 limit order 等回调；不要市价单追入',
+              '考虑加 catalyst 确认（不要因为价格涨就买，要因为基本面变好买）',
+            ]
+          : sev > 0
+          ? ['观察期 — 偶尔追高在可接受范围']
+          : [],
+      detail: `${chasing.total} 笔有完整 entry_price 数据的 trade 中, ${chasing.triggered} 笔入场点在 5 日 high 95% 以上且最终亏损`,
+    });
+  }
+
+  // 2. overtrading
+  const overtrading = detectOvertrading(outcomes);
+  if (overtrading.total > 0) {
+    const sev = computeSeverity(overtrading.triggered, overtrading.total);
+    findings.push({
+      bias_key: 'overtrading',
+      bias_label: BIAS_LABELS.overtrading,
+      severity: sev,
+      triggered_count: overtrading.triggered,
+      total_count: overtrading.total,
+      threshold: { holding_days: 3, condition: 'holding_days < 3' },
+      observed: {
+        avg_holding_days: Math.round(overtrading.avg_holding_days * 10) / 10,
+        triggered_pct: Math.round((overtrading.triggered / overtrading.total) * 100),
+      },
+      suggestions:
+        sev >= 50
+          ? [
+              `平均持仓 ${overtrading.avg_holding_days.toFixed(
+                1
+              )} 天 — 缩短至 < 3 天的 trade 占比 ${Math.round(
+                (overtrading.triggered / overtrading.total) * 100
+              )}%, 高换手摩擦成本`,
+              '加最小持仓期 (如 5 个交易日) 限制；除非 stop_loss 触发',
+              '检查是不是被噪音吓出场, 用 ATR-based stop 而非固定 % stop',
+            ]
+          : sev > 0
+          ? ['平均持仓接近健康区间, 偶有短线无影响']
+          : [],
+      detail: `${overtrading.total} 笔 closed trade 平均持仓 ${overtrading.avg_holding_days.toFixed(
+        1
+      )} 天, ${overtrading.triggered} 笔 < 3 天`,
+    });
+  }
+
+  // 3. anchoring_loss
+  const anchoring = detectAnchoringLoss(outcomes);
+  if (anchoring.total_losses > 0) {
+    const sev = computeSeverity(anchoring.triggered, anchoring.total_losses);
+    findings.push({
+      bias_key: 'anchoring_loss',
+      bias_label: BIAS_LABELS.anchoring_loss,
+      severity: sev,
+      triggered_count: anchoring.triggered,
+      total_count: anchoring.total_losses,
+      threshold: { holding_days: 30, condition: 'loss AND holding_days > 30' },
+      observed: {
+        triggered_pct: Math.round((anchoring.triggered / anchoring.total_losses) * 100),
+      },
+      suggestions:
+        sev >= 50
+          ? [
+              '套牢死扛是心理偏差最难纠正的一种 — 设硬性 30 天 time stop',
+              '亏损 > 15% 时强制平仓, 不要"等回本"',
+              '复盘那些套牢 > 30 天的 trade — 多数最终不会回本, 早断更好',
+            ]
+          : sev > 0
+          ? ['偶尔有套牢长持, 但不是主导模式']
+          : [],
+      detail: `${anchoring.total_losses} 笔亏损中, ${anchoring.triggered} 笔持仓 > 30 天才止损`,
+    });
+  }
+
+  // 4. loss_aversion_early_take
+  const lossAvert = detectLossAversionEarlyTake(outcomes);
+  if (lossAvert.total_wins > 0) {
+    const sev = computeSeverity(lossAvert.triggered, lossAvert.total_wins);
+    findings.push({
+      bias_key: 'loss_aversion_early_take',
+      bias_label: BIAS_LABELS.loss_aversion_early_take,
+      severity: sev,
+      triggered_count: lossAvert.triggered,
+      total_count: lossAvert.total_wins,
+      threshold: { return_pct: 3, condition: 'winner AND return < 3%' },
+      observed: {
+        avg_winner_return: Math.round(lossAvert.avg_winner_return * 100) / 100,
+        triggered_pct: Math.round((lossAvert.triggered / lossAvert.total_wins) * 100),
+      },
+      suggestions:
+        sev >= 50
+          ? [
+              `平均盈利 ${lossAvert.avg_winner_return.toFixed(2)}% — 太低, 切短了大鱼`,
+              '用 trailing-stop 让盈利跑 — 设 trailing 3% / 5% / 10% 阶梯',
+              '小幅获利就卖等价于支付摩擦成本; 让赢家变大才能 cover losses',
+            ]
+          : sev > 0
+          ? ['少量小赚, 大部分盈利能跑']
+          : [],
+      detail: `${lossAvert.total_wins} 笔盈利中, ${
+        lossAvert.triggered
+      } 笔回报 < 3%; 平均盈利 ${lossAvert.avg_winner_return.toFixed(2)}%`,
+    });
+  }
+
+  return findings;
+}
+
+/**
+ * 从 OutcomeRow[] 中筛"今日新平仓" — exit_date === anchor_date 的 closed outcomes.
+ *
+ * anchor_date 'YYYY-MM-DD' 直接 string 比对, 避免 timezone 漂移.
+ * exit_date 可能是 'YYYY-MM-DD' (DATEONLY) 或 'YYYY-MM-DDTHH:mm:ss' (string-cast),
+ * 取前 10 字符即可统一.
+ */
+export function filterIncrementalOutcomes(
+  outcomes: OutcomeRow[],
+  anchor_date: string
+): OutcomeRow[] {
+  if (!anchor_date || anchor_date.length < 10) return [];
+  const anchor = anchor_date.slice(0, 10);
+  return outcomes.filter(o => {
+    if (o.trade_status !== 'closed') return false;
+    const exit = o.exit_date ? String(o.exit_date).slice(0, 10) : '';
+    return exit === anchor;
+  });
+}
+
 // ============================================================
 // DataSource
 // ============================================================
@@ -314,132 +488,7 @@ export class BehaviorBiasDetector {
     const outcomes = await this.dataSource.loadOutcomes(user_id, lookback_days);
     const closed = outcomes.filter(o => o.trade_status === 'closed');
 
-    const findings: BiasFinding[] = [];
-
-    // 1. chasing_high
-    const chasing = detectChasingHigh(outcomes);
-    if (chasing.total > 0) {
-      const sev = computeSeverity(chasing.triggered, chasing.total);
-      findings.push({
-        bias_key: 'chasing_high',
-        bias_label: BIAS_LABELS.chasing_high,
-        severity: sev,
-        triggered_count: chasing.triggered,
-        total_count: chasing.total,
-        threshold: { entry_ratio: 0.95, condition: '入场价 ≥ 5d high × 95% AND 最终 loss' },
-        observed: {
-          triggered_pct:
-            chasing.total > 0 ? Math.round((chasing.triggered / chasing.total) * 100) : 0,
-        },
-        suggestions:
-          sev >= 50
-            ? [
-                '入场前检查 5 日内是否已大涨（>5%）— 大涨后入场命中追高陷阱',
-                '加 limit order 等回调；不要市价单追入',
-                '考虑加 catalyst 确认（不要因为价格涨就买，要因为基本面变好买）',
-              ]
-            : sev > 0
-            ? ['观察期 — 偶尔追高在可接受范围']
-            : [],
-        detail: `${chasing.total} 笔有完整 entry_price 数据的 trade 中, ${chasing.triggered} 笔入场点在 5 日 high 95% 以上且最终亏损`,
-      });
-    }
-
-    // 2. overtrading
-    const overtrading = detectOvertrading(outcomes);
-    if (overtrading.total > 0) {
-      const sev = computeSeverity(overtrading.triggered, overtrading.total);
-      findings.push({
-        bias_key: 'overtrading',
-        bias_label: BIAS_LABELS.overtrading,
-        severity: sev,
-        triggered_count: overtrading.triggered,
-        total_count: overtrading.total,
-        threshold: { holding_days: 3, condition: 'holding_days < 3' },
-        observed: {
-          avg_holding_days: Math.round(overtrading.avg_holding_days * 10) / 10,
-          triggered_pct: Math.round((overtrading.triggered / overtrading.total) * 100),
-        },
-        suggestions:
-          sev >= 50
-            ? [
-                `平均持仓 ${overtrading.avg_holding_days.toFixed(
-                  1
-                )} 天 — 缩短至 < 3 天的 trade 占比 ${Math.round(
-                  (overtrading.triggered / overtrading.total) * 100
-                )}%, 高换手摩擦成本`,
-                '加最小持仓期 (如 5 个交易日) 限制；除非 stop_loss 触发',
-                '检查是不是被噪音吓出场, 用 ATR-based stop 而非固定 % stop',
-              ]
-            : sev > 0
-            ? ['平均持仓接近健康区间, 偶有短线无影响']
-            : [],
-        detail: `${
-          overtrading.total
-        } 笔 closed trade 平均持仓 ${overtrading.avg_holding_days.toFixed(1)} 天, ${
-          overtrading.triggered
-        } 笔 < 3 天`,
-      });
-    }
-
-    // 3. anchoring_loss
-    const anchoring = detectAnchoringLoss(outcomes);
-    if (anchoring.total_losses > 0) {
-      const sev = computeSeverity(anchoring.triggered, anchoring.total_losses);
-      findings.push({
-        bias_key: 'anchoring_loss',
-        bias_label: BIAS_LABELS.anchoring_loss,
-        severity: sev,
-        triggered_count: anchoring.triggered,
-        total_count: anchoring.total_losses,
-        threshold: { holding_days: 30, condition: 'loss AND holding_days > 30' },
-        observed: {
-          triggered_pct: Math.round((anchoring.triggered / anchoring.total_losses) * 100),
-        },
-        suggestions:
-          sev >= 50
-            ? [
-                '套牢死扛是心理偏差最难纠正的一种 — 设硬性 30 天 time stop',
-                '亏损 > 15% 时强制平仓, 不要"等回本"',
-                '复盘那些套牢 > 30 天的 trade — 多数最终不会回本, 早断更好',
-              ]
-            : sev > 0
-            ? ['偶尔有套牢长持, 但不是主导模式']
-            : [],
-        detail: `${anchoring.total_losses} 笔亏损中, ${anchoring.triggered} 笔持仓 > 30 天才止损`,
-      });
-    }
-
-    // 4. loss_aversion_early_take
-    const lossAvert = detectLossAversionEarlyTake(outcomes);
-    if (lossAvert.total_wins > 0) {
-      const sev = computeSeverity(lossAvert.triggered, lossAvert.total_wins);
-      findings.push({
-        bias_key: 'loss_aversion_early_take',
-        bias_label: BIAS_LABELS.loss_aversion_early_take,
-        severity: sev,
-        triggered_count: lossAvert.triggered,
-        total_count: lossAvert.total_wins,
-        threshold: { return_pct: 3, condition: 'winner AND return < 3%' },
-        observed: {
-          avg_winner_return: Math.round(lossAvert.avg_winner_return * 100) / 100,
-          triggered_pct: Math.round((lossAvert.triggered / lossAvert.total_wins) * 100),
-        },
-        suggestions:
-          sev >= 50
-            ? [
-                `平均盈利 ${lossAvert.avg_winner_return.toFixed(2)}% — 太低, 切短了大鱼`,
-                '用 trailing-stop 让盈利跑 — 设 trailing 3% / 5% / 10% 阶梯',
-                '小幅获利就卖等价于支付摩擦成本; 让赢家变大才能 cover losses',
-              ]
-            : sev > 0
-            ? ['少量小赚, 大部分盈利能跑']
-            : [],
-        detail: `${lossAvert.total_wins} 笔盈利中, ${
-          lossAvert.triggered
-        } 笔回报 < 3%; 平均盈利 ${lossAvert.avg_winner_return.toFixed(2)}%`,
-      });
-    }
+    const findings = buildBiasFindings(outcomes);
 
     const healthScore = computeOverallHealth(findings);
     const summary = buildSummary(findings, healthScore);
@@ -453,6 +502,37 @@ export class BehaviorBiasDetector {
       findings,
       overall_health_score: healthScore,
       summary_message: summary,
+    };
+  }
+
+  /**
+   * 增量诊断 — PM-008 (US-085): 只在当日新平仓 outcomes 上跑.
+   *
+   * 性能 + 信噪比双重优化:
+   *   - 不再每天扫 90 天 lookback 重复触发同一笔老套牢 trade (anchoring_loss 失真)
+   *   - DailyAttribution 17:00 cron 拿这个结果填 `report.bias_findings` 字段
+   *   - 当日无平仓 → findings = [] (caller 写空数组, 不打扰用户)
+   *   - 触发后, 仅返 `triggered_count > 0` 的 findings (severity=0 的偏差不入当日报告)
+   *
+   * @param user_id 用户 ID
+   * @param anchor_date 'YYYY-MM-DD' 锚定日期, 通常 = DailyAttribution 的 date
+   * @param lookback_days 加载 outcomes 的回看天数 (默认 7 — 当日 exit 的 outcome 一定在最近 7 天 entry,
+   *                      DataSource 仍按 lookback_days 筛 entry_date, 因此小值降低 DB 扫描)
+   */
+  async detectIncremental(
+    user_id: number,
+    anchor_date: string,
+    lookback_days = 7
+  ): Promise<IncrementalBiasResult> {
+    const outcomes = await this.dataSource.loadOutcomes(user_id, lookback_days);
+    const incrementalClosed = filterIncrementalOutcomes(outcomes, anchor_date);
+    // 仅触发的 findings 进当日报告 (severity=0 / triggered=0 的偏差不打扰用户).
+    const findings = buildBiasFindings(incrementalClosed).filter(f => f.triggered_count > 0);
+    return {
+      anchor_date: anchor_date ? anchor_date.slice(0, 10) : '',
+      user_id,
+      new_closed_count: incrementalClosed.length,
+      findings,
     };
   }
 }
