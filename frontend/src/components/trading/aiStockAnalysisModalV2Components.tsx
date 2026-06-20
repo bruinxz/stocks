@@ -1,30 +1,40 @@
 /**
  * US-076 [FE-037] — v2 modal 子组件 (AnalyzerScoreBar / ConfidenceRing / EvidenceList).
+ * US-077 [FE-038] — 续拆 ActionPlanCard / DataMissingBanner 到本文件 (同源同测便利).
  *
- * 把 US-075 在 AIStockAnalysisModal.V2Layout 内联实现的 3 块 UI 拆成独立可复用组件:
+ * 把 US-075 在 AIStockAnalysisModal.V2Layout 内联实现的 UI 拆成独立可复用组件:
  *   - AnalyzerScoreBar — 8 dim score 进度条 (吃 dim.bar_value + dim.color, render Progress)
  *   - ConfidenceRing — 单维 confidence Tag (吃 dim.confidence + dim.confidence_color)
  *   - EvidenceList — 证据列表 (吃 dim.evidence: EvidenceViewItemV2[], render bullish/bearish/neutral 标签)
+ *   - DataMissingBanner — 数据缺失红色 Alert (吃 DataQualityViewModelV2, 关键字段缺失或 critical 等级时展示)
+ *   - ActionPlanCard — 行动计划卡片 (吃 ActionPlanViewModelV2, 显示买入区间 / 仓位 / 止损止盈 / 风险提示)
  *
  * 设计:
  *   - 纯 stateless render — 不取 store / 不发请求, 完全靠 props 喂数据 (易测易复用).
- *   - 类型直接复用 [[aiStockAnalysisModalV2Helpers]] 的 AnalyzerDimensionViewModelV2 +
- *     EvidenceViewItemV2 — 不再各自挑字段, 避免视图模型字段漂移.
- *   - antd Progress / Tag / Tooltip — 与 AIStockAnalysisModal 同款依赖, 不引入新 lib.
- *   - 单测: backend/tests/services/ai-stock-analysis-modal-v2-components.test.ts 跨
- *     monorepo ts-node --transpile-only 跑 (与 helpers test 同范式). 单测以 META-GUARD
- *     形式校验 modal 已用子组件替换 inline 实现 (3 子组件 import + jsx 出现) + 用 jsdom-free
- *     纯 props 校验 (子组件函数引用存在 + 接受类型签名一致).
+ *   - 类型直接复用 [[aiStockAnalysisModalV2Helpers]] 的 view model — 不再各自挑字段, 避免漂移.
+ *   - antd Alert / Progress / Tag / Tooltip / Row / Col / Divider — 与 AIStockAnalysisModal
+ *     同款依赖, 不引入新 lib.
+ *   - 单测: backend/tests/services/ai-stock-analysis-modal-v2-components.test.ts (US-076)
+ *     + backend/tests/services/ai-stock-analysis-modal-v2-action-components.test.ts (US-077)
+ *     跨 monorepo ts-node --transpile-only 跑 (与 helpers test 同范式). 以 META-GUARD
+ *     形式校验 modal 已用子组件替换 inline 实现 (import + jsx 出现) + props 类型签名稳定.
  *
- * 后续 US-077 [FE-038] 会拆 ActionPlanCard / DataMissingBanner — 与本文件同款思路,
- * 但 model 不同 (吃 ActionPlanViewModelV2 / DataQualityViewModelV2).
+ * 5 子组件本质都是 stateless presentational, 同文件汇集让 modal 只需 1 行 import 拿全套.
  */
 
 import React from 'react';
-import { Progress, Tag, Tooltip, Typography } from 'antd';
-import { CloseCircleOutlined, InfoCircleOutlined } from '@ant-design/icons';
+import { Alert, Col, Divider, Progress, Row, Space, Tag, Tooltip, Typography } from 'antd';
+import {
+  BulbOutlined,
+  CloseCircleOutlined,
+  ExclamationCircleOutlined,
+  InfoCircleOutlined,
+  WarningOutlined,
+} from '@ant-design/icons';
 import type {
+  ActionPlanViewModelV2,
   AnalyzerDimensionViewModelV2,
+  DataQualityViewModelV2,
   EvidenceViewItemV2,
 } from './aiStockAnalysisModalV2Helpers';
 
@@ -183,5 +193,163 @@ export const EvidenceList: React.FC<EvidenceListProps> = ({
         </li>
       ))}
     </ul>
+  );
+};
+
+// ===========================================================================
+// DataMissingBanner — US-077 [FE-038]
+// ===========================================================================
+
+export interface DataMissingBannerProps {
+  /** 数据质量 view model — 由 buildDataQualityViewModelV2 产出 */
+  dataQuality: DataQualityViewModelV2 | null | undefined;
+  /** missing_optional 列表最多展示几条 (默认 5, 防止 banner 撑爆) */
+  maxOptionalShown?: number;
+}
+
+/**
+ * 数据缺失红色 banner — 仅在关键字段缺失或 level==='critical' 时显示, 否则返 null
+ * (与 V2Layout inline 行为完全一致, 避免回归).
+ *
+ * 设计:
+ *   - dataQuality=null/undefined → 直接 null (上游 metadata 无 data_quality 字段).
+ *   - missing_critical 非空 OR level==='critical' → 显示红色 Alert.
+ *   - 其余情况 (level=good/partial/degraded 且 missing_critical=[]) → null.
+ *   - missing_optional 截断到 maxOptionalShown (默认 5), 多出来标 '…'.
+ *
+ * 单测见 backend/tests/services/ai-stock-analysis-modal-v2-action-components.test.ts.
+ */
+export const DataMissingBanner: React.FC<DataMissingBannerProps> = ({
+  dataQuality,
+  maxOptionalShown = 5,
+}) => {
+  if (!dataQuality) return null;
+  const showBanner = dataQuality.missing_critical.length > 0 || dataQuality.level === 'critical';
+  if (!showBanner) return null;
+  const optionalShown = dataQuality.missing_optional.slice(0, maxOptionalShown);
+  const optionalOverflow = dataQuality.missing_optional.length > maxOptionalShown;
+  return (
+    <Alert
+      type="error"
+      showIcon
+      icon={<WarningOutlined />}
+      message="关键数据缺失 — 建议谨慎参考本结论"
+      description={
+        <Space direction="vertical" size={4}>
+          {dataQuality.missing_critical.length > 0 && (
+            <Text type="secondary">缺失字段：{dataQuality.missing_critical.join('、')}</Text>
+          )}
+          {optionalShown.length > 0 && (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              可选缺失：{optionalShown.join('、')}
+              {optionalOverflow ? '…' : ''}
+            </Text>
+          )}
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            数据完整系数：{(dataQuality.coefficient * 100).toFixed(0)}%
+          </Text>
+        </Space>
+      }
+    />
+  );
+};
+
+// ===========================================================================
+// ActionPlanCard — US-077 [FE-038]
+// ===========================================================================
+
+export interface ActionPlanCardProps {
+  /** 行动计划 view model — 由 buildActionPlanViewModelV2 产出 */
+  actionPlan: ActionPlanViewModelV2;
+  /** 风险提示展示上限 (默认 5, 防止滚动) */
+  maxRiskWarningsShown?: number;
+}
+
+/**
+ * 行动计划卡片 — 买入区间 / 仓位 / 止损 / 止盈 + 风险提示.
+ *
+ * 设计:
+ *   - 单字段 null → 显示 '—' 占位 (与 V2Layout inline 实现一致).
+ *   - risk_warnings 非空 → 渲染 Divider + 列表; 空 → 仅显示上半部行动计划字段.
+ *   - 止损绿色 / 止盈红色 (中股惯例同 [[ACTION_COLORS_V2]]).
+ *   - 标题色随 action_color 变 (强买入=深红, 强卖出=深绿, 持有=蓝, unknown=灰).
+ *
+ * 单测见 backend/tests/services/ai-stock-analysis-modal-v2-action-components.test.ts.
+ */
+export const ActionPlanCard: React.FC<ActionPlanCardProps> = ({
+  actionPlan,
+  maxRiskWarningsShown = 5,
+}) => {
+  return (
+    <div
+      style={{
+        padding: 16,
+        borderRadius: 8,
+        background: '#fff7e6',
+        border: '1px solid #ffd591',
+      }}
+    >
+      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+        <Space>
+          <BulbOutlined style={{ color: actionPlan.action_color }} />
+          <Text strong style={{ fontSize: 14 }}>
+            行动计划
+          </Text>
+          <Tag color={actionPlan.action_color}>{actionPlan.action_label}</Tag>
+        </Space>
+        <Row gutter={[16, 8]}>
+          <Col span={12}>
+            <Text type="secondary">建议买入区间：</Text>
+            <Text strong>
+              {actionPlan.entry_zone
+                ? `¥${actionPlan.entry_zone[0].toFixed(2)} ~ ¥${actionPlan.entry_zone[1].toFixed(
+                    2
+                  )}`
+                : '—'}
+            </Text>
+          </Col>
+          <Col span={12}>
+            <Text type="secondary">建议仓位：</Text>
+            <Text strong>
+              {actionPlan.suggested_position_pct != null
+                ? `${(actionPlan.suggested_position_pct * 100).toFixed(1)}%`
+                : '—'}
+            </Text>
+          </Col>
+          <Col span={12}>
+            <Text type="secondary">止损价：</Text>
+            <Text strong style={{ color: '#52c41a' }}>
+              {actionPlan.stop_loss != null ? `¥${actionPlan.stop_loss.toFixed(2)}` : '—'}
+            </Text>
+          </Col>
+          <Col span={12}>
+            <Text type="secondary">止盈价：</Text>
+            <Text strong style={{ color: '#f5222d' }}>
+              {actionPlan.take_profit != null ? `¥${actionPlan.take_profit.toFixed(2)}` : '—'}
+            </Text>
+          </Col>
+        </Row>
+        {actionPlan.risk_warnings.length > 0 && (
+          <>
+            <Divider style={{ margin: '8px 0' }} />
+            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+              <Space>
+                <ExclamationCircleOutlined style={{ color: '#fa541c' }} />
+                <Text strong style={{ fontSize: 13 }}>
+                  风险提示 ({actionPlan.risk_warnings.length})
+                </Text>
+              </Space>
+              <ul style={{ marginBottom: 0, paddingLeft: 20 }}>
+                {actionPlan.risk_warnings.slice(0, maxRiskWarningsShown).map((w, idx) => (
+                  <li key={idx} style={{ fontSize: 12 }}>
+                    <Text type="secondary">{w}</Text>
+                  </li>
+                ))}
+              </ul>
+            </Space>
+          </>
+        )}
+      </Space>
+    </div>
   );
 };

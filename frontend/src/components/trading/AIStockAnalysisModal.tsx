@@ -3,7 +3,6 @@ import {
   Alert,
   Button,
   Checkbox,
-  Divider,
   Modal,
   Row,
   Col,
@@ -18,10 +17,8 @@ import {
   BulbOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
-  ExclamationCircleOutlined,
   ReloadOutlined,
   RobotOutlined,
-  WarningOutlined,
 } from '@ant-design/icons';
 import {
   ALL_ANALYSIS_DIMENSIONS,
@@ -34,7 +31,13 @@ import {
   aiStockAnalysisService,
 } from '../../services/aiStockAnalysisService';
 import { buildV2ViewModel, isV2Result, type V2ViewModel } from './aiStockAnalysisModalV2Helpers';
-import { AnalyzerScoreBar, ConfidenceRing, EvidenceList } from './aiStockAnalysisModalV2Components';
+import {
+  ActionPlanCard,
+  AnalyzerScoreBar,
+  ConfidenceRing,
+  DataMissingBanner,
+  EvidenceList,
+} from './aiStockAnalysisModalV2Components';
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -59,10 +62,10 @@ const { Paragraph, Text, Title } = Typography;
  *   4. 失败 / partial → Alert 提示，但已得到的部分维度仍展示；
  *   5. 用户可改 dimensions 重跑（"重新分析"按钮）。
  *
- * v2 子组件 (US-076 AnalyzerScoreBar/ConfidenceRing/EvidenceList — 已拆出, 见
- * [[aiStockAnalysisModalV2Components]]; US-077 ActionPlanCard/DataMissingBanner 待拆)
- * 在下一个 story 拆到独立文件; 本 story 先在本文件内联 render 让
- * v2 layout 端到端可用 (US-075 acceptance: "8 dim score bar + evidence + action plan").
+ * v2 子组件 (US-076 AnalyzerScoreBar/ConfidenceRing/EvidenceList + US-077 DataMissingBanner
+ * /ActionPlanCard — 全已拆到 [[aiStockAnalysisModalV2Components]]) — modal 只负责
+ * 状态机 (dimensions 选择 / loading / result) + V2Layout 编排; 各 widget 渲染细节都在
+ * 子组件文件, 易测且不再有 inline 实现.
  */
 
 interface AIStockAnalysisModalProps {
@@ -332,8 +335,9 @@ export default AIStockAnalysisModal;
 // 8 dim score bar + confidence + evidence + 行动计划 + risk_warnings + data_quality banner.
 //
 // US-076 [FE-037]: AnalyzerScoreBar / ConfidenceRing / EvidenceList 已拆到独立文件
-// ([[aiStockAnalysisModalV2Components]]); 本 layout 直接 import + 调用. ActionPlanCard /
-// DataMissingBanner 待 US-077 [FE-038] 拆出 (当前仍内联).
+// ([[aiStockAnalysisModalV2Components]]); 本 layout 直接 import + 调用.
+// US-077 [FE-038]: DataMissingBanner / ActionPlanCard 同样已拆到同文件; V2Layout 不再
+// 持有 inline JSX, 只负责 view 字段映射到子组件 props.
 // ===========================================================================
 const V2Layout: React.FC<{
   result: AnalyzeSingleStockResult;
@@ -380,104 +384,11 @@ const V2Layout: React.FC<{
         }
       />
 
-      {/* DataMissingBanner — 缺关键数据时显著提示 (US-077 占位实现) */}
-      {data_quality &&
-        (data_quality.missing_critical.length > 0 || data_quality.level === 'critical') && (
-          <Alert
-            type="error"
-            showIcon
-            icon={<WarningOutlined />}
-            message="关键数据缺失 — 建议谨慎参考本结论"
-            description={
-              <Space direction="vertical" size={4}>
-                {data_quality.missing_critical.length > 0 && (
-                  <Text type="secondary">缺失字段：{data_quality.missing_critical.join('、')}</Text>
-                )}
-                {data_quality.missing_optional.length > 0 && (
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    可选缺失：{data_quality.missing_optional.slice(0, 5).join('、')}
-                    {data_quality.missing_optional.length > 5 ? '…' : ''}
-                  </Text>
-                )}
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  数据完整系数：{(data_quality.coefficient * 100).toFixed(0)}%
-                </Text>
-              </Space>
-            }
-          />
-        )}
+      {/* DataMissingBanner — US-077 子组件接入 (关键字段缺失或 critical 等级时显示) */}
+      <DataMissingBanner dataQuality={data_quality} />
 
-      {/* ActionPlanCard — 行动计划 (US-077 占位实现) */}
-      <div
-        style={{
-          padding: 16,
-          borderRadius: 8,
-          background: '#fff7e6',
-          border: '1px solid #ffd591',
-        }}
-      >
-        <Space direction="vertical" size={8} style={{ width: '100%' }}>
-          <Space>
-            <BulbOutlined style={{ color: action_plan.action_color }} />
-            <Text strong style={{ fontSize: 14 }}>
-              行动计划
-            </Text>
-            <Tag color={action_plan.action_color}>{action_plan.action_label}</Tag>
-          </Space>
-          <Row gutter={[16, 8]}>
-            <Col span={12}>
-              <Text type="secondary">建议买入区间：</Text>
-              <Text strong>
-                {action_plan.entry_zone
-                  ? `¥${action_plan.entry_zone[0].toFixed(
-                      2
-                    )} ~ ¥${action_plan.entry_zone[1].toFixed(2)}`
-                  : '—'}
-              </Text>
-            </Col>
-            <Col span={12}>
-              <Text type="secondary">建议仓位：</Text>
-              <Text strong>
-                {action_plan.suggested_position_pct != null
-                  ? `${(action_plan.suggested_position_pct * 100).toFixed(1)}%`
-                  : '—'}
-              </Text>
-            </Col>
-            <Col span={12}>
-              <Text type="secondary">止损价：</Text>
-              <Text strong style={{ color: '#52c41a' }}>
-                {action_plan.stop_loss != null ? `¥${action_plan.stop_loss.toFixed(2)}` : '—'}
-              </Text>
-            </Col>
-            <Col span={12}>
-              <Text type="secondary">止盈价：</Text>
-              <Text strong style={{ color: '#f5222d' }}>
-                {action_plan.take_profit != null ? `¥${action_plan.take_profit.toFixed(2)}` : '—'}
-              </Text>
-            </Col>
-          </Row>
-          {action_plan.risk_warnings.length > 0 && (
-            <>
-              <Divider style={{ margin: '8px 0' }} />
-              <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                <Space>
-                  <ExclamationCircleOutlined style={{ color: '#fa541c' }} />
-                  <Text strong style={{ fontSize: 13 }}>
-                    风险提示 ({action_plan.risk_warnings.length})
-                  </Text>
-                </Space>
-                <ul style={{ marginBottom: 0, paddingLeft: 20 }}>
-                  {action_plan.risk_warnings.slice(0, 5).map((w, idx) => (
-                    <li key={idx} style={{ fontSize: 12 }}>
-                      <Text type="secondary">{w}</Text>
-                    </li>
-                  ))}
-                </ul>
-              </Space>
-            </>
-          )}
-        </Space>
-      </div>
+      {/* ActionPlanCard — US-077 子组件接入 (买入区间 / 仓位 / 止损 / 止盈 + 风险提示) */}
+      <ActionPlanCard actionPlan={action_plan} />
 
       {/* 8 dim Score Bar + Confidence + Evidence — US-076 子组件接入 */}
       <div>

@@ -2265,3 +2265,23 @@ Started: Fri Jun 19 02:25:41 CST 2026
     后 tsc 0 err + 44+174 test 全过, 无 regression. 反例若 auto-fix 改了 multi-line conditional 的换行,
     TS 类型推断 narrow 不一样, 可能出 type err. fix → tsc → test 三段顺序是标准姿势.
 ---
+
+## 2026-06-20 08:42 - US-077
+- [FE-038] DataMissingBanner + ActionPlanCard 拆到独立子组件文件
+  - 把 V2Layout 内 inline 的 `<Alert type="error">` 数据缺失 banner 和 `<div style={{...#fff7e6}}>` 行动计划卡 拆到 `aiStockAnalysisModalV2Components.tsx`
+  - 新增 props DataMissingBannerProps (dataQuality: DataQualityViewModelV2 | null | undefined + maxOptionalShown) + ActionPlanCardProps (actionPlan: ActionPlanViewModelV2 + maxRiskWarningsShown)
+  - modal V2Layout 改用 `<DataMissingBanner dataQuality={data_quality} />` + `<ActionPlanCard actionPlan={action_plan} />` 两行 jsx
+  - 清理 modal 不再用的 import: Divider / ExclamationCircleOutlined / WarningOutlined
+- 单测 `backend/tests/services/ai-stock-analysis-modal-v2-action-components.test.ts` — 37 assert 全过, 7 测组 (文件 sanity + export + 类型签名 + META-GUARD 接入 + 反向不再 inline + import 白名单 + 渲染条件)
+- 文件改动:
+  - frontend/src/components/trading/aiStockAnalysisModalV2Components.tsx (添加 2 子组件 + 改 header 注释 + 改 import set)
+  - frontend/src/components/trading/AIStockAnalysisModal.tsx (V2Layout 接入 + 清理 import)
+  - backend/tests/services/ai-stock-analysis-modal-v2-action-components.test.ts (新增, 256 行)
+  - ralph/prd.json (US-077 passes=true)
+- 跑过: backend npm test --filter=ai-stock-analysis-modal (3/3 OK 2.2s) + frontend npx tsc --noEmit (clean) + backend npx tsc --noEmit (clean) + frontend eslint --fix (1 prettier warning 自动修)
+- **Learnings for future iterations:**
+  - 续拆同款子组件时, 跟 US-076 同范式: 同文件汇集 (modal 1 行 import 拿全套) + helper view model 直接喂 props (props 不要挑字段 → 避免漂移) + META-GUARD 守 import + jsx + 反向无 inline 残留.
+  - 反向 META-GUARD 必须连 unused import 都查 (e.g. `!WarningOutlined`, `!Divider`), 否则 modal 看似干净但 import 没清理, dead code 会重新被人当成"还在用"再加回去.
+  - 测 React 渲染避坑: backend tsconfig 没开 jsx, ts-node --transpile-only 不能 require .tsx, 所以全走 fs+regex 源码扫. 真渲染分支已经在 helpers.test.ts 覆盖 (view model layer), 子组件本质就是 view model → JSX 直翻译.
+  - 拆子组件时, 把 inline 实现用的 antd 子组件 (Divider, Row, Col 等) + icons (WarningOutlined, ExclamationCircleOutlined) 一并移动, modal 那侧的 import set 也要同步清理 (否则 typecheck 不报但 lint unused-import 会拦, 而且看代码的人会困惑).
+---
