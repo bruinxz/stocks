@@ -3,10 +3,15 @@ import {
   Alert,
   Button,
   Checkbox,
+  Divider,
   Modal,
+  Progress,
+  Row,
+  Col,
   Space,
   Spin,
   Tag,
+  Tooltip,
   Typography,
   message as antdMessage,
 } from 'antd';
@@ -14,8 +19,11 @@ import {
   BulbOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
+  ExclamationCircleOutlined,
+  InfoCircleOutlined,
   ReloadOutlined,
   RobotOutlined,
+  WarningOutlined,
 } from '@ant-design/icons';
 import {
   ALL_ANALYSIS_DIMENSIONS,
@@ -27,11 +35,12 @@ import {
   RecommendationKey,
   aiStockAnalysisService,
 } from '../../services/aiStockAnalysisService';
+import { buildV2ViewModel, isV2Result, type V2ViewModel } from './aiStockAnalysisModalV2Helpers';
 
 const { Paragraph, Text, Title } = Typography;
 
 /**
- * AIStockAnalysisModal — US-055 单股深度问答 UI
+ * AIStockAnalysisModal — US-055 单股深度问答 UI (v1) + US-075 v2 layout switch.
  *
  * 复用于 PortfolioWorkspace（持仓页）+ FactorWorkspace（选股页）+ TodayWorkspace（工作区）。
  *
@@ -43,9 +52,17 @@ const { Paragraph, Text, Title } = Typography;
  * UI 流程：
  *   1. Modal 打开 → 用户选 dimensions（默认 5 维度全选） → 点 "开始分析"；
  *   2. POST /api/ai/analyze-stock → 显示 loading；
- *   3. 收到 result 后显示综合建议 + 每维度 key_points；
+ *   3. 收到 result 后:
+ *      - **v2 layout** (metadata.engine_variant==='multi_dim_v1' / hard 短路 / per_dimension 非空) →
+ *        显示 8 dim score bar + confidence + evidence + 行动计划 (entry_zone/stop_loss/take_profit/position) +
+ *        risk_warnings + data_quality banner. 见 [[aiStockAnalysisModalV2Helpers]] (US-075).
+ *      - **v1 layout** (legacy 5 dim TradingAgents) → 显示综合建议 + 每维度 key_points.
  *   4. 失败 / partial → Alert 提示，但已得到的部分维度仍展示；
  *   5. 用户可改 dimensions 重跑（"重新分析"按钮）。
+ *
+ * v2 子组件 (US-076 AnalyzerScoreBar/ConfidenceRing/EvidenceList + US-077 ActionPlanCard/
+ * DataMissingBanner) 在下一个 story 拆到独立文件; 本 story 先在本文件内联 render 让
+ * v2 layout 端到端可用 (US-075 acceptance: "8 dim score bar + evidence + action plan").
  */
 
 interface AIStockAnalysisModalProps {
@@ -133,6 +150,10 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
   const recoLabel = RECOMMENDATION_LABELS[reco];
   const recoColor = RECOMMENDATION_COLORS[reco];
 
+  // US-075: 判定走 v2 layout 还是 v1 (legacy). v2 layout 用 v2 helpers 解析 metadata.
+  const v2View: V2ViewModel | null = useMemo(() => buildV2ViewModel(result), [result]);
+  const useV2Layout = isV2Result(result);
+
   return (
     <Modal
       open={open}
@@ -190,7 +211,9 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
             />
           )}
 
-          {result && (
+          {result && useV2Layout && v2View && <V2Layout result={result} view={v2View} />}
+
+          {result && !useV2Layout && (
             <Space direction="vertical" size="middle" style={{ width: '100%' }}>
               {/* 综合建议 */}
               <Alert
@@ -198,10 +221,10 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
                   reco === 'strong_buy' || reco === 'buy'
                     ? 'success'
                     : reco === 'strong_sell' || reco === 'sell'
-                      ? 'error'
-                      : reco === 'unknown'
-                        ? 'warning'
-                        : 'info'
+                    ? 'error'
+                    : reco === 'unknown'
+                    ? 'warning'
+                    : 'info'
                 }
                 showIcon
                 icon={<BulbOutlined />}
@@ -247,9 +270,7 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
                         background: '#fafafa',
                       }}
                     >
-                      <Text strong>
-                        {DIMENSION_LABELS[dim as AnalysisDimension] || dim}
-                      </Text>
+                      <Text strong>{DIMENSION_LABELS[dim as AnalysisDimension] || dim}</Text>
                       {points.length === 0 ? (
                         <div style={{ marginTop: 6 }}>
                           <Text type="secondary">（暂无信息）</Text>
@@ -279,6 +300,17 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
             </Space>
           )}
 
+          {result && useV2Layout && v2View && (
+            <Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
+              <CheckCircleOutlined style={{ marginRight: 4, color: '#52c41a' }} />
+              Report ID：<Text code>{result.report_id}</Text>
+              {result.persisted ? ' · 已归档' : ' · 未归档'} · 引擎{' '}
+              <Text code>{v2View.engine_variant}</Text>
+              {result.generated_at &&
+                ` · 生成于 ${new Date(result.generated_at).toLocaleString('zh-CN')}`}
+            </Paragraph>
+          )}
+
           {!result && !loading && !error && (
             <Alert
               type="info"
@@ -294,3 +326,268 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
 };
 
 export default AIStockAnalysisModal;
+
+// ===========================================================================
+// V2 layout — US-075 [FE-036].
+// 8 dim score bar + confidence + evidence + 行动计划 + risk_warnings + data_quality banner.
+//
+// 本组件 inline 实现 (US-075), 之后 US-076 / US-077 把内部 block 拆成独立可复用组件:
+//   - AnalyzerScoreBar / ConfidenceRing / EvidenceList (FE-037 → US-076)
+//   - DataMissingBanner / ActionPlanCard (FE-038 → US-077)
+// 拆完后本文件这块代码直接换成子组件调用即可, 不需要改 V2ViewModel 形态.
+// ===========================================================================
+const V2Layout: React.FC<{
+  result: AnalyzeSingleStockResult;
+  view: V2ViewModel;
+}> = ({ result, view }) => {
+  const { dimensions, action_plan, data_quality, overall_confidence } = view;
+  return (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      {/* 顶部总览: 综合建议 + 置信 + 风险 + 数据质量 */}
+      <Alert
+        type={
+          action_plan.action === 'strong_buy' ||
+          action_plan.action === 'buy' ||
+          action_plan.action === 'add'
+            ? 'success'
+            : action_plan.action === 'strong_sell' ||
+              action_plan.action === 'sell' ||
+              action_plan.action === 'reduce'
+            ? 'error'
+            : action_plan.action === 'hold'
+            ? 'info'
+            : 'warning'
+        }
+        showIcon
+        icon={<BulbOutlined />}
+        message={
+          <Space wrap>
+            <span>综合建议：</span>
+            <Tag color={action_plan.action_color} style={{ fontSize: 14, fontWeight: 600 }}>
+              {action_plan.action_label}
+            </Tag>
+            {overall_confidence != null && <Tag>置信 {overall_confidence}</Tag>}
+            {result.risk_level && <Tag color="purple">风险 {result.risk_level}</Tag>}
+            {data_quality && data_quality.level !== 'good' && (
+              <Tag color={data_quality.level_color}>数据 {data_quality.level_label}</Tag>
+            )}
+            {result.status === 'partial' && <Tag color="warning">部分缺数据</Tag>}
+            {result.status === 'failed' && <Tag color="error">分析失败</Tag>}
+            {result.status === 'pending' && <Tag color="processing">异步分析中</Tag>}
+          </Space>
+        }
+        description={
+          result.error && result.status !== 'completed' ? `备注：${result.error}` : undefined
+        }
+      />
+
+      {/* DataMissingBanner — 缺关键数据时显著提示 (US-077 占位实现) */}
+      {data_quality &&
+        (data_quality.missing_critical.length > 0 || data_quality.level === 'critical') && (
+          <Alert
+            type="error"
+            showIcon
+            icon={<WarningOutlined />}
+            message="关键数据缺失 — 建议谨慎参考本结论"
+            description={
+              <Space direction="vertical" size={4}>
+                {data_quality.missing_critical.length > 0 && (
+                  <Text type="secondary">缺失字段：{data_quality.missing_critical.join('、')}</Text>
+                )}
+                {data_quality.missing_optional.length > 0 && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    可选缺失：{data_quality.missing_optional.slice(0, 5).join('、')}
+                    {data_quality.missing_optional.length > 5 ? '…' : ''}
+                  </Text>
+                )}
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  数据完整系数：{(data_quality.coefficient * 100).toFixed(0)}%
+                </Text>
+              </Space>
+            }
+          />
+        )}
+
+      {/* ActionPlanCard — 行动计划 (US-077 占位实现) */}
+      <div
+        style={{
+          padding: 16,
+          borderRadius: 8,
+          background: '#fff7e6',
+          border: '1px solid #ffd591',
+        }}
+      >
+        <Space direction="vertical" size={8} style={{ width: '100%' }}>
+          <Space>
+            <BulbOutlined style={{ color: action_plan.action_color }} />
+            <Text strong style={{ fontSize: 14 }}>
+              行动计划
+            </Text>
+            <Tag color={action_plan.action_color}>{action_plan.action_label}</Tag>
+          </Space>
+          <Row gutter={[16, 8]}>
+            <Col span={12}>
+              <Text type="secondary">建议买入区间：</Text>
+              <Text strong>
+                {action_plan.entry_zone
+                  ? `¥${action_plan.entry_zone[0].toFixed(
+                      2
+                    )} ~ ¥${action_plan.entry_zone[1].toFixed(2)}`
+                  : '—'}
+              </Text>
+            </Col>
+            <Col span={12}>
+              <Text type="secondary">建议仓位：</Text>
+              <Text strong>
+                {action_plan.suggested_position_pct != null
+                  ? `${(action_plan.suggested_position_pct * 100).toFixed(1)}%`
+                  : '—'}
+              </Text>
+            </Col>
+            <Col span={12}>
+              <Text type="secondary">止损价：</Text>
+              <Text strong style={{ color: '#52c41a' }}>
+                {action_plan.stop_loss != null ? `¥${action_plan.stop_loss.toFixed(2)}` : '—'}
+              </Text>
+            </Col>
+            <Col span={12}>
+              <Text type="secondary">止盈价：</Text>
+              <Text strong style={{ color: '#f5222d' }}>
+                {action_plan.take_profit != null ? `¥${action_plan.take_profit.toFixed(2)}` : '—'}
+              </Text>
+            </Col>
+          </Row>
+          {action_plan.risk_warnings.length > 0 && (
+            <>
+              <Divider style={{ margin: '8px 0' }} />
+              <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                <Space>
+                  <ExclamationCircleOutlined style={{ color: '#fa541c' }} />
+                  <Text strong style={{ fontSize: 13 }}>
+                    风险提示 ({action_plan.risk_warnings.length})
+                  </Text>
+                </Space>
+                <ul style={{ marginBottom: 0, paddingLeft: 20 }}>
+                  {action_plan.risk_warnings.slice(0, 5).map((w, idx) => (
+                    <li key={idx} style={{ fontSize: 12 }}>
+                      <Text type="secondary">{w}</Text>
+                    </li>
+                  ))}
+                </ul>
+              </Space>
+            </>
+          )}
+        </Space>
+      </div>
+
+      {/* 8 dim Score Bar + Confidence + Evidence — US-076 占位实现 */}
+      <div>
+        <Title level={5} style={{ marginBottom: 12 }}>
+          <RobotOutlined style={{ marginRight: 6 }} />
+          多维分析评分 (8 dim)
+        </Title>
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          {dimensions.map(dim => (
+            <div
+              key={dim.key}
+              style={{
+                padding: 12,
+                borderRadius: 6,
+                background: dim.failed ? '#fff1f0' : '#fafafa',
+                border: dim.failed ? '1px solid #ffa39e' : '1px solid transparent',
+              }}
+            >
+              <Row gutter={[12, 6]} align="middle">
+                <Col xs={24} sm={6}>
+                  <Tooltip title={dim.hint}>
+                    <Text strong style={{ fontSize: 13 }}>
+                      {dim.label}
+                    </Text>
+                  </Tooltip>
+                  {dim.failed && (
+                    <Tag color="error" style={{ marginLeft: 6 }}>
+                      失败
+                    </Tag>
+                  )}
+                </Col>
+                <Col xs={18} sm={12}>
+                  {/* AnalyzerScoreBar 占位 — Progress percent 用 bar_value */}
+                  <Progress
+                    percent={dim.bar_value}
+                    showInfo={false}
+                    strokeColor={dim.color}
+                    trailColor="#f0f0f0"
+                    size="small"
+                  />
+                  <Text style={{ fontSize: 11, color: '#8c8c8c' }}>
+                    {dim.score != null ? `score ${dim.score.toFixed(0)}` : '无评分'}
+                  </Text>
+                </Col>
+                <Col xs={6} sm={6} style={{ textAlign: 'right' }}>
+                  {/* ConfidenceRing 占位 — 数字 + 颜色 */}
+                  <Tooltip title="该维度的数据可信度">
+                    <Tag
+                      color={dim.confidence != null ? undefined : 'default'}
+                      style={{ borderColor: dim.confidence_color, color: dim.confidence_color }}
+                    >
+                      置信 {dim.confidence != null ? `${Math.round(dim.confidence * 100)}` : '—'}
+                    </Tag>
+                  </Tooltip>
+                </Col>
+              </Row>
+              {/* EvidenceList 占位 */}
+              {dim.evidence.length > 0 && (
+                <ul style={{ marginTop: 8, marginBottom: 0, paddingLeft: 20 }}>
+                  {dim.evidence.map((ev, idx) => (
+                    <li key={idx} style={{ fontSize: 12 }}>
+                      <Tag
+                        color={
+                          ev.direction === 'bullish'
+                            ? 'red'
+                            : ev.direction === 'bearish'
+                            ? 'green'
+                            : 'default'
+                        }
+                        style={{ marginRight: 6 }}
+                      >
+                        {ev.direction === 'bullish'
+                          ? '利多'
+                          : ev.direction === 'bearish'
+                          ? '利空'
+                          : '中性'}
+                      </Tag>
+                      <Text>{ev.label}</Text>
+                      {ev.detail && (
+                        <Text type="secondary" style={{ marginLeft: 6 }}>
+                          — {ev.detail}
+                        </Text>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {dim.evidence.length === 0 && !dim.failed && (
+                <div style={{ marginTop: 6 }}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    <InfoCircleOutlined style={{ marginRight: 4 }} />
+                    {dim.data_missing.length > 0
+                      ? `数据缺失：${dim.data_missing.slice(0, 2).join('、')}`
+                      : '暂无明显信号'}
+                  </Text>
+                </div>
+              )}
+              {dim.error && (
+                <div style={{ marginTop: 6 }}>
+                  <Text type="danger" style={{ fontSize: 12 }}>
+                    <CloseCircleOutlined style={{ marginRight: 4 }} />
+                    {dim.error}
+                  </Text>
+                </div>
+              )}
+            </div>
+          ))}
+        </Space>
+      </div>
+    </Space>
+  );
+};

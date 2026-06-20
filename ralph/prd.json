@@ -1168,8 +1168,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 75,
-      "passes": false,
-      "notes": "依赖: AE-002"
+      "passes": true,
+      "notes": "依赖: AE-002 | DONE 2026/06/20: 加 frontend/src/components/trading/aiStockAnalysisModalV2Helpers.ts 纯函数 helper (8 dim 视图模型 / score→bar/color / confidence→color / EvidenceItem normalize / ActionPlan / DataQuality / V2ViewModel 主入口 / isV2Result 三触发条件). AIStockAnalysisModal.tsx 加 useV2Layout 分支 + 内联 V2Layout 子组件 (Alert 总览 + DataMissingBanner 占位 + ActionPlanCard 占位 entry_zone/stop_loss/take_profit/position/risk_warnings + 8 dim Progress score bar + Tag confidence + EvidenceList Tag 占位), v1 layout 路径保留 (US-055 未被破坏). 跨 monorepo 单测 backend/tests/services/ai-stock-analysis-modal-v2-helpers.test.ts 174 ok / 0 failed (9 模块含 META-GUARD modal 接入). 8 dim 顺序与 [[analysisEngineWeightHelpers]] ANALYZER_DIMENSIONS 对齐 (跨页面认知零迁移). v2 子组件 (AnalyzerScoreBar/ConfidenceRing/EvidenceList for US-076 + DataMissingBanner/ActionPlanCard for US-077) 在下一 story 拆独立文件, 本 story V2Layout inline 让 v2 layout 端到端可用."
     },
     {
       "id": "US-076",
