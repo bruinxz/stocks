@@ -1652,8 +1652,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 107,
-      "passes": false,
-      "notes": "依赖: EX-006"
+      "passes": true,
+      "notes": "EX-007: 加 classifyTradingSession + sessionDowngradeReason 纯函数 + ExecutionPolicyInput.now + ExecutionPolicyResult.session, routeExecutionPolicy 内时段优先级最高 (CLOSED→SKIP, OPEN/CLOSE_AUCTION→强制 LIMIT, CONTINUOUS→原决策链); 单测 85 ok (新增 3 段 + 4 边界 + downgrade matrix)"
     },
     {
       "id": "US-108",

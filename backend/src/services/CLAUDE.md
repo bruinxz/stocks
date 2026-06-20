@@ -285,3 +285,28 @@ const plan = executionAlgoSlicer.plan({
 - POV 缺 `adv_qty` 返空 plan + reason, 集成层应降级 TWAP 而非 silent fail.
 - VWAP 默认用 `DEFAULT_ASHARE_VOLUME_PROFILE` (8 桶 U-型, sum=1.00);
   传 `volume_profile` 任意长度会自动 resample 到 slice_count.
+
+## ExecutionPolicyRouter — TradingSession 时段分类 (US-107 / EX-007)
+
+`classifyTradingSession(now)` 把 A 股一天切成 4 段, [start, end) 区间, 与
+[[checkAShareTradingHours]] 边界同源 (09:30 含, 11:30 不含):
+
+| 段 | 时间 (Asia/Shanghai) | algo 行为 |
+|----|---------------------|----------|
+| OPEN_AUCTION | 09:15-09:25 | 仅单一价撮合 → 强制降级 LIMIT_AT_TOUCH |
+| CONTINUOUS | 09:30-11:30 + 13:00-14:57 | 全 algo 可用 (TWAP/VWAP/POV/LIMIT) |
+| CLOSE_AUCTION | 14:57-15:00 | 仅单一价撮合 → 强制降级 LIMIT_AT_TOUCH |
+| CLOSED | 其它 (含 09:25-09:30 撮合间隙 + 午休 + 收盘后 + 盘前) | 直接 SKIP |
+
+**关键边界**:
+- 09:25 是撮合时刻而非交易时刻 → 落 CLOSED 不落 OPEN_AUCTION
+- 14:57 是收盘集合竞价起点 → 14:56 仍 CONTINUOUS, 14:57 起 CLOSE_AUCTION
+- `routeExecutionPolicy` 内时段判定优先级最高 (在 SKIP 硬约束 / WAIT / size 之前):
+  CLOSED 任何 input 都 SKIP, 集合竞价时段 TWAP/VWAP/POV 全降级 LIMIT,
+  连续竞价时段才执行原 SKIP/WAIT/size 决策链
+- WAIT (跳空等待) 仅在 CONTINUOUS 触发 — 集合竞价本身就是"等单一价",
+  再 WAIT 会让用户错过本日撮合点
+
+**调用约定**: caller (PaperTradingAutomationService 等) 0 改动; `input.now` 不传
+默认 `new Date()`, 仅单测 / 回放 / 夜间 cron 显式注入以避免 host 时间漂移.
+`ExecutionPolicyResult.session` 字段透传给下游 UI / TCA 审计.
