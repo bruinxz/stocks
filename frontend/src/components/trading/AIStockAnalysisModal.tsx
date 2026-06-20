@@ -5,7 +5,6 @@ import {
   Checkbox,
   Divider,
   Modal,
-  Progress,
   Row,
   Col,
   Space,
@@ -20,7 +19,6 @@ import {
   CheckCircleOutlined,
   CloseCircleOutlined,
   ExclamationCircleOutlined,
-  InfoCircleOutlined,
   ReloadOutlined,
   RobotOutlined,
   WarningOutlined,
@@ -36,6 +34,7 @@ import {
   aiStockAnalysisService,
 } from '../../services/aiStockAnalysisService';
 import { buildV2ViewModel, isV2Result, type V2ViewModel } from './aiStockAnalysisModalV2Helpers';
+import { AnalyzerScoreBar, ConfidenceRing, EvidenceList } from './aiStockAnalysisModalV2Components';
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -60,8 +59,9 @@ const { Paragraph, Text, Title } = Typography;
  *   4. 失败 / partial → Alert 提示，但已得到的部分维度仍展示；
  *   5. 用户可改 dimensions 重跑（"重新分析"按钮）。
  *
- * v2 子组件 (US-076 AnalyzerScoreBar/ConfidenceRing/EvidenceList + US-077 ActionPlanCard/
- * DataMissingBanner) 在下一个 story 拆到独立文件; 本 story 先在本文件内联 render 让
+ * v2 子组件 (US-076 AnalyzerScoreBar/ConfidenceRing/EvidenceList — 已拆出, 见
+ * [[aiStockAnalysisModalV2Components]]; US-077 ActionPlanCard/DataMissingBanner 待拆)
+ * 在下一个 story 拆到独立文件; 本 story 先在本文件内联 render 让
  * v2 layout 端到端可用 (US-075 acceptance: "8 dim score bar + evidence + action plan").
  */
 
@@ -331,10 +331,9 @@ export default AIStockAnalysisModal;
 // V2 layout — US-075 [FE-036].
 // 8 dim score bar + confidence + evidence + 行动计划 + risk_warnings + data_quality banner.
 //
-// 本组件 inline 实现 (US-075), 之后 US-076 / US-077 把内部 block 拆成独立可复用组件:
-//   - AnalyzerScoreBar / ConfidenceRing / EvidenceList (FE-037 → US-076)
-//   - DataMissingBanner / ActionPlanCard (FE-038 → US-077)
-// 拆完后本文件这块代码直接换成子组件调用即可, 不需要改 V2ViewModel 形态.
+// US-076 [FE-037]: AnalyzerScoreBar / ConfidenceRing / EvidenceList 已拆到独立文件
+// ([[aiStockAnalysisModalV2Components]]); 本 layout 直接 import + 调用. ActionPlanCard /
+// DataMissingBanner 待 US-077 [FE-038] 拆出 (当前仍内联).
 // ===========================================================================
 const V2Layout: React.FC<{
   result: AnalyzeSingleStockResult;
@@ -480,7 +479,7 @@ const V2Layout: React.FC<{
         </Space>
       </div>
 
-      {/* 8 dim Score Bar + Confidence + Evidence — US-076 占位实现 */}
+      {/* 8 dim Score Bar + Confidence + Evidence — US-076 子组件接入 */}
       <div>
         <Title level={5} style={{ marginBottom: 12 }}>
           <RobotOutlined style={{ marginRight: 6 }} />
@@ -511,79 +510,18 @@ const V2Layout: React.FC<{
                   )}
                 </Col>
                 <Col xs={18} sm={12}>
-                  {/* AnalyzerScoreBar 占位 — Progress percent 用 bar_value */}
-                  <Progress
-                    percent={dim.bar_value}
-                    showInfo={false}
-                    strokeColor={dim.color}
-                    trailColor="#f0f0f0"
-                    size="small"
-                  />
-                  <Text style={{ fontSize: 11, color: '#8c8c8c' }}>
-                    {dim.score != null ? `score ${dim.score.toFixed(0)}` : '无评分'}
-                  </Text>
+                  <AnalyzerScoreBar dimension={dim} />
                 </Col>
                 <Col xs={6} sm={6} style={{ textAlign: 'right' }}>
-                  {/* ConfidenceRing 占位 — 数字 + 颜色 */}
-                  <Tooltip title="该维度的数据可信度">
-                    <Tag
-                      color={dim.confidence != null ? undefined : 'default'}
-                      style={{ borderColor: dim.confidence_color, color: dim.confidence_color }}
-                    >
-                      置信 {dim.confidence != null ? `${Math.round(dim.confidence * 100)}` : '—'}
-                    </Tag>
-                  </Tooltip>
+                  <ConfidenceRing dimension={dim} />
                 </Col>
               </Row>
-              {/* EvidenceList 占位 */}
-              {dim.evidence.length > 0 && (
-                <ul style={{ marginTop: 8, marginBottom: 0, paddingLeft: 20 }}>
-                  {dim.evidence.map((ev, idx) => (
-                    <li key={idx} style={{ fontSize: 12 }}>
-                      <Tag
-                        color={
-                          ev.direction === 'bullish'
-                            ? 'red'
-                            : ev.direction === 'bearish'
-                            ? 'green'
-                            : 'default'
-                        }
-                        style={{ marginRight: 6 }}
-                      >
-                        {ev.direction === 'bullish'
-                          ? '利多'
-                          : ev.direction === 'bearish'
-                          ? '利空'
-                          : '中性'}
-                      </Tag>
-                      <Text>{ev.label}</Text>
-                      {ev.detail && (
-                        <Text type="secondary" style={{ marginLeft: 6 }}>
-                          — {ev.detail}
-                        </Text>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {dim.evidence.length === 0 && !dim.failed && (
-                <div style={{ marginTop: 6 }}>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    <InfoCircleOutlined style={{ marginRight: 4 }} />
-                    {dim.data_missing.length > 0
-                      ? `数据缺失：${dim.data_missing.slice(0, 2).join('、')}`
-                      : '暂无明显信号'}
-                  </Text>
-                </div>
-              )}
-              {dim.error && (
-                <div style={{ marginTop: 6 }}>
-                  <Text type="danger" style={{ fontSize: 12 }}>
-                    <CloseCircleOutlined style={{ marginRight: 4 }} />
-                    {dim.error}
-                  </Text>
-                </div>
-              )}
+              <EvidenceList
+                evidence={dim.evidence}
+                showEmpty={!dim.failed}
+                dataMissing={dim.data_missing}
+                error={dim.error}
+              />
             </div>
           ))}
         </Space>

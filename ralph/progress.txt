@@ -919,6 +919,10 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **不去重 vs 去重的语义边界**: extractStocks/extractIndustries/extractIndicators 都去重 (同一实体多次提及不重复返); 但 extractNumbers/extractDates 不去重 (同一数字在不同 slot 出现 — e.g. `topN=30 lookback=30` 是两个独立参数 / `今天 涨, 明天 后天 都涨` 三个不同日期 slot). 这条契约必须在 jsdoc 显式说明, 否则后续 ralph 重构时容易把"统一全去重"当成 cleanup. 单测 testExtractNumbers 显式断言 `extractNumbers('30 元 30 元')` 返 2 个就是这个守门.
 
 ## Codebase Patterns (新增)
+- **Frontend 子组件拆分 + 反向 META-GUARD 模板** (US-076 AnalyzerScoreBar/ConfidenceRing/EvidenceList 落地, 适用所有"inline UI block → 独立 .tsx 子组件"重构): 子组件文件命名 `<feature>Components.tsx`, props 必须吃整个 helper view model (`{ dimension: AnalyzerDimensionViewModelV2 }`) 而非各自挑字段 — 防字段漂移. 颜色/标签映射全抽到 `EVIDENCE_DIRECTION_LABELS/COLORS` 类 frozen 常量 export (中股惯例 利多=red/利空=green 与 ACTION_COLORS_V2 同方向). 单测走 backend/tests/services/<feature>-components.test.ts, **跳过 React.createElement** (backend tsconfig 没开 jsx, require .tsx 会 parse 失败) 改用 7 测组: 文件 sanity / export const+interface regex / 常量内容固化 / props 类型签名 regex / META-GUARD 正向 (modal 已 import+jsx) / **META-GUARD 反向** (modal 不再 inline `<Progress percent=...` / `ev.direction==='bullish'?'red'` ternary / `Math.round(...)`) / import 白名单 (只允 react/antd/@ant-design/icons/同目录 helpers). 反向断言用 `!regex.test(modalSrc)` 一行加进 [6] 测组, 防未来重构又 inline 写一遍数据漂移. eslint --fix 后必须再跑 tsc + 单测 (auto-fix 可能改 JSX 换行影响 regex). 与 [[shadowRunHelpers]] / [[todoSuggestionsHelpers]] / [[alertsPanelHelpers]] "thin UI 占位升级到完整 view model" 是同模子的不同阶段 (helpers 出 view model → components 消费, US-076 是后半段).
+---
+
+## Codebase Patterns (历史)
 - **NLP pure extractor 模板** (US-027 entities / US-028 earnings grade / US-033 stocks-industries-indicators...): 任何"从自然语言 60-200 字符抽 N 类 slot/entity"启发式都按 7 件套 — (1) 主入口 `extractXxx(text: any): T[]` 接 unknown 不报 — `normalizeExtractorInput` helper 统一处理 null/undefined/非字符串/空/全空格 → '' fallback, 6 个 extractor 全转调避免 6 处 null guard; (2) 关键词字典/别名表 export const + Object.freeze (INDUSTRY_KEYWORDS / INDICATOR_ALIASES / NUMBER_UNIT_TOKENS / 关键词词表 必须冻结); (3) 多个别名映射到同 canonical 形态 ('夏普'/'sharpe'/'SHARPE'→'sharpe', '回撤'/'MAX_DRAWDOWN'/'最大回撤'→'max_drawdown') 减少 downstream 分支; (4) 边界 regex 用 lookbehind/lookahead (`(?<!\d)(\d{6})(?!\d)`) 拦"过窄 / 过宽"匹配, Node 18+ 稳定但**必须**配单测 case 守"6 位精确 + 5/7 位过滤"边界; (5) 单位归一表 `[token, canonical]` Object.freeze + 显式注释"单位只记不乘" — 7000 万 ≠ 7000 (downstream 自行 ×10000), 否则丢精度信息; (6) 多正则 + 重叠位置去重 (extractDates 用 `_pos` 内部跟踪) 防"2026年6月19日" 被 reAbs + reAbsNoYear 双抽; (7) 聚合入口 `extract<Domain>Entities(text)` 一次返所有切片, 上游单调即可拿全 slot — 单测必断"聚合 = 6 个 extractor 各自结果合并". 与 AnnouncementNLPService.extractEntities (US-027 角色实体) 同名不冲突: 两个独立 module 不互相 import, namespace 自然分离, 但顶部 jsdoc 必须显式声明"与 X 同名不冲突" 让 grep 抓出来时容易识别 namespace. **不去重 vs 去重**契约写 jsdoc — 实体类 (stocks/industries) 去重; 数字/日期不去重 (同 slot 多 occurrence 是独立信息).
 ---
 
@@ -2180,4 +2184,84 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **"非破坏性 v1→v2 升级" 路径**: 不要写 "if v2 only" — 必须 `result && useV2Layout && v2View && <V2Layout/>` + `result && !useV2Layout && <V1Layout 原渲染/>`. 三条件同时 truthy 才 render v2 (defensive: buildV2ViewModel 可能返 null 即便 isV2Result true, 保安全), 反之走 v1. 这套保 US-055 既有 5 dim 行为零变更. 反例: 如果只用 isV2Result 判定不 fallback 到 v1 render, 旧 TradingAgents 结果 (无 metadata 标识) 也走 v2 时 dimensions 全 8 dim 占位, 用户看到"系统没跑任何 dim" 误导更严重. 反向 META-GUARD 可未来加: 守"v1 渲染路径不被删" (源代码必含 `result && !useV2Layout` 字面量).
   - **跨 monorepo 单测 import 路径 + 跨组件常量同步**: backend/tests/services/ 用 `path.resolve(__dirname, '../../../frontend/src/components/trading/aiStockAnalysisModalV2Helpers')` 三层向上 (services → tests → backend → repo root → frontend/src/...). 与 [[todo-suggestions-helpers.test.ts]] / [[risk-parameters-center-tab.test.ts]] 同款. 注意 helper 文件 import 自 services/aiStockAnalysisService — 这是 frontend 模块且不依赖 React/antd, ts-node --transpile-only 可直接吃 (不要写 React/antd import 否则 backend ts-node 加载会 throw module not found, 与 [[shadowRunHelpers]] 同款约束). 8 dim ANALYZER_KEYS_V2 顺序必须与 analysisEngineWeightHelpers.ANALYZER_DIMENSIONS 默认顺序同 — 跨 page (Settings tab / AI modal) 用户看到的 dim 顺序一致, 这是认知零迁移的关键. 改 ANALYZER_KEYS_V2 必须同时改 analysisEngineWeightHelpers + 单测断 fundamental 必须排第一 / event 必须排最后.
   - **prettier auto-fix 后必须再跑 tsc + test** — eslint --fix 可能改 prop 换行 / 函数签名格式, 极少数情况下会改变 TS 推断 (e.g. multi-line conditional 切单行后类型 narrow 不一样), 必须 fix → tsc → test 全过一遍才认 lint clean. 本 story auto-fix 26 个 prettier warning 后 tsc + 174 test 全过, 无 regression.
+---
+
+## 2026/06/20 08:35 - US-076
+- 实现 [FE-037] AnalyzerScoreBar + ConfidenceRing + EvidenceList 组件 — 把 US-075 在
+  AIStockAnalysisModal.V2Layout 内联实现的 3 块 UI 拆到独立 .tsx, 让 V2Layout 改用子组件
+  替换 inline (反向 META-GUARD 守不回退).
+- Files changed:
+  - frontend/src/components/trading/aiStockAnalysisModalV2Components.tsx (新, 187 行):
+    * `export const AnalyzerScoreBar` — 单维 score 进度条 (antd Progress, percent=dim.bar_value,
+      color=dim.color, 下方 score 数字). props: { dimension: AnalyzerDimensionViewModelV2,
+      size?: 'small'|'default' } — 不挑字段, 直接吃整个 dim view model 避免漂移.
+    * `export const ConfidenceRing` — 单维 confidence Tag (antd Tag, borderColor/color=
+      dim.confidence_color, confidence=null 走 '—' 占位避免 NaN%). 命名 "Ring" 是预留长尾
+      (未来 PRD 若要 echarts 环形图, 本组件内换实现, caller 接口不变).
+    * `export const EvidenceList` — 证据列表 (ul + li, 每条 [利多/利空/中性 Tag] + label + detail).
+      内置 3 态: error 优先 (CloseCircleOutlined + 红字) → empty + showEmpty (data_missing
+      slice(0,2)/'暂无明显信号' fallback) → 正常列表. props: { evidence, showEmpty?, dataMissing?, error? }
+    * `export const EVIDENCE_DIRECTION_LABELS` / `EVIDENCE_DIRECTION_COLORS` — frozen
+      Record<bullish|bearish|neutral, ...> 中股惯例 (利多=red/利空=green/中性=default),
+      单测固化, 三档全有定义防 evidence.direction 缺漏走 undefined Tag.
+  - frontend/src/components/trading/AIStockAnalysisModal.tsx: import 新增 3 子组件,
+    删 inline 实现 (Progress percent={dim.bar_value} + Math.round(dim.confidence*100) Tooltip Tag
+    + ternary ev.direction==='bullish'?'red' + evidence ul + showEmpty fallback + error Text);
+    V2Layout 内每个 dim 的 Row > Col 中改用 `<AnalyzerScoreBar dimension={dim} />` +
+    `<ConfidenceRing dimension={dim} />`, 整段 evidence/empty/error 三态全部由
+    `<EvidenceList evidence={...} showEmpty={!dim.failed} dataMissing={...} error={...} />`
+    一行接管. 删 import { Progress, InfoCircleOutlined }(子组件吸走). 文档注释 +
+    block 头标记 "US-076 子组件接入".
+  - backend/tests/services/ai-stock-analysis-modal-v2-components.test.ts (新, 7 测组 44 ok):
+    [1] 文件 sanity / [2] 3 子组件 export const + 3 Props interface + 2 frozen 常量 export /
+    [3] 常量内容固化 regex (Object.freeze 包裹 / 3 direction 全有 / 利多=red 中股惯例) /
+    [4] props 类型签名必须 `dimension: AnalyzerDimensionViewModelV2` + `evidence: EvidenceViewItemV2[]`
+    (regex 守, 防 caller 改成各自挑字段导致字段漂移) / [5] META-GUARD modal 已 import + jsx
+    渲染 + dimension={dim} prop 形态 / [6] META-GUARD 反向 — 不再 inline <Progress percent={dim.bar_value}
+    / ev.direction==='bullish'?'red' ternary / Math.round(dim.confidence*100) / [7] import 白名单只允
+    react+antd+@ant-design/icons+./aiStockAnalysisModalV2Helpers (不引入新 lib).
+  - ralph/prd.json: US-076 passes=true + notes
+  - ralph/progress.txt: 本 entry
+- 验证:
+  - `cd backend && npx tsc --noEmit` exit 0
+  - `cd frontend && npx tsc --noEmit` exit 0
+  - `cd backend && npm test -- --filter=ai-stock-analysis-modal` exit 0 — 2 files all pass:
+    * tests/services/ai-stock-analysis-modal-v2-components.test.ts 44 ok / 0 failed (760ms)
+    * tests/services/ai-stock-analysis-modal-v2-helpers.test.ts 174 ok / 0 failed (719ms, no regression)
+  - `cd frontend && npx eslint src/components/trading/aiStockAnalysisModalV2Components.tsx
+     src/components/trading/AIStockAnalysisModal.tsx` exit 0, 0 err / 0 warn (--fix 自动整 14 prettier warn 后)
+  - 手动 browser smoke 待用户在本地 dev 启动 frontend 后验证 (本环境无 react-scripts dev server +
+    chromium); 子组件 createElement smoke 因 backend ts-node 不支持 jsx 跳过 — 替代方案: jsx
+    渲染契约用 META-GUARD fs+regex (modal 接入 + 反向不 inline) 守住.
+- **Learnings for future iterations:**
+  - **"frontend .tsx 子组件单测" 在本项目走 META-GUARD 而非 React.createElement**: 项目 backend
+    tsconfig 没开 `"jsx": "react-jsx"` (只 frontend 有), 直接 `require(.tsx)` 自 backend ts-node
+    会 module-not-found / parse 失败. 因此跨 monorepo 单测仅能 require **纯 .ts** (helpers / actions
+    / 字符串常量), 不能 require **含 JSX 的 .tsx**. 解决: 子组件本身的颜色/标签映射全抽到 frozen
+    常量 (EVIDENCE_DIRECTION_LABELS/COLORS) — 这些是纯数据 export, 直接 import 单测; jsx 渲染契约
+    用 fs+regex META-GUARD 守"已 import + 已 jsx 调用 + 已删 inline 实现". 反例: 强行加
+    react-test-renderer + jsdom 会引入 backend 不需要的 devdep, 与项目"backend 单测不引 jest/jsdom"
+    的口径冲突. 同款适用未来任何 frontend 子组件拆分 story.
+  - **"反向 META-GUARD" 是组件拆分的核心防回退手段**: 子组件拆完后必须断言"modal 不再含 inline
+    实现"的反向 regex. 本 story 守了 3 条: `<Progress percent={dim.bar_value}` (AnalyzerScoreBar
+    接管) / `ev.direction==='bullish'?'red'` ternary (EvidenceList+常量接管) / `Math.round(dim.confidence*100)`
+    (ConfidenceRing 接管). 没有反向断言, 未来重构可能不小心又 inline 写一遍 (e.g. "改 1 个字段顺手
+    改 inline" 后子组件没改, 数据漂移). 反向断言用 `!regex.test(modalSrc)` 一行即可, 加进 META-GUARD
+    [6] 测组. 同款适用 US-077 (DataMissingBanner/ActionPlanCard) — 拆完必须断 modal 不再 inline
+    渲染 entry_zone 或 data_quality 字段.
+  - **子组件 props 必须吃整个 view model 而非各自挑字段**: AnalyzerScoreBar 不要写 `{ score, color,
+    barValue }` 三个独立 prop, 要写 `{ dimension: AnalyzerDimensionViewModelV2 }` 一个 prop. 理由:
+    (a) helper view model 字段加减时子组件 props 不破坏 (新增字段子组件可选择性吃, 删字段 helper 单测
+    会先挂); (b) caller 永远只传 dim 不需要展开属性 (jsx 更简洁); (c) 反向 META-GUARD 可断言 `<X
+    dimension={dim}` 一行就守住接入契约 (若 caller 拆字段, regex 测会挂提醒). 单测 [4] 用 regex
+    `AnalyzerScoreBarProps[\s\S]*?dimension:\s*AnalyzerDimensionViewModelV2` 守这一条. 同款规则适用
+    所有 "组件接 helper view model" 场景.
+  - **import 白名单是组件拆分的隐性防膨胀**: 子组件文件 export const 的 import 必须列白名单 (本 story
+    只允 react / antd / @ant-design/icons / 同目录 helpers). 未来若有人在子组件里 import 'lodash'
+    或 'moment' (frontend 已有更小替代), META-GUARD 立刻挂. 测组 [7] 用 `^import.*from '([^']+)';$m`
+    扫所有 import 路径 + 与白名单比对. 同款适用未来任何"拆子组件 + 防引入新 lib"场景 — 不写白名单
+    单测, 半年后 bundle size 失控. 等价于 backend 的 `dependency-cruise` 规则但零 devdep.
+  - **eslint --fix 后必须 tsc + test 再跑一遍**: 沿用上 story 习得; 本 story auto-fix 14 prettier warn
+    后 tsc 0 err + 44+174 test 全过, 无 regression. 反例若 auto-fix 改了 multi-line conditional 的换行,
+    TS 类型推断 narrow 不一样, 可能出 type err. fix → tsc → test 三段顺序是标准姿势.
 ---

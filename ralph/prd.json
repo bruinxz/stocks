@@ -1184,8 +1184,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 76,
-      "passes": false,
-      "notes": "依赖: FE-036"
+      "passes": true,
+      "notes": "依赖: FE-036 | DONE 2026/06/20: 把 AIStockAnalysisModal.V2Layout 内联的 3 块 (Progress 进度条 / confidence Tag / evidence ul) 拆到 frontend/src/components/trading/aiStockAnalysisModalV2Components.tsx, export AnalyzerScoreBar / ConfidenceRing / EvidenceList + EVIDENCE_DIRECTION_LABELS / EVIDENCE_DIRECTION_COLORS 常量 (中股惯例 利多=红/利空=绿 frozen). 3 子组件 props 全吃 AnalyzerDimensionViewModelV2 / EvidenceViewItemV2[] (直接 import 自 helpers, 避免字段漂移). EvidenceList 内置 error 优先 / empty + showEmpty fallback / dataMissing slice(0,2) 三态. Modal V2Layout 改用子组件后删 inline 的 <Progress percent={dim.bar_value} + ternary ev.direction==='bullish'?'red' + Math.round(dim.confidence*100) (反向 META-GUARD 守不回退). 单测 tests/services/ai-stock-analysis-modal-v2-components.test.ts 44 ok / 0 failed (7 测组: 文件 sanity / export 形态 / 常量内容固化 / 类型签名复用 / META-GUARD 接入 / META-GUARD 反向 / import 白名单只允 react+antd+icons+helpers). helpers test 174 ok / 0 failed 无 regression. tsc 0 err 前后端, eslint 0 err 0 warn (--fix prettier 自动整). 无新外部 lib."
     },
     {
       "id": "US-077",
