@@ -3603,6 +3603,77 @@ class SchedulerService {
             `${diarySummary.enable_llm ? ' llm=on' : ' llm=off'}` +
             `${dryRunDiary ? ' (dry_run)' : ''}`
         );
+      } else if (task.type === 'WEEKLY_ERROR_PATTERN_AGGREGATE') {
+        // US-093 PM-022 — 周日 10:00 给所有 active user 聚合最近 90 天
+        // DailyAttributionReport → upsert error_pattern_reports. `user_ids` 显式
+        // list (空 = 取所有 is_active=true); `dry_run`=true 仅标记 (cron-side 仍
+        // 跑全 user); `period_end` 默认今日 Asia/Shanghai; `lookback_days` 默认 90.
+        // fail-OPEN: 单 user 失败 continue 不阻塞 batch.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { runWeeklyErrorPattern } = require('./postmortem/ErrorPatternCronRunner');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const explicitEpUserIds: number[] = Array.isArray(parameters.user_ids)
+          ? parameters.user_ids
+              .map((x: unknown) => Number(x))
+              .filter((n: number) => Number.isFinite(n) && n > 0)
+          : [];
+        const dryRunEp =
+          parameters.dry_run !== undefined
+            ? Boolean(parameters.dry_run)
+            : parameters.dryRun !== undefined
+            ? Boolean(parameters.dryRun)
+            : false;
+        const periodEndEp =
+          typeof parameters.period_end === 'string' && parameters.period_end.length > 0
+            ? parameters.period_end
+            : typeof parameters.date === 'string' && parameters.date.length > 0
+            ? parameters.date
+            : undefined;
+        const lookbackDaysEp =
+          parameters.lookback_days !== undefined
+            ? Number(parameters.lookback_days)
+            : parameters.lookbackDays !== undefined
+            ? Number(parameters.lookbackDays)
+            : undefined;
+        const epSummary = await runWeeklyErrorPattern({
+          period_end: periodEndEp,
+          lookback_days: lookbackDaysEp,
+          user_ids: explicitEpUserIds.length > 0 ? explicitEpUserIds : undefined,
+          dry_run: dryRunEp,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: epSummary.total_users,
+          completed_items: epSummary.persisted_count,
+          failed_items: epSummary.failed_count,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'weekly_error_pattern_aggregate',
+            period_end: epSummary.period_end,
+            lookback_days: epSummary.lookback_days,
+            dry_run: epSummary.dry_run,
+            cron_run_id: epSummary.cron_run_id,
+            total_users: epSummary.total_users,
+            ok_count: epSummary.ok_count,
+            skipped_count: epSummary.skipped_count,
+            failed_count: epSummary.failed_count,
+            persisted_count: epSummary.persisted_count,
+            per_user: epSummary.per_user.map((u: any) => ({
+              user_id: u.user_id,
+              status: u.status,
+              reason: u.reason,
+              persisted: u.persisted,
+            })),
+          },
+        });
+        logger.info(
+          `[WEEKLY_ERROR_PATTERN_AGGREGATE] period_end=${epSummary.period_end} ` +
+            `lookback_days=${epSummary.lookback_days} ` +
+            `total=${epSummary.total_users} ok=${epSummary.ok_count} ` +
+            `skip=${epSummary.skipped_count} fail=${epSummary.failed_count} ` +
+            `persisted=${epSummary.persisted_count}${dryRunEp ? ' (dry_run)' : ''}`
+        );
       } else if (task.type === 'MARKET_BRIEF_GENERATE') {
         // US-073 — 每个交易日 08:30 生成「AI 大盘速读」当日卡片。
         // 5 维数据：沪深300 上日收盘 / 今日开盘 / 北向资金 / 涨停数 / AI 一句话观点。
@@ -5829,6 +5900,20 @@ class SchedulerService {
         parameters: {
           dry_run: false,
           enable_llm: false,
+        },
+      },
+      {
+        // US-093 PM-022 — 周日 10:00 给所有 active user 聚合最近 90 天
+        // DailyAttributionReport → upsert error_pattern_reports.
+        // 默认 dry_run=false + lookback_days=90 (走 heuristic 零外网);
+        // 单 user 失败 fail-OPEN continue 不阻塞 batch.
+        name: '周度错误模式聚合',
+        type: 'WEEKLY_ERROR_PATTERN_AGGREGATE',
+        cron_expression: '0 10 * * 0',
+        is_active: true,
+        parameters: {
+          dry_run: false,
+          lookback_days: 90,
         },
       },
       {

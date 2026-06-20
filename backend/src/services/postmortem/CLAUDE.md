@@ -21,7 +21,21 @@ L8-Postmortem 系列 service. 每日 / 每周 / 增量地把 trading_agents + pa
   挂在 SchedulerService AI_DIARY_GENERATE dispatch + cronRegistry analytics 段,
   推荐 cron `0 18 * * 1-5` (工作日 18:00 — DAILY_ATTRIBUTION_GENERATE 17:00 之后).
 
-(后续 story 接入: PM-021 ErrorPatternReport, PM-023 ImprovementSuggestion, ...)
+- **ErrorPatternAggregator.ts** — US-092 [PM-021] 90 天错误模式聚合主入口
+  aggregateForUser(user_id, {period_end, data_source, lookback_days?, cron_run_id?}) →
+  bias_patterns / outcome_patterns / attribution_patterns / top_findings / summary
+  ≤ 500 字 → upsert error_pattern_reports. 永不 throw (load throw → failed 留痕,
+  records < MIN_DATA_DAYS → skipped 留痕, upsert 失败 → persisted=false).
+  (user_id, period_end) UNIQUE 走 ON CONFLICT.
+
+- **ErrorPatternCronRunner.ts** — US-093 [PM-022] WEEKLY_ERROR_PATTERN_AGGREGATE
+  cron 批量驱动. runWeeklyErrorPattern({period_end?, lookback_days?, user_ids?,
+  dry_run?, ...}) — 枚举所有 active user, 逐个 aggregateForUser, 返聚合
+  {total/ok/skipped/failed/persisted + per_user[]}. 默认 dry_run=false +
+  lookback_days=90. 挂在 SchedulerService WEEKLY_ERROR_PATTERN_AGGREGATE dispatch
+  + cronRegistry analytics 段, 推荐 cron `0 10 * * 0` (周日 10:00).
+
+(后续 story 接入: PM-023 ImprovementSuggestion, ...)
 
 ## 范式 — 与 [[services/attribution/AIAttributionSummary]] 5 件套对齐
 

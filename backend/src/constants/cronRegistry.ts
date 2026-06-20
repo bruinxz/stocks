@@ -422,6 +422,20 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '工作日 18:00 给所有 active user 生成 ≤ 500 字 AI 投资日记并 upsert ai_diary_entries',
   },
+  // US-093 PM-022 — 每周日 10:00 (与 AI_DIARY_GENERATE 错峰) 给所有 active user
+  // 聚合最近 90 天 DailyAttributionReport → 落 error_pattern_reports
+  // (单 user 一周 = 一行 status='ok'/'skipped'/'failed' 三态都留痕).
+  // 默认 dry_run=false + lookback_days=90 (走 heuristic 零外网); ops 可调
+  // ScheduledTask.parameters.lookback_days 跑短窗口.
+  // fail-OPEN: 单 user 失败 continue 不阻塞 batch.
+  {
+    type: 'WEEKLY_ERROR_PATTERN_AGGREGATE',
+    category: 'analytics',
+    owner: 'analytics',
+    recommendedCron: '0 10 * * 0',
+    description:
+      '周日 10:00 给所有 active user 聚合最近 90 天 DailyAttributionReport → upsert error_pattern_reports',
+  },
   // US-038 QA-002 — 周一 02:00 (早于 AC "周一 04:00 前生成" 截止) 聚合上周
   // 全市场 (或 ScheduledTask.parameters.stock_codes 显式 list) 投资者问答按
   // (stock, week) 落 east_money_qa_stats 表.

@@ -1440,8 +1440,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 93,
-      "passes": false,
-      "notes": "依赖: OPS-002"
+      "passes": true,
+      "notes": "依赖: OPS-002, PM-021. 新 ErrorPatternCronRunner.ts (~310 行) + SchedulerService dispatch + cronRegistry analytics + defaultTasks seed; runWeeklyErrorPattern fail-OPEN 双层 (service 内 + per-user catch); 推荐 cron 0 10 * * 0 (周日 10:00); 76 ok 单测覆盖 happy/skipped/load throw/explicit user_ids/list throw/dry_run/period_end+lookback/cron_run_id/upsert fail/empty ids/过滤 NaN + META-GUARD scheduler+registry+defaultTasks 双向一致; npx tsc 0; npm test postmortem 5 文件全过; cron-registry 550 ok 0 fail."
     },
     {
       "id": "US-094",

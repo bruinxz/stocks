@@ -2677,3 +2677,35 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **DB-less PRODUCTION DataSource 单测姿势**: 调 PRODUCTION 工厂的 method 必走 lazy-require → Sequelize "Model not initialized" throw → 内部 try/catch 兜底返 [] / {ok:false}. 单测只验"不抛 + 返结构对" 而非"真有数据" — 跟 [[ai-diary-cron]] / [[daily-attribution-service]] 同款"DB-less 不能验真数据, 只能验降级契约"思想.
   - **(user_id, period_end) UNIQUE + sequelize upsert** 是 idempotent 周日重跑的关键 — PG 走 ON CONFLICT (user_id, period_end) DO UPDATE 自动覆盖最新结果. 历史保留靠不同 period_end 的多行 + created_at 时间戳. 想做 "周内多次重跑只保留最新" 不需要额外 dedup 逻辑, 让 UNIQUE 索引和 upsert 原语自然守, 与 [[Bull queue dedup]] (US-019) "让底层组件的原子保证生效" 同款思想.
 ---
+
+## 2026/06/20 14:30 - US-093
+- 实现 [PM-022] WEEKLY_ERROR_PATTERN_AGGREGATE cron — 周日 10:00 给所有 active user 调 ErrorPatternAggregator.aggregateForUser, 复用 US-091 AIDiaryCronRunner 6 件套范式 (cron-side DataSource DI / per-user 兜底 / fail-OPEN 双层 / explicit user_ids 优先 + listActiveUsers 兜底 / dry_run summary 标记)
+- Files changed:
+  - backend/src/services/postmortem/ErrorPatternCronRunner.ts (新, ~310 行 + jsdoc):
+    * 3 export 常量 ERROR_PATTERN_CRON_RUN_ID_PREFIX='error_pattern_cron_' / DEFAULT_ERROR_PATTERN_CRON_DRY_RUN=false / DEFAULT_ERROR_PATTERN_CRON_LOOKBACK_DAYS=90 (与 aggregator DEFAULT_LOOKBACK_DAYS 同源, 不重新定义数字)
+    * 4 类型 export ErrorPatternCronUserResult / ErrorPatternCronRunSummary / RunWeeklyErrorPatternOptions / ErrorPatternCronDataSource
+    * 3 pure helpers export — normalizeErrorPatternCronDate (YYYY-MM-DD + 截 ISO + 非法返今日 UTC) / buildDefaultCronRunId (prefix+period_end+Date.now) / normalizeLookbackDays (NaN/0/负数/undefined → 90, 小数 floor)
+    * createProductionErrorPatternCronDataSource() — lazy require User model, try/catch fail-OPEN 返 []
+    * 主入口 async runWeeklyErrorPattern(options) — 默认 PRODUCTION_CRON_DS + PRODUCTION_AGGREGATOR_DS; explicit user_ids 优先 (含空数组 → 跳过 listActive 让 preview 可用); listActiveUsers throw → [] 不抛; for-loop per-user 套 try/catch 兜底 fail-OPEN 转 status='failed' reason='service_threw' 与 AIDiaryCronRunner 同款
+  - backend/src/constants/cronRegistry.ts: 新增 WEEKLY_ERROR_PATTERN_AGGREGATE 注册 (category=analytics owner=analytics recommendedCron='0 10 * * 0')
+  - backend/src/services/SchedulerService.ts:
+    * 3534 行 AI_DIARY_GENERATE 后追加 WEEKLY_ERROR_PATTERN_AGGREGATE else-if 分支 — 解析 parameters.user_ids / dry_run / period_end (兼 date alias) / lookback_days (兼 lookbackDays alias), 调 runWeeklyErrorPattern, 落 safeUpdateExecutionLog (含 per_user 明细) + logger.info '[WEEKLY_ERROR_PATTERN_AGGREGATE]' 标签
+    * 5905 行 defaultTasks 新增 seed (name='周度错误模式聚合' cron_expression='0 10 * * 0' is_active=true parameters={dry_run:false, lookback_days:90})
+  - backend/src/services/postmortem/CLAUDE.md: 新增 ErrorPatternAggregator + ErrorPatternCronRunner 文件清单两段
+  - backend/tests/postmortem/error-pattern-cron.test.ts (新, ~480 行 / 76 assert): 5 模块 — [1] 常量 / [2] pure helpers normalize/build/lookback (11 case) / [3] runWeeklyErrorPattern AC 主验收 11 子模块 (a happy 3 user → ok+persisted, lookback=90+cron_run_id 流入 upsert / b skipped records<MIN_DATA_DAYS → 留痕 / c load throw → failed 留痕 reason=load_threw / d explicit ids 不调 listActive / e listActive throw → 空跑 / f dry_run summary 标记 / g period_end+lookback_days 透传 upsert row / h cron_run_id explicit 流入 metadata / i upsert fail → failed counter + 后续 user 继续跑 / j explicit ids=[] 跳过 listActive (preview) / k 过滤 NaN/0/负数) / [4] PRODUCTION factory smoke 不抛 / [5] META-GUARD fs+regex — cronRegistry (含 WEEKLY_ERROR_PATTERN_AGGREGATE + analytics + 周日 10:00) + SchedulerService (含 else-if + require ErrorPatternCronRunner + runWeeklyErrorPattern call + safeUpdateExecutionLog + logger.info 标签) + defaultTasks (含 seed + cron_expression + lookback_days)
+  - ralph/prd.json: US-093 passes=true + notes
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npx ts-node tests/postmortem/error-pattern-cron.test.ts` exit 0, 76 ok / 0 failed
+  - `npm test -- --filter=postmortem` exit 0, 5 文件全过 (含 error-pattern-aggregator 142 + ai-diary-cron 53 + ai-diary-service N + trade-postmortem 28)
+  - `npm test -- --filter=cron-registry` exit 0, 550 ok 0 fail (含双向一致性 guard 新 type 注册即过)
+  - lint baseline diff: SchedulerService.ts 错误数 23 (修改前) = 23 (修改后), 本次新增 0 err 0 warn
+- **Learnings for future iterations:**
+  - **PM 系列 cron 6 件套已成熟 — 抄 AIDiaryCronRunner 改决策表/字段名就够**: 加 PM-024 IMPROVEMENT_SUGGESTION cron / PM-026 BLACK_SWAN_DETECT cron 等任何"已有单实体 service + 加 cron 批量驱动" 直接抄本 runner 改 4 处 — (1) import 主入口名 + DataSource type; (2) const PREFIX / lookback_days 默认; (3) for-loop 内 await service 主入口 + 兜底 fallback 结构 (要按 service 自身的 ResultShape 构造); (4) summary 字段命名 + per_user 字段透传. 不要每个 cron 重新设计; 与 [[daily-attribution-service]] "先建框架 + 后填实" 同款思想.
+  - **service-side 与 cron-side 两个 DataSource 是必要的, 不要合并**: ErrorPatternAggregatorDataSource 负责 loadAttributionReports + upsertErrorPatternReport (单 user); ErrorPatternCronDataSource 负责 listActiveUsers (枚举多 user). 合并会让单测注入 fake 时多写无意义 method (e.g. 单元测 aggregateForUser 时要 stub listActiveUsers, 测 runWeeklyErrorPattern 时要 stub 单 user 的 load+upsert). 拆开让 fake 最小化, 与 [[cron 批量驱动 + 持久化层]] 模板 (US-083) 一脉相承.
+  - **fallback Result 构造必须用 service 真实的 ResultShape**: runner 顶层 per-user catch 兜底返 result 时, status/patterns/summary_stats/summary/reason/persisted 必须按 AggregateForUserResult 接口字段填齐 (e.g. SummaryStats 是 total_bias_count/total_outcome_count/total_attribution_days/avg_pnl_pct/win_rate/data_completeness, 不是 trade_count/win_days 之类的"似是而非"字段) — 我第一版照 AI_DIARY 抄了错的 SummaryStats 字段, tsc 不会报 (object literal 完整匹配 union 时不报) 但运行时 status counter 仍正确 (因为 catch 路径只看 result.status / result.persisted). 抄模板时**回看一遍 service 的 Result interface 定义**而不是凭记忆.
+  - **explicit user_ids=[] 必须显式区分于 undefined**: AIDiaryCronRunner 用 `Array.isArray(options.user_ids) && options.user_ids.length > 0` 判断 → 传 [] 会 fallback 到 listActiveUsers (整批跑). 本 runner 改为 `Array.isArray(options.user_ids)` (不带 length 守门) → 传 [] 跳过 listActive 跑空集 — 让 ops 想"零副作用 preview" 时可显式传 user_ids:[] 实现, 比 dry_run 更彻底 (后者 cron-side 仍跑全 user). 这条边界值得对未来 PM 系列 cron 重新对齐 (AIDiaryCronRunner 的 [] === undefined 行为不一定是想要的, 但本次不动它防 regression).
+  - **cron-side dry_run 语义**: 单 user service 已 fail-OPEN, cron-side dry_run=true 仅写 summary.dry_run=true + ops 日志, **不**强制 service-side 跳过 upsert (那是 service-side data_source 实现的事). 想"真零副作用 preview" 用 explicit user_ids:[]. 这条与 PM-006 DailyAttributionCronRunner 略不同 (那个直接透传到 attribution build), 因为 ErrorPattern 没"算但不写"概念 — service 主入口算完必 upsert (PRD AC 强语义 "周日生成"留痕).
+  - **lookback_days 与 service 同源**: DEFAULT_ERROR_PATTERN_CRON_LOOKBACK_DAYS = DEFAULT_LOOKBACK_DAYS (import 自 aggregator), 不重新写 90. 与 [[AI_VIEW_MAX_CHARS]] 跨边界常量同源思想.
+---
+
