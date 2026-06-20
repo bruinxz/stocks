@@ -3482,3 +3482,25 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **持久化不改父表用关联表 metadata 留痕**: 给已落库的 AnnouncementSummary 加 dedupe 列触发 migration + 历史回填风险大. 改走 AnnouncementEventRelation.metadata.{linked_dedupe_cluster_id,is_canonical,duplicate_of} 与 ANN-008 设计文档 "dedupe_service 回写 cluster_id" 自然对齐. 占位 related_stock_code='_DEDUPE_' 是必要的 (本表 UNIQUE (announcement_id, related_stock_code) 必须给一个非空值, 否则 bulkCreate 多行同 announcement_id 会触发 UNIQUE conflict).
   - **fail-OPEN trivial cluster 是 dedupe 服务的"安全态"**: 上游 CriticalAnnouncementPushService 如果走 dedupe gating 时, dedupe 抛错就 push 所有原始公告 (好过 push 0 条让黑天鹅漏报). 这是与 RiskGuardFailClosed (US-011) 对偶的 "fail-OPEN 不挡用户" 思想 — dedupe 是降噪不是守门, 失败时回到原始行最安全.
 ---
+
+## 2026-06-20 - US-119 [KOL-005] KOLAggregator time_decay
+- 实现 weight × exp(-days_old / 7) 时间衰减, 接入 KOLOpinion 加权汇总链路.
+- backend/src/services/KOLAggregatorService.ts (+~75 行):
+  * TIME_DECAY_HALF_LIFE_DAYS = 7 (锁 AC, 公式 `/ 7`);
+  * daysBetweenIsoDates(opinionDate, asOfDate) — 用 Date.UTC 算整数天差; 输入异常 (格式不合法 / 空 / 月份越界) fail-OPEN 返 0;
+  * timeDecayFactor(opinionDate, asOfDate) — exp(-days_old / 7), days_old<=0 直返 1; 与 dedupeAndSort opinion_date desc 互补 (排序按日, 加权按 exp);
+  * decayedAuthorityWeightedSentiment(rec, asOfDate?) — |sentiment| × authority × decay; sentiment=0/null 短路返 0 不算 decay; asOfDate 缺省 = todayLocalIso().
+- backend/tests/services/kol-aggregator-service.test.ts (+~220 行 / +36 新断言):
+  * testTimeDecayConstants — 锁 7;
+  * testDaysBetweenIsoDates 9 case (同日 / +1/+7 / 跨月跨年 / 未来 / 空 / 非法 / 月越界);
+  * testTimeDecayFactor — 同日/未来=1 + AC 边界 7d/14d/30d/1d 用 approxEqual 验 + 单调性 d1>d7>d30 + (0,1] 范围;
+  * testDecayedAuthorityWeightedSentiment — research +1 同日=0.6 / 7d=0.6×exp(-1) / policy 14d / sentiment=0 短路 / null 短路 / "新闻今天 0.5 > 研报 30d 前 0.5" 验 decay 真翻转排序 / 默认 asOfDate fallback 不抛;
+  * testTimeDecayMetaGuard — fs+regex 守 4 个 export + `Math.exp(-X / TIME_DECAY_HALF_LIFE_DAYS)` 模式真出现 + decayedAuthorityWeightedSentiment 函数体真调 authorityWeightedSentiment × timeDecayFactor.
+- npx ts-node tests/services/kol-aggregator-service.test.ts → ✅ 295 passed 0 failed (从 259 升到 295, +36).
+- npx tsc --noEmit -p tsconfig.json → clean.
+- npx eslint src/services/KOLAggregatorService.ts → clean.
+- **Learnings for future iterations:**
+  - "时间衰减加权" 模板 (US-119 + 未来任何 "多观点按 freshness 加权汇总" 类 — KOL/News/AnnouncementHeat/PolicyDoc): 4 件套 — (1) **半衰常数显式 export + 锁 AC**: `TIME_DECAY_HALF_LIFE_DAYS = 7` 跟 SOURCE_AUTHORITY 同款 — 不允许业务侧悄改, 任何改动走 PR review (meta-guard 用 `/ TIME_DECAY_HALF_LIFE_DAYS\)/` regex 守公式真出现, 而不是只守常数, 防 inline 字面量绕过); (2) **daysBetween 必须 fail-OPEN 返 0** — 输入空/非法/月越界全返 0, 不抛, 与 "未识别 source → default authority" 同款防御; 否则上游脏 opinion_date 让整批 batch sentiment 信号被吞; (3) **decayedXxx 短路优化**: sentiment=0/null 直返 0, 不算 exp (Math.exp 上百万次 N+1 query 也是 cost); 短路 + Number.isFinite 双层防 NaN 渗到下游 SQL aggregation; (4) **"新且弱压过老且权威" 必须显式单测** — 这是 time_decay 引入的核心行为翻转, 不测就回归不出来; 选 "新闻今天 0.5 vs 研报 30d 前 0.5", 算清 newsFresh > researchStale 才能写死断言 (与 [[滑窗 cluster dedupe + AC ≥ N% 反向算样本]] 同款 "反向算数据" 思路).
+  - **dedupeAndSort 不直接接 time_decay 的原因**: 排序仍按 opinion_date desc (确定性 stable, 跨次调用同输入同输出), time_decay 只进 "加权汇总" 路径 (decayedAuthorityWeightedSentiment); 否则同一组 opinions 在 t+1d 跑 dedupeAndSort 顺序会漂 — 前端 "他人在看" 卡片以 DB row order 渲染, 顺序漂 = 用户看到的列表每天都微变. 这条边界写到 KOLAggregatorService.ts dedupeAndSort 注释 + decayedAuthorityWeightedSentiment 注释里, 防后续 ralph "把 decay 也塞进 dedupeAndSort 排序" 的误抽象.
+  - **approxEqual helper 模板**: 任何 exp/log/sqrt/trig 数值断言都用 `Math.abs(actual - expected) <= eps` (默认 1e-6), 别用 assertEqual 走 JSON.stringify (浮点 0.36787944117144233 vs 0.367879441171442 比不过). approxEqual 是这种 service 第一个引入数值连续计算时必备的 test util.
+---

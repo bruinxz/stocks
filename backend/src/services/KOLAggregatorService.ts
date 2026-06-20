@@ -198,6 +198,80 @@ export function authorityWeightedSentiment(rec: KOLOpinionRecord): number {
   return absS * getSourceAuthority(rec.kol_source);
 }
 
+// ---------------------------------------------------------------------------
+// US-119 [KOL-005] time_decay — weight × exp(-days_old / 7)
+// ---------------------------------------------------------------------------
+
+/**
+ * 时间衰减半衰常数 (天). 公式 `exp(-days_old / TIME_DECAY_HALF_LIFE_DAYS)`,
+ * 这里命名为 "half life" 是直观叫法 — 实际是 e-fold 时间常数, 7 天后权重 ≈ 0.368
+ * (1/e), 14 天后 ≈ 0.135, 30 天后 ≈ 0.014. AC 锁定 `/ 7`, 不允许业务侧改.
+ *
+ * 设计原因: 个股 KOL 观点 / 政策口径的"新鲜度衰减"经验是 1-2 周, 7 天是
+ * mid-point — 比新闻 (3d 衰减) 久, 比研报 (30d) 短, 适合多源汇总.
+ */
+export const TIME_DECAY_HALF_LIFE_DAYS = 7;
+
+/**
+ * 计算两个 ISO 日期 (YYYY-MM-DD) 之间的整数天差 (asOfDate - opinionDate).
+ * 跨月 / 跨年通过 UTC 日时间戳算, 与 isoDateMinusDays 同算法一致.
+ *
+ * 输入异常 (格式不合法 / parse 失败) 兜底返 0 — 与 "未识别 source → default authority"
+ * 同款 fail-OPEN: 缺日期就当成 "今天" 处理, 不衰减, 避免上游脏数据被吞掉.
+ */
+export function daysBetweenIsoDates(opinionDate: string, asOfDate: string): number {
+  const parse = (s: string): number | null => {
+    if (!s || typeof s !== 'string') return null;
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return null;
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return null;
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+    return Date.UTC(y, mo - 1, d);
+  };
+  const oms = parse(opinionDate);
+  const ams = parse(asOfDate);
+  if (oms === null || ams === null) return 0;
+  return Math.round((ams - oms) / 86_400_000);
+}
+
+/**
+ * **US-119: time_decay 衰减因子** — `exp(-days_old / 7)`, 范围 (0, 1].
+ *
+ * - days_old <= 0 (未来日期或同日) → 1.0 (不衰减);
+ * - days_old = 7 → ≈ 0.368 (1/e);
+ * - days_old = 14 → ≈ 0.135;
+ * - days_old = 30 → ≈ 0.013.
+ *
+ * 严格 AC 公式不带 floor / clamp, 让下游加权汇总自然平滑.
+ */
+export function timeDecayFactor(opinionDate: string, asOfDate: string): number {
+  const daysOld = daysBetweenIsoDates(opinionDate, asOfDate);
+  if (daysOld <= 0) return 1;
+  return Math.exp(-daysOld / TIME_DECAY_HALF_LIFE_DAYS);
+}
+
+/**
+ * 一条意见的"权威 × 强度 × 时间衰减"综合权重 — `|sentiment| * authority * exp(-days/7)`.
+ *
+ * 用于 (a) dedupeAndSort 第三级排序 (越新 + 越权威 + 越强 排越前);
+ * (b) 下游加权汇总 (NewsAnalyzer / SentimentAnalyzer) 把多源多日观点合成单值
+ * — 同一思路: 时间越远权重越低, 不让 30 天前的强观点喧宾夺主.
+ *
+ * asOfDate 缺省 = 今天本地 (与 aggregateForStock 默认一致); 测试可注入固定值.
+ */
+export function decayedAuthorityWeightedSentiment(
+  rec: KOLOpinionRecord,
+  asOfDate?: string
+): number {
+  const base = authorityWeightedSentiment(rec);
+  if (base === 0) return 0;
+  const ref = asOfDate || todayLocalIso();
+  return base * timeDecayFactor(rec.opinion_date, ref);
+}
+
 export interface AggregateOptions {
   /** 取近 N 天 (默认 90)。研报 / 新闻 / 概念 均按此窗口过滤。 */
   lookbackDays?: number;

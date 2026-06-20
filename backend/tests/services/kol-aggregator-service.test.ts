@@ -46,8 +46,12 @@ import {
   SOURCE_AUTHORITY_DEFAULT,
   POLICY_DIRECTION_KEYWORDS,
   POLICY_TOPIC_KEYWORDS,
+  TIME_DECAY_HALF_LIFE_DAYS,
   getSourceAuthority,
   authorityWeightedSentiment,
+  daysBetweenIsoDates,
+  timeDecayFactor,
+  decayedAuthorityWeightedSentiment,
   ratingToSentiment,
   scoreNewsSentiment,
   conceptRankToSentiment,
@@ -1554,6 +1558,231 @@ function testSourceAuthorityMetaGuard(): void {
 }
 
 // ---------------------------------------------------------------------------
+// US-119 [KOL-005] time_decay — weight × exp(-days_old / 7)
+// ---------------------------------------------------------------------------
+
+function approxEqual(name: string, actual: number, expected: number, eps = 1e-6): void {
+  const ok = Number.isFinite(actual) && Math.abs(actual - expected) <= eps;
+  assert(name, ok, `actual=${actual} expected=${expected} eps=${eps}`);
+}
+
+function testTimeDecayConstants(): void {
+  // AC: 公式 `/ 7` 固定, 任何业务方改这个常数都要走 PR review
+  assertEqual('TIME_DECAY_HALF_LIFE_DAYS = 7', TIME_DECAY_HALF_LIFE_DAYS, 7);
+}
+
+function testDaysBetweenIsoDates(): void {
+  // 同日 → 0
+  assertEqual('days same day', daysBetweenIsoDates('2026-06-20', '2026-06-20'), 0);
+  // 隔 1 天
+  assertEqual('days +1', daysBetweenIsoDates('2026-06-19', '2026-06-20'), 1);
+  // 隔 7 天
+  assertEqual('days +7', daysBetweenIsoDates('2026-06-13', '2026-06-20'), 7);
+  // 跨月
+  assertEqual('days cross-month', daysBetweenIsoDates('2026-05-30', '2026-06-05'), 6);
+  // 跨年
+  assertEqual('days cross-year', daysBetweenIsoDates('2025-12-25', '2026-01-05'), 11);
+  // 未来日期 → 负数 (timeDecayFactor 处理为 1.0)
+  assertEqual('days future negative', daysBetweenIsoDates('2026-06-25', '2026-06-20'), -5);
+  // 异常输入 fail-OPEN → 0
+  assertEqual('days bad opinion fallback', daysBetweenIsoDates('not-a-date', '2026-06-20'), 0);
+  assertEqual('days bad asOf fallback', daysBetweenIsoDates('2026-06-20', 'bad'), 0);
+  assertEqual('days empty input', daysBetweenIsoDates('', '2026-06-20'), 0);
+  // 月份越界 → 0 (不能拼 NaN 月份漏到下游)
+  assertEqual('days month out of range', daysBetweenIsoDates('2026-13-01', '2026-06-20'), 0);
+}
+
+function testTimeDecayFactor(): void {
+  // 同日 / 未来日期 → 1.0 (不衰减)
+  assertEqual('decay same day = 1', timeDecayFactor('2026-06-20', '2026-06-20'), 1);
+  assertEqual('decay future = 1', timeDecayFactor('2026-06-25', '2026-06-20'), 1);
+
+  // AC 边界: days_old=7 → exp(-1) ≈ 0.3678794
+  approxEqual(
+    'decay 7d = 1/e',
+    timeDecayFactor('2026-06-13', '2026-06-20'),
+    Math.exp(-1)
+  );
+  // days_old=14 → exp(-2) ≈ 0.1353
+  approxEqual(
+    'decay 14d = exp(-2)',
+    timeDecayFactor('2026-06-06', '2026-06-20'),
+    Math.exp(-2)
+  );
+  // days_old=30 → exp(-30/7) ≈ 0.0136
+  approxEqual(
+    'decay 30d',
+    timeDecayFactor('2026-05-21', '2026-06-20'),
+    Math.exp(-30 / 7)
+  );
+  // days_old=1 → exp(-1/7) ≈ 0.866 (短期内仍有大权重)
+  approxEqual(
+    'decay 1d',
+    timeDecayFactor('2026-06-19', '2026-06-20'),
+    Math.exp(-1 / 7)
+  );
+
+  // 单调性: 越老越衰减
+  const d1 = timeDecayFactor('2026-06-19', '2026-06-20');
+  const d7 = timeDecayFactor('2026-06-13', '2026-06-20');
+  const d30 = timeDecayFactor('2026-05-21', '2026-06-20');
+  assert('decay 单调 1>7>30', d1 > d7 && d7 > d30);
+  // 始终在 (0, 1]
+  assert('decay 30d still > 0', d30 > 0);
+  assert('decay 30d < 1', d30 < 1);
+}
+
+function testDecayedAuthorityWeightedSentiment(): void {
+  // research +1.0 同日 → 0.6 * 1.0 * 1.0 = 0.6 (不衰减)
+  approxEqual(
+    'decayed research +1 same day',
+    decayedAuthorityWeightedSentiment(
+      makeRec({
+        kol_source: KOL_SOURCES.RESEARCH_REPORT,
+        sentiment_score: 1.0,
+        opinion_date: '2026-06-20',
+      }),
+      '2026-06-20'
+    ),
+    0.6
+  );
+
+  // research +1.0 7 天前 → 0.6 * exp(-1) ≈ 0.2207
+  approxEqual(
+    'decayed research +1 7d ago',
+    decayedAuthorityWeightedSentiment(
+      makeRec({
+        kol_source: KOL_SOURCES.RESEARCH_REPORT,
+        sentiment_score: 1.0,
+        opinion_date: '2026-06-13',
+      }),
+      '2026-06-20'
+    ),
+    0.6 * Math.exp(-1)
+  );
+
+  // policy -0.5 14 天前 → 0.8 * 0.5 * exp(-2) ≈ 0.0541
+  approxEqual(
+    'decayed policy -0.5 14d ago',
+    decayedAuthorityWeightedSentiment(
+      makeRec({
+        kol_source: KOL_SOURCES.POLICY_DOC,
+        sentiment_score: -0.5,
+        opinion_date: '2026-06-06',
+      }),
+      '2026-06-20'
+    ),
+    0.8 * 0.5 * Math.exp(-2)
+  );
+
+  // sentiment=0 → 整体 0 (短路, 不必算 decay)
+  assertEqual(
+    'decayed 0 sentiment = 0',
+    decayedAuthorityWeightedSentiment(
+      makeRec({
+        kol_source: KOL_SOURCES.RESEARCH_REPORT,
+        sentiment_score: 0,
+        opinion_date: '2026-06-13',
+      }),
+      '2026-06-20'
+    ),
+    0
+  );
+
+  // sentiment=null → 0
+  assertEqual(
+    'decayed null sentiment = 0',
+    decayedAuthorityWeightedSentiment(
+      makeRec({
+        kol_source: KOL_SOURCES.RESEARCH_REPORT,
+        sentiment_score: null,
+        opinion_date: '2026-06-13',
+      }),
+      '2026-06-20'
+    ),
+    0
+  );
+
+  // 新 vs 老对比: 新闻 +0.5 今天 vs 研报 +0.5 30 天前
+  //   新闻今天 = 0.3 * 0.5 * 1 = 0.15
+  //   研报 30d = 0.6 * 0.5 * exp(-30/7) ≈ 0.0041
+  // → 新闻今天权重更大 (验证 time_decay 真的让"新且弱"压过"老且权威")
+  const newsFresh = decayedAuthorityWeightedSentiment(
+    makeRec({
+      kol_source: KOL_SOURCES.EAST_MONEY_NEWS,
+      sentiment_score: 0.5,
+      opinion_date: '2026-06-20',
+    }),
+    '2026-06-20'
+  );
+  const researchStale = decayedAuthorityWeightedSentiment(
+    makeRec({
+      kol_source: KOL_SOURCES.RESEARCH_REPORT,
+      sentiment_score: 0.5,
+      opinion_date: '2026-05-21',
+    }),
+    '2026-06-20'
+  );
+  assert('decay 让"新且弱"压过"老且权威"', newsFresh > researchStale);
+
+  // 默认 asOfDate fallback = todayLocalIso(): 至少不抛 + 返回有限数
+  const today = todayLocalIso();
+  const defaulted = decayedAuthorityWeightedSentiment(
+    makeRec({
+      kol_source: KOL_SOURCES.RESEARCH_REPORT,
+      sentiment_score: 0.5,
+      opinion_date: today,
+    })
+  );
+  assert('decay 默认 asOfDate 不抛', Number.isFinite(defaulted));
+  approxEqual('decay 默认 asOfDate 同日 = base', defaulted, 0.3);
+}
+
+function testTimeDecayMetaGuard(): void {
+  const src = fs.readFileSync(
+    path.resolve(__dirname, '../../src/services/KOLAggregatorService.ts'),
+    'utf8'
+  );
+  // 三件套 export
+  assert(
+    'service exports TIME_DECAY_HALF_LIFE_DAYS',
+    /export\s+const\s+TIME_DECAY_HALF_LIFE_DAYS\s*=\s*7\b/.test(src)
+  );
+  assert(
+    'service exports timeDecayFactor',
+    /export\s+function\s+timeDecayFactor/.test(src)
+  );
+  assert(
+    'service exports decayedAuthorityWeightedSentiment',
+    /export\s+function\s+decayedAuthorityWeightedSentiment/.test(src)
+  );
+  assert(
+    'service exports daysBetweenIsoDates',
+    /export\s+function\s+daysBetweenIsoDates/.test(src)
+  );
+  // 公式 `exp(-days / 7)` 必须真出现在源码 — AC 锁定
+  assert(
+    'time_decay uses Math.exp(-... / TIME_DECAY_HALF_LIFE_DAYS)',
+    /Math\.exp\(-[A-Za-z_]+\s*\/\s*TIME_DECAY_HALF_LIFE_DAYS\)/.test(src)
+  );
+  // decayedAuthorityWeightedSentiment 必须真的乘 authorityWeightedSentiment × timeDecayFactor
+  const decayedFn = src.match(
+    /export function decayedAuthorityWeightedSentiment[\s\S]+?\n\}\n/
+  );
+  assert('decayedAuthorityWeightedSentiment 函数被找到', !!decayedFn);
+  if (decayedFn) {
+    assert(
+      'decayed 调 authorityWeightedSentiment',
+      /authorityWeightedSentiment\(/.test(decayedFn[0])
+    );
+    assert(
+      'decayed 调 timeDecayFactor',
+      /timeDecayFactor\(/.test(decayedFn[0])
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
   // Pure functions
@@ -1574,6 +1803,13 @@ async function main(): Promise<void> {
   testGetSourceAuthority();
   testAuthorityWeightedSentiment();
   testSourceAuthorityMetaGuard();
+
+  // US-119 [KOL-005] time_decay
+  testTimeDecayConstants();
+  testDaysBetweenIsoDates();
+  testTimeDecayFactor();
+  testDecayedAuthorityWeightedSentiment();
+  testTimeDecayMetaGuard();
 
   // US-035 [KOL-003] ETF + 政策集成
   testNetInflowToSentiment();
