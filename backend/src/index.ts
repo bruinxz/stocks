@@ -132,6 +132,13 @@ app.use(
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+// US-097 [OPS-008] 日志统一字段 — 给每个 request 分配 / 透传 trace_id 并绑到 AsyncLocalStorage,
+// 任何此 request 链路内 logger.info/warn/error 自动携带 `trace_id=<x> module=http` 后缀.
+// 必须在 httpMetricsMiddleware 之前 (metric 埋点本身的 log 也带 trace_id) 但在 cors/helmet 之后
+// (preflight OPTIONS 不需要 trace, 也避免 res.setHeader 与 cors 冲突).
+import { requestContextMiddleware } from './middlewares/requestContext';
+app.use(requestContextMiddleware());
+
 // US-072 Prometheus 指标埋点 —— middleware 必须在所有 route 之前挂载才能拦截每个请求；
 // `res.on('finish')` 是异步触发的，挂在最前面也能拿到 req.route（routing 阶段填充）。
 import {

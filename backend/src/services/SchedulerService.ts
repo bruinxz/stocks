@@ -9,6 +9,7 @@ import {
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
 import { logger } from '../utils/logger';
+import { generateTraceId, runWithLoggingContext } from '../utils/loggingContext';
 import { LIVE_AUDIT_EVENT_TYPES } from '../live-trading/auditEvents';
 import { dataUpdateQueue } from '../jobs/dataUpdateQueue';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
@@ -389,14 +390,20 @@ class SchedulerService {
           return;
         }
         this.inFlightTaskIds.add(task.id);
-        logger.info(`Executing scheduled task: ${task.name} (${task.type})`);
-        try {
-          await this._executeTaskLogic(task, false);
-        } catch (error) {
-          logger.error(`Scheduled task ${task.id} (${task.name}) execution failed:`, error);
-        } finally {
-          this.inFlightTaskIds.delete(task.id);
-        }
+        // US-097 [OPS-008]: 每个 cron tick 起一个独立 trace_id + module='scheduler',
+        // 让该 task 跑时所有 logger.* 全链路自动携带统一字段; grep trace_id 能完整追踪
+        // 一次 cron 跑的全部 service / model 子调用 (含异步 fan-out 也覆盖).
+        const ctxTraceId = generateTraceId();
+        await runWithLoggingContext({ trace_id: ctxTraceId, module: 'scheduler' }, async () => {
+          logger.info(`Executing scheduled task: ${task.name} (${task.type})`);
+          try {
+            await this._executeTaskLogic(task, false);
+          } catch (error) {
+            logger.error(`Scheduled task ${task.id} (${task.name}) execution failed:`, error);
+          } finally {
+            this.inFlightTaskIds.delete(task.id);
+          }
+        });
       },
       {
         timezone: 'Asia/Shanghai',
@@ -448,8 +455,8 @@ class SchedulerService {
     try {
       const tz = 'Asia/Shanghai';
       const activeIds = new Set(this.activeTasks.keys());
-      const sorted = [...allTasks].sort((a, b) =>
-        (a.type || '').localeCompare(b.type || '') || a.id - b.id
+      const sorted = [...allTasks].sort(
+        (a, b) => (a.type || '').localeCompare(b.type || '') || a.id - b.id
       );
       for (const task of sorted) {
         const scheduled = activeIds.has(task.id);
@@ -466,7 +473,9 @@ class SchedulerService {
         const registered = isRegisteredCronType(task.type);
         const prefix = scheduled ? '[scheduler] cron task' : '[scheduler] cron task NOT_SCHEDULED';
         logger.info(
-          `${prefix} id=${task.id} type=${task.type} name="${task.name}" cron="${task.cron_expression}" nextRunAt=${nextRunStr || 'n/a'} registered=${registered}`
+          `${prefix} id=${task.id} type=${task.type} name="${task.name}" cron="${
+            task.cron_expression
+          }" nextRunAt=${nextRunStr || 'n/a'} registered=${registered}`
         );
       }
       const unregistered = findUnregisteredTypes(allTasks.map(t => t.type));
@@ -4101,9 +4110,7 @@ class SchedulerService {
             if (res && res.task_id) {
               const pollingJobOptions = buildAIPollingJobOptions({ taskId: res.task_id });
               if (!pollingJobOptions) {
-                logger.warn(
-                  `跳过股票 ${candidate.symbol} 入队: TradingAgents 返回的 task_id 非法`
-                );
+                logger.warn(`跳过股票 ${candidate.symbol} 入队: TradingAgents 返回的 task_id 非法`);
                 failed++;
                 continue;
               }
@@ -5028,8 +5035,13 @@ class SchedulerService {
     const task = await ScheduledTask.findByPk(id);
     if (!task) throw new Error('Task not found');
 
-    logger.info(`Manually triggering task ${task.id} (${task.name})`);
-    return await this._executeTaskLogic(task, true);
+    // US-097 [OPS-008]: 手动触发 task 也起独立 trace_id + module='scheduler' 子作用域,
+    // 与 cron tick 路径对齐, 手动执行的全链路日志也可 grep trace_id.
+    const ctxTraceId = generateTraceId();
+    return await runWithLoggingContext({ trace_id: ctxTraceId, module: 'scheduler' }, async () => {
+      logger.info(`Manually triggering task ${task.id} (${task.name})`);
+      return await this._executeTaskLogic(task, true);
+    });
   }
 
   async applyLiveShadowBudgetSuggestion(
