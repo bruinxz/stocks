@@ -1984,8 +1984,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 129,
-      "passes": false,
-      "notes": "依赖: OPS-004"
+      "passes": true,
+      "notes": "依赖: OPS-004 | done 2026-06-20: 5 dashboards (signal-flow/risk-control/reconciliation/data-sla/strategy-performance) + drift-guard test 66 ok"
     },
     {
       "id": "US-130",
