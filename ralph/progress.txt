@@ -39,6 +39,7 @@ Started: Fri Jun 19 02:25:41 CST 2026
 - "cron 收尾批量 push (writeback hook)" 模板 (US-086 DailyAttributionFeishuPushService, 未来任何"cron 跑完后给一批 entity push 通知"类 story — DailyDigestPush / WeeklyReviewPush / EarningsForecastPush 等): 5 件套 — (1) **6 件套抄 [[CriticalAnnouncementPushService]] 同款** (constant / type / pure helpers shouldPushItem+buildText+resolveWebhookUrl / DataSource DI FeishuWebhookPoster / service class pushBatch / singleton) — 改业务字段不改结构, 后续每个 PM 类 push 零认知成本接入. 反例: 强塞进既有 PushService 加 `if (kind === 'attribution')` 分支让 buildText 难维护; (2) **挂 cron runner 收尾而非 service 内单条** — service (e.g. DailyAttributionService.generateDailyReport) 被 route + cron 共用, route (GET /api/portfolio/:id/attribution/daily) 读历史报告时不能 push (用户每打开页面就推飞书 = 灾难). 任何"通知/推送" 类 hook 必须问: caller 是 mutation 入口 (1 次/写) 还是 read 入口 (N 次/请求)? 只挂前者. 同款边界 [[Announcement syncDate 内 push]]; (3) **enable_<channel>=true 默认 / boolean 关闭 / 不三态** — 灰度时让 PRD AC 不变 (cron 跑完即推), ops 关掉只改 ScheduledTask.parameters.enable_feishu_push=false 不动代码. 与 [[shadow→hard 三态范式]] 不同 — 这里 push 不写 DB 失败仅 warn, 不需 shadow 中间态. 不要 over-engineer 加三态枚举; (4) **dry_run 透传到 push 通道而非 skip 整个通道** — 主流程 dry_run=true 时, 透传给 pushBatch 让其内部走 dry_run skip 分支 (per-item skip_reason='dry_run' 统一可观测), 而不是整个 push 通道 skip (那样 metric label / 测试覆盖率全断). pushItems 自然空时走 no_records skip 是 self-consistency 兜底; (5) **双层 fail-OPEN** — pushService.pushBatch 内部已 fail-OPEN 不抛 (顶层 catch 返 skipped_reason='top_level_error'), runner 仍套一层 try/catch — 防 future refactor 移除内层 catch / 防 caller 注入 fake svc 抛 sync error. 调用面 (cron runner) 才是用户感知边界, 永远不信任 callee 的 fail-OPEN 契约不被打破, 自己也守一层. 与 [[Risk guard 三件套]] caller-side 保护对偶 (fail-CLOSED) / [[多通道 dispatcher]] (fail-OPEN) 一脉相承.
 - "AsyncLocalStorage 跨切面上下文 + winston format 拼接注入" 模板 (US-097 OPS-008 trace_id+module / 未来任何 RequestId / UserContext / AuditContext 等跨 await 隐式透传类): 5 件套 — (1) **Node 内置 AsyncLocalStorage 不引第三方 cls-hooked** (后者 monkey-patch promise hooks 已知坑多, V8 async hooks 原生支持跨 await/setImmediate/setTimeout 全自动透传, 是事实标准); (2) **runWithXxx + getXxx + currentXxx 三件套 API** — runWithXxx 起子作用域 (内层完全覆盖外层) + 沿用外层仅替换部分字段的 runWithModule 助手 + 取字段时 current* 占位 '-' 兜底, 任何取不到 context 路径 fail-OPEN 不抛; (3) **winston format 链拼接末尾注入而非改 printf**: 在既有 `${ts} ${level}: ${msg}` 格式末尾追加 `trace_id=<x> module=<y>` 后缀, LogController 既有正则 `(.*)` 贪婪捕获 message 段自然包住, **完全 zero 下游改动** (老 logs 解析脚本 / 飞书 push 文案 / log dashboard 都不破). 改 printf 格式会让所有下游同步改, 选拼接是 "新增字段时优先 backward-compatible 拼接而非 schema 改造" 的实例. (4) **back-compat 守 message 已含 `<field>=` 不重复追加**: format 内 `if (!/trace_id=/.test(msg)) ... append`, 项目里既有 service 已手写 trace_id=signal:123 在 message 段, 不守这层 grep 会误以为关联两条记录. 单测显式断 `trace_id=` 只出现 1 次. (5) **incoming 字段必须走 WHITELIST regex + 长度 cap** (TRACE_ID_REGEX `/^[A-Za-z0-9-]{1,128}$/`): incoming trace_id 是上游/用户可控, 不限字符集 + 长度 → log injection 风险 (`trace_id="\nERROR ..."` 伪造日志条). 非法生成新的 (fail-OPEN), 不要拒请求 (fail-CLOSED 体验差). 接入点 4 处: HTTP middleware (express app.use 在 cors+helmet 之后 metrics 之前) / cron tick (SchedulerService cron.schedule callback 内) / 手动触发 (SchedulerService.executeTask) / 任何 off-main-loop 入口 (Bull queue worker / Redis pub-sub consumer / WebSocket onmessage). 测 ALS 真生效 AC 主验收**必须**测并发隔离 — N request 各异 trace_id 各自异步链路 setImmediate 后读 trace_id 互不污染, 单 request 走通不证明真生效 (如果是"模块级 let currentTrace" 单测 trivially 过但并发立乱). 测 winston 输出用 `winston.transports.Stream` + `stream.Writable` 内存抓 → 比 sinon stub 干净.
 - "代码 ↔ 衍生品" drift guard 模板 (US-098 OPS-009, 未来任何 generated docs / schema codegen / 配置缓存): 任何 "源 → 生成产物" 关系 (routes/*.ts → docs/openapi.json / migration → schema.ts / proto → ts SDK) 都该有 CI drift checker. 6 件套 — (1) **不在 CI 自动 commit 生成产物**, fail + 提示本地跑命令 (避免 git history 充满 noise + 影响 PR diff 可读性); (2) **byte-for-byte 比对** (serialize 严格匹配 generator 的落盘 format — indent + trailing newline + key 顺序), 不用 JSON.parse + deepEqual (会让格式微调不被检测); (3) **CLI 既可执行又可 require** — `if (require.main === module) { main(); }` 兜底, 让单测 require 时不触发 process.exit; (4) **line-level diff ±5 行 + 双侧 ---expected/+++actual 标记** 输出第一处差异, char offset 在 230KB JSON 里无可读性; (5) **3 种 reason 枚举** (in_sync / drift / missing_file) + 退出码 0/1/2 让 CI 与本地 dev 都能区分 "代码漂" vs "首次没生成"; (6) **反向 false-negative test 必带** — 显式构造一份缺一项的 fake 输入 → 必须报 drift, 防 "checker 实现错永远过" 类隐性 bug (与 [[Risk guard 三件套]] / [[ai-polling-enqueue 反向 META-GUARD]] 同款"反向 case 比正向更重要"思想). CI 加 step 4 处同步: tee log / Upload artifact path / PR comment logs 数组 / 下游 grep 工具.
+- "多段 JSONB 报告分阶段 UPSERT" 模板 (US-102 BlackSwanPostmortemService, 未来任何 model 有 N 段 JSONB 字段被多个 service / cron 分阶段填充类 — DailyAttributionReport 多段 / ErrorPatternReport 多段 / TradePostmortem 多 reviewer 等): 当一个报告 model 含 N 段 JSONB 字段, 每段由不同 cron / service 各自接力填 (本例: event_summary 由 PR-013 填, counterfactual_baselines/event_timeline/improvement_suggestions 由 PR-014/015/016 各自填), 落表必须遵守 5 件套 — (1) **UPSERT payload 只列我们要更新的字段**, 其余 JSONB 段**根本不出现在 row 对象里** — sequelize.upsert 不动它们, 保留并发写入的另一段不被擦. 反例: row 里写 `counterfactual_baselines: {}` 当占位 → 重跑时把其它 service 已填的真数据擦成空对象, 数据 silently 丢失没报错; (2) **status 用 'partial' 而非 'ok' 作初始**: 单段填完后 status='partial' + reason 留痕段名, 后续 service 全填后由它们升 'ok' — 与 ErrorPatternReport / DailyAttributionReport 的 fail-OPEN status 四态 (pending/ok/partial/failed) 对齐; (3) **metadata.sections_filled[] 数组累加**追踪 lifecycle — 每段 service upsert 时把自己段名 push 进去 (注意 sequelize.upsert 整 payload 覆盖, 累加要 caller 先 read-modify-write 或用 metadata.<section>_filled_at 各自独立 key 避免覆盖); (4) **业务唯一键 UNIQUE(parent_id)** 让"一父事件一份最新报告" 1:1 — UPSERT 冲突时 UPDATE 而非 INSERT 二次; 重跑同 parent_id 自然覆盖, 配合 (1) 实现 "本服务负责段被刷新, 他服务负责段保留"; (5) **测试 META-GUARD 反向断 row 不含他人段 key** — `!Object.prototype.hasOwnProperty.call(row, 'counterfactual_baselines')` 单测显式守, 防止未来 refactor 误加占位字段擦其它段 (反向 guard 比正向更关键, 与 US-018/019 同款思想). 错峰 cron 配合: BLACK_SWAN_DETECT (3,33) → BLACK_SWAN_POSTMORTEM (13,43) → 后续 PR-014/015/016 推荐 23,53 / 33,03 / 43,13 各偏 10min, 让上游写完下游再读避免数据竞态.
 
 ## 2026/06/19 09:50 - US-019
 - 实现 [EX-005] aiPollingQueue dedup 持久化 — BETA-3 在 4 caller 内联 `jobId: ai-poll-${taskId}` + 4 默认值, 本 story 抽统一 helper + 单测覆盖 AC + 反向 META-GUARD 守持久化不退化
@@ -2934,4 +2935,47 @@ Started: Fri Jun 19 02:25:41 CST 2026
     更可观测 (ops 知道哪些段没填), 与 ErrorPatternReport 3 态形成对比.
   - 1M tokens model 一次性 review 整套范式: model + 2 个 migration + test + database.ts + index.ts
     的 5 处同步, 比逐文件 grep 高效很多 (沿用 PR-010 同款套路, 避免回归).
+---
+
+## 2026-06-20 16:25 - US-102 [PR-013] BlackSwanPostmortemService
+- 新增 backend/src/services/BlackSwanPostmortemService.ts (566 行 + 完整 jsdoc)
+  - 6 个 export 纯函数 (calcDurationMinutes / buildReportTitle / buildReportSummary /
+    buildEventSummary / buildPostmortemReportRow / runBlackSwanPostmortem)
+  - PostmortemRunner DI 接口 (loadEvents / loadLinkedRiskAlertIds / upsertReport)
+  - createProductionPostmortemRunner lazy-require BlackSwanEvent + RiskAlert +
+    BlackSwanPostmortemReport models, sequelize 直调 + try/catch 兜底
+  - 4 段策略: 本 story 只填 event_summary (PRD US-101 4 段中第 1 段);
+    UPSERT payload 不含 counterfactual_baselines/event_timeline/improvement_suggestions
+    → sequelize 不动 PR-014/015/016 已写值. status 初始 'partial' + reason 留痕.
+- backend/src/constants/cronRegistry.ts: 加 BLACK_SWAN_POSTMORTEM cron '13,43 * * * *'
+  (与 BLACK_SWAN_DETECT '3,33' 错峰 10min — detector 先把事件落表 → postmortem 再读)
+- backend/src/services/SchedulerService.ts: 新增 BLACK_SWAN_POSTMORTEM dispatch 分支
+  (lazy-require + 透传 dry_run/event_id/lookback_hours + 写 task_execution_log result_summary)
+- 单测 backend/tests/services/black-swan-postmortem-service.test.ts: 115 ok / 0 failed
+  - [1-5] 纯函数: calcDurationMinutes 6 case + buildReportTitle cap + summary 启发式 +
+    buildEventSummary 14 字段 (含 Array.from 拷贝防 mutate) + buildPostmortemReportRow
+    status=partial / sections_filled=['event_summary'] / 不含 PR-014/015/016 段 key
+  - [6] e2e 11 路径: loadEvents 失败 / 无 events / dry_run / 全成功 / 部分失败 /
+    upsert throw / loadLinkedRiskAlertIds throw 容错 / event_id 透传 / lookback_hours
+    默认 24 + override + 非法 fallback / metadata 透传 / generated_at 覆盖
+  - [7] PRODUCTION runner singleton + 兜底空数组
+  - [8] META-GUARD 14 项: cron registry + SchedulerService dispatch + service jsdoc
+    含 US-102/PR-013/4 段语义/fail-OPEN/UNIQUE(black_swan_event_id)/PR-014~016 分工
+- Files: 4 files changed (1 new service / 1 new test / 1 cron registry / 1 scheduler)
+- 质量: tsc 0 err / eslint 同基线 (无新错) / npm test --filter=black-swan 5/5 OK
+- **Learnings for future iterations:**
+  - **多段 JSONB 报告 UPSERT 模式**: 当 model 有 N 段 JSONB 字段, 但本 service 只填其中 M 段
+    (其余段由后续 PR 接力填), UPSERT payload **只列我们要更新的字段**, 其余字段不出现在 row
+    里 — sequelize.upsert 不动它们, 保留并发写入的另一段不被擦. status='partial' + metadata.
+    sections_filled[] 累加做 lifecycle 追踪. 后续 PR-014/015/016 同款.
+  - **错峰 cron**: 同主题的多 cron (BLACK_SWAN_DETECT + BLACK_SWAN_POSTMORTEM) 用 +10min
+    偏移 (3,33 → 13,43) 避免数据竞态 (detector 先落事件再让 postmortem 读). 已成型模式,
+    后续 PR-014/015/016 cron 推荐 23,53 / 33,03 / 43,13 错峰延续这套.
+  - **fail-OPEN 三层**: (1) loadEvents throw → 整体 success=false + 早返;
+    (2) 单事件 upsert throw → reports_failed +1 + 主流程继续; (3) 关联查询
+    (loadLinkedRiskAlertIds) throw → fallback 空数组 + 主流程继续. 三层下来"任何 cron
+    单次失败不阻塞下一次", 与 BlackSwanDetectorService / DbBackupService 同款.
+  - **测试 fake state 用 idx 拨号**: e2e 多事件场景, fake state.upsertResults[] 用
+    array index 拨号让每次 upsert 取不同返值 — 支持 "第 1 条 ok, 第 2 条 fail, 第 3 条 ok"
+    精细路径覆盖, 不需要给 runner 加复杂 mock.
 ---

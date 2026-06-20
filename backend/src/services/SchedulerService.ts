@@ -5015,6 +5015,61 @@ class SchedulerService {
         } else {
           logger.warn(`[BLACK_SWAN_DETECT] FAIL ${bsResult.error || 'unknown_error'}`);
         }
+      } else if (task.type === 'BLACK_SWAN_POSTMORTEM') {
+        // US-102 PR-013 — 每 30min 巡最近 24h BlackSwanEvent (PR-010) → 生成
+        // BlackSwanPostmortemReport (PR-012). 4 段中本 cron 只填第 1 段
+        // event_summary; PR-014/015/016 各自接力填其它 3 段. status 初始 'partial'
+        // (单段填) + UNIQUE(black_swan_event_id) UPSERT 让重跑只覆盖
+        // event_summary/generated_at/sections_filled, 不动他人填的段.
+        // dry_run=true → 仅返预演 events_total. event_id (debug) → 仅处理单事件 id.
+        // lookback_hours 默认 24, 与 cron 30min 跑频率匹配 (容忍漏跑 / 补跑).
+        // fail-OPEN: loadEvents throw → success=false + error + failed_items=1 warn 不抛.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          runBlackSwanPostmortem,
+          getProductionPostmortemRunner,
+        } = require('./BlackSwanPostmortemService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const dryRunBp = parameters.dry_run === true || parameters.dryRun === true;
+        const eventIdBp = parameters.event_id || parameters.eventId;
+        const lookbackHoursBp = parameters.lookback_hours || parameters.lookbackHours;
+        const bpResult = await runBlackSwanPostmortem(getProductionPostmortemRunner(), {
+          dry_run: dryRunBp,
+          event_id: eventIdBp ? Number(eventIdBp) : undefined,
+          lookback_hours: Number.isFinite(Number(lookbackHoursBp))
+            ? Number(lookbackHoursBp)
+            : undefined,
+          metadata: {
+            cron_run_id: executionLog?.id ?? null,
+            service_version: 'PR-013/v1',
+          },
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: bpResult.events_total,
+          completed_items: bpResult.reports_generated,
+          failed_items: bpResult.success ? bpResult.reports_failed : 1,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: bpResult.error || null,
+          result_summary: {
+            scenario: 'black_swan_postmortem',
+            dry_run: bpResult.dry_run,
+            events_total: bpResult.events_total,
+            reports_generated: bpResult.reports_generated,
+            reports_failed: bpResult.reports_failed,
+            generated_at_iso: bpResult.generated_at_iso,
+            error: bpResult.error || null,
+          },
+        });
+        if (bpResult.success) {
+          logger.info(
+            `[BLACK_SWAN_POSTMORTEM] events=${bpResult.events_total} generated=${bpResult.reports_generated} ` +
+              `failed=${bpResult.reports_failed}` +
+              (bpResult.dry_run ? ' (dry_run)' : '')
+          );
+        } else {
+          logger.warn(`[BLACK_SWAN_POSTMORTEM] FAIL ${bpResult.error || 'unknown_error'}`);
+        }
       } else if (task.type === 'LIVE_RECONCILIATION_GUARD') {
         // BETA-2 (2026-06-18, audit S-12): 对账主动告警 cron — 阈值评估 →
         // RiskAlert HIGH/MEDIUM → RealtimeAlertDispatcher 飞书推送。

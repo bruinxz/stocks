@@ -470,6 +470,23 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '每 30min 巡 5 类黑天鹅信号 (ST/SUSPENDED/NEWS_KEYWORD/SHAREHOLDER_REDUCTION/MARKET_REGIME) → 落 BlackSwanEvent (global 视角, 与 BlackSwanWatchdog per-user RiskAlert 互补)',
   },
+  // US-102 PR-013 — 每 30min 巡最近 24h BlackSwanEvent (PR-010) → 生成
+  // BlackSwanPostmortemReport (PR-012). 4 段中本 cron 只负责第 1 段 event_summary;
+  // PR-014/015/016 各自接力填 counterfactual_baselines / event_timeline /
+  // improvement_suggestions. UNIQUE(black_swan_event_id) 让本 cron 重跑走 UPSERT
+  // 仅覆盖 event_summary + generated_at + sections_filled — 其余 JSONB 段不出现在
+  // payload 里, sequelize 不动它们 (保留 PR-014/015/016 已写值). 与 BLACK_SWAN_DETECT
+  // 错峰 10min (3,33 → 13,43): detector 先把事件落表, postmortem 再读出来生成报告.
+  // fail-OPEN: loadEvents throw → 整次 success=false + error; 单事件 upsert throw →
+  // reports_failed +1 但不抛. status 初始 'partial', PR-014/015/016 全填后由它们升 'ok'.
+  {
+    type: 'BLACK_SWAN_POSTMORTEM',
+    category: 'risk_control',
+    owner: 'risk',
+    recommendedCron: '13,43 * * * *',
+    description:
+      '每 30min 巡最近 24h BlackSwanEvent → UPSERT BlackSwanPostmortemReport (本 cron 只填 event_summary 段; PR-014/015/016 各自填其它 3 段)',
+  },
   // US-095 OPS-006 — 每 5min 扫 webhook_fallback_log status='pending' AND
   // next_retry_at <= NOW(), 透传 sender 重投递; 成功 → 'sent', 失败 attempts+=1
   // + 指数 backoff; attempts >= max_attempts → 'dead'. 主流程 (FeishuBotWebhookService)

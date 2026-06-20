@@ -1577,8 +1577,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 102,
-      "passes": false,
-      "notes": "依赖: PR-012"
+      "passes": true,
+      "notes": "依赖: PR-012 | DONE 2026/06/20: 新增 backend/src/services/BlackSwanPostmortemService.ts (566 行 + 完整 jsdoc) — 触发后 30min 内对 BlackSwanEvent (PR-010) UPSERT 一行 BlackSwanPostmortemReport (PR-012). 本 story 填充 4 段中第 1 段 event_summary (event_type/severity/scope/symbol/detected_at/resolved_at/duration_minutes/title/description/linked_risk_alert_ids[]); status 初始 partial + reason=only_event_summary_filled, 由 PR-014/015/016 接力填后 3 段时升 ok. cron BLACK_SWAN_POSTMORTEM (13,43 * * * *) 与 BLACK_SWAN_DETECT (3,33) 错峰 10min. PostmortemRunner DI seam + 6 个纯函数 helpers (calcDurationMinutes / buildReportTitle / buildReportSummary / buildEventSummary / buildPostmortemReportRow / runBlackSwanPostmortem). UPSERT payload 只含 event_summary 段, sequelize 不动 PR-014/015/016 段 (重跑 idempotent). fail-OPEN: loadEvents throw → events_query_failed; 单事件 upsert throw → reports_failed +1 不抛; loadLinkedRiskAlertIds throw → linked=[] fallback. SchedulerService._executeTaskLogic 加 BLACK_SWAN_POSTMORTEM 分支透传 dry_run/event_id/lookback_hours + 写 task_execution_log. tests/services/black-swan-postmortem-service.test.ts 115 ok / 0 failed 覆盖 8 大模块 (calcDurationMinutes / buildReportTitle cap / buildReportSummary 启发式 / buildEventSummary 字段 1:1 + Array.from 拷贝 / buildPostmortemReportRow status+metadata / e2e 11 路径含 fail-OPEN / PRODUCTION runner singleton + 兜底空数组 / META-GUARD 14 项: cron registry+SchedulerService dispatch+lazy-require+透传 params+错峰+service jsdoc 含 US-102/PR-013/4 段/fail-OPEN/UNIQUE/PR-014~016). tsc 0 err / eslint 同基线 (无新错). 完整 black-swan filter 5 文件全过 (event + report + watchdog + detector + postmortem service)."
     },
     {
       "id": "US-103",
