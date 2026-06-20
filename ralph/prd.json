@@ -1877,7 +1877,7 @@
         "Relevant unit tests pass"
       ],
       "priority": 122,
-      "passes": false,
+      "passes": true,
       "notes": "依赖: QA-002"
     },
     {

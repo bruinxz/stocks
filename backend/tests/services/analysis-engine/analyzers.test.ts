@@ -215,28 +215,62 @@ function baseCtx(): AnalyzerContext {
   );
   assert(newsMissing.confidence === 0, 'news missing: confidence=0');
 
-  // 9. SentimentAnalyzer happy
-  const sa = new SentimentAnalyzer({
-    async getMarketSentimentPercentile() {
-      return 40; // 市场略偏冷
+  // 9. SentimentAnalyzer happy (含 US-122 QA 新维度)
+  const sa = new SentimentAnalyzer(
+    {
+      async getMarketSentimentPercentile() {
+        return 40; // 市场略偏冷
+      },
     },
-  });
+    {
+      async getQAStatSnapshot() {
+        return {
+          stock_code: '300750',
+          week_start: '2026-06-15',
+          questions_count_curr: 30,
+          questions_count_prev: 10,
+          answer_rate: 0.6,
+        };
+      },
+    }
+  );
   const sentOut = await sa.analyze(ctx);
   assert(sentOut.error === null, 'sentiment happy: no error');
   assert(sentOut.confidence > 0, 'sentiment happy: confidence > 0');
+  // US-122: evidence 必须含 QA 新两维 label
+  const sentLabels = sentOut.evidence.map(e => e.label).join(' | ');
+  assert(
+    /本周提问环比/.test(sentLabels),
+    `sentiment happy: questions_growth evidence emitted (${sentLabels})`
+  );
+  assert(
+    /公司答复率/.test(sentLabels),
+    `sentiment happy: answer_rate evidence emitted (${sentLabels})`
+  );
 
   // 10. SentimentAnalyzer missing
   const ctxNoSent = baseCtx();
   ctxNoSent.factor_snapshot = {};
-  const saNoBase = new SentimentAnalyzer({
-    async getMarketSentimentPercentile() {
-      return null;
+  const saNoBase = new SentimentAnalyzer(
+    {
+      async getMarketSentimentPercentile() {
+        return null;
+      },
     },
-  });
+    {
+      async getQAStatSnapshot() {
+        return null;
+      },
+    }
+  );
   const sentMissing = await saNoBase.analyze(ctxNoSent);
   assert(
     sentMissing.data_missing.includes('factor.east_money_qa'),
     'sentiment missing: east_money_qa listed'
+  );
+  assert(
+    sentMissing.data_missing.includes('qa_stat_snapshot'),
+    'sentiment missing: qa_stat_snapshot listed (US-122)'
   );
   assert(sentMissing.confidence === 0, 'sentiment missing: confidence=0');
 

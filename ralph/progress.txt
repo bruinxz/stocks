@@ -3549,3 +3549,28 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **service 层 DataSource DI seam 一律 now: Date 注入** (而非 Date.now()) — 单测要算 sinceIso
     必须能 mock 时间. getSinceIso(lookbackDays, now = new Date()) 是当前 qa/ 目录统一签名.
 ---
+
+## 2026-06-20 - US-122 [QA-005] SentimentAnalyzer 接 QA 新维度
+- Implemented:
+  - SentimentAnalyzer 新增 SentimentQASource DI (getQAStatSnapshot(stockCode) → QAStatSnapshot|null), 生产实现 PRODUCTION_SENTIMENT_QA_SOURCE 真接入 qaStatAggregator.listByStock(code, 2) (US-038 QA-002 wire-in), 内部剥 sh./sz. 前缀到 6 位纯代码.
+  - 新增 export 纯函数 questionsGrowthToScore / answerRateToScore / computeQuestionsGrowth + 冻结常量 QA_DIMENSION_THRESHOLDS (MIN_QUESTIONS_COUNT=5/GROWTH_PCT_CAP=2.0/ANSWER_RATE_REF=0.3) / QA_DIMENSION_WEIGHTS (各 0.1).
+  - run() 在原 3 factor + market baseline 之后新增 QA 维度处理: 拉 snapshot → 小样本守门 (curr<5 → 双 missing) → growth 算分 (Inf 上限 cap, prev=null missing) → answer_rate 算分 (REF=0.3 中性) → 加入 evidence + partial.
+  - data_sources 数组追加 east_money_qa_stats.
+  - 修复 analyzers.test.ts §9/§10: SentimentAnalyzer 构造函数加 fake qaSource (避免命中真 DB), 新增 assertion 验"本周提问环比"+"公司答复率" 两 evidence label.
+- Files changed:
+  - backend/src/services/analysis-engine/analyzers/SentimentAnalyzer.ts (+148 -3)
+  - backend/tests/services/analysis-engine/analyzers.test.ts (+38 -10) — fake qaSource + label 断言
+  - backend/tests/services/sentiment-analyzer.test.ts (新增 ~230 行 / 55 assertion 全绿)
+  - ralph/prd.json (US-122 passes=true)
+- Quality checks:
+  - `npx tsc --noEmit` 0 err
+  - `npx eslint src/services/analysis-engine/analyzers/SentimentAnalyzer.ts` 0 err 0 warn
+  - `npm test -- --filter=sentiment` 2 files OK
+  - `npm test -- --filter=analysis-engine` 13 files OK (含 happy/missing + integration_300750 + integration_3_samples_hard 100% 一致率)
+- **Learnings for future iterations:**
+  - **"analyzer 接新维度" 的标准姿势 = DI source + pure helpers + frozen thresholds + 小样本守门** (US-122 范式): 给 analyzer 加一个新外部数据维度时, 不要 inline `require` 一次性写; 而是 (a) export `XxxSource` 接口 + `PRODUCTION_XXX_SOURCE` singleton (try/catch 包 require, 任何故障返 null 不抛); (b) 接受 source 作为 constructor 第 N 个可选参数 (向后兼容: 单测注入 fake, 生产用 default); (c) 抽出纯函数评分 helper (`xxxToScore`) + 冻结阈值常量 + 单测白盒覆盖边界 (null / NaN / Inf / 上下限截断); (d) 小样本守门常量必须与上游 detector 对齐 (本例 MIN_QUESTIONS_COUNT=5 ↔ QALeadingSignalDetector.SIGNAL_THRESHOLDS.MIN_QUESTIONS_COUNT=5), 防"不同 service 用不同阈值导致同事件触发不一致". 这与 US-029 LiquidityFactor / US-076 AnalyzerScoreBar 抽 helper 模板同根, 但 analyzer 多一项"DI source"模式覆盖 IO 边界.
+  - **`require('../../../qa/QAStatAggregator')` 路径深度**: services/analysis-engine/analyzers/ 到 services/qa/ 是 `../../qa/` (出 analyzers → 出 analysis-engine), 不是 `../../../qa/`. SentimentAnalyzer 已有 `require('../../MarketSentimentIndexService')` 作模板, 严格 copy 同层级.
+  - **6 位代码剥前缀的统一姿势 (与 KOLAggregatorService / EastMoneyQAFactor 同款)**: `String(sym || '').replace(/[a-zA-Z.]/g, '').slice(-6)` + 正则 `/^\d{6}$/` 校验. EastMoneyQAStat / EastMoneyQATopic / FactorScore 表统一用 6 位纯代码; ctx.stock.code 多为 `sz.300750` 含前缀. 类似下游 require 数据表的 service 务必先剥再校.
+  - **analyzers.test.ts §9/§10 修改边界**: 该测试是 8 analyzer 全家桶, 改 SentimentAnalyzer 构造签名 (加第二参数) 后旧调用 `new SentimentAnalyzer({ getMarketSentimentPercentile })` 仍向后兼容 (qaSource 缺省走 PRODUCTION). 但缺省走生产意味着试图命中真 DB → 整个 test runner 子进程会 hang/慢. 解决: 显式给第二参数 fake, 哪怕只是 `{ async getQAStatSnapshot() { return null; } }`. 这也是 [Codebase Patterns] "DataSource DI 单测注入 fake 零 DB" 原则的硬性约束.
+  - **fail-OPEN on QA source**: getQAStatSnapshot null 走 data_missing 标记 'qa_stat_snapshot' (而非 throw / 而非默认 0 分静默吞). 与 BaseAnalyzer.requiredFields (本 analyzer 只声明 `factor.east_money_qa`) 不冲突 — qa_stat_snapshot 不计入 confidence 公式, 维持"无 QA 数据则该维度静音, 不影响 factor-only confidence" 的精确语义. 反向不要把 'qa_stat_snapshot' 加进 requiredFields, 否则首次没 stat 数据的新股 confidence 会被打 0 — 与业务"factor 完整即可下决策"契约冲突.
+---
