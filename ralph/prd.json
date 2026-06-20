@@ -1742,8 +1742,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 113,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "IndustryRegimeAnalyzer 接入 IndustryLeaderSource (DI + lazy require IndustryFlow), 计算同行业当日龙头股共振 (self_leader/strong_alignment/alignment/divergence/leader_only/neutral 6 种 kind, 权重 0.15, evidence 显式带 detail 龙头 code/Δ vs 本股 Δ). pure computeDragonResonance + toSixDigitStockCode + computeTargetTodayChangePct 全单测. industry==null 或 loader throw → data_missing.push(industry_leader) 不阻塞 env/momentum partial (fail-OPEN). 58 ok 新单测 + 40 ok 老 analyzers 回归, 全 analysis-engine 11 test files (508 ok) 全过."
     },
     {
       "id": "US-114",

@@ -3283,3 +3283,46 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - pickEntryZone 的 ±2% 兜底也要走 `roundToTick(0.01)` 而非 `round2`, 否则 tick 口径不一致 (主链是 0.01 元 round-half-up, round2 是浮点 round, 个别价格 (例 19.995) 会差 1 个 tick).
   - `getLimitPrices` 入参非法 (prev_close ≤ 0) 会**抛 RangeError**, 上层调用必须 try/catch 包成 null 返回, 否则 aggregator 整链 fail-closed 不利在线服务.
 ---
+
+## 2026-06-20 - US-113 [AE-007] IndustryRegimeAnalyzer dragon resonance
+- 实现: IndustryRegimeAnalyzer 接入 IndustryLeaderSource (DI lazy require IndustryFlow)
+  + 计算 dragon resonance (6 种 kind: self_leader / strong_alignment / alignment /
+  divergence / leader_only / neutral) + evidence 显式 detail (龙头 code/Δ vs 本股 Δ).
+- 4 partials 加权重: market(0.35) + industry_regime(0.3) + momentum(0.2) + leader(0.15).
+- pure helpers: toSixDigitStockCode / computeTargetTodayChangePct / computeDragonResonance.
+- 文件:
+  - 改: backend/src/services/analysis-engine/analyzers/IndustryRegimeAnalyzer.ts
+  - 新: backend/tests/services/analysis-engine/industryRegimeAnalyzerDragonResonance.test.ts
+  - 改: ralph/prd.json (US-113 passes=true)
+- 验证: 58 ok 新单测 + 40 ok 老 analyzers.test.ts 回归 + 全 analysis-engine 11 个测试
+  文件全过 (508 ok 总).
+- **Learnings for future iterations:**
+  - **"龙头共振" 不能光靠龙头自己涨, 必须看龙头 vs 本股的 4 种关系矩阵**:
+    (a) self_leader 顶格 +30, (b) 同向 + 龙头强 → +20/+25, (c) 同向 + 龙头中 → +8,
+    (d) 龙头强 + 本股反向 → divergence -18, (e) 龙头中涨 + 本股持平 → leader_only -8
+    "板块行情未扩散". 第 5 种最容易被忽略, 但实战意义大 (说明此股没跟上).
+  - **precedence 顺序坑**: leader_only 必须放在 strong_alignment 之前判断,
+    否则 "leader +6%, me +0.5%" 会被 strong_alignment (≥5% + sameDir) 错误吸收.
+    且 strong_alignment 要 require target |Δ|≥1 才算共振 (否则就是 leader_only 兜底).
+  - **stock code 归一**: ctx.stock.code 可能是 sz.300750 / 600519.SH / sh.600519 / bj.920003,
+    而 IndustryFlow.leader_stock_code 是纯 6 位. 必须 toSixDigitStockCode 统一,
+    否则 self_leader 永远命中不了. 已抽 pure helper 复用.
+  - **DI lazy require IndustryFlow**: 不能在文件 top import IndustryFlow (sequelize-typescript
+    模型注入时机问题, 同 FundamentalAnalyzer peer source). 必须 `require()` 在
+    PRODUCTION_INDUSTRY_LEADER_SOURCE.loadIndustryLeader 内 + try/catch.
+  - **confidence 算法变化**: 老版本 confidence = (totalReq - dataMissing) / totalReq 但只看
+    requiredFields. 新版改成基于 partials.length / 4 (env/regime/momentum/leader 四件套).
+    这让 leader 缺时 confidence 平滑降到 0.75, 不会因为 leader 不在 requiredFields 里就
+    完全不影响 confidence. 同时 requiredFields 仍守 ≥50% 阈值 (env + momentum 缺一半 → 强制 0).
+  - **fail-OPEN**: industry==null 不阻塞 (loader 返 null + data_missing 标记); loader throw
+    被内部 try/catch 兜成 null + data_missing. 端到端任何 leader 故障 → 只是少一个 +0.15 partial,
+    其它 3 个 partial (env + regime + momentum) 照常出 score. 这套"单 partial fail 不阻塞" 是
+    AE 系列 analyzer 共享模式, 与 AE-005 peer rank 三因子各自独立 data_missing 同款.
+  - **evidence weight 0.15**: 与历史 env(0.4)+regime(0.35)+momentum(0.25)=1.0 共存时, 直接把
+    env→0.35 / regime→0.3 / momentum→0.2 / leader→0.15 重分配, 总和仍 1.0. 不动 aggregator 上层.
+  - **META-GUARD fs+regex 守 6 个关键路径** (项目 [Codebase Patterns] 推荐姿势):
+    leaderSource.loadIndustryLeader 调用 / computeDragonResonance helper 调用 /
+    industry_leader data_missing / 龙头共振 evidence label / PRODUCTION_INDUSTRY_LEADER_SOURCE
+    导出 / industry_flows.leader data_sources. 保证未来 refactor 不会偷偷把"龙头共振"
+    回退掉. 任何"接 A 到 B 类" story 都该有这层守卫.
+---
