@@ -2257,8 +2257,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 147,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "ETFCreationRedemption model + migration + index + database.ts/models.index 双挂载 + 62 META-GUARD 断言. 一行 (trade_date, etf_code) PK, AC 7 字段 (etf_name/industry/net_creation/net_redemption/premium_pct) 全齐, 三 num 字段 nullable 表达 \"未拉到\" ≠ \"真 0\". 与 ETFFlow (US-092 net_inflow proxy 单字段) 互补 — 本表给 gross 申/赎 + 折溢价, 让下游 KOLAggregator 能识别套利对倒 vs 真增量资金. 后续 KOL-002~006 接 sync service + cron + aggregator integrate."
     }
   ]
 }

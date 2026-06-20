@@ -4183,3 +4183,18 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **trackForSuggestion fail-OPEN 三态 + reason 枚举集中**: ok / skipped / failed 三态, reason 字段 8 个枚举值 (no_portfolios / no_attribution_data / already_tracked / invalid_applied_at / list_portfolios_threw / load_attribution_threw / writeback_failed / writeback_threw / dry_run). reason 一定走集中枚举不是 caller 自创字符串 — Grafana 后续按 reason label group 时不能出现拼写漂移. 与 [[shadow→hard 三态范式]] / [[多段 JSONB 报告分阶段 UPSERT]] partial status 同款思想.
   - **trackPendingSuggestions cron-mode 命名约定**: cron 调本 service 一次性枚举全部 pending 一次性写回 — 不要让 cron 自己 for-loop 调单条 trackForSuggestion (与 [[DailyAttributionCronRunner]] 形态对齐: cron 一次性触发 batch entry, 单条逻辑封进 batch entry 内). user_id 可选透传让 ops 可"只跑某用户" 复盘; limit 让 cron 灰度初期限流. 任何"batch + 单条" service 都该按这模板分主入口 + 单条入口两套 export.
 ---
+
+## 2026/06/21 04:35 - US-147
+- 新建 `backend/src/models/ETFCreationRedemption.ts` — KOL-001 ETF 一级市场申赎 + 折溢价 model. 一行 = (trade_date, etf_code) 二元 PK; AC 必需 7 字段全齐 (etf_name VARCHAR(100) / industry VARCHAR(50) / net_creation DECIMAL(24,4) / net_redemption DECIMAL(24,4) / premium_pct DECIMAL(8,4)); 三个 num 字段 nullable 表达 "未拉到" ≠ "真 0"; 4 个辅助索引 (trade_date / etf_code / industry / (trade_date, industry) 复合).
+- 新建 `backend/scripts/migrations/2026-06-21-etf-creation-redemption.sql` + rollback — CREATE TABLE IF NOT EXISTS + 4 个 CREATE INDEX IF NOT EXISTS + COMMENT ON TABLE/COLUMN 全齐 + BEGIN/COMMIT 包裹.
+- 在 `backend/src/config/database.ts` 与 `backend/src/models/index.ts` 双处挂载 ETFCreationRedemption (与 KOLAuthorStat / AIDiaryEntry 同款必挂模式).
+- 新建 `backend/tests/models/etf-creation-redemption.test.ts` — fs+regex META-GUARD 62 个断言全过, 覆盖 @Table tableName/index 配置 / @Column 11 个字段(7 AC + source/raw_payload + created_at/updated_at) 类型 + nullable + 默认值 / TS 类型签名 / 双处挂载 / migration up & down SQL 完整性.
+- 文件改动: 5 个 (1 新 model + 2 新 SQL + 1 新 test + 2 处挂载 = database.ts/index.ts).
+- 质量验证: `npx tsc --noEmit` 0 error; `tests/models/etf-creation-redemption.test.ts` 62/62 ok; `tests/services/etf-flow-sync-service.test.ts` 110/110 ok (回归 sanity, 没破坏既有 ETFFlow 体系).
+- **Learnings for future iterations:**
+  - **"既有 ETFFlow vs 新 ETFCreationRedemption" 双 ETF 资金流 model 必须分清职责**: ETFFlow (US-092) 用 share_count diff × NAV 代理 net_inflow 单字段, 端点稳; ETFCreationRedemption (US-147) 拿 fund_etf_iopv_em 等端点的 gross 申/赎 + premium_pct, 用于识别"净 0 但 gross 大 = 套利对倒". 写新 model 前必须先读既有同 domain model 的 jsdoc, 在新 model jsdoc 顶部加 "与既有模型区分" 章节 (本 model 列了 5 个相关 model 的差异), 否则后续 service 拉数据时容易写到错的表 / 重复造轮子.
+  - **"3 num 字段 nullable 表达 '未拉到' ≠ '真 0'"** 范式 (与 ETFFlow.net_inflow 同款 fail-safe): 一级市场申赎数据稀疏, AKShare 端点不同版本字段名漂移, 拉不到时不要默认 0 (会被下游误读成"今日真没人申赎"). 而是用 NULL 表达"未拉到", 下游聚合层用 `coalesce(net_creation, 0)` 兜底. 这套 nullable 语义在 model column comment + migration COMMENT ON COLUMN + 测试 [3.5][3.6][3.7] + TS 类型签名 [4.3][4.4][4.5] 四处同步标注, 避免被"helpful refactor" 改成 NOT NULL.
+  - **model 测试 fs+regex META-GUARD 模式可复用模板** (本 story 沿用 AIDiaryEntry / KOLAuthorStat 的模板): 不依赖 jest / DB / sequelize singleton, ts-node --transpile-only 直接跑. 核心是 `listColumnDeclarations()` 提取 @Column 块 + `columnFor()` 按字段名查. 注意 indexes 数组提取 regex 要用 `indexes:\s*\[([\s\S]*)\][,\s]*$/m` (greedy + multiline + 行尾), 用 `\}\)` 锚定会被嵌套的 indexes object `}` 提前结束匹配 — 第一次写错调了 1 次.
+  - **"PK 二元 + 4 索引" ETF 时序表布局** 已是本仓库定式 (与 ETFFlow / MarginTradingBalance / DailyBar 同款): (trade_date, code) PK + (trade_date) + (code) + (group_field) + (trade_date, group_field) 复合. group_field 因表而异: ETF 系是 industry, 个股系是 industry/concept.
+  - **AKShare 端点选型在 model jsdoc 里要写清楚备选 + 降级路径**: fund_etf_iopv_em (首选, IOPV+二级价) / fund_etf_fund_info_em / fund_etf_dividend_sina (申赎金额, 字段名跨版本漂移). 写清后下游 KOL-002 service 直接照搬选型, 不用再去 PRD 找.
+---

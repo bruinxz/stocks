@@ -87,6 +87,7 @@ import { RestrictedShareRelease } from '../models/RestrictedShareRelease';
 import { ShareholderTradeRecord } from '../models/ShareholderTradeRecord';
 import { MarginTradingBalance } from '../models/MarginTradingBalance';
 import { ETFFlow } from '../models/ETFFlow';
+import { ETFCreationRedemption } from '../models/ETFCreationRedemption';
 import { MarketNews } from '../models/MarketNews';
 import { SocialSentimentSnapshot } from '../models/SocialSentimentSnapshot';
 import { MarketHotSearch } from '../models/MarketHotSearch';
@@ -224,6 +225,7 @@ const sequelize = new Sequelize({
     ShareholderTradeRecord,
     MarginTradingBalance,
     ETFFlow,
+    ETFCreationRedemption,
     MarketNews,
     SocialSentimentSnapshot,
     MarketHotSearch,

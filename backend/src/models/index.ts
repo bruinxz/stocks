@@ -86,6 +86,7 @@ export * from './RestrictedShareRelease';
 export * from './ShareholderTradeRecord';
 export * from './MarginTradingBalance';
 export * from './ETFFlow';
+export * from './ETFCreationRedemption';
 export * from './MarketNews';
 export * from './SocialSentimentSnapshot';
 export * from './MarketHotSearch';
