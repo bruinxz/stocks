@@ -1470,8 +1470,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 95,
-      "passes": false,
-      "notes": "依赖: OPS-005"
+      "passes": true,
+      "notes": "依赖: OPS-005 | 实现: WebhookFallbackLog model + 2026-06-20-webhook-fallback-log migration up/down + webhookFailOpen.ts (wrapFeishuWebhookFailOpen 主入口 + retryPendingFallbacks cron 主入口 + DataSource DI seam + 5 个 pure helper) + WEBHOOK_FALLBACK_RETRY cron 注册 + SchedulerService dispatch. AC: mock 504 → 主流程仍 success=false 透传不抛, INSERT pending row, attempts=1, max=5. 93 单测全过 (含 6 个 cron retry 分支: sender 成功→sent, 失败→retry_failed+指数 backoff, 达上限→dead, unknown scenario→skip, throw→不传染, DB throw→不传染). cron-registry meta-guard 559 ok 0 fail."
     },
     {
       "id": "US-096",

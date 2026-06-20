@@ -68,6 +68,7 @@ export * from './DailyAttributionReport';
 export * from './AIDiaryEntry';
 export * from './ErrorPatternReport';
 export * from './ImprovementSuggestion';
+export * from './WebhookFallbackLog';
 export * from './MorningRiskCheckup';
 export * from './AIStockAnalysisReport';
 export * from './KOLOpinion';

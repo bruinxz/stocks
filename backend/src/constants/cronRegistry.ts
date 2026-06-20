@@ -455,6 +455,17 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description: '过期 backtest / log / alert 清理',
     dryRunDefault: true,
   },
+  // US-095 OPS-006 — 每 5min 扫 webhook_fallback_log status='pending' AND
+  // next_retry_at <= NOW(), 透传 sender 重投递; 成功 → 'sent', 失败 attempts+=1
+  // + 指数 backoff; attempts >= max_attempts → 'dead'. 主流程 (FeishuBotWebhookService)
+  // 已 fail-OPEN, 本 cron 是"为了不丢消息"的第二道防线.
+  {
+    type: 'WEBHOOK_FALLBACK_RETRY',
+    category: 'cleanup',
+    owner: 'ops',
+    recommendedCron: '*/5 * * * *',
+    description: '每 5min 扫 webhook_fallback_log pending 行重投递',
+  },
 ]);
 
 const CRON_REGISTRY_BY_TYPE: ReadonlyMap<string, CronTaskDefinition> = new Map(

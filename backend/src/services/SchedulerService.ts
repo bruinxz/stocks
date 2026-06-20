@@ -4217,6 +4217,57 @@ class SchedulerService {
             `total_cascade=${cleanupResult.total_cascade_count} ` +
             `whitelist_skipped=${cleanupResult.whitelist_skipped_total} errors=${cleanupResult.errors.length}`
         );
+      } else if (task.type === 'WEBHOOK_FALLBACK_RETRY') {
+        // US-095 OPS-006 — 每 5min 扫 webhook_fallback_log status='pending' AND
+        // next_retry_at <= NOW(), 透传 sender 重投递; 成功 → status='sent', 失败
+        // attempts+=1 + 指数 backoff; attempts >= max_attempts → status='dead'.
+        // dispatchers 把 row.scenario (sendDailyDigestCard / sendRiskAlertCard / etc)
+        // 映射到真实 sender. 主流程 (FeishuBotWebhookService) 已 fail-OPEN, 本 cron
+        // 是"为了不丢消息"的第二道防线; retryPendingFallbacks 自身永不 throw.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { retryPendingFallbacks } = require('./webhookFailOpen');
+        const { feishuBotWebhookService } = require('./FeishuBotWebhookService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const limitWebhook = Number.isFinite(Number(parameters.limit))
+          ? Number(parameters.limit)
+          : undefined;
+        // dispatchers — 按 scenario 名映射到真实 sender. payload 即首次失败时
+        // INSERT 的 args (含 webhookUrl / body / options 等); webhook_url 仍走 row
+        // (env 改了不影响在飞历史告警).
+        const webhookDispatchers: Record<string, any> = {
+          sendDailyDigestCard: async (payload: Record<string, unknown>, row: any) =>
+            feishuBotWebhookService.sendDailyDigestCard(
+              payload?.payload,
+              String(row.webhook_url || ''),
+              { buildCard: () => payload?.cardBody }
+            ),
+        };
+        const webhookSummary = await retryPendingFallbacks({
+          dispatchers: webhookDispatchers,
+          limit: limitWebhook,
+          now: new Date(),
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: webhookSummary.total,
+          completed_items: webhookSummary.sent_count,
+          failed_items: webhookSummary.retry_failed_count + webhookSummary.dead_count,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'webhook_fallback_retry',
+            total: webhookSummary.total,
+            sent_count: webhookSummary.sent_count,
+            retry_failed_count: webhookSummary.retry_failed_count,
+            dead_count: webhookSummary.dead_count,
+            skipped_unknown_scenario_count: webhookSummary.skipped_unknown_scenario_count,
+          },
+        });
+        logger.info(
+          `[WEBHOOK_FALLBACK_RETRY] total=${webhookSummary.total} sent=${webhookSummary.sent_count} ` +
+            `retry_failed=${webhookSummary.retry_failed_count} dead=${webhookSummary.dead_count} ` +
+            `skipped_unknown=${webhookSummary.skipped_unknown_scenario_count}`
+        );
       } else if (task.type === 'EXTRA_DIMS_SYNC') {
         // 新维度同步 — 走 child_process 调用 sync:extra-dims CLI 复用既有逻辑
         const dims: string[] = Array.isArray(parameters.dims)

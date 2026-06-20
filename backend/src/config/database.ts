@@ -67,6 +67,7 @@ import { DailyAttributionReport } from '../models/DailyAttributionReport';
 import { AIDiaryEntry } from '../models/AIDiaryEntry';
 import { ErrorPatternReport } from '../models/ErrorPatternReport';
 import { ImprovementSuggestion } from '../models/ImprovementSuggestion';
+import { WebhookFallbackLog } from '../models/WebhookFallbackLog';
 import { MorningRiskCheckup } from '../models/MorningRiskCheckup';
 import { AIStockAnalysisReport } from '../models/AIStockAnalysisReport';
 import { KOLOpinion } from '../models/KOLOpinion';
@@ -198,6 +199,7 @@ const sequelize = new Sequelize({
     AIDiaryEntry,
     ErrorPatternReport,
     ImprovementSuggestion,
+    WebhookFallbackLog,
     MorningRiskCheckup,
     AIStockAnalysisReport,
     KOLOpinion,

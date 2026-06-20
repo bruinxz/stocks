@@ -2730,3 +2730,39 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **(user_id, period_end, category, key) 四元组 UNIQUE**: 任何"per-user-per-period-per-N-行"业务表都该考虑四元组 UNIQUE (比常见的三元组多 1 列)。bulkUpsert 必须按四元组 ON CONFLICT DO UPDATE 才能覆盖 (sequelize upsert 自动识别 model.indexes 里的 unique 数组)
   - **eslint --fix prettier 拉直**: 新 service 写完跑 lint 常见 10+ prettier 行长 warn, `npx eslint --fix <files>` 一键拉直, 改后 tsc 仍 0 err / 测试仍全过 (prettier 只改空白). 提前避免: 写 string template 时拆 multiline 模式与现有 service 对齐
 ---
+
+
+## 2026/06/20 14:10 - US-095
+- 实现 [OPS-006] 飞书 webhook fail-open + fallback_log + 5min retry — 主流程 (FeishuBotWebhookService) 已 fail-OPEN 返 `{success:false}` 不抛; 本 story 加第二道防线: 失败 snapshot 落 webhook_fallback_log 表 + WEBHOOK_FALLBACK_RETRY cron 5min 扫 pending 行重投递. 不入侵既有 N 个 sendXxx 方法 — caller 用 `wrapFeishuWebhookFailOpen(args, sender)` 包一层
+- Files changed:
+  - backend/scripts/migrations/2026-06-20-webhook-fallback-log.sql (新, up): `webhook_fallback_log` 表 + 3 索引 ((status,next_retry_at) 组合 cron 主查询 / (channel) ops 分组 / (created_at) 时间序列), JSONB payload+metadata, 默认 status='pending' / attempts=1 / max_attempts=5 / next_retry_at=NOW+5min / max_attempts=5 (与 webhookFailOpen.ts 常量同源)
+  - backend/scripts/migrations/2026-06-20-webhook-fallback-log-rollback.sql (新, down): IF EXISTS 幂等
+  - backend/src/models/WebhookFallbackLog.ts (新, 191 行): @Table 一对一映射 + 完整 jsdoc 说明 status 三态 (pending/sent/dead) + attempts 语义 (含首次) + next_retry_at 指数 backoff 公式 + webhook_url in-DB 透明约定 + payload 复原 (必须走原 sender 不能直接 axios)
+  - backend/src/models/index.ts: export WebhookFallbackLog
+  - backend/src/config/database.ts: import + models[] 注册
+  - backend/src/services/webhookFailOpen.ts (新, 480 行 / lint clean): 主模块
+    * 常量: DEFAULT_MAX_ATTEMPTS=5, DEFAULT_FIRST_BACKOFF_MS=5min, MAX_BACKOFF_MS=4h, DEFAULT_RETRY_BATCH_SIZE=50, WEBHOOK_SCENARIOS Object.freeze 10 项
+    * Pure helpers: computeNextBackoffMs (1→5min, 2→10min, 4→40min, 6→160min, 7+→cap 4h, NaN/Infinity 兜底), extractErrorInfo (SendResult.message+status_code / Error.message+err.response.status), isSkippedResult (skipped=true 不算失败)
+    * DataSource interface: 5 method (insertFallback / loadPending / markSent / markRetryFailed / markDead), 单测注入 fake 完整覆盖
+    * 主入口 wrapFeishuWebhookFailOpen(args, sender, source?): sender 成功→透传, 失败→safeInsertFallback (DB INSERT 自身失败仅 logger.warn 吞错), sender throw→转 fail-OPEN 返 {success:false, message} 不抛
+    * Cron 入口 retryPendingFallbacks({dispatchers, limit?, now?, source?}): 扫 pending 行 + 按 row.scenario 查 dispatchers + 4 出口 (sent / retry_failed + 指数 backoff / dead 达 max_attempts / skipped_unknown_scenario), 顶层 try/catch 防 loadPending throw
+    * createProductionWebhookFallbackLogDataSource(): lazy require model, 每个 method 内层 try/catch (insertFallback DB throw 返 null, loadPending DB throw 返 [], markSent/markRetryFailed/markDead 由 retryPendingFallbacks 顶层 catch 兜底), DB-less 环境单测 require 不挂
+  - backend/src/constants/cronRegistry.ts: 注册 WEBHOOK_FALLBACK_RETRY (category=cleanup, owner=ops, recommendedCron='*/5 * * * *'). 与首次失败 INSERT 时 next_retry_at=NOW+5min 对齐 (cron 一启动就能扫到)
+  - backend/src/services/SchedulerService.ts: 加 `task.type === 'WEBHOOK_FALLBACK_RETRY'` 分支 — lazy-require webhookFailOpen + feishuBotWebhookService, 构造 dispatchers (sendDailyDigestCard 走 service.sendDailyDigestCard, payload + webhookUrl + buildCard 透传), 调 retryPendingFallbacks, summary 落 execution_log
+  - backend/tests/services/webhook-fail-open.test.ts (新, 480 行 / 93 assert): 7 模块覆盖 [1] 常量冻结 / [2] computeNextBackoffMs 阶梯+clamp+非法输入 / [3] extractErrorInfo SendResult+Error+空 / [4] isSkippedResult 5 边界 / [5] wrapFeishuWebhookFailOpen **AC 主验收 6 子 block** (success 透传 / mock 504 fail-OPEN INSERT pending+attempts=1+last_status_code=504+payload+metadata 透传+next_retry_at≈now+5min / sender throw 转 fail-OPEN / skipped 不落 log / DB INSERT throw 不传染 / max_attempts override) / [6] retryPendingFallbacks **8 路径全覆盖** (空 / sent / retry_failed+指数 / dead / unknown_scenario / sender throw / loadPending throw / markSent throw 各仅 logger.warn) / [7] PRODUCTION DataSource smoke (5 method 是 function + DB-less insertFallback 返 null + loadPending 返 [] 不抛)
+  - ralph/prd.json: US-095 passes=true + notes
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npx ts-node --transpile-only tests/services/webhook-fail-open.test.ts` 93 ok / 0 failed (~520ms)
+  - `npm test -- --filter=cron-registry` 559 ok / 0 failed (新加 cron type 已被 meta-guard 验证 dispatch 分支双向一致)
+  - `eslint src/services/webhookFailOpen.ts src/models/WebhookFallbackLog.ts` 0 err 0 warn
+  - SchedulerService baseline lint: 23 → 23 (本次新增 0 err)
+- **Learnings for future iterations:**
+  - **"fail-OPEN 主流程不阻塞" + "持久化兜底" 这套组合是飞书 / 邮件 / SMS / IM 等所有外部通道的统一形态**. 主流程已 fail-OPEN 时 (sender 返 success=false 而非 throw) 是必要前提, 二道防线只需在 caller 侧包 wrapXxxFailOpen helper, 不要去改 sender 本身 (避免破坏既有 N 个调用方契约). 与 RiskAlertService (US-005) 多通道 dispatcher 配套 — RiskAlertService 决定"这条告警走哪些 channel", wrapFeishuWebhookFailOpen 决定"webhook 通道失败如何兜底", 互不耦合. 改 webhook 兜底完全不动 RiskAlertService.
+  - **"webhook_url 必须 in-DB 透明存储"是 retry 模式的硬要求**: 不能 cron 重试时再读 env (env 改了, 历史 pending 行的 webhook_url 就跟着漂; ops 排查"这条到底发到哪里"还要去 join 系统配置). 与 RiskAlertService feishu_webhook_url 同款 in-DB 约定. 单条 row 的 webhook_url + payload + scenario 三件套合起来 = 完整可重放的失败 snapshot.
+  - **payload 复原不能用 axios.post(url, payload.body)**: 不同 sender 有不同 card schema / msg 包装逻辑 (sendDailyDigestCard 走 interactive card, sendRecommendationSummary 走 post 富文本, sendOpsAlertText 走 text msg_type). cron 重试必须按 row.scenario 查 dispatchers 拿到原 sender, 透传 payload 调一次. dispatcher 表是 cron-side 的"sender 工厂注入点", 加新 scenario 时同步加一行就行.
+  - **sender 工厂注入 + DataSource DI seam 二者缺一不可**: 前者让单测可以 mock "sender 返失败 / throw" 而不真起 axios + 飞书 endpoint; 后者让单测可以 mock "DB INSERT / loadPending / markSent / markRetryFailed / markDead" 而不真起 sequelize. 二者组合让 93 assert 全覆盖 happy/fail/throw/DB-error 各路径, **完全脱离 DB + 完全脱离外部 endpoint**. 与 [[ai-polling-enqueue]] (US-019) Bull 复刻 EXISTS 同款 "复刻底层语义而非真起组件" 思想.
+  - **指数 backoff clamp 必须用 export 常量 + 单测显式守边界 (attempts=7 触发 cap)**: 不能只单测 1/2/3 后就假设公式正确 — clamp 边界 (cap 触发的最小 attempts) 是最容易踩偏的, 必须显式有一 case 验"恰好触发 cap 的 attempts 值". 与 [[ai-view-max-chars]] N/N+1/远超 N 同款防御.
+  - **markSent / markRetryFailed / markDead 失败仅 logger.warn 不传染**: cron 跑 N 行, 单行 DB update 失败不影响其它行 retry. 但本行的 status 没改 → 下次 cron 还会扫到 (next_retry_at 仍是上次的值) → idempotent (sender 重试一次, 成功则 markSent, 失败则继续). 这是 ack 类操作 (markSent/markRetryFailed/markDead) 与 retry 业务的天然解耦; 任何"cron 批处理 + 单行 ack DB" 都按这套抄.
+  - **cron 默认 dispatchers 只接 sendDailyDigestCard 一个 scenario**: 本 story 不强制把所有既有 sender 都接入 wrapFeishuWebhookFailOpen (那会触发广范围 caller 改动 + regression 风险), 留给后续 story 按需开. 未来 caller 想用就在 SchedulerService 的 dispatchers 加一行 + 自己 caller 侧包 wrap. cron-side dispatchers 是接入清单的事实源, 没接入的 scenario row 会落 'skipped_unknown_scenario' 留痕 + 不消耗 retry — ops 看 dashboard 一眼就知道"有哪些 scenario 失败了但还没接 retry".
+---
