@@ -2580,3 +2580,31 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **fs+regex META-GUARD 守 model + migration 双源**: model 测试不依赖真 sequelize singleton (DB-less), 完全靠源文件正则扫. migration 测试新增维度 — up 含 CREATE TABLE / 列名 / NOT NULL / 默认值 / UNIQUE INDEX / 单列索引 / COMMENT 全套; down 含 DROP TABLE / DROP INDEX 全套 (索引数与 up 必须一致, 否则回滚漏索引). 这是 "schema 先行" 类 story 最强守约 — schema 漂移立刻挂. 与 [[daily-attribution-report.test.ts]] 同款思想, 但额外加 migration up/down 维度让 ops 复用 sql 安全.
   - **AIDiaryEntry vs DailyAttributionReport 形态差异 (per-user vs per-portfolio)**: 前者 = 一个 user 一天一行 (人本身的反思), 后者 = 一个 portfolio 一天一行 (账户级归因). PM-018 evidence.daily_attribution_report_id 引用而非内嵌 — 一个 user 可以多 portfolio, 取主账户 (active portfolio) 写一个 attribution id 即可, 不强制全跑. 这条边界写入 model jsdoc 是 PM-019 service 实现时直接落 evidence builder 的契约源. 同思想适用未来任何 "per-user 总结 vs per-portfolio 计算" 类 story.
 ---
+
+## 2026/06/20 12:10 - US-090
+- 实现 [PM-019] AIDiaryService — 每日 AI 投资日记主入口 (≤ 500 字 PRD AC)
+- Files changed:
+  - backend/src/services/postmortem/AIDiaryService.ts (新, ~480 行 / 完整 jsdoc):
+    * 8 常量 export: AI_DIARY_MAX_CHARS=500 / MIN_CHARS=20 / ENDPOINT='/api/diary-summary' / TIMEOUT=30s / AI_DIARY_SOURCE Frozen{LLM,HEURISTIC,MANUAL} / AI_DIARY_STATUS Frozen{OK,SKIPPED,FAILED}
+    * 5 interface export: DiaryContext / AIDiaryDataSource / AIDiaryLLMSource / GenerateDiaryResult / AIDiaryUpsertRow
+    * 6 纯函数 export: buildDiaryPrompt / enforceDiaryConstraints / heuristicDiary / buildDiaryEvidence / buildDataSourcesList / mapAttributionRowToContext
+    * 1 主入口 export async generateForUser(userId, {date, data_source, llm_source?, cron_run_id?})
+    * 1 子函数 decideDiaryText — LLM→校验→fallback 三态分离, 边走边填 llmMetadata (latency_ms/engine/fallback_reason)
+    * 2 PRODUCTION factory export: createProductionAIDiaryLLMSource (axios → TRADING_AGENTS_BASE_URL) / createProductionAIDiaryDataSource (lazy-require PaperTradingPortfolio + DailyAttributionReport + User + AIDiaryEntry)
+    * 2 PRODUCTION 单例: PRODUCTION_AI_DIARY_LLM_SOURCE / PRODUCTION_AI_DIARY_DATA_SOURCE
+  - backend/tests/postmortem/ai-diary-service.test.ts (新, 147 assert / 0 failed):
+    [1] 常量 sanity 8 件 [2] buildDiaryPrompt 15 件 (含 MAX+date+pnl+各维度+称呼回退) [3] enforceDiaryConstraints 12 件 (a-g 路径全) [4] heuristicDiary 18 件 (6 边界 ctx × 3 维度) [5] evidence+data_sources 10 件 [6] generateForUser AC 主验收 41 件 (子路径 a-i 全) [7] mapAttributionRowToContext 14 件 [8] PRODUCTION factories 3 件 [9] META-GUARD 12 件
+  - ralph/prd.json: US-090 passes=true + notes
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npx eslint src/services/postmortem/AIDiaryService.ts` exit 0 (auto-fix prettier 后)
+  - `npx ts-node --transpile-only tests/postmortem/ai-diary-service.test.ts` exit 0, 147 ok / 0 failed
+  - `npm test -- --filter=ai-diary` exit 0, 2 files (ai-diary-entry 73 US-089 + ai-diary-service 147 US-090) / 220 assert all pass
+- **Learnings for future iterations:**
+  - 新建 backend/src/services/postmortem/ 子目录承载 PM-019/020/021+ 系列 service — PM 系列 (postmortem) 与 attribution/ 同级, 让 PM cluster (diary/bias/error-pattern/improvement) 物理聚集
+  - AIDiaryService 是 AIAttributionSummary 5 件套范式的 **直接镜像 + 扩展**: 多了 (a) **可落库** 主入口 (调 ds.upsertDiaryEntry, 跨 LLM+heuristic+留痕三态) (b) **多入口 DataSource** (loadDiaryContext + upsertDiaryEntry 双方法) (c) decideDiaryText 子函数把 LLM 三态决策抽离 - 后续 PM-021 ErrorPatternReport / PM-023 ImprovementSuggestion 都可复用本范式
+  - **fail-OPEN 留痕分级**: (1) loadContext throw → 不留痕 (无 ctx 无 evidence 写啥) (2) loadContext 返 null (无 today report) → 留痕空 text + status=skipped + reason=no_attribution_today (3) LLM 全挂 → 留痕 heuristic text + status=ok + source=heuristic (4) upsert 挂 → 不留痕但返 status=failed - 这个层级与 DailyAttributionCronRunner buildPersistRow 一致 (skipped 也落零行)
+  - **lazy-require chain 多 model** 时需 require **全部** model: 这里 lazy-require 了 PaperTradingPortfolio (找用户主账户) + DailyAttributionReport (取当日归因) + User (取 username) + AIDiaryEntry (upsert) - 任何 model 缺 sequelize init 都会 fail-OPEN logger.warn 不抛
+  - **enforceDiaryConstraints 比 enforceAttributionSummaryConstraints 多了 too_short 校验** (MIN_CHARS=20) — LLM 返 "今日平稳" 那种 4 字短串得 fallback. attribution 用 MIN_NUMBERS 校 ≥ 3 数字 (公司财报硬要求), 日记是叙事性文本无此约束
+  - **mapAttributionRowToContext 接 Record<string, unknown>** 而非 DailyAttributionReport 类型 — 让 PRODUCTION DataSource 把 toJSON() 行映射成纯 plain object, 避免 model class 实例进入 service 内部, 单测也无需 mock model 实例
+---

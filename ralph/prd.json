@@ -1395,8 +1395,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 90,
-      "passes": false,
-      "notes": "依赖: PM-018"
+      "passes": true,
+      "notes": "依赖: PM-018 | DONE 2026/06/20: 新建 backend/src/services/postmortem/AIDiaryService.ts (~480 行 + 完整 jsdoc) - 实现 PM-019 主入口 generateForUser(user_id, options{date, data_source, llm_source?, cron_run_id?}). 5 件套范式 (与 AIAttributionSummary 同款): (1) 8 常量 export (MAX=500 PRD AC / MIN=20 / ENDPOINT / TIMEOUT / SOURCE/STATUS 双枚举 frozen); (2) DiaryContext + AIDiaryDataSource + AIDiaryLLMSource + GenerateDiaryResult + AIDiaryUpsertRow 5 类型全 export; (3) 纯函数 helpers 全 export (buildDiaryPrompt / enforceDiaryConstraints / heuristicDiary / buildDiaryEvidence / buildDataSourcesList / mapAttributionRowToContext); (4) 主入口 generateForUser 三层 fail-OPEN — loadContext throw → skipped+不留痕; 无 ctx → skipped+空留痕; LLM throw/null/invalid → heuristic fallback+ok; upsert throw/false → failed+persisted=false; 主流程永不 throw; (5) decideDiaryText 子函数清晰隔离 LLM→校验→fallback 三态. lazy-require PaperTradingPortfolio + DailyAttributionReport + User + AIDiaryEntry + axios; PRODUCTION_AI_DIARY_DATA_SOURCE + PRODUCTION_AI_DIARY_LLM_SOURCE 单例 export. 单测 tests/postmortem/ai-diary-service.test.ts 147 ok / 0 failed 覆盖 9 大模块 (常量 sanity / prompt 含 MAX+date+pnl+缺维度不强提+称呼回退 / enforce 6 路径 a-g / heuristic 6 边界 ctx / evidence+data_sources 字段映射 / generateForUser AC i 子路径 a-i 全 / mapAttributionRowToContext 缺字段降级 / PRODUCTION factories 不抛 / META-GUARD 12 项). tsc 0 err / eslint 0 err / npm test --filter=ai-diary: 2 files 220 assert 全过 (含 US-089 ai-diary-entry 73 无 regression)."
     },
     {
       "id": "US-091",
