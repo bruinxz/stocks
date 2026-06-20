@@ -3574,3 +3574,51 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **analyzers.test.ts §9/§10 修改边界**: 该测试是 8 analyzer 全家桶, 改 SentimentAnalyzer 构造签名 (加第二参数) 后旧调用 `new SentimentAnalyzer({ getMarketSentimentPercentile })` 仍向后兼容 (qaSource 缺省走 PRODUCTION). 但缺省走生产意味着试图命中真 DB → 整个 test runner 子进程会 hang/慢. 解决: 显式给第二参数 fake, 哪怕只是 `{ async getQAStatSnapshot() { return null; } }`. 这也是 [Codebase Patterns] "DataSource DI 单测注入 fake 零 DB" 原则的硬性约束.
   - **fail-OPEN on QA source**: getQAStatSnapshot null 走 data_missing 标记 'qa_stat_snapshot' (而非 throw / 而非默认 0 分静默吞). 与 BaseAnalyzer.requiredFields (本 analyzer 只声明 `factor.east_money_qa`) 不冲突 — qa_stat_snapshot 不计入 confidence 公式, 维持"无 QA 数据则该维度静音, 不影响 factor-only confidence" 的精确语义. 反向不要把 'qa_stat_snapshot' 加进 requiredFields, 否则首次没 stat 数据的新股 confidence 会被打 0 — 与业务"factor 完整即可下决策"契约冲突.
 ---
+
+
+## 2026/06/20 22:00 - US-123
+- 实现 [PM-010] PortfolioWorkspace 归因卡 — 把 backend `daily_attribution_reports` (PM-001~006 cron 落库的 6 维真值) 接入前端日归因 tab; heuristic 卡 (US-055) 作 fallback. 6 维 pie + best/worst trade tables + AI summary + status banner.
+- Files changed:
+  - frontend/src/services/portfolioWorkspaceService.ts: 加 5 个 export (AttributionFactorContrib / AttributionIndustryContrib / AttributionExecutionCostBreakdown / AttributionBreakdown / AttributionBestWorstTrade / DailyAttributionReportRow) + `getDailyAttributionReport(portfolioId, date?)` 主入口 (404 → null fallback) + bundle export
+  - frontend/src/pages/workspace/portfolioAttributionCardHelpers.ts (新, ~330 行): 9 export 常量 (POSITIVE/NEGATIVE/NEUTRAL_COLOR + DIMENSION_ORDER Object.freeze 6 维 + DIMENSION_LABEL + TOP_TRADE_LIMIT=3 + AI_SUMMARY_MAX_CHARS=200 同源 backend) + safeNumber / pickAttributionColor / extractDimensionContribs (执行成本符号反转) / buildAttributionPieData (totalAbs + slice 排序按 DIMENSION_ORDER) / normalizeBestWorstTrades (cap 3 + 缺字段 fallback) / buildAttributionAiSummaryFallback (Array.from 切字符避 unicode surrogate 断, 与 [[AI_VIEW_MAX_CHARS]] 同款) / 主入口 buildPortfolioAttributionCardViewModel (null report → hidden=true)
+  - frontend/src/pages/workspace/PortfolioWorkspace.tsx: import Pie/PieChart/Cell from recharts + import helper/types + DailyAttributionTab 加 portfolioId prop + useEffect 拉 backend report (race-protected 切盘 snapshot) + 新增 BackendAttributionCard 子组件 (顶部 KPI 5 件套 + 左侧 6 维 PieChart + 右侧 AI summary + 行业/因子 top tags + Best/Worst 3 tables) + 主 DailyAttributionTab 同时渲染 backend 卡 + heuristic 卡 (任一 hidden 时另一可用) + 404 fallback Alert + status banner (skipped/failed)
+  - backend/tests/services/portfolio-attribution-card-helpers.test.ts (新, ~330 行, 97 ok): 8 模块 — [1] 常量 sanity (DIMENSION_ORDER frozen + 长度 6) / [2] safeNumber + pickColor / [3] extractDimensionContribs 5 case (null / 部分字段 / 完整 / execution_cost 符号反转 / industry 聚合) / [4] buildAttributionPieData (全 0 / 混合 / 排序稳定 / pctOfAbs 精度) / [5] normalizeBestWorstTrades (null/非数组/缺字段/cap 3) / [6] buildAttributionAiSummaryFallback (短/长截断/负值/null pct) / [7] **AC 主验收 buildPortfolioAttributionCardViewModel** 5 case (null hidden / happy 6 维 / skipped statusReason / 空 ai_summary fallback / null trade_count) / [8] META-GUARD fs+regex 跨 monorepo: service 含 getDailyAttributionReport export + DailyAttributionReportRow interface + 404 fallback null + workspace 含 import helper + import Pie/PieChart/Cell + 渲染 BackendAttributionCard + 调 getDailyAttributionReport + 404 fallback Alert + portfolioId prop 透传 + helper 不依赖 react/antd/recharts
+  - backend/tests/services/daily-attribution-helpers.test.ts: 旧 META-GUARD [9.3] regex 由 `<DailyAttributionTab snapshots={snapshots} trades={trades} />` 严格匹配松绑到 `<DailyAttributionTab ... snapshots={snapshots} ... trades={trades}` 让 portfolioId 新 prop 接入不破老断言
+  - ralph/prd.json: US-123 passes=true + notes
+  - ralph/progress.txt: 新增 Codebase Pattern + 本 entry
+- 验证:
+  - frontend `npx tsc --noEmit` exit 0
+  - backend `npx tsc --noEmit` exit 0
+  - 新 helper 单测 97 ok / 0 failed (750ms)
+  - 既有 daily-attribution-helpers 88 ok / 0 failed (regex 松绑后)
+  - 12 个 attribution-filtered tests 全过 (execution-cost-aggregator / daily-attribution-report model / benchmark / industry / 等)
+  - 全 backend test 228 个: 226 passed / 2 failed; **2 失败 pre-existing** (check-openapi-drift = sentiment 路由 doc 未跑 OpenAPI 重生成, 与 US-121/122 历史漂移; aiPollingQueue.dedup = 12 META-GUARD 期望 caller 切到 helper 但 caller 仍 inline, US-019 历史问题). git stash 对比验证两 failure 与本 story 无关.
+- **Learnings for future iterations:**
+  - **"先建框架 + 后填实" 链路的最后一公里是 UI 接入**: PM-001~009 已经把 schema + service + cron + 落库 + 飞书 push 全建好, 但用户能感知的只有 PM-010 这步 (UI 拉报告 + 6 维 pie). 这是 "infrastructure first, UX last" 的标准节奏 — backend 链路 9 个 story 完整落地后, UI 接入只需要 service.getXxx + helper.buildVm + Card + Pie, 不再回头改 backend 任何东西. 同款适用未来 PM-008 BehaviorBias / KOL 系列 / ANN 系列的 UI 收尾 story.
+  - **6 维 pie 用 |contrib| size + 符号决定 color**: 业务直觉是 "贡献度大小" 不是 "占比" (后者负贡献会变负切片不合理). 正负贡献都要可见 → absValue 当 dataKey + value 决定 color. 不要用 PieChart 的 fill prop 单色, 必须 `<Cell key={s.key} fill={s.color} />` 逐切片配色才能体现"红绿分布".
+  - **execution_cost 在 pie 上要反转符号**: backend 字段语义是"支出金额" (正值), 但 pie 上展示是"对总盈亏的贡献", 支出拉低 → 负贡献. helper 内 `execution_cost: -safeNumber(...)` 是关键, 漏一个反转会让 pie 显示"成本对组合是正贡献", 业务直觉相反.
+  - **backend report null vs status='skipped' 是两类**: 404 (cron 未跑/账户当日没数据) → report=null → hidden=true 让 UI 显示 Empty + Alert "等待 cron"; status='skipped' (报告写了但被跳过, e.g. no_prev_snapshot) → 仍渲染卡 + 顶部 statusReason banner. 两者错位会让"今天跑了但被跳过"的用户看不到任何提示.
+  - **AI summary backend 真值 vs 前端 fallback 必须明确标识**: 用 Tag `{aiSummaryIsBackend ? 'LLM 真值' : '前端兜底'}` 让用户/ops 知道当前看的是哪条路径. 不标识 → backend LLM 挂了用户看到 heuristic 短句以为是 LLM 输出 → 系统不可观测.
+  - **跨 monorepo helper 单测 cross-import pure helper 形态 + META-GUARD 双源守**: helper (frontend pure ts) + service (frontend ts) + workspace (frontend tsx) 3 个文件路径 fs 读 + regex 守关键 wiring (import 顺序 / Cell/Pie/PieChart recharts 三件套 / 404 fallback / portfolioId 透传 / hidden Alert 文案). 改任一文件破契约 META-GUARD 立刻 fail-loud, 比真起 React/jsdom 跑 component test 轻 100x. 这条沉淀复用 [[shadowRunHelpers]] / [[dailyAttributionHelpers]] / [[alertsPanelHelpers]] 的 5+ story 模板.
+  - **加新 prop 到既有 component 时要顺手扫旧 META-GUARD regex 容差**: 我加 `portfolioId={...}` 到 DailyAttributionTab, 既有 US-055 META-GUARD `<DailyAttributionTab\s+snapshots=...\s+trades=...\s*/>` 严格匹配立刻失败. 修法是把严格 `\s+\s+\/>` 松绑为 `\b[\s\S]*?snapshots[\s\S]*?trades` — 既守"这两 prop 还在", 又允许新 prop 顺序/字面量变化. 严格 regex 在新 prop 接入时是 "fail-loud" (好), 但要顺手松绑别让作者绕开 META-GUARD. 同思想适用任何"接入新 prop 后查旧测"的 story.
+---
+
+## 2026-06-20 22:10 - US-124 PM-013 WK-005
+- 实现 StrategyCapacityEstimator pure helper service (backend/src/services/StrategyCapacityEstimator.ts).
+- 算法 = (ADV × participation × n_days) / target_pos_pct, bottleneck = min(stock_capacity); capacity_used_pct = deployed/capacity*100.
+- 默认参数 part=0.10 / days=5 / pos=0.05 (与 SizingPolicyService 对齐); ALERT_USED_PCT=80 触发 over_capacity=true (周报 #5 验收: capacity>80% 出"减权"建议).
+- 分级: high ≥10 亿 / medium ≥1 亿 / low / unknown (缺 ADV / Infinity / NaN 各路径分流).
+- Files changed:
+  - + backend/src/services/StrategyCapacityEstimator.ts (351 行 + jsdoc 完整)
+  - + backend/tests/services/strategy-capacity-estimator.test.ts (98 assert)
+  - M ralph/prd.json (US-124 passes=true)
+  - M ralph/progress.txt
+- 单测: 98 ok / 0 failed; tsc 0 err; eslint 0 err; 不破坏 weekly-review 380 既有测试.
+- **Learnings for future iterations:**
+  - 已有 backend/src/services/research/ashare-pit-capacity.ts:236 `estimateStrategyCapacity` 是 *单策略 backtest 视角* (caller 传 adv_values + 参数), 本 service 是 *portfolio 运营视角* (真实持仓做 deployed, 多策略 batch). 两者算法同口径 (avoid drift), 但用场不同 — 评估上线前用前者, 运营监控用后者.
+  - DailyBar 字段: `turnover` (DECIMAL 20,4, 元) = 成交额; `turnover_rate` (DECIMAL 10,4, %) = 换手率. capacity 计算要钱用 turnover, **不要混淆**. 周报 PRODUCTION DataSource 接入时取近 N=20 个交易日 turnover mean.
+  - strategy_key sentinel 三处同步: `__MANUAL__` / `__UNKNOWN__` 在 WeeklyReviewReportService.strategyLabel + StrategyCapacityEstimator.strategyLabel + PaperTradingAttributionService.sourceTypeLabel 共同维护. 新加 AISignalSourceType 必须三处同步加映射.
+  - capacity_used_pct round 到 1 位小数 (`Math.round(x * 1000) / 10`), 极小持仓 (0.01%) 会 round 成 0 — 单测期望要按 round 行为写, 不能直接 assertClose 到原始浮点.
+  - 排序: capacity_used_pct desc + strategy_key asc tie-break (与 aggregateStrategyContribution / aggregateIndustryContribution 同款稳定排序范式).
+  - WK-006 (WeeklyReviewPayload.capacity_estimates 字段) 留给后续 plumbing task — 本 story 只交付 pure helper service. PRD 拆分粒度允许"先 service 后 wire".
+---

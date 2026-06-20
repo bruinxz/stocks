@@ -1893,8 +1893,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 123,
-      "passes": false,
-      "notes": "依赖: PM-007"
+      "passes": true,
+      "notes": "依赖: PM-007 | implemented: backend report fetch + 6dim pie + best/worst + AI summary; META-GUARD"
     },
     {
       "id": "US-124",
@@ -1908,8 +1908,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 124,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "已落 backend/src/services/StrategyCapacityEstimator.ts (351 行 + 完整 jsdoc) — pure helper service: bucketPositionsByStrategy + computeStockCapacity + computeStrategyCapacity + estimateCapacities + gradeCapacity + meanTurnoverFromBars. 算法 = (ADV × participation × n_days) / target_pos_pct, bottleneck = min(stock_capacity) across symbols, capacity_used_pct = deployed/capacity*100. 默认 part=0.10 / days=5 / pos=0.05 (与 SizingPolicyService 默认对齐). ALERT_USED_PCT=80 触发 over_capacity=true (WK 验收 #5: capacity>80% 在 AI opinion 建议清单 出现\"减权\"提议). 分级阈值 high≥10亿 / medium≥1亿 / low / unknown (缺 ADV / Infinity / NaN 各路径分流). 与 ashare-pit-capacity.estimateStrategyCapacity 同口径但 portfolio 视角 — 真实持仓做 deployed, 多策略 batch 输出 CapacityRow[] 直接接 WK-006 weeklyreview payload. fail-OPEN: pure helper 永不 throw, 缺 ADV → null / Infinity, 不污染整组. 单测 tests/services/strategy-capacity-estimator.test.ts 98 ok / 0 failed (覆盖 常量冻结 / strategyLabel 已知+未知 / computeStockCapacity 0/负/NaN/Infinity/默认/兜底 / gradeCapacity 6 路径 / bucketPositionsByStrategy 合并+sentinel+负市值skip / computeStrategyCapacity 空+全缺ADV+部分缺ADV+stable tie / estimateCapacities 主入口 6 场景 + over_capacity 边界 + 排序稳定性 + 非 Map ADV / meanTurnoverFromBars 5 路径 / ALERT_USED_PCT 与 over_capacity 同步 meta-guard). tsc 0 err / eslint 0 err / 不破坏 weekly-review 380 既有测试. WK-006 接 WeeklyReviewPayload.capacity_estimates 留给后续 plumbing task."
     },
     {
       "id": "US-125",
