@@ -193,6 +193,95 @@ function makeAnalyzer(
   assert(pickStopLoss([], 100, 2) === 96, 'stop_loss = price - 2*atr');
   assert(pickStopLoss([], 100, null) === 93, 'stop_loss fallback = 0.93×price');
 
+  // ----------------------------------------------------------------
+  // AE-010 (US-115) — ATR-adjusted stop: max(support[0], close - 2×ATR)
+  // ----------------------------------------------------------------
+
+  // (a) support[0] 与 close - 2*ATR 都可用 → 取较高 (更紧)
+  //     support=95, atrStop=100-2*2=96 → max=96 (ATR stop 更紧)
+  assert(
+    pickStopLoss([95, 90], 100, 2) === 96,
+    `AE-010: max(support=95, close-2*ATR=96) = 96 (got ${pickStopLoss([95, 90], 100, 2)})`
+  );
+  // support=98 较紧, atrStop=100-4=96 → max=98 (support 更紧)
+  assert(
+    pickStopLoss([98], 100, 2) === 98,
+    `AE-010: max(support=98, close-2*ATR=96) = 98 (got ${pickStopLoss([98], 100, 2)})`
+  );
+  // 极端: support=95, ATR=10 → atrStop=80 → max=95 (support 远紧于 ATR)
+  assert(
+    pickStopLoss([95], 100, 10) === 95,
+    `AE-010: max(support=95, close-2*ATR=80) = 95 (got ${pickStopLoss([95], 100, 10)})`
+  );
+
+  // (b) 安全 guard: max 结果 ≥ currentPrice → 退化到较小者
+  //     support=105 (已被击穿/在 price 之上), ATR=2 → atrStop=96 → max=105 ≥ 100 → 退化到 96
+  assert(
+    pickStopLoss([105], 100, 2) === 96,
+    `AE-010 guard: max≥price 退化到较小 ATR stop (got ${pickStopLoss([105], 100, 2)})`
+  );
+  // 双源都 ≥ price → 跌回 0.93×price 兜底 (support=105, ATR=0.0... → atrStop=99.99 也 ≥100? no 99.99 <100)
+  // 构造双源都 ≥ price: support=105, currentPrice=100, ATR=-1 不行 (atr>0 守); 用 support=105 + 没 ATR
+  // 走 support-only path: support=105 直接返回 (不在双源 guard 内). 这正是历史行为, 不应破坏.
+  assert(
+    pickStopLoss([105], 100, null) === 105,
+    `AE-010: support-only 即便 ≥ price 仍返回 support (不在双源 guard 内, 与历史一致)`
+  );
+
+  // (c) 老契约不变: 只有 support → support[0]; 只有 ATR → close - 2*ATR; 都无 → 0.93×price; 全无 → null
+  assert(pickStopLoss(undefined, 100, null) === 93, 'AE-010: 老 fallback 不变 (0.93×price)');
+  assert(pickStopLoss(undefined, null, null) === null, 'AE-010: 全 null → null');
+  assert(pickStopLoss([], null, 2) === null, 'AE-010: 只有 ATR 但无 price → null');
+
+  // (d) 非法值 fail-safe: support[0]=NaN / atr=NaN / atr=0 / atr<0 → 退到对应单源 / 兜底
+  assert(
+    pickStopLoss([NaN, 90], 100, 2) === 96,
+    `AE-010: NaN support → 退到 ATR stop (got ${pickStopLoss([NaN, 90], 100, 2)})`
+  );
+  assert(
+    pickStopLoss([95], 100, NaN) === 95,
+    `AE-010: NaN ATR → 退到 support (got ${pickStopLoss([95], 100, NaN)})`
+  );
+  assert(
+    pickStopLoss([95], 100, 0) === 95,
+    `AE-010: atr=0 → 退到 support (got ${pickStopLoss([95], 100, 0)})`
+  );
+  assert(
+    pickStopLoss([95], 100, -1) === 95,
+    `AE-010: atr<0 → 退到 support (got ${pickStopLoss([95], 100, -1)})`
+  );
+
+  // (e) 联立属性: 双源都有时, 结果永远 ≥ 单 support / 单 ATR 任一 (取 max 不变小)
+  const supportOnly = pickStopLoss([95], 100, null);
+  const atrOnly = pickStopLoss([], 100, 2);
+  const both = pickStopLoss([95], 100, 2);
+  assert(
+    supportOnly !== null && atrOnly !== null && both !== null,
+    `AE-010 联立 sanity: 三路径均非 null`
+  );
+  assert(
+    (both as number) >= (supportOnly as number) && (both as number) >= (atrOnly as number),
+    `AE-010 联立: max(support,ATR) ≥ support 且 ≥ ATR (got both=${both} support=${supportOnly} atr=${atrOnly})`
+  );
+
+  // META-GUARD: pickStopLoss 实现必须真用 Math.max 把两源合并 (防回退到单源)
+  const aggSrcForAtr = fs.readFileSync(
+    path.resolve(__dirname, '../../../src/services/analysis-engine/DecisionAggregator.ts'),
+    'utf-8'
+  );
+  // 抽 pickStopLoss 函数体 (从 export function pickStopLoss 到下一个 export)
+  const fnMatch = aggSrcForAtr.match(/export function pickStopLoss[\s\S]*?\n\}\n/);
+  assert(fnMatch !== null, 'meta: pickStopLoss 函数体抽取成功');
+  const fnBody = fnMatch ? fnMatch[0] : '';
+  assert(
+    /Math\.max\s*\(/.test(fnBody),
+    'meta AE-010: pickStopLoss 必须用 Math.max 合并 support + ATR 双源'
+  );
+  assert(
+    /2\s*\*/.test(fnBody),
+    'meta AE-010: pickStopLoss 必须含 `2 *` 系数 (close - 2*ATR)'
+  );
+
   // pickTakeProfit
   assert(pickTakeProfit([120, 130], 100, null) === 120, 'take_profit = resistance[0]');
   assert(pickTakeProfit([], 100, 3) === 109, 'take_profit = price + 3*atr');

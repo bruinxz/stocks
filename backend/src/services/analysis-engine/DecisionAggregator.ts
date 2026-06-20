@@ -188,19 +188,60 @@ export function pickEntryZone(
   return [roundToTick(lo), roundToTick(hi)];
 }
 
+/**
+ * AE-010 (US-115) — ATR-adjusted stop loss: `max(support[0], close - 2×ATR)`.
+ *
+ * 当 support[0] 与 ATR 双源都可用时, 取两者较高值作为止损 — 即"两个底中较紧的那个":
+ *   - support[0] 是技术面给出的结构性支撑;
+ *   - close - 2×ATR 是基于波动率的动态护栏 (大约覆盖 95% 单日波动).
+ *   - 取 max 等价于"宁可早止损也不漏止损" — 比起单独用任一来源, 双重锚更鲁棒.
+ *
+ * 安全 guard: 当 max 结果意外 ≥ currentPrice (例如 support 已被击穿 / ATR=0 退化),
+ * 退化到两者较小者; 仍 ≥ currentPrice 则跌回 0.93×price 兜底, 保证 stop_loss
+ * 永远 < currentPrice 这一硬契约 (下游 sizing/risk-guard 默认 stop 在下方).
+ *
+ * 既有契约保留:
+ *   - 只有 support, 无 ATR → support[0] (老行为).
+ *   - 只有 ATR, 无 support → close - 2×ATR (老行为).
+ *   - 都无, 但有 price → 0.93×price 兜底 (老行为).
+ *   - 都无 → null (老行为).
+ */
 export function pickStopLoss(
   supportLevels: number[] | undefined,
   currentPrice: number | null | undefined,
   atr: number | null | undefined
 ): number | null {
-  if (Array.isArray(supportLevels) && supportLevels.length > 0) {
-    const s = supportLevels[0];
-    if (Number.isFinite(s) && s > 0) return round2(s);
+  const hasSupport =
+    Array.isArray(supportLevels) &&
+    supportLevels.length > 0 &&
+    Number.isFinite(supportLevels[0]) &&
+    (supportLevels[0] as number) > 0;
+  const supportStop = hasSupport ? (supportLevels as number[])[0] : null;
+
+  const hasAtr =
+    typeof currentPrice === 'number' &&
+    currentPrice > 0 &&
+    typeof atr === 'number' &&
+    Number.isFinite(atr) &&
+    atr > 0;
+  const atrStop = hasAtr ? (currentPrice as number) - 2 * (atr as number) : null;
+
+  if (supportStop !== null && atrStop !== null) {
+    // AE-010 主路径: 取两者较高 = 更紧止损 (离 currentPrice 更近).
+    let stop = Math.max(supportStop, atrStop);
+    if (typeof currentPrice === 'number' && currentPrice > 0 && stop >= currentPrice) {
+      // 退化到较低 (较松) 一个; 若仍 ≥ price 走兜底.
+      stop = Math.min(supportStop, atrStop);
+      if (stop >= currentPrice) {
+        return round2(currentPrice * 0.93);
+      }
+    }
+    return round2(stop);
   }
-  if (currentPrice && currentPrice > 0 && atr && atr > 0) {
-    return round2(currentPrice - 2 * atr);
-  }
-  if (currentPrice && currentPrice > 0) {
+
+  if (supportStop !== null) return round2(supportStop);
+  if (atrStop !== null) return round2(atrStop as number);
+  if (typeof currentPrice === 'number' && currentPrice > 0) {
     return round2(currentPrice * 0.93);
   }
   return null;

@@ -3371,3 +3371,17 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **8 analyzer 全填才能让 medium tier 真复现**: 第一版我用 2 analyzer + 0.5 confidence 算 mediumDecision, 结果 sumConfidenceW=0.5*(0.25+0.20)=0.225 / totalWeight=1 → avgConfidence=0.225, 落 'low' 不是 'medium'. aggregate() 的 avgConfidence 公式是 `sumConfidenceW / totalWeight` (全部权重之和), 只填部分 analyzer 时分母仍是 1.0 → 算出的 conf 严重偏低. 任何测 confidence tier 边界都要给 8 个 analyzer 全填, 否则数学上构造不出预期 tier.
   - **archive metadata 字段顺序: tier 紧跟 overall_confidence**: 让 DBA 用 jq / SQL JSONB path 提取时认知零成本 (`overall_confidence + confidence_tier` 总是相邻两行). 反例: 把 tier 塞到 metadata 末尾让人翻 30 行才找到, 跨 service review 时易漏.
 ---
+
+## 2026/06/20 20:30 - US-115 [AE-010] RiskAnalyzer ATR-adjusted stop
+- 把 backend/src/services/analysis-engine/DecisionAggregator.ts:pickStopLoss 改为 `max(support[0], close - 2×ATR)` 双源合并; 加 guard 保证 stop_loss < currentPrice
+- 老契约保留 (只 support / 只 ATR / 都无 / 全无四路径不变), 不破坏既有 aggregator 两处调用点
+- Files changed:
+  - backend/src/services/analysis-engine/DecisionAggregator.ts (pickStopLoss 重写 + 注释解释 max 取紧 + 安全 guard)
+  - backend/tests/services/analysis-engine/DecisionAggregator.test.ts (60→81 ok, 新增 21 AE-010 项: 双源 max×3 / 安全 guard×2 / 老 fallback×3 / 非法值 fail-safe×4 / 联立 sanity / META-GUARD 验 Math.max 在源码)
+- 验证: tsc 0 err / eslint 0 new err / DecisionAggregator 81 ok / 隔壁 hardShortCircuit 118 ok / analysisEngineSignalArchive 99 ok / ShadowDoubleRunService 35 ok 无 regression
+- **Learnings for future iterations:**
+  - pickStopLoss 双源合并取 max = "宁可早止损不漏止损" — 两个止损中选更紧的一个 (离 currentPrice 更近的). 与 pickTakeProfit (取 resistance[0] 或 close+3*ATR) 是对称结构, 但 take_profit 不需要合并 (它只挑一个不取 max/min).
+  - 任何对 pickStopLoss 的修改都要保证 stop_loss < currentPrice 硬契约 (下游 sizing / risk-guard 默认 stop 在下方); 当 support 已被击穿 / ATR=0 退化时必须有兜底分支退到 0.93×price.
+  - META-GUARD 用 fs.readFileSync + 正则抽函数体可防"功能被改回单源". 与已有 [5] cron-registry / [6] PCA 双向一致性 guard 同款模式 — 改一处, 立即失败.
+  - 这次 21 项新测里, "联立属性测试" (both ≥ supportOnly 且 both ≥ atrOnly) 是数学上的不变量, 比单点比较更稳, 任何未来对实现的破坏都会被立即捕获.
+---

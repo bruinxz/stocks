@@ -1772,8 +1772,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 115,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "AE-010 DONE 2026/06/20: backend/src/services/analysis-engine/DecisionAggregator.ts pickStopLoss 改造为 ATR-adjusted stop = max(support[0], close-2×ATR) — 双源都可用时取较高 (更紧止损); 加 guard: max ≥ currentPrice 退化到较小者, 仍 ≥ price 跌回 0.93×price 兜底, 保证 stop_loss < currentPrice 硬契约. 老契约保留: 只 support / 只 ATR / 都无 / 全无 四路径不变. 单测 tests/services/analysis-engine/DecisionAggregator.test.ts 60→81 (新增 21 项 AE-010: 双源 max 主路径×3 / 安全 guard 退化×2 / 老 fallback 不变×3 / 非法值 fail-safe×4 / 联立 sanity / META-GUARD 验源码用 Math.max 防回退). typecheck 0 err, eslint 0 new err, 全部 81 ok."
     },
     {
       "id": "US-116",
