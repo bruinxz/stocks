@@ -3765,3 +3765,19 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **env-validator 测试 fixture 改写注意**: `TRADING_AGENTS_URL` 字段只校验 "is URL", 所以 `http://127.0.0.1:8000` / `http://10.x.x.x:8000` / `http://example.test:8000` 都行; 不需要保留任何特定 IP. 改了不影响 107 个断言
   - **scrub 脚本 mirror-clone safety**: 在日常工作 clone 跑 `git filter-repo` 会污染本地; 必须在 `git clone --mirror` 出来的 bare repo (`./refs` + `./HEAD` 存在但无 working tree) 上跑, 这是 git-filter-repo 官方推荐. 守门用 `[[ -d ./refs && -f ./HEAD ]]` 二维检查
 ---
+
+## 2026-06-21 - US-131
+- [OPS-012] CI matrix 升级: .github/workflows/ci.yml 三 job 并行 (backend / frontend / docker)
+- backend-check 保留 envcheck + tsc + openapi-drift + lint + test (无改动)
+- frontend-check 在原 typecheck+lint 基础上追加 test (react-scripts jest, --watchAll=false --passWithNoTests, 仓库当前没 test 也 exit 0) 和 build (react-scripts build, GENERATE_SOURCEMAP=false + DISABLE_ESLINT_PLUGIN=true 避免 webpack 内嵌 eslint 把 prettier warning 当 error 阻塞 PR, lint job 已单独覆盖)
+- 新增 docker-check job: docker compose -f docker-compose.yml config 校验 YAML 语法 + ${POSTGRES_PASSWORD:?...} 占位符替换; CI-only POSTGRES_PASSWORD 假值喂参; 不实际起容器, 不 build image (当前仓库无 Dockerfile, 生产用宿主 npm build + node run)
+- detect-changes 加 docker filter: docker-compose.yml / backend/Dockerfile* / frontend/Dockerfile* 变更才跑 docker job, PR 事件总是跑
+- 三 job 都有失败日志 tee 到 ../{name}.log, failure 时 actions/upload-artifact@v4 上传 + actions/github-script@v7 在 PR 上贴 tail 60 lines 评论
+- 文件改动: .github/workflows/ci.yml (改 header + detect-changes outputs + frontend test/build steps + docker-check job)
+- **Learnings for future iterations:**
+  - **react-scripts build 在 CI=true 下默认把 eslint warning 升级成 error**, 与单独跑的 lint job 重复且会被既有 prettier warning 阻塞. DISABLE_ESLINT_PLUGIN=true 关掉 build 内嵌 eslint, lint job 保证全覆盖 — belt-and-suspenders 分两 step 比合并更稳.
+  - **react-scripts test 在 CI=true 自动非 watch**, 但保险起见显式带 --watchAll=false; --passWithNoTests 让"还没补 test 的仓库"也能 exit 0, 后续补测试自动启用, 不需要改 CI.
+  - **docker compose config 是廉价 docker-build smoke**: 当仓库没 Dockerfile 时, validate compose 就能抓 90% 的 YAML / env 占位符 / 服务声明回归. 后续补 Dockerfile 把 `docker buildx build --load` 加同一 job 即可, 不用拆新 workflow.
+  - **CI 改动同步 4 处**: tee log filename → Upload artifact path → PR comment logs 数组 → header 注释列出新 step (跟 [[代码 ↔ 衍生品 drift guard 模板]] 同款 "改一处必改 4 处" 反例 — CI step 加但忘改 logs 数组的 PR comment 会丢日志, 等价于 step 没加).
+  - **paths-filter dorny/paths-filter@v3 outputs 多个 key 必须 detect-changes job outputs 同步声明**: filter.outputs.docker 不在 detect-changes outputs 里, 下游 job needs.detect-changes.outputs.docker 拿到的是 undefined → if 永远 false. 改 filter 必同步 outputs 块.
+---

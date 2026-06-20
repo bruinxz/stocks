@@ -1,9 +1,11 @@
-# GitHub Actions CI 流水线 (US-069)
+# GitHub Actions CI 流水线 (US-069 / US-131 matrix 升级)
 #
 # 触发：push 到任何分支 + PR 到 main
-# 两个 job 并行（互不阻塞）:
-#   - backend-check: typecheck + lint + test
-#   - frontend-check: typecheck + lint
+# 三个 job 并行（互不阻塞）:
+#   - backend-check:  typecheck + lint + test
+#   - frontend-check: typecheck + lint + test + build
+#   - docker-check:   docker-compose config validate
+# 任一 job failure 均 block PR（PR 事件下 needs-block 会强制 require 这些 check）。
 #
 # 设计原则：
 #   - PR 提早暴露问题（包括 push 到 feature 分支也跑，避免 PR 时才发现）
@@ -11,6 +13,10 @@
 #   - 任一 job 失败必须有 PR 评论附关键错误片段，方便开发者一眼看到失败位置
 #   - backend-check 不依赖 PG/Redis：所有测试遵循 DB-less 单测约定（fake DataSource）
 #   - paths-filter：仅当对应目录文件变更时跑对应 job，省 CI 时间（main/PR 总是跑）
+#   - frontend test 用 `CI=true` 触发 react-scripts 一次性 jest run（非 watch），
+#     `--passWithNoTests` 保证仓库里暂无 *.test.* 时也能 exit 0；后续补完测试自动启用
+#   - docker-check 在没有 Dockerfile 的当下只验 `docker compose config` —— 任何 env
+#     占位符未填写 (${POSTGRES_PASSWORD:?...}) 或 YAML 语法回归都会立刻 fail
 #
 # 历史：security-lint.yml 是另一个独立 workflow（无关 typecheck/lint/test）共存即可。
 
@@ -39,6 +45,7 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      docker: ${{ steps.filter.outputs.docker }}
     steps:
       - uses: actions/checkout@v4
 
@@ -51,6 +58,11 @@ jobs:
               - '.github/workflows/ci.yml'
             frontend:
               - 'frontend/**'
+              - '.github/workflows/ci.yml'
+            docker:
+              - 'docker-compose.yml'
+              - 'backend/Dockerfile*'
+              - 'frontend/Dockerfile*'
               - '.github/workflows/ci.yml'
 
   # --------------------------------------------------------------------------
@@ -216,6 +228,33 @@ jobs:
         run: npm run lint 2>&1 | tee ../frontend-lint.log
         continue-on-error: false
 
+      # US-131 (OPS-012) frontend test 加入 CI matrix。React-scripts 基于 jest，
+      # 在 CI=true 环境下默认非 watch 一次性跑完；--passWithNoTests 让仓库当前
+      # 还没补 *.test.* 文件时也能 exit 0，后续逐步补测试自动启用。任何回归
+      # （test 报错 / 引用缺失文件）此处会爆掉。
+      - name: Test (jest via react-scripts)
+        id: test
+        env:
+          CI: 'true'
+        run: npm test -- --watchAll=false --passWithNoTests 2>&1 | tee ../frontend-test.log
+        continue-on-error: false
+
+      # US-131 (OPS-012) frontend build：react-scripts build 校验生产包能编译。
+      # 缺资源、import 报错、env 占位符不匹配在此立即暴露，避免到部署机才发现。
+      # 跑完不上传产物（占空间且 dev 流程会自动产出），只关心 exit code。
+      # DISABLE_ESLINT_PLUGIN：build 阶段 webpack 内嵌的 eslint 插件会把"任何
+      # warning 升级成 error"（CI=true 行为）。lint job 已经单独跑 eslint 全量
+      # 校验，build 这里不重复跑，避免一处 prettier warning 阻塞整个 PR。
+      # 真正的"build break"（类型错误 / import 失败 / loader 报错）依然会触发。
+      - name: Build (react-scripts build)
+        id: build
+        env:
+          CI: 'true'
+          GENERATE_SOURCEMAP: 'false'
+          DISABLE_ESLINT_PLUGIN: 'true'
+        run: npm run build 2>&1 | tee ../frontend-build.log
+        continue-on-error: false
+
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -224,6 +263,8 @@ jobs:
           path: |
             frontend-typecheck.log
             frontend-lint.log
+            frontend-test.log
+            frontend-build.log
           retention-days: 7
 
       - name: Comment on PR with errors
@@ -233,7 +274,7 @@ jobs:
           script: |
             const fs = require('fs');
             const path = require('path');
-            const logs = ['typecheck', 'lint'];
+            const logs = ['typecheck', 'lint', 'test', 'build'];
             const sections = [];
             for (const name of logs) {
               const filePath = path.join(process.env.GITHUB_WORKSPACE, `frontend-${name}.log`);
@@ -243,6 +284,64 @@ jobs:
               sections.push(`<details><summary><b>frontend ${name}</b> (tail 60 lines)</summary>\n\n\`\`\`\n${tail}\n\`\`\`\n\n</details>`);
             }
             const body = `## ❌ Frontend CI failed\n\n${sections.join('\n\n')}\n\n_See full logs in [workflow run](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})._`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+  # --------------------------------------------------------------------------
+  # US-131 (OPS-012) docker-check: docker compose config 校验
+  # docker-compose.yml 有占位符 ${POSTGRES_PASSWORD:?...}，CI 注入合法值后跑
+  # `docker compose config` 验证 YAML 语法 + 占位替换 + 服务声明无 typo。
+  # 当前仓库没有 backend/frontend Dockerfile（生产用宿主 npm build + node 运行，
+  # 见 docs/deployment_topology.md），所以这里不 build image，仅 validate compose。
+  # 一旦后续补 Dockerfile，把 `docker buildx build --load` 加进同一 job 即可。
+  # --------------------------------------------------------------------------
+  docker-check:
+    name: Docker compose validate
+    needs: detect-changes
+    if: needs.detect-changes.outputs.docker == 'true' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker-compose.yml
+        id: compose_validate
+        env:
+          # 给占位符喂一个 CI-only 假值，让 ${POSTGRES_PASSWORD:?...} 不 fail；
+          # 这个值仅用于 `compose config` 解析，从不真正起容器。
+          POSTGRES_PASSWORD: ci-only-not-a-real-password
+        run: |
+          docker compose -f docker-compose.yml config 2>&1 | tee ../docker-compose-config.log
+          # docker compose config 退出码 0 = YAML / 占位符 / 服务声明全合法
+          # 任何 typo / env 占位符未填 / volumes 引用错都会 != 0
+          echo "compose config OK"
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-logs
+          path: |
+            docker-compose-config.log
+          retention-days: 7
+
+      - name: Comment on PR with errors
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const filePath = path.join(process.env.GITHUB_WORKSPACE, 'docker-compose-config.log');
+            const tail = fs.existsSync(filePath)
+              ? fs.readFileSync(filePath, 'utf-8').split('\n').slice(-60).join('\n')
+              : '(log missing)';
+            const body = `## ❌ Docker compose validate failed\n\n<details><summary><b>docker compose config</b> (tail 60 lines)</summary>\n\n\`\`\`\n${tail}\n\`\`\`\n\n</details>\n\n_See full logs in [workflow run](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})._`;
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
