@@ -466,6 +466,18 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     recommendedCron: '*/5 * * * *',
     description: '每 5min 扫 webhook_fallback_log pending 行重投递',
   },
+  // US-096 OPS-007 — 每日 02:00 跑 scripts/backup-db.sh: pg_dump → gzip →
+  // backups/YYYY-MM-DD.sql.gz + 自动清 30 天前旧备份. shell 自己有 retention
+  // purge, 服务层只负责 spawn + 扫文件 + 写 task_execution_logs.
+  // fail-OPEN: spawn 失败仅写 failed_items=1 + warn 日志, 不抛.
+  // dry_run=true 仅扫现有备份不 spawn (供 ops 在生产 cron 前预览).
+  {
+    type: 'DB_BACKUP',
+    category: 'cleanup',
+    owner: 'ops',
+    recommendedCron: '0 2 * * *',
+    description: '每日 02:00 全库 pg_dump → backups/YYYY-MM-DD.sql.gz, 保留 30 天',
+  },
 ]);
 
 const CRON_REGISTRY_BY_TYPE: ReadonlyMap<string, CronTaskDefinition> = new Map(

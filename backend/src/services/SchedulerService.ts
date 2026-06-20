@@ -4268,6 +4268,74 @@ class SchedulerService {
             `retry_failed=${webhookSummary.retry_failed_count} dead=${webhookSummary.dead_count} ` +
             `skipped_unknown=${webhookSummary.skipped_unknown_scenario_count}`
         );
+      } else if (task.type === 'DB_BACKUP') {
+        // US-096 OPS-007 — 每日 02:00 跑 scripts/backup-db.sh: pg_dump → gzip →
+        // backups/YYYY-MM-DD.sql.gz; shell 自带 retention 30d purge.
+        // 服务层 fail-OPEN: spawn 失败仅写 failed_items=1 + warn 不抛.
+        // parameters.dry_run=true → 仅扫现有备份不真跑 (供 ops 在 prod cron 前预览).
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { runDbBackup, getProductionBackupRunner } = require('./DbBackupService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const dryRunBackup =
+          parameters.dry_run !== undefined
+            ? Boolean(parameters.dry_run)
+            : parameters.dryRun !== undefined
+            ? Boolean(parameters.dryRun)
+            : false;
+        const retentionOverride =
+          parameters.retention_days !== undefined
+            ? parameters.retention_days
+            : parameters.retentionDays;
+        const timeoutOverride =
+          parameters.timeout_ms !== undefined ? parameters.timeout_ms : parameters.timeoutMs;
+        const backupDirOverride =
+          typeof parameters.backup_dir === 'string' && parameters.backup_dir.length > 0
+            ? parameters.backup_dir
+            : typeof parameters.backupDir === 'string' && parameters.backupDir.length > 0
+            ? parameters.backupDir
+            : undefined;
+        const backupResult = await runDbBackup(getProductionBackupRunner(), {
+          dry_run: dryRunBackup,
+          retentionDaysOverride: retentionOverride,
+          timeoutMsOverride: timeoutOverride,
+          backupDirOverride,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: 1,
+          completed_items: backupResult.success ? 1 : 0,
+          failed_items: backupResult.success ? 0 : 1,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: backupResult.error || null,
+          result_summary: {
+            scenario: 'db_backup',
+            dry_run: backupResult.dry_run,
+            backup_dir: backupResult.backup_dir,
+            retention_days: backupResult.retention_days,
+            file_count: backupResult.files.length,
+            latest_backup_file: backupResult.latest_backup_file
+              ? {
+                  name: backupResult.latest_backup_file.name,
+                  size_bytes: backupResult.latest_backup_file.size_bytes,
+                  mtime_iso: backupResult.latest_backup_file.mtime_iso,
+                  abs_path: backupResult.latest_backup_file.abs_path,
+                }
+              : null,
+            spawn_elapsed_ms: backupResult.spawn?.elapsed_ms ?? null,
+            spawn_status: backupResult.spawn?.status ?? null,
+            spawn_timed_out: backupResult.spawn?.timed_out ?? false,
+            error: backupResult.error || null,
+          },
+        });
+        const latestName = backupResult.latest_backup_file?.name ?? 'none';
+        if (backupResult.success) {
+          logger.info(
+            `[DB_BACKUP] success dry_run=${backupResult.dry_run} files=${backupResult.files.length} ` +
+              `latest=${latestName} elapsed_ms=${backupResult.spawn?.elapsed_ms ?? 0}`
+          );
+        } else {
+          logger.warn(`[DB_BACKUP] FAIL ${backupResult.error || 'unknown_error'}`);
+        }
       } else if (task.type === 'EXTRA_DIMS_SYNC') {
         // 新维度同步 — 走 child_process 调用 sync:extra-dims CLI 复用既有逻辑
         const dims: string[] = Array.isArray(parameters.dims)

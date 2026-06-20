@@ -2766,3 +2766,30 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **markSent / markRetryFailed / markDead 失败仅 logger.warn 不传染**: cron 跑 N 行, 单行 DB update 失败不影响其它行 retry. 但本行的 status 没改 → 下次 cron 还会扫到 (next_retry_at 仍是上次的值) → idempotent (sender 重试一次, 成功则 markSent, 失败则继续). 这是 ack 类操作 (markSent/markRetryFailed/markDead) 与 retry 业务的天然解耦; 任何"cron 批处理 + 单行 ack DB" 都按这套抄.
   - **cron 默认 dispatchers 只接 sendDailyDigestCard 一个 scenario**: 本 story 不强制把所有既有 sender 都接入 wrapFeishuWebhookFailOpen (那会触发广范围 caller 改动 + regression 风险), 留给后续 story 按需开. 未来 caller 想用就在 SchedulerService 的 dispatchers 加一行 + 自己 caller 侧包 wrap. cron-side dispatchers 是接入清单的事实源, 没接入的 scenario row 会落 'skipped_unknown_scenario' 留痕 + 不消耗 retry — ops 看 dashboard 一眼就知道"有哪些 scenario 失败了但还没接 retry".
 ---
+
+## 2026/06/20 14:35 - US-096
+- 实现 [OPS-007] DB 备份 cron — 每日 02:00 跑 scripts/backup-db.sh (US-071 已实现 pg_dump + gzip + 30d retention purge), 服务层只负责 spawn + 扫文件 + 写 task_execution_logs.
+- 文件:
+  - backend/src/services/DbBackupService.ts (新, ~430 行 + 完整 jsdoc):
+    * 常量 5: DEFAULT_BACKUP_TIMEOUT_MS=30min / DEFAULT_RETENTION_DAYS=30 / BACKUP_SCRIPT_RELATIVE_PATH='scripts/backup-db.sh' / DEFAULT_BACKUP_DIR_RELATIVE='backups' / BACKUP_FILE_NAME_REGEX
+    * 纯函数 helpers 6: normalizeRetentionDays / normalizeTimeoutMs / isValidBackupFileName / sortBackupFilesByMtimeDesc (mtime desc + name desc tie-break, immutable) / pickLatestBackup / buildBackupEnv (BACKUP_DIR + RETENTION_DAYS 透传)
+    * BackupRunner DataSource interface: 3 method (resolveRepoRoot / listBackupFiles / spawnBackupScript) — 单测注入 fake 完整覆盖
+    * createProductionBackupRunner: lazy-require child_process/fs/path, spawnBackupScript 用 spawn + Promise + 256KB stdout/stderr cap + timeoutMs 硬 kill, listBackupFiles 跳非 valid 文件名/fs.statSync 单条挂不传染
+    * runDbBackup 主入口: dry_run=true 仅扫文件; 真跑 spawn → 扫 → 报告 latest_backup_file (供 ops `npm run db:restore -- --file=<path>` 验证); fail-OPEN 5 路径全覆盖 (spawn 非 0 / 超时 / spawn throw / list throw / repo_root throw)
+    * getProductionBackupRunner singleton (lazy)
+  - backend/src/constants/cronRegistry.ts: 加 DB_BACKUP entry (category=cleanup, owner=ops, recommendedCron='0 2 * * *')
+  - backend/src/services/SchedulerService.ts: 新增 task.type === 'DB_BACKUP' dispatch 分支 (lazy-require runDbBackup + getProductionBackupRunner, 透传 dry_run / retention_days / timeout_ms / backup_dir 参数, 写 result_summary.scenario='db_backup' + latest_backup_file 元信息)
+  - backend/tests/services/db-backup-service.test.ts (新, ~330 行 / 97 assert): 10 维度 — [1] 常量 8 / [2] normalizeRetentionDays 13 / [3] normalizeTimeoutMs 6 / [4] isValidBackupFileName 7 / [5] sortBackupFilesByMtimeDesc 3 (含 immutability 守) / [6] pickLatestBackup 4 / [7] buildBackupEnv 5 / [8] runDbBackup e2e 8 子路径 a-h (含 dry_run/真跑成败/超时/spawn throw/list throw/repo_root throw/参数透传) / [9] PRODUCTION runner smoke (含 singleton 复用) / [10] META-GUARD fs+regex 守 cron registry + SchedulerService dispatch 分支
+- 验收:
+  - `npx tsc --noEmit` exit 0
+  - `npm test -- --filter=db-backup` 97/97 ok 0 failed
+  - `npm test -- --filter=cron-registry` 568/568 ok 0 failed (双向一致性 [#5] 验证 DB_BACKUP 入 registry + scheduler 加分支)
+  - `npx eslint src/services/DbBackupService.ts src/constants/cronRegistry.ts` 0 err (cronRegistry.ts 1 warning 在 line 526 是 pre-existing 非本 story)
+  - AC "备份文件存在且可 restore 验证": result_summary.latest_backup_file.abs_path 直接喂 `npm run db:restore -- --file=<abs_path> --target-db=stock_backtest_test --yes` 验证; 本服务不做 cross-DB restore 验证 (会写入目标库, 风险大), 只让入口可寻路
+- **Learnings for future iterations:**
+  - **"shell 已实现 logic + 服务层包 cron"是 ops cron 最快路径**: US-071 的 scripts/backup-db.sh 已经写过 pg_dump + gzip + retention purge + 原子 mv + 子进程 trap, 本 story 完全没动 shell, 只是新加一层 TypeScript service 把它 spawn 起来并写 task_execution_logs. 不要重写 retention 逻辑 (服务层和 shell 两处写一定会漂移) — 只 spawn shell + 扫文件验证产物. 同款适用 OPS-008/009 (db-restore-verify cron / OpenAPI 生成 cron) 等"已经有 shell, 只缺定时器"的 story.
+  - **BackupRunner DI 把 spawn + fs + repo_root 全抽出**: 3 method 接口让单测注入 in-memory fake 完整覆盖 8 个 e2e 子路径 (含 spawn throw / list throw / repo_root throw 三类异常) 无需起 child_process. resolveRepoRoot 单独抽是因为 prod 用 path.resolve(__dirname, '../../..') 而测试要伪造 /fake/repo; 不抽就需要 mock global path. 与 [[webhookFailOpen]] WebhookFallbackLogDataSource / [[CleanupOldDataService]] CleanupDataSource 同款"DI seam 完整覆盖异常分支"思想.
+  - **fail-OPEN 的 5 个失败路径全覆盖才能落"生产 cron"**: 备份 cron 不能让单次失败让 SchedulerService crash 重启 — 这意味着服务层不能 throw, 5 个失败入口都要 catch+返结构化 error: (a) spawn 非 0 exit (b) spawn 超时 SIGKILL (c) spawn 自身 throw (ENOENT 等) (d) list dir throw (EPERM) (e) resolveRepoRoot throw. test [8] 严守 5 路径都返 success=false + 不传染. 与 [[Risk guard 三件套]] / [[webhookFailOpen retryPendingFallbacks]] 同款"运维链路绝不传染主流程"思想.
+  - **listBackupFiles 在 spawn 失败后仍要扫**: result.files 在 success=false 时也填 (扫目录看现存最旧备份是什么时候), 这是 ops 排障的关键 — "新备份没生成, 但上一个备份还在 3 天前", 比 "新备份没生成且不知道上次成功是什么时候" 信息密度高得多. 这条边界靠 [8c] 单测显式守住 (spawn status=1 → 主流程仍扫 list).
+  - **256KB stdout/stderr cap 是 spawn 长跑必备**: pg_dump 默认 verbose 会喷大量 NOTICE, 若不 cap 子进程持续 push buffer 会 OOM. spawn 用 'pipe' 接 stream + on('data') 手动累加, 累到 cap 就丢, 而不是 spawnSync 的 maxBuffer (后者会直接 SIGKILL 子进程, 不可控). 这个 cap 与 [[EXTRA_DIMS_SYNC]] 的 maxBuffer=64MB 是两种风格 — 长跑用 stream + cap, 短跑用 sync + maxBuffer.
+---
