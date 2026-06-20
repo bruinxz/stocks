@@ -505,6 +505,26 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '每 30min 扫 partial postmortem → 算 4 baseline (hold/zero/plan/perfect) → UPDATE counterfactual_baselines 段 (PR-013 已填 event_summary; PR-015/016 各自填其它 2 段)',
   },
+  // US-104 PR-015 — 每 30min 扫最近 24h status='partial' 且 sections_filled 不含
+  // 'event_timeline' 的 BlackSwanPostmortemReport, 对每行调
+  // EventTimelineReplayerService 把事件前 N 天 (默认 7) RiskAlert / BlackSwanWatchdog
+  // 触发 (rule_id='black_swan' 的 RiskAlert) 排时间轴, UPDATE 仅覆盖 event_timeline
+  // 段 + metadata.sections_filled + status (其它 JSONB 段不出现在 payload,
+  // sequelize 不动它们; 保留 PR-013/014 已填的 event_summary/counterfactual_baselines,
+  // 与 [[多段 JSONB 报告分阶段 UPSERT]] 同款). 与 BLACK_SWAN_BASELINE (23,53)
+  // 错峰 10min (33,3): PR-014 先填 baseline → 本 service 再补 event_timeline,
+  // 让 cron 跑顺序与段间依赖匹配 (3,33 detector → 13,43 postmortem →
+  // 23,53 baseline → 33,3 timeline). fail-OPEN: loadCandidates throw →
+  // success=false + error; 单事件 loadRiskAlerts / upsert throw → skipped/failed
+  // 累计但不抛.
+  {
+    type: 'BLACK_SWAN_TIMELINE',
+    category: 'risk_control',
+    owner: 'risk',
+    recommendedCron: '33,3 * * * *',
+    description:
+      '每 30min 扫 partial postmortem → 拉前 N 天 RiskAlert/Watchdog 触发排时间轴 → UPDATE event_timeline 段 (PR-013 已填 event_summary, PR-014 已填 counterfactual_baselines; PR-016 后续填 improvement_suggestions)',
+  },
   // US-095 OPS-006 — 每 5min 扫 webhook_fallback_log status='pending' AND
   // next_retry_at <= NOW(), 透传 sender 重投递; 成功 → 'sent', 失败 attempts+=1
   // + 指数 backoff; attempts >= max_attempts → 'dead'. 主流程 (FeishuBotWebhookService)

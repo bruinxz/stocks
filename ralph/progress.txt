@@ -3028,3 +3028,31 @@ Started: Fri Jun 19 02:25:41 CST 2026
     永不 throw + recommendedCron 错峰 + META-GUARD (cron-registry.test.ts 双向一致 595/595 自动覆盖). 与
     [[新 cron type 5 件套清单]] 套路完全一致, 无新模板增量, 但每次都要重新走一遍守住不漏接 dispatch.
 ---
+
+## 2026/06/20 17:45 - US-104
+- 实现 [PR-015] EventTimelineReplayerService 单元测试补齐 — service / cron registry / SchedulerService dispatch 之前已落代码主干, 本 story 写 178 单测覆盖 10 模块 + META-GUARD + 1 处 jsdoc 补 PR-016 提及
+- Files changed:
+  - backend/src/services/EventTimelineReplayerService.ts: jsdoc 第 5 行补 "(本 service = 第 3 段; PR-016 ImprovementSuggestor 是第 4 段, 同款形态)" 让 META-GUARD 10.11 守的 "PR-013/014/016 段间分工" 在 service jsdoc 里完整可见 (之前只在 cron 注释段含 PR-016)
+  - backend/tests/services/event-timeline-replayer-service.test.ts (新, 790+ 行 / 178 assert): 10 模块
+    * [1] normalizeAlertSeverity 大小写/未知/null/non-string 兜底 (10 assert)
+    * [2] alertToTimelineItem rule_id='black_swan' → watchdog_trigger / 其它 → risk_alert / 80 字截断 + description 透传 / 空 msg 兜底 / metadata 浅拷贝 (13 assert)
+    * [3] aggregateAlertCounts 4 档 / 非 alert/watchdog 不归桶 / severity 缺省 → medium (4 assert)
+    * [4] sortTimeline ts 升序 + source_id 兜底 + title localeCompare 兜底 + 不 mutate 输入 (6 assert)
+    * [5] truncateTimeline cap<=0 / cap>=len / 长于 cap 保首尾 (8 assert)
+    * [6] buildEventTimeline engine 空 input / 4 档分布 / sources_used / extra_items 拼接 / lookback_days override / 非法 lookback_days fallback / items_cap override + items_truncated / 非法 cap fallback (22 assert)
+    * [7] appendSectionFilled / decidePostmortemStatus 与 PR-014 同款契约 (12 assert)
+    * [8] runEventTimelineReplayerService e2e 11 路径 (~85 assert): (a) loadCandidates ok=false → success=false + error / (b) loadCandidates throw → 同 / (c) 无 candidates → success=true 0 / (d) dry_run → 不调下游 / (e) loadRiskAlerts throw → alerts=[] + skipped / (f) timeline 空 → skipped / (g) updateReport ok=false → failed +1 / (h) updateReport throw → failed +1 / (i) 全成功 2 行 + sections_filled 累加 + status partial / ok 升级 + **核心契约 payload 仅含约定 5 列 (event_timeline+metadata+status+reason+generated_at), 不出现 event_summary/counterfactual_baselines/improvement_suggestions** + alert_count_by_level (mixed high/critical) 正确 / (j) event_id + lookback_hours + lookback_days 透传 / (k) metadata 透传 + replayer_version 覆盖 + generated_at 覆盖
+    * [9] PRODUCTION runner smoke — createProductionTimelineRunner / singleton / 3 method 脱 DB 永不抛 (8 assert)
+    * [10] META-GUARD 16 规则 — cronRegistry 含 BLACK_SWAN_TIMELINE type + recommendedCron 与常量一致 + 错峰 BLACK_SWAN_BASELINE (23,53 vs 33,3) / SchedulerService dispatch 分支 + lazy-require + 透传 4 参数 / Service jsdoc 含 US-104+PR-015 + RiskAlert+Watchdog + fail-OPEN + idempotent+sections_filled + PR-013/014/016 段间分工 + 不擦其它段 + 与 BLACK_SWAN_BASELINE 错峰 / 默认 lookback_days=7 与 PRD AC 一致 / ALL_POSTMORTEM_SECTIONS.length=4
+  - ralph/prd.json: US-104 passes=true + notes
+- 验证:
+  - `npx ts-node --transpile-only tests/services/event-timeline-replayer-service.test.ts` exit 0, 178 pass / 0 fail (~50ms)
+  - `npx tsc --noEmit` exit 0
+  - `npm test -- --filter=baseline` exit 0, 197 pass — sister test 无 regression
+  - `npx eslint src/services/EventTimelineReplayerService.ts --fix` exit 0 (prettier 自动修一处 array literal 多行格式)
+- **Learnings for future iterations:**
+  - 多段 JSONB 分阶段 UPSERT (PR-013/014/015/016 同款) 的 META-GUARD 必须 守 service jsdoc 里**所有兄弟 PR 编号都被提及** —— 不仅是代码里的 cron 注释, 而是顶部 jsdoc. 这是 [[多段 JSONB 报告分阶段 UPSERT]] 模板第 6 件套 ("反向断 row 不含他人段 key") 的延伸: 文档侧也要互相引用让 reader 一眼看到段间依赖. 本 story 落 META-GUARD 10.11 时发现 PR-016 只在 cron registry 注释里出现, service jsdoc 缺它 → 加 "(本 service = 第 3 段; PR-016 ImprovementSuggestor 是第 4 段)" 让所有兄弟 PR 在 service 入口处可见.
+  - 测试里构造 N 条 alert 用 ISO 字符串 `2026-06-09T${String(i).padStart(2,'0')}:00:00Z` 在 i>23 时变 `T24:00:00Z` 立即 Invalid Date → toISOString throw. 用 `new Date(year, month, day, h, m, s, ms)` 构造器 + i 当毫秒位避免越界 (本 story i 最大 49, 取 ms 字段). 这是 "大批量时间序列 fixture" 的隐性坑 — 任何 `padStart(2)` 在 i>23/i>59 都炸. 后续遇到 "造 N 条按时间排序的 fixture" 优先 `new Date(epoch + i*1000)` 类整数递增, 不用字符串拼接.
+  - sortTimeline 用 `.slice()` 浅拷贝返新数组, 但**数组内对象本身**仍是同一引用 — 想测 "不 mutate 输入数组" 应该改输出数组的长度 (`.push(...)`) 而非改对象的属性 (`[0].title = 'mutated'`). 后者改的是共享对象, 输入数组当然能"看到". 这是 JS 浅拷贝的标准坑, 任何"不 mutate"测试都要明确测的是数组结构还是对象内容.
+  - service / cron registry / SchedulerService dispatch 三件提前落完后单测才补的故事: 写 META-GUARD 时直接读源文件 + regex 扫即可, 不需要重新读历史 PR diff. 本次发现一处 jsdoc 缺失通过 META-GUARD 立刻暴露 → 这就是 [[CRON_REGISTRY 双向一致性 guard]] 类 meta-test 的核心价值 — 即使代码先于测试落, 测试也能反向 audit 代码完整性.
+---

@@ -1607,8 +1607,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 104,
-      "passes": false,
-      "notes": "依赖: PR-013"
+      "passes": true,
+      "notes": "EventTimelineReplayerService (svc + cron registry + SchedulerService dispatch) 已落; 本 story 补齐 178 单测 (10 模块: normalizeAlertSeverity / alertToTimelineItem / aggregateAlertCounts / sortTimeline / truncateTimeline / buildEventTimeline engine / appendSectionFilled+decidePostmortemStatus / runEventTimelineReplayerService e2e 11 路径含 fail-OPEN / PRODUCTION runner smoke / META-GUARD 16 规则). 与 PR-014 同款多段 JSONB 分阶段 UPSERT 模板; payload 仅含 event_timeline+metadata+status+reason+generated_at 5 列, 不擦其它段. 178 pass / 0 fail; typecheck 通过; lint 通过 (prettier --fix)."
     },
     {
       "id": "US-105",
