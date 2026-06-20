@@ -4020,3 +4020,31 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **fail-OPEN 4 层防御对偶 fail-CLOSED**: 本 service 是 "统计/可视化层" (与 RiskGuardFailClosed 对偶), DB 故障不应让 cron / API 挂. 4 层: (a) PRODUCTION DataSource 内 try/catch 返 []/Map(); (b) 主入口顶层 try/catch 返 status='failed'; (c) saveStats 失败 → status='partial' + 数据仍包; (d) 单 firm 缺数据 → 跳过 + skipped_reasons 留痕. 与 risk guard fail-CLOSED 三件套 (US-011) 形成完整光谱: 挡单/审批走 fail-CLOSED, 统计/AI 摘要走 fail-OPEN.
   - **stats.length === 0 时不调 saveStats**: 单 firm 全被 min_samples 过滤后 stats=[] 仍调 save 会让 saveCalls=1 但实际无事可做 — 加 `if (stats.length > 0)` 守门让 [7.27] "不达样本数 → 不调 save" 单测成立. 顺手避免 bulkCreate([]) 在某些 sequelize 版本可能 throw 的边界. 这条守门适用任何 "批量 upsert" service.
 ---
+
+
+## 2026/06/21 02:54 - US-141
+- 实现 [KOL-008] ConceptLinkageAnalyzer — xq_hot_concept 同板块联动分析
+- Files changed:
+  - backend/src/services/kol/ConceptLinkageAnalyzer.ts (新, ~540 行 + 完整 jsdoc):
+    * 7 export 常量 (DEFAULT_LINKAGE_LOOKBACK_DAYS=7 / DEFAULT_MIN_MEMBERS_PER_CONCEPT=3 / DEFAULT_STRONG_LINKAGE_MIN_SAMPLES=3 / DEFAULT_STRONG_LINKAGE_MIN_SCORE=0.7 / DEFAULT_STRONG_LINKAGE_LIMIT=20 / HOT_CONCEPT_KOL_NAME_PREFIX='市场热议·' / XQ_HOT_CONCEPT_SOURCE='xq_hot_concept')
+    * 5 pure helpers export — computeDailyReturn (基准 prev close vs 当天 close 反算日内涨跌) / computeReturnStats (mean + sample stddev Bessel n-1) / computeDirectionalCohesion (与 avg 同向占比 ∈ [0,1], avg=0 / r=0 / 空 全 fail-safe 返 0) / computeConceptLinkageStat (单 concept 聚合 → stat 含 raw_payload audit) / identifyStrongLinkages (AC §"输出" 主验收事实源, 过滤 min_samples + min_score, 排序 score desc + sample_size desc + name asc)
+    * roundTo4 + addDays helper
+    * ConceptLinkageDataSource interface (2 方法 loadConceptMembers / loadDailyBarsForStocks) + DefaultConceptLinkageDataSource lazy require KOLOpinion + DailyBar + Stock + PRODUCTION singleton
+    * ConceptLinkageAnalyzer class.analyzeLinkages 主入口 — 3 层 fail-OPEN (DataSource 内 + 顶层 try/catch + 单 concept 缺数据跳过); status 三态 'ok'|'skipped'|'failed'; barsSince = sinceDate - 7d 兜底周末/停牌
+    * conceptLinkageAnalyzer 生产 singleton export
+  - backend/tests/services/kol/concept-linkage-analyzer.test.ts (新, ~530 行, 100 assert / 0 failed):
+    [1] 常量 7 件 / [2] computeDailyReturn 10 case (含 close=0 / NaN / 单 bar / 非法日期 / 周末兜底) / [3] computeReturnStats 10 case (Bessel n-1 验证) / [4] computeDirectionalCohesion 8 case (含 avg=0 / null / r=0 不算同向) / [5] computeConceptLinkageStat 18 case (含部分缺数据 / 全跌同向 / 全缺) / [6] identifyStrongLinkages 8 case (默认 / 自定阈值 / tie-break / limit) / [7] addDays 6 case / [8] service e2e 18 case (happy / dry_run / 空 members / load throws / min_members 过滤 / 伪联动有 bars 不足) / [9] **AC §输出 主验收** testACStrongLinkages — 构造 4 concept × 5 成员: AI 芯片 100% / 新能源车 80% / 白酒 60% / 光伏 40%, identifyStrongLinkages(min_samples:5, min_score:0.7) 返 >= 2 (AI 芯片 + 新能源车), 白酒/光伏 过滤 / [10] roundTo4 4 case
+  - ralph/prd.json: US-141 passes=true + notes
+  - ralph/progress.txt: 新增本 entry (Codebase Pattern "按 concept 维度聚合 + 方向一致度 + identifyStrongLinkages AC 验收" 与 US-140 KOL-007 同款范式, 已在 US-140 entry 充分记录, 本次不重复加 pattern 段)
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npm test -- --filter=kol` 3 files / 3 passed: kol-aggregator (342 ok) + concept-linkage (100 ok) + kol-author-tracking (102 ok), 总 544 assertion 全过, 0 regression
+  - `npx eslint src/services/kol/ConceptLinkageAnalyzer.ts` exit 0, 0 err 0 warn (test file 不在 tsconfig 范围内属预期 — 与 KOLAuthorTracking 同款)
+- **Learnings for future iterations:**
+  - **xq_hot_concept "反向" 聚合**: KOLAggregatorService 把热门概念当作"代理 KOL 观点"写进 KOLOpinion 表 (kol_source='xq_hot_concept', kol_name='市场热议·<concept>'), 但同份数据可以反向聚合 — 按 concept_name 维度 GROUP BY 拿到的就是"该概念的成员股清单". 这是"已有数据多种聚合姿势" 的实例 — 不要急着加新表, 先看看现有数据 reshape 一下是否就能跑.
+  - **kol_name 解析必须有前缀守门**: 把 "市场热议·<concept>" 拆出 concept_name 时必须 if (!kolName.startsWith(PREFIX)) continue, 不能直接 split('·')[1] — 历史脏数据 / 未来 KOL_SOURCES 扩展可能让 kol_name 不带这个前缀渗进来, 直接 split 会得到空串或 undefined 让 concept_name 错误聚合. 这与 US-027 / US-029 "AI 字段优先 + 本地兜底" 类似 — 解析任何外部字符串字段必须显式守 schema 前缀.
+  - **方向一致度 vs avg_return**: cohesion 是"同向占比", 不带方向 (跌得最齐和涨得最齐都 cohesion=1); avg_return 才告诉你方向. linkage_score = cohesion 让"今天哪些板块在联动" 与"涨跌方向" 解耦 — 操盘手可能想抓"今天最齐刷刷跌的板块"做反弹, 也可能想抓"最齐刷刷涨的"追势. 在 stat 里同时给 avg_return + cohesion 两路, 让 caller (NewsAnalyzer / UI) 自行组合, 不要 service 端预设方向.
+  - **bars lookback 必须包含周末兜底**: asOfDate=2026-06-21 (周日) 时, settle bar 实际是 2026-06-19 (周五), prev_settle 是 2026-06-18 (周四). 如果 barsSince 只拉 [asOfDate - lookback, asOfDate] 而 asOfDate 落在周末, lookback=7 可能只拉到 1 个交易日 (周五本身), prev_settle 完全缺失. 兜底姿势: barsSince = sinceDate - 7d (额外往前留 7 天), 让任何 asOfDate 落点都至少能拿到 2 个交易日. 与 US-140 forwardReturn 7d tolerance 同款思想.
+  - **AC §"输出" 主验收要让 4 个 concept 分布在阈值附近**: 100% / 80% / 60% / 40% 这种"两侧都跨 70% 阈值"的设计能同时验三件事 — (a) 强联动确实进 top (AI 芯片 + 新能源车); (b) 边界附近的恰好不进 (60% < 70%); (c) 完全反向的也不进 (40%). 仅给 2 个 concept 一个 100% 一个 0% 测不出 off-by-one (>= vs >). 与 US-118 "AC ≥ N% 反向算样本" / US-043 "N / N+1 / 远超 N 边界三件套" 同款思想.
+  - **monotonic bars helper 的 close 复利精度**: buildMonotonicBars(100, 10, 0.01) 第 10 天 close=100*(1.01)^9, daily_return 单步=0.01 但累积有微差. 单测断言用 sample_size + cohesion (整数比率) 比 avg_return_pct 精确小数更稳, 后者会因复利 + 4 位舍入产生 1e-5 量级差. 这是"用整数指标避开浮点测精度" 的实例.
+---

@@ -2167,8 +2167,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 141,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "实现 backend/src/services/kol/ConceptLinkageAnalyzer.ts (~540 行) + 单测 100/100 ok. DataSource DI / fail-OPEN / 与 KOLAuthorTrackingService 同款范式. AC §输出 主验收 identifyStrongLinkages(min_score=0.7) 返 >= 2 concept (4 concept 5 成员构造)."
     },
     {
       "id": "US-142",
