@@ -10,6 +10,7 @@ import { morningRiskCheckupService } from '../../portfolio/risk/MorningRiskCheck
 import { sizingPolicyService } from '../../portfolio/risk/SizingPolicyService';
 import { sizingAuditService } from '../../services/SizingAuditService';
 import { strategyKillSwitchMonitor } from '../../services/StrategyKillSwitchMonitor';
+import { reconciliationAlertService } from '../../live-trading/services/ReconciliationAlertService';
 import { logger } from '../../utils/logger';
 
 /**
@@ -363,6 +364,40 @@ export class RiskController {
       res.json({ success: true, data: saved, message: '开盘前风险体检配置已保存' });
     } catch (error: any) {
       logger.error('更新开盘前风险体检配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/risk/reconciliation-alert  (US-137 [EX-012])
+   * 返回用户对账告警阈值配置 (enabled / alignment_score_high / medium /
+   * drift_count_high / medium / dedupe_window_minutes). 未设过则返
+   * DEFAULT_RECONCILIATION_ALERT_CONFIG 占位让 UI 展示 default.
+   */
+  async getReconciliationAlertConfig(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const config = await reconciliationAlertService.getConfig(user_id);
+      res.json({ success: true, data: config });
+    } catch (error: any) {
+      logger.error('获取对账告警阈值配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * PUT /api/risk/reconciliation-alert  (US-137 [EX-012])
+   * 持久化对账告警阈值. lenient normalize — 非法字段沉默回退默认 (同
+   * normalizeBlackSwanConfig / normalizePositionLimitsConfig 范式), 不抛 4xx.
+   * 下一次 reconciliationAlertService.runForUser 调用即生效 (不需重启 cron).
+   */
+  async updateReconciliationAlertConfig(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const saved = await reconciliationAlertService.updateConfig(user_id, req.body || {});
+      res.json({ success: true, data: saved, message: '对账告警阈值已保存' });
+    } catch (error: any) {
+      logger.error('更新对账告警阈值配置失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

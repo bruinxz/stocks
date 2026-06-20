@@ -91,6 +91,11 @@ console.log('T1 — RiskParametersCenterTab.tsx META-GUARD');
     /['"]\/risk\/morning-checkup['"]/.test(tabSrc),
     '必须接入 /risk/morning-checkup endpoint (US-135 PR-020)'
   );
+  // US-137 [EX-012] +1 endpoint (对账告警阈值)
+  assert(
+    /['"]\/risk\/reconciliation-alert['"]/.test(tabSrc),
+    '必须接入 /risk/reconciliation-alert endpoint (US-137 EX-012)'
+  );
 
   // 关键 helper / hook
   assert(
@@ -119,8 +124,9 @@ console.log('T1 — RiskParametersCenterTab.tsx META-GUARD');
       /ic\.saving/.test(tabSrc) &&
       /mr\.saving/.test(tabSrc) &&
       /bs\.saving/.test(tabSrc) &&
-      /mc\.saving/.test(tabSrc),
-    '8 个 section 必须有独立 saving state (pl/ts/db/psl/ic/mr/bs/mc) — US-135 +3'
+      /mc\.saving/.test(tabSrc) &&
+      /ra\.saving/.test(tabSrc),
+    '9 个 section 必须有独立 saving state (pl/ts/db/psl/ic/mr/bs/mc/ra) — US-137 +1'
   );
   // draft/view 回灌 — 保存后用 server normalize 值回灌 (US-065 lesson)
   assert(
@@ -232,6 +238,12 @@ console.log('T3 — 5 个 backend endpoint 都已 existing');
       path: 'morning-checkup',
       getMethod: 'getMorningCheckupConfig',
       putMethod: 'updateMorningCheckupConfig',
+    },
+    // US-137 [EX-012] +1 endpoint
+    {
+      path: 'reconciliation-alert',
+      getMethod: 'getReconciliationAlertConfig',
+      putMethod: 'updateReconciliationAlertConfig',
     },
   ];
 

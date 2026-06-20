@@ -14,6 +14,7 @@
  *   6. /api/risk/market-regime           (US-050 / US-132 PR-017 MarketRegimeAlertService) — 市场环境
  *   7. /api/risk/black-swan              (US-053 BlackSwanWatchdog) — 黑天鹅监控
  *   8. /api/risk/morning-checkup         (US-054 MorningRiskCheckupService) — 开盘前体检
+ *   9. /api/risk/reconciliation-alert    (US-137 EX-012 ReconciliationAlertService) — 对账告警
  *
  * US-135 [PR-020] 在 US-066 5 endpoint 基础上 +3 (market-regime / black-swan / morning-checkup),
  * 让"风控阈值散落 3 个隐藏 tab"问题彻底消除 — 操盘手一处编辑全部. 沿用 US-066 既有
@@ -145,6 +146,16 @@ interface MorningRiskCheckupConfig {
   include_breakdown_in_message: boolean;
 }
 
+/** US-137 [EX-012] — ReconciliationAlertService.ReconciliationAlertConfig 对齐. */
+interface ReconciliationAlertConfig {
+  enabled: boolean;
+  alignment_score_high_threshold: number;
+  alignment_score_medium_threshold: number;
+  drift_count_high_threshold: number;
+  drift_count_medium_threshold: number;
+  dedupe_window_minutes: number;
+}
+
 // ---------------------------------------------------------------------------
 //  Generic section state — 5 个 section 共用同款 view/draft/loading/saving/error
 // ---------------------------------------------------------------------------
@@ -193,6 +204,10 @@ const RiskParametersCenterTab: React.FC = () => {
   const [mc, setMc] = useState<SectionState<MorningRiskCheckupConfig>>(() =>
     initialSectionState<MorningRiskCheckupConfig>()
   );
+  // US-137 [EX-012] ReconciliationAlert 阈值持久化 — 第 9 个 section
+  const [ra, setRa] = useState<SectionState<ReconciliationAlertConfig>>(() =>
+    initialSectionState<ReconciliationAlertConfig>()
+  );
 
   // ---- generic per-section load helper (sets loading/error/view/draft) ----
   // 不在 setLoading 里 setView/setDraft 避免 React 18 batching 边界问题,
@@ -226,6 +241,7 @@ const RiskParametersCenterTab: React.FC = () => {
       loadSection<MarketRegimeAlertConfig>('/risk/market-regime', setMr),
       loadSection<BlackSwanWatchdogConfig>('/risk/black-swan', setBs),
       loadSection<MorningRiskCheckupConfig>('/risk/morning-checkup', setMc),
+      loadSection<ReconciliationAlertConfig>('/risk/reconciliation-alert', setRa),
     ]);
   }, [loadSection]);
 
@@ -267,6 +283,7 @@ const RiskParametersCenterTab: React.FC = () => {
   const mrHasChanges = useMemo(() => hasSectionChanges(mr), [mr]);
   const bsHasChanges = useMemo(() => hasSectionChanges(bs), [bs]);
   const mcHasChanges = useMemo(() => hasSectionChanges(mc), [mc]);
+  const raHasChanges = useMemo(() => hasSectionChanges(ra), [ra]);
 
   /**
    * 顶层 KPI bar — 一眼看出"还有几项未保存的改动" + "整体风控启用率",
@@ -281,6 +298,7 @@ const RiskParametersCenterTab: React.FC = () => {
     mrHasChanges,
     bsHasChanges,
     mcHasChanges,
+    raHasChanges,
   ].filter(Boolean).length;
   const enabledGuards = [
     ts.view?.enabled,
@@ -290,9 +308,10 @@ const RiskParametersCenterTab: React.FC = () => {
     mr.view?.enabled,
     bs.view?.enabled,
     mc.view?.enabled,
+    ra.view?.enabled,
   ].filter(v => v === true).length;
   // position_limits 永远 enabled (没有 enabled 字段) — 算进总数
-  const totalGuards = 8;
+  const totalGuards = 9;
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -317,6 +336,7 @@ const RiskParametersCenterTab: React.FC = () => {
               </Tag>
               <Tag color="purple">US-066 风控参数中心</Tag>
               <Tag color="cyan">US-135 PR-020 全 8 维度</Tag>
+              <Tag color="magenta">US-137 EX-012 对账阈值</Tag>
             </Space>
           </div>
         }
@@ -1845,6 +1865,272 @@ const RiskParametersCenterTab: React.FC = () => {
             <Text type="secondary" style={{ fontSize: 12 }}>
               backend: <code>MorningRiskCheckupService</code> 每日开盘前 cron — 6 核心 metric (持仓
               / 单股 / 行业 / 回撤 / 周收益 / 未读告警) 渲染中文 message 推给飞书/邮件。
+            </Text>
+          </Form>
+        )}
+      </Card>
+
+      {/* Section 9: 对账告警阈值 (US-137 [EX-012]) */}
+      <Card
+        size="small"
+        variant="borderless"
+        className="modern-card"
+        title={
+          <Space>
+            <AlertOutlined />
+            <span style={{ fontWeight: 600 }}>对账告警阈值 (Reconciliation Alert)</span>
+            {raHasChanges && <Tag color="warning">未保存</Tag>}
+          </Space>
+        }
+        extra={
+          <Space>
+            <Button
+              size="small"
+              icon={<ReloadOutlined />}
+              loading={ra.loading}
+              onClick={() =>
+                void loadSection<ReconciliationAlertConfig>('/risk/reconciliation-alert', setRa)
+              }
+            >
+              刷新
+            </Button>
+            <Button
+              type="primary"
+              size="small"
+              icon={<SaveOutlined />}
+              loading={ra.saving}
+              disabled={!raHasChanges}
+              onClick={() =>
+                void saveSection<ReconciliationAlertConfig>(
+                  '/risk/reconciliation-alert',
+                  ra.draft,
+                  setRa,
+                  '对账告警阈值'
+                )
+              }
+            >
+              保存
+            </Button>
+          </Space>
+        }
+      >
+        {ra.error && (
+          <Alert type="error" message={ra.error} showIcon style={{ marginBottom: 12 }} />
+        )}
+        {!ra.draft ? (
+          ra.loading ? (
+            <Alert type="info" message="加载中..." />
+          ) : (
+            <Empty description="未加载到对账告警配置" />
+          )
+        ) : (
+          <Form layout="vertical">
+            <Row gutter={[16, 8]}>
+              <Col xs={12} md={4}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>启用</span>
+                      <Tooltip title="关闭后整 user 跳过对账告警 (不会写 RiskAlert)">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <Switch
+                    checked={ra.draft.enabled}
+                    onChange={v =>
+                      setRa(prev =>
+                        prev.draft ? { ...prev, draft: { ...prev.draft, enabled: v } } : prev
+                      )
+                    }
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={5}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>HIGH alignment_score 阈值</span>
+                      <Tooltip title="alignment_score 严格小于此值 → HIGH 级告警. 默认 70 (即 < 70 触发 HIGH)">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <InputNumber
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={ra.draft.alignment_score_high_threshold}
+                    disabled={!ra.draft.enabled}
+                    onChange={v =>
+                      setRa(prev =>
+                        prev.draft
+                          ? {
+                              ...prev,
+                              draft: {
+                                ...prev.draft,
+                                alignment_score_high_threshold: Number(v ?? 70),
+                              },
+                            }
+                          : prev
+                      )
+                    }
+                    style={{ width: '100%' }}
+                    addonAfter="< 触发 HIGH"
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={5}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>MEDIUM alignment_score 阈值</span>
+                      <Tooltip title="alignment_score 严格小于此值 → MEDIUM. 默认 85 (即 [HIGH阈值, 85) 触发 MEDIUM)">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <InputNumber
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={ra.draft.alignment_score_medium_threshold}
+                    disabled={!ra.draft.enabled}
+                    onChange={v =>
+                      setRa(prev =>
+                        prev.draft
+                          ? {
+                              ...prev,
+                              draft: {
+                                ...prev.draft,
+                                alignment_score_medium_threshold: Number(v ?? 85),
+                              },
+                            }
+                          : prev
+                      )
+                    }
+                    style={{ width: '100%' }}
+                    addonAfter="< 触发 MEDIUM"
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={5}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>HIGH 漂移仓位数阈值</span>
+                      <Tooltip title="live_only + paper_only 严格大于此值 → HIGH. 默认 3 (即 ≥ 4 仓漂移触发 HIGH)">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <InputNumber
+                    min={0}
+                    max={100}
+                    step={1}
+                    precision={0}
+                    value={ra.draft.drift_count_high_threshold}
+                    disabled={!ra.draft.enabled}
+                    onChange={v =>
+                      setRa(prev =>
+                        prev.draft
+                          ? {
+                              ...prev,
+                              draft: {
+                                ...prev.draft,
+                                drift_count_high_threshold: Number(v ?? 3),
+                              },
+                            }
+                          : prev
+                      )
+                    }
+                    style={{ width: '100%' }}
+                    addonAfter="> 触发 HIGH"
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={5}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>MEDIUM 漂移仓位数阈值</span>
+                      <Tooltip title="live_only + paper_only ≥ 此值 → MEDIUM. 默认 1 (即 1 仓漂移触发 MEDIUM)">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <InputNumber
+                    min={0}
+                    max={100}
+                    step={1}
+                    precision={0}
+                    value={ra.draft.drift_count_medium_threshold}
+                    disabled={!ra.draft.enabled}
+                    onChange={v =>
+                      setRa(prev =>
+                        prev.draft
+                          ? {
+                              ...prev,
+                              draft: {
+                                ...prev.draft,
+                                drift_count_medium_threshold: Number(v ?? 1),
+                              },
+                            }
+                          : prev
+                      )
+                    }
+                    style={{ width: '100%' }}
+                    addonAfter="≥ 触发 MEDIUM"
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={5}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>Dedup 窗口 (分钟)</span>
+                      <Tooltip title="同 (symbols_hash, severity) signature 多久内不重复告警, 默认 30 min. 调仓后 symbols 变 → signature 变 → 重新告警">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <InputNumber
+                    min={1}
+                    max={1440}
+                    step={1}
+                    precision={0}
+                    value={ra.draft.dedupe_window_minutes}
+                    disabled={!ra.draft.enabled}
+                    onChange={v =>
+                      setRa(prev =>
+                        prev.draft
+                          ? {
+                              ...prev,
+                              draft: {
+                                ...prev.draft,
+                                dedupe_window_minutes: Number(v ?? 30),
+                              },
+                            }
+                          : prev
+                      )
+                    }
+                    style={{ width: '100%' }}
+                    addonAfter="分钟"
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              backend: <code>ReconciliationAlertService</code> 定时对账 live vs paper 仓位, 漂移触发
+              RiskAlert (HIGH 写入即推飞书+邮件+SMS 三通道). 调高阈值降低噪声; 调低提升敏感度. 修改
+              后下一次 runForUser 调用即生效 (无需重启 cron). MEDIUM &lt; HIGH 阈值时 backend 静默
+              swap 防止 MEDIUM 永远先被 HIGH 决策覆盖.
             </Text>
           </Form>
         )}

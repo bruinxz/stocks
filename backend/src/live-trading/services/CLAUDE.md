@@ -44,3 +44,31 @@ inline 拼 SQL). DB-less, 79 ok.
 
 **未来扩展提醒**: 新加 autopilot 类入口 (e.g. `runSignalAutopilot` / `runRiskAutopilot`) 复用 `backend/src/utils/autopilotIdempotency.ts` 同款 store, key 必须把"会改变业务语义"的参数全放进 `extra`. 不要 inline 写 in-flight Map. 测试在 `tests/live-trading/autopilot-idempotency.test.ts`, META-GUARD fs+regex 守 wiring 单一事实源.
 
+
+## US-137 [EX-012] ReconciliationAlertConfig — 阈值持久化
+
+之前 `classifyReconciliation` 4 个阈值硬编码 (HIGH<70 / MEDIUM<85 / drift>3 / drift>=1). 现在
+持久化到 `User.risk_config.live_reconciliation_alert` JSONB, 与 8 个 risk guard 同款
+`getConfig`/`updateConfig` + `normalizeXxxConfig` lenient + `Object.freeze` DEFAULT 范式.
+
+**API 三件套**:
+- `DEFAULT_RECONCILIATION_ALERT_CONFIG` (frozen, 与 v1 hardcoded 值完全等价 — 用户没改 →
+  零行为漂移)
+- `normalizeReconciliationAlertConfig(raw)` (沉默 fallback 默认; 内部一致性兜底: medium
+  阈值 < high 时静默 swap, 防 MEDIUM 永远被 HIGH 决策覆盖)
+- `service.getConfig(user_id)` / `service.updateConfig(user_id, raw)` (JSONB 写法
+  `changed('risk_config', true)`)
+
+**接入点**:
+- `classifyReconciliation` 新增 optional `thresholds?: ReconciliationAlertConfig` 参数;
+  缺省走 DEFAULT, 与 v1 hardcoded 行为完全一致 (backward compat, 既有单测 0 改动).
+- `runForUser` 启动时先 `this.getConfig(user_id)` (fail-OPEN 用 DEFAULT). `cfg.enabled=false`
+  时整 user 跳过. `dedupe_window_ms` 优先级: options > cfg.dedupe_window_minutes*60_000 >
+  `DEDUPE_WINDOW_MS_DEFAULT`.
+- HTTP: GET/PUT `/api/risk/reconciliation-alert` (RiskController + risk.routes.ts).
+- UI: `SettingsWorkspace.RiskParametersCenterTab.tsx` 第 9 个 section.
+
+**单测**: `tests/services/ReconciliationAlertService.test.ts` 新增 9 个 case 覆盖 DEFAULT
+frozen / normalize empty / lenient invalid / happy / swap inverted thresholds / custom
+threshold HIGH branch / custom threshold drift_relaxed / backward compat / extreme
+threshold disables alerts (63 ok 总).

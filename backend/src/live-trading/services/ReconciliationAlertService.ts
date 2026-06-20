@@ -83,13 +83,125 @@ const SYMBOL_HIGH = 'SYSTEM:LIVE_RECONCILIATION_HIGH';
 const SYMBOL_MEDIUM = 'SYSTEM:LIVE_RECONCILIATION_MEDIUM';
 const SYMBOL_STALE = 'SYSTEM:LIVE_RECONCILIATION_STALE';
 
+// ---------------------------------------------------------------------------
+//  US-137 [EX-012] — ReconciliationAlertConfig 阈值持久化
+// ---------------------------------------------------------------------------
+
+/**
+ * 用户级 reconciliation 告警阈值. US-137 [EX-012] 之前阈值硬编码 (HIGH<70 /
+ * MEDIUM<85 / drift>3 / drift>=1), 操盘手没法把"日内 3 仓位漂移"调成"日内 5
+ * 仓位漂移" 类的容差. 本配置把 4 个阈值 + 启用 + dedup 窗口持久化到
+ * User.risk_config.live_reconciliation_alert JSONB, 与 US-047 / US-048 / US-052
+ * 等 8 个 guard 同款 "lenient normalize + JSONB + getConfig/updateConfig"
+ * 范式 (RiskParametersCenterTab 一站编辑).
+ *
+ * 决策表 (保持与 v1 hardcoded 同语义 — 用户没改 → DEFAULT_* 后行为不变):
+ *  - severity=HIGH ↔ alignment_score < alignment_score_high_threshold
+ *                  OR drift_sum > drift_count_high_threshold
+ *  - severity=MEDIUM ↔ alignment_score < alignment_score_medium_threshold
+ *                   OR drift_sum >= drift_count_medium_threshold
+ *  - 否则 NONE.
+ * Stale 路由 (snapshot_age_minutes > stale_threshold_minutes 由 LiveTrading
+ * 自身参数控制) 不在此 config 范围.
+ */
+export interface ReconciliationAlertConfig {
+  /** 主开关 — false 时整 user 跳过, runForUser 直接返 NONE+reason=disabled. */
+  enabled: boolean;
+  /** alignment_score < 此值 → HIGH (与 drift_count_high_threshold OR). 默认 70. */
+  alignment_score_high_threshold: number;
+  /** alignment_score < 此值 → MEDIUM (与 drift_count_medium_threshold OR). 默认 85. */
+  alignment_score_medium_threshold: number;
+  /** live_only+paper_only > 此值 → HIGH. 默认 3 (严格 >; 4 仓漂移触发). */
+  drift_count_high_threshold: number;
+  /** live_only+paper_only >= 此值 → MEDIUM. 默认 1 (>=; 1 仓漂移触发). */
+  drift_count_medium_threshold: number;
+  /** 同 (symbols_hash, severity) signature 多久内不重复告警 (分钟). 默认 30. */
+  dedupe_window_minutes: number;
+}
+
+/**
+ * US-137 [EX-012] — Object.freeze 与 8 个 guard 同款; 用户没改 → 走默认行为
+ * 与 v1 hardcoded 完全一致 (回归 zero-cost).
+ */
+export const DEFAULT_RECONCILIATION_ALERT_CONFIG: ReconciliationAlertConfig = Object.freeze({
+  enabled: true,
+  alignment_score_high_threshold: 70,
+  alignment_score_medium_threshold: 85,
+  drift_count_high_threshold: 3,
+  drift_count_medium_threshold: 1,
+  dedupe_window_minutes: 30,
+});
+
+/**
+ * US-137 [EX-012] lenient normalize — 与 US-047 normalizePositionLimitsConfig
+ * / US-053 normalizeBlackSwanConfig 同款 "非法值沉默回退默认, 不抛 4xx".
+ * UI InputNumber 软提示 min/max, backend 兜底.
+ */
+export function normalizeReconciliationAlertConfig(raw: any): ReconciliationAlertConfig {
+  const safeBool = (v: any, fb: boolean): boolean => (typeof v === 'boolean' ? v : fb);
+  const safeNumber = (
+    v: any,
+    fb: number,
+    opts: { min?: number; max?: number; integer?: boolean } = {}
+  ): number => {
+    const num = typeof v === 'number' ? v : Number(v);
+    if (!Number.isFinite(num)) return fb;
+    if (opts.integer && !Number.isInteger(num)) return fb;
+    if (opts.min !== undefined && num < opts.min) return fb;
+    if (opts.max !== undefined && num > opts.max) return fb;
+    return num;
+  };
+  // 容错: object/null 都允许 (老 user 没设过 → raw=undefined)
+  const r = raw && typeof raw === 'object' ? raw : {};
+  const normalized: ReconciliationAlertConfig = {
+    enabled: safeBool(r.enabled, DEFAULT_RECONCILIATION_ALERT_CONFIG.enabled),
+    alignment_score_high_threshold: safeNumber(
+      r.alignment_score_high_threshold,
+      DEFAULT_RECONCILIATION_ALERT_CONFIG.alignment_score_high_threshold,
+      { min: 0, max: 100 }
+    ),
+    alignment_score_medium_threshold: safeNumber(
+      r.alignment_score_medium_threshold,
+      DEFAULT_RECONCILIATION_ALERT_CONFIG.alignment_score_medium_threshold,
+      { min: 0, max: 100 }
+    ),
+    drift_count_high_threshold: safeNumber(
+      r.drift_count_high_threshold,
+      DEFAULT_RECONCILIATION_ALERT_CONFIG.drift_count_high_threshold,
+      { min: 0, max: 100, integer: true }
+    ),
+    drift_count_medium_threshold: safeNumber(
+      r.drift_count_medium_threshold,
+      DEFAULT_RECONCILIATION_ALERT_CONFIG.drift_count_medium_threshold,
+      { min: 0, max: 100, integer: true }
+    ),
+    dedupe_window_minutes: safeNumber(
+      r.dedupe_window_minutes,
+      DEFAULT_RECONCILIATION_ALERT_CONFIG.dedupe_window_minutes,
+      { min: 1, max: 24 * 60, integer: true }
+    ),
+  };
+  // 内部一致性兜底: medium 阈值不应小于 high (high<70/medium<85 才有梯度), 反过来
+  // medium <= high 会让 MEDIUM 永远先被 HIGH 决策覆盖。用户写错 → 静默 swap.
+  if (normalized.alignment_score_medium_threshold < normalized.alignment_score_high_threshold) {
+    normalized.alignment_score_medium_threshold = normalized.alignment_score_high_threshold;
+  }
+  if (normalized.drift_count_medium_threshold > normalized.drift_count_high_threshold) {
+    normalized.drift_count_medium_threshold = normalized.drift_count_high_threshold;
+  }
+  return normalized;
+}
+
 /**
  * 按对账结果生成 (severity, symbol, hash signature)。
  *
- *  - HIGH: alignment_score<70 / live_only+paper_only>3
+ *  - HIGH: alignment_score<70 / live_only+paper_only>3 (用户可调阈值, US-137)
  *  - HIGH stale: snapshot_age_minutes>stale_threshold
- *  - MEDIUM: 70 ≤ alignment_score < 85 或 漂移 1-3
+ *  - MEDIUM: 70 ≤ alignment_score < 85 或 漂移 1-3 (用户可调阈值, US-137)
  *  - NONE: 健康
+ *
+ * US-137 [EX-012] thresholds 参数可选 — 缺省走 DEFAULT_RECONCILIATION_ALERT_CONFIG,
+ * 行为与 v1 hardcoded 完全等价 (单测既有 case 0 改动).
  */
 export function classifyReconciliation(input: {
   alignment_score: number | null;
@@ -98,6 +210,7 @@ export function classifyReconciliation(input: {
   snapshot_age_minutes: number | null;
   stale_threshold_minutes: number;
   status: string;
+  thresholds?: ReconciliationAlertConfig;
 }): { severity: ReconciliationAlertSeverity; reason: string; symbol: string } {
   const driftSum = (input.live_only_count || 0) + (input.paper_only_count || 0);
   const ageOk =
@@ -114,14 +227,21 @@ export function classifyReconciliation(input: {
     // not_bound / no_snapshot 不当 alert（paper-only 用户）
     return { severity: 'NONE', reason: 'not_bound / no_snapshot', symbol: SYMBOL_HIGH };
   }
-  if (input.alignment_score < 70 || driftSum > 3) {
+  const cfg = input.thresholds || DEFAULT_RECONCILIATION_ALERT_CONFIG;
+  if (
+    input.alignment_score < cfg.alignment_score_high_threshold ||
+    driftSum > cfg.drift_count_high_threshold
+  ) {
     return {
       severity: 'HIGH',
       reason: `alignment_score=${input.alignment_score} drift=${driftSum}`,
       symbol: SYMBOL_HIGH,
     };
   }
-  if (input.alignment_score < 85 || driftSum >= 1) {
+  if (
+    input.alignment_score < cfg.alignment_score_medium_threshold ||
+    driftSum >= cfg.drift_count_medium_threshold
+  ) {
     return {
       severity: 'MEDIUM',
       reason: `alignment_score=${input.alignment_score} drift=${driftSum}`,
@@ -207,7 +327,36 @@ export class ReconciliationAlertService {
     options: ReconciliationAlertOptions = {}
   ): Promise<ReconciliationAlertUserResult> {
     const window = options.window || 'intraday';
-    const dedupeWindowMs = options.dedupe_window_ms || DEDUPE_WINDOW_MS_DEFAULT;
+    // US-137 [EX-012] — 先拉用户阈值, dedupe_window_ms 优先级:
+    //   1) options.dedupe_window_ms (调用方显式 override)
+    //   2) cfg.dedupe_window_minutes (持久化的用户偏好)
+    //   3) DEDUPE_WINDOW_MS_DEFAULT (老硬编码 30min, fail-OPEN)
+    let cfg: ReconciliationAlertConfig = DEFAULT_RECONCILIATION_ALERT_CONFIG;
+    try {
+      cfg = await this.getConfig(user_id);
+    } catch (e: any) {
+      // fail-OPEN — 配置拉失败仍走默认阈值, 不阻塞告警 cron
+      logger.warn(
+        `[ReconciliationAlert] loadConfig user=${user_id} failed (fail-open use default): ${
+          e?.message || e
+        }`
+      );
+    }
+    if (!cfg.enabled) {
+      return {
+        user_id,
+        scanned: false,
+        severity: 'NONE',
+        alignment_score: null,
+        live_only_count: 0,
+        paper_only_count: 0,
+        snapshot_age_minutes: null,
+        alert_written: false,
+        reason: 'disabled by user config (US-137 EX-012)',
+      };
+    }
+    const dedupeWindowMs =
+      options.dedupe_window_ms || cfg.dedupe_window_minutes * 60 * 1000 || DEDUPE_WINDOW_MS_DEFAULT;
     const dryRun = options.dry_run === true;
     try {
       const reconciliation = await liveTradingService.getReconciliation(user_id, {});
@@ -229,6 +378,7 @@ export class ReconciliationAlertService {
         snapshot_age_minutes: snapshotAge,
         stale_threshold_minutes: staleThreshold,
         status: String(reconciliation.status || ''),
+        thresholds: cfg, // US-137 [EX-012] 真用用户阈值, 缺省 fallback DEFAULT
       });
 
       // US-017 [EX-003]: 把当前对账快照写入 Prometheus gauge 系列（无论 severity 如何，
@@ -428,6 +578,43 @@ export class ReconciliationAlertService {
       alerts_written: written,
       per_user: perUser,
     };
+  }
+
+  /**
+   * US-137 [EX-012] — 读用户当前 reconciliation 告警阈值配置. 与 8 个 risk guard
+   * 同款 (US-047 / US-048 / US-049 / US-050 / US-051 / US-052 / US-053 / US-054)
+   * "normalize 后返默认值兜底" 模式: 老 user 没设过 / risk_config.live_reconciliation_alert
+   * 为 null → 返 DEFAULT_RECONCILIATION_ALERT_CONFIG 副本, UI 显示 default 占位.
+   */
+  async getConfig(user_id: number): Promise<ReconciliationAlertConfig> {
+    const user = await User.findByPk(user_id, { attributes: ['id', 'risk_config'] });
+    const raw = (user as any)?.risk_config?.live_reconciliation_alert;
+    return normalizeReconciliationAlertConfig(raw);
+  }
+
+  /**
+   * US-137 [EX-012] — 持久化 reconciliation 阈值. lenient normalize (非法字段
+   * 沉默回退) 与 US-047 / US-053 等同款; 调用方在 UI InputNumber 软提示 min/max,
+   * backend 不抛 4xx. JSONB 写法用 `changed('risk_config', true)` (Sequelize
+   * JSONB 列必须显式 mark dirty, 与 US-017 lesson 同).
+   */
+  async updateConfig(user_id: number, raw: any): Promise<ReconciliationAlertConfig> {
+    const normalized = normalizeReconciliationAlertConfig(raw);
+    const user = await User.findByPk(user_id);
+    if (!user) {
+      throw new Error(`updateConfig: user ${user_id} not found`);
+    }
+    const merged = {
+      ...((user as any).risk_config || {}),
+      live_reconciliation_alert: {
+        ...(((user as any).risk_config || {}).live_reconciliation_alert || {}),
+        ...normalized,
+      },
+    };
+    (user as any).risk_config = merged;
+    user.changed('risk_config', true);
+    await user.save();
+    return { ...normalized };
   }
 }
 

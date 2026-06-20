@@ -339,6 +339,53 @@ router.put(
   riskController.updateMorningCheckupConfig
 );
 
+/**
+ * @openapi
+ * /api/risk/reconciliation-alert:
+ *   get:
+ *     tags: [风控 Risk]
+ *     summary: 获取当前用户的对账告警阈值配置 (US-137 EX-012)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 对账告警阈值配置 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
+ *   put:
+ *     tags: [风控 Risk]
+ *     summary: 更新当前用户的对账告警阈值配置 (US-137 EX-012)
+ *     description: |
+ *       lenient normalize — 非法字段沉默回退默认, 不抛 4xx. 与
+ *       /position-limits / /trailing-stop 等 8 个 guard endpoint 同款形态.
+ *       下一次 ReconciliationAlertService.runForUser 调用即生效.
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               enabled: { type: boolean }
+ *               alignment_score_high_threshold: { type: number, minimum: 0, maximum: 100 }
+ *               alignment_score_medium_threshold: { type: number, minimum: 0, maximum: 100 }
+ *               drift_count_high_threshold: { type: integer, minimum: 0, maximum: 100 }
+ *               drift_count_medium_threshold: { type: integer, minimum: 0, maximum: 100 }
+ *               dedupe_window_minutes: { type: integer, minimum: 1, maximum: 1440 }
+ *     responses:
+ *       200: { description: 已保存 }
+ *       401: { description: 未授权 }
+ */
+router.get(
+  '/reconciliation-alert',
+  authController.authenticate,
+  riskController.getReconciliationAlertConfig
+);
+router.put(
+  '/reconciliation-alert',
+  authController.authenticate,
+  riskController.updateReconciliationAlertConfig
+);
+
 // ============================================================
 // Phase 2: Position Sizing Policy
 // ============================================================

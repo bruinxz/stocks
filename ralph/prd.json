@@ -2091,8 +2091,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 136,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "依赖: EX-001 / PR-006 | DONE 2026/06/21: 抽 backend/src/portfolio/internal/preTradeGuards.ts 的 checkAllPreTradeGates(input) 统一 entry, side BUY → checkPreBuyGuards (drawdown+position-limit), side SELL → checkTPlus1; 三 caller (facade.placeOrder BUY+SELL, automation.createBuyTrade+createSellTrade, LiveTradingService.approveDraft) 全部改走 unified entry, 不再直接调 drawdownCircuitBreaker.checkBuyAllowed / positionLimitGuard.checkBuyOrder / checkTPlus1 / checkPreBuyGuards. LiveTradingService.approveDraft 新增 七闸门 audit (live_order_blocked_by_pre_trade_gate critical), 把 paper-trading 那两条 path 的 drawdown + position-limit + T+1 拦截也覆盖到实盘 path (broker 侧 T+1 会拒, 提前拒避免一次浪费的 bridge round trip). 新增 tests/portfolio/check-all-pre-trade-gates.test.ts 22 ok / 0 failed (4 大类: 入参 union 形态契约 / facade meta-guard / automation meta-guard / LiveTradingService meta-guard / SELL bypass 端到端). 配套调整 tests/risk/risk-guard-fail-closed.test.ts (a) 段: facade 不再直接 import handleRiskGuardUnavailable (单源真理下沉到 preTradeGuards), assert facade routes through checkAllPreTradeGates + preTradeGuards 仍 import handleRiskGuardUnavailable. tsc 0 err / eslint 16 problem (5 error/11 warn) 与 baseline 完全一致 / 17 个 portfolio + 16 个 risk + 4 个 live-trading + 1 个 paper + 1 个 compliance 测试全过."
     },
     {
       "id": "US-137",
@@ -2107,8 +2107,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 137,
-      "passes": false,
-      "notes": "依赖: OPS-005"
+      "passes": true,
+      "notes": "依赖: OPS-005 | DONE 2026/06/21: 在 ReconciliationAlertService 新增 ReconciliationAlertConfig interface (6 字段: enabled / alignment_score_high_threshold / alignment_score_medium_threshold / drift_count_high_threshold / drift_count_medium_threshold / dedupe_window_minutes) + DEFAULT_RECONCILIATION_ALERT_CONFIG (Object.freeze, 与 v1 hardcoded 完全等价 — 用户没改 → 零行为漂移) + normalizeReconciliationAlertConfig (lenient: 非法值沉默回退默认; 内部一致性兜底: medium 阈值 < high 时静默 swap 防 MEDIUM 永被 HIGH 覆盖) + getConfig / updateConfig 实例方法 (JSONB user.changed(risk_config,true) 写法). classifyReconciliation 新增 optional thresholds 参数, 缺省走 DEFAULT 与 v1 hardcoded 行为完全等价 (既有单测 0 改动 backward compat). runForUser 启动时拉用户配置 fail-OPEN, cfg.enabled=false 整 user 跳过, dedupe_window_ms 优先级 options.dedupe_window_ms > cfg.dedupe_window_minutes*60_000 > DEDUPE_WINDOW_MS_DEFAULT. HTTP: RiskController.getReconciliationAlertConfig / updateReconciliationAlertConfig + GET/PUT /api/risk/reconciliation-alert 注册到 risk.routes.ts. UI: SettingsWorkspace.RiskParametersCenterTab.tsx 第 9 个 section (AlertOutlined icon, 6 个 InputNumber/Switch 控件, 与既有 8 section 同款 draft/view 双状态 + saveSection 用 server normalized 回灌). 单测: tests/services/ReconciliationAlertService.test.ts 从 54 → 63 ok (+9: DEFAULT frozen / normalize empty 4 case / lenient invalid 6 case / happy path 6 case / swap inverted 2 case / custom thresholds 触发 HIGH 边界 / 放宽降级 MEDIUM / backward compat 不传 thresholds / 极限阈值 disables alerts). tests/risk/risk-parameters-center-tab.test.ts 从 51 → 59 ok (+8: 8→9 endpoint + 8→9 saving state + reconciliation-alert GET/PUT controller methods + routes). tsc(backend+frontend) 0 err / eslint --fix 后 0 err. CLAUDE.md backend/src/live-trading/services/ 新增 US-137 章节 含 API 3 件套 + 接入点 + 单测."
     },
     {
       "id": "US-138",
