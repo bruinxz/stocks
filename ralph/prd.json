@@ -1637,8 +1637,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 106,
-      "passes": false,
-      "notes": "依赖: EX-001"
+      "passes": true,
+      "notes": "依赖: EX-001 | DONE 2026/06/20: 新增 backend/src/services/execution/ExecutionAlgoSlicer.ts (520+ 行 + 完整 jsdoc), 把 ExecutionPolicyRouter 给的 policy (TWAP/VWAP/ICEBERG/POV/LIMIT/SKIP/WAIT_*) 转成可下单 SlicePlan. 5 个 pure-fn builder 全 export: buildTwapPlan (等量等间隔) / buildVwapPlan (按 A 股 U-型 8 桶 profile 加权 + 任意长度 profile resample) / buildIcebergPlan (visible_pct 切块) / buildPovPlan (rate × ADV/min) / roundQtyByLot (lot=100 整数倍 + 余数末片). ADV 自适应: TWAP/VWAP 单片自动 cap 到 adv_qty × participation_rate (默认 0.10). fail-open: 任何边界 (total<=0/duration<=0/SKIP/WAIT/POV 缺 ADV) 返回 empty slices + reason, 不抛错. tests/services/execution-algo-slicer.test.ts 80 ok / 0 failed 覆盖 9 大组 (roundQtyByLot 含负权重过滤 / TWAP/VWAP/ICEBERG/POV builder 含 ADV cap / resampleProfile 升降采样 / planExecutionSlices 端到端 7 algo + 边界 / service wrapper + fail-open / AC sum=total). tsc 0 err / lint 0 err (--fix prettier 后) / execution-policy-router 既有 38 ok 无 regression."
     },
     {
       "id": "US-107",

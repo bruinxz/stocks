@@ -3088,3 +3088,23 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **detector priority 公式选择直觉**: detection (50 base) < response (55 base) < execution (60 base) < risk_control (65 base) — base 反映"问题严重度", 缺检出 < 缺响应 < 缺执行 < 缺风控 (越靠后越是结果而非过程问题). gap/dd 越大 priority 越高 (线性外加 max cap 让满档不爆). 让 top_findings 排序符合"先解决最致命问题" 直觉.
   - **payload 反向 META-GUARD 必须 explicit**: e2e 测试 [10.h] 显式断 `!Object.prototype.hasOwnProperty.call(row, 'counterfactual_baselines')` + `!Object.prototype.hasOwnProperty.call(row, 'event_timeline')` + `!Object.prototype.hasOwnProperty.call(row, 'event_summary')` — 反向 guard 比正向更关键, 防止未来 refactor 误加占位字段擦其它段 (US-018 lesson reformulated). 与 [[多段 JSONB 报告分阶段 UPSERT]] (US-102) 同款.
 ---
+
+## 2026-06-20 18:36 - US-106 [EX-006] TWAP/VWAP/Iceberg 算法实现
+- 新增 backend/src/services/execution/ExecutionAlgoSlicer.ts (520+ 行) — 把 ExecutionPolicyRouter 输出的 policy 转成可下单 SlicePlan.
+- 5 个纯函数 builder 全 export (与既有 ExecutionPolicyRouter 同款 pattern):
+  - buildTwapPlan: 等量等间隔, ADV cap 单片 ≤ adv × rate
+  - buildVwapPlan: 按 A 股 U-型 8 桶 profile (默认 [0.20, 0.13, 0.10, 0.10, 0.10, 0.10, 0.12, 0.15]) 加权, 支持任意长度 profile resample 到 n 桶
+  - buildIcebergPlan: visible_pct 切块, 末片余量自动补
+  - buildPovPlan: participation_rate × ADV / 分钟 → 5min 间隔切片
+  - roundQtyByLot: A 股 lot=100 强约束, 余数按"被舍掉最多"优先级回填, 末片兜底
+- 主入口 planExecutionSlices(input) 支持 9 种 algo (TWAP/VWAP/ICEBERG/POV/LIMIT_AT_TOUCH/WAIT_5M/WAIT_15M/WAIT_30M/SKIP), fail-open: 任何边界返空 slices + reason 不抛错.
+- ExecutionAlgoSlicer service class + singleton executionAlgoSlicer 暴露给下游 PaperTradingFacade.placeOrder 调用.
+- 新增 tests/services/execution-algo-slicer.test.ts: 80 assertions / 9 大组 (roundQtyByLot 含负权重 / TWAP/VWAP/ICEBERG/POV builder 含 ADV cap / resampleProfile / planExecutionSlices 端到端 + 边界 / service wrapper fail-open / AC sum=total 且 time_offset 单调).
+- Files changed: backend/src/services/execution/ExecutionAlgoSlicer.ts (新增), backend/tests/services/execution-algo-slicer.test.ts (新增), prd.json (US-106 passes=true).
+- Quality: tsc 0 err / eslint 0 err (--fix prettier 后) / execution-policy-router 既有 38 ok 无 regression.
+- **Learnings for future iterations:**
+  - Pattern: Execution algo 现在分两层 — ExecutionPolicyRouter (选 policy) + ExecutionAlgoSlicer (拆 slices); 下游 PaperTradingFacade.placeOrder 应先调 router 拿 policy + slice_count, 再调 slicer.plan({ algo: result.policy, total_qty, slice_count: result.slice_count, participation_rate: result.participation_rate, adv_qty }) 拿 SlicePlan 然后按 time_offset_minutes 定时触发 child order.
+  - Gotcha: A 股 lot=100 强约束让"均分"不再等量 — total_qty=10300/5 不能整除时, 余数 (300) 按"被舍掉最多"优先级补到第一片. 单测要验证 sum(slices.qty) === total_qty, 不要验证"每片等量".
+  - Gotcha: POV 必须提供 adv_qty, 否则 builder 返空 + reason 提示; PaperTradingFacade 集成时若 adv 缺失, 应降级到 TWAP 而非 silent fail.
+  - Reference: A 股盘中 U-型量能分布参考 DEFAULT_ASHARE_VOLUME_PROFILE constant (sum = 1.00), 8 个 30 分钟桶覆盖 9:30-15:00.
+---

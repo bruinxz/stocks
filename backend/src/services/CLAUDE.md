@@ -258,3 +258,30 @@ NULL = 当周无任何回答（合法语义状态），≠ "回答模板分 0"�
 **Sequelize DECIMAL 字符串坑**：`EastMoneyQAStat.answer_rate / answer_template_score`
 等 DECIMAL 列在原生 sequelize-typescript 返回字符串。`rowToStatLike()` 是统一入口，
 对每个 numeric 字段 `Number()` 转一遍（带 string→0.5 + null→null 单测覆盖）。
+
+## Execution layer 二段式 (Sprint 41-E + US-106 EX-006)
+
+**ExecutionPolicyRouter (选 policy)** + **ExecutionAlgoSlicer (拆 slices)** 是
+下单链路的两段, 上游 PaperTradingFacade.placeOrder 顺序调用:
+
+```ts
+const policy = executionPolicyRouter.route({ symbol, side, amount_yuan, ... });
+// → { policy: 'TWAP'|'VWAP'|'POV'|..., slice_count, participation_rate, ... }
+const plan = executionAlgoSlicer.plan({
+  algo: policy.policy,
+  total_qty,
+  slice_count: policy.slice_count,
+  participation_rate: policy.participation_rate,
+  adv_qty,        // POV 必填; TWAP/VWAP 提供后启用 per-slice cap
+  parent_order_id,
+});
+// → { slices: [{ index, time_offset_minutes, qty, visible_qty, ... }] }
+// 按 plan.slices[i].time_offset_minutes 定时触发 child order (bridge_qmt/ptrade)
+```
+
+**坑**:
+- A 股 lot=100 强约束 → "等量 TWAP" 实际不等量, 余数按"被舍掉最多"补到第一片;
+  单测验 `sum(slices.qty) === total_qty`, 不验"每片等量".
+- POV 缺 `adv_qty` 返空 plan + reason, 集成层应降级 TWAP 而非 silent fail.
+- VWAP 默认用 `DEFAULT_ASHARE_VOLUME_PROFILE` (8 桶 U-型, sum=1.00);
+  传 `volume_profile` 任意长度会自动 resample 到 slice_count.
