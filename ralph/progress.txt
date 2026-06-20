@@ -2528,3 +2528,22 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **enable_feishu_push 默认 true 而非 false**: 灰度 / 演练时让 PRD AC 不变 (cron 跑完即推), ops 想关只改 ScheduledTask.parameters.enable_feishu_push=false 而不动代码. 与 [[shadow→hard 三态范式]] 的 "off→shadow→hard" 不同 — 这里没有 shadow 中间态需求 (push 不写 DB, 失败仅 logger.warn), 直接 boolean 关闭. 不要 over-engineer 加三态枚举.
   - **顶层 try-catch 双层守 fail-OPEN**: pushService.pushBatch 自身已 fail-OPEN 不抛 (内部顶层 try/catch 返 skipped_reason='top_level_error'), 但 runner 仍套一层 try/catch — 防 caller 注入 fake svc.pushBatch 抛 sync 错 / 真 PRODUCTION 未来 refactor 移除内层 catch. 这是 [[Risk guard 三件套]] 的 caller-side 保护对偶: caller 永远不信任 callee 的 fail-OPEN 契约不会被 future refactor 打破, 自己也守一层. 调用面 (cron runner) 才是用户感知边界.
 ---
+
+## 2026/06/20 - US-088 [PM-012] WeeklyReview correlation matrix
+- 完整落地 PM-012 持仓股 N×N pearson 相关矩阵 (周报内)
+- 新增 6 个 export 纯函数: computePearson (含 NaN/Inf/常量序列/len mismatch 全兜底, clamp ±1 + round 3 位) / dailyReturnsFromCloses (close<=0/缺失重置 prev 防 2-day return 污染) / selectCorrelationSymbols (持仓 + 上周交易 ∪, market_value desc + symbol asc tie-break 稳定排序, Top-10 cap) / computeCorrelationMatrix (date intersect 防错位 + 上三角镜像 + valid symbol 二次过滤) / buildCorrelationMatrixPayload (主入口, 任何 throw → null) / buildCorrelationMatrixHtml (inline-style 热力图)
+- 新增 2 个 export 常量: CORRELATION_MAX_SYMBOLS=10 (邮件 N×N 视觉上限) / CORRELATION_MIN_RETURNS=3 (周三新建账户也能算)
+- 扩 WeeklyReviewDataSource 接口 + DefaultWeeklyReviewDataSource: 新增 loadDailyCloses(symbols, start, end) — Stock IN + DailyBar JOIN, Asia/Shanghai 时区 startOf/endOf day 边界, ORDER BY time ASC
+- WeeklyReviewPayload 新增 correlation_matrix 字段 (CorrelationMatrixPayload | null), runForUser fail-OPEN 顶层 try/catch → throw → correlation_matrix=null + logger.warn 不阻塞主流程
+- buildWeeklyReviewEmail 注入 buildCorrelationMatrixHtml section (在 strategy table 之后, top winners 之前)
+- buildPlainTextFallback 新增 N×N 对齐表 (列宽 = max symbol len + 2, +/- 符号 + 2 位小数, '—' 缺数据)
+- 顺道清理 stale test fake DataSource (US-087 PM-011 引入 loadTradeStrategyMap 但未补 testSendUserIdFilter 的 inline 实现, 现 ts-node typecheck fail 一并修)
+- Files: backend/src/services/WeeklyReviewReportService.ts (+~480 lines), backend/tests/services/weekly-review-report-service.test.ts (+~480 lines, +1 stub 修)
+- Quality: tsc 0 err, eslint 0 err 0 warn, 380 assertions (新增 50+ 覆盖 pearson 数学/returns 边界/select 排序+cap+dedup/矩阵对称对角/缺数据 fail-OPEN/HTML 渲染+text fallback)
+- **Learnings for future iterations:**
+  - Pure helpers 一定要 export (单测直接调) 而不是闭包在 service 类里 — 与 US-087 strategy helpers / US-085 BehaviorBiasDetector 同款范式
+  - DataSource 接口新增方法时务必同步搜 codebase 所有 fake DataSource (grep "WeeklyReviewDataSource = {") 补 stub, 否则 ts-node typecheck fail; 本次 US-087 漏补一处, 现整理补齐
+  - moment.tz('YYYY-MM-DD', 'Asia/Shanghai').startOf('day') 是 DailyBar.time 区间扫描的安全姿势 — Sequelize DATE 列含时分秒, 不能直接传 'YYYY-MM-DD' 字串否则边界丢点
+  - pearson 单测应该覆盖 5 类数学陷阱: identical=1 / opposite=-1 / scaled=1 / constant→null / NaN/Inf→null. round 3 位让浮点比较稳定
+  - 邮件 HTML 表格的 N×N 单元格颜色梯度用 inline-style background + color (≥0.6 深色字 / <0.6 中灰字) 兼容所有 mail client; 不依赖 <style> 块
+---

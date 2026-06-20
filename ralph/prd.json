@@ -1365,8 +1365,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 88,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DONE 2026/06/20: 完整落地 PM-012 持仓股 N×N pearson 相关矩阵 — 新增 6 个 export 纯函数 (computePearson / dailyReturnsFromCloses / selectCorrelationSymbols / computeCorrelationMatrix / buildCorrelationMatrixPayload + buildCorrelationMatrixHtml) + 2 个常量 (CORRELATION_MAX_SYMBOLS=10 cap, CORRELATION_MIN_RETURNS=3) + DataSource 扩 loadDailyCloses + DefaultWeeklyReviewDataSource Stock+DailyBar 单查实现 (Asia/Shanghai 边界 startOf/endOf day) + runForUser fail-OPEN try/catch 块 → 任何 throw correlation_matrix=null. WeeklyReviewPayload.correlation_matrix 新字段, HTML inline-style 热力图 (红=高正相关 / 灰=弱相关 / 绿=负相关 / 对角线深蓝 1.00) + plain-text fallback 对齐表. 同时清理 stale test fake DataSource 缺 loadTradeStrategyMap/loadDailyCloses stub 的旧债 (US-087 引入但未补 testSendUserIdFilter 等 4 处). tsc/lint/test 380 ok 全过, 含 50+ 新 assert 覆盖 pearson 数学性质 (identical/opposite/scaled/constant/NaN/Inf/len-mismatch) + returns 边界 + selectSymbols 排序+dedup+cap + 矩阵对称/对角/缺数据 null 兜底."
     },
     {
       "id": "US-089",
