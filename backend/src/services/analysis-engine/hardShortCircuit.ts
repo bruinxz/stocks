@@ -283,6 +283,7 @@ export function buildHardShortCircuitResult(
     ...ctx.metadata,
     engine_variant: decision.engine_variant,
     overall_confidence: decision.overall_confidence,
+    confidence_tier: decision.confidence_tier,
     data_quality: decision.data_quality,
     entry_zone: decision.entry_zone,
     stop_loss: decision.stop_loss,

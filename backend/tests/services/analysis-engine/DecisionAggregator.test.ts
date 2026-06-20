@@ -15,6 +15,9 @@ import {
   pickEntryZone,
   pickStopLoss,
   pickTakeProfit,
+  pickConfidenceTier,
+  CONFIDENCE_TIER_HIGH_MIN,
+  CONFIDENCE_TIER_MEDIUM_MIN,
 } from '../../../src/services/analysis-engine/DecisionAggregator';
 import { getLimitPrices } from '../../../src/quant/marketLimits';
 import type {
@@ -262,6 +265,148 @@ function makeAnalyzer(
   assert(
     !segmentPctLit.test(aggSrc),
     'meta: no inline 0.2/0.3/0.05 next to segment literals (must go via marketLimits)'
+  );
+
+  // ----------------------------------------------------------------
+  // AE-008 (US-114) — confidence_tier 三档分桶 + 阈值常量 sanity + aggregator 3 路径全填
+  // ----------------------------------------------------------------
+
+  // 阈值常量 sanity (与 [[shadowRunHelpers]] HEALTHY_MIN > DEGRADED_MIN 同款守 sanity)
+  assert(
+    CONFIDENCE_TIER_HIGH_MIN > CONFIDENCE_TIER_MEDIUM_MIN,
+    `tier thresholds: HIGH_MIN (${CONFIDENCE_TIER_HIGH_MIN}) > MEDIUM_MIN (${CONFIDENCE_TIER_MEDIUM_MIN})`
+  );
+  assert(CONFIDENCE_TIER_MEDIUM_MIN > 0, 'MEDIUM_MIN > 0');
+  assert(CONFIDENCE_TIER_HIGH_MIN <= 1, 'HIGH_MIN ≤ 1');
+
+  // pickConfidenceTier — high 边界 (恰好 / 略低 / 远低; off-by-one 防御)
+  assert(pickConfidenceTier(CONFIDENCE_TIER_HIGH_MIN) === 'high', `≥ HIGH_MIN → high`);
+  assert(
+    pickConfidenceTier(CONFIDENCE_TIER_HIGH_MIN - 0.0001) === 'medium',
+    `< HIGH_MIN → medium (off-by-one boundary)`
+  );
+  assert(pickConfidenceTier(0.99) === 'high', `0.99 → high`);
+  assert(pickConfidenceTier(1) === 'high', `1.0 → high`);
+
+  // pickConfidenceTier — medium 边界
+  assert(pickConfidenceTier(CONFIDENCE_TIER_MEDIUM_MIN) === 'medium', `≥ MEDIUM_MIN → medium`);
+  assert(
+    pickConfidenceTier(CONFIDENCE_TIER_MEDIUM_MIN - 0.0001) === 'low',
+    `< MEDIUM_MIN → low (off-by-one boundary)`
+  );
+  assert(pickConfidenceTier(0.5) === 'medium', `0.5 → medium`);
+
+  // pickConfidenceTier — low + 非法值 fail-safe (任何 NaN/Infinity/null/undefined/负数 → low)
+  assert(pickConfidenceTier(0) === 'low', `0 → low`);
+  assert(pickConfidenceTier(0.39) === 'low', `0.39 → low`);
+  assert(pickConfidenceTier(NaN) === 'low', `NaN → low (fail-safe)`);
+  assert(pickConfidenceTier(Infinity) === 'low', `Infinity → low (fail-safe)`);
+  assert(pickConfidenceTier(-Infinity) === 'low', `-Infinity → low (fail-safe)`);
+  assert(pickConfidenceTier(null) === 'low', `null → low (fail-safe)`);
+  assert(pickConfidenceTier(undefined) === 'low', `undefined → low (fail-safe)`);
+  assert(pickConfidenceTier(-0.5) === 'low', `negative → low (fail-safe)`);
+
+  // aggregator 3 个返回路径全填 confidence_tier
+  // (a) data_quality=critical → overall_confidence=0 → tier='low'
+  assert(d1.confidence_tier === 'low', `critical path → tier=low (got ${d1.confidence_tier})`);
+  // (b) hard veto → overall_confidence=0.3 → tier='low' (0.3 < 0.4)
+  assert(d2.confidence_tier === 'low', `veto path → tier=low (got ${d2.confidence_tier})`);
+  assert(d3.confidence_tier === 'low', `risk hard veto → tier=low (got ${d3.confidence_tier})`);
+
+  // (c) 正常路径 — 所有 analyzer confidence=0.8 + data_quality.coefficient=1 → avg=0.8 → high
+  assert(
+    noDampenDecision.confidence_tier === 'high',
+    `all-bull confidence=0.8 → tier=high (got ${noDampenDecision.confidence_tier})`
+  );
+
+  // (c2) 正常路径 — confidence 拉到 medium 档 (8 analyzer 全填, 单 confidence=0.55 → 0.55*1=0.55 → medium)
+  const mediumDecision = agg.aggregate({
+    stock_code: 'sh.600519',
+    as_of: '2026-06-18',
+    analyzers: [
+      makeAnalyzer('fundamental', 20, 0.55),
+      makeAnalyzer('technical', 20, 0.55),
+      makeAnalyzer('capital', 20, 0.55),
+      makeAnalyzer('news', 20, 0.55),
+      makeAnalyzer('sentiment', 20, 0.55),
+      makeAnalyzer('industry_regime', 20, 0.55),
+      makeAnalyzer('risk', 20, 0.55),
+      makeAnalyzer('event', 20, 0.55),
+    ],
+    data_quality: dqGood(),
+    current_price: 100,
+  });
+  assert(
+    mediumDecision.confidence_tier === 'medium',
+    `confidence ≈ 0.55 → medium (got ${mediumDecision.overall_confidence} → ${mediumDecision.confidence_tier})`
+  );
+
+  // (c3) 正常路径 — coefficient 拖低到 low 档
+  const lowDecision = agg.aggregate({
+    stock_code: 'sh.600519',
+    as_of: '2026-06-18',
+    analyzers: [
+      makeAnalyzer('fundamental', 20, 0.5),
+      makeAnalyzer('technical', 20, 0.5),
+      makeAnalyzer('capital', 20, 0.5),
+      makeAnalyzer('news', 20, 0.5),
+      makeAnalyzer('sentiment', 20, 0.5),
+      makeAnalyzer('industry_regime', 20, 0.5),
+      makeAnalyzer('risk', 20, 0.5),
+      makeAnalyzer('event', 20, 0.5),
+    ],
+    data_quality: {
+      level: 'degraded',
+      missing_critical: [],
+      missing_optional: ['x'],
+      notes: [],
+      coefficient: 0.5,
+    },
+    current_price: 100,
+  });
+  assert(
+    lowDecision.confidence_tier === 'low',
+    `confidence 拖低 → low (got ${lowDecision.overall_confidence} → ${lowDecision.confidence_tier})`
+  );
+
+  // META-GUARD: DecisionAggregator.ts 必须 export pickConfidenceTier + 常量 + 3 个 return 路径都填
+  const aggSrcPath2 = path.resolve(
+    __dirname,
+    '../../../src/services/analysis-engine/DecisionAggregator.ts'
+  );
+  const aggSrc2 = fs.readFileSync(aggSrcPath2, 'utf-8');
+  assert(
+    /export\s+function\s+pickConfidenceTier\s*\(/.test(aggSrc2),
+    'meta: pickConfidenceTier exported'
+  );
+  assert(
+    /export\s+const\s+CONFIDENCE_TIER_HIGH_MIN/.test(aggSrc2) &&
+      /export\s+const\s+CONFIDENCE_TIER_MEDIUM_MIN/.test(aggSrc2),
+    'meta: 两档阈值常量 export'
+  );
+  // 3 个 return 路径都必须含 confidence_tier — 数 occurrences ≥ 3
+  const tierOccurrences = (aggSrc2.match(/confidence_tier:\s*pickConfidenceTier/g) || []).length;
+  assert(
+    tierOccurrences >= 3,
+    `meta: aggregator 3 个 return 路径全填 confidence_tier (found ${tierOccurrences})`
+  );
+
+  // META-GUARD: archive + hardShortCircuit metadata 必须含 confidence_tier (下游可见)
+  const archiveSrc = fs.readFileSync(
+    path.resolve(__dirname, '../../../src/services/analysis-engine/analysisEngineSignalArchive.ts'),
+    'utf-8'
+  );
+  assert(
+    /confidence_tier:\s*decision\.confidence_tier/.test(archiveSrc),
+    'meta: archive metadata 含 confidence_tier'
+  );
+  const hardSrc = fs.readFileSync(
+    path.resolve(__dirname, '../../../src/services/analysis-engine/hardShortCircuit.ts'),
+    'utf-8'
+  );
+  assert(
+    /confidence_tier:\s*decision\.confidence_tier/.test(hardSrc),
+    'meta: hardShortCircuit metadata 含 confidence_tier'
   );
 
   console.log(`\n${pass} passed, ${fail} failed.`);

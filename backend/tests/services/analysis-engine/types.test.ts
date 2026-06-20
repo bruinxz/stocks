@@ -71,6 +71,7 @@ function assert(cond: boolean, msg: string): void {
     key_reasons: ['x'],
     risk_warnings: [],
     overall_confidence: 0.8,
+    confidence_tier: 'high',
     per_dimension: [out],
     data_quality: dq,
     engine_variant: 'multi_dim_v1',

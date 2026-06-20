@@ -37,6 +37,19 @@ export type RecommendationAction =
 export type DataQualityLevel = 'good' | 'partial' | 'degraded' | 'critical';
 
 /**
+ * confidence_tier — 把 `overall_confidence ∈ [0,1]` 分桶到三档 (US-114 / AE-008).
+ *
+ * - `high` ≥ 0.7   → UI 强提示 / 飞书 push 走优先级队列 / autoBuy 视情况放大仓位
+ * - `medium` ≥ 0.4 → UI 普通提示 / 默认仓位
+ * - `low` < 0.4    → UI 弱提示 / autoBuy 默认跳过 (与 hold/critical 合流)
+ *
+ * 分桶规则与阈值常量同源于 `DecisionAggregator.pickConfidenceTier`,
+ * 改阈值时必须同时改 `CONFIDENCE_TIER_HIGH_MIN` / `CONFIDENCE_TIER_MEDIUM_MIN`
+ * 与单测 sanity (`HIGH_MIN > MEDIUM_MIN > 0`).
+ */
+export type ConfidenceTier = 'high' | 'medium' | 'low';
+
+/**
  * 数据质量判定结果. critical → aggregator 直接 hold + overall_confidence=0.
  */
 export interface DataQualityVerdict {
@@ -146,6 +159,13 @@ export interface RecommendationDecision {
   risk_warnings: string[];
   /** [0, 1] */
   overall_confidence: number;
+  /**
+   * confidence_tier — `overall_confidence` 三档分桶 (US-114 / AE-008).
+   * 由 `pickConfidenceTier(overall_confidence)` 计算, aggregator 在 3 个返回路径
+   * (critical hold / veto / 正常加权) 全部填写, 让下游 UI / 飞书 push / autoBuy
+   * 走 tier 而非反复 if (overall_confidence >= 0.7) 散落, 阈值改一处生效.
+   */
+  confidence_tier: ConfidenceTier;
   per_dimension: AnalyzerOutput[];
   data_quality: DataQualityVerdict;
   engine_variant: 'multi_dim_v1';

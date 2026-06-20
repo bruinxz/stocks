@@ -3326,3 +3326,48 @@ Started: Fri Jun 19 02:25:41 CST 2026
     导出 / industry_flows.leader data_sources. 保证未来 refactor 不会偷偷把"龙头共振"
     回退掉. 任何"接 A 到 B 类" story 都该有这层守卫.
 ---
+
+## 2026/06/20 20:20 - US-114
+- 实现 [AE-008] confidence_tier 字段 — RecommendationDecision 加 confidence_tier 三档 (high/medium/low), aggregator 3 个 return 路径全部填, 阈值常量同源 + sanity guard.
+- Files changed:
+  - backend/src/services/analysis-engine/AnalyzerTypes.ts:
+    * 新 export type ConfidenceTier = 'high' | 'medium' | 'low' + jsdoc 业务语义 (high=UI 强提示+autoBuy 放大 / medium=普通 / low=弱+autoBuy 跳过)
+    * RecommendationDecision 加 confidence_tier: ConfidenceTier 必填字段 + jsdoc 注释指向 pickConfidenceTier
+  - backend/src/services/analysis-engine/DecisionAggregator.ts:
+    * 新 export const CONFIDENCE_TIER_HIGH_MIN = 0.7 / CONFIDENCE_TIER_MEDIUM_MIN = 0.4
+    * 新 export function pickConfidenceTier(c: number|null|undefined): ConfidenceTier — NaN/Infinity/null/undefined/负数全 fail-safe 到 'low' (与 critical=0→tier=low 同款最安全档兜底)
+    * aggregate() 3 个 return 路径全部加 confidence_tier: pickConfidenceTier(overallConfidence) — critical hold (0) / veto (0.3) / 正常加权 (avg)
+  - backend/src/services/analysis-engine/index.ts: export pickConfidenceTier + 2 常量
+  - backend/src/services/analysis-engine/analysisEngineSignalArchive.ts: archive metadata 加 confidence_tier: decision.confidence_tier (与既有 overall_confidence 并排)
+  - backend/src/services/analysis-engine/hardShortCircuit.ts: hardShortCircuitResult.metadata 加 confidence_tier (同上)
+  - backend/src/services/analysis-engine/CLAUDE.md: Aggregator 关键规则段加 confidence_tier 说明 (3 档阈值 + 3 路径全填 + fail-safe)
+  - backend/tests/services/analysis-engine/DecisionAggregator.test.ts:
+    * import pickConfidenceTier + 2 常量
+    * 新增 [AE-008] 测试段: 阈值常量 sanity (HIGH_MIN > MEDIUM_MIN > 0; HIGH_MIN ≤ 1)
+    * pickConfidenceTier 边界 — high/medium/low 各档边界 (恰好 / 略低 0.0001 / 远低) + NaN/Infinity/null/undefined/负数 fail-safe 8 case
+    * aggregator 3 路径全填 — d1 (critical) / d2 (veto no pos) / d3 (risk veto) / noDampenDecision (正常 high) / mediumDecision (8 analyzer + 0.55 conf → medium) / lowDecision (coefficient 0.5 拖低 → low)
+    * META-GUARD fs+regex — 守 export pickConfidenceTier + 2 常量 + aggregator 3 路径含 'confidence_tier: pickConfidenceTier' + archive/hard metadata 含 'confidence_tier: decision.confidence_tier'
+  - backend/tests/services/analysis-engine/types.test.ts: makeDecision fixture 加 confidence_tier: 'high'
+  - backend/tests/services/analysis-engine/analysisEngineSignalArchive.test.ts: makeDecision fixture 加 confidence_tier: 'high'
+  - backend/tests/services/analysis-engine/hardShortCircuit.test.ts: makeDecision fixture 加 confidence_tier: 'high'
+  - ralph/prd.json: US-114 passes=true + notes
+  - ralph/progress.txt: 本 entry
+- 验证:
+  - `npx tsc --noEmit` exit 0 (整 backend)
+  - `npx ts-node tests/services/analysis-engine/DecisionAggregator.test.ts` 64 ok / 0 failed
+  - `npx ts-node tests/services/analysis-engine/types.test.ts` 13 ok / 0 failed
+  - `npx ts-node tests/services/analysis-engine/analysisEngineSignalArchive.test.ts` 99 ok / 0 failed
+  - `npx ts-node tests/services/analysis-engine/hardShortCircuit.test.ts` 118 ok / 0 failed
+  - `npx ts-node tests/services/analysis-engine/ShadowDoubleRunService.test.ts` 35 ok / 0 failed
+  - `npx ts-node tests/services/analysis-engine/integration_3_samples_hard.test.ts` 21 ok / 100% 一致率
+  - `npx ts-node tests/services/analysis-engine/integration_300750.test.ts` 17 ok / 0 failed
+  - `npm test` (整套) 222 files / 221 passed / 1 failed (aiPollingQueue.dedup.test.ts 是 US-019 重构后遗留 pre-existing 失败, git stash 验证不在我改动里; 与 US-114 无关)
+  - eslint src/services/analysis-engine/ → 5 errors 全在 IndustryRegimeAnalyzer.ts (US-113 baseline prettier issues), 本次 0 新增
+- **Learnings for future iterations:**
+  - **"加字段"是接力链条**: PRD AC 只写"字段输出"看似简单, 实际上必须 walk 整条链 — (1) AnalyzerTypes.ts 主 type 加 + 类型 union 加; (2) Aggregator 3 个 return 路径全部填 (critical hold / veto / 正常加权 — 漏一个让某路径返回的 decision 缺字段, 下游 metadata 透传随机 undefined); (3) archive + hardShortCircuit metadata 透传 (让 DB 行 + UI 看板都能看到, 否则字段只在 RAM 里转一圈白做); (4) 全部 fixture 加字段 (types/archive/hard 3 个 makeDecision 必须同步, 否则 TS 编译挂); (5) META-GUARD fs+regex 守 3 路径 + 2 metadata 透传防未来 refactor 漏一处. 任何"给 N 路输出的 decision 加新字段"都按这 5 步.
+  - **fail-safe 默认值选 'low' 不选 null**: 让任何 NaN/Infinity/null/undefined/负数/>1 → 'low' 而非 throw 或 'unknown', 与 critical=0 → tier=low 同款"最安全档兜底"思想 (与 [[US-029 computePriority safe-default low]] / [[shadowRunHelpers samples=0 → unknown 而非 healthy]] 一脉相承). 反例: 让非法值返 null 让下游 caller `if (tier === 'high')` 漏检, autoBuy 误以为是 medium 走默认仓位; 让非法值 throw 让 aggregator fail-OPEN 契约破坏. 选 'low' 是"风险偏好最保守"的填空.
+  - **阈值常量同源 + Object 不需要 freeze 因为是 number primitive**: CONFIDENCE_TIER_HIGH_MIN / MEDIUM_MIN 是 number 常量, JS 不可变, 不需要 Object.freeze (与 [[shadowRunHelpers]] HEALTHY_THRESHOLDS 是对象需 freeze 不同). 但单测必须断 HIGH_MIN > MEDIUM_MIN > 0 + HIGH_MIN ≤ 1 防未来调参漂移 (与 [[ai-view-max-chars]] N/N+1/远超 N 同款 off-by-one 防御).
+  - **boundary 测试 N / N+0.0001 / N-0.0001 是 ≥ vs > 的唯一可靠守法**: pickConfidenceTier(HIGH_MIN) → high, pickConfidenceTier(HIGH_MIN - 0.0001) → medium. 仅测"high 段任意值" 漏 off-by-one (e.g. 把 ≥ 写成 > 让 0.7 → medium), 与 [[ai-view-max-chars 5 件套]] N/N+1/远超 N 同款防御.
+  - **8 analyzer 全填才能让 medium tier 真复现**: 第一版我用 2 analyzer + 0.5 confidence 算 mediumDecision, 结果 sumConfidenceW=0.5*(0.25+0.20)=0.225 / totalWeight=1 → avgConfidence=0.225, 落 'low' 不是 'medium'. aggregate() 的 avgConfidence 公式是 `sumConfidenceW / totalWeight` (全部权重之和), 只填部分 analyzer 时分母仍是 1.0 → 算出的 conf 严重偏低. 任何测 confidence tier 边界都要给 8 个 analyzer 全填, 否则数学上构造不出预期 tier.
+  - **archive metadata 字段顺序: tier 紧跟 overall_confidence**: 让 DBA 用 jq / SQL JSONB path 提取时认知零成本 (`overall_confidence + confidence_tier` 总是相邻两行). 反例: 把 tier 塞到 metadata 末尾让人翻 30 行才找到, 跨 service review 时易漏.
+---

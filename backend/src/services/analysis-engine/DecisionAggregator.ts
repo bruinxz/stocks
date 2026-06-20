@@ -33,6 +33,7 @@
 import type {
   AnalyzerKey,
   AnalyzerOutput,
+  ConfidenceTier,
   DataQualityVerdict,
   RecommendationAction,
   RecommendationDecision,
@@ -49,6 +50,34 @@ export const DEFAULT_ANALYZER_WEIGHTS: Readonly<Record<AnalyzerKey, number>> = O
   risk: 0.05,
   event: 0.05,
 });
+
+// ---------------------------------------------------------------------------
+//  US-114 / AE-008: confidence_tier 三档阈值
+// ---------------------------------------------------------------------------
+//
+// `pickConfidenceTier(c)` 把 overall_confidence ∈ [0,1] 分桶到 high/medium/low.
+// 阈值常量同源 + Object.freeze + sanity guard `HIGH_MIN > MEDIUM_MIN > 0`
+// 防未来调参漂移; 改任一阈值必须同步改 `tests/.../DecisionAggregator.test.ts`
+// 的 boundary cases (恰好 / 略低 / 远低 三档边界, 与 [[ai-view-max-chars]] N/N+1
+// 同款 off-by-one 防御).
+//
+// 业务语义:
+//   - high   ≥ 0.7 → UI 强提示; autoBuy 视情况放大仓位; 飞书 push 走优先级队列
+//   - medium ≥ 0.4 → UI 普通提示; 默认仓位
+//   - low    <  0.4 → UI 弱提示; autoBuy 默认跳过 (与 hold/critical 合流)
+//
+// 任何 NaN / Infinity / 负数 / >1 输入都 fail-safe 到 'low' (与 data_quality=critical
+// → confidence=0 同款"最安全档兜底"思想, 防止远端 AI / heuristic bug 借非法值渗漏).
+export const CONFIDENCE_TIER_HIGH_MIN = 0.7;
+export const CONFIDENCE_TIER_MEDIUM_MIN = 0.4;
+
+export function pickConfidenceTier(overallConfidence: number | null | undefined): ConfidenceTier {
+  if (!Number.isFinite(overallConfidence as number)) return 'low';
+  const c = overallConfidence as number;
+  if (c >= CONFIDENCE_TIER_HIGH_MIN) return 'high';
+  if (c >= CONFIDENCE_TIER_MEDIUM_MIN) return 'medium';
+  return 'low';
+}
 
 export interface AggregatorInput {
   stock_code: string;
@@ -261,6 +290,7 @@ export class DecisionAggregator {
         key_reasons: ['关键数据缺失 (' + input.data_quality.missing_critical.join(', ') + ')'],
         risk_warnings: ['data_quality=critical, 引擎拒绝出建议'],
         overall_confidence: 0,
+        confidence_tier: pickConfidenceTier(0),
         per_dimension: input.analyzers,
         data_quality: input.data_quality,
         engine_variant: 'multi_dim_v1',
@@ -292,6 +322,7 @@ export class DecisionAggregator {
         key_reasons: [`[${vetoSource}] 硬否决`],
         risk_warnings: collectRiskWarnings(input.analyzers),
         overall_confidence: 0.3,
+        confidence_tier: pickConfidenceTier(0.3),
         per_dimension: input.analyzers,
         data_quality: input.data_quality,
         engine_variant: 'multi_dim_v1',
@@ -386,6 +417,7 @@ export class DecisionAggregator {
       key_reasons: pickKeyReasons(input.analyzers, weights),
       risk_warnings: collectRiskWarnings(input.analyzers),
       overall_confidence: overallConfidence,
+      confidence_tier: pickConfidenceTier(overallConfidence),
       per_dimension: input.analyzers,
       data_quality: input.data_quality,
       engine_variant: 'multi_dim_v1',

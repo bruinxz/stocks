@@ -97,6 +97,12 @@ Runbook (灰度切量): `docs/audit/analysis_engine_runbook.md`.
 - `event_action='dampen'` → 加权 score × 0.5.
 - 加权 score → action 映射: ≥60 strong_buy / ≥30 buy / ≥15 add / (-15,15) hold /
   (-30,-15] reduce / (-60,-30] sell / ≤-60 strong_sell.
+- **confidence_tier** (US-114 / AE-008): `overall_confidence` 三档分桶 (high ≥0.7 / medium ≥0.4 / low <0.4),
+  aggregator 3 个 return 路径 (critical hold / veto / 正常加权) 全部填; 由 `pickConfidenceTier`
+  纯函数 + `CONFIDENCE_TIER_HIGH_MIN`/`MEDIUM_MIN` 常量同源. archive metadata +
+  hardShortCircuit metadata 都透传 `confidence_tier`, 让下游 UI / 飞书 push /
+  autoBuy 直接读 tier 而非反复散落 `if (overall_confidence >= 0.7)`. 任何 NaN /
+  Infinity / null / 负数 / >1 输入 fail-safe 到 'low' (与 critical→0 同款最安全档兜底).
 - entry_zone: TechnicalAnalyzer.buy_zone + 涨跌停修正 (TODO: 等 ALPHA `marketLimits.ts`,
   暂用 inline 实现).
 - stop_loss / take_profit: support[0]/resistance[0] 或 ATR×2/×3 兜底.

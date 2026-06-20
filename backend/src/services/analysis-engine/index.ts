@@ -20,6 +20,9 @@ export {
   pickTakeProfit,
   pickKeyReasons,
   collectRiskWarnings,
+  pickConfidenceTier,
+  CONFIDENCE_TIER_HIGH_MIN,
+  CONFIDENCE_TIER_MEDIUM_MIN,
 } from './DecisionAggregator';
 export {
   AnalysisEngineService,

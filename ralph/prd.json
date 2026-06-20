@@ -1757,8 +1757,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 114,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "[AE-008] confidence_tier 字段已落 — DecisionAggregator.ts 加 pickConfidenceTier(c) 纯函数 + CONFIDENCE_TIER_HIGH_MIN=0.7 / MEDIUM_MIN=0.4 阈值常量 + AnalyzerTypes.ts RecommendationDecision 加 confidence_tier 字段 (high/medium/low type union). Aggregator 3 个 return 路径 (critical hold / hard veto / 正常加权) 全部填. NaN/Infinity/null/负数/>1 全 fail-safe 到 low (与 critical=0 同款最安全档兜底). archive metadata + hardShortCircuit metadata 都透传让下游 UI / 飞书 push / autoBuy 直接读 tier. 64 ok / 0 failed (DecisionAggregator.test.ts) + types/archive/hard/Shadow 4 测试全过 (13+99+118+35 ok). META-GUARD fs+regex 守 export pickConfidenceTier + 常量 + 3 路径全填 + archive/hard metadata 透传."
     },
     {
       "id": "US-115",

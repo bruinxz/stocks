@@ -56,6 +56,7 @@ function makeDecision(overrides: Partial<RecommendationDecision> = {}): Recommen
     key_reasons: ['趋势向上', 'MACD 金叉', '资金净流入', '同行业 PE 25 分位'],
     risk_warnings: ['量能未充分释放'],
     overall_confidence: 0.72,
+    confidence_tier: 'high',
     per_dimension: [
       {
         analyzer_key: 'fundamental',
