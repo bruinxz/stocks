@@ -1,6 +1,12 @@
 /**
  * DecisionAggregator.test.ts — 5 case (veto / dampen / 各 action 阈值 / data_quality critical).
+ *
+ * AE-006 (US-112): 追加 pickEntryZone 走 `marketLimits.ts` 的市场段矩阵 + meta-test
+ * guard 确保 DecisionAggregator 不再 inline 写涨跌停 (历史 `applyLimitPrice` 已删除).
  */
+
+import * as fs from 'fs';
+import * as path from 'path';
 
 import {
   DecisionAggregator,
@@ -10,6 +16,7 @@ import {
   pickStopLoss,
   pickTakeProfit,
 } from '../../../src/services/analysis-engine/DecisionAggregator';
+import { getLimitPrices } from '../../../src/quant/marketLimits';
 import type {
   AnalyzerOutput,
   DataQualityVerdict,
@@ -186,6 +193,76 @@ function makeAnalyzer(
   // pickTakeProfit
   assert(pickTakeProfit([120, 130], 100, null) === 120, 'take_profit = resistance[0]');
   assert(pickTakeProfit([], 100, 3) === 109, 'take_profit = price + 3*atr');
+
+  // ----------------------------------------------------------------
+  // AE-006 (US-112) — pickEntryZone 走 marketLimits.ts 单一权威, 全市场段矩阵
+  // ----------------------------------------------------------------
+  // ST 主板 5% (与历史 inline 一致, 但口径来自 marketLimits.ST_LIMIT_PCT)
+  const ezST = pickEntryZone([90, 99], 100, 'main', true);
+  // ST 下限 = 95, buy_zone [90,99] → clamp 到 [95,99]
+  assert(
+    !!ezST && ezST[0] === 95 && ezST[1] === 99,
+    `ST clamp to ±5% (got ${JSON.stringify(ezST)})`
+  );
+
+  // 北交所 30%: buy_zone 在区间内不动
+  const ezBJ = pickEntryZone([72, 128], 100, 'bj', false);
+  assert(
+    !!ezBJ && ezBJ[0] === 72 && ezBJ[1] === 128,
+    `BJ 30% no clamp (got ${JSON.stringify(ezBJ)})`
+  );
+
+  // 科创板 20%: buy_zone 全部超下限 → 反弹到 [down, up]
+  const ezSTAR = pickEntryZone([50, 60], 100, 'star', false);
+  // star: down=80, up=120, lo=max(50,80)=80, hi=min(60,120)=60 → lo>=hi → reset to [80,120]
+  assert(
+    !!ezSTAR && ezSTAR[0] === 80 && ezSTAR[1] === 120,
+    `STAR clamp degenerate → full band (got ${JSON.stringify(ezSTAR)})`
+  );
+
+  // unknown 段兜底 = 主板 10%
+  const ezUnknown = pickEntryZone([85, 95], 100, undefined, false);
+  assert(
+    !!ezUnknown && ezUnknown[0] === 90,
+    `unknown segment fallback to main 10% (got ${JSON.stringify(ezUnknown)})`
+  );
+
+  // 与 marketLimits.getLimitPrices 字节对齐: pickEntryZone 与 getLimitPrices 同源
+  const bandST = getLimitPrices(100, 'main', true);
+  assert(bandST.upper === 105 && bandST.lower === 95, `marketLimits ST band sanity`);
+  const bandSTAR = getLimitPrices(100, 'star', false);
+  assert(bandSTAR.upper === 120 && bandSTAR.lower === 80, `marketLimits STAR band sanity`);
+
+  // buy_zone null + currentPrice null → 真 null
+  assert(pickEntryZone(null, null, 'main', false) === null, 'pickEntryZone null both = null');
+
+  // ----------------------------------------------------------------
+  // AE-006 meta-test guard: DecisionAggregator.ts 必须 import marketLimits 且不再
+  // inline 写涨跌停百分比 (照搬 [5] cron-registry / [6] PCA 双向一致性 guard 模式).
+  // ----------------------------------------------------------------
+  const aggSrcPath = path.resolve(
+    __dirname,
+    '../../../src/services/analysis-engine/DecisionAggregator.ts'
+  );
+  const aggSrc = fs.readFileSync(aggSrcPath, 'utf-8');
+  assert(
+    /from\s+['"][^'"]*quant\/marketLimits['"]/.test(aggSrc),
+    'meta: DecisionAggregator imports quant/marketLimits'
+  );
+  assert(
+    /getLimitPrices\s*\(/.test(aggSrc),
+    'meta: DecisionAggregator calls getLimitPrices(...)'
+  );
+  assert(
+    !/function\s+applyLimitPrice\s*\(/.test(aggSrc),
+    'meta: legacy inline applyLimitPrice() removed'
+  );
+  // 不再硬编码 0.2 / 0.3 / 0.05 涨跌停百分比 (允许 0.93/1.12/0.98/1.02 等 ATR/兜底常数)
+  const segmentPctLit = /(?:chinext|star|bj|isSt|isST)[^\n]{0,60}(?:0\.2(?!\d)|0\.3(?!\d)|0\.05(?!\d))/;
+  assert(
+    !segmentPctLit.test(aggSrc),
+    'meta: no inline 0.2/0.3/0.05 next to segment literals (must go via marketLimits)'
+  );
 
   console.log(`\n${pass} passed, ${fail} failed.`);
   if (fail > 0) {

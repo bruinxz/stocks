@@ -1727,8 +1727,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 112,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DONE 2026/06/20: 删除 DecisionAggregator.ts 旧 inline applyLimitPrice (硬编码 0.1/0.2/0.3/0.05), 改 import { getLimitPrices, roundToTick, MarketSegment } from '../../quant/marketLimits'. 新增 computeLimitBand() fail-open 包装 (prev_close≤0/不合法 → 返 null 让上层走非夹紧路径, 不抛错破链). pickEntryZone 的 ±2% 兜底 + 最终 lo/hi 也走 roundToTick(0.01) 与全市场段口径对齐. AggregatorInput.market_segment 类型从硬编码 4 段扩展到 MarketSegment ('unknown' 段兜底 = 主板 10%). DecisionAggregator.test.ts 23→35 assert: 新增 ST 5%/BJ 30%/STAR 20% 矩阵 + unknown 兜底 + getLimitPrices 同源 sanity + 双 null + **meta-test guard** 用 fs 读源文件正则扫: (1) 必须 import quant/marketLimits, (2) 必须 call getLimitPrices, (3) 历史 applyLimitPrice 必须删除, (4) 不允许 segment 名旁出现 0.2/0.3/0.05 inline 字面量. 复用 [5] cron-registry / [6] PCA 双向一致性 guard 模式. tsc/eslint/test 全过, integration_300750 无 regression."
     },
     {
       "id": "US-113",

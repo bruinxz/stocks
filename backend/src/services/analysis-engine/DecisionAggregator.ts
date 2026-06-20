@@ -20,7 +20,10 @@
  *      (-60, -30]: sell
  *      ≤ -60: strong_sell
  * 6. suggested_position_pct: 调 PositionSizingPolicy.decideSizing.
- * 7. entry_zone: TechnicalAnalyzer.buy_zone + 涨跌停修正 (TODO: 等 ALPHA marketLimits.ts).
+ * 7. entry_zone: TechnicalAnalyzer.buy_zone 夹紧到 `marketLimits.getLimitPrices`
+ *    给出的涨跌停区间内 (ST 5% / 主板 10% / 创业板&科创 20% / 北交所 30%).
+ *    已废除本文件历史 inline `applyLimitPrice` — 全市场段 + ST + tick round 全部
+ *    走 `backend/src/quant/marketLimits.ts` 单一权威 (AE-006 / audit S-2/S-3).
  * 8. stop_loss / take_profit: support_levels[0] / resistance_levels[0] 或 ATR 兜底.
  * 9. key_reasons: |score × weight × confidence| top 5.
  * 10. risk_warnings: RiskAnalyzer + EventAnalyzer 的 negative evidence 全部.
@@ -34,6 +37,7 @@ import type {
   RecommendationAction,
   RecommendationDecision,
 } from './AnalyzerTypes';
+import { getLimitPrices, roundToTick, type MarketSegment } from '../../quant/marketLimits';
 
 export const DEFAULT_ANALYZER_WEIGHTS: Readonly<Record<AnalyzerKey, number>> = Object.freeze({
   fundamental: 0.25,
@@ -64,7 +68,7 @@ export interface AggregatorInput {
     atr?: number | null;
   };
   /** market_segment (用于涨跌停修正) */
-  market_segment?: 'main' | 'chinext' | 'star' | 'bj';
+  market_segment?: MarketSegment;
   /** 是否 ST (5% 涨跌停) */
   is_st?: boolean;
 }
@@ -101,22 +105,24 @@ export function mapScoreToAction(score: number): RecommendationAction {
 }
 
 /**
- * TODO(ALPHA): 等 backend/src/quant/marketLimits.ts 完成后替换为 import.
- * 临时 inline: 主板/中小板 10%, 创业板/科创 20%, 北交所 30%, ST 5%.
+ * 按 prev_close + market segment + ST 算涨跌停价 — 委托给 `quant/marketLimits.getLimitPrices`,
+ * 失败时返回 null 让上层兜底 (此处不抛错以保证 aggregator 整链 fail-open).
+ *
+ * AE-006: 历史 inline `applyLimitPrice` 已删除, 全市场段 + ST + tick round 全部
+ * 走 `marketLimits.ts` 单一权威 (见文件头注释).
  */
-function applyLimitPrice(
-  price: number,
-  segment: 'main' | 'chinext' | 'star' | 'bj' | undefined,
+function computeLimitBand(
+  prevClose: number | null | undefined,
+  segment: MarketSegment | undefined,
   isSt: boolean
-): { up: number; down: number } {
-  let pct = 0.1;
-  if (isSt) pct = 0.05;
-  else if (segment === 'chinext' || segment === 'star') pct = 0.2;
-  else if (segment === 'bj') pct = 0.3;
-  return {
-    up: round2(price * (1 + pct)),
-    down: round2(price * (1 - pct)),
-  };
+): { up: number; down: number } | null {
+  if (!Number.isFinite(prevClose) || (prevClose as number) <= 0) return null;
+  try {
+    const { upper, lower } = getLimitPrices(prevClose as number, segment ?? 'unknown', isSt);
+    return { up: upper, down: lower };
+  } catch {
+    return null;
+  }
 }
 
 function round2(x: number): number {
@@ -131,16 +137,18 @@ export function pickEntryZone(
 ): [number, number] | null {
   if (!buyZone || !Array.isArray(buyZone) || buyZone.length !== 2) {
     if (currentPrice && currentPrice > 0) {
-      // 兜底: 当前价 ±2% 一档窄区间
-      return [round2(currentPrice * 0.98), round2(currentPrice * 1.02)];
+      // 兜底: 当前价 ±2% 一档窄区间, 也走 0.01 tick round 保持口径一致
+      return [roundToTick(currentPrice * 0.98), roundToTick(currentPrice * 1.02)];
     }
     return null;
   }
   let [lo, hi] = buyZone;
   if (!(Number.isFinite(lo) && Number.isFinite(hi))) return null;
   if (lo > hi) [lo, hi] = [hi, lo];
-  if (currentPrice && currentPrice > 0) {
-    const limits = applyLimitPrice(currentPrice, segment, isSt);
+  // 注意: marketLimits 的 prev_close 语义就是 currentPrice (T-1 收 / 当前价均可代入,
+  // 这里用 currentPrice 作为锚, 与历史 inline 行为完全一致).
+  const limits = computeLimitBand(currentPrice ?? null, segment, isSt);
+  if (limits) {
     lo = Math.max(lo, limits.down);
     hi = Math.min(hi, limits.up);
     if (lo >= hi) {
@@ -148,7 +156,7 @@ export function pickEntryZone(
       hi = limits.up;
     }
   }
-  return [round2(lo), round2(hi)];
+  return [roundToTick(lo), roundToTick(hi)];
 }
 
 export function pickStopLoss(

@@ -3271,3 +3271,15 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **EvidenceItem.metric_value 是 UI 渲染 Tag 的唯一数字源**: detail 是人读字符串, label 是分类标签, 真正 UI 排序/过滤/染色都看 metric_value. 把 percentile (0~100) 直接放 metric_value 让前端 sort/filter "百分位 > 80 的因子" 不用 regex parse detail. 与 metric_value=score (-100~100) 是两套语义, 各 analyzer 自己一致即可, 但单个 analyzer 内最好统一一种 (本 analyzer 因子条用 score, peer 条用 percentile — 已分类清晰).
   - **null z-score 显式 type predicate filter 比 cast 干净**: `filter((p): p is {stock_code:string; z:number} => p.z !== null && p.z !== undefined)` 让 TS 在后续 sort 内 `b.z - a.z` 不需 `!` 断言, 比 `filter(...) as Array<...>` cast 更类型安全. 同款适用任何"过滤掉 null 字段后下游需要 narrowed type" 场景.
 ---
+
+## 2026-06-20 - US-112 [AE-006] TechnicalAnalyzer entry_zone marketLimits
+- 替换 DecisionAggregator.ts 里 inline `applyLimitPrice` (硬编码 0.1/0.2/0.3/0.05) → 走 `backend/src/quant/marketLimits.getLimitPrices` 单一权威.
+- 改动: backend/src/services/analysis-engine/DecisionAggregator.ts (新 import + `computeLimitBand` fail-open 包装 + `pickEntryZone` 全部 roundToTick + AggregatorInput.market_segment 类型从硬编码 4 段扩到 MarketSegment 含 'unknown').
+- 改动: backend/tests/services/analysis-engine/DecisionAggregator.test.ts (23→35 assert, 新增 ST/BJ/STAR/unknown 矩阵 + getLimitPrices 同源 sanity + meta-test guard 4 条).
+- 结果: tsc 0 err, eslint 0 err, DecisionAggregator.test 35/35, integration_300750 无 regression, marketLimits.test 46/46 还在.
+- **Learnings for future iterations:**
+  - 任何 `TODO(ALPHA): 等 X 完成后替换` 的 inline 实现, X 完成后必须**真正替换 + 加 meta-test guard 防回潮** (照搬 [5] cron-registry / [6] PCA 双向一致性 guard 模式: 用 `fs.readFileSync` + 正则扫源文件断言不能再有老符号). 单纯 import 不算完工, guard 才防回退.
+  - `marketLimits.MarketSegment` 多一档 `'unknown'` 段, 涨跌停按主板 10% 兜底, 接入时**类型必须扩**, 别 narrow 成 4 段否则上层 segment 透传会 TS 报错.
+  - pickEntryZone 的 ±2% 兜底也要走 `roundToTick(0.01)` 而非 `round2`, 否则 tick 口径不一致 (主链是 0.01 元 round-half-up, round2 是浮点 round, 个别价格 (例 19.995) 会差 1 个 tick).
+  - `getLimitPrices` 入参非法 (prev_close ≤ 0) 会**抛 RangeError**, 上层调用必须 try/catch 包成 null 返回, 否则 aggregator 整链 fail-closed 不利在线服务.
+---
