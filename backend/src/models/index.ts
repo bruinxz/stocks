@@ -78,6 +78,7 @@ export * from './MarketSentimentIndex';
 export * from './MarketBrief';
 export * from './SnowballHotKeyword';
 export * from './AnnouncementSummary';
+export * from './AnnouncementEventRelation';
 export * from './EastMoneyQATopic';
 export * from './TechnicalAnalysisReport';
 export * from './RestrictedShareRelease';

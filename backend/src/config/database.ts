@@ -77,6 +77,7 @@ import { MarketSentimentIndex } from '../models/MarketSentimentIndex';
 import { MarketBrief } from '../models/MarketBrief';
 import { SnowballHotKeyword } from '../models/SnowballHotKeyword';
 import { AnnouncementSummary } from '../models/AnnouncementSummary';
+import { AnnouncementEventRelation } from '../models/AnnouncementEventRelation';
 import { EastMoneyQATopic } from '../models/EastMoneyQATopic';
 import { EastMoneyQAStat } from '../models/EastMoneyQAStat';
 import { TechnicalAnalysisReport } from '../models/TechnicalAnalysisReport';
@@ -211,6 +212,7 @@ const sequelize = new Sequelize({
     MarketBrief,
     SnowballHotKeyword,
     AnnouncementSummary,
+    AnnouncementEventRelation,
     EastMoneyQATopic,
     EastMoneyQAStat,
     TechnicalAnalysisReport,

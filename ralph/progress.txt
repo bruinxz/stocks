@@ -3385,3 +3385,28 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - META-GUARD 用 fs.readFileSync + 正则抽函数体可防"功能被改回单源". 与已有 [5] cron-registry / [6] PCA 双向一致性 guard 同款模式 — 改一处, 立即失败.
   - 这次 21 项新测里, "联立属性测试" (both ≥ supportOnly 且 both ≥ atrOnly) 是数学上的不变量, 比单点比较更稳, 任何未来对实现的破坏都会被立即捕获.
 ---
+
+## 2026/06/20 21:00 - US-116 [ANN-008] AnnouncementEventRelation model
+- 新 model `AnnouncementEventRelation` — 一行 = (announcement_id, related_stock_code) 的公告 ↔ 关联公司 M:N 映射, 为 ANN-009 RelatedCompanyExtractor (US-117) / ANN-010 AnnouncementDedupeService (US-118) 准备 schema
+- 关键字段: announcement_id INTEGER FK → announcement_summaries(id) ON DELETE CASCADE, related_stock_code VARCHAR(10), relation_type (primary/mentioned/subsidiary/related_party/peer/other 默认 mentioned), confidence NUMERIC(4,3) 默认 0.5, source (extractor_heuristic/llm/manual/dedupe_service), detail/metadata JSONB, extracted_at TIMESTAMPTZ
+- 索引: UNIQUE(announcement_id, related_stock_code) + 5 单列 (announcement_id, related_stock_code, relation_type, source, extracted_at)
+- Files changed:
+  - backend/src/models/AnnouncementEventRelation.ts (新, 168 行, 含 jsdoc 业务语义 + 边界说明 + ANN-009/010 接入清单)
+  - backend/src/models/index.ts (新增 export * from './AnnouncementEventRelation')
+  - backend/src/config/database.ts (import + models 数组挂载)
+  - backend/scripts/migrations/2026-06-20-announcement-event-relations.sql (新, up: CREATE TABLE + 6 索引 + 全字段 COMMENT)
+  - backend/scripts/migrations/2026-06-20-announcement-event-relations-rollback.sql (新, down: 全 6 索引 DROP + TABLE DROP)
+  - backend/tests/models/announcement-event-relation.test.ts (新, 74 ok / 0 failed; fs+regex META-GUARD 同款 black-swan-event.test.ts 模式)
+  - ralph/prd.json: US-116 passes=true + notes
+  - ralph/progress.txt: 本 entry
+- 验证:
+  - `npx tsc --noEmit` exit 0 (整 backend, 0 err)
+  - `npx ts-node tests/models/announcement-event-relation.test.ts` 74 ok / 0 failed
+  - `npx ts-node tests/models/black-swan-event.test.ts` 103 ok / 0 failed (sibling regression check)
+- **Learnings for future iterations:**
+  - 公告 ↔ 关联公司是 M:N 关系, 必须独立表 + UNIQUE(parent_id, foreign_key) 复合键防同 cron 重跑重复行; 这是与 AnnouncementSummary 本身 (一行 = 一公告, 主体公司维度) 的核心边界 — 本表是辅助 relation, 不取代主表.
+  - 软外键模式 (model 不声明 @ForeignKey/@BelongsTo, migration 层用 REFERENCES ... ON DELETE CASCADE) 避免 sequelize-typescript register 顺序坑 + 循环 import; read 侧由 service 层 JOIN 查询. 与 ImprovementSuggestion (用 @ForeignKey User) 模式互补 — 后者只引用一个核心 User 表, 不易循环.
+  - ON DELETE CASCADE 在 migration 层就是孤儿行预防的最简方案 (父公告删除 → 本表行自动同删), 无需 service 层手动维护一致性. 测试要 assert REFERENCES + ON DELETE CASCADE 同时存在 (regex `/REFERENCES\s+announcement_summaries\s*\(\s*id\s*\)\s+ON DELETE CASCADE/i`).
+  - fail-safe 默认: confidence=0.5 (中间档) / relation_type='mentioned' (弱关联) — 在 extractor 跑前的安全态, 让 trivially INSERT 通过 + 不偏向通过/拒绝, 减少误判.
+  - DataType.NOW 在 model 层做 defaultValue (extracted_at) 等价 migration 层 `DEFAULT NOW()`, 测试 META-GUARD 要双查 (model `/defaultValue:\s*DataType\.NOW/` + SQL `/DEFAULT\s+NOW/i`).
+---

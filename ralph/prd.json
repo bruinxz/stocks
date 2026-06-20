@@ -1787,8 +1787,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 116,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "[ANN-008] AnnouncementEventRelation model + migration + 74 单测; FK ON DELETE CASCADE → announcement_summaries(id); (announcement_id, related_stock_code) UNIQUE"
     },
     {
       "id": "US-117",
