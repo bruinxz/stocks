@@ -2029,8 +2029,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 132,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DONE 2026/06/21: 在既有 MarketRegimeAlertService (US-050) 上接入第 4 类 detector: 连续 N 日跌停股 > M 触发 CRITICAL 'SYSTEM:MARKET_REGIME_HALT_BUY' 全市场暂停建仓告警. 默认 N=3 / M=100, 边界严格大于 (100 不触发 / 101 触发, 与 PRD 字面对齐 + 与 drop_3d_pct ≤ 镜像). 落点: (1) Config 加 3 字段 enable_halt_buy_on_panic / halt_buy_limit_down_count_threshold / halt_buy_consecutive_days; (2) 新 export 纯函数 detectConsecutiveLimitDownHalt(counts, days, thr) → 'halt_buy'|'no_halt'|'unknown' (insufficient/NaN/负数/非整数 全 unknown safe HOLD 不触发); (3) RegimeAlertType union 扩 'HALT_BUY', RegimeAlert.level union 扩 'CRITICAL'; (4) buildAlertMessage 加 HALT_BUY 分支输出'连续 N 日跌停股 a/b/c 只均超过 M 只 触发全市场暂停建仓 (CRITICAL)'; (5) pickRegimeAlerts 加第 4 信号 (config.enable_halt_buy_on_panic 子开关独立可关); (6) DataSource interface 加 loadConsecutiveLimitDownCounts(asOfDate, days), 生产实现按 change_percent ≤ -9.8 + is_suspended=false + is_trading_day=true group by time count distinct, 失败 fail-open 返 [] 不触发误报; (7) getMarketRegimeStatus 拉取 limit_down_counts 输出到 status 让 UI 看曲线, 拉取失败 try/catch fail-open 不阻塞其它 3 信号; (8) normalizeMarketRegimeAlertConfig 加 safePosInt helper + 3 新字段 lenient 退默认 (与既有 safePct/safeBool 同款防御). 单测 175→214 (+39): 13 testDetectConsecutiveLimitDownHalt (含 100/100/100 不触发 + 101/101/101 触发 严格边界 AC 主验收 + 数据不足/NaN/负数/非整数 5 个 unknown safe HOLD case + tail-window slice + N=1 单日 + threshold=0 边界) + 5 testPickRegimeAlertsHaltBuy (单触发 / 边界不触发 / 数据不足 / counts undefined / disabled / 4 信号全触发) + 4 testNormalizeHaltBuyConfig (默认 + valid + garbage NaN / negative / 非整数 / 非 boolean) + 6 testBuildHaltBuyMessage + 5 testStatusHaltBuyTrigger + 6 disabled-no-fetch + fail-open + insufficient + fan-out. MarketRegimeStatus 加 limit_down_counts: number[] | null 字段透传给 UI dashboard. tsc 0 err, eslint 0 err (1 auto-fix prettier prettier 多行 attributes), npm test --filter=risk 15 files 全 OK."
     },
     {
       "id": "US-133",

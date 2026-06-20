@@ -1,12 +1,16 @@
 /**
- * MarketRegimeAlertService — US-050
+ * MarketRegimeAlertService — US-050 + US-132
  *
  * 大盘市场环境预警 — 每日开盘后扫描上证指数（默认 sh.000001）的关键
- * 风险信号，按 3 类指标输出告警并建议降仓（仅 alert，不强制下单）：
+ * 风险信号，按 4 类指标输出告警并建议降仓（仅 alert，不强制下单）：
  *
  *   1. **3 日累计跌幅 > 5%**      → MEDIUM  (建议降仓 30%)
  *   2. **月度跌幅 (20 个交易日) > 15%** → HIGH   (建议降仓 30%)
  *   3. **MA20 下穿 MA60 (死叉)**  → MEDIUM  (建议降仓 30%)
+ *   4. **连续 N 日 跌停股 > M (US-132 [PR-017])** → CRITICAL (全市场暂停建仓)
+ *      默认 N=3 日 / M=100 只。触发后 symbol='SYSTEM:MARKET_REGIME_HALT_BUY'
+ *      level=CRITICAL，前端 / preTradeGuards 可按 sentinel symbol 查表后
+ *      直接拒绝新 BUY (短期 hard rule, 配置开关 enable_halt_buy_on_panic)。
  *
  * 与 US-047 (PositionLimitGuard) / US-048 (TrailingStopGuard) / US-049
  * (DrawdownCircuitBreaker) 互补的**第 4 类风控形态** —— 不是 per-position /
@@ -65,6 +69,7 @@
 
 import { Op } from 'sequelize';
 import moment from 'moment-timezone';
+import { sequelize } from '../../config/database';
 import { Stock } from '../../models/Stock';
 import { DailyBar } from '../../models/DailyBar';
 import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
@@ -89,6 +94,21 @@ export interface MarketRegimeAlertConfig {
   enable_death_cross: boolean;
   /** 触发后建议降仓比例（0-1，e.g. 0.30 = 30%）— 仅写入 message，guard 不强制下单。 */
   reduce_position_pct: number;
+  /**
+   * US-132 [PR-017] — 连续 N 日跌停股数量超阈值触发"全市场暂停建仓" CRITICAL 告警。
+   * true = 开启检测；false = 跳过该信号（与 enable_death_cross 同款 enabled 三态）。
+   */
+  enable_halt_buy_on_panic: boolean;
+  /**
+   * US-132 — 跌停股阈值（每日跌停股数量 > N 算"恐慌"日，e.g. 100 = 默认）。
+   * 必须正整数；非法值退化到默认 100。
+   */
+  halt_buy_limit_down_count_threshold: number;
+  /**
+   * US-132 — 连续恐慌日数（连续 ≥N 日跌停股数量超阈值触发暂停建仓，e.g. 3 = 默认）。
+   * 必须正整数；非法值退化到默认 3。
+   */
+  halt_buy_consecutive_days: number;
 }
 
 /**
@@ -103,6 +123,10 @@ export const DEFAULT_MARKET_REGIME_ALERT_CONFIG: MarketRegimeAlertConfig = Objec
   drop_20d_pct: 0.15,
   enable_death_cross: true,
   reduce_position_pct: 0.3,
+  // US-132 — 默认开启暂停建仓检测；阈值 100 跌停股 + 连续 3 日。
+  enable_halt_buy_on_panic: true,
+  halt_buy_limit_down_count_threshold: 100,
+  halt_buy_consecutive_days: 3,
 });
 
 // ---------------------------------------------------------------------------
@@ -120,12 +144,12 @@ export interface BenchmarkBar {
 export type DeathCrossSignal = 'death_cross' | 'no_cross' | 'unknown';
 
 /** One regime alert (alert type discriminator). */
-export type RegimeAlertType = 'DROP_3D' | 'DROP_20D' | 'DEATH_CROSS';
+export type RegimeAlertType = 'DROP_3D' | 'DROP_20D' | 'DEATH_CROSS' | 'HALT_BUY';
 
 /** One regime alert payload. */
 export interface RegimeAlert {
   type: RegimeAlertType;
-  level: 'MEDIUM' | 'HIGH';
+  level: 'MEDIUM' | 'HIGH' | 'CRITICAL';
   message: string;
   /** Sentinel symbol used for RiskAlert.symbol (SYSTEM: prefix). */
   symbol: string;
@@ -157,6 +181,12 @@ export interface MarketRegimeStatus {
   ma60_yesterday: number | null;
   /** Whether today crossed below MA60 (death cross). */
   cross_signal: DeathCrossSignal;
+  /**
+   * US-132 — 最近 N 日（含今日）每日跌停股数量，OLDEST→NEWEST。
+   * null = DataSource 未实现 / DB 故障 / 数据不足；空数组 = 数据源返回空。
+   * detectConsecutiveLimitDownHalt 用此数组 + config 判定是否触发 HALT_BUY。
+   */
+  limit_down_counts: number[] | null;
   /** Alerts triggered by this evaluation (0..3). */
   alerts: RegimeAlert[];
   /** Bars examined (debug; from oldest to newest). */
@@ -257,6 +287,42 @@ export function detectDeathCross(
   return 'no_cross';
 }
 
+/**
+ * US-132 [PR-017] — 连续 N 日跌停股 > M 触发"全市场暂停建仓"判定。
+ *
+ * 输入 `counts` 为 OLDEST → NEWEST 的每日跌停股数量序列（不含集合竞价 / 停牌
+ * 单边股, 由 DataSource 负责合规过滤）。规则:
+ *   - 取**最新 N 日**（counts.slice(-N)）；
+ *   - 若长度 < N → 'unknown'（数据不足，安全 HOLD 不触发）;
+ *   - 若任一日 count 非有限数 / 非正整数 → 'unknown'（数据脏，safe HOLD）;
+ *   - 否则 `every(c => c > threshold)` 即所有 N 日**严格大于**阈值才触发。
+ *
+ * 严格大于 `>` 而非 `≥` —— 与 PRD AC "跌停股 > 100" 字面对齐 + 与 drop_3d_pct
+ * 镜像保护 (跌幅 ≤ -threshold 触发即 ≥) 形态相反:
+ *   - 跌幅 5% boundary 必须触发 (跌得越深越糟, 5% 是底线);
+ *   - 跌停股 100 boundary **不触发** (PRD 写 ">100", 100 仍属边缘观望);
+ * 这种"风险方向不对称"的边界选择必须显式记到 jsdoc + 单测同时守 N=100 不触发
+ * 与 N=101 触发两 case 防 off-by-one (与 [[ai-view-max-chars]] / [[滑窗 cluster
+ * dedupe]] 同款 N/N+1 双边界范式).
+ */
+export type HaltBuySignal = 'halt_buy' | 'no_halt' | 'unknown';
+
+export function detectConsecutiveLimitDownHalt(
+  counts: number[] | null | undefined,
+  consecutive_days: number,
+  count_threshold: number
+): HaltBuySignal {
+  if (!Number.isInteger(consecutive_days) || consecutive_days <= 0) return 'unknown';
+  if (!Number.isInteger(count_threshold) || count_threshold < 0) return 'unknown';
+  if (!Array.isArray(counts) || counts.length < consecutive_days) return 'unknown';
+  const window = counts.slice(counts.length - consecutive_days);
+  for (const c of window) {
+    if (!Number.isFinite(c) || !Number.isInteger(c) || c < 0) return 'unknown';
+  }
+  // 严格大于 (与 PRD "跌停股 > 100" 字面对齐, 100 不触发 / 101 触发).
+  return window.every(c => c > count_threshold) ? 'halt_buy' : 'no_halt';
+}
+
 /** Build human-readable alert message (Chinese). */
 export function buildAlertMessage(input: {
   type: RegimeAlertType;
@@ -266,6 +332,12 @@ export function buildAlertMessage(input: {
   ma20?: number | null;
   ma60?: number | null;
   reduce_position_pct: number;
+  /** US-132 HALT_BUY only: 每日跌停股数量序列 OLDEST→NEWEST。 */
+  limit_down_counts?: number[];
+  /** US-132 HALT_BUY only: 触发阈值（单日跌停股数量）。 */
+  limit_down_threshold?: number;
+  /** US-132 HALT_BUY only: 连续天数阈值。 */
+  consecutive_days?: number;
 }): string {
   const reducePct = (input.reduce_position_pct * 100).toFixed(0);
   if (input.type === 'DROP_3D') {
@@ -282,6 +354,15 @@ export function buildAlertMessage(input: {
     return (
       `市场预警：${input.benchmark_name} 月度（20 交易日）累计跌幅 ${(ret * 100).toFixed(2)}%，` +
       `已超过阈值 ${(thr * 100).toFixed(2)}%。建议降仓 ${reducePct}%。`
+    );
+  }
+  if (input.type === 'HALT_BUY') {
+    const days = input.consecutive_days ?? 0;
+    const thr = input.limit_down_threshold ?? 0;
+    const countsStr = (input.limit_down_counts ?? []).join('/');
+    return (
+      `市场恐慌预警：连续 ${days} 日跌停股数量 ${countsStr} 只均超过阈值 ${thr} 只，` +
+      `触发全市场暂停建仓 (CRITICAL)。建议持有现金 + 暂停新开仓直至市场企稳。`
     );
   }
   // DEATH_CROSS
@@ -310,6 +391,8 @@ export function pickRegimeAlerts(input: {
   ma60_today: number | null;
   ma20_yesterday: number | null;
   ma60_yesterday: number | null;
+  /** US-132 — 最近 N 日跌停股数量 OLDEST→NEWEST (null = 数据不可用，跳过 HALT_BUY 检测)。 */
+  limit_down_counts?: number[] | null;
 }): RegimeAlert[] {
   const alerts: RegimeAlert[] = [];
   const { config } = input;
@@ -398,6 +481,42 @@ export function pickRegimeAlerts(input: {
     }
   }
 
+  // 4. US-132 — 连续 N 日跌停股 > M → CRITICAL "全市场暂停建仓".
+  // 不放 `if (config.enabled && config.enable_halt_buy_on_panic)` 分级 — 与 DEATH_CROSS 同款
+  // 单 enable_xxx flag 控制 (caller 顶层 enabled flag 已在 service.getMarketRegimeStatus 里
+  // 守住, 这里 pure helper 只判子开关), 让单测可独立验证子信号开关.
+  if (config.enable_halt_buy_on_panic) {
+    const haltSignal = detectConsecutiveLimitDownHalt(
+      input.limit_down_counts ?? null,
+      config.halt_buy_consecutive_days,
+      config.halt_buy_limit_down_count_threshold
+    );
+    if (haltSignal === 'halt_buy') {
+      const counts = input.limit_down_counts as number[];
+      alerts.push({
+        type: 'HALT_BUY',
+        level: 'CRITICAL',
+        symbol: 'SYSTEM:MARKET_REGIME_HALT_BUY',
+        name: `市场恐慌 - 全市场暂停建仓`,
+        message: buildAlertMessage({
+          type: 'HALT_BUY',
+          benchmark_name: input.benchmark_name,
+          reduce_position_pct: config.reduce_position_pct,
+          limit_down_counts: counts,
+          limit_down_threshold: config.halt_buy_limit_down_count_threshold,
+          consecutive_days: config.halt_buy_consecutive_days,
+        }),
+        detail: {
+          benchmark_symbol: config.benchmark_symbol,
+          limit_down_threshold: config.halt_buy_limit_down_count_threshold,
+          consecutive_days: config.halt_buy_consecutive_days,
+          // detail 是 Record<string, number|string>; 序列化数组用逗号分隔避免 type 矛盾.
+          recent_counts: counts.join(','),
+        },
+      });
+    }
+  }
+
   return alerts;
 }
 
@@ -418,6 +537,11 @@ export function normalizeMarketRegimeAlertConfig(raw: any): MarketRegimeAlertCon
   const safeBool = (v: any, dflt: boolean) => (typeof v === 'boolean' ? v : dflt);
   const safeStr = (v: any, dflt: string) =>
     typeof v === 'string' && v.trim().length > 0 ? v : dflt;
+  // US-132 — 正整数(>0) safe coerce, 负 / 0 / 非整数 / 非有限 → 默认值.
+  const safePosInt = (v: any, dflt: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) && Number.isInteger(n) && n > 0 ? n : dflt;
+  };
   return {
     enabled: safeBool(raw?.enabled, DEFAULT_MARKET_REGIME_ALERT_CONFIG.enabled),
     benchmark_symbol: safeStr(
@@ -433,6 +557,19 @@ export function normalizeMarketRegimeAlertConfig(raw: any): MarketRegimeAlertCon
     reduce_position_pct: safePct(
       raw?.reduce_position_pct,
       DEFAULT_MARKET_REGIME_ALERT_CONFIG.reduce_position_pct
+    ),
+    // US-132 — 新增 3 字段, 全 lenient 退默认 (与既有字段同款防御).
+    enable_halt_buy_on_panic: safeBool(
+      raw?.enable_halt_buy_on_panic,
+      DEFAULT_MARKET_REGIME_ALERT_CONFIG.enable_halt_buy_on_panic
+    ),
+    halt_buy_limit_down_count_threshold: safePosInt(
+      raw?.halt_buy_limit_down_count_threshold,
+      DEFAULT_MARKET_REGIME_ALERT_CONFIG.halt_buy_limit_down_count_threshold
+    ),
+    halt_buy_consecutive_days: safePosInt(
+      raw?.halt_buy_consecutive_days,
+      DEFAULT_MARKET_REGIME_ALERT_CONFIG.halt_buy_consecutive_days
     ),
   };
 }
@@ -461,12 +598,22 @@ export interface MarketRegimeAlertDataSource {
   loadBenchmarkName(benchmark_symbol: string): Promise<string>;
   /** Load all users with a paper-trading portfolio (for batch RiskAlert fan-out). */
   loadAllUserIdsWithPortfolios(): Promise<number[]>;
+  /**
+   * US-132 — 取最近 N 个交易日（含 asOfDate 当日，OLDEST→NEWEST）的市场跌停股数量。
+   * 一个 element 对应一日；返回 length 不足 N 表示数据不足，detect 自动返 'unknown'。
+   *
+   * 实现方法（生产 PG 路径）— 按 change_percent ≤ -9.8（A 股主板默认 10%，
+   * AShareConstraintEngine.DEFAULT_LIMIT_DOWN_PCT 同源），group by 交易日 count
+   * distinct symbol。停牌当日不算 (`is_suspended=false` 过滤)。失败 → 返 [] 让
+   * caller 视为数据不足 (safe HOLD 不触发 HALT_BUY 误报)。
+   */
+  loadConsecutiveLimitDownCounts(asOfDate: Date, days: number): Promise<number[]>;
   /** Write a single RiskAlert row (level supplied per-call). */
   writeAlert(input: {
     user_id: number;
     symbol: string;
     name: string;
-    level: 'MEDIUM' | 'HIGH';
+    level: 'MEDIUM' | 'HIGH' | 'CRITICAL';
     message: string;
   }): Promise<void>;
 }
@@ -550,11 +697,53 @@ export class DefaultMarketRegimeAlertDataSource implements MarketRegimeAlertData
     return rows.map(r => r.user_id);
   }
 
+  async loadConsecutiveLimitDownCounts(asOfDate: Date, days: number): Promise<number[]> {
+    // 取最近 ~2x days 个日历日的所有 daily_bars (覆盖周末 / 假期保证至少 days 个交易日),
+    // 按 group by 时间 count distinct stock_id 跌停股 (change_percent <= -9.8 + is_suspended=false +
+    // is_trading_day=true), 然后取最后 days 个交易日按 OLDEST→NEWEST 输出.
+    if (!Number.isInteger(days) || days <= 0) return [];
+    try {
+      // ~2x days 缓冲 (周末 + 假期); 上限避免极端查询.
+      const lookbackCalendarDays = Math.min(days * 4 + 14, 60);
+      const startDate = new Date(asOfDate.getTime() - lookbackCalendarDays * 24 * 60 * 60 * 1000);
+      const rows = (await DailyBar.findAll({
+        attributes: [
+          'time',
+          [sequelize.fn('COUNT', sequelize.col('stock_id')), 'limit_down_count'],
+        ],
+        where: {
+          time: {
+            [Op.gte]: startDate,
+            [Op.lte]: asOfDate,
+          },
+          change_percent: { [Op.lte]: -9.8 },
+          is_suspended: false,
+          is_trading_day: true,
+        },
+        group: ['time'],
+        order: [['time', 'ASC']],
+        raw: true,
+      })) as any[];
+      const counts = rows
+        .map(r => Number((r as any).limit_down_count))
+        .filter(n => Number.isFinite(n) && n >= 0);
+      // OLDEST → NEWEST 已由 order ASC 保证; slice 最后 days 个交易日.
+      return counts.slice(-days);
+    } catch (err) {
+      // fail-open: 返空让 detect 自动 'unknown' 不触发 HALT_BUY 误报.
+      logger.warn(
+        `MarketRegimeAlertService.loadConsecutiveLimitDownCounts asOf=${asOfDate.toISOString()} ` +
+          `days=${days}: ${(err as Error).message}`
+      );
+      return [];
+    }
+  }
+
   async writeAlert(input: {
     user_id: number;
     symbol: string;
     name: string;
-    level: 'MEDIUM' | 'HIGH';
+    level: 'MEDIUM' | 'HIGH' | 'CRITICAL';
     message: string;
   }): Promise<void> {
     await RiskAlert.create({
@@ -659,6 +848,27 @@ export class MarketRegimeAlertService {
 
     const cross_signal = detectDeathCross(ma20Today, ma60Today, ma20Yesterday, ma60Yesterday);
 
+    // US-132 — 取最近 N 日跌停股数量 (即使本评估窗口未触发, 也带回让 UI 看曲线).
+    // 仅在 enable_halt_buy_on_panic=true 时拉取, 否则 null 占位 (节省 DB 查询).
+    let limit_down_counts: number[] | null = null;
+    if (config.enable_halt_buy_on_panic) {
+      try {
+        const counts = await this.source.loadConsecutiveLimitDownCounts(
+          asOfDate,
+          config.halt_buy_consecutive_days
+        );
+        // 空数组也视为 "数据不可用" → null 让 detect 返 unknown 不触发误报.
+        limit_down_counts = Array.isArray(counts) && counts.length > 0 ? counts : null;
+      } catch (err) {
+        // fail-open: log + null 占位, 不阻塞其他 3 类信号评估.
+        logger.warn(
+          `MarketRegimeAlertService.getMarketRegimeStatus loadConsecutiveLimitDownCounts ` +
+            `asOf=${asOfDate.toISOString()}: ${(err as Error).message}`
+        );
+        limit_down_counts = null;
+      }
+    }
+
     const alerts = config.enabled
       ? pickRegimeAlerts({
           config,
@@ -669,6 +879,7 @@ export class MarketRegimeAlertService {
           ma60_today: ma60Today,
           ma20_yesterday: ma20Yesterday,
           ma60_yesterday: ma60Yesterday,
+          limit_down_counts,
         })
       : [];
 
@@ -683,6 +894,7 @@ export class MarketRegimeAlertService {
       ma20_yesterday: ma20Yesterday,
       ma60_yesterday: ma60Yesterday,
       cross_signal,
+      limit_down_counts,
       alerts,
       bar_count: bars.length,
       error,

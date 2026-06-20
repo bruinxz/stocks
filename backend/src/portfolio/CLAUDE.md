@@ -15,7 +15,7 @@ portfolio/
 │   ├── PositionLimitGuard.ts      # max positions + single-stock + single-industry caps
 │   ├── TrailingStopGuard.ts       # 追踪止损 — daily highest_price + next-day SELL trigger
 │   ├── DrawdownCircuitBreaker.ts  # 组合级回撤熔断 — LEVEL_1/2/3 cascade + 24h pause
-│   ├── MarketRegimeAlertService.ts # 市场级环境预警 — 指数 3 日/月度跌幅 + MA20/MA60 死叉
+│   ├── MarketRegimeAlertService.ts # 市场级环境预警 — 指数 3 日/月度跌幅 + MA20/MA60 死叉 + 连续 N 日跌停股 > M HALT_BUY (US-132)
 │   ├── PerStockStopLossGuard.ts   # 每股止损 — close vs avg_cost loss ≤ -7% + 50% mass alert
 │   ├── IndustryConcentrationGuard.ts # 行业集中度 — post-trade > 35% alert + 一键再平衡
 │   ├── BlackSwanWatchdog.ts       # 个股黑天鹅 — US-053
@@ -272,7 +272,7 @@ Patterns codified in US-049 that future risk guards should follow:
   `GET` (read config), `PUT` (update config), `POST /clear-pause`
   (admin override).  All require auth.  Same namespace as US-047/US-048.
 
-## `risk/MarketRegimeAlertService` — US-050 specifics
+## `risk/MarketRegimeAlertService` — US-050 + US-132 specifics
 
 The market-regime alert service introduces the **fourth risk-guard shape** —
 **market-level signals** (indicator-driven, no user positions involved).
@@ -282,11 +282,12 @@ out to every user with a portfolio.
 
 1. **`getMarketRegimeStatus(options)`** — read-only HTTP query.  Computes
    3-day cumulative return, 20-day cumulative return, MA20 today vs
-   yesterday, MA60 today vs yesterday, and the death-cross flag in one
-   pass.  Returns a `MarketRegimeStatus` snapshot with all fields plus the
-   alerts that *would* fire (already-evaluated by `pickRegimeAlerts`).
-   Used by the UI dashboard / 风控面板 for live display.  Does **not**
-   write any RiskAlert row.
+   yesterday, MA60 today vs yesterday, the death-cross flag, **and (US-132)
+   the consecutive-day limit-down count series**, in one pass.  Returns a
+   `MarketRegimeStatus` snapshot with all fields plus the alerts that
+   *would* fire (already-evaluated by `pickRegimeAlerts`).  Used by the UI
+   dashboard / 风控面板 for live display.  Does **not** write any RiskAlert
+   row.
 2. **`evaluateAfterOpen(options)`** — post-open cron.  Internally calls
    `getMarketRegimeStatus`, then fans the same alerts out as one RiskAlert
    per (user × alert) pair.  Sentinel symbol `SYSTEM:MARKET_REGIME_<TYPE>`
@@ -296,6 +297,34 @@ out to every user with a portfolio.
 3. **`getConfig(user_id)` / `updateConfig(user_id, raw)`** — same shape as
    US-047/US-048/US-049 config CRUD; backed by `User.risk_config.market_regime`
    JSONB + `Object.freeze`'d `DEFAULT_MARKET_REGIME_ALERT_CONFIG`.
+
+### US-132 [PR-017] HALT_BUY detector (4th signal)
+
+The 4th detector (`SYSTEM:MARKET_REGIME_HALT_BUY` / `level=CRITICAL`) fires
+when **consecutive N trading days each have > M limit-down stocks** (default
+N=3 / M=100 from PRD).  Differences from the prior 3 detectors:
+
+- **Boundary is strict `>`, not `≤`** (the drop-based detectors use
+  `≤ -threshold` so 5%-drop boundary triggers — the limit-down detector
+  uses `> 100` so 100 limit-down stocks does NOT trigger, 101 does, mirroring
+  the literal PRD wording "> 100").  Unit tests guard both N (no-trigger)
+  and N+1 (trigger) sides.
+- **Two sub-knobs** — `halt_buy_consecutive_days` and
+  `halt_buy_limit_down_count_threshold` — both `safePosInt`-normalized
+  (Number.isInteger + >0); negatives / 0 / non-integer / NaN silently fall
+  back to defaults.
+- **Independent sub-switch** `enable_halt_buy_on_panic` controls only this
+  detector (like `enable_death_cross` for #3).  When false,
+  `getMarketRegimeStatus` skips the `loadConsecutiveLimitDownCounts` DB call
+  entirely (cost saving) and `limit_down_counts: null` on the status.
+- **DataSource adds `loadConsecutiveLimitDownCounts(asOfDate, days)`** which
+  the production impl queries via `DailyBar` group by time with
+  `change_percent <= -9.8` (matches `AShareConstraintEngine.DEFAULT_LIMIT_DOWN_PCT`
+  industry convention) + `is_suspended=false` + `is_trading_day=true`.
+  Throws are caught + return `[]` (fail-open safe HOLD, NOT throwing 503).
+- **Downstream consumers** can read `RiskAlert.symbol === 'SYSTEM:MARKET_REGIME_HALT_BUY'`
+  as a sentinel to short-circuit new BUYs (future PR-018+ work — this story
+  only writes the alert; `preTradeGuards` does NOT yet consult it).
 
 Patterns codified in US-050 that future market-level guards should follow:
 
