@@ -4070,3 +4070,31 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - "opt-in option 默认 false" 是给上线 graylog 留余地的零回归升级模板 (与 US-137 thresholds 同款模板): 既有 caller / 既有 dedupeAndSort tests 0 改动, 新行为只在显式开关下生效, 灰度期可在 CLI / 定时任务里逐 stock 启用观察.
   - dedupeAndSort 之后再 semantic 的两阶段: 第一阶段先收敛到"同 composite-PK 内部最强代表", 让 semantic 阶段对比的是"代表 vs 代表", 而不是原始多份复制. 一阶段 limit 必须给全量 (windowed.length 而非 limit), 否则 semantic 之前就被裁掉好票, 之后 cluster representative 不全.
 ---
+
+## 2026-06-21 03:18 - US-143 [PM-015] WeeklyReview /apply 接口
+- 落 POST /api/settings/weekly-review/apply (+ GET /weekly-review/applied 历史只读) — 把上周复盘邮件的某条 recommendation 落 user.risk_config.weekly_review_applied[] JSONB 数组. 与 PM-024 (US-126) ImprovementSuggestion apply 同源 idempotent 设计: 同 (week_id, recommendation_index) 二次调 409 + 含 previous snapshot, history LRU cap=50. 不另建 model — 寄居 risk_config 既有 JSONB 列 (与 notification_channels/position_limits/trailing_stop 并列, 同 US-063 namespace 范式).
+- 设计要点 / 与 PM-024 的差异:
+  - PM-024 (ImprovementSuggestion apply) 有独立 model (ImprovementSuggestion 表), cron 写表后 apply 改 status='applied'. PM-015 (WeeklyReview apply) 无外部 source ID — recommendation 是周报当时生成的 string, 表化反而冗余, 直接寄居 user JSONB 即可.
+  - service.applyRecommendation throw 三态串: 'USER_NOT_FOUND' → 404, 'ALREADY_APPLIED' (含 err.previous) → 409, 'INVALID_RECOMMENDATION_INPUT' → 400. controller 按 msg 字面分路, 与 SmtpConfig env / wechat scene_str ENUM_CONST throw 同款"业务错误用字符串 sentinel + 字段透传 cause" 范式 (不抛特殊 Error subclass, 单测 mock 简单).
+  - history 落 (week_id, recommendation_index, text<=240char, applied_at ISO, source). 下游 PM-027 (US-146) effect tracker 用 (user_id, applied_at, week_id) 反查 N 周后 PnL 变化, 评估"apply 是否真有效". source 字段 (frontend / cron / manual) 留给未来给 cron 自动 apply 留口.
+  - LRU cap=50: append 超 cap 时 drop 最旧 (FIFO). 防 user 长期使用让 risk_config JSONB 无限膨胀 (该列同时存其他 namespace, JSONB write 是整列 rewrite, 越大越慢).
+  - LRU pure helper appendAppliedRecommendation 拆出后能单测 cap=50 边界. 与 [[BlackSwan dedup buffer]] cap=200 / [[EarningsForecast dedup]] cap=100 同源"无 SQL 上限的 JSONB 累计型字段必须 cap"模式.
+  - 5 个 pure helper 全 export: parseApplyRecommendationBody (controller) + normalizeAppliedRecommendation / readWeeklyReviewAppliedFromRiskConfig / findDuplicateApplied / appendAppliedRecommendation (service). 让 mirror 单测复刻主流程不依赖 sequelize (controller / service 顶层 require User model 拽起 sequelize, 单测进程无 PG).
+- Files:
+  - backend/src/services/WeeklyReviewReportService.ts (+150 行: AppliedRecommendation 类型 + 4 helper + service 2 method)
+  - backend/src/api/controllers/SettingsController.ts (+90 行: parseApplyRecommendationBody helper + applyWeeklyReviewRecommendation / listAppliedWeeklyReviewRecommendations 2 method)
+  - backend/src/api/routes/settings.routes.ts (+60 行: 2 个 endpoint OpenAPI jsdoc + mount)
+  - backend/tests/api/settings-weekly-review-apply.test.ts (new, ~500 行, 96 assertions / 7 模块全过)
+  - ralph/prd.json (US-143.passes=true)
+- 验收:
+  - `cd backend && npx ts-node --transpile-only tests/api/settings-weekly-review-apply.test.ts` exit 0, 96 ok / 0 failed
+  - `cd backend && npx ts-node --transpile-only tests/services/weekly-review-report-service.test.ts` exit 0, 454 ok / 0 failed (回归 PM-014 等 14 个上游 story 没断)
+  - `cd backend && npx ts-node --transpile-only tests/api/improvement-suggestion-apply.test.ts` exit 0, 91 ok / 0 failed (回归 PM-024 没断)
+  - `cd backend && npx tsc --noEmit` exit 0
+- **Learnings for future iterations:**
+  - **"业务错误用字符串 sentinel + Error.cause 字段透传" 比 Error subclass 更便于单测**: service 层 throw `new Error('ALREADY_APPLIED')` + `err.previous=snapshot`, controller 按 `String(error?.message)` 字面分路. 单测 mock 直接 `throw new Error('ALREADY_APPLIED')` 不用造 class hierarchy. 与 PM-024 用 `IMPROVEMENT_STATUS.OPEN` enum 走 status 字段不同 (那里有 row 实体, 这里 throw 是更简洁的失败信号). 适用场景: service 单 method, 失败模式 ≤5 种, 不需要类型化 catch. 失败模式多 (>5) 时仍建议 Error subclass.
+  - **append-only 累计型 JSONB 字段必须 LRU cap + 拆 helper**: weekly_review_applied / blackswan_dedup_buffer / earnings_forecast_dedup 都是"用户操作一次 append 一条, 永不删". 没有 cap 早晚把单行 JSONB 列撑到 100MB+ → PG TOAST 触发 → 整列 rewrite 慢 100x. cap 50/100/200 不重要, 必须有 + 拆 pure `append(existing, cand)` helper 单测边界 (满载 / 溢出 / 空).
+  - **PR-024 + PR-015 双 apply 接口同源, 但 source 差异决定要不要 model**: ImprovementSuggestion (PM-024) 是 cron 生成 → 有 model 行 → apply 改 status. Weekly review recommendation (PM-015) 是当周邮件生成的 ephemeral string → 不该建表存所有曾推过的 recommendation. 决策树: "source 是否有持久化的 row?" 是 → 表 + status; 否 → 寄居 user JSONB.
+  - **risk_config JSONB 多 namespace 共享**: 已有 namespace = notification_channels / position_limits / trailing_stop / stop_loss_percent / take_profit_percent / weekly_review_applied (本 story 新增). 新 namespace 写法: 取整 rc → mutate rc[name] → `(user as any).risk_config = rc; user.changed('risk_config', true); await user.save()`. 必须显式 `changed('risk_config', true)` — sequelize-typescript JSONB 不会自动检测嵌套 mutate, 否则 save() 静默 noop.
+  - **mirror 单测 setTimeout(... 100ms) 兜底等 async**: T6 里 9 个 async IIFE 不 await, 用 `setTimeout(100ms)` 兜底等全跑完打统计. 与"全 await + 串行" 比是 trade-off — 串行更准但代码丑, ms-级 mock 不会卡满 100ms 所以风险低. 适合 fake service 是同步内存的场景 (本 story 的 mkSvc 全是 sync return Promise.resolve), 不适合 fake 内含 setTimeout 的场景.
+---

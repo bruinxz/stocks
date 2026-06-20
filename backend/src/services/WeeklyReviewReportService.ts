@@ -225,6 +225,130 @@ export interface AIWeeklyOpinion {
   recommendations: string[];
 }
 
+// ---------------------------------------------------------------------------
+// US-143 PM-015 — WeeklyReview /apply 接口持久化结构
+//
+// 落 user.risk_config.weekly_review_applied: AppliedRecommendation[] (LRU cap 50).
+// 与 [[ImprovementSuggestion apply]] (PM-024) 同源设计: idempotent guard +
+// snapshot 透传, 但 PM-015 没有独立 model — 直接寄居 user JSONB, 因为
+// recommendation_text 来自周报当时生成的内容 (无外部 source ID), 表化反而冗余.
+// ---------------------------------------------------------------------------
+
+/** 单条已应用的周报建议快照. */
+export interface AppliedRecommendation {
+  /** 该建议归属周 (ISO week id, 与 PrevWeekRange.week_id 一致). */
+  week_id: string;
+  /** 在该周 ai_opinion.recommendations 数组中的下标 (0-based). */
+  recommendation_index: number;
+  /** 原文 (截断到 240 char 防 JSONB 爆). */
+  text: string;
+  /** 应用时间 ISO 字符串 (UTC). */
+  applied_at: string;
+  /** 来源标识 (frontend / cron / manual) — 透传 PM-027 effect tracker 用. */
+  source: string;
+}
+
+/** AppliedRecommendation LRU 上限 (防 risk_config JSONB 无限增长). */
+export const APPLIED_RECOMMENDATION_CAP = 50;
+
+/** AppliedRecommendation.text 截断上限 (中文 240 字 ≈ 720 bytes UTF-8). */
+export const APPLIED_RECOMMENDATION_TEXT_MAX = 240;
+
+/** AppliedRecommendation.source 默认值. */
+export const APPLIED_RECOMMENDATION_DEFAULT_SOURCE = 'manual';
+
+/**
+ * 纯函数: 把任意 input 标准化为 AppliedRecommendation, 非法返 null.
+ * - week_id 必须非空 string
+ * - recommendation_index 必须 finite + 非负整数 (浮点截整, 负数 reject)
+ * - text 缺失允许 (落空串, 让 PM-027 effect tracker 仍可绑定)
+ * - applied_at 缺失自动补 ISO now (但通常 caller 已传入)
+ * 单独 export 给单测.
+ */
+export function normalizeAppliedRecommendation(input: {
+  week_id?: unknown;
+  recommendation_index?: unknown;
+  text?: unknown;
+  source?: unknown;
+  applied_at?: unknown;
+}): AppliedRecommendation | null {
+  if (!input || typeof input !== 'object') return null;
+  const weekId = typeof input.week_id === 'string' ? input.week_id.trim() : '';
+  if (weekId.length === 0 || weekId.length > 32) return null;
+  const idxRaw = Number(input.recommendation_index);
+  if (!Number.isFinite(idxRaw) || idxRaw < 0) return null;
+  const idx = Math.floor(idxRaw);
+  if (idx > 999) return null; // 防恶意构造大下标
+  let text = typeof input.text === 'string' ? input.text : '';
+  if (text.length > APPLIED_RECOMMENDATION_TEXT_MAX) {
+    text = text.slice(0, APPLIED_RECOMMENDATION_TEXT_MAX);
+  }
+  const source =
+    typeof input.source === 'string' && input.source.trim().length > 0
+      ? input.source.trim().slice(0, 32)
+      : APPLIED_RECOMMENDATION_DEFAULT_SOURCE;
+  const appliedAt =
+    typeof input.applied_at === 'string' && input.applied_at.length > 0
+      ? input.applied_at
+      : new Date().toISOString(); // caller (service) 通常显式传入; 缺省补 now
+  return {
+    week_id: weekId,
+    recommendation_index: idx,
+    text,
+    applied_at: appliedAt,
+    source,
+  };
+}
+
+/**
+ * 纯函数: 从 risk_config blob 读 weekly_review_applied 数组, 静默归一化非法项.
+ * 任何 throw / 非数组 / 元素非法 → 一致返 []. 单独 export 给单测.
+ */
+export function readWeeklyReviewAppliedFromRiskConfig(rc: unknown): AppliedRecommendation[] {
+  if (!rc || typeof rc !== 'object') return [];
+  const raw = (rc as { weekly_review_applied?: unknown }).weekly_review_applied;
+  if (!Array.isArray(raw)) return [];
+  const out: AppliedRecommendation[] = [];
+  for (const item of raw) {
+    const normalized = normalizeAppliedRecommendation(item as any);
+    if (normalized) out.push(normalized);
+  }
+  return out;
+}
+
+/**
+ * 纯函数: 在 existing 中找与 candidate 同 (week_id, recommendation_index) 的项.
+ * 单独 export 给单测.
+ */
+export function findDuplicateApplied(
+  existing: AppliedRecommendation[],
+  candidate: AppliedRecommendation
+): AppliedRecommendation | null {
+  for (const item of existing) {
+    if (
+      item.week_id === candidate.week_id &&
+      item.recommendation_index === candidate.recommendation_index
+    ) {
+      return item;
+    }
+  }
+  return null;
+}
+
+/**
+ * 纯函数: 把 candidate append 到 existing 尾部, 超过 APPLIED_RECOMMENDATION_CAP
+ * 时 drop 最旧 (FIFO LRU). caller 必须保证 candidate 已通过 findDuplicateApplied
+ * 去重 (本函数不再去重). 单独 export 给单测.
+ */
+export function appendAppliedRecommendation(
+  existing: AppliedRecommendation[],
+  candidate: AppliedRecommendation
+): AppliedRecommendation[] {
+  const next = [...existing, candidate];
+  if (next.length <= APPLIED_RECOMMENDATION_CAP) return next;
+  return next.slice(next.length - APPLIED_RECOMMENDATION_CAP);
+}
+
 export interface WeeklyReviewPayload {
   user_id: number;
   username: string;
@@ -2375,6 +2499,71 @@ export class WeeklyReviewReportService {
       email_response: sendRes.data,
       error: sendRes.message || '邮件发送失败',
     };
+  }
+
+  /**
+   * US-143 [PM-015] WeeklyReview /apply 接口 — 把一条 recommendation 落到 user
+   * 的 `risk_config.weekly_review_applied[]` 数组（与 `notification_channels` 共享
+   * 同一 JSONB 列, 复用 US-063 引入的 risk_config namespace 约定）.
+   *
+   * 设计要点 (与 [[ImprovementSuggestion apply]] PM-024 设计对齐):
+   *   - **idempotent guard**: 同 (week_id, recommendation_text) 视为重复 apply →
+   *     409 (上层 controller 包装), service 层 throw `Error('ALREADY_APPLIED')`
+   *     + cause 字段 = 之前 snapshot. (与 markAsRead boolean 不同, apply 有
+   *     "上线 strategy_config" 副作用, 不能重复触发).
+   *   - **LRU cap = 50**: 数组超过 50 条时 drop 最旧, 防 JSONB 无限增长.
+   *   - **结构化 payload**: 落盘 `{week_id, recommendation_index, text, applied_at, source}`,
+   *     下游 PM-027 effect tracker (US-146) 用 (user_id, applied_at, week_id)
+   *     反查后续 N 周 PnL 变化, 评估 apply 是否真有效.
+   *   - **fail-safe**: User 不存在 → throw 'USER_NOT_FOUND' (上层 404).
+   *   - **静默 normalize**: 越界 / 非整数 / 文本超长 → 截断而非 4xx.
+   */
+  async applyRecommendation(
+    user_id: number,
+    input: { week_id: string; recommendation_index: number; text?: string; source?: string }
+  ): Promise<{
+    applied: AppliedRecommendation;
+    history: AppliedRecommendation[];
+  }> {
+    const user = await User.findByPk(user_id);
+    if (!user) throw new Error('USER_NOT_FOUND');
+    const rc =
+      (user as any).risk_config && typeof (user as any).risk_config === 'object'
+        ? { ...(user as any).risk_config }
+        : {};
+    const existing = readWeeklyReviewAppliedFromRiskConfig(rc);
+    const candidate = normalizeAppliedRecommendation({
+      week_id: input.week_id,
+      recommendation_index: input.recommendation_index,
+      text: input.text,
+      source: input.source,
+      applied_at: new Date().toISOString(),
+    });
+    if (!candidate) throw new Error('INVALID_RECOMMENDATION_INPUT');
+    const dup = findDuplicateApplied(existing, candidate);
+    if (dup) {
+      const err: any = new Error('ALREADY_APPLIED');
+      err.previous = dup;
+      throw err;
+    }
+    const next = appendAppliedRecommendation(existing, candidate);
+    rc.weekly_review_applied = next;
+    (user as any).risk_config = rc;
+    user.changed('risk_config', true);
+    await user.save();
+    return { applied: candidate, history: next };
+  }
+
+  /**
+   * GET /api/settings/weekly-review/applied 用 — 返回 user 已应用的 recommendation 历史
+   * (PM-027 effect tracker 也会用同一只读接口). 不 throw — 用户不存在直接返空数组,
+   * 避免给 listing 接口加 404 噪声.
+   */
+  async listAppliedRecommendations(user_id: number): Promise<AppliedRecommendation[]> {
+    const user = await User.findByPk(user_id);
+    if (!user) return [];
+    const rc = (user as any).risk_config;
+    return readWeeklyReviewAppliedFromRiskConfig(rc);
   }
 
   /**

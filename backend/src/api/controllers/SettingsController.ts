@@ -10,6 +10,34 @@ import { realtimeAlertDispatcher } from '../../services/RealtimeAlertDispatcher'
 import { logger } from '../../utils/logger';
 
 /**
+ * US-143 [PM-015] — POST /api/settings/weekly-review/apply body parser.
+ *
+ * 必填: week_id (string), recommendation_index (number, >=0).
+ * 可选: text (string), source (string).
+ * 单独 export 给单测 (controller 顶层 require 拽 sequelize, mirror-style 单测复刻
+ * 主流程时直接用此 helper, 与 [[ImprovementSuggestionController parseSuggestionId]]
+ * PM-024 同款 "可单测 pure helper export" 范式).
+ */
+export function parseApplyRecommendationBody(body: unknown): {
+  week_id: string;
+  recommendation_index: number;
+  text?: string;
+  source?: string;
+} | null {
+  if (!body || typeof body !== 'object') return null;
+  const b = body as Record<string, unknown>;
+  const weekId = typeof b.week_id === 'string' ? b.week_id.trim() : '';
+  if (weekId.length === 0 || weekId.length > 32) return null;
+  const idxRaw = Number(b.recommendation_index);
+  if (!Number.isFinite(idxRaw) || idxRaw < 0) return null;
+  const idx = Math.floor(idxRaw);
+  if (idx > 999) return null;
+  const text = typeof b.text === 'string' ? b.text : undefined;
+  const source = typeof b.source === 'string' ? b.source : undefined;
+  return { week_id: weekId, recommendation_index: idx, text, source };
+}
+
+/**
  * US-080 — 推送渠道 (push-channels) 矩阵视图。
  *
  * 把 NotificationChannelsConfig 的 4 个 channel 拍平成 4 × 4 矩阵：
@@ -498,6 +526,88 @@ export class SettingsController {
     } catch (error: any) {
       logger.error('手动触发周报失败:', error);
       res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * POST /api/settings/weekly-review/apply (US-143 [PM-015])
+   *
+   * 把上周复盘邮件中的某条 recommendation 落到 user 的
+   * `risk_config.weekly_review_applied[]` JSONB 数组. 该数组下游被 PM-027 (US-146)
+   * effect tracker 消费, 用于回看"被采纳的建议" N 周后是否真改善 PnL.
+   *
+   * Body: { week_id: string, recommendation_index: number, text?: string, source?: string }
+   *
+   * 响应:
+   *   200 { success: true, data: { applied, history } }
+   *   400 { success: false, message: '参数非法' }              — week_id / index 缺失或越界
+   *   404 { success: false, message: '用户不存在' }            — User.findByPk null (理论上不该到)
+   *   409 { success: false, message: '该建议已 apply 过',
+   *          data: { previous } }                              — idempotent guard (同 week+index)
+   *   500 { success: false, message }                          — DB throw
+   *
+   * 与 [[ImprovementSuggestion apply]] (PM-024) 同源 idempotent 设计 — apply 有
+   * "落 strategy_config" 副作用, 不能重复触发, 必须 409 而非 200 上重复.
+   */
+  async applyWeeklyReviewRecommendation(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user?.id;
+      if (!user_id) {
+        return res.status(401).json({ success: false, message: '未登录' });
+      }
+      const body = req.body || {};
+      const parsed = parseApplyRecommendationBody(body);
+      if (!parsed) {
+        return res
+          .status(400)
+          .json({ success: false, message: '参数非法 (week_id / recommendation_index 必填)' });
+      }
+      const result = await weeklyReviewReportService.applyRecommendation(user_id, parsed);
+      return res.json({
+        success: true,
+        data: { applied: result.applied, history: result.history },
+        message: '建议已应用',
+      });
+    } catch (error: any) {
+      const msg = String(error?.message || '');
+      if (msg === 'USER_NOT_FOUND') {
+        return res.status(404).json({ success: false, message: '用户不存在' });
+      }
+      if (msg === 'ALREADY_APPLIED') {
+        return res.status(409).json({
+          success: false,
+          message: '该建议已 apply 过, 不可重复触发',
+          data: { previous: (error as any).previous || null },
+        });
+      }
+      if (msg === 'INVALID_RECOMMENDATION_INPUT') {
+        return res.status(400).json({ success: false, message: '参数非法' });
+      }
+      logger.error('apply 周报建议失败:', error);
+      return res.status(500).json({ success: false, message: error?.message || 'apply 失败' });
+    }
+  }
+
+  /**
+   * GET /api/settings/weekly-review/applied (US-143 [PM-015])
+   * 返回当前用户已 apply 过的 recommendation 历史 (按 applied_at 升序, LRU cap=50).
+   * 前端用于 SettingsWorkspace "已采纳建议" 列表展示, 防止重复点击 + 留痕.
+   */
+  async listAppliedWeeklyReviewRecommendations(
+    req: Request,
+    res: Response,
+    _next: NextFunction
+  ) {
+    try {
+      const user_id = (req as any).user?.id;
+      if (!user_id) {
+        return res.status(401).json({ success: false, message: '未登录' });
+      }
+      const history = await weeklyReviewReportService.listAppliedRecommendations(user_id);
+      return res.json({ success: true, data: { history } });
+    } catch (error: any) {
+      logger.error('获取已 apply 建议历史失败:', error);
+      return res.status(500).json({ success: false, message: error?.message || '获取失败' });
     }
   }
 

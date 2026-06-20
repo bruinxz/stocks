@@ -2197,8 +2197,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 143,
-      "passes": false,
-      "notes": "依赖: PM-014"
+      "passes": true,
+      "notes": "依赖: PM-014 | done: POST /api/settings/weekly-review/apply + GET /applied + risk_config.weekly_review_applied[] (LRU cap 50, idempotent 409 guard). 96 unit tests pass."
     },
     {
       "id": "US-144",
