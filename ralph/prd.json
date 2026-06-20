@@ -1622,8 +1622,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 105,
-      "passes": false,
-      "notes": "依赖: PR-013"
+      "passes": true,
+      "notes": "DONE 2026/06/20: 实现 BlackSwanImprovementSuggestorService (~920 行 pure engine + DI seam + production lazy-require). 4 类短板归类 (detection / response / execution / risk_control) + 模板建议生成 — 每类 ≤1 条 suggestion (避免噪声), top_findings 按 priority 取 ≤5. 阈值常量 DETECTION_LOW_ALERT_THRESHOLD=1 / RESPONSE_HIGH_ALERT_THRESHOLD=2 / EXECUTION_PNL_GAP_THRESHOLD=0.03 / RISK_CONTROL_DRAWDOWN_THRESHOLD=0.1 全 export. 与 [[多段 JSONB 报告分阶段 UPSERT]] 同款 — UPSERT payload 只列 improvement_suggestions + metadata + status + reason + generated_at, 其它段 (event_summary / counterfactual_baselines / event_timeline) 不出现在 payload 中, sequelize 不擦它们. 4 段全填后由本 service 升级 status=ok (decidePostmortemStatus). CRON BLACK_SWAN_IMPROVEMENT (43,13 * * * *) 与 BLACK_SWAN_TIMELINE (33,3) 错峰 10min. SchedulerService dispatch 加 BLACK_SWAN_IMPROVEMENT 分支调 runBlackSwanImprovementSuggestorService + getProductionSuggestorRunner. fail-OPEN 4 层 — engine throw / loadCandidates throw / updateReport throw / 单事件 detector throw 均累计不抛. 单测 tests/services/black-swan-improvement-suggestor-service.test.ts 208 ok / 0 failed (12 模块: 常量冻结 / 基础 helpers / 4 detector 边界 + 命中 + priority 公式 / sort + cap / engine 合并 + detector throw fail-OPEN / appendSectionFilled + decidePostmortemStatus / e2e 10 路径 / PRODUCTION smoke / META-GUARD cron registry + SchedulerService dispatch + service jsdoc). AC 主验收 — buildImprovementSuggestions 4 detector 全跑 (sources_used=[event_summary, counterfactual_baselines, event_timeline]); detection/response/execution/risk_control 各自命中 case 都返非 null + priority 公式精确等于. tsc 0 err / lint baseline-diff 0 new err."
     },
     {
       "id": "US-106",

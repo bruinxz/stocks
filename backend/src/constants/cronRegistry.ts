@@ -525,6 +525,27 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '每 30min 扫 partial postmortem → 拉前 N 天 RiskAlert/Watchdog 触发排时间轴 → UPDATE event_timeline 段 (PR-013 已填 event_summary, PR-014 已填 counterfactual_baselines; PR-016 后续填 improvement_suggestions)',
   },
+  // US-105 PR-016 — 每 30min 扫最近 24h status='partial' 且 sections_filled 不含
+  // 'improvement_suggestions' 的 BlackSwanPostmortemReport, 对每行从已填段
+  // (event_summary + counterfactual_baselines + event_timeline) 启发式归类
+  // 4 类短板 (detection/response/execution/risk_control), 套模板生成建议, UPDATE
+  // 仅覆盖 improvement_suggestions 段 + metadata.sections_filled + status (其它
+  // JSONB 段不出现在 payload, sequelize 不动它们; 保留 PR-013/014/015 已填的
+  // event_summary/counterfactual_baselines/event_timeline, 与 [[多段 JSONB 报告
+  // 分阶段 UPSERT]] 同款). 与 BLACK_SWAN_TIMELINE (33,3) 错峰 10min (43,13):
+  // PR-015 先填 timeline → 本 service 再补 improvement_suggestions, 让 cron 跑
+  // 顺序与段间依赖匹配 (3,33 detector → 13,43 postmortem → 23,53 baseline →
+  // 33,3 timeline → 43,13 improvement). 4 段全填后由本 service 升 status='ok'.
+  // fail-OPEN: loadCandidates throw → success=false + error; 单事件 engine /
+  // upsert throw → skipped/failed 累计但不抛.
+  {
+    type: 'BLACK_SWAN_IMPROVEMENT',
+    category: 'risk_control',
+    owner: 'risk',
+    recommendedCron: '43,13 * * * *',
+    description:
+      '每 30min 扫 partial postmortem → 4 类短板归类 + 模板建议生成 → UPDATE improvement_suggestions 段 (PR-013/014/015 已填前 3 段; 本段为 4 段最后一段, 通常升级 status=ok)',
+  },
   // US-095 OPS-006 — 每 5min 扫 webhook_fallback_log status='pending' AND
   // next_retry_at <= NOW(), 透传 sender 重投递; 成功 → 'sent', 失败 attempts+=1
   // + 指数 backoff; attempts >= max_attempts → 'dead'. 主流程 (FeishuBotWebhookService)

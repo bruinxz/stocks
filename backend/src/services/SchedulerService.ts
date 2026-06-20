@@ -5198,6 +5198,75 @@ class SchedulerService {
         } else {
           logger.warn(`[BLACK_SWAN_TIMELINE] FAIL ${tlResult.error || 'unknown_error'}`);
         }
+      } else if (task.type === 'BLACK_SWAN_IMPROVEMENT') {
+        // US-105 PR-016 — 每 30min 扫 partial postmortem → 从已填段
+        // (event_summary + counterfactual_baselines + event_timeline) 启发式
+        // 归类 4 类短板 (detection/response/execution/risk_control) → 套模板生成
+        // 建议 → UPDATE improvement_suggestions 段 (PR-013/014/015 已填前 3 段).
+        // 与 BLACK_SWAN_TIMELINE (33,3) 错峰 10min (43,13): PR-015 先填 timeline,
+        // 本 cron 再补 improvement_suggestions. UNIQUE(black_swan_event_id) 让
+        // 重跑只 UPDATE 同行; payload 仅含本段 (其它 JSONB 段不出现, sequelize
+        // 不动它们) — 与 [[多段 JSONB 报告分阶段 UPSERT]] 同款.
+        // dry_run=true → 仅返预演 candidates_total. event_id (debug) → 仅处理
+        // 单事件 id. lookback_hours 默认 24 (扫 partial postmortem).
+        // top_findings_cap 默认 5.
+        // fail-OPEN: loadCandidates throw → success=false + error +
+        // failed_items=1 warn 不抛; 单事件 engine / upsert throw →
+        // skipped/failed 累计但不抛.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          runBlackSwanImprovementSuggestorService,
+          getProductionSuggestorRunner,
+        } = require('./BlackSwanImprovementSuggestorService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const dryRunImpr = parameters.dry_run === true || parameters.dryRun === true;
+        const eventIdImpr = parameters.event_id || parameters.eventId;
+        const lookbackHoursImpr = parameters.lookback_hours || parameters.lookbackHours;
+        const topFindingsCap = parameters.top_findings_cap || parameters.topFindingsCap;
+        const imprResult = await runBlackSwanImprovementSuggestorService(
+          getProductionSuggestorRunner(),
+          {
+            dry_run: dryRunImpr,
+            event_id: eventIdImpr ? Number(eventIdImpr) : undefined,
+            lookback_hours: Number.isFinite(Number(lookbackHoursImpr))
+              ? Number(lookbackHoursImpr)
+              : undefined,
+            top_findings_cap: Number.isFinite(Number(topFindingsCap))
+              ? Number(topFindingsCap)
+              : undefined,
+            metadata: {
+              cron_run_id: executionLog?.id ?? null,
+              service_version: 'PR-016/v1',
+            },
+          }
+        );
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: imprResult.candidates_total,
+          completed_items: imprResult.reports_updated,
+          failed_items: imprResult.success ? imprResult.reports_failed : 1,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: imprResult.error || null,
+          result_summary: {
+            scenario: 'black_swan_improvement',
+            dry_run: imprResult.dry_run,
+            candidates_total: imprResult.candidates_total,
+            reports_updated: imprResult.reports_updated,
+            reports_failed: imprResult.reports_failed,
+            reports_skipped: imprResult.reports_skipped,
+            generated_at_iso: imprResult.generated_at_iso,
+            error: imprResult.error || null,
+          },
+        });
+        if (imprResult.success) {
+          logger.info(
+            `[BLACK_SWAN_IMPROVEMENT] candidates=${imprResult.candidates_total} updated=${imprResult.reports_updated} ` +
+              `failed=${imprResult.reports_failed} skipped=${imprResult.reports_skipped}` +
+              (imprResult.dry_run ? ' (dry_run)' : '')
+          );
+        } else {
+          logger.warn(`[BLACK_SWAN_IMPROVEMENT] FAIL ${imprResult.error || 'unknown_error'}`);
+        }
       } else if (task.type === 'LIVE_RECONCILIATION_GUARD') {
         // BETA-2 (2026-06-18, audit S-12): 对账主动告警 cron — 阈值评估 →
         // RiskAlert HIGH/MEDIUM → RealtimeAlertDispatcher 飞书推送。
