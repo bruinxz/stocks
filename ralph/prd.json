@@ -1350,8 +1350,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 87,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DONE 2026/06/20: WeeklyReviewPayload 加 strategy_contribution: StrategyContributionRow[] 字段 (与 industry_contribution 对偶); pure helper aggregateStrategyContribution + strategyLabel 全 export. trade 表无 strategy_key 列, 通过 DataSource 新 method loadTradeStrategyMap(portfolio_id, trade_ids) 反查 AIInvestmentSignal.metadata.paper_trading_by_portfolio[pid].trade_id / sell_trade_id → signal.source_type 推断策略归属, 缺映射走 '__MANUAL__' (与 PaperTradingAttributionService 同款语义). HTML 邮件加 🎯 各策略贡献 4 列表 (策略/PnL/笔数/胜率), plain text fallback 同步加 策略贡献 section. PRODUCTION DataSource 实现按 created_at ASC 首个 signal 优先 (与 PaperTradingAttributionService accountedSellTradeIds 去重对偶) + try/catch fail-OPEN (lookup throw → 仅 logger.warn 不阻塞主流程 → 全 SELL 走 __MANUAL__). 单测 279 ok / 0 failed (新增: testStrategyLabel 8 case / testAggregateStrategyContribution 含 BUY 忽略+缺映射+排序+tie-break+空入+胜率 16 assertion / testBuildWeeklyReviewEmail 加 7 assertion 守 HTML+text 含策略 section / testSendStrategyContributionPropagates e2e fake DataSource 验 trade→strategy 端到端流转 / testSendStrategyLookupFailureFallsBackManual 验 throw 不阻塞且 fallback 到 __MANUAL__). tsc 0 err / eslint 0 new err (改 1 文件 prettier 已修)."
     },
     {
       "id": "US-088",

@@ -53,6 +53,8 @@ import {
   computePrevWeekRange,
   computeWeeklyPnL,
   aggregateIndustryContribution,
+  aggregateStrategyContribution,
+  strategyLabel,
   aggregateSymbolContribution,
   buildEquityCurveSparkline,
   buildHeuristicWeeklyOpinion,
@@ -61,6 +63,8 @@ import {
   formatMoney,
   WeeklyReviewPayload,
   IndustryContributionRow,
+  StrategyContributionRow,
+  StrategyTradeRow,
   SymbolContributionRow,
   WeeklyEquityPoint,
   UpcomingEventRow,
@@ -119,6 +123,8 @@ interface FakeState {
   portfolios?: Record<number, any | null>;
   snapshots?: Record<number, WeeklyEquityPoint[]>;
   trades?: Record<number, any[]>;
+  /** US-087 PM-011 — portfolio_id → Map<trade_id, strategy_key> */
+  tradeStrategyMap?: Record<number, Map<number, string>>;
   stockMeta?: Map<string, { name: string; industry: string | null }>;
   upcomingEvents?: UpcomingEventRow[];
   aiOpinion?: AIWeeklyOpinion;
@@ -129,6 +135,7 @@ interface FakeState {
     loadPortfolio: boolean;
     loadWeeklySnapshots: boolean;
     loadWeeklyTrades: boolean;
+    loadTradeStrategyMap: boolean;
     loadStockMetadata: boolean;
     loadUpcomingEvents: boolean;
     generateAIWeeklyOpinion: boolean;
@@ -158,6 +165,10 @@ function makeFakeDataSource(state: FakeState): WeeklyReviewDataSource {
     async loadWeeklyTrades(portfolio_id, _start, _end) {
       if (state.throwOn?.loadWeeklyTrades) throw new Error('FAKE loadWeeklyTrades');
       return (state.trades?.[portfolio_id] || []) as any;
+    },
+    async loadTradeStrategyMap(portfolio_id, _trade_ids) {
+      if (state.throwOn?.loadTradeStrategyMap) throw new Error('FAKE loadTradeStrategyMap');
+      return state.tradeStrategyMap?.[portfolio_id] || new Map<number, string>();
     },
     async loadStockMetadata(_symbols) {
       if (state.throwOn?.loadStockMetadata) throw new Error('FAKE loadStockMetadata');
@@ -378,6 +389,112 @@ function testAggregateSymbolContribution(): void {
   assertEqual('cap top', cap[0].symbol, '600519.SH');
 }
 
+// ---------------------------------------------------------------------------
+// US-087 PM-011 — strategy_contribution
+// ---------------------------------------------------------------------------
+
+function testStrategyLabel(): void {
+  // 已知枚举 → 中文
+  assertEqual('quant 标签', strategyLabel('quant_recommendation'), '量化推荐');
+  assertEqual('tradingagents 标签', strategyLabel('tradingagents'), 'TradingAgents');
+  assertEqual('daily_screener 标签', strategyLabel('daily_screener'), 'AI每日优选');
+  assertEqual('manual_analysis 标签', strategyLabel('manual_analysis'), '人工分析');
+  assertEqual('analysis_engine 标签', strategyLabel('analysis_engine'), '多维分析引擎');
+  // sentinel 默认值
+  assertEqual('__MANUAL__ 标签', strategyLabel('__MANUAL__'), '手动交易');
+  assertEqual('__UNKNOWN__ 标签', strategyLabel('__UNKNOWN__'), '未标注策略');
+  // 未知 → 落 fallback (返回原值, 与 sourceTypeLabel 同款语义)
+  assertEqual('未知 source 透传', strategyLabel('future_source'), 'future_source');
+  // 空 → 默认 兜底
+  assertEqual('空字符串', strategyLabel(''), '未标注策略');
+}
+
+function testAggregateStrategyContribution(): void {
+  const trades: StrategyTradeRow[] = [
+    // 量化推荐: 2 笔, +2000 / +500 → 2 胜 0 负
+    {
+      symbol: '600519.SH',
+      direction: 'SELL',
+      realized_pnl: 2000,
+      strategy_key: 'quant_recommendation',
+    },
+    {
+      symbol: '000858.SZ',
+      direction: 'SELL',
+      realized_pnl: 500,
+      strategy_key: 'quant_recommendation',
+    },
+    // 量化推荐 BUY → 忽略
+    {
+      symbol: '600519.SH',
+      direction: 'BUY',
+      realized_pnl: 0,
+      strategy_key: 'quant_recommendation',
+    },
+    // analysis_engine: 1 笔 -800 → 0 胜 1 负
+    {
+      symbol: '000725.SZ',
+      direction: 'SELL',
+      realized_pnl: -800,
+      strategy_key: 'analysis_engine',
+    },
+    // 缺 strategy_key → '__MANUAL__'
+    {
+      symbol: '002475.SZ',
+      direction: 'SELL',
+      realized_pnl: 100,
+      strategy_key: '',
+    },
+    // 重复 symbol 同 strategy → dedup 但 trade_count 累加
+    {
+      symbol: '600519.SH',
+      direction: 'SELL',
+      realized_pnl: 300,
+      strategy_key: 'quant_recommendation',
+    },
+  ];
+  const result = aggregateStrategyContribution(trades);
+
+  assertEqual('strategy bucket count', result.length, 3);
+  // 排序: 量化 (+2800) > __MANUAL__ (+100) > analysis_engine (-800)
+  assertEqual('top strategy_key', result[0].strategy_key, 'quant_recommendation');
+  assertEqual('top strategy_label', result[0].strategy_label, '量化推荐');
+  assertEqual('top realized_pnl', result[0].realized_pnl, 2800);
+  assertEqual('top trade_count', result[0].trade_count, 3);
+  assertEqual('top win_count', result[0].win_count, 3);
+  assertEqual('top loss_count', result[0].loss_count, 0);
+  assert(
+    'top symbols 含 600519/000858 两个 (符号去重)',
+    result[0].symbols.length === 2 &&
+      result[0].symbols.includes('600519.SH') &&
+      result[0].symbols.includes('000858.SZ')
+  );
+
+  assertEqual('second strategy', result[1].strategy_key, '__MANUAL__');
+  assertEqual('second label', result[1].strategy_label, '手动交易');
+  assertEqual('second pnl', result[1].realized_pnl, 100);
+  assertEqual('second win_count', result[1].win_count, 1);
+  assertEqual('second loss_count', result[1].loss_count, 0);
+
+  assertEqual('third strategy', result[2].strategy_key, 'analysis_engine');
+  assertEqual('third label', result[2].strategy_label, '多维分析引擎');
+  assertEqual('third pnl', result[2].realized_pnl, -800);
+  assertEqual('third win_count', result[2].win_count, 0);
+  assertEqual('third loss_count', result[2].loss_count, 1);
+
+  // 空入
+  assertEqual('empty input', aggregateStrategyContribution([]).length, 0);
+
+  // tie-break: 同 realized_pnl 按 strategy_key 字母升序
+  const tieRows: StrategyTradeRow[] = [
+    { symbol: 'A', direction: 'SELL', realized_pnl: 100, strategy_key: 'zzz' },
+    { symbol: 'B', direction: 'SELL', realized_pnl: 100, strategy_key: 'aaa' },
+  ];
+  const tie = aggregateStrategyContribution(tieRows);
+  assertEqual('tie first', tie[0].strategy_key, 'aaa');
+  assertEqual('tie second', tie[1].strategy_key, 'zzz');
+}
+
 function testBuildEquityCurveSparkline(): void {
   // empty / single → ''
   assertEqual('empty sparkline', buildEquityCurveSparkline([]), '');
@@ -524,6 +641,26 @@ function testBuildWeeklyReviewEmail(): void {
       { industry: '白酒', realized_pnl: 3000, trade_count: 2, symbols: ['600519.SH'] },
       { industry: '__UNKNOWN__', realized_pnl: -500, trade_count: 1, symbols: ['UNK.X'] },
     ],
+    strategy_contribution: [
+      {
+        strategy_key: 'quant_recommendation',
+        strategy_label: '量化推荐',
+        realized_pnl: 3000,
+        trade_count: 2,
+        symbols: ['600519.SH'],
+        win_count: 2,
+        loss_count: 0,
+      },
+      {
+        strategy_key: '__MANUAL__',
+        strategy_label: '手动交易',
+        realized_pnl: -500,
+        trade_count: 1,
+        symbols: ['UNK.X'],
+        win_count: 0,
+        loss_count: 1,
+      },
+    ],
     top_winners: [
       { symbol: '600519.SH', name: '茅台', industry: '白酒', realized_pnl: 3000, trade_count: 1 },
     ],
@@ -562,6 +699,15 @@ function testBuildWeeklyReviewEmail(): void {
   assert('html 含 headline', mail.html.includes('跑赢'));
   assert('text plain fallback 含 主要数据', !!mail.text && mail.text.includes('lym'));
   assert('text 含 PnL line', !!mail.text && mail.text.includes('+5,000.00'));
+  // US-087 PM-011 — strategy 维度渲染
+  assert('html 含 各策略贡献 section header', mail.html.includes('各策略贡献'));
+  assert('html 含 量化推荐 label', mail.html.includes('量化推荐'));
+  assert('html 含 手动交易 label (来自 __MANUAL__)', mail.html.includes('手动交易'));
+  assert('html 含 胜率 列头', mail.html.includes('胜率'));
+  assert('html 含 100% 胜率 (quant 2 胜 0 负)', mail.html.includes('100%'));
+  assert('text 含 策略贡献 section', !!mail.text && mail.text.includes('策略贡献'));
+  assert('text 含 量化推荐 line', !!mail.text && mail.text.includes('量化推荐'));
+  assert('text 含 手动交易 line', !!mail.text && mail.text.includes('手动交易'));
 }
 
 function testFormatMoney(): void {
@@ -947,6 +1093,80 @@ async function testSendDryRun(): Promise<void> {
   assertEqual('dry_run pnl pct', r.per_user[0].payload!.pnl.pnl_pct, 2);
   // dry_run 不调 sendEmail
   assertEqual('dry_run sendEmail not called', state.sendEmailCalls!.length, 0);
+  // US-087 PM-011 — payload.strategy_contribution 必然存在 (即便为空)
+  assert(
+    'dry_run payload 含 strategy_contribution 字段',
+    Array.isArray(r.per_user[0].payload!.strategy_contribution)
+  );
+}
+
+// ---------------------------------------------------------------------------
+// US-087 PM-011 — sendForUser strategy lookup e2e
+// ---------------------------------------------------------------------------
+async function testSendStrategyContributionPropagates(): Promise<void> {
+  // 模拟: portfolio 100 内 trade 11/12/13, 其中 11 → quant_recommendation,
+  // 12 → analysis_engine, 13 无映射 (手动) → '__MANUAL__'.
+  const tradeStrategyMap = new Map<number, string>([
+    [11, 'quant_recommendation'],
+    [12, 'analysis_engine'],
+  ]);
+  const state: FakeState = {
+    users: [eligibleUser(1, 'lym')],
+    portfolios: { 1: { portfolio: { id: 100 }, positions: [] } },
+    snapshots: {
+      100: [
+        { date: '2026-06-01', total_value: 100000 },
+        { date: '2026-06-07', total_value: 103000 },
+      ],
+    },
+    trades: {
+      100: [
+        { id: 11, symbol: '600519.SH', name: '茅台', direction: 'SELL', realized_pnl: 2000 },
+        { id: 12, symbol: '000725.SZ', name: '京东方A', direction: 'SELL', realized_pnl: -500 },
+        { id: 13, symbol: '002475.SZ', name: '立讯精密', direction: 'SELL', realized_pnl: 200 },
+        // BUY 永远不入策略聚合
+        { id: 14, symbol: '600519.SH', name: '茅台', direction: 'BUY', realized_pnl: 0 },
+      ],
+    },
+    tradeStrategyMap: { 100: tradeStrategyMap },
+  };
+  const svc = new WeeklyReviewReportService(makeFakeDataSource(state));
+  const r = await svc.sendWeeklyReviewReports({ reference_date: '2026-06-08', dry_run: true });
+  const payload = r.per_user[0].payload!;
+  const strat = payload.strategy_contribution;
+  assert('3 个策略桶', strat.length === 3);
+  // 排序: 量化 (+2000) > __MANUAL__ (+200) > analysis_engine (-500)
+  assertEqual('top strategy', strat[0].strategy_key, 'quant_recommendation');
+  assertEqual('top strategy label', strat[0].strategy_label, '量化推荐');
+  assertEqual('top strategy pnl', strat[0].realized_pnl, 2000);
+  assertEqual('top strategy win=1', strat[0].win_count, 1);
+  assertEqual('second strategy', strat[1].strategy_key, '__MANUAL__');
+  assertEqual('second strategy pnl', strat[1].realized_pnl, 200);
+  assertEqual('third strategy', strat[2].strategy_key, 'analysis_engine');
+  assertEqual('third strategy pnl', strat[2].realized_pnl, -500);
+  assertEqual('third strategy loss=1', strat[2].loss_count, 1);
+}
+
+async function testSendStrategyLookupFailureFallsBackManual(): Promise<void> {
+  // loadTradeStrategyMap throw → 不阻塞主流程, 所有 SELL trade 走 '__MANUAL__'
+  const state: FakeState = {
+    users: [eligibleUser(1, 'lym')],
+    portfolios: { 1: { portfolio: { id: 100 }, positions: [] } },
+    snapshots: { 100: [{ date: '2026-06-01', total_value: 100000 }] },
+    trades: {
+      100: [{ id: 11, symbol: '600519.SH', name: '茅台', direction: 'SELL', realized_pnl: 100 }],
+    },
+    throwOn: { loadTradeStrategyMap: true },
+  };
+  const svc = new WeeklyReviewReportService(makeFakeDataSource(state));
+  const r = await svc.sendWeeklyReviewReports({ reference_date: '2026-06-08', dry_run: true });
+  // 主流程不挂
+  assertEqual('strategy throw → dry_run sent', r.sent_count, 1);
+  const strat = r.per_user[0].payload!.strategy_contribution;
+  assertEqual('strategy throw → 1 bucket', strat.length, 1);
+  assertEqual('strategy throw → __MANUAL__ key', strat[0].strategy_key, '__MANUAL__');
+  assertEqual('strategy throw → 手动交易 label', strat[0].strategy_label, '手动交易');
+  assertEqual('strategy throw → pnl', strat[0].realized_pnl, 100);
 }
 
 async function testSendEmailThrows(): Promise<void> {
@@ -1210,6 +1430,8 @@ async function main(): Promise<void> {
   testComputeWeeklyPnL();
   testAggregateIndustryContribution();
   testAggregateSymbolContribution();
+  testStrategyLabel();
+  testAggregateStrategyContribution();
   testBuildEquityCurveSparkline();
   testBuildHeuristicWeeklyOpinion();
   testBuildReportId();
@@ -1238,6 +1460,8 @@ async function main(): Promise<void> {
   await testSendEmailDisabled();
   await testSendNoPortfolio();
   await testSendDryRun();
+  await testSendStrategyContributionPropagates();
+  await testSendStrategyLookupFailureFallsBackManual();
   await testSendEmailThrows();
   await testSendEmailReturnsFailure();
   await testSendEmailHappyPath();

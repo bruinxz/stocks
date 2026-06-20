@@ -41,6 +41,7 @@ import { PaperTradingTrade } from '../models/PaperTradingTrade';
 import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
 import { Stock } from '../models/Stock';
 import { EarningsForecast } from '../models/EarningsForecast';
+import { AIInvestmentSignal, AISignalSourceType } from '../models/AIInvestmentSignal';
 import {
   normalizeNotificationConfig,
   NotificationChannelsConfig,
@@ -88,6 +89,47 @@ export interface IndustryContributionRow {
   symbols: string[];
 }
 
+/**
+ * 策略维度贡献 (US-087 PM-011).
+ *
+ * trade 表本身无 strategy_key 列, 策略归属来自该 trade 关联的 AIInvestmentSignal:
+ *   - signal.metadata.paper_trading_by_portfolio[portfolio_id].trade_id === trade.id
+ *     或 .sell_trade_id === trade.id → strategy = signal.source_type
+ *   - signal.metadata.paper_trading 同形态 (旧 schema)
+ *   - 无法匹配 (手动下单 / signal 元数据丢失) → strategy_key = '__MANUAL__'
+ *
+ * 同 sell_trade_id 被多个 signal 共享时 (加仓 cycle), 第一个 signal 的 source_type
+ * 优先 (与 PaperTradingAttributionService accountedSellTradeIds 去重思想一致 —
+ * 真实 PnL 只算一次, 归属到首个 signal 的策略).
+ *
+ * 字段语义:
+ *   - strategy_key: AISignalSourceType 枚举值或 '__MANUAL__' / '__UNKNOWN__'
+ *   - strategy_label: 中文展示标签 (sourceTypeLabel 同款映射)
+ *   - realized_pnl: Σ SELL realized_pnl (与 industry 一致, BUY 不入)
+ *   - trade_count: SELL 笔数
+ *   - symbols: 去重 symbol 列表
+ *   - win_count / loss_count: realized_pnl>0 与 <0 的笔数 (与 industry 维度对偶,
+ *     未来 attribution 看板可直接复用胜率)
+ */
+export interface StrategyContributionRow {
+  strategy_key: string;
+  strategy_label: string;
+  realized_pnl: number;
+  trade_count: number;
+  symbols: string[];
+  win_count: number;
+  loss_count: number;
+}
+
+/** 内部输入: trade 行 + 推断出的 strategy_key */
+export interface StrategyTradeRow {
+  symbol: string;
+  direction: 'BUY' | 'SELL' | string;
+  realized_pnl: number;
+  /** 由 caller 通过 trade_id → signal.source_type lookup 推断, 缺省走 '__MANUAL__' */
+  strategy_key: string;
+}
+
 /** 单股贡献（top winners / losers 用） */
 export interface SymbolContributionRow {
   symbol: string;
@@ -128,6 +170,12 @@ export interface WeeklyReviewPayload {
   };
   equity_curve: WeeklyEquityPoint[];
   industry_contribution: IndustryContributionRow[];
+  /**
+   * US-087 PM-011 — 按 strategy_key 拆 PnL.
+   * 与 industry_contribution 对偶, 同一份 trade 数据按"来源策略" (signal.source_type)
+   * 重新聚合. 无关联 signal 的 SELL trade → strategy_key='__MANUAL__'.
+   */
+  strategy_contribution: StrategyContributionRow[];
   top_winners: SymbolContributionRow[];
   top_losers: SymbolContributionRow[];
   trade_count: number;
@@ -201,6 +249,16 @@ export interface WeeklyReviewDataSource {
     start_date: string,
     end_date: string
   ): Promise<PaperTradingTrade[]>;
+  /**
+   * US-087 PM-011 — 取这批 trade 的 strategy_key 映射.
+   *
+   * 实现策略 (PRODUCTION): 用 trade_ids 反向查 AIInvestmentSignal:
+   *   `metadata.paper_trading_by_portfolio.<portfolio_id>.trade_id IN (...)`
+   *   `OR metadata.paper_trading_by_portfolio.<portfolio_id>.sell_trade_id IN (...)`
+   *   `OR metadata.paper_trading.trade_id IN (...)` (legacy schema)
+   * 失败 / 缺数据时返空 Map (caller 走 fail-OPEN, 缺映射 → '__MANUAL__').
+   */
+  loadTradeStrategyMap(portfolio_id: number, trade_ids: number[]): Promise<Map<number, string>>;
   /** 取 symbol → {industry, name} mapping */
   loadStockMetadata(
     symbols: string[]
@@ -345,6 +403,67 @@ export function aggregateIndustryContribution(
       if (diff !== 0) return diff;
       return a.industry.localeCompare(b.industry);
     });
+}
+
+/**
+ * US-087 PM-011 — strategy_key 维度聚合.
+ *
+ * 与 aggregateIndustryContribution 对偶, 但聚合 key 是 strategy_key (由
+ * caller 通过 trade_id → signal.source_type lookup 推断, 见
+ * StrategyTradeRow.strategy_key 注释). 缺映射的 SELL 默认走 '__MANUAL__'.
+ *
+ * 排序:
+ *   - realized_pnl 降序 (盈利策略在前)
+ *   - tie → strategy_key 字母升序 (稳定)
+ */
+export function aggregateStrategyContribution(
+  trades: StrategyTradeRow[]
+): StrategyContributionRow[] {
+  const map = new Map<string, StrategyContributionRow>();
+  for (const t of trades) {
+    if (!t || t.direction !== 'SELL') continue;
+    const pnl = safeNumber(t.realized_pnl);
+    const strategy_key = safeString(t.strategy_key) || '__MANUAL__';
+    const row = map.get(strategy_key) || {
+      strategy_key,
+      strategy_label: strategyLabel(strategy_key),
+      realized_pnl: 0,
+      trade_count: 0,
+      symbols: [],
+      win_count: 0,
+      loss_count: 0,
+    };
+    row.realized_pnl += pnl;
+    row.trade_count += 1;
+    if (pnl > 0) row.win_count += 1;
+    if (pnl < 0) row.loss_count += 1;
+    if (!row.symbols.includes(t.symbol)) row.symbols.push(t.symbol);
+    map.set(strategy_key, row);
+  }
+  return Array.from(map.values())
+    .map(r => ({ ...r, realized_pnl: roundMoney(r.realized_pnl) }))
+    .sort((a, b) => {
+      const diff = b.realized_pnl - a.realized_pnl;
+      if (diff !== 0) return diff;
+      return a.strategy_key.localeCompare(b.strategy_key);
+    });
+}
+
+/**
+ * strategy_key → 中文展示标签. 与 PaperTradingAttributionService.sourceTypeLabel
+ * 同款映射 (US-020 接入新 source 时两处同步更新).
+ */
+export function strategyLabel(key: string): string {
+  const labels: Record<string, string> = {
+    [AISignalSourceType.QUANT_RECOMMENDATION]: '量化推荐',
+    [AISignalSourceType.TRADING_AGENTS]: 'TradingAgents',
+    [AISignalSourceType.DAILY_SCREENER]: 'AI每日优选',
+    [AISignalSourceType.MANUAL_ANALYSIS]: '人工分析',
+    [AISignalSourceType.ANALYSIS_ENGINE]: '多维分析引擎',
+    __MANUAL__: '手动交易',
+    __UNKNOWN__: '未标注策略',
+  };
+  return labels[key] || key || '未标注策略';
 }
 
 /**
@@ -582,6 +701,26 @@ export function buildWeeklyReviewEmail(payload: WeeklyReviewPayload): EmailPaylo
         .join('')
     : '<tr><td colspan="3" style="padding:12px;color:#94a3b8;text-align:center;">本周无已实现交易</td></tr>';
 
+  // US-087 PM-011 — strategy 维度表 (策略来源 / PnL / 笔数 / 胜率)
+  const strategyRows = (payload.strategy_contribution || []).slice(0, 8);
+  const strategyTableHtml = strategyRows.length
+    ? strategyRows
+        .map(r => {
+          const c = r.realized_pnl > 0 ? '#16a34a' : r.realized_pnl < 0 ? '#dc2626' : '#475569';
+          const sign = r.realized_pnl > 0 ? '+' : '';
+          const decided = r.win_count + r.loss_count;
+          const winRate = decided > 0 ? `${Math.round((r.win_count / decided) * 100)}%` : '—';
+          return `<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;">${escapeHtml(
+            r.strategy_label
+          )}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;text-align:right;color:${c};font-weight:600;">${sign}${formatMoney(
+            r.realized_pnl
+          )}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;text-align:right;color:#64748b;">${
+            r.trade_count
+          }</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;text-align:right;color:#64748b;">${winRate}</td></tr>`;
+        })
+        .join('')
+    : '<tr><td colspan="4" style="padding:12px;color:#94a3b8;text-align:center;">本周无已实现交易</td></tr>';
+
   const winnerRowsHtml = payload.top_winners.length
     ? payload.top_winners.map(r => buildSymbolRowHtml(r, '#16a34a')).join('')
     : '<tr><td colspan="4" style="padding:12px;color:#94a3b8;text-align:center;">本周无盈利兑现</td></tr>';
@@ -657,6 +796,13 @@ export function buildWeeklyReviewEmail(payload: WeeklyReviewPayload): EmailPaylo
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:13px;">
         <thead><tr style="background:#f8fafc;"><th style="padding:8px 12px;text-align:left;color:#64748b;font-weight:500;">行业</th><th style="padding:8px 12px;text-align:right;color:#64748b;font-weight:500;">已实现盈亏 (元)</th><th style="padding:8px 12px;text-align:right;color:#64748b;font-weight:500;">成交笔数</th></tr></thead>
         <tbody>${industryTableHtml}</tbody>
+      </table>
+    </td></tr>
+    <tr><td style="padding:0 24px 16px 24px;">
+      <h2 style="margin:8px 0;font-size:15px;font-weight:600;color:#0f172a;">🎯 各策略贡献</h2>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:13px;">
+        <thead><tr style="background:#f8fafc;"><th style="padding:8px 12px;text-align:left;color:#64748b;font-weight:500;">策略</th><th style="padding:8px 12px;text-align:right;color:#64748b;font-weight:500;">已实现盈亏 (元)</th><th style="padding:8px 12px;text-align:right;color:#64748b;font-weight:500;">成交笔数</th><th style="padding:8px 12px;text-align:right;color:#64748b;font-weight:500;">胜率</th></tr></thead>
+        <tbody>${strategyTableHtml}</tbody>
       </table>
     </td></tr>
     <tr><td style="padding:0 24px 16px 24px;">
@@ -740,6 +886,23 @@ function buildPlainTextFallback(payload: WeeklyReviewPayload): string {
     }
   }
   lines.push('');
+  // US-087 PM-011 — 策略贡献
+  lines.push('策略贡献：');
+  if (!payload.strategy_contribution || payload.strategy_contribution.length === 0) {
+    lines.push('  本周无已实现交易');
+  } else {
+    for (const r of payload.strategy_contribution.slice(0, 8)) {
+      const s = r.realized_pnl > 0 ? '+' : '';
+      const decided = r.win_count + r.loss_count;
+      const winRate = decided > 0 ? `${Math.round((r.win_count / decided) * 100)}%` : '—';
+      lines.push(
+        `  - ${r.strategy_label}: ${s}${formatMoney(r.realized_pnl)} 元 (${
+          r.trade_count
+        } 笔, 胜率 ${winRate})`
+      );
+    }
+  }
+  lines.push('');
   lines.push('AI 周观点：');
   lines.push(`  ${payload.ai_opinion.headline}`);
   for (const p of payload.ai_opinion.paragraphs) {
@@ -781,6 +944,13 @@ function safeString(v: any): string {
 function safeNumber(v: any): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+/** US-087 PM-011 helper — trade_id 提取, 非有限数返 null (与 safeNumber 默认 0 对偶). */
+function toFiniteNumber(v: any): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 function roundMoney(v: number): number {
@@ -870,6 +1040,66 @@ export class DefaultWeeklyReviewDataSource implements WeeklyReviewDataSource {
       },
       order: [['created_at', 'ASC']],
     });
+  }
+
+  /**
+   * US-087 PM-011 — trade_id → strategy_key 反向 lookup.
+   *
+   * AIInvestmentSignal.metadata 是 JSONB, 存放 paper_trading_by_portfolio.<pid>.trade_id
+   * / sell_trade_id. 不同 portfolio 写不同 sub-key 防串号. legacy 行还可能落在
+   * metadata.paper_trading.trade_id (US-020 之前 schema). 全局拉所有 signals
+   * 在内存里匹配 — portfolio 周内 trade 数普遍 <100, signals 数 <1000, 直接
+   * 全表扫不复杂. 真要优化可加 trades<-signals 反向索引表, 但当前规模无必要.
+   *
+   * 同 sell_trade_id 被多 signal 共享 (加仓 cycle) 时, 第一个 signal 的 source_type
+   * 优先 (与 PaperTradingAttributionService accountedSellTradeIds 去重对偶).
+   */
+  async loadTradeStrategyMap(
+    portfolio_id: number,
+    trade_ids: number[]
+  ): Promise<Map<number, string>> {
+    const out = new Map<number, string>();
+    if (!trade_ids || trade_ids.length === 0) return out;
+    const tradeIdSet = new Set(trade_ids.map(id => Number(id)).filter(id => Number.isFinite(id)));
+    if (tradeIdSet.size === 0) return out;
+    // 该 portfolio 范围内的 signals — 不按 trade_id JSONB 索引查 (MySQL 兼容性差),
+    // 而是按 metadata.paper_trading_by_portfolio.<pid> 存在性 LIKE 粗筛 + 内存精筛.
+    // PostgreSQL 走 jsonb_extract_path 可优化, 但 fail-OPEN 默认全表扫不影响功能.
+    const signals = (await AIInvestmentSignal.findAll({
+      attributes: ['id', 'source_type', 'metadata', 'created_at'],
+      order: [['created_at', 'ASC']],
+      raw: true,
+    })) as unknown as Array<{
+      id: number;
+      source_type: string;
+      metadata: any;
+      created_at: Date | string;
+    }>;
+    for (const s of signals) {
+      const meta = s.metadata && typeof s.metadata === 'object' ? s.metadata : {};
+      const byPortfolio =
+        meta.paper_trading_by_portfolio && typeof meta.paper_trading_by_portfolio === 'object'
+          ? meta.paper_trading_by_portfolio
+          : {};
+      const keyed =
+        byPortfolio[String(portfolio_id)] && typeof byPortfolio[String(portfolio_id)] === 'object'
+          ? byPortfolio[String(portfolio_id)]
+          : {};
+      const legacy =
+        meta.paper_trading && typeof meta.paper_trading === 'object' ? meta.paper_trading : {};
+      const pt = Object.keys(keyed).length > 0 ? keyed : legacy;
+      const tradeId = toFiniteNumber(pt.trade_id);
+      const sellTradeId = toFiniteNumber(pt.sell_trade_id);
+      const sourceType = safeString(s.source_type) || '__UNKNOWN__';
+      // 首个 signal 优先 (created_at ASC), 同 trade_id 被多 signal 持有时不覆盖
+      if (tradeId !== null && tradeIdSet.has(tradeId) && !out.has(tradeId)) {
+        out.set(tradeId, sourceType);
+      }
+      if (sellTradeId !== null && tradeIdSet.has(sellTradeId) && !out.has(sellTradeId)) {
+        out.set(sellTradeId, sourceType);
+      }
+    }
+    return out;
   }
 
   async loadStockMetadata(symbols: string[]) {
@@ -1185,8 +1415,32 @@ export class WeeklyReviewReportService {
       logger.warn(`[WeeklyReview] loadStockMetadata user=${user_id} 失败: ${err?.message || err}`);
     }
 
+    // ---- US-087 PM-011: trade_id → strategy_key 反向 lookup (fail-OPEN, 缺映射 → '__MANUAL__') ----
+    let tradeStrategyMap = new Map<number, string>();
+    const tradeIdsForLookup = trades.map(t => Number(t.id)).filter(id => Number.isFinite(id));
+    if (tradeIdsForLookup.length > 0) {
+      try {
+        tradeStrategyMap = await this.dataSource.loadTradeStrategyMap(
+          summary.portfolio.id,
+          tradeIdsForLookup
+        );
+      } catch (err: any) {
+        logger.warn(
+          `[WeeklyReview] loadTradeStrategyMap user=${user_id} 失败: ${err?.message || err}`
+        );
+      }
+    }
+
     const pnl = computeWeeklyPnL(snapshots);
     const industryContrib = aggregateIndustryContribution(tradeRows, stockMeta);
+    const strategyContrib = aggregateStrategyContribution(
+      trades.map(t => ({
+        symbol: t.symbol,
+        direction: t.direction,
+        realized_pnl: Number(t.realized_pnl),
+        strategy_key: tradeStrategyMap.get(Number(t.id)) || '__MANUAL__',
+      }))
+    );
     const topWinners = aggregateSymbolContribution(tradeRows, stockMeta, 'desc', 5);
     const topLosers = aggregateSymbolContribution(tradeRows, stockMeta, 'asc', 3);
     const realizedPnlTotal = roundMoney(
@@ -1243,6 +1497,7 @@ export class WeeklyReviewReportService {
       pnl,
       equity_curve: snapshots,
       industry_contribution: industryContrib,
+      strategy_contribution: strategyContrib,
       top_winners: topWinners,
       top_losers: topLosers,
       trade_count: tradeCount,
