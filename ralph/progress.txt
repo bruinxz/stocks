@@ -3410,3 +3410,41 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - fail-safe 默认: confidence=0.5 (中间档) / relation_type='mentioned' (弱关联) — 在 extractor 跑前的安全态, 让 trivially INSERT 通过 + 不偏向通过/拒绝, 减少误判.
   - DataType.NOW 在 model 层做 defaultValue (extracted_at) 等价 migration 层 `DEFAULT NOW()`, 测试 META-GUARD 要双查 (model `/defaultValue:\s*DataType\.NOW/` + SQL `/DEFAULT\s+NOW/i`).
 ---
+
+## 2026-06-20 20:42 - US-117
+- [ANN-009] RelatedCompanyExtractor: 公告关联公司启发式抽取 + bulkUpsert
+- Files:
+  - backend/src/services/announcement/RelatedCompanyExtractor.ts (NEW; pure
+    extractRelatedCompanies + DataSource DI + service class runBatch)
+  - backend/tests/services/announcement/related-company-extractor.test.ts (NEW;
+    58 assertions, AC 20 条标注样本识别率 100%, ≥ 80% AC 达标)
+- 设计 highlights:
+  - 三源融合: (a) entities JSONB 中 AI 写的 stock_code (conf=0.9 extractor_llm),
+    (b) title 中的 6 位代码 (conf=1.0 extractor_heuristic), (c) summary 中的 6 位代码
+    (conf=0.85). 同 code 多源合并: 取 max conf, relation_type 从 mentioned 升级到具体类.
+  - relation_type 推断: 命中片段前后 12 字符窗口含 '全资子公司/控股子公司/子公司' → subsidiary;
+    含 '关联交易/关联方/担保/资金占用/资产置换' → related_party; 否则 mentioned.
+  - 主体处理: 主体 stock_code 命中且号段合法 → 必输出 primary 行 (conf=1.0), 让前端
+    统一表查 "公告 N 关联了哪些股票" 无需 JOIN AnnouncementSummary.
+  - 6 位代码 sanity 复用 inferMarketSegment (剔除 ETF 5xx / 未识别号段).
+  - 同 \\b\\d{6}\\b 词边界正则保证 7 位以上数字不被截断为 6 位.
+  - DataSource DI: PRODUCTION_RELATED_COMPANY_DATA_SOURCE 走 Sequelize + bulkCreate
+    updateOnDuplicate; 测试注入 fake (与 KOLAggregatorService 同款 5 项约定).
+  - runBatch 单条 try/catch + fail-OPEN: processed 计数在 try 前递增, 单条 throw 不
+    阻塞批 (与 syncRange 同款).
+- **Learnings for future iterations:**
+  - 6 位 A 股代码扫描应直接复用 `inferMarketSegment` 做 sanity, 不要自己写号段判断;
+    它已统一处理科创板/创业板/北交所/ETF 边界, 重写易漏 92xxxx/43xxxx 北交所号段
+    或误收 5xxxxx ETF.
+  - DataSource DI + persist=false 默认是 services/ 约定 (CLAUDE.md 4 项约定第 4 条);
+    所有"抽取+持久化"类 service 应默认 dry-run, caller 显式开 persist=true.
+  - 多源 candidate 合并模式: 优先级链 (primary > entities > title > summary) + Map
+    去重 + 同 code 取 max(conf) + relation_type 升级. 适用所有"多通道抽取同 key"
+    场景 (e.g. KOL opinion 多源 / NewsAnalyzer evidence 合并).
+  - 启发式 fail-OPEN: extractor 不抛, 异常 (null / 非法 JSON / DB 失败) 返 [] 或 0
+    persisted, 仅 logger.warn. 与 BlackSwanDetector / AnnouncementNLP fallback 同款.
+  - AC "识别率 ≥ 80%" 类验收应内嵌测试: 在 test 末尾跑 N 条人工标注样本, accuracy 直接
+    assert. 比"靠人工每次跑一次"靠谱, 与 extractEarningsGrade 同款 testExtractEarningsGradeAccuracy.
+  - **\\b\\d{6}\\b 词边界很关键**: 不加 \\b 会把 "编号 1234567" 切出 123456 / 234567 假阳;
+    带 \\b 保证只在数字串两侧是非数字时命中. 单测 [2.8] 守住这条不变量.
+---

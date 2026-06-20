@@ -1802,7 +1802,7 @@
         "Relevant unit tests pass"
       ],
       "priority": 117,
-      "passes": false,
+      "passes": true,
       "notes": "依赖: ANN-008"
     },
     {
