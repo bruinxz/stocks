@@ -2076,8 +2076,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 135,
-      "passes": false,
-      "notes": "依赖: PR-002"
+      "passes": true,
+      "notes": "DONE 2026/06/21: US-135 [PR-020] 风控参数中心前端 — 在 US-066 既有 5 endpoint (position-limits/trailing-stop/drawdown-breaker/per-stock-stop-loss/industry-concentration) 之上 +3 endpoint (market-regime US-050/US-132 PR-017 / black-swan US-053 / morning-checkup US-054), 让风控阈值一处编辑全部. 沿用既有 SectionState<T> + loadAll Promise.allSettled + 独立 Save 模板, 8 个 section 各自 view/draft 双状态独立 hasChanges; KPI bar 显示 '待保存 N 个' + '启用 guard N/8' 帮多 section 编辑后不忘按 Save. 新 section 用 antd Switch 编辑 boolean enable_* (比 InputNumber 直观), Input 编辑 benchmark_symbol, InputNumber + disabled={!enabled} 联动 (关闭 guard 时灰阈值). 同步扩 META-GUARD 测试 5→8 endpoint (54/54 ok). 反向触感修复: SettingsWorkspace.tsx 改动 + 新 BlackSwanHistoryTab 是 US-133 PR-018 残留, 本 commit 不动 (US-133 已 passes=True 但文件未 commit, 由后续 cleanup 处理). 验证: frontend tsc 0 err, backend tsc 0 err, risk-parameters-center-tab.test 54/54 ok."
     },
     {
       "id": "US-136",

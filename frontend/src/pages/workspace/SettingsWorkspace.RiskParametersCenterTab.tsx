@@ -1,16 +1,24 @@
 /**
- * SettingsWorkspace.RiskParametersCenterTab — US-066 / FE-027
+ * SettingsWorkspace.RiskParametersCenterTab — US-066 / FE-027 / US-135 [PR-020]
  *
- * **风控参数中心** — 把 5 个 backend risk guard 的阈值合并到一个 tab,
- * 让用户在同一个面板内编辑所有"挡 BUY / 触发减仓 / 全清仓"类阈值,
+ * **风控参数中心** — 把所有 backend risk guard 的阈值合并到一个 tab,
+ * 让用户在同一个面板内编辑所有"挡 BUY / 触发减仓 / 全清仓 / 全市场暂停"类阈值,
  * 不用在多个隐藏入口之间跳。
  *
- * 接入的 5 个 backend endpoint (全部沿用 RiskController 既有 GET/PUT):
- *   1. /api/risk/position-limits         (US-047 PositionLimitGuard)
- *   2. /api/risk/trailing-stop           (US-048 TrailingStopGuard)
- *   3. /api/risk/drawdown-breaker        (US-049 DrawdownCircuitBreaker)
- *   4. /api/risk/per-stock-stop-loss     (US-051 PerStockStopLossGuard)
- *   5. /api/risk/industry-concentration  (US-052 IndustryConcentrationGuard)
+ * 接入的 8 个 backend endpoint (全部沿用 RiskController 既有 GET/PUT):
+ *   1. /api/risk/position-limits         (US-047 PositionLimitGuard) — pre-trade
+ *   2. /api/risk/trailing-stop           (US-048 TrailingStopGuard) — 持仓监控
+ *   3. /api/risk/drawdown-breaker        (US-049 DrawdownCircuitBreaker) — 组合熔断
+ *   4. /api/risk/per-stock-stop-loss     (US-051 PerStockStopLossGuard) — 单股止损
+ *   5. /api/risk/industry-concentration  (US-052 IndustryConcentrationGuard) — 行业集中
+ *   6. /api/risk/market-regime           (US-050 / US-132 PR-017 MarketRegimeAlertService) — 市场环境
+ *   7. /api/risk/black-swan              (US-053 BlackSwanWatchdog) — 黑天鹅监控
+ *   8. /api/risk/morning-checkup         (US-054 MorningRiskCheckupService) — 开盘前体检
+ *
+ * US-135 [PR-020] 在 US-066 5 endpoint 基础上 +3 (market-regime / black-swan / morning-checkup),
+ * 让"风控阈值散落 3 个隐藏 tab"问题彻底消除 — 操盘手一处编辑全部. 沿用 US-066 既有
+ * "多 section 聚合" 模板 (SectionState<T> / loadAll Promise.allSettled / 独立 Save), 复用
+ * 0 改动. 新 section UI 选 antd Select 编辑 boolean enable_* 比 InputNumber 直观.
  *
  * 行为契约 (与 backend lenient normalize 对齐):
  *   - PUT body 字段全 lenient — 非法值被 normalizeXxxConfig 静默退到 default,
@@ -36,6 +44,7 @@ import {
   Col,
   Empty,
   Form,
+  Input,
   InputNumber,
   Row,
   Space,
@@ -54,6 +63,9 @@ import {
   FundOutlined,
   StopOutlined,
   ApartmentOutlined,
+  GlobalOutlined,
+  ThunderboltOutlined,
+  ClockCircleOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 
@@ -95,6 +107,44 @@ interface IndustryConcentrationConfig {
   rebalance_max_sell_count: number;
 }
 
+/** US-050 / US-132 [PR-017] — MarketRegimeAlertService.MarketRegimeAlertConfig 对齐. */
+interface MarketRegimeAlertConfig {
+  enabled: boolean;
+  benchmark_symbol: string;
+  drop_3d_pct: number;
+  drop_20d_pct: number;
+  enable_death_cross: boolean;
+  reduce_position_pct: number;
+  /** US-132 PR-017 — 连续 N 日跌停股 > 阈值触发 CRITICAL "全市场暂停建仓". */
+  enable_halt_buy_on_panic: boolean;
+  halt_buy_limit_down_count_threshold: number;
+  halt_buy_consecutive_days: number;
+}
+
+/** US-053 — BlackSwanWatchdog.BlackSwanConfig 对齐. */
+interface BlackSwanWatchdogConfig {
+  enabled: boolean;
+  scan_st: boolean;
+  scan_suspended: boolean;
+  scan_news: boolean;
+  news_keywords: readonly string[];
+  news_lookback_hours: number;
+  news_per_stock_limit: number;
+  scan_shareholder_reduction: boolean;
+  shareholder_reduction_lookback_days: number;
+  shareholder_reduction_amount_threshold: number;
+  shareholder_reduction_pct_threshold: number;
+  dedupe_enabled: boolean;
+}
+
+/** US-054 — MorningRiskCheckupService.MorningRiskCheckupConfig 对齐. */
+interface MorningRiskCheckupConfig {
+  enabled: boolean;
+  weekly_lookback_days: number;
+  drawdown_lookback_days: number;
+  include_breakdown_in_message: boolean;
+}
+
 // ---------------------------------------------------------------------------
 //  Generic section state — 5 个 section 共用同款 view/draft/loading/saving/error
 // ---------------------------------------------------------------------------
@@ -133,6 +183,16 @@ const RiskParametersCenterTab: React.FC = () => {
   const [ic, setIc] = useState<SectionState<IndustryConcentrationConfig>>(() =>
     initialSectionState<IndustryConcentrationConfig>()
   );
+  // US-135 [PR-020] +3 section
+  const [mr, setMr] = useState<SectionState<MarketRegimeAlertConfig>>(() =>
+    initialSectionState<MarketRegimeAlertConfig>()
+  );
+  const [bs, setBs] = useState<SectionState<BlackSwanWatchdogConfig>>(() =>
+    initialSectionState<BlackSwanWatchdogConfig>()
+  );
+  const [mc, setMc] = useState<SectionState<MorningRiskCheckupConfig>>(() =>
+    initialSectionState<MorningRiskCheckupConfig>()
+  );
 
   // ---- generic per-section load helper (sets loading/error/view/draft) ----
   // 不在 setLoading 里 setView/setDraft 避免 React 18 batching 边界问题,
@@ -155,7 +215,7 @@ const RiskParametersCenterTab: React.FC = () => {
     []
   );
 
-  /** 并行拉 5 个 endpoint — 某一路失败仅 set 自己的 error, 其它 section 照常 */
+  /** 并行拉 8 个 endpoint — 某一路失败仅 set 自己的 error, 其它 section 照常 */
   const loadAll = useCallback(async (): Promise<void> => {
     await Promise.allSettled([
       loadSection<PositionLimitsConfig>('/risk/position-limits', setPl),
@@ -163,6 +223,9 @@ const RiskParametersCenterTab: React.FC = () => {
       loadSection<DrawdownBreakerConfig>('/risk/drawdown-breaker', setDb),
       loadSection<PerStockStopLossConfig>('/risk/per-stock-stop-loss', setPsl),
       loadSection<IndustryConcentrationConfig>('/risk/industry-concentration', setIc),
+      loadSection<MarketRegimeAlertConfig>('/risk/market-regime', setMr),
+      loadSection<BlackSwanWatchdogConfig>('/risk/black-swan', setBs),
+      loadSection<MorningRiskCheckupConfig>('/risk/morning-checkup', setMc),
     ]);
   }, [loadSection]);
 
@@ -195,12 +258,15 @@ const RiskParametersCenterTab: React.FC = () => {
     []
   );
 
-  // ---- 派生 hasChanges (5 个独立) -----------------------------------------
+  // ---- 派生 hasChanges (8 个独立) -----------------------------------------
   const plHasChanges = useMemo(() => hasSectionChanges(pl), [pl]);
   const tsHasChanges = useMemo(() => hasSectionChanges(ts), [ts]);
   const dbHasChanges = useMemo(() => hasSectionChanges(db), [db]);
   const pslHasChanges = useMemo(() => hasSectionChanges(psl), [psl]);
   const icHasChanges = useMemo(() => hasSectionChanges(ic), [ic]);
+  const mrHasChanges = useMemo(() => hasSectionChanges(mr), [mr]);
+  const bsHasChanges = useMemo(() => hasSectionChanges(bs), [bs]);
+  const mcHasChanges = useMemo(() => hasSectionChanges(mc), [mc]);
 
   /**
    * 顶层 KPI bar — 一眼看出"还有几项未保存的改动" + "整体风控启用率",
@@ -212,15 +278,21 @@ const RiskParametersCenterTab: React.FC = () => {
     dbHasChanges,
     pslHasChanges,
     icHasChanges,
+    mrHasChanges,
+    bsHasChanges,
+    mcHasChanges,
   ].filter(Boolean).length;
   const enabledGuards = [
     ts.view?.enabled,
     db.view?.enabled,
     psl.view?.enabled,
     ic.view?.enabled,
+    mr.view?.enabled,
+    bs.view?.enabled,
+    mc.view?.enabled,
   ].filter(v => v === true).length;
   // position_limits 永远 enabled (没有 enabled 字段) — 算进总数
-  const totalGuards = 5;
+  const totalGuards = 8;
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -244,6 +316,7 @@ const RiskParametersCenterTab: React.FC = () => {
                 启用 guard: {enabledGuards + 1}/{totalGuards} (position_limits 默认启用)
               </Tag>
               <Tag color="purple">US-066 风控参数中心</Tag>
+              <Tag color="cyan">US-135 PR-020 全 8 维度</Tag>
             </Space>
           </div>
         }
@@ -1015,6 +1088,763 @@ const RiskParametersCenterTab: React.FC = () => {
             <Text type="secondary" style={{ fontSize: 12 }}>
               backend: <code>IndustryConcentrationGuard</code> 告警阈值触发后 UI
               一键再平衡至目标占比。
+            </Text>
+          </Form>
+        )}
+      </Card>
+
+      {/* Section 6: 市场环境预警 (US-050 / US-132 PR-017) — US-135 新增 */}
+      <Card
+        size="small"
+        variant="borderless"
+        className="modern-card"
+        title={
+          <Space>
+            <GlobalOutlined />
+            <span style={{ fontWeight: 600 }}>市场环境预警 (Market Regime Alert)</span>
+            {mrHasChanges && <Tag color="warning">未保存</Tag>}
+          </Space>
+        }
+        extra={
+          <Space>
+            <Button
+              size="small"
+              icon={<ReloadOutlined />}
+              loading={mr.loading}
+              onClick={() =>
+                void loadSection<MarketRegimeAlertConfig>('/risk/market-regime', setMr)
+              }
+            >
+              刷新
+            </Button>
+            <Button
+              type="primary"
+              size="small"
+              icon={<SaveOutlined />}
+              loading={mr.saving}
+              disabled={!mrHasChanges}
+              onClick={() =>
+                void saveSection<MarketRegimeAlertConfig>(
+                  '/risk/market-regime',
+                  mr.draft,
+                  setMr,
+                  '市场环境预警'
+                )
+              }
+            >
+              保存
+            </Button>
+          </Space>
+        }
+      >
+        {mr.error && (
+          <Alert type="error" message={mr.error} showIcon style={{ marginBottom: 12 }} />
+        )}
+        {!mr.draft ? (
+          mr.loading ? (
+            <Alert type="info" message="加载中..." />
+          ) : (
+            <Empty description="未加载到市场环境预警配置" />
+          )
+        ) : (
+          <Form layout="vertical">
+            <Row gutter={[16, 8]}>
+              <Col xs={12} md={4}>
+                <Form.Item label="启用">
+                  <Switch
+                    checked={mr.draft.enabled}
+                    onChange={v =>
+                      setMr(prev =>
+                        prev.draft ? { ...prev, draft: { ...prev.draft, enabled: v } } : prev
+                      )
+                    }
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={6}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>基准指数</span>
+                      <Tooltip title="benchmark_symbol, e.g. sh.000001 (上证) / sh.000300 (沪深300)">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <Input
+                    value={mr.draft.benchmark_symbol}
+                    disabled={!mr.draft.enabled}
+                    onChange={e =>
+                      setMr(prev =>
+                        prev.draft
+                          ? { ...prev, draft: { ...prev.draft, benchmark_symbol: e.target.value } }
+                          : prev
+                      )
+                    }
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={7}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>3 日跌幅 → MEDIUM</span>
+                      <Tooltip title="(0-1) 3 日累计跌幅触发 MEDIUM 告警, e.g. 0.05 = 5%">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <InputNumber
+                    min={0.01}
+                    max={1}
+                    step={0.01}
+                    value={mr.draft.drop_3d_pct}
+                    disabled={!mr.draft.enabled}
+                    onChange={v =>
+                      setMr(prev =>
+                        prev.draft
+                          ? { ...prev, draft: { ...prev.draft, drop_3d_pct: Number(v ?? 0.05) } }
+                          : prev
+                      )
+                    }
+                    style={{ width: '100%' }}
+                    addonAfter="比例"
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={7}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>20 日跌幅 → HIGH</span>
+                      <Tooltip title="(0-1) 20 日累计跌幅触发 HIGH 告警, e.g. 0.15 = 15%">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <InputNumber
+                    min={0.01}
+                    max={1}
+                    step={0.01}
+                    value={mr.draft.drop_20d_pct}
+                    disabled={!mr.draft.enabled}
+                    onChange={v =>
+                      setMr(prev =>
+                        prev.draft
+                          ? { ...prev, draft: { ...prev.draft, drop_20d_pct: Number(v ?? 0.15) } }
+                          : prev
+                      )
+                    }
+                    style={{ width: '100%' }}
+                    addonAfter="比例"
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Row gutter={[16, 8]}>
+              <Col xs={12} md={6}>
+                <Form.Item label="MA20/MA60 死叉 → MEDIUM">
+                  <Switch
+                    checked={mr.draft.enable_death_cross}
+                    disabled={!mr.draft.enabled}
+                    onChange={v =>
+                      setMr(prev =>
+                        prev.draft
+                          ? { ...prev, draft: { ...prev.draft, enable_death_cross: v } }
+                          : prev
+                      )
+                    }
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={6}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>建议降仓比例</span>
+                      <Tooltip title="(0-1) 触发后建议降仓比例, 仅写 message 不强制下单">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <InputNumber
+                    min={0.05}
+                    max={1}
+                    step={0.05}
+                    value={mr.draft.reduce_position_pct}
+                    disabled={!mr.draft.enabled}
+                    onChange={v =>
+                      setMr(prev =>
+                        prev.draft
+                          ? {
+                              ...prev,
+                              draft: { ...prev.draft, reduce_position_pct: Number(v ?? 0.3) },
+                            }
+                          : prev
+                      )
+                    }
+                    style={{ width: '100%' }}
+                    addonAfter="比例"
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={6}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>跌停股 → CRITICAL</span>
+                      <Tooltip title="US-132 PR-017: 启用 '连续 N 日跌停股 > 阈值 → 全市场暂停建仓' CRITICAL 信号">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <Switch
+                    checked={mr.draft.enable_halt_buy_on_panic}
+                    disabled={!mr.draft.enabled}
+                    onChange={v =>
+                      setMr(prev =>
+                        prev.draft
+                          ? {
+                              ...prev,
+                              draft: { ...prev.draft, enable_halt_buy_on_panic: v },
+                            }
+                          : prev
+                      )
+                    }
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={3}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>跌停股数</span>
+                      <Tooltip title="每日跌停股 > N 算 '恐慌日', 默认 100">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <InputNumber
+                    min={1}
+                    max={5000}
+                    value={mr.draft.halt_buy_limit_down_count_threshold}
+                    disabled={!mr.draft.enabled || !mr.draft.enable_halt_buy_on_panic}
+                    onChange={v =>
+                      setMr(prev =>
+                        prev.draft
+                          ? {
+                              ...prev,
+                              draft: {
+                                ...prev.draft,
+                                halt_buy_limit_down_count_threshold: Number(v ?? 100),
+                              },
+                            }
+                          : prev
+                      )
+                    }
+                    style={{ width: '100%' }}
+                    addonAfter="只"
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={3}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>连续日数</span>
+                      <Tooltip title="连续 ≥ N 日 '恐慌日' 触发, 默认 3">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <InputNumber
+                    min={1}
+                    max={30}
+                    value={mr.draft.halt_buy_consecutive_days}
+                    disabled={!mr.draft.enabled || !mr.draft.enable_halt_buy_on_panic}
+                    onChange={v =>
+                      setMr(prev =>
+                        prev.draft
+                          ? {
+                              ...prev,
+                              draft: {
+                                ...prev.draft,
+                                halt_buy_consecutive_days: Number(v ?? 3),
+                              },
+                            }
+                          : prev
+                      )
+                    }
+                    style={{ width: '100%' }}
+                    addonAfter="日"
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              backend: <code>MarketRegimeAlertService</code> 每日盘前 cron — 4 类信号 (3d 跌幅 / 20d
+              跌幅 / 死叉 / 连续跌停股恐慌) 分级告警。
+            </Text>
+          </Form>
+        )}
+      </Card>
+
+      {/* Section 7: 黑天鹅监控 (US-053) — US-135 新增 */}
+      <Card
+        size="small"
+        variant="borderless"
+        className="modern-card"
+        title={
+          <Space>
+            <ThunderboltOutlined />
+            <span style={{ fontWeight: 600 }}>黑天鹅监控 (Black Swan Watchdog)</span>
+            {bsHasChanges && <Tag color="warning">未保存</Tag>}
+          </Space>
+        }
+        extra={
+          <Space>
+            <Button
+              size="small"
+              icon={<ReloadOutlined />}
+              loading={bs.loading}
+              onClick={() => void loadSection<BlackSwanWatchdogConfig>('/risk/black-swan', setBs)}
+            >
+              刷新
+            </Button>
+            <Button
+              type="primary"
+              size="small"
+              icon={<SaveOutlined />}
+              loading={bs.saving}
+              disabled={!bsHasChanges}
+              onClick={() =>
+                void saveSection<BlackSwanWatchdogConfig>(
+                  '/risk/black-swan',
+                  bs.draft,
+                  setBs,
+                  '黑天鹅监控'
+                )
+              }
+            >
+              保存
+            </Button>
+          </Space>
+        }
+      >
+        {bs.error && (
+          <Alert type="error" message={bs.error} showIcon style={{ marginBottom: 12 }} />
+        )}
+        {!bs.draft ? (
+          bs.loading ? (
+            <Alert type="info" message="加载中..." />
+          ) : (
+            <Empty description="未加载到黑天鹅监控配置" />
+          )
+        ) : (
+          <Form layout="vertical">
+            <Row gutter={[16, 8]}>
+              <Col xs={12} md={4}>
+                <Form.Item label="启用">
+                  <Switch
+                    checked={bs.draft.enabled}
+                    onChange={v =>
+                      setBs(prev =>
+                        prev.draft ? { ...prev, draft: { ...prev.draft, enabled: v } } : prev
+                      )
+                    }
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={4}>
+                <Form.Item label="扫 ST / *ST">
+                  <Switch
+                    checked={bs.draft.scan_st}
+                    disabled={!bs.draft.enabled}
+                    onChange={v =>
+                      setBs(prev =>
+                        prev.draft ? { ...prev, draft: { ...prev.draft, scan_st: v } } : prev
+                      )
+                    }
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={4}>
+                <Form.Item label="扫停牌">
+                  <Switch
+                    checked={bs.draft.scan_suspended}
+                    disabled={!bs.draft.enabled}
+                    onChange={v =>
+                      setBs(prev =>
+                        prev.draft ? { ...prev, draft: { ...prev.draft, scan_suspended: v } } : prev
+                      )
+                    }
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={4}>
+                <Form.Item label="扫利空新闻">
+                  <Switch
+                    checked={bs.draft.scan_news}
+                    disabled={!bs.draft.enabled}
+                    onChange={v =>
+                      setBs(prev =>
+                        prev.draft ? { ...prev, draft: { ...prev.draft, scan_news: v } } : prev
+                      )
+                    }
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={4}>
+                <Form.Item label="扫股东减持">
+                  <Switch
+                    checked={bs.draft.scan_shareholder_reduction}
+                    disabled={!bs.draft.enabled}
+                    onChange={v =>
+                      setBs(prev =>
+                        prev.draft
+                          ? {
+                              ...prev,
+                              draft: { ...prev.draft, scan_shareholder_reduction: v },
+                            }
+                          : prev
+                      )
+                    }
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={4}>
+                <Form.Item label="去重">
+                  <Switch
+                    checked={bs.draft.dedupe_enabled}
+                    disabled={!bs.draft.enabled}
+                    onChange={v =>
+                      setBs(prev =>
+                        prev.draft ? { ...prev, draft: { ...prev.draft, dedupe_enabled: v } } : prev
+                      )
+                    }
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Row gutter={[16, 8]}>
+              <Col xs={12} md={6}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>新闻回看窗口</span>
+                      <Tooltip title="news_lookback_hours, 默认 24h">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <InputNumber
+                    min={1}
+                    max={168}
+                    value={bs.draft.news_lookback_hours}
+                    disabled={!bs.draft.enabled || !bs.draft.scan_news}
+                    onChange={v =>
+                      setBs(prev =>
+                        prev.draft
+                          ? {
+                              ...prev,
+                              draft: {
+                                ...prev.draft,
+                                news_lookback_hours: Number(v ?? 24),
+                              },
+                            }
+                          : prev
+                      )
+                    }
+                    style={{ width: '100%' }}
+                    addonAfter="小时"
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={6}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>单股新闻 cap</span>
+                      <Tooltip title="news_per_stock_limit, 默认 50">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <InputNumber
+                    min={1}
+                    max={500}
+                    value={bs.draft.news_per_stock_limit}
+                    disabled={!bs.draft.enabled || !bs.draft.scan_news}
+                    onChange={v =>
+                      setBs(prev =>
+                        prev.draft
+                          ? {
+                              ...prev,
+                              draft: {
+                                ...prev.draft,
+                                news_per_stock_limit: Number(v ?? 50),
+                              },
+                            }
+                          : prev
+                      )
+                    }
+                    style={{ width: '100%' }}
+                    addonAfter="条"
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={6}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>减持回看 (天)</span>
+                      <Tooltip title="shareholder_reduction_lookback_days, 默认 30">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <InputNumber
+                    min={1}
+                    max={365}
+                    value={bs.draft.shareholder_reduction_lookback_days}
+                    disabled={!bs.draft.enabled || !bs.draft.scan_shareholder_reduction}
+                    onChange={v =>
+                      setBs(prev =>
+                        prev.draft
+                          ? {
+                              ...prev,
+                              draft: {
+                                ...prev.draft,
+                                shareholder_reduction_lookback_days: Number(v ?? 30),
+                              },
+                            }
+                          : prev
+                      )
+                    }
+                    style={{ width: '100%' }}
+                    addonAfter="天"
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={6}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>减持金额阈值</span>
+                      <Tooltip title="shareholder_reduction_amount_threshold (元), 默认 1 亿">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <InputNumber
+                    min={1_000_000}
+                    max={10_000_000_000}
+                    step={10_000_000}
+                    value={bs.draft.shareholder_reduction_amount_threshold}
+                    disabled={!bs.draft.enabled || !bs.draft.scan_shareholder_reduction}
+                    onChange={v =>
+                      setBs(prev =>
+                        prev.draft
+                          ? {
+                              ...prev,
+                              draft: {
+                                ...prev.draft,
+                                shareholder_reduction_amount_threshold: Number(v ?? 100_000_000),
+                              },
+                            }
+                          : prev
+                      )
+                    }
+                    style={{ width: '100%' }}
+                    addonAfter="元"
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              backend: <code>BlackSwanWatchdog</code> 每日盘后/盘中 cron — 5 维度 (ST / 停牌 /
+              利空新闻 / 减持暴增 / dedup) 触发持仓预警。关键词列表在配置后端调, 此面板仅暴露开关 +
+              数值阈值。
+            </Text>
+          </Form>
+        )}
+      </Card>
+
+      {/* Section 8: 开盘前体检 (US-054) — US-135 新增 */}
+      <Card
+        size="small"
+        variant="borderless"
+        className="modern-card"
+        title={
+          <Space>
+            <ClockCircleOutlined />
+            <span style={{ fontWeight: 600 }}>开盘前体检 (Morning Risk Checkup)</span>
+            {mcHasChanges && <Tag color="warning">未保存</Tag>}
+          </Space>
+        }
+        extra={
+          <Space>
+            <Button
+              size="small"
+              icon={<ReloadOutlined />}
+              loading={mc.loading}
+              onClick={() =>
+                void loadSection<MorningRiskCheckupConfig>('/risk/morning-checkup', setMc)
+              }
+            >
+              刷新
+            </Button>
+            <Button
+              type="primary"
+              size="small"
+              icon={<SaveOutlined />}
+              loading={mc.saving}
+              disabled={!mcHasChanges}
+              onClick={() =>
+                void saveSection<MorningRiskCheckupConfig>(
+                  '/risk/morning-checkup',
+                  mc.draft,
+                  setMc,
+                  '开盘前体检'
+                )
+              }
+            >
+              保存
+            </Button>
+          </Space>
+        }
+      >
+        {mc.error && (
+          <Alert type="error" message={mc.error} showIcon style={{ marginBottom: 12 }} />
+        )}
+        {!mc.draft ? (
+          mc.loading ? (
+            <Alert type="info" message="加载中..." />
+          ) : (
+            <Empty description="未加载到开盘前体检配置" />
+          )
+        ) : (
+          <Form layout="vertical">
+            <Row gutter={[16, 8]}>
+              <Col xs={12} md={6}>
+                <Form.Item label="启用">
+                  <Switch
+                    checked={mc.draft.enabled}
+                    onChange={v =>
+                      setMc(prev =>
+                        prev.draft ? { ...prev, draft: { ...prev.draft, enabled: v } } : prev
+                      )
+                    }
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={6}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>周净值回看 (天)</span>
+                      <Tooltip title="weekly_lookback_days, 默认 7 (1 自然周)">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <InputNumber
+                    min={1}
+                    max={30}
+                    value={mc.draft.weekly_lookback_days}
+                    disabled={!mc.draft.enabled}
+                    onChange={v =>
+                      setMc(prev =>
+                        prev.draft
+                          ? {
+                              ...prev,
+                              draft: { ...prev.draft, weekly_lookback_days: Number(v ?? 7) },
+                            }
+                          : prev
+                      )
+                    }
+                    style={{ width: '100%' }}
+                    addonAfter="天"
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={6}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>回撤回看 (天)</span>
+                      <Tooltip title="drawdown_lookback_days, 默认 365 (1 年, 与 US-049 对齐)">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <InputNumber
+                    min={30}
+                    max={3650}
+                    value={mc.draft.drawdown_lookback_days}
+                    disabled={!mc.draft.enabled}
+                    onChange={v =>
+                      setMc(prev =>
+                        prev.draft
+                          ? {
+                              ...prev,
+                              draft: {
+                                ...prev.draft,
+                                drawdown_lookback_days: Number(v ?? 365),
+                              },
+                            }
+                          : prev
+                      )
+                    }
+                    style={{ width: '100%' }}
+                    addonAfter="天"
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={6}>
+                <Form.Item
+                  label={
+                    <Space size={4}>
+                      <span>消息含明细</span>
+                      <Tooltip title="include_breakdown_in_message — Web UI 推荐 ON, 飞书/邮件简洁推 OFF">
+                        <QuestionCircleOutlined style={{ color: 'var(--text-muted)' }} />
+                      </Tooltip>
+                    </Space>
+                  }
+                >
+                  <Switch
+                    checked={mc.draft.include_breakdown_in_message}
+                    disabled={!mc.draft.enabled}
+                    onChange={v =>
+                      setMc(prev =>
+                        prev.draft
+                          ? {
+                              ...prev,
+                              draft: { ...prev.draft, include_breakdown_in_message: v },
+                            }
+                          : prev
+                      )
+                    }
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              backend: <code>MorningRiskCheckupService</code> 每日开盘前 cron — 6 核心 metric (持仓
+              / 单股 / 行业 / 回撤 / 周收益 / 未读告警) 渲染中文 message 推给飞书/邮件。
             </Text>
           </Form>
         )}

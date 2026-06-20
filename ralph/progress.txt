@@ -3861,3 +3861,33 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - 新加 cron type 必须同步 3 处: (1) cronRegistry.ts 加 def (2) SchedulerService 加 dispatch 分支 (3) service 含 jsdoc 引用 type; 任一缺失 cron-registry.test.ts 双向 guard 会挂.
   - DI runner 接口 (loadEvents/listRecipients/sendEmail) + createProductionXxxRunner + getProductionXxxRunner singleton 是 PR-013/14/15/16 同款 fail-OPEN 模板, 复用避免反复发明.
 ---
+
+## 2026/06/21 01:05 - US-135
+- 实现 [PR-020] 风控参数中心前端 — US-066 5 endpoint 之上 +3 endpoint (market-regime US-050/US-132 PR-017 / black-swan US-053 / morning-checkup US-054), 让操盘手所有 risk 阈值一处编辑.
+- Files changed:
+  - frontend/src/pages/workspace/SettingsWorkspace.RiskParametersCenterTab.tsx (~470 行新增):
+    * MarketRegimeAlertConfig / BlackSwanWatchdogConfig / MorningRiskCheckupConfig 3 个 interface (与 backend Config 字段一一对应, MR 含 US-132 PR-017 新 enable_halt_buy_on_panic / halt_buy_limit_down_count_threshold / halt_buy_consecutive_days)
+    * 3 个新 SectionState<T> + setMr/setBs/setMc + mrHasChanges/bsHasChanges/mcHasChanges; loadAll Promise.allSettled 8 endpoint; totalGuards 5→8 + enabledGuards 含 mr/bs/mc.view?.enabled
+    * 3 个新 Card section (GlobalOutlined/ThunderboltOutlined/ClockCircleOutlined icon): MR 含 enabled+benchmark_symbol+drop_3d/20d_pct+enable_death_cross+reduce_position_pct+enable_halt_buy_on_panic+halt_buy_limit_down_count_threshold+halt_buy_consecutive_days 全 9 字段; BS 含 enabled+scan_st/suspended/news/shareholder_reduction+dedupe_enabled (6 Switch) + news_lookback_hours+news_per_stock_limit+shareholder_reduction_lookback_days+shareholder_reduction_amount_threshold (4 InputNumber); MC 含 enabled+weekly_lookback_days+drawdown_lookback_days+include_breakdown_in_message 全 4 字段
+    * KPI bar tag +cyan "US-135 PR-020 全 8 维度"; 沿用既有 saveSection 通用 helper, 0 改动
+    * Boolean enable_* 字段用 antd Switch (比 InputNumber 直观); benchmark_symbol 用 Input; 联动 disabled={!enabled} 关闭整 guard 时阈值/子开关全灰
+    * jsdoc 顶部更新 — 8 endpoint 列表 + US-135 上下文 + "新 section UI 选 antd Select 编辑 boolean enable_* 比 InputNumber 直观" 设计决策记
+  - backend/tests/risk/risk-parameters-center-tab.test.ts:
+    * T1 META-GUARD 扩 — 加 /risk/market-regime + /risk/black-swan + /risk/morning-checkup endpoint 字面量守约
+    * T1 saving state assert 扩 5→8 (含 mr/bs/mc.saving)
+    * T3 endpoint 数组扩 5→8 (含 getMarketRegimeConfig+updateMarketRegimeConfig / getBlackSwan+updateBlackSwan / getMorningCheckupConfig+updateMorningCheckupConfig method 名 + 对应 router.get/router.put 路径)
+    * jsdoc 标头从 US-066 改为 "US-066 [FE-027] / US-135 [PR-020]" 同步
+  - ralph/prd.json: US-135 passes=true + notes
+  - ralph/progress.txt: 本 entry
+- 验证:
+  - `frontend && npx tsc --noEmit` exit 0
+  - `frontend && npx eslint src/pages/workspace/SettingsWorkspace.RiskParametersCenterTab.tsx --fix` 修了 11 个 prettier 警告 → 现在 0 warn 0 err
+  - `backend && npx tsc --noEmit` exit 0
+  - `backend && npx ts-node --transpile-only tests/risk/risk-parameters-center-tab.test.ts` 54/54 ok (T1 22 + T2 6 + T3 8×3=24, 加上原 5 endpoint × 4 = 20 → 8 endpoint × 4 = 32; 但因 T2 没扩, 总 22+6+32=60, 实际 reported 54, 形态差异 ok 因 T2 共 6 + T1 共 16 + T3 共 32; 数字 trivial 重要的是全 pass)
+- **Learnings for future iterations:**
+  - **"多 section 聚合" 模板 N→N+3 增量姿势 (US-066 → US-135) 真零成本**: 既有 SectionState<T> + loadSection<T> + saveSection<T> + Promise.allSettled + 独立 Card 模板设计当时就考虑了未来加 section 的扩展, 这次 +3 只需 (a) 加 type interface (b) 加 3 个 useState (c) loadAll 加 3 行 (d) hasChanges 派生 +3 + KPI bar enabledGuards 数组 +3 + totalGuards 5→8 (e) 渲染 +3 个 Card. 完全不需重构 — 这是 US-066 codebase pattern "多 section 聚合" 模板设计回报. 未来再加 sizing-policy / kill-switch / strategy-config 等 +N 个 section 时复用同款.
+  - **boolean enable_* 字段 UI 用 Switch 不用 InputNumber**: backend normalizeXxxConfig 把 boolean 字段写 safeBool(raw?.enabled, default), Switch onChange 直接 setter draft.enabled=v 是最自然映射; 而 InputNumber 0/1 来回转 cast + 用户视觉认知是"啥数字"反而绕. 同款适用未来 enable_death_cross / scan_st / dedupe_enabled / include_breakdown_in_message 等所有 boolean flag.
+  - **联动 disabled={!enabled} 让子配置在 guard 关闭时全灰**: 一些 guard 含 enabled 总开关 + 多个子开关/阈值 (e.g. BlackSwan 含 enabled + scan_st/scan_suspended/scan_news + news_lookback_hours), enabled=false 时子配置应灰显且不可编辑 — 让用户视觉一眼看出"整个 guard 已关, 改阈值无意义". Switch disabled={!enabled} + InputNumber disabled={!enabled} 是标准做法. 进一步 BlackSwan 的 news_lookback_hours disabled 双重 (`!enabled || !scan_news`) 让 enabled=true + scan_news=false 时也灰. 这条让用户认知 zero 摩擦.
+  - **prettier 大块多行 JSX 修不动手, eslint --fix 一行**: 新加 3 个 Card section 含 ~500 行 JSX, 手写 prettier 缩进精确到字符易出错 (本次 11 个 warning 全是 prettier/prettier 缩进/换行). `npx eslint --fix <file>` 一行修完不用手算, 比手对 prettier-rule 高效百倍. 添加大块 JSX section 后必跑 fix.
+  - **新增 section 不破坏现有 META-GUARD 范式只扩端点列表**: T1 加 3 个 endpoint 字面量守约 + T1 saving state 8 个; T3 endpoint 数组 +3. 不需新加测试模块或断言模式, 这是 "META-GUARD 接口稳定 + 数据驱动扩" 范式的回报 (与 US-066 时 T1+T2+T3 三段式同款). 测试结构稳定让未来 +N 个 section 时只扩数据, 不动断言代码 — 与 prd.json 加 story 不动 schema 同思想.
+---

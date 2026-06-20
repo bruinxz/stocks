@@ -1,5 +1,5 @@
 /**
- * US-066 [FE-027] — SettingsWorkspace.RiskParametersCenterTab 单测.
+ * US-066 [FE-027] / US-135 [PR-020] — SettingsWorkspace.RiskParametersCenterTab 单测.
  *
  * 不依赖 jest / DB / React 渲染. node 直接跑:
  *   cd backend && npx ts-node --transpile-only tests/risk/risk-parameters-center-tab.test.ts
@@ -7,14 +7,17 @@
  * 测试范式与 [US-065 analysis-engine-config.test.ts] 同款 — RiskController 顶层
  * import 一长串 guard singleton, 会拽起 sequelize-typescript 数据库连接, 单测进程
  * 不可加载 (与 US-018 EX-004 同源问题). 所以本测试不直接调任何组件 render, 而是:
- *   [T1] fs+regex META-GUARD 守 RiskParametersCenterTab.tsx 含 5 个 endpoint
+ *   [T1] fs+regex META-GUARD 守 RiskParametersCenterTab.tsx 含 8 个 endpoint
  *        全部 wired + 关键 hook (loadAll / saveSection / hasSectionChanges)
  *   [T2] fs+regex META-GUARD 守 SettingsWorkspace.tsx 已注册 risk-parameters tab
  *        + headerActions 已挂 + conditional render 已挂 (与 US-065 analysis-engine
  *        tab 上线时手抄路径同款 — 漏 headerActions 用户看到 "待迁移现有个人中心"
  *        误导, 漏 render 用户点了 tab 但看不到内容)
- *   [T3] 5 个 backend endpoint 已存在 (RiskController.ts + risk.routes.ts 都有
+ *   [T3] 8 个 backend endpoint 已存在 (RiskController.ts + risk.routes.ts 都有
  *        对应 GET / PUT 形态)
+ *
+ * US-135 [PR-020] 在 US-066 5 endpoint 之上 +3 (market-regime / black-swan /
+ * morning-checkup), 测试同步扩 5→8 endpoint 覆盖.
  */
 
 import * as fs from 'fs';
@@ -75,6 +78,19 @@ console.log('T1 — RiskParametersCenterTab.tsx META-GUARD');
     /['"]\/risk\/industry-concentration['"]/.test(tabSrc),
     '必须接入 /risk/industry-concentration endpoint'
   );
+  // US-135 [PR-020] +3 endpoint
+  assert(
+    /['"]\/risk\/market-regime['"]/.test(tabSrc),
+    '必须接入 /risk/market-regime endpoint (US-135 PR-020)'
+  );
+  assert(
+    /['"]\/risk\/black-swan['"]/.test(tabSrc),
+    '必须接入 /risk/black-swan endpoint (US-135 PR-020)'
+  );
+  assert(
+    /['"]\/risk\/morning-checkup['"]/.test(tabSrc),
+    '必须接入 /risk/morning-checkup endpoint (US-135 PR-020)'
+  );
 
   // 关键 helper / hook
   assert(
@@ -100,8 +116,11 @@ console.log('T1 — RiskParametersCenterTab.tsx META-GUARD');
       /ts\.saving/.test(tabSrc) &&
       /db\.saving/.test(tabSrc) &&
       /psl\.saving/.test(tabSrc) &&
-      /ic\.saving/.test(tabSrc),
-    '5 个 section 必须有独立 saving state (pl/ts/db/psl/ic)'
+      /ic\.saving/.test(tabSrc) &&
+      /mr\.saving/.test(tabSrc) &&
+      /bs\.saving/.test(tabSrc) &&
+      /mc\.saving/.test(tabSrc),
+    '8 个 section 必须有独立 saving state (pl/ts/db/psl/ic/mr/bs/mc) — US-135 +3'
   );
   // draft/view 回灌 — 保存后用 server normalize 值回灌 (US-065 lesson)
   assert(
@@ -197,6 +216,22 @@ console.log('T3 — 5 个 backend endpoint 都已 existing');
       path: 'industry-concentration',
       getMethod: 'getIndustryConcentration',
       putMethod: 'updateIndustryConcentration',
+    },
+    // US-135 [PR-020] +3 endpoint
+    {
+      path: 'market-regime',
+      getMethod: 'getMarketRegimeConfig',
+      putMethod: 'updateMarketRegimeConfig',
+    },
+    {
+      path: 'black-swan',
+      getMethod: 'getBlackSwan',
+      putMethod: 'updateBlackSwan',
+    },
+    {
+      path: 'morning-checkup',
+      getMethod: 'getMorningCheckupConfig',
+      putMethod: 'updateMorningCheckupConfig',
     },
   ];
 
