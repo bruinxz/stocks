@@ -121,6 +121,15 @@ jobs:
         run: npx tsc --noEmit 2>&1 | tee ../backend-typecheck.log
         continue-on-error: false
 
+      # US-098 (OPS-009) OpenAPI 自动生成 drift guard：跑 `buildOpenApiSpec()` 与
+      # 已提交的 `docs/openapi.json` 做 byte-for-byte 对比。任何 routes/*.ts 修改
+      # @openapi JSDoc 但忘了重跑 `npm run docs:openapi` 的 PR 都会在此挂掉，
+      # 并打印第一处差异位置 + 修复命令提示。不依赖 DB / 任何外部服务。
+      - name: OpenAPI drift check (docs/openapi.json ↔ code)
+        id: openapi_check
+        run: npm run docs:openapi:check 2>&1 | tee ../backend-openapi-check.log
+        continue-on-error: false
+
       - name: Lint (eslint)
         id: lint
         run: npm run lint 2>&1 | tee ../backend-lint.log
@@ -141,6 +150,7 @@ jobs:
             backend-envcheck.log
             backend-envcheck-fail.log
             backend-typecheck.log
+            backend-openapi-check.log
             backend-lint.log
             backend-test.log
           retention-days: 7
@@ -152,7 +162,7 @@ jobs:
           script: |
             const fs = require('fs');
             const path = require('path');
-            const logs = ['envcheck', 'envcheck-fail', 'typecheck', 'lint', 'test'];
+            const logs = ['envcheck', 'envcheck-fail', 'typecheck', 'openapi-check', 'lint', 'test'];
             const sections = [];
             for (const name of logs) {
               const filePath = path.join(process.env.GITHUB_WORKSPACE, `backend-${name}.log`);

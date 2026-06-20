@@ -1516,8 +1516,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 98,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "OPS-009 OpenAPI 自动生成: 加 npm scripts docs:openapi + docs:openapi:check; 新增 src/scripts/check-openapi-drift.ts (drift checker, fail-OPEN, line-level diff); 重新生成 docs/openapi.json (251 ops, 27 tags, 235KB) 与代码同步; CI .github/workflows/ci.yml 加 backend-check OpenAPI drift 步骤; 23 单测覆盖 serialize 契约 + in_sync + drift + missing_file + diffSnippet + 真实集成 + 反向 false-negative guard."
     },
     {
       "id": "US-099",
