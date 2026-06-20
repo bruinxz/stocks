@@ -2242,8 +2242,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 146,
-      "passes": false,
-      "notes": "依赖: PM-024"
+      "passes": true,
+      "notes": "PM-027 落地: improvement_suggestions 加 effect_metrics JSONB + effect_tracked_at TIMESTAMPTZ + 新 index (status, effect_tracked_at) + ImprovementEffectTracker service (DataSource DI seam + 4 method PRODUCTION lazy require + trackForSuggestion 单条 fail-OPEN 三态 + trackPendingSuggestions cron 主入口 + buildEffectMetrics/computeSharpeRatio 纯函数 helpers). 123 ok / 0 failed unit tests (常量/纯 helper/单条 12 路径/cron 8 验证/PRODUCTION smoke/META-GUARD model+migration+service). typecheck + lint clean. 与 PM-024 apply route + DailyAttributionReport 串成完整 EV-015 30 天 effect_metrics 闭环."
     },
     {
       "id": "US-147",

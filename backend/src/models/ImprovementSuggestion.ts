@@ -99,6 +99,8 @@ import { User } from './User';
     { fields: ['status'] },
     { fields: ['priority'] },
     { fields: ['generated_at'] },
+    // US-146 PM-027 — tracker cron 按 (status='applied', effect_tracked_at IS NULL) 高频查
+    { fields: ['status', 'effect_tracked_at'], name: 'idx_improvement_suggestions_status_tracked' },
   ],
 })
 export class ImprovementSuggestion extends Model {
@@ -248,6 +250,36 @@ export class ImprovementSuggestion extends Model {
     comment: 'dismiss 时间戳; 默认 null',
   })
   declare dismissed_at: Date | null;
+
+  // ─── US-146 PM-027 apply 后效果跟踪 ────────────────────────────────────────
+  //
+  // tracker (ImprovementEffectTracker) 在 apply 满 effect_window_days (默认 30) 天后,
+  // 采集该用户 PaperTradingPortfolio DailyAttributionReport 期间 pnl / pnl_pct / sharpe /
+  // 样本天数, 写回本字段; UI 展示 "建议 apply 后实际效果", ops 用以评估 heuristic 质量.
+  //
+  // effect_metrics JSONB schema (与 ImprovementEffectMetrics 类型对齐):
+  //   { window_days, sample_days, total_pnl_sum, total_pnl_pct_avg,
+  //     total_pnl_pct_sharpe, trade_count_sum, start_date, end_date,
+  //     portfolios_covered, source }
+  // 未跟踪态 = {} (default), tracker 跑完后填齐.
+
+  @Column({
+    type: DataType.JSONB,
+    allowNull: false,
+    field: 'effect_metrics',
+    defaultValue: {},
+    comment:
+      'US-146 PM-027 apply 后效果指标 (window_days / sample_days / total_pnl_sum / total_pnl_pct_avg / sharpe / etc); 默认 {} = 未跟踪',
+  })
+  declare effect_metrics: Record<string, unknown>;
+
+  @Column({
+    type: DataType.DATE,
+    allowNull: true,
+    field: 'effect_tracked_at',
+    comment: 'US-146 PM-027 tracker 写入时间戳; NULL = 未跑过',
+  })
+  declare effect_tracked_at: Date | null;
 
   @CreatedAt
   @Column({ field: 'created_at' })
