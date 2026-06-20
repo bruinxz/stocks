@@ -29,9 +29,9 @@
 - [backend/src/scripts/sync-qa-topics.ts](backend/src/scripts/sync-qa-topics.ts)
 - [backend/src/scripts/sync-announcements.ts](backend/src/scripts/sync-announcements.ts)
 
-**`.env.example` 整治**：[backend/.env.example:33-35](backend/.env.example) 把硬编码 `http://47.93.224.109:8000` 改成 `http://127.0.0.1:8000` 默认，注释提示"prod 走团队私聊给的真实地址"。
+**`.env.example` 整治**：[backend/.env.example:33-35](backend/.env.example) 把硬编码 `http://<legacy-internal-ip>:8000` 改成 `http://127.0.0.1:8000` 默认，注释提示"prod 走团队私聊给的真实地址"。
 
-**验证**：`grep -rn "47\.93\.224\.109" backend/src/ | grep -v externalServices.ts` 零命中。
+**验证**：`grep -rn "<legacy-internal-ip>" backend/src/ | grep -v externalServices.ts` 零命中。
 （`externalServices.ts` 顶部 jsdoc 自己描述"修复前曾硬编码 47.93..."属正常历史说明。）
 
 ### 2. 因子用交易日窗口（audit M-9）

@@ -150,7 +150,7 @@ UPDATE users SET risk_config = jsonb_set(
 
 - ❌ 真正写入 `AIInvestmentSignal(source_type='analysis_engine')` 把新引擎信号桥接到自动跟单（v2 hard mode）
 - ❌ 前端 `AIStockAnalysisModal` 升级展示 8 维度 evidence（v2）
-- ❌ git filter-repo 抹掉 git 历史中的 `47.93.224.109`（仓库级影响，等你确认是否做）
+- ❌ git filter-repo 抹掉 git 历史中的 `<legacy-internal-ip>`（仓库级影响，等你确认是否做；US-130 已把工作树脱敏 + 落 CI lint + 提供 `scripts/ops/scrub_legacy_ip.sh`，history rewrite 等你跑）
 - ❌ Composite backtest 全部 13 个策略真接通（ALPHA 已建立 engine 端 hook + MFA smoke；下一轮把所有组合级策略的 caller layer 实现）
 - ❌ 进入真实账户 / 真实下单（红线，永远不会自动做）
 - ❌ 触 `.env` / docker-compose / bridge secrets / 部署脚本

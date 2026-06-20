@@ -91,7 +91,7 @@ function makeValidEnv(overrides: Record<string, string | undefined> = {}): NodeJ
     REDIS_HOST: 'localhost',
     REDIS_PORT: '6379',
     JWT_SECRET: 'a-real-secret-key-not-a-placeholder',
-    TRADING_AGENTS_URL: 'http://47.93.224.109:8000',
+    TRADING_AGENTS_URL: 'http://127.0.0.1:8000',
   };
   const merged: Record<string, string | undefined> = { ...base };
   for (const k of Object.keys(overrides)) {

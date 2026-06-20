@@ -2,7 +2,7 @@
  * 外部服务基址集中常量 (audit L-19 修复, 2026-06-18).
  *
  * 在引入本模块前, `TRADING_AGENTS_URL` 在 10+ 处文件中各自硬编码
- * `process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000'`,
+ * `process.env.TRADING_AGENTS_URL || 'http://<legacy-internal-ip>:8000'`,
  * 内部 IP 被多次暴露在 git 历史中, 且换服务器需要改 10+ 处.
  *
  * 本模块约定: **任何调用 TradingAgents AI 远端的代码必须 import 这里的

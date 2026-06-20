@@ -82,7 +82,7 @@ Layer 8: Postmortem + Self-evolution (4 时间尺度 + 黑天鹅 + AI 日记)
 | OPS-008 | 日志统一字段 | 所有 logger.info/warn/error 携带 trace_id + module；JSON format | P1 | — | grep trace_id 能追踪一次 request 全链路 |
 | OPS-009 | OpenAPI 自动生成 | 所有 controller 输出 OpenAPI spec 到 docs/openapi.json；CI 校验未漂移 | P1 | — | openapi.json 与代码同步；CI 检查通过 |
 | OPS-010 | Grafana dashboard 模板 | 提供 5 个 dashboard json：信号流 / 风控 / 对账 / 数据 SLA / 策略表现 | P2 | OPS-004 | dashboard 可导入即用 |
-| OPS-011 | git filter-repo 抹掉 IP | 把 git 历史中的 47.93.224.109 删掉（implementation_summary 第 153 行明示） | P2 | — | git log --all 不再出现该 IP |
+| OPS-011 | git filter-repo 抹掉 IP | 把 git 历史中的 `<legacy-internal-ip>` 删掉（implementation_summary 第 153 行明示） | P2 | — | git log --all 不再出现该 IP |
 | OPS-012 | CI matrix 升级 | CI 跑 lint + tsc + npm test + frontend test + docker build；任一失败 block PR | P2 | — | GitHub Actions 配置完整 |
 
 ---

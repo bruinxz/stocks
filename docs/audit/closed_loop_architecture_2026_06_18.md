@@ -43,7 +43,7 @@
        │                            │                          │
 ┌──────┴────────────┐    ┌──────────┴───────────┐   ┌──────────┴────────────┐
 │ Python helpers    │    │ broker-bridge        │   │ TradingAgents FastAPI │
-│ akshare_helper.py │    │ qmt_bridge/ptrade    │   │ http://47.93.224.109  │
+│ akshare_helper.py │    │ qmt_bridge/ptrade    │   │ <internal-host>       │
 │ market_data_…py   │    │ (Windows 跑)         │   │  :8000  (外部服务)    │
 │ 数据源 + 代理池   │    │ adapter.place_order  │   │ /api/analyze 等       │
 └───────────────────┘    └──────────────────────┘   └───────────────────────┘
@@ -52,7 +52,7 @@
 进程边界要点：
 - broker-bridge 必须 Windows 跑、HMAC + nonce + 时钟偏差 ≤ 60s（[docs/QMT_PTRADE_LIVE_TRADING_ROADMAP.md](../QMT_PTRADE_LIVE_TRADING_ROADMAP.md) §6.1）。
 - bridge 接入 nginx，需独立 `proxy_*_timeout=40s` + `proxy_buffering off`；SSE 走 `X-Accel-Buffering: no`；容器健康检查**不**打 bridge 路由（[docs/live_trading_launch_checklist.md](../live_trading_launch_checklist.md) §69-75）。
-- TradingAgents 外部基址 `http://47.93.224.109:8000` **作为 env 默认值硬编码在 10 处**（[AIAdvisorService.ts:9](../../backend/src/services/AIAdvisorService.ts)、[TechnicalAnalysisService.ts:9](../../backend/src/services/TechnicalAnalysisService.ts)、[MarketBriefService.ts:65](../../backend/src/services/MarketBriefService.ts) 等），不是 secret 但**暴露内部 IP**。
+- TradingAgents 外部基址 `<internal-host>:8000` **作为 env 默认值硬编码在 10 处**（[AIAdvisorService.ts:9](../../backend/src/services/AIAdvisorService.ts)、[TechnicalAnalysisService.ts:9](../../backend/src/services/TechnicalAnalysisService.ts)、[MarketBriefService.ts:65](../../backend/src/services/MarketBriefService.ts) 等），不是 secret 但**暴露内部 IP**。
 
 ---
 

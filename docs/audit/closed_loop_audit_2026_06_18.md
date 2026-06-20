@@ -325,7 +325,7 @@
 
 **修复方案**
 - 抽 `backend/src/config/externalServices.ts`，导出 `TRADING_AGENTS_BASE_URL`；10 处全部 import 这个常量。
-- ⚠️ 把 `47.93.224.109` 从代码里移到 `.env.example` 才不算"暴露内部 IP"，但 git 历史还在。需你确认是否要做 git filter-repo 或者接受历史现状。
+- ⚠️ 把 `<legacy-internal-ip>` 从代码里移到 `.env.example` 才不算"暴露内部 IP"，但 git 历史还在。需你确认是否要做 git filter-repo 或者接受历史现状。（DONE 2026/06/20: 工作树已脱敏，CI lint 防回插；history rewrite 待你执行 `scripts/ops/scrub_legacy_ip.sh`，详见 US-130 notes。）
 
 ---
 

@@ -56,7 +56,7 @@
 
 | 项 | 原因 |
 |---|---|
-| L-19 全仓 git filter-repo 抹除 `47.93.224.109` 历史 | git 历史改写是仓库级影响，等你确认 |
+| L-19 全仓 git filter-repo 抹除 `<legacy-internal-ip>` 历史 | git 历史改写是仓库级影响，等你确认（脚本已就绪：`scripts/ops/scrub_legacy_ip.sh`） |
 | 触碰 `LIVE_BRIDGE_SECRETS` / `.env` / bridge 端 secret | 红线，永远等你确认 |
 | 切换 `LIVE_BROKER_GATEWAY` 到 qmt_bridge / ptrade_bridge | 红线 |
 | 修改 `docker-compose.yml` / 部署脚本 | 不属于本轮 audit 范围 |
