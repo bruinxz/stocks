@@ -81,6 +81,7 @@ import { AnnouncementSummary } from '../models/AnnouncementSummary';
 import { AnnouncementEventRelation } from '../models/AnnouncementEventRelation';
 import { EastMoneyQATopic } from '../models/EastMoneyQATopic';
 import { EastMoneyQAStat } from '../models/EastMoneyQAStat';
+import { KOLAuthorStat } from '../models/KOLAuthorStat';
 import { TechnicalAnalysisReport } from '../models/TechnicalAnalysisReport';
 import { RestrictedShareRelease } from '../models/RestrictedShareRelease';
 import { ShareholderTradeRecord } from '../models/ShareholderTradeRecord';
@@ -217,6 +218,7 @@ const sequelize = new Sequelize({
     AnnouncementEventRelation,
     EastMoneyQATopic,
     EastMoneyQAStat,
+    KOLAuthorStat,
     TechnicalAnalysisReport,
     RestrictedShareRelease,
     ShareholderTradeRecord,

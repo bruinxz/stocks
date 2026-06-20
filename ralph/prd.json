@@ -2152,8 +2152,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 140,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "完成 KOLAuthorTrackingService (US-140 KOL-007): backend/src/models/KOLAuthorStat.ts + migration 双 SQL + backend/src/services/kol/KOLAuthorTrackingService.ts (430 行) + 102 单测全过含 AC §8 主验收 (Alpha 100% / Beta 80% / Gamma 60% identifyTopAuthors 返 ≥3 author ≥60%). pure helpers: classifyRatingDirection / addDays / computeForwardReturn (停牌≤7天兜底) / computeAuthorStat (方向校正 forward return) / identifyTopAuthors (min_samples + min_win_rate 过滤). DataSource DI + fail-OPEN 4 层 (load fail → status=failed / save fail → partial / 单股缺数据 → 跳过 / 单 firm < min_samples → 跳过不落库). tsc 0 err, lint 0 err."
     },
     {
       "id": "US-141",
