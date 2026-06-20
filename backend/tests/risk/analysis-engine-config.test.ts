@@ -59,20 +59,23 @@ console.log('T1 — normalizeAnalysisEngineConfig 行为契约');
   const fromEmpty = normalizeAnalysisEngineConfig({});
   assert(fromEmpty.mode === 'off', '空对象 → off');
 
+  // US-139 [AE-009] — weights/enabled_analyzers 走 AnalyzerKey 白名单过滤;
+  // 注意必须用 canonical key (e.g. 'fundamental' 单数 — 与 AnalyzerTypes.AnalyzerKey 一致),
+  // 写错的 'fundamentals' 复数会被 sanitize 当 unknown key 静默丢弃.
   const withWeights = normalizeAnalysisEngineConfig({
     mode: 'hard',
-    weights: { fundamentals: 0.5, news: 0.3 },
-    enabled_analyzers: ['fundamentals', 'news'],
+    weights: { fundamental: 0.5, news: 0.3 },
+    enabled_analyzers: ['fundamental', 'news'],
   });
   assert(withWeights.mode === 'hard', 'weights/enabled_analyzers 不影响 mode');
   assert(
-    !!withWeights.weights && withWeights.weights.fundamentals === 0.5,
-    'weights 透传'
+    !!withWeights.weights && withWeights.weights.fundamental === 0.5,
+    'weights 透传 (canonical key)'
   );
   assert(
     Array.isArray(withWeights.enabled_analyzers) &&
       withWeights.enabled_analyzers!.length === 2,
-    'enabled_analyzers 透传'
+    'enabled_analyzers 透传 (canonical key)'
   );
 
   assert(
@@ -257,6 +260,171 @@ console.log('T3 — META-GUARD: RiskController.ts + risk.routes.ts 源码守约'
     /authController\.authenticate[\s\S]{0,200}analysis-engine-config/.test(routesSrc) ||
       /analysis-engine-config[\s\S]{0,200}authController\.authenticate/.test(routesSrc),
     "risk.routes.ts /analysis-engine-config 必须挂 authController.authenticate (不可裸路由)"
+  );
+}
+
+// ---------------------------------------------------------------------------
+// T4 — US-139 [AE-009] analyzer_weights 白名单过滤 (AnalyzerKey 8 dim 唯一可信)
+// ---------------------------------------------------------------------------
+// 进入 User.risk_config JSONB 的 weights/enabled_analyzers 必须先过 ANALYZER_KEYS
+// 白名单, 防 typo / 历史脏数据 / 攻击者构造的越界键值污染 DecisionAggregator.
+// 与 normalizeWeights 在 DecisionAggregator 端再 sum=1 归一形成双层防腐 (本层管
+// "键值合法", 那层管"sum=1"), 与 [[Codebase Patterns]] "Optional thresholds param
+// + DEFAULT fallback" lenient 模板同源.
+console.log('T4 — US-139 [AE-009] AnalyzerKey 白名单过滤 (weights / enabled_analyzers)');
+{
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { ANALYZER_KEYS } = require('../../src/services/analysis-engine/ShadowDoubleRunService');
+
+  // [4.1] ANALYZER_KEYS 形态: 8 个 + 与 frontend / AnalyzerTypes 同款
+  assert(Array.isArray(ANALYZER_KEYS) && ANALYZER_KEYS.length === 8, 'ANALYZER_KEYS 长度=8');
+  const EXPECTED = new Set([
+    'fundamental',
+    'technical',
+    'capital',
+    'news',
+    'sentiment',
+    'industry_regime',
+    'risk',
+    'event',
+  ]);
+  assert(
+    ANALYZER_KEYS.every((k: string) => EXPECTED.has(k)),
+    'ANALYZER_KEYS 与 AnalyzerTypes.AnalyzerKey 8 dim 同集合'
+  );
+  // frozen 防 mutate (同 DEFAULT_ANALYSIS_ENGINE_CONFIG 思路)
+  let mutated = false;
+  try {
+    (ANALYZER_KEYS as any).push('attacker_inject');
+  } catch {
+    mutated = true;
+  }
+  assert(
+    mutated || ANALYZER_KEYS.length === 8,
+    'ANALYZER_KEYS 必须 Object.freeze 防 caller push 污染'
+  );
+
+  // [4.2] weights — unknown key 丢弃
+  const w1 = normalizeAnalysisEngineConfig({
+    mode: 'hard',
+    weights: {
+      fundamental: 0.4,
+      technical: 0.3,
+      fundamentals: 0.5, // typo 复数 — drop
+      industryRegime: 0.2, // camelCase — drop
+      foo: 0.1, // unknown — drop
+      __proto__: 0.1, // prototype pollution attempt — drop
+    },
+  });
+  assert(
+    !!w1.weights && Object.keys(w1.weights).length === 2,
+    `weights 过滤后只剩 2 key (got ${w1.weights ? Object.keys(w1.weights).join(',') : 'null'})`
+  );
+  assert(
+    !!w1.weights && w1.weights.fundamental === 0.4 && w1.weights.technical === 0.3,
+    'weights canonical key 透传'
+  );
+  assert(
+    !!w1.weights && (w1.weights as any).fundamentals === undefined,
+    'weights typo "fundamentals" 必须丢弃 (防与 fundamental 共存写花 JSONB)'
+  );
+
+  // [4.3] weights — 非 finite / 负数 丢弃, 0 保留
+  const w2 = normalizeAnalysisEngineConfig({
+    mode: 'shadow',
+    weights: {
+      fundamental: 'oops' as any, // 非 number — drop
+      technical: NaN, // NaN — drop
+      capital: Infinity, // Infinity — drop
+      news: -0.5, // 负数 — drop
+      sentiment: 0, // 0 — 保留 (用户主动屏蔽合法)
+      risk: 0.5,
+    },
+  });
+  assert(
+    !!w2.weights && w2.weights.sentiment === 0,
+    'weights 0 保留 (用户主动屏蔽 dim)'
+  );
+  assert(
+    !!w2.weights && w2.weights.risk === 0.5,
+    'weights 正常 number 保留'
+  );
+  for (const bad of ['fundamental', 'technical', 'capital', 'news']) {
+    assert(
+      !!w2.weights && (w2.weights as any)[bad] === undefined,
+      `weights 非法值 (${bad}) 必须丢弃`
+    );
+  }
+
+  // [4.4] weights — 全丢弃 / 空对象 → undefined (走 DecisionAggregator 全默认权重)
+  const w3 = normalizeAnalysisEngineConfig({
+    mode: 'hard',
+    weights: { foo: 1, bar: 2 },
+  });
+  assert(w3.weights === undefined, '全 unknown key → weights=undefined (走默认)');
+
+  const w4 = normalizeAnalysisEngineConfig({ mode: 'hard', weights: {} });
+  assert(w4.weights === undefined, '空 weights {} → undefined (与未填等价)');
+
+  // [4.5] weights — 数组 / null / 非 object → undefined (防 Array.isArray 漏判)
+  const w5 = normalizeAnalysisEngineConfig({ mode: 'hard', weights: [0.5, 0.3] });
+  assert(w5.weights === undefined, '数组 weights → undefined (不能当对象 index)');
+
+  const w6 = normalizeAnalysisEngineConfig({ mode: 'hard', weights: null });
+  assert(w6.weights === undefined, 'null weights → undefined');
+
+  const w7 = normalizeAnalysisEngineConfig({ mode: 'hard', weights: 'string' as any });
+  assert(w7.weights === undefined, 'string weights → undefined');
+
+  // [4.6] enabled_analyzers — unknown key dropped, dedupe
+  const e1 = normalizeAnalysisEngineConfig({
+    mode: 'shadow',
+    enabled_analyzers: [
+      'fundamental',
+      'fundamental', // dup — dedupe
+      'foo', // unknown — drop
+      'INDUSTRY_REGIME', // 大小写不匹配 — drop (严格 case-sensitive)
+      'industry_regime',
+      123 as any, // 非 string — drop
+    ],
+  });
+  assert(
+    !!e1.enabled_analyzers && e1.enabled_analyzers.length === 2,
+    `enabled_analyzers dedupe + filter 后剩 2 (got ${e1.enabled_analyzers?.join(',')})`
+  );
+  assert(
+    !!e1.enabled_analyzers &&
+      e1.enabled_analyzers.includes('fundamental') &&
+      e1.enabled_analyzers.includes('industry_regime'),
+    'enabled_analyzers 保留 canonical key'
+  );
+
+  // [4.7] enabled_analyzers — 全 unknown / 空 → undefined (走全 8 dim 默认)
+  const e2 = normalizeAnalysisEngineConfig({
+    mode: 'shadow',
+    enabled_analyzers: ['foo', 'bar'],
+  });
+  assert(e2.enabled_analyzers === undefined, '全 unknown enabled_analyzers → undefined');
+
+  const e3 = normalizeAnalysisEngineConfig({ mode: 'shadow', enabled_analyzers: [] });
+  assert(e3.enabled_analyzers === undefined, '空 enabled_analyzers [] → undefined');
+
+  // [4.8] META-GUARD: ShadowDoubleRunService.ts 必须 export ANALYZER_KEYS 且为 frozen
+  const svcSrc = fs.readFileSync(
+    path.resolve(__dirname, '../../src/services/analysis-engine/ShadowDoubleRunService.ts'),
+    'utf-8'
+  );
+  assert(
+    /export\s+const\s+ANALYZER_KEYS\s*:/.test(svcSrc),
+    'ShadowDoubleRunService.ts 必须 export ANALYZER_KEYS (单一可信白名单)'
+  );
+  assert(
+    /Object\.freeze\(\s*\[[\s\S]*?'fundamental'[\s\S]*?'event'[\s\S]*?\]/.test(svcSrc),
+    'ANALYZER_KEYS 必须 Object.freeze 包裹字面量数组 (防 mutate)'
+  );
+  assert(
+    /sanitizeWeights\s*\(/.test(svcSrc) && /sanitizeEnabledAnalyzers\s*\(/.test(svcSrc),
+    'normalizeAnalysisEngineConfig 必须委托 sanitizeWeights / sanitizeEnabledAnalyzers 白名单'
   );
 }
 

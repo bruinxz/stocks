@@ -2137,8 +2137,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 139,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "normalizeAnalysisEngineConfig 引入 ANALYZER_KEYS 8 dim 白名单 + sanitizeWeights/sanitizeEnabledAnalyzers — unknown key/typo/负数/NaN/__proto__ 全静默丢弃, 与 DecisionAggregator.normalizeWeights 形成双层防腐. 60/60 tests pass."
     },
     {
       "id": "US-140",

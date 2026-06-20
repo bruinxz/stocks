@@ -50,6 +50,24 @@ Runbook (灰度切量): `docs/audit/analysis_engine_runbook.md`.
 `risk_config.analysis_engine = {mode:'shadow'}`. 必须 `user.changed('risk_config', true)`
 后 save (US-017 JSONB 更新坑).
 
+## US-139 [AE-009] user analyzer_weights 白名单 (双层防腐)
+
+`risk_config.analysis_engine.{weights, enabled_analyzers}` 进入 JSONB 之前必须先过
+`ShadowDoubleRunService.ANALYZER_KEYS` 8 dim 白名单 (与 `AnalyzerTypes.AnalyzerKey` 同源,
+也与前端 `analysisEngineWeightHelpers.ANALYZER_DIMENSIONS` 同源 — single source of truth).
+
+- `sanitizeWeights` — unknown key (typo `'fundamentals'` 复数 / camelCase / 攻击者
+  注入 `__proto__`) 静默丢弃; 非 finite / 负数 丢弃; 0 保留 (用户主动屏蔽合法).
+  全丢弃后返 undefined 走 `DecisionAggregator.normalizeWeights` 全默认 (sum=1).
+- `sanitizeEnabledAnalyzers` — 同白名单 + dedupe + case-sensitive (与 `AnalyzerKey`
+  字面量完全一致); 空数组 / 全 unknown → undefined 走全 8 dim 默认.
+- `DecisionAggregator.normalizeWeights` 内仍做 sum=1 归一化 — 双层防腐: 本层管"键值合法",
+  那层管"sum=1".
+
+任何新加 analyzer key 必须同步改 4 处: `AnalyzerTypes.AnalyzerKey` / `ShadowDoubleRunService.ANALYZER_KEYS` /
+`DecisionAggregator.DEFAULT_ANALYZER_WEIGHTS` / 前端 `analysisEngineWeightHelpers.ANALYZER_DIMENSIONS`.
+漏改 `ANALYZER_KEYS` 会让新 dim 配置被 sanitize 静默丢弃, UI 看着保存了实际没生效.
+
 ## 新加 analyzer 的 5 步流程
 
 1. 在 `analyzers/` 下新建 `XxxAnalyzer.ts`, 继承 `BaseAnalyzer`, 实现 `run(ctx)`.

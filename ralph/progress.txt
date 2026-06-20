@@ -3952,3 +3952,30 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - service 层 since_hours 必须 clamp (1 ≤ x ≤ 720) — 不 clamp 就是 DoS 入口 (用户传 since_hours=99999 一次扫几年数据 + 全表 sequence scan). LiveBrokerCommand.findAll 还应该 limit 5000 兜底, 防极端 user 单窗口出 50k+ row 拖崩 service.
   - sample_per_category 提供 per-category 样本是"统计 + 实例"双视图必备 — 只给 counts 用户看到 cancelled_partial=8 但点不进去看具体哪 8 单是哪个 symbol / 什么时候发生. 提供前 5 条样本 + 后端按 created_at DESC 排序, 让 UI 可以"点击柱状图直接看明细".
 ---
+
+## 2026/06/21 02:25 - US-139 [AE-009] user analyzer_weights
+- 实现 risk_config.analysis_engine.{weights,enabled_analyzers} 8 dim 白名单过滤 — UI/controller/service 端到端配置流早已存在 (US-067 slider + US-065 controller + US-021 hard mode), 但 `normalizeAnalysisEngineConfig` 之前对 weights blob 完全裸透传, 攻击者 / 历史脏数据 / typo (e.g. 'fundamentals' 复数 / 'industryRegime' camelCase) / `__proto__` 注入 / NaN / Infinity / 负数 都会进 User.risk_config JSONB 污染 DecisionAggregator. 本 PR 补这层防腐.
+- 设计 (与 [[Codebase Patterns]] "DEFAULT_* 必须 Object.freeze" + lenient 静默兜底 同源, 与 sizing-limit-consistency / risk-guard threshold normalize 同模板):
+  - 引入 `ANALYZER_KEYS` 8 dim 白名单常量, `Object.freeze` 防 mutate, 与 AnalyzerTypes.AnalyzerKey / 前端 analysisEngineWeightHelpers.ANALYZER_DIMENSIONS **三处同源** (改一处必同步另两处, CLAUDE.md 已注明).
+  - 新增 `sanitizeWeights(raw)`: unknown key drop / 非 finite drop / 负数 drop / 0 保留 / 空 → undefined.
+  - 新增 `sanitizeEnabledAnalyzers(raw)`: 同白名单 + dedupe + case-sensitive (大写 'INDUSTRY_REGIME' 也 drop) / 空 → undefined.
+  - `normalizeAnalysisEngineConfig` 委托两个 helper, 不再原样透传 raw object.
+  - 与 `DecisionAggregator.normalizeWeights` 形成**双层防腐**: 本层管"键值合法", 那层管"sum=1 归一" — single layer 不够 (上层 typo 透过来, 下层只会按 typo 当 unknown 用 0 默认覆盖, 总权重相对正确但 audit 一看 JSONB 是脏的).
+- Files changed:
+  - backend/src/services/analysis-engine/ShadowDoubleRunService.ts: 加 ANALYZER_KEYS + sanitizeWeights + sanitizeEnabledAnalyzers + refactor normalizeAnalysisEngineConfig.
+  - backend/tests/risk/analysis-engine-config.test.ts: 修正 legacy typo ('fundamentals' → 'fundamental' canonical key), 新增 T4 段 25 个 assertion 覆盖白名单 / 边界值 / __proto__ 攻击 / 数组/null/string raw / dedupe / case-sensitive / META-GUARD fs+regex.
+  - backend/src/services/analysis-engine/CLAUDE.md: 加 US-139 章节, 说明 ANALYZER_KEYS 4 处同步守约 (AnalyzerTypes / ShadowDoubleRunService / DecisionAggregator / 前端 helper).
+- 验证:
+  - tests/risk/analysis-engine-config.test.ts: 60/60 ✓ (原 35 + 新 25)
+  - tests/services/analysis-engine/ShadowDoubleRunService.test.ts: 35/35 ✓ (回归 normalizeAnalysisEngineConfig 行为契约)
+  - tests/services/analysis-engine/DecisionAggregator.test.ts: 81/81 ✓
+  - tests/services/analysis-engine-weight-helpers.test.ts: 112/112 ✓
+  - npx tsc --noEmit: 0 errors
+  - eslint: clean
+- **Learnings for future iterations:**
+  - **"白名单 sanitize + normalize 双层防腐" 模板**: 任何 `risk_config` / `user_settings` JSONB 子字段 (e.g. PortfolioConstruction / RiskParameters / TodoSuggestions / 未来 AE-X) 都应同款双层守护. 上层 (normalizeXxxConfig) 管 "raw blob → 仅 known schema 字段 + 合法值类型", 下层 (Aggregator/Service.normalizeXxx) 管 "排比例 / sum=1 / 阈值排序". 单层不够: 单 sanitize 不归一会让 sum 漂; 单 normalize 不 sanitize 会让 unknown key 写入 JSONB audit 脏数据.
+  - **"3 处 (或 N 处) 同源 single source of truth" 加 META-GUARD**: ANALYZER_KEYS 在 backend AnalyzerTypes / backend ShadowDoubleRunService / 前端 analysisEngineWeightHelpers 三处必须同集合; 漏一处会让"UI 显示 + 后端接收 + 后端持久化"三段对不齐. 新加 dim 时改 1 处忘改其它 2 处 = 配置看着保存了实际不生效. CLAUDE.md 已注明 4 处 (含 DecisionAggregator.DEFAULT_ANALYZER_WEIGHTS) 必须同步.
+  - **`__proto__` / prototype pollution 攻击向量**: JSONB 字段从 API body 进来时, `for...of Object.keys(raw)` 不会枚举 `__proto__` 这种特殊 key (但 raw 是 JSON.parse 的会变 own property, 仍会枚举). 白名单过滤是最简防御 — 任何 key 不在 ANALYZER_KEYS 集合一律丢弃, 不只是 `__proto__`. 单测应显式构造 `{__proto__: 0.1, ...}` 这类 case 守住.
+  - **case-sensitive 白名单**: 'INDUSTRY_REGIME' / 'IndustryRegime' / 'industry_regime' 在 ANALYZER_KEYS 里只接受第三个 (snake_case lower). UI 端如果手抖发了 camelCase 也会被丢, 这是好事 — 强制前后端 case 对齐, 不允许 lenient 大小写匹配 (那会导致 enabled_analyzers dedupe 不掉 'fundamental' + 'Fundamental' 两条).
+  - **0 是合法权重值**: 用户主动把某 dim 拉到 0 (e.g. 屏蔽 sentiment) 是合法语义, sanitize 必须保留 0. 之前 `if (v)` 真值判断会把 0 当 falsy 丢掉. 用 `Number.isFinite(v) && v >= 0` 守边界正确.
+---

@@ -25,9 +25,35 @@ import {
   type AnalysisEngineArchiveDataSource,
   type ArchiveAnalysisEngineResultOutput,
 } from './analysisEngineSignalArchive';
-import type { RecommendationDecision } from './AnalyzerTypes';
+import type { AnalyzerKey, RecommendationDecision } from './AnalyzerTypes';
 
 export type AnalysisEngineMode = 'off' | 'shadow' | 'hard';
+
+/**
+ * US-139 [AE-009] — 8 dim analyzer key 白名单 single source of truth.
+ *
+ * 与 `AnalyzerTypes.AnalyzerKey` / 前端 `analysisEngineWeightHelpers.ANALYZER_DIMENSIONS`
+ * 同名同序; 任何 `risk_config.analysis_engine.weights` / `.enabled_analyzers` 进入
+ * 持久化之前必须先过这层过滤, 把 unknown key / typo (e.g. 'fundamentals' 复数误写)
+ * / 拼写差异 (e.g. 'industryRegime' camelCase) 直接 **静默丢弃**, 防止 JSONB 被污染.
+ *
+ * 为何不抛错: 与 mode='evil' → 'off' 同款 lenient 策略 — 上游 API/历史脏数据/前端
+ * 老版本兼容. 写错的 key 等同未配置, 退回 `DEFAULT_ANALYZER_WEIGHTS` 兜底.
+ *
+ * Object.freeze + Set 防 caller 误 mutate 让全局漂移 (与 [[Codebase Patterns]]
+ * "DEFAULT_* 必须 Object.freeze" 同源).
+ */
+export const ANALYZER_KEYS: ReadonlyArray<AnalyzerKey> = Object.freeze([
+  'fundamental',
+  'technical',
+  'capital',
+  'news',
+  'sentiment',
+  'industry_regime',
+  'risk',
+  'event',
+]);
+const ANALYZER_KEYS_SET: ReadonlySet<string> = new Set(ANALYZER_KEYS);
 
 export interface AnalysisEngineUserConfig {
   mode: AnalysisEngineMode;
@@ -39,19 +65,57 @@ export const DEFAULT_ANALYSIS_ENGINE_CONFIG: Readonly<AnalysisEngineUserConfig> 
   mode: 'off',
 });
 
+/**
+ * US-139 [AE-009] — 把任意 raw weights blob 过滤成 "仅 8 个 known AnalyzerKey + 有限非负 number".
+ *
+ * 设计:
+ *  - unknown key 丢弃 (typo 'fundamentals' / 'industryRegime' / 'foo' 全 drop)
+ *  - 非 number / NaN / Infinity / 负数 丢弃 (前端 slider 范围 0~100, 不应越界)
+ *  - 0 保留 (用户主动屏蔽某一 dim 是合法语义)
+ *  - 结果为空 {} 时返 undefined 走 DecisionAggregator 全默认权重 (sum=1 默认)
+ *
+ * 不在此处归一化 sum=1: DecisionAggregator.normalizeWeights 已做, 这里只把"垃圾键值"
+ * 过滤掉, 保留用户语义 (e.g. 用户填 50/30/20 而非 0.5/0.3/0.2, 都会被 downstream
+ * 重新归一化, 比例正确).
+ */
+function sanitizeWeights(raw: unknown): Record<string, number> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const out: Record<string, number> = {};
+  for (const k of Object.keys(raw as Record<string, unknown>)) {
+    if (!ANALYZER_KEYS_SET.has(k)) continue;
+    const v = Number((raw as Record<string, unknown>)[k]);
+    if (!Number.isFinite(v) || v < 0) continue;
+    out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * US-139 [AE-009] — enabled_analyzers 同款白名单 + dedupe.
+ * 非 string / unknown key 丢弃; 结果为空时返 undefined 让 service 端走全 8 dim 默认.
+ */
+function sanitizeEnabledAnalyzers(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of raw) {
+    if (typeof s !== 'string') continue;
+    if (!ANALYZER_KEYS_SET.has(s)) continue;
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 export function normalizeAnalysisEngineConfig(raw: any): AnalysisEngineUserConfig {
   const obj = raw && typeof raw === 'object' ? raw : {};
   const validModes: AnalysisEngineMode[] = ['off', 'shadow', 'hard'];
   const mode = validModes.includes(obj.mode) ? obj.mode : 'off';
   return {
     mode,
-    enabled_analyzers: Array.isArray(obj.enabled_analyzers)
-      ? obj.enabled_analyzers.filter((s: unknown): s is string => typeof s === 'string')
-      : undefined,
-    weights:
-      obj.weights && typeof obj.weights === 'object' && !Array.isArray(obj.weights)
-        ? (obj.weights as Record<string, number>)
-        : undefined,
+    enabled_analyzers: sanitizeEnabledAnalyzers(obj.enabled_analyzers),
+    weights: sanitizeWeights(obj.weights),
   };
 }
 
