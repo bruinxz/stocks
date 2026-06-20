@@ -1410,8 +1410,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 91,
-      "passes": false,
-      "notes": "依赖: OPS-002"
+      "passes": true,
+      "notes": "依赖: OPS-002 | DONE 2026/06/20: 新增 backend/src/services/postmortem/AIDiaryCronRunner.ts (~330 行 + 完整 jsdoc) — cron 批量驱动遵循 [[DailyAttributionCronRunner]] (US-083 PM-006) 模板. export 常量 AI_DIARY_CRON_RUN_ID_PREFIX / DEFAULT_AI_DIARY_CRON_DRY_RUN / DEFAULT_AI_DIARY_CRON_ENABLE_LLM, AIDiaryCronDataSource interface (listActiveUsers), AIDiaryCronUserResult / AIDiaryCronRunSummary / RunAIDiaryGenerateOptions 全 export. PRODUCTION DataSource lazy require User model + try/catch fail-OPEN. pure helpers normalizeDiaryCronDate / buildDefaultCronRunId. 主入口 runAIDiaryGenerate 支持 explicit user_ids 覆盖 / listActiveUsers throw 当空跑 / dry_run + enable_llm 优先级链 / cron_run_id 默认 + override. cronRegistry.ts 新增 AI_DIARY_GENERATE entry (analytics / owner=analytics / recommendedCron 0 18 * * 1-5). SchedulerService._executeTaskLogic 新增 else-if AI_DIARY_GENERATE dispatch (parameters 解析 user_ids/dry_run/enable_llm/date + safeUpdateExecutionLog 写 result_summary + logger.info [AI_DIARY_GENERATE] 标签); defaultTasks 新增 \"AI 投资日记每日生成\" seed (cron 0 18 * * 1-5 / enable_llm=false). 单测 backend/tests/postmortem/ai-diary-cron.test.ts (~450 行 / 61 ok) 覆盖常量 / pure helpers / happy 多 user / skipped 留痕 / sync throw 兜底 / explicit user_ids 过滤非法 / listActiveUsers throw / dry_run+explicit llm / enable_llm+fake LLM / cron_run_id override / upsert ok=false → failed continue / PRODUCTION factory smoke / META-GUARD fs+regex 守 cronRegistry + SchedulerService dispatch + defaultTasks seed. tsc 0 err / lint 0 new err (SchedulerService.ts 21 baseline 不动) / npm test --filter=ai-diary 3 files all pass (220+61=281 ok) / cron-registry 541 ok / 0 failed 无 regression."
     },
     {
       "id": "US-092",

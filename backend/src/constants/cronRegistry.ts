@@ -409,6 +409,19 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '工作日 17:00 给所有 active portfolio 生成 6 维归因 (factor/industry/timing/selection/sizing/execution_cost) 并落 daily_attribution_reports',
   },
+  // US-091 PM-020 — 工作日 18:00 (盘后 + DAILY_ATTRIBUTION_GENERATE 17:00 之后)
+  // 给所有 active user 生成 ≤ 500 字 AI 投资日记并 upsert ai_diary_entries.
+  // 默认 dry_run=false + enable_llm=false (走 heuristic 零外网链路);
+  // ops 显式启 LLM 改 ScheduledTask.parameters.enable_llm=true.
+  // fail-OPEN: 单 user 失败 continue 不阻塞 batch.
+  {
+    type: 'AI_DIARY_GENERATE',
+    category: 'analytics',
+    owner: 'analytics',
+    recommendedCron: '0 18 * * 1-5',
+    description:
+      '工作日 18:00 给所有 active user 生成 ≤ 500 字 AI 投资日记并 upsert ai_diary_entries',
+  },
   // US-038 QA-002 — 周一 02:00 (早于 AC "周一 04:00 前生成" 截止) 聚合上周
   // 全市场 (或 ScheduledTask.parameters.stock_codes 显式 list) 投资者问答按
   // (stock, week) 落 east_money_qa_stats 表.

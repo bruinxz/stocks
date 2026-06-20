@@ -3531,6 +3531,78 @@ class SchedulerService {
                   : '')
               : '')
         );
+      } else if (task.type === 'AI_DIARY_GENERATE') {
+        // US-091 PM-020 — 工作日 18:00 (DAILY_ATTRIBUTION_GENERATE 17:00 之后) 给所有
+        // active user 生成 ≤ 500 字 AI 投资日记并 upsert ai_diary_entries.
+        // `user_ids` 显式 list (空 = 取所有 is_active=true); `dry_run`=true 仅算不写;
+        // `enable_llm`=true 启远端 trading_agents LLM (默认 false 走 heuristic);
+        // `date` override 默认今日 Asia/Shanghai. fail-OPEN: 单 user 失败 continue 不阻塞 batch.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { runAIDiaryGenerate } = require('./postmortem/AIDiaryCronRunner');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const explicitUserIds: number[] = Array.isArray(parameters.user_ids)
+          ? parameters.user_ids
+              .map((x: unknown) => Number(x))
+              .filter((n: number) => Number.isFinite(n) && n > 0)
+          : [];
+        const dryRunDiary =
+          parameters.dry_run !== undefined
+            ? Boolean(parameters.dry_run)
+            : parameters.dryRun !== undefined
+            ? Boolean(parameters.dryRun)
+            : false;
+        const enableLlmDiary =
+          parameters.enable_llm !== undefined
+            ? Boolean(parameters.enable_llm)
+            : parameters.enableLlm !== undefined
+            ? Boolean(parameters.enableLlm)
+            : false;
+        const refDateDiary =
+          typeof parameters.date === 'string' && parameters.date.length > 0
+            ? parameters.date
+            : typeof parameters.reference_date === 'string'
+            ? parameters.reference_date
+            : undefined;
+        const diarySummary = await runAIDiaryGenerate({
+          date: refDateDiary,
+          user_ids: explicitUserIds.length > 0 ? explicitUserIds : undefined,
+          dry_run: dryRunDiary,
+          enable_llm: enableLlmDiary,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: diarySummary.total_users,
+          completed_items: diarySummary.persisted_count,
+          failed_items: diarySummary.failed_count,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'ai_diary_generate',
+            date: diarySummary.date,
+            dry_run: diarySummary.dry_run,
+            enable_llm: diarySummary.enable_llm,
+            cron_run_id: diarySummary.cron_run_id,
+            total_users: diarySummary.total_users,
+            ok_count: diarySummary.ok_count,
+            skipped_count: diarySummary.skipped_count,
+            failed_count: diarySummary.failed_count,
+            persisted_count: diarySummary.persisted_count,
+            per_user: diarySummary.per_user.map((u: any) => ({
+              user_id: u.user_id,
+              status: u.status,
+              reason: u.reason,
+              persisted: u.persisted,
+            })),
+          },
+        });
+        logger.info(
+          `[AI_DIARY_GENERATE] date=${diarySummary.date} ` +
+            `total=${diarySummary.total_users} ok=${diarySummary.ok_count} ` +
+            `skip=${diarySummary.skipped_count} fail=${diarySummary.failed_count} ` +
+            `persisted=${diarySummary.persisted_count}` +
+            `${diarySummary.enable_llm ? ' llm=on' : ' llm=off'}` +
+            `${dryRunDiary ? ' (dry_run)' : ''}`
+        );
       } else if (task.type === 'MARKET_BRIEF_GENERATE') {
         // US-073 — 每个交易日 08:30 生成「AI 大盘速读」当日卡片。
         // 5 维数据：沪深300 上日收盘 / 今日开盘 / 北向资金 / 涨停数 / AI 一句话观点。
@@ -5743,6 +5815,20 @@ class SchedulerService {
         is_active: true,
         parameters: {
           dry_run: false,
+        },
+      },
+      {
+        // US-091 PM-020 — 工作日 18:00 (DAILY_ATTRIBUTION_GENERATE 17:00 之后) 给所有
+        // active user 生成 ≤ 500 字 AI 投资日记并 upsert ai_diary_entries.
+        // 默认 dry_run=false + enable_llm=false (走 heuristic 零外网链路);
+        // 单 user 失败 fail-OPEN continue 不阻塞 batch.
+        name: 'AI 投资日记每日生成',
+        type: 'AI_DIARY_GENERATE',
+        cron_expression: '0 18 * * 1-5',
+        is_active: true,
+        parameters: {
+          dry_run: false,
+          enable_llm: false,
         },
       },
       {

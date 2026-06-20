@@ -14,6 +14,13 @@ L8-Postmortem 系列 service. 每日 / 每周 / 增量地把 trading_agents + pa
   generateForUser(user_id, {date, data_source, llm_source?, cron_run_id?}) →
   LLM ≤ 500 字 / heuristic fallback / upsert AIDiaryEntry. 永不 throw.
 
+- **AIDiaryCronRunner.ts** — US-091 [PM-020] AI_DIARY_GENERATE cron 批量驱动
+  runAIDiaryGenerate({date?, user_ids?, dry_run?, enable_llm?, ...}) — 枚举所有
+  active user, 逐个 generateForUser, 返聚合 {total/ok/skipped/failed/persisted +
+  per_user[]}. 默认 dry_run=false + enable_llm=false (零外网 heuristic).
+  挂在 SchedulerService AI_DIARY_GENERATE dispatch + cronRegistry analytics 段,
+  推荐 cron `0 18 * * 1-5` (工作日 18:00 — DAILY_ATTRIBUTION_GENERATE 17:00 之后).
+
 (后续 story 接入: PM-021 ErrorPatternReport, PM-023 ImprovementSuggestion, ...)
 
 ## 范式 — 与 [[services/attribution/AIAttributionSummary]] 5 件套对齐

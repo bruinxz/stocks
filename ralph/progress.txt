@@ -2608,3 +2608,37 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **enforceDiaryConstraints 比 enforceAttributionSummaryConstraints 多了 too_short 校验** (MIN_CHARS=20) — LLM 返 "今日平稳" 那种 4 字短串得 fallback. attribution 用 MIN_NUMBERS 校 ≥ 3 数字 (公司财报硬要求), 日记是叙事性文本无此约束
   - **mapAttributionRowToContext 接 Record<string, unknown>** 而非 DailyAttributionReport 类型 — 让 PRODUCTION DataSource 把 toJSON() 行映射成纯 plain object, 避免 model class 实例进入 service 内部, 单测也无需 mock model 实例
 ---
+
+
+## 2026/06/20 12:30 - US-091
+- 实现 [PM-020] AI_DIARY_GENERATE cron — 工作日 18:00 给所有 active user 生成 ≤ 500 字 AI 投资日记并 upsert ai_diary_entries
+- Files changed:
+  - backend/src/services/postmortem/AIDiaryCronRunner.ts (新, ~330 行 + 完整 jsdoc):
+    * 3 export 常量 AI_DIARY_CRON_RUN_ID_PREFIX='ai_diary_cron_' / DEFAULT_AI_DIARY_CRON_DRY_RUN=false / DEFAULT_AI_DIARY_CRON_ENABLE_LLM=false
+    * AIDiaryCronDataSource interface (listActiveUsers) — 与 service-side AIDiaryDataSource (loadDiaryContext/upsertDiaryEntry) 分两 interface 职责清晰
+    * AIDiaryCronUserResult / AIDiaryCronRunSummary (含 cron_run_id / dry_run / enable_llm + per_user[]) / RunAIDiaryGenerateOptions 全 export
+    * createProductionAIDiaryCronDataSource() lazy require '../../models/User' (try/catch fail-OPEN 返 [])
+    * pure helper normalizeDiaryCronDate (与 normalizeAttributionDate 同款 YYYY-MM-DD UTC) + buildDefaultCronRunId(date) 形如 ai_diary_cron_2026-06-20_<nowMs>
+    * 主入口 runAIDiaryGenerate(options) — LLM 注入优先级: explicit llm_source > enable_llm+非dry_run → PRODUCTION > null (heuristic); explicit user_ids 优先(过滤 NaN/0/负数) / 空时 listActiveUsers(throw 当空跑); per-user try/catch service throw 兜底转 failed+service_threw; status 计数按 service result.status; persisted 由 service result.persisted 决定
+  - backend/src/constants/cronRegistry.ts: 在 analytics 段加 AI_DIARY_GENERATE entry (owner=analytics / recommendedCron='0 18 * * 1-5' / 描述含 "≤ 500 字" "ai_diary_entries")
+  - backend/src/services/SchedulerService.ts:
+    * 新增 else-if task.type === 'AI_DIARY_GENERATE' 分支 (与 DAILY_ATTRIBUTION_GENERATE 对齐): parameters 解析 user_ids / dry_run / enable_llm / date (+ camelCase 兼容) → runAIDiaryGenerate → safeUpdateExecutionLog 写 result_summary (含 cron_run_id / per_user[]) → logger.info [AI_DIARY_GENERATE] 标签 (含 llm=on/off + dry_run 后缀)
+    * defaultTasks 新增 "AI 投资日记每日生成" seed (type='AI_DIARY_GENERATE' / cron='0 18 * * 1-5' / parameters={dry_run:false, enable_llm:false})
+  - backend/src/services/postmortem/CLAUDE.md: 文件清单增加 AIDiaryCronRunner.ts 段
+  - backend/tests/postmortem/ai-diary-cron.test.ts (新, ~450 行 / 61 assert): 5 模块 — [1] 常量冻结 / [2] pure helpers 4 case (有效/ISO/非法/cronRunId) / [3] runAIDiaryGenerate 主入口 9 path (a happy 3 user / b skipped null ctx / c sync throw 兜底 / d explicit ids 过滤 / e list throw 当空 / f dry_run + 显式 fake LLM (尊重 override) / g enable_llm + fake LLM 验证调用 / h cron_run_id override / i upsert ok=false → failed continue) / [4] PRODUCTION factory smoke 不抛 / [5] META-GUARD fs+regex 守 cronRegistry (有 type / category=analytics / recommendedCron 18:00) + SchedulerService dispatch (else-if + require AIDiaryCronRunner + runAIDiaryGenerate + safeUpdateExecutionLog + [AI_DIARY_GENERATE] 日志) + defaultTasks seed (name='AI 投资日记每日生成' / cron='0 18 * * 1-5' / enable_llm:false)
+  - ralph/prd.json: US-091 passes=true + notes
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npm test -- --filter=ai-diary` exit 0, 3 files (ai-diary-entry US-089 73 + ai-diary-service US-090 147 + ai-diary-cron US-091 61) / 281 assert all pass
+  - `npm test -- --filter=cron-registry` 541 ok / 0 failed — 双向一致性 guard 通过 (新 AI_DIARY_GENERATE 同时在 registry + scheduler dispatch 双源)
+  - `eslint src/services/postmortem/AIDiaryCronRunner.ts src/constants/cronRegistry.ts` — AIDiaryCronRunner 0 err, cronRegistry 1 pre-existing baseline warn
+  - `eslint src/services/SchedulerService.ts` 21 err = baseline (git stash 对比验证本次新增 0 err 0 warn, 与 US-019 / US-083 同款 baseline-diff 模式)
+- **Learnings for future iterations:**
+  - **PM 系列 cron runner 与 attribution 系列同形态可直接抄**: US-091 PM-020 是 PM 系列 (Postmortem) 第一个 cron, 直接抄 US-083 PM-006 DailyAttributionCronRunner 改字段, 与 [[Codebase Patterns]] 第 38 条 "先建框架 + 后填实" / 第 38 条 "cron 批量驱动 + 持久化层" 完全契合. 同款套路适用未来 PM-022 WEEKLY_ERROR_PATTERN / PM-024 IMPROVEMENT_SUGGESTION_* — 改 entity (user/portfolio/strategy) + service-side method 名即可, runner 形态 6 件套零改动.
+  - **PM 系列 service-side vs cron-side DataSource 分两 interface 而非合并**: AIDiaryService.AIDiaryDataSource (loadDiaryContext/upsertDiaryEntry) 是"单 user 一次跑"的 I/O, AIDiaryCronRunner.AIDiaryCronDataSource (listActiveUsers) 是"枚举批"的 I/O. 强塞进 service-side 会让单 user 测试 fake 多写无意义 listActiveUsers (单测注入 fake 看上去是 noise), 拆开让单测 fake 互不污染. 这条边界 [[Codebase Patterns 第 38 条]] 显式记录过, 但每次新写都要落地一次. 接入新 PM cron 第一件事就是拆 cron-side DataSource 单独一个 interface.
+  - **LLM 注入三态优先级链 (explicit > enable+非dry_run > null) 是 cron 模板的关键 corner**: dry_run=true 时绝对不能注入 PRODUCTION LLMSource (灰度不应触发 LLM 计费/外网) — runner 自己控. 但 explicit llm_source 仍尊重 (单测注入 fake 验证传递). 三态优先级: `options.llm_source !== undefined → explicit`, `enableLlm && !dryRun → PRODUCTION`, `else → null (heuristic)`. 漏 "explicit 高于 dry_run" 让单测无法测 dry_run+LLM 组合 (调用方实际 ops 可能要 dry_run 测 LLM 自身).
+  - **service 内部已 fail-OPEN 不代表 runner 不需要兜底**: AIDiaryService.generateForUser 三层 fail-OPEN 永不 throw (jsdoc 明文). 但 runner 仍套 per-user try/catch 防 fake/programmer error (类型断言绕过 / future refactor 移除 fail-OPEN) 漏网. 兜底转 status='failed' + reason='service_threw' + 计入 failed_count + continue 下个 user. 与 [[Codebase Patterns]] DailyAttributionCronRunner per-portfolio try/catch 同形态. 调用面 (cron) 才是用户感知边界, 永远不信任 callee 的 fail-OPEN 契约不被打破.
+  - **per-user 真 throw 路径单测难构造的"sync throw via () => { throw }"招式**: 想测 generateForUser 真的 throw 而非 fail-OPEN, 最简单是给 data_source.loadDiaryContext 直接赋 sync throw 的函数 (`(() => { throw new Error('boom') }) as any`). service 顶层 try/catch 会捕到, 转 skipped 路径走 safeUpsert. 想让 generateForUser 自身 throw (绕过其 fail-OPEN) 几乎不可能 (service 把所有 await 都 try/catch 了), 测试改为验证 "service fail-OPEN 链路 + runner counter 正确累加" 而非 "runner 兜底转 failed" (后者只在 future regression 时生效). 这是 fail-OPEN 测试的一类常见困境: caller 兜底分支几乎不可达, 但仍必须存在防 future bug.
+  - **explicit user_ids 过滤非法 (NaN/0/负数) 要在 runner 端做不是 service 端**: ScheduledTask.parameters.user_ids 是 ops 手填 JSON, 可能传错类型. service 端假设 user_id 是合法正整数; runner 接 parameters 必须 `filter(Number.isFinite(n) && n > 0)` 一道过滤, 否则 user_id=NaN 传到 service.generateForUser 会让 DB query 全空 + 落 log 难诊断. 同款适用所有 "parameters → typed input" 边界的 runner.
+  - **cron_run_id 默认含时间戳 (Date.now()) 让重跑可区分 + ops 显式 override 让 idempotent**: 默认 `ai_diary_cron_${date}_${Date.now()}` 让同日两次 cron 跑 (e.g. 17:30 trigger + 19:00 ops 手动 replay) 各自一个 ID 落 metadata.cron_run_id, ops grep 一目了然. 但显式 override (e.g. 'manual_replay_20260620_001') 让"重跑覆盖" 时 metadata 一致 — 与 sequelize upsert (ON CONFLICT DO UPDATE) 配合达到完整 idempotent. 这是 cron metadata 设计的标准范式, [[Codebase Patterns]] 后续可扩到 "cron metadata 6 字段集" 标准.
+---
