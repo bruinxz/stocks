@@ -1817,8 +1817,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 118,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DONE 2026/06/20: 新增 backend/src/services/announcement/AnnouncementDedupeService.ts (~470 行 + 完整 jsdoc) — pure-function-first 设计沿用 [[RelatedCompanyExtractor]] 同款 DataSource DI. 聚类规则 4 件套: (1) cluster_key=`${stock_code}|${event_type}` (event_type=NULL 退化 `${stock}|*`); (2) 桶内按 announce_date ASC + id ASC 排序; (3) 滑窗 split — 任意两行 |日期差| > DEDUPE_WINDOW_DAYS(=7) 开新 sub-cluster (`${key}#${idx}`); (4) sub-cluster 首行 canonical + 其余 duplicate_of=canonical.id. 6 export 常量+类型 / 5 pure helpers (parseAnnounceDate / daysBetween / buildClusterKey / clusterAnnouncements / buildDedupeRecords / dedupeAnnouncements 一站式) / DataSource interface + PRODUCTION (lazy require AnnouncementSummary + AnnouncementEventRelation) / Service class (dedupe + runBatch 含 persist 开关) / singleton. 持久化通过 AnnouncementEventRelation.metadata.{linked_dedupe_cluster_id, is_canonical, duplicate_of} 不改 AnnouncementSummary 表. fail-OPEN 三层: dedupeAnnouncements unexpected throw 返 trivial cluster (每行自成 cluster ratio=0); list 失败返 []; persist 失败返 0 不抛. 单测 tests/services/announcement/announcement-dedupe-service.test.ts 50 ok / 0 failed 覆盖: [1] 常量 / [2] parse 边界 5 case + daysBetween + buildClusterKey 退化 / [3] cluster 7 case (单 cluster / 多 cluster / 超窗口 split / event_type=null 退化 / 边界 7 天 = 同 cluster / 8 天 = 不同 cluster) / [4] buildDedupeRecords canonical + duplicate_of / [5] dedupeAnnouncements 一站式 + 空输入 / [6] service.dedupe 转发 + runBatch persist 双路径 + persist throw fail-OPEN + list 空 / [7] **AC 主验收 20 条人工标注 6 cluster (A:4+B:3+C:3+D:3+E:3+F:4)** dedupe_ratio=70% 恰好满足 AC ≥ 70%. tsc 0 err, lint 0 新 err (sibling test 同样 tsconfig pre-existing 1 err). 依赖: ANN-008 (AnnouncementEventRelation) + ANN-001~006 (event_type 字段 + classifyEventType 输出)."
     },
     {
       "id": "US-119",
