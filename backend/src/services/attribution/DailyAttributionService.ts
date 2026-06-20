@@ -54,6 +54,11 @@ import {
   AttributionEngineResult,
   computeBrinsonFachler,
 } from './AttributionEngine';
+import {
+  ExecutionCostBreakdown,
+  ExecutionCostInput,
+  aggregateExecutionCost,
+} from './ExecutionCostAggregator';
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -138,6 +143,9 @@ export interface DailyAttributionBreakdown {
   sizing_contrib: number;
   /** 滑点 + 手续费 + 印花税 (PM-004 真接入; 当前 = Σ commission) */
   execution_cost: number;
+  /** PM-004 ExecutionCostAggregator 输出 4 件套 (commission/stamp/transfer/slippage);
+   *  caller 未传 execution_cost_input 时为 null, 保持 PM-001 老 caller 全兼容. */
+  execution_cost_breakdown: ExecutionCostBreakdown | null;
   /** 残差 (运气) = total_pnl - sum(其它维度) */
   residual: number;
 }
@@ -501,18 +509,32 @@ export function topPnL(
  *   - timing_contrib    ← interaction_contrib (交叉项)
  *   - residual 重算 = total - industry - allocation - selection - interaction + execution_cost
  *   让 AC §E.2 ±5% 不变量 trivially 成立.
+ *
+ * PM-004 接入 (US-081): 当 caller 传入 execution_cost_input 时, execution_cost 走
+ * ExecutionCostAggregator 输出 total_cost (commission_total + slippage_total),
+ * 同时把分项 ExecutionCostBreakdown 挂在 breakdown.execution_cost_breakdown 上.
+ * caller 不传则保持 PM-001 老逻辑 = Σ commission, breakdown=null.
  */
 export function sixDimBreakdown(input: {
   trades: DailyAttributionTradeRow[];
   symbolToIndustry: Record<string, string>;
   totalPnL: number;
   attribution_engine_result?: AttributionEngineResult | null;
+  execution_cost_input?: ExecutionCostInput | null;
 }): DailyAttributionBreakdown {
-  const { trades, symbolToIndustry, totalPnL, attribution_engine_result } = input;
+  const { trades, symbolToIndustry, totalPnL, attribution_engine_result, execution_cost_input } =
+    input;
   const buckets = bucketByIndustry(trades, symbolToIndustry);
   const industry_contrib = rankIndustryContrib(buckets, totalPnL);
   const industry_total = buckets.reduce((s, b) => s + b.pnl, 0);
-  const execution_cost = computeExecutionCost(trades);
+  // PM-004 — caller 传 execution_cost_input 时用 aggregator (含 slippage), 否则
+  // 保持 PM-001 老逻辑 = Σ commission. breakdown 字段在前者下挂分项, 否则 null.
+  const execution_cost_breakdown: ExecutionCostBreakdown | null = execution_cost_input
+    ? aggregateExecutionCost(execution_cost_input)
+    : null;
+  const execution_cost = execution_cost_breakdown
+    ? execution_cost_breakdown.total_cost
+    : computeExecutionCost(trades);
   const safeTotal = Number.isFinite(totalPnL) ? totalPnL : 0;
   // PM-002 4 维 — caller 传 engine_result 时填真值, 否则 placeholder=0 兼容 PM-001
   const allocation = attribution_engine_result
@@ -537,6 +559,7 @@ export function sixDimBreakdown(input: {
     selection_contrib: round2(selection),
     sizing_contrib: round2(allocation),
     execution_cost,
+    execution_cost_breakdown,
     residual,
   };
 }
@@ -573,6 +596,14 @@ export function heuristicSummary(report: DailyAttributionReport): string {
  * PM-002 接入 (US-079): 可选传 `attribution_engine_input` (含 industry-level
  * portfolio/benchmark weight + return). 传了就调 Brinson-Fachler engine 把
  * sizing/selection/timing 4 维填真值; 不传保持 PM-001 placeholder=0 行为.
+ *
+ * PM-004 接入 (US-081): 可选传 `execution_cost_input` (含 trades + ref_prices),
+ * 让 execution_cost 走 ExecutionCostAggregator (含 slippage + 分项 breakdown);
+ * 不传则 execution_cost 走 PM-001 老逻辑 = Σ commission.
+ *
+ * 默认 (caller 未显式 opt-out) 用当日 tradesToday 自动构 ExecutionCostInput
+ * 让 breakdown 4 件套始终可见; ref_prices 没传 slippage_total=0 (覆盖率 0) —
+ * caller 视为"暂无滑点数据"渲染即可, 仍优于 PM-001 完全没分项.
  */
 export function buildDailyAttributionReport(input: {
   portfolio_id: number;
@@ -583,6 +614,7 @@ export function buildDailyAttributionReport(input: {
   symbolToIndustry: Record<string, string>;
   generated_at?: string;
   attribution_engine_input?: AttributionEngineInput | null;
+  execution_cost_input?: ExecutionCostInput | null;
 }): DailyAttributionReport {
   const anchorDate = normalizeAttributionDate(input.date);
   // 仅保留 anchor date 当日的 trade
@@ -595,11 +627,29 @@ export function buildDailyAttributionReport(input: {
   const engineResult = input.attribution_engine_input
     ? computeBrinsonFachler(input.attribution_engine_input)
     : null;
+  // PM-004 — caller 显式传 input.execution_cost_input 时尊重 (含可能的 ref_prices);
+  //          caller 未传 (undefined) 时默认用 tradesToday 构最小 input, 让 breakdown
+  //          4 件套始终可见 (slippage_total=0 当 ref_prices 缺失, 仍优于 PM-001 完全无分项);
+  //          caller 显式传 null 时关闭 aggregator → 退到 PM-001 老逻辑 (breakdown=null).
+  const executionCostInput: ExecutionCostInput | null =
+    input.execution_cost_input === undefined
+      ? {
+          trades: tradesToday.map(t => ({
+            symbol: t.symbol,
+            side: t.direction,
+            quantity: Number(t.quantity ?? 0),
+            execute_price: Number(t.execute_price ?? 0),
+            amount: Number(t.amount ?? 0),
+            commission: Number(t.commission ?? 0),
+          })),
+        }
+      : input.execution_cost_input;
   const breakdown = sixDimBreakdown({
     trades: tradesToday,
     symbolToIndustry: input.symbolToIndustry || {},
     totalPnL,
     attribution_engine_result: engineResult,
+    execution_cost_input: executionCostInput,
   });
   const buyCount = tradesToday.filter(t => t.direction === 'BUY').length;
   const sellCount = tradesToday.filter(t => t.direction === 'SELL').length;
@@ -641,6 +691,13 @@ export interface GenerateDailyReportOptions {
    * 不传保持 PM-001 placeholder=0 行为.
    */
   attribution_engine_input?: AttributionEngineInput | null;
+  /**
+   * PM-004 接入: caller 准备好 symbol→arrival/VWAP 参考价 map 后传入完整
+   * ExecutionCostInput, 让 execution_cost 含滑点 + 输出分项 breakdown. 不传
+   * 时 buildDailyAttributionReport 用当日 trades 构最小 input (slippage_total=0).
+   * 显式传 null 则关闭 aggregator (退到 PM-001 老 Σ commission 路径).
+   */
+  execution_cost_input?: ExecutionCostInput | null;
 }
 
 export class DailyAttributionService {
@@ -698,6 +755,11 @@ export class DailyAttributionService {
         symbolToIndustry: symbolToIndustry || {},
         generated_at: options.generated_at,
         attribution_engine_input: options.attribution_engine_input ?? null,
+        // PM-004 — 显式传 null/value 时透传; undefined 时不进 key 让 builder 走
+        // 默认行为 (auto-build from trades, slippage_total=0).
+        ...(Object.prototype.hasOwnProperty.call(options, 'execution_cost_input')
+          ? { execution_cost_input: options.execution_cost_input }
+          : {}),
       });
       return { status: DAILY_ATTRIBUTION_STATUS.OK, report };
     } catch (err) {

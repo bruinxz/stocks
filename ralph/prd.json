@@ -1260,8 +1260,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 81,
-      "passes": false,
-      "notes": "依赖: EX-013"
+      "passes": true,
+      "notes": "依赖: EX-013 | Done: aggregateExecutionCost (commission+stamp+transfer+slippage) + reconcileWithLiveFills (≥99% match_ratio) + sixDimBreakdown 联动. 88 assert / 0 fail. PM-001/002/003 tests 无 regression (88+112+89+98+171+111+88=757 pass)."
     },
     {
       "id": "US-082",
