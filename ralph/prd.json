@@ -1215,8 +1215,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 78,
-      "passes": false,
-      "notes": "依赖: OPS-002"
+      "passes": true,
+      "notes": "依赖: OPS-002 | DONE 2026/06/20: 新建 backend/src/services/attribution/DailyAttributionService.ts (~570 行 + 完整 jsdoc) — L8-Postmortem 6 维归因主入口 + DataSource DI seam, 后续 PM-002~009 接相应 DataSource method 即可. 9 个 export 纯函数 (normalizeAttributionDate/normalizeIndustryName/extractTradeDate/bucketByIndustry/rankIndustryContrib/computeExecutionCost/computeRealizedPnL/computeDailyPnL/topPnL/sixDimBreakdown/heuristicSummary/buildDailyAttributionReport) 全独立单测. DailyAttributionDataSource interface (loadTrades / loadSnapshots / loadPositions / loadSymbolIndustryMap) + createProductionDailyAttributionDataSource lazy-require 工厂. 主入口 generateDailyReport(portfolio_id, {date?, data_source?}) fail-OPEN 顶层 try/catch 返 {status:ok/skipped/failed, report?, reason?, error?} 永不抛. tests/attribution/daily-attribution-service.test.ts 112 ok / 0 failed 覆盖 16 模块 (常量冻结 / 4 normalize helpers / bucket/rank / 各 compute / top / sixDim / heuristicSummary / buildReport happy+边界 / generateDailyReport AC 5 case (happy+skip+fail-OPEN+空 industry map+symbols dedup) / PRODUCTION DataSource 工厂不抛 / META-GUARD 10 条). tsc 0 err / eslint --fix 0 err / npm test --filter=attribution 4 files all pass."
     },
     {
       "id": "US-079",
