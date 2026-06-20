@@ -67,6 +67,7 @@ import { DailyAttributionReport } from '../models/DailyAttributionReport';
 import { AIDiaryEntry } from '../models/AIDiaryEntry';
 import { ErrorPatternReport } from '../models/ErrorPatternReport';
 import { ImprovementSuggestion } from '../models/ImprovementSuggestion';
+import { PersonalityStrategyMatchReport } from '../models/PersonalityStrategyMatchReport';
 import { BlackSwanEvent } from '../models/BlackSwanEvent';
 import { BlackSwanPostmortemReport } from '../models/BlackSwanPostmortemReport';
 import { WebhookFallbackLog } from '../models/WebhookFallbackLog';
@@ -202,6 +203,7 @@ const sequelize = new Sequelize({
     AIDiaryEntry,
     ErrorPatternReport,
     ImprovementSuggestion,
+    PersonalityStrategyMatchReport,
     BlackSwanEvent,
     BlackSwanPostmortemReport,
     WebhookFallbackLog,

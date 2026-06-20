@@ -1953,8 +1953,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 127,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "PM-025 PersonalityStrategyMatcher 落地: model PersonalityStrategyMatchReport (JSONB personality/strategies/matches + summary + status/source/reason/metadata + (user_id, period_end) UNIQUE) + migration 2026-06-20 up/down + service src/services/postmortem/PersonalityStrategyMatcher.ts (DEFAULT_LOOKBACK_DAYS=90 + 5 维加分制 industry/vol/turnover/hold/quality 各 20 分 + 性格反推 aggregatePreferredIndustries + estimateVolatility + classifyRiskTolerance/TradeFrequency/HoldingPeriod + 策略反推 inferStrategyIndustries/Vol/Turnover/HoldClass + buildStrategyProfiles + computeOverallScore weighted + buildSuggestions ≥ 1 (ADD/REDUCE/REMOVE/TUNE 4 类) + buildHeuristicSummary cap 500 字 + matchForUser fail-OPEN 三态 ok/skipped/failed) + PersonalityStrategyMatcherDataSource interface + createProductionPersonalityStrategyMatcherDataSource (lazy require PaperTradingPortfolio/Trade/Position + QuantStrategyWeight/Model + Stock industry map + DailyAttributionReport pnl + 全 try/catch 不抛). 单测 tests/postmortem/personality-strategy-matcher.test.ts 142 ok / 0 failed (常量+helpers+性格反推+策略反推+5 维 score+总体 matches+heuristic summary+matchForUser AC abcdefg+PRODUCTION factory+META-GUARD 4 个文件 regex 守). tsc 0 err / lint 0 err. EV-011 月度 cron 接入留给后续 story."
     },
     {
       "id": "US-128",
