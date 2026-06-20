@@ -546,6 +546,22 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '每 30min 扫 partial postmortem → 4 类短板归类 + 模板建议生成 → UPDATE improvement_suggestions 段 (PR-013/014/015 已填前 3 段; 本段为 4 段最后一段, 通常升级 status=ok)',
   },
+  // US-134 PR-019 — 每季度首日 09:05 扫上一季 BlackSwanEvent 全量, 按 event_type
+  // / severity / scope / symbol 聚合 + 高严重事件高亮, 渲染 HTML 邮件发给
+  // QUARTERLY_BLACK_SWAN_RECIPIENTS env 列表收件人 (与 WeeklyReviewReportService
+  // US-065 同款 EmailNotificationService channel). 与单事件复盘 (PR-013/014/015/016)
+  // 互补 — 季度报告关注 "上季 black swan 风险面" 总览, 单事件报告关注根因分析.
+  // dry_run=true → 仅返聚合 payload, 不发邮件 (UI / ops 预览). fail-OPEN: loadEvents
+  // throw → success=false + error + failed_items=1 warn 不抛; 单收件人发送失败
+  // → 累计 failed 但其它收件人继续. 收件人空 → skipped (success=true).
+  {
+    type: 'BLACK_SWAN_QUARTERLY_SUMMARY',
+    category: 'risk_control',
+    owner: 'risk',
+    recommendedCron: '5 9 1 1,4,7,10 *',
+    description:
+      '每季首日 09:05 把上一季全量 BlackSwanEvent 聚合 (event_type/severity/scope/top_symbols/critical+high 高亮) → HTML 邮件发给 ops 收件人列表',
+  },
   // US-095 OPS-006 — 每 5min 扫 webhook_fallback_log status='pending' AND
   // next_retry_at <= NOW(), 透传 sender 重投递; 成功 → 'sent', 失败 attempts+=1
   // + 指数 backoff; attempts >= max_attempts → 'dead'. 主流程 (FeishuBotWebhookService)

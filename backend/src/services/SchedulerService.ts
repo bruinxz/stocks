@@ -5267,6 +5267,66 @@ class SchedulerService {
         } else {
           logger.warn(`[BLACK_SWAN_IMPROVEMENT] FAIL ${imprResult.error || 'unknown_error'}`);
         }
+      } else if (task.type === 'BLACK_SWAN_QUARTERLY_SUMMARY') {
+        // US-134 PR-019 — 每季首日 09:05 把上一季全量 BlackSwanEvent 聚合
+        // (event_type/severity/scope/top_symbols/critical+high 高亮) → HTML 邮件
+        // 发给 ops 收件人列表 (QUARTERLY_BLACK_SWAN_RECIPIENTS env). 与 PR-013/14/15/16
+        // 单事件复盘互补. dry_run=true → 仅返聚合 payload, 不发邮件. reference_date
+        // (YYYY-MM-DD, Asia/Shanghai) override 默认 NOW (用于回填). fail-OPEN: loadEvents
+        // throw → success=false + error + failed_items=1 warn 不抛; 单收件人发送
+        // 失败 → 累计 failed 但其它收件人继续.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          runBlackSwanQuarterlyReport,
+          getProductionQuarterlyRunner,
+        } = require('./BlackSwanQuarterlyReportService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const dryRunQ = parameters.dry_run === true || parameters.dryRun === true;
+        const refDateQ =
+          typeof parameters.reference_date === 'string'
+            ? parameters.reference_date
+            : typeof parameters.referenceDate === 'string'
+            ? parameters.referenceDate
+            : undefined;
+        const qResult = await runBlackSwanQuarterlyReport(getProductionQuarterlyRunner(), {
+          dry_run: dryRunQ,
+          reference_date: refDateQ,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: qResult.recipients_total,
+          completed_items: qResult.sent_count,
+          failed_items: qResult.success ? qResult.failed_count : 1,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: qResult.error || null,
+          result_summary: {
+            scenario: 'black_swan_quarterly_summary',
+            dry_run: qResult.dry_run,
+            quarter: qResult.quarter
+              ? `${qResult.quarter.year} Q${qResult.quarter.quarter}`
+              : null,
+            events_total: qResult.events_total,
+            recipients_total: qResult.recipients_total,
+            sent_count: qResult.sent_count,
+            skipped_count: qResult.skipped_count,
+            failed_count: qResult.failed_count,
+            generated_at_iso: qResult.generated_at_iso,
+            error: qResult.error || null,
+          },
+        });
+        if (qResult.success) {
+          logger.info(
+            `[BLACK_SWAN_QUARTERLY_SUMMARY] quarter=${
+              qResult.quarter ? `${qResult.quarter.year}Q${qResult.quarter.quarter}` : 'unknown'
+            } events=${qResult.events_total} recipients=${qResult.recipients_total} ` +
+              `sent=${qResult.sent_count} skipped=${qResult.skipped_count} failed=${qResult.failed_count}` +
+              (qResult.dry_run ? ' (dry_run)' : '')
+          );
+        } else {
+          logger.warn(
+            `[BLACK_SWAN_QUARTERLY_SUMMARY] FAIL ${qResult.error || 'unknown_error'}`
+          );
+        }
       } else if (task.type === 'LIVE_RECONCILIATION_GUARD') {
         // BETA-2 (2026-06-18, audit S-12): 对账主动告警 cron — 阈值评估 →
         // RiskAlert HIGH/MEDIUM → RealtimeAlertDispatcher 飞书推送。

@@ -3813,3 +3813,51 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **"loadCounts fail-open 返 [] 而非 throw"** 是与 "fetch fail-CLOSED throw 503"相反的契约 — 这个 service 的角色是 "降噪 alert 提示, 不是守门 gate", 因此数据失败 → null + 不触发 (safe HOLD) 优于 throw 503 让 SchedulerService crash. 与 US-049 DrawdownCircuitBreaker.checkBuyAllowed 是 gate 必须 fail-CLOSED 对偶. 任何"加新 detector" 都先决策: gate 还是 alert? 决定 fail 方向.
   - **A 股跌停判定的"主板默认 10% 阈值"复用** — change_percent ≤ -9.8 来自 AShareConstraintEngine.DEFAULT_LIMIT_DOWN_PCT, 不另外定义魔术数. 注意 -9.8 不是 -10, 是 PRD 业内惯例 (T+1 收盘价 ≤ 前收 * 0.90 浮动允许 0.2% 误差 + 涨跌停板封板可能略低于理论值). 未来加 ST 股 5% 跌停 / 创业板 20% 跌停 detector 时, 必须按 stock_type 分组分别套阈值 (本 US-132 简化方案: 全市场一刀切 -9.8, ST 计入但 漏算高弹性创业板. 后续 PR-018+ 真生效阶段再分股性分桶).
 ---
+
+## 2026/06/21 00:40 - US-133
+- 实现 [PR-018] 黑天鹅前端历史页 — SettingsWorkspace `/black-swan` tab: 事件列表 + 详情 抽屉 (PR-013/014/015/016 4 段 postmortem 报告)
+- Files changed:
+  - backend/src/api/controllers/BlackSwanEventController.ts (新, ~240 行): GET /api/black-swan/events (list + filter event_type/severity/scope/status/symbol/date_from/date_to + 分页, max=200) + GET /api/black-swan/events/:id (detail + 关联 BlackSwanPostmortemReport, postmortem 可能 null 表示 PR-013 cron 未跑); 6 个 export 纯函数 safeInt/safeIsoDate/safeEventType/safeSeverity/safeScope/safeStatus + parseEventId 给单测; class bind(this) 两个方法 + singleton export; fail-OPEN 顶层 try/catch 返 500
+  - backend/src/api/routes/blackSwan.routes.ts (新, ~110 行): 2 个 readonly endpoint + openapi jsdoc + authenticate 中间件; mount /api/black-swan
+  - backend/src/index.ts: import blackSwanRoutes + app.use('/api/black-swan', blackSwanRoutes)
+  - frontend/src/services/blackSwanService.ts (新, ~120 行): listBlackSwanEvents(filters)/getBlackSwanEvent(id) 2 个 API client + 完整 type union (BlackSwanEventType/Severity/Scope/Status/Source) + BlackSwanEventRow/PostmortemRow/ListEventsResult/GetEventResult/ListEventsFilters interface
+  - frontend/src/pages/workspace/blackSwanHistoryHelpers.ts (新, ~270 行): 纯 helper — 全 frozen Record 常量 (BLACK_SWAN_EVENT_TYPES/SEVERITY_ORDER/EVENT_TYPE_LABEL/SCOPE_LABEL/STATUS_LABEL/SEVERITY/SCOPE/STATUS_COLOR) + truncateText/eventTypeLabel/scopeLabel/statusLabel/severityLabel/severityColor/scopeColor/statusColor/severityRank + sortBlackSwanEventsBySeverity (3 段稳定: severity → detected_at DESC → id ASC) + summarizeBlackSwanEvents (永远 4 档 + unknown 兜底) + computePostmortemSectionStatus (4 段完成度 0/4-4/4)
+  - frontend/src/pages/workspace/SettingsWorkspace.BlackSwanHistoryTab.tsx (新, ~470 行): 顶部 Alert + KPI bar (total/critical/high/medium/low/总记录数) + 过滤 Card (5 个 Select + Search 代码) + 应用/重置按钮 + 列表 Card (Table 8 列, 每行点击/详情按钮开 Drawer) + 详情 Drawer (Descriptions 14 字段 + detail JSONB pre + Tabs 4 段 postmortem 内嵌); 9 个 data-testid 让 webapp-testing 可自动化; fail-OPEN UI (loadError 顶部 Alert + retry, drawerError 抽屉内 Alert; postmortem=null 显示 "待生成" Empty 不报错)
+  - frontend/src/pages/workspace/SettingsWorkspace.tsx: import BlackSwanHistoryTab + AlertOutlined icon + tabs[] 加 black-swan 一行 + headerActions 加 US-133 PR-018 Tag + render switch 加 case
+  - backend/tests/risk/black-swan-history.test.ts (新, ~700 行 / 206 assert): 8 模块 [T1] controller 7 纯函数 safe* + parseEventId 边界 / [T2] listEvents 镜像 6 case (默认参数 / 全 filter / 非法 enum silent ignore / 分页 / limit cap=200 / DB throw → 500) / [T3] getEvent 镜像 5 case (happy / postmortem null / 4 种 id 非法 → 400 / not found → 404 / DB throw → 500) / [T4] helper truncateText N/N+1/远超/null + eventTypeLabel/scope/status/severity Label/Color 未知值兜底 + 4 个常量 frozen 守 / [T5] sortBlackSwanEventsBySeverity 3 段稳定 (critical 优先 + detected_at DESC + id ASC 兜底) / [T6] summarizeBlackSwanEvents 4 档 + unknown + null array fail-safe / [T7] computePostmortemSectionStatus null/undef/4 段全空/1 段填/4 段全填/null vs {} 等效 / [T8] META-GUARD fs+regex 守 controller (12 处) + routes (5 处) + index.ts (2 处) + service (4 处) + helper (8 处) + tab (12 处) + SettingsWorkspace (6 处) 全形态
+  - ralph/prd.json: US-133 passes=true + notes
+- 验证:
+  - `npx tsc --noEmit` (backend + frontend) exit 0
+  - `npx ts-node tests/risk/black-swan-history.test.ts` exit 0, 206/206 OK
+  - `npm test -- --filter=black-swan` exit 0, 7 files all pass — 无 regression on 既有 BlackSwanDetector / BlackSwanPostmortemService / CounterfactualBaseline / EventTimelineReplayer / BlackSwanImprovementSuggestor
+  - `npm test -- --filter=risk` exit 0, 16 files all pass
+  - `eslint --fix` 收尾 — 5 文件 0 err 0 warn (autofix 把 prettier 格式自动调整)
+- **Learnings for future iterations:**
+  - **"前端历史页"AC 落地标准 6 件套** (与 [[Codebase Patterns]] 同款新增): (1) backend readonly 2 endpoint (list 分页+过滤 / detail+关联表); (2) routes.ts authenticate + openapi jsdoc + mount index.ts; (3) frontend service.ts 含完整 type union 让 helper/tab 强类型, list/detail 各一个 async; (4) frontend helpers.ts pure function — 颜色/标签/排序/聚合/段完成度 全 export 常量 frozen + 单测守 sanity, 不依赖 React/antd; (5) tab.tsx fetch + render + navigate, fail-OPEN UI (列表错误不阻塞 tab, 详情错误不阻塞列表), 9+ data-testid; (6) META-GUARD 跨 monorepo 单测 controller mirror 复刻 + 全 7 文件 fs+regex 守源码形态 (controller export + routes mount + index.ts mount + service path literal + helper export + tab import/render + SettingsWorkspace 5 处接入). 这是项目 US-058 (ATR-DD)/US-059 (AI 日记)/US-067 (SMS)/US-068 (待办建议)/US-069 (kill-switch) 之后第 N 次复用; 任何"加 settings 子 tab" 类未来 PR (PR-019/PR-020/PR-021/EX-011/EX-012) 全照搬.
+  - **"postmortem 4 段 JSONB 完成度"展示模式** — backend BlackSwanPostmortemReport 的 4 段 event_summary/counterfactual_baselines/event_timeline/improvement_suggestions 是异步 cron (PR-013→PR-014→PR-015→PR-016) 分阶段填的, UI 不能假设全部填好. helper `computePostmortemSectionStatus(postmortem)` 直接看 4 段 JSONB 内容 (Object.keys > 0 即算填), 不依赖 metadata.sections_filled[] 字段维护. UI 在 Drawer Tabs 上每段 label 加 ✓/○ + 顶部 Tag "复盘 N/4 段", 让 ops 一眼看出"还在生成中" vs "全跑完了". 与 [[多段 JSONB 报告分阶段 UPSERT]] (US-102) 模板对偶 — 后者讲"backend 段独立填", 本 helper 讲"frontend 段独立显示".
+  - **跨 monorepo helper 单测 path 模板** — backend tests/ 用 `path.resolve(__dirname, '../../../frontend/src/...')` 直接 readFileSync + import frontend 源文件. helper 不依赖 React/antd (本 story 仅 import type `BlackSwanEventRow` 这种纯接口) 即可被 backend ts-node 跑. 与 [[shadowRunHelpers]] / [[risk-parameters-center-tab.test.ts]] / [[todo-suggestions-helpers.test.ts]] 同款"复刻形态而非真跑 jsdom/React"思想.
+  - **safe* 参数解析器同源跨 controller 复用模板** — RiskAlertController 已经有 safeInt/safeIsoDate/safeLevel/safeType/safeIsRead 5 个, BlackSwanEventController 加 safeEventType/safeSeverity/safeScope/safeStatus 4 个新的 — **同款形态** (大小写 normalize + 已知 enum Set.has check + 不识别返 null). 单测 import 测纯函数边界 8-9 case 每个 (合法 / null / 非 string / 大小写 / 未知 enum / 空字符串), 配合 mirror 测验证 `if (safe*(...)) where.X = ...` 让非法 filter silent ignore (与 backend lenient normalize 哲学一致 — 不阻请求, 不污染数据).
+  - **routes 路径 `:id` vs `mark-read` 类静态路径冲突教训复用** — riskAlert.routes.ts 注释: "router.put('/mark-read') 必须早于 router.put('/:id/read')". 本 story 只有 GET /events + GET /events/:id 不冲突 (前者无 :id 段不会被吃成 id 参数), 但任何未来 PR-019 (BlackSwanEventDeleteController / BlackSwanEventBatchUpdateController) 想加静态字面量 endpoint 必须排在 :id 前. 写到 routes 文件 jsdoc 防踩坑.
+  - **lazy require 与 顶层 import 的 trade-off** — 本 controller 顶层 import BlackSwanEvent + BlackSwanPostmortemReport 直接拽起 sequelize, 单测进程必须用 mirror 范式 (与 [[improvement-suggestion-apply.test.ts]] 同源 DB-less 不可测). 想 import 真 controller 必须 lazy require 但带来 controller 自身复杂度. 范式选 mirror + META-GUARD 双守, mirror 测分支覆盖 + META-GUARD 守 controller 形态不漂. 与 [[backend tests 不依赖 jest]] / [[Bull queue dedup fake DataSource 复刻]] 同款"复刻底层"思想.
+---
+
+
+## 2026-06-21 - US-134 [PR-019] 季度黑天鹅汇总报告
+- 实现 BlackSwanQuarterlyReportService — 每季度首日 09:05 把上一季全量 BlackSwanEvent 聚合 (5 维度: event_type / severity / scope / top_symbols / critical+high 高亮) → HTML+text 邮件发给 QUARTERLY_BLACK_SWAN_RECIPIENTS env 收件人 (复用 EmailNotificationService US-065 SMTP channel).
+- 季度计算纯函数 computePrevQuarterRange + Asia/Shanghai UTC 转换 (start_at = 季首 00:00 +08, end_at = 季末 23:59:59.999 +08); 4 季全覆盖 + 跨年 (2026-01-15 → 2025 Q4) + 闰年 (Q1 2024 = 91 天).
+- fail-OPEN 全链: loadEvents throw → success=false + error_query_failed / 单收件人 send 失败 → 累计 failed_count 其它继续 / dry_run=true → 仅返 payload 不发 / listRecipients throw → fallback 空 + skipped.
+- htmlEscape 防 <script> 注入 (邮件正文里渲染用户提供的 event.title / event.symbol).
+- cron type='BLACK_SWAN_QUARTERLY_SUMMARY' recommendedCron='5 9 1 1,4,7,10 *' 已加 cronRegistry; SchedulerService dispatch 分支已挂 (lazy-require runBlackSwanQuarterlyReport + getProductionQuarterlyRunner, parameters.dry_run + reference_date 透传, result_summary 含 quarter + events_total + sent/skipped/failed).
+- Files changed:
+  - backend/src/services/BlackSwanQuarterlyReportService.ts (new, 638 lines incl. jsdoc)
+  - backend/src/constants/cronRegistry.ts (+1 task type entry)
+  - backend/src/services/SchedulerService.ts (+1 dispatch branch)
+  - backend/tests/services/black-swan-quarterly-report-service.test.ts (new, 169 ok / 0 failed)
+- Quality: tsc 0 err; npx eslint src/services/BlackSwanQuarterlyReportService.ts → 0 err; cron-registry.test.ts 622 ok (双向 guard 通过); black-swan-postmortem-service.test.ts 115 ok (无 regression).
+- **Learnings for future iterations:**
+  - 季度切割: refQuarter == 1 → 上季 year - 1; Q2=[4,6] (4-6 月), Q3=[7,9], Q4=[10,12]; lastDayOfQuarterMonth 用 `new Date(year, endMonth, 0).getDate()` (JS Date month 0-based; day=0 → 上月最末日).
+  - Asia/Shanghai 时区 UTC 偏移: 不依赖 moment-timezone 也能算 — UTC ms = local ms - 8*3600*1000; countDaysWithEvents 反向 (UTC+8 后用 UTC accessors 读 YYYY-MM-DD) 避开 node 进程 TZ 漂移.
+  - EmailNotificationService.sendEmail(payload, addr, {buildEmail}) 注入式: caller (service) 提供 buildEmail helper, adapter 不知道 payload schema; 与 WeeklyReviewReportService US-065 同款 — 复用就是新建邮件类 service 模板.
+  - 新加 cron type 必须同步 3 处: (1) cronRegistry.ts 加 def (2) SchedulerService 加 dispatch 分支 (3) service 含 jsdoc 引用 type; 任一缺失 cron-registry.test.ts 双向 guard 会挂.
+  - DI runner 接口 (loadEvents/listRecipients/sendEmail) + createProductionXxxRunner + getProductionXxxRunner singleton 是 PR-013/14/15/16 同款 fail-OPEN 模板, 复用避免反复发明.
+---

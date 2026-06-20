@@ -2045,8 +2045,8 @@
         "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
       ],
       "priority": 133,
-      "passes": false,
-      "notes": "依赖: PR-013"
+      "passes": true,
+      "notes": "依赖: PR-013 | DONE 2026-06-21: backend controller GET /api/black-swan/events (list + filter) + GET /api/black-swan/events/:id (detail + postmortem 4 段 JSONB); frontend SettingsWorkspace.BlackSwanHistoryTab 接入 SettingsWorkspace.tsx (icon AlertOutlined / tabs / render / headerActions); pure helpers blackSwanHistoryHelpers (severity color/label/rank, sortBlackSwanEventsBySeverity 3 段稳定, summarizeBlackSwanEvents, computePostmortemSectionStatus); tests 206 ok (controller mirror + helper + META-GUARD); typecheck + lint clean."
     },
     {
       "id": "US-134",
@@ -2060,8 +2060,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 134,
-      "passes": false,
-      "notes": "依赖: PR-013"
+      "passes": true,
+      "notes": "依赖: PR-013 | DONE 2026-06-21: 新增 BlackSwanQuarterlyReportService (US-134/PR-019) — 每季首日 09:05 把上一季全量 BlackSwanEvent 聚合 (event_type/severity/scope/top_symbols/critical+high 高亮) → HTML 邮件发给 QUARTERLY_BLACK_SWAN_RECIPIENTS env 收件人列表 (复用 EmailNotificationService US-065 channel). cron type=BLACK_SWAN_QUARTERLY_SUMMARY recommendedCron='5 9 1 1,4,7,10 *' (与 weekly_review 08:00 错峰). 季度计算纯函数 computePrevQuarterRange + Asia/Shanghai 时区 UTC 转换 (start_at = 季首日 00:00 +08, end_at = 季末日 23:59:59.999 +08). 5 维度聚合: by_event_type/by_severity/by_scope 按 count desc + key asc tie / top_symbols (仅 scope=symbol, cap 15, worst_severity + last_detected_at) / severity_highlights (critical+high, detected_at desc, cap 20). buildQuarterlyReportEmail 渲染 HTML+text 兜底, 含 htmlEscape 防 <script> 注入. fail-OPEN: loadEvents throw → success=false + error / 单收件人 send 失败 → 累计 failed 但其它继续 / dry_run=true → 仅返 payload 不发. SchedulerService dispatch 分支已挂 (lazy-require runBlackSwanQuarterlyReport + getProductionQuarterlyRunner, parameters.dry_run + parameters.reference_date 透传). tests/services/black-swan-quarterly-report-service.test.ts 169 ok / 0 failed (14 维度: parseYmd/quarterMonths/computePrevQuarterRange 含闰年跨年/aggregateByDimension/aggregateTopSymbols/severityRank/buildSeverityHighlights/countDaysWithEvents Asia/Shanghai 跨日/parseRecipientsList/buildQuarterlyReportPayload/buildQuarterlyReportEmail 含注入防御/runBlackSwanQuarterlyReport e2e 11 fail-OPEN 路径/PRODUCTION runner singleton/META-GUARD cron registry+SchedulerService+jsdoc 一致). cron-registry.test.ts 622 ok (registry↔scheduler 双向 guard 通过). tsc 0 err / lint 0 err."
     },
     {
       "id": "US-135",
