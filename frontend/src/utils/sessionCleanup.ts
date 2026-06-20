@@ -34,6 +34,15 @@ export const USER_SCOPED_LOCAL_STORAGE_KEYS: ReadonlyArray<string> = [
 ];
 
 /**
+ * US-074 [FE-035] CriticalAlertModal 已 ack 缓存 (sessionStorage).
+ * 与 localStorage 白名单分开是因为 sessionStorage 关 tab 自动清, 平时无需触碰,
+ * 但 logout 后同 tab 重登 (sessionStorage 仍在) 应清掉避免上一用户的 ack 状态泄漏.
+ */
+export const USER_SCOPED_SESSION_STORAGE_KEYS: ReadonlyArray<string> = [
+  'criticalAlertModal_acked_v1',
+];
+
+/**
  * 清扫 user-scoped localStorage. 仅扫白名单, 不动 app-level preferences (主题色 / 语言等).
  */
 export function clearUserScopedStorage(): void {
@@ -43,5 +52,14 @@ export function clearUserScopedStorage(): void {
     }
   } catch {
     // localStorage 访问失败 (private mode / quota) — 静默
+  }
+  try {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      for (const key of USER_SCOPED_SESSION_STORAGE_KEYS) {
+        window.sessionStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // sessionStorage 访问失败 — 静默
   }
 }

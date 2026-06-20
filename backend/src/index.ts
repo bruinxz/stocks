@@ -1021,7 +1021,24 @@ async function initializeApp() {
     const { globalErrorHandler } = require('./middlewares/globalErrorAndRateLimit');
     app.use(globalErrorHandler);
 
-    app.listen(Number(PORT), HOST, () => {
+    // US-073 [FE-034] /ws/alerts 实时告警 WebSocket —— 用 http.createServer 替代
+    // app.listen 才能在同端口挂 WebSocket. attachAlertsWebSocketServer 内部 lazy
+    // require 'ws', 'ws' 缺失时 silent skip (返 null) 不阻塞 HTTP 启动.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const http = require('http');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { attachAlertsWebSocketServer } = require('./realtime/alertsWebSocketServer');
+    const httpServer = http.createServer(app);
+    try {
+      const wsAttachResult = attachAlertsWebSocketServer(httpServer);
+      if (wsAttachResult) {
+        console.log('WebSocket server listening on /ws/alerts');
+      }
+    } catch (wsErr: any) {
+      console.warn('[ws/alerts] attach failed (HTTP server unaffected):', wsErr?.message || wsErr);
+    }
+
+    httpServer.listen(Number(PORT), HOST, () => {
       console.log(`Server is running on ${HOST}:${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });
@@ -1048,7 +1065,22 @@ async function initializeApp() {
     const overrideGlobalErrorMod = require('./middlewares/globalErrorAndRateLimit');
     const globalErrorHandlerOverride = overrideGlobalErrorMod.globalErrorHandler;
     app.use(globalErrorHandlerOverride);
-    app.listen(Number(PORT), HOST, () => {
+    // US-073 [FE-034] override 路径也需要 /ws/alerts (虽然 DB 离线但前端 polling 仍工作);
+    // ws attach 失败完全静默, HTTP 业务不受影响.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const httpOverride = require('http');
+    /* eslint-disable @typescript-eslint/no-var-requires */
+    const {
+      attachAlertsWebSocketServer: attachAlertsWsOverride,
+    } = require('./realtime/alertsWebSocketServer');
+    /* eslint-enable @typescript-eslint/no-var-requires */
+    const httpServerOverride = httpOverride.createServer(app);
+    try {
+      attachAlertsWsOverride(httpServerOverride);
+    } catch {
+      /* swallow */
+    }
+    httpServerOverride.listen(Number(PORT), HOST, () => {
       console.log(`Server is running on ${HOST}:${PORT} (without database connection)`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });

@@ -234,25 +234,30 @@ function readFile(rel: string): string {
   }
 }
 
-// 8.2 — AlertsBell.tsx 接入 helper + 调 listRiskAlerts + 轮询 + navigate
+// 8.2 — AlertsBell.tsx 接入 helper + 调 useAlertsRealtime + navigate
+// US-073 [FE-034] 已把 listRiskAlerts/setInterval 移到 useAlertsRealtime hook 内部,
+// 这里只守 "Bell 仍走 hook + helper 渲染 Badge/Tooltip" 形态, 不再直接守 listRiskAlerts.
 {
   const bellSrc = readFile('components/layout/AlertsBell.tsx');
   assert(
     '[8.2a] AlertsBell import alertsBellHelpers',
     bellSrc.includes('alertsBellHelpers')
   );
-  assert('[8.2b] AlertsBell 调 listRiskAlerts', bellSrc.includes('listRiskAlerts'));
   assert(
-    '[8.2c] AlertsBell 用 limit: 1 让响应小',
-    /limit:\s*1/.test(bellSrc)
+    '[8.2b] AlertsBell 用 useAlertsRealtime hook (US-073)',
+    bellSrc.includes('useAlertsRealtime')
   );
   assert(
-    '[8.2d] AlertsBell 用 window.setInterval 轮询',
-    bellSrc.includes('window.setInterval')
+    '[8.2c] AlertsBell import alertsRealtimeClient',
+    /from\s+['"]\.\.\/\.\.\/services\/alertsRealtimeClient['"]/.test(bellSrc)
   );
   assert(
-    '[8.2e] AlertsBell 用 window.clearInterval 清理',
-    bellSrc.includes('window.clearInterval')
+    '[8.2d] AlertsBell 暴露 enableWebSocket prop (故障演练)',
+    bellSrc.includes('enableWebSocket')
+  );
+  assert(
+    '[8.2e] AlertsBell 暴露 data-mode 让 E2E 断 ws/polling 状态',
+    bellSrc.includes('data-mode')
   );
   assert(
     '[8.2f] AlertsBell 用 useNavigate + buildAlertsBellHref',
@@ -271,13 +276,14 @@ function readFile(rel: string): string {
     '[8.2j] AlertsBell 用 Tooltip 显示 buildBellTooltip',
     bellSrc.includes('Tooltip') && bellSrc.includes('buildBellTooltip')
   );
-  // fail-OPEN: catch 内不清零 unreadCount
+  // fail-OPEN: mode='error' 时仍保留 unreadCount 不清零 (现在由 hook 兜底)
   assert(
-    '[8.2k] AlertsBell catch 块标记 errored 而非清零',
-    /catch[^{]*\{[\s\S]*?setErrored\(true\)/.test(bellSrc)
+    "[8.2k] AlertsBell 仍处理 mode==='error' 提示 (fail-OPEN)",
+    /mode\s*===\s*['"]error['"]/.test(bellSrc)
   );
   // 提及 US-070 让未来 grep / 跨 sprint 追溯能找到
   assert('[8.2l] AlertsBell 提到 US-070', bellSrc.includes('US-070'));
+  assert('[8.2m] AlertsBell 提到 US-073 (实时升级标识)', bellSrc.includes('US-073'));
 }
 
 // 8.3 — App.tsx 已 import + 在 Header 渲染 AlertsBell

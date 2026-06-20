@@ -81,6 +81,7 @@
     "@types/iconv-lite": "^0.0.1",
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.8",
+    "@types/ws": "^8.18.1",
     "@zhaots/tushare-core": "^0.0.1-beta.1",
     "axios": "^1.4.0",
     "bcrypt": "^5.1.0",
@@ -114,7 +115,8 @@
     "swagger-ui-express": "^5.0.1",
     "ta": "*",
     "tulind": "^0.8.18",
-    "winston": "^3.10.0"
+    "winston": "^3.10.0",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/axios": "^0.14.0",
