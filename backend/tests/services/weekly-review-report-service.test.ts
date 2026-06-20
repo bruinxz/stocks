@@ -85,6 +85,16 @@ import {
   BenchmarkComparisonRow,
   computeBenchmarkComparisons,
   buildBenchmarkComparisonsHtml,
+  // US-145 PM-017
+  NextWeekCalendarEvent,
+  NEXT_WEEK_CALENDAR_HIGH_IMPACT_THRESHOLD,
+  NEXT_WEEK_CALENDAR_MAX_ROWS,
+  NEXT_WEEK_CALENDAR_LOOKAHEAD_DAYS,
+  classifyEarningsForecastImpact,
+  classifyDividendImpact,
+  classifyRestrictedReleaseImpact,
+  sortAndCapNextWeekEvents,
+  buildNextWeekCalendarHtml,
   // US-125 PM-014
   WEEKLY_OPINION_MIN_CHARS,
   WEEKLY_OPINION_MAX_CHARS,
@@ -154,6 +164,8 @@ interface FakeState {
   benchmarkReturns?: Map<string, { start_date: string; end_date: string; return_pct: number }>;
   stockMeta?: Map<string, { name: string; industry: string | null }>;
   upcomingEvents?: UpcomingEventRow[];
+  /** US-145 PM-017 — 下周日历事件 */
+  nextWeekEvents?: NextWeekCalendarEvent[];
   aiOpinion?: AIWeeklyOpinion;
   sendEmailResults?: EmailNotificationSendResult[];
   /** Throw spec: 任一 method 设置为 true → throw new Error('FAKE') */
@@ -167,6 +179,7 @@ interface FakeState {
     loadUpcomingEvents: boolean;
     loadDailyCloses: boolean;
     loadBenchmarkReturns: boolean;
+    loadNextWeekCalendarEvents: boolean;
     generateAIWeeklyOpinion: boolean;
     sendEmail: boolean;
   }>;
@@ -217,6 +230,11 @@ function makeFakeDataSource(state: FakeState): WeeklyReviewDataSource {
     async loadUpcomingEvents(_symbols, _from, _to) {
       if (state.throwOn?.loadUpcomingEvents) throw new Error('FAKE loadUpcomingEvents');
       return state.upcomingEvents || [];
+    },
+    async loadNextWeekCalendarEvents(_symbols, _from, _to) {
+      if (state.throwOn?.loadNextWeekCalendarEvents)
+        throw new Error('FAKE loadNextWeekCalendarEvents');
+      return state.nextWeekEvents || [];
     },
     async generateAIWeeklyOpinion(_payload) {
       if (state.throwOn?.generateAIWeeklyOpinion) throw new Error('FAKE generateAIWeeklyOpinion');
@@ -1093,6 +1111,32 @@ function testBuildWeeklyReviewEmail(): void {
         announce_date: '2026-06-10',
       },
     ],
+    next_week_events: [
+      {
+        event_date: '2026-06-09',
+        symbol: '600519.SH',
+        name: '茅台',
+        event_type: 'earnings_forecast',
+        detail: '预增 · 2026Q1 · 净利+60.0%',
+        impact_level: 8,
+      },
+      {
+        event_date: '2026-06-10',
+        symbol: '000858.SZ',
+        name: '五粮液',
+        event_type: 'dividend',
+        detail: '10派50.00元 · 股息率4.20%',
+        impact_level: 6,
+      },
+      {
+        event_date: '2026-06-11',
+        symbol: '300750.SZ',
+        name: '宁德时代',
+        event_type: 'restricted_release',
+        detail: '解禁市值3.00亿 · 占流通2.00%',
+        impact_level: 3,
+      },
+    ],
     ai_opinion: {
       source: 'heuristic',
       headline: '组合本周大幅跑赢 +5.00%',
@@ -1150,6 +1194,27 @@ function testBuildWeeklyReviewEmail(): void {
   assert('text 含 vs 基准指数 section', !!mail.text && mail.text.includes('vs 基准指数'));
   assert('text 含 沪深300 line', !!mail.text && mail.text.includes('沪深300(sh.000300)'));
   assert('text 含 创业板指 缺数据 (—)', !!mail.text && mail.text.includes('创业板指'));
+  // US-145 PM-017 — 下周日历事件渲染 (AC: 邮件 section + 标记影响 ≥ 5)
+  assert('html 含 下周日历事件 section', mail.html.includes('下周日历事件'));
+  assert('html 含 茅台 next-week row', mail.html.includes('茅台'));
+  assert('html 含 五粮液 next-week row', mail.html.includes('五粮液'));
+  assert('html 含 宁德时代 next-week row', mail.html.includes('宁德时代'));
+  assert('html 含 业绩预告 label', mail.html.includes('业绩预告'));
+  assert('html 含 分红除权 label', mail.html.includes('分红除权'));
+  assert('html 含 限售解禁 label', mail.html.includes('限售解禁'));
+  assert('html 含 高影响红色 dot (impact ≥ 5)', mail.html.includes('background:#dc2626'));
+  assert('html 含 普通灰色 dot (impact < 5)', mail.html.includes('background:#e2e8f0'));
+  assert('html 含 next-week event_date 2026-06-09', mail.html.includes('2026-06-09'));
+  assert('html 含 next-week detail 净利+60.0%', mail.html.includes('净利+60.0%'));
+  assert('text 含 下周日历事件 section', !!mail.text && mail.text.includes('下周日历事件'));
+  assert(
+    'text 含 ★ 标记 (高影响)',
+    !!mail.text && /★\s*2026-06-09\s+600519\.SH/.test(mail.text)
+  );
+  assert(
+    'text 含 普通 (无 ★)',
+    !!mail.text && /\s{2}2026-06-11\s+300750\.SZ/.test(mail.text)
+  );
 }
 
 function testFormatMoney(): void {
@@ -2179,6 +2244,9 @@ async function testSendUserIdFilter(): Promise<void> {
     async loadUpcomingEvents() {
       return [];
     },
+    async loadNextWeekCalendarEvents() {
+      return [];
+    },
     async generateAIWeeklyOpinion() {
       return { source: 'heuristic', headline: 'x', paragraphs: [], recommendations: [] };
     },
@@ -2555,6 +2623,238 @@ function testMetaGuardRemoteFallbackBehavior(): void {
 }
 
 // ---------------------------------------------------------------------------
+// US-145 PM-017 — 下周日历事件 (pure helpers + e2e)
+// ---------------------------------------------------------------------------
+
+function testNextWeekCalendarConstantsFrozen(): void {
+  assertEqual(
+    'NEXT_WEEK_CALENDAR_HIGH_IMPACT_THRESHOLD === 5',
+    NEXT_WEEK_CALENDAR_HIGH_IMPACT_THRESHOLD,
+    5
+  );
+  assertEqual('NEXT_WEEK_CALENDAR_MAX_ROWS === 20', NEXT_WEEK_CALENDAR_MAX_ROWS, 20);
+  assertEqual(
+    'NEXT_WEEK_CALENDAR_LOOKAHEAD_DAYS === 7',
+    NEXT_WEEK_CALENDAR_LOOKAHEAD_DAYS,
+    7
+  );
+}
+
+function testClassifyEarningsForecastImpact(): void {
+  assertEqual('|low|=80% → 8', classifyEarningsForecastImpact(80), 8);
+  assertEqual('|low|=-60% → 8', classifyEarningsForecastImpact(-60), 8);
+  assertEqual('|low|=50% 边界 → 8', classifyEarningsForecastImpact(50), 8);
+  assertEqual('|low|=49% → 5', classifyEarningsForecastImpact(49), 5);
+  assertEqual('low=null → 5', classifyEarningsForecastImpact(null), 5);
+  assertEqual('low=NaN → 5', classifyEarningsForecastImpact(NaN), 5);
+}
+
+function testClassifyDividendImpact(): void {
+  assertEqual('yield=5% → 6', classifyDividendImpact(5), 6);
+  assertEqual('yield=3% 边界 → 6', classifyDividendImpact(3), 6);
+  assertEqual('yield=2.99% → 4', classifyDividendImpact(2.99), 4);
+  assertEqual('yield=0 → 4', classifyDividendImpact(0), 4);
+  assertEqual('yield=null → 4', classifyDividendImpact(null), 4);
+}
+
+function testClassifyRestrictedReleaseImpact(): void {
+  assertEqual('pct=15% → 9', classifyRestrictedReleaseImpact(15), 9);
+  assertEqual('pct=10% 边界 → 9', classifyRestrictedReleaseImpact(10), 9);
+  assertEqual('pct=7% → 6', classifyRestrictedReleaseImpact(7), 6);
+  assertEqual('pct=5% 边界 → 6', classifyRestrictedReleaseImpact(5), 6);
+  assertEqual('pct=2% → 3', classifyRestrictedReleaseImpact(2), 3);
+  assertEqual('pct=null → 3 (保守)', classifyRestrictedReleaseImpact(null), 3);
+  assertEqual('pct=NaN → 3', classifyRestrictedReleaseImpact(NaN), 3);
+}
+
+function testSortAndCapNextWeekEvents(): void {
+  const ev = (
+    date: string,
+    impact: number,
+    sym = 'X'
+  ): NextWeekCalendarEvent => ({
+    event_date: date,
+    symbol: sym,
+    name: sym,
+    event_type: 'earnings_forecast',
+    detail: '-',
+    impact_level: impact,
+  });
+  assertEqual('empty → []', sortAndCapNextWeekEvents([]), []);
+  assertEqual('null → []', sortAndCapNextWeekEvents(null as any), []);
+  // 同日 impact desc
+  const sameDate = sortAndCapNextWeekEvents([ev('2026-06-09', 3, 'A'), ev('2026-06-09', 9, 'B')]);
+  assertEqual('same date impact desc 第一', sameDate[0].symbol, 'B');
+  assertEqual('same date impact desc 第二', sameDate[1].symbol, 'A');
+  // 不同日 date asc 优先
+  const diffDate = sortAndCapNextWeekEvents([ev('2026-06-12', 9, 'L'), ev('2026-06-09', 1, 'E')]);
+  assertEqual('date asc 第一 (低 impact 但早)', diffDate[0].symbol, 'E');
+  assertEqual('date asc 第二', diffDate[1].symbol, 'L');
+  // cap
+  const many = Array.from({ length: 50 }, (_, i) => ev(`2026-06-${10}`, 10 - (i % 5), `S${i}`));
+  const capped = sortAndCapNextWeekEvents(many, 5);
+  assertEqual('cap=5 长度', capped.length, 5);
+  // 默认 cap = 20
+  const capDefault = sortAndCapNextWeekEvents(many);
+  assertEqual('cap default=20', capDefault.length, 20);
+  // 不 mutate 原数组
+  const orig = [ev('2026-06-12', 1), ev('2026-06-09', 9)];
+  sortAndCapNextWeekEvents(orig);
+  assertEqual('不 mutate 原数组顺序', orig[0].event_date, '2026-06-12');
+}
+
+function testBuildNextWeekCalendarHtml(): void {
+  assertEqual('null → 空', buildNextWeekCalendarHtml(null), '');
+  assertEqual('undefined → 空', buildNextWeekCalendarHtml(undefined), '');
+  assertEqual('empty → 空', buildNextWeekCalendarHtml([]), '');
+  const rows: NextWeekCalendarEvent[] = [
+    {
+      event_date: '2026-06-09',
+      symbol: '600519.SH',
+      name: '茅台',
+      event_type: 'earnings_forecast',
+      detail: 'detail-x',
+      impact_level: 8,
+    },
+    {
+      event_date: '2026-06-11',
+      symbol: '000001.SZ',
+      name: '小股',
+      event_type: 'dividend',
+      detail: 'div-y',
+      impact_level: 4,
+    },
+  ];
+  const html = buildNextWeekCalendarHtml(rows);
+  assert('html 含 section 标题', html.includes('下周日历事件'));
+  assert('html 含 茅台', html.includes('茅台'));
+  assert('html 含 detail-x', html.includes('detail-x'));
+  assert('html 含 div-y', html.includes('div-y'));
+  assert('html 高影响有红色 dot', html.includes('background:#dc2626'));
+  assert('html 普通有灰色 dot', html.includes('background:#e2e8f0'));
+  assert('html 类型 label 业绩预告', html.includes('业绩预告'));
+  assert('html 类型 label 分红除权', html.includes('分红除权'));
+  // escape: 名字含 < 应被转义
+  const xss = buildNextWeekCalendarHtml([
+    {
+      event_date: '2026-06-09',
+      symbol: '<>&',
+      name: '<script>',
+      event_type: 'restricted_release',
+      detail: '"x"',
+      impact_level: 3,
+    },
+  ]);
+  assert('html escape <script>', xss.includes('&lt;script&gt;'));
+  assert('html escape &', xss.includes('&amp;'));
+  assert('html 不含 raw <script>', !xss.includes('<script>'));
+}
+
+async function testSendNextWeekEventsPropagates(): Promise<void> {
+  const state: FakeState = {
+    users: [eligibleUser(1, 'lym')],
+    portfolios: { 1: { portfolio: { id: 100 }, positions: [] } },
+    snapshots: { 100: [{ date: 'x', total_value: 1 }] },
+    trades: { 100: [] },
+    nextWeekEvents: [
+      {
+        event_date: '2026-06-09',
+        symbol: '600519.SH',
+        name: '茅台',
+        event_type: 'earnings_forecast',
+        detail: 'high-impact',
+        impact_level: 8,
+      },
+    ],
+    sendEmailResults: [{ success: true }],
+  };
+  const svc = new WeeklyReviewReportService(makeFakeDataSource(state));
+  const r = await svc.sendWeeklyReviewReports({ reference_date: '2026-06-08' });
+  assertEqual('next-week sent', r.per_user[0].status, 'sent');
+  assertEqual(
+    'next-week payload 长度=1',
+    r.per_user[0].payload!.next_week_events.length,
+    1
+  );
+  assertEqual(
+    'next-week payload impact_level=8',
+    r.per_user[0].payload!.next_week_events[0].impact_level,
+    8
+  );
+}
+
+async function testSendNextWeekEventsThrowsNonBlocking(): Promise<void> {
+  const state: FakeState = {
+    users: [eligibleUser(1, 'lym')],
+    portfolios: { 1: { portfolio: { id: 100 }, positions: [] } },
+    snapshots: { 100: [{ date: 'x', total_value: 1 }] },
+    trades: { 100: [] },
+    throwOn: { loadNextWeekCalendarEvents: true },
+    sendEmailResults: [{ success: true }],
+  };
+  const svc = new WeeklyReviewReportService(makeFakeDataSource(state));
+  const r = await svc.sendWeeklyReviewReports({ reference_date: '2026-06-08' });
+  assertEqual('next-week throw → still sent', r.per_user[0].status, 'sent');
+  assertEqual(
+    'next-week throw → events []',
+    r.per_user[0].payload!.next_week_events.length,
+    0
+  );
+}
+
+async function testSendNextWeekEventsDateRange(): Promise<void> {
+  // 验 caller 传 from = week.end_date + 1, to = week.end_date + 7
+  // reference_date = 2026-06-08 (周一) → 上周 (2026-06-01 ~ 2026-06-07)
+  // next-week 区间 = 2026-06-08 ~ 2026-06-14
+  let captured: { from: string; to: string } | null = null;
+  const state: FakeState = {
+    users: [eligibleUser(1, 'lym')],
+    portfolios: { 1: { portfolio: { id: 100 }, positions: [] } },
+    snapshots: { 100: [{ date: 'x', total_value: 1 }] },
+    trades: { 100: [] },
+    sendEmailResults: [{ success: true }],
+  };
+  const ds = makeFakeDataSource(state);
+  ds.loadNextWeekCalendarEvents = async (_symbols, from, to) => {
+    captured = { from, to };
+    return [];
+  };
+  const svc = new WeeklyReviewReportService(ds);
+  await svc.sendWeeklyReviewReports({ reference_date: '2026-06-08' });
+  assertEqual('next-week from = week.end_date+1', captured?.from, '2026-06-08');
+  assertEqual('next-week to = week.end_date+7', captured?.to, '2026-06-14');
+}
+
+function testNextWeekCalendarMetaGuard(): void {
+  // META-GUARD: 源文件正则扫确保 buildWeeklyReviewEmail 真的接入了
+  // next_week_events 渲染, 防止以后误删 nextWeekCalendarSectionHtml 占位.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const fs = require('fs');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const path = require('path');
+  const src = fs.readFileSync(
+    path.resolve(__dirname, '../../src/services/WeeklyReviewReportService.ts'),
+    'utf8'
+  );
+  assert(
+    'meta: buildWeeklyReviewEmail 调 buildNextWeekCalendarHtml',
+    /buildNextWeekCalendarHtml\s*\(\s*payload\.next_week_events\s*\)/.test(src)
+  );
+  assert(
+    'meta: template 含 ${nextWeekCalendarSectionHtml}',
+    /\$\{nextWeekCalendarSectionHtml\}/.test(src)
+  );
+  assert(
+    'meta: sendForUser 调 loadNextWeekCalendarEvents',
+    /loadNextWeekCalendarEvents\s*\(/.test(src)
+  );
+  assert(
+    'meta: payload 含 next_week_events 字段',
+    /next_week_events\s*:\s*nextWeekEvents/.test(src)
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -2639,6 +2939,18 @@ async function main(): Promise<void> {
   await testCallRemoteWeeklyOpinionAxiosInjected();
   await testGenerateAIWeeklyOpinionRemoteShortFallback();
   testMetaGuardRemoteFallbackBehavior();
+
+  // US-145 PM-017 — 下周日历事件
+  testNextWeekCalendarConstantsFrozen();
+  testClassifyEarningsForecastImpact();
+  testClassifyDividendImpact();
+  testClassifyRestrictedReleaseImpact();
+  testSortAndCapNextWeekEvents();
+  testBuildNextWeekCalendarHtml();
+  await testSendNextWeekEventsPropagates();
+  await testSendNextWeekEventsThrowsNonBlocking();
+  await testSendNextWeekEventsDateRange();
+  testNextWeekCalendarMetaGuard();
 
   console.log(`\n────────────────────────────────────`);
   console.log(`${passed} passed, ${failed} failed`);

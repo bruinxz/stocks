@@ -4138,3 +4138,25 @@ Started: Fri Jun 19 02:25:41 CST 2026
     - Object.freeze ReadonlyArray 之外, 每个 element 也要单独 freeze, 否则 `WEEKLY_REVIEW_BENCHMARKS[0].name = 'X'` 默默生效. testWeeklyReviewBenchmarksConstantFrozen 同时验 array push 防御 + element 字段 mutation 防御 (与 WEEKLY_REVIEW_STATUS 同款双层 frozen guard).
     - DataSource interface 改了 (加 loadBenchmarkReturns method), 现有 fake 必须补全 method 否则 sendForUser 调用时直接 TypeError; 模板: WeeklyReviewDataSource 加新 method → makeFakeDataSource 同步加 + FakeState 加 optional data 字段 + throwOn 也加. 等同于 BehaviorBiasDetector 的 DataSource DI 范式.
 ---
+
+## 2026-06-21 04:02 - US-145
+- 实现 [PM-017] WeeklyReview 下周日历事件 section
+- 新增 NextWeekCalendarEvent interface (event_date / symbol / name / event_type / detail / impact_level)
+- 三类事件源同框: EarningsForecast (announce_date) + DividendHistory (ex_date) + RestrictedShareRelease (ex_date)
+- impact_level 0-10 整数分级: earnings 大幅预增/预减≥50% → 8, 默认 5; dividend yield≥3% → 6, 默认 4; 限售解禁 ≥10% → 9, 5-10% → 6, 默认 3
+- ≥ NEXT_WEEK_CALENDAR_HIGH_IMPACT_THRESHOLD (=5) 邮件 dot 标红
+- 区间 = (week.end_date + 1) ~ (week.end_date + 7); review-end 后下 7 天
+- 同股同日多 shareholder 解禁合并 (sum mv + max pct)
+- 三类独立 try/catch fail-OPEN; 顶层 fail-OPEN → next_week_events=[]; UI hide section
+- Files changed:
+  - backend/src/services/WeeklyReviewReportService.ts (+462 lines: interface, classify*, sortAndCap, buildHtml, loadNextWeekCalendarEvents impl, runUserWeeklyReview 集成)
+  - backend/tests/services/weekly-review-report-service.test.ts (+312 lines: 28 个新 case 覆盖 classify, sortAndCap, buildHtml, loadNextWeekCalendarEvents fake/throw, end-to-end runUserWeeklyReview next_week_events 透传)
+- Quality: tsc --noEmit 0 errors, 608 单测全过 (含 28 个新增 PM-017 case)
+- **Learnings for future iterations:**
+  - "下周日历事件"区间用 review-end+1 → +7 (不是 today+1 → +7) 与 US-098 周线对齐; 这点 vs UpcomingEventRow (today → today+7) 是同一个 service 里两个区间标准并存
+  - DividendHistory + RestrictedShareRelease 都用 stock_code (6 位无后缀) 而非 symbol — 需在 service 里 codeToSymbol 反查回 600519.SH; 否则 portfolio symbol set 匹配 0
+  - 同股同日多 shareholder 解禁必须 group by (date, code) 合并; 否则一条 600519 解禁会因为 3 个 shareholder 出 3 行邮件挤爆 NEXT_WEEK_CALENDAR_MAX_ROWS
+  - 三类独立 try/catch (不是单一 try) — 限售表缺数据时不能阻塞业绩预告 + 分红; 单 catch 损一类全 fail 退化体验
+  - sortAndCapNextWeekEvents 是 (event_date ASC, impact_level DESC, symbol ASC) 三元稳定排序 — 单测要锁住排序顺序防 V8 排序回退漂移
+  - 邮件 section 用 collapsible HTML 是错的; 直接 inline <table> 适配 mobile mail client (Gmail / Outlook 不解 details/summary); 高亮 dot 用 ● + span color 而非 emoji (Outlook 替换 emoji 字体)
+---

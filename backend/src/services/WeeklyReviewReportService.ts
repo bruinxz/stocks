@@ -41,6 +41,8 @@ import { PaperTradingTrade } from '../models/PaperTradingTrade';
 import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
 import { Stock } from '../models/Stock';
 import { EarningsForecast } from '../models/EarningsForecast';
+import { DividendHistory } from '../models/DividendHistory';
+import { RestrictedShareRelease } from '../models/RestrictedShareRelease';
 import { DailyBar } from '../models/DailyBar';
 import { AIInvestmentSignal, AISignalSourceType } from '../models/AIInvestmentSignal';
 import {
@@ -257,6 +259,47 @@ export interface UpcomingEventRow {
   announce_date?: string | null;
 }
 
+/**
+ * US-145 PM-017 — WeeklyReview "下周日历事件" section.
+ *
+ * 与 [[UpcomingEventRow]] 同源但定位不同:
+ *   - UpcomingEventRow 只覆盖 EarningsForecast (公告型), 取 lookahead=ref+7 区间
+ *     里持仓股的预告. AC 重点在 "本周关注事件" 决策辅助.
+ *   - NextWeekCalendarEvent 是"下周 (review-end+1 ~ +7) 全行业日历事件"
+ *     综合视图: 业绩预告 + 分红除权 + 限售解禁 三类同框, 让操盘手提前看
+ *     "下周哪几天有可能触发持仓回撤". 这是 PM-017 AC "邮件 section" 的字面.
+ *
+ * impact_level 是 0-10 整数 (10 最高), 给前端排序 + 标红用:
+ *   - earnings_forecast 大幅预增/预减 (|profit_change_low| ≥ 50%) → 8
+ *   - dividend 高股息 (yield_pct ≥ 3%) → 6, 普通 → 4
+ *   - restricted_release 大额解禁 (release_pct_of_float ≥ 10%) → 9
+ *     中等 (5-10%) → 6, 小额 → 3
+ *   - earnings_forecast 默认 5
+ *
+ * AC "标记影响 ≥ 5 的" — 即 impact_level ≥ 5 行邮件加红色 dot.
+ */
+export interface NextWeekCalendarEvent {
+  /** 事件日 (YYYY-MM-DD, 上海时区), 取 announce_date / ex_date / 解禁日 */
+  event_date: string;
+  /** 持仓 symbol (含市场后缀, 如 600519.SH); 不在持仓的事件不入列表 */
+  symbol: string;
+  /** 股票简称 */
+  name: string;
+  /** 事件类型 (3 类) */
+  event_type: 'earnings_forecast' | 'dividend' | 'restricted_release';
+  /** 一行简述 (中文 ≤ 60 字), 邮件直接展示 */
+  detail: string;
+  /** 影响等级 0-10 (≥5 视为重要, 邮件红色 dot 标记) */
+  impact_level: number;
+}
+
+/** US-145 AC "标记影响 ≥ 5 的" — 重要事件红色 dot 阈值. */
+export const NEXT_WEEK_CALENDAR_HIGH_IMPACT_THRESHOLD = 5;
+/** US-145 — 邮件 section 最大 row (防移动端撑爆); 多出走 dashboard. */
+export const NEXT_WEEK_CALENDAR_MAX_ROWS = 20;
+/** US-145 — 下周 lookahead 天数 (start = ref+1, end = ref+7, 共 7 天). */
+export const NEXT_WEEK_CALENDAR_LOOKAHEAD_DAYS = 7;
+
 /** AI 周观点（启发式 narrative；远端不可达时兜底） */
 export interface AIWeeklyOpinion {
   /** 'remote' = TradingAgents 远端生成；'heuristic' = 本地启发式兜底 */
@@ -432,6 +475,14 @@ export interface WeeklyReviewPayload {
    */
   vs_benchmarks: BenchmarkComparisonRow[];
   upcoming_events: UpcomingEventRow[];
+  /**
+   * US-145 PM-017 — 下周 (review-end+1 ~ +7) 日历事件预览.
+   * 综合 EarningsForecast + DividendHistory + RestrictedShareRelease 三类,
+   * 仅含 user 当前持仓 / 上周交易过的 symbol. 缺数据时返 [] (UI hide section).
+   * 已按 (event_date ASC, impact_level DESC) 排序, 顶部 NEXT_WEEK_CALENDAR_MAX_ROWS
+   * 已截断, 避免邮件正文撑爆.
+   */
+  next_week_events: NextWeekCalendarEvent[];
   ai_opinion: AIWeeklyOpinion;
 }
 
@@ -552,6 +603,23 @@ export interface WeeklyReviewDataSource {
     from_date: string,
     to_date: string
   ): Promise<UpcomingEventRow[]>;
+  /**
+   * US-145 PM-017 — 取下周 (review-end+1 ~ +7) 持仓股的日历事件.
+   *
+   * 综合三类:
+   *   - EarningsForecast: 公告日落在区间 → impact 5 (|change_low|≥50% 升 8)
+   *   - DividendHistory: ex_date 落在区间 → impact 4 (yield_pct≥3% 升 6)
+   *   - RestrictedShareRelease: ex_date 落在区间 → impact 3
+   *     (release_pct_of_float 5-10% 升 6, ≥10% 升 9)
+   *
+   * 返排序后的 NextWeekCalendarEvent[] (≤ NEXT_WEEK_CALENDAR_MAX_ROWS).
+   * fail-OPEN: throw → caller 顶层 catch → next_week_events=[].
+   */
+  loadNextWeekCalendarEvents(
+    symbols: string[],
+    from_date: string,
+    to_date: string
+  ): Promise<NextWeekCalendarEvent[]>;
   /** 生成 AI 周观点（远端 → heuristic 兜底） */
   generateAIWeeklyOpinion(payload: {
     pnl_pct: number | null;
@@ -1558,6 +1626,9 @@ export function buildWeeklyReviewEmail(payload: WeeklyReviewPayload): EmailPaylo
   // US-144 PM-016 — vs 多 benchmark 周对比 (vs_benchmarks=[] → hide section)
   const benchmarkSectionHtml = buildBenchmarkComparisonsHtml(payload.vs_benchmarks);
 
+  // US-145 PM-017 — 下周日历事件 (next_week_events=[] → hide section)
+  const nextWeekCalendarSectionHtml = buildNextWeekCalendarHtml(payload.next_week_events);
+
   const winnerRowsHtml = payload.top_winners.length
     ? payload.top_winners.map(r => buildSymbolRowHtml(r, '#16a34a')).join('')
     : '<tr><td colspan="4" style="padding:12px;color:#94a3b8;text-align:center;">本周无盈利兑现</td></tr>';
@@ -1674,6 +1745,7 @@ export function buildWeeklyReviewEmail(payload: WeeklyReviewPayload): EmailPaylo
       <h2 style="margin:8px 0;font-size:15px;font-weight:600;color:#0f172a;">📅 本周关注事件</h2>
       <ul style="margin:0;padding-left:20px;font-size:13px;color:#475569;line-height:1.7;">${eventsHtml}</ul>
     </td></tr>
+    ${nextWeekCalendarSectionHtml}
     <tr><td style="padding:0 24px 16px 24px;">${opinionHtml}</td></tr>
     <tr><td style="padding:12px 24px 24px 24px;border-top:1px solid #f1f5f9;">
       <div style="font-size:11px;color:#94a3b8;text-align:center;">QuantX A-Share Alpha · 自动生成 · ${escapeHtml(
@@ -1830,6 +1902,120 @@ export function buildBenchmarkComparisonsHtml(
     </td></tr>`.trim();
 }
 
+// ---------------------------------------------------------------------------
+// US-145 PM-017 — 下周日历事件 (pure helpers)
+// ---------------------------------------------------------------------------
+
+/**
+ * 把 EarningsForecast row 映射到 NextWeekCalendarEvent.
+ * |profit_change_low|≥50% → impact 8, 否则 5.
+ * 单独 export 给单测.
+ */
+export function classifyEarningsForecastImpact(profit_change_low: number | null): number {
+  if (profit_change_low !== null && Number.isFinite(profit_change_low)) {
+    if (Math.abs(profit_change_low) >= 50) return 8;
+  }
+  return 5;
+}
+
+/**
+ * 把 DividendHistory row 映射到 NextWeekCalendarEvent impact.
+ * yield_pct ≥ 3% → 6 (高股息), 否则 4.
+ * 单独 export 给单测.
+ */
+export function classifyDividendImpact(yield_pct: number | null): number {
+  if (yield_pct !== null && Number.isFinite(yield_pct) && yield_pct >= 3) return 6;
+  return 4;
+}
+
+/**
+ * 把 RestrictedShareRelease row 映射到 NextWeekCalendarEvent impact.
+ * release_pct_of_float ≥ 10% → 9, 5-10% → 6, < 5% → 3.
+ * 缺数据 → 3 (无法评估时落保守值).
+ * 单独 export 给单测.
+ */
+export function classifyRestrictedReleaseImpact(release_pct_of_float: number | null): number {
+  if (release_pct_of_float === null || !Number.isFinite(release_pct_of_float)) return 3;
+  if (release_pct_of_float >= 10) return 9;
+  if (release_pct_of_float >= 5) return 6;
+  return 3;
+}
+
+/**
+ * 把 NextWeekCalendarEvent[] 按 (event_date ASC, impact_level DESC) 排序后
+ * 截到 NEXT_WEEK_CALENDAR_MAX_ROWS (防邮件正文撑爆). 纯函数, 不 mutate.
+ * 单独 export 给单测.
+ */
+export function sortAndCapNextWeekEvents(
+  rows: NextWeekCalendarEvent[],
+  cap: number = NEXT_WEEK_CALENDAR_MAX_ROWS
+): NextWeekCalendarEvent[] {
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+  const copy = rows.slice();
+  copy.sort((a, b) => {
+    if (a.event_date !== b.event_date) return a.event_date < b.event_date ? -1 : 1;
+    return b.impact_level - a.impact_level;
+  });
+  if (copy.length <= cap) return copy;
+  return copy.slice(0, cap);
+}
+
+function nextWeekEventLabel(kind: NextWeekCalendarEvent['event_type']): string {
+  switch (kind) {
+    case 'earnings_forecast':
+      return '业绩预告';
+    case 'dividend':
+      return '分红除权';
+    case 'restricted_release':
+      return '限售解禁';
+    default:
+      return String(kind);
+  }
+}
+
+/**
+ * 把 NextWeekCalendarEvent[] 渲染成 HTML <tr> section.
+ * AC: 邮件 section + 标记影响 ≥ 5 的 (impact_level ≥ 5 行红色 dot).
+ *
+ * rows 为 null / undefined / [] → 返空字符串 (整个 section 不渲染).
+ */
+export function buildNextWeekCalendarHtml(
+  rows: NextWeekCalendarEvent[] | null | undefined
+): string {
+  if (!Array.isArray(rows) || rows.length === 0) return '';
+  const bodyHtml = rows
+    .map(ev => {
+      const highImpact = ev.impact_level >= NEXT_WEEK_CALENDAR_HIGH_IMPACT_THRESHOLD;
+      const dot = highImpact
+        ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#dc2626;margin-right:6px;vertical-align:middle;" title="高影响事件"></span>'
+        : '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#e2e8f0;margin-right:6px;vertical-align:middle;"></span>';
+      const labelStyle = highImpact
+        ? 'color:#dc2626;font-weight:600;'
+        : 'color:#475569;font-weight:500;';
+      return `<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;white-space:nowrap;font-family:monospace;color:#1e293b;">${dot}${escapeHtml(
+        ev.event_date
+      )}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;"><strong>${escapeHtml(
+        ev.symbol
+      )}</strong> <span style="color:#64748b;">${escapeHtml(
+        ev.name
+      )}</span></td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;${labelStyle}">${escapeHtml(
+        nextWeekEventLabel(ev.event_type)
+      )}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;color:#475569;">${escapeHtml(
+        ev.detail
+      )}</td></tr>`;
+    })
+    .join('');
+  return `
+    <tr><td style="padding:0 24px 16px 24px;">
+      <h2 style="margin:8px 0;font-size:15px;font-weight:600;color:#0f172a;">🗓️ 下周日历事件</h2>
+      <div style="font-size:11px;color:#94a3b8;margin-bottom:6px;">● 红 = 高影响 (impact ≥ ${NEXT_WEEK_CALENDAR_HIGH_IMPACT_THRESHOLD}, 大额预告/解禁/高股息), ● 灰 = 普通; 仅含持仓 + 上周交易 symbol</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:13px;">
+        <thead><tr style="background:#f8fafc;"><th style="padding:8px 12px;text-align:left;color:#64748b;font-weight:500;">日期</th><th style="padding:8px 12px;text-align:left;color:#64748b;font-weight:500;">代码 / 名称</th><th style="padding:8px 12px;text-align:left;color:#64748b;font-weight:500;">类型</th><th style="padding:8px 12px;text-align:left;color:#64748b;font-weight:500;">详情</th></tr></thead>
+        <tbody>${bodyHtml}</tbody>
+      </table>
+    </td></tr>`.trim();
+}
+
 function buildPlainTextFallback(payload: WeeklyReviewPayload): string {
   const lines: string[] = [];
   const sign = payload.pnl.pnl_amount > 0 ? '+' : '';
@@ -1909,6 +2095,19 @@ function buildPlainTextFallback(payload: WeeklyReviewPayload): string {
         `  - ${r.benchmark_name}(${r.benchmark_code}): 基准 ${fmt(
           r.benchmark_return_pct
         )} / 组合 ${fmt(r.portfolio_return_pct)} / α ${fmt(r.alpha_pct)}`
+      );
+    }
+    lines.push('');
+  }
+  // US-145 PM-017 — 下周日历事件
+  if (payload.next_week_events && payload.next_week_events.length > 0) {
+    lines.push('下周日历事件：');
+    for (const ev of payload.next_week_events) {
+      const mark = ev.impact_level >= NEXT_WEEK_CALENDAR_HIGH_IMPACT_THRESHOLD ? '★' : ' ';
+      lines.push(
+        `  ${mark} ${ev.event_date} ${ev.symbol} ${ev.name} · ${nextWeekEventLabel(
+          ev.event_type
+        )} — ${ev.detail}`
       );
     }
     lines.push('');
@@ -2348,6 +2547,245 @@ export class DefaultWeeklyReviewDataSource implements WeeklyReviewDataSource {
     return out;
   }
 
+  /**
+   * US-145 PM-017 — 下周日历事件 (EarningsForecast + DividendHistory +
+   * RestrictedShareRelease 三类). 每类独立 try/catch, 单类失败不阻塞其他类
+   * (例如 RestrictedShareRelease 表缺数据时仍能拉到分红 + 业绩预告).
+   *
+   * 注意与 loadUpcomingEvents 的差异:
+   *   - loadUpcomingEvents 只查 EarningsForecast, 用 from=ref / to=ref+lookahead
+   *   - 本方法查 3 表, from/to 已经是 "下周" 区间 (caller 传 ref+1, ref+7)
+   *
+   * 返排序 + cap 后的 NextWeekCalendarEvent[].
+   */
+  async loadNextWeekCalendarEvents(
+    symbols: string[],
+    from_date: string,
+    to_date: string
+  ): Promise<NextWeekCalendarEvent[]> {
+    if (!symbols || symbols.length === 0) return [];
+    const unique = Array.from(new Set(symbols.filter(s => !!s)));
+    const codes = unique.map(s => stripSuffix(s)).filter(s => !!s);
+    if (codes.length === 0) return [];
+    const codeToSymbol = (code: string): string =>
+      unique.find(s => stripSuffix(s) === code) || code;
+    const all: NextWeekCalendarEvent[] = [];
+
+    // 1) EarningsForecast
+    try {
+      const rows = (await EarningsForecast.findAll({
+        where: {
+          stock_code: { [Op.in]: codes },
+          announce_date: { [Op.gte]: from_date, [Op.lte]: to_date },
+        },
+        attributes: [
+          'stock_code',
+          'stock_name',
+          'forecast_type',
+          'announce_date',
+          'report_period',
+          'profit_change_low',
+        ],
+        raw: true,
+      })) as unknown as Array<{
+        stock_code: string;
+        stock_name?: string;
+        forecast_type?: string;
+        announce_date?: string;
+        report_period?: string;
+        profit_change_low?: number;
+      }>;
+      for (const r of rows) {
+        if (!r.announce_date) continue;
+        const sym = codeToSymbol(r.stock_code);
+        const lo =
+          r.profit_change_low !== undefined && r.profit_change_low !== null
+            ? Number(r.profit_change_low)
+            : null;
+        const impact = classifyEarningsForecastImpact(lo);
+        const pctText =
+          lo !== null && Number.isFinite(lo) ? `净利${lo > 0 ? '+' : ''}${lo.toFixed(1)}%` : '';
+        const detail =
+          [safeString(r.forecast_type), safeString(r.report_period), pctText]
+            .filter(Boolean)
+            .join(' · ') || '业绩预告';
+        all.push({
+          event_date: r.announce_date,
+          symbol: sym,
+          name: safeString(r.stock_name) || sym,
+          event_type: 'earnings_forecast',
+          detail,
+          impact_level: impact,
+        });
+      }
+    } catch (err: any) {
+      logger.warn(
+        `[WeeklyReview] loadNextWeekCalendarEvents EarningsForecast 失败 from=${from_date} to=${to_date}: ${
+          err?.message || err
+        }`
+      );
+    }
+
+    // 2) DividendHistory (按 ex_date 落区间)
+    try {
+      const rows = (await DividendHistory.findAll({
+        where: {
+          stock_code: { [Op.in]: codes },
+          ex_date: { [Op.gte]: from_date, [Op.lte]: to_date },
+        },
+        attributes: [
+          'stock_code',
+          'stock_name',
+          'ex_date',
+          'dividend_per_share',
+          'bonus_per_10',
+          'transfer_per_10',
+          'yield_pct',
+        ],
+        raw: true,
+      })) as unknown as Array<{
+        stock_code: string;
+        stock_name?: string;
+        ex_date?: string;
+        dividend_per_share?: number;
+        bonus_per_10?: number;
+        transfer_per_10?: number;
+        yield_pct?: number;
+      }>;
+      for (const r of rows) {
+        if (!r.ex_date) continue;
+        const sym = codeToSymbol(r.stock_code);
+        const yieldPct =
+          r.yield_pct !== undefined && r.yield_pct !== null ? Number(r.yield_pct) : null;
+        const impact = classifyDividendImpact(yieldPct);
+        const parts: string[] = [];
+        if (
+          r.dividend_per_share !== undefined &&
+          r.dividend_per_share !== null &&
+          Number(r.dividend_per_share) > 0
+        ) {
+          parts.push(`10派${(Number(r.dividend_per_share) * 10).toFixed(2)}元`);
+        }
+        if (r.bonus_per_10 !== undefined && r.bonus_per_10 !== null && Number(r.bonus_per_10) > 0) {
+          parts.push(`10送${Number(r.bonus_per_10).toFixed(1)}股`);
+        }
+        if (
+          r.transfer_per_10 !== undefined &&
+          r.transfer_per_10 !== null &&
+          Number(r.transfer_per_10) > 0
+        ) {
+          parts.push(`10转${Number(r.transfer_per_10).toFixed(1)}股`);
+        }
+        if (yieldPct !== null && Number.isFinite(yieldPct)) {
+          parts.push(`股息率${yieldPct.toFixed(2)}%`);
+        }
+        const detail = parts.length > 0 ? parts.join(' · ') : '分红除权';
+        all.push({
+          event_date: r.ex_date,
+          symbol: sym,
+          name: safeString(r.stock_name) || sym,
+          event_type: 'dividend',
+          detail,
+          impact_level: impact,
+        });
+      }
+    } catch (err: any) {
+      logger.warn(
+        `[WeeklyReview] loadNextWeekCalendarEvents DividendHistory 失败 from=${from_date} to=${to_date}: ${
+          err?.message || err
+        }`
+      );
+    }
+
+    // 3) RestrictedShareRelease (按 ex_date 落区间)
+    try {
+      const rows = (await RestrictedShareRelease.findAll({
+        where: {
+          stock_code: { [Op.in]: codes },
+          ex_date: { [Op.gte]: from_date, [Op.lte]: to_date },
+        },
+        attributes: [
+          'stock_code',
+          'stock_name',
+          'ex_date',
+          'shareholder_name',
+          'release_market_value',
+          'release_pct_of_float',
+        ],
+        raw: true,
+      })) as unknown as Array<{
+        stock_code: string;
+        stock_name?: string;
+        ex_date?: string;
+        shareholder_name?: string;
+        release_market_value?: number;
+        release_pct_of_float?: number;
+      }>;
+      // 同股同日多 shareholder 合并成单 row (取 sum(market_value) + max(pct))
+      const grouped = new Map<
+        string,
+        { sym: string; name: string; mv: number; pct: number | null; ex_date: string }
+      >();
+      for (const r of rows) {
+        if (!r.ex_date) continue;
+        const key = `${r.ex_date}|${r.stock_code}`;
+        const sym = codeToSymbol(r.stock_code);
+        const mv =
+          r.release_market_value !== undefined && r.release_market_value !== null
+            ? Number(r.release_market_value)
+            : 0;
+        const pct =
+          r.release_pct_of_float !== undefined && r.release_pct_of_float !== null
+            ? Number(r.release_pct_of_float)
+            : null;
+        const cur = grouped.get(key);
+        if (!cur) {
+          grouped.set(key, {
+            sym,
+            name: safeString(r.stock_name) || sym,
+            mv,
+            pct,
+            ex_date: r.ex_date,
+          });
+        } else {
+          cur.mv += Number.isFinite(mv) ? mv : 0;
+          if (pct !== null && Number.isFinite(pct)) {
+            cur.pct = cur.pct === null ? pct : Math.max(cur.pct, pct);
+          }
+        }
+      }
+      for (const v of grouped.values()) {
+        const impact = classifyRestrictedReleaseImpact(v.pct);
+        const parts: string[] = [];
+        if (v.mv > 0) {
+          // 亿元单位 (10^8) 更易读
+          const yi = v.mv / 1e8;
+          parts.push(`解禁市值${yi >= 1 ? yi.toFixed(2) + '亿' : (v.mv / 1e4).toFixed(0) + '万'}`);
+        }
+        if (v.pct !== null && Number.isFinite(v.pct)) {
+          parts.push(`占流通${v.pct.toFixed(2)}%`);
+        }
+        const detail = parts.length > 0 ? parts.join(' · ') : '限售解禁';
+        all.push({
+          event_date: v.ex_date,
+          symbol: v.sym,
+          name: v.name,
+          event_type: 'restricted_release',
+          detail,
+          impact_level: impact,
+        });
+      }
+    } catch (err: any) {
+      logger.warn(
+        `[WeeklyReview] loadNextWeekCalendarEvents RestrictedShareRelease 失败 from=${from_date} to=${to_date}: ${
+          err?.message || err
+        }`
+      );
+    }
+
+    return sortAndCapNextWeekEvents(all);
+  }
+
   async generateAIWeeklyOpinion(payload: {
     pnl_pct: number | null;
     industry_contribution: IndustryContributionRow[];
@@ -2646,6 +3084,29 @@ export class WeeklyReviewReportService {
       logger.warn(`[WeeklyReview] loadUpcomingEvents user=${user_id} 失败: ${err?.message || err}`);
     }
 
+    // ---- US-145 PM-017 — 下周日历事件 (review-end+1 ~ +7) ----
+    const nextWeekStart = moment
+      .tz(week.end_date, 'YYYY-MM-DD', 'Asia/Shanghai')
+      .add(1, 'day')
+      .format('YYYY-MM-DD');
+    const nextWeekEnd = moment
+      .tz(week.end_date, 'YYYY-MM-DD', 'Asia/Shanghai')
+      .add(NEXT_WEEK_CALENDAR_LOOKAHEAD_DAYS, 'days')
+      .format('YYYY-MM-DD');
+    let nextWeekEvents: NextWeekCalendarEvent[] = [];
+    try {
+      nextWeekEvents = await this.dataSource.loadNextWeekCalendarEvents(
+        watchSymbols,
+        nextWeekStart,
+        nextWeekEnd
+      );
+    } catch (err: any) {
+      logger.warn(
+        `[WeeklyReview] loadNextWeekCalendarEvents user=${user_id} 失败: ${err?.message || err}`
+      );
+      nextWeekEvents = [];
+    }
+
     // ---- AI 周观点 ----
     let aiOpinion: AIWeeklyOpinion;
     try {
@@ -2729,6 +3190,7 @@ export class WeeklyReviewReportService {
       realized_pnl_total: realizedPnlTotal,
       vs_benchmarks: vsBenchmarks,
       upcoming_events: events,
+      next_week_events: nextWeekEvents,
       ai_opinion: aiOpinion,
     };
 
