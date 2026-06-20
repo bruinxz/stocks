@@ -2709,3 +2709,24 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **lookback_days 与 service 同源**: DEFAULT_ERROR_PATTERN_CRON_LOOKBACK_DAYS = DEFAULT_LOOKBACK_DAYS (import 自 aggregator), 不重新写 90. 与 [[AI_VIEW_MAX_CHARS]] 跨边界常量同源思想.
 ---
 
+
+## 2026-06-20 13:50 - US-094 [PM-023] ImprovementSuggestion model + Service
+- 实现内容:
+  - backend/src/models/ImprovementSuggestion.ts (新建; @Table improvement_suggestions; UNIQUE(user_id, period_end, category, key); 4 类 category {bias|outcome|attribution|top} + 4 态 status {open|applied|dismissed|expired}; priority INTEGER 0..100; evidence/action JSONB; applied_at/dismissed_at nullable 给 PM-024 apply route 写)
+  - backend/scripts/migrations/2026-06-20-improvement-suggestions.sql + rollback.sql (CREATE TABLE IF NOT EXISTS + 7 索引 + 默认值安全态 status='open'/source='heuristic'/priority=0/action='{type:noop}'::jsonb + BEGIN/COMMIT; rollback 反向 DROP INDEX/TABLE IF EXISTS)
+  - backend/src/models/index.ts + backend/src/config/database.ts (re-export + 注册 model)
+  - backend/src/services/postmortem/ImprovementSuggestionService.ts (新建 ~620 行): 常量+枚举全 export + Frozen; DataSource interface (loadLatestErrorPatternReport + bulkUpsertSuggestions); PRODUCTION 工厂 lazy-require ErrorPatternReport + ImprovementSuggestion; 4 个 builder (buildBias/Outcome/Attribution/Top Suggestion) heuristic 模板 + enforceTitle 60 字/enforceBody 500 字 cap; buildSuggestionsFromPatterns 一次性展开 + attribution 仅 total_contrib<0 + top key='cat:orig_key' 防冲突; generateForUser 三层 fail-OPEN (load throw→failed reason=load_threw / no report→skipped no_error_pattern / patterns 全空→skipped patterns_empty / bulkUpsert false 或 throw→failed persisted_count=0); **与 ErrorPatternAggregator 范式差异**: 不写"留痕空行" (UI 显示"暂无建议"即可)
+  - backend/tests/postmortem/improvement-suggestion-service.test.ts (新建 ~600 行): 7 大测试维度 / 116 ok / 0 failed (常量+约束+4 builder+合并+主入口 8 边界+PRODUCTION DB-less+META-GUARD fs+regex)
+  - backend/src/services/postmortem/CLAUDE.md (登记新文件 + 强调与 ErrorPatternAggregator 范式差异 = 不写留痕空行)
+- 质量门:
+  - tsc 0 err
+  - lint 0 err 0 新增 warn (test 文件 tsconfig 不含 = 已存在 baseline)
+  - npm test --filter=improvement 1 file 116/0
+  - npm test --filter=postmortem 6 files all pass 无 regression
+- **Learnings for future iterations:**
+  - **PM 系列 service 的"留痕 vs 不留痕"二分**: ErrorPatternAggregator (US-092) 走"周日强制留痕" — 即使 sparse 也 upsert 空 patterns 让 ops 看板看到"用户 X 跑过但跳过". 本 service (US-094) 走相反范式 — 没建议就 skipped 返回不写空行 (UI"暂无建议"语义胜过空行). 二分依据: 上游 cron 是否需要"该周期跑过"的证据 (Aggregator 需要; SuggestionService 用 Aggregator 的留痕作上游, 自己不需要再留)
+  - **bulkUpsert pattern 注意 partial success**: PRODUCTION DataSource 逐行 try/catch upsert, 一行失败 logger.warn + 不计入 persisted_count + 不中断后续行; 全失败返 ok=false reason='all_rows_failed'; 部分成功返 ok=true persisted_count<N. service 层 generateForUser 返 partial = OK + persisted_count<N 不算 failed (与 cron 容忍部分失败一致, 同款 RealtimeAlertDispatcher Promise.allSettled 思想)
+  - **top_findings 单独 category='top' + key='cat:original_key' 防冲突**: 如果 top_finding 的 bias chase_high 与原始 bias_patterns 中的 chase_high 都写 category='bias' key='chase_high' 会触发 UNIQUE 冲突. 解决: top 用独立 category='top', key 内联 `cat:orig_key` 保证唯一. UI 拿到 top 行可以高优先级 banner 显示, 同时用 evidence.source_category + source_key 反查原始建议
+  - **(user_id, period_end, category, key) 四元组 UNIQUE**: 任何"per-user-per-period-per-N-行"业务表都该考虑四元组 UNIQUE (比常见的三元组多 1 列)。bulkUpsert 必须按四元组 ON CONFLICT DO UPDATE 才能覆盖 (sequelize upsert 自动识别 model.indexes 里的 unique 数组)
+  - **eslint --fix prettier 拉直**: 新 service 写完跑 lint 常见 10+ prettier 行长 warn, `npx eslint --fix <files>` 一键拉直, 改后 tsc 仍 0 err / 测试仍全过 (prettier 只改空白). 提前避免: 写 string template 时拆 multiline 模式与现有 service 对齐
+---

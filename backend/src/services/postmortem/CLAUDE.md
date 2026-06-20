@@ -35,7 +35,19 @@ L8-Postmortem 系列 service. 每日 / 每周 / 增量地把 trading_agents + pa
   lookback_days=90. 挂在 SchedulerService WEEKLY_ERROR_PATTERN_AGGREGATE dispatch
   + cronRegistry analytics 段, 推荐 cron `0 10 * * 0` (周日 10:00).
 
-(后续 story 接入: PM-023 ImprovementSuggestion, ...)
+- **ImprovementSuggestionService.ts** — US-094 [PM-023] 改进建议主入口
+  generateForUser(user_id, {data_source, period_end?, cron_run_id?}) → 读最近 1 行
+  ErrorPatternReport (status=ok) → 把 bias / outcome / attribution / top_findings
+  各路 builder 展开为 ImprovementSuggestionUpsertRow → bulkUpsert
+  improvement_suggestions. 永不 throw (load throw → failed, no report → skipped
+  no_error_pattern, patterns 全空 → skipped patterns_empty, bulkUpsert 失败 →
+  failed persisted_count=0). **本 service 与 ErrorPatternAggregator 范式差异**:
+  不写"留痕空行" — 没建议就 skipped 返回 (UI 显示"暂无建议"). attribution
+  只取 total_contrib<0 维度 (正贡献不需要建议). top_findings 单独 category='top'
+  key='cat:original_key' 避免与原始三类冲突. (user_id, period_end, category, key)
+  UNIQUE 走 ON CONFLICT.
+
+(后续 story 接入: PM-024 ImprovementSuggestion apply route, ...)
 
 ## 范式 — 与 [[services/attribution/AIAttributionSummary]] 5 件套对齐
 
