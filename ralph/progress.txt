@@ -2547,3 +2547,36 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - pearson 单测应该覆盖 5 类数学陷阱: identical=1 / opposite=-1 / scaled=1 / constant→null / NaN/Inf→null. round 3 位让浮点比较稳定
   - 邮件 HTML 表格的 N×N 单元格颜色梯度用 inline-style background + color (≥0.6 深色字 / <0.6 中灰字) 兼容所有 mail client; 不依赖 <style> 块
 ---
+
+## 2026/06/20 11:50 - US-089
+- 实现 [PM-018] AIDiaryEntry model — per-user per-date AI 投资日记 schema + migration + 73 assert 单测
+- Files changed:
+  - backend/src/models/AIDiaryEntry.ts (新, ~180 行 / 完整 jsdoc):
+    * @Table 'ai_diary_entries' + (user_id, date) UNIQUE + 5 单列索引 (user_id/date/status/source/generated_at)
+    * 11 列 — user_id (FK→User + BelongsTo), date DATEONLY, text TEXT default='', evidence JSONB default={}, source STRING(20) default='heuristic', status STRING(20) default='ok', reason STRING(200) nullable, metadata JSONB default={}, generated_at DATE, created_at/updated_at (@CreatedAt/@UpdatedAt 装饰)
+    * source 三态 (llm / heuristic / manual), status 三态 (ok / skipped / failed; fail-OPEN 与 DailyAttributionReport 对齐)
+    * jsdoc 显式记 evidence 7 个字段 (daily_attribution_report_id / total_pnl / bias_findings_count / best_trades_codes / worst_trades_codes / factor_review_id / data_sources[]) + ≤500 字 cap 由后续 PM-019 service 守不在 model 校验 + 与 DailyAttributionReport (per-portfolio) 差异
+  - backend/src/config/database.ts: import AIDiaryEntry + models 数组添加 (插在 DailyAttributionReport 之后, MorningRiskCheckup 之前, 保持 attribution 类聚团)
+  - backend/src/models/index.ts: export * from './AIDiaryEntry' (与 import 顺序对齐)
+  - backend/scripts/migrations/2026-06-20-ai-diary-entries.sql (新, up): CREATE TABLE IF NOT EXISTS + 1 UNIQUE + 5 单列索引 + 8 COMMENT (table + 7 列); 与 model schema 一一对应; 默认值 fail-safe (text='' / source='heuristic' / status='ok')
+  - backend/scripts/migrations/2026-06-20-ai-diary-entries-rollback.sql (新, down): DROP INDEX×6 IF EXISTS + DROP TABLE IF EXISTS, 全幂等
+  - backend/tests/models/ai-diary-entry.test.ts (新, ~285 行 / 73 assert / 7 模块):
+    [1] @Table 配置 (tableName / underscored / timestamps)
+    [2] 索引 6 件套 ((user_id, date) UNIQUE + 5 单列)
+    [3] 列定义 sanity 11 列 (含 ForeignKey + BelongsTo 装饰)
+    [4] 所有业务列含 comment guard (skip id + 自动管理时间戳)
+    [5] PRD US-089 AC: (user_id, date) UNIQUE + text TEXT + evidence JSONB 三件
+    [6] META-GUARD database.ts import + models 数组 + models/index.ts export + PM-018/US-089 标识 + fail-OPEN 注释
+    [7] migration up/down 双 SQL 形态: 16 件 up (BEGIN/COMMIT + CREATE TABLE + 各列 NOT NULL/类型 + UNIQUE INDEX + 5 单列索引 + COMMENT) + 4 件 down (BEGIN/COMMIT + DROP TABLE + DROP INDEX×6)
+  - ralph/prd.json: US-089 passes=true + notes
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npx ts-node --transpile-only tests/models/ai-diary-entry.test.ts` exit 0, 73 ok / 0 failed
+  - `npm test -- --filter=models` exit 0, 2 files (ai-diary-entry 73 + daily-attribution-report 98) / 171 assert all pass
+  - `eslint src/models/AIDiaryEntry.ts` exit 0 (prettier --fix 后, 0 err 0 warn)
+- **Learnings for future iterations:**
+  - **"先建框架 + 后填实" 模板的标准入口故事 (model + migration only)**: PM-018 是 PM-019 (service) / PM-020 (cron) 的依赖前置, 本 story 必须做到 (a) schema 字段一应俱全 (后续 service 直接 upsert 不再补字段 / migration) (b) 默认值 fail-safe 让 "未跑过 service 行" trivially INSERT (text='' / evidence={} / status='ok' / source='heuristic') (c) status/source 枚举字符串与下游 PM-019 输出契约对齐 (jsdoc 显式列三态 + 用 enum-like 注释) (d) jsdoc 写清 evidence JSONB 的 7 个子字段是后续 PM-019 prompt / 启发式 fallback 直接抄走的契约表. 漏 (d) 会让 PM-019 实现时反向猜 evidence 结构造成 model 与 service 漂移.
+  - **migration up/down 模板与 daily-attribution-report / eastmoney-qa-stat 一一对应**: 同款 BEGIN/COMMIT + CREATE TABLE IF NOT EXISTS + UNIQUE INDEX IF NOT EXISTS + idx_*_<col> 单列索引 + COMMENT ON TABLE/COLUMN; down 完全镜像 DROP IF EXISTS. 这套模板已稳定 (见 [[Codebase Patterns]] "schema 先行" 段), 每个 model 类 story 直接抄, 命名 idx_<table>_<col1>_<col2> + <table>_<col1>_<col2>_uniq 不要发明.
+  - **fs+regex META-GUARD 守 model + migration 双源**: model 测试不依赖真 sequelize singleton (DB-less), 完全靠源文件正则扫. migration 测试新增维度 — up 含 CREATE TABLE / 列名 / NOT NULL / 默认值 / UNIQUE INDEX / 单列索引 / COMMENT 全套; down 含 DROP TABLE / DROP INDEX 全套 (索引数与 up 必须一致, 否则回滚漏索引). 这是 "schema 先行" 类 story 最强守约 — schema 漂移立刻挂. 与 [[daily-attribution-report.test.ts]] 同款思想, 但额外加 migration up/down 维度让 ops 复用 sql 安全.
+  - **AIDiaryEntry vs DailyAttributionReport 形态差异 (per-user vs per-portfolio)**: 前者 = 一个 user 一天一行 (人本身的反思), 后者 = 一个 portfolio 一天一行 (账户级归因). PM-018 evidence.daily_attribution_report_id 引用而非内嵌 — 一个 user 可以多 portfolio, 取主账户 (active portfolio) 写一个 attribution id 即可, 不强制全跑. 这条边界写入 model jsdoc 是 PM-019 service 实现时直接落 evidence builder 的契约源. 同思想适用未来任何 "per-user 总结 vs per-portfolio 计算" 类 story.
+---

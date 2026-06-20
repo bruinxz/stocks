@@ -1380,8 +1380,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 89,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "已实现 AIDiaryEntry model + migration (up+down) + 73 assert 单测 + database.ts/models/index.ts 接入. PM-019 service / PM-020 cron 后续 story."
     },
     {
       "id": "US-090",
