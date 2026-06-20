@@ -42,6 +42,12 @@ import {
   dailyAttributionService,
   normalizeAttributionDate,
 } from './DailyAttributionService';
+import {
+  DailyAttributionFeishuPushService,
+  DailyAttributionPushOptions,
+  DailyAttributionPushResult,
+  dailyAttributionFeishuPushService,
+} from './DailyAttributionFeishuPushService';
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -80,6 +86,13 @@ export interface DailyAttributionCronRunSummary {
   dry_run: boolean;
   /** 单 portfolio 明细 (调用方按需写 execution_log.result_summary) */
   per_portfolio: DailyAttributionCronPortfolioResult[];
+  /**
+   * US-086 [PM-009] — 当 enable_feishu_push !== false 时, 把当日 status='ok' 且
+   * persist 成功的 portfolio report 顺序 fan-out 到 OPS 飞书群; 失败 fail-OPEN
+   * 不影响 ok/skipped/failed 计数. push=null 表示本批未触发推送 (e.g. 显式关闭 /
+   * dry_run / 没有可推送的 portfolio).
+   */
+  feishu_push: DailyAttributionPushResult | null;
 }
 
 /** cron 入口 options — 透传给 DailyAttributionService + 控制 dry_run / portfolio 范围 */
@@ -110,6 +123,16 @@ export interface RunDailyAttributionGenerateOptions {
   ai_summary_source?: GenerateDailyReportOptions['ai_summary_source'];
   /** override DailyAttributionReport.source 字段 (默认 'cron') */
   source?: string;
+  /**
+   * US-086 [PM-009] — 整批 cron 跑完后是否触发飞书 push (status=ok+persisted).
+   * 默认 true (cron 跑完即推, 与 PRD AC §E.1 "17:35 前送达" 时窗对齐);
+   * 显式 false → 跳过 push 通道 (灰度 / 演练); dry_run=true 时 push 自然 skip.
+   */
+  enable_feishu_push?: boolean;
+  /** override OPS 飞书 webhook 配置 / cap, 默认走 env OPS_ALERT_FEISHU_WEBHOOK */
+  feishu_push_options?: DailyAttributionPushOptions;
+  /** 单测 / 灰度时可注入 fake push service, 默认走 PRODUCTION singleton */
+  feishu_push_service?: DailyAttributionFeishuPushService;
 }
 
 /** Cron-side DataSource — 独立于 DailyAttributionService 的 service-side DataSource */
@@ -309,7 +332,11 @@ export async function runDailyAttributionGenerate(
     date,
     dry_run: dryRun,
     per_portfolio: [],
+    feishu_push: null,
   };
+
+  // US-086 PM-009 — 累计 status=ok+persisted 的 portfolio report, 收尾批量 push.
+  const pushItems: Array<{ portfolio_id: number; report: DailyAttributionReport }> = [];
 
   for (const target of targets) {
     const portfolioId = target.id;
@@ -375,6 +402,11 @@ export async function runDailyAttributionGenerate(
     else if (finalStatus === DAILY_ATTRIBUTION_STATUS.SKIPPED) summary.skipped_count += 1;
     else summary.failed_count += 1;
     if (persisted) summary.persisted_count += 1;
+    // 仅 status=ok 且持久化成功的 portfolio 才入 push 队列 (skipped/failed/persist_failed
+    // 一律不推, 避免空报告 push 风暴; dry_run 时 persisted=false 自然跳过)
+    if (persisted && finalStatus === DAILY_ATTRIBUTION_STATUS.OK && result.report) {
+      pushItems.push({ portfolio_id: portfolioId, report: result.report });
+    }
 
     summary.per_portfolio.push({
       portfolio_id: portfolioId,
@@ -383,6 +415,38 @@ export async function runDailyAttributionGenerate(
       error: persistError ?? result.error,
       persisted,
     });
+  }
+
+  // US-086 PM-009 — 收尾批量飞书 push (顺序 fan-out). 仅 status=ok+persisted
+  // 入队; enable_feishu_push !== false 默认 true; dry_run 路径 pushItems=空也走 push
+  // service 让其内部走 no_records skip 分支 (统一可观测性). push fail-OPEN 不
+  // 影响 ok/skipped/failed 计数 (本通道只是通知, 失败 ops 仍可走表查).
+  if (options.enable_feishu_push !== false) {
+    try {
+      const pushService = options.feishu_push_service || dailyAttributionFeishuPushService;
+      const pushResult = await pushService.pushBatch(
+        pushItems,
+        // dry_run 透传给 push 让其内部走 dry_run skip 分支不真发
+        { ...(options.feishu_push_options || {}), ...(dryRun ? { dry_run: true } : {}) }
+      );
+      summary.feishu_push = pushResult;
+    } catch (err) {
+      // pushService.pushBatch 自身已 fail-OPEN 不抛, 但防 caller 注入 fake 抛异常
+      logger.warn(
+        `[daily-attribution-cron] feishu push threw (treat as fail-OPEN): ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+      summary.feishu_push = {
+        scanned: pushItems.length,
+        attempted: 0,
+        succeeded: 0,
+        failed: 0,
+        skipped_reason: 'top_level_error',
+        items: [],
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
   }
 
   return summary;

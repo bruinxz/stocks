@@ -11,6 +11,7 @@ AttributionEngine.ts         — PM-002 Brinson-Fachler 拆解 (pure helper, no 
 ExecutionCostAggregator.ts   — PM-004 commission + stamp + transfer + slippage + LiveTrade 对账
 AIAttributionSummary.ts      — PM-005 LLM 摘要 (≤200 字 + ≥3 数字 + heuristic fallback)
 DailyAttributionCronRunner.ts — PM-006 工作日 17:00 批量 cron 入口 + persistReport DataSource
+DailyAttributionFeishuPushService.ts — PM-009 cron 收尾飞书 push (text webhook + fail-OPEN)
 ```
 
 后续 story 在本目录新增:
@@ -20,7 +21,7 @@ DailyAttributionCronRunner.ts — PM-006 工作日 17:00 批量 cron 入口 + pe
 - PM-006 (US-083): `DailyAttributionCronRunner.ts` + SchedulerService.DAILY_ATTRIBUTION_GENERATE cron  ✔ 已落
 - PM-007 (US-084): `api/controllers/DailyAttributionController.ts` + route
 - PM-008 (US-085): BehaviorBiasDetector.detectIncremental 接入 bias_findings  ✔ 已落 (method 就绪, caller 后续接)
-- PM-009 (US-086): 飞书推送 attribution 卡片
+- PM-009 (US-086): 飞书推送 attribution 卡片  ✔ 已落 (cron 收尾批量 push, fail-OPEN)
 
 ## 接入约定 (PM-002~009 共同遵守)
 
@@ -215,3 +216,44 @@ persisted_count / per_portfolio[]`), SchedulerService 落 `execution_log.result_
 按需读 (GET /api/portfolio/:id/attribution/daily?date=...), 直接读 `DailyAttributionReport`
 表; 缓存 miss 时调 `dailyAttributionService.generateDailyReport` 单 portfolio 跑 + 不
 落库 (route 是只读语义). cron + route 共享同一份 service, 不共享 cron runner.
+
+## DailyAttributionFeishuPushService — PM-009 飞书 push (US-086)
+
+`DailyAttributionCronRunner.runDailyAttributionGenerate` 收尾时把当日所有
+`status='ok' && persisted=true` 的 `DailyAttributionReport` 顺序 fan-out 到
+OPS 飞书群 (text webhook), 让操盘手 17:35 前在手机/PC 上看到当日归因 (PRD AC §E.1).
+
+```ts
+runDailyAttributionGenerate({
+  enable_feishu_push?: boolean,            // 默认 true; false 强关 push 通道
+  feishu_push_options?: {                  // 透传给 pushBatch
+    webhook_url?: string,                  // override OPS_ALERT_FEISHU_WEBHOOK
+    dry_run?: boolean,
+    max_per_batch?: number,                // 默认 20 防风暴
+  },
+  feishu_push_service?: DailyAttributionFeishuPushService, // 单测注入 fake
+})
+```
+
+返 `summary.feishu_push: DailyAttributionPushResult | null` (null = enable_feishu_push=false).
+
+**路由契约** (与 [[CriticalAnnouncementPushService]] 同款 fail-OPEN):
+- 仅 `status='ok' && persisted=true` 的 portfolio 入 push 队列 (skipped/failed/persist_failed
+  一律不推, dry_run 时 pushItems 自然空走 `no_records` skip);
+- `OPS_ALERT_FEISHU_WEBHOOK` 未配置 → 整批 skip (`skipped_reason='no_webhook'`);
+- per-message try-catch, 单条失败不阻塞批; 顶层 try-catch 兜底 — push 失败绝
+  不影响 cron summary 的 ok/skipped/failed 计数.
+
+**为何不复用 CriticalAnnouncementPushService**: 输入语义不同 (announcement 公告事件
+vs portfolio 归因报告), 输出文本格式不同 (🚨 vs 📊). 6 件套结构完全对齐 (constant /
+type / pure helpers / DataSource / service class / singleton), 后续 PM 类 push 都按
+本模板抽 — 而不是塞一堆 `if (kind==='announcement')` 分支让 buildText 难维护.
+
+**为何 cron 收尾批量 push 而非 service 内单条 push**: service 是被 route + cron 共用的
+单实体计算入口, route 读历史报告时不应该重发 push. 把 push 留在 cron runner 收尾,
+"只在每日真跑完归因时推一次"语义清晰. 这条与 [[Announcement syncDate 内 push]] 一脉相承
+("数据真落库后才推, 防止 dry_run / 缓存 read 误触发").
+
+**接入新 push 通道**: enable_feishu_push 默认 true → cron 跑完即推, 不需 SchedulerService
+parameters 显式 opt-in; 灰度时可在 ScheduledTask.parameters 加 `enable_feishu_push:false`
+强关而不动代码 — 与 dry_run 同样语义.

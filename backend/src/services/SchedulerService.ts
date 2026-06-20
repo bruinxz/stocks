@@ -3507,13 +3507,29 @@ class SchedulerService {
               reason: p.reason,
               persisted: p.persisted,
             })),
+            // US-086 PM-009 — 飞书 push 摘要 (null 表示 enable_feishu_push=false 关闭)
+            feishu_push: attrSummary.feishu_push
+              ? {
+                  scanned: attrSummary.feishu_push.scanned,
+                  attempted: attrSummary.feishu_push.attempted,
+                  succeeded: attrSummary.feishu_push.succeeded,
+                  failed: attrSummary.feishu_push.failed,
+                  skipped_reason: attrSummary.feishu_push.skipped_reason,
+                }
+              : null,
           },
         });
         logger.info(
           `[DAILY_ATTRIBUTION_GENERATE] date=${attrSummary.date} ` +
             `total=${attrSummary.total_portfolios} ok=${attrSummary.ok_count} ` +
             `skip=${attrSummary.skipped_count} fail=${attrSummary.failed_count} ` +
-            `persisted=${attrSummary.persisted_count}${dryRunAttr ? ' (dry_run)' : ''}`
+            `persisted=${attrSummary.persisted_count}${dryRunAttr ? ' (dry_run)' : ''}` +
+            (attrSummary.feishu_push
+              ? ` push=${attrSummary.feishu_push.succeeded}/${attrSummary.feishu_push.attempted}` +
+                (attrSummary.feishu_push.skipped_reason
+                  ? ` skipped=${attrSummary.feishu_push.skipped_reason}`
+                  : '')
+              : '')
         );
       } else if (task.type === 'MARKET_BRIEF_GENERATE') {
         // US-073 — 每个交易日 08:30 生成「AI 大盘速读」当日卡片。

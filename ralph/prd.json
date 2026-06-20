@@ -1335,8 +1335,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 86,
-      "passes": false,
-      "notes": "依赖: OPS-005, PM-005"
+      "passes": true,
+      "notes": "依赖: OPS-005, PM-005 | DONE 2026/06/20: 新增 backend/src/services/attribution/DailyAttributionFeishuPushService.ts (~380 行 + 完整 jsdoc) — DailyAttributionCronRunner.runDailyAttributionGenerate 收尾批量 push (status=ok+persisted 的 portfolio report 顺序 fan-out 到 OPS 飞书群 text webhook), 让操盘手 17:35 前看到当日归因. 路由契约: 仅 status=ok+persisted 入队 (skipped/failed/persist_failed 一律 skip); OPS_ALERT_FEISHU_WEBHOOK 未配置 → 整批 skip (fail-OPEN); per-message try-catch 单条失败不阻塞批; 顶层 try-catch 兜底 push 失败绝不影响 cron summary 返回. 设计 6 件套对齐 CriticalAnnouncementPushService: DataSource DI (FeishuWebhookPoster) + 3 export 纯函数 (shouldPushItem 双重 gate / buildDailyAttributionPushText 含 header+portfolio+date+总盈亏+已实现/浮盈+成交+行业TOP3+执行成本+AI总结+触发规则尾行截断保留 / resolveWebhookUrl 与 OPS 同源 env) + 顺序 fan-out + MAX_PUSH_PER_BATCH=20 防风暴 cap + dry_run 透传 skip + truncated_batch skip 留痕. DailyAttributionCronRunner 集成: enable_feishu_push !== false 默认 true (cron 跑完即推), feishu_push_options 透传, dry_run=true 自动 push 也 dry_run, pushBatch throw 顶层 catch 兜底返 top_level_error. SchedulerService.DAILY_ATTRIBUTION_GENERATE 段 result_summary 加 feishu_push 摘要 + logger.info 含 push=succeeded/attempted. 单测 daily-attribution-feishu-push.test.ts 72 ok / 0 failed (7 模块: 常量冻结 / shouldPushItem 6 case / buildText 21 case 含截断尾行+边界+pct=null+长 ai_summary / resolveWebhookUrl 5 / pushBatch AC 8 case 含 happy+no_webhook+no_records+dry_run+single_failure+cap截断+poster_throw+top_level / default poster fail-OPEN / META-GUARD 8 件 fs+regex 守 cron runner 含 import+option+summary字段+pushBatch调用+enable_feishu_push默认+反向仅ok+persisted入队+dry_run透传+SchedulerService 写 result_summary.feishu_push); 老 daily-attribution-cron.test.ts 扩 5 集成 case 88 ok / 0 failed (happy push / skipped 不入队 / 强关 enable_feishu_push=false / dry_run 透传 / pushBatch throw 兜底). 全量 attribution 11 file 全 pass 无 regression. tsc 0 err / eslint 0 err (SchedulerService baseline 21 err 不变)."
     },
     {
       "id": "US-087",

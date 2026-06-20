@@ -46,6 +46,10 @@ import {
   DailyAttributionSnapshotRow,
   DailyAttributionPositionRow,
 } from '../../src/services/attribution/DailyAttributionService';
+import {
+  DailyAttributionFeishuPushService,
+  FeishuWebhookPoster,
+} from '../../src/services/attribution/DailyAttributionFeishuPushService';
 
 let passed = 0;
 let failed = 0;
@@ -502,6 +506,184 @@ function prevDayString(date: string): string {
     assert(
       '[4.4] PRODUCTION persistReport 不抛 (返 {ok})',
       persistResult && typeof persistResult.ok === 'boolean'
+    );
+  }
+
+  // ---- [4.5] US-086 PM-009 — 飞书 push 集成 -------------------------------
+  // (a) happy — runner 跑完后 push 仅给 status=ok+persisted 的 portfolio
+  {
+    const date = '2026-06-20';
+    const cronSource: DailyAttributionCronDataSource = {
+      async listActivePortfolios() {
+        return [
+          { id: 81, user_id: 100 },
+          { id: 82, user_id: 101 },
+        ];
+      },
+      async persistReport() {
+        return { ok: true };
+      },
+    };
+    const posterCalls: Array<{ url: string; text: string }> = [];
+    const poster: FeishuWebhookPoster = async (url, body) => {
+      posterCalls.push({ url, text: body.content.text });
+      return { success: true };
+    };
+    const pushSvc = new DailyAttributionFeishuPushService(poster);
+    const summary = await runDailyAttributionGenerate({
+      date,
+      cron_data_source: cronSource,
+      service_data_source: makeServiceDataSource({ snapshots: happySnapshots(date) }),
+      feishu_push_service: pushSvc,
+      feishu_push_options: { webhook_url: 'https://hook.example.com' },
+    });
+    assert('[4.5.a.1] summary.feishu_push 非 null', summary.feishu_push !== null);
+    assert(
+      '[4.5.a.2] scanned=2 / attempted=2 / succeeded=2',
+      summary.feishu_push!.scanned === 2 &&
+        summary.feishu_push!.attempted === 2 &&
+        summary.feishu_push!.succeeded === 2
+    );
+    assert('[4.5.a.3] poster 实调 2 次', posterCalls.length === 2);
+    assert(
+      '[4.5.a.4] body 含触发规则',
+      posterCalls[0].text.indexOf('触发规则: daily_attribution_post_close_push') >= 0
+    );
+    assert(
+      '[4.5.a.5] body 含 portfolio=81',
+      posterCalls[0].text.indexOf('portfolio=81') >= 0
+    );
+  }
+  // (b) skipped portfolio 不入 push 队列
+  {
+    const date = '2026-06-20';
+    const cronSource: DailyAttributionCronDataSource = {
+      async listActivePortfolios() {
+        return [
+          { id: 91, user_id: 100 }, // skipped (no snapshot)
+        ];
+      },
+      async persistReport() {
+        return { ok: true };
+      },
+    };
+    let posted = 0;
+    const poster: FeishuWebhookPoster = async () => {
+      posted += 1;
+      return { success: true };
+    };
+    const pushSvc = new DailyAttributionFeishuPushService(poster);
+    const summary = await runDailyAttributionGenerate({
+      date,
+      cron_data_source: cronSource,
+      service_data_source: makeServiceDataSource({ snapshots: [] }),
+      feishu_push_service: pushSvc,
+      feishu_push_options: { webhook_url: 'https://hook.example.com' },
+    });
+    assert('[4.5.b.1] skipped 不入 push', posted === 0);
+    assert(
+      '[4.5.b.2] feishu_push.skipped_reason=no_records',
+      summary.feishu_push!.skipped_reason === 'no_records'
+    );
+  }
+  // (c) enable_feishu_push=false 强关 — 整个 push 不调
+  {
+    const date = '2026-06-20';
+    const cronSource: DailyAttributionCronDataSource = {
+      async listActivePortfolios() {
+        return [{ id: 101, user_id: 100 }];
+      },
+      async persistReport() {
+        return { ok: true };
+      },
+    };
+    let posted = 0;
+    const poster: FeishuWebhookPoster = async () => {
+      posted += 1;
+      return { success: true };
+    };
+    const pushSvc = new DailyAttributionFeishuPushService(poster);
+    const summary = await runDailyAttributionGenerate({
+      date,
+      cron_data_source: cronSource,
+      service_data_source: makeServiceDataSource({ snapshots: happySnapshots(date) }),
+      enable_feishu_push: false,
+      feishu_push_service: pushSvc,
+      feishu_push_options: { webhook_url: 'https://hook.example.com' },
+    });
+    assert('[4.5.c.1] 强关 poster 不调', posted === 0);
+    assert('[4.5.c.2] feishu_push=null', summary.feishu_push === null);
+    assert('[4.5.c.3] ok_count 正常', summary.ok_count === 1);
+  }
+  // (d) dry_run=true 透传到 push — items 走 dry_run skip 分支不真发
+  {
+    const date = '2026-06-20';
+    const cronSource: DailyAttributionCronDataSource = {
+      async listActivePortfolios() {
+        return [{ id: 111, user_id: 100 }];
+      },
+      async persistReport() {
+        return { ok: true };
+      },
+    };
+    let posted = 0;
+    const poster: FeishuWebhookPoster = async () => {
+      posted += 1;
+      return { success: true };
+    };
+    const pushSvc = new DailyAttributionFeishuPushService(poster);
+    const summary = await runDailyAttributionGenerate({
+      date,
+      dry_run: true,
+      cron_data_source: cronSource,
+      service_data_source: makeServiceDataSource({ snapshots: happySnapshots(date) }),
+      feishu_push_service: pushSvc,
+      feishu_push_options: { webhook_url: 'https://hook.example.com' },
+    });
+    assert('[4.5.d.1] dry_run poster 不调', posted === 0);
+    // pushItems 空 (dry_run 时 persisted=false) → no_records 分支
+    assert(
+      '[4.5.d.2] dry_run feishu_push.skipped_reason=no_records (pushItems 空)',
+      summary.feishu_push!.skipped_reason === 'no_records'
+    );
+  }
+  // (e) pushBatch throw — runner 顶层 fail-OPEN 兜底 + summary 不挂
+  {
+    const date = '2026-06-20';
+    const cronSource: DailyAttributionCronDataSource = {
+      async listActivePortfolios() {
+        return [{ id: 121, user_id: 100 }];
+      },
+      async persistReport() {
+        return { ok: true };
+      },
+    };
+    // 注入"主入口 pushBatch 直接 throw"的 fake svc
+    const pushSvc = {
+      pushBatch: async () => {
+        throw new Error('push svc boom');
+      },
+    } as unknown as DailyAttributionFeishuPushService;
+    const summary = await runDailyAttributionGenerate({
+      date,
+      cron_data_source: cronSource,
+      service_data_source: makeServiceDataSource({ snapshots: happySnapshots(date) }),
+      feishu_push_service: pushSvc,
+      feishu_push_options: { webhook_url: 'https://hook.example.com' },
+    });
+    assert('[4.5.e.1] push throw 不影响 ok_count', summary.ok_count === 1);
+    assert(
+      '[4.5.e.2] push throw 仍返 feishu_push summary 不为 null',
+      summary.feishu_push !== null
+    );
+    assert(
+      '[4.5.e.3] feishu_push.skipped_reason=top_level_error',
+      summary.feishu_push!.skipped_reason === 'top_level_error'
+    );
+    assert(
+      '[4.5.e.4] feishu_push.error 透传',
+      typeof summary.feishu_push!.error === 'string' &&
+        summary.feishu_push!.error!.indexOf('push svc boom') >= 0
     );
   }
 
