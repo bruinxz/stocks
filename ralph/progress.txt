@@ -4098,3 +4098,43 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **risk_config JSONB 多 namespace 共享**: 已有 namespace = notification_channels / position_limits / trailing_stop / stop_loss_percent / take_profit_percent / weekly_review_applied (本 story 新增). 新 namespace 写法: 取整 rc → mutate rc[name] → `(user as any).risk_config = rc; user.changed('risk_config', true); await user.save()`. 必须显式 `changed('risk_config', true)` — sequelize-typescript JSONB 不会自动检测嵌套 mutate, 否则 save() 静默 noop.
   - **mirror 单测 setTimeout(... 100ms) 兜底等 async**: T6 里 9 个 async IIFE 不 await, 用 `setTimeout(100ms)` 兜底等全跑完打统计. 与"全 await + 串行" 比是 trade-off — 串行更准但代码丑, ms-级 mock 不会卡满 100ms 所以风险低. 适合 fake service 是同步内存的场景 (本 story 的 mkSvc 全是 sync return Promise.resolve), 不适合 fake 内含 setTimeout 的场景.
 ---
+
+## 2026/06/21 - US-144
+- Implemented [PM-016] WeeklyReview 多 benchmark — 三件套 (沪深300 / 中证500 / 创业板指) vs 周收益 + α + portfolio 同期收益
+- Files changed:
+  - backend/src/services/WeeklyReviewReportService.ts:
+    - import benchmarkIndexService (复用 BenchmarkIndexService 与 trade 归因同源)
+    - +BenchmarkComparisonRow interface
+    - +WEEKLY_REVIEW_BENCHMARKS Object.freeze 三件套 (sh.000300/sh.000905/sz.399006)
+    - WeeklyReviewPayload 加 vs_benchmarks: BenchmarkComparisonRow[]
+    - WeeklyReviewDataSource interface 加 loadBenchmarkReturns(symbols, start, end): Map<symbol, {start_date, end_date, return_pct}>
+    - +computeBenchmarkComparisons 纯函数 (port pct + returnsMap → 3 row, 缺数据 row 仍存在但 bench/alpha null)
+    - +buildBenchmarkComparisonsHtml: alpha>0 绿 / alpha<0 红 / null '—' / α explainer
+    - DefaultWeeklyReviewDataSource.loadBenchmarkReturns: ensureBenchmarkCoverage 触发同步 + DailyBar 首末 close 双 query (ASC+DESC 各一行) + 缺 symbol absent
+    - runForUser 加 ---- US-144 PM-016 块 (fail-OPEN: throw → vs_benchmarks=[])
+    - buildWeeklyReviewEmail 渲染 benchmarkSectionHtml (放 correlation 后)
+    - buildPlainTextFallback 加 vs 基准指数 section
+  - backend/tests/services/weekly-review-report-service.test.ts:
+    - FakeState 加 benchmarkReturns + throwOn.loadBenchmarkReturns
+    - makeFakeDataSource 加 loadBenchmarkReturns method
+    - testBuildWeeklyReviewEmail payload 加 vs_benchmarks (含 null bench row) + 13 个 assert (3 benchmark name + 4 数值 + green/red color + dash for null)
+    - +testWeeklyReviewBenchmarksConstantFrozen (7 assert: length=3 + symbol/name 全展开 + frozen array push 防御 + element frozen)
+    - +testComputeBenchmarkComparisons (6 路径: 全数据 / 缺 row / port null / 空 map / custom benchmarks / Infinity 防御)
+    - +testBuildBenchmarkComparisonsHtml (5 路径: null/empty/undefined + 完整 + null cell '—')
+    - +testSendBenchmarkPropagates (e2e: DataSource→ vs_benchmarks 3 row + alpha 算对)
+    - +testSendBenchmarkFailureEmpty (throwOn=true → vs_benchmarks=[] + 其他链路不挂)
+    - +testSendBenchmarkPartialMissing (DataSource 只返 HS300 → 3 row 但 CSI500/ChiNext null)
+    - +testSendBenchmarkPropagatesEmailHtml (end-to-end: dry_run → payload → buildWeeklyReviewEmail → HTML 含 3 benchmark)
+    - main() register 7 new test fns
+  - ralph/prd.json: US-144.passes=true + notes
+- 单测从 519 扩到 539 (新增 20 assert), 全过 0 failed
+- tsc 0 err / eslint 0 err
+- **Learnings for future iterations:**
+  - Patterns discovered:
+    - "多产物 (multi-benchmark / multi-source) 邮件 row 即使缺数据也保留 row" 模板 — 当 AC 字面写 "N 个 X" (如 "邮件出 3 benchmark"), pure helper 必须保证返 length===N, 缺数据的 row bench/alpha 全 null 但 row 仍存在; UI 渲染 '—' 明确告诉用户 "未取到" 而不是 silent drop. silent drop 会让用户以为根本没接 → false negative. testComputeBenchmarkComparisons 单测 "empty map rows length === 3" 锁死这个契约 (改 length=0 立刻 fail). 与 US-088 PM-012 correlation matrix "数据不足整 payload 返 null" 范式相反 — correlation 是 N×N 表格, 缺数据无意义; benchmark 是 N 行独立 row, 缺数据仍有"告诉用户某基准未同步" 的价值.
+    - "复用 BenchmarkIndexService 而非自己定义指数列表" 同源原则 — 指数代码 (sh.000300 vs HS300 vs 沪深300) 在系统里散落于 BenchmarkAttributionService / QuantBacktestService / BenchmarkIndexService / 现在 WeeklyReview, 任意两处定义不同步会让"vs 基准" 在不同 UI 跨页对不上. 模板: 新模块加 benchmark 不要 hardcode 名称 → import benchmarkIndexService.DEFAULT_BENCHMARK_INDICES 的子集; 加 ensureBenchmarkCoverage 触发同步避免 "策略上线但指数数据缺" 静默失败. 同时本模块为了 AC 字面 "3 benchmark" 还是抽了 WEEKLY_REVIEW_BENCHMARKS 子集常量 (大盘+中盘+创业板, 不是 7 全要), 注释明确 "改本数组必须同步 tests + 设计文档".
+  - Gotchas:
+    - DailyBar 首末取值用 findOne ASC + findOne DESC 两条 query, 比 findAll 拉全区间再 sort 高效 (周内 5 工作日 ×3 benchmark = 15 行 vs 拉 5 行/symbol 然后内存 sort) — 适合"只关心首末" 的场景. 拉全区间留给 correlation matrix 那种"全序列才能算" 的下游.
+    - Object.freeze ReadonlyArray 之外, 每个 element 也要单独 freeze, 否则 `WEEKLY_REVIEW_BENCHMARKS[0].name = 'X'` 默默生效. testWeeklyReviewBenchmarksConstantFrozen 同时验 array push 防御 + element 字段 mutation 防御 (与 WEEKLY_REVIEW_STATUS 同款双层 frozen guard).
+    - DataSource interface 改了 (加 loadBenchmarkReturns method), 现有 fake 必须补全 method 否则 sendForUser 调用时直接 TypeError; 模板: WeeklyReviewDataSource 加新 method → makeFakeDataSource 同步加 + FakeState 加 optional data 字段 + throwOn 也加. 等同于 BehaviorBiasDetector 的 DataSource DI 范式.
+---

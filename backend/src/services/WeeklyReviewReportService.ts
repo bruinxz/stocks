@@ -53,6 +53,7 @@ import {
   EmailPayload,
 } from './EmailNotificationService';
 import { TRADING_AGENTS_BASE_URL } from '../config/externalServices';
+import { benchmarkIndexService } from './BenchmarkIndexService';
 
 // ---------------------------------------------------------------------------
 // 类型常量
@@ -198,6 +199,54 @@ export interface SymbolContributionRow {
   realized_pnl: number;
   trade_count: number;
 }
+
+/**
+ * US-144 PM-016 — 多 benchmark 对比 (vs 沪深300 / 中证500 / 创业板指).
+ *
+ * 同一周内 portfolio 总收益 (pnl_pct) 与每个基准指数同期收益率的差额. 操盘手用
+ * 来分辨"市场风口跑出来" vs "策略 alpha". 三个基准互补:
+ *   - 沪深300 (sh.000300): 大盘价值/成长代表, 蓝筹仓位的天然 beta
+ *   - 中证500  (sh.000905): 中盘均衡, 中等市值股
+ *   - 创业板指 (sz.399006): 成长 / 科技 / 新兴行业
+ *
+ * 字段:
+ *   - benchmark_code/name: 与 BenchmarkIndexService.DEFAULT_BENCHMARK_INDICES 一致
+ *   - benchmark_return_pct: 周内 (close_end - close_start) / close_start * 100, null = 数据缺
+ *   - portfolio_return_pct: payload.pnl.pnl_pct 同值 (冗余存便于邮件渲染独立 row)
+ *   - alpha_pct: portfolio - benchmark; 任一为 null → null
+ *   - start_date/end_date: 实际取到的首末日, 周末/停牌让区间收缩为工作日; 缺数据
+ *     时落空字符串而非 null (展示层用 startsWith('-')/length===0 区分)
+ */
+export interface BenchmarkComparisonRow {
+  benchmark_code: string;
+  benchmark_name: string;
+  benchmark_return_pct: number | null;
+  portfolio_return_pct: number | null;
+  alpha_pct: number | null;
+  start_date: string;
+  end_date: string;
+}
+
+/**
+ * US-144 PM-016 — 周报默认 benchmark 三件套. 与 BenchmarkAttributionService /
+ * BenchmarkIndexService 同源 (改动需 cross-grep). 顺序按"大盘 → 中盘 → 成长"
+ * 自然层级排列, 邮件渲染按本 order 保稳定.
+ *
+ * 修改本数组必须同步:
+ *   1. tests/services/weekly-review-report-service.test.ts WEEKLY_REVIEW_BENCHMARKS 期望
+ *   2. docs/trader-system/72_weekly_strategy_review.md WK-010 章节列表
+ *
+ * AC 字面要求 "邮件出 3 benchmark" — 不要把这个数组扩到 4+ 元素 (邮件正文
+ * 加 row 会撑爆移动端). 真要看更多基准走 BenchmarkAttributionService 看板.
+ */
+export const WEEKLY_REVIEW_BENCHMARKS: ReadonlyArray<{
+  symbol: string;
+  name: string;
+}> = Object.freeze([
+  Object.freeze({ symbol: 'sh.000300', name: '沪深300' }),
+  Object.freeze({ symbol: 'sh.000905', name: '中证500' }),
+  Object.freeze({ symbol: 'sz.399006', name: '创业板指' }),
+]) as ReadonlyArray<{ symbol: string; name: string }>;
 
 /** 本周关注事件（业绩预告） */
 export interface UpcomingEventRow {
@@ -376,6 +425,12 @@ export interface WeeklyReviewPayload {
   top_losers: SymbolContributionRow[];
   trade_count: number;
   realized_pnl_total: number;
+  /**
+   * US-144 PM-016 — vs 多 benchmark 周对比. 缺数据时整数组返空 (UI hide section);
+   * 单个 benchmark 取不到数据 → 该 row 仍出现, 但 benchmark_return_pct=null /
+   * alpha_pct=null, 邮件展示 "—". 顺序与 WEEKLY_REVIEW_BENCHMARKS 一致.
+   */
+  vs_benchmarks: BenchmarkComparisonRow[];
   upcoming_events: UpcomingEventRow[];
   ai_opinion: AIWeeklyOpinion;
 }
@@ -472,6 +527,25 @@ export interface WeeklyReviewDataSource {
   loadStockMetadata(
     symbols: string[]
   ): Promise<Map<string, { name: string; industry: string | null }>>;
+  /**
+   * US-144 PM-016 — 取 benchmark 指数周收益率.
+   *
+   * 输入 symbols 必须是 BenchmarkIndexService.DEFAULT_BENCHMARK_INDICES 已知的
+   * 指数 symbol (sh.000300 / sh.000905 / sz.399006 ...); 未知 symbol 在 Map 中
+   * absent. 返回 Map<symbol, {start_date, end_date, return_pct}>:
+   *   - start_date/end_date 是实际取到的首末交易日 (周末非交易日, 区间收缩)
+   *   - return_pct = (end_close - start_close) / start_close * 100
+   *   - 数据缺失 (周内无交易日 / Stock 行未 ensureBenchmarkIndices) → 该 symbol absent
+   *
+   * PRODUCTION 实现: 调 benchmarkIndexService.ensureBenchmarkCoverage 触发同步,
+   * 再按 stock_id 拉 DailyBar 算首末 close. fail-OPEN: throw → caller 顶层
+   * try/catch → vs_benchmarks=[].
+   */
+  loadBenchmarkReturns(
+    symbols: string[],
+    start_date: string,
+    end_date: string
+  ): Promise<Map<string, { start_date: string; end_date: string; return_pct: number }>>;
   /** 取本周关注事件（业绩预告 + 财报披露） */
   loadUpcomingEvents(
     symbols: string[],
@@ -673,6 +747,66 @@ export function strategyLabel(key: string): string {
     __UNKNOWN__: '未标注策略',
   };
   return labels[key] || key || '未标注策略';
+}
+
+// ---------------------------------------------------------------------------
+// US-144 PM-016 — 多 benchmark 周对比 (pure helpers)
+// ---------------------------------------------------------------------------
+
+/**
+ * 把 raw benchmark 周收益 Map 组成 BenchmarkComparisonRow[].
+ *
+ * 输入:
+ *   - portfolio_pnl_pct: 来自 computeWeeklyPnL.pnl_pct, 缺数据走 null
+ *   - returnsMap: DataSource.loadBenchmarkReturns 返值; absent 的 benchmark 退化
+ *     成 row { benchmark_return_pct: null, alpha_pct: null, start/end_date: '' }
+ *   - benchmarks: 缺省走 WEEKLY_REVIEW_BENCHMARKS (沪深300/中证500/创业板指),
+ *     测试可注入子集
+ *
+ * 输出长度 === benchmarks 长度 (保证邮件 row 个数与 AC 字面一致, 即使缺数据
+ * 也要明确告诉用户 "未取到"). 缺 portfolio_pnl_pct → alpha_pct 一律 null.
+ *
+ * 数学:
+ *   - alpha_pct = portfolio - benchmark (单位都已是 %, 不再 ×100)
+ *   - 四舍五入到 0.01% (与 roundPct 一致)
+ */
+export function computeBenchmarkComparisons(
+  portfolio_pnl_pct: number | null,
+  returnsMap: Map<string, { start_date: string; end_date: string; return_pct: number }>,
+  benchmarks: ReadonlyArray<{ symbol: string; name: string }> = WEEKLY_REVIEW_BENCHMARKS
+): BenchmarkComparisonRow[] {
+  const port =
+    typeof portfolio_pnl_pct === 'number' && Number.isFinite(portfolio_pnl_pct)
+      ? portfolio_pnl_pct
+      : null;
+  const rows: BenchmarkComparisonRow[] = [];
+  for (const b of benchmarks) {
+    const hit = returnsMap.get(b.symbol);
+    if (hit && Number.isFinite(hit.return_pct)) {
+      const benchPct = roundPct(hit.return_pct);
+      const alpha = port === null ? null : roundPct(port - hit.return_pct);
+      rows.push({
+        benchmark_code: b.symbol,
+        benchmark_name: b.name,
+        benchmark_return_pct: benchPct,
+        portfolio_return_pct: port === null ? null : roundPct(port),
+        alpha_pct: alpha,
+        start_date: safeString(hit.start_date),
+        end_date: safeString(hit.end_date),
+      });
+    } else {
+      rows.push({
+        benchmark_code: b.symbol,
+        benchmark_name: b.name,
+        benchmark_return_pct: null,
+        portfolio_return_pct: port === null ? null : roundPct(port),
+        alpha_pct: null,
+        start_date: '',
+        end_date: '',
+      });
+    }
+  }
+  return rows;
 }
 
 // ---------------------------------------------------------------------------
@@ -1421,6 +1555,9 @@ export function buildWeeklyReviewEmail(payload: WeeklyReviewPayload): EmailPaylo
   // US-088 PM-012 — 相关性矩阵 HTML (correlation_matrix=null 时 hide section)
   const correlationSectionHtml = buildCorrelationMatrixHtml(payload.correlation_matrix);
 
+  // US-144 PM-016 — vs 多 benchmark 周对比 (vs_benchmarks=[] → hide section)
+  const benchmarkSectionHtml = buildBenchmarkComparisonsHtml(payload.vs_benchmarks);
+
   const winnerRowsHtml = payload.top_winners.length
     ? payload.top_winners.map(r => buildSymbolRowHtml(r, '#16a34a')).join('')
     : '<tr><td colspan="4" style="padding:12px;color:#94a3b8;text-align:center;">本周无盈利兑现</td></tr>';
@@ -1514,6 +1651,7 @@ export function buildWeeklyReviewEmail(payload: WeeklyReviewPayload): EmailPaylo
       </table>
     </td></tr>
     ${correlationSectionHtml}
+    ${benchmarkSectionHtml}
     <tr><td style="padding:0 24px 16px 24px;">
       <h2 style="margin:8px 0;font-size:15px;font-weight:600;color:#0f172a;">🏆 盈利 TOP ${
         payload.top_winners.length
@@ -1640,6 +1778,58 @@ function correlationCellColor(r: number): string {
   return '#86efac'; // 深绿 高负相关
 }
 
+/**
+ * US-144 PM-016 — 把 vs_benchmarks 渲染成 HTML 表格 section.
+ *
+ * 颜色: alpha > 0 用绿 #16a34a (跑赢), alpha < 0 用红 #dc2626 (跑输),
+ * null 用灰 #94a3b8 ('—'). 与 industry/strategy 表 PnL 配色对偶 (邮件场景
+ * 红跌绿涨, 国际惯例; 与"涨绿跌红" 国内股市 ticker 配色不同).
+ *
+ * 空数组 / null → 返空字符串 (整个 section 不渲染), caller 用 ${} 占位即可.
+ */
+export function buildBenchmarkComparisonsHtml(
+  rows: BenchmarkComparisonRow[] | null | undefined
+): string {
+  if (!Array.isArray(rows) || rows.length === 0) return '';
+  const fmtPct = (v: number | null): { text: string; color: string } => {
+    if (v === null || !Number.isFinite(v)) return { text: '—', color: '#94a3b8' };
+    const sign = v > 0 ? '+' : '';
+    const color = v > 0 ? '#16a34a' : v < 0 ? '#dc2626' : '#475569';
+    return { text: `${sign}${v.toFixed(2)}%`, color };
+  };
+  const bodyHtml = rows
+    .map(r => {
+      const bench = fmtPct(r.benchmark_return_pct);
+      const port = fmtPct(r.portfolio_return_pct);
+      const alpha = fmtPct(r.alpha_pct);
+      return `<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;">${escapeHtml(
+        r.benchmark_name
+      )}<span style="font-size:11px;color:#94a3b8;margin-left:6px;font-family:monospace;">${escapeHtml(
+        r.benchmark_code
+      )}</span></td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;text-align:right;color:${
+        bench.color
+      };font-weight:500;">${
+        bench.text
+      }</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;text-align:right;color:${
+        port.color
+      };font-weight:500;">${
+        port.text
+      }</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;text-align:right;color:${
+        alpha.color
+      };font-weight:600;">${alpha.text}</td></tr>`;
+    })
+    .join('');
+  return `
+    <tr><td style="padding:0 24px 16px 24px;">
+      <h2 style="margin:8px 0;font-size:15px;font-weight:600;color:#0f172a;">📊 vs 基准指数</h2>
+      <div style="font-size:11px;color:#94a3b8;margin-bottom:6px;">α &gt; 0 = 组合跑赢基准 (alpha 来自策略选股); α &lt; 0 = 跑输 (beta / 风格暴露)</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:13px;">
+        <thead><tr style="background:#f8fafc;"><th style="padding:8px 12px;text-align:left;color:#64748b;font-weight:500;">基准</th><th style="padding:8px 12px;text-align:right;color:#64748b;font-weight:500;">基准周收益</th><th style="padding:8px 12px;text-align:right;color:#64748b;font-weight:500;">组合周收益</th><th style="padding:8px 12px;text-align:right;color:#64748b;font-weight:500;">α (超额)</th></tr></thead>
+        <tbody>${bodyHtml}</tbody>
+      </table>
+    </td></tr>`.trim();
+}
+
 function buildPlainTextFallback(payload: WeeklyReviewPayload): string {
   const lines: string[] = [];
   const sign = payload.pnl.pnl_amount > 0 ? '+' : '';
@@ -1706,6 +1896,20 @@ function buildPlainTextFallback(payload: WeeklyReviewPayload): string {
         return fmt(`${v >= 0 ? '+' : ''}${v.toFixed(2)}`);
       });
       lines.push('  ' + fmt(row.symbol) + cells.join(''));
+    }
+    lines.push('');
+  }
+  // US-144 PM-016 — vs 多 benchmark
+  if (payload.vs_benchmarks && payload.vs_benchmarks.length > 0) {
+    lines.push('vs 基准指数：');
+    for (const r of payload.vs_benchmarks) {
+      const fmt = (v: number | null) =>
+        v === null || !Number.isFinite(v) ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(2)}%`;
+      lines.push(
+        `  - ${r.benchmark_name}(${r.benchmark_code}): 基准 ${fmt(
+          r.benchmark_return_pct
+        )} / 组合 ${fmt(r.portfolio_return_pct)} / α ${fmt(r.alpha_pct)}`
+      );
     }
     lines.push('');
   }
@@ -1984,6 +2188,88 @@ export class DefaultWeeklyReviewDataSource implements WeeklyReviewDataSource {
       const arr = out.get(symbol) || [];
       arr.push({ date, close });
       out.set(symbol, arr);
+    }
+    return out;
+  }
+
+  /**
+   * US-144 PM-016 — 取 benchmark 指数 [start_date, end_date] 区间内的首末 close
+   * 并算周收益. 复用 [[BenchmarkIndexService]] (与 trade/strategy 归因同源, 避免
+   * 两套指数定义漂移).
+   *
+   * 实现:
+   *   1. ensureBenchmarkCoverage 触发缺失同步 (会拉 tushare / tencent); 失败
+   *      返 {} 但不 throw, 保留之前已有 DailyBar.
+   *   2. Stock.symbol IN (...) 拉 stock_id;
+   *   3. DailyBar by stock_id + time BETWEEN [start, end] 拉首末 (ASC + DESC
+   *      各一行, 减少返条数).
+   *   4. 缺数据 (周末 / 同步失败) → 该 symbol 不出现在结果 Map 里.
+   *
+   * fail-OPEN 不在本层 — caller (runForUser 内 ---- US-144 块) 顶层 catch,
+   * helper throw 让 caller 把 vs_benchmarks 置 []. 单测验证 caller 顶层
+   * catch 真的能兜底 (testSendBenchmarkReturnsThrowsEmpty).
+   */
+  async loadBenchmarkReturns(
+    symbols: string[],
+    start_date: string,
+    end_date: string
+  ): Promise<Map<string, { start_date: string; end_date: string; return_pct: number }>> {
+    const out = new Map<string, { start_date: string; end_date: string; return_pct: number }>();
+    if (!symbols || symbols.length === 0) return out;
+    const unique = Array.from(new Set(symbols.filter(s => !!s)));
+    if (unique.length === 0) return out;
+
+    // 触发缺数据自动同步 (返 {} 也无所谓, ensure 内部 try/catch 已 swallow).
+    try {
+      await benchmarkIndexService.ensureBenchmarkCoverage(start_date, end_date, {
+        symbols: unique,
+      });
+    } catch (err: any) {
+      logger.warn(
+        `[WeeklyReview] ensureBenchmarkCoverage 失败 (continue with existing bars): ${
+          err?.message || err
+        }`
+      );
+    }
+
+    const stocks = (await Stock.findAll({
+      where: { symbol: { [Op.in]: unique } },
+      attributes: ['id', 'symbol'],
+      raw: true,
+    })) as unknown as Array<{ id: number; symbol: string }>;
+    if (stocks.length === 0) return out;
+
+    const dayStart = moment.tz(start_date, 'Asia/Shanghai').startOf('day').toDate();
+    const dayEnd = moment.tz(end_date, 'Asia/Shanghai').endOf('day').toDate();
+    for (const s of stocks) {
+      const stockId = Number(s.id);
+      const symbol = s.symbol;
+      // 取首末两根 bar 即可算周收益, 不需要拉全区间
+      const [firstBar, lastBar] = await Promise.all([
+        DailyBar.findOne({
+          where: { stock_id: stockId, time: { [Op.gte]: dayStart, [Op.lte]: dayEnd } },
+          attributes: ['time', 'close'],
+          order: [['time', 'ASC']],
+          raw: true,
+        }),
+        DailyBar.findOne({
+          where: { stock_id: stockId, time: { [Op.gte]: dayStart, [Op.lte]: dayEnd } },
+          attributes: ['time', 'close'],
+          order: [['time', 'DESC']],
+          raw: true,
+        }),
+      ]);
+      if (!firstBar || !lastBar) continue;
+      const startClose = Number((firstBar as any).close);
+      const endClose = Number((lastBar as any).close);
+      if (!Number.isFinite(startClose) || !Number.isFinite(endClose) || startClose <= 0) continue;
+      const returnPct = ((endClose - startClose) / startClose) * 100;
+      if (!Number.isFinite(returnPct)) continue;
+      out.set(symbol, {
+        start_date: moment.tz((firstBar as any).time, 'Asia/Shanghai').format('YYYY-MM-DD'),
+        end_date: moment.tz((lastBar as any).time, 'Asia/Shanghai').format('YYYY-MM-DD'),
+        return_pct: returnPct,
+      });
     }
     return out;
   }
@@ -2411,6 +2697,23 @@ export class WeeklyReviewReportService {
       correlationMatrix = null;
     }
 
+    // ---- US-144 PM-016: vs 多 benchmark 周对比 (fail-OPEN, throw → vs_benchmarks=[]) ----
+    let vsBenchmarks: BenchmarkComparisonRow[] = [];
+    try {
+      const benchSymbols = WEEKLY_REVIEW_BENCHMARKS.map(b => b.symbol);
+      const returnsMap = await this.dataSource.loadBenchmarkReturns(
+        benchSymbols,
+        week.start_date,
+        week.end_date
+      );
+      vsBenchmarks = computeBenchmarkComparisons(pnl.pnl_pct, returnsMap);
+    } catch (err: any) {
+      logger.warn(
+        `[WeeklyReview] loadBenchmarkReturns user=${user_id} 失败: ${err?.message || err}`
+      );
+      vsBenchmarks = [];
+    }
+
     const payload: WeeklyReviewPayload = {
       user_id,
       username,
@@ -2424,6 +2727,7 @@ export class WeeklyReviewReportService {
       top_losers: topLosers,
       trade_count: tradeCount,
       realized_pnl_total: realizedPnlTotal,
+      vs_benchmarks: vsBenchmarks,
       upcoming_events: events,
       ai_opinion: aiOpinion,
     };

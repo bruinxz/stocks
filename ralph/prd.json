@@ -2212,8 +2212,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 144,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DONE 2026/06/21: 在 WeeklyReviewReportService.ts 加 WEEKLY_REVIEW_BENCHMARKS (Object.freeze 沪深300 sh.000300 + 中证500 sh.000905 + 创业板指 sz.399006 三件套, AC 字面 \"3 benchmark\") + BenchmarkComparisonRow 接口 + 纯函数 computeBenchmarkComparisons(portfolio_pnl_pct, returnsMap, benchmarks?) — 缺数据/null pnl/Infinity 全 fallback 到 null row 但 length 一致 (邮件 3 行明确告诉用户 \"未取到\"). DataSource.loadBenchmarkReturns(symbols, start, end) 复用 BenchmarkIndexService.ensureBenchmarkCoverage (与 trade 归因同源避免指数定义漂移) + DailyBar 首末 close 双 query (ASC+DESC 取一行 vs 拉全区间, 减少返条数). buildBenchmarkComparisonsHtml: alpha>0 绿/alpha<0 红/null \"—\", 与 industry/strategy 同款配色 + α explainer. runForUser 顶层 try/catch fail-OPEN — loadBenchmarkReturns throw → vs_benchmarks=[] section hide, 不阻塞其他 7 个 section. plain text fallback 同步含 3 row. 单测 539 ok / 0 failed (从 519 扩 20: 常量 frozen 1, computeBenchmarkComparisons 6 路径, buildHtml 5 路径含 null/red/green, e2e propagate 4 — full/throw/partial/email-html. tsc 0 err / eslint 0 err."
     },
     {
       "id": "US-145",

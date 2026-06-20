@@ -80,6 +80,11 @@ import {
   PrevWeekRange,
   CorrelationMatrixPayload,
   DailyCloseRow,
+  // US-144 PM-016
+  WEEKLY_REVIEW_BENCHMARKS,
+  BenchmarkComparisonRow,
+  computeBenchmarkComparisons,
+  buildBenchmarkComparisonsHtml,
   // US-125 PM-014
   WEEKLY_OPINION_MIN_CHARS,
   WEEKLY_OPINION_MAX_CHARS,
@@ -145,6 +150,8 @@ interface FakeState {
   tradeStrategyMap?: Record<number, Map<number, string>>;
   /** US-088 PM-012 — symbol → DailyCloseRow[] (与 PRODUCTION loadDailyCloses 返值同形态) */
   dailyCloses?: Map<string, DailyCloseRow[]>;
+  /** US-144 PM-016 — symbol → benchmark 周收益 (与 PRODUCTION loadBenchmarkReturns 返值同形态) */
+  benchmarkReturns?: Map<string, { start_date: string; end_date: string; return_pct: number }>;
   stockMeta?: Map<string, { name: string; industry: string | null }>;
   upcomingEvents?: UpcomingEventRow[];
   aiOpinion?: AIWeeklyOpinion;
@@ -159,6 +166,7 @@ interface FakeState {
     loadStockMetadata: boolean;
     loadUpcomingEvents: boolean;
     loadDailyCloses: boolean;
+    loadBenchmarkReturns: boolean;
     generateAIWeeklyOpinion: boolean;
     sendEmail: boolean;
   }>;
@@ -198,6 +206,13 @@ function makeFakeDataSource(state: FakeState): WeeklyReviewDataSource {
     async loadDailyCloses(_symbols, _start, _end) {
       if (state.throwOn?.loadDailyCloses) throw new Error('FAKE loadDailyCloses');
       return state.dailyCloses || new Map<string, DailyCloseRow[]>();
+    },
+    async loadBenchmarkReturns(_symbols, _start, _end) {
+      if (state.throwOn?.loadBenchmarkReturns) throw new Error('FAKE loadBenchmarkReturns');
+      return (
+        state.benchmarkReturns ||
+        new Map<string, { start_date: string; end_date: string; return_pct: number }>()
+      );
     },
     async loadUpcomingEvents(_symbols, _from, _to) {
       if (state.throwOn?.loadUpcomingEvents) throw new Error('FAKE loadUpcomingEvents');
@@ -1040,6 +1055,35 @@ function testBuildWeeklyReviewEmail(): void {
     top_losers: [],
     trade_count: 3,
     realized_pnl_total: 2500,
+    vs_benchmarks: [
+      {
+        benchmark_code: 'sh.000300',
+        benchmark_name: '沪深300',
+        benchmark_return_pct: 3.2,
+        portfolio_return_pct: 5,
+        alpha_pct: 1.8,
+        start_date: '2026-06-01',
+        end_date: '2026-06-05',
+      },
+      {
+        benchmark_code: 'sh.000905',
+        benchmark_name: '中证500',
+        benchmark_return_pct: -1.5,
+        portfolio_return_pct: 5,
+        alpha_pct: 6.5,
+        start_date: '2026-06-01',
+        end_date: '2026-06-05',
+      },
+      {
+        benchmark_code: 'sz.399006',
+        benchmark_name: '创业板指',
+        benchmark_return_pct: null,
+        portfolio_return_pct: 5,
+        alpha_pct: null,
+        start_date: '',
+        end_date: '',
+      },
+    ],
     upcoming_events: [
       {
         symbol: '000725.SZ',
@@ -1093,6 +1137,19 @@ function testBuildWeeklyReviewEmail(): void {
   assert('html 含 +0.78 corr', mail.html.includes('+0.78'));
   assert('html 含 日收益 window', mail.html.includes('4 日'));
   assert('text 含 相关性 section', !!mail.text && mail.text.includes('持仓相关性矩阵'));
+  // US-144 PM-016 — vs 多 benchmark 渲染 (AC: 邮件出 3 benchmark)
+  assert('html 含 vs 基准指数 section', mail.html.includes('vs 基准指数'));
+  assert('html 含 沪深300 row', mail.html.includes('沪深300'));
+  assert('html 含 中证500 row', mail.html.includes('中证500'));
+  assert('html 含 创业板指 row', mail.html.includes('创业板指'));
+  assert('html 含 +3.20% 基准收益', mail.html.includes('+3.20%'));
+  assert('html 含 -1.50% 中证500 收益', mail.html.includes('-1.50%'));
+  assert('html 含 +1.80% alpha vs HS300', mail.html.includes('+1.80%'));
+  assert('html 含 +6.50% alpha vs CSI500', mail.html.includes('+6.50%'));
+  assert('html 含 sh.000300 code', mail.html.includes('sh.000300'));
+  assert('text 含 vs 基准指数 section', !!mail.text && mail.text.includes('vs 基准指数'));
+  assert('text 含 沪深300 line', !!mail.text && mail.text.includes('沪深300(sh.000300)'));
+  assert('text 含 创业板指 缺数据 (—)', !!mail.text && mail.text.includes('创业板指'));
 }
 
 function testFormatMoney(): void {
@@ -1646,6 +1703,304 @@ async function testSendCorrelationEmptyPositionsNull(): Promise<void> {
   const svc = new WeeklyReviewReportService(makeFakeDataSource(state));
   const r = await svc.sendWeeklyReviewReports({ reference_date: '2026-06-08', dry_run: true });
   assertEqual('empty positions → null', r.per_user[0].payload!.correlation_matrix, null);
+}
+
+// ---------------------------------------------------------------------------
+// US-144 PM-016 — vs 多 benchmark
+// ---------------------------------------------------------------------------
+
+function testWeeklyReviewBenchmarksConstantFrozen(): void {
+  assertEqual('WEEKLY_REVIEW_BENCHMARKS length === 3', WEEKLY_REVIEW_BENCHMARKS.length, 3);
+  assertEqual(
+    'WEEKLY_REVIEW_BENCHMARKS[0] = HS300',
+    WEEKLY_REVIEW_BENCHMARKS[0].symbol,
+    'sh.000300'
+  );
+  assertEqual(
+    'WEEKLY_REVIEW_BENCHMARKS[1] = CSI500',
+    WEEKLY_REVIEW_BENCHMARKS[1].symbol,
+    'sh.000905'
+  );
+  assertEqual(
+    'WEEKLY_REVIEW_BENCHMARKS[2] = ChiNext',
+    WEEKLY_REVIEW_BENCHMARKS[2].symbol,
+    'sz.399006'
+  );
+  assertEqual(
+    'WEEKLY_REVIEW_BENCHMARKS[0].name = 沪深300',
+    WEEKLY_REVIEW_BENCHMARKS[0].name,
+    '沪深300'
+  );
+  assertEqual(
+    'WEEKLY_REVIEW_BENCHMARKS[1].name = 中证500',
+    WEEKLY_REVIEW_BENCHMARKS[1].name,
+    '中证500'
+  );
+  assertEqual(
+    'WEEKLY_REVIEW_BENCHMARKS[2].name = 创业板指',
+    WEEKLY_REVIEW_BENCHMARKS[2].name,
+    '创业板指'
+  );
+  // frozen: 改任意字段不应改原 array
+  let frozenOk = false;
+  try {
+    (WEEKLY_REVIEW_BENCHMARKS as any).push({ symbol: 'X', name: 'X' });
+    frozenOk = WEEKLY_REVIEW_BENCHMARKS.length === 3;
+  } catch {
+    frozenOk = true;
+  }
+  assert('WEEKLY_REVIEW_BENCHMARKS frozen (no push)', frozenOk);
+  let elemFrozen = false;
+  try {
+    (WEEKLY_REVIEW_BENCHMARKS[0] as any).symbol = 'X';
+    elemFrozen = WEEKLY_REVIEW_BENCHMARKS[0].symbol === 'sh.000300';
+  } catch {
+    elemFrozen = true;
+  }
+  assert('WEEKLY_REVIEW_BENCHMARKS elements frozen', elemFrozen);
+}
+
+function testComputeBenchmarkComparisons(): void {
+  // 三个 benchmark 全有数据, portfolio +5%
+  const fullMap = new Map<
+    string,
+    { start_date: string; end_date: string; return_pct: number }
+  >([
+    ['sh.000300', { start_date: '2026-06-01', end_date: '2026-06-05', return_pct: 3.2 }],
+    ['sh.000905', { start_date: '2026-06-01', end_date: '2026-06-05', return_pct: -1.5 }],
+    ['sz.399006', { start_date: '2026-06-01', end_date: '2026-06-05', return_pct: 4 }],
+  ]);
+  const r1 = computeBenchmarkComparisons(5, fullMap);
+  assertEqual('rows length === 3', r1.length, 3);
+  assertEqual('row0 code = HS300', r1[0].benchmark_code, 'sh.000300');
+  assertEqual('row0 bench = +3.20', r1[0].benchmark_return_pct, 3.2);
+  assertEqual('row0 port = 5', r1[0].portfolio_return_pct, 5);
+  assertEqual('row0 alpha = 1.80', r1[0].alpha_pct, 1.8);
+  assertEqual('row1 bench = -1.50', r1[1].benchmark_return_pct, -1.5);
+  assertEqual('row1 alpha = 6.50', r1[1].alpha_pct, 6.5);
+  assertEqual('row2 alpha = 1.00', r1[2].alpha_pct, 1);
+  // benchmark missing → row 仍存在但 bench/alpha 都 null
+  const partial = new Map<string, { start_date: string; end_date: string; return_pct: number }>(
+    [['sh.000300', { start_date: '2026-06-01', end_date: '2026-06-05', return_pct: 2 }]]
+  );
+  const r2 = computeBenchmarkComparisons(3, partial);
+  assertEqual('partial rows length still 3', r2.length, 3);
+  assertEqual('partial row0 alpha = 1', r2[0].alpha_pct, 1);
+  assertEqual('partial row1 bench null', r2[1].benchmark_return_pct, null);
+  assertEqual('partial row1 alpha null', r2[1].alpha_pct, null);
+  assertEqual('partial row1 start_date empty', r2[1].start_date, '');
+  // portfolio_pnl_pct null → alpha_pct 一律 null
+  const r3 = computeBenchmarkComparisons(null, fullMap);
+  assertEqual('port null → row0 alpha null', r3[0].alpha_pct, null);
+  assertEqual('port null → row0 port null', r3[0].portfolio_return_pct, null);
+  assertEqual('port null → bench 仍有', r3[0].benchmark_return_pct, 3.2);
+  // 空 returnsMap → 3 行全 null bench
+  const r4 = computeBenchmarkComparisons(2, new Map());
+  assertEqual('empty map rows length === 3', r4.length, 3);
+  assert(
+    'empty map all bench null',
+    r4.every(r => r.benchmark_return_pct === null && r.alpha_pct === null)
+  );
+  // 自定义 benchmarks 子集
+  const customMap = new Map([
+    ['x', { start_date: '2026-06-01', end_date: '2026-06-05', return_pct: 1 }],
+  ]);
+  const r5 = computeBenchmarkComparisons(2, customMap, [{ symbol: 'x', name: 'X' }]);
+  assertEqual('custom benchmarks length === 1', r5.length, 1);
+  assertEqual('custom row alpha = 1', r5[0].alpha_pct, 1);
+  // Infinity 防御 — return_pct 非 finite 仍走 null 分支
+  const infMap = new Map([
+    ['sh.000300', { start_date: '2026-06-01', end_date: '2026-06-05', return_pct: Infinity }],
+  ]);
+  const r6 = computeBenchmarkComparisons(2, infMap);
+  assertEqual('Infinity → row null', r6[0].benchmark_return_pct, null);
+  assertEqual('Infinity → alpha null', r6[0].alpha_pct, null);
+}
+
+function testBuildBenchmarkComparisonsHtml(): void {
+  // 空 → 空字符串 (整 section hide)
+  assertEqual('empty rows → ""', buildBenchmarkComparisonsHtml([]), '');
+  assertEqual('null → ""', buildBenchmarkComparisonsHtml(null), '');
+  assertEqual('undefined → ""', buildBenchmarkComparisonsHtml(undefined), '');
+
+  const rows: BenchmarkComparisonRow[] = [
+    {
+      benchmark_code: 'sh.000300',
+      benchmark_name: '沪深300',
+      benchmark_return_pct: 3.2,
+      portfolio_return_pct: 5,
+      alpha_pct: 1.8,
+      start_date: '2026-06-01',
+      end_date: '2026-06-05',
+    },
+    {
+      benchmark_code: 'sh.000905',
+      benchmark_name: '中证500',
+      benchmark_return_pct: -1.5,
+      portfolio_return_pct: 5,
+      alpha_pct: 6.5,
+      start_date: '2026-06-01',
+      end_date: '2026-06-05',
+    },
+    {
+      benchmark_code: 'sz.399006',
+      benchmark_name: '创业板指',
+      benchmark_return_pct: null,
+      portfolio_return_pct: 5,
+      alpha_pct: null,
+      start_date: '',
+      end_date: '',
+    },
+  ];
+  const html = buildBenchmarkComparisonsHtml(rows);
+  assert('html 非空', html.length > 0);
+  assert('html 含 section header', html.includes('vs 基准指数'));
+  assert('html 含 alpha 解释', html.includes('α'));
+  assert('html 含 沪深300', html.includes('沪深300'));
+  assert('html 含 中证500', html.includes('中证500'));
+  assert('html 含 创业板指', html.includes('创业板指'));
+  assert('html 含 sh.000300 code', html.includes('sh.000300'));
+  assert('html 含 +3.20% bench', html.includes('+3.20%'));
+  assert('html 含 -1.50% bench', html.includes('-1.50%'));
+  assert('html 含 +1.80% alpha', html.includes('+1.80%'));
+  assert('html 含 +6.50% alpha', html.includes('+6.50%'));
+  // null cell → '—'
+  assert('html 含 dash for null', html.includes('—'));
+  // 正 alpha 用绿 #16a34a
+  assert('html 含 green color for positive', html.includes('#16a34a'));
+  // 负 bench 用红 #dc2626
+  assert('html 含 red color for negative', html.includes('#dc2626'));
+}
+
+async function testSendBenchmarkPropagates(): Promise<void> {
+  // PRODUCTION 链路: DataSource.loadBenchmarkReturns 返 3 个 → payload.vs_benchmarks
+  // 含 3 row, alpha 算对.
+  const benchmarkReturns = new Map<
+    string,
+    { start_date: string; end_date: string; return_pct: number }
+  >([
+    ['sh.000300', { start_date: '2026-06-01', end_date: '2026-06-05', return_pct: 1 }],
+    ['sh.000905', { start_date: '2026-06-01', end_date: '2026-06-05', return_pct: -0.5 }],
+    ['sz.399006', { start_date: '2026-06-01', end_date: '2026-06-05', return_pct: 2 }],
+  ]);
+  const state: FakeState = {
+    users: [eligibleUser(1, 'lym')],
+    portfolios: { 1: { portfolio: { id: 100 }, positions: [] } },
+    snapshots: {
+      100: [
+        { date: '2026-06-01', total_value: 100000 },
+        { date: '2026-06-07', total_value: 103000 },
+      ],
+    },
+    trades: { 100: [] },
+    benchmarkReturns,
+  };
+  const svc = new WeeklyReviewReportService(makeFakeDataSource(state));
+  const r = await svc.sendWeeklyReviewReports({ reference_date: '2026-06-08', dry_run: true });
+  const vb = r.per_user[0].payload!.vs_benchmarks;
+  assert('vs_benchmarks present', Array.isArray(vb));
+  assertEqual('vs_benchmarks length === 3 (AC: 邮件出 3 benchmark)', vb.length, 3);
+  assertEqual('row0 HS300', vb[0].benchmark_code, 'sh.000300');
+  assertEqual('row1 CSI500', vb[1].benchmark_code, 'sh.000905');
+  assertEqual('row2 ChiNext', vb[2].benchmark_code, 'sz.399006');
+  // portfolio +3% (100000 → 103000)
+  assertEqual('row0 portfolio=3', vb[0].portfolio_return_pct, 3);
+  assertEqual('row0 alpha=2 (3-1)', vb[0].alpha_pct, 2);
+  assertEqual('row1 alpha=3.5 (3-(-0.5))', vb[1].alpha_pct, 3.5);
+  assertEqual('row2 alpha=1 (3-2)', vb[2].alpha_pct, 1);
+}
+
+async function testSendBenchmarkFailureEmpty(): Promise<void> {
+  // loadBenchmarkReturns throw → fail-OPEN → vs_benchmarks=[]
+  const state: FakeState = {
+    users: [eligibleUser(1, 'lym')],
+    portfolios: { 1: { portfolio: { id: 100 }, positions: [] } },
+    snapshots: { 100: [{ date: '2026-06-01', total_value: 100000 }] },
+    trades: { 100: [] },
+    throwOn: { loadBenchmarkReturns: true },
+  };
+  const svc = new WeeklyReviewReportService(makeFakeDataSource(state));
+  const r = await svc.sendWeeklyReviewReports({ reference_date: '2026-06-08', dry_run: true });
+  assertEqual('throw → dry_run sent', r.sent_count, 1);
+  assertEqual(
+    'throw → vs_benchmarks=[]',
+    Array.isArray(r.per_user[0].payload!.vs_benchmarks)
+      ? r.per_user[0].payload!.vs_benchmarks.length
+      : -1,
+    0
+  );
+  // 其他链路不受影响
+  assert(
+    'throw → correlation_matrix path still runs',
+    'correlation_matrix' in r.per_user[0].payload!
+  );
+}
+
+async function testSendBenchmarkPartialMissing(): Promise<void> {
+  // DataSource 只返 HS300, 缺 CSI500 / 创业板指 → vs_benchmarks 仍 3 行,
+  // CSI500/ChiNext 的 bench/alpha 全 null (邮件 row 仍存在, AC 字面 3 row).
+  const benchmarkReturns = new Map<
+    string,
+    { start_date: string; end_date: string; return_pct: number }
+  >([['sh.000300', { start_date: '2026-06-01', end_date: '2026-06-05', return_pct: 2 }]]);
+  const state: FakeState = {
+    users: [eligibleUser(1, 'lym')],
+    portfolios: { 1: { portfolio: { id: 100 }, positions: [] } },
+    snapshots: {
+      100: [
+        { date: '2026-06-01', total_value: 100000 },
+        { date: '2026-06-07', total_value: 102000 },
+      ],
+    },
+    trades: { 100: [] },
+    benchmarkReturns,
+  };
+  const svc = new WeeklyReviewReportService(makeFakeDataSource(state));
+  const r = await svc.sendWeeklyReviewReports({ reference_date: '2026-06-08', dry_run: true });
+  const vb = r.per_user[0].payload!.vs_benchmarks;
+  assertEqual('partial vs_benchmarks length === 3', vb.length, 3);
+  assertEqual('partial row0 bench = 2', vb[0].benchmark_return_pct, 2);
+  assertEqual('partial row0 alpha = 0 (2-2)', vb[0].alpha_pct, 0);
+  assertEqual('partial row1 bench null', vb[1].benchmark_return_pct, null);
+  assertEqual('partial row1 alpha null', vb[1].alpha_pct, null);
+  assertEqual('partial row2 bench null', vb[2].benchmark_return_pct, null);
+}
+
+async function testSendBenchmarkPropagatesEmailHtml(): Promise<void> {
+  // 跑 dry_run, 直接拿 payload 喂 buildWeeklyReviewEmail 验 HTML 含 3 个 benchmark
+  // (AC: 邮件出 3 benchmark — 这里是 end-to-end 验证)
+  const benchmarkReturns = new Map<
+    string,
+    { start_date: string; end_date: string; return_pct: number }
+  >([
+    ['sh.000300', { start_date: '2026-06-01', end_date: '2026-06-05', return_pct: 1.5 }],
+    ['sh.000905', { start_date: '2026-06-01', end_date: '2026-06-05', return_pct: -2 }],
+    ['sz.399006', { start_date: '2026-06-01', end_date: '2026-06-05', return_pct: 0.5 }],
+  ]);
+  const state: FakeState = {
+    users: [eligibleUser(1, 'lym')],
+    portfolios: { 1: { portfolio: { id: 100 }, positions: [] } },
+    snapshots: {
+      100: [
+        { date: '2026-06-01', total_value: 100000 },
+        { date: '2026-06-07', total_value: 101000 },
+      ],
+    },
+    trades: { 100: [] },
+    benchmarkReturns,
+  };
+  const svc = new WeeklyReviewReportService(makeFakeDataSource(state));
+  const r = await svc.sendWeeklyReviewReports({ reference_date: '2026-06-08', dry_run: true });
+  const payload = r.per_user[0].payload!;
+  const mail = buildWeeklyReviewEmail(payload);
+  // AC: 邮件 HTML 含 3 个 benchmark 名称 + 各自数值
+  assert('email html 含 沪深300', mail.html.includes('沪深300'));
+  assert('email html 含 中证500', mail.html.includes('中证500'));
+  assert('email html 含 创业板指', mail.html.includes('创业板指'));
+  assert('email html 含 +1.50% (HS300)', mail.html.includes('+1.50%'));
+  assert('email html 含 -2.00% (CSI500)', mail.html.includes('-2.00%'));
+  assert('email html 含 +0.50% (ChiNext)', mail.html.includes('+0.50%'));
+  assert('email text 含 vs 基准指数', !!mail.text && mail.text.includes('vs 基准指数'));
 }
 
 async function testSendEmailThrows(): Promise<void> {
@@ -2252,6 +2607,14 @@ async function main(): Promise<void> {
   await testSendCorrelationMatrixPropagates();
   await testSendCorrelationMatrixFailureNull();
   await testSendCorrelationEmptyPositionsNull();
+  // US-144 PM-016 — vs 多 benchmark
+  testWeeklyReviewBenchmarksConstantFrozen();
+  testComputeBenchmarkComparisons();
+  testBuildBenchmarkComparisonsHtml();
+  await testSendBenchmarkPropagates();
+  await testSendBenchmarkFailureEmpty();
+  await testSendBenchmarkPartialMissing();
+  await testSendBenchmarkPropagatesEmailHtml();
   await testSendEmailThrows();
   await testSendEmailReturnsFailure();
   await testSendEmailHappyPath();
