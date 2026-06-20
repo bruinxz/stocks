@@ -1547,8 +1547,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 100,
-      "passes": false,
-      "notes": "依赖: PR-010, OPS-002"
+      "passes": true,
+      "notes": "依赖: PR-010, OPS-002 | DONE 2026-06-20: BlackSwanDetectorService 复用 BlackSwanWatchdog dry_run 当事件枚举器, (event_type, signature) 去重 + bulkCreate ignoreDuplicates, BLACK_SWAN_DETECT cron 3,33 * * * *, fail-OPEN, 105 单测全过."
     },
     {
       "id": "US-101",

@@ -455,6 +455,21 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description: '过期 backtest / log / alert 清理',
     dryRunDefault: true,
   },
+  // US-100 PR-011 — 每 30min 巡 5 类黑天鹅信号 (ST / SUSPENDED / NEWS_KEYWORD /
+  // SHAREHOLDER_REDUCTION / MARKET_REGIME), 复用 BlackSwanWatchdog (US-053)
+  // 当事件枚举器, 把跨 user 拍平 + (event_type, signature) 去重后 bulkCreate
+  // BlackSwanEvent (PR-010); ignoreDuplicates: true 让 UNIQUE
+  // (event_type, signature, detected_at::date) 拦的同事件静默跳过. 与 watchdog
+  // per-user 写 RiskAlert 互补不取代 (本 cron 始终让 watchdog dry_run=true).
+  // fail-OPEN: watchdog/bulkCreate 任一 throw → 仅 failed_items=1 + warn 不抛.
+  {
+    type: 'BLACK_SWAN_DETECT',
+    category: 'risk_control',
+    owner: 'risk',
+    recommendedCron: '3,33 * * * *',
+    description:
+      '每 30min 巡 5 类黑天鹅信号 (ST/SUSPENDED/NEWS_KEYWORD/SHAREHOLDER_REDUCTION/MARKET_REGIME) → 落 BlackSwanEvent (global 视角, 与 BlackSwanWatchdog per-user RiskAlert 互补)',
+  },
   // US-095 OPS-006 — 每 5min 扫 webhook_fallback_log status='pending' AND
   // next_retry_at <= NOW(), 透传 sender 重投递; 成功 → 'sent', 失败 attempts+=1
   // + 指数 backoff; attempts >= max_attempts → 'dead'. 主流程 (FeishuBotWebhookService)

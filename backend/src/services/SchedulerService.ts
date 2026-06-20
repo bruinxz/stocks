@@ -4960,6 +4960,61 @@ class SchedulerService {
           `[WEEKLY_QA_STAT_AGGREGATE] stocks=${result.total_stocks} ok=${result.succeeded} ` +
             `fail=${result.failed}${dryRun ? ' (dry_run)' : ''}`
         );
+      } else if (task.type === 'BLACK_SWAN_DETECT') {
+        // US-100 PR-011 — 每 30min 巡 5 类黑天鹅信号 → 落 BlackSwanEvent (PR-010).
+        // 复用 BlackSwanWatchdog (US-053) 当事件枚举器, 把跨 user trigger 拍平
+        // 后 (event_type, signature) 去重 → bulkCreate ignoreDuplicates: true.
+        // dry_run=true → 仅返预演 distinct_total/by_type, 不真插表.
+        // user_id (debug) → 仅扫单 user (但仍走 watchdog dry_run, 不写 RiskAlert).
+        // fail-OPEN: watchdog/bulkCreate 任一 throw → success=false + error +
+        //   failed_items=1 warn 不抛. 主 cron tick 不会因为 detector 挂崩.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          runBlackSwanDetector,
+          getProductionDetectorRunner,
+        } = require('./BlackSwanDetectorService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const dryRunBs = parameters.dry_run === true || parameters.dryRun === true;
+        const targetUserIdBs = parameters.user_id || parameters.userId;
+        const bsResult = await runBlackSwanDetector(getProductionDetectorRunner(), {
+          dry_run: dryRunBs,
+          user_id: targetUserIdBs ? Number(targetUserIdBs) : undefined,
+          metadata: {
+            cron_run_id: executionLog?.id ?? null,
+            detector_version: 'PR-011/v1',
+          },
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: bsResult.distinct_total,
+          completed_items: bsResult.inserted,
+          failed_items: bsResult.success ? 0 : 1,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: bsResult.error || null,
+          result_summary: {
+            scenario: 'black_swan_detect',
+            dry_run: bsResult.dry_run,
+            scanned_users: bsResult.scanned_users,
+            candidates_total: bsResult.candidates_total,
+            distinct_total: bsResult.distinct_total,
+            inserted: bsResult.inserted,
+            skipped_duplicates: bsResult.skipped_duplicates,
+            by_type: bsResult.by_type,
+            by_severity: bsResult.by_severity,
+            detected_at_iso: bsResult.detected_at_iso,
+            error: bsResult.error || null,
+          },
+        });
+        if (bsResult.success) {
+          logger.info(
+            `[BLACK_SWAN_DETECT] scanned=${bsResult.scanned_users} candidates=${bsResult.candidates_total} ` +
+              `distinct=${bsResult.distinct_total} inserted=${bsResult.inserted} ` +
+              `skipped_dup=${bsResult.skipped_duplicates}` +
+              (bsResult.dry_run ? ' (dry_run)' : '')
+          );
+        } else {
+          logger.warn(`[BLACK_SWAN_DETECT] FAIL ${bsResult.error || 'unknown_error'}`);
+        }
       } else if (task.type === 'LIVE_RECONCILIATION_GUARD') {
         // BETA-2 (2026-06-18, audit S-12): 对账主动告警 cron — 阈值评估 →
         // RiskAlert HIGH/MEDIUM → RealtimeAlertDispatcher 飞书推送。
