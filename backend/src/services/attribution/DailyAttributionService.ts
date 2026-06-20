@@ -59,6 +59,10 @@ import {
   ExecutionCostInput,
   aggregateExecutionCost,
 } from './ExecutionCostAggregator';
+import {
+  AIAttributionSummaryDataSource,
+  generateAIAttributionSummary,
+} from './AIAttributionSummary';
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -698,6 +702,14 @@ export interface GenerateDailyReportOptions {
    * 显式传 null 则关闭 aggregator (退到 PM-001 老 Σ commission 路径).
    */
   execution_cost_input?: ExecutionCostInput | null;
+  /**
+   * PM-005 接入 (US-082): caller 传入 LLM DataSource 后,
+   * ai_summary 走 generateAIAttributionSummary (LLM → 校验 → 不达标 fallback
+   * 到 PM-001 heuristicSummary). 不传或 null → ai_summary 仍走 heuristic.
+   *
+   * 显式 'off' 字符串可强制关闭 (caller 想跑零 AI 链路时用).
+   */
+  ai_summary_source?: AIAttributionSummaryDataSource | null | 'off';
 }
 
 export class DailyAttributionService {
@@ -761,6 +773,21 @@ export class DailyAttributionService {
           ? { execution_cost_input: options.execution_cost_input }
           : {}),
       });
+      // PM-005 (US-082) — caller 传 ai_summary_source 时调 LLM 替换 heuristic
+      // ai_summary; 永不 throw, 失败自动 fallback (heuristic 在 build 内已填).
+      if (options.ai_summary_source && options.ai_summary_source !== 'off') {
+        try {
+          const aiResult = await generateAIAttributionSummary(report, options.ai_summary_source);
+          report.ai_summary = aiResult.text;
+        } catch (err) {
+          logger.warn(
+            `[daily-attribution] generateAIAttributionSummary failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+          // ai_summary 已是 heuristic, 不动
+        }
+      }
       return { status: DAILY_ATTRIBUTION_STATUS.OK, report };
     } catch (err) {
       logger.warn(

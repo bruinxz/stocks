@@ -9,12 +9,13 @@
 DailyAttributionService.ts   — PM-001 主入口 + 6 维框架 + DataSource DI seam
 AttributionEngine.ts         — PM-002 Brinson-Fachler 拆解 (pure helper, no DB)
 ExecutionCostAggregator.ts   — PM-004 commission + stamp + transfer + slippage + LiveTrade 对账
+AIAttributionSummary.ts      — PM-005 LLM 摘要 (≤200 字 + ≥3 数字 + heuristic fallback)
 ```
 
 后续 story 在本目录新增:
 - PM-003 (US-080): 持久化走 `backend/src/models/DailyAttributionReport.ts` + migration  ✔ 已落
 - PM-004 (US-081): `ExecutionCostAggregator.ts` — 滑点 + 手续费 + 印花税 + 实盘对账  ✔ 已落
-- PM-005 (US-082): `AIAttributionSummary.ts` — LLM 替换 heuristicSummary
+- PM-005 (US-082): `AIAttributionSummary.ts` — LLM 替换 heuristicSummary  ✔ 已落
 - PM-006 (US-083): SchedulerService 注册 `DAILY_ATTRIBUTION_GENERATE` cron
 - PM-007 (US-084): `api/controllers/DailyAttributionController.ts` + route
 - PM-008 (US-085): BehaviorBiasDetector.detectIncremental 接入 bias_findings
@@ -98,6 +99,36 @@ broker_commission + stamp_tax + transfer_fee 三者之和 (见
 **何时传 execution_cost_input**: caller 准备好 `symbol → arrival_price` 或
 `symbol → 当日 VWAP` 参考价 map 后才传含 ref_prices 的 input — 否则 slippage
 覆盖率=0 也可, breakdown 仍含 commission/stamp/transfer 三件套对 UI 已可用.
+
+### PM-005 AIAttributionSummary 接入 (US-082, 已落地)
+
+`AIAttributionSummary.ts` 纯函数 + DataSource DI, 与 PM-002/PM-004 同形态.
+3 个 export 主入口: `buildAttributionSummaryPrompt` (拼 LLM 指令) /
+`enforceAttributionSummaryConstraints` (校验 ≤200 字 + ≥3 数字) /
+`generateAIAttributionSummary(report, source?)` (async, 调 LLM → 校验 → fallback);
+常量 `AI_ATTRIBUTION_SUMMARY_MAX_CHARS=200` (复用 PM-001 `DAILY_ATTRIBUTION_AI_SUMMARY_MAX_CHARS`)
++ `AI_ATTRIBUTION_SUMMARY_MIN_NUMBERS=3` (AC §E.3).
+
+`generateDailyReport` 新增 option `ai_summary_source?: AIAttributionSummaryDataSource | null | 'off'`:
+- `undefined` / `null` / `'off'`: ai_summary 走 PM-001 heuristic (老行为, 全兼容)
+- DataSource: 调 LLM, 失败自动 fallback 到 heuristic, **永不 throw**
+
+**三层校验** (与 [[AI_VIEW_MAX_CHARS 5 件套]] 同款):
+1. prompt 上游告诉 LLM "≤200 字 + ≥3 数字"
+2. 中游 `enforceAttributionSummaryConstraints` 收到 LLM 返值后 hard-cap 截断 + 数字计数
+3. 下游 fallback 走 `heuristicSummary` (PM-001, 输出含 date/total_pnl/trade_count 至少 3 数字)
+
+**数字计数**: 用 `/-?\d+(?:\.\d+)?/g`, 全局匹配, 不去重. 日期 `2026-06-19` 命中
+`2026`/`-06`/`-19` = 3 个 (有 `-` 算负数). 极端边界 fallback 内补
+`默认占位 0.00 元 0 笔` 保证永远 ≥ 3.
+
+**PRODUCTION DataSource**: lazy require axios + TRADING_AGENTS_BASE_URL, 调
+`/api/attribution-summary`, 30s timeout, 与 `AnnouncementNLPService.callRemoteSummarize`
+完全同形态. 接口失败 (ECONNREFUSED / timeout / 5xx) 转 null 不 throw, 主流程降级.
+
+**caller 何时传 source**: PM-006 cron 启动时根据 env / config (`AI_ATTRIBUTION_MODE`)
+决定传 `PRODUCTION_AI_ATTRIBUTION_SUMMARY_DATA_SOURCE` 还是 `null` / `'off'`. 灰度
+推进 (off → shadow → hard) 在 caller 侧, 本 module 不感知.
 
 ### DataSource 接口扩展
 

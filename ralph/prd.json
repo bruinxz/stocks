@@ -1275,8 +1275,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 82,
-      "passes": false,
-      "notes": "依赖: PM-003"
+      "passes": true,
+      "notes": "已实现 backend/src/services/attribution/AIAttributionSummary.ts (pure helpers + DataSource DI seam + PRODUCTION axios 调 trading_agents /api/attribution-summary + 三层校验: prompt 显式告知 LLM ≤200 字 + ≥3 数字 / enforceAttributionSummaryConstraints 收返值后 hard-cap 截断 + 数字计数 / 不达标 fallback 到 PM-001 heuristicSummary 永远 ≥3 数字)。generateAIAttributionSummary 永不 throw, source=null/throw/<3 数字/超 cap 全 fallback。DailyAttributionService.generateDailyReport 新增 ai_summary_source?: DS | null | 'off' option, undefined/null/'off' 走老 heuristic 全兼容; 传 DS 调 LLM 失败自动降级。78 个新单测 + 112 个老 daily-attribution 测试全过 (AC 主验收: 合规 LLM → source='llm', null/empty/throw/<3 数字/非 string → source='fallback' + reason 分类, 超 cap 截断后仍合规 → source='llm', fallback 任意边界 report 都 ≤200 字 + ≥3 数字)。"
     },
     {
       "id": "US-083",
