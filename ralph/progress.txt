@@ -4048,3 +4048,25 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **AC §"输出" 主验收要让 4 个 concept 分布在阈值附近**: 100% / 80% / 60% / 40% 这种"两侧都跨 70% 阈值"的设计能同时验三件事 — (a) 强联动确实进 top (AI 芯片 + 新能源车); (b) 边界附近的恰好不进 (60% < 70%); (c) 完全反向的也不进 (40%). 仅给 2 个 concept 一个 100% 一个 0% 测不出 off-by-one (>= vs >). 与 US-118 "AC ≥ N% 反向算样本" / US-043 "N / N+1 / 远超 N 边界三件套" 同款思想.
   - **monotonic bars helper 的 close 复利精度**: buildMonotonicBars(100, 10, 0.01) 第 10 天 close=100*(1.01)^9, daily_return 单步=0.01 但累积有微差. 单测断言用 sample_size + cohesion (整数比率) 比 avg_return_pct 精确小数更稳, 后者会因复利 + 4 位舍入产生 1e-5 量级差. 这是"用整数指标避开浮点测精度" 的实例.
 ---
+
+## 2026-06-21 03:05 - US-142
+- 实现 KOLAggregator semantic dedupe (shingle Jaccard 文本相似度合并)
+- 新增 pure functions: normalizeTextForShingle / shingleText / jaccardSimilarity / semanticSimilarity / semanticDedupe
+- 新增常量: DEFAULT_SEMANTIC_DEDUPE_THRESHOLD=0.65, SEMANTIC_DEDUPE_SHINGLE_K=2 (字符级 2-gram)
+- aggregateForStock 加 opt-in option: `semanticDedupe?: boolean` + `semanticDedupeThreshold?: number` (默认关闭, 保 backward compat)
+- 流程: composite-PK dedupeAndSort (取全量不裁) → semanticDedupe (可选, 同源/同文本类合并) → slice(limit)
+- 文件改动:
+  - backend/src/services/KOLAggregatorService.ts (+170 行: helpers + AggregateOptions 扩展 + aggregateForStock 流程切片改写)
+  - backend/tests/services/kol-aggregator-service.test.ts (+330 行: 13 个新测试 + main() 注册)
+- 验证:
+  - npx ts-node tests/services/kol-aggregator-service.test.ts → 381 passed 0 failed
+  - npx tsc --noEmit → clean
+  - npx eslint src/services/KOLAggregatorService.ts → clean
+  - AC §"去重率 ≥ 70%" 在 10 条同事件标题复述池上 → 9/10 合并, 90% 去重率
+- **Learnings for future iterations:**
+  - "去重率 X%" AC 的测量集要明确: 在"全 duplicate" 池 vs "混合 (重复+独立)" 池上 X% 的算法上限差别极大 — 5 独立 + 5 重复完美算法只能拿 40% 总去重率 (≤5/10), 永远达不到字面 70%. 应在"高度重复" 候选池 (模拟同事件多源转载) 上度量, 这才贴近"算法能识别多少同事件复述" 的 AC 意图.
+  - 跨多源去重要默认拒绝合并 (研报+新闻+ETF 流多源共识 = 信号增强, 不该被压缩成 1 条丢权重). 用 isMergeableSource(a,b) 白名单: 同 source 始终允许, 跨 source 仅在"文本叙事类" (news/concept/policy) 之间允许. 研报 / ETF 流是结构化 / 量化信号, 不与任何其他 source 合并.
+  - 中文 shingle 用字符级 2-gram (k=2) 配合 normalize (去标点 / 空白 / emoji / 小写) 是经验最优 — 不需要分词器, 不需要 embedding 模型, 复杂度 O(N²·L²) 但 N≤数十 L≤500 字, 单股 / 行业聚合规模都跑得过.
+  - "opt-in option 默认 false" 是给上线 graylog 留余地的零回归升级模板 (与 US-137 thresholds 同款模板): 既有 caller / 既有 dedupeAndSort tests 0 改动, 新行为只在显式开关下生效, 灰度期可在 CLI / 定时任务里逐 stock 启用观察.
+  - dedupeAndSort 之后再 semantic 的两阶段: 第一阶段先收敛到"同 composite-PK 内部最强代表", 让 semantic 阶段对比的是"代表 vs 代表", 而不是原始多份复制. 一阶段 limit 必须给全量 (windowed.length 而非 limit), 否则 semantic 之前就被裁掉好票, 之后 cluster representative 不全.
+---
