@@ -1532,8 +1532,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 99,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "PR-010 BlackSwanEvent model + migration (schema-only, 真持久化 PR-011~016 后续接入): 新增 backend/src/models/BlackSwanEvent.ts (16 业务列 / 7 索引 / (event_type, signature, detected_at::date) UNIQUE 复合键 / fail-safe defaults severity=medium scope=symbol status=open source=detector_cron); 双 SQL 2026-06-20-black-swan-events.sql + rollback (表达式索引 (detected_at::date) 让 TIMESTAMPTZ 不破 UNIQUE); 挂 database.ts + models/index.ts; tests/models/black-swan-event.test.ts 103 ok / 0 failed 覆盖 @Table 配置 + 索引 + 列定义 + AC (id/detected_at/event_type/severity/scope) + META-GUARD database/index 双挂 + migration up/down 双 SQL 形态."
     },
     {
       "id": "US-100",

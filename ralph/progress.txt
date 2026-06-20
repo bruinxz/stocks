@@ -2851,3 +2851,30 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **CI step 加新 log artifact 4 处要同步**: (1) tee `../backend-<name>.log` 在 step run 行; (2) Upload logs on failure 的 path 数组加 `backend-<name>.log`; (3) Comment on PR 的 logs JS 数组加 `<name>` 字符串字面量 (注意 hyphen — 文件名是 `backend-openapi-check.log` 但 logs array 用 `openapi-check`, 模板字符串拼回去 `backend-${name}.log`); (4) 任何 grep CI logs 的下游工具 (e.g. 飞书 push) 也得知道新文件名. 漏 (2) 让 CI fail 时拿不到失败日志, 漏 (3) 让 PR 评论缺失该 section. 任何 "CI 加新 step" 类 story 都按这 4 处 checklist 走.
 
 ---
+
+## 2026/06/20 15:15 - US-099
+- 实现 [PR-010] BlackSwanEvent model — L4-Portfolio + Risk 层 schema-only 桩位 story, 真持久化由 PR-011 (US-100) BlackSwanDetector cron 接入; PR-012/013/014/015/016 后续 FK / 报告 / counterfactual / timeline / suggestor 全部消费本表
+- Files changed:
+  - backend/src/models/BlackSwanEvent.ts (新, ~285 行 + 完整 jsdoc 含 PRD 字段语义 / 与既有 BlackSwanWatchdog 边界 / event_type 6 态 / severity 4 态 / scope 4 态 / status 3 态 / source 4 态 / fail-safe defaults / 主要消费方列表):
+    * @Table('black_swan_events', underscored, timestamps); 16 业务列 + 7 索引
+    * UNIQUE 复合索引 (event_type, signature, detected_at) 名 black_swan_events_type_sig_detected_uniq — 同 type 同 sig 同日只一行 (cron 30min 重跑 idempotent)
+    * 字段: id PK / detected_at TIMESTAMP NOT NULL / event_type VARCHAR(40) NOT NULL / severity VARCHAR(20) default=medium / scope VARCHAR(20) default=symbol / symbol VARCHAR(20) nullable / signature VARCHAR(255) default='' / title VARCHAR(200) default='' / description TEXT default='' / detail JSONB default={} / scope_detail JSONB default={} / source VARCHAR(20) default=detector_cron / status VARCHAR(20) default=open / resolved_at + resolved_reason nullable / metadata JSONB default={}
+  - backend/scripts/migrations/2026-06-20-black-swan-events.sql (新): BEGIN/COMMIT + CREATE TABLE IF NOT EXISTS + 表达式索引 (detected_at::date) 让 UNIQUE 真生效 (TIMESTAMPTZ 毫秒级否则永不重复) + 7 索引 + COMMENT ON TABLE + 每列 COMMENT
+  - backend/scripts/migrations/2026-06-20-black-swan-events-rollback.sql (新): DROP INDEX + DROP TABLE 全 IF EXISTS 幂等
+  - backend/src/config/database.ts: import BlackSwanEvent + models 数组追加
+  - backend/src/models/index.ts: export * from './BlackSwanEvent'
+  - backend/tests/models/black-swan-event.test.ts (新, ~450 行 / 103 assert): 7 模块 — [1] @Table 配置 / [2] 7 索引含 UNIQUE 复合键 / [3] 17 列定义 sanity (type + allowNull + defaultValue) / [4] 所有业务列含 comment / [5] PRD US-099 AC (id + detected_at + event_type + severity + scope) 显式守 / [6] META-GUARD database.ts import + models 数组 + index.ts export 三处必挂 + model 含 PR-010/US-099 + 与 BlackSwanWatchdog 边界 + PR-011~016 接入清单 / [7] migration up/down 形态 (BEGIN/COMMIT + CREATE/DROP IF EXISTS + 表达式索引 (detected_at::date) + 默认值断言)
+  - ralph/prd.json: US-099 passes=true + notes
+  - ralph/progress.txt: 本 entry
+- 验证:
+  - `npx tsc --noEmit` exit 0
+  - `npx ts-node --transpile-only tests/models/black-swan-event.test.ts` 103 ok / 0 failed
+  - `npm test -- --filter=black-swan` 2/2 files passed (新 model test 103 ok + 既有 BlackSwanWatchdog test 208 ok 全 green, 无 regression)
+  - `npx eslint src/models/BlackSwanEvent.ts` exit 0 (auto-fix prettier 之后 clean)
+- **Learnings for future iterations:**
+  - **PostgreSQL TIMESTAMPTZ UNIQUE 必须用表达式索引 (detected_at::date)**: 如果直接 `UNIQUE(event_type, signature, detected_at)` 而 detected_at 是 TIMESTAMPTZ, 毫秒级永远不重复, UNIQUE 完全失效, cron 30min 重跑会无限累积同事件. 唯一正解 = `CREATE UNIQUE INDEX ... ON tbl (col1, col2, (detected_at::date))`. Sequelize model 的 indexes array `fields: ['detected_at']` 在 ORM 层只是声明, 真 UNIQUE 由 SQL migration 表达式索引守; model 层 indexes 与 SQL 表达式索引"形态对齐 + 语义不同"是必须分开维护的. test [7.19] 显式守 SQL 含 `(detected_at::date)`, 不守的话哪天人手抹掉表达式 UNIQUE 静默退化无人感知.
+  - **schema-only "先建框架 + 后填实" story 套路 (与 AIDiaryEntry/PM-018 / ImprovementSuggestion/PM-023 同款)**: 一个 story 只落 model + migration + index 模型挂载 + 测试 4 件, 不写 service / cron / route. 9 件套清单 (与 US-025 ANN-001 同款): (1) migration up/down 双 SQL; (2) IF NOT EXISTS / IF EXISTS 让重复跑幂等; (3) 字段默认值是"未跑过 service 时的安全态" (severity=medium 不是 critical, status=open 不是 expired, 否则历史回填行就触发 push 风暴); (4) Sequelize Model `@Column` 三件套 (type/allowNull/defaultValue) + indexes 显式 name 与 SQL `CREATE INDEX <name>` 字面量一致; (5) export 类型用 enum 让后续 helper 强类型守 (本 story 直接 union string 也可, 后续 PR-011 可加 enum); (6) 注释清晰记录与既有 watchdog/service 边界 (本 story 与 BlackSwanWatchdog 边界尤其重要 — 一个 per-user 一个 global, 不取代而是互补); (7) bulkCreate 的 updateOnDuplicate 留给后续 service story 接入 (本 story 不到那一步); (8) META-GUARD 守 model 含 declare + index name + database.ts/models/index.ts 两处必挂 + migration up/down 全形态 + 表达式索引 SQL.
+  - **与既有 model/service 边界声明要写到 jsdoc 第一段**: 任何"看似与既有 X 重复" 的新 model (本 story 新 BlackSwanEvent 与既有 BlackSwanWatchdog 重名 + 同领域) 都必须在 jsdoc 头部显式记 "X = ... / 本表 = ..." 边界对比. 后续 ralph 自主推进时 grep 'BlackSwan' 第一个会被 BlackSwanWatchdog 吸引误以为重复造轮子, 边界注释是防误删/误合的关键. 与 [[Sprint 27/28/29 L8 activation results]] "shadow vs hard mode 边界写代码注释"同款思想.
+  - **AC 字段精确对齐用单独 [5] block 测**: PRD US-099 AC "字段含 (id, detected_at, event_type, severity, scope)" 是 product owner 看 PR 时唯一的验收点, 必须每个 AC 字段一行单测断言, 不让大型 [3] 列定义测试块覆盖 (前者改组件不破后者). 与 [[ai-view-max-chars]] "AC 数字守 prompt + 中游 + 下游 3 处" 同款"AC 是产品契约"思想.
+---
+
