@@ -3504,3 +3504,17 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **dedupeAndSort 不直接接 time_decay 的原因**: 排序仍按 opinion_date desc (确定性 stable, 跨次调用同输入同输出), time_decay 只进 "加权汇总" 路径 (decayedAuthorityWeightedSentiment); 否则同一组 opinions 在 t+1d 跑 dedupeAndSort 顺序会漂 — 前端 "他人在看" 卡片以 DB row order 渲染, 顺序漂 = 用户看到的列表每天都微变. 这条边界写到 KOLAggregatorService.ts dedupeAndSort 注释 + decayedAuthorityWeightedSentiment 注释里, 防后续 ralph "把 decay 也塞进 dedupeAndSort 排序" 的误抽象.
   - **approxEqual helper 模板**: 任何 exp/log/sqrt/trig 数值断言都用 `Math.abs(actual - expected) <= eps` (默认 1e-6), 别用 assertEqual 走 JSON.stringify (浮点 0.36787944117144233 vs 0.367879441171442 比不过). approxEqual 是这种 service 第一个引入数值连续计算时必备的 test util.
 ---
+
+## 2026-06-20 21:13 - US-120
+- [KOL-006] KOLAggregator.aggregateForIndustry(industry, stockCodes, options) — 行业维度跨股聚合 + signed weighted average ∈ [-1, 1]
+- 新增 signedWeightedSentiment(records, asOfDate) pure helper: Σ(s × auth × decay) / Σ(auth × decay), null/zero-weight skip, 分母 0 fail-OPEN 返 0
+- 新增 IndustryAggregateResult interface (industry, stock_codes, total_opinions, aggregate_sentiment, top_opinions, by_stock, by_source, as_of_date, error?)
+- aggregateForIndustry 流程: 校验+去重 stockCodes → 子聚合 aggregateForStock(dryRun=true 默认) → 跨股 dedupeAndSort → signedWeightedSentiment → top_opinions 按 |decayed weight| desc 取 topLimit (1-50 clamp, 默认 10)
+- 单测 +47 (342 total): signedWeightedSentiment 边界 (空/单/多空相消/null skip/decay 老空被压制/[-1,1] 区间) + e2e (happy path/空 industry/全非法 code/dedupe code/无数据 fail-OPEN/dryRun 默认/dryRun override/topLimit clamp/decay 让今日新闻压过 30d 前研报/全空头行业总分<0/asOfDate 默认 todayLocalIso)
+- Files: backend/src/services/KOLAggregatorService.ts (+~110 行: helper+interface+method), backend/tests/services/kol-aggregator-service.test.ts (+~280 行: 测试)
+- **Learnings for future iterations:**
+  - `authorityWeightedSentiment` 返 |s| × authority (无符号), 只能用作排序 weight; 任何"行业偏多/偏空"判断必须用 `signedWeightedSentiment` (保留符号的加权平均), 否则空头行业也 > 0 — 这是 first attempt 踩的坑
+  - 跨股聚合用 dryRun=true 是因为单股 aggregateForStock 已落库, industry 层是 read-time view; 仍允许 caller 显式 dryRun=false 让 service 顺带落库
+  - top_opinions 重排不复用 dedupeAndSort 的 (time desc + source priority): 它按 |decayed weight| desc 才能让"最重要的少数条"浮到前面, 适合前端"行业风向卡片"
+  - 跨股 dedupe: 不同 stockCode 的相同 KOL/同一日 (e.g. 中信证券同日发 2 家公司研报) 会算 1 条共识, 这是有意的; 若改成 by-stock 计数, 修 dedupeAndSort 的 PK 字段
+---

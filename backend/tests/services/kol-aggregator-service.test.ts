@@ -52,6 +52,7 @@ import {
   daysBetweenIsoDates,
   timeDecayFactor,
   decayedAuthorityWeightedSentiment,
+  signedWeightedSentiment,
   ratingToSentiment,
   scoreNewsSentiment,
   conceptRankToSentiment,
@@ -1783,6 +1784,352 @@ function testTimeDecayMetaGuard(): void {
 }
 
 // ---------------------------------------------------------------------------
+// US-120 [KOL-006] aggregateForIndustry — 行业维度聚合
+// ---------------------------------------------------------------------------
+
+function testSignedWeightedSentiment(): void {
+  // 空数组 → 0
+  assertEqual('signed empty → 0', signedWeightedSentiment([], '2026-06-20'), 0);
+
+  // 单条全多 → 单条 sentiment_score (权重比 1)
+  const recBuy: KOLOpinionRecord = {
+    stock_code: '600519',
+    kol_source: KOL_SOURCES.RESEARCH_REPORT,
+    kol_name: 'firm1',
+    opinion_date: '2026-06-20',
+    opinion_summary: 's',
+    sentiment_score: 1.0,
+    url: null,
+    raw_payload: {},
+  };
+  approxEqual(
+    'signed 1 buy → +1.0',
+    signedWeightedSentiment([recBuy], '2026-06-20'),
+    1.0
+  );
+
+  // 多空相消: 同权重同日 (research +1, research -1) → 0
+  const recSell: KOLOpinionRecord = { ...recBuy, kol_name: 'firm2', sentiment_score: -1.0 };
+  approxEqual(
+    'signed +1/-1 same weight → 0',
+    signedWeightedSentiment([recBuy, recSell], '2026-06-20'),
+    0
+  );
+
+  // sentiment=null 不参与 (skip), 其余正常加权
+  const recNull: KOLOpinionRecord = { ...recBuy, kol_name: 'firm3', sentiment_score: null };
+  approxEqual(
+    'signed null skip → 平均其余',
+    signedWeightedSentiment([recBuy, recNull], '2026-06-20'),
+    1.0
+  );
+
+  // 全部 null → 0 (分母 0 fail-OPEN)
+  approxEqual(
+    'signed all null → 0',
+    signedWeightedSentiment([recNull], '2026-06-20'),
+    0
+  );
+
+  // 老观点 (30d 前) decay 后权重小, 今日强观点压过 30d 前同强反向观点
+  // 今日 +1 (w=0.6*1=0.6), 30d 前 -1 (w=0.6*exp(-30/7)≈0.0083)
+  // → ~ (0.6 - 0.0083) / (0.6 + 0.0083) ≈ +0.973
+  const recOldSell: KOLOpinionRecord = {
+    ...recSell,
+    opinion_date: '2026-05-21',
+  };
+  const mixed = signedWeightedSentiment([recBuy, recOldSell], '2026-06-20');
+  assert(`signed 今日多 vs 30d 前空 → 偏多 (got ${mixed})`, mixed > 0.9);
+
+  // 输出永远在 [-1, 1]
+  const all = signedWeightedSentiment([recBuy, recSell, recBuy, recBuy], '2026-06-20');
+  assert(`signed in [-1, 1] (got ${all})`, all >= -1 && all <= 1);
+}
+
+function buildIndustryFixtureState(): FakeState {
+  // 半导体 3 只成份股: 600519 (强多近期研报+新闻), 000001 (中性), 002460 (弱空老新闻).
+  return emptyState({
+    researchByCode: {
+      '600519': [
+        {
+          report_date: '2026-06-19',
+          analyst_firm: '中信证券',
+          rating: '买入',
+          report_title: '新一代芯片量产',
+          report_pdf_url: null,
+          raw_payload: {},
+        },
+      ],
+      '000001': [
+        {
+          report_date: '2026-06-18',
+          analyst_firm: '华泰证券',
+          rating: '中性',
+          report_title: '行业景气度观望',
+          report_pdf_url: null,
+          raw_payload: {},
+        },
+      ],
+    },
+    newsByCode: {
+      '600519': [
+        {
+          title: '业绩超预期',
+          content: null,
+          publish_time: '2026-06-20',
+          source: '财联社',
+          url: null,
+          raw_payload: {},
+        },
+      ],
+      '002460': [
+        {
+          title: '股价短期下跌',
+          content: null,
+          publish_time: '2026-06-10',
+          source: '证券时报',
+          url: null,
+          raw_payload: {},
+        },
+      ],
+    },
+    etfByCode: {
+      '600519': [
+        {
+          trade_date: '2026-06-20',
+          etf_code: '159995',
+          etf_name: '芯片ETF华夏',
+          underlying_industry: '半导体',
+          net_inflow: 3e8, // 强多
+          aum: 1.2e10,
+          raw_payload: {},
+        },
+      ],
+    },
+  });
+}
+
+async function testAggregateIndustry_HappyPath(): Promise<void> {
+  const state = buildIndustryFixtureState();
+  const service = new KOLAggregatorService(makeFakeSource(state));
+  const r = await service.aggregateForIndustry(
+    '半导体',
+    ['600519', '000001', '002460'],
+    { asOfDate: '2026-06-20', lookbackDays: 90 }
+  );
+  assertEqual('industry label echo', r.industry, '半导体');
+  assertEqual('industry stock_codes preserved', r.stock_codes, ['600519', '000001', '002460']);
+  assert('industry total_opinions > 0', r.total_opinions > 0);
+  // 多头主导 (业绩超预期 + 买入 + ETF 净申购), aggregate_sentiment 必须 > 0
+  assert(
+    `industry aggregate_sentiment > 0 (got ${r.aggregate_sentiment})`,
+    r.aggregate_sentiment > 0
+  );
+  // top_opinions 排序: 第一名应为今日 / 高权重 / 多头
+  assert('industry top_opinions non-empty', r.top_opinions.length > 0);
+  const top = r.top_opinions[0];
+  assert(
+    `industry top opinion is positive (got sentiment=${top.sentiment_score})`,
+    (top.sentiment_score ?? 0) > 0
+  );
+  // by_stock 三只票全部出现 (即便子分=0)
+  assertEqual(
+    'industry by_stock has all 3 codes',
+    Object.keys(r.by_stock).sort(),
+    ['000001', '002460', '600519']
+  );
+  // 持有 + 中性 = sentiment 0 → 子分 0 (单股 1 条意见 0/1 = 0)
+  assertEqual('industry by_stock 000001 = 0 (rating 中性)', r.by_stock['000001'], 0);
+  // 强多股子分必 > 0
+  assert(
+    `industry by_stock 600519 > 0 (got ${r.by_stock['600519']})`,
+    r.by_stock['600519'] > 0
+  );
+  // as_of_date 透传
+  assertEqual('industry as_of_date echo', r.as_of_date, '2026-06-20');
+  // by_source: 至少 research / news / etf 三类非零
+  assert('industry by_source research >= 1', r.by_source.research_report >= 1);
+  assert('industry by_source news >= 1', r.by_source.east_money_news >= 1);
+  assert('industry by_source etf >= 1', r.by_source.etf_flow >= 1);
+  assert('industry no error', r.error === undefined);
+}
+
+async function testAggregateIndustry_EmptyIndustry(): Promise<void> {
+  const service = new KOLAggregatorService(makeFakeSource(emptyState()));
+  const r = await service.aggregateForIndustry('', ['600519'], { asOfDate: '2026-06-20' });
+  assertEqual('empty industry → 0 opinions', r.total_opinions, 0);
+  assertEqual('empty industry → 0 sentiment', r.aggregate_sentiment, 0);
+  assert('empty industry has error', typeof r.error === 'string');
+  assert(
+    'empty industry error mentions required',
+    String(r.error).includes('required')
+  );
+}
+
+async function testAggregateIndustry_AllInvalidCodes(): Promise<void> {
+  const service = new KOLAggregatorService(makeFakeSource(emptyState()));
+  const r = await service.aggregateForIndustry('半导体', ['XX', 'foo', '12345'], {
+    asOfDate: '2026-06-20',
+  });
+  assertEqual('all-invalid → 0 codes', r.stock_codes, []);
+  assertEqual('all-invalid → 0 opinions', r.total_opinions, 0);
+  assertEqual('all-invalid → 0 sentiment', r.aggregate_sentiment, 0);
+  assert('all-invalid has error', typeof r.error === 'string');
+  assert(
+    'all-invalid error mentions no valid stock_code',
+    String(r.error).includes('valid stock_code')
+  );
+}
+
+async function testAggregateIndustry_DedupeCodes(): Promise<void> {
+  const state = buildIndustryFixtureState();
+  const service = new KOLAggregatorService(makeFakeSource(state));
+  // 重复 + 非法码混杂 → 去重 + 校验
+  const r = await service.aggregateForIndustry(
+    '半导体',
+    ['600519', '600519', 'BAD', '000001'],
+    { asOfDate: '2026-06-20' }
+  );
+  assertEqual('dedupe stock_codes', r.stock_codes, ['600519', '000001']);
+}
+
+async function testAggregateIndustry_NoOpinionsFailOpen(): Promise<void> {
+  // 全部成份股都没数据 → aggregate_sentiment = 0, 无 error (区分输入失败 vs 数据空)
+  const service = new KOLAggregatorService(makeFakeSource(emptyState()));
+  const r = await service.aggregateForIndustry('半导体', ['600519', '000001'], {
+    asOfDate: '2026-06-20',
+  });
+  assertEqual('no-data → 0 opinions', r.total_opinions, 0);
+  assertEqual('no-data → 0 sentiment', r.aggregate_sentiment, 0);
+  assertEqual('no-data → top_opinions empty', r.top_opinions, []);
+  assert('no-data has no error (fail-OPEN)', r.error === undefined);
+  // by_stock 都是 0
+  assertEqual('no-data by_stock 600519 = 0', r.by_stock['600519'], 0);
+  assertEqual('no-data by_stock 000001 = 0', r.by_stock['000001'], 0);
+}
+
+async function testAggregateIndustry_DryRunDefault(): Promise<void> {
+  // industry 聚合默认 dryRun=true: 不调 saveOpinions
+  const state = buildIndustryFixtureState();
+  const service = new KOLAggregatorService(makeFakeSource(state));
+  await service.aggregateForIndustry('半导体', ['600519'], { asOfDate: '2026-06-20' });
+  assertEqual('industry dryRun=true → saves length = 0', state.saves.length, 0);
+}
+
+async function testAggregateIndustry_DryRunOverride(): Promise<void> {
+  // 显式 dryRun=false → 调 saveOpinions (子聚合走 single-stock 落库路径)
+  const state = buildIndustryFixtureState();
+  const service = new KOLAggregatorService(makeFakeSource(state));
+  await service.aggregateForIndustry('半导体', ['600519'], {
+    asOfDate: '2026-06-20',
+    dryRun: false,
+  });
+  assert('industry dryRun=false → saveOpinions called', state.saves.length >= 1);
+}
+
+async function testAggregateIndustry_TopLimitClamp(): Promise<void> {
+  // 多条意见 + topLimit=2 → top_opinions 只返 2
+  const state = buildIndustryFixtureState();
+  const service = new KOLAggregatorService(makeFakeSource(state));
+  const r = await service.aggregateForIndustry(
+    '半导体',
+    ['600519', '000001', '002460'],
+    { asOfDate: '2026-06-20', topLimit: 2 }
+  );
+  assert('topLimit=2 caps top_opinions', r.top_opinions.length <= 2);
+  // total_opinions 不被 topLimit 影响 (它是去重后总数)
+  assert('total_opinions > top_opinions.length', r.total_opinions >= r.top_opinions.length);
+}
+
+async function testAggregateIndustry_DecaySortFreshnessWins(): Promise<void> {
+  // 两只成份股: A 一条今日 news +0.5, B 一条 30 天前 research +1.0.
+  // top_opinions[0] 必须是今日新闻 (decay 让"新且弱"压过"老且权威").
+  const state = emptyState({
+    newsByCode: {
+      '600519': [
+        {
+          title: '业绩超预期',
+          content: null,
+          publish_time: '2026-06-20',
+          source: '财联社',
+          url: null,
+          raw_payload: {},
+        },
+      ],
+    },
+    researchByCode: {
+      '000001': [
+        {
+          report_date: '2026-05-21', // 30 天前
+          analyst_firm: '中信证券',
+          rating: '买入',
+          report_title: '老研报',
+          report_pdf_url: null,
+          raw_payload: {},
+        },
+      ],
+    },
+  });
+  const service = new KOLAggregatorService(makeFakeSource(state));
+  const r = await service.aggregateForIndustry('半导体', ['600519', '000001'], {
+    asOfDate: '2026-06-20',
+    lookbackDays: 90,
+  });
+  assert('two-stock fixture yields >= 2 opinions', r.total_opinions >= 2);
+  const top = r.top_opinions[0];
+  assertEqual(
+    'fresh news beats stale research in top',
+    top.kol_source,
+    KOL_SOURCES.EAST_MONEY_NEWS
+  );
+  assertEqual('fresh news top opinion date', top.opinion_date, '2026-06-20');
+}
+
+async function testAggregateIndustry_NegativeIndustry(): Promise<void> {
+  // 全部成份股都是空头/利空 → aggregate_sentiment < 0
+  const state = emptyState({
+    newsByCode: {
+      '600519': [
+        {
+          title: '公司被立案调查',
+          content: null,
+          publish_time: '2026-06-20',
+          source: '财联社',
+          url: null,
+          raw_payload: {},
+        },
+      ],
+      '000001': [
+        {
+          title: '面临退市风险',
+          content: null,
+          publish_time: '2026-06-20',
+          source: '证券时报',
+          url: null,
+          raw_payload: {},
+        },
+      ],
+    },
+  });
+  const service = new KOLAggregatorService(makeFakeSource(state));
+  const r = await service.aggregateForIndustry('半导体', ['600519', '000001'], {
+    asOfDate: '2026-06-20',
+  });
+  assert(
+    `negative industry sentiment < 0 (got ${r.aggregate_sentiment})`,
+    r.aggregate_sentiment < 0
+  );
+}
+
+async function testAggregateIndustry_AsOfDefault(): Promise<void> {
+  // 不传 asOfDate → 用 todayLocalIso(), 至少不抛 + 返回有效形状
+  const service = new KOLAggregatorService(makeFakeSource(emptyState()));
+  const r = await service.aggregateForIndustry('半导体', ['600519']);
+  assert('as_of_date YYYY-MM-DD', /^\d{4}-\d{2}-\d{2}$/.test(r.as_of_date));
+  assertEqual('default as_of empty opinions', r.total_opinions, 0);
+}
+
+// ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
   // Pure functions
@@ -1837,6 +2184,20 @@ async function main(): Promise<void> {
   // US-035 [KOL-003] aggregateForStock e2e with ETF + policy
   await testAggregate_FiveSourcesNonEmpty();
   await testAggregate_ETFAndPolicySourceFailure();
+
+  // US-120 [KOL-006] aggregateForIndustry — 行业维度聚合
+  testSignedWeightedSentiment();
+  await testAggregateIndustry_HappyPath();
+  await testAggregateIndustry_EmptyIndustry();
+  await testAggregateIndustry_AllInvalidCodes();
+  await testAggregateIndustry_DedupeCodes();
+  await testAggregateIndustry_NoOpinionsFailOpen();
+  await testAggregateIndustry_DryRunDefault();
+  await testAggregateIndustry_DryRunOverride();
+  await testAggregateIndustry_TopLimitClamp();
+  await testAggregateIndustry_DecaySortFreshnessWins();
+  await testAggregateIndustry_NegativeIndustry();
+  await testAggregateIndustry_AsOfDefault();
 
   console.log(
     `\n✅ ${passed} passed  ${failed > 0 ? '❌ ' + failed + ' failed' : '0 failed'}  ` +

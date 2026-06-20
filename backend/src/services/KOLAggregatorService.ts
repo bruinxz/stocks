@@ -272,6 +272,42 @@ export function decayedAuthorityWeightedSentiment(
   return base * timeDecayFactor(rec.opinion_date, ref);
 }
 
+/**
+ * US-120 [KOL-006]: **签名加权平均** ∈ [-1, 1] —
+ * `Σ (sentiment_score × authority × decay) / Σ (authority × decay)`.
+ *
+ * 与 `decayedAuthorityWeightedSentiment` (|s| × authority × decay, 仅作权重) 区分:
+ * 这里**保留 sentiment 符号**, 让多头/空头互相抵消, 得到行业整体倾向.
+ *
+ * - 0 条意见 → 0 (fail-OPEN, 与 SentimentAnalyzer 缺数同款);
+ * - 全部 sentiment=null / 0 → 分母 = 0 → 0 (避免 NaN);
+ * - 单条意见 → 直接退化为该条 sentiment_score (权重比例为 1).
+ *
+ * 也供 `aggregateForIndustry` 行业总分 + 每只成份股子分共用同款公式,
+ * 让 by_stock[code] 数学定义与 aggregate_sentiment 一致 (drill-down 可加权重组).
+ */
+export function signedWeightedSentiment(
+  records: ReadonlyArray<KOLOpinionRecord>,
+  asOfDate?: string
+): number {
+  if (!records || records.length === 0) return 0;
+  const ref = asOfDate || todayLocalIso();
+  let num = 0;
+  let den = 0;
+  for (const r of records) {
+    const s = r.sentiment_score;
+    if (s === null || !Number.isFinite(s as number)) continue;
+    const auth = getSourceAuthority(r.kol_source);
+    const decay = timeDecayFactor(r.opinion_date, ref);
+    const w = auth * decay;
+    if (w <= 0) continue;
+    num += (s as number) * w;
+    den += w;
+  }
+  if (den <= 0) return 0;
+  return num / den;
+}
+
 export interface AggregateOptions {
   /** 取近 N 天 (默认 90)。研报 / 新闻 / 概念 均按此窗口过滤。 */
   lookbackDays?: number;
@@ -289,6 +325,37 @@ export interface AggregateResult {
   by_source: Record<KOLSource, number>;
   opinions: KOLOpinionRecord[];
   persisted: boolean;
+  error?: string;
+}
+
+/**
+ * US-120 [KOL-006]: 行业维度聚合结果 — 把 stocks[] 内每只票的 KOL 观点
+ * 收编到行业层, 输出一份"行业风向"快照供 IndustryRegimeAnalyzer /
+ * SentimentAnalyzer 直接读 (跨股聚合的 decayed authority-weighted 总和).
+ *
+ * - `industry`: 行业标签 (与 ETFProfile.industry / Stock.industry 字符串严格匹配);
+ * - `stock_codes`: 输入的成份股代码 (去重 + 6 位 digits 校验);
+ * - `aggregate_sentiment`: 签名加权平均 ∈ [-1, 1] —
+ *   Σ (sentiment_score × authority × decay) / Σ (authority × decay),
+ *   注意 weight 用 |authority × decay| 但乘上**带符号的 sentiment**,
+ *   故行业一致看空 → 总分 < 0, 多空对峙 → 接近 0, 全员看多 → > 0;
+ * - `total_opinions`: 全行业内累计 opinion 条数 (跨股 dedupe 后);
+ * - `top_opinions`: 跨股 dedupe + decayed weight desc 取 top N (默认 10),
+ *   供前端 "行业风向" 卡片直接展示;
+ * - `by_stock`: 每只股票 aggregate_sentiment 子分 (供 drill-down);
+ * - `by_source`: 全行业累计每 source opinion 数 (诊断维度覆盖);
+ * - `as_of_date`: 时间衰减锚点 (默认 todayLocalIso());
+ * - `error`: 输入全失败兜底 (e.g. 全部 stockCode 非法), service 不抛.
+ */
+export interface IndustryAggregateResult {
+  industry: string;
+  stock_codes: string[];
+  total_opinions: number;
+  aggregate_sentiment: number;
+  top_opinions: KOLOpinionRecord[];
+  by_stock: Record<string, number>;
+  by_source: Record<KOLSource, number>;
+  as_of_date: string;
   error?: string;
 }
 
@@ -1272,6 +1339,144 @@ export class KOLAggregatorService {
       }
     }
     return { total: stockCodes.length, succeeded, failed, details };
+  }
+
+  /**
+   * US-120 [KOL-006]: **行业维度聚合** — 把成份股的 KOL 观点提升到行业层.
+   *
+   * 调用方典型场景:
+   *   - IndustryRegimeAnalyzer 拉行业风向 (近 14 天行业大 V 怎么看半导体);
+   *   - SentimentAnalyzer 跨股聚合避免单股孤证 (一个公司利空 ≠ 整个行业利空);
+   *   - 前端 "行业风向" 卡片直接读 top_opinions 列表 (与 "他人在看"同款 UI).
+   *
+   * 实现:
+   *   1. 对每只成份股**复用 aggregateForStock** (dryRun=true 默认, 行业聚合**不写库**
+   *      — 单股观点已落库; 行业层是 read-time view);
+   *   2. 跨股**合并** opinions, 二次走 dedupeAndSort (跨股相同 KOL × 日期共识去重);
+   *   3. 按 `decayedAuthorityWeightedSentiment(rec, asOfDate)` 排序取 top N;
+   *   4. **加权平均**: `Σ decayed / N` → industry-level [-1, 1] 分数
+   *      (与 SentimentAnalyzer 同款契约, 缺数 fail-OPEN 返 0);
+   *   5. 输出 `by_stock` / `by_source` 子分供 drill-down.
+   *
+   * **不 throw**: 任一股票聚合失败用 0/[]降级; 输入全失败 (e.g. 0 个有效 stockCode)
+   * → 返 `error` 字段 + aggregate_sentiment=0.
+   */
+  async aggregateForIndustry(
+    industry: string,
+    stockCodes: string[],
+    options: AggregateOptions & { topLimit?: number } = {}
+  ): Promise<IndustryAggregateResult> {
+    const asOf = options.asOfDate || todayLocalIso();
+    const topLimit = Math.max(1, Math.min(50, options.topLimit ?? 10));
+
+    const emptyBySource: Record<KOLSource, number> = {
+      research_report: 0,
+      east_money_news: 0,
+      xq_hot_concept: 0,
+      etf_flow: 0,
+      policy_doc: 0,
+    };
+
+    const trimmedIndustry = (industry || '').trim();
+    if (!trimmedIndustry) {
+      return {
+        industry: trimmedIndustry,
+        stock_codes: [],
+        total_opinions: 0,
+        aggregate_sentiment: 0,
+        top_opinions: [],
+        by_stock: {},
+        by_source: emptyBySource,
+        as_of_date: asOf,
+        error: 'industry is required',
+      };
+    }
+
+    // 去重 + 6 位 digits 校验; 非法码丢弃 (CLI / endpoint 拼错不致中断)
+    const validCodes = Array.from(new Set(stockCodes.filter(c => /^\d{6}$/.test(c))));
+    if (validCodes.length === 0) {
+      return {
+        industry: trimmedIndustry,
+        stock_codes: [],
+        total_opinions: 0,
+        aggregate_sentiment: 0,
+        top_opinions: [],
+        by_stock: {},
+        by_source: emptyBySource,
+        as_of_date: asOf,
+        error: 'no valid stock_code (expected 6 digits) in input',
+      };
+    }
+
+    // 子聚合默认 dryRun=true (行业层是 read view, 单股已有落库路径);
+    // 调用方仍可显式 options.dryRun=false 让 service 顺带落库.
+    const subOptions: AggregateOptions = {
+      ...options,
+      dryRun: options.dryRun ?? true,
+      asOfDate: asOf,
+    };
+
+    const byStock: Record<string, number> = {};
+    const merged: KOLOpinionRecord[] = [];
+
+    // 串行 (与 aggregateForStocks 同款节流哲学); 单股失败用 0/[]降级, 不抛
+    for (const code of validCodes) {
+      let opinions: KOLOpinionRecord[] = [];
+      try {
+        const r = await this.aggregateForStock(code, subOptions);
+        opinions = r.opinions;
+      } catch (e) {
+        logger.warn(
+          `KOLAggregator.aggregateForIndustry: stock=${code} failed: ${(e as Error).message}`
+        );
+      }
+      // 每股子分: signed weighted average (与行业总分同款公式, 保 [-1, 1] 单股层 drill-down)
+      byStock[code] = signedWeightedSentiment(opinions, asOf);
+      for (const o of opinions) merged.push(o);
+    }
+
+    // 跨股 dedupe + 时间 desc + source priority (相同 KOL × 同一日 = 共识, 只算一次)
+    const deduped = dedupeAndSort(merged, merged.length);
+
+    // 行业层: signed weighted average
+    //   numerator   = Σ sentiment_score × authority × decay  (带符号)
+    //   denominator = Σ authority × decay                    (|权重|, 不带符号)
+    //   结果 ∈ [-1, 1]: 空头主导 < 0, 多头主导 > 0, 共识弱 → 接近 0.
+    // 这与 SentimentAnalyzer 缺数 fail-OPEN 同款 (0 个 opinion 或权重 0 → 返 0).
+    const aggregateSentiment = signedWeightedSentiment(deduped, asOf);
+
+    // top_opinions: 跨股 decayed weight desc 取 topLimit (重排, 不复用 dedupeAndSort 的时序排)
+    const topOpinions = [...deduped]
+      .sort((a, b) => {
+        const wa = Math.abs(decayedAuthorityWeightedSentiment(a, asOf));
+        const wb = Math.abs(decayedAuthorityWeightedSentiment(b, asOf));
+        if (wa !== wb) return wb - wa;
+        // tie-break: 时间 desc → source priority → kol_name asc (与 dedupeAndSort 一致, 保 stable)
+        if (a.opinion_date !== b.opinion_date) {
+          return a.opinion_date < b.opinion_date ? 1 : -1;
+        }
+        return a.kol_name < b.kol_name ? -1 : a.kol_name > b.kol_name ? 1 : 0;
+      })
+      .slice(0, topLimit);
+
+    const bySource = countBySource(deduped);
+
+    logger.info(
+      `[KOLAggregator] industry=${trimmedIndustry} stocks=${validCodes.length} ` +
+        `merged=${merged.length} deduped=${deduped.length} ` +
+        `aggregate_sentiment=${aggregateSentiment.toFixed(3)}`
+    );
+
+    return {
+      industry: trimmedIndustry,
+      stock_codes: validCodes,
+      total_opinions: deduped.length,
+      aggregate_sentiment: aggregateSentiment,
+      top_opinions: topOpinions,
+      by_stock: byStock,
+      by_source: bySource,
+      as_of_date: asOf,
+    };
   }
 
   // ---- per-source 防御性 fetch (任一来源失败不影响其他) ----
