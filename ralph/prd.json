@@ -1923,8 +1923,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 125,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DONE 2026/06/20: AIWeeklyOpinion 升级到双路 (remote LLM → heuristic 兜底) + 200-300 字 budget + 3-5 条结构化 recommendations. 关键改动: (1) AIWeeklyOpinion 新增 recommendations:string[] 字段, frontend type + UI 同步 (SettingsWorkspace + settingsService.ts); (2) buildHeuristicWeeklyOpinion 输出契约升级 — paragraphs 1-5 段 + recommendations 3-5 条, 拼起来中文字符 200-300 字; pct 6 档每档配 actionable bullets (大涨锁止盈/小涨持仓/平观察/小回行业再平衡/大回降仓位 50% 以下); (3) 新增 callRemoteWeeklyOpinion(payload, {axiosImpl, baseUrl, timeoutMs}) — 调 TradingAgents /api/weekly-opinion, axios 注入式可 unit-test, 失败/超时/解析错全 fail-OPEN 返 null (caller 走 heuristic); (4) parseRemoteWeeklyOpinionPayload 纯函数 — 校验 status=success + headline + (paragraphs|recommendations) 至少一个非空, 否则返 null; (5) clampOpinionToWordBudget(opinion) 强制 [200, 300] 字 — 不够 200 字按 HEURISTIC_FILLER_RECOMMENDATIONS 5 条 generic 兜底建议补到过线, 超 300 字优先弹末尾 recommendations 再弹 paragraphs 尾段, headline 永远保留; (6) countChineseChars (U+4E00-9FFF only, 不数 ASCII/数字) + countOpinionChineseChars 工具函数; (7) DefaultWeeklyReviewDataSource.generateAIWeeklyOpinion 新实现: try remote → clamp → 若 < 200 字降级 heuristic (避免远端 \"成功但 20 字\" 悄悄退化); (8) email HTML/text 双路渲染 recommendations section (💡 操作建议) — 既有的 heuristic 兜底路径无需改动. 测试: weekly-review-report-service.test.ts 437→454 ok / 0 failed (新增 17 项: countChineseChars 4 case / countOpinion 1 / clamp min/max 边界 / buildHeuristic 7 case × 2 budget assert / parseRemote 6 case 含 status FAILED + 空内容 + 直顶层 + 类型过滤 / callRemote axiosImpl 注入 happy + throw + bad-shape / remote-short 降级路径 / META-GUARD 正则扫源文件 6 条边界 — callRemoteWeeklyOpinion+clampOpinionToWordBudget+WEEKLY_OPINION_MIN_CHARS gate+try/catch+heuristic 兜底+recommendations 字段). tsc 0 err / lint 0 new err. 浏览器手动 smoke: SettingsWorkspace 预览周报 → 期望 AI 周观点 section 下方多一组 💡 操作建议 bullet list (heuristic 兜底必出 3-4 条)."
     },
     {
       "id": "US-126",

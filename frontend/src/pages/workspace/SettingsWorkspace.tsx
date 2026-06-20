@@ -2078,6 +2078,20 @@ const WeeklyReviewPreviewModal: React.FC<WeeklyReviewPreviewModalProps> = ({
                 {p}
               </Paragraph>
             ))}
+            {payload.ai_opinion.recommendations && payload.ai_opinion.recommendations.length > 0 && (
+              <>
+                <Paragraph style={{ marginTop: 8, marginBottom: 4, fontWeight: 600 }}>
+                  💡 操作建议
+                </Paragraph>
+                <ul style={{ margin: 0, paddingLeft: 20, color: '#475569' }}>
+                  {payload.ai_opinion.recommendations.map((r, i) => (
+                    <li key={i} style={{ marginBottom: 4 }}>
+                      {r}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
           </Card>
 
           <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8 }}>

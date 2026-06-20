@@ -52,6 +52,7 @@ import {
   EmailNotificationSendResult,
   EmailPayload,
 } from './EmailNotificationService';
+import { TRADING_AGENTS_BASE_URL } from '../config/externalServices';
 
 // ---------------------------------------------------------------------------
 // 类型常量
@@ -215,6 +216,13 @@ export interface AIWeeklyOpinion {
   headline: string;
   /** 多段叙述（HTML 排版） */
   paragraphs: string[];
+  /**
+   * US-125 PM-014 — 结构化建议 (3-5 条 actionable bullets).
+   * 与 paragraphs 拼接后整段中文字符数 200-300 (邮件正文阅读区间).
+   * 远端必须返这个字段; 远端缺失或空时本 service 自动降级到 heuristic.
+   * 兜底逻辑见 `buildHeuristicWeeklyOpinion` (基于 pct / 行业 / 关注事件 生成).
+   */
+  recommendations: string[];
 }
 
 export interface WeeklyReviewPayload {
@@ -896,6 +904,13 @@ export function buildEquityCurveSparkline(
  * 启发式 AI 周观点 —— 远端不可达时兜底；与 US-061 双路范式一致。
  * 完全基于 payload 数据（PnL pct / 行业 top / 个股 top / 关注事件），
  * 不调远端服务（保证邮件 cron 不依赖远端高可用）。
+ *
+ * US-125 PM-014 — 输出契约升级:
+ *   1. paragraphs 段数从 1-4 段扩到 3-5 段 (覆盖整体节奏 / 行业 / 个股 / 事件 / 仓位建议)
+ *   2. 新增 recommendations[] 3-4 条结构化建议 (基于 pct / 行业 / 个股贡献)
+ *   3. headline + paragraphs + recommendations 拼起来中文字符数 200-300, 不达标
+ *      自动补到 200 (用通用 risk-on/off 兜底), 超 300 截到 300.
+ *   4. 远端返回 < 200 字时 WeeklyReviewReportService 自动 fallback 到本启发式.
  */
 export function buildHeuristicWeeklyOpinion(payload: {
   pnl_pct: number | null;
@@ -907,9 +922,16 @@ export function buildHeuristicWeeklyOpinion(payload: {
   const pct = payload.pnl_pct;
   let headline = '组合本周整体走势平稳，继续观察策略表现。';
   const paragraphs: string[] = [];
+  const recommendations: string[] = [];
 
   if (pct === null) {
     headline = '上周净值数据不足，建议确认模拟盘是否正常运行。';
+    paragraphs.push(
+      '上周缺少净值快照，可能是模拟盘未启动、snapshot cron 未跑或新建账户尚无历史数据，无法生成完整复盘。'
+    );
+    recommendations.push('登录系统检查 PaperTradingSnapshot 任务是否按日 17:00 跑通');
+    recommendations.push('确认账户已绑定有效模拟盘并存在持仓');
+    recommendations.push('数据补齐后下周再回看本份复盘');
   } else if (pct >= 3) {
     headline = `组合本周大幅跑赢，净值 +${pct.toFixed(2)}%，建议关注后续兑现节奏。`;
   } else if (pct >= 1) {
@@ -970,15 +992,234 @@ export function buildHeuristicWeeklyOpinion(payload: {
   if (payload.upcoming_events.length > 0) {
     const evCount = payload.upcoming_events.length;
     paragraphs.push(`本周共 ${evCount} 个关注事件触发，重点跟踪业绩预告及发布公告对持仓的影响。`);
-  } else {
+  } else if (pct !== null) {
     paragraphs.push('本周暂无重要事件触发，可专注于持仓节奏与新仓位筛选。');
   }
 
-  return {
+  // ---- US-125 PM-014: 结构化建议 (基于 pct / 行业 / 个股 / 事件) ----
+  if (pct !== null) {
+    if (pct >= 3) {
+      recommendations.push('对盈利头寸设置移动止盈，锁定本周已实现收益');
+      recommendations.push('观察下周成交量配合，警惕情绪化追高');
+    } else if (pct >= 1) {
+      recommendations.push('保持当前持仓节奏，按既定计划逐步加仓优势品种');
+      recommendations.push('每日盘后对照策略画像核对偏离度，避免风格漂移');
+    } else if (pct > -1) {
+      recommendations.push('观察一周后再决定加减仓，不在震荡区主动放大仓位');
+      recommendations.push('利用空窗期完善选股池与回测，准备下一个突破信号');
+    } else if (pct > -3) {
+      recommendations.push('对亏损股逐一复盘进场逻辑，未达预期立刻减仓');
+      recommendations.push('行业敞口若已 > 25% 立即触发再平衡，分散单一赛道风险');
+    } else {
+      recommendations.push('暂停所有非必要新仓，先把仓位降到 50% 以下保现金');
+      recommendations.push('对持仓股逐一过 5% / 8% 止损线，纪律性兑现亏损');
+      recommendations.push('复盘本周 3 笔最大亏损交易，把教训写入交易日志');
+    }
+  }
+  if (losingIndustries.length > 0 && recommendations.length < 5) {
+    recommendations.push(
+      `下周适度降低 ${
+        losingIndustries[0].industry === '__UNKNOWN__' ? '未分类' : losingIndustries[0].industry
+      } 行业敞口，再平衡到行业均匀`
+    );
+  }
+  if (payload.upcoming_events.length > 0 && recommendations.length < 5) {
+    recommendations.push('提前为本周公告日设置持仓提醒，事件驱动股留意盘前波动');
+  }
+
+  // ---- 字数 budget: 200 ≤ chineseChars ≤ 300 ----
+  const opinion = clampOpinionToWordBudget({
     source: 'heuristic',
     headline,
     paragraphs,
+    recommendations,
+  });
+  return opinion;
+}
+
+// ---------------------------------------------------------------------------
+// US-125 PM-014 — AIWeeklyOpinion 字数 budget + remote payload 解析
+// ---------------------------------------------------------------------------
+
+/**
+ * US-125 PM-014 — 字数预算下限 (AC: 输出 ≥ 200 字).
+ * 远端 / 启发式产出未达此值时, 由 buildHeuristicFillerSentences 补足.
+ */
+export const WEEKLY_OPINION_MIN_CHARS = 200;
+/**
+ * US-125 PM-014 — 字数预算上限 (AC: LLM ≤ 300 字摘要).
+ * 超过此值时由 truncateOpinionToMax 优先截 recommendations, 再截 paragraphs 尾段.
+ */
+export const WEEKLY_OPINION_MAX_CHARS = 300;
+/** 远端 weekly-opinion 调用 timeout (LLM 推理偏慢, 容忍 30s) */
+export const REMOTE_WEEKLY_OPINION_TIMEOUT_MS = 30_000;
+
+/**
+ * 数中文字符 (CJK Unified Ideographs U+4E00-U+9FFF) — 不含 ASCII 标点 / 数字.
+ * AC "≥ 200 字" 在中文语境下指中文字符数, 数字 / 英文不计入. 避免被 "+2.34%"
+ * 这种数字串撑大字数误判 "够长".
+ */
+export function countChineseChars(s: string): number {
+  if (!s) return 0;
+  let n = 0;
+  for (const ch of String(s)) {
+    const code = ch.codePointAt(0) || 0;
+    if (code >= 0x4e00 && code <= 0x9fff) n += 1;
+  }
+  return n;
+}
+
+/** opinion 整段中文字符总数 = headline + paragraphs + recommendations 拼起来. */
+export function countOpinionChineseChars(o: AIWeeklyOpinion): number {
+  const parts = [o.headline || '', ...(o.paragraphs || []), ...(o.recommendations || [])];
+  return parts.reduce((sum, p) => sum + countChineseChars(p), 0);
+}
+
+/**
+ * 字数不达 200 时的 generic filler — 与具体 pct 解耦, 任何 opinion 都能复用.
+ * 顺序按"操盘手最常忽视 → 最容易上手"排列, 边补边数, 够 200 字立刻停.
+ * 每条 ≥ 40 中文字, 5 条全加 ≈ 220 字, 远端短文 (10 字内) 也能补到 200.
+ */
+const HEURISTIC_FILLER_RECOMMENDATIONS: ReadonlyArray<string> = Object.freeze([
+  '每日盘后花十分钟过一遍风控告警收件箱, 不要把中等级别告警遗忘到下周, 中级别会逐步累积成系统性偏移',
+  '检查模拟盘账户资金曲线与策略画像的吻合度, 异常偏离立刻触发组合优化器重排, 不要等周报再处理',
+  '把本周最大盈利股与最大亏损股各取一只写入交易日志, 标注下次进出场的具体改进点与触发条件, 形成迭代闭环',
+  '复盘上周触发的所有止损单, 确认止损价是否按百分之五与百分之八阶梯正确设置, 不允许人工挪窝抗单',
+  '行业敞口若大于百分之二十五立刻分散到下一只候选股, 防止单一赛道黑天鹅, 同时记录调仓决策的事前理由',
+]);
+
+/**
+ * Clamp 一个 opinion 到 [WEEKLY_OPINION_MIN_CHARS, WEEKLY_OPINION_MAX_CHARS] 区间.
+ *   - 不够 200 字: 按 HEURISTIC_FILLER_RECOMMENDATIONS 顺序补 recommendations,
+ *     直到字数过线或填料用完 (用完仍不够则不再强补, 邮件 client 自适应).
+ *   - 超 300 字: 优先弹掉末尾 recommendations, 不行再弹掉末尾 paragraphs.
+ *     绝对不动 headline (headline 30-60 字, 即便单独存在也合规).
+ */
+export function clampOpinionToWordBudget(input: AIWeeklyOpinion): AIWeeklyOpinion {
+  const out: AIWeeklyOpinion = {
+    source: input.source,
+    headline: input.headline,
+    paragraphs: [...(input.paragraphs || [])],
+    recommendations: [...(input.recommendations || [])],
   };
+
+  // 1. 不够 200 字 — 顺序补 filler 直到过线或填料用完
+  let cur = countOpinionChineseChars(out);
+  for (
+    let i = 0;
+    cur < WEEKLY_OPINION_MIN_CHARS && i < HEURISTIC_FILLER_RECOMMENDATIONS.length;
+    i += 1
+  ) {
+    const filler = HEURISTIC_FILLER_RECOMMENDATIONS[i];
+    if (out.recommendations.includes(filler)) continue;
+    out.recommendations.push(filler);
+    cur = countOpinionChineseChars(out);
+  }
+
+  // 2. 超 300 字 — 优先弹末尾 recommendations, 不够再弹末尾 paragraphs
+  cur = countOpinionChineseChars(out);
+  while (cur > WEEKLY_OPINION_MAX_CHARS && out.recommendations.length > 0) {
+    out.recommendations.pop();
+    cur = countOpinionChineseChars(out);
+  }
+  while (cur > WEEKLY_OPINION_MAX_CHARS && out.paragraphs.length > 1) {
+    out.paragraphs.pop();
+    cur = countOpinionChineseChars(out);
+  }
+  return out;
+}
+
+/**
+ * 远端 TradingAgents `/api/weekly-opinion` 响应解析 (纯函数, 不调 axios).
+ * 期望 shape: `{ status: 'success', data: { headline, paragraphs[], recommendations[] } }`.
+ * 任一字段缺失 / 类型不对 → 返 null (caller 走 heuristic 兜底).
+ *
+ * 注意: 此处仅验证 shape, **不**做字数 budget 检查 — 由调用方 (WeeklyReviewReportService)
+ * 跑完 clampOpinionToWordBudget 后再用 countOpinionChineseChars 判断
+ * `< WEEKLY_OPINION_MIN_CHARS` 时降级到 heuristic, 防止远端返回"成功但只有 20 字"
+ * 这种悄悄退化的场景.
+ */
+export function parseRemoteWeeklyOpinionPayload(raw: any): AIWeeklyOpinion | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const status = String((raw as any).status || '').toLowerCase();
+  if (status && status !== 'success' && status !== 'ok') return null;
+  const data = (raw as any).data && typeof (raw as any).data === 'object' ? (raw as any).data : raw;
+  const headline = typeof data.headline === 'string' ? data.headline.trim() : '';
+  if (!headline) return null;
+  const paragraphsRaw = Array.isArray(data.paragraphs) ? data.paragraphs : [];
+  const recommendationsRaw = Array.isArray(data.recommendations) ? data.recommendations : [];
+  const paragraphs = paragraphsRaw
+    .map((p: any) => (typeof p === 'string' ? p.trim() : ''))
+    .filter((p: string) => p.length > 0);
+  const recommendations = recommendationsRaw
+    .map((r: any) => (typeof r === 'string' ? r.trim() : ''))
+    .filter((r: string) => r.length > 0);
+  // 至少 1 段 paragraphs 或 1 条 recommendation 才算成功 (否则等同于无内容)
+  if (paragraphs.length === 0 && recommendations.length === 0) return null;
+  return { source: 'remote', headline, paragraphs, recommendations };
+}
+
+/**
+ * 调远端 TradingAgents `/api/weekly-opinion`. 失败 / timeout / 解析失败 → null.
+ * **不**抛 — 让 caller (DataSource.generateAIWeeklyOpinion) 走 heuristic 兜底.
+ *
+ * payload 只喂聚合后的轻量摘要 (pct + 行业 top 3 + 个股 top 3 + 事件 top 3),
+ * 不喂完整 trade 流水, 控制 prompt 长度并避免泄漏底层持仓.
+ */
+export async function callRemoteWeeklyOpinion(
+  payload: {
+    pnl_pct: number | null;
+    industry_contribution: IndustryContributionRow[];
+    top_winners: SymbolContributionRow[];
+    top_losers: SymbolContributionRow[];
+    upcoming_events: UpcomingEventRow[];
+  },
+  options: {
+    /** 注入 axios 替代品 (单测用) */
+    axiosImpl?: { post: (url: string, body: any, opts?: any) => Promise<any> };
+    /** override base URL (单测稳定化) */
+    baseUrl?: string;
+    /** override timeout (单测稳定化) */
+    timeoutMs?: number;
+  } = {}
+): Promise<AIWeeklyOpinion | null> {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const axios = options.axiosImpl || require('axios');
+  const baseUrl = options.baseUrl || TRADING_AGENTS_BASE_URL;
+  const timeout = options.timeoutMs ?? REMOTE_WEEKLY_OPINION_TIMEOUT_MS;
+  const body = {
+    pnl_pct: payload.pnl_pct,
+    industry_top: payload.industry_contribution.slice(0, 3).map(r => ({
+      industry: r.industry,
+      realized_pnl: r.realized_pnl,
+      trade_count: r.trade_count,
+    })),
+    winners_top: payload.top_winners.slice(0, 3).map(r => ({
+      symbol: r.symbol,
+      name: r.name,
+      realized_pnl: r.realized_pnl,
+    })),
+    losers_top: payload.top_losers.slice(0, 3).map(r => ({
+      symbol: r.symbol,
+      name: r.name,
+      realized_pnl: r.realized_pnl,
+    })),
+    events_top: payload.upcoming_events.slice(0, 3).map(ev => ({
+      symbol: ev.symbol,
+      name: ev.name,
+      detail: ev.detail,
+      event_type: ev.event_type,
+    })),
+    word_budget: { min: WEEKLY_OPINION_MIN_CHARS, max: WEEKLY_OPINION_MAX_CHARS },
+  };
+  let response: any;
+  try {
+    response = await axios.post(`${baseUrl}/api/weekly-opinion`, body, { timeout });
+  } catch (err: any) {
+    logger.warn(`[WeeklyReview] axios.post /api/weekly-opinion failed: ${err?.message || err}`);
+    return null;
+  }
+  return parseRemoteWeeklyOpinionPayload(response?.data);
 }
 
 /**
@@ -1095,6 +1336,14 @@ export function buildWeeklyReviewEmail(payload: WeeklyReviewPayload): EmailPaylo
             )}</p>`
         )
         .join('')}
+      ${
+        payload.ai_opinion.recommendations && payload.ai_opinion.recommendations.length > 0
+          ? `<div style="margin-top:10px;font-size:13px;color:#1e293b;font-weight:600;">💡 操作建议</div>
+      <ul style="margin:4px 0 0 0;padding-left:20px;font-size:13px;line-height:1.7;color:#475569;">${payload.ai_opinion.recommendations
+        .map(r => `<li style="margin-bottom:4px;">${escapeHtml(r)}</li>`)
+        .join('')}</ul>`
+          : ''
+      }
     </div>
   `.trim();
 
@@ -1340,6 +1589,12 @@ function buildPlainTextFallback(payload: WeeklyReviewPayload): string {
   lines.push(`  ${payload.ai_opinion.headline}`);
   for (const p of payload.ai_opinion.paragraphs) {
     lines.push(`  ${p}`);
+  }
+  if (payload.ai_opinion.recommendations && payload.ai_opinion.recommendations.length > 0) {
+    lines.push('  操作建议：');
+    for (const r of payload.ai_opinion.recommendations) {
+      lines.push(`    • ${r}`);
+    }
   }
   return lines.join('\n');
 }
@@ -1690,10 +1945,34 @@ export class DefaultWeeklyReviewDataSource implements WeeklyReviewDataSource {
     top_losers: SymbolContributionRow[];
     upcoming_events: UpcomingEventRow[];
   }): Promise<AIWeeklyOpinion> {
-    // 当前版本：直接走启发式（保证邮件 cron 0 远端依赖）。
-    // 后续 story 可在此处 try { 远端 } catch { heuristic } 双路，与
-    // US-061 TechnicalAnalysisService 同款双路范式。
-    return buildHeuristicWeeklyOpinion(payload);
+    // US-125 PM-014 — 双路: remote LLM → heuristic 兜底, 与 US-061 同款范式.
+    //
+    // 字数 AC: 远端正文 ≥ 200 字才算"够长", 否则降级到 heuristic (避免远端
+    // 返回 "本周走势平稳" 这种 10 字摘要悄悄退化体验). clampOpinionToWordBudget
+    // 同时把超 300 字的远端响应截到 ≤ 300 字.
+    const heuristic = () => buildHeuristicWeeklyOpinion(payload);
+    let remote: AIWeeklyOpinion | null = null;
+    try {
+      remote = await callRemoteWeeklyOpinion(payload);
+    } catch (err: any) {
+      logger.warn(
+        `[WeeklyReview] callRemoteWeeklyOpinion 失败 → heuristic: ${err?.message || err}`
+      );
+      return heuristic();
+    }
+    if (!remote) {
+      return heuristic();
+    }
+    const clamped = clampOpinionToWordBudget(remote);
+    if (countOpinionChineseChars(clamped) < WEEKLY_OPINION_MIN_CHARS) {
+      logger.warn(
+        `[WeeklyReview] remote opinion < ${WEEKLY_OPINION_MIN_CHARS} 字 (实际 ${countOpinionChineseChars(
+          clamped
+        )} 字) → heuristic 兜底`
+      );
+      return heuristic();
+    }
+    return clamped;
   }
 
   async sendEmail(payload: WeeklyReviewPayload, to: string): Promise<EmailNotificationSendResult> {

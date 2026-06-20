@@ -222,6 +222,8 @@ export interface AIWeeklyOpinion {
   source: 'remote' | 'heuristic';
   headline: string;
   paragraphs: string[];
+  /** US-125 PM-014 — 3-5 条结构化操作建议 (与 paragraphs 一起拼成 200-300 字摘要) */
+  recommendations: string[];
 }
 
 export interface WeeklyReviewPayload {

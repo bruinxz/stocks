@@ -313,6 +313,7 @@ export const portfolioWorkspaceService = {
   fetchBenchmarkHistory,
   getCorrelationReport,
   getIndustryConcentrationSummary,
+  getDailyAttributionReport,
 };
 
 export default portfolioWorkspaceService;
@@ -430,4 +431,123 @@ export async function getExposureReport(portfolioId?: number): Promise<ExposureR
     throw new Error(res.data?.message || '获取 exposure 失败');
   }
   return res.data.data as ExposureReport;
+}
+
+// ============================================================
+// US-123 [PM-010] PortfolioWorkspace 归因卡 — 后端 6 维归因报告
+// ============================================================
+//
+// 调 GET /api/portfolio/:id/attribution/daily (PM-007 / US-084 route),
+// 读 daily_attribution_reports 表 (PM-003 schema). 报告由 cron
+// DAILY_ATTRIBUTION_GENERATE (US-083 / PM-006) 在 17:00 工作日 upsert.
+//
+// 关键契约 (与 backend DailyAttributionService.DailyAttributionReport 对齐):
+//   - breakdown JSONB 含 6 维 + factor_contrib_total + industry_contrib[] +
+//     execution_cost + residual; 真值由 AttributionEngine (PM-002) 填.
+//   - best_trades / worst_trades 各取 top 3.
+//   - ai_summary ≤ 200 字; PM-005 (AIAttributionSummary) 替换成 LLM 输出.
+//   - status='ok'/'skipped'/'failed', skipped/failed 时仍写一行做"今日未跑"留痕.
+//
+// 404 = "当日报告不存在" → 返 null 让 UI 显示 Empty 占位 + 用户感知 cron 状态.
+
+export interface AttributionFactorContrib {
+  factor: string;
+  pnl: number;
+  pct: number;
+  /** 0-1 之间, 该因子在组合中的暴露权重 (PM-002 真填; placeholder=0) */
+  exposure: number;
+}
+
+export interface AttributionIndustryContrib {
+  industry: string;
+  pnl: number;
+  pct: number;
+  trade_count: number;
+}
+
+export interface AttributionExecutionCostBreakdown {
+  /** 总成本 (元) = commission_total + slippage_total */
+  total_cost: number;
+  /** 券商佣金 (元) */
+  commission_total: number;
+  /** 印花税 (元), 仅 SELL */
+  stamp_duty_total: number;
+  /** 过户费 (元) */
+  transfer_fee_total: number;
+  /** 滑点 (元), 仅当 caller 提供 ref_prices 时非 0 */
+  slippage_total: number;
+}
+
+export interface AttributionBreakdown {
+  factor_contrib: AttributionFactorContrib[];
+  factor_contrib_total: number;
+  industry_contrib: AttributionIndustryContrib[];
+  timing_contrib: number;
+  selection_contrib: number;
+  sizing_contrib: number;
+  execution_cost: number;
+  execution_cost_breakdown: AttributionExecutionCostBreakdown | null;
+  residual: number;
+}
+
+export interface AttributionBestWorstTrade {
+  id: number;
+  symbol: string;
+  name?: string | null;
+  realized_pnl: number;
+  realized_pnl_pct?: number | null;
+  amount: number;
+  quantity: number;
+}
+
+export interface DailyAttributionReportRow {
+  id: number;
+  portfolio_id: number;
+  date: string;
+  total_pnl: number;
+  total_pnl_pct: number | null;
+  realized_pnl: number;
+  unrealized_delta: number;
+  trade_count: number;
+  buy_count: number;
+  sell_count: number;
+  breakdown: AttributionBreakdown;
+  best_trades: AttributionBestWorstTrade[];
+  worst_trades: AttributionBestWorstTrade[];
+  ai_summary: string;
+  bias_findings: Array<Record<string, unknown>>;
+  recommendations: string[];
+  status: 'ok' | 'skipped' | 'failed' | string;
+  reason: string | null;
+  metadata: Record<string, unknown>;
+  generated_at: string;
+  source: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * 拉取单个 portfolio 当日归因报告 (US-123 PM-010).
+ *
+ * @param portfolioId  PaperTradingPortfolio.id
+ * @param date         YYYY-MM-DD, 默认后端今日 (Asia/Shanghai)
+ * @returns            报告对象, 404 (报告未生成) 返 null 让 UI 走 Empty.
+ *                     其它错误透传 (component 走 loadError 兜底).
+ */
+export async function getDailyAttributionReport(
+  portfolioId: number,
+  date?: string
+): Promise<DailyAttributionReportRow | null> {
+  try {
+    const url = `/portfolio/${portfolioId}/attribution/daily`;
+    const res = await api.get(url, { params: date ? { date } : {} });
+    return unwrap<DailyAttributionReportRow>(res, '获取归因报告失败');
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status === 404) {
+      // 报告未生成 — cron 未跑 / 当日新建账户 / 周末. 让 UI 显示 Empty + 解释文案.
+      return null;
+    }
+    throw err;
+  }
 }

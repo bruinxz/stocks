@@ -358,8 +358,8 @@ assert('[5.6] trades undefined → []', filterTradesOnDate(undefined, '2026-06-1
     /key:\s*['"]attribution['"][^}]*label:\s*['"]日归因['"]/.test(src),
   );
   assert(
-    '[9.3] PortfolioWorkspace.tsx 渲染 <DailyAttributionTab',
-    /<DailyAttributionTab\s+snapshots=\{snapshots\}\s+trades=\{trades\}\s*\/>/.test(src),
+    '[9.3] PortfolioWorkspace.tsx 渲染 <DailyAttributionTab (含 snapshots + trades props)',
+    /<DailyAttributionTab\b[\s\S]*?snapshots=\{snapshots\}[\s\S]*?trades=\{trades\}/.test(src),
   );
   assert(
     '[9.4] DailyAttributionTab 组件定义在原文件',

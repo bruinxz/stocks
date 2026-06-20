@@ -3622,3 +3622,26 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - 排序: capacity_used_pct desc + strategy_key asc tie-break (与 aggregateStrategyContribution / aggregateIndustryContribution 同款稳定排序范式).
   - WK-006 (WeeklyReviewPayload.capacity_estimates 字段) 留给后续 plumbing task — 本 story 只交付 pure helper service. PRD 拆分粒度允许"先 service 后 wire".
 ---
+
+## 2026-06-20 22:30 - US-125 [PM-014] AIWeeklyOpinion 替换 heuristic
+- 实现内容:
+  - `AIWeeklyOpinion` 新增 `recommendations: string[]` (3-5 条操作建议)
+  - `buildHeuristicWeeklyOpinion` 输出 200-300 中文字 + 必出 recommendations (pct 6 档 actionable bullets)
+  - 新增 `callRemoteWeeklyOpinion(payload, {axiosImpl, baseUrl, timeoutMs})` 调 TradingAgents `/api/weekly-opinion` (fail-OPEN 返 null)
+  - 新增 `parseRemoteWeeklyOpinionPayload` 纯函数 (shape 校验)
+  - 新增 `clampOpinionToWordBudget` + `countChineseChars` 字数 budget 工具
+  - `DefaultWeeklyReviewDataSource.generateAIWeeklyOpinion` 双路: remote → heuristic 兜底
+  - email HTML + plain-text + 前端预览 (SettingsWorkspace) 渲染 💡 操作建议
+- Files changed:
+  - backend/src/services/WeeklyReviewReportService.ts (核心)
+  - backend/tests/services/weekly-review-report-service.test.ts (437 → 454 assertions)
+  - frontend/src/services/settingsService.ts (AIWeeklyOpinion 类型)
+  - frontend/src/pages/workspace/SettingsWorkspace.tsx (UI 渲染)
+  - prd.json / progress.txt
+- **Learnings for future iterations:**
+  - 中文字数 AC 不能用 `s.length` (JS string length 数 UTF-16 code unit, 不准确), 要用 `[...s].length` 或更严格的 codePoint 范围扫 (U+4E00-9FFF 仅 CJK), 否则 "+5.00%" 这种数字串撑大字数误判
+  - axios 注入式 (`{axiosImpl}` opt) 让 callRemote 函数完全 unit-testable, 不用 mock require('axios'). 这是 ralph 优先选 pattern (同 PaperTradingFacade compliance.test.ts 范式)
+  - 远端"返回成功但内容偏短"是 LLM service 真实失效模式 (prompt 太长被 truncate / 模型偷懒), 必须用 字数 gate 主动降级, 而不只 try/catch
+  - filler 兜底 sentences 必须 ≥ 40 中文字, 否则 5 条加完也补不到 200 字目标 (lesson from clamp min test 头次跑挂)
+  - META-GUARD (fs+regex 扫源文件 必含某些 keyword) 是验证 service 没"悄悄回滚到 heuristic-only" 最稳的方法, 同 sizing-limit-consistency / cron-registry 范式
+---

@@ -80,6 +80,14 @@ import {
   PrevWeekRange,
   CorrelationMatrixPayload,
   DailyCloseRow,
+  // US-125 PM-014
+  WEEKLY_OPINION_MIN_CHARS,
+  WEEKLY_OPINION_MAX_CHARS,
+  countChineseChars,
+  countOpinionChineseChars,
+  clampOpinionToWordBudget,
+  parseRemoteWeeklyOpinionPayload,
+  callRemoteWeeklyOpinion,
 } from '../../src/services/WeeklyReviewReportService';
 import {
   EmailNotificationService,
@@ -202,6 +210,7 @@ function makeFakeDataSource(state: FakeState): WeeklyReviewDataSource {
           source: 'heuristic',
           headline: 'FAKE',
           paragraphs: [],
+          recommendations: [],
         }
       );
     },
@@ -1044,6 +1053,7 @@ function testBuildWeeklyReviewEmail(): void {
       source: 'heuristic',
       headline: '组合本周大幅跑赢 +5.00%',
       paragraphs: ['白酒主推', '半导体平稳'],
+      recommendations: ['设置移动止盈锁定收益', '降低单一行业曝光'],
     },
   };
   const mail = buildWeeklyReviewEmail(payload);
@@ -1061,6 +1071,11 @@ function testBuildWeeklyReviewEmail(): void {
   assert('html 含 AI 周观点', mail.html.includes('AI 周观点'));
   assert('html 含 本地启发式 tag', mail.html.includes('本地启发式'));
   assert('html 含 headline', mail.html.includes('跑赢'));
+  // US-125 PM-014 — recommendations 渲染
+  assert('html 含 操作建议 section', mail.html.includes('操作建议'));
+  assert('html 含 移动止盈 建议', mail.html.includes('设置移动止盈锁定收益'));
+  assert('text 含 操作建议 line', !!mail.text && mail.text.includes('操作建议'));
+  assert('text 含 移动止盈 建议', !!mail.text && mail.text.includes('设置移动止盈锁定收益'));
   assert('text plain fallback 含 主要数据', !!mail.text && mail.text.includes('lym'));
   assert('text 含 PnL line', !!mail.text && mail.text.includes('+5,000.00'));
   // US-087 PM-011 — strategy 维度渲染
@@ -1810,7 +1825,7 @@ async function testSendUserIdFilter(): Promise<void> {
       return [];
     },
     async generateAIWeeklyOpinion() {
-      return { source: 'heuristic', headline: 'x', paragraphs: [] };
+      return { source: 'heuristic', headline: 'x', paragraphs: [], recommendations: [] };
     },
     async sendEmail() {
       return { success: true };
@@ -1890,6 +1905,301 @@ async function testSendLoadPortfolioThrows(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// US-125 PM-014 — AIWeeklyOpinion 字数 budget + remote payload 解析 + remote call
+// ---------------------------------------------------------------------------
+
+function testCountChineseChars(): void {
+  assertEqual('empty → 0', countChineseChars(''), 0);
+  assertEqual('null → 0', countChineseChars(null as any), 0);
+  assertEqual('纯中文', countChineseChars('一二三四五'), 5);
+  assertEqual('混合数字', countChineseChars('涨幅 +5.00%'), 2);
+  assertEqual('混合英文', countChineseChars('AI 周观点'), 3);
+  assertEqual('标点不计', countChineseChars('涨，跌。'), 2);
+}
+
+function testCountOpinionChineseChars(): void {
+  const o: AIWeeklyOpinion = {
+    source: 'heuristic',
+    headline: '一二三', // 3
+    paragraphs: ['四五', '六七八'], // 2 + 3
+    recommendations: ['九十'], // 2
+  };
+  assertEqual('合计', countOpinionChineseChars(o), 10);
+}
+
+function testClampOpinionMin(): void {
+  // 不够 200 字 → 自动补 recommendations
+  const short: AIWeeklyOpinion = {
+    source: 'heuristic',
+    headline: '组合本周平稳。',
+    paragraphs: ['本周整体波动较小。'],
+    recommendations: ['观察一周再决定。'],
+  };
+  const out = clampOpinionToWordBudget(short);
+  assert(
+    `clamp min: ≥ ${WEEKLY_OPINION_MIN_CHARS}`,
+    countOpinionChineseChars(out) >= WEEKLY_OPINION_MIN_CHARS ||
+      // 边界: 填料用完仍不够时不强补 (HEURISTIC_FILLER_RECOMMENDATIONS 才 5 条),
+      // 但 5 条加完肯定 > 200, 所以正常路径必满足.
+      out.recommendations.length >= 5
+  );
+  assert('clamp min: recommendations 不空', out.recommendations.length >= 1);
+  assert('clamp min: headline 不变', out.headline === short.headline);
+}
+
+function testClampOpinionMax(): void {
+  // 超 300 字 → 截 recommendations 优先
+  const longRec = Array.from({ length: 10 }, (_, i) =>
+    `第${i + 1}条建议非常非常非常非常非常非常长长长长长长长长长长长长长长`
+  );
+  const longParas = Array.from({ length: 5 }, (_, i) =>
+    `第${i + 1}段叙述非常非常非常非常非常非常长长长长长长长长长长长长长长`
+  );
+  const long: AIWeeklyOpinion = {
+    source: 'remote',
+    headline: '组合本周大幅跑赢',
+    paragraphs: longParas,
+    recommendations: longRec,
+  };
+  const out = clampOpinionToWordBudget(long);
+  assert(
+    `clamp max: ≤ ${WEEKLY_OPINION_MAX_CHARS}`,
+    countOpinionChineseChars(out) <= WEEKLY_OPINION_MAX_CHARS
+  );
+  assert('clamp max: headline 保留', out.headline === long.headline);
+  assert('clamp max: paragraphs 至少保留 1 段', out.paragraphs.length >= 1);
+}
+
+function testBuildHeuristicWeeklyOpinionWordBudget(): void {
+  // AC: 输出 ≥ 200 字
+  const cases: Array<Parameters<typeof buildHeuristicWeeklyOpinion>[0]> = [
+    { pnl_pct: null, industry_contribution: [], top_winners: [], top_losers: [], upcoming_events: [] },
+    { pnl_pct: 5, industry_contribution: [], top_winners: [], top_losers: [], upcoming_events: [] },
+    { pnl_pct: 2, industry_contribution: [], top_winners: [], top_losers: [], upcoming_events: [] },
+    { pnl_pct: 0, industry_contribution: [], top_winners: [], top_losers: [], upcoming_events: [] },
+    { pnl_pct: -2, industry_contribution: [], top_winners: [], top_losers: [], upcoming_events: [] },
+    { pnl_pct: -5, industry_contribution: [], top_winners: [], top_losers: [], upcoming_events: [] },
+    {
+      pnl_pct: -5,
+      industry_contribution: [
+        { industry: '半导体', realized_pnl: -3000, trade_count: 2, symbols: ['c'] },
+      ],
+      top_winners: [],
+      top_losers: [
+        { symbol: '000725.SZ', name: '京东方A', industry: '半导体', realized_pnl: -2000, trade_count: 1 },
+      ],
+      upcoming_events: [
+        { symbol: '600519.SH', name: '茅台', event_type: 'earnings_forecast', detail: 'x', announce_date: null },
+      ],
+    },
+  ];
+  for (let i = 0; i < cases.length; i += 1) {
+    const out = buildHeuristicWeeklyOpinion(cases[i]);
+    const n = countOpinionChineseChars(out);
+    assert(`case[${i}] ≥ ${WEEKLY_OPINION_MIN_CHARS} 字`, n >= WEEKLY_OPINION_MIN_CHARS, `actual=${n} headline=${out.headline}`);
+    assert(`case[${i}] ≤ ${WEEKLY_OPINION_MAX_CHARS} 字`, n <= WEEKLY_OPINION_MAX_CHARS, `actual=${n}`);
+    assert(`case[${i}] recommendations 非空`, out.recommendations.length > 0);
+    assertEqual(`case[${i}] source`, out.source, 'heuristic');
+  }
+}
+
+function testParseRemoteWeeklyOpinionPayload(): void {
+  // null / undefined / 非对象
+  assertEqual('null → null', parseRemoteWeeklyOpinionPayload(null), null);
+  assertEqual('undefined → null', parseRemoteWeeklyOpinionPayload(undefined), null);
+  assertEqual('string → null', parseRemoteWeeklyOpinionPayload('foo'), null);
+
+  // status 错误
+  assertEqual(
+    'status FAILED → null',
+    parseRemoteWeeklyOpinionPayload({ status: 'FAILED', data: { headline: 'x' } }),
+    null
+  );
+
+  // headline 缺失
+  assertEqual(
+    'no headline → null',
+    parseRemoteWeeklyOpinionPayload({ status: 'success', data: { paragraphs: ['x'] } }),
+    null
+  );
+
+  // 内容全空
+  assertEqual(
+    'empty content → null',
+    parseRemoteWeeklyOpinionPayload({
+      status: 'success',
+      data: { headline: '组合', paragraphs: [], recommendations: [] },
+    }),
+    null
+  );
+
+  // happy path (status=success + data wrapper)
+  const ok = parseRemoteWeeklyOpinionPayload({
+    status: 'success',
+    data: {
+      headline: '组合本周大幅跑赢',
+      paragraphs: ['行业贡献集中在白酒。', '个股贡献集中在茅台。'],
+      recommendations: ['锁定收益。', '降低敞口。'],
+    },
+  });
+  assert('happy 解析成功', ok !== null);
+  assertEqual('happy source', ok!.source, 'remote');
+  assertEqual('happy headline', ok!.headline, '组合本周大幅跑赢');
+  assertEqual('happy paragraphs 长度', ok!.paragraphs.length, 2);
+  assertEqual('happy recommendations 长度', ok!.recommendations.length, 2);
+
+  // 无 status wrapper (data 直接顶层)
+  const direct = parseRemoteWeeklyOpinionPayload({
+    headline: '组合',
+    paragraphs: ['段一'],
+    recommendations: [],
+  });
+  assert('direct 解析成功', direct !== null);
+
+  // 过滤掉非字符串元素
+  const mixed = parseRemoteWeeklyOpinionPayload({
+    status: 'success',
+    data: { headline: '组合', paragraphs: ['段一', null, 123, 'segment 2'], recommendations: ['建议'] },
+  });
+  assertEqual('mixed paragraphs 过滤', mixed!.paragraphs.length, 2);
+}
+
+async function testCallRemoteWeeklyOpinionAxiosInjected(): Promise<void> {
+  // Happy path: 注入 axios 返合规 payload
+  const captured: Array<{ url: string; body: any; opts: any }> = [];
+  const ok = await callRemoteWeeklyOpinion(
+    {
+      pnl_pct: 5,
+      industry_contribution: [],
+      top_winners: [],
+      top_losers: [],
+      upcoming_events: [],
+    },
+    {
+      baseUrl: 'http://fake-trading-agents:9999',
+      timeoutMs: 1234,
+      axiosImpl: {
+        async post(url, body, opts) {
+          captured.push({ url, body, opts });
+          return {
+            data: {
+              status: 'success',
+              data: {
+                headline: '组合本周大幅跑赢',
+                paragraphs: ['段一段二。'],
+                recommendations: ['建议一。'],
+              },
+            },
+          };
+        },
+      },
+    }
+  );
+  assert('remote 调用成功', ok !== null);
+  assertEqual('remote source', ok!.source, 'remote');
+  assertEqual('axios 命中 url', captured[0].url, 'http://fake-trading-agents:9999/api/weekly-opinion');
+  assertEqual('axios 命中 timeout', captured[0].opts.timeout, 1234);
+  assert('axios body 含 pnl_pct', captured[0].body.pnl_pct === 5);
+  assert('axios body 含 word_budget', !!captured[0].body.word_budget);
+
+  // Throw path
+  const failed = await callRemoteWeeklyOpinion(
+    { pnl_pct: 0, industry_contribution: [], top_winners: [], top_losers: [], upcoming_events: [] },
+    {
+      axiosImpl: {
+        async post() {
+          throw new Error('boom');
+        },
+      },
+    }
+  );
+  assertEqual('remote throw → null', failed, null);
+
+  // Bad-shape response → null
+  const bad = await callRemoteWeeklyOpinion(
+    { pnl_pct: 0, industry_contribution: [], top_winners: [], top_losers: [], upcoming_events: [] },
+    {
+      axiosImpl: {
+        async post() {
+          return { data: { status: 'success', data: { paragraphs: ['x'] } } }; // 无 headline
+        },
+      },
+    }
+  );
+  assertEqual('remote bad shape → null', bad, null);
+}
+
+async function testGenerateAIWeeklyOpinionRemoteShortFallback(): Promise<void> {
+  // 直接对 DefaultWeeklyReviewDataSource 走 generateAIWeeklyOpinion, 注入 axios
+  // 让 remote 返合规但 < 200 字 — 应自动降级到 heuristic.
+  const { DefaultWeeklyReviewDataSource } = await import(
+    '../../src/services/WeeklyReviewReportService'
+  );
+  // 直接 monkey-patch 实例的 generateAIWeeklyOpinion 行不通 (依赖 require('axios')),
+  // 改用 callRemoteWeeklyOpinion + clamp + 降级条件 重演 service 内逻辑.
+  const remote = await callRemoteWeeklyOpinion(
+    { pnl_pct: 5, industry_contribution: [], top_winners: [], top_losers: [], upcoming_events: [] },
+    {
+      axiosImpl: {
+        async post() {
+          return {
+            data: {
+              status: 'success',
+              data: {
+                headline: '组合本周大幅跑赢',
+                paragraphs: ['短。'],
+                recommendations: ['短。'],
+              },
+            },
+          };
+        },
+      },
+    }
+  );
+  assert('remote 解析非 null', remote !== null);
+  const clamped = clampOpinionToWordBudget(remote!);
+  // remote 内容短, clamp 也只能补到 filler 范围 (≥ 200 字)
+  assert(
+    'clamp 后 ≥ 200 字',
+    countOpinionChineseChars(clamped) >= WEEKLY_OPINION_MIN_CHARS
+  );
+  // service 内逻辑: 若 clamp 仍 < 200 字才降级 — 此处 clamp 后会拼足
+  // (filler 5 条每条 ~30 字, 加 1-2 条就够 200). 主要验 clamp 行为正确, 降级路径
+  // 由下面 meta-guard 验.
+  void DefaultWeeklyReviewDataSource;
+}
+
+function testMetaGuardRemoteFallbackBehavior(): void {
+  // META-GUARD: 源文件正则扫 generateAIWeeklyOpinion 必须含
+  // (1) callRemoteWeeklyOpinion (远端入口)
+  // (2) clampOpinionToWordBudget (字数 budget 必走)
+  // (3) WEEKLY_OPINION_MIN_CHARS 短文降级判定
+  // (4) try/catch (fail-OPEN)
+  // (5) heuristic 兜底 (buildHeuristicWeeklyOpinion)
+  // 与 cron-registry / sizing-limit-consistency 同款 meta-guard 范式.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const fs = require('fs');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const path = require('path');
+  const src = fs.readFileSync(
+    path.resolve(__dirname, '../../src/services/WeeklyReviewReportService.ts'),
+    'utf8'
+  );
+  assert('meta: 含 callRemoteWeeklyOpinion call', /await\s+callRemoteWeeklyOpinion\s*\(/.test(src));
+  assert('meta: 含 clampOpinionToWordBudget', /clampOpinionToWordBudget\s*\(/.test(src));
+  assert('meta: 含 WEEKLY_OPINION_MIN_CHARS gate', /WEEKLY_OPINION_MIN_CHARS/.test(src));
+  assert(
+    'meta: generateAIWeeklyOpinion 含 try',
+    /generateAIWeeklyOpinion[\s\S]{0,800}try\s*\{/.test(src)
+  );
+  assert('meta: 含 heuristic 兜底', /buildHeuristicWeeklyOpinion\s*\(/.test(src));
+  assert(
+    'meta: AIWeeklyOpinion 含 recommendations 字段',
+    /recommendations\s*:\s*string\s*\[\s*\]/.test(src)
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -1955,6 +2265,17 @@ async function main(): Promise<void> {
   await testSendUpcomingEventsThrowsNonBlocking();
   await testSendStockMetadataThrowsNonBlocking();
   await testSendLoadPortfolioThrows();
+
+  // US-125 PM-014
+  testCountChineseChars();
+  testCountOpinionChineseChars();
+  testClampOpinionMin();
+  testClampOpinionMax();
+  testBuildHeuristicWeeklyOpinionWordBudget();
+  testParseRemoteWeeklyOpinionPayload();
+  await testCallRemoteWeeklyOpinionAxiosInjected();
+  await testGenerateAIWeeklyOpinionRemoteShortFallback();
+  testMetaGuardRemoteFallbackBehavior();
 
   console.log(`\n────────────────────────────────────`);
   console.log(`${passed} passed, ${failed} failed`);

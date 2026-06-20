@@ -41,9 +41,12 @@ import {
 } from '@ant-design/icons';
 import {
   CartesianGrid,
+  Cell,
   Legend,
   Line,
   LineChart,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip as RechartsTooltip,
   XAxis,
@@ -65,6 +68,7 @@ import {
   CorrelationReport,
   getCorrelationReport,
   IndustryConcentrationSummary,
+  DailyAttributionReportRow,
 } from '../../services/portfolioWorkspaceService';
 import {
   buildIndustryConcentrationKpiViewModel,
@@ -76,6 +80,14 @@ import {
   DailyAttributionViewModel,
   DailyAttributionTradeRow,
 } from './dailyAttributionHelpers';
+import {
+  buildPortfolioAttributionCardViewModel,
+  PortfolioAttributionCardViewModel,
+  AttributionPieSlice,
+  AttributionTradeRow,
+  ATTRIBUTION_POSITIVE_COLOR,
+  ATTRIBUTION_NEGATIVE_COLOR,
+} from './portfolioAttributionCardHelpers';
 import {
   buildErrorPatternsViewModel,
   ErrorPatternsViewModel,
@@ -310,7 +322,13 @@ const PortfolioWorkspace: React.FC = () => {
   } else if (activeKey === 'equity') {
     body = <EquityCurveTab snapshots={snapshots} kpis={kpis} />;
   } else if (activeKey === 'attribution') {
-    body = <DailyAttributionTab snapshots={snapshots} trades={trades} />;
+    body = (
+      <DailyAttributionTab
+        snapshots={snapshots}
+        trades={trades}
+        portfolioId={portfolioData?.portfolio?.id ?? null}
+      />
+    );
   } else if (activeKey === 'trades') {
     body = <TradesTab trades={trades} />;
   } else if (activeKey === 'journal') {
@@ -1409,31 +1427,82 @@ const EquityCurveTab: React.FC<EquityCurveTabProps> = ({ snapshots, kpis }) => {
 };
 
 // ===========================================================================
-//  Tab 3 (US-055): 日归因卡
+//  Tab 3 (US-055 + US-123): 日归因卡
 // ===========================================================================
 /**
  * US-055 [FE-016] PortfolioWorkspace 日归因卡 — 把"最近交易日的资金变化
  * + realized/unrealized 拆解 + top contributor/detractor"汇总到一张卡.
  *
- * 数据源: 复用顶层已加载的 `snapshots` + `trades`, 不再单独打 attribution
- * API (ATTR-007 backend 还没提供 daily endpoint, 等真值落地后可再加 followup
- * helper 把 backend daily 字段并入同 view model).
+ * US-123 [PM-010] 扩展 — 把 backend `daily_attribution_reports` 真值卡 (6 维
+ * pie + best/worst + AI summary) 叠加在 heuristic 卡上方: backend 报告就绪
+ * 时优先展示真值, 未跑 / 失败 / 404 时 fallback 到 US-055 的 heuristic 视图.
+ * 两者互补 — heuristic 是 "用 snapshot+trade 现算" 占位卡 (周末/节假日 cron
+ * 不跑时仍能看), backend 是 "AttributionEngine + AIAttributionSummary 真值".
  *
- * 渲染逻辑全部在 `dailyAttributionHelpers.buildDailyAttributionViewModel`,
- * 本 component 只负责绘制 KPI + 表格 — 与 [[前端 pure helper 模板]] 同款.
+ * 数据源:
+ *   - heuristic 卡: 复用顶层已加载的 `snapshots` + `trades`, 不打 API.
+ *   - backend 卡: GET /api/portfolio/:id/attribution/daily (PM-007 / US-084
+ *     route), 由 cron DAILY_ATTRIBUTION_GENERATE (PM-006 / US-083) 在 17:00
+ *     工作日 upsert. 404 = "当日报告不存在" → 隐藏 backend 卡仅显示 heuristic.
+ *
+ * 渲染逻辑全部在 `dailyAttributionHelpers.buildDailyAttributionViewModel` +
+ * `portfolioAttributionCardHelpers.buildPortfolioAttributionCardViewModel`,
+ * 本 component 只负责绘制 — 与 [[前端 pure helper 模板]] 同款.
  */
 interface DailyAttributionTabProps {
   snapshots: SnapshotRow[];
   trades: TradeRow[];
+  portfolioId: number | null;
 }
 
-const DailyAttributionTab: React.FC<DailyAttributionTabProps> = ({ snapshots, trades }) => {
+const DailyAttributionTab: React.FC<DailyAttributionTabProps> = ({
+  snapshots,
+  trades,
+  portfolioId,
+}) => {
   const vm: DailyAttributionViewModel = useMemo(
     () => buildDailyAttributionViewModel(snapshots, trades),
     [snapshots, trades]
   );
 
-  if (vm.hidden) {
+  // US-123 [PM-010] backend 真值卡 — 按 portfolioId 拉今日 cron 报告.
+  // 404 / 网络错误 → setReport(null) + 隐藏 backend 卡, 不阻塞 heuristic 视图.
+  const [backendReport, setBackendReport] = useState<DailyAttributionReportRow | null>(null);
+  const [backendLoading, setBackendLoading] = useState(false);
+  const [backendError, setBackendError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!portfolioId) {
+      setBackendReport(null);
+      return;
+    }
+    // 切盘 race 保护 — snapshot portfolioId, await 后比对
+    const callId = portfolioId;
+    setBackendLoading(true);
+    setBackendError(null);
+    portfolioWorkspaceService
+      .getDailyAttributionReport(portfolioId)
+      .then(r => {
+        if (callId !== portfolioId) return;
+        setBackendReport(r);
+      })
+      .catch((err: unknown) => {
+        if (callId !== portfolioId) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        setBackendError(msg);
+        setBackendReport(null);
+      })
+      .finally(() => {
+        if (callId === portfolioId) setBackendLoading(false);
+      });
+  }, [portfolioId]);
+
+  const backendVm: PortfolioAttributionCardViewModel = useMemo(
+    () => buildPortfolioAttributionCardViewModel(backendReport),
+    [backendReport]
+  );
+
+  if (vm.hidden && backendVm.hidden) {
     return (
       <Card title="日归因">
         <Empty
@@ -1450,75 +1519,416 @@ const DailyAttributionTab: React.FC<DailyAttributionTabProps> = ({ snapshots, tr
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Card
-        title={
-          <Space>
-            <RobotOutlined />
-            <span>
-              {vm.anchorDate} 日归因（对比 {vm.prevDate}）
-            </span>
-          </Space>
-        }
-      >
+      {/* US-123 [PM-010] backend 真值卡 — 在 cron 报告就绪时显示 */}
+      {!backendVm.hidden && (
+        <BackendAttributionCard
+          vm={backendVm}
+          loading={backendLoading}
+          error={backendError}
+        />
+      )}
+      {backendVm.hidden && backendLoading && (
+        <Card title="日归因 (cron 报告加载中...)">
+          <div style={{ textAlign: 'center', padding: 24 }}>
+            <Spin />
+          </div>
+        </Card>
+      )}
+      {backendVm.hidden && !backendLoading && portfolioId !== null && (
+        <Alert
+          type="info"
+          showIcon
+          message="当日 cron 归因报告尚未生成"
+          description={
+            backendError
+              ? `加载失败: ${backendError}. 下方仍展示 snapshot + trade 现算结果.`
+              : '17:00 工作日 cron (DAILY_ATTRIBUTION_GENERATE) 跑完后才有 6 维 pie + AI summary. 下方先用 snapshot + trade 现算结果占位.'
+          }
+          style={{ marginBottom: 0 }}
+        />
+      )}
+      {!vm.hidden && (
+        <Card
+          title={
+            <Space>
+              <RobotOutlined />
+              <span>
+                {vm.anchorDate} 日归因 (heuristic 现算, 对比 {vm.prevDate})
+              </span>
+            </Space>
+          }
+        >
+          <Row gutter={[16, 16]}>
+            <Col xs={12} sm={8} md={5}>
+              <Statistic
+                title="当日 P&L"
+                value={vm.dailyPnl}
+                precision={2}
+                prefix="¥"
+                valueStyle={{ color: vm.pnlColor }}
+              />
+            </Col>
+            <Col xs={12} sm={8} md={5}>
+              <Statistic
+                title="当日收益率"
+                value={vm.dailyReturnPct}
+                precision={2}
+                suffix="%"
+                valueStyle={{ color: vm.pnlColor }}
+              />
+            </Col>
+            <Col xs={12} sm={8} md={5}>
+              <Tooltip title="当日 SELL 单的 realized_pnl 之和">
+                <Statistic
+                  title="已实现盈亏"
+                  value={vm.realizedPnl}
+                  precision={2}
+                  prefix="¥"
+                  valueStyle={{ color: pnlColor(vm.realizedPnl) }}
+                />
+              </Tooltip>
+            </Col>
+            <Col xs={12} sm={8} md={5}>
+              <Tooltip title="当日 P&L − 已实现 = 持仓 mark-to-market 变化 + 当日 BUY 的浮动盈亏">
+                <Statistic
+                  title="浮动盈亏变化"
+                  value={vm.unrealizedChange}
+                  precision={2}
+                  prefix="¥"
+                  valueStyle={{ color: pnlColor(vm.unrealizedChange) }}
+                />
+              </Tooltip>
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <Statistic
+                title="成交笔数"
+                value={vm.tradeCount}
+                suffix={vm.tradeCount > 0 ? `（买 ${vm.buyCount} / 卖 ${vm.sellCount}）` : undefined}
+              />
+            </Col>
+          </Row>
+        </Card>
+      )}
+
+      {!vm.hidden && (
         <Row gutter={[16, 16]}>
-          <Col xs={12} sm={8} md={5}>
-            <Statistic
-              title="当日 P&L"
-              value={vm.dailyPnl}
-              precision={2}
-              prefix="¥"
-              valueStyle={{ color: vm.pnlColor }}
-            />
+          <Col xs={24} md={12}>
+            <Card title={<span style={{ color: DAILY_PNL_POSITIVE_COLOR_LOCAL }}>Top 正贡献</span>}>
+              {vm.topContributors.length === 0 ? (
+                <Empty description="今日无盈利平仓" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              ) : (
+                <Table<DailyAttributionTradeRow>
+                  dataSource={vm.topContributors}
+                  pagination={false}
+                  size="small"
+                  rowKey="id"
+                  columns={[
+                    {
+                      title: '标的',
+                      dataIndex: 'name',
+                      key: 'name',
+                      render: (_, row) => (
+                        <Space direction="vertical" size={0}>
+                          <Text strong>{row.name || row.symbol}</Text>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            {row.symbol}
+                          </Text>
+                        </Space>
+                      ),
+                    },
+                    {
+                      title: 'Realized P&L',
+                      dataIndex: 'realized_pnl',
+                      key: 'realized_pnl',
+                      align: 'right',
+                      render: (v: number) => (
+                        <Text strong style={{ color: DAILY_PNL_POSITIVE_COLOR_LOCAL }}>
+                          +¥{v.toFixed(2)}
+                        </Text>
+                      ),
+                    },
+                    {
+                      title: '成交额',
+                      dataIndex: 'amount',
+                      key: 'amount',
+                      align: 'right',
+                      render: (v: number) => `¥${v.toFixed(2)}`,
+                    },
+                  ]}
+                />
+              )}
+            </Card>
           </Col>
-          <Col xs={12} sm={8} md={5}>
-            <Statistic
-              title="当日收益率"
-              value={vm.dailyReturnPct}
-              precision={2}
-              suffix="%"
-              valueStyle={{ color: vm.pnlColor }}
-            />
-          </Col>
-          <Col xs={12} sm={8} md={5}>
-            <Tooltip title="当日 SELL 单的 realized_pnl 之和">
-              <Statistic
-                title="已实现盈亏"
-                value={vm.realizedPnl}
-                precision={2}
-                prefix="¥"
-                valueStyle={{ color: pnlColor(vm.realizedPnl) }}
-              />
-            </Tooltip>
-          </Col>
-          <Col xs={12} sm={8} md={5}>
-            <Tooltip title="当日 P&L − 已实现 = 持仓 mark-to-market 变化 + 当日 BUY 的浮动盈亏">
-              <Statistic
-                title="浮动盈亏变化"
-                value={vm.unrealizedChange}
-                precision={2}
-                prefix="¥"
-                valueStyle={{ color: pnlColor(vm.unrealizedChange) }}
-              />
-            </Tooltip>
-          </Col>
-          <Col xs={12} sm={8} md={4}>
-            <Statistic
-              title="成交笔数"
-              value={vm.tradeCount}
-              suffix={vm.tradeCount > 0 ? `（买 ${vm.buyCount} / 卖 ${vm.sellCount}）` : undefined}
-            />
+          <Col xs={24} md={12}>
+            <Card title={<span style={{ color: DAILY_PNL_NEGATIVE_COLOR_LOCAL }}>Top 负贡献</span>}>
+              {vm.topDetractors.length === 0 ? (
+                <Empty description="今日无亏损平仓" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              ) : (
+                <Table<DailyAttributionTradeRow>
+                  dataSource={vm.topDetractors}
+                  pagination={false}
+                  size="small"
+                  rowKey="id"
+                  columns={[
+                    {
+                      title: '标的',
+                      dataIndex: 'name',
+                      key: 'name',
+                      render: (_, row) => (
+                        <Space direction="vertical" size={0}>
+                          <Text strong>{row.name || row.symbol}</Text>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            {row.symbol}
+                          </Text>
+                        </Space>
+                      ),
+                    },
+                    {
+                      title: 'Realized P&L',
+                      dataIndex: 'realized_pnl',
+                      key: 'realized_pnl',
+                      align: 'right',
+                      render: (v: number) => (
+                        <Text strong style={{ color: DAILY_PNL_NEGATIVE_COLOR_LOCAL }}>
+                          ¥{v.toFixed(2)}
+                        </Text>
+                      ),
+                    },
+                    {
+                      title: '成交额',
+                      dataIndex: 'amount',
+                      key: 'amount',
+                      align: 'right',
+                      render: (v: number) => `¥${v.toFixed(2)}`,
+                    },
+                  ]}
+                />
+              )}
+            </Card>
           </Col>
         </Row>
-      </Card>
+      )}
+    </Space>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// US-123 [PM-010] — backend cron 报告卡 (6 维 pie + best/worst + AI summary)
+// ---------------------------------------------------------------------------
+interface BackendAttributionCardProps {
+  vm: PortfolioAttributionCardViewModel;
+  loading: boolean;
+  error: string | null;
+}
+
+const BackendAttributionCard: React.FC<BackendAttributionCardProps> = ({ vm, loading, error }) => {
+  const titleNode = (
+    <Space>
+      <RobotOutlined />
+      <span>{vm.date} 日归因 (cron 真值)</span>
+      {vm.status === 'ok' && <Tag color="green">已生成</Tag>}
+      {vm.status === 'skipped' && <Tag color="default">已跳过</Tag>}
+      {vm.status === 'failed' && <Tag color="red">失败</Tag>}
+      {loading && <Tag color="processing">刷新中</Tag>}
+    </Space>
+  );
+  const statusBanner =
+    vm.status !== 'ok' ? (
+      <Alert
+        type={vm.status === 'failed' ? 'error' : 'warning'}
+        showIcon
+        style={{ marginBottom: 12 }}
+        message={vm.status === 'failed' ? '归因报告生成失败' : '当日归因被跳过'}
+        description={vm.statusReason || '查看 logs 排查; 数据仍按现有 breakdown 展示.'}
+      />
+    ) : null;
+  const errorBanner = error ? (
+    <Alert
+      type="warning"
+      showIcon
+      style={{ marginBottom: 12 }}
+      message="cron 报告加载失败"
+      description={error}
+    />
+  ) : null;
+  return (
+    <Card title={titleNode}>
+      {statusBanner}
+      {errorBanner}
+      {/* 顶部 KPI 一栏 */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 12 }}>
+        <Col xs={12} sm={8} md={5}>
+          <Statistic
+            title="当日 P&L"
+            value={vm.totalPnl}
+            precision={2}
+            prefix="¥"
+            valueStyle={{ color: pnlColor(vm.totalPnl) }}
+          />
+        </Col>
+        <Col xs={12} sm={8} md={5}>
+          <Statistic
+            title="当日收益率"
+            value={vm.totalPnlPct ?? 0}
+            precision={2}
+            suffix={vm.totalPnlPct == null ? ' —' : '%'}
+            valueStyle={{ color: pnlColor(vm.totalPnl) }}
+          />
+        </Col>
+        <Col xs={12} sm={8} md={5}>
+          <Tooltip title="当日 SELL realized_pnl 之和 (后端口径)">
+            <Statistic
+              title="已实现"
+              value={vm.realizedPnl}
+              precision={2}
+              prefix="¥"
+              valueStyle={{ color: pnlColor(vm.realizedPnl) }}
+            />
+          </Tooltip>
+        </Col>
+        <Col xs={12} sm={8} md={5}>
+          <Tooltip title="残差 (运气) = 总盈亏 − 已知 6 维之和; |残差|/|总盈亏| 越大说明可解释性越弱">
+            <Statistic
+              title="残差"
+              value={vm.residual}
+              precision={2}
+              prefix="¥"
+              valueStyle={{ color: pnlColor(vm.residual) }}
+            />
+          </Tooltip>
+        </Col>
+        <Col xs={12} sm={8} md={4}>
+          <Statistic
+            title="成交笔数"
+            value={vm.tradeCount}
+            suffix={
+              vm.tradeCount > 0 ? `（买 ${vm.buyCount} / 卖 ${vm.sellCount}）` : undefined
+            }
+          />
+        </Col>
+      </Row>
 
       <Row gutter={[16, 16]}>
+        {/* 6 维 pie */}
         <Col xs={24} md={12}>
-          <Card title={<span style={{ color: DAILY_PNL_POSITIVE_COLOR_LOCAL }}>Top 正贡献</span>}>
-            {vm.topContributors.length === 0 ? (
+          <Card size="small" type="inner" title="6 维归因分布">
+            {vm.totalAbs <= 0 ? (
+              <Empty description="6 维 placeholder 全 0 — 等待 PM-002 真填值" />
+            ) : (
+              <div style={{ width: '100%', height: 280 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={vm.pieData.filter(s => s.absValue > 0)}
+                      dataKey="absValue"
+                      nameKey="label"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={90}
+                      labelLine={false}
+                      label={(entry: AttributionPieSlice) =>
+                        `${entry.label} ${(entry.pctOfAbs * 100).toFixed(0)}%`
+                      }
+                    >
+                      {vm.pieData
+                        .filter(s => s.absValue > 0)
+                        .map(s => (
+                          <Cell key={s.key} fill={s.color} />
+                        ))}
+                    </Pie>
+                    <RechartsTooltip
+                      formatter={(value: number, _name: string, ctx: any) => {
+                        const slice: AttributionPieSlice | undefined = ctx?.payload;
+                        if (!slice) return [`¥${value.toFixed(2)}`, ''];
+                        const sign = slice.value >= 0 ? '+' : '';
+                        return [`${sign}¥${slice.value.toFixed(2)}`, slice.label];
+                      }}
+                    />
+                    <Legend
+                      formatter={(_value: string, entry: any) => {
+                        const slice: AttributionPieSlice | undefined = entry?.payload;
+                        if (!slice) return _value;
+                        const sign = slice.value >= 0 ? '+' : '';
+                        return `${slice.label} (${sign}¥${slice.value.toFixed(0)})`;
+                      }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </Card>
+        </Col>
+        {/* AI summary + 行业 / 因子 top */}
+        <Col xs={24} md={12}>
+          <Card
+            size="small"
+            type="inner"
+            title={
+              <Space>
+                <span>AI 复盘摘要</span>
+                <Tag color={vm.aiSummaryIsBackend ? 'blue' : 'default'}>
+                  {vm.aiSummaryIsBackend ? 'LLM 真值' : '前端兜底'}
+                </Tag>
+              </Space>
+            }
+          >
+            <Paragraph style={{ whiteSpace: 'pre-wrap', margin: 0 }}>
+              {vm.aiSummary || <Text type="secondary">（无摘要）</Text>}
+            </Paragraph>
+            {vm.industryTop.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
+                  行业贡献 Top:
+                </Text>
+                <Space wrap size={[4, 4]}>
+                  {vm.industryTop.map(it => {
+                    const pnl = Number(it.pnl) || 0;
+                    return (
+                      <Tag
+                        key={it.industry}
+                        color={pnl >= 0 ? 'green' : 'red'}
+                      >
+                        {it.industry} {pnl >= 0 ? '+' : ''}¥{pnl.toFixed(0)}
+                      </Tag>
+                    );
+                  })}
+                </Space>
+              </div>
+            )}
+            {vm.factorTop.length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
+                  因子贡献 Top:
+                </Text>
+                <Space wrap size={[4, 4]}>
+                  {vm.factorTop.map(it => {
+                    const pnl = Number(it.pnl) || 0;
+                    return (
+                      <Tag key={it.factor} color={pnl >= 0 ? 'green' : 'red'}>
+                        {it.factor} {pnl >= 0 ? '+' : ''}¥{pnl.toFixed(0)}
+                      </Tag>
+                    );
+                  })}
+                </Space>
+              </div>
+            )}
+          </Card>
+        </Col>
+      </Row>
+
+      {/* Best / Worst (backend cron 输出, 与 heuristic 现算独立) */}
+      <Row gutter={[16, 16]} style={{ marginTop: 12 }}>
+        <Col xs={24} md={12}>
+          <Card
+            size="small"
+            type="inner"
+            title={<span style={{ color: ATTRIBUTION_POSITIVE_COLOR }}>Best 3 (cron)</span>}
+          >
+            {vm.bestTrades.length === 0 ? (
               <Empty description="今日无盈利平仓" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             ) : (
-              <Table<DailyAttributionTradeRow>
-                dataSource={vm.topContributors}
+              <Table<AttributionTradeRow>
+                dataSource={vm.bestTrades}
                 pagination={false}
                 size="small"
                 rowKey="id"
@@ -1537,22 +1947,23 @@ const DailyAttributionTab: React.FC<DailyAttributionTabProps> = ({ snapshots, tr
                     ),
                   },
                   {
-                    title: 'Realized P&L',
+                    title: 'Realized',
                     dataIndex: 'realized_pnl',
                     key: 'realized_pnl',
                     align: 'right',
-                    render: (v: number) => (
-                      <Text strong style={{ color: DAILY_PNL_POSITIVE_COLOR_LOCAL }}>
-                        +¥{v.toFixed(2)}
-                      </Text>
+                    render: (v: number, row) => (
+                      <Space direction="vertical" size={0} align="end">
+                        <Text strong style={{ color: ATTRIBUTION_POSITIVE_COLOR }}>
+                          +¥{v.toFixed(2)}
+                        </Text>
+                        {row.realized_pnl_pct !== null && (
+                          <Text type="secondary" style={{ fontSize: 11 }}>
+                            {row.realized_pnl_pct >= 0 ? '+' : ''}
+                            {row.realized_pnl_pct.toFixed(2)}%
+                          </Text>
+                        )}
+                      </Space>
                     ),
-                  },
-                  {
-                    title: '成交额',
-                    dataIndex: 'amount',
-                    key: 'amount',
-                    align: 'right',
-                    render: (v: number) => `¥${v.toFixed(2)}`,
                   },
                 ]}
               />
@@ -1560,12 +1971,16 @@ const DailyAttributionTab: React.FC<DailyAttributionTabProps> = ({ snapshots, tr
           </Card>
         </Col>
         <Col xs={24} md={12}>
-          <Card title={<span style={{ color: DAILY_PNL_NEGATIVE_COLOR_LOCAL }}>Top 负贡献</span>}>
-            {vm.topDetractors.length === 0 ? (
+          <Card
+            size="small"
+            type="inner"
+            title={<span style={{ color: ATTRIBUTION_NEGATIVE_COLOR }}>Worst 3 (cron)</span>}
+          >
+            {vm.worstTrades.length === 0 ? (
               <Empty description="今日无亏损平仓" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             ) : (
-              <Table<DailyAttributionTradeRow>
-                dataSource={vm.topDetractors}
+              <Table<AttributionTradeRow>
+                dataSource={vm.worstTrades}
                 pagination={false}
                 size="small"
                 rowKey="id"
@@ -1584,22 +1999,23 @@ const DailyAttributionTab: React.FC<DailyAttributionTabProps> = ({ snapshots, tr
                     ),
                   },
                   {
-                    title: 'Realized P&L',
+                    title: 'Realized',
                     dataIndex: 'realized_pnl',
                     key: 'realized_pnl',
                     align: 'right',
-                    render: (v: number) => (
-                      <Text strong style={{ color: DAILY_PNL_NEGATIVE_COLOR_LOCAL }}>
-                        ¥{v.toFixed(2)}
-                      </Text>
+                    render: (v: number, row) => (
+                      <Space direction="vertical" size={0} align="end">
+                        <Text strong style={{ color: ATTRIBUTION_NEGATIVE_COLOR }}>
+                          ¥{v.toFixed(2)}
+                        </Text>
+                        {row.realized_pnl_pct !== null && (
+                          <Text type="secondary" style={{ fontSize: 11 }}>
+                            {row.realized_pnl_pct >= 0 ? '+' : ''}
+                            {row.realized_pnl_pct.toFixed(2)}%
+                          </Text>
+                        )}
+                      </Space>
                     ),
-                  },
-                  {
-                    title: '成交额',
-                    dataIndex: 'amount',
-                    key: 'amount',
-                    align: 'right',
-                    render: (v: number) => `¥${v.toFixed(2)}`,
                   },
                 ]}
               />
@@ -1607,7 +2023,7 @@ const DailyAttributionTab: React.FC<DailyAttributionTabProps> = ({ snapshots, tr
           </Card>
         </Col>
       </Row>
-    </Space>
+    </Card>
   );
 };
 
