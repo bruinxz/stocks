@@ -8,20 +8,27 @@ import { logger } from '../../utils/logger';
 import { LIVE_AUDIT_EVENT_TYPES } from '../auditEvents';
 
 /**
- * Bridge 鉴权中间件。路线图 §6.1。
+ * Bridge 鉴权中间件。路线图 §6.1 + US-109 [EX-009] ed25519 升级。
  *
  * 头部：
- *   X-Live-Bridge-Key       桥接密钥 ID（不是 secret 本身）
- *   X-Live-Bridge-Timestamp UTC 毫秒
- *   X-Live-Bridge-Nonce     每请求唯一，5 分钟滑动窗口去重
- *   X-Live-Bridge-Signature HMAC-SHA256（method + path + query + timestamp + nonce + body_hash）
+ *   X-Live-Bridge-Key        桥接密钥 ID（不是 secret 本身）
+ *   X-Live-Bridge-Timestamp  UTC 毫秒
+ *   X-Live-Bridge-Nonce      每请求唯一，5 分钟滑动窗口去重
+ *   X-Live-Bridge-Signature  签名 hex
+ *   X-Live-Bridge-Sig-Method 可选: "hmac"（默认，兼容老 bridge）或 "ed25519"（US-109 新路径）
  *
  * 校验流程（review 修订）：
  *  1. Content-Type 必须 application/json（写请求）— 防止 verify 不触发使 rawBody=undefined 拿空 hash 通过
  *  2. timestamp clock skew ≤ LIVE_BRIDGE_MAX_CLOCK_SKEW_SECONDS（默认 60s）
  *  3. 签名校验（包含 query 防止重放篡改）
+ *      - hmac: HMAC-SHA256（method + path + query + timestamp + nonce + body_hash）
+ *      - ed25519: Ed25519 detached signature (同一 base string)，需要 LIVE_BRIDGE_ED25519_PUBKEYS
  *  4. bridge_key 必须存在于 live_broker_accounts 且 is_active
  *  5. 通过后才尝试 INSERT live_bridge_nonces：失败=重放
+ *
+ * ed25519 设计理由（C.4）: HMAC 对称密钥泄露后任何持有者都能伪造命令；ed25519 让 bridge
+ * 持有 private key 签名、server 仅持 public key 验证 → 即使 server 端 env / DB 泄露
+ * 也不能伪造命令。新老 bridge 同表共存（按 sig method 路由），灰度切换 0 风险。
  *
  * 跨进程/跨重启去重靠 DB 唯一约束（之前内存 Map 在水平扩展或重启时全失效）。
  */
@@ -40,6 +47,160 @@ function loadSecrets(): Record<string, string> {
   const singleSecret = process.env.LIVE_BRIDGE_SECRET;
   if (singleKey && singleSecret) return { [singleKey]: singleSecret };
   return {};
+}
+
+/**
+ * US-109 [EX-009] ed25519 升级: 加载 `{bridge_key: pubkey}` 映射. pubkey 接受三种格式
+ * (按 try 顺序):
+ *   1. PEM (BEGIN PUBLIC KEY...) — node createPublicKey 直吃
+ *   2. base64 / hex 编码的 SPKI DER — 解码后 type:"spki"
+ *   3. 32 字节裸 Ed25519 公钥 (hex 64 字符 或 base64 44 字符) — 自动拼上 SPKI 前缀
+ * 解析失败的 key 直接跳过 (不阻塞其他 key), 解析结果缓存进内存避免每请求重算.
+ *
+ * 注: 不与 LIVE_BRIDGE_SECRETS 互斥. 一个 bridge_key 可能同时配 hmac secret + ed25519 pub
+ * (灰度切换期). 真正决定走哪条 path 的是请求头 X-Live-Bridge-Sig-Method.
+ */
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+const ed25519PubkeyCache = new Map<string, crypto.KeyObject>();
+let ed25519CacheRawJson: string | null = null;
+
+export function __resetEd25519CacheForTests(): void {
+  ed25519PubkeyCache.clear();
+  ed25519CacheRawJson = null;
+}
+
+function parseEd25519Pubkey(raw: string): crypto.KeyObject | null {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return null;
+  // PEM
+  if (/-----BEGIN/.test(trimmed)) {
+    try {
+      return crypto.createPublicKey({ key: trimmed, format: 'pem' });
+    } catch {
+      // fall through
+    }
+  }
+  // hex 64 = 32 bytes raw key
+  if (/^[0-9a-fA-F]{64}$/.test(trimmed)) {
+    try {
+      const buf = Buffer.from(trimmed, 'hex');
+      const spki = Buffer.concat([ED25519_SPKI_PREFIX, buf]);
+      return crypto.createPublicKey({ key: spki, format: 'der', type: 'spki' });
+    } catch {
+      /* fall through */
+    }
+  }
+  // hex DER (88 chars = 44 bytes SPKI)
+  if (/^[0-9a-fA-F]+$/.test(trimmed) && trimmed.length % 2 === 0) {
+    try {
+      const buf = Buffer.from(trimmed, 'hex');
+      return crypto.createPublicKey({ key: buf, format: 'der', type: 'spki' });
+    } catch {
+      /* fall through */
+    }
+  }
+  // base64 (44 chars for 32-byte raw key, longer for SPKI)
+  try {
+    const buf = Buffer.from(trimmed, 'base64');
+    if (buf.length === 32) {
+      const spki = Buffer.concat([ED25519_SPKI_PREFIX, buf]);
+      return crypto.createPublicKey({ key: spki, format: 'der', type: 'spki' });
+    }
+    return crypto.createPublicKey({ key: buf, format: 'der', type: 'spki' });
+  } catch {
+    return null;
+  }
+}
+
+function loadEd25519Pubkeys(): Record<string, crypto.KeyObject> {
+  const raw = process.env.LIVE_BRIDGE_ED25519_PUBKEYS;
+  if (!raw) {
+    if (ed25519CacheRawJson !== null) {
+      ed25519PubkeyCache.clear();
+      ed25519CacheRawJson = null;
+    }
+    return {};
+  }
+  if (raw === ed25519CacheRawJson) {
+    return Object.fromEntries(ed25519PubkeyCache.entries());
+  }
+  ed25519PubkeyCache.clear();
+  ed25519CacheRawJson = raw;
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err: any) {
+    logger.error('LIVE_BRIDGE_ED25519_PUBKEYS 不是合法 JSON:', err?.message || err);
+    return {};
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    logger.error('LIVE_BRIDGE_ED25519_PUBKEYS 必须是 {bridge_key: pubkey} 对象');
+    return {};
+  }
+  for (const [k, v] of Object.entries(parsed)) {
+    if (typeof v !== 'string') continue;
+    const keyObj = parseEd25519Pubkey(v);
+    if (keyObj) {
+      ed25519PubkeyCache.set(k, keyObj);
+    } else {
+      logger.warn(`LIVE_BRIDGE_ED25519_PUBKEYS[${k}] 公钥解析失败, 已跳过`);
+    }
+  }
+  return Object.fromEntries(ed25519PubkeyCache.entries());
+}
+
+export type BridgeSignatureMethod = 'hmac' | 'ed25519';
+
+export function normalizeSigMethod(raw: string | undefined | null): BridgeSignatureMethod {
+  const v = String(raw || '').toLowerCase().trim();
+  if (v === 'ed25519') return 'ed25519';
+  // 缺省 / hmac / 其他全部按 hmac 处理 (兼容老 bridge, 老 bridge 不发该 header)
+  return 'hmac';
+}
+
+/**
+ * 验证签名. 返回 {ok: true} 或 {ok: false, reason}. reason 仅用于服务端 log,
+ * 不返客户端 (Batch V lt-7 fix: 401 文案统一以防 oracle 枚举).
+ */
+export function verifyBridgeSignature(args: {
+  method: BridgeSignatureMethod;
+  bridgeKey: string;
+  baseString: string;
+  signature: string;
+  hmacSecret?: string;
+  ed25519Pubkey?: crypto.KeyObject;
+}): { ok: boolean; reason: string } {
+  if (args.method === 'ed25519') {
+    if (!args.ed25519Pubkey) {
+      return { ok: false, reason: `ed25519 pubkey 未注册 bridge_key=${args.bridgeKey}` };
+    }
+    let sigBuf: Buffer;
+    try {
+      sigBuf = Buffer.from(args.signature, 'hex');
+    } catch {
+      return { ok: false, reason: 'ed25519 signature 非 hex' };
+    }
+    // Ed25519 detached signature 固定 64 字节
+    if (sigBuf.length !== 64) {
+      return { ok: false, reason: `ed25519 signature 长度非 64 (got ${sigBuf.length})` };
+    }
+    let ok = false;
+    try {
+      ok = crypto.verify(null, Buffer.from(args.baseString, 'utf8'), args.ed25519Pubkey, sigBuf);
+    } catch (err: any) {
+      return { ok: false, reason: `ed25519 verify throw: ${err?.message || err}` };
+    }
+    return ok
+      ? { ok: true, reason: '' }
+      : { ok: false, reason: `ed25519 签名校验失败 bridge_key=${args.bridgeKey}` };
+  }
+  // hmac
+  if (!args.hmacSecret) {
+    return { ok: false, reason: `bridge_key 未注册: ${args.bridgeKey}` };
+  }
+  const expected = computeSignature(args.hmacSecret, args.baseString);
+  if (safeEqual(args.signature, expected)) return { ok: true, reason: '' };
+  return { ok: false, reason: `签名校验失败 bridge_key=${args.bridgeKey}` };
 }
 
 function safeEqual(a: string, b: string): boolean {
@@ -179,6 +340,7 @@ export async function bridgeAuthMiddleware(
   const timestamp = String(req.header('X-Live-Bridge-Timestamp') || '').trim();
   const nonce = String(req.header('X-Live-Bridge-Nonce') || '').trim();
   const signature = String(req.header('X-Live-Bridge-Signature') || '').trim();
+  const sigMethod = normalizeSigMethod(req.header('X-Live-Bridge-Sig-Method'));
 
   if (!bridgeKey || !timestamp || !nonce || !signature) {
     return reject401('缺少 bridge 鉴权头');
@@ -197,12 +359,6 @@ export async function bridgeAuthMiddleware(
     return reject401(`时钟偏差 ${skewSeconds.toFixed(1)}s 超过 ${skewLimitSeconds}s`);
   }
 
-  const secrets = loadSecrets();
-  const secret = secrets[bridgeKey];
-  if (!secret) {
-    return reject401(`bridge_key 未注册: ${bridgeKey}`);
-  }
-
   // 签名串：method + path + canonical_query + timestamp + nonce + body_hash
   // canonical_query 把 query 字段按 key 排序、值用 RFC3986 编码（空格 → %20），
   // 避免两端实现差异 / 中间代理重写 query string 导致签名不一致。
@@ -219,9 +375,27 @@ export async function bridgeAuthMiddleware(
     nonce,
     hashBody(req.rawBody),
   ].join('\n');
-  const expected = computeSignature(secret, baseString);
-  if (!safeEqual(signature, expected)) {
-    return reject401(`签名校验失败 bridge_key=${bridgeKey}`);
+
+  // sig method 路由: ed25519 走非对称, 缺省/hmac 走老的 HMAC-SHA256
+  // 两条 path 共享同一 base string + nonce 表, 灰度切换零迁移成本
+  const verifyResult =
+    sigMethod === 'ed25519'
+      ? verifyBridgeSignature({
+          method: 'ed25519',
+          bridgeKey,
+          baseString,
+          signature,
+          ed25519Pubkey: loadEd25519Pubkeys()[bridgeKey],
+        })
+      : verifyBridgeSignature({
+          method: 'hmac',
+          bridgeKey,
+          baseString,
+          signature,
+          hmacSecret: loadSecrets()[bridgeKey],
+        });
+  if (!verifyResult.ok) {
+    return reject401(verifyResult.reason);
   }
 
   // bridge_key 必须独占绑定一个活跃账户
@@ -274,6 +448,7 @@ export async function bridgeAuthMiddleware(
           method: req.method,
           timestamp_ms: tsMs,
           clock_skew_seconds: Math.round(skewSeconds),
+          sig_method: sigMethod,
         },
       } as any);
     } catch (err: any) {

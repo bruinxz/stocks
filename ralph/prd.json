@@ -1682,8 +1682,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 109,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "ed25519 升级完成: bridgeAuth.ts 加 verifyBridgeSignature + normalizeSigMethod 双 path 路由; Python sign_ed25519/derive_ed25519_pubkey_hex; config signature_method toggle; LIVE_BRIDGE_ED25519_PUBKEYS env (PEM/hex/SPKI/base64); 44 单测覆盖 + Python↔Node round-trip + meta-guard 5 道; 文档 60 C.4 改为已支持"
     },
     {
       "id": "US-110",

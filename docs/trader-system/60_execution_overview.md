@@ -140,11 +140,14 @@ sha256(body)
 - 防重放：`live_bridge_nonces` 表 UNIQUE
 - 时间窗口：`nonceWindowMs` 配置
 
-### C.4 ⚠️ ed25519 升级路径未实现
+### C.4 ✅ ed25519 升级路径已支持 (US-109 [EX-009])
 
-- 当前仅 HMAC-SHA256（对称密钥）
-- 操盘手心智 ed25519（非对称）是 future-proof 方向：bridge 持有 private key 签名，server 持 public key 验证 → 即使 server 库泄露也不能伪造命令。
-- 待 future story。
+- HMAC-SHA256 仍是缺省 (`X-Live-Bridge-Sig-Method` 缺省 / `hmac` → 老路径,兼容老 bridge)
+- 新增 ed25519 (`X-Live-Bridge-Sig-Method: ed25519`): bridge 持 private key 签名, server 仅持公钥验证 → 即使 server env/DB 泄露也无法伪造命令
+- 灰度切换: server 同一 `bridge_key` 可同时配 `LIVE_BRIDGE_SECRETS` (hmac) + `LIVE_BRIDGE_ED25519_PUBKEYS` (ed25519), 两条 path 共享同一 base string + nonce 表, 单 bridge 切换零迁移成本
+- 公钥配置: `LIVE_BRIDGE_ED25519_PUBKEYS={"bridge_key":"<pub_hex_64>"}` (接受 PEM / hex 32-byte raw / hex SPKI DER / base64 raw)
+- Bridge 端: `config.yaml` 加 `signature_method: ed25519` + `ed25519_private_key: <hex>`, 调 `bridge_common.auth.derive_ed25519_pubkey_hex()` 派生公钥配到 server
+- 测试: `backend/tests/live-trading/bridge-ed25519.test.ts` 覆盖两 method round-trip + 错误 pubkey/secret/sig 长度/篡改 base 全部 fail + Python ↔ Node 字节对齐契约
 
 ### C.5 ⚠️ qmt vs ptrade 差异未文档化
 

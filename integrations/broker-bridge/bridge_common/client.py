@@ -27,6 +27,8 @@ class BridgeClient:
             self.config.bridge_key,
             self.config.bridge_secret,
             canonical_query="",
+            signature_method=self.config.signature_method,
+            ed25519_private_key=self.config.ed25519_private_key,
         )
         resp = self._session.post(url, data=body.encode("utf-8"), headers=headers, timeout=20)
         resp.raise_for_status()
@@ -45,6 +47,8 @@ class BridgeClient:
             self.config.bridge_key,
             self.config.bridge_secret,
             canonical_query=canonical_query,
+            signature_method=self.config.signature_method,
+            ed25519_private_key=self.config.ed25519_private_key,
         )
         full_url = f"{url}?{canonical_query}" if canonical_query else url
         resp = self._session.get(full_url, headers=headers, timeout=timeout)

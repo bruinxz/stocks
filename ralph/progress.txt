@@ -2,6 +2,7 @@
 Started: Fri Jun 19 02:25:41 CST 2026
 
 ## Codebase Patterns
+- "header-based method 路由 + 同 base string + 同 nonce 表 = 灰度切换零成本" (US-109 EX-009 bridge ed25519 升级): 加密协议/算法升级模板. 不另开 endpoint, 不改 base string, 不改 nonce 表. 只加 header `X-Live-Bridge-Sig-Method` 路由 (缺省/未知/老 method 全部 fallback 到最严格已实现 path, 防 sigMethod spoof 升级到不存在 path). 同 bridge_key 可双注册 hmac (LIVE_BRIDGE_SECRETS) + ed25519 (LIVE_BRIDGE_ED25519_PUBKEYS), 灰度期 server 同时接受两种签名, 切完拆掉老 secret. Node 端核心是抽 `verifyBridgeSignature(method, base, sig, hmacSecret?|pubkey?)` 纯函数 (DB-less 可测) + `normalizeSigMethod` 单点路由. Ed25519 公钥 4 种 env 格式必须全支持 (PEM/hex raw 32/hex SPKI DER/base64 raw), parser try 序列, 失败的 key 跳过不阻塞全 fleet; Node `crypto.createPublicKey` 不接 raw 32 bytes, 必须前面拼 12-byte SPKI 前缀 `302a300506032b6570032100`. Python ↔ Node base string 字节对齐必须 round-trip 测 (任何差异都 0% 通过, 不像 hmac 弱不对齐会概率通过). 提供 `derive_ed25519_pubkey_hex(priv)` 给 ops, 私钥永远不出 bridge 机器, server admin / DBA 拿不到. audit metadata 加 `sig_method` 字段供 SRE SQL 看切换进度. 任何"协议版本切换 / 加密升级 / 多 path 共存" 都照搬这套.
 - "进程内幂等 helper + DB 层强幂等" 双层模板 (US-108 EX-008 autopilotIdempotency): 任何"周期触发 / 用户重连 / 双击" 类入口都会有重复 fire 风险, 单靠 SchedulerService 的 inFlightTaskIds Set (Batch O C-S1) 只挡同 task_id cron tick overlap, 挡不了 manual API 重连 + 多账户串行. 推荐双层: (a) **DB 层强幂等** — 关键写路径 (e.g. markDraftShadowExecuted) 必须 transaction + SELECT FOR UPDATE + status check, 锁后第二个 caller 拿不到锁等 commit → 看到新 status → 直接 throw 形成跨进程兜底, BETA-4 / KillSwitchService.trigger / approveDraft 全同款; (b) **进程内入口幂等** — `getDefaultAutopilotIdempotencyStore().run({task,user_id,source,window:dailyWindow(),extra:{dry_run,limit}}, {ttl_ms:30_000}, worker)` 包 service 入口: in-flight Map join 并发 caller (worker 只跑一次, 第二个 promise share 结果), TTL cache Map 在 ttl 窗口内重复触发返 cached + reused_from_idempotency=true 标记, throw 时清 in-flight 不污染重试也不写缓存. key 字段必须把"会改变业务语义"的参数全放进 extra (dry_run / limit / account_role), 漏一个会让"换参数重新跑"被错误命中老缓存. dailyWindow 用 +8h offset 算北京日历日 (Asia/Shanghai 无 DST 安全), 不要 toISOString().slice(0,10) (会按 UTC 切日). 拆主入口时把真实工作体抽出 `_<verb>Uncached` 私有方法, 主入口只剩 guard.run 一行 + 参数 normalize, 不要给主入口签名加新参数 (会牵动所有 caller). meta-guard fs+regex 守 import / guard.run / extra 字段 / 私有方法被拆出 + 主入口 body 不再 createDraft, 防未来 refactor 把 worker 重新塞回主入口绕过幂等. helper 在 backend/src/utils/ 是 leaf 模块, 不依赖任何 model/service, 单测纯 DB-less, AutopilotIdempotencyStore({now:()=>nowMs}) 注入 fake clock 测 cache 过期. 与 BETA-4 / aiPollingQueue jobId Redis dedup (US-019) 协同覆盖: aiPollingQueue 是 "跨进程 Bull EXISTS 短路" (Redis 事实源), 本 helper 是 "单进程 in-memory 入口去重", BETA-4 是 "DB 行级锁兜底", 三者形成"入口/队列/写库" 三层防御.
 - Backend tests 不依赖 jest：每个 `tests/**/*.test.ts` 自带 assert 框架并 `process.exit`，由 `src/scripts/run-tests.ts` 串行 spawn 子进程跑 (`npm test`)。
 - EnvValidator (`backend/src/config/EnvValidator.ts`) 是项目环境一致性校验的唯一事实源：`validateEnv()` 返回 `EnvValidationResult`，`shouldExitOnFailure()` 决定是否 exit。任何新增 required env 都加到 `buildBaseSchema()`，同步更新 `.env.example` 与 docs/deploy。
@@ -3182,4 +3183,40 @@ Started: Fri Jun 19 02:25:41 CST 2026
     在测试中带 META-GUARD fs+regex (项目 Pattern, bridge-fail-safe.test.ts [6] /
     portfolio-construction-adapter.test.ts [meta-test guard] / cron-registry.test.ts [5]
     同款), 防止有人下次直接在主 service inline 重写绕过 helper.
+---
+
+## 2026-06-20 14:00 CST - US-109 [EX-009] bridge ed25519 升级
+- 把 60 文档 C.4 标记的 "HMAC → ed25519" 落地: bridge 持 private key 签名, server 仅持公钥验证, 即使 server env/DB 泄露也无法伪造命令.
+- 设计: 共用同一 base string (method+path+canonical_query+ts+nonce+sha256(body)), 通过新 header `X-Live-Bridge-Sig-Method` 路由 (缺省 / "hmac" / 任何未知值 → 老路径; "ed25519" → 新路径). 同 bridge_key 可同时在 LIVE_BRIDGE_SECRETS (hmac) + LIVE_BRIDGE_ED25519_PUBKEYS (ed25519) 两表注册, 灰度切换零迁移成本; nonce 表跨 method 共享去重.
+- Node 端: `backend/src/live-trading/middlewares/bridgeAuth.ts` 抽出 `normalizeSigMethod` + `verifyBridgeSignature` 纯函数 (DB-less 可测), 公钥 loader 接 4 种格式 (PEM / hex 32-byte raw / hex SPKI DER / base64 raw), 按 env raw JSON 串缓存解析结果. audit metadata 增加 `sig_method` 字段. 不破坏老 bridge: 既有 hmac 调用路径完全保留.
+- Python 端: `integrations/broker-bridge/bridge_common/auth.py` 加 `sign_ed25519` + `derive_ed25519_pubkey_hex` + `make_auth_headers(signature_method=, ed25519_private_key=)`. `config.py` 加 `signature_method` + `ed25519_private_key` 字段, load() 校验 ed25519 模式必填私钥. `client.py` _post/_get 透传 method. requirements.txt 加 cryptography>=42.0.
+- 测试 `backend/tests/live-trading/bridge-ed25519.test.ts` (44 ok / 0 fail):
+  - normalizeSigMethod (10): 缺省/大小写/乱码 fallback hmac
+  - hmac verify (7): 正确/错误 secret/缺 secret/篡改 body/篡改 path
+  - ed25519 verify (9): 正确/garbage sig 长度对/短 sig/缺 pubkey/错误 pubkey/hmac sig 跨 method/篡改 base
+  - env loader (4): PEM/hex raw/hex SPKI/base64 raw 四种格式 round-trip
+  - env-driven loader (1): cache reset
+  - META-GUARD fs+regex (13): export + 路由 + env 名 + header 名 + 文档 60 不再写"未实现" + Python sign_ed25519/signature_method/config 字段
+- Round-trip 验证: Python `sign_ed25519` → Node `crypto.verify` 字节对齐, 用 random 生成 keypair + 含 query 的 base string.
+- productionPreflight 加了 LIVE_BRIDGE_ED25519_PUBKEYS 校验 (JSON/object/key 长度 >=32). 老 2 个 ALLOWED_ORIGINS 失败是 pre-existing (与本改动无关, git stash 验证过).
+- 文件改动:
+  - backend/src/live-trading/middlewares/bridgeAuth.ts (核心: +~180 行, 抽 verifyBridgeSignature/normalizeSigMethod, 加 ed25519 pubkey loader+缓存, 路由层加 sigMethod 切换)
+  - backend/src/utils/productionPreflight.ts (+30 行: LIVE_BRIDGE_ED25519_PUBKEYS 校验)
+  - backend/tests/live-trading/bridge-ed25519.test.ts (新, 463 行)
+  - integrations/broker-bridge/bridge_common/auth.py (+100 行: sign_ed25519/_load_ed25519_seed/derive_ed25519_pubkey_hex + make_auth_headers 加参数)
+  - integrations/broker-bridge/bridge_common/config.py (+25 行: signature_method/ed25519_private_key + load() 校验)
+  - integrations/broker-bridge/bridge_common/client.py (_post/_get 透传 signature_method/ed25519_private_key)
+  - integrations/broker-bridge/config.example.yaml (说明 + 切换步骤)
+  - integrations/broker-bridge/requirements.txt (cryptography>=42.0)
+  - docs/trader-system/60_execution_overview.md (C.4 ⚠️未实现 → ✅已支持)
+- **Learnings for future iterations:**
+  - **header-based method 路由 + 同 base string + 同 nonce 表 = 灰度切换零成本**: ed25519 不另开 endpoint / 不改 base string / 不改 nonce 表结构, 只加 header `X-Live-Bridge-Sig-Method` 路由, 老 bridge 不发该 header 自动走 hmac. 同 bridge_key 可双注册 hmac + ed25519, 灰度期内 server 同时接受两种签名; 切完拆掉 hmac secret 即关闭老路径. 这是给将来任何"加密算法升级 / 协议版本切换"该照搬的模板.
+  - **未知 sigMethod 必须 fallback 到老 path (不是 reject)**: `normalizeSigMethod` 把 "rsa" / "junk" 全归 hmac, 不归 ed25519. 反过来很危险 — 若把未知值升级到新 path, 攻击者只要发 `X-Live-Bridge-Sig-Method: future-strong-algo` 就可能命中"未实现 → ok=true"路径. 缺省 / 未知 / 老 method 都必须落回最严格已实现 path.
+  - **Ed25519 公钥 4 种 env 格式必须全支持**: PEM (运维 ssh-keygen 输出习惯) + hex 32-byte raw (cryptography 库 .public_bytes(Raw,Raw) 默认) + hex SPKI DER (openssl x509 -pubkey 默认) + base64 raw (短/可复制). 每种都接, parser 按 try 顺序, 失败的 key 跳过不阻塞其他 key (一个 bridge 配错不能拖死全 fleet). Node `crypto.createPublicKey` 不接 raw 32 bytes, 必须前面拼 12-byte SPKI 前缀 `302a300506032b6570032100`.
+  - **Ed25519 detached signature 固定 64 字节, 长度检查是廉价兜底**: hex 128 chars 是硬约束, 任何长度不符直接 reject, 不调 crypto.verify (有些实现 length-mismatch 会 throw, 有些返 false, 不一致). 测试用 hmac sig (hex 64 chars) 走 ed25519 path → 在长度检查就挂掉, 不会让 verify 函数面对意外输入.
+  - **Python ↔ Node base string 字节对齐 = 旧契约的红线**: ed25519 升级最大风险不是密码学, 是两端 base string 不一致导致 verify 全 fail. 验证手段: 用 Python `sign_ed25519(priv, base)` 产 sig, 用 Node `crypto.verify(null, base, pub, sig)` 验, **同一个 base 串两端各算一遍 sha256(body) / canonicalize_query**, 任何差异都会 0%通过 (不像 hmac 弱不对齐会概率通过). 测试 `[5]` 跑了 random keypair + 含 `a=1&b=2` query 的 base, 通过率 100%.
+  - **derive_ed25519_pubkey_hex 是关键 ops 工具**: bridge 操作员只需在 bridge 机器 `python -c "from bridge_common.auth import derive_ed25519_pubkey_hex; print(derive_ed25519_pubkey_hex(open('priv').read()))"`, 派生出的 hex 公钥直接贴给 server admin 配 `LIVE_BRIDGE_ED25519_PUBKEYS={"bk-id":"<hex>"}`. **私钥永远不出 bridge 机器** — server admin / DBA / 任何 server 端泄露途径都拿不到. 不提供这条 helper, ops 会去 google `cryptography ed25519 public key extract`, 半小时浪费.
+  - **cryptography 库装/不装都不阻塞导入**: `sign_ed25519` 先调 `_load_ed25519_seed`, 后者 `import cryptography` 失败时 throw ValueError, 但调用栈延后到第一次签名才触发 — 老 bridge (signature_method=hmac) 永远不会进 ed25519 path, 即使没装 cryptography 也能正常跑. requirements.txt 加这条作为推荐, 但不强制. 同 pattern 适用任何"v2 path 引入新依赖" — import 在函数内, throw 在调用时, env 已切到 v2 才 fail.
+  - **audit metadata 加 sig_method 是廉价合规礼物**: BRIDGE_REQUEST audit log 已经写 bridge_key/path/method/clock_skew, 多写一个 sig_method 是 free. 灰度期 SRE 直接 SQL `SELECT sig_method, count(*) FROM live_execution_audit_logs WHERE event_type='BRIDGE_REQUEST' GROUP BY 1` 看切换进度, 不需要外挂监控.
+  - **`__resetEd25519CacheForTests` 是 test-only export, 隐藏 in-memory cache 不影响 prod**: env 改了但 cache 还按老 raw JSON 串命中是真实坑 (生产 hot-reload env 时); 缓存命中条件是"env raw 字符串完全相等", 改一个 key 名 = cache miss = 重新解析全集. 测试通过显式 reset 强迫这条路径走一遍, 不靠"我没改 env 所以应该命中" 这种隐式假设.
 ---
