@@ -1667,8 +1667,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 108,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "DONE 2026/06/20: 新增 backend/src/utils/autopilotIdempotency.ts (AutopilotIdempotencyStore + buildIdempotencyKey + dailyWindow + default singleton), 进程内 in-flight + TTL cache 双层去重 (跨进程靠 BETA-4 markDraftShadowExecuted 的 transaction 兜底). 在 LiveTradingService.runShadowAutopilot 入口 wire-in: 同 (user_id, source, 当日 Asia/Shanghai 窗口, dry_run, limit, account_role) 30s 内重复触发直接返 cached + reused_from_idempotency=true; 真实工作体抽出 _runShadowAutopilotUncached 私有方法. tests/live-trading/autopilot-idempotency.test.ts 49 ok / 0 failed 覆盖 key 稳定性 / dailyWindow 北京日历日 / fresh / cached / ttl=0 不缓存 / fake clock 过期重 fresh / 并发 inflight_join (worker 仅跑 1 次) / throw 清 in-flight 不写缓存 / mark_reused=false / META-GUARD fs+regex LiveTradingService wiring / singleton getter+inject. typecheck 0 err, 新文件 0 lint err, 全量 npm test 217/218 (唯一 fail 是 pre-existing US-103 aiPollingQueue.dedup 需 redis, 与本 story 无关)."
     },
     {
       "id": "US-109",

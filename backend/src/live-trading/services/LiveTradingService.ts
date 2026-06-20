@@ -39,6 +39,12 @@ import {
   evaluateFeasibilityGate,
   emitFeasibilityGateAlert,
 } from '../../portfolio/internal/feasibilityGate';
+// US-108 [EX-008]: 统一 autopilot 幂等 helper. 进程内 in-flight + TTL cache 双层去重,
+// 跨进程靠 markDraftShadowExecuted 的 BETA-4 transaction 兜底.
+import {
+  getDefaultAutopilotIdempotencyStore,
+  dailyWindow as autopilotDailyWindow,
+} from '../../utils/autopilotIdempotency';
 // main 上 PAPER_PORTFOLIO_FAMILIES 位于 portfolio/internal/，dev_lym 旧路径 services/ 已不存在
 import { PAPER_PORTFOLIO_FAMILIES } from '../../portfolio/internal/PaperTradingPortfolioFamilies';
 
@@ -742,6 +748,42 @@ export class LiveTradingService {
       throw new Error('无人影子执行未启用：请设置 LIVE_SHADOW_AUTOPILOT_ENABLED=true。');
     }
 
+    // US-108 [EX-008]: 同 (user_id, source, 当日窗口, dry_run, limit, account_role) 30s 内重复
+    // 触发 → 直接返上次成功 result + reused_from_idempotency=true. 防 cron tick overlap /
+    // manual API 重连 / dashboard 双击造成的重复 shadow 草稿. dry_run 单独成 key 避免互相
+    // 污染. 强幂等仍由 markDraftShadowExecuted 的 transaction 兜底.
+    const guard = getDefaultAutopilotIdempotencyStore();
+    const wrapped = await guard.run(
+      {
+        task: 'shadow_autopilot',
+        user_id,
+        source: options.source || 'manual_shadow_autopilot',
+        window: autopilotDailyWindow(),
+        extra: {
+          dry_run: dryRun,
+          limit: maxCount,
+          account_role: accountRole,
+        },
+      },
+      { ttl_ms: 30_000 },
+      () =>
+        this._runShadowAutopilotUncached(user_id, options, safety, maxCount, accountRole, dryRun)
+    );
+    return wrapped.result;
+  }
+
+  /**
+   * runShadowAutopilot 的真实工作体. 抽出来是为了让 US-108 [EX-008] 幂等 helper 包裹.
+   * 不要在外部直接调; 走 runShadowAutopilot 入口才有幂等保护.
+   */
+  private async _runShadowAutopilotUncached(
+    user_id: number,
+    options: { limit?: number; source?: string; dry_run?: boolean; account_role?: string },
+    safety: any,
+    maxCount: number,
+    accountRole: string,
+    dryRun: boolean
+  ) {
     const candidateDashboard = await this.getDraftCandidates(user_id, {
       limit: Math.max(maxCount, 10),
       account_role: accountRole,

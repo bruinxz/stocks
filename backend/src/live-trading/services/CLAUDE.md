@@ -35,3 +35,12 @@ inline 拼 SQL). DB-less, 79 ok.
 - `KillSwitchService.trigger` 幂等: 已有 active 记录走 append metadata 路径, 不再 emit
   `kill_switch_triggered` 事件 (避免 SSE 反复断连). 真要"再次提醒"靠前端定期拉 detail.
 - `LiveExecutionAuditLog` 写入失败一律 swallow + log error/warn, 不阻塞主流程.
+
+## US-108 (EX-008) runShadowAutopilot 幂等 — autopilot 任务统一入口去重
+
+**两层幂等**:
+1. **进程内入口去重** — `LiveTradingService.runShadowAutopilot` 入口已包 `getDefaultAutopilotIdempotencyStore().run({task,user_id,source,window:dailyWindow(),extra:{dry_run,limit,account_role}}, {ttl_ms:30_000}, worker)`. 同 key 30s 内重复触发返 cached + `reused_from_idempotency=true` 标记; 并发同 key 调 worker 只跑 1 次 (in-flight join). 真实工作体在私有 `_runShadowAutopilotUncached(...)`, **不要** 在外部直接调它 — 必走 `runShadowAutopilot` 入口才有幂等保护.
+2. **DB 层强幂等** — `markDraftShadowExecuted` 用 transaction + SELECT FOR UPDATE 防并发把同 draft 双标为 shadow_executed (BETA-4, audit M-16). 跨进程靠这层兜底.
+
+**未来扩展提醒**: 新加 autopilot 类入口 (e.g. `runSignalAutopilot` / `runRiskAutopilot`) 复用 `backend/src/utils/autopilotIdempotency.ts` 同款 store, key 必须把"会改变业务语义"的参数全放进 `extra`. 不要 inline 写 in-flight Map. 测试在 `tests/live-trading/autopilot-idempotency.test.ts`, META-GUARD fs+regex 守 wiring 单一事实源.
+

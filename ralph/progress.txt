@@ -2,6 +2,7 @@
 Started: Fri Jun 19 02:25:41 CST 2026
 
 ## Codebase Patterns
+- "进程内幂等 helper + DB 层强幂等" 双层模板 (US-108 EX-008 autopilotIdempotency): 任何"周期触发 / 用户重连 / 双击" 类入口都会有重复 fire 风险, 单靠 SchedulerService 的 inFlightTaskIds Set (Batch O C-S1) 只挡同 task_id cron tick overlap, 挡不了 manual API 重连 + 多账户串行. 推荐双层: (a) **DB 层强幂等** — 关键写路径 (e.g. markDraftShadowExecuted) 必须 transaction + SELECT FOR UPDATE + status check, 锁后第二个 caller 拿不到锁等 commit → 看到新 status → 直接 throw 形成跨进程兜底, BETA-4 / KillSwitchService.trigger / approveDraft 全同款; (b) **进程内入口幂等** — `getDefaultAutopilotIdempotencyStore().run({task,user_id,source,window:dailyWindow(),extra:{dry_run,limit}}, {ttl_ms:30_000}, worker)` 包 service 入口: in-flight Map join 并发 caller (worker 只跑一次, 第二个 promise share 结果), TTL cache Map 在 ttl 窗口内重复触发返 cached + reused_from_idempotency=true 标记, throw 时清 in-flight 不污染重试也不写缓存. key 字段必须把"会改变业务语义"的参数全放进 extra (dry_run / limit / account_role), 漏一个会让"换参数重新跑"被错误命中老缓存. dailyWindow 用 +8h offset 算北京日历日 (Asia/Shanghai 无 DST 安全), 不要 toISOString().slice(0,10) (会按 UTC 切日). 拆主入口时把真实工作体抽出 `_<verb>Uncached` 私有方法, 主入口只剩 guard.run 一行 + 参数 normalize, 不要给主入口签名加新参数 (会牵动所有 caller). meta-guard fs+regex 守 import / guard.run / extra 字段 / 私有方法被拆出 + 主入口 body 不再 createDraft, 防未来 refactor 把 worker 重新塞回主入口绕过幂等. helper 在 backend/src/utils/ 是 leaf 模块, 不依赖任何 model/service, 单测纯 DB-less, AutopilotIdempotencyStore({now:()=>nowMs}) 注入 fake clock 测 cache 过期. 与 BETA-4 / aiPollingQueue jobId Redis dedup (US-019) 协同覆盖: aiPollingQueue 是 "跨进程 Bull EXISTS 短路" (Redis 事实源), 本 helper 是 "单进程 in-memory 入口去重", BETA-4 是 "DB 行级锁兜底", 三者形成"入口/队列/写库" 三层防御.
 - Backend tests 不依赖 jest：每个 `tests/**/*.test.ts` 自带 assert 框架并 `process.exit`，由 `src/scripts/run-tests.ts` 串行 spawn 子进程跑 (`npm test`)。
 - EnvValidator (`backend/src/config/EnvValidator.ts`) 是项目环境一致性校验的唯一事实源：`validateEnv()` 返回 `EnvValidationResult`，`shouldExitOnFailure()` 决定是否 exit。任何新增 required env 都加到 `buildBaseSchema()`，同步更新 `.env.example` 与 docs/deploy。
 - `backend/src/index.ts` 第 1 行 dotenv.config，第 18 行 validateEnv，再 productionPreflight。任何强制启动检查都加这里。
@@ -3143,4 +3144,42 @@ Started: Fri Jun 19 02:25:41 CST 2026
   - **新加 now: Date 参数的 baseInput 必须显式注入**: 不加 baseInput.now 让所有已有 routeExecutionPolicy 单测在生产时段 (host 当地非交易时段) 跑会突然全走 CLOSED → SKIP, 看起来"代码全错" 实际是测试时区敏感. baseInput 加 `now: 2026-06-15T10:00:00+08:00` (周一非节假日, CONTINUOUS) 让所有沿用 baseInput 的旧 case 行为不变, 也是给后续 reader 的"老测试为何能继续过" 的注脚. 同样适用未来任何"时间敏感 helper" 加 now 参数到 input 时.
   - **session 优先级要高于 SKIP 硬约束**: 反直觉但正确 — 高 vol + 集合竞价时段, vol 计算来自连续竞价的 ATR/分钟收益率, 集合竞价时段这些指标本就不成立. 让 session 先兜底 (CLOSED → SKIP; AUCTION → 降级 LIMIT) 比让 vol skip 先触发更合理. 写到 routeExecutionPolicy 优先级链注释里防 future refactor 误调顺序.
   - **WAIT 仅在 CONTINUOUS 触发**: gap_up + low urgency 本来 WAIT_30M, 但在 14:58 收盘集合竞价时段 WAIT 30 min = 错过本日最后撮合 + 错过收盘价. 把 WAIT 判定移到 `if (session === 'CONTINUOUS')` 内是必须的, 否则集合竞价时段 + gap_up 用户会得到 "WAIT_30M" 但实际等过头就收盘. 测试 testRouteBySession 第 3 段显式守这条 (closeAuctionGap.policy === 'LIMIT_AT_TOUCH').
+---
+
+## 2026-06-20 19:05 - US-108 [EX-008] runShadowAutopilot 幂等
+- 新增 backend/src/utils/autopilotIdempotency.ts:
+  - AutopilotIdempotencyStore: 进程内 in-flight Map + TTL cache Map 双层去重
+  - buildIdempotencyKey(): 把 {task,user_id,source,window,extra} 规范成稳定字符串 (extra 按 key 排序,
+    跳过 undefined/null, user_id=0 保留)
+  - dailyWindow(): UTC ts → 北京 (+8h) 日历日字符串
+  - getDefaultAutopilotIdempotencyStore() / __setDefaultAutopilotIdempotencyStoreForTests() 单例 +
+    单测注入 hook
+- 在 LiveTradingService.runShadowAutopilot wire-in:
+  - 拆出 _runShadowAutopilotUncached(...) 私有方法承载真实工作
+  - 入口用 guard.run({task:'shadow_autopilot', user_id, source, window:dailyWindow(),
+    extra:{dry_run,limit,account_role}}, {ttl_ms:30_000}, worker) 包裹
+  - dry_run / limit / account_role 进 key extra 避免互相污染
+- 新增 backend/tests/live-trading/autopilot-idempotency.test.ts: 49 ok / 0 failed
+  - 覆盖 key 稳定性, dailyWindow 跨时区日历日, fresh/cached/ttl=0/过期/并发 inflight_join/
+    throw 不污染缓存/mark_reused=false, META-GUARD fs+regex LiveTradingService wiring 单一事实源,
+    singleton getter+inject
+- Files changed:
+  - backend/src/utils/autopilotIdempotency.ts (new, 217 行)
+  - backend/src/live-trading/services/LiveTradingService.ts (引入 helper + 拆 _runShadowAutopilotUncached)
+  - backend/tests/live-trading/autopilot-idempotency.test.ts (new)
+- Quality: typecheck 0 err, 新文件 0 lint err (老文件 pre-existing warning 不变),
+  全量 npm test 217/218 (唯一 fail = US-103 aiPollingQueue.dedup, 需 redis, 与本 story 无关)
+- **Learnings for future iterations:**
+  - 项目"幂等"分两层: (a) DB 层强幂等 (BETA-4 transaction + SELECT FOR UPDATE 在
+    markDraftShadowExecuted, KillSwitchService.trigger 等) (b) 进程内 in-memory 入口去重
+    (本 helper). 跨进程靠 DB 兜底, 单进程 cron tick overlap / manual API 重连 / dashboard
+    双击靠 store 兜底.
+  - 跨时区日历日不要直接 toISOString().slice(0,10), 必须先 +8h 偏移. Asia/Shanghai 没
+    DST 所以纯加法安全.
+  - LiveTradingService 已经 3100+ 行, 新功能拆 helper utils + 私有 _xxxUncached 方法
+    最稳; 不要给主入口签名加新参数 (会牵动 SchedulerService 5 处调用).
+  - test 文件加在 backend/tests/<feature_dir>/ 自动被 run-tests.ts 扫到; 不要忘了
+    在测试中带 META-GUARD fs+regex (项目 Pattern, bridge-fail-safe.test.ts [6] /
+    portfolio-construction-adapter.test.ts [meta-test guard] / cron-registry.test.ts [5]
+    同款), 防止有人下次直接在主 service inline 重写绕过 helper.
 ---
