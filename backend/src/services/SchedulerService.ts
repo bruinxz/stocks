@@ -3454,6 +3454,67 @@ class SchedulerService {
             `跳过 ${weeklyResult.skipped_count}，失败 ${weeklyResult.failed_count}` +
             (dryRun ? '（dry-run，未实际推送）' : '')
         );
+      } else if (task.type === 'DAILY_ATTRIBUTION_GENERATE') {
+        // US-083 PM-006 — 工作日 17:00 给所有 active paper trading portfolio 生成 6 维
+        // 归因 (factor/industry/timing/selection/sizing/execution_cost) 并 upsert 到
+        // daily_attribution_reports. 单 portfolio 失败 fail-OPEN continue 不阻塞 batch.
+        // `portfolio_ids` 显式 list (空 = 取所有 is_active=true); `dry_run`=true 仅算不写;
+        // `date` override 默认今日 Asia/Shanghai; cron 默认零 AI 链路走 heuristic.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { runDailyAttributionGenerate } = require('./attribution/DailyAttributionCronRunner');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const explicitIds: number[] = Array.isArray(parameters.portfolio_ids)
+          ? parameters.portfolio_ids
+              .map((x: unknown) => Number(x))
+              .filter((n: number) => Number.isFinite(n) && n > 0)
+          : [];
+        const dryRunAttr =
+          parameters.dry_run !== undefined
+            ? Boolean(parameters.dry_run)
+            : parameters.dryRun !== undefined
+            ? Boolean(parameters.dryRun)
+            : false;
+        const refDate =
+          typeof parameters.date === 'string' && parameters.date.length > 0
+            ? parameters.date
+            : typeof parameters.reference_date === 'string'
+            ? parameters.reference_date
+            : undefined;
+        const attrSummary = await runDailyAttributionGenerate({
+          date: refDate,
+          portfolio_ids: explicitIds.length > 0 ? explicitIds : undefined,
+          dry_run: dryRunAttr,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: attrSummary.total_portfolios,
+          completed_items: attrSummary.persisted_count,
+          failed_items: attrSummary.failed_count,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'daily_attribution_generate',
+            date: attrSummary.date,
+            dry_run: attrSummary.dry_run,
+            total_portfolios: attrSummary.total_portfolios,
+            ok_count: attrSummary.ok_count,
+            skipped_count: attrSummary.skipped_count,
+            failed_count: attrSummary.failed_count,
+            persisted_count: attrSummary.persisted_count,
+            per_portfolio: attrSummary.per_portfolio.map((p: any) => ({
+              portfolio_id: p.portfolio_id,
+              status: p.status,
+              reason: p.reason,
+              persisted: p.persisted,
+            })),
+          },
+        });
+        logger.info(
+          `[DAILY_ATTRIBUTION_GENERATE] date=${attrSummary.date} ` +
+            `total=${attrSummary.total_portfolios} ok=${attrSummary.ok_count} ` +
+            `skip=${attrSummary.skipped_count} fail=${attrSummary.failed_count} ` +
+            `persisted=${attrSummary.persisted_count}${dryRunAttr ? ' (dry_run)' : ''}`
+        );
       } else if (task.type === 'MARKET_BRIEF_GENERATE') {
         // US-073 — 每个交易日 08:30 生成「AI 大盘速读」当日卡片。
         // 5 维数据：沪深300 上日收盘 / 今日开盘 / 北向资金 / 涨停数 / AI 一句话观点。
@@ -5651,6 +5712,21 @@ class SchedulerService {
         parameters: {
           dry_run: false,
           upcoming_lookahead_days: 7,
+        },
+      },
+      {
+        // US-083 PM-006 — 工作日 17:00 (盘后 + DAILY_UPDATE 18:00 前) 给所有 active
+        // paper_trading_portfolio 生成 6 维归因报告并 upsert 到 daily_attribution_reports.
+        // 时间窗 (17:00) 早于 ENHANCED_TRADING_JOURNAL_GENERATE (15:40) 不冲突, 因为
+        // journal 用的是 15:30 daily_digest 的快照, 而 attribution 用的是 17:00 之前
+        // 的 snapshot/trade 落库结果, 二者读取互不依赖.
+        // 默认 dry_run=false, 单 portfolio 失败 fail-OPEN continue 不阻塞 batch.
+        name: '每日归因报告生成',
+        type: 'DAILY_ATTRIBUTION_GENERATE',
+        cron_expression: '0 17 * * 1-5',
+        is_active: true,
+        parameters: {
+          dry_run: false,
         },
       },
       {

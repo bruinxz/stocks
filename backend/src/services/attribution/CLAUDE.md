@@ -10,13 +10,14 @@ DailyAttributionService.ts   — PM-001 主入口 + 6 维框架 + DataSource DI 
 AttributionEngine.ts         — PM-002 Brinson-Fachler 拆解 (pure helper, no DB)
 ExecutionCostAggregator.ts   — PM-004 commission + stamp + transfer + slippage + LiveTrade 对账
 AIAttributionSummary.ts      — PM-005 LLM 摘要 (≤200 字 + ≥3 数字 + heuristic fallback)
+DailyAttributionCronRunner.ts — PM-006 工作日 17:00 批量 cron 入口 + persistReport DataSource
 ```
 
 后续 story 在本目录新增:
 - PM-003 (US-080): 持久化走 `backend/src/models/DailyAttributionReport.ts` + migration  ✔ 已落
 - PM-004 (US-081): `ExecutionCostAggregator.ts` — 滑点 + 手续费 + 印花税 + 实盘对账  ✔ 已落
 - PM-005 (US-082): `AIAttributionSummary.ts` — LLM 替换 heuristicSummary  ✔ 已落
-- PM-006 (US-083): SchedulerService 注册 `DAILY_ATTRIBUTION_GENERATE` cron
+- PM-006 (US-083): `DailyAttributionCronRunner.ts` + SchedulerService.DAILY_ATTRIBUTION_GENERATE cron  ✔ 已落
 - PM-007 (US-084): `api/controllers/DailyAttributionController.ts` + route
 - PM-008 (US-085): BehaviorBiasDetector.detectIncremental 接入 bias_findings
 - PM-009 (US-086): 飞书推送 attribution 卡片
@@ -179,3 +180,38 @@ if (!Number.isFinite(pnl)) continue;
 
 不能依赖 `Number.isFinite(Number(null))` (那是 `Number.isFinite(0) === true`, null
 会被当 0 通过). 同时 unit test 必须同时断 sum 和 count 才能发现这类巧合通过.
+
+## DailyAttributionCronRunner — PM-006 cron 批量入口 (US-083)
+
+工作日 17:00 (盘后 + DAILY_UPDATE 18:00 前) 批量驱动 — 给所有 active paper trading
+portfolio 跑 `DailyAttributionService.generateDailyReport` 并 upsert 到
+`daily_attribution_reports`. 与 service 解耦的 cron-side DataSource:
+
+```ts
+runDailyAttributionGenerate({
+  date?: 'YYYY-MM-DD',          // 默认今日 Asia/Shanghai
+  portfolio_ids?: number[],      // 空 = 取所有 is_active=true
+  dry_run?: boolean,             // true 时不调 persistReport
+  ai_summary_source?: ...,       // 默认 'off' (cron 跑零 AI 链路)
+  cron_data_source?: ...,        // 单测注入
+  service_data_source?: ...,     // 单测注入透传给 generateDailyReport
+})
+```
+
+返聚合 summary (`total_portfolios / ok_count / skipped_count / failed_count /
+persisted_count / per_portfolio[]`), SchedulerService 落 `execution_log.result_summary`.
+
+**fail-OPEN 双层**:
+1. service 内部 fail-OPEN — `loadTrades` 抛被 service 顶层 catch 转 `status='failed'`
+2. persistReport 失败 → `per_portfolio[].status='persist_failed'` 但 continue 下一个
+
+**dry_run 契约**: `dry_run=true` 时跳过 persistReport, 仅返聚合 (cron preview / 灰度).
+
+**skipped / failed 也持久化留痕**: PRD US-080 AC "表里有当日记录" 要求所有 portfolio
+都有一行 (status 字段区分), 不留无记录的 "todo" 行 — `buildPersistRow` 在 report=null
+时用占位 0 / '' 仍写一行.
+
+**新加 PM-007 (route) 时不要再调 runDailyAttributionGenerate**: route 是单 portfolio
+按需读 (GET /api/portfolio/:id/attribution/daily?date=...), 直接读 `DailyAttributionReport`
+表; 缓存 miss 时调 `dailyAttributionService.generateDailyReport` 单 portfolio 跑 + 不
+落库 (route 是只读语义). cron + route 共享同一份 service, 不共享 cron runner.

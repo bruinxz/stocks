@@ -396,6 +396,19 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     owner: 'analytics',
     description: 'TCA (Transaction Cost Analysis) 周报',
   },
+  // US-083 PM-006 — 工作日 17:00 (盘后 + DAILY_UPDATE 18:00 前) 给所有 active
+  // paper trading portfolio 生成 6 维归因报告并 upsert 到 daily_attribution_reports.
+  // 默认 dry_run=false; portfolio_ids 显式 list (空 = 取全部 is_active=true);
+  // ai_summary_source='off' 让 cron 跑零 AI 链路(走 heuristic); reference_date
+  // 默认今日 Asia/Shanghai. fail-OPEN: 单 portfolio 失败 continue 不阻塞 batch.
+  {
+    type: 'DAILY_ATTRIBUTION_GENERATE',
+    category: 'analytics',
+    owner: 'analytics',
+    recommendedCron: '0 17 * * 1-5',
+    description:
+      '工作日 17:00 给所有 active portfolio 生成 6 维归因 (factor/industry/timing/selection/sizing/execution_cost) 并落 daily_attribution_reports',
+  },
   // US-038 QA-002 — 周一 02:00 (早于 AC "周一 04:00 前生成" 截止) 聚合上周
   // 全市场 (或 ScheduledTask.parameters.stock_codes 显式 list) 投资者问答按
   // (stock, week) 落 east_money_qa_stats 表.

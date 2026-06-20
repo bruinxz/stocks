@@ -1290,8 +1290,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 83,
-      "passes": false,
-      "notes": "依赖: OPS-002, PM-005"
+      "passes": true,
+      "notes": "依赖: OPS-002, PM-005 | done 2026-06-20: DAILY_ATTRIBUTION_GENERATE cron 落地 — registry 加白名单 + SchedulerService dispatch + seed 0 17 * * 1-5 + DailyAttributionCronRunner (DataSource DI seam, fail-OPEN per-portfolio, persist upsert 留痕 ok/skipped/failed). tests/attribution/daily-attribution-cron.test.ts 72 assert (8 主入口 + buildPersistRow + PRODUCTION factory + 5 件 META-GUARD). 全量 attribution 9 file 全 pass."
     },
     {
       "id": "US-084",
