@@ -2979,3 +2979,52 @@ Started: Fri Jun 19 02:25:41 CST 2026
     array index 拨号让每次 upsert 取不同返值 — 支持 "第 1 条 ok, 第 2 条 fail, 第 3 条 ok"
     精细路径覆盖, 不需要给 runner 加复杂 mock.
 ---
+
+## 2026-06-20 17:05 - US-103 [PR-014] CounterfactualBaselineCalculator
+- 落地 CounterfactualBaselineService — L4-Portfolio + Risk 层 cron service. 主入口
+  runCounterfactualBaselineService 30min 巡最近 24h status='partial' 且
+  sections_filled 不含 'counterfactual_baselines' 的 BlackSwanPostmortemReport,
+  对每行调 buildCounterfactualBaselines (pure engine) 算 4 baseline (hold/zero/plan/perfect)
+  模拟, UPDATE 仅覆盖 counterfactual_baselines + metadata.sections_filled + status,
+  其它 JSONB 段不出现在 payload 里 (sequelize 不动) — 保留 PR-013 已填的 event_summary
+  与后续 PR-015/016 待填段, 与 [[多段 JSONB 报告分阶段 UPSERT]] 同款.
+- 4 baseline 语义:
+  - hold    — 持有不动 (= 实际曲线本身, 与 actual 单独留 key 数值等价)
+  - zero    — 满仓清空 @ event_detect (后续 value 平直 = cash @ event)
+  - plan    — 按 user risk_config.per_stock_stop_loss.default_pct 触发清仓
+  - perfect — 提前 N 日清仓 (lead_days 默认 1, 事后视角最优)
+- 文件变更:
+  - backend/src/services/CounterfactualBaselineService.ts (新, 956 行 + 完整 jsdoc 含
+    4 baseline / fail-OPEN / idempotent / cron 错峰 / SchedulerService 接入)
+  - backend/src/constants/cronRegistry.ts: 加 BLACK_SWAN_BASELINE recommendedCron
+    '23,53 * * * *' (与 BLACK_SWAN_POSTMORTEM '13,43' 错峰 10min, 让 PR-013 先填
+    event_summary → 本 service 再补 counterfactual_baselines)
+  - backend/src/services/SchedulerService.ts: dispatch 分支 (lazy-require + 透传
+    dry_run/event_id/lookback_hours + result_summary scenario='black_swan_baseline')
+  - backend/tests/services/counterfactual-baseline-service.test.ts (新, 197 ok / 0 failed)
+  - ralph/prd.json: US-103 passes=true + notes
+- 质量检查:
+  - `npx tsc --noEmit` 0 err (项目级)
+  - `npx ts-node --transpile-only tests/services/counterfactual-baseline-service.test.ts` 197/0
+  - `npx ts-node --transpile-only tests/constants/cron-registry.test.ts` 595/0 (双向一致 guard 含新 type)
+  - `npx eslint src/services/CounterfactualBaselineService.ts` 0 err
+- **Learnings for future iterations:**
+  - **safeNum + Number(null)=0 陷阱**: `typeof null !== 'number'` 走 `Number(null)` → 0 (finite!), 不走 fallback. 与
+    `Number(undefined)=NaN` 行为不一致 — 单测要写"null → 0 是正常路径"而不是"null → fallback"
+    (本次首跑就被 1.8 case 抓到, 第二次顺手把语义写到注释里). 涉及 number 兼容入参时, 若希望 null
+    也兜 fallback, 得显式 `n == null ? fallback : safeNum(n, fallback)`.
+  - **PR-014 复用 PR-013 的多段 JSONB UPSERT 模式 — payload "只列我们要更新的字段"**: 本次 BaselineReportUpdateRow
+    只声明 id + counterfactual_baselines + metadata + status + reason + generated_at 6 列, 不出现 event_summary /
+    event_timeline / improvement_suggestions, sequelize.update 自然不动它们. 测 META-GUARD 必须用 `'event_summary' in row1`
+    反向断言"row 不含这些 key", 守住与 PR-015/016 并发写不冲突的语义.
+  - **engine 内 actual 与 hold baseline 数值等价但单独留 key**: 这是设计 (UI 一眼看出 "实际 vs hold-do-nothing"),
+    不是 bug. paper trading 没自动止损时 hold = actual. 这种"看起来重复的设计字段"必须在 jsdoc 写清原因, 否则
+    后续 review 会去除而引发前端断字段.
+  - **status 升级触发点**: decidePostmortemStatus 仅在 sections_filled 4 段全到位时升 'ok'. PR-014 本身
+    只负责"sections_filled 累加本段 + 让 decide 重算 status", 不强行升级 — 这让 4 个 PR 可以任意顺序接力,
+    任何一个 PR 都不需要预知谁是最后一个填的. 测 8m.8 用"事先放 3 段 sections_filled 的 candidate"模拟"我是最后一个"
+    路径, 验证升级语义.
+  - **新 cron type 5 件套照 PR-013 同款执行**: cronRegistry + SchedulerService dispatch 分支 + service
+    永不 throw + recommendedCron 错峰 + META-GUARD (cron-registry.test.ts 双向一致 595/595 自动覆盖). 与
+    [[新 cron type 5 件套清单]] 套路完全一致, 无新模板增量, 但每次都要重新走一遍守住不漏接 dispatch.
+---

@@ -1592,8 +1592,8 @@
         "Relevant unit tests pass"
       ],
       "priority": 103,
-      "passes": false,
-      "notes": "依赖: PR-013"
+      "passes": true,
+      "notes": "依赖: PR-013 | DONE 2026/06/20: 新增 backend/src/services/CounterfactualBaselineService.ts (956 行+完整 jsdoc) — 4 baseline 算子 (hold/zero/plan/perfect) 全 export 纯函数 + buildCounterfactualBaselines engine 含 meta(event_detected_at/window/snapshots_total/perfect_lead_days/plan_stop_loss_pct) + appendSectionFilled / decidePostmortemStatus / runCounterfactualBaselineService 主入口 (永不 throw, fail-OPEN) + createProductionBaselineRunner lazy-require (PaperTradingSnapshot + BlackSwanPostmortemReport + User.risk_config) + singleton. cronRegistry 加 BLACK_SWAN_BASELINE recommendedCron='23,53 * * * *' (与 BLACK_SWAN_POSTMORTEM '13,43' 错峰 10min). SchedulerService 加 dispatch 分支 (透传 dry_run/event_id/lookback_hours + 写 result_summary scenario='black_swan_baseline'). 单测 tests/services/counterfactual-baseline-service.test.ts 197 ok / 0 failed 覆盖 10 模块: safeNum + findEventIndex + computeDrawdown (V/W 型) + downsampleSeries + 4 baseline 算子精确数值 + engine snapshots<2/事件找不到/事件落尾/全 4/无 plan + appendSectionFilled (空/重/非数组兜底) + decidePostmortemStatus 4 段全升 ok / 缺段 partial + e2e 15 路径 + PRODUCTION runner singleton smoke + META-GUARD (cron registry 与 PR-013 错峰 + SchedulerService dispatch + service jsdoc 含 4 baseline + US-103/PR-014 + fail-OPEN + 不擦其它段). tsc 0 err / lint 0 err / cron-registry.test.ts 595 ok (双向一致 guard 含新 type)."
     },
     {
       "id": "US-104",

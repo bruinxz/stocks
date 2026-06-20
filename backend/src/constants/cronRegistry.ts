@@ -487,6 +487,24 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '每 30min 巡最近 24h BlackSwanEvent → UPSERT BlackSwanPostmortemReport (本 cron 只填 event_summary 段; PR-014/015/016 各自填其它 3 段)',
   },
+  // US-103 PR-014 — 每 30min 扫最近 24h status='partial' 且 sections_filled 不含
+  // 'counterfactual_baselines' 的 BlackSwanPostmortemReport, 对每行调
+  // CounterfactualBaselineService 算 4 baseline (hold/zero/plan/perfect) 模拟,
+  // UPDATE 仅覆盖 counterfactual_baselines + metadata.sections_filled + status
+  // (其它 JSONB 段不出现在 payload, sequelize 不动它们; 保留 PR-013 已填的
+  // event_summary, 与 [[多段 JSONB 报告分阶段 UPSERT]] 同款). 与
+  // BLACK_SWAN_POSTMORTEM (13,43) 错峰 10min (23,53): PR-013 先填 event_summary →
+  // 本 service 再补 counterfactual_baselines, 让 cron 跑顺序与段间依赖匹配.
+  // fail-OPEN: loadCandidates throw → success=false + error; 单事件 engine /
+  // upsert throw → skipped/failed 累计但不抛.
+  {
+    type: 'BLACK_SWAN_BASELINE',
+    category: 'risk_control',
+    owner: 'risk',
+    recommendedCron: '23,53 * * * *',
+    description:
+      '每 30min 扫 partial postmortem → 算 4 baseline (hold/zero/plan/perfect) → UPDATE counterfactual_baselines 段 (PR-013 已填 event_summary; PR-015/016 各自填其它 2 段)',
+  },
   // US-095 OPS-006 — 每 5min 扫 webhook_fallback_log status='pending' AND
   // next_retry_at <= NOW(), 透传 sender 重投递; 成功 → 'sent', 失败 attempts+=1
   // + 指数 backoff; attempts >= max_attempts → 'dead'. 主流程 (FeishuBotWebhookService)

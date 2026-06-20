@@ -5070,6 +5070,67 @@ class SchedulerService {
         } else {
           logger.warn(`[BLACK_SWAN_POSTMORTEM] FAIL ${bpResult.error || 'unknown_error'}`);
         }
+      } else if (task.type === 'BLACK_SWAN_BASELINE') {
+        // US-103 PR-014 — 每 30min 扫 partial postmortem → 算 4 baseline
+        // (hold/zero/plan/perfect) → UPDATE counterfactual_baselines 段
+        // (PR-013 已填 event_summary; PR-015/016 各自填其它 2 段). 与
+        // BLACK_SWAN_POSTMORTEM (13,43) 错峰 10min (23,53): postmortem 先填
+        // event_summary, 本 cron 再补 counterfactual_baselines.
+        // UNIQUE(black_swan_event_id) 让重跑只 UPDATE 同行; payload 仅含本段
+        // (其它 JSONB 段不出现, sequelize 不动它们) — 与 [[多段 JSONB 报告分阶段
+        // UPSERT]] 同款.
+        // dry_run=true → 仅返预演 candidates_total. event_id (debug) → 仅处理
+        // 单事件 id. lookback_hours 默认 24, 与 cron 30min 跑频率匹配.
+        // fail-OPEN: loadCandidates throw → success=false + error +
+        // failed_items=1 warn 不抛; 单事件 engine / upsert throw → skipped/failed
+        // 累计但不抛.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          runCounterfactualBaselineService,
+          getProductionBaselineRunner,
+        } = require('./CounterfactualBaselineService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const dryRunBl = parameters.dry_run === true || parameters.dryRun === true;
+        const eventIdBl = parameters.event_id || parameters.eventId;
+        const lookbackHoursBl = parameters.lookback_hours || parameters.lookbackHours;
+        const blResult = await runCounterfactualBaselineService(getProductionBaselineRunner(), {
+          dry_run: dryRunBl,
+          event_id: eventIdBl ? Number(eventIdBl) : undefined,
+          lookback_hours: Number.isFinite(Number(lookbackHoursBl))
+            ? Number(lookbackHoursBl)
+            : undefined,
+          metadata: {
+            cron_run_id: executionLog?.id ?? null,
+            service_version: 'PR-014/v1',
+          },
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: blResult.candidates_total,
+          completed_items: blResult.reports_updated,
+          failed_items: blResult.success ? blResult.reports_failed : 1,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: blResult.error || null,
+          result_summary: {
+            scenario: 'black_swan_baseline',
+            dry_run: blResult.dry_run,
+            candidates_total: blResult.candidates_total,
+            reports_updated: blResult.reports_updated,
+            reports_failed: blResult.reports_failed,
+            reports_skipped: blResult.reports_skipped,
+            generated_at_iso: blResult.generated_at_iso,
+            error: blResult.error || null,
+          },
+        });
+        if (blResult.success) {
+          logger.info(
+            `[BLACK_SWAN_BASELINE] candidates=${blResult.candidates_total} updated=${blResult.reports_updated} ` +
+              `failed=${blResult.reports_failed} skipped=${blResult.reports_skipped}` +
+              (blResult.dry_run ? ' (dry_run)' : '')
+          );
+        } else {
+          logger.warn(`[BLACK_SWAN_BASELINE] FAIL ${blResult.error || 'unknown_error'}`);
+        }
       } else if (task.type === 'LIVE_RECONCILIATION_GUARD') {
         // BETA-2 (2026-06-18, audit S-12): 对账主动告警 cron — 阈值评估 →
         // RiskAlert HIGH/MEDIUM → RealtimeAlertDispatcher 飞书推送。
