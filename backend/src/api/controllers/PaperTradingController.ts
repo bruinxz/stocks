@@ -7,8 +7,9 @@ import {
   QUANT_ONLY_PORTFOLIO_NAME,
 } from '../../portfolio/PaperTradingFacade';
 import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
-import { PaperTradingPosition } from '../../models/PaperTradingPosition';
 import { PaperTradingOrderIntent } from '../../models/PaperTradingOrderIntent';
+// AT-1 (2026-06-22) — 模拟盘 CRUD
+import { paperTradingPortfolioCrudService } from '../../portfolio/internal/PaperTradingPortfolioCrudService';
 import { logger } from '../../utils/logger';
 
 // AUTONOMOUS_PORTFOLIO_NAME / DEFAULT_AUTONOMOUS_INITIAL_CAPITAL / QUANT_ONLY_PORTFOLIO_NAME
@@ -81,33 +82,156 @@ export class PaperTradingController {
   // 之前 user 4 有 9 个 portfolio 但 UI 只调 GET / 拿一个 (随机), 用户看到的持仓
   // 一会儿是这盘一会儿是那盘. 现在 UI 应该先调这个 endpoint 拿列表, 再用
   // ?portfolio_id=X 拉具体盘.
+  //
+  // AT-1 (2026-06-22): 切到 PaperTradingPortfolioCrudService.listForUser, 返回
+  // 扩展字段 (strategy_keys + strategy_display + enabled_factors + factor_display +
+  // auto_trade_enabled + return_7d_pct + return_30d_pct + total_return_pct +
+  // description). 旧字段全部保留 (向后兼容).
   listPortfolios = async (req: Request, res: Response, _next: NextFunction) => {
     try {
       const user = (req as any).user;
-      const rows = await PaperTradingPortfolio.findAll({
-        where: { user_id: user.id, is_active: true },
-        order: [['id', 'ASC']],
-        attributes: ['id', 'name', 'initial_capital', 'current_cash', 'total_value', 'created_at'],
+      const includeInactive = String(req.query?.include_inactive || '').toLowerCase() === 'true';
+      const data = await paperTradingPortfolioCrudService.listForUser(user.id, {
+        include_inactive: includeInactive,
       });
-      const data = await Promise.all(
-        rows.map(async p => {
-          const posCount = await PaperTradingPosition.count({
-            where: { portfolio_id: p.id, quantity: { [Op.gt]: 0 } },
-          });
-          return {
-            id: p.id,
-            name: p.name,
-            initial_capital: Number(p.initial_capital),
-            current_cash: Number(p.current_cash),
-            total_value: Number(p.total_value),
-            positions_count: posCount,
-            created_at: p.created_at,
-          };
-        })
-      );
       res.json({ success: true, data });
     } catch (error: any) {
       sendError(res, error, '获取 portfolio 列表失败');
+    }
+  };
+
+  // AT-1 (2026-06-22): GET /api/paper-trading/portfolios/:id — 获取指定 portfolio
+  // 详情 (strategy_display + factor_display + 最近 10 笔 trade + risk_profile_overrides)
+  getPortfolioDetail = async (req: Request, res: Response, _next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const portfolioId = Number(req.params.id);
+      if (!Number.isFinite(portfolioId) || portfolioId <= 0) {
+        return res.status(400).json({ success: false, message: 'id 无效' });
+      }
+      const data = await paperTradingPortfolioCrudService.getDetailForUser(user.id, portfolioId);
+      res.json({ success: true, data });
+    } catch (error: any) {
+      sendError(res, error, '获取 portfolio 详情失败');
+    }
+  };
+
+  // AT-1 (2026-06-22): POST /api/paper-trading/portfolios — 创建新模拟盘
+  createPortfolio = async (req: Request, res: Response, _next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const body = req.body || {};
+      const result = await paperTradingPortfolioCrudService.createForUser(user.id, {
+        name: body.name,
+        description: body.description,
+        initial_capital: Number(body.initial_capital),
+        strategy_keys: body.strategy_keys,
+        enabled_factors: body.enabled_factors,
+        auto_trade_enabled: body.auto_trade_enabled,
+        risk_profile_overrides: body.risk_profile_overrides,
+      });
+      res.status(201).json({
+        success: true,
+        data: result,
+        message: `已创建模拟盘 "${result.name}" (id=${result.id})`,
+      });
+    } catch (error: any) {
+      sendError(res, error, '创建模拟盘失败');
+    }
+  };
+
+  // AT-1 (2026-06-22): PUT /api/paper-trading/portfolios/:id — 更新模拟盘配置
+  // (只允许改 name/description/strategy_keys/enabled_factors/auto_trade_enabled/
+  // risk_profile_overrides; 资金字段一律拒绝)
+  updatePortfolio = async (req: Request, res: Response, _next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const portfolioId = Number(req.params.id);
+      if (!Number.isFinite(portfolioId) || portfolioId <= 0) {
+        return res.status(400).json({ success: false, message: 'id 无效' });
+      }
+      const body = req.body || {};
+      // 资金字段防御性拦截 (service 层已过滤, 这里 422 提示更早)
+      const FORBIDDEN = ['initial_capital', 'current_cash', 'total_value', 'user_id', 'id'];
+      for (const k of FORBIDDEN) {
+        if (Object.prototype.hasOwnProperty.call(body, k)) {
+          return res.status(422).json({
+            success: false,
+            message: `不允许通过 PUT 修改 ${k} (要重置资金请用 POST /portfolios/:id/reset; 要改规模请删后重建)`,
+          });
+        }
+      }
+      await paperTradingPortfolioCrudService.updateForUser(user.id, portfolioId, {
+        name: body.name,
+        description: body.description,
+        strategy_keys: body.strategy_keys,
+        enabled_factors: body.enabled_factors,
+        auto_trade_enabled: body.auto_trade_enabled,
+        risk_profile_overrides: body.risk_profile_overrides,
+      });
+      res.json({ success: true, message: '模拟盘配置已更新' });
+    } catch (error: any) {
+      sendError(res, error, '更新模拟盘失败');
+    }
+  };
+
+  // AT-1 (2026-06-22): DELETE /api/paper-trading/portfolios/:id?hard=true
+  // 默认软删 (is_active=false 保留历史); hard=true 物理删 + cascade
+  deletePortfolio = async (req: Request, res: Response, _next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const portfolioId = Number(req.params.id);
+      if (!Number.isFinite(portfolioId) || portfolioId <= 0) {
+        return res.status(400).json({ success: false, message: 'id 无效' });
+      }
+      const hard = String(req.query?.hard || '').toLowerCase() === 'true';
+      await paperTradingPortfolioCrudService.deleteForUser(user.id, portfolioId, { hard });
+      res.json({
+        success: true,
+        message: hard
+          ? '模拟盘已物理删除 (含所有历史 trade/snapshot)'
+          : '模拟盘已停用 (软删, 历史保留)',
+      });
+    } catch (error: any) {
+      sendError(res, error, '删除模拟盘失败');
+    }
+  };
+
+  // AT-1 (2026-06-22): POST /api/paper-trading/portfolios/:id/reset
+  // 清持仓 + cash 还原到 initial_capital (保留 portfolio.id + 历史 trades/snapshots)
+  resetPortfolio = async (req: Request, res: Response, _next: NextFunction) => {
+    try {
+      const user = (req as any).user;
+      const portfolioId = Number(req.params.id);
+      if (!Number.isFinite(portfolioId) || portfolioId <= 0) {
+        return res.status(400).json({ success: false, message: 'id 无效' });
+      }
+      await paperTradingPortfolioCrudService.resetForUser(user.id, portfolioId);
+      res.json({ success: true, message: '模拟盘已重置 (持仓清零, 资金还原)' });
+    } catch (error: any) {
+      sendError(res, error, '重置模拟盘失败');
+    }
+  };
+
+  // AT-1 (2026-06-22): GET /api/paper-trading/strategies/available
+  // 列出全部已注册策略 + 中文名 + 简介 + risk_level + tags (供创建/编辑 portfolio 时选)
+  listAvailableStrategies = async (_req: Request, res: Response, _next: NextFunction) => {
+    try {
+      const data = paperTradingPortfolioCrudService.listAvailableStrategies();
+      res.json({ success: true, data });
+    } catch (error: any) {
+      sendError(res, error, '获取可选策略列表失败');
+    }
+  };
+
+  // AT-1 (2026-06-22): GET /api/paper-trading/factors/available
+  // 列出全部已注册因子 + 中文描述 + category (供 enabled_factors 选)
+  listAvailableFactors = async (_req: Request, res: Response, _next: NextFunction) => {
+    try {
+      const data = paperTradingPortfolioCrudService.listAvailableFactors();
+      res.json({ success: true, data });
+    } catch (error: any) {
+      sendError(res, error, '获取可选因子列表失败');
     }
   };
 

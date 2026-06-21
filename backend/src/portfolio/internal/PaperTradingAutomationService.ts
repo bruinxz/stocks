@@ -3526,6 +3526,48 @@ class PaperTradingAutomationService {
       initial_capital: options.initial_capital,
       force_new: options.force_new_portfolio,
     });
+
+    // AT-1 (2026-06-22): auto_trade_enabled opt-in gate.
+    //
+    // 之前 runAutoSync 对 user 任一 active portfolio 都默认自动跟单, 用户被动
+    // 持仓被刷, 想停只能改 cron. 现在 portfolio.auto_trade_enabled 默认 false,
+    // 用户必须在 UI 上主动开启某盘才会被 PAPER_TRADING_AUTO_SYNC cron 拉.
+    //
+    // 例外:
+    //   - bypass_auto_trade_gate: 显式 ops/admin 跳过 (历史回填 / 单测 / 强制刷新)
+    //   - dry_run: 预演不下单, 也不该被 gate 限制 (用户想看计划)
+    //   - autonomous_auto_sync 链路 (caller 是 force_new_portfolio=true 显式建专用盘)
+    //     依然走自己的语义, 这层 gate 由 ensurePortfolio 之后立即检查 — 自主盘创建后
+    //     默认 false, 需要用户去 UI 开;  AC 要求 ops 部署后跑 admin SQL 把现有盘
+    //     恢复 true, 见 backend/scripts/migrations/2026-06-22-admin-keep-auto-trade.sql
+    if (
+      !toBoolean(options.dry_run, false) &&
+      !toBoolean((options as any).bypass_auto_trade_gate, false) &&
+      portfolio.auto_trade_enabled !== true
+    ) {
+      logger.info(
+        `[runAutoSync] portfolio ${portfolio.id} (${portfolio.name}) auto_trade_enabled=false — opt-in 未开启, skip 自动跟单`
+      );
+      return {
+        portfolio_id: portfolio.id,
+        user_id: portfolio.user_id,
+        dry_run: false,
+        source_type: String(options.source_type || 'unknown'),
+        scanned: 0,
+        eligible: 0,
+        executed: 0,
+        planned: 0,
+        skipped: 0,
+        trades: [],
+        skipped_items: [
+          {
+            symbol: 'AUTO_TRADE_GATE',
+            name: portfolio.name,
+            reason: 'portfolio.auto_trade_enabled=false (用户未在 UI 开启自动跟单)',
+          },
+        ],
+      } as any;
+    }
     const refreshRecommendations = toBoolean(options.refresh_recommendations, false);
     let generated: any = null;
     let archive: any = null;
