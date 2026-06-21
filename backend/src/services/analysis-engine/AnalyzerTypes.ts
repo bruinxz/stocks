@@ -173,4 +173,23 @@ export interface RecommendationDecision {
   /** YYYY-MM-DD */
   as_of: string;
   stock_code: string;
+  /**
+   * Batch AW (2026-06-22): TradingAgents 远端 LLM 研报式 narrative (可选).
+   * 引擎决策不依赖它 (依然由 8 analyzer 决定 action / score), 但作为补充展示:
+   *   - 5 段 markdown: fundamental / technical / capital / news / sentiment
+   *   - 由 AIAdvisorService 调一次 TA `/api/analyze` 后 buildKeyPoints 风格生成
+   *   - 失败时缺省 null, 不阻塞 decision
+   *   - 前端 AIStockAnalysisModal v2 在量化 evidence 下方显示
+   * 设计: "新引擎做决策, TA 做解释", 既要量化可追溯也要叙事好读.
+   */
+  tradingagents_narrative?: {
+    fundamental?: string;
+    technical?: string;
+    capital?: string;
+    news?: string;
+    sentiment?: string;
+    raw_text?: string;
+    source: 'tradingagents';
+    generated_at: string;
+  } | null;
 }

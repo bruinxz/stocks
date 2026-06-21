@@ -323,7 +323,51 @@ export class AnalysisEngineService {
       { shadow_of_report_id: options.shadow_of_report_id || null }
     );
 
+    // Batch AW (2026-06-22): 异步附加 TradingAgents narrative — 作为"叙事补充", 不影响决策
+    // 用 Promise.race 给 6s timeout, TA 慢/挂不阻塞引擎主流程返回.
+    decision.tradingagents_narrative = await this.maybeLoadTradingAgentsNarrative(normalized, asOf);
+
     return decision;
+  }
+
+  /**
+   * 调用 AIAdvisorService 拿 TradingAgents 的研报式 5 维度 narrative.
+   * 失败 / timeout 返 null, 不让 decision 主路径挂.
+   */
+  private async maybeLoadTradingAgentsNarrative(
+    stockCode: string,
+    asOf: string
+  ): Promise<RecommendationDecision['tradingagents_narrative']> {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { aiAdvisorService } = require('../AIAdvisorService');
+      // analyzeSingleStock 是 TradingAgents 5 维度的入口
+      // (走旧路径, 不触发 hard short-circuit — 我们就是要 TA 的叙事补充, 不要 hard 替换)
+      const TA_TIMEOUT_MS = 6000;
+      const taPromise: Promise<any> = aiAdvisorService.analyzeSingleStock(stockCode, {
+        as_of: asOf,
+        force_legacy: true, // 跳过 hard short circuit
+      });
+      const timeoutPromise = new Promise<null>(resolve =>
+        setTimeout(() => resolve(null), TA_TIMEOUT_MS)
+      );
+      const result: any = await Promise.race([taPromise, timeoutPromise]);
+      if (!result || !result.key_points) return null;
+      const kp = result.key_points || {};
+      return {
+        fundamental: kp.fundamental || undefined,
+        technical: kp.technical || undefined,
+        capital: kp.capital || undefined,
+        news: kp.news || undefined,
+        sentiment: kp.sentiment || undefined,
+        raw_text: result.summary || undefined,
+        source: 'tradingagents',
+        generated_at: new Date().toISOString(),
+      };
+    } catch (e: any) {
+      logger.warn(`[analysis-engine] TradingAgents narrative 加载失败 (${stockCode}): ${e?.message ?? e}`);
+      return null;
+    }
   }
 
   /**
