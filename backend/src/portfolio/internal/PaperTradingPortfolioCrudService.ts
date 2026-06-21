@@ -47,7 +47,10 @@ const MAX_NAME_LENGTH = 100;
 const MAX_DESCRIPTION_LENGTH = 1000;
 const AUDIT_RULE_ID = 'portfolio_crud';
 const AUDIT_LEVEL = 'LOW';
-const AUDIT_SYMBOL = 'SYSTEM:PORTFOLIO_CRUD';
+// AT-2-FIX (2026-06-22 二轮 review): risk_alerts.symbol 列 VARCHAR(20), "SYSTEM:PORTFOLIO_CRUD"
+// 是 21 字节, INSERT 永远 fail. audit log try/catch 吞错让"删除/更新/重置/创建" 4 个
+// mutation 操作的审计全部丢失. 改成 19 字节 (留 1 字节余量).
+const AUDIT_SYMBOL = 'SYSTEM:PT_CRUD';
 
 // ---------- Public types ----------
 
