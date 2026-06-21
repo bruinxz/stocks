@@ -200,7 +200,7 @@ const TodayWorkspace: React.FC = () => {
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<ApplySignalsData | null>(null);
   // 2026-06-17: 全局选盘. KPI / MFA 差分基线 / 一键下单都跟随选盘.
-  const { selectedPortfolioId } = usePortfolio();
+  const { selectedPortfolioId, portfolios } = usePortfolio();
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -257,6 +257,10 @@ const TodayWorkspace: React.FC = () => {
     const totalReturn = account?.total_return ?? null;
     const totalReturnPct = account?.total_return_pct ?? null;
     const unreadCount = data?.unread_alert_count ?? 0;
+    // AT-2 (2026-06-21): 顶部加 "当前盘 · 策略 chip / 因子 chip" 让用户一眼看到当前选盘用的策略和因子.
+    const currentPortfolio = portfolios.find(p => p.id === selectedPortfolioId);
+    const strategyChips = currentPortfolio?.strategy_display ?? [];
+    const factorChips = currentPortfolio?.factor_display ?? [];
     return (
       <Space size={24} wrap>
         <Statistic
@@ -302,9 +306,55 @@ const TodayWorkspace: React.FC = () => {
           suffix="条"
           valueStyle={{ color: unreadCount > 0 ? '#cf1322' : '#52c41a' }}
         />
+        {currentPortfolio && (strategyChips.length > 0 || factorChips.length > 0) && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 200 }}>
+            <span style={{ fontSize: 12, color: '#8c8c8c' }}>
+              当前盘 · {currentPortfolio.name}
+              {currentPortfolio.auto_trade_enabled ? ' · 🟣 自动跟单' : ''}
+            </span>
+            <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+              {strategyChips.slice(0, 3).map(s => (
+                <span
+                  key={`strat-${s.key}`}
+                  title={s.brief || s.key}
+                  style={{
+                    background: '#e6f4ff',
+                    color: '#1677ff',
+                    padding: '0 6px',
+                    borderRadius: 4,
+                    fontSize: 12,
+                  }}
+                >
+                  {s.name}
+                </span>
+              ))}
+              {strategyChips.length > 3 && (
+                <span style={{ fontSize: 12, color: '#8c8c8c' }}>+{strategyChips.length - 3}</span>
+              )}
+              {factorChips.slice(0, 3).map(f => (
+                <span
+                  key={`fac-${f.key}`}
+                  title={`${f.category} · ${f.key}`}
+                  style={{
+                    background: '#f6ffed',
+                    color: '#389e0d',
+                    padding: '0 6px',
+                    borderRadius: 4,
+                    fontSize: 12,
+                  }}
+                >
+                  {f.name}
+                </span>
+              ))}
+              {factorChips.length > 3 && (
+                <span style={{ fontSize: 12, color: '#8c8c8c' }}>+{factorChips.length - 3}</span>
+              )}
+            </span>
+          </div>
+        )}
       </Space>
     );
-  }, [data]);
+  }, [data, portfolios, selectedPortfolioId]);
 
   // ----- 一键应用全部信号 -----
   const totalBuyCount = useMemo(() => {

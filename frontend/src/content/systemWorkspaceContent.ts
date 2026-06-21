@@ -211,6 +211,8 @@ export const SYSTEM_MANUAL_MD = `# 操作手册
 - 实盘账户 + 持仓 + Fill 流水
 - 模拟盘账户（多盘）+ Snapshot 历史 + 对账信息
 - 每日归因 + AI 日记 + 错误模式 + 改进建议
+- **模拟盘管理 tab (AT-2 新增)**: 新建 / 编辑 / 重置 / 删除模拟盘 +
+  策略 / 因子配置 + 自动跟单开关
 
 ### 2.5 数据中心 \`/workspace/data\`
 
@@ -274,7 +276,59 @@ AI 多维分析引擎默认 **off**（不参与下单）。要打开：
 
 ---
 
-## 6. 常见问题
+## 6. 模拟盘管理 (新建 / 编辑 / 重置 / 删除)
+
+> 入口: **持仓与复盘 → 模拟盘管理** tab. 终极目的:
+> 让每个用户能开 N 个模拟盘各自跑不同的策略 + 因子组合, 横向对比哪套打得过基准.
+
+### 6.1 新建模拟盘
+
+1. 点 "新建模拟盘" 按钮
+2. **盘名**: 必填, ≤ 32 字 (例如 "因子组合 1" / "龙头打板" / "财报反转")
+3. **描述**: 可选 (用途 / 选股逻辑 / 风控偏好), ≤ 200 字
+4. **初始资金**: 必填, 1 万 ~ 1 亿之间. 新建后不可改 (会让对账乱)
+5. **自动跟单**: Switch
+   - **开**: 14:35 cron 按所选策略 + 风控 8 道闸门自动下单
+   - **关**: 必须在 "今日作战 → AI 信号" 里手工 apply
+6. **策略多选 Transfer**: 左侧 29 个策略 (悬停看 brief), 右侧已选
+7. **因子多选 Transfer**: 左侧 22 个因子 (按 价值 / 成长 / 质量 / 动量 / 反转 / 流动性 分类), 右侧已选
+8. 点 "创建" → 后端立即落 \`paper_trading_portfolios\` 表
+
+> 不选策略 / 因子 = 系统默认使用全部 (兼容 legacy 盘行为).
+
+### 6.2 编辑模拟盘
+
+- 点行的 ✏️ 编辑按钮
+- 改盘名 / 描述 / 策略 / 因子 / 自动跟单 — 立即生效
+- **不能改初始资金** — 影响 cost basis 和对账
+
+### 6.3 自动跟单开关 (行内 Switch)
+
+- 表格内每行右侧直接拨 Switch, 不用进编辑 Modal
+- 关 → 当晚 14:35 cron 跳过这个盘, 仍可手工 apply
+- 开 → cron 把信号按 Kelly + 8 道风控算仓位, 直接下单到这个盘
+
+### 6.4 重置 (清仓 + 重置 cash)
+
+- 点行的 🔄 重置按钮 → Popconfirm "确认重置? 不可撤销"
+- 所有持仓清空, cash 恢复到 \`initial_capital\`, snapshots / trades **保留** (历史可查)
+- 适用场景: 我想换一套策略从零开始跑
+
+### 6.5 删除 (软删除)
+
+- 点行的 🗑 删除按钮 → Popconfirm "已成交的 trades / snapshots 会保留, 列表中不再显示"
+- 后端置 \`is_active=false\`, 列表 + dropdown 不再出现
+- trades / snapshots 表里历史数据全保留 (审计 + 复盘用)
+- **不支持前端硬删** — 需要管理员通过 API \`?hard=true\` 才能物理删除
+
+### 6.6 查看详情 (Drawer)
+
+- 点行的 👁 查看按钮 → 右侧 Drawer
+- 显示: 基本信息 / 使用的策略列表 (含 brief) / 启用的因子 chip / 7d 净值曲线 / 最近 10 笔交易
+
+---
+
+## 7. 常见问题
 
 | 现象 | 怎么办 |
 |---|---|
@@ -282,6 +336,7 @@ AI 多维分析引擎默认 **off**（不参与下单）。要打开：
 | AI 分析弹窗空白 | 后端 ai-polling-queue 卡了，等 5 分钟或联系管理员重启 worker |
 | 模拟盘看不到新单 | 看 RiskAlert 是不是被 gate 拒；如果没拒看对账是否 drift |
 | 改进建议 apply 没效果 | apply 后 30 天 \`DAILY_IMPROVEMENT_EFFECT_TRACK\` cron 才回采 metric |
+| 新建的盘 cron 没自动下单 | 检查 "自动跟单" Switch 是否开; 关了 cron 会跳过 |
 
 > 找不到答案？去 **系统介绍 → 用户反馈** 提交，30 分钟内 AI 分类、admin 处理后下方绿底回复。
 `;
@@ -292,7 +347,28 @@ export const SYSTEM_CHANGELOG_MD = `# 更新日志
 
 ---
 
-## Batch AL — 2026-06-21（本批）
+## Batch AT — 2026-06-21（本批）
+
+**模拟盘完整 CRUD UI**
+
+- 新增 \`持仓与复盘 → 模拟盘管理\` tab: 表格列出所有模拟盘 + 7d 收益 / 策略 chip / 因子 chip / 自动跟单开关
+- 新建 / 编辑 Modal: antd Transfer 选 29 策略 + 22 因子 (悬停看 brief / category)
+- 行操作: 查看详情 Drawer (净值曲线 + 最近 10 trades) / 编辑 / 重置 / 软删除
+- GlobalPortfolioSelector 下拉显示 "(N 策略 / M 因子 / 自动)" chip
+- TodayWorkspace KPI 顶部加 "当前盘 · 策略 chip · 因子 chip" 一行
+- 8 个新 endpoint + service \`portfolioCrudService\`
+
+---
+
+## Batch AS — 2026-06-21
+
+**5 P0 修复**
+
+- AI 引擎 model cold path / cron 2034 解析 / 北向 stale alert / 拓扑 user 泄露 / 重复 cron 收口
+
+---
+
+## Batch AL — 2026-06-21
 
 **SystemWorkspace 系统介绍 + 用户反馈闭环**
 

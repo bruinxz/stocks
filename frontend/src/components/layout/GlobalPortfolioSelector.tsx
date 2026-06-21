@@ -20,10 +20,27 @@ const GlobalPortfolioSelector: React.FC = () => {
   // 单盘场景不显示 dropdown, 显示一个 Tag 提示
   if (portfolios.length === 1) {
     const only = portfolios[0];
+    const stratCount = only.strategy_display?.length ?? only.strategy_keys?.length ?? 0;
+    const factorCount = only.factor_display?.length ?? only.enabled_factors?.length ?? 0;
     return (
-      <Tooltip title={`当前盘: ${only.name}`}>
+      <Tooltip
+        title={
+          <span>
+            当前盘: {only.name}
+            {stratCount > 0 || factorCount > 0
+              ? ` · ${stratCount} 策略 / ${factorCount} 因子`
+              : ''}
+            {only.auto_trade_enabled ? ' · 自动跟单 ON' : ''}
+          </span>
+        }
+      >
         <Tag icon={<WalletOutlined />} color="default" style={{ marginRight: 0 }}>
           {only.name}
+          {stratCount > 0 || factorCount > 0 ? (
+            <span style={{ marginLeft: 6, opacity: 0.7, fontSize: 11 }}>
+              ({stratCount}策略/{factorCount}因子)
+            </span>
+          ) : null}
         </Tag>
       </Tooltip>
     );
@@ -31,19 +48,25 @@ const GlobalPortfolioSelector: React.FC = () => {
 
   return (
     <Select
-      style={{ minWidth: 300 }}
+      style={{ minWidth: 340 }}
       value={selectedPortfolioId}
       onChange={setSelectedPortfolioId}
       placeholder="选择模拟盘"
       size="middle"
       suffixIcon={<WalletOutlined />}
-      options={portfolios.map(p => ({
-        value: p.id,
-        label: `${p.name} · ${p.positions_count} 持仓 · ¥${Number(p.total_value).toLocaleString(
-          undefined,
-          { maximumFractionDigits: 0 }
-        )}`,
-      }))}
+      options={portfolios.map(p => {
+        const stratCount = p.strategy_display?.length ?? p.strategy_keys?.length ?? 0;
+        const factorCount = p.factor_display?.length ?? p.enabled_factors?.length ?? 0;
+        const meta = stratCount > 0 || factorCount > 0 ? ` · ${stratCount}策略/${factorCount}因子` : '';
+        const auto = p.auto_trade_enabled ? ' · 🟣自动' : '';
+        return {
+          value: p.id,
+          label: `${p.name} · ${p.positions_count} 持仓 · ¥${Number(p.total_value).toLocaleString(
+            undefined,
+            { maximumFractionDigits: 0 }
+          )}${meta}${auto}`,
+        };
+      })}
     />
   );
 };

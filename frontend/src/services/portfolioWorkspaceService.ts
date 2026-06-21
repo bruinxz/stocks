@@ -222,7 +222,10 @@ function unwrap<T>(
   return res.data.data as T;
 }
 
-/** 修复 (2026-06-17 串盘): portfolio 列表条目, 供 PortfolioWorkspace 顶部选盘下拉 */
+/** 修复 (2026-06-17 串盘): portfolio 列表条目, 供 PortfolioWorkspace 顶部选盘下拉.
+ *  AT-2 (2026-06-21) 扩展: 含 strategy_display / factor_display chip 数据
+ *  (以及 auto_trade_enabled / recent_7d_return_pct), 给 GlobalPortfolioSelector +
+ *  TodayWorkspace KPI strip + 任何想直接渲染 "策略+因子" 信息的 UI 使用. */
 export interface PortfolioListItem {
   id: number;
   name: string;
@@ -231,6 +234,22 @@ export interface PortfolioListItem {
   total_value: number;
   positions_count: number;
   created_at: string;
+  /** AT-2 (2026-06-21): 用户保存的策略 key 数组 (legacy 盘可能为空). */
+  strategy_keys?: string[];
+  /** AT-2 (2026-06-21): 策略 chip (后端 join 注册表的中文名 + brief). */
+  strategy_display?: Array<{ key: string; name: string; brief?: string }>;
+  /** AT-2 (2026-06-21): 用户保存的因子 key 数组 (legacy 盘可能为空). */
+  enabled_factors?: string[];
+  /** AT-2 (2026-06-21): 因子 chip (后端 join 注册表的中文名 + category). */
+  factor_display?: Array<{ key: string; name: string; category: string }>;
+  /** AT-2 (2026-06-21): 是否参与每日 14:35 cron 自动下单. */
+  auto_trade_enabled?: boolean;
+  /** AT-2 (2026-06-21): 近 7 天收益百分比 (null = 历史不足 7 天). */
+  recent_7d_return_pct?: number | null;
+  /** AT-2 (2026-06-21): 描述. */
+  description?: string | null;
+  /** AT-2 (2026-06-21): soft delete 标记 — 列表默认只返回 is_active=true. */
+  is_active?: boolean;
 }
 
 export async function getPortfolio(portfolio_id?: number): Promise<PortfolioWithPositions> {

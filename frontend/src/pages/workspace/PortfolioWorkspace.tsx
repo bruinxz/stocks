@@ -35,6 +35,7 @@ import {
   ReadOutlined,
   ReloadOutlined,
   RobotOutlined,
+  SettingOutlined,
   StopOutlined,
   UnorderedListOutlined,
   WalletOutlined,
@@ -56,6 +57,7 @@ import dayjs, { Dayjs } from 'dayjs';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
 import TradeReasonCell from '../../components/trading/TradeReasonCell';
+import PortfolioManagementPanel from '../../components/portfolio/PortfolioManagementPanel';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import {
   portfolioWorkspaceService,
@@ -152,6 +154,7 @@ const PortfolioWorkspace: React.FC = () => {
     { key: 'journal', label: '复盘日记', icon: <ReadOutlined /> },
     { key: 'error-patterns', label: 'AI 日记 + 错误模式', icon: <ExclamationCircleOutlined /> },
     { key: 'correlation', label: '相关性矩阵', icon: <RadarChartOutlined /> },
+    { key: 'manage', label: '模拟盘管理', icon: <SettingOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState<string>('positions');
 
@@ -338,6 +341,8 @@ const PortfolioWorkspace: React.FC = () => {
     body = <ErrorPatternsTab trades={trades} journalList={journalList} />;
   } else if (activeKey === 'correlation') {
     body = <CorrelationTab portfolioId={portfolioData?.portfolio?.id} />;
+  } else if (activeKey === 'manage') {
+    body = <PortfolioManagementPanel />;
   } else {
     body = null;
   }
