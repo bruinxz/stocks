@@ -92,6 +92,21 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     owner: 'data',
     description: '行业资金流同步',
   },
+  // Macro 串联补丁 (2026-06-21) — US-092 行业 ETF 资金流 daily sync.
+  // 工作日 18:00 (盘后 + AKShare fund_etf_fund_daily_em T+1 数据可用) 跑前一交易日
+  // 全市场 ETF 净流入 / 份额 + per-ETF 历史. 写 etf_creation_redemption 表,
+  // 下游 KOL aggregator / 行业资金流面板消费. CLI 入口 backend/src/scripts/sync-etf-flow.ts
+  // 仍保留供 ops 手动补数 / 范围回填; cron 默认仅 syncDate(today).
+  // fail-OPEN: ETFFlowSyncService.syncDate 已 try/catch + 返 SyncDateResult.error,
+  // cron 仅记 failed_items=1 + warn 不抛.
+  {
+    type: 'ETF_FLOW_SYNC',
+    category: 'data_sync',
+    owner: 'data',
+    recommendedCron: '0 18 * * 1-5',
+    description:
+      '工作日 18:00 拉前一交易日 30+ 行业 ETF 净流入 / 份额 (AKShare fund_etf_fund_daily_em + fund_etf_hist_em) → etf_creation_redemption',
+  },
   {
     type: 'LIMIT_UP_SYNC',
     category: 'data_sync',
@@ -435,6 +450,33 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     recommendedCron: '0 10 * * 0',
     description:
       '周日 10:00 给所有 active user 聚合最近 90 天 DailyAttributionReport → upsert error_pattern_reports',
+  },
+  // Macro 串联补丁 (2026-06-21) — US-094 PM-023 改进建议生成 cron 接入.
+  // 周二 09:00: 错峰在 WEEKLY_ERROR_PATTERN_AGGREGATE (周日 10:00) 完成 1.5 天后,
+  // 让上周 error pattern 已落库, 再聚合成 actionable suggestion. 每周一次足够,
+  // 与 PM-023 service `(user_id, period_end, category, key)` UNIQUE 配合 upsert 幂等.
+  // fail-OPEN: 单 user 失败 continue 不阻塞 batch (与 WEEKLY_ERROR_PATTERN_AGGREGATE
+  // 同款 per-user try/catch + service 三层 fail-OPEN).
+  {
+    type: 'WEEKLY_IMPROVEMENT_SUGGESTION_GENERATE',
+    category: 'analytics',
+    owner: 'analytics',
+    recommendedCron: '0 9 * * 2',
+    description:
+      '周二 09:00 给所有 active user 把最近 ErrorPatternReport → 生成 improvement_suggestions (heuristic 模板, fail-OPEN)',
+  },
+  // Macro 串联补丁 (2026-06-21) — US-146 PM-027 改进建议效果回采 cron 接入.
+  // 每日 19:30: 错峰在 FACTOR_IC_COMPUTE (19:00) + DAILY_ATTRIBUTION_GENERATE
+  // (17:00) 之后, 让当日所有 portfolio 的 attribution 已落库, 再算 apply 后 30 天
+  // 的 effect_metrics. 默认 30 天 window, 仅处理 effect_tracked_at IS NULL 的 applied 行.
+  // fail-OPEN 三层 (list throw / 单条 trackForSuggestion throw / writeBack 失败均不抛).
+  {
+    type: 'DAILY_IMPROVEMENT_EFFECT_TRACK',
+    category: 'analytics',
+    owner: 'analytics',
+    recommendedCron: '30 19 * * *',
+    description:
+      '每日 19:30 扫 apply ≥ 30 天 + effect_tracked_at IS NULL 的 improvement_suggestions → 计算 effect_metrics 写回 (heuristic Sharpe, fail-OPEN)',
   },
   // US-038 QA-002 — 周一 02:00 (早于 AC "周一 04:00 前生成" 截止) 聚合上周
   // 全市场 (或 ScheduledTask.parameters.stock_codes 显式 list) 投资者问答按

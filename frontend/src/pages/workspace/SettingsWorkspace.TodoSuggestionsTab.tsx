@@ -29,6 +29,8 @@ import {
   Card,
   Col,
   Empty,
+  message,
+  Modal,
   Row,
   Space,
   Statistic,
@@ -40,6 +42,7 @@ import {
 import {
   AlertOutlined,
   BulbOutlined,
+  CheckCircleOutlined,
   ReloadOutlined,
   ThunderboltOutlined,
   WarningOutlined,
@@ -60,6 +63,30 @@ import {
 
 const { Paragraph, Text } = Typography;
 
+/**
+ * Macro 串联补丁 (2026-06-21) — ImprovementSuggestion 一条建议的最小投影 (后端
+ * GET /api/me/improvement-suggestions 返). 与
+ * backend/src/api/controllers/ImprovementSuggestionController.ts listImprovementSuggestions
+ * 的 items 形状对齐.
+ */
+export interface ImprovementSuggestionRow {
+  id: number;
+  period_start: string;
+  period_end: string;
+  category: string;
+  key: string;
+  title: string;
+  body: string;
+  priority: number;
+  status: string;
+  source: string;
+  action: { type?: string; payload?: any } | null;
+  evidence?: Record<string, unknown>;
+  applied_at?: string | null;
+  generated_at: string;
+  effect_metrics?: Record<string, unknown> | null;
+}
+
 /** category → icon (UI 友好) */
 const CATEGORY_ICON: Record<TodoCategory, React.ReactNode> = {
   'black-swan': <AlertOutlined />,
@@ -73,11 +100,20 @@ const TodoSuggestionsTab: React.FC = () => {
   /** 分路 error — 任一路 fail 只本 section 标 error, 另一路照常加载 */
   const [alertsError, setAlertsError] = useState<string | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
+  /**
+   * Macro 串联补丁 (2026-06-21) — improvement_suggestions 列表 + apply 状态.
+   * 与 automation-health 的 risk_limit_suggestion 不同 — 那是单条 + 直接 apply;
+   * 这里是 PM-023 服务生成的"周度复盘建议", 每条独立 apply (POST /:id/apply).
+   */
+  const [improvementRows, setImprovementRows] = useState<ImprovementSuggestionRow[]>([]);
+  const [improvementError, setImprovementError] = useState<string | null>(null);
+  const [applyingId, setApplyingId] = useState<number | null>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
     setLoading(true);
     setAlertsError(null);
     setHealthError(null);
+    setImprovementError(null);
 
     let alerts: RiskAlertInput[] | null = null;
     let health: AutomationHealthInput | null = null;
@@ -86,6 +122,8 @@ const TodoSuggestionsTab: React.FC = () => {
     const results = await Promise.allSettled([
       api.get('/risk-alerts', { params: { limit: 50 } }),
       api.get('/tasks/automation-health'),
+      // Macro 串联补丁 (2026-06-21) — 拉 open 状态的改进建议给 apply 按钮用.
+      api.get('/me/improvement-suggestions', { params: { status: 'open', limit: 50 } }),
     ]);
 
     const alertsRes = results[0];
@@ -114,9 +152,64 @@ const TodoSuggestionsTab: React.FC = () => {
       setHealthError(`加载偏差/改进建议失败: ${msg}`);
     }
 
+    const improvRes = results[2];
+    if (improvRes.status === 'fulfilled') {
+      const payload = improvRes.value?.data?.data;
+      const items = Array.isArray(payload?.items)
+        ? (payload.items as ImprovementSuggestionRow[])
+        : [];
+      setImprovementRows(items);
+    } else {
+      const err = improvRes.reason;
+      const msg = err?.response?.data?.message || err?.message || String(err);
+      setImprovementError(`加载改进建议列表失败: ${msg}`);
+      setImprovementRows([]);
+    }
+
     setView(buildTodoSuggestionsViewModel({ alerts, health }));
     setLoading(false);
   }, []);
+
+  /**
+   * Macro 串联补丁 (2026-06-21) — 应用单条改进建议.
+   * 调 POST /api/me/improvement-suggestions/:id/apply, 后端只 mark status='applied' + applied_at,
+   * action 透传给前端按 type 决定后续 UX (默认 noop 仅刷新列表).
+   */
+  const handleApplyImprovement = useCallback(
+    (row: ImprovementSuggestionRow): void => {
+      Modal.confirm({
+        title: '应用此改进建议?',
+        content: (
+          <Space direction="vertical" size={4} style={{ width: '100%' }}>
+            <Text strong>{row.title}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {row.body}
+            </Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              动作类型: {row.action?.type || 'noop'}
+            </Text>
+          </Space>
+        ),
+        okText: '应用',
+        cancelText: '取消',
+        onOk: async () => {
+          setApplyingId(row.id);
+          try {
+            await api.post(`/me/improvement-suggestions/${row.id}/apply`);
+            message.success(`已应用建议: ${row.title.slice(0, 40)}`);
+            await refresh();
+          } catch (err: any) {
+            const msg =
+              err?.response?.data?.message || err?.message || String(err) || '应用失败';
+            message.error(`应用失败: ${msg}`);
+          } finally {
+            setApplyingId(null);
+          }
+        },
+      });
+    },
+    [refresh]
+  );
 
   useEffect(() => {
     void refresh();
@@ -264,6 +357,115 @@ const TodoSuggestionsTab: React.FC = () => {
       {/* 分路 error — 两路独立显示, 一路失败另一路照常 */}
       {alertsError && <Alert type="warning" showIcon message={alertsError} />}
       {healthError && <Alert type="warning" showIcon message={healthError} />}
+      {improvementError && <Alert type="warning" showIcon message={improvementError} />}
+
+      {/* Macro 串联补丁 (2026-06-21) — 改进建议 (PM-023) 独立列表 + apply 按钮 */}
+      <Card
+        size="small"
+        variant="borderless"
+        className="modern-card"
+        title={
+          <Space>
+            <BulbOutlined />
+            <span style={{ fontWeight: 600 }}>
+              改进建议 (PM-023) ({improvementRows.length} 项 open)
+            </span>
+          </Space>
+        }
+        extra={
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            周二 09:00 由 WEEKLY_IMPROVEMENT_SUGGESTION_GENERATE cron 自动生成
+          </Text>
+        }
+      >
+        {improvementRows.length > 0 ? (
+          <Table<ImprovementSuggestionRow>
+            size="small"
+            rowKey="id"
+            pagination={{ pageSize: 10, showSizeChanger: false }}
+            data-testid="improvement-suggestions-table"
+            dataSource={improvementRows}
+            columns={[
+              {
+                title: '类别',
+                dataIndex: 'category',
+                key: 'category',
+                width: 100,
+                render: (c: string) => <Tag>{c}</Tag>,
+              },
+              {
+                title: '优先级',
+                dataIndex: 'priority',
+                key: 'priority',
+                width: 80,
+                sorter: (a, b) => a.priority - b.priority,
+                defaultSortOrder: 'descend' as const,
+                render: (p: number) => (
+                  <Tag color={p >= 90 ? 'red' : p >= 70 ? 'orange' : 'blue'}>{p}</Tag>
+                ),
+              },
+              {
+                title: '建议',
+                dataIndex: 'title',
+                key: 'title',
+                render: (t: string, row: ImprovementSuggestionRow) => (
+                  <Space direction="vertical" size={0}>
+                    <Text strong>{t}</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {row.body}
+                    </Text>
+                  </Space>
+                ),
+              },
+              {
+                title: '动作',
+                dataIndex: 'action',
+                key: 'action_type',
+                width: 140,
+                render: (a: ImprovementSuggestionRow['action']) => (
+                  <Tag>{a?.type || 'noop'}</Tag>
+                ),
+              },
+              {
+                title: '生成时间',
+                dataIndex: 'generated_at',
+                key: 'generated_at',
+                width: 140,
+                render: (v: string) => (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {v ? new Date(v).toLocaleDateString() : '—'}
+                  </Text>
+                ),
+              },
+              {
+                title: '操作',
+                key: 'apply',
+                width: 110,
+                render: (_: unknown, row: ImprovementSuggestionRow) => (
+                  <Button
+                    size="small"
+                    type="primary"
+                    icon={<CheckCircleOutlined />}
+                    loading={applyingId === row.id}
+                    onClick={() => handleApplyImprovement(row)}
+                    data-testid={`apply-improvement-${row.id}`}
+                  >
+                    应用此建议
+                  </Button>
+                ),
+              },
+            ]}
+          />
+        ) : (
+          <Empty
+            description={
+              loading
+                ? '加载中...'
+                : '当前无改进建议 — 周二 cron 跑出建议后会出现在这里 (依赖最近 ErrorPatternReport)'
+            }
+          />
+        )}
+      </Card>
 
       {/* Table — 待办列表, 默认按 priority + category + 时间倒序 */}
       <Card

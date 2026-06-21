@@ -578,9 +578,9 @@ export function buildBiasFindings(outcomes: OutcomeRow[]): BiasFinding[] {
       suggestions:
         sev >= 50
           ? [
-              `${dowLabel} 入场胜率 ${Math.round(
-                timeBias.worst_winrate * 100
-              )}%, 全局 ${Math.round(timeBias.global_winrate * 100)}% — 显著落后`,
+              `${dowLabel} 入场胜率 ${Math.round(timeBias.worst_winrate * 100)}%, 全局 ${Math.round(
+                timeBias.global_winrate * 100
+              )}% — 显著落后`,
               `避免在 ${dowLabel} 入场, 或对 ${dowLabel} 信号加更严格的过滤`,
               '复盘该时段的市场环境 (流动性 / 情绪) 是否系统性不利于本策略',
             ]
@@ -590,9 +590,7 @@ export function buildBiasFindings(outcomes: OutcomeRow[]): BiasFinding[] {
       detail:
         timeBias.worst_dow === null
           ? '未发现显著时段偏差'
-          : `${dowLabel} ${timeBias.total} 笔 / ${
-              timeBias.triggered
-            } 亏损; 胜率 ${Math.round(
+          : `${dowLabel} ${timeBias.total} 笔 / ${timeBias.triggered} 亏损; 胜率 ${Math.round(
               timeBias.worst_winrate * 100
             )}% vs 全局 ${Math.round(timeBias.global_winrate * 100)}%`,
     });

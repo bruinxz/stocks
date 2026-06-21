@@ -485,15 +485,30 @@ class SchedulerService {
             `→ ${unregistered.join(', ')} (请加到 src/constants/cronRegistry.ts)`
         );
       }
-      // 反向: registry 有但 DB 没启用 → 提示 (不告警, 因为允许"代码登记但环境未启用")
+      // 反向: registry 有但 DB 没启用 → 升级为 warn (Macro 串联补丁 2026-06-21).
+      // Batch AJ 把 14 个漏 seed 的 cron 全部补齐后, 这个 list 应稳定为 0; 若有
+      // 漂移意味着新加了 cron 但漏 seed 到 ensureDefaultTasks (会导致 fresh DB
+      // 启动后这些 cron 不会运行) — ops 必须看到 warn 立即补 seed.
+      // 允许 ops 通过 SCHEDULER_REGISTRY_DRIFT_ALLOW_MISSING env (CSV) 显式豁免
+      // "故意不在本环境 seed" 的 type (e.g. 灰度中的 cron / dev-only).
       const dbTypes = new Set(allTasks.map(t => t.type));
+      const driftAllowEnv = String(process.env.SCHEDULER_REGISTRY_DRIFT_ALLOW_MISSING || '');
+      const driftAllowList = new Set(
+        driftAllowEnv
+          .split(',')
+          .map(s => s.trim())
+          .filter(s => s.length > 0)
+      );
       const missingInDb = CRON_REGISTRY.map(d => d.type)
-        .filter(t => !dbTypes.has(t))
+        .filter(t => !dbTypes.has(t) && !driftAllowList.has(t))
         .sort();
       if (missingInDb.length > 0) {
-        logger.info(
-          `[scheduler] cron registry note: ${missingInDb.length} registered type(s) without active DB row ` +
-            `(可能本环境未启用): ${missingInDb.join(', ')}`
+        logger.warn(
+          `[scheduler] cron registry reverse drift: ${missingInDb.length} registered type(s) without DB row ` +
+            `(请到 SchedulerService.ensureDefaultTasks 加 seed, 或 export ` +
+            `SCHEDULER_REGISTRY_DRIFT_ALLOW_MISSING='${missingInDb.join(
+              ','
+            )}' 显式豁免): ${missingInDb.join(', ')}`
         );
       }
     } catch (err: any) {
@@ -5302,9 +5317,7 @@ class SchedulerService {
           result_summary: {
             scenario: 'black_swan_quarterly_summary',
             dry_run: qResult.dry_run,
-            quarter: qResult.quarter
-              ? `${qResult.quarter.year} Q${qResult.quarter.quarter}`
-              : null,
+            quarter: qResult.quarter ? `${qResult.quarter.year} Q${qResult.quarter.quarter}` : null,
             events_total: qResult.events_total,
             recipients_total: qResult.recipients_total,
             sent_count: qResult.sent_count,
@@ -5323,9 +5336,7 @@ class SchedulerService {
               (qResult.dry_run ? ' (dry_run)' : '')
           );
         } else {
-          logger.warn(
-            `[BLACK_SWAN_QUARTERLY_SUMMARY] FAIL ${qResult.error || 'unknown_error'}`
-          );
+          logger.warn(`[BLACK_SWAN_QUARTERLY_SUMMARY] FAIL ${qResult.error || 'unknown_error'}`);
         }
       } else if (task.type === 'LIVE_RECONCILIATION_GUARD') {
         // BETA-2 (2026-06-18, audit S-12): 对账主动告警 cron — 阈值评估 →
@@ -5369,6 +5380,243 @@ class SchedulerService {
             `written=${result.alerts_written} deduped=${result.deduped_count}` +
             (dryRun ? ' (dry_run)' : '')
         );
+      } else if (task.type === 'WEEKLY_IMPROVEMENT_SUGGESTION_GENERATE') {
+        // Macro 串联补丁 (2026-06-21) — US-094 PM-023 改进建议生成 cron 入口.
+        // 周二 09:00 给所有 active user 把最近 ErrorPatternReport → 生成
+        // improvement_suggestions (heuristic 模板, source='heuristic').
+        // `user_ids` 显式 list (空 = 所有 is_active=true 用户); 单 user 失败 fail-OPEN
+        // continue. `period_end` 可 override (默认 service 取 latest ok 报告).
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          generateForUser: generateImprovementForUser,
+          PRODUCTION_IMPROVEMENT_SUGGESTION_DATA_SOURCE,
+        } = require('./postmortem/ImprovementSuggestionService');
+        const { User } = require('../models/User');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const explicitImprUserIds: number[] = Array.isArray(parameters.user_ids)
+          ? parameters.user_ids
+              .map((x: unknown) => Number(x))
+              .filter((n: number) => Number.isFinite(n) && n > 0)
+          : [];
+        const periodEndImpr =
+          typeof parameters.period_end === 'string' && parameters.period_end.length > 0
+            ? parameters.period_end
+            : null;
+        const cronRunIdImpr = `improvement_suggestion_cron_${Date.now()}`;
+
+        let imprTargets: Array<{ id: number }> = [];
+        if (explicitImprUserIds.length > 0) {
+          imprTargets = explicitImprUserIds.map(id => ({ id }));
+        } else {
+          try {
+            const rows = await User.findAll({
+              where: { is_active: true },
+              attributes: ['id'],
+              raw: true,
+            });
+            imprTargets = (rows as Array<{ id: number }>).map(r => ({ id: Number(r.id) }));
+          } catch (err: any) {
+            logger.warn(
+              `[WEEKLY_IMPROVEMENT_SUGGESTION_GENERATE] listActiveUsers failed (treat as empty): ${
+                err?.message || String(err)
+              }`
+            );
+            imprTargets = [];
+          }
+        }
+
+        let imprOk = 0;
+        let imprSkipped = 0;
+        let imprFailed = 0;
+        let imprPersistedTotal = 0;
+        const imprPerUser: Array<{
+          user_id: number;
+          status: string;
+          reason: string | null;
+          persisted_count: number;
+          error?: string;
+        }> = [];
+        for (const t of imprTargets) {
+          try {
+            const res = await generateImprovementForUser(t.id, {
+              data_source: PRODUCTION_IMPROVEMENT_SUGGESTION_DATA_SOURCE,
+              period_end: periodEndImpr,
+              cron_run_id: cronRunIdImpr,
+            });
+            if (res.status === 'ok') imprOk += 1;
+            else if (res.status === 'skipped') imprSkipped += 1;
+            else imprFailed += 1;
+            imprPersistedTotal += res.persisted_count || 0;
+            imprPerUser.push({
+              user_id: t.id,
+              status: res.status,
+              reason: res.reason,
+              persisted_count: res.persisted_count || 0,
+            });
+          } catch (err: any) {
+            // service 已 fail-OPEN, 此处兜底防 fake/import 异常
+            imprFailed += 1;
+            logger.warn(
+              `[WEEKLY_IMPROVEMENT_SUGGESTION_GENERATE] generateForUser user=${t.id} threw: ${
+                err?.message || String(err)
+              }`
+            );
+            imprPerUser.push({
+              user_id: t.id,
+              status: 'failed',
+              reason: 'service_threw',
+              persisted_count: 0,
+              error: err?.message || String(err),
+            });
+          }
+        }
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: imprTargets.length,
+          completed_items: imprPersistedTotal,
+          failed_items: imprFailed,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'weekly_improvement_suggestion_generate',
+            cron_run_id: cronRunIdImpr,
+            period_end: periodEndImpr,
+            total_users: imprTargets.length,
+            ok_count: imprOk,
+            skipped_count: imprSkipped,
+            failed_count: imprFailed,
+            persisted_count: imprPersistedTotal,
+            per_user: imprPerUser,
+          },
+        });
+        logger.info(
+          `[WEEKLY_IMPROVEMENT_SUGGESTION_GENERATE] users=${imprTargets.length} ok=${imprOk} ` +
+            `skip=${imprSkipped} fail=${imprFailed} persisted=${imprPersistedTotal}`
+        );
+      } else if (task.type === 'DAILY_IMPROVEMENT_EFFECT_TRACK') {
+        // Macro 串联补丁 (2026-06-21) — US-146 PM-027 改进建议效果回采 cron 入口.
+        // 每日 19:30 扫所有 status='applied' AND applied_at <= NOW - 30d AND
+        // effect_tracked_at IS NULL 的 improvement_suggestions, 算 apply 后窗口的
+        // total_pnl_sum / Sharpe / trade_count_sum 等 metrics 写回 effect_metrics JSONB.
+        // `window_days` 默认 30; `user_id` 单 user 灰度; `limit` 限流; `dry_run`=true
+        // 仅算不写; `force`=true 重算已 tracked 行 (heuristic 升级后).
+        // fail-OPEN 三层 — list throw / 单条 trackForSuggestion throw / writeBack 失败均不抛.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          trackPendingSuggestions,
+          PRODUCTION_IMPROVEMENT_EFFECT_TRACKER_DATA_SOURCE,
+          EFFECT_METRICS_SOURCE,
+        } = require('./postmortem/ImprovementEffectTracker');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const windowDaysTrack =
+          parameters.window_days !== undefined
+            ? Number(parameters.window_days)
+            : parameters.windowDays !== undefined
+            ? Number(parameters.windowDays)
+            : undefined;
+        const dryRunTrack = parameters.dry_run === true || parameters.dryRun === true;
+        const forceTrack = parameters.force === true;
+        const userIdTrack =
+          parameters.user_id !== undefined
+            ? Number(parameters.user_id)
+            : parameters.userId !== undefined
+            ? Number(parameters.userId)
+            : null;
+        const limitTrack =
+          parameters.limit !== undefined && Number.isFinite(Number(parameters.limit))
+            ? Number(parameters.limit)
+            : 0;
+        const trackSummary = await trackPendingSuggestions({
+          data_source: PRODUCTION_IMPROVEMENT_EFFECT_TRACKER_DATA_SOURCE,
+          window_days: windowDaysTrack,
+          source: EFFECT_METRICS_SOURCE.TRACKER_CRON,
+          dry_run: dryRunTrack,
+          force: forceTrack,
+          user_id: userIdTrack && userIdTrack > 0 ? userIdTrack : null,
+          limit: limitTrack,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: trackSummary.total_candidates,
+          completed_items: trackSummary.persisted_count,
+          failed_items: trackSummary.failed_count,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'daily_improvement_effect_track',
+            window_days: trackSummary.window_days,
+            source: trackSummary.source,
+            dry_run: trackSummary.dry_run,
+            total_candidates: trackSummary.total_candidates,
+            ok_count: trackSummary.ok_count,
+            skipped_count: trackSummary.skipped_count,
+            failed_count: trackSummary.failed_count,
+            persisted_count: trackSummary.persisted_count,
+            reason: trackSummary.reason || null,
+            per_suggestion: trackSummary.per_suggestion.map((s: any) => ({
+              id: s.id,
+              user_id: s.user_id,
+              status: s.status,
+              reason: s.reason,
+              persisted: s.persisted,
+            })),
+          },
+        });
+        logger.info(
+          `[DAILY_IMPROVEMENT_EFFECT_TRACK] candidates=${trackSummary.total_candidates} ok=${trackSummary.ok_count} ` +
+            `skip=${trackSummary.skipped_count} fail=${trackSummary.failed_count} ` +
+            `persisted=${trackSummary.persisted_count} window_days=${trackSummary.window_days}` +
+            (dryRunTrack ? ' (dry_run)' : '')
+        );
+      } else if (task.type === 'ETF_FLOW_SYNC') {
+        // Macro 串联补丁 (2026-06-21) — US-092 行业 ETF 资金流 daily sync cron 入口.
+        // 工作日 18:00 (AKShare T+1 数据可用) 跑前一交易日 30+ 行业 ETF 净流入 / 份额.
+        // `date` 显式 (YYYY-MM-DD) override; 默认今日 (Asia/Shanghai) — 与 CLI
+        // backend/src/scripts/sync-etf-flow.ts 同款数据源 + service.
+        // fail-OPEN: ETFFlowSyncService.syncDate 已 try/catch 返 result.error.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { ETFFlowSyncService } = require('../data/services/ETFFlowSyncService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const tzNow = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+        const tradeDateEtf =
+          typeof parameters.date === 'string' && parameters.date.length >= 10
+            ? parameters.date.slice(0, 10)
+            : typeof parameters.trade_date === 'string' && parameters.trade_date.length >= 10
+            ? parameters.trade_date.slice(0, 10)
+            : tzNow;
+        const etfSvc = new ETFFlowSyncService();
+        const etfResult = await etfSvc.syncDate(tradeDateEtf);
+        const succeeded = !etfResult.error;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: Number(etfResult.fetched) || 0,
+          completed_items: Number(etfResult.upserted) || 0,
+          failed_items: succeeded ? 0 : 1,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: etfResult.error || null,
+          result_summary: {
+            scenario: 'etf_flow_sync',
+            trade_date: etfResult.trade_date,
+            fetched: etfResult.fetched,
+            upserted: etfResult.upserted,
+            net_inflow_imputed: etfResult.net_inflow_imputed,
+            filtered_out: etfResult.filtered_out,
+            error: etfResult.error || null,
+          },
+        });
+        if (succeeded) {
+          logger.info(
+            `[ETF_FLOW_SYNC] date=${etfResult.trade_date} fetched=${etfResult.fetched} ` +
+              `upserted=${etfResult.upserted} imputed=${etfResult.net_inflow_imputed} ` +
+              `filtered=${etfResult.filtered_out}`
+          );
+        } else {
+          logger.warn(
+            `[ETF_FLOW_SYNC] date=${etfResult.trade_date} FAIL ${
+              etfResult.error || 'unknown_error'
+            }`
+          );
+        }
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }
@@ -6698,6 +6946,163 @@ class SchedulerService {
         cron_expression: '40 16 * * 1-5',
         is_active: true,
         parameters: { limit: 50 },
+      },
+      // ===========================================================================
+      // Macro 串联补丁 (2026-06-21) — Batch AJ: 把 14 个已注册并已实现但 ensureDefaultTasks
+      // 漏 seed 的 cron 全部补上, 让 fresh DB 启动 (新 staging / DR 重建) 后这些 cron
+      // 自动起跑, 不再依赖 ops 人工 INSERT. cron_expression 全部对齐 cronRegistry.ts
+      // 的 recommendedCron, 让 docs / 代码 / DB 三者口径一致.
+      // 同时 seed 3 个本批新增 cron (WEEKLY_IMPROVEMENT_SUGGESTION_GENERATE,
+      // DAILY_IMPROVEMENT_EFFECT_TRACK, ETF_FLOW_SYNC).
+      // 参考 docs/audit/ralph_macro_integration_check_2026_06_21.md §🚨 #3.
+      // ===========================================================================
+      {
+        // 数据质量深度扫描 — 每日 23:00 扫"空表 / 旧数据 / 数据漂移". cronRegistry data_sync.
+        name: '数据质量深度扫描 (Batch AJ)',
+        type: 'DATA_QUALITY_SCAN',
+        cron_expression: '0 23 * * *',
+        is_active: true,
+        parameters: {},
+      },
+      {
+        // 股票基础信息全量同步 — 每周一 03:00 (低峰 + 早于交易时段). cronRegistry data_sync.
+        name: '股票基础信息全量同步 (Batch AJ)',
+        type: 'SYNC_ALL_STOCKS',
+        cron_expression: '0 3 * * 1',
+        is_active: true,
+        parameters: {},
+      },
+      {
+        // 组合净值守卫日评 — 每日盘后 17:00 (DAILY_UPDATE 之后, 让最新净值入库再评).
+        // cronRegistry risk_control; EquityCurveGovernor 触发 kill switch / 降仓建议.
+        name: '组合净值守卫日评 (Batch AJ)',
+        type: 'EQUITY_CURVE_GOVERNOR_DAILY_EVAL',
+        cron_expression: '0 17 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      {
+        // 实盘对账守卫 (intraday) — 盘中 10:31/14:31/15:31 三次 + 收盘后 16:01 一次.
+        // BETA-2 (audit S-12) 的实现; intraday 标签下跑 3 次盘中风险窗口.
+        name: '实盘对账守卫 (intraday) (Batch AJ)',
+        type: 'LIVE_RECONCILIATION_GUARD',
+        cron_expression: '31 10,14,15 * * 1-5',
+        is_active: true,
+        parameters: { window: 'intraday', dry_run: false },
+      },
+      {
+        // 实盘对账守卫 (eod) — 收盘后 16:01 跑 EOD 对账, 与 intraday 错峰 + 不同 window 标签.
+        name: '实盘对账守卫 (eod) (Batch AJ)',
+        type: 'LIVE_RECONCILIATION_GUARD',
+        cron_expression: '1 16 * * 1-5',
+        is_active: true,
+        parameters: { window: 'eod', dry_run: false },
+      },
+      {
+        // 研究产物完整性批审计 — 每日 22:00 扫"研报已写但数据缺失"等漏洞. cronRegistry analytics.
+        name: '研究产物完整性批审计 (Batch AJ)',
+        type: 'RESEARCH_INTEGRITY_BATCH_AUDIT',
+        cron_expression: '0 22 * * *',
+        is_active: true,
+        parameters: {},
+      },
+      {
+        // Webhook fallback retry — 每 5 分钟扫 webhook_fallback_log pending 行重投递.
+        // 飞书 fail-OPEN 后的第二道防线, 必须高频跑.
+        name: 'Webhook fallback retry (Batch AJ)',
+        type: 'WEBHOOK_FALLBACK_RETRY',
+        cron_expression: '*/5 * * * *',
+        is_active: true,
+        parameters: {},
+      },
+      {
+        // 全库 pg_dump 备份 — 每日 02:00 跑 backups/YYYY-MM-DD.sql.gz, 保留 30 天.
+        name: '全库 pg_dump 备份 (Batch AJ)',
+        type: 'DB_BACKUP',
+        cron_expression: '0 2 * * *',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      {
+        // 周度问答统计聚合 — 周一 02:00 把上周个股投资者问答聚合 (≤ 04:00 截止). cronRegistry analytics.
+        name: '周度问答统计聚合 (Batch AJ)',
+        type: 'WEEKLY_QA_STAT_AGGREGATE',
+        cron_expression: '0 2 * * 1',
+        is_active: true,
+        parameters: {},
+      },
+      // ===== 黑天鹅 6 stage 错峰 cron — cronRegistry 已设错峰, 这里 seed 同款 schedule =====
+      {
+        name: '黑天鹅检测 (Batch AJ)',
+        type: 'BLACK_SWAN_DETECT',
+        cron_expression: '3,33 * * * *',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      {
+        name: '黑天鹅复盘 - event_summary (Batch AJ)',
+        type: 'BLACK_SWAN_POSTMORTEM',
+        cron_expression: '13,43 * * * *',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      {
+        name: '黑天鹅复盘 - counterfactual_baseline (Batch AJ)',
+        type: 'BLACK_SWAN_BASELINE',
+        cron_expression: '23,53 * * * *',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      {
+        name: '黑天鹅复盘 - event_timeline (Batch AJ)',
+        type: 'BLACK_SWAN_TIMELINE',
+        cron_expression: '33,3 * * * *',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      {
+        name: '黑天鹅复盘 - improvement_suggestions (Batch AJ)',
+        type: 'BLACK_SWAN_IMPROVEMENT',
+        cron_expression: '43,13 * * * *',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      {
+        name: '黑天鹅季度汇总邮件 (Batch AJ)',
+        type: 'BLACK_SWAN_QUARTERLY_SUMMARY',
+        cron_expression: '5 9 1 1,4,7,10 *',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // ===== 3 个本批新增 cron =====
+      {
+        // Macro 串联补丁 (2026-06-21) — US-094 PM-023 改进建议生成 cron.
+        // 周二 09:00 错峰在 WEEKLY_ERROR_PATTERN_AGGREGATE (周日 10:00) 之后,
+        // 让上周 error pattern 已落库再聚合成 actionable suggestion. 每周一次足够.
+        name: '改进建议生成 (周度)',
+        type: 'WEEKLY_IMPROVEMENT_SUGGESTION_GENERATE',
+        cron_expression: '0 9 * * 2',
+        is_active: true,
+        parameters: {},
+      },
+      {
+        // Macro 串联补丁 (2026-06-21) — US-146 PM-027 改进建议效果回采 cron.
+        // 每日 19:30 错峰在 FACTOR_IC_COMPUTE (19:00) + DAILY_ATTRIBUTION_GENERATE
+        // (17:00) 之后, 让当日所有 portfolio 的 attribution 已落库再算 effect_metrics.
+        name: '改进建议效果回采 (日度)',
+        type: 'DAILY_IMPROVEMENT_EFFECT_TRACK',
+        cron_expression: '30 19 * * *',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      {
+        // Macro 串联补丁 (2026-06-21) — US-092 行业 ETF 资金流 daily sync cron.
+        // 工作日 18:00 (AKShare T+1 数据可用) 跑前一交易日 30+ 行业 ETF 净流入 / 份额.
+        name: '行业 ETF 资金流 daily sync',
+        type: 'ETF_FLOW_SYNC',
+        cron_expression: '0 18 * * 1-5',
+        is_active: true,
+        parameters: {},
       },
     ];
 

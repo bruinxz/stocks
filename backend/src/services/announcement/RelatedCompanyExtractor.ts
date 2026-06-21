@@ -62,13 +62,7 @@ import { logger } from '../../utils/logger';
 export interface RelatedCompanyCandidate {
   related_stock_code: string;
   related_stock_name: string | null;
-  relation_type:
-    | 'primary'
-    | 'mentioned'
-    | 'subsidiary'
-    | 'related_party'
-    | 'peer'
-    | 'other';
+  relation_type: 'primary' | 'mentioned' | 'subsidiary' | 'related_party' | 'peer' | 'other';
   confidence: number;
   source: 'extractor_heuristic' | 'extractor_llm';
   detail: {
@@ -106,11 +100,13 @@ const SUBSIDIARY_KEYWORDS = ['全资子公司', '控股子公司', '子公司', 
 const RELATED_PARTY_KEYWORDS = ['关联交易', '关联方', '担保', '资金占用', '资产置换'];
 
 /** entities[*].role / change_type / source 提示词 → relation_type. */
-function inferRelationTypeFromRole(role: string | undefined): RelatedCompanyCandidate['relation_type'] {
+function inferRelationTypeFromRole(
+  role: string | undefined
+): RelatedCompanyCandidate['relation_type'] {
   if (!role) return 'mentioned';
   const r = String(role);
-  if (SUBSIDIARY_KEYWORDS.some((kw) => r.includes(kw))) return 'subsidiary';
-  if (RELATED_PARTY_KEYWORDS.some((kw) => r.includes(kw))) return 'related_party';
+  if (SUBSIDIARY_KEYWORDS.some(kw => r.includes(kw))) return 'subsidiary';
+  if (RELATED_PARTY_KEYWORDS.some(kw => r.includes(kw))) return 'related_party';
   return 'mentioned';
 }
 
@@ -130,7 +126,9 @@ export function isValidAStockCode(code: string | null | undefined): boolean {
  * 从一段文本中扫所有 6 位 A 股代码, 输出 (code, 命中起始位置) 列表.
  * 同代码多次命中保留首次出现位置.
  */
-export function scanStockCodesInText(text: string | null | undefined): Array<{ code: string; idx: number }> {
+export function scanStockCodesInText(
+  text: string | null | undefined
+): Array<{ code: string; idx: number }> {
   if (text === null || text === undefined) return [];
   const s = String(text);
   if (!s) return [];
@@ -288,8 +286,8 @@ export function inferRelationTypeFromText(
 ): RelatedCompanyCandidate['relation_type'] {
   if (!text) return 'mentioned';
   const t = String(text);
-  if (SUBSIDIARY_KEYWORDS.some((kw) => t.includes(kw))) return 'subsidiary';
-  if (RELATED_PARTY_KEYWORDS.some((kw) => t.includes(kw))) return 'related_party';
+  if (SUBSIDIARY_KEYWORDS.some(kw => t.includes(kw))) return 'subsidiary';
+  if (RELATED_PARTY_KEYWORDS.some(kw => t.includes(kw))) return 'related_party';
   return 'mentioned';
 }
 
@@ -331,11 +329,18 @@ export const PRODUCTION_RELATED_COMPANY_DATA_SOURCE: RelatedCompanyExtractorData
     try {
       const rows = await AnnouncementSummary.findAll({
         where,
-        attributes: ['id', 'stock_code', 'original_title', 'summary', 'entities', 'key_topics_json'],
+        attributes: [
+          'id',
+          'stock_code',
+          'original_title',
+          'summary',
+          'entities',
+          'key_topics_json',
+        ],
         limit,
         order: [['id', 'DESC']],
       });
-      return rows.map((r) => ({
+      return rows.map(r => ({
         id: r.id,
         stock_code: r.stock_code,
         original_title: r.original_title,
@@ -354,7 +359,7 @@ export const PRODUCTION_RELATED_COMPANY_DATA_SOURCE: RelatedCompanyExtractorData
   async bulkUpsertRelations(announcementId, candidates, metadata) {
     if (!Number.isFinite(announcementId) || candidates.length === 0) return 0;
     const meta = metadata || {};
-    const rows = candidates.map((c) => ({
+    const rows = candidates.map(c => ({
       announcement_id: announcementId,
       related_stock_code: c.related_stock_code,
       related_stock_name: c.related_stock_name,

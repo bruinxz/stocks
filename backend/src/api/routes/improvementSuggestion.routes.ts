@@ -18,6 +18,45 @@ const authController = new AuthController();
 
 /**
  * @openapi
+ * /api/me/improvement-suggestions:
+ *   get:
+ *     tags: [改进建议 ImprovementSuggestion]
+ *     summary: Macro 串联补丁 (2026-06-21) — 列出当前用户的改进建议
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema: { type: string, enum: [open, applied, dismissed, expired], default: open }
+ *         description: 过滤状态; 默认 open
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+ *     responses:
+ *       200:
+ *         description: 列表
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     total: { type: integer }
+ *                     items:
+ *                       type: array
+ *                       items: { type: object }
+ *       401: { description: 未登录 }
+ */
+router.get(
+  '/',
+  authController.authenticate,
+  improvementSuggestionController.listImprovementSuggestions
+);
+
+/**
+ * @openapi
  * /api/me/improvement-suggestions/{id}/apply:
  *   post:
  *     tags: [改进建议 ImprovementSuggestion]

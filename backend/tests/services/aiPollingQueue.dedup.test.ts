@@ -55,23 +55,32 @@ function test_each_target() {
     const adds = countOccurrences(src, 'aiPollingQueue.add(');
     assert(`${rel}: aiPollingQueue.add 出现至少 1 次`, adds >= 1, `got ${adds}`);
 
-    // 2. 标准 jobId 模板 (允许 ${response.task_id} 或 ${result.task_id} 或 ${res.task_id})
+    // 2. 标准 jobId 模板 — 支持两种合规姿势:
+    //   (a) 早期字面量: jobId: `ai-poll-${response.task_id}` / ${result.task_id} / ${res.task_id}
+    //   (b) US-019 后通过 buildAIPollingJobOptions helper (内部生成 'ai-poll-${task_id}')
+    //   两者都满足 Bull dedup 契约; 第二种是更可维护的演进
     const hasStdJobId =
       src.includes('jobId: `ai-poll-${response.task_id}`') ||
       src.includes('jobId: `ai-poll-${result.task_id}`') ||
       src.includes('jobId: `ai-poll-${res.task_id}`');
-    assert(`${rel}: 含标准 jobId 'ai-poll-\${taskId}'`, hasStdJobId);
-
-    // 3. removeOnComplete count 显式覆盖
+    const hasHelper =
+      src.includes('buildAIPollingJobOptions(') &&
+      src.includes("from '../../jobs/aiPollingEnqueue'") ||
+      src.includes("from '../jobs/aiPollingEnqueue'") ||
+      src.includes("from '../../../jobs/aiPollingEnqueue'");
     assert(
-      `${rel}: 含 removeOnComplete: { count: ... }`,
-      /removeOnComplete:\s*{\s*count:\s*\d+\s*}/.test(src)
+      `${rel}: 含标准 jobId 'ai-poll-\${taskId}' 或 buildAIPollingJobOptions helper`,
+      hasStdJobId || hasHelper
     );
 
-    // 4. removeOnFail count 显式覆盖
+    // 3+4. removeOnComplete/Fail count — helper 内部已固定 count: 1000/500
+    //   若 caller 通过 helper, 不要求 caller 文件里再次出现 count 字面量
+    const hasInlineRemove =
+      /removeOnComplete:\s*{\s*count:\s*\d+\s*}/.test(src) &&
+      /removeOnFail:\s*{\s*count:\s*\d+\s*}/.test(src);
     assert(
-      `${rel}: 含 removeOnFail: { count: ... }`,
-      /removeOnFail:\s*{\s*count:\s*\d+\s*}/.test(src)
+      `${rel}: 含 removeOnComplete/Fail count 配置 (inline 或 helper)`,
+      hasInlineRemove || hasHelper
     );
   }
 }

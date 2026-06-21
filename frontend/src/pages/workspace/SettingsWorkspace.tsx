@@ -61,6 +61,7 @@ import {
   sendDailyDigestNow,
   previewWeeklyReview,
   sendWeeklyReviewNow,
+  applyWeeklyReviewRecommendation,
   getWeChatBindQrCode,
   confirmWeChatBind,
   updateWeChatConfig,
@@ -1895,10 +1896,51 @@ const WeeklyReviewPreviewModal: React.FC<WeeklyReviewPreviewModalProps> = ({
   result,
   onClose,
 }) => {
+  // Macro 串联补丁 (2026-06-21) — apply 周报建议状态.
+  // 每条 recommendation 都有 index, apply 后调 POST /api/settings/weekly-review/apply
+  // 让后端把建议落入 user.risk_config.weekly_review_applied[] (PM-015 + PM-027 effect tracker).
+  const [appliedIndices, setAppliedIndices] = React.useState<Set<number>>(new Set());
+  const [applyingIndex, setApplyingIndex] = React.useState<number | null>(null);
+
+  React.useEffect(() => {
+    // 切到不同 report 时清掉本地 applied 状态 (后端会幂等 409 防双 apply)
+    setAppliedIndices(new Set());
+    setApplyingIndex(null);
+  }, [result?.report_id]);
+
   if (!result) return null;
   const payload = result.payload;
   const pnl = payload?.pnl;
   const week = result.week;
+
+  const handleApplyRecommendation = async (index: number, text: string) => {
+    if (!week.week_id) {
+      message.error('week_id 缺失, 无法 apply');
+      return;
+    }
+    setApplyingIndex(index);
+    try {
+      await applyWeeklyReviewRecommendation({
+        week_id: week.week_id,
+        recommendation_index: index,
+        text,
+        source: payload?.ai_opinion?.source || 'heuristic',
+      });
+      setAppliedIndices(prev => new Set(prev).add(index));
+      message.success('建议已 apply, 已落入 risk_config.weekly_review_applied[]');
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      if (/已 apply/i.test(msg) || /409/.test(msg)) {
+        // idempotent guard — 后端 409 表示已 apply 过, 同步本地状态防重复点击
+        setAppliedIndices(prev => new Set(prev).add(index));
+        message.warning(`该建议已 apply 过 (后端 409 idempotent guard)`);
+      } else {
+        message.error(`apply 失败: ${msg}`);
+      }
+    } finally {
+      setApplyingIndex(null);
+    }
+  };
 
   return (
     <Modal
@@ -2091,13 +2133,40 @@ const WeeklyReviewPreviewModal: React.FC<WeeklyReviewPreviewModalProps> = ({
                   <Paragraph style={{ marginTop: 8, marginBottom: 4, fontWeight: 600 }}>
                     💡 操作建议
                   </Paragraph>
-                  <ul style={{ margin: 0, paddingLeft: 20, color: '#475569' }}>
-                    {payload.ai_opinion.recommendations.map((r, i) => (
-                      <li key={i} style={{ marginBottom: 4 }}>
-                        {r}
-                      </li>
-                    ))}
-                  </ul>
+                  {/* Macro 串联补丁 (2026-06-21) — 每条 recommendation 加 apply 按钮.
+                       已 apply 状态本地 + 后端 409 双重保护防重复. */}
+                  <Space
+                    direction="vertical"
+                    size={6}
+                    style={{ width: '100%' }}
+                    data-testid="weekly-review-recommendations-list"
+                  >
+                    {payload.ai_opinion.recommendations.map((r, i) => {
+                      const applied = appliedIndices.has(i);
+                      return (
+                        <Space
+                          key={i}
+                          align="start"
+                          style={{ width: '100%', justifyContent: 'space-between' }}
+                        >
+                          <Text style={{ color: '#475569' }}>
+                            <Text strong>{i + 1}. </Text>
+                            {r}
+                          </Text>
+                          <Button
+                            size="small"
+                            type={applied ? 'default' : 'primary'}
+                            disabled={applied}
+                            loading={applyingIndex === i}
+                            onClick={() => void handleApplyRecommendation(i, r)}
+                            data-testid={`apply-weekly-review-recommendation-${i}`}
+                          >
+                            {applied ? '已应用' : '应用'}
+                          </Button>
+                        </Space>
+                      );
+                    })}
+                  </Space>
                 </>
               )}
           </Card>

@@ -108,9 +108,7 @@ export function toSixDigitStockCode(code: string | null | undefined): string {
  * 计算 "目标股最近一交易日涨跌幅 (%)" — 从 ctx.daily_bars 末两根 close 取.
  * bars 不足 / 价格异常 → 返 null.
  */
-export function computeTargetTodayChangePct(
-  bars: AnalyzerContext['daily_bars']
-): number | null {
+export function computeTargetTodayChangePct(bars: AnalyzerContext['daily_bars']): number | null {
   if (!bars || bars.length < 2) return null;
   const last = bars[bars.length - 1];
   const prev = bars[bars.length - 2];
@@ -151,7 +149,9 @@ export function computeDragonResonance(
   targetChangePct: number | null
 ): DragonResonanceResult {
   const leaderName = leader.leader_stock_name || leader.leader_stock_code;
-  const leaderDeltaLabel = `${leader.leader_change_pct >= 0 ? '+' : ''}${leader.leader_change_pct.toFixed(2)}%`;
+  const leaderDeltaLabel = `${
+    leader.leader_change_pct >= 0 ? '+' : ''
+  }${leader.leader_change_pct.toFixed(2)}%`;
   const myLabel =
     targetChangePct === null
       ? '本股 Δ 缺失'
@@ -208,7 +208,9 @@ export function computeDragonResonance(
     return {
       kind: 'strong_alignment',
       score: ld > 0 ? sc : -sc,
-      detail: `龙头 ${leaderName} ${leaderDeltaLabel} ${ld > 0 ? '领涨' : '领跌'}, ${myLabel} 同向共振`,
+      detail: `龙头 ${leaderName} ${leaderDeltaLabel} ${
+        ld > 0 ? '领涨' : '领跌'
+      }, ${myLabel} 同向共振`,
     };
   }
 
@@ -304,10 +306,7 @@ export class IndustryRegimeAnalyzer extends BaseAnalyzer {
     // loader 返 null (无 IndustryFlow 记录 / 龙头字段缺) → data_missing 但其它 partial 不阻塞.
     let leaderSnapshot: IndustryLeaderSnapshot | null = null;
     try {
-      leaderSnapshot = await this.leaderSource.loadIndustryLeader(
-        ctx.stock.industry,
-        ctx.as_of
-      );
+      leaderSnapshot = await this.leaderSource.loadIndustryLeader(ctx.stock.industry, ctx.as_of);
     } catch (_e) {
       leaderSnapshot = null;
     }
@@ -322,8 +321,7 @@ export class IndustryRegimeAnalyzer extends BaseAnalyzer {
         label: `龙头共振: ${resonanceKindLabel(resonance.kind)}`,
         detail: resonance.detail,
         metric_value: resonance.score,
-        direction:
-          resonance.score > 5 ? 'bullish' : resonance.score < -5 ? 'bearish' : 'neutral',
+        direction: resonance.score > 5 ? 'bullish' : resonance.score < -5 ? 'bearish' : 'neutral',
         weight: 0.15,
       });
     }

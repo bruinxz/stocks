@@ -75,6 +75,79 @@ export function resolveActionType(action: unknown): string {
 export class ImprovementSuggestionController {
   constructor() {
     this.applyImprovementSuggestion = this.applyImprovementSuggestion.bind(this);
+    this.listImprovementSuggestions = this.listImprovementSuggestions.bind(this);
+  }
+
+  /**
+   * GET /api/me/improvement-suggestions
+   * Query: status=open|applied|dismissed|expired (默认 open), limit=N (默认 50, max 200)
+   *
+   * Macro 串联补丁 (2026-06-21) — 前端 SettingsWorkspace.TodoSuggestionsTab apply 按钮
+   * 的数据源. 之前后端只有 POST /:id/apply 但没 list 入口, 前端没法展示 → 永远点不到 apply.
+   *
+   * 响应:
+   *   200 { success: true, data: { items: [...], total: N } }
+   *   401 { success: false, message: '未登录' }
+   *   500 { success: false, message: error.message }
+   */
+  async listImprovementSuggestions(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user?.id;
+      if (!user_id) {
+        return res.status(401).json({ success: false, message: '未登录' });
+      }
+      const statusRaw = String(req.query.status || IMPROVEMENT_STATUS.OPEN);
+      const ALLOWED_STATUS = new Set<string>([
+        IMPROVEMENT_STATUS.OPEN,
+        IMPROVEMENT_STATUS.APPLIED,
+        IMPROVEMENT_STATUS.DISMISSED,
+        IMPROVEMENT_STATUS.EXPIRED,
+      ]);
+      const status = ALLOWED_STATUS.has(statusRaw) ? statusRaw : IMPROVEMENT_STATUS.OPEN;
+
+      const limitRaw = parseInt(String(req.query.limit || '50'), 10);
+      const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 200) : 50;
+
+      const rows = await ImprovementSuggestion.findAll({
+        where: { user_id, status },
+        order: [
+          ['priority', 'DESC'],
+          ['generated_at', 'DESC'],
+        ],
+        limit,
+      });
+
+      const items = rows.map(r => {
+        const j = typeof (r as any).toJSON === 'function' ? (r as any).toJSON() : r;
+        return {
+          id: j.id,
+          period_start: j.period_start,
+          period_end: j.period_end,
+          category: j.category,
+          key: j.key,
+          title: j.title,
+          body: j.body,
+          priority: j.priority,
+          status: j.status,
+          source: j.source,
+          action: j.action,
+          evidence: j.evidence,
+          applied_at: j.applied_at,
+          dismissed_at: j.dismissed_at,
+          generated_at: j.generated_at,
+          effect_metrics: j.effect_metrics,
+          effect_tracked_at: j.effect_tracked_at,
+        };
+      });
+
+      return res.json({ success: true, data: { items, total: items.length } });
+    } catch (error: any) {
+      logger.error('list ImprovementSuggestion 失败:', error);
+      return res.status(500).json({
+        success: false,
+        message: error?.message || 'list ImprovementSuggestion 失败',
+      });
+    }
   }
 
   /**

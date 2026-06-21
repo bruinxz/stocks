@@ -141,8 +141,7 @@ export class ETFCreationRedemption extends Model {
     allowNull: true,
     field: 'net_redemption',
     comment:
-      'AC 必需字段: 当日 gross 赎回金额 (元, ≥0). ' +
-      'NULL = 未从 AKShare 拉到, 与"真 0" 区分.',
+      'AC 必需字段: 当日 gross 赎回金额 (元, ≥0). ' + 'NULL = 未从 AKShare 拉到, 与"真 0" 区分.',
   })
   declare net_redemption: number | null;
 

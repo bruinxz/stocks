@@ -593,11 +593,7 @@ export class SettingsController {
    * 返回当前用户已 apply 过的 recommendation 历史 (按 applied_at 升序, LRU cap=50).
    * 前端用于 SettingsWorkspace "已采纳建议" 列表展示, 防止重复点击 + 留痕.
    */
-  async listAppliedWeeklyReviewRecommendations(
-    req: Request,
-    res: Response,
-    _next: NextFunction
-  ) {
+  async listAppliedWeeklyReviewRecommendations(req: Request, res: Response, _next: NextFunction) {
     try {
       const user_id = (req as any).user?.id;
       if (!user_id) {

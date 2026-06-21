@@ -152,7 +152,9 @@ function loadEd25519Pubkeys(): Record<string, crypto.KeyObject> {
 export type BridgeSignatureMethod = 'hmac' | 'ed25519';
 
 export function normalizeSigMethod(raw: string | undefined | null): BridgeSignatureMethod {
-  const v = String(raw || '').toLowerCase().trim();
+  const v = String(raw || '')
+    .toLowerCase()
+    .trim();
   if (v === 'ed25519') return 'ed25519';
   // 缺省 / hmac / 其他全部按 hmac 处理 (兼容老 bridge, 老 bridge 不发该 header)
   return 'hmac';
