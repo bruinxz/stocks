@@ -400,9 +400,18 @@ const TodayWorkspace: React.FC = () => {
         headerActions={headerActions}
       >
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
-          <MarketJudgmentCard />
-          <CallAuctionCard portfolioId={selectedPortfolioId ?? null} />
-          <MarketBriefCard />
+          {/* hotfix-AL (2026-06-21): MarketJudgment / CallAuction / MarketBrief
+              是 "今日大盘速读" 概览, 只属于 "今日信号" tab. 此前一直把这 3 张大卡
+              render 在所有 tab 之上 (~600-800px 高), 用户点击 "关键事件 / 风险提醒
+              / 风控中心" 后 activeKey state 确实改了, 但实际 body 内容被推到屏幕
+              下方看不到, 体感"点击无反应". 改成只在 signals tab 渲染. */}
+          {activeKey === 'signals' && (
+            <>
+              <MarketJudgmentCard />
+              <CallAuctionCard portfolioId={selectedPortfolioId ?? null} />
+              <MarketBriefCard />
+            </>
+          )}
           {body}
         </Space>
       </WorkspaceLayout>
