@@ -32,6 +32,12 @@ export const LIVE_AUDIT_EVENT_TYPES = {
   // BLOCKED = composite_score < 60 / decision='blocked' 直接拒草稿; WARN = risky 放行留痕.
   ORDER_BLOCKED_BY_FEASIBILITY: 'live_order_blocked_by_feasibility',
   ORDER_FEASIBILITY_WARN: 'live_order_feasibility_warn',
+  // US-010 (PR-005) — TradeComplianceChecker pre-trade gate 在 approveDraft 的出口.
+  // BLOCKED_BY_COMPLIANCE = severity=high 直接拒; COMPLIANCE_WARN = severity=medium 放行留痕.
+  ORDER_BLOCKED_BY_COMPLIANCE: 'live_order_blocked_by_compliance',
+  ORDER_COMPLIANCE_WARN: 'live_order_compliance_warn',
+  // US-011 (PR-006) — DrawdownCircuitBreaker / pre-trade guard chain 任一不可用 (fail-closed) 拒草稿.
+  ORDER_BLOCKED_BY_PRE_TRADE_GATE: 'live_order_blocked_by_pre_trade_gate',
 
   // ----- 命令队列 / bridge -----
   ORDER_ENQUEUED: 'live_order_enqueued',
