@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Button,
@@ -40,6 +40,7 @@ import {
 } from './aiStockAnalysisModalV2Components';
 import TradeReasonCell from './TradeReasonCell';
 import type { TradeReasonPayload } from '../../services/portfolioWorkspaceService';
+import api from '../../services/api';
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -108,6 +109,31 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AnalyzeSingleStockResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Batch AR (2026-06-21): Pull analysis_engine.mode so we can warn users when
+  // it's 'off' — otherwise the dialog renders TradingAgents legacy output and
+  // any DataMissingBanner('data_quality=critical') makes users think the system
+  // is broken, when actually they just never enabled v2. See user feedback.
+  const [engineMode, setEngineMode] = useState<'off' | 'shadow' | 'hard' | 'unknown'>('unknown');
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await api.get('/risk/analysis-engine-config');
+        const mode = resp?.data?.data?.config?.mode;
+        if (!cancelled) {
+          if (mode === 'off' || mode === 'shadow' || mode === 'hard') setEngineMode(mode);
+          else setEngineMode('unknown');
+        }
+      } catch {
+        if (!cancelled) setEngineMode('unknown');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   const runAnalysis = useCallback(async () => {
     if (!stockCode) {
@@ -202,6 +228,24 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
     >
       <Spin spinning={loading} tip="正在召唤 TradingAgents 多维度分析（通常需要 30-90 秒）…">
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          {/* Batch AR (2026-06-21): mode=off 引导 — 否则 critical hold 被误以为系统坏 */}
+          {engineMode === 'off' && (
+            <Alert
+              type="info"
+              showIcon
+              message="AI v2 多维分析引擎未启用"
+              description={
+                <span>
+                  当前为 <Text code>mode=off</Text>（TradingAgents legacy 模式，仅 5
+                  个维度文本要点）。如需 8 个 analyzer 的评分 / 证据 / 行动计划，请在&nbsp;
+                  <Text strong>账号设置 → 风险参数 → AI 引擎模式</Text> 切到{' '}
+                  <Text code>shadow</Text> 或 <Text code>hard</Text>。下方若出现{' '}
+                  <Text code>data_quality=critical</Text> 仅是 legacy 兜底，不代表系统故障。
+                </span>
+              }
+            />
+          )}
+
           {/* 维度选择 */}
           <div>
             <Text type="secondary">选择分析维度：</Text>

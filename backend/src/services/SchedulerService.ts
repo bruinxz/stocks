@@ -916,10 +916,15 @@ class SchedulerService {
           : Array.isArray(parameters.stock_symbols)
           ? parameters.stock_symbols
           : undefined;
+        // Batch AR (2026-06-21): default 600 → 5000 to cover 全 A 股 universe.
+        // Audit 2026-06-21 found only 807 distinct symbols in realtime_quotes
+        // over 7d, because limit defaulted to 600 + getStocks itself capped to
+        // 1000. Now both caps are 5000 so a single cron tick covers ~5500
+        // listed names (with ST/退 filters in QuantDataService.getStocks).
         const limit = this.toPositiveInt(
           parameters.limit || parameters.quote_sync_limit || parameters.max_stocks,
-          600,
-          2000
+          5000,
+          5000
         );
         const source = parameters.source || parameters.data_source || 'auto';
         const universe = parameters.universe === 'favorites' ? 'favorites' : 'market';
@@ -6184,7 +6189,8 @@ class SchedulerService {
         is_active: true,
         parameters: {
           universe: 'market',
-          limit: 360,
+          // Batch AR (2026-06-21): 360 → 5000, 全 A 股 universe.
+          limit: 5000,
           source: 'auto',
           batch_size: 300,
           report_to_feishu: false,

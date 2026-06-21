@@ -24,11 +24,11 @@ export const SYSTEM_INTRO_MD = `# QuantX A 股 Alpha 平台 — 系统介绍
 [数据层]                         5500 只股票 / 10+ 数据源
    │  AKShare + 腾讯 + 新浪 双源校验，多源降级，T+0/T+1/T+2 三档新鲜度
    ▼
-[因子与信号]                     18+ factor（value / quality / growth / momentum
+[因子与信号]                     22 个 factor（value / quality / growth / momentum
    │                            / low_vol / northbound / dragon_tiger / sentiment …）
    │  每个 factor IC ≥ 0.03 / IR ≥ 0.3 才上线；相关性 ≤ 0.7
    ▼
-[策略与组合]                     13 个组合级策略：
+[策略与组合]                     29 个组合级策略：
    │  - 多因子选股 / 龙头 / 突破 / 左侧反转 / 高股息 / 业绩超预期
    │  - 北向跟随 / 策略融合（regime 加权）
    │  - 每个策略有自己的 capacity + kill switch
@@ -68,21 +68,26 @@ export const SYSTEM_INTRO_MD = `# QuantX A 股 Alpha 平台 — 系统介绍
 - 一个源挂掉自动切备源 + 写 RiskAlert，**不阻断决策**
 
 ### 模块 B · 因子与信号
-- 18+ factor 全部有清晰经济学逻辑，禁止 data mining
+- 22 个 factor 全部有清晰经济学逻辑，禁止 data mining
 - IC < 0.03 持续 3 个月即下线；高相关因子（>0.7）合并
 - 因子按市场状态加权：牛市动量+成长，熊市低波动+高分红
 - 每个信号 ≥ 3 条 evidence 解释 "为什么是这只票"
 
-### 模块 C · 策略与组合（13 个策略）
+### 模块 C · 策略与组合（29 个策略）
 1. **多因子选股 (MultiFactorAlpha)** — 中长期主力，因子复合打分
 2. **龙头策略 (DragonHead)** — 涨停板 + 龙虎榜 + 北向共振
-3. **突破策略 (Breakout)** — 量价突破带止损
-4. **左侧反转 (LeftSideReversal)** — 业绩拐点 + 超跌反弹
-5. **高股息价值 (HighDividend)** — 防御资产，长期复利
+3. **突破策略 (Breakout / BreakoutAtr / TurtleBreakout / VolatilityContractionBreakout)** — 量价突破带止损
+4. **左侧反转 (LeftSideReversal / MomentumReversal / BollingerReversion / RsiMeanReversion)** — 业绩拐点 + 超跌反弹
+5. **高股息价值 (HighDividend / GARP / Value)** — 防御资产，长期复利
 6. **业绩超预期 (EarningsSurprise)** — 财报后 N 日跟随
 7. **北向跟随 (NorthboundFollow)** — 净流入排序
 8. **策略融合 (Ensemble)** — Regime 自适应加权
-9-13. **持续迭代中** — 见 \`docs/trader-system/30_strategy_overview.md\`
+9. **趋势 (MovingAverageTrend / MacdTrend / DonchianTrend / MinerviniTrendTemplate / TrendPullbackReentry)**
+10. **动量 (RelativeStrengthMomentum / DualMomentumRotation / QualityMomentumBlend / CTA100Momentum / DragonHeadMomentum / GameTraderRelay)**
+11. **质量与波动 (LowVolatilityQuality / VolumePriceConfirmation)**
+12. **板块联动 (SectorRotationLeader / Linkage)**
+
+完整 29 策略列表（含 capacity + kill switch）：\`docs/trader-system/30_strategy_overview.md\` 与 \`backend/src/quant/engine/StrategyRegistry.ts\`
 
 ### 模块 D · 风控（8 层闸门，fail-closed）
 | 闸门 | 触发条件 | 动作 |
@@ -149,8 +154,8 @@ export const SYSTEM_INTRO_MD = `# QuantX A 股 Alpha 平台 — 系统介绍
 | 工作区 | 做什么 |
 |---|---|
 | **今日作战** | 集合竞价异动 / AI brief / 卖出建议 / 当日候选 |
-| **选股因子** | 23 个 factor / 龙虎榜 / 北向 / 涨停板 / ETF flow / 公告政策 / 宏观 |
-| **策略实验室** | 策略详情 / Walk-forward / 跨 regime / Quarterly retrain / Leaderboard |
+| **选股因子** | 22 个 factor / 龙虎榜 / 北向 / 涨停板 / ETF flow / 公告政策 / 宏观 |
+| **策略实验室** | 策略详情 / Walk-forward / 跨 regime / Quarterly retrain / Leaderboard（29 策略） |
 | **持仓与复盘** | 实盘 / 模拟盘 / 对账 / 归因日记 / 错误模式 |
 | **数据中心** | 数据健康 / 行情同步 / 调度任务 / 系统日志 / 健康监控 |
 | **账号设置** | 个人中心 / 风险参数 / 改进建议待办 / Kill switch / 通知 |
@@ -190,17 +195,16 @@ export const SYSTEM_MANUAL_MD = `# 操作手册
 
 ### 2.2 选股因子 \`/workspace/factors\`
 
-7 个 tab 看不同维度数据：
-- 基础因子（PE/PB/ROE/Momentum/低波动 等）
-- 龙虎榜 / 北向资金 / 涨停板（含连板 / 炸板）
-- 行业 ETF flow / 公告政策 / 宏观环境
+9 个 tab 看不同维度数据：
+- 因子总览 / 权重调参 / 今日选股清单 / 行业决策 / 舆情雷达
+- 宏观环境 / 大宗交易 / ETF 资金流 / 政策要闻
 
 ### 2.3 策略实验室 \`/workspace/lab\`
 
-6 个 tab：
-- 高级量化（Walk-forward / Monte Carlo / Cost sensitivity）
-- 跨 regime 表现 / Quarterly retrain / Shadow Run 对比
-- Leaderboard：13 个策略横向对比
+10 个 tab：
+- 我的策略 / 策略排行 / 新建回测 / 回测对比
+- Walk-Forward / 优化历史 / 季度参数重训 / Shadow Run / OverfitMetrics / 高级量化
+- 共 29 个策略横向对比
 
 ### 2.4 持仓与复盘 \`/workspace/portfolio\`
 
@@ -339,7 +343,7 @@ export const SYSTEM_ARCHITECTURE_MD = `# 系统架构图
 
 > 当前架构对应 6 工作区 + AI 多维分析引擎 v1 hard cutover + 黑天鹅 6 stage 复盘 + AI 日记 + 改进建议闭环。
 >
-> 数据中心的实时拓扑图（含节点状态）仍可在 **数据中心 → 数据健康** 找到 SystemTopologyMap，本页是文本版整体地图。
+> 本页上方已嵌入实时拓扑图组件 \`SystemTopologyMap\`（含节点状态、9 层 ≈ 40 节点）。下方文本版整体地图是文字解释，与上图一一对应。
 
 ---
 
@@ -353,7 +357,7 @@ export const SYSTEM_ARCHITECTURE_MD = `# 系统架构图
                 └────────────────────────────────────────────────┘
                                     ↓
                 ┌────────────────────────────────────────────────┐
-                │  L2 因子与信号 (23 factor; IC/IR 持续监测)       │
+                │  L2 因子与信号 (22 factor; IC/IR 持续监测)       │
                 │  value · quality · growth · momentum ·          │
                 │  low_vol · northbound · money_flow ·            │
                 │  dragon_tiger · liquidity · sentiment · event   │
@@ -362,10 +366,12 @@ export const SYSTEM_ARCHITECTURE_MD = `# 系统架构图
                 └────────────────────────────────────────────────┘
                                     ↓
                 ┌────────────────────────────────────────────────┐
-                │  L3 策略 & 组合 (13 策略 regime-加权融合)       │
+                │  L3 策略 & 组合 (29 策略 regime-加权融合)       │
                 │  MultiFactorAlpha / DragonHead / Breakout /     │
                 │  LeftSide / HighDividend / Earnings /           │
-                │  Northbound / Ensemble / + 5 in pipeline        │
+                │  Northbound / Ensemble / Trend / Momentum /     │
+                │  MeanReversion / SectorRotation / Linkage /     │
+                │  GARP / CTA100 / GameTraderRelay …              │
                 │       ↓ PortfolioOptimizer + PositionSizing     │
                 │       ↓ RebalanceEngine (3% 偏离触发)            │
                 └────────────────────────────────────────────────┘
@@ -456,7 +462,7 @@ export const SYSTEM_ARCHITECTURE_MD = `# 系统架构图
 | 文档 | 内容 |
 |---|---|
 | \`docs/trader-system/00_overview.md\` | 操盘手方法论 + 6 大模块 |
-| \`docs/trader-system/30_strategy_overview.md\` | 13 策略详细 |
+| \`docs/trader-system/30_strategy_overview.md\` | 29 策略详细 |
 | \`docs/trader-system/80_ai_analysis_engine.md\` | AI 引擎 v2 设计 |
 | \`docs/audit/full_completion_2026_06_21.md\` | 147 story 完整实施记录 |
 | \`docs/audit/deployment_2026_06_21.md\` | 部署坑 + ops 三账号 |

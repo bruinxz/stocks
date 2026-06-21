@@ -179,6 +179,17 @@ const TodayWorkspace: React.FC = () => {
     }
   }, [location.search]);
 
+  // Batch AR (2026-06-21): tab 切换用 navigate(..., { replace: true }) 同步到
+  // URL — 解决 "用户在本页连续切 4 个 tab, 浏览器后退要按 4 次才回到 dashboard".
+  // replace=true 保证 tab 切换不进 history stack, 后退键直接回上一页.
+  const handleTabChange = useCallback(
+    (key: string) => {
+      setActiveKey(key);
+      navigate(`${location.pathname}?tab=${encodeURIComponent(key)}`, { replace: true });
+    },
+    [navigate, location.pathname]
+  );
+
   const [data, setData] = useState<TodaySignalsData | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -395,7 +406,7 @@ const TodayWorkspace: React.FC = () => {
         subtitle={subtitle}
         tabs={tabs}
         activeKey={activeKey}
-        onTabChange={setActiveKey}
+        onTabChange={handleTabChange}
         kpiSlot={kpiSlot}
         headerActions={headerActions}
       >

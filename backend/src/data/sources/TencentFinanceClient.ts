@@ -106,10 +106,12 @@ export class TencentFinanceClient {
 
       logger.info(`Fetched ${bars.length} daily bars for ${normalizedCode} from Tencent Finance`);
       return bars;
-    } catch (error) {
-      logger.error(
-        `Failed to fetch history k data for ${normalizedCode} from Tencent Finance:`,
-        error
+    } catch (error: any) {
+      // Batch AR (2026-06-21): downgrade to warn — CombinedDataSource fallback
+      // 已兜底, 单源失败 (退市股 / 网络瞬断) 不应污染 error.log.
+      const msg = error?.message || String(error);
+      logger.warn(
+        `Failed to fetch history k data for ${normalizedCode} from Tencent Finance: ${msg}`
       );
       throw error;
     }

@@ -173,8 +173,12 @@ export class SinaFinanceClient {
 
       logger.info(`Fetched ${bars.length} daily bars for ${code}`);
       return bars;
-    } catch (error) {
-      logger.error(`Failed to fetch history k data for ${code}:`, error);
+    } catch (error: any) {
+      // Batch AR (2026-06-21): warn instead of error — CombinedDataSource
+      // already does provider fallback; single-source failure doesn't merit
+      // error.log noise (delisted stocks would flood thousands of lines/day).
+      const msg = error?.message || String(error);
+      logger.warn(`Failed to fetch history k data for ${code}: ${msg}`);
       throw error;
     }
   }

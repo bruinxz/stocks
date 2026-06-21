@@ -185,8 +185,11 @@ export class AKShareClient {
       );
       logger.info(`Fetched ${bars.length} daily bars for ${code} from AKShare`);
       return bars;
-    } catch (error) {
-      logger.error(`Failed to fetch history k data for ${code} from AKShare:`, error);
+    } catch (error: any) {
+      // Batch AR (2026-06-21): warn instead of error — CombinedDataSource does
+      // provider fallback; single-source failure shouldn't flood error.log.
+      const msg = error?.message || String(error);
+      logger.warn(`Failed to fetch history k data for ${code} from AKShare: ${msg}`);
       throw error;
     }
   }

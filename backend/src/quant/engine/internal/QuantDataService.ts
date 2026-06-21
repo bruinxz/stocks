@@ -85,7 +85,11 @@ export class QuantDataService {
      */
     as_of_date?: string;
   }): Promise<Stock[]> {
-    const limit = Math.min(Number(options.limit || 120), 1000);
+    // Batch AR (2026-06-21): cap raised from 1000 → 5000 for full-universe
+    // realtime quote sync (REALTIME_QUOTE_SYNC). A 股 listed ≈ 5500, the cap
+    // was leaving ~4000 stocks without intraday quotes (audited 2026-06-21:
+    // only 807 distinct symbols in realtime_quotes 7d window).
+    const limit = Math.min(Number(options.limit || 120), 5000);
     const listedSurvivalWhere = this.buildListedSurvivalWhere(options.as_of_date);
     if (options.symbols?.length) {
       const symbols = options.symbols.map(normalizeSymbol).filter(Boolean);

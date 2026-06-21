@@ -226,8 +226,12 @@ export class EastMoneyClient {
 
       logger.info(`Fetched ${bars.length} daily bars for ${normalizedCode} from EastMoney`);
       return bars;
-    } catch (error) {
-      logger.error(`Failed to fetch history k data for ${code} from EastMoney:`, error);
+    } catch (error: any) {
+      // Batch AR (2026-06-21): 退市股 + 网络瞬断 99% 都长这样 (socket hang up /
+      // ECONNRESET / 5xx). 上游 CombinedDataSource 已经做 provider 链式 fallback,
+      // 单源失败本身不致命, 用 warn 避免污染 error.log (6 个退市票每天刷数千行).
+      const msg = error?.message || String(error);
+      logger.warn(`Failed to fetch history k data for ${code} from EastMoney: ${msg}`);
       throw error;
     }
   }

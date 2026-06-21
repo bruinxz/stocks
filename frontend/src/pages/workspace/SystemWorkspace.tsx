@@ -328,14 +328,22 @@ function FeedbackTab() {
               showCount
             />
           </Form.Item>
-          <Form.Item label="附件图片（最多 9 张，每张 ≤ 5 MB）">
+          <Form.Item label="附件图片（最多 3 张，每张 ≤ 1.5 MB；总大小 ≤ 5 MB）">
             <Upload.Dragger
               multiple
               accept="image/jpeg,image/png,image/gif,image/webp"
               beforeUpload={file => {
+                // 单张 ≤ 1.5 MB (nginx client_max_body_size 5 MB, 留 buffer 给 multipart overhead)
+                const MAX_BYTES = 1.5 * 1024 * 1024;
+                if (file.size > MAX_BYTES) {
+                  message.warning(
+                    `图片 ${file.name} 超过 1.5 MB (${(file.size / 1024 / 1024).toFixed(2)} MB)，请压缩后再上传`
+                  );
+                  return Upload.LIST_IGNORE;
+                }
                 setImageFiles(prev => {
-                  if (prev.length >= 9) {
-                    message.warning('最多 9 张');
+                  if (prev.length >= 3) {
+                    message.warning('最多 3 张，请删除一张再添加');
                     return prev;
                   }
                   return [...prev, file];
@@ -357,7 +365,9 @@ function FeedbackTab() {
                 <InboxOutlined />
               </p>
               <p className="ant-upload-text">点击或拖拽图片到此处</p>
-              <p className="ant-upload-hint">支持 JPEG / PNG / GIF / WEBP；多张可一起选</p>
+              <p className="ant-upload-hint">
+                支持 JPEG / PNG / GIF / WEBP；最多 3 张 × 1.5 MB（nginx 限制 5 MB）
+              </p>
             </Upload.Dragger>
           </Form.Item>
         </Form>

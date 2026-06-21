@@ -13,7 +13,7 @@
 import { Router } from 'express';
 import { userFeedbackController } from '../controllers/UserFeedbackController';
 import { AuthController } from '../controllers/AuthController';
-import { uploadFeedbackImagesMiddleware } from '../../middlewares/uploadFeedback';
+import { uploadFeedbackImages } from '../../middlewares/uploadFeedback';
 
 const meRouter = Router();
 const adminRouter = Router();
@@ -66,7 +66,7 @@ meRouter.get('/', authController.authenticate, userFeedbackController.listMyFeed
 meRouter.post(
   '/',
   authController.authenticate,
-  uploadFeedbackImagesMiddleware.array('images', 9),
+  uploadFeedbackImages('images'),
   userFeedbackController.createMyFeedback
 );
 
