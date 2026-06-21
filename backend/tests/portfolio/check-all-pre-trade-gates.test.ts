@@ -222,10 +222,13 @@ function testLiveTradingWireIn() {
     'live-trading: 出现 checkAllPreTradeGates 调用',
     /\bcheckAllPreTradeGates\s*\(/.test(src)
   );
-  // approveDraft 方法内必须含 pre-trade gate audit event
+  // approveDraft 方法内必须含 pre-trade gate audit event (字面量 或 LIVE_AUDIT_EVENT_TYPES enum)
+  // Batch AJ (2026-06-21): live_order_* 字面量已迁到 LIVE_AUDIT_EVENT_TYPES.ORDER_BLOCKED_BY_PRE_TRADE_GATE 枚举,
+  // test 接受两种姿势
   assert(
-    'live-trading: 写 live_order_blocked_by_pre_trade_gate audit event',
-    /live_order_blocked_by_pre_trade_gate/.test(src)
+    'live-trading: 写 live_order_blocked_by_pre_trade_gate audit event (字面量或枚举)',
+    /live_order_blocked_by_pre_trade_gate/.test(src) ||
+      /LIVE_AUDIT_EVENT_TYPES\.ORDER_BLOCKED_BY_PRE_TRADE_GATE/.test(src)
   );
 }
 

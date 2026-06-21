@@ -302,8 +302,11 @@ function baseCtx(): AnalyzerContext {
   assert(riskSt.event_action === 'veto', 'risk ST: event_action=veto');
   assert(riskSt.score === -100, `risk ST: score=-100 (${riskSt.score})`);
 
-  // 15. RiskAnalyzer 行情陈旧 → veto
+  // 15. RiskAnalyzer 行情陈旧 → veto (盘中模式 = as_of 设为 today)
+  // Batch AO (2026-06-21): RiskAnalyzer 复盘模式 (as_of != today) 跳过 stale veto.
+  // 测 veto 必须显式把 ctx.as_of 设到 today, 模拟"实时盘中决策"场景.
   const ctxStale = baseCtx();
+  ctxStale.as_of = new Date().toISOString().slice(0, 10); // 强制实时盘中模式
   ctxStale.realtime_quote = {
     ...(ctxStale.realtime_quote as any),
     as_of_ts: new Date(Date.now() - 60 * 60 * 1000).toISOString(), // 60 min ago
