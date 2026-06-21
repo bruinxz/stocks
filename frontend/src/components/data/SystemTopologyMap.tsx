@@ -101,52 +101,86 @@ const ICONS: Record<string, string> = {
   data_collection: '📊',
   macro_env: '🌍',
   capacity_monitor: '📈', // Sprint 23/25 — 容量 + Alpha 衰减
+  northbound_data: '🌐', // Batch AQ — 北向资金
+  insider_trade_data: '👔', // Batch AQ — 内部增减持
+  dragon_tiger_data: '🐉', // Batch AQ — 龙虎榜
+  realtime_quote_data: '📡', // Batch AQ — 真盘口 bid/ask
   // L2 信号
   factor_engine: '🧮',
   strategy_engine: '🎯',
   pattern_library: '🧩', // Sprint 13/21 — Bulkowski 15 形态
+  factor_correlation: '🕸️', // Batch AQ — 因子相关性矩阵
+  factor_ic_monitor: '📉', // Batch AQ — IC 衰减监测
   // L3 元决策 + 仓位
   meta_label_filter: '🎚️',
   autopilot: '🤖',
   sizing_decision: '⚖️', // Phase 2+ Sizing (Kelly / vol_target / ATR)
+  ai_analysis_engine_v2: '🧠', // Batch AQ — AI 多维分析引擎 (8 analyzer)
   // L4 组合构建
   portfolio_construction: '📐',
-  bl_hrp_qp: '🧠', // Sprint 16/19/20 — Black-Litterman + HRP + QP
+  bl_hrp_qp: '🧪', // Sprint 16/19/20 — Black-Litterman + HRP + QP
   // L5 执行可行性
   execution_feasibility: '🚦',
   portfolio: '💰',
   tca_microstructure: '🔎', // v4/v5 — TCA + Kyle Lambda + RL execution
+  live_trading_bridge: '🌉', // Batch AQ — 实盘 bridge
+  reconciliation_alert: '🧾', // Batch AQ — 对账主动告警
   // L6 风控
   risk_control: '🛡️',
   kill_switch: '🚨', // Phase 4+ 策略熔断监控
+  industry_concentration: '🏭', // Batch AQ — 行业集中度
+  restricted_share_watchdog: '🔒', // Batch AQ — 限售解禁
+  black_swan_watchdog: '🦢', // Batch AQ — 黑天鹅事件检测
   // L7 资金曲线治理
   equity_curve_governor: '🎛️',
   // L8 复盘 + 归因 + 输出
   outcome_analysis: '🔬', // Phase 5+ root_cause + postmortem
   attribution_brinson: '📊', // Sprint 20/25 — Brinson + MCR + Style + Crowding
-  research_integrity: '🧪',
+  research_integrity: '🧫',
   notification: '🔔',
+  daily_attribution: '📅', // Batch AQ — 每日归因
+  ai_diary: '📔', // Batch AQ — AI 日记
+  improvement_suggestions: '💡', // Batch AQ — 改进建议闭环
+  black_swan_postmortem: '📝', // Batch AQ — 黑天鹅复盘
+  // L9 平台层 (Batch AQ NEW)
+  user_feedback: '💬',
+  trade_reason: '🗂️',
+  scheduler: '⏱️',
 };
 
-// 横向 8-stage 布局 — 对齐 Sprint 24 后端 8 层纵向架构 (backend layers L1-L8)
+// 纵向 stage 布局 — Sprint 24 后端 8 层 + Batch AQ +L9 平台层 = 9 行
 const STAGES: { key: string; label: string; sub: string; nodes: string[] }[] = [
   {
     key: 'L1_data',
     label: 'L1 数据',
     sub: 'Data',
-    nodes: ['data_collection', 'macro_env', 'capacity_monitor'],
+    nodes: [
+      'data_collection',
+      'macro_env',
+      'capacity_monitor',
+      'northbound_data',
+      'insider_trade_data',
+      'dragon_tiger_data',
+      'realtime_quote_data',
+    ],
   },
   {
     key: 'L2_signal',
     label: 'L2 信号',
     sub: 'Signal',
-    nodes: ['factor_engine', 'strategy_engine', 'pattern_library'],
+    nodes: [
+      'factor_engine',
+      'strategy_engine',
+      'pattern_library',
+      'factor_correlation',
+      'factor_ic_monitor',
+    ],
   },
   {
     key: 'L3_meta',
     label: 'L3 元决策',
     sub: 'Meta',
-    nodes: ['meta_label_filter', 'autopilot', 'sizing_decision'],
+    nodes: ['meta_label_filter', 'autopilot', 'sizing_decision', 'ai_analysis_engine_v2'],
   },
   {
     key: 'L4_construction',
@@ -158,13 +192,25 @@ const STAGES: { key: string; label: string; sub: string; nodes: string[] }[] = [
     key: 'L5_feasibility',
     label: 'L5 执行',
     sub: 'Execute',
-    nodes: ['execution_feasibility', 'portfolio', 'tca_microstructure'],
+    nodes: [
+      'execution_feasibility',
+      'portfolio',
+      'tca_microstructure',
+      'live_trading_bridge',
+      'reconciliation_alert',
+    ],
   },
   {
     key: 'L6_risk',
     label: 'L6 风控',
     sub: 'Risk',
-    nodes: ['risk_control', 'kill_switch'],
+    nodes: [
+      'risk_control',
+      'kill_switch',
+      'industry_concentration',
+      'restricted_share_watchdog',
+      'black_swan_watchdog',
+    ],
   },
   {
     key: 'L7_governor',
@@ -176,7 +222,22 @@ const STAGES: { key: string; label: string; sub: string; nodes: string[] }[] = [
     key: 'L8_reflection',
     label: 'L8 复盘',
     sub: 'Reflect',
-    nodes: ['outcome_analysis', 'attribution_brinson', 'research_integrity', 'notification'],
+    nodes: [
+      'outcome_analysis',
+      'attribution_brinson',
+      'research_integrity',
+      'notification',
+      'daily_attribution',
+      'ai_diary',
+      'improvement_suggestions',
+      'black_swan_postmortem',
+    ],
+  },
+  {
+    key: 'L9_platform',
+    label: 'L9 平台',
+    sub: 'Platform',
+    nodes: ['user_feedback', 'trade_reason', 'scheduler'],
   },
 ];
 
@@ -531,9 +592,7 @@ const FlowLines: React.FC<FlowLinesProps> = ({ edges, stageRefs, containerEl }) 
   });
 
   // 节点边界 + 中心坐标：从 DOM 实测，比硬编码 grid 精确
-  const getNodeGeo = (
-    id: string
-  ): { cx: number; topY: number; botY: number } | null => {
+  const getNodeGeo = (id: string): { cx: number; topY: number; botY: number } | null => {
     const el = stageRefs[id];
     if (!el || !containerEl) return null;
     const a = el.getBoundingClientRect();
@@ -630,8 +689,8 @@ const FlowLines: React.FC<FlowLinesProps> = ({ edges, stageRefs, containerEl }) 
                 isHovered
                   ? 'var(--primary, #2764b8)'
                   : isDimmed
-                  ? 'rgba(39, 100, 184, 0.2)'
-                  : 'rgba(39, 100, 184, 0.65)'
+                    ? 'rgba(39, 100, 184, 0.2)'
+                    : 'rgba(39, 100, 184, 0.65)'
               }
               strokeWidth={isHovered ? 3.5 : 2}
               strokeLinecap="round"
@@ -652,9 +711,7 @@ const FlowLines: React.FC<FlowLinesProps> = ({ edges, stageRefs, containerEl }) 
               strokeLinecap="round"
               style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
             >
-              <title>
-                {`${edge.label || '→'}\n${edge.source} → ${edge.target}`}
-              </title>
+              <title>{`${edge.label || '→'}\n${edge.source} → ${edge.target}`}</title>
             </path>
           </g>
         );

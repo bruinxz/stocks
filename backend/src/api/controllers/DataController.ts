@@ -116,6 +116,8 @@ export class DataController {
    */
   async getSystemTopology(_req: Request, res: Response) {
     try {
+      // Batch AQ (2026-06-21) — 让所有新加的 status 计算都共用同一个 StatusKey 联合
+      type StatusKey = 'green' | 'yellow' | 'red' | 'gray';
       const today = todayIso();
       const q = async (sql: string) => {
         const [[row]] = await sequelize.query(sql);
@@ -294,7 +296,200 @@ export class DataController {
           ? 'yellow'
           : 'green';
 
-      // ---- 构建节点 (Sprint 26: 8 层纵向) ----
+      // ============================================================
+      // Batch AQ (2026-06-21) — 拓扑全面更新: 加入最近 7 周新增的模块
+      // 每个 SQL 都 try/catch, 失败返 gray, 不让单个查询拖崩整个 endpoint
+      // ============================================================
+
+      const safeQ = async <T = any>(sql: string, fallback: T): Promise<T> => {
+        try {
+          const [[row]] = await sequelize.query(sql);
+          return (row as T) ?? fallback;
+        } catch (e: any) {
+          logger.warn(
+            `getSystemTopology safeQ failed (sql=${sql.slice(0, 80)}…): ${e?.message ?? e}`
+          );
+          return fallback;
+        }
+      };
+
+      // ---- L1: 新增 4 节点 (北向 / 内部增减持 / 龙虎榜 / 真盘口) ----
+      const northboundRow = await safeQ<any>(
+        'SELECT COUNT(*)::int AS n, MAX(trade_date)::date AS d, COUNT(DISTINCT trade_date) FILTER (WHERE trade_date > CURRENT_DATE - 7)::int AS d7 FROM northbound_holdings',
+        { n: 0, d: null, d7: 0 }
+      );
+      const northboundLag = northboundRow.d
+        ? Math.floor((Date.now() - new Date(northboundRow.d).getTime()) / 86400000)
+        : 999;
+      const northboundStatus: StatusKey =
+        northboundRow.n === 0
+          ? 'gray'
+          : northboundLag > 5
+          ? 'red'
+          : northboundLag > 2
+          ? 'yellow'
+          : 'green';
+
+      const insiderRow = await safeQ<any>(
+        'SELECT COUNT(*)::int AS n, MAX(announce_date)::date AS d, COUNT(*) FILTER (WHERE announce_date > CURRENT_DATE - 30)::int AS recent FROM shareholder_trade_records',
+        { n: 0, d: null, recent: 0 }
+      );
+      const insiderStatus: StatusKey =
+        insiderRow.n === 0 ? 'gray' : insiderRow.recent === 0 ? 'yellow' : 'green';
+
+      const dragonRow = await safeQ<any>(
+        'SELECT COUNT(*)::int AS n, MAX(trade_date)::date AS d, COUNT(*) FILTER (WHERE trade_date > CURRENT_DATE - 7)::int AS recent FROM dragon_tiger_board',
+        { n: 0, d: null, recent: 0 }
+      );
+      const dragonLag = dragonRow.d
+        ? Math.floor((Date.now() - new Date(dragonRow.d).getTime()) / 86400000)
+        : 999;
+      const dragonStatus: StatusKey =
+        dragonRow.n === 0 ? 'gray' : dragonLag > 5 ? 'red' : dragonLag > 2 ? 'yellow' : 'green';
+
+      const realtimeQuoteRow = await safeQ<any>(
+        "SELECT COUNT(*)::int AS n, MAX(quote_time) AS latest, COUNT(DISTINCT symbol) FILTER (WHERE quote_time > NOW() - INTERVAL '24 hours')::int AS recent_symbols FROM realtime_quotes",
+        { n: 0, latest: null, recent_symbols: 0 }
+      );
+      const realtimeQuoteAgeMin = realtimeQuoteRow.latest
+        ? Math.floor((Date.now() - new Date(realtimeQuoteRow.latest).getTime()) / 60000)
+        : 999_999;
+      const realtimeQuoteStatus: StatusKey =
+        realtimeQuoteRow.n === 0
+          ? 'gray'
+          : realtimeQuoteAgeMin > 60 * 24
+          ? 'red'
+          : realtimeQuoteAgeMin > 60
+          ? 'yellow'
+          : 'green';
+
+      // ---- L2: 新增 2 节点 (因子相关性矩阵 / IC 监测) ----
+      // factor_correlation_results / factor_ic_results 是事后区间统计, 4-tuple PK
+      // 用 period_end (不是 trade_date — 这两表的 model JSDoc 明确)
+      const factorCorrRow = await safeQ<any>(
+        'SELECT COUNT(*)::int AS n, MAX(period_end)::date AS d FROM factor_correlation_results',
+        { n: 0, d: null }
+      );
+      const factorCorrLag = factorCorrRow.d
+        ? Math.floor((Date.now() - new Date(factorCorrRow.d).getTime()) / 86400000)
+        : 999;
+      const factorCorrStatus: StatusKey =
+        factorCorrRow.n === 0 ? 'gray' : factorCorrLag > 14 ? 'yellow' : 'green';
+
+      const factorIcRow = await safeQ<any>(
+        'SELECT COUNT(*)::int AS n, MAX(period_end)::date AS d, COUNT(DISTINCT factor_name)::int AS factors FROM factor_ic_results',
+        { n: 0, d: null, factors: 0 }
+      );
+      const factorIcLag = factorIcRow.d
+        ? Math.floor((Date.now() - new Date(factorIcRow.d).getTime()) / 86400000)
+        : 999;
+      const factorIcStatus: StatusKey =
+        factorIcRow.n === 0 ? 'gray' : factorIcLag > 3 ? 'yellow' : 'green';
+
+      // ---- L3: 新增 ai_analysis_engine_v2 (multi_dim_v1 24h 内报告数 + avg confidence) ----
+      const aiEngineRow = await safeQ<any>(
+        "SELECT COUNT(*)::int AS n, AVG(confidence_score)::float AS avg_conf, MAX(created_at) AS latest FROM ai_stock_analysis_reports WHERE engine_variant='multi_dim_v1' AND created_at > NOW() - INTERVAL '24 hours'",
+        { n: 0, avg_conf: null, latest: null }
+      );
+      const aiEngineStatus: StatusKey = aiEngineRow.n === 0 ? 'gray' : 'green';
+
+      // ---- L5: 新增 live_trading_bridge / reconciliation_alert ----
+      const liveOrderRow = await safeQ<any>(
+        "SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status='filled')::int AS filled, COUNT(*) FILTER (WHERE status='rejected' OR status='failed')::int AS failed, MAX(created_at) AS latest FROM live_orders WHERE created_at > NOW() - INTERVAL '7 days'",
+        { total: 0, filled: 0, failed: 0, latest: null }
+      );
+      const liveCmdRow = await safeQ<any>(
+        "SELECT COUNT(*)::int AS n FROM live_broker_commands WHERE created_at > NOW() - INTERVAL '7 days'",
+        { n: 0 }
+      );
+      const liveBridgeStatus: StatusKey =
+        liveOrderRow.total === 0 && liveCmdRow.n === 0
+          ? 'gray'
+          : liveOrderRow.failed > 0
+          ? 'yellow'
+          : 'green';
+
+      const reconTask = taskStatus(['LIVE_RECONCILIATION_GUARD']);
+
+      // ---- L6: 新增 industry_concentration / restricted_share_watchdog / black_swan_watchdog ----
+      const industryTask = taskStatus(['PAPER_TRADING_INDUSTRY_CONCENTRATION_CHECK']);
+      const restrictedTask = taskStatus(['PAPER_TRADING_RESTRICTED_SHARE_CHECK']);
+      const blackSwanWatchdogTask = taskStatus(['BLACK_SWAN_DETECT']);
+
+      const blackSwanEventRow = await safeQ<any>(
+        "SELECT COUNT(*)::int AS n7d, COUNT(*) FILTER (WHERE detected_at > NOW() - INTERVAL '24 hours')::int AS n24h, MAX(detected_at) AS latest FROM black_swan_events WHERE detected_at > NOW() - INTERVAL '7 days'",
+        { n7d: 0, n24h: 0, latest: null }
+      );
+      const blackSwanStatus: StatusKey =
+        blackSwanWatchdogTask.status === 'gray' && blackSwanEventRow.n7d === 0
+          ? 'gray'
+          : blackSwanEventRow.n24h > 0
+          ? 'yellow'
+          : (blackSwanWatchdogTask.status as StatusKey);
+
+      // ---- L8: 新增 daily_attribution / ai_diary / improvement_suggestions / black_swan_postmortem ----
+      const attrRow = await safeQ<any>(
+        "SELECT COUNT(*)::int AS n, MAX(created_at) AS latest FROM daily_attribution_reports WHERE created_at > NOW() - INTERVAL '7 days'",
+        { n: 0, latest: null }
+      );
+      const attrStatus: StatusKey = attrRow.n === 0 ? 'gray' : 'green';
+
+      const diaryRow = await safeQ<any>(
+        "SELECT COUNT(*)::int AS n, MAX(generated_at) AS latest FROM ai_diary_entries WHERE generated_at > NOW() - INTERVAL '7 days'",
+        { n: 0, latest: null }
+      );
+      const diaryStatus: StatusKey = diaryRow.n === 0 ? 'gray' : 'green';
+
+      const improvRow = await safeQ<any>(
+        "SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status='applied')::int AS applied, COUNT(*) FILTER (WHERE status='dismissed')::int AS dismissed, COUNT(*) FILTER (WHERE status='pending' OR status='active')::int AS pending FROM improvement_suggestions WHERE created_at > NOW() - INTERVAL '30 days'",
+        { total: 0, applied: 0, dismissed: 0, pending: 0 }
+      );
+      const improvStatus: StatusKey =
+        improvRow.total === 0 ? 'gray' : improvRow.pending > 20 ? 'yellow' : 'green';
+
+      const bsPostRow = await safeQ<any>(
+        "SELECT COUNT(*)::int AS n, MAX(created_at) AS latest FROM black_swan_postmortem_reports WHERE created_at > NOW() - INTERVAL '30 days'",
+        { n: 0, latest: null }
+      );
+      const bsPostStatus: StatusKey = bsPostRow.n === 0 ? 'gray' : 'green';
+
+      // ---- L9 平台层 (新增): user_feedback / trade_reason / scheduler ----
+      const feedbackRow = await safeQ<any>(
+        "SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status='pending')::int AS pending, COUNT(*) FILTER (WHERE status='resolved')::int AS resolved FROM user_feedbacks",
+        { total: 0, pending: 0, resolved: 0 }
+      );
+      const feedbackStatus: StatusKey =
+        feedbackRow.total === 0 ? 'gray' : feedbackRow.pending > 20 ? 'yellow' : 'green';
+
+      const tradeReasonRow = await safeQ<any>(
+        "SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE trade_reason_summary IS NOT NULL AND trade_reason_summary <> '')::int AS with_reason FROM paper_trading_trades WHERE created_at > NOW() - INTERVAL '24 hours'",
+        { total: 0, with_reason: 0 }
+      );
+      const tradeReasonCoverage =
+        tradeReasonRow.total > 0
+          ? Math.round((tradeReasonRow.with_reason / tradeReasonRow.total) * 1000) / 10
+          : 0;
+      const tradeReasonStatus: StatusKey =
+        tradeReasonRow.total === 0
+          ? 'gray'
+          : tradeReasonCoverage < 50
+          ? 'red'
+          : tradeReasonCoverage < 90
+          ? 'yellow'
+          : 'green';
+
+      const schedulerActiveCount = taskRows.length;
+      const schedulerFailedCount = taskRows.filter(
+        (t: any) => t.last_run_status === 'FAILED'
+      ).length;
+      const schedulerStatus: StatusKey =
+        schedulerActiveCount === 0
+          ? 'red'
+          : schedulerFailedCount > schedulerActiveCount * 0.2
+          ? 'yellow'
+          : 'green';
+
+      // ---- 构建节点 (Sprint 26: 8 层纵向; Batch AQ: +L9 平台 + 19 新节点) ----
       const nodes = [
         {
           id: 'quant_system',
@@ -343,6 +538,73 @@ export class DataController {
           stats: { signals_tracked: 6, half_life_method: 'observed/literature' },
           lastAction: 'A-share PIT + 容量阈值 + 半衰期 (Sprint 23/25)',
         },
+        // Batch AQ NEW (2026-06-21): L1 — 北向 / 内部增减持 / 龙虎榜 / 真盘口
+        {
+          id: 'northbound_data',
+          label: '北向资金',
+          category: 'L1_data',
+          status: northboundStatus,
+          stats: {
+            rows: northboundRow.n,
+            latest: northboundRow.d,
+            lag_days: northboundLag,
+            days_with_data_7d: northboundRow.d7,
+          },
+          lastAction:
+            northboundRow.n === 0
+              ? '尚无北向数据'
+              : `${northboundRow.n.toLocaleString()} 行 / latest=${
+                  northboundRow.d || '—'
+                } / lag=${northboundLag}d`,
+        },
+        {
+          id: 'insider_trade_data',
+          label: '内部增减持',
+          category: 'L1_data',
+          status: insiderStatus,
+          stats: {
+            rows: insiderRow.n,
+            latest: insiderRow.d,
+            recent_30d: insiderRow.recent,
+          },
+          lastAction:
+            insiderRow.n === 0
+              ? '尚无内部增减持数据'
+              : `${insiderRow.n.toLocaleString()} 行 / 30d 新增 ${insiderRow.recent}`,
+        },
+        {
+          id: 'dragon_tiger_data',
+          label: '龙虎榜',
+          category: 'L1_data',
+          status: dragonStatus,
+          stats: {
+            rows: dragonRow.n,
+            latest: dragonRow.d,
+            lag_days: dragonLag,
+            recent_7d: dragonRow.recent,
+          },
+          lastAction:
+            dragonRow.n === 0
+              ? '尚无龙虎榜数据'
+              : `${dragonRow.n.toLocaleString()} 行 / latest=${
+                  dragonRow.d || '—'
+                } / lag=${dragonLag}d`,
+        },
+        {
+          id: 'realtime_quote_data',
+          label: '真实盘口',
+          category: 'L1_data',
+          status: realtimeQuoteStatus,
+          stats: {
+            rows: realtimeQuoteRow.n,
+            recent_symbols_24h: realtimeQuoteRow.recent_symbols,
+            age_min: realtimeQuoteAgeMin === 999_999 ? null : realtimeQuoteAgeMin,
+          },
+          lastAction:
+            realtimeQuoteRow.n === 0
+              ? '尚无实时行情'
+              : `${realtimeQuoteRow.recent_symbols} 标的近 24h / age=${realtimeQuoteAgeMin}min`,
+        },
         // ===== L2 — Signal 策略 + 因子 + 形态 =====
         {
           id: 'factor_engine',
@@ -374,6 +636,34 @@ export class DataController {
           stats: { patterns: 15, source: 'Bulkowski + Sprint13/21' },
           lastAction: '15 Bulkowski 形态 + inferLocalRegime',
         },
+        // Batch AQ NEW (2026-06-21): L2 — 因子相关性矩阵 / IC 监测
+        {
+          id: 'factor_correlation',
+          label: '因子相关性矩阵',
+          category: 'L2_signal',
+          status: factorCorrStatus,
+          stats: { rows: factorCorrRow.n, latest: factorCorrRow.d, lag_days: factorCorrLag },
+          lastAction:
+            factorCorrRow.n === 0
+              ? '尚无因子相关性数据'
+              : `${factorCorrRow.n} 行 / latest=${factorCorrRow.d || '—'} / lag=${factorCorrLag}d`,
+        },
+        {
+          id: 'factor_ic_monitor',
+          label: 'IC 监测',
+          category: 'L2_signal',
+          status: factorIcStatus,
+          stats: {
+            rows: factorIcRow.n,
+            factors: factorIcRow.factors,
+            latest: factorIcRow.d,
+            lag_days: factorIcLag,
+          },
+          lastAction:
+            factorIcRow.n === 0
+              ? '尚无 IC 监测数据'
+              : `${factorIcRow.factors} 因子 / ${factorIcRow.n} 行 / lag=${factorIcLag}d`,
+        },
         // ===== L3 — Meta Decision 元决策 + 仓位 =====
         {
           id: 'meta_label_filter',
@@ -404,6 +694,32 @@ export class DataController {
             sizingStats.recent_count > 0
               ? `7d ${sizingStats.recent_count} 决策 (${sizingStats.hard_count} hard) method=${sizingStats.methods}`
               : '尚未触发非 equal_pct sizing',
+        },
+        // Batch AQ NEW (2026-06-21): L3 — AI 多维分析引擎 v2 (8 analyzer + hard/shadow)
+        {
+          id: 'ai_analysis_engine_v2',
+          label: 'AI 多维分析引擎',
+          category: 'L3_meta',
+          status: aiEngineStatus,
+          stats: {
+            reports_24h: aiEngineRow.n,
+            avg_confidence:
+              aiEngineRow.avg_conf !== null
+                ? Math.round(Number(aiEngineRow.avg_conf) * 100) / 100
+                : null,
+            latest:
+              aiEngineRow.latest?.toISOString?.()?.slice(11, 16) || aiEngineRow.latest || null,
+            analyzers: 8,
+            mode: 'shadow+hard',
+          },
+          lastAction:
+            aiEngineRow.n === 0
+              ? '近 24h 未跑 multi_dim_v1'
+              : `24h ${aiEngineRow.n} 报告 / avg_conf=${
+                  aiEngineRow.avg_conf !== null
+                    ? Math.round(Number(aiEngineRow.avg_conf) * 100) / 100
+                    : '—'
+                }`,
         },
         // ===== L4 — Construction 组合权重 =====
         {
@@ -458,6 +774,36 @@ export class DataController {
           stats: { models: 'AlmgrenChriss+Bouchaud+KyleLambda+GlostenMilgrom' },
           lastAction: '冲击成本 / Spread / PIN + RL execution',
         },
+        // Batch AQ NEW (2026-06-21): L5 — 实盘 bridge / 对账主动告警
+        {
+          id: 'live_trading_bridge',
+          label: '实盘 Bridge',
+          category: 'L5_feasibility',
+          status: liveBridgeStatus,
+          stats: {
+            orders_7d: liveOrderRow.total,
+            filled: liveOrderRow.filled,
+            failed: liveOrderRow.failed,
+            commands_7d: liveCmdRow.n,
+          },
+          lastAction:
+            liveOrderRow.total === 0 && liveCmdRow.n === 0
+              ? '近 7 天无实盘下单'
+              : `7d ${liveOrderRow.total} 单 / ${liveOrderRow.filled} 成交 / ${liveOrderRow.failed} 失败 / ${liveCmdRow.n} cmd`,
+        },
+        {
+          id: 'reconciliation_alert',
+          label: '对账主动告警',
+          category: 'L5_feasibility',
+          status: reconTask.status,
+          stats: {
+            lastRun: reconTask.lastRun,
+            lastStatus: reconTask.lastStatus,
+          },
+          lastAction: reconTask.lastRun
+            ? `${reconTask.lastStatus} @ ${reconTask.lastRun?.slice(11, 16)}`
+            : '等待 LIVE_RECONCILIATION_GUARD 首次运行',
+        },
         // ===== L6 — Risk 风控守门 =====
         {
           id: 'risk_control',
@@ -480,6 +826,43 @@ export class DataController {
             killSwitchStats.strategies_with_killswitch > 0
               ? `${killSwitchStats.strategies_with_killswitch}/${killSwitchStats.total} 策略配 kill_switch · ${killSwitchStats.disabled_count} 已禁用`
               : '尚未配置 kill_switch',
+        },
+        // Batch AQ NEW (2026-06-21): L6 — 行业集中度 / 限售解禁 / 黑天鹅 watchdog
+        {
+          id: 'industry_concentration',
+          label: '行业集中度',
+          category: 'L6_risk',
+          status: industryTask.status,
+          stats: { lastRun: industryTask.lastRun, lastStatus: industryTask.lastStatus },
+          lastAction: industryTask.lastRun
+            ? `${industryTask.lastStatus} @ ${industryTask.lastRun?.slice(11, 16)}`
+            : '等待首次运行',
+        },
+        {
+          id: 'restricted_share_watchdog',
+          label: '限售解禁',
+          category: 'L6_risk',
+          status: restrictedTask.status,
+          stats: { lastRun: restrictedTask.lastRun, lastStatus: restrictedTask.lastStatus },
+          lastAction: restrictedTask.lastRun
+            ? `${restrictedTask.lastStatus} @ ${restrictedTask.lastRun?.slice(11, 16)}`
+            : '等待首次运行',
+        },
+        {
+          id: 'black_swan_watchdog',
+          label: '黑天鹅事件检测',
+          category: 'L6_risk',
+          status: blackSwanStatus,
+          stats: {
+            events_7d: blackSwanEventRow.n7d,
+            events_24h: blackSwanEventRow.n24h,
+            cron_status: blackSwanWatchdogTask.status,
+            lastRun: blackSwanWatchdogTask.lastRun,
+          },
+          lastAction:
+            blackSwanEventRow.n7d === 0
+              ? '近 7 天无黑天鹅事件'
+              : `7d ${blackSwanEventRow.n7d} 事件 · 24h ${blackSwanEventRow.n24h}`,
         },
         // ===== L7 — Governor 资金曲线治理 =====
         {
@@ -526,6 +909,90 @@ export class DataController {
           status: webhookOk && !webhookDisabled ? 'green' : webhookDisabled ? 'gray' : 'red',
           stats: { feishu: webhookOk, disabled: webhookDisabled },
           lastAction: webhookOk ? (webhookDisabled ? '已禁用' : '飞书 webhook 就绪') : '未配置',
+        },
+        // Batch AQ NEW (2026-06-21): L8 — 每日归因 / AI 日记 / 改进建议闭环 / 黑天鹅复盘
+        {
+          id: 'daily_attribution',
+          label: '每日归因',
+          category: 'L8_reflection',
+          status: attrStatus,
+          stats: {
+            reports_7d: attrRow.n,
+            latest: attrRow.latest?.toISOString?.()?.slice(0, 16) || attrRow.latest || null,
+          },
+          lastAction: attrRow.n === 0 ? '近 7 天无归因报告' : `7d ${attrRow.n} 份归因报告`,
+        },
+        {
+          id: 'ai_diary',
+          label: 'AI 日记',
+          category: 'L8_reflection',
+          status: diaryStatus,
+          stats: {
+            entries_7d: diaryRow.n,
+            latest: diaryRow.latest?.toISOString?.()?.slice(0, 16) || diaryRow.latest || null,
+          },
+          lastAction: diaryRow.n === 0 ? '近 7 天无 AI 日记' : `7d ${diaryRow.n} 条日记`,
+        },
+        {
+          id: 'improvement_suggestions',
+          label: '改进建议闭环',
+          category: 'L8_reflection',
+          status: improvStatus,
+          stats: improvRow,
+          lastAction:
+            improvRow.total === 0
+              ? '尚无改进建议'
+              : `30d ${improvRow.total} 条 · 应用 ${improvRow.applied} · 待处理 ${improvRow.pending}`,
+        },
+        {
+          id: 'black_swan_postmortem',
+          label: '黑天鹅复盘',
+          category: 'L8_reflection',
+          status: bsPostStatus,
+          stats: {
+            reports_30d: bsPostRow.n,
+            latest: bsPostRow.latest?.toISOString?.()?.slice(0, 16) || bsPostRow.latest || null,
+          },
+          lastAction: bsPostRow.n === 0 ? '近 30 天无复盘报告' : `30d ${bsPostRow.n} 份复盘`,
+        },
+        // ===== L9 — Platform 平台层 (Batch AQ NEW, 2026-06-21) =====
+        // 用户反馈 / 操作理由覆盖率 / 调度器 — 横切, 承接 L8 复盘 → 系统迭代闭环
+        {
+          id: 'user_feedback',
+          label: '用户反馈',
+          category: 'L9_platform',
+          status: feedbackStatus,
+          stats: feedbackRow,
+          lastAction:
+            feedbackRow.total === 0
+              ? '尚无用户反馈'
+              : `${feedbackRow.total} 条 · 待处理 ${feedbackRow.pending} · 已解决 ${feedbackRow.resolved}`,
+        },
+        {
+          id: 'trade_reason',
+          label: '操作理由覆盖率',
+          category: 'L9_platform',
+          status: tradeReasonStatus,
+          stats: {
+            total_24h: tradeReasonRow.total,
+            with_reason: tradeReasonRow.with_reason,
+            coverage_pct: tradeReasonCoverage,
+          },
+          lastAction:
+            tradeReasonRow.total === 0
+              ? '近 24h 无交易'
+              : `24h ${tradeReasonRow.total} 笔 · ${tradeReasonRow.with_reason} 有理由 (${tradeReasonCoverage}%)`,
+        },
+        {
+          id: 'scheduler',
+          label: '调度器',
+          category: 'L9_platform',
+          status: schedulerStatus,
+          stats: {
+            active: schedulerActiveCount,
+            failed_last_run: schedulerFailedCount,
+          },
+          lastAction: `${schedulerActiveCount} active cron · ${schedulerFailedCount} 上次失败`,
         },
       ];
 
@@ -581,6 +1048,50 @@ export class DataController {
         // 顶层调度
         { source: 'quant_system', target: 'data_collection', label: '调度' },
         { source: 'quant_system', target: 'macro_env', label: '调度' },
+        // ===== Batch AQ NEW (2026-06-21) edges =====
+        // L1 新数据 → L2 信号
+        { source: 'northbound_data', target: 'factor_engine', label: '北向流量因子' },
+        { source: 'insider_trade_data', target: 'factor_engine', label: '内部增减持因子' },
+        { source: 'dragon_tiger_data', target: 'factor_engine', label: '游资席位特征' },
+        { source: 'realtime_quote_data', target: 'execution_feasibility', label: '真盘口 bid/ask' },
+        // L2 新 → L2 内部
+        { source: 'factor_engine', target: 'factor_correlation', label: '因子值' },
+        { source: 'factor_engine', target: 'factor_ic_monitor', label: '因子值' },
+        { source: 'factor_correlation', target: 'strategy_engine', label: '相关性约束 (反馈)' },
+        { source: 'factor_ic_monitor', target: 'strategy_engine', label: 'IC 衰减预警 (反馈)' },
+        // L3 — AI 多维分析引擎: 信号 + macro → engine → portfolio (hard mode)
+        { source: 'strategy_engine', target: 'ai_analysis_engine_v2', label: '原始信号' },
+        { source: 'macro_env', target: 'ai_analysis_engine_v2', label: 'regime 上下文' },
+        { source: 'ai_analysis_engine_v2', target: 'portfolio', label: 'hard mode 决策' },
+        // L5 实盘 bridge + 对账
+        { source: 'portfolio', target: 'live_trading_bridge', label: '影子订单' },
+        { source: 'live_trading_bridge', target: 'reconciliation_alert', label: '成交回报' },
+        { source: 'reconciliation_alert', target: 'risk_control', label: '差异告警' },
+        { source: 'reconciliation_alert', target: 'notification', label: '对账差异通知' },
+        // L6 新风控
+        { source: 'portfolio', target: 'industry_concentration', label: '持仓快照' },
+        { source: 'industry_concentration', target: 'risk_control', label: '行业超限告警' },
+        { source: 'restricted_share_watchdog', target: 'risk_control', label: '解禁日告警' },
+        { source: 'black_swan_watchdog', target: 'risk_control', label: '黑天鹅告警' },
+        { source: 'black_swan_watchdog', target: 'notification', label: '黑天鹅通知' },
+        // L6 → L8 黑天鹅复盘
+        { source: 'black_swan_watchdog', target: 'black_swan_postmortem', label: '事件 → 复盘' },
+        // L5/L8 → L8 复盘新增
+        { source: 'portfolio', target: 'daily_attribution', label: '每日持仓+收益' },
+        { source: 'portfolio', target: 'ai_diary', label: '每日交易' },
+        { source: 'daily_attribution', target: 'improvement_suggestions', label: '归因结论' },
+        { source: 'outcome_analysis', target: 'improvement_suggestions', label: '失败 root_cause' },
+        { source: 'ai_diary', target: 'improvement_suggestions', label: '反思要点' },
+        { source: 'black_swan_postmortem', target: 'improvement_suggestions', label: '复盘建议' },
+        { source: 'improvement_suggestions', target: 'strategy_engine', label: '应用回写 (反馈)' },
+        // L8 → L9 用户反馈闭环 (用户提反馈 → AI 分类 → 系统应用)
+        { source: 'improvement_suggestions', target: 'user_feedback', label: '触达用户' },
+        { source: 'user_feedback', target: 'improvement_suggestions', label: '用户反馈回写' },
+        // L9 平台横切
+        { source: 'portfolio', target: 'trade_reason', label: '交易 → 理由覆盖' },
+        { source: 'scheduler', target: 'data_collection', label: '调度' },
+        { source: 'scheduler', target: 'strategy_engine', label: '调度' },
+        { source: 'scheduler', target: 'risk_control', label: '调度' },
       ];
 
       return res.json({

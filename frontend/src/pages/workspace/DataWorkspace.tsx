@@ -11,7 +11,8 @@ import {
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import DataHealthDashboard from '../../components/data/DataHealthDashboard';
 import StockExplorer from '../../components/data/StockExplorer';
-import SystemTopologyMap from '../../components/data/SystemTopologyMap';
+// Batch AQ (2026-06-21) — SystemTopologyMap 已迁到 系统介绍 → 架构图
+// (用户原话: 架构图应挂在系统介绍 tab, 不在数据中心). 这里删 import + health 渲染.
 import ActivationDashboard from '../../components/data/ActivationDashboard';
 import SlaDashboardCard from '../../components/data/SlaDashboardCard';
 import DataMissingAlertsCard from '../../components/data/DataMissingAlertsCard';
@@ -145,7 +146,7 @@ const DataWorkspace: React.FC = () => {
             <SlaDashboardCard healthData={healthData} />
             <DataMissingAlertsCard healthData={healthData} />
             <DataSourceSwitchCard />
-            <SystemTopologyMap />
+            {/* Batch AQ (2026-06-21) — SystemTopologyMap 已迁到 系统介绍 → 架构图 */}
             <ActivationDashboard />
             <DataHealthDashboard />
           </>

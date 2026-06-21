@@ -20,7 +20,6 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   Button,
   Card,
   Empty,
@@ -55,6 +54,7 @@ import {
   SYSTEM_INTRO_MD,
   SYSTEM_MANUAL_MD,
 } from '../../content/systemWorkspaceContent';
+import SystemTopologyMap from '../../components/data/SystemTopologyMap';
 import {
   UserFeedbackRow,
   createMyFeedback,
@@ -389,13 +389,12 @@ const SystemWorkspace: React.FC = () => {
       case 'changelog':
         return <MarkdownCard content={SYSTEM_CHANGELOG_MD} />;
       case 'architecture':
+        // Batch AQ (2026-06-21) — 把实时拓扑组件 <SystemTopologyMap /> 从 DataWorkspace
+        // 迁过来 (用户原话: 架构图应该挂在 "系统介绍" 而不是 "数据中心"), 下方保留
+        // SYSTEM_ARCHITECTURE_MD 作为文字说明 (节点 ID / 数据流向解释).
         return (
           <Space direction="vertical" size={12} style={{ width: '100%' }}>
-            <Alert
-              type="info"
-              showIcon
-              message="实时拓扑图（节点状态着色）见 数据中心 → 数据健康 → SystemTopologyMap"
-            />
+            <SystemTopologyMap />
             <MarkdownCard content={SYSTEM_ARCHITECTURE_MD} />
           </Space>
         );
