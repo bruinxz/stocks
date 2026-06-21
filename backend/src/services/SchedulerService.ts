@@ -5617,6 +5617,56 @@ class SchedulerService {
             }`
           );
         }
+      } else if (task.type === 'FEEDBACK_REVIEW_SWEEP') {
+        // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环 cron 入口.
+        // 每 30 分钟扫 status='pending' 且 (reviewed_at IS NULL OR < now-ageHours) 的反馈,
+        // 跑启发式分类器, 把 ai_classification / ai_priority / ai_summary / reviewed_at 写回.
+        // **不自动 resolve** — resolve 必须 admin 通过 POST /api/admin/feedbacks/:id/resolve 手工触发.
+        // fail-OPEN: service.runReviewSweep 已 try/catch, 整体 + 单 row 均不抛.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { PRODUCTION_USER_FEEDBACK_REVIEW_SWEEP } = require('./UserFeedbackService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const feedbackLimit =
+          Number.isFinite(Number(parameters.limit)) && Number(parameters.limit) > 0
+            ? Number(parameters.limit)
+            : 200;
+        const feedbackAgeHours =
+          Number.isFinite(Number(parameters.age_hours)) && Number(parameters.age_hours) >= 0
+            ? Number(parameters.age_hours)
+            : 6;
+        const sweepResult = await PRODUCTION_USER_FEEDBACK_REVIEW_SWEEP({
+          limit: feedbackLimit,
+          ageHours: feedbackAgeHours,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: Number(sweepResult.scanned) || 0,
+          completed_items: Number(sweepResult.updated) || 0,
+          failed_items: Number(sweepResult.failed) || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: sweepResult.error || null,
+          result_summary: {
+            scenario: 'feedback_review_sweep',
+            scanned: sweepResult.scanned,
+            updated: sweepResult.updated,
+            failed: sweepResult.failed,
+            per_classification: sweepResult.per_classification,
+            age_hours: feedbackAgeHours,
+            limit: feedbackLimit,
+          },
+        });
+        if (sweepResult.error) {
+          logger.warn(
+            `[FEEDBACK_REVIEW_SWEEP] error=${sweepResult.error} scanned=${sweepResult.scanned}`
+          );
+        } else {
+          logger.info(
+            `[FEEDBACK_REVIEW_SWEEP] scanned=${sweepResult.scanned} updated=${sweepResult.updated} ` +
+              `failed=${sweepResult.failed} classes=${JSON.stringify(
+                sweepResult.per_classification
+              )}`
+          );
+        }
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }
@@ -7103,6 +7153,16 @@ class SchedulerService {
         cron_expression: '0 18 * * 1-5',
         is_active: true,
         parameters: {},
+      },
+      {
+        // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环 cron seed.
+        // 每 30 分钟扫 status='pending' 且 (reviewed_at IS NULL OR > 6h) 的反馈,
+        // 跑启发式分类器 + 优先级 + 摘要. 不自动 resolve — 留 admin 手工触发.
+        name: '用户反馈分类巡检 (30min)',
+        type: 'FEEDBACK_REVIEW_SWEEP',
+        cron_expression: '*/30 * * * *',
+        is_active: true,
+        parameters: { age_hours: 6, limit: 200 },
       },
     ];
 

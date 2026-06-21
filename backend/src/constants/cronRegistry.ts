@@ -497,6 +497,18 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description: '过期 backtest / log / alert 清理',
     dryRunDefault: true,
   },
+  // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环 cron 入口.
+  // 每 30 分钟扫 user_feedbacks (status='pending' AND (reviewed_at IS NULL OR < now-6h))
+  // 跑启发式分类器 (bug/feature_request/question/praise/other) + 优先级 1..5 + 摘要 ≤ 200 字,
+  // 写回 ai_classification/ai_priority/ai_summary/reviewed_at. 真正 resolve 必须 admin 手工触发.
+  {
+    type: 'FEEDBACK_REVIEW_SWEEP',
+    category: 'analytics',
+    owner: 'product',
+    recommendedCron: '*/30 * * * *',
+    description:
+      '每 30 分钟扫 pending 用户反馈 → 启发式分类 + 优先级 + 摘要 (cron 永不自动 resolve)',
+  },
   // US-100 PR-011 — 每 30min 巡 5 类黑天鹅信号 (ST / SUSPENDED / NEWS_KEYWORD /
   // SHAREHOLDER_REDUCTION / MARKET_REGIME), 复用 BlackSwanWatchdog (US-053)
   // 当事件枚举器, 把跨 user 拍平 + (event_type, signature) 去重后 bulkCreate

@@ -55,6 +55,10 @@ const LabStrategyDetail = lazy(() => import('./pages/workspace/LabStrategyDetail
 const PortfolioWorkspace = lazy(() => import('./pages/workspace/PortfolioWorkspace'));
 const DataWorkspace = lazy(() => import('./pages/workspace/DataWorkspace'));
 const SettingsWorkspace = lazy(() => import('./pages/workspace/SettingsWorkspace'));
+// Batch AL (2026-06-21) — SystemWorkspace 系统介绍 + 用户反馈闭环.
+// 例外打破"6 shell 固定" — 用户原话明确要求新增 (workspace/CLAUDE.md
+// 的限制面向 PRD US-001; 本批用户授权扩到 7 shell).
+const SystemWorkspace = lazy(() => import('./pages/workspace/SystemWorkspace'));
 
 import {
   CompassOutlined,
@@ -63,6 +67,7 @@ import {
   DatabaseOutlined,
   FilterOutlined,
   PieChartOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons';
 
 import type { MenuProps } from 'antd';
@@ -234,6 +239,8 @@ const AppContent: React.FC = () => {
       menuLink('/workspace/portfolio', <PieChartOutlined />, '持仓与复盘'),
       menuLink('/workspace/data', <DatabaseOutlined />, '数据中心'),
       menuLink('/workspace/settings', <SettingOutlined />, '账号设置'),
+      // Batch AL (2026-06-21) — 用户明确要求新增"系统介绍"
+      menuLink('/workspace/system', <InfoCircleOutlined />, '系统介绍'),
     ],
     []
   );
@@ -420,6 +427,15 @@ const AppContent: React.FC = () => {
                 element={
                   <ProtectedRoute>
                     <SettingsWorkspace />
+                  </ProtectedRoute>
+                }
+              />
+              {/* Batch AL (2026-06-21) — SystemWorkspace 入口 */}
+              <Route
+                path="/workspace/system"
+                element={
+                  <ProtectedRoute>
+                    <SystemWorkspace />
                   </ProtectedRoute>
                 }
               />

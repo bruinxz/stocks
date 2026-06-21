@@ -116,6 +116,8 @@ import { MetaLabelDecision } from '../models/MetaLabelDecision';
 import { PortfolioConstructionResult } from '../models/PortfolioConstructionResult';
 import { EquityCurveGovernorState } from '../models/EquityCurveGovernorState';
 import { StrategyTcaMultiplier } from '../models/StrategyTcaMultiplier';
+// Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环 model
+import { UserFeedback } from '../models/UserFeedback';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -254,6 +256,8 @@ const sequelize = new Sequelize({
     PortfolioConstructionResult,
     EquityCurveGovernorState,
     StrategyTcaMultiplier,
+    // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环
+    UserFeedback,
   ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {
