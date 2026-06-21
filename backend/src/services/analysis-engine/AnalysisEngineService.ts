@@ -111,16 +111,30 @@ export const PRODUCTION_ANALYSIS_ENGINE_DATA_SOURCE: AnalysisEngineDataSource = 
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { RealtimeQuote } = require('../../models/RealtimeQuote');
-      const row = await RealtimeQuote.findOne({
-        where: { stock_code: stockCode },
+      // Batch AM (2026-06-21): RealtimeQuote schema 用 symbol (不是 stock_code) +
+      // current_price (不是 price) + raw_payload (bid/ask 在里面). 旧 loader 用错列名,
+      // findOne 永远返 null → CapitalAnalyzer spread 评分全废 + RiskAnalyzer 行情陈旧度
+      // veto 触发失效. 修正后 ETag check 走真实最新价 + 真盘口 bid1/ask1 (若 raw_payload 有).
+      const row: any = await RealtimeQuote.findOne({
+        where: { symbol: stockCode },
         order: [['updated_at', 'DESC']],
         raw: true,
       });
       if (!row) return null;
+      // 从 raw_payload 抽 bid1/ask1 (腾讯/新浪源会带)
+      let bid: number | null = null;
+      let ask: number | null = null;
+      if (row.raw_payload && typeof row.raw_payload === 'object') {
+        const p = row.raw_payload;
+        const b1 = p.bid1_price ?? p.bid1 ?? p.bid ?? null;
+        const a1 = p.ask1_price ?? p.ask1 ?? p.ask ?? null;
+        bid = b1 === null || b1 === undefined ? null : Number(b1);
+        ask = a1 === null || a1 === undefined ? null : Number(a1);
+      }
       return {
-        price: Number(row.price),
-        bid: row.bid === null || row.bid === undefined ? null : Number(row.bid),
-        ask: row.ask === null || row.ask === undefined ? null : Number(row.ask),
+        price: Number(row.current_price),
+        bid: bid,
+        ask: ask,
         volume: row.volume === null || row.volume === undefined ? null : Number(row.volume),
         as_of_ts:
           typeof row.updated_at === 'string'
@@ -146,14 +160,24 @@ export const PRODUCTION_ANALYSIS_ENGINE_DATA_SOURCE: AnalysisEngineDataSource = 
       const { FactorScore } = require('../../models/FactorScore');
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { stripSuffix } = require('../../quant/factors/library/_helpers');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { Op } = require('sequelize');
       const code = stripSuffix(stockCode);
+      // Batch AM (2026-06-21): 不再严格匹配 trade_date = asOf, 改取"最近一日 ≤ asOf".
+      // 原因: factor_scores 工作日才有 (cron 17:30 跑), 节假日 / 周末 / 数据延迟
+      // 都会让严格 = 匹配返 0 行 → 整个 fundamental/capital/sentiment/risk 维度坍缩.
+      // FactorPipeline 自己也是按"今日 (asOf) 写入", 所以 ≤ asOf 自然取到最新一份.
       const rows = await FactorScore.findAll({
-        where: { trade_date: asOf, stock_code: code },
-        attributes: ['factor_name', 'z_score'],
+        where: { trade_date: { [Op.lte]: asOf }, stock_code: code },
+        attributes: ['factor_name', 'z_score', 'trade_date'],
+        order: [['trade_date', 'DESC']],
+        limit: 200, // 22 factor × 7 日窗口足够
         raw: true,
       });
       const out: Record<string, number | null> = {};
+      // 每个 factor_name 取最新一日 (rows 已按 trade_date DESC)
       for (const r of rows) {
+        if (out[r.factor_name] !== undefined) continue;
         const z = r.z_score === null || r.z_score === undefined ? null : Number(r.z_score);
         out[r.factor_name] = z;
       }
