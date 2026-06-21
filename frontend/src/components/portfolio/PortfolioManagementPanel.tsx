@@ -604,16 +604,18 @@ const PortfolioManagementPanel: React.FC = () => {
             label="盘名"
             rules={[
               { required: true, message: '盘名必填' },
-              { max: 32, message: '盘名最多 32 字' },
+              // AT-2-FIX (2026-06-22 二轮 review): 与后端 MAX_NAME_LENGTH=100 对齐.
+              // 之前 FE 32 字, 用户输入 33-100 字会被前端拒, 但后端实际接受.
+              { max: 100, message: '盘名最多 100 字' },
             ]}
           >
             <Input placeholder="例如: 因子组合 1 / 龙头打板 / 财报反转" />
           </Form.Item>
-          <Form.Item name="description" label="描述 (可选)" rules={[{ max: 200 }]}>
+          <Form.Item name="description" label="描述 (可选)" rules={[{ max: 1000, message: '描述最多 1000 字' }]}>
             <Input.TextArea
               placeholder="这个模拟盘的用途 / 选股逻辑 / 风控偏好"
               autoSize={{ minRows: 2, maxRows: 4 }}
-              maxLength={200}
+              maxLength={1000}
               showCount
             />
           </Form.Item>

@@ -61,7 +61,7 @@ const GlobalPortfolioSelector: React.FC = () => {
         const auto = p.auto_trade_enabled ? ' · 🟣自动' : '';
         return {
           value: p.id,
-          label: `${p.name} · ${p.positions_count} 持仓 · ¥${Number(p.total_value).toLocaleString(
+          label: `${p.name} · ${p.position_count ?? (p as any).positions_count ?? 0} 持仓 · ¥${Number(p.total_value).toLocaleString(
             undefined,
             { maximumFractionDigits: 0 }
           )}${meta}${auto}`,
