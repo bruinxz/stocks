@@ -11,7 +11,8 @@
  *       - 缺 asOfDate → null
  *       - windowTradeDays 非法值 (0 / 负 / NaN / 浮点) → null
  *       - 全部 trade_date > asOfDate (lookahead) → null
- *       - latest 不是 asOfDate → null (当日无数据)
+ *       - latest 距 asOfDate 在 STALE_TOLERANCE_DAYS 内 → 计算 (Batch AN)
+ *       - latest 距 asOfDate 超出 STALE_TOLERANCE_DAYS → null (Batch AN)
  *       - baseline fin_balance ≤ 0 → null (防分母爆炸)
  *       - baseline = latest (只有一条有效数据) → null
  *       - 已知数值: 5 日内 +20% / -10% / 平
@@ -158,9 +159,10 @@ console.log('\n## computeFinBalanceChange() — lookahead bias guard');
   }
 }
 
-console.log('\n## computeFinBalanceChange() — latest 不是 asOfDate');
+console.log('\n## computeFinBalanceChange() — latest 距 asOfDate 在容忍窗口内 (Batch AN)');
 {
-  // latest 比 asOfDate 早 → 当日无数据 → null
+  // latest 比 asOfDate 早 2 日 → 仍在 STALE_TOLERANCE_DAYS (15) 内 → 计算变化率
+  // (Batch AN 修: 原严格相等 latest === asOfDate 导致非交易日全失效)
   const r = computeFinBalanceChange(
     [
       { trade_date: '2026-06-01', fin_balance: 1_000_000 },
@@ -168,7 +170,21 @@ console.log('\n## computeFinBalanceChange() — latest 不是 asOfDate');
     ],
     '2026-06-07'
   );
-  assert('latest=2026-06-05 ≠ asOfDate=2026-06-07 → null', r === null);
+  assert(
+    'latest=2026-06-05 距 asOfDate=2026-06-07 仅 2 日 (≤15 容忍) → 计算变化率',
+    r !== null && Math.abs(r - 0.1) < 1e-9
+  );
+}
+{
+  // latest 比 asOfDate 早 30 日 → 超出 STALE_TOLERANCE_DAYS (15) → null
+  const r = computeFinBalanceChange(
+    [
+      { trade_date: '2026-04-01', fin_balance: 1_000_000 },
+      { trade_date: '2026-05-05', fin_balance: 1_100_000 },
+    ],
+    '2026-06-07'
+  );
+  assert('latest 距 asOfDate 33 日 > 15 容忍 → null', r === null);
 }
 
 console.log('\n## computeFinBalanceChange() — baseline 数据卫生');

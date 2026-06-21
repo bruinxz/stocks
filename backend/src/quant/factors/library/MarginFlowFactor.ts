@@ -73,17 +73,30 @@ export const LOOKBACK_CALENDAR_DAYS = WINDOW_TRADE_DAYS + 10;
  * baseline 选择策略:
  *   - 优先: 取倒数第 (windowTradeDays + 1) 条 (即 T-N 日)
  *   - 兜底: 若长度不足 windowTradeDays+1, 取窗口内最早一条 (与 NorthboundFactor 同款)
- *   - 必须 latest 是 as_of_date (业务约束: 当日无数据该股不入 Map)
+ *   - 业务约束: as_of_date 距 latest trade_date 不能太远 (上交所 / 深交所
+ *     公告 T+1 出, 但 sync 任务可能延迟; 默认允许 latest 在 as_of_date
+ *     前 STALE_TOLERANCE_DAYS 内, 超出即认为数据停滞跳过该股).
+ *
+ * Batch AN 修 (2026-06-21): 原 `latest.trade_date !== asOfDate` 严格相等
+ * 导致非交易日 / 当日数据未入库时全市场 margin_flow 完全失效 (factor 0 命中,
+ * std=0). 改为窗口内最新一条 ≤ as_of, 距 as_of 最多 STALE_TOLERANCE_DAYS 自然日.
  */
 export interface FinBalanceObservation {
   trade_date: string;
   fin_balance: number;
 }
 
+/**
+ * 业务上允许的 latest 数据陈旧度 (自然日). 春节 / 国庆停盘最长 ~10 日,
+ * 加 +3 兜底 sync 延迟; 超出该窗口认为数据停滞 (该股不入 Map).
+ */
+export const STALE_TOLERANCE_DAYS = 15;
+
 export function computeFinBalanceChange(
   series: FinBalanceObservation[],
   asOfDate: string,
-  windowTradeDays: number = WINDOW_TRADE_DAYS
+  windowTradeDays: number = WINDOW_TRADE_DAYS,
+  staleToleranceDays: number = STALE_TOLERANCE_DAYS
 ): number | null {
   if (!series || series.length < 2) return null;
   if (!asOfDate) return null;
@@ -97,7 +110,13 @@ export function computeFinBalanceChange(
   if (filtered.length < 2) return null;
 
   const latest = filtered[filtered.length - 1];
-  if (latest.trade_date !== asOfDate) return null; // 当日无数据 → 跳过
+  // Batch AN 修: 改成允许 latest 在 as_of 前 staleToleranceDays 自然日内
+  // (原严格相等 latest.trade_date === asOfDate 在非交易日 / sync 滞后时全部失效).
+  const asOfMs = new Date(`${asOfDate}T00:00:00Z`).getTime();
+  const latestMs = new Date(`${latest.trade_date}T00:00:00Z`).getTime();
+  if (!Number.isFinite(asOfMs) || !Number.isFinite(latestMs)) return null;
+  const ageDays = (asOfMs - latestMs) / 86400000;
+  if (ageDays > staleToleranceDays) return null; // 数据停滞 → 跳过
 
   // baseline: 取倒数第 (windowTradeDays + 1) 条 (即 T-N 日); 兜底取最早
   const baselineIdx = Math.max(0, filtered.length - 1 - windowTradeDays);
