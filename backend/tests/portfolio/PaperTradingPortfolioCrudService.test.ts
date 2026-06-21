@@ -338,6 +338,12 @@ function test_meta_automation_gate(): void {
       '[14] runAutoSync gate hit 时 return 跳过',
       /AUTO_TRADE_GATE/.test(body)
     );
+    // AT-2-FIX (2026-06-22): runAutoSync 必须把 portfolio.strategy_keys 透传给
+    // autoBuyFromSignals, 否则 UI 上选的策略 filter 永远不生效.
+    assert(
+      '[14] runAutoSync 把 portfolio.strategy_keys 透传给 autoBuyFromSignals',
+      /portfolio\.strategy_keys/.test(body) && /strategy_keys:\s*\(\(\)\s*=>/.test(body)
+    );
   }
 }
 
