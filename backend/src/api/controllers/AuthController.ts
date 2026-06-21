@@ -13,8 +13,19 @@ export interface JwtPayload {
 export class AuthController {
   private readonly jwtSecret: string;
   private readonly refreshTokenSecret: string;
-  private readonly accessTokenExpiry = '15m';
-  private readonly refreshTokenExpiry = '7d';
+  // Batch AU (2026-06-22): "登录态保持 3 天" 修复
+  //   旧 accessTokenExpiry='15m' 太短 + refresh cookie Secure 在 HTTP prod 丢弃导致 axios refresh 链断 → 用户感知"频繁要登录"
+  //   现在: access 1h (兜底, 大部分时间走 refresh) + refresh 3d (cookie 真寿命) + Secure 仅在真 HTTPS 启用
+  private readonly accessTokenExpiry = '1h';
+  private readonly refreshTokenExpiry = '3d';
+
+  /**
+   * Batch AU: 决定 cookie 是否设 Secure 标志.
+   * 旧实现: NODE_ENV=production 强制 Secure → prod 实际跑在 http://103.242.3.87:3001/ (无 HTTPS) →
+   *         浏览器拒收 Secure cookie → refreshToken 永远发不出 → axios refresh 链断 → 用户掉线频繁.
+   * 新实现: 显式 env `ENABLE_SECURE_COOKIE=true` 才启用 Secure (上 HTTPS 时由 ops 配); 默认 false 让 HTTP prod 也能维持登录.
+   */
+  private readonly cookieSecure: boolean = process.env.ENABLE_SECURE_COOKIE === 'true';
 
   constructor() {
     // P0 review：生产环境绝不允许 JWT_SECRET / JWT_REFRESH_SECRET 使用硬编码兜底。
@@ -132,10 +143,10 @@ export class AuthController {
       // 设置HttpOnly cookie
       res.cookie('refreshToken', refreshToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production', // production 强制 HTTPS Secure cookie；dev/HTTP 下保留宽松行为
+        secure: this.cookieSecure, // production 强制 HTTPS Secure cookie；dev/HTTP 下保留宽松行为
         sameSite: 'strict',
         path: '/',
-        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+        maxAge: 3 * 24 * 60 * 60 * 1000, // 3 days (Batch AU 与 refreshTokenExpiry 对齐)
       });
 
       res.status(201).json({
@@ -189,10 +200,10 @@ export class AuthController {
       // 设置HttpOnly cookie
       res.cookie('refreshToken', refreshToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production', // production 强制 HTTPS Secure cookie；dev/HTTP 下保留宽松行为
+        secure: this.cookieSecure, // production 强制 HTTPS Secure cookie；dev/HTTP 下保留宽松行为
         sameSite: 'strict',
         path: '/',
-        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+        maxAge: 3 * 24 * 60 * 60 * 1000, // 3 days (Batch AU 与 refreshTokenExpiry 对齐)
       });
 
       res.json({
@@ -253,10 +264,10 @@ export class AuthController {
       // 设置新的HttpOnly cookie
       res.cookie('refreshToken', newRefreshToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production', // production 强制 HTTPS Secure cookie
+        secure: this.cookieSecure, // production 强制 HTTPS Secure cookie
         sameSite: 'strict',
         path: '/',
-        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+        maxAge: 3 * 24 * 60 * 60 * 1000, // 3 days (Batch AU 与 refreshTokenExpiry 对齐)
       });
 
       res.json({
@@ -280,7 +291,7 @@ export class AuthController {
       // 清除HttpOnly cookie中的refreshToken
       res.clearCookie('refreshToken', {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production', // 与 setCookie 时保持一致；prod=true / dev=false
+        secure: this.cookieSecure, // 与 setCookie 时保持一致；prod=true / dev=false
         sameSite: 'strict',
         path: '/',
       });
