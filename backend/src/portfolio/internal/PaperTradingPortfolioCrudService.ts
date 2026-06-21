@@ -47,9 +47,29 @@ const MAX_NAME_LENGTH = 100;
 const MAX_DESCRIPTION_LENGTH = 1000;
 const AUDIT_RULE_ID = 'portfolio_crud';
 const AUDIT_LEVEL = 'LOW';
-const AUDIT_SYMBOL = 'SYSTEM:PORTFOLIO_CRUD';
+// AT-2-FIX (2026-06-22 二轮 review): risk_alerts.symbol 列 VARCHAR(20), "SYSTEM:PORTFOLIO_CRUD"
+// 是 21 字节, INSERT 永远 fail. audit log try/catch 吞错让"删除/更新/重置/创建" 4 个
+// mutation 操作的审计全部丢失. 改成 19 字节 (留 1 字节余量).
+const AUDIT_SYMBOL = 'SYSTEM:PT_CRUD';
 
 // ---------- Public types ----------
+
+/**
+ * AT-2-FIX (2026-06-22 二轮 review): chip 形态 (含 key + 中文 name + 描述), 让 UI
+ * 直接 join 不用再回查 strategyRegistry / factorRegistry. 之前是 string[] 让前端
+ * 渲染时 chip 缺 tooltip 也找不到 key, transfer 控件无法 anchor.
+ */
+export interface StrategyDisplayChip {
+  key: string;
+  name: string;
+  brief?: string;
+}
+
+export interface FactorDisplayChip {
+  key: string;
+  name: string;
+  category: string;
+}
 
 export interface PortfolioListItem {
   id: number;
@@ -61,32 +81,61 @@ export interface PortfolioListItem {
   is_active: boolean;
   auto_trade_enabled: boolean;
   strategy_keys: string[];
-  strategy_display: string[]; // 中文名展开
+  strategy_display: StrategyDisplayChip[];
   enabled_factors: string[];
-  factor_display: string[]; // 中文名展开
-  positions_count: number;
-  return_7d_pct: number | null; // 7 日收益 % (基线日 snapshot 缺失 → null)
-  return_30d_pct: number | null;
+  factor_display: FactorDisplayChip[];
+  /**
+   * AT-2-FIX (2026-06-22 二轮 review): 字段名与 FE/CRUD service contract 对齐.
+   * 之前后端用 `positions_count` 而 FE/Modal 读 `position_count`, 表格 "持仓数" 列
+   * 永远显示空. position_count 是单数 (一个数), 不是复数.
+   */
+  position_count: number;
+  /**
+   * AT-2-FIX (2026-06-22 二轮 review): 字段名与 FE contract 对齐.
+   * 之前 return_7d_pct / return_30d_pct, FE 读 recent_7d_return_pct.
+   * 旧字段保留向后兼容 (deprecated), 给 7d 收益 column 用; 30d 因 FE 不读所以
+   * 重命名为 recent_30d_return_pct 以保持一致.
+   */
+  recent_7d_return_pct: number | null;
+  recent_30d_return_pct: number | null;
   total_return_pct: number;
   created_at: Date;
 }
 
+/**
+ * AT-2-FIX (2026-06-22 二轮 review): 详情 trade 形态对齐 FE contract.
+ * 之前 backend 写 price/trade_date, FE 读 execute_price/realized_pnl/created_at.
+ * Trade 表的真实列就是 execute_price + realized_pnl, FE 字段是对的; backend 错.
+ * trade_date 是不存在的列, 之前序列化 "undefined" string.
+ */
+export interface PortfolioDetailTrade {
+  id: number;
+  symbol: string;
+  name: string | null;
+  direction: string;
+  quantity: number;
+  execute_price: number;
+  amount: number;
+  commission: number;
+  realized_pnl: number | null;
+  trade_reason_summary: string | null;
+  trade_reason_source: string | null;
+  created_at: Date;
+}
+
+/**
+ * AT-2-FIX (2026-06-22 二轮 review): 最近 7 天 net value snapshot 给 FE Drawer
+ * 画曲线. 之前 detail endpoint 没返这个字段, recharts LineChart 永远是空 Empty.
+ */
+export interface PortfolioDetailSnapshot {
+  date: string;
+  total_value: number;
+}
+
 export interface PortfolioDetail extends PortfolioListItem {
   risk_profile_overrides: Record<string, unknown>;
-  recent_trades: Array<{
-    id: number;
-    symbol: string;
-    name: string | null;
-    direction: string;
-    quantity: number;
-    price: number;
-    amount: number;
-    commission: number;
-    trade_reason_summary: string | null;
-    trade_reason_source: string | null;
-    trade_date: string;
-    created_at: Date;
-  }>;
+  recent_trades: PortfolioDetailTrade[];
+  recent_snapshots: PortfolioDetailSnapshot[];
 }
 
 export interface CreatePortfolioInput {
@@ -109,9 +158,17 @@ export interface UpdatePortfolioInput {
 }
 
 export interface AvailableStrategy {
-  strategy_key: string;
+  /**
+   * AT-2-FIX (2026-06-22 二轮 review): 与 FE Transfer/Modal contract 对齐.
+   * 之前 backend 返 strategy_key, FE Transfer 读 `s.key`; 导致 Transfer 控件
+   * 整个空, 用户无法创建/编辑模拟盘时选策略 (P0 阻塞).
+   */
+  key: string;
   name: string;
-  description: string;
+  /**
+   * UI Transfer 控件读 `s.brief`; 之前 backend 给 description, FE 读不到 → tooltip 空.
+   */
+  brief: string;
   category: string;
   risk_level: 'low' | 'medium' | 'high';
   tags: string[];
@@ -119,8 +176,14 @@ export interface AvailableStrategy {
 }
 
 export interface AvailableFactor {
+  /**
+   * AT-2-FIX (2026-06-22 二轮 review): 与 FE Transfer contract 对齐, 同上.
+   * FE Transfer 读 `f.key`/`f.name`/`f.category`; 之前 backend 返 name+description+category
+   * (没有 key), 因子 Transfer 空, P0 阻塞.
+   */
+  key: string;
   name: string;
-  description: string;
+  brief: string;
   category: string;
 }
 
@@ -265,23 +328,34 @@ export function normalizeRiskOverrides(raw: any): Record<string, unknown> {
 }
 
 /**
- * 展开 strategy_keys 到中文名数组 (UI 直接显示, 不用 join). registry 无该 key
- * 时显示 key 本身 (历史 schema 漂移时不至于全空).
+ * 展开 strategy_keys 到 chip 对象 (含 key + 中文 name + brief), 让 UI 直接渲染
+ * 不用再回查 strategyRegistry. registry 无该 key 时显示 key 本身.
  */
-export function expandStrategyDisplay(keys: string[]): string[] {
+export function expandStrategyDisplay(keys: string[]): StrategyDisplayChip[] {
   return keys.map(k => {
     const def = strategyRegistry.get(k);
-    return def ? def.definition.name : k;
+    if (!def) return { key: k, name: k, brief: '' };
+    return {
+      key: k,
+      name: def.definition.name,
+      brief: def.definition.description,
+    };
   });
 }
 
 /**
- * 展开 enabled_factors 到中文名数组. 因子无注册时显示原 key.
+ * 展开 enabled_factors 到 chip 对象 (含 key + 中文 name + category).
+ * factor 没有独立中文 name 字段, 用 description 当 name. 无注册时显示 key.
  */
-export function expandFactorDisplay(names: string[]): string[] {
+export function expandFactorDisplay(names: string[]): FactorDisplayChip[] {
   return names.map(n => {
-    const f = factorRegistry.has(n) ? factorRegistry.get(n) : null;
-    return f ? f.description : n; // factor 没有独立中文 name 字段, 用 description
+    if (!factorRegistry.has(n)) return { key: n, name: n, category: 'unknown' };
+    const f = factorRegistry.get(n);
+    return {
+      key: n,
+      name: f.description || n,
+      category: String(f.category || 'other'),
+    };
   });
 }
 
@@ -329,40 +403,62 @@ export class PaperTradingPortfolioCrudService {
   }
 
   /**
-   * 详情 — 含 risk_profile_overrides + 最近 10 笔 trade. 越权访问 → 404 (不区分
-   * "盘不存在"和"盘不属于你"防 enumeration 泄露).
+   * 详情 — 含 risk_profile_overrides + 最近 10 笔 trade + 最近 7 日 snapshot.
+   * 越权访问 → 404 (不区分 "盘不存在"和"盘不属于你"防 enumeration 泄露).
    */
   async getDetailForUser(userId: number, portfolioId: number): Promise<PortfolioDetail> {
     this.assertUserId(userId);
     const p = await this.findOwnedPortfolio(userId, portfolioId, { allowInactive: true });
     const base = await this.toListItem(p);
-    const trades = await PaperTradingTrade.findAll({
-      where: { portfolio_id: p.id },
-      order: [['created_at', 'DESC']],
-      limit: 10,
-    });
-    const recent_trades = trades.map(t => {
+    const [trades, snapshots] = await Promise.all([
+      PaperTradingTrade.findAll({
+        where: { portfolio_id: p.id },
+        order: [['created_at', 'DESC']],
+        limit: 10,
+      }),
+      // AT-2-FIX (2026-06-22): 最近 7 日净值快照, FE Drawer recharts 直接渲染.
+      // 倒序拉再 reverse 让前端按时间正序 (Recharts XAxis 期望升序).
+      PaperTradingSnapshot.findAll({
+        where: { portfolio_id: p.id },
+        order: [['date', 'DESC']],
+        limit: 7,
+        attributes: ['date', 'total_value'],
+      }),
+    ]);
+    const recent_trades: PortfolioDetailTrade[] = trades.map(t => {
       const raw: any = t.toJSON ? t.toJSON() : t;
       const reason = raw.trade_reason || {};
+      const rawExec = raw.execute_price;
+      const rawPnl = raw.realized_pnl;
       return {
         id: Number(raw.id),
         symbol: String(raw.symbol),
         name: raw.name || null,
         direction: String(raw.direction),
         quantity: Number(raw.quantity),
-        price: Number(raw.price),
+        execute_price: rawExec == null ? 0 : Number(rawExec),
         amount: Number(raw.amount),
         commission: Number(raw.commission),
+        realized_pnl: rawPnl == null ? null : Number(rawPnl),
         trade_reason_summary: raw.trade_reason_summary || null,
         trade_reason_source: reason?.source || null,
-        trade_date: String(raw.trade_date),
         created_at: raw.created_at,
       };
     });
+    const recent_snapshots: PortfolioDetailSnapshot[] = snapshots
+      .map(s => {
+        const raw: any = s.toJSON ? s.toJSON() : s;
+        return {
+          date: String(raw.date),
+          total_value: Number(raw.total_value),
+        };
+      })
+      .reverse();
     return {
       ...base,
       risk_profile_overrides: (p.risk_profile_overrides as any) || {},
       recent_trades,
+      recent_snapshots,
     };
   }
 
@@ -547,12 +643,15 @@ export class PaperTradingPortfolioCrudService {
 
   /**
    * 列出所有 active 策略 (UI 选盘配置时用).
+   * AT-2-FIX (2026-06-22 二轮 review): contract 改 strategy_key → key, description → brief
+   * 对齐 FE Transfer/Modal contract. 之前 Transfer 因为读 `s.key` 拿 undefined,
+   * 选择整个失效 (P0 阻塞模拟盘创建).
    */
   listAvailableStrategies(): AvailableStrategy[] {
     return strategyRegistry.list().map(def => ({
-      strategy_key: def.strategy_key,
+      key: def.strategy_key,
       name: def.name,
-      description: def.description,
+      brief: def.description,
       category: String(def.category || 'other'),
       risk_level: def.risk_level,
       tags: Array.isArray(def.tags) ? [...def.tags] : [],
@@ -562,11 +661,13 @@ export class PaperTradingPortfolioCrudService {
 
   /**
    * 列出所有已注册因子 (UI 选盘配置时用).
+   * AT-2-FIX (2026-06-22 二轮 review): contract 加 key 字段对齐 FE Transfer.
    */
   listAvailableFactors(): AvailableFactor[] {
     return factorRegistry.list().map(f => ({
-      name: f.name,
-      description: f.description,
+      key: f.name, // factor registry 的 name 就是 unique key
+      name: f.description || f.name,
+      brief: f.description || '',
       category: String(f.category || 'other'),
     }));
   }
@@ -610,7 +711,7 @@ export class PaperTradingPortfolioCrudService {
   }
 
   private async toListItem(p: PaperTradingPortfolio): Promise<PortfolioListItem> {
-    const [positions_count, baseline7, baseline30] = await Promise.all([
+    const [position_count, baseline7, baseline30] = await Promise.all([
       PaperTradingPosition.count({
         where: { portfolio_id: p.id, quantity: { [Op.gt]: 0 } },
       }),
@@ -634,9 +735,9 @@ export class PaperTradingPortfolioCrudService {
       strategy_display: expandStrategyDisplay(strategy_keys),
       enabled_factors,
       factor_display: expandFactorDisplay(enabled_factors),
-      positions_count,
-      return_7d_pct: computeReturnPct(total, baseline7, initial),
-      return_30d_pct: computeReturnPct(total, baseline30, initial),
+      position_count,
+      recent_7d_return_pct: computeReturnPct(total, baseline7, initial),
+      recent_30d_return_pct: computeReturnPct(total, baseline30, initial),
       total_return_pct: initial > 0 ? Math.round(((total - initial) / initial) * 10000) / 100 : 0,
       created_at: p.created_at,
     };

@@ -225,14 +225,20 @@ function unwrap<T>(
 /** 修复 (2026-06-17 串盘): portfolio 列表条目, 供 PortfolioWorkspace 顶部选盘下拉.
  *  AT-2 (2026-06-21) 扩展: 含 strategy_display / factor_display chip 数据
  *  (以及 auto_trade_enabled / recent_7d_return_pct), 给 GlobalPortfolioSelector +
- *  TodayWorkspace KPI strip + 任何想直接渲染 "策略+因子" 信息的 UI 使用. */
+ *  TodayWorkspace KPI strip + 任何想直接渲染 "策略+因子" 信息的 UI 使用.
+ *  AT-2-FIX (2026-06-22 二轮 review): position_count (单数) 与 backend contract
+ *  对齐 (backend 之前给 positions_count 是 typo, 已在 PaperTradingPortfolioCrudService
+ *  统一改正). 这里同步改字段名; 旧 positions_count 标 deprecated 兜底过渡. */
 export interface PortfolioListItem {
   id: number;
   name: string;
   initial_capital: number;
   current_cash: number;
   total_value: number;
-  positions_count: number;
+  /** AT-2-FIX (2026-06-22): 与 backend 单数对齐. */
+  position_count: number;
+  /** @deprecated AT-2-FIX (2026-06-22): 用 position_count. 兜底保留防 1-2 个老 caller. */
+  positions_count?: number;
   created_at: string;
   /** AT-2 (2026-06-21): 用户保存的策略 key 数组 (legacy 盘可能为空). */
   strategy_keys?: string[];

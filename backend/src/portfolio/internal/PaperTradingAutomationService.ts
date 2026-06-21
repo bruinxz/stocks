@@ -3620,6 +3620,28 @@ class PaperTradingAutomationService {
       ...options,
       user_id: portfolio.user_id,
       source_type: options.source_type || AISignalSourceType.QUANT_RECOMMENDATION,
+      // AT-2-FIX (2026-06-22 二轮 review): 把 portfolio 的 strategy_keys 配置真正生效.
+      //
+      // 之前 portfolio.strategy_keys 只是 UI 上的"展示"字段, automation 链路完全忽略 —
+      // 用户在 UI 上勾"我这盘只接 ma_trend / macd_trend 的信号", 但 cron 仍然给该盘
+      // 下所有 29 个策略的信号. 这是 AT-1 的核心承诺没有兑现 — 字段存了不用.
+      //
+      // 规则:
+      // - 优先级: caller 显式传 options.strategy_keys (admin/ops 手动指定) >
+      //   portfolio.strategy_keys (UI 配置) > 空 (= 接所有策略, 兼容 legacy)
+      // - portfolio.strategy_keys 是空数组时: 走 legacy 行为 (接所有策略), 与 UI
+      //   "未配置 — 默认全部" 提示对齐
+      //
+      // 注: enabled_factors 不在这里 wire — factor 配置是给 MultiFactorAlpha
+      // 等接受 factor weights 的策略层用的, 未来在策略层单独 wire.
+      strategy_keys: (() => {
+        const callerKeys = normalizeStringArray((options as any).strategy_keys);
+        if (callerKeys.length > 0) return callerKeys;
+        const portfolioKeys = Array.isArray(portfolio.strategy_keys)
+          ? portfolio.strategy_keys.filter((k: any) => typeof k === 'string' && k.length > 0)
+          : [];
+        return portfolioKeys.length > 0 ? portfolioKeys : undefined;
+      })(),
     });
 
     const syncResult = {

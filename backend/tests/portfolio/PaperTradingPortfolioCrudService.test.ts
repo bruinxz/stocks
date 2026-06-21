@@ -158,13 +158,16 @@ function test_normalizeRiskOverrides(): void {
 // ---------- [7] expand display ----------
 function test_expandDisplay(): void {
   const sd = expandStrategyDisplay(['multi_factor_alpha']);
-  assert('[7] strategy_display 含中文', sd.length === 1 && sd[0].length > 0);
+  assert('[7] strategy_display 单元素', sd.length === 1);
+  assert('[7] strategy chip has key', sd[0].key === 'multi_factor_alpha');
+  assert('[7] strategy chip has name (中文)', typeof sd[0].name === 'string' && sd[0].name.length > 0);
   const sd2 = expandStrategyDisplay(['unknown_xyz']);
-  assert('[7] 未知 strategy 显示原 key', sd2[0] === 'unknown_xyz');
+  assert('[7] 未知 strategy fallback key=name=unknown_xyz', sd2[0].key === 'unknown_xyz' && sd2[0].name === 'unknown_xyz');
   const fd = expandFactorDisplay(['value']);
-  assert('[7] factor_display 含描述', fd.length === 1 && fd[0].length > 0);
+  assert('[7] factor chip has key', fd[0].key === 'value');
+  assert('[7] factor chip has category', typeof fd[0].category === 'string' && fd[0].category.length > 0);
   const fd2 = expandFactorDisplay(['unknown_xyz']);
-  assert('[7] 未知 factor 显示原 key', fd2[0] === 'unknown_xyz');
+  assert('[7] 未知 factor fallback', fd2[0].key === 'unknown_xyz' && fd2[0].category === 'unknown');
 }
 
 // ---------- [8] computeReturnPct ----------
@@ -199,12 +202,15 @@ function test_errorClass(): void {
 function test_listAvailable(): void {
   const strategies = paperTradingPortfolioCrudService.listAvailableStrategies();
   assert('[10] strategies 至少 20 个', strategies.length >= 20);
-  assert('[10] strategy 含 strategy_key', strategies[0].strategy_key.length > 0);
+  // AT-2-FIX (2026-06-22 二轮 review): contract 改 strategy_key → key, description → brief
+  assert('[10] strategy 含 key', strategies[0].key.length > 0);
   assert('[10] strategy 含 name', strategies[0].name.length > 0);
+  assert('[10] strategy 含 brief', typeof strategies[0].brief === 'string');
   const factors = paperTradingPortfolioCrudService.listAvailableFactors();
   assert('[10] factors 至少 15 个', factors.length >= 15);
+  assert('[10] factor 含 key', factors[0].key.length > 0);
   assert('[10] factor 含 name', factors[0].name.length > 0);
-  assert('[10] factor 含 description', factors[0].description.length > 0);
+  assert('[10] factor 含 category', typeof factors[0].category === 'string' && factors[0].category.length > 0);
 }
 
 // ---------- [11] Meta-guard: controller wire-in ----------
@@ -332,7 +338,63 @@ function test_meta_automation_gate(): void {
       '[14] runAutoSync gate hit 时 return 跳过',
       /AUTO_TRADE_GATE/.test(body)
     );
+    // AT-2-FIX (2026-06-22): runAutoSync 必须把 portfolio.strategy_keys 透传给
+    // autoBuyFromSignals, 否则 UI 上选的策略 filter 永远不生效.
+    assert(
+      '[14] runAutoSync 把 portfolio.strategy_keys 透传给 autoBuyFromSignals',
+      /portfolio\.strategy_keys/.test(body) && /strategy_keys:\s*\(\(\)\s*=>/.test(body)
+    );
   }
+}
+
+// ---------- [15] Meta-guard: FE/BE contract shape (AT-2 二轮 review) ----------
+// 防止字段名漂移再次发生 — UI Transfer 控件 + 表格列 + Drawer 都按这些字段读.
+function test_meta_fe_be_contract(): void {
+  const svc = fs.readFileSync(
+    path.join(ROOT, 'src/portfolio/internal/PaperTradingPortfolioCrudService.ts'),
+    'utf8'
+  );
+  // ListItem 必须用 FE 字段名 (单数, 不是 positions_count)
+  assert('[15] toListItem returns position_count (not positions_count)',
+    /position_count,?\s*$/m.test(svc) && /position_count: number/.test(svc));
+  assert('[15] svc has recent_7d_return_pct field',
+    /recent_7d_return_pct/.test(svc));
+  assert('[15] svc no longer outputs return_7d_pct identifier',
+    !/return_7d_pct:/.test(svc));
+  // Available strategy 必须有 key + brief
+  assert('[15] AvailableStrategy has key field',
+    /AvailableStrategy[\s\S]*?key:\s*string/.test(svc));
+  assert('[15] AvailableStrategy has brief field',
+    /AvailableStrategy[\s\S]*?brief:\s*string/.test(svc));
+  // Available factor 必须有 key
+  assert('[15] AvailableFactor has key field',
+    /AvailableFactor[\s\S]*?key:\s*string/.test(svc));
+  // Trade detail 必须 execute_price + realized_pnl + 无 trade_date
+  assert('[15] PortfolioDetailTrade has execute_price',
+    /PortfolioDetailTrade[\s\S]*?execute_price:\s*number/.test(svc));
+  assert('[15] PortfolioDetailTrade has realized_pnl',
+    /PortfolioDetailTrade[\s\S]*?realized_pnl:\s*number/.test(svc));
+  // Detail 必须包含 recent_snapshots 字段 (FE Drawer Recharts 用)
+  assert('[15] PortfolioDetail has recent_snapshots',
+    /recent_snapshots:\s*PortfolioDetailSnapshot\[\]/.test(svc));
+
+  // FE service contract 必须匹配
+  const feSvc = fs.readFileSync(
+    path.join(ROOT, '../frontend/src/services/portfolioCrudService.ts'),
+    'utf8'
+  );
+  assert('[15] FE service reads position_count',
+    /position_count:\s*number/.test(feSvc));
+  assert('[15] FE service reads recent_7d_return_pct',
+    /recent_7d_return_pct/.test(feSvc));
+  assert('[15] FE service AvailableStrategy.key',
+    /AvailableStrategy[\s\S]{0,200}?key:\s*string/.test(feSvc));
+  assert('[15] FE service AvailableFactor.key',
+    /AvailableFactor[\s\S]{0,200}?key:\s*string/.test(feSvc));
+  assert('[15] FE service PortfolioDetailTrade.execute_price',
+    /PortfolioDetailTrade[\s\S]{0,400}?execute_price:\s*number/.test(feSvc));
+  assert('[15] FE service PortfolioDetailSnapshot present',
+    /PortfolioDetailSnapshot/.test(feSvc));
 }
 
 // ============================================================
@@ -366,6 +428,8 @@ function test_meta_automation_gate(): void {
   test_meta_migration();
   console.log('## [14] Meta-guard: automation gate');
   test_meta_automation_gate();
+  console.log('## [15] Meta-guard: FE/BE contract shape');
+  test_meta_fe_be_contract();
 
   console.log(`\n# summary: ${passed} ok, ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);
