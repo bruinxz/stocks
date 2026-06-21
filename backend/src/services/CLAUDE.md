@@ -128,6 +128,43 @@ advanced quant 5 个 service 是 **soft decision layers**（MetaLabel 过滤 / F
 两者**串联**而非平行：每个 signal 先过 risk/ 硬 guard，再过 advanced quant 软
 gate，最后 facade.placeOrder。两层都 fail 都阻止下单。
 
+## RiskAlertService — 系统级风控告警统一入口 (OPS-005)
+
+**何时用**：server-side 任何模块想发一条 "系统级" 风控告警时（与 risk guards
+的 `RiskAlert.create` + model afterCreate hook 路径并存，本 service 提供
+**按 severity 路由 + 多通道 fan-out** 的高阶 API）。
+
+```ts
+import { riskAlertService, RISK_ALERT_SEVERITY } from './RiskAlertService';
+await riskAlertService.write({
+  user_id, symbol, name, message,
+  severity: RISK_ALERT_SEVERITY.CRITICAL, // 'critical' | 'high' | 'medium'
+  rule_id: 'drawdown_breaker',
+});
+```
+
+**路由规则（不可改，已强制测试）**：
+- `critical` → inbox(DB level=HIGH) + 飞书 OPS 群 + IM(email) + toast(metadata.toast=true)
+- `high`     → inbox(DB level=HIGH) + 飞书 OPS 群
+- `medium`   → inbox(DB level=MEDIUM)
+
+**与既有路径关系**：
+- 不取代 risk guards 里散落的 `RiskAlert.create({...})`（那些走 model
+  afterCreate hook → RealtimeAlertDispatcher 个性化推送，覆盖 level='HIGH'）
+- 不取代 `audit-task-parameters-dry-run.ts` 的 risk_alert + feishu_ops 双
+  通道（那是脚本专用 boot guard）
+- critical/high 写完后还会 fire `RealtimeAlertDispatcher`（在 model hook
+  之外补一道路径，hook 失效时 ops 仍能收到）
+
+**channel 控制**：
+- 默认按 severity 走 `SEVERITY_TO_CHANNELS` 表
+- `options.override_channels` 强制覆盖（inbox 自动 prepend 防 DB 漏写）
+- `options.dry_run=true` → 空 plan，所有通道不调
+- `options.feishu_webhook_url` / `options.im_address` → 覆盖 env / user 表
+
+**飞书 OPS 群 webhook env**：`OPS_ALERT_FEISHU_WEBHOOK`（与
+audit-task-parameters-dry-run.ts 共享同一 env，避免运维多配一份）
+
 ## 测试
 
 5 个 service 各有独立单测（188 tests）+ 1 个集成 smoke test:
@@ -140,3 +177,136 @@ gate，最后 facade.placeOrder。两层都 fail 都阻止下单。
 
 跑全部: `cd backend && npm test`（runner 顺序跑全部 .test.ts）
 跑单个: `npx ts-node --transpile-only tests/services/research-integrity-service.test.ts`
+
+## AnnouncementNLP — ANN-001 (US-025) 新字段约定
+
+`AnnouncementSummary` 表 + `AnnouncementNLPRecord` 在 2026-06-19 ANN-001 落地后**多出三列**，
+任何后续 ANN-002~007 / 新接入 caller 都必须同时填充：
+
+| 列 | 类型 | 默认 | 由谁填 | 注意 |
+|---|---|---|---|---|
+| `event_type` | VARCHAR(40) NULL | NULL | US-026 `classifyEventType` | NULL = 未跑过分类；`'其它'` = 跑过且不属于前 6 类 (语义不同！) |
+| `priority` | VARCHAR(20) NOT NULL | `'low'` | US-029 `computePriority` | `'critical'` 触发 US-031 5min 飞书 push — 任何 normalizer 默认必须返 `'low'`，绝不擅自 escalate |
+| `entities` | JSONB NOT NULL | `[]` | US-027 `extractEntities` | 元素必须 `{name, role, holding_pct?}`；额外字段透传 |
+
+**接入清单**（任何新建/扩展 NLP record 的代码 6 处必须改）：
+1. `AnnouncementNLPRecord` interface 字段（`backend/src/services/AnnouncementNLPService.ts`）
+2. `buildHeuristicNLPResult()` 默认占位
+3. `buildNLPResultFromPayload()` — 成功路径走 `normalize*()`，FAILED fallback 走默认值
+4. `DefaultAnnouncementNLPDataSource.saveSummaries()` 的 `bulkCreate` map + `updateOnDuplicate` 数组（漏一处 = re-sync 漂回默认值）
+5. 测试 fake store + `installModelStubs()` 的 `FakeRowState`（不加新列 → 字段消失但测试不挂）
+6. Model：`backend/src/models/AnnouncementSummary.ts` `@Column` + indexes
+
+**归一函数 (`normalizePriority` / `normalizeEventType` / `normalizeEntities`) 安全默认**：
+
+- `normalizePriority(raw)`: 未识别 → `'low'`（**绝不 escalate 到 `'critical'`**，否则远端 AI 返垃圾会触发飞书 push 风暴）
+- `normalizeEventType(raw)`: 未识别字符串 → `'其它'`；null/empty → `null`（区分"跑过没识别"与"没跑过"）
+- `normalizeEntities(raw)`: 非 array → `[]`；缺 name 或 role 的元素直接 drop（不报错）
+
+**Migration**：`backend/scripts/migrations/2026-06-19-announcement-nlp-event-priority-entities.sql`
+（+ 同名 `-rollback.sql`）— `IF NOT EXISTS` + `IF EXISTS` 幂等，可重复跑；
+**生产执行**：`psql $DATABASE_URL -f backend/scripts/migrations/2026-06-19-announcement-nlp-event-priority-entities.sql`。
+
+测试守护：`tests/services/announcement-nlp-service.test.ts` 内
+`testSaveSummariesUpdateOnDuplicateIncludesNewFields` + `testAnnouncementSummaryModelHasNewColumns` +
+`testMigrationSqlPresentAndComplete` 三处 META-GUARD（fs+regex 扫源文件 + SQL）— 漏改任何一处立刻挂。
+
+---
+
+## EastMoneyQATopicService — QA-001 subcategory 细化（2026-06-19）
+
+`TOPIC_SUBCATEGORIES` 在 6 大父类 (FINANCE/PRODUCT/ORDER/POLICY/PERSONNEL/OTHER)
+下细分 26 个 subcategory（含 6 个 `*_other` + 1 个 `other_general` 兜底，actionable = 20）。
+`classifySubtopic(question)` 是 sub-first 启发式（命中数多者胜 + `TOPIC_SUBCATEGORY_PRIORITY` 升序 tie-break），
+未命中走 `classifyTopic()` 的父类落 `*_other` 兜底，保证 `(topic, subtopic)` 严格 parent-child。
+
+**新增 subtopic 字典 4 步**：
+1. `TOPIC_SUBCATEGORIES` 加常量 + `SubtopicCategory` union 加成员 + `SUBTOPIC_VALUES` 数组追加
+2. `TOPIC_SUBCATEGORY_OF` 加 1:1 父类映射（必填，否则 `deriveTopicFromSubtopic` 返 `undefined`）
+3. `TOPIC_SUBCATEGORY_PRIORITY` 加数值（父类内升序，`*_other` 留 19/29/39/49/59 末档）
+4. `TOPIC_SUBCATEGORY_KEYWORDS` 加 ≥ 3 关键词（`*_other` 留空数组，由 fallback 路径触发）
+
+**字典顺序坑**：父类内更具体的 subtopic 关键词命中数若与泛化项打平，靠 `TOPIC_SUBCATEGORY_PRIORITY`
+决定（不是字典声明顺序）。新增字典必须同步加单测样本到 `SUBTOPIC_LABELED_CORPUS` 维持 ≥ 80% 准确率
+AC，已记录 1 例已知 misclassification（"出口管制" 中 'export' 比 'tariff' 命中先且数高）— 改进需引入
+"否定词上下文 / 多词 phrase 优先" 启发，目前 99.1% 准确率不阻塞 AC。
+
+---
+
+## QALeadingSignalDetector — QA-003 业绩 leading 信号（2026-06-19）
+
+`services/qa/QALeadingSignalDetector.ts` 是 **derived view**：消费 `EastMoneyQAStat`
+（QA-002 已落表的按周聚合）→ 输出 3 类 leading signal（earnings_bullish /
+earnings_bearish / earnings_forecast_leading）。**不写库 / 不写 RiskAlert / 不重拉远端 /
+不重跑 NLP** —— 告警通路与 factor 接入分别由 QA-009 / QA-010 owner。
+
+**新增信号 4 步**：
+1. `SIGNAL_TYPES` 加常量 + `QALeadingSignalType` union 加成员
+2. `SIGNAL_THRESHOLDS` 加数值阈值（**严格 > / <**，等于阈值不触发，防默认值 = 阈值误报）
+3. `detectForStat()` 加 if 分支 push 到 `out[]`（同周多信号都返回，全局排序在 service 层）
+4. `qa-leading-signal-detector.test.ts` 加 happy + 边界 + null 兜底 + AC 主验收
+
+**`prev=null` vs `prev=0` 严格区分**（首坑）：
+- `prev=null/undefined` → growth=null → 不触发 growth-class 信号（无 baseline week 存在）
+- `prev=0 curr>0` → growth=+Infinity → 触发 growth-class（合法的 "0 → N" 暴增）
+- 任一混淆都会过/漏触发。`detectForStat` 内有显式 prev null-check（短路 computeQuestionsGrowthPct）。
+
+**`top_subtopic = earnings_forecast` 但 `template_score=null` 必须不触发 leading**：
+NULL = 当周无任何回答（合法语义状态），≠ "回答模板分 0"。`detectForStat` 显式
+`templateScore !== null` guard。
+
+**Sequelize DECIMAL 字符串坑**：`EastMoneyQAStat.answer_rate / answer_template_score`
+等 DECIMAL 列在原生 sequelize-typescript 返回字符串。`rowToStatLike()` 是统一入口，
+对每个 numeric 字段 `Number()` 转一遍（带 string→0.5 + null→null 单测覆盖）。
+
+## Execution layer 二段式 (Sprint 41-E + US-106 EX-006)
+
+**ExecutionPolicyRouter (选 policy)** + **ExecutionAlgoSlicer (拆 slices)** 是
+下单链路的两段, 上游 PaperTradingFacade.placeOrder 顺序调用:
+
+```ts
+const policy = executionPolicyRouter.route({ symbol, side, amount_yuan, ... });
+// → { policy: 'TWAP'|'VWAP'|'POV'|..., slice_count, participation_rate, ... }
+const plan = executionAlgoSlicer.plan({
+  algo: policy.policy,
+  total_qty,
+  slice_count: policy.slice_count,
+  participation_rate: policy.participation_rate,
+  adv_qty,        // POV 必填; TWAP/VWAP 提供后启用 per-slice cap
+  parent_order_id,
+});
+// → { slices: [{ index, time_offset_minutes, qty, visible_qty, ... }] }
+// 按 plan.slices[i].time_offset_minutes 定时触发 child order (bridge_qmt/ptrade)
+```
+
+**坑**:
+- A 股 lot=100 强约束 → "等量 TWAP" 实际不等量, 余数按"被舍掉最多"补到第一片;
+  单测验 `sum(slices.qty) === total_qty`, 不验"每片等量".
+- POV 缺 `adv_qty` 返空 plan + reason, 集成层应降级 TWAP 而非 silent fail.
+- VWAP 默认用 `DEFAULT_ASHARE_VOLUME_PROFILE` (8 桶 U-型, sum=1.00);
+  传 `volume_profile` 任意长度会自动 resample 到 slice_count.
+
+## ExecutionPolicyRouter — TradingSession 时段分类 (US-107 / EX-007)
+
+`classifyTradingSession(now)` 把 A 股一天切成 4 段, [start, end) 区间, 与
+[[checkAShareTradingHours]] 边界同源 (09:30 含, 11:30 不含):
+
+| 段 | 时间 (Asia/Shanghai) | algo 行为 |
+|----|---------------------|----------|
+| OPEN_AUCTION | 09:15-09:25 | 仅单一价撮合 → 强制降级 LIMIT_AT_TOUCH |
+| CONTINUOUS | 09:30-11:30 + 13:00-14:57 | 全 algo 可用 (TWAP/VWAP/POV/LIMIT) |
+| CLOSE_AUCTION | 14:57-15:00 | 仅单一价撮合 → 强制降级 LIMIT_AT_TOUCH |
+| CLOSED | 其它 (含 09:25-09:30 撮合间隙 + 午休 + 收盘后 + 盘前) | 直接 SKIP |
+
+**关键边界**:
+- 09:25 是撮合时刻而非交易时刻 → 落 CLOSED 不落 OPEN_AUCTION
+- 14:57 是收盘集合竞价起点 → 14:56 仍 CONTINUOUS, 14:57 起 CLOSE_AUCTION
+- `routeExecutionPolicy` 内时段判定优先级最高 (在 SKIP 硬约束 / WAIT / size 之前):
+  CLOSED 任何 input 都 SKIP, 集合竞价时段 TWAP/VWAP/POV 全降级 LIMIT,
+  连续竞价时段才执行原 SKIP/WAIT/size 决策链
+- WAIT (跳空等待) 仅在 CONTINUOUS 触发 — 集合竞价本身就是"等单一价",
+  再 WAIT 会让用户错过本日撮合点
+
+**调用约定**: caller (PaperTradingAutomationService 等) 0 改动; `input.now` 不传
+默认 `new Date()`, 仅单测 / 回放 / 夜间 cron 显式注入以避免 host 时间漂移.
+`ExecutionPolicyResult.session` 字段透传给下游 UI / TCA 审计.

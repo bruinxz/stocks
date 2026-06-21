@@ -78,7 +78,7 @@ export class TSRng {
   /** Box-Muller transform: uniform → normal(0, 1) */
   nextGaussian(): number {
     let u1 = this.next();
-    let u2 = this.next();
+    const u2 = this.next();
     if (u1 < 1e-12) u1 = 1e-12;
     return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
   }
@@ -114,9 +114,9 @@ export interface StrategyPosterior {
  */
 export function createPrior(
   strategy_key: string,
-  prior_mu: number = 0,
-  prior_var: number = 1.0,
-  obs_var: number = 0.5
+  prior_mu = 0,
+  prior_var = 1.0,
+  obs_var = 0.5
 ): StrategyPosterior {
   return {
     strategy_key,
@@ -139,7 +139,10 @@ export function createPrior(
  *
  * Uses running mean / variance for online update.
  */
-export function updatePosterior(posterior: StrategyPosterior, new_reward: number): StrategyPosterior {
+export function updatePosterior(
+  posterior: StrategyPosterior,
+  new_reward: number
+): StrategyPosterior {
   if (!Number.isFinite(new_reward)) return posterior;
 
   const n_new = posterior.n_obs + 1;
@@ -149,7 +152,8 @@ export function updatePosterior(posterior: StrategyPosterior, new_reward: number
   const new_sum_sq = posterior.observed_sum_sq_dev + delta * delta2;
 
   const post_var = 1 / (1 / posterior.prior_var + n_new / posterior.obs_var);
-  const post_mu = post_var * (posterior.prior_mu / posterior.prior_var + (n_new * new_mean) / posterior.obs_var);
+  const post_mu =
+    post_var * (posterior.prior_mu / posterior.prior_var + (n_new * new_mean) / posterior.obs_var);
 
   return {
     ...posterior,
@@ -208,7 +212,12 @@ export function softmaxAllocation(sampled_mus: number[], temperature: number): n
  */
 export function thompsonSamplingAllocation(
   posteriors: StrategyPosterior[],
-  options: { temperature?: number; rng?: TSRng; mode?: 'softmax' | 'argmax'; min_weight?: number } = {}
+  options: {
+    temperature?: number;
+    rng?: TSRng;
+    mode?: 'softmax' | 'argmax';
+    min_weight?: number;
+  } = {}
 ): { weights: number[]; sampled_mus: number[] } {
   if (posteriors.length === 0) return { weights: [], sampled_mus: [] };
   const rng = options.rng ?? new TSRng(42);
@@ -223,7 +232,10 @@ export function thompsonSamplingAllocation(
     let bestIdx = 0;
     let bestVal = sampled[0];
     for (let i = 1; i < sampled.length; i += 1) {
-      if (sampled[i] > bestVal) { bestVal = sampled[i]; bestIdx = i; }
+      if (sampled[i] > bestVal) {
+        bestVal = sampled[i];
+        bestIdx = i;
+      }
     }
     weights = sampled.map((_, i) => (i === bestIdx ? 1 : 0));
   } else {
@@ -291,7 +303,10 @@ export interface BetaBernoulliPosterior {
  *   α += 1 if outcome else 0
  *   β += 0 if outcome else 1
  */
-export function updateBetaBernoulli(posterior: BetaBernoulliPosterior, outcome: boolean): BetaBernoulliPosterior {
+export function updateBetaBernoulli(
+  posterior: BetaBernoulliPosterior,
+  outcome: boolean
+): BetaBernoulliPosterior {
   return {
     ...posterior,
     alpha: posterior.alpha + (outcome ? 1 : 0),
@@ -313,14 +328,19 @@ export function betaBernoulliThompsonAllocation(
   const mode = options.mode ?? 'softmax';
   const T = options.temperature ?? 1.0;
 
-  const sampled = posteriors.map(p => sampleBeta(Math.max(0.1, p.alpha), Math.max(0.1, p.beta), rng));
+  const sampled = posteriors.map(p =>
+    sampleBeta(Math.max(0.1, p.alpha), Math.max(0.1, p.beta), rng)
+  );
 
   let weights: number[];
   if (mode === 'argmax') {
     let bestIdx = 0;
     let bestVal = sampled[0];
     for (let i = 1; i < sampled.length; i += 1) {
-      if (sampled[i] > bestVal) { bestVal = sampled[i]; bestIdx = i; }
+      if (sampled[i] > bestVal) {
+        bestVal = sampled[i];
+        bestIdx = i;
+      }
     }
     weights = sampled.map((_, i) => (i === bestIdx ? 1 : 0));
   } else {

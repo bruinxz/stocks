@@ -10,6 +10,7 @@ import { morningRiskCheckupService } from '../../portfolio/risk/MorningRiskCheck
 import { sizingPolicyService } from '../../portfolio/risk/SizingPolicyService';
 import { sizingAuditService } from '../../services/SizingAuditService';
 import { strategyKillSwitchMonitor } from '../../services/StrategyKillSwitchMonitor';
+import { reconciliationAlertService } from '../../live-trading/services/ReconciliationAlertService';
 import { logger } from '../../utils/logger';
 
 /**
@@ -367,6 +368,40 @@ export class RiskController {
     }
   }
 
+  /**
+   * GET /api/risk/reconciliation-alert  (US-137 [EX-012])
+   * 返回用户对账告警阈值配置 (enabled / alignment_score_high / medium /
+   * drift_count_high / medium / dedupe_window_minutes). 未设过则返
+   * DEFAULT_RECONCILIATION_ALERT_CONFIG 占位让 UI 展示 default.
+   */
+  async getReconciliationAlertConfig(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const config = await reconciliationAlertService.getConfig(user_id);
+      res.json({ success: true, data: config });
+    } catch (error: any) {
+      logger.error('获取对账告警阈值配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * PUT /api/risk/reconciliation-alert  (US-137 [EX-012])
+   * 持久化对账告警阈值. lenient normalize — 非法字段沉默回退默认 (同
+   * normalizeBlackSwanConfig / normalizePositionLimitsConfig 范式), 不抛 4xx.
+   * 下一次 reconciliationAlertService.runForUser 调用即生效 (不需重启 cron).
+   */
+  async updateReconciliationAlertConfig(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      const saved = await reconciliationAlertService.updateConfig(user_id, req.body || {});
+      res.json({ success: true, data: saved, message: '对账告警阈值已保存' });
+    } catch (error: any) {
+      logger.error('更新对账告警阈值配置失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
   // ============================================================
   // Phase 2: Position Sizing Policy
   // ============================================================
@@ -460,6 +495,94 @@ export class RiskController {
     } catch (error: any) {
       logger.error('获取 market top status 失败:', error);
       res.status(500).json({ success: false, message: error?.message || '获取失败' });
+    }
+  }
+
+  // ============================================================
+  // US-065 [FE-026] AnalysisEngine off/shadow/hard mode 切换
+  // ============================================================
+
+  /**
+   * GET /api/risk/analysis-engine-config  (US-065)
+   *
+   * 读取当前 user 的 analysis-engine 接入模式 + 配置。
+   * 字段存于 `User.risk_config.analysis_engine` JSONB:
+   *   { mode: 'off'|'shadow'|'hard', enabled_analyzers?: string[], weights?: object }
+   *
+   * 未配置时返回 default (mode='off') 并标 is_default=true 让 UI 显示 “系统默认”。
+   *
+   * Response: { success, data: { config, is_default, default } }
+   */
+  async getAnalysisEngineConfig(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { User } = require('../../models/User');
+      /* eslint-disable @typescript-eslint/no-var-requires */
+      const {
+        normalizeAnalysisEngineConfig,
+        DEFAULT_ANALYSIS_ENGINE_CONFIG,
+      } = require('../../services/analysis-engine/ShadowDoubleRunService');
+      /* eslint-enable @typescript-eslint/no-var-requires */
+      const userRow = await User.findByPk(user_id);
+      if (!userRow) {
+        return res.status(404).json({ success: false, message: 'user 不存在' });
+      }
+      const raw = (userRow.risk_config || {})['analysis_engine'];
+      const normalized = normalizeAnalysisEngineConfig(raw);
+      return res.json({
+        success: true,
+        data: {
+          config: normalized,
+          is_default: !raw,
+          default: DEFAULT_ANALYSIS_ENGINE_CONFIG,
+        },
+      });
+    } catch (error: any) {
+      logger.error('获取 AnalysisEngine 配置失败:', error);
+      res.status(500).json({ success: false, message: error?.message || '获取失败' });
+    }
+  }
+
+  /**
+   * PUT /api/risk/analysis-engine-config  (US-065)
+   *
+   * 持久化用户 analysis-engine 接入模式。
+   *   body: { mode, enabled_analyzers?, weights? }
+   * 字段全 lenient — 走 normalizeAnalysisEngineConfig 把 invalid mode/字段静默
+   * 退回 'off' / undefined, 防腐蚀 risk_config JSONB.
+   */
+  async updateAnalysisEngineConfig(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const user_id = (req as any).user.id;
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { User } = require('../../models/User');
+      /* eslint-disable @typescript-eslint/no-var-requires */
+      const {
+        normalizeAnalysisEngineConfig,
+      } = require('../../services/analysis-engine/ShadowDoubleRunService');
+      /* eslint-enable @typescript-eslint/no-var-requires */
+      const userRow = await User.findByPk(user_id);
+      if (!userRow) {
+        return res.status(404).json({ success: false, message: 'user 不存在' });
+      }
+      const normalized = normalizeAnalysisEngineConfig(req.body || {});
+      const nextRiskConfig = {
+        ...(userRow.risk_config || {}),
+        analysis_engine: normalized,
+      };
+      userRow.risk_config = nextRiskConfig;
+      // US-017 lesson: JSONB 改动必须显式 changed()
+      userRow.changed('risk_config', true);
+      await userRow.save();
+      return res.json({
+        success: true,
+        data: { config: normalized },
+        message: `AnalysisEngine 模式已设为 ${normalized.mode}`,
+      });
+    } catch (error: any) {
+      logger.error('更新 AnalysisEngine 配置失败:', error);
+      res.status(500).json({ success: false, message: error?.message || '更新失败' });
     }
   }
 }

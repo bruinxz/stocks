@@ -7,7 +7,11 @@ import {
   Descriptions,
   Drawer,
   Empty,
+  Input,
   InputNumber,
+  List,
+  Modal,
+  Popconfirm,
   Row,
   Slider,
   Space,
@@ -16,12 +20,15 @@ import {
   Switch,
   Table,
   Tag,
+  Tooltip as AntTooltip,
   Typography,
   message,
 } from 'antd';
 import {
   AppstoreOutlined,
+  DeleteOutlined,
   FundOutlined,
+  SaveOutlined,
   SlidersOutlined,
   OrderedListOutlined,
   ReloadOutlined,
@@ -50,6 +57,17 @@ import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/Workspace
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
 import MacroEnvTab from './FactorWorkspace.MacroEnvTab';
 import BlockTradesTab from './FactorWorkspace.BlockTradesTab';
+import ETFFlowTab from './FactorWorkspace.ETFFlowTab';
+import PolicyNewsTab from './FactorWorkspace.PolicyNewsTab';
+import { computeAIWeights, computeWeightDeltas } from './factorAIWeightHelpers';
+import {
+  ComboTemplate,
+  COMBO_TEMPLATE_NAME_MAX_LEN,
+  deleteComboTemplate,
+  listComboTemplates,
+  saveComboTemplate,
+} from './factorComboTemplateHelpers';
+import { buildShortPickReason } from './factorPickReasonHelpers';
 import {
   factorService,
   FactorDetailResponse,
@@ -111,6 +129,65 @@ const CATEGORY_DISPLAY: Record<string, { label: string; color: string }> = {
   other: { label: '其他', color: 'default' },
 };
 
+/**
+ * US-045 因子健康列 (FE-006) — 4 档分类的 UI 表达 (Tag 颜色 + 中文 + 提示).
+ *
+ * 与后端 FactorController.classifyFactorHealth 4 档 (alpha/weak/unstable/unknown)
+ * 严格一一对应; 颜色挑选:
+ *   - alpha=green: 操盘手"放心用"
+ *   - unstable=gold: 有方向但 IR 低, "谨慎用"
+ *   - weak=red: 已失效, "停用"
+ *   - unknown=default: 无数据, "先 compute IC"
+ */
+const FACTOR_HEALTH_DISPLAY: Record<
+  'alpha' | 'weak' | 'unstable' | 'unknown',
+  { label: string; color: string; tip: string }
+> = {
+  alpha: {
+    label: '有效',
+    color: 'green',
+    tip: '|IC_90d| ≥ 0.03 且 |IC_IR| ≥ 0.3，因子稳定有 alpha',
+  },
+  unstable: {
+    label: '不稳',
+    color: 'gold',
+    tip: '有方向但 IC_IR 不够稳健，谨慎使用',
+  },
+  weak: { label: '失效', color: 'red', tip: '|IC_90d| < 0.01，因子已失效，建议停用' },
+  unknown: {
+    label: '无数据',
+    color: 'default',
+    tip: '近 90 日无 IC 报告，请等 FACTOR_IC_COMPUTE 跑完',
+  },
+};
+
+/** IC_90d 数值染色: ≥0.03 绿 / ≤-0.03 红 (反向有效) / 其它默认; null → undefined 让组件用默认色 */
+function ic90dColor(v: number | null): string | undefined {
+  if (v === null || !Number.isFinite(v)) return undefined;
+  if (v >= 0.03) return '#52c41a';
+  if (v <= -0.03) return '#cf1322';
+  return undefined;
+}
+
+/** IC_IR 数值染色: |ir|≥0.5 绿稳健 / |ir|≥0.3 不染色 (灰区) / |ir|<0.3 灰; null → undefined */
+function icIrColor(v: number | null): string | undefined {
+  if (v === null || !Number.isFinite(v)) return undefined;
+  if (Math.abs(v) >= 0.5) return '#52c41a';
+  return undefined;
+}
+
+/**
+ * US-047 因子组合模板 (FE-008): 把 ISO 时间戳转成 "MM-DD HH:mm" 给 List item 副标题用.
+ * 解析失败 / 空 返 "—". UI 兜底, 不抛错.
+ */
+function formatSavedAt(raw: string | null | undefined): string {
+  if (!raw) return '—';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return '—';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 const FactorWorkspace: React.FC = () => {
   const tabs: WorkspaceTab[] = [
     { key: 'overview', label: '因子总览', icon: <FundOutlined /> },
@@ -120,6 +197,9 @@ const FactorWorkspace: React.FC = () => {
     { key: 'sentiment', label: '舆情雷达', icon: <RobotOutlined /> },
     { key: 'macro', label: '宏观环境', icon: <FundOutlined /> },
     { key: 'block', label: '大宗交易', icon: <FundOutlined /> },
+    // US-048 (FE-009) — 行业 ETF 申赎资金流 + 政策要闻 2 个新 tab
+    { key: 'etf', label: 'ETF 资金流', icon: <FundOutlined /> },
+    { key: 'policy', label: '政策要闻', icon: <FundOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('overview');
 
@@ -216,6 +296,104 @@ const FactorWorkspace: React.FC = () => {
     setMaxPerIndustry(3);
     setExcludeST(true);
     setExcludeNew60d(true);
+  }, []);
+
+  // US-046 因子 AI 权重对照 (FE-007): 基于 overview 返的 (ic_90d, ic_ir, health_class)
+  // 算 AI 推荐权重. useMemo cache 避免每次 render 重算 (factors 变才会重算).
+  // 空 Map 等价于 "AI 暂无建议" — UI 那一侧 Tag 显示 '—'.
+  const aiWeights = useMemo(() => computeAIWeights(overview?.factors ?? []), [overview?.factors]);
+
+  /** "一键应用 AI 建议": 把 aiWeights 全套覆盖到 weights state, 其它参数不动 */
+  const handleApplyAIWeights = useCallback(() => {
+    if (Object.keys(aiWeights).length === 0) {
+      message.warning('AI 暂无权重建议 — 请等 FACTOR_IC_COMPUTE 跑完最新一日 IC 报告');
+      return;
+    }
+    setWeights(prev => {
+      // 把所有当前 weights key 先归零, 再用 aiWeights 覆盖; 这样 prev 中存在但
+      // aiWeights 不推荐的因子会被设成 0, 用户看到的就是"AI 视角的完整套用".
+      const next: Record<string, number> = {};
+      for (const k of Object.keys(prev)) next[k] = 0;
+      for (const [k, v] of Object.entries(aiWeights)) next[k] = v;
+      return next;
+    });
+    message.success(`已应用 AI 推荐 (${Object.keys(aiWeights).length} 个因子)`);
+  }, [aiWeights]);
+
+  // --- US-047 因子组合模板 save/load (FE-008) ---
+  // localStorage-only 私有模板库. 与 [[factorAIWeightHelpers]] 同款纯 helper 模式,
+  // FactorWorkspace 只负责 state + UI; 校验 / 落盘 / 解析 / 上限统一在
+  // factorComboTemplateHelpers 里. 模板里包含全套权重 + 选股参数 (topN / industryNeutral
+  // / maxPerIndustry / excludeST / excludeNew60d), load 时一次性灌回所有 setXxx,
+  // 不需要再点 "预览" 之外的其他按钮就能复现该模板的选股逻辑.
+  const [templates, setTemplates] = useState<ComboTemplate[]>(() => listComboTemplates());
+  const [saveModalOpen, setSaveModalOpen] = useState(false);
+  const [pendingTemplateName, setPendingTemplateName] = useState('');
+  const [loadModalOpen, setLoadModalOpen] = useState(false);
+
+  const refreshTemplates = useCallback(() => {
+    setTemplates(listComboTemplates());
+  }, []);
+
+  /** 弹出保存对话框. 当前若已选中某个模板 (pendingTemplateName 残留), 复用作默认名. */
+  const openSaveModal = useCallback(() => {
+    setPendingTemplateName(prev => prev || '');
+    setSaveModalOpen(true);
+  }, []);
+
+  const handleConfirmSave = useCallback(() => {
+    try {
+      const list = saveComboTemplate({
+        name: pendingTemplateName,
+        weights,
+        topN,
+        industryNeutral,
+        maxPerIndustry,
+        excludeST,
+        excludeNew60d,
+      });
+      setTemplates(list);
+      setSaveModalOpen(false);
+      message.success(`已保存模板「${pendingTemplateName.trim()}」`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      message.error(msg);
+    }
+  }, [
+    pendingTemplateName,
+    weights,
+    topN,
+    industryNeutral,
+    maxPerIndustry,
+    excludeST,
+    excludeNew60d,
+  ]);
+
+  /** 把模板应用到当前 state: 一次性更新所有 6 个相关 setter. */
+  const handleLoadTemplate = useCallback((tpl: ComboTemplate) => {
+    setWeights(prev => {
+      // 与 handleApplyAIWeights 同款做法: 先把 prev 已知的因子置 0, 再灌 tpl.weights,
+      // 这样 tpl 没覆盖到的旧因子会变 0 (= "完整切到这个模板的视角"); 反之 tpl 中存在
+      // 但 overview 还没 fetch 回来的新因子也能正确灌入, 等 overview 拉回后 UI 自然展示.
+      const next: Record<string, number> = {};
+      for (const k of Object.keys(prev)) next[k] = 0;
+      for (const [k, v] of Object.entries(tpl.weights)) next[k] = v;
+      return next;
+    });
+    setTopN(tpl.topN);
+    setIndustryNeutral(tpl.industryNeutral);
+    setMaxPerIndustry(tpl.maxPerIndustry);
+    setExcludeST(tpl.excludeST);
+    setExcludeNew60d(tpl.excludeNew60d);
+    setPendingTemplateName(tpl.name);
+    setLoadModalOpen(false);
+    message.success(`已加载模板「${tpl.name}」`);
+  }, []);
+
+  const handleDeleteTemplate = useCallback((name: string) => {
+    const list = deleteComboTemplate(name);
+    setTemplates(list);
+    message.success(`已删除模板「${name}」`);
   }, []);
 
   // --- 行业热力 (US-074) — lazy on first tab activation ---
@@ -390,6 +568,7 @@ const FactorWorkspace: React.FC = () => {
         factors={overview?.factors ?? []}
         weights={weights}
         weightSum={weightSum}
+        aiWeights={aiWeights}
         topN={topN}
         industryNeutral={industryNeutral}
         maxPerIndustry={maxPerIndustry}
@@ -407,6 +586,13 @@ const FactorWorkspace: React.FC = () => {
         onExcludeNew60dChange={setExcludeNew60d}
         onPreview={handlePreview}
         onReset={handleResetWeights}
+        onApplyAIWeights={handleApplyAIWeights}
+        templates={templates}
+        onOpenSaveTemplate={openSaveModal}
+        onOpenLoadTemplate={() => {
+          refreshTemplates();
+          setLoadModalOpen(true);
+        }}
       />
     );
   } else if (activeKey === 'heatmap') {
@@ -440,6 +626,12 @@ const FactorWorkspace: React.FC = () => {
     body = <MacroEnvTab />;
   } else if (activeKey === 'block') {
     body = <BlockTradesTab />;
+  } else if (activeKey === 'etf') {
+    // US-048 (FE-009): 行业 ETF 申赎资金流 — 内部 lazy fetch, 第一次切到该 tab 才拉
+    body = <ETFFlowTab />;
+  } else if (activeKey === 'policy') {
+    // US-048 (FE-009): 政策要闻 — 从 market-news 流前端关键字过滤出政策类
+    body = <PolicyNewsTab />;
   } else {
     // 'picks'
     body = <PicksTab picks={latestPicks} loading={loading} />;
@@ -467,6 +659,103 @@ const FactorWorkspace: React.FC = () => {
         error={detailError}
         onRetry={drawerFactor ? () => loadFactorDetail(drawerFactor) : undefined}
       />
+      {/* US-047 因子组合模板 — Save 对话框 */}
+      <Modal
+        title="保存因子组合模板"
+        open={saveModalOpen}
+        onCancel={() => setSaveModalOpen(false)}
+        onOk={handleConfirmSave}
+        okText="保存"
+        cancelText="取消"
+        okButtonProps={{
+          disabled: pendingTemplateName.trim().length === 0,
+          'data-testid': 'combo-template-save-confirm-btn',
+        }}
+        destroyOnClose
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size={12}>
+          <Input
+            placeholder="例如：高分红低估值 / 短期反转 / 成长动量"
+            value={pendingTemplateName}
+            onChange={e => setPendingTemplateName(e.target.value)}
+            maxLength={COMBO_TEMPLATE_NAME_MAX_LEN}
+            showCount
+            onPressEnter={handleConfirmSave}
+            data-testid="combo-template-name-input"
+          />
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            模板包含全部因子权重 + 选股参数 (Top-N / 行业中性 / 单行业上限 / 剔除 ST / 剔除次新).
+            同名模板会被覆盖. 上限 20 个.
+          </Text>
+        </Space>
+      </Modal>
+      {/* US-047 因子组合模板 — Load 对话框 */}
+      <Modal
+        title="加载因子组合模板"
+        open={loadModalOpen}
+        onCancel={() => setLoadModalOpen(false)}
+        footer={null}
+        destroyOnClose
+        width={560}
+      >
+        {templates.length === 0 ? (
+          <Empty description="还没有保存过模板 — 调整 slider 后点 “保存模板” 即可创建" />
+        ) : (
+          <List
+            dataSource={templates}
+            data-testid="combo-template-list"
+            renderItem={tpl => (
+              <List.Item
+                actions={[
+                  <Button
+                    key="load"
+                    type="link"
+                    onClick={() => handleLoadTemplate(tpl)}
+                    data-testid={`combo-template-load-btn-${tpl.name}`}
+                  >
+                    加载
+                  </Button>,
+                  <Popconfirm
+                    key="del"
+                    title={`确定删除模板「${tpl.name}」？`}
+                    okText="删除"
+                    okButtonProps={{ danger: true }}
+                    cancelText="取消"
+                    onConfirm={() => handleDeleteTemplate(tpl.name)}
+                  >
+                    <Button
+                      type="link"
+                      danger
+                      icon={<DeleteOutlined />}
+                      data-testid={`combo-template-delete-btn-${tpl.name}`}
+                    >
+                      删除
+                    </Button>
+                  </Popconfirm>,
+                ]}
+              >
+                <List.Item.Meta
+                  title={tpl.name}
+                  description={
+                    <Space wrap size={[6, 4]} style={{ fontSize: 12 }}>
+                      <Tag>
+                        {Object.keys(tpl.weights).filter(k => tpl.weights[k] > 0).length} 因子
+                      </Tag>
+                      <Tag>Top {tpl.topN}</Tag>
+                      {tpl.industryNeutral && <Tag color="blue">行业中性</Tag>}
+                      {tpl.excludeST && <Tag color="orange">剔除 ST</Tag>}
+                      {tpl.excludeNew60d && <Tag color="orange">剔除次新</Tag>}
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        保存于 {formatSavedAt(tpl.savedAt)}
+                      </Text>
+                    </Space>
+                  }
+                />
+              </List.Item>
+            )}
+          />
+        )}
+      </Modal>
     </>
   );
 };
@@ -502,6 +791,7 @@ const FactorOverviewTab: React.FC<{
         const category = CATEGORY_DISPLAY[factor.category] ?? CATEGORY_DISPLAY.other;
         const coverageRatio =
           factor.universe_size > 0 ? factor.non_neutral_count / factor.universe_size : 0;
+        const health = FACTOR_HEALTH_DISPLAY[factor.health_class] ?? FACTOR_HEALTH_DISPLAY.unknown;
         return (
           <Col xs={24} sm={12} lg={8} xxl={6} key={factor.name}>
             <Card
@@ -512,6 +802,11 @@ const FactorOverviewTab: React.FC<{
                 <Space>
                   <Text strong>{factor.name}</Text>
                   <Tag color={category.color}>{category.label}</Tag>
+                  <AntTooltip title={health.tip}>
+                    <Tag color={health.color} data-testid={`factor-health-tag-${factor.name}`}>
+                      {health.label}
+                    </Tag>
+                  </AntTooltip>
                 </Space>
               }
             >
@@ -533,6 +828,33 @@ const FactorOverviewTab: React.FC<{
                     suffix="只"
                     valueStyle={{ fontSize: 14 }}
                   />
+                </Col>
+              </Row>
+              {/* US-045 因子健康列 (FE-006): IC_90d + IC_IR 双指标 */}
+              <Row gutter={8} style={{ marginTop: 8 }}>
+                <Col span={12}>
+                  <AntTooltip title="近 90 日 IC 均值 (look_forward=20)；> 0.05 一般认为有 alpha">
+                    <Statistic
+                      title="IC_90d"
+                      value={factor.ic_90d !== null ? factor.ic_90d.toFixed(3) : '—'}
+                      valueStyle={{
+                        fontSize: 14,
+                        color: ic90dColor(factor.ic_90d),
+                      }}
+                    />
+                  </AntTooltip>
+                </Col>
+                <Col span={12}>
+                  <AntTooltip title="最新 IC report 的 IC_IR (信息比率)；|IC_IR| > 0.5 算稳健、> 1.0 优秀">
+                    <Statistic
+                      title="IC_IR"
+                      value={factor.ic_ir !== null ? factor.ic_ir.toFixed(2) : '—'}
+                      valueStyle={{
+                        fontSize: 14,
+                        color: icIrColor(factor.ic_ir),
+                      }}
+                    />
+                  </AntTooltip>
                 </Col>
               </Row>
               <div style={{ marginTop: 12 }}>
@@ -560,6 +882,8 @@ interface WeightsTabProps {
   factors: FactorOverviewItem[];
   weights: Record<string, number>;
   weightSum: number;
+  /** US-046 因子 AI 权重对照 (FE-007): 按 |IC_90d|×|IC_IR| 算出的归一化权重 %; 空 = AI 暂无建议 */
+  aiWeights: Record<string, number>;
   topN: number;
   industryNeutral: boolean;
   maxPerIndustry: number;
@@ -575,12 +899,21 @@ interface WeightsTabProps {
   onExcludeNew60dChange: (b: boolean) => void;
   onPreview: () => void;
   onReset: () => void;
+  /** US-046: 一键把所有 slider 设成 AI 推荐值 */
+  onApplyAIWeights: () => void;
+  /** US-047 因子组合模板 (FE-008): 已保存的模板数, 仅 用于 "加载模板" 按钮上的 Badge 显示 */
+  templates: ComboTemplate[];
+  /** US-047: 点 "保存模板" 唤起 Save Modal */
+  onOpenSaveTemplate: () => void;
+  /** US-047: 点 "加载模板" 唤起 Load Modal (内部 refreshTemplates 后弹出) */
+  onOpenLoadTemplate: () => void;
 }
 
 const WeightsTab: React.FC<WeightsTabProps> = ({
   factors,
   weights,
   weightSum,
+  aiWeights,
   topN,
   industryNeutral,
   maxPerIndustry,
@@ -596,6 +929,10 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
   onExcludeNew60dChange,
   onPreview,
   onReset,
+  onApplyAIWeights,
+  templates,
+  onOpenSaveTemplate,
+  onOpenLoadTemplate,
 }) => {
   const [aiTarget, setAiTarget] = useState<{ symbol: string; name: string | null } | null>(null);
 
@@ -610,6 +947,9 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
     Object.keys(weights).filter(k => weights[k] > 0),
     (row: FactorPreviewSignal) => setAiTarget({ symbol: row.stock_code, name: row.name || null })
   );
+  // US-046 AI 权重对照: 当前用户权重 vs AI 权重的差额. 仅 AI 推荐过的因子有 delta.
+  const weightDeltas = computeWeightDeltas(weights, aiWeights);
+  const aiHasRecommendation = Object.keys(aiWeights).length > 0;
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card
@@ -621,7 +961,40 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
         }
         extra={
           <Space>
+            <AntTooltip
+              title={
+                aiHasRecommendation
+                  ? `按 |IC_90d|×|IC_IR| 算的归一化建议 (${
+                      Object.keys(aiWeights).length
+                    } 个有效因子). 点击后会覆盖所有 slider.`
+                  : 'AI 暂无建议: 需要至少一个 health=alpha/unstable 的因子才能推荐, 请等 FACTOR_IC_COMPUTE 跑完'
+              }
+            >
+              <Button
+                icon={<RobotOutlined />}
+                onClick={onApplyAIWeights}
+                disabled={!aiHasRecommendation}
+                data-testid="apply-ai-weights-btn"
+              >
+                应用 AI 建议
+              </Button>
+            </AntTooltip>
             <Button onClick={onReset}>重置为默认</Button>
+            {/* US-047 因子组合模板 (FE-008): Save + Load 入口 */}
+            <Button
+              icon={<SaveOutlined />}
+              onClick={onOpenSaveTemplate}
+              data-testid="combo-template-save-btn"
+            >
+              保存模板
+            </Button>
+            <Button
+              icon={<AppstoreOutlined />}
+              onClick={onOpenLoadTemplate}
+              data-testid="combo-template-load-btn"
+            >
+              加载模板{templates.length > 0 ? ` (${templates.length})` : ''}
+            </Button>
             <Button
               type="primary"
               icon={<ThunderboltOutlined />}
@@ -637,6 +1010,13 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
           {factors.map(factor => {
             const category = CATEGORY_DISPLAY[factor.category] ?? CATEGORY_DISPLAY.other;
             const value = weights[factor.name] ?? 0;
+            // US-046 AI 权重对照: 右侧显示 "AI N%" + "Δ +M%" 的 chip
+            const aiVal = aiWeights[factor.name];
+            const aiSuggested = typeof aiVal === 'number';
+            const delta = aiSuggested ? weightDeltas[factor.name] ?? 0 : null;
+            // delta 颜色: |delta| < 2% 灰色 (基本一致) / 正值 (用户高于 AI) 红 / 负值 (用户低于 AI) 绿
+            const deltaColor =
+              delta === null || Math.abs(delta) < 2 ? '#999' : delta > 0 ? '#cf1322' : '#52c41a';
             return (
               <Col xs={24} md={12} key={factor.name}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -662,6 +1042,35 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
                     style={{ width: 80 }}
                     addonAfter="%"
                   />
+                  {/* US-046 AI 权重对照: slider 右侧固定宽度 chip, 即使没建议也占位防错位 */}
+                  <div
+                    style={{
+                      minWidth: 110,
+                      textAlign: 'right',
+                      fontSize: 11,
+                      lineHeight: 1.4,
+                    }}
+                    data-testid={`ai-weight-chip-${factor.name}`}
+                  >
+                    {aiSuggested ? (
+                      <>
+                        <div>
+                          <Text type="secondary">AI</Text>{' '}
+                          <Text strong style={{ color: '#722ed1' }}>
+                            {aiVal.toFixed(1)}%
+                          </Text>
+                        </div>
+                        <div style={{ color: deltaColor }}>
+                          Δ {delta! > 0 ? '+' : ''}
+                          {delta!.toFixed(1)}%
+                        </div>
+                      </>
+                    ) : (
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        AI —
+                      </Text>
+                    )}
+                  </div>
                 </div>
               </Col>
             );
@@ -952,7 +1361,9 @@ const IndustryBoardTab: React.FC<{
         <Alert
           type={data.data_staleness === 'very_stale' ? 'error' : 'warning'}
           showIcon
-          message={`⚠ 数据滞后 ${data.lag_days} 天 (当前 ${data.today_iso ?? '?'}, 数据 ${data.trade_date})`}
+          message={`⚠ 数据滞后 ${data.lag_days} 天 (当前 ${data.today_iso ?? '?'}, 数据 ${
+            data.trade_date
+          })`}
           description={
             data.data_staleness === 'very_stale'
               ? '行业资金流数据已超过 1 周未更新. 可能 AKShare 上游 endpoint 临时故障 (stock_sector_fund_flow_rank). 等待自动 cron 修复或手动 sync.'
@@ -1107,27 +1518,26 @@ const IndustryBoardTab: React.FC<{
                 {
                   title: `近 ${data.dates.length} 日涨跌幅`,
                   width: 200,
-                  render: (_v, row) => (
-                    <SparklinePctRow points={row.series} dates={data.dates} />
-                  ),
+                  render: (_v, row) => <SparklinePctRow points={row.series} dates={data.dates} />,
                 },
               ]}
               expandable={{
-                expandedRowRender: (row) => (
+                expandedRowRender: row => (
                   <div style={{ padding: '8px 0', fontSize: 12 }}>
                     <Typography.Paragraph style={{ marginBottom: 4 }}>
-                      <Text strong>{row.industry_name}</Text> · 近 {row.series.length} 日资金流向 (主力净占比):
+                      <Text strong>{row.industry_name}</Text> · 近 {row.series.length} 日资金流向
+                      (主力净占比):
                     </Typography.Paragraph>
                     <Space wrap>
-                      {row.series.map((p) => (
+                      {row.series.map(p => (
                         <Tag
                           key={p.trade_date}
                           color={
                             p.main_inflow_ratio == null
                               ? 'default'
                               : p.main_inflow_ratio > 0
-                                ? 'red'
-                                : 'green'
+                              ? 'red'
+                              : 'green'
                           }
                         >
                           {p.trade_date.slice(5)}: {fmtPct(p.main_inflow_ratio)}
@@ -1139,8 +1549,8 @@ const IndustryBoardTab: React.FC<{
               }}
             />
             <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 12 }}>
-              排序逻辑: 今日主力净流入 desc. 板块龙头股 = 当日涨幅最大且非一字板.
-              展开行查看近 {data.dates.length} 日板块资金流强度.
+              排序逻辑: 今日主力净流入 desc. 板块龙头股 = 当日涨幅最大且非一字板. 展开行查看近{' '}
+              {data.dates.length} 日板块资金流强度.
             </Typography.Paragraph>
           </Card>
         </Col>
@@ -1157,9 +1567,7 @@ const IndustryBoardTab: React.FC<{
             size="small"
           >
             {data.hot_concepts.length === 0 ? (
-              <Empty
-                description="今日 snowball_hot_keywords 无数据 — 请在 SchedulerService 启用 SNOWBALL_HOT_KEYWORD_SYNC"
-              />
+              <Empty description="今日 snowball_hot_keywords 无数据 — 请在 SchedulerService 启用 SNOWBALL_HOT_KEYWORD_SYNC" />
             ) : (
               <Space direction="vertical" size={8} style={{ width: '100%' }}>
                 {data.hot_concepts.map((c, i) => (
@@ -1178,16 +1586,14 @@ const IndustryBoardTab: React.FC<{
                             新进
                           </Tag>
                         )}
-                        {c.rank != null && (
-                          <Tag style={{ marginLeft: 4 }}>#{c.rank}</Tag>
-                        )}
+                        {c.rank != null && <Tag style={{ marginLeft: 4 }}>#{c.rank}</Tag>}
                       </div>
                       <Tag color="purple">{c.heat_score.toLocaleString()}</Tag>
                     </div>
                     {c.related_stocks.length > 0 && (
                       <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
                         关联:{' '}
-                        {c.related_stocks.map((s) => (
+                        {c.related_stocks.map(s => (
                           <Tag key={s.stock_code} style={{ marginBottom: 2 }}>
                             {s.stock_name || s.stock_code}
                           </Tag>
@@ -1255,11 +1661,7 @@ const IndustryBoardTab: React.FC<{
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                  <Text
-                    strong
-                    style={{ fontSize: 13 }}
-                    ellipsis={{ tooltip: n.title }}
-                  >
+                  <Text strong style={{ fontSize: 13 }} ellipsis={{ tooltip: n.title }}>
                     {n.url ? (
                       <a href={n.url} target="_blank" rel="noopener noreferrer">
                         {n.title}
@@ -1268,7 +1670,9 @@ const IndustryBoardTab: React.FC<{
                       n.title
                     )}
                   </Text>
-                  <Tag color={n.source === 'cls' ? 'orange' : n.source === 'em' ? 'blue' : 'default'}>
+                  <Tag
+                    color={n.source === 'cls' ? 'orange' : n.source === 'em' ? 'blue' : 'default'}
+                  >
                     {n.source}
                   </Tag>
                 </div>
@@ -1290,14 +1694,11 @@ const SparklinePctRow: React.FC<{
   dates: string[];
 }> = ({ points, dates }) => {
   if (!points.length) return <span style={{ color: '#999' }}>—</span>;
-  const max = Math.max(
-    1,
-    ...points.map((p) => (p.change_pct == null ? 0 : Math.abs(p.change_pct)))
-  );
+  const max = Math.max(1, ...points.map(p => (p.change_pct == null ? 0 : Math.abs(p.change_pct))));
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', height: 28, gap: 3 }}>
-      {dates.map((d) => {
-        const p = points.find((x) => x.trade_date === d);
+      {dates.map(d => {
+        const p = points.find(x => x.trade_date === d);
         const v = p?.change_pct ?? null;
         const h = v == null ? 4 : Math.max(2, (Math.abs(v) / max) * 24);
         const color = v == null ? '#e0e0e0' : v >= 0 ? '#cf1322' : '#389e0d';
@@ -1423,7 +1824,9 @@ const SentimentBoardTab: React.FC<{
         <Alert
           type={data.data_staleness === 'very_stale' ? 'error' : 'warning'}
           showIcon
-          message={`⚠ 数据滞后 ${data.lag_days} 天 (当前 ${data.today_iso ?? '?'}, 数据 ${data.trade_date})`}
+          message={`⚠ 数据滞后 ${data.lag_days} 天 (当前 ${data.today_iso ?? '?'}, 数据 ${
+            data.trade_date
+          })`}
           description="社媒/舆情数据未更新到最新交易日, 决策时请留意时间差."
           style={{ marginBottom: 8 }}
         />
@@ -1477,10 +1880,7 @@ const SentimentBoardTab: React.FC<{
               />
             )}
             {data.today_hot_rank_top20.length === 0 ? (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="今日人气榜无数据"
-              />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="今日人气榜无数据" />
             ) : (
               <Table
                 size="small"
@@ -1495,7 +1895,10 @@ const SentimentBoardTab: React.FC<{
                     width: 56,
                     align: 'center',
                     render: (v: number) => (
-                      <Tag color={rankColor(v) === '#999' ? 'default' : undefined} style={{ background: rankColor(v), color: 'white', border: 'none' }}>
+                      <Tag
+                        color={rankColor(v) === '#999' ? 'default' : undefined}
+                        style={{ background: rankColor(v), color: 'white', border: 'none' }}
+                      >
                         {v}
                       </Tag>
                     ),
@@ -1578,7 +1981,10 @@ const SentimentBoardTab: React.FC<{
                     width: 56,
                     align: 'center',
                     render: (v: number) => (
-                      <Tag color={rankColor(v) === '#999' ? 'default' : undefined} style={{ background: rankColor(v), color: 'white', border: 'none' }}>
+                      <Tag
+                        color={rankColor(v) === '#999' ? 'default' : undefined}
+                        style={{ background: rankColor(v), color: 'white', border: 'none' }}
+                      >
                         {v}
                       </Tag>
                     ),
@@ -1591,7 +1997,9 @@ const SentimentBoardTab: React.FC<{
                       <div>
                         <div style={{ fontSize: 12, fontWeight: 500 }}>{v}</div>
                         {row.related_stock_code && (
-                          <div style={{ fontSize: 11, color: '#1890ff' }}>{row.related_stock_code}</div>
+                          <div style={{ fontSize: 11, color: '#1890ff' }}>
+                            {row.related_stock_code}
+                          </div>
                         )}
                       </div>
                     ),
@@ -1602,9 +2010,7 @@ const SentimentBoardTab: React.FC<{
                     width: 90,
                     align: 'right',
                     render: (v: number | null) => (
-                      <span style={{ fontSize: 12 }}>
-                        {v == null ? '—' : v.toLocaleString()}
-                      </span>
+                      <span style={{ fontSize: 12 }}>{v == null ? '—' : v.toLocaleString()}</span>
                     ),
                   },
                   {
@@ -1681,9 +2087,7 @@ const SentimentBoardTab: React.FC<{
                     dataIndex: 'hot_rank_em',
                     width: 60,
                     align: 'center',
-                    render: (v: number | null) => (
-                      <Tag color="red">{v ?? '—'}</Tag>
-                    ),
+                    render: (v: number | null) => <Tag color="red">{v ?? '—'}</Tag>,
                   },
                   {
                     title: '5日均',
@@ -1699,8 +2103,7 @@ const SentimentBoardTab: React.FC<{
                     dataIndex: 'rank_breakout_delta',
                     width: 80,
                     align: 'right',
-                    sorter: (a, b) =>
-                      (a.rank_breakout_delta ?? 0) - (b.rank_breakout_delta ?? 0),
+                    sorter: (a, b) => (a.rank_breakout_delta ?? 0) - (b.rank_breakout_delta ?? 0),
                     render: (v: number | null) => (
                       <span style={{ fontSize: 12, fontWeight: 600, color: '#cf1322' }}>
                         +{fmtNum(v)}
@@ -1745,10 +2148,7 @@ const SentimentBoardTab: React.FC<{
               />
             )}
             {data.sentiment_scatter.length === 0 ? (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="今日无数据"
-              />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="今日无数据" />
             ) : (
               (() => {
                 const top30 = [...data.sentiment_scatter]
@@ -1798,9 +2198,7 @@ const SentimentBoardTab: React.FC<{
                               <div style={{ fontWeight: 500 }}>
                                 {p.label} <span style={{ color: '#999' }}>{p.code}</span>
                               </div>
-                              <div style={{ color: '#722ed1' }}>
-                                综合评分: {p.comment_score}
-                              </div>
+                              <div style={{ color: '#722ed1' }}>综合评分: {p.comment_score}</div>
                               <div style={{ color: '#fa8c16' }}>
                                 机构参与: {p.institution_participation}%
                               </div>
@@ -1896,15 +2294,17 @@ const SentimentBoardTab: React.FC<{
                           n.title
                         )}
                       </Text>
-                      <Tag color={n.source === 'cls' ? 'orange' : n.source === 'em' ? 'blue' : 'default'}>
+                      <Tag
+                        color={
+                          n.source === 'cls' ? 'orange' : n.source === 'em' ? 'blue' : 'default'
+                        }
+                      >
                         {n.source}
                       </Tag>
                     </div>
                     <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>
                       {formatNewsTime(n.publish_time)}
-                      {n.category && (
-                        <Tag style={{ marginLeft: 4 }}>{n.category}</Tag>
-                      )}
+                      {n.category && <Tag style={{ marginLeft: 4 }}>{n.category}</Tag>}
                     </div>
                   </div>
                 ))}
@@ -1916,11 +2316,10 @@ const SentimentBoardTab: React.FC<{
 
       <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
         💡 舆情雷达: <Text strong>东财人气榜</Text> 告诉你「全市场散户在看哪只」,{' '}
-        <Text strong>百度搜索</Text> 是跨平台搜索热度的「散户视角」,{' '}
-        <Text strong>Rank 突变</Text> 找今日关注度突增的「异动股」,{' '}
-        <Text strong>散点</Text> 看机构参与 vs 综合评分的分布找洼地,{' '}
-        <Text strong>情绪要闻</Text> 提供宏观情绪上下文. 数据每日盘后由 SchedulerService
-        定时 sync (SOCIAL_SENTIMENT_SYNC 16:20 / MARKET_HOT_SEARCH_SYNC 16:40).
+        <Text strong>百度搜索</Text> 是跨平台搜索热度的「散户视角」, <Text strong>Rank 突变</Text>{' '}
+        找今日关注度突增的「异动股」, <Text strong>散点</Text> 看机构参与 vs 综合评分的分布找洼地,{' '}
+        <Text strong>情绪要闻</Text> 提供宏观情绪上下文. 数据每日盘后由 SchedulerService 定时 sync
+        (SOCIAL_SENTIMENT_SYNC 16:20 / MARKET_HOT_SEARCH_SYNC 16:40).
       </Typography.Paragraph>
     </Space>
   );
@@ -1966,7 +2365,7 @@ const IndustryHeatmapTab: React.FC<{
       cellMap.set(k, c.avg_z);
       sampleMap.set(k, c.sample_size ?? 0);
     }
-    return data.industries.map((ind) => {
+    return data.industries.map(ind => {
       const row: Record<string, any> = { industry: ind };
       let totalSample = 0;
       let factorSum = 0;
@@ -1981,7 +2380,8 @@ const IndustryHeatmapTab: React.FC<{
         }
         totalSample += sampleMap.get(k) || 0;
       }
-      row._sample_count = totalSample > 0 ? Math.round(totalSample / Math.max(1, data.factors.length)) : 0;
+      row._sample_count =
+        totalSample > 0 ? Math.round(totalSample / Math.max(1, data.factors.length)) : 0;
       row._intensity = factorN > 0 ? factorSum / factorN : 0;
       return row;
     });
@@ -1991,7 +2391,9 @@ const IndustryHeatmapTab: React.FC<{
     if (!sortFactor || sortFactor === '_intensity') {
       return [...tableRows].sort((a, b) => (b._intensity || 0) - (a._intensity || 0));
     }
-    return [...tableRows].sort((a, b) => (b[sortFactor] ?? -Infinity) - (a[sortFactor] ?? -Infinity));
+    return [...tableRows].sort(
+      (a, b) => (b[sortFactor] ?? -Infinity) - (a[sortFactor] ?? -Infinity)
+    );
   }, [tableRows, sortFactor]);
 
   // 颜色映射: z 越正越红, 越负越绿
@@ -2046,10 +2448,16 @@ const IndustryHeatmapTab: React.FC<{
           <Space>
             {data?.universe_size != null && <Tag color="purple">命中 {data.universe_size} 只</Tag>}
             <Button.Group size="small">
-              <Button type={viewMode === 'table' ? 'primary' : 'default'} onClick={() => setViewMode('table')}>
+              <Button
+                type={viewMode === 'table' ? 'primary' : 'default'}
+                onClick={() => setViewMode('table')}
+              >
                 表格
               </Button>
-              <Button type={viewMode === 'chart' ? 'primary' : 'default'} onClick={() => setViewMode('chart')}>
+              <Button
+                type={viewMode === 'chart' ? 'primary' : 'default'}
+                onClick={() => setViewMode('chart')}
+              >
                 热力图
               </Button>
             </Button.Group>
@@ -2089,7 +2497,7 @@ const IndustryHeatmapTab: React.FC<{
                 >
                   综合强度
                 </Button>
-                {data.factors.slice(0, 8).map((f) => (
+                {data.factors.slice(0, 8).map(f => (
                   <Button
                     key={f}
                     type={sortFactor === f ? 'primary' : 'default'}
@@ -2104,7 +2512,12 @@ const IndustryHeatmapTab: React.FC<{
               size="small"
               rowKey="industry"
               dataSource={sortedRows}
-              pagination={{ pageSize: 30, size: 'small', showSizeChanger: true, pageSizeOptions: ['20', '30', '50', '100'] }}
+              pagination={{
+                pageSize: 30,
+                size: 'small',
+                showSizeChanger: true,
+                pageSizeOptions: ['20', '30', '50', '100'],
+              }}
               scroll={{ x: 'max-content', y: 600 }}
               columns={[
                 {
@@ -2119,7 +2532,7 @@ const IndustryHeatmapTab: React.FC<{
                     </div>
                   ),
                 },
-                ...data.factors.map((f) => ({
+                ...data.factors.map(f => ({
                   title: <span style={{ fontSize: 12 }}>{f}</span>,
                   dataIndex: f,
                   width: 78,
@@ -2364,6 +2777,25 @@ function buildLatestPickColumns(
         ) : (
           <Tag color="blue">持有</Tag>
         ),
+    },
+    {
+      title: '理由',
+      key: 'inline_reason',
+      width: 260,
+      render: (_: unknown, record: FactorPreviewSignal) => {
+        const short = buildShortPickReason(record);
+        // Tooltip 显示 backend 原始 reason + composite (展开行也有, 这里给"不点展开"
+        // 的用户兜底); 列默认显示 inline 短理由 (top-2 因子贡献), 与 US-049 PRD AC
+        // "列表内嵌短理由"对齐.
+        const fullTip = record.reason || short;
+        return (
+          <AntTooltip title={fullTip} mouseEnterDelay={0.2}>
+            <Text style={{ fontSize: 12 }} type="secondary">
+              {short}
+            </Text>
+          </AntTooltip>
+        );
+      },
     },
     ...(onAnalyze
       ? [

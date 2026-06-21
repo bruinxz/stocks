@@ -50,6 +50,8 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
     { fields: ['recommendation'] },
     { fields: ['status'] },
     { fields: ['user_id'] },
+    { fields: ['engine_variant'] },
+    { fields: ['shadow_of_report_id'] },
   ],
 })
 export class AIStockAnalysisReport extends Model {
@@ -187,6 +189,35 @@ export class AIStockAnalysisReport extends Model {
     comment: '原始 TradingAgents payload + 调用参数 metadata',
   })
   declare metadata: Record<string, unknown>;
+
+  /**
+   * GAMMA 2026-06-18 — analysis-engine v1 shadow mode 字段.
+   *
+   * `engine_variant`:
+   *   - 'tradingagents_legacy' (默认) = 现有 AIAdvisorService.analyzeSingleStock prod 路径
+   *   - 'multi_dim_v1' = analysis-engine 新引擎 (shadow / hard 阶段)
+   *
+   * `shadow_of_report_id`:
+   *   - 当 engine_variant='multi_dim_v1' 时, 引用其 shadow 对应的 prod report_id
+   *     (= AIStockAnalysisReport.report_id), 用于 dashboard 一致率统计 / forward returns join.
+   *   - 'tradingagents_legacy' 路径写 null.
+   */
+  @Column({
+    type: DataType.STRING(40),
+    allowNull: false,
+    defaultValue: 'tradingagents_legacy',
+    field: 'engine_variant',
+    comment: '产生本报告的分析引擎: tradingagents_legacy | multi_dim_v1',
+  })
+  declare engine_variant: string;
+
+  @Column({
+    type: DataType.STRING(100),
+    allowNull: true,
+    field: 'shadow_of_report_id',
+    comment: 'shadow mode 时引用其 prod report_id, 用于一致率/收益对比',
+  })
+  declare shadow_of_report_id: string | null;
 
   @CreatedAt
   @Column({ field: 'created_at' })

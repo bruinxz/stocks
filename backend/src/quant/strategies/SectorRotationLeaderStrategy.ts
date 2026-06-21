@@ -433,11 +433,7 @@ export class SectorRotationLeaderStrategy extends QuantStrategy {
       expected_edge_pct: 10.0,
       expected_holding_days: 20,
       key_factors: ['industry_5d_main_inflow', 'stock_change_pct_in_industry'],
-      failure_modes: [
-        '热门行业切换',
-        '行业内龙头切换 (今日龙头明日不再是)',
-        '主力资金统计偏差',
-      ],
+      failure_modes: ['热门行业切换', '行业内龙头切换 (今日龙头明日不再是)', '主力资金统计偏差'],
       kill_switch_metric: 'win_rate_30d',
       kill_switch_threshold: 0.45,
     },

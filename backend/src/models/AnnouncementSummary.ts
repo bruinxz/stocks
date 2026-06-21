@@ -15,6 +15,12 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
  *   - sentiment             AI 判定情绪 ('正面' / '中性' / '负面')
  *   - key_amounts_json      涉及金额 [{label, amount, unit}] (亿元 / 万元 / 元 / 股)
  *   - key_topics_json       涉及业务 / 主题 ['新能源', '光伏', '海外订单', ...]
+ *   - event_type            US-026 ANN-002 classifyEventType 输出: 7 大事件分类
+ *                           (业绩 / 重组 / 减持 / 担保 / 处罚 / 解禁 / 其它), NULL = 未分类
+ *   - priority              US-029 ANN-005 computePriority 输出: critical / high / medium / low
+ *                           critical → ANN-007 (US-031) 5min 飞书 push; 默认 'low'
+ *   - entities              US-027 ANN-003 extractEntities 输出: [{name, role, holding_pct?, ...}]
+ *                           JSONB array, 默认 []; 涉及人名 / 持股变动 / 关联方
  *
  * 数据源 (AKShare `stock_notice_report`):
  *   - 东方财富网-数据中心-公告大全-沪深京 A 股公告
@@ -61,6 +67,9 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
     { fields: ['announce_date'] },
     { fields: ['sentiment'] },
     { fields: ['announcement_type'] },
+    // US-025 ANN-001: 新增两条复合索引服务 ANN-007 critical push + KOL/黑天鹅按事件类型聚合.
+    { fields: ['priority', 'announce_date'], name: 'idx_announcement_summaries_priority_date' },
+    { fields: ['event_type', 'announce_date'], name: 'idx_announcement_summaries_event_type_date' },
   ],
 })
 export class AnnouncementSummary extends Model {
@@ -154,6 +163,40 @@ export class AnnouncementSummary extends Model {
     comment: '涉及业务/主题字符串数组 (e.g. ["新能源", "光伏", "海外订单"]), 默认空数组',
   })
   declare key_topics_json: string[];
+
+  // -------------------------------------------------------------------------
+  // US-025 ANN-001: 新增 event_type / priority / entities 三列
+  // 配套迁移: backend/scripts/migrations/2026-06-19-announcement-nlp-event-priority-entities.sql
+  // 实际抽取逻辑由 ANN-002 (US-026) ~ ANN-006 (US-030) 的 pure helper 填充;
+  // 本 story 仅落 schema + 默认值, 历史行 event_type=NULL / priority='low' / entities=[].
+  // -------------------------------------------------------------------------
+
+  @Column({
+    type: DataType.STRING(40),
+    allowNull: true,
+    field: 'event_type',
+    comment:
+      'AI 事件分类 (US-026 classifyEventType): 业绩|重组|减持|担保|处罚|解禁|其它; NULL=未分类',
+  })
+  declare event_type: string | null;
+
+  @Column({
+    type: DataType.STRING(20),
+    allowNull: false,
+    defaultValue: 'low',
+    comment:
+      'AI 优先级 (US-029 computePriority): critical|high|medium|low; critical 触发 5min 飞书 push (US-031)',
+  })
+  declare priority: string;
+
+  @Column({
+    type: DataType.JSONB,
+    allowNull: false,
+    defaultValue: [],
+    comment:
+      'AI 实体抽取 (US-027 extractEntities): [{name, role, holding_pct?, ...}] JSONB array, 默认 []',
+  })
+  declare entities: Array<Record<string, unknown>>;
 
   @Column({
     type: DataType.STRING(30),

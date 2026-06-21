@@ -56,6 +56,12 @@ import {
   WalkForwardWindowResult,
   RunWalkForwardPayload,
 } from '../../services/labService';
+import {
+  listAllGridTemplates,
+  paramGridToJsonString,
+  countGridCombinations,
+  GridTemplate,
+} from './walkForwardGridTemplateHelpers';
 
 const { Text } = Typography;
 const { RangePicker } = DatePicker;
@@ -730,9 +736,11 @@ const WalkForwardTab: React.FC<WalkForwardTabProps> = ({ strategies }) => {
           {/* grid_search 参数 */}
           <Form.Item
             noStyle
-            shouldUpdate={(prev, curr) => prev.optimizer_type !== curr.optimizer_type}
+            shouldUpdate={(prev, curr) =>
+              prev.optimizer_type !== curr.optimizer_type || prev.strategy_key !== curr.strategy_key
+            }
           >
-            {({ getFieldValue }) =>
+            {({ getFieldValue, setFieldsValue }) =>
               getFieldValue('optimizer_type') === 'bayesian' ? (
                 <Form.Item
                   name="param_bounds_json"
@@ -742,13 +750,60 @@ const WalkForwardTab: React.FC<WalkForwardTabProps> = ({ strategies }) => {
                   <Input.TextArea rows={5} placeholder="{ topN: { min, max, integer? } }" />
                 </Form.Item>
               ) : (
-                <Form.Item
-                  name="param_grid_json"
-                  label="param_grid (JSON)"
-                  rules={[{ required: true, message: '必填' }]}
-                >
-                  <Input.TextArea rows={5} placeholder="{ topN: [10, 20, 30] }" />
-                </Form.Item>
+                <>
+                  {/* US-053 (FE-014) 快速 grid 模板 — 内置 4 套预设 + 用户保存. 选中自动覆盖
+                      下方 param_grid (JSON) 字段, 用户也可手改后再提交. */}
+                  <Form.Item
+                    label={
+                      <Space size={4}>
+                        <Text>快速 grid 模板</Text>
+                        <Tooltip title="选一个预设填充下方 param_grid; 也可手动编辑覆盖. 列表已按当前所选策略排序, 命中策略的预设上浮.">
+                          <QuestionCircleOutlined style={{ color: '#999' }} />
+                        </Tooltip>
+                      </Space>
+                    }
+                    data-testid="grid-template-picker"
+                  >
+                    <Select
+                      allowClear
+                      showSearch
+                      placeholder="选择内置预设或已保存模板"
+                      data-testid="grid-template-select"
+                      filterOption={(input, option) =>
+                        String(option?.label || '')
+                          .toLowerCase()
+                          .includes(input.toLowerCase())
+                      }
+                      onChange={(value: string | undefined) => {
+                        if (!value) return;
+                        const all = listAllGridTemplates(getFieldValue('strategy_key'));
+                        const tpl = all.find(t => t.name === value);
+                        if (!tpl) return;
+                        setFieldsValue({ param_grid_json: paramGridToJsonString(tpl.paramGrid) });
+                        const combos = countGridCombinations(tpl.paramGrid);
+                        message.success(
+                          `已加载模板 "${tpl.name}" — 共 ${combos} 个 GridSearch 组合`
+                        );
+                      }}
+                      options={listAllGridTemplates(getFieldValue('strategy_key')).map(
+                        (t: GridTemplate) => ({
+                          value: t.name,
+                          label:
+                            (t.source === 'builtin' ? '📋 ' : '⭐ ') +
+                            t.name +
+                            ` (${countGridCombinations(t.paramGrid)} 组合)`,
+                        })
+                      )}
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    name="param_grid_json"
+                    label="param_grid (JSON)"
+                    rules={[{ required: true, message: '必填' }]}
+                  >
+                    <Input.TextArea rows={5} placeholder="{ topN: [10, 20, 30] }" />
+                  </Form.Item>
+                </>
               )
             }
           </Form.Item>

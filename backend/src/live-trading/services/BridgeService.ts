@@ -132,15 +132,20 @@ export class BridgeService {
     const MAX_FUTURE_SKEW_SEC = -300; // 5min future
     const clockSkew = localTime ? Math.round((now.getTime() - localTime.getTime()) / 1000) : 0;
     const skewSuspect = clockSkew > MAX_SKEW_SEC || clockSkew < MAX_FUTURE_SKEW_SEC;
-    const ALLOWED_BROKER_STATUS = new Set(['logged_in', 'logged_out', 'connecting', 'error', 'unknown']);
+    const ALLOWED_BROKER_STATUS = new Set([
+      'logged_in',
+      'logged_out',
+      'connecting',
+      'error',
+      'unknown',
+    ]);
     const rawBrokerStatus = String(input.broker_client_status || '').toLowerCase();
     const validatedBrokerStatus = ALLOWED_BROKER_STATUS.has(rawBrokerStatus)
       ? rawBrokerStatus
       : 'unknown';
     // Batch V (lt-5): 严格 status 派生 — 必须 broker logged_in **且** 时钟未异常才算 online.
     // 旧实现只看 broker_client_status === 'logged_in', bridge 可任意 fake.
-    const status =
-      validatedBrokerStatus === 'logged_in' && !skewSuspect ? 'online' : 'degraded';
+    const status = validatedBrokerStatus === 'logged_in' && !skewSuspect ? 'online' : 'degraded';
     // metadata 大小上限防 DoS (lt-related, M9/H10)
     let safeMetadata: Record<string, any> = {};
     try {
@@ -168,7 +173,10 @@ export class BridgeService {
     return { id: Number((row as any).id), clock_skew_seconds: clockSkew };
   }
 
-  async ingestAccountSnapshot(ctx: BridgeAuthContext, input: AccountSnapshotInput): Promise<{ id: number }> {
+  async ingestAccountSnapshot(
+    ctx: BridgeAuthContext,
+    input: AccountSnapshotInput
+  ): Promise<{ id: number }> {
     const row = await LiveAccountSnapshot.create({
       user_id: ctx.user_id,
       account_id: ctx.account_id,
@@ -191,7 +199,10 @@ export class BridgeService {
     return { id: Number((row as any).id) };
   }
 
-  async ingestPositions(ctx: BridgeAuthContext, positions: PositionInput[]): Promise<{ written: number }> {
+  async ingestPositions(
+    ctx: BridgeAuthContext,
+    positions: PositionInput[]
+  ): Promise<{ written: number }> {
     if (!Array.isArray(positions)) throw new Error('positions 必须是数组');
     if (positions.length === 0) return { written: 0 };
     // 整批包事务：避免半成品（部分行写入 + 中途失败）；单行内 findOne+update/create 仍可能与并发竞态，
@@ -231,10 +242,11 @@ export class BridgeService {
         } catch (err: any) {
           // 并发已被另一事务先 create：unique 冲突 → reload 走 update
           const code = (err && (err.original?.code || err.parent?.code)) || '';
-          const isDup = String(err?.name || '') === 'SequelizeUniqueConstraintError'
-            || code === '23505'
-            || code === 'SQLITE_CONSTRAINT_UNIQUE'
-            || code === 'SQLITE_CONSTRAINT_PRIMARYKEY';
+          const isDup =
+            String(err?.name || '') === 'SequelizeUniqueConstraintError' ||
+            code === '23505' ||
+            code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+            code === 'SQLITE_CONSTRAINT_PRIMARYKEY';
           if (!isDup) throw err;
           const existing = await LivePosition.findOne({
             where: { account_id: ctx.account_id, symbol: String(p.symbol) },
@@ -274,9 +286,14 @@ export class BridgeService {
    * 空集合保护：positions=[] 时不清零，避免 broker 临时空响应清掉真实持仓。
    * 整段包事务：upsert + 幽灵清零原子。
    */
-  async replacePositions(ctx: BridgeAuthContext, positions: PositionInput[]): Promise<{ written: number; zeroed: number; skipped_empty?: boolean }> {
+  async replacePositions(
+    ctx: BridgeAuthContext,
+    positions: PositionInput[]
+  ): Promise<{ written: number; zeroed: number; skipped_empty?: boolean }> {
     if (!Array.isArray(positions) || positions.length === 0) {
-      logger.warn(`replacePositions: empty positions payload for account ${ctx.account_id}, skipping to avoid wiping real holdings`);
+      logger.warn(
+        `replacePositions: empty positions payload for account ${ctx.account_id}, skipping to avoid wiping real holdings`
+      );
       return { written: 0, zeroed: 0, skipped_empty: true };
     }
     const incomingSymbols = new Set(
@@ -334,7 +351,10 @@ export class BridgeService {
             available_quantity: 0,
             market_value: 0,
             source: 'bridge_readonly',
-            raw_payload: { ...(row as any).raw_payload, zeroed_by_replace_at: new Date().toISOString() },
+            raw_payload: {
+              ...(row as any).raw_payload,
+              zeroed_by_replace_at: new Date().toISOString(),
+            },
           },
           { transaction: t }
         );
@@ -345,7 +365,10 @@ export class BridgeService {
     return result;
   }
 
-  async ingestOrders(ctx: BridgeAuthContext, orders: OrderInput[]): Promise<{ written: number; skipped: number }> {
+  async ingestOrders(
+    ctx: BridgeAuthContext,
+    orders: OrderInput[]
+  ): Promise<{ written: number; skipped: number }> {
     if (!Array.isArray(orders)) throw new Error('orders 必须是数组');
     if (orders.length === 0) return { written: 0, skipped: 0 };
     // 逐条独立事务：单条 unique 冲突不会让整批回滚
@@ -396,10 +419,11 @@ export class BridgeService {
       } catch (err: any) {
         const code = (err && (err.original?.code || err.parent?.code)) || '';
         const name = String(err?.name || '');
-        const isDup = name === 'SequelizeUniqueConstraintError'
-          || code === '23505'
-          || code === 'SQLITE_CONSTRAINT_UNIQUE'
-          || code === 'SQLITE_CONSTRAINT_PRIMARYKEY';
+        const isDup =
+          name === 'SequelizeUniqueConstraintError' ||
+          code === '23505' ||
+          code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+          code === 'SQLITE_CONSTRAINT_PRIMARYKEY';
         if (isDup) {
           skipped += 1;
           continue;
@@ -411,7 +435,10 @@ export class BridgeService {
     return { written, skipped };
   }
 
-  async ingestTrades(ctx: BridgeAuthContext, trades: TradeInput[]): Promise<{ written: number; skipped: number }> {
+  async ingestTrades(
+    ctx: BridgeAuthContext,
+    trades: TradeInput[]
+  ): Promise<{ written: number; skipped: number }> {
     if (!Array.isArray(trades)) throw new Error('trades 必须是数组');
     if (trades.length === 0) return { written: 0, skipped: 0 };
     let written = 0;
@@ -442,7 +469,9 @@ export class BridgeService {
               side: t.side,
               quantity: toNumber(t.quantity),
               trade_price: toNumber(t.trade_price),
-              trade_amount: toNumber(t.trade_amount || toNumber(t.quantity) * toNumber(t.trade_price)),
+              trade_amount: toNumber(
+                t.trade_amount || toNumber(t.quantity) * toNumber(t.trade_price)
+              ),
               trade_time: t.trade_time ? toDate(t.trade_time) : new Date(),
               raw_payload: t.raw_payload || {},
             } as any,
@@ -453,10 +482,11 @@ export class BridgeService {
       } catch (err: any) {
         const code = (err && (err.original?.code || err.parent?.code)) || '';
         const name = String(err?.name || '');
-        const isDup = name === 'SequelizeUniqueConstraintError'
-          || code === '23505'
-          || code === 'SQLITE_CONSTRAINT_UNIQUE'
-          || code === 'SQLITE_CONSTRAINT_PRIMARYKEY';
+        const isDup =
+          name === 'SequelizeUniqueConstraintError' ||
+          code === '23505' ||
+          code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+          code === 'SQLITE_CONSTRAINT_PRIMARYKEY';
         if (isDup) {
           skipped += 1;
           continue;
@@ -472,7 +502,12 @@ export class BridgeService {
 
   async pullPendingCommands(
     ctx: BridgeAuthContext,
-    options: { wait_seconds?: number; limit?: number; channel?: 'long_poll' | 'sse'; abort?: () => boolean } = {}
+    options: {
+      wait_seconds?: number;
+      limit?: number;
+      channel?: 'long_poll' | 'sse';
+      abort?: () => boolean;
+    } = {}
   ): Promise<{ commands: any[] }> {
     const wait = Math.min(Math.max(Number(options.wait_seconds || 0), 0), 60);
     const limit = Math.min(Math.max(Number(options.limit || 10), 1), 50);
@@ -483,17 +518,21 @@ export class BridgeService {
     const tickMs = Math.max(Number(process.env.LIVE_BRIDGE_PULL_TICK_MS || 2000), 500);
 
     // 心跳健康度检查：bridge 心跳丢失超过 LIVE_BRIDGE_HEARTBEAT_TIMEOUT_SECONDS（默认 300s）则禁止派单
-    const heartbeatTimeoutMs = Math.max(
-      Number(process.env.LIVE_BRIDGE_HEARTBEAT_TIMEOUT_SECONDS || 300),
-      30
-    ) * 1000;
+    const heartbeatTimeoutMs =
+      Math.max(Number(process.env.LIVE_BRIDGE_HEARTBEAT_TIMEOUT_SECONDS || 300), 30) * 1000;
     const lastHeartbeat: any = await LiveBrokerBridgeHeartbeat.findOne({
       where: { bridge_key: ctx.bridge_key },
       order: [['received_at', 'DESC']],
     });
-    if (lastHeartbeat && lastHeartbeat.received_at && Date.now() - new Date(lastHeartbeat.received_at).getTime() > heartbeatTimeoutMs) {
+    if (
+      lastHeartbeat &&
+      lastHeartbeat.received_at &&
+      Date.now() - new Date(lastHeartbeat.received_at).getTime() > heartbeatTimeoutMs
+    ) {
       logger.warn(
-        `bridge ${ctx.bridge_key} heartbeat is stale (${Math.round((Date.now() - new Date(lastHeartbeat.received_at).getTime()) / 1000)}s), refuse dispatch`
+        `bridge ${ctx.bridge_key} heartbeat is stale (${Math.round(
+          (Date.now() - new Date(lastHeartbeat.received_at).getTime()) / 1000
+        )}s), refuse dispatch`
       );
       return { commands: [] };
     }
@@ -602,14 +641,20 @@ export class BridgeService {
         dispatched_at: (cmd as any).dispatched_at || new Date(),
       });
       const latestDispatch = await LiveBrokerCommandDispatch.findOne({
-        where: { command_id: Number((cmd as any).id), bridge_key: ctx.bridge_key, acked_at: null as any },
+        where: {
+          command_id: Number((cmd as any).id),
+          bridge_key: ctx.bridge_key,
+          acked_at: null as any,
+        },
         order: [['dispatched_at', 'DESC']],
       });
       if (latestDispatch) await latestDispatch.update({ acked_at: new Date() });
       return { status: 'dispatched' };
     }
     if (current === 'pending') {
-      throw new Error('command 当前 pending：必须先经 pull 派发后才能 ack；绕过派发直接 ack 已被拒绝');
+      throw new Error(
+        'command 当前 pending：必须先经 pull 派发后才能 ack；绕过派发直接 ack 已被拒绝'
+      );
     }
     return { status: current };
   }
@@ -620,7 +665,13 @@ export class BridgeService {
     ctx: BridgeAuthContext,
     input: OrderEventInput
   ): Promise<{ accepted: boolean; reason?: string }> {
-    if (!input || !input.command_id || !input.event_type || input.event_seq == null || !input.event_time) {
+    if (
+      !input ||
+      !input.command_id ||
+      !input.event_type ||
+      input.event_seq == null ||
+      !input.event_time
+    ) {
       throw new Error('event 必须包含 command_id, event_type, event_seq, event_time');
     }
     // event_seq 强制转 string，避免 number 大数精度丢失
@@ -651,7 +702,10 @@ export class BridgeService {
       // Sequelize UniqueConstraintError / postgres 23505 / sqlite SQLITE_CONSTRAINT_UNIQUE
       const code = (err && (err.original?.code || err.parent?.code)) || '';
       const name = String(err?.name || '');
-      const isDup = name === 'SequelizeUniqueConstraintError' || code === '23505' || code === 'SQLITE_CONSTRAINT_UNIQUE';
+      const isDup =
+        name === 'SequelizeUniqueConstraintError' ||
+        code === '23505' ||
+        code === 'SQLITE_CONSTRAINT_UNIQUE';
       if (isDup) {
         return { accepted: false, reason: 'duplicate_event_seq' };
       }
@@ -676,7 +730,11 @@ export class BridgeService {
     return { accepted: true };
   }
 
-  private async advanceCommandStatus(cmd: any, ev: OrderEventInput, eventSeqStr: string): Promise<void> {
+  private async advanceCommandStatus(
+    cmd: any,
+    ev: OrderEventInput,
+    eventSeqStr: string
+  ): Promise<void> {
     const current = String(cmd.status);
     const terminal = new Set(['filled', 'cancelled', 'failed', 'expired']);
     if (terminal.has(current)) return;
@@ -691,7 +749,10 @@ export class BridgeService {
 
     await sequelize.transaction(async t => {
       // 重新读取以获得最新 filled_quantity 与 status（防 read-modify-write）
-      const fresh: any = await LiveBrokerCommand.findByPk(Number(cmd.id), { transaction: t, lock: rowLock(t) });
+      const fresh: any = await LiveBrokerCommand.findByPk(Number(cmd.id), {
+        transaction: t,
+        lock: rowLock(t),
+      });
       if (!fresh) return;
       const freshStatus = String(fresh.status);
       if (terminal.has(freshStatus)) return;

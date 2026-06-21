@@ -1,4 +1,13 @@
-import { Table, Column, Model, DataType, CreatedAt, UpdatedAt, Index, AfterUpdate } from 'sequelize-typescript';
+import {
+  Table,
+  Column,
+  Model,
+  DataType,
+  CreatedAt,
+  UpdatedAt,
+  Index,
+  AfterUpdate,
+} from 'sequelize-typescript';
 import { logger } from '../utils/logger';
 
 @Table({
@@ -275,7 +284,10 @@ export class RecommendationTradeOutcome extends Model {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { autoApplyDqsToClosedTrade } = require('../services/governor/trader-mind-deep');
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { checkTradeCompliance, emitWizardAlert } = require('../services/TradeComplianceChecker');
+      const {
+        checkTradeCompliance,
+        emitWizardAlert,
+      } = require('../services/TradeComplianceChecker');
 
       // === 1. DQS 自动评分 ===
       const dqsResult = autoApplyDqsToClosedTrade({
@@ -305,7 +317,7 @@ export class RecommendationTradeOutcome extends Model {
         stop_loss_distance_pct: Number(md.stop_loss_distance_pct || 0.07),
         market_trend: (md.market_trend || 'sideways') as 'up' | 'down' | 'sideways',
         trade_direction: 'BUY' as 'BUY' | 'SELL',
-        expected_target_pct: Number(md.expected_target_pct || 0.10),
+        expected_target_pct: Number(md.expected_target_pct || 0.1),
         expected_stop_pct: Number(md.stop_loss_distance_pct || 0.07),
         worst_case_analyzed_pre_trade: !!md.worst_case_analyzed,
         current_pe: Number(md.current_pe || 15),
@@ -351,7 +363,9 @@ export class RecommendationTradeOutcome extends Model {
           if (port?.user_id) resolvedUserId = Number(port.user_id);
         } catch (lookupErr: any) {
           logger.warn(
-            `[RecommendationTradeOutcome.afterUpdate] portfolio→user lookup failed (fallback user_id=1): ${lookupErr?.message || lookupErr}`
+            `[RecommendationTradeOutcome.afterUpdate] portfolio→user lookup failed (fallback user_id=1): ${
+              lookupErr?.message || lookupErr
+            }`
           );
         }
         await emitWizardAlert({
@@ -365,7 +379,9 @@ export class RecommendationTradeOutcome extends Model {
         });
       }
     } catch (err: any) {
-      logger.warn(`[RecommendationTradeOutcome.afterUpdate] DQS+Wizard hook failed: ${err?.message || err}`);
+      logger.warn(
+        `[RecommendationTradeOutcome.afterUpdate] DQS+Wizard hook failed: ${err?.message || err}`
+      );
     }
   }
 }

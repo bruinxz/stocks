@@ -85,7 +85,10 @@ export function termPremium(yield_10y: number, yield_2y: number): number {
  *
  *   Historical average ≈ 2-4% pa (Bekaert-Hoerova 2014).
  */
-export function volatilityRiskPremium(implied_vol_annual: number, realized_vol_annual: number): number {
+export function volatilityRiskPremium(
+  implied_vol_annual: number,
+  realized_vol_annual: number
+): number {
   return implied_vol_annual - realized_vol_annual;
 }
 
@@ -101,7 +104,11 @@ export function amihudIlliquidity(returns: number[], dollar_volumes: number[]): 
   let sum = 0;
   let count = 0;
   for (let i = 0; i < returns.length; i += 1) {
-    if (Number.isFinite(returns[i]) && Number.isFinite(dollar_volumes[i]) && dollar_volumes[i] > 0) {
+    if (
+      Number.isFinite(returns[i]) &&
+      Number.isFinite(dollar_volumes[i]) &&
+      dollar_volumes[i] > 0
+    ) {
       sum += Math.abs(returns[i]) / dollar_volumes[i];
       count += 1;
     }
@@ -130,8 +137,8 @@ export function currencyCarryPremium(yield_long: number, yield_short: number): n
  */
 export function macroAdjustedPremium(input: {
   base_premium: number;
-  inflation_rate: number;  // YoY %
-  credit_spread: number;    // BBB - 10y treasury (bps)
+  inflation_rate: number; // YoY %
+  credit_spread: number; // BBB - 10y treasury (bps)
   vix_level: number;
 }): {
   adjusted_premium: number;
@@ -140,7 +147,7 @@ export function macroAdjustedPremium(input: {
   vix_adjustment: number;
 } {
   // 经验 multipliers (Ilmanen 报告)
-  const infl_adj = input.inflation_rate * 0.3;  // 1% 通胀 → +0.3% premium
+  const infl_adj = input.inflation_rate * 0.3; // 1% 通胀 → +0.3% premium
   const credit_adj = (input.credit_spread / 100) * 0.5; // 100bp spread → +0.5% premium
   const vix_adj = (input.vix_level - 20) * -0.05; // VIX > 20 → 已扣过 → negative adj
 
@@ -233,11 +240,18 @@ export function macroStyleWeights(
   regime: 'bull' | 'bear' | 'range' | 'volatile' | 'inflation'
 ): number[] {
   const regimeProfiles: Record<string, Record<string, number>> = {
-    bull: { value: 0.10, growth: 0.30, momentum: 0.25, low_vol: 0.05, quality: 0.15, size: 0.15 },
-    bear: { value: 0.30, growth: 0.05, momentum: 0.05, low_vol: 0.30, quality: 0.20, size: 0.10 },
-    range: { value: 0.20, growth: 0.15, momentum: 0.15, low_vol: 0.15, quality: 0.20, size: 0.15 },
-    volatile: { value: 0.15, growth: 0.10, momentum: 0.05, low_vol: 0.35, quality: 0.25, size: 0.10 },
-    inflation: { value: 0.35, growth: 0.05, momentum: 0.15, low_vol: 0.15, quality: 0.20, size: 0.10 },
+    bull: { value: 0.1, growth: 0.3, momentum: 0.25, low_vol: 0.05, quality: 0.15, size: 0.15 },
+    bear: { value: 0.3, growth: 0.05, momentum: 0.05, low_vol: 0.3, quality: 0.2, size: 0.1 },
+    range: { value: 0.2, growth: 0.15, momentum: 0.15, low_vol: 0.15, quality: 0.2, size: 0.15 },
+    volatile: { value: 0.15, growth: 0.1, momentum: 0.05, low_vol: 0.35, quality: 0.25, size: 0.1 },
+    inflation: {
+      value: 0.35,
+      growth: 0.05,
+      momentum: 0.15,
+      low_vol: 0.15,
+      quality: 0.2,
+      size: 0.1,
+    },
   };
   const profile = regimeProfiles[regime] || regimeProfiles.range;
   return style_names.map(name => profile[name] ?? 0);
@@ -268,7 +282,10 @@ export function activeRiskDecomposition(input: {
   let factor_var = 0;
   for (let k = 0; k < K; k += 1) {
     for (let j = 0; j < K; j += 1) {
-      factor_var += input.active_factor_exposures[k] * input.factor_cov_matrix[k][j] * input.active_factor_exposures[j];
+      factor_var +=
+        input.active_factor_exposures[k] *
+        input.factor_cov_matrix[k][j] *
+        input.active_factor_exposures[j];
     }
   }
   const factor_risk = Math.sqrt(Math.max(0, factor_var));
@@ -330,8 +347,12 @@ export function multiFactorRiskModel(input: {
     let singular = false;
     for (let idx = 0; idx < dim; idx += 1) {
       let piv = idx;
-      for (let r = idx + 1; r < dim; r += 1) if (Math.abs(aug[r][idx]) > Math.abs(aug[piv][idx])) piv = r;
-      if (Math.abs(aug[piv][idx]) < 1e-12) { singular = true; break; }
+      for (let r = idx + 1; r < dim; r += 1)
+        if (Math.abs(aug[r][idx]) > Math.abs(aug[piv][idx])) piv = r;
+      if (Math.abs(aug[piv][idx]) < 1e-12) {
+        singular = true;
+        break;
+      }
       if (piv !== idx) [aug[idx], aug[piv]] = [aug[piv], aug[idx]];
       const d = aug[idx][idx];
       for (let j = 0; j <= dim; j += 1) aug[idx][j] /= d;

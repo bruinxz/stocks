@@ -73,7 +73,8 @@ export function rollSpread(prices: number[]): number | null {
   if (prices.length < 3) return null;
   const dp: number[] = [];
   for (let t = 1; t < prices.length; t += 1) dp.push(prices[t] - prices[t - 1]);
-  const x = dp.slice(0, -1), y = dp.slice(1);
+  const x = dp.slice(0, -1),
+    y = dp.slice(1);
   const mx = x.reduce((s, v) => s + v, 0) / x.length;
   const my = y.reduce((s, v) => s + v, 0) / y.length;
   let cov = 0;
@@ -138,7 +139,7 @@ export function beckerParkinsonVol(highs: number[], lows: number[]): number[] {
  *
  * @param values series; bin into k_bins for discrete probabilities
  */
-export function shannonEntropy(values: number[], k_bins: number = 10): number {
+export function shannonEntropy(values: number[], k_bins = 10): number {
   const N = values.length;
   if (N === 0) return 0;
   const min = Math.min(...values);
@@ -172,10 +173,12 @@ export function shannonEntropy(values: number[], k_bins: number = 10): number {
  *
  *   Higher → more complex / random.
  */
-export function sampleEntropy(values: number[], m: number = 2, r_factor: number = 0.2): number {
+export function sampleEntropy(values: number[], m = 2, r_factor = 0.2): number {
   const N = values.length;
   if (N < m + 1) return 0;
-  const std = Math.sqrt(values.reduce((s, v) => s + v * v, 0) / N - Math.pow(values.reduce((s, v) => s + v, 0) / N, 2));
+  const std = Math.sqrt(
+    values.reduce((s, v) => s + v * v, 0) / N - Math.pow(values.reduce((s, v) => s + v, 0) / N, 2)
+  );
   const r = r_factor * std;
 
   const countMatches = (templateLen: number): number => {
@@ -217,7 +220,11 @@ export function sampleEntropy(values: number[], m: number = 2, r_factor: number 
  *   Critical values (asymptotic):
  *     1%: -3.43, 5%: -2.86, 10%: -2.57
  */
-export function adfTestStatistic(values: number[]): { t_stat: number; rho_hat: number; n_samples: number } {
+export function adfTestStatistic(values: number[]): {
+  t_stat: number;
+  rho_hat: number;
+  n_samples: number;
+} {
   const T = values.length;
   if (T < 5) return { t_stat: NaN, rho_hat: NaN, n_samples: 0 };
 
@@ -230,7 +237,8 @@ export function adfTestStatistic(values: number[]): { t_stat: number; rho_hat: n
   const N = x.length;
   const mx = x.reduce((s, v) => s + v, 0) / N;
   const my = y.reduce((s, v) => s + v, 0) / N;
-  let num = 0, denom = 0;
+  let num = 0,
+    denom = 0;
   for (let i = 0; i < N; i += 1) {
     num += (x[i] - mx) * (y[i] - my);
     denom += (x[i] - mx) ** 2;
@@ -261,7 +269,7 @@ export function adfTestStatistic(values: number[]): { t_stat: number; rho_hat: n
  * @param r0 minimum window fraction (default 0.4)
  * @returns max ADF stat over all sub-windows
  */
-export function supAdf(values: number[], r0: number = 0.4): number {
+export function supAdf(values: number[], r0 = 0.4): number {
   const T = values.length;
   if (T < 10) return NaN;
   const min_len = Math.max(5, Math.floor(r0 * T));
@@ -295,7 +303,11 @@ export function supAdf(values: number[], r0: number = 0.4): number {
  *   3. Replace noisy eigenvalues with their mean (preserve trace)
  *   4. Reconstruct correlation matrix from cleaned eigenvalues
  */
-export function marchenkoPasturThreshold(N: number, T: number, sigma: number = 1): { lambda_max: number; lambda_min: number } {
+export function marchenkoPasturThreshold(
+  N: number,
+  T: number,
+  sigma = 1
+): { lambda_max: number; lambda_min: number } {
   const q = N / T;
   const lambda_max = sigma * sigma * (1 + Math.sqrt(q)) ** 2;
   const lambda_min = sigma * sigma * (1 - Math.sqrt(q)) ** 2;
@@ -309,15 +321,22 @@ export function marchenkoPasturThreshold(N: number, T: number, sigma: number = 1
  *   2. λ_i = mean of noisy if λ_i < λ_max, else keep
  *   3. reconstruct
  */
-export function denoiseCorrelation(corr: number[][], T: number): { denoised: number[][]; n_noise: number } {
+export function denoiseCorrelation(
+  corr: number[][],
+  T: number
+): { denoised: number[][]; n_noise: number } {
   const N = corr.length;
   if (N === 0) return { denoised: [], n_noise: 0 };
 
   const { lambda_max } = marchenkoPasturThreshold(N, T);
   const pc = topKPrincipalComponents(corr, N);
   const eigenvalues = pc.eigenvalues.slice();
-  const noisy_idx = eigenvalues.map((v, i) => ({ v, i })).filter(p => p.v < lambda_max).map(p => p.i);
-  const noisy_avg = noisy_idx.length > 0 ? noisy_idx.reduce((s, i) => s + eigenvalues[i], 0) / noisy_idx.length : 0;
+  const noisy_idx = eigenvalues
+    .map((v, i) => ({ v, i }))
+    .filter(p => p.v < lambda_max)
+    .map(p => p.i);
+  const noisy_avg =
+    noisy_idx.length > 0 ? noisy_idx.reduce((s, i) => s + eigenvalues[i], 0) / noisy_idx.length : 0;
   for (const i of noisy_idx) eigenvalues[i] = noisy_avg;
 
   // Reconstruct: corr_denoised = V × diag(λ_new) × V^T
@@ -347,7 +366,7 @@ export function denoiseCorrelation(corr: number[][], T: number): { denoised: num
  *   1. Find top 1-2 eigenvectors (market + sector)
  *   2. Subtract their contribution from correlation matrix
  */
-export function detoneCorrelation(corr: number[][], n_detone: number = 1): number[][] {
+export function detoneCorrelation(corr: number[][], n_detone = 1): number[][] {
   const N = corr.length;
   const pc = topKPrincipalComponents(corr, n_detone);
   const detoned: number[][] = corr.map(row => row.slice());

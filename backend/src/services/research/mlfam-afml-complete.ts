@@ -56,14 +56,20 @@
  * @param Y discrete values (same length)
  * @param n_bins for continuous → discretize
  */
-export function mutualInformation(X: number[], Y: number[], n_bins: number = 10): number {
+export function mutualInformation(X: number[], Y: number[], n_bins = 10): number {
   if (X.length !== Y.length || X.length === 0) return 0;
   // Discretize via equal-width bins
-  const min_x = Math.min(...X), max_x = Math.max(...X);
-  const min_y = Math.min(...Y), max_y = Math.max(...Y);
+  const min_x = Math.min(...X),
+    max_x = Math.max(...X);
+  const min_y = Math.min(...Y),
+    max_y = Math.max(...Y);
   if (max_x - min_x < 1e-12 || max_y - min_y < 1e-12) return 0;
-  const bin_x = X.map(v => Math.min(n_bins - 1, Math.floor((v - min_x) / (max_x - min_x) * n_bins)));
-  const bin_y = Y.map(v => Math.min(n_bins - 1, Math.floor((v - min_y) / (max_y - min_y) * n_bins)));
+  const bin_x = X.map(v =>
+    Math.min(n_bins - 1, Math.floor(((v - min_x) / (max_x - min_x)) * n_bins))
+  );
+  const bin_y = Y.map(v =>
+    Math.min(n_bins - 1, Math.floor(((v - min_y) / (max_y - min_y)) * n_bins))
+  );
 
   const joint: Record<string, number> = {};
   const marg_x: Record<number, number> = {};
@@ -99,14 +105,20 @@ export function mutualInformation(X: number[], Y: number[], n_bins: number = 10)
  *
  * Normalized: VI / (H(X) + H(Y) - MI(X, Y)) ∈ [0, 1]
  */
-export function variationOfInformation(X: number[], Y: number[], n_bins: number = 10): number {
+export function variationOfInformation(X: number[], Y: number[], n_bins = 10): number {
   if (X.length !== Y.length || X.length === 0) return 0;
   // Entropy of each
-  const min_x = Math.min(...X), max_x = Math.max(...X);
-  const min_y = Math.min(...Y), max_y = Math.max(...Y);
+  const min_x = Math.min(...X),
+    max_x = Math.max(...X);
+  const min_y = Math.min(...Y),
+    max_y = Math.max(...Y);
   if (max_x - min_x < 1e-12 || max_y - min_y < 1e-12) return 0;
-  const bin_x = X.map(v => Math.min(n_bins - 1, Math.floor((v - min_x) / (max_x - min_x) * n_bins)));
-  const bin_y = Y.map(v => Math.min(n_bins - 1, Math.floor((v - min_y) / (max_y - min_y) * n_bins)));
+  const bin_x = X.map(v =>
+    Math.min(n_bins - 1, Math.floor(((v - min_x) / (max_x - min_x)) * n_bins))
+  );
+  const bin_y = Y.map(v =>
+    Math.min(n_bins - 1, Math.floor(((v - min_y) / (max_y - min_y)) * n_bins))
+  );
 
   const entropy = (bins: number[]): number => {
     const counts: Record<number, number> = {};
@@ -140,10 +152,7 @@ export function variationOfInformation(X: number[], Y: number[], n_bins: number 
  *   Silhouette = mean(s(i))   ∈ [-1, 1]
  *   Higher → better clustering.
  */
-export function silhouetteScore(
-  data_points: number[][],
-  cluster_assignment: number[]
-): number {
+export function silhouetteScore(data_points: number[][], cluster_assignment: number[]): number {
   const N = data_points.length;
   if (N < 2 || cluster_assignment.length !== N) return 0;
   const clusters = Array.from(new Set(cluster_assignment));
@@ -156,14 +165,16 @@ export function silhouetteScore(
       .filter(j => j !== -1);
     if (same_cluster.length === 0) continue;
     const a_i =
-      same_cluster.reduce((s, j) => s + euclideanDistance(data_points[i], data_points[j]), 0) / same_cluster.length;
+      same_cluster.reduce((s, j) => s + euclideanDistance(data_points[i], data_points[j]), 0) /
+      same_cluster.length;
     let b_i = Infinity;
     for (const c of clusters) {
       if (c === cluster_assignment[i]) continue;
       const other = cluster_assignment.map((cc, j) => (cc === c ? j : -1)).filter(j => j !== -1);
       if (other.length === 0) continue;
       const d_mean =
-        other.reduce((s, j) => s + euclideanDistance(data_points[i], data_points[j]), 0) / other.length;
+        other.reduce((s, j) => s + euclideanDistance(data_points[i], data_points[j]), 0) /
+        other.length;
       if (d_mean < b_i) b_i = d_mean;
     }
     if (b_i === Infinity) continue;
@@ -187,16 +198,27 @@ function euclideanDistance(a: number[], b: number[]): number {
  */
 export function optimalNumberOfClusters(
   data_points: number[][],
-  k_max: number = 10,
+  k_max = 10,
   options: { seed?: number; max_iter?: number } = {}
 ): { best_k: number; best_silhouette: number; assignment: number[]; silhouette_per_k: number[] } {
   const N = data_points.length;
-  if (N < 4) return { best_k: 1, best_silhouette: 0, assignment: new Array(N).fill(0), silhouette_per_k: [] };
+  if (N < 4)
+    return {
+      best_k: 1,
+      best_silhouette: 0,
+      assignment: new Array(N).fill(0),
+      silhouette_per_k: [],
+    };
   let state = (options.seed ?? 42) % 2147483647;
   if (state <= 0) state += 2147483646;
-  const rng = (): number => { state = (state * 16807) % 2147483647; return state / 2147483647; };
+  const rng = (): number => {
+    state = (state * 16807) % 2147483647;
+    return state / 2147483647;
+  };
 
-  let best_k = 2, best_sil = -Infinity, best_assign: number[] = new Array(N).fill(0);
+  let best_k = 2,
+    best_sil = -Infinity,
+    best_assign: number[] = new Array(N).fill(0);
   const silhouettes: number[] = [];
   for (let k = 2; k <= Math.min(k_max, N - 1); k += 1) {
     // K-means lite: random init + 10 iterations
@@ -206,26 +228,34 @@ export function optimalNumberOfClusters(
       const idx = Math.floor(rng() * indices.length);
       centroids.push(data_points[indices[idx]].slice());
     }
-    let assignment: number[] = new Array(N).fill(0);
+    const assignment: number[] = new Array(N).fill(0);
     for (let iter = 0; iter < (options.max_iter ?? 30); iter += 1) {
       // Assign
       for (let i = 0; i < N; i += 1) {
-        let min_d = Infinity, best_c = 0;
+        let min_d = Infinity,
+          best_c = 0;
         for (let c = 0; c < k; c += 1) {
           const d = euclideanDistance(data_points[i], centroids[c]);
-          if (d < min_d) { min_d = d; best_c = c; }
+          if (d < min_d) {
+            min_d = d;
+            best_c = c;
+          }
         }
         assignment[i] = best_c;
       }
       // Recompute centroids
-      const new_centroids: number[][] = Array.from({ length: k }, () => new Array(data_points[0].length).fill(0));
+      const new_centroids: number[][] = Array.from({ length: k }, () =>
+        new Array(data_points[0].length).fill(0)
+      );
       const counts: number[] = new Array(k).fill(0);
       for (let i = 0; i < N; i += 1) {
-        for (let d = 0; d < data_points[i].length; d += 1) new_centroids[assignment[i]][d] += data_points[i][d];
+        for (let d = 0; d < data_points[i].length; d += 1)
+          new_centroids[assignment[i]][d] += data_points[i][d];
         counts[assignment[i]] += 1;
       }
       for (let c = 0; c < k; c += 1) {
-        if (counts[c] > 0) for (let d = 0; d < new_centroids[c].length; d += 1) new_centroids[c][d] /= counts[c];
+        if (counts[c] > 0)
+          for (let d = 0; d < new_centroids[c].length; d += 1) new_centroids[c][d] /= counts[c];
       }
       centroids = new_centroids;
     }
@@ -237,7 +267,12 @@ export function optimalNumberOfClusters(
       best_assign = assignment.slice();
     }
   }
-  return { best_k, best_silhouette: best_sil, assignment: best_assign, silhouette_per_k: silhouettes };
+  return {
+    best_k,
+    best_silhouette: best_sil,
+    assignment: best_assign,
+    silhouette_per_k: silhouettes,
+  };
 }
 
 // ============================================================
@@ -258,7 +293,11 @@ export function optimalNumberOfClusters(
  * @param max_horizon H (look forward bars)
  * @param t_stat_threshold strict t-stat (default 2.0)
  */
-export function trendScanningLabels(prices: number[], max_horizon: number = 20, t_stat_threshold: number = 2.0): number[] {
+export function trendScanningLabels(
+  prices: number[],
+  max_horizon = 20,
+  t_stat_threshold = 2.0
+): number[] {
   const N = prices.length;
   const labels: number[] = new Array(N).fill(0);
   for (let t = 0; t < N - max_horizon; t += 1) {
@@ -271,7 +310,8 @@ export function trendScanningLabels(prices: number[], max_horizon: number = 20, 
     }
     const mx = xs.reduce((s, v) => s + v, 0) / xs.length;
     const my = ys.reduce((s, v) => s + v, 0) / ys.length;
-    let num = 0, denom = 0;
+    let num = 0,
+      denom = 0;
     for (let i = 0; i < xs.length; i += 1) {
       num += (xs[i] - mx) * (ys[i] - my);
       denom += (xs[i] - mx) ** 2;
@@ -310,7 +350,10 @@ export function clusteredFeatureImportance(
   feature_importances: Record<string, number>,
   feature_clusters: Record<string, number>
 ): Record<number, { cluster_id: number; total_importance: number; features: string[] }> {
-  const clusters: Record<number, { cluster_id: number; total_importance: number; features: string[] }> = {};
+  const clusters: Record<
+    number,
+    { cluster_id: number; total_importance: number; features: string[] }
+  > = {};
   for (const [feat, imp] of Object.entries(feature_importances)) {
     const cid = feature_clusters[feat];
     if (cid === undefined) continue;
@@ -361,7 +404,9 @@ export function ncoComplete(
     const inv_vars = members.map(i => 1 / Math.max(1e-9, cov[i][i]));
     const sum_inv = inv_vars.reduce((s, v) => s + v, 0);
     const w = inv_vars.map(v => v / sum_inv);
-    members.forEach((i, k) => { intra_weights[i] = w[k]; });
+    members.forEach((i, k) => {
+      intra_weights[i] = w[k];
+    });
     // Cluster variance under intra weights
     let cv = 0;
     for (let a = 0; a < members.length; a += 1) {
@@ -403,11 +448,16 @@ export function ncoComplete(
  * @returns paths with train_rank_champion + test_rank_champion
  */
 export function combinatorialBacktestPBO(input: {
-  strategy_returns: number[][];  // K strategies × T periods
-  n_train_groups: number;        // N
-  n_total_groups: number;        // K (typical 8)
+  strategy_returns: number[][]; // K strategies × T periods
+  n_train_groups: number; // N
+  n_total_groups: number; // K (typical 8)
 }): {
-  paths: Array<{ train_groups: number[]; test_groups: number[]; train_champion: number; test_rank_of_champion: number }>;
+  paths: Array<{
+    train_groups: number[];
+    test_groups: number[];
+    train_champion: number;
+    test_rank_of_champion: number;
+  }>;
   pbo: number;
 } {
   const K = input.n_total_groups;
@@ -431,10 +481,17 @@ export function combinatorialBacktestPBO(input: {
   };
   gen(0, []);
 
-  const paths: Array<{ train_groups: number[]; test_groups: number[]; train_champion: number; test_rank_of_champion: number }> = [];
+  const paths: Array<{
+    train_groups: number[];
+    test_groups: number[];
+    train_champion: number;
+    test_rank_of_champion: number;
+  }> = [];
   let overfit_count = 0;
   for (const train_groups of combinations) {
-    const test_groups = Array.from({ length: K }, (_, i) => i).filter(g => !train_groups.includes(g));
+    const test_groups = Array.from({ length: K }, (_, i) => i).filter(
+      g => !train_groups.includes(g)
+    );
 
     // Compute train sharpe per strategy
     const train_sharpes = input.strategy_returns.map(rets => {
@@ -460,11 +517,19 @@ export function combinatorialBacktestPBO(input: {
     let champion = 0;
     let max_sharpe = train_sharpes[0];
     for (let s = 1; s < n_strategies; s += 1) {
-      if (train_sharpes[s] > max_sharpe) { max_sharpe = train_sharpes[s]; champion = s; }
+      if (train_sharpes[s] > max_sharpe) {
+        max_sharpe = train_sharpes[s];
+        champion = s;
+      }
     }
     // Rank champion in test (1 = best)
     const test_rank = test_sharpes.filter(s => s > test_sharpes[champion]).length + 1;
-    paths.push({ train_groups, test_groups, train_champion: champion, test_rank_of_champion: test_rank });
+    paths.push({
+      train_groups,
+      test_groups,
+      train_champion: champion,
+      test_rank_of_champion: test_rank,
+    });
     if (test_rank > n_strategies / 2) overfit_count += 1;
   }
 
@@ -506,7 +571,8 @@ export function detectBaggingLeakage(sample_uniquenesses: number[]): {
     rec = '⚠️ Bagging 中等泄漏风险, 推荐用 sequentialBootstrap (AFML Ch.4)';
   } else {
     risk = 'high';
-    rec = '🔴 Bagging 高泄漏风险, 必须用 sequentialBootstrap; 否则改用 Bayesian aggregation 替代 bagging';
+    rec =
+      '🔴 Bagging 高泄漏风险, 必须用 sequentialBootstrap; 否则改用 Bayesian aggregation 替代 bagging';
   }
   return { avg_uniqueness: avg, leakage_risk: risk, recommendation: rec };
 }
@@ -554,7 +620,9 @@ export function recommendBacktestMethod(input: {
   if (input.n_samples > 1000 && input.n_strategies_to_compare > 1) {
     return {
       recommended_method: 'cpcv',
-      reason: `大数据 ${input.n_samples} + ≥2 strategies, CPCV 提供 ${10 * 9 / 2 / 2} 倍 walk-forward path 数`,
+      reason: `大数据 ${input.n_samples} + ≥2 strategies, CPCV 提供 ${
+        (10 * 9) / 2 / 2
+      } 倍 walk-forward path 数`,
       config: { n_groups: 10, k_test: 2, embargo_pct: 0.01 },
     };
   }

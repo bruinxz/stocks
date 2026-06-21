@@ -1,2 +1,5 @@
 PyYAML>=6.0
 requests>=2.31
+# US-109 [EX-009] ed25519 升级 — bridge_common.auth.sign_ed25519 / derive_ed25519_pubkey_hex
+# 老 bridge (signature_method=hmac) 不会 import 这条 path, 但装上不增重量
+cryptography>=42.0

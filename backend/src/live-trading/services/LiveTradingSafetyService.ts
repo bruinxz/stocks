@@ -37,10 +37,14 @@ export class LiveTradingSafetyService {
     const broker_capability_key = brokerCapabilities?.broker_key || null;
     const broker_gateway_trading_allowed = LIVE_TRADING_GATEWAY_ALLOWLIST.includes(broker_gateway);
     const broker_gateway_trading_supported = brokerCapabilities?.trading_supported === true;
-    const market_data_provider = process.env.LIVE_MARKET_DATA_PROVIDER || 'database_realtime_quotes';
+    const market_data_provider =
+      process.env.LIVE_MARKET_DATA_PROVIDER || 'database_realtime_quotes';
     // 持牌行情源闸门：默认要求真实下单必须使用 licensed_configured 行情源
     // 想关掉（仅限内部联调）需要显式 LIVE_LICENSED_PROVIDER_REQUIRED_FOR_LIVE_ORDER=false
-    const licensed_provider_required = envBool('LIVE_LICENSED_PROVIDER_REQUIRED_FOR_LIVE_ORDER', true);
+    const licensed_provider_required = envBool(
+      'LIVE_LICENSED_PROVIDER_REQUIRED_FOR_LIVE_ORDER',
+      true
+    );
     const licensed_provider_satisfied =
       !licensed_provider_required || market_data_provider === LIVE_LICENSED_MARKET_DATA_PROVIDER;
     const env_kill_switch = envBool('LIVE_TRADING_KILL_SWITCH', true);
@@ -64,7 +68,9 @@ export class LiveTradingSafetyService {
     if (env_kill_switch) blockers.push('LIVE_TRADING_KILL_SWITCH 处于熔断状态');
     if (db_kill_switch) {
       blockers.push(
-        `服务端 kill switch 已自动触发 (${killSwitch?.reason_code || 'unknown'}): ${killSwitch?.reason_detail || ''}`.trim()
+        `服务端 kill switch 已自动触发 (${killSwitch?.reason_code || 'unknown'}): ${
+          killSwitch?.reason_detail || ''
+        }`.trim()
       );
     }
     if (!broker_gateway_trading_allowed) {

@@ -411,6 +411,40 @@ export async function getStrategySource(strategyKey: string): Promise<StrategySo
   return res.data.data as StrategySourceResponse;
 }
 
+// ---------- /api/quant/strategies/:id PATCH (US-069 kill-switch toggle) ---
+
+/**
+ * US-069 [FE-030] 策略 kill-switch — 单独 enable / disable 一只策略。
+ *
+ * 后端 QuantController.updateStrategyConfig 接受顶层 `enabled` boolean,
+ * 落到 quant_strategies.enabled 字段。一旦 enabled=false:
+ *   - strategyEngine.resolveStrategyKeys() 不会再纳入这只策略;
+ *   - daily pipeline / signal 生成 / shadow run 全部对它停掉;
+ *   - 已存仓位不会自动卖出 (走风控独立路径), 用户需要自己平仓.
+ *
+ * 与 [[setStrategyDryRun]] 互补: dry-run 是 "产信号不下单", kill-switch 是
+ * "策略整体停摆". 大多数场景先 dry-run 一段时间观察, 真要彻底下线再调
+ * 本接口 disable.
+ *
+ * 与后端自动熔断 [[strategy-kill-switch-monitor]] 解耦: 自动熔断走
+ * live_kill_switch_states 表 + RiskAlert (订单失败率 / 连败), 是 live-trading
+ * 维度; 本接口走 quant_strategies.enabled, 是策略级别的 "明天还要不要扫描".
+ *
+ * 返回更新后的策略对象 (含最新 enabled 值).
+ */
+export async function setStrategyEnabled(
+  strategyKey: string,
+  enabled: boolean
+): Promise<QuantStrategyItem> {
+  const res = await api.patch(`/quant/strategies/${encodeURIComponent(strategyKey)}`, {
+    enabled,
+  });
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '更新策略启用状态失败');
+  }
+  return res.data.data;
+}
+
 // ---------- /api/quant/strategies/:id PATCH (US-083 dry-run toggle) --------
 
 /**
@@ -662,6 +696,50 @@ export async function listOptimizationRuns(
   return (res.data.data || []) as OptimizationRunSummary[];
 }
 
+// ---------- /api/admin/analysis-engine/shadow-stats (US-051) ---------------
+//
+// 后端 AnalysisEngineShadowController.getShadowStats: shadow vs 生产决策一致率 + analyzer 健康度
+// (复用 GAMMA 2026-06-18 已落 endpoint, 不新加 API). 该端点的响应是
+// { ok: true, data: {...} }, 与 quant/* 系列的 { success, data } 信封略有差异,
+// 这里把两路兼容: 先 success 再 ok, 任一为 true 视为成功.
+
+export interface AnalysisEngineShadowConsistency {
+  buy_class: number;
+  sell_class: number;
+  hold_class: number;
+  overall: number;
+}
+
+export interface AnalysisEngineShadowAnalyzerHealth {
+  key: string;
+  samples: number;
+  error_rate: number;
+  mean_confidence: number;
+  data_missing_rate: number;
+}
+
+export interface AnalysisEngineShadowStatsResponse {
+  since: string;
+  total_shadow_reports: number;
+  consistency_rate: AnalysisEngineShadowConsistency;
+  analyzer_health: AnalysisEngineShadowAnalyzerHealth[];
+  forward_return_5d: { samples: number; mean_pct: number | null; note?: string };
+}
+
+export async function getAnalysisEngineShadowStats(
+  sinceYyyyMmDd?: string
+): Promise<AnalysisEngineShadowStatsResponse> {
+  const res = await api.get('/admin/analysis-engine/shadow-stats', {
+    params: sinceYyyyMmDd ? { since: sinceYyyyMmDd } : undefined,
+  });
+  const envelope = res.data || {};
+  const ok = envelope.success === true || envelope.ok === true;
+  if (!ok) {
+    throw new Error(envelope.message || envelope.error || '获取 shadow 统计失败');
+  }
+  return (envelope.data || {}) as AnalysisEngineShadowStatsResponse;
+}
+
 // ---------- bundled export -------------------------------------------------
 
 export const labService = {
@@ -683,6 +761,8 @@ export const labService = {
   getWalkForwardWindows,
   deleteWalkForwardRun,
   listOptimizationRuns,
+  // US-051: analysis-engine shadow stats
+  getAnalysisEngineShadowStats,
 };
 
 export default labService;

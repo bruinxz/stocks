@@ -48,6 +48,7 @@ import { Stock } from '../../models/Stock';
 import { RiskAlert } from '../../models/RiskAlert';
 import { User } from '../../models/User';
 import { logger } from '../../utils/logger';
+import { wrapFailClosed } from './RiskGuardFailClosed';
 
 // ---------------------------------------------------------------------------
 //  Config
@@ -440,50 +441,63 @@ export class PositionLimitGuard {
    *   - return `{ok:false, violation, config}`
    * Callers (PaperTradingFacade.placeOrder) should throw a user-facing
    * error using `violation.message`.
+   *
+   * US-011 (PR-006): wrapped in `wrapFailClosed('position_limit', ...)` —
+   * DB outage in `loadConfig` / `loadPortfolio` / `loadPositions` /
+   * `loadIndustryForSymbol` now throws `RiskGuardUnavailableError` instead
+   * of propagating raw Sequelize errors. PaperTradingFacade + preTradeGuards
+   * catch this and convert to a 503 + HIGH RiskAlert via
+   * `handleRiskGuardUnavailable`. Parity with DrawdownCircuitBreaker.
    */
   async checkBuyOrder(input: CheckOrderInput): Promise<CheckOrderResult> {
-    const config = await this.source.loadConfig(input.user_id);
-    const portfolio = await this.source.loadPortfolio(input.user_id);
-    if (!portfolio || portfolio.total_value <= 0) {
-      // Without a portfolio (or zero total value) we cannot evaluate
-      // percentages.  Pass through — the upstream `placeOrder` already
-      // rejects orders without a portfolio.
-      return { ok: true, config };
-    }
-    const positions = await this.source.loadPositions(input.user_id);
-    const industry = await this.source.loadIndustryForSymbol(input.symbol);
+    return wrapFailClosed(
+      'position_limit',
+      async () => {
+        const config = await this.source.loadConfig(input.user_id);
+        const portfolio = await this.source.loadPortfolio(input.user_id);
+        if (!portfolio || portfolio.total_value <= 0) {
+          // Without a portfolio (or zero total value) we cannot evaluate
+          // percentages.  Pass through — the upstream `placeOrder` already
+          // rejects orders without a portfolio.
+          return { ok: true, config };
+        }
+        const positions = await this.source.loadPositions(input.user_id);
+        const industry = await this.source.loadIndustryForSymbol(input.symbol);
 
-    const ctx: OrderContext = {
-      user_id: input.user_id,
-      symbol: input.symbol,
-      proposed_value: input.proposed_value,
-      total_value: portfolio.total_value,
-      positions,
-      industry,
-    };
+        const ctx: OrderContext = {
+          user_id: input.user_id,
+          symbol: input.symbol,
+          proposed_value: input.proposed_value,
+          total_value: portfolio.total_value,
+          positions,
+          industry,
+        };
 
-    const violation = pickSingleViolation(ctx, config);
-    if (!violation) {
-      return { ok: true, config };
-    }
+        const violation = pickSingleViolation(ctx, config);
+        if (!violation) {
+          return { ok: true, config };
+        }
 
-    // Persist alert — failures here MUST NOT mask the violation; we still
-    // want to reject the order.
-    try {
-      await this.source.writeAlert({
-        user_id: input.user_id,
-        symbol: input.symbol,
-        name: `仓位限制告警 - ${violation.rule}`,
-        message: violation.message,
-      });
-    } catch (err) {
-      logger.warn(
-        `PositionLimitGuard: writeAlert failed user=${input.user_id} symbol=${input.symbol} ` +
-          `rule=${violation.rule}: ${(err as Error).message}`
-      );
-    }
+        // Persist alert — failures here MUST NOT mask the violation; we still
+        // want to reject the order.
+        try {
+          await this.source.writeAlert({
+            user_id: input.user_id,
+            symbol: input.symbol,
+            name: `仓位限制告警 - ${violation.rule}`,
+            message: violation.message,
+          });
+        } catch (err) {
+          logger.warn(
+            `PositionLimitGuard: writeAlert failed user=${input.user_id} symbol=${input.symbol} ` +
+              `rule=${violation.rule}: ${(err as Error).message}`
+          );
+        }
 
-    return { ok: false, violation, config };
+        return { ok: false, violation, config };
+      },
+      { user_id: input.user_id, symbol: input.symbol }
+    );
   }
 
   /** Return the user's effective config (uses defaults if not customized). */
@@ -494,7 +508,31 @@ export class PositionLimitGuard {
   /** Persist a (normalized) updated config for the user. */
   async updateConfig(user_id: number, raw: any): Promise<PositionLimitsConfig> {
     const normalized = normalizePositionLimitsConfig(raw);
-    return this.source.saveConfig(user_id, normalized);
+    const saved = await this.source.saveConfig(user_id, normalized);
+    // PR-003 (US-008): persist 后做 sizing↔limit 阈值一致性检查。
+    // lazy-require 解循环 import（SizingLimitConsistency 自身已 import 本文件的
+    // normalizePositionLimitsConfig + DEFAULT_POSITION_LIMITS + PositionLimitsConfig）。
+    // 内部 fail-open — 任一 loader 失败返 null + logger.warn 吞错，主流程不阻塞。
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { assertConsistencyOnUpdate } = require('./SizingLimitConsistency');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { sizingPolicyService } = require('./SizingPolicyService');
+      await assertConsistencyOnUpdate({
+        user_id,
+        sizingLoader: (uid: number) => sizingPolicyService.getConfig(uid),
+        // 直接用刚 normalize 的值，避免再回一次 DB。
+        limitLoader: async () => saved,
+        triggered_by: 'position_limit_update',
+      });
+    } catch (err: any) {
+      logger.warn(
+        `PositionLimitGuard.updateConfig consistency check failed user=${user_id}: ${
+          err?.message || err
+        }`
+      );
+    }
+    return saved;
   }
 }
 

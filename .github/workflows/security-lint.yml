@@ -20,3 +20,6 @@ jobs:
 
       - name: Check audit events enumeration
         run: bash scripts/ci/check_audit_events.sh
+
+      - name: Check legacy internal IP not reintroduced
+        run: bash scripts/ci/check_legacy_ip.sh

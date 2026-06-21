@@ -551,11 +551,7 @@ export class DragonHeadMomentumStrategy extends QuantStrategy {
       expected_edge_pct: 12.0,
       expected_holding_days: 3,
       key_factors: ['limit_up', 'famous_yz_net_buy', 'industry_leader_rank'],
-      failure_modes: [
-        '一字板 (无法买入)',
-        '高位炸板',
-        '题材切换 (今日热门明日不热)',
-      ],
+      failure_modes: ['一字板 (无法买入)', '高位炸板', '题材切换 (今日热门明日不热)'],
       kill_switch_metric: 'win_rate_5d',
       kill_switch_threshold: 0.45,
     },
@@ -820,7 +816,10 @@ export class DragonHeadMomentumStrategy extends QuantStrategy {
         cap = meta.circulating_market_cap;
       }
       // 仅在 cap 有真实值时才做市值过滤
-      if (cap != null && (cap < params.minCirculatingMarketCap || cap > params.maxCirculatingMarketCap)) {
+      if (
+        cap != null &&
+        (cap < params.minCirculatingMarketCap || cap > params.maxCirculatingMarketCap)
+      ) {
         filtered.fail_market_cap += 1;
         continue;
       }

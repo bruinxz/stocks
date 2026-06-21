@@ -16,7 +16,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { logger } from '../../utils/logger';
-import { hmmBaumWelch, initializeHMMParams, hmmViterbi, decodeRegimeLabels, HMMParams } from '../research/hmm-regime';
+import {
+  hmmBaumWelch,
+  initializeHMMParams,
+  hmmViterbi,
+  decodeRegimeLabels,
+  HMMParams,
+} from '../research/hmm-regime';
 import { StrategyPosterior, BetaBernoulliPosterior } from '../portfolio/thompson-sampling';
 import { MetaLabelModel } from '../meta/MetaLabelService';
 import { callAuctionClearing } from '../execution/harris-full';
@@ -34,10 +40,28 @@ import { carverPositionSize } from '../execution/carver-johnson-chan';
  */
 export interface BrokerBridge {
   is_connected: boolean;
-  placeOrder(input: { symbol: string; side: 'BUY' | 'SELL'; qty: number; price?: number; type: 'limit' | 'market' }): Promise<{ order_id: string; status: string }>;
+  placeOrder(input: {
+    symbol: string;
+    side: 'BUY' | 'SELL';
+    qty: number;
+    price?: number;
+    type: 'limit' | 'market';
+  }): Promise<{ order_id: string; status: string }>;
   cancelOrder(order_id: string): Promise<boolean>;
-  getPositions(): Promise<Array<{ symbol: string; qty: number; avg_cost: number; current_price: number }>>;
-  getOrders(): Promise<Array<{ order_id: string; symbol: string; side: string; qty: number; filled_qty: number; price: number; status: string }>>;
+  getPositions(): Promise<
+    Array<{ symbol: string; qty: number; avg_cost: number; current_price: number }>
+  >;
+  getOrders(): Promise<
+    Array<{
+      order_id: string;
+      symbol: string;
+      side: string;
+      qty: number;
+      filled_qty: number;
+      price: number;
+      status: string;
+    }>
+  >;
 }
 
 /**
@@ -46,10 +70,17 @@ export interface BrokerBridge {
 export class MockBrokerBridge implements BrokerBridge {
   is_connected = true;
   private orders: Array<any> = [];
-  private positions: Map<string, { qty: number; avg_cost: number; current_price: number }> = new Map();
+  private positions: Map<string, { qty: number; avg_cost: number; current_price: number }> =
+    new Map();
   private order_counter = 0;
 
-  async placeOrder(input: { symbol: string; side: 'BUY' | 'SELL'; qty: number; price?: number; type: 'limit' | 'market' }) {
+  async placeOrder(input: {
+    symbol: string;
+    side: 'BUY' | 'SELL';
+    qty: number;
+    price?: number;
+    type: 'limit' | 'market';
+  }) {
     const order_id = `mock_${++this.order_counter}`;
     this.orders.push({ ...input, order_id, status: 'submitted', filled_qty: 0 });
     // Simulate immediate fill for market orders
@@ -58,10 +89,15 @@ export class MockBrokerBridge implements BrokerBridge {
       this.orders[this.orders.length - 1].status = 'filled';
       this.orders[this.orders.length - 1].filled_qty = input.qty;
       // Update position
-      const existing = this.positions.get(input.symbol) || { qty: 0, avg_cost: 0, current_price: p };
+      const existing = this.positions.get(input.symbol) || {
+        qty: 0,
+        avg_cost: 0,
+        current_price: p,
+      };
       if (input.side === 'BUY') {
         const new_qty = existing.qty + input.qty;
-        existing.avg_cost = new_qty > 0 ? (existing.avg_cost * existing.qty + p * input.qty) / new_qty : 0;
+        existing.avg_cost =
+          new_qty > 0 ? (existing.avg_cost * existing.qty + p * input.qty) / new_qty : 0;
         existing.qty = new_qty;
       } else {
         existing.qty = Math.max(0, existing.qty - input.qty);
@@ -157,7 +193,9 @@ export async function processAuction(input: {
     }
   }
 
-  logger.info(`[auction-handler] ${input.symbol} clearing=${auction_result.clearing_price} matched=${matched_qty}`);
+  logger.info(
+    `[auction-handler] ${input.symbol} clearing=${auction_result.clearing_price} matched=${matched_qty}`
+  );
   return {
     clearing_price: auction_result.clearing_price,
     matched_qty,
@@ -182,7 +220,13 @@ export async function processAuction(input: {
  *   5. 9:25 clearing, fill 反馈
  */
 export async function processOvernightSignals(input: {
-  signals: Array<{ id: number; symbol: string; side: 'BUY' | 'SELL'; target_pct: number; target_price?: number }>;
+  signals: Array<{
+    id: number;
+    symbol: string;
+    side: 'BUY' | 'SELL';
+    target_pct: number;
+    target_price?: number;
+  }>;
   current_capital: number;
   reference_prices: Record<string, number>; // prev_close per symbol
   broker: BrokerBridge;
@@ -198,7 +242,7 @@ export async function processOvernightSignals(input: {
     }
     // Default: bid 1% under ref for buy, ask 1% over for sell (集合竞价 bid)
     const price = sig.target_price ?? (sig.side === 'BUY' ? ref * 0.99 : ref * 1.01);
-    const qty = Math.floor((input.current_capital * sig.target_pct / 100) / price / 100) * 100; // 100-lot
+    const qty = Math.floor((input.current_capital * sig.target_pct) / 100 / price / 100) * 100; // 100-lot
     if (qty < 100) {
       skipped += 1;
       continue;
@@ -238,7 +282,10 @@ export async function icebergOrderSplit(input: {
   display_qty_per_child: number; // each iceberg child shows this
   broker: BrokerBridge;
   reference_price: number;
-}): Promise<{ child_orders: Array<{ bucket: number; qty: number; display_qty: number }>; order_ids: string[] }> {
+}): Promise<{
+  child_orders: Array<{ bucket: number; qty: number; display_qty: number }>;
+  order_ids: string[];
+}> {
   // Compute schedule via Almgren-Chriss
   const trajectory = optimalLiquidationTrajectory(input.total_qty, input.n_time_buckets, {
     risk_aversion: 1e-6,
@@ -272,11 +319,18 @@ export async function icebergOrderSplit(input: {
 
 const HMM_PERSIST_DIR = path.resolve(__dirname, '../../../data/hmm');
 
-export function persistHMMParams(symbol: string, params: HMMParams, regime_labels: string[]): boolean {
+export function persistHMMParams(
+  symbol: string,
+  params: HMMParams,
+  regime_labels: string[]
+): boolean {
   try {
     if (!fs.existsSync(HMM_PERSIST_DIR)) fs.mkdirSync(HMM_PERSIST_DIR, { recursive: true });
     const file_path = path.join(HMM_PERSIST_DIR, `${symbol.replace(/[\/\\]/g, '_')}.json`);
-    fs.writeFileSync(file_path, JSON.stringify({ params, regime_labels, persisted_at: new Date().toISOString() }, null, 2));
+    fs.writeFileSync(
+      file_path,
+      JSON.stringify({ params, regime_labels, persisted_at: new Date().toISOString() }, null, 2)
+    );
     return true;
   } catch (err: any) {
     logger.warn(`[hmm-persist] failed for ${symbol}: ${err?.message}`);
@@ -284,7 +338,9 @@ export function persistHMMParams(symbol: string, params: HMMParams, regime_label
   }
 }
 
-export function loadHMMParams(symbol: string): { params: HMMParams; regime_labels: string[] } | null {
+export function loadHMMParams(
+  symbol: string
+): { params: HMMParams; regime_labels: string[] } | null {
   try {
     const file_path = path.join(HMM_PERSIST_DIR, `${symbol.replace(/[\/\\]/g, '_')}.json`);
     if (!fs.existsSync(file_path)) return null;
@@ -324,11 +380,16 @@ export async function trainOrLoadHMM(input: {
 
 const TS_PERSIST_PATH = path.resolve(__dirname, '../../../data/thompson-posteriors.json');
 
-export function persistThompsonPosteriors(posteriors: Record<string, StrategyPosterior | BetaBernoulliPosterior>): boolean {
+export function persistThompsonPosteriors(
+  posteriors: Record<string, StrategyPosterior | BetaBernoulliPosterior>
+): boolean {
   try {
     const dir = path.dirname(TS_PERSIST_PATH);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(TS_PERSIST_PATH, JSON.stringify({ posteriors, persisted_at: new Date().toISOString() }, null, 2));
+    fs.writeFileSync(
+      TS_PERSIST_PATH,
+      JSON.stringify({ posteriors, persisted_at: new Date().toISOString() }, null, 2)
+    );
     return true;
   } catch (err: any) {
     logger.warn(`[ts-persist] failed: ${err?.message}`);
@@ -336,7 +397,10 @@ export function persistThompsonPosteriors(posteriors: Record<string, StrategyPos
   }
 }
 
-export function loadThompsonPosteriors(): Record<string, StrategyPosterior | BetaBernoulliPosterior> {
+export function loadThompsonPosteriors(): Record<
+  string,
+  StrategyPosterior | BetaBernoulliPosterior
+> {
   try {
     if (!fs.existsSync(TS_PERSIST_PATH)) return {};
     const data = JSON.parse(fs.readFileSync(TS_PERSIST_PATH, 'utf8'));
@@ -354,9 +418,16 @@ const METALABEL_CHECKPOINT_DIR = path.resolve(__dirname, '../../../data/metalabe
 
 export function persistMetaLabelCheckpoint(version: string, model: MetaLabelModel): boolean {
   try {
-    if (!fs.existsSync(METALABEL_CHECKPOINT_DIR)) fs.mkdirSync(METALABEL_CHECKPOINT_DIR, { recursive: true });
-    const file_path = path.join(METALABEL_CHECKPOINT_DIR, `${version.replace(/[^\w\-]/g, '_')}.json`);
-    fs.writeFileSync(file_path, JSON.stringify({ model, persisted_at: new Date().toISOString() }, null, 2));
+    if (!fs.existsSync(METALABEL_CHECKPOINT_DIR))
+      fs.mkdirSync(METALABEL_CHECKPOINT_DIR, { recursive: true });
+    const file_path = path.join(
+      METALABEL_CHECKPOINT_DIR,
+      `${version.replace(/[^\w\-]/g, '_')}.json`
+    );
+    fs.writeFileSync(
+      file_path,
+      JSON.stringify({ model, persisted_at: new Date().toISOString() }, null, 2)
+    );
     return true;
   } catch (err: any) {
     logger.warn(`[metalabel-persist] failed: ${err?.message}`);
@@ -379,7 +450,10 @@ export function listMetaLabelCheckpoints(): Array<{ version: string; persisted_a
 
 export function loadMetaLabelCheckpoint(version: string): MetaLabelModel | null {
   try {
-    const file_path = path.join(METALABEL_CHECKPOINT_DIR, `${version.replace(/[^\w\-]/g, '_')}.json`);
+    const file_path = path.join(
+      METALABEL_CHECKPOINT_DIR,
+      `${version.replace(/[^\w\-]/g, '_')}.json`
+    );
     if (!fs.existsSync(file_path)) return null;
     const data = JSON.parse(fs.readFileSync(file_path, 'utf8'));
     return data.model;

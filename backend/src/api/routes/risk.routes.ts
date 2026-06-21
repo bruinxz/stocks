@@ -339,6 +339,53 @@ router.put(
   riskController.updateMorningCheckupConfig
 );
 
+/**
+ * @openapi
+ * /api/risk/reconciliation-alert:
+ *   get:
+ *     tags: [风控 Risk]
+ *     summary: 获取当前用户的对账告警阈值配置 (US-137 EX-012)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 对账告警阈值配置 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
+ *   put:
+ *     tags: [风控 Risk]
+ *     summary: 更新当前用户的对账告警阈值配置 (US-137 EX-012)
+ *     description: |
+ *       lenient normalize — 非法字段沉默回退默认, 不抛 4xx. 与
+ *       /position-limits / /trailing-stop 等 8 个 guard endpoint 同款形态.
+ *       下一次 ReconciliationAlertService.runForUser 调用即生效.
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               enabled: { type: boolean }
+ *               alignment_score_high_threshold: { type: number, minimum: 0, maximum: 100 }
+ *               alignment_score_medium_threshold: { type: number, minimum: 0, maximum: 100 }
+ *               drift_count_high_threshold: { type: integer, minimum: 0, maximum: 100 }
+ *               drift_count_medium_threshold: { type: integer, minimum: 0, maximum: 100 }
+ *               dedupe_window_minutes: { type: integer, minimum: 1, maximum: 1440 }
+ *     responses:
+ *       200: { description: 已保存 }
+ *       401: { description: 未授权 }
+ */
+router.get(
+  '/reconciliation-alert',
+  authController.authenticate,
+  riskController.getReconciliationAlertConfig
+);
+router.put(
+  '/reconciliation-alert',
+  authController.authenticate,
+  riskController.updateReconciliationAlertConfig
+);
+
 // ============================================================
 // Phase 2: Position Sizing Policy
 // ============================================================
@@ -414,11 +461,7 @@ router.get('/sizing-audit', authController.authenticate, riskController.getSizin
  *     responses:
  *       200: { description: 评估报告 + 触发策略列表 }
  */
-router.get(
-  '/kill-switch-status',
-  authController.authenticate,
-  riskController.getKillSwitchStatus
-);
+router.get('/kill-switch-status', authController.authenticate, riskController.getKillSwitchStatus);
 
 /**
  * @swagger
@@ -428,10 +471,51 @@ router.get(
  *     responses:
  *       200: { description: 5 维信号 + top_score + level }
  */
+router.get('/market-top-status', authController.authenticate, riskController.getMarketTopStatus);
+
+/**
+ * @openapi
+ * /api/risk/analysis-engine-config:
+ *   get:
+ *     tags: [风控 Risk]
+ *     summary: 读取 AnalysisEngine 接入模式配置 (US-065)
+ *     description: |
+ *       返回用户 risk_config.analysis_engine 的 normalized 配置 (off/shadow/hard),
+ *       附带 system default 与 is_default 标记便于 UI "恢复默认" 按钮。
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 配置 + 默认值 }
+ *       401: { description: 未授权 }
+ *   put:
+ *     tags: [风控 Risk]
+ *     summary: 更新 AnalysisEngine 接入模式 (US-065; off/shadow/hard)
+ *     description: |
+ *       字段全 lenient，invalid 会被 normalize 退回 off。
+ *       下一次 AIAdvisorService.analyzeSingleStock 末尾的 maybeRunShadow 调用生效。
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               mode: { type: string, enum: [off, shadow, hard] }
+ *               enabled_analyzers: { type: array, items: { type: string } }
+ *               weights: { type: object }
+ *     responses:
+ *       200: { description: 已保存 }
+ *       401: { description: 未授权 }
+ */
 router.get(
-  '/market-top-status',
+  '/analysis-engine-config',
   authController.authenticate,
-  riskController.getMarketTopStatus
+  riskController.getAnalysisEngineConfig
+);
+router.put(
+  '/analysis-engine-config',
+  authController.authenticate,
+  riskController.updateAnalysisEngineConfig
 );
 
 export default router;

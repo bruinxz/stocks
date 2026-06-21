@@ -19,7 +19,9 @@ export class JournalController {
       });
     } catch (error: any) {
       logger.error('获取复盘日记失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   }
 
@@ -40,7 +42,9 @@ export class JournalController {
       res.json({ success: true, data: journal });
     } catch (error: any) {
       logger.error('获取日记详情失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   }
 
@@ -80,7 +84,9 @@ export class JournalController {
       res.json({ success: true, data: newJournal });
     } catch (error: any) {
       logger.error('创建复盘日记失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   }
 
@@ -110,7 +116,9 @@ export class JournalController {
       res.json({ success: true, data: journal });
     } catch (error: any) {
       logger.error('更新复盘日记失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   }
 
@@ -133,7 +141,9 @@ export class JournalController {
       res.json({ success: true, message: '删除成功' });
     } catch (error: any) {
       logger.error('删除复盘日记失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   }
 
@@ -192,7 +202,9 @@ export class JournalController {
       });
     } catch (error: any) {
       logger.error('追加复盘手记失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   }
 }

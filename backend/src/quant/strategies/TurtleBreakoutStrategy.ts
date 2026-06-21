@@ -6,7 +6,10 @@ import {
   QuantStrategyRuntimeOptions,
 } from '../types/QuantTypes';
 import { atr, average, clamp, last, pct, round, sma, valueNDaysAgo } from '../engine/QuantMath';
-import { turtleEntryWithPatternFilter, inferLocalRegime } from '../../services/research/pattern-library';
+import {
+  turtleEntryWithPatternFilter,
+  inferLocalRegime,
+} from '../../services/research/pattern-library';
 
 export class TurtleBreakoutStrategy extends QuantStrategy {
   readonly definition: QuantStrategyDefinition = {
@@ -31,7 +34,14 @@ export class TurtleBreakoutStrategy extends QuantStrategy {
       category: 'breakout',
       expected_edge_pct: 8.0,
       expected_holding_days: 30,
-      key_factors: ['close_vs_high_20', 'close_vs_high_55', 'ma20_vs_ma60', 'atr_pct', 'volume_3_20_ratio', 'return_60d'],
+      key_factors: [
+        'close_vs_high_20',
+        'close_vs_high_55',
+        'ma20_vs_ma60',
+        'atr_pct',
+        'volume_3_20_ratio',
+        'return_60d',
+      ],
       evidence_link: 'Richard Dennis / Bill Eckhardt - Turtle Trading (1983)',
       failure_modes: [
         '震荡市 20 日突破频繁失败（whipsaw），ATR 止损反复触发',
@@ -115,7 +125,11 @@ export class TurtleBreakoutStrategy extends QuantStrategy {
       reasons.push(`形态过滤未通过 (${regime}市, mul=${patternMul.toFixed(2)}), 降级 buy→watch`);
       score = Math.min(score, 70);
     } else if (turtleCheck.proceed && patternMul > 1) {
-      reasons.push(`形态确认 (${regime}市): mul ${patternMul.toFixed(2)} → ${scoreBeforePattern.toFixed(0)}→${score.toFixed(0)}`);
+      reasons.push(
+        `形态确认 (${regime}市): mul ${patternMul.toFixed(2)} → ${scoreBeforePattern.toFixed(
+          0
+        )}→${score.toFixed(0)}`
+      );
     }
 
     return {

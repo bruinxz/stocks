@@ -731,140 +731,6 @@
         }
       }
     },
-    "/api/today/command-center": {
-      "get": {
-        "tags": [
-          "今日作战 Today"
-        ],
-        "summary": "获取今日作战指挥中心聚合数据",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "指挥中心聚合",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "参数错误"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/today/opening-readiness": {
-      "get": {
-        "tags": [
-          "今日作战 Today"
-        ],
-        "summary": "获取开盘准备度状态",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "准备度状态",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "参数错误"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/today/signals": {
-      "get": {
-        "tags": [
-          "今日作战 Today"
-        ],
-        "summary": "获取今日信号清单 (US-018)",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "信号列表",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "参数错误"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/today/apply-signals": {
-      "post": {
-        "tags": [
-          "今日作战 Today"
-        ],
-        "summary": "应用今日信号 (US-018)",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "应用成功",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "参数错误"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
     "/api/tasks": {
       "get": {
         "tags": [
@@ -1999,6 +1865,83 @@
         }
       }
     },
+    "/api/settings/notification-config": {
+      "get": {
+        "tags": [
+          "设置 Settings"
+        ],
+        "summary": "获取推送渠道矩阵视图 (US-080)",
+        "description": "返回 channels 顶部摘要（启用 / 绑定 / 配置）+ matrix 4×4 (event × channel)。\n与 GET /notification-channels 共用底层 JSONB 存储，只是视图形态不同。\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "矩阵视图",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "设置 Settings"
+        ],
+        "summary": "批量保存推送渠道矩阵 + 渠道字段 (US-080)",
+        "description": "Body 同时支持两种 patch 形态：\n  - matrix_updates: { event: { channel: bool } } —— 矩阵格反向 patch；\n  - channels_updates: { feishu?: { enabled?, webhook_url? }, email?: { ... }, wechat?: { ... }, sms?: { ... } }\n两份 patch 合并后走 dailyTradingDigestService.updateNotificationConfig。\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "matrix_updates": {
+                    "type": "object"
+                  },
+                  "channels_updates": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "保存成功 + 返回最新矩阵视图",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数错误"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
     "/api/settings/daily-digest/preview": {
       "post": {
         "tags": [
@@ -2231,6 +2174,101 @@
           },
           "400": {
             "description": "参数错误"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/settings/weekly-review/apply": {
+      "post": {
+        "tags": [
+          "设置 Settings"
+        ],
+        "summary": "把一条周报建议落到 user.risk_config.weekly_review_applied (US-143 PM-015)",
+        "description": "Body: { week_id: string, recommendation_index: number, text?: string, source?: string }\n同 (week_id, recommendation_index) 二次调返 409 (idempotent guard, 与 PM-024\nImprovementSuggestion apply 同源设计). 历史数组 LRU cap=50.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "week_id",
+                  "recommendation_index"
+                ],
+                "properties": {
+                  "week_id": {
+                    "type": "string"
+                  },
+                  "recommendation_index": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "应用成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数非法"
+          },
+          "401": {
+            "description": "未授权"
+          },
+          "404": {
+            "description": "用户不存在"
+          },
+          "409": {
+            "description": "该建议已 apply 过"
+          }
+        }
+      }
+    },
+    "/api/settings/weekly-review/applied": {
+      "get": {
+        "tags": [
+          "设置 Settings"
+        ],
+        "summary": "列出当前用户已 apply 过的周报建议历史 (US-143 PM-015)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "历史列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
           },
           "401": {
             "description": "未授权"
@@ -2750,12 +2788,74 @@
         }
       }
     },
+    "/api/sentiment/qa-industry-heat": {
+      "get": {
+        "tags": [
+          "情绪 Sentiment"
+        ],
+        "summary": "行业 QA 热度榜 — 某行业内最近 N 天最活跃的 top N 股票 (US-121 QA-004)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "industry",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "行业名 (与 Stock.industry 一致)"
+          },
+          {
+            "in": "query",
+            "name": "lookback_days",
+            "schema": {
+              "type": "integer",
+              "default": 7,
+              "maximum": 365
+            },
+            "description": "回看天数"
+          },
+          {
+            "in": "query",
+            "name": "top",
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "maximum": 100
+            },
+            "description": "top N 上限"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "行业 QA 热度榜",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数错误"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
     "/api/risk-alerts": {
       "get": {
         "tags": [
           "告警 RiskAlert"
         ],
-        "summary": "获取当前用户的风控告警列表",
+        "summary": "获取当前用户的风控告警列表（最近 50 条 + risk_config 兼容老页面）",
         "security": [
           {
             "bearerAuth": []
@@ -2781,6 +2881,139 @@
         }
       }
     },
+    "/api/risk-alerts/list": {
+      "get": {
+        "tags": [
+          "告警 RiskAlert"
+        ],
+        "summary": "US-077 风控中心列表 — 支持 level / type / 日期范围 / is_read / 模糊搜索 / 分页",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "level",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "HIGH",
+                "MEDIUM",
+                "LOW"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "position",
+                "market",
+                "individual"
+              ]
+            },
+            "description": "告警类别 — position (持仓相关) / market (市场系统级) / individual (单股)"
+          },
+          {
+            "in": "query",
+            "name": "date_from",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "is_read",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            },
+            "description": "模糊匹配 symbol / name"
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "default": 30,
+              "minimum": 1,
+              "maximum": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "分页告警列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        },
+                        "total": {
+                          "type": "integer"
+                        },
+                        "page": {
+                          "type": "integer"
+                        },
+                        "limit": {
+                          "type": "integer"
+                        },
+                        "unread_count": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
     "/api/risk-alerts/read-all": {
       "put": {
         "tags": [
@@ -2795,6 +3028,106 @@
         "responses": {
           "200": {
             "description": "标记结果"
+          },
+          "400": {
+            "description": "参数错误"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/risk-alerts/mark-read": {
+      "put": {
+        "tags": [
+          "告警 RiskAlert"
+        ],
+        "summary": "US-077 按 ID 数组批量标记已读（单次最多 200 个）",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ids"
+                ],
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    },
+                    "maxItems": 200
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "标记结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "updated": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数错误"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/risk-alerts/config": {
+      "put": {
+        "tags": [
+          "告警 RiskAlert"
+        ],
+        "summary": "更新风控阈值配置",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新结果"
           },
           "400": {
             "description": "参数错误"
@@ -2838,40 +3171,6 @@
           },
           "404": {
             "description": "未找到告警"
-          }
-        }
-      }
-    },
-    "/api/risk-alerts/config": {
-      "put": {
-        "tags": [
-          "告警 RiskAlert"
-        ],
-        "summary": "更新风控阈值配置",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "更新结果"
-          },
-          "400": {
-            "description": "参数错误"
-          },
-          "401": {
-            "description": "未授权"
           }
         }
       }
@@ -3396,6 +3695,305 @@
         }
       }
     },
+    "/api/risk/reconciliation-alert": {
+      "get": {
+        "tags": [
+          "风控 Risk"
+        ],
+        "summary": "获取当前用户的对账告警阈值配置 (US-137 EX-012)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "对账告警阈值配置"
+          },
+          "400": {
+            "description": "参数错误"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "风控 Risk"
+        ],
+        "summary": "更新当前用户的对账告警阈值配置 (US-137 EX-012)",
+        "description": "lenient normalize — 非法字段沉默回退默认, 不抛 4xx. 与\n/position-limits / /trailing-stop 等 8 个 guard endpoint 同款形态.\n下一次 ReconciliationAlertService.runForUser 调用即生效.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "alignment_score_high_threshold": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "alignment_score_medium_threshold": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "drift_count_high_threshold": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "drift_count_medium_threshold": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "dedupe_window_minutes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1440
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "已保存"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/risk/sizing-policy": {
+      "get": {
+        "tags": [
+          "风控 Risk"
+        ],
+        "summary": "(Phase 2) 获取用户 sizing 配置 (含 default 对比)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "当前 sizing 配置 + defaults"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "风控 Risk"
+        ],
+        "summary": "(Phase 2) 更新 sizing 配置",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "method": {
+                    "type": "string",
+                    "enum": [
+                      "equal_pct",
+                      "vol_target",
+                      "atr_based"
+                    ]
+                  },
+                  "base_position_pct": {
+                    "type": "number"
+                  },
+                  "max_position_pct": {
+                    "type": "number"
+                  },
+                  "vol_target_pct": {
+                    "type": "number"
+                  },
+                  "vol_max_lookback_days": {
+                    "type": "integer"
+                  },
+                  "atr_risk_pct": {
+                    "type": "number"
+                  },
+                  "atr_period": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "已保存"
+          }
+        }
+      }
+    },
+    "/api/risk/sizing-audit": {
+      "get": {
+        "summary": "Phase 2+ sizing 决策 A/B 报告",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "lookback_days",
+            "schema": {
+              "type": "integer",
+              "default": 30
+            }
+          },
+          {
+            "in": "query",
+            "name": "portfolio_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "method",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "equal_pct",
+                "vol_target",
+                "atr_based",
+                "kelly"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "决策聚合报告 + recent rows"
+          }
+        }
+      }
+    },
+    "/api/risk/kill-switch-status": {
+      "get": {
+        "summary": "Phase 4+ 策略熔断状态评估",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "dry_run",
+            "schema": {
+              "type": "string",
+              "default": "true"
+            },
+            "description": "true (默认) = 只评估不真正禁用；false = 触发的策略立即禁用"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "评估报告 + 触发策略列表"
+          }
+        }
+      }
+    },
+    "/api/risk/market-top-status": {
+      "get": {
+        "summary": "Phase 8 市场顶部前瞻预警",
+        "responses": {
+          "200": {
+            "description": "5 维信号 + top_score + level"
+          }
+        }
+      }
+    },
+    "/api/risk/analysis-engine-config": {
+      "get": {
+        "tags": [
+          "风控 Risk"
+        ],
+        "summary": "读取 AnalysisEngine 接入模式配置 (US-065)",
+        "description": "返回用户 risk_config.analysis_engine 的 normalized 配置 (off/shadow/hard),\n附带 system default 与 is_default 标记便于 UI \"恢复默认\" 按钮。\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "配置 + 默认值"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "风控 Risk"
+        ],
+        "summary": "更新 AnalysisEngine 接入模式 (US-065; off/shadow/hard)",
+        "description": "字段全 lenient，invalid 会被 normalize 退回 off。\n下一次 AIAdvisorService.analyzeSingleStock 末尾的 maybeRunShadow 调用生效。\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "shadow",
+                      "hard"
+                    ]
+                  },
+                  "enabled_analyzers": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "weights": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "已保存"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
     "/api/review/performance-center": {
       "get": {
         "tags": [
@@ -3447,6 +4045,85 @@
           },
           "401": {
             "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/quant/strategies/{strategy_key}/detail": {
+      "get": {
+        "tags": [
+          "量化 Quant"
+        ],
+        "summary": "单只策略详情（US-078）— 元数据 + 近 10 次回测 + 最新 IC + 实盘绑定状态",
+        "description": "聚合返回 4 类数据：(1) strategy 行（含 default_params / execution_policy 等），\n(2) backtests 近 10 次包含该策略的回测（含该策略自身 KPI 与冠军 KPI），\n(3) latest_ic 最近一次因子 IC 报告（按 factor_name=strategy_key 匹配），\n(4) live_binding 简化版实盘绑定（enabled flag + 近 7 日是否有信号）。\n任一子查询失败用 fallback 不阻塞。\n\nMust be registered before PATCH /strategies/:strategy_key — Express 同方法优先，\n但加 GET 子资源在 catchall 之前是更通用的安全做法。\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "strategy_key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "策略详情"
+          },
+          "400": {
+            "description": "缺少 strategy_key"
+          },
+          "401": {
+            "description": "未授权"
+          },
+          "404": {
+            "description": "策略不存在"
+          }
+        }
+      }
+    },
+    "/api/quant/strategies/{strategy_key}/source": {
+      "get": {
+        "tags": [
+          "量化 Quant"
+        ],
+        "summary": "策略源码（US-093）— 返回 backend/src/quant/strategies/*.ts 内容，供 Monaco 只读展示",
+        "description": "前端在策略详情页 \"代码视图\" tab 加载 Monaco 编辑器后调用本接口拉取源码。\n严格校验 strategy_key（仅允许 `^[a-z][a-z0-9_]*$`），并通过预扫描建立的\nkey→filename 缓存查找，杜绝 path traversal。源文件硬上限 256KB。\n\nMust be registered before PATCH /strategies/:strategy_key — 与 /detail 同款\nordering 规则，避免 Express 把 'source' 错配成 PATCH catchall 的 :strategy_key。\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "strategy_key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "源码内容 + 文件元数据"
+          },
+          "400": {
+            "description": "strategy_key 格式非法或缺失"
+          },
+          "401": {
+            "description": "未授权"
+          },
+          "404": {
+            "description": "找不到对应源文件"
+          },
+          "413": {
+            "description": "源文件过大"
           }
         }
       }
@@ -3900,6 +4577,258 @@
         }
       }
     },
+    "/api/quant/walk-forward": {
+      "post": {
+        "tags": [
+          "量化 Quant"
+        ],
+        "summary": "(Phase 1) 触发 walk-forward 验证 — in-process 实现 + DSR/PBO 过拟合检测",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "strategy_key": {
+                    "type": "string"
+                  },
+                  "param_grid": {
+                    "type": "object",
+                    "description": "grid_search 模式用"
+                  },
+                  "param_bounds": {
+                    "type": "object",
+                    "description": "bayesian 模式用"
+                  },
+                  "base_config": {
+                    "type": "object"
+                  },
+                  "train_months": {
+                    "type": "integer",
+                    "default": 12
+                  },
+                  "test_months": {
+                    "type": "integer",
+                    "default": 3
+                  },
+                  "start_date": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "end_date": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "scheme": {
+                    "type": "string",
+                    "enum": [
+                      "rolling",
+                      "cpcv"
+                    ],
+                    "default": "rolling"
+                  },
+                  "optimizer_type": {
+                    "type": "string",
+                    "enum": [
+                      "grid_search",
+                      "bayesian"
+                    ],
+                    "default": "grid_search"
+                  },
+                  "purging": {
+                    "type": "object",
+                    "properties": {
+                      "label_horizon_days": {
+                        "type": "integer"
+                      },
+                      "embargo_days": {
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  "cpcv": {
+                    "type": "object",
+                    "properties": {
+                      "n_groups": {
+                        "type": "integer",
+                        "default": 6
+                      },
+                      "k_test_groups": {
+                        "type": "integer",
+                        "default": 2
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "验证完成"
+          },
+          "400": {
+            "description": "参数错误"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/quant/walk-forward/runs": {
+      "get": {
+        "tags": [
+          "量化 Quant"
+        ],
+        "summary": "(Phase 1) 列出最近的 walk-forward run",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "strategy_name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "default": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "run 列表"
+          }
+        }
+      }
+    },
+    "/api/quant/optimization-runs": {
+      "get": {
+        "tags": [
+          "量化 Quant"
+        ],
+        "summary": "(Phase 7+) 统一列出所有 OptimizationRun (grid_search / bayesian / walk_forward)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "optimizer_type",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "grid_search",
+                "bayesian",
+                "walk_forward",
+                "all"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "strategy_name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "default": 30,
+              "maximum": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OptimizationRun 列表 (统一形态)"
+          }
+        }
+      }
+    },
+    "/api/quant/walk-forward/runs/{id}/windows": {
+      "get": {
+        "tags": [
+          "量化 Quant"
+        ],
+        "summary": "(Phase 1) 拿一个 walk-forward run 的所有 windows",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "windows 列表"
+          },
+          "400": {
+            "description": "参数错误"
+          }
+        }
+      }
+    },
+    "/api/quant/walk-forward/runs/{id}": {
+      "delete": {
+        "tags": [
+          "量化 Quant"
+        ],
+        "summary": "(Phase 1) 删除一个 walk-forward run",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "删除成功"
+          },
+          "400": {
+            "description": "参数错误"
+          }
+        }
+      }
+    },
     "/api/quant/backtests/grid-search": {
       "post": {
         "tags": [
@@ -4062,6 +4991,199 @@
           },
           "404": {
             "description": "未找到"
+          }
+        }
+      }
+    },
+    "/api/quant/backtests/{id}/drawdown-series": {
+      "get": {
+        "tags": [
+          "量化 Quant"
+        ],
+        "summary": "回测冠军策略每日回撤序列（US-075）",
+        "description": "返回冠军策略 (按 total_return_pct 取最高) 每个交易日的回撤百分比与权益价值。\n优先复用 equity_curve_json 中预存的 drawdown_pct；缺失时现场用 running peak 算。\n供前端 LabWorkspace 回测对比 tab 的回撤曲线叠加图使用。\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "回撤序列"
+          },
+          "400": {
+            "description": "参数错误"
+          },
+          "401": {
+            "description": "未授权"
+          },
+          "404": {
+            "description": "任务不存在或暂无结果"
+          }
+        }
+      }
+    },
+    "/api/quant/backtests/{id}/monthly-returns": {
+      "get": {
+        "tags": [
+          "量化 Quant"
+        ],
+        "summary": "回测冠军策略月度收益矩阵（US-075）",
+        "description": "按 YYYY-MM 聚合冠军策略月末权益，输出 (year × month) 形式的收益率矩阵，\n供前端 LabWorkspace 渲染月度热力图。返回 years[] / months[] / cells[] 三个维度\n便于前端构建矩阵。\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "月度收益矩阵"
+          },
+          "400": {
+            "description": "参数错误"
+          },
+          "401": {
+            "description": "未授权"
+          },
+          "404": {
+            "description": "任务不存在或暂无结果"
+          }
+        }
+      }
+    },
+    "/api/quant/backtests/{id}/rolling-sharpe-series": {
+      "get": {
+        "tags": [
+          "量化 Quant"
+        ],
+        "summary": "回测冠军策略滚动夏普序列（US-075）",
+        "description": "从冠军策略权益曲线推每日 pct 收益，对每个交易日取过去 window 天 (默认 90，\n通过 ?window=N 调，范围 2-252) 的收益序列算 (mean / sd) * sqrt(252) 得滚动夏普。\n供前端 LabWorkspace 渲染滚动夏普曲线，window 不足时该日返回 null（前端 connectNulls 跳过）。\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 90,
+              "minimum": 2,
+              "maximum": 252
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "滚动夏普序列"
+          },
+          "400": {
+            "description": "参数错误"
+          },
+          "401": {
+            "description": "未授权"
+          },
+          "404": {
+            "description": "任务不存在或暂无结果"
+          }
+        }
+      }
+    },
+    "/api/quant/backtests/{id}/cost-sensitivity": {
+      "post": {
+        "tags": [
+          "量化 Quant"
+        ],
+        "summary": "交易成本敏感性分析（US-085）",
+        "description": "对一次已完成的回测，按 3 档佣金费率（万 1.5 / 万 2.5 / 万 5）逐档重跑回测引擎，\n将每档的 annual_return / sharpe / turnover / total_return / max_drawdown / win_rate\n/ trade_count 落到 cost_sensitivity_results 表。请求体可选 dry_run=true 仅返回不落库；\ncost_levels=['万2.5'] 仅跑指定档；metadata 任意 JSON 写入 row.metadata_json。\n\n同 (base_run_id, strategy_key, cost_level) 重跑会自动 upsert（destroy + bulkCreate）。\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "dry_run": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "cost_levels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "万1.5",
+                        "万2.5",
+                        "万5"
+                      ]
+                    }
+                  },
+                  "metadata": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "分析结果（含 rows + summary + persisted）"
+          },
+          "400": {
+            "description": "参数错误"
+          },
+          "401": {
+            "description": "未授权"
+          },
+          "404": {
+            "description": "任务不存在或无 per-strategy 结果"
           }
         }
       }
@@ -4264,6 +5386,33 @@
           },
           "401": {
             "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/quant/strategy-leaderboard": {
+      "get": {
+        "tags": [
+          "量化 Quant"
+        ],
+        "summary": "策略排行榜（按 sharpe / annual / total 排序，每策略最新一次回测）",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sort_by",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "sharpe",
+                "annual",
+                "total"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "排序后的策略列表"
           }
         }
       }
@@ -4515,6 +5664,80 @@
         }
       }
     },
+    "/api/portfolio/industry-concentration-summary": {
+      "get": {
+        "tags": [
+          "组合 Portfolio"
+        ],
+        "summary": "行业集中度 KPI 快照 (US-012)",
+        "description": "PortfolioWorkspace 顶部 KPI 卡专用 — 返回当前 user 的最大行业占比、\n是否超 alert_pct（默认 0.35）以及完整 industry breakdown。复用 US-052\nIndustryConcentrationGuard.aggregateByIndustry（同款分母：持仓不含\ncash），不写 RiskAlert，UI 可任意频率轮询。\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "KPI 快照"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/portfolio/{id}/attribution/daily": {
+      "get": {
+        "tags": [
+          "组合 Portfolio"
+        ],
+        "summary": "获取单 portfolio 当日归因报告 (US-084 / PM-007)",
+        "description": "读取 daily_attribution_reports 表 (PM-003 schema), 由 cron\nDAILY_ATTRIBUTION_GENERATE (US-083 / PM-006) 在 17:00 工作日 upsert.\nowner check — portfolio.user_id 必须等于请求 user, 否则 403.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "date",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "YYYY-MM-DD, 默认今日 (Asia/Shanghai)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "报告内容"
+          },
+          "400": {
+            "description": "portfolio id 非法"
+          },
+          "401": {
+            "description": "未登录"
+          },
+          "403": {
+            "description": "非本人 portfolio"
+          },
+          "404": {
+            "description": "portfolio / 当日报告不存在"
+          }
+        }
+      }
+    },
     "/api/portfolio/validate-stocks": {
       "post": {
         "tags": [
@@ -4589,6 +5812,25 @@
           },
           "401": {
             "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/paper-trading/portfolios": {
+      "get": {
+        "tags": [
+          "模拟交易 PaperTrading"
+        ],
+        "summary": "列出当前用户名下所有 active portfolio (供前端选盘下拉)",
+        "description": "多账户多盘场景下解决\"每次刷新切到不同盘\"的串盘问题. 前端拿到 portfolio list 后展示选盘下拉, 选完用 ?portfolio_id=X 拉具体盘.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "portfolio 列表"
           }
         }
       }
@@ -5134,6 +6376,86 @@
         }
       }
     },
+    "/api/paper-trading/activation-summary": {
+      "get": {
+        "tags": [
+          "模拟交易 PaperTrading"
+        ],
+        "summary": "L1-L8 决策链激活汇总 (Sprint 27)",
+        "description": "聚合最近 N 天的 paper_trading_order_intents.metadata.l8_activation,\n返回 8 层每层 reached/blocked/contributed 计数 + Top block reasons +\n最近 10 笔 trade 的逐层激活快照. 用于 ActivationDashboard 前端面板.\n",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "portfolio_id",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "可选; 缺省 = 当前 user 全部 portfolio 聚合"
+          },
+          {
+            "in": "query",
+            "name": "days",
+            "schema": {
+              "type": "integer",
+              "default": 7,
+              "minimum": 1,
+              "maximum": 90
+            },
+            "description": "回看天数 (default 7, max 90)"
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "激活汇总"
+          },
+          "401": {
+            "description": "未登录"
+          },
+          "403": {
+            "description": "显式 portfolio_id 不属当前 user"
+          }
+        }
+      }
+    },
+    "/api/paper-trading/portfolio-construction-config": {
+      "get": {
+        "tags": [
+          "模拟交易 PaperTrading"
+        ],
+        "summary": "读取 PortfolioConstruction 配置 (Sprint 29)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "配置 + 默认值"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "模拟交易 PaperTrading"
+        ],
+        "summary": "更新 PortfolioConstruction 模式 (Sprint 29; off/shadow/hard)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "已保存"
+          }
+        }
+      }
+    },
     "/api/paper-trading/attribution/report": {
       "post": {
         "tags": [
@@ -5427,6 +6749,59 @@
         }
       }
     },
+    "/api/paper-trading/positions/{id}/take-profit": {
+      "put": {
+        "tags": [
+          "模拟交易 PaperTrading"
+        ],
+        "summary": "设置/清除指定持仓的硬止盈价 (US-076)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "take_profit_price": {
+                    "type": "number",
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "设置结果"
+          },
+          "400": {
+            "description": "参数错误"
+          },
+          "401": {
+            "description": "未授权"
+          },
+          "404": {
+            "description": "未找到持仓"
+          }
+        }
+      }
+    },
     "/api/market/overview": {
       "get": {
         "tags": [
@@ -5434,6 +6809,29 @@
         ],
         "summary": "获取市场大盘概览",
         "description": "获取沪深300等核心指数的最新状态和近期走势"
+      }
+    },
+    "/api/market/realtime-indexes": {
+      "get": {
+        "tags": [
+          "Market"
+        ],
+        "summary": "拉取指数实时报价 (新浪 hq.sinajs.cn，5s 缓存)",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "symbols",
+            "schema": {
+              "type": "string"
+            },
+            "description": "逗号分隔的 symbol 列表 (如 'sh.000300,sh.000001,sz.399001,sz.399006')；默认 hs300+上证+深证+创业板"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "实时报价"
+          }
+        }
       }
     },
     "/api/market/search": {
@@ -7340,6 +8738,164 @@
         ]
       }
     },
+    "/api/me/improvement-suggestions": {
+      "get": {
+        "tags": [
+          "改进建议 ImprovementSuggestion"
+        ],
+        "summary": "Macro 串联补丁 (2026-06-21) — 列出当前用户的改进建议",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "applied",
+                "dismissed",
+                "expired"
+              ],
+              "default": "open"
+            },
+            "description": "过滤状态; 默认 open"
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "integer"
+                        },
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未登录"
+          }
+        }
+      }
+    },
+    "/api/me/improvement-suggestions/{id}/apply": {
+      "post": {
+        "tags": [
+          "改进建议 ImprovementSuggestion"
+        ],
+        "summary": "US-126 PM-024 — 应用一条改进建议 (status='open' → 'applied' + 写 applied_at)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "improvement_suggestions.id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "应用成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "applied"
+                          ]
+                        },
+                        "applied_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "action_type": {
+                          "type": "string",
+                          "enum": [
+                            "noop",
+                            "tune_risk_param",
+                            "enable_kill_switch",
+                            "open_workspace_tab"
+                          ]
+                        },
+                        "action": {
+                          "type": "object"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "id 非法"
+          },
+          "401": {
+            "description": "未登录"
+          },
+          "404": {
+            "description": "建议不存在 (亦兼容跨用户访问)"
+          },
+          "409": {
+            "description": "建议非 'open' 状态 (已 applied / dismissed / expired)"
+          }
+        }
+      }
+    },
     "/api/factors/overview": {
       "get": {
         "tags": [
@@ -7405,6 +8961,490 @@
           },
           "401": {
             "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/factors/industry-heatmap": {
+      "get": {
+        "tags": [
+          "因子 Factors"
+        ],
+        "summary": "行业 × 因子 z_score 平均值热力图 (US-074)",
+        "description": "给定 trade_date（缺省 = factor_scores 最新一日），返回每个 (industry, factor) 组合的平均 z_score 与样本数，前端用 echarts heatmap 渲染。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "截面交易日 YYYY-MM-DD；不传则用 factor_scores 表最新一日"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "行业 × 因子 cells",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "date 格式错误"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/factors/industry-board": {
+      "get": {
+        "tags": [
+          "因子 Factors"
+        ],
+        "summary": "行业决策面板 (Batch AF 2026-06-18) — 板块资金流 + 龙头 + 热门概念",
+        "description": "基于 IndustryFlow / LimitUpStock / SnowballHotKeyword 真实盘口数据, 替代\n因子 z_score 抽象热力图, 让用户直接看到 \"今天哪个板块在涨 + 主力流入\"\n+ \"板块龙头股\" + \"近 N 日序列\" + \"今日热门概念\"。\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "top",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 30
+            }
+          },
+          {
+            "in": "query",
+            "name": "lookback",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20,
+              "default": 5
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "行业决策面板数据"
+          },
+          "400": {
+            "description": "date 格式错误"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/factors/sentiment-board": {
+      "get": {
+        "tags": [
+          "因子 Factors"
+        ],
+        "summary": "舆情雷达面板 (Batch AH 2026-06-18) — 东财人气 + 百度热搜 + 异动 + 散点 + 情绪新闻",
+        "description": "基于 SocialSentimentSnapshot + MarketHotSearch + MarketNews 真实数据.\n聚合 5 个 block 一次返回. 每个 block 独立 try/catch fallback.\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "top",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20
+            }
+          },
+          {
+            "in": "query",
+            "name": "breakout_lookback",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20,
+              "default": 5
+            }
+          },
+          {
+            "in": "query",
+            "name": "news_keywords_csv",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "覆盖默认情绪关键词列表 (逗号分隔)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "舆情雷达数据"
+          },
+          "400": {
+            "description": "date 格式错误"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/factors/stock/{stock_code}": {
+      "get": {
+        "tags": [
+          "因子 Factors"
+        ],
+        "summary": "单股横截面因子分数 (z_score + percentile, 最新一天)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "stock_code",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{6}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "该股票当日所有因子的 z_score / percentile"
+          },
+          "400": {
+            "description": "stock_code 必须是 6 位数字"
+          }
+        }
+      }
+    },
+    "/api/factors/{name}/detail": {
+      "get": {
+        "tags": [
+          "因子 Factors"
+        ],
+        "summary": "单因子详情 — IC 曲线 + 5 等分组合净值 (US-094)",
+        "description": "Must be registered AFTER /overview / /preview / /industry-heatmap — otherwise\nExpress's :name catchall would consume those static paths.\n\n返回 3 段：因子元信息 + IC 历史曲线（按 period_end ASC）+ 5 等分组合累计净值\n曲线 Q1..Q5（按 trade_date ASC，起点 1.0）。\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "因子名（snake_case）"
+          },
+          {
+            "in": "query",
+            "name": "limit_days",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 250,
+              "default": 120
+            },
+            "description": "抓取最近 N 个交易日"
+          },
+          {
+            "in": "query",
+            "name": "ic_limit",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 60
+            },
+            "description": "抓取最近 N 条 IC 历史"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "因子详情",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "因子名非法"
+          },
+          "401": {
+            "description": "未授权"
+          },
+          "404": {
+            "description": "因子未注册"
+          }
+        }
+      }
+    },
+    "/api/black-swan/events": {
+      "get": {
+        "tags": [
+          "黑天鹅 BlackSwan"
+        ],
+        "summary": "US-133 PR-018 — 黑天鹅事件分页列表 (按 detected_at DESC)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "event_type",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ST",
+                "SUSPENDED",
+                "NEWS_KEYWORD",
+                "SHAREHOLDER_REDUCTION",
+                "MARKET_REGIME",
+                "OTHER"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "severity",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "symbol",
+                "sector",
+                "market",
+                "portfolio"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "resolved",
+                "expired"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "symbol",
+            "schema": {
+              "type": "string"
+            },
+            "description": "模糊匹配 symbol"
+          },
+          {
+            "in": "query",
+            "name": "date_from",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "minimum": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "default": 30,
+              "minimum": 1,
+              "maximum": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "分页事件列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        },
+                        "total": {
+                          "type": "integer"
+                        },
+                        "page": {
+                          "type": "integer"
+                        },
+                        "limit": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/black-swan/events/{id}": {
+      "get": {
+        "tags": [
+          "黑天鹅 BlackSwan"
+        ],
+        "summary": "US-133 PR-018 — 黑天鹅事件详情 + 关联 postmortem 报告 (可能 null)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "事件详情 + postmortem 4 段 JSONB (可能 null 表示待生成)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "event": {
+                          "type": "object"
+                        },
+                        "postmortem": {
+                          "type": "object",
+                          "nullable": true
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "id 非法"
+          },
+          "401": {
+            "description": "未授权"
+          },
+          "404": {
+            "description": "事件不存在"
           }
         }
       }
@@ -8174,1005 +10214,6 @@
         }
       }
     },
-    "/api/ai/health": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "获取 TradingAgents 服务健康与能力信息",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/analyze": {
-      "post": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "提交 AI 同步或异步分析任务",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "stock_code": {
-                    "type": "string"
-                  },
-                  "async": {
-                    "type": "boolean"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "400": {
-            "description": "参数错误"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/analyze-stock": {
-      "post": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "US-055 单股深度分析（基本面/技术面/资金面/新闻面/情绪面）",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "stock_code": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "400": {
-            "description": "参数错误"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/analyze-stock/stream": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "US-055 单股深度分析 SSE 流式返回（EventSource 无 Bearer Header）",
-        "security": [],
-        "parameters": [
-          {
-            "in": "query",
-            "name": "stock_code",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "SSE 流"
-          }
-        }
-      }
-    },
-    "/api/ai/analyze-stock/reports/{reportId}": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "US-055 单条 AI 分析报告详情",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "in": "path",
-            "name": "reportId",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          },
-          "404": {
-            "description": "报告不存在"
-          }
-        }
-      }
-    },
-    "/api/ai/analyze-stock/reports": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "US-055 AI 分析报告列表（按 stock_code 过滤、时间倒序）",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "in": "query",
-            "name": "stock_code",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "schema": {
-              "type": "integer",
-              "default": 20
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/tasks/{taskId}": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "获取 AI 分析异步任务的状态",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "in": "path",
-            "name": "taskId",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          },
-          "404": {
-            "description": "任务不存在"
-          }
-        }
-      }
-    },
-    "/api/ai/analyze/stream": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "实时 SSE 流式返回 AI 研报分析过程",
-        "security": [],
-        "parameters": [
-          {
-            "in": "query",
-            "name": "stock_code",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "SSE 流"
-          }
-        }
-      }
-    },
-    "/api/ai/recommendations": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "获取本地多因子候选推荐",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/recommendations/strategy-experiment": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "并行比较多种荐股策略风格与参数组合",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/recommendations/analyze": {
-      "post": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "将多因子候选批量提交 TradingAgents 深度研报",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "400": {
-            "description": "参数错误"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/recommendations/archive": {
-      "post": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "将多因子候选归档为可后验验证的投研信号",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "400": {
-            "description": "参数错误"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/recommendations/loop-policy-snapshots": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "获取全市场荐股闭环策略参数快照与版本表现",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/recommendations/loop-policy-snapshots/refresh-outcomes": {
-      "post": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "用最新推荐交易收益回填策略参数版本表现",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/recommendations/auto-loop": {
-      "post": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "执行全市场自动荐股闭环",
-        "description": "量化初筛、归档、Agent 复核、后验验证与模拟盘预演/跟单",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/recommendations/sync-profiles": {
-      "post": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "为候选推荐批量补全股票画像/估值快照",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/signals": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "获取已归档 AI 投研信号及后验收益",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/signals/stats": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "获取 AI 投研信号统计表现",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/signals/performance": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "获取 AI/量化推荐后验绩效看板",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/signals/quality-report": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "获取信号来源质量排行榜日报",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "生成信号来源质量排行榜并上报飞书",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/signals/agent-tail-ledger": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "获取 TradingAgents 尾盘建议收益账本与 Alpha 归因",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/signals/sync-screeners": {
-      "post": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "从 AI 每日优选同步为可验证信号",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/signals/verify": {
-      "post": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "刷新 AI 信号后验收益验证",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/signals/verification/diagnose": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "诊断 AI 信号收益验证缺口（缺股票/缺行情/周期未完成）",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/signals/verification/repair": {
-      "post": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "自动补齐缺失行情并重新验证 AI 信号收益",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/signals/performance/refresh": {
-      "post": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "刷新 AI/量化推荐后验绩效并上报飞书",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/screener": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "获取 AI 每日优选列表",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/screener/{id}": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "获取单条 AI 优选详情（包含 detail 大字段）",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "401": {
-            "description": "未授权"
-          },
-          "404": {
-            "description": "优选不存在"
-          }
-        }
-      }
-    },
-    "/api/ai/kol-opinions": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "US-056 行业大 V / 券商 / 媒体观点聚合",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "in": "query",
-            "name": "stock_code",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "schema": {
-              "type": "integer",
-              "default": 10,
-              "minimum": 1,
-              "maximum": 50
-            }
-          },
-          {
-            "in": "query",
-            "name": "refresh",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "true",
-                "false"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "400": {
-            "description": "参数错误"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/technical-analysis": {
-      "post": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "US-061 大模型技术面 K 线解读",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "stock_code"
-                ],
-                "properties": {
-                  "stock_code": {
-                    "type": "string"
-                  },
-                  "lookback_days": {
-                    "type": "integer",
-                    "default": 60,
-                    "minimum": 20,
-                    "maximum": 250
-                  },
-                  "force_refresh": {
-                    "type": "boolean",
-                    "default": false
-                  },
-                  "dry_run": {
-                    "type": "boolean",
-                    "default": false
-                  },
-                  "task_label": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "400": {
-            "description": "参数错误"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/strategy-copilot": {
-      "post": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "US-062 AI 策略人机协同 (Copilot) 同步聊天",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "prompt"
-                ],
-                "properties": {
-                  "prompt": {
-                    "type": "string"
-                  },
-                  "strategy_key": {
-                    "type": "string"
-                  },
-                  "intent_override": {
-                    "type": "string"
-                  },
-                  "dry_run": {
-                    "type": "boolean"
-                  },
-                  "task_label": {
-                    "type": "string"
-                  },
-                  "conversation_id": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "400": {
-            "description": "参数错误"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
-    "/api/ai/strategy-copilot/stream": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "US-062 AI Copilot SSE 流式返回（EventSource 无 Bearer Header）",
-        "security": [],
-        "parameters": [
-          {
-            "in": "query",
-            "name": "prompt",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          },
-          {
-            "in": "query",
-            "name": "strategy_key",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "intent_override",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "task_label",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "conversation_id",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "SSE 流 (status/context/payload/completed/error)"
-          }
-        }
-      }
-    },
-    "/api/ai/strategy-copilot/context": {
-      "get": {
-        "tags": [
-          "AI 分析"
-        ],
-        "summary": "US-062 仅返回策略元 + 最近 N 次回测，不调远端 AI",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "in": "query",
-            "name": "strategy_key",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          },
-          {
-            "in": "query",
-            "name": "lookback",
-            "schema": {
-              "type": "integer",
-              "default": 5
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "操作成功"
-          },
-          "400": {
-            "description": "参数错误"
-          },
-          "401": {
-            "description": "未授权"
-          }
-        }
-      }
-    },
     "/api/live-trading/readiness": {
       "get": {
         "tags": [
@@ -9819,6 +10860,57 @@
           },
           "400": {
             "description": "参数错误"
+          },
+          "401": {
+            "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/live-trading/fill-anomaly-stats": {
+      "get": {
+        "tags": [
+          "实盘 LiveTrading"
+        ],
+        "summary": "实盘 fill 异常分类统计 (US-138 EX-013)",
+        "description": "按 partial / canceled / rejected / failed / expired / aborted 等 10 类目聚合, 返回 counts + anomaly_rate + per-category 样本",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "since_hours",
+            "schema": {
+              "type": "integer",
+              "default": 24,
+              "minimum": 1,
+              "maximum": 720
+            }
+          },
+          {
+            "in": "query",
+            "name": "sample_per_category",
+            "schema": {
+              "type": "integer",
+              "default": 5,
+              "minimum": 1,
+              "maximum": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "统计结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
           },
           "401": {
             "description": "未授权"

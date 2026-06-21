@@ -30,7 +30,15 @@ export class MinerviniTrendTemplateStrategy extends QuantStrategy {
       category: 'trend',
       expected_edge_pct: 8.0,
       expected_holding_days: 25,
-      key_factors: ['ma50_ma150_ma200_stack', 'ma200_slope', 'distance_to_52w_high', 'distance_to_52w_low', 'return_60d', 'volume_5_30_ratio', 'quality_score'],
+      key_factors: [
+        'ma50_ma150_ma200_stack',
+        'ma200_slope',
+        'distance_to_52w_high',
+        'distance_to_52w_low',
+        'return_60d',
+        'volume_5_30_ratio',
+        'quality_score',
+      ],
       evidence_link: 'Mark Minervini - Trade Like a Stock Market Wizard (2013)',
       failure_modes: [
         '大盘 regime 切换到 bear 时所有强势股同步崩塌（系统性 beta）',
@@ -118,7 +126,11 @@ export class MinerviniTrendTemplateStrategy extends QuantStrategy {
     score = clamp(score * patternBoost.multiplier);
     if (patternBoost.detected_patterns.length > 0) {
       reasons.push(
-        `形态确认 (${regime}市): ${patternBoost.detected_patterns.join(', ')} × ${patternBoost.multiplier.toFixed(2)} → ${scoreBeforePattern.toFixed(0)}→${score.toFixed(0)}`,
+        `形态确认 (${regime}市): ${patternBoost.detected_patterns.join(
+          ', '
+        )} × ${patternBoost.multiplier.toFixed(2)} → ${scoreBeforePattern.toFixed(
+          0
+        )}→${score.toFixed(0)}`
       );
     }
 

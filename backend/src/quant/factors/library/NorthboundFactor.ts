@@ -19,9 +19,11 @@ import { Op } from 'sequelize';
 import { Factor } from '../types';
 import { factorRegistry } from '../FactorRegistry';
 import { NorthboundHolding } from '../../../models/NorthboundHolding';
-import { isFiniteNumber, lookbackStartDate } from './_helpers';
+import { isFiniteNumber } from './_helpers';
+import { tradingDayLookbackStartDate } from './_tradingDayWindow';
 
-const WINDOW_DAYS = 20;
+/** 业务窗口: 近 20 个交易日 (audit M-9: 从 30 自然日 +10 buffer 改成精确 20 交易日) */
+const WINDOW_TRADING_DAYS = 20;
 
 export const northboundFactor: Factor = {
   name: 'northbound',
@@ -32,8 +34,8 @@ export const northboundFactor: Factor = {
     const out = new Map<string, number | null>();
     if (!ctx.universe.length) return out;
 
-    // 拉窗口内 + 当日的全部北向行（按 stock_code IN 过滤 universe）
-    const startDate = lookbackStartDate(ctx.as_of_date, WINDOW_DAYS + 10); // +10 兜底节假日间隔
+    // 拉窗口内 + 当日的全部北向行 (audit M-9: 交易日窗口替代 +10 自然日兜底)
+    const startDate = await tradingDayLookbackStartDate(ctx.as_of_date, WINDOW_TRADING_DAYS);
     const rows = (await NorthboundHolding.findAll({
       attributes: ['stock_code', 'trade_date', 'hold_ratio'],
       where: {

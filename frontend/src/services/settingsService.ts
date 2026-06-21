@@ -222,6 +222,8 @@ export interface AIWeeklyOpinion {
   source: 'remote' | 'heuristic';
   headline: string;
   paragraphs: string[];
+  /** US-125 PM-014 — 3-5 条结构化操作建议 (与 paragraphs 一起拼成 200-300 字摘要) */
+  recommendations: string[];
 }
 
 export interface WeeklyReviewPayload {
@@ -320,6 +322,29 @@ export async function sendWeeklyReviewNow(
     throw new Error(res.data?.message || '触发周报推送失败');
   }
   return res.data.data as SendWeeklyReviewResult;
+}
+
+/**
+ * Macro 串联补丁 (2026-06-21) — US-143 PM-015 apply 一条周报建议.
+ *
+ * 后端: POST /api/settings/weekly-review/apply
+ *   body: { week_id: string, recommendation_index: number, text?: string, source?: string }
+ *
+ * 后端 controller 把建议落入 user.risk_config.weekly_review_applied[] JSONB,
+ * 下游 PM-027 ImprovementEffectTracker 消费. 失败抛 Error (含 409 已 apply).
+ */
+export async function applyWeeklyReviewRecommendation(input: {
+  week_id: string;
+  recommendation_index: number;
+  text?: string;
+  source?: string;
+}): Promise<{ applied: any; history: any[] }> {
+  const res = await api.post('/settings/weekly-review/apply', input);
+  if (!res.data?.success) {
+    const msg = res.data?.message || '应用周报建议失败';
+    throw new Error(msg);
+  }
+  return res.data.data as { applied: any; history: any[] };
 }
 
 // ---------- US-066 微信公众号绑定与配置 ------------------------------------
@@ -609,6 +634,7 @@ const settingsService = {
   sendDailyDigestNow,
   previewWeeklyReview,
   sendWeeklyReviewNow,
+  applyWeeklyReviewRecommendation,
   getWeChatBindQrCode,
   confirmWeChatBind,
   updateWeChatConfig,

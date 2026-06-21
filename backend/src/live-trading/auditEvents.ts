@@ -28,6 +28,16 @@ export const LIVE_AUDIT_EVENT_TYPES = {
   ORDER_SHADOW_EXECUTED: 'live_order_shadow_executed',
   ORDER_UNATTENDED_REAL_SUBMIT_BLOCKED: 'live_order_unattended_real_submit_blocked',
   ORDER_PRE_SUBMIT_RECHECK_BLOCKED: 'live_order_pre_submit_recheck_blocked',
+  // US-015 (EX-001) — ExecutionFeasibility gate 在 approveDraft 内的两个出口.
+  // BLOCKED = composite_score < 60 / decision='blocked' 直接拒草稿; WARN = risky 放行留痕.
+  ORDER_BLOCKED_BY_FEASIBILITY: 'live_order_blocked_by_feasibility',
+  ORDER_FEASIBILITY_WARN: 'live_order_feasibility_warn',
+  // US-010 (PR-005) — TradeComplianceChecker pre-trade gate 在 approveDraft 的出口.
+  // BLOCKED_BY_COMPLIANCE = severity=high 直接拒; COMPLIANCE_WARN = severity=medium 放行留痕.
+  ORDER_BLOCKED_BY_COMPLIANCE: 'live_order_blocked_by_compliance',
+  ORDER_COMPLIANCE_WARN: 'live_order_compliance_warn',
+  // US-011 (PR-006) — DrawdownCircuitBreaker / pre-trade guard chain 任一不可用 (fail-closed) 拒草稿.
+  ORDER_BLOCKED_BY_PRE_TRADE_GATE: 'live_order_blocked_by_pre_trade_gate',
 
   // ----- 命令队列 / bridge -----
   ORDER_ENQUEUED: 'live_order_enqueued',
@@ -64,7 +74,7 @@ export const LIVE_AUDIT_EVENT_TYPES = {
 } as const;
 
 export type LiveAuditEventType =
-  typeof LIVE_AUDIT_EVENT_TYPES[keyof typeof LIVE_AUDIT_EVENT_TYPES];
+  (typeof LIVE_AUDIT_EVENT_TYPES)[keyof typeof LIVE_AUDIT_EVENT_TYPES];
 
 /**
  * 返回所有已知 event_type 字面量。

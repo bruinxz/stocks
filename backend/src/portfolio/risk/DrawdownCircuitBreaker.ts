@@ -65,6 +65,16 @@ import { PaperTradingSnapshot } from '../../models/PaperTradingSnapshot';
 import { RiskAlert } from '../../models/RiskAlert';
 import { User } from '../../models/User';
 import { logger } from '../../utils/logger';
+import { RiskGuardUnavailableError, wrapFailClosed } from './RiskGuardFailClosed';
+
+// ---------------------------------------------------------------------------
+//  Back-compat re-export — US-011 (PR-006) moved the canonical declaration
+//  to RiskGuardFailClosed.ts. Existing imports of RiskGuardUnavailableError
+//  from DrawdownCircuitBreaker keep working (preTradeGuards / PaperTradingFacade
+//  / multiple .test.ts files), but new code should import from the new home.
+// ---------------------------------------------------------------------------
+
+export { RiskGuardUnavailableError };
 
 // ---------------------------------------------------------------------------
 //  Config
@@ -502,10 +512,7 @@ export class DefaultDrawdownBreakerDataSource implements DrawdownBreakerDataSour
         portfolio_id: { [Op.in]: portfolioIds },
         date: { [Op.between]: [startIso, endIso] },
       },
-      attributes: [
-        'date',
-        [sequelize.fn('SUM', sequelize.col('total_value')), 'total_value'],
-      ],
+      attributes: ['date', [sequelize.fn('SUM', sequelize.col('total_value')), 'total_value']],
       group: ['date'],
       order: [['date', 'ASC']],
       raw: true,
@@ -847,42 +854,42 @@ export class DrawdownCircuitBreaker {
    *   避免误伤已开仓的策略加仓动作）；
    * - SELL 永远不需要走此 hook（评估器只暂停 BUY，平仓总是允许）。
    *
-   * 失败时（DB outage）保守放行 — 风控不该 DB 故障一刀切阻断所有交易。
-   * 上层 placeOrder 仍有 cash check / position limit guard 兜底。
+   * BETA-7 (2026-06-18, audit M-13): **fail-CLOSED** — DB 抖动时抛
+   * `RiskGuardUnavailableError`。US-011 (PR-006): 统一走
+   * `RiskGuardFailClosed.wrapFailClosed`，让 caller (PaperTradingFacade /
+   * preTradeGuards) catch 并按业务规则决定是阻塞 BUY (硬风控不可用 = 不下单)
+   * 或写 RiskAlert HIGH 告警。
    */
   async checkBuyAllowed(input: CheckBuyAllowedInput): Promise<CheckBuyAllowedResult> {
-    try {
-      const config = await this.source.loadConfig(input.user_id);
-      if (!config.enabled) return { ok: true };
+    return wrapFailClosed(
+      'drawdown_breaker',
+      async () => {
+        const config = await this.source.loadConfig(input.user_id);
+        if (!config.enabled) return { ok: true };
 
-      const paused_until = await this.source.loadPausedUntil(input.user_id);
-      const nowMs = Date.now();
-      if (!isPauseActive(paused_until, nowMs)) {
-        return { ok: true };
-      }
+        const paused_until = await this.source.loadPausedUntil(input.user_id);
+        const nowMs = Date.now();
+        if (!isPauseActive(paused_until, nowMs)) {
+          return { ok: true };
+        }
 
-      const isExisting = await this.source.hasExistingPosition(input.user_id, input.symbol);
-      if (isExisting) {
-        // Allow add-on to existing position even during pause.
-        return { ok: true, is_new_holding: false };
-      }
+        const isExisting = await this.source.hasExistingPosition(input.user_id, input.symbol);
+        if (isExisting) {
+          // Allow add-on to existing position even during pause.
+          return { ok: true, is_new_holding: false };
+        }
 
-      return {
-        ok: false,
-        is_new_holding: true,
-        paused_until: paused_until ?? undefined,
-        reason:
-          `组合处于回撤熔断暂停期（至 ${paused_until}），` +
-          `禁止新开仓 ${input.symbol}。可在期满后再交易，或平仓现有持仓。`,
-      };
-    } catch (err) {
-      logger.warn(
-        `DrawdownCircuitBreaker.checkBuyAllowed user=${input.user_id} ` +
-          `symbol=${input.symbol}: ${(err as Error).message}`
-      );
-      // Fail open — see jsdoc.
-      return { ok: true };
-    }
+        return {
+          ok: false,
+          is_new_holding: true,
+          paused_until: paused_until ?? undefined,
+          reason:
+            `组合处于回撤熔断暂停期（至 ${paused_until}），` +
+            `禁止新开仓 ${input.symbol}。可在期满后再交易，或平仓现有持仓。`,
+        };
+      },
+      { user_id: input.user_id, symbol: input.symbol }
+    );
   }
 
   /** Return the user's effective config (defaults if not customized). */

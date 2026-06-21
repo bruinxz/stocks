@@ -94,18 +94,10 @@ const SUGGESTIONS_BY_ROOT_CAUSE: Record<string, string[]> = {
     '降低对单一催化剂的依赖；要求多源确认 (业绩+北向+龙虎榜)',
     '复查催化剂检测的延迟 (是否在事件发生后已扩散)',
   ],
-  risk_kill_switch: [
-    '本笔被组合级风控熔断；评估是否需要调整 sizing 或 drawdown_breaker 阈值',
-  ],
-  time_stop: [
-    '持仓超期未达预期 — 考虑缩短 hold_days 阈值或加 trailing-stop 加速出场',
-  ],
-  backtest_drift: [
-    '实盘表现显著低于回测；触发 walk-forward 重测或参数 grid-search 再校准',
-  ],
-  data_quality: [
-    '数据异常（缺/错）导致信号失真 — 增加 data freshness 校验',
-  ],
+  risk_kill_switch: ['本笔被组合级风控熔断；评估是否需要调整 sizing 或 drawdown_breaker 阈值'],
+  time_stop: ['持仓超期未达预期 — 考虑缩短 hold_days 阈值或加 trailing-stop 加速出场'],
+  backtest_drift: ['实盘表现显著低于回测；触发 walk-forward 重测或参数 grid-search 再校准'],
+  data_quality: ['数据异常（缺/错）导致信号失真 — 增加 data freshness 校验'],
 };
 
 export class TradePostmortemService {
@@ -192,9 +184,9 @@ export class TradePostmortemService {
       data: { exit_reason: input.exit_reason, root_cause: input.root_cause },
     });
 
-    const suggestions =
-      SUGGESTIONS_BY_ROOT_CAUSE[String(input.root_cause)] ||
-      ['复查策略 thesis 与本笔实际表现差异，识别可调参数'];
+    const suggestions = SUGGESTIONS_BY_ROOT_CAUSE[String(input.root_cause)] || [
+      '复查策略 thesis 与本笔实际表现差异，识别可调参数',
+    ];
 
     return {
       generated_at: new Date().toISOString(),
@@ -212,9 +204,7 @@ export class TradePostmortemService {
   /**
    * 拉取某策略最近 60 天 closed outcomes 算 baseline pnl / win_rate。
    */
-  async fetchStrategyBaseline(
-    strategy_key: string
-  ): Promise<TradePostmortem['similar_baseline']> {
+  async fetchStrategyBaseline(strategy_key: string): Promise<TradePostmortem['similar_baseline']> {
     const since = new Date();
     since.setDate(since.getDate() - 60);
     const sinceStr = since.toISOString().slice(0, 10);

@@ -63,10 +63,14 @@ export type FiscalPeriod = 'Q1' | 'Q2' | 'Q3' | 'Q4';
  */
 export function getFinancialPublishDeadline(fiscal_year: number, period: FiscalPeriod): string {
   switch (period) {
-    case 'Q1': return `${fiscal_year}-04-30`;
-    case 'Q2': return `${fiscal_year}-08-31`;
-    case 'Q3': return `${fiscal_year}-10-31`;
-    case 'Q4': return `${fiscal_year + 1}-04-30`;
+    case 'Q1':
+      return `${fiscal_year}-04-30`;
+    case 'Q2':
+      return `${fiscal_year}-08-31`;
+    case 'Q3':
+      return `${fiscal_year}-10-31`;
+    case 'Q4':
+      return `${fiscal_year + 1}-04-30`;
   }
 }
 
@@ -75,9 +79,9 @@ export interface PITFinancialDataPoint {
   fiscal_year: number;
   fiscal_period: FiscalPeriod;
   fiscal_period_end_date: string;
-  actual_publish_date: string | null;  // 实际发布日; null = 估计 = 用 deadline
-  is_pit_safe: boolean;                // 是否经过 PIT 验证可用
-  data: Record<string, number>;        // financial metrics
+  actual_publish_date: string | null; // 实际发布日; null = 估计 = 用 deadline
+  is_pit_safe: boolean; // 是否经过 PIT 验证可用
+  data: Record<string, number>; // financial metrics
 }
 
 /**
@@ -88,7 +92,9 @@ export interface PITFinancialDataPoint {
  */
 export function isPITSafe(point: PITFinancialDataPoint, as_of_date: string): boolean {
   if (!point.is_pit_safe) return false;
-  const pub_date = point.actual_publish_date ?? getFinancialPublishDeadline(point.fiscal_year, point.fiscal_period);
+  const pub_date =
+    point.actual_publish_date ??
+    getFinancialPublishDeadline(point.fiscal_year, point.fiscal_period);
   return pub_date <= as_of_date;
 }
 
@@ -98,7 +104,11 @@ export function isPITSafe(point: PITFinancialDataPoint, as_of_date: string): boo
  *   从 all_points 找最近的 fiscal_period_end_date,
  *   且 actual_publish_date <= as_of_date.
  */
-export function getLatestPITSafeData(all_points: PITFinancialDataPoint[], symbol: string, as_of_date: string): PITFinancialDataPoint | null {
+export function getLatestPITSafeData(
+  all_points: PITFinancialDataPoint[],
+  symbol: string,
+  as_of_date: string
+): PITFinancialDataPoint | null {
   const safe = all_points
     .filter(p => p.symbol === symbol && isPITSafe(p, as_of_date))
     .sort((a, b) => b.fiscal_period_end_date.localeCompare(a.fiscal_period_end_date));
@@ -112,14 +122,40 @@ export function getLatestPITSafeData(all_points: PITFinancialDataPoint[], symbol
  *   verify all financial data used are PIT-safe.
  */
 export function detectFinancialLookahead(input: {
-  backtest_used_data: Array<{ symbol: string; as_of_date: string; data_point: PITFinancialDataPoint }>;
-}): { lookahead_count: number; offending_rows: Array<{ symbol: string; as_of_date: string; data_publish_date: string; days_ahead: number }> } {
-  const offending: Array<{ symbol: string; as_of_date: string; data_publish_date: string; days_ahead: number }> = [];
+  backtest_used_data: Array<{
+    symbol: string;
+    as_of_date: string;
+    data_point: PITFinancialDataPoint;
+  }>;
+}): {
+  lookahead_count: number;
+  offending_rows: Array<{
+    symbol: string;
+    as_of_date: string;
+    data_publish_date: string;
+    days_ahead: number;
+  }>;
+} {
+  const offending: Array<{
+    symbol: string;
+    as_of_date: string;
+    data_publish_date: string;
+    days_ahead: number;
+  }> = [];
   for (const row of input.backtest_used_data) {
-    const pub = row.data_point.actual_publish_date ?? getFinancialPublishDeadline(row.data_point.fiscal_year, row.data_point.fiscal_period);
+    const pub =
+      row.data_point.actual_publish_date ??
+      getFinancialPublishDeadline(row.data_point.fiscal_year, row.data_point.fiscal_period);
     if (pub > row.as_of_date) {
-      const days_ahead = Math.floor((new Date(pub).getTime() - new Date(row.as_of_date).getTime()) / (24 * 3600 * 1000));
-      offending.push({ symbol: row.symbol, as_of_date: row.as_of_date, data_publish_date: pub, days_ahead });
+      const days_ahead = Math.floor(
+        (new Date(pub).getTime() - new Date(row.as_of_date).getTime()) / (24 * 3600 * 1000)
+      );
+      offending.push({
+        symbol: row.symbol,
+        as_of_date: row.as_of_date,
+        data_publish_date: pub,
+        days_ahead,
+      });
     }
   }
   return { lookahead_count: offending.length, offending_rows: offending };
@@ -131,7 +167,7 @@ export function detectFinancialLookahead(input: {
 
 export interface IndexMembershipChange {
   index_code: string;
-  effective_date: string;  // 调整生效日
+  effective_date: string; // 调整生效日
   added_symbols: string[];
   removed_symbols: string[];
 }
@@ -168,15 +204,18 @@ export function getIndexMembershipAt(input: {
  *   count stocks that should have been delisted/removed but weren't.
  */
 export function detectSurvivorshipBias(input: {
-  backtest_universe: string[];       // 回测里用的 universe (today's)
+  backtest_universe: string[]; // 回测里用的 universe (today's)
   pit_membership_at_start: string[]; // start_date 时实际成分
-  pit_membership_at_end: string[];   // end_date 时实际成分
+  pit_membership_at_end: string[]; // end_date 时实际成分
 }): {
   survivorship_bias_count: number;
   symbols_added_via_survivor_bias: string[];
 } {
   // 应该用 union of start + end, 不应该用 today's
-  const correct_universe = new Set([...input.pit_membership_at_start, ...input.pit_membership_at_end]);
+  const correct_universe = new Set([
+    ...input.pit_membership_at_start,
+    ...input.pit_membership_at_end,
+  ]);
   const biased = input.backtest_universe.filter(s => !correct_universe.has(s));
   return { survivorship_bias_count: biased.length, symbols_added_via_survivor_bias: biased };
 }
@@ -196,9 +235,9 @@ export function detectSurvivorshipBias(input: {
  */
 export function estimateStrategyCapacity(input: {
   stock_adv_values: Array<{ symbol: string; adv_cny: number }>; // 平均日成交额
-  positions_per_stock_pct: number;       // 每股目标仓位 (e.g. 5%)
-  n_holding_days: number;                // 平均持仓天数
-  participation_rate: number;            // 单日参与率上限 (e.g. 0.15)
+  positions_per_stock_pct: number; // 每股目标仓位 (e.g. 5%)
+  n_holding_days: number; // 平均持仓天数
+  participation_rate: number; // 单日参与率上限 (e.g. 0.15)
   n_trades_per_year: number;
 }): {
   capacity_cny: number;
@@ -227,7 +266,7 @@ export function estimateStrategyCapacity(input: {
   }
 
   let grade: 'high' | 'medium' | 'low';
-  if (min_capacity >= 1e9) grade = 'high';      // 10 亿+
+  if (min_capacity >= 1e9) grade = 'high'; // 10 亿+
   else if (min_capacity >= 1e8) grade = 'medium'; // 1 亿
   else grade = 'low';
 
@@ -247,14 +286,14 @@ export function estimateStrategyCapacity(input: {
  * Known half-lives for short-life signals (A 股 empirical).
  */
 export const SIGNAL_HALF_LIVES: Record<string, number> = {
-  'dragon_tiger_seat': 4,           // 龙虎榜席位变化
-  'limit_up_continuation': 3,       // 涨停连板
-  'industry_hot_money_flow': 7,     // 行业资金流
-  'northbound_holding_change': 15,  // 北上持仓变化
-  'industry_rotation_signal': 20,   // 行业轮动
-  'sector_theme_burst': 10,         // 题材爆发
-  'analyst_upgrade': 30,            // 分析师升评
-  'earnings_surprise': 60,          // 业绩超预期
+  dragon_tiger_seat: 4, // 龙虎榜席位变化
+  limit_up_continuation: 3, // 涨停连板
+  industry_hot_money_flow: 7, // 行业资金流
+  northbound_holding_change: 15, // 北上持仓变化
+  industry_rotation_signal: 20, // 行业轮动
+  sector_theme_burst: 10, // 题材爆发
+  analyst_upgrade: 30, // 分析师升评
+  earnings_surprise: 60, // 业绩超预期
 };
 
 /**
@@ -265,14 +304,17 @@ export const SIGNAL_HALF_LIVES: Record<string, number> = {
  *
  *   Half-life = τ × log(2)
  */
-export function observedHalfLife(ic_series: Array<{ days_after_signal: number; ic: number }>): number | null {
+export function observedHalfLife(
+  ic_series: Array<{ days_after_signal: number; ic: number }>
+): number | null {
   if (ic_series.length < 2) return null;
   const ic_0 = ic_series[0].ic;
   if (ic_0 <= 0) return null;
   const valid = ic_series.filter(p => p.ic > 0 && p.days_after_signal > 0);
   if (valid.length === 0) return null;
   // Compute average tau across all points
-  let sum_tau = 0, count = 0;
+  let sum_tau = 0,
+    count = 0;
   for (const p of valid) {
     const ratio = p.ic / ic_0;
     if (ratio > 0 && ratio < 1) {
@@ -304,17 +346,29 @@ export function monitorAlphaDecay(input: {
   const expected = SIGNAL_HALF_LIVES[input.signal_name] ?? null;
   const observed = observedHalfLife(input.observed_ic_series);
   if (expected === null) {
-    return { expected_half_life_days: null, observed_half_life_days: observed, decay_status: 'unknown', recommendation: `未知信号 ${input.signal_name}, 加入 SIGNAL_HALF_LIVES 表` };
+    return {
+      expected_half_life_days: null,
+      observed_half_life_days: observed,
+      decay_status: 'unknown',
+      recommendation: `未知信号 ${input.signal_name}, 加入 SIGNAL_HALF_LIVES 表`,
+    };
   }
   if (observed === null) {
-    return { expected_half_life_days: expected, observed_half_life_days: null, decay_status: 'unknown', recommendation: 'IC 数据不足' };
+    return {
+      expected_half_life_days: expected,
+      observed_half_life_days: null,
+      decay_status: 'unknown',
+      recommendation: 'IC 数据不足',
+    };
   }
   if (observed < expected * 0.5) {
     return {
       expected_half_life_days: expected,
       observed_half_life_days: observed,
       decay_status: 'accelerated',
-      recommendation: `🔴 信号失效预警: observed=${observed.toFixed(1)}d << expected=${expected}d. 可能被市场套利;减小持仓周期或降权重`,
+      recommendation: `🔴 信号失效预警: observed=${observed.toFixed(
+        1
+      )}d << expected=${expected}d. 可能被市场套利;减小持仓周期或降权重`,
     };
   }
   if (observed > expected * 1.5) {
@@ -322,7 +376,9 @@ export function monitorAlphaDecay(input: {
       expected_half_life_days: expected,
       observed_half_life_days: observed,
       decay_status: 'extended',
-      recommendation: `🟢 信号异常持久: observed=${observed.toFixed(1)}d >> expected=${expected}d. 可能 regime change 或新 alpha source`,
+      recommendation: `🟢 信号异常持久: observed=${observed.toFixed(
+        1
+      )}d >> expected=${expected}d. 可能 regime change 或新 alpha source`,
     };
   }
   return {

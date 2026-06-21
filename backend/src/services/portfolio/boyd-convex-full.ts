@@ -56,7 +56,12 @@
  *
  * Simplified implementation for small problems (n ≤ 20).
  */
-export function simplexLP(c: number[], A: number[][], b: number[], options: { max_iter?: number } = {}): {
+export function simplexLP(
+  c: number[],
+  A: number[][],
+  b: number[],
+  options: { max_iter?: number } = {}
+): {
   optimal_x: number[];
   optimal_value: number;
   status: 'optimal' | 'unbounded' | 'max_iter';
@@ -79,7 +84,7 @@ export function simplexLP(c: number[], A: number[][], b: number[], options: { ma
   tableau.push(cost_row);
 
   const total_vars = n + m;
-  let basis = Array.from({ length: m }, (_, i) => n + i); // initial basis = slacks
+  const basis = Array.from({ length: m }, (_, i) => n + i); // initial basis = slacks
 
   for (let iter = 0; iter < max_iter; iter += 1) {
     // Find entering variable (most negative reduced cost)
@@ -147,7 +152,7 @@ export function simplexLP(c: number[], A: number[][], b: number[], options: { ma
  *   **简化实现**: 当 P_0 = I (min ||x||²), QCQP 退化为 trust-region, 有 closed form.
  */
 export function shorRelaxationDualBound(input: {
-  P0: number[][];  // n × n
+  P0: number[][]; // n × n
   q0: number[];
   Pi_list: number[][][]; // m constraints
   qi_list: number[][];
@@ -188,7 +193,8 @@ export function socpRobustPortfolio(input: {
   // Compute actual vol
   const port_var = (weights: number[]) => {
     let v = 0;
-    for (let i = 0; i < N; i += 1) for (let j = 0; j < N; j += 1) v += weights[i] * input.cov_matrix[i][j] * weights[j];
+    for (let i = 0; i < N; i += 1)
+      for (let j = 0; j < N; j += 1) v += weights[i] * input.cov_matrix[i][j] * weights[j];
     return Math.max(0, v);
   };
   const port_vol = Math.sqrt(port_var(w));
@@ -198,7 +204,12 @@ export function socpRobustPortfolio(input: {
     w = w.map(v => v * scale);
   }
   const ret = w.reduce((s, v, i) => s + v * input.expected_returns[i], 0);
-  return { weights: w, achieved_return: ret, achieved_vol: Math.sqrt(port_var(w)), status: 'feasible' };
+  return {
+    weights: w,
+    achieved_return: ret,
+    achieved_vol: Math.sqrt(port_var(w)),
+    status: 'feasible',
+  };
 }
 
 // ============================================================
@@ -246,8 +257,8 @@ export function dualGapQP(input: {
   q: number[];
   A: number[][];
   b: number[];
-  x: number[];       // primal candidate
-  lambda: number[];   // dual candidate
+  x: number[]; // primal candidate
+  lambda: number[]; // dual candidate
 }): { primal_value: number; dual_value: number; gap: number } {
   const N = input.x.length;
   // Primal: 0.5 x^T P x + q^T x
@@ -302,7 +313,8 @@ export function checkKKT(input: {
     let Ax_i = 0;
     for (let j = 0; j < input.x.length; j += 1) Ax_i += input.A[i][j] * input.x[j];
     const slack = input.b[i] - Ax_i;
-    if (input.lambda[i] * slack > tol) violations.push(`complementary slackness (i=${i}, λ·slack=${input.lambda[i] * slack})`);
+    if (input.lambda[i] * slack > tol)
+      violations.push(`complementary slackness (i=${i}, λ·slack=${input.lambda[i] * slack})`);
   }
   // 4. Stationarity: P x + q + A^T λ ≈ 0
   for (let j = 0; j < input.x.length; j += 1) {
@@ -345,7 +357,7 @@ export function interiorPointBarrier(input: {
   step_size: number;
   eps: number;
 }): { x: number[]; iterations: number; converged: boolean } {
-  let x = input.initial_x.slice();
+  const x = input.initial_x.slice();
   let t = input.initial_t;
   let total_iters = 0;
   let converged = false;
@@ -359,7 +371,10 @@ export function interiorPointBarrier(input: {
       let infeasible = false;
       for (let i = 0; i < input.fi_funcs.length; i += 1) {
         const fi = input.fi_funcs[i](x);
-        if (fi >= 0) { infeasible = true; break; }
+        if (fi >= 0) {
+          infeasible = true;
+          break;
+        }
         const g_fi = input.fi_grads[i](x);
         for (let j = 0; j < x.length; j += 1) grad[j] -= g_fi[j] / (t * fi);
       }

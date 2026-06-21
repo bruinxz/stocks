@@ -39,11 +39,16 @@
 import { Op } from 'sequelize';
 import { ExecutionFeasibilityRecord } from '../../models/ExecutionFeasibilityRecord';
 import { logger } from '../../utils/logger';
+import { expectedImpactCost, impactCostToScore, AlmgrenChrissParams } from './almgren-chriss';
 import {
-  expectedImpactCost,
-  impactCostToScore,
-  AlmgrenChrissParams,
-} from './almgren-chriss';
+  inferMarketSegment as inferMarketSegmentShared,
+  getLimitPct as getLimitPctShared,
+  MAIN_LIMIT_PCT,
+  ST_LIMIT_PCT as ST_LIMIT_PCT_SHARED,
+  CHINEXT_LIMIT_PCT as CHINEXT_LIMIT_PCT_SHARED,
+  BJ_LIMIT_PCT as BJ_LIMIT_PCT_SHARED,
+  MarketSegment,
+} from '../../quant/marketLimits';
 
 // ============================================================
 // Constants
@@ -54,14 +59,14 @@ export const VOLUME_COVERAGE_WEIGHT = 0.3;
 export const SPREAD_WEIGHT = 0.2;
 export const STATUS_WEIGHT = 0.2;
 
-/** A 股普通股涨跌停幅度 */
-export const STANDARD_LIMIT_PCT = 0.10;
-/** ST 股涨跌停幅度 */
-export const ST_LIMIT_PCT = 0.05;
-/** 创业板 / 科创板涨跌停幅度 */
-export const CHINEXT_LIMIT_PCT = 0.20;
-/** 北交所涨跌停幅度 */
-export const BJ_LIMIT_PCT = 0.30;
+/**
+ * 涨跌停幅度常量 — 重新导出自 `quant/marketLimits` (audit S-2 修复)。
+ * 历史 import 路径保持兼容（旧代码 import 自本文件仍可用）。
+ */
+export const STANDARD_LIMIT_PCT = MAIN_LIMIT_PCT;
+export const ST_LIMIT_PCT = ST_LIMIT_PCT_SHARED;
+export const CHINEXT_LIMIT_PCT = CHINEXT_LIMIT_PCT_SHARED;
+export const BJ_LIMIT_PCT = BJ_LIMIT_PCT_SHARED;
 
 /** composite ≥ 此值即 fillable */
 export const FILLABLE_THRESHOLD = 70;
@@ -152,37 +157,31 @@ export interface ExecutionFeasibilityReport {
 // ============================================================
 
 /**
- * 按 symbol 推断市场类型
- *   - 60xxxx / 90xxxx → 沪主板
- *   - 68xxxx → 科创板 (star, 20%)
- *   - 30xxxx → 创业板 (chinext, 20%)
- *   - 8xxxxx / 4xxxxx → 北交所 (bj, 30%)
- *   - 00xxxx → 深主板
- *   - ST 股需要 name 才能识别，这里默认 'main'
+ * 按 symbol 推断市场段 (sh.6xx → main / sz.3xx → chinext / sh.688 → star /
+ * bj.* → bj / 其他 → main 兜底)。
+ *
+ * **audit S-2 修复**: 此函数已迁移到 `quant/marketLimits.ts` 作为唯一权威源,
+ * 本处仅做兼容性 re-export 让旧 import 路径继续可用。**新代码请直接
+ * `import { inferMarketSegment } from '../../quant/marketLimits'`**。
+ *
+ * 注意签名差异：`quant/marketLimits` 的 `inferMarketSegment` 返回包含
+ * 'unknown' 的联合类型；本兼容版本把 'unknown' 折叠回 'main' 兜底，保持
+ * 历史调用方的类型契约不变。
  */
 export function inferMarketSegment(symbol: string): 'main' | 'chinext' | 'star' | 'bj' {
-  const m = String(symbol || '').toLowerCase().replace(/^(sh|sz|bj)\.?/, '').replace(/\..+$/, '');
-  if (m.startsWith('68')) return 'star';
-  if (m.startsWith('30')) return 'chinext';
-  if (m.startsWith('8') || m.startsWith('4')) return 'bj';
-  return 'main';
+  const seg = inferMarketSegmentShared(symbol);
+  return seg === 'unknown' ? 'main' : seg;
 }
 
 /**
- * 按市场段返回涨跌停幅度
+ * 按市场段返回涨跌停幅度。
+ *
+ * **audit S-2 修复**: 同上迁移到 `quant/marketLimits.ts`。本处保留旧签名（接受
+ * 'st' 单独段），内部映射到新模块的 `(segment, isST)` 双参数接口。
  */
 export function getLimitPct(segment: 'main' | 'chinext' | 'star' | 'bj' | 'st'): number {
-  switch (segment) {
-    case 'star':
-    case 'chinext':
-      return CHINEXT_LIMIT_PCT;
-    case 'bj':
-      return BJ_LIMIT_PCT;
-    case 'st':
-      return ST_LIMIT_PCT;
-    default:
-      return STANDARD_LIMIT_PCT;
-  }
+  if (segment === 'st') return getLimitPctShared('main', true);
+  return getLimitPctShared(segment as MarketSegment, false);
 }
 
 /**
@@ -243,7 +242,7 @@ export function computeVolumeCoverageScore(input: {
   if (ratio <= 0.001) return 100;
   if (ratio <= 0.01) return Math.round(100 - ((ratio - 0.001) / 0.009) * 20);
   if (ratio <= 0.05) return Math.round(80 - ((ratio - 0.01) / 0.04) * 30);
-  if (ratio <= 0.10) return Math.round(50 - ((ratio - 0.05) / 0.05) * 30);
+  if (ratio <= 0.1) return Math.round(50 - ((ratio - 0.05) / 0.05) * 30);
   return 0;
 }
 
@@ -264,12 +263,20 @@ export function computeVolumeCoverageScoreV2(input: {
   daily_vol: number | null | undefined;
   spread_pct: number | null | undefined;
 }): { score: number | null; impact_bps: number | null; participation: number | null } {
-  if (input.avg_volume_5d === null || input.avg_volume_5d === undefined || input.avg_volume_5d <= 0) {
+  if (
+    input.avg_volume_5d === null ||
+    input.avg_volume_5d === undefined ||
+    input.avg_volume_5d <= 0
+  ) {
     return { score: null, impact_bps: null, participation: null };
   }
   if (input.daily_vol === null || input.daily_vol === undefined || input.daily_vol <= 0) {
     // 退化到 v1
-    return { score: computeVolumeCoverageScore(input), impact_bps: null, participation: input.target_qty / input.avg_volume_5d };
+    return {
+      score: computeVolumeCoverageScore(input),
+      impact_bps: null,
+      participation: input.target_qty / input.avg_volume_5d,
+    };
   }
   const ac: AlmgrenChrissParams = {
     adv: input.avg_volume_5d,
@@ -330,7 +337,8 @@ export function computeSpreadScore(input: {
   }
   // Fallback: high-low/close 代理
   if (high === null || high === undefined || low === null || low === undefined) return null;
-  if (!Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close) || close <= 0) return null;
+  if (!Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close) || close <= 0)
+    return null;
   const proxy = (high - low) / close;
   if (proxy <= 0) return 100;
   if (proxy <= 0.01) return 100;
@@ -395,8 +403,10 @@ export function computeCompositeScore(input: {
 
   // 各子项 null 时跳过（重新归一化权重）
   const components: Array<{ score: number; weight: number }> = [];
-  if (input.limit_proximity !== null) components.push({ score: input.limit_proximity, weight: LIMIT_PROXIMITY_WEIGHT });
-  if (input.volume_coverage !== null) components.push({ score: input.volume_coverage, weight: VOLUME_COVERAGE_WEIGHT });
+  if (input.limit_proximity !== null)
+    components.push({ score: input.limit_proximity, weight: LIMIT_PROXIMITY_WEIGHT });
+  if (input.volume_coverage !== null)
+    components.push({ score: input.volume_coverage, weight: VOLUME_COVERAGE_WEIGHT });
   if (input.spread !== null) components.push({ score: input.spread, weight: SPREAD_WEIGHT });
   components.push({ score: input.status, weight: STATUS_WEIGHT });
 
@@ -409,7 +419,10 @@ export function computeCompositeScore(input: {
 /**
  * 决策规则
  */
-export function deriveDecision(composite: number, hasHardBlock: boolean): 'fillable' | 'risky' | 'blocked' {
+export function deriveDecision(
+  composite: number,
+  hasHardBlock: boolean
+): 'fillable' | 'risky' | 'blocked' {
   if (hasHardBlock) return 'blocked';
   if (composite >= FILLABLE_THRESHOLD) return 'fillable';
   if (composite < BLOCKED_THRESHOLD) return 'blocked';
@@ -623,12 +636,14 @@ export class ExecutionFeasibilityService {
     let volume_coverage_score: number | null;
     let impact_bps_v2: number | null = null;
     if (options.use_almgren_chriss) {
-      const sigma = snapshot.prev_close && snapshot.prev_close > 0 && snapshot.high && snapshot.low
-        ? (snapshot.high - snapshot.low) / snapshot.prev_close
-        : 0.02;
-      const spread_pct = snapshot.high && snapshot.low && snapshot.close > 0
-        ? (snapshot.high - snapshot.low) / snapshot.close / 2
-        : 0.001;
+      const sigma =
+        snapshot.prev_close && snapshot.prev_close > 0 && snapshot.high && snapshot.low
+          ? (snapshot.high - snapshot.low) / snapshot.prev_close
+          : 0.02;
+      const spread_pct =
+        snapshot.high && snapshot.low && snapshot.close > 0
+          ? (snapshot.high - snapshot.low) / snapshot.close / 2
+          : 0.001;
       const v2 = computeVolumeCoverageScoreV2({
         target_qty: input.target_qty,
         avg_volume_5d: snapshot.avg_volume_5d,
@@ -753,7 +768,10 @@ export class ExecutionFeasibilityService {
     return out;
   }
 
-  async listRecent(limit = 50, filters: { user_id?: number; decision?: string } = {}): Promise<ExecutionFeasibilityRecord[]> {
+  async listRecent(
+    limit = 50,
+    filters: { user_id?: number; decision?: string } = {}
+  ): Promise<ExecutionFeasibilityRecord[]> {
     const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 500);
     const where: any = {};
     if (filters.user_id) where.user_id = filters.user_id;

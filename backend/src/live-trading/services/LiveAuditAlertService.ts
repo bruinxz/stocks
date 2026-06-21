@@ -55,9 +55,7 @@ function getHttp() {
 
 function getWebhookUrl(): string {
   return String(
-    process.env.LIVE_ALERT_FEISHU_WEBHOOK ||
-      process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK ||
-      ''
+    process.env.LIVE_ALERT_FEISHU_WEBHOOK || process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || ''
   ).trim();
 }
 
@@ -145,7 +143,8 @@ export function sendLiveAuditAlert(payload: AuditAlertPayload): void {
   const sev = String(payload.severity || '').toLowerCase();
   if (!ALERT_LEVELS.has(sev)) return;
   // 默认 critical/error 才推；warning 在 LIVE_ALERT_INCLUDE_WARNING=true 时才推
-  const includeWarning = String(process.env.LIVE_ALERT_INCLUDE_WARNING || '').toLowerCase() === 'true';
+  const includeWarning =
+    String(process.env.LIVE_ALERT_INCLUDE_WARNING || '').toLowerCase() === 'true';
   if (!CRITICAL_LEVELS.has(sev) && !includeWarning) return;
   if (!isEnabled()) return;
 

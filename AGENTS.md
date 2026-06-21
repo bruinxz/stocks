@@ -26,7 +26,7 @@
 
 ### 3.2 智能投顾与外部多智能体系统 (AI Advisors)
 本系统计划深度集成外部的 **TradingAgents** 多智能体分析系统，用于提供深度的个股基本面、情绪面、技术面和新闻面分析，以及买卖建议。
-- **TradingAgents 项目地址**: `/Users/bytedance/go/src/github.com/TauricResearch/TradingAgents/api.py` (运行于 `http://47.93.224.109:8000`)
+- **TradingAgents 项目地址**: `/Users/bytedance/go/src/github.com/TauricResearch/TradingAgents/api.py` (运行于 `${TRADING_AGENTS_URL}` — 内网 host，通过 `.env` 注入；历史 IP 已脱敏。仓库历史里残留的 legacy 内网 IP 见 `scripts/ops/scrub_legacy_ip.sh` 的擦除流程，本文件正文不再展示。)
 - **核心接口**: `/api/analyze` (同步/异步分析), `/api/analyze/stream` (SSE流式分析)
 - **职责**: 在每日收盘后，由定时任务调度，为用户的自选股池或全市场筛选出的候选股生成《多智能体投资决策报告》，为“研究员”和“交易员”提供高维度的决策依据。
 

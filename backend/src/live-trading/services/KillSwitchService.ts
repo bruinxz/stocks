@@ -10,6 +10,10 @@ import { sequelize } from '../../config/database';
 import { logger } from '../../utils/logger';
 import { sendLiveAuditAlert } from './LiveAuditAlertService';
 import { LIVE_AUDIT_EVENT_TYPES } from '../auditEvents';
+import {
+  abortBridgeCommandsOnKillSwitch,
+  createProductionBridgeFailSafeDataSource,
+} from './bridgeFailSafe';
 
 export type KillSwitchReasonCode =
   | 'bridge_heartbeat_lost'
@@ -157,7 +161,11 @@ export class KillSwitchService extends EventEmitter {
         event_type: LIVE_AUDIT_EVENT_TYPES.KILL_SWITCH_TRIGGERED,
         severity: 'critical',
         message: `Kill switch 已触发 (${params.reason_code}): ${params.reason_detail}`,
-        metadata: { ...(params.metadata || {}), reason_code: params.reason_code, source: params.source },
+        metadata: {
+          ...(params.metadata || {}),
+          reason_code: params.reason_code,
+          source: params.source,
+        },
       });
       return { created: true, state };
     } catch (err: any) {
@@ -213,59 +221,19 @@ export class KillSwitchService extends EventEmitter {
    * fail-safe: 单条 command update 失败不阻塞其他; 已 dispatched 的不能强 reject
    * (bridge 可能已经在执行), 只能标记 metadata.killed=true 让 bridge 接到 event
    * 时识别. pending 的可以直接标 aborted.
+   *
+   * US-018 (EX-004): 真实 abort 逻辑抽到 ./bridgeFailSafe.ts 便于 DB-less 单测,
+   * 本方法退化为薄 wrapper 调用 helper, 行为语义不变.
    */
   private async abortPendingCommands(
     reason_code: KillSwitchReasonCode | string,
     reason_detail: string
   ): Promise<void> {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { LiveBrokerCommand } = require('../../models/LiveBrokerCommand');
     try {
-      // pending: 还没被 bridge 取走, 直接 abort
-      const pendingResult = await LiveBrokerCommand.update(
-        {
-          status: 'aborted',
-          metadata: sequelize.literal(
-            `COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('killed', true, 'kill_reason_code', ${LiveBrokerCommand.sequelize?.escape(String(reason_code))}, 'kill_reason_detail', ${LiveBrokerCommand.sequelize?.escape(reason_detail)})`
-          ) as any,
-        },
-        {
-          where: { status: 'pending' },
-        }
-      );
-      // dispatching / dispatched: 已被 bridge 取走, 不强改 status (避免 bridge ack 时 conflict),
-      // 只在 metadata 标记 killed=true 让 bridge 自己识别 + 写 audit.
-      const inflightResult = await LiveBrokerCommand.update(
-        {
-          metadata: sequelize.literal(
-            `COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('killed', true, 'kill_reason_code', ${LiveBrokerCommand.sequelize?.escape(String(reason_code))}, 'kill_reason_detail', ${LiveBrokerCommand.sequelize?.escape(reason_detail)})`
-          ) as any,
-        },
-        {
-          where: { status: { [Op.in]: ['dispatching', 'dispatched'] } },
-        }
-      );
-      const abortedCount = Array.isArray(pendingResult) ? pendingResult[0] : 0;
-      const markedCount = Array.isArray(inflightResult) ? inflightResult[0] : 0;
-      if (abortedCount + markedCount > 0) {
-        logger.warn(
-          `[kill-switch] abortPendingCommands: aborted=${abortedCount} pending + marked=${markedCount} in-flight (reason=${reason_code})`
-        );
-        try {
-          await LiveExecutionAuditLog.create({
-            event_type: LIVE_AUDIT_EVENT_TYPES.KILL_SWITCH_TRIGGERED,
-            severity: 'critical',
-            message:
-              `Kill switch 触发后批量标记 ${abortedCount} pending command aborted + ` +
-              `${markedCount} in-flight command 标记 killed=true (bridge 自行识别拒执行)`,
-            before_state: {},
-            after_state: { aborted_count: abortedCount, marked_count: markedCount, reason_code },
-            metadata: { reason_code, reason_detail },
-          } as any);
-        } catch (auditErr: any) {
-          logger.warn(`[kill-switch] abort audit log failed: ${auditErr?.message || auditErr}`);
-        }
-      }
+      await abortBridgeCommandsOnKillSwitch(createProductionBridgeFailSafeDataSource(), {
+        reason_code: String(reason_code),
+        reason_detail,
+      });
     } catch (error: any) {
       logger.error(`[kill-switch] abortPendingCommands query failed: ${error?.message || error}`);
       throw error;
@@ -290,7 +258,9 @@ export class KillSwitchService extends EventEmitter {
       await LiveExecutionAuditLog.create({
         event_type: LIVE_AUDIT_EVENT_TYPES.KILL_SWITCH_RESOLVED,
         severity: 'warning',
-        message: `Kill switch 已解除（resolved_by=${params.resolved_by}）${params.note ? ': ' + params.note : ''}`,
+        message: `Kill switch 已解除（resolved_by=${params.resolved_by}）${
+          params.note ? ': ' + params.note : ''
+        }`,
         before_state: before as any,
         after_state: this.toActive(active) as any,
         metadata: {},
@@ -303,7 +273,9 @@ export class KillSwitchService extends EventEmitter {
     sendLiveAuditAlert({
       event_type: LIVE_AUDIT_EVENT_TYPES.KILL_SWITCH_RESOLVED,
       severity: 'critical',
-      message: `Kill switch 已解除 by ${params.resolved_by}${params.note ? ': ' + params.note : ''}`,
+      message: `Kill switch 已解除 by ${params.resolved_by}${
+        params.note ? ': ' + params.note : ''
+      }`,
       metadata: { resolved_by: params.resolved_by, note: params.note || null },
     });
     return state;
@@ -349,10 +321,17 @@ export class KillSwitchService extends EventEmitter {
           reasons.push(`account=${accountId} order_failure_rate ${(rate * 100).toFixed(1)}%`);
           await this.trigger({
             reason_code: 'order_failure_rate',
-            reason_detail: `账户 ${accountId} 近 24 小时订单失败率 ${(rate * 100).toFixed(1)}% (${failed.length}/${recent.length})`,
+            reason_detail: `账户 ${accountId} 近 24 小时订单失败率 ${(rate * 100).toFixed(1)}% (${
+              failed.length
+            }/${recent.length})`,
             source: 'auto',
             triggered_by: 'kill_switch_auto_scan',
-            metadata: { account_id: accountId, failed: failed.length, total: recent.length, window: '24h' },
+            metadata: {
+              account_id: accountId,
+              failed: failed.length,
+              total: recent.length,
+              window: '24h',
+            },
           });
           triggered = true;
         }
@@ -383,7 +362,11 @@ export class KillSwitchService extends EventEmitter {
           reason_detail: `账户 ${accountId} 近 24 小时订单数 ${recent.length} ≥ ${orderCountKill}`,
           source: 'auto',
           triggered_by: 'kill_switch_auto_scan',
-          metadata: { account_id: accountId, recent_count: recent.length, threshold: orderCountKill },
+          metadata: {
+            account_id: accountId,
+            recent_count: recent.length,
+            threshold: orderCountKill,
+          },
         });
         triggered = true;
       }
@@ -404,7 +387,9 @@ export class KillSwitchService extends EventEmitter {
       });
       if (!lastHb || new Date(lastHb.received_at).getTime() < heartbeatCutoff.getTime()) {
         const detail = lastHb
-          ? `bridge ${bridgeKey} 上次心跳在 ${new Date(lastHb.received_at).toISOString()}，超过 ${heartbeatTimeoutMinutes} 分钟阈值`
+          ? `bridge ${bridgeKey} 上次心跳在 ${new Date(
+              lastHb.received_at
+            ).toISOString()}，超过 ${heartbeatTimeoutMinutes} 分钟阈值`
           : `bridge ${bridgeKey} 从未推送过心跳`;
         reasons.push(`bridge_heartbeat_lost bridge=${bridgeKey}`);
         await this.trigger({
@@ -412,7 +397,11 @@ export class KillSwitchService extends EventEmitter {
           reason_detail: detail,
           source: 'auto',
           triggered_by: 'kill_switch_auto_scan',
-          metadata: { account_id: accountId, bridge_key: bridgeKey, threshold_minutes: heartbeatTimeoutMinutes },
+          metadata: {
+            account_id: accountId,
+            bridge_key: bridgeKey,
+            threshold_minutes: heartbeatTimeoutMinutes,
+          },
         });
         triggered = true;
       }
@@ -434,10 +423,17 @@ export class KillSwitchService extends EventEmitter {
           reasons.push(`account=${accountId} daily_loss_breach ${lossPct.toFixed(2)}%`);
           await this.trigger({
             reason_code: 'daily_loss_breach',
-            reason_detail: `账户 ${accountId} 当日浮亏 ${lossPct.toFixed(2)}% ≥ 阈值 ${dailyLossKillPct}%`,
+            reason_detail: `账户 ${accountId} 当日浮亏 ${lossPct.toFixed(
+              2
+            )}% ≥ 阈值 ${dailyLossKillPct}%`,
             source: 'auto',
             triggered_by: 'kill_switch_auto_scan',
-            metadata: { account_id: accountId, day_pnl: dayPnl, total_asset: total, threshold_pct: dailyLossKillPct },
+            metadata: {
+              account_id: accountId,
+              day_pnl: dayPnl,
+              total_asset: total,
+              threshold_pct: dailyLossKillPct,
+            },
           });
           triggered = true;
         }
@@ -448,7 +444,9 @@ export class KillSwitchService extends EventEmitter {
     const staleSyncCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
     for (const account of accounts) {
       const status = String((account as any).connection_status || '').toLowerCase();
-      const lastSync = (account as any).last_sync_at ? new Date((account as any).last_sync_at) : null;
+      const lastSync = (account as any).last_sync_at
+        ? new Date((account as any).last_sync_at)
+        : null;
       const staleSync = lastSync && lastSync.getTime() < staleSyncCutoff.getTime();
       if (status === 'error' || status === 'disconnected') {
         reasons.push(`account=${(account as any).id} account_anomaly status=${status}`);
@@ -466,7 +464,9 @@ export class KillSwitchService extends EventEmitter {
         reasons.push(`account=${(account as any).id} account_anomaly stale_sync ${hoursStale}h`);
         await this.trigger({
           reason_code: 'account_anomaly',
-          reason_detail: `账户 ${(account as any).id} last_sync_at 已 ${hoursStale}h 未更新仍处 active`,
+          reason_detail: `账户 ${
+            (account as any).id
+          } last_sync_at 已 ${hoursStale}h 未更新仍处 active`,
           source: 'auto',
           triggered_by: 'kill_switch_auto_scan',
           metadata: {

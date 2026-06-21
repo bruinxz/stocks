@@ -21,6 +21,8 @@ import { authService } from './services/authService';
 import { API_DOMAIN_URL } from './services/api';
 import { PortfolioProvider } from './contexts/PortfolioContext';
 import GlobalPortfolioSelector from './components/layout/GlobalPortfolioSelector';
+import AlertsBell from './components/layout/AlertsBell';
+import CriticalAlertModal from './components/layout/CriticalAlertModal';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const TodayCommandCenter = lazy(() => import('./pages/TodayCommandCenter'));
@@ -325,6 +327,13 @@ const AppContent: React.FC = () => {
             <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
               {/* 2026-06-17 全局选盘下拉. 任何 workspace 通过 usePortfolio() 拿到 selected */}
               <GlobalPortfolioSelector />
+              {/* US-070 [FE-031] 顶 nav bar 全局告警铃铛 — 60s 轮询未读告警数,
+                  红 Badge ≥10, 点击跳风控中心. */}
+              <AlertsBell />
+              {/* US-074 [FE-035] critical 告警强制弹窗 — 不渲染任何可见 UI 直到
+                  实时推送命中 isCriticalAlert. 全局 mount 在 token 守护下保证
+                  任何 workspace 都能弹. */}
+              <CriticalAlertModal />
               <Dropdown menu={userMenuProps} placement="bottomRight" trigger={['click']}>
                 <div className="header-user-dropdown">
                   <Avatar

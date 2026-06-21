@@ -967,3 +967,40 @@ Controllers / UI 通过 facade 调用，不直接 import IndustryAttributionServ
    而非扩本类（避免本类公式从「绝对贡献」变到「相对超额」）。
 4. **支持多区间归因（季度/月度对比）** — 当前 period_start/end 是单区间。多区间用 caller
    多次调用本类，每次传不同区间，本表 4-tuple PK 天然支持多行存储不冲突。
+
+## Composite 策略 caller-prefetch 契约 (audit S-1 / US-016)
+
+QuantBacktestEngine 默认走 per-stock `evaluate()` 路径; **组合级策略 (实现了
+`generateSignals(date)` 的) 在该路径下退化为 'hold' 信号导致 trade_count=0**.
+要让这些策略真正被回测撮合, caller 必须预先调
+`strategy.generateSignals(date, {previousSelection})` 拿到信号, 把
+结果填到 `QuantBacktestOptions.precomputed_composite_signals[strategy_key]`
+(类型: `Record<rebalanceDate, { target_portfolio: string[] }>`).
+
+引擎检测到 `typeof strategy.generateSignals === 'function'` 且
+`precomputed_composite_signals[strategy.definition.strategy_key]` 非空时,
+切到"组合级撮合路径": 每个 rebalanceDate 把 target_portfolio diff 当前持仓
+得到 BUY/SELL pending orders, 后续按 `next_open` 撮合 (见
+`backtest/internal/QuantBacktestEngine.ts:212-270`).
+
+**注册的组合级策略 (US-016 实测 13 个)**: multi_factor_alpha /
+dragon_head_momentum / breakout_strategy / earnings_surprise / garp_strategy /
+game_trader_relay / high_dividend_value / left_side_reversal /
+linkage_strategy / northbound_follow / cta100_momentum /
+sector_rotation_leader / ensemble_strategy.
+
+**契约 META-GUARD**: `tests/quant/composite_backtest_all_strategies.test.ts`
+枚举 strategyRegistry 自动发现全部 composite strategy, 喂合成 precomputed
+信号驱动引擎 + 验 trade_count > 0 + 反向验"喂错 strategy_key 时引擎回退
+evaluate() 退化路径不串号". 新加 composite strategy 时, 测试无需改即可自动
+覆盖 (META-TEST 模式 — `typeof generateSignals === 'function'` 探测对齐
+引擎判定).
+
+**新加 composite strategy 的 wiring 清单**:
+1. 类实现 `async generateSignals(tradeDate, options?): Promise<{target_portfolio: string[]}>`.
+2. 在 `engine/StrategyRegistry.ts` register.
+3. Caller (production: CompositeRebalanceService / Backtest script /
+   PaperTradingFacade.rebalance 等) 先调 `strategy.generateSignals(rebalanceDate)`
+   拿信号, 填到 `options.precomputed_composite_signals[strategy_key]`,
+   再调 `quantBacktestEngine.run()`.
+4. composite_backtest_all_strategies.test.ts 会自动覆盖新策略 (META-TEST 自发现).

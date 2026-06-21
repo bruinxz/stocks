@@ -14,6 +14,13 @@ import { DataSyncService } from '../data/services/DataSyncService';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import type { QuantRecommendationItem } from './QuantRecommendationService';
 import { marketEnvironmentService } from './MarketEnvironmentService';
+import {
+  archiveAnalysisEngineResult,
+  createProductionAnalysisEngineArchiveDataSource,
+  type AnalysisEngineArchiveDataSource,
+  type ArchiveAnalysisEngineResultInput,
+  type ArchiveAnalysisEngineResultOutput,
+} from './analysis-engine/analysisEngineSignalArchive';
 
 const DEFAULT_HORIZONS = [1, 3, 5, 10, 20];
 const DEFAULT_PERFORMANCE_HORIZON = '5d';
@@ -1087,6 +1094,38 @@ export class AIInvestmentSignalService {
     }
 
     return { created, updated, total: screeners.length };
+  }
+
+  /**
+   * US-020 [AE-001] — 把 `AnalysisEngineService.analyzeStock` 产出的
+   * `RecommendationDecision` 落到 AIInvestmentSignal 表
+   * (source_type=AISignalSourceType.ANALYSIS_ENGINE). 让 hard mode (US-021/AE-002) 下游
+   * `PaperTradingAutomationService` / `AutomatedRecommendationLoopService`
+   * 自动跟单 + Dashboard / Attribution 可视化.
+   *
+   * 内部委托 `services/analysis-engine/analysisEngineSignalArchive.ts` —
+   * 与 US-018 bridgeFailSafe / US-019 aiPollingEnqueue 同款 helper 抽取
+   * 模式: DataSource DI seam + 纯函数 payload builder + 顶层 fail-LOUD,
+   * 让 DB-less 单测 100% 覆盖.
+   *
+   * 行为契约:
+   *   - decision.stock_code / decision.as_of 缺失 → 返 ok=false 不抛
+   *   - dry_run=true → 仅返 payload 不落库
+   *   - findOrCreate path: 已存在则 update + metadata 合并 (保留
+   *     paper_trading / paper_trading_by_portfolio 不被覆盖)
+   *   - DB 抛错 → 返 ok=false reason='db_failure' 不抛
+   *
+   * 调用方典型用法 (hard mode 入口, US-021 会落):
+   *   const out = await aiInvestmentSignalService.archiveAnalysisEngineResult({
+   *     decision, loop_run_id, shadow_of_report_id: null,
+   *   });
+   *   if (!out.ok) logger.warn(`archive failed: ${out.reason}`);
+   */
+  async archiveAnalysisEngineResult(
+    input: ArchiveAnalysisEngineResultInput,
+    source: AnalysisEngineArchiveDataSource = createProductionAnalysisEngineArchiveDataSource()
+  ): Promise<ArchiveAnalysisEngineResultOutput> {
+    return archiveAnalysisEngineResult(source, input);
   }
 
   async archiveTradingAgentsResult(params: {

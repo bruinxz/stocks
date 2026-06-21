@@ -3170,254 +3170,257 @@ class PaperTradingAutomationService {
       // recordBuyIntent + refreshOutcome 块包 try/catch. 一笔失败让本批剩余信号继续
       // 处理 (per-signal isolation). 之前任一 throw 直接出 candidateSignals loop, 整批跳过.
       try {
-      if (!signalDryRun) {
-        // Batch Q (2026-06-17, F3 fix): 跨调用 dedup 防同股双跟单 race.
-        // 同 (portfolio, symbol, today) 已有 inflight buy → skip 本笔. 配合 existingSymbols
-        // entry-time snapshot, 把 race window 从"两 autoBuy 并发" 收窄到"两 createBuyTrade
-        // 同 ms 同时进入此 reserve check"(P99 极不可能).
-        if (!this.tryReserveInflightBuy(portfolio.id, symbol)) {
-          await skip('同 (portfolio, symbol, 今日) 已有进行中的下单, 跳过避免双跟单');
-          continue;
-        }
-        let trade: PaperTradingTrade;
-        try {
-          trade = await this.createBuyTrade({
-            portfolio,
-            signal,
-            symbol,
-            name: signal.name || quote.name || symbol,
-            latest_price: quote.price,
-            execute_price,
+        if (!signalDryRun) {
+          // Batch Q (2026-06-17, F3 fix): 跨调用 dedup 防同股双跟单 race.
+          // 同 (portfolio, symbol, today) 已有 inflight buy → skip 本笔. 配合 existingSymbols
+          // entry-time snapshot, 把 race window 从"两 autoBuy 并发" 收窄到"两 createBuyTrade
+          // 同 ms 同时进入此 reserve check"(P99 极不可能).
+          if (!this.tryReserveInflightBuy(portfolio.id, symbol)) {
+            await skip('同 (portfolio, symbol, 今日) 已有进行中的下单, 跳过避免双跟单');
+            continue;
+          }
+          let trade: PaperTradingTrade;
+          try {
+            trade = await this.createBuyTrade({
+              portfolio,
+              signal,
+              symbol,
+              name: signal.name || quote.name || symbol,
+              latest_price: quote.price,
+              execute_price,
+              quantity,
+              amount,
+              commission,
+              total_cost,
+            });
+          } finally {
+            // 不管 createBuyTrade 成功失败, 都释放 inflight marker.
+            // (失败后 retry 仍能走 — 是 caller 决定是否再 enqueue, 不是这里阻止)
+            this.releaseInflightBuy(portfolio.id, symbol);
+          }
+          tradePayload.trade_id = trade.id;
+          // Sprint 27: L8 复盘 — 真下单完成即视为走到 L8 (entry_trade_id 已落地,
+          // 后续 outcome / DQS / wizard hook 都将基于此运行).
+          markReached(activation, 'L8_reflection', {
+            trade_id: trade.id,
             quantity,
+            execute_price,
+            amount,
+            total_cost,
+          });
+          setOutcome(activation, 'executed');
+
+          // ========== 即时飞书推送：自主买入卡片 ==========
+          // Sprint 35: interactive 富文本卡片 (绿色 header), 替代之前的 text/错误模板.
+          try {
+            const webhookUrl =
+              process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK;
+            if (webhookUrl && String(process.env.DISABLE_FEISHU_BOT_WEBHOOK) !== 'true') {
+              const stockName = signal.name || quote.name || symbol;
+              const positionPct = (
+                (total_cost / toNumber(portfolio.total_value, 200000)) *
+                100
+              ).toFixed(1);
+              const score = toNumber(signal.confidence_score, 0).toFixed(0);
+              const card = {
+                msg_type: 'interactive',
+                card: {
+                  config: { wide_screen_mode: true },
+                  header: {
+                    title: { tag: 'plain_text', content: `🟢 自主买入 · ${stockName}` },
+                    template: 'green',
+                  },
+                  elements: [
+                    {
+                      tag: 'div',
+                      fields: [
+                        {
+                          is_short: true,
+                          text: { tag: 'lark_md', content: `**代码**\n${symbol}` },
+                        },
+                        { is_short: true, text: { tag: 'lark_md', content: `**得分**\n${score}` } },
+                        {
+                          is_short: true,
+                          text: {
+                            tag: 'lark_md',
+                            content: `**成交价**\n¥${execute_price.toFixed(2)}`,
+                          },
+                        },
+                        {
+                          is_short: true,
+                          text: { tag: 'lark_md', content: `**数量**\n${quantity} 股` },
+                        },
+                        {
+                          is_short: true,
+                          text: { tag: 'lark_md', content: `**总成本**\n¥${amount.toFixed(0)}` },
+                        },
+                        {
+                          is_short: true,
+                          text: { tag: 'lark_md', content: `**仓位**\n${positionPct}%` },
+                        },
+                      ],
+                    },
+                    { tag: 'hr' },
+                    {
+                      tag: 'note',
+                      elements: [
+                        {
+                          tag: 'plain_text',
+                          content: `${moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm')} · ${
+                            portfolio.name || 'paper trading'
+                          }`,
+                        },
+                      ],
+                    },
+                  ],
+                },
+              };
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const axios = require('axios');
+              axios.post(webhookUrl, card, { timeout: 5000 }).catch(() => {
+                /* 静默 — fail-OPEN, 推送失败不阻塞下单主流程 */
+              });
+            }
+          } catch {
+            /* 静默 */
+          }
+
+          await this.markSignalExecuted(signal, {
+            portfolio_id: portfolio.id,
+            trade_id: trade.id,
+            quantity,
+            execute_price,
             amount,
             commission,
             total_cost,
+            target_position_pct: tradePayload.target_position_pct,
+            strategy_allocation_pct: tradePayload.strategy_allocation_pct,
+            strategy_allocation_amount: tradePayload.strategy_allocation_amount,
+            strategy_max_single_trade_pct: tradePayload.strategy_max_single_trade_pct,
+            strategy_max_single_trade_amount: tradePayload.strategy_max_single_trade_amount,
+            strategy_allocation_policy: strategyAllocationPolicy,
+            strategy_budget_action: tradePayload.strategy_budget_action,
+            strategy_budget_label: tradePayload.strategy_budget_label,
+            strategy_budget_reason: tradePayload.strategy_budget_reason,
+            strategy_budget_confidence: tradePayload.strategy_budget_confidence,
+            strategy_budget_discipline: tradePayload.strategy_budget_discipline,
+            entry_risk_guard_decision: tradePayload.entry_risk_guard_decision,
+            execution_reality_decision: tradePayload.execution_reality_decision,
+            min_lot_sample: minLotSample || undefined,
+            min_lot_sample_reason: minLotSampleReason || undefined,
+            stop_loss_pct: tradePayload.stop_loss_pct,
+            take_profit_pct: tradePayload.take_profit_pct,
+            strategy_key: metadata.strategy_key,
+            strategy_variant: metadata.strategy_variant,
+            strategy_bucket_label: metadata.strategy_bucket_label,
+            loop_policy_snapshot_id:
+              options.loop_policy_snapshot_id ?? metadata.loop_policy_snapshot_id,
+            profit_gate: profitGatePolicy,
+            outcome_feedback: outcomeFeedbackPolicy,
+            environment_policy: environmentPolicy,
+            resample_sample: resampleSample || undefined,
+            resample_match: resampleSample ? resampleMatch : undefined,
+            resample_combo_key: resampleMatch.key,
+            resample_reason: resampleReason,
+            resample_position_multiplier: resamplePositionMultiplier,
+            environment_strategy_budget_action: budgetAction,
+            environment_strategy_budget_multiplier: budgetMultiplier,
+            environment_strategy_budget_reason:
+              budgetPolicyReason ||
+              metadata.environment_strategy_budget_reason ||
+              resampleMatch.budget_action_reason,
+            environment_strategy_budget_policy_action:
+              metadata.environment_strategy_budget_policy_action || budgetActionPolicyMatch.action,
+            environment_strategy_budget_policy_reason: budgetPolicyReason,
+            environment_strategy_budget_policy_multiplier:
+              toOptionalNumber(
+                metadata.environment_strategy_budget_policy_multiplier ??
+                  budgetActionPolicyMatch.position_multiplier
+              ) || undefined,
+            environment_strategy_budget_policy_version_id:
+              metadata.environment_strategy_budget_policy_version_id ||
+              budgetPolicyVersion.version_id ||
+              asPlainObject(options.external_environment_policy).budget_action_policy?.version_id,
+            environment_strategy_budget_policy_version_hash:
+              metadata.environment_strategy_budget_policy_version_hash ||
+              budgetPolicyVersion.version_hash ||
+              asPlainObject(options.external_environment_policy).budget_action_policy?.version_hash,
+            budget_policy_version_snapshot_id:
+              budgetPolicyVersion.snapshot_record_id ||
+              asPlainObject(options.external_environment_policy).budget_policy_version_snapshot_id,
+            environment_strategy_budget_policy_version_guard_action:
+              metadata.environment_strategy_budget_policy_version_guard_action ||
+              budgetPolicyVersionGuard.action,
+            environment_strategy_budget_policy_version_guard_reason:
+              metadata.environment_strategy_budget_policy_version_guard_reason ||
+              budgetPolicyVersionGuard.reason,
+            environment_strategy_budget_policy_version_guard_champion:
+              metadata.environment_strategy_budget_policy_version_guard_champion ||
+              budgetPolicyVersionGuard.champion_version_id,
+            environment_strategy_budget_policy_rollback_action:
+              metadata.environment_strategy_budget_policy_rollback_action ||
+              budgetPolicyRollbackPlan.action,
+            environment_strategy_budget_policy_rollback_source:
+              metadata.environment_strategy_budget_policy_rollback_source ||
+              budgetPolicyRollbackPlan.source_version_id,
+            environment_strategy_budget_policy_rollback_snapshot_id: toOptionalNumber(
+              metadata.environment_strategy_budget_policy_rollback_snapshot_id ??
+                budgetPolicyRollbackPlan.source_snapshot_id
+            ),
+            environment_strategy_budget_policy_rollback_reason:
+              metadata.environment_strategy_budget_policy_rollback_reason ||
+              budgetPolicyRollbackPlan.reason,
+            environment_strategy_capital_efficiency_score:
+              metadata.environment_strategy_capital_efficiency_score ||
+              budgetActionPolicyMatch.capital_efficiency_score ||
+              resampleMatch.capital_efficiency_score,
+            market_environment: environmentPolicy.market_environment || metadata.market_environment,
+            entry_risk_guard: this.buildEntryRiskGuardPolicy(entryRiskGuard),
+            entry_market_profile: marketProfileWithPortfolioRisk,
+            // 修复 CRITICAL #5 (2026-06-16): 5 个反馈层字段必须写进 signal.metadata.paper_trading_by_portfolio
+            // 让 outcome.metadata 投影 (RecommendationTradeOutcomeService.ts:3298) 真正读到值.
+            // 之前 100% NULL 导致 EV/TCA/MetaLabel/Playbook 反馈闭环全断 - "写"端从来没接.
+            ev_decision: capturedEvDecision || undefined,
+            execution_policy: (orderIntentMetadata as any).execution_policy || undefined,
+            playbook: (orderIntentMetadata as any).playbook || undefined,
+            playbook_id: (orderIntentMetadata as any).playbook?.id || undefined,
+            feasibility_score:
+              (orderIntentMetadata as any).pre_check_feasibility_score ||
+              (orderIntentMetadata as any).feasibility?.composite_score ||
+              undefined,
+            // reason_triplet / dqs 在 BUY 时还没产生 (closed 时才算), 留空, SELL closed 时再补.
           });
-        } finally {
-          // 不管 createBuyTrade 成功失败, 都释放 inflight marker.
-          // (失败后 retry 仍能走 — 是 caller 决定是否再 enqueue, 不是这里阻止)
-          this.releaseInflightBuy(portfolio.id, symbol);
-        }
-        tradePayload.trade_id = trade.id;
-        // Sprint 27: L8 复盘 — 真下单完成即视为走到 L8 (entry_trade_id 已落地,
-        // 后续 outcome / DQS / wizard hook 都将基于此运行).
-        markReached(activation, 'L8_reflection', {
-          trade_id: trade.id,
-          quantity,
-          execute_price,
-          amount,
-          total_cost,
-        });
-        setOutcome(activation, 'executed');
-
-        // ========== 即时飞书推送：自主买入卡片 ==========
-        // Sprint 35: interactive 富文本卡片 (绿色 header), 替代之前的 text/错误模板.
-        try {
-          const webhookUrl =
-            process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK;
-          if (webhookUrl && String(process.env.DISABLE_FEISHU_BOT_WEBHOOK) !== 'true') {
-            const stockName = signal.name || quote.name || symbol;
-            const positionPct = (
-              (total_cost / toNumber(portfolio.total_value, 200000)) *
-              100
-            ).toFixed(1);
-            const score = toNumber(signal.confidence_score, 0).toFixed(0);
-            const card = {
-              msg_type: 'interactive',
-              card: {
-                config: { wide_screen_mode: true },
-                header: {
-                  title: { tag: 'plain_text', content: `🟢 自主买入 · ${stockName}` },
-                  template: 'green',
-                },
-                elements: [
-                  {
-                    tag: 'div',
-                    fields: [
-                      { is_short: true, text: { tag: 'lark_md', content: `**代码**\n${symbol}` } },
-                      { is_short: true, text: { tag: 'lark_md', content: `**得分**\n${score}` } },
-                      {
-                        is_short: true,
-                        text: {
-                          tag: 'lark_md',
-                          content: `**成交价**\n¥${execute_price.toFixed(2)}`,
-                        },
-                      },
-                      {
-                        is_short: true,
-                        text: { tag: 'lark_md', content: `**数量**\n${quantity} 股` },
-                      },
-                      {
-                        is_short: true,
-                        text: { tag: 'lark_md', content: `**总成本**\n¥${amount.toFixed(0)}` },
-                      },
-                      {
-                        is_short: true,
-                        text: { tag: 'lark_md', content: `**仓位**\n${positionPct}%` },
-                      },
-                    ],
-                  },
-                  { tag: 'hr' },
-                  {
-                    tag: 'note',
-                    elements: [
-                      {
-                        tag: 'plain_text',
-                        content: `${moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm')} · ${
-                          portfolio.name || 'paper trading'
-                        }`,
-                      },
-                    ],
-                  },
-                ],
-              },
-            };
-            // eslint-disable-next-line @typescript-eslint/no-var-requires
-            const axios = require('axios');
-            axios.post(webhookUrl, card, { timeout: 5000 }).catch(() => {
-              /* 静默 — fail-OPEN, 推送失败不阻塞下单主流程 */
-            });
-          }
-        } catch {
-          /* 静默 */
-        }
-
-        await this.markSignalExecuted(signal, {
-          portfolio_id: portfolio.id,
-          trade_id: trade.id,
-          quantity,
-          execute_price,
-          amount,
-          commission,
-          total_cost,
-          target_position_pct: tradePayload.target_position_pct,
-          strategy_allocation_pct: tradePayload.strategy_allocation_pct,
-          strategy_allocation_amount: tradePayload.strategy_allocation_amount,
-          strategy_max_single_trade_pct: tradePayload.strategy_max_single_trade_pct,
-          strategy_max_single_trade_amount: tradePayload.strategy_max_single_trade_amount,
-          strategy_allocation_policy: strategyAllocationPolicy,
-          strategy_budget_action: tradePayload.strategy_budget_action,
-          strategy_budget_label: tradePayload.strategy_budget_label,
-          strategy_budget_reason: tradePayload.strategy_budget_reason,
-          strategy_budget_confidence: tradePayload.strategy_budget_confidence,
-          strategy_budget_discipline: tradePayload.strategy_budget_discipline,
-          entry_risk_guard_decision: tradePayload.entry_risk_guard_decision,
-          execution_reality_decision: tradePayload.execution_reality_decision,
-          min_lot_sample: minLotSample || undefined,
-          min_lot_sample_reason: minLotSampleReason || undefined,
-          stop_loss_pct: tradePayload.stop_loss_pct,
-          take_profit_pct: tradePayload.take_profit_pct,
-          strategy_key: metadata.strategy_key,
-          strategy_variant: metadata.strategy_variant,
-          strategy_bucket_label: metadata.strategy_bucket_label,
-          loop_policy_snapshot_id:
-            options.loop_policy_snapshot_id ?? metadata.loop_policy_snapshot_id,
-          profit_gate: profitGatePolicy,
-          outcome_feedback: outcomeFeedbackPolicy,
-          environment_policy: environmentPolicy,
-          resample_sample: resampleSample || undefined,
-          resample_match: resampleSample ? resampleMatch : undefined,
-          resample_combo_key: resampleMatch.key,
-          resample_reason: resampleReason,
-          resample_position_multiplier: resamplePositionMultiplier,
-          environment_strategy_budget_action: budgetAction,
-          environment_strategy_budget_multiplier: budgetMultiplier,
-          environment_strategy_budget_reason:
-            budgetPolicyReason ||
-            metadata.environment_strategy_budget_reason ||
-            resampleMatch.budget_action_reason,
-          environment_strategy_budget_policy_action:
-            metadata.environment_strategy_budget_policy_action || budgetActionPolicyMatch.action,
-          environment_strategy_budget_policy_reason: budgetPolicyReason,
-          environment_strategy_budget_policy_multiplier:
-            toOptionalNumber(
-              metadata.environment_strategy_budget_policy_multiplier ??
-                budgetActionPolicyMatch.position_multiplier
-            ) || undefined,
-          environment_strategy_budget_policy_version_id:
-            metadata.environment_strategy_budget_policy_version_id ||
-            budgetPolicyVersion.version_id ||
-            asPlainObject(options.external_environment_policy).budget_action_policy?.version_id,
-          environment_strategy_budget_policy_version_hash:
-            metadata.environment_strategy_budget_policy_version_hash ||
-            budgetPolicyVersion.version_hash ||
-            asPlainObject(options.external_environment_policy).budget_action_policy?.version_hash,
-          budget_policy_version_snapshot_id:
-            budgetPolicyVersion.snapshot_record_id ||
-            asPlainObject(options.external_environment_policy).budget_policy_version_snapshot_id,
-          environment_strategy_budget_policy_version_guard_action:
-            metadata.environment_strategy_budget_policy_version_guard_action ||
-            budgetPolicyVersionGuard.action,
-          environment_strategy_budget_policy_version_guard_reason:
-            metadata.environment_strategy_budget_policy_version_guard_reason ||
-            budgetPolicyVersionGuard.reason,
-          environment_strategy_budget_policy_version_guard_champion:
-            metadata.environment_strategy_budget_policy_version_guard_champion ||
-            budgetPolicyVersionGuard.champion_version_id,
-          environment_strategy_budget_policy_rollback_action:
-            metadata.environment_strategy_budget_policy_rollback_action ||
-            budgetPolicyRollbackPlan.action,
-          environment_strategy_budget_policy_rollback_source:
-            metadata.environment_strategy_budget_policy_rollback_source ||
-            budgetPolicyRollbackPlan.source_version_id,
-          environment_strategy_budget_policy_rollback_snapshot_id: toOptionalNumber(
-            metadata.environment_strategy_budget_policy_rollback_snapshot_id ??
-              budgetPolicyRollbackPlan.source_snapshot_id
-          ),
-          environment_strategy_budget_policy_rollback_reason:
-            metadata.environment_strategy_budget_policy_rollback_reason ||
-            budgetPolicyRollbackPlan.reason,
-          environment_strategy_capital_efficiency_score:
-            metadata.environment_strategy_capital_efficiency_score ||
-            budgetActionPolicyMatch.capital_efficiency_score ||
-            resampleMatch.capital_efficiency_score,
-          market_environment: environmentPolicy.market_environment || metadata.market_environment,
-          entry_risk_guard: this.buildEntryRiskGuardPolicy(entryRiskGuard),
-          entry_market_profile: marketProfileWithPortfolioRisk,
-          // 修复 CRITICAL #5 (2026-06-16): 5 个反馈层字段必须写进 signal.metadata.paper_trading_by_portfolio
-          // 让 outcome.metadata 投影 (RecommendationTradeOutcomeService.ts:3298) 真正读到值.
-          // 之前 100% NULL 导致 EV/TCA/MetaLabel/Playbook 反馈闭环全断 - "写"端从来没接.
-          ev_decision: capturedEvDecision || undefined,
-          execution_policy: (orderIntentMetadata as any).execution_policy || undefined,
-          playbook: (orderIntentMetadata as any).playbook || undefined,
-          playbook_id: (orderIntentMetadata as any).playbook?.id || undefined,
-          feasibility_score:
-            (orderIntentMetadata as any).pre_check_feasibility_score ||
-            (orderIntentMetadata as any).feasibility?.composite_score ||
-            undefined,
-          // reason_triplet / dqs 在 BUY 时还没产生 (closed 时才算), 留空, SELL closed 时再补.
-        });
-        await recordBuyIntent('executed', tradePayload.reason || '自动跟单已模拟买入', {
-          trade_id: trade.id,
-          reference_price: quote.price,
-          execute_price,
-          quantity,
-          amount,
-          target_position_pct: tradePayload.target_position_pct,
-          reason_category: 'executed',
-          metadata: {
-            ...orderIntentMetadata,
+          await recordBuyIntent('executed', tradePayload.reason || '自动跟单已模拟买入', {
             trade_id: trade.id,
-            total_cost,
-            commission,
-          },
-        });
-        await this.refreshRecommendationTradeOutcome(signal.id);
-      } else {
-        await recordBuyIntent('planned', tradePayload.reason || '自动跟单预演计划买入', {
-          reference_price: quote.price,
-          execute_price,
-          quantity,
-          amount,
-          target_position_pct: tradePayload.target_position_pct,
-          reason_category: 'planned',
-          metadata: {
-            ...orderIntentMetadata,
-            total_cost,
-            commission,
-          },
-        });
-      }
+            reference_price: quote.price,
+            execute_price,
+            quantity,
+            amount,
+            target_position_pct: tradePayload.target_position_pct,
+            reason_category: 'executed',
+            metadata: {
+              ...orderIntentMetadata,
+              trade_id: trade.id,
+              total_cost,
+              commission,
+            },
+          });
+          await this.refreshRecommendationTradeOutcome(signal.id);
+        } else {
+          await recordBuyIntent('planned', tradePayload.reason || '自动跟单预演计划买入', {
+            reference_price: quote.price,
+            execute_price,
+            quantity,
+            amount,
+            target_position_pct: tradePayload.target_position_pct,
+            reason_category: 'planned',
+            metadata: {
+              ...orderIntentMetadata,
+              total_cost,
+              commission,
+            },
+          });
+        }
       } catch (createTradeErr: any) {
         // 修复 CRITICAL #6: per-signal isolation. 单笔失败不阻塞剩余信号.
         logger.error(
@@ -3426,7 +3429,9 @@ class PaperTradingAutomationService {
           }`
         );
         try {
-          await skip(`下单失败 (per-signal isolation): ${createTradeErr?.message || createTradeErr}`);
+          await skip(
+            `下单失败 (per-signal isolation): ${createTradeErr?.message || createTradeErr}`
+          );
         } catch {
           /* skip 自身失败也吞 */
         }
@@ -3707,8 +3712,7 @@ class PaperTradingAutomationService {
         const userPct = Number(userCfg?.pct);
         // user.risk_config.per_stock_stop_loss.pct 是 0.07 (decimal); runRiskCheck 默认 7 (整数百分位)
         // 需要 × 100 对齐
-        resolvedDefaultStopLossPct =
-          Number.isFinite(userPct) && userPct > 0 ? userPct * 100 : 7;
+        resolvedDefaultStopLossPct = Number.isFinite(userPct) && userPct > 0 ? userPct * 100 : 7;
       } catch (err: any) {
         logger.warn(
           `runRiskCheck: 读 user.risk_config.per_stock_stop_loss 失败 fail-open 默认 7%: ${
@@ -3766,469 +3770,483 @@ class PaperTradingAutomationService {
       // 修复 CRITICAL #6 (2026-06-16): per-position isolation. 任一持仓的 SELL 失败
       // (createSellTrade throw / quote 拉不到 / DB 抖动) 不影响本 portfolio 后续持仓评估.
       try {
-      const symbol = normalizeSymbol(position.symbol);
-      const quantity = Math.floor(toNumber(position.quantity, 0));
-      const avgCost = toNumber(position.avg_cost, 0);
-      const sourceSignal = await this.findExecutionSignalForPosition(portfolio.id, symbol);
-      const signalMeta = asPlainObject(sourceSignal?.metadata);
-      const paperTradingMeta = paperTradingMetaForPortfolio(signalMeta, portfolio.id);
-      const entryDate = paperTradingMeta.executed_at || position.created_at;
-      const holdingDays = Math.max(0, moment().tz('Asia/Shanghai').diff(moment(entryDate), 'days'));
-      const useAdaptiveDefaults =
-        adaptiveRiskPolicy.applied && adaptiveRiskPolicy.override_signal_params;
-      const stopLossPct = Math.abs(
-        toNumber(
-          useAdaptiveDefaults
-            ? adaptiveRiskPolicy.effective_stop_loss_pct
-            : paperTradingMeta.stop_loss_pct ?? signalMeta.stop_loss_pct,
-          adaptiveRiskPolicy.effective_stop_loss_pct
-        )
-      );
-      const takeProfitPct = Math.abs(
-        toNumber(
-          useAdaptiveDefaults
-            ? adaptiveRiskPolicy.effective_take_profit_pct
-            : paperTradingMeta.take_profit_pct ?? signalMeta.take_profit_pct,
-          adaptiveRiskPolicy.effective_take_profit_pct
-        )
-      );
-      const positionTrailingActivationPct = adaptiveRiskPolicy.effective_trailing_activation_pct;
-      const positionTrailingDrawdownPct = adaptiveRiskPolicy.effective_trailing_drawdown_pct;
-      const quote = await this.getLatestPrice(symbol, toNumber(position.current_price, 0));
-      const latestPrice = quote.price || toNumber(position.current_price, 0);
-      const marketProfile = await this.getEntryMarketProfile(symbol, {
-        cooldown_days_after_loss: 0,
-      });
-      const executionRealityDecision = this.evaluateExecutionReality({
-        side: 'SELL',
-        profile: marketProfile,
-        quote,
-        min_avg_turnover_yuan: 0,
-        block_limit_up: false,
-        block_limit_down: true,
-        block_suspended: true,
-        block_st: false,
-      });
-      const pnlPct = avgCost > 0 ? roundNumber(((latestPrice - avgCost) / avgCost) * 100, 4) : 0;
-      const trailingStats = await this.computePositionPeakProfit({
-        symbol,
-        entry_date: entryDate,
-        entry_price: avgCost,
-        latest_price: latestPrice,
-        trailing_drawdown_pct: positionTrailingDrawdownPct,
-      });
-
-      const baseItem: PaperTradingRiskExitItem = {
-        status: 'held',
-        symbol,
-        name: position.name || quote.name || symbol,
-        quantity,
-        avg_cost: avgCost,
-        latest_price: latestPrice,
-        pnl_pct: pnlPct,
-        holding_days: holdingDays,
-        stop_loss_pct: stopLossPct,
-        take_profit_pct: takeProfitPct,
-        trailing_activation_pct: positionTrailingActivationPct,
-        trailing_drawdown_pct: positionTrailingDrawdownPct,
-        max_profit_pct: trailingStats.max_profit_pct,
-        drawdown_from_peak_pct: trailingStats.drawdown_from_peak_pct,
-        peak_price: trailingStats.peak_price,
-        trailing_stop_price:
-          enableTrailingTakeProfit && trailingStats.max_profit_pct >= positionTrailingActivationPct
-            ? trailingStats.trailing_stop_price
-            : undefined,
-        source_signal_id: sourceSignal?.id,
-        execution_reality_decision: executionRealityDecision,
-      };
-      let exitReason: RiskExitReason | undefined;
-      let sellSignal: AIInvestmentSignal | null = null;
-
-      const recordSellIntent = async (
-        status: OrderIntentStatus,
-        reason_text?: string,
-        extra: Partial<RecordOrderIntentParams> = {}
-      ) => {
-        const baseMetadata = {
-          source_signal_id: sourceSignal?.id,
-          sell_signal_id: sellSignal?.id,
-          exit_reason: exitReason,
-          exit_reason_label: exitReason ? riskReasonLabel(exitReason) : undefined,
-          pnl_pct: pnlPct,
-          holding_days: holdingDays,
-          adaptive_risk_policy: adaptiveRiskPolicy,
-          execution_reality_decision: executionRealityDecision,
-        };
-        return this.recordOrderIntent({
-          portfolio_id: portfolio.id,
-          signal: sourceSignal,
+        const symbol = normalizeSymbol(position.symbol);
+        const quantity = Math.floor(toNumber(position.quantity, 0));
+        const avgCost = toNumber(position.avg_cost, 0);
+        const sourceSignal = await this.findExecutionSignalForPosition(portfolio.id, symbol);
+        const signalMeta = asPlainObject(sourceSignal?.metadata);
+        const paperTradingMeta = paperTradingMetaForPortfolio(signalMeta, portfolio.id);
+        const entryDate = paperTradingMeta.executed_at || position.created_at;
+        const holdingDays = Math.max(
+          0,
+          moment().tz('Asia/Shanghai').diff(moment(entryDate), 'days')
+        );
+        const useAdaptiveDefaults =
+          adaptiveRiskPolicy.applied && adaptiveRiskPolicy.override_signal_params;
+        const stopLossPct = Math.abs(
+          toNumber(
+            useAdaptiveDefaults
+              ? adaptiveRiskPolicy.effective_stop_loss_pct
+              : paperTradingMeta.stop_loss_pct ?? signalMeta.stop_loss_pct,
+            adaptiveRiskPolicy.effective_stop_loss_pct
+          )
+        );
+        const takeProfitPct = Math.abs(
+          toNumber(
+            useAdaptiveDefaults
+              ? adaptiveRiskPolicy.effective_take_profit_pct
+              : paperTradingMeta.take_profit_pct ?? signalMeta.take_profit_pct,
+            adaptiveRiskPolicy.effective_take_profit_pct
+          )
+        );
+        const positionTrailingActivationPct = adaptiveRiskPolicy.effective_trailing_activation_pct;
+        const positionTrailingDrawdownPct = adaptiveRiskPolicy.effective_trailing_drawdown_pct;
+        const quote = await this.getLatestPrice(symbol, toNumber(position.current_price, 0));
+        const latestPrice = quote.price || toNumber(position.current_price, 0);
+        const marketProfile = await this.getEntryMarketProfile(symbol, {
+          cooldown_days_after_loss: 0,
+        });
+        const executionRealityDecision = this.evaluateExecutionReality({
           side: 'SELL',
-          status,
+          profile: marketProfile,
+          quote,
+          min_avg_turnover_yuan: 0,
+          block_limit_up: false,
+          block_limit_down: true,
+          block_suspended: true,
+          block_st: false,
+        });
+        const pnlPct = avgCost > 0 ? roundNumber(((latestPrice - avgCost) / avgCost) * 100, 4) : 0;
+        const trailingStats = await this.computePositionPeakProfit({
+          symbol,
+          entry_date: entryDate,
+          entry_price: avgCost,
+          latest_price: latestPrice,
+          trailing_drawdown_pct: positionTrailingDrawdownPct,
+        });
+
+        const baseItem: PaperTradingRiskExitItem = {
+          status: 'held',
           symbol,
           name: position.name || quote.name || symbol,
-          reference_price: latestPrice,
           quantity,
-          score: toOptionalNumber(sellSignal?.confidence_score ?? sourceSignal?.confidence_score),
-          risk_level: sourceSignal?.risk_level,
-          reason_text,
-          reason_category:
-            extra.reason_category ||
-            (reason_text ? normalizeSkipReasonCategory(reason_text) : undefined),
-          metadata: {
-            ...baseMetadata,
-            ...(extra.metadata || {}),
-          },
-          ...extra,
-        });
-      };
-
-      const skip = async (message: string) => {
-        skippedItems.push({ ...baseItem, status: 'skipped', message });
-        await recordSellIntent('rejected', message);
-      };
-
-      if (exits.length >= limit) {
-        break;
-      }
-
-      if (!quantity || quantity <= 0) {
-        await skip('持仓数量无效，跳过');
-        continue;
-      }
-
-      if (!latestPrice || latestPrice <= 0 || !avgCost || avgCost <= 0) {
-        await skip('无法获取有效价格或成本，跳过');
-        continue;
-      }
-
-      if (enableStopLoss && stopLossPct > 0 && pnlPct <= -stopLossPct) {
-        exitReason = 'stop_loss';
-      } else if (enableTakeProfit && takeProfitPct > 0 && pnlPct >= takeProfitPct) {
-        exitReason = 'take_profit';
-      } else if (
-        enableTrailingTakeProfit &&
-        positionTrailingActivationPct > 0 &&
-        positionTrailingDrawdownPct > 0 &&
-        trailingStats.max_profit_pct >= positionTrailingActivationPct &&
-        Math.abs(Math.min(trailingStats.drawdown_from_peak_pct, 0)) >= positionTrailingDrawdownPct
-      ) {
-        exitReason = 'trailing_take_profit';
-      } else if (enableSellSignals) {
-        sellSignal = await this.findLatestSellSignal({
-          symbol,
-          since_date: dateOnly(entryDate),
-          min_score: minSellSignalScore,
-          source_type: sellSignalSourceType,
-        });
-        if (sellSignal) {
-          exitReason = 'sell_signal';
-        }
-      }
-
-      // ========== 智能卖出 — 高级操盘手规则 ==========
-      // 规则 5: 技术破位（跌破 MA20 + 放量确认）
-      if (!exitReason && holdingDays >= 10) {
-        try {
-          const { DailyBar: DBar } = require('../../models/DailyBar');
-          const { Stock: StockModel } = require('../../models/Stock');
-          const stockRow = await StockModel.findOne({ where: { symbol }, raw: true });
-          if (stockRow) {
-            const recentBars: any[] = await DBar.findAll({
-              where: { stock_id: stockRow.id },
-              order: [['time', 'DESC']],
-              limit: 25,
-              raw: true,
-            });
-            if (recentBars.length >= 20) {
-              const bars20 = recentBars.slice(0, 20).reverse(); // 按时间升序
-              const closes20 = bars20.map((b: any) => Number(b.close));
-              const ma20 = closes20.reduce((s: number, v: number) => s + v, 0) / 20;
-              const todayClose = closes20[closes20.length - 1];
-              const todayVolume = Number(bars20[bars20.length - 1]?.volume || 0);
-              const avgVolume =
-                bars20.reduce((s: number, b: any) => s + Number(b.volume || 0), 0) / 20;
-              // 跌破 MA20 1%+ 且成交额放大 1.3 倍 → 技术破位
-              if (todayClose < ma20 * 0.99 && todayVolume > avgVolume * 1.3) {
-                exitReason = 'technical_breakdown';
-              }
-            }
-          }
-        } catch {
-          /* 安全跳过 — 拿不到 bar 不影响其他规则 */
-        }
-      }
-
-      // 规则 6: 阶梯式获利兑现（涨 15%+ 开始分批减仓，涨 25%+ 清仓）
-      if (!exitReason && pnlPct >= 25) {
-        exitReason = 'profit_target_high';
-      } else if (!exitReason && pnlPct >= 15 && holdingDays >= 5) {
-        // 涨 15%-25%：如果持有 > 5 天 + 开始见顶（近 3 日回落），兑现
-        if (trailingStats.max_profit_pct - pnlPct > 3) {
-          exitReason = 'profit_pullback';
-        }
-      }
-
-      // 规则 7: 持仓超 30 天 + 收益 < 3% → 换仓（释放资金给更好机会）
-      if (!exitReason && holdingDays >= 30 && pnlPct < 3 && pnlPct > -stopLossPct) {
-        exitReason = 'underperform_swap';
-      }
-
-      if (
-        !exitReason &&
-        adaptiveRiskPolicy.effective_max_hold_days > 0 &&
-        holdingDays >= adaptiveRiskPolicy.effective_max_hold_days
-      ) {
-        exitReason = 'max_hold_days';
-      }
-
-      if (!exitReason) {
-        const holdMessage = this.buildRiskHoldMessage({
+          avg_cost: avgCost,
+          latest_price: latestPrice,
           pnl_pct: pnlPct,
+          holding_days: holdingDays,
           stop_loss_pct: stopLossPct,
           take_profit_pct: takeProfitPct,
-          enable_trailing_take_profit: enableTrailingTakeProfit,
           trailing_activation_pct: positionTrailingActivationPct,
           trailing_drawdown_pct: positionTrailingDrawdownPct,
           max_profit_pct: trailingStats.max_profit_pct,
           drawdown_from_peak_pct: trailingStats.drawdown_from_peak_pct,
-        });
-        heldItems.push({
-          ...baseItem,
-          status: 'held',
-          message: holdMessage,
-        });
-        if (heldItems.length <= 10) {
-          await recordSellIntent('held', holdMessage, {
-            reason_category: 'risk_hold',
-            metadata: { max_profit_pct: trailingStats.max_profit_pct },
+          peak_price: trailingStats.peak_price,
+          trailing_stop_price:
+            enableTrailingTakeProfit &&
+            trailingStats.max_profit_pct >= positionTrailingActivationPct
+              ? trailingStats.trailing_stop_price
+              : undefined,
+          source_signal_id: sourceSignal?.id,
+          execution_reality_decision: executionRealityDecision,
+        };
+        let exitReason: RiskExitReason | undefined;
+        let sellSignal: AIInvestmentSignal | null = null;
+
+        const recordSellIntent = async (
+          status: OrderIntentStatus,
+          reason_text?: string,
+          extra: Partial<RecordOrderIntentParams> = {}
+        ) => {
+          const baseMetadata = {
+            source_signal_id: sourceSignal?.id,
+            sell_signal_id: sellSignal?.id,
+            exit_reason: exitReason,
+            exit_reason_label: exitReason ? riskReasonLabel(exitReason) : undefined,
+            pnl_pct: pnlPct,
+            holding_days: holdingDays,
+            adaptive_risk_policy: adaptiveRiskPolicy,
+            execution_reality_decision: executionRealityDecision,
+          };
+          return this.recordOrderIntent({
+            portfolio_id: portfolio.id,
+            signal: sourceSignal,
+            side: 'SELL',
+            status,
+            symbol,
+            name: position.name || quote.name || symbol,
+            reference_price: latestPrice,
+            quantity,
+            score: toOptionalNumber(sellSignal?.confidence_score ?? sourceSignal?.confidence_score),
+            risk_level: sourceSignal?.risk_level,
+            reason_text,
+            reason_category:
+              extra.reason_category ||
+              (reason_text ? normalizeSkipReasonCategory(reason_text) : undefined),
+            metadata: {
+              ...baseMetadata,
+              ...(extra.metadata || {}),
+            },
+            ...extra,
           });
+        };
+
+        const skip = async (message: string) => {
+          skippedItems.push({ ...baseItem, status: 'skipped', message });
+          await recordSellIntent('rejected', message);
+        };
+
+        if (exits.length >= limit) {
+          break;
         }
-        continue;
-      }
 
-      if (!executionRealityDecision.allowed) {
-        await skip(executionRealityDecision.reasons.join('；'));
-        continue;
-      }
+        if (!quantity || quantity <= 0) {
+          await skip('持仓数量无效，跳过');
+          continue;
+        }
 
-      const execute_price = roundNumber(latestPrice * (1 - this.slippageRate), 3);
-      const amount = roundNumber(execute_price * quantity, 2);
-      // 修复 CRITICAL #1 (2026-06-16): A 股 SELL 单边印花税. baseCommission = 千 0.3 broker,
-      // stampTax = 千 1, total = 千 1.3. 之前漏算 stampTax 让 realized_pnl 高估 0.1%.
-      // Batch S (2026-06-17, G1): 补 min_commission 5 元地板 + transfer_fee 千 0.01.
-      const brokerCommission = roundNumber(
-        Math.max(amount * this.commissionRate, this.minCommission),
-        2
-      );
-      const stampTax = roundNumber(amount * this.stampTaxRate, 2);
-      const transferFee = roundNumber(amount * this.transferFeeRate, 2);
-      const commission = roundNumber(brokerCommission + stampTax + transferFee, 2);
-      const net_revenue = roundNumber(amount - commission, 2);
-      // 修复 CRITICAL #2 (2026-06-16): realized_pnl 公式漏 BUY commission.
-      // 实盘正确: realized_pnl = (sell_revenue - sell_commission) - (buy_amount + buy_commission)
-      // avgCost 不含 BUY commission (createBuyTrade 写 avg_cost = execute_price 单纯成交价).
-      // Batch S (G1): BUY commission 估算同款补 min_commission + transfer_fee.
-      const buyAmount = avgCost * quantity;
-      const estBuyBroker = roundNumber(
-        Math.max(buyAmount * this.commissionRate, this.minCommission),
-        2
-      );
-      const estBuyTransfer = roundNumber(buyAmount * this.transferFeeRate, 2);
-      const estimatedBuyCommission = roundNumber(estBuyBroker + estBuyTransfer, 2);
-      const realized_pnl = roundNumber(
-        amount - buyAmount - commission - estimatedBuyCommission,
-        2
-      );
+        if (!latestPrice || latestPrice <= 0 || !avgCost || avgCost <= 0) {
+          await skip('无法获取有效价格或成本，跳过');
+          continue;
+        }
 
-      const exitItem: PaperTradingRiskExitItem = {
-        ...baseItem,
-        status: dry_run ? 'planned' : 'exited',
-        reason: exitReason,
-        reason_label: riskReasonLabel(exitReason),
-        execute_price,
-        amount,
-        commission,
-        net_revenue,
-        realized_pnl,
-        sell_signal_id: sellSignal?.id,
-        sell_signal_date: sellSignal?.signal_date,
-        sell_signal_score: toOptionalNumber(sellSignal?.confidence_score),
-        execution_reality_decision: executionRealityDecision,
-      };
+        if (enableStopLoss && stopLossPct > 0 && pnlPct <= -stopLossPct) {
+          exitReason = 'stop_loss';
+        } else if (enableTakeProfit && takeProfitPct > 0 && pnlPct >= takeProfitPct) {
+          exitReason = 'take_profit';
+        } else if (
+          enableTrailingTakeProfit &&
+          positionTrailingActivationPct > 0 &&
+          positionTrailingDrawdownPct > 0 &&
+          trailingStats.max_profit_pct >= positionTrailingActivationPct &&
+          Math.abs(Math.min(trailingStats.drawdown_from_peak_pct, 0)) >= positionTrailingDrawdownPct
+        ) {
+          exitReason = 'trailing_take_profit';
+        } else if (enableSellSignals) {
+          sellSignal = await this.findLatestSellSignal({
+            symbol,
+            since_date: dateOnly(entryDate),
+            min_score: minSellSignalScore,
+            source_type: sellSignalSourceType,
+          });
+          if (sellSignal) {
+            exitReason = 'sell_signal';
+          }
+        }
 
-      if (!dry_run) {
-        const trade = await this.createSellTrade({
-          portfolio,
-          position,
-          symbol,
-          name: exitItem.name || symbol,
+        // ========== 智能卖出 — 高级操盘手规则 ==========
+        // 规则 5: 技术破位（跌破 MA20 + 放量确认）
+        if (!exitReason && holdingDays >= 10) {
+          try {
+            const { DailyBar: DBar } = require('../../models/DailyBar');
+            const { Stock: StockModel } = require('../../models/Stock');
+            const stockRow = await StockModel.findOne({ where: { symbol }, raw: true });
+            if (stockRow) {
+              const recentBars: any[] = await DBar.findAll({
+                where: { stock_id: stockRow.id },
+                order: [['time', 'DESC']],
+                limit: 25,
+                raw: true,
+              });
+              if (recentBars.length >= 20) {
+                const bars20 = recentBars.slice(0, 20).reverse(); // 按时间升序
+                const closes20 = bars20.map((b: any) => Number(b.close));
+                const ma20 = closes20.reduce((s: number, v: number) => s + v, 0) / 20;
+                const todayClose = closes20[closes20.length - 1];
+                const todayVolume = Number(bars20[bars20.length - 1]?.volume || 0);
+                const avgVolume =
+                  bars20.reduce((s: number, b: any) => s + Number(b.volume || 0), 0) / 20;
+                // 跌破 MA20 1%+ 且成交额放大 1.3 倍 → 技术破位
+                if (todayClose < ma20 * 0.99 && todayVolume > avgVolume * 1.3) {
+                  exitReason = 'technical_breakdown';
+                }
+              }
+            }
+          } catch {
+            /* 安全跳过 — 拿不到 bar 不影响其他规则 */
+          }
+        }
+
+        // 规则 6: 阶梯式获利兑现（涨 15%+ 开始分批减仓，涨 25%+ 清仓）
+        if (!exitReason && pnlPct >= 25) {
+          exitReason = 'profit_target_high';
+        } else if (!exitReason && pnlPct >= 15 && holdingDays >= 5) {
+          // 涨 15%-25%：如果持有 > 5 天 + 开始见顶（近 3 日回落），兑现
+          if (trailingStats.max_profit_pct - pnlPct > 3) {
+            exitReason = 'profit_pullback';
+          }
+        }
+
+        // 规则 7: 持仓超 30 天 + 收益 < 3% → 换仓（释放资金给更好机会）
+        if (!exitReason && holdingDays >= 30 && pnlPct < 3 && pnlPct > -stopLossPct) {
+          exitReason = 'underperform_swap';
+        }
+
+        if (
+          !exitReason &&
+          adaptiveRiskPolicy.effective_max_hold_days > 0 &&
+          holdingDays >= adaptiveRiskPolicy.effective_max_hold_days
+        ) {
+          exitReason = 'max_hold_days';
+        }
+
+        if (!exitReason) {
+          const holdMessage = this.buildRiskHoldMessage({
+            pnl_pct: pnlPct,
+            stop_loss_pct: stopLossPct,
+            take_profit_pct: takeProfitPct,
+            enable_trailing_take_profit: enableTrailingTakeProfit,
+            trailing_activation_pct: positionTrailingActivationPct,
+            trailing_drawdown_pct: positionTrailingDrawdownPct,
+            max_profit_pct: trailingStats.max_profit_pct,
+            drawdown_from_peak_pct: trailingStats.drawdown_from_peak_pct,
+          });
+          heldItems.push({
+            ...baseItem,
+            status: 'held',
+            message: holdMessage,
+          });
+          if (heldItems.length <= 10) {
+            await recordSellIntent('held', holdMessage, {
+              reason_category: 'risk_hold',
+              metadata: { max_profit_pct: trailingStats.max_profit_pct },
+            });
+          }
+          continue;
+        }
+
+        if (!executionRealityDecision.allowed) {
+          await skip(executionRealityDecision.reasons.join('；'));
+          continue;
+        }
+
+        const execute_price = roundNumber(latestPrice * (1 - this.slippageRate), 3);
+        const amount = roundNumber(execute_price * quantity, 2);
+        // 修复 CRITICAL #1 (2026-06-16): A 股 SELL 单边印花税. baseCommission = 千 0.3 broker,
+        // stampTax = 千 1, total = 千 1.3. 之前漏算 stampTax 让 realized_pnl 高估 0.1%.
+        // Batch S (2026-06-17, G1): 补 min_commission 5 元地板 + transfer_fee 千 0.01.
+        const brokerCommission = roundNumber(
+          Math.max(amount * this.commissionRate, this.minCommission),
+          2
+        );
+        const stampTax = roundNumber(amount * this.stampTaxRate, 2);
+        const transferFee = roundNumber(amount * this.transferFeeRate, 2);
+        const commission = roundNumber(brokerCommission + stampTax + transferFee, 2);
+        const net_revenue = roundNumber(amount - commission, 2);
+        // 修复 CRITICAL #2 (2026-06-16): realized_pnl 公式漏 BUY commission.
+        // 实盘正确: realized_pnl = (sell_revenue - sell_commission) - (buy_amount + buy_commission)
+        // avgCost 不含 BUY commission (createBuyTrade 写 avg_cost = execute_price 单纯成交价).
+        // Batch S (G1): BUY commission 估算同款补 min_commission + transfer_fee.
+        const buyAmount = avgCost * quantity;
+        const estBuyBroker = roundNumber(
+          Math.max(buyAmount * this.commissionRate, this.minCommission),
+          2
+        );
+        const estBuyTransfer = roundNumber(buyAmount * this.transferFeeRate, 2);
+        const estimatedBuyCommission = roundNumber(estBuyBroker + estBuyTransfer, 2);
+        const realized_pnl = roundNumber(
+          amount - buyAmount - commission - estimatedBuyCommission,
+          2
+        );
+
+        const exitItem: PaperTradingRiskExitItem = {
+          ...baseItem,
+          status: dry_run ? 'planned' : 'exited',
+          reason: exitReason,
+          reason_label: riskReasonLabel(exitReason),
           execute_price,
-          quantity,
           amount,
           commission,
           net_revenue,
           realized_pnl,
-        });
-        exitItem.trade_id = trade.id;
+          sell_signal_id: sellSignal?.id,
+          sell_signal_date: sellSignal?.signal_date,
+          sell_signal_score: toOptionalNumber(sellSignal?.confidence_score),
+          execution_reality_decision: executionRealityDecision,
+        };
 
-        // ========== 即时飞书推送：自主卖出卡片 ==========
-        // Sprint 35: 盈利/亏损用不同 header template (green/red), 卖出原因显示
-        try {
-          const webhookUrl =
-            process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK;
-          if (webhookUrl && String(process.env.DISABLE_FEISHU_BOT_WEBHOOK) !== 'true') {
-            const stockName = exitItem.name || symbol;
-            const pnlSign = realized_pnl >= 0 ? '+' : '';
-            const reasonText = riskReasonLabel(exitReason);
-            const icon = realized_pnl >= 0 ? '🟢' : '🔴';
-            const pnlEmoji = realized_pnl >= 0 ? '💰' : '📉';
-            const headerTemplate = realized_pnl >= 0 ? 'green' : 'red';
-            const card = {
-              msg_type: 'interactive',
-              card: {
-                config: { wide_screen_mode: true },
-                header: {
-                  title: { tag: 'plain_text', content: `${icon} 自主卖出 · ${stockName}` },
-                  template: headerTemplate,
-                },
-                elements: [
-                  {
-                    tag: 'div',
-                    text: {
-                      tag: 'lark_md',
-                      content: `**卖出原因**: ${reasonText}`,
-                    },
-                  },
-                  {
-                    tag: 'div',
-                    fields: [
-                      { is_short: true, text: { tag: 'lark_md', content: `**代码**\n${symbol}` } },
-                      {
-                        is_short: true,
-                        text: {
-                          tag: 'lark_md',
-                          content: `**${pnlEmoji} 实现盈亏**\n${pnlSign}¥${realized_pnl.toFixed(
-                            2
-                          )}`,
-                        },
-                      },
-                      {
-                        is_short: true,
-                        text: {
-                          tag: 'lark_md',
-                          content: `**成交价**\n¥${execute_price.toFixed(2)}`,
-                        },
-                      },
-                      {
-                        is_short: true,
-                        text: { tag: 'lark_md', content: `**数量**\n${quantity} 股` },
-                      },
-                      {
-                        is_short: true,
-                        text: { tag: 'lark_md', content: `**总金额**\n¥${amount.toFixed(0)}` },
-                      },
-                      {
-                        is_short: true,
-                        text: { tag: 'lark_md', content: `**持有天数**\n${holdingDays} 天` },
-                      },
-                    ],
-                  },
-                  { tag: 'hr' },
-                  {
-                    tag: 'note',
-                    elements: [
-                      {
-                        tag: 'plain_text',
-                        content: `${moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm')} · ${
-                          portfolio.name || 'paper trading'
-                        }`,
-                      },
-                    ],
-                  },
-                ],
-              },
-            };
-            // eslint-disable-next-line @typescript-eslint/no-var-requires
-            const axios = require('axios');
-            axios.post(webhookUrl, card, { timeout: 5000 }).catch(() => {
-              /* 静默 */
-            });
-          }
-        } catch {
-          /* 静默 */
-        }
-
-        await recordSellIntent('executed', riskReasonLabel(exitReason), {
-          trade_id: trade.id,
-          execute_price,
-          quantity,
-          amount,
-          reason_category: 'executed',
-          metadata: {
+        if (!dry_run) {
+          const trade = await this.createSellTrade({
+            portfolio,
+            position,
+            symbol,
+            name: exitItem.name || symbol,
+            execute_price,
+            quantity,
+            amount,
+            commission,
             net_revenue,
             realized_pnl,
-            sell_signal_id: sellSignal?.id,
-            sell_signal_date: sellSignal?.signal_date,
-            sell_signal_score: toOptionalNumber(sellSignal?.confidence_score),
-          },
-        });
-
-        if (sourceSignal) {
-          // Batch K (2026-06-17, H4 fix): 写 exit_market_environment 让 outcome
-          // 的 market_regime_at_exit 真有数据 → root_cause classifier 的 wrong_regime
-          // 规则才能命中. 之前从未写入, 全局 0% wrong_regime 误判. fail-OPEN: 取不到
-          // 环境 fallback null, 不阻塞 SELL 主流程.
-          let exitMarketEnvironment: any = null;
-          try {
-            exitMarketEnvironment = await this.resolveEnvironmentForSignal(sourceSignal, asPlainObject(sourceSignal.metadata));
-          } catch (envErr: any) {
-            logger.warn(
-              `[runRiskCheck] 写 exit_market_environment 失败 fail-open: ${envErr?.message || envErr}`
-            );
-          }
-          await this.markSignalClosed(sourceSignal, {
-            portfolio_id: portfolio.id,
-            sell_trade_id: trade.id,
-            sell_signal_id: sellSignal?.id,
-            exit_reason: exitReason,
-            exit_reason_label: riskReasonLabel(exitReason),
-            exit_price: execute_price,
-            exit_quantity: quantity,
-            exit_amount: amount,
-            exit_commission: commission,
-            realized_pnl,
-            realized_pnl_pct: pnlPct,
-            holding_days: holdingDays,
-            max_profit_pct: trailingStats.max_profit_pct,
-            drawdown_from_peak_pct: trailingStats.drawdown_from_peak_pct,
-            peak_price: trailingStats.peak_price,
-            trailing_stop_price:
-              exitReason === 'trailing_take_profit' ? trailingStats.trailing_stop_price : undefined,
-            trailing_activation_pct: positionTrailingActivationPct,
-            trailing_drawdown_pct: positionTrailingDrawdownPct,
-            adaptive_risk_policy: adaptiveRiskPolicy,
-            execution_reality_decision: executionRealityDecision,
-            exit_market_environment: exitMarketEnvironment,
           });
-          await this.refreshRecommendationTradeOutcome(sourceSignal.id);
-        }
-      } else {
-        await recordSellIntent('planned', riskReasonLabel(exitReason), {
-          execute_price,
-          quantity,
-          amount,
-          reason_category: 'planned',
-          metadata: {
-            net_revenue,
-            realized_pnl,
-            sell_signal_id: sellSignal?.id,
-            sell_signal_date: sellSignal?.signal_date,
-            sell_signal_score: toOptionalNumber(sellSignal?.confidence_score),
-          },
-        });
-      }
+          exitItem.trade_id = trade.id;
 
-      exits.push(exitItem);
+          // ========== 即时飞书推送：自主卖出卡片 ==========
+          // Sprint 35: 盈利/亏损用不同 header template (green/red), 卖出原因显示
+          try {
+            const webhookUrl =
+              process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK;
+            if (webhookUrl && String(process.env.DISABLE_FEISHU_BOT_WEBHOOK) !== 'true') {
+              const stockName = exitItem.name || symbol;
+              const pnlSign = realized_pnl >= 0 ? '+' : '';
+              const reasonText = riskReasonLabel(exitReason);
+              const icon = realized_pnl >= 0 ? '🟢' : '🔴';
+              const pnlEmoji = realized_pnl >= 0 ? '💰' : '📉';
+              const headerTemplate = realized_pnl >= 0 ? 'green' : 'red';
+              const card = {
+                msg_type: 'interactive',
+                card: {
+                  config: { wide_screen_mode: true },
+                  header: {
+                    title: { tag: 'plain_text', content: `${icon} 自主卖出 · ${stockName}` },
+                    template: headerTemplate,
+                  },
+                  elements: [
+                    {
+                      tag: 'div',
+                      text: {
+                        tag: 'lark_md',
+                        content: `**卖出原因**: ${reasonText}`,
+                      },
+                    },
+                    {
+                      tag: 'div',
+                      fields: [
+                        {
+                          is_short: true,
+                          text: { tag: 'lark_md', content: `**代码**\n${symbol}` },
+                        },
+                        {
+                          is_short: true,
+                          text: {
+                            tag: 'lark_md',
+                            content: `**${pnlEmoji} 实现盈亏**\n${pnlSign}¥${realized_pnl.toFixed(
+                              2
+                            )}`,
+                          },
+                        },
+                        {
+                          is_short: true,
+                          text: {
+                            tag: 'lark_md',
+                            content: `**成交价**\n¥${execute_price.toFixed(2)}`,
+                          },
+                        },
+                        {
+                          is_short: true,
+                          text: { tag: 'lark_md', content: `**数量**\n${quantity} 股` },
+                        },
+                        {
+                          is_short: true,
+                          text: { tag: 'lark_md', content: `**总金额**\n¥${amount.toFixed(0)}` },
+                        },
+                        {
+                          is_short: true,
+                          text: { tag: 'lark_md', content: `**持有天数**\n${holdingDays} 天` },
+                        },
+                      ],
+                    },
+                    { tag: 'hr' },
+                    {
+                      tag: 'note',
+                      elements: [
+                        {
+                          tag: 'plain_text',
+                          content: `${moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm')} · ${
+                            portfolio.name || 'paper trading'
+                          }`,
+                        },
+                      ],
+                    },
+                  ],
+                },
+              };
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const axios = require('axios');
+              axios.post(webhookUrl, card, { timeout: 5000 }).catch(() => {
+                /* 静默 */
+              });
+            }
+          } catch {
+            /* 静默 */
+          }
+
+          await recordSellIntent('executed', riskReasonLabel(exitReason), {
+            trade_id: trade.id,
+            execute_price,
+            quantity,
+            amount,
+            reason_category: 'executed',
+            metadata: {
+              net_revenue,
+              realized_pnl,
+              sell_signal_id: sellSignal?.id,
+              sell_signal_date: sellSignal?.signal_date,
+              sell_signal_score: toOptionalNumber(sellSignal?.confidence_score),
+            },
+          });
+
+          if (sourceSignal) {
+            // Batch K (2026-06-17, H4 fix): 写 exit_market_environment 让 outcome
+            // 的 market_regime_at_exit 真有数据 → root_cause classifier 的 wrong_regime
+            // 规则才能命中. 之前从未写入, 全局 0% wrong_regime 误判. fail-OPEN: 取不到
+            // 环境 fallback null, 不阻塞 SELL 主流程.
+            let exitMarketEnvironment: any = null;
+            try {
+              exitMarketEnvironment = await this.resolveEnvironmentForSignal(
+                sourceSignal,
+                asPlainObject(sourceSignal.metadata)
+              );
+            } catch (envErr: any) {
+              logger.warn(
+                `[runRiskCheck] 写 exit_market_environment 失败 fail-open: ${
+                  envErr?.message || envErr
+                }`
+              );
+            }
+            await this.markSignalClosed(sourceSignal, {
+              portfolio_id: portfolio.id,
+              sell_trade_id: trade.id,
+              sell_signal_id: sellSignal?.id,
+              exit_reason: exitReason,
+              exit_reason_label: riskReasonLabel(exitReason),
+              exit_price: execute_price,
+              exit_quantity: quantity,
+              exit_amount: amount,
+              exit_commission: commission,
+              realized_pnl,
+              realized_pnl_pct: pnlPct,
+              holding_days: holdingDays,
+              max_profit_pct: trailingStats.max_profit_pct,
+              drawdown_from_peak_pct: trailingStats.drawdown_from_peak_pct,
+              peak_price: trailingStats.peak_price,
+              trailing_stop_price:
+                exitReason === 'trailing_take_profit'
+                  ? trailingStats.trailing_stop_price
+                  : undefined,
+              trailing_activation_pct: positionTrailingActivationPct,
+              trailing_drawdown_pct: positionTrailingDrawdownPct,
+              adaptive_risk_policy: adaptiveRiskPolicy,
+              execution_reality_decision: executionRealityDecision,
+              exit_market_environment: exitMarketEnvironment,
+            });
+            await this.refreshRecommendationTradeOutcome(sourceSignal.id);
+          }
+        } else {
+          await recordSellIntent('planned', riskReasonLabel(exitReason), {
+            execute_price,
+            quantity,
+            amount,
+            reason_category: 'planned',
+            metadata: {
+              net_revenue,
+              realized_pnl,
+              sell_signal_id: sellSignal?.id,
+              sell_signal_date: sellSignal?.signal_date,
+              sell_signal_score: toOptionalNumber(sellSignal?.confidence_score),
+            },
+          });
+        }
+
+        exits.push(exitItem);
       } catch (perPosErr: any) {
         // 修复 CRITICAL #6: per-position isolation. position 处理失败仅记 log 继续下一个.
         logger.error(
@@ -4403,10 +4421,9 @@ class PaperTradingAutomationService {
     // 阈值: 30 分钟. 超过 = 视为不可信, 走 DailyBar fallback. 交易时段外 cron 跑时
     // 自然落到 DailyBar 也合理 (15:30 收盘后 quote 不再变, 用收盘价).
     const REALTIME_QUOTE_MAX_AGE_MS = 30 * 60 * 1000;
-    const quoteAgeMs =
-      latestRealtime?.quote_time
-        ? Date.now() - new Date(latestRealtime.quote_time).getTime()
-        : Infinity;
+    const quoteAgeMs = latestRealtime?.quote_time
+      ? Date.now() - new Date(latestRealtime.quote_time).getTime()
+      : Infinity;
     const realtimeFresh = quoteAgeMs <= REALTIME_QUOTE_MAX_AGE_MS;
     if (
       latestRealtime?.current_price &&
@@ -4747,8 +4764,7 @@ class PaperTradingAutomationService {
 
       // 修复 (2026-06-16, HIGH H4): avgMaeAbs 极小 (< 1%) 时, maeBasedStop * 0.5 + requestedStop*0.5 → clamp 4
       // 让 stop_loss 触发面骤增 (~30% 持仓直接 stop_loss) 这是误触发. 加 floor: avgMaeAbs<1 退回 requestedStop.
-      const maeBasedStop =
-        avgMaeAbs >= 1 ? avgMaeAbs * (weakOutcome ? 0.85 : 1.1) : requestedStop;
+      const maeBasedStop = avgMaeAbs >= 1 ? avgMaeAbs * (weakOutcome ? 0.85 : 1.1) : requestedStop;
       let effectiveStop = clamp((requestedStop + maeBasedStop) / 2, 4, 10);
       let effectiveTake = requestedTake;
       let effectiveTrailActivation = requestedTrailActivation;
@@ -6703,90 +6719,185 @@ class PaperTradingAutomationService {
     // Batch I (2026-06-17, C2-pos-limit): pre-trade guards. 之前 automation BUY
     // 完全跳过 PositionLimitGuard / DrawdownCircuitBreaker, 与 facade.placeOrder
     // 双轨制 + 自动跟单失去组合级硬风控. 在 transaction 外先 check, 失败抛 err.code.
+    // US-136 [EX-011] (2026-06-21): 七闸门统一入口 — BUY 路径改走 checkAllPreTradeGates
+    // (side='BUY'), 与 facade / LiveTradingService 同款 helper, 内部仍调
+    // checkPreBuyGuards (drawdown + position-limit).
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { checkPreBuyGuards } = require('./preTradeGuards');
-    const guardResult = await checkPreBuyGuards({
+    const { checkAllPreTradeGates } = require('./preTradeGuards');
+    const buyGateResult = await checkAllPreTradeGates({
+      side: 'BUY',
       user_id: portfolio.user_id,
       symbol,
       proposed_value: amount, // = execute_price × quantity, ex-commission
+      caller_label: 'automation.createBuyTrade',
     });
-    if (!guardResult.ok) {
-      const err: any = new Error(guardResult.reason);
-      err.statusCode = 400;
-      err.code = guardResult.code;
-      err.detail = guardResult.detail;
+    if (!buyGateResult.ok) {
+      const err: any = new Error(buyGateResult.reason);
+      err.statusCode = buyGateResult.code === 'RISK_GUARD_UNAVAILABLE' ? 503 : 400;
+      err.code = buyGateResult.code;
+      err.detail = buyGateResult.detail;
       throw err;
+    }
+
+    // BETA-1 (2026-06-18, audit S-5): pre-trade compliance — 5 wizard rule 部分
+    // 子规则提到下单前评估 + 3 个 pre-trade 独有规则（次日追高 / 频繁交易 / 信号
+    // 陈旧）。high 拒单 + 写 MEDIUM RiskAlert; medium 放行但写 LOW; low 仅 log。
+    // 不阻塞硬风控（checkPreBuyGuards 已在前），仅"再多一道软合规"。
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const {
+      checkPreTradeCompliance,
+      emitPreTradeComplianceAlert,
+    } = require('../../services/TradeComplianceChecker');
+    try {
+      const sigMeta = asPlainObject((params.signal as any)?.metadata);
+      const signalTsMs = (() => {
+        const t = sigMeta?.signal_timestamp || (params.signal as any)?.signal_date;
+        if (!t) return undefined;
+        const parsed = typeof t === 'number' ? t : new Date(t).getTime();
+        return Number.isFinite(parsed) ? parsed : undefined;
+      })();
+      const positionSizePct = (() => {
+        const total = Number(portfolio.current_cash || 0) + amount;
+        if (!Number.isFinite(total) || total <= 0) return undefined;
+        return amount / total;
+      })();
+      const draft = {
+        user_id: portfolio.user_id,
+        portfolio_id: portfolio.id,
+        symbol,
+        side: 'BUY' as const,
+        price: execute_price,
+        quantity,
+        position_size_pct: positionSizePct,
+        conviction_level: toOptionalNumber(sigMeta?.conviction_level) ?? undefined,
+        strategy_key: toOptionalNumber(sigMeta?.strategy_key)
+          ? undefined
+          : (sigMeta?.strategy_key as string | undefined),
+        stop_loss_distance_pct: toOptionalNumber(sigMeta?.stop_loss_pct) ?? undefined,
+        market_trend:
+          (sigMeta?.market_environment?.market_regime as 'up' | 'down' | 'sideways') || 'sideways',
+        current_pe: toOptionalNumber(sigMeta?.current_pe) ?? undefined,
+        historical_avg_pe: toOptionalNumber(sigMeta?.historical_avg_pe) ?? undefined,
+        has_specific_catalyst: !!sigMeta?.has_catalyst,
+        intraday_change_pct: (() => {
+          const c = toOptionalNumber(sigMeta?.price_change_pct);
+          if (c === undefined || c === null) return undefined;
+          // sigMeta 的 price_change_pct 通常以 % 计 (例如 7 表示涨 7%)
+          return Math.abs(c) > 1 ? c / 100 : c;
+        })(),
+        signal_timestamp_ms: signalTsMs,
+      };
+      const complianceResult = await checkPreTradeCompliance(draft);
+      if (complianceResult.block) {
+        await emitPreTradeComplianceAlert({
+          user_id: portfolio.user_id,
+          symbol,
+          side: 'BUY',
+          level: 'MEDIUM',
+          draft,
+          result: complianceResult,
+        });
+        const err: any = new Error(`pre-trade compliance 拒单: ${complianceResult.summary}`);
+        err.statusCode = 400;
+        err.code = 'PRE_TRADE_COMPLIANCE_BLOCKED';
+        err.detail = { violations: complianceResult.violations };
+        throw err;
+      }
+      // medium 放行写 LOW（让 ops 看到但不阻塞）
+      const hasMedium = complianceResult.violations.some(v => v.severity === 'medium');
+      if (hasMedium) {
+        await emitPreTradeComplianceAlert({
+          user_id: portfolio.user_id,
+          symbol,
+          side: 'BUY',
+          level: 'LOW',
+          draft,
+          result: complianceResult,
+        });
+      } else if (complianceResult.violations.length > 0) {
+        logger.info(
+          `[PaperAutomation] pre-trade compliance LOW-only for ${symbol}: ${complianceResult.summary}`
+        );
+      }
+    } catch (err: any) {
+      // 区分 BLOCK 错误 (从内部 throw) vs 其它意外 (fail-open)
+      if (err?.code === 'PRE_TRADE_COMPLIANCE_BLOCKED') throw err;
+      logger.warn(
+        `[PaperAutomation] pre-trade compliance check failed (fail-open): ${err?.message || err}`
+      );
     }
 
     // ============= 事务保护 + 锁 (修复 CRITICAL C1/C2/C3) =============
     // 之前 3 个 write (position.create + portfolio.update + trade.create) 没包 transaction,
     // 任一步崩溃就产生 "扣了钱没单 / 建了仓没单 / 单写了但 cash 漏更新" ghost state.
     // 加 SELECT FOR UPDATE 锁 portfolio 行, 防并发 BUY 各扣各的 cash.
-    return await sequelize.transaction(async t => {
-      const lockedPortfolio = await PaperTradingPortfolio.findByPk(portfolio.id, {
-        transaction: t,
-        lock: t.LOCK.UPDATE,
-      });
-      if (!lockedPortfolio) {
-        throw new Error(`createBuyTrade: portfolio ${portfolio.id} 不存在`);
-      }
-      const realCash = toNumber(lockedPortfolio.current_cash, 0);
-      if (realCash < total_cost) {
-        throw new Error(
-          `createBuyTrade: portfolio ${portfolio.id} 资金不足 (need=${total_cost.toFixed(2)}, ` +
-            `have=${realCash.toFixed(2)}); 并发 BUY 已占用 cash?`
+    return await sequelize
+      .transaction(async t => {
+        const lockedPortfolio = await PaperTradingPortfolio.findByPk(portfolio.id, {
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+        if (!lockedPortfolio) {
+          throw new Error(`createBuyTrade: portfolio ${portfolio.id} 不存在`);
+        }
+        const realCash = toNumber(lockedPortfolio.current_cash, 0);
+        if (realCash < total_cost) {
+          throw new Error(
+            `createBuyTrade: portfolio ${portfolio.id} 资金不足 (need=${total_cost.toFixed(2)}, ` +
+              `have=${realCash.toFixed(2)}); 并发 BUY 已占用 cash?`
+          );
+        }
+
+        const existingPosition = await PaperTradingPosition.findOne({
+          where: { portfolio_id: portfolio.id, symbol },
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+        if (existingPosition) {
+          throw new Error(`模拟盘已持有 ${symbol}，自动跟单拒绝重复加仓`);
+        }
+
+        await PaperTradingPosition.create(
+          {
+            portfolio_id: portfolio.id,
+            symbol,
+            name,
+            quantity,
+            avg_cost: execute_price,
+            current_price: latest_price,
+            market_value: roundNumber(quantity * latest_price, 2),
+            unrealized_pnl: roundNumber(quantity * latest_price - amount, 2),
+          },
+          { transaction: t }
         );
-      }
 
-      const existingPosition = await PaperTradingPosition.findOne({
-        where: { portfolio_id: portfolio.id, symbol },
-        transaction: t,
-        lock: t.LOCK.UPDATE,
+        const current_cash = roundNumber(realCash - total_cost, 2);
+        await lockedPortfolio.update({ current_cash }, { transaction: t });
+
+        const trade = await PaperTradingTrade.create(
+          {
+            portfolio_id: portfolio.id,
+            symbol,
+            name,
+            direction: 'BUY',
+            execute_price,
+            quantity,
+            amount,
+            commission,
+          },
+          { transaction: t }
+        );
+        // 修复 CRITICAL #9 (2026-06-16): 不在 tx 内 mutate caller portfolio.current_cash —
+        // tx 若回滚 mutated 值留在内存 → caller stale read. 改为返回后 tx 外 sync.
+        (trade as any)._newCash = current_cash;
+        return trade;
+      })
+      .then(trade => {
+        // tx commit 成功后再 sync caller
+        portfolio.current_cash = (trade as any)._newCash;
+        delete (trade as any)._newCash;
+        return trade;
       });
-      if (existingPosition) {
-        throw new Error(`模拟盘已持有 ${symbol}，自动跟单拒绝重复加仓`);
-      }
-
-      await PaperTradingPosition.create(
-        {
-          portfolio_id: portfolio.id,
-          symbol,
-          name,
-          quantity,
-          avg_cost: execute_price,
-          current_price: latest_price,
-          market_value: roundNumber(quantity * latest_price, 2),
-          unrealized_pnl: roundNumber(quantity * latest_price - amount, 2),
-        },
-        { transaction: t }
-      );
-
-      const current_cash = roundNumber(realCash - total_cost, 2);
-      await lockedPortfolio.update({ current_cash }, { transaction: t });
-
-      const trade = await PaperTradingTrade.create(
-        {
-          portfolio_id: portfolio.id,
-          symbol,
-          name,
-          direction: 'BUY',
-          execute_price,
-          quantity,
-          amount,
-          commission,
-        },
-        { transaction: t }
-      );
-      // 修复 CRITICAL #9 (2026-06-16): 不在 tx 内 mutate caller portfolio.current_cash —
-      // tx 若回滚 mutated 值留在内存 → caller stale read. 改为返回后 tx 外 sync.
-      (trade as any)._newCash = current_cash;
-      return trade;
-    }).then(trade => {
-      // tx commit 成功后再 sync caller
-      portfolio.current_cash = (trade as any)._newCash;
-      delete (trade as any)._newCash;
-      return trade;
-    });
   }
 
   private async createSellTrade(params: {
@@ -6820,23 +6931,28 @@ class PaperTradingAutomationService {
     // 模拟盘可以当日 BUY → 当日 SELL, 违反 A 股实盘规则, EV 系统性高估短线策略.
     // 现在显式 check; bypass_t_plus_1 仅在 EOD guard 接的真卖路径下由 caller 显式置 true
     // (因为 EOD trigger 是 next-day open 前评估, 已天然 T+1 通过).
+    // US-136 [EX-011] (2026-06-21): 七闸门统一入口 — SELL 路径改走 checkAllPreTradeGates
+    // (side='SELL'), 与 facade.placeOrder / LiveTradingService.approveDraft 同一个 helper.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { checkTPlus1 } = require('./preTradeGuards');
-    const tPlus1 = await checkTPlus1({
+    const { checkAllPreTradeGates } = require('./preTradeGuards');
+    const sellGateResult = await checkAllPreTradeGates({
+      side: 'SELL',
+      user_id: portfolio.user_id,
       portfolio_id: portfolio.id,
       symbol,
       held_quantity: Number(position.quantity) || 0,
       sell_quantity: quantity,
-      bypass: params.bypass_t_plus_1 === true,
+      bypass_t_plus_1: params.bypass_t_plus_1 === true,
+      caller_label: 'automation.createSellTrade',
     });
-    if (!tPlus1.ok) {
-      const err: any = new Error(tPlus1.reason || 'T+1 violation');
+    if (!sellGateResult.ok) {
+      const err: any = new Error(sellGateResult.reason);
       err.statusCode = 400;
-      err.code = 'T_PLUS_1_VIOLATION';
+      err.code = sellGateResult.code;
       err.detail = {
         holding: position.quantity,
-        today_buy: tPlus1.today_buy_qty,
-        available: tPlus1.available_for_sell,
+        today_buy: sellGateResult.detail?.today_buy,
+        available: sellGateResult.detail?.available,
         requested: quantity,
       };
       throw err;
@@ -6845,75 +6961,74 @@ class PaperTradingAutomationService {
     // ============= 事务保护 + 锁 (修复 CRITICAL C1/C2/C3) =============
     // SELL 路径写 3 表: position.destroy/update + portfolio.update + trade.create.
     // 锁 portfolio + position 防止并发 SELL / 同时 BUY 撞 cash.
-    return await sequelize.transaction(async t => {
-      const lockedPortfolio = await PaperTradingPortfolio.findByPk(portfolio.id, {
-        transaction: t,
-        lock: t.LOCK.UPDATE,
-      });
-      if (!lockedPortfolio) {
-        throw new Error(`createSellTrade: portfolio ${portfolio.id} 不存在`);
-      }
-      const lockedPosition = await PaperTradingPosition.findByPk(position.id, {
-        transaction: t,
-        lock: t.LOCK.UPDATE,
-      });
-      if (!lockedPosition) {
-        throw new Error(
-          `createSellTrade: position ${position.id} 不存在 (并发 SELL 已删除?)`
-        );
-      }
-      const heldQty = toNumber(lockedPosition.quantity, 0);
-      if (heldQty < quantity) {
-        throw new Error(
-          `createSellTrade: 卖超 (held=${heldQty}, sell=${quantity}); 并发 SELL 已扣减?`
-        );
-      }
-      if (heldQty <= quantity) {
-        await lockedPosition.destroy({ transaction: t });
-      } else {
-        const remainingQuantity = heldQty - quantity;
-        // 部分平仓: 修复 (M1) 不重写 current_price, 保留 quote 同步的最新值, 避免 2 次 sync
-        // 之间瞬时 market_value 偏低. quote 在下次 syncLatestPricesAndSnapshot 会刷新.
-        const remainPrice = toNumber(lockedPosition.current_price, execute_price);
-        await lockedPosition.update(
+    return await sequelize
+      .transaction(async t => {
+        const lockedPortfolio = await PaperTradingPortfolio.findByPk(portfolio.id, {
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+        if (!lockedPortfolio) {
+          throw new Error(`createSellTrade: portfolio ${portfolio.id} 不存在`);
+        }
+        const lockedPosition = await PaperTradingPosition.findByPk(position.id, {
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+        if (!lockedPosition) {
+          throw new Error(`createSellTrade: position ${position.id} 不存在 (并发 SELL 已删除?)`);
+        }
+        const heldQty = toNumber(lockedPosition.quantity, 0);
+        if (heldQty < quantity) {
+          throw new Error(
+            `createSellTrade: 卖超 (held=${heldQty}, sell=${quantity}); 并发 SELL 已扣减?`
+          );
+        }
+        if (heldQty <= quantity) {
+          await lockedPosition.destroy({ transaction: t });
+        } else {
+          const remainingQuantity = heldQty - quantity;
+          // 部分平仓: 修复 (M1) 不重写 current_price, 保留 quote 同步的最新值, 避免 2 次 sync
+          // 之间瞬时 market_value 偏低. quote 在下次 syncLatestPricesAndSnapshot 会刷新.
+          const remainPrice = toNumber(lockedPosition.current_price, execute_price);
+          await lockedPosition.update(
+            {
+              quantity: remainingQuantity,
+              market_value: roundNumber(remainingQuantity * remainPrice, 2),
+              unrealized_pnl: roundNumber(
+                remainingQuantity * (remainPrice - toNumber(lockedPosition.avg_cost, 0)),
+                2
+              ),
+            },
+            { transaction: t }
+          );
+        }
+
+        const newCash = roundNumber(toNumber(lockedPortfolio.current_cash, 0) + net_revenue, 2);
+        await lockedPortfolio.update({ current_cash: newCash }, { transaction: t });
+
+        const trade = await PaperTradingTrade.create(
           {
-            quantity: remainingQuantity,
-            market_value: roundNumber(remainingQuantity * remainPrice, 2),
-            unrealized_pnl: roundNumber(
-              remainingQuantity *
-                (remainPrice - toNumber(lockedPosition.avg_cost, 0)),
-              2
-            ),
+            portfolio_id: portfolio.id,
+            symbol,
+            name,
+            direction: 'SELL',
+            execute_price,
+            quantity,
+            amount,
+            commission,
+            realized_pnl,
           },
           { transaction: t }
         );
-      }
-
-      const newCash = roundNumber(toNumber(lockedPortfolio.current_cash, 0) + net_revenue, 2);
-      await lockedPortfolio.update({ current_cash: newCash }, { transaction: t });
-
-      const trade = await PaperTradingTrade.create(
-        {
-          portfolio_id: portfolio.id,
-          symbol,
-          name,
-          direction: 'SELL',
-          execute_price,
-          quantity,
-          amount,
-          commission,
-          realized_pnl,
-        },
-        { transaction: t }
-      );
-      // 修复 CRITICAL #9: tx 内不 mutate caller
-      (trade as any)._newCash = newCash;
-      return trade;
-    }).then(trade => {
-      portfolio.current_cash = (trade as any)._newCash;
-      delete (trade as any)._newCash;
-      return trade;
-    });
+        // 修复 CRITICAL #9: tx 内不 mutate caller
+        (trade as any)._newCash = newCash;
+        return trade;
+      })
+      .then(trade => {
+        portfolio.current_cash = (trade as any)._newCash;
+        delete (trade as any)._newCash;
+        return trade;
+      });
   }
 
   private async markSignalExecuted(signal: AIInvestmentSignal, execution: Record<string, any>) {

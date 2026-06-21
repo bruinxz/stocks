@@ -242,6 +242,59 @@ router.post(
 
 /**
  * @openapi
+ * /api/settings/weekly-review/apply:
+ *   post:
+ *     tags: [设置 Settings]
+ *     summary: 把一条周报建议落到 user.risk_config.weekly_review_applied (US-143 PM-015)
+ *     description: |
+ *       Body: { week_id: string, recommendation_index: number, text?: string, source?: string }
+ *       同 (week_id, recommendation_index) 二次调返 409 (idempotent guard, 与 PM-024
+ *       ImprovementSuggestion apply 同源设计). 历史数组 LRU cap=50.
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [week_id, recommendation_index]
+ *             properties:
+ *               week_id: { type: string }
+ *               recommendation_index: { type: integer, minimum: 0 }
+ *               text: { type: string }
+ *               source: { type: string }
+ *     responses:
+ *       200: { description: 应用成功, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数非法 }
+ *       401: { description: 未授权 }
+ *       404: { description: 用户不存在 }
+ *       409: { description: 该建议已 apply 过 }
+ */
+router.post(
+  '/weekly-review/apply',
+  authController.authenticate,
+  settingsController.applyWeeklyReviewRecommendation
+);
+
+/**
+ * @openapi
+ * /api/settings/weekly-review/applied:
+ *   get:
+ *     tags: [设置 Settings]
+ *     summary: 列出当前用户已 apply 过的周报建议历史 (US-143 PM-015)
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 历史列表, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       401: { description: 未授权 }
+ */
+router.get(
+  '/weekly-review/applied',
+  authController.authenticate,
+  settingsController.listAppliedWeeklyReviewRecommendations
+);
+
+/**
+ * @openapi
  * /api/settings/wechat-bind-qrcode:
  *   get:
  *     tags: [设置 Settings]

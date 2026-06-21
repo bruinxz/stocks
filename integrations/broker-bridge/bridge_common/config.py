@@ -14,6 +14,11 @@ class BridgeConfig:
     bridge_key: str
     bridge_secret: str
     broker_type: str = "qmt"
+    # US-109 [EX-009] ed25519 升级: signature_method 切换. "hmac" 兼容老 bridge (缺省),
+    # "ed25519" 启用非对称签名. ed25519 模式下 bridge_secret 仍要求填 (向后兼容字段,
+    # 不参与签名), ed25519_private_key 必填. server 端只持公钥, 不持私钥.
+    signature_method: str = "hmac"
+    ed25519_private_key: Optional[str] = None
     qmt_userdata_path: Optional[str] = None
     qmt_account_id: Optional[str] = None
     account_id_masked: Optional[str] = None
@@ -43,4 +48,10 @@ class BridgeConfig:
         cfg = cls(**kwargs, extra=extras)
         if not cfg.server_base_url or not cfg.bridge_key or not cfg.bridge_secret:
             raise ValueError("config 缺少 server_base_url / bridge_key / bridge_secret")
+        sm = (cfg.signature_method or "hmac").lower().strip()
+        if sm not in ("hmac", "ed25519"):
+            raise ValueError(f"signature_method 必须是 hmac/ed25519, got {cfg.signature_method!r}")
+        cfg.signature_method = sm
+        if sm == "ed25519" and not cfg.ed25519_private_key:
+            raise ValueError("signature_method=ed25519 必须配 ed25519_private_key")
         return cfg

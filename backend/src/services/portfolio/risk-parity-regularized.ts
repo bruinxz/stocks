@@ -61,9 +61,7 @@ import { solveERC } from './PortfolioConstructionService';
  */
 export function tikhonovRegularize(cov: number[][], lambda: number): number[][] {
   const N = cov.length;
-  return cov.map((row, i) =>
-    row.map((v, j) => (i === j ? v + lambda : v))
-  );
+  return cov.map((row, i) => row.map((v, j) => (i === j ? v + lambda : v)));
 }
 
 /**
@@ -73,7 +71,7 @@ export function tikhonovRegularize(cov: number[][], lambda: number): number[][] 
  *
  * 默认 fraction = 0.01 (与 sklearn ridge regression 默认 alpha 相似量级)
  */
-export function autoTikhonovLambda(cov: number[][], fraction: number = 0.01): number {
+export function autoTikhonovLambda(cov: number[][], fraction = 0.01): number {
   let maxDiag = 0;
   for (let i = 0; i < cov.length; i += 1) {
     if (cov[i][i] > maxDiag) maxDiag = cov[i][i];
@@ -159,7 +157,11 @@ export function solveERCRegularized(
  * @param T number of observations
  * @param cov current cov matrix
  */
-export function recommendCovStrategy(N: number, T: number, cov: number[][]): {
+export function recommendCovStrategy(
+  N: number,
+  T: number,
+  cov: number[][]
+): {
   use_ledoit_wolf: boolean;
   use_tikhonov: boolean;
   tikhonov_fraction: number;
@@ -182,7 +184,9 @@ export function recommendCovStrategy(N: number, T: number, cov: number[][]): {
       use_ledoit_wolf: true,
       use_tikhonov: true,
       tikhonov_fraction: 0.05,
-      reason: `T/N=${ratio.toFixed(1)} ≤ 0.333 或 condition=${cond.toFixed(0)} ≥ 10000: 严重病态, 同时用 LW + Tikhonov λ=0.05×max(diag)`,
+      reason: `T/N=${ratio.toFixed(1)} ≤ 0.333 或 condition=${cond.toFixed(
+        0
+      )} ≥ 10000: 严重病态, 同时用 LW + Tikhonov λ=0.05×max(diag)`,
     };
   }
   // 中等情况: 仅 LW

@@ -39,10 +39,20 @@ import {
   MessageOutlined,
   CalculatorOutlined,
   ApartmentOutlined,
+  ThunderboltOutlined,
+  SafetyOutlined,
+  BulbOutlined,
+  PoweroffOutlined,
+  AlertOutlined,
 } from '@ant-design/icons';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import SizingPolicyTab from './SettingsWorkspace.SizingPolicyTab';
 import PortfolioConstructionTab from './SettingsWorkspace.PortfolioConstructionTab';
+import AnalysisEngineTab from './SettingsWorkspace.AnalysisEngineTab';
+import RiskParametersCenterTab from './SettingsWorkspace.RiskParametersCenterTab';
+import TodoSuggestionsTab from './SettingsWorkspace.TodoSuggestionsTab';
+import StrategyKillSwitchTab from './SettingsWorkspace.StrategyKillSwitchTab';
+import BlackSwanHistoryTab from './SettingsWorkspace.BlackSwanHistoryTab';
 import {
   loadNotificationChannels,
   updateNotificationChannels,
@@ -51,6 +61,7 @@ import {
   sendDailyDigestNow,
   previewWeeklyReview,
   sendWeeklyReviewNow,
+  applyWeeklyReviewRecommendation,
   getWeChatBindQrCode,
   confirmWeChatBind,
   updateWeChatConfig,
@@ -117,6 +128,11 @@ const SettingsWorkspace: React.FC = () => {
     { key: 'notifications', label: '通知设置', icon: <BellOutlined /> },
     { key: 'sizing', label: '仓位策略', icon: <CalculatorOutlined /> },
     { key: 'portfolio-construction', label: '组合构建', icon: <ApartmentOutlined /> },
+    { key: 'analysis-engine', label: '分析引擎', icon: <ThunderboltOutlined /> },
+    { key: 'risk-parameters', label: '风控参数中心', icon: <SafetyOutlined /> },
+    { key: 'strategy-kill-switch', label: '策略 kill-switch', icon: <PoweroffOutlined /> },
+    { key: 'todo-suggestions', label: '待办建议', icon: <BulbOutlined /> },
+    { key: 'black-swan', label: '黑天鹅历史', icon: <AlertOutlined /> },
     { key: 'users', label: '用户管理', icon: <TeamOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('push-channels');
@@ -265,6 +281,20 @@ const SettingsWorkspace: React.FC = () => {
         </Button>
         <Tag color="purple">US-080 推送渠道</Tag>
       </Space>
+    ) : activeKey === 'sizing' ? (
+      <Tag color="cyan">仓位策略 (Sprint 26+)</Tag>
+    ) : activeKey === 'portfolio-construction' ? (
+      <Tag color="geekblue">组合构建 (Sprint 29+)</Tag>
+    ) : activeKey === 'analysis-engine' ? (
+      <Tag color="volcano">US-065 分析引擎接入</Tag>
+    ) : activeKey === 'risk-parameters' ? (
+      <Tag color="red">US-066 风控参数中心</Tag>
+    ) : activeKey === 'strategy-kill-switch' ? (
+      <Tag color="red">US-069 策略 kill-switch</Tag>
+    ) : activeKey === 'todo-suggestions' ? (
+      <Tag color="gold">US-068 待办建议</Tag>
+    ) : activeKey === 'black-swan' ? (
+      <Tag color="red">US-133 PR-018 黑天鹅历史</Tag>
     ) : (
       <Tag color="processing">待迁移现有个人中心 / 用户管理页</Tag>
     );
@@ -1610,15 +1640,27 @@ const SettingsWorkspace: React.FC = () => {
       kpiSlot={kpiSlot}
       headerActions={headerActions}
     >
-      {activeKey === 'notifications'
-        ? renderNotifications()
-        : activeKey === 'push-channels'
-        ? renderPushChannels()
-        : activeKey === 'sizing'
-        ? <SizingPolicyTab />
-        : activeKey === 'portfolio-construction'
-        ? <PortfolioConstructionTab />
-        : renderPlaceholder()}
+      {activeKey === 'notifications' ? (
+        renderNotifications()
+      ) : activeKey === 'push-channels' ? (
+        renderPushChannels()
+      ) : activeKey === 'sizing' ? (
+        <SizingPolicyTab />
+      ) : activeKey === 'portfolio-construction' ? (
+        <PortfolioConstructionTab />
+      ) : activeKey === 'analysis-engine' ? (
+        <AnalysisEngineTab />
+      ) : activeKey === 'risk-parameters' ? (
+        <RiskParametersCenterTab />
+      ) : activeKey === 'strategy-kill-switch' ? (
+        <StrategyKillSwitchTab />
+      ) : activeKey === 'todo-suggestions' ? (
+        <TodoSuggestionsTab />
+      ) : activeKey === 'black-swan' ? (
+        <BlackSwanHistoryTab />
+      ) : (
+        renderPlaceholder()
+      )}
       <DigestPreviewModal
         open={previewOpen}
         result={previewResult}
@@ -1854,10 +1896,51 @@ const WeeklyReviewPreviewModal: React.FC<WeeklyReviewPreviewModalProps> = ({
   result,
   onClose,
 }) => {
+  // Macro 串联补丁 (2026-06-21) — apply 周报建议状态.
+  // 每条 recommendation 都有 index, apply 后调 POST /api/settings/weekly-review/apply
+  // 让后端把建议落入 user.risk_config.weekly_review_applied[] (PM-015 + PM-027 effect tracker).
+  const [appliedIndices, setAppliedIndices] = React.useState<Set<number>>(new Set());
+  const [applyingIndex, setApplyingIndex] = React.useState<number | null>(null);
+
+  React.useEffect(() => {
+    // 切到不同 report 时清掉本地 applied 状态 (后端会幂等 409 防双 apply)
+    setAppliedIndices(new Set());
+    setApplyingIndex(null);
+  }, [result?.report_id]);
+
   if (!result) return null;
   const payload = result.payload;
   const pnl = payload?.pnl;
   const week = result.week;
+
+  const handleApplyRecommendation = async (index: number, text: string) => {
+    if (!week.week_id) {
+      message.error('week_id 缺失, 无法 apply');
+      return;
+    }
+    setApplyingIndex(index);
+    try {
+      await applyWeeklyReviewRecommendation({
+        week_id: week.week_id,
+        recommendation_index: index,
+        text,
+        source: payload?.ai_opinion?.source || 'heuristic',
+      });
+      setAppliedIndices(prev => new Set(prev).add(index));
+      message.success('建议已 apply, 已落入 risk_config.weekly_review_applied[]');
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      if (/已 apply/i.test(msg) || /409/.test(msg)) {
+        // idempotent guard — 后端 409 表示已 apply 过, 同步本地状态防重复点击
+        setAppliedIndices(prev => new Set(prev).add(index));
+        message.warning(`该建议已 apply 过 (后端 409 idempotent guard)`);
+      } else {
+        message.error(`apply 失败: ${msg}`);
+      }
+    } finally {
+      setApplyingIndex(null);
+    }
+  };
 
   return (
     <Modal
@@ -2044,6 +2127,48 @@ const WeeklyReviewPreviewModal: React.FC<WeeklyReviewPreviewModalProps> = ({
                 {p}
               </Paragraph>
             ))}
+            {payload.ai_opinion.recommendations &&
+              payload.ai_opinion.recommendations.length > 0 && (
+                <>
+                  <Paragraph style={{ marginTop: 8, marginBottom: 4, fontWeight: 600 }}>
+                    💡 操作建议
+                  </Paragraph>
+                  {/* Macro 串联补丁 (2026-06-21) — 每条 recommendation 加 apply 按钮.
+                       已 apply 状态本地 + 后端 409 双重保护防重复. */}
+                  <Space
+                    direction="vertical"
+                    size={6}
+                    style={{ width: '100%' }}
+                    data-testid="weekly-review-recommendations-list"
+                  >
+                    {payload.ai_opinion.recommendations.map((r, i) => {
+                      const applied = appliedIndices.has(i);
+                      return (
+                        <Space
+                          key={i}
+                          align="start"
+                          style={{ width: '100%', justifyContent: 'space-between' }}
+                        >
+                          <Text style={{ color: '#475569' }}>
+                            <Text strong>{i + 1}. </Text>
+                            {r}
+                          </Text>
+                          <Button
+                            size="small"
+                            type={applied ? 'default' : 'primary'}
+                            disabled={applied}
+                            loading={applyingIndex === i}
+                            onClick={() => void handleApplyRecommendation(i, r)}
+                            data-testid={`apply-weekly-review-recommendation-${i}`}
+                          >
+                            {applied ? '已应用' : '应用'}
+                          </Button>
+                        </Space>
+                      );
+                    })}
+                  </Space>
+                </>
+              )}
           </Card>
 
           <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8 }}>

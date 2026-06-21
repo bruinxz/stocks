@@ -139,7 +139,7 @@ export function sequentialBootstrap(
     if (total <= 0) break;
     const probs = marginal_u.map(v => v / total);
     // Sample
-    let r = rng();
+    const r = rng();
     let chosen = 0;
     let cumul = 0;
     for (let i = 0; i < N; i += 1) {
@@ -169,7 +169,7 @@ export function sequentialBootstrap(
 export function computeSampleWeightsByReturns(
   avg_uniqueness: number[],
   returns: number[],
-  normalize: boolean = true
+  normalize = true
 ): number[] {
   if (avg_uniqueness.length !== returns.length) throw new Error('length mismatch');
   const N = avg_uniqueness.length;
@@ -197,10 +197,7 @@ export function computeSampleWeightsByReturns(
  *
  *   Equivalent: oldest samples get c·ū, newest get ū.
  */
-export function timeDecayWeights(
-  avg_uniqueness: number[],
-  c: number = 0.5
-): number[] {
+export function timeDecayWeights(avg_uniqueness: number[], c = 0.5): number[] {
   const N = avg_uniqueness.length;
   if (N === 0) return [];
   const out: number[] = new Array(N).fill(0);

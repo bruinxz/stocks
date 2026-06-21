@@ -27,6 +27,19 @@ export const USER_SCOPED_LOCAL_STORAGE_KEYS: ReadonlyArray<string> = [
   'aiAdvisor_analyzing',
   // 收藏 / pinned 类
   'stocks_pinned_symbols', // PINNED_KEY in StockExplorer
+  // US-047 FactorWorkspace 组合模板 (FE-008) — 用户自定义因子组合 (权重 + 选股参数), localStorage-only
+  'fw_combo_templates_v1',
+  // US-053 LabWorkspace 快速 grid 模板 (FE-014) — 用户自定义 walk-forward param_grid 预设, localStorage-only
+  'lab_grid_templates_v1',
+];
+
+/**
+ * US-074 [FE-035] CriticalAlertModal 已 ack 缓存 (sessionStorage).
+ * 与 localStorage 白名单分开是因为 sessionStorage 关 tab 自动清, 平时无需触碰,
+ * 但 logout 后同 tab 重登 (sessionStorage 仍在) 应清掉避免上一用户的 ack 状态泄漏.
+ */
+export const USER_SCOPED_SESSION_STORAGE_KEYS: ReadonlyArray<string> = [
+  'criticalAlertModal_acked_v1',
 ];
 
 /**
@@ -39,5 +52,14 @@ export function clearUserScopedStorage(): void {
     }
   } catch {
     // localStorage 访问失败 (private mode / quota) — 静默
+  }
+  try {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      for (const key of USER_SCOPED_SESSION_STORAGE_KEYS) {
+        window.sessionStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // sessionStorage 访问失败 — 静默
   }
 }

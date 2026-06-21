@@ -45,12 +45,17 @@ import { logger } from '../../utils/logger';
 
 export const DEFAULT_MAX_WEIGHT = 0.15;
 export const DEFAULT_MIN_WEIGHT = 0.0;
-export const DEFAULT_MAX_INDUSTRY_WEIGHT = 0.40;
+export const DEFAULT_MAX_INDUSTRY_WEIGHT = 0.4;
 export const DEFAULT_TOTAL_ALLOCATION = 0.95;
 export const DEFAULT_MAX_ITERATIONS = 500;
 export const DEFAULT_TOLERANCE = 1e-6;
 
-export type ConstructionMethod = 'risk_parity' | 'equal_weight' | 'min_variance' | 'max_sharpe' | 'hrp';
+export type ConstructionMethod =
+  | 'risk_parity'
+  | 'equal_weight'
+  | 'min_variance'
+  | 'max_sharpe'
+  | 'hrp';
 
 /** 协方差估计方法 (v2) */
 export type CovarianceEstimator = 'sample' | 'ledoit_wolf';
@@ -304,7 +309,9 @@ export function solveMinVariance(
     try {
       wNext = projectOntoSimplexWithBox(wRaw, minW, maxW);
     } catch (err) {
-      logger.warn(`[portfolio-construction] min_variance projection failed: ${(err as Error).message}`);
+      logger.warn(
+        `[portfolio-construction] min_variance projection failed: ${(err as Error).message}`
+      );
       break;
     }
     const V = computePortfolioVariance(wNext, cov);
@@ -361,7 +368,9 @@ export function solveMaxSharpe(
     try {
       wNext = projectOntoSimplexWithBox(wRaw, minW, maxW);
     } catch (err) {
-      logger.warn(`[portfolio-construction] max_sharpe projection failed: ${(err as Error).message}`);
+      logger.warn(
+        `[portfolio-construction] max_sharpe projection failed: ${(err as Error).message}`
+      );
       break;
     }
     const obj = mvObjective(wNext, expectedReturns, cov, riskAversion);
@@ -462,7 +471,8 @@ function buildSummaryMsg(input: {
   expectedVol: number | null;
   expectedReturn: number | null;
 }): string {
-  const { method, N, weights, industryExposure, totalAllocation, expectedVol, expectedReturn } = input;
+  const { method, N, weights, industryExposure, totalAllocation, expectedVol, expectedReturn } =
+    input;
   const top3 = weights
     .map((w, i) => ({ i, w }))
     .sort((a, b) => b.w - a.w)
@@ -539,7 +549,11 @@ export class PortfolioConstructionService {
         const lw = ledoitWolfCovariance(xTxN);
         cov = lw.cov;
         covShrinkage = lw.shrinkage;
-        logger.info(`[portfolio-construction] Ledoit-Wolf shrinkage applied: δ=${lw.shrinkage.toFixed(4)}, μ=${lw.mu.toFixed(6)}`);
+        logger.info(
+          `[portfolio-construction] Ledoit-Wolf shrinkage applied: δ=${lw.shrinkage.toFixed(
+            4
+          )}, μ=${lw.mu.toFixed(6)}`
+        );
       } else {
         cov = estimateCovariance(returnsMatrix);
       }
@@ -560,7 +574,9 @@ export class PortfolioConstructionService {
       weights = hrpResult.weights;
       iterations = 0;
       converged = true;
-      logger.info(`[portfolio-construction] HRP cluster order: [${hrpResult.cluster_order.join(',')}]`);
+      logger.info(
+        `[portfolio-construction] HRP cluster order: [${hrpResult.cluster_order.join(',')}]`
+      );
     } else if (method === 'risk_parity') {
       const r = solveERC(cov, { max_iterations: maxIter, tolerance });
       weights = r.weights;
@@ -602,7 +618,12 @@ export class PortfolioConstructionService {
     // 这样 cap 不会被后续 scale 回涨，cap 出去的部分作为现金保留。
     const industries = input.candidates.map(c => c.industry || null);
     weights = scaleToTotalAllocation(weights, totalAlloc);
-    weights = applyIndustryConstraints(input.candidates.map(c => c.symbol), weights, industries, maxInd);
+    weights = applyIndustryConstraints(
+      input.candidates.map(c => c.symbol),
+      weights,
+      industries,
+      maxInd
+    );
 
     // 计算 metrics
     const symbols = input.candidates.map(c => c.symbol);
@@ -703,7 +724,12 @@ export class PortfolioConstructionService {
     const maxInd = options.max_industry_weight ?? DEFAULT_MAX_INDUSTRY_WEIGHT;
     let weights = new Array(N).fill(1 / N);
     const industries = input.candidates.map(c => c.industry || null);
-    weights = applyIndustryConstraints(input.candidates.map(c => c.symbol), weights, industries, maxInd);
+    weights = applyIndustryConstraints(
+      input.candidates.map(c => c.symbol),
+      weights,
+      industries,
+      maxInd
+    );
     weights = scaleToTotalAllocation(weights, totalAlloc);
     const industryExposure = computeIndustryExposure(weights, industries);
     return {

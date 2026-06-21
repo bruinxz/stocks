@@ -5,8 +5,10 @@ import { AIStockAnalysisReport } from '../models/AIStockAnalysisReport';
 import { Stock } from '../models/Stock';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { observeAIRequestDuration } from '../metrics/PrometheusRegistry';
+import { TRADING_AGENTS_BASE_URL } from '../config/externalServices';
 
-const TRADING_AGENTS_URL = process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000';
+// audit L-19: 集中常量, 不再硬编码 IP. 别名保持下方代码 diff 最小.
+const TRADING_AGENTS_URL = TRADING_AGENTS_BASE_URL;
 
 /**
  * US-072: 把一个 AI 远程调用包成 `ai_request_duration_seconds` Histogram observe 的
@@ -709,12 +711,11 @@ export class AIAdvisorService {
    * 用法: aiAdvisorService.analyzeStock(ticker, date, true, await aiAdvisorService.buildAnalyzeContext(ticker, date))
    * 如果 caller 不显式传 context, analyzeStock 内部会自动 build (默认 enriched).
    */
-  async buildAnalyzeContext(
-    ticker: string,
-    _targetDate?: string
-  ): Promise<AnalyzeContext> {
+  async buildAnalyzeContext(ticker: string, _targetDate?: string): Promise<AnalyzeContext> {
     const ctx: AnalyzeContext = {};
-    const code = String(ticker || '').replace(/\.[A-Z]+$/, '').trim();
+    const code = String(ticker || '')
+      .replace(/\.[A-Z]+$/, '')
+      .trim();
     if (!code) return ctx;
     // 1) Stock 基础
     try {
@@ -761,12 +762,17 @@ export class AIAdvisorService {
                 bars.length > n
                   ? ((Number(today.close) - Number(bars[n].close)) / Number(bars[n].close)) * 100
                   : undefined;
-              const volSum = bars.slice(0, 5).reduce((s: number, b: any) => s + Number(b.volume || 0), 0);
-              const volAvg20 = bars.slice(0, 20).reduce((s: number, b: any) => s + Number(b.volume || 0), 0) / Math.max(1, Math.min(20, bars.length));
+              const volSum = bars
+                .slice(0, 5)
+                .reduce((s: number, b: any) => s + Number(b.volume || 0), 0);
+              const volAvg20 =
+                bars.slice(0, 20).reduce((s: number, b: any) => s + Number(b.volume || 0), 0) /
+                Math.max(1, Math.min(20, bars.length));
               ctx.today_market = {
                 change_pct: Number(today.change_percent ?? stock.change_percent) || undefined,
                 close: Number(today.close) || undefined,
-                volume_ratio: volAvg20 > 0 ? Math.round((volSum / 5 / volAvg20) * 100) / 100 : undefined,
+                volume_ratio:
+                  volAvg20 > 0 ? Math.round((volSum / 5 / volAvg20) * 100) / 100 : undefined,
                 return_5d_pct: Number(ret(5)?.toFixed(2)) || undefined,
                 return_20d_pct: Number(ret(20)?.toFixed(2)) || undefined,
               };
@@ -804,11 +810,15 @@ export class AIAdvisorService {
             const mean = (arr: number[]) =>
               arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : undefined;
             const changes = flows.map((f: any) => Number(f.change_pct)).filter(Number.isFinite);
-            const ratios = flows.map((f: any) => Number(f.main_inflow_ratio)).filter(Number.isFinite);
+            const ratios = flows
+              .map((f: any) => Number(f.main_inflow_ratio))
+              .filter(Number.isFinite);
             ctx.industry_today = {
               industry_name: ctx.stock_basic.industry,
               change_pct_5d_avg: mean(changes),
-              main_inflow_ratio_5d_avg_pct: mean(ratios) ? Number((mean(ratios)! * 100).toFixed(2)) : undefined,
+              main_inflow_ratio_5d_avg_pct: mean(ratios)
+                ? Number((mean(ratios)! * 100).toFixed(2))
+                : undefined,
               today_leader_stock_code: flows[0].leader_stock_code || undefined,
               today_leader_stock_change_pct: Number(flows[0].leader_stock_change_pct) || undefined,
             };
@@ -1001,6 +1011,43 @@ export class AIAdvisorService {
       requested_at: now.toISOString(),
     };
 
+    // US-022 [AE-003] hard 短路: mode='hard' 时直接调多维引擎 + 写 AIInvestmentSignal
+    // 跳过 TradingAgents 旧 5-维度路径与末尾 shadow trigger.
+    // off / shadow / 未知 mode → 返 null fall-through 旧路径 (shadow 仍由末尾 trigger 处理).
+    // isAsync=true 不走 hard 短路 (异步任务语义靠 TradingAgents).
+    if (!isAsync) {
+      try {
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const hardModule = require('./analysis-engine/hardShortCircuit');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const hardResult = await hardModule.maybeRunHardShortCircuit(
+          hardModule.PRODUCTION_HARD_SHORT_CIRCUIT_DATA_SOURCE,
+          {
+            stock_code: normalizedCode,
+            user_id: options.user_id ?? null,
+            target_date: options.target_date,
+            stock_name: stockName,
+            task_label: options.task_label ?? null,
+            dry_run: dryRun,
+            report_id: reportId,
+            metadata,
+            now,
+          }
+        );
+        if (hardResult) {
+          // hard 模式已接管 — 不调 TradingAgents, 不调末尾 shadow trigger
+          return hardResult as AnalyzeSingleStockResult;
+        }
+      } catch (hardErr: any) {
+        logger.warn(
+          `[analysis-engine.hard] short-circuit trigger failed for ${reportId}: ${
+            hardErr?.message || hardErr
+          }`
+        );
+        // fall-through 旧路径
+      }
+    }
+
     // 调远端（同步/异步）
     let payload: RemoteAnalyzePayload;
     try {
@@ -1038,6 +1085,26 @@ export class AIAdvisorService {
         `AIAdvisorService.analyzeSingleStock saveReport failed (report_id=${reportId}): ${err.message}`
       );
       result.metadata = { ...result.metadata, save_error: err.message };
+    }
+
+    // GAMMA 2026-06-18: Shadow double-run for multi-dim analysis engine v1
+    // (User.risk_config.analysis_engine.mode=='off' 时零开销, 'shadow' 时异步双跑).
+    // 见 backend/src/services/analysis-engine/CLAUDE.md 与 docs/audit/analysis_engine_runbook.md.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { shadowDoubleRunService } = require('./analysis-engine');
+      shadowDoubleRunService.maybeRunShadow({
+        stock_code: normalizedCode,
+        as_of: options.target_date,
+        user_id: options.user_id ?? null,
+        prod_report_id: reportId,
+      });
+    } catch (shadowErr: any) {
+      logger.warn(
+        `[analysis-engine.shadow] trigger failed for ${reportId}: ${
+          shadowErr?.message || shadowErr
+        }`
+      );
     }
 
     return result;

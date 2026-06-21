@@ -102,4 +102,24 @@ router.get('/qa-topics', authController.authenticate, (req, res) => {
   void sentimentController.getQATopics(req, res);
 });
 
+/**
+ * @openapi
+ * /api/sentiment/qa-industry-heat:
+ *   get:
+ *     tags: [情绪 Sentiment]
+ *     summary: 行业 QA 热度榜 — 某行业内最近 N 天最活跃的 top N 股票 (US-121 QA-004)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: query, name: industry, required: true, schema: { type: string }, description: 行业名 (与 Stock.industry 一致) }
+ *       - { in: query, name: lookback_days, schema: { type: integer, default: 7, maximum: 365 }, description: 回看天数 }
+ *       - { in: query, name: top, schema: { type: integer, default: 10, maximum: 100 }, description: top N 上限 }
+ *     responses:
+ *       200: { description: 行业 QA 热度榜, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
+ */
+router.get('/qa-industry-heat', authController.authenticate, (req, res) => {
+  void sentimentController.getIndustryQAHeat(req, res);
+});
+
 export default router;

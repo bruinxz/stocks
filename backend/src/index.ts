@@ -51,7 +51,9 @@ import taskRoutes from './api/routes/task.routes';
 import paperTradingRoutes from './api/routes/paperTrading.routes';
 import riskAlertRoutes from './api/routes/riskAlert.routes';
 import riskRoutes from './api/routes/risk.routes';
+import blackSwanRoutes from './api/routes/blackSwan.routes';
 import advancedQuantRoutes from './api/routes/advancedQuant.routes';
+import analysisEngineShadowRoutes from './api/routes/analysisEngineShadow.routes';
 import journalRoutes from './api/routes/journal.routes';
 import userRoutes from './api/routes/user.routes';
 import logRoutes from './api/routes/log.routes';
@@ -68,6 +70,7 @@ import announcementRoutes from './api/routes/announcement.routes';
 import settingsRoutes from './api/routes/settings.routes';
 import dataRoutes from './api/routes/data.routes';
 import macroRoutes from './api/routes/macro.routes';
+import improvementSuggestionRoutes from './api/routes/improvementSuggestion.routes';
 import bridgeRoutes from './live-trading/routes/bridge.routes';
 import './jobs/dataUpdateWorker'; // 初始化数据更新队列处理器
 import './jobs/aiPollingWorker'; // 初始化 AI 分析轮询队列处理器
@@ -131,6 +134,13 @@ app.use(
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+// US-097 [OPS-008] 日志统一字段 — 给每个 request 分配 / 透传 trace_id 并绑到 AsyncLocalStorage,
+// 任何此 request 链路内 logger.info/warn/error 自动携带 `trace_id=<x> module=http` 后缀.
+// 必须在 httpMetricsMiddleware 之前 (metric 埋点本身的 log 也带 trace_id) 但在 cors/helmet 之后
+// (preflight OPTIONS 不需要 trace, 也避免 res.setHeader 与 cors 冲突).
+import { requestContextMiddleware } from './middlewares/requestContext';
+app.use(requestContextMiddleware());
+
 // US-072 Prometheus 指标埋点 —— middleware 必须在所有 route 之前挂载才能拦截每个请求；
 // `res.on('finish')` 是异步触发的，挂在最前面也能拿到 req.route（routing 阶段填充）。
 import {
@@ -164,7 +174,8 @@ app.get('/health/detail', async (req, res) => {
   // 攻击者侦察"哪个外部依赖挂了" 选最弱时机进攻.
   const expectedToken = process.env.METRICS_ACCESS_TOKEN;
   const ipRaw = req.ip || req.socket.remoteAddress || '';
-  const isLocalhost = ipRaw.endsWith('127.0.0.1') || ipRaw === '::1' || ipRaw === '::ffff:127.0.0.1';
+  const isLocalhost =
+    ipRaw.endsWith('127.0.0.1') || ipRaw === '::1' || ipRaw === '::ffff:127.0.0.1';
   if (expectedToken) {
     const auth = req.headers.authorization || '';
     const provided = auth.startsWith('Bearer ') ? auth.slice(7) : (req.query.token as string) || '';
@@ -179,7 +190,9 @@ app.get('/health/detail', async (req, res) => {
       sequelize: { query: (sql: string) => sequelize.query(sql) },
       redisHealthCheck: () => redisLock.healthCheck(),
       httpGet: (url, opts) => axios.get(url, { timeout: opts.timeout }),
-      tradingAgentsUrl: process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000',
+      // audit L-19: 集中常量, 不再硬编码 IP.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      tradingAgentsUrl: require('./config/externalServices').TRADING_AGENTS_BASE_URL,
     });
     const detail = await collectSystemHealthDetail(probes);
     // Batch M (2026-06-17): 暴露 scheduler_active_tasks 让运维感知 silent scheduler failure.
@@ -210,7 +223,8 @@ app.get('/health/detail', async (req, res) => {
 app.get('/metrics', async (req, res) => {
   const expectedToken = process.env.METRICS_ACCESS_TOKEN;
   const ipRaw = req.ip || req.socket.remoteAddress || '';
-  const isLocalhost = ipRaw.endsWith('127.0.0.1') || ipRaw === '::1' || ipRaw === '::ffff:127.0.0.1';
+  const isLocalhost =
+    ipRaw.endsWith('127.0.0.1') || ipRaw === '::1' || ipRaw === '::ffff:127.0.0.1';
   if (!expectedToken) {
     // 缺 env: 只允许 localhost (dev / 本机 curl)
     if (!isLocalhost) {
@@ -240,10 +254,7 @@ app.get('/', (req, res) => {
 // Batch R (2026-06-17, P1-2): /api/auth/login + /api/auth/refresh 加 IP 维度限流
 // 防暴破. 每 IP 5 分钟最多 20 次. 多副本部署不共享但配合 nginx ip_hash 已够灰度.
 import { ipRateLimit } from './middlewares/globalErrorAndRateLimit';
-app.use(
-  '/api/auth/login',
-  ipRateLimit({ name: 'auth_login', windowMs: 5 * 60 * 1000, max: 20 })
-);
+app.use('/api/auth/login', ipRateLimit({ name: 'auth_login', windowMs: 5 * 60 * 1000, max: 20 }));
 app.use(
   '/api/auth/refresh',
   ipRateLimit({ name: 'auth_refresh', windowMs: 5 * 60 * 1000, max: 30 })
@@ -259,7 +270,9 @@ app.use('/api/tasks', taskRoutes);
 app.use('/api/paper-trading', paperTradingRoutes);
 app.use('/api/risk-alerts', riskAlertRoutes);
 app.use('/api/risk', riskRoutes);
+app.use('/api/black-swan', blackSwanRoutes);
 app.use('/api/advanced-quant', advancedQuantRoutes);
+app.use('/api/admin/analysis-engine', analysisEngineShadowRoutes);
 app.use('/api/journals', journalRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/logs', logRoutes);
@@ -278,6 +291,7 @@ app.use('/api/announcements', announcementRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/data', dataRoutes);
 app.use('/api/macro', macroRoutes);
+app.use('/api/me/improvement-suggestions', improvementSuggestionRoutes);
 
 // US-070 OpenAPI / Swagger UI —— 仅 development 模式暴露 /api-docs（不需鉴权方便联调）
 // production 默认禁用避免泄露内部 endpoint 列表；通过 ENABLE_SWAGGER_UI=true 可强制开启
@@ -403,7 +417,10 @@ async function dropPublicIndexIfExists(indexName: string): Promise<void> {
     await sequelize.query(`DROP INDEX IF EXISTS "${indexName}"`);
     console.log(`Dropped legacy runtime schema index ${indexName}`);
   } catch (error: any) {
-    console.warn(`Failed to drop legacy runtime schema index ${indexName}:`, error?.message || error);
+    console.warn(
+      `Failed to drop legacy runtime schema index ${indexName}:`,
+      error?.message || error
+    );
   }
 }
 
@@ -650,11 +667,9 @@ async function ensureLiveTradingRuntimeSchema() {
       true,
       '"client_order_id" IS NOT NULL'
     );
-    await createPublicIndexIfMissing(
-      'live_orders',
-      'idx_live_orders_bridge_status',
-      ['bridge_status']
-    );
+    await createPublicIndexIfMissing('live_orders', 'idx_live_orders_bridge_status', [
+      'bridge_status',
+    ]);
     // P1 review：bridge ingestOrders 用 (account_id, broker_order_id) 做幂等 lookup；
     // 没有 unique 兜底时并发会产生重复 LiveOrder 行
     await createPublicIndexIfMissing(
@@ -970,13 +985,18 @@ async function initializeApp() {
     // 仅在数据库可用时启用；NODE_ENV=test 不启动避免污染单元测试。
     // 显式 unref，让 ts-node smoke / CI 跑完不被 timer 阻塞退出。
     if (process.env.NODE_ENV !== 'test') {
-      const intervalMs = Math.max(Number(process.env.LIVE_KILL_SWITCH_SCAN_INTERVAL_MS || 60000), 15000);
+      const intervalMs = Math.max(
+        Number(process.env.LIVE_KILL_SWITCH_SCAN_INTERVAL_MS || 60000),
+        15000
+      );
       const ksTimer = setInterval(async () => {
         try {
           const result = await killSwitchService.runAutoTriggerScan();
           if (result.triggered) {
             console.warn(
-              `[kill-switch] auto-triggered: ${result.reasons.join('; ')} (checked=${result.checked})`
+              `[kill-switch] auto-triggered: ${result.reasons.join('; ')} (checked=${
+                result.checked
+              })`
             );
           }
         } catch (err: any) {
@@ -1012,7 +1032,24 @@ async function initializeApp() {
     const { globalErrorHandler } = require('./middlewares/globalErrorAndRateLimit');
     app.use(globalErrorHandler);
 
-    app.listen(Number(PORT), HOST, () => {
+    // US-073 [FE-034] /ws/alerts 实时告警 WebSocket —— 用 http.createServer 替代
+    // app.listen 才能在同端口挂 WebSocket. attachAlertsWebSocketServer 内部 lazy
+    // require 'ws', 'ws' 缺失时 silent skip (返 null) 不阻塞 HTTP 启动.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const http = require('http');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { attachAlertsWebSocketServer } = require('./realtime/alertsWebSocketServer');
+    const httpServer = http.createServer(app);
+    try {
+      const wsAttachResult = attachAlertsWebSocketServer(httpServer);
+      if (wsAttachResult) {
+        console.log('WebSocket server listening on /ws/alerts');
+      }
+    } catch (wsErr: any) {
+      console.warn('[ws/alerts] attach failed (HTTP server unaffected):', wsErr?.message || wsErr);
+    }
+
+    httpServer.listen(Number(PORT), HOST, () => {
       console.log(`Server is running on ${HOST}:${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });
@@ -1026,15 +1063,35 @@ async function initializeApp() {
       String(process.env.LIVE_TRADING_ALLOW_DB_OFFLINE || '').toLowerCase() === 'true' ||
       process.env.NODE_ENV === 'test';
     if (!allowDbOffline) {
-      console.error('DB connection failed; refusing to start. Set LIVE_TRADING_ALLOW_DB_OFFLINE=true to override.');
+      console.error(
+        'DB connection failed; refusing to start. Set LIVE_TRADING_ALLOW_DB_OFFLINE=true to override.'
+      );
       process.exit(1);
     }
-    console.warn('Starting server without database connection (override enabled). Many features will 5xx.');
+    console.warn(
+      'Starting server without database connection (override enabled). Many features will 5xx.'
+    );
     // Batch R (2026-06-17, P1-2): override 路径下也挂 globalErrorHandler.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { globalErrorHandler: globalErrorHandlerOverride } = require('./middlewares/globalErrorAndRateLimit');
+    const overrideGlobalErrorMod = require('./middlewares/globalErrorAndRateLimit');
+    const globalErrorHandlerOverride = overrideGlobalErrorMod.globalErrorHandler;
     app.use(globalErrorHandlerOverride);
-    app.listen(Number(PORT), HOST, () => {
+    // US-073 [FE-034] override 路径也需要 /ws/alerts (虽然 DB 离线但前端 polling 仍工作);
+    // ws attach 失败完全静默, HTTP 业务不受影响.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const httpOverride = require('http');
+    /* eslint-disable @typescript-eslint/no-var-requires */
+    const {
+      attachAlertsWebSocketServer: attachAlertsWsOverride,
+    } = require('./realtime/alertsWebSocketServer');
+    /* eslint-enable @typescript-eslint/no-var-requires */
+    const httpServerOverride = httpOverride.createServer(app);
+    try {
+      attachAlertsWsOverride(httpServerOverride);
+    } catch {
+      /* swallow */
+    }
+    httpServerOverride.listen(Number(PORT), HOST, () => {
       console.log(`Server is running on ${HOST}:${PORT} (without database connection)`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });

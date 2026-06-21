@@ -2,11 +2,26 @@ import winston from 'winston';
 import path from 'path';
 import moment from 'moment-timezone';
 import { ensureLogsRuntime, getLogsRoot } from './runtimePaths';
+import { currentModule, currentTraceId } from './loggingContext';
 
 // 强制所有通过 logger 的时间都是北京时间
 const appendTimestamp = winston.format((info, opts: any) => {
   if (opts.tz) {
     info.timestamp = moment().tz(opts.tz).format('YYYY-MM-DD HH:mm:ss.SSS');
+  }
+  return info;
+});
+
+// US-097 [OPS-008] 统一字段注入: 任何 logger.info/warn/error 输出末尾追加
+// `trace_id=<x> module=<y>` 后缀, 让 grep trace_id=<x> 能贯穿一次请求全链路.
+// 无 ALS 上下文时 (e.g. boot-time / 后台 cron 没 run 子作用域) 自动返 '-' 占位,
+// 不阻塞 — fail-OPEN. 已显式在 message 里手写 `trace_id=` 的旧代码不重复追加.
+const appendContext = winston.format(info => {
+  const msg = String(info.message ?? '');
+  if (!/trace_id=/.test(msg)) {
+    const traceId = currentTraceId();
+    const mod = currentModule();
+    info.message = `${msg} trace_id=${traceId} module=${mod}`;
   }
   return info;
 });
@@ -41,6 +56,7 @@ winston.addColors(colors);
 // 针对终端打印的彩色格式
 const consoleFormat = winston.format.combine(
   appendTimestamp({ tz: 'Asia/Shanghai' }),
+  appendContext(),
   winston.format.colorize({ all: true }),
   winston.format.printf(info => `${info.timestamp} ${info.level}: ${info.message}`)
 );
@@ -48,6 +64,7 @@ const consoleFormat = winston.format.combine(
 // 针对文件存储的无色纯文本格式
 const fileFormat = winston.format.combine(
   appendTimestamp({ tz: 'Asia/Shanghai' }),
+  appendContext(),
   winston.format.uncolorize(),
   winston.format.printf(info => `${info.timestamp} ${info.level}: ${info.message}`)
 );

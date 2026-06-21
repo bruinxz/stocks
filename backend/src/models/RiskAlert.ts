@@ -104,7 +104,35 @@ export class RiskAlert extends Model {
   @AfterCreate
   static dispatchRealtimeAlert(instance: RiskAlert): void {
     try {
-      if (!instance || String(instance.level || '').toUpperCase() !== 'HIGH') return;
+      if (!instance) return;
+      // US-073 [FE-034] /ws/alerts 实时广播 — level=HIGH 优先, MEDIUM/LOW 也广播
+      // (WebSocket fanout 进程内 O(1) cost, 不像飞书/邮件那样有外部网络代价),
+      // 让前端 AlertsPanel 可以即时刷新而不仅靠 60s polling.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const broadcasterMod = require('../realtime/alertsBroadcaster');
+        const payload = broadcasterMod.buildBroadcastPayload({
+          alert_id: instance.id,
+          user_id: instance.user_id,
+          symbol: instance.symbol,
+          name: instance.name,
+          level: instance.level,
+          message: instance.message,
+          rule_id: instance.rule_id || undefined,
+          created_at: instance.created_at,
+        });
+        broadcasterMod.alertsBroadcaster.broadcast(payload);
+      } catch (wsErr: any) {
+        // ws broadcast 内层失败不应阻塞 dispatcher 飞书/邮件/短信
+        logger.warn(
+          `[RiskAlert.afterCreate] alertsBroadcaster.broadcast 异常 (吞错保护): ${
+            wsErr?.message || wsErr
+          }`
+        );
+      }
+
+      // 既有 US-067 RealtimeAlertDispatcher (飞书/邮件/短信), 仅 HIGH 触发
+      if (String(instance.level || '').toUpperCase() !== 'HIGH') return;
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { realtimeAlertDispatcher } = require('../services/RealtimeAlertDispatcher');
       realtimeAlertDispatcher.fireAndForget({

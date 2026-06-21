@@ -144,13 +144,15 @@ export class BridgeReadonlyBrokerGateway implements BrokerGateway {
       };
     }
     const snap = await this.getAccountSnapshotFor(accountId);
-    return snap || {
-      total_asset: 0,
-      available_cash: 0,
-      market_value: 0,
-      snapshot_time: new Date(),
-      raw_payload: { source: 'bridge_readonly', note: 'no snapshot yet' },
-    };
+    return (
+      snap || {
+        total_asset: 0,
+        available_cash: 0,
+        market_value: 0,
+        snapshot_time: new Date(),
+        raw_payload: { source: 'bridge_readonly', note: 'no snapshot yet' },
+      }
+    );
   }
 
   async getPositions(): Promise<BrokerPosition[]> {
@@ -193,7 +195,9 @@ export class BridgeReadonlyBrokerGateway implements BrokerGateway {
       limit: Math.min(Math.max(Number(query.limit || 100), 1), 500),
     });
     // review 修订 #42：broker_order_id 必须从对应 LiveOrder 反查；不能用 trade.order_id（那是内部 PK）
-    const orderIds = rows.map((r: any) => r.order_id).filter((v: any) => Number.isFinite(Number(v)));
+    const orderIds = rows
+      .map((r: any) => r.order_id)
+      .filter((v: any) => Number.isFinite(Number(v)));
     let orderMap = new Map<number, string>();
     if (orderIds.length) {
       const orders = await LiveOrder.findAll({
@@ -218,10 +222,14 @@ export class BridgeReadonlyBrokerGateway implements BrokerGateway {
   }
 
   async placeOrder(_order: BrokerPlaceOrderRequest): Promise<BrokerPlaceOrderResult> {
-    throw new Error('BridgeReadonlyBrokerGateway 仅做只读读取，禁止真实下单；请切换 LIVE_BROKER_GATEWAY=qmt_bridge。');
+    throw new Error(
+      'BridgeReadonlyBrokerGateway 仅做只读读取，禁止真实下单；请切换 LIVE_BROKER_GATEWAY=qmt_bridge。'
+    );
   }
 
   async cancelOrder(order_id: string): Promise<BrokerCancelOrderResult> {
-    throw new Error(`BridgeReadonlyBrokerGateway 禁止撤单 ${order_id}；撤单只能通过 qmt_bridge / ptrade_bridge 经命令通道下发。`);
+    throw new Error(
+      `BridgeReadonlyBrokerGateway 禁止撤单 ${order_id}；撤单只能通过 qmt_bridge / ptrade_bridge 经命令通道下发。`
+    );
   }
 }

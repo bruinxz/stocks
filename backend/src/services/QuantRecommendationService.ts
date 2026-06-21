@@ -8,6 +8,7 @@ import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 import { DEFAULT_BENCHMARK_INDICES } from './BenchmarkIndexService';
+import { isBeijingExchange } from '../quant/marketLimits';
 import {
   marketEnvironmentService,
   type MarketEnvironmentSnapshot,
@@ -633,9 +634,7 @@ export class QuantRecommendationService {
         const meanCh = g.changes.length
           ? g.changes.reduce((s, v) => s + v, 0) / g.changes.length
           : 0;
-        const meanRt = g.ratios.length
-          ? g.ratios.reduce((s, v) => s + v, 0) / g.ratios.length
-          : 0;
+        const meanRt = g.ratios.length ? g.ratios.reduce((s, v) => s + v, 0) / g.ratios.length : 0;
         map.set(name, meanCh + meanRt * 100);
       }
     } catch (err: any) {
@@ -734,7 +733,16 @@ export class QuantRecommendationService {
     limit: number;
     exclude_st?: boolean;
     min_market_cap_yi?: number;
+    /**
+     * audit S-7 (decisions §4): 北交所默认避开。明确传 true 才包含 BJ 候选 (920/430/8xx 号段)。
+     * favorites universe 模式下不应用此过滤 (用户自选股就是最终意图)。
+     */
+    include_bj?: boolean;
   }): Promise<Stock[]> {
+    const includeBJ = options.include_bj === true;
+    const filterBJ = (stocks: Stock[]) =>
+      includeBJ ? stocks : stocks.filter(s => !isBeijingExchange(s.symbol));
+
     if (options.universe === 'favorites') {
       if (options.user_id) {
         const favorites = await FavoriteStock.findAll({
@@ -748,7 +756,7 @@ export class QuantRecommendationService {
         });
 
         const stocks = favorites.map(favorite => favorite.stock).filter(Boolean) as Stock[];
-        if (stocks.length > 0) return stocks;
+        if (stocks.length > 0) return stocks; // favorites: 用户自选不做 BJ 过滤
       }
 
       // 定时任务没有具体 user_id 时，使用全站自选股交集作为候选池。
@@ -792,8 +800,10 @@ export class QuantRecommendationService {
         },
       ];
     }
-
-    return Stock.findAll({
+    // audit decisions §4: 默认排除北交所 symbol 前缀 (920/430/8xx 等);
+    // 调用方显式 include_bj=true 时跳过此约束。注意 Sequelize 不能直接 NOT LIKE
+    // 多个变体, 用 in-memory 二次过滤保持 SQL 简单。
+    const rawStocks = await Stock.findAll({
       attributes: [
         'id',
         'symbol',
@@ -821,8 +831,11 @@ export class QuantRecommendationService {
         ['updated_at', 'DESC'],
         ['total_market_cap', 'DESC NULLS LAST'],
       ] as any,
-      limit: options.limit,
+      // 多取一些以补偿 BJ 过滤后的损失
+      limit: includeBJ ? options.limit : Math.min(options.limit * 2, 1000),
     });
+    const filtered = filterBJ(rawStocks);
+    return filtered.slice(0, options.limit);
   }
 
   private async scoreStock(
@@ -1008,7 +1021,9 @@ export class QuantRecommendationService {
       value: round(changePercent, 2),
       reason:
         burstScore >= 70
-          ? `今日 ${round(changePercent, 2) ?? '--'}% + 量比 ${round(volumeRatio, 2) ?? '--'}，明显爆发`
+          ? `今日 ${round(changePercent, 2) ?? '--'}% + 量比 ${
+              round(volumeRatio, 2) ?? '--'
+            }，明显爆发`
           : burstScore <= 35
           ? `今日 ${round(changePercent, 2) ?? '--'}%，量价节奏未跟上`
           : `今日 ${round(changePercent, 2) ?? '--'}%，温和`,
@@ -1028,7 +1043,9 @@ export class QuantRecommendationService {
       value: industryScore !== undefined ? round(industryScore, 2) : undefined,
       reason:
         industryRegimeScore >= 70
-          ? `所在行业 "${industry || '未分类'}" 近 5 日热度 ${round(industryScore, 2) ?? '--'}，板块向上`
+          ? `所在行业 "${industry || '未分类'}" 近 5 日热度 ${
+              round(industryScore, 2) ?? '--'
+            }，板块向上`
           : industryRegimeScore <= 40
           ? `所在行业 "${industry || '未分类'}" 近 5 日偏弱`
           : `所在行业 "${industry || '未分类'}" 近 5 日中性`,
@@ -1687,10 +1704,7 @@ export class QuantRecommendationService {
    *   change=10%, vol=4 → ~70 (涨停/接近涨停, 追涨风险, 反扣)
    *   change=-5% → ~30
    */
-  private scoreTodayBurst(params: {
-    changePercent?: number;
-    volumeRatio?: number;
-  }): number {
+  private scoreTodayBurst(params: { changePercent?: number; volumeRatio?: number }): number {
     let score = 50;
     const ch = params.changePercent;
     const vr = params.volumeRatio;

@@ -9,6 +9,7 @@ import {
 import { quantSignalService } from './QuantSignalService';
 import { aiAdvisorService } from '../../../services/AIAdvisorService';
 import { aiPollingQueue } from '../../../jobs/aiPollingQueue';
+import { buildAIPollingJobOptions } from '../../../jobs/aiPollingEnqueue';
 import { paperTradingAutomationService } from '../../../portfolio/internal/PaperTradingAutomationService';
 import { paperTradingRiskProfileService } from '../../../portfolio/internal/PaperTradingRiskProfileService';
 import { normalizeSymbol } from '../../../utils/stockSymbol';
@@ -2150,6 +2151,15 @@ export class QuantFusionService {
         }
 
         const archivedSignal = recordsBySymbol.get(normalizeSymbol(candidate.symbol));
+        const pollingJobOptions = buildAIPollingJobOptions({ taskId: response.task_id });
+        if (!pollingJobOptions) {
+          failed.push({
+            symbol: candidate.symbol,
+            name: candidate.name,
+            error: 'TradingAgents 返回的 task_id 非法',
+          });
+          continue;
+        }
         await aiPollingQueue.add(
           {
             taskId: response.task_id,
@@ -2225,11 +2235,9 @@ export class QuantFusionService {
             quant_agent_fusion: true,
           },
           {
-            jobId: `ai-poll-quant-${
-              options.execution_log_id ? `log-${options.execution_log_id}` : 'manual'
-            }-${response.task_id}`,
-            attempts: 10,
-            backoff: { type: 'fixed', delay: 3 * 60 * 1000 },
+            // US-019 / EX-005: jobId/attempts/backoff/retention 统一由 aiPollingEnqueue 单点供给;
+            // Bull Redis Lua dedup (EXISTS ai-poll-${taskId}) 是持久化的事实源, 重复入队短路返同 jobId.
+            ...pollingJobOptions,
           }
         );
 

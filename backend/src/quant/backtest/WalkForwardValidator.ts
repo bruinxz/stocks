@@ -84,11 +84,7 @@ import {
   computeCompositeScore,
   defaultBacktestRunner,
 } from './GridSearchOptimizer';
-import {
-  bayesianOptimizer,
-  BayesianOptimizer,
-  ParamBounds,
-} from './BayesianOptimizer';
+import { bayesianOptimizer, BayesianOptimizer, ParamBounds } from './BayesianOptimizer';
 import {
   deflatedSharpeRatio,
   probabilityOfBacktestOverfitting,
@@ -873,7 +869,9 @@ export class WalkForwardValidator {
     logger.info(
       `[walk-forward] start: strategy=${input.strategy_key} scheme=${scheme} ` +
         `optimizer=${optimizerType} windows=${windows.length} ` +
-        `purging=${purging ? `label_h=${purging.label_horizon_days}/embargo=${purging.embargo_days}` : 'OFF'} ` +
+        `purging=${
+          purging ? `label_h=${purging.label_horizon_days}/embargo=${purging.embargo_days}` : 'OFF'
+        } ` +
         `range=${input.start_date}..${input.end_date}`
     );
 
@@ -1037,7 +1035,10 @@ export class WalkForwardValidator {
                     start_date: w.test_start_date,
                     end_date: w.test_end_date,
                   } as QuantBacktestOptions;
-                  const candTest = await testRunner({ params: cand.params, index: w.index }, candTestOpts);
+                  const candTest = await testRunner(
+                    { params: cand.params, index: w.index },
+                    candTestOpts
+                  );
                   candidateOosSharpe.push(candTest.sharpe);
                 } catch {
                   // 失败的 candidate 给 -Infinity (会 rank 最低)
@@ -1182,9 +1183,8 @@ export class WalkForwardValidator {
       }
     }
 
-    const runVerdict = runDsr !== null
-      ? deriveWalkForwardVerdict({ dsr: runDsr, pbo: runPbo })
-      : 'INSUFFICIENT';
+    const runVerdict =
+      runDsr !== null ? deriveWalkForwardVerdict({ dsr: runDsr, pbo: runPbo }) : 'INSUFFICIENT';
 
     summary.dsr = roundTo(runDsr, 4);
     summary.pbo = roundTo(runPbo, 4);

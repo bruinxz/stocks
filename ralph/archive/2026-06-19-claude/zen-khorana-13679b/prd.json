@@ -1,0 +1,2264 @@
+{
+  "project": "TraderSystem-AShare-Production",
+  "branchName": "ralph/trader-system-prod",
+  "description": "把\"高级操盘手\"做成生产级自动化系统 — 基于 docs/trader-system/ 下 54 份模块设计文档 + 99 路线图 (210 user story), 按 9 层依赖 (Ops 基础 → Data → Factor → Strategy → Portfolio/Risk → Execution → AI → Frontend → Postmortem) 推进. 目标: 模拟盘 sharpe ≥ 1.5, 30 日 dd ≤ 12%, 每笔交易 ≥ 3 条 AI evidence, 全链路 fail-closed. 当前已完成 Batch AI 闭环审计 + 多维分析引擎 v1 (Mar AI commit dd88cad). 本 prd 是 v2 完整落地. 总 story: 147. ralph 自主推进; 任何触实盘/触 secrets/触部署的改动跳过并写 notes 等用户.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "originalId": "OPS-001",
+      "layer": "L0-Ops 基础",
+      "title": "[OPS-001] env 校验脚本",
+      "description": "As a 量化操盘手 / 系统用户, I want env 校验脚本, so that 启动时校验 .env 必备字段（DATABASE_URL / REDIS_URL / TRADING_AGENTS_URL ...）；缺失立刻 fail-fast",
+      "acceptanceCriteria": [
+        "npm run start 在缺关键 env 时立即报错并 exit 1",
+        "CI 跑 env-check 步骤通过",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "originalId": "OPS-002",
+      "layer": "L0-Ops 基础",
+      "title": "[OPS-002] SchedulerService cron 注册中心",
+      "description": "As a 量化操盘手 / 系统用户, I want SchedulerService cron 注册中心, so that 所有 cron job 在 SchedulerService 集中注册；新 cron 必须列入 CRON_REGISTRY 常量；启动时 dump 到日志",
+      "acceptanceCriteria": [
+        "启动日志列出所有 cron",
+        "下次触发时间",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "依赖: OPS-001"
+    },
+    {
+      "id": "US-003",
+      "originalId": "OPS-003",
+      "layer": "L0-Ops 基础",
+      "title": "[OPS-003] dry_run 默认值巡检 boot guard",
+      "description": "As a 量化操盘手 / 系统用户, I want dry_run 默认值巡检 boot guard, so that service 启动时跑 audit-task-parameters-dry-run，发现 task_parameters.dry_run=true 写 RiskAlert",
+      "acceptanceCriteria": [
+        "已实现（BETA-5）",
+        "boot guard 已挂",
+        "扩展告警 channel",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "依赖: OPS-002"
+    },
+    {
+      "id": "US-004",
+      "originalId": "OPS-004",
+      "layer": "L0-Ops 基础",
+      "title": "[OPS-004] Prometheus metric 标准化",
+      "description": "As a 量化操盘手 / 系统用户, I want Prometheus metric 标准化, so that 所有 service 注册 metric 到 PrometheusRegistry；命名遵循 `<domain>_<verb>_<unit>`",
+      "acceptanceCriteria": [
+        "至少 20 个 metric 在 /metrics 可见",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "originalId": "OPS-005",
+      "layer": "L0-Ops 基础",
+      "title": "[OPS-005] RiskAlert 标准 dispatcher",
+      "description": "As a 量化操盘手 / 系统用户, I want RiskAlert 标准 dispatcher, so that RiskAlertService.write 统一入口；按 severity 路由（critical→飞书+IM+toast，high→飞书，medium→inbox）",
+      "acceptanceCriteria": [
+        "测试构造 3 级 alert 推送到正确 channel",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "依赖: OPS-004"
+    },
+    {
+      "id": "US-006",
+      "originalId": "PR-001",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-001] PortfolioOptimizer 真接入",
+      "description": "As a 量化操盘手 / 系统用户, I want PortfolioOptimizer 真接入, so that 当前未接入；接到 PaperTradingFacade autoBuyFromSignals",
+      "acceptanceCriteria": [
+        "跑通",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "originalId": "PR-002",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-002] PositionLimitGuard 阈值持久化",
+      "description": "As a 量化操盘手 / 系统用户, I want PositionLimitGuard 阈值持久化, so that 移除 hardcoded；从 user.risk_config 读",
+      "acceptanceCriteria": [
+        "配置驱动",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "originalId": "PR-003",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-003] sizing vs limit 阈值一致性",
+      "description": "As a 量化操盘手 / 系统用户, I want sizing vs limit 阈值一致性, so that SizingPolicyService 与 PositionLimitGuard 阈值同步",
+      "acceptanceCriteria": [
+        "单测覆盖",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "依赖: PR-002"
+    },
+    {
+      "id": "US-009",
+      "originalId": "PR-004",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-004] RebalanceEngine 边界控制",
+      "description": "As a 量化操盘手 / 系统用户, I want RebalanceEngine 边界控制, so that 偏离 > 3% 才触发；不日日动",
+      "acceptanceCriteria": [
+        "单测覆盖",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "originalId": "PR-005",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-005] TradeComplianceChecker pre-trade 全接入",
+      "description": "As a 量化操盘手 / 系统用户, I want TradeComplianceChecker pre-trade 全接入, so that BETA-1 只接 2 处；完成剩余 caller 接入",
+      "acceptanceCriteria": [
+        "全 caller 验收",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "originalId": "PR-006",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-006] DrawdownCircuitBreaker fail-closed 巡检",
+      "description": "As a 量化操盘手 / 系统用户, I want DrawdownCircuitBreaker fail-closed 巡检, so that 已修；扩展到所有 risk_guard fail-closed pattern 统一",
+      "acceptanceCriteria": [
+        "统一 helper",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "originalId": "PR-007",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-007] 行业集中度 KPI",
+      "description": "As a 量化操盘手 / 系统用户, I want 行业集中度 KPI, so that PortfolioWorkspace 顶 KPI 显示最大行业集中度；> 25% 红色",
+      "acceptanceCriteria": [
+        "UI 完成",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "originalId": "PR-008",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-008] 黑天鹅 watchdog 增强",
+      "description": "As a 量化操盘手 / 系统用户, I want 黑天鹅 watchdog 增强, so that 减持暴增 / 重大诉讼 / 退市预警检测扩展",
+      "acceptanceCriteria": [
+        "单测",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "originalId": "PR-009",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-009] 限售解禁预警提前 5 日",
+      "description": "As a 量化操盘手 / 系统用户, I want 限售解禁预警提前 5 日, so that RestrictedShareWatchdog 提前 5 日仓位减半建议",
+      "acceptanceCriteria": [
+        "单测",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "originalId": "EX-001",
+      "layer": "L5-Execution",
+      "title": "[EX-001] ExecutionFeasibility 全接入",
+      "description": "As a 量化操盘手 / 系统用户, I want ExecutionFeasibility 全接入, so that feasibility score < 60 不下单；接到 PaperTradingFacade + Bridge",
+      "acceptanceCriteria": [
+        "gate 触发",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-016",
+      "originalId": "EX-002",
+      "layer": "L5-Execution",
+      "title": "[EX-002] Composite backtest caller 接通",
+      "description": "As a 量化操盘手 / 系统用户, I want Composite backtest caller 接通, so that ALPHA 已建 engine hook + MFA smoke；接通剩余 12 策略",
+      "acceptanceCriteria": [
+        "12 策略 trade_count > 0",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": "依赖: S-003"
+    },
+    {
+      "id": "US-017",
+      "originalId": "EX-003",
+      "layer": "L5-Execution",
+      "title": "[EX-003] 对账 alignment_score 监控",
+      "description": "As a 量化操盘手 / 系统用户, I want 对账 alignment_score 监控, so that ReconciliationAlertService 已实现；扩展看板",
+      "acceptanceCriteria": [
+        "dashboard 完成",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": "依赖: D-001"
+    },
+    {
+      "id": "US-018",
+      "originalId": "EX-004",
+      "layer": "L5-Execution",
+      "title": "[EX-004] broker-bridge fail-safe 单测",
+      "description": "As a 量化操盘手 / 系统用户, I want broker-bridge fail-safe 单测, so that bridge 失联 / KillSwitch 激活 → 全 pending 转 aborted",
+      "acceptanceCriteria": [
+        "单测覆盖",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-019",
+      "originalId": "EX-005",
+      "layer": "L5-Execution",
+      "title": "[EX-005] aiPollingQueue dedup 持久化",
+      "description": "As a 量化操盘手 / 系统用户, I want aiPollingQueue dedup 持久化, so that BETA-3 已加 jobId；持久化到 Redis",
+      "acceptanceCriteria": [
+        "重复 enqueue 被合并",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-020",
+      "originalId": "AE-001",
+      "layer": "L6-AI Layer",
+      "title": "[AE-001] archiveAnalysisEngineResult",
+      "description": "As a 量化操盘手 / 系统用户, I want archiveAnalysisEngineResult, so that AIInvestmentSignalService 加方法；source_type='analysis_engine'",
+      "acceptanceCriteria": [
+        "写库验证",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-021",
+      "originalId": "AE-002",
+      "layer": "L6-AI Layer",
+      "title": "[AE-002] hard mode 实现",
+      "description": "As a 量化操盘手 / 系统用户, I want hard mode 实现, so that ShadowDoubleRunService.hard 不再退化 shadow；调主路径",
+      "acceptanceCriteria": [
+        "mode='hard' 走新引擎",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": "依赖: AE-001"
+    },
+    {
+      "id": "US-022",
+      "originalId": "AE-003",
+      "layer": "L6-AI Layer",
+      "title": "[AE-003] AIAdvisorService hard 短路",
+      "description": "As a 量化操盘手 / 系统用户, I want AIAdvisorService hard 短路, so that mode='hard' 时直接调 AnalysisEngineService",
+      "acceptanceCriteria": [
+        "集成测试",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": "依赖: AE-002"
+    },
+    {
+      "id": "US-023",
+      "originalId": "AE-004",
+      "layer": "L6-AI Layer",
+      "title": "[AE-004] AutomatedRecommendationLoop hard 分支",
+      "description": "As a 量化操盘手 / 系统用户, I want AutomatedRecommendationLoop hard 分支, so that 检测 source_type='analysis_engine' 走 hard 跟单",
+      "acceptanceCriteria": [
+        "跟单触发",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 23,
+      "passes": false,
+      "notes": "依赖: AE-001"
+    },
+    {
+      "id": "US-024",
+      "originalId": "AE-011",
+      "layer": "L6-AI Layer",
+      "title": "[AE-011] 3 样本股 hard 集成测试",
+      "description": "As a 量化操盘手 / 系统用户, I want 3 样本股 hard 集成测试, so that 600519/000858/300750 端到端比对",
+      "acceptanceCriteria": [
+        "一致率 ≥ 80%",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 24,
+      "passes": false,
+      "notes": "依赖: AE-002"
+    },
+    {
+      "id": "US-025",
+      "originalId": "ANN-001",
+      "layer": "L6-AI Layer",
+      "title": "[ANN-001] AnnouncementNLP 加 event_type/priority/entities",
+      "description": "As a 量化操盘手 / 系统用户, I want AnnouncementNLP 加 event_type/priority/entities, so that model 加字段 + migration",
+      "acceptanceCriteria": [
+        "migration 跑通",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 25,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-026",
+      "originalId": "ANN-002",
+      "layer": "L6-AI Layer",
+      "title": "[ANN-002] classifyEventType pure function",
+      "description": "As a 量化操盘手 / 系统用户, I want classifyEventType pure function, so that 7 大事件分类",
+      "acceptanceCriteria": [
+        "准确率 ≥ 80%",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 26,
+      "passes": false,
+      "notes": "依赖: ANN-001"
+    },
+    {
+      "id": "US-027",
+      "originalId": "ANN-003",
+      "layer": "L6-AI Layer",
+      "title": "[ANN-003] extractEntities pure function",
+      "description": "As a 量化操盘手 / 系统用户, I want extractEntities pure function, so that 人名/角色/持股比例",
+      "acceptanceCriteria": [
+        "单测",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 27,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-028",
+      "originalId": "ANN-004",
+      "layer": "L6-AI Layer",
+      "title": "[ANN-004] extractEarningsGrade pure function",
+      "description": "As a 量化操盘手 / 系统用户, I want extractEarningsGrade pure function, so that YoY% 抽取 + 分级",
+      "acceptanceCriteria": [
+        "单测",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 28,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-029",
+      "originalId": "ANN-005",
+      "layer": "L6-AI Layer",
+      "title": "[ANN-005] computePriority pure function",
+      "description": "As a 量化操盘手 / 系统用户, I want computePriority pure function, so that event_type + sentiment + amounts → priority",
+      "acceptanceCriteria": [
+        "单测",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 29,
+      "passes": false,
+      "notes": "依赖: ANN-002"
+    },
+    {
+      "id": "US-030",
+      "originalId": "ANN-006",
+      "layer": "L6-AI Layer",
+      "title": "[ANN-006] buildStructuredSummary",
+      "description": "As a 量化操盘手 / 系统用户, I want buildStructuredSummary, so that 替换 heuristicSummarize；含 entities + amounts_detailed",
+      "acceptanceCriteria": [
+        "输出含 entities",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 30,
+      "passes": false,
+      "notes": "依赖: ANN-002,003,004"
+    },
+    {
+      "id": "US-031",
+      "originalId": "ANN-007",
+      "layer": "L6-AI Layer",
+      "title": "[ANN-007] critical 公告 5min 飞书 push",
+      "description": "As a 量化操盘手 / 系统用户, I want critical 公告 5min 飞书 push, so that enqueue feishuNotifier.sendCriticalAnnouncementCard",
+      "acceptanceCriteria": [
+        "推送验证",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 31,
+      "passes": false,
+      "notes": "依赖: OPS-005"
+    },
+    {
+      "id": "US-032",
+      "originalId": "CO-001",
+      "layer": "L6-AI Layer",
+      "title": "[CO-001] Copilot 7 task intents",
+      "description": "As a 量化操盘手 / 系统用户, I want Copilot 7 task intents, so that 扩展到 11 intent",
+      "acceptanceCriteria": [
+        "normalizeIntent 单测",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 32,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-033",
+      "originalId": "CO-002",
+      "layer": "L6-AI Layer",
+      "title": "[CO-002] EntityExtractor pure functions",
+      "description": "As a 量化操盘手 / 系统用户, I want EntityExtractor pure functions, so that extractStocks / industries / indicators / numbers / dates / strategyParams",
+      "acceptanceCriteria": [
+        "单测",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 33,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-034",
+      "originalId": "KOL-002",
+      "layer": "L6-AI Layer",
+      "title": "[KOL-002] KOLAggregator 加 source_authority 权重",
+      "description": "As a 量化操盘手 / 系统用户, I want KOLAggregator 加 source_authority 权重, so that research 0.6 / news 0.3 / kol 0.4 / etf 0.5 / policy 0.8",
+      "acceptanceCriteria": [
+        "dedupeAndSort 升级",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 34,
+      "passes": false,
+      "notes": "依赖: D-011, D-020"
+    },
+    {
+      "id": "US-035",
+      "originalId": "KOL-003",
+      "layer": "L6-AI Layer",
+      "title": "[KOL-003] KOLAggregator ETF + 政策集成",
+      "description": "As a 量化操盘手 / 系统用户, I want KOLAggregator ETF + 政策集成, so that fetchETFFlow + fetchPolicyDirectives 方法",
+      "acceptanceCriteria": [
+        "5 类来源非空",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 35,
+      "passes": false,
+      "notes": "依赖: KOL-002"
+    },
+    {
+      "id": "US-036",
+      "originalId": "KOL-004",
+      "layer": "L6-AI Layer",
+      "title": "[KOL-004] NewsAnalyzer 接 KOLAggregator 真输出",
+      "description": "As a 量化操盘手 / 系统用户, I want NewsAnalyzer 接 KOLAggregator 真输出, so that 替换占位；evidence top 3 + source tag",
+      "acceptanceCriteria": [
+        "evidence 真实",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 36,
+      "passes": false,
+      "notes": "依赖: KOL-003"
+    },
+    {
+      "id": "US-037",
+      "originalId": "QA-001",
+      "layer": "L6-AI Layer",
+      "title": "[QA-001] TOPIC_SUBCATEGORIES + classifySubtopic",
+      "description": "As a 量化操盘手 / 系统用户, I want TOPIC_SUBCATEGORIES + classifySubtopic, so that 24+ subcategory",
+      "acceptanceCriteria": [
+        "准确率 ≥ 80%",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 37,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-038",
+      "originalId": "QA-002",
+      "layer": "L6-AI Layer",
+      "title": "[QA-002] EastMoneyQAStat model + aggregator",
+      "description": "As a 量化操盘手 / 系统用户, I want EastMoneyQAStat model + aggregator, so that 周聚合 + answer_rate + template_score",
+      "acceptanceCriteria": [
+        "周一 04:00 前生成",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 38,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-039",
+      "originalId": "QA-003",
+      "layer": "L6-AI Layer",
+      "title": "[QA-003] QALeadingSignalDetector",
+      "description": "As a 量化操盘手 / 系统用户, I want QALeadingSignalDetector, so that earnings questions 暴增 + answer 积极",
+      "acceptanceCriteria": [
+        "90 天 ≥ 5 信号",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 39,
+      "passes": false,
+      "notes": "依赖: QA-002"
+    },
+    {
+      "id": "US-040",
+      "originalId": "FE-001",
+      "layer": "L7-Frontend",
+      "title": "[FE-001] TodayWorkspace 今日大盘判断卡片",
+      "description": "As a 量化操盘手 / 系统用户, I want TodayWorkspace 今日大盘判断卡片, so that 昨夜外盘 + regime + 仓位建议",
+      "acceptanceCriteria": [
+        "UI 完成",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 40,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-041",
+      "originalId": "FE-002",
+      "layer": "L7-Frontend",
+      "title": "[FE-002] TodayWorkspace 集合竞价异动卡片",
+      "description": "As a 量化操盘手 / 系统用户, I want TodayWorkspace 集合竞价异动卡片, so that 9:25 后展示一字/高开/撤单",
+      "acceptanceCriteria": [
+        "UI",
+        "数据",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 41,
+      "passes": false,
+      "notes": "依赖: D-014"
+    },
+    {
+      "id": "US-042",
+      "originalId": "FE-003",
+      "layer": "L7-Frontend",
+      "title": "[FE-003] TodayWorkspace 今日交易计划卡",
+      "description": "As a 量化操盘手 / 系统用户, I want TodayWorkspace 今日交易计划卡, so that 信号 → plan list",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 42,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-043",
+      "originalId": "FE-004",
+      "layer": "L7-Frontend",
+      "title": "[FE-004] TodayWorkspace AI 大盘 brief",
+      "description": "As a 量化操盘手 / 系统用户, I want TodayWorkspace AI 大盘 brief, so that trading-agents LLM 摘要",
+      "acceptanceCriteria": [
+        "≤ 150 字",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 43,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-044",
+      "originalId": "FE-005",
+      "layer": "L7-Frontend",
+      "title": "[FE-005] TodayWorkspace 今日卖出建议卡",
+      "description": "As a 量化操盘手 / 系统用户, I want TodayWorkspace 今日卖出建议卡, so that 止盈/止损/减持",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 44,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-045",
+      "originalId": "FE-006",
+      "layer": "L7-Frontend",
+      "title": "[FE-006] FactorWorkspace 因子健康列",
+      "description": "As a 量化操盘手 / 系统用户, I want FactorWorkspace 因子健康列, so that IC_90d / IR / classification",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 45,
+      "passes": false,
+      "notes": "依赖: F-014"
+    },
+    {
+      "id": "US-046",
+      "originalId": "FE-007",
+      "layer": "L7-Frontend",
+      "title": "[FE-007] FactorWorkspace AI 权重对照",
+      "description": "As a 量化操盘手 / 系统用户, I want FactorWorkspace AI 权重对照, so that slider 旁显示 AI 建议",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 46,
+      "passes": false,
+      "notes": "依赖: F-011"
+    },
+    {
+      "id": "US-047",
+      "originalId": "FE-008",
+      "layer": "L7-Frontend",
+      "title": "[FE-008] FactorWorkspace 组合模板 save/load",
+      "description": "As a 量化操盘手 / 系统用户, I want FactorWorkspace 组合模板 save/load, so that 自定义因子组合",
+      "acceptanceCriteria": [
+        "持久化",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 47,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-048",
+      "originalId": "FE-009",
+      "layer": "L7-Frontend",
+      "title": "[FE-009] FactorWorkspace ETF + 政策 tab",
+      "description": "As a 量化操盘手 / 系统用户, I want FactorWorkspace ETF + 政策 tab, so that 新增 2 tab",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 48,
+      "passes": false,
+      "notes": "依赖: D-011, D-020"
+    },
+    {
+      "id": "US-049",
+      "originalId": "FE-010",
+      "layer": "L7-Frontend",
+      "title": "[FE-010] FactorWorkspace picks inline 理由",
+      "description": "As a 量化操盘手 / 系统用户, I want FactorWorkspace picks inline 理由, so that 列表内嵌短理由",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 49,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-050",
+      "originalId": "FE-011",
+      "layer": "L7-Frontend",
+      "title": "[FE-011] LabWorkspace 季度参数重训 tab",
+      "description": "As a 量化操盘手 / 系统用户, I want LabWorkspace 季度参数重训 tab, so that 候选 + shadow",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 50,
+      "passes": false,
+      "notes": "依赖: S-008"
+    },
+    {
+      "id": "US-051",
+      "originalId": "FE-012",
+      "layer": "L7-Frontend",
+      "title": "[FE-012] LabWorkspace shadow run 区块",
+      "description": "As a 量化操盘手 / 系统用户, I want LabWorkspace shadow run 区块, so that shadow vs live 对比",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 51,
+      "passes": false,
+      "notes": "依赖: S-006"
+    },
+    {
+      "id": "US-052",
+      "originalId": "FE-013",
+      "layer": "L7-Frontend",
+      "title": "[FE-013] LabWorkspace OverfitMetrics 显示",
+      "description": "As a 量化操盘手 / 系统用户, I want LabWorkspace OverfitMetrics 显示, so that PBO + Deflated Sharpe",
+      "acceptanceCriteria": [
+        "回测结果展示",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 52,
+      "passes": false,
+      "notes": "依赖: S-010"
+    },
+    {
+      "id": "US-053",
+      "originalId": "FE-014",
+      "layer": "L7-Frontend",
+      "title": "[FE-014] LabWorkspace 快速 grid 模板",
+      "description": "As a 量化操盘手 / 系统用户, I want LabWorkspace 快速 grid 模板, so that 参数空间预设",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 53,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-054",
+      "originalId": "FE-015",
+      "layer": "L7-Frontend",
+      "title": "[FE-015] LabWorkspace leaderboard 超额列",
+      "description": "As a 量化操盘手 / 系统用户, I want LabWorkspace leaderboard 超额列, so that vs HS300 / ZZ500",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 54,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-055",
+      "originalId": "FE-016",
+      "layer": "L7-Frontend",
+      "title": "[FE-016] PortfolioWorkspace 日归因卡",
+      "description": "As a 量化操盘手 / 系统用户, I want PortfolioWorkspace 日归因卡, so that 71 文档输出消费",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 55,
+      "passes": false,
+      "notes": "依赖: ATTR-007"
+    },
+    {
+      "id": "US-056",
+      "originalId": "FE-017",
+      "layer": "L7-Frontend",
+      "title": "[FE-017] PortfolioWorkspace weekly/monthly/quarterly tab",
+      "description": "As a 量化操盘手 / 系统用户, I want PortfolioWorkspace weekly/monthly/quarterly tab, so that 复盘日记升级",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 56,
+      "passes": false,
+      "notes": "依赖: WK-012"
+    },
+    {
+      "id": "US-057",
+      "originalId": "FE-018",
+      "layer": "L7-Frontend",
+      "title": "[FE-018] PortfolioWorkspace 行业集中度 KPI",
+      "description": "As a 量化操盘手 / 系统用户, I want PortfolioWorkspace 行业集中度 KPI, so that > 25% 红色高亮",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 57,
+      "passes": false,
+      "notes": "依赖: PR-007"
+    },
+    {
+      "id": "US-058",
+      "originalId": "FE-019",
+      "layer": "L7-Frontend",
+      "title": "[FE-019] PortfolioWorkspace 持仓 ATR/DD/days_held 列",
+      "description": "As a 量化操盘手 / 系统用户, I want PortfolioWorkspace 持仓 ATR/DD/days_held 列, so that 高级指标",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 58,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-059",
+      "originalId": "FE-020",
+      "layer": "L7-Frontend",
+      "title": "[FE-020] PortfolioWorkspace AI 日记 + 错误模式 tab",
+      "description": "As a 量化操盘手 / 系统用户, I want PortfolioWorkspace AI 日记 + 错误模式 tab, so that 76 文档消费",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 59,
+      "passes": false,
+      "notes": "依赖: EV-014"
+    },
+    {
+      "id": "US-060",
+      "originalId": "FE-021",
+      "layer": "L7-Frontend",
+      "title": "[FE-021] DataWorkspace 加厚 6 tab",
+      "description": "As a 量化操盘手 / 系统用户, I want DataWorkspace 加厚 6 tab, so that 实际内容填充",
+      "acceptanceCriteria": [
+        "6 tab 真内容",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 60,
+      "passes": false,
+      "notes": "依赖: D-001"
+    },
+    {
+      "id": "US-061",
+      "originalId": "FE-022",
+      "layer": "L7-Frontend",
+      "title": "[FE-022] DataWorkspace SLA dashboard",
+      "description": "As a 量化操盘手 / 系统用户, I want DataWorkspace SLA dashboard, so that 时效 SLA 可视化",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 61,
+      "passes": false,
+      "notes": "依赖: D-001"
+    },
+    {
+      "id": "US-062",
+      "originalId": "FE-023",
+      "layer": "L7-Frontend",
+      "title": "[FE-023] DataWorkspace 数据缺失独立告警",
+      "description": "As a 量化操盘手 / 系统用户, I want DataWorkspace 数据缺失独立告警, so that category='data'",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 62,
+      "passes": false,
+      "notes": "依赖: D-028"
+    },
+    {
+      "id": "US-063",
+      "originalId": "FE-024",
+      "layer": "L7-Frontend",
+      "title": "[FE-024] DataWorkspace 补抓按钮",
+      "description": "As a 量化操盘手 / 系统用户, I want DataWorkspace 补抓按钮, so that UI 一键触发",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 63,
+      "passes": false,
+      "notes": "依赖: D-027"
+    },
+    {
+      "id": "US-064",
+      "originalId": "FE-025",
+      "layer": "L7-Frontend",
+      "title": "[FE-025] DataWorkspace 数据源切换",
+      "description": "As a 量化操盘手 / 系统用户, I want DataWorkspace 数据源切换, so that 主备源状态可视化",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 64,
+      "passes": false,
+      "notes": "依赖: D-026"
+    },
+    {
+      "id": "US-065",
+      "originalId": "FE-026",
+      "layer": "L7-Frontend",
+      "title": "[FE-026] SettingsWorkspace 分析引擎 mode 切换",
+      "description": "As a 量化操盘手 / 系统用户, I want SettingsWorkspace 分析引擎 mode 切换, so that off/shadow/hard UI",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 65,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-066",
+      "originalId": "FE-027",
+      "layer": "L7-Frontend",
+      "title": "[FE-027] SettingsWorkspace 风控参数中心 tab",
+      "description": "As a 量化操盘手 / 系统用户, I want SettingsWorkspace 风控参数中心 tab, so that 合并所有 risk 阈值",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 66,
+      "passes": false,
+      "notes": "依赖: PR-020"
+    },
+    {
+      "id": "US-067",
+      "originalId": "FE-028",
+      "layer": "L7-Frontend",
+      "title": "[FE-028] SettingsWorkspace AI 引擎 8 dim 权重 slider",
+      "description": "As a 量化操盘手 / 系统用户, I want SettingsWorkspace AI 引擎 8 dim 权重 slider, so that 用户调权",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 67,
+      "passes": false,
+      "notes": "依赖: AE-009"
+    },
+    {
+      "id": "US-068",
+      "originalId": "FE-029",
+      "layer": "L7-Frontend",
+      "title": "[FE-029] SettingsWorkspace 待办建议 tab",
+      "description": "As a 量化操盘手 / 系统用户, I want SettingsWorkspace 待办建议 tab, so that 黑天鹅/偏差/改进",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 68,
+      "passes": false,
+      "notes": "依赖: PR-013, EV-008"
+    },
+    {
+      "id": "US-069",
+      "originalId": "FE-030",
+      "layer": "L7-Frontend",
+      "title": "[FE-030] SettingsWorkspace 策略 kill-switch UI",
+      "description": "As a 量化操盘手 / 系统用户, I want SettingsWorkspace 策略 kill-switch UI, so that 单独 disable/enable",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 69,
+      "passes": false,
+      "notes": "依赖: S-013"
+    },
+    {
+      "id": "US-070",
+      "originalId": "FE-031",
+      "layer": "L7-Frontend",
+      "title": "[FE-031] AlertsBell 顶 nav bar",
+      "description": "As a 量化操盘手 / 系统用户, I want AlertsBell 顶 nav bar, so that 全局浮动 badge",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 70,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-071",
+      "originalId": "FE-032",
+      "layer": "L7-Frontend",
+      "title": "[FE-032] AlertsPanel filter + search + 分类",
+      "description": "As a 量化操盘手 / 系统用户, I want AlertsPanel filter + search + 分类, so that 完整 alerts panel",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 71,
+      "passes": false,
+      "notes": "依赖: FE-031"
+    },
+    {
+      "id": "US-072",
+      "originalId": "FE-033",
+      "layer": "L7-Frontend",
+      "title": "[FE-033] AlertItem snooze + action",
+      "description": "As a 量化操盘手 / 系统用户, I want AlertItem snooze + action, so that snooze 1h/1d/1w + 一键执行",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 72,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-073",
+      "originalId": "FE-034",
+      "layer": "L7-Frontend",
+      "title": "[FE-034] WebSocket /ws/alerts 后端 + 前端",
+      "description": "As a 量化操盘手 / 系统用户, I want WebSocket /ws/alerts 后端 + 前端, so that 实时推送 + 30s polling fallback",
+      "acceptanceCriteria": [
+        "实时",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 73,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-074",
+      "originalId": "FE-035",
+      "layer": "L7-Frontend",
+      "title": "[FE-035] CriticalAlertModal 强制弹窗",
+      "description": "As a 量化操盘手 / 系统用户, I want CriticalAlertModal 强制弹窗, so that critical 必须确认",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 74,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-075",
+      "originalId": "FE-036",
+      "layer": "L7-Frontend",
+      "title": "[FE-036] AIStockAnalysisModal v2",
+      "description": "As a 量化操盘手 / 系统用户, I want AIStockAnalysisModal v2, so that 8 dim score bar + evidence + action plan",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 75,
+      "passes": false,
+      "notes": "依赖: AE-002"
+    },
+    {
+      "id": "US-076",
+      "originalId": "FE-037",
+      "layer": "L7-Frontend",
+      "title": "[FE-037] AnalyzerScoreBar + ConfidenceRing + EvidenceList 组件",
+      "description": "As a 量化操盘手 / 系统用户, I want AnalyzerScoreBar + ConfidenceRing + EvidenceList 组件, so that v2 子组件",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 76,
+      "passes": false,
+      "notes": "依赖: FE-036"
+    },
+    {
+      "id": "US-077",
+      "originalId": "FE-038",
+      "layer": "L7-Frontend",
+      "title": "[FE-038] DataMissingBanner + ActionPlanCard",
+      "description": "As a 量化操盘手 / 系统用户, I want DataMissingBanner + ActionPlanCard, so that v2 子组件",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 77,
+      "passes": false,
+      "notes": "依赖: FE-036"
+    },
+    {
+      "id": "US-078",
+      "originalId": "PM-001",
+      "layer": "L8-Postmortem",
+      "title": "[PM-001] DailyAttributionService",
+      "description": "As a 量化操盘手 / 系统用户, I want DailyAttributionService, so that 17:00 cron 触发；6 维归因",
+      "acceptanceCriteria": [
+        "service 输出",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 78,
+      "passes": false,
+      "notes": "依赖: OPS-002"
+    },
+    {
+      "id": "US-079",
+      "originalId": "PM-002",
+      "layer": "L8-Postmortem",
+      "title": "[PM-002] AttributionEngine",
+      "description": "As a 量化操盘手 / 系统用户, I want AttributionEngine, so that Brinson-Fachler 拆解算法",
+      "acceptanceCriteria": [
+        "单测 ±5%",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 79,
+      "passes": false,
+      "notes": "依赖: PM-001"
+    },
+    {
+      "id": "US-080",
+      "originalId": "PM-003",
+      "layer": "L8-Postmortem",
+      "title": "[PM-003] DailyAttributionReport model",
+      "description": "As a 量化操盘手 / 系统用户, I want DailyAttributionReport model, so that (date, portfolio_id, breakdown JSONB, ai_summary TEXT)",
+      "acceptanceCriteria": [
+        "model OK",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 80,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-081",
+      "originalId": "PM-004",
+      "layer": "L8-Postmortem",
+      "title": "[PM-004] ExecutionCostAggregator",
+      "description": "As a 量化操盘手 / 系统用户, I want ExecutionCostAggregator, so that slippage + commission + stamp_duty 汇总",
+      "acceptanceCriteria": [
+        "与 LiveTradeFill 对账 ≥ 99%",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 81,
+      "passes": false,
+      "notes": "依赖: EX-013"
+    },
+    {
+      "id": "US-082",
+      "originalId": "PM-005",
+      "layer": "L8-Postmortem",
+      "title": "[PM-005] AIAttributionSummary",
+      "description": "As a 量化操盘手 / 系统用户, I want AIAttributionSummary, so that LLM 输入 6 维归因 → ≤ 200 字",
+      "acceptanceCriteria": [
+        "输出含 ≥ 3 数字",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 82,
+      "passes": false,
+      "notes": "依赖: PM-003"
+    },
+    {
+      "id": "US-083",
+      "originalId": "PM-006",
+      "layer": "L8-Postmortem",
+      "title": "[PM-006] DAILY_ATTRIBUTION_GENERATE cron",
+      "description": "As a 量化操盘手 / 系统用户, I want DAILY_ATTRIBUTION_GENERATE cron, so that 17:00 工作日",
+      "acceptanceCriteria": [
+        "表里有当日记录",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 83,
+      "passes": false,
+      "notes": "依赖: OPS-002, PM-005"
+    },
+    {
+      "id": "US-084",
+      "originalId": "PM-007",
+      "layer": "L8-Postmortem",
+      "title": "[PM-007] DailyAttribution route + controller",
+      "description": "As a 量化操盘手 / 系统用户, I want DailyAttribution route + controller, so that GET /api/portfolio/:id/attribution/daily",
+      "acceptanceCriteria": [
+        "接口测试",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 84,
+      "passes": false,
+      "notes": "依赖: PM-006"
+    },
+    {
+      "id": "US-085",
+      "originalId": "PM-008",
+      "layer": "L8-Postmortem",
+      "title": "[PM-008] BehaviorBiasDetector.detectIncremental",
+      "description": "As a 量化操盘手 / 系统用户, I want BehaviorBiasDetector.detectIncremental, so that 只在今日新增上诊断",
+      "acceptanceCriteria": [
+        "性能优化",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 85,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-086",
+      "originalId": "PM-009",
+      "layer": "L8-Postmortem",
+      "title": "[PM-009] 飞书 push DailyAttribution",
+      "description": "As a 量化操盘手 / 系统用户, I want 飞书 push DailyAttribution, so that 17:35 前送达",
+      "acceptanceCriteria": [
+        "推送",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 86,
+      "passes": false,
+      "notes": "依赖: OPS-005, PM-005"
+    },
+    {
+      "id": "US-087",
+      "originalId": "PM-011",
+      "layer": "L8-Postmortem",
+      "title": "[PM-011] WeeklyReview strategy_performance 列",
+      "description": "As a 量化操盘手 / 系统用户, I want WeeklyReview strategy_performance 列, so that 按 strategy_key 拆 pnl",
+      "acceptanceCriteria": [
+        "payload 升级",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 87,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-088",
+      "originalId": "PM-012",
+      "layer": "L8-Postmortem",
+      "title": "[PM-012] WeeklyReview correlation matrix",
+      "description": "As a 量化操盘手 / 系统用户, I want WeeklyReview correlation matrix, so that N×N pearson",
+      "acceptanceCriteria": [
+        "输出矩阵",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 88,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-089",
+      "originalId": "PM-018",
+      "layer": "L8-Postmortem",
+      "title": "[PM-018] AIDiaryEntry model",
+      "description": "As a 量化操盘手 / 系统用户, I want AIDiaryEntry model, so that (user_id, date, text, evidence JSONB)",
+      "acceptanceCriteria": [
+        "model OK",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 89,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-090",
+      "originalId": "PM-019",
+      "layer": "L8-Postmortem",
+      "title": "[PM-019] AIDiaryService",
+      "description": "As a 量化操盘手 / 系统用户, I want AIDiaryService, so that 每日 18:00 LLM ≤ 500 字日记",
+      "acceptanceCriteria": [
+        "每日生成",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 90,
+      "passes": false,
+      "notes": "依赖: PM-018"
+    },
+    {
+      "id": "US-091",
+      "originalId": "PM-020",
+      "layer": "L8-Postmortem",
+      "title": "[PM-020] AI_DIARY_GENERATE cron",
+      "description": "As a 量化操盘手 / 系统用户, I want AI_DIARY_GENERATE cron, so that 每日 18:00",
+      "acceptanceCriteria": [
+        "cron 跑成功",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 91,
+      "passes": false,
+      "notes": "依赖: OPS-002"
+    },
+    {
+      "id": "US-092",
+      "originalId": "PM-021",
+      "layer": "L8-Postmortem",
+      "title": "[PM-021] ErrorPatternReport model + Aggregator",
+      "description": "As a 量化操盘手 / 系统用户, I want ErrorPatternReport model + Aggregator, so that 90 天 bias/outcome/attribution 聚合",
+      "acceptanceCriteria": [
+        "周日生成",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 92,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-093",
+      "originalId": "PM-022",
+      "layer": "L8-Postmortem",
+      "title": "[PM-022] WEEKLY_ERROR_PATTERN cron",
+      "description": "As a 量化操盘手 / 系统用户, I want WEEKLY_ERROR_PATTERN cron, so that 每周日 10:00",
+      "acceptanceCriteria": [
+        "cron 跑成功",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 93,
+      "passes": false,
+      "notes": "依赖: OPS-002"
+    },
+    {
+      "id": "US-094",
+      "originalId": "PM-023",
+      "layer": "L8-Postmortem",
+      "title": "[PM-023] ImprovementSuggestion model + Service",
+      "description": "As a 量化操盘手 / 系统用户, I want ImprovementSuggestion model + Service, so that bias/pattern/factor 汇集 → 落表",
+      "acceptanceCriteria": [
+        "model OK",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 94,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-095",
+      "originalId": "OPS-006",
+      "layer": "L0-Ops 基础",
+      "title": "[OPS-006] 飞书 webhook fail-open",
+      "description": "As a 量化操盘手 / 系统用户, I want 飞书 webhook fail-open, so that feishuNotifier 失败时不阻塞主流程；写 fallback_log 表 + 5min retry",
+      "acceptanceCriteria": [
+        "mock feishu 504，主流程仍完成",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 95,
+      "passes": false,
+      "notes": "依赖: OPS-005"
+    },
+    {
+      "id": "US-096",
+      "originalId": "OPS-007",
+      "layer": "L0-Ops 基础",
+      "title": "[OPS-007] DB 备份 cron",
+      "description": "As a 量化操盘手 / 系统用户, I want DB 备份 cron, so that 每日 02:00 pg_dump → S3 / 本地 backup 目录；保留 30 天",
+      "acceptanceCriteria": [
+        "备份文件存在且可 restore 验证",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 96,
+      "passes": false,
+      "notes": "依赖: OPS-001"
+    },
+    {
+      "id": "US-097",
+      "originalId": "OPS-008",
+      "layer": "L0-Ops 基础",
+      "title": "[OPS-008] 日志统一字段",
+      "description": "As a 量化操盘手 / 系统用户, I want 日志统一字段, so that 所有 logger.info/warn/error 携带 trace_id + module；JSON format",
+      "acceptanceCriteria": [
+        "grep trace_id 能追踪一次 request 全链路",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 97,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-098",
+      "originalId": "OPS-009",
+      "layer": "L0-Ops 基础",
+      "title": "[OPS-009] OpenAPI 自动生成",
+      "description": "As a 量化操盘手 / 系统用户, I want OpenAPI 自动生成, so that 所有 controller 输出 OpenAPI spec 到 docs/openapi.json；CI 校验未漂移",
+      "acceptanceCriteria": [
+        "openapi.json 与代码同步",
+        "CI 检查通过",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 98,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-099",
+      "originalId": "PR-010",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-010] BlackSwanEvent model",
+      "description": "As a 量化操盘手 / 系统用户, I want BlackSwanEvent model, so that 黑天鹅事件持久化（id, detected_at, event_type, severity, scope）",
+      "acceptanceCriteria": [
+        "model",
+        "migration",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 99,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-100",
+      "originalId": "PR-011",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-011] BlackSwanDetector",
+      "description": "As a 量化操盘手 / 系统用户, I want BlackSwanDetector, so that 30min cron 巡 5 类信号",
+      "acceptanceCriteria": [
+        "cron 跑成功",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 100,
+      "passes": false,
+      "notes": "依赖: PR-010, OPS-002"
+    },
+    {
+      "id": "US-101",
+      "originalId": "PR-012",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-012] BlackSwanPostmortemReport model",
+      "description": "As a 量化操盘手 / 系统用户, I want BlackSwanPostmortemReport model, so that 报告模型 + 4 段 JSONB 字段",
+      "acceptanceCriteria": [
+        "model OK",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 101,
+      "passes": false,
+      "notes": "依赖: PR-010"
+    },
+    {
+      "id": "US-102",
+      "originalId": "PR-013",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-013] BlackSwanPostmortemService",
+      "description": "As a 量化操盘手 / 系统用户, I want BlackSwanPostmortemService, so that 触发后 30min 内生成 4 段",
+      "acceptanceCriteria": [
+        "测试事件 → 报告生成",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 102,
+      "passes": false,
+      "notes": "依赖: PR-012"
+    },
+    {
+      "id": "US-103",
+      "originalId": "PR-014",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-014] CounterfactualBaselineCalculator",
+      "description": "As a 量化操盘手 / 系统用户, I want CounterfactualBaselineCalculator, so that 4 baseline（hold/zero/plan/perfect）模拟",
+      "acceptanceCriteria": [
+        "数值验证",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 103,
+      "passes": false,
+      "notes": "依赖: PR-013"
+    },
+    {
+      "id": "US-104",
+      "originalId": "PR-015",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-015] EventTimelineReplayer",
+      "description": "As a 量化操盘手 / 系统用户, I want EventTimelineReplayer, so that 拉事件前 N 天 RiskAlert + Watchdog 输出",
+      "acceptanceCriteria": [
+        "时间轴输出",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 104,
+      "passes": false,
+      "notes": "依赖: PR-013"
+    },
+    {
+      "id": "US-105",
+      "originalId": "PR-016",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-016] ImprovementSuggestor",
+      "description": "As a 量化操盘手 / 系统用户, I want ImprovementSuggestor, so that 4 类短板归类 + 模板建议生成",
+      "acceptanceCriteria": [
+        "建议输出",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 105,
+      "passes": false,
+      "notes": "依赖: PR-013"
+    },
+    {
+      "id": "US-106",
+      "originalId": "EX-006",
+      "layer": "L5-Execution",
+      "title": "[EX-006] TWAP/VWAP/Iceberg 算法实现",
+      "description": "As a 量化操盘手 / 系统用户, I want TWAP/VWAP/Iceberg 算法实现, so that 大单拆 N 笔；按 ADV 自适应",
+      "acceptanceCriteria": [
+        "算法跑通",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 106,
+      "passes": false,
+      "notes": "依赖: EX-001"
+    },
+    {
+      "id": "US-107",
+      "originalId": "EX-007",
+      "layer": "L5-Execution",
+      "title": "[EX-007] 集合竞价 vs 连续 vs 收盘 区分处理",
+      "description": "As a 量化操盘手 / 系统用户, I want 集合竞价 vs 连续 vs 收盘 区分处理, so that ExecutionPolicyRouter 分时段策略",
+      "acceptanceCriteria": [
+        "单测 3 段",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 107,
+      "passes": false,
+      "notes": "依赖: EX-006"
+    },
+    {
+      "id": "US-108",
+      "originalId": "EX-008",
+      "layer": "L5-Execution",
+      "title": "[EX-008] runShadowAutopilot 幂等",
+      "description": "As a 量化操盘手 / 系统用户, I want runShadowAutopilot 幂等, so that BETA-4 已实现；扩展所有 autopilot 任务统一幂等 helper",
+      "acceptanceCriteria": [
+        "幂等单测",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 108,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-109",
+      "originalId": "EX-009",
+      "layer": "L5-Execution",
+      "title": "[EX-009] bridge ed25519 升级",
+      "description": "As a 量化操盘手 / 系统用户, I want bridge ed25519 升级, so that 60 文档第 C.4 标记的 HMAC → ed25519",
+      "acceptanceCriteria": [
+        "升级完成",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 109,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-110",
+      "originalId": "EX-010",
+      "layer": "L5-Execution",
+      "title": "[EX-010] qmt vs ptrade 差异文档化",
+      "description": "As a 量化操盘手 / 系统用户, I want qmt vs ptrade 差异文档化, so that 60 文档第 C.5 标记",
+      "acceptanceCriteria": [
+        "docs 完整",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 110,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-111",
+      "originalId": "AE-005",
+      "layer": "L6-AI Layer",
+      "title": "[AE-005] FundamentalAnalyzer peer rank",
+      "description": "As a 量化操盘手 / 系统用户, I want FundamentalAnalyzer peer rank, so that 同行业 PE/PB/ROE 百分位 evidence",
+      "acceptanceCriteria": [
+        "evidence 含百分位",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 111,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-112",
+      "originalId": "AE-006",
+      "layer": "L6-AI Layer",
+      "title": "[AE-006] TechnicalAnalyzer entry_zone marketLimits",
+      "description": "As a 量化操盘手 / 系统用户, I want TechnicalAnalyzer entry_zone marketLimits, so that 替换 inline 实现接 marketLimits.ts",
+      "acceptanceCriteria": [
+        "接通",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 112,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-113",
+      "originalId": "AE-007",
+      "layer": "L6-AI Layer",
+      "title": "[AE-007] IndustryRegimeAnalyzer dragon resonance",
+      "description": "As a 量化操盘手 / 系统用户, I want IndustryRegimeAnalyzer dragon resonance, so that 同板块龙头共振 evidence",
+      "acceptanceCriteria": [
+        "evidence 输出",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 113,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-114",
+      "originalId": "AE-008",
+      "layer": "L6-AI Layer",
+      "title": "[AE-008] confidence_tier 字段",
+      "description": "As a 量化操盘手 / 系统用户, I want confidence_tier 字段, so that high/medium/low 加 aggregator 输出",
+      "acceptanceCriteria": [
+        "字段输出",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 114,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-115",
+      "originalId": "AE-010",
+      "layer": "L6-AI Layer",
+      "title": "[AE-010] RiskAnalyzer ATR-adjusted stop",
+      "description": "As a 量化操盘手 / 系统用户, I want RiskAnalyzer ATR-adjusted stop, so that max(support[0], close - 2×ATR)",
+      "acceptanceCriteria": [
+        "单测",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 115,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-116",
+      "originalId": "ANN-008",
+      "layer": "L6-AI Layer",
+      "title": "[ANN-008] AnnouncementEventRelation model",
+      "description": "As a 量化操盘手 / 系统用户, I want AnnouncementEventRelation model, so that 公告关联公司",
+      "acceptanceCriteria": [
+        "model OK",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 116,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-117",
+      "originalId": "ANN-009",
+      "layer": "L6-AI Layer",
+      "title": "[ANN-009] RelatedCompanyExtractor",
+      "description": "As a 量化操盘手 / 系统用户, I want RelatedCompanyExtractor, so that 识别公告中提到的其它股票",
+      "acceptanceCriteria": [
+        "识别 ≥ 80%",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 117,
+      "passes": false,
+      "notes": "依赖: ANN-008"
+    },
+    {
+      "id": "US-118",
+      "originalId": "ANN-010",
+      "layer": "L6-AI Layer",
+      "title": "[ANN-010] AnnouncementDedupeService",
+      "description": "As a 量化操盘手 / 系统用户, I want AnnouncementDedupeService, so that 同事件多次公告去重",
+      "acceptanceCriteria": [
+        "去重 ≥ 70%",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 118,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-119",
+      "originalId": "KOL-005",
+      "layer": "L6-AI Layer",
+      "title": "[KOL-005] KOLAggregator time_decay",
+      "description": "As a 量化操盘手 / 系统用户, I want KOLAggregator time_decay, so that weight × exp(-days_old / 7)",
+      "acceptanceCriteria": [
+        "单测",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 119,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-120",
+      "originalId": "KOL-006",
+      "layer": "L6-AI Layer",
+      "title": "[KOL-006] KOLAggregator industry 维度聚合",
+      "description": "As a 量化操盘手 / 系统用户, I want KOLAggregator industry 维度聚合, so that aggregateForIndustry",
+      "acceptanceCriteria": [
+        "输出",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 120,
+      "passes": false,
+      "notes": "依赖: KOL-002"
+    },
+    {
+      "id": "US-121",
+      "originalId": "QA-004",
+      "layer": "L6-AI Layer",
+      "title": "[QA-004] IndustryQAHeatService",
+      "description": "As a 量化操盘手 / 系统用户, I want IndustryQAHeatService, so that 行业级 top 10 active",
+      "acceptanceCriteria": [
+        "API 输出",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 121,
+      "passes": false,
+      "notes": "依赖: QA-002"
+    },
+    {
+      "id": "US-122",
+      "originalId": "QA-005",
+      "layer": "L6-AI Layer",
+      "title": "[QA-005] SentimentAnalyzer 接 QA 新维度",
+      "description": "As a 量化操盘手 / 系统用户, I want SentimentAnalyzer 接 QA 新维度, so that evidence 含 questions_growth + answer_rate",
+      "acceptanceCriteria": [
+        "evidence 升级",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 122,
+      "passes": false,
+      "notes": "依赖: QA-002"
+    },
+    {
+      "id": "US-123",
+      "originalId": "PM-010",
+      "layer": "L8-Postmortem",
+      "title": "[PM-010] PortfolioWorkspace 归因卡",
+      "description": "As a 量化操盘手 / 系统用户, I want PortfolioWorkspace 归因卡, so that UI 展示 6 维 pie + best/worst + AI summary",
+      "acceptanceCriteria": [
+        "UI",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 123,
+      "passes": false,
+      "notes": "依赖: PM-007"
+    },
+    {
+      "id": "US-124",
+      "originalId": "PM-013",
+      "layer": "L8-Postmortem",
+      "title": "[PM-013] StrategyCapacityEstimator",
+      "description": "As a 量化操盘手 / 系统用户, I want StrategyCapacityEstimator, so that capacity_used_pct",
+      "acceptanceCriteria": [
+        "输出",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 124,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-125",
+      "originalId": "PM-014",
+      "layer": "L8-Postmortem",
+      "title": "[PM-014] AIWeeklyOpinion 替换 heuristic",
+      "description": "As a 量化操盘手 / 系统用户, I want AIWeeklyOpinion 替换 heuristic, so that LLM ≤ 300 字摘要 + 建议结构化",
+      "acceptanceCriteria": [
+        "输出 ≥ 200 字",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 125,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-126",
+      "originalId": "PM-024",
+      "layer": "L8-Postmortem",
+      "title": "[PM-024] ImprovementSuggestion apply route",
+      "description": "As a 量化操盘手 / 系统用户, I want ImprovementSuggestion apply route, so that POST /api/.../suggestion/:id/apply",
+      "acceptanceCriteria": [
+        "接口测试",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 126,
+      "passes": false,
+      "notes": "依赖: PM-023"
+    },
+    {
+      "id": "US-127",
+      "originalId": "PM-025",
+      "layer": "L8-Postmortem",
+      "title": "[PM-025] PersonalityStrategyMatcher",
+      "description": "As a 量化操盘手 / 系统用户, I want PersonalityStrategyMatcher, so that 性格画像 vs 策略画像匹配度",
+      "acceptanceCriteria": [
+        "输出",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 127,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-128",
+      "originalId": "PM-026",
+      "layer": "L8-Postmortem",
+      "title": "[PM-026] BehaviorBias 新 detector style_drift + time_bias",
+      "description": "As a 量化操盘手 / 系统用户, I want BehaviorBias 新 detector style_drift + time_bias, so that 6 类 detector",
+      "acceptanceCriteria": [
+        "单测",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 128,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-129",
+      "originalId": "OPS-010",
+      "layer": "L0-Ops 基础",
+      "title": "[OPS-010] Grafana dashboard 模板",
+      "description": "As a 量化操盘手 / 系统用户, I want Grafana dashboard 模板, so that 提供 5 个 dashboard json：信号流 / 风控 / 对账 / 数据 SLA / 策略表现",
+      "acceptanceCriteria": [
+        "dashboard 可导入即用",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 129,
+      "passes": false,
+      "notes": "依赖: OPS-004"
+    },
+    {
+      "id": "US-130",
+      "originalId": "OPS-011",
+      "layer": "L0-Ops 基础",
+      "title": "[OPS-011] git filter-repo 抹掉 IP",
+      "description": "As a 量化操盘手 / 系统用户, I want git filter-repo 抹掉 IP, so that 把 git 历史中的 47.93.224.109 删掉（implementation_summary 第 153 行明示）",
+      "acceptanceCriteria": [
+        "git log --all 不再出现该 IP",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 130,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-131",
+      "originalId": "OPS-012",
+      "layer": "L0-Ops 基础",
+      "title": "[OPS-012] CI matrix 升级",
+      "description": "As a 量化操盘手 / 系统用户, I want CI matrix 升级, so that CI 跑 lint + tsc + npm test + frontend test + docker build；任一失败 block PR",
+      "acceptanceCriteria": [
+        "GitHub Actions 配置完整",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 131,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-132",
+      "originalId": "PR-017",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-017] MarketRegimeAlertService 完善",
+      "description": "As a 量化操盘手 / 系统用户, I want MarketRegimeAlertService 完善, so that 连续 3 日 跌停股 > 100 触发\"全市场暂停建仓\"",
+      "acceptanceCriteria": [
+        "触发逻辑",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 132,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-133",
+      "originalId": "PR-018",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-018] 黑天鹅前端历史页",
+      "description": "As a 量化操盘手 / 系统用户, I want 黑天鹅前端历史页, so that SettingsWorkspace /black-swan tab：事件列表 + 详情",
+      "acceptanceCriteria": [
+        "UI 完成",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 133,
+      "passes": false,
+      "notes": "依赖: PR-013"
+    },
+    {
+      "id": "US-134",
+      "originalId": "PR-019",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-019] 季度黑天鹅汇总报告",
+      "description": "As a 量化操盘手 / 系统用户, I want 季度黑天鹅汇总报告, so that 每季度汇总并邮件",
+      "acceptanceCriteria": [
+        "邮件",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 134,
+      "passes": false,
+      "notes": "依赖: PR-013"
+    },
+    {
+      "id": "US-135",
+      "originalId": "PR-020",
+      "layer": "L4-Portfolio + Risk",
+      "title": "[PR-020] 风控参数中心前端",
+      "description": "As a 量化操盘手 / 系统用户, I want 风控参数中心前端, so that SettingsWorkspace 合并所有 risk 阈值到一个 panel",
+      "acceptanceCriteria": [
+        "UI 完成",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 135,
+      "passes": false,
+      "notes": "依赖: PR-002"
+    },
+    {
+      "id": "US-136",
+      "originalId": "EX-011",
+      "layer": "L5-Execution",
+      "title": "[EX-011] 七闸门统一入口",
+      "description": "As a 量化操盘手 / 系统用户, I want 七闸门统一入口, so that facade vs LiveTradingService 路径合并",
+      "acceptanceCriteria": [
+        "统一 helper",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 136,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-137",
+      "originalId": "EX-012",
+      "layer": "L5-Execution",
+      "title": "[EX-012] ReconciliationAlert 阈值调参 UI",
+      "description": "As a 量化操盘手 / 系统用户, I want ReconciliationAlert 阈值调参 UI, so that SettingsWorkspace 暴露 alignment_score 阈值",
+      "acceptanceCriteria": [
+        "UI 完成",
+        "Typecheck passes",
+        "Relevant unit tests pass",
+        "Verify in browser using dev-browser skill (or describe manual smoke if no browser env)"
+      ],
+      "priority": 137,
+      "passes": false,
+      "notes": "依赖: OPS-005"
+    },
+    {
+      "id": "US-138",
+      "originalId": "EX-013",
+      "layer": "L5-Execution",
+      "title": "[EX-013] 实盘 fill 异常分类",
+      "description": "As a 量化操盘手 / 系统用户, I want 实盘 fill 异常分类, so that partial / canceled / rejected 分类持久化",
+      "acceptanceCriteria": [
+        "统计可用",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 138,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-139",
+      "originalId": "AE-009",
+      "layer": "L6-AI Layer",
+      "title": "[AE-009] user analyzer_weights",
+      "description": "As a 量化操盘手 / 系统用户, I want user analyzer_weights, so that risk_config 支持用户自定义 8 dim 权重",
+      "acceptanceCriteria": [
+        "配置驱动",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 139,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-140",
+      "originalId": "KOL-007",
+      "layer": "L6-AI Layer",
+      "title": "[KOL-007] KOLAuthorTrackingService",
+      "description": "As a 量化操盘手 / 系统用户, I want KOLAuthorTrackingService, so that author 历史命中率统计",
+      "acceptanceCriteria": [
+        "90 天后 ≥ 3 author 胜率 ≥ 60%",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 140,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-141",
+      "originalId": "KOL-008",
+      "layer": "L6-AI Layer",
+      "title": "[KOL-008] ConceptLinkageAnalyzer",
+      "description": "As a 量化操盘手 / 系统用户, I want ConceptLinkageAnalyzer, so that xq_hot_concept 同板块联动",
+      "acceptanceCriteria": [
+        "输出",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 141,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-142",
+      "originalId": "KOL-009",
+      "layer": "L6-AI Layer",
+      "title": "[KOL-009] KOLAggregator semantic dedupe",
+      "description": "As a 量化操盘手 / 系统用户, I want KOLAggregator semantic dedupe, so that NLP/embedding 去重",
+      "acceptanceCriteria": [
+        "去重率 ≥ 70%",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 142,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-143",
+      "originalId": "PM-015",
+      "layer": "L8-Postmortem",
+      "title": "[PM-015] WeeklyReview /apply 接口",
+      "description": "As a 量化操盘手 / 系统用户, I want WeeklyReview /apply 接口, so that 建议落 strategy_config（人工 click）",
+      "acceptanceCriteria": [
+        "接口测试",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 143,
+      "passes": false,
+      "notes": "依赖: PM-014"
+    },
+    {
+      "id": "US-144",
+      "originalId": "PM-016",
+      "layer": "L8-Postmortem",
+      "title": "[PM-016] WeeklyReview 多 benchmark",
+      "description": "As a 量化操盘手 / 系统用户, I want WeeklyReview 多 benchmark, so that 加中证 500 + 创业板",
+      "acceptanceCriteria": [
+        "邮件出 3 benchmark",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 144,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-145",
+      "originalId": "PM-017",
+      "layer": "L8-Postmortem",
+      "title": "[PM-017] WeeklyReview 下周日历事件",
+      "description": "As a 量化操盘手 / 系统用户, I want WeeklyReview 下周日历事件, so that 读 EventsCalendar 未来 7 天",
+      "acceptanceCriteria": [
+        "邮件 section",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 145,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-146",
+      "originalId": "PM-027",
+      "layer": "L8-Postmortem",
+      "title": "[PM-027] apply 后效果跟踪",
+      "description": "As a 量化操盘手 / 系统用户, I want apply 后效果跟踪, so that 30 天 effect_metrics",
+      "acceptanceCriteria": [
+        "落表",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 146,
+      "passes": false,
+      "notes": "依赖: PM-024"
+    },
+    {
+      "id": "US-147",
+      "originalId": "KOL-001",
+      "layer": "L6-AI Layer",
+      "title": "[KOL-001] ETFCreationRedemption model",
+      "description": "As a 量化操盘手 / 系统用户, I want ETFCreationRedemption model, so that 见 D-011/D-012；归 data 层",
+      "acceptanceCriteria": [
+        "见 D-011",
+        "Typecheck passes",
+        "Relevant unit tests pass"
+      ],
+      "priority": 147,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

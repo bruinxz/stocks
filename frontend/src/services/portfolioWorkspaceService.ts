@@ -42,6 +42,21 @@ export interface PositionRow {
   unrealized_pnl: number;
   stop_loss_price: number | null;
   take_profit_price: number | null;
+  /**
+   * 追踪止损 — 持仓期间观察到的最高收盘价 (US-048).
+   * 由 TrailingStopGuard 每日收盘后写; 新仓首日尚未跑 guard 之前为 null.
+   * US-058 用作"当前回撤" 的分母 (DD% = (highest - current) / highest * 100).
+   */
+  highest_price?: number | null;
+  /** 追踪止损回撤比例 (US-048), 0-1 间. */
+  trailing_stop_pct?: number | null;
+  /** 追踪止损触发价 = highest_price * (1 - effective_pct), US-048 写入. */
+  trailing_stop_price?: number | null;
+  /**
+   * 当日 ATR(14) / current_price * 100, % 单位.  由 PaperTradingFacade.getPortfolio
+   * 在 US-058 加入: 服务端读 30 天日 bars 算 ATR(14), 缺数据返 null.
+   */
+  atr_pct?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -297,9 +312,56 @@ export const portfolioWorkspaceService = {
   appendJournalNote,
   fetchBenchmarkHistory,
   getCorrelationReport,
+  getIndustryConcentrationSummary,
+  getDailyAttributionReport,
 };
 
 export default portfolioWorkspaceService;
+
+// ============================================================
+// US-012: Industry concentration KPI snapshot
+// ============================================================
+
+export interface IndustryBreakdownEntry {
+  industry: string;
+  total_value: number;
+  /** 0-1 */
+  pct: number;
+  position_count: number;
+  symbols: string[];
+}
+
+export interface IndustryConcentrationSummary {
+  user_id: number;
+  portfolio_id: number | null;
+  enabled: boolean;
+  /** 告警阈值 0-1，默认 0.35。 */
+  alert_pct: number;
+  rebalance_target_pct: number;
+  /** 当前最大行业占比 0-1；null = 空持仓 / 无 portfolio。 */
+  max_industry_pct: number | null;
+  /** 对应行业名（null = 同上；`__UNKNOWN__` = 未分类）。 */
+  max_industry_name: string | null;
+  /** 当前是否超 alert_pct（严格 `>`，禁用配置强制 false）。 */
+  over_alert: boolean;
+  open_positions_count: number;
+  total_position_value: number;
+  industry_breakdown: IndustryBreakdownEntry[];
+}
+
+/** 哨兵 industry 名（与后端 IndustryConcentrationGuard 同步）。 */
+export const UNKNOWN_INDUSTRY_LABEL = '__UNKNOWN__';
+
+/**
+ * 拉取行业集中度 KPI 快照（US-012）— 顶部 KPI 卡专用。
+ *
+ * 后端 `GET /api/portfolio/industry-concentration-summary` — dry-run，不写
+ * RiskAlert，UI 可任意频率轮询。
+ */
+export async function getIndustryConcentrationSummary(): Promise<IndustryConcentrationSummary> {
+  const res = await api.get('/portfolio/industry-concentration-summary');
+  return unwrap<IndustryConcentrationSummary>(res, '获取行业集中度 KPI 失败');
+}
 
 // ============================================================
 // Phase 6: Portfolio correlation matrix + cluster
@@ -369,4 +431,123 @@ export async function getExposureReport(portfolioId?: number): Promise<ExposureR
     throw new Error(res.data?.message || '获取 exposure 失败');
   }
   return res.data.data as ExposureReport;
+}
+
+// ============================================================
+// US-123 [PM-010] PortfolioWorkspace 归因卡 — 后端 6 维归因报告
+// ============================================================
+//
+// 调 GET /api/portfolio/:id/attribution/daily (PM-007 / US-084 route),
+// 读 daily_attribution_reports 表 (PM-003 schema). 报告由 cron
+// DAILY_ATTRIBUTION_GENERATE (US-083 / PM-006) 在 17:00 工作日 upsert.
+//
+// 关键契约 (与 backend DailyAttributionService.DailyAttributionReport 对齐):
+//   - breakdown JSONB 含 6 维 + factor_contrib_total + industry_contrib[] +
+//     execution_cost + residual; 真值由 AttributionEngine (PM-002) 填.
+//   - best_trades / worst_trades 各取 top 3.
+//   - ai_summary ≤ 200 字; PM-005 (AIAttributionSummary) 替换成 LLM 输出.
+//   - status='ok'/'skipped'/'failed', skipped/failed 时仍写一行做"今日未跑"留痕.
+//
+// 404 = "当日报告不存在" → 返 null 让 UI 显示 Empty 占位 + 用户感知 cron 状态.
+
+export interface AttributionFactorContrib {
+  factor: string;
+  pnl: number;
+  pct: number;
+  /** 0-1 之间, 该因子在组合中的暴露权重 (PM-002 真填; placeholder=0) */
+  exposure: number;
+}
+
+export interface AttributionIndustryContrib {
+  industry: string;
+  pnl: number;
+  pct: number;
+  trade_count: number;
+}
+
+export interface AttributionExecutionCostBreakdown {
+  /** 总成本 (元) = commission_total + slippage_total */
+  total_cost: number;
+  /** 券商佣金 (元) */
+  commission_total: number;
+  /** 印花税 (元), 仅 SELL */
+  stamp_duty_total: number;
+  /** 过户费 (元) */
+  transfer_fee_total: number;
+  /** 滑点 (元), 仅当 caller 提供 ref_prices 时非 0 */
+  slippage_total: number;
+}
+
+export interface AttributionBreakdown {
+  factor_contrib: AttributionFactorContrib[];
+  factor_contrib_total: number;
+  industry_contrib: AttributionIndustryContrib[];
+  timing_contrib: number;
+  selection_contrib: number;
+  sizing_contrib: number;
+  execution_cost: number;
+  execution_cost_breakdown: AttributionExecutionCostBreakdown | null;
+  residual: number;
+}
+
+export interface AttributionBestWorstTrade {
+  id: number;
+  symbol: string;
+  name?: string | null;
+  realized_pnl: number;
+  realized_pnl_pct?: number | null;
+  amount: number;
+  quantity: number;
+}
+
+export interface DailyAttributionReportRow {
+  id: number;
+  portfolio_id: number;
+  date: string;
+  total_pnl: number;
+  total_pnl_pct: number | null;
+  realized_pnl: number;
+  unrealized_delta: number;
+  trade_count: number;
+  buy_count: number;
+  sell_count: number;
+  breakdown: AttributionBreakdown;
+  best_trades: AttributionBestWorstTrade[];
+  worst_trades: AttributionBestWorstTrade[];
+  ai_summary: string;
+  bias_findings: Array<Record<string, unknown>>;
+  recommendations: string[];
+  status: 'ok' | 'skipped' | 'failed' | string;
+  reason: string | null;
+  metadata: Record<string, unknown>;
+  generated_at: string;
+  source: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * 拉取单个 portfolio 当日归因报告 (US-123 PM-010).
+ *
+ * @param portfolioId  PaperTradingPortfolio.id
+ * @param date         YYYY-MM-DD, 默认后端今日 (Asia/Shanghai)
+ * @returns            报告对象, 404 (报告未生成) 返 null 让 UI 走 Empty.
+ *                     其它错误透传 (component 走 loadError 兜底).
+ */
+export async function getDailyAttributionReport(
+  portfolioId: number,
+  date?: string
+): Promise<DailyAttributionReportRow | null> {
+  try {
+    const url = `/portfolio/${portfolioId}/attribution/daily`;
+    const res = await api.get(url, { params: date ? { date } : {} });
+    return unwrap<DailyAttributionReportRow>(res, '获取归因报告失败');
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status === 404) {
+      // 报告未生成 — cron 未跑 / 当日新建账户 / 周末. 让 UI 显示 Empty + 解释文案.
+      return null;
+    }
+    throw err;
+  }
 }

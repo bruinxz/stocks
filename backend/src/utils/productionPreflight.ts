@@ -36,7 +36,12 @@ const KNOWN_LEAKED_SECRETS = new Set([
 
 const WEAK_PASSWORDS = new Set(['666', '123456', 'password', 'admin']);
 
-function requireEnv(ctx: RuleCtx, key: string, message?: string, level: 'error' | 'warn' = 'error'): void {
+function requireEnv(
+  ctx: RuleCtx,
+  key: string,
+  message?: string,
+  level: 'error' | 'warn' = 'error'
+): void {
   const value = ctx.env[key];
   if (!value || !String(value).trim()) {
     ctx.results.push({
@@ -202,6 +207,38 @@ function checkBridgeSecrets(ctx: RuleCtx): void {
       message: '不要与旧变量 LIVE_BRIDGE_KEY / LIVE_BRIDGE_SECRET 同时配置',
     });
   }
+  // US-109 [EX-009] ed25519 公钥可选; 配了就校验格式
+  const ed = String(ctx.env.LIVE_BRIDGE_ED25519_PUBKEYS || '').trim();
+  if (ed) {
+    let edParsed: any;
+    try {
+      edParsed = JSON.parse(ed);
+    } catch {
+      ctx.results.push({
+        key: 'LIVE_BRIDGE_ED25519_PUBKEYS',
+        level: 'error',
+        message: '不是合法 JSON',
+      });
+      return;
+    }
+    if (!edParsed || typeof edParsed !== 'object' || Array.isArray(edParsed)) {
+      ctx.results.push({
+        key: 'LIVE_BRIDGE_ED25519_PUBKEYS',
+        level: 'error',
+        message: '必须是 {bridge_key: pubkey} JSON object',
+      });
+      return;
+    }
+    for (const [k, v] of Object.entries(edParsed)) {
+      if (typeof v !== 'string' || v.length < 32) {
+        ctx.results.push({
+          key: 'LIVE_BRIDGE_ED25519_PUBKEYS',
+          level: 'error',
+          message: `bridge_key=${k} ed25519 公钥过短 (<32 chars), 期待 hex/base64/PEM`,
+        });
+      }
+    }
+  }
 }
 
 function checkRiskLimitsForGrayscale(ctx: RuleCtx): void {
@@ -260,7 +297,9 @@ function checkBrokerGateway(ctx: RuleCtx): void {
     ctx.results.push({
       key: 'LIVE_BROKER_GATEWAY',
       level: 'error',
-      message: `真实下单必须 LIVE_BROKER_GATEWAY ∈ {qmt_bridge, ptrade_bridge}，当前 ${gateway || 'unset'}`,
+      message: `真实下单必须 LIVE_BROKER_GATEWAY ∈ {qmt_bridge, ptrade_bridge}，当前 ${
+        gateway || 'unset'
+      }`,
     });
   }
 }

@@ -1022,6 +1022,93 @@ export class IndustryConcentrationGuard {
     const normalized = normalizeIndustryConcentrationConfig(raw);
     return this.source.saveConfig(user_id, normalized);
   }
+
+  /**
+   * 单 user 行业集中度快照（US-012 KPI 用） — UI / 顶部 KPI 卡专用。
+   *
+   * 本质是 `evaluateAfterClose({ user_id, dry_run: true })` 的"单 user 投影"：
+   *   - 不写 RiskAlert（dry_run）；
+   *   - 不扫全表（user_id 明确）；
+   *   - 返回简化的 KPI 字段（max_industry_pct / max_industry_name / top 3 行业 /
+   *     alert_pct）让前端**一次 fetch 直接渲染**，避免和 `evaluateAfterClose`
+   *     返回的批量结构耦合（那个是给 cron / 飞书 push 用的多 user 聚合）。
+   *
+   * 边界（与 guard 评估口径完全一致 — 复用 `aggregateByIndustry`）：
+   *   - 持仓为空 → `max_industry_pct=null, max_industry_name=null`；
+   *   - 未分类持仓走 `UNKNOWN_INDUSTRY_SENTINEL` bucket（不静默合并到其它行业）；
+   *   - `over_alert=true` 当 `max_industry_pct > config.alert_pct`（严格 `>`）；
+   *   - `enabled=false` 时仍返回 breakdown / max_industry_pct（让 UI 知道当前真实
+   *     占比），只是 `over_alert` 强制为 false（用户已主动禁用阈值告警）；
+   *   - 无 portfolio → returns 空 snapshot (portfolio_id=null)，前端可以隐藏 KPI。
+   *
+   * 与 `getConfig(user_id)` 区分：`getConfig` 返回 *config*（阈值），本方法返回
+   *   *实时状态*（当前占比 + 是否超阈值）。前端 KPI 卡只需调这个，不必再单独
+   *   fetch config。
+   */
+  async getSummary(user_id: number): Promise<IndustryConcentrationSummary> {
+    const config = await this.source.loadConfig(user_id);
+    const portfolio_id = await this.source.loadPortfolioId(user_id);
+    if (portfolio_id === null) {
+      return {
+        user_id,
+        portfolio_id: null,
+        enabled: config.enabled,
+        alert_pct: config.alert_pct,
+        rebalance_target_pct: config.rebalance_target_pct,
+        max_industry_pct: null,
+        max_industry_name: null,
+        over_alert: false,
+        open_positions_count: 0,
+        total_position_value: 0,
+        industry_breakdown: [],
+      };
+    }
+    const positions = await this.source.loadOpenPositions(user_id);
+    const open_positions_count = positions.filter(p => p.quantity > 0).length;
+    const { breakdown, total_position_value } = aggregateByIndustry(positions);
+    const top = breakdown[0];
+    const max_pct = top ? top.pct : null;
+    const max_name = top ? top.industry : null;
+    // 阈值告警仅在 enabled 时生效（保持与 evaluateAfterClose 一致语义：
+    // 用户禁用则不触发告警，但 UI 仍可展示真实占比让用户决定再开启）。
+    const over_alert =
+      config.enabled && max_pct !== null ? isIndustryOverAlert(max_pct, config.alert_pct) : false;
+    return {
+      user_id,
+      portfolio_id,
+      enabled: config.enabled,
+      alert_pct: config.alert_pct,
+      rebalance_target_pct: config.rebalance_target_pct,
+      max_industry_pct: max_pct,
+      max_industry_name: max_name,
+      over_alert,
+      open_positions_count,
+      total_position_value,
+      industry_breakdown: breakdown,
+    };
+  }
+}
+
+/**
+ * KPI 快照 — UI 顶部"最大行业集中度"KPI 卡用（US-012）。
+ *
+ * 字段语义见 `IndustryConcentrationGuard.getSummary`。
+ */
+export interface IndustryConcentrationSummary {
+  user_id: number;
+  portfolio_id: number | null;
+  enabled: boolean;
+  alert_pct: number;
+  rebalance_target_pct: number;
+  /** 当前最大行业占比 0-1（null = 空持仓 / 无 portfolio）。 */
+  max_industry_pct: number | null;
+  /** 对应行业名（null = 同上；`__UNKNOWN__` = 未分类聚合）。 */
+  max_industry_name: string | null;
+  /** 是否超 alert_pct（严格 `>`，配置 enabled=false 时强制 false）。 */
+  over_alert: boolean;
+  open_positions_count: number;
+  total_position_value: number;
+  industry_breakdown: IndustryAggregation[];
 }
 
 /** Singleton — controllers / scheduler / facade reach this instead of `new`-ing per call. */

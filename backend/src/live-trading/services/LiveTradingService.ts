@@ -23,13 +23,35 @@ import { BridgeReadonlyBrokerGateway } from '../brokers/BridgeReadonlyBrokerGate
 import { BrokerGateway } from '../brokers/BrokerGateway';
 import { DatabaseQuoteProvider } from '../market-data/DatabaseQuoteProvider';
 import { ConfiguredQuoteProvider } from '../market-data/ConfiguredQuoteProvider';
+import {
+  inferMarketSegment as inferMarketSegmentLM,
+  isAtLimitUp as isAtLimitUpLM,
+} from '../../quant/marketLimits';
+import { isSTName as isSTNameLM } from '../../utils/stNameUtils';
 import { LiveMarketDataProvider } from '../market-data/LiveMarketDataProvider';
 import { liveRiskGuardService } from './LiveRiskGuardService';
 import { LIVE_ORDER_CONFIRM_TEXT, liveTradingSafetyService } from './LiveTradingSafetyService';
 import { killSwitchService } from './KillSwitchService';
 import { sendLiveAuditAlert } from './LiveAuditAlertService';
+// US-138 [EX-013]: 实盘 fill 异常分类 — 纯函数 helper + stats aggregator
+import {
+  aggregateFillAnomalies,
+  classifyFillAnomaly,
+  FillAnomalyCategory,
+  FillAnomalyStatsCounts,
+} from './fillAnomalyClassifier';
 import { LIVE_AUDIT_EVENT_TYPES } from '../auditEvents';
 import { logger } from '../../utils/logger';
+import {
+  evaluateFeasibilityGate,
+  emitFeasibilityGateAlert,
+} from '../../portfolio/internal/feasibilityGate';
+// US-108 [EX-008]: 统一 autopilot 幂等 helper. 进程内 in-flight + TTL cache 双层去重,
+// 跨进程靠 markDraftShadowExecuted 的 BETA-4 transaction 兜底.
+import {
+  getDefaultAutopilotIdempotencyStore,
+  dailyWindow as autopilotDailyWindow,
+} from '../../utils/autopilotIdempotency';
 // main 上 PAPER_PORTFOLIO_FAMILIES 位于 portfolio/internal/，dev_lym 旧路径 services/ 已不存在
 import { PAPER_PORTFOLIO_FAMILIES } from '../../portfolio/internal/PaperTradingPortfolioFamilies';
 
@@ -80,12 +102,16 @@ function isAccountNoBound(masked: string): boolean {
 }
 
 function normalizeAccountRole(value?: string): string {
-  const role = String(value || 'main').trim().toLowerCase();
+  const role = String(value || 'main')
+    .trim()
+    .toLowerCase();
   return ['main', 'grayscale', 'readonly', 'sandbox'].includes(role) ? role : 'main';
 }
 
 function normalizePermissionScope(role: string, value?: string): string {
-  const scope = String(value || '').trim().toLowerCase();
+  const scope = String(value || '')
+    .trim()
+    .toLowerCase();
   const allowed = ['read_only', 'trading'];
   if (allowed.includes(scope)) {
     // 只有 grayscale / main 允许 trading；readonly / sandbox 永远只读
@@ -97,7 +123,11 @@ function normalizePermissionScope(role: string, value?: string): string {
   return 'read_only';
 }
 
-function buildBrokerAccountKey(brokerKey: string, accountRole: string, accountNoMasked: string): string {
+function buildBrokerAccountKey(
+  brokerKey: string,
+  accountRole: string,
+  accountNoMasked: string
+): string {
   return `${brokerKey}:${accountRole}:${accountNoMasked || ACCOUNT_NO_UNBOUND_PLACEHOLDER}`;
 }
 
@@ -563,7 +593,10 @@ export class LiveTradingService {
     };
   }
 
-  async getDraftCandidates(user_id: number, options: { limit?: number; account_role?: string } = {}) {
+  async getDraftCandidates(
+    user_id: number,
+    options: { limit?: number; account_role?: string } = {}
+  ) {
     const accountRole = options.account_role ? normalizeAccountRole(options.account_role) : 'main';
     const reconciliation = await this.getReconciliation(user_id, { account_role: accountRole });
     const maxCandidates = Math.min(Math.max(Number(options.limit || 20), 1), 80);
@@ -680,7 +713,9 @@ export class LiveTradingService {
       limit: Number(input.limit || 80),
       account_role: accountRole,
     });
-    const candidate = candidates.candidates.find((item: any) => normalizeSymbol(item.symbol) === symbol);
+    const candidate = candidates.candidates.find(
+      (item: any) => normalizeSymbol(item.symbol) === symbol
+    );
     if (!candidate) throw new Error('未找到该股票的策略候选，请先刷新只读对账候选。');
     if (!candidate.eligible) {
       throw new Error(
@@ -720,6 +755,42 @@ export class LiveTradingService {
       throw new Error('无人影子执行未启用：请设置 LIVE_SHADOW_AUTOPILOT_ENABLED=true。');
     }
 
+    // US-108 [EX-008]: 同 (user_id, source, 当日窗口, dry_run, limit, account_role) 30s 内重复
+    // 触发 → 直接返上次成功 result + reused_from_idempotency=true. 防 cron tick overlap /
+    // manual API 重连 / dashboard 双击造成的重复 shadow 草稿. dry_run 单独成 key 避免互相
+    // 污染. 强幂等仍由 markDraftShadowExecuted 的 transaction 兜底.
+    const guard = getDefaultAutopilotIdempotencyStore();
+    const wrapped = await guard.run(
+      {
+        task: 'shadow_autopilot',
+        user_id,
+        source: options.source || 'manual_shadow_autopilot',
+        window: autopilotDailyWindow(),
+        extra: {
+          dry_run: dryRun,
+          limit: maxCount,
+          account_role: accountRole,
+        },
+      },
+      { ttl_ms: 30_000 },
+      () =>
+        this._runShadowAutopilotUncached(user_id, options, safety, maxCount, accountRole, dryRun)
+    );
+    return wrapped.result;
+  }
+
+  /**
+   * runShadowAutopilot 的真实工作体. 抽出来是为了让 US-108 [EX-008] 幂等 helper 包裹.
+   * 不要在外部直接调; 走 runShadowAutopilot 入口才有幂等保护.
+   */
+  private async _runShadowAutopilotUncached(
+    user_id: number,
+    options: { limit?: number; source?: string; dry_run?: boolean; account_role?: string },
+    safety: any,
+    maxCount: number,
+    accountRole: string,
+    dryRun: boolean
+  ) {
     const candidateDashboard = await this.getDraftCandidates(user_id, {
       limit: Math.max(maxCount, 10),
       account_role: accountRole,
@@ -1478,6 +1549,35 @@ export class LiveTradingService {
     }
     const accountRiskConfig = account ? (account as any).risk_config : undefined;
     const accountMaxSingleOrderAmount = accountRiskConfig?.max_single_order_amount;
+    // audit S-3 修复: 按市场段算精确涨停判定 (主板 10% / 创业板 20% / 科创板 20% /
+    // 北交所 30% / ST 5%), 不再依赖 caller 传入的 is_limit_up boolean。
+    const lmIsST = isSTNameLM(name);
+    const lmSegment = inferMarketSegmentLM(symbol);
+    let lmIsLimitUp = false;
+    try {
+      const prevBars = await DailyBar.findAll({
+        where: { stock_id: (stock as any)?.id },
+        order: [['time', 'DESC']],
+        limit: 2,
+      });
+      const prevClose = prevBars.length >= 2 ? Number(prevBars[1].close) : null;
+      if (prevClose && Number.isFinite(prevClose) && prevClose > 0) {
+        const referencePrice = quotePrice(quote) || limitPrice;
+        if (Number.isFinite(referencePrice) && referencePrice > 0) {
+          lmIsLimitUp = isAtLimitUpLM(
+            { open: referencePrice, high: referencePrice, close: referencePrice },
+            lmSegment,
+            lmIsST,
+            prevClose
+          );
+        }
+      }
+    } catch (err: any) {
+      // 缺数据不阻塞主流程 — 风控其它 guard 仍生效 (fail-open 单 metric)
+      logger.warn(
+        `[live-risk-guard] limit_up precheck failed for ${symbol}: ${err?.message || err}`
+      );
+    }
     const riskCheck = liveRiskGuardService.evaluate({
       side,
       symbol,
@@ -1488,7 +1588,8 @@ export class LiveTradingService {
       available_cash: overview.summary.available_cash,
       current_position_value: toNumber(position?.market_value),
       total_exposure_pct: overview.summary.exposure_pct,
-      is_st: /ST|退/.test(String(name || '')),
+      is_st: lmIsST || /ST|退/.test(String(name || '')),
+      is_limit_up: lmIsLimitUp,
       quote_missing: !quote || !quotePrice(quote),
       quote_latency_seconds: quoteLatency(quote),
       quote_is_realtime: quote?.is_realtime,
@@ -1569,59 +1670,72 @@ export class LiveTradingService {
   }
 
   async markDraftShadowExecuted(user_id: number, draft_id: number, input: any = {}) {
-    const draft = await LiveOrderDraft.findOne({ where: { id: draft_id, user_id } });
-    if (!draft) throw new Error('订单草稿不存在或无权限');
-    if (!['pending', 'preview'].includes(String((draft as any).status))) {
-      throw new Error(`当前订单草稿状态为 ${(draft as any).status}，不可影子执行。`);
-    }
-    const before = this.toPlain(draft);
-    const riskAllowed = Boolean((draft as any).risk_check?.allowed);
-    if (!riskAllowed) throw new Error('订单草稿未通过基础风控，禁止影子执行。');
-    const recheck = await this.recheckDraft(user_id, draft);
-    const shadowFillPrice =
-      quotePrice(recheck.quote_snapshot) || toNumber((draft as any).limit_price);
-    const shadowAmount = round(shadowFillPrice * Number((draft as any).quantity), 2);
-    const shadowExecution = {
-      mode: 'shadow_only',
-      source: input.source || 'manual_shadow_execution',
-      executed_at: new Date().toISOString(),
-      fill_price: shadowFillPrice,
-      quantity: Number((draft as any).quantity),
-      amount: shadowAmount,
-      real_order_submitted: false,
-      conclusion: '已记录影子成交；未提交真实券商委托。',
-    };
+    // BETA-4 (2026-06-18, audit M-16): 包 transaction + SELECT FOR UPDATE 防并发触发
+    // 重复 mark 同一 draft 为 shadow_executed (双计入 RecommendationTradeOutcome).
+    // 并发第二个 request 拿不到锁 → 等 commit → 看到 status='shadow_executed' → status
+    // check 直接抛 "不可影子执行" 错误形成幂等保护，与 approveDraft (Batch V lt-1) 一致。
+    return await sequelize.transaction(async t => {
+      const draft = await LiveOrderDraft.findOne({
+        where: { id: draft_id, user_id },
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (!draft) throw new Error('订单草稿不存在或无权限');
+      if (!['pending', 'preview'].includes(String((draft as any).status))) {
+        throw new Error(`当前订单草稿状态为 ${(draft as any).status}，不可影子执行。`);
+      }
+      const before = this.toPlain(draft);
+      const riskAllowed = Boolean((draft as any).risk_check?.allowed);
+      if (!riskAllowed) throw new Error('订单草稿未通过基础风控，禁止影子执行。');
+      const recheck = await this.recheckDraft(user_id, draft);
+      const shadowFillPrice =
+        quotePrice(recheck.quote_snapshot) || toNumber((draft as any).limit_price);
+      const shadowAmount = round(shadowFillPrice * Number((draft as any).quantity), 2);
+      const shadowExecution = {
+        mode: 'shadow_only',
+        source: input.source || 'manual_shadow_execution',
+        executed_at: new Date().toISOString(),
+        fill_price: shadowFillPrice,
+        quantity: Number((draft as any).quantity),
+        amount: shadowAmount,
+        real_order_submitted: false,
+        conclusion: '已记录影子成交；未提交真实券商委托。',
+      };
 
-    await draft.update({
-      status: 'shadow_executed',
-      risk_check: recheck.risk_check,
-      quote_snapshot: recheck.quote_snapshot || {},
-      estimated_amount: shadowAmount,
-      metadata: {
-        ...((draft as any).metadata || {}),
-        shadow_execution: shadowExecution,
-        pre_shadow_recheck_at: new Date().toISOString(),
-        pre_shadow_recheck_conclusion: recheck.risk_check.conclusion,
-      },
+      await draft.update(
+        {
+          status: 'shadow_executed',
+          risk_check: recheck.risk_check,
+          quote_snapshot: recheck.quote_snapshot || {},
+          estimated_amount: shadowAmount,
+          metadata: {
+            ...((draft as any).metadata || {}),
+            shadow_execution: shadowExecution,
+            pre_shadow_recheck_at: new Date().toISOString(),
+            pre_shadow_recheck_conclusion: recheck.risk_check.conclusion,
+          },
+        },
+        { transaction: t }
+      );
+
+      await this.audit({
+        user_id,
+        account_id: (draft as any).account_id,
+        draft_id,
+        event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_SHADOW_EXECUTED,
+        severity: 'warning',
+        message: '无人确认影子执行已记录；真实券商委托提交数为 0。',
+        before_state: before,
+        after_state: this.toPlain(draft),
+        metadata: {
+          shadow_execution: shadowExecution,
+          risk_check: recheck.risk_check,
+          unattended_real_order_allowed: false,
+        },
+      });
+
+      return this.toPlain(draft);
     });
-
-    await this.audit({
-      user_id,
-      account_id: (draft as any).account_id,
-      draft_id,
-      event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_SHADOW_EXECUTED,
-      severity: 'warning',
-      message: '无人确认影子执行已记录；真实券商委托提交数为 0。',
-      before_state: before,
-      after_state: this.toPlain(draft),
-      metadata: {
-        shadow_execution: shadowExecution,
-        risk_check: recheck.risk_check,
-        unattended_real_order_allowed: false,
-      },
-    });
-
-    return this.toPlain(draft);
   }
 
   async approveDraft(user_id: number, draft_id: number, input: any) {
@@ -1705,6 +1819,272 @@ export class LiveTradingService {
           return ks ? { active: true, ...ks } : undefined;
         })()
       );
+
+      // BETA-1 (2026-06-18, audit S-5): pre-trade compliance gate.
+      // assertOrderExecutionAllowed 之后、submitApprovedDraft 之前；high 直接 throw
+      // + 写 ORDER_BLOCKED_BY_COMPLIANCE audit; medium 允许且 audit
+      // ORDER_COMPLIANCE_WARN; low 仅 log。
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const {
+        checkPreTradeCompliance,
+        emitPreTradeComplianceAlert,
+      } = require('../../services/TradeComplianceChecker');
+      try {
+        const sideUpper =
+          String((draft as any).side || 'BUY').toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
+        const limitPriceRaw = Number((draft as any).limit_price || 0);
+        const quantityRaw = Number((draft as any).quantity || 0);
+        const meta: any = (draft as any).metadata || {};
+        const candidate = meta.candidate || {};
+        const totalAssetGuess =
+          Number((draft as any).risk_check?.total_asset || 0) ||
+          Number(meta.safety_status?.total_asset || 0) ||
+          0;
+        const positionSizePct =
+          totalAssetGuess > 0 && limitPriceRaw > 0
+            ? (limitPriceRaw * quantityRaw) / totalAssetGuess
+            : undefined;
+        const signalTsMs = (() => {
+          const t = meta?.signal_timestamp || candidate?.signal_timestamp;
+          if (!t) return undefined;
+          const parsed = typeof t === 'number' ? t : new Date(t).getTime();
+          return Number.isFinite(parsed) ? parsed : undefined;
+        })();
+        const intradayChg = (() => {
+          const c = Number(candidate.intraday_change_pct ?? candidate.price_change_pct);
+          if (!Number.isFinite(c)) return undefined;
+          return Math.abs(c) > 1 ? c / 100 : c;
+        })();
+        const draftInput = {
+          user_id,
+          symbol: (draft as any).symbol,
+          side: sideUpper as 'BUY' | 'SELL',
+          price: limitPriceRaw,
+          quantity: quantityRaw,
+          position_size_pct: positionSizePct,
+          conviction_level: Number(candidate.conviction_level || candidate.score || 5),
+          strategy_key: candidate.strategy_key,
+          stop_loss_distance_pct: Number(candidate.stop_loss_pct || 0.07),
+          market_trend: (candidate.market_regime || 'sideways') as 'up' | 'down' | 'sideways',
+          intraday_change_pct: intradayChg,
+          signal_timestamp_ms: signalTsMs,
+        };
+        const complianceResult = await checkPreTradeCompliance(draftInput);
+        if (complianceResult.block) {
+          await this.audit({
+            user_id,
+            account_id: (draft as any).account_id,
+            draft_id,
+            event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_BLOCKED_BY_COMPLIANCE,
+            severity: 'critical',
+            message: `pre-trade compliance 拒单: ${complianceResult.summary}`,
+            before_state: before,
+            after_state: this.toPlain(draft),
+            metadata: { compliance: complianceResult },
+          });
+          await emitPreTradeComplianceAlert({
+            user_id,
+            symbol: (draft as any).symbol,
+            side: sideUpper as 'BUY' | 'SELL',
+            level: 'MEDIUM',
+            draft: draftInput,
+            result: complianceResult,
+          });
+          throw new Error(`pre-trade compliance 拒单: ${complianceResult.summary}`);
+        }
+        if (complianceResult.violations.some(v => v.severity === 'medium')) {
+          await this.audit({
+            user_id,
+            account_id: (draft as any).account_id,
+            draft_id,
+            event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_COMPLIANCE_WARN,
+            severity: 'warning',
+            message: `pre-trade compliance medium 违规放行: ${complianceResult.summary}`,
+            metadata: { compliance: complianceResult },
+          });
+        }
+      } catch (err: any) {
+        // 区分 BLOCK throw (上面已 audit) vs 内部 unexpected (fail-open)
+        if (err?.message && err.message.startsWith('pre-trade compliance 拒单')) {
+          throw err;
+        }
+        logger.warn(
+          `[LiveTradingService.approveDraft] pre-trade compliance check failed (fail-open): ${
+            err?.message || err
+          }`
+        );
+      }
+
+      // US-015 (EX-001): ExecutionFeasibility gate — 实盘 bridge 命令发送前最后一道.
+      // composite_score < 60 拒草稿 + 写 ORDER_BLOCKED_BY_FEASIBILITY audit (critical);
+      // risky 放行 + 写 ORDER_FEASIBILITY_WARN audit (warning); fillable 静默通过.
+      // fail-OPEN: gate 自身 throw 时 logger.warn 不阻塞 approveDraft 链路.
+      try {
+        const sideUpper =
+          String((draft as any).side || 'BUY').toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
+        const quoteSnap: any = (draft as any).quote_snapshot || {};
+        // 从 draft.quote_snapshot 抽 market snapshot — 草稿生成时已 snapshot 行情
+        // (LiveTradingController.createDraft 路径), 直接复用避免二次 fetch.
+        const marketSnapshot = {
+          close: Number(quoteSnap.current_price || (draft as any).limit_price || 0),
+          open: quoteSnap.open !== undefined ? Number(quoteSnap.open) : null,
+          high: quoteSnap.high !== undefined ? Number(quoteSnap.high) : null,
+          low: quoteSnap.low !== undefined ? Number(quoteSnap.low) : null,
+          prev_close: quoteSnap.prev_close !== undefined ? Number(quoteSnap.prev_close) : null,
+          volume: quoteSnap.volume !== undefined ? Number(quoteSnap.volume) : null,
+          bid1_price: quoteSnap.bid1_price ?? null,
+          ask1_price: quoteSnap.ask1_price ?? null,
+          bid1_volume: quoteSnap.bid1_volume ?? null,
+          ask1_volume: quoteSnap.ask1_volume ?? null,
+        };
+        const feasResult = await evaluateFeasibilityGate({
+          user_id,
+          symbol: (draft as any).symbol,
+          side: sideUpper as 'BUY' | 'SELL',
+          target_qty: Number((draft as any).quantity || 0),
+          target_price: Number((draft as any).limit_price || 0),
+          market_snapshot: marketSnapshot.close > 0 ? marketSnapshot : undefined,
+        });
+        if (!feasResult.ok) {
+          await this.audit({
+            user_id,
+            account_id: (draft as any).account_id,
+            draft_id,
+            event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_BLOCKED_BY_FEASIBILITY,
+            severity: 'critical',
+            message: `ExecutionFeasibility 拒单: ${feasResult.reason}`,
+            before_state: before,
+            after_state: this.toPlain(draft),
+            metadata: {
+              feasibility: {
+                decision: feasResult.decision,
+                composite_score: feasResult.composite_score,
+                block_reasons: feasResult.block_reasons,
+                report_id: feasResult.report.persisted_id ?? null,
+              },
+            },
+          });
+          await emitFeasibilityGateAlert({
+            user_id,
+            symbol: (draft as any).symbol,
+            side: sideUpper as 'BUY' | 'SELL',
+            result: feasResult,
+            callerLabel: 'LiveTradingService.approveDraft',
+          });
+          throw new Error(`ExecutionFeasibility 拒单: ${feasResult.reason}`);
+        }
+        if (feasResult.alert_level === 'LOW') {
+          await this.audit({
+            user_id,
+            account_id: (draft as any).account_id,
+            draft_id,
+            event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_FEASIBILITY_WARN,
+            severity: 'warning',
+            message: `ExecutionFeasibility risky 放行: ${feasResult.reason}`,
+            metadata: {
+              feasibility: {
+                decision: feasResult.decision,
+                composite_score: feasResult.composite_score,
+                block_reasons: feasResult.block_reasons,
+                report_id: feasResult.report.persisted_id ?? null,
+              },
+            },
+          });
+        }
+      } catch (err: any) {
+        if (err?.message && err.message.startsWith('ExecutionFeasibility 拒单')) {
+          throw err;
+        }
+        logger.warn(
+          `[LiveTradingService.approveDraft] feasibility gate check failed (fail-open): ${
+            err?.message || err
+          }`
+        );
+      }
+
+      // ============ US-136 [EX-011] (2026-06-21): 七闸门统一入口 ============
+      // 与 facade.placeOrder / automation.createBuyTrade|createSellTrade 同一个 helper.
+      // 之前实盘 path 完全不调 paper-trading 那两条 path 的 drawdown + position-limit +
+      // T+1 三道硬风控 (实盘单独走 LiveRiskGuardService.evaluateAllRules + KillSwitch +
+      // TradeComplianceChecker + ExecutionFeasibility), 但 drawdown circuit breaker
+      // 跨账户保护 + 实盘当日 BUY 后当日 SELL 的 T+1 拦截在实盘也应生效 (broker 侧
+      // qmt/ptrade 当日 SELL 也会被拒, server 先拒避免一次浪费的 bridge round trip).
+      //
+      // fail-OPEN: gate 内部 throw 时 logger.warn 不阻塞 (与上面 compliance / feasibility
+      // 同款), 业务级拒单 throw 后写 ORDER_BLOCKED_BY_PRE_TRADE_GATE audit.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { checkAllPreTradeGates } = require('../../portfolio/internal/preTradeGuards');
+        const sideUpper2 =
+          String((draft as any).side || 'BUY').toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
+        const limitPriceRaw2 = Number((draft as any).limit_price || 0);
+        const quantityRaw2 = Number((draft as any).quantity || 0);
+        let gateInput: any;
+        if (sideUpper2 === 'BUY') {
+          gateInput = {
+            side: 'BUY',
+            user_id,
+            symbol: (draft as any).symbol,
+            proposed_value: limitPriceRaw2 * quantityRaw2,
+            caller_label: 'LiveTradingService.approveDraft',
+          };
+        } else {
+          // SELL: T+1 check needs portfolio_id + held_quantity. 实盘 LiveOrderDraft
+          // 不直接挂 paper-trading portfolio_id, 这里允许 metadata.paper_portfolio_id
+          // 显式传; 缺则 skip T+1 (实盘 broker 侧自带 T+1, 不会让 SELL 当日 BUY 通过).
+          const meta2: any = (draft as any).metadata || {};
+          const paperPortfolioId = Number(meta2?.paper_portfolio_id || 0);
+          if (paperPortfolioId > 0) {
+            gateInput = {
+              side: 'SELL',
+              user_id,
+              portfolio_id: paperPortfolioId,
+              symbol: (draft as any).symbol,
+              held_quantity: Number(meta2?.held_quantity || quantityRaw2),
+              sell_quantity: quantityRaw2,
+              bypass_t_plus_1: !!meta2?.bypass_t_plus_1,
+              caller_label: 'LiveTradingService.approveDraft',
+            };
+          } else {
+            gateInput = null;
+          }
+        }
+        if (gateInput) {
+          const preTradeGateResult = await checkAllPreTradeGates(gateInput);
+          if (!preTradeGateResult.ok) {
+            await this.audit({
+              user_id,
+              account_id: (draft as any).account_id,
+              draft_id,
+              event_type: LIVE_AUDIT_EVENT_TYPES.ORDER_BLOCKED_BY_PRE_TRADE_GATE,
+              severity: 'critical',
+              message: `七闸门统一入口拒单 (${preTradeGateResult.gate}/${preTradeGateResult.code}): ${preTradeGateResult.reason}`,
+              before_state: before,
+              after_state: this.toPlain(draft),
+              metadata: {
+                pre_trade_gate: {
+                  side: sideUpper2,
+                  gate: preTradeGateResult.gate,
+                  code: preTradeGateResult.code,
+                  detail: preTradeGateResult.detail,
+                },
+              },
+            });
+            throw new Error(
+              `七闸门拒单 (${preTradeGateResult.code}): ${preTradeGateResult.reason}`
+            );
+          }
+        }
+      } catch (err: any) {
+        if (err?.message && err.message.startsWith('七闸门拒单')) {
+          throw err;
+        }
+        logger.warn(
+          `[LiveTradingService.approveDraft] checkAllPreTradeGates failed (fail-open): ${
+            err?.message || err
+          }`
+        );
+      }
 
       await draft.update(
         { status: 'approved', approved_by: user_id, approved_at: new Date() },
@@ -1843,7 +2223,11 @@ export class LiveTradingService {
     } catch (err: any) {
       logger.warn?.('submitApprovedDraft audit failed:', err?.message || err);
     }
-    return { draft: this.toPlain(draft), order: this.toPlain(order), command: this.toPlain(command) };
+    return {
+      draft: this.toPlain(draft),
+      order: this.toPlain(order),
+      command: this.toPlain(command),
+    };
   }
 
   async syncReadonlyAccount(user_id: number, input: any = {}) {
@@ -1875,7 +2259,10 @@ export class LiveTradingService {
       });
       if (!latest) {
         // bridge 尚未推送过任何快照，返回空状态而不是用网关 fallback
-        await account.update({ last_sync_at: new Date(), connection_status: 'awaiting_bridge_push' });
+        await account.update({
+          last_sync_at: new Date(),
+          connection_status: 'awaiting_bridge_push',
+        });
         return {
           account: this.toPlain(account),
           snapshot: null,
@@ -1912,7 +2299,11 @@ export class LiveTradingService {
         raw_payload: row.raw_payload || {},
       }));
       // 不在这里再写一次 LiveAccountSnapshot（bridge 已经写了）
-      await account.update({ last_sync_at: new Date(), readonly_enabled: true, connection_status: 'readonly_synced' });
+      await account.update({
+        last_sync_at: new Date(),
+        readonly_enabled: true,
+        connection_status: 'readonly_synced',
+      });
       await this.audit({
         user_id,
         account_id: accountId,
@@ -1968,7 +2359,8 @@ export class LiveTradingService {
               market_value: marketValue,
               unrealized_pnl: position.unrealized_pnl,
               unrealized_pnl_pct: position.unrealized_pnl_pct,
-              position_pct: snapshot.total_asset > 0 ? round((marketValue / snapshot.total_asset) * 100, 4) : 0,
+              position_pct:
+                snapshot.total_asset > 0 ? round((marketValue / snapshot.total_asset) * 100, 4) : 0,
               quote_time: position.quote_time,
               source: gatewayKey,
               raw_payload: position.raw_payload || {},
@@ -2004,7 +2396,11 @@ export class LiveTradingService {
           }
         }
         await account.update(
-          { last_sync_at: new Date(), readonly_enabled: true, connection_status: 'readonly_synced' },
+          {
+            last_sync_at: new Date(),
+            readonly_enabled: true,
+            connection_status: 'readonly_synced',
+          },
           { transaction: t }
         );
         return created;
@@ -2035,7 +2431,12 @@ export class LiveTradingService {
         metadata: { position_count: positions.length, source: gatewayKey },
       });
     } catch {}
-    return { account: this.toPlain(account), snapshot: this.toPlain(row), position_count: positions.length };  }
+    return {
+      account: this.toPlain(account),
+      snapshot: this.toPlain(row),
+      position_count: positions.length,
+    };
+  }
 
   async getAuditLogs(user_id: number, limit = 50) {
     const rows = await LiveExecutionAuditLog.findAll({
@@ -2044,6 +2445,120 @@ export class LiveTradingService {
       limit: Math.min(Math.max(Number(limit || 50), 1), 200),
     });
     return rows.map(item => this.toPlain(item));
+  }
+
+  /**
+   * US-138 [EX-013] 实盘 fill 异常分类统计.
+   *
+   * 扫描指定 user 在 `since_hours` 内的 `live_broker_commands`, 按 fillAnomalyClassifier
+   * 的 10 类目逐条归类后聚合 counts + anomaly_rate + 最近 N 条样本.
+   *
+   * 设计:
+   *   - 默认窗口 24h (与 reconciliation / overview 默认一致), 可通过 since_hours 参数覆盖
+   *     (上限 720h = 30 天, 防超大 scan)
+   *   - 只读, 不写 DB, 不发告警 (告警走 ReconciliationAlertService / sendLiveAuditAlert)
+   *   - per-category 提供最近 5 条样本 (client_order_id + symbol + side + qty + filled +
+   *     finalized_at + reason_code) 让前端可以"点 cancelled_partial 看具体单"
+   *   - 包含 in_flight 计数但分母排除, 与 classifier 设计一致
+   *
+   * @returns {window: {since_hours, since_at, until_at}, stats: FillAnomalyStatsCounts,
+   *          samples: Partial per-category list}
+   */
+  async getFillAnomalyStats(
+    user_id: number,
+    options: { since_hours?: number; sample_per_category?: number } = {}
+  ): Promise<{
+    window: { since_hours: number; since_at: string; until_at: string };
+    stats: FillAnomalyStatsCounts;
+    samples: Array<{
+      category: FillAnomalyCategory;
+      items: Array<{
+        command_id: number;
+        client_order_id: string;
+        symbol: string;
+        side: string | null;
+        command_type: string;
+        quantity: number;
+        filled_quantity: number;
+        status: string;
+        finalized_at: string | null;
+        created_at: string;
+        reason_code: string | null;
+      }>;
+    }>;
+  }> {
+    if (!user_id || !Number.isFinite(user_id)) {
+      throw new Error('user_id 必填');
+    }
+    const sinceHoursRaw = Number(options.since_hours);
+    const sinceHours = Number.isFinite(sinceHoursRaw) && sinceHoursRaw > 0 ? sinceHoursRaw : 24;
+    // 上限 30 天, 防超大 scan; 下限 1h
+    const sinceHoursClamped = Math.min(Math.max(sinceHours, 1), 24 * 30);
+    const samplePerCategory = Math.min(Math.max(Number(options.sample_per_category) || 5, 1), 20);
+
+    const until = new Date();
+    const since = new Date(until.getTime() - sinceHoursClamped * 3600 * 1000);
+
+    const rows = await LiveBrokerCommand.findAll({
+      where: {
+        user_id,
+        created_at: { [Op.gte]: since },
+      },
+      order: [['created_at', 'DESC']],
+      limit: 5000,
+    });
+
+    const plainRows = rows.map(item => this.toPlain(item)) as any[];
+    const categorized = plainRows.map(row => ({
+      row,
+      category: classifyFillAnomaly({
+        status: row.status,
+        quantity: row.quantity,
+        filled_quantity: row.filled_quantity,
+        command_type: row.command_type,
+        metadata: row.metadata,
+      }),
+    }));
+
+    const stats = aggregateFillAnomalies(categorized.map(c => c.category));
+
+    // per-category 采样: 已按 created_at DESC 排序, 取前 N
+    const samplesMap = new Map<FillAnomalyCategory, any[]>();
+    for (const { row, category } of categorized) {
+      const list = samplesMap.get(category) || [];
+      if (list.length < samplePerCategory) {
+        list.push({
+          command_id: Number(row.id),
+          client_order_id: String(row.client_order_id || ''),
+          symbol: String(row.symbol || ''),
+          side: row.side || null,
+          command_type: String(row.command_type || ''),
+          quantity: Number(row.quantity || 0),
+          filled_quantity: Number(row.filled_quantity || 0),
+          status: String(row.status || ''),
+          finalized_at: row.finalized_at ? new Date(row.finalized_at).toISOString() : null,
+          created_at: new Date(row.created_at).toISOString(),
+          reason_code:
+            (row.metadata && (row.metadata.reason_code || row.metadata.error_kind)) || null,
+        });
+        samplesMap.set(category, list);
+      }
+    }
+
+    const samples = stats.by_category.map(b => ({
+      category: b.category,
+      items: samplesMap.get(b.category) || [],
+    }));
+
+    return {
+      window: {
+        since_hours: sinceHoursClamped,
+        since_at: since.toISOString(),
+        until_at: until.toISOString(),
+      },
+      stats,
+      samples,
+    };
   }
 
   async getQuotes(symbols: string[]) {
@@ -2066,12 +2581,18 @@ export class LiveTradingService {
     // 灰度账户的草稿必须用 grayscale 视角的 overview 复核，否则风控以 main 账户的总资产算
     const draftAccountId = Number((draft as any).account_id || 0);
     const draftAccount = draftAccountId ? await LiveBrokerAccount.findByPk(draftAccountId) : null;
-    const accountRole = draftAccount ? String((draftAccount as any).account_role || 'main') : 'main';
+    const accountRole = draftAccount
+      ? String((draftAccount as any).account_role || 'main')
+      : 'main';
     const overview = await this.getOverview(user_id, { account_role: accountRole });
-    const position = overview.positions.find((item: any) => normalizeSymbol(item.symbol) === symbol);    const latestPrice = quotePrice(quote);
+    const position = overview.positions.find(
+      (item: any) => normalizeSymbol(item.symbol) === symbol
+    );
+    const latestPrice = quotePrice(quote);
     const limitPrice = toNumber((draft as any).limit_price);
     const accountId = draftAccountId || Number(overview.account?.id || 0);
-    const account = draftAccount || (accountId ? await LiveBrokerAccount.findByPk(accountId) : null);
+    const account =
+      draftAccount || (accountId ? await LiveBrokerAccount.findByPk(accountId) : null);
     const accountRiskConfig = account ? (account as any).risk_config : undefined;
     const accountMaxSingleOrderAmount = accountRiskConfig?.max_single_order_amount;
     const riskCheck = liveRiskGuardService.evaluate({
@@ -2110,14 +2631,13 @@ export class LiveTradingService {
       throw new Error('灰度账户必须提供 account_no，禁止使用占位符复用其它账户。');
     }
     const permissionScope = normalizePermissionScope(accountRole, input.permission_scope);
-    const brokerAccountKey = input.broker_account_key || buildBrokerAccountKey(
-      broker.broker_key,
-      accountRole,
-      accountNoMasked
-    );
+    const brokerAccountKey =
+      input.broker_account_key ||
+      buildBrokerAccountKey(broker.broker_key, accountRole, accountNoMasked);
     // bridge_key 是数据库唯一约束字段；只接受运维显式且账号已绑定的情况，避免普通同步接口被滥用抢占
     const bridgeKeyInput = typeof input.bridge_key === 'string' ? input.bridge_key.trim() : '';
-    const bridgeKey = bridgeKeyInput && isAccountNoBound(accountNoMasked) ? bridgeKeyInput : undefined;
+    const bridgeKey =
+      bridgeKeyInput && isAccountNoBound(accountNoMasked) ? bridgeKeyInput : undefined;
     const orClauses: any[] = [{ broker_account_key: brokerAccountKey }];
     if (isAccountNoBound(accountNoMasked)) {
       orClauses.push({
@@ -2139,7 +2659,8 @@ export class LiveTradingService {
         broker_account_key: brokerAccountKey,
         bridge_key: bridgeKey,
         broker_name: broker.broker_name,
-        account_alias: input.account_alias || (accountRole === 'grayscale' ? '实盘灰度账户' : '实盘只读账户'),
+        account_alias:
+          input.account_alias || (accountRole === 'grayscale' ? '实盘灰度账户' : '实盘只读账户'),
         account_no_masked: accountNoMasked,
         account_role: accountRole,
         permission_scope: permissionScope,
@@ -2155,7 +2676,9 @@ export class LiveTradingService {
     // 已存在账户：禁止改 role（main ↔ grayscale 切换会污染隔离）
     if ((account as any).account_role && (account as any).account_role !== accountRole) {
       throw new Error(
-        `账户角色与已绑定记录冲突：当前角色 ${(account as any).account_role}，请求角色 ${accountRole}`
+        `账户角色与已绑定记录冲突：当前角色 ${
+          (account as any).account_role
+        }，请求角色 ${accountRole}`
       );
     }
     const patch: Record<string, any> = {};
@@ -2774,10 +3297,20 @@ export class LiveTradingService {
     if (options.account_id && Number((order as any).account_id) !== Number(options.account_id)) {
       throw new Error('订单不属于当前选定账户，撤单被拒绝');
     }
-    const currentStatus = String((order as any).bridge_status || (order as any).status || '').toLowerCase();
-    const cancellable = new Set(['pending', 'dispatched', 'dispatching', 'submitted', 'partially_filled']);
+    const currentStatus = String(
+      (order as any).bridge_status || (order as any).status || ''
+    ).toLowerCase();
+    const cancellable = new Set([
+      'pending',
+      'dispatched',
+      'dispatching',
+      'submitted',
+      'partially_filled',
+    ]);
     if (!cancellable.has(currentStatus)) {
-      throw new Error(`订单当前状态 ${currentStatus} 不可撤单（仅 pending/dispatched/submitted/partially_filled 允许）`);
+      throw new Error(
+        `订单当前状态 ${currentStatus} 不可撤单（仅 pending/dispatched/submitted/partially_filled 允许）`
+      );
     }
     const brokerOrderId = (order as any).broker_order_id;
     // dry-run 模拟产生的 broker_order_id 不允许走真实撤单通道
@@ -2794,10 +3327,8 @@ export class LiveTradingService {
       throw new Error('该订单没有对应的 bridge place_order 命令，无法走撤单通道；请联系运维');
     }
     // 撤单 TTL 独立配置，默认 180s（券商撤单回报通常需要几十秒）
-    const cancelTtlMs = Math.max(
-      Number(process.env.LIVE_BRIDGE_CANCEL_COMMAND_TTL_SECONDS || 180),
-      30
-    ) * 1000;
+    const cancelTtlMs =
+      Math.max(Number(process.env.LIVE_BRIDGE_CANCEL_COMMAND_TTL_SECONDS || 180), 30) * 1000;
     // Batch V (2026-06-17, lt-2 fix): client_order_id 去掉 Date.now() 保证幂等.
     // 之前每次调用拿不同时间戳, UNIQUE 索引失效, 并发两 cancel 请求各写一条 cancel_order
     // command, bridge 重复发券商, 大概率触发 order_failure_streak 自动 kill switch.
@@ -2811,7 +3342,9 @@ export class LiveTradingService {
       where: {
         order_id,
         command_type: 'cancel_order',
-        status: { [Op.in]: ['pending', 'dispatching', 'dispatched', 'submitted', 'partially_filled'] },
+        status: {
+          [Op.in]: ['pending', 'dispatching', 'dispatched', 'submitted', 'partially_filled'],
+        },
       },
       order: [['created_at', 'DESC']],
     });

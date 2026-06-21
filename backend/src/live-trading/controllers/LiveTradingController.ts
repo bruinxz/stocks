@@ -18,7 +18,8 @@ class LiveTradingController {
   async getOverview(req: AuthenticatedRequest, res: Response) {
     try {
       const data = await liveTradingService.getOverview(Number(req.user?.id), {
-        account_role: typeof req.query.account_role === 'string' ? req.query.account_role : undefined,
+        account_role:
+          typeof req.query.account_role === 'string' ? req.query.account_role : undefined,
       });
       res.json({ success: true, data, message: data.summary.conclusion });
     } catch (error: any) {
@@ -30,7 +31,8 @@ class LiveTradingController {
   async getReconciliation(req: AuthenticatedRequest, res: Response) {
     try {
       const data = await liveTradingService.getReconciliation(Number(req.user?.id), {
-        account_role: typeof req.query.account_role === 'string' ? req.query.account_role : undefined,
+        account_role:
+          typeof req.query.account_role === 'string' ? req.query.account_role : undefined,
       });
       res.json({ success: true, data, message: data.summary.conclusion });
     } catch (error: any) {
@@ -42,7 +44,11 @@ class LiveTradingController {
   async getSafety(req: AuthenticatedRequest, res: Response) {
     try {
       const data = liveTradingService.getSafetyStatus();
-      res.json({ success: true, data, message: data.can_submit_orders ? '实盘提交能力处于受限启用状态' : '实盘提交能力默认关闭' });
+      res.json({
+        success: true,
+        data,
+        message: data.can_submit_orders ? '实盘提交能力处于受限启用状态' : '实盘提交能力默认关闭',
+      });
     } catch (error: any) {
       logger.error('获取实盘安全边界失败:', error);
       res.status(500).json({ success: false, message: error.message || '获取实盘安全边界失败' });
@@ -53,7 +59,8 @@ class LiveTradingController {
     try {
       const data = await liveTradingService.getDraftCandidates(Number(req.user?.id), {
         limit: req.query.limit ? Number(req.query.limit) : undefined,
-        account_role: typeof req.query.account_role === 'string' ? req.query.account_role : undefined,
+        account_role:
+          typeof req.query.account_role === 'string' ? req.query.account_role : undefined,
       });
       res.json({ success: true, data, message: data.summary.conclusion });
     } catch (error: any) {
@@ -85,10 +92,14 @@ class LiveTradingController {
           typeof body.account_role === 'string'
             ? body.account_role
             : typeof req.query.account_role === 'string'
-              ? req.query.account_role
-              : undefined,
+            ? req.query.account_role
+            : undefined,
       });
-      res.json({ success: true, data, message: data.risk_check?.conclusion || '实盘订单草稿已创建' });
+      res.json({
+        success: true,
+        data,
+        message: data.risk_check?.conclusion || '实盘订单草稿已创建',
+      });
     } catch (error: any) {
       logger.error('创建实盘订单草稿失败:', error);
       res.status(500).json({ success: false, message: error.message || '创建实盘订单草稿失败' });
@@ -104,10 +115,14 @@ class LiveTradingController {
           typeof body.account_role === 'string'
             ? body.account_role
             : typeof req.query.account_role === 'string'
-              ? req.query.account_role
-              : undefined,
+            ? req.query.account_role
+            : undefined,
       });
-      res.json({ success: true, data, message: data.risk_check?.conclusion || '策略候选已生成实盘订单草稿' });
+      res.json({
+        success: true,
+        data,
+        message: data.risk_check?.conclusion || '策略候选已生成实盘订单草稿',
+      });
     } catch (error: any) {
       logger.warn('策略候选生成实盘草稿被阻断:', error?.message || error);
       res
@@ -122,7 +137,8 @@ class LiveTradingController {
         limit: req.body?.limit ? Number(req.body.limit) : undefined,
         source: req.body?.source,
         dry_run: req.body?.dry_run === true,
-        account_role: typeof req.body?.account_role === 'string' ? req.body.account_role : undefined,
+        account_role:
+          typeof req.body?.account_role === 'string' ? req.body.account_role : undefined,
       });
       res.json({ success: true, data, message: data.summary.conclusion });
     } catch (error: any) {
@@ -248,6 +264,33 @@ class LiveTradingController {
     }
   }
 
+  /**
+   * US-138 [EX-013] 实盘 fill 异常分类统计.
+   * Query: since_hours (default 24, max 720), sample_per_category (default 5, max 20)
+   */
+  async getFillAnomalyStats(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await liveTradingService.getFillAnomalyStats(Number(req.user?.id), {
+        since_hours: req.query.since_hours ? Number(req.query.since_hours) : undefined,
+        sample_per_category: req.query.sample_per_category
+          ? Number(req.query.sample_per_category)
+          : undefined,
+      });
+      res.json({
+        success: true,
+        data,
+        message: `近 ${data.window.since_hours}h 异常率 ${(data.stats.anomaly_rate * 100).toFixed(
+          1
+        )}% (${data.stats.anomaly_total}/${data.stats.terminal_total})`,
+      });
+    } catch (error: any) {
+      logger.error('获取实盘 fill 异常分类失败:', error);
+      res
+        .status(500)
+        .json({ success: false, message: error.message || '获取实盘 fill 异常分类失败' });
+    }
+  }
+
   async getQuotes(req: AuthenticatedRequest, res: Response) {
     try {
       const symbols = String(req.query.symbols || req.query.symbol || '')
@@ -268,11 +311,15 @@ class LiveTradingController {
       res.json({
         success: true,
         data: { active: Boolean(active), state: active },
-        message: active ? `服务端 kill switch 处于熔断 (${active.reason_code})` : '服务端 kill switch 未触发',
+        message: active
+          ? `服务端 kill switch 处于熔断 (${active.reason_code})`
+          : '服务端 kill switch 未触发',
       });
     } catch (error: any) {
       logger.error('查询 kill switch 状态失败:', error);
-      res.status(500).json({ success: false, message: error.message || '查询 kill switch 状态失败' });
+      res
+        .status(500)
+        .json({ success: false, message: error.message || '查询 kill switch 状态失败' });
     }
   }
 
@@ -309,9 +356,17 @@ class LiveTradingController {
         note: typeof body.note === 'string' ? body.note : undefined,
       });
       if (!resolved) {
-        return res.json({ success: true, data: { resolved: false }, message: 'Kill switch 当前未处于熔断，无需解除' });
+        return res.json({
+          success: true,
+          data: { resolved: false },
+          message: 'Kill switch 当前未处于熔断，无需解除',
+        });
       }
-      res.json({ success: true, data: { resolved: true, last_state: resolved }, message: 'Kill switch 已解除' });
+      res.json({
+        success: true,
+        data: { resolved: true, last_state: resolved },
+        message: 'Kill switch 已解除',
+      });
     } catch (error: any) {
       logger.error('解除 kill switch 失败:', error);
       res.status(500).json({ success: false, message: error.message || '解除 kill switch 失败' });
@@ -325,10 +380,14 @@ class LiveTradingController {
         return res.status(400).json({ success: false, message: 'order id 不合法' });
       }
       const body = req.body || {};
-      const data = await liveTradingService.requestOrderCancellation(Number(req.user?.id), orderId, {
-        reason: typeof body.reason === 'string' ? body.reason : undefined,
-        account_id: body.account_id ? Number(body.account_id) : undefined,
-      });
+      const data = await liveTradingService.requestOrderCancellation(
+        Number(req.user?.id),
+        orderId,
+        {
+          reason: typeof body.reason === 'string' ? body.reason : undefined,
+          account_id: body.account_id ? Number(body.account_id) : undefined,
+        }
+      );
       res.json({ success: true, data, message: '撤单已入队，等待本地桥执行' });
     } catch (error: any) {
       logger.error('撤单失败:', error);
@@ -340,7 +399,8 @@ class LiveTradingController {
   async listLiveOrders(req: AuthenticatedRequest, res: Response) {
     try {
       const data = await liveTradingService.listLiveOrders(Number(req.user?.id), {
-        account_role: typeof req.query.account_role === 'string' ? req.query.account_role : undefined,
+        account_role:
+          typeof req.query.account_role === 'string' ? req.query.account_role : undefined,
         active_only: req.query.active_only !== 'false',
         limit: req.query.limit ? Number(req.query.limit) : undefined,
       });

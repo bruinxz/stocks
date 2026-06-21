@@ -174,7 +174,64 @@ router.get('/exposure', authController.authenticate, portfolioController.getExpo
 // IMPORTANT: /behavior-bias 同理
 router.get('/behavior-bias', authController.authenticate, portfolioController.getBehaviorBias);
 
+/**
+ * @openapi
+ * /api/portfolio/industry-concentration-summary:
+ *   get:
+ *     tags: [组合 Portfolio]
+ *     summary: 行业集中度 KPI 快照 (US-012)
+ *     description: |
+ *       PortfolioWorkspace 顶部 KPI 卡专用 — 返回当前 user 的最大行业占比、
+ *       是否超 alert_pct（默认 0.35）以及完整 industry breakdown。复用 US-052
+ *       IndustryConcentrationGuard.aggregateByIndustry（同款分母：持仓不含
+ *       cash），不写 RiskAlert，UI 可任意频率轮询。
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: KPI 快照 }
+ *       401: { description: 未授权 }
+ */
+// IMPORTANT: /industry-concentration-summary 必须在 /:id 之前注册（同上）
+router.get(
+  '/industry-concentration-summary',
+  authController.authenticate,
+  portfolioController.getIndustryConcentrationSummary
+);
+
 router.get('/:id', authController.authenticate, portfolioController.getSimulationDetail);
+
+/**
+ * @openapi
+ * /api/portfolio/{id}/attribution/daily:
+ *   get:
+ *     tags: [组合 Portfolio]
+ *     summary: 获取单 portfolio 当日归因报告 (US-084 / PM-007)
+ *     description: |
+ *       读取 daily_attribution_reports 表 (PM-003 schema), 由 cron
+ *       DAILY_ATTRIBUTION_GENERATE (US-083 / PM-006) 在 17:00 工作日 upsert.
+ *       owner check — portfolio.user_id 必须等于请求 user, 否则 403.
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: integer, minimum: 1 }
+ *       - in: query
+ *         name: date
+ *         required: false
+ *         schema: { type: string, format: date }
+ *         description: YYYY-MM-DD, 默认今日 (Asia/Shanghai)
+ *     responses:
+ *       200: { description: 报告内容 }
+ *       400: { description: portfolio id 非法 }
+ *       401: { description: 未登录 }
+ *       403: { description: 非本人 portfolio }
+ *       404: { description: portfolio / 当日报告不存在 }
+ */
+router.get(
+  '/:id/attribution/daily',
+  authController.authenticate,
+  portfolioController.getDailyAttribution
+);
 
 /**
  * @openapi

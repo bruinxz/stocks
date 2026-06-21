@@ -24,6 +24,30 @@ function factorSourcePriority(row: any): number {
   return 0;
 }
 
+/**
+ * audit S-7 修复: 构造一个 where 条件让"当时上市但今天已退市"的标的也能
+ * 进入回测 universe (历史回测必须包含退市股, 否则跨年回测系统性高估收益)。
+ *
+ * 规则：
+ *   - is_listed=true (今天仍在市)
+ *   - OR delisting_date 在 as_of_date 之后 (历史时点仍在市)
+ *
+ * as_of_date 不传 → 默认 today, 行为等价旧的 `is_listed=true`。
+ *
+ * 抽出为 export pure function 便于单测断言 where 形状。
+ */
+export function buildListedSurvivalWhere(as_of_date?: string): any {
+  const asOf = as_of_date || new Date().toISOString().slice(0, 10);
+  return {
+    [Op.or]: [
+      { is_listed: true },
+      {
+        delisting_date: { [Op.ne]: null, [Op.gt]: asOf } as any,
+      },
+    ],
+  };
+}
+
 export class QuantDataService {
   private buildMarketOrder(): any[] {
     return [
@@ -44,16 +68,31 @@ export class QuantDataService {
     ] as any;
   }
 
+  /** @deprecated audit S-7: use exported `buildListedSurvivalWhere` instead. */
+  private buildListedSurvivalWhere(as_of_date?: string): any {
+    return buildListedSurvivalWhere(as_of_date);
+  }
+
   async getStocks(options: {
     universe?: QuantUniverse;
     user_id?: number;
     symbols?: string[];
     limit?: number;
+    /**
+     * audit S-7 修复: 历史回测的时点日; 不传 → 默认 today, 行为等价旧 `is_listed=true`。
+     * 传入回测的 trade_date 可以正确包含"当时上市但今天已退市"的标的, 避免
+     * 生存者偏差。
+     */
+    as_of_date?: string;
   }): Promise<Stock[]> {
     const limit = Math.min(Number(options.limit || 120), 1000);
+    const listedSurvivalWhere = this.buildListedSurvivalWhere(options.as_of_date);
     if (options.symbols?.length) {
       const symbols = options.symbols.map(normalizeSymbol).filter(Boolean);
-      return Stock.findAll({ where: { symbol: { [Op.in]: symbols }, is_listed: true }, limit });
+      return Stock.findAll({
+        where: { symbol: { [Op.in]: symbols }, ...listedSurvivalWhere },
+        limit,
+      });
     }
     if (options.universe === 'favorites' && options.user_id) {
       const favorites = await FavoriteStock.findAll({
@@ -66,7 +105,7 @@ export class QuantDataService {
     }
     return Stock.findAll({
       where: {
-        is_listed: true,
+        ...listedSurvivalWhere,
         [Op.or]: [{ type: 'stock' }, { type: null }],
         name: { [Op.and]: [{ [Op.notILike]: '%ST%' }, { [Op.notILike]: '%退%' }] },
       },
@@ -84,8 +123,13 @@ export class QuantDataService {
     warmup_days?: number;
     limit?: number;
     include_realtime_quote?: boolean;
+    /** audit S-7 修复: 历史回测 as-of 日期, 默认 end_date 防生存者偏差 */
+    as_of_date?: string;
   }): Promise<QuantStockContext[]> {
-    const stocks = await this.getStocks(options);
+    const stocks = await this.getStocks({
+      ...options,
+      as_of_date: options.as_of_date || options.end_date,
+    });
     const latestQuotes =
       options.include_realtime_quote === false
         ? []

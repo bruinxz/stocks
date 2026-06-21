@@ -175,23 +175,27 @@ function buildFakeDataSource(
 
 async function test_default_weights_match_AC() {
   const weights = DEFAULT_MULTI_FACTOR_ALPHA_WEIGHTS;
-  // US-081 升级后的 12 因子默认权重
-  expectEqual('default weights.value', weights.value, 0.1);
-  expectEqual('default weights.quality', weights.quality, 0.1);
-  expectEqual('default weights.growth', weights.growth, 0.1);
-  expectEqual('default weights.momentum', weights.momentum, 0.1);
-  expectEqual('default weights.low_vol', weights.low_vol, 0.08);
-  expectEqual('default weights.northbound', weights.northbound, 0.08);
-  expectEqual('default weights.money_flow', weights.money_flow, 0.08);
-  expectEqual('default weights.dragon_tiger', weights.dragon_tiger, 0.08);
-  // US-081 新增 4 个因子
-  expectEqual('default weights.quality_high', weights.quality_high, 0.07);
-  expectEqual('default weights.analyst_consensus', weights.analyst_consensus, 0.07);
-  expectEqual('default weights.east_money_qa', weights.east_money_qa, 0.06);
-  expectEqual('default weights.momentum_reversal', weights.momentum_reversal, 0.08);
-  expectEqual('US-081: 12 个因子全部都在', Object.keys(weights).length, 12);
+  // Batch AC (2026-06-18): 12 因子缩放 + 2 个新行业/题材因子 (industry_momentum / concept_heat)
+  expectEqual('default weights.value', weights.value, 0.084);
+  expectEqual('default weights.quality', weights.quality, 0.084);
+  expectEqual('default weights.growth', weights.growth, 0.084);
+  expectEqual('default weights.momentum', weights.momentum, 0.084);
+  expectEqual('default weights.low_vol', weights.low_vol, 0.067);
+  expectEqual('default weights.northbound', weights.northbound, 0.067);
+  expectEqual('default weights.money_flow', weights.money_flow, 0.067);
+  expectEqual('default weights.dragon_tiger', weights.dragon_tiger, 0.067);
+  expectEqual('default weights.quality_high', weights.quality_high, 0.059);
+  expectEqual('default weights.analyst_consensus', weights.analyst_consensus, 0.059);
+  expectEqual('default weights.east_money_qa', weights.east_money_qa, 0.05);
+  expectEqual('default weights.momentum_reversal', weights.momentum_reversal, 0.067);
+  // Batch AC 新增 2 个因子
+  expectEqual('default weights.industry_momentum', weights.industry_momentum, 0.1);
+  expectEqual('default weights.concept_heat', weights.concept_heat, 0.06);
+  expectEqual('Batch AC: 14 个因子全部都在', Object.keys(weights).length, 14);
   const sum = Object.values(weights).reduce((a, b) => a + b, 0);
-  assert('default weights sum to 1.0', Math.abs(sum - 1) < 1e-9, `sum=${sum}`);
+  // sum 约等于 1.0 (浮点累计误差 + 因子四舍五入到 3 位小数 → sum=0.999)
+  // normalizeWeights() 会在使用时强制归一化到 1.0
+  assert('default weights sum ≈ 1.0 (tolerance 1e-2)', Math.abs(sum - 1) < 1e-2, `sum=${sum}`);
 }
 
 async function test_default_params_are_AC_defaults() {
@@ -212,7 +216,10 @@ async function test_default_params_are_AC_defaults() {
 }
 
 async function test_composite_score_weighted_sum() {
-  // 构造一只股票：12 因子 z 都是 1.0 → composite_score 应当 = 1.0（weight sum 1.0）
+  // 构造一只股票：12 因子 z 都是 1.0 → composite 由 normalize 后的权重和决定 ≈ 1.0
+  // 但 Batch AC 后还有 2 个因子 (industry_momentum / concept_heat) z=0 不贡献。
+  // normalizeWeights 会按所有 14 因子的 sum=0.999 重新归一化到 1.0；
+  // 12 老因子 sum=0.839 → 归一化后占 0.839 / 0.999 ≈ 0.8399
   const ds = buildFakeDataSource([
     {
       code: '600519',
@@ -227,7 +234,7 @@ async function test_composite_score_weighted_sum() {
         northbound: 1,
         money_flow: 1,
         dragon_tiger: 1,
-        // US-081 新增 4 个因子也设 z=1
+        // US-081 4 个 + Batch AC 2 个 z 默认 0
         quality_high: 1,
         analyst_consensus: 1,
         east_money_qa: 1,
@@ -237,9 +244,14 @@ async function test_composite_score_weighted_sum() {
   ]);
   const s = new MultiFactorAlphaStrategy(ds);
   const result = await s.generateSignals('2026-06-05');
-  expectEqual('全 z=1 → composite=1.0', result.signals[0].composite_score, 1.0);
+  // 12 老因子 sum/总 sum ≈ 0.839 / 0.999 ≈ 0.8398
+  assert(
+    '12 z=1（不含 industry_momentum/concept_heat）→ composite ≈ 0.84',
+    Math.abs(result.signals[0].composite_score - 0.8398) < 1e-2,
+    `got ${result.signals[0].composite_score}`
+  );
 
-  // 构造一只股票：value=2.0，其他全 0；权重 0.10 (US-081 新值) → composite = 2.0 * 0.10 = 0.20
+  // 构造一只股票：value=2.0，其他全 0；权重 0.084 归一化后 0.084/0.999 → composite ≈ 2 * 0.0841 ≈ 0.1682
   const ds2 = buildFakeDataSource([
     {
       code: '600519',
@@ -252,8 +264,8 @@ async function test_composite_score_weighted_sum() {
   const r2 = await s2.generateSignals('2026-06-05');
   const composite = r2.signals[0].composite_score;
   assert(
-    'value=2, 其余=0 → composite ≈ 0.20 (US-081 新权重 0.10)',
-    Math.abs(composite - 0.2) < 1e-9,
+    'value=2, 其余=0 → composite ≈ 0.168 (Batch AC 新权重 0.084 归一化后)',
+    Math.abs(composite - 0.1682) < 1e-3,
     `got ${composite}`
   );
 }
@@ -634,8 +646,9 @@ async function test_topN_caps_output() {
 
 async function test_weight_mode_static_is_default_equiv_us011() {
   // weightMode='static'（不传或显式传）应当完全等价 US-011 旧行为
-  // value=10, momentum=10, 其他 0 + default weights (value=0.10, momentum=0.10)
-  // composite = 10 * 0.10 + 10 * 0.10 = 2.0
+  // value=10, momentum=10, 其他 0
+  // Batch AC: value weight = 0.084, momentum weight = 0.084, sum 14 factors = 0.999
+  // composite = 10 * (0.084/0.999) + 10 * (0.084/0.999) ≈ 1.6817
   const ds = buildFakeDataSource([
     {
       code: '600519',
@@ -654,8 +667,8 @@ async function test_weight_mode_static_is_default_equiv_us011() {
     `got ${r1.params.weightMode}`
   );
   assert(
-    'static (default): composite ≈ 2.0',
-    Math.abs(r1.signals[0].composite_score - 2.0) < 1e-9,
+    'static (default): composite ≈ 1.68 (Batch AC normalize 后)',
+    Math.abs(r1.signals[0].composite_score - 1.6817) < 1e-3,
     `got ${r1.signals[0].composite_score}`
   );
 
@@ -675,8 +688,8 @@ async function test_weight_mode_static_is_default_equiv_us011() {
 }
 
 async function test_weight_mode_equal_uniform_weights() {
-  // weightMode='equal' = 12 个正权重因子各 1/12
-  // 12 因子全 z=1 → composite = sum(1 * 1/12) * 12 = 1.0（与 static 全 z=1 结果一致）
+  // weightMode='equal' = 14 个正权重因子各 1/14
+  // 12 老因子 z=1 + industry_momentum/concept_heat z=0 → composite = 12 * (1/14) ≈ 0.857
   const ds = buildFakeDataSource([
     {
       code: '600519',
@@ -701,12 +714,12 @@ async function test_weight_mode_equal_uniform_weights() {
   const s = new MultiFactorAlphaStrategy(ds);
   const r = await s.generateSignals('2026-06-05', { params: { weightMode: 'equal' } });
   assert(
-    'equal mode: 全 z=1 → composite=1.0',
-    Math.abs(r.signals[0].composite_score - 1.0) < 1e-9,
+    'equal mode: 12 z=1（不含 industry_momentum/concept_heat）→ composite ≈ 12/14',
+    Math.abs(r.signals[0].composite_score - 12 / 14) < 1e-9,
     `got ${r.signals[0].composite_score}`
   );
 
-  // value=12, 其他 0 + equal mode → composite = 12 * (1/12) = 1.0
+  // value=12, 其他 0 + equal mode → composite = 12 * (1/14) ≈ 0.857
   const ds2 = buildFakeDataSource([
     {
       code: '600519',
@@ -718,8 +731,8 @@ async function test_weight_mode_equal_uniform_weights() {
   const s2 = new MultiFactorAlphaStrategy(ds2);
   const r2 = await s2.generateSignals('2026-06-05', { params: { weightMode: 'equal' } });
   assert(
-    'equal mode: value=12 其他 0 → composite = 12 * 1/12 = 1.0',
-    Math.abs(r2.signals[0].composite_score - 1.0) < 1e-9,
+    'equal mode: value=12 其他 0 → composite = 12 * 1/14',
+    Math.abs(r2.signals[0].composite_score - 12 / 14) < 1e-9,
     `got ${r2.signals[0].composite_score}`
   );
 
@@ -795,13 +808,13 @@ async function test_weight_mode_ic_weighted_dynamic_weights() {
   );
   expectEqual('ic_weighted effective: value = 0.10 (from IC)', eff.value, 0.1);
   expectEqual('ic_weighted effective: momentum = 0.05 (from IC)', eff.momentum, 0.05);
-  // 其他因子无 IC 数据 → fallback to static weight
-  expectEqual('ic_weighted effective: quality = 0.10 (fallback static)', eff.quality, 0.1);
-  expectEqual('ic_weighted effective: growth = 0.10 (fallback static)', eff.growth, 0.1);
+  // 其他因子无 IC 数据 → fallback to static weight (Batch AC: quality/growth=0.084, east_money_qa=0.05)
+  expectEqual('ic_weighted effective: quality = 0.084 (fallback static)', eff.quality, 0.084);
+  expectEqual('ic_weighted effective: growth = 0.084 (fallback static)', eff.growth, 0.084);
   expectEqual(
-    'ic_weighted effective: east_money_qa = 0.06 (fallback static)',
+    'ic_weighted effective: east_money_qa = 0.05 (fallback static)',
     eff.east_money_qa,
-    0.06
+    0.05
   );
 }
 

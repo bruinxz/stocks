@@ -156,7 +156,9 @@ export const DEFAULT_DATA_PROVIDERS: MarketDataProviderDefinition[] = [
     is_enabled: true,
     supported_features: ['health_probe'],
     metadata: {
-      base_url: process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000',
+      // audit L-19: 集中常量, 不再硬编码 IP.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      base_url: require('../../config/externalServices').TRADING_AGENTS_BASE_URL,
       role: 'multi_agent_research',
       commercial_tier: 'internal_service',
       quant_role: '外部信息/多智能体深研源',
@@ -519,7 +521,10 @@ export class DataSourceHealthService {
     }
 
     const startedAt = Date.now();
-    const baseUrl = provider.metadata?.base_url || 'http://47.93.224.109:8000';
+    // audit L-19: 集中常量, 不再硬编码 IP fallback.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { TRADING_AGENTS_BASE_URL } = require('../../config/externalServices');
+    const baseUrl = provider.metadata?.base_url || TRADING_AGENTS_BASE_URL;
 
     try {
       const response = await axios.get(`${baseUrl}/openapi.json`, { timeout: 5000 });

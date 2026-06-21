@@ -106,7 +106,8 @@ export function combineScaledForecasts(
   if (scaled_forecasts.length === 0) return 0;
   const N = scaled_forecasts.length;
   const w = weights ?? new Array(N).fill(1 / N);
-  if (w.length !== N) throw new Error(`combineScaledForecasts: weights length ${w.length} != forecasts ${N}`);
+  if (w.length !== N)
+    throw new Error(`combineScaledForecasts: weights length ${w.length} != forecasts ${N}`);
   let sum = 0;
   for (let i = 0; i < N; i += 1) {
     if (Number.isFinite(scaled_forecasts[i])) sum += w[i] * scaled_forecasts[i];
@@ -119,7 +120,7 @@ export function combineScaledForecasts(
 // Buffer Zones (Ch.15)
 // ============================================================
 
-export const DEFAULT_BUFFER_WIDTH = 0.10;
+export const DEFAULT_BUFFER_WIDTH = 0.1;
 
 /**
  * Apply buffer zone to position update.
@@ -165,7 +166,7 @@ export function applyBufferZone(
 export function applyMultiplierBuffer(
   prev_multiplier: number,
   raw_multiplier: number,
-  buffer_width = 0.10
+  buffer_width = 0.1
 ): number {
   return applyBufferZone(prev_multiplier, raw_multiplier, buffer_width);
 }
@@ -194,8 +195,7 @@ export function applyMultiplierBuffer(
 export function continuousMultiplier(drawdown_pct: number, sharpe: number | null): number {
   const dd = Math.max(0, drawdown_pct);
   const mult_dd = Math.max(0, 1 - 2.5 * dd);
-  const sharpe_factor = sharpe === null || !Number.isFinite(sharpe)
-    ? 1.0
-    : Math.max(0, Math.min(1, (sharpe + 1) / 2));
+  const sharpe_factor =
+    sharpe === null || !Number.isFinite(sharpe) ? 1.0 : Math.max(0, Math.min(1, (sharpe + 1) / 2));
   return Math.max(0, Math.min(1, mult_dd * sharpe_factor));
 }

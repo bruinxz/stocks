@@ -148,7 +148,9 @@ export async function executeGuardSells(
         error_code: error?.code,
       });
       logger.warn(
-        `[guard-sell-executor] ${options.scenario} failed: user=${trig.user_id} ${trig.symbol} qty=${trig.quantity}: ${error?.message || error}`
+        `[guard-sell-executor] ${options.scenario} failed: user=${trig.user_id} ${
+          trig.symbol
+        } qty=${trig.quantity}: ${error?.message || error}`
       );
     }
   }

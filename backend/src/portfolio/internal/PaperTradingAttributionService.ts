@@ -340,7 +340,11 @@ export class PaperTradingAttributionService {
         : null;
       // Batch K: 若 sell_trade_id 已被前一条 signal 算过, 跳过这条 (会重复加)
       const sellTradeIdNum = paperTrading.sell_trade_id ? Number(paperTrading.sell_trade_id) : null;
-      if (sellTradeIdNum && Number.isFinite(sellTradeIdNum) && accountedSellTradeIds.has(sellTradeIdNum)) {
+      if (
+        sellTradeIdNum &&
+        Number.isFinite(sellTradeIdNum) &&
+        accountedSellTradeIds.has(sellTradeIdNum)
+      ) {
         // skip — 已被 sibling signal 计入 closedTrades
         continue;
       }
@@ -930,6 +934,7 @@ function sourceTypeLabel(value: string): string {
     [AISignalSourceType.TRADING_AGENTS]: 'TradingAgents',
     [AISignalSourceType.DAILY_SCREENER]: 'AI每日优选',
     [AISignalSourceType.MANUAL_ANALYSIS]: '人工分析',
+    [AISignalSourceType.ANALYSIS_ENGINE]: '多维分析引擎',
     manual_trade: '手动交易',
     unknown: '未标注来源',
   };

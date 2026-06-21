@@ -15,7 +15,11 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
     { fields: ['received_at'] },
     // 显式声明 (command_id, event_seq) UNIQUE，作为 runtime schema 兜底
     // （若 runtime schema 未跑，sequelize.sync 也会创建该唯一约束）
-    { unique: true, fields: ['command_id', 'event_seq'], name: 'idx_live_broker_events_command_seq_unique' },
+    {
+      unique: true,
+      fields: ['command_id', 'event_seq'],
+      name: 'idx_live_broker_events_command_seq_unique',
+    },
   ],
 })
 export class LiveBrokerEvent extends Model {

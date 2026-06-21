@@ -6,6 +6,7 @@ import { automatedRecommendationLoopService } from '../../services/AutomatedReco
 import { recommendationLoopPolicySnapshotService } from '../../services/RecommendationLoopPolicySnapshotService';
 import { AISignalSourceType } from '../../models/AIInvestmentSignal';
 import { aiPollingQueue } from '../../jobs/aiPollingQueue';
+import { buildAIPollingJobOptions } from '../../jobs/aiPollingEnqueue';
 import { logger } from '../../utils/logger';
 
 export class QuantRecommendationController {
@@ -39,7 +40,9 @@ export class QuantRecommendationController {
       res.json({ success: true, data: result });
     } catch (error: any) {
       logger.error('获取量化候选推荐失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   };
 
@@ -64,7 +67,9 @@ export class QuantRecommendationController {
       res.json({ success: true, data: result });
     } catch (error: any) {
       logger.error('运行推荐策略实验失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   };
 
@@ -94,6 +99,11 @@ export class QuantRecommendationController {
         try {
           const result = await aiAdvisorService.analyzeStock(symbol, target_date, true);
           if (result?.task_id) {
+            const pollingJobOptions = buildAIPollingJobOptions({ taskId: result.task_id });
+            if (!pollingJobOptions) {
+              failed.push({ symbol, name, error: 'TradingAgents 返回的 task_id 非法' });
+              continue;
+            }
             await aiPollingQueue.add(
               {
                 taskId: result.task_id,
@@ -111,11 +121,9 @@ export class QuantRecommendationController {
                 recommendation_source:
                   typeof item === 'string' ? 'manual_recommendation' : item.source,
               },
-              {
-                jobId: `ai-recommend-${result.task_id}`,
-                attempts: 10,
-                backoff: { type: 'fixed', delay: 3 * 60 * 1000 },
-              }
+              // US-019 / EX-005: jobId/attempts/backoff/retention 统一由 aiPollingEnqueue 单点供给;
+              // Bull 内置 Redis Lua dedup (同 jobId EXISTS → return existing jobId), 持久化由 Redis 兜底.
+              pollingJobOptions
             );
             submitted.push({ symbol, name, task_id: result.task_id, status: result.status });
           } else {
@@ -129,7 +137,9 @@ export class QuantRecommendationController {
       res.json({ success: true, data: { submitted, failed } });
     } catch (error: any) {
       logger.error('提交多因子候选至 TradingAgents 失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   };
 
@@ -208,7 +218,9 @@ export class QuantRecommendationController {
       });
     } catch (error: any) {
       logger.error('归档量化候选信号失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   };
 
@@ -228,7 +240,9 @@ export class QuantRecommendationController {
       res.json({ success: true, data: result });
     } catch (error: any) {
       logger.error('获取荐股闭环策略快照失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   };
 
@@ -252,7 +266,9 @@ export class QuantRecommendationController {
       });
     } catch (error: any) {
       logger.error('刷新荐股闭环策略快照收益失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   };
 
@@ -386,7 +402,9 @@ export class QuantRecommendationController {
       res.json({ success: true, data: result, message: '全市场荐股闭环已执行' });
     } catch (error: any) {
       logger.error('执行全市场荐股闭环失败:', error);
-      res.status((error as any)?.statusCode || 500).json({ success: false, message: error.message });
+      res
+        .status((error as any)?.statusCode || 500)
+        .json({ success: false, message: error.message });
     }
   };
 }

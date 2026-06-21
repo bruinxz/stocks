@@ -76,13 +76,27 @@ export function inferStockSymbol(code: string): string {
  */
 export async function loadStocksByCodes(
   codes: string[],
-  attributes: string[] = ['id', 'symbol', 'industry', 'circulating_market_cap']
+  attributes: string[] = ['id', 'symbol', 'industry', 'circulating_market_cap'],
+  options?: {
+    /**
+     * audit S-7 修复: 历史时点日; 不传则不做时点过滤 (因子 / 策略默认使用全集
+     * 已知股票数据, 行为兼容旧)。需要按"当时上市但今天已退市"截断时传入。
+     */
+    as_of_date?: string;
+  }
 ): Promise<Map<string, any>> {
   if (!codes.length) return new Map();
   const symbols = Array.from(new Set(codes.map(inferStockSymbol).filter(Boolean)));
+  const where: any = { symbol: { [Op.in]: symbols } };
+  if (options?.as_of_date) {
+    where[Op.or as any] = [
+      { is_listed: true },
+      { delisting_date: { [Op.ne]: null, [Op.gt]: options.as_of_date } as any },
+    ];
+  }
   const rows = (await Stock.findAll({
     attributes,
-    where: { symbol: { [Op.in]: symbols } },
+    where,
     raw: true,
   })) as unknown as Array<Record<string, any>>;
   const out = new Map<string, any>();

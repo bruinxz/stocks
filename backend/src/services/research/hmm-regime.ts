@@ -109,7 +109,10 @@ export interface HMMParams {
  *
  * @returns log_alpha matrix (T × K), log P(y_1..t) for each t & state
  */
-export function hmmForward(params: HMMParams, observations: number[]): {
+export function hmmForward(
+  params: HMMParams,
+  observations: number[]
+): {
   log_alpha: number[][];
   log_likelihood: number;
 } {
@@ -121,7 +124,9 @@ export function hmmForward(params: HMMParams, observations: number[]): {
 
   // t = 0: log α_0(k) = log π_k + log b_k(y_0)
   for (let k = 0; k < K; k += 1) {
-    log_alpha[0][k] = Math.log(Math.max(1e-300, params.pi[k])) + logGaussianPdf(observations[0], params.mu[k], params.sigma[k]);
+    log_alpha[0][k] =
+      Math.log(Math.max(1e-300, params.pi[k])) +
+      logGaussianPdf(observations[0], params.mu[k], params.sigma[k]);
   }
 
   // t = 1..T-1
@@ -131,7 +136,8 @@ export function hmmForward(params: HMMParams, observations: number[]): {
       for (let j = 0; j < K; j += 1) {
         probsArr.push(log_alpha[t - 1][j] + Math.log(Math.max(1e-300, params.A[j][k])));
       }
-      log_alpha[t][k] = logSumExp(probsArr) + logGaussianPdf(observations[t], params.mu[k], params.sigma[k]);
+      log_alpha[t][k] =
+        logSumExp(probsArr) + logGaussianPdf(observations[t], params.mu[k], params.sigma[k]);
     }
   }
 
@@ -164,8 +170,8 @@ export function hmmBackward(params: HMMParams, observations: number[]): number[]
       for (let j = 0; j < K; j += 1) {
         probsArr.push(
           Math.log(Math.max(1e-300, params.A[k][j])) +
-          logGaussianPdf(observations[t + 1], params.mu[j], params.sigma[j]) +
-          log_beta[t + 1][j]
+            logGaussianPdf(observations[t + 1], params.mu[j], params.sigma[j]) +
+            log_beta[t + 1][j]
         );
       }
       log_beta[t][k] = logSumExp(probsArr);
@@ -202,7 +208,10 @@ export function hmmPosteriorStates(log_alpha: number[][], log_beta: number[][]):
  *
  * @returns most likely state sequence (length T)
  */
-export function hmmViterbi(params: HMMParams, observations: number[]): {
+export function hmmViterbi(
+  params: HMMParams,
+  observations: number[]
+): {
   states: number[];
   log_max_likelihood: number;
 } {
@@ -215,7 +224,9 @@ export function hmmViterbi(params: HMMParams, observations: number[]): {
 
   // t = 0
   for (let k = 0; k < K; k += 1) {
-    log_delta[0][k] = Math.log(Math.max(1e-300, params.pi[k])) + logGaussianPdf(observations[0], params.mu[k], params.sigma[k]);
+    log_delta[0][k] =
+      Math.log(Math.max(1e-300, params.pi[k])) +
+      logGaussianPdf(observations[0], params.mu[k], params.sigma[k]);
   }
 
   // t = 1..T-1
@@ -225,7 +236,10 @@ export function hmmViterbi(params: HMMParams, observations: number[]): {
       let bestPrev = 0;
       for (let j = 0; j < K; j += 1) {
         const v = log_delta[t - 1][j] + Math.log(Math.max(1e-300, params.A[j][k]));
-        if (v > bestVal) { bestVal = v; bestPrev = j; }
+        if (v > bestVal) {
+          bestVal = v;
+          bestPrev = j;
+        }
       }
       log_delta[t][k] = bestVal + logGaussianPdf(observations[t], params.mu[k], params.sigma[k]);
       psi[t][k] = bestPrev;
@@ -310,7 +324,9 @@ export function hmmBaumWelch(
       const all_logs: number[] = [];
       for (let i = 0; i < K; i += 1) {
         for (let j = 0; j < K; j += 1) {
-          const v = log_alpha[t][i] + Math.log(Math.max(1e-300, params.A[i][j])) +
+          const v =
+            log_alpha[t][i] +
+            Math.log(Math.max(1e-300, params.A[i][j])) +
             logGaussianPdf(observations[t + 1], params.mu[j], params.sigma[j]) +
             log_beta[t + 1][j];
           log_vals[i][j] = v;
@@ -366,7 +382,10 @@ export function hmmBaumWelch(
       for (let t = 0; t < T; t += 1) {
         num_sigma += gamma[t][k] * (observations[t] - new_mu[k]) ** 2;
       }
-      new_sigma[k] = denom > 1e-12 ? Math.sqrt(Math.max(min_sigma * min_sigma, num_sigma / denom)) : params.sigma[k];
+      new_sigma[k] =
+        denom > 1e-12
+          ? Math.sqrt(Math.max(min_sigma * min_sigma, num_sigma / denom))
+          : params.sigma[k];
     }
 
     params = { K, pi: new_pi, A: new_A, mu: new_mu, sigma: new_sigma };
@@ -399,7 +418,8 @@ export function initializeHMMParams(observations: number[], K: number): HMMParam
   const mean = observations.reduce((s, v) => s + v, 0) / T;
   const variance = T > 1 ? observations.reduce((s, v) => s + (v - mean) ** 2, 0) / (T - 1) : 1;
   const std = Math.sqrt(Math.max(1e-6, variance));
-  let minV = Infinity, maxV = -Infinity;
+  let minV = Infinity,
+    maxV = -Infinity;
   for (const v of observations) {
     if (v < minV) minV = v;
     if (v > maxV) maxV = v;

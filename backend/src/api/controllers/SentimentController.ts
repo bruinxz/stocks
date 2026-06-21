@@ -3,6 +3,7 @@ import { marketSentimentIndexService } from '../../services/MarketSentimentIndex
 import { MarketSentimentIndex } from '../../models/MarketSentimentIndex';
 import { snowballHotKeywordSyncService } from '../../data/services/SnowballHotKeywordSyncService';
 import { eastMoneyQATopicService } from '../../services/EastMoneyQATopicService';
+import { industryQAHeatService } from '../../services/qa/IndustryQAHeatService';
 import { logger } from '../../utils/logger';
 
 /**
@@ -23,6 +24,10 @@ import { logger } from '../../utils/logger';
  *   US-060 东财问答 NLP 主题:
  *     - GET  /api/sentiment/qa-topics?stock_code=000001[&weeks=12]
  *            某只股票最近 N 周的投资者问答 NLP 聚合 (按 week_start × topic 分组).
+ *
+ *   US-121 QA-004 行业 QA 热度榜:
+ *     - GET  /api/sentiment/qa-industry-heat?industry=电池[&lookback_days=7&top=10]
+ *            某行业内最近 N 天最活跃的 top N 股票.
  */
 export class SentimentController {
   /**
@@ -256,6 +261,66 @@ export class SentimentController {
       });
     } catch (error: any) {
       logger.error('获取问答 NLP 主题失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * GET /api/sentiment/qa-industry-heat?industry=电池[&lookback_days=7&top=10]
+   *
+   * US-121 QA-004 行业级 QA 热度榜.
+   *
+   * 返回某行业内最近 N 天最活跃的 top N 股票 (按 active_score = questions_count *
+   * (1 + 0.5 * answer_rate) desc 排序). 默认 lookback=7d, top=10.
+   *
+   * Response:
+   *   {
+   *     industry, lookback_days, top_n, total_stocks,
+   *     items: [{
+   *       stock_code, stock_name, industry,
+   *       questions_count_7d, answer_count_7d, answer_rate_7d,
+   *       top_subtopic_7d, active_score, weeks_covered
+   *     }]
+   *   }
+   *
+   * fail-OPEN: 行业为空 / DB 故障 / 行业内无任何 stat → 返 items=[] (200 OK),
+   * service 层错误以 error 字段透出 (前端按需展示降级提示).
+   */
+  async getIndustryQAHeat(req: Request, res: Response) {
+    try {
+      const industryRaw = typeof req.query.industry === 'string' ? req.query.industry.trim() : '';
+      if (industryRaw === '') {
+        res.status(400).json({ success: false, message: 'industry 参数必填' });
+        return;
+      }
+
+      let lookbackDays: number | undefined = undefined;
+      if (req.query.lookback_days !== undefined) {
+        const parsed = Number(req.query.lookback_days);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          lookbackDays = Math.floor(parsed);
+        }
+      }
+
+      let top: number | undefined = undefined;
+      if (req.query.top !== undefined) {
+        const parsed = Number(req.query.top);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          top = Math.floor(parsed);
+        }
+      }
+
+      const result = await industryQAHeatService.getHotStocksInIndustry(industryRaw, {
+        lookback_days: lookbackDays,
+        top,
+      });
+
+      res.json({
+        success: true,
+        data: result,
+      });
+    } catch (error: any) {
+      logger.error('获取行业 QA 热度榜失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

@@ -80,7 +80,7 @@ export function sizeFromProbability(p: number): number {
  *
  * @param step typical 0.05, 0.1, 0.2 (5%/10%/20% increments)
  */
-export function discretizeBetSize(m: number, step: number = 0.1): number {
+export function discretizeBetSize(m: number, step = 0.1): number {
   if (step <= 0) return m;
   const rounded = Math.round(m / step) * step;
   return Math.max(-1, Math.min(1, rounded));
@@ -117,11 +117,18 @@ export function decideBetSize(input: {
   max_size?: number;
   /** Min absolute bet size to bother trading (below this → 0) */
   min_size_threshold?: number;
-}): { raw_m: number; discretized_m: number; adjusted_m: number; final_size: number; should_bet: boolean } {
+}): {
+  raw_m: number;
+  discretized_m: number;
+  adjusted_m: number;
+  final_size: number;
+  should_bet: boolean;
+} {
   const raw = sizeFromProbability(input.probability);
-  const discr = input.discretization_step && input.discretization_step > 0
-    ? discretizeBetSize(raw, input.discretization_step)
-    : raw;
+  const discr =
+    input.discretization_step && input.discretization_step > 0
+      ? discretizeBetSize(raw, input.discretization_step)
+      : raw;
   const adj = uniquenessAdjustedSize(discr, input.concurrent_bets ?? 1);
   const maxSize = input.max_size ?? 1.0;
   const min_threshold = input.min_size_threshold ?? 0.05;
@@ -148,7 +155,7 @@ export function decideBetSize(input: {
 export function bettingSizeToDollarAmount(
   m: number,
   max_allocation: number,
-  long_only: boolean = true
+  long_only = true
 ): number {
   if (long_only && m < 0) return 0;
   return m * max_allocation;
@@ -177,7 +184,11 @@ export function averageActiveBetSize(bet_sizes: number[]): number {
  *
  * 替代 fractional Kelly 的简化 sizing.
  */
-export function probabilityToPositionPct(p: number, max_position_pct: number, long_only: boolean = true): number {
+export function probabilityToPositionPct(
+  p: number,
+  max_position_pct: number,
+  long_only = true
+): number {
   const m = sizeFromProbability(p);
   const size = bettingSizeToDollarAmount(m, max_position_pct, long_only);
   return size;

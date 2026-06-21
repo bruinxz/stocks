@@ -63,6 +63,14 @@ import { MonteCarloResult } from '../models/MonteCarloResult';
 import { StrategyPortfolioResult } from '../models/StrategyPortfolioResult';
 import { BenchmarkAttributionResult } from '../models/BenchmarkAttributionResult';
 import { IndustryAttributionResult } from '../models/IndustryAttributionResult';
+import { DailyAttributionReport } from '../models/DailyAttributionReport';
+import { AIDiaryEntry } from '../models/AIDiaryEntry';
+import { ErrorPatternReport } from '../models/ErrorPatternReport';
+import { ImprovementSuggestion } from '../models/ImprovementSuggestion';
+import { PersonalityStrategyMatchReport } from '../models/PersonalityStrategyMatchReport';
+import { BlackSwanEvent } from '../models/BlackSwanEvent';
+import { BlackSwanPostmortemReport } from '../models/BlackSwanPostmortemReport';
+import { WebhookFallbackLog } from '../models/WebhookFallbackLog';
 import { MorningRiskCheckup } from '../models/MorningRiskCheckup';
 import { AIStockAnalysisReport } from '../models/AIStockAnalysisReport';
 import { KOLOpinion } from '../models/KOLOpinion';
@@ -70,12 +78,16 @@ import { MarketSentimentIndex } from '../models/MarketSentimentIndex';
 import { MarketBrief } from '../models/MarketBrief';
 import { SnowballHotKeyword } from '../models/SnowballHotKeyword';
 import { AnnouncementSummary } from '../models/AnnouncementSummary';
+import { AnnouncementEventRelation } from '../models/AnnouncementEventRelation';
 import { EastMoneyQATopic } from '../models/EastMoneyQATopic';
+import { EastMoneyQAStat } from '../models/EastMoneyQAStat';
+import { KOLAuthorStat } from '../models/KOLAuthorStat';
 import { TechnicalAnalysisReport } from '../models/TechnicalAnalysisReport';
 import { RestrictedShareRelease } from '../models/RestrictedShareRelease';
 import { ShareholderTradeRecord } from '../models/ShareholderTradeRecord';
 import { MarginTradingBalance } from '../models/MarginTradingBalance';
 import { ETFFlow } from '../models/ETFFlow';
+import { ETFCreationRedemption } from '../models/ETFCreationRedemption';
 import { MarketNews } from '../models/MarketNews';
 import { SocialSentimentSnapshot } from '../models/SocialSentimentSnapshot';
 import { MarketHotSearch } from '../models/MarketHotSearch';
@@ -189,6 +201,14 @@ const sequelize = new Sequelize({
     StrategyPortfolioResult,
     BenchmarkAttributionResult,
     IndustryAttributionResult,
+    DailyAttributionReport,
+    AIDiaryEntry,
+    ErrorPatternReport,
+    ImprovementSuggestion,
+    PersonalityStrategyMatchReport,
+    BlackSwanEvent,
+    BlackSwanPostmortemReport,
+    WebhookFallbackLog,
     MorningRiskCheckup,
     AIStockAnalysisReport,
     KOLOpinion,
@@ -196,12 +216,16 @@ const sequelize = new Sequelize({
     MarketBrief,
     SnowballHotKeyword,
     AnnouncementSummary,
+    AnnouncementEventRelation,
     EastMoneyQATopic,
+    EastMoneyQAStat,
+    KOLAuthorStat,
     TechnicalAnalysisReport,
     RestrictedShareRelease,
     ShareholderTradeRecord,
     MarginTradingBalance,
     ETFFlow,
+    ETFCreationRedemption,
     MarketNews,
     SocialSentimentSnapshot,
     MarketHotSearch,

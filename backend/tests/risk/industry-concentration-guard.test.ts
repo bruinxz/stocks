@@ -1210,6 +1210,180 @@ async function testUpdateConfigGarbageSanitized() {
 }
 
 // ---------------------------------------------------------------------------
+//  Tests — getSummary (US-012 KPI 快照)
+// ---------------------------------------------------------------------------
+
+async function testGetSummaryEmptyPortfolio() {
+  const state = emptyState({ userIds: [1], positionsByUser: { 1: [] } });
+  const guard = new IndustryConcentrationGuard(makeFakeSource(state));
+  const summary = await guard.getSummary(1);
+  assertEqual('getSummary empty: portfolio_id resolved', summary.portfolio_id !== null, true);
+  assertEqual('getSummary empty: max_industry_pct null', summary.max_industry_pct, null);
+  assertEqual('getSummary empty: max_industry_name null', summary.max_industry_name, null);
+  assertEqual('getSummary empty: over_alert false', summary.over_alert, false);
+  assertEqual('getSummary empty: open_positions_count 0', summary.open_positions_count, 0);
+  assertEqual('getSummary empty: total_position_value 0', summary.total_position_value, 0);
+  assertEqual('getSummary empty: breakdown []', summary.industry_breakdown.length, 0);
+  // 0 alerts written even though config.enabled — dry-run guarantee.
+  assertEqual('getSummary empty: 0 alerts written', state.alerts.length, 0);
+  // Config reflected
+  assertEqual('getSummary empty: alert_pct == default 0.35', summary.alert_pct, 0.35);
+  assertEqual(
+    'getSummary empty: rebalance_target_pct == default 0.30',
+    summary.rebalance_target_pct,
+    0.3
+  );
+}
+
+async function testGetSummaryNoPortfolio() {
+  const state = emptyState({
+    userIds: [1],
+    portfolioIds: { 1: null },
+    positionsByUser: { 1: [] },
+  });
+  const guard = new IndustryConcentrationGuard(makeFakeSource(state));
+  const summary = await guard.getSummary(1);
+  assertEqual('getSummary noPortfolio: portfolio_id null', summary.portfolio_id, null);
+  assertEqual('getSummary noPortfolio: max_industry_pct null', summary.max_industry_pct, null);
+  assertEqual('getSummary noPortfolio: over_alert false', summary.over_alert, false);
+}
+
+async function testGetSummarySingleIndustryOverAlert() {
+  // 3 holdings all in 白酒 → 100% concentration → over alert (default 35%)
+  const state = emptyState({
+    userIds: [1],
+    positionsByUser: {
+      1: [
+        makePosition({ id: 1, symbol: 'A.SH', industry: '白酒', market_value: 5000 }),
+        makePosition({ id: 2, symbol: 'B.SH', industry: '白酒', market_value: 3000 }),
+        makePosition({ id: 3, symbol: 'C.SH', industry: '白酒', market_value: 2000 }),
+      ],
+    },
+  });
+  const guard = new IndustryConcentrationGuard(makeFakeSource(state));
+  const summary = await guard.getSummary(1);
+  assertClose('getSummary single over: max_pct == 1.0', summary.max_industry_pct ?? -1, 1.0);
+  assertEqual('getSummary single over: max_industry_name 白酒', summary.max_industry_name, '白酒');
+  assertEqual('getSummary single over: over_alert true', summary.over_alert, true);
+  assertEqual('getSummary single over: open_positions_count 3', summary.open_positions_count, 3);
+  assertEqual('getSummary single over: total_value 10000', summary.total_position_value, 10000);
+  // 仍是 dry-run, 不写 alert
+  assertEqual('getSummary single over: 0 alerts written', state.alerts.length, 0);
+  // breakdown 至少包含 1 行业
+  assert('getSummary single over: breakdown non-empty', summary.industry_breakdown.length >= 1);
+}
+
+async function testGetSummaryBoundaryNotOver() {
+  // 35% 严格不等 → over_alert false
+  const state = emptyState({
+    userIds: [1],
+    positionsByUser: {
+      1: [
+        makePosition({ id: 1, symbol: 'A.SH', industry: '白酒', market_value: 3500 }),
+        makePosition({ id: 2, symbol: 'B.SH', industry: '银行', market_value: 6500 }),
+      ],
+    },
+  });
+  const guard = new IndustryConcentrationGuard(makeFakeSource(state));
+  const summary = await guard.getSummary(1);
+  assertClose('boundary: max_pct == 0.65', summary.max_industry_pct ?? -1, 0.65);
+  assertEqual('boundary: max_name 银行', summary.max_industry_name, '银行');
+  // 0.65 > 0.35 → over
+  assertEqual('boundary: over_alert true', summary.over_alert, true);
+}
+
+async function testGetSummaryUnderAlertBelowThreshold() {
+  // 50/50 split → 0.5 < ... wait default is 0.35; need below — use 30/70 to put max=0.7
+  // Use 30/30/40 (each 30%, max=0.40) — still over default 0.35; use 25/25/25/25 = max 0.25 (< 0.35)
+  const state = emptyState({
+    userIds: [1],
+    positionsByUser: {
+      1: [
+        makePosition({ id: 1, symbol: 'A.SH', industry: '白酒', market_value: 2500 }),
+        makePosition({ id: 2, symbol: 'B.SH', industry: '银行', market_value: 2500 }),
+        makePosition({ id: 3, symbol: 'C.SH', industry: '科技', market_value: 2500 }),
+        makePosition({ id: 4, symbol: 'D.SH', industry: '医药', market_value: 2500 }),
+      ],
+    },
+  });
+  const guard = new IndustryConcentrationGuard(makeFakeSource(state));
+  const summary = await guard.getSummary(1);
+  assertClose('under: max_pct == 0.25', summary.max_industry_pct ?? -1, 0.25);
+  assertEqual('under: over_alert false', summary.over_alert, false);
+}
+
+async function testGetSummaryDisabledForcesOverAlertFalse() {
+  // Disabled config → over_alert 强制 false 即使真实占比 100%
+  const state = emptyState({
+    userIds: [1],
+    configs: {
+      1: {
+        ...DEFAULT_INDUSTRY_CONCENTRATION_CONFIG,
+        enabled: false,
+      },
+    },
+    positionsByUser: {
+      1: [makePosition({ id: 1, symbol: 'A.SH', industry: '白酒', market_value: 10000 })],
+    },
+  });
+  const guard = new IndustryConcentrationGuard(makeFakeSource(state));
+  const summary = await guard.getSummary(1);
+  assertEqual('disabled: enabled false echoed', summary.enabled, false);
+  // 真实占比仍计算并返回, 让 UI 决定是否提示
+  assertClose('disabled: max_pct still 1.0', summary.max_industry_pct ?? -1, 1.0);
+  assertEqual('disabled: over_alert forced false', summary.over_alert, false);
+}
+
+async function testGetSummaryCustomAlertPctEchoed() {
+  // 自定义 alert_pct 应回显
+  const state = emptyState({
+    userIds: [1],
+    configs: {
+      1: {
+        ...DEFAULT_INDUSTRY_CONCENTRATION_CONFIG,
+        alert_pct: 0.5,
+        rebalance_target_pct: 0.45,
+      },
+    },
+    positionsByUser: {
+      1: [
+        makePosition({ id: 1, symbol: 'A.SH', industry: '白酒', market_value: 4500 }),
+        makePosition({ id: 2, symbol: 'B.SH', industry: '银行', market_value: 5500 }),
+      ],
+    },
+  });
+  const guard = new IndustryConcentrationGuard(makeFakeSource(state));
+  const summary = await guard.getSummary(1);
+  assertEqual('custom: alert_pct echoed 0.5', summary.alert_pct, 0.5);
+  assertEqual('custom: rebalance_target_pct echoed 0.45', summary.rebalance_target_pct, 0.45);
+  assertClose('custom: max_pct 0.55', summary.max_industry_pct ?? -1, 0.55);
+  // 0.55 > 0.5 → over
+  assertEqual('custom: over_alert true (0.55 > 0.5)', summary.over_alert, true);
+}
+
+async function testGetSummaryUnknownIndustry() {
+  // 未分类持仓 → __UNKNOWN__ bucket
+  const state = emptyState({
+    userIds: [1],
+    positionsByUser: {
+      1: [
+        makePosition({ id: 1, symbol: 'A.SH', industry: null, market_value: 5000 }),
+        makePosition({ id: 2, symbol: 'B.SH', industry: '银行', market_value: 5000 }),
+      ],
+    },
+  });
+  const guard = new IndustryConcentrationGuard(makeFakeSource(state));
+  const summary = await guard.getSummary(1);
+  // 各 50% — max 是字典序在前的（pct 同则 industry asc），__UNKNOWN__ 排在 银行 之前
+  assertClose('unknown: max_pct 0.5', summary.max_industry_pct ?? -1, 0.5);
+  // 一定能找到 __UNKNOWN__ bucket（不静默合并）
+  const hasUnknown = summary.industry_breakdown.some(
+    b => b.industry === UNKNOWN_INDUSTRY_SENTINEL
+  );
+  assert('unknown: __UNKNOWN__ bucket present', hasUnknown);
+}
+
+// ---------------------------------------------------------------------------
 //  Driver
 // ---------------------------------------------------------------------------
 
@@ -1251,6 +1425,15 @@ async function main() {
   await testGetConfigDefault();
   await testUpdateConfigRoundTrip();
   await testUpdateConfigGarbageSanitized();
+
+  await testGetSummaryEmptyPortfolio();
+  await testGetSummaryNoPortfolio();
+  await testGetSummarySingleIndustryOverAlert();
+  await testGetSummaryBoundaryNotOver();
+  await testGetSummaryUnderAlertBelowThreshold();
+  await testGetSummaryDisabledForcesOverAlertFalse();
+  await testGetSummaryCustomAlertPctEchoed();
+  await testGetSummaryUnknownIndustry();
 
   console.log(`\n${passed} ok, ${failed} failed`);
   if (failed > 0) {

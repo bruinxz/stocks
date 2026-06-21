@@ -40,6 +40,39 @@ export type ExecutionPolicy =
 
 export type OrderUrgency = 'low' | 'normal' | 'high';
 
+/**
+ * US-107 / EX-007: A 股 4 段交易时段分类
+ *
+ * - **OPEN_AUCTION** (09:15-09:25): 开盘集合竞价 — 09:25 一次性按集合竞价撮合,
+ *   单一成交价. 期间下单只接受 LIMIT 单, 无 spread/中间价概念, TWAP/VWAP/POV 全部不适用.
+ * - **CONTINUOUS** (09:30-11:30 + 13:00-14:57): 连续竞价 — 可正常拆单 / VWAP / POV.
+ * - **CLOSE_AUCTION** (14:57-15:00): 收盘集合竞价 — 同 OPEN_AUCTION, 只接 LIMIT,
+ *   且只剩 3 分钟无法 TWAP/VWAP/POV.
+ * - **CLOSED**: 非交易时段 (含午休 11:30-13:00 / 09:25-09:30 撮合间隙 / 15:00 后) → SKIP.
+ *
+ * 与 [[checkAShareTradingHours]] 的差异: 后者只判 "能否下单 (allowed bool)", 不区分集合
+ * vs 连续 — 集合竞价对 router 而言可下单但 algo 必须降级到 LIMIT, 所以本枚举更细粒度.
+ *
+ * 时间窗口边界采用 [start, end) — start 含、end 不含, 与 [[checkAShareTradingHours]]
+ * 一致 (e.g. 09:25 已属 CLOSED, 09:30 才是 CONTINUOUS).
+ */
+export type TradingSession = 'OPEN_AUCTION' | 'CONTINUOUS' | 'CLOSE_AUCTION' | 'CLOSED';
+
+/** OPEN_AUCTION 起始 (Asia/Shanghai), 09:15. */
+export const OPEN_AUCTION_START_MIN = 9 * 60 + 15;
+/** OPEN_AUCTION 结束 (Asia/Shanghai), 09:25. 09:25-09:30 为撮合间隙归 CLOSED. */
+export const OPEN_AUCTION_END_MIN = 9 * 60 + 25;
+/** CONTINUOUS 上午开始 (Asia/Shanghai), 09:30. */
+export const CONTINUOUS_MORNING_START_MIN = 9 * 60 + 30;
+/** CONTINUOUS 上午结束 (Asia/Shanghai), 11:30. */
+export const CONTINUOUS_MORNING_END_MIN = 11 * 60 + 30;
+/** CONTINUOUS 下午开始 (Asia/Shanghai), 13:00. */
+export const CONTINUOUS_AFTERNOON_START_MIN = 13 * 60;
+/** CONTINUOUS 下午结束 (Asia/Shanghai), 14:57 (收盘集合竞价从 14:57 起). */
+export const CONTINUOUS_AFTERNOON_END_MIN = 14 * 60 + 57;
+/** CLOSE_AUCTION 结束 (Asia/Shanghai), 15:00. */
+export const CLOSE_AUCTION_END_MIN = 15 * 60;
+
 export interface ExecutionPolicyInput {
   symbol: string;
   side: 'BUY' | 'SELL';
@@ -57,6 +90,11 @@ export interface ExecutionPolicyInput {
   close_to_limit_up_pct: number;
   /** 信号紧急度: low=耐心拆单, normal=平衡, high=尽快成交 */
   urgency?: OrderUrgency;
+  /**
+   * US-107: 决策当下时间 (Asia/Shanghai). 不传则用 new Date().
+   * 显式注入是给单测/回放/夜间 cron 控制时段, 不要在生产 caller 路径手动传.
+   */
+  now?: Date;
   options?: Partial<ExecutionPolicyOptions>;
 }
 
@@ -111,6 +149,8 @@ export interface ExecutionPolicyResult {
   wait_minutes: number;
   /** amount / avg_turnover 比例 (诊断用) */
   order_size_pct: number;
+  /** US-107: 决策当下所处时段, 用于下游审计/UI 染色. */
+  session: TradingSession;
   /** 判定理由链 */
   reason: string;
   options: ExecutionPolicyOptions;
@@ -119,6 +159,52 @@ export interface ExecutionPolicyResult {
 // ===========================================================================
 // Pure helpers (all exported for testing)
 // ===========================================================================
+
+/**
+ * US-107 / EX-007: 按 Asia/Shanghai 时刻分类 A 股交易时段.
+ *
+ * 注意只看 "时段窗口", 不查节假日 — 节假日已被上游 [[checkAShareTradingHours]] 提前拦截,
+ * 本 helper 假设来源是交易日; 非交易日传入也会按时段返结果 (caller 应先验交易日).
+ *
+ * 边界采用 [start, end) — start 含、end 不含, 保证 09:25 落 CLOSED (撮合间隙),
+ * 14:57 落 CLOSE_AUCTION (起点含), 15:00 落 CLOSED.
+ */
+export function classifyTradingSession(now: Date = new Date()): TradingSession {
+  const shanghai = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  const hour = shanghai.getUTCHours();
+  const minute = shanghai.getUTCMinutes();
+  const t = hour * 60 + minute;
+  if (t >= OPEN_AUCTION_START_MIN && t < OPEN_AUCTION_END_MIN) return 'OPEN_AUCTION';
+  if (t >= CONTINUOUS_MORNING_START_MIN && t < CONTINUOUS_MORNING_END_MIN) return 'CONTINUOUS';
+  if (t >= CONTINUOUS_AFTERNOON_START_MIN && t < CONTINUOUS_AFTERNOON_END_MIN) return 'CONTINUOUS';
+  if (t >= CONTINUOUS_AFTERNOON_END_MIN && t < CLOSE_AUCTION_END_MIN) return 'CLOSE_AUCTION';
+  return 'CLOSED';
+}
+
+/**
+ * US-107: 给定时段判定 algo 是否需要 "降级" — 集合竞价时段只能下 LIMIT,
+ * 多片 TWAP/VWAP/POV 在 10/3 分钟单一价撮合里都不成立.
+ *
+ * 返 null 表示 algo 可用, 返 string 是降级理由 (caller 用作 reason 前缀).
+ */
+export function sessionDowngradeReason(
+  session: TradingSession,
+  policy: ExecutionPolicy
+): string | null {
+  if (session === 'CONTINUOUS') return null;
+  if (session === 'CLOSED') return '非交易时段 (盘前 / 午休 / 撮合间隙 / 收盘后) → SKIP';
+  if (session === 'OPEN_AUCTION') {
+    if (policy === 'TWAP' || policy === 'VWAP' || policy === 'POV') {
+      return '开盘集合竞价时段 (09:15-09:25) 仅单一价撮合, 多片拆单不适用 → 降级 LIMIT';
+    }
+    return null;
+  }
+  // CLOSE_AUCTION
+  if (policy === 'TWAP' || policy === 'VWAP' || policy === 'POV') {
+    return '收盘集合竞价时段 (14:57-15:00) 仅单一价撮合, 多片拆单不适用 → 降级 LIMIT';
+  }
+  return null;
+}
 
 export function normalizeExecutionPolicyOptions(
   input?: Partial<ExecutionPolicyOptions>
@@ -261,15 +347,36 @@ export function pickSizeBasedPolicy(
  * 主入口: 给定订单 input → execution policy.
  *
  * 优先级:
- *   1. SKIP (硬约束) - 高 vol / 临近涨停 / 大 spread
- *   2. WAIT (开盘跳空 + 非紧急)
- *   3. 按 size 分流 LIMIT / TWAP / VWAP / POV
+ *   1. **TradingSession** (US-107): CLOSED → SKIP, OPEN/CLOSE_AUCTION → 强制降级 LIMIT
+ *   2. SKIP (硬约束) - 高 vol / 临近涨停 / 大 spread
+ *   3. WAIT (开盘跳空 + 非紧急)
+ *   4. 按 size 分流 LIMIT / TWAP / VWAP / POV
+ *
+ * Session 优先级最高: 集合竞价/收盘后, vol/spread 等连续竞价指标都不成立,
+ * 此时连"是否 SKIP / 拆几片" 这种 algo 决策都没意义, 由时段统一兜底.
  */
 export function routeExecutionPolicy(input: ExecutionPolicyInput): ExecutionPolicyResult {
   const opts = normalizeExecutionPolicyOptions(input.options);
   const size_pct = input.avg_daily_turnover > 0 ? input.amount_yuan / input.avg_daily_turnover : 1;
+  const session = classifyTradingSession(input.now);
 
-  // 1. SKIP 硬约束
+  // 1. CLOSED → SKIP. 兜底安全网: 非交易时段任何 algo 都不应触发 (PaperTradingFacade
+  //    pre-trade guard 已经拦, 这里是 defense-in-depth).
+  if (session === 'CLOSED') {
+    return {
+      policy: 'SKIP',
+      slice_count: 1,
+      participation_rate: 0,
+      max_slippage_pct: 0,
+      wait_minutes: 0,
+      order_size_pct: size_pct,
+      session,
+      reason: `SKIP: ${sessionDowngradeReason(session, 'TWAP')}`,
+      options: opts,
+    };
+  }
+
+  // 2. SKIP 硬约束 — vol / 涨停 / spread
   const skip = shouldSkip(input, opts);
   if (skip.skip) {
     return {
@@ -279,30 +386,52 @@ export function routeExecutionPolicy(input: ExecutionPolicyInput): ExecutionPoli
       max_slippage_pct: 0,
       wait_minutes: 0,
       order_size_pct: size_pct,
+      session,
       reason: `SKIP: ${skip.reason}`,
       options: opts,
     };
   }
 
-  // 2. WAIT 时机
-  const wait = shouldWait(input, opts);
-  if (wait.wait_minutes > 0) {
-    const policy: ExecutionPolicy =
-      wait.wait_minutes >= 30 ? 'WAIT_30M' : wait.wait_minutes >= 15 ? 'WAIT_15M' : 'WAIT_5M';
+  // 3. WAIT 时机 (仅连续竞价时段有意义; 集合竞价本身就是"等单一价",
+  //    再 WAIT 让用户错过本日撮合点没意义).
+  if (session === 'CONTINUOUS') {
+    const wait = shouldWait(input, opts);
+    if (wait.wait_minutes > 0) {
+      const policy: ExecutionPolicy =
+        wait.wait_minutes >= 30 ? 'WAIT_30M' : wait.wait_minutes >= 15 ? 'WAIT_15M' : 'WAIT_5M';
+      return {
+        policy,
+        slice_count: 1,
+        participation_rate: 0,
+        max_slippage_pct: 0,
+        wait_minutes: wait.wait_minutes,
+        order_size_pct: size_pct,
+        session,
+        reason: `WAIT: ${wait.reason}`,
+        options: opts,
+      };
+    }
+  }
+
+  // 4. size-based 分流
+  const sized = pickSizeBasedPolicy(size_pct, opts);
+
+  // 4b. US-107: 集合竞价时段强制降级到 LIMIT_AT_TOUCH (单一价撮合不支持拆单)
+  const downgrade = sessionDowngradeReason(session, sized.policy);
+  if (downgrade) {
     return {
-      policy,
+      policy: 'LIMIT_AT_TOUCH',
       slice_count: 1,
       participation_rate: 0,
-      max_slippage_pct: 0,
-      wait_minutes: wait.wait_minutes,
+      max_slippage_pct: 0.002,
+      wait_minutes: 0,
       order_size_pct: size_pct,
-      reason: `WAIT: ${wait.reason}`,
+      session,
+      reason: `${downgrade} (原 size policy=${sized.policy})`,
       options: opts,
     };
   }
 
-  // 3. size-based
-  const sized = pickSizeBasedPolicy(size_pct, opts);
   // max slippage 按 policy 设默认
   const max_slippage_pct =
     sized.policy === 'LIMIT_AT_TOUCH'
@@ -319,6 +448,7 @@ export function routeExecutionPolicy(input: ExecutionPolicyInput): ExecutionPoli
     max_slippage_pct,
     wait_minutes: 0,
     order_size_pct: size_pct,
+    session,
     reason: sized.reason,
     options: opts,
   };
@@ -348,6 +478,7 @@ export class ExecutionPolicyRouter {
         max_slippage_pct: 0.005,
         wait_minutes: 0,
         order_size_pct: 0,
+        session: 'CONTINUOUS',
         reason: `error fallback: ${error?.message || error}`,
         options: DEFAULT_EXECUTION_POLICY_OPTIONS,
       };

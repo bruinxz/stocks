@@ -393,7 +393,9 @@ class FeishuBotWebhookService {
       }
 
       logger.info(
-        `飞书机器人荐股摘要已推送 (card): ${(card as any).card?.header?.title?.content || 'untitled'}`
+        `飞书机器人荐股摘要已推送 (card): ${
+          (card as any).card?.header?.title?.content || 'untitled'
+        }`
       );
       return { success: true, data: body };
     } catch (error: any) {
@@ -555,9 +557,7 @@ class FeishuBotWebhookService {
             : '现价--';
         const score = item.score != null ? ` | 分 **${item.score}**` : '';
         const positionPct =
-          item.position_pct != null
-            ? ` | 仓位 ${Number(item.position_pct).toFixed(1)}%`
-            : '';
+          item.position_pct != null ? ` | 仓位 ${Number(item.position_pct).toFixed(1)}%` : '';
         const actionLabel = item.action_label || item.status || '';
         const action = actionLabel ? ` | ${actionLabel}` : '';
         const traceLink = item.trace_url ? ` [详情](${item.trace_url})` : '';
@@ -673,7 +673,6 @@ class FeishuBotWebhookService {
       },
     };
   }
-
 
   private buildRiskCheckPost(payload: FeishuRecommendationSummaryPayload): {
     title: string;

@@ -40,6 +40,7 @@ import {
   buildAlertMessage,
   computeMovingAverage,
   computeReturnPct,
+  detectConsecutiveLimitDownHalt,
   detectDeathCross,
   normalizeMarketRegimeAlertConfig,
   pickRegimeAlerts,
@@ -81,9 +82,13 @@ interface FakeState {
     user_id: number;
     symbol: string;
     name: string;
-    level: 'MEDIUM' | 'HIGH';
+    level: 'MEDIUM' | 'HIGH' | 'CRITICAL';
     message: string;
   }>;
+  /** US-132 — 跌停股计数序列（OLDEST→NEWEST），不设置则返空数组. */
+  limitDownCounts?: number[];
+  /** US-132 — 模拟 loadConsecutiveLimitDownCounts 抛错. */
+  loadLimitDownShouldThrow?: boolean;
   /** Force loadBenchmarkBars to throw. */
   loadBenchmarkBarsShouldThrow?: boolean;
   /** Force loadConfig on this user to throw. */
@@ -118,6 +123,14 @@ function makeFakeSource(state: FakeState): MarketRegimeAlertDataSource {
     },
     async loadAllUserIdsWithPortfolios() {
       return [...state.userIds];
+    },
+    async loadConsecutiveLimitDownCounts(_asOfDate: Date, days: number) {
+      if (state.loadLimitDownShouldThrow) {
+        throw new Error('fake limit-down load outage');
+      }
+      if (!state.limitDownCounts) return [];
+      // 复刻生产实现的 slice(-days) 语义.
+      return state.limitDownCounts.slice(-days);
     },
     async writeAlert(input) {
       if (state.writeAlertShouldThrowForUser === input.user_id) {
@@ -788,6 +801,430 @@ async function testGetUpdateConfig() {
 }
 
 // ---------------------------------------------------------------------------
+//  Tests — US-132 [PR-017] detectConsecutiveLimitDownHalt
+// ---------------------------------------------------------------------------
+
+async function testDetectConsecutiveLimitDownHalt() {
+  // Insufficient data → unknown (safe HOLD, 不触发)
+  assertEqual(
+    'halt: empty array N=3 → unknown',
+    detectConsecutiveLimitDownHalt([], 3, 100),
+    'unknown'
+  );
+  assertEqual(
+    'halt: 2 entries N=3 → unknown (insufficient)',
+    detectConsecutiveLimitDownHalt([150, 200], 3, 100),
+    'unknown'
+  );
+  assertEqual('halt: null → unknown', detectConsecutiveLimitDownHalt(null, 3, 100), 'unknown');
+  assertEqual(
+    'halt: undefined → unknown',
+    detectConsecutiveLimitDownHalt(undefined, 3, 100),
+    'unknown'
+  );
+
+  // Dirty data → unknown (NaN / 负数 / 非整数)
+  assertEqual(
+    'halt: NaN in window → unknown',
+    detectConsecutiveLimitDownHalt([150, NaN, 200], 3, 100),
+    'unknown'
+  );
+  assertEqual(
+    'halt: negative in window → unknown',
+    detectConsecutiveLimitDownHalt([150, -10, 200], 3, 100),
+    'unknown'
+  );
+  assertEqual(
+    'halt: non-int in window → unknown',
+    detectConsecutiveLimitDownHalt([150, 100.5, 200], 3, 100),
+    'unknown'
+  );
+
+  // Bad config args → unknown
+  assertEqual(
+    'halt: consecutive_days 0 → unknown',
+    detectConsecutiveLimitDownHalt([150, 200, 300], 0, 100),
+    'unknown'
+  );
+  assertEqual(
+    'halt: consecutive_days -1 → unknown',
+    detectConsecutiveLimitDownHalt([150, 200, 300], -1, 100),
+    'unknown'
+  );
+  assertEqual(
+    'halt: count_threshold negative → unknown',
+    detectConsecutiveLimitDownHalt([150, 200, 300], 3, -5),
+    'unknown'
+  );
+
+  // ★ AC 主验收 — 严格大于边界 (与 PRD "跌停股 > 100" 字面对齐).
+  // 100 不触发 (恰好等于阈值, 仍属边缘) / 101 触发.
+  assertEqual(
+    'halt: 100/100/100 = threshold (boundary not triggered) → no_halt',
+    detectConsecutiveLimitDownHalt([100, 100, 100], 3, 100),
+    'no_halt'
+  );
+  assertEqual(
+    'halt: 101/101/101 > threshold (just over) → halt_buy',
+    detectConsecutiveLimitDownHalt([101, 101, 101], 3, 100),
+    'halt_buy'
+  );
+
+  // ★ 主 happy path — 连续 3 日远超阈值
+  assertEqual(
+    'halt: 150/200/300 N=3 thr=100 → halt_buy',
+    detectConsecutiveLimitDownHalt([150, 200, 300], 3, 100),
+    'halt_buy'
+  );
+
+  // One day below threshold → no halt (任何一日断链)
+  assertEqual(
+    'halt: 150/80/200 (mid day below) → no_halt',
+    detectConsecutiveLimitDownHalt([150, 80, 200], 3, 100),
+    'no_halt'
+  );
+  assertEqual(
+    'halt: 150/200/80 (last day below) → no_halt',
+    detectConsecutiveLimitDownHalt([150, 200, 80], 3, 100),
+    'no_halt'
+  );
+  assertEqual(
+    'halt: 80/150/200 (first day below) → no_halt',
+    detectConsecutiveLimitDownHalt([80, 150, 200], 3, 100),
+    'no_halt'
+  );
+
+  // 取最后 N 天 (历史窗口外不计)
+  assertEqual(
+    'halt: tail-window 5 entries N=3 last 3 trigger → halt_buy',
+    detectConsecutiveLimitDownHalt([10, 20, 150, 200, 300], 3, 100),
+    'halt_buy'
+  );
+  assertEqual(
+    'halt: tail-window 5 entries N=3 last day below → no_halt',
+    detectConsecutiveLimitDownHalt([300, 300, 300, 300, 50], 3, 100),
+    'no_halt'
+  );
+
+  // N=1 (单日恐慌)
+  assertEqual(
+    'halt: N=1 single day >threshold → halt_buy',
+    detectConsecutiveLimitDownHalt([101], 1, 100),
+    'halt_buy'
+  );
+  assertEqual(
+    'halt: N=1 single day == threshold → no_halt',
+    detectConsecutiveLimitDownHalt([100], 1, 100),
+    'no_halt'
+  );
+
+  // 0 是合法 count (零跌停股, 显然不触发)
+  assertEqual(
+    'halt: 0/0/0 → no_halt',
+    detectConsecutiveLimitDownHalt([0, 0, 0], 3, 100),
+    'no_halt'
+  );
+
+  // 阈值 = 0 (任何 >0 都触发)
+  assertEqual(
+    'halt: threshold=0 + 1/1/1 → halt_buy',
+    detectConsecutiveLimitDownHalt([1, 1, 1], 3, 0),
+    'halt_buy'
+  );
+  assertEqual(
+    'halt: threshold=0 + 0/0/0 → no_halt (strict >)',
+    detectConsecutiveLimitDownHalt([0, 0, 0], 3, 0),
+    'no_halt'
+  );
+}
+
+async function testPickRegimeAlertsHaltBuy() {
+  const cfg = { ...DEFAULT_MARKET_REGIME_ALERT_CONFIG };
+
+  // ★ HALT_BUY only (limit_down_counts trigger; 跌幅 / MA 全无)
+  const haltOnly = pickRegimeAlerts({
+    config: cfg,
+    benchmark_name: '上证指数',
+    return_3d_pct: -0.01,
+    return_20d_pct: -0.05,
+    ma20_today: null,
+    ma60_today: null,
+    ma20_yesterday: null,
+    ma60_yesterday: null,
+    limit_down_counts: [150, 200, 300],
+  });
+  assertEqual('pick: halt only → 1 alert', haltOnly.length, 1);
+  assertEqual('pick: halt only type HALT_BUY', haltOnly[0].type, 'HALT_BUY');
+  assertEqual('pick: halt only level CRITICAL', haltOnly[0].level, 'CRITICAL');
+  assertEqual(
+    'pick: halt sentinel symbol',
+    haltOnly[0].symbol,
+    'SYSTEM:MARKET_REGIME_HALT_BUY'
+  );
+  assert('pick: halt message contains 暂停建仓', haltOnly[0].message.includes('暂停建仓'));
+  assert('pick: halt message contains 150', haltOnly[0].message.includes('150'));
+
+  // Boundary: 100/100/100 (= threshold) → 不触发
+  const haltBoundary = pickRegimeAlerts({
+    config: cfg,
+    benchmark_name: '上证指数',
+    return_3d_pct: -0.01,
+    return_20d_pct: -0.05,
+    ma20_today: null,
+    ma60_today: null,
+    ma20_yesterday: null,
+    ma60_yesterday: null,
+    limit_down_counts: [100, 100, 100],
+  });
+  assertEqual('pick: halt boundary 100=thr → 0 (strict >)', haltBoundary.length, 0);
+
+  // 数据不足 → 不触发
+  const haltShort = pickRegimeAlerts({
+    config: cfg,
+    benchmark_name: '上证指数',
+    return_3d_pct: -0.01,
+    return_20d_pct: -0.05,
+    ma20_today: null,
+    ma60_today: null,
+    ma20_yesterday: null,
+    ma60_yesterday: null,
+    limit_down_counts: [500, 500],
+  });
+  assertEqual('pick: halt only 2 days N=3 → 0 (unknown)', haltShort.length, 0);
+
+  // limit_down_counts 未传 → 不触发
+  const haltMissing = pickRegimeAlerts({
+    config: cfg,
+    benchmark_name: '上证指数',
+    return_3d_pct: -0.01,
+    return_20d_pct: -0.05,
+    ma20_today: null,
+    ma60_today: null,
+    ma20_yesterday: null,
+    ma60_yesterday: null,
+  });
+  assertEqual('pick: halt counts undefined → 0', haltMissing.length, 0);
+
+  // enable_halt_buy_on_panic=false → 即使触发条件也不产 HALT_BUY
+  const haltDisabled = pickRegimeAlerts({
+    config: { ...cfg, enable_halt_buy_on_panic: false },
+    benchmark_name: '上证指数',
+    return_3d_pct: -0.01,
+    return_20d_pct: -0.05,
+    ma20_today: null,
+    ma60_today: null,
+    ma20_yesterday: null,
+    ma60_yesterday: null,
+    limit_down_counts: [200, 300, 400],
+  });
+  assertEqual('pick: halt disabled → 0', haltDisabled.length, 0);
+
+  // ★ 多信号并列 — DROP_3D + HALT_BUY 同时触发 (恐慌日通常伴随大盘跌幅)
+  const both = pickRegimeAlerts({
+    config: cfg,
+    benchmark_name: '上证指数',
+    return_3d_pct: -0.08,
+    return_20d_pct: -0.05,
+    ma20_today: null,
+    ma60_today: null,
+    ma20_yesterday: null,
+    ma60_yesterday: null,
+    limit_down_counts: [150, 200, 300],
+  });
+  assertEqual('pick: drop3d + halt_buy → 2 alerts', both.length, 2);
+  const halt = both.find(a => a.type === 'HALT_BUY');
+  const drop3d = both.find(a => a.type === 'DROP_3D');
+  assert('pick: drop3d present in multi', !!drop3d);
+  assert('pick: halt_buy present in multi', !!halt);
+  assertEqual('pick: halt_buy level CRITICAL in multi', halt?.level, 'CRITICAL');
+
+  // 4 信号全触发 (典型恐慌日, AC 验所有维度互不抢)
+  const allFour = pickRegimeAlerts({
+    config: cfg,
+    benchmark_name: '上证指数',
+    return_3d_pct: -0.08,
+    return_20d_pct: -0.18,
+    ma20_today: 95,
+    ma60_today: 100,
+    ma20_yesterday: 101,
+    ma60_yesterday: 100,
+    limit_down_counts: [150, 200, 300],
+  });
+  assertEqual('pick: all 4 triggered → 4', allFour.length, 4);
+  const types = allFour.map(a => a.type).sort();
+  assertEqual(
+    'pick: all 4 types complete',
+    types,
+    ['DEATH_CROSS', 'DROP_20D', 'DROP_3D', 'HALT_BUY']
+  );
+}
+
+async function testNormalizeHaltBuyConfig() {
+  // defaults — 新增 3 字段
+  assertEqual(
+    'normalize default enable_halt_buy_on_panic == true',
+    DEFAULT_MARKET_REGIME_ALERT_CONFIG.enable_halt_buy_on_panic,
+    true
+  );
+  assertEqual(
+    'normalize default halt_buy_limit_down_count_threshold == 100',
+    DEFAULT_MARKET_REGIME_ALERT_CONFIG.halt_buy_limit_down_count_threshold,
+    100
+  );
+  assertEqual(
+    'normalize default halt_buy_consecutive_days == 3',
+    DEFAULT_MARKET_REGIME_ALERT_CONFIG.halt_buy_consecutive_days,
+    3
+  );
+
+  // explicit valid override
+  const valid = normalizeMarketRegimeAlertConfig({
+    enable_halt_buy_on_panic: false,
+    halt_buy_limit_down_count_threshold: 200,
+    halt_buy_consecutive_days: 5,
+  });
+  assertEqual('normalize: halt disabled saved', valid.enable_halt_buy_on_panic, false);
+  assertEqual('normalize: threshold 200 saved', valid.halt_buy_limit_down_count_threshold, 200);
+  assertEqual('normalize: consecutive 5 saved', valid.halt_buy_consecutive_days, 5);
+
+  // garbage → defaults
+  const bad = normalizeMarketRegimeAlertConfig({
+    enable_halt_buy_on_panic: 'yes',
+    halt_buy_limit_down_count_threshold: -5,
+    halt_buy_consecutive_days: 0,
+  });
+  assertEqual(
+    'normalize: non-bool halt enable → default',
+    bad.enable_halt_buy_on_panic,
+    true
+  );
+  assertEqual('normalize: negative thr → default 100', bad.halt_buy_limit_down_count_threshold, 100);
+  assertEqual('normalize: 0 days → default 3', bad.halt_buy_consecutive_days, 3);
+
+  const bad2 = normalizeMarketRegimeAlertConfig({
+    halt_buy_limit_down_count_threshold: 'abc',
+    halt_buy_consecutive_days: 3.5, // 非整数
+  });
+  assertEqual(
+    'normalize: NaN thr → default',
+    bad2.halt_buy_limit_down_count_threshold,
+    100
+  );
+  assertEqual('normalize: non-int days → default', bad2.halt_buy_consecutive_days, 3);
+}
+
+async function testBuildHaltBuyMessage() {
+  const msg = buildAlertMessage({
+    type: 'HALT_BUY',
+    benchmark_name: '上证指数',
+    reduce_position_pct: 0.3,
+    limit_down_counts: [150, 200, 300],
+    limit_down_threshold: 100,
+    consecutive_days: 3,
+  });
+  assert('halt msg contains 恐慌', msg.includes('恐慌'));
+  assert('halt msg contains 暂停建仓', msg.includes('暂停建仓'));
+  assert('halt msg contains 100', msg.includes('100'));
+  assert('halt msg contains 150/200/300', msg.includes('150/200/300'));
+  assert('halt msg contains CRITICAL', msg.includes('CRITICAL'));
+  assert('halt msg contains 连续 3 日', msg.includes('连续 3 日'));
+}
+
+async function testStatusHaltBuyTrigger() {
+  // 4 bars makes return_3d -6% (DROP_3D triggers), 同时 limit_down_counts 触发 HALT_BUY.
+  const bars = makeBars(4, i => (i < 3 ? 100 : 94));
+  const state = emptyState({
+    benchmarkBars: bars,
+    limitDownCounts: [150, 200, 300],
+  });
+  const svc = new MarketRegimeAlertService(makeFakeSource(state));
+  const s = await svc.getMarketRegimeStatus();
+  assert('status halt: limit_down_counts populated', Array.isArray(s.limit_down_counts));
+  assertEqual('status halt: limit_down_counts.length == 3', s.limit_down_counts?.length, 3);
+  // 2 alerts: DROP_3D + HALT_BUY
+  assertEqual('status halt: 2 alerts (drop3d + halt)', s.alerts.length, 2);
+  const halt = s.alerts.find(a => a.type === 'HALT_BUY');
+  assert('status halt: HALT_BUY present', !!halt);
+  assertEqual('status halt: HALT_BUY level CRITICAL', halt?.level, 'CRITICAL');
+}
+
+async function testStatusHaltBuyDisabledNoFetch() {
+  // enable_halt_buy_on_panic=false → 不调 loadConsecutiveLimitDownCounts
+  // (limit_down_counts 字段保持 null + 即使 fake source 有数据也不发 HALT_BUY)
+  const bars = makeBars(4, i => (i < 3 ? 100 : 99));
+  const state = emptyState({
+    benchmarkBars: bars,
+    limitDownCounts: [200, 300, 400], // would trigger if asked
+    globalConfig: {
+      ...DEFAULT_MARKET_REGIME_ALERT_CONFIG,
+      enable_halt_buy_on_panic: false,
+    },
+  });
+  const svc = new MarketRegimeAlertService(makeFakeSource(state));
+  const s = await svc.getMarketRegimeStatus();
+  assertEqual('status halt-disabled: limit_down_counts null', s.limit_down_counts, null);
+  const halt = s.alerts.find(a => a.type === 'HALT_BUY');
+  assertEqual('status halt-disabled: no HALT_BUY alert', halt, undefined);
+}
+
+async function testStatusHaltBuyFetchFailureFailOpen() {
+  // loadConsecutiveLimitDownCounts 抛错 → status.limit_down_counts=null + 不影响其它 3 信号
+  const bars = makeBars(4, i => (i < 3 ? 100 : 94));
+  const state = emptyState({
+    benchmarkBars: bars,
+    loadLimitDownShouldThrow: true,
+  });
+  const svc = new MarketRegimeAlertService(makeFakeSource(state));
+  const s = await svc.getMarketRegimeStatus();
+  assertEqual('status halt-throw: limit_down_counts null', s.limit_down_counts, null);
+  // DROP_3D 仍然触发 (3 类原信号不受影响)
+  assertEqual('status halt-throw: DROP_3D still triggered', s.alerts.length, 1);
+  assertEqual('status halt-throw: alert type DROP_3D', s.alerts[0].type, 'DROP_3D');
+}
+
+async function testStatusHaltBuyInsufficientData() {
+  // limit_down_counts=[]（DataSource 返空, 数据不足）→ null + 不触发 HALT_BUY
+  const bars = makeBars(4, i => (i < 3 ? 100 : 99));
+  const state = emptyState({
+    benchmarkBars: bars,
+    limitDownCounts: [], // empty
+  });
+  const svc = new MarketRegimeAlertService(makeFakeSource(state));
+  const s = await svc.getMarketRegimeStatus();
+  assertEqual('status halt-empty: limit_down_counts null', s.limit_down_counts, null);
+  const halt = s.alerts.find(a => a.type === 'HALT_BUY');
+  assertEqual('status halt-empty: no HALT_BUY', halt, undefined);
+}
+
+async function testEvaluateHaltBuyFanOut() {
+  // 全 CRITICAL HALT_BUY 信号触发 + 多用户 fan-out
+  // mild stable bars 让 DROP_* / DEATH_CROSS 不触发 — 只让 HALT_BUY 单独跑.
+  const bars = makeBars(4, () => 100);
+  const state = emptyState({
+    benchmarkBars: bars,
+    userIds: [1, 2],
+    limitDownCounts: [150, 200, 300],
+  });
+  const svc = new MarketRegimeAlertService(makeFakeSource(state));
+  const r = await svc.evaluateAfterOpen();
+  assertEqual('evaluate halt: 1 alert in status', r.status.alerts.length, 1);
+  assertEqual('evaluate halt: alert type HALT_BUY', r.status.alerts[0].type, 'HALT_BUY');
+  assertEqual('evaluate halt: scanned 2', r.scanned_users, 2);
+  assertEqual('evaluate halt: alerted 2', r.alerted_users, 2);
+  assertEqual('evaluate halt: 2 alerts written total', state.alerts.length, 2);
+  assertEqual(
+    'evaluate halt: written alert level CRITICAL',
+    state.alerts[0].level,
+    'CRITICAL'
+  );
+  assertEqual(
+    'evaluate halt: written alert symbol SYSTEM:MARKET_REGIME_HALT_BUY',
+    state.alerts[0].symbol,
+    'SYSTEM:MARKET_REGIME_HALT_BUY'
+  );
+}
+
+// ---------------------------------------------------------------------------
 //  Main driver
 // ---------------------------------------------------------------------------
 
@@ -819,6 +1256,16 @@ async function main() {
   await testEvaluateSingleUserOnly();
   // Config
   await testGetUpdateConfig();
+  // US-132 [PR-017] — HALT_BUY 4th detector
+  await testDetectConsecutiveLimitDownHalt();
+  await testPickRegimeAlertsHaltBuy();
+  await testNormalizeHaltBuyConfig();
+  await testBuildHaltBuyMessage();
+  await testStatusHaltBuyTrigger();
+  await testStatusHaltBuyDisabledNoFetch();
+  await testStatusHaltBuyFetchFailureFailOpen();
+  await testStatusHaltBuyInsufficientData();
+  await testEvaluateHaltBuyFanOut();
 
   const total = passed + failed;
   console.log(`\n${passed} ok, ${failed} failed (of ${total})`);

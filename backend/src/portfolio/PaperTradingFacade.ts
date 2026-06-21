@@ -50,10 +50,19 @@ import { paperTradingRiskProfileService } from './internal/PaperTradingRiskProfi
 import { paperTradingOrderIntentService } from './internal/PaperTradingOrderIntentService';
 import { paperTradingTuningApplyService } from './internal/PaperTradingTuningApplyService';
 import { recommendationTradeOutcomeService } from '../services/RecommendationTradeOutcomeService';
-import { positionLimitGuard } from './risk/PositionLimitGuard';
-import { drawdownCircuitBreaker } from './risk/DrawdownCircuitBreaker';
+// US-136 [EX-011] (2026-06-21): drawdownCircuitBreaker / positionLimitGuard / RiskGuardUnavailableError /
+// handleRiskGuardUnavailable / loadProductionRiskAlertCreator 不再在 facade 直接调 —
+// 全部走 internal/preTradeGuards.checkAllPreTradeGates 统一入口 (七闸门统一入口).
+import { evaluateFeasibilityGate, emitFeasibilityGateAlert } from './internal/feasibilityGate';
 import { perStockStopLossGuard, pickEffectivePct } from './risk/PerStockStopLossGuard';
 import { incrementOrderTotal } from '../metrics/PrometheusRegistry';
+import {
+  inferMarketSegment as inferMarketSegmentLM,
+  getLimitPct as getLimitPctLM,
+  isAtLimitUp as isAtLimitUpLM,
+  isAtLimitDown as isAtLimitDownLM,
+} from '../quant/marketLimits';
+import { isSTName as isSTNameLM } from '../utils/stNameUtils';
 
 // Re-export the small set of constants the controller still needs literal access
 // to (default capital, portfolio name keys for downstream services).  This is the
@@ -96,6 +105,48 @@ export interface PlaceOrderOptions {
   bypass_trading_hours?: boolean;
   /** 跳过 T+1 拦截 (测试用) */
   bypass_t_plus_1?: boolean;
+  /**
+   * 跳过 pre-trade 合规检查 (US-010 / PR-005). 仅给系统级强制路径用:
+   *   - GuardSellExecutor 强平 (止损/止盈/集中度), 不该被 wizard 拦
+   *   - closePosition (用户已显式选择平仓)
+   *   - IndustryConcentrationGuard.rebalance 等再平衡 SELL 链
+   * 普通 UI BUY / TodaySignals shadow autopilot / RebalanceEngine BUY **不要**传.
+   */
+  bypass_compliance?: boolean;
+  /**
+   * 跳过 ExecutionFeasibility gate (US-015 / EX-001). 仅给系统级强制路径用:
+   *   - GuardSellExecutor 强平 (止损/止盈/集中度), feasibility 阻止不了实际需要的清仓
+   *   - closePosition (用户已显式选择平仓)
+   *   - IndustryConcentrationGuard.rebalance 等再平衡 SELL 链
+   * 普通 UI BUY / TodaySignals shadow autopilot / RebalanceEngine BUY **不要**传.
+   * SELL 路径目前不调 gate (与 PaperTradingAutomationService 同款), 该 flag 主要给
+   * 未来扩 SELL gate 时留 escape hatch.
+   */
+  bypass_feasibility?: boolean;
+  /**
+   * 可选 pre-trade compliance 上下文 — 由 caller (策略层) 注入信号元数据,
+   * facade 内不再二次查 DB. 缺省时仅跑 wizard 子规则中不依赖元数据的分支
+   * (NEXT_DAY_CHASE / FREQUENT_TRADING / MIN_HOLDING_PERIOD 仍能命中).
+   */
+  compliance_context?: PreTradeComplianceContext;
+}
+
+/**
+ * caller 注入的策略/信号上下文，用于 PaperTradingFacade.placeOrder 调
+ * checkPreTradeCompliance. 全 optional — 缺什么 wizard 跳什么.
+ */
+export interface PreTradeComplianceContext {
+  conviction_level?: number;
+  strategy_key?: string;
+  stop_loss_distance_pct?: number;
+  market_trend?: 'up' | 'down' | 'sideways';
+  current_pe?: number;
+  historical_avg_pe?: number;
+  has_specific_catalyst?: boolean;
+  /** 当日已涨幅 (0-1 小数, 例如 0.07 = 7%) */
+  intraday_change_pct?: number;
+  /** 信号产生 timestamp (ms epoch) — 超 24h 算 STALE_SIGNAL */
+  signal_timestamp_ms?: number;
 }
 
 export interface ClosePositionOptions {
@@ -105,6 +156,9 @@ export interface ClosePositionOptions {
   portfolio_id?: number;
   bypass_trading_hours?: boolean;
   bypass_t_plus_1?: boolean;
+  bypass_compliance?: boolean;
+  /** US-015 (EX-001): closePosition 默认 bypass=true (强平 SELL 不该被 feasibility gate 拦) */
+  bypass_feasibility?: boolean;
 }
 
 export type GetDailySnapshotAction = 'list' | 'trades' | 'refresh';
@@ -184,6 +238,11 @@ const toNumber = (value: any, fallback = 0): number => {
 
 const roundMoney = (value: any): number => Math.round(toNumber(value, 0) * 100) / 100;
 
+// US-058 [FE-019] — ATR% 计算抽到 ./internal/positionAtrHelpers.ts 让 ts-node
+// 单测能 DB-less import. 这里 re-export 保留 back-compat (外部若引用走 facade).
+export { computeAtrPctFromBars } from './internal/positionAtrHelpers';
+import { computeAtrPctFromBars } from './internal/positionAtrHelpers';
+
 const withAutonomousPortfolio = (payload: Record<string, any> = {}) => {
   // Batch I (2026-06-17): 防 body 注入 portfolio_id/portfolio_name 劫持 autonomous 盘.
   // 之前 spread payload 后只硬编码 portfolio_name; 但 portfolio_id 仍可被 body 注入 →
@@ -217,8 +276,281 @@ export function inferOrderFailureCode(message: unknown): string | null {
 }
 
 // ---------------------------------------------------------------------------
+//  BETA-6 (2026-06-18, audit M-17): Quote staleness 决策纯函数
+// ---------------------------------------------------------------------------
+
+export type QuoteStalenessKind =
+  | 'pass_realtime'
+  | 'pass_daily_bar_fallback'
+  | 'stale_realtime'
+  | 'stale_daily_bar';
+
+export interface QuoteStalenessDecision {
+  kind: QuoteStalenessKind;
+  message: string;
+  detail: Record<string, any>;
+}
+
+/**
+ * 评估行情陈旧度 — 优先 RealtimeQuote 30 min，缺失 fallback daily_bar 1 day。
+ *
+ * 输入全部传值（无 DB 调用 / 无 RealtimeQuoteService 调用），让 caller 注入
+ * RealtimeQuote 与 daily_bar timestamp 后纯逻辑判定 — 单测易、回测可复用。
+ *
+ * 返回 4 种 kind:
+ *   - pass_realtime — RealtimeQuote 在 30 min 内 → 放行
+ *   - pass_daily_bar_fallback — RealtimeQuote 缺失但 daily_bar 在 1 天内 → 放行
+ *   - stale_realtime — RealtimeQuote 超 30 min → 拒单 code='STALE_REALTIME_QUOTE'
+ *   - stale_daily_bar — RealtimeQuote 缺失 + daily_bar 超 1 天 → 拒单 code='STALE_DAILY_BAR'
+ */
+export function evaluateQuoteStaleness(input: {
+  symbol: string;
+  now_ms: number;
+  realtime_quote_time: any | null;
+  daily_bar_time: any;
+  max_realtime_age_minutes: number;
+  max_daily_bar_age_days: number;
+}): QuoteStalenessDecision {
+  // 1) RealtimeQuote 优先
+  if (input.realtime_quote_time !== null && input.realtime_quote_time !== undefined) {
+    const ts = new Date(input.realtime_quote_time).getTime();
+    if (Number.isFinite(ts)) {
+      const ageMinutes = (input.now_ms - ts) / (60 * 1000);
+      if (ageMinutes > input.max_realtime_age_minutes) {
+        return {
+          kind: 'stale_realtime',
+          message:
+            `行情数据陈旧 (RealtimeQuote 最新 ${Math.round(ageMinutes)} 分钟前 > ` +
+            `${input.max_realtime_age_minutes}min), 拒绝按 stale 价撮合。` +
+            `请等待行情同步或加 bypass_trading_hours=true 强制下单`,
+          detail: {
+            symbol: input.symbol,
+            quote_time: input.realtime_quote_time,
+            age_minutes: Math.round(ageMinutes),
+            source: 'realtime_quote',
+          },
+        };
+      }
+      return {
+        kind: 'pass_realtime',
+        message: 'realtime quote within window',
+        detail: {
+          symbol: input.symbol,
+          age_minutes: Math.round(ageMinutes),
+          source: 'realtime_quote',
+        },
+      };
+    }
+  }
+
+  // 2) RealtimeQuote 不可用 → daily_bar fallback
+  const barTs = new Date(input.daily_bar_time).getTime();
+  if (!Number.isFinite(barTs)) {
+    // 双源都解析失败 — 视为 stale_daily_bar
+    return {
+      kind: 'stale_daily_bar',
+      message: `行情数据陈旧 (RealtimeQuote 不可用 + daily_bar timestamp 无法解析: ${input.daily_bar_time})`,
+      detail: { symbol: input.symbol, daily_bar_time: input.daily_bar_time, source: 'daily_bar' },
+    };
+  }
+  const ageMs = input.now_ms - barTs;
+  const maxAgeMs = input.max_daily_bar_age_days * 24 * 60 * 60 * 1000;
+  if (ageMs > maxAgeMs) {
+    const ageDays = Math.round((ageMs / (24 * 60 * 60 * 1000)) * 10) / 10;
+    return {
+      kind: 'stale_daily_bar',
+      message:
+        `行情数据陈旧 (RealtimeQuote 不可用 + daily_bar ${ageDays} 天前 > ` +
+        `${input.max_daily_bar_age_days} 天), 拒绝按 stale 价撮合。` +
+        `请等待数据同步或加 bypass_trading_hours=true 强制下单`,
+      detail: {
+        symbol: input.symbol,
+        latest_bar_time: input.daily_bar_time,
+        age_days: ageDays,
+        source: 'daily_bar',
+      },
+    };
+  }
+  return {
+    kind: 'pass_daily_bar_fallback',
+    message: 'daily_bar fallback within window',
+    detail: {
+      symbol: input.symbol,
+      age_minutes: Math.round(ageMs / (60 * 1000)),
+      source: 'daily_bar',
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 //  Facade
 // ---------------------------------------------------------------------------
+
+/**
+ * audit S-3 修复: 涨跌停 pre-trade 拦截的纯函数实现。
+ *
+ * 单测可以直接调用此函数验证 5 个市场段 × BUY/SELL 边界, 不需要走 placeOrder
+ * 整条 DB 链路。`_placeOrderInner` 真实 BUY/SELL 路径里有同款逻辑 inline 嵌入,
+ * 把判定逻辑抽到 export 函数让单元测试可独立断言。
+ *
+ * 返回 { ok: true } 表示放行 (或缺数据 / bypass 时安全 fallback);
+ * 返回 { ok: false, code, message, detail } 表示触发涨/跌停, 调用方应当抛错。
+ */
+export interface LimitUpDownDecision {
+  ok: boolean;
+  code?: 'LIMIT_UP_BLOCK_BUY' | 'LIMIT_DOWN_BLOCK_SELL';
+  message?: string;
+  detail?: Record<string, any>;
+}
+
+export function evaluateLimitUpDownBlock(input: {
+  symbol: string;
+  stock_name?: string | null;
+  direction: 'BUY' | 'SELL';
+  prev_close: number | null | undefined;
+  reference_price: number;
+  bypass?: boolean;
+}): LimitUpDownDecision {
+  if (input.bypass) return { ok: true };
+  if (!Number.isFinite(input.prev_close as number) || (input.prev_close as number) <= 0) {
+    return { ok: true }; // 缺数据安全 fallback
+  }
+  if (!Number.isFinite(input.reference_price) || input.reference_price <= 0) {
+    return { ok: true };
+  }
+  const segment = inferMarketSegmentLM(input.symbol);
+  const isST = isSTNameLM(input.stock_name || '');
+  const fakeBar = {
+    open: input.reference_price,
+    high: input.reference_price,
+    low: input.reference_price,
+    close: input.reference_price,
+  };
+  if (input.direction === 'BUY') {
+    if (isAtLimitUpLM(fakeBar, segment, isST, input.prev_close as number)) {
+      const limitPct = getLimitPctLM(segment, isST);
+      return {
+        ok: false,
+        code: 'LIMIT_UP_BLOCK_BUY',
+        message: `标的 ${input.symbol} 当前已涨停 (${segment}${isST ? '+ST' : ''} ${(
+          limitPct * 100
+        ).toFixed(0)}%), 拒绝买入`,
+        detail: {
+          symbol: input.symbol,
+          segment,
+          is_st: isST,
+          limit_pct: limitPct,
+          prev_close: input.prev_close,
+          reference_price: input.reference_price,
+        },
+      };
+    }
+  } else {
+    if (isAtLimitDownLM(fakeBar, segment, isST, input.prev_close as number)) {
+      const limitPct = getLimitPctLM(segment, isST);
+      return {
+        ok: false,
+        code: 'LIMIT_DOWN_BLOCK_SELL',
+        message: `标的 ${input.symbol} 当前已跌停 (${segment}${isST ? '+ST' : ''} ${(
+          limitPct * 100
+        ).toFixed(0)}%), 拒绝卖出`,
+        detail: {
+          symbol: input.symbol,
+          segment,
+          is_st: isST,
+          limit_pct: limitPct,
+          prev_close: input.prev_close,
+          reference_price: input.reference_price,
+        },
+      };
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * Pure helper — 把 placeOrder 输入 + 已知盘口/组合信息映射成
+ * checkPreTradeCompliance 的 PreTradeComplianceDraft. 抽出做纯函数方便单测,
+ * 同时让 facade 的 BUY 主路径与 LiveTradingService.approveDraft /
+ * PaperTradingAutomationService.createBuyTrade 的 draft 构造逻辑保持口径一致.
+ *
+ * - position_size_pct: cost / (current_cash + cost) — 与 automation 同公式
+ * - intraday_change_pct: 接受 0.07 (小数) 或 7 (百分比), 自动 /100 归一
+ * - 缺什么字段 caller 传 undefined, 不要传 NaN, 让 wizard 子规则自然跳过
+ */
+export function buildPreTradeComplianceDraft(input: {
+  user_id: number;
+  portfolio_id?: number;
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  price: number;
+  quantity: number;
+  current_cash?: number;
+  context?: PreTradeComplianceContext;
+  bypass?: boolean;
+}): {
+  user_id: number;
+  portfolio_id?: number;
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  price: number;
+  quantity: number;
+  position_size_pct?: number;
+  conviction_level?: number;
+  strategy_key?: string;
+  stop_loss_distance_pct?: number;
+  market_trend?: 'up' | 'down' | 'sideways';
+  current_pe?: number;
+  historical_avg_pe?: number;
+  has_specific_catalyst?: boolean;
+  intraday_change_pct?: number;
+  signal_timestamp_ms?: number;
+  bypass?: boolean;
+} {
+  const ctx = input.context || {};
+  const cost = Number(input.price) * Number(input.quantity);
+  let positionSizePct: number | undefined;
+  if (
+    input.side === 'BUY' &&
+    Number.isFinite(input.current_cash as number) &&
+    Number.isFinite(cost)
+  ) {
+    const denom = Number(input.current_cash) + cost;
+    if (denom > 0 && cost > 0) positionSizePct = cost / denom;
+  }
+  const intradayChg = (() => {
+    const c = Number(ctx.intraday_change_pct);
+    if (!Number.isFinite(c)) return undefined;
+    return Math.abs(c) > 1 ? c / 100 : c;
+  })();
+  return {
+    user_id: input.user_id,
+    portfolio_id: input.portfolio_id,
+    symbol: input.symbol,
+    side: input.side,
+    price: Number(input.price),
+    quantity: Number(input.quantity),
+    position_size_pct: positionSizePct,
+    conviction_level: Number.isFinite(ctx.conviction_level as number)
+      ? Number(ctx.conviction_level)
+      : undefined,
+    strategy_key: ctx.strategy_key,
+    stop_loss_distance_pct: Number.isFinite(ctx.stop_loss_distance_pct as number)
+      ? Number(ctx.stop_loss_distance_pct)
+      : undefined,
+    market_trend: ctx.market_trend,
+    current_pe: Number.isFinite(ctx.current_pe as number) ? Number(ctx.current_pe) : undefined,
+    historical_avg_pe: Number.isFinite(ctx.historical_avg_pe as number)
+      ? Number(ctx.historical_avg_pe)
+      : undefined,
+    has_specific_catalyst: ctx.has_specific_catalyst === true ? true : undefined,
+    intraday_change_pct: intradayChg,
+    signal_timestamp_ms: Number.isFinite(ctx.signal_timestamp_ms as number)
+      ? Number(ctx.signal_timestamp_ms)
+      : undefined,
+    bypass: input.bypass === true ? true : undefined,
+  };
+}
 
 export class PaperTradingFacade {
   private dataService: DataService;
@@ -318,10 +650,14 @@ export class PaperTradingFacade {
     let totalMarketValue = 0;
     const updatedPositions = await Promise.all(
       positions.map(async pos => {
+        // US-058 [FE-019]: 把日 bars window 从 7 天扩到 30 天 (≈ 22 个交易日) — ATR(14)
+        // 需要至少 15 根 bar, 7 天 (3-5 个交易日) 不够. 同时把 close-price 取最后一
+        // 根的逻辑保留, 新增 atr_pct 计算挂到 toJSON 输出里供 UI "ATR%" 列消费.
+        let atr_pct: number | null = null;
         try {
           const bars = await this.dataService.getDailyBars(
             pos.symbol,
-            new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+            new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
             new Date()
           );
           if (bars && bars.length > 0) {
@@ -338,14 +674,22 @@ export class PaperTradingFacade {
             pos.market_value = market_value;
             pos.unrealized_pnl = unrealized_pnl;
             await pos.save();
+
+            atr_pct = computeAtrPctFromBars(bars as Array<{ high: any; low: any; close: any }>, 14);
           }
           totalMarketValue += toNumber(pos.market_value);
-          return pos;
         } catch (e) {
           logger.error(`获取股票 ${pos.symbol} 价格失败`, e);
           totalMarketValue += toNumber(pos.market_value);
-          return pos;
         }
+
+        // 把 model.toJSON 串成普通 object + 挂 atr_pct (model 列没存 ATR — 它是
+        // 实时算的; 不污染 DB).  highest_price / trailing_stop_pct / trailing_stop_price
+        // 已是 model 字段, toJSON 天然带出, 无需另加.  US-058 持仓表前端需要这 4 个
+        // 字段一起渲染"ATR% / DD% / 持仓天数" 三列.
+        const json = pos.toJSON() as Record<string, any>;
+        json.atr_pct = atr_pct;
+        return json;
       })
     );
 
@@ -432,8 +776,10 @@ export class PaperTradingFacade {
         const hh = String(hour).padStart(2, '0');
         const mm = String(minute).padStart(2, '0');
         let reason = '在 A 股交易时段 (09:30-11:30 / 13:00-15:00) 外';
-        if (totalMinutes >= 9 * 60 && totalMinutes < MORNING_START) reason = '集合竞价时段 (09:00-09:30)，等待 09:30 开盘后再下单';
-        else if (totalMinutes >= MORNING_END && totalMinutes < AFTERNOON_START) reason = '午休时段 (11:30-13:00)';
+        if (totalMinutes >= 9 * 60 && totalMinutes < MORNING_START)
+          reason = '集合竞价时段 (09:00-09:30)，等待 09:30 开盘后再下单';
+        else if (totalMinutes >= MORNING_END && totalMinutes < AFTERNOON_START)
+          reason = '午休时段 (11:30-13:00)';
         else if (totalMinutes >= AFTERNOON_END) reason = '已收盘 (>15:00)';
         else if (totalMinutes < 9 * 60) reason = '尚未开盘 (<09:00)';
         const err: any = new Error(
@@ -493,18 +839,50 @@ export class PaperTradingFacade {
     // bypass_trading_hours=true (历史回填 / 单测) 时跳过此检查. 未来可接 RealtimeQuoteService
     // 同款 30min 阈值, 这里先用 daily_bar 时间戳保底.
     if (!(options as any).bypass_trading_hours && latestBar.time) {
-      const ageMs = Date.now() - new Date(latestBar.time as any).getTime();
-      const maxAgeMs = 3 * 24 * 60 * 60 * 1000;
-      if (Number.isFinite(ageMs) && ageMs > maxAgeMs) {
-        const ageDays = Math.round((ageMs / (24 * 60 * 60 * 1000)) * 10) / 10;
-        const err: any = new Error(
-          `行情数据陈旧 (最新 daily_bar ${ageDays} 天前), 拒绝按 stale 价撮合. ` +
-            `请等待数据同步或加 bypass_trading_hours=true 强制下单`
+      // BETA-6 (2026-06-18, audit M-17): 优先用 RealtimeQuoteService 的 timestamp
+      // (盘中 30 min 阈值); 不可用则 fallback 到 daily_bar 3 天阈值。daily_bar 3 天
+      // 阈值放宽到 1 天 (audit 要求) — 实测发现 facade 历史回填等场景偶尔依赖 1-3 天
+      // 老 bar, 折中取 1 天作为 fallback 阈值, 既比之前严格又不破回填场景。
+      let quoteSnapshot: { quote_time?: any } | null = null;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { realtimeQuoteService } = require('../data/services/RealtimeQuoteService');
+        const quotes = await realtimeQuoteService.getLatestQuotes([symbol]);
+        quoteSnapshot = Array.isArray(quotes) && quotes.length > 0 ? quotes[0] : null;
+      } catch (err: any) {
+        logger.warn(
+          `[facade.placeOrder] RealtimeQuote getLatestQuotes failed, fallback to daily_bar: ${
+            err?.message || err
+          }`
         );
+        quoteSnapshot = null;
+      }
+      const stalenessDecision = evaluateQuoteStaleness({
+        symbol,
+        now_ms: Date.now(),
+        realtime_quote_time: quoteSnapshot?.quote_time ?? null,
+        daily_bar_time: latestBar.time,
+        max_realtime_age_minutes: 30,
+        max_daily_bar_age_days: 1,
+      });
+      if (stalenessDecision.kind === 'stale_realtime') {
+        const err: any = new Error(stalenessDecision.message);
+        err.statusCode = 503;
+        err.code = 'STALE_REALTIME_QUOTE';
+        err.detail = stalenessDecision.detail;
+        throw err;
+      }
+      if (stalenessDecision.kind === 'stale_daily_bar') {
+        const err: any = new Error(stalenessDecision.message);
         err.statusCode = 503;
         err.code = 'STALE_DAILY_BAR';
-        err.detail = { symbol, latest_bar_time: latestBar.time, age_days: ageDays };
+        err.detail = stalenessDecision.detail;
         throw err;
+      }
+      if (stalenessDecision.kind === 'pass_daily_bar_fallback') {
+        logger.debug(
+          `[facade.placeOrder] staleness fallback to daily_bar source for ${symbol}: ${stalenessDecision.detail?.age_minutes}m`
+        );
       }
     }
     const stockInfo = await Stock.findOne({ where: { symbol } });
@@ -529,43 +907,208 @@ export class PaperTradingFacade {
       const transferFee = cost * transferFeeRate;
       const totalCost = cost + commission + transferFee;
 
-      // ---- US-049: Drawdown circuit breaker LEVEL_1 pause ----
-      // If the portfolio is in an active LEVEL_1 pause window (peak-drawdown
-      // ≥ 10% triggered by the EOD evaluator), block NEW openings.  Adding to
-      // existing positions is allowed (covers策略 add-on without forcing
-      // operators to manually clear the pause for every routine top-up).
-      // Failure-open: a DB outage in the guard simply lets the order proceed —
-      // upstream `cash check` + `position-limit guard` still gate it.
-      const breakerResult = await drawdownCircuitBreaker.checkBuyAllowed({
-        user_id,
+      // ---- audit S-3 修复: 涨停板拦截 (用 evaluateLimitUpDownBlock 纯函数) ----
+      // 之前 BUY/SELL 完全不查涨跌停, 模拟盘可下单到 300xxx 创业板涨 18% / 920xxx
+      // 北交所涨 25% / ST 涨 4.5% (实盘 5% 已涨停)。按市场段计算精确涨停价
+      // (主板 10% / 创业板 + 科创板 20% / 北交所 30% / ST 5%), 触及即拒。
+      const limitUpDecision = evaluateLimitUpDownBlock({
         symbol,
+        stock_name: stockName,
+        direction: 'BUY',
+        prev_close: bars.length >= 2 ? Number(bars[bars.length - 2].close) : null,
+        reference_price: current_price,
+        bypass: (options as any).bypass_limit_up_check === true,
       });
-      if (!breakerResult.ok && breakerResult.reason) {
-        const err: any = new Error(breakerResult.reason);
+      if (!limitUpDecision.ok) {
+        const err: any = new Error(limitUpDecision.message);
         err.statusCode = 400;
-        err.code = 'DRAWDOWN_BREAKER_PAUSED';
-        err.paused_until = breakerResult.paused_until;
+        err.code = limitUpDecision.code;
+        err.detail = limitUpDecision.detail;
         throw err;
       }
 
-      // ---- US-047: Position limit guard ----
-      // Run BEFORE the cash check so that a position-limit violation is
-      // reported as a "仓位上限" issue rather than an "可用资金不足" one.
-      // `cost` (execute_price × quantity, ex-commission) is the right
-      // notional to compare against `max_single_stock_pct` since commission
-      // doesn't accrue to the position's market value.
-      const guardResult = await positionLimitGuard.checkBuyOrder({
+      // ---- US-049 + US-047: Drawdown circuit breaker + PositionLimitGuard ----
+      // US-136 [EX-011] (2026-06-21): 七闸门统一入口 — 把 drawdown + position-limit
+      // 两道硬风控合到 `checkAllPreTradeGates(side='BUY')`, 三 caller (facade /
+      // automation / LiveTradingService) 通过同一个 helper 走. 之前 facade 串
+      // drawdownCircuitBreaker.checkBuyAllowed + positionLimitGuard.checkBuyOrder
+      // 两段重复代码, 与 automation.preTradeGuards.checkPreBuyGuards 同款逻辑
+      // 双份维护; 现在统一到 checkAllPreTradeGates → checkPreBuyGuards.
+      //
+      // fail-CLOSED 行为: RISK_GUARD_UNAVAILABLE 由内部 handleRiskGuardUnavailable
+      // 写好 RiskAlert 后返 ok=false, caller 拼 statusCode=503 throw; 业务级拒单
+      // (DRAWDOWN_BREAKER_PAUSED / POSITION_LIMIT_VIOLATION) 走 statusCode=400.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const _preTradeGuardsBuy = require('./internal/preTradeGuards');
+      const buyGateResult = await _preTradeGuardsBuy.checkAllPreTradeGates({
+        side: 'BUY',
         user_id,
         symbol,
         proposed_value: cost,
+        caller_label: 'facade.placeOrder',
       });
-      if (!guardResult.ok && guardResult.violation) {
-        const err: any = new Error(guardResult.violation.message);
-        err.statusCode = 400;
-        err.code = 'POSITION_LIMIT_VIOLATION';
-        err.rule = guardResult.violation.rule;
-        err.detail = guardResult.violation.detail;
+      if (!buyGateResult.ok) {
+        const err: any = new Error(buyGateResult.reason);
+        err.statusCode = buyGateResult.code === 'RISK_GUARD_UNAVAILABLE' ? 503 : 400;
+        err.code = buyGateResult.code;
+        if (buyGateResult.detail) err.detail = buyGateResult.detail;
+        if (buyGateResult.detail?.paused_until)
+          err.paused_until = buyGateResult.detail.paused_until;
+        if (buyGateResult.detail?.rule) err.rule = buyGateResult.detail.rule;
         throw err;
+      }
+
+      // ============ pre-trade compliance (US-010 / PR-005, BETA-1 续) ============
+      // 复用 services/TradeComplianceChecker. 之前只接 LiveTradingService.approveDraft
+      // 与 PaperTradingAutomationService.createBuyTrade 两处; facade.placeOrder 是 UI
+      // 手动 BUY / TodaySignals shadow autopilot / RebalanceEngine 执行的统一入口,
+      // 这次补齐让"全 caller 验收"成立.
+      //
+      // 规则:
+      //   high 违规 → throw err.code=PRE_TRADE_COMPLIANCE_BLOCKED + emit MEDIUM RiskAlert
+      //   medium    → 放行, emit LOW RiskAlert
+      //   low       → 放行, 不写 RiskAlert (仅 log)
+      // bypass_compliance=true 时直接跳过 (强平 / closePosition / 强制 rebalance).
+      // fail-OPEN: 内部 unexpected throw 走 logger.warn, 不阻塞业务.
+      if (!(options as any).bypass_compliance) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const complianceMod = require('../services/TradeComplianceChecker');
+          const { checkPreTradeCompliance, emitPreTradeComplianceAlert } = complianceMod;
+          const complianceDraft = buildPreTradeComplianceDraft({
+            user_id,
+            portfolio_id: portfolio.id,
+            symbol,
+            side: 'BUY',
+            price: execute_price,
+            quantity,
+            current_cash: Number(portfolio.current_cash) || 0,
+            context: (options as any).compliance_context,
+          });
+          const complianceResult = await checkPreTradeCompliance(complianceDraft);
+          if (complianceResult.block) {
+            await emitPreTradeComplianceAlert({
+              user_id,
+              symbol,
+              side: 'BUY',
+              level: 'MEDIUM',
+              draft: complianceDraft,
+              result: complianceResult,
+            });
+            const err: any = new Error(`pre-trade compliance 拒单: ${complianceResult.summary}`);
+            err.statusCode = 400;
+            err.code = 'PRE_TRADE_COMPLIANCE_BLOCKED';
+            err.detail = { violations: complianceResult.violations };
+            throw err;
+          }
+          if (complianceResult.violations.some((v: any) => v.severity === 'medium')) {
+            await emitPreTradeComplianceAlert({
+              user_id,
+              symbol,
+              side: 'BUY',
+              level: 'LOW',
+              draft: complianceDraft,
+              result: complianceResult,
+            });
+          } else if (complianceResult.violations.length > 0) {
+            logger.info(
+              `[facade.placeOrder] pre-trade compliance LOW-only for ${symbol}: ${complianceResult.summary}`
+            );
+          }
+        } catch (err: any) {
+          if (err?.code === 'PRE_TRADE_COMPLIANCE_BLOCKED') throw err;
+          logger.warn(
+            `[facade.placeOrder] pre-trade compliance check failed (fail-open): ${
+              err?.message || err
+            }`
+          );
+        }
+      }
+
+      // ============ ExecutionFeasibility gate (US-015 / EX-001) ============
+      // 之前仅 PaperTradingAutomationService.autoBuyFromSignals 接入. facade.placeOrder
+      // 覆盖 UI 手动 BUY / RebalanceEngine / CompositeRebalanceService 全链, 把
+      // "composite_score < 60 不下单" AC 真正变成三入口全覆盖.
+      //
+      // gate 决策矩阵 (详见 internal/feasibilityGate.ts):
+      //   service decision='blocked'                → throw EXECUTION_FEASIBILITY_BLOCKED + MEDIUM 告警
+      //   composite_score < 60 (FEASIBILITY_BLOCK_THRESHOLD) → 同上
+      //   decision='risky' + score ≥ 60             → 放行 + LOW 告警
+      //   decision='fillable'                       → 放行
+      //
+      // 仅 BUY 路径生效; SELL 与 automation 同款不调 gate (强平 / rebalance SELL 不该被
+      // 流动性评分拦). bypass_feasibility=true 时跳过 (closePosition / 系统级强制路径).
+      // fail-OPEN: gate 自身 throw 时 logger.warn 不阻塞主流程.
+      if (!(options as any).bypass_feasibility) {
+        try {
+          // Sprint 34 复用 — 优先把 facade 已知的 bars + RealtimeQuote 拼成 snapshot,
+          // 让 feasibility 评分用与下单同源行情, 避免"按 A 价格决策按 B 数据评估"漂移.
+          const latest = bars[bars.length - 1];
+          const prev = bars.length >= 2 ? bars[bars.length - 2] : null;
+          // 复用 staleness 检查路径里已 fetch 的 quote (避免二次 RPC). 简化: 这里再
+          // try 一次 cheap fetch, 失败也无所谓 — service 内有 fallback.
+          let liveQuote: any = null;
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { realtimeQuoteService } = require('../data/services/RealtimeQuoteService');
+            const q = await realtimeQuoteService.getLatestQuotes([symbol]);
+            liveQuote = Array.isArray(q) && q.length > 0 ? q[0] : null;
+          } catch {
+            liveQuote = null;
+          }
+          const marketSnapshot = {
+            close: Number(latest.close),
+            open: latest.open !== undefined ? Number(latest.open) : null,
+            high: latest.high !== undefined ? Number(latest.high) : null,
+            low: latest.low !== undefined ? Number(latest.low) : null,
+            prev_close: prev ? Number(prev.close) : null,
+            volume: latest.volume !== undefined ? Number(latest.volume) : null,
+            bid1_price: liveQuote?.bid1_price ?? null,
+            ask1_price: liveQuote?.ask1_price ?? null,
+            bid1_volume: liveQuote?.bid1_volume ?? null,
+            ask1_volume: liveQuote?.ask1_volume ?? null,
+          };
+          const feasibilityResult = await evaluateFeasibilityGate({
+            user_id,
+            symbol,
+            side: 'BUY',
+            target_qty: quantity,
+            target_price: execute_price,
+            market_snapshot: marketSnapshot,
+          });
+          if (!feasibilityResult.ok) {
+            await emitFeasibilityGateAlert({
+              user_id,
+              symbol,
+              side: 'BUY',
+              result: feasibilityResult,
+              callerLabel: 'facade.placeOrder',
+            });
+            const err: any = new Error(`ExecutionFeasibility 拒单: ${feasibilityResult.reason}`);
+            err.statusCode = 400;
+            err.code = 'EXECUTION_FEASIBILITY_BLOCKED';
+            err.detail = {
+              decision: feasibilityResult.decision,
+              composite_score: feasibilityResult.composite_score,
+              block_reasons: feasibilityResult.block_reasons,
+            };
+            throw err;
+          }
+          if (feasibilityResult.alert_level === 'LOW') {
+            await emitFeasibilityGateAlert({
+              user_id,
+              symbol,
+              side: 'BUY',
+              result: feasibilityResult,
+              callerLabel: 'facade.placeOrder',
+            });
+          }
+        } catch (err: any) {
+          if (err?.code === 'EXECUTION_FEASIBILITY_BLOCKED') throw err;
+          logger.warn(
+            `[facade.placeOrder] feasibility gate check failed (fail-open): ${err?.message || err}`
+          );
+        }
       }
 
       if (portfolio.current_cash < totalCost) {
@@ -610,13 +1153,8 @@ export class PaperTradingFacade {
             } catch {
               userPct = null;
             }
-            const effectivePct = pickEffectivePct(
-              (position as any).stop_loss_pct ?? null,
-              userPct
-            );
-            position.stop_loss_price = Number(
-              (position.avg_cost * (1 - effectivePct)).toFixed(4)
-            );
+            const effectivePct = pickEffectivePct((position as any).stop_loss_pct ?? null, userPct);
+            position.stop_loss_price = Number((position.avg_cost * (1 - effectivePct)).toFixed(4));
           }
           await position.save({ transaction: t });
         } else {
@@ -676,26 +1214,48 @@ export class PaperTradingFacade {
       throw new Error('持仓不足，无法卖出');
     }
 
+    // ---- audit S-3 修复: 跌停板拦截 (SELL, 共用 evaluateLimitUpDownBlock) ----
+    const limitDownDecision = evaluateLimitUpDownBlock({
+      symbol,
+      stock_name: stockName,
+      direction: 'SELL',
+      prev_close: bars.length >= 2 ? Number(bars[bars.length - 2].close) : null,
+      reference_price: current_price,
+      bypass: (options as any).bypass_limit_down_check === true,
+    });
+    if (!limitDownDecision.ok) {
+      const err: any = new Error(limitDownDecision.message);
+      err.statusCode = 400;
+      err.code = limitDownDecision.code;
+      err.detail = limitDownDecision.detail;
+      throw err;
+    }
+
     // ============= T+1 拦截 (修复 CRITICAL C5) =============
-    // A 股当日 BUY 不可当日 SELL. Batch I (2026-06-17): 抽到 preTradeGuards.checkTPlus1
-    // 共享, automation createSellTrade 同款用. bypass_t_plus_1=true 时跳过.
+    // A 股当日 BUY 不可当日 SELL. Batch I (2026-06-17): 抽到 preTradeGuards.checkTPlus1.
+    // US-136 [EX-011] (2026-06-21): 七闸门统一入口 — SELL 路径走 checkAllPreTradeGates
+    // (side='SELL'), 与 BUY 路径同一个 helper, 三 caller (facade / automation /
+    // LiveTradingService) 全通过它. bypass_t_plus_1=true 时跳过.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { checkTPlus1 } = require('./internal/preTradeGuards');
-    const tPlus1 = await checkTPlus1({
+    const _preTradeGuardsSell = require('./internal/preTradeGuards');
+    const sellGateResult = await _preTradeGuardsSell.checkAllPreTradeGates({
+      side: 'SELL',
+      user_id,
       portfolio_id: portfolio.id,
       symbol,
       held_quantity: Number(position.quantity) || 0,
       sell_quantity: quantity,
-      bypass: options.bypass_t_plus_1 === true,
+      bypass_t_plus_1: options.bypass_t_plus_1 === true,
+      caller_label: 'facade.placeOrder',
     });
-    if (!tPlus1.ok) {
-      const err: any = new Error(tPlus1.reason || 'T+1 violation');
+    if (!sellGateResult.ok) {
+      const err: any = new Error(sellGateResult.reason);
       err.statusCode = 400;
-      err.code = 'T_PLUS_1_VIOLATION';
+      err.code = sellGateResult.code;
       err.detail = {
         holding: position.quantity,
-        today_buy: tPlus1.today_buy_qty,
-        available: tPlus1.available_for_sell,
+        today_buy: sellGateResult.detail?.today_buy,
+        available: sellGateResult.detail?.available,
         requested: quantity,
       };
       throw err;
@@ -866,6 +1426,14 @@ export class PaperTradingFacade {
       quantity: position.quantity,
       bypass_trading_hours: options.bypass_trading_hours,
       bypass_t_plus_1: options.bypass_t_plus_1,
+      // closePosition 总是 SELL — 当前 checkPreTradeCompliance 对 SELL 直接 ok=true
+      // 跳过, 即便不传 bypass_compliance 也不会被拦. 但显式传 true 表达"用户已确认
+      // 平仓, 跳过任何 pre-trade 软合规", 与 GuardSellExecutor 强平语义一致.
+      bypass_compliance: options.bypass_compliance !== false,
+      // US-015 (EX-001): 同款语义 — closePosition 走 ExecutionFeasibility gate 没有意义
+      // (SELL 路径 facade 本来就不调 gate; 但显式 bypass=true 表达系统级强制路径,
+      // 与未来若扩 SELL gate 时的契约一致).
+      bypass_feasibility: options.bypass_feasibility !== false,
     });
   }
 

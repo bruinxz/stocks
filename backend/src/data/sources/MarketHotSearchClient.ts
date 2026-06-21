@@ -31,10 +31,9 @@ export class MarketHotSearchClient {
   async fetchHotSearch(limit = 50): Promise<MarketHotSearchRow[]> {
     const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
     try {
-      const rows = (await this.callPythonScript(
-        'get_baidu_hot_search',
-        String(safeLimit)
-      )) as MarketHotSearchRow[] | null;
+      const rows = (await this.callPythonScript('get_baidu_hot_search', String(safeLimit))) as
+        | MarketHotSearchRow[]
+        | null;
       const count = Array.isArray(rows) ? rows.length : 0;
       logger.info(`MarketHotSearch fetched: ${count} rows`);
       return Array.isArray(rows) ? rows : [];

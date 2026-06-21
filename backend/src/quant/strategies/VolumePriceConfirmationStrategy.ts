@@ -41,7 +41,16 @@ export class VolumePriceConfirmationStrategy extends QuantStrategy {
       category: 'momentum',
       expected_edge_pct: 5.5,
       expected_holding_days: 12,
-      key_factors: ['volume_ratio', 'turnover_rate', 'mfi_14', 'obv_trend_15d', 'adx_dmi', 'return_5d', 'return_20d', 'money_flow_score'],
+      key_factors: [
+        'volume_ratio',
+        'turnover_rate',
+        'mfi_14',
+        'obv_trend_15d',
+        'adx_dmi',
+        'return_5d',
+        'return_20d',
+        'money_flow_score',
+      ],
       evidence_link: '量价配合经典 / Joseph Granville - OBV / Money Flow Index',
       failure_modes: [
         'volume_ratio > 3.2 异常放量是情绪化 short squeeze 而非真趋势',

@@ -15,7 +15,7 @@ portfolio/
 │   ├── PositionLimitGuard.ts      # max positions + single-stock + single-industry caps
 │   ├── TrailingStopGuard.ts       # 追踪止损 — daily highest_price + next-day SELL trigger
 │   ├── DrawdownCircuitBreaker.ts  # 组合级回撤熔断 — LEVEL_1/2/3 cascade + 24h pause
-│   ├── MarketRegimeAlertService.ts # 市场级环境预警 — 指数 3 日/月度跌幅 + MA20/MA60 死叉
+│   ├── MarketRegimeAlertService.ts # 市场级环境预警 — 指数 3 日/月度跌幅 + MA20/MA60 死叉 + 连续 N 日跌停股 > M HALT_BUY (US-132)
 │   ├── PerStockStopLossGuard.ts   # 每股止损 — close vs avg_cost loss ≤ -7% + 50% mass alert
 │   ├── IndustryConcentrationGuard.ts # 行业集中度 — post-trade > 35% alert + 一键再平衡
 │   ├── BlackSwanWatchdog.ts       # 个股黑天鹅 — US-053
@@ -29,7 +29,8 @@ portfolio/
     ├── PaperTradingPlanService.ts
     ├── PaperTradingPortfolioFamilies.ts   # constants module — re-exported by facade
     ├── PaperTradingRiskProfileService.ts
-    └── PaperTradingTuningApplyService.ts
+    ├── PaperTradingTuningApplyService.ts
+    └── PortfolioConstructionAdapter.ts    # Sprint 29 / US-006 — autoBuyFromSignals 接 PortfolioConstructionService
 ```
 
 ## Rules
@@ -105,6 +106,43 @@ strategy` and `factor diagnostic` patterns:
    alongside `/api/risk-alerts`).  `RiskController` is intentionally
    separate from `RiskAlertController`: the former is *pre-trade policy*,
    the latter is *post-trade consumption*.
+8. **阈值持久化 (PR-002 / US-007) — 反 hardcode meta-guard**:
+   `PositionLimitGuard` 的所有阈值在生产路径上**必须**从
+   `User.risk_config.position_limits` 取，不允许直接引用
+   `DEFAULT_POSITION_LIMITS`（除了 `normalizePositionLimitsConfig` 自身的
+   fallback）。`tests/risk/position-limit-guard.test.ts` 末尾的
+   `testNoHardcodedThresholdsMetaGuard` 用 `fs.readFileSync` 正则扫源文件
+   守这条边界：(1) `async loadConfig` 必须含 `User.findByPk` +
+   `risk_config?.position_limits` + `normalizePositionLimitsConfig`；
+   (2) `async saveConfig` 必须含 `user.risk_config = …` +
+   `user.changed('risk_config', true)` + `await user.save()`（US-017 JSONB
+   pattern）；(3) `checkBuyOrder` 必须调 `this.source.loadConfig(input.user_id)`
+   且方法体**绝不**直接引用 `DEFAULT_POSITION_LIMITS`；
+   (4) `DEFAULT_POSITION_LIMITS` 必须 `Object.freeze`；
+   (5) `updateConfig` 必须先 `normalizePositionLimitsConfig` 再 `saveConfig`。
+   未来给其它 guard 加"用户可调阈值"时按这套 5 点 meta-guard 模板抄到
+   对应 test 文件 — 是项目"配置驱动" AC 的标准守卫姿势 (与
+   cron-registry [5] 双向一致性 guard 同款 fs+regex 模式)。
+9. **Pre-trade compliance 接入 (PR-005 / US-010) — facade.placeOrder 入口**:
+   `services/TradeComplianceChecker` 的 `checkPreTradeCompliance` 在三处统一
+   入口拦截 BUY 草稿: (a) `LiveTradingService.approveDraft` (实盘审批);
+   (b) `PaperTradingAutomationService.createBuyTrade` (自动跟单);
+   (c) `PaperTradingFacade.placeOrder` (UI 手动 BUY + RebalanceEngine + 任何
+   composite caller). 三处用同款 **draft 构造 → checker → severity 分支** 模式:
+   - `block=true` → throw `code=PRE_TRADE_COMPLIANCE_BLOCKED` +
+     `emitPreTradeComplianceAlert(level='MEDIUM')`
+   - `block=false` 但含 medium → 放行 + `emit(level='LOW')`
+   - 仅 low → 放行 + 仅 logger.info
+   - 顶层 try/catch fail-OPEN (任何 checker 内部异常都不阻塞下单主流程)
+   draft 构造统一走 `buildPreTradeComplianceDraft(input)` 纯函数 (export 在
+   `PaperTradingFacade.ts`), 它复用 automation 同款 `cost / (current_cash + cost)`
+   公式算 `position_size_pct`, 并把 `intraday_change_pct` 7 (百分比) / 0.07
+   (小数) 两种约定归一. **强平 / 用户显式平仓 / 强制 rebalance SELL** 链路 (例
+   如 GuardSellExecutor / closePosition / IndustryConcentrationGuard) 必须传
+   `bypass_compliance: true` 跳过 — 这些路径已经是"强制执行"语义, 不该被
+   wizard 软规则再拦. closePosition 也已默认 `bypass_compliance = options.bypass_compliance !== false`
+   保持平仓体验. SELL 在 checker 内部直接 `ok=true` 短路, 即便没传 bypass
+   也不会被拦, bypass 主要是表达语义 + 避免误触发未来 SELL 规则.
 
 ## `risk/TrailingStopGuard` — US-048 specifics
 
@@ -234,7 +272,7 @@ Patterns codified in US-049 that future risk guards should follow:
   `GET` (read config), `PUT` (update config), `POST /clear-pause`
   (admin override).  All require auth.  Same namespace as US-047/US-048.
 
-## `risk/MarketRegimeAlertService` — US-050 specifics
+## `risk/MarketRegimeAlertService` — US-050 + US-132 specifics
 
 The market-regime alert service introduces the **fourth risk-guard shape** —
 **market-level signals** (indicator-driven, no user positions involved).
@@ -244,11 +282,12 @@ out to every user with a portfolio.
 
 1. **`getMarketRegimeStatus(options)`** — read-only HTTP query.  Computes
    3-day cumulative return, 20-day cumulative return, MA20 today vs
-   yesterday, MA60 today vs yesterday, and the death-cross flag in one
-   pass.  Returns a `MarketRegimeStatus` snapshot with all fields plus the
-   alerts that *would* fire (already-evaluated by `pickRegimeAlerts`).
-   Used by the UI dashboard / 风控面板 for live display.  Does **not**
-   write any RiskAlert row.
+   yesterday, MA60 today vs yesterday, the death-cross flag, **and (US-132)
+   the consecutive-day limit-down count series**, in one pass.  Returns a
+   `MarketRegimeStatus` snapshot with all fields plus the alerts that
+   *would* fire (already-evaluated by `pickRegimeAlerts`).  Used by the UI
+   dashboard / 风控面板 for live display.  Does **not** write any RiskAlert
+   row.
 2. **`evaluateAfterOpen(options)`** — post-open cron.  Internally calls
    `getMarketRegimeStatus`, then fans the same alerts out as one RiskAlert
    per (user × alert) pair.  Sentinel symbol `SYSTEM:MARKET_REGIME_<TYPE>`
@@ -258,6 +297,34 @@ out to every user with a portfolio.
 3. **`getConfig(user_id)` / `updateConfig(user_id, raw)`** — same shape as
    US-047/US-048/US-049 config CRUD; backed by `User.risk_config.market_regime`
    JSONB + `Object.freeze`'d `DEFAULT_MARKET_REGIME_ALERT_CONFIG`.
+
+### US-132 [PR-017] HALT_BUY detector (4th signal)
+
+The 4th detector (`SYSTEM:MARKET_REGIME_HALT_BUY` / `level=CRITICAL`) fires
+when **consecutive N trading days each have > M limit-down stocks** (default
+N=3 / M=100 from PRD).  Differences from the prior 3 detectors:
+
+- **Boundary is strict `>`, not `≤`** (the drop-based detectors use
+  `≤ -threshold` so 5%-drop boundary triggers — the limit-down detector
+  uses `> 100` so 100 limit-down stocks does NOT trigger, 101 does, mirroring
+  the literal PRD wording "> 100").  Unit tests guard both N (no-trigger)
+  and N+1 (trigger) sides.
+- **Two sub-knobs** — `halt_buy_consecutive_days` and
+  `halt_buy_limit_down_count_threshold` — both `safePosInt`-normalized
+  (Number.isInteger + >0); negatives / 0 / non-integer / NaN silently fall
+  back to defaults.
+- **Independent sub-switch** `enable_halt_buy_on_panic` controls only this
+  detector (like `enable_death_cross` for #3).  When false,
+  `getMarketRegimeStatus` skips the `loadConsecutiveLimitDownCounts` DB call
+  entirely (cost saving) and `limit_down_counts: null` on the status.
+- **DataSource adds `loadConsecutiveLimitDownCounts(asOfDate, days)`** which
+  the production impl queries via `DailyBar` group by time with
+  `change_percent <= -9.8` (matches `AShareConstraintEngine.DEFAULT_LIMIT_DOWN_PCT`
+  industry convention) + `is_suspended=false` + `is_trading_day=true`.
+  Throws are caught + return `[]` (fail-open safe HOLD, NOT throwing 503).
+- **Downstream consumers** can read `RiskAlert.symbol === 'SYSTEM:MARKET_REGIME_HALT_BUY'`
+  as a sentinel to short-circuit new BUYs (future PR-018+ work — this story
+  only writes the alert; `preTradeGuards` does NOT yet consult it).
 
 Patterns codified in US-050 that future market-level guards should follow:
 
@@ -493,6 +560,18 @@ should follow:
     "rebalance-industry" as the `:id` param).
   - `GET /api/risk/industry-concentration` (config read).
   - `PUT /api/risk/industry-concentration` (config write).
+  - `GET /api/portfolio/industry-concentration-summary` (US-012) — single-user
+    KPI snapshot for the PortfolioWorkspace top KPI card. Wraps
+    `IndustryConcentrationGuard.getSummary(user_id)`: dry-run, no RiskAlert
+    written, returns `{max_industry_pct, max_industry_name, over_alert,
+    alert_pct, rebalance_target_pct, industry_breakdown[]}`. Reuses
+    `aggregateByIndustry` so KPI / alert / rebalance share one denominator.
+    `enabled=false` still returns the real max_pct (so UI can show it) but
+    forces `over_alert=false`. UI red threshold (25%) is intentionally
+    lower than backend `alert_pct` (35%) — Tooltip in
+    `PortfolioWorkspace.tsx` discloses both so the user understands
+    "yellow card vs red card". MUST be registered BEFORE `/:id` (same
+    Express ordering rule as `/rebalance-industry`).
 
 ## `risk/BlackSwanWatchdog` — US-053 specifics
 
@@ -880,6 +959,47 @@ HTTP / facade integration: 目前 RebalanceEngine **不直接绑定 HTTP route**
 事后分析结果落地调用 这 3 种 caller 共享。caller 决定是否 audit log + 是否
 推送（webhook / 飞书），引擎只负责"算 + 下单"。
 
+### US-009 (PR-004) — RebalanceEngine 边界控制 (minDeviationPct gate "不日日动")
+
+为防"每天微调"换手率内耗,RebalanceEngine 引入**第二层 portfolio-level gate**
+`minDeviationPct`（默认 3%），与既有 per-symbol 的 `minTradePct`（0.5%）互补:
+
+| Gate                | 作用域       | 默认  | 边界  | 触发后行为                                   |
+|---------------------|--------------|-------|-------|---------------------------------------------|
+| `minTradePct`       | per-symbol   | 0.005 | 严格 < | 该 symbol → HOLD `within_min_trade_pct`     |
+| `minDeviationPct`   | portfolio    | 0.03  | 严格 < | 全部 classifiable → HOLD `within_min_deviation_pct`，`suppressed=true`，execute 跳过 |
+
+`computeMaxDeviationPct(orders)` 是 gate 判定的事实源（max `|diff_pct|`
+across non-missing-price orders）。`RebalanceResult` 新增 2 个字段:
+`suppressed: boolean` + `max_deviation_pct: number`（caller / UI 直观看
+"离 gate 阈值还有多远"）。
+
+设计要点 / future-proof patterns:
+
+- **fail-safe edge: 全 missing_price → gate 触发但不覆盖 reason**。`maxDev=0 <
+  0.03` 让 gate 抑制，但 missing_price 的 order 自带 reason 不被改写。"未拿到
+  价格就别下单"是更安全的兜底。同 US-049 `cap_ratio_unknown` skip 模式。
+- **`minDeviationPct=0` = caller opt-out**: `CompositeRebalanceService` 已有
+  `turnover_cap_pct` 控"日日动"，需要 RebalanceEngine 出**完整 raw plan** 给本
+  service 做 cap 决策，所以显式传 0 关闭 gate。**任何拥有自己 turnover cap
+  的 caller 都必须显式传 0**，否则会双重 gate 反向叠加（gate 先把 plan 全清
+  空 → turnover cap 永远碰不到，UI 看到的总是 0 单）。
+- **suppressed 检测从 plan 反向推**（而非重新算 maxDev 判断），让
+  `computeTradePlan` 是唯一事实源：`orders.some(o.reason === 'within_min_
+  deviation_pct') && orders.every(o.side === 'HOLD')`。避免双侧浮点比较不一
+  致导致 engine 与 plan 反相。
+- **`suppressed=true` 在 execute=true 时也 skip executeOrder**：gate 触发
+  就是为了不下单，execute 参数 override 不应越过 gate（caller 若真想强制
+  下单，要先用 `minDeviationPct=0` 关 gate）。
+- **boundary 严格 `<`**：max_dev == minDeviationPct **不**抑制，留给真交易；
+  与 US-082 `合格线用严格 <`、US-086 `minTradePct` 同款约定。
+- **meta-guard via fs+regex**（`testRebalanceResultSchemaCompleteness`）：
+  扫源文件 verify `suppressed:` / `max_deviation_pct:` 两个字段两处 return 都
+  出现 + CompositeRebalanceService 显式 `minDeviationPct: 0`。同 cron-registry
+  [5] / position-limit-guard meta-guard / portfolio-construction-adapter
+  testAutoBuyFromSignalsWireIn 同款 fs+regex meta-guard 模板。任何"两处 return
+  必须同步"或"caller A 必须显式 opt 出 caller B 的功能"边界用此模式守。
+
 ### Engine 类的命名约定 (US-086 引入)
 
 portfolio/ 目录新增"engine"类模块的命名 / 放置规则：
@@ -890,3 +1010,167 @@ portfolio/ 目录新增"engine"类模块的命名 / 放置规则：
 - **risk/ 限定**：pre-trade / post-trade guards（阻止订单 / 监控持仓 / 写
   RiskAlert）。
 - **internal/ 限定**：facade 私有实现（不能被外部 controller 直接 import）。
+
+## `internal/PortfolioConstructionAdapter.ts` — Sprint 29 / US-006 (PR-001)
+
+桥接 `services/portfolio/PortfolioConstructionService` (股票级风险预算组合
+构造) 到 `PaperTradingAutomationService.autoBuyFromSignals` 的 buy-decision
+loop. 设计为隔离层 — loop 主干只加 5 行调用即可"候选池 → 组合权重 → 调仓
+订单".
+
+**三段式 wire-in (PaperTradingAutomationService.autoBuyFromSignals)**:
+  1. **入口**: 收集 `candidateSignals` 后一次性调 `buildPortfolioConstruction({user_id, as_of_date, candidates, config})` → 拿 `weights_by_signal_id` Map
+  2. **per-signal 应用**: loop 内每个 signal 拿自己的 weight → `effectiveTargetPct = pcWeight × 100`
+  3. **fail-open**: 整段被 try/catch 包裹, 失败 logger.warn + adapter 也内部 fail-open 返 `skipped_reason`
+
+**三种 mode (User.risk_config.portfolio_construction.mode)**:
+  - `off` (默认): adapter 立即返 null, 零开销, loop 行为 100% 不变
+  - `shadow`: 计算 weights, 只 log + activation mark, **不**改 effectiveTargetPct
+  - `hard`: 用 pcWeight × 100 替换 effectiveTargetPct; weights 表里没有的
+    signal 被 skip ("pc_weight_zero_or_missing")
+
+**改这里时必须同步**:
+  1. `tests/portfolio/portfolio-construction-adapter.test.ts` 的 meta-test
+     `testAutoBuyFromSignalsWireIn` 用源文件正则扫 autoBuyFromSignals 方法体,
+     verify `buildPortfolioConstruction` import + 调用 + weights_by_signal_id 消费
+     + try/catch fail-open + candidateSignals 先于 adapter 调用. 任何 refactor
+     破坏其中一条 → CI 立刻挂.
+  2. `loadUserPortfolioConstructionConfig` (PaperTradingAutomationService 末
+     尾) 是 mode 仲裁的唯一事实源, 新增 config 字段 → 同步 adapter
+     `normalizePortfolioConstructionConfig` + `DEFAULT_PORTFOLIO_CONSTRUCTION_CONFIG`.
+
+## `risk/SizingLimitConsistency.ts` — US-008 (PR-003)
+
+`SizingPolicyService.max_position_pct` (percent 1-50, 默认 12) 与
+`PositionLimitGuard.max_single_stock_pct` (fraction 0-1, 默认 0.10) 都管
+**单股最大仓位**, 但字段名 / 单位 / 默认值不同 — 用户在 UI 一边调一边不
+调时容易漂移 (sizing 25% 但 limit 还是 10% → 每笔 buy 都被 limit guard
+裁切). 这个模块在两个 service 的 `updateConfig` 之后做一致性检查:
+
+  - 纯函数 `compareSingleStockThresholds(sizing, limit)`: 单位换算到
+    fraction 后比较, 返 `ConsistencyReport { severity, message, ... }`.
+    三 severity: `info` (sizing ≤ limit), `warn` (sizing>limit ≤ 2pp 漂移),
+    `critical` (差 > 2pp 阈值, 用户意图未生效).
+  - 异步 hook `assertConsistencyOnUpdate({ user_id, sizingLoader,
+    limitLoader, triggered_by })`: **fail-open** — 任一 loader throw →
+    返 null + `logger.warn` 吞错, 调用方 PUT /api/risk/* 主流程绝不阻塞.
+  - 批量入口 `runDriftAudit({ user_ids, sizingLoader, limitLoader })`:
+    per-user try/catch 隔离, 单个失败不影响其余 (当前未注册 cron, 留给
+    运维 — 若要 cron 化按 SCHEDULER_TASK_TYPE + CRON_REGISTRY 三件套接).
+
+**两个调用站点必须接 hook** (META-TEST 守):
+  - `SizingPolicyService.updateConfig` → 直接 `import {
+    assertConsistencyOnUpdate }` + `import { positionLimitGuard }`, persist
+    后 await 一次, sizingLoader 用刚 normalize 的值不回 DB.
+  - `PositionLimitGuard.updateConfig` → 必须 **lazy require** 解循环 import
+    (SizingLimitConsistency 已 import PositionLimitGuard 的 normalize/Default/Type);
+    整段被 try/catch 包裹 + `logger.warn` 吞错.
+
+**设计取舍**: **只 log + report**, **不**做自动同步 — 两边语义不同
+(sizing 是 desired 上限, limit 是 hard wall), 自动同步会让用户的 UI 配置
+被悄悄改写. severity=warn 阈值 0.02 (2pp): 低于这个的差异通常是用户故意
+留 safety margin (sizing 12% + limit 10% = 2pp 缓冲), 不该报噪音.
+
+**比较只看 `max_position_pct` ↔ `max_single_stock_pct`** (单股), 因为
+limit guard 的 `max_positions` / `max_single_industry_pct` 在 sizing
+policy 没有对应字段.
+
+## `risk/RiskGuardFailClosed.ts` — US-011 (PR-006)
+
+**统一 fail-CLOSED helper** — 把 BETA-7 在 DrawdownCircuitBreaker 写的
+"DB 抖动 → 抛 RiskGuardUnavailableError → caller catch + 写 HIGH RiskAlert"
+模式抽出成共享 module, 让任何 pre-trade guard (现已含 DrawdownCircuitBreaker
++ PositionLimitGuard, 未来如 BlackSwanWatchdog/IndustryConcentrationGuard
+接入 BUY 路径时) 用同款 3 行就能拿到完整的 fail-CLOSED 契约.
+
+API 三件套:
+  - **`RiskGuardUnavailableError`** — 单一事实源 (`DrawdownCircuitBreaker`
+    re-export 不再 declare). `statusCode=503` / `code='RISK_GUARD_UNAVAILABLE'`
+    / `guardName` (用作 RiskAlert.rule_id + 取人类标签) / `detail`.
+  - **guard-side: `wrapFailClosed(guardName, fn, detail?)`** — 任何 guard
+    的 pre-trade 检查方法 body 用它包一层就行: fn 抛 RiskGuardUnavailableError
+    re-throw, 抛其它 Error 自动包装. 副作用: 把 unexpected programmer-error
+    (TypeError 等) 也转 503 — 用户体验始终是"风控不可用 503"而非"500 cannot
+    read property of undefined".
+  - **caller-side: `handleRiskGuardUnavailable({err, user_id, symbol, callerLabel, dataSource})`**
+    — 写 HIGH RiskAlert + 返结构化 payload. RiskAlert 写失败仅 log 不
+    re-throw (拒单是主要语义, 告警是副产物).
+
+接入清单 (2026/06/19):
+  - `DrawdownCircuitBreaker.checkBuyAllowed` (`wrapFailClosed('drawdown_breaker', ...)`)
+  - `PositionLimitGuard.checkBuyOrder` (`wrapFailClosed('position_limit', ...)`)
+  - `PaperTradingFacade._placeOrderInner` (两 guard 后都接 `handleRiskGuardUnavailable`)
+  - `preTradeGuards.checkPreBuyGuards` (两 guard 后都接 `handleRiskGuardUnavailable`)
+
+**为啥不把 wrap 收到一个 base class?** 项目所有 guard 都是 export class +
+DataSource interface + singleton, 没有继承层级. 显式 `return wrapFailClosed
+(...)` 比"继承一个 BasePreTradeGuard 自动 wrap" 更易追读 — 在 method body
+里就能看出 "这个 guard 是 fail-CLOSED 不是 fail-OPEN".
+
+**为啥 RiskAlert.create 仍走 lazy require?** `PaperTradingFacade.ts` 自己
+已经 lazy-require RiskAlert (规避循环 import), `RiskGuardFailClosed.ts`
+也用 `loadProductionRiskAlertCreator()` 沿用同款模式 — 让本 module 在
+DB-less 单测里 import 也不挂. caller 传 `dataSource = loadProductionRiskAlertCreator()`
+是生产路径; 单测传 fake `{create: async (input) => {...}}`.
+
+**未来接入新 guard**: 在 `RiskGuardFailClosed.ts` 的 `GUARD_LABELS` 表里
+加一行映射 (`new_guard: 'NewGuardClassName'`), method body 套
+`wrapFailClosed('new_guard', ...)`, caller catch RiskGuardUnavailableError
+后调 `handleRiskGuardUnavailable({callerLabel: 'caller-X', ...})`. 三件套.
+
+## `internal/feasibilityGate.ts` — US-015 (EX-001)
+
+**ExecutionFeasibility pre-trade gate 统一 helper** — 之前
+`ExecutionFeasibilityService.computeFeasibility` 只在
+`PaperTradingAutomationService.autoBuyFromSignals` 一处接入. US-015 AC
+要求 "composite_score < 60 不下单 + 接到 PaperTradingFacade + Bridge",
+本 module 抽出 3 处共享的 gate / alert / audit 模板.
+
+**API 三件套**:
+  - **`FEASIBILITY_BLOCK_THRESHOLD = 60`** — 严格 `<` (60.0 放行). PRD AC
+    主条款字面对齐; tests/portfolio/feasibility-gate.test.ts 有常量守卫.
+  - **`evaluateFeasibilityGate(input, options?)`** — caller 入口, 返
+    `{ ok, decision, composite_score, block_reasons, reason, alert_level?, report }`.
+    决策矩阵: `decision='blocked'` → ok=false MEDIUM / `score < 60` → ok=false
+    MEDIUM / `risky+score≥60` → ok=true LOW / `fillable` → ok=true. **fail-OPEN**:
+    service 抛错时返 synthetic fillable report + log warn.
+  - **`emitFeasibilityGateAlert(input, options?)`** — 走 `RiskAlertService.write`
+    (US-005, severity='medium' 仅 inbox). MEDIUM tag=`feasibility_blocked` /
+    LOW tag=`feasibility_passed_with_warning`. write 失败仅 log 不 re-throw.
+
+**接入清单 (2026/06/19)**:
+  - `PaperTradingFacade._placeOrderInner` BUY 路径 (UI 手动 / Rebalance /
+    CompositeRebalance / 任何 facade.placeOrder caller). `bypass_feasibility=true`
+    时跳过 (closePosition 默认 `!== false`).
+  - `LiveTradingService.approveDraft` — 实盘 bridge 命令发送前, audit
+    `ORDER_BLOCKED_BY_FEASIBILITY` (critical) / `ORDER_FEASIBILITY_WARN` (warning).
+  - `PaperTradingAutomationService.autoBuyFromSignals` (历史既有, **沿用 inline**
+    调 `executionFeasibilityService.computeFeasibility` 不切换 — automation 用
+    service decision 而非 gate cutoff: `risky` 在 automation 是放行让 sizing 决策,
+    facade/bridge 是放行+留痕, 用户体感语义不同). 改 automation feasibility
+    逻辑时**不要顺手**改 gate threshold (60 vs service 70/30 阈值彼此独立).
+
+**为啥 gate 在 service 之外加 60 cutoff?** service 内部 `BLOCKED_THRESHOLD=30 /
+FILLABLE_THRESHOLD=70` 决定 decision; 改这两个会影响 automation 链路 +
+ExecutionFeasibilityRecord 历史聚合 (dashboard / MetaLabel preCheckFeasibilityScore).
+gate 层加一道 60 cutoff 是 facade/bridge 独有的"用户视角严格", AC 显式要求
+"< 60 不下单", 不改 service 阈值就能满足.
+
+**为啥不和 compliance / risk guard 合并成 mega-gate?** 三类 gate 触发场景 /
+受众 / alert 形态各异: compliance (wizard 规则) / risk guard (用户配置阻拦) /
+feasibility (市场微观结构评分). 合并会让告警可追溯性下降, 与 PR-005/PR-006
+并列保留是项目既有模式.
+
+**SELL 路径不调 gate**: 与 automation 一致 — SELL 是 stop loss / rebalance
+风控守护的; feasibility 评分主要解决 BUY 流动性/涨跌停问题. 未来若扩 SELL
+gate, `evaluateFeasibilityGate` 已支持 side='SELL', 把 facade SELL 段加
+同款调用即可; bypass_feasibility flag 已留好 escape hatch.
+
+**META-TEST 守 (tests/portfolio/feasibility-gate.test.ts [6])**: fs+regex 扫
+四源文件 — feasibilityGate.ts 含常量; PaperTradingFacade.ts 必须 import +
+call + throw EXECUTION_FEASIBILITY_BLOCKED + 不再 inline 调
+`executionFeasibilityService.computeFeasibility` + PlaceOrderOptions 含
+`bypass_feasibility`; LiveTradingService.ts 必须 import + call + audit
+ORDER_BLOCKED_BY_FEASIBILITY/WARN; auditEvents.ts 含两个事件常量.
+任一 refactor 破坏其中一条 → CI 立刻挂.
+

@@ -3,6 +3,20 @@ server_base_url: "https://your-domain.com/api/live-trading/bridge"
 bridge_key: "local-qmt-001"
 bridge_secret: "change_me_to_long_random_secret"
 
+# US-109 [EX-009] 签名方式. "hmac" (缺省, 兼容老 bridge) 或 "ed25519" (非对称, 推荐).
+# ed25519 优势: bridge 持私钥, server 仅持公钥; 即使 server env/DB 泄露也无法伪造命令.
+# 切换步骤:
+#   1) bridge 机器生成 ed25519 keypair (例:
+#      python -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey; \
+#                 from cryptography.hazmat.primitives.serialization import Encoding,PrivateFormat,NoEncryption; \
+#                 k=Ed25519PrivateKey.generate(); \
+#                 print('priv_hex=',k.private_bytes(Encoding.Raw,PrivateFormat.Raw,NoEncryption()).hex())")
+#   2) 把私钥 hex 填到 ed25519_private_key, 把派生公钥 hex 配到 server
+#      LIVE_BRIDGE_ED25519_PUBKEYS={"local-qmt-001":"<pub_hex_64chars>"}
+#   3) signature_method 切到 "ed25519"; bridge_secret 字段仍保留 (兼容老 bridge 回退)
+signature_method: "hmac"
+ed25519_private_key: ""  # 仅 signature_method=ed25519 时必填; hex / base64 / PEM 三选一
+
 broker_type: "qmt" # qmt | ptrade
 qmt_userdata_path: "C:/迅投极速策略交易系统/userdata"
 qmt_account_id: "1234567890"

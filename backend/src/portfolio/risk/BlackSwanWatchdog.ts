@@ -93,6 +93,7 @@ import { PaperTradingPosition } from '../../models/PaperTradingPosition';
 import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
 import { Stock } from '../../models/Stock';
 import { RiskAlert } from '../../models/RiskAlert';
+import { ShareholderTradeRecord } from '../../models/ShareholderTradeRecord';
 import { User } from '../../models/User';
 import { logger } from '../../utils/logger';
 import {
@@ -114,17 +115,41 @@ export interface BlackSwanConfig {
   scan_st: boolean;
   /** 是否扫描停牌（默认 true）。 */
   scan_suspended: boolean;
-  /** 是否扫描重大利空新闻关键词（默认 true）。 */
+  /**
+   * 是否扫描重大利空新闻关键词（默认 true）。
+   *
+   * US-013 增强：默认关键词覆盖
+   *   - 监管类：'立案' / '处罚' / '问询函' / '重大违规'；
+   *   - 退市预警：'退市' / '退市风险' / '终止上市'；
+   *   - 重大诉讼：'诉讼' / '仲裁'。
+   * 配合 news_keywords 自定义覆盖。
+   */
   scan_news: boolean;
   /**
-   * 新闻关键词列表 — 命中任一即触发。默认含 '立案' / '退市' / '重大违规' /
-   * '处罚' / '问询函'。空 array → 关闭关键词触发（等同 scan_news=false）。
+   * 新闻关键词列表 — 命中任一即触发。默认含 9 个 (US-013 扩展)：
+   *   '立案' / '退市' / '重大违规' / '处罚' / '问询函' /
+   *   '诉讼' / '仲裁' / '终止上市' / '退市风险'。
+   * 空 array → 关闭关键词触发（等同 scan_news=false）。
    */
   news_keywords: readonly string[];
   /** 新闻回看窗口 (小时)，默认 24h。 */
   news_lookback_hours: number;
   /** 每只持仓最多扫多少条新闻（cost cap），默认 50。 */
   news_per_stock_limit: number;
+  /**
+   * 是否扫描股东减持暴增（US-013 减持暴增维度）。
+   *
+   * 数据源：`ShareholderTradeRecord` (US-090) — 公告日 ≤ asOfDate 且
+   * trade_direction='减持' 的近 N 日记录；按 stock_code 聚合，超阈值即触发。
+   * 默认 true；缺数据（无表 / 0 行）静默跳过 fail-OPEN，不阻塞其他检测。
+   */
+  scan_shareholder_reduction: boolean;
+  /** 减持回看窗口 (天)，默认 30 天。 */
+  shareholder_reduction_lookback_days: number;
+  /** 单股累计减持总金额触发阈值 (元)，默认 1 亿元。 */
+  shareholder_reduction_amount_threshold: number;
+  /** 单股累计减持占流通股比例触发阈值 (%)，默认 1.0%。任一阈值满足即触发。 */
+  shareholder_reduction_pct_threshold: number;
   /**
    * 是否启用去重（默认 true）。同事件已发过 alert 后跳过，依赖
    * User.risk_config.black_swan_seen JSONB array (LRU 200 条)。
@@ -137,15 +162,40 @@ export interface BlackSwanConfig {
  *
  * `Object.freeze` 防止模块级常量被意外 mutate（US-037 codebase pattern）。
  * `news_keywords` 用 `as const` 让 readonly 类型推断收紧。
+ *
+ * US-013 (PR-008) 扩展关键词：
+ *   - 监管基础 (5)：'立案' / '退市' / '重大违规' / '处罚' / '问询函'；
+ *   - 重大诉讼 (2)：'诉讼' / '仲裁'；
+ *   - 退市预警 (2)：'终止上市' / '退市风险'；
+ *  合计 9 条。
+ *
+ *  US-013 同时新增"减持暴增"维度，默认阈值：
+ *   - 30 日累计减持金额 ≥ 1 亿元 OR
+ *   - 30 日累计减持占流通股 ≥ 1.0%；
+ *  阈值偏严，避免对小市值股 false-positive 频发；run-of-mill 减持不触发。
  */
 export const DEFAULT_BLACK_SWAN_CONFIG: BlackSwanConfig = Object.freeze({
   enabled: true,
   scan_st: true,
   scan_suspended: true,
   scan_news: true,
-  news_keywords: Object.freeze(['立案', '退市', '重大违规', '处罚', '问询函']),
+  news_keywords: Object.freeze([
+    '立案',
+    '退市',
+    '重大违规',
+    '处罚',
+    '问询函',
+    '诉讼',
+    '仲裁',
+    '终止上市',
+    '退市风险',
+  ]),
   news_lookback_hours: 24,
   news_per_stock_limit: 50,
+  scan_shareholder_reduction: true,
+  shareholder_reduction_lookback_days: 30,
+  shareholder_reduction_amount_threshold: 100_000_000, // 1 亿元
+  shareholder_reduction_pct_threshold: 1.0, // 占流通股 1%
   dedupe_enabled: true,
 });
 
@@ -157,7 +207,7 @@ export const BLACK_SWAN_SEEN_LRU_LIMIT = 200;
 // ---------------------------------------------------------------------------
 
 /** 黑天鹅事件类型。 */
-export type BlackSwanEventType = 'ST' | 'SUSPENDED' | 'NEWS_KEYWORD';
+export type BlackSwanEventType = 'ST' | 'SUSPENDED' | 'NEWS_KEYWORD' | 'SHAREHOLDER_REDUCTION';
 
 /** 单条 trigger payload。 */
 export interface BlackSwanTrigger {
@@ -300,10 +350,17 @@ export function signatureForEvent(input: {
   symbol: string;
   keyword?: string;
   title?: string | null;
+  /** SHAREHOLDER_REDUCTION 用：lookback window 起始日 (YYYY-MM-DD) — 不同窗口可重新触发。 */
+  windowStartDate?: string;
 }): string {
   const sym = input.symbol;
   if (input.event_type === 'ST') return `ST::${sym}`;
   if (input.event_type === 'SUSPENDED') return `SUSPENDED::${sym}`;
+  if (input.event_type === 'SHAREHOLDER_REDUCTION') {
+    // 同股 + 同窗口起始日只发一次；窗口推进自然恢复发送
+    const w = input.windowStartDate || '';
+    return `SHAREHOLDER_REDUCTION::${sym}::${w}`;
+  }
   const kw = input.keyword || '';
   const titleHash = hashTitle(input.title || '');
   return `NEWS::${sym}::${kw}::${titleHash}`;
@@ -387,6 +444,10 @@ export function normalizeBlackSwanConfig(raw: any): BlackSwanConfig {
     const n = Number(v);
     return Number.isInteger(n) && n >= 1 ? n : dflt;
   };
+  const safePosNumber = (v: any, dflt: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : dflt;
+  };
   const safeKeywords = (v: any, dflt: readonly string[]) => {
     if (!Array.isArray(v)) return [...dflt];
     const filtered = v
@@ -407,6 +468,22 @@ export function normalizeBlackSwanConfig(raw: any): BlackSwanConfig {
     news_per_stock_limit: safePosInt(
       raw?.news_per_stock_limit,
       DEFAULT_BLACK_SWAN_CONFIG.news_per_stock_limit
+    ),
+    scan_shareholder_reduction: safeBool(
+      raw?.scan_shareholder_reduction,
+      DEFAULT_BLACK_SWAN_CONFIG.scan_shareholder_reduction
+    ),
+    shareholder_reduction_lookback_days: safePosInt(
+      raw?.shareholder_reduction_lookback_days,
+      DEFAULT_BLACK_SWAN_CONFIG.shareholder_reduction_lookback_days
+    ),
+    shareholder_reduction_amount_threshold: safePosNumber(
+      raw?.shareholder_reduction_amount_threshold,
+      DEFAULT_BLACK_SWAN_CONFIG.shareholder_reduction_amount_threshold
+    ),
+    shareholder_reduction_pct_threshold: safePosNumber(
+      raw?.shareholder_reduction_pct_threshold,
+      DEFAULT_BLACK_SWAN_CONFIG.shareholder_reduction_pct_threshold
     ),
     dedupe_enabled: safeBool(raw?.dedupe_enabled, DEFAULT_BLACK_SWAN_CONFIG.dedupe_enabled),
   };
@@ -465,6 +542,148 @@ export function buildNewsKeywordMessage(input: {
 }
 
 // ---------------------------------------------------------------------------
+//  Shareholder reduction (US-013 减持暴增) helpers
+// ---------------------------------------------------------------------------
+
+/** 单条减持记录（聚合用），不依赖 Sequelize Model 形态。 */
+export interface ShareholderReductionRow {
+  /** 公告日 YYYY-MM-DD。 */
+  announce_date: string;
+  /** 6 位股票代码。 */
+  stock_code: string;
+  /** 股东名称。 */
+  shareholder_name: string;
+  /** 变动金额（元，代理值，detail 参考 ShareholderTradeRecord.trade_amount）。 */
+  trade_amount: number | null;
+  /** 占流通股比例 (%)。 */
+  pct_of_float_shares: number | null;
+}
+
+/** stock_code → 减持聚合后的 summary。 */
+export interface ShareholderReductionSummary {
+  stock_code: string;
+  total_amount: number;
+  total_pct_of_float: number;
+  unique_shareholders: number;
+  row_count: number;
+  /** 排序后的 top contributors（按 trade_amount desc，最多 5 个）— 进 detail 便于 UI 展示。 */
+  top_contributors: Array<{
+    shareholder_name: string;
+    trade_amount: number;
+    pct_of_float_shares: number | null;
+  }>;
+}
+
+/**
+ * 把扁平的减持记录列表按 stock_code 聚合：
+ *   - sum(trade_amount) 算总金额；
+ *   - sum(pct_of_float_shares) 累加占比 — 注意"同一股东多次减持"会重复累加，
+ *     这是有意为之（持续抛压意味着真实"占流通股比例增量"应相加，不是 max）；
+ *   - 取 top 5 contributors (by trade_amount desc) 进 detail。
+ *
+ * 缺失字段做防御处理：null / NaN 计 0。
+ */
+export function summarizeShareholderReductions(
+  rows: readonly ShareholderReductionRow[]
+): Map<string, ShareholderReductionSummary> {
+  const byCode = new Map<string, ShareholderReductionRow[]>();
+  for (const r of rows) {
+    if (!r || typeof r.stock_code !== 'string' || r.stock_code.length === 0) continue;
+    const list = byCode.get(r.stock_code);
+    if (list) {
+      list.push(r);
+    } else {
+      byCode.set(r.stock_code, [r]);
+    }
+  }
+  const out = new Map<string, ShareholderReductionSummary>();
+  for (const [code, list] of byCode.entries()) {
+    const total_amount = list.reduce((acc, r) => acc + safeFinite(r.trade_amount), 0);
+    const total_pct_of_float = list.reduce((acc, r) => acc + safeFinite(r.pct_of_float_shares), 0);
+    const unique_shareholders = new Set(list.map(r => r.shareholder_name || '')).size;
+    const top_contributors = [...list]
+      .sort((a, b) => safeFinite(b.trade_amount) - safeFinite(a.trade_amount))
+      .slice(0, 5)
+      .map(r => ({
+        shareholder_name: r.shareholder_name,
+        trade_amount: safeFinite(r.trade_amount),
+        pct_of_float_shares: Number.isFinite(r.pct_of_float_shares as number)
+          ? (r.pct_of_float_shares as number)
+          : null,
+      }));
+    out.set(code, {
+      stock_code: code,
+      total_amount,
+      total_pct_of_float,
+      unique_shareholders,
+      row_count: list.length,
+      top_contributors,
+    });
+  }
+  return out;
+}
+
+function safeFinite(v: number | null | undefined): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return 0;
+  return v;
+}
+
+/**
+ * 判断单股聚合是否超阈值。任一阈值（金额或占比）满足即返回 true；
+ * 阈值非有限 / 非正 → 视该维度为永不命中（防御 normalize 漏网）。
+ */
+export function shouldTriggerShareholderReduction(
+  summary: ShareholderReductionSummary,
+  amountThreshold: number,
+  pctThreshold: number
+): boolean {
+  const amtOk = Number.isFinite(amountThreshold) && amountThreshold > 0;
+  const pctOk = Number.isFinite(pctThreshold) && pctThreshold > 0;
+  if (amtOk && summary.total_amount >= amountThreshold) return true;
+  if (pctOk && summary.total_pct_of_float >= pctThreshold) return true;
+  return false;
+}
+
+/**
+ * 计算 lookback 窗口起始日 (YYYY-MM-DD)。
+ * - asOfDate 的当天 00:00 UTC 往前 N 天；
+ * - 用于查询 ShareholderTradeRecord.announce_date >= window_start_date；
+ * - 同样进 signature 让"窗口推进 → 重新触发"自然生效。
+ */
+export function shareholderReductionWindowStart(asOfDate: Date, lookbackDays: number): string {
+  const ms = asOfDate.getTime() - Math.max(1, lookbackDays) * 86_400_000;
+  const d = new Date(ms);
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/** 拼装减持暴增触发 message（中文）。 */
+export function buildShareholderReductionMessage(input: {
+  symbol: string;
+  name: string;
+  lookback_days: number;
+  total_amount: number;
+  total_pct_of_float: number;
+  unique_shareholders: number;
+  top_contributors: ShareholderReductionSummary['top_contributors'];
+}): string {
+  const amount亿 = (input.total_amount / 100_000_000).toFixed(2);
+  const pct = input.total_pct_of_float.toFixed(2);
+  const topLabels = input.top_contributors
+    .slice(0, 3)
+    .map(c => `${c.shareholder_name}(${(c.trade_amount / 100_000_000).toFixed(2)}亿)`)
+    .join('、');
+  return (
+    `${input.symbol}（${input.name}）近 ${input.lookback_days} 日股东减持暴增。` +
+    `累计减持金额 ${amount亿} 亿元（占流通股 ${pct}%），涉及 ${input.unique_shareholders} 个股东` +
+    (topLabels ? `（主要：${topLabels}）` : '') +
+    `。强烈建议关注资金面是否持续承压。`
+  );
+}
+
+// ---------------------------------------------------------------------------
 //  DataSource — DI seam for unit tests
 // ---------------------------------------------------------------------------
 
@@ -496,6 +715,18 @@ export interface BlackSwanDataSource {
   fetchSuspendedList(): Promise<SuspendedStockRow[]>;
   /** Fetch per-stock recent news (limit applied per config). */
   fetchStockNews(stock_code: string, limit: number): Promise<StockNewsRow[]>;
+  /**
+   * 取 lookback 窗口内、限定 stock_code 集合、trade_direction='减持' 的全部
+   * 公告记录（US-013 减持暴增）。
+   *
+   * - stockCodes: 6 位代码集合（已 stripSymbolSuffix）；
+   * - windowStartDate: 'YYYY-MM-DD'，AKShare 公告日 ≥ 此日；
+   * - 失败 → 返 []（fail-OPEN，guard 自然 0 触发，不阻塞其他维度）。
+   */
+  fetchShareholderReductions(
+    stockCodes: readonly string[],
+    windowStartDate: string
+  ): Promise<ShareholderReductionRow[]>;
   /** Write a single RiskAlert row (level='HIGH'). */
   writeAlert(input: {
     user_id: number;
@@ -638,6 +869,44 @@ export class DefaultBlackSwanDataSource implements BlackSwanDataSource {
       logger.warn(
         `BlackSwanWatchdog.fetchStockNews(${stock_code}) failed: ${(err as Error).message}`
       );
+      return [];
+    }
+  }
+
+  async fetchShareholderReductions(
+    stockCodes: readonly string[],
+    windowStartDate: string
+  ): Promise<ShareholderReductionRow[]> {
+    if (!stockCodes || stockCodes.length === 0) return [];
+    try {
+      const rows = await ShareholderTradeRecord.findAll({
+        where: {
+          stock_code: { [Op.in]: stockCodes as string[] },
+          trade_direction: '减持',
+          announce_date: { [Op.gte]: windowStartDate },
+        },
+        attributes: [
+          'announce_date',
+          'stock_code',
+          'shareholder_name',
+          'trade_amount',
+          'pct_of_float_shares',
+        ],
+      });
+      return rows.map(r => ({
+        announce_date: r.announce_date,
+        stock_code: r.stock_code,
+        shareholder_name: r.shareholder_name,
+        trade_amount:
+          r.trade_amount !== null && r.trade_amount !== undefined ? Number(r.trade_amount) : null,
+        pct_of_float_shares:
+          r.pct_of_float_shares !== null && r.pct_of_float_shares !== undefined
+            ? Number(r.pct_of_float_shares)
+            : null,
+      }));
+    } catch (err) {
+      // fail-OPEN: 缺表 / DB outage 不阻塞其他维度
+      logger.warn(`BlackSwanWatchdog.fetchShareholderReductions failed: ${(err as Error).message}`);
       return [];
     }
   }
@@ -807,6 +1076,24 @@ export class BlackSwanWatchdog {
     const triggers: BlackSwanTrigger[] = [];
     const perPosition: PositionBlackSwanResult[] = [];
 
+    // Pre-fetch shareholder reductions for ALL held codes in one batch query
+    // (per-user, before per-position loop). fail-OPEN to empty Map on data
+    // outage so the lower-priority dimensions still run.
+    let reductionByCode = new Map<string, ShareholderReductionSummary>();
+    let reductionWindowStart = '';
+    if (config.scan_shareholder_reduction && positions.length > 0) {
+      reductionWindowStart = shareholderReductionWindowStart(
+        asOfDate,
+        config.shareholder_reduction_lookback_days
+      );
+      const heldCodes = Array.from(new Set(positions.map(p => stripSymbolSuffix(p.symbol))));
+      const reductionRows = await this.source.fetchShareholderReductions(
+        heldCodes,
+        reductionWindowStart
+      );
+      reductionByCode = summarizeShareholderReductions(reductionRows);
+    }
+
     for (const pos of positions) {
       const pureCode = stripSymbolSuffix(pos.symbol);
       let hit = false;
@@ -903,7 +1190,6 @@ export class BlackSwanWatchdog {
       // 3) News keyword check (most expensive — per-stock AKShare call)
       if (!hit && config.scan_news && config.news_keywords.length > 0) {
         const news = await this.source.fetchStockNews(pureCode, config.news_per_stock_limit);
-        let newsHit = false;
         for (const n of news) {
           const hours = computeNewsRecencyHours(n.publish_time, asOfDate);
           if (hours === null || hours > config.news_lookback_hours) continue;
@@ -924,7 +1210,7 @@ export class BlackSwanWatchdog {
               event_type: 'NEWS_KEYWORD',
               reason: `已发过 [${kw}] 告警（dedup）`,
             });
-            newsHit = true;
+            hit = true; // short-circuit: do not fall through to shareholder-reduction check
             break;
           }
           const message = buildNewsKeywordMessage({
@@ -960,14 +1246,82 @@ export class BlackSwanWatchdog {
             event_type: 'NEWS_KEYWORD',
             reason: `命中关键词 ${kw}`,
           });
-          newsHit = true;
           hit = true;
           break;
         }
-        if (!newsHit && !hit) {
-          perPosition.push({ position_id: pos.id, symbol: pos.symbol, status: 'no_event' });
+        // Fall through to step 4 if no news fired (no explicit no_event push;
+        // the final `if (!hit)` after step 4 handles it).
+      }
+
+      // 4) Shareholder reduction check (US-013 减持暴增) — uses pre-fetched
+      //    per-user batch from `reductionByCode`. fail-OPEN: empty Map ⇒ skip.
+      if (!hit && config.scan_shareholder_reduction) {
+        const summary = reductionByCode.get(pureCode);
+        if (
+          summary &&
+          shouldTriggerShareholderReduction(
+            summary,
+            config.shareholder_reduction_amount_threshold,
+            config.shareholder_reduction_pct_threshold
+          )
+        ) {
+          const sig = signatureForEvent({
+            event_type: 'SHAREHOLDER_REDUCTION',
+            symbol: pureCode,
+            windowStartDate: reductionWindowStart,
+          });
+          if (config.dedupe_enabled && seenSet.has(sig)) {
+            perPosition.push({
+              position_id: pos.id,
+              symbol: pos.symbol,
+              status: 'skipped_seen',
+              event_type: 'SHAREHOLDER_REDUCTION',
+              reason: '已发过减持暴增告警（dedup）',
+            });
+            hit = true;
+          } else {
+            const message = buildShareholderReductionMessage({
+              symbol: pos.symbol,
+              name: pos.name,
+              lookback_days: config.shareholder_reduction_lookback_days,
+              total_amount: summary.total_amount,
+              total_pct_of_float: summary.total_pct_of_float,
+              unique_shareholders: summary.unique_shareholders,
+              top_contributors: summary.top_contributors,
+            });
+            triggers.push({
+              user_id,
+              position_id: pos.id,
+              symbol: pos.symbol,
+              name: pos.name,
+              event_type: 'SHAREHOLDER_REDUCTION',
+              detail: {
+                window_start_date: reductionWindowStart,
+                lookback_days: config.shareholder_reduction_lookback_days,
+                total_amount: summary.total_amount,
+                total_pct_of_float: summary.total_pct_of_float,
+                unique_shareholders: summary.unique_shareholders,
+                row_count: summary.row_count,
+                top_contributors: summary.top_contributors,
+                amount_threshold: config.shareholder_reduction_amount_threshold,
+                pct_threshold: config.shareholder_reduction_pct_threshold,
+              },
+              signature: sig,
+              message,
+            });
+            perPosition.push({
+              position_id: pos.id,
+              symbol: pos.symbol,
+              status: 'triggered',
+              event_type: 'SHAREHOLDER_REDUCTION',
+              reason: '减持暴增',
+            });
+            hit = true;
+          }
         }
-      } else if (!hit) {
+      }
+
+      if (!hit) {
         perPosition.push({ position_id: pos.id, symbol: pos.symbol, status: 'no_event' });
       }
     }

@@ -22,7 +22,10 @@ const DEFAULT_FEISHU_HOSTS = ['open.feishu.cn', 'open.larksuite.com'];
 function resolveAllowlist(): string[] {
   const env = process.env.FEISHU_WEBHOOK_HOST_ALLOWLIST;
   if (!env) return DEFAULT_FEISHU_HOSTS;
-  const extra = env.split(',').map(s => s.trim()).filter(Boolean);
+  const extra = env
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
   return [...DEFAULT_FEISHU_HOSTS, ...extra];
 }
 
@@ -45,7 +48,8 @@ function isPrivateOrLocalHostname(hostname: string): boolean {
   // IPv6 link-local / loopback
   if (lower.startsWith('fe80:') || lower.startsWith('fc') || lower.startsWith('fd')) return true;
   // 内网主机名启发式 (不严格, 配合 allowlist)
-  if (lower.endsWith('.internal') || lower.endsWith('.local') || lower.endsWith('.lan')) return true;
+  if (lower.endsWith('.internal') || lower.endsWith('.local') || lower.endsWith('.lan'))
+    return true;
   return false;
 }
 
@@ -97,7 +101,9 @@ export function validateWebhookUrl(rawUrl: string): WebhookValidationResult {
   if (!allowed && process.env.NODE_ENV === 'production') {
     return {
       ok: false,
-      reason: `webhook_url hostname '${url.hostname}' 不在白名单 (${allowlist.join(', ')}). 如需新增, 在 FEISHU_WEBHOOK_HOST_ALLOWLIST env 配置`,
+      reason: `webhook_url hostname '${url.hostname}' 不在白名单 (${allowlist.join(
+        ', '
+      )}). 如需新增, 在 FEISHU_WEBHOOK_HOST_ALLOWLIST env 配置`,
     };
   }
   return { ok: true };

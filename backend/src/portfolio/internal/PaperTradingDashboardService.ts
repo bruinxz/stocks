@@ -104,6 +104,7 @@ function sourceTypeLabel(value?: string): string {
     [AISignalSourceType.TRADING_AGENTS]: 'TradingAgents 深度复核',
     [AISignalSourceType.DAILY_SCREENER]: 'AI每日优选',
     [AISignalSourceType.MANUAL_ANALYSIS]: '人工分析',
+    [AISignalSourceType.ANALYSIS_ENGINE]: '多维分析引擎',
   };
   return labels[String(value || '')] || value || '未知来源';
 }

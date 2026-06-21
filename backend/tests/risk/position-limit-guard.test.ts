@@ -27,6 +27,8 @@
  *     - normalize 兼容性（负数 / NaN / >1 percentage → 退回默认）
  */
 
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import {
   DEFAULT_POSITION_LIMITS,
   HeldPositionSnapshot,
@@ -720,6 +722,229 @@ async function testGetConfigAndUpdate() {
 }
 
 // ---------------------------------------------------------------------------
+//  PR-002 / US-007 — 阈值持久化端到端 + 反 hardcode meta-test guard
+// ---------------------------------------------------------------------------
+
+/**
+ * PR-002 端到端：用户在 risk_config 里把上限收紧 → 默认下放行的订单被卡掉；
+ * 用户把上限放宽 → 默认下卡掉的订单被放行。证明 guard 真正读用户配置而非
+ * 写死的 DEFAULT_POSITION_LIMITS。
+ *
+ * 此测试是 PR-002 "阈值持久化、配置驱动" AC 的代理 — 跑通即视为持久化路径
+ * （updateConfig → saveConfig → loadConfig → checkBuyOrder.config）联通无缝。
+ */
+async function testCustomizedConfigDrivesEnforcement() {
+  // ---- 1. 用户收紧 single-stock 到 5%：默认 10% 下放行的 8% 单被卡掉 ----
+  {
+    const state = emptyState({
+      portfolio: { total_value: 100000 },
+      industryFor: { 'A.SH': '白酒' },
+    });
+    const guard = new PositionLimitGuard(makeFakeSource(state));
+
+    // baseline: default 10% — 8000/100000=8% < 10% → 放行
+    const baseline = await guard.checkBuyOrder({
+      user_id: 7,
+      symbol: 'A.SH',
+      proposed_value: 8000,
+    });
+    assertEqual('PR-002 baseline 8% < default 10% → ok', baseline.ok, true);
+
+    // 用户收紧到 5%
+    await guard.updateConfig(7, { max_single_stock_pct: 0.05 });
+
+    const enforced = await guard.checkBuyOrder({
+      user_id: 7,
+      symbol: 'A.SH',
+      proposed_value: 8000,
+    });
+    assertEqual('PR-002 收紧到 5% 后 8% → ok=false', enforced.ok, false);
+    assertEqual(
+      'PR-002 enforce 命中 single_stock 规则 (而非 default)',
+      enforced.violation?.rule,
+      'max_single_stock_pct'
+    );
+    assertEqual(
+      'PR-002 enforce config.max_single_stock_pct = 0.05 (custom 不是 default 0.10)',
+      enforced.config.max_single_stock_pct,
+      0.05
+    );
+    assertEqual(
+      'PR-002 enforce alert 被写入',
+      state.writeAlertCalls.length,
+      1
+    );
+  }
+
+  // ---- 2. 用户放宽 max_positions 到 50：默认 20 下卡掉的 21 只新股放行 ----
+  {
+    const positions: HeldPositionSnapshot[] = Array.from({ length: 20 }, (_, i) => ({
+      symbol: `S${i}.SH`,
+      market_value: 1000,
+    }));
+    const state = emptyState({
+      portfolio: { total_value: 1000000 },
+      positions,
+      industryFor: { 'NEW.SH': '白酒' },
+    });
+    const guard = new PositionLimitGuard(makeFakeSource(state));
+
+    // baseline: default max_positions=20, 已 20 只 → 新开第 21 应卡
+    const baseline = await guard.checkBuyOrder({
+      user_id: 8,
+      symbol: 'NEW.SH',
+      proposed_value: 1000,
+    });
+    assertEqual('PR-002 baseline 20/20 默认上限 → 卡掉', baseline.ok, false);
+    assertEqual(
+      'PR-002 baseline 命中 max_positions',
+      baseline.violation?.rule,
+      'max_positions'
+    );
+
+    // 用户放宽到 50
+    await guard.updateConfig(8, { max_positions: 50 });
+    state.writeAlertCalls.length = 0;
+
+    const relaxed = await guard.checkBuyOrder({
+      user_id: 8,
+      symbol: 'NEW.SH',
+      proposed_value: 1000,
+    });
+    assertEqual('PR-002 放宽到 50 后 20/50 + 新开第 21 → ok', relaxed.ok, true);
+    assertEqual(
+      'PR-002 放宽后 config.max_positions = 50 (持久化生效)',
+      relaxed.config.max_positions,
+      50
+    );
+    assertEqual(
+      'PR-002 放宽后 no alert written',
+      state.writeAlertCalls.length,
+      0
+    );
+  }
+
+  // ---- 3. 不同 user 的 config 互相隔离 (持久化要按 user_id key) ----
+  {
+    const state = emptyState({
+      portfolio: { total_value: 100000 },
+      industryFor: { 'A.SH': '白酒' },
+    });
+    const guard = new PositionLimitGuard(makeFakeSource(state));
+    // userA 收紧 single-stock 到 1%
+    await guard.updateConfig(101, { max_single_stock_pct: 0.01 });
+    // userB 用默认 (不调 updateConfig — fake loadConfig 返回 state.config)
+    // 注意 fake 状态共享是 fake 测试限制 — 真实生产 loadConfig 按 user_id 查 User 表
+    // 此 case 主要验"writeAlert 含正确 user_id" + "config 字段透传"
+    const result = await guard.checkBuyOrder({
+      user_id: 101,
+      symbol: 'A.SH',
+      proposed_value: 2000, // 2% > 1%
+    });
+    assertEqual('PR-002 userA 收紧后 2% > 1% → 卡掉', result.ok, false);
+    assertEqual(
+      'PR-002 alert user_id 正确透传',
+      state.writeAlertCalls[state.writeAlertCalls.length - 1].user_id,
+      101
+    );
+  }
+}
+
+/**
+ * Meta-test (PR-002): 用 fs.readFileSync 直接扫 PositionLimitGuard.ts 源文件,
+ * 防止未来 refactor 把"读 User.risk_config"路径误删 / 退回 hardcoded.
+ *
+ * 这是项目 Codebase Patterns 推荐姿势 (cron-registry [5] +
+ * portfolio-construction-adapter [meta-test guard] 同款). PR-002 的
+ * "配置驱动" 验收靠这个 guard 把"持久化 wire-in"真正变成 CI 守卫.
+ */
+async function testNoHardcodedThresholdsMetaGuard() {
+  const guardSrcPath = resolve(__dirname, '../../src/portfolio/risk/PositionLimitGuard.ts');
+  const src = readFileSync(guardSrcPath, 'utf8');
+
+  // [1] DefaultPositionLimitDataSource.loadConfig 必须读 user.risk_config.position_limits
+  // 用 `async loadConfig` 锚定具体方法实现 (避开 interface 同名 declaration)
+  const loadConfigMatch = src.match(/async loadConfig[\s\S]*?\n  \}/);
+  assert(
+    'meta-guard: DefaultPositionLimitDataSource.loadConfig 方法实现可定位',
+    loadConfigMatch !== null && loadConfigMatch.length > 0
+  );
+  const loadConfigBody = loadConfigMatch?.[0] || '';
+  assert(
+    'meta-guard: loadConfig 真去读 User.findByPk',
+    /User\.findByPk/.test(loadConfigBody)
+  );
+  assert(
+    'meta-guard: loadConfig 真消费 user.risk_config.position_limits 字段',
+    /risk_config\??\.position_limits/.test(loadConfigBody)
+  );
+  assert(
+    'meta-guard: loadConfig 走 normalizePositionLimitsConfig (脏数据回退默认)',
+    /normalizePositionLimitsConfig/.test(loadConfigBody)
+  );
+
+  // [2] saveConfig 必须用 JSONB changed() pattern 持久化 (US-017 约定)
+  const saveConfigMatch = src.match(/async saveConfig[\s\S]*?\n  \}/);
+  const saveConfigBody = saveConfigMatch?.[0] || '';
+  assert(
+    'meta-guard: saveConfig 方法实现可定位',
+    saveConfigMatch !== null && saveConfigMatch.length > 0
+  );
+  assert(
+    'meta-guard: saveConfig 写 user.risk_config (JSONB merge)',
+    /user\.risk_config\s*=/.test(saveConfigBody)
+  );
+  assert(
+    'meta-guard: saveConfig 调 user.changed("risk_config", true) (US-017 JSONB pattern)',
+    /changed\s*\(\s*['"]risk_config['"]\s*,\s*true\s*\)/.test(saveConfigBody)
+  );
+  assert(
+    'meta-guard: saveConfig 真 await user.save() 持久化',
+    /await\s+user\.save\(\)/.test(saveConfigBody)
+  );
+
+  // [3] guard.checkBuyOrder 必须从 source.loadConfig 拿 config 而非直接用 DEFAULT_POSITION_LIMITS
+  const checkBuyMatch = src.match(/async checkBuyOrder[\s\S]*?\n  \}/);
+  const checkBuyBody = checkBuyMatch?.[0] || '';
+  assert(
+    'meta-guard: checkBuyOrder 方法可定位',
+    checkBuyMatch !== null && checkBuyMatch.length > 0
+  );
+  assert(
+    'meta-guard: checkBuyOrder 调 this.source.loadConfig(user_id) (按用户读)',
+    /this\.source\.loadConfig\(\s*input\.user_id\s*\)/.test(checkBuyBody)
+  );
+  assert(
+    'meta-guard: checkBuyOrder body 不再直接引用 DEFAULT_POSITION_LIMITS (避免硬编码绕过)',
+    !/DEFAULT_POSITION_LIMITS/.test(checkBuyBody)
+  );
+
+  // [4] DEFAULT_POSITION_LIMITS 必须 Object.freeze (防止任何 caller 误 mutate 共享对象)
+  assert(
+    'meta-guard: DEFAULT_POSITION_LIMITS 由 Object.freeze 包裹',
+    /DEFAULT_POSITION_LIMITS[^=]*=\s*Object\.freeze\(/.test(src)
+  );
+
+  // [5] updateConfig 必须先 normalize 再 saveConfig (脏数据不进 DB)
+  const updateConfigMatch = src.match(/async updateConfig[\s\S]*?\n  \}/);
+  const updateConfigBody = updateConfigMatch?.[0] || '';
+  assert(
+    'meta-guard: updateConfig 方法可定位',
+    updateConfigMatch !== null && updateConfigMatch.length > 0
+  );
+  assert(
+    'meta-guard: updateConfig 调 normalizePositionLimitsConfig 在 saveConfig 前',
+    /normalizePositionLimitsConfig[\s\S]*?saveConfig/.test(updateConfigBody)
+  );
+
+  // [6] 与 PR-002 / US-007 标识同步 (帮助未来 grep)
+  assert(
+    'meta-guard: 源码注释含 US-047 标识 (PositionLimitGuard 出生 story)',
+    /US-047/.test(src)
+  );
+}
+
+// ---------------------------------------------------------------------------
 //  Driver — IIFE-free async sequencing per US-037 codebase pattern
 // ---------------------------------------------------------------------------
 
@@ -740,6 +965,8 @@ async function main() {
   await testGuardZeroTotalValue();
   await testGuardAlertFailureDoesNotMaskViolation();
   await testGetConfigAndUpdate();
+  await testCustomizedConfigDrivesEnforcement();
+  await testNoHardcodedThresholdsMetaGuard();
 
   console.log(`\n${passed} ok, ${failed} failed`);
   if (failed > 0) {
