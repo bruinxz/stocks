@@ -918,8 +918,8 @@ class SchedulerService {
           : undefined;
         const limit = this.toPositiveInt(
           parameters.limit || parameters.quote_sync_limit || parameters.max_stocks,
-          360,
-          1500
+          600,
+          2000
         );
         const source = parameters.source || parameters.data_source || 'auto';
         const universe = parameters.universe === 'favorites' ? 'favorites' : 'market';
@@ -935,9 +935,69 @@ class SchedulerService {
               user_id: parameters.user_id,
               limit,
             });
-        const targetSymbols = rawSymbols?.length
+        let targetSymbols: string[] = rawSymbols?.length
           ? rawSymbols.map((symbol: any) => String(symbol || '').trim()).filter(Boolean)
           : stocks.map(stock => stock.symbol);
+
+        // 2026-06-21 数据 sync 修复: 默认 universe 始终覆盖 当前持仓 + 全部用户的
+        // FavoriteStock + 6 只目标 / 候选票, 确保 AI 引擎下游不会因为单股缺行情失败.
+        // parameters.skip_extra_universe=true 时跳过 (例如 ops 手工只刷指定标的).
+        if (!rawSymbols?.length && parameters.skip_extra_universe !== true) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { PaperTradingPosition } = require('../models/PaperTradingPosition');
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { FavoriteStock } = require('../models/FavoriteStock');
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { Stock } = require('../models/Stock');
+            const extra = new Set<string>(targetSymbols);
+            const positions = await PaperTradingPosition.findAll({
+              attributes: ['symbol'],
+              group: ['symbol'],
+              raw: true,
+            }).catch(() => []);
+            for (const r of positions as any[]) {
+              if (r.symbol) extra.add(String(r.symbol));
+            }
+            // FavoriteStock has stock_id (not stock_code) — JOIN Stock to resolve.
+            const favs = await FavoriteStock.findAll({
+              attributes: ['stock_id'],
+              raw: true,
+            }).catch(() => []);
+            const favIds = Array.from(
+              new Set((favs as any[]).map(r => Number(r.stock_id)).filter(Boolean))
+            );
+            if (favIds.length) {
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const { Op } = require('sequelize');
+              const favStocks = await Stock.findAll({
+                where: { id: { [Op.in]: favIds } },
+                attributes: ['symbol'],
+                raw: true,
+              }).catch(() => []);
+              for (const r of favStocks as any[]) {
+                if (r.symbol) extra.add(String(r.symbol));
+              }
+            }
+            // Guarantee the 6 audit targets are always pulled
+            const targetDigits = ['688008', '300054', '600667', '300476', '002916', '301377'];
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { Op } = require('sequelize');
+            const tStocks = await Stock.findAll({
+              where: {
+                [Op.or]: targetDigits.map(d => ({ symbol: { [Op.like]: `%${d}` } })),
+              },
+              attributes: ['symbol'],
+              raw: true,
+            }).catch(() => []);
+            for (const r of tStocks as any[]) {
+              if (r.symbol) extra.add(String(r.symbol));
+            }
+            targetSymbols = Array.from(extra);
+          } catch (e) {
+            logger.warn(`[realtime-quote-sync] extra universe enrich failed: ${(e as Error).message}`);
+          }
+        }
 
         const result = await realtimeQuoteService.syncQuotesForSymbols(targetSymbols, {
           source,
@@ -2544,9 +2604,92 @@ class SchedulerService {
         // Batch AB (2026-06-18): 北向持股当日 sync (沪股通/深股通).
         // northbound 因子 + NorthboundFollowStrategy + EarningsSurpriseStrategy 依赖.
         // 推荐 cron: '15 16 * * 1-5' (港股通收盘后 16:10 数据可用).
+        //
+        // 2026-06-21 数据 sync 修复: 上游 East Money `stock_hsgt_hold_stock_em`
+        // 当前 100% 返 null pages (AKShare TypeError), 全市场快照拉不下来. 增加
+        // per-stock fallback: 先试 syncDate, 若 fetched=0 (空) 且 parameters.fallback_individual
+        // 不为 false, 则用 universe (持仓 + 收藏 + 主板 top N) 走 stock_hsgt_individual_em
+        // 逐只补回最近 N 天历史. 确保 northbound_holdings 始终非空.
         const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
         const date = parameters.date || today;
         const result = await northboundSyncService.syncDate(date);
+
+        // Fallback path
+        let fallbackSummary: Record<string, unknown> | null = null;
+        const allowFallback = parameters.fallback_individual !== false;
+        if (allowFallback && (result.fetched || 0) === 0) {
+          try {
+            const windowDays = this.toPositiveInt(parameters.window_days, 14, 60);
+            const universeLimit = this.toPositiveInt(parameters.universe_limit, 300, 1500);
+            const startDate = moment(date)
+              .tz('Asia/Shanghai')
+              .subtract(windowDays, 'day')
+              .format('YYYY-MM-DD');
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { Stock } = require('../models/Stock');
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { PaperTradingPosition } = require('../models/PaperTradingPosition');
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { Op } = require('sequelize');
+
+            const set = new Set<string>();
+            try {
+              const positions = await PaperTradingPosition.findAll({
+                attributes: ['symbol'],
+                group: ['symbol'],
+                raw: true,
+              });
+              for (const r of positions) {
+                const digits = String(r.symbol || '').replace(/[^0-9]/g, '').slice(-6);
+                if (/^\d{6}$/.test(digits)) set.add(digits);
+              }
+            } catch (e) {
+              // continue
+            }
+            // Top stocks by circulating market cap to fill the universe
+            try {
+              const top = await Stock.findAll({
+                where: {
+                  is_listed: true,
+                  name: {
+                    [Op.and]: [{ [Op.notILike]: '%ST%' }, { [Op.notILike]: '%退%' }],
+                  },
+                },
+                order: [['circulating_market_cap', 'DESC NULLS LAST']],
+                limit: universeLimit,
+                attributes: ['symbol'],
+                raw: true,
+              });
+              for (const s of top as any[]) {
+                const digits = String(s.symbol || '').replace(/[^0-9]/g, '').slice(-6);
+                if (/^\d{6}$/.test(digits)) set.add(digits);
+              }
+            } catch (e) {
+              // continue
+            }
+            // Always include core targets so they are guaranteed in DB
+            for (const code of ['688008', '300054', '600667', '300476', '002916', '301377']) {
+              set.add(code);
+            }
+
+            const universe = Array.from(set).slice(0, universeLimit);
+            const individualResult = await northboundSyncService.syncIndividualUniverse(
+              universe,
+              startDate,
+              date,
+              { intervalMs: 150 }
+            );
+            fallbackSummary = {
+              fallback: 'individual',
+              window: { start: startDate, end: date },
+              universe_size: universe.length,
+              ...individualResult,
+            };
+          } catch (e: any) {
+            fallbackSummary = { fallback: 'individual', error: e?.message || String(e) };
+          }
+        }
+
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: result.fetched || 0,
           success_count: result.upserted || 0,
@@ -2559,10 +2702,12 @@ class SchedulerService {
             date,
             fetched: result.fetched,
             upserted: result.upserted,
+            ...(fallbackSummary ? { fallback: fallbackSummary } : {}),
           },
         });
         logger.info(
-          `[northbound-sync] ${date} 完成: fetched=${result.fetched} upserted=${result.upserted}`
+          `[northbound-sync] ${date} 完成: fetched=${result.fetched} upserted=${result.upserted}` +
+            (fallbackSummary ? ` fallback=${JSON.stringify(fallbackSummary)}` : '')
         );
       } else if (task.type === 'SNOWBALL_HOT_KEYWORD_SYNC') {
         // Batch AB (2026-06-18): 雪球热门话题 sync (AKShare stock_hot_follow_xq).

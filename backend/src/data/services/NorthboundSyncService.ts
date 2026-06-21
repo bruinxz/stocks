@@ -156,6 +156,96 @@ export class NorthboundSyncService {
       details,
     };
   }
+
+  /**
+   * Per-stock fallback ingest — for cases where the global daily endpoint
+   * (`stock_hsgt_hold_stock_em`) is broken upstream (East Money returns null
+   * pages → AKShare raises `TypeError: 'NoneType' object is not subscriptable`).
+   *
+   * Iterates `symbols`, calls `stock_hsgt_individual_em(symbol)` per stock,
+   * filters to [startDate, endDate], and upserts in the same shape as syncDate.
+   *
+   * @param symbols 6-digit codes (no market prefix)
+   * @param startDate ISO YYYY-MM-DD inclusive
+   * @param endDate ISO YYYY-MM-DD inclusive
+   * @param options.intervalMs sleep between per-stock calls (default 200ms)
+   */
+  async syncIndividualUniverse(
+    symbols: string[],
+    startDate: string,
+    endDate: string,
+    options: { intervalMs?: number } = {}
+  ): Promise<{
+    total_stocks: number;
+    succeeded: number;
+    failed: number;
+    upserted_rows: number;
+    days: number;
+  }> {
+    const intervalMs = options.intervalMs ?? 200;
+    const codes = [
+      ...new Set(symbols.map(s => String(s || '').replace(/[^0-9]/g, '').slice(-6))),
+    ].filter(c => /^\d{6}$/.test(c));
+    let succeeded = 0;
+    let failed = 0;
+    let upsertedRows = 0;
+
+    for (let i = 0; i < codes.length; i++) {
+      const code = codes[i];
+      try {
+        const rows = await this.client.fetchIndividualWindow(code, startDate, endDate);
+        if (rows.length === 0) {
+          succeeded += 1;
+        } else {
+          const records = rows.map(row => ({
+            trade_date: row.trade_date,
+            stock_code: row.stock_code,
+            stock_name: row.stock_name ?? undefined,
+            hold_volume: row.hold_volume ?? undefined,
+            hold_amount: row.hold_amount ?? undefined,
+            hold_ratio: row.hold_ratio ?? undefined,
+            market_type: row.market_type,
+            source: 'akshare_individual',
+            raw_payload: row.raw_payload ?? {},
+          }));
+          await NorthboundHolding.bulkCreate(records, {
+            updateOnDuplicate: [
+              'stock_name',
+              'hold_volume',
+              'hold_amount',
+              'hold_ratio',
+              'market_type',
+              'source',
+              'raw_payload',
+              'updated_at',
+            ],
+          });
+          upsertedRows += records.length;
+          succeeded += 1;
+        }
+      } catch (e) {
+        failed += 1;
+        logger.warn(`Northbound individual sync failed for ${code}: ${(e as Error).message}`);
+      }
+      if (intervalMs > 0 && i < codes.length - 1) {
+        await new Promise(r => setTimeout(r, intervalMs));
+      }
+    }
+
+    const days =
+      (parseIsoDate(endDate).getTime() - parseIsoDate(startDate).getTime()) / 86_400_000 + 1;
+    logger.info(
+      `Northbound individual universe: codes=${codes.length} ok=${succeeded} fail=${failed} ` +
+        `upserted=${upsertedRows} window=[${startDate},${endDate}] days=${days}`
+    );
+    return {
+      total_stocks: codes.length,
+      succeeded,
+      failed,
+      upserted_rows: upsertedRows,
+      days,
+    };
+  }
 }
 
 /** ISO YYYY-MM-DD → Date (UTC midnight)，避免本地时区漂移 */

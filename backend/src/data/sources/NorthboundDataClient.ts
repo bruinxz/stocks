@@ -66,6 +66,34 @@ export class NorthboundDataClient {
   }
 
   /**
+   * Per-stock fallback — pulls `stock_hsgt_individual_em(symbol)` history,
+   * filtered to [start_date, end_date]. Used when the global daily endpoint
+   * (`stock_hsgt_hold_stock_em`) returns null pages upstream (East Money outage).
+   *
+   * Returns the same row shape as `fetchHoldings`.
+   */
+  async fetchIndividualWindow(
+    symbol: string,
+    startDate: string,
+    endDate: string
+  ): Promise<NorthboundHoldingRow[]> {
+    try {
+      const rows = (await this.callPythonScript(
+        'get_northbound_individual_window',
+        symbol,
+        startDate,
+        endDate
+      )) as NorthboundHoldingRow[] | null;
+      return Array.isArray(rows) ? rows : [];
+    } catch (error) {
+      logger.warn(
+        `Northbound individual window ${symbol} [${startDate},${endDate}] failed: ${(error as Error).message}`
+      );
+      return [];
+    }
+  }
+
+  /**
    * 调用 Python 助手脚本（与 AKShareClient 同样的契约 JSON: {success, data}）
    */
   private callPythonScript(command: string, ...args: string[]): Promise<unknown> {

@@ -185,25 +185,43 @@ export class ShareholderTradeSyncService {
         };
       });
 
-      await ShareholderTradeRecord.bulkCreate(records, {
-        updateOnDuplicate: [
-          'stock_name',
-          'trade_shares',
-          'trade_amount',
-          'shareholder_type',
-          'latest_price',
-          'pct_of_total_shares',
-          'pct_of_float_shares',
-          'post_hold_shares',
-          'change_end_date',
-          'source',
-          'raw_payload',
-          'updated_at',
-        ],
-      });
+      // 2026-06-21: ~140k 行单次 bulkCreate 会让 PG 连接 idle timeout 杀掉
+      // (Connection terminated unexpectedly). 改成每批 2000 行分页 upsert,
+      // 失败的批次 log warn 但不中断, 避免一次 14min 拉取白跑.
+      const CHUNK = 2000;
+      let writtenChunks = 0;
+      let failedChunks = 0;
+      for (let i = 0; i < records.length; i += CHUNK) {
+        const slice = records.slice(i, i + CHUNK);
+        try {
+          await ShareholderTradeRecord.bulkCreate(slice, {
+            updateOnDuplicate: [
+              'stock_name',
+              'trade_shares',
+              'trade_amount',
+              'shareholder_type',
+              'latest_price',
+              'pct_of_total_shares',
+              'pct_of_float_shares',
+              'post_hold_shares',
+              'change_end_date',
+              'source',
+              'raw_payload',
+              'updated_at',
+            ],
+          });
+          writtenChunks += 1;
+        } catch (chunkErr) {
+          failedChunks += 1;
+          logger.warn(
+            `ShareholderTrade: chunk ${i}-${i + slice.length} failed: ${(chunkErr as Error).message}`
+          );
+        }
+      }
 
       logger.info(
-        `ShareholderTrade: upserted ${records.length} rows for symbol=${symbol}` +
+        `ShareholderTrade: upserted ${records.length} rows for symbol=${symbol} ` +
+          `(chunks ok=${writtenChunks} fail=${failedChunks})` +
           (dedupDropped > 0 ? ` (dedup_dropped=${dedupDropped})` : '') +
           ` | dist=${JSON.stringify(typeCounter)}`
       );

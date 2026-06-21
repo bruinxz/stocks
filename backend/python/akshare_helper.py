@@ -895,6 +895,88 @@ def get_northbound_holdings(date: str, market: str = "北向") -> List[Dict[str,
         return []
 
 
+def get_northbound_individual_window(symbol: str, start_date: str, end_date: str) -> List[Dict[str, Any]]:
+    """
+    Fallback per-stock northbound holdings — the global `stock_hsgt_hold_stock_em`
+    endpoint is currently broken upstream (East Money returns null pages), so we
+    pull per-stock history via `stock_hsgt_individual_em(symbol)` and filter to
+    the requested date window.
+
+    Returns dicts shaped like get_northbound_holdings rows so the downstream
+    NorthboundSyncService schema does not need to change.
+
+    Args:
+      symbol: 6-digit code (e.g. '600519')
+      start_date: YYYY-MM-DD or YYYYMMDD inclusive
+      end_date:   YYYY-MM-DD or YYYYMMDD inclusive
+    """
+    try:
+        s = str(symbol).strip().zfill(6)
+        if not s.isdigit() or len(s) != 6:
+            return []
+        start_iso = _format_iso_date(start_date.replace('-', ''))
+        end_iso = _format_iso_date(end_date.replace('-', ''))
+
+        if s.startswith('6'):
+            market_type = 'SH'
+        elif s.startswith(('0', '3')):
+            market_type = 'SZ'
+        else:
+            return []
+
+        try:
+            df = ak.stock_hsgt_individual_em(symbol=s)
+        except Exception as e:
+            print(f"stock_hsgt_individual_em({s}) failed: {e}", file=sys.stderr)
+            return []
+        if df is None or df.empty:
+            return []
+
+        results: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            dval = row.get('持股日期')
+            if pd.isna(dval):
+                continue
+            if hasattr(dval, 'strftime'):
+                iso = dval.strftime('%Y-%m-%d')
+            else:
+                iso = str(dval)[:10]
+            if iso < start_iso or iso > end_iso:
+                continue
+
+            hold_volume = safe_float_value(row.get('持股数量'))
+            hold_amount = safe_float_value(row.get('持股市值'))
+            hold_ratio = safe_float_value(row.get('持股数量占A股百分比'))
+
+            raw_payload: Dict[str, Any] = {}
+            for col in df.columns:
+                v = row.get(col)
+                if pd.isna(v):
+                    raw_payload[str(col)] = None
+                elif isinstance(v, (int, float)):
+                    raw_payload[str(col)] = float(v)
+                elif hasattr(v, 'strftime'):
+                    raw_payload[str(col)] = v.strftime('%Y-%m-%d')
+                else:
+                    raw_payload[str(col)] = str(v)
+
+            results.append({
+                "trade_date": iso,
+                "stock_code": s,
+                "stock_name": None,
+                "hold_volume": int(hold_volume) if hold_volume is not None else None,
+                "hold_amount": hold_amount,
+                "hold_ratio": hold_ratio,
+                "market_type": market_type,
+                "raw_payload": raw_payload,
+            })
+        return results
+    except Exception as e:
+        print(f"Error in get_northbound_individual_window({symbol}): {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return []
+
+
 def get_dragon_tiger_detail(date: str) -> List[Dict[str, Any]]:
     """
     Fetch the Dragon-Tiger Board (龙虎榜) seat-level detail for a given trade date.
@@ -5438,6 +5520,15 @@ def main():
             date = sys.argv[2]
             market = sys.argv[3] if len(sys.argv) > 3 else "北向"
             result = get_northbound_holdings(date, market)
+
+        elif command == "get_northbound_individual_window":
+            if len(sys.argv) < 5:
+                print(json.dumps({"error": "Missing args: symbol start_date end_date"}), file=sys.stderr)
+                sys.exit(1)
+            symbol = sys.argv[2]
+            start_date = sys.argv[3]
+            end_date = sys.argv[4]
+            result = get_northbound_individual_window(symbol, start_date, end_date)
 
         elif command == "get_dragon_tiger_detail":
             if len(sys.argv) < 3:

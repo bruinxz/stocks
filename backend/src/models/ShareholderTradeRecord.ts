@@ -98,7 +98,7 @@ export class ShareholderTradeRecord extends Model {
   declare stock_code: string;
 
   @Column({
-    type: DataType.STRING(200),
+    type: DataType.STRING(500),
     allowNull: false,
     primaryKey: true,
     field: 'shareholder_name',
