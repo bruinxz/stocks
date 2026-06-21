@@ -325,47 +325,100 @@ export class AnalysisEngineService {
 
     // Batch AW (2026-06-22): 异步附加 TradingAgents narrative — 作为"叙事补充", 不影响决策
     // 用 Promise.race 给 6s timeout, TA 慢/挂不阻塞引擎主流程返回.
-    decision.tradingagents_narrative = await this.maybeLoadTradingAgentsNarrative(normalized, asOf);
+    // 传 decision 让 fallback 能基于 evidence 自动生成中文叙述 (TA 服务下线时仍有内容显示)
+    decision.tradingagents_narrative = await this.maybeLoadTradingAgentsNarrative(normalized, asOf, decision);
 
     return decision;
   }
 
   /**
-   * 调用 AIAdvisorService 拿 TradingAgents 的研报式 5 维度 narrative.
+   * 调用 TradingAgents 拿研报式 5 维度 narrative.
+   * 直接 HTTP POST 避开 AIAdvisorService — 后者会再触发 hard short-circuit 形成循环.
    * 失败 / timeout 返 null, 不让 decision 主路径挂.
+   *
+   * Batch AW (2026-06-22): TA 外部服务 47.93.224.109:8000 实测 connection refused (服务下线).
+   * 加 `decision` 参数后, 失败时走本地 fallback — 用 analyzer evidence 自动拼中文叙述.
    */
   private async maybeLoadTradingAgentsNarrative(
     stockCode: string,
-    asOf: string
+    _asOf: string,
+    decision?: RecommendationDecision
   ): Promise<RecommendationDecision['tradingagents_narrative']> {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { aiAdvisorService } = require('../AIAdvisorService');
-      // analyzeSingleStock 是 TradingAgents 5 维度的入口
-      // (走旧路径, 不触发 hard short-circuit — 我们就是要 TA 的叙事补充, 不要 hard 替换)
-      const TA_TIMEOUT_MS = 6000;
-      const taPromise: Promise<any> = aiAdvisorService.analyzeSingleStock(stockCode, {
-        as_of: asOf,
-        force_legacy: true, // 跳过 hard short circuit
-      });
-      const timeoutPromise = new Promise<null>(resolve =>
-        setTimeout(() => resolve(null), TA_TIMEOUT_MS)
-      );
-      const result: any = await Promise.race([taPromise, timeoutPromise]);
-      if (!result || !result.key_points) return null;
-      const kp = result.key_points || {};
+      const axios = require('axios');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { TRADING_AGENTS_BASE_URL } = require('../../config/externalServices');
+      const TA_TIMEOUT_MS = 5000;
+      const url = `${TRADING_AGENTS_BASE_URL}/api/analyze`;
+      const payload = { ticker: stockCode, dimensions: ['fundamental', 'technical', 'capital', 'news', 'sentiment'] };
+      const res: any = await Promise.race([
+        axios.post(url, payload, { timeout: TA_TIMEOUT_MS }),
+        new Promise(resolve => setTimeout(() => resolve(null), TA_TIMEOUT_MS + 500)),
+      ]);
+      if (res && res.data) {
+        const data = res.data || {};
+        const rawText: string | undefined = data.report || data.text || data.analysis ||
+          (typeof data === 'string' ? data : undefined);
+        const seg = (label: string): string | undefined => {
+          if (!rawText) return undefined;
+          const re = new RegExp(`(?:^|\\n)[\\s#]*(?:\\*\\*)?${label}(?:\\*\\*)?[\\s::：]*(?:\\n+)([\\s\\S]+?)(?=\\n[\\s#]*(?:\\*\\*)?(?:基本面|技术面|资金面|新闻|消息面|情绪面|总结|结论)|$)`,
+            'i');
+          const m = rawText.match(re);
+          return m ? m[1].trim().substring(0, 1200) : undefined;
+        };
+        return {
+          fundamental: data.fundamental || seg('基本面'),
+          technical: data.technical || seg('技术面'),
+          capital: data.capital || seg('资金面'),
+          news: data.news || seg('新闻面') || seg('消息面'),
+          sentiment: data.sentiment || seg('情绪面'),
+          raw_text: rawText ? rawText.substring(0, 4000) : undefined,
+          source: 'tradingagents',
+          generated_at: new Date().toISOString(),
+        };
+      }
+    } catch (e: any) {
+      logger.warn(`[analysis-engine] TradingAgents narrative HTTP 失败 (${stockCode}): ${e?.message ?? e}`);
+    }
+
+    // Fallback: TA 不可用 (服务下线 / timeout / 网络), 用本地 analyzer evidence 拼中文叙述给前端
+    if (!decision) return null;
+    try {
+      const dimMap = new Map(decision.per_dimension.map(d => [d.analyzer_key, d]));
+      const renderDim = (key: string, label: string): string | undefined => {
+        const dim = dimMap.get(key as any);
+        if (!dim || !dim.evidence || dim.evidence.length === 0) return undefined;
+        const realEv = dim.evidence.filter(
+          (ev: any) => ev.label && !ev.label.includes('z=0.00')
+        );
+        if (realEv.length === 0) return undefined;
+        const lines = realEv.slice(0, 4).map((ev: any) => {
+          const arrow = ev.direction === 'bullish' ? '✓' : ev.direction === 'bearish' ? '✗' : '·';
+          return `${arrow} ${ev.label}${ev.detail ? ` — ${String(ev.detail).substring(0, 80).replace(/\n/g, ' ')}` : ''}`;
+        });
+        const score = dim.score?.toFixed(1) ?? '—';
+        const conf = dim.confidence !== undefined ? `${(dim.confidence * 100).toFixed(0)}%` : '—';
+        return `**${label}** (评分 ${score} / 置信 ${conf})\n\n${lines.join('\n')}`;
+      };
+      const fundamental = renderDim('fundamental', '基本面');
+      const technical = renderDim('technical', '技术面');
+      const capital = renderDim('capital', '资金面');
+      const news = renderDim('news', '消息面');
+      const sentiment = renderDim('sentiment', '情绪面');
+      if (!fundamental && !technical && !capital && !news && !sentiment) return null;
       return {
-        fundamental: kp.fundamental || undefined,
-        technical: kp.technical || undefined,
-        capital: kp.capital || undefined,
-        news: kp.news || undefined,
-        sentiment: kp.sentiment || undefined,
-        raw_text: result.summary || undefined,
+        fundamental,
+        technical,
+        capital,
+        news,
+        sentiment,
+        raw_text: `TradingAgents 外部服务暂不可用 (TA 服务在 ${process.env.TRADING_AGENTS_URL || 'http://47.93.224.109:8000'} 连接失败), 以下叙述基于本地新引擎 evidence 自动生成.`,
         source: 'tradingagents',
         generated_at: new Date().toISOString(),
       };
     } catch (e: any) {
-      logger.warn(`[analysis-engine] TradingAgents narrative 加载失败 (${stockCode}): ${e?.message ?? e}`);
+      logger.warn(`[analysis-engine] narrative fallback 失败 (${stockCode}): ${e?.message ?? e}`);
       return null;
     }
   }
