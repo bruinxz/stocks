@@ -225,7 +225,11 @@ export class NewsAnalyzer extends BaseAnalyzer {
     super();
   }
 
-  protected requiredFields: readonly string[] = ['announcements', 'news'];
+  // Batch AO (2026-06-21): announcements + news 大量股票全缺 (cninfo IRM 仅 bj9xx 全覆盖)
+  // → 旧版严格要求两者全到 (2/2 缺时 ≥50% 触发 BaseAnalyzer conf=0). 改为只要 KOL 在
+  // 即认为 News 维度有信号 (KOL 真聚合了研报/财经新闻/概念热议 5 类来源, 是当前最稳定的
+  // 替代数据源). 让 conf 反映真实可用度而非全或无.
+  protected requiredFields: readonly string[] = ['kol'];
 
   protected async run(ctx: AnalyzerContext): Promise<RawAnalyzerResult> {
     const dataMissing: string[] = [];

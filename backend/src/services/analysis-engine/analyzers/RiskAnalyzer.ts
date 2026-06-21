@@ -87,9 +87,22 @@ export class RiskAnalyzer extends BaseAnalyzer {
     }
 
     // 4) 行情陈旧度
+    //   Batch AO (2026-06-21): 复盘模式跳过这条 veto.
+    //   "复盘模式" = caller 传了 ctx.as_of 且不是 today (例如分析 2026-06-18 收盘后,
+    //   今天 6-21 周日跑) — 这种场景下 realtime_quote 必然是历史的, 阈值 30min veto
+    //   会让所有事后分析永远 hold. 改为: 只有"当日盘中"(as_of=today) 才硬否决.
+    //   盘中误用引擎拍板是真风险, 复盘不是.
     const q = ctx.realtime_quote;
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const isReplayMode = ctx.as_of && ctx.as_of !== todayIso;
     if (!q) {
       dataMissing.push('realtime_quote');
+    } else if (isReplayMode) {
+      evidence.push({
+        label: '复盘模式: 跳过行情陈旧 veto',
+        direction: 'neutral',
+        weight: 0,
+      });
     } else {
       const ageMs = Date.now() - new Date(q.as_of_ts).getTime();
       if (!Number.isFinite(ageMs) || ageMs < 0) {

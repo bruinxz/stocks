@@ -239,7 +239,9 @@ export class IndustryRegimeAnalyzer extends BaseAnalyzer {
     super();
   }
 
-  protected requiredFields: readonly string[] = ['market_env', 'factor.industry_momentum'];
+  // Batch AO (2026-06-21): factor.industry_momentum 在 prod 仍 std=0 (factor sync 没真算),
+  // 严格要求会强制 conf=0. 改成只要 market_env 在即认为有信号 (industry_momentum 是 plus).
+  protected requiredFields: readonly string[] = ['market_env'];
 
   protected async run(ctx: AnalyzerContext): Promise<RawAnalyzerResult> {
     const dataMissing: string[] = [];
