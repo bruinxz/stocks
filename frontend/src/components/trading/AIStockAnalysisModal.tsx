@@ -401,7 +401,7 @@ const V2Layout: React.FC<{
   result: AnalyzeSingleStockResult;
   view: V2ViewModel;
 }> = ({ result, view }) => {
-  const { dimensions, action_plan, data_quality, overall_confidence } = view;
+  const { dimensions, action_plan, data_quality, overall_confidence, tradingagents_narrative } = view;
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
       {/* 顶部总览: 综合建议 + 置信 + 风险 + 数据质量 */}
@@ -549,6 +549,42 @@ const V2Layout: React.FC<{
           ))}
         </Space>
       </div>
+
+      {/* Batch AW (2026-06-22): TradingAgents 5 段研报式叙事 (与新引擎量化 evidence 互补) */}
+      {tradingagents_narrative && (
+        <div>
+          <Title level={5} style={{ marginBottom: 12 }}>
+            <RobotOutlined style={{ marginRight: 6 }} />
+            研报式叙述 (TradingAgents)
+            <Tag color="purple" style={{ marginLeft: 8, fontSize: 11 }}>叙事补充</Tag>
+          </Title>
+          <Space direction="vertical" size={8} style={{ width: '100%' }}>
+            {tradingagents_narrative.fundamental && (
+              <Alert type="info" message={<b>基本面</b>} description={tradingagents_narrative.fundamental} showIcon={false} />
+            )}
+            {tradingagents_narrative.technical && (
+              <Alert type="info" message={<b>技术面</b>} description={tradingagents_narrative.technical} showIcon={false} />
+            )}
+            {tradingagents_narrative.capital && (
+              <Alert type="info" message={<b>资金面</b>} description={tradingagents_narrative.capital} showIcon={false} />
+            )}
+            {tradingagents_narrative.news && (
+              <Alert type="info" message={<b>新闻面</b>} description={tradingagents_narrative.news} showIcon={false} />
+            )}
+            {tradingagents_narrative.sentiment && (
+              <Alert type="info" message={<b>情绪面</b>} description={tradingagents_narrative.sentiment} showIcon={false} />
+            )}
+            {!tradingagents_narrative.fundamental &&
+              !tradingagents_narrative.technical &&
+              !tradingagents_narrative.capital &&
+              !tradingagents_narrative.news &&
+              !tradingagents_narrative.sentiment &&
+              tradingagents_narrative.raw_text && (
+                <Alert type="info" message={<b>综合叙述</b>} description={tradingagents_narrative.raw_text} showIcon={false} />
+              )}
+          </Space>
+        </div>
+      )}
     </Space>
   );
 };

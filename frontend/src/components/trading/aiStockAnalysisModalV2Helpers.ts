@@ -429,6 +429,20 @@ export interface V2ViewModel {
   overall_confidence: number | null;
   /** engine variant — 用于 footer 显示 */
   engine_variant: string;
+  /**
+   * Batch AW (2026-06-22): TradingAgents 5 段研报式叙事 (可选).
+   * 引擎决策是量化, narrative 是叙述, 两者互补.
+   * null = TA 调用失败或 timeout, UI 隐藏整段不报错.
+   */
+  tradingagents_narrative: {
+    fundamental?: string;
+    technical?: string;
+    capital?: string;
+    news?: string;
+    sentiment?: string;
+    raw_text?: string;
+    generated_at?: string;
+  } | null;
 }
 
 /**
@@ -496,11 +510,33 @@ export function buildV2ViewModel(
     overall_confidence = Math.max(0, Math.min(100, Math.round(r.confidence_score)));
   }
   const engine_variant = typeof m.engine_variant === 'string' ? m.engine_variant : 'multi_dim_v1';
+  // Batch AW (2026-06-22): 拼装 TradingAgents 5 段叙事 (来自 metadata.tradingagents_narrative)
+  const naRaw = m.tradingagents_narrative;
+  let tradingagents_narrative: V2ViewModel['tradingagents_narrative'] = null;
+  if (naRaw && typeof naRaw === 'object') {
+    const na = naRaw as Record<string, unknown>;
+    const pick = (k: string) => (typeof na[k] === 'string' ? (na[k] as string) : undefined);
+    const hasAny = ['fundamental', 'technical', 'capital', 'news', 'sentiment', 'raw_text'].some(
+      k => typeof na[k] === 'string' && (na[k] as string).length > 0
+    );
+    if (hasAny) {
+      tradingagents_narrative = {
+        fundamental: pick('fundamental'),
+        technical: pick('technical'),
+        capital: pick('capital'),
+        news: pick('news'),
+        sentiment: pick('sentiment'),
+        raw_text: pick('raw_text'),
+        generated_at: pick('generated_at'),
+      };
+    }
+  }
   return {
     dimensions,
     action_plan,
     data_quality,
     overall_confidence,
     engine_variant,
+    tradingagents_narrative,
   };
 }

@@ -299,6 +299,8 @@ export function buildHardShortCircuitResult(
     risk_warnings: decision.risk_warnings,
     hard_short_circuit: true,
     hard_short_circuit_action: decision.action,
+    // Batch AW (2026-06-22): 把 TradingAgents 5 维度叙事透传给前端 modal v2
+    tradingagents_narrative: decision.tradingagents_narrative || null,
   };
   return {
     report_id: ctx.report_id,
