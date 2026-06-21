@@ -55,6 +55,7 @@ import {
 import dayjs, { Dayjs } from 'dayjs';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
+import TradeReasonCell from '../../components/trading/TradeReasonCell';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import {
   portfolioWorkspaceService,
@@ -2152,6 +2153,19 @@ const TradesTab: React.FC<TradesTabProps> = ({ trades }) => {
         );
       },
     },
+    {
+      // AL-3 (2026-06-21): 用户原话 "买入卖出的时候需要额外补充上原因".
+      // TradeReasonCell 行内显示 summary, Popover 展开完整 evidence / key_reasons / risk_trigger.
+      title: '操作理由',
+      key: 'trade_reason',
+      width: 240,
+      render: (_v: unknown, row: TradeRow) => (
+        <TradeReasonCell
+          trade_reason={row.trade_reason}
+          trade_reason_summary={row.trade_reason_summary}
+        />
+      ),
+    },
   ];
 
   return (
@@ -2199,7 +2213,7 @@ const TradesTab: React.FC<TradesTabProps> = ({ trades }) => {
         size="middle"
         dataSource={filtered}
         columns={columns as any}
-        scroll={{ x: 1010 }}
+        scroll={{ x: 1250 }}
         pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }}
         style={{ display: isMobile ? 'none' : undefined }}
       />
@@ -2274,6 +2288,18 @@ const TradeMobileCard: React.FC<{ row: TradeRow }> = ({ row }) => {
             </span>
           </div>
         )}
+
+        {/* AL-3 (2026-06-21): 操作理由 */}
+        <div className="workspace-mobile-card-row" style={{ alignItems: 'flex-start' }}>
+          <span className="label">操作理由</span>
+          <span className="value" style={{ flex: 1, textAlign: 'right' }}>
+            <TradeReasonCell
+              trade_reason={row.trade_reason}
+              trade_reason_summary={row.trade_reason_summary}
+              maxInlineChars={28}
+            />
+          </span>
+        </div>
       </Space>
     </Card>
   );

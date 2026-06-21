@@ -26,6 +26,10 @@
  */
 
 import { logger } from '../../utils/logger';
+import {
+  buildTradeReasonFromRiskGuard,
+  summarizeTradeReason,
+} from '../internal/tradeReasonBuilder';
 
 export interface GuardSellTriggerInput {
   user_id: number;
@@ -112,6 +116,14 @@ export async function executeGuardSells(
       continue;
     }
     try {
+      // AL-3 (2026-06-21): 把 trigger_kind + detail 转成 trade_reason 透传给 facade.
+      const reason = buildTradeReasonFromRiskGuard(trig.trigger_kind, {
+        detail: trig.detail,
+        threshold: trig.detail?.threshold,
+        actual: trig.detail?.actual,
+        indicator: trig.detail?.indicator,
+        message: trig.detail?.message,
+      });
       const trade = await paperTradingFacade.placeOrder({
         user_id: trig.user_id,
         portfolio_id: trig.portfolio_id,
@@ -120,6 +132,8 @@ export async function executeGuardSells(
         quantity: trig.quantity,
         bypass_trading_hours: true, // EOD cron 在开盘前/收盘后执行, 模拟盘按 daily close 撮合
         bypass_t_plus_1: true, // EOD trigger 持仓必然是 prior day, T+1 自然满足
+        trade_reason: reason,
+        trade_reason_summary: summarizeTradeReason(reason),
       });
       result.succeeded++;
       result.executions.push({

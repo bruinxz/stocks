@@ -502,12 +502,26 @@ export class TodaySignalsService {
       const quantity = rawQty >= 100 ? Math.floor(rawQty / 100) * 100 : 100;
 
       try {
+        // AL-3 (2026-06-21): TodaySignals 自动下单也写 reason. candidate 仅有
+        // strategy / symbol / name, 没 signal_id, 给最小占位 reason 让 UI 知道
+        // "来自今日信号列表".
+        const {
+          buildTradeReasonFromSignal,
+          summarizeTradeReason,
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+        } = require('../portfolio/internal/tradeReasonBuilder');
+        const reason = buildTradeReasonFromSignal({
+          strategy_key: (c as any).strategy,
+          reasons: [`今日信号: ${(c as any).strategy} 推荐 ${c.symbol}`],
+        });
         const result = await paperTradingFacade.placeOrder({
           user_id: options.user_id,
           portfolio_id: portfolio?.id, // 修复 (2026-06-17 串盘): 显式指定 target portfolio
           symbol: c.symbol,
           direction: 'BUY',
           quantity,
+          trade_reason: reason,
+          trade_reason_summary: summarizeTradeReason(reason),
         });
         placed += 1;
         orders.push({

@@ -86,6 +86,31 @@ export class PaperTradingTrade extends Model {
   })
   declare realized_pnl: number;
 
+  /**
+   * AL-3 (2026-06-21): 操作理由 JSONB. 见 backend/src/portfolio/internal/tradeReasonBuilder.ts
+   * 中的 TradeReason 类型. 6+ 写入入口 (facade BUY/SELL × 2, automation create*Trade × 2,
+   * GuardSellExecutor 透传, IndustryConcentrationGuard / RebalanceEngine 透传) 必须传值,
+   * 缺省 '{}' 兼容历史行.
+   */
+  @Column({
+    type: DataType.JSONB,
+    allowNull: false,
+    defaultValue: {},
+    field: 'trade_reason',
+    comment:
+      'AL-3 操作理由 { source, strategy_key?, signal_id?, ai_report_id?, evidence[], confidence?, key_reasons[], risk_trigger?, ai_summary? }',
+  })
+  declare trade_reason: Record<string, any>;
+
+  /** AL-3 (2026-06-21): 一句话总结, UI 列表展示, 详情看 trade_reason JSONB. */
+  @Column({
+    type: DataType.TEXT,
+    allowNull: true,
+    field: 'trade_reason_summary',
+    comment: 'AL-3 操作理由一句话总结',
+  })
+  declare trade_reason_summary: string | null;
+
   @CreatedAt
   @Column({ field: 'created_at' })
   declare created_at: Date;

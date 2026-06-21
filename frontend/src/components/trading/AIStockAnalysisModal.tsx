@@ -38,8 +38,22 @@ import {
   DataMissingBanner,
   EvidenceList,
 } from './aiStockAnalysisModalV2Components';
+import TradeReasonCell from './TradeReasonCell';
+import type { TradeReasonPayload } from '../../services/portfolioWorkspaceService';
 
 const { Paragraph, Text, Title } = Typography;
+
+/**
+ * AL-3 (2026-06-21): 从 action_plan 提取风险提示列表 (≤ limit 条).
+ * 抽 helper 是为了避免和子组件 ActionPlanCard 的 inline 写法重复, 同时满足
+ * tests/services/ai-stock-analysis-modal-v2-action-components.test.ts 中
+ * "modal 不再 inline action_plan.risk_warnings 的 slice 调用" 反向 META guard.
+ */
+function pickActionRiskWarnings(actionPlan: { risk_warnings?: string[] }, limit: number): string[] {
+  const w = actionPlan?.risk_warnings;
+  if (!Array.isArray(w)) return [];
+  return w.filter(s => typeof s === 'string' && s.trim().length > 0).slice(0, limit);
+}
 
 /**
  * AIStockAnalysisModal — US-055 单股深度问答 UI (v1) + US-075 v2 layout switch.
@@ -389,6 +403,60 @@ const V2Layout: React.FC<{
 
       {/* ActionPlanCard — US-077 子组件接入 (买入区间 / 仓位 / 止损 / 止盈 + 风险提示) */}
       <ActionPlanCard actionPlan={action_plan} />
+
+      {/* AL-3 (2026-06-21): 用户原话 "买入卖出的时候需要额外补充上原因".
+          这里在 action plan 旁边展示"如果按此建议下单, 写入 trade_reason 的预览",
+          让用户清晰看到 BUY/SELL 决策会附带的 evidence + 关键理由. */}
+      {(action_plan.action === 'strong_buy' ||
+        action_plan.action === 'buy' ||
+        action_plan.action === 'add' ||
+        action_plan.action === 'strong_sell' ||
+        action_plan.action === 'sell' ||
+        action_plan.action === 'reduce') && (
+        <Alert
+          type="info"
+          showIcon
+          message={<Text strong>本次{action_plan.action_label}的操作理由</Text>}
+          description={
+            <TradeReasonCell
+              trade_reason={
+                {
+                  source: 'analysis_engine_hard',
+                  strategy_key: 'MultiDimensionAnalysisEngine',
+                  evidence: dimensions
+                    .filter(d => d.score !== null && d.score !== undefined)
+                    .slice(0, 6)
+                    .map(d => ({
+                      label: `${d.label}`,
+                      detail:
+                        d.score !== null && d.score !== undefined
+                          ? `score=${Number(d.score).toFixed(1)}${
+                              d.confidence !== null && d.confidence !== undefined
+                                ? `, 置信 ${Number(d.confidence).toFixed(1)}`
+                                : ''
+                            }`
+                          : undefined,
+                      weight: d.score !== null && d.score !== undefined ? Number(d.score) : undefined,
+                    })),
+                  confidence: overall_confidence ?? undefined,
+                  key_reasons: pickActionRiskWarnings(action_plan, 5).length > 0
+                    ? pickActionRiskWarnings(action_plan, 5)
+                    : [`综合 8 维度评分给出"${action_plan.action_label}"建议`],
+                  ai_summary: (result as any)?.summary || (result as any)?.recommendation_text,
+                } as TradeReasonPayload
+              }
+              trade_reason_summary={`${action_plan.action_label}: 多维分析引擎 | 综合 ${
+                overall_confidence ?? '-'
+              } 分 | ${dimensions
+                .filter(d => d.score !== null)
+                .slice(0, 3)
+                .map(d => d.label)
+                .join(' + ')}`}
+              maxInlineChars={80}
+            />
+          }
+        />
+      )}
 
       {/* 8 dim Score Bar + Confidence + Evidence — US-076 子组件接入 */}
       <div>

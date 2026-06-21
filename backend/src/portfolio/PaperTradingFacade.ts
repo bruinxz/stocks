@@ -57,6 +57,11 @@ import { evaluateFeasibilityGate, emitFeasibilityGateAlert } from './internal/fe
 import { perStockStopLossGuard, pickEffectivePct } from './risk/PerStockStopLossGuard';
 import { incrementOrderTotal } from '../metrics/PrometheusRegistry';
 import {
+  buildTradeReasonForManualOrder,
+  summarizeTradeReason,
+  type TradeReason,
+} from './internal/tradeReasonBuilder';
+import {
   inferMarketSegment as inferMarketSegmentLM,
   getLimitPct as getLimitPctLM,
   isAtLimitUp as isAtLimitUpLM,
@@ -129,6 +134,17 @@ export interface PlaceOrderOptions {
    * (NEXT_DAY_CHASE / FREQUENT_TRADING / MIN_HOLDING_PERIOD 仍能命中).
    */
   compliance_context?: PreTradeComplianceContext;
+  /**
+   * AL-3 (2026-06-21): 操作理由 — 由 caller 注入, 缺省时 facade 用
+   * buildTradeReasonForManualOrder 兜底 (source='manual', evidence='手动下单').
+   * 自动跟单 / 风控强平 / 再平衡 caller 应该构造好 reason 传进来, 让
+   * paper_trading_trades.trade_reason 真正记录"为什么这笔交易发生".
+   */
+  trade_reason?: import('./internal/tradeReasonBuilder').TradeReason;
+  /** 配合 trade_reason 用 — 若 caller 自己也想覆写 summary 文案. 否则 facade 用 summarizeTradeReason. */
+  trade_reason_summary?: string;
+  /** 简单备注 (UI 手动下单填的话) — 进 buildTradeReasonForManualOrder.notes */
+  reason_notes?: string;
 }
 
 /**
@@ -159,6 +175,10 @@ export interface ClosePositionOptions {
   bypass_compliance?: boolean;
   /** US-015 (EX-001): closePosition 默认 bypass=true (强平 SELL 不该被 feasibility gate 拦) */
   bypass_feasibility?: boolean;
+  /** AL-3 (2026-06-21): 操作理由 — 默认 source='close_position' */
+  trade_reason?: import('./internal/tradeReasonBuilder').TradeReason;
+  trade_reason_summary?: string;
+  reason_notes?: string;
 }
 
 export type GetDailySnapshotAction = 'list' | 'trades' | 'refresh';
@@ -237,6 +257,34 @@ const toNumber = (value: any, fallback = 0): number => {
 };
 
 const roundMoney = (value: any): number => Math.round(toNumber(value, 0) * 100) / 100;
+
+/**
+ * AL-3 (2026-06-21): facade.placeOrder 写 paper_trading_trades 时统一兜底.
+ * caller 已传 trade_reason 直接用; 否则用 buildTradeReasonForManualOrder 占位.
+ */
+function facadeResolveTradeReason(
+  options: { trade_reason?: TradeReason; reason_notes?: string },
+  side: 'BUY' | 'SELL'
+): TradeReason {
+  if (options?.trade_reason && typeof options.trade_reason === 'object') {
+    return options.trade_reason;
+  }
+  return buildTradeReasonForManualOrder({
+    reason: options?.reason_notes,
+    source: 'manual',
+  });
+}
+
+function facadeResolveTradeReasonSummary(
+  options: { trade_reason?: TradeReason; trade_reason_summary?: string; reason_notes?: string },
+  side: 'BUY' | 'SELL'
+): string {
+  if (options?.trade_reason_summary && typeof options.trade_reason_summary === 'string') {
+    return options.trade_reason_summary;
+  }
+  const reason = facadeResolveTradeReason(options, side);
+  return summarizeTradeReason(reason);
+}
 
 // US-058 [FE-019] — ATR% 计算抽到 ./internal/positionAtrHelpers.ts 让 ts-node
 // 单测能 DB-less import. 这里 re-export 保留 back-compat (外部若引用走 facade).
@@ -1188,6 +1236,10 @@ export class PaperTradingFacade {
             quantity,
             amount: cost,
             commission,
+            // AL-3 (2026-06-21): 操作理由. caller (UI / closePosition / 强平) 传则用,
+            // 否则用 buildTradeReasonForManualOrder 兜底 source='manual'.
+            trade_reason: facadeResolveTradeReason(options, 'BUY'),
+            trade_reason_summary: facadeResolveTradeReasonSummary(options, 'BUY'),
           },
           { transaction: t }
         );
@@ -1329,6 +1381,11 @@ export class PaperTradingFacade {
           amount: revenue,
           commission,
           realized_pnl,
+          // AL-3 (2026-06-21): SELL reason — caller 强平 (GuardSellExecutor /
+          // closePosition / IndustryConcentrationGuard) 应该传 reason; UI 手动卖
+          // 兜底 source='manual'.
+          trade_reason: facadeResolveTradeReason(options, 'SELL'),
+          trade_reason_summary: facadeResolveTradeReasonSummary(options, 'SELL'),
         },
         { transaction: t }
       );
@@ -1434,6 +1491,16 @@ export class PaperTradingFacade {
       // (SELL 路径 facade 本来就不调 gate; 但显式 bypass=true 表达系统级强制路径,
       // 与未来若扩 SELL gate 时的契约一致).
       bypass_feasibility: options.bypass_feasibility !== false,
+      // AL-3 (2026-06-21): closePosition 默认 source='close_position', caller
+      // 可传 trade_reason 覆盖 (例如 IndustryConcentrationGuard 传 industry_concentration).
+      trade_reason:
+        options.trade_reason ||
+        buildTradeReasonForManualOrder({
+          reason: options.reason_notes,
+          source: 'close_position',
+        }),
+      trade_reason_summary: options.trade_reason_summary,
+      reason_notes: options.reason_notes,
     });
   }
 

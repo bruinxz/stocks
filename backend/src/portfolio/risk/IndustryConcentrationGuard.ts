@@ -685,10 +685,21 @@ export class DefaultIndustryConcentrationDataSource implements IndustryConcentra
     // guards (drawdown breaker, future per-stock checks) still run.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { paperTradingFacade } = require('../PaperTradingFacade');
+    // AL-3 (2026-06-21): 显式 source='industry_concentration'.
+    const {
+      buildTradeReasonFromRiskGuard,
+      summarizeTradeReason,
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+    } = require('../internal/tradeReasonBuilder');
+    const reason = buildTradeReasonFromRiskGuard('industry_concentration', {
+      message: '行业集中度超阈, 再平衡触发清仓',
+    });
     const result = await paperTradingFacade.closePosition({
       user_id: input.user_id,
       portfolio_id: input.portfolio_id, // 修复 C2: 必传 — 否则 facade fallback 到 first portfolio 错卖
       symbol: input.symbol,
+      trade_reason: reason,
+      trade_reason_summary: summarizeTradeReason(reason),
     });
     return {
       executed_quantity: Number(result.quantity) || 0,

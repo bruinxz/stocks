@@ -58,6 +58,11 @@ import {
   type AdapterResult as PortfolioConstructionAdapterResult,
   type AdapterCandidate as PortfolioConstructionAdapterCandidate,
 } from './PortfolioConstructionAdapter';
+import {
+  buildTradeReasonFromSignal,
+  buildTradeReasonFromRiskGuard,
+  summarizeTradeReason,
+} from './tradeReasonBuilder';
 
 export const DEFAULT_PAPER_TRADING_INITIAL_CAPITAL = 200000;
 
@@ -4076,6 +4081,21 @@ class PaperTradingAutomationService {
             commission,
             net_revenue,
             realized_pnl,
+            // AL-3 (2026-06-21): 透传 exit_reason / pnl 上下文 / sell_signal 给 reason builder.
+            exit_reason: exitReason,
+            exit_context: {
+              pnl_pct: typeof pnlPct === 'number' ? `${(pnlPct * 100).toFixed(2)}%` : undefined,
+              holding_days: holdingDays,
+              max_profit_pct: trailingStats?.max_profit_pct,
+              drawdown_from_peak_pct: trailingStats?.drawdown_from_peak_pct,
+            },
+            sell_signal: sellSignal
+              ? {
+                  id: sellSignal.id,
+                  confidence_score: toOptionalNumber(sellSignal.confidence_score) ?? undefined,
+                  strategy_key: (sellSignal as any)?.metadata?.strategy_key,
+                }
+              : null,
           });
           exitItem.trade_id = trade.id;
 
@@ -6884,6 +6904,12 @@ class PaperTradingAutomationService {
             quantity,
             amount,
             commission,
+            // AL-3 (2026-06-21): 从 signal 构造 reason — 用户看到的就不再是"空白 BUY".
+            // signal 缺字段时 builder fail-safe (返回最小占位 reason).
+            trade_reason: buildTradeReasonFromSignal(params.signal as any),
+            trade_reason_summary: summarizeTradeReason(
+              buildTradeReasonFromSignal(params.signal as any)
+            ),
           },
           { transaction: t }
         );
@@ -6912,6 +6938,13 @@ class PaperTradingAutomationService {
     net_revenue: number;
     realized_pnl: number;
     bypass_t_plus_1?: boolean;
+    /** AL-3 (2026-06-21): SELL 触发原因 (stop_loss / take_profit / trailing_take_profit /
+     *  sell_signal / technical_breakdown / max_hold_days 等). 用于构造 trade_reason. */
+    exit_reason?: string;
+    /** AL-3: SELL 触发上下文 — pnl_pct / threshold / max_profit_pct 等. */
+    exit_context?: Record<string, any>;
+    /** AL-3: 触发 SELL 的 sell_signal (如有) — id / score / strategy_key */
+    sell_signal?: { id?: number; confidence_score?: number; strategy_key?: string } | null;
   }): Promise<PaperTradingTrade> {
     const {
       portfolio,
@@ -7017,6 +7050,36 @@ class PaperTradingAutomationService {
             amount,
             commission,
             realized_pnl,
+            // AL-3 (2026-06-21): SELL reason 来自 exit_reason (caller 已知触发类型).
+            // 若 caller 没传 exit_reason (legacy 调用) 兜底 'sell_signal'.
+            trade_reason: (() => {
+              const r = buildTradeReasonFromRiskGuard(params.exit_reason || 'sell_signal', {
+                position: {
+                  symbol,
+                  quantity,
+                  avg_cost: toNumber((position as any)?.avg_cost, 0),
+                  current_price: execute_price,
+                },
+                detail: params.exit_context,
+              });
+              if (params.sell_signal) {
+                r.signal_id = params.sell_signal.id;
+                r.strategy_key = params.sell_signal.strategy_key;
+                r.confidence = params.sell_signal.confidence_score;
+              }
+              return r;
+            })(),
+            trade_reason_summary: summarizeTradeReason(
+              buildTradeReasonFromRiskGuard(params.exit_reason || 'sell_signal', {
+                position: {
+                  symbol,
+                  quantity,
+                  avg_cost: toNumber((position as any)?.avg_cost, 0),
+                  current_price: execute_price,
+                },
+                detail: params.exit_context,
+              })
+            ),
           },
           { transaction: t }
         );

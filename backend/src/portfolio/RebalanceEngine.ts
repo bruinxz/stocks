@@ -625,11 +625,23 @@ export class DefaultRebalanceDataSource implements RebalanceDataSource {
     // Same pattern as IndustryConcentrationGuard.executeFullClose (US-052).
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { paperTradingFacade } = require('./PaperTradingFacade');
+    // AL-3 (2026-06-21): 显式 source='rebalance' 让 UI 列表能区分"再平衡"
+    // 与"AI 跟单"/"手动".
+    const {
+      buildTradeReasonFromRiskGuard,
+      summarizeTradeReason,
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+    } = require('./internal/tradeReasonBuilder');
+    const reason = buildTradeReasonFromRiskGuard('rebalance', {
+      message: `组合再平衡 ${input.direction} ${input.symbol}`,
+    });
     const result = await paperTradingFacade.placeOrder({
       user_id: input.user_id,
       symbol: input.symbol,
       direction: input.direction,
       quantity: input.quantity,
+      trade_reason: reason,
+      trade_reason_summary: summarizeTradeReason(reason),
     });
     // paperTradingFacade returns the legacy controller payload; pluck price/qty if present.
     const executed_price =

@@ -87,6 +87,51 @@ export interface TradeRow {
   commission: number;
   realized_pnl: number | null;
   created_at: string;
+  /** AL-3 (2026-06-21): 操作理由 JSONB. 历史 trade 是 {}; 新 trade 必有 source. */
+  trade_reason?: TradeReasonPayload;
+  /** AL-3 (2026-06-21): 一句话总结. 历史 trade 是 null. */
+  trade_reason_summary?: string | null;
+}
+
+// AL-3 (2026-06-21): TradeReason 前端类型 — 与
+// backend/src/portfolio/internal/tradeReasonBuilder.ts 对齐.
+export type TradeReasonSource =
+  | 'manual'
+  | 'auto_buy_from_signals'
+  | 'analysis_engine_hard'
+  | 'rebalance'
+  | 'trailing_stop'
+  | 'drawdown_breaker'
+  | 'industry_concentration'
+  | 'per_stock_stop_loss'
+  | 'black_swan'
+  | 'restricted_share'
+  | 'market_regime_alert'
+  | 'kill_switch'
+  | 'close_position'
+  | 'take_profit'
+  | 'stop_loss'
+  | 'trailing_take_profit'
+  | 'sell_signal'
+  | 'technical_breakdown'
+  | 'unknown';
+
+export interface TradeReasonEvidenceItem {
+  label: string;
+  detail?: string;
+  weight?: number;
+}
+
+export interface TradeReasonPayload {
+  source: TradeReasonSource;
+  strategy_key?: string;
+  signal_id?: number;
+  ai_report_id?: string;
+  evidence?: TradeReasonEvidenceItem[];
+  confidence?: number;
+  key_reasons?: string[];
+  risk_trigger?: { type: string; threshold?: number; actual?: number; indicator?: string };
+  ai_summary?: string;
 }
 
 export interface JournalSummary {
