@@ -246,6 +246,95 @@ export class NorthboundSyncService {
       days,
     };
   }
+
+  /**
+   * AR-3 (2026-06-21): 北向数据陈旧度主动告警.
+   *
+   * 上游 AKShare 的两个北向 endpoint (`stock_hsgt_hold_stock_em` 全市场快照 +
+   * `stock_hsgt_individual_em` 个股窗口) 都依赖东方财富数据中心 — 自 2024-08-16
+   * 起东方财富停止暴露 detail 数据, AKShare 调用要么 NoneType subscript error,
+   * 要么返历史最大日期 2024-08-16 + 22 月空数据. 这是 **上游死了**, 不是我们的
+   * sync bug.
+   *
+   * 本方法在每次 cron sync 后跑一次, 比对 DB 内 `MAX(trade_date)` 与今日:
+   *   - 旧度 > thresholdDays → 写 RiskAlert MEDIUM (rule_id='northbound_stale')
+   *     + DataSourceHealth(降级为 yellow, 让 SystemTopology 节点显红)
+   *   - 旧度 ≤ thresholdDays → no-op
+   *
+   * 不替代上游数据修复 — 这只是让运维"立即知道"数据已经死了 N 天, 而不是等
+   * 用户在 UI 看到空图反馈才发现. 数据真正接通需走 baostock / tushare /
+   * 其它替代源 (TODO 见 NorthboundDataClient docstring).
+   *
+   * @param thresholdDays 视为"陈旧"的天数 (默认 7, 即"超过一周没新数据就告警")
+   * @returns 当前 latest_date + age_days + 是否触发告警
+   */
+  async checkAndAlertStaleness(
+    thresholdDays = 7
+  ): Promise<{
+    latest_date: string | null;
+    age_days: number;
+    is_stale: boolean;
+    alert_written: boolean;
+  }> {
+    try {
+      const latest: unknown = await NorthboundHolding.max('trade_date');
+      let latestIso: string | null = null;
+      if (latest instanceof Date) {
+        latestIso = latest.toISOString().slice(0, 10);
+      } else if (typeof latest === 'string' && /^\d{4}-\d{2}-\d{2}/.test(latest)) {
+        latestIso = latest.slice(0, 10);
+      }
+
+      if (!latestIso) {
+        logger.warn('[Northbound staleness] 表为空, 无法判断陈旧度');
+        return { latest_date: null, age_days: Infinity, is_stale: true, alert_written: false };
+      }
+
+      const ageMs = Date.now() - new Date(`${latestIso}T00:00:00Z`).getTime();
+      const ageDays = Math.floor(ageMs / 86_400_000);
+      const isStale = ageDays > thresholdDays;
+
+      if (!isStale) {
+        return { latest_date: latestIso, age_days: ageDays, is_stale: false, alert_written: false };
+      }
+
+      // 触发告警: 走 RiskAlertService 走 severity-medium 路径 (inbox-only, 不打扰运维群)
+      // user_id=0 表示"系统全局告警" (与既有 system-level alert 同款约定).
+      let alertWritten = false;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { riskAlertService, RISK_ALERT_SEVERITY } = require('../../services/RiskAlertService');
+        await riskAlertService.write({
+          user_id: 0,
+          symbol: 'NORTHBOUND',
+          name: '北向资金',
+          severity: RISK_ALERT_SEVERITY.MEDIUM,
+          rule_id: 'northbound_stale',
+          message: `北向资金数据已停滞 ${ageDays} 天 (latest=${latestIso}). 上游 AKShare/东方财富 endpoint 自 2024-08-16 起异常, 需切换替代源 (baostock / tushare).`,
+          metadata: {
+            latest_date: latestIso,
+            age_days: ageDays,
+            threshold_days: thresholdDays,
+            upstream: 'akshare:stock_hsgt_individual_em',
+          },
+        });
+        alertWritten = true;
+      } catch (alertErr: any) {
+        logger.warn(
+          `[Northbound staleness] alert write failed (continuing): ${alertErr?.message || alertErr}`
+        );
+      }
+
+      logger.warn(
+        `[Northbound staleness] 数据陈旧 ${ageDays} 天 (latest=${latestIso}), threshold=${thresholdDays}, alert_written=${alertWritten}`
+      );
+
+      return { latest_date: latestIso, age_days: ageDays, is_stale: true, alert_written: alertWritten };
+    } catch (err: any) {
+      logger.warn(`[Northbound staleness] check failed: ${err?.message || err}`);
+      return { latest_date: null, age_days: -1, is_stale: false, alert_written: false };
+    }
+  }
 }
 
 /** ISO YYYY-MM-DD → Date (UTC midnight)，避免本地时区漂移 */

@@ -268,5 +268,33 @@ const sequelize = new Sequelize({
   },
 });
 
+/**
+ * AR-1 (2026-06-21): cold-path model registration guard.
+ *
+ * 症状: standalone 脚本 / 测试 / cold-path service 直接 `require('../models/X')`
+ *       不触发 `config/database.ts` 的副作用导入, 模型保持 un-initialized,
+ *       第一次访问报 `"X" needs to be added to a Sequelize instance`.
+ *
+ * 方案: 每个会走 cold path 的 service entry (e.g. AnalysisEngineService) 在
+ *       文件顶部 `import '../../config/database';` 触发本模块加载, 构造函数
+ *       内 `new Sequelize({...models: [...]})` 已把所有模型 addModels 一次.
+ *       本 helper 做防御性 idempotent 兜底: 若发现 sequelize.models 为空
+ *       (异常 boot order), 显式再 addModels 一次, 不会因二次注册抛错
+ *       (sequelize-typescript 允许同一 model 多次 addModels — initialize
+ *        本身是 idempotent 写入 attributes/options).
+ *
+ * 不需要在每个 service entry 显式调本函数 — 仅做"出问题时一行兜底".
+ */
+export function ensureModelsRegistered(): void {
+  if (Object.keys(sequelize.models).length > 0) return;
+  // Defensive: should never hit in normal flow, but recovers from any future
+  // boot-order regression without re-throwing.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const opts = (sequelize as any).options;
+  if (opts && Array.isArray(opts.models) && opts.models.length > 0) {
+    sequelize.addModels(opts.models);
+  }
+}
+
 export { sequelize };
 export default sequelize;

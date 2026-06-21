@@ -116,6 +116,21 @@ export class DataController {
    */
   async getSystemTopology(_req: Request, res: Response) {
     try {
+      // AR-4 (2026-06-21): 拓扑节点的 portfolio / risk_alerts / positions / trades
+      // 4 处 SQL 旧写死 `WHERE user_id=4`, 任何 authenticate 通过的普通用户调本 API
+      // 都能看到 admin 的现金 + 持仓数 + 最新单. 改成读 req.user.id (authController
+      // .authenticate 已 attach 在 _req.user). 仍兼容 ENV `TOPOLOGY_FALLBACK_USER_ID`
+      // 给本地 dev / cron / 后台脚本无 token 时用 (生产 env 不设, 走严格隔离).
+      // 注: SystemTopology 是"个人视角"看自己仓位活跃度, 不是全局 metrics — 想看
+      // 全局健康度走 dataHealthStatusService.getHealthStatus 即可.
+      const reqUser = (_req as any).user;
+      const callerUserId =
+        Number.isInteger(reqUser?.id) && reqUser.id > 0
+          ? Number(reqUser.id)
+          : Number(process.env.TOPOLOGY_FALLBACK_USER_ID || 0);
+      if (!callerUserId) {
+        return res.status(401).json({ success: false, message: '需登录' });
+      }
       // Batch AQ (2026-06-21) — 让所有新加的 status 计算都共用同一个 StatusKey 联合
       type StatusKey = 'green' | 'yellow' | 'red' | 'gray';
       const today = todayIso();
@@ -192,18 +207,18 @@ export class DataController {
         'PAPER_TRADING_MARKET_REGIME_CHECK',
       ]);
       const alertRow = await q(
-        "SELECT COUNT(*)::int AS n FROM risk_alerts WHERE user_id=4 AND created_at > NOW() - INTERVAL '24 hours'"
+        `SELECT COUNT(*)::int AS n FROM risk_alerts WHERE user_id=${callerUserId} AND created_at > NOW() - INTERVAL '24 hours'`
       );
 
       // 7. 模拟盘
       const pfRow = await q(
-        'SELECT current_cash, total_value FROM paper_trading_portfolios WHERE user_id=4 LIMIT 1'
+        `SELECT current_cash, total_value FROM paper_trading_portfolios WHERE user_id=${callerUserId} LIMIT 1`
       );
       const posRow = await q(
-        'SELECT COUNT(*)::int AS n FROM paper_trading_positions WHERE portfolio_id IN (SELECT id FROM paper_trading_portfolios WHERE user_id=4)'
+        `SELECT COUNT(*)::int AS n FROM paper_trading_positions WHERE portfolio_id IN (SELECT id FROM paper_trading_portfolios WHERE user_id=${callerUserId})`
       );
       const tradeRow = await q(
-        'SELECT symbol, name, direction, created_at FROM paper_trading_trades WHERE portfolio_id IN (SELECT id FROM paper_trading_portfolios WHERE user_id=4) ORDER BY created_at DESC LIMIT 1'
+        `SELECT symbol, name, direction, created_at FROM paper_trading_trades WHERE portfolio_id IN (SELECT id FROM paper_trading_portfolios WHERE user_id=${callerUserId}) ORDER BY created_at DESC LIMIT 1`
       );
 
       // 8. 通知

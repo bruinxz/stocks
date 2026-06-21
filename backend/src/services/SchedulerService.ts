@@ -10,6 +10,7 @@ import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
 import { logger } from '../utils/logger';
 import { generateTraceId, runWithLoggingContext } from '../utils/loggingContext';
+import { computeNextRunAt, isImplausibleNextRun } from '../utils/cronNextRun';
 import { LIVE_AUDIT_EVENT_TYPES } from '../live-trading/auditEvents';
 import { dataUpdateQueue } from '../jobs/dataUpdateQueue';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
@@ -462,13 +463,23 @@ class SchedulerService {
         const scheduled = activeIds.has(task.id);
         const cronJob = this.activeTasks.get(task.id) as any;
         let nextRunStr = '';
+        // AR-2 (2026-06-21): node-cron@4.2.1 的 getNextRun() 对 DoW-only cron
+        // (e.g. "0 10 * * 0" 周日 / "0 9 * * 2" 周二) 返 2027~2034 错误年份
+        // (matcher-walker.matchNext bug). 优先用 cron-parser 算下次触发,
+        // 仅在 cron-parser 失败时回退到 node-cron 的 getNextRun(). 实际 cron
+        // 触发由 runner.js heartBeat (cap 86400000ms) 决定, 不受 getNextRun 影响.
         try {
-          const next = cronJob?.getNextRun?.();
-          if (next instanceof Date && !Number.isNaN(next.getTime())) {
-            nextRunStr = moment(next).tz(tz).format('YYYY-MM-DD HH:mm:ss z');
+          const parsed = computeNextRunAt(task.cron_expression, { timezone: tz });
+          if (parsed) {
+            nextRunStr = moment(parsed).tz(tz).format('YYYY-MM-DD HH:mm:ss z');
+          } else {
+            const next = cronJob?.getNextRun?.();
+            if (next instanceof Date && !Number.isNaN(next.getTime()) && !isImplausibleNextRun(next)) {
+              nextRunStr = moment(next).tz(tz).format('YYYY-MM-DD HH:mm:ss z');
+            }
           }
         } catch {
-          /* runtime 没有 getNextRun 时降级为空 */
+          /* 全失败降级为空, 不打断 dump */
         }
         const registered = isRegisteredCronType(task.type);
         const prefix = scheduled ? '[scheduler] cron task' : '[scheduler] cron task NOT_SCHEDULED';
@@ -2714,6 +2725,22 @@ class SchedulerService {
           `[northbound-sync] ${date} 完成: fetched=${result.fetched} upserted=${result.upserted}` +
             (fallbackSummary ? ` fallback=${JSON.stringify(fallbackSummary)}` : '')
         );
+
+        // AR-3 (2026-06-21): sync 完后跑陈旧度告警 — 上游 AKShare 已死的事实
+        // 让运维通过 RiskAlert 立刻看到, 而不是等用户在 UI 看空图反馈.
+        // 失败仅 warn 不阻塞 cron.
+        try {
+          const staleness = await northboundSyncService.checkAndAlertStaleness(
+            this.toPositiveInt(parameters.stale_threshold_days, 7, 365)
+          );
+          logger.info(
+            `[northbound-sync] staleness check: latest=${staleness.latest_date} ` +
+              `age_days=${staleness.age_days} is_stale=${staleness.is_stale} ` +
+              `alert_written=${staleness.alert_written}`
+          );
+        } catch (e: any) {
+          logger.warn(`[northbound-sync] staleness check failed: ${e?.message || e}`);
+        }
       } else if (task.type === 'SNOWBALL_HOT_KEYWORD_SYNC') {
         // Batch AB (2026-06-18): 雪球热门话题 sync (AKShare stock_hot_follow_xq).
         // 当日热点关键词 + 关联个股, UI / sentiment 模块用. 推荐 cron: '0 16 * * 1-5'.

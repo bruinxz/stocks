@@ -9,8 +9,15 @@
  *
  * 注意: 本 service 仅"分析 + 返回结构化决策". 落 AIStockAnalysisReport / AIInvestmentSignal
  * 由 caller (ShadowDoubleRunService / 未来 hard mode) 决定, 以便 dry-run / 测试不依赖 DB.
+ *
+ * AR-1 (2026-06-21): 强制在文件顶部 `import '../../config/database'` 触发
+ * sequelize 单例 + addModels 副作用; 否则 cold-path caller (CLI / 直跑脚本 /
+ * worker thread) 直接 `require('AnalysisEngineService')` 后 lazy `require('models/X')`
+ * 时 X 未 addModels → `"X" needs to be added to a Sequelize instance`. 见
+ * config/database.ts 注释.
  */
 
+import { ensureModelsRegistered } from '../../config/database';
 import { logger } from '../../utils/logger';
 import { normalizeSymbol } from '../../utils/stockSymbol';
 import { evaluateDataQuality } from './DataQualityVerdict';
@@ -235,6 +242,9 @@ export class AnalysisEngineService {
     stockCode: string,
     options: AnalyzeStockOptions = {}
   ): Promise<RecommendationDecision> {
+    // AR-1: cold-path caller (CLI / 测试 / worker) 第一次访问模型前确保 addModels 已跑.
+    // 主进程 boot 时已注册, 二次调用本函数即为 no-op (一次 Object.keys 检查).
+    ensureModelsRegistered();
     const normalized = normalizeSymbol(stockCode) || stockCode;
     const asOf = options.as_of || new Date().toISOString().slice(0, 10);
 
