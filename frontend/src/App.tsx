@@ -193,7 +193,14 @@ const AppContent: React.FC = () => {
             clearUserScopedStorage();
           }
         } catch (error) {
+          // Batch AK (2026-06-21, hotfix): catch 分支也必须清 token + user,
+          // 否则 fetchProfile 失败 → token 仍在 localStorage → 任何后续 API 401
+          // 又触发 api.ts location.href='/login' → 加载新页面 → 又重启 React →
+          // useEffect 又看到 token → 又调 fetchProfile → 又失败... 死循环表现为
+          // "登录页一直闪动一直刷新".
           console.error('Failed to fetch user profile on load', error);
+          dispatch(logout());
+          clearUserScopedStorage();
         }
       }
     };

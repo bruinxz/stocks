@@ -21,6 +21,10 @@ const api = axios.create({
 
 // 是否正在刷新的标记
 let isRefreshing = false;
+// Batch AK (2026-06-21, hotfix): 防止多个并发 401 reject 后全部都触发 location.href
+// 跳转 → 浏览器一直在加载状态 → 看起来"页面一直闪动"。
+// module-level singleton, 只在 unload/manual reset 时清。
+let sessionRedirectingToLogin = false;
 // Batch R (2026-06-17, P1-1 fix): 重试队列每项含 resolve + reject 两个 callback,
 // 让 refresh 失败时能 reject 所有 queued promise (旧实现 requests=[]; 清空数组让
 // queued promise 永远 pending, 配合 SPA 不跳页时 memory leak + loading 圈卡死).
@@ -88,7 +92,9 @@ api.interceptors.response.use(
             // 旧实现 requests=[] 清空让 queued promise 永远 pending → memory leak +
             // SPA 不跳页时 loading 圈永远卡住. 现在 caller 的 await 会进 catch 跳出.
             requests.forEach(cb =>
-              cb.reject(refreshError instanceof Error ? refreshError : new Error(String(refreshError)))
+              cb.reject(
+                refreshError instanceof Error ? refreshError : new Error(String(refreshError))
+              )
             );
             requests = [];
             // Batch U (2026-06-17, front-3 fix): 中央化清扫 user-scoped localStorage,
@@ -105,8 +111,20 @@ api.interceptors.response.use(
               localStorage.removeItem('refreshToken');
               localStorage.removeItem('username');
             }
-            // 后端登出会清除cookie，或者如果刷新失败，需要重新登录获取新的cookie
-            window.location.href = '/login';
+            // Batch AK (2026-06-21, hotfix): 死循环防线 —
+            // (1) 已经在 /login 时不再 location.href 跳 (浏览器会再次 reload, 配合并发 401
+            //     queued reject 让页面看起来一直闪动); 改用 SPA 内部 noop, 让 caller 的
+            //     Promise.reject 自然冒泡到 UI 报错即可
+            // (2) 用一个 module-level guard 确保 location 跳转只发一次, 防多个并发 401
+            //     全部 reject 后一起触发跳转 → 浏览器加载 → 又跳 → 再加载 → 闪
+            if (typeof window !== 'undefined') {
+              const alreadyOnLogin = window.location.pathname === '/login';
+              if (!alreadyOnLogin && !sessionRedirectingToLogin) {
+                sessionRedirectingToLogin = true;
+                // 后端登出会清除cookie，或者如果刷新失败，需要重新登录获取新的cookie
+                window.location.href = '/login';
+              }
+            }
             return Promise.reject(refreshError);
           } finally {
             isRefreshing = false;
