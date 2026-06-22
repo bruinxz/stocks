@@ -127,26 +127,54 @@ export const PRODUCTION_ANALYSIS_ENGINE_DATA_SOURCE: AnalysisEngineDataSource = 
         order: [['updated_at', 'DESC']],
         raw: true,
       });
-      if (!row) return null;
-      // 从 raw_payload 抽 bid1/ask1 (腾讯/新浪源会带)
-      let bid: number | null = null;
-      let ask: number | null = null;
-      if (row.raw_payload && typeof row.raw_payload === 'object') {
-        const p = row.raw_payload;
-        const b1 = p.bid1_price ?? p.bid1 ?? p.bid ?? null;
-        const a1 = p.ask1_price ?? p.ask1 ?? p.ask ?? null;
-        bid = b1 === null || b1 === undefined ? null : Number(b1);
-        ask = a1 === null || a1 === undefined ? null : Number(a1);
+      if (row) {
+        // 从 raw_payload 抽 bid1/ask1 (腾讯/新浪源会带)
+        let bid: number | null = null;
+        let ask: number | null = null;
+        if (row.raw_payload && typeof row.raw_payload === 'object') {
+          const p = row.raw_payload;
+          const b1 = p.bid1_price ?? p.bid1 ?? p.bid ?? null;
+          const a1 = p.ask1_price ?? p.ask1 ?? p.ask ?? null;
+          bid = b1 === null || b1 === undefined ? null : Number(b1);
+          ask = a1 === null || a1 === undefined ? null : Number(a1);
+        }
+        return {
+          price: Number(row.current_price),
+          bid: bid,
+          ask: ask,
+          volume: row.volume === null || row.volume === undefined ? null : Number(row.volume),
+          as_of_ts:
+            typeof row.updated_at === 'string'
+              ? row.updated_at
+              : new Date(row.updated_at).toISOString(),
+        };
       }
+      // Batch BA-7 (2026-06-22): RT 没数据 fallback 用最新 daily_bar.close
+      // 真因: A 股 ~5500 只票, RT sync 偶发 1-3% 票漏 (AKShare 单 API 偶尔失败).
+      // 这些票之前完全没 quote → CapitalAnalyzer / TechnicalAnalyzer 部分功能失效.
+      // 用 daily_bar 兜底虽然不是实时, 但保证 analyzer 有 price 输入, RiskAnalyzer
+      // staleness check 会标记 'stale_from_daily_bar' 让 caller 知道这是兜底.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { Stock } = require('../../models/Stock');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { DailyBar } = require('../../models/DailyBar');
+      const s = await Stock.findOne({ where: { symbol: stockCode }, attributes: ['id'] });
+      if (!s) return null;
+      const latestBar: any = await DailyBar.findOne({
+        where: { stock_id: s.id },
+        order: [['time', 'DESC']],
+        attributes: ['time', 'close', 'volume'],
+        raw: true,
+      });
+      if (!latestBar) return null;
       return {
-        price: Number(row.current_price),
-        bid: bid,
-        ask: ask,
-        volume: row.volume === null || row.volume === undefined ? null : Number(row.volume),
-        as_of_ts:
-          typeof row.updated_at === 'string'
-            ? row.updated_at
-            : new Date(row.updated_at).toISOString(),
+        price: Number(latestBar.close),
+        bid: null,
+        ask: null,
+        volume: latestBar.volume === null ? null : Number(latestBar.volume),
+        as_of_ts: typeof latestBar.time === 'string'
+          ? latestBar.time
+          : new Date(latestBar.time).toISOString(),
       };
     } catch (_e) {
       return null;
