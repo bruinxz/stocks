@@ -5610,6 +5610,48 @@ class PaperTradingAutomationService {
           })
         : null;
 
+    // Batch AX (2026-06-22): 真实 bug 修复 — 用户截图发现"10:15 止损卖出 / 10:22 自动加价买回".
+    // 根因: 上面 cooldown 只查 RecommendationTradeOutcome (推荐闭环表), 不查直接的
+    // paper_trading_trades SELL. 而 PerStockStopLossGuard / TrailingStopGuard 写 SELL 不会
+    // 同步写 outcome.closed → cooldown 永远查不到这种止损. 补一个 paper_trading_trades
+    // 维度的 fallback: 最近 cooldown_days_after_loss 天内有 direction='SELL' 且 realized_pnl < 0
+    // 的同标的 trade, 也算 cooldown hit.
+    let cooldownHitFromTrade: { exit_date: string; total_pnl_pct: number | null; realized_pnl_pct: number | null } | null = null;
+    if (options.cooldown_days_after_loss > 0 && !cooldownHit) {
+      try {
+        const cutoff = moment()
+          .tz('Asia/Shanghai')
+          .subtract(options.cooldown_days_after_loss, 'days')
+          .toDate();
+        const recentLossSell = await PaperTradingTrade.findOne({
+          where: {
+            symbol: normalizedSymbol,
+            direction: 'SELL',
+            realized_pnl: { [Op.lt]: 0 },
+            created_at: { [Op.gte]: cutoff },
+          },
+          order: [['created_at', 'DESC']],
+          attributes: ['created_at', 'realized_pnl', 'amount', 'execute_price', 'quantity'],
+        });
+        if (recentLossSell) {
+          const pnl = Number((recentLossSell as any).realized_pnl) || 0;
+          const amount = Number((recentLossSell as any).amount) || 1;
+          const pnlPct = amount > 0 ? (pnl / amount) * 100 : null;
+          cooldownHitFromTrade = {
+            exit_date: moment((recentLossSell as any).created_at).tz('Asia/Shanghai').format('YYYY-MM-DD'),
+            total_pnl_pct: pnlPct,
+            realized_pnl_pct: pnlPct,
+          };
+          logger.warn(
+            `[paper-auto] cooldown_from_trade hit ${normalizedSymbol} — recent SELL @${(recentLossSell as any).execute_price} pnl=${pnl} on ${cooldownHitFromTrade.exit_date}, suppress new BUY (within ${options.cooldown_days_after_loss}d)`
+          );
+        }
+      } catch (e: any) {
+        logger.warn(`[paper-auto] cooldown_from_trade query failed for ${normalizedSymbol}: ${e?.message ?? e}`);
+      }
+    }
+    const effectiveCooldownHit = cooldownHit || cooldownHitFromTrade;
+
     // 修复 (2026-06-16, HIGH H3): 板块感知涨跌停阈值, 不再硬编码 9.7.
     // 主板 ±10%, ST 股 ±5%, 科创/创业板 ±20%, 北交所 ±30%.
     // ST 用 name 字符串识别 (H2 H3 已知缺陷: name 未更新会漏判, 未来用 ST list 同步覆盖).
@@ -5656,11 +5698,11 @@ class PaperTradingAutomationService {
           : 'stale_or_missing',
       from_realtime: Boolean(latestQuote),
       latest_date: latest?.time ? moment(latest.time).tz('Asia/Shanghai').format('YYYY-MM-DD') : '',
-      cooldown_hit: cooldownHit
+      cooldown_hit: effectiveCooldownHit
         ? {
-            exit_date: cooldownHit.exit_date,
-            total_pnl_pct: toOptionalNumber(cooldownHit.total_pnl_pct),
-            realized_pnl_pct: toOptionalNumber(cooldownHit.realized_pnl_pct),
+            exit_date: effectiveCooldownHit.exit_date,
+            total_pnl_pct: toOptionalNumber(effectiveCooldownHit.total_pnl_pct),
+            realized_pnl_pct: toOptionalNumber(effectiveCooldownHit.realized_pnl_pct),
           }
         : null,
     };
