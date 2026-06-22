@@ -202,10 +202,42 @@ async function modeFusion(stockCode: string, asOf: string, claudeReplyPath: stri
   } catch {
     claudeReply = '(未找到 Claude 回复文件, 跳过)';
   }
+  // Batch BA-4 (2026-06-22): 真 parse Claude 回复里的 JSON 块, 渲染对照表
+  const claudeStructured = parseClaudeJsonBlock(claudeReply);
 
   const lines: string[] = [];
   lines.push(`# ${ctx.stock.name || ctx.stock.code} (${ctx.stock.code}) 融合分析报告`);
   lines.push(`截止: ${asOf}\n`);
+
+  if (claudeStructured) {
+    lines.push(`## A vs B 对照 (引擎 vs Claude)`);
+    lines.push('');
+    lines.push('| 维度 | 新引擎 | Claude (as TA) |');
+    lines.push('|---|---|---|');
+    const enginePosPct = ((engineResult.suggested_position_pct || 0) * 100).toFixed(1) + '%';
+    const claudePos = claudeStructured.position_pct != null ? `${claudeStructured.position_pct}%` : '—';
+    lines.push(`| action | **${engineResult.action}** | **${claudeStructured.action || '—'}** |`);
+    lines.push(`| 置信度 | ${((engineResult.overall_confidence || 0) * 100).toFixed(0)}% | ${claudeStructured.confidence != null ? (claudeStructured.confidence * 100).toFixed(0) + '%' : '—'} |`);
+    lines.push(`| 建议仓位 | ${enginePosPct} | ${claudePos} |`);
+    lines.push(`| 入场区间 | ${engineResult.entry_zone ? `${engineResult.entry_zone[0]}-${engineResult.entry_zone[1]}` : '—'} | ${claudeStructured.entry_zone ? `${claudeStructured.entry_zone[0]}-${claudeStructured.entry_zone[1]}` : '—'} |`);
+    lines.push(`| 止损 | ${engineResult.stop_loss ?? '—'} | ${claudeStructured.stop_loss ?? '—'} |`);
+    lines.push(`| 止盈 | ${engineResult.take_profit ?? '—'} | ${claudeStructured.take_profit ?? '—'} |`);
+    lines.push('');
+    // 一致性判定
+    const actionAgree = engineResult.action === claudeStructured.action;
+    const sameDir = (a: string | undefined, b: string | undefined): boolean => {
+      const bulls = ['strong_buy', 'buy', 'add'];
+      const bears = ['strong_sell', 'sell', 'reduce'];
+      if (!a || !b) return false;
+      if (bulls.includes(a) && bulls.includes(b)) return true;
+      if (bears.includes(a) && bears.includes(b)) return true;
+      if (a === 'hold' && b === 'hold') return true;
+      return false;
+    };
+    const directionAgree = sameDir(engineResult.action, claudeStructured.action);
+    lines.push(`**一致性**: ${actionAgree ? '✅ 完全一致' : directionAgree ? '⚠️ 方向一致, 强度不同' : '❌ 显著分歧 — 重点关注'}\n`);
+  }
+
   lines.push(`## A. 新引擎 (多维分析引擎 v2)\n`);
   lines.push(`**action**: ${engineResult.action} | **置信度**: ${((engineResult.overall_confidence || 0) * 100).toFixed(0)}% | **仓位**: ${((engineResult.suggested_position_pct || 0) * 100).toFixed(1)}%\n`);
   if (engineResult.entry_zone) lines.push(`- 入场区间: ${engineResult.entry_zone[0]} - ${engineResult.entry_zone[1]}`);
@@ -224,14 +256,170 @@ async function modeFusion(stockCode: string, asOf: string, claudeReplyPath: stri
   for (const w of engineResult.risk_warnings || []) lines.push(`- ⚠️ ${w}`);
 
   lines.push(`\n---\n\n## B. Claude-as-TradingAgents 分析\n`);
+  if (claudeStructured) {
+    lines.push(`### 解析后字段`);
+    lines.push('```json');
+    lines.push(JSON.stringify(claudeStructured, null, 2));
+    lines.push('```');
+    if (claudeStructured.key_reasons?.length) {
+      lines.push(`\n### Claude 关键理由`);
+      for (const r of claudeStructured.key_reasons) lines.push(`- ${r}`);
+    }
+    if (claudeStructured.risk_warnings?.length) {
+      lines.push(`\n### Claude 风险提示`);
+      for (const w of claudeStructured.risk_warnings) lines.push(`- ⚠️ ${w}`);
+    }
+    lines.push(`\n### Claude 原文 (markdown)`);
+  }
   lines.push(claudeReply);
 
   lines.push(`\n---\n\n## C. 融合建议\n`);
   lines.push(`引擎是**量化结果**, Claude 是**研报式叙述**. 一致则信号强, 冲突则用 Claude 的 narrative 解释为什么引擎数字背后藏着风险.`);
-  lines.push(`\n**操作建议** (你自己拍板): 引擎 ${engineResult.action} + Claude 怎么说 → 综合决定.`);
+  lines.push(`\n**操作建议** (你自己拍板): 引擎 ${engineResult.action} + Claude ${claudeStructured?.action || '?'} → 综合决定.`);
 
   fs.writeFileSync(outPath, lines.join('\n'), 'utf8');
   console.log(`✓ 融合报告写入 ${outPath}`);
+}
+
+/**
+ * Batch BA-4: 从 Claude 回复 markdown 里提 ```json ... ``` 代码块并 parse.
+ * 支持 (a) 标 ```json 的块 (b) 没标 lang 但内容是 JSON 的块.
+ * 返 null 如果找不到或 parse 失败.
+ */
+function parseClaudeJsonBlock(text: string): {
+  action?: string;
+  confidence?: number;
+  position_pct?: number;
+  entry_zone?: [number, number];
+  stop_loss?: number;
+  take_profit?: number;
+  key_reasons?: string[];
+  risk_warnings?: string[];
+} | null {
+  if (!text) return null;
+  // 尝试 ```json ... ``` 块
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
+  if (fenceMatch) {
+    try {
+      return normalizeClaudeJson(JSON.parse(fenceMatch[1]));
+    } catch {
+      // 落到下面 fallback
+    }
+  }
+  // fallback: 整段是 JSON
+  const trimmed = text.trim();
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      return normalizeClaudeJson(JSON.parse(trimmed));
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function normalizeClaudeJson(j: any) {
+  if (!j || typeof j !== 'object') return null;
+  const ezRaw = j.entry_zone || j.entryZone || j.buy_zone;
+  let entryZone: [number, number] | undefined;
+  if (Array.isArray(ezRaw) && ezRaw.length === 2) {
+    entryZone = [Number(ezRaw[0]), Number(ezRaw[1])];
+  }
+  return {
+    action: j.action || j.recommendation || undefined,
+    confidence: typeof j.confidence === 'number' ? j.confidence :
+      typeof j.confidence === 'string' ? Number(j.confidence) : undefined,
+    position_pct: j.position_pct != null ? Number(j.position_pct) :
+      j.suggested_position_pct != null ? Number(j.suggested_position_pct) * 100 : undefined,
+    entry_zone: entryZone,
+    stop_loss: j.stop_loss != null ? Number(j.stop_loss) : undefined,
+    take_profit: j.take_profit != null ? Number(j.take_profit) : undefined,
+    key_reasons: Array.isArray(j.key_reasons) ? j.key_reasons :
+      Array.isArray(j.reasons) ? j.reasons : undefined,
+    risk_warnings: Array.isArray(j.risk_warnings) ? j.risk_warnings :
+      Array.isArray(j.risks) ? j.risks : undefined,
+  };
+}
+
+/**
+ * Batch BA-4: 批量模式 — 对多个 stock 跑 engine, 输出汇总 markdown table.
+ * symbols 输入: --symbols=sh.688008,sz.300054 或 --symbols-file=path.txt (每行一个).
+ */
+async function modeBatch(symbols: string[], asOf: string, outPath: string) {
+  console.log(`▶ 批量模式: ${symbols.length} 只票 as-of=${asOf}`);
+  const results: Array<{ symbol: string; name?: string | null; ok: boolean; action?: string; conf?: number; pos?: number; entry?: [number, number] | null; sl?: number | null; tp?: number | null; dq?: string; top_reasons?: string[]; error?: string }> = [];
+  for (const sym of symbols) {
+    try {
+      console.log(`  [${results.length + 1}/${symbols.length}] ${sym}...`);
+      const stock = await Stock.findOne({ where: { symbol: sym }, attributes: ['name'] });
+      const r = await analysisEngineService.analyzeStock(sym, { as_of: asOf });
+      results.push({
+        symbol: sym,
+        name: stock ? (stock as any).name : null,
+        ok: true,
+        action: r.action,
+        conf: r.overall_confidence,
+        pos: r.suggested_position_pct,
+        entry: r.entry_zone,
+        sl: r.stop_loss,
+        tp: r.take_profit,
+        dq: r.data_quality?.level,
+        top_reasons: (r.key_reasons || []).slice(0, 3),
+      });
+    } catch (e: any) {
+      results.push({ symbol: sym, ok: false, error: e?.message ?? String(e) });
+    }
+  }
+
+  const lines: string[] = [];
+  lines.push(`# 批量分析报告 — ${symbols.length} 只票`);
+  lines.push(`截止: ${asOf} | 生成时间: ${new Date().toISOString().slice(0, 19).replace('T', ' ')}\n`);
+  lines.push(`## 汇总表`);
+  lines.push('| # | 股票 | 名称 | action | 置信 | 仓位 | 入场区间 | 止损 | 止盈 | 数据质量 |');
+  lines.push('|---|---|---|---|---|---|---|---|---|---|');
+  results.forEach((r, i) => {
+    if (!r.ok) {
+      lines.push(`| ${i + 1} | ${r.symbol} | — | ❌ ${r.error?.substring(0, 30)} | | | | | | |`);
+      return;
+    }
+    const confStr = r.conf != null ? `${(r.conf * 100).toFixed(0)}%` : '—';
+    const posStr = r.pos != null ? `${(r.pos * 100).toFixed(1)}%` : '—';
+    const entryStr = r.entry ? `${r.entry[0]}-${r.entry[1]}` : '—';
+    lines.push(`| ${i + 1} | ${r.symbol} | ${r.name || '—'} | ${r.action} | ${confStr} | ${posStr} | ${entryStr} | ${r.sl ?? '—'} | ${r.tp ?? '—'} | ${r.dq || '—'} |`);
+  });
+
+  lines.push(`\n## 按 action 分组`);
+  const byAction = new Map<string, typeof results>();
+  for (const r of results) {
+    if (!r.ok) continue;
+    const act = r.action || 'unknown';
+    if (!byAction.has(act)) byAction.set(act, []);
+    byAction.get(act)!.push(r);
+  }
+  const actionOrder = ['strong_buy', 'buy', 'add', 'hold', 'reduce', 'sell', 'strong_sell'];
+  for (const act of actionOrder) {
+    const list = byAction.get(act);
+    if (!list || list.length === 0) continue;
+    lines.push(`\n### ${act} (${list.length} 只)`);
+    for (const r of list) {
+      lines.push(`- **${r.symbol}** ${r.name || ''} (置信 ${r.conf ? (r.conf * 100).toFixed(0) : '?'}%)`);
+      for (const reason of r.top_reasons || []) {
+        lines.push(`  - ${reason}`);
+      }
+    }
+  }
+
+  // 失败的票
+  const failed = results.filter(r => !r.ok);
+  if (failed.length > 0) {
+    lines.push(`\n## 分析失败 (${failed.length} 只)`);
+    for (const r of failed) {
+      lines.push(`- **${r.symbol}**: ${r.error}`);
+    }
+  }
+
+  fs.writeFileSync(outPath, lines.join('\n'), 'utf8');
+  console.log(`✓ 批量报告写入 ${outPath} (${results.filter(r => r.ok).length} 成功 / ${failed.length} 失败)`);
 }
 
 (async () => {
@@ -245,12 +433,16 @@ async function modeFusion(stockCode: string, asOf: string, claudeReplyPath: stri
     `/tmp/${stockCode || 'analysis'}-${cmd}.md`;
   const claudeReplyArg = args.find(a => a.startsWith('--claude-reply='))?.split('=')[1] ||
     args[args.indexOf('--claude-reply') + 1];
+  // Batch BA-4: batch mode args
+  const symbolsArg = args.find(a => a.startsWith('--symbols='))?.split('=')[1];
+  const symbolsFileArg = args.find(a => a.startsWith('--symbols-file='))?.split('=')[1];
 
-  if (!cmd || !stockCode) {
+  if (!cmd || (cmd !== 'batch' && !stockCode) || (cmd === 'batch' && !symbolsArg && !symbolsFileArg)) {
     console.error('Usage:');
     console.error('  ./analyze-stock-cli.ts export <stock> [--as-of=YYYY-MM-DD] [--out=path.md]');
     console.error('  ./analyze-stock-cli.ts engine <stock> [--as-of=YYYY-MM-DD]');
     console.error('  ./analyze-stock-cli.ts fusion <stock> --claude-reply=path.md [--as-of=YYYY-MM-DD] [--out=report.md]');
+    console.error('  ./analyze-stock-cli.ts batch (--symbols=sh.X,sz.Y | --symbols-file=path.txt) [--as-of=YYYY-MM-DD] [--out=path.md]');
     process.exit(1);
   }
 
@@ -260,6 +452,17 @@ async function modeFusion(stockCode: string, asOf: string, claudeReplyPath: stri
     else if (cmd === 'fusion') {
       if (!claudeReplyArg) throw new Error('fusion 模式需要 --claude-reply=path.md');
       await modeFusion(stockCode, asOf, claudeReplyArg, outArg);
+    } else if (cmd === 'batch') {
+      let symbols: string[] = [];
+      if (symbolsArg) {
+        symbols = symbolsArg.split(',').map(s => s.trim()).filter(s => s.length > 0);
+      } else if (symbolsFileArg) {
+        const fileContent = fs.readFileSync(symbolsFileArg, 'utf8');
+        symbols = fileContent.split(/\r?\n/).map(s => s.trim()).filter(s => s.length > 0 && !s.startsWith('#'));
+      }
+      if (symbols.length === 0) throw new Error('batch 模式需要至少 1 个 symbol');
+      const batchOut = outArg.includes('/analysis-') ? `/tmp/batch-${asOf}.md` : outArg;
+      await modeBatch(symbols, asOf, batchOut);
     } else throw new Error(`未知 cmd: ${cmd}`);
     process.exit(0);
   } catch (e: any) {
