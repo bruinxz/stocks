@@ -174,9 +174,17 @@ export const PRODUCTION_ANALYSIS_ENGINE_DATA_SOURCE: AnalysisEngineDataSource = 
       // 原因: factor_scores 工作日才有 (cron 17:30 跑), 节假日 / 周末 / 数据延迟
       // 都会让严格 = 匹配返 0 行 → 整个 fundamental/capital/sentiment/risk 维度坍缩.
       // FactorPipeline 自己也是按"今日 (asOf) 写入", 所以 ≤ asOf 自然取到最新一份.
+      //
+      // BA-B (用户清单 #10): 必须同时读 raw_value 才能区分"真有信号 z=0" vs "缺数据
+      // 被中性补全 z=0". FactorPipeline 对该股票 factor.compute() 没返回值时写
+      // raw_value=NULL + z_score=0 + percentile=0.5 (FactorPipeline.ts:252-254);
+      // 不读 raw_value 的话, AnalysisEngine 收到 z=0 会把"无数据"当"中性信号" 喂给
+      // analyzer (e.g. FundamentalAnalyzer 把 6 个因子全当成有数据加权), 让缺研报
+      // 的小盘股得到"分析师一致预期=中性"的虚假 evidence. 这里显式: raw_value=NULL
+      // → out[factor]=null, analyzer 才能正确走 data_missing 路径.
       const rows = await FactorScore.findAll({
         where: { trade_date: { [Op.lte]: asOf }, stock_code: code },
-        attributes: ['factor_name', 'z_score', 'trade_date'],
+        attributes: ['factor_name', 'z_score', 'raw_value', 'trade_date'],
         order: [['trade_date', 'DESC']],
         limit: 200, // 22 factor × 7 日窗口足够
         raw: true,
@@ -185,6 +193,12 @@ export const PRODUCTION_ANALYSIS_ENGINE_DATA_SOURCE: AnalysisEngineDataSource = 
       // 每个 factor_name 取最新一日 (rows 已按 trade_date DESC)
       for (const r of rows) {
         if (out[r.factor_name] !== undefined) continue;
+        // raw_value=NULL → 该股票该因子 compute() 缺数据被中性补全; 显式置 null 让
+        // analyzer 走 data_missing 路径 (而非把 z=0 当成"中性有信号").
+        if (r.raw_value === null || r.raw_value === undefined) {
+          out[r.factor_name] = null;
+          continue;
+        }
         const z = r.z_score === null || r.z_score === undefined ? null : Number(r.z_score);
         out[r.factor_name] = z;
       }
