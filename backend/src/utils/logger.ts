@@ -70,7 +70,18 @@ const fileFormat = winston.format.combine(
 );
 
 const transports = [
-  new winston.transports.Console({ format: consoleFormat }),
+  // Bug AY-15 fix: Console transport 默认走 stdout, 让 CLI 脚本 `node script.js > out.json`
+  // 时 168 行 winston banner 混入 JSON 输出, 让 caller 没法直接 pipe 解析.
+  // 设置 LOG_STDERR_ONLY=true (任何 CLI / eval 脚本启动前 export 一下) → Console 走
+  // stderr, stdout 留给业务 JSON; 默认 (server 模式) 保持原 stdout 不变以保 systemd
+  // append:/var/log/stocks/backend.log 行为不变.
+  new winston.transports.Console({
+    format: consoleFormat,
+    stderrLevels:
+      process.env.LOG_STDERR_ONLY === 'true'
+        ? ['error', 'warn', 'info', 'http', 'debug']
+        : ['error', 'warn'],
+  }),
   // Batch Z (2026-06-17, m-4 fix): 加 maxsize (50MB/file) + maxFiles (10 = 总 500MB)
   // 防 combined.log 无限增长 OOM LogController.getLogs 全文 read.
   // winston 内置 rotation: 文件满 50MB 自动 rename + new file, 保留最近 10 个.
