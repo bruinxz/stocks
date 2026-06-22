@@ -485,16 +485,26 @@ export class DataSyncService {
 
         for (const barData of bars) {
           try {
+            // Batch AY (2026-06-22): 修 bug #5 — daily_bars.turnover 99.85% = 0 真因
+            // 上游 akshare 代理网关 (青果) HTTP 400 拿不到 amount/turn 字段, 但 volume + close
+            // 都有真值. fallback: amount = volume × close 估算成交额 (元); turnover_rate 用
+            // Stock.circulating_market_cap 估算后续处理 (但 cap 也常缺, 暂只填 amount).
+            const closeNum = Number(barData.close) || 0;
+            const volumeNum = Math.round(Number(barData.volume) || 0);
+            let amountNum = Number(barData.amount) || 0;
+            if (amountNum === 0 && volumeNum > 0 && closeNum > 0) {
+              amountNum = Math.round(volumeNum * closeNum);
+            }
             const barToInsert = {
               stock_id: stock.id,
               time: new Date(barData.date + 'T00:00:00.000Z'),
               open: Number(barData.open) || 0,
               high: Number(barData.high) || 0,
               low: Number(barData.low) || 0,
-              close: Number(barData.close) || 0,
-              volume: Math.round(Number(barData.volume) || 0), // 确保是整数
-              turnover: Number(barData.amount) || 0,
-              adj_close: Number(barData.close) || 0,
+              close: closeNum,
+              volume: volumeNum, // 确保是整数
+              turnover: amountNum,
+              adj_close: closeNum,
               turnover_rate: Number(barData.turn) || 0,
               change_percent: Number(barData.pctChg) || 0,
               pe: Number(barData.peTTM) || 0,

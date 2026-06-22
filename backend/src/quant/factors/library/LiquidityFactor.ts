@@ -148,9 +148,13 @@ export const liquidityFactor: Factor = {
     }
 
     // 2) 拉自然日 30 天的 turnover_rate（足够拿 20 个交易日）
+    // Batch AY (2026-06-22): 加 turnover (amount) fallback — 当 turnover_rate=0/null 时,
+    // 用 amount + Stock.circulating_market_cap 反算 turnover_rate ≈ amount/mcap × 100.
+    // 真因: 上游 akshare 代理网关挂时拿不到 turn 字段, 但 amount 已被 sync fallback
+    // (volume × close) 补全了 → 这里能反推出 turnover_rate.
     const startDate = lookbackStartDate(ctx.as_of_date, TURNOVER_QUERY_CALENDAR_DAYS);
     const bars = (await DailyBar.findAll({
-      attributes: ['stock_id', 'time', 'turnover_rate'],
+      attributes: ['stock_id', 'time', 'turnover_rate', 'turnover'],
       where: {
         stock_id: { [Op.in]: stockIds },
         time: {
@@ -163,13 +167,37 @@ export const liquidityFactor: Factor = {
       stock_id: number;
       time: Date | string;
       turnover_rate: any;
+      turnover: any;
     }>;
 
     // 3) 按 stock_id 分组 + 计算 avg_turnover_20
-    const barsByStockId = new Map<number, Array<{ time: Date | string; turnover_rate: any }>>();
+    // Batch AY (2026-06-22): 用 historicalMarketCap 反算 turnover_rate fallback
+    let mcapByCode: Map<string, number> = new Map();
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { loadHistoricalCirculatingMarketCap } = require('./_historicalMarketCap');
+      mcapByCode = await loadHistoricalCirculatingMarketCap(ctx.universe, ctx.as_of_date);
+    } catch (_e) {
+      // 没 mcap 就只能用 turnover_rate 真值, fallback 失效
+    }
+
+    const barsByStockId = new Map<
+      number,
+      Array<{ time: Date | string; turnover_rate: any }>
+    >();
     for (const b of bars) {
       const arr = barsByStockId.get(b.stock_id) ?? [];
-      arr.push({ time: b.time, turnover_rate: b.turnover_rate });
+      let effectiveRate = Number(b.turnover_rate);
+      if (!isFiniteNumber(effectiveRate) || effectiveRate <= 0) {
+        // fallback: turnover (元) / circulating_market_cap (元) × 100
+        const code = codeByStockId.get(b.stock_id);
+        const mcap = code ? mcapByCode.get(code) : undefined;
+        const turnoverYuan = Number(b.turnover);
+        if (mcap && mcap > 0 && isFiniteNumber(turnoverYuan) && turnoverYuan > 0) {
+          effectiveRate = (turnoverYuan / mcap) * 100;
+        }
+      }
+      arr.push({ time: b.time, turnover_rate: effectiveRate });
       barsByStockId.set(b.stock_id, arr);
     }
 
