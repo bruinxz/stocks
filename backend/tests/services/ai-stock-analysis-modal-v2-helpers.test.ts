@@ -329,6 +329,97 @@ console.log('[5] normalizeAction + buildActionPlanViewModelV2');
   // action fallback: metadata.action
   const ap6 = buildActionPlanViewModelV2({ action: 'sell' });
   assert(ap6.action === 'sell', '从 metadata.action 取');
+
+  // ----------------------------------------------------------------
+  // BA-A (用户清单 #14) — position_action 4 档 + UI 文案 + fallback
+  // ----------------------------------------------------------------
+
+  // (a) backend 已写 position_action='maintain' (hold + 有持仓 — 高信心维持)
+  const apMaintain = buildActionPlanViewModelV2({
+    hard_short_circuit_action: 'hold',
+    position_action: 'maintain',
+    suggested_position_pct: 0,
+  });
+  assert(
+    apMaintain.position_action === 'maintain' && apMaintain.position_action_label === '维持当前仓位',
+    `maintain → label="维持当前仓位" (got ${apMaintain.position_action_label})`
+  );
+
+  // (b) backend 已写 position_action='avoid' (hold + 无持仓 — 高信心不建仓)
+  const apAvoid = buildActionPlanViewModelV2({
+    hard_short_circuit_action: 'hold',
+    position_action: 'avoid',
+    suggested_position_pct: 0,
+  });
+  assert(
+    apAvoid.position_action === 'avoid' && apAvoid.position_action_label === '不建议建仓',
+    `avoid → label="不建议建仓" (got ${apAvoid.position_action_label})`
+  );
+
+  // (c) backend 已写 position_action='open' (买入类)
+  const apOpen = buildActionPlanViewModelV2({
+    hard_short_circuit_action: 'buy',
+    position_action: 'open',
+    suggested_position_pct: 0.15,
+  });
+  assert(
+    apOpen.position_action === 'open' && apOpen.position_action_label === '建议建仓',
+    `open → label="建议建仓"`
+  );
+
+  // (d) backend 已写 position_action='close' (卖出 + 有持仓)
+  const apClose = buildActionPlanViewModelV2({
+    hard_short_circuit_action: 'sell',
+    position_action: 'close',
+    suggested_position_pct: 0,
+  });
+  assert(
+    apClose.position_action === 'close' && apClose.position_action_label === '建议卖出',
+    `close → label="建议卖出"`
+  );
+
+  // (e) 旧 archive 没写 position_action — fallback 兜底:
+  //     hold 默认 'avoid' (保守: 不知道用户是否持仓时默认提示"不建仓"避免误导)
+  const apLegacyHold = buildActionPlanViewModelV2({
+    hard_short_circuit_action: 'hold',
+    suggested_position_pct: 0,
+  });
+  assert(
+    apLegacyHold.position_action === 'avoid',
+    `legacy hold (无 position_action) → fallback 'avoid' (got ${apLegacyHold.position_action})`
+  );
+
+  // (e2) 旧 archive 没写 position_action — 买入类 fallback 到 'open'
+  const apLegacyBuy = buildActionPlanViewModelV2({
+    hard_short_circuit_action: 'buy',
+    suggested_position_pct: 0.2,
+  });
+  assert(apLegacyBuy.position_action === 'open', `legacy buy → fallback 'open'`);
+
+  // (e3) 旧 archive 没写 — 卖出类 fallback 到 'close'
+  const apLegacySell = buildActionPlanViewModelV2({
+    hard_short_circuit_action: 'sell',
+    suggested_position_pct: 0,
+  });
+  assert(apLegacySell.position_action === 'close', `legacy sell → fallback 'close'`);
+
+  // (e4) 非法 position_action 字符串 → fallback 走 action 推断
+  const apIllegal = buildActionPlanViewModelV2({
+    hard_short_circuit_action: 'buy',
+    position_action: 'WAT_DA_HECK',
+    suggested_position_pct: 0.1,
+  });
+  assert(
+    apIllegal.position_action === 'open',
+    `illegal position_action 字符串 → 走 action fallback (got ${apIllegal.position_action})`
+  );
+
+  // (f) action='unknown' + 旧 archive → position_action='unknown' + label=''
+  const apUnknown = buildActionPlanViewModelV2({});
+  assert(
+    apUnknown.position_action === 'unknown' && apUnknown.position_action_label === '',
+    `action unknown + no position_action → 'unknown' + 空 label`
+  );
 }
 
 // ---------------------------------------------------------------------------

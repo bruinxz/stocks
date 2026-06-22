@@ -65,6 +65,7 @@ function assert(cond: boolean, msg: string): void {
   const decision: RecommendationDecision = {
     action: 'buy',
     suggested_position_pct: 0.07,
+    position_action: 'open',
     entry_zone: [100, 110],
     stop_loss: 90,
     take_profit: 130,

@@ -311,7 +311,19 @@ export const ActionPlanCard: React.FC<ActionPlanCardProps> = ({
           <Col span={12}>
             <Text type="secondary">建议仓位：</Text>
             <Text strong>
-              {actionPlan.suggested_position_pct != null
+              {/* BA-A (用户清单 #14) — hold 双形态歧义修复:
+                  - position_action='maintain' (有持仓+hold) → "维持当前仓位" (不显示 0%)
+                  - position_action='avoid' (无持仓+hold/sell) → "不建议建仓"
+                  - position_action='open' → 显示具体仓位 % (suggested_position_pct)
+                  - position_action='close' → 显示卖出文案
+                  - position_action='unknown' (旧 archive) → fallback 走原逻辑 (显示 pct%) */}
+              {actionPlan.position_action === 'maintain'
+                ? actionPlan.position_action_label
+                : actionPlan.position_action === 'avoid'
+                ? actionPlan.position_action_label
+                : actionPlan.position_action === 'close'
+                ? actionPlan.position_action_label
+                : actionPlan.suggested_position_pct != null
                 ? `${(actionPlan.suggested_position_pct * 100).toFixed(1)}%`
                 : '—'}
             </Text>

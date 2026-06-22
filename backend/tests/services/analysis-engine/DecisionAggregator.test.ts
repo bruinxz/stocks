@@ -16,6 +16,7 @@ import {
   pickStopLoss,
   pickTakeProfit,
   pickConfidenceTier,
+  derivePositionAction,
   CONFIDENCE_TIER_HIGH_MIN,
   CONFIDENCE_TIER_MEDIUM_MIN,
 } from '../../../src/services/analysis-engine/DecisionAggregator';
@@ -496,6 +497,148 @@ function makeAnalyzer(
   assert(
     /confidence_tier:\s*decision\.confidence_tier/.test(hardSrc),
     'meta: hardShortCircuit metadata 含 confidence_tier'
+  );
+
+  // ----------------------------------------------------------------
+  // BA-A (用户清单 #14) — position_action 4 档语义 + hold 双形态
+  // ----------------------------------------------------------------
+
+  // derivePositionAction 纯函数 — 12 case 覆盖 (action × has_open_position 矩阵)
+  // hold + 有持仓 → maintain (区别于"不建仓")
+  assert(
+    derivePositionAction('hold', true) === 'maintain',
+    `hold + 持仓 → maintain (got ${derivePositionAction('hold', true)})`
+  );
+  // hold + 无持仓 → avoid (区别于"维持现有")
+  assert(
+    derivePositionAction('hold', false) === 'avoid',
+    `hold + 无持仓 → avoid (got ${derivePositionAction('hold', false)})`
+  );
+  // hold + undefined → avoid (默认无持仓; "不建议"是更保守的兜底, 不会让用户误以为持仓存在)
+  assert(
+    derivePositionAction('hold', undefined) === 'avoid',
+    `hold + undefined → avoid (defaults to avoid)`
+  );
+  // buy / strong_buy / add → open (不分有无持仓)
+  assert(derivePositionAction('strong_buy', false) === 'open', 'strong_buy → open');
+  assert(derivePositionAction('buy', true) === 'open', 'buy + 持仓 → open (加仓)');
+  assert(derivePositionAction('add', false) === 'open', 'add → open');
+  // reduce / sell / strong_sell + 有持仓 → close
+  assert(derivePositionAction('reduce', true) === 'close', 'reduce + 持仓 → close');
+  assert(derivePositionAction('sell', true) === 'close', 'sell + 持仓 → close');
+  assert(derivePositionAction('strong_sell', true) === 'close', 'strong_sell + 持仓 → close');
+  // reduce / sell / strong_sell + 无持仓 → avoid (无需操作)
+  assert(derivePositionAction('reduce', false) === 'avoid', 'reduce + 无持仓 → avoid');
+  assert(derivePositionAction('sell', false) === 'avoid', 'sell + 无持仓 → avoid');
+  assert(derivePositionAction('strong_sell', undefined) === 'avoid', 'strong_sell + undef → avoid');
+
+  // aggregator 3 个 return 路径都必须填 position_action
+  // (a) critical hold + 有持仓 → action=hold + position_action=maintain
+  const dCriticalHeld = agg.aggregate({
+    stock_code: 'sh.600519',
+    as_of: '2026-06-18',
+    analyzers: [makeAnalyzer('fundamental', 80)],
+    data_quality: dqCritical(),
+    current_price: 100,
+    has_open_position: true,
+  });
+  assert(
+    dCriticalHeld.action === 'hold' && dCriticalHeld.position_action === 'maintain',
+    `critical + 持仓 → action=hold + position_action=maintain (got ${dCriticalHeld.action} / ${dCriticalHeld.position_action})`
+  );
+  // (a2) critical hold + 无持仓 → action=hold + position_action=avoid
+  assert(
+    d1.position_action === 'avoid',
+    `critical + 无持仓 → position_action=avoid (got ${d1.position_action})`
+  );
+
+  // (b) veto + 持仓 → action=sell + position_action=close
+  assert(
+    d2b.position_action === 'close',
+    `veto + 持仓 → position_action=close (got ${d2b.position_action})`
+  );
+  // (b2) veto + 无持仓 → action=hold + position_action=avoid
+  assert(
+    d2.position_action === 'avoid',
+    `veto + 无持仓 → position_action=avoid (got ${d2.position_action})`
+  );
+
+  // (c) 正常路径 strong_buy → position_action=open
+  assert(
+    noDampenDecision.position_action === 'open',
+    `strong_buy → position_action=open (got ${noDampenDecision.position_action})`
+  );
+  // (c2) 正常路径 + 有持仓 + strong_buy → open
+  const noDampenWithPos = agg.aggregate({
+    stock_code: 'sh.600519',
+    as_of: '2026-06-18',
+    analyzers: [...allBull],
+    data_quality: dqGood(),
+    current_price: 100,
+    has_open_position: true,
+  });
+  assert(
+    noDampenWithPos.position_action === 'open',
+    `strong_buy + 持仓 → open (加仓; got ${noDampenWithPos.position_action})`
+  );
+
+  // (c3) 正常路径 hold (全部 0 分) + 有持仓 → maintain
+  const allZero = [
+    makeAnalyzer('fundamental', 0),
+    makeAnalyzer('technical', 0),
+    makeAnalyzer('capital', 0),
+    makeAnalyzer('news', 0),
+    makeAnalyzer('sentiment', 0),
+    makeAnalyzer('industry_regime', 0),
+    makeAnalyzer('risk', 0),
+    makeAnalyzer('event', 0),
+  ];
+  const dHoldHeld = agg.aggregate({
+    stock_code: 'sh.600519',
+    as_of: '2026-06-18',
+    analyzers: allZero,
+    data_quality: dqGood(),
+    current_price: 100,
+    has_open_position: true,
+  });
+  assert(
+    dHoldHeld.action === 'hold' && dHoldHeld.position_action === 'maintain',
+    `正常 hold + 持仓 → action=hold + position_action=maintain (got ${dHoldHeld.action} / ${dHoldHeld.position_action})`
+  );
+  const dHoldNoPos = agg.aggregate({
+    stock_code: 'sh.600519',
+    as_of: '2026-06-18',
+    analyzers: allZero,
+    data_quality: dqGood(),
+    current_price: 100,
+    has_open_position: false,
+  });
+  assert(
+    dHoldNoPos.action === 'hold' && dHoldNoPos.position_action === 'avoid',
+    `正常 hold + 无持仓 → action=hold + position_action=avoid (got ${dHoldNoPos.action} / ${dHoldNoPos.position_action})`
+  );
+
+  // META-GUARD: derivePositionAction 必须 export + aggregator 3 个 return 路径全部填
+  assert(
+    /export\s+function\s+derivePositionAction\s*\(/.test(aggSrc2),
+    'meta: derivePositionAction exported'
+  );
+  const posActionOccurrences = (
+    aggSrc2.match(/position_action:\s*derivePositionAction/g) || []
+  ).length;
+  assert(
+    posActionOccurrences >= 3,
+    `meta: aggregator 3 个 return 路径全填 position_action (found ${posActionOccurrences})`
+  );
+
+  // META-GUARD: archive / hardShortCircuit metadata 含 position_action
+  assert(
+    /position_action:\s*decision\.position_action/.test(archiveSrc),
+    'meta: archive metadata 含 position_action'
+  );
+  assert(
+    /position_action:\s*decision\.position_action/.test(hardSrc),
+    'meta: hardShortCircuit metadata 含 position_action'
   );
 
   console.log(`\n${pass} passed, ${fail} failed.`);

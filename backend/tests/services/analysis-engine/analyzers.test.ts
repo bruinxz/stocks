@@ -368,6 +368,81 @@ function baseCtx(): AnalyzerContext {
   );
   assert(evErrOut.confidence === 0, 'event err: confidence=0');
 
+  // ----------------------------------------------------------------
+  // BA-B (用户清单 #10) — FundamentalAnalyzer fund_consensus fallback
+  // ----------------------------------------------------------------
+  // analyst_consensus 缺失但 fund_consensus 存在 → 用 fund_consensus 当代理.
+  // 8 票 (sh.688008/sz.300054/sh.600667/sz.300476/sz.002916/sh.600350/sz.002025/sh.601985)
+  // 没有真研报数据 (AnalystForecast sync 只覆盖 ~50 popular stocks), 但 fund_consensus
+  // 因子覆盖全 A 股 ~500+ 重仓股 — 这些 8 票里 7/8 在 fund_consensus 里有值.
+  const faFallback = new FundamentalAnalyzer({
+    async loadIndustryPeerScores() {
+      return [];
+    },
+  });
+  const ctxFallback = baseCtx();
+  ctxFallback.factor_snapshot = {
+    value: 0.5,
+    growth: 0.5,
+    quality: 0.5,
+    quality_high: 0.5,
+    analyst_consensus: null, // 8 票典型场景: 真研报缺失
+    earnings_surprise: 0.5,
+    fund_consensus: 1.2, // 但基金抱团度有值 (重仓股)
+  };
+  const fundOutFb = await faFallback.analyze(ctxFallback);
+  assert(fundOutFb.error === null, 'fund_consensus fallback: no error');
+  // analyst_consensus 不应该出现在 data_missing — fallback 走 fund_consensus 顶替了
+  assert(
+    !fundOutFb.data_missing.includes('factor.analyst_consensus'),
+    `fund_consensus fallback 命中 → analyst_consensus 不进 data_missing (got ${JSON.stringify(fundOutFb.data_missing)})`
+  );
+  // evidence 必须标注"基金一致预期代理"让 UI 显式
+  const hasProxyEvidence = fundOutFb.evidence.some(
+    e => e.label.includes('基金一致预期代理') || (e.detail || '').includes('基金抱团度代理')
+  );
+  assert(
+    hasProxyEvidence,
+    `fund_consensus fallback 命中 → evidence 必须含代理标注 (got ${JSON.stringify(fundOutFb.evidence.map(e => e.label))})`
+  );
+
+  // analyst_consensus 缺失 + fund_consensus 也缺失 → 真 data_missing
+  const ctxBothMissing = baseCtx();
+  ctxBothMissing.factor_snapshot = {
+    value: 0.5,
+    growth: 0.5,
+    quality: 0.5,
+    quality_high: 0.5,
+    analyst_consensus: null,
+    earnings_surprise: 0.5,
+    // fund_consensus 也缺
+  };
+  const fundOutBoth = await faFallback.analyze(ctxBothMissing);
+  assert(
+    fundOutBoth.data_missing.includes('factor.analyst_consensus'),
+    `双缺 → analyst_consensus 进 data_missing (got ${JSON.stringify(fundOutBoth.data_missing)})`
+  );
+
+  // analyst_consensus 真值存在 → fallback 不触发 (用真数据)
+  const ctxRealConsensus = baseCtx();
+  ctxRealConsensus.factor_snapshot = {
+    value: 0.5,
+    growth: 0.5,
+    quality: 0.5,
+    quality_high: 0.5,
+    analyst_consensus: 1.5, // 真研报数据
+    earnings_surprise: 0.5,
+    fund_consensus: 0.8,
+  };
+  const fundOutReal = await faFallback.analyze(ctxRealConsensus);
+  const hasProxyOnReal = fundOutReal.evidence.some(
+    e => (e.detail || '').includes('基金抱团度代理')
+  );
+  assert(
+    !hasProxyOnReal,
+    `真研报数据存在 → fallback 不触发, 不应有代理标注 (got ${JSON.stringify(fundOutReal.evidence.map(e => e.label))})`
+  );
+
   console.log(`\n${pass} passed, ${fail} failed.`);
   if (fail > 0) {
     console.error(`FAILURES:\n${failures.map(f => '  - ' + f).join('\n')}`);

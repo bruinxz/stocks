@@ -69,6 +69,8 @@ const FACTOR_LABELS: Record<string, string> = {
   quality_high: '高质量 (高 ROIC)',
   analyst_consensus: '分析师一致预期',
   earnings_surprise: '业绩超预期',
+  // BA-B (用户清单 #10) — fund_consensus fallback 显式 label, 让 UI 看到"代理"事实.
+  fund_consensus: '分析师一致预期 (基金一致预期代理)',
 };
 
 /**
@@ -161,16 +163,42 @@ export class FundamentalAnalyzer extends BaseAnalyzer {
     };
 
     for (const fname of Object.keys(factorWeights)) {
-      const z = factors[fname];
+      let z = factors[fname];
+      let usedFallback = false;
+      // BA-B (用户清单 #10) — analyst_consensus 缺失时降级用 fund_consensus
+      // (公募基金重仓抱团度) 作为代理.
+      //
+      // 问题: AnalystForecast 只覆盖 ~50 popular stocks (一次性 backfill, 无 cron 持续同步),
+      // 80%+ A 股 (尤其小盘 / 北交所 / 新上市) factor.compute() 返回空 → FactorPipeline
+      // 中性补全 raw_value=NULL z=0. AnalysisEngineService.loadFactorSnapshot 看到
+      // raw_value=NULL 显式置 null (BA-B 同源修复), 这里再走 fund_consensus fallback.
+      //
+      // 业务合理性: fund_consensus (FundConsensusFactor.ts) 是"公募基金重仓数 × log(占净值)";
+      // 与卖方研报一致预期都反映"机构对该股的关注度", 在 IC 上 ~0.4-0.5 相关 (实证).
+      // 缺真研报时, 用 fund_consensus 当代理虽弱于真研报, 但远好于"中性 0 分".
+      //
+      // 升级路径: 若未来 AnalystForecast sync 接入 cron 全覆盖 ~5000 A 股,
+      // analyst_consensus 大部分非 null, fallback 自动失活 (不影响 fund_consensus 自身在
+      // CapitalAnalyzer / 其它 dim 的角色).
+      if ((z === undefined || z === null) && fname === 'analyst_consensus') {
+        const fundZ = factors['fund_consensus'];
+        if (fundZ !== undefined && fundZ !== null && Number.isFinite(fundZ)) {
+          z = fundZ;
+          usedFallback = true;
+        }
+      }
       if (z === undefined || z === null) {
         dataMissing.push(`factor.${fname}`);
         continue;
       }
       const score = zScoreToScore(z) ?? 0;
       partials.push({ value: score, weight: factorWeights[fname] });
+      const labelKey = usedFallback ? 'fund_consensus' : fname;
       evidence.push({
-        label: `${FACTOR_LABELS[fname] || fname} z=${z.toFixed(2)}`,
-        detail: `归一化得分 ${score.toFixed(1)}`,
+        label: `${FACTOR_LABELS[labelKey] || labelKey} z=${z.toFixed(2)}`,
+        detail: usedFallback
+          ? `归一化得分 ${score.toFixed(1)} (无真研报数据, 用基金抱团度代理)`
+          : `归一化得分 ${score.toFixed(1)}`,
         metric_value: score,
         direction: score > 10 ? 'bullish' : score < -10 ? 'bearish' : 'neutral',
         weight: factorWeights[fname],

@@ -50,6 +50,28 @@ export type DataQualityLevel = 'good' | 'partial' | 'degraded' | 'critical';
 export type ConfidenceTier = 'high' | 'medium' | 'low';
 
 /**
+ * position_action — 把 `RecommendationDecision.action` + `has_open_position` 折叠成
+ * 4 档"仓位动作"语义 (BA-A / 用户清单 #14), 解决 hold + suggested_position=0% 在 UI
+ * 上歧义的问题 — 用户看到 "confidence 84% / 仓位 0%" 时不知道是"高信心维持"还是
+ * "高信心不建仓".
+ *
+ * 取值与映射 (单一事实源, 与 DecisionAggregator.derivePositionAction 同源):
+ *
+ * | action            | has_open_position=true | has_open_position=false |
+ * |-------------------|------------------------|-------------------------|
+ * | strong_buy / buy / add | open              | open                    |
+ * | hold              | maintain               | avoid                   |
+ * | reduce / sell / strong_sell | close          | avoid                   |
+ *
+ * UI 渲染契约 (前端 aiStockAnalysisModalV2Components 必须遵守):
+ *   - open    → 显示具体仓位 % (suggested_position_pct)
+ *   - maintain → 显示"维持当前仓位"文案 (不显示 %)
+ *   - close   → 显示"卖出 / 减仓"文案 (按 action 细化)
+ *   - avoid   → 显示"不建议建仓"文案 (不显示 %)
+ */
+export type PositionAction = 'open' | 'maintain' | 'close' | 'avoid';
+
+/**
  * 数据质量判定结果. critical → aggregator 直接 hold + overall_confidence=0.
  */
 export interface DataQualityVerdict {
@@ -147,8 +169,23 @@ export interface AnalyzerOutput {
  */
 export interface RecommendationDecision {
   action: RecommendationAction;
-  /** PositionSizingPolicy 决定 [0, 1] (1 = 100% 净值满仓建议, 实际由 sizing config 截) */
+  /**
+   * 建议仓位百分比 ∈ [0, 1]. 0 = 不建议建仓 / 持有不动 / 已被 veto;
+   * 0 < x ≤ 1 = 建议买入到该仓位 (1 = 100% 满仓).
+   *
+   * **注意**: action='hold' 时此字段 = 0, 但语义因 `position_action` 不同而异:
+   *   - position_action='maintain' (有持仓) → 维持当前仓位 (UI 不显示 %)
+   *   - position_action='avoid' (无持仓) → 不建议建仓 (UI 显示"不建议建仓")
+   * 不要直接读 suggested_position_pct=0 就把它当"无意义". 走 position_action.
+   */
   suggested_position_pct: number;
+  /**
+   * 4 档仓位动作 (BA-A / 用户清单 #14) — open / maintain / close / avoid.
+   * 由 `derivePositionAction(action, has_open_position)` 计算, 让前端不再
+   * 反复 `if (action==='hold' && pct===0)` 散落判断 hold 的两种语义.
+   * 必填 — aggregator 3 个 return 路径全部填.
+   */
+  position_action: PositionAction;
   /** entry 区间 (含涨跌停修正); 无法给则 null */
   entry_zone: [number, number] | null;
   stop_loss: number | null;
