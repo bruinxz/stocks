@@ -93,7 +93,12 @@ export class RiskAnalyzer extends BaseAnalyzer {
     //   会让所有事后分析永远 hold. 改为: 只有"当日盘中"(as_of=today) 才硬否决.
     //   盘中误用引擎拍板是真风险, 复盘不是.
     const q = ctx.realtime_quote;
-    const todayIso = new Date().toISOString().slice(0, 10);
+    // Batch BA-17 (2026-06-22): 时区修复 — UTC 23:30 即北京 07:30, 但 toISOString 已是次日
+    // → isReplayMode 误判 → 该 veto 时不 veto. 改用 Asia/Shanghai 当前日.
+    const todayIso = (() => {
+      const sh = new Date(Date.now() + 8 * 60 * 60 * 1000);
+      return sh.toISOString().slice(0, 10);
+    })();
     const isReplayMode = ctx.as_of && ctx.as_of !== todayIso;
     if (!q) {
       dataMissing.push('realtime_quote');

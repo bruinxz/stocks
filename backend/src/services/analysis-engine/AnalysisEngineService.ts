@@ -274,7 +274,17 @@ export class AnalysisEngineService {
     // 主进程 boot 时已注册, 二次调用本函数即为 no-op (一次 Object.keys 检查).
     ensureModelsRegistered();
     const normalized = normalizeSymbol(stockCode) || stockCode;
-    const asOf = options.as_of || new Date().toISOString().slice(0, 10);
+    // Batch BA-17 (2026-06-22): bug 清单 #17 — 时区错位修复
+    // 原: new Date().toISOString().slice(0,10) 用 UTC. UTC 08:00 = Asia/Shanghai 16:00,
+    // 当 UTC 23:30 (≈ 北京 07:30) 时 toISOString 已经是次日, 但北京时间还是今天,
+    // 导致 factor_scores 查询查到次日 (0 行) 整个 fundamental 维度坍缩.
+    // 与 portfolio/internal/PaperTradingAutomationService.ts:994 同款 moment().tz('Asia/Shanghai').
+    const asOf = options.as_of || (() => {
+      const d = new Date();
+      // Asia/Shanghai = UTC+8
+      const sh = new Date(d.getTime() + 8 * 60 * 60 * 1000);
+      return sh.toISOString().slice(0, 10);
+    })();
 
     // Phase 1: Context Build
     const [stock, daily_bars, realtime_quote, market_env, factor_snapshot] = await Promise.all([
