@@ -200,6 +200,7 @@ export function buildAnalysisEngineSignalPayload(
     stop_loss: decision.stop_loss,
     take_profit: decision.take_profit,
     suggested_position_pct: decision.suggested_position_pct,
+    position_action: decision.position_action,
     engine_variant: decision.engine_variant,
   };
 
@@ -217,6 +218,7 @@ export function buildAnalysisEngineSignalPayload(
     stop_loss: decision.stop_loss,
     take_profit: decision.take_profit,
     suggested_position_pct: decision.suggested_position_pct,
+    position_action: decision.position_action,
     risk_warnings: riskWarnings,
     per_dimension_summary: decision.per_dimension.map(d => ({
       analyzer_key: d.analyzer_key,

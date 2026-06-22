@@ -289,6 +289,7 @@ export function buildHardShortCircuitResult(
     stop_loss: decision.stop_loss,
     take_profit: decision.take_profit,
     suggested_position_pct: decision.suggested_position_pct,
+    position_action: decision.position_action,
     per_dimension: decision.per_dimension.map(d => ({
       analyzer_key: d.analyzer_key,
       score: d.score,

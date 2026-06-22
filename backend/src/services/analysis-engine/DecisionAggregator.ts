@@ -35,6 +35,7 @@ import type {
   AnalyzerOutput,
   ConfidenceTier,
   DataQualityVerdict,
+  PositionAction,
   RecommendationAction,
   RecommendationDecision,
 } from './AnalyzerTypes';
@@ -77,6 +78,38 @@ export function pickConfidenceTier(overallConfidence: number | null | undefined)
   if (c >= CONFIDENCE_TIER_HIGH_MIN) return 'high';
   if (c >= CONFIDENCE_TIER_MEDIUM_MIN) return 'medium';
   return 'low';
+}
+
+// ---------------------------------------------------------------------------
+//  BA-A (用户清单 #14) — position_action: hold + suggested_position 语义改造
+// ---------------------------------------------------------------------------
+//
+// 问题: aggregator action='hold' 时 suggested_position_pct 永远是 0%, 用户在
+// 弹窗看到 "confidence 84% / 仓位 0%" 不知道是"高信心维持现有仓位" 还是
+// "高信心不建仓".
+//
+// 解法: 加 position_action 4 档把 has_open_position 维度显式编码, 让前端不再
+// 反复 `if (action==='hold' && pct===0)` 散落判断 hold 的两种语义.
+//
+// 映射表 (与 AnalyzerTypes.PositionAction jsdoc 同源 — 单一事实源):
+//
+// | action            | has_open_position=true | has_open_position=false |
+// |-------------------|------------------------|-------------------------|
+// | strong_buy/buy/add | open                  | open                    |
+// | hold              | maintain               | avoid                   |
+// | reduce/sell/strong_sell | close            | avoid                   |
+//
+// 注意: hold + has_open_position=true → maintain (suggested_position_pct=0 但
+// 语义是"维持当前仓位"); hold + has_open_position=false → avoid (suggested_pct=0
+// 语义是"不建议建仓"). UI 必须分别渲染避免误导用户清仓.
+export function derivePositionAction(
+  action: RecommendationAction,
+  hasOpenPosition: boolean | undefined
+): PositionAction {
+  if (action === 'strong_buy' || action === 'buy' || action === 'add') return 'open';
+  if (action === 'hold') return hasOpenPosition === true ? 'maintain' : 'avoid';
+  // reduce / sell / strong_sell: 有持仓 → close (卖出); 无持仓 → avoid (无需操作)
+  return hasOpenPosition === true ? 'close' : 'avoid';
 }
 
 export interface AggregatorInput {
@@ -325,6 +358,7 @@ export class DecisionAggregator {
       return {
         action: 'hold',
         suggested_position_pct: 0,
+        position_action: derivePositionAction('hold', input.has_open_position),
         entry_zone: null,
         stop_loss: null,
         take_profit: null,
@@ -353,6 +387,7 @@ export class DecisionAggregator {
       return {
         action,
         suggested_position_pct: 0,
+        position_action: derivePositionAction(action, input.has_open_position),
         entry_zone: null,
         stop_loss: pickStopLoss(
           input.technical_anchors?.support_levels,
@@ -452,6 +487,7 @@ export class DecisionAggregator {
     return {
       action,
       suggested_position_pct: round2(suggestedPct * 100) / 100,
+      position_action: derivePositionAction(action, input.has_open_position),
       entry_zone: entryZone,
       stop_loss: stopLoss,
       take_profit: takeProfit,

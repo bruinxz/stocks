@@ -81,6 +81,7 @@ function makeDecision(overrides: Partial<RecommendationDecision> = {}): Recommen
   return {
     action: 'buy',
     suggested_position_pct: 0.25,
+    position_action: 'open',
     entry_zone: [10.5, 11.2],
     stop_loss: 9.8,
     take_profit: 13.0,

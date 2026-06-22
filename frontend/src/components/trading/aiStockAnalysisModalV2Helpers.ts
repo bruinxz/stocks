@@ -306,9 +306,36 @@ export interface ActionPlanViewModelV2 {
   take_profit: number | null;
   /** [0, 1] → percent (e.g. 0.15 → 15); 缺失 null */
   suggested_position_pct: number | null;
+  /**
+   * BA-A (用户清单 #14) — 4 档仓位动作:
+   *   - 'open': 显示具体仓位 % (suggested_position_pct)
+   *   - 'maintain': 显示"维持当前仓位"文案 (不显示 %)
+   *   - 'close': 显示"卖出 / 减仓"文案
+   *   - 'avoid': 显示"不建议建仓"文案
+   *   - 'unknown': 旧 archive 没写, fallback 走 suggested_position_pct
+   *
+   * UI 必须用 position_action 而不是直接判 suggested_position_pct == 0,
+   * 因为 hold + 持仓 → maintain (pct=0 但语义"维持"), hold + 无持仓 → avoid
+   * (pct=0 且语义"不建仓"). 两者前端显示完全不同.
+   */
+  position_action: 'open' | 'maintain' | 'close' | 'avoid' | 'unknown';
+  /** position_action 对应的中文展示文案 (UI 直接渲染) */
+  position_action_label: string;
   /** 风险提示 (RiskAnalyzer + EventAnalyzer negative evidence 全集) */
   risk_warnings: string[];
 }
+
+/**
+ * position_action 中文文案表 (与 backend AnalyzerTypes.PositionAction 同源).
+ */
+export const POSITION_ACTION_LABELS: Readonly<
+  Record<'open' | 'maintain' | 'close' | 'avoid', string>
+> = Object.freeze({
+  open: '建议建仓',
+  maintain: '维持当前仓位',
+  close: '建议卖出',
+  avoid: '不建议建仓',
+});
 
 /** action 字符串 → 枚举; 未知返 'unknown' */
 export function normalizeAction(raw: unknown): ActionV2 | 'unknown' {
@@ -346,6 +373,25 @@ export function buildActionPlanViewModelV2(
   const posRaw = m.suggested_position_pct;
   const suggested_position_pct =
     typeof posRaw === 'number' && Number.isFinite(posRaw) ? Math.max(0, Math.min(1, posRaw)) : null;
+  // BA-A (用户清单 #14) — position_action 透传 + fallback
+  // 旧 archive 未写 position_action 时根据 (action, suggested_position_pct, has_open_position 缺失)
+  // fallback: action=hold + pct=0 → avoid (保守兜底, 与默认 has_open_position=false 一致),
+  // action=买入类 → open, action=卖出类 → close (前端不知道是否持仓, 默认 close 提示需操作).
+  const paRaw = m.position_action;
+  let position_action: 'open' | 'maintain' | 'close' | 'avoid' | 'unknown' = 'unknown';
+  if (paRaw === 'open' || paRaw === 'maintain' || paRaw === 'close' || paRaw === 'avoid') {
+    position_action = paRaw;
+  } else if (action === 'strong_buy' || action === 'buy' || action === 'add') {
+    position_action = 'open';
+  } else if (action === 'hold') {
+    position_action = 'avoid';
+  } else if (action === 'reduce' || action === 'sell' || action === 'strong_sell') {
+    position_action = 'close';
+  }
+  const position_action_label =
+    position_action === 'unknown'
+      ? ''
+      : (POSITION_ACTION_LABELS as Record<string, string>)[position_action] || '';
   const warningsRaw = Array.isArray(m.risk_warnings) ? m.risk_warnings : [];
   const risk_warnings = warningsRaw
     .map(w => (typeof w === 'string' ? w.trim() : ''))
@@ -362,6 +408,8 @@ export function buildActionPlanViewModelV2(
     stop_loss,
     take_profit,
     suggested_position_pct,
+    position_action,
+    position_action_label,
     risk_warnings,
   };
 }
