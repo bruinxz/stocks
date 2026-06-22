@@ -378,37 +378,41 @@ const PortfolioManagementPanel: React.FC = () => {
       align: 'right',
     },
     {
-      title: '策略',
+      title: '策略 / 因子',
       dataIndex: 'strategy_display',
       key: 'strategy_display',
-      width: 260,
-      render: (chips: PortfolioListItem['strategy_display']) => {
-        if (!chips || chips.length === 0) return <Text type="secondary">— 未配置</Text>;
+      width: 280,
+      // Batch BB (2026-06-22): 列表挤 — 改紧凑展示, 策略前 2 个 + 总数 chip; 因子合并进同列
+      // 详细列表在右侧 Drawer (点 "详情" 看完整 22 因子 + 全部策略 + brief).
+      render: (chips: PortfolioListItem['strategy_display'], row) => {
+        const factors = row.factor_display || [];
+        if ((!chips || chips.length === 0) && factors.length === 0)
+          return <Text type="secondary">— 未配置 (用全局默认)</Text>;
+        const previewCount = 2;
+        const stratPreview = (chips || []).slice(0, previewCount);
+        const stratExtra = (chips || []).length - previewCount;
+        const factorsTotal = factors.length;
         return (
-          <Space size={[4, 4]} wrap>
-            {chips.map(c => (
-              <Tooltip key={c.key} title={c.brief || c.key}>
-                <Tag color="blue">{c.name}</Tag>
+          <Space direction="vertical" size={2} style={{ width: '100%' }}>
+            <Space size={[4, 4]} wrap>
+              {stratPreview.map(c => (
+                <Tooltip key={c.key} title={c.brief || c.key}>
+                  <Tag color="blue" style={{ marginInlineEnd: 0 }}>{c.name}</Tag>
+                </Tooltip>
+              ))}
+              {stratExtra > 0 && (
+                <Tooltip title={(chips || []).slice(previewCount).map(c => c.name).join(' · ')}>
+                  <Tag color="default">+{stratExtra} 策略</Tag>
+                </Tooltip>
+              )}
+            </Space>
+            {factorsTotal > 0 && (
+              <Tooltip title={factors.map(f => f.name).slice(0, 8).join(' · ') + (factors.length > 8 ? ` …+${factors.length - 8}` : '')}>
+                <Tag color="geekblue" style={{ marginInlineEnd: 0, fontSize: 11 }}>
+                  共 {factorsTotal} 因子 (详情可见)
+                </Tag>
               </Tooltip>
-            ))}
-          </Space>
-        );
-      },
-    },
-    {
-      title: '因子',
-      dataIndex: 'factor_display',
-      key: 'factor_display',
-      width: 240,
-      render: (chips: PortfolioListItem['factor_display']) => {
-        if (!chips || chips.length === 0) return <Text type="secondary">— 未配置</Text>;
-        return (
-          <Space size={[4, 4]} wrap>
-            {chips.map(c => (
-              <Tooltip key={c.key} title={`${c.category} · ${c.key}`}>
-                <Tag color="geekblue">{c.name}</Tag>
-              </Tooltip>
-            ))}
+            )}
           </Space>
         );
       },
