@@ -54,6 +54,7 @@ import {
   computeSurprise,
   selectFreshestReport,
   buildConsensusEps,
+  extractActualEpsFromReport,
   POST_REPORT_WINDOW_DAYS,
   CONSENSUS_LOOKBACK_DAYS,
   MIN_CONSENSUS_REPORTS,
@@ -460,6 +461,174 @@ console.log('\n## 端到端：空 universe → 空 Map');
       universe: [],
     });
     assert('空 universe → Map size = 0', out.size === 0);
+
+    // -------------------------------------------------------------------
+    // Batch BA (2026-06-22) 新增: extractActualEpsFromReport 纯函数 + 端到端
+    // -------------------------------------------------------------------
+    console.log('\n## Batch BA 纯函数 extractActualEpsFromReport');
+    {
+      const payload1 = {
+        abstract_row: { revenue: 5e10, net_profit: 2e10 },
+        indicator_row: {
+          '摊薄每股收益(元)': 22.4822,
+          '加权每股收益(元)': 21.76,
+        },
+      };
+      assert(
+        '正常 payload → 取摊薄 EPS 22.4822',
+        extractActualEpsFromReport(payload1) === 22.4822
+      );
+
+      // 摊薄缺 → fallback 加权
+      const payload2 = {
+        indicator_row: {
+          '摊薄每股收益(元)': null,
+          '加权每股收益(元)': 1.5,
+        },
+      };
+      assert('摊薄 null → fallback 加权 1.5', extractActualEpsFromReport(payload2) === 1.5);
+
+      // 摊薄 + 加权都缺 → fallback 调整后
+      const payload3 = {
+        indicator_row: {
+          '摊薄每股收益(元)': null,
+          '加权每股收益(元)': null,
+          '每股收益_调整后(元)': 0.88,
+        },
+      };
+      assert('摊薄+加权缺 → fallback 调整后 0.88', extractActualEpsFromReport(payload3) === 0.88);
+
+      // 全 null → null
+      const payload4 = {
+        indicator_row: {
+          '摊薄每股收益(元)': null,
+          '加权每股收益(元)': null,
+          '每股收益_调整后(元)': null,
+        },
+      };
+      assert('3 字段全 null → null', extractActualEpsFromReport(payload4) === null);
+
+      // string DECIMAL (Sequelize raw_payload 偶尔出 string 数字)
+      const payload5 = {
+        indicator_row: { '摊薄每股收益(元)': '5.55' },
+      };
+      assert('string DECIMAL → 转 Number 5.55', extractActualEpsFromReport(payload5) === 5.55);
+
+      // NaN → 跳过
+      const payload6 = {
+        indicator_row: {
+          '摊薄每股收益(元)': NaN,
+          '加权每股收益(元)': 1.2,
+        },
+      };
+      assert('NaN 字段 → 跳到 fallback 1.2', extractActualEpsFromReport(payload6) === 1.2);
+
+      // 完全空 / 缺 indicator_row / 缺 raw_payload
+      assert('空 payload → null', extractActualEpsFromReport({}) === null);
+      assert('缺 indicator_row → null', extractActualEpsFromReport({ abstract_row: {} }) === null);
+      assert('null payload → null', extractActualEpsFromReport(null) === null);
+      assert('undefined payload → null', extractActualEpsFromReport(undefined) === null);
+      assert(
+        'indicator_row 非 object → null',
+        extractActualEpsFromReport({ indicator_row: 'not-object' } as any) === null
+      );
+
+      // 负 EPS (亏损股)
+      const payload7 = {
+        indicator_row: { '摊薄每股收益(元)': -0.5 },
+      };
+      assert('负 EPS (-0.5) → 仍返回', extractActualEpsFromReport(payload7) === -0.5);
+    }
+
+    // -------------------------------------------------------------------
+    // Batch BA 端到端: FinancialReport-only 数据源 (无需 StockFundamentalFactor)
+    // -------------------------------------------------------------------
+    console.log('\n## Batch BA 端到端: FinancialReport 自带 EPS');
+    {
+      const FRModel = require('../../src/models/FinancialReport').FinancialReport;
+      const AFModel = require('../../src/models/AnalystForecast').AnalystForecast;
+      const origFRFind = FRModel.findAll;
+      const origAFFind = AFModel.findAll;
+
+      // 场景: 茅台 2026-03-31 一季报, 摊薄 EPS=22.4822 vs 一致预期 EPS≈68 (年度)
+      // 因为 forecast_year_y1=2026 必须等于 year(report_date)=2026 才匹配
+      FRModel.findAll = async () => [
+        {
+          stock_code: '600519',
+          report_date: '2026-03-31',
+          report_type: '一季报',
+          raw_payload: {
+            indicator_row: { '摊薄每股收益(元)': 22.4822 },
+          },
+        },
+      ];
+      // 3 份研报 EPS=20 (用 2026 年作为 y1), report_date 在 2026-03-31 之前
+      AFModel.findAll = async () => [
+        {
+          stock_code: '600519',
+          report_date: '2026-01-15',
+          forecast_eps_y1: 20.0,
+          forecast_year_y1: 2026,
+        },
+        {
+          stock_code: '600519',
+          report_date: '2026-02-10',
+          forecast_eps_y1: 20.0,
+          forecast_year_y1: 2026,
+        },
+        {
+          stock_code: '600519',
+          report_date: '2026-03-05',
+          forecast_eps_y1: 20.0,
+          forecast_year_y1: 2026,
+        },
+      ];
+      const outE2E1 = await earningsSurpriseFactor.compute({
+        universe: ['600519'],
+        as_of_date: '2026-06-18',
+      } as any);
+      assert('FinancialReport actual 22.4822 vs consensus 20.0 → surprise (22.4822-20)/20', outE2E1.size === 1);
+      const surprise = outE2E1.get('600519') as number;
+      const expected = (22.4822 - 20.0) / 20.0;
+      assert(
+        `600519 surprise ≈ ${expected.toFixed(6)} (实际 ${surprise?.toFixed(6)})`,
+        Math.abs(surprise - expected) < 1e-9
+      );
+
+      // 场景: raw_payload 缺 EPS 字段 → 该股票被跳过
+      FRModel.findAll = async () => [
+        {
+          stock_code: '600519',
+          report_date: '2026-03-31',
+          report_type: '一季报',
+          raw_payload: { indicator_row: {} }, // 无 EPS 字段
+        },
+      ];
+      const outE2E2 = await earningsSurpriseFactor.compute({
+        universe: ['600519'],
+        as_of_date: '2026-06-18',
+      } as any);
+      assert('raw_payload 缺 EPS → Map 空 (BA fetch=0 bug 回归)', outE2E2.size === 0);
+
+      // 场景: raw_payload = null → 跳过
+      FRModel.findAll = async () => [
+        {
+          stock_code: '600519',
+          report_date: '2026-03-31',
+          report_type: '一季报',
+          raw_payload: null,
+        },
+      ];
+      const outE2E3 = await earningsSurpriseFactor.compute({
+        universe: ['600519'],
+        as_of_date: '2026-06-18',
+      } as any);
+      assert('raw_payload=null → Map 空', outE2E3.size === 0);
+
+      // restore
+      FRModel.findAll = origFRFind;
+      AFModel.findAll = origAFFind;
+    }
 
     console.log('\n----------------------------------------------------------------');
     console.log(`Summary: ${passed} passed, ${failed} failed`);

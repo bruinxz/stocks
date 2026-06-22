@@ -11,7 +11,8 @@
  * 数据源（按 AC 拆解）：
  *   - 实际值：FinancialReport（report_type='年报' / '半年报' / '一季报' / '三季报'）
  *     的 report_date 锁定财报期；
- *     **实际 EPS** 取 StockFundamentalFactor.eps（同期 report_period 匹配）
+ *     **实际 EPS** 从 FinancialReport.raw_payload.indicator_row['摊薄每股收益(元)']
+ *     提取（Batch BA 切换，详见下方"代理替代范式 (c)"）
  *   - 预期值：AnalystForecast.forecast_eps_y1，按 forecast_year_y1 = year(报告期末)
  *     聚合在财报公告前的 N 份研报均值。
  *
@@ -31,11 +32,11 @@
  *         没有 announce_date 就无法精确实现 "公告日后 60 个交易日" 的截止判定。
  *
  *   选定代理（依据 + 升级路径）：
- *     (a) **EPS 维度** 双向比较替代净利润维度：actual_eps 取
- *         StockFundamentalFactor.eps（同股 / 同 report_period），consensus_eps
- *         取 AnalystForecast.forecast_eps_y1 同年度均值。两侧单位 (元/股) 一致，
- *         比率天然无量纲，"surprise rate" 业务语义不变。升级路径：US-090+ 引入
- *         total_shares 落库后可切换为净利润维度（fact: net_profit = eps × shares）。
+ *     (a) **EPS 维度** 双向比较替代净利润维度：actual_eps 从 FinancialReport
+ *         raw_payload 提取（详见 (c)），consensus_eps 取 AnalystForecast
+ *         .forecast_eps_y1 同年度均值。两侧单位 (元/股) 一致，比率天然无量纲，
+ *         "surprise rate" 业务语义不变。升级路径：US-090+ 引入 total_shares
+ *         落库后可切换为净利润维度（fact: net_profit = eps × shares）。
  *     (b) **`report_date + 窗口` 替代 `announce_date + 60 个交易日`**：
  *         report_date = 2024-12-31 的年报，企业典型公告期为 2025-02 至 2025-04
  *         （CSRC 规定年报 4 月底前公告），PEAD 学术研究 drift 期 ≈ 60 交易日 ≈
@@ -46,6 +47,17 @@
  *         覆盖大部分准时披露公司的 alpha 区间，过滤掉拖延披露的尾部噪音。
  *         升级路径：FinancialReport 引入 announce_date 字段后改成
  *         `tradingDaysBetween(announce_date, as_of_date) ≤ 60`。
+ *     (c) **actual_eps 从 FinancialReport.raw_payload 提取，不读
+ *         StockFundamentalFactor.eps** (Batch BA, 2026-06-22)：
+ *         prod 实测 stock_fundamental_factors.eps **永远 NULL**（15184 行 0 个
+ *         有效值），local_derived sync 服务从未填该列。同时 FinancialReport
+ *         的 raw_payload (AKShare stock_financial_abstract 落库的完整指标行)
+ *         里含 `indicator_row['摊薄每股收益(元)']` 字段，与 report_date 同步
+ *         同期匹配。修复前 EarningsSurpriseFactor.fetch=0（22 因子里 6 个
+ *         std=0 之一）；修复后从 FinancialReport 同一表内一次性拿到 actual_eps
+ *         + report_date + report_type，无需额外查表。升级路径：未来若
+ *         FinancialReport 引入独立 eps 列（不再走 raw_payload JSON 提取），
+ *         切换 `extractActualEpsFromReport` 内部读取字段即可。
  *
  *   按 CLAUDE.md "代理替代范式"：
  *     - factor.name = 'earnings_surprise' 保留 AC 命名（不加 _proxy / _v0 后缀，
@@ -67,9 +79,10 @@
  *      （同年度才有可比性，跨年度 EPS 比较没意义 — 见 US-030 同款约束）。
  *      不足 MIN_CONSENSUS_REPORTS（默认 3 份）→ 跳过（横截面太稀疏）。
  *      取均值作为 consensus_eps_avg。
- *   3. 在 [report_date, report_date + ACTUAL_EPS_LOOKAHEAD_DAYS] 区间内查
- *      StockFundamentalFactor.eps，优先匹配 report_period = report_date_str，
- *      回退到 factor_date 最早（最接近公告日的 EPS 数据）。没有则跳过。
+ *   3. 实际 EPS 从 freshest report 的 raw_payload.indicator_row['摊薄每股收益(元)']
+ *      提取（FinancialReport 同表自带，不再需要查 StockFundamentalFactor）。
+ *      非有限数或字段缺失 → 跳过（financial_reports 全部 24 只 A 股蓝筹 prod 数据
+ *      验证此字段稳定）。
  *   4. consensus_eps_avg 绝对值过小（|x| < CONSENSUS_NEAR_ZERO_THRESHOLD，默认 0.01
  *      元/股 = 1 分钱）→ 跳过（亏损股 / 微利股 EPS 接近 0，分母放大噪音爆炸）。
  *   5. surprise = (actual_eps - consensus_eps_avg) / |consensus_eps_avg|；非有限数
@@ -78,7 +91,7 @@
  * 失效（不入 Map → Pipeline 中性补全 raw_value=null / z_score=0 / percentile=0.5）：
  *   - 最近一份财报 stale（distance > POST_REPORT_WINDOW_DAYS）— 财报太旧 surprise 已被消化
  *   - 财报前 N 日窗口内研报数 < MIN_CONSENSUS_REPORTS — 卖方覆盖太少无统计意义
- *   - 没有同期 actual eps（StockFundamentalFactor 缺数据） — 实际值不可用
+ *   - actual eps 字段缺失或非有限（raw_payload 字段缺 / NaN / Infinity）
  *   - |consensus_eps_avg| < CONSENSUS_NEAR_ZERO_THRESHOLD — 亏损股 分母噪音
  *   - 任一中间计算非有限数
  *
@@ -102,8 +115,7 @@ import { Factor } from '../types';
 import { factorRegistry } from '../FactorRegistry';
 import { AnalystForecast } from '../../../models/AnalystForecast';
 import { FinancialReport } from '../../../models/FinancialReport';
-import { StockFundamentalFactor } from '../../../models/StockFundamentalFactor';
-import { stripSuffix, isFiniteNumber, lookbackStartDate } from './_helpers';
+import { isFiniteNumber, lookbackStartDate } from './_helpers';
 
 /**
  * 财报"新鲜窗口"：报告期末后 N 自然日内 actual 仍视为"surprise 可定价"区间。
@@ -124,8 +136,9 @@ export const MIN_CONSENSUS_REPORTS = 3;
 
 /**
  * 取 actual EPS 时在 report_date 之后的搜索窗口（自然日）。
- * 用于查 StockFundamentalFactor.eps —— actual EPS 数据通常在公告日入库，
- * 即报告期末 + 60~120 自然日。
+ * **Batch BA (2026-06-22) 后已弃用**：actual EPS 现从 FinancialReport.raw_payload
+ * 同表提取，不再需要查 StockFundamentalFactor.eps。保留常量仅为向后兼容（外部
+ * 测试 import）；下个版本可彻底移除。
  */
 export const ACTUAL_EPS_LOOKAHEAD_DAYS = 150;
 
@@ -204,6 +217,8 @@ export function computeSurprise(
 export interface ReportLike {
   report_date: string;
   report_type?: string | null;
+  /** Batch BA: 同表 raw_payload 直传, 用于 extractActualEpsFromReport 提取 actual_eps */
+  raw_payload?: Record<string, any> | null;
 }
 
 export function selectFreshestReport(
@@ -274,10 +289,49 @@ export function buildConsensusEps(
 // Factor 主体
 // ---------------------------------------------------------------------------
 
+/**
+ * 从 FinancialReport.raw_payload 提取 actual EPS（Batch BA, 2026-06-22）。
+ *
+ * raw_payload 结构（AKShare stock_financial_abstract 直接落库）：
+ * ```
+ * {
+ *   "abstract_row": { "revenue": ..., "net_profit": ... },
+ *   "indicator_row": {
+ *     "摊薄每股收益(元)": 22.4822,   ← 主选字段
+ *     "加权每股收益(元)": 21.76,    ← 备用
+ *     "每股收益_调整后(元)": 21.76,
+ *     ...
+ *   }
+ * }
+ * ```
+ *
+ * 选 **摊薄EPS (diluted)** 优先 + **加权 EPS** fallback：
+ *   - 摊薄 EPS 假设全部潜在稀释证券都行权（与卖方研报口径基本一致）
+ *   - 加权 EPS 按时间加权当期已发行股本（中报 / 季报场景下也稳定）
+ *   - AnalystForecast.forecast_eps_y1 是 forecast EPS，跟摊薄口径最契合
+ *
+ * @returns 有限数 → 返回；缺失 / 非有限 → null
+ */
+export function extractActualEpsFromReport(
+  payload: Record<string, any> | null | undefined
+): number | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const indicator = (payload as any).indicator_row;
+  if (!indicator || typeof indicator !== 'object') return null;
+  const candidates = ['摊薄每股收益(元)', '加权每股收益(元)', '每股收益_调整后(元)'];
+  for (const key of candidates) {
+    const raw = indicator[key];
+    if (raw === null || raw === undefined) continue;
+    const v = typeof raw === 'number' ? raw : Number(raw);
+    if (isFiniteNumber(v)) return v;
+  }
+  return null;
+}
+
 export const earningsSurpriseFactor: Factor = {
   name: 'earnings_surprise',
   description:
-    '盈利惊喜代理：(actual_eps - consensus_eps_avg) / |consensus_eps_avg|；actual 取 StockFundamentalFactor.eps，consensus 取 AnalystForecast.forecast_eps_y1 同年度均值；仅在最近财报 180 自然日内生效（announce_date 不可得，用 report_date + window 代理）',
+    '盈利惊喜代理：(actual_eps - consensus_eps_avg) / |consensus_eps_avg|；actual 从 FinancialReport.raw_payload 摊薄每股收益提取，consensus 取 AnalystForecast.forecast_eps_y1 同年度均值；仅在最近财报 180 自然日内生效（announce_date 不可得，用 report_date + window 代理）',
   category: 'event',
 
   async compute(ctx) {
@@ -288,9 +342,10 @@ export const earningsSurpriseFactor: Factor = {
     //
     // FinancialReport.stock_code 已经是无后缀形式（与 ctx.universe 一致）。
     // 不限 report_type — 让 selectFreshestReport 挑最新一份。
+    // Batch BA: 顺便取 raw_payload, actual EPS 同表提取无需第 2 次查表。
     const reportStartDate = lookbackStartDate(ctx.as_of_date, POST_REPORT_WINDOW_DAYS);
     const reportRows = (await FinancialReport.findAll({
-      attributes: ['stock_code', 'report_date', 'report_type'],
+      attributes: ['stock_code', 'report_date', 'report_type', 'raw_payload'],
       where: {
         stock_code: { [Op.in]: ctx.universe },
         report_date: { [Op.gte]: reportStartDate, [Op.lte]: ctx.as_of_date },
@@ -300,6 +355,7 @@ export const earningsSurpriseFactor: Factor = {
       stock_code: string;
       report_date: string;
       report_type: string | null;
+      raw_payload: Record<string, any> | null;
     }>;
 
     if (!reportRows.length) return out; // 全市场近 180 日内无任何财报 — 早返回
@@ -310,7 +366,11 @@ export const earningsSurpriseFactor: Factor = {
       const byCode = new Map<string, ReportLike[]>();
       for (const r of reportRows) {
         const arr = byCode.get(r.stock_code) ?? [];
-        arr.push({ report_date: r.report_date, report_type: r.report_type });
+        arr.push({
+          report_date: r.report_date,
+          report_type: r.report_type,
+          raw_payload: r.raw_payload,
+        });
         byCode.set(r.stock_code, arr);
       }
       for (const [code, arr] of byCode.entries()) {
@@ -360,56 +420,10 @@ export const earningsSurpriseFactor: Factor = {
       forecastsByCode.set(f.stock_code, arr);
     }
 
-    // ----- 3) StockFundamentalFactor：拉 actual eps -----
+    // ----- 3) per-stock 合成：consensus + actual → surprise -----
     //
-    // 注意：StockFundamentalFactor.symbol 带后缀 "600519.SH"；
-    // 需要 stripSuffix 才能与 ctx.universe 对齐。
-    // 时间窗 = 所有 freshest report_date 的 [report_date, report_date + ACTUAL_EPS_LOOKAHEAD_DAYS]
-    // 的并集；为简化查询直接用全局并集 [minReportDate, maxReportDate + lookahead]，
-    // 内存里再按 per-stock 精确过滤。
-    let actualMinDate = ctx.as_of_date;
-    let actualMaxDate = ctx.as_of_date;
-    for (const r of freshestByCode.values()) {
-      if (r.report_date < actualMinDate) actualMinDate = r.report_date;
-      const upper = isoDatePlusDays(r.report_date, ACTUAL_EPS_LOOKAHEAD_DAYS);
-      if (upper > actualMaxDate) actualMaxDate = upper;
-    }
-    // 上限不能超过 as_of_date（防 lookahead bias —— 因子 ctx 里的"今天"是 as_of_date，
-    // 不能用 as_of_date 之后才出现的数据）
-    if (actualMaxDate > ctx.as_of_date) actualMaxDate = ctx.as_of_date;
-
-    const universeSet = new Set(ctx.universe);
-    const fundamentalRows = (await StockFundamentalFactor.findAll({
-      attributes: ['symbol', 'factor_date', 'report_period', 'eps'],
-      where: {
-        factor_date: { [Op.gte]: actualMinDate, [Op.lte]: actualMaxDate },
-      },
-      raw: true,
-    })) as unknown as Array<{
-      symbol: string;
-      factor_date: string;
-      report_period: string | null;
-      eps: any;
-    }>;
-
-    // 按无后缀 stock_code 分组，记录 [factor_date, report_period, eps]
-    interface FundamentalRecord {
-      factor_date: string;
-      report_period: string | null;
-      eps: number;
-    }
-    const fundByCode = new Map<string, FundamentalRecord[]>();
-    for (const r of fundamentalRows) {
-      const code = stripSuffix(r.symbol);
-      if (!universeSet.has(code)) continue;
-      const eps = r.eps == null ? null : Number(r.eps);
-      if (!isFiniteNumber(eps as number)) continue;
-      const arr = fundByCode.get(code) ?? [];
-      arr.push({ factor_date: r.factor_date, report_period: r.report_period, eps: eps as number });
-      fundByCode.set(code, arr);
-    }
-
-    // ----- 4) per-stock 合成：consensus + actual → surprise -----
+    // Batch BA: actual EPS 不再走 StockFundamentalFactor.eps（该列 prod 永远 NULL），
+    // 直接从 freshest report.raw_payload 提取，单表一次查询即可。
     for (const [code, freshest] of freshestByCode.entries()) {
       const forecasts = forecastsByCode.get(code) ?? [];
       if (forecasts.length === 0) continue;
@@ -417,29 +431,7 @@ export const earningsSurpriseFactor: Factor = {
       const consensus = buildConsensusEps(forecasts, freshest.report_date);
       if (consensus === null) continue;
 
-      // actual_eps：从 fundamental 记录中挑
-      //   首选：report_period 精确匹配 freshest.report_date（同期口径）
-      //   回退：factor_date >= report_date 的最早一条（最接近公告日的 actual）
-      const fundRecords = fundByCode.get(code) ?? [];
-      let actual: number | null = null;
-      // 首选：report_period 精确匹配
-      for (const f of fundRecords) {
-        if (f.report_period === freshest.report_date) {
-          actual = f.eps;
-          break;
-        }
-      }
-      // 回退：factor_date >= report_date 的最早一条
-      if (actual === null) {
-        let bestDate: string | null = null;
-        for (const f of fundRecords) {
-          if (f.factor_date < freshest.report_date) continue;
-          if (bestDate === null || f.factor_date < bestDate) {
-            bestDate = f.factor_date;
-            actual = f.eps;
-          }
-        }
-      }
+      const actual = extractActualEpsFromReport(freshest.raw_payload ?? null);
       if (actual === null) continue;
 
       const surprise = computeSurprise(actual, consensus);
