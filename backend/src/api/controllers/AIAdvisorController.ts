@@ -322,7 +322,21 @@ export class AIAdvisorController {
         user_id: typeof userId === 'number' ? userId : undefined,
       });
 
-      return res.json({ success: true, data: result });
+      // Bug AY-12 fix: data.status 是远端 / 引擎实际结果, success 必须随之.
+      // 之前永远 return { success: true } 即使 status='failed' 让前端拿不到错误信号.
+      // 现在: failed/pending 都返 success=false (HTTP 仍 200 保持兼容), message 字段
+      // 走前端 throw 路径让用户看到 toast; completed/partial 维持 success=true.
+      const status = (result as any)?.status;
+      const ok = status === 'completed' || status === 'partial';
+      if (ok) {
+        return res.json({ success: true, data: result });
+      }
+      const errMsg = (result as any)?.error || '';
+      return res.json({
+        success: false,
+        data: result,
+        message: `AI 分析未完成 (status=${status || 'unknown'})${errMsg ? ': ' + errMsg : ''}`,
+      });
     } catch (error: any) {
       logger.error('analyzeSingleStock 失败:', error);
       return res.status(500).json({ success: false, message: error.message });

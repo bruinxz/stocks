@@ -51,6 +51,7 @@ export class AISignalController {
     try {
       const {
         symbol,
+        stock_code, // Bug AY-13: 兼容前端/CLI 用 stock_code 别名传 symbol
         decision,
         source_type,
         start_date,
@@ -58,8 +59,11 @@ export class AISignalController {
         limit = '50',
         offset = '0',
       } = req.query;
+      // 优先 symbol, 缺失退到 stock_code; 任一为空字符串视作未传 (避免 where.symbol=''
+      // 让结果永远 0 条).
+      const rawSymbol = (symbol as string) || (stock_code as string) || '';
       const result = await aiInvestmentSignalService.listSignals({
-        symbol: symbol as string,
+        symbol: rawSymbol.trim() ? rawSymbol.trim() : undefined,
         decision: decision as string,
         source_type: source_type as string,
         start_date: start_date as string,
@@ -86,9 +90,11 @@ export class AISignalController {
 
   getSignalStats = async (req: Request, res: Response) => {
     try {
-      const { symbol, decision, source_type, start_date, end_date } = req.query;
+      const { symbol, stock_code, decision, source_type, start_date, end_date } = req.query;
+      // Bug AY-13: 兼容 stock_code 别名 (与 listSignals 同款).
+      const rawSymbol = (symbol as string) || (stock_code as string) || '';
       const stats = await aiInvestmentSignalService.getSignalStats({
-        symbol: symbol as string,
+        symbol: rawSymbol.trim() ? rawSymbol.trim() : undefined,
         decision: decision as string,
         source_type: source_type as string,
         start_date: start_date as string,

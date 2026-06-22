@@ -27,6 +27,19 @@
 
 import { logger } from '../../utils/logger';
 
+/**
+ * `'600519.SH'` → `'600519'`. 持仓 symbol 含 '.SH/SZ/BJ' 后缀, 但底层
+ * EarningsForecast / NorthboundHolding / DragonTigerBoard 三表 stock_code
+ * 均为无后缀 6 位 (AKShare 入库口径). 此 helper 把 caller 输入对齐到底层
+ * 存储的 stock_code, 避免事件维度永远 0 命中.
+ */
+function stripSymbolSuffix(symbol: string): string {
+  if (typeof symbol !== 'string') return symbol as any;
+  const idx = symbol.indexOf('.');
+  if (idx < 0) return symbol;
+  return symbol.slice(0, idx);
+}
+
 // ===========================================================================
 // Types
 // ===========================================================================
@@ -236,7 +249,8 @@ export const PRODUCTION_EVENT_INTELLIGENCE_DATA_SOURCE: EventIntelligenceDataSou
       const lookbackStart = new Date(`${as_of_date}T00:00:00.000Z`);
       lookbackStart.setDate(lookbackStart.getDate() - 30);
       const row = await EarningsForecast.findOne({
-        where: { symbol, announce_date: { [Op.gte]: lookbackStart } },
+        // Bug AY-2 fix: 表列名是 stock_code (6 位无后缀), 不是 symbol.
+        where: { stock_code: stripSymbolSuffix(symbol), announce_date: { [Op.gte]: lookbackStart } },
         order: [['announce_date', 'DESC']],
         attributes: ['profit_change_high', 'profit_change_low', 'report_period'],
         raw: true,
@@ -265,7 +279,8 @@ export const PRODUCTION_EVENT_INTELLIGENCE_DATA_SOURCE: EventIntelligenceDataSou
       const start = new Date(end);
       start.setDate(start.getDate() - 7); // 7 自然日覆盖 5 交易日
       const rows = await NorthboundHolding.findAll({
-        where: { symbol, trade_date: { [Op.between]: [start, end] } },
+        // Bug AY-2 fix: 表列名是 stock_code (6 位无后缀), 不是 symbol.
+        where: { stock_code: stripSymbolSuffix(symbol), trade_date: { [Op.between]: [start, end] } },
         order: [['trade_date', 'ASC']],
         attributes: ['trade_date', 'hold_ratio'],
         raw: true,
@@ -288,19 +303,31 @@ export const PRODUCTION_EVENT_INTELLIGENCE_DATA_SOURCE: EventIntelligenceDataSou
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { DragonTigerBoard } = require('../../models/DragonTigerBoard');
       const rows = await DragonTigerBoard.findAll({
-        where: { symbol, trade_date: as_of_date },
-        attributes: ['seat_type', 'net_buy_amount'],
+        // Bug AY-2 fix: 表列名是 stock_code (6 位无后缀) + net_amount (非 net_buy_amount).
+        where: { stock_code: stripSymbolSuffix(symbol), trade_date: as_of_date },
+        attributes: ['seat_type', 'net_amount'],
         raw: true,
       });
       if (!rows.length) return null;
       let inst = 0;
       let yz = 0;
       for (const r of rows as any[]) {
-        const amount = Number(r.net_buy_amount);
+        const amount = Number(r.net_amount);
         if (!Number.isFinite(amount)) continue;
         const seatType = String(r.seat_type || '');
-        if (seatType.includes('机构') || seatType.includes('institutional')) inst += amount;
-        if (seatType.includes('famous') || seatType.includes('游资')) yz += amount;
+        // seat_type 入库枚举: public_fund / foreign / private / famous_yz / unknown
+        if (
+          seatType === 'public_fund' ||
+          seatType === 'foreign' ||
+          seatType === 'private' ||
+          seatType.includes('机构') ||
+          seatType.includes('institutional')
+        ) {
+          inst += amount;
+        }
+        if (seatType === 'famous_yz' || seatType.includes('famous') || seatType.includes('游资')) {
+          yz += amount;
+        }
       }
       return { inst_net_buy: inst, yz_net_buy: yz };
     } catch (error: any) {
@@ -323,8 +350,12 @@ export const PRODUCTION_EVENT_INTELLIGENCE_DATA_SOURCE: EventIntelligenceDataSou
       const end = new Date(asOf);
       end.setDate(end.getDate() + window_days);
       const exists = await EarningsForecast.findOne({
-        where: { symbol, announce_date: { [Op.between]: [start, end] } },
-        attributes: ['id'],
+        // Bug AY-2 fix: 表列名是 stock_code (6 位无后缀), 不是 symbol.
+        // 该表无独立 'id' 列 (PK = announce_date + stock_code + report_period 复合主键),
+        // 仅查 announce_date 字段做 EXISTS 判定 (足够触发 findOne 真行 → !! 转 boolean).
+        where: { stock_code: stripSymbolSuffix(symbol), announce_date: { [Op.between]: [start, end] } },
+        attributes: ['announce_date'],
+        raw: true,
       });
       return !!exists;
     } catch (error: any) {
@@ -339,15 +370,33 @@ export const PRODUCTION_EVENT_INTELLIGENCE_DATA_SOURCE: EventIntelligenceDataSou
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { Stock } = require('../../models/Stock');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { DailyBar } = require('../../models/DailyBar');
       const stock = await Stock.findOne({
         where: { symbol },
-        attributes: ['name', 'is_suspended'],
+        // Bug AY-2 fix: stocks 表无 is_suspended 列, 停牌字段在 daily_bars
+        // 表 (按 stock_id 关联最新一根 bar 取真).
+        attributes: ['id', 'name'],
         raw: true,
       });
       if (!stock) return { st: false, suspended: false };
       const name = String((stock as any).name || '');
       const st = name.includes('ST');
-      const suspended = !!(stock as any).is_suspended;
+      let suspended = false;
+      try {
+        const latestBar = await DailyBar.findOne({
+          where: { stock_id: (stock as any).id },
+          order: [['time', 'DESC']],
+          attributes: ['is_suspended'],
+          raw: true,
+        });
+        suspended = !!(latestBar && (latestBar as any).is_suspended);
+      } catch (barError: any) {
+        // fail-open: bar lookup 失败时仍按 ST 字符串结果返回
+        logger.warn(
+          `EventIntelligence isHardBlocked bar fallback (${symbol}): ${barError?.message || barError}`
+        );
+      }
       return { st, suspended };
     } catch (error: any) {
       logger.warn(`EventIntelligence isHardBlocked 失败 (${symbol}): ${error?.message || error}`);

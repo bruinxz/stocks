@@ -478,8 +478,18 @@ export class DefaultKOLAggregatorDataSource implements KOLAggregatorDataSource {
   private timeoutMs: number;
 
   constructor(opts: { pythonPath?: string; timeoutMs?: number } = {}) {
-    this.pythonPath = opts.pythonPath || process.env.PYTHON_PATH || 'python3';
+    // Bug AY-3 fix: 若 process.env.PYTHON_PATH 缺失 (常见于 CLI 脚本未 source
+    // backend.env 直接 spawn 子进程, 或 worker 进程未继承 prod systemd env),
+    // 用 prod 一致的 /opt/stocks/shared/venv/bin/python 兜底而非 python3 -
+    // 后者系统装的解释器没有 akshare 模块, 一调用就 ModuleNotFoundError fallback []
+    // 让事件维度永远空命中, 静默式 degrade. 与 backend/src/scripts/sync-extra-dims.ts
+    // 的兜底口径保持一致.
+    this.pythonPath =
+      opts.pythonPath || process.env.PYTHON_PATH || '/opt/stocks/shared/venv/bin/python';
     this.timeoutMs = opts.timeoutMs || Number(process.env.KOL_AGGREGATOR_TIMEOUT_MS || 60_000);
+    logger.info(
+      `DefaultKOLAggregatorDataSource initialized (python=${this.pythonPath}, script=${PYTHON_HELPER}, timeoutMs=${this.timeoutMs})`
+    );
   }
 
   async fetchNews(stockCode: string, limit: number): Promise<KOLNewsRow[]> {
