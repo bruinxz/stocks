@@ -110,10 +110,24 @@ def baostock_login():
     except Exception as exc:
         raise RuntimeError(f"baostock package is not installed: {exc}")
 
-    login_result = bs.login()
+    # Batch AZ (2026-06-22): baostock 包内部 print "login success!" 到 stdout
+    # 会污染我们写到 stdout 的 JSON 输出. 重定向到 stderr 让 banner 不进 stdout.
+    import contextlib
+    with contextlib.redirect_stdout(sys.stderr):
+        login_result = bs.login()
     if getattr(login_result, "error_code", "0") != "0":
         raise RuntimeError(f"baostock login failed: {getattr(login_result, 'error_msg', '')}")
     return bs
+
+
+def silent_bs_logout(bs):
+    """Batch AZ: bs.logout() 也 print 到 stdout, 同款 silence."""
+    import contextlib
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            bs.logout()
+    except Exception:
+        pass
 
 
 def baostock_get_all_stocks() -> List[Dict[str, Any]]:
@@ -142,7 +156,7 @@ def baostock_get_all_stocks() -> List[Dict[str, Any]]:
             )
         return stocks
     finally:
-        bs.logout()
+        silent_bs_logout(bs)
 
 
 def baostock_get_daily_data(
@@ -192,7 +206,7 @@ def baostock_get_daily_data(
         bars.sort(key=lambda item: item["date"])
         return bars
     finally:
-        bs.logout()
+        silent_bs_logout(bs)
 
 
 def baostock_get_stock_basic(code: str) -> Optional[Dict[str, Any]]:
@@ -214,7 +228,7 @@ def baostock_get_stock_basic(code: str) -> Optional[Dict[str, Any]]:
             }
         return None
     finally:
-        bs.logout()
+        silent_bs_logout(bs)
 
 
 def baostock_get_trade_dates(start_date: str, end_date: str) -> List[str]:
@@ -230,7 +244,7 @@ def baostock_get_trade_dates(start_date: str, end_date: str) -> List[str]:
                 dates.append(item["calendar_date"])
         return dates
     finally:
-        bs.logout()
+        silent_bs_logout(bs)
 
 
 def tushare_client(token: str):

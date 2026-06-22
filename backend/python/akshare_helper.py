@@ -19,62 +19,77 @@ import pandas as pd
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 
-class QingguoProxyManager:
-    """青果网络 API 代理管理器"""
-    def __init__(self, api_url: str):
-        self.api_url = api_url
+class FreeProxyManager:
+    """
+    Batch AZ (2026-06-22): 替换青果 (已下线) 为开源免费代理源.
+    用户原话: "青果代理 API 没有了，你去网上找免费的".
+
+    数据源 (按 freshness 排序):
+    1. https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt — 2000+ 代理, 每小时更新
+    2. https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt — 较少但更新频率更高
+
+    设计权衡:
+    - 免费代理质量参差: 60-90% 失效率正常 — 用 _patched_request 的代理失效自动剔除机制兜底
+    - 单次 fetch 拉 50 个候选, 失效一个就剔除一个; 池子见底再 fetch (10 秒频率限制)
+    - 真上游 (东方财富) 直连失败时才用代理, 大部分数据其实直连就行
+    - 多源 fetch (按顺序) 让任一 GitHub 源挂了也不影响整体可用性
+    """
+    SOURCES = [
+        ("TheSpeedX", "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"),
+        ("monosans", "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt"),
+    ]
+
+    def __init__(self):
         self.proxies: List[str] = []
         self.lock = threading.Lock()
         self.last_fetch_time = 0
-        self.min_interval = 10  # 限制请求频率，防止 API 被封
+        self.min_interval = 30  # 30 秒频率限制 (GitHub raw 接近无限制, 但避免无谓刷)
+        self.max_pool_size = 100  # 池子上限, 多了反而 random 命中差
 
     def fetch_proxies(self):
-        """从青果网络 API 提取新的 IP 列表"""
+        """从多个开源免费代理源拉新 IP 列表 (按 SOURCES 顺序 fallback)"""
         now = time.time()
         if now - self.last_fetch_time < self.min_interval:
-            print("Skipping proxy fetch due to rate limit.", file=sys.stderr)
             return
 
-        try:
-            print(f"Fetching proxies from Qingguo API...", file=sys.stderr)
-            req = urllib.request.Request(self.api_url)
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                status_code = resp.getcode()
-                text = resp.read().decode('utf-8').strip()
-                
-            if status_code == 200:
-                # 如果返回了错误信息，例如包含 FAILED_OPERATION 或 code:
-                if "提取失败" in text or "FAILED" in text.upper():
-                    print(f"Qingguo API returned error: {text}", file=sys.stderr)
-                    return
-                
-                # 青果网络通常返回每行一个 IP:Port
-                lines = text.split('\n')
-                new_proxies = []
-                for line in lines:
-                    line = line.strip()
-                    if line and ':' in line:
-                        new_proxies.append(f"http://{line}")
-                
-                with self.lock:
-                    self.proxies.extend(new_proxies)
-                    # 去重并限制池大小
-                    self.proxies = list(set(self.proxies))[-50:]
-                    self.last_fetch_time = now
-                
-                print(f"Successfully fetched {len(new_proxies)} proxies from Qingguo. Pool size: {len(self.proxies)}", file=sys.stderr)
-            else:
-                print(f"Qingguo API request failed with status {status_code}", file=sys.stderr)
-        except Exception as e:
-            print(f"Failed to fetch proxies from Qingguo API: {e}", file=sys.stderr)
+        total_new = 0
+        for source_name, url in self.SOURCES:
+            try:
+                print(f"Fetching proxies from {source_name}...", file=sys.stderr)
+                req = urllib.request.Request(url, headers={'User-Agent': 'akshare-helper/1.0'})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    if resp.getcode() != 200:
+                        print(f"{source_name} returned status {resp.getcode()}", file=sys.stderr)
+                        continue
+                    text = resp.read().decode('utf-8', errors='ignore').strip()
+                    lines = text.split('\n')
+                    new_for_source = []
+                    for line in lines:
+                        line = line.strip()
+                        # 形如 "118.99.71.50:80" — 严格校验避免脏数据
+                        if line and re.match(r'^\d{1,3}(\.\d{1,3}){3}:\d{1,5}$', line):
+                            new_for_source.append(f"http://{line}")
+
+                    with self.lock:
+                        # 加入池子 + 去重 + 取最新 N 个
+                        all_proxies = self.proxies + new_for_source
+                        # 用 list(dict.fromkeys(...)) 保持插入顺序去重
+                        self.proxies = list(dict.fromkeys(all_proxies))[-self.max_pool_size:]
+                    total_new += len(new_for_source)
+                    print(f"{source_name}: +{len(new_for_source)} proxies", file=sys.stderr)
+            except Exception as e:
+                print(f"Failed to fetch from {source_name}: {e}", file=sys.stderr)
+                continue
+
+        self.last_fetch_time = now
+        print(f"Proxy pool refreshed: +{total_new} new, total {len(self.proxies)}", file=sys.stderr)
 
     def get_proxy(self) -> Optional[str]:
         """获取一个随机代理"""
         with self.lock:
-            if not self.proxies:
-                pass # 释放锁去抓取
-                
-        if not self.proxies:
+            has_any = bool(self.proxies)
+
+        if not has_any:
             self.fetch_proxies()
 
         with self.lock:
@@ -87,29 +102,32 @@ class QingguoProxyManager:
         with self.lock:
             if proxy in self.proxies:
                 self.proxies.remove(proxy)
-                print(f"Removed dead proxy: {proxy}. Remaining: {len(self.proxies)}", file=sys.stderr)
+                # 池子见底自动 trigger 下次 get_proxy 时 fetch
+                if len(self.proxies) < 5:
+                    print(f"Pool low ({len(self.proxies)}), will refetch on next get", file=sys.stderr)
+                    self.last_fetch_time = 0
 
-# 初始化青果代理管理器
-QINGGUO_API_URL = "https://share.proxy.qg.net/get?key=AB85550D&num=15&area=&isp=0&format=txt&seq=\\r\\n&distinct=false"
-proxy_manager = QingguoProxyManager(QINGGUO_API_URL)
+
+# Batch AZ: 替换原 QingguoProxyManager (API 已下线)
+proxy_manager = FreeProxyManager()
 
 # 当前正在使用的代理
 _current_proxy = None
 
 def update_proxy(force_new=False):
-    """更新代理，优先使用青果网络"""
+    """更新代理，优先使用免费开源代理源 (Batch AZ)"""
     global _current_proxy
-    
-    # 优先从青果网络获取
+
+    # 优先从免费源获取
     new_proxy = proxy_manager.get_proxy()
-    
+
     if new_proxy:
         _current_proxy = new_proxy
         os.environ["http_proxy"] = new_proxy
         os.environ["https_proxy"] = new_proxy
-        print(f"Using Qingguo proxy: {new_proxy}", file=sys.stderr)
+        print(f"Using free proxy: {new_proxy}", file=sys.stderr)
         return True
-        
+
     return False
 
 def clear_proxy():
