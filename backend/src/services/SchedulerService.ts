@@ -6009,6 +6009,48 @@ class SchedulerService {
             ).substring(0, 200)}`
           );
         }
+      } else if (task.type === 'SHAREHOLDER_COUNT_SYNC') {
+        // BH-3 (2026-06-23): 周三 02:00 全市场 sync 股东户数 (修 shareholder_concentration std<0.10 真因)
+        // 跟 BH-2 (ANALYST_FORECAST_SYNC) 同 spawnSync pattern, env 显式 pass (BC-5)
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { spawnSync: spawnSyncSC } = require('child_process');
+        const pathSC = require('path');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const scriptSC = pathSC.resolve(__dirname, '..', 'scripts', 'sync-shareholder-count.js');
+        const argsSC = [scriptSC, '--all', '--interval-ms=200'];
+        if (parameters.force) argsSC.push('--force');
+        const t0SC = Date.now();
+        const rSC = spawnSyncSC('/usr/bin/node', argsSC, {
+          cwd: pathSC.resolve(__dirname, '..', '..'),
+          encoding: 'utf-8',
+          timeout: 5 * 60 * 60_000, // 5h 上限 (5500 票 × 3s = ~4h)
+          maxBuffer: 128 * 1024 * 1024,
+          env: { ...process.env },
+        });
+        const elapsedSC = ((Date.now() - t0SC) / 1000).toFixed(1);
+        const okSC = rSC.status === 0;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: 1,
+          completed_items: okSC ? 1 : 0,
+          failed_items: okSC ? 0 : 1,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: okSC ? null : (rSC.stderr || '').substring(0, 500),
+          result_summary: {
+            scenario: 'shareholder_count_sync',
+            elapsed_seconds: Number(elapsedSC),
+            status: okSC ? 'SUCCESS' : 'FAILED',
+          },
+        });
+        if (okSC) {
+          logger.info(`[SHAREHOLDER_COUNT_SYNC] done in ${elapsedSC}s`);
+        } else {
+          logger.warn(
+            `[SHAREHOLDER_COUNT_SYNC] failed status=${rSC.status} after ${elapsedSC}s: ${(
+              rSC.stderr || ''
+            ).substring(0, 200)}`
+          );
+        }
       } else if (task.type === 'FEEDBACK_REVIEW_SWEEP') {
         // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环 cron 入口.
         // 每 30 分钟扫 status='pending' 且 (reviewed_at IS NULL OR < now-ageHours) 的反馈,

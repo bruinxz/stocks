@@ -131,6 +131,18 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '周一 03:00 全市场 sync 分析师研报 (AKShare stock_research_report_em). 解决 analyst_consensus factor std<0.02 真因.',
   },
+  // BH-3 (2026-06-23): 股东户数全市场 sync — 真因 shareholder_counts 表只有 48 票
+  // (factor effective 仅 38 票, std=0.0818 偏低). 与 BH-2 (analyst) 同款"一次性 backfill
+  // 后无 cron"问题. 周三 02:00 错峰 (避开 ANALYST_FORECAST_SYNC 周一 03:00).
+  // CLI 内置 skip-existing, 5500 票 × ~3s = ~4h.
+  {
+    type: 'SHAREHOLDER_COUNT_SYNC',
+    category: 'data_sync',
+    owner: 'data',
+    recommendedCron: '0 2 * * 3',
+    description:
+      '周三 02:00 全市场 sync 股东户数 (AKShare stock_zh_a_gdhs_detail_em). 解决 shareholder_concentration factor std<0.10 真因.',
+  },
   {
     type: 'LIMIT_UP_SYNC',
     category: 'data_sync',
