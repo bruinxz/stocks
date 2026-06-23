@@ -247,7 +247,9 @@ export class ETFFlowSyncService {
       };
     } catch (error) {
       const message = (error as Error).message;
-      logger.error(`ETFFlow syncDate(${date}) failed: ${message}`);
+      // BI-3 (2026-06-23): ETF sync 是 daily cron, 失败次日重试. error 字段已返
+      // SyncDateResult.error 给 caller, log 降 warn 减少 error.log noise.
+      logger.warn(`ETFFlow syncDate(${date}) failed: ${message}`);
       return {
         trade_date: date,
         fetched: 0,
