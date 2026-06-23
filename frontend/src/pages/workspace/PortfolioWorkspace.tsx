@@ -242,6 +242,16 @@ const PortfolioWorkspace: React.FC = () => {
         : 0;
     const annualizedReturnPct = annualizeReturnPct(snapshots);
     const sharpe = computeSharpeRatio(dailyReturns);
+    // Batch BG (2026-06-23): 样本充分度 — 用户要"统计样本积累"指标判断 sharpe 是否可信
+    // 业界经验: < 20 个交易日数据 sharpe 噪声极大不可信; 60+ 才有意义; 252 (1 年) 正经.
+    const sampleDays = snapshots.length;
+    const sampleConfidence: 'low' | 'medium' | 'high' =
+      sampleDays < 20 ? 'low' : sampleDays < 60 ? 'medium' : 'high';
+    // 胜率 = 上涨日 / 总日数 (粗略, 更准是 per-trade winrate 但需 close trade 数据)
+    const winRate =
+      dailyReturns.length > 0
+        ? (dailyReturns.filter(r => r > 0).length / dailyReturns.length) * 100
+        : 0;
     return {
       positionCount: positions.length,
       totalValue,
@@ -251,6 +261,9 @@ const PortfolioWorkspace: React.FC = () => {
       maxDrawdownPct,
       totalReturnPct,
       annualizedReturnPct,
+      sampleDays,
+      sampleConfidence,
+      winRate,
       sharpe,
     };
   }, [portfolioData, snapshots]);
@@ -1242,6 +1255,9 @@ interface EquityCurveTabProps {
     sharpe: number;
     maxDrawdownPct: number;
     monthReturnPct: number;
+    sampleDays: number;
+    sampleConfidence: 'low' | 'medium' | 'high';
+    winRate: number;
   };
 }
 
@@ -1424,6 +1440,51 @@ const EquityCurveTab: React.FC<EquityCurveTabProps> = ({ snapshots, kpis }) => {
               precision={2}
               suffix="%"
               valueStyle={{ color: pnlColor(kpis.monthReturnPct) }}
+            />
+          </Col>
+        </Row>
+        {/* Batch BG (2026-06-23): 样本充分度 + 胜率 — 让用户判断 sharpe 可信度 */}
+        <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+          <Col xs={12} sm={8} md={6}>
+            <Statistic
+              title={
+                <Tooltip title="夏普率统计意义需 60+ 个交易日, 当前数据点不足时夏普可能是 lucky 也可能 unlucky">
+                  <span>统计样本 (交易日) ⓘ</span>
+                </Tooltip>
+              }
+              value={kpis.sampleDays}
+              suffix="日"
+              valueStyle={{
+                color:
+                  kpis.sampleConfidence === 'high'
+                    ? '#3f8600'
+                    : kpis.sampleConfidence === 'medium'
+                      ? '#fa8c16'
+                      : '#cf1322',
+              }}
+            />
+            <div style={{ fontSize: 11, color: '#999', marginTop: 4 }}>
+              {kpis.sampleConfidence === 'high'
+                ? '✓ 样本充足, 指标可信'
+                : kpis.sampleConfidence === 'medium'
+                  ? '⚠ 样本中等 (建议 60+ 日)'
+                  : '⚠ 样本不足 < 20 日, 指标不可信'}
+            </div>
+          </Col>
+          <Col xs={12} sm={8} md={6}>
+            <Statistic
+              title={
+                <Tooltip title="日级胜率 — 上涨日数 / 总日数 (粗略). 业界 > 55% 算合格策略.">
+                  <span>日级胜率 ⓘ</span>
+                </Tooltip>
+              }
+              value={kpis.winRate}
+              precision={1}
+              suffix="%"
+              valueStyle={{
+                color:
+                  kpis.winRate >= 55 ? '#3f8600' : kpis.winRate >= 45 ? undefined : '#cf1322',
+              }}
             />
           </Col>
         </Row>
