@@ -90,14 +90,21 @@ export const REALTIME_ALERT_CHANNELS = Object.freeze({
 export type RealtimeAlertChannel =
   (typeof REALTIME_ALERT_CHANNELS)[keyof typeof REALTIME_ALERT_CHANNELS];
 
-/** 30 分钟时间窗 — 同 signature dedup 阈值（AC "30 分钟内只推一次"）。 */
-export const REALTIME_ALERT_DEDUP_WINDOW_MS = 30 * 60 * 1000;
+/** 60 分钟时间窗 — 同 signature dedup 阈值 (Batch BF-1: 升级到 1h 防告警风暴).
+ *  原版 30 min, 用户要求 "同一 symbol + level 1 小时内最多推 1 次" 防凌晨告警风暴.
+ *  message_hash 仍在 signature 里 → 升级告警 (drawdown 10% → 15%) 依然能突破 dedup. */
+export const REALTIME_ALERT_DEDUP_WINDOW_MS = 60 * 60 * 1000;
 
 /** LRU dedup buffer 上限 — 与 BlackSwanWatchdog / EarningsForecastWatcher 一致 200。 */
 export const REALTIME_ALERT_SEEN_LRU_LIMIT = 200;
 
-/** 只对 level=HIGH 触发（MEDIUM/LOW 走 cron 聚合）。 */
+/** 只对 level=HIGH / CRITICAL 触发 (MEDIUM/LOW 走 cron 聚合).
+ *  Batch BF-1 (2026-06-23): 加 CRITICAL — 之前 hook 只对 HIGH 触发, CRITICAL 一条都不推. */
 export const REALTIME_ALERT_TRIGGER_LEVEL = 'HIGH';
+export const REALTIME_ALERT_TRIGGER_LEVELS: ReadonlyArray<string> = Object.freeze([
+  'HIGH',
+  'CRITICAL',
+]);
 
 /** 阿里云 SMS 模板 / 签名 env 名 */
 export const SMS_TEMPLATE_RISK_ALERT_ENV = 'ALIYUN_SMS_TEMPLATE_RISK_ALERT';
@@ -371,8 +378,15 @@ export function buildRiskAlertFeishuCard(payload: RealtimeAlertCardPayload): {
   };
 } {
   const level = String(payload.level || '').toUpperCase();
-  // HIGH=红, MEDIUM=橙(orange), LOW/其他=灰(grey)
-  const headerTemplate = level === 'HIGH' ? 'red' : level === 'MEDIUM' ? 'orange' : 'grey';
+  // CRITICAL=红 (BF-1 加; 与 HIGH 同款最高视觉强度), HIGH=红, MEDIUM=橙(orange), LOW/其他=灰(grey)
+  const headerTemplate =
+    level === 'CRITICAL'
+      ? 'red'
+      : level === 'HIGH'
+        ? 'red'
+        : level === 'MEDIUM'
+          ? 'orange'
+          : 'grey';
   const elements: any[] = [];
   // Section 1: header line — symbol + name
   elements.push({
@@ -446,7 +460,15 @@ export function buildRiskAlertFeishuCard(payload: RealtimeAlertCardPayload): {
 export function buildRiskAlertEmail(payload: RealtimeAlertCardPayload): EmailPayload {
   const level = String(payload.level || '').toUpperCase();
   const subject = `【${level || '风控'}告警】${payload.symbol} ${payload.name}`;
-  const levelColor = level === 'HIGH' ? '#cf1322' : level === 'MEDIUM' ? '#fa8c16' : '#999999';
+  // BF-1: CRITICAL = 更深红 (#9c0011) 区别 HIGH (#cf1322)
+  const levelColor =
+    level === 'CRITICAL'
+      ? '#9c0011'
+      : level === 'HIGH'
+        ? '#cf1322'
+        : level === 'MEDIUM'
+          ? '#fa8c16'
+          : '#999999';
   const html = `
 <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; padding: 16px; color: #333">
   <h2 style="color: ${levelColor}; margin: 0 0 12px">🚨 ${level || ''} 风控告警</h2>
@@ -738,10 +760,12 @@ export class RealtimeAlertDispatcher {
     };
 
     // ---- (1) level gate -----------------------------------------------------
-    if (String(input.level || '').toUpperCase() !== REALTIME_ALERT_TRIGGER_LEVEL) {
+    // Batch BF-1 (2026-06-23): 接受 HIGH + CRITICAL 两档触发实时推送.
+    const normalizedLevel = String(input.level || '').toUpperCase();
+    if (!REALTIME_ALERT_TRIGGER_LEVELS.includes(normalizedLevel)) {
       return {
         ...baseResult,
-        skip_reason: `level=${input.level} 非 ${REALTIME_ALERT_TRIGGER_LEVEL}，跳过实时推送`,
+        skip_reason: `level=${input.level} 不在 ${REALTIME_ALERT_TRIGGER_LEVELS.join('/')}, 跳过实时推送`,
       };
     }
 

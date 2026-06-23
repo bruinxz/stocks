@@ -248,7 +248,7 @@ function makeInput(overrides: Partial<RealtimeAlertInput> = {}): RealtimeAlertIn
   assertEqual('REALTIME_ALERT_CHANNELS.FEISHU', REALTIME_ALERT_CHANNELS.FEISHU, 'feishu');
   assertEqual('REALTIME_ALERT_CHANNELS.EMAIL', REALTIME_ALERT_CHANNELS.EMAIL, 'email');
   assertEqual('REALTIME_ALERT_CHANNELS.SMS', REALTIME_ALERT_CHANNELS.SMS, 'sms');
-  assertEqual('dedup window 30 min', REALTIME_ALERT_DEDUP_WINDOW_MS, 30 * 60 * 1000);
+  assertEqual('dedup window 60 min', REALTIME_ALERT_DEDUP_WINDOW_MS, 60 * 60 * 1000);
   assertEqual('lru limit 200', REALTIME_ALERT_SEEN_LRU_LIMIT, 200);
   assertEqual('trigger level HIGH', REALTIME_ALERT_TRIGGER_LEVEL, 'HIGH');
 
@@ -300,14 +300,14 @@ function makeInput(overrides: Partial<RealtimeAlertInput> = {}): RealtimeAlertIn
   const nowMs = 1_000_000_000_000;
   assertEqual('在窗', isWithinDedupWindow({ signature: 's', pushed_at_ms: nowMs - 10_000 }, nowMs), true);
   assertEqual(
-    '出窗（恰好 30min）',
-    isWithinDedupWindow({ signature: 's', pushed_at_ms: nowMs - 30 * 60 * 1000 }, nowMs),
+    '出窗（恰好 60min）',
+    isWithinDedupWindow({ signature: 's', pushed_at_ms: nowMs - 60 * 60 * 1000 }, nowMs),
     false
   );
   assertEqual(
-    '出窗（30min + 1s）',
+    '出窗（60min + 1s）',
     isWithinDedupWindow(
-      { signature: 's', pushed_at_ms: nowMs - 30 * 60 * 1000 - 1000 },
+      { signature: 's', pushed_at_ms: nowMs - 60 * 60 * 1000 - 1000 },
       nowMs
     ),
     false
@@ -692,7 +692,7 @@ function makeInput(overrides: Partial<RealtimeAlertInput> = {}): RealtimeAlertIn
   assertEqual('sms templateCode 空', smsParams2.templateCode, '');
 
   // =========================================================================
-  console.log('\n[10] dispatch e2e: level !== HIGH → skipped...');
+  console.log('\n[10] dispatch e2e: level !== HIGH/CRITICAL → skipped...');
   const ds10 = new FakeDataSource({
     users: new Map([[1, { username: 'u1', config: configFull() }]]),
   });
@@ -705,6 +705,15 @@ function makeInput(overrides: Partial<RealtimeAlertInput> = {}): RealtimeAlertIn
 
   const r10b = await svc10.dispatch(makeInput({ level: 'low' }));
   assertEqual('LOW (case) skipped', r10b.status, REALTIME_ALERT_STATUS.SKIPPED);
+
+  // Batch BF-1 (2026-06-23): CRITICAL 应该也触发 (与 HIGH 同款)
+  const r10c = await svc10.dispatch(makeInput({ level: 'CRITICAL' }));
+  assertEqual('CRITICAL not skipped (BF-1)', r10c.status, REALTIME_ALERT_STATUS.SENT);
+  assertEqual('CRITICAL sent_any=true', r10c.sent_any, true);
+  const r10d = await svc10.dispatch(
+    makeInput({ level: 'critical', symbol: 'sh.000002' })
+  );
+  assertEqual('critical (lowercase) 也触发', r10d.status, REALTIME_ALERT_STATUS.SENT);
 
   // =========================================================================
   console.log('\n[11] dispatch e2e: 用户不存在 → skipped...');
@@ -789,10 +798,10 @@ function makeInput(overrides: Partial<RealtimeAlertInput> = {}): RealtimeAlertIn
   assertEqual('deduped 不写 dedup', ds13.saveSeenCalls.length, 0);
 
   // =========================================================================
-  console.log('\n[14] dispatch e2e: 出 30 min 窗口 → 重新发...');
+  console.log('\n[14] dispatch e2e: 出 60 min 窗口 → 重新发...');
   const seeded14 = new Map<number, RealtimeAlertSeenRecord[]>();
   seeded14.set(1, [
-    { signature: 'position_limit::600519::HIGH::d5e0cb68', pushed_at_ms: dedupNow - 31 * 60 * 1000 },
+    { signature: 'position_limit::600519::HIGH::d5e0cb68', pushed_at_ms: dedupNow - 61 * 60 * 1000 },
   ]);
   const ds14 = new FakeDataSource({
     users: new Map([[1, { username: 'u1', config: configFull() }]]),

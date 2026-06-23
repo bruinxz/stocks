@@ -131,8 +131,13 @@ export class RiskAlert extends Model {
         );
       }
 
-      // 既有 US-067 RealtimeAlertDispatcher (飞书/邮件/短信), 仅 HIGH 触发
-      if (String(instance.level || '').toUpperCase() !== 'HIGH') return;
+      // 既有 US-067 RealtimeAlertDispatcher (飞书/邮件/短信), HIGH + CRITICAL 触发
+      // Batch BF-1 (2026-06-23): 加 CRITICAL — 之前只 HIGH 触发, 类似 MarketRegimeAlertService
+      // 用的 level='CRITICAL' 一条都不推, 用户原话"凌晨出问题没人知道". 推送通道复用
+      // dispatcher 4 channel (Lark webhook / 邮件 / 系统 admin 通道); dedup 已经升级到
+      // 1h (REALTIME_ALERT_DEDUP_WINDOW_MS = 60min) 防告警风暴.
+      const lvl = String(instance.level || '').toUpperCase();
+      if (lvl !== 'HIGH' && lvl !== 'CRITICAL') return;
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { realtimeAlertDispatcher } = require('../services/RealtimeAlertDispatcher');
       realtimeAlertDispatcher.fireAndForget({
@@ -147,6 +152,37 @@ export class RiskAlert extends Model {
           ? new Date(instance.created_at).toISOString()
           : new Date().toISOString(),
       });
+
+      // Batch BF-1 (2026-06-23): 额外触发 system-level admin 推送 (Lark OPS 群 +
+      // admin email) — RealtimeAlertDispatcher 走 per-user notification config,
+      // 但 prod 多数 user `feishu.enabled=false` → 仍然 0 条推送. SystemAdminAlertPusher
+      // 走 env 配置 (OPS_ALERT_FEISHU_WEBHOOK / ADMIN_ALERT_EMAILS) 兜底, 凌晨出
+      // 真问题时运维群一定收得到. 1h dedup 防告警风暴.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const sysMod = require('../services/SystemAdminAlertPusher');
+        const triggered = instance.created_at
+          ? new Date(instance.created_at).toISOString()
+          : new Date().toISOString();
+        const frontend = process.env.FRONTEND_BASE_URL || 'http://localhost:3000';
+        const dedupKey = `risk:${instance.symbol}:${lvl}`;
+        const truncatedMsg = String(instance.message || '').slice(0, 1500);
+        sysMod.pushSystemAdminAlertFireAndForget({
+          dedup_key: dedupKey,
+          level: lvl as 'HIGH' | 'CRITICAL',
+          title: `[${lvl}] ${instance.symbol} ${instance.name} 风控告警`,
+          body_markdown:
+            `**用户**: ${instance.user_id}\n` +
+            `**触发规则**: ${instance.rule_id || 'unknown'}\n` +
+            `**告警详情**:\n${truncatedMsg}`,
+          triggered_at: triggered,
+          deeplink: `${frontend}/workspace/portfolio?ai=${encodeURIComponent(instance.symbol)}&alert=${instance.id}`,
+        });
+      } catch (sysErr: any) {
+        logger.warn(
+          `[RiskAlert.afterCreate] SystemAdminAlertPusher 异常 (吞错保护): ${sysErr?.message || sysErr}`
+        );
+      }
     } catch (err: any) {
       // 顶层吞错 — model hook 抛出会让 RiskAlert.create() 失败，那是事故级 regression
       logger.warn(
