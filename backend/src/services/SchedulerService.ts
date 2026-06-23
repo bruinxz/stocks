@@ -5855,6 +5855,71 @@ class SchedulerService {
             }`
           );
         }
+      } else if (task.type === 'DATA_FRESHNESS_CHECK') {
+        // BF-3 (2026-06-23): 工作日 18:30 检查 5 项数据陈旧度 + 命中阈值推 Lark + 写 RiskAlert MEDIUM
+        // fail-OPEN: runDataFreshnessCheck 内部 per-item try/catch, 整体不抛.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          runDataFreshnessCheck,
+          buildFreshnessReportMarkdown,
+          PRODUCTION_DATA_FRESHNESS_CHECK_DATA_SOURCE,
+        } = require('./DataFreshnessCheckService');
+        const { RiskAlert } = require('../models/RiskAlert');
+        const { pushSystemAdminAlert } = require('./SystemAdminAlertPusher');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const report = await runDataFreshnessCheck(PRODUCTION_DATA_FRESHNESS_CHECK_DATA_SOURCE);
+        const hasFail = report.fail_count > 0;
+        const hasWarn = report.warn_count > 0;
+        // 命中阈值 → 写 RiskAlert + 推 Lark
+        if (hasFail || hasWarn) {
+          const level = hasFail ? 'MEDIUM' : 'LOW';
+          try {
+            await RiskAlert.create({
+              user_id: 1, // system admin
+              symbol: 'SYSTEM:DATA_FRESHNESS',
+              name: `数据陈旧度告警 ${report.fail_count}f/${report.warn_count}w`,
+              level,
+              rule_id: 'data_freshness',
+              message: report.items
+                .filter((i: any) => i.status !== 'ok')
+                .map((i: any) => `[${i.status.toUpperCase()}] ${i.display_name}: ${i.detail}`)
+                .join('\n'),
+              metadata: { report },
+            });
+          } catch (e: any) {
+            logger.warn(`[DATA_FRESHNESS_CHECK] write RiskAlert failed: ${e?.message ?? e}`);
+          }
+          // 推 Lark (1h dedup)
+          try {
+            const md = buildFreshnessReportMarkdown(report);
+            await pushSystemAdminAlert({
+              dedup_key: `data_freshness:${report.trade_date}`,
+              level: hasFail ? 'HIGH' : 'WARN',
+              title: `📊 数据陈旧度告警 - ${report.fail_count} fail / ${report.warn_count} warn`,
+              body_markdown: md.substring(0, 1900),
+              triggered_at: new Date().toISOString(),
+            });
+          } catch (e: any) {
+            logger.warn(`[DATA_FRESHNESS_CHECK] push lark failed: ${e?.message ?? e}`);
+          }
+        }
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: report.items.length,
+          completed_items: report.ok_count,
+          failed_items: hasFail ? report.fail_count : 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'data_freshness_check',
+            ok: report.ok_count,
+            warn: report.warn_count,
+            fail: report.fail_count,
+            trade_date: report.trade_date,
+          },
+        });
+        logger.info(
+          `[DATA_FRESHNESS_CHECK] ok=${report.ok_count} warn=${report.warn_count} fail=${report.fail_count}`
+        );
       } else if (task.type === 'FEEDBACK_REVIEW_SWEEP') {
         // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环 cron 入口.
         // 每 30 分钟扫 status='pending' 且 (reviewed_at IS NULL OR < now-ageHours) 的反馈,

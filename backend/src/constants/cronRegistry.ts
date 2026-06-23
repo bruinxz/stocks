@@ -107,6 +107,18 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '工作日 18:00 拉前一交易日 30+ 行业 ETF 净流入 / 份额 (AKShare fund_etf_fund_daily_em + fund_etf_hist_em) → etf_creation_redemption',
   },
+  // BF-3 (2026-06-23): 数据陈旧度检查 - 工作日盘后 18:30 (ETF_FLOW_SYNC 后 30min, 让本日数据落库再检)
+  // 检 5 项: realtime_quotes 1h+ stale / daily_bars 不是 today / factor std=0 > 2 / cron FAILED / sentiment 陈旧
+  // 命中任一阈值 → RiskAlert MEDIUM + Lark OPS 群推 (1h dedup)
+  // fail-OPEN: 任一检查 throw → 仅 warn 不阻塞.
+  {
+    type: 'DATA_FRESHNESS_CHECK',
+    category: 'data_sync',
+    owner: 'data',
+    recommendedCron: '30 18 * * 1-5',
+    description:
+      '工作日 18:30 检查 5 项数据陈旧度 (RT 1h / daily_bars / factor std / cron FAILED / sentiment) → 命中阈值推 Lark + RiskAlert MEDIUM',
+  },
   {
     type: 'LIMIT_UP_SYNC',
     category: 'data_sync',
