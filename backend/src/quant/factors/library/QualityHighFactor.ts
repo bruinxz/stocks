@@ -78,8 +78,20 @@ import { FinancialReport } from '../../../models/FinancialReport';
 import { StockFundamentalFactor } from '../../../models/StockFundamentalFactor';
 import { stripSuffix, isFiniteNumber, lookbackStartDate } from './_helpers';
 
-/** 毛利率 5 年滑动窗口所需的最少有效观测数 */
-export const MIN_GROSS_MARGIN_OBSERVATIONS = 5;
+/**
+ * 毛利率滑动窗口所需的最少有效观测数 (BD-3 relax 2026-06-23).
+ *
+ * 历史值 = 5 (5 年标准差). BD-3 之前实际生产覆盖率: 全市场只 15 只股票有
+ * ≥ 5 个 distinct gross_margin 观测 (其余股票 1-4 个), 因子 effective=7.
+ *
+ * 真因: 当前 StockFundamentalFactor.gross_margin 只回填了 1-3 个季度 (~6-15 月),
+ * 大量股票 distinct dates < 5. 调到 3 (~3 季度) 后, 覆盖股票数从 15 → 100+,
+ * 实证下 3 个观测的 1/sd 仍能反映稳定性 (波动 vs 平稳 仍能区分), 噪音放大有限.
+ *
+ * 升级路径: 若未来 StockFundamentalFactor 回填 5+ 年财报历史, 调回 5 取得更
+ * 稳健的稳定性度量.
+ */
+export const MIN_GROSS_MARGIN_OBSERVATIONS = 3;
 /** 毛利率时序回看自然日窗口（5 年 + buffer 兜底） */
 export const GROSS_MARGIN_LOOKBACK_DAYS = 365 * 5;
 /** sd clamp 下限（% 单位）：5 年完全无变化（sd ≤ 0.05%）按 0.05 处理，

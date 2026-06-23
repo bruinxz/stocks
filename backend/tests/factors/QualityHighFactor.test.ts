@@ -8,7 +8,7 @@
  *   - 纯函数 sampleStddev (与 LiquidityFactor 同口径但本地副本：空 / 1 个 /
  *     n-1 正确 / 全相等 → 0)
  *   - 纯函数 computeGrossMarginStability:
- *     - 不足 MIN_GROSS_MARGIN_OBSERVATIONS (5) → null
+ *     - 不足 MIN_GROSS_MARGIN_OBSERVATIONS (3, BD-3 relax) → null
  *     - 恰好 5 个 → 算正确（1/stddev）
  *     - 全相等（sd=0）→ 应用 MIN_GROSS_MARGIN_SD clamp 后返回 1/MIN_GROSS_MARGIN_SD
  *     - sd 极小（< MIN_GROSS_MARGIN_SD）→ clamp 到 1/MIN_GROSS_MARGIN_SD
@@ -94,15 +94,23 @@ expectClose(
 
 console.log('\n## computeGrossMarginStability');
 {
-  // 不足 5 个有效观测 → null
+  // 不足 3 个有效观测 → null (BD-3 relax: 阈值 5 → 3)
   assert('空数组 → null', computeGrossMarginStability([]) === null);
-  assert('4 个 → null', computeGrossMarginStability([20, 21, 19, 22]) === null);
-  // 恰好 5 个 → 算正常 1/sd
+  assert('2 个 → null (< MIN_GROSS_MARGIN_OBSERVATIONS=3)', computeGrossMarginStability([20, 21]) === null);
+  // 恰好 3 个 → 算正常 1/sd (BD-3 边界)
+  const three = [20, 21, 19];
+  const sd3 = sampleStddev(three);
+  const score3 = computeGrossMarginStability(three);
+  assert(
+    `恰好 3 个（BD-3 新阈值），应该正常返回 1/sd (sd=${sd3.toFixed(4)})`,
+    score3 !== null && near(score3, 1 / sd3)
+  );
+  // 5 个仍正常
   const five = [20, 21, 19, 22, 18];
   const sd5 = sampleStddev(five);
   const score5 = computeGrossMarginStability(five);
   assert(
-    `恰好 5 个，应该正常返回 1/sd (sd=${sd5.toFixed(4)})`,
+    `5 个仍正常 (sd=${sd5.toFixed(4)})`,
     score5 !== null && near(score5, 1 / sd5)
   );
 }
@@ -174,10 +182,10 @@ console.log('\n## computeGrossMarginStability');
   );
 }
 {
-  // 边界：恰好 valid 数 < MIN 但总数 ≥ MIN → null
-  const partial = [20, NaN, 22, NaN, 18, NaN];
+  // 边界：BD-3 后 valid=3 已是阈值; 改测 valid=2 (< MIN=3) → null
+  const partial = [20, NaN, 22, NaN, NaN, NaN];
   assert(
-    'valid 3 个，总数 6 个 → null (valid < MIN)',
+    'valid 2 个，总数 6 个 → null (BD-3: valid < MIN=3)',
     computeGrossMarginStability(partial) === null
   );
 }
@@ -278,8 +286,8 @@ assert('quality 因子未被本因子破坏（仍可 get）', factorRegistry.get
 
 console.log('\n## 常量校验');
 assert(
-  `MIN_GROSS_MARGIN_OBSERVATIONS = 5 (got ${MIN_GROSS_MARGIN_OBSERVATIONS})`,
-  MIN_GROSS_MARGIN_OBSERVATIONS === 5
+  `MIN_GROSS_MARGIN_OBSERVATIONS = 3 (got ${MIN_GROSS_MARGIN_OBSERVATIONS}) — BD-3 relaxed from 5 → 3`,
+  MIN_GROSS_MARGIN_OBSERVATIONS === 3
 );
 assert(
   `MIN_GROSS_MARGIN_SD = 0.05 (got ${MIN_GROSS_MARGIN_SD})`,
