@@ -73,6 +73,22 @@ import { recordSchedulerTaskRun } from '../metrics/PrometheusRegistry';
 type TaskRunStatus = 'SUCCESS' | 'FAILED' | 'RUNNING';
 type TaskExecutionLogLike = TaskExecutionLog | null;
 
+/**
+ * Batch BF-2 (2026-06-23): 抽前 N 行 stack — cron 失败推 Lark 用.
+ * 兼容 Error 实例 / 普通 object / string. 完全 stack 太长 (lark card 2k 限制),
+ * 取前 5 行通常足够定位.
+ */
+function errorStackPreview(err: any, maxLines: number): string {
+  if (!err) return '';
+  const stack = typeof err === 'object' && err && err.stack ? String(err.stack) : '';
+  if (!stack) return '';
+  return stack
+    .split('\n')
+    .slice(0, Math.max(1, maxLines))
+    .map(line => line.replace(/^\s+/, ''))
+    .join('\n');
+}
+
 function compactRuntimeHealth(runtimeHealth: any) {
   if (!runtimeHealth) return null;
   return {
@@ -694,6 +710,42 @@ class SchedulerService {
         record_type: status === 'FAILED' ? '定时任务失败' : '定时任务完成',
         error,
       });
+    }
+
+    // Batch BF-2 (2026-06-23): cron 失败推 Lark + admin email — fire-and-forget,
+    // 1h dedup (同 task.type 1h 内最多 1 次). 用户原话 "凌晨出问题没人知道",
+    // 之前 markTaskFinished FAILED 只 logger.warn (error.log 沉默淹没); 现在系统级
+    // admin 路径 (env FEISHU_RECOMMENDATION_BOT_WEBHOOK / ADMIN_ALERT_EMAILS) 推一条.
+    // 不推 SUCCESS (太多噪声 — 每日数千次 success). 不推 RUNNING (中间态).
+    if (status === 'FAILED') {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const sysMod = require('./SystemAdminAlertPusher');
+        const stackPreview = errorStackPreview(error, 5);
+        sysMod.pushSystemAdminAlertFireAndForget({
+          dedup_key: `cron:${task.type}`,
+          // cron 一直失败超过 FAILURE_KILL_THRESHOLD 已经写 RiskAlert HIGH (走 BF-1
+          // 推 admin), 这里日常失败用 WARN 区分 (避免 OPS 群被 5 次连败前的每次失败刷屏).
+          level: 'WARN',
+          title: `[CRON FAIL] ${task.name} (${task.type})`,
+          body_markdown:
+            `**task_id**: ${task.id}\n` +
+            `**task.type**: ${task.type}\n` +
+            `**task.name**: ${task.name}\n` +
+            `**连续失败次数**: ${(task.consecutive_failure_count || 0) + 1}\n` +
+            `**失败时间**: ${new Date().toISOString()}\n` +
+            `**错误**:\n\`\`\`\n${error_message || '未知错误'}\n\`\`\`\n` +
+            (stackPreview ? `\n**Stack (前 5 行)**:\n\`\`\`\n${stackPreview}\n\`\`\`` : ''),
+          triggered_at: new Date().toISOString(),
+          trace_id: executionLog?.id ? `task_execution_log_id=${executionLog.id}` : undefined,
+        });
+      } catch (sysErr: any) {
+        logger.warn(
+          `[scheduler] markTaskFinished cron-failed pusher 异常 (吞错): ${
+            sysErr?.message || sysErr
+          }`
+        );
+      }
     }
   }
 
