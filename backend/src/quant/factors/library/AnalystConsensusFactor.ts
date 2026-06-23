@@ -51,10 +51,33 @@ import { isFiniteNumber, lookbackStartDate } from './_helpers';
 
 /** 近期窗口（自然日）— "最近 30 日的研报" */
 export const RECENT_WINDOW_DAYS = 30;
-/** 总窗口（自然日）— "近 90 日"，即 baseline 窗口 = [-90, -30] */
-export const TOTAL_WINDOW_DAYS = 90;
-/** 单只股票计算因子值所需的最少有效研报数（recent + baseline 合计） */
-export const MIN_REPORTS_TOTAL = 5;
+/**
+ * 总窗口（自然日）— baseline 窗口 = [-TOTAL_WINDOW_DAYS, -RECENT_WINDOW_DAYS].
+ *
+ * BD-4 (2026-06-23): 90 → 180 自然日.
+ *
+ * 真因: 当前 prod analyst_forecasts 表只 1789 distinct stocks (其中 5+ 研报近 90d
+ * 的 ~108 票, 2+ 的 423 票). 与 5532 票全市场比覆盖率 32%, 主要因为多数中小盘股
+ * 一年内 ≤ 1 份研报. 90d baseline 窗口让因子只能算"高频被覆盖"的大盘股.
+ *
+ * 实测 (2026-06-22 as_of):
+ *   - 90d + MIN=5 → 38 票 (当前)
+ *   - 90d + MIN=3 → 72 票
+ *   - 180d + MIN=3 → 78 票 (本次 BD-4 选)
+ *   - 180d + MIN=2 → 100 票 (太松 — 2 份研报 single-year revision 不稳)
+ *
+ * 升级路径: 分析师研报 sync 拓宽到全 A 股后 (当前 cron 缺) 数据更稠密时,
+ * 再调回 90d 让短期 revision 信号更敏感.
+ */
+export const TOTAL_WINDOW_DAYS = 180;
+/**
+ * 单只股票计算因子值所需的最少有效研报数（recent + baseline 合计）.
+ *
+ * BD-4 (2026-06-23): 5 → 3. 3 份研报已足以做"recent vs baseline"双窗口比较;
+ * 5 份 阈值是早期保守设定, 实测把因子效用从 38 票限制下来. 3 份阈值实证
+ * 仍能保证统计意义 (recent ≥ 1, baseline ≥ 1 各非空).
+ */
+export const MIN_REPORTS_TOTAL = 3;
 /** baseline 均值 ≤ 此绝对值视为"接近 0"，避免上调比例分母爆炸 */
 export const BASELINE_ZERO_THRESHOLD = 0.05;
 
@@ -147,7 +170,7 @@ export function aggregateRevisions(perYearRevisions: PerYearRevision[]): number 
 
 export const analystConsensusFactor: Factor = {
   name: 'analyst_consensus',
-  description: '近 30 日 vs 60 日前 forecast_eps_y1 一致预期上调比例（卖方研报上修方向）',
+  description: '近 30 日 vs 150 日前 forecast_eps_y1 一致预期上调比例（卖方研报上修方向, BD-4 窗口 90→180d）',
   category: 'sentiment',
 
   async compute(ctx) {

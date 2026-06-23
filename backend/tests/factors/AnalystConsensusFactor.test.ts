@@ -367,8 +367,8 @@ assert(
 
 console.log('\n## 常量');
 assert('RECENT_WINDOW_DAYS=30', RECENT_WINDOW_DAYS === 30);
-assert('TOTAL_WINDOW_DAYS=90', TOTAL_WINDOW_DAYS === 90);
-assert('MIN_REPORTS_TOTAL=5', MIN_REPORTS_TOTAL === 5);
+assert('TOTAL_WINDOW_DAYS=180 (BD-4 relaxed from 90)', TOTAL_WINDOW_DAYS === 180);
+assert('MIN_REPORTS_TOTAL=3 (BD-4 relaxed from 5)', MIN_REPORTS_TOTAL === 3);
 assert('BASELINE_ZERO_THRESHOLD=0.05', BASELINE_ZERO_THRESHOLD === 0.05);
 
 console.log('\n## 空 universe 路径不爆');
