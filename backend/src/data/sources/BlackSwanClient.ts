@@ -97,8 +97,42 @@ export class BlackSwanClient {
       logger.info(`ST stocks: ${count}`);
       return Array.isArray(rows) ? rows : [];
     } catch (error) {
-      logger.error(`Failed to fetch ST stocks: ${(error as Error).message}`);
-      throw error;
+      // BI-1 (2026-06-23): EastMoney 直连被反爬封 + 免费代理 60-90% 失效率 →
+      // get_st_stocks 反复 timeout. Fallback 用本地 Stock 表 name LIKE 'ST%' 兜底.
+      // 数据来源: 周一 SYNC_ALL_STOCKS cron 更新, 数据滞后 ≤ 1 周 (新晋 ST 也是 T+1 公告).
+      // ST 名册变化每周 < 5 票, 滞后影响小; 比"全无 ST 数据"安全得多.
+      const errMsg = (error as Error).message;
+      logger.warn(
+        `Failed to fetch ST stocks from EastMoney (${errMsg}); falling back to local Stock table`
+      );
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { Stock } = require('../../models/Stock');
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { Op } = require('sequelize');
+        const stocks = (await Stock.findAll({
+          where: {
+            is_listed: true,
+            [Op.or]: [{ name: { [Op.like]: 'ST%' } }, { name: { [Op.like]: '*ST%' } }],
+          },
+          attributes: ['symbol', 'name'],
+          raw: true,
+        })) as Array<{ symbol: string; name: string }>;
+        logger.info(`ST stocks (local fallback): ${stocks.length}`);
+        return stocks.map(s => ({
+          stock_code: s.symbol.replace(/^(sh|sz|bj)\./i, ''),
+          stock_name: s.name,
+          latest_price: null,
+          change_pct: null,
+          raw_payload: { source: 'local_fallback', symbol: s.symbol },
+        }));
+      } catch (fallbackErr) {
+        logger.error(
+          `Local Stock fallback also failed: ${(fallbackErr as Error).message}; returning empty`
+        );
+        // 不再 throw — fail-OPEN: BlackSwanWatchdog 看到空列表 = "今日无 ST 候选"
+        return [];
+      }
     }
   }
 
@@ -115,8 +149,17 @@ export class BlackSwanClient {
       logger.info(`Suspended stocks: ${count}`);
       return Array.isArray(rows) ? rows : [];
     } catch (error) {
-      logger.error(`Failed to fetch suspended stocks: ${(error as Error).message}`);
-      throw error;
+      // BI-1 (2026-06-23): 同 fetchSTList — EastMoney 反爬时返空而不抛
+      // Suspended 列表本地没替代源 (停牌是 T+0 实时信息, 我们 sync 不到),
+      // 但 fail-OPEN 返 [] 让 BlackSwanWatchdog 按 "今日无停牌候选" 处理,
+      // 避免 cron 每 30min 刷 error log + 不影响 paper trading 主流程.
+      // 真实保护仍在: pre-trade 时 PaperTradingFacade 用 daily_bars.volume==0
+      // 判停牌, 而不是依赖此 watchdog.
+      const errMsg = (error as Error).message;
+      logger.warn(
+        `Failed to fetch suspended stocks from EastMoney (${errMsg}); returning empty (fail-OPEN)`
+      );
+      return [];
     }
   }
 
