@@ -18,8 +18,16 @@ import { logger } from '../../utils/logger';
 export { AUTONOMOUS_PORTFOLIO_NAME, DEFAULT_AUTONOMOUS_INITIAL_CAPITAL, QUANT_ONLY_PORTFOLIO_NAME };
 
 function sendError(res: Response, error: any, fallbackMessage: string) {
-  logger.error(fallbackMessage, error);
   const status = error?.statusCode || 500;
+  // BC-3-r2 (2026-06-23): 4xx 是用户输入/权限/资源缺失的业务错误, 不应污染
+  // error.log (prod error 看板). 5xx (默认) 是真异常, 保持 error 级别.
+  // 之前: '未找到模拟盘 (或无权访问)' (404) 等业务错误近 3 天累计 49 条噪声.
+  // 对照 BC-2-r1 (autoBuyFromSignals 持仓上限 warn 降级) 同款分级.
+  if (status >= 400 && status < 500) {
+    logger.warn(`${fallbackMessage} ${error?.message || ''} (status=${status})`);
+  } else {
+    logger.error(fallbackMessage, error);
+  }
   return res.status(status).json({ success: false, message: error?.message || fallbackMessage });
 }
 
