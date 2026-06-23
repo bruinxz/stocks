@@ -3428,15 +3428,24 @@ class PaperTradingAutomationService {
         }
       } catch (createTradeErr: any) {
         // 修复 CRITICAL #6: per-signal isolation. 单笔失败不阻塞剩余信号.
-        logger.error(
-          `[autoBuyFromSignals] signal ${signal.id} (${symbol}) createBuyTrade 失败: ${
-            createTradeErr?.message || createTradeErr
-          }`
-        );
+        // BC-2 (2026-06-23): 业务限制 (持仓上限/可用资金不足/单笔金额过小/被风控拦)
+        // 不是 error — 真 error log 被淹. logger 改用 warn (业务跳过) vs error (真异常).
+        const msg = String(createTradeErr?.message || createTradeErr || '');
+        const isBusinessSkip =
+          msg.includes('持仓数量达到上限') ||
+          msg.includes('可用资金不足') ||
+          msg.includes('单笔金额过小') ||
+          msg.includes('已经持有') ||
+          msg.includes('风险') ||
+          msg.includes('限制');
+        const logLine = `[autoBuyFromSignals] signal ${signal.id} (${symbol}) createBuyTrade 失败: ${msg}`;
+        if (isBusinessSkip) {
+          logger.warn(logLine);
+        } else {
+          logger.error(logLine);
+        }
         try {
-          await skip(
-            `下单失败 (per-signal isolation): ${createTradeErr?.message || createTradeErr}`
-          );
+          await skip(`下单失败 (per-signal isolation): ${msg}`);
         } catch {
           /* skip 自身失败也吞 */
         }
