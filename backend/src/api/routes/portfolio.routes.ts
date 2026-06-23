@@ -237,7 +237,10 @@ router.get(
  *       404: { description: portfolio / 当日报告不存在 }
  */
 router.get(
-  '/:id([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/attribution/daily',
+  // BJ-3 (2026-06-23): /attribution/daily 走 PaperTradingPortfolio (integer id),
+  // 不是 PortfolioSimulation (UUID). 接 integer 或 UUID 都行 — 让 controller 内部
+  // parseInt 自己判 (非法 → 400).
+  '/:id(\\d+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/attribution/daily',
   authController.authenticate,
   portfolioController.getDailyAttribution
 );
