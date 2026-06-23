@@ -240,12 +240,12 @@ console.log('\n## computeRevisionPerYear() — 数据卫生 (缺数据 / 越界�
   }
 }
 
-// 超出总窗口 (> 90 天前) 的 record 跳过
+// 超出总窗口 (> 180 天前, BD-4 后) 的 record 跳过
 {
   const reports: ForecastInput[] = [
-    // 100 天前 — 超出总窗口
+    // 200 天前 — 超出 BD-4 后的 180 天总窗口
     {
-      report_date: isoDateMinusDays(new Date(`${AS_OF}T00:00:00Z`), 100),
+      report_date: isoDateMinusDays(new Date(`${AS_OF}T00:00:00Z`), 200),
       forecast_eps_y1: 999.0,
       forecast_year_y1: 2026,
     },
@@ -258,7 +258,7 @@ console.log('\n## computeRevisionPerYear() — 数据卫生 (缺数据 / 越界�
   ];
   const result = computeRevisionPerYear(reports, AS_OF);
   assert(
-    '超窗 100 天前的极端值被剔除 → revision 不受 999 污染',
+    '超窗 200 天前的极端值被剔除 → revision 不受 999 污染 (BD-4 后 window=180d)',
     result.length === 1
   );
   if (result.length === 1) {
