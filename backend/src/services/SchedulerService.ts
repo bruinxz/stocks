@@ -5970,23 +5970,46 @@ class SchedulerService {
         // 跑 dist/scripts/sync-analyst-forecast.js --all --interval-ms=400
         // CLI 已有 skip-existing 断点续传, 重跑不会重复抓
         // 5500 票 × ~2s/票 = ~3h, 周一上班前跑完, factor cron 周一 17:30 重算时能用上新数据
+        //
+        // BJ-5 (2026-06-23): 必须用 async spawn 不是 spawnSync, 后者阻塞 node event loop,
+        // 4-5h 的 sync 会让整个 backend 卡死无响应 (curl /health timeout).
         /* eslint-disable @typescript-eslint/no-var-requires */
-        const { spawnSync: spawnSyncAF } = require('child_process');
+        const { spawn: spawnAF } = require('child_process');
         const pathAF = require('path');
         /* eslint-enable @typescript-eslint/no-var-requires */
         const scriptAF = pathAF.resolve(__dirname, '..', 'scripts', 'sync-analyst-forecast.js');
         const argsAF = [scriptAF, '--all', '--interval-ms=400'];
         if (parameters.force) argsAF.push('--force');
         const t0AF = Date.now();
-        const rAF = spawnSyncAF('/usr/bin/node', argsAF, {
-          cwd: pathAF.resolve(__dirname, '..', '..'),
-          encoding: 'utf-8',
-          timeout: 4 * 60 * 60_000, // 4h 上限 (5500 票 × 2s = 3h)
-          maxBuffer: 128 * 1024 * 1024,
-          env: { ...process.env },
+        const rAF = await new Promise<{ code: number | null; stderr: string }>(resolve => {
+          const child = spawnAF('/usr/bin/node', argsAF, {
+            cwd: pathAF.resolve(__dirname, '..', '..'),
+            env: { ...process.env },
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          let stderr = '';
+          child.stderr?.on('data', (d: Buffer) => {
+            stderr += d.toString();
+            if (stderr.length > 16 * 1024) stderr = stderr.slice(-16 * 1024); // 16KB tail
+          });
+          const timer = setTimeout(
+            () => {
+              child.kill('SIGTERM');
+              resolve({ code: -1, stderr: stderr + '\n[BJ-5] killed by timeout 4h' });
+            },
+            4 * 60 * 60_000
+          );
+          child.on('exit', (code: number | null) => {
+            clearTimeout(timer);
+            resolve({ code, stderr });
+          });
+          child.on('error', (err: Error) => {
+            clearTimeout(timer);
+            resolve({ code: -1, stderr: stderr + '\n' + err.message });
+          });
         });
         const elapsedAF = ((Date.now() - t0AF) / 1000).toFixed(1);
-        const okAF = rAF.status === 0;
+        const okAF = rAF.code === 0;
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: 1,
           completed_items: okAF ? 1 : 0,
@@ -6004,31 +6027,51 @@ class SchedulerService {
           logger.info(`[ANALYST_FORECAST_SYNC] done in ${elapsedAF}s`);
         } else {
           logger.warn(
-            `[ANALYST_FORECAST_SYNC] failed status=${rAF.status} after ${elapsedAF}s: ${(
+            `[ANALYST_FORECAST_SYNC] failed code=${rAF.code} after ${elapsedAF}s: ${(
               rAF.stderr || ''
             ).substring(0, 200)}`
           );
         }
       } else if (task.type === 'SHAREHOLDER_COUNT_SYNC') {
         // BH-3 (2026-06-23): 周三 02:00 全市场 sync 股东户数 (修 shareholder_concentration std<0.10 真因)
-        // 跟 BH-2 (ANALYST_FORECAST_SYNC) 同 spawnSync pattern, env 显式 pass (BC-5)
+        // BJ-5 (2026-06-23): 同 BH-2, 用 async spawn 防 event loop 阻塞
         /* eslint-disable @typescript-eslint/no-var-requires */
-        const { spawnSync: spawnSyncSC } = require('child_process');
+        const { spawn: spawnSC } = require('child_process');
         const pathSC = require('path');
         /* eslint-enable @typescript-eslint/no-var-requires */
         const scriptSC = pathSC.resolve(__dirname, '..', 'scripts', 'sync-shareholder-count.js');
         const argsSC = [scriptSC, '--all', '--interval-ms=200'];
         if (parameters.force) argsSC.push('--force');
         const t0SC = Date.now();
-        const rSC = spawnSyncSC('/usr/bin/node', argsSC, {
-          cwd: pathSC.resolve(__dirname, '..', '..'),
-          encoding: 'utf-8',
-          timeout: 5 * 60 * 60_000, // 5h 上限 (5500 票 × 3s = ~4h)
-          maxBuffer: 128 * 1024 * 1024,
-          env: { ...process.env },
+        const rSC = await new Promise<{ code: number | null; stderr: string }>(resolve => {
+          const child = spawnSC('/usr/bin/node', argsSC, {
+            cwd: pathSC.resolve(__dirname, '..', '..'),
+            env: { ...process.env },
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          let stderr = '';
+          child.stderr?.on('data', (d: Buffer) => {
+            stderr += d.toString();
+            if (stderr.length > 16 * 1024) stderr = stderr.slice(-16 * 1024);
+          });
+          const timer = setTimeout(
+            () => {
+              child.kill('SIGTERM');
+              resolve({ code: -1, stderr: stderr + '\n[BJ-5] killed by timeout 5h' });
+            },
+            5 * 60 * 60_000
+          );
+          child.on('exit', (code: number | null) => {
+            clearTimeout(timer);
+            resolve({ code, stderr });
+          });
+          child.on('error', (err: Error) => {
+            clearTimeout(timer);
+            resolve({ code: -1, stderr: stderr + '\n' + err.message });
+          });
         });
         const elapsedSC = ((Date.now() - t0SC) / 1000).toFixed(1);
-        const okSC = rSC.status === 0;
+        const okSC = rSC.code === 0;
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: 1,
           completed_items: okSC ? 1 : 0,
@@ -6046,7 +6089,7 @@ class SchedulerService {
           logger.info(`[SHAREHOLDER_COUNT_SYNC] done in ${elapsedSC}s`);
         } else {
           logger.warn(
-            `[SHAREHOLDER_COUNT_SYNC] failed status=${rSC.status} after ${elapsedSC}s: ${(
+            `[SHAREHOLDER_COUNT_SYNC] failed code=${rSC.code} after ${elapsedSC}s: ${(
               rSC.stderr || ''
             ).substring(0, 200)}`
           );
