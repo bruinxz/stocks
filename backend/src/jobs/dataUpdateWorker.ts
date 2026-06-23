@@ -880,6 +880,18 @@ export class DataUpdateWorker {
         totalRecordsInserted: currentTotalInserted,
       };
     } catch (error: any) {
+      // BI-2 (2026-06-23): lock busy → return skipped, 不 throw
+      // 原代码无脑 throw, Bull 默认 retry 3 次 → 每次跑 syncHistory 任务都刷
+      // 3 条 'lock busy' + 3 条 '处理失败' error log. 同 processDailyUpdate (line 285) 模式 fix.
+      if (this.isLockBusyError(error)) {
+        logger.warn('批量同步任务跳过 (lock busy, 已有任务在跑):', error.message);
+        return {
+          success: true,
+          skipped: true,
+          reason: 'lock_busy',
+          message: error.message,
+        };
+      }
       logger.error('批量同步任务执行失败:', error);
 
       // 更新日志状态
