@@ -294,8 +294,10 @@ console.log('T3 — META-GUARD: PortfolioController.ts + portfolio.routes.ts 源
     path.resolve(__dirname, '../../src/api/routes/portfolio.routes.ts'),
     'utf-8'
   );
+  // Batch BC-7 (2026-06-23): 容忍 BC-4 加的 UUID regex 约束 `'/:id([0-9a-fA-F]{8}-...)'/attribution/daily'`
+  // 旧 regex 只匹配裸 `'/:id/...'`. 加 `(?:\([^)]+\))?` 让 (uuid regex) 可选.
   assert(
-    /router\.get\(\s*['"]\/:id\/attribution\/daily['"]/.test(routesSrc),
+    /router\.get\(\s*['"]\/:id(?:\([^)]+\))?\/attribution\/daily['"]/.test(routesSrc),
     "portfolio.routes.ts 必须挂 GET '/:id/attribution/daily'"
   );
   assert(
@@ -303,14 +305,21 @@ console.log('T3 — META-GUARD: PortfolioController.ts + portfolio.routes.ts 源
     'portfolio.routes.ts 必须把 GET /:id/attribution/daily 绑到 portfolioController.getDailyAttribution'
   );
   assert(
-    /\/:id\/attribution\/daily[\s\S]{0,300}authController\.authenticate/.test(routesSrc) ||
-      /authController\.authenticate[\s\S]{0,300}\/:id\/attribution\/daily/.test(routesSrc),
+    /\/:id(?:\([^)]+\))?\/attribution\/daily[\s\S]{0,300}authController\.authenticate/.test(
+      routesSrc
+    ) ||
+      /authController\.authenticate[\s\S]{0,300}\/:id(?:\([^)]+\))?\/attribution\/daily/.test(
+        routesSrc
+      ),
     "portfolio.routes.ts /:id/attribution/daily 必须挂 authController.authenticate (不可裸路由)"
   );
   // /:id/attribution/daily 必须在 /:id 之后注册 — Express 路径匹配是按 pattern 注册顺序
   // 走第一个匹配的; '/:id' 是 single-segment 不匹配多段路径, 所以放后面也 OK; 但既然加在
   // /:id 之后, 顺序天然正确. 仍守 routes 含 /:id 路径 (sanity).
-  assert(/router\.get\(\s*['"]\/:id['"]/.test(routesSrc), "portfolio.routes.ts 仍含 GET '/:id'");
+  assert(
+    /router\.get\(\s*['"]\/:id(?:\([^)]+\))?['"]/.test(routesSrc),
+    "portfolio.routes.ts 仍含 GET '/:id'"
+  );
 }
 
 // ---------------------------------------------------------------------------
