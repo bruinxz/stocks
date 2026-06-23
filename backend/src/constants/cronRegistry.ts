@@ -119,6 +119,18 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '工作日 18:30 检查 5 项数据陈旧度 (RT 1h / daily_bars / factor std / cron FAILED / sentiment) → 命中阈值推 Lark + RiskAlert MEDIUM',
   },
+  // BH-2 (2026-06-23): 分析师研报全市场 sync — 真因 analyst_forecasts 表只有 50 票
+  // 一次性 backfill 后没 cron 续接. 这是 analyst_consensus factor std 仅 0.0190 的真因.
+  // 周一 03:00 跑全市场 (--all --interval-ms=400, 5500 票 × ~2s/票 = ~3h, 周末前一日跑完成).
+  // CLI 内置 skip-existing 断点续传, 已 sync 过的票仅做 metadata refresh.
+  {
+    type: 'ANALYST_FORECAST_SYNC',
+    category: 'data_sync',
+    owner: 'data',
+    recommendedCron: '0 3 * * 1',
+    description:
+      '周一 03:00 全市场 sync 分析师研报 (AKShare stock_research_report_em). 解决 analyst_consensus factor std<0.02 真因.',
+  },
   {
     type: 'LIMIT_UP_SYNC',
     category: 'data_sync',

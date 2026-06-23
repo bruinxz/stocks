@@ -5965,6 +5965,50 @@ class SchedulerService {
             `ai=${r.ai_engine.total}/${(r.ai_engine.fallback_rate * 100).toFixed(1)}%fb ` +
             `std0=${r.factor_std_zero.length} push=${out.push_attempted}`
         );
+      } else if (task.type === 'ANALYST_FORECAST_SYNC') {
+        // BH-2 (2026-06-23): 周一 03:00 全市场 sync 分析师研报
+        // 跑 dist/scripts/sync-analyst-forecast.js --all --interval-ms=400
+        // CLI 已有 skip-existing 断点续传, 重跑不会重复抓
+        // 5500 票 × ~2s/票 = ~3h, 周一上班前跑完, factor cron 周一 17:30 重算时能用上新数据
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { spawnSync: spawnSyncAF } = require('child_process');
+        const pathAF = require('path');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const scriptAF = pathAF.resolve(__dirname, '..', 'scripts', 'sync-analyst-forecast.js');
+        const argsAF = [scriptAF, '--all', '--interval-ms=400'];
+        if (parameters.force) argsAF.push('--force');
+        const t0AF = Date.now();
+        const rAF = spawnSyncAF('/usr/bin/node', argsAF, {
+          cwd: pathAF.resolve(__dirname, '..', '..'),
+          encoding: 'utf-8',
+          timeout: 4 * 60 * 60_000, // 4h 上限 (5500 票 × 2s = 3h)
+          maxBuffer: 128 * 1024 * 1024,
+          env: { ...process.env },
+        });
+        const elapsedAF = ((Date.now() - t0AF) / 1000).toFixed(1);
+        const okAF = rAF.status === 0;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: 1,
+          completed_items: okAF ? 1 : 0,
+          failed_items: okAF ? 0 : 1,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: okAF ? null : (rAF.stderr || '').substring(0, 500),
+          result_summary: {
+            scenario: 'analyst_forecast_sync',
+            elapsed_seconds: Number(elapsedAF),
+            status: okAF ? 'SUCCESS' : 'FAILED',
+          },
+        });
+        if (okAF) {
+          logger.info(`[ANALYST_FORECAST_SYNC] done in ${elapsedAF}s`);
+        } else {
+          logger.warn(
+            `[ANALYST_FORECAST_SYNC] failed status=${rAF.status} after ${elapsedAF}s: ${(
+              rAF.stderr || ''
+            ).substring(0, 200)}`
+          );
+        }
       } else if (task.type === 'FEEDBACK_REVIEW_SWEEP') {
         // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环 cron 入口.
         // 每 30 分钟扫 status='pending' 且 (reviewed_at IS NULL OR < now-ageHours) 的反馈,
