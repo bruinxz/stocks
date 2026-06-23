@@ -113,12 +113,18 @@ class FeishuBotWebhookService {
    * Batch X (2026-06-17): safePost — 任何 webhook POST 前 validateWebhookUrl,
    * 拒绝内网 / 非白名单 / 非 https URL. 失败 throw err.code='WEBHOOK_URL_INVALID'
    * caller try/catch 转 {success:false, message}.
+   *
+   * Batch BF (2026-06-23): 修复 infinite recursion — 原版本 body 写成
+   * `return this.safePost(url, body)` 自己调自己 → stack overflow.
+   * 已上 prod (5174f49 / Batch AI 引入此 bug), 导致 4 处 caller (sendDailyDigestCard /
+   * sendEarningsForecastCard / sendRiskAlertCard / sendRecommendationSummary)
+   * 全部 throw → fail-OPEN 进 catch 走 warn "推送异常" → 用户一条飞书消息都收不到.
    */
   private async safePost(url: string, body: any) {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { assertWebhookUrlAllowed } = require('../utils/webhookUrlGuard');
     assertWebhookUrlAllowed(url, 'feishu webhook_url');
-    return this.safePost(url, body);
+    return this.http.post(url, body);
   }
 
   isEnabled(): boolean {

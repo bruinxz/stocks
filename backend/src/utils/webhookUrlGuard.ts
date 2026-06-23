@@ -17,7 +17,12 @@
 
 import { URL } from 'url';
 
-const DEFAULT_FEISHU_HOSTS = ['open.feishu.cn', 'open.larksuite.com'];
+// Batch BF (2026-06-23): 补 open.larkoffice.com (Lark CN open API host 别名).
+// 之前默认 allowlist 只含 open.feishu.cn / open.larksuite.com, 导致 prod 真正配置
+// 的 webhook (host=open.larkoffice.com) 全部被 reject → 飞书告警一条都发不出去
+// (从 combined.log 看每分钟多次 "feishu webhook_url 校验失败"). 仍只放行飞书 /
+// Lark 官方域, 不放任意 host. 用户仍可通过 FEISHU_WEBHOOK_HOST_ALLOWLIST 扩展.
+const DEFAULT_FEISHU_HOSTS = ['open.feishu.cn', 'open.larksuite.com', 'open.larkoffice.com'];
 
 function resolveAllowlist(): string[] {
   const env = process.env.FEISHU_WEBHOOK_HOST_ALLOWLIST;
