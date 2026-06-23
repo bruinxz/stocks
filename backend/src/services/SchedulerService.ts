@@ -558,6 +558,63 @@ class SchedulerService {
     return max ? Math.min(normalized, max) : normalized;
   }
 
+  /**
+   * BJ-5/BJ-6 (2026-06-23): async script runner 替代 spawnSync.
+   *
+   * 真因: spawnSync 阻塞 node event loop → 长 cron (10min-5h) 让整个 backend
+   * HTTP 失响应. 实际事件: SHAREHOLDER_COUNT_SYNC 02:00 触发后 backend /health
+   * timeout 4h, 用户登录/看模拟盘全部 timeout.
+   *
+   * 用法: const r = await this.runScriptAsync('/usr/bin/node', [scriptPath, ...args], { cwd, timeoutMs });
+   *       if (r.code === 0) ... else logger.warn(r.stderr);
+   *
+   * 返回: { code: number | null, stdout: string, stderr: string }
+   *   - code === 0  → 成功
+   *   - code === -1 → timeout 或 error 事件
+   *   - stdout/stderr → 累积 (tail 16KB 防 OOM)
+   */
+  private async runScriptAsync(
+    cmd: string,
+    args: string[],
+    opts: { cwd: string; timeoutMs: number; env?: NodeJS.ProcessEnv }
+  ): Promise<{ code: number | null; stdout: string; stderr: string }> {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { spawn } = require('child_process');
+    return new Promise(resolve => {
+      const child = spawn(cmd, args, {
+        cwd: opts.cwd,
+        env: opts.env || { ...process.env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout?.on('data', (d: Buffer) => {
+        stdout += d.toString();
+        if (stdout.length > 16 * 1024) stdout = stdout.slice(-16 * 1024); // 16KB tail
+      });
+      child.stderr?.on('data', (d: Buffer) => {
+        stderr += d.toString();
+        if (stderr.length > 16 * 1024) stderr = stderr.slice(-16 * 1024);
+      });
+      const timer = setTimeout(() => {
+        child.kill('SIGTERM');
+        resolve({
+          code: -1,
+          stdout,
+          stderr: stderr + `\n[runScriptAsync] killed by timeout ${opts.timeoutMs}ms`,
+        });
+      }, opts.timeoutMs);
+      child.on('exit', (code: number | null) => {
+        clearTimeout(timer);
+        resolve({ code, stdout, stderr });
+      });
+      child.on('error', (err: Error) => {
+        clearTimeout(timer);
+        resolve({ code: -1, stdout, stderr: stderr + '\n' + err.message });
+      });
+    });
+  }
+
   private getParameterValue(parameters: any, snakeKey: string, camelKey?: string) {
     if (parameters?.[snakeKey] !== undefined) return parameters[snakeKey];
     if (camelKey && parameters?.[camelKey] !== undefined) return parameters[camelKey];
@@ -4594,7 +4651,7 @@ class SchedulerService {
           : ['macro', 'qvix', 'block'];
         const blockDays: number = this.toPositiveInt(parameters.block_days, 7, 60);
         const results: Record<string, string> = {};
-        const { spawnSync } = require('child_process');
+        // BJ-6: spawnSync replaced by runScriptAsync, no longer need require
         const path = require('path');
         const scriptPath = path.resolve(__dirname, '..', 'scripts', 'sync-extra-dims.ts');
         for (const dim of dims) {
@@ -4613,20 +4670,18 @@ class SchedulerService {
             args.push(`--start=${start}`, `--end=${today}`);
           }
           const t0 = Date.now();
-          const r = spawnSync('/usr/bin/node', args, {
+          // BJ-6 (2026-06-23): 换 runScriptAsync 防 event loop 阻塞 (跟 BJ-5 BH-2/BH-3 同款)
+          const r = await this.runScriptAsync('/usr/bin/node', args, {
             cwd: path.resolve(__dirname, '..', '..'),
-            encoding: 'utf-8',
-            timeout: 10 * 60_000,
-            maxBuffer: 64 * 1024 * 1024,
-            env: { ...process.env }, // BC-5: 显式 pass env (子进程 dotenv symlink 解析问题)
+            timeoutMs: 10 * 60_000,
           });
           const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-          if (r.status === 0) {
+          if (r.code === 0) {
             results[dim] = `OK ${elapsed}s`;
             logger.info(`[EXTRA_DIMS_SYNC] ${dim} OK ${elapsed}s`);
           } else {
-            results[dim] = `FAIL status=${r.status} ${(r.stderr || '').substring(0, 200)}`;
-            logger.warn(`[EXTRA_DIMS_SYNC] ${dim} FAIL status=${r.status}`);
+            results[dim] = `FAIL code=${r.code} ${(r.stderr || '').substring(0, 200)}`;
+            logger.warn(`[EXTRA_DIMS_SYNC] ${dim} FAIL code=${r.code}`);
           }
         }
         await this.safeUpdateExecutionLog(executionLog, {
@@ -4647,7 +4702,6 @@ class SchedulerService {
         // Batch AH review pt.2 (2026-06-18): 之前用 ts-node 跑 .ts 源在 prod
         // 报 'Cannot find module ./compute-factors.ts' — prod dist 模式 ts-node
         // 是 dev dep 且 .ts 源不复制. 改用 /usr/bin/node 直接跑 dist/scripts/compute-factors.js.
-        const { spawnSync } = require('child_process');
         const path = require('path');
         // __dirname in prod = dist/services, 上一级 = dist, scripts/compute-factors.js 就在 dist 内
         const compiledScript = path.resolve(__dirname, '..', 'scripts', 'compute-factors.js');
@@ -4666,19 +4720,13 @@ class SchedulerService {
         const skipFactors: string[] = Array.isArray(parameters.skip) ? parameters.skip : [];
         if (skipFactors.length) args.push(`--skip=${skipFactors.join(',')}`);
         const t0 = Date.now();
-        // Batch BC-5 (2026-06-23): cron 跑 compute-factors 时 status=FAILED + "password
-        // authentication failed for user 'postgres'" 真因 — spawnSync 子进程独立环境,
-        // 默认继承 env 但 dotenv 加载顺序 cwd .env 路径解析可能失败 (symlink /opt/stocks/current).
-        // 显式 pass parent 已加载的 process.env + cwd 用 dotenv 已解析的路径, 让子进程拿到 DB pass.
-        const r = spawnSync('/usr/bin/node', args, {
+        // BJ-6 (2026-06-23): runScriptAsync 防 event loop 阻塞 30min
+        const r = await this.runScriptAsync('/usr/bin/node', args, {
           cwd: path.resolve(__dirname, '..', '..'),
-          encoding: 'utf-8',
-          timeout: 30 * 60_000, // 20 个 factor × 上千股, 给 30 min 上限
-          maxBuffer: 128 * 1024 * 1024,
-          env: { ...process.env }, // 显式 pass 父进程 env (含 dotenv 加载的 DATABASE_URL 等)
+          timeoutMs: 30 * 60_000, // 20 个 factor × 上千股, 给 30 min 上限
         });
         const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-        const ok = r.status === 0;
+        const ok = r.code === 0;
         if (ok) {
           logger.info(
             `[FACTOR_SCORE_COMPUTE] done in ${elapsed}s for date=${date} factors=${
@@ -4687,7 +4735,7 @@ class SchedulerService {
           );
         } else {
           logger.warn(
-            `[FACTOR_SCORE_COMPUTE] failed status=${r.status} after ${elapsed}s: ${(
+            `[FACTOR_SCORE_COMPUTE] failed code=${r.code} after ${elapsed}s: ${(
               r.stderr || ''
             ).substring(0, 200)}`
           );
@@ -4947,7 +4995,6 @@ class SchedulerService {
         //
         // 每周日晚 20:30 跑, 给周一开盘前看到本周因子健康度报告.
         /* eslint-disable @typescript-eslint/no-var-requires */
-        const { spawnSync } = require('child_process');
         const path = require('path');
         /* eslint-enable @typescript-eslint/no-var-requires */
         const scriptPath = path.resolve(
@@ -4974,22 +5021,20 @@ class SchedulerService {
           `--threshold=${threshold}`,
         ];
         const t0 = Date.now();
-        const r = spawnSync('/usr/bin/node', args, {
+        // BJ-6 (2026-06-23): runScriptAsync 防 event loop 阻塞 30min
+        const r = await this.runScriptAsync('/usr/bin/node', args, {
           cwd: path.resolve(__dirname, '..', '..'),
-          encoding: 'utf-8',
-          timeout: 30 * 60_000, // 30 min 上限 (20 因子 × C(20,2)=190 pair)
-          maxBuffer: 128 * 1024 * 1024,
-          env: { ...process.env },
+          timeoutMs: 30 * 60_000, // 30 min 上限 (20 因子 × C(20,2)=190 pair)
         });
         const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-        const ok = r.status === 0;
+        const ok = r.code === 0;
         if (ok) {
           logger.info(
             `[FACTOR_CORRELATION_WEEKLY] done in ${elapsed}s for ${startDate}..${today} threshold=${threshold}`
           );
         } else {
           logger.warn(
-            `[FACTOR_CORRELATION_WEEKLY] failed status=${r.status} after ${elapsed}s: ${(
+            `[FACTOR_CORRELATION_WEEKLY] failed code=${r.code} after ${elapsed}s: ${(
               r.stderr || ''
             ).substring(0, 300)}`
           );
@@ -5012,7 +5057,6 @@ class SchedulerService {
       } else if (task.type === 'FACTOR_IC_COMPUTE') {
         // Phase 3: 每日因子 IC 计算 — 走 child_process 调用 compute-factor-ic CLI
         // 默认跑过去 90 天 + 默认 forwardDays=[1,5,10,20,60]，覆盖 5 个时间窗口的衰减分析
-        const { spawnSync } = require('child_process');
         const path = require('path');
         const scriptPath = path.resolve(__dirname, '..', 'scripts', 'compute-factor-ic.ts');
         const lookbackDays: number = this.toPositiveInt(parameters.lookback_days, 90, 365);
@@ -5033,15 +5077,13 @@ class SchedulerService {
         ];
         if (factorNames.length) args.push(`--factors=${factorNames.join(',')}`);
         const t0 = Date.now();
-        const r = spawnSync('/usr/bin/node', args, {
+        // BJ-6 (2026-06-23): runScriptAsync 防 event loop 阻塞 30min
+        const r = await this.runScriptAsync('/usr/bin/node', args, {
           cwd: path.resolve(__dirname, '..', '..'),
-          encoding: 'utf-8',
-          timeout: 30 * 60_000, // IC 计算可能跑 5-15 分钟
-          maxBuffer: 128 * 1024 * 1024,
-          env: { ...process.env },
+          timeoutMs: 30 * 60_000, // IC 计算可能跑 5-15 分钟
         });
         const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-        const ok = r.status === 0;
+        const ok = r.code === 0;
         if (ok) {
           logger.info(
             `[FACTOR_IC_COMPUTE] done in ${elapsed}s for ${
@@ -5050,7 +5092,7 @@ class SchedulerService {
           );
         } else {
           logger.warn(
-            `[FACTOR_IC_COMPUTE] failed status=${r.status} after ${elapsed}s: ${(
+            `[FACTOR_IC_COMPUTE] failed code=${r.code} after ${elapsed}s: ${(
               r.stderr || ''
             ).substring(0, 200)}`
           );
@@ -5065,12 +5107,11 @@ class SchedulerService {
             range: `${start}..${today}`,
             factor_names: factorNames,
             elapsed_seconds: Number(elapsed),
-            exit_status: r.status,
+            exit_status: r.code,
           },
         });
       } else if (task.type === 'DRAGON_TIGER_SYNC') {
         // 龙虎榜独立 cron — 收盘后 16:30 拉今日（如有上榜）
-        const { spawnSync } = require('child_process');
         const path = require('path');
         const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
         const start = parameters.start || today;
@@ -5084,15 +5125,13 @@ class SchedulerService {
           `--end=${end}`,
         ];
         const t0 = Date.now();
-        const r = spawnSync('/usr/bin/node', args, {
+        // BJ-6 (2026-06-23): runScriptAsync 防 event loop 阻塞 10min
+        const r = await this.runScriptAsync('/usr/bin/node', args, {
           cwd: path.resolve(__dirname, '..', '..'),
-          encoding: 'utf-8',
-          timeout: 10 * 60_000,
-          maxBuffer: 64 * 1024 * 1024,
-          env: { ...process.env },
+          timeoutMs: 10 * 60_000,
         });
         const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-        const ok = r.status === 0;
+        const ok = r.code === 0;
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: 1,
           success_count: ok ? 1 : 0,
@@ -5102,7 +5141,7 @@ class SchedulerService {
             start,
             end,
             elapsed_s: elapsed,
-            status: r.status,
+            status: r.code,
           },
         });
         logger.info(`[DRAGON_TIGER_SYNC] ${start}~${end} ${ok ? 'OK' : 'FAIL'} ${elapsed}s`);
