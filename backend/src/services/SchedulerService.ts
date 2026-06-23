@@ -4613,11 +4613,16 @@ class SchedulerService {
         const skipFactors: string[] = Array.isArray(parameters.skip) ? parameters.skip : [];
         if (skipFactors.length) args.push(`--skip=${skipFactors.join(',')}`);
         const t0 = Date.now();
+        // Batch BC-5 (2026-06-23): cron 跑 compute-factors 时 status=FAILED + "password
+        // authentication failed for user 'postgres'" 真因 — spawnSync 子进程独立环境,
+        // 默认继承 env 但 dotenv 加载顺序 cwd .env 路径解析可能失败 (symlink /opt/stocks/current).
+        // 显式 pass parent 已加载的 process.env + cwd 用 dotenv 已解析的路径, 让子进程拿到 DB pass.
         const r = spawnSync('/usr/bin/node', args, {
           cwd: path.resolve(__dirname, '..', '..'),
           encoding: 'utf-8',
           timeout: 30 * 60_000, // 20 个 factor × 上千股, 给 30 min 上限
           maxBuffer: 128 * 1024 * 1024,
+          env: { ...process.env }, // 显式 pass 父进程 env (含 dotenv 加载的 DATABASE_URL 等)
         });
         const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
         const ok = r.status === 0;
