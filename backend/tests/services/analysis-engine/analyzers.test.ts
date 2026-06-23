@@ -305,8 +305,14 @@ function baseCtx(): AnalyzerContext {
   // 15. RiskAnalyzer 行情陈旧 → veto (盘中模式 = as_of 设为 today)
   // Batch AO (2026-06-21): RiskAnalyzer 复盘模式 (as_of != today) 跳过 stale veto.
   // 测 veto 必须显式把 ctx.as_of 设到 today, 模拟"实时盘中决策"场景.
+  // BJ-4 (2026-06-23): 必须用 Asia/Shanghai today, 否则 UTC 16:00-24:00 (北京次日凌晨)
+  //   测试会失败 (RiskAnalyzer 内部用 Asia/Shanghai today).
   const ctxStale = baseCtx();
-  ctxStale.as_of = new Date().toISOString().slice(0, 10); // 强制实时盘中模式
+  const todayIsoSh = (() => {
+    const sh = new Date(Date.now() + 8 * 60 * 60 * 1000);
+    return sh.toISOString().slice(0, 10);
+  })();
+  ctxStale.as_of = todayIsoSh; // 强制实时盘中模式 (Asia/Shanghai today)
   ctxStale.realtime_quote = {
     ...(ctxStale.realtime_quote as any),
     as_of_ts: new Date(Date.now() - 60 * 60 * 1000).toISOString(), // 60 min ago

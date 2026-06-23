@@ -296,8 +296,10 @@ console.log('T3 — META-GUARD: PortfolioController.ts + portfolio.routes.ts 源
   );
   // Batch BC-7 (2026-06-23): 容忍 BC-4 加的 UUID regex 约束 `'/:id([0-9a-fA-F]{8}-...)'/attribution/daily'`
   // 旧 regex 只匹配裸 `'/:id/...'`. 加 `(?:\([^)]+\))?` 让 (uuid regex) 可选.
+  // BJ-3 (2026-06-23): /attribution/daily 接 integer + UUID, regex 是 `\d+|UUID`,
+  //   含 `|` 需在 (?:\([^)]+\))? 内允许.
   assert(
-    /router\.get\(\s*['"]\/:id(?:\([^)]+\))?\/attribution\/daily['"]/.test(routesSrc),
+    /router\.get\([\s\S]*?['"]\/:id(?:\([^)]+\))?\/attribution\/daily['"]/.test(routesSrc),
     "portfolio.routes.ts 必须挂 GET '/:id/attribution/daily'"
   );
   assert(
@@ -305,7 +307,7 @@ console.log('T3 — META-GUARD: PortfolioController.ts + portfolio.routes.ts 源
     'portfolio.routes.ts 必须把 GET /:id/attribution/daily 绑到 portfolioController.getDailyAttribution'
   );
   assert(
-    /\/:id(?:\([^)]+\))?\/attribution\/daily[\s\S]{0,300}authController\.authenticate/.test(
+    /\/:id(?:\([^)]+\))?\/attribution\/daily['"][\s\S]{0,300}authController\.authenticate/.test(
       routesSrc
     ) ||
       /authController\.authenticate[\s\S]{0,300}\/:id(?:\([^)]+\))?\/attribution\/daily/.test(

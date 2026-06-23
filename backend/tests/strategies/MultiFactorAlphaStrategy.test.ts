@@ -176,14 +176,19 @@ function buildFakeDataSource(
 async function test_default_weights_match_AC() {
   const weights = DEFAULT_MULTI_FACTOR_ALPHA_WEIGHTS;
   // Batch AC (2026-06-18): 12 因子缩放 + 2 个新行业/题材因子 (industry_momentum / concept_heat)
+  // Batch BH-1 (2026-06-23): northbound 数据源死 (监管 2024-08-19 关闭披露),
+  //   权重 0.067 → 0; 让 +0.033 给 fund_consensus / +0.034 给 margin_flow (同维度替代).
+  //   总因子数 14 → 16 (northbound 留 weight=0 仍注册, 加 fund_consensus + margin_flow).
   expectEqual('default weights.value', weights.value, 0.084);
   expectEqual('default weights.quality', weights.quality, 0.084);
   expectEqual('default weights.growth', weights.growth, 0.084);
   expectEqual('default weights.momentum', weights.momentum, 0.084);
   expectEqual('default weights.low_vol', weights.low_vol, 0.067);
-  expectEqual('default weights.northbound', weights.northbound, 0.067);
+  expectEqual('default weights.northbound', weights.northbound, 0); // BH-1: 数据源死
   expectEqual('default weights.money_flow', weights.money_flow, 0.067);
   expectEqual('default weights.dragon_tiger', weights.dragon_tiger, 0.067);
+  expectEqual('default weights.fund_consensus', weights.fund_consensus, 0.033); // BH-1 new
+  expectEqual('default weights.margin_flow', weights.margin_flow, 0.034); // BH-1 new
   expectEqual('default weights.quality_high', weights.quality_high, 0.059);
   expectEqual('default weights.analyst_consensus', weights.analyst_consensus, 0.059);
   expectEqual('default weights.east_money_qa', weights.east_money_qa, 0.05);
@@ -191,7 +196,7 @@ async function test_default_weights_match_AC() {
   // Batch AC 新增 2 个因子
   expectEqual('default weights.industry_momentum', weights.industry_momentum, 0.1);
   expectEqual('default weights.concept_heat', weights.concept_heat, 0.06);
-  expectEqual('Batch AC: 14 个因子全部都在', Object.keys(weights).length, 14);
+  expectEqual('Batch AC + BH-1: 16 个因子全部都在', Object.keys(weights).length, 16);
   const sum = Object.values(weights).reduce((a, b) => a + b, 0);
   // sum 约等于 1.0 (浮点累计误差 + 因子四舍五入到 3 位小数 → sum=0.999)
   // normalizeWeights() 会在使用时强制归一化到 1.0
@@ -244,10 +249,12 @@ async function test_composite_score_weighted_sum() {
   ]);
   const s = new MultiFactorAlphaStrategy(ds);
   const result = await s.generateSignals('2026-06-05');
-  // 12 老因子 sum/总 sum ≈ 0.839 / 0.999 ≈ 0.8398
+  // BH-1 (2026-06-23): northbound 数据源死 → 权重 0, 12 老因子里 northbound z=1 不贡献.
+  //   12 老因子 sum 从 0.839 → 0.772 (扣 northbound 0.067).
+  //   归一化后 0.772 / 1.0 ≈ 0.7727
   assert(
-    '12 z=1（不含 industry_momentum/concept_heat）→ composite ≈ 0.84',
-    Math.abs(result.signals[0].composite_score - 0.8398) < 1e-2,
+    '12 z=1（含 northbound, 但 northbound 权重 0 → 11 因子贡献）→ composite ≈ 0.77',
+    Math.abs(result.signals[0].composite_score - 0.7727) < 1e-2,
     `got ${result.signals[0].composite_score}`
   );
 
@@ -713,13 +720,15 @@ async function test_weight_mode_equal_uniform_weights() {
   ]);
   const s = new MultiFactorAlphaStrategy(ds);
   const r = await s.generateSignals('2026-06-05', { params: { weightMode: 'equal' } });
+  // BH-1 (2026-06-23): 16 个因子 但 equal mode 只算"正权重"因子. northbound 权重=0 排除.
+  // 15 个正权重 factor; 输入 12 z=1 (含 northbound 但被排除) → 实际 11 z=1, composite = 11/15
   assert(
-    'equal mode: 12 z=1（不含 industry_momentum/concept_heat）→ composite ≈ 12/14',
-    Math.abs(r.signals[0].composite_score - 12 / 14) < 1e-9,
+    'equal mode: 12 z=1 输入 (northbound 被排除, 11 effective) → composite = 11/15',
+    Math.abs(r.signals[0].composite_score - 11 / 15) < 1e-9,
     `got ${r.signals[0].composite_score}`
   );
 
-  // value=12, 其他 0 + equal mode → composite = 12 * (1/14) ≈ 0.857
+  // value=12, 其他 0 + equal mode → composite = 12 * (1/15) = 0.8
   const ds2 = buildFakeDataSource([
     {
       code: '600519',
@@ -731,8 +740,8 @@ async function test_weight_mode_equal_uniform_weights() {
   const s2 = new MultiFactorAlphaStrategy(ds2);
   const r2 = await s2.generateSignals('2026-06-05', { params: { weightMode: 'equal' } });
   assert(
-    'equal mode: value=12 其他 0 → composite = 12 * 1/14',
-    Math.abs(r2.signals[0].composite_score - 12 / 14) < 1e-9,
+    'equal mode: value=12 其他 0 → composite = 12 * 1/15',
+    Math.abs(r2.signals[0].composite_score - 12 / 15) < 1e-9,
     `got ${r2.signals[0].composite_score}`
   );
 
