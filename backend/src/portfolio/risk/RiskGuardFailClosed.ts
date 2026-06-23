@@ -254,7 +254,13 @@ export async function handleRiskGuardUnavailable(input: {
   try {
     await input.dataSource.create(payload);
   } catch (alertErr: any) {
-    logger.warn(
+    // T1-01 (2026-06-23): 这里是 "alarm-on-alarm" 失败 (风控本身 fail-CLOSED 拒单
+    // 成功, 但告警写不进 DB) — ops 现场看不到 503 风控不可用就只能从 application
+    // log 推断. 之前 logger.warn 容易被高频 noise 淹没, 升 error 让 ELK
+    // alert 优先级覆盖 (loki / Grafana log-volume rules 通常 warn=info-ish, error 才告警).
+    // 历史 bug: risk_alerts.symbol varchar(20) 容不下 'SYSTEM:RISK_GUARD_UNAVAILABLE' (29),
+    // 全部 fail-CLOSED HIGH alert 在 prod 静默丢失数月, 直到 risk drill 才浮出来.
+    logger.error(
       `[risk-guard-fail-closed] RiskAlert.create RISK_GUARD_UNAVAILABLE failed ` +
         `(caller=${input.callerLabel} guard=${input.err.guardName}): ` +
         `${alertErr?.message || alertErr}`

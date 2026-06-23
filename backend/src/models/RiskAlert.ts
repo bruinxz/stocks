@@ -36,9 +36,9 @@ export class RiskAlert extends Model {
   declare user: User;
 
   @Column({
-    type: DataType.STRING(20),
+    type: DataType.STRING(64),
     allowNull: false,
-    comment: '触发告警的股票代码',
+    comment: '触发告警的股票代码 (T1-01 2026-06-23: 20→64 防 SYSTEM:* 长 sentinel 截断)',
   })
   declare symbol: string;
 
