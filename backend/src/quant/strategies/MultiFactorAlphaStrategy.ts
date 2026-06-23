@@ -92,9 +92,18 @@ export const DEFAULT_MULTI_FACTOR_ALPHA_WEIGHTS: Readonly<Record<string, number>
   growth: 0.084,
   momentum: 0.084,
   low_vol: 0.067,
-  northbound: 0.067,
+  // Batch BH (2026-06-23): northbound 因子 std=0 真因不可救 —
+  // AKShare stock_hsgt_hold_stock_em / stock_hsgt_individual_em 2024-08-16 后
+  // 完全停发数据 (监管层主动关闭北向资金披露). 同维度替代信号 fund_consensus
+  // (std=0.357 已用) / money_flow (std=0.255 已用) / margin_flow (std=0.792 已用)
+  // 都在多因子里, alpha 信号未损失. 把 northbound 0.067 权重转给:
+  //   fund_consensus +0.033 (基金抱团是境内机构 alpha, 与北向最接近)
+  //   margin_flow +0.034 (融资余额是杠杆资金方向, 与北向都是"主动资金"维度)
+  northbound: 0.0, // deprecated 2026-06-23 (数据源死)
   money_flow: 0.067,
   dragon_tiger: 0.067,
+  fund_consensus: 0.033, // BH: +0.033 接收 northbound 一半权重
+  margin_flow: 0.034, // BH: +0.034 接收另一半
   // US-081 新增 4 个因子
   quality_high: 0.059,
   analyst_consensus: 0.059,
