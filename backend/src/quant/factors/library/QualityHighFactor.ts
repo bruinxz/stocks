@@ -185,7 +185,8 @@ export function combineQualityHigh(comp: QualityHighComponents): number | null {
 
 export const qualityHighFactor: Factor = {
   name: 'quality_high',
-  description: '高阶质量 = ROIC 代理(ROE 最新年报) + 毛利率 5 年稳定性(1/sd) + 净利率代理 等权合成',
+  description:
+    '高阶质量 = ROIC 代理(年报 ROE → SFF.roe 兜底) + 毛利率稳定性(1/sd, BD-3 ≥3 obs) + 净利率(FinancialReport / SFF.gross_margin 兜底) 等权合成',
   category: 'quality',
 
   async compute(ctx) {
@@ -199,6 +200,9 @@ export const qualityHighFactor: Factor = {
     //
     // 注意：FinancialReport.stock_code 已经是无后缀形式（与 ctx.universe 一致），
     // 不需要走 Stock.symbol 反查。
+    //
+    // **BD-3 注释 (2026-06-23)**: prod 实测 financial_reports 表只 25 distinct 股票
+    // (上游 sync 严重欠缺). 本路径只能命中 25 票, 其余靠 StockFundamentalFactor fallback (路径 1b/3b).
     const reportRows = (await FinancialReport.findAll({
       attributes: ['stock_code', 'report_date', 'report_type', 'net_profit', 'revenue', 'roe'],
       where: {
@@ -237,16 +241,23 @@ export const qualityHighFactor: Factor = {
       });
     }
 
-    // ----- 2) StockFundamentalFactor：拉 5 年 gross_margin 时序，按 symbol 聚合 -----
+    // ----- 2) StockFundamentalFactor：拉 5 年 gross_margin 时序 + 取每只股票最新 roe 兜底 -----
     //
     // 注意：StockFundamentalFactor.symbol 是 "600519.SH" 形式（带后缀），
     // 需要 stripSuffix 才能与 ctx.universe 对齐。
     //
     // 不做 stock_id IN 过滤（避免再走 Stock 表）— factor_date 时间窗 + 内存 stripSuffix
     // 过滤后只保留 universe 内的股票，性能可接受（5 年全市场 ~3000 × 4 季 = 60k 行）。
+    //
+    // **BD-3 (2026-06-23): 加 latest roe / gross_margin 提取, 用于 FinancialReport 缺失时
+    // 作 ROIC 代理 + 净利率代理**:
+    //   - ROIC proxy: SFF.roe 当作 ROIC 代理 (代理链一致: FinancialReport.roe → SFF.roe)
+    //   - net_margin proxy: SFF.gross_margin 作 net_margin 兜底 (毛利率是净利率的上限, 同方向)
+    //
+    // 双代理升级路径: 若未来 FinancialReport 扩到全 A 股, 优先级仍是 FinancialReport > SFF.
     const universeSet = new Set(ctx.universe);
     const gmRows = (await StockFundamentalFactor.findAll({
-      attributes: ['symbol', 'factor_date', 'gross_margin'],
+      attributes: ['symbol', 'factor_date', 'gross_margin', 'roe'],
       where: {
         factor_date: { [Op.gte]: gmStart, [Op.lte]: ctx.as_of_date },
       },
@@ -255,27 +266,60 @@ export const qualityHighFactor: Factor = {
       symbol: string;
       factor_date: string;
       gross_margin: any;
+      roe: any;
     }>;
 
     const gmByCode = new Map<string, number[]>();
+    interface LatestSFF {
+      factor_date: string;
+      roe: number | null;
+      gross_margin: number | null;
+    }
+    const latestSFF = new Map<string, LatestSFF>();
     for (const r of gmRows) {
       const code = stripSuffix(r.symbol);
       if (!universeSet.has(code)) continue;
+
+      // gross_margin 时序累计 (用于 stability 计算)
       const gm = Number(r.gross_margin);
-      if (!isFiniteNumber(gm)) continue;
-      const arr = gmByCode.get(code) ?? [];
-      arr.push(gm);
-      gmByCode.set(code, arr);
+      if (isFiniteNumber(gm)) {
+        const arr = gmByCode.get(code) ?? [];
+        arr.push(gm);
+        gmByCode.set(code, arr);
+      }
+
+      // 取每只 symbol 最新 factor_date 的 roe + gross_margin (用于 FinancialReport 缺失时兜底)
+      const roe = Number(r.roe);
+      const gmLatest = Number(r.gross_margin);
+      const cur = latestSFF.get(code);
+      if (!cur || r.factor_date > cur.factor_date) {
+        latestSFF.set(code, {
+          factor_date: r.factor_date,
+          roe: isFiniteNumber(roe) ? roe : cur?.roe ?? null,
+          gross_margin: isFiniteNumber(gmLatest) ? gmLatest : cur?.gross_margin ?? null,
+        });
+      }
     }
 
-    // ----- 3) 合成：3 子分量等权重 -----
+    // ----- 3) 合成：3 子分量等权重 (FinancialReport 优先, SFF 兜底) -----
     for (const code of ctx.universe) {
       const annual = latestAnnual.get(code);
+      const sff = latestSFF.get(code);
       const gmSeries = gmByCode.get(code) ?? [];
 
-      const roicProxy = annual?.roe ?? null;
+      // ROIC proxy: 优先 annual ROE, 缺则 SFF.roe (TTM 代理 - 一致语义)
+      const roicProxy = annual?.roe ?? sff?.roe ?? null;
+
+      // gm stability 仍只依赖 SFF 时序 (BD-3 已调 MIN=3)
       const gmStability = computeGrossMarginStability(gmSeries);
-      const netMargin = computeNetMargin(annual?.net_profit, annual?.revenue);
+
+      // net_margin: 优先 FinancialReport (np/rev), 缺则 SFF.gross_margin (毛利率代理 — 与净利率同方向, 上限)
+      let netMargin: number | null = computeNetMargin(annual?.net_profit, annual?.revenue);
+      if (netMargin === null && sff?.gross_margin !== null && sff?.gross_margin !== undefined) {
+        // 毛利率作为净利率代理: 实证毛利率 > 净利率 (扣完费用前), 相关性 0.5-0.7;
+        // 缺真实 net_margin 时此代理仍保留 "盈利能力强弱" 排序意义.
+        netMargin = sff.gross_margin;
+      }
 
       const score = combineQualityHigh({
         roic_proxy: roicProxy,
