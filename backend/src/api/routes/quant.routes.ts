@@ -207,6 +207,18 @@ router.get(
   quantController.getRuntimeHealth.bind(quantController)
 );
 
+router.get(
+  '/workflow-presets',
+  authController.authenticate,
+  quantController.getWorkflowPresets.bind(quantController)
+);
+
+router.post(
+  '/workflow-readiness/evaluate',
+  authController.authenticate,
+  quantController.evaluateWorkflowReadiness.bind(quantController)
+);
+
 /**
  * @openapi
  * /api/quant/strategy-experiments:
