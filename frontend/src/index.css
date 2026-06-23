@@ -14034,6 +14034,112 @@ a {
 }
 
 /* ---------------------------------------------------------------------------
+ * Lab workspace: phase 1-3 workflow readiness.
+ * ------------------------------------------------------------------------- */
+.workflow-preset-card,
+.workflow-verdict-card,
+.workflow-stage-card,
+.workflow-input-card {
+  min-width: 0;
+}
+
+.workflow-verdict-card.status-ready,
+.workflow-stage-card.status-ready {
+  border-color: rgba(34, 197, 94, 0.28) !important;
+}
+
+.workflow-verdict-card.status-degraded,
+.workflow-stage-card.status-degraded {
+  border-color: rgba(245, 158, 11, 0.3) !important;
+}
+
+.workflow-verdict-card.status-blocked,
+.workflow-stage-card.status-blocked {
+  border-color: rgba(239, 68, 68, 0.26) !important;
+}
+
+.workflow-stage-card .ant-progress-line {
+  margin-bottom: 0;
+}
+
+.workflow-next-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.035);
+}
+
+.workflow-next-actions .ant-list-sm .ant-list-item {
+  padding: 5px 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.workflow-input-card .ant-card-head-wrapper {
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.workflow-input-card .ant-card-extra {
+  min-width: 0;
+  padding: 12px 0;
+  white-space: normal;
+}
+
+.workflow-input-section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 0 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(39, 100, 184, 0.055);
+}
+
+.workflow-input-section-title .ant-typography-secondary {
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: right;
+}
+
+.workflow-switch-row {
+  width: 100%;
+}
+
+.workflow-switch-row .ant-form-item {
+  margin-bottom: 8px;
+}
+
+@media (max-width: 767px) {
+  .workflow-input-card .ant-card-extra {
+    width: 100%;
+  }
+
+  .workflow-input-card .ant-card-extra .ant-space {
+    width: 100%;
+  }
+
+  .workflow-input-card .ant-card-extra .ant-space-item,
+  .workflow-input-card .ant-card-extra .ant-btn {
+    width: 100%;
+  }
+
+  .workflow-input-section-title {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .workflow-input-section-title .ant-typography-secondary {
+    text-align: left;
+  }
+}
+
+/* ---------------------------------------------------------------------------
  * Workspace shell (US-002): shared layout for the 6 unified workspaces.
  * KPI bar is exactly 96px tall (set inline via Card style); the inner flex
  * keeps title / metrics / actions on a single row at desktop widths.
@@ -14191,4 +14297,3 @@ a {
     min-height: 38px;
   }
 }
-

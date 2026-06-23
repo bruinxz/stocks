@@ -61,6 +61,7 @@ import AdvancedQuantTab from './LabWorkspace.AdvancedQuantTab';
 import QuarterlyRetrainTab from './LabWorkspace.QuarterlyRetrainTab';
 import ShadowRunTab from './LabWorkspace.ShadowRunTab';
 import OverfitMetricsTab from './LabWorkspace.OverfitMetricsTab';
+import WorkflowReadinessTab from './LabWorkspace.WorkflowReadinessTab';
 import {
   labService,
   QuantStrategyItem,
@@ -99,6 +100,7 @@ const POLL_INTERVAL_MS = 3000;
 
 const LabWorkspace: React.FC = () => {
   const tabs: WorkspaceTab[] = [
+    { key: 'workflow_readiness', label: '工作流体检', icon: <SafetyCertificateOutlined /> },
     { key: 'mine', label: '我的策略', icon: <ExperimentOutlined /> },
     { key: 'leaderboard', label: '策略排行', icon: <TrophyOutlined /> },
     { key: 'new', label: '新建回测', icon: <PlusSquareOutlined /> },
@@ -110,7 +112,7 @@ const LabWorkspace: React.FC = () => {
     { key: 'overfit_metrics', label: 'OverfitMetrics', icon: <SafetyCertificateOutlined /> },
     { key: 'advanced_quant', label: '高级量化', icon: <SafetyCertificateOutlined /> },
   ];
-  const [activeKey, setActiveKey] = useState('mine');
+  const [activeKey, setActiveKey] = useState('workflow_readiness');
 
   // US-078: 从策略详情页跳回来时携带 location.state，自动触发 clone/edit/newRun
   const location = useLocation();
@@ -378,6 +380,8 @@ const LabWorkspace: React.FC = () => {
         }
       />
     );
+  } else if (activeKey === 'workflow_readiness') {
+    body = <WorkflowReadinessTab strategies={strategies} tasks={tasks} />;
   } else if (activeKey === 'mine') {
     body = (
       <MyStrategiesTab
