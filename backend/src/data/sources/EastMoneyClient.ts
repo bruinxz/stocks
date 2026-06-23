@@ -156,7 +156,9 @@ export class EastMoneyClient {
       logger.info(`Fetched ${stocks.length} stocks from EastMoney`);
       return stocks;
     } catch (error) {
-      logger.error('Failed to fetch all stocks from EastMoney:', error);
+      // BI-3 (2026-06-23): EastMoney 失败 caller (multi-source orchestrator) 会
+      // fallback 到其他源 (baostock/腾讯), 不是真错. 降到 warn 减少 error.log noise.
+      logger.warn('Failed to fetch all stocks from EastMoney (caller 应已 fallback):', error);
       throw error;
     }
   }

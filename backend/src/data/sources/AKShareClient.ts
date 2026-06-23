@@ -292,7 +292,9 @@ export class AKShareClient {
       const quotes = await this.callPythonScript('get_realtime_quotes', symbols);
       return quotes;
     } catch (error) {
-      logger.error(`Failed to fetch real-time quotes from AKShare:`, error);
+      // BI-3 (2026-06-23): AKShare RT 失败 caller 会 fallback 到腾讯实时源,
+      // 不是真错. 降到 warn 减少 error.log noise.
+      logger.warn(`Failed to fetch real-time quotes from AKShare (caller 应已 fallback):`, error);
       throw error;
     }
   }
