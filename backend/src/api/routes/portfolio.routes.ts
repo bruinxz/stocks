@@ -197,7 +197,16 @@ router.get(
   portfolioController.getIndustryConcentrationSummary
 );
 
-router.get('/:id', authController.authenticate, portfolioController.getSimulationDetail);
+// Batch BD (2026-06-23): 限制 :id 必须是 UUID 格式, 防止 /api/portfolio/list 等路径被错误匹配
+// 真因: 前端调 /api/portfolio/list (期望列表) 时 express 把 "list" 当作 :id → controller 查 UUID
+// → PG 报 'invalid input syntax for type uuid: "list"' → 500. UUID regex 不匹配 → 自然 404.
+// 同样保护 /api/portfolio/33 等数字 ID 被误判为 simulation portfolio (这些是 paper-trading 数字 ID,
+// 应走 /api/paper-trading/portfolios/:id 路由).
+router.get(
+  '/:id([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})',
+  authController.authenticate,
+  portfolioController.getSimulationDetail
+);
 
 /**
  * @openapi
@@ -228,7 +237,7 @@ router.get('/:id', authController.authenticate, portfolioController.getSimulatio
  *       404: { description: portfolio / 当日报告不存在 }
  */
 router.get(
-  '/:id/attribution/daily',
+  '/:id([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/attribution/daily',
   authController.authenticate,
   portfolioController.getDailyAttribution
 );
