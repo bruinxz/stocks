@@ -4566,6 +4566,7 @@ class SchedulerService {
             encoding: 'utf-8',
             timeout: 10 * 60_000,
             maxBuffer: 64 * 1024 * 1024,
+            env: { ...process.env }, // BC-5: 显式 pass env (子进程 dotenv symlink 解析问题)
           });
           const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
           if (r.status === 0) {
@@ -4926,6 +4927,7 @@ class SchedulerService {
           encoding: 'utf-8',
           timeout: 30 * 60_000, // 30 min 上限 (20 因子 × C(20,2)=190 pair)
           maxBuffer: 128 * 1024 * 1024,
+          env: { ...process.env },
         });
         const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
         const ok = r.status === 0;
@@ -4984,6 +4986,7 @@ class SchedulerService {
           encoding: 'utf-8',
           timeout: 30 * 60_000, // IC 计算可能跑 5-15 分钟
           maxBuffer: 128 * 1024 * 1024,
+          env: { ...process.env },
         });
         const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
         const ok = r.status === 0;
@@ -5034,6 +5037,7 @@ class SchedulerService {
           encoding: 'utf-8',
           timeout: 10 * 60_000,
           maxBuffer: 64 * 1024 * 1024,
+          env: { ...process.env },
         });
         const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
         const ok = r.status === 0;
