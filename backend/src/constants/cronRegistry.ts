@@ -501,6 +501,20 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description: '周一 02:00 (≤ AC 04:00) 聚合上周投资者问答 → east_money_qa_stats',
   },
 
+  // BF-4 (2026-06-23): 每日健康日报 - 工作日 21:00 (盘后 + ETF/归因/AI 报告均已落库)
+  // 聚合 7 段 (实盘下单/草稿拒绝/模拟盘/cron 失败/RiskAlert HIGH+/AI 引擎/factor std=0)
+  // 推 Lark OPS 群 + admin 邮箱 (复用 SystemAdminAlertPusher, dedup_key='daily-health:date')
+  // level='INFO' (无论好坏每日 1 张; 真出事走 RiskAlert HIGH push 单独推)
+  // fail-OPEN: per-section try/catch, 主流程不阻塞
+  {
+    type: 'DAILY_HEALTH_REPORT',
+    category: 'analytics',
+    owner: 'ops',
+    recommendedCron: '0 21 * * 1-5',
+    description:
+      '工作日 21:00 聚合 7 段健康指标 (实盘/模拟/cron/告警/AI/factor) → Lark OPS 群 + admin 邮箱 (INFO 级, 每日 1 张)',
+  },
+
   // ===== L7 清理 =====
   {
     type: 'CLEANUP_OLD_DATA',

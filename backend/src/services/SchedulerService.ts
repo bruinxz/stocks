@@ -5920,6 +5920,51 @@ class SchedulerService {
         logger.info(
           `[DATA_FRESHNESS_CHECK] ok=${report.ok_count} warn=${report.warn_count} fail=${report.fail_count}`
         );
+      } else if (task.type === 'DAILY_HEALTH_REPORT') {
+        // BF-4 (2026-06-23): 工作日 21:00 7 段健康指标 → Lark OPS 群 + admin 邮箱
+        // fail-OPEN: generateAndPushDailyHealthReport per-section + push 都 try/catch, 整体不抛.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          generateAndPushDailyHealthReport,
+        } = require('./DailyHealthReportService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const dryRun = parameters?.dry_run === true;
+        const out = await generateAndPushDailyHealthReport({ dry_run: dryRun });
+        const r = out.report;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: 7,
+          completed_items:
+            7 - Object.keys(r.errors || {}).length,
+          failed_items: Object.keys(r.errors || {}).length,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: out.push_error || null,
+          result_summary: {
+            scenario: 'daily_health_report',
+            trade_date: r.trade_date,
+            is_trading_day: r.is_trading_day,
+            live_total: r.live_order.total,
+            live_success_rate: r.live_order.success_rate,
+            paper_buy: r.paper_trading.buy_count,
+            paper_sell: r.paper_trading.sell_count,
+            cron_failures: r.cron_failures.length,
+            risk_alerts_high: r.risk_alerts_high.length,
+            ai_total: r.ai_engine.total,
+            ai_fallback_rate: r.ai_engine.fallback_rate,
+            factor_std_zero: r.factor_std_zero.length,
+            push_attempted: out.push_attempted,
+            push_error: out.push_error || null,
+            section_errors: r.errors,
+          },
+        });
+        logger.info(
+          `[DAILY_HEALTH_REPORT] date=${r.trade_date} live=${r.live_order.total}/${
+            (r.live_order.success_rate * 100).toFixed(1)
+          }% paper=${r.paper_trading.buy_count}/${r.paper_trading.sell_count} ` +
+            `cron_fail=${r.cron_failures.length} alerts=${r.risk_alerts_high.length} ` +
+            `ai=${r.ai_engine.total}/${(r.ai_engine.fallback_rate * 100).toFixed(1)}%fb ` +
+            `std0=${r.factor_std_zero.length} push=${out.push_attempted}`
+        );
       } else if (task.type === 'FEEDBACK_REVIEW_SWEEP') {
         // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环 cron 入口.
         // 每 30 分钟扫 status='pending' 且 (reviewed_at IS NULL OR < now-ageHours) 的反馈,
