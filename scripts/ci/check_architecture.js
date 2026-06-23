@@ -8,9 +8,10 @@
  *   3. 标记可能未被使用的 export（仅 hint，不 fail）
  *
  * 用法：
- *   node scripts/ci/check_architecture.js [--strict]
+ *   node scripts/ci/check_architecture.js [--strict] [--baseline path/to/baseline.json]
  *
  * --strict：循环依赖 / 跨层违规即 exit 1（CI 推荐打开）。
+ * --baseline：登记已知历史债务；strict 模式只拦截 baseline 之外的新增项。
  * 默认 dry-run，只汇总报告。
  */
 
@@ -21,6 +22,18 @@ const repoRoot = path.resolve(__dirname, '../..');
 const srcRoot = path.join(repoRoot, 'backend/src');
 
 const STRICT = process.argv.includes('--strict');
+
+function parseBaselinePath(argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--baseline') return argv[i + 1] || '';
+    if (arg.startsWith('--baseline=')) return arg.slice('--baseline='.length);
+  }
+  return '';
+}
+
+const BASELINE_ARG = parseBaselinePath(process.argv.slice(2));
+const BASELINE_PATH = BASELINE_ARG ? path.resolve(process.cwd(), BASELINE_ARG) : '';
 
 if (!fs.existsSync(srcRoot)) {
   console.error('backend/src 不存在');
@@ -204,11 +217,75 @@ const unused = findUnusedExportsLiveTrading();
 
 function rel(f) { return path.relative(srcRoot, f).replace(/\\/g, '/'); }
 
+function cycleKey(cycle) {
+  return cycle.map(rel).sort().join('|');
+}
+
+function violationKey(v) {
+  return `${v.rule}|${rel(v.from)}|${rel(v.to)}`;
+}
+
+function readBaseline(file) {
+  if (!file) {
+    return {
+      cycleKeys: new Set(),
+      violationKeys: new Set(),
+      enabled: false,
+    };
+  }
+
+  if (!fs.existsSync(file)) {
+    console.error(`baseline 文件不存在: ${file}`);
+    process.exit(2);
+  }
+
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    console.error(`baseline 文件无法解析为 JSON: ${file}`);
+    console.error(err && err.message ? err.message : String(err));
+    process.exit(2);
+  }
+
+  const cycleKeys = new Set(
+    (Array.isArray(data.cycles) ? data.cycles : []).map(cycle =>
+      Array.isArray(cycle) ? cycle.slice().sort().join('|') : String(cycle)
+    )
+  );
+  const violationKeys = new Set(
+    (Array.isArray(data.violations) ? data.violations : []).map(v =>
+      typeof v === 'string' ? v : `${v.rule}|${v.from}|${v.to}`
+    )
+  );
+
+  return {
+    cycleKeys,
+    violationKeys,
+    enabled: true,
+  };
+}
+
+const baseline = readBaseline(BASELINE_PATH);
+const unbaselinedCycles = cycles.filter(cycle => !baseline.cycleKeys.has(cycleKey(cycle)));
+const unbaselinedViolations = violations.filter(v => !baseline.violationKeys.has(violationKey(v)));
+
 console.log('=== 架构依赖扫描 ===');
 console.log(`- 已分析 .ts 文件：${files.length}`);
-console.log(`- 循环依赖 SCC：${cycles.length}`);
-console.log(`- 跨层违规：${violations.length}`);
+console.log(
+  `- 循环依赖 SCC：${cycles.length}` +
+    (baseline.enabled
+      ? `（baseline 覆盖 ${cycles.length - unbaselinedCycles.length}，新增 ${unbaselinedCycles.length}）`
+      : '')
+);
+console.log(
+  `- 跨层违规：${violations.length}` +
+    (baseline.enabled
+      ? `（baseline 覆盖 ${violations.length - unbaselinedViolations.length}，新增 ${unbaselinedViolations.length}）`
+      : '')
+);
 console.log(`- live-trading 未使用 export 候选：${unused.length}`);
+if (baseline.enabled) console.log(`- baseline：${path.relative(repoRoot, BASELINE_PATH)}`);
 
 if (cycles.length) {
   console.log('\n=== 循环依赖 ===');
@@ -235,12 +312,23 @@ if (unused.length) {
   if (unused.length > 30) console.log(`  ... ${unused.length - 30} more`);
 }
 
-const hardFail = cycles.length > 0 || violations.length > 0;
+if (baseline.enabled && (unbaselinedCycles.length || unbaselinedViolations.length)) {
+  console.log('\n=== baseline 外新增违规 ===');
+  for (const cyc of unbaselinedCycles) {
+    console.log('  new cycle:');
+    for (const f of cyc) console.log('    ' + rel(f));
+  }
+  for (const v of unbaselinedViolations) {
+    console.log(`  new [${v.rule}] ${rel(v.from)} → ${rel(v.to)}`);
+  }
+}
+
+const hardFail = unbaselinedCycles.length > 0 || unbaselinedViolations.length > 0;
 if (STRICT && hardFail) {
-  console.error('\n❌ --strict 模式：循环依赖 / 跨层违规即失败');
+  console.error('\n❌ --strict 模式：baseline 外新增循环依赖 / 跨层违规即失败');
   process.exit(1);
 }
-if (!STRICT && hardFail) {
+if (!STRICT && (cycles.length > 0 || violations.length > 0)) {
   console.log('\n⚠️ 有循环依赖 / 跨层违规但 dry-run 模式不 fail；CI 跑 --strict 强约束');
 }
 console.log('\n✅ 扫描完成');

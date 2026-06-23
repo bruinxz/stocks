@@ -192,8 +192,7 @@ export class Portfolio {
       this.equity_curve.length >= 2
         ? (this.equity_curve[this.equity_curve.length - 1].value /
             this.equity_curve[this.equity_curve.length - 2].value -
-            1) *
-          100
+            1)
         : 0;
 
     return {

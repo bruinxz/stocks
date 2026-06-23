@@ -55,6 +55,7 @@ jobs:
           filters: |
             backend:
               - 'backend/**'
+              - 'scripts/ci/**'
               - '.github/workflows/ci.yml'
             frontend:
               - 'frontend/**'
@@ -142,6 +143,14 @@ jobs:
         run: npm run docs:openapi:check 2>&1 | tee ../backend-openapi-check.log
         continue-on-error: false
 
+      # Phase 0 hardening: architecture drift guard. Existing cycles / layer
+      # violations are recorded in scripts/ci/architecture-baseline.json; strict
+      # mode fails only when a PR introduces new unbaselined debt.
+      - name: Architecture drift check
+        id: architecture_check
+        run: node ../scripts/ci/check_architecture.js --strict --baseline ../scripts/ci/architecture-baseline.json 2>&1 | tee ../backend-architecture-check.log
+        continue-on-error: false
+
       - name: Lint (eslint)
         id: lint
         run: npm run lint 2>&1 | tee ../backend-lint.log
@@ -163,6 +172,7 @@ jobs:
             backend-envcheck-fail.log
             backend-typecheck.log
             backend-openapi-check.log
+            backend-architecture-check.log
             backend-lint.log
             backend-test.log
           retention-days: 7
@@ -174,7 +184,7 @@ jobs:
           script: |
             const fs = require('fs');
             const path = require('path');
-            const logs = ['envcheck', 'envcheck-fail', 'typecheck', 'openapi-check', 'lint', 'test'];
+            const logs = ['envcheck', 'envcheck-fail', 'typecheck', 'openapi-check', 'architecture-check', 'lint', 'test'];
             const sections = [];
             for (const name of logs) {
               const filePath = path.join(process.env.GITHUB_WORKSPACE, `backend-${name}.log`);
