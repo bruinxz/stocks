@@ -480,6 +480,18 @@ export class PositionLimitGuard {
 
         // Persist alert — failures here MUST NOT mask the violation; we still
         // want to reject the order.
+        //
+        // BJ-7 (2026-06-24): max_positions 是"满仓拒绝下单"业务状态, 不是风险事件.
+        //   每次扫描候选都满仓 → 一次扫批 30+ 候选刷 30+ HIGH alert, 用户被刷屏
+        //   24h 487 条 HIGH 全是 max_positions noise.
+        //   max_positions 不写 RiskAlert (auto_trade 满仓是正常运行状态), 只 logger.info;
+        //   其他 rule (industry_cap / single_stock_cap / max_loss) 是真风险, 继续 HIGH.
+        if (violation.rule === 'max_positions') {
+          logger.info(
+            `[PositionLimitGuard] max_positions skip: user=${input.user_id} symbol=${input.symbol}: ${violation.message}`
+          );
+          return { ok: false, violation, config };
+        }
         try {
           await this.source.writeAlert({
             user_id: input.user_id,
