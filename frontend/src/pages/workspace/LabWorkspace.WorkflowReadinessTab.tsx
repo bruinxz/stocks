@@ -1,7 +1,7 @@
 /**
  * LabWorkspace.WorkflowReadinessTab — phase 1-3 quant workflow readiness UI.
  *
- * This tab turns backend readiness gates into an operator-facing checklist:
+ * This tab turns the backend self-assessment scorer into an operator-facing checklist:
  * simple preset → research credibility → paper-trading acceptance.
  */
 
