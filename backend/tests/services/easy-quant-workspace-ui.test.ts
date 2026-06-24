@@ -103,6 +103,12 @@ assert(
   /EasyQuantMark/.test(page) && /JourneySketch/.test(page) && /eq-logo-mark/.test(css)
 );
 assert(
+  'display typography uses Heiti-style fallback',
+  css.includes('--eq-display-font') &&
+    /Heiti SC|STHeiti|PingFang SC/.test(css) &&
+    !/Songti|宋体|Noto Serif SC|Kaiti|KaiTi|STKaiti|FangSong|LXGW WenKai/.test(page + css)
+);
+assert(
   'style avoids rejected blue dashboard palette',
   !/#2764b8|#1f3a5f|geekblue|蓝色后台/.test(page + css)
 );
