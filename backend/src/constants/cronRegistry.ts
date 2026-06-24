@@ -107,6 +107,19 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '工作日 18:00 拉前一交易日 30+ 行业 ETF 净流入 / 份额 (AKShare fund_etf_fund_daily_em + fund_etf_hist_em) → etf_creation_redemption',
   },
+  // BJ-8 (2026-06-24): 市场情绪指数每日计算 - 真因 MarketSentimentIndexService 写
+  //   全自动 (US-057), 但 cron 没有调度, 仅 sync-market-sentiment 脚本手动跑过 2 次
+  //   (2026-06-09 + 06-11), 之后停摆 13 日 → DATA_FRESHNESS_CHECK 永远 fail.
+  //   现在工作日 17:30 自动 sync (盘后 30min, daily_bar/limit_up 已落 + 早于 18:30
+  //   DATA_FRESHNESS_CHECK 1h 让 sentiment 当天能算上).
+  {
+    type: 'MARKET_SENTIMENT_INDEX_SYNC',
+    category: 'data_sync',
+    owner: 'data',
+    recommendedCron: '30 17 * * 1-5',
+    description:
+      '工作日 17:30 计算并持久化当日全市场情绪指数 (4 维: 涨跌停 + 北向 + 融资 + QA 热度) → market_sentiment_indices',
+  },
   // BF-3 (2026-06-23): 数据陈旧度检查 - 工作日盘后 18:30 (ETF_FLOW_SYNC 后 30min, 让本日数据落库再检)
   // 检 5 项: realtime_quotes 1h+ stale / daily_bars 不是 today / factor std=0 > 2 / cron FAILED / sentiment 陈旧
   // 命中任一阈值 → RiskAlert MEDIUM + Lark OPS 群推 (1h dedup)

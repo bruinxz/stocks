@@ -496,8 +496,11 @@ class DefaultDataFreshnessCheckDataSource implements DataFreshnessCheckDataSourc
     const { DailyBar } = require('../models/DailyBar');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { fn, col } = require('sequelize');
+    // BJ-8 (2026-06-24): daily_bars 真实列是 'time' (TimescaleDB hypertable
+    // timestamp column), 不是 'trade_date'. 原代码查 trade_date 必报
+    // 'column "trade_date" does not exist' → 永远 warn.
     const r: any = await DailyBar.findOne({
-      attributes: [[fn('MAX', col('trade_date')), 'max_date']],
+      attributes: [[fn('MAX', col('time')), 'max_date']],
       raw: true,
     });
     const v = r?.max_date;

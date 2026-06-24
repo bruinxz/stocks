@@ -5894,6 +5894,23 @@ class SchedulerService {
             }`
           );
         }
+      } else if (task.type === 'MARKET_SENTIMENT_INDEX_SYNC') {
+        // BJ-8 (2026-06-24): 工作日 17:30 全市场情绪指数计算 (US-057).
+        // computeAndPersist 内部 4 维度 safeAwait fallback (per-dim 死单独不阻塞),
+        // 任一全死时 limit_diff 仍能算 (= 0-0), 写 index_value=50 中性. fail-OPEN.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { marketSentimentIndexService } = require('./MarketSentimentIndexService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        try {
+          const result = await marketSentimentIndexService.computeAndPersist({});
+          logger.info(
+            `[MARKET_SENTIMENT_INDEX_SYNC] trade_date=${result.trade_date} index_value=${result.index_value.toFixed(2)} persisted=${!result.dry_run}`
+          );
+        } catch (e: any) {
+          // 整体异常仍 warn 不抛 (与 ETF_FLOW_SYNC 同款 fail-OPEN 模式),
+          // 让 cron 标 success, 失败由 DATA_FRESHNESS_CHECK 18:30 监测 + 告警.
+          logger.warn(`[MARKET_SENTIMENT_INDEX_SYNC] failed: ${e?.message ?? e}`);
+        }
       } else if (task.type === 'DATA_FRESHNESS_CHECK') {
         // BF-3 (2026-06-23): 工作日 18:30 检查 5 项数据陈旧度 + 命中阈值推 Lark + 写 RiskAlert MEDIUM
         // fail-OPEN: runDataFreshnessCheck 内部 per-item try/catch, 整体不抛.
