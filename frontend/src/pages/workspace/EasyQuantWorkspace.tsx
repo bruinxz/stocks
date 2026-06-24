@@ -4,6 +4,7 @@ import {
   ArrowRightOutlined,
   BellOutlined,
   CheckCircleOutlined,
+  CloseOutlined,
   DownOutlined,
   ExportOutlined,
   PlayCircleOutlined,
@@ -14,12 +15,14 @@ import './EasyQuantWorkspace.css';
 
 type StepKey = 'template' | 'data' | 'backtest' | 'observe';
 type TemplateId = 'steady_trend' | 'mean_cross' | 'low_vol_value';
+type DrawerKey = StepKey | 'guide' | null;
 
 interface JourneyStep {
   key: StepKey;
   number: string;
   title: string;
   caption: string;
+  drawerTitle: string;
   sketch: 'sprout' | 'lens' | 'chart' | 'telescope';
 }
 
@@ -39,28 +42,32 @@ const journeySteps: JourneyStep[] = [
     key: 'template',
     number: '01',
     title: '选模板',
-    caption: '从策略模板开始，事半功倍。',
+    caption: '先选一个不用调太多参数的策略。',
+    drawerTitle: '模板怎么选',
     sketch: 'sprout',
   },
   {
     key: 'data',
     number: '02',
     title: '查数据',
-    caption: '检查完整性，为回测做好准备。',
+    caption: '看行情、因子和风险边界是否齐备。',
+    drawerTitle: '数据体检',
     sketch: 'lens',
   },
   {
     key: 'backtest',
     number: '03',
     title: '跑回测',
-    caption: '验证策略表现，评估风险与收益。',
+    caption: '先判断收益和回撤是否能接受。',
+    drawerTitle: '回测报告',
     sketch: 'chart',
   },
   {
     key: 'observe',
     number: '04',
     title: '模拟观察',
-    caption: '在模拟环境中观察策略行为。',
+    caption: '观察一段时间，再考虑更复杂配置。',
+    drawerTitle: '观察日志',
     sketch: 'telescope',
   },
 ];
@@ -231,11 +238,21 @@ const JourneySketch: React.FC<{
 const EasyQuantWorkspace: React.FC = () => {
   const [activeStep, setActiveStep] = useState<StepKey>('template');
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('steady_trend');
+  const [drawerKey, setDrawerKey] = useState<DrawerKey>(null);
 
   const selectedTemplateData = useMemo(
     () => strategyTemplates.find(item => item.id === selectedTemplate) || strategyTemplates[0],
     [selectedTemplate]
   );
+
+  const activeStepIndex = journeySteps.findIndex(step => step.key === activeStep);
+  const activeStepData = journeySteps[activeStepIndex] || journeySteps[0];
+  const drawerStepData =
+    drawerKey && drawerKey !== 'guide'
+      ? journeySteps.find(step => step.key === drawerKey) || activeStepData
+      : activeStepData;
+  const nextStep = journeySteps[Math.min(activeStepIndex + 1, journeySteps.length - 1)];
+  const progressPercent = Math.round(((activeStepIndex + 1) / journeySteps.length) * 100);
 
   const displayUsername =
     localStorage.getItem('username') ||
@@ -248,49 +265,89 @@ const EasyQuantWorkspace: React.FC = () => {
       }
     })();
 
+  const moveToNextStep = () => {
+    if (activeStepIndex < journeySteps.length - 1) {
+      setActiveStep(journeySteps[activeStepIndex + 1].key);
+      return;
+    }
+    setDrawerKey('observe');
+  };
+
   const renderStage = () => {
     if (activeStep === 'data') {
       return (
-        <section className="eq-stage-panel" aria-label="检查数据">
-          <div className="eq-stage-head">
-            <h2>检查数据</h2>
-            <p>确认行情、因子、基准和风控边界都可用，再开始回测。</p>
+        <section className="eq-stage-panel eq-stage-panel--data" aria-label="检查数据">
+          <div className="eq-stage-topline">
+            <span>当前任务</span>
+            <button onClick={() => setDrawerKey('data')}>打开体检抽屉</button>
           </div>
-          <div className="eq-data-grid">
+          <div className="eq-stage-copy">
+            <h2>检查数据</h2>
+            <p>先确认数据可靠，再进入回测。新手不需要理解每个字段，只看是否可以继续。</p>
+          </div>
+          <div className="eq-verdict-card">
+            <JourneySketch type="lens" />
+            <div>
+              <span className="eq-soft-label">体检结果</span>
+              <strong>可以进入回测</strong>
+              <p>行情完整度和风险边界都通过，因子字段足够跑第一版策略。</p>
+            </div>
+          </div>
+          <div className="eq-inline-metrics">
             {dataChecks.map(item => (
-              <article key={item.label} className="eq-data-card">
+              <article key={item.label}>
                 <span>{item.label}</span>
                 <strong>{item.value}</strong>
-                <p>{item.detail}</p>
               </article>
             ))}
           </div>
-          <button className="eq-button eq-button--dark" onClick={() => setActiveStep('backtest')}>
-            开始回测 <PlayCircleOutlined />
-          </button>
+          <div className="eq-stage-actions">
+            <button className="eq-button eq-button--dark" onClick={() => setActiveStep('backtest')}>
+              开始回测 <PlayCircleOutlined />
+            </button>
+            <button className="eq-button eq-button--quiet" onClick={() => setDrawerKey('data')}>
+              查看数据明细
+            </button>
+          </div>
         </section>
       );
     }
 
     if (activeStep === 'backtest') {
       return (
-        <section className="eq-stage-panel" aria-label="回测报告">
-          <div className="eq-stage-head">
-            <h2>回测报告</h2>
-            <p>把专业指标翻译成新手能判断的三件事：收益、回撤、是否值得模拟。</p>
+        <section className="eq-stage-panel eq-stage-panel--backtest" aria-label="回测报告">
+          <div className="eq-stage-topline">
+            <span>当前任务</span>
+            <button onClick={() => setDrawerKey('backtest')}>打开报告抽屉</button>
           </div>
-          <div className="eq-report-grid">
+          <div className="eq-stage-copy">
+            <h2>回测报告</h2>
+            <p>先看一个结论，再决定要不要进入模拟观察。详细指标放在抽屉里慢慢看。</p>
+          </div>
+          <div className="eq-result-hero">
+            <div>
+              <span className="eq-soft-label">样例结论</span>
+              <strong>值得进入模拟观察</strong>
+              <p>收益表现不错，最大回撤仍在新手默认边界内。</p>
+            </div>
+            <JourneySketch type="chart" />
+          </div>
+          <div className="eq-inline-metrics eq-inline-metrics--four">
             {reportMetrics.map(metric => (
-              <article key={metric.label} className="eq-report-card">
+              <article key={metric.label}>
                 <span>{metric.label}</span>
                 <strong>{metric.value}</strong>
-                <p>{metric.note}</p>
               </article>
             ))}
           </div>
-          <button className="eq-button eq-button--dark" onClick={() => setActiveStep('observe')}>
-            进入模拟观察 <ArrowRightOutlined />
-          </button>
+          <div className="eq-stage-actions">
+            <button className="eq-button eq-button--dark" onClick={() => setActiveStep('observe')}>
+              进入模拟观察 <ArrowRightOutlined />
+            </button>
+            <button className="eq-button eq-button--quiet" onClick={() => setDrawerKey('backtest')}>
+              查看完整指标
+            </button>
+          </div>
         </section>
       );
     }
@@ -298,76 +355,173 @@ const EasyQuantWorkspace: React.FC = () => {
     if (activeStep === 'observe') {
       return (
         <section className="eq-stage-panel eq-stage-panel--observe" aria-label="模拟观察">
-          <div className="eq-stage-head">
-            <h2>模拟观察</h2>
-            <p>观察 30 个交易日后再考虑实盘，收益不代表未来表现。</p>
+          <div className="eq-stage-topline">
+            <span>当前任务</span>
+            <button onClick={() => setDrawerKey('observe')}>打开日志抽屉</button>
           </div>
-          <div className="eq-observe-layout">
-            <article className="eq-observe-summary">
-              <h3>{selectedTemplateData.name}</h3>
-              <span>{selectedTemplateData.risk}</span>
+          <div className="eq-stage-copy">
+            <h2>模拟观察</h2>
+            <p>不要急着实盘。先观察策略每天如何生成信号、通过风控、产生持仓变化。</p>
+          </div>
+          <div className="eq-observe-hero">
+            <article>
+              <span>{selectedTemplateData.name}</span>
               <strong>8/30</strong>
-              <p>当前为模拟观察期，仅用于策略验证。</p>
+              <p>已观察 8 个交易日，还需要继续看稳定性。</p>
             </article>
-            <div className="eq-observe-log">
-              {observeLogs.map(log => (
-                <article key={`${log.time}-${log.title}`}>
+            <div className="eq-observe-timeline">
+              {observeLogs.slice(0, 3).map(log => (
+                <button key={`${log.time}-${log.title}`} onClick={() => setDrawerKey('observe')}>
                   <time>{log.time}</time>
-                  <div>
-                    <strong>{log.title}</strong>
-                    <p>{log.detail}</p>
-                  </div>
+                  <strong>{log.title}</strong>
                   <span>{log.state}</span>
-                </article>
+                </button>
               ))}
             </div>
+          </div>
+          <div className="eq-stage-actions">
+            <button className="eq-button eq-button--dark" onClick={() => setDrawerKey('observe')}>
+              查看完整日志
+            </button>
+            <button
+              className="eq-button eq-button--quiet"
+              onClick={() => setActiveStep('template')}
+            >
+              重新选模板
+            </button>
           </div>
         </section>
       );
     }
 
     return (
-      <section className="eq-stage-panel" aria-label="选择策略模板">
-        <div className="eq-stage-head">
-          <h2>选择策略模板</h2>
-          <p>精选适合新手的策略模板，先跑通第一套策略，再慢慢调参数。</p>
+      <section className="eq-stage-panel eq-stage-panel--template" aria-label="选择策略模板">
+        <div className="eq-stage-topline">
+          <span>当前任务</span>
+          <button onClick={() => setDrawerKey('template')}>打开模板抽屉</button>
         </div>
-        <div className="eq-template-list">
+        <div className="eq-stage-copy">
+          <h2>选择策略模板</h2>
+          <p>从一个默认模板开始，先跑通完整流程。参数和高级规则之后再慢慢打开。</p>
+        </div>
+        <div className="eq-template-cards">
           {strategyTemplates.map(template => (
             <button
               key={template.id}
-              className={`eq-template-row ${
-                selectedTemplate === template.id ? 'eq-template-row--active' : ''
+              className={`eq-template-card ${
+                selectedTemplate === template.id ? 'eq-template-card--active' : ''
               }`}
               onClick={() => setSelectedTemplate(template.id)}
               aria-pressed={selectedTemplate === template.id}
             >
               <JourneySketch type={template.sketch} />
-              <span className="eq-template-main">
+              <span>
                 <strong>{template.name}</strong>
                 <em>{template.description}</em>
-                <small>{template.reason}</small>
               </span>
-              <span className="eq-template-meta">
-                <b>{template.risk}</b>
-                <em>{template.holding}</em>
-              </span>
-              <span
-                className={
-                  template.dataStatus === '已就绪'
-                    ? 'eq-template-status'
-                    : 'eq-template-status eq-template-status--warn'
-                }
-              >
-                {template.dataStatus}
-              </span>
+              <small>{template.risk}</small>
             </button>
           ))}
         </div>
-        <button className="eq-button eq-button--dark" onClick={() => setActiveStep('data')}>
-          检查数据 <ArrowRightOutlined />
-        </button>
+        <article className="eq-selected-note">
+          <span>已选模板</span>
+          <strong>{selectedTemplateData.name}</strong>
+          <p>{selectedTemplateData.reason}</p>
+        </article>
+        <div className="eq-stage-actions">
+          <button className="eq-button eq-button--dark" onClick={() => setActiveStep('data')}>
+            下一步：检查数据 <ArrowRightOutlined />
+          </button>
+          <button className="eq-button eq-button--quiet" onClick={() => setDrawerKey('template')}>
+            对比模板
+          </button>
+        </div>
       </section>
+    );
+  };
+
+  const renderDrawerContent = () => {
+    if (drawerKey === 'guide') {
+      return (
+        <>
+          <p>
+            简易版只保留一条主线：选模板、查数据、跑回测、模拟观察。每一步页面只做一个决定，
+            其余信息都收进抽屉。
+          </p>
+          <div className="eq-drawer-list">
+            {journeySteps.map(step => (
+              <article key={step.key}>
+                <span>{step.number}</span>
+                <strong>{step.title}</strong>
+                <p>{step.caption}</p>
+              </article>
+            ))}
+          </div>
+          <div className="eq-drawer-note">
+            <strong>推荐动线</strong>
+            <span>先按默认配置走完一次，再回到专业版调参数。</span>
+          </div>
+        </>
+      );
+    }
+
+    if (drawerKey === 'data') {
+      return (
+        <div className="eq-drawer-list">
+          {dataChecks.map(item => (
+            <article key={item.label}>
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
+              <p>{item.detail}</p>
+            </article>
+          ))}
+        </div>
+      );
+    }
+
+    if (drawerKey === 'backtest') {
+      return (
+        <div className="eq-drawer-list">
+          {reportMetrics.map(metric => (
+            <article key={metric.label}>
+              <span>{metric.label}</span>
+              <strong>{metric.value}</strong>
+              <p>{metric.note}</p>
+            </article>
+          ))}
+        </div>
+      );
+    }
+
+    if (drawerKey === 'observe') {
+      return (
+        <div className="eq-drawer-log">
+          {observeLogs.map(log => (
+            <article key={`${log.time}-${log.title}`}>
+              <time>{log.time}</time>
+              <div>
+                <strong>{log.title}</strong>
+                <p>{log.detail}</p>
+              </div>
+              <span>{log.state}</span>
+            </article>
+          ))}
+        </div>
+      );
+    }
+
+    return (
+      <div className="eq-drawer-list">
+        {strategyTemplates.map(template => (
+          <article key={template.id}>
+            <span>{template.risk}</span>
+            <strong>{template.name}</strong>
+            <p>
+              {template.description} 持有周期：{template.holding}。数据状态：{template.dataStatus}。
+            </p>
+          </article>
+        ))}
+      </div>
     );
   };
 
@@ -409,24 +563,16 @@ const EasyQuantWorkspace: React.FC = () => {
 
       <section className="eq-hero">
         <div className="eq-hero-main">
-          <h1>从一颗策略种子开始</h1>
-          <p>选模板，查数据，跑回测，再进入模拟观察</p>
-          <div className="eq-journey">
-            {journeySteps.map((step, index) => (
-              <button
-                key={step.key}
-                className={`eq-journey-step ${
-                  activeStep === step.key ? 'eq-journey-step--active' : ''
-                }`}
-                onClick={() => setActiveStep(step.key)}
-              >
-                <span className="eq-step-number">{step.number}</span>
-                <JourneySketch type={step.sketch} />
-                {index < journeySteps.length - 1 ? <span className="eq-dash-line" /> : null}
-                <strong>{step.title}</strong>
-                <em>{step.caption}</em>
-              </button>
-            ))}
+          <span className="eq-kicker">简易版工作台</span>
+          <h1>今天只推进一步</h1>
+          <p>把复杂量化流程收成四个动作，先跑通，再深入。</p>
+          <div className="eq-hero-actions">
+            <button className="eq-button eq-button--dark" onClick={moveToNextStep}>
+              继续：{nextStep.title} <ArrowRightOutlined />
+            </button>
+            <button className="eq-button eq-button--quiet" onClick={() => setDrawerKey('guide')}>
+              看动线说明
+            </button>
           </div>
         </div>
 
@@ -438,67 +584,96 @@ const EasyQuantWorkspace: React.FC = () => {
             </button>
           </div>
           <JourneySketch type="flag" />
-          <h2>建议先用沪深300成分股池跑 2 年回测</h2>
-          <p>覆盖度高，流动性好，能够更有效地验证策略稳定性与风险。</p>
-          <button className="eq-button eq-button--light" onClick={() => setActiveStep('template')}>
-            开始配置 <ArrowRightOutlined />
-          </button>
+          <h2>先用沪深300成分池跑 2 年回测</h2>
+          <p>覆盖度高，流动性好，更适合验证第一版策略稳定性。</p>
         </aside>
       </section>
 
-      <section className="eq-action-grid" aria-label="快捷入口">
-        <article className="eq-action-card">
-          <JourneySketch type="trend" />
-          <div>
-            <h2>选择策略模板</h2>
-            <p>精选适合新手的模板，快速搭建你的第一套策略。</p>
-            <button className="eq-button eq-button--dark" onClick={() => setActiveStep('template')}>
-              浏览模板 <ArrowRightOutlined />
-            </button>
+      <section className="eq-flow-shell" aria-label="简易版操作动线">
+        <aside className="eq-step-dock" aria-label="步骤导航">
+          <div className="eq-progress">
+            <span>进度</span>
+            <strong>{progressPercent}%</strong>
+            <div>
+              <i style={{ width: `${progressPercent}%` }} />
+            </div>
           </div>
-        </article>
-        <article className="eq-action-card">
-          <JourneySketch type="shield" />
-          <div>
-            <h2>检查数据</h2>
-            <p>检查行情、因子与基准数据，确保回测结果可靠。</p>
-            <button className="eq-button eq-button--dark" onClick={() => setActiveStep('data')}>
-              开始检查 <ArrowRightOutlined />
+          {journeySteps.map(step => (
+            <button
+              key={step.key}
+              className={`eq-step-pill ${activeStep === step.key ? 'eq-step-pill--active' : ''}`}
+              onClick={() => setActiveStep(step.key)}
+            >
+              <span>{step.number}</span>
+              <div>
+                <strong>{step.title}</strong>
+                <em>{step.caption}</em>
+              </div>
             </button>
-          </div>
-        </article>
-        <article className="eq-action-card">
-          <JourneySketch type="chart" />
-          <div>
-            <h2>查看回测记录</h2>
-            <p>浏览历史回测结果，复盘并对比不同策略表现。</p>
-            <button className="eq-button eq-button--dark" onClick={() => setActiveStep('backtest')}>
-              查看记录 <ArrowRightOutlined />
-            </button>
-          </div>
-        </article>
-      </section>
+          ))}
+        </aside>
 
-      {renderStage()}
+        <div className="eq-stage-wrap">{renderStage()}</div>
+
+        <aside className="eq-inspector" aria-label="当前摘要">
+          <div className="eq-inspector-card">
+            <span className="eq-soft-label">当前步骤</span>
+            <JourneySketch type={activeStepData.sketch} />
+            <h2>{activeStepData.title}</h2>
+            <p>{activeStepData.caption}</p>
+            <button className="eq-button eq-button--dark" onClick={() => setDrawerKey(activeStep)}>
+              打开{activeStepData.drawerTitle}
+            </button>
+          </div>
+          <div className="eq-quick-list">
+            <button onClick={() => setDrawerKey('template')}>模板对比</button>
+            <button onClick={() => setDrawerKey('data')}>数据体检</button>
+            <button onClick={() => setDrawerKey('backtest')}>回测指标</button>
+            <button onClick={() => setDrawerKey('observe')}>观察日志</button>
+          </div>
+        </aside>
+      </section>
 
       <footer className="eq-status-strip" aria-label="系统状态">
         <span>
           <EasyQuantMark compact />
-          数据最新更新时间 <strong>2026-06-24 15:28</strong>
+          数据更新 <strong>2026-06-24 15:28</strong>
         </span>
         <span>
           <CheckCircleOutlined />
-          数据完整性 <strong>96%</strong>
+          完整性 <strong>96%</strong>
         </span>
         <span>
           <CheckCircleOutlined />
           风险边界 <strong>已启用</strong>
         </span>
-        <Link to="/workspace/system">查看新手指南</Link>
+        <Link to="/workspace/system">新手指南</Link>
         <Link to="/workspace/lab">
           进入专业版 <ExportOutlined />
         </Link>
       </footer>
+
+      <div className={`eq-drawer-layer ${drawerKey ? 'eq-drawer-layer--open' : ''}`}>
+        <button
+          className="eq-drawer-backdrop"
+          aria-label="关闭抽屉"
+          onClick={() => setDrawerKey(null)}
+        />
+        <aside
+          className="eq-drawer"
+          role="dialog"
+          aria-modal="true"
+          aria-label={drawerKey ? '简易版详情抽屉' : undefined}
+        >
+          <div className="eq-drawer-head">
+            <span>{drawerKey === 'guide' ? '动线说明' : drawerStepData.drawerTitle}</span>
+            <button aria-label="关闭抽屉" onClick={() => setDrawerKey(null)}>
+              <CloseOutlined />
+            </button>
+          </div>
+          {renderDrawerContent()}
+        </aside>
+      </div>
     </main>
   );
 };
