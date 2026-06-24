@@ -1,14 +1,20 @@
-import React, { useMemo, useState } from 'react';
+import React, { ReactNode, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowRightOutlined,
+  AreaChartOutlined,
   BellOutlined,
   CheckCircleOutlined,
   CloseOutlined,
+  DatabaseOutlined,
   DownOutlined,
   ExportOutlined,
+  EyeOutlined,
+  LineChartOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
+  RiseOutlined,
+  SafetyCertificateOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import './EasyQuantWorkspace.css';
@@ -23,7 +29,7 @@ interface JourneyStep {
   title: string;
   caption: string;
   drawerTitle: string;
-  sketch: 'sprout' | 'lens' | 'chart' | 'telescope';
+  icon: ReactNode;
 }
 
 interface StrategyTemplate {
@@ -34,7 +40,7 @@ interface StrategyTemplate {
   dataStatus: string;
   description: string;
   reason: string;
-  sketch: 'trend' | 'cross' | 'shield';
+  icon: ReactNode;
 }
 
 const journeySteps: JourneyStep[] = [
@@ -44,7 +50,7 @@ const journeySteps: JourneyStep[] = [
     title: '选模板',
     caption: '先选一个不用调太多参数的策略。',
     drawerTitle: '模板怎么选',
-    sketch: 'sprout',
+    icon: <RiseOutlined />,
   },
   {
     key: 'data',
@@ -52,7 +58,7 @@ const journeySteps: JourneyStep[] = [
     title: '查数据',
     caption: '看行情、因子和风险边界是否齐备。',
     drawerTitle: '数据体检',
-    sketch: 'lens',
+    icon: <DatabaseOutlined />,
   },
   {
     key: 'backtest',
@@ -60,7 +66,7 @@ const journeySteps: JourneyStep[] = [
     title: '跑回测',
     caption: '先判断收益和回撤是否能接受。',
     drawerTitle: '回测报告',
-    sketch: 'chart',
+    icon: <AreaChartOutlined />,
   },
   {
     key: 'observe',
@@ -68,7 +74,7 @@ const journeySteps: JourneyStep[] = [
     title: '模拟观察',
     caption: '观察一段时间，再考虑更复杂配置。',
     drawerTitle: '观察日志',
-    sketch: 'telescope',
+    icon: <EyeOutlined />,
   },
 ];
 
@@ -81,7 +87,7 @@ const strategyTemplates: StrategyTemplate[] = [
     dataStatus: '已就绪',
     description: '跟随中长期趋势，优选强势行业龙头。',
     reason: '适合希望先稳稳跑通第一套策略的新手。',
-    sketch: 'trend',
+    icon: <RiseOutlined />,
   },
   {
     id: 'mean_cross',
@@ -91,7 +97,7 @@ const strategyTemplates: StrategyTemplate[] = [
     dataStatus: '部分缺失',
     description: '短中期均线金叉，捕捉趋势启动信号。',
     reason: '逻辑直观，适合学习信号是怎么产生的。',
-    sketch: 'cross',
+    icon: <LineChartOutlined />,
   },
   {
     id: 'low_vol_value',
@@ -101,7 +107,7 @@ const strategyTemplates: StrategyTemplate[] = [
     dataStatus: '已就绪',
     description: '低波动加高股息组合，追求稳健收益。',
     reason: '交易频率低，适合慢节奏模拟观察。',
-    sketch: 'shield',
+    icon: <SafetyCertificateOutlined />,
   },
 ];
 
@@ -133,107 +139,11 @@ const EasyQuantMark: React.FC<{ compact?: boolean }> = ({ compact = false }) => 
     role="img"
     aria-label="QuantX 量化简易版 logo"
   >
-    <rect x="4" y="4" width="56" height="56" rx="13" fill="none" />
-    <path
-      d="M15 43c8-3 16-8 25-21 3 16 8 25 17 29"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="3.2"
-    />
-    <path
-      d="M39 23c-10-4-18-1-24 8 11 4 19 1 24-8Zm3 2c8-6 15-6 22-1-7 8-15 8-22 1Z"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="2.8"
-    />
-    <circle cx="52" cy="47" r="4" fill="currentColor" />
+    <rect x="5" y="5" width="54" height="54" rx="12" fill="none" />
+    <path d="M18 42h7V28h-7v14Zm11 0h7V20h-7v22Zm11 0h7V31h-7v11Z" fill="currentColor" />
+    <path d="M17 48h30" fill="none" />
   </svg>
 );
-
-const JourneySketch: React.FC<{
-  type: JourneyStep['sketch'] | StrategyTemplate['sketch'] | 'flag';
-}> = ({ type }) => {
-  if (type === 'lens') {
-    return (
-      <svg className="eq-sketch" viewBox="0 0 112 112" aria-hidden="true">
-        <circle cx="47" cy="43" r="24" />
-        <path d="M65 61 87 83M39 39h17M39 50h10M73 29h18M75 39h12M77 49h10" />
-      </svg>
-    );
-  }
-
-  if (type === 'chart') {
-    return (
-      <svg className="eq-sketch" viewBox="0 0 112 112" aria-hidden="true">
-        <path d="M24 83h65M28 78V24" />
-        <path d="M34 70c10-13 16-16 24-9 10 8 15 5 28-20" />
-        <circle cx="34" cy="70" r="3" />
-        <circle cx="58" cy="61" r="3" />
-        <circle cx="86" cy="41" r="3" />
-      </svg>
-    );
-  }
-
-  if (type === 'telescope') {
-    return (
-      <svg className="eq-sketch" viewBox="0 0 112 112" aria-hidden="true">
-        <path d="m25 57 50-22 7 16-50 22-7-16Z" />
-        <path d="m76 35 11-4 8 18-11 4M48 66 36 91M52 64l11 27M34 91h32" />
-        <path d="M82 22h4m-1-3v7M91 63h4m-1-3v7" />
-      </svg>
-    );
-  }
-
-  if (type === 'trend') {
-    return (
-      <svg className="eq-sketch" viewBox="0 0 112 112" aria-hidden="true">
-        <path d="M25 75c15-17 22-22 34-11 11 10 20 5 32-22" />
-        <path d="M72 43h20v20" />
-      </svg>
-    );
-  }
-
-  if (type === 'cross') {
-    return (
-      <svg className="eq-sketch" viewBox="0 0 112 112" aria-hidden="true">
-        <path d="M23 72c17-27 38-25 66-4M24 44c22 25 43 24 64-7" />
-        <path d="m31 36-8 8 8 8M81 60l8 8-8 8" />
-      </svg>
-    );
-  }
-
-  if (type === 'shield') {
-    return (
-      <svg className="eq-sketch" viewBox="0 0 112 112" aria-hidden="true">
-        <path d="M56 18c13 10 25 13 35 13v24c0 22-15 34-35 42-20-8-35-20-35-42V31c10 0 22-3 35-13Z" />
-        <path d="m40 57 11 11 24-28" />
-      </svg>
-    );
-  }
-
-  if (type === 'flag') {
-    return (
-      <svg className="eq-sketch eq-sketch--hero" viewBox="0 0 220 160" aria-hidden="true">
-        <path d="M37 112c42-54 77-58 106-33" />
-        <path d="M117 87c7-24 12-46 16-66" />
-        <path d="M134 26c26-7 43-1 54 15-19 7-35 7-54-3" />
-        <path d="M75 113c18-14 37-16 54-8" />
-      </svg>
-    );
-  }
-
-  return (
-    <svg className="eq-sketch" viewBox="0 0 112 112" aria-hidden="true">
-      <path d="M31 79c14-5 22-21 25-48 7 28 15 42 27 48" />
-      <path d="M56 32c-14-6-25-3-34 9 15 6 27 2 34-9Zm4 3c11-9 23-9 32-1-9 10-23 10-32 1Z" />
-      <path d="M27 82c20 7 38 7 58 0" />
-    </svg>
-  );
-};
 
 const EasyQuantWorkspace: React.FC = () => {
   const [activeStep, setActiveStep] = useState<StepKey>('template');
@@ -253,6 +163,17 @@ const EasyQuantWorkspace: React.FC = () => {
       : activeStepData;
   const nextStep = journeySteps[Math.min(activeStepIndex + 1, journeySteps.length - 1)];
   const progressPercent = Math.round(((activeStepIndex + 1) / journeySteps.length) * 100);
+
+  useEffect(() => {
+    if (!drawerKey) return undefined;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setDrawerKey(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [drawerKey]);
 
   const displayUsername =
     localStorage.getItem('username') ||
@@ -277,16 +198,18 @@ const EasyQuantWorkspace: React.FC = () => {
     if (activeStep === 'data') {
       return (
         <section className="eq-stage-panel eq-stage-panel--data" aria-label="检查数据">
-          <div className="eq-stage-topline">
-            <span>当前任务</span>
-            <button onClick={() => setDrawerKey('data')}>打开体检抽屉</button>
+          <div className="eq-stage-header">
+            <span className="eq-section-label">当前任务</span>
+            <button onClick={() => setDrawerKey('data')}>查看数据明细</button>
           </div>
           <div className="eq-stage-copy">
             <h2>检查数据</h2>
             <p>先确认数据可靠，再进入回测。新手不需要理解每个字段，只看是否可以继续。</p>
           </div>
           <div className="eq-verdict-card">
-            <JourneySketch type="lens" />
+            <span className="eq-verdict-icon">
+              <DatabaseOutlined />
+            </span>
             <div>
               <span className="eq-soft-label">体检结果</span>
               <strong>可以进入回测</strong>
@@ -316,9 +239,9 @@ const EasyQuantWorkspace: React.FC = () => {
     if (activeStep === 'backtest') {
       return (
         <section className="eq-stage-panel eq-stage-panel--backtest" aria-label="回测报告">
-          <div className="eq-stage-topline">
-            <span>当前任务</span>
-            <button onClick={() => setDrawerKey('backtest')}>打开报告抽屉</button>
+          <div className="eq-stage-header">
+            <span className="eq-section-label">当前任务</span>
+            <button onClick={() => setDrawerKey('backtest')}>查看完整指标</button>
           </div>
           <div className="eq-stage-copy">
             <h2>回测报告</h2>
@@ -330,7 +253,9 @@ const EasyQuantWorkspace: React.FC = () => {
               <strong>值得进入模拟观察</strong>
               <p>收益表现不错，最大回撤仍在新手默认边界内。</p>
             </div>
-            <JourneySketch type="chart" />
+            <span className="eq-verdict-icon">
+              <AreaChartOutlined />
+            </span>
           </div>
           <div className="eq-inline-metrics eq-inline-metrics--four">
             {reportMetrics.map(metric => (
@@ -355,9 +280,9 @@ const EasyQuantWorkspace: React.FC = () => {
     if (activeStep === 'observe') {
       return (
         <section className="eq-stage-panel eq-stage-panel--observe" aria-label="模拟观察">
-          <div className="eq-stage-topline">
-            <span>当前任务</span>
-            <button onClick={() => setDrawerKey('observe')}>打开日志抽屉</button>
+          <div className="eq-stage-header">
+            <span className="eq-section-label">当前任务</span>
+            <button onClick={() => setDrawerKey('observe')}>查看观察日志</button>
           </div>
           <div className="eq-stage-copy">
             <h2>模拟观察</h2>
@@ -396,9 +321,9 @@ const EasyQuantWorkspace: React.FC = () => {
 
     return (
       <section className="eq-stage-panel eq-stage-panel--template" aria-label="选择策略模板">
-        <div className="eq-stage-topline">
-          <span>当前任务</span>
-          <button onClick={() => setDrawerKey('template')}>打开模板抽屉</button>
+        <div className="eq-stage-header">
+          <span className="eq-section-label">当前任务</span>
+          <button onClick={() => setDrawerKey('template')}>对比模板</button>
         </div>
         <div className="eq-stage-copy">
           <h2>选择策略模板</h2>
@@ -414,7 +339,7 @@ const EasyQuantWorkspace: React.FC = () => {
               onClick={() => setSelectedTemplate(template.id)}
               aria-pressed={selectedTemplate === template.id}
             >
-              <JourneySketch type={template.sketch} />
+              <span className="eq-template-icon">{template.icon}</span>
               <span>
                 <strong>{template.name}</strong>
                 <em>{template.description}</em>
@@ -561,12 +486,12 @@ const EasyQuantWorkspace: React.FC = () => {
         </div>
       </header>
 
-      <section className="eq-hero">
-        <div className="eq-hero-main">
-          <span className="eq-kicker">简易版工作台</span>
+      <section className="eq-command-strip" aria-label="今日任务">
+        <div className="eq-command-primary">
+          <span className="eq-section-label">简易版工作台</span>
           <h1>今天只推进一步</h1>
           <p>把复杂量化流程收成四个动作，先跑通，再深入。</p>
-          <div className="eq-hero-actions">
+          <div className="eq-command-actions">
             <button className="eq-button eq-button--dark" onClick={moveToNextStep}>
               继续：{nextStep.title} <ArrowRightOutlined />
             </button>
@@ -575,50 +500,51 @@ const EasyQuantWorkspace: React.FC = () => {
             </button>
           </div>
         </div>
-
-        <aside className="eq-recommendation">
-          <div className="eq-rec-top">
+        <aside className="eq-today-card">
+          <div className="eq-card-head">
             <strong>今日建议</strong>
             <button aria-label="刷新今日建议">
               <ReloadOutlined /> 刷新
             </button>
           </div>
-          <JourneySketch type="flag" />
           <h2>先用沪深300成分池跑 2 年回测</h2>
           <p>覆盖度高，流动性好，更适合验证第一版策略稳定性。</p>
         </aside>
       </section>
 
-      <section className="eq-flow-shell" aria-label="简易版操作动线">
-        <aside className="eq-step-dock" aria-label="步骤导航">
-          <div className="eq-progress">
-            <span>进度</span>
-            <strong>{progressPercent}%</strong>
-            <div>
-              <i style={{ width: `${progressPercent}%` }} />
-            </div>
+      <section className="eq-step-rail" aria-label="步骤导航">
+        <div className="eq-progress">
+          <span>进度</span>
+          <strong>{progressPercent}%</strong>
+          <div>
+            <i style={{ width: `${progressPercent}%` }} />
           </div>
+        </div>
+        <div className="eq-step-list">
           {journeySteps.map(step => (
             <button
               key={step.key}
               className={`eq-step-pill ${activeStep === step.key ? 'eq-step-pill--active' : ''}`}
               onClick={() => setActiveStep(step.key)}
             >
-              <span>{step.number}</span>
+              <span className="eq-step-icon">{step.icon}</span>
               <div>
+                <small>{step.number}</small>
                 <strong>{step.title}</strong>
                 <em>{step.caption}</em>
               </div>
             </button>
           ))}
-        </aside>
+        </div>
+      </section>
 
+      <section className="eq-workbench" aria-label="简易版操作动线">
         <div className="eq-stage-wrap">{renderStage()}</div>
 
         <aside className="eq-inspector" aria-label="当前摘要">
           <div className="eq-inspector-card">
             <span className="eq-soft-label">当前步骤</span>
-            <JourneySketch type={activeStepData.sketch} />
+            <span className="eq-inspector-icon">{activeStepData.icon}</span>
             <h2>{activeStepData.title}</h2>
             <p>{activeStepData.caption}</p>
             <button className="eq-button eq-button--dark" onClick={() => setDrawerKey(activeStep)}>
@@ -653,27 +579,24 @@ const EasyQuantWorkspace: React.FC = () => {
         </Link>
       </footer>
 
-      <div className={`eq-drawer-layer ${drawerKey ? 'eq-drawer-layer--open' : ''}`}>
-        <button
-          className="eq-drawer-backdrop"
-          aria-label="关闭抽屉"
-          onClick={() => setDrawerKey(null)}
-        />
-        <aside
-          className="eq-drawer"
-          role="dialog"
-          aria-modal="true"
-          aria-label={drawerKey ? '简易版详情抽屉' : undefined}
-        >
-          <div className="eq-drawer-head">
-            <span>{drawerKey === 'guide' ? '动线说明' : drawerStepData.drawerTitle}</span>
-            <button aria-label="关闭抽屉" onClick={() => setDrawerKey(null)}>
-              <CloseOutlined />
-            </button>
-          </div>
-          {renderDrawerContent()}
-        </aside>
-      </div>
+      {drawerKey ? (
+        <div className="eq-drawer-layer">
+          <button
+            className="eq-drawer-backdrop"
+            aria-label="关闭抽屉"
+            onClick={() => setDrawerKey(null)}
+          />
+          <aside className="eq-drawer" role="dialog" aria-modal="true" aria-label="简易版详情抽屉">
+            <div className="eq-drawer-head">
+              <span>{drawerKey === 'guide' ? '动线说明' : drawerStepData.drawerTitle}</span>
+              <button aria-label="关闭抽屉" onClick={() => setDrawerKey(null)}>
+                <CloseOutlined />
+              </button>
+            </div>
+            {renderDrawerContent()}
+          </aside>
+        </div>
+      ) : null}
     </main>
   );
 };
