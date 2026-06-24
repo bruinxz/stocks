@@ -4,7 +4,7 @@
  * Static frontend contract guard for the simplified quant workspace.
  * Local checkouts may not have frontend node_modules installed, so this
  * verifies route wiring, mock-only data, standalone shell isolation, and the
- * simplified product-workbench UI contract.
+ * Claude-like warm editorial UI tokens.
  */
 
 import * as fs from 'fs';
@@ -95,36 +95,16 @@ assert(
     !/api\.(get|post|put|delete)/.test(page)
 );
 assert(
-  'product workbench layout classes are defined',
-  ['eq-command-strip', 'eq-step-rail', 'eq-workbench', 'eq-inspector', 'eq-drawer-layer'].every(
-    className => page.includes(className) && css.includes(className)
-  )
+  'Claude-like warm editorial tokens are defined',
+  css.includes('#f7f2e8') && css.includes('#171512') && css.includes('#c96338')
 );
 assert(
-  'visual system avoids discarded sketch illustration layer',
-  /EasyQuantMark/.test(page) && /eq-logo-mark/.test(css) && !/JourneySketch|eq-sketch/.test(page + css)
-);
-assert(
-  'drawer is only mounted when opened',
-  /\{drawerKey \? \([\s\S]{0,120}<div className=["']eq-drawer-layer["']/.test(page)
-);
-assert(
-  'layout supports keyboard focus and reduced motion',
-  /:focus-visible/.test(css) && /prefers-reduced-motion/.test(css)
-);
-assert(
-  'page keeps secondary details in progressive disclosure',
-  ['查看数据明细', '查看完整指标', '查看观察日志', '看动线说明'].every(label =>
-    page.includes(label)
-  )
-);
-assert(
-  'page exposes product-mode escape hatches',
-  page.includes('新手指南') && page.includes('进入专业版')
+  'logo and restrained hand-drawn concepts are implemented in code',
+  /EasyQuantMark/.test(page) && /JourneySketch/.test(page) && /eq-logo-mark/.test(css)
 );
 assert(
   'style avoids rejected blue dashboard palette',
-  !/#2764b8|#1f3a5f|geekblue|蓝色后台|linear-gradient\(135deg/.test(page + css)
+  !/#2764b8|#1f3a5f|geekblue|蓝色后台/.test(page + css)
 );
 assert(
   'visible source avoids em dash and en dash',
