@@ -584,7 +584,7 @@ const EasyQuantWorkspace: React.FC = () => {
               className="eq-button eq-button--dark eq-button--start"
               onClick={startGuidedFlow}
             >
-              开始 <ArrowRightOutlined />
+              开始：选模板 <ArrowRightOutlined />
             </button>
           </div>
         </div>
@@ -629,11 +629,14 @@ const EasyQuantWorkspace: React.FC = () => {
         <div className="eq-stage-wrap">{renderStage()}</div>
 
         <aside className="eq-inspector" aria-label="快捷入口">
-          <div className="eq-quick-list">
-            <button onClick={() => setDrawerKey('template')}>模板对比</button>
-            <button onClick={() => setDrawerKey('data')}>查数据</button>
-            <button onClick={() => setDrawerKey('backtest')}>回测指标</button>
-            <button onClick={() => setDrawerKey('observe')}>观察日志</button>
+          <div className="eq-quick-card">
+            <span>快捷入口</span>
+            <div className="eq-quick-list">
+              <button onClick={() => setDrawerKey('template')}>模板对比</button>
+              <button onClick={() => setDrawerKey('data')}>查数据</button>
+              <button onClick={() => setDrawerKey('backtest')}>回测指标</button>
+              <button onClick={() => setDrawerKey('observe')}>观察日志</button>
+            </div>
           </div>
         </aside>
       </section>

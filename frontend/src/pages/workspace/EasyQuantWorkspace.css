@@ -2,7 +2,7 @@
   --eq-paper: #f7f2e8;
   --eq-sheet: #fbf8f1;
   --eq-ink: #171512;
-  --eq-muted: #565149;
+  --eq-muted: #48433c;
   --eq-clay: #c96338;
   --eq-green: #2f7d4b;
   --eq-amber: #9a6a12;
@@ -217,9 +217,8 @@
   display: grid;
   grid-template-columns: minmax(0, calc(100% - 320px)) 300px;
   gap: 20px;
-  align-items: center;
-  min-height: calc(100dvh - 75px);
-  padding: 52px 0;
+  align-items: stretch;
+  padding: 42px 0 0;
 }
 
 .eq-hero-main,
@@ -237,7 +236,7 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  min-height: 360px;
+  min-height: 320px;
   padding: 44px 32px;
 }
 
@@ -283,7 +282,7 @@
   display: grid;
   grid-template-rows: auto minmax(108px, 1fr) auto auto;
   align-content: stretch;
-  min-height: 360px;
+  min-height: 320px;
   padding: 22px;
 }
 
@@ -392,8 +391,7 @@
   grid-template-columns: 244px minmax(0, 1fr) 300px;
   gap: 20px;
   align-items: start;
-  min-height: calc(100dvh - 24px);
-  margin-top: 0;
+  margin-top: 36px;
   scroll-margin-top: 24px;
 }
 
@@ -475,7 +473,7 @@
 }
 
 .eq-stage-panel {
-  min-height: 560px;
+  min-height: 420px;
   padding: 26px;
 }
 
@@ -590,20 +588,25 @@
 .eq-risk-tag {
   align-self: end;
   width: fit-content;
+  border-radius: 999px;
+  padding: 5px 8px;
   font-size: 12px;
   font-weight: 800;
   line-height: 1;
 }
 
 .eq-risk-tag--low {
+  background: rgba(47, 125, 75, 0.12);
   color: var(--eq-green);
 }
 
 .eq-risk-tag--medium {
+  background: rgba(154, 106, 18, 0.13);
   color: var(--eq-amber);
 }
 
 .eq-risk-tag--high {
+  background: rgba(182, 66, 50, 0.12);
   color: var(--eq-red);
 }
 
@@ -762,6 +765,21 @@
   gap: 12px;
 }
 
+.eq-quick-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--eq-line);
+  border-radius: 14px;
+  background: rgba(251, 248, 241, 0.68);
+}
+
+.eq-quick-card > span {
+  color: var(--eq-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .eq-inspector-card {
   display: flex;
   flex-direction: column;
@@ -811,7 +829,7 @@
   grid-template-columns: 1.2fr 0.72fr 0.8fr auto auto;
   gap: 18px;
   align-items: center;
-  margin-top: 18px;
+  margin-top: 24px;
   margin-bottom: 26px;
   min-height: 62px;
   padding: 12px 20px;

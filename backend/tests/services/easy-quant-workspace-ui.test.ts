@@ -96,7 +96,7 @@ assert(
 );
 assert(
   'hero uses Chinese start button and scroll target for guided flow',
-  page.includes('开始 <ArrowRightOutlined />') &&
+  page.includes('开始：选模板 <ArrowRightOutlined />') &&
     page.includes('startGuidedFlow') &&
     page.includes('id="easy-quant-flow"') &&
     !page.includes('看动线说明')
@@ -119,9 +119,11 @@ assert(
     css.includes('eq-risk-tag--high')
 );
 assert(
-  'hero owns the first viewport before the guided flow',
-  /\.eq-hero\s*\{[\s\S]{0,220}?min-height:\s*calc\(100dvh - 75px\)/.test(css) &&
-    /\.eq-flow-shell\s*\{[\s\S]{0,260}?scroll-margin-top:\s*24px/.test(css)
+  'hero and guided flow use natural document rhythm',
+  !/\.eq-hero\s*\{[\s\S]{0,260}?min-height:\s*calc\(100dvh/.test(css) &&
+    !/\.eq-flow-shell\s*\{[\s\S]{0,260}?min-height:\s*calc\(100dvh/.test(css) &&
+    /\.eq-flow-shell\s*\{[\s\S]{0,260}?margin-top:\s*36px/.test(css) &&
+    page.includes('eq-quick-card')
 );
 assert(
   'Claude-like warm editorial tokens are defined',
