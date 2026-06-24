@@ -12,6 +12,7 @@ import * as path from 'path';
 
 let failed = 0;
 let passed = 0;
+const REPO_ROOT = findRepoRoot();
 
 function assert(name: string, cond: boolean, detail = ''): void {
   if (cond) {
@@ -35,8 +36,27 @@ function extractRouteCall(src: string, route_path: string): string | null {
   return src.slice(match.index, end + 2);
 }
 
+function findRepoRoot(start = process.cwd()): string {
+  let current = path.resolve(start);
+
+  while (true) {
+    if (
+      fs.existsSync(path.join(current, 'frontend')) &&
+      fs.existsSync(path.join(current, 'backend'))
+    ) {
+      return current;
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current) {
+      throw new Error(`Cannot find repo root from ${start}`);
+    }
+    current = parent;
+  }
+}
+
 const source = fs.readFileSync(
-  path.join(__dirname, '../../src/api/routes/market.routes.ts'),
+  path.join(REPO_ROOT, 'backend/src/api/routes/market.routes.ts'),
   'utf8'
 );
 
