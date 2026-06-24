@@ -47,7 +47,8 @@ const RiskAlerts = lazy(() => import('./pages/RiskAlerts'));
 const SystemLogs = lazy(() => import('./pages/SystemLogs'));
 const StockDetail = lazy(() => import('./pages/StockDetail'));
 
-// 6 unified workspace shells (US-001/US-002)
+// Unified workspace shells (US-001/US-002 + Easy mode).
+const EasyQuantWorkspace = lazy(() => import('./pages/workspace/EasyQuantWorkspace'));
 const TodayWorkspace = lazy(() => import('./pages/workspace/TodayWorkspace'));
 const FactorWorkspace = lazy(() => import('./pages/workspace/FactorWorkspace'));
 const LabWorkspace = lazy(() => import('./pages/workspace/LabWorkspace'));
@@ -68,6 +69,7 @@ import {
   FilterOutlined,
   PieChartOutlined,
   InfoCircleOutlined,
+  RocketOutlined,
 } from '@ant-design/icons';
 
 import type { MenuProps } from 'antd';
@@ -229,10 +231,11 @@ const AppContent: React.FC = () => {
     navigate('/login');
   };
 
-  // US-001: collapse the legacy 38-page sprawl into 6 top-level workspaces.
+  // US-001: collapse the legacy 38-page sprawl into top-level workspaces.
   // Each workspace owns a tabbed inner layout (built out in later stories).
   const mainMenuItems: MenuProps['items'] = useMemo(
     () => [
+      menuLink('/workspace/easy', <RocketOutlined />, '简易版'),
       menuLink('/workspace/today', <CompassOutlined />, '今日作战'),
       menuLink('/workspace/factors', <FilterOutlined />, '选股因子'),
       menuLink('/workspace/lab', <ExperimentOutlined />, '策略实验室'),
@@ -308,6 +311,24 @@ const AppContent: React.FC = () => {
     );
   }
 
+  if (location.pathname.startsWith('/workspace/easy')) {
+    return (
+      <Suspense fallback={routeFallback}>
+        <Routes>
+          <Route
+            path="/workspace/easy"
+            element={
+              <ProtectedRoute>
+                <EasyQuantWorkspace />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="*" element={<Navigate to="/workspace/easy" replace />} />
+        </Routes>
+      </Suspense>
+    );
+  }
+
   return (
     <Layout className="modern-layout">
       <Sider width={256} className="modern-sider">
@@ -369,10 +390,10 @@ const AppContent: React.FC = () => {
         <Content className="modern-layout-content">
           <Suspense fallback={routeFallback}>
             <Routes>
-              {/* Default lands users in the new today workspace */}
+              {/* Default still lands existing users in the today workspace. */}
               <Route path="/" element={<Navigate to="/workspace/today" replace />} />
 
-              {/* 6 unified workspaces (US-001) */}
+              {/* Unified workspaces (US-001) */}
               <Route
                 path="/workspace/today"
                 element={
