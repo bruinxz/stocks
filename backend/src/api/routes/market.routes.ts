@@ -3,6 +3,7 @@ import { MarketController } from '../controllers/MarketController';
 import { AuthController } from '../controllers/AuthController';
 import { body, query } from 'express-validator';
 import { validateRequest } from '../../middlewares/validateRequest';
+import { requireRole } from '../../middlewares/auth';
 
 const router = Router();
 const marketController = new MarketController();
@@ -473,7 +474,12 @@ router.patch(
  *       500:
  *         description: 服务器错误
  */
-router.post('/update-data', marketController.updateData);
+router.post(
+  '/update-data',
+  authController.authenticate,
+  requireRole('admin'),
+  marketController.updateData
+);
 
 /**
  * @swagger
@@ -596,7 +602,12 @@ router.get('/update-status', marketController.getUpdateStatus);
  *       500:
  *         description: 服务器错误
  */
-router.post('/manual-sync', marketController.triggerManualSync);
+router.post(
+  '/manual-sync',
+  authController.authenticate,
+  requireRole('admin'),
+  marketController.triggerManualSync
+);
 
 /**
  * @swagger
@@ -683,7 +694,12 @@ router.post('/manual-sync', marketController.triggerManualSync);
  *       500:
  *         description: 服务器错误
  */
-router.post('/bulk-sync', marketController.triggerBulkSync as any);
+router.post(
+  '/bulk-sync',
+  authController.authenticate,
+  requireRole('admin'),
+  marketController.triggerBulkSync as any
+);
 
 /**
  * @swagger
@@ -719,7 +735,12 @@ router.post('/bulk-sync', marketController.triggerBulkSync as any);
  *       500:
  *         description: 服务器错误
  */
-router.post('/clean-queue', marketController.cleanUpdateQueue);
+router.post(
+  '/clean-queue',
+  authController.authenticate,
+  requireRole('admin'),
+  marketController.cleanUpdateQueue
+);
 
 /**
  * @swagger
@@ -804,7 +825,12 @@ router.get('/update-stats', marketController.getUpdateStats);
  *       500:
  *         description: 服务器错误
  */
-router.post('/queue/:jobId/cancel', marketController.cancelJob as any);
+router.post(
+  '/queue/:jobId/cancel',
+  authController.authenticate,
+  requireRole('admin'),
+  marketController.cancelJob as any
+);
 
 /**
  * @swagger
@@ -853,7 +879,12 @@ router.post('/queue/:jobId/cancel', marketController.cancelJob as any);
  *       500:
  *         description: 服务器错误
  */
-router.post('/queue/:jobId/retry', marketController.retryJob as any);
+router.post(
+  '/queue/:jobId/retry',
+  authController.authenticate,
+  requireRole('admin'),
+  marketController.retryJob as any
+);
 
 /**
  * @swagger
@@ -901,7 +932,12 @@ router.get(
   authController.authenticate,
   marketController.smokeTestFactorProvider as any
 );
-router.post('/factors/sync', authController.authenticate, marketController.syncFactors as any);
+router.post(
+  '/factors/sync',
+  authController.authenticate,
+  requireRole('admin'),
+  marketController.syncFactors as any
+);
 
 /**
  * @swagger
@@ -1065,6 +1101,11 @@ router.get('/data-completeness', marketController.getDataCompletenessStats as an
  *       500:
  *         description: 服务器错误
  */
-router.post('/data-completeness/refresh', marketController.refreshDataCompletenessCache as any);
+router.post(
+  '/data-completeness/refresh',
+  authController.authenticate,
+  requireRole('admin'),
+  marketController.refreshDataCompletenessCache as any
+);
 
 export default router;

@@ -4,6 +4,10 @@ import { signalEngine } from '../../quant/engine/SignalEngine';
 import { backtestEngine } from '../../quant/backtest/BacktestEngine';
 import { performanceReporter } from '../../quant/performance/PerformanceReporter';
 import { quantHealthMonitor } from '../../quant/health/QuantHealthMonitor';
+import {
+  evaluateQuantWorkflowReadiness,
+  getQuantWorkflowPresets,
+} from '../../quant/workflow/QuantWorkflowReadinessService';
 import { AuthenticatedRequest } from '../../middlewares/auth';
 import { logger } from '../../utils/logger';
 
@@ -196,6 +200,31 @@ export class QuantController {
       res.json({ success: true, data, message: data.summary.conclusion });
     } catch (error: any) {
       logger.error('获取量化运行时健康失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async getWorkflowPresets(_req: AuthenticatedRequest, res: Response) {
+    try {
+      res.json({
+        success: true,
+        data: {
+          mode: 'simple',
+          presets: getQuantWorkflowPresets(),
+        },
+      });
+    } catch (error: any) {
+      logger.error('获取量化简单模式预设失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async evaluateWorkflowReadiness(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = evaluateQuantWorkflowReadiness(req.body || {});
+      res.json({ success: true, data, message: data.verdict.conclusion });
+    } catch (error: any) {
+      logger.error('评估量化阶段 1-3 readiness 失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

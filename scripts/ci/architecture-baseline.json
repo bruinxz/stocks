@@ -1,0 +1,59 @@
+{
+  "cycles": [
+    [
+      "models/DailyBar.ts",
+      "models/Stock.ts"
+    ],
+    [
+      "models/BacktestResult.ts",
+      "models/PaperTradingPortfolio.ts",
+      "models/PaperTradingPosition.ts",
+      "models/PaperTradingSnapshot.ts",
+      "models/PaperTradingTrade.ts",
+      "models/RiskAlert.ts",
+      "models/Trade.ts",
+      "models/TradingJournal.ts",
+      "models/User.ts"
+    ],
+    [
+      "portfolio/internal/PaperTradingTuningApplyService.ts",
+      "services/SchedulerService.ts"
+    ],
+    [
+      "services/attribution/AIAttributionSummary.ts",
+      "services/attribution/DailyAttributionService.ts"
+    ]
+  ],
+  "violations": [
+    {
+      "rule": "outside-imports-live-trading",
+      "from": "api/controllers/RiskController.ts",
+      "to": "live-trading/services/ReconciliationAlertService.ts"
+    },
+    {
+      "rule": "live-service-imports-out-of-allowed",
+      "from": "live-trading/services/LiveTradingService.ts",
+      "to": "quant/marketLimits.ts"
+    },
+    {
+      "rule": "live-service-imports-out-of-allowed",
+      "from": "live-trading/services/LiveTradingService.ts",
+      "to": "portfolio/internal/feasibilityGate.ts"
+    },
+    {
+      "rule": "live-service-imports-out-of-allowed",
+      "from": "live-trading/services/LiveTradingService.ts",
+      "to": "portfolio/internal/PaperTradingPortfolioFamilies.ts"
+    },
+    {
+      "rule": "live-service-imports-out-of-allowed",
+      "from": "live-trading/services/ReconciliationAlertService.ts",
+      "to": "metrics/PrometheusRegistry.ts"
+    },
+    {
+      "rule": "outside-imports-live-trading",
+      "from": "services/SchedulerService.ts",
+      "to": "live-trading/services/LiveTradingService.ts"
+    }
+  ]
+}

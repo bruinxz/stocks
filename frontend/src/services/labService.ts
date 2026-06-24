@@ -740,6 +740,144 @@ export async function getAnalysisEngineShadowStats(
   return (envelope.data || {}) as AnalysisEngineShadowStatsResponse;
 }
 
+// ---------- /api/quant/workflow-* (phase 1-3 readiness) --------------------
+
+export type QuantWorkflowStatus = 'ready' | 'degraded' | 'blocked';
+
+export interface QuantWorkflowPreset {
+  preset_key: string;
+  strategy_key: string;
+  display_name: string;
+  mode: 'simple';
+  risk_level: 'low' | 'medium' | 'high';
+  description: string;
+  suitable_for: string[];
+  data_requirements: {
+    min_history_days: number;
+    min_daily_bar_coverage_pct: number;
+    min_factor_coverage_pct: number;
+    required_features: string[];
+  };
+  backtest_defaults: {
+    lookback_days: number;
+    initial_capital: number;
+    benchmark_symbol: string;
+    validation_split: boolean;
+    commission_rate: number;
+    slippage_bps: number;
+  };
+  paper_trading_defaults: {
+    default_position_pct: number;
+    max_single_position_pct: number;
+    max_positions: number;
+    min_paper_trading_days: number;
+    min_completed_trades: number;
+  };
+  required_hypothesis_fields: string[];
+}
+
+export interface QuantWorkflowReadinessInput {
+  strategy?: {
+    preset_key?: string;
+    strategy_key?: string;
+    edge_hypothesis?: {
+      thesis?: string;
+      target_universe?: string;
+      expected_holding_days?: number;
+      invalidation_rule?: string;
+      risk_notes?: string;
+    };
+  };
+  data?: {
+    daily_bar_coverage_pct?: number;
+    factor_coverage_pct?: number;
+    latest_trade_date?: string;
+    stale_symbol_count?: number;
+    point_in_time_ready?: boolean;
+    corporate_action_adjusted?: boolean;
+    benchmark_ready?: boolean;
+  };
+  backtest?: {
+    trading_days?: number;
+    trade_count?: number;
+    sharpe_ratio?: number;
+    max_drawdown_pct?: number;
+    benchmark_excess_return_pct?: number;
+    validation_split?: boolean;
+    walk_forward_verdict?: string;
+    overfit_score?: number;
+  };
+  paper?: {
+    trading_days?: number;
+    completed_trades?: number;
+    win_rate?: number;
+    profit_loss_ratio?: number;
+    max_drawdown_pct?: number;
+    average_slippage_bps?: number;
+    backtest_to_paper_correlation?: number;
+    risk_guard_breaches?: number;
+    manual_override_count?: number;
+  };
+}
+
+export interface QuantWorkflowCheck {
+  key: string;
+  label: string;
+  status: QuantWorkflowStatus;
+  expected: string;
+  actual: string | number | boolean | null;
+  mandatory: boolean;
+  weight: number;
+  message: string;
+}
+
+export interface QuantWorkflowStage {
+  stage: 1 | 2 | 3;
+  stage_key: 'simple_usable_loop' | 'research_credibility' | 'paper_trading_acceptance';
+  title: string;
+  status: QuantWorkflowStatus;
+  score: number;
+  checks: QuantWorkflowCheck[];
+  next_actions: string[];
+}
+
+export interface QuantWorkflowReadiness {
+  version: string;
+  generated_at: string;
+  mode: 'simple';
+  presets: QuantWorkflowPreset[];
+  selected_preset: QuantWorkflowPreset;
+  stages: QuantWorkflowStage[];
+  verdict: {
+    target_stage: 3;
+    current_stage: 0 | 1 | 2 | 3;
+    status: QuantWorkflowStatus;
+    status_label: string;
+    can_start_backtest: boolean;
+    can_start_paper_trading: boolean;
+    can_promote_paper_to_canary: boolean;
+    conclusion: string;
+  };
+}
+
+export async function listWorkflowPresets(): Promise<QuantWorkflowPreset[]> {
+  const res = await api.get('/quant/workflow-presets');
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '获取工作流预设失败');
+  }
+  return (res.data.data?.presets || []) as QuantWorkflowPreset[];
+}
+
+export async function evaluateWorkflowReadiness(
+  payload: QuantWorkflowReadinessInput
+): Promise<QuantWorkflowReadiness> {
+  const res = await api.post('/quant/workflow-readiness/evaluate', payload);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '工作流体检失败');
+  }
+  return res.data.data as QuantWorkflowReadiness;
+}
+
 // ---------- bundled export -------------------------------------------------
 
 export const labService = {
@@ -763,6 +901,9 @@ export const labService = {
   listOptimizationRuns,
   // US-051: analysis-engine shadow stats
   getAnalysisEngineShadowStats,
+  // Phase 1-3: simple workflow readiness
+  listWorkflowPresets,
+  evaluateWorkflowReadiness,
 };
 
 export default labService;

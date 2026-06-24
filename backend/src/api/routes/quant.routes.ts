@@ -1,9 +1,32 @@
-import { Router } from 'express';
+import { NextFunction, Request, Response, Router } from 'express';
+import { body } from 'express-validator';
 import { quantController } from '../controllers/QuantController';
 import { AuthController } from '../controllers/AuthController';
+import { validateRequest } from '../../middlewares/validateRequest';
+import { getQuantWorkflowPresetKeys } from '../../quant/workflow/QuantWorkflowReadinessService';
 
 const router = Router();
 const authController = new AuthController();
+const workflowPresetKeys = getQuantWorkflowPresetKeys();
+const WORKFLOW_READINESS_BODY_LIMIT_BYTES = 100 * 1024;
+
+const optionalNumber = (field: string, min: number, max: number) =>
+  body(field).optional({ nullable: true }).isFloat({ min, max });
+const optionalBoolean = (field: string) => body(field).optional({ nullable: true }).isBoolean();
+const workflowReadinessBodySizeGuard = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const contentLength = Number(req.headers['content-length'] || 0);
+  if (Number.isFinite(contentLength) && contentLength > WORKFLOW_READINESS_BODY_LIMIT_BYTES) {
+    return res.status(413).json({
+      success: false,
+      message: 'workflow readiness 请求体过大',
+    });
+  }
+  return next();
+};
 
 /**
  * @openapi
@@ -205,6 +228,74 @@ router.get(
   '/runtime-health',
   authController.authenticate,
   quantController.getRuntimeHealth.bind(quantController)
+);
+
+router.get(
+  '/workflow-presets',
+  authController.authenticate,
+  quantController.getWorkflowPresets.bind(quantController)
+);
+
+router.post(
+  '/workflow-readiness/evaluate',
+  authController.authenticate,
+  workflowReadinessBodySizeGuard,
+  [
+    body()
+      .custom(value => value === undefined || (typeof value === 'object' && !Array.isArray(value)))
+      .withMessage('请求体必须为对象'),
+    body('strategy').optional({ nullable: true }).isObject().withMessage('strategy 必须为对象'),
+    body('strategy.preset_key')
+      .optional({ nullable: true, checkFalsy: true })
+      .isIn(workflowPresetKeys)
+      .withMessage(`preset_key 必须是以下之一: ${workflowPresetKeys.join(', ')}`),
+    body('strategy.strategy_key')
+      .optional({ nullable: true, checkFalsy: true })
+      .isString()
+      .isLength({ min: 1, max: 80 })
+      .matches(/^[a-z][a-z0-9_]*$/)
+      .withMessage('strategy_key 仅支持 snake_case 策略 key'),
+    body('strategy.edge_hypothesis')
+      .optional({ nullable: true })
+      .isObject()
+      .withMessage('edge_hypothesis 必须为对象'),
+    body('data').optional({ nullable: true }).isObject().withMessage('data 必须为对象'),
+    body('backtest').optional({ nullable: true }).isObject().withMessage('backtest 必须为对象'),
+    body('paper').optional({ nullable: true }).isObject().withMessage('paper 必须为对象'),
+    body('data.latest_trade_date')
+      .optional({ nullable: true, checkFalsy: true })
+      .isISO8601({ strict: true })
+      .withMessage('latest_trade_date 必须为 YYYY-MM-DD 日期'),
+    optionalNumber('data.daily_bar_coverage_pct', 0, 100),
+    optionalNumber('data.factor_coverage_pct', 0, 100),
+    optionalNumber('data.stale_symbol_count', 0, 100000),
+    optionalBoolean('data.point_in_time_ready'),
+    optionalBoolean('data.corporate_action_adjusted'),
+    optionalBoolean('data.benchmark_ready'),
+    optionalNumber('strategy.edge_hypothesis.expected_holding_days', 0, 10000),
+    optionalNumber('backtest.trading_days', 0, 10000),
+    optionalNumber('backtest.trade_count', 0, 100000),
+    optionalNumber('backtest.sharpe_ratio', -20, 20),
+    optionalNumber('backtest.max_drawdown_pct', 0, 100),
+    optionalNumber('backtest.benchmark_excess_return_pct', -1000, 1000),
+    optionalBoolean('backtest.validation_split'),
+    body('backtest.walk_forward_verdict')
+      .optional({ nullable: true, checkFalsy: true })
+      .isIn(['pass', 'warn', 'warning', 'fail'])
+      .withMessage('walk_forward_verdict 必须为 pass/warn/warning/fail'),
+    optionalNumber('backtest.overfit_score', 0, 1),
+    optionalNumber('paper.trading_days', 0, 10000),
+    optionalNumber('paper.completed_trades', 0, 100000),
+    optionalNumber('paper.win_rate', 0, 1),
+    optionalNumber('paper.profit_loss_ratio', 0, 100),
+    optionalNumber('paper.max_drawdown_pct', 0, 100),
+    optionalNumber('paper.average_slippage_bps', 0, 10000),
+    optionalNumber('paper.backtest_to_paper_correlation', -1, 1),
+    optionalNumber('paper.risk_guard_breaches', 0, 100000),
+    optionalNumber('paper.manual_override_count', 0, 100000),
+  ],
+  validateRequest,
+  quantController.evaluateWorkflowReadiness.bind(quantController)
 );
 
 /**
