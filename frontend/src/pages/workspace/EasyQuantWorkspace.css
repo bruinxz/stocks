@@ -212,8 +212,8 @@
 
 .eq-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
-  gap: 24px;
+  grid-template-columns: minmax(0, calc(100% - 320px)) 300px;
+  gap: 20px;
   align-items: stretch;
   padding: 42px 0 22px;
 }
