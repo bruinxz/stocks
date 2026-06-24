@@ -86,13 +86,37 @@ assert(
 );
 assert(
   'page covers the beginner flow',
-  ['选择策略模板', '检查数据', '回测报告', '模拟观察'].every(label => page.includes(label))
+  ['选择策略模板', '查数据', '回测报告', '模拟观察'].every(label => page.includes(label))
 );
 assert(
   'page uses local mock constants instead of backend requests',
   /const dataChecks/.test(page) &&
     /const reportMetrics/.test(page) &&
     !/api\.(get|post|put|delete)/.test(page)
+);
+assert(
+  'hero uses Chinese start button and scroll target for guided flow',
+  page.includes('开始 <ArrowRightOutlined />') &&
+    page.includes('startGuidedFlow') &&
+    page.includes('id="easy-quant-flow"') &&
+    !page.includes('看动线说明')
+);
+assert(
+  'copy keeps one data-checking term and removes duplicate current-step card',
+  !/检查数据|数据体检|当前步骤/.test(page) &&
+    page.includes('下一步：查数据') &&
+    page.includes('查数据详情')
+);
+assert(
+  'template selection is expressed by selected card state',
+  page.includes('eq-template-check') && !page.includes('已选模板')
+);
+assert(
+  'risk labels have semantic tones',
+  page.includes('getRiskTone') &&
+    css.includes('eq-risk-tag--low') &&
+    css.includes('eq-risk-tag--medium') &&
+    css.includes('eq-risk-tag--high')
 );
 assert(
   'Claude-like warm editorial tokens are defined',
