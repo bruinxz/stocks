@@ -5894,6 +5894,36 @@ class SchedulerService {
             }`
           );
         }
+      } else if (task.type === 'INDUSTRY_FLOW_INTRADAY_SYNC') {
+        // BK-2 (2026-06-24): 盘中 10min 行业资金流时序快照. fail-OPEN: 单点漏没关系.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { industryFlowIntradayService } = require('./IndustryFlowIntradayService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        try {
+          const r = await industryFlowIntradayService.pullSnapshot();
+          if (r.skipped_reason) {
+            logger.info(
+              `[INDUSTRY_FLOW_INTRADAY_SYNC] skipped reason=${r.skipped_reason} ts=${r.snapshot_ts.toISOString()}`
+            );
+          } else {
+            logger.info(
+              `[INDUSTRY_FLOW_INTRADAY_SYNC] ts=${r.snapshot_ts.toISOString()} upserted=${r.inserted}`
+            );
+          }
+        } catch (e: any) {
+          logger.warn(`[INDUSTRY_FLOW_INTRADAY_SYNC] failed: ${e?.message ?? e}`);
+        }
+      } else if (task.type === 'INDUSTRY_FLOW_INTRADAY_CLEANUP') {
+        // BK-2 (2026-06-24): 每日 16:00 删 > 3 日老 intraday 快照. fail-OPEN.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { industryFlowIntradayService } = require('./IndustryFlowIntradayService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        try {
+          const n = await industryFlowIntradayService.cleanup(3);
+          logger.info(`[INDUSTRY_FLOW_INTRADAY_CLEANUP] deleted=${n}`);
+        } catch (e: any) {
+          logger.warn(`[INDUSTRY_FLOW_INTRADAY_CLEANUP] failed: ${e?.message ?? e}`);
+        }
       } else if (task.type === 'MARKET_SENTIMENT_INDEX_SYNC') {
         // BJ-8 (2026-06-24): 工作日 17:30 全市场情绪指数计算 (US-057).
         // computeAndPersist 内部 4 维度 safeAwait fallback (per-dim 死单独不阻塞),

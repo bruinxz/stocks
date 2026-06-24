@@ -2117,4 +2117,117 @@ export class MarketController {
       });
     }
   };
+
+  /**
+   * BK-3 (2026-06-24): 盘中行业资金流时序快照.
+   * GET /api/market/industry-flow/intraday?date=YYYY-MM-DD&top=20
+   *
+   * 默认返回今日 (Asia/Shanghai) 全部行业 + 全部 snapshot.
+   * top 参数: 仅返回 累计净流入 |绝对值| 排名 top-N 的行业 (N 默认 20, 上限 86).
+   *
+   * 返回结构方便前端直接喂 ECharts 多线图:
+   *   {
+   *     date: 'YYYY-MM-DD',
+   *     industries: [{industry_code, industry_name, latest_main_inflow,
+   *       latest_change_pct, series: [{ts: ISO, main_inflow}]}],
+   *     snapshot_ts_list: [ISO, ...]  // 公共 X 轴
+   *   }
+   */
+  getIndustryFlowIntraday = async (req: Request, res: Response) => {
+    try {
+      const topRaw = req.query.top as string | undefined;
+      const top = topRaw ? Math.max(1, Math.min(86, parseInt(topRaw, 10) || 20)) : 20;
+      const dateParam = req.query.date as string | undefined;
+      // 默认 Asia/Shanghai today
+      const today = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const dateStr = dateParam || today;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        res.status(400).json({ success: false, error: 'date 必须是 YYYY-MM-DD' });
+        return;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { IndustryFlowIntraday } = require('../../models/IndustryFlowIntraday');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { Op } = require('sequelize');
+      const startTs = new Date(`${dateStr}T00:00:00+08:00`);
+      const endTs = new Date(`${dateStr}T23:59:59+08:00`);
+      const rows: any[] = await IndustryFlowIntraday.findAll({
+        where: { snapshot_ts: { [Op.between]: [startTs, endTs] } },
+        attributes: [
+          'snapshot_ts',
+          'industry_code',
+          'industry_name',
+          'change_pct',
+          'main_inflow',
+          'main_inflow_ratio',
+        ],
+        order: [
+          ['snapshot_ts', 'ASC'],
+          ['industry_code', 'ASC'],
+        ],
+        raw: true,
+      });
+
+      // Group by industry_code, compute latest + series
+      const byIndustry = new Map<
+        string,
+        {
+          industry_code: string;
+          industry_name: string;
+          latest_main_inflow: number | null;
+          latest_change_pct: number | null;
+          latest_main_inflow_ratio: number | null;
+          series: Array<{ ts: string; main_inflow: number | null }>;
+        }
+      >();
+      const tsSet = new Set<string>();
+      for (const r of rows) {
+        const ts =
+          typeof r.snapshot_ts === 'string' ? r.snapshot_ts : new Date(r.snapshot_ts).toISOString();
+        tsSet.add(ts);
+        const code = r.industry_code as string;
+        let g = byIndustry.get(code);
+        if (!g) {
+          g = {
+            industry_code: code,
+            industry_name: r.industry_name,
+            latest_main_inflow: null,
+            latest_change_pct: null,
+            latest_main_inflow_ratio: null,
+            series: [],
+          };
+          byIndustry.set(code, g);
+        }
+        const inflow = r.main_inflow === null ? null : Number(r.main_inflow);
+        g.series.push({ ts, main_inflow: inflow });
+        // 因为按 snapshot_ts ASC 排, 最后一次覆盖即"最新"
+        g.latest_main_inflow = inflow;
+        g.latest_change_pct = r.change_pct === null ? null : Number(r.change_pct);
+        g.latest_main_inflow_ratio =
+          r.main_inflow_ratio === null ? null : Number(r.main_inflow_ratio);
+        g.industry_name = r.industry_name; // 保最新
+      }
+      let industries = Array.from(byIndustry.values());
+      // 按 |latest_main_inflow| 降序取 top
+      industries.sort((a, b) => {
+        const va = Math.abs(a.latest_main_inflow ?? 0);
+        const vb = Math.abs(b.latest_main_inflow ?? 0);
+        return vb - va;
+      });
+      industries = industries.slice(0, top);
+      const snapshot_ts_list = Array.from(tsSet).sort();
+
+      res.json({
+        success: true,
+        data: {
+          date: dateStr,
+          industries,
+          snapshot_ts_list,
+        },
+      });
+    } catch (error: any) {
+      logger.error('getIndustryFlowIntraday failed:', error);
+      res.status(500).json({ success: false, error: error?.message ?? 'unknown' });
+    }
+  };
 }

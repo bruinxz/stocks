@@ -92,6 +92,27 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     owner: 'data',
     description: '行业资金流同步',
   },
+  // BK-2 (2026-06-24): 盘中 10min 行业资金流时序快照 + 清理.
+  //   工作日 9:35-11:30 + 13:00-14:55 每 10min 调 AKShare stock_sector_fund_flow_rank
+  //   → industry_flow_intraday 表 (snapshot_ts, industry_code) 复合主键.
+  //   配合 INDUSTRY_FLOW_INTRADAY_CLEANUP 每日 16:00 删 > 3 日老快照, 总量 ~6200 行控量.
+  //   前端 TodayWorkspace "资金流向" tab 直接消费, 类似抖音"分时累计资金流"图.
+  //   fail-OPEN: 单点拉取失败仅 warn, 10min 后下次再补.
+  {
+    type: 'INDUSTRY_FLOW_INTRADAY_SYNC',
+    category: 'data_sync',
+    owner: 'data',
+    intraday: true,
+    recommendedCron: '*/10 9-11,13-14 * * 1-5',
+    description: '盘中 10min 行业资金流时序快照 (累计净流入), 给前端画分时图',
+  },
+  {
+    type: 'INDUSTRY_FLOW_INTRADAY_CLEANUP',
+    category: 'cleanup',
+    owner: 'data',
+    recommendedCron: '0 16 * * 1-5',
+    description: '每日 16:00 删 industry_flow_intraday > 3 日老快照',
+  },
   // Macro 串联补丁 (2026-06-21) — US-092 行业 ETF 资金流 daily sync.
   // 工作日 18:00 (盘后 + AKShare fund_etf_fund_daily_em T+1 数据可用) 跑前一交易日
   // 全市场 ETF 净流入 / 份额 + per-ETF 历史. 写 etf_creation_redemption 表,

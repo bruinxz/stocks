@@ -1108,4 +1108,33 @@ router.post(
   marketController.refreshDataCompletenessCache as any
 );
 
+/**
+ * BK-3 (2026-06-24): 盘中行业资金流时序快照 (10min 一刷).
+ * @swagger
+ * /api/market/industry-flow/intraday:
+ *   get:
+ *     tags: [Market]
+ *     summary: 盘中行业资金流时序 (10min 整点累计)
+ *     description: |
+ *       返回某日各行业的"分时累计主力净流入"曲线, 默认今日.
+ *       前端可直接喂 ECharts 多线图; series.main_inflow 单位元.
+ *     parameters:
+ *       - in: query
+ *         name: date
+ *         schema: { type: string, format: date }
+ *         description: ISO YYYY-MM-DD (默认今日, Asia/Shanghai)
+ *       - in: query
+ *         name: top
+ *         schema: { type: integer, default: 20, minimum: 1, maximum: 86 }
+ *         description: 按 |latest_main_inflow| 取 top-N 行业 (默认 20)
+ *     responses:
+ *       200:
+ *         description: 时序快照
+ */
+router.get(
+  '/industry-flow/intraday',
+  authController.authenticate,
+  marketController.getIndustryFlowIntraday as any
+);
+
 export default router;

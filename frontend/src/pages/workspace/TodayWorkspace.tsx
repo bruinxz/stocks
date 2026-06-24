@@ -30,6 +30,7 @@ import {
   ClockCircleOutlined,
   FireOutlined,
   FundOutlined,
+  LineChartOutlined,
   ReloadOutlined,
   RightOutlined,
   RiseOutlined,
@@ -130,6 +131,8 @@ import {
   AlertCategory,
   ALERT_CATEGORY_LABEL,
 } from '../../services/riskAlertService';
+// BK-4 (2026-06-24): 盘中行业资金流向 tab — lazy 加载该 tab 才加载 ECharts.
+import IntradayCapitalFlowTab from './TodayWorkspace.IntradayCapitalFlowTab';
 
 const { Text, Paragraph } = Typography;
 const { RangePicker } = DatePicker;
@@ -154,6 +157,8 @@ const TODAY_WORKSPACE_TABS: WorkspaceTab[] = [
   { key: 'events', label: '关键事件', icon: <BellOutlined /> },
   { key: 'alerts', label: '风险提醒', icon: <AlertOutlined /> },
   { key: 'risk_center', label: '风控中心', icon: <SafetyCertificateOutlined /> },
+  // BK-4 (2026-06-24): 盘中行业资金流 (10min 自动刷新, 类似抖音"分时累计资金流")
+  { key: 'capital_flow', label: '资金流向', icon: <LineChartOutlined /> },
 ];
 const TODAY_WORKSPACE_TAB_KEYS = TODAY_WORKSPACE_TABS.map(t => t.key);
 
@@ -443,6 +448,9 @@ const TodayWorkspace: React.FC = () => {
     body = <AlertsPanel alerts={data.unread_alerts} totalCount={data.unread_alert_count} />;
   } else if (activeKey === 'risk_center') {
     body = <RiskAlertCenterPanel onUnreadCountChange={refresh} />;
+  } else if (activeKey === 'capital_flow') {
+    // BK-4 (2026-06-24): 盘中行业资金流 (10min auto-refresh, 截图类多线图)
+    body = <IntradayCapitalFlowTab />;
   }
 
   const subtitle = data?.trade_date

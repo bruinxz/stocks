@@ -1558,6 +1558,144 @@ def get_limit_up_pool(date: str) -> List[Dict[str, Any]]:
         return []
 
 
+def get_industry_flow_intraday() -> List[Dict[str, Any]]:
+    """
+    BK-2 (2026-06-24): Lightweight intraday industry-board fund-flow snapshot.
+
+    Returns ONLY the fund-flow rank dataframe (no constituents / no leader stock).
+    Unlike `get_industry_flow` (240s, fetches per-board cons), this fetches
+    a single AKShare API call (~3-5s) and joins with `stock_board_industry_name_em`
+    for the BKxxxx code mapping.
+
+    Used by `INDUSTRY_FLOW_INTRADAY_SYNC` cron (every 10min during trading hours).
+    Each call returns ~86 rows; the TS layer stamps `snapshot_ts = now()` and
+    upserts to `industry_flow_intraday`.
+
+    AKShare semantics: `stock_sector_fund_flow_rank(indicator='今日')` returns
+    **cumulative net inflow since market open** (元), which is exactly what
+    the chart needs (no per-call delta math required in TS).
+
+    Returns:
+        List[Dict] with: industry_code, industry_name, change_pct (%),
+        main_inflow (元), main_inflow_ratio (%). Returns [] on fail (caller
+        can checkpoint a missed snapshot — single missed point is acceptable).
+    """
+    try:
+        fn_rank = getattr(ak, 'stock_sector_fund_flow_rank', None)
+        if fn_rank is None:
+            print("[intraday] stock_sector_fund_flow_rank not available", file=sys.stderr)
+            return []
+        df_flow = None
+        try:
+            df_flow = fn_rank(indicator='今日', sector_type='行业资金流')
+        except Exception as ex_flow:
+            print(f"[intraday] fund_flow_rank failed: {ex_flow}", file=sys.stderr)
+            df_flow = None
+
+        # ----- 同花顺 fallback (BK-2): EastMoney push2 经常 502, 与 get_industry_flow 同款 -----
+        used_ths_fallback = False
+        if df_flow is None or df_flow.empty:
+            try:
+                fn_ths = getattr(ak, 'stock_board_industry_summary_ths', None)
+                if fn_ths is not None:
+                    df_ths = fn_ths()
+                    if df_ths is not None and not df_ths.empty:
+                        import pandas as pd
+                        rows = []
+                        for _, r in df_ths.iterrows():
+                            try:
+                                rows.append({
+                                    '名称': str(r.get('板块', '')).strip(),
+                                    '今日涨跌幅': r.get('涨跌幅'),
+                                    '今日主力净流入-净额': r.get('净流入'),
+                                    '今日主力净流入-净占比': None,
+                                })
+                            except Exception:
+                                continue
+                        if rows:
+                            df_flow = pd.DataFrame(rows)
+                            used_ths_fallback = True
+                            print(f"[intraday-fallback] 同花顺 parsed {len(rows)} boards", file=sys.stderr)
+            except Exception as e_ths:
+                print(f"[intraday-fallback] 同花顺也失败: {e_ths}", file=sys.stderr)
+
+        if df_flow is None or df_flow.empty:
+            print("[intraday] fund_flow_rank empty (东财+同花顺都死)", file=sys.stderr)
+            return []
+
+        # ---- name → code 映射 (BKxxxx) ----
+        name_to_code: Dict[str, str] = {}
+        try:
+            fn_name = getattr(ak, 'stock_board_industry_name_em', None)
+            if fn_name is not None:
+                df_name = fn_name()
+                if df_name is not None and not df_name.empty:
+                    # 列名常见: 板块名称, 板块代码
+                    name_col = None
+                    code_col = None
+                    for c in df_name.columns:
+                        cs = str(c)
+                        if '板块名称' in cs or '名称' == cs.strip():
+                            name_col = c
+                        elif '板块代码' in cs or '代码' == cs.strip():
+                            code_col = c
+                    if name_col and code_col:
+                        for _, row in df_name.iterrows():
+                            nm = str(row.get(name_col, '')).strip()
+                            cd = str(row.get(code_col, '')).strip()
+                            if nm and cd:
+                                name_to_code[nm] = cd
+        except Exception as ex_name:
+            print(f"[intraday] name_em failed (fallback to FALLBACK-name): {ex_name}", file=sys.stderr)
+
+        # ---- 解析 flow 列 (东财字段名可能漂移, 多 alias) ----
+        def _pick_col(df, candidates):
+            for c in df.columns:
+                cs = str(c)
+                for cand in candidates:
+                    if cand in cs:
+                        return c
+            return None
+
+        col_name = _pick_col(df_flow, ['名称'])
+        col_change = _pick_col(df_flow, ['今日涨跌幅', '涨跌幅', '今日涨跌'])
+        col_inflow = _pick_col(df_flow, ['今日主力净流入-净额', '主力净流入-净额', '主力净流入'])
+        col_ratio = _pick_col(df_flow, ['今日主力净流入-净占比', '主力净流入-净占比', '净占比'])
+
+        if not col_name or not col_inflow:
+            print(f"[intraday] missing required cols name={col_name} inflow={col_inflow}", file=sys.stderr)
+            return []
+
+        def _to_num(v):
+            if v is None:
+                return None
+            try:
+                fv = float(v)
+                if fv != fv:  # NaN
+                    return None
+                return fv
+            except (TypeError, ValueError):
+                return None
+
+        out: List[Dict[str, Any]] = []
+        for _, row in df_flow.iterrows():
+            name = str(row.get(col_name, '')).strip()
+            if not name:
+                continue
+            code = name_to_code.get(name) or f"FALLBACK-{name}"
+            out.append({
+                'industry_code': code,
+                'industry_name': name,
+                'change_pct': _to_num(row.get(col_change)) if col_change else None,
+                'main_inflow': _to_num(row.get(col_inflow)),
+                'main_inflow_ratio': _to_num(row.get(col_ratio)) if col_ratio else None,
+            })
+        return out
+    except Exception as e:
+        print(f"[intraday] fatal: {e}", file=sys.stderr)
+        return []
+
+
 def get_industry_flow(date: str) -> List[Dict[str, Any]]:
     """
     Fetch daily industry-board fund-flow + board-strength snapshot for all
@@ -5571,6 +5709,10 @@ def main():
 
             date = sys.argv[2]
             result = get_industry_flow(date)
+
+        elif command == "get_industry_flow_intraday":
+            # BK-2: no args, returns current cumulative snapshot.
+            result = get_industry_flow_intraday()
 
         elif command == "get_earnings_forecast":
             if len(sys.argv) < 3:

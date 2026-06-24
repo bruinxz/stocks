@@ -44,6 +44,7 @@ import { NorthboundHolding } from '../models/NorthboundHolding';
 import { DragonTigerBoard } from '../models/DragonTigerBoard';
 import { LimitUpStock } from '../models/LimitUpStock';
 import { IndustryFlow } from '../models/IndustryFlow';
+import { IndustryFlowIntraday } from '../models/IndustryFlowIntraday';
 import { FactorScore } from '../models/FactorScore';
 import { EarningsForecast } from '../models/EarningsForecast';
 import { IndexComponent } from '../models/IndexComponent';
@@ -184,6 +185,7 @@ const sequelize = new Sequelize({
     DragonTigerBoard,
     LimitUpStock,
     IndustryFlow,
+    IndustryFlowIntraday,
     FactorScore,
     EarningsForecast,
     IndexComponent,
