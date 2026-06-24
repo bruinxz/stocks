@@ -217,9 +217,9 @@
   display: grid;
   grid-template-columns: minmax(0, calc(100% - 320px)) 300px;
   gap: 20px;
-  align-items: start;
-  min-height: clamp(520px, calc(100dvh - 260px), 560px);
-  padding: 54px 0 44px;
+  align-items: center;
+  min-height: calc(100dvh - 75px);
+  padding: 52px 0;
 }
 
 .eq-hero-main,
@@ -392,7 +392,7 @@
   grid-template-columns: 244px minmax(0, 1fr) 300px;
   gap: 20px;
   align-items: start;
-  min-height: calc(100dvh + 48px);
+  min-height: calc(100dvh - 24px);
   margin-top: 0;
   scroll-margin-top: 24px;
 }

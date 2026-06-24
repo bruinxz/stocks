@@ -119,6 +119,11 @@ assert(
     css.includes('eq-risk-tag--high')
 );
 assert(
+  'hero owns the first viewport before the guided flow',
+  /\.eq-hero\s*\{[\s\S]{0,220}?min-height:\s*calc\(100dvh - 75px\)/.test(css) &&
+    /\.eq-flow-shell\s*\{[\s\S]{0,260}?scroll-margin-top:\s*24px/.test(css)
+);
+assert(
   'Claude-like warm editorial tokens are defined',
   css.includes('#f7f2e8') && css.includes('#171512') && css.includes('#c96338')
 );
