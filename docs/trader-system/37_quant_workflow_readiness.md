@@ -3,6 +3,11 @@
 This page documents the phase 1-3 implementation surface for turning the
 platform into a simpler and more professional quant workflow.
 
+This implementation is a stateless self-assessment layer. It does not pull
+fresh data from the database, launch backtests, place paper/live orders, or
+unlock canary trading automatically. The response labels are advisory signals
+for the operator UI.
+
 ## API Surface
 
 - `GET /api/quant/workflow-presets`
@@ -73,6 +78,12 @@ Only `stage_3.status === "ready"` opens
 
 - All API fields use `snake_case`.
 - Missing numeric fields are treated as blocked, never as passing values.
+- `verdict.can_promote_paper_to_canary` is an advisory flag; it does not change
+  live-trading or paper-trading permissions by itself.
+- Backtests created before PR-13 may have `backtest_results.daily_returns`
+  stored as percent values instead of decimal returns. Their detail-page
+  daily-return chart can therefore show 100x values after the unit fix. Re-run
+  those backtests to regenerate normalized daily-return series.
 - Historical architecture debt is tracked separately in
   `scripts/ci/architecture-baseline.json`; new workflow readiness code should
   not add new cycles or live-trading layer violations.

@@ -89,6 +89,10 @@ assert(
   /阶段 1/.test(tab) && /阶段 2/.test(tab) && /阶段 3/.test(tab)
 );
 assert(
+  'WorkflowReadinessTab clarifies self-assessment semantics',
+  /自评表单/.test(tab) && /不会自动拉取数据库/.test(tab) && /解锁真实 canary/.test(tab)
+);
+assert(
   'WorkflowReadinessTab renders preset selector and next actions',
   /workflow-readiness-preset-select/.test(tab) && /下一步/.test(tab)
 );

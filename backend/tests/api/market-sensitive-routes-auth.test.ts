@@ -47,6 +47,7 @@ const sensitive_routes = [
   { route_path: '/clean-queue', handler: 'marketController.cleanUpdateQueue' },
   { route_path: '/queue/:jobId/cancel', handler: 'marketController.cancelJob' },
   { route_path: '/queue/:jobId/retry', handler: 'marketController.retryJob' },
+  { route_path: '/factors/sync', handler: 'marketController.syncFactors' },
   {
     route_path: '/data-completeness/refresh',
     handler: 'marketController.refreshDataCompletenessCache',

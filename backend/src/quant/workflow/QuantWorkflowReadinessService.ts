@@ -1,3 +1,10 @@
+/**
+ * Stateless self-assessment scorer for the beginner quant workflow.
+ *
+ * This module does not read databases, start backtests, place paper/live orders,
+ * or unlock canary trading. It only scores the payload supplied by the caller
+ * and returns advisory readiness labels for the UI/operator.
+ */
 export type QuantWorkflowStatus = 'ready' | 'degraded' | 'blocked';
 
 export interface QuantStrategyPreset {
@@ -117,6 +124,54 @@ export interface QuantWorkflowReadiness {
 }
 
 const DEFAULT_PRESET_KEY = 'steady_momentum_basic';
+
+export const QUANT_WORKFLOW_THRESHOLDS = Object.freeze({
+  stage_score: {
+    ready_min: 85,
+    degraded_min: 60,
+  },
+  stage_1: {
+    daily_bar_coverage_degraded_min: 85,
+    factor_coverage_degraded_min: 75,
+    stale_symbol_ready_max: 0,
+    stale_symbol_degraded_max: 5,
+  },
+  stage_2: {
+    hypothesis_thesis_min_length: 20,
+    hypothesis_universe_min_length: 10,
+    expected_holding_days_ready_min: 1,
+    invalidation_rule_min_length: 15,
+    risk_notes_min_length: 10,
+    backtest_trading_days_ready_min: 180,
+    backtest_trading_days_degraded_min: 120,
+    backtest_trade_count_ready_min: 30,
+    backtest_trade_count_degraded_min: 12,
+    benchmark_excess_return_ready_min: 0,
+    benchmark_excess_return_degraded_min: -2,
+    max_drawdown_ready_max: 20,
+    max_drawdown_degraded_max: 35,
+    overfit_score_ready_max: 0.3,
+    overfit_score_degraded_max: 0.5,
+  },
+  stage_3: {
+    minimum_degraded_paper_trading_days: 15,
+    minimum_degraded_completed_trades: 12,
+    paper_win_rate_ready_min: 0.52,
+    paper_win_rate_degraded_min: 0.45,
+    paper_profit_loss_ratio_ready_min: 1.2,
+    paper_profit_loss_ratio_degraded_min: 1,
+    paper_max_drawdown_ready_max: 12,
+    paper_max_drawdown_degraded_max: 20,
+    average_slippage_ready_max_bps: 20,
+    average_slippage_degraded_max_bps: 40,
+    backtest_paper_correlation_ready_min: 0.45,
+    backtest_paper_correlation_degraded_min: 0.3,
+    risk_guard_breaches_ready_max: 0,
+    risk_guard_breaches_degraded_max: 0,
+    manual_override_ready_max: 2,
+    manual_override_degraded_max: 5,
+  },
+});
 
 const PRESETS: QuantStrategyPreset[] = [
   {
@@ -246,6 +301,10 @@ export function getQuantWorkflowPresets(): QuantStrategyPreset[] {
   }));
 }
 
+export function getQuantWorkflowPresetKeys(): string[] {
+  return PRESETS.map(preset => preset.preset_key);
+}
+
 export function evaluateQuantWorkflowReadiness(
   input: QuantWorkflowInput = {}
 ): QuantWorkflowReadiness {
@@ -313,7 +372,7 @@ function buildSimpleUsableLoopStage(
         label: 'K 线覆盖率',
         value: data.daily_bar_coverage_pct,
         ready_min: preset.data_requirements.min_daily_bar_coverage_pct,
-        degraded_min: 85,
+        degraded_min: QUANT_WORKFLOW_THRESHOLDS.stage_1.daily_bar_coverage_degraded_min,
         expected: `>= ${preset.data_requirements.min_daily_bar_coverage_pct}%`,
         mandatory: true,
         weight: 18,
@@ -324,7 +383,7 @@ function buildSimpleUsableLoopStage(
         label: '因子覆盖率',
         value: data.factor_coverage_pct,
         ready_min: preset.data_requirements.min_factor_coverage_pct,
-        degraded_min: 75,
+        degraded_min: QUANT_WORKFLOW_THRESHOLDS.stage_1.factor_coverage_degraded_min,
         expected: `>= ${preset.data_requirements.min_factor_coverage_pct}%`,
         mandatory: false,
         weight: 12,
@@ -344,8 +403,8 @@ function buildSimpleUsableLoopStage(
         key: 'stale_symbols',
         label: '过期股票数量',
         value: data.stale_symbol_count,
-        ready_max: 0,
-        degraded_max: 5,
+        ready_max: QUANT_WORKFLOW_THRESHOLDS.stage_1.stale_symbol_ready_max,
+        degraded_max: QUANT_WORKFLOW_THRESHOLDS.stage_1.stale_symbol_degraded_max,
         expected: '0',
         mandatory: false,
         weight: 10,
@@ -392,22 +451,22 @@ function buildResearchCredibilityStage(
         key: 'hypothesis_thesis',
         label: '可证伪 alpha 假设',
         value: hypothesis.thesis,
-        min_length: 20,
+        min_length: QUANT_WORKFLOW_THRESHOLDS.stage_2.hypothesis_thesis_min_length,
         weight: 10,
       }),
       checkText({
         key: 'hypothesis_universe',
         label: '目标股票池明确',
         value: hypothesis.target_universe,
-        min_length: 10,
+        min_length: QUANT_WORKFLOW_THRESHOLDS.stage_2.hypothesis_universe_min_length,
         weight: 8,
       }),
       checkThreshold({
         key: 'expected_holding_days',
         label: '预期持有周期',
         value: hypothesis.expected_holding_days,
-        ready_min: 1,
-        degraded_min: 1,
+        ready_min: QUANT_WORKFLOW_THRESHOLDS.stage_2.expected_holding_days_ready_min,
+        degraded_min: QUANT_WORKFLOW_THRESHOLDS.stage_2.expected_holding_days_ready_min,
         expected: '>= 1 天',
         mandatory: true,
         weight: 6,
@@ -417,22 +476,22 @@ function buildResearchCredibilityStage(
         key: 'invalidation_rule',
         label: '失效规则',
         value: hypothesis.invalidation_rule,
-        min_length: 15,
+        min_length: QUANT_WORKFLOW_THRESHOLDS.stage_2.invalidation_rule_min_length,
         weight: 8,
       }),
       checkText({
         key: 'risk_notes',
         label: '风险边界',
         value: hypothesis.risk_notes,
-        min_length: 10,
+        min_length: QUANT_WORKFLOW_THRESHOLDS.stage_2.risk_notes_min_length,
         weight: 6,
       }),
       checkThreshold({
         key: 'backtest_trading_days',
         label: '回测交易日样本',
         value: backtest.trading_days,
-        ready_min: 180,
-        degraded_min: 120,
+        ready_min: QUANT_WORKFLOW_THRESHOLDS.stage_2.backtest_trading_days_ready_min,
+        degraded_min: QUANT_WORKFLOW_THRESHOLDS.stage_2.backtest_trading_days_degraded_min,
         expected: '>= 180 个交易日',
         mandatory: true,
         weight: 10,
@@ -442,8 +501,8 @@ function buildResearchCredibilityStage(
         key: 'backtest_trade_count',
         label: '回测成交样本',
         value: backtest.trade_count,
-        ready_min: 30,
-        degraded_min: 12,
+        ready_min: QUANT_WORKFLOW_THRESHOLDS.stage_2.backtest_trade_count_ready_min,
+        degraded_min: QUANT_WORKFLOW_THRESHOLDS.stage_2.backtest_trade_count_degraded_min,
         expected: '>= 30 笔',
         mandatory: true,
         weight: 8,
@@ -453,8 +512,8 @@ function buildResearchCredibilityStage(
         key: 'benchmark_excess_return',
         label: '相对基准超额收益',
         value: backtest.benchmark_excess_return_pct,
-        ready_min: 0,
-        degraded_min: -2,
+        ready_min: QUANT_WORKFLOW_THRESHOLDS.stage_2.benchmark_excess_return_ready_min,
+        degraded_min: QUANT_WORKFLOW_THRESHOLDS.stage_2.benchmark_excess_return_degraded_min,
         expected: '> 0%',
         mandatory: false,
         weight: 8,
@@ -464,8 +523,8 @@ function buildResearchCredibilityStage(
         key: 'max_drawdown',
         label: '最大回撤',
         value: backtest.max_drawdown_pct,
-        ready_max: 20,
-        degraded_max: 35,
+        ready_max: QUANT_WORKFLOW_THRESHOLDS.stage_2.max_drawdown_ready_max,
+        degraded_max: QUANT_WORKFLOW_THRESHOLDS.stage_2.max_drawdown_degraded_max,
         expected: '<= 20%',
         mandatory: true,
         weight: 8,
@@ -486,8 +545,8 @@ function buildResearchCredibilityStage(
         key: 'overfit_score',
         label: '过拟合风险分',
         value: backtest.overfit_score,
-        ready_max: 0.3,
-        degraded_max: 0.5,
+        ready_max: QUANT_WORKFLOW_THRESHOLDS.stage_2.overfit_score_ready_max,
+        degraded_max: QUANT_WORKFLOW_THRESHOLDS.stage_2.overfit_score_degraded_max,
         expected: '<= 0.30',
         mandatory: true,
         weight: 6,
@@ -523,7 +582,10 @@ function buildPaperTradingAcceptanceStage(
         label: '纸面交易观察天数',
         value: paper.trading_days,
         ready_min: preset.paper_trading_defaults.min_paper_trading_days,
-        degraded_min: Math.max(15, Math.floor(preset.paper_trading_defaults.min_paper_trading_days / 2)),
+        degraded_min: Math.max(
+          QUANT_WORKFLOW_THRESHOLDS.stage_3.minimum_degraded_paper_trading_days,
+          Math.floor(preset.paper_trading_defaults.min_paper_trading_days / 2)
+        ),
         expected: `>= ${preset.paper_trading_defaults.min_paper_trading_days} 天`,
         mandatory: true,
         weight: 12,
@@ -534,7 +596,10 @@ function buildPaperTradingAcceptanceStage(
         label: '纸面已完成交易',
         value: paper.completed_trades,
         ready_min: preset.paper_trading_defaults.min_completed_trades,
-        degraded_min: Math.max(12, Math.floor(preset.paper_trading_defaults.min_completed_trades / 2)),
+        degraded_min: Math.max(
+          QUANT_WORKFLOW_THRESHOLDS.stage_3.minimum_degraded_completed_trades,
+          Math.floor(preset.paper_trading_defaults.min_completed_trades / 2)
+        ),
         expected: `>= ${preset.paper_trading_defaults.min_completed_trades} 笔`,
         mandatory: true,
         weight: 12,
@@ -544,8 +609,8 @@ function buildPaperTradingAcceptanceStage(
         key: 'paper_win_rate',
         label: '纸面胜率',
         value: paper.win_rate,
-        ready_min: 0.52,
-        degraded_min: 0.45,
+        ready_min: QUANT_WORKFLOW_THRESHOLDS.stage_3.paper_win_rate_ready_min,
+        degraded_min: QUANT_WORKFLOW_THRESHOLDS.stage_3.paper_win_rate_degraded_min,
         expected: '>= 52%',
         mandatory: false,
         weight: 8,
@@ -554,8 +619,8 @@ function buildPaperTradingAcceptanceStage(
         key: 'paper_profit_loss_ratio',
         label: '纸面盈亏比',
         value: paper.profit_loss_ratio,
-        ready_min: 1.2,
-        degraded_min: 1,
+        ready_min: QUANT_WORKFLOW_THRESHOLDS.stage_3.paper_profit_loss_ratio_ready_min,
+        degraded_min: QUANT_WORKFLOW_THRESHOLDS.stage_3.paper_profit_loss_ratio_degraded_min,
         expected: '>= 1.2',
         mandatory: true,
         weight: 10,
@@ -564,8 +629,8 @@ function buildPaperTradingAcceptanceStage(
         key: 'paper_max_drawdown',
         label: '纸面最大回撤',
         value: paper.max_drawdown_pct,
-        ready_max: 12,
-        degraded_max: 20,
+        ready_max: QUANT_WORKFLOW_THRESHOLDS.stage_3.paper_max_drawdown_ready_max,
+        degraded_max: QUANT_WORKFLOW_THRESHOLDS.stage_3.paper_max_drawdown_degraded_max,
         expected: '<= 12%',
         mandatory: true,
         weight: 12,
@@ -575,8 +640,8 @@ function buildPaperTradingAcceptanceStage(
         key: 'paper_slippage',
         label: '平均滑点',
         value: paper.average_slippage_bps,
-        ready_max: 20,
-        degraded_max: 40,
+        ready_max: QUANT_WORKFLOW_THRESHOLDS.stage_3.average_slippage_ready_max_bps,
+        degraded_max: QUANT_WORKFLOW_THRESHOLDS.stage_3.average_slippage_degraded_max_bps,
         expected: '<= 20 bps',
         mandatory: false,
         weight: 8,
@@ -586,8 +651,8 @@ function buildPaperTradingAcceptanceStage(
         key: 'backtest_paper_consistency',
         label: '回测/纸面一致性',
         value: paper.backtest_to_paper_correlation,
-        ready_min: 0.45,
-        degraded_min: 0.3,
+        ready_min: QUANT_WORKFLOW_THRESHOLDS.stage_3.backtest_paper_correlation_ready_min,
+        degraded_min: QUANT_WORKFLOW_THRESHOLDS.stage_3.backtest_paper_correlation_degraded_min,
         expected: '相关性 >= 0.45',
         mandatory: true,
         weight: 12,
@@ -596,8 +661,8 @@ function buildPaperTradingAcceptanceStage(
         key: 'risk_guard_breaches',
         label: '风控硬违规',
         value: paper.risk_guard_breaches,
-        ready_max: 0,
-        degraded_max: 0,
+        ready_max: QUANT_WORKFLOW_THRESHOLDS.stage_3.risk_guard_breaches_ready_max,
+        degraded_max: QUANT_WORKFLOW_THRESHOLDS.stage_3.risk_guard_breaches_degraded_max,
         expected: '0 次',
         mandatory: true,
         weight: 8,
@@ -607,8 +672,8 @@ function buildPaperTradingAcceptanceStage(
         key: 'manual_overrides',
         label: '人工覆盖次数',
         value: paper.manual_override_count,
-        ready_max: 2,
-        degraded_max: 5,
+        ready_max: QUANT_WORKFLOW_THRESHOLDS.stage_3.manual_override_ready_max,
+        degraded_max: QUANT_WORKFLOW_THRESHOLDS.stage_3.manual_override_degraded_max,
         expected: '<= 2 次',
         mandatory: false,
         weight: 6,
@@ -634,9 +699,9 @@ function buildStage(opts: {
   const score = Math.round((earned / totalWeight) * 100);
   const status: QuantWorkflowStatus = mandatoryBlocked
     ? 'blocked'
-    : score >= 85
+    : score >= QUANT_WORKFLOW_THRESHOLDS.stage_score.ready_min
     ? 'ready'
-    : score >= 60
+    : score >= QUANT_WORKFLOW_THRESHOLDS.stage_score.degraded_min
     ? 'degraded'
     : 'blocked';
   const next_actions = opts.checks

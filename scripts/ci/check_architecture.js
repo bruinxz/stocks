@@ -326,6 +326,11 @@ if (baseline.enabled && (unbaselinedCycles.length || unbaselinedViolations.lengt
 const hardFail = unbaselinedCycles.length > 0 || unbaselinedViolations.length > 0;
 if (STRICT && hardFail) {
   console.error('\n❌ --strict 模式：baseline 外新增循环依赖 / 跨层违规即失败');
+  console.error(
+    '处理方式：优先修改代码移除新增依赖；若确认为可接受的历史债务扩展，请运行 ' +
+      '`node scripts/ci/check_architecture.js --baseline scripts/ci/architecture-baseline.json` ' +
+      '核对输出后，人工更新 baseline 并在 PR 中说明原因。'
+  );
   process.exit(1);
 }
 if (!STRICT && (cycles.length > 0 || violations.length > 0)) {

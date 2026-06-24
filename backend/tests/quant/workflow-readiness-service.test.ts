@@ -8,7 +8,9 @@
  */
 
 import {
+  QUANT_WORKFLOW_THRESHOLDS,
   evaluateQuantWorkflowReadiness,
+  getQuantWorkflowPresetKeys,
   getQuantWorkflowPresets,
 } from '../../src/quant/workflow/QuantWorkflowReadinessService';
 
@@ -41,6 +43,15 @@ assert(
 assert(
   'every preset declares data requirements',
   presets.every(item => item.data_requirements.min_history_days >= 120)
+);
+assert(
+  'preset keys are exposed for route validation',
+  getQuantWorkflowPresetKeys().includes('steady_momentum_basic')
+);
+assert(
+  'workflow thresholds are centralized',
+  QUANT_WORKFLOW_THRESHOLDS.stage_2.backtest_trade_count_ready_min === 30 &&
+    QUANT_WORKFLOW_THRESHOLDS.stage_3.average_slippage_ready_max_bps === 20
 );
 
 console.log('\n## stage 1-3 readiness evaluation');

@@ -932,7 +932,12 @@ router.get(
   authController.authenticate,
   marketController.smokeTestFactorProvider as any
 );
-router.post('/factors/sync', authController.authenticate, marketController.syncFactors as any);
+router.post(
+  '/factors/sync',
+  authController.authenticate,
+  requireRole('admin'),
+  marketController.syncFactors as any
+);
 
 /**
  * @swagger

@@ -37,9 +37,21 @@ assert(
 );
 assert(
   'POST /workflow-readiness/evaluate is authenticated',
-  /router\.post\(\s*['"]\/workflow-readiness\/evaluate['"][\s\S]{0,180}?authController\.authenticate[\s\S]{0,180}?evaluateWorkflowReadiness/.test(
+  /router\.post\(\s*['"]\/workflow-readiness\/evaluate['"][\s\S]{0,240}?authController\.authenticate[\s\S]{0,240}?evaluateWorkflowReadiness/.test(
     routes
   )
+);
+assert(
+  'POST /workflow-readiness/evaluate validates request body',
+  /validateRequest/.test(routes) &&
+    /strategy\.preset_key/.test(routes) &&
+    /workflowPresetKeys/.test(routes)
+);
+assert(
+  'POST /workflow-readiness/evaluate has route-level body size guard',
+  /WORKFLOW_READINESS_BODY_LIMIT_BYTES\s*=\s*100\s*\*\s*1024/.test(routes) &&
+    /workflowReadinessBodySizeGuard/.test(routes) &&
+    /status\(413\)/.test(routes)
 );
 assert(
   'controller imports workflow readiness service',

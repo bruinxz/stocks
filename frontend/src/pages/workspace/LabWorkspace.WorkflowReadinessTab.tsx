@@ -241,7 +241,7 @@ const WorkflowReadinessTab: React.FC<WorkflowReadinessTabProps> = ({ strategies,
         type={verdict?.status === 'ready' ? 'success' : verdict?.status === 'degraded' ? 'warning' : 'info'}
         showIcon
         message="阶段 1-3 量化工作流体检"
-        description="先确认数据和简单策略能跑，再确认研究可信，最后确认纸面交易样本够不够进入小仓观察。"
+        description="这是自评表单：不会自动拉取数据库、启动回测或解锁真实 canary；结论只用于提示下一步人工操作。"
       />
 
       <Row gutter={[16, 16]}>

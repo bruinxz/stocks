@@ -112,7 +112,7 @@ const LabWorkspace: React.FC = () => {
     { key: 'overfit_metrics', label: 'OverfitMetrics', icon: <SafetyCertificateOutlined /> },
     { key: 'advanced_quant', label: '高级量化', icon: <SafetyCertificateOutlined /> },
   ];
-  const [activeKey, setActiveKey] = useState('workflow_readiness');
+  const [activeKey, setActiveKey] = useState('mine');
 
   // US-078: 从策略详情页跳回来时携带 location.state，自动触发 clone/edit/newRun
   const location = useLocation();
