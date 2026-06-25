@@ -141,7 +141,16 @@ export interface CreateBacktestPayload {
 
 export interface CreateBacktestResponse {
   task: BacktestDetail | BacktestTask | any;
+  task_id: number;
   queue_job_id?: string | number;
+}
+
+function extractCreateBacktestTaskId(data: any): number {
+  const taskId = Number(data?.task_id || data?.task?.id || data?.task?.task?.id || data?.id);
+  if (!Number.isFinite(taskId) || taskId <= 0) {
+    throw new Error('创建回测任务成功，但后端没有返回可追踪的 task_id');
+  }
+  return taskId;
 }
 
 export async function createBacktestTask(
@@ -151,7 +160,11 @@ export async function createBacktestTask(
   if (!res.data?.success) {
     throw new Error(res.data?.message || '创建回测任务失败');
   }
-  return res.data.data as CreateBacktestResponse;
+  const data = res.data.data as CreateBacktestResponse;
+  return {
+    ...data,
+    task_id: extractCreateBacktestTaskId(data),
+  };
 }
 
 // ---------- /api/quant/backtests/compare -----------------------------------

@@ -82,6 +82,13 @@
 - **数据库字段**：所有数据表的列名必须使用 `snake_case`（如 `user_id`, `created_at`）。
 - **Sequelize 模型**：所有 Model 的类属性声明也必须强制使用 `snake_case`，以保持与数据库字段的完全一致（如 `declare user_id: number;`）。
 - **代码交互**：在所有前后端接口交互、控制器逻辑、服务层代码中，凡是涉及到上述数据库字段的数据传递和处理，都必须统一使用 `snake_case`，严禁使用 `camelCase`（驼峰命名法）。
+
+### 5.5 简易版前端美术与交互规范
+- 简易版入口（当前 `/workspace/easy`）以及后续新手引导、模板选择、查数据、跑回测、模拟观察等低门槛功能，必须优先遵守 [docs/EASY_QUANT_UI_DESIGN_GUIDELINES.md](docs/EASY_QUANT_UI_DESIGN_GUIDELINES.md)。
+- 简易版统一使用“暖纸风”：米色纸张底、黑墨文字、陶土橙强调、克制描边、少量与功能相关的手绘线稿。不要回退到旧蓝色 SaaS 后台风格，也不要随意新增裸色值。
+- 交互上保持“一屏一个任务”：Hero、动线、选模板、查数据、跑回测、模拟观察各自独立成屏；桌面端可用轻量 scroll snap，移动端和矮窗口必须退化为自然单列滚动。
+- 每屏最多保留一个深色主 CTA，术语保持统一（尤其使用“查数据”），复杂指标和日志优先收进抽屉或专业版。
+- 调整简易版 UI 后，至少运行 `node backend/tests/services/easy-quant-workspace-ui.test.ts` 做契约检查，并按需补充测试覆盖新的视觉/交互约束。
 ---
 
 ## 6. 开发环境备忘录 (Agent Context)
