@@ -1,8 +1,12 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Card, Space, Tag, Typography, Button, Tooltip, Row, Col, Statistic } from 'antd';
-import { RobotOutlined } from '@ant-design/icons';
+import { RobotOutlined, DownOutlined, RightOutlined, WarningOutlined } from '@ant-design/icons';
 import Sparkline20d from '../charts/Sparkline20d';
-import type { V3RecommendationItem, V3DimensionItem } from '../../services/v3RecommendationService';
+import type {
+  V3RecommendationItem,
+  V3DimensionItem,
+  V3PlaybookItem,
+} from '../../services/v3RecommendationService';
 
 /**
  * CA-1 抖音风 v3 推荐卡片 — 单条 stacked card.
@@ -77,6 +81,22 @@ const DIMENSION_ORDER: ReadonlyArray<V3DimensionItem['key']> = Object.freeze([
   'structure',
 ]);
 
+/** playbook verdict → 颜色 (与后端 VERDICT_COLOR 同源, 中股惯例红=买/橙=持有/蓝=观望/绿=避). */
+export function playbookVerdictColor(verdict: V3PlaybookItem['verdict']): string {
+  switch (verdict) {
+    case 'buy':
+      return '#cf1322';
+    case 'hold':
+      return '#fa8c16';
+    case 'observe':
+      return '#1890ff';
+    case 'avoid':
+      return '#52c41a';
+    default:
+      return '#8c8c8c';
+  }
+}
+
 /** 把 dimensions 按 fixed order 排好, 缺的位置返 null. */
 export function orderDimensions(
   dims: ReadonlyArray<V3DimensionItem>
@@ -94,6 +114,9 @@ const V3RecommendationCard: React.FC<V3RecommendationCardProps> = ({ item, onCli
     () => marketCapBucketLabel(item.circulating_market_cap, item.total_market_cap),
     [item.circulating_market_cap, item.total_market_cap]
   );
+  const [playbookOpen, setPlaybookOpen] = useState(false);
+  const playbookItems = Array.isArray(item.playbook) ? item.playbook : null;
+  const hasPlaybook = !!playbookItems && playbookItems.length > 0;
 
   return (
     <Card
@@ -258,6 +281,92 @@ const V3RecommendationCard: React.FC<V3RecommendationCardProps> = ({ item, onCli
             );
           })}
         </Row>
+
+        {/* CA-2 场景化 5 档 playbook — collapsible */}
+        {hasPlaybook && (
+          <div
+            style={{
+              borderTop: '1px dashed #e8e8e8',
+              paddingTop: 8,
+            }}
+            data-testid={`v3-card-${item.symbol}-playbook`}
+          >
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setPlaybookOpen(o => !o)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setPlaybookOpen(o => !o);
+                }
+              }}
+              style={{
+                cursor: 'pointer',
+                userSelect: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+              }}
+              data-testid={`v3-card-${item.symbol}-playbook-toggle`}
+            >
+              {playbookOpen ? (
+                <DownOutlined style={{ fontSize: 12 }} />
+              ) : (
+                <RightOutlined style={{ fontSize: 12 }} />
+              )}
+              <Text style={{ fontSize: 13, fontWeight: 600 }}>操作建议 (5 档开盘场景)</Text>
+            </div>
+            {playbookOpen && (
+              <div style={{ marginTop: 8 }}>
+                {playbookItems!.map((p, idx) => {
+                  const color = playbookVerdictColor(p.verdict);
+                  return (
+                    <div
+                      key={p.bucket}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: 8,
+                        padding: '6px 8px',
+                        marginBottom: idx === playbookItems!.length - 1 ? 0 : 4,
+                        background: p.avoid ? '#fff1f0' : '#fafafa',
+                        borderLeft: p.avoid
+                          ? '3px solid #cf1322'
+                          : `3px solid ${color}`,
+                        borderRadius: 4,
+                      }}
+                      data-testid={`v3-card-${item.symbol}-playbook-${p.bucket}`}
+                    >
+                      <div style={{ flexShrink: 0 }}>
+                        <Text
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 600,
+                            color,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          【{p.trigger}】
+                        </Text>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={{ fontSize: 12, color: '#262626', wordBreak: 'break-all' }}>
+                          {p.action}
+                        </Text>
+                        {p.avoid && (
+                          <WarningOutlined
+                            style={{ color: '#cf1322', marginLeft: 4, fontSize: 12 }}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* 查看完整分析 — 父组件触发 modal */}
         <Button

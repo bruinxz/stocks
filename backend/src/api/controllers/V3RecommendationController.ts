@@ -41,6 +41,11 @@ import {
   pickV3ConfidenceTier,
   type V3DimensionScore,
 } from '../../services/analysis-engine/v3CardHelpers';
+import {
+  buildScenarioPlaybook,
+  type ScenarioPlaybookItem,
+  type ScenarioPlaybookContext,
+} from '../../services/analysis-engine/scenarioPlaybookBuilder';
 
 // ---------------------------------------------------------------------------
 //  常量
@@ -222,6 +227,95 @@ export function computeAmplitude(
     return null;
   }
   return Math.round(((hi - lo) / prevClose) * 100 * 100) / 100;
+}
+
+/**
+ * 算 20 日 ATR (Avg True Range, 元) — playbook 紧止损用.
+ * True Range = max(high-low, |high-prev_close|, |low-prev_close|).
+ * bars 已按时间升序. 少于 N+1 条 → null (无法算前收).
+ */
+export function computeATR20(
+  bars: Array<{ high?: number; low?: number; close?: number }>,
+  period = 20
+): number | null {
+  if (!Array.isArray(bars) || bars.length < period + 1) return null;
+  // 取最近 period 根 K + 前 1 根 (算 prev_close)
+  const window = bars.slice(-(period + 1));
+  let sumTR = 0;
+  let n = 0;
+  for (let i = 1; i < window.length; i++) {
+    const hi = Number(window[i]?.high);
+    const lo = Number(window[i]?.low);
+    const prevClose = Number(window[i - 1]?.close);
+    if (
+      !Number.isFinite(hi) ||
+      !Number.isFinite(lo) ||
+      !Number.isFinite(prevClose) ||
+      hi < lo ||
+      prevClose <= 0
+    ) {
+      continue;
+    }
+    const tr = Math.max(hi - lo, Math.abs(hi - prevClose), Math.abs(lo - prevClose));
+    sumTR += tr;
+    n += 1;
+  }
+  if (n === 0) return null;
+  return Math.round((sumTR / n) * 100) / 100;
+}
+
+/**
+ * 从 60 日内 daily_bars 找近期最低 low — playbook low_mild 兜底 support_level.
+ * (优先级: per_dimension.technical.evidence 含 "支撑" label → 此函数; 当前实现只取后者.)
+ */
+export function findRecentLow(
+  bars: Array<{ low?: number }>,
+  lookback = 60
+): number | null {
+  if (!Array.isArray(bars) || bars.length === 0) return null;
+  const window = bars.slice(-lookback);
+  let min = Infinity;
+  for (const b of window) {
+    const lo = Number(b?.low);
+    if (Number.isFinite(lo) && lo > 0 && lo < min) min = lo;
+  }
+  return Number.isFinite(min) ? Math.round(min * 100) / 100 : null;
+}
+
+/**
+ * 从 per_dimension.technical.evidence 找含 "支撑" 字样的 evidence.metric_value
+ * (analyzer 输出约定: evidence item 可能含 {label, detail, metric_value}).
+ * 若 evidence 是 {label, direction} 子集 (V3RecommendationController.extractPerDimension
+ * 当前返回的精简形态), 则尝试用正则从 label/detail 字符串提取数字; 否则返 null.
+ */
+export function extractSupportLevel(perDim: PerDimensionLike[]): number | null {
+  const tech = perDim.find(d => d.analyzer_key === 'technical');
+  if (!tech || !Array.isArray(tech.evidence)) return null;
+  for (const ev of tech.evidence) {
+    const text = `${ev?.label ?? ''}`;
+    if (!text.includes('支撑')) continue;
+    // 任何形态的数字: 整数或带小数
+    const m = text.match(/(\d+(?:\.\d+)?)/);
+    if (m) {
+      const n = Number(m[1]);
+      if (Number.isFinite(n) && n > 0) return Math.round(n * 100) / 100;
+    }
+  }
+  return null;
+}
+
+/**
+ * 把 per_dimension 全部 evidence label 拼成 evidence_text (playbook keyword 检测用).
+ */
+export function buildEvidenceText(perDim: PerDimensionLike[]): string {
+  const parts: string[] = [];
+  for (const d of perDim) {
+    if (!Array.isArray(d.evidence)) continue;
+    for (const ev of d.evidence) {
+      if (ev && typeof ev.label === 'string') parts.push(ev.label);
+    }
+  }
+  return parts.join(' ');
 }
 
 // ---------------------------------------------------------------------------
@@ -429,6 +523,53 @@ class V3RecommendationController {
     if (!recommendReason && signal.rationale) recommendReason = String(signal.rationale).slice(0, 120);
 
     const metadata: any = signal.metadata ?? {};
+    const entryZone: [number, number] | null = Array.isArray(metadata?.entry_zone)
+      ? (metadata.entry_zone as [number, number])
+      : null;
+
+    // ----- CA-2: 场景化 5 档 playbook -----
+    // prev_close 从 daily_bars 倒数第二根 (今日的"前收") 或 last bar (若数据只有 1 条)
+    const prevCloseForPlaybook =
+      bars.length >= 2
+        ? Number(bars[bars.length - 2]?.close)
+        : lastBar
+          ? Number(lastBar.close)
+          : NaN;
+    const supportLevel =
+      extractSupportLevel(perDim) ?? findRecentLow(bars.map(b => ({ low: Number(b.low) })), 60);
+    const atr20d = computeATR20(
+      bars.map(b => ({ high: Number(b.high), low: Number(b.low), close: Number(b.close) })),
+      20
+    );
+    const capitalDim = perDim.find(d => d.analyzer_key === 'capital');
+    const capitalScore =
+      capitalDim && Number.isFinite(Number(capitalDim.score)) ? Number(capitalDim.score) : null;
+    const riskWarningsText = Array.isArray(metadata?.risk_warnings)
+      ? metadata.risk_warnings.join(' ')
+      : '';
+
+    let playbook: ScenarioPlaybookItem[] | null = null;
+    if (Number.isFinite(prevCloseForPlaybook) && prevCloseForPlaybook > 0) {
+      const ctx: ScenarioPlaybookContext = {
+        prev_close: prevCloseForPlaybook,
+        entry_low: entryZone ? Number(entryZone[0]) : null,
+        support_level: supportLevel,
+        atr_20d: atr20d,
+        action: String(signal.decision ?? ''),
+        evidence_text: buildEvidenceText(perDim),
+        capital_score: capitalScore,
+        risk_warnings_text: riskWarningsText,
+      };
+      try {
+        playbook = buildScenarioPlaybook(ctx);
+      } catch (err: any) {
+        logger.warn(
+          `v3-recommendations playbook build failed for ${symbol}: ${err?.message ?? err}`
+        );
+        playbook = null;
+      }
+    }
+
     return {
       symbol,
       name: signal.name ?? stock?.name ?? null,
@@ -460,6 +601,7 @@ class V3RecommendationController {
         confidence_tier_engine: metadata?.confidence_tier ?? null,
         risk_warnings: Array.isArray(metadata?.risk_warnings) ? metadata.risk_warnings : [],
       },
+      playbook,
       signal_id: signal.id,
       signal_date: signal.signal_date,
     };
@@ -499,6 +641,7 @@ class V3RecommendationController {
         confidence_tier_engine: null,
         risk_warnings: [],
       },
+      playbook: null,
       signal_id: signal.id,
       signal_date: signal.signal_date,
       enrich_failed: true,

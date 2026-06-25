@@ -10,6 +10,7 @@ import {
   dimensionScoreColor,
   marketCapBucketLabel,
   orderDimensions,
+  playbookVerdictColor,
 } from '../V3RecommendationCard';
 import type { V3DimensionItem } from '../../../services/v3RecommendationService';
 
@@ -137,5 +138,18 @@ describe('V3RecommendationCard / orderDimensions', () => {
     const input: V3DimensionItem[] = [mkDim('popularity', 50), mkDim('popularity', 99)];
     const out = orderDimensions(input);
     expect(out[0]?.bar_value).toBe(99);
+  });
+});
+
+describe('V3RecommendationCard / playbookVerdictColor (CA-2)', () => {
+  test('buy 红 / hold 橙 / observe 蓝 / avoid 绿', () => {
+    expect(playbookVerdictColor('buy')).toBe('#cf1322');
+    expect(playbookVerdictColor('hold')).toBe('#fa8c16');
+    expect(playbookVerdictColor('observe')).toBe('#1890ff');
+    expect(playbookVerdictColor('avoid')).toBe('#52c41a');
+  });
+
+  test('未知 verdict 兜底灰', () => {
+    expect(playbookVerdictColor('xxx' as any)).toBe('#8c8c8c');
   });
 });

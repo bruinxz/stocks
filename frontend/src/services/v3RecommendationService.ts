@@ -65,6 +65,29 @@ export interface V3RecommendationDecision {
   risk_warnings: string[];
 }
 
+/**
+ * CA-2 场景化 5 档 playbook — 由 backend `buildScenarioPlaybook` 生成. null = 不适用
+ * (action=sell/strong_sell 或 prev_close 缺失).
+ *
+ * 5 档 bucket 固定顺序: high_strong → high_weak → flat → low_mild → low_hard.
+ * UI 渲染按数组顺序即可, 不需要 sort.
+ */
+export type V3ScenarioBucket = 'high_strong' | 'high_weak' | 'flat' | 'low_mild' | 'low_hard';
+
+export interface V3PlaybookItem {
+  bucket: V3ScenarioBucket;
+  /** "高开 +2% 以上" — UI 直接展示. */
+  trigger: string;
+  /** "可积极参与 · 放量突破信号 · 止损 ¥99.96" — UI 直接展示. */
+  action: string;
+  /** 数值止损价 (元), 仅 high_strong / high_weak / low_mild 会给; null 不渲染止损. */
+  stop_loss: number | null;
+  /** "buy" / "hold" / "observe" / "avoid" — UI 决定颜色 / 强弱. */
+  verdict: 'buy' | 'hold' | 'observe' | 'avoid';
+  /** true → 红色 left-border + 警告 icon. */
+  avoid: boolean;
+}
+
 /** 单条 v3 推荐. */
 export interface V3RecommendationItem {
   symbol: string;
@@ -90,6 +113,8 @@ export interface V3RecommendationItem {
   /** 一句话推荐理由, 缺数据 null. */
   recommend_reason: string | null;
   decision: V3RecommendationDecision;
+  /** CA-2: 场景化 5 档操作建议. null = 不适用 (action=sell 或 prev_close 缺失). */
+  playbook: V3PlaybookItem[] | null;
   /** AIInvestmentSignal.id, 跳详情用. */
   signal_id: number;
   /** 后端归档时的 signal_date (YYYY-MM-DD). */
