@@ -115,6 +115,25 @@ export interface V3RecommendationItem {
   decision: V3RecommendationDecision;
   /** CA-2: 场景化 5 档操作建议. null = 不适用 (action=sell 或 prev_close 缺失). */
   playbook: V3PlaybookItem[] | null;
+  /**
+   * CA-3: 结构化技术面摘要 — 一段 markdown 文本.
+   *   例: "今日+1.37%, 窄幅震荡, 换手率 13.9% 适中, 量比 13.85 巨量,
+   *        成交额 41.3 亿 (大额成交), 市值 3204 亿 (超大盘),
+   *        上涨逻辑: 题材活跃 · 资金流入, 近 20 日 -6.4% 中期调整."
+   * 缺数据时仍出至少 "上涨逻辑: 技术形态."; ctx 全 null 给兜底文案; minimal view = null.
+   */
+  technical_summary?: string | null;
+  /**
+   * CA-3: 观察点 — 最多 5 条 bullet, "接下来需要盯什么".
+   * 任一触发器不满足则该条不出, 至少 0 条 (UI 0 条整段不渲染).
+   */
+  observation_points?: string[];
+  /**
+   * CA-3: 风险硬规则 — 最多 3 条, "什么情况就放弃".
+   * 默认 2 条 always 出 (低开 -3% / 竞价缩量), ST/超买/遇阻 追加, ST 命中优先级最高.
+   * UI 必须用红框 + warning icon 突出.
+   */
+  risk_rules?: string[];
   /** AIInvestmentSignal.id, 跳详情用. */
   signal_id: number;
   /** 后端归档时的 signal_date (YYYY-MM-DD). */

@@ -46,6 +46,14 @@ import {
   type ScenarioPlaybookItem,
   type ScenarioPlaybookContext,
 } from '../../services/analysis-engine/scenarioPlaybookBuilder';
+import {
+  buildTechnicalSummary,
+  buildObservationPoints,
+  buildRiskRules,
+  type TechnicalSummaryContext,
+  type ObservationPointsContext,
+  type RiskRulesContext,
+} from '../../services/analysis-engine/v3DetailBuilder';
 
 // ---------------------------------------------------------------------------
 //  常量
@@ -318,6 +326,68 @@ export function buildEvidenceText(perDim: PerDimensionLike[]): string {
   return parts.join(' ');
 }
 
+/**
+ * 从 60 日内 daily_bars 找近期最高 high — observation_points 阻力位兜底.
+ * (优先级: per_dimension.technical.evidence 含 "阻力"/"压力" label → 此函数兜底.)
+ */
+export function findRecentHigh(
+  bars: Array<{ high?: number }>,
+  lookback = 60
+): number | null {
+  if (!Array.isArray(bars) || bars.length === 0) return null;
+  const window = bars.slice(-lookback);
+  let max = -Infinity;
+  for (const b of window) {
+    const hi = Number(b?.high);
+    if (Number.isFinite(hi) && hi > 0 && hi > max) max = hi;
+  }
+  return Number.isFinite(max) ? Math.round(max * 100) / 100 : null;
+}
+
+/**
+ * 从 per_dimension.technical.evidence 找含 "阻力"/"压力" 字样的数字 — observation 用.
+ * 命名与 extractSupportLevel 对偶.
+ */
+export function extractResistanceLevel(perDim: PerDimensionLike[]): number | null {
+  const tech = perDim.find(d => d.analyzer_key === 'technical');
+  if (!tech || !Array.isArray(tech.evidence)) return null;
+  for (const ev of tech.evidence) {
+    const text = `${ev?.label ?? ''}`;
+    if (!text.includes('阻力') && !text.includes('压力')) continue;
+    const m = text.match(/(\d+(?:\.\d+)?)/);
+    if (m) {
+      const n = Number(m[1]);
+      if (Number.isFinite(n) && n > 0) return Math.round(n * 100) / 100;
+    }
+  }
+  return null;
+}
+
+/**
+ * 拼 technical 维度的全部 evidence label — 给 observation_points 检测 MACD/KDJ
+ * 与 risk_rules 检测 "阻力"/"高位" 用.
+ */
+export function buildTechnicalEvidenceText(perDim: PerDimensionLike[]): string {
+  const tech = perDim.find(d => d.analyzer_key === 'technical');
+  if (!tech || !Array.isArray(tech.evidence)) return '';
+  return tech.evidence
+    .filter(ev => ev && typeof ev.label === 'string')
+    .map(ev => ev.label)
+    .join(' ');
+}
+
+/** evidence 含 "阻力" / "套牢" / "高位" / "压力" / "压制" → 触发风险硬规则. */
+const SHORT_TERM_RESISTANCE_KEYWORDS: ReadonlyArray<string> = Object.freeze([
+  '阻力',
+  '套牢',
+  '高位',
+  '压力',
+  '压制',
+]);
+
+/** evidence 含 "超买" → 触发情绪过热风险. */
+const OVERBOUGHT_KEYWORDS: ReadonlyArray<string> = Object.freeze(['超买']);
+
 // ---------------------------------------------------------------------------
 //  Controller
 // ---------------------------------------------------------------------------
@@ -570,6 +640,110 @@ class V3RecommendationController {
       }
     }
 
+    // ----- CA-3: 详情区结构化模板 — 技术面 / 观察点 / 风险硬规则 -----
+    // amount_yi 从 last bar.turnover (元) → 亿; market_cap_yi 从 circulating → 亿
+    const lastBarTurnover = lastBar && (lastBar as any).turnover !== undefined
+      ? Number((lastBar as any).turnover)
+      : null;
+    const amountYi =
+      typeof lastBarTurnover === 'number' && Number.isFinite(lastBarTurnover) && lastBarTurnover >= 0
+        ? Math.round((lastBarTurnover / 1e8) * 100) / 100
+        : null;
+    const marketCapSource =
+      stock?.circulating_market_cap != null && Number(stock.circulating_market_cap) > 0
+        ? Number(stock.circulating_market_cap)
+        : stock?.total_market_cap != null && Number(stock.total_market_cap) > 0
+          ? Number(stock.total_market_cap)
+          : null;
+    const marketCapYi =
+      marketCapSource != null && Number.isFinite(marketCapSource)
+        ? Math.round((marketCapSource / 1e8) * 100) / 100
+        : null;
+    // volume_ratio = today.volume / avg(prev 5d volume) (倍数)
+    let volumeRatio: number | null = null;
+    if (bars.length >= 2) {
+      const today = bars[bars.length - 1];
+      const prevs = bars.slice(-6, -1); // 取倒数 2-6 共 5 根
+      const todayVol = Number(today?.volume);
+      if (Number.isFinite(todayVol) && todayVol >= 0 && prevs.length > 0) {
+        const sums = prevs
+          .map(b => Number(b?.volume))
+          .filter(v => Number.isFinite(v) && v >= 0);
+        if (sums.length > 0) {
+          const avg = sums.reduce((a, b) => a + b, 0) / sums.length;
+          if (avg > 0) volumeRatio = Math.round((todayVol / avg) * 100) / 100;
+        }
+      }
+    }
+
+    const technicalEvidenceText = buildTechnicalEvidenceText(perDim);
+    const sentimentDim = perDim.find(d => d.analyzer_key === 'sentiment');
+    const sentimentScore =
+      sentimentDim && Number.isFinite(Number(sentimentDim.score)) ? Number(sentimentDim.score) : null;
+    const industryDim = perDim.find(d => d.analyzer_key === 'industry_regime');
+    const industryScore =
+      industryDim && Number.isFinite(Number(industryDim.score)) ? Number(industryDim.score) : null;
+    const hasIndustryTheme =
+      (industryScore !== null && industryScore > 50) || (sentimentScore !== null && sentimentScore > 50);
+    const todayHigh = lastBar ? Number((lastBar as any).high) : null;
+    const resistanceLevel =
+      extractResistanceLevel(perDim) ?? findRecentHigh(bars.map(b => ({ high: Number(b.high) })), 60);
+    const hasShortTermResistance = SHORT_TERM_RESISTANCE_KEYWORDS.some(kw =>
+      technicalEvidenceText.includes(kw)
+    );
+    const isOverbought =
+      (sentimentScore !== null && sentimentScore > 80) ||
+      OVERBOUGHT_KEYWORDS.some(kw => technicalEvidenceText.includes(kw));
+
+    let technicalSummary: string | null = null;
+    let observationPoints: string[] = [];
+    let riskRules: string[] = [];
+    try {
+      const techCtx: TechnicalSummaryContext = {
+        change_pct_today: changePct,
+        turnover_rate: turnoverRate,
+        volume_ratio: volumeRatio,
+        amount_yi: amountYi,
+        market_cap_yi: marketCapYi,
+        amplitude_pct: amplitude,
+        evidence_text: buildEvidenceText(perDim),
+        change_pct_20d: priceWindow?.cumulative_change_pct ?? null,
+      };
+      technicalSummary = buildTechnicalSummary(techCtx);
+
+      const obsCtx: ObservationPointsContext = {
+        resistance_level: resistanceLevel,
+        support_level: supportLevel,
+        current_volume_ratio: volumeRatio,
+        today_high: Number.isFinite(todayHigh as number) ? (todayHigh as number) : null,
+        has_industry_theme: hasIndustryTheme,
+        technical_evidence: technicalEvidenceText,
+        change_pct_20d: priceWindow?.cumulative_change_pct ?? null,
+      };
+      observationPoints = buildObservationPoints(obsCtx);
+
+      const riskCtx: RiskRulesContext = {
+        action: String(signal.decision ?? ''),
+        risk_warnings: Array.isArray(metadata?.risk_warnings) ? metadata.risk_warnings : [],
+        has_short_term_resistance: hasShortTermResistance,
+        is_overbought: isOverbought,
+      };
+      riskRules = buildRiskRules(riskCtx);
+    } catch (err: any) {
+      logger.warn(
+        `v3-recommendations detail (CA-3) build failed for ${symbol}: ${err?.message ?? err}`
+      );
+      // 三段任一抛错都退化为基础值, 不阻塞返回
+      if (technicalSummary === null) technicalSummary = null;
+      if (!Array.isArray(observationPoints)) observationPoints = [];
+      if (!Array.isArray(riskRules) || riskRules.length === 0) {
+        riskRules = [
+          '低开超 -3% 且无主线支撑不要进, 弱势难改',
+          '竞价阶段量比 < 0.5 且低开 -2% 以上, 放弃当天操作',
+        ];
+      }
+    }
+
     return {
       symbol,
       name: signal.name ?? stock?.name ?? null,
@@ -602,6 +776,9 @@ class V3RecommendationController {
         risk_warnings: Array.isArray(metadata?.risk_warnings) ? metadata.risk_warnings : [],
       },
       playbook,
+      technical_summary: technicalSummary,
+      observation_points: observationPoints,
+      risk_rules: riskRules,
       signal_id: signal.id,
       signal_date: signal.signal_date,
     };
@@ -642,6 +819,12 @@ class V3RecommendationController {
         risk_warnings: [],
       },
       playbook: null,
+      technical_summary: null,
+      observation_points: [],
+      risk_rules: [
+        '低开超 -3% 且无主线支撑不要进, 弱势难改',
+        '竞价阶段量比 < 0.5 且低开 -2% 以上, 放弃当天操作',
+      ],
       signal_id: signal.id,
       signal_date: signal.signal_date,
       enrich_failed: true,

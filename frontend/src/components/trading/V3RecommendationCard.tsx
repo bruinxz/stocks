@@ -1,6 +1,13 @@
 import React, { useMemo, useState } from 'react';
-import { Card, Space, Tag, Typography, Button, Tooltip, Row, Col, Statistic } from 'antd';
-import { RobotOutlined, DownOutlined, RightOutlined, WarningOutlined } from '@ant-design/icons';
+import { Card, Space, Tag, Typography, Button, Tooltip, Row, Col, Statistic, Alert } from 'antd';
+import {
+  RobotOutlined,
+  DownOutlined,
+  RightOutlined,
+  WarningOutlined,
+  BarChartOutlined,
+  EyeOutlined,
+} from '@ant-design/icons';
 import Sparkline20d from '../charts/Sparkline20d';
 import type {
   V3RecommendationItem,
@@ -9,7 +16,7 @@ import type {
 } from '../../services/v3RecommendationService';
 
 /**
- * CA-1 抖音风 v3 推荐卡片 — 单条 stacked card.
+ * CA-1/CA-2/CA-3 抖音风 v3 推荐卡片 — 单条 stacked card.
  *
  * 布局 (top→down):
  *   - 顶部: 名称 + 代码 + 涨跌幅 (右对齐) + 行业/市值 Tag;
@@ -18,16 +25,20 @@ import type {
  *   - 3 个高亮 Tag (橙色);
  *   - 推荐理由 (一句话);
  *   - 4 维评分 (人气/逻辑/资金/结构) 大字横排;
+ *   - CA-2 场景化 5 档 playbook (collapsible, 默认折叠);
+ *   - CA-3 技术面段落 (灰底, 默认展开);
+ *   - CA-3 观察点 bullet list (默认展开);
+ *   - CA-3 风险硬规则 (红框 + warning icon, 默认展开);
  *   - "查看完整分析" 按钮 → onClickDetail(item).
  *
  * 不做:
- *   - 不展开详情 (技术面 / 操作建议 / 观察点 / 风险) — 那是 CA-2/CA-3 的事;
  *   - 不内嵌 modal — 父组件接 onClickDetail 后自己渲 modal.
  *
  * 容错 (与后端 enrichSignal fail-OPEN 同款):
  *   - sparkline 空 → Sparkline20d 自身渲染 "数据不足";
  *   - dimensions 少于 4 维 → 缺的位置不渲染 (不强制占位);
- *   - 行业 / 市值 null → tag 不渲染.
+ *   - 行业 / 市值 null → tag 不渲染;
+ *   - technical_summary / observation_points / risk_rules 缺失 → 整段不渲染.
  */
 export interface V3RecommendationCardProps {
   item: V3RecommendationItem;
@@ -366,6 +377,101 @@ const V3RecommendationCard: React.FC<V3RecommendationCardProps> = ({ item, onCli
               </div>
             )}
           </div>
+        )}
+
+        {/* CA-3: 技术面 / 观察点 / 风险 — 3 段结构化详情, 默认展开. 缺数据整段不渲染. */}
+        {item.technical_summary && (
+          <div
+            style={{
+              borderTop: '1px dashed #e8e8e8',
+              paddingTop: 10,
+            }}
+            data-testid={`v3-card-${item.symbol}-tech`}
+          >
+            <Space size={6} align="center" style={{ marginBottom: 4 }}>
+              <BarChartOutlined style={{ fontSize: 13, color: '#1890ff' }} />
+              <Text style={{ fontSize: 13, fontWeight: 600, color: '#262626' }}>技术面</Text>
+            </Space>
+            <Paragraph
+              style={{
+                margin: 0,
+                fontSize: 12,
+                lineHeight: 1.6,
+                color: '#262626',
+                background: '#fafafa',
+                padding: '8px 10px',
+                borderRadius: 4,
+              }}
+              data-testid={`v3-card-${item.symbol}-tech-text`}
+            >
+              {item.technical_summary}
+            </Paragraph>
+          </div>
+        )}
+
+        {Array.isArray(item.observation_points) && item.observation_points.length > 0 && (
+          <div data-testid={`v3-card-${item.symbol}-obs`}>
+            <Space size={6} align="center" style={{ marginBottom: 4 }}>
+              <EyeOutlined style={{ fontSize: 13, color: '#722ed1' }} />
+              <Text style={{ fontSize: 13, fontWeight: 600, color: '#262626' }}>观察点</Text>
+            </Space>
+            <ul
+              style={{
+                margin: 0,
+                paddingLeft: 18,
+                fontSize: 12,
+                lineHeight: 1.7,
+                color: '#262626',
+              }}
+            >
+              {item.observation_points.map((point, idx) => (
+                <li
+                  key={`${idx}-${point.slice(0, 8)}`}
+                  data-testid={`v3-card-${item.symbol}-obs-${idx}`}
+                >
+                  {point}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {Array.isArray(item.risk_rules) && item.risk_rules.length > 0 && (
+          <Alert
+            type="error"
+            showIcon
+            icon={<WarningOutlined />}
+            data-testid={`v3-card-${item.symbol}-risk`}
+            style={{
+              padding: '8px 12px',
+              borderRadius: 6,
+              border: '1px solid #ffa39e',
+              background: '#fff1f0',
+            }}
+            message={
+              <Text style={{ fontSize: 13, fontWeight: 600, color: '#cf1322' }}>风险硬规则</Text>
+            }
+            description={
+              <ul
+                style={{
+                  margin: '4px 0 0',
+                  paddingLeft: 18,
+                  fontSize: 12,
+                  lineHeight: 1.7,
+                  color: '#5c0011',
+                }}
+              >
+                {item.risk_rules.map((rule, idx) => (
+                  <li
+                    key={`${idx}-${rule.slice(0, 8)}`}
+                    data-testid={`v3-card-${item.symbol}-risk-${idx}`}
+                  >
+                    {rule}
+                  </li>
+                ))}
+              </ul>
+            }
+          />
         )}
 
         {/* 查看完整分析 — 父组件触发 modal */}
