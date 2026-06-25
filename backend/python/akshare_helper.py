@@ -1562,18 +1562,9 @@ def get_industry_flow_intraday() -> List[Dict[str, Any]]:
     """
     BK-2 (2026-06-24): Lightweight intraday industry-board fund-flow snapshot.
 
-    Returns ONLY the fund-flow rank dataframe (no constituents / no leader stock).
-    Unlike `get_industry_flow` (240s, fetches per-board cons), this fetches
-    a single AKShare API call (~3-5s) and joins with `stock_board_industry_name_em`
-    for the BKxxxx code mapping.
-
-    Used by `INDUSTRY_FLOW_INTRADAY_SYNC` cron (every 10min during trading hours).
-    Each call returns ~86 rows; the TS layer stamps `snapshot_ts = now()` and
-    upserts to `industry_flow_intraday`.
-
-    AKShare semantics: `stock_sector_fund_flow_rank(indicator='今日')` returns
-    **cumulative net inflow since market open** (元), which is exactly what
-    the chart needs (no per-call delta math required in TS).
+    BK-2-fix (2026-06-25): bypass AKShare monkey-patched requests (代理池重试
+    会让单次 fetch 耗 30s+ 直接超时). 直接 hit EastMoney push2 API.
+    Endpoint 实测 prod 凌晨/盘前 502, 但盘中 9:30+ 都能正常返回 200.
 
     Returns:
         List[Dict] with: industry_code, industry_name, change_pct (%),
@@ -1581,119 +1572,144 @@ def get_industry_flow_intraday() -> List[Dict[str, Any]]:
         can checkpoint a missed snapshot — single missed point is acceptable).
     """
     try:
-        fn_rank = getattr(ak, 'stock_sector_fund_flow_rank', None)
-        if fn_rank is None:
-            print("[intraday] stock_sector_fund_flow_rank not available", file=sys.stderr)
-            return []
-        df_flow = None
+        # Bypass AKShare 的 monkey-patched requests — 用原生 urllib 直 hit endpoint.
+        # AKShare 的 stock_sector_fund_flow_rank 内部本质就是调这个 API.
+        import json as _json
+        import urllib.request as _urllib_req
+        url = (
+            'https://push2.eastmoney.com/api/qt/clist/get?'
+            'pn=1&pz=200&po=1&np=1&fltt=2&invt=2&fid0=f62'
+            '&fs=m:90+t:2'  # 行业板块
+            '&fields=f12,f14,f3,f62,f184'  # 代码,名称,涨跌幅,主力净流入,净占比
+        )
+        req = _urllib_req.Request(
+            url,
+            headers={
+                'User-Agent': 'Mozilla/5.0',
+                'Referer': 'https://data.eastmoney.com/',
+            },
+        )
         try:
-            df_flow = fn_rank(indicator='今日', sector_type='行业资金流')
-        except Exception as ex_flow:
-            print(f"[intraday] fund_flow_rank failed: {ex_flow}", file=sys.stderr)
-            df_flow = None
+            with _urllib_req.urlopen(req, timeout=15) as resp:
+                if resp.status != 200:
+                    print(f"[intraday] eastmoney HTTP {resp.status}", file=sys.stderr)
+                    return _intraday_ths_fallback()
+                payload = _json.loads(resp.read().decode('utf-8'))
+        except Exception as e_em:
+            print(f"[intraday] eastmoney direct failed: {e_em}", file=sys.stderr)
+            return _intraday_ths_fallback()
 
-        # ----- 同花顺 fallback (BK-2): EastMoney push2 经常 502, 与 get_industry_flow 同款 -----
-        used_ths_fallback = False
-        if df_flow is None or df_flow.empty:
-            try:
-                fn_ths = getattr(ak, 'stock_board_industry_summary_ths', None)
-                if fn_ths is not None:
-                    df_ths = fn_ths()
-                    if df_ths is not None and not df_ths.empty:
-                        import pandas as pd
-                        rows = []
-                        for _, r in df_ths.iterrows():
-                            try:
-                                rows.append({
-                                    '名称': str(r.get('板块', '')).strip(),
-                                    '今日涨跌幅': r.get('涨跌幅'),
-                                    '今日主力净流入-净额': r.get('净流入'),
-                                    '今日主力净流入-净占比': None,
-                                })
-                            except Exception:
-                                continue
-                        if rows:
-                            df_flow = pd.DataFrame(rows)
-                            used_ths_fallback = True
-                            print(f"[intraday-fallback] 同花顺 parsed {len(rows)} boards", file=sys.stderr)
-            except Exception as e_ths:
-                print(f"[intraday-fallback] 同花顺也失败: {e_ths}", file=sys.stderr)
-
-        if df_flow is None or df_flow.empty:
-            print("[intraday] fund_flow_rank empty (东财+同花顺都死)", file=sys.stderr)
-            return []
-
-        # ---- name → code 映射 (BKxxxx) ----
-        name_to_code: Dict[str, str] = {}
-        try:
-            fn_name = getattr(ak, 'stock_board_industry_name_em', None)
-            if fn_name is not None:
-                df_name = fn_name()
-                if df_name is not None and not df_name.empty:
-                    # 列名常见: 板块名称, 板块代码
-                    name_col = None
-                    code_col = None
-                    for c in df_name.columns:
-                        cs = str(c)
-                        if '板块名称' in cs or '名称' == cs.strip():
-                            name_col = c
-                        elif '板块代码' in cs or '代码' == cs.strip():
-                            code_col = c
-                    if name_col and code_col:
-                        for _, row in df_name.iterrows():
-                            nm = str(row.get(name_col, '')).strip()
-                            cd = str(row.get(code_col, '')).strip()
-                            if nm and cd:
-                                name_to_code[nm] = cd
-        except Exception as ex_name:
-            print(f"[intraday] name_em failed (fallback to FALLBACK-name): {ex_name}", file=sys.stderr)
-
-        # ---- 解析 flow 列 (东财字段名可能漂移, 多 alias) ----
-        def _pick_col(df, candidates):
-            for c in df.columns:
-                cs = str(c)
-                for cand in candidates:
-                    if cand in cs:
-                        return c
-            return None
-
-        col_name = _pick_col(df_flow, ['名称'])
-        col_change = _pick_col(df_flow, ['今日涨跌幅', '涨跌幅', '今日涨跌'])
-        col_inflow = _pick_col(df_flow, ['今日主力净流入-净额', '主力净流入-净额', '主力净流入'])
-        col_ratio = _pick_col(df_flow, ['今日主力净流入-净占比', '主力净流入-净占比', '净占比'])
-
-        if not col_name or not col_inflow:
-            print(f"[intraday] missing required cols name={col_name} inflow={col_inflow}", file=sys.stderr)
-            return []
+        data = payload.get('data') or {}
+        rows = data.get('diff') or []
+        if not rows:
+            print(f"[intraday] eastmoney empty diff", file=sys.stderr)
+            return _intraday_ths_fallback()
 
         def _to_num(v):
-            if v is None:
+            if v is None or v == '-':
                 return None
             try:
                 fv = float(v)
-                if fv != fv:  # NaN
-                    return None
-                return fv
+                return None if fv != fv else fv
             except (TypeError, ValueError):
                 return None
 
         out: List[Dict[str, Any]] = []
-        for _, row in df_flow.iterrows():
-            name = str(row.get(col_name, '')).strip()
-            if not name:
+        for r in rows:
+            code = str(r.get('f12', '')).strip()  # BK0xxx
+            name = str(r.get('f14', '')).strip()
+            if not name or not code:
                 continue
-            code = name_to_code.get(name) or f"FALLBACK-{name}"
             out.append({
-                'industry_code': code,
+                'industry_code': f'BK{code}' if not code.startswith('BK') else code,
                 'industry_name': name,
-                'change_pct': _to_num(row.get(col_change)) if col_change else None,
-                'main_inflow': _to_num(row.get(col_inflow)),
-                'main_inflow_ratio': _to_num(row.get(col_ratio)) if col_ratio else None,
+                'change_pct': _to_num(r.get('f3')),
+                'main_inflow': _to_num(r.get('f62')),
+                'main_inflow_ratio': _to_num(r.get('f184')),
             })
+        print(f"[intraday] eastmoney parsed {len(out)} boards", file=sys.stderr)
         return out
     except Exception as e:
         print(f"[intraday] fatal: {e}", file=sys.stderr)
         return []
+
+
+def _intraday_ths_fallback() -> List[Dict[str, Any]]:
+    """BK-2-fix: 同花顺 ths.10jqka fallback, 直 hit, bypass AKShare 代理重试.
+
+    HTML 结构: <tr><td>排名</td><td><a>板块名</a></td><td>涨跌幅</td>
+    <td>总成交量(亿手)</td><td>总成交额(亿元)</td><td>净流入(亿元)</td>
+    <td>上涨家数</td><td>下跌家数</td><td>均价</td><td>领涨股</td><td>最新价</td><td>涨跌幅%</td></tr>
+
+    多页爬: 同花顺每页 20 行, ~88 行业 → 5 页. 直接顺序 fetch 5 页拼.
+    """
+    try:
+        import json as _json
+        import re
+        import urllib.request as _urllib_req
+        all_rows: List[Dict[str, Any]] = []
+        for page in range(1, 6):
+            url = f'http://q.10jqka.com.cn/thshy/index/field/199112/order/desc/page/{page}/ajax/1/'
+            req = _urllib_req.Request(
+                url,
+                headers={
+                    # BK-2-fix: 同花顺反爬把含 "Mozilla" UA 的请求 401, curl UA 200.
+                    # 实测 Python urllib + Mozilla UA → 401; curl UA → 200.
+                    'User-Agent': 'curl/7.81.0',
+                    'Accept': '*/*',
+                },
+            )
+            try:
+                with _urllib_req.urlopen(req, timeout=8) as resp:
+                    if resp.status != 200:
+                        break
+                    html = resp.read().decode('gbk', errors='replace')
+            except Exception as e_page:
+                print(f"[intraday-ths] page {page} fail: {e_page}", file=sys.stderr)
+                break
+            # 用 regex 拆 <tr> 块 (BeautifulSoup 不可用避免装包)
+            tr_blocks = re.findall(r'<tr>(.*?)</tr>', html, re.DOTALL)
+            for tr in tr_blocks:
+                tds = re.findall(r'<td[^>]*>(.*?)</td>', tr, re.DOTALL)
+                if len(tds) < 6:
+                    continue
+                # td[1] = <a href="/thshy/detail/code/XXXXXX/" target="_blank">板块名</a>
+                code_match = re.search(r'code/(\d+)/', tds[1])
+                name_match = re.search(r'>([^<>]+)<', tds[1])
+                if not code_match or not name_match:
+                    continue
+                code = code_match.group(1)
+                name = name_match.group(1).strip()
+                # 清掉 HTML tag 取数值
+                def _clean(s: str) -> str:
+                    return re.sub(r'<[^>]+>', '', s).strip()
+                def _f(s: str):
+                    s = _clean(s)
+                    if not s or s == '--':
+                        return None
+                    try:
+                        return float(s)
+                    except ValueError:
+                        return None
+                change_pct = _f(tds[2])  # 涨跌幅 (%)
+                # tds[5] = 净流入 (亿元), 需转元
+                inflow_yi = _f(tds[5])
+                main_inflow = None if inflow_yi is None else inflow_yi * 1e8
+                all_rows.append({
+                    'industry_code': f'BK{code}',  # ths 用 881xxx, 仍 BK 前缀对齐
+                    'industry_name': name,
+                    'change_pct': change_pct,
+                    'main_inflow': main_inflow,
+                    'main_inflow_ratio': None,  # 同花顺无此字段
+                })
+            if len(tr_blocks) < 18:  # 少于一页, 应该是最后一页
+                break
+        print(f"[intraday-ths] parsed {len(all_rows)} boards from THS HTML", file=sys.stderr)
+        return all_rows
+    except Exception as e:
+        print(f"[intraday-ths] fatal: {e}", file=sys.stderr)
+        return []
+
 
 
 def get_industry_flow(date: str) -> List[Dict[str, Any]]:

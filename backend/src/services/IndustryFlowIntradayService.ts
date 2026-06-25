@@ -105,7 +105,15 @@ export const PRODUCTION_INTRADAY_FLOW_DATA_SOURCE: IntradayFlowDataSource = {
     const { IndustryFlowIntraday } = require('../models/IndustryFlowIntraday');
     /* eslint-enable @typescript-eslint/no-var-requires */
     if (rows.length === 0) return 0;
-    const payload = rows.map(r => ({
+    // BK-2-fix (2026-06-25): 同花顺 HTML 数据偶发同 industry_code 出现 2 行 (BK881101 / BK881118),
+    // 让 ON CONFLICT DO UPDATE 抛 "cannot affect row a second time". 用 Map dedup
+    // 保最后一行 (后行通常是更新值).
+    const dedup = new Map<string, IntradayFlowSnapshot>();
+    for (const r of rows) {
+      if (!r.industry_code) continue;
+      dedup.set(r.industry_code, r);
+    }
+    const payload = Array.from(dedup.values()).map(r => ({
       snapshot_ts: snapshotTs,
       industry_code: r.industry_code,
       industry_name: r.industry_name,
