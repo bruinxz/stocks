@@ -24,21 +24,17 @@ import {
   explainEasyQuantError,
 } from './easyQuantResultHelpers';
 import {
+  EasyQuantSectionId as SectionId,
+  EasyQuantSectionNavItem,
+  EasyQuantStepKey as StepKey,
   useEasyQuantBacktestPolling,
   useEasyQuantBootstrap,
   useEasyQuantDisplayUsername,
+  useEasyQuantSectionScrollSpy,
 } from './easyQuantHooks';
 import './EasyQuantWorkspace.css';
 
-type StepKey = 'template' | 'data' | 'backtest' | 'observe';
 type DrawerKey = StepKey | 'guide' | null;
-type SectionId =
-  | 'easy-quant-hero'
-  | 'easy-quant-flow'
-  | 'easy-quant-template'
-  | 'easy-quant-data'
-  | 'easy-quant-backtest'
-  | 'easy-quant-observe';
 
 interface JourneyStep {
   key: StepKey;
@@ -90,7 +86,7 @@ const templateSketchById: Record<EasyQuantTemplateId, 'trend' | 'cross' | 'shiel
   low_vol_value: 'shield',
 };
 
-const sectionNavItems: Array<{ id: SectionId; label: string }> = [
+const sectionNavItems: EasyQuantSectionNavItem[] = [
   { id: 'easy-quant-hero', label: '开始' },
   { id: 'easy-quant-flow', label: '动线' },
   { id: 'easy-quant-template', label: '模板' },
@@ -377,121 +373,15 @@ const EasyQuantWorkspace: React.FC = () => {
     }
   }, [selectedTemplateId]);
 
-  useEffect(() => {
-    const scrollRoot = scrollRootRef.current;
-    const sections = sectionNavItems
-      .map(item => document.getElementById(item.id))
-      .filter((section): section is HTMLElement => Boolean(section));
-
-    if (!sections.length) {
-      return undefined;
-    }
-
-    if (!('IntersectionObserver' in window)) {
-      setVisibleSections(
-        sectionNavItems.reduce<Record<string, boolean>>((acc, item) => {
-          acc[item.id] = true;
-          return acc;
-        }, {})
-      );
-      return undefined;
-    }
-
-    const observer = new IntersectionObserver(
-      entries => {
-        entries.forEach(entry => {
-          if (!entry.isIntersecting) {
-            return;
-          }
-
-          const sectionId = entry.target.id as SectionId;
-          const stepKey = stepBySection[sectionId];
-          if (programmaticSectionRef.current) {
-            return;
-          }
-
-          setActiveSectionId(sectionId);
-          if (stepKey) {
-            setActiveStep(stepKey);
-          }
-          setVisibleSections(prev =>
-            prev[sectionId]
-              ? prev
-              : {
-                  ...prev,
-                  [sectionId]: true,
-                }
-          );
-        });
-      },
-      {
-        root: scrollRoot,
-        threshold: 0.42,
-        rootMargin: '0px 0px -8% 0px',
-      }
-    );
-
-    sections.forEach(section => observer.observe(section));
-
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const scrollRoot = scrollRootRef.current;
-    if (!scrollRoot) {
-      return undefined;
-    }
-
-    let frameId = 0;
-
-    const updateActiveSection = () => {
-      const scrollerRect = scrollRoot.getBoundingClientRect();
-      const viewportCenter = scrollerRect.top + scrollRoot.clientHeight / 2;
-      const nearestSection = sectionNavItems
-        .map(item => {
-          const section = document.getElementById(item.id);
-          if (!section) {
-            return null;
-          }
-
-          const rect = section.getBoundingClientRect();
-          const sectionCenter = rect.top + rect.height / 2;
-          return {
-            id: item.id,
-            distance: Math.abs(sectionCenter - viewportCenter),
-          };
-        })
-        .filter((item): item is { id: SectionId; distance: number } => Boolean(item))
-        .sort((a, b) => a.distance - b.distance)[0];
-
-      if (nearestSection) {
-        const stepKey = stepBySection[nearestSection.id];
-        setActiveSectionId(nearestSection.id);
-        if (stepKey) {
-          setActiveStep(stepKey);
-        }
-      }
-    };
-
-    const requestUpdate = () => {
-      if (programmaticSectionRef.current) {
-        return;
-      }
-
-      window.cancelAnimationFrame(frameId);
-      frameId = window.requestAnimationFrame(updateActiveSection);
-    };
-
-    updateActiveSection();
-    scrollRoot.addEventListener('scroll', requestUpdate, { passive: true });
-    window.addEventListener('resize', requestUpdate);
-
-    return () => {
-      window.cancelAnimationFrame(frameId);
-      scrollRoot.removeEventListener('scroll', requestUpdate);
-      window.removeEventListener('resize', requestUpdate);
-    };
-  }, []);
+  useEasyQuantSectionScrollSpy(
+    scrollRootRef,
+    programmaticSectionRef,
+    sectionNavItems,
+    stepBySection,
+    setActiveSectionId,
+    setActiveStep,
+    setVisibleSections
+  );
 
   useEffect(
     () => () => {

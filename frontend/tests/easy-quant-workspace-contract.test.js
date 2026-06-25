@@ -134,6 +134,13 @@ assert(
     !page.includes("localStorage.getItem('username')")
 );
 assert(
+  'section visibility and scroll spy are isolated in a hook',
+  page.includes('useEasyQuantSectionScrollSpy') &&
+    hooks.includes('export function useEasyQuantSectionScrollSpy') &&
+    hooks.includes('IntersectionObserver') &&
+    hooks.includes('viewportCenter')
+);
+assert(
   'observation portfolio names avoid duplicate collisions',
   service.includes('new Date()') &&
     /name:\s*`简易观察-\$\{template\.name\}-\$\{timestamp\}`/.test(service) &&
