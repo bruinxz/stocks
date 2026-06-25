@@ -107,6 +107,16 @@ function parseDate(raw: any): string {
 }
 
 /**
+ * Batch CD (2026-06-25): shift ISO date YYYY-MM-DD by N days.
+ * 给 V3 endpoint fallback 查询用 — 找最近 N 天的 signal.
+ */
+function shiftDate(isoDate: string, deltaDays: number): string {
+  const d = new Date(isoDate + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + deltaDays);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
  * 应用"弹性扩展": 默认 baseN, 但若 #(baseN) 与 #(baseN+1)... 的 confidence_score gap < threshold,
  * 持续往后扩到 maxN. 让"分数相近的并列项"不被硬截断.
  */
@@ -401,8 +411,20 @@ class V3RecommendationController {
       const date = parseDate(req.query.date);
       const requested = clampLimit(req.query.limit);
       const baseN = Math.min(requested, DEFAULT_RECOMMEND_LIMIT);
+
+      // Batch CD (2026-06-25): V3 endpoint 兜底 ANALYSIS_ENGINE → QUANT_RECOMMENDATION.
+      // 真因: 生产环境 3 个 active user analysis_engine.mode='off' (全是 'off'),
+      // 所以 ai_investment_signals 从未写入 source_type='analysis_engine' 行, 历史全是
+      // quant_recommendation. V3 endpoint 之前只查 ANALYSIS_ENGINE → 永远 0 条 → 推荐空.
+      // 此外: archive 的 signal_date 取的是 candidate.trend 最后一根 bar 的 time -
+      // 而 daily_bars 滞后 1-3 天 (今天 cron 跑前 daily_bars 最新只到 yesterday),
+      // 所以 signal_date 永远不是 today. 此处加 fallback: 优先 ANALYSIS_ENGINE today,
+      // 不空就用; 空了走 QUANT_RECOMMENDATION 最近 7 天的最新一天.
+      let actualSourceUsed = AISignalSourceType.ANALYSIS_ENGINE;
+      let actualDateUsed = date;
+
       // 拉 50 条候选, 应用弹性扩展后再切 top N
-      const candidateRows = await AIInvestmentSignal.findAll({
+      let candidateRows = await AIInvestmentSignal.findAll({
         where: {
           source_type: AISignalSourceType.ANALYSIS_ENGINE,
           signal_date: date,
@@ -414,6 +436,35 @@ class V3RecommendationController {
         ],
         limit: 50,
       });
+
+      if (candidateRows.length === 0) {
+        // Fallback: query quant_recommendation 最近 5 个交易日 (含今天) 中最新一天有数据的
+        const fallbackRows = await AIInvestmentSignal.findAll({
+          where: {
+            source_type: AISignalSourceType.QUANT_RECOMMENDATION,
+            signal_date: {
+              [Op.gte]: shiftDate(date, -7), // 最近 7 天 cover 长假
+              [Op.lte]: date,
+            },
+            normalized_decision: { [Op.in]: BUY_DECISIONS as string[] },
+          },
+          order: [
+            ['signal_date', 'DESC'],
+            ['confidence_score', 'DESC'],
+            ['created_at', 'DESC'],
+          ],
+          limit: 50,
+        });
+
+        if (fallbackRows.length > 0) {
+          // 只取最新一天的 (与 ANALYSIS_ENGINE 单天语义一致)
+          actualDateUsed = String(fallbackRows[0].signal_date).slice(0, 10);
+          actualSourceUsed = AISignalSourceType.QUANT_RECOMMENDATION;
+          candidateRows = fallbackRows.filter(
+            r => String(r.signal_date).slice(0, 10) === actualDateUsed
+          );
+        }
+      }
 
       // 应用弹性扩展; 用户显式 limit > 3 则按 limit 截断 (不再弹性), 反之走 elastic 到 5.
       let selected: AIInvestmentSignal[];
@@ -431,15 +482,18 @@ class V3RecommendationController {
         }))
       );
 
-      const funnel = await this.queryFunnel(date).catch(err => {
+      const funnel = await this.queryFunnel(actualDateUsed).catch(err => {
         logger.warn(`v3-recommendations funnel query failed: ${err?.message ?? err}`);
-        return { scanned: 0, candidate: 0, selected: 0, as_of: date };
+        return { scanned: 0, candidate: 0, selected: 0, as_of: actualDateUsed };
       });
 
       res.json({
         success: true,
         data: {
-          as_of: date,
+          as_of: actualDateUsed,
+          requested_date: date,
+          source_used: actualSourceUsed,
+          fallback_applied: actualDateUsed !== date || actualSourceUsed !== AISignalSourceType.ANALYSIS_ENGINE,
           recommendations,
           funnel,
         },
