@@ -2208,6 +2208,31 @@ export class MarketController {
         g.industry_name = r.industry_name; // 保最新
       }
       let industries = Array.from(byIndustry.values());
+
+      // BL-2 (2026-06-25): 同名行业去重 (元件 / 通信设备 / 半导体...). 真因是
+      // Python helper 在不同 snapshot 切 EM/THS 两套数据源, DB 累积了 2 套不同
+      // industry_code (BK0xxx vs BK881xxx). 这里按 industry_name 合并, 优先 BK0/BK1
+      // (东财, 数据更稳定), 其次按 |latest_main_inflow| 大者 (信号更强).
+      const dedupByName = new Map<string, (typeof industries)[number]>();
+      for (const ind of industries) {
+        const key = (ind.industry_name || '').trim();
+        if (!key) continue;
+        const existing = dedupByName.get(key);
+        if (!existing) {
+          dedupByName.set(key, ind);
+          continue;
+        }
+        const existingIsEm = /^BK[01]\d/.test(existing.industry_code);
+        const newIsEm = /^BK[01]\d/.test(ind.industry_code);
+        if (newIsEm && !existingIsEm) dedupByName.set(key, ind);
+        else if (newIsEm === existingIsEm) {
+          const ea = Math.abs(existing.latest_main_inflow ?? 0);
+          const na = Math.abs(ind.latest_main_inflow ?? 0);
+          if (na > ea) dedupByName.set(key, ind);
+        }
+      }
+      industries = Array.from(dedupByName.values());
+
       // 按 |latest_main_inflow| 降序取 top
       industries.sort((a, b) => {
         const va = Math.abs(a.latest_main_inflow ?? 0);

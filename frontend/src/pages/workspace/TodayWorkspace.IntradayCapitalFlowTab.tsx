@@ -38,7 +38,8 @@ interface IntradayResponse {
 }
 
 const REFRESH_MS = 5 * 60 * 1000; // 5min
-const TOP_OPTIONS = [10, 20, 30, 50];
+const TOP_OPTIONS = [10, 15, 20, 30];
+const DEFAULT_TOP = 10; // BL-2 (2026-06-25): 默认从 20 改到 10, 减少端标签重叠
 
 /** 元 → 亿元, 保 2 位小数. */
 function yiYuan(v: number | null | undefined): number | null {
@@ -76,7 +77,7 @@ const IntradayCapitalFlowTab: React.FC = () => {
   const [data, setData] = useState<IntradayResponse['data'] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [topN, setTopN] = useState<number>(20);
+  const [topN, setTopN] = useState<number>(DEFAULT_TOP);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -112,10 +113,45 @@ const IntradayCapitalFlowTab: React.FC = () => {
 
   const chartOption = useMemo(() => {
     if (!data || data.industries.length === 0) return null;
+
+    // BL-2 (2026-06-25) — 3 个图表问题修复:
+    //  1. 同名行业 dedup: 同名 (元件 / 通信设备 / 半导体...) 同时出现 BK0xxx (东财) 与
+    //     BK881xxx (同花顺) 两条线 — 真因是 Python helper 在不同 snapshot 切换数据源,
+    //     DB 累积了 2 套不同编码. 前端按 industry_name 去重, 优先 BK0 (东财, 数据更稳).
+    //  2. 线不平滑 / 断开: 不同 snapshot 数据源切换导致同一 industry_code 序列只有
+    //     2-3 个点. 用 ECharts connectNulls=true 让缺失点自动跨过连线; smooth=0.3
+    //     轻微平滑而非完全光滑曲线 (避免人为伪造数据走向).
+    //  3. 端标签 (endLabel) 重叠严重: 减少 top 默认到 10 + endLabel 加 distance 避让 +
+    //     用主线条颜色 强 (>5亿) / 中 (1-5亿) / 弱 (<1亿) 三档 z-index 分层.
+    const dedupByName = new Map<string, IndustryData>();
+    for (const ind of data.industries) {
+      const key = (ind.industry_name || '').trim();
+      if (!key) continue;
+      const existing = dedupByName.get(key);
+      if (!existing) {
+        dedupByName.set(key, ind);
+        continue;
+      }
+      // 同名冲突: 保留 BK0 / BK1 前缀 (东财 编码), 让 BK881 (同花顺) 让位.
+      const existingIsEm = /^BK[01]\d/.test(existing.industry_code);
+      const newIsEm = /^BK[01]\d/.test(ind.industry_code);
+      if (newIsEm && !existingIsEm) dedupByName.set(key, ind);
+      // 同源 (都 EM 或都 THS) 时, 保留 latest_main_inflow 绝对值大的 (信号更强)
+      else if (newIsEm === existingIsEm) {
+        const existingAbs = Math.abs(existing.latest_main_inflow ?? 0);
+        const newAbs = Math.abs(ind.latest_main_inflow ?? 0);
+        if (newAbs > existingAbs) dedupByName.set(key, ind);
+      }
+    }
+    const dedupedIndustries = Array.from(dedupByName.values()).sort((a, b) => {
+      const va = Math.abs(a.latest_main_inflow ?? 0);
+      const vb = Math.abs(b.latest_main_inflow ?? 0);
+      return vb - va;
+    });
+
     const xAxisData = data.snapshot_ts_list.map(toHHMM);
-    // X-axis: 公共时间序列; series: 每个行业一条线
-    const series = data.industries.map(ind => {
-      // 按 snapshot_ts_list 顺序找对应 main_inflow (亿元)
+    // X-axis: 公共时间序列; series: 每个去重后行业一条线
+    const series = dedupedIndustries.map(ind => {
       const tsToInflow = new Map<string, number | null>();
       for (const p of ind.series) tsToInflow.set(p.ts, p.main_inflow);
       const seriesData = data.snapshot_ts_list.map(ts => {
@@ -124,35 +160,43 @@ const IntradayCapitalFlowTab: React.FC = () => {
       });
       const latestYi = yiYuan(ind.latest_main_inflow);
       const color = inflowColor(latestYi);
+      const strength = Math.abs(latestYi ?? 0);
+      // 强信号 (>5亿) 线粗 2.5; 中 (1-5亿) 1.5; 弱 (<1亿) 0.8
+      const lineWidth = strength >= 5 ? 2.5 : strength >= 1 ? 1.5 : 0.8;
       return {
-        name: `${ind.industry_name} ${latestYi !== null ? `${latestYi > 0 ? '+' : ''}${latestYi.toFixed(2)}亿` : ''}`,
+        name: ind.industry_name,
         type: 'line',
-        smooth: true,
-        symbol: 'none',
-        lineStyle: { width: 1.5, color },
-        emphasis: { lineStyle: { width: 3 }, focus: 'series' },
+        smooth: 0.3, // 轻微平滑, 不光滑到伪造走向
+        smoothMonotone: 'x', // 单调插值, 不会"反弓"
+        symbol: 'circle',
+        symbolSize: 4,
+        connectNulls: true, // 关键: 跨越缺失点自动连线
+        lineStyle: { width: lineWidth, color },
+        itemStyle: { color },
+        emphasis: { lineStyle: { width: lineWidth + 1.5 }, focus: 'series' },
         data: seriesData,
         endLabel: {
           show: true,
-          formatter: (params: any) => {
-            const yi = params?.value;
-            if (yi === null || yi === undefined) return '';
-            return `${ind.industry_name} ${yi > 0 ? '+' : ''}${yi.toFixed(2)}亿`;
+          distance: 8,
+          formatter: () => {
+            if (latestYi === null) return '';
+            return `${ind.industry_name} ${latestYi > 0 ? '+' : ''}${latestYi.toFixed(1)}亿`;
           },
           color,
           fontSize: 11,
+          fontWeight: strength >= 5 ? 'bold' : 'normal',
         },
+        z: strength >= 5 ? 3 : strength >= 1 ? 2 : 1, // 强信号画在最上面
       };
     });
     return {
       backgroundColor: 'transparent',
-      grid: { left: 50, right: 200, top: 30, bottom: 40 },
+      grid: { left: 60, right: 180, top: 30, bottom: 40 },
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'cross' },
         formatter: (params: any[]) => {
           const ts = params?.[0]?.axisValueLabel || '';
-          // 显示当前 ts 下 top 10 by |inflow|
           const items = (params || [])
             .filter(p => p?.value !== null && p?.value !== undefined)
             .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
@@ -160,7 +204,7 @@ const IntradayCapitalFlowTab: React.FC = () => {
             .map(p => {
               const yi = p.value as number;
               const color = yi >= 0 ? '#cf1322' : '#52c41a';
-              return `<span style="color:${color};">●</span> ${p.seriesName.split(' ')[0]}: <b style="color:${color}">${yi >= 0 ? '+' : ''}${yi.toFixed(2)}亿</b>`;
+              return `<span style="color:${color};">●</span> ${p.seriesName}: <b style="color:${color}">${yi >= 0 ? '+' : ''}${yi.toFixed(2)}亿</b>`;
             })
             .join('<br/>');
           return `<b>${ts}</b><br/>${items}`;
@@ -185,14 +229,39 @@ const IntradayCapitalFlowTab: React.FC = () => {
 
   const tableData = useMemo(() => {
     if (!data) return [];
-    return data.industries.map(ind => ({
-      key: ind.industry_code,
-      industry_code: ind.industry_code,
-      industry_name: ind.industry_name,
-      latest_yi: yiYuan(ind.latest_main_inflow),
-      change_pct: ind.latest_change_pct,
-      ratio: ind.latest_main_inflow_ratio,
-    }));
+    // BL-2: 排名表同样按 industry_name dedup (与图表一致), 避免"元件" 出现 2 次
+    const dedup = new Map<string, IndustryData>();
+    for (const ind of data.industries) {
+      const key = (ind.industry_name || '').trim();
+      if (!key) continue;
+      const existing = dedup.get(key);
+      if (!existing) {
+        dedup.set(key, ind);
+        continue;
+      }
+      const existingIsEm = /^BK[01]\d/.test(existing.industry_code);
+      const newIsEm = /^BK[01]\d/.test(ind.industry_code);
+      if (newIsEm && !existingIsEm) dedup.set(key, ind);
+      else if (newIsEm === existingIsEm) {
+        const ea = Math.abs(existing.latest_main_inflow ?? 0);
+        const na = Math.abs(ind.latest_main_inflow ?? 0);
+        if (na > ea) dedup.set(key, ind);
+      }
+    }
+    return Array.from(dedup.values())
+      .sort((a, b) => {
+        const va = Math.abs(a.latest_main_inflow ?? 0);
+        const vb = Math.abs(b.latest_main_inflow ?? 0);
+        return vb - va;
+      })
+      .map(ind => ({
+        key: ind.industry_code,
+        industry_code: ind.industry_code,
+        industry_name: ind.industry_name,
+        latest_yi: yiYuan(ind.latest_main_inflow),
+        change_pct: ind.latest_change_pct,
+        ratio: ind.latest_main_inflow_ratio,
+      }));
   }, [data]);
 
   return (

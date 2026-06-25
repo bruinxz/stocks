@@ -1604,6 +1604,12 @@ def get_industry_flow_intraday() -> List[Dict[str, Any]]:
         if not rows:
             print(f"[intraday] eastmoney empty diff", file=sys.stderr)
             return _intraday_ths_fallback()
+        # BL-2 (2026-06-25): EM 偶发返 200 但 diff < 完整行业列表 (~86 板块).
+        # 部分数据让前端 series 与历史 THS 数据混合, 同名行业出现 2 条线.
+        # 阈值 50: 全 EM 行业板块约 86 个, < 50 视为部分数据失败, 走 THS 完整源.
+        if len(rows) < 50:
+            print(f"[intraday] eastmoney partial diff={len(rows)} < 50, falling back to THS", file=sys.stderr)
+            return _intraday_ths_fallback()
 
         def _to_num(v):
             if v is None or v == '-':
