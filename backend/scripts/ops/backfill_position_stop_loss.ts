@@ -19,12 +19,12 @@
  * 输出: 每行打印 (portfolio_id, symbol, avg_cost) → (stop_loss, take_profit),
  * 末尾打印汇总 "X rows scanned, Y rows ${dryRun ? 'would update' : 'updated'}".
  */
-import { sequelize } from '../../config/database';
-import { PaperTradingPosition } from '../../models/PaperTradingPosition';
-import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
-import { User } from '../../models/User';
+import { sequelize } from '../../src/config/database';
+import { PaperTradingPosition } from '../../src/models/PaperTradingPosition';
+import { PaperTradingPortfolio } from '../../src/models/PaperTradingPortfolio';
+import { User } from '../../src/models/User';
 import { Op } from 'sequelize';
-import { deriveProtectionPrices } from '../../portfolio/internal/positionProtectionDefaults';
+import { deriveProtectionPrices } from '../../src/portfolio/internal/positionProtectionDefaults';
 
 async function main() {
   const args = process.argv.slice(2);
