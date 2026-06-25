@@ -64,6 +64,7 @@ import {
   summarizeTradeReason,
 } from './tradeReasonBuilder';
 import { loadProtectionPricesForUser } from './positionProtectionDefaults';
+import { shouldSkipForUserDedup, PRODUCTION_CROSS_PORTFOLIO_DEDUP_DATA_SOURCE } from './crossPortfolioDedup';
 import {
   CONFIDENCE_DRIVEN_DEFAULT_MIN_TRADE_AMOUNT,
   deriveTargetPctFromConfidence,
@@ -3212,6 +3213,31 @@ class PaperTradingAutomationService {
       // 处理 (per-signal isolation). 之前任一 throw 直接出 candidateSignals loop, 整批跳过.
       try {
         if (!signalDryRun) {
+          // CB-3 (2026/06/25): 同 user 跨组合 buy dedup. 同 (user_id, symbol) 已在
+          // ≥ 2 个 portfolio 持仓 → skip 本笔避免重仓单票. 同 user 多组合赛马场设计:
+          // 不同策略选中同一只票 = alpha 共识, ≥ 1 个组合代表即可, 其它跳过.
+          // fail-OPEN: DataSource 自带 try/catch, 拿不到数据返 should_skip=false.
+          try {
+            const dedup = await shouldSkipForUserDedup(
+              portfolio.user_id,
+              symbol,
+              portfolio.id,
+              PRODUCTION_CROSS_PORTFOLIO_DEDUP_DATA_SOURCE
+            );
+            if (dedup.error) {
+              logger.warn(`[cb3-cross-portfolio-dedup] ${dedup.error}`);
+            }
+            if (dedup.should_skip) {
+              logger.info(`[cb3-cross-portfolio-dedup] ${dedup.reason}`);
+              await skip(dedup.reason);
+              continue;
+            }
+          } catch (cb3Err: any) {
+            logger.warn(
+              `[cb3-cross-portfolio-dedup] failed (fail-open): ${cb3Err?.message || cb3Err}`
+            );
+          }
+
           // Batch Q (2026-06-17, F3 fix): 跨调用 dedup 防同股双跟单 race.
           // 同 (portfolio, symbol, today) 已有 inflight buy → skip 本笔. 配合 existingSymbols
           // entry-time snapshot, 把 race window 从"两 autoBuy 并发" 收窄到"两 createBuyTrade
