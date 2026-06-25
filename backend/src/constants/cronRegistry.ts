@@ -73,12 +73,22 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     owner: 'data',
     description: '历史 K 线回补',
   },
+  // 实时行情快照刷新 — 支持 2 种 cron 模式:
+  //   (A) 老 universe='market' / limit=5000: 20min 间隔, '5,25 9,10,13,14 * * 1-5'
+  //       覆盖全 A 股 5500 票, AI 引擎下游需要.
+  //   (B) CE-A 新 universe_source='intraday' / limit=500: 2min 间隔
+  //       '*/2 9-11,13-14 * * 1-5'. 走 IntradayUniverseService 选 ≤500 票活跃
+  //       universe (持仓 + 涨跌幅榜 + 涨停 + 成交额), batch_size=100. 给实时机会
+  //       推送 / 异动告警类下游用. ops 在 prod 手动 INSERT 新 ScheduledTask 行启用,
+  //       不在 ensureDefaultTasks 里默认 active=true (避免代码层强加新 cron).
   {
     type: 'REALTIME_QUOTE_SYNC',
     category: 'data_sync',
     owner: 'data',
     intraday: true,
-    description: '盘中实时行情快照刷新 (TradingAgents prompt 数据源)',
+    recommendedCron: '*/2 9-11,13-14 * * 1-5',
+    description:
+      '盘中实时行情快照刷新 (TradingAgents prompt 数据源). 2 模式: market 全量 (20min) / intraday 活跃 ≤500 (2min, CE-A)',
   },
   {
     type: 'BENCHMARK_INDEX_SYNC',

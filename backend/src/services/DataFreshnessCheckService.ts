@@ -112,9 +112,17 @@ export function diffDays(a: string, b: string): number {
 
 /**
  * realtime_quotes 检查:
- *   - 工作日盘中 (9:30-15:00 上海): MAX(updated_at) 必须 < 1h 内, 否则 fail
+ *   - 工作日盘中 (9:30-15:00 上海): MAX(updated_at) 必须 < REALTIME_QUOTE_STALE_MS (30min, 老 cron 20min 间隔预留 buffer), 否则 fail
  *   - 非盘中: 不检查 (跳过 status=ok detail='非盘中时段')
+ *
+ * CE-A (2026-06-25): 新增 INTRADAY_REALTIME_QUOTE_STALE_MS (5min) 用于 2min cron
+ * 模式. 检查取"择宽"判定 — 任一阈值通过 (lag <= 老阈值 OR lag <= 新阈值, 即
+ * lag <= max(old, new)) 算 OK, 避免老 cron (20min) 模式下被新 5min 阈值误报.
+ * 实际上 max(30min, 5min) = 30min, 所以语义等价于"30min 内 OK"; 但保留 dual 形态
+ * 让未来切换到纯 intraday cron 后只需删除老阈值即可一步到位.
  */
+export const REALTIME_QUOTE_STALE_MS = 30 * 60 * 1000;
+export const INTRADAY_REALTIME_QUOTE_STALE_MS = 5 * 60 * 1000;
 export async function checkRealtimeQuote(
   ds: DataFreshnessCheckDataSource,
   now: Date
@@ -125,7 +133,7 @@ export async function checkRealtimeQuote(
       display_name: '实时行情新鲜度',
       status: 'ok',
       current_value: null,
-      threshold: '盘中 (9-16 上海) 1h 内',
+      threshold: '盘中 (9-16 上海) 30min/5min 内 (取宽)',
       detail: '非盘中, 跳过 (盘后 stale 是预期)',
     };
   }
@@ -138,7 +146,7 @@ export async function checkRealtimeQuote(
       display_name: '实时行情新鲜度',
       status: 'warn',
       current_value: null,
-      threshold: '盘中 1h 内',
+      threshold: '盘中 30min/5min 内 (取宽)',
       detail: `查询失败: ${err?.message || err}`,
     };
   }
@@ -148,20 +156,24 @@ export async function checkRealtimeQuote(
       display_name: '实时行情新鲜度',
       status: 'fail',
       current_value: null,
-      threshold: '盘中 1h 内',
+      threshold: '盘中 30min/5min 内 (取宽)',
       detail: 'realtime_quotes 表 0 行 — 盘中无任何行情写入',
     };
   }
   const lagMs = now.getTime() - maxUpdatedAt.getTime();
   const lagMin = Math.round(lagMs / (60 * 1000));
-  if (lagMs > 60 * 60 * 1000) {
+  // 择宽: 任一阈值通过即 OK. max(老 30min, 新 5min) = 30min, 老 cron 模式下不误报.
+  const effectiveThresholdMs = Math.max(REALTIME_QUOTE_STALE_MS, INTRADAY_REALTIME_QUOTE_STALE_MS);
+  if (lagMs > effectiveThresholdMs) {
     return {
       key: 'realtime_quotes',
       display_name: '实时行情新鲜度',
       status: 'fail',
       current_value: maxUpdatedAt.toISOString(),
-      threshold: '盘中 1h 内',
-      detail: `MAX(updated_at)=${maxUpdatedAt.toISOString()}, 已 stale ${lagMin}min (> 60min)`,
+      threshold: '盘中 30min/5min 内 (取宽)',
+      detail: `MAX(updated_at)=${maxUpdatedAt.toISOString()}, 已 stale ${lagMin}min (> ${Math.round(
+        effectiveThresholdMs / 60000
+      )}min 择宽阈值)`,
     };
   }
   return {
@@ -169,7 +181,7 @@ export async function checkRealtimeQuote(
     display_name: '实时行情新鲜度',
     status: 'ok',
     current_value: maxUpdatedAt.toISOString(),
-    threshold: '盘中 1h 内',
+    threshold: '盘中 30min/5min 内 (取宽)',
     detail: `MAX(updated_at)=${maxUpdatedAt.toISOString()}, lag=${lagMin}min`,
   };
 }
