@@ -181,8 +181,12 @@ echo "▶ tsc build (backend)..."
 cd "\$WORK/frontend"
 echo "▶ npm install (frontend)..."
 npm install --no-audit --no-fund --prefer-offline --legacy-peer-deps 2>&1 | tail -10
-echo "▶ react-scripts build (frontend)..."
-CI=false NODE_OPTIONS=--max-old-space-size=4096 ./node_modules/.bin/react-scripts build 2>&1 | tail -20
+if [ "${SKIP_FRONTEND_BUILD:-false}" = "true" ]; then
+  echo "▶ react-scripts build (frontend) — SKIPPED (SKIP_FRONTEND_BUILD=true)"
+else
+  echo "▶ react-scripts build (frontend)..."
+  CI=false NODE_OPTIONS=--max-old-space-size=4096 ./node_modules/.bin/react-scripts build 2>&1 | tail -20
+fi
 EOF
 
 echo ""
