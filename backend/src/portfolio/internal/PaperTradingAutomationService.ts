@@ -63,6 +63,7 @@ import {
   buildTradeReasonFromRiskGuard,
   summarizeTradeReason,
 } from './tradeReasonBuilder';
+import { loadProtectionPricesForUser } from './positionProtectionDefaults';
 
 export const DEFAULT_PAPER_TRADING_INITIAL_CAPITAL = 200000;
 
@@ -6992,6 +6993,11 @@ class PaperTradingAutomationService {
           throw new Error(`模拟盘已持有 ${symbol}，自动跟单拒绝重复加仓`);
         }
 
+        // CB-1 (2026/06/25): 自动跟单创建仓位时按 user.risk_config 自动落 stop_loss_price /
+        // take_profit_price (默认 5% / 10%). 与 facade.placeOrder 新仓位分支同源, 让 GuardSellExecutor
+        // 真有止损价可读. fail-OPEN: loader 内 try/catch, 拿不到 user 返默认.
+        const protection = await loadProtectionPricesForUser(portfolio.user_id, execute_price);
+
         await PaperTradingPosition.create(
           {
             portfolio_id: portfolio.id,
@@ -7002,6 +7008,8 @@ class PaperTradingAutomationService {
             current_price: latest_price,
             market_value: roundNumber(quantity * latest_price, 2),
             unrealized_pnl: roundNumber(quantity * latest_price - amount, 2),
+            stop_loss_price: protection.stop_loss_price,
+            take_profit_price: protection.take_profit_price,
           },
           { transaction: t }
         );

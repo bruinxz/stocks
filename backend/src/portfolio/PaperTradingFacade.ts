@@ -55,6 +55,7 @@ import { recommendationTradeOutcomeService } from '../services/RecommendationTra
 // 全部走 internal/preTradeGuards.checkAllPreTradeGates 统一入口 (七闸门统一入口).
 import { evaluateFeasibilityGate, emitFeasibilityGateAlert } from './internal/feasibilityGate';
 import { perStockStopLossGuard, pickEffectivePct } from './risk/PerStockStopLossGuard';
+import { loadProtectionPricesForUser } from './internal/positionProtectionDefaults';
 import { incrementOrderTotal } from '../metrics/PrometheusRegistry';
 import {
   buildTradeReasonForManualOrder,
@@ -1206,6 +1207,11 @@ export class PaperTradingFacade {
           }
           await position.save({ transaction: t });
         } else {
+          // CB-1 (2026/06/25): 创建新仓位时按 user.risk_config 自动落 stop_loss_price /
+          // take_profit_price (默认 5% / 10%). 之前 paper_trading_positions.stop_loss_price 全 NULL
+          // GuardSellExecutor 读 NULL 跳过 = 用户 UI 上配的止损完全失效.
+          // fail-OPEN: loader 内自带 try/catch, 拿不到 user 返默认.
+          const protection = await loadProtectionPricesForUser(user_id, execute_price);
           await PaperTradingPosition.create(
             {
               portfolio_id: portfolio.id,
@@ -1216,6 +1222,8 @@ export class PaperTradingFacade {
               current_price,
               market_value: quantity * current_price,
               unrealized_pnl: quantity * current_price - cost,
+              stop_loss_price: protection.stop_loss_price,
+              take_profit_price: protection.take_profit_price,
             },
             { transaction: t }
           );
