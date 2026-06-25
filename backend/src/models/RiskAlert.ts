@@ -11,6 +11,7 @@ import {
 } from 'sequelize-typescript';
 import { User } from './User';
 import { logger } from '../utils/logger';
+import { formatEast8Readable } from '../utils/timezone';
 
 @Table({
   tableName: 'risk_alerts',
@@ -148,9 +149,10 @@ export class RiskAlert extends Model {
         level: instance.level,
         message: instance.message,
         rule_id: instance.rule_id || undefined,
-        triggered_at: instance.created_at
-          ? new Date(instance.created_at).toISOString()
-          : new Date().toISOString(),
+        // Batch CC (2026-06-25): 时区修复 — 之前用 toISOString() 输出 UTC Z 后缀
+        // (如 "2026-06-25T08:09:00.597Z"), 用户读 "08:09" 以为系统时间错了.
+        // 改用 formatEast8Readable 输出 "2026-06-25 16:09:00 (UTC+8)" 显式标注时区.
+        triggered_at: formatEast8Readable(instance.created_at || new Date()),
       });
 
       // Batch BF-1 (2026-06-23): 额外触发 system-level admin 推送 (Lark OPS 群 +
@@ -161,9 +163,8 @@ export class RiskAlert extends Model {
       try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const sysMod = require('../services/SystemAdminAlertPusher');
-        const triggered = instance.created_at
-          ? new Date(instance.created_at).toISOString()
-          : new Date().toISOString();
+        // Batch CC (2026-06-25): 同 RealtimeAlertDispatcher 同款时区修复.
+        const triggered = formatEast8Readable(instance.created_at || new Date());
         const frontend = process.env.FRONTEND_BASE_URL || 'http://localhost:3000';
         const dedupKey = `risk:${instance.symbol}:${lvl}`;
         const truncatedMsg = String(instance.message || '').slice(0, 1500);

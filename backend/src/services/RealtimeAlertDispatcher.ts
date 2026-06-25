@@ -570,7 +570,9 @@ function nowMs(): number {
 }
 
 function nowShanghaiIso(): string {
-  return moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss');
+  // Batch CC (2026-06-25): 加 (UTC+8) 后缀显式标注时区, 与 RiskAlert.ts hook
+  // 通过 formatEast8Readable 传入的 triggered_at 格式一致 — caller 不传时也走同款.
+  return moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss') + ' (UTC+8)';
 }
 
 // ---------------------------------------------------------------------------
