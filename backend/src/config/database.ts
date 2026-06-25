@@ -119,6 +119,8 @@ import { EquityCurveGovernorState } from '../models/EquityCurveGovernorState';
 import { StrategyTcaMultiplier } from '../models/StrategyTcaMultiplier';
 // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环 model
 import { UserFeedback } from '../models/UserFeedback';
+// Batch CE-C (2026-06-25) — 实时机会推送审计 model
+import { IntradayOpportunityPush } from '../models/IntradayOpportunityPush';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -260,6 +262,8 @@ const sequelize = new Sequelize({
     StrategyTcaMultiplier,
     // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环
     UserFeedback,
+    // Batch CE-C (2026-06-25) — 实时机会推送审计
+    IntradayOpportunityPush,
   ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {
