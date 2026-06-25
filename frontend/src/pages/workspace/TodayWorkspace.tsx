@@ -133,6 +133,13 @@ import {
 } from '../../services/riskAlertService';
 // BK-4 (2026-06-24): 盘中行业资金流向 tab — lazy 加载该 tab 才加载 ECharts.
 import IntradayCapitalFlowTab from './TodayWorkspace.IntradayCapitalFlowTab';
+// CA-1b: v3 抖音风核心推荐 tab — 4 维评分卡片 + 5 档 playbook + 详情区.
+import {
+  getV3Recommendations,
+  V3RecommendationData,
+  V3RecommendationItem,
+} from '../../services/v3RecommendationService';
+import V3RecommendationCard from '../../components/trading/V3RecommendationCard';
 
 const { Text, Paragraph } = Typography;
 const { RangePicker } = DatePicker;
@@ -152,7 +159,10 @@ const { RangePicker } = DatePicker;
 
 // US-070 [FE-031]: tab keys 抽到 module-scope 让 useEffect deps 干净 +
 // AlertsBell 跳转 query 校验有单一事实源.
+// CA-1: 'core_picks' 作为默认 tab — v3 抖音风刷卡片, 学习自抖音「炒股养家」的
+// "信息密度集中 + 大字评分 + 一句话理由" 信息架构. 保留旧 4 tab 不删.
 const TODAY_WORKSPACE_TABS: WorkspaceTab[] = [
+  { key: 'core_picks', label: '核心推荐', icon: <FireOutlined /> },
   { key: 'signals', label: '今日信号', icon: <ThunderboltOutlined /> },
   { key: 'events', label: '关键事件', icon: <BellOutlined /> },
   { key: 'alerts', label: '风险提醒', icon: <AlertOutlined /> },
@@ -169,7 +179,9 @@ const TodayWorkspace: React.FC = () => {
   // 同时 AlertsBell 点击带的 ?tab= query 也只能落在这 4 个 key 里. 字符串数组
   // inline 在 JSX 之外, 防 React Hook deps lint 抱怨 + 重渲不重建.
   const tabs: WorkspaceTab[] = TODAY_WORKSPACE_TABS;
-  const [activeKey, setActiveKey] = useState('signals');
+  // CA-1: 默认 tab = 'core_picks' (v3 抖音风刷卡片).
+  // 旧 4 tab 仍然由 ?tab= query 显式选中 (AlertsBell 跳转兼容).
+  const [activeKey, setActiveKey] = useState('core_picks');
 
   // US-070 [FE-031] AlertsBell 跳转支持 — 顶部 Bell 点击会带 `?tab=risk_center`,
   // 进入本页时应用 query 一次, 之后用户切 tab 不再被 query 覆盖.
@@ -201,6 +213,19 @@ const TodayWorkspace: React.FC = () => {
   // US-044 / FE-005: 当前持仓 (供 SellSuggestionCard 计算硬触发止损/止盈).
   // 与 todaySignals 一起拉, 任一失败仅本卡片降级, 不阻塞其它面板.
   const [positions, setPositions] = useState<PositionRow[] | null>(null);
+
+  // ---- CA-1 v3 推荐 (核心推荐 tab) 独立 lazy-load 状态 ----
+  // 三态独立 (data / loading / error) 套 [[lazy-load tab data 三态判定]] pattern:
+  // 只在 activeKey==='core_picks' 且未加载未失败时触发, 与 TodaySignals 完全解耦.
+  const [v3Data, setV3Data] = useState<V3RecommendationData | null>(null);
+  const [v3Loading, setV3Loading] = useState(false);
+  const [v3Error, setV3Error] = useState<string | null>(null);
+
+  // CA-1 详情 modal target — 复用 AIStockAnalysisModal (5 维 v1 / 8 维 v2 自动选).
+  const [v3DetailTarget, setV3DetailTarget] = useState<{
+    symbol: string;
+    name: string | null;
+  } | null>(null);
 
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<ApplySignalsData | null>(null);
@@ -250,6 +275,30 @@ const TodayWorkspace: React.FC = () => {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // ---- CA-1 v3 推荐 lazy-load ----
+  // 套 [[lazy-load tab data 三态判定]] pattern: 用户首次切到 core_picks 才拉.
+  // 刷新按钮 / 错误重试都直接调 loadV3.
+  const loadV3 = useCallback(async () => {
+    setV3Loading(true);
+    setV3Error(null);
+    try {
+      // limit=5: 后端默认 3, 加 limit 显式触发 elastic 取数 (>3 时也会按 5 截断).
+      const res = await getV3Recommendations({ limit: 5 });
+      setV3Data(res);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setV3Error(msg);
+    } finally {
+      setV3Loading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeKey !== 'core_picks') return;
+    if (v3Data || v3Loading || v3Error) return;
+    void loadV3();
+  }, [activeKey, v3Data, v3Loading, v3Error, loadV3]);
 
   // ----- 顶部 KPI -----
   const kpiSlot = useMemo(() => {
@@ -399,7 +448,16 @@ const TodayWorkspace: React.FC = () => {
 
   const headerActions = (
     <Space>
-      <Button icon={<ReloadOutlined />} onClick={() => void refresh()} loading={loading}>
+      <Button
+        icon={<ReloadOutlined />}
+        onClick={() => {
+          // CA-1: core_picks tab 走独立 loadV3, 其它 tab 走 refresh.
+          // 用户体感: 当前 tab 的"刷新"刷当前 tab 的数据, 不会触发其它 tab fetch.
+          if (activeKey === 'core_picks') void loadV3();
+          else void refresh();
+        }}
+        loading={activeKey === 'core_picks' ? v3Loading : loading}
+      >
         刷新
       </Button>
       {/* 系统自主决策：每日 14:35 cron 按 score>75 + 风控 8 道 guard 自动下单；
@@ -410,7 +468,18 @@ const TodayWorkspace: React.FC = () => {
 
   // ----- body -----
   let body: React.ReactNode = null;
-  if (loading && !data) {
+  if (activeKey === 'core_picks') {
+    // CA-1: core_picks 走独立 v3 状态机, 与 TodaySignals 完全解耦.
+    body = (
+      <CorePicksPanel
+        data={v3Data}
+        loading={v3Loading}
+        error={v3Error}
+        onReload={() => void loadV3()}
+        onClickDetail={item => setV3DetailTarget({ symbol: item.symbol, name: item.name ?? null })}
+      />
+    );
+  } else if (loading && !data) {
     body = (
       <Card>
         <div style={{ textAlign: 'center', padding: 48 }}>
@@ -492,6 +561,16 @@ const TodayWorkspace: React.FC = () => {
           navigate('/workspace/portfolio');
         }}
       />
+      {/* CA-1 v3 推荐卡片点击 "查看完整分析" — 复用 AIStockAnalysisModal. */}
+      {v3DetailTarget && (
+        <AIStockAnalysisModal
+          open={!!v3DetailTarget}
+          onClose={() => setV3DetailTarget(null)}
+          stockCode={v3DetailTarget.symbol}
+          stockName={v3DetailTarget.name}
+          taskLabel="today_v3_core_pick"
+        />
+      )}
     </>
   );
 };
@@ -1419,6 +1498,129 @@ const MarketBriefCard: React.FC = () => {
         )}
       </Space>
     </Card>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// CA-1 CorePicksPanel — v3 抖音风核心推荐 (默认 tab)
+// ---------------------------------------------------------------------------
+
+/**
+ * 「核心推荐」抖音风刷卡片 — 替代 v1 "今日信号" 作为默认登陆视角.
+ *
+ * 信息架构 (学习自抖音 / "炒股养家" 风格):
+ *   1. 顶部漏斗条 — "今日筛选 {scanned} 只候选 / {candidate} 只达标 / 推荐 {selected} 只"
+ *      让用户对 "为什么是这几只" 有量化感知, 不再是黑盒;
+ *   2. 下方 5 张大卡 (lg 双列, xs 单列) — V3RecommendationCard 渲染.
+ *
+ * 数据流:
+ *   - 数据由父组件 lazy-load 后通过 props 传入 (避免本组件持有 fetch 逻辑导致难测试);
+ *   - 详情 modal trigger 走 props.onClickDetail, 父组件统一收口 modal state.
+ *
+ * 容错三态:
+ *   - loading 无数据 → Spin
+ *   - error → Alert + 重试
+ *   - data 为空 (recommendations.length===0) → Empty 提示 cron pipeline 未跑
+ */
+const CorePicksPanel: React.FC<{
+  data: V3RecommendationData | null;
+  loading: boolean;
+  error: string | null;
+  onReload: () => void;
+  onClickDetail: (item: V3RecommendationItem) => void;
+}> = ({ data, loading, error, onReload, onClickDetail }) => {
+  if (loading && !data) {
+    return (
+      <Card>
+        <div style={{ textAlign: 'center', padding: 48 }}>
+          <Spin tip="加载核心推荐..." />
+        </div>
+      </Card>
+    );
+  }
+  if (error && !data) {
+    return (
+      <Card>
+        <Alert
+          type="warning"
+          showIcon
+          message="核心推荐加载失败"
+          description={error}
+          action={
+            <Button size="small" onClick={onReload}>
+              重试
+            </Button>
+          }
+        />
+      </Card>
+    );
+  }
+  const recommendations = data?.recommendations ?? [];
+  const funnel = data?.funnel;
+  return (
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      {/* 顶部漏斗条 — 学习自抖音「炒股养家」"信息密度集中 + 一目了然" 的展示风格. */}
+      <Card size="small" data-testid="core-picks-funnel">
+        <Row gutter={[16, 8]} align="middle">
+          <Col xs={8}>
+            <Statistic
+              title={<span style={{ fontSize: 12 }}>今日筛选</span>}
+              value={funnel?.scanned ?? '—'}
+              suffix={funnel?.scanned != null ? ' 只候选' : ''}
+              valueStyle={{ fontSize: 18, color: '#1677ff' }}
+            />
+          </Col>
+          <Col xs={8}>
+            <Statistic
+              title={<span style={{ fontSize: 12 }}>达标</span>}
+              value={funnel?.candidate ?? '—'}
+              suffix={funnel?.candidate != null ? ' 只' : ''}
+              valueStyle={{ fontSize: 18, color: '#722ed1' }}
+            />
+          </Col>
+          <Col xs={8}>
+            <Statistic
+              title={<span style={{ fontSize: 12 }}>核心推荐</span>}
+              value={funnel?.selected ?? recommendations.length}
+              suffix=" 只"
+              valueStyle={{ fontSize: 18, color: '#cf1322', fontWeight: 700 }}
+            />
+          </Col>
+        </Row>
+        {funnel?.as_of && (
+          <div style={{ marginTop: 4 }}>
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              as-of {funnel.as_of}
+            </Text>
+          </div>
+        )}
+      </Card>
+
+      {recommendations.length === 0 ? (
+        <Card>
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={
+              <Space direction="vertical" size={4} align="center">
+                <Text>今日尚无核心推荐</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  请确认 quant pipeline cron 已运行 (analysis_engine archive → AIInvestmentSignal);
+                  或切换到「今日信号」tab 查看其它策略.
+                </Text>
+              </Space>
+            }
+          />
+        </Card>
+      ) : (
+        <Row gutter={[16, 16]} data-testid="core-picks-grid">
+          {recommendations.map(item => (
+            <Col xs={24} lg={12} key={`${item.symbol}-${item.signal_id}`}>
+              <V3RecommendationCard item={item} onClickDetail={onClickDetail} />
+            </Col>
+          ))}
+        </Row>
+      )}
+    </Space>
   );
 };
 
