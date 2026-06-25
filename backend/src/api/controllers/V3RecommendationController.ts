@@ -198,6 +198,61 @@ export function extractPerDimension(signal: AIInvestmentSignal): PerDimensionLik
       // detail 不是合法 JSON → ignore, summary 仍生效
     }
   }
+
+  // Batch CD (2026-06-25): V3 fallback 到 quant_recommendation 时, metadata 没有
+  // per_dimension_summary, 但有 factors[] (5 维 quant_recommendation 输出格式 -
+  // trend / volume / quality / valuation / risk + 可选 industry / momentum 等).
+  // 把这些 factors 转成 V3 4 维输入 (人气/逻辑/资金/结构), 让 V3 4 维卡片不空白.
+  // 映射规则 (与 v3CardHelpers.aggregateToV3Dimensions 的 8→4 聚合精神一致):
+  //   - 资金 (capital):  volume + momentum
+  //   - 逻辑 (logic):    quality + valuation
+  //   - 结构 (structure): trend + risk
+  //   - 人气 (sentiment): industry + 缺省给 50 中性
+  if (out.length === 0) {
+    const factors = (signal.metadata as any)?.factors;
+    if (Array.isArray(factors) && factors.length > 0) {
+      const scoreMap: Record<string, number> = {};
+      for (const f of factors) {
+        if (f && typeof f.name === 'string' && Number.isFinite(Number(f.score))) {
+          scoreMap[f.name] = Number(f.score);
+        }
+      }
+      const avg = (keys: string[], fallback = 50): number => {
+        const vals = keys.map(k => scoreMap[k]).filter(v => Number.isFinite(v));
+        if (vals.length === 0) return fallback;
+        return Math.round(vals.reduce((s, v) => s + v, 0) / vals.length);
+      };
+      // 把 quant factor score (0-100) 映射成 analyzer score (-100 to +100)
+      const to8 = (s: number): number => Math.round((s - 50) * 2);
+      out.push(
+        {
+          analyzer_key: 'sentiment',
+          score: to8(avg(['industry', 'concept_heat', 'east_money_qa'])),
+          confidence: 0.6,
+          evidence: [],
+        },
+        {
+          analyzer_key: 'fundamental',
+          score: to8(avg(['quality', 'valuation'])),
+          confidence: 0.6,
+          evidence: [],
+        },
+        {
+          analyzer_key: 'capital',
+          score: to8(avg(['volume', 'money_flow', 'momentum'])),
+          confidence: 0.6,
+          evidence: [],
+        },
+        {
+          analyzer_key: 'technical',
+          score: to8(avg(['trend', 'risk'])),
+          confidence: 0.6,
+          evidence: [],
+        }
+      );
+    }
+  }
+
   return out;
 }
 
