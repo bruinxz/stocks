@@ -64,6 +64,10 @@ import {
   summarizeTradeReason,
 } from './tradeReasonBuilder';
 import { loadProtectionPricesForUser } from './positionProtectionDefaults';
+import {
+  CONFIDENCE_DRIVEN_DEFAULT_MIN_TRADE_AMOUNT,
+  deriveTargetPctFromConfidence,
+} from '../sizing/SignalDrivenSizing';
 
 export const DEFAULT_PAPER_TRADING_INITIAL_CAPITAL = 200000;
 
@@ -2816,7 +2820,38 @@ class PaperTradingAutomationService {
         );
         continue;
       }
-      const targetAmount = Math.min(totalValue * (effectiveTargetPct / 100), availableCash * 0.98);
+
+      // CB-2 (2026/06/25): signal-driven sizing — 让 sizing 听信号强度. 现状:
+      // gated pipeline 把 effectiveTargetPct 往往压到 1-3%, 20 万 × 1.5% = 3000 元
+      // 一手刚好买. 用户决策: "该冲就冲" — 信号 confidence ≥ 0.8 → 8%, ≥ 0.6 → 5%,
+      // ≥ 0.4 → 3%, < 0.4 → 1.5%. fail-OPEN: 若 confidence 拿不到 / 计算异常 不影响.
+      //
+      // 与既有 gated stack 关系: 取 MAX(gated, signal_driven) — 让强信号有"提仓"权,
+      // 弱信号 / governor 降权后仍走原 gated 路径. 上限受 strategyPositionCap 限制
+      // (max_position_pct 已经传入).
+      try {
+        const cb2 = deriveTargetPctFromConfidence(signal.confidence_score, {
+          max_position_pct: strategyPositionCap,
+        });
+        if (cb2.target_pct > effectiveTargetPct) {
+          const beforeCb2 = effectiveTargetPct;
+          logger.info(
+            `[cb2-signal-driven] user=${portfolio.user_id} symbol=${signal.symbol} ` +
+              `confidence=${cb2.normalized_confidence.toFixed(2)} tier=${cb2.tier} ` +
+              `${roundNumber(beforeCb2, 2)}% → ${roundNumber(cb2.target_pct, 2)}% (${cb2.reason})`
+          );
+          effectiveTargetPct = cb2.target_pct;
+        }
+      } catch (cb2Err: any) {
+        logger.warn(`[cb2-signal-driven] failed (fail-open): ${cb2Err?.message || cb2Err}`);
+      }
+
+      // CB-2: 兜底最低单笔 5000 元 — 避免摩擦 (commission ≥ 0.2% 等). 即使
+      // target_pct × totalValue < 5000, 把 targetAmount 抬到 max(raw, 5000),
+      // 受 availableCash * 0.98 cap.
+      const rawTargetAmount = totalValue * (effectiveTargetPct / 100);
+      const cb2FlooredAmount = Math.max(rawTargetAmount, CONFIDENCE_DRIVEN_DEFAULT_MIN_TRADE_AMOUNT);
+      const targetAmount = Math.min(cb2FlooredAmount, availableCash * 0.98);
       if (targetAmount < min_trade_amount && !minLotSample) {
         await skip(`目标交易金额低于最小阈值 ${min_trade_amount}`);
         continue;
