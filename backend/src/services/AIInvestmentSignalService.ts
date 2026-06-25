@@ -1302,10 +1302,17 @@ export class AIInvestmentSignalService {
       if (!candidate?.symbol) continue;
 
       const symbol = normalizeSymbol(candidate.symbol);
-      const latestTrendDate = candidate.trend?.[candidate.trend.length - 1]?.time;
+      // Batch CE-2 (2026-06-25): signal_date 必须用 cron 注入的 options.as_of
+      // (生成信号的真实时刻, 默认 = 当天) 而不是 trend 最后一根 bar 的 time.
+      // 真因: trend 是从 normalizedBars.slice(-30) 派生, time 来自 daily_bars.time,
+      // 但 (a) daily_bars 落库滞后 1-3 天 (今天数据 18:00 cron 才入), (b) 派生时
+      // 走 toISOString().split('T')[0] 在 non-UTC tz 下 off-by-1 天. 双重叠加让
+      // signal_date 永远是 today-2/today-3, V3 endpoint 查 today 永远空.
+      // 修复后: 当天跑的 cron → signal_date = today (优先 options.signal_date >
+      // options.as_of > getChinaToday() 兜底), 不再被 trend 的过期 bar 拖累.
       const signal_date = resolveSignalDate({
         signal_date: options.signal_date,
-        as_of: latestTrendDate || options.as_of,
+        as_of: options.as_of,
       });
       const decision =
         candidate.action === 'buy'
