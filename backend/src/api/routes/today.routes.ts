@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { AuthController } from '../controllers/AuthController';
 import { todayController } from '../controllers/TodayController';
+import { v3RecommendationController } from '../controllers/V3RecommendationController';
 
 const router = Router();
 const authController = new AuthController();
@@ -40,6 +41,18 @@ router.get(
   '/call-auction',
   authController.authenticate,
   todayController.getCallAuctionAnomalies.bind(todayController)
+);
+
+// CA-1 — 抖音风 v3 推荐卡片 (4 维评分 + 漏斗 stats)
+router.get(
+  '/v3-recommendations',
+  authController.authenticate,
+  v3RecommendationController.getRecommendations.bind(v3RecommendationController)
+);
+router.get(
+  '/v3-funnel',
+  authController.authenticate,
+  v3RecommendationController.getFunnelStats.bind(v3RecommendationController)
 );
 
 export default router;
