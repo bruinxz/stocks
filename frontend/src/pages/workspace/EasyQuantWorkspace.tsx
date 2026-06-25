@@ -12,10 +12,7 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import { BacktestDetail } from '../../services/labService';
-import easyQuantService, {
-  EasyQuantBootstrap,
-  EasyQuantTemplateView,
-} from '../../services/easyQuantService';
+import easyQuantService, { EasyQuantTemplateView } from '../../services/easyQuantService';
 import {
   EASY_QUANT_TEMPLATES,
   EasyQuantTemplateId,
@@ -26,6 +23,11 @@ import {
   buildEasyQuantBacktestVerdict,
   explainEasyQuantError,
 } from './easyQuantResultHelpers';
+import {
+  useEasyQuantBacktestPolling,
+  useEasyQuantBootstrap,
+  useEasyQuantDisplayUsername,
+} from './easyQuantHooks';
 import './EasyQuantWorkspace.css';
 
 type StepKey = 'template' | 'data' | 'backtest' | 'observe';
@@ -125,18 +127,6 @@ const getRiskTone = (risk: string): 'low' | 'medium' | 'high' => {
   }
 
   return 'low';
-};
-
-const getMetricTone = (value: string): 'positive' | 'negative' | 'neutral' => {
-  if (value.trim().startsWith('+')) {
-    return 'positive';
-  }
-
-  if (value.trim().startsWith('-')) {
-    return 'negative';
-  }
-
-  return 'neutral';
 };
 
 const EasyQuantMark: React.FC<{ compact?: boolean }> = ({ compact = false }) => (
@@ -256,9 +246,7 @@ const EasyQuantWorkspace: React.FC = () => {
   const programmaticSectionRef = useRef<SectionId | null>(null);
   const [activeStep, setActiveStep] = useState<StepKey>('template');
   const [selectedTemplateId, setSelectedTemplateId] = useState<EasyQuantTemplateId>('steady_trend');
-  const [bootstrap, setBootstrap] = useState<EasyQuantBootstrap | null>(null);
-  const [bootstrapLoading, setBootstrapLoading] = useState(false);
-  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const { bootstrap, bootstrapLoading, bootstrapError } = useEasyQuantBootstrap();
   const [backtestTaskId, setBacktestTaskId] = useState<number | null>(null);
   const [backtestDetail, setBacktestDetail] = useState<BacktestDetail | null>(null);
   const [backtestLoading, setBacktestLoading] = useState(false);
@@ -350,45 +338,7 @@ const EasyQuantWorkspace: React.FC = () => {
       ? journeySteps.find(step => step.key === drawerKey) || activeStepData
       : activeStepData;
   const progressPercent = Math.round(((activeStepIndex + 1) / journeySteps.length) * 100);
-
-  const displayUsername =
-    localStorage.getItem('username') ||
-    (() => {
-      try {
-        const user = JSON.parse(localStorage.getItem('user') || '{}');
-        return user?.nickname || user?.username || 'stock';
-      } catch {
-        return 'stock';
-      }
-    })();
-
-  useEffect(() => {
-    let cancelled = false;
-    setBootstrapLoading(true);
-    setBootstrapError(null);
-
-    easyQuantService
-      .loadEasyQuantBootstrap(selectedTemplateId)
-      .then(data => {
-        if (!cancelled) {
-          setBootstrap(data);
-        }
-      })
-      .catch(error => {
-        if (!cancelled) {
-          setBootstrapError(error instanceof Error ? error.message : String(error));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setBootstrapLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedTemplateId]);
+  const displayUsername = useEasyQuantDisplayUsername();
 
   const handleRunBacktest = useCallback(async () => {
     setBacktestLoading(true);
@@ -398,70 +348,19 @@ const EasyQuantWorkspace: React.FC = () => {
 
     try {
       const created = await easyQuantService.runEasyQuantBacktest(selectedTemplateId);
-      const task = created.task as any;
-      const taskId = Number(task?.id || task?.task_id || task?.task?.id);
-
-      if (!Number.isFinite(taskId)) {
-        throw new Error('后端没有返回可追踪的回测任务 ID。');
-      }
-
-      setBacktestTaskId(taskId);
+      setBacktestTaskId(created.task_id);
     } catch (error) {
       setBacktestError(error instanceof Error ? error.message : String(error));
       setBacktestLoading(false);
     }
   }, [selectedTemplateId]);
 
-  useEffect(() => {
-    if (!backtestTaskId) {
-      return undefined;
-    }
-
-    let cancelled = false;
-    const startedAt = Date.now();
-
-    const poll = async () => {
-      try {
-        const detail = await easyQuantService.getEasyQuantBacktestDetail(backtestTaskId);
-        if (cancelled) {
-          return true;
-        }
-
-        setBacktestDetail(detail);
-        const status = detail?.task?.status;
-
-        if (status === 'COMPLETED' || status === 'FAILED') {
-          setBacktestLoading(false);
-          return true;
-        }
-
-        if (Date.now() - startedAt > 10 * 60 * 1000) {
-          setBacktestLoading(false);
-          setBacktestError('回测超过 10 分钟还没有完成，请稍后刷新结果。');
-          return true;
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setBacktestError(error instanceof Error ? error.message : String(error));
-        }
-      }
-
-      return false;
-    };
-
-    void poll();
-    const timer = window.setInterval(async () => {
-      const shouldStop = await poll();
-      if (shouldStop) {
-        window.clearInterval(timer);
-      }
-    }, 3000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [backtestTaskId]);
+  useEasyQuantBacktestPolling(
+    backtestTaskId,
+    setBacktestDetail,
+    setBacktestLoading,
+    setBacktestError
+  );
 
   const handleCreateObservation = useCallback(async () => {
     setObservationCreating(true);
@@ -717,6 +616,9 @@ const EasyQuantWorkspace: React.FC = () => {
             <button
               className="eq-button eq-button--dark"
               disabled={
+                bootstrapLoading ||
+                Boolean(bootstrapError) ||
+                !bootstrap ||
                 backtestLoading ||
                 selectedTemplateData.available === false ||
                 bootstrap?.health_verdict.can_run_backtest === false
@@ -765,7 +667,7 @@ const EasyQuantWorkspace: React.FC = () => {
           <div className="eq-inline-metrics eq-inline-metrics--four">
             {backtestVerdict.beginner_metrics.length ? (
               backtestVerdict.beginner_metrics.map(metric => (
-                <article key={metric.key} data-raw-tone={getMetricTone(metric.value)}>
+                <article key={metric.key}>
                   <span>{metric.label}</span>
                   <strong className={`eq-metric-value eq-metric-value--${metric.tone}`}>
                     {metric.value}

@@ -43,8 +43,8 @@ export interface EasyQuantBootstrap {
   templates: EasyQuantTemplateView[];
   selected_template_id: EasyQuantTemplateId;
   workflow_presets: QuantWorkflowPreset[];
-  data_freshness: EasyQuantHealthSnapshot | null;
-  runtime_health: EasyQuantHealthSnapshot | null;
+  data_freshness: EasyQuantHealthSnapshot;
+  runtime_health: EasyQuantHealthSnapshot;
   health_verdict: EasyQuantHealthVerdict;
 }
 
@@ -59,10 +59,30 @@ function normalizeHealthStatus(rawStatus: unknown): EasyQuantHealthStatus {
     return 'blocked';
   }
 
-  return 'degraded';
+  if (['degraded', 'warning', 'warn', 'caution'].includes(value)) {
+    return 'degraded';
+  }
+
+  return 'blocked';
 }
 
 function unwrapHealth(res: any, fallback: string): EasyQuantHealthSnapshot {
+  if (!res) {
+    return {
+      status: 'blocked',
+      conclusion: fallback,
+      raw: null,
+    };
+  }
+
+  if (res?.data?.success === false) {
+    return {
+      status: 'blocked',
+      conclusion: res.data.message || fallback,
+      raw: res.data,
+    };
+  }
+
   const data = res?.data?.data || {};
   const summary = data.summary || {};
 
@@ -74,8 +94,8 @@ function unwrapHealth(res: any, fallback: string): EasyQuantHealthSnapshot {
 }
 
 function buildHealthVerdict(
-  dataFreshness: EasyQuantHealthSnapshot | null,
-  runtimeHealth: EasyQuantHealthSnapshot | null
+  dataFreshness: EasyQuantHealthSnapshot,
+  runtimeHealth: EasyQuantHealthSnapshot
 ): EasyQuantHealthVerdict {
   const blockedSource =
     dataFreshness?.status === 'blocked'
@@ -117,9 +137,7 @@ function buildHealthVerdict(
   };
 }
 
-export async function loadEasyQuantBootstrap(
-  selectedTemplateId: EasyQuantTemplateId = 'steady_trend'
-): Promise<EasyQuantBootstrap> {
+export async function loadEasyQuantBootstrap(): Promise<EasyQuantBootstrap> {
   const [strategies, workflowPresets, dataFreshnessRes, runtimeHealthRes] = await Promise.all([
     listQuantStrategies(),
     listWorkflowPresets(),
@@ -146,16 +164,12 @@ export async function loadEasyQuantBootstrap(
     };
   });
 
-  const dataFreshness = dataFreshnessRes
-    ? unwrapHealth(dataFreshnessRes, '没有拿到行情数据健康结论。')
-    : null;
-  const runtimeHealth = runtimeHealthRes
-    ? unwrapHealth(runtimeHealthRes, '没有拿到系统运行健康结论。')
-    : null;
+  const dataFreshness = unwrapHealth(dataFreshnessRes, '没有拿到行情数据健康结论。');
+  const runtimeHealth = unwrapHealth(runtimeHealthRes, '没有拿到系统运行健康结论。');
 
   return {
     templates,
-    selected_template_id: selectedTemplateId,
+    selected_template_id: 'steady_trend',
     workflow_presets: workflowPresets,
     data_freshness: dataFreshness,
     runtime_health: runtimeHealth,
@@ -176,9 +190,10 @@ export async function getEasyQuantBacktestDetail(taskId: number): Promise<Backte
 
 export async function createEasyQuantObservationPortfolio(templateId: EasyQuantTemplateId) {
   const template = getEasyQuantTemplate(templateId);
+  const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
 
   return portfolioCrudService.createPortfolio({
-    name: `简易观察-${template.name}`,
+    name: `简易观察-${template.name}-${timestamp}`,
     description: `由简易版模板 ${template.name} 创建，仅用于模拟观察。`,
     initial_capital: template.default_initial_capital,
     strategy_keys: [template.strategy_key],

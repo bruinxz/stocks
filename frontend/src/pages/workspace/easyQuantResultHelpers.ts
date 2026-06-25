@@ -19,6 +19,15 @@ export interface EasyQuantBacktestVerdict {
   can_create_observation: boolean;
 }
 
+// Prefer a backend-provided easy_verdict when available; these are UI fallback gates.
+export const EASY_QUANT_OBSERVATION_THRESHOLDS = {
+  min_total_return_pct: 0,
+  max_drawdown_pct: 20,
+  caution_max_drawdown_pct: 30,
+  min_sharpe_ratio: 0.8,
+  min_trade_count: 5,
+};
+
 const formatPct = (value?: number | null) =>
   typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(2)}%` : '暂无';
 
@@ -37,9 +46,27 @@ function pickBestResult(detail: BacktestDetail | null): BacktestStrategyResult |
   })[0];
 }
 
+function pickBackendVerdict(detail: BacktestDetail | null): EasyQuantBacktestVerdict | null {
+  const verdict = (detail as any)?.easy_verdict;
+  if (
+    verdict &&
+    ['ready', 'caution', 'blocked'].includes(verdict.status) &&
+    Array.isArray(verdict.beginner_metrics)
+  ) {
+    return verdict as EasyQuantBacktestVerdict;
+  }
+
+  return null;
+}
+
 export function buildEasyQuantBacktestVerdict(
   detail: BacktestDetail | null
 ): EasyQuantBacktestVerdict {
+  const backendVerdict = pickBackendVerdict(detail);
+  if (backendVerdict) {
+    return backendVerdict;
+  }
+
   const result = pickBestResult(detail);
 
   if (!detail) {
@@ -76,15 +103,21 @@ export function buildEasyQuantBacktestVerdict(
   }
 
   const totalReturn = result.total_return_pct;
-  const drawdown = result.max_drawdown_pct;
+  const drawdown = Math.abs(result.max_drawdown_pct);
   const sharpe = result.sharpe_ratio;
   const trades = result.trade_count;
   const winRate = result.win_rate;
+  const thresholds = EASY_QUANT_OBSERVATION_THRESHOLDS;
 
-  const canCreateObservation = totalReturn > 0 && drawdown <= 20 && sharpe >= 0.8 && trades >= 5;
+  const canCreateObservation =
+    totalReturn > thresholds.min_total_return_pct &&
+    drawdown <= thresholds.max_drawdown_pct &&
+    sharpe >= thresholds.min_sharpe_ratio &&
+    trades >= thresholds.min_trade_count;
   const status: EasyQuantVerdictStatus = canCreateObservation
     ? 'ready'
-    : totalReturn > 0 && drawdown <= 30
+    : totalReturn > thresholds.min_total_return_pct &&
+        drawdown <= thresholds.caution_max_drawdown_pct
       ? 'caution'
       : 'blocked';
 
@@ -155,7 +188,7 @@ export function explainEasyQuantError(message: string): string {
     return '行情数据可能不完整，请先刷新数据中心或换一个模板。';
   }
 
-  if (lower.includes('timeout') || lower.includes('超过')) {
+  if (lower.includes('timeout') || lower.includes('超时') || lower.includes('超过')) {
     return '回测运行时间过长，请稍后刷新结果。';
   }
 
