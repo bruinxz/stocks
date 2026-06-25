@@ -146,10 +146,23 @@ class QuantOpenWatchdogService {
       });
     }
     if (archivedSignalCount < minArchivedSignals) {
+      // BL-1 (2026-06-25) — 区分 "扫描失败" vs "扫描成功但无候选"
+      //
+      // 真因: 2026-06-25 开盘扫描成功生成 166 条策略信号 (扫描正常), 但融合后无
+      // 股票达到 min_score=55 阈值, 归档 0. watchdog 旧逻辑直接 critical → throw
+      // → cron FAILED → Lark 告警, 但这本质是合理的"今日市场无机会"业务空仓状态.
+      //
+      // 修后: 当 quant_signal_count 达标 (扫描已成功) 但 archived=0, 仅 warning
+      // 不 throw; 只有扫描和归档都不足才 critical (真链路异常).
+      const scanWorked = quantSignalCount >= minQuantSignals;
+      const isCritical =
+        latestLog?.status === 'COMPLETED' && hasMarketOpenedForDate && !scanWorked;
       issues.push({
-        level: latestLog?.status === 'COMPLETED' && hasMarketOpenedForDate ? 'critical' : 'warning',
+        level: isCritical ? 'critical' : 'warning',
         code: 'no_archived_signals',
-        message: `量化融合归档不足：${archivedSignalCount}/${minArchivedSignals}。`,
+        message: scanWorked
+          ? `量化融合归档不足：${archivedSignalCount}/${minArchivedSignals} (扫描已生成 ${quantSignalCount} 条策略信号, 本日无候选达到融合阈值, 属合理空仓)。`
+          : `量化融合归档不足：${archivedSignalCount}/${minArchivedSignals}。`,
       });
     }
     if (requireFreshQuote) {
