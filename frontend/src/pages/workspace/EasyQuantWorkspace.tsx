@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowRightOutlined,
@@ -11,11 +11,32 @@ import {
   ReloadOutlined,
   UserOutlined,
 } from '@ant-design/icons';
+import { BacktestDetail } from '../../services/labService';
+import easyQuantService, {
+  EasyQuantBootstrap,
+  EasyQuantTemplateView,
+} from '../../services/easyQuantService';
+import {
+  EASY_QUANT_TEMPLATES,
+  EasyQuantTemplateId,
+  getEasyQuantTemplate,
+} from './easyQuantTemplates';
+import {
+  EasyQuantBacktestVerdict,
+  buildEasyQuantBacktestVerdict,
+  explainEasyQuantError,
+} from './easyQuantResultHelpers';
 import './EasyQuantWorkspace.css';
 
 type StepKey = 'template' | 'data' | 'backtest' | 'observe';
-type TemplateId = 'steady_trend' | 'mean_cross' | 'low_vol_value';
 type DrawerKey = StepKey | 'guide' | null;
+type SectionId =
+  | 'easy-quant-hero'
+  | 'easy-quant-flow'
+  | 'easy-quant-template'
+  | 'easy-quant-data'
+  | 'easy-quant-backtest'
+  | 'easy-quant-observe';
 
 interface JourneyStep {
   key: StepKey;
@@ -24,17 +45,6 @@ interface JourneyStep {
   caption: string;
   drawerTitle: string;
   sketch: 'sprout' | 'lens' | 'chart' | 'telescope';
-}
-
-interface StrategyTemplate {
-  id: TemplateId;
-  name: string;
-  risk: string;
-  holding: string;
-  dataStatus: string;
-  description: string;
-  reason: string;
-  sketch: 'trend' | 'cross' | 'shield';
 }
 
 const journeySteps: JourneyStep[] = [
@@ -72,59 +82,34 @@ const journeySteps: JourneyStep[] = [
   },
 ];
 
-const strategyTemplates: StrategyTemplate[] = [
-  {
-    id: 'steady_trend',
-    name: '稳健趋势',
-    risk: '中低风险',
-    holding: '1 到 3 个月',
-    dataStatus: '已就绪',
-    description: '跟随中长期趋势，优选强势行业龙头。',
-    reason: '适合希望先稳稳跑通第一套策略的新手。',
-    sketch: 'trend',
-  },
-  {
-    id: 'mean_cross',
-    name: '均线突破',
-    risk: '中风险',
-    holding: '1 到 4 周',
-    dataStatus: '部分缺失',
-    description: '短中期均线金叉，捕捉趋势启动信号。',
-    reason: '逻辑直观，适合学习信号是怎么产生的。',
-    sketch: 'cross',
-  },
-  {
-    id: 'low_vol_value',
-    name: '低波价值',
-    risk: '低风险',
-    holding: '3 到 12 个月',
-    dataStatus: '已就绪',
-    description: '低波动加高股息组合，追求稳健收益。',
-    reason: '交易频率低，适合慢节奏模拟观察。',
-    sketch: 'shield',
-  },
+const templateSketchById: Record<EasyQuantTemplateId, 'trend' | 'cross' | 'shield'> = {
+  steady_trend: 'trend',
+  breakout_ma: 'cross',
+  low_vol_value: 'shield',
+};
+
+const sectionNavItems: Array<{ id: SectionId; label: string }> = [
+  { id: 'easy-quant-hero', label: '开始' },
+  { id: 'easy-quant-flow', label: '动线' },
+  { id: 'easy-quant-template', label: '模板' },
+  { id: 'easy-quant-data', label: '查数据' },
+  { id: 'easy-quant-backtest', label: '回测' },
+  { id: 'easy-quant-observe', label: '观察' },
 ];
 
-const dataChecks = [
-  { label: '行情完整度', value: '96%', detail: '沪深300 成分覆盖充分' },
-  { label: '因子覆盖', value: '92%', detail: '估值与动量字段可用' },
-  { label: '风险边界', value: '已启用', detail: '单票仓位和回撤线已设置' },
-];
+const sectionByStep: Record<StepKey, SectionId> = {
+  template: 'easy-quant-template',
+  data: 'easy-quant-data',
+  backtest: 'easy-quant-backtest',
+  observe: 'easy-quant-observe',
+};
 
-const reportMetrics = [
-  { label: '样例总收益', value: '+18.7%', note: '已计入交易成本' },
-  { label: '最大回撤', value: '-8.4%', note: '低于新手默认警戒线' },
-  { label: '夏普比率', value: '1.32', note: '风险调整后表现可接受' },
-  { label: '胜率', value: '57%', note: '不是越高越好，要结合赔率' },
-];
-
-const observeLogs = [
-  { time: '09:30:01', title: '读取行情', state: '完成', detail: '已读取沪深 300 成分股行情数据' },
-  { time: '09:30:02', title: '生成信号', state: '无信号', detail: '未生成新的交易信号' },
-  { time: '09:30:03', title: '执行风险检查', state: '正常', detail: '持仓与风控规则未触发风险' },
-  { time: '09:30:04', title: '持仓变化', state: '无变化', detail: '今日没有模拟成交' },
-  { time: '09:30:05', title: '当日总结', state: '观察中', detail: '等待下一次有效信号' },
-];
+const stepBySection: Partial<Record<SectionId, StepKey>> = {
+  'easy-quant-template': 'template',
+  'easy-quant-data': 'data',
+  'easy-quant-backtest': 'backtest',
+  'easy-quant-observe': 'observe',
+};
 
 const getRiskTone = (risk: string): 'low' | 'medium' | 'high' => {
   if (risk.includes('高')) {
@@ -140,6 +125,18 @@ const getRiskTone = (risk: string): 'low' | 'medium' | 'high' => {
   }
 
   return 'low';
+};
+
+const getMetricTone = (value: string): 'positive' | 'negative' | 'neutral' => {
+  if (value.trim().startsWith('+')) {
+    return 'positive';
+  }
+
+  if (value.trim().startsWith('-')) {
+    return 'negative';
+  }
+
+  return 'neutral';
 };
 
 const EasyQuantMark: React.FC<{ compact?: boolean }> = ({ compact = false }) => (
@@ -171,7 +168,7 @@ const EasyQuantMark: React.FC<{ compact?: boolean }> = ({ compact = false }) => 
 );
 
 const JourneySketch: React.FC<{
-  type: JourneyStep['sketch'] | StrategyTemplate['sketch'] | 'flag';
+  type: JourneyStep['sketch'] | 'trend' | 'cross' | 'shield' | 'flag';
 }> = ({ type }) => {
   if (type === 'lens') {
     return (
@@ -253,13 +250,97 @@ const JourneySketch: React.FC<{
 };
 
 const EasyQuantWorkspace: React.FC = () => {
+  const scrollRootRef = useRef<HTMLDivElement | null>(null);
+  const snapRestoreTimerRef = useRef<number | null>(null);
+  const navLockTimerRef = useRef<number | null>(null);
+  const programmaticSectionRef = useRef<SectionId | null>(null);
   const [activeStep, setActiveStep] = useState<StepKey>('template');
-  const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('steady_trend');
+  const [selectedTemplateId, setSelectedTemplateId] = useState<EasyQuantTemplateId>('steady_trend');
+  const [bootstrap, setBootstrap] = useState<EasyQuantBootstrap | null>(null);
+  const [bootstrapLoading, setBootstrapLoading] = useState(false);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const [backtestTaskId, setBacktestTaskId] = useState<number | null>(null);
+  const [backtestDetail, setBacktestDetail] = useState<BacktestDetail | null>(null);
+  const [backtestLoading, setBacktestLoading] = useState(false);
+  const [backtestError, setBacktestError] = useState<string | null>(null);
+  const [observationCreating, setObservationCreating] = useState(false);
+  const [observationMessage, setObservationMessage] = useState<string | null>(null);
   const [drawerKey, setDrawerKey] = useState<DrawerKey>(null);
+  const [visibleSections, setVisibleSections] = useState<Record<string, boolean>>({
+    'easy-quant-hero': true,
+  });
+  const [activeSectionId, setActiveSectionId] = useState<SectionId>('easy-quant-hero');
 
-  const selectedTemplateData = useMemo(
-    () => strategyTemplates.find(item => item.id === selectedTemplate) || strategyTemplates[0],
-    [selectedTemplate]
+  const fallbackTemplates = useMemo<EasyQuantTemplateView[]>(
+    () =>
+      EASY_QUANT_TEMPLATES.map(template => ({
+        ...template,
+        available: true,
+      })),
+    []
+  );
+  const templatesForView = bootstrap?.templates || fallbackTemplates;
+  const selectedTemplateData = useMemo<EasyQuantTemplateView>(
+    () =>
+      templatesForView.find(item => item.id === selectedTemplateId) || {
+        ...getEasyQuantTemplate(selectedTemplateId),
+        available: true,
+      },
+    [selectedTemplateId, templatesForView]
+  );
+  const backtestVerdict: EasyQuantBacktestVerdict = useMemo(
+    () => buildEasyQuantBacktestVerdict(backtestDetail),
+    [backtestDetail]
+  );
+  const dataCheckItems = useMemo(
+    () => [
+      {
+        label: '行情数据',
+        value: bootstrap?.data_freshness?.status === 'ready' ? '可用' : '待确认',
+        tone: bootstrap?.data_freshness?.status || 'degraded',
+        detail: bootstrap?.data_freshness?.conclusion || '等待后端返回行情数据健康结论。',
+      },
+      {
+        label: '运行环境',
+        value: bootstrap?.runtime_health?.status === 'ready' ? '可用' : '待确认',
+        tone: bootstrap?.runtime_health?.status || 'degraded',
+        detail: bootstrap?.runtime_health?.conclusion || '等待后端返回运行环境健康结论。',
+      },
+      {
+        label: '流程预设',
+        value: bootstrap ? `${bootstrap.workflow_presets.length} 个` : '检查中',
+        tone: bootstrap?.workflow_presets.length ? 'ready' : 'degraded',
+        detail: bootstrap?.workflow_presets.length
+          ? '已读取专业版工作流预设，简易版会沿用默认安全边界。'
+          : '正在读取工作流预设。',
+      },
+    ],
+    [bootstrap]
+  );
+  const observationEvents = useMemo(
+    () => [
+      {
+        time: '现在',
+        title: '模拟观察组合',
+        state: observationMessage ? '已创建' : '待创建',
+        detail:
+          observationMessage ||
+          `将基于 ${selectedTemplateData.name} 创建纸面观察组合，默认不自动交易。`,
+      },
+      {
+        time: '回测后',
+        title: '观察门槛',
+        state: backtestVerdict.can_create_observation ? '通过' : '未通过',
+        detail: backtestVerdict.summary,
+      },
+      {
+        time: '每日',
+        title: '观察方式',
+        state: '纸面',
+        detail: '只记录虚拟组合和信号变化，不会下真实订单。',
+      },
+    ],
+    [backtestVerdict, observationMessage, selectedTemplateData.name]
   );
 
   const activeStepIndex = journeySteps.findIndex(step => step.key === activeStep);
@@ -281,20 +362,324 @@ const EasyQuantWorkspace: React.FC = () => {
       }
     })();
 
-  const startGuidedFlow = () => {
-    setActiveStep('template');
+  useEffect(() => {
+    let cancelled = false;
+    setBootstrapLoading(true);
+    setBootstrapError(null);
+
+    easyQuantService
+      .loadEasyQuantBootstrap(selectedTemplateId)
+      .then(data => {
+        if (!cancelled) {
+          setBootstrap(data);
+        }
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setBootstrapError(error instanceof Error ? error.message : String(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setBootstrapLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTemplateId]);
+
+  const handleRunBacktest = useCallback(async () => {
+    setBacktestLoading(true);
+    setBacktestError(null);
+    setBacktestDetail(null);
+    setObservationMessage(null);
+
+    try {
+      const created = await easyQuantService.runEasyQuantBacktest(selectedTemplateId);
+      const task = created.task as any;
+      const taskId = Number(task?.id || task?.task_id || task?.task?.id);
+
+      if (!Number.isFinite(taskId)) {
+        throw new Error('后端没有返回可追踪的回测任务 ID。');
+      }
+
+      setBacktestTaskId(taskId);
+    } catch (error) {
+      setBacktestError(error instanceof Error ? error.message : String(error));
+      setBacktestLoading(false);
+    }
+  }, [selectedTemplateId]);
+
+  useEffect(() => {
+    if (!backtestTaskId) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const startedAt = Date.now();
+
+    const poll = async () => {
+      try {
+        const detail = await easyQuantService.getEasyQuantBacktestDetail(backtestTaskId);
+        if (cancelled) {
+          return true;
+        }
+
+        setBacktestDetail(detail);
+        const status = detail?.task?.status;
+
+        if (status === 'COMPLETED' || status === 'FAILED') {
+          setBacktestLoading(false);
+          return true;
+        }
+
+        if (Date.now() - startedAt > 10 * 60 * 1000) {
+          setBacktestLoading(false);
+          setBacktestError('回测超过 10 分钟还没有完成，请稍后刷新结果。');
+          return true;
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setBacktestError(error instanceof Error ? error.message : String(error));
+        }
+      }
+
+      return false;
+    };
+
+    void poll();
+    const timer = window.setInterval(async () => {
+      const shouldStop = await poll();
+      if (shouldStop) {
+        window.clearInterval(timer);
+      }
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [backtestTaskId]);
+
+  const handleCreateObservation = useCallback(async () => {
+    setObservationCreating(true);
+    setObservationMessage(null);
+
+    try {
+      const created =
+        await easyQuantService.createEasyQuantObservationPortfolio(selectedTemplateId);
+      setObservationMessage(`已创建模拟观察组合：${created.name}`);
+    } catch (error) {
+      setObservationMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setObservationCreating(false);
+    }
+  }, [selectedTemplateId]);
+
+  useEffect(() => {
+    const scrollRoot = scrollRootRef.current;
+    const sections = sectionNavItems
+      .map(item => document.getElementById(item.id))
+      .filter((section): section is HTMLElement => Boolean(section));
+
+    if (!sections.length) {
+      return undefined;
+    }
+
+    if (!('IntersectionObserver' in window)) {
+      setVisibleSections(
+        sectionNavItems.reduce<Record<string, boolean>>((acc, item) => {
+          acc[item.id] = true;
+          return acc;
+        }, {})
+      );
+      return undefined;
+    }
+
+    const observer = new IntersectionObserver(
+      entries => {
+        entries.forEach(entry => {
+          if (!entry.isIntersecting) {
+            return;
+          }
+
+          const sectionId = entry.target.id as SectionId;
+          const stepKey = stepBySection[sectionId];
+          if (programmaticSectionRef.current) {
+            return;
+          }
+
+          setActiveSectionId(sectionId);
+          if (stepKey) {
+            setActiveStep(stepKey);
+          }
+          setVisibleSections(prev =>
+            prev[sectionId]
+              ? prev
+              : {
+                  ...prev,
+                  [sectionId]: true,
+                }
+          );
+        });
+      },
+      {
+        root: scrollRoot,
+        threshold: 0.42,
+        rootMargin: '0px 0px -8% 0px',
+      }
+    );
+
+    sections.forEach(section => observer.observe(section));
+
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const scrollRoot = scrollRootRef.current;
+    if (!scrollRoot) {
+      return undefined;
+    }
+
+    let frameId = 0;
+
+    const updateActiveSection = () => {
+      const scrollerRect = scrollRoot.getBoundingClientRect();
+      const viewportCenter = scrollerRect.top + scrollRoot.clientHeight / 2;
+      const nearestSection = sectionNavItems
+        .map(item => {
+          const section = document.getElementById(item.id);
+          if (!section) {
+            return null;
+          }
+
+          const rect = section.getBoundingClientRect();
+          const sectionCenter = rect.top + rect.height / 2;
+          return {
+            id: item.id,
+            distance: Math.abs(sectionCenter - viewportCenter),
+          };
+        })
+        .filter((item): item is { id: SectionId; distance: number } => Boolean(item))
+        .sort((a, b) => a.distance - b.distance)[0];
+
+      if (nearestSection) {
+        const stepKey = stepBySection[nearestSection.id];
+        setActiveSectionId(nearestSection.id);
+        if (stepKey) {
+          setActiveStep(stepKey);
+        }
+      }
+    };
+
+    const requestUpdate = () => {
+      if (programmaticSectionRef.current) {
+        return;
+      }
+
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(updateActiveSection);
+    };
+
+    updateActiveSection();
+    scrollRoot.addEventListener('scroll', requestUpdate, { passive: true });
+    window.addEventListener('resize', requestUpdate);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      scrollRoot.removeEventListener('scroll', requestUpdate);
+      window.removeEventListener('resize', requestUpdate);
+    };
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (snapRestoreTimerRef.current) {
+        window.clearTimeout(snapRestoreTimerRef.current);
+      }
+      if (navLockTimerRef.current) {
+        window.clearTimeout(navLockTimerRef.current);
+      }
+    },
+    []
+  );
+
+  const scrollToSection = (sectionId: SectionId) => {
+    const scrollRoot = scrollRootRef.current;
+    const section = document.getElementById(sectionId);
+    if (!section || !scrollRoot) {
+      return;
+    }
+
+    if (snapRestoreTimerRef.current) {
+      window.clearTimeout(snapRestoreTimerRef.current);
+    }
+
+    if (navLockTimerRef.current) {
+      window.clearTimeout(navLockTimerRef.current);
+    }
+
+    setActiveSectionId(sectionId);
+    const stepKey = stepBySection[sectionId];
+    if (stepKey) {
+      setActiveStep(stepKey);
+    }
+    setVisibleSections(prev =>
+      prev[sectionId]
+        ? prev
+        : {
+            ...prev,
+            [sectionId]: true,
+          }
+    );
+
+    const scrollRootTop = scrollRoot.getBoundingClientRect().top;
+    const sectionTop = section.getBoundingClientRect().top;
+    const targetTop = sectionTop - scrollRootTop + scrollRoot.scrollTop;
+
+    programmaticSectionRef.current = sectionId;
+    scrollRoot.classList.add('eq-scroll-root--no-snap');
+    scrollRoot.style.scrollBehavior = 'auto';
+    scrollRoot.scrollTo({
+      top: targetTop,
+      behavior: 'auto',
+    });
+
     window.requestAnimationFrame(() => {
-      document.getElementById('easy-quant-flow')?.scrollIntoView({
-        behavior: 'smooth',
-        block: 'start',
+      scrollRoot.scrollTo({
+        top: targetTop,
+        behavior: 'auto',
       });
     });
+
+    navLockTimerRef.current = window.setTimeout(() => {
+      programmaticSectionRef.current = null;
+      scrollRoot.style.scrollBehavior = '';
+    }, 180);
+    snapRestoreTimerRef.current = window.setTimeout(() => {
+      scrollRoot.classList.remove('eq-scroll-root--no-snap');
+    }, 240);
   };
 
-  const renderStage = () => {
-    if (activeStep === 'data') {
+  const goToStep = (stepKey: StepKey) => {
+    setActiveStep(stepKey);
+    window.requestAnimationFrame(() => scrollToSection(sectionByStep[stepKey]));
+  };
+
+  const getSectionClassName = (sectionId: SectionId) =>
+    `eq-screen-section ${visibleSections[sectionId] ? 'eq-screen-section--visible' : ''}`;
+
+  const startGuidedFlow = () => {
+    setActiveStep('template');
+    window.requestAnimationFrame(() => scrollToSection('easy-quant-flow'));
+  };
+
+  const renderStage = (stageKey: StepKey = activeStep) => {
+    if (stageKey === 'data') {
       return (
-        <section className="eq-stage-panel eq-stage-panel--data" aria-label="查数据">
+        <article className="eq-stage-panel eq-stage-panel--data">
           <div className="eq-stage-topline">
             <span>当前任务</span>
           </div>
@@ -306,33 +691,54 @@ const EasyQuantWorkspace: React.FC = () => {
             <JourneySketch type="lens" />
             <div>
               <span className="eq-soft-label">体检结果</span>
-              <strong>可以进入回测</strong>
-              <p>行情完整度和风险边界都通过，因子字段足够跑第一版策略。</p>
+              <strong>{bootstrap?.health_verdict.title || '正在读取数据状态'}</strong>
+              <p>{bootstrap?.health_verdict.summary || '正在读取后端数据健康和运行健康。'}</p>
             </div>
           </div>
+          {bootstrapError && (
+            <p className="eq-state-error">{explainEasyQuantError(bootstrapError)}</p>
+          )}
+          {bootstrapLoading && <p className="eq-state-muted">正在检查策略和数据状态...</p>}
+          {bootstrap?.health_verdict && (
+            <p className={`eq-state-${bootstrap.health_verdict.status}`}>
+              {bootstrap.health_verdict.title}：{bootstrap.health_verdict.summary}
+            </p>
+          )}
           <div className="eq-inline-metrics">
-            {dataChecks.map(item => (
+            {dataCheckItems.map(item => (
               <article key={item.label}>
                 <span>{item.label}</span>
-                <strong>{item.value}</strong>
+                <strong className={`eq-state-${item.tone}`}>{item.value}</strong>
+                <em>{item.detail}</em>
               </article>
             ))}
           </div>
           <div className="eq-stage-actions">
-            <button className="eq-button eq-button--dark" onClick={() => setActiveStep('backtest')}>
-              开始回测 <PlayCircleOutlined />
+            <button
+              className="eq-button eq-button--dark"
+              disabled={
+                backtestLoading ||
+                selectedTemplateData.available === false ||
+                bootstrap?.health_verdict.can_run_backtest === false
+              }
+              onClick={() => {
+                goToStep('backtest');
+                void handleRunBacktest();
+              }}
+            >
+              {backtestLoading ? '回测运行中' : '开始真实回测'} <PlayCircleOutlined />
             </button>
             <button className="eq-button eq-button--quiet" onClick={() => setDrawerKey('data')}>
               查看数据明细
             </button>
           </div>
-        </section>
+        </article>
       );
     }
 
-    if (activeStep === 'backtest') {
+    if (stageKey === 'backtest') {
       return (
-        <section className="eq-stage-panel eq-stage-panel--backtest" aria-label="回测报告">
+        <article className="eq-stage-panel eq-stage-panel--backtest">
           <div className="eq-stage-topline">
             <span>当前任务</span>
           </div>
@@ -342,35 +748,58 @@ const EasyQuantWorkspace: React.FC = () => {
           </div>
           <div className="eq-result-hero">
             <div>
-              <span className="eq-soft-label">样例结论</span>
-              <strong>值得进入模拟观察</strong>
-              <p>收益表现不错，最大回撤仍在新手默认边界内。</p>
+              <span className="eq-soft-label">真实回测结论</span>
+              <strong>{backtestLoading ? '回测运行中' : backtestVerdict.title}</strong>
+              <p>
+                {backtestLoading
+                  ? '正在读取后端回测任务结果，完成后会自动解释收益和风险。'
+                  : backtestVerdict.summary}
+              </p>
             </div>
             <JourneySketch type="chart" />
           </div>
+          {backtestError && (
+            <p className="eq-state-error">{explainEasyQuantError(backtestError)}</p>
+          )}
+          {backtestTaskId && <p className="eq-state-muted">回测任务 ID：{backtestTaskId}</p>}
           <div className="eq-inline-metrics eq-inline-metrics--four">
-            {reportMetrics.map(metric => (
-              <article key={metric.label}>
-                <span>{metric.label}</span>
-                <strong>{metric.value}</strong>
+            {backtestVerdict.beginner_metrics.length ? (
+              backtestVerdict.beginner_metrics.map(metric => (
+                <article key={metric.key} data-raw-tone={getMetricTone(metric.value)}>
+                  <span>{metric.label}</span>
+                  <strong className={`eq-metric-value eq-metric-value--${metric.tone}`}>
+                    {metric.value}
+                  </strong>
+                  <em>{metric.explanation}</em>
+                </article>
+              ))
+            ) : (
+              <article>
+                <span>回测指标</span>
+                <strong className="eq-metric-value eq-metric-value--neutral">待生成</strong>
+                <em>点“开始真实回测”后，这里会展示新手版解释。</em>
               </article>
-            ))}
+            )}
           </div>
           <div className="eq-stage-actions">
-            <button className="eq-button eq-button--dark" onClick={() => setActiveStep('observe')}>
+            <button
+              className="eq-button eq-button--dark"
+              disabled={!backtestVerdict.can_create_observation || backtestLoading}
+              onClick={() => goToStep('observe')}
+            >
               进入模拟观察 <ArrowRightOutlined />
             </button>
             <button className="eq-button eq-button--quiet" onClick={() => setDrawerKey('backtest')}>
               查看完整指标
             </button>
           </div>
-        </section>
+        </article>
       );
     }
 
-    if (activeStep === 'observe') {
+    if (stageKey === 'observe') {
       return (
-        <section className="eq-stage-panel eq-stage-panel--observe" aria-label="模拟观察">
+        <article className="eq-stage-panel eq-stage-panel--observe">
           <div className="eq-stage-topline">
             <span>当前任务</span>
           </div>
@@ -381,11 +810,11 @@ const EasyQuantWorkspace: React.FC = () => {
           <div className="eq-observe-hero">
             <article>
               <span>{selectedTemplateData.name}</span>
-              <strong>8/30</strong>
-              <p>已观察 8 个交易日，还需要继续看稳定性。</p>
+              <strong>{observationMessage ? '已创建' : '待创建'}</strong>
+              <p>{observationMessage || '回测达到观察门槛后，可以创建一个纸面观察组合。'}</p>
             </article>
             <div className="eq-observe-timeline">
-              {observeLogs.slice(0, 3).map(log => (
+              {observationEvents.map(log => (
                 <button key={`${log.time}-${log.title}`} onClick={() => setDrawerKey('observe')}>
                   <time>{log.time}</time>
                   <strong>{log.title}</strong>
@@ -394,23 +823,30 @@ const EasyQuantWorkspace: React.FC = () => {
               ))}
             </div>
           </div>
+          <p className="eq-state-muted">
+            模拟观察只记录虚拟组合，不会下真实订单，也不会自动开启实盘。
+          </p>
           <div className="eq-stage-actions">
-            <button className="eq-button eq-button--dark" onClick={() => setDrawerKey('observe')}>
-              查看完整日志
-            </button>
             <button
-              className="eq-button eq-button--quiet"
-              onClick={() => setActiveStep('template')}
+              className="eq-button eq-button--dark"
+              disabled={!backtestVerdict.can_create_observation || observationCreating}
+              onClick={handleCreateObservation}
             >
+              {observationCreating ? '创建中' : backtestVerdict.next_action_label}
+            </button>
+            <Link className="eq-button eq-button--quiet" to="/workspace/portfolio">
+              去模拟盘查看
+            </Link>
+            <button className="eq-button eq-button--quiet" onClick={() => goToStep('template')}>
               重新选模板
             </button>
           </div>
-        </section>
+        </article>
       );
     }
 
     return (
-      <section className="eq-stage-panel eq-stage-panel--template" aria-label="选择策略模板">
+      <article className="eq-stage-panel eq-stage-panel--template">
         <div className="eq-stage-topline">
           <span>当前任务</span>
         </div>
@@ -419,39 +855,108 @@ const EasyQuantWorkspace: React.FC = () => {
           <p>从一个默认模板开始，先跑通完整流程。参数和高级规则之后再慢慢打开。</p>
         </div>
         <div className="eq-template-cards">
-          {strategyTemplates.map(template => (
+          {templatesForView.map(template => (
             <button
               key={template.id}
               className={`eq-template-card ${
-                selectedTemplate === template.id ? 'eq-template-card--active' : ''
+                selectedTemplateId === template.id ? 'eq-template-card--active' : ''
               }`}
-              onClick={() => setSelectedTemplate(template.id)}
-              aria-pressed={selectedTemplate === template.id}
+              onClick={() => setSelectedTemplateId(template.id)}
+              aria-pressed={selectedTemplateId === template.id}
+              disabled={template.available === false}
             >
-              {selectedTemplate === template.id ? (
+              {selectedTemplateId === template.id ? (
                 <span className="eq-template-check" aria-hidden="true">
                   ✓
                 </span>
               ) : null}
-              <JourneySketch type={template.sketch} />
+              <JourneySketch type={templateSketchById[template.id]} />
               <span>
                 <strong>{template.name}</strong>
-                <em>{template.description}</em>
+                <em>
+                  {template.beginner_summary}
+                  {template.available === false ? ` ${template.unavailable_reason}` : ''}
+                </em>
               </span>
-              <small className={`eq-risk-tag eq-risk-tag--${getRiskTone(template.risk)}`}>
-                {template.risk}
+              <small className={`eq-risk-tag eq-risk-tag--${getRiskTone(template.risk_label)}`}>
+                {template.risk_label}
               </small>
             </button>
           ))}
         </div>
         <div className="eq-stage-actions">
-          <button className="eq-button eq-button--dark" onClick={() => setActiveStep('data')}>
+          <button
+            className="eq-button eq-button--dark"
+            disabled={selectedTemplateData.available === false}
+            onClick={() => goToStep('data')}
+          >
             下一步：查数据 <ArrowRightOutlined />
           </button>
+          {selectedTemplateData.available === false && (
+            <Link className="eq-button eq-button--quiet" to="/workspace/lab">
+              去专业版查看策略
+            </Link>
+          )}
         </div>
-      </section>
+      </article>
     );
   };
+
+  const renderStepDock = () => (
+    <aside className="eq-step-dock" aria-label="步骤导航">
+      <div className="eq-progress">
+        <span>进度</span>
+        <strong>{progressPercent}%</strong>
+        <div>
+          <i style={{ width: `${progressPercent}%` }} />
+        </div>
+      </div>
+      {journeySteps.map(step => (
+        <button
+          key={step.key}
+          className={`eq-step-pill ${activeStep === step.key ? 'eq-step-pill--active' : ''}`}
+          onClick={() => goToStep(step.key)}
+        >
+          <span>{step.number}</span>
+          <div>
+            <strong>{step.title}</strong>
+            <em>{step.caption}</em>
+          </div>
+        </button>
+      ))}
+    </aside>
+  );
+
+  const renderQuickCard = () => (
+    <aside className="eq-inspector" aria-label="快捷入口">
+      <div className="eq-quick-card">
+        <span>快捷入口</span>
+        <div className="eq-quick-list">
+          <button onClick={() => setDrawerKey('template')}>模板对比</button>
+          <button onClick={() => setDrawerKey('data')}>查数据</button>
+          <button onClick={() => setDrawerKey('backtest')}>回测指标</button>
+          <button onClick={() => setDrawerKey('observe')}>观察日志</button>
+        </div>
+      </div>
+    </aside>
+  );
+
+  const renderFlowOverview = () => (
+    <div className="eq-flow-overview-grid">
+      {journeySteps.map(step => (
+        <button
+          key={step.key}
+          className={`eq-flow-card ${activeStep === step.key ? 'eq-flow-card--active' : ''}`}
+          onClick={() => goToStep(step.key)}
+        >
+          <span>{step.number}</span>
+          <JourneySketch type={step.sketch} />
+          <strong>{step.title}</strong>
+          <em>{step.caption}</em>
+        </button>
+      ))}
+    </div>
+  );
 
   const renderDrawerContent = () => {
     if (drawerKey === 'guide') {
@@ -481,7 +986,7 @@ const EasyQuantWorkspace: React.FC = () => {
     if (drawerKey === 'data') {
       return (
         <div className="eq-drawer-list">
-          {dataChecks.map(item => (
+          {dataCheckItems.map(item => (
             <article key={item.label}>
               <span>{item.label}</span>
               <strong>{item.value}</strong>
@@ -495,13 +1000,21 @@ const EasyQuantWorkspace: React.FC = () => {
     if (drawerKey === 'backtest') {
       return (
         <div className="eq-drawer-list">
-          {reportMetrics.map(metric => (
-            <article key={metric.label}>
-              <span>{metric.label}</span>
-              <strong>{metric.value}</strong>
-              <p>{metric.note}</p>
+          {backtestVerdict.beginner_metrics.length ? (
+            backtestVerdict.beginner_metrics.map(metric => (
+              <article key={metric.key}>
+                <span>{metric.label}</span>
+                <strong>{metric.value}</strong>
+                <p>{metric.explanation}</p>
+              </article>
+            ))
+          ) : (
+            <article>
+              <span>回测指标</span>
+              <strong>待生成</strong>
+              <p>完成一次真实回测后，这里会显示收益、回撤、夏普等解释。</p>
             </article>
-          ))}
+          )}
         </div>
       );
     }
@@ -509,7 +1022,7 @@ const EasyQuantWorkspace: React.FC = () => {
     if (drawerKey === 'observe') {
       return (
         <div className="eq-drawer-log">
-          {observeLogs.map(log => (
+          {observationEvents.map(log => (
             <article key={`${log.time}-${log.title}`}>
               <time>{log.time}</time>
               <div>
@@ -525,12 +1038,13 @@ const EasyQuantWorkspace: React.FC = () => {
 
     return (
       <div className="eq-drawer-list">
-        {strategyTemplates.map(template => (
+        {templatesForView.map(template => (
           <article key={template.id}>
-            <span>{template.risk}</span>
+            <span>{template.risk_label}</span>
             <strong>{template.name}</strong>
             <p>
-              {template.description} 持有周期：{template.holding}。数据状态：{template.dataStatus}。
+              {template.beginner_summary} 持有周期：{template.holding_period_label}。 策略状态：
+              {template.available === false ? '不可用' : '可用'}。
             </p>
           </article>
         ))}
@@ -574,91 +1088,146 @@ const EasyQuantWorkspace: React.FC = () => {
         </div>
       </header>
 
-      <section className="eq-hero">
-        <div className="eq-hero-main">
-          <span className="eq-kicker">简易版工作台</span>
-          <h1>开始第一套量化策略</h1>
-          <p>从一个模板开始，按步骤查数据、跑回测、进入模拟观察。</p>
-          <div className="eq-hero-actions">
-            <button
-              className="eq-button eq-button--dark eq-button--start"
-              onClick={startGuidedFlow}
-            >
-              开始：选模板 <ArrowRightOutlined />
+      <nav className="eq-section-dots" aria-label="简易版分屏导航">
+        {sectionNavItems.map(item => (
+          <button
+            key={item.id}
+            className={`eq-section-dot ${activeSectionId === item.id ? 'eq-section-dot--active' : ''}`}
+            onClick={() => scrollToSection(item.id)}
+            aria-label={`跳转到${item.label}`}
+            aria-current={activeSectionId === item.id ? 'step' : undefined}
+          >
+            <span />
+            <em>{item.label}</em>
+          </button>
+        ))}
+      </nav>
+
+      <div className="eq-scroll-root" ref={scrollRootRef}>
+        <section
+          id="easy-quant-hero"
+          className={getSectionClassName('easy-quant-hero')}
+          aria-label="开始第一套量化策略"
+        >
+          <div className="eq-screen-inner eq-screen-content">
+            <div className="eq-hero">
+              <div className="eq-hero-main">
+                <span className="eq-kicker">简易版工作台</span>
+                <h1>开始第一套量化策略</h1>
+                <p>从一个模板开始，按步骤查数据、跑回测、进入模拟观察。</p>
+                <div className="eq-hero-actions">
+                  <button
+                    className="eq-button eq-button--dark eq-button--start"
+                    onClick={startGuidedFlow}
+                  >
+                    开始 <ArrowRightOutlined />
+                  </button>
+                </div>
+              </div>
+
+              <aside className="eq-recommendation">
+                <div className="eq-rec-top">
+                  <strong>今日建议</strong>
+                  <button aria-label="刷新今日建议">
+                    <ReloadOutlined /> 刷新
+                  </button>
+                </div>
+                <div className="eq-rec-body">
+                  <JourneySketch type="flag" />
+                  <h2>先用沪深300成分池跑 2 年回测</h2>
+                  <p>覆盖度高，流动性好，更适合验证第一版策略稳定性。</p>
+                </div>
+              </aside>
+            </div>
+            <button className="eq-scroll-cue" onClick={startGuidedFlow} aria-label="向下滚动">
+              <span>向下滚动</span>
+              <ArrowRightOutlined />
             </button>
           </div>
+        </section>
+
+        <section
+          id="easy-quant-flow"
+          className={getSectionClassName('easy-quant-flow')}
+          aria-label="四步操作动线"
+        >
+          <div className="eq-screen-inner eq-screen-content eq-flow-overview">
+            <div className="eq-flow-intro">
+              <span className="eq-kicker">四步操作动线</span>
+              <h2>今天只推进一步</h2>
+              <p>简易版把复杂量化流程收成四个动作。先看清楚顺序，再进入模板选择。</p>
+              <div className="eq-flow-meter">
+                <span>当前：{activeStepData.title}</span>
+                <strong>{progressPercent}%</strong>
+                <div>
+                  <i style={{ width: `${progressPercent}%` }} />
+                </div>
+              </div>
+              <button className="eq-button eq-button--dark" onClick={() => goToStep('template')}>
+                继续：选模板 <ArrowRightOutlined />
+              </button>
+            </div>
+            {renderFlowOverview()}
+          </div>
+        </section>
+
+        <div className="eq-screen-inner eq-workflow-grid" aria-label="分步操作区">
+          {renderStepDock()}
+          <div className="eq-stage-sections">
+            <section
+              id="easy-quant-template"
+              className={getSectionClassName('easy-quant-template')}
+              aria-label="选择策略模板"
+            >
+              <div className="eq-screen-content eq-stage-wrap">{renderStage('template')}</div>
+            </section>
+
+            <section
+              id="easy-quant-data"
+              className={getSectionClassName('easy-quant-data')}
+              aria-label="查数据"
+            >
+              <div className="eq-screen-content eq-stage-wrap">{renderStage('data')}</div>
+            </section>
+
+            <section
+              id="easy-quant-backtest"
+              className={getSectionClassName('easy-quant-backtest')}
+              aria-label="跑回测"
+            >
+              <div className="eq-screen-content eq-stage-wrap">{renderStage('backtest')}</div>
+            </section>
+
+            <section
+              id="easy-quant-observe"
+              className={getSectionClassName('easy-quant-observe')}
+              aria-label="模拟观察"
+            >
+              <div className="eq-screen-content eq-stage-wrap">{renderStage('observe')}</div>
+            </section>
+          </div>
+          {renderQuickCard()}
         </div>
 
-        <aside className="eq-recommendation">
-          <div className="eq-rec-top">
-            <strong>今日建议</strong>
-            <button aria-label="刷新今日建议">
-              <ReloadOutlined /> 刷新
-            </button>
-          </div>
-          <JourneySketch type="flag" />
-          <h2>先用沪深300成分池跑 2 年回测</h2>
-          <p>覆盖度高，流动性好，更适合验证第一版策略稳定性。</p>
-        </aside>
-      </section>
-
-      <section id="easy-quant-flow" className="eq-flow-shell" aria-label="简易版操作动线">
-        <aside className="eq-step-dock" aria-label="步骤导航">
-          <div className="eq-progress">
-            <span>进度</span>
-            <strong>{progressPercent}%</strong>
-            <div>
-              <i style={{ width: `${progressPercent}%` }} />
-            </div>
-          </div>
-          {journeySteps.map(step => (
-            <button
-              key={step.key}
-              className={`eq-step-pill ${activeStep === step.key ? 'eq-step-pill--active' : ''}`}
-              onClick={() => setActiveStep(step.key)}
-            >
-              <span>{step.number}</span>
-              <div>
-                <strong>{step.title}</strong>
-                <em>{step.caption}</em>
-              </div>
-            </button>
-          ))}
-        </aside>
-
-        <div className="eq-stage-wrap">{renderStage()}</div>
-
-        <aside className="eq-inspector" aria-label="快捷入口">
-          <div className="eq-quick-card">
-            <span>快捷入口</span>
-            <div className="eq-quick-list">
-              <button onClick={() => setDrawerKey('template')}>模板对比</button>
-              <button onClick={() => setDrawerKey('data')}>查数据</button>
-              <button onClick={() => setDrawerKey('backtest')}>回测指标</button>
-              <button onClick={() => setDrawerKey('observe')}>观察日志</button>
-            </div>
-          </div>
-        </aside>
-      </section>
-
-      <footer className="eq-status-strip" aria-label="系统状态">
-        <span>
-          <EasyQuantMark compact />
-          数据更新 <strong>2026-06-24 15:28</strong>
-        </span>
-        <span>
-          <CheckCircleOutlined />
-          完整性 <strong>96%</strong>
-        </span>
-        <span>
-          <CheckCircleOutlined />
-          风险边界 <strong>已启用</strong>
-        </span>
-        <Link to="/workspace/system">新手指南</Link>
-        <Link to="/workspace/lab">
-          进入专业版 <ExportOutlined />
-        </Link>
-      </footer>
+        <footer className="eq-status-strip" aria-label="系统状态">
+          <span>
+            <EasyQuantMark compact />
+            数据状态 <strong>{bootstrap?.data_freshness?.status || '待检查'}</strong>
+          </span>
+          <span>
+            <CheckCircleOutlined />
+            运行环境 <strong>{bootstrap?.runtime_health?.status || '待检查'}</strong>
+          </span>
+          <span>
+            <CheckCircleOutlined />
+            模板 <strong>{selectedTemplateData.name}</strong>
+          </span>
+          <Link to="/workspace/system">新手指南</Link>
+          <Link to="/workspace/lab">
+            进入专业版 <ExportOutlined />
+          </Link>
+        </footer>
+      </div>
 
       <div className={`eq-drawer-layer ${drawerKey ? 'eq-drawer-layer--open' : ''}`}>
         <button
