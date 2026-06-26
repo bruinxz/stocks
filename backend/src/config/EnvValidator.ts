@@ -189,6 +189,12 @@ function buildBaseSchema(): Joi.ObjectSchema {
     // ----------- 可选: Scheduler/Misc 开关 (不强校验) -----------
     DISABLE_SCHEDULER: Joi.string().optional(),
     DISABLE_DEFAULT_TASK_SEED: Joi.string().optional(),
+    DISABLE_QUEUE_WORKERS: Joi.string().optional(),
+    DISABLE_LIVE_TRADING_BACKGROUND: Joi.string().optional(),
+    SKIP_DB_SYNC: Joi.string().optional(),
+    SKIP_LEGACY_SCHEMA_REPAIR: Joi.string().optional(),
+    SKIP_RECOMMENDATION_RUNTIME_SYNC: Joi.string().optional(),
+    SKIP_DEFAULT_USER_INIT: Joi.string().optional(),
     DISABLE_FEISHU_BOT_WEBHOOK: Joi.string().optional(),
     DISABLE_EMAIL_NOTIFICATION: Joi.string().optional(),
     DISABLE_WECHAT_NOTIFICATION: Joi.string().optional(),

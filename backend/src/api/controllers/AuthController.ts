@@ -11,6 +11,7 @@ export interface JwtPayload {
 }
 
 export class AuthController {
+  private static defaultUsersInitPromise: Promise<void> | null = null;
   private readonly jwtSecret: string;
   private readonly refreshTokenSecret: string;
   // Batch AU (2026-06-22): "登录态保持 3 天" 修复
@@ -54,12 +55,22 @@ export class AuthController {
     this.getProfile = this.getProfile.bind(this);
     this.updateProfile = this.updateProfile.bind(this);
     this.uploadAvatar = this.uploadAvatar.bind(this);
-
-    // 初始化默认用户
-    this.initDefaultUsers();
   }
 
-  private async initDefaultUsers() {
+  static ensureDefaultUsersInitialized(): Promise<void> {
+    if (String(process.env.SKIP_DEFAULT_USER_INIT || '').toLowerCase() === 'true') {
+      logger.info('[AuthController] default user initialization skipped by environment flag');
+      return Promise.resolve();
+    }
+
+    if (!AuthController.defaultUsersInitPromise) {
+      AuthController.defaultUsersInitPromise = AuthController.initDefaultUsers();
+    }
+
+    return AuthController.defaultUsersInitPromise;
+  }
+
+  private static async initDefaultUsers() {
     try {
       // P0 launch-helper：硬编码 '666' admin 密码是上线最大后门。
       // production 环境必须显式 LIVE_ADMIN_BOOTSTRAP_PASSWORD 才创建默认 admin；
