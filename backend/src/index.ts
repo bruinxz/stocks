@@ -37,9 +37,9 @@ if (!runProductionPreflight()) {
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import path from 'path';
 import cookieParser from 'cookie-parser';
 import { sequelize } from './config/database';
+import { AuthController } from './api/controllers/AuthController';
 import authRoutes from './api/routes/auth.routes';
 import stockRoutes from './api/routes/stock.routes';
 import backtestRoutes from './api/routes/backtest.routes';
@@ -72,10 +72,7 @@ import dataRoutes from './api/routes/data.routes';
 import macroRoutes from './api/routes/macro.routes';
 import improvementSuggestionRoutes from './api/routes/improvementSuggestion.routes';
 // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环
-import {
-  userFeedbackMeRoutes,
-  userFeedbackAdminRoutes,
-} from './api/routes/userFeedback.routes';
+import { userFeedbackMeRoutes, userFeedbackAdminRoutes } from './api/routes/userFeedback.routes';
 import bridgeRoutes from './live-trading/routes/bridge.routes';
 import './jobs/dataUpdateWorker'; // 初始化数据更新队列处理器
 import './jobs/aiPollingWorker'; // 初始化 AI 分析轮询队列处理器
@@ -87,9 +84,19 @@ import { ensureUploadsRuntime, getUploadsRoot } from './utils/runtimePaths';
 const app = express();
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
+const isProduction = process.env.NODE_ENV === 'production';
 const disableScheduler = String(process.env.DISABLE_SCHEDULER || '').toLowerCase() === 'true';
 const disableDefaultTaskSeed =
   disableScheduler || String(process.env.DISABLE_DEFAULT_TASK_SEED || '').toLowerCase() === 'true';
+const requestedSkipDatabaseSync = String(process.env.SKIP_DB_SYNC || '').toLowerCase() === 'true';
+const requestedSkipLegacySchemaRepair =
+  String(process.env.SKIP_LEGACY_SCHEMA_REPAIR || '').toLowerCase() === 'true';
+const requestedSkipRecommendationRuntimeSync =
+  String(process.env.SKIP_RECOMMENDATION_RUNTIME_SYNC || '').toLowerCase() === 'true';
+const devSkipLegacySchemaRepair = !isProduction && requestedSkipLegacySchemaRepair;
+const devSkipRecommendationRuntimeSync = !isProduction && requestedSkipRecommendationRuntimeSync;
+const disableLiveTradingBackground =
+  String(process.env.DISABLE_LIVE_TRADING_BACKGROUND || '').toLowerCase() === 'true';
 
 // Middleware
 // CORS：默认收紧到 ALLOWED_ORIGINS 白名单（逗号分隔），仅在显式 LIVE_TRADING_CORS_RELAX=true 时全反射。
@@ -322,7 +329,6 @@ if (shouldExposeSwaggerUI()) {
   });
 }
 
-import { User } from './models/User';
 import { AIInvestmentSignal } from './models/AIInvestmentSignal';
 import { RecommendationTradeOutcome } from './models/RecommendationTradeOutcome';
 import { PaperTradingOrderIntent } from './models/PaperTradingOrderIntent';
@@ -839,37 +845,47 @@ async function initializeApp() {
     await sequelize.authenticate();
     console.log('Database connection has been established successfully.');
 
-    await repairLegacyDevelopmentSchema();
-
-    // 生产环境当前没有独立 migration runner；新闭环收益表必须在启动时幂等创建，
-    // 以免定时任务先于开发环境 alter 同步执行导致接口 500。
-    try {
-      await syncRecommendationRuntimeTables();
-    } catch (schemaError: any) {
+    if (isProduction && requestedSkipLegacySchemaRepair) {
       console.warn(
-        'Failed to sync recommendation loop tables:',
-        schemaError?.message || schemaError
+        'SKIP_LEGACY_SCHEMA_REPAIR=true ignored in production; startup schema repair will run.'
       );
     }
 
+    if (isProduction && requestedSkipRecommendationRuntimeSync) {
+      console.warn(
+        'SKIP_RECOMMENDATION_RUNTIME_SYNC=true ignored in production; recommendation runtime schema sync will run.'
+      );
+    }
+
+    if (devSkipLegacySchemaRepair) {
+      console.log('Legacy development schema compatibility check skipped by environment flag');
+    } else {
+      await repairLegacyDevelopmentSchema();
+    }
+
+    // 生产环境当前没有独立 migration runner；新闭环收益表必须在启动时幂等创建，
+    // 以免定时任务先于开发环境 alter 同步执行导致接口 500。
+    if (devSkipRecommendationRuntimeSync) {
+      console.log('Recommendation runtime schema sync skipped by environment flag');
+    } else {
+      try {
+        await syncRecommendationRuntimeTables();
+      } catch (schemaError: any) {
+        console.warn(
+          'Failed to sync recommendation loop tables:',
+          schemaError?.message || schemaError
+        );
+      }
+    }
+
     // Sync models in development environment
-    if (process.env.NODE_ENV === 'development') {
+    if (process.env.NODE_ENV === 'development' && requestedSkipDatabaseSync) {
+      console.log('Database model sync skipped by SKIP_DB_SYNC=true');
+    } else if (process.env.NODE_ENV === 'development') {
       console.log('Syncing database models...');
       try {
         await sequelize.sync({ alter: true }); // 创建缺失的表并修改现有表结构
         console.log('Database models synced successfully with alter: true');
-
-        const lymCount = await User.count({ where: { username: 'lym' } });
-        if (lymCount === 0) {
-          await User.create({
-            username: 'lym',
-            password_hash: '666',
-            email: 'lym@example.com',
-            role: 'admin',
-            is_active: true,
-          });
-          console.log('Default admin user "lym" created successfully');
-        }
 
         if (disableDefaultTaskSeed) {
           console.log('Default scheduled task seeding skipped by environment flag');
@@ -956,6 +972,8 @@ async function initializeApp() {
       }
     }
 
+    await AuthController.ensureDefaultUsersInitialized();
+
     // 生产环境不执行 sequelize.sync，但默认任务仍需要随版本演进做幂等补齐。
     // ensureDefaultTasks 只会 findOrCreate / 补缺省字段，不会覆盖用户已有 cron 配置。
     try {
@@ -992,7 +1010,7 @@ async function initializeApp() {
     // 实盘 kill switch 自动巡检：每 60 秒检查订单失败率/连败/订单数，命中阈值即触发熔断。
     // 仅在数据库可用时启用；NODE_ENV=test 不启动避免污染单元测试。
     // 显式 unref，让 ts-node smoke / CI 跑完不被 timer 阻塞退出。
-    if (process.env.NODE_ENV !== 'test') {
+    if (process.env.NODE_ENV !== 'test' && !disableLiveTradingBackground) {
       const intervalMs = Math.max(
         Number(process.env.LIVE_KILL_SWITCH_SCAN_INTERVAL_MS || 60000),
         15000
@@ -1031,6 +1049,8 @@ async function initializeApp() {
         }
       }, expiryIntervalMs);
       expTimer.unref?.();
+    } else if (disableLiveTradingBackground) {
+      console.log('Live trading background scans skipped by environment flag');
     }
 
     // Batch R (2026-06-17, P1-2): 全局 error handler middleware — 放在 app.listen 前,
