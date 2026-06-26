@@ -26,6 +26,7 @@ FRONTEND_LOG="$RUNTIME_DIR/frontend.log"
 REDIS_LOG="$RUNTIME_DIR/redis.log"
 REDIS_CONTAINER_NAME="${STOCKS_DEV_REDIS_CONTAINER:-stocks-local-dev-redis}"
 CURRENT_MODE="${STOCKS_DEV_MODE:-safe}"
+BACKEND_ENV_CACHE=""
 LABEL_SUFFIX="$(printf '%s' "$ROOT_DIR" | cksum | awk '{print $1}')"
 LAUNCHD_DOMAIN="gui/$(id -u)"
 BACKEND_LABEL="com.local.stocks.$LABEL_SUFFIX.backend"
@@ -389,14 +390,12 @@ ensure_backend_env() {
   fi
 }
 
-env_value() {
-  local key="$1"
-  node - "$BACKEND_DIR/.env" "$key" <<'NODE'
+load_backend_env_cache() {
+  BACKEND_ENV_CACHE="$(node - "$BACKEND_DIR/.env" <<'NODE'
 const fs = require('fs');
 const path = require('path');
 
 const envFile = process.argv[2];
-const key = process.argv[3];
 let dotenv;
 
 try {
@@ -406,12 +405,22 @@ try {
 }
 
 const parsed = dotenv.parse(fs.readFileSync(envFile));
-process.stdout.write(parsed[key] || '');
+for (const key of ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER']) {
+  process.stdout.write(`${key}=${parsed[key] || ''}\n`);
+}
 NODE
+)"
+}
+
+env_value() {
+  local key="$1"
+  printf '%s\n' "$BACKEND_ENV_CACHE" | awk -F= -v key="$key" \
+    '$1 == key { sub(/^[^=]*=/, ""); print; exit }'
 }
 
 assert_backend_env_points_to_dev_db() {
   local db_host db_port db_name db_user
+  load_backend_env_cache
   db_host="$(env_value DB_HOST)"
   db_port="$(env_value DB_PORT)"
   db_name="$(env_value DB_NAME)"

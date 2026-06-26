@@ -64,7 +64,10 @@ export class AuthController {
     }
 
     if (!AuthController.defaultUsersInitPromise) {
-      AuthController.defaultUsersInitPromise = AuthController.initDefaultUsers();
+      AuthController.defaultUsersInitPromise = AuthController.initDefaultUsers().catch(err => {
+        AuthController.defaultUsersInitPromise = null;
+        throw err;
+      });
     }
 
     return AuthController.defaultUsersInitPromise;
