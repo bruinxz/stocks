@@ -561,6 +561,76 @@ export class QuantController {
     }
   }
 
+  async listResearchExperiments(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await backtestEngine.listResearchExperiments({
+        user_id: req.user?.id,
+        limit: Number(req.query.limit || 50),
+      });
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('获取研究实验账本失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async createResearchExperiment(req: AuthenticatedRequest, res: Response) {
+    try {
+      const body = req.body || {};
+      if (!body.strategy_key && !Array.isArray(body.strategy_keys)) {
+        return res.status(400).json({ success: false, message: '缺少 strategy_key' });
+      }
+      if (!body.start_date || !body.end_date) {
+        return res.status(400).json({ success: false, message: '缺少 start_date 或 end_date' });
+      }
+      const data = await backtestEngine.createResearchExperiment(body, req.user?.id);
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('创建研究实验账本失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async getResearchExperiment(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await backtestEngine.getResearchExperiment(Number(req.params.id), req.user?.id);
+      if (!data) return res.status(404).json({ success: false, message: '研究实验不存在' });
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('获取研究实验详情失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async runResearchExperimentAudit(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await backtestEngine.runResearchExperimentAudit(
+        Number(req.params.id),
+        req.user?.id
+      );
+      if (!data) {
+        return res
+          .status(404)
+          .json({ success: false, message: '研究实验不存在或尚未绑定回测任务' });
+      }
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('运行研究实验审计失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async getBacktestResearchAudit(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await backtestEngine.getBacktestResearchAudit(Number(req.params.id));
+      if (!data) return res.status(404).json({ success: false, message: '回测审计不存在' });
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('获取回测研究审计失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
   async getBacktest(req: Request, res: Response) {
     try {
       const data = await backtestEngine.get(Number(req.params.id));

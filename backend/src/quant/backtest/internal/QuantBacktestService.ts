@@ -10,6 +10,7 @@ import { benchmarkIndexService } from '../../../services/BenchmarkIndexService';
 import { selectBenchmarkForStrategyKeys } from '../BenchmarkSelector';
 import { quantStrategyExperimentService } from '../../engine/internal/QuantStrategyExperimentService';
 import { quantStrategyService } from '../../engine/internal/QuantStrategyService';
+import { researchExperimentService } from '../../../services/research/ResearchExperimentService';
 import { logger } from '../../../utils/logger';
 import { Op } from 'sequelize';
 import { incrementBacktestTotal } from '../../../metrics/PrometheusRegistry';
@@ -422,8 +423,10 @@ export class QuantBacktestService {
 
   async createBacktestTask(options: QuantBacktestOptions, user_id?: number, asyncMode = true) {
     const normalizedOptions = this.withDefaultExecutionOptions(options);
+    const rawOptions = normalizedOptions as any;
     const task = await QuantBacktestTask.create({
       user_id,
+      experiment_id: Number(rawOptions.experiment_id || 0) || null,
       task_name: options.task_name || `量化策略跑分 ${options.start_date}~${options.end_date}`,
       universe: options.universe || 'market',
       strategy_keys: options.strategy_keys,
@@ -436,7 +439,22 @@ export class QuantBacktestService {
       status: asyncMode ? 'QUEUED' : 'RUNNING',
       progress: asyncMode ? 0 : 10,
       parameters: normalizedOptions,
+      data_policy_json: rawOptions.data_policy_json || {},
+      constraint_policy_json: rawOptions.constraint_policy_json || {},
     });
+
+    try {
+      const experiment = await researchExperimentService.createOrAttachForBacktest(
+        normalizedOptions,
+        task,
+        user_id
+      );
+      if (experiment) {
+        (normalizedOptions as any).experiment_id = experiment.id;
+      }
+    } catch (error: any) {
+      logger.warn(`[quant-backtest] research experiment attach failed: ${error?.message || error}`);
+    }
 
     if (!asyncMode) {
       return this.processBacktestTask(task.id, normalizedOptions, {
@@ -856,6 +874,16 @@ export class QuantBacktestService {
         },
       } as any);
       const experimentResult = await quantStrategyExperimentService.recordBacktestTask(task.id);
+      let researchAudit: any = null;
+      if (task.experiment_id) {
+        try {
+          researchAudit = await researchExperimentService.runAuditForBacktest(task.id);
+        } catch (error: any) {
+          logger.warn(
+            `[quant-backtest] research audit failed for task ${task.id}: ${error?.message || error}`
+          );
+        }
+      }
 
       // US-072 Prometheus: 每条策略结果各增 1 个 `backtest_total{strategy, result='success'}`
       // —— 一个 task 可能跑多策略，per-strategy 计数让 Grafana 能按策略看通过率。
@@ -891,7 +919,9 @@ export class QuantBacktestService {
           best_excess_return_pct: round(best?.excess_return_pct || 0, 2),
           best_validation_verdict: best?.validation?.verdict,
           experiment_count: experimentResult.recorded,
+          research_verdict: researchAudit?.credibility_verdict?.verdict || null,
         },
+        research_audit: researchAudit,
       };
     } catch (error: any) {
       await this.markTaskFailed(task.id, error);
@@ -988,6 +1018,12 @@ export class QuantBacktestService {
       order: [['buy_date', 'DESC']],
       limit: 500,
     });
+    let research_audit: any = null;
+    try {
+      research_audit = await researchExperimentService.getBacktestResearchAudit(id);
+    } catch (error: any) {
+      logger.warn(`[quant-backtest] load research audit failed: ${error?.message || error}`);
+    }
     return {
       task: {
         ...task.toJSON(),
@@ -996,6 +1032,7 @@ export class QuantBacktestService {
       results,
       trades,
       run_summary: this.buildTaskRunSummary(task, results),
+      research_audit,
     };
   }
 

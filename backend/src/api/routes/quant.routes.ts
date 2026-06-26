@@ -442,6 +442,30 @@ router.post(
   quantController.refreshParamLifecycle.bind(quantController)
 );
 
+router.get(
+  '/research-experiments',
+  authController.authenticate,
+  quantController.listResearchExperiments.bind(quantController)
+);
+
+router.post(
+  '/research-experiments',
+  authController.authenticate,
+  quantController.createResearchExperiment.bind(quantController)
+);
+
+router.get(
+  '/research-experiments/:id',
+  authController.authenticate,
+  quantController.getResearchExperiment.bind(quantController)
+);
+
+router.post(
+  '/research-experiments/:id/run-audit',
+  authController.authenticate,
+  quantController.runResearchExperimentAudit.bind(quantController)
+);
+
 /**
  * @openapi
  * /api/quant/backtests:
@@ -702,6 +726,12 @@ router.get(
   '/backtests',
   authController.authenticate,
   quantController.listBacktests.bind(quantController)
+);
+
+router.get(
+  '/backtests/:id/research-audit',
+  authController.authenticate,
+  quantController.getBacktestResearchAudit.bind(quantController)
 );
 
 /**

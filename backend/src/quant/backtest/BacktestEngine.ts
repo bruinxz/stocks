@@ -10,6 +10,7 @@ import { quantBacktestService } from './internal/QuantBacktestService';
 import { quantStrategyService } from '../engine/internal/QuantStrategyService';
 import { costSensitivityAnalysis, CostSensitivityAnalyzeOptions } from './CostSensitivityAnalysis';
 import { walkForwardValidator, WalkForwardInput, WalkForwardOptions } from './WalkForwardValidator';
+import { researchExperimentService } from '../../services/research/ResearchExperimentService';
 
 async function withResolvedStrategyParams(input: any) {
   const strategy_keys = await quantStrategyService.resolveStrategyKeys(
@@ -58,6 +59,26 @@ export class BacktestEngine {
 
   get(id: number) {
     return quantBacktestService.getBacktest(id);
+  }
+
+  listResearchExperiments(options: { user_id?: number; limit?: number } = {}) {
+    return researchExperimentService.listExperiments(options);
+  }
+
+  createResearchExperiment(input: any, user_id?: number) {
+    return researchExperimentService.createExperiment(input, user_id);
+  }
+
+  getResearchExperiment(id: number, user_id?: number) {
+    return researchExperimentService.getExperiment(id, user_id);
+  }
+
+  runResearchExperimentAudit(id: number, user_id?: number) {
+    return researchExperimentService.runAuditForExperiment(id, user_id);
+  }
+
+  getBacktestResearchAudit(taskId: number) {
+    return researchExperimentService.getBacktestResearchAudit(taskId);
   }
 
   retry(id: number, user_id?: number) {

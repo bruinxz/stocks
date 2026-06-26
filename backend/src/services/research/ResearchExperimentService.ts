@@ -1,4 +1,14 @@
-import { QuantResearchArtifactStatus } from '../../models/QuantResearchArtifact';
+import { createHash } from 'crypto';
+import {
+  QuantResearchArtifact,
+  QuantResearchArtifactStatus,
+} from '../../models/QuantResearchArtifact';
+import { QuantResearchExperiment } from '../../models/QuantResearchExperiment';
+import { QuantBacktestTask } from '../../models/QuantBacktestTask';
+import { QuantBacktestResult } from '../../models/QuantBacktestResult';
+import { QuantBacktestOptions } from '../../quant/types/QuantTypes';
+import { ResearchIntegrityService } from './ResearchIntegrityService';
+import { logger } from '../../utils/logger';
 
 export type QuantResearchVerdict = 'pending' | 'pass' | 'watch' | 'reject' | 'insufficient';
 
@@ -20,6 +30,16 @@ export interface CredibilitySummary {
   next_action_label: string;
   title: string;
   summary: string;
+}
+
+export interface ResearchAuditPayload {
+  experiment: any;
+  artifacts: any[];
+  credibility_verdict: CredibilitySummary;
+  can_create_observation: boolean;
+  blocking_reasons: string[];
+  watch_reasons: string[];
+  next_action_label: string;
 }
 
 function statusToReason(artifact: Pick<ResearchArtifactDraft, 'status' | 'summary'>): string {
@@ -181,6 +201,348 @@ export function buildCredibilitySummary(input: {
   };
 }
 
-export class ResearchExperimentService {}
+function stableStringify(value: any): string {
+  if (value === null || value === undefined) return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(item => stableStringify(item)).join(',')}]`;
+  if (typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map(key => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function shortHash(value: any): string {
+  return createHash('sha1').update(stableStringify(value)).digest('hex').slice(0, 12);
+}
+
+function asPlain(row: any) {
+  return row && typeof row.toJSON === 'function' ? row.toJSON() : row;
+}
+
+function artifactByType(artifacts: any[], artifact_type: string) {
+  return artifacts.find(item => item.artifact_type === artifact_type) || null;
+}
+
+function buildBacktestArtifact(task: QuantBacktestTask, bestResult: QuantBacktestResult | null) {
+  if (!bestResult) {
+    return {
+      artifact_type: 'backtest',
+      source_type: 'quant_backtest_task',
+      source_id: task.id,
+      status: task.status === 'FAILED' ? 'reject' : 'insufficient',
+      title: '回测来源',
+      summary:
+        task.status === 'FAILED'
+          ? task.error_message || '回测失败，没有可信结果。'
+          : '回测完成但没有生成策略结果。',
+      payload_json: {
+        task_id: task.id,
+        task_status: task.status,
+        error_message: task.error_message || null,
+      },
+    } as ResearchArtifactDraft;
+  }
+
+  return {
+    artifact_type: 'backtest',
+    source_type: 'quant_backtest_result',
+    source_id: bestResult.id,
+    status: 'pass',
+    title: '回测来源',
+    summary: `${bestResult.strategy_name || bestResult.strategy_key} 回测完成，总收益 ${Number(
+      bestResult.total_return_pct || 0
+    ).toFixed(2)}%，最大回撤 ${Number(bestResult.max_drawdown_pct || 0).toFixed(2)}%。`,
+    payload_json: {
+      task_id: task.id,
+      result_id: bestResult.id,
+      strategy_key: bestResult.strategy_key,
+      strategy_name: bestResult.strategy_name,
+      total_return_pct: Number(bestResult.total_return_pct || 0),
+      excess_return_pct: Number(bestResult.excess_return_pct || 0),
+      max_drawdown_pct: Number(bestResult.max_drawdown_pct || 0),
+      sharpe_ratio: Number(bestResult.sharpe_ratio || 0),
+      trade_count: Number(bestResult.trade_count || 0),
+    },
+  } as ResearchArtifactDraft;
+}
+
+export class ResearchExperimentService {
+  constructor(private integrityService = new ResearchIntegrityService()) {}
+
+  async createExperiment(input: Record<string, any>, user_id?: number | null) {
+    const strategyKeys = Array.isArray(input.strategy_keys)
+      ? input.strategy_keys
+      : input.strategy_key
+      ? [input.strategy_key]
+      : [];
+    const strategy_key = String(strategyKeys[0] || input.strategy_key || 'unknown');
+    const seed = {
+      user_id: user_id || null,
+      strategy_key,
+      template_id: input.template_id || null,
+      start_date: input.start_date,
+      end_date: input.end_date,
+      universe: input.universe || 'market',
+      symbols: input.symbols || [],
+      hypothesis: input.hypothesis || '',
+      created_at: Date.now(),
+    };
+    const experiment = await QuantResearchExperiment.create({
+      user_id: user_id || null,
+      experiment_key: `qresearch_${shortHash(seed)}`,
+      hypothesis: input.hypothesis || null,
+      strategy_key,
+      template_id: input.template_id || null,
+      task_id: input.task_id || null,
+      status: input.status || 'draft',
+      verdict: 'pending',
+      start_date: input.start_date,
+      end_date: input.end_date,
+      universe: input.universe || 'market',
+      symbols: input.symbols || [],
+      params_json: input.params_json || input.params_by_strategy || {},
+      data_policy_json: input.data_policy_json || {},
+      cost_policy_json: input.cost_policy_json || {},
+      constraint_policy_json: input.constraint_policy_json || {},
+      summary_json: {},
+    } as any);
+    return experiment;
+  }
+
+  async createOrAttachForBacktest(
+    options: QuantBacktestOptions,
+    task: QuantBacktestTask,
+    user_id?: number
+  ) {
+    const rawOptions = options as any;
+    const explicitExperimentId = Number(rawOptions.experiment_id || task.experiment_id || 0);
+    if (explicitExperimentId > 0) {
+      const existing = await QuantResearchExperiment.findByPk(explicitExperimentId);
+      if (existing) {
+        await existing.update({ task_id: task.id, status: 'running' } as any);
+        await task.update({
+          experiment_id: existing.id,
+          data_policy_json: rawOptions.data_policy_json || existing.data_policy_json || {},
+          constraint_policy_json:
+            rawOptions.constraint_policy_json || existing.constraint_policy_json || {},
+        } as any);
+        return existing;
+      }
+    }
+
+    if (!rawOptions.easy_mode) return null;
+
+    const experiment = await this.createExperiment(
+      {
+        ...rawOptions,
+        task_id: task.id,
+        status: 'running',
+        strategy_key: rawOptions.strategy_keys?.[0],
+        params_json: rawOptions.params_by_strategy || {},
+        cost_policy_json: {
+          initial_capital: rawOptions.initial_capital,
+          commission_rate: rawOptions.commission_rate,
+          slippage_rate: rawOptions.slippage_rate,
+          min_commission: rawOptions.min_commission,
+          stamp_tax_rate: rawOptions.stamp_tax_rate,
+        },
+      },
+      user_id
+    );
+    await task.update({
+      experiment_id: experiment.id,
+      data_policy_json: rawOptions.data_policy_json || {},
+      constraint_policy_json: rawOptions.constraint_policy_json || {},
+    } as any);
+    return experiment;
+  }
+
+  private async replaceArtifact(
+    experiment_id: number,
+    task_id: number | null,
+    draft: ResearchArtifactDraft
+  ) {
+    const artifact_type = draft.artifact_type || 'credibility_summary';
+    await QuantResearchArtifact.destroy({
+      where: {
+        experiment_id,
+        task_id,
+        artifact_type,
+      },
+    });
+    return QuantResearchArtifact.create({
+      experiment_id,
+      task_id,
+      artifact_type,
+      source_type: draft.source_type || null,
+      source_id: draft.source_id || null,
+      status: draft.status,
+      title: draft.title || artifact_type,
+      summary: draft.summary,
+      payload_json: draft.payload_json || {},
+    } as any);
+  }
+
+  private async findExperimentForTask(task: QuantBacktestTask) {
+    if (task.experiment_id) {
+      const byId = await QuantResearchExperiment.findByPk(task.experiment_id);
+      if (byId) return byId;
+    }
+    return QuantResearchExperiment.findOne({ where: { task_id: task.id } });
+  }
+
+  async runAuditForBacktest(task_id: number): Promise<ResearchAuditPayload | null> {
+    const task = await QuantBacktestTask.findByPk(task_id);
+    if (!task) return null;
+    const experiment = await this.findExperimentForTask(task);
+    if (!experiment) return null;
+
+    const results = await QuantBacktestResult.findAll({
+      where: { task_id },
+      order: [['total_return_pct', 'DESC']],
+    });
+    const bestResult = results[0] || null;
+    const backtestArtifact = buildBacktestArtifact(task, bestResult);
+    await this.replaceArtifact(experiment.id, task.id, backtestArtifact);
+
+    let integrityArtifact: ResearchArtifactDraft;
+    if (!bestResult) {
+      integrityArtifact = {
+        artifact_type: 'integrity_audit',
+        source_type: 'research_integrity_audit',
+        source_id: null,
+        status: 'insufficient',
+        title: '未来数据检查',
+        summary: '缺少可审计的回测结果，无法判断是否使用未来数据。',
+        payload_json: {},
+      };
+    } else {
+      try {
+        const integrityReport = await this.integrityService.auditBacktest(
+          {
+            backtest_id: bestResult.id,
+            source: 'quant_backtest_result',
+            strategy_key: bestResult.strategy_key,
+            scan_strategy_code: true,
+          },
+          { persist: true }
+        );
+        integrityArtifact = mapResearchIntegrityArtifact(integrityReport);
+      } catch (error: any) {
+        logger.warn(`[research-experiment] integrity audit failed: ${error?.message || error}`);
+        integrityArtifact = {
+          artifact_type: 'integrity_audit',
+          source_type: 'research_integrity_audit',
+          source_id: null,
+          status: 'error',
+          title: '未来数据检查',
+          summary: error?.message || '未来数据检查执行失败。',
+          payload_json: { error: error?.message || String(error) },
+        };
+      }
+    }
+    await this.replaceArtifact(experiment.id, task.id, integrityArtifact);
+
+    const rejectedOrders = results.flatMap(result =>
+      Array.isArray(result.rejected_orders_json) ? result.rejected_orders_json : []
+    );
+    const executionArtifact = buildExecutionArtifactFromRejectedOrders(rejectedOrders);
+    await this.replaceArtifact(experiment.id, task.id, executionArtifact);
+
+    const credibility = buildCredibilitySummary({
+      backtest_artifact: backtestArtifact,
+      integrity_artifact: integrityArtifact,
+      execution_artifact: executionArtifact,
+    });
+    await this.replaceArtifact(experiment.id, task.id, {
+      artifact_type: 'credibility_summary',
+      source_type: 'quant_research_experiment',
+      source_id: experiment.id,
+      status:
+        credibility.verdict === 'pass' || credibility.verdict === 'watch'
+          ? credibility.verdict
+          : credibility.verdict === 'pending'
+          ? 'pending'
+          : credibility.verdict,
+      title: credibility.title,
+      summary: credibility.summary,
+      payload_json: credibility,
+    });
+
+    await experiment.update({
+      status: task.status === 'COMPLETED' ? 'completed' : 'running',
+      verdict: credibility.verdict,
+      summary_json: {
+        credibility_verdict: credibility,
+        updated_at: new Date().toISOString(),
+      },
+    } as any);
+
+    return this.getBacktestResearchAudit(task.id);
+  }
+
+  async getBacktestResearchAudit(task_id: number): Promise<ResearchAuditPayload | null> {
+    const task = await QuantBacktestTask.findByPk(task_id);
+    if (!task) return null;
+    const experiment = await this.findExperimentForTask(task);
+    if (!experiment) return null;
+    const artifactRows = await QuantResearchArtifact.findAll({
+      where: { experiment_id: experiment.id, task_id: task.id },
+      order: [['created_at', 'ASC']],
+    });
+    const artifacts = artifactRows.map(row => asPlain(row));
+    const storedSummary = (experiment.summary_json || {}).credibility_verdict;
+    const credibility_verdict =
+      storedSummary ||
+      buildCredibilitySummary({
+        backtest_artifact: artifactByType(artifacts, 'backtest'),
+        integrity_artifact: artifactByType(artifacts, 'integrity_audit'),
+        execution_artifact: artifactByType(artifacts, 'execution_audit'),
+      });
+    return {
+      experiment: asPlain(experiment),
+      artifacts,
+      credibility_verdict,
+      can_create_observation: Boolean(credibility_verdict.can_create_observation),
+      blocking_reasons: credibility_verdict.blocking_reasons || [],
+      watch_reasons: credibility_verdict.watch_reasons || [],
+      next_action_label: credibility_verdict.next_action_label || '回到查数据',
+    };
+  }
+
+  async listExperiments(options: { user_id?: number; limit?: number } = {}) {
+    const where: any = {};
+    if (options.user_id) where.user_id = options.user_id;
+    const rows = await QuantResearchExperiment.findAll({
+      where,
+      order: [['created_at', 'DESC']],
+      limit: Math.min(Math.max(Number(options.limit || 50), 1), 200),
+    });
+    return rows.map(row => asPlain(row));
+  }
+
+  async getExperiment(id: number, user_id?: number) {
+    const where: any = { id };
+    if (user_id) where.user_id = user_id;
+    const experiment = await QuantResearchExperiment.findOne({ where });
+    if (!experiment) return null;
+    const artifacts = await QuantResearchArtifact.findAll({
+      where: { experiment_id: experiment.id },
+      order: [['created_at', 'ASC']],
+    });
+    return {
+      ...asPlain(experiment),
+      artifacts: artifacts.map(row => asPlain(row)),
+    };
+  }
+
+  async runAuditForExperiment(id: number, user_id?: number) {
+    const experiment = await this.getExperiment(id, user_id);
+    if (!experiment?.task_id) return null;
+    return this.runAuditForBacktest(Number(experiment.task_id));
+  }
+}
 
 export const researchExperimentService = new ResearchExperimentService();

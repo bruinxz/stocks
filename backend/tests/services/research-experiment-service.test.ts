@@ -74,5 +74,17 @@ const execution = buildExecutionArtifactFromRejectedOrders([
 assert('rejected orders map to reject', execution.status === 'reject');
 assert('execution summary explains count', execution.summary.includes('2'));
 
+const easyVerdict = buildCredibilitySummary({
+  backtest_artifact: { status: 'pass', summary: '冠军策略收益为正。' },
+  integrity_artifact: { status: 'pass', summary: '没有发现未来函数。' },
+  execution_artifact: { status: 'reject', summary: '1 笔涨停买入不可成交。' },
+});
+assert('easy status blocks when execution rejects', easyVerdict.verdict === 'reject');
+assert(
+  'easy label tells user to adjust',
+  easyVerdict.next_action_label.includes('修正') ||
+    easyVerdict.next_action_label.includes('查数据')
+);
+
 console.log(`\nResult: ${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
