@@ -881,6 +881,36 @@
   line-height: 1.55;
 }
 
+.eq-hypothesis {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.eq-hypothesis span {
+  color: var(--eq-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.eq-hypothesis textarea {
+  width: 100%;
+  min-height: 86px;
+  resize: vertical;
+  border: 1px solid var(--eq-soft-line);
+  border-radius: 13px;
+  padding: 13px 14px;
+  background: rgba(251, 248, 241, 0.62);
+  color: var(--eq-ink);
+  font: inherit;
+  line-height: 1.6;
+}
+
+.eq-hypothesis textarea:focus {
+  outline: 2px solid rgba(201, 99, 56, 0.28);
+  outline-offset: 2px;
+}
+
 .eq-risk-tag {
   align-self: end;
   width: fit-content;
@@ -908,6 +938,7 @@
 
 .eq-verdict-card,
 .eq-result-hero,
+.eq-credibility-hero,
 .eq-observe-hero {
   margin-top: 16px;
   border: 1px solid var(--eq-soft-line);
@@ -963,14 +994,25 @@
   grid-template-columns: minmax(0, 1fr) 82px;
 }
 
+.eq-credibility-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 82px;
+  gap: 18px;
+  align-items: center;
+  min-height: 136px;
+  padding: 20px;
+}
+
 .eq-verdict-card .eq-sketch,
-.eq-result-hero .eq-sketch {
+.eq-result-hero .eq-sketch,
+.eq-credibility-hero .eq-sketch {
   margin: 0;
   color: var(--eq-clay);
 }
 
 .eq-verdict-card strong,
-.eq-result-hero strong {
+.eq-result-hero strong,
+.eq-credibility-hero strong {
   display: block;
   margin-top: 6px;
   font-size: 24px;
@@ -978,10 +1020,57 @@
 }
 
 .eq-verdict-card p,
-.eq-result-hero p {
+.eq-result-hero p,
+.eq-credibility-hero p {
   margin: 8px 0 0;
   color: var(--eq-muted);
   line-height: 1.65;
+}
+
+.eq-credibility-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.eq-credibility-card {
+  min-height: 128px;
+  padding: 16px;
+  border: 1px solid var(--eq-soft-line);
+  border-radius: 13px;
+  background: rgba(251, 248, 241, 0.5);
+}
+
+.eq-credibility-card span {
+  color: var(--eq-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.eq-credibility-card strong {
+  display: block;
+  margin-top: 14px;
+  font-size: 21px;
+}
+
+.eq-credibility-card p {
+  margin: 10px 0 0;
+  color: var(--eq-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.eq-credibility-card--ready strong {
+  color: var(--eq-green);
+}
+
+.eq-credibility-card--degraded strong {
+  color: var(--eq-amber);
+}
+
+.eq-credibility-card--blocked strong {
+  color: var(--eq-red);
 }
 
 .eq-inline-metrics {
@@ -1317,6 +1406,38 @@
   gap: 10px;
 }
 
+.eq-ledger {
+  display: grid;
+  gap: 10px;
+  margin: 18px;
+}
+
+.eq-ledger article {
+  padding: 16px;
+  border: 1px solid var(--eq-soft-line);
+  border-radius: 14px;
+  background: rgba(247, 242, 232, 0.44);
+}
+
+.eq-ledger span {
+  color: var(--eq-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.eq-ledger strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 20px;
+  line-height: 1.35;
+}
+
+.eq-ledger p {
+  margin: 8px 0 0;
+  color: var(--eq-muted);
+  line-height: 1.65;
+}
+
 .eq-drawer-list article {
   padding: 16px;
 }
@@ -1413,7 +1534,7 @@
   }
 
   .eq-step-dock {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   }
 
   .eq-progress {
@@ -1429,7 +1550,7 @@
   }
 
   .eq-quick-list {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   }
 
   .eq-status-strip {
@@ -1536,6 +1657,7 @@
   .eq-template-cards,
   .eq-inline-metrics,
   .eq-inline-metrics--four,
+  .eq-credibility-grid,
   .eq-observe-hero,
   .eq-status-strip {
     grid-template-columns: 1fr;
@@ -1561,7 +1683,8 @@
   }
 
   .eq-result-hero .eq-sketch,
-  .eq-verdict-card .eq-sketch {
+  .eq-verdict-card .eq-sketch,
+  .eq-credibility-hero .eq-sketch {
     display: none;
   }
 

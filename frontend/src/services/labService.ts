@@ -59,10 +59,49 @@ export interface BacktestRunSummary {
   retryable?: boolean;
   conclusion?: string;
   last_error?: string | null;
+  research_verdict?: string | null;
+}
+
+export type ResearchCredibilityVerdictValue =
+  | 'pending'
+  | 'pass'
+  | 'watch'
+  | 'reject'
+  | 'insufficient';
+
+export interface ResearchCredibilityVerdict {
+  verdict: ResearchCredibilityVerdictValue;
+  can_create_observation: boolean;
+  blocking_reasons: string[];
+  watch_reasons: string[];
+  next_action_label: string;
+  title: string;
+  summary: string;
+}
+
+export interface ResearchAuditArtifact {
+  id?: number;
+  artifact_type: 'backtest' | 'integrity_audit' | 'execution_audit' | 'credibility_summary';
+  status: 'pending' | 'pass' | 'watch' | 'reject' | 'insufficient' | 'error';
+  title: string;
+  summary?: string | null;
+  payload_json?: Record<string, any>;
+  created_at?: string;
+}
+
+export interface BacktestResearchAudit {
+  experiment: Record<string, any> | null;
+  artifacts: ResearchAuditArtifact[];
+  credibility_verdict: ResearchCredibilityVerdict;
+  can_create_observation: boolean;
+  blocking_reasons: string[];
+  watch_reasons: string[];
+  next_action_label: string;
 }
 
 export interface BacktestTask {
   id: number;
+  experiment_id?: number | null;
   task_name: string;
   status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PENDING';
   progress: number;
@@ -76,6 +115,8 @@ export interface BacktestTask {
   symbols?: string[];
   initial_capital?: number;
   parameters?: Record<string, any>;
+  data_policy_json?: Record<string, any>;
+  constraint_policy_json?: Record<string, any>;
   run_summary?: BacktestRunSummary;
 }
 
@@ -101,6 +142,8 @@ export interface BacktestDetail {
   results: BacktestStrategyResult[];
   trades: any[];
   run_summary?: BacktestRunSummary;
+  research_audit?: BacktestResearchAudit | null;
+  easy_verdict?: any;
 }
 
 export async function listBacktestTasks(limit = 50): Promise<BacktestTask[]> {
@@ -123,6 +166,10 @@ export async function getBacktestDetail(id: number): Promise<BacktestDetail | nu
 
 export interface CreateBacktestPayload {
   task_name?: string;
+  easy_mode?: boolean;
+  experiment_id?: number;
+  template_id?: string;
+  hypothesis?: string;
   universe?: 'favorites' | 'all';
   strategy_keys: string[];
   start_date: string;
@@ -136,6 +183,8 @@ export interface CreateBacktestPayload {
   enable_t_plus_one?: boolean;
   benchmark_symbol?: string;
   params_by_strategy?: Record<string, Record<string, any>>;
+  data_policy_json?: Record<string, any>;
+  constraint_policy_json?: Record<string, any>;
   async?: boolean;
 }
 

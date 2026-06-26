@@ -1,5 +1,6 @@
 import api from './api';
 import {
+  BacktestResearchAudit,
   BacktestDetail,
   CreateBacktestResponse,
   QuantStrategyItem,
@@ -47,6 +48,8 @@ export interface EasyQuantBootstrap {
   runtime_health: EasyQuantHealthSnapshot;
   health_verdict: EasyQuantHealthVerdict;
 }
+
+export type EasyQuantResearchAudit = BacktestResearchAudit;
 
 function normalizeHealthStatus(rawStatus: unknown): EasyQuantHealthStatus {
   const value = String(rawStatus || '').toLowerCase();
@@ -178,14 +181,30 @@ export async function loadEasyQuantBootstrap(): Promise<EasyQuantBootstrap> {
 }
 
 export async function runEasyQuantBacktest(
-  templateId: EasyQuantTemplateId
+  templateId: EasyQuantTemplateId,
+  hypothesis?: string
 ): Promise<CreateBacktestResponse> {
   const template = getEasyQuantTemplate(templateId);
-  return createBacktestTask(buildEasyQuantBacktestPayload(template));
+  const payload = buildEasyQuantBacktestPayload(template, hypothesis);
+  return createBacktestTask({
+    ...payload,
+    easy_mode: true,
+    hypothesis: hypothesis || payload.hypothesis,
+  });
 }
 
 export async function getEasyQuantBacktestDetail(taskId: number): Promise<BacktestDetail | null> {
   return getBacktestDetail(taskId);
+}
+
+export async function getEasyQuantResearchAudit(
+  taskId: number
+): Promise<EasyQuantResearchAudit | null> {
+  const res = await api.get(`/quant/backtests/${taskId}/research-audit`);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '获取回测可信度失败');
+  }
+  return res.data.data as EasyQuantResearchAudit;
 }
 
 export async function createEasyQuantObservationPortfolio(templateId: EasyQuantTemplateId) {
@@ -206,6 +225,7 @@ export const easyQuantService = {
   loadEasyQuantBootstrap,
   runEasyQuantBacktest,
   getEasyQuantBacktestDetail,
+  getEasyQuantResearchAudit,
   createEasyQuantObservationPortfolio,
 };
 

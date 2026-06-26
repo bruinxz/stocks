@@ -5,13 +5,14 @@ import { BacktestDetail } from '../../services/labService';
 import easyQuantService, { EasyQuantBootstrap } from '../../services/easyQuantService';
 import { RootState } from '../../store/rootReducer';
 
-export type EasyQuantStepKey = 'template' | 'data' | 'backtest' | 'observe';
+export type EasyQuantStepKey = 'template' | 'data' | 'backtest' | 'credibility' | 'observe';
 export type EasyQuantSectionId =
   | 'easy-quant-hero'
   | 'easy-quant-flow'
   | 'easy-quant-template'
   | 'easy-quant-data'
   | 'easy-quant-backtest'
+  | 'easy-quant-credibility'
   | 'easy-quant-observe';
 
 export interface EasyQuantSectionNavItem {

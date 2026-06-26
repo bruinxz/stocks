@@ -86,7 +86,13 @@ assert(
 );
 assert(
   'page covers the beginner flow',
-  ['选择策略模板', '查数据', '回测报告', '模拟观察'].every(label => page.includes(label))
+  ['选择策略模板', '查数据', '回测报告', '可信度', '模拟观察'].every(label =>
+    page.includes(label)
+  )
+);
+assert(
+  'page adds credibility step before observation',
+  page.includes('可信度') && page.indexOf('可信度') < page.indexOf('模拟观察')
 );
 assert(
   'bootstrap is independent from selected template changes',
@@ -99,9 +105,18 @@ assert(
   'easy service calls existing quant and paper APIs only',
   service.includes("api.get('/quant/data-freshness'") &&
     service.includes("api.get('/quant/runtime-health'") &&
+    service.includes("api.get(`/quant/backtests/${taskId}/research-audit`)") &&
     service.includes('createBacktestTask') &&
     service.includes('createPortfolio') &&
     !service.includes('/live-trading')
+);
+assert(
+  'easy service sends easy-mode research payload',
+  service.includes('easy_mode: true') && service.includes('hypothesis')
+);
+assert(
+  'easy service reads research audit',
+  service.includes('getEasyQuantResearchAudit') && service.includes('/research-audit')
 );
 assert(
   'health checks fail closed on unknown or business failure',
@@ -153,8 +168,20 @@ assert(
 assert(
   'result helpers support backend verdict with local fallback thresholds',
   helpers.includes('pickBackendVerdict') &&
+    helpers.includes('credibility_verdict') &&
     helpers.includes('EASY_QUANT_OBSERVATION_THRESHOLDS') &&
     helpers.includes('Math.abs(result.max_drawdown_pct)')
+);
+assert(
+  'result helpers normalize ratio win rate for beginner display',
+  helpers.includes('formatWinRatePct') &&
+    helpers.includes('value >= 0 && value <= 1 ? value * 100 : value') &&
+    helpers.includes('value: formatWinRatePct(winRate)')
+);
+assert(
+  'observation is gated by credibility verdict',
+  helpers.includes('credibility_verdict') &&
+    page.includes('researchAuditVerdict.can_create_observation')
 );
 assert(
   'beginner errors are translated into plain Chinese',
@@ -168,6 +195,10 @@ assert(
   !/检查数据|数据体检|当前步骤/.test(page) &&
     page.includes('下一步：查数据') &&
     page.includes('查数据详情')
+);
+assert(
+  'ledger drawer is available',
+  page.includes('实验账本') && page.includes('eq-ledger')
 );
 assert(
   'template selection is expressed by selected card state',

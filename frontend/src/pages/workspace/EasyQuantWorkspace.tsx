@@ -12,7 +12,10 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import { BacktestDetail } from '../../services/labService';
-import easyQuantService, { EasyQuantTemplateView } from '../../services/easyQuantService';
+import easyQuantService, {
+  EasyQuantResearchAudit,
+  EasyQuantTemplateView,
+} from '../../services/easyQuantService';
 import {
   EASY_QUANT_TEMPLATES,
   EasyQuantTemplateId,
@@ -34,7 +37,7 @@ import {
 } from './easyQuantHooks';
 import './EasyQuantWorkspace.css';
 
-type DrawerKey = StepKey | 'guide' | null;
+type DrawerKey = StepKey | 'guide' | 'ledger' | null;
 
 interface JourneyStep {
   key: StepKey;
@@ -42,7 +45,7 @@ interface JourneyStep {
   title: string;
   caption: string;
   drawerTitle: string;
-  sketch: 'sprout' | 'lens' | 'chart' | 'telescope';
+  sketch: 'sprout' | 'lens' | 'chart' | 'shield' | 'telescope';
 }
 
 const journeySteps: JourneyStep[] = [
@@ -71,8 +74,16 @@ const journeySteps: JourneyStep[] = [
     sketch: 'chart',
   },
   {
-    key: 'observe',
+    key: 'credibility',
     number: '04',
+    title: '可信度',
+    caption: '看有没有未来数据和成交阻断。',
+    drawerTitle: '可信度详情',
+    sketch: 'shield',
+  },
+  {
+    key: 'observe',
+    number: '05',
     title: '模拟观察',
     caption: '观察一段时间，再考虑更复杂配置。',
     drawerTitle: '观察日志',
@@ -92,6 +103,7 @@ const sectionNavItems: EasyQuantSectionNavItem[] = [
   { id: 'easy-quant-template', label: '模板' },
   { id: 'easy-quant-data', label: '查数据' },
   { id: 'easy-quant-backtest', label: '回测' },
+  { id: 'easy-quant-credibility', label: '可信度' },
   { id: 'easy-quant-observe', label: '观察' },
 ];
 
@@ -99,6 +111,7 @@ const sectionByStep: Record<StepKey, SectionId> = {
   template: 'easy-quant-template',
   data: 'easy-quant-data',
   backtest: 'easy-quant-backtest',
+  credibility: 'easy-quant-credibility',
   observe: 'easy-quant-observe',
 };
 
@@ -106,6 +119,7 @@ const stepBySection: Partial<Record<SectionId, StepKey>> = {
   'easy-quant-template': 'template',
   'easy-quant-data': 'data',
   'easy-quant-backtest': 'backtest',
+  'easy-quant-credibility': 'credibility',
   'easy-quant-observe': 'observe',
 };
 
@@ -124,6 +138,29 @@ const getRiskTone = (risk: string): 'low' | 'medium' | 'high' => {
 
   return 'low';
 };
+
+const artifactLabelByStatus: Record<string, string> = {
+  pass: '通过',
+  watch: '需谨慎',
+  reject: '阻断',
+  insufficient: '数据不足',
+  pending: '待生成',
+  error: '异常',
+};
+
+const artifactToneByStatus: Record<string, 'ready' | 'degraded' | 'blocked'> = {
+  pass: 'ready',
+  watch: 'degraded',
+  reject: 'blocked',
+  insufficient: 'blocked',
+  pending: 'degraded',
+  error: 'blocked',
+};
+
+const getArtifactStatusLabel = (status?: string) => artifactLabelByStatus[status || ''] || '待生成';
+
+const getArtifactTone = (status?: string): 'ready' | 'degraded' | 'blocked' =>
+  artifactToneByStatus[status || ''] || 'degraded';
 
 const EasyQuantMark: React.FC<{ compact?: boolean }> = ({ compact = false }) => (
   <svg
@@ -247,6 +284,9 @@ const EasyQuantWorkspace: React.FC = () => {
   const [backtestDetail, setBacktestDetail] = useState<BacktestDetail | null>(null);
   const [backtestLoading, setBacktestLoading] = useState(false);
   const [backtestError, setBacktestError] = useState<string | null>(null);
+  const [researchAudit, setResearchAudit] = useState<EasyQuantResearchAudit | null>(null);
+  const [researchAuditLoading, setResearchAuditLoading] = useState(false);
+  const [researchAuditError, setResearchAuditError] = useState<string | null>(null);
   const [observationCreating, setObservationCreating] = useState(false);
   const [observationMessage, setObservationMessage] = useState<string | null>(null);
   const [drawerKey, setDrawerKey] = useState<DrawerKey>(null);
@@ -272,9 +312,20 @@ const EasyQuantWorkspace: React.FC = () => {
       },
     [selectedTemplateId, templatesForView]
   );
+  const [hypothesis, setHypothesis] = useState(selectedTemplateData.default_hypothesis);
+
+  useEffect(() => {
+    setHypothesis(selectedTemplateData.default_hypothesis);
+  }, [selectedTemplateData.default_hypothesis, selectedTemplateId]);
+
   const backtestVerdict: EasyQuantBacktestVerdict = useMemo(
-    () => buildEasyQuantBacktestVerdict(backtestDetail),
-    [backtestDetail]
+    () => buildEasyQuantBacktestVerdict(backtestDetail, researchAudit),
+    [backtestDetail, researchAudit]
+  );
+  const researchAuditVerdict = backtestVerdict;
+  const researchArtifacts = useMemo(
+    () => researchAudit?.artifacts || backtestDetail?.research_audit?.artifacts || [],
+    [backtestDetail, researchAudit]
   );
   const dataCheckItems = useMemo(
     () => [
@@ -313,9 +364,9 @@ const EasyQuantWorkspace: React.FC = () => {
       },
       {
         time: '回测后',
-        title: '观察门槛',
-        state: backtestVerdict.can_create_observation ? '通过' : '未通过',
-        detail: backtestVerdict.summary,
+        title: '可信度门槛',
+        state: researchAuditVerdict.can_create_observation ? '通过' : '未通过',
+        detail: researchAuditVerdict.summary,
       },
       {
         time: '每日',
@@ -324,15 +375,21 @@ const EasyQuantWorkspace: React.FC = () => {
         detail: '只记录虚拟组合和信号变化，不会下真实订单。',
       },
     ],
-    [backtestVerdict, observationMessage, selectedTemplateData.name]
+    [observationMessage, researchAuditVerdict, selectedTemplateData.name]
   );
 
   const activeStepIndex = journeySteps.findIndex(step => step.key === activeStep);
   const activeStepData = journeySteps[activeStepIndex] || journeySteps[0];
   const drawerStepData =
-    drawerKey && drawerKey !== 'guide'
+    drawerKey && drawerKey !== 'guide' && drawerKey !== 'ledger'
       ? journeySteps.find(step => step.key === drawerKey) || activeStepData
       : activeStepData;
+  const drawerTitle =
+    drawerKey === 'guide'
+      ? '动线说明'
+      : drawerKey === 'ledger'
+        ? '实验账本'
+        : drawerStepData.drawerTitle;
   const progressPercent = Math.round(((activeStepIndex + 1) / journeySteps.length) * 100);
   const displayUsername = useEasyQuantDisplayUsername();
 
@@ -340,16 +397,19 @@ const EasyQuantWorkspace: React.FC = () => {
     setBacktestLoading(true);
     setBacktestError(null);
     setBacktestDetail(null);
+    setResearchAudit(null);
+    setResearchAuditError(null);
+    setResearchAuditLoading(false);
     setObservationMessage(null);
 
     try {
-      const created = await easyQuantService.runEasyQuantBacktest(selectedTemplateId);
+      const created = await easyQuantService.runEasyQuantBacktest(selectedTemplateId, hypothesis);
       setBacktestTaskId(created.task_id);
     } catch (error) {
       setBacktestError(error instanceof Error ? error.message : String(error));
       setBacktestLoading(false);
     }
-  }, [selectedTemplateId]);
+  }, [hypothesis, selectedTemplateId]);
 
   useEasyQuantBacktestPolling(
     backtestTaskId,
@@ -357,6 +417,44 @@ const EasyQuantWorkspace: React.FC = () => {
     setBacktestLoading,
     setBacktestError
   );
+
+  useEffect(() => {
+    const taskId = backtestDetail?.task?.id || backtestTaskId;
+    if (!taskId || backtestDetail?.task?.status !== 'COMPLETED') {
+      return undefined;
+    }
+
+    if (backtestDetail.research_audit) {
+      setResearchAudit(backtestDetail.research_audit);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setResearchAuditLoading(true);
+    setResearchAuditError(null);
+
+    easyQuantService
+      .getEasyQuantResearchAudit(taskId)
+      .then(audit => {
+        if (!cancelled) {
+          setResearchAudit(audit);
+        }
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setResearchAuditError(error instanceof Error ? error.message : String(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setResearchAuditLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [backtestDetail, backtestTaskId]);
 
   const handleCreateObservation = useCallback(async () => {
     setObservationCreating(true);
@@ -464,6 +562,37 @@ const EasyQuantWorkspace: React.FC = () => {
     setActiveStep('template');
     window.requestAnimationFrame(() => scrollToSection('easy-quant-flow'));
   };
+
+  const credibilityItems = useMemo(() => {
+    const getArtifact = (artifact_type: string) =>
+      researchArtifacts.find(item => item.artifact_type === artifact_type);
+    const items = [
+      {
+        key: 'backtest',
+        label: '回测来源',
+        artifact: getArtifact('backtest'),
+        fallback: backtestDetail ? '回测已返回，等待账本写入。' : '完成回测后生成来源记录。',
+      },
+      {
+        key: 'integrity',
+        label: '未来数据',
+        artifact: getArtifact('integrity_audit'),
+        fallback: researchAuditLoading ? '正在检查未来函数和数据可见性。' : '等待可信度审计。',
+      },
+      {
+        key: 'execution',
+        label: 'A股成交',
+        artifact: getArtifact('execution_audit'),
+        fallback: researchAuditLoading ? '正在汇总涨跌停、停牌和 T+1 约束。' : '等待成交约束审计。',
+      },
+    ];
+
+    return items.map(item => ({
+      ...item,
+      status: item.artifact?.status || (researchAuditLoading ? 'pending' : 'insufficient'),
+      summary: item.artifact?.summary || item.fallback,
+    }));
+  }, [backtestDetail, researchArtifacts, researchAuditLoading]);
 
   const renderStage = (stageKey: StepKey = activeStep) => {
     if (stageKey === 'data') {
@@ -576,14 +705,75 @@ const EasyQuantWorkspace: React.FC = () => {
           <div className="eq-stage-actions">
             <button
               className="eq-button eq-button--dark"
-              disabled={!backtestVerdict.can_create_observation || backtestLoading}
-              onClick={() => goToStep('observe')}
+              disabled={!backtestDetail || backtestLoading}
+              onClick={() => goToStep('credibility')}
             >
-              进入模拟观察 <ArrowRightOutlined />
+              查看可信度 <ArrowRightOutlined />
             </button>
             <button className="eq-button eq-button--quiet" onClick={() => setDrawerKey('backtest')}>
               查看完整指标
             </button>
+          </div>
+        </article>
+      );
+    }
+
+    if (stageKey === 'credibility') {
+      return (
+        <article className="eq-stage-panel eq-stage-panel--credibility">
+          <div className="eq-stage-topline">
+            <span>当前任务</span>
+          </div>
+          <div className="eq-stage-copy">
+            <h2>可信度</h2>
+            <p>先确认这次研究没有偷看未来，也没有违反 A 股成交规则，再进入模拟观察。</p>
+          </div>
+          <div className="eq-credibility-hero">
+            <div>
+              <span className="eq-soft-label">可信度总判</span>
+              <strong>{researchAuditLoading ? '可信度生成中' : researchAuditVerdict.title}</strong>
+              <p>
+                {researchAuditLoading
+                  ? '正在写入实验账本和审计结论。'
+                  : researchAuditVerdict.summary}
+              </p>
+            </div>
+            <JourneySketch type="shield" />
+          </div>
+          {researchAuditError && (
+            <p className="eq-state-error">{explainEasyQuantError(researchAuditError)}</p>
+          )}
+          {backtestTaskId && (
+            <p className="eq-state-muted">实验账本关联回测任务：{backtestTaskId}</p>
+          )}
+          <div className="eq-credibility-grid">
+            {credibilityItems.map(item => (
+              <article
+                key={item.key}
+                className={`eq-credibility-card eq-credibility-card--${getArtifactTone(item.status)}`}
+              >
+                <span>{item.label}</span>
+                <strong>{getArtifactStatusLabel(item.status)}</strong>
+                <p>{item.summary}</p>
+              </article>
+            ))}
+          </div>
+          <div className="eq-stage-actions">
+            <button
+              className="eq-button eq-button--dark"
+              disabled={!researchAuditVerdict.can_create_observation || researchAuditLoading}
+              onClick={() => goToStep('observe')}
+            >
+              进入模拟观察 <ArrowRightOutlined />
+            </button>
+            <button className="eq-button eq-button--quiet" onClick={() => setDrawerKey('ledger')}>
+              查看实验账本
+            </button>
+            {!researchAuditVerdict.can_create_observation && (
+              <button className="eq-button eq-button--quiet" onClick={() => goToStep('data')}>
+                回到查数据
+              </button>
+            )}
           </div>
         </article>
       );
@@ -621,10 +811,10 @@ const EasyQuantWorkspace: React.FC = () => {
           <div className="eq-stage-actions">
             <button
               className="eq-button eq-button--dark"
-              disabled={!backtestVerdict.can_create_observation || observationCreating}
+              disabled={!researchAuditVerdict.can_create_observation || observationCreating}
               onClick={handleCreateObservation}
             >
-              {observationCreating ? '创建中' : backtestVerdict.next_action_label}
+              {observationCreating ? '创建中' : researchAuditVerdict.next_action_label}
             </button>
             <Link className="eq-button eq-button--quiet" to="/workspace/portfolio">
               去模拟盘查看
@@ -676,6 +866,14 @@ const EasyQuantWorkspace: React.FC = () => {
             </button>
           ))}
         </div>
+        <label className="eq-hypothesis">
+          <span>研究假设</span>
+          <textarea
+            value={hypothesis}
+            onChange={event => setHypothesis(event.target.value)}
+            rows={3}
+          />
+        </label>
         <div className="eq-stage-actions">
           <button
             className="eq-button eq-button--dark"
@@ -727,6 +925,7 @@ const EasyQuantWorkspace: React.FC = () => {
           <button onClick={() => setDrawerKey('template')}>模板对比</button>
           <button onClick={() => setDrawerKey('data')}>查数据</button>
           <button onClick={() => setDrawerKey('backtest')}>回测指标</button>
+          <button onClick={() => setDrawerKey('ledger')}>实验账本</button>
           <button onClick={() => setDrawerKey('observe')}>观察日志</button>
         </div>
       </div>
@@ -807,6 +1006,33 @@ const EasyQuantWorkspace: React.FC = () => {
               <p>完成一次真实回测后，这里会显示收益、回撤、夏普等解释。</p>
             </article>
           )}
+        </div>
+      );
+    }
+
+    if (drawerKey === 'ledger') {
+      return (
+        <div className="eq-ledger">
+          <article>
+            <span>研究假设</span>
+            <strong>{hypothesis || selectedTemplateData.default_hypothesis}</strong>
+            <p>
+              模板：{selectedTemplateData.name}。回测任务：
+              {backtestTaskId ? `#${backtestTaskId}` : '待生成'}。
+            </p>
+          </article>
+          {credibilityItems.map(item => (
+            <article key={item.key}>
+              <span>{item.label}</span>
+              <strong>{getArtifactStatusLabel(item.status)}</strong>
+              <p>{item.summary}</p>
+            </article>
+          ))}
+          <article>
+            <span>最终结论</span>
+            <strong>{researchAuditVerdict.title}</strong>
+            <p>{researchAuditVerdict.summary}</p>
+          </article>
         </div>
       );
     }
@@ -991,6 +1217,14 @@ const EasyQuantWorkspace: React.FC = () => {
             </section>
 
             <section
+              id="easy-quant-credibility"
+              className={getSectionClassName('easy-quant-credibility')}
+              aria-label="可信度"
+            >
+              <div className="eq-screen-content eq-stage-wrap">{renderStage('credibility')}</div>
+            </section>
+
+            <section
               id="easy-quant-observe"
               className={getSectionClassName('easy-quant-observe')}
               aria-label="模拟观察"
@@ -1034,7 +1268,7 @@ const EasyQuantWorkspace: React.FC = () => {
           aria-label={drawerKey ? '简易版详情抽屉' : undefined}
         >
           <div className="eq-drawer-head">
-            <span>{drawerKey === 'guide' ? '动线说明' : drawerStepData.drawerTitle}</span>
+            <span>{drawerTitle}</span>
             <button aria-label="关闭抽屉" onClick={() => setDrawerKey(null)}>
               <CloseOutlined />
             </button>

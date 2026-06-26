@@ -1,4 +1,9 @@
-import { BacktestDetail, BacktestStrategyResult } from '../../services/labService';
+import {
+  BacktestDetail,
+  BacktestResearchAudit,
+  BacktestStrategyResult,
+  ResearchCredibilityVerdict,
+} from '../../services/labService';
 
 export type EasyQuantVerdictStatus = 'ready' | 'caution' | 'blocked';
 
@@ -17,6 +22,9 @@ export interface EasyQuantBacktestVerdict {
   beginner_metrics: EasyQuantMetric[];
   next_action_label: string;
   can_create_observation: boolean;
+  credibility_verdict?: ResearchCredibilityVerdict;
+  blocking_reasons?: string[];
+  watch_reasons?: string[];
 }
 
 // Prefer a backend-provided easy_verdict when available; these are UI fallback gates.
@@ -30,6 +38,15 @@ export const EASY_QUANT_OBSERVATION_THRESHOLDS = {
 
 const formatPct = (value?: number | null) =>
   typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(2)}%` : '暂无';
+
+const formatWinRatePct = (value?: number | null) => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return '暂无';
+  }
+
+  const normalized = value >= 0 && value <= 1 ? value * 100 : value;
+  return `${normalized.toFixed(2)}%`;
+};
 
 const formatNumber = (value?: number | null) =>
   typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : '暂无';
@@ -59,8 +76,73 @@ function pickBackendVerdict(detail: BacktestDetail | null): EasyQuantBacktestVer
   return null;
 }
 
+function pickCredibilityVerdict(
+  detail: BacktestDetail | null,
+  researchAudit?: BacktestResearchAudit | null
+): ResearchCredibilityVerdict | null {
+  const credibility_verdict =
+    researchAudit?.credibility_verdict || detail?.research_audit?.credibility_verdict || null;
+
+  if (!credibility_verdict?.verdict) {
+    return null;
+  }
+
+  return credibility_verdict;
+}
+
+function buildMetricsFromResult(result: BacktestStrategyResult | null): EasyQuantMetric[] {
+  if (!result) {
+    return [];
+  }
+
+  const totalReturn = result.total_return_pct;
+  const drawdown = Math.abs(result.max_drawdown_pct);
+  const sharpe = result.sharpe_ratio;
+  const trades = result.trade_count;
+  const winRate = result.win_rate;
+
+  return [
+    {
+      key: 'return',
+      label: '总收益',
+      value: formatPct(totalReturn),
+      explanation: '这代表这段历史区间内策略整体赚了多少。',
+      tone: totalReturn > 0 ? 'good' : 'bad',
+    },
+    {
+      key: 'drawdown',
+      label: '最大回撤',
+      value: formatPct(drawdown),
+      explanation: '这代表中途最难受的一段亏损幅度。',
+      tone: drawdown <= 15 ? 'good' : drawdown <= 25 ? 'watch' : 'bad',
+    },
+    {
+      key: 'sharpe',
+      label: '夏普比率',
+      value: formatNumber(sharpe),
+      explanation: '这代表收益相对波动是否划算，新手先看 0.8 以上。',
+      tone: sharpe >= 1 ? 'good' : sharpe >= 0.8 ? 'watch' : 'bad',
+    },
+    {
+      key: 'trades',
+      label: '交易次数',
+      value: String(trades || 0),
+      explanation: '次数太少时，结果可能只是偶然。',
+      tone: trades >= 10 ? 'good' : trades >= 5 ? 'watch' : 'bad',
+    },
+    {
+      key: 'win_rate',
+      label: '胜率',
+      value: formatWinRatePct(winRate),
+      explanation: '胜率不是越高越好，要和盈亏比一起看。',
+      tone: 'neutral',
+    },
+  ];
+}
+
 export function buildEasyQuantBacktestVerdict(
-  detail: BacktestDetail | null
+  detail: BacktestDetail | null,
+  researchAudit?: BacktestResearchAudit | null
 ): EasyQuantBacktestVerdict {
   const backendVerdict = pickBackendVerdict(detail);
   if (backendVerdict) {
@@ -68,6 +150,32 @@ export function buildEasyQuantBacktestVerdict(
   }
 
   const result = pickBestResult(detail);
+  const credibility_verdict = pickCredibilityVerdict(detail, researchAudit);
+
+  if (credibility_verdict) {
+    const verdict = credibility_verdict.verdict;
+    const canCreateObservation = Boolean(credibility_verdict.can_create_observation);
+    const status: EasyQuantVerdictStatus = canCreateObservation
+      ? verdict === 'watch'
+        ? 'caution'
+        : 'ready'
+      : 'blocked';
+    return {
+      status,
+      title:
+        credibility_verdict.title ||
+        (canCreateObservation ? '可以进入模拟观察' : '暂不建议进入模拟观察'),
+      summary:
+        credibility_verdict.summary ||
+        (canCreateObservation ? '可信度检查没有发现阻断问题。' : '可信度检查仍有阻断或数据不足。'),
+      beginner_metrics: buildMetricsFromResult(result),
+      next_action_label: credibility_verdict.next_action_label || '回到查数据',
+      can_create_observation: canCreateObservation,
+      credibility_verdict,
+      blocking_reasons: credibility_verdict.blocking_reasons || [],
+      watch_reasons: credibility_verdict.watch_reasons || [],
+    };
+  }
 
   if (!detail) {
     return {
@@ -106,7 +214,6 @@ export function buildEasyQuantBacktestVerdict(
   const drawdown = Math.abs(result.max_drawdown_pct);
   const sharpe = result.sharpe_ratio;
   const trades = result.trade_count;
-  const winRate = result.win_rate;
   const thresholds = EASY_QUANT_OBSERVATION_THRESHOLDS;
 
   const canCreateObservation =
@@ -135,43 +242,7 @@ export function buildEasyQuantBacktestVerdict(
         : status === 'caution'
           ? '结果有亮点，但风险或样本质量还不够稳。'
           : '这次结果不适合作为模拟观察的起点。',
-    beginner_metrics: [
-      {
-        key: 'return',
-        label: '总收益',
-        value: formatPct(totalReturn),
-        explanation: '这代表这段历史区间内策略整体赚了多少。',
-        tone: totalReturn > 0 ? 'good' : 'bad',
-      },
-      {
-        key: 'drawdown',
-        label: '最大回撤',
-        value: formatPct(drawdown),
-        explanation: '这代表中途最难受的一段亏损幅度。',
-        tone: drawdown <= 15 ? 'good' : drawdown <= 25 ? 'watch' : 'bad',
-      },
-      {
-        key: 'sharpe',
-        label: '夏普比率',
-        value: formatNumber(sharpe),
-        explanation: '这代表收益相对波动是否划算，新手先看 0.8 以上。',
-        tone: sharpe >= 1 ? 'good' : sharpe >= 0.8 ? 'watch' : 'bad',
-      },
-      {
-        key: 'trades',
-        label: '交易次数',
-        value: String(trades || 0),
-        explanation: '次数太少时，结果可能只是偶然。',
-        tone: trades >= 10 ? 'good' : trades >= 5 ? 'watch' : 'bad',
-      },
-      {
-        key: 'win_rate',
-        label: '胜率',
-        value: formatPct(winRate),
-        explanation: '胜率不是越高越好，要和盈亏比一起看。',
-        tone: 'neutral',
-      },
-    ],
+    beginner_metrics: buildMetricsFromResult(result),
     next_action_label: canCreateObservation ? '创建模拟观察组合' : '换模板再测一次',
     can_create_observation: canCreateObservation,
   };
