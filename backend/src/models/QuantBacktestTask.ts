@@ -4,7 +4,12 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
   tableName: 'quant_backtest_tasks',
   timestamps: true,
   underscored: true,
-  indexes: [{ fields: ['user_id'] }, { fields: ['status'] }, { fields: ['created_at'] }],
+  indexes: [
+    { fields: ['user_id'] },
+    { fields: ['status'] },
+    { fields: ['created_at'] },
+    { fields: ['experiment_id'] },
+  ],
 })
 export class QuantBacktestTask extends Model {
   @Column({ type: DataType.INTEGER, primaryKey: true, autoIncrement: true })
@@ -12,6 +17,9 @@ export class QuantBacktestTask extends Model {
 
   @Column({ type: DataType.INTEGER, allowNull: true, field: 'user_id' })
   declare user_id?: number;
+
+  @Column({ type: DataType.INTEGER, allowNull: true, field: 'experiment_id' })
+  declare experiment_id?: number | null;
 
   @Column({ type: DataType.STRING(160), allowNull: false, field: 'task_name' })
   declare task_name: string;
@@ -66,6 +74,17 @@ export class QuantBacktestTask extends Model {
 
   @Column({ type: DataType.JSONB, allowNull: false, defaultValue: {} })
   declare parameters: Record<string, any>;
+
+  @Column({ type: DataType.JSONB, allowNull: false, defaultValue: {}, field: 'data_policy_json' })
+  declare data_policy_json: Record<string, any>;
+
+  @Column({
+    type: DataType.JSONB,
+    allowNull: false,
+    defaultValue: {},
+    field: 'constraint_policy_json',
+  })
+  declare constraint_policy_json: Record<string, any>;
 
   @CreatedAt
   @Column({ field: 'created_at' })
