@@ -6279,6 +6279,54 @@ class SchedulerService {
               )}`
           );
         }
+      } else if (task.type === 'INTRADAY_OPPORTUNITY_SCAN') {
+        // CE-B (2026-06-26) — 盘中实时机会规则引擎.
+        // 拉 IntradayUniverseService.resolveUniverse() → 10 类 detector → analyzeStock
+        // 二次审核 → intradayOpportunityPusher.push. parameters 支持:
+        //   - min_final_score (默认 65)
+        //   - target_groups (默认 ['business'])
+        //   - rules (subset 限定; 默认全 10 类)
+        //   - dry_run
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          intradayOpportunityWatcher,
+        } = require('./IntradayOpportunityWatcher');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const minFinal =
+          Number.isFinite(Number(parameters.min_final_score)) &&
+          Number(parameters.min_final_score) >= 0
+            ? Number(parameters.min_final_score)
+            : 65;
+        const targetGroups = Array.isArray(parameters.target_groups)
+          ? parameters.target_groups
+          : ['business'];
+        const rules = Array.isArray(parameters.rules) ? parameters.rules : undefined;
+        const scanRes = await intradayOpportunityWatcher.scan({
+          min_final_score: minFinal,
+          target_groups: targetGroups,
+          rules,
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: scanRes.scanned_count,
+          completed_items: scanRes.pushed_count,
+          failed_items: scanRes.errors.length,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'intraday_opportunity_scan',
+            scanned: scanRes.scanned_count,
+            hits: scanRes.hit_count,
+            pushed: scanRes.pushed_count,
+            skipped: scanRes.skipped_count,
+            errors: scanRes.errors.length,
+            min_final_score: minFinal,
+          },
+        });
+        logger.info(
+          `[INTRADAY_OPPORTUNITY_SCAN] scanned=${scanRes.scanned_count} hits=${scanRes.hit_count} ` +
+            `pushed=${scanRes.pushed_count} skipped=${scanRes.skipped_count} errors=${scanRes.errors.length}`
+        );
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }
