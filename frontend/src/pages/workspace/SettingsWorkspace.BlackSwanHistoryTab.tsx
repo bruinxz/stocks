@@ -280,7 +280,7 @@ const BlackSwanHistoryTab: React.FC = () => {
           <Statistic title="总数 (当前页)" value={summary.total} />
         </Col>
         <Col span={4}>
-          <Statistic title="极端" value={summary.critical} valueStyle={{ color: '#cf1322' }} />
+          <Statistic title="极端" value={summary.critical} valueStyle={{ color: '#dc2626' }} />
         </Col>
         <Col span={4}>
           <Statistic title="高" value={summary.high} valueStyle={{ color: '#fa541c' }} />

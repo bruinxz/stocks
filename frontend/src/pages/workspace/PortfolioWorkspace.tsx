@@ -303,7 +303,7 @@ const PortfolioWorkspace: React.FC = () => {
         value={kpis.maxDrawdownPct}
         precision={2}
         suffix="%"
-        valueStyle={{ color: '#cf1322' }}
+        valueStyle={{ color: '#dc2626' }}
       />
       <IndustryConcentrationKpi summary={industryConc} />
     </Space>
@@ -1435,7 +1435,7 @@ const EquityCurveTab: React.FC<EquityCurveTabProps> = ({ snapshots, kpis }) => {
               value={kpis.maxDrawdownPct}
               precision={2}
               suffix="%"
-              valueStyle={{ color: '#cf1322' }}
+              valueStyle={{ color: '#dc2626' }}
             />
           </Col>
           <Col xs={12} sm={8} md={5}>
@@ -1443,7 +1443,7 @@ const EquityCurveTab: React.FC<EquityCurveTabProps> = ({ snapshots, kpis }) => {
               title="夏普率"
               value={kpis.sharpe}
               precision={2}
-              valueStyle={{ color: kpis.sharpe >= 1 ? '#3f8600' : undefined }}
+              valueStyle={{ color: kpis.sharpe >= 1 ? '#4338ca' : undefined }}
             />
           </Col>
           <Col xs={12} sm={8} md={4}>
@@ -1470,10 +1470,10 @@ const EquityCurveTab: React.FC<EquityCurveTabProps> = ({ snapshots, kpis }) => {
               valueStyle={{
                 color:
                   kpis.sampleConfidence === 'high'
-                    ? '#3f8600'
+                    ? '#16a34a'
                     : kpis.sampleConfidence === 'medium'
                       ? '#fa8c16'
-                      : '#cf1322',
+                      : '#dc2626',
               }}
             />
             <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
@@ -1496,7 +1496,7 @@ const EquityCurveTab: React.FC<EquityCurveTabProps> = ({ snapshots, kpis }) => {
               suffix="%"
               valueStyle={{
                 color:
-                  kpis.winRate >= 55 ? '#3f8600' : kpis.winRate >= 45 ? undefined : '#cf1322',
+                  kpis.winRate >= 55 ? '#16a34a' : kpis.winRate >= 45 ? undefined : '#dc2626',
               }}
             />
           </Col>
@@ -2108,8 +2108,8 @@ const BackendAttributionCard: React.FC<BackendAttributionCardProps> = ({ vm, loa
 };
 
 // Card title 颜色 — 与 helper 内部常量同步, 避免 component 内再 import 一遍.
-const DAILY_PNL_POSITIVE_COLOR_LOCAL = '#3f8600';
-const DAILY_PNL_NEGATIVE_COLOR_LOCAL = '#cf1322';
+const DAILY_PNL_POSITIVE_COLOR_LOCAL = '#16a34a';
+const DAILY_PNL_NEGATIVE_COLOR_LOCAL = '#dc2626';
 
 // ===========================================================================
 //  Tab 4: 交易明细
@@ -2952,8 +2952,11 @@ const ErrorPatternsTab: React.FC<ErrorPatternsTabProps> = ({ trades, journalList
 // ===========================================================================
 
 function pnlColor(value: number): string | undefined {
-  if (value > 0) return '#3f8600';
-  if (value < 0) return '#cf1322';
+  // Phase 5 (2026-06-27): A 股惯例红涨绿跌. 旧实现误把上涨上绿色 (国际惯例),
+  // 与 FactorWorkspace / TodayWorkspace 不一致, 在持仓盈亏列表造成"看到绿色以为亏了".
+  // 颜色与 index.css :root 的 --up / --down 保持同源.
+  if (value > 0) return '#dc2626';
+  if (value < 0) return '#16a34a';
   return undefined;
 }
 
@@ -3249,7 +3252,7 @@ const CorrelationTab: React.FC<{ portfolioId?: number }> = ({ portfolioId }) => 
           size="small"
           title={
             <Space>
-              <ExclamationCircleOutlined style={{ color: '#cf1322' }} />
+              <ExclamationCircleOutlined style={{ color: '#dc2626' }} />
               <Text strong>高相关性 Cluster 警告</Text>
               <Tag color="error">{report.high_correlation_clusters.length} 个 cluster</Tag>
             </Space>
@@ -3279,7 +3282,7 @@ const CorrelationTab: React.FC<{ portfolioId?: number }> = ({ portfolioId }) => 
                       title="平均相关性"
                       value={c.avg_correlation}
                       precision={3}
-                      valueStyle={{ fontSize: 14, color: '#cf1322' }}
+                      valueStyle={{ fontSize: 14, color: '#dc2626' }}
                     />
                   </Col>
                   <Col xs={12} md={5}>

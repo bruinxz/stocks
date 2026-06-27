@@ -35,8 +35,8 @@ export interface Sparkline20dProps {
 
 const DEFAULT_HEIGHT = 60;
 const DEFAULT_WIDTH = 200;
-const COLOR_UP = '#cf1322'; // 中股惯例 涨红
-const COLOR_DOWN = '#52c41a'; // 跌绿
+const COLOR_UP = '#dc2626'; // 中股惯例 涨红
+const COLOR_DOWN = '#16a34a'; // 跌绿
 const COLOR_FLAT = '#1677ff';
 
 /**

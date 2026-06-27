@@ -61,7 +61,7 @@ const formatPrimaryMetric = (c: RetrainCandidate) => {
       : c.primary_metric_kind === 'deflated_sharpe'
       ? 'DeflatedSharpe'
       : '';
-  const tone = c.primary_metric > 0.5 ? '#3f8600' : c.primary_metric > 0 ? '#1677ff' : '#cf1322';
+  const tone = c.primary_metric > 0.5 ? '#16a34a' : c.primary_metric > 0 ? '#1677ff' : '#dc2626';
   return (
     <Tooltip title={`${label}: ${c.primary_metric.toFixed(4)}`}>
       <Text style={{ color: tone, fontWeight: 500 }}>{c.primary_metric.toFixed(3)}</Text>
@@ -234,7 +234,7 @@ const QuarterlyRetrainTab: React.FC<QuarterlyRetrainTabProps> = ({ strategies = 
               value={vm.shadowStrategiesInActiveQuarter}
               suffix={`/ ${vm.strategiesInActiveQuarter}`}
               valueStyle={{
-                color: vm.shadowStrategiesInActiveQuarter > 0 ? '#fa8c16' : '#3f8600',
+                color: vm.shadowStrategiesInActiveQuarter > 0 ? '#fa8c16' : '#16a34a',
               }}
               prefix={<SafetyCertificateOutlined />}
             />

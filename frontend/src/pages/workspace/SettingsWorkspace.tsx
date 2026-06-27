@@ -270,7 +270,7 @@ const SettingsWorkspace: React.FC = () => {
           <Statistic
             title="飞书日报"
             value={cfgForKpi?.feishu.daily_digest ? '开启' : '关闭'}
-            valueStyle={{ color: cfgForKpi?.feishu.daily_digest ? '#3f8600' : '#999' }}
+            valueStyle={{ color: cfgForKpi?.feishu.daily_digest ? '#16a34a' : '#999' }}
           />
         )}
       </Space>
@@ -1713,9 +1713,9 @@ const DigestPreviewModal: React.FC<DigestPreviewModalProps> = ({ open, result, o
                   valueStyle={{
                     color:
                       (pnl?.pnl_today ?? 0) > 0
-                        ? '#cf1322'
+                        ? '#dc2626'
                         : (pnl?.pnl_today ?? 0) < 0
-                        ? '#3f8600'
+                        ? '#16a34a'
                         : '#999',
                   }}
                 />
@@ -1729,9 +1729,9 @@ const DigestPreviewModal: React.FC<DigestPreviewModalProps> = ({ open, result, o
                   valueStyle={{
                     color:
                       (pnl?.pnl_today_pct ?? 0) > 0
-                        ? '#cf1322'
+                        ? '#dc2626'
                         : (pnl?.pnl_today_pct ?? 0) < 0
-                        ? '#3f8600'
+                        ? '#16a34a'
                         : '#999',
                   }}
                 />
@@ -1961,9 +1961,9 @@ const WeeklyReviewPreviewModal: React.FC<WeeklyReviewPreviewModalProps> = ({
                   valueStyle={{
                     color:
                       (pnl?.pnl_amount ?? 0) > 0
-                        ? '#cf1322'
+                        ? '#dc2626'
                         : (pnl?.pnl_amount ?? 0) < 0
-                        ? '#3f8600'
+                        ? '#16a34a'
                         : '#999',
                   }}
                 />
@@ -1977,9 +1977,9 @@ const WeeklyReviewPreviewModal: React.FC<WeeklyReviewPreviewModalProps> = ({
                   valueStyle={{
                     color:
                       (pnl?.pnl_pct ?? 0) > 0
-                        ? '#cf1322'
+                        ? '#dc2626'
                         : (pnl?.pnl_pct ?? 0) < 0
-                        ? '#3f8600'
+                        ? '#16a34a'
                         : '#999',
                   }}
                 />
@@ -2038,7 +2038,7 @@ const WeeklyReviewPreviewModal: React.FC<WeeklyReviewPreviewModalProps> = ({
                         dataIndex: 'realized_pnl',
                         align: 'right',
                         render: (v: number) => (
-                          <Text style={{ color: '#cf1322' }}>+{v.toFixed(2)}</Text>
+                          <Text style={{ color: '#dc2626' }}>+{v.toFixed(2)}</Text>
                         ),
                       },
                     ]}
@@ -2065,7 +2065,7 @@ const WeeklyReviewPreviewModal: React.FC<WeeklyReviewPreviewModalProps> = ({
                         dataIndex: 'realized_pnl',
                         align: 'right',
                         render: (v: number) => (
-                          <Text style={{ color: '#3f8600' }}>{v.toFixed(2)}</Text>
+                          <Text style={{ color: '#16a34a' }}>{v.toFixed(2)}</Text>
                         ),
                       },
                     ]}

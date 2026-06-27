@@ -40,9 +40,9 @@ import type {
 // ---------- 常量与颜色 ----------
 
 /** 上涨色 — 与 [[dailyAttributionHelpers]] / 持仓盈亏同色 */
-export const ATTRIBUTION_POSITIVE_COLOR = '#3f8600';
+export const ATTRIBUTION_POSITIVE_COLOR = '#16a34a';
 /** 下跌色 — 同上 */
-export const ATTRIBUTION_NEGATIVE_COLOR = '#cf1322';
+export const ATTRIBUTION_NEGATIVE_COLOR = '#dc2626';
 /** 中性灰 — 0 贡献的维度 */
 export const ATTRIBUTION_NEUTRAL_COLOR = '#bfbfbf';
 

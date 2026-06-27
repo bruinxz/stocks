@@ -373,7 +373,7 @@ const PortfolioManagementPanel: React.FC = () => {
       align: 'right',
       render: (pct: number | null) => {
         if (pct == null) return <Text type="secondary">—</Text>;
-        const color = pct > 0 ? '#cf1322' : pct < 0 ? '#3f8600' : undefined;
+        const color = pct > 0 ? '#dc2626' : pct < 0 ? '#16a34a' : undefined;
         return <Text style={{ color }}>{`${pct.toFixed(2)}%`}</Text>;
       },
     },
@@ -866,7 +866,7 @@ const PortfolioManagementPanel: React.FC = () => {
                       align: 'right',
                       render: (v: number | null) => {
                         if (v == null) return <Text type="secondary">—</Text>;
-                        const color = v > 0 ? '#cf1322' : v < 0 ? '#3f8600' : undefined;
+                        const color = v > 0 ? '#dc2626' : v < 0 ? '#16a34a' : undefined;
                         return (
                           <Text style={{ color }}>
                             {v > 0 ? '+' : ''}

@@ -255,14 +255,14 @@ const PolicyNewsTab: React.FC = () => {
                     n.topic === 'monetary'
                       ? '#faad14'
                       : n.topic === 'regulatory'
-                      ? '#cf1322'
+                      ? '#dc2626'
                       : n.topic === 'fiscal'
                       ? '#fa8c16'
                       : n.topic === 'capital_market'
                       ? '#1890ff'
                       : n.topic === 'industry'
                       ? '#722ed1'
-                      : '#52c41a'
+                      : '#16a34a'
                   }`,
                   marginLeft: -18,
                   paddingLeft: 14,

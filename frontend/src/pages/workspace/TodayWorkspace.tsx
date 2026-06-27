@@ -379,7 +379,7 @@ const TodayWorkspace: React.FC = () => {
           title="未读风险"
           value={unreadCount}
           suffix="条"
-          valueStyle={{ color: unreadCount > 0 ? '#cf1322' : '#52c41a' }}
+          valueStyle={{ color: unreadCount > 0 ? '#dc2626' : '#16a34a' }}
         />
         {currentPortfolio && (strategyChips.length > 0 || factorChips.length > 0) && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 200 }}>
@@ -412,7 +412,7 @@ const TodayWorkspace: React.FC = () => {
                   title={`${f.category} · ${f.key}`}
                   style={{
                     background: '#f6ffed',
-                    color: '#389e0d',
+                    color: '#16a34a',
                     padding: '0 6px',
                     borderRadius: 8,
                     fontSize: 12,
@@ -771,8 +771,8 @@ const MarketJudgmentCard: React.FC = () => {
                   data.benchmark_return_20d_pct == null
                     ? undefined
                     : data.benchmark_return_20d_pct >= 0
-                    ? '#cf1322'
-                    : '#3f8600',
+                    ? '#dc2626'
+                    : '#16a34a',
               }}
             />
           </Col>
@@ -823,7 +823,7 @@ const MarketJudgmentCard: React.FC = () => {
                           style={{
                             fontSize: 12,
                             marginLeft: 6,
-                            color: idx.change_pct >= 0 ? '#cf1322' : '#3f8600',
+                            color: idx.change_pct >= 0 ? '#dc2626' : '#16a34a',
                           }}
                         >
                           {idx.change_pct >= 0 ? '+' : ''}
@@ -833,7 +833,7 @@ const MarketJudgmentCard: React.FC = () => {
                       valueStyle={{
                         fontSize: 14,
                         fontWeight: 600,
-                        color: idx.change_pct >= 0 ? '#cf1322' : '#3f8600',
+                        color: idx.change_pct >= 0 ? '#dc2626' : '#16a34a',
                       }}
                     />
                   </Tooltip>
@@ -1014,7 +1014,7 @@ const CallAuctionCard: React.FC<{ portfolioId: number | null }> = ({ portfolioId
                 valueStyle={{
                   fontSize: 18,
                   fontWeight: 600,
-                  color: data.summary.one_word_count > 0 ? '#cf1322' : '#8c8c8c',
+                  color: data.summary.one_word_count > 0 ? '#dc2626' : '#8c8c8c',
                 }}
               />
             </Tooltip>
@@ -1028,7 +1028,7 @@ const CallAuctionCard: React.FC<{ portfolioId: number | null }> = ({ portfolioId
                 valueStyle={{
                   fontSize: 18,
                   fontWeight: 600,
-                  color: data.summary.gap_up_count > 0 ? '#cf1322' : '#8c8c8c',
+                  color: data.summary.gap_up_count > 0 ? '#dc2626' : '#8c8c8c',
                 }}
               />
             </Tooltip>
@@ -1042,7 +1042,7 @@ const CallAuctionCard: React.FC<{ portfolioId: number | null }> = ({ portfolioId
                 valueStyle={{
                   fontSize: 18,
                   fontWeight: 600,
-                  color: data.summary.gap_down_count > 0 ? '#3f8600' : '#8c8c8c',
+                  color: data.summary.gap_down_count > 0 ? '#16a34a' : '#8c8c8c',
                 }}
               />
             </Tooltip>
@@ -1113,7 +1113,7 @@ const CallAuctionCard: React.FC<{ portfolioId: number | null }> = ({ portfolioId
                   v == null ? (
                     <Text type="secondary">—</Text>
                   ) : (
-                    <Text strong style={{ color: v >= 0 ? '#cf1322' : '#3f8600' }}>
+                    <Text strong style={{ color: v >= 0 ? '#dc2626' : '#16a34a' }}>
                       {v >= 0 ? '+' : ''}
                       {v.toFixed(2)}%
                     </Text>
@@ -1400,7 +1400,7 @@ const MarketBriefCard: React.FC = () => {
                           style={{
                             fontSize: 12,
                             marginLeft: 6,
-                            color: idx.change_pct >= 0 ? '#cf1322' : '#3f8600',
+                            color: idx.change_pct >= 0 ? '#dc2626' : '#16a34a',
                           }}
                         >
                           {idx.change_pct >= 0 ? '+' : ''}
@@ -1410,7 +1410,7 @@ const MarketBriefCard: React.FC = () => {
                       valueStyle={{
                         fontSize: 18,
                         fontWeight: 600,
-                        color: idx.change_pct >= 0 ? '#cf1322' : '#3f8600',
+                        color: idx.change_pct >= 0 ? '#dc2626' : '#16a34a',
                       }}
                     />
                   </Tooltip>
@@ -1604,7 +1604,7 @@ const CorePicksPanel: React.FC<{
               title={<span style={{ fontSize: 12 }}>核心推荐</span>}
               value={funnel?.selected ?? recommendations.length}
               suffix=" 只"
-              valueStyle={{ fontSize: 18, color: '#cf1322', fontWeight: 700 }}
+              valueStyle={{ fontSize: 18, color: '#dc2626', fontWeight: 700 }}
             />
           </Col>
         </Row>
@@ -1711,7 +1711,7 @@ const TradingPlanCard: React.FC<{ data: TodaySignalsData }> = ({ data }) => {
           <Statistic
             title="强烈推荐"
             value={counts.high}
-            valueStyle={{ color: '#cf1322', fontSize: 18 }}
+            valueStyle={{ color: '#dc2626', fontSize: 18 }}
           />
           <Statistic
             title="建议关注"
@@ -1959,7 +1959,7 @@ const SellSuggestionCard: React.FC<{
       size="small"
       title={
         <Space>
-          <WarningOutlined style={{ color: '#cf1322' }} />
+          <WarningOutlined style={{ color: '#dc2626' }} />
           <span>今日卖出建议</span>
           <Tag color="red">{counts.total} 只</Tag>
         </Space>
@@ -1977,12 +1977,12 @@ const SellSuggestionCard: React.FC<{
           <Statistic
             title="必卖止损"
             value={counts.high}
-            valueStyle={{ color: '#cf1322', fontSize: 18 }}
+            valueStyle={{ color: '#dc2626', fontSize: 18 }}
           />
           <Statistic
             title="考虑止盈"
             value={counts.medium}
-            valueStyle={{ color: '#52c41a', fontSize: 18 }}
+            valueStyle={{ color: '#16a34a', fontSize: 18 }}
           />
           <Statistic
             title="渐进减持"
@@ -2248,7 +2248,7 @@ const SignalsPanel: React.FC<{ data: TodaySignalsData; positions: PositionRow[] 
             size="small"
             title={
               <Space>
-                <AlertOutlined style={{ color: '#f5222d' }} />
+                <AlertOutlined style={{ color: '#dc2626' }} />
                 <span>风险告警 · 未读</span>
                 <Tag color="red">{data.unread_alert_count}</Tag>
               </Space>
@@ -2298,7 +2298,7 @@ const MultiFactorCard: React.FC<{
             <Statistic
               title="新进入选"
               value={newPicks}
-              valueStyle={{ color: '#cf1322', fontSize: 18 }}
+              valueStyle={{ color: '#dc2626', fontSize: 18 }}
             />
             <Statistic title="保留" value={keeps} valueStyle={{ color: '#1677ff', fontSize: 18 }} />
             <Statistic title="剔除" value={drops} valueStyle={{ color: '#999', fontSize: 18 }} />
@@ -2385,7 +2385,7 @@ const MultiFactorCard: React.FC<{
                       sorter: (a: MultiFactorAlphaSignal, b: MultiFactorAlphaSignal) =>
                         (a.composite_score ?? 0) - (b.composite_score ?? 0),
                       render: (v: number) => (
-                        <Text strong style={{ color: '#cf1322' }}>
+                        <Text strong style={{ color: '#dc2626' }}>
                           {v?.toFixed(3)}
                         </Text>
                       ),
@@ -2570,7 +2570,7 @@ const DragonHeadCard: React.FC<{
             <Statistic
               title="今日 BUY"
               value={candidates.length}
-              valueStyle={{ color: '#cf1322', fontSize: 18 }}
+              valueStyle={{ color: '#dc2626', fontSize: 18 }}
             />
             <Statistic
               title="涨停池"
@@ -2692,7 +2692,7 @@ const EarningsSurpriseCard: React.FC<{
       size="small"
       title={
         <Space>
-          <ThunderboltOutlined style={{ color: '#52c41a' }} />
+          <ThunderboltOutlined style={{ color: '#16a34a' }} />
           <span>业绩超预期入选</span>
           {tradeDate && <Tag color="green">{tradeDate}</Tag>}
         </Space>
@@ -2706,7 +2706,7 @@ const EarningsSurpriseCard: React.FC<{
             <Statistic
               title="今日 BUY"
               value={candidates.length}
-              valueStyle={{ color: '#cf1322', fontSize: 18 }}
+              valueStyle={{ color: '#dc2626', fontSize: 18 }}
             />
             <Statistic
               title="当日公告"
@@ -2991,7 +2991,7 @@ const AlertsPanel: React.FC<{ alerts: UnreadRiskAlertItem[]; totalCount: number 
       data-testid="alerts-panel"
       title={
         <Space wrap>
-          <AlertOutlined style={{ color: '#f5222d' }} />
+          <AlertOutlined style={{ color: '#dc2626' }} />
           <span>风险告警未读列表</span>
           <Tag color="red">{totalCount}</Tag>
           {hasFilter && (
@@ -3671,7 +3671,7 @@ const ApplyResultModal: React.FC<{
       {result && (
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
           <Space size={24}>
-            <Statistic title="成功" value={result.placed} valueStyle={{ color: '#52c41a' }} />
+            <Statistic title="成功" value={result.placed} valueStyle={{ color: '#16a34a' }} />
             <Statistic title="跳过/失败" value={result.skipped} valueStyle={{ color: '#999' }} />
             <Statistic title="交易日" value={result.trade_date ?? '—'} />
           </Space>
@@ -3717,7 +3717,7 @@ const ApplyResultModal: React.FC<{
 
 function pnlColor(value: number | null): string {
   if (value == null || value === 0) return undefined as unknown as string;
-  return value > 0 ? '#cf1322' : '#52c41a';
+  return value > 0 ? '#dc2626' : '#16a34a';
 }
 
 /** US-040 regime → tag 颜色（与建议仓位强度同源色谱） */
@@ -3743,13 +3743,13 @@ function regimeTagColor(regime: MarketRegime): string {
 function regimeStatColor(regime: MarketRegime): string | undefined {
   switch (regime) {
     case 'bull':
-      return '#cf1322';
+      return '#dc2626';
     case 'rebound':
       return '#fa8c16';
     case 'range':
       return '#1677ff';
     case 'bear':
-      return '#52c41a';
+      return '#16a34a';
     case 'stress':
       return '#a8071a';
     default:
@@ -3773,7 +3773,7 @@ function regimeLabelFallback(regime: MarketRegime): string {
 /** US-040 建议仓位百分比 → 颜色（重 red / 中 blue / 谨慎 orange / 空 gray） */
 function positionPctColor(pct: number): { text: string; tag: string } {
   if (!Number.isFinite(pct)) return { text: '#999', tag: 'default' };
-  if (pct >= 0.7) return { text: '#cf1322', tag: 'red' };
+  if (pct >= 0.7) return { text: '#dc2626', tag: 'red' };
   if (pct >= 0.4) return { text: '#1677ff', tag: 'blue' };
   if (pct >= 0.1) return { text: '#fa8c16', tag: 'orange' };
   return { text: '#8c8c8c', tag: 'default' };
@@ -3790,25 +3790,25 @@ function atrColor(value: number | null): string | undefined {
 /** US-040 外盘均值色：>0 红 / <0 绿 / 0 默认 */
 function overnightAvgColor(value: number): string {
   if (!Number.isFinite(value) || value === 0) return '#8c8c8c';
-  return value > 0 ? '#cf1322' : '#3f8600';
+  return value > 0 ? '#dc2626' : '#16a34a';
 }
 
 /** US-073 沪深300 开盘涨跌色：>0 红涨，<0 绿跌，0/null 中性 */
 function openChangeColor(value: number | null): string | undefined {
   if (value == null || !Number.isFinite(value) || value === 0) return undefined;
-  return value > 0 ? '#cf1322' : '#52c41a';
+  return value > 0 ? '#dc2626' : '#16a34a';
 }
 
 /** US-073 北向资金色：净流入红，净流出绿 */
 function northboundColor(value: number | null): string | undefined {
   if (value == null || !Number.isFinite(value) || value === 0) return undefined;
-  return value > 0 ? '#cf1322' : '#52c41a';
+  return value > 0 ? '#dc2626' : '#16a34a';
 }
 
 /** US-073 涨停数色：≥80 红（赚钱效应强），≤30 灰（赚钱效应弱），否则默认 */
 function limitUpColor(value: number | null): string | undefined {
   if (value == null || !Number.isFinite(value)) return undefined;
-  if (value >= 80) return '#cf1322';
+  if (value >= 80) return '#dc2626';
   if (value <= 30) return '#8c8c8c';
   return undefined;
 }
@@ -3828,7 +3828,7 @@ function auctionTypeTag(t: AuctionAnomalyType): React.ReactNode {
 }
 
 function eventTypeIcon(t: KeyEventItem['event_type']): React.ReactNode {
-  if (t === 'earnings_surprise') return <ThunderboltOutlined style={{ color: '#f5222d' }} />;
+  if (t === 'earnings_surprise') return <ThunderboltOutlined style={{ color: '#dc2626' }} />;
   if (t === 'earnings_announcement') return <FundOutlined style={{ color: '#1677ff' }} />;
   return <RiseOutlined style={{ color: '#fa541c' }} />;
 }
@@ -3843,7 +3843,7 @@ function levelTag(level: string): React.ReactNode {
 
 function levelIcon(level: string): React.ReactNode {
   const upper = (level || '').toUpperCase();
-  if (upper === 'HIGH') return <WarningOutlined style={{ color: '#f5222d' }} />;
+  if (upper === 'HIGH') return <WarningOutlined style={{ color: '#dc2626' }} />;
   return <AlertOutlined style={{ color: '#fa8c16' }} />;
 }
 

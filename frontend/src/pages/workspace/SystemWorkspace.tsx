@@ -255,7 +255,7 @@ function FeedbackTab() {
                         }}
                       >
                         <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                          <Text strong style={{ color: '#389e0d' }}>
+                          <Text strong style={{ color: '#16a34a' }}>
                             系统回复
                           </Text>
                           <Paragraph

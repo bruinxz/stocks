@@ -97,7 +97,7 @@ const LeaderboardTab: React.FC<{
   const pctRender = (v: any, redIfNeg = true) => {
     const n = num(v);
     if (n == null) return <Text type="secondary">—</Text>;
-    const color = redIfNeg ? (n >= 0 ? '#cf1322' : '#3f8600') : '#1677ff';
+    const color = redIfNeg ? (n >= 0 ? '#dc2626' : '#16a34a') : '#1677ff';
     return (
       <Text style={{ color, fontWeight: 500 }}>
         {n >= 0 ? '+' : ''}
@@ -109,7 +109,7 @@ const LeaderboardTab: React.FC<{
   const sharpeRender = (v: any) => {
     const n = num(v);
     if (n == null) return <Text type="secondary">—</Text>;
-    const color = n >= 1.5 ? '#cf1322' : n >= 0.5 ? '#fa8c16' : n >= 0 ? '#1677ff' : '#3f8600';
+    const color = n >= 1.5 ? '#dc2626' : n >= 0.5 ? '#fa8c16' : n >= 0 ? '#1677ff' : '#16a34a';
     return <Text style={{ color, fontWeight: 500 }}>{n.toFixed(2)}</Text>;
   };
 
@@ -169,7 +169,7 @@ const LeaderboardTab: React.FC<{
       );
     }
     // A 股语义: 红涨绿跌 — 跑赢 = 红
-    const color = excess >= 0 ? '#cf1322' : '#3f8600';
+    const color = excess >= 0 ? '#dc2626' : '#16a34a';
     return (
       <Tooltip title={tooltipContent}>
         <Text style={{ color, fontWeight: 500 }}>
@@ -218,7 +218,7 @@ const LeaderboardTab: React.FC<{
               key: 'rank',
               width: 40,
               render: (_: any, __: any, idx: number) => {
-                const colors = ['#cf1322', '#fa8c16', '#fadb14', '#1677ff', '#1677ff'];
+                const colors = ['#dc2626', '#fa8c16', '#fadb14', '#1677ff', '#1677ff'];
                 const color = idx < 5 ? colors[Math.min(idx, 4)] : '#999';
                 return (
                   <Text strong style={{ color, fontSize: 14 }}>
@@ -298,7 +298,7 @@ const LeaderboardTab: React.FC<{
                 const n = num(v);
                 if (n == null) return <Text type="secondary">—</Text>;
                 const color =
-                  Math.abs(n) > 20 ? '#cf1322' : Math.abs(n) > 10 ? '#fa8c16' : '#3f8600';
+                  Math.abs(n) > 20 ? '#dc2626' : Math.abs(n) > 10 ? '#fa8c16' : '#16a34a';
                 return <Text style={{ color, fontWeight: 500 }}>{n.toFixed(2)}%</Text>;
               },
             },
@@ -312,7 +312,7 @@ const LeaderboardTab: React.FC<{
                 if (n == null) return <Text type="secondary">—</Text>;
                 // win_rate 可能是 0-1 或 0-100, 兼容
                 const pct = n > 1 ? n : n * 100;
-                const color = pct >= 60 ? '#cf1322' : pct >= 50 ? '#fa8c16' : '#3f8600';
+                const color = pct >= 60 ? '#dc2626' : pct >= 50 ? '#fa8c16' : '#16a34a';
                 return <Text style={{ color }}>{pct.toFixed(1)}%</Text>;
               },
             },

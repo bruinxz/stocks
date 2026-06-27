@@ -352,7 +352,7 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
 
               {/* 元数据 / 报告 ID */}
               <Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
-                <CheckCircleOutlined style={{ marginRight: 4, color: '#52c41a' }} />
+                <CheckCircleOutlined style={{ marginRight: 4, color: '#16a34a' }} />
                 Report ID：<Text code>{result.report_id}</Text>
                 {result.persisted ? ' · 已归档' : ' · 未归档'}
                 {result.generated_at &&
@@ -363,7 +363,7 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
 
           {result && useV2Layout && v2View && (
             <Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
-              <CheckCircleOutlined style={{ marginRight: 4, color: '#52c41a' }} />
+              <CheckCircleOutlined style={{ marginRight: 4, color: '#16a34a' }} />
               Report ID：<Text code>{result.report_id}</Text>
               {result.persisted ? ' · 已归档' : ' · 未归档'} · 引擎{' '}
               <Text code>{v2View.engine_variant}</Text>

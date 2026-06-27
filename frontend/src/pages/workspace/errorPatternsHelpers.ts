@@ -60,7 +60,7 @@ export const RECENT_WINDOW_30D = 30;
 
 /** Priority 色 — 与 [[前端 pure helper 模板]] / SellSuggestionCard 业务语义一致 */
 export const ERROR_PATTERN_PRIORITY_COLOR: Record<ErrorPatternPriority, string> = {
-  critical: '#cf1322',
+  critical: '#dc2626',
   high: '#fa8c16',
   medium: '#fadb14',
   low: '#8c8c8c',

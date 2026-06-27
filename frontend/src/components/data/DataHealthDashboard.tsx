@@ -57,7 +57,7 @@ const LEVEL_META: Record<
   }
 > = {
   green: {
-    color: '#52c41a',
+    color: '#16a34a',
     label: '健康',
     icon: <CheckCircleOutlined />,
     antColor: 'success',
@@ -69,7 +69,7 @@ const LEVEL_META: Record<
     antColor: 'warning',
   },
   red: {
-    color: '#f5222d',
+    color: '#dc2626',
     label: '严重滞后',
     icon: <ExclamationCircleOutlined />,
     antColor: 'error',

@@ -490,7 +490,7 @@ const SizingAuditPanel: React.FC = () => {
                   value={summary.avg_delta_pct}
                   precision={2}
                   suffix="%"
-                  valueStyle={{ color: summary.avg_delta_pct > 0 ? '#cf1322' : '#3f8600' }}
+                  valueStyle={{ color: summary.avg_delta_pct > 0 ? '#dc2626' : '#16a34a' }}
                 />
               </Tooltip>
             </Col>
@@ -508,7 +508,7 @@ const SizingAuditPanel: React.FC = () => {
                 value={summary.capped_by_max_pct}
                 precision={1}
                 suffix="%"
-                valueStyle={{ color: summary.capped_by_max_pct > 30 ? '#cf1322' : '#666' }}
+                valueStyle={{ color: summary.capped_by_max_pct > 30 ? '#dc2626' : '#666' }}
               />
             </Col>
             <Col xs={12} sm={8} md={6}>
@@ -517,7 +517,7 @@ const SizingAuditPanel: React.FC = () => {
                 value={summary.capped_by_cash_pct}
                 precision={1}
                 suffix="%"
-                valueStyle={{ color: summary.capped_by_cash_pct > 30 ? '#cf1322' : '#666' }}
+                valueStyle={{ color: summary.capped_by_cash_pct > 30 ? '#dc2626' : '#666' }}
               />
             </Col>
           </Row>
@@ -553,7 +553,7 @@ const SizingAuditPanel: React.FC = () => {
                     dataIndex: 'avg_delta_pct',
                     width: 100,
                     render: (v: number) => (
-                      <span style={{ color: v > 0 ? '#cf1322' : '#3f8600' }}>{v.toFixed(2)}%</span>
+                      <span style={{ color: v > 0 ? '#dc2626' : '#16a34a' }}>{v.toFixed(2)}%</span>
                     ),
                   },
                   {
@@ -621,7 +621,7 @@ const SizingAuditPanel: React.FC = () => {
                     render: (v: number) => {
                       const n = Number(v);
                       return (
-                        <span style={{ color: n > 0 ? '#cf1322' : n < 0 ? '#3f8600' : '#999' }}>
+                        <span style={{ color: n > 0 ? '#dc2626' : n < 0 ? '#16a34a' : '#999' }}>
                           {n.toFixed(2)}%
                         </span>
                       );
@@ -720,7 +720,7 @@ const KillSwitchPanel: React.FC = () => {
               <Statistic
                 title="触发熔断"
                 value={report.triggered}
-                valueStyle={{ color: report.triggered > 0 ? '#cf1322' : '#3f8600' }}
+                valueStyle={{ color: report.triggered > 0 ? '#dc2626' : '#16a34a' }}
               />
             </Col>
             <Col xs={12} sm={8} md={6}>

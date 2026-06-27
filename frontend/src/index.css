@@ -14556,6 +14556,19 @@ a {
   font-weight: 600;
 }
 
+/* === KPI bar 内嵌 Statistic — 22px 紧凑, 单行不挤碎 ===
+ * 全局 statistic 字号 28px 在 KPI bar 单行多于 4 项时会换行/挤碎.
+ * 限定 .workspace-kpi-bar 内压到 22px + 收紧 title margin.
+ */
+.workspace-kpi-bar .ant-statistic .ant-statistic-content {
+  font-size: 22px !important;
+  line-height: 1.2 !important;
+}
+
+.workspace-kpi-bar .ant-statistic .ant-statistic-title {
+  margin-bottom: 2px !important;
+}
+
 /* === Phase 5 — 让保留的旧 page-* 装饰也变素 (策略详情 / 个股详情等) === */
 .modern-card,
 .card-modern {

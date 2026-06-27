@@ -188,13 +188,13 @@ const StockDetailPanel: React.FC<Props> = ({ symbol: rawSymbol, showBack = false
         <Col xs={12} sm={6}>
           <Card size="small">
             <Statistic title="最新价" value={lastBar?.close ?? Number(stockInfo?.price ?? 0)} precision={2} prefix="¥"
-              valueStyle={{ color: change >= 0 ? '#cf1322' : '#3f8600', fontSize: compact ? 18 : 22 }} />
+              valueStyle={{ color: change >= 0 ? '#dc2626' : '#16a34a', fontSize: compact ? 18 : 22 }} />
           </Card>
         </Col>
         <Col xs={12} sm={6}>
           <Card size="small">
             <Statistic title="涨跌幅" value={lastBar ? changePct : Number(stockInfo?.change_percent ?? 0)} precision={2} suffix="%"
-              valueStyle={{ color: (lastBar ? changePct : Number(stockInfo?.change_percent ?? 0)) >= 0 ? '#cf1322' : '#3f8600', fontSize: compact ? 18 : 22 }} />
+              valueStyle={{ color: (lastBar ? changePct : Number(stockInfo?.change_percent ?? 0)) >= 0 ? '#dc2626' : '#16a34a', fontSize: compact ? 18 : 22 }} />
           </Card>
         </Col>
         <Col xs={12} sm={6}>
@@ -208,7 +208,7 @@ const StockDetailPanel: React.FC<Props> = ({ symbol: rawSymbol, showBack = false
             {summary?.priceChange && (
               <div style={{ marginTop: 4, fontSize: 12 }}>
                 <Text type="secondary">区间涨跌：</Text>
-                <Text strong style={{ color: summary.priceChange.startsWith('-') ? '#3f8600' : '#cf1322' }}>{summary.priceChange}</Text>
+                <Text strong style={{ color: summary.priceChange.startsWith('-') ? '#16a34a' : '#dc2626' }}>{summary.priceChange}</Text>
               </div>
             )}
           </Card>
@@ -277,7 +277,7 @@ const StockDetailPanel: React.FC<Props> = ({ symbol: rawSymbol, showBack = false
                 { title: '最高', dataIndex: 'high', width: 80, align: 'right', render: (v: number) => v?.toFixed(2) },
                 { title: '最低', dataIndex: 'low', width: 80, align: 'right', render: (v: number) => v?.toFixed(2) },
                 { title: '收盘', dataIndex: 'close', width: 80, align: 'right', render: (v: number) => <Text strong>{v?.toFixed(2)}</Text> },
-                { title: '涨跌幅', dataIndex: 'pctChg', width: 90, align: 'right', render: (v: number) => <Text style={{ color: v >= 0 ? '#cf1322' : '#3f8600' }}>{v >= 0 ? '+' : ''}{v?.toFixed(2)}%</Text> },
+                { title: '涨跌幅', dataIndex: 'pctChg', width: 90, align: 'right', render: (v: number) => <Text style={{ color: v >= 0 ? '#dc2626' : '#16a34a' }}>{v >= 0 ? '+' : ''}{v?.toFixed(2)}%</Text> },
                 { title: '成交量', dataIndex: 'volume', width: 100, align: 'right', render: (v: number) => (v / 10000).toFixed(0) + ' 万' },
                 { title: '成交额', dataIndex: 'amount', width: 100, align: 'right', render: (v: number) => v ? `${(v / 1e8).toFixed(2)} 亿` : '—' },
               ]} />
@@ -333,7 +333,7 @@ const StockDetailPanel: React.FC<Props> = ({ symbol: rawSymbol, showBack = false
                       render: (v: number | null) => {
                         if (v == null) return <Text type="secondary">—</Text>;
                         const pct = v * 100;
-                        return <Text style={{ color: pct >= 50 ? '#cf1322' : '#3f8600' }}>{pct.toFixed(1)}%</Text>;
+                        return <Text style={{ color: pct >= 50 ? '#dc2626' : '#16a34a' }}>{pct.toFixed(1)}%</Text>;
                       },
                     },
                     { title: '原值', dataIndex: 'raw_value', width: 100, align: 'right',

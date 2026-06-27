@@ -216,7 +216,7 @@ const BulkBackfillButton: React.FC<BulkBackfillButtonProps> = ({ healthData, onB
         <Space>
           <ThunderboltOutlined
             style={{
-              color: tagColor === 'red' ? '#f5222d' : tagColor === 'orange' ? '#faad14' : '#1890ff',
+              color: tagColor === 'red' ? '#dc2626' : tagColor === 'orange' ? '#faad14' : '#1890ff',
             }}
           />
           <Text strong>一键补抓</Text>
