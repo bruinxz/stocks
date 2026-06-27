@@ -385,7 +385,7 @@ const AppContent: React.FC = () => {
                 <div className="header-user-dropdown">
                   <Avatar
                     size={36}
-                    style={{ backgroundColor: '#1f3a5f', fontSize: 14 }}
+                    style={{ backgroundColor: '#0a0a0a', fontSize: 14 }}
                     icon={<UserOutlined />}
                     src={avatarSrc}
                   />
@@ -620,57 +620,87 @@ const App: React.FC = () => {
     <ConfigProvider
       locale={zhCN}
       theme={{
-        // Phase 5 (2026-06-27) — 视觉重设计 (方向 B: 极简专业).
-        // 详见 docs/audit/design_system_2026_06_27.md. token 与 index.css :root
-        // 严格保持同源 (--brand / --ink-1 / --bg-canvas / radius-1 / shadow-1).
+        // Phase 8 (2026-06-28) — 高级感视觉系统 (Apple Finance 杂交 Stripe Dashboard).
+        // token 与 index.css :root 严格同源 (--brand violet / --ink-1 / --bg /
+        // radius-md / shadow-md). Inter 字体走 rsms.me CDN (public/index.html
+        // 已加 preconnect + stylesheet).
         token: {
-          colorPrimary: '#4338ca',
-          colorInfo: '#4338ca',
+          colorPrimary: '#7c3aed',
+          colorInfo: '#0284c7',
           // A 股惯例 — 红涨绿跌. success 用于跌 (绿), error 用于涨 (红).
           colorSuccess: '#16a34a',
-          colorWarning: '#d97706',
+          colorWarning: '#f59e0b',
           colorError: '#dc2626',
-          colorTextBase: '#0f172a',
+          colorTextBase: '#0a0a0a',
           colorBgBase: '#ffffff',
-          colorBgLayout: '#f8fafc',
+          colorBgLayout: '#fafafa',
           colorBgContainer: '#ffffff',
-          colorBorder: '#e2e8f0',
-          colorBorderSecondary: '#e2e8f0',
-          colorText: '#0f172a',
-          colorTextSecondary: '#475569',
-          colorTextTertiary: '#94a3b8',
-          colorLink: '#4338ca',
-          borderRadius: 6,
-          borderRadiusLG: 10,
-          borderRadiusSM: 4,
-          fontSize: 13,
+          colorBorder: 'rgba(0,0,0,0.10)',
+          colorBorderSecondary: 'rgba(0,0,0,0.06)',
+          colorText: '#0a0a0a',
+          colorTextSecondary: '#404040',
+          colorTextTertiary: '#737373',
+          colorLink: '#7c3aed',
+          borderRadius: 10,
+          borderRadiusLG: 16,
+          borderRadiusSM: 6,
+          fontSize: 14,
           fontSizeLG: 15,
-          fontSizeXL: 20,
+          fontSizeXL: 18,
+          fontSizeHeading1: 36,
+          fontSizeHeading2: 28,
+          fontSizeHeading3: 22,
+          fontSizeHeading4: 18,
           fontFamily:
-            "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif",
-          boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)',
-          boxShadowSecondary: '0 4px 16px rgba(15, 23, 42, 0.08)',
-          controlHeight: 32,
+            "'Inter', 'PingFang SC', system-ui, -apple-system, 'Microsoft YaHei', sans-serif",
+          boxShadow: '0 4px 12px rgba(0,0,0,0.05), 0 2px 4px rgba(0,0,0,0.03)',
+          boxShadowSecondary: '0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.03)',
+          controlHeight: 36,
+          controlHeightLG: 44,
+          motionDurationFast: '120ms',
+          motionDurationMid: '200ms',
+          motionDurationSlow: '300ms',
         },
         components: {
-          Button: { borderRadius: 6, controlHeight: 32, fontWeight: 500 },
-          Card: { borderRadiusLG: 10, paddingLG: 16 },
+          Button: {
+            borderRadius: 8,
+            controlHeight: 36,
+            controlHeightLG: 44,
+            fontWeight: 500,
+          },
+          Card: {
+            borderRadiusLG: 16,
+            paddingLG: 24,
+            boxShadowTertiary: 'none',
+            colorBorderSecondary: 'rgba(0,0,0,0.06)',
+          },
           Table: {
             borderRadius: 10,
-            headerBg: '#f1f5f9',
-            headerColor: '#475569',
-            rowHoverBg: '#eef2ff',
-            cellPaddingBlock: 10,
-            cellPaddingInline: 12,
+            headerBg: 'transparent',
+            headerColor: '#737373',
+            rowHoverBg: '#f5f5f5',
+            cellPaddingBlock: 12,
+            cellPaddingInline: 16,
           },
-          Input: { borderRadius: 6, controlHeight: 32 },
-          Select: { borderRadius: 6, controlHeight: 32 },
-          DatePicker: { borderRadius: 6, controlHeight: 32 },
-          Tag: { borderRadiusSM: 4 },
-          Statistic: { titleFontSize: 12, contentFontSize: 28 },
-          Tabs: { titleFontSize: 13, inkBarColor: '#4338ca' },
-          Modal: { borderRadiusLG: 10 },
-          Drawer: { borderRadiusLG: 10 },
+          Input: { borderRadius: 8, controlHeight: 36 },
+          Select: { borderRadius: 8, controlHeight: 36 },
+          DatePicker: { borderRadius: 8, controlHeight: 36 },
+          Tag: { borderRadiusSM: 6 },
+          Statistic: {
+            titleFontSize: 12,
+            contentFontSize: 28,
+            fontFamily: "'Inter', 'SF Mono', 'JetBrains Mono', Menlo, monospace",
+          },
+          Tabs: { titleFontSize: 14, inkBarColor: '#7c3aed' },
+          Modal: { borderRadiusLG: 16 },
+          Drawer: { borderRadiusLG: 16 },
+          Menu: {
+            itemHeight: 40,
+            itemBorderRadius: 8,
+            itemSelectedBg: '#f5f3ff',
+            itemSelectedColor: '#5b21b6',
+            itemHoverBg: '#f5f5f5',
+          },
         },
       }}
     >

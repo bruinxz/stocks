@@ -1,74 +1,145 @@
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&display=swap');
 
 /*
- * Phase 5 (2026-06-27) — 视觉重设计 (方向 B: 极简专业 + 金融数据感).
- * 详见 docs/audit/design_system_2026_06_27.md.
+ * Phase 8 (2026-06-28) — 高级感视觉系统 (Apple Finance 杂交 Stripe Dashboard).
+ * 详见 docs/audit/design_system_phase8_2026_06_28.md (TODO).
  *
- * 重命名后的新 token (--brand / --ink-1 / --bg-canvas / --shadow-1 / ...)
- * 与旧 token (--primary / --text-main / --shadow-card / ...) 同时存在 —
- * 旧 token 现在指向新值, 让 14K 行历史 CSS 自动继承新外观, 不必逐条 refactor.
- * 配色: 8 → 5 (brand indigo + up 红 + down 绿 + warn 橙). 圆角: 4 → 2 (6 / 10).
- * 阴影: 4 → 2 (subtle + floating). 字号: 引入 5 档黄金比例 (12/13/15/20/28).
- * 字体: 删除 IBM Plex Sans/Noto Sans SC Google Fonts → 走 system stack 节省首屏字体下载.
+ * 用户原话: "继续优化视觉效果, 我要高级感和设计感".
+ *
+ * 升级要点 (与 Phase 5 对比):
+ *   字体:    system stack → Inter Variable (rsms.me CDN, Stripe/Linear 同款) + PingFang SC.
+ *   主色:    indigo #4338ca → violet #7c3aed (更显贵).
+ *   灰阶:    7 档 → 12 档 (zinc 风格 + bg-sunken/bg-hover, ink-1/2/3/4/disabled).
+ *   描边:    #e2e8f0 → rgba(0,0,0,0.06/0.10/0.15) (更隐忍).
+ *   字号:    5 档 (12/13/15/20/28) → 10 档 (11/12/14/15/18/22/28/36/48/64), KPI 用 64px.
+ *   间距:    4 档 → 8 档 (4/8/12/16/24/32/48/64), 奢侈留白.
+ *   阴影:    2 档 → 4 档 (xs/sm/md/lg, 全部 < 12px blur).
+ *   transition: 0.15s ease → cubic-bezier(0.4,0,0.2,1) 120/200/300ms.
+ *   数字:    全局 tabular-nums + Inter font-feature-settings (cv11/ss01).
+ *
+ * 旧 token (--brand / --ink-1 / --bg-canvas / ...) 全部保留 — 直接指向新值,
+ * 让 14k 行 Phase 1-5 历史 CSS 自动继承新外观, 不必逐条 refactor.
  */
 :root {
   color-scheme: light;
 
-  /* === New 5-color brand palette === */
-  --brand: #4338ca;
-  --brand-soft: #eef2ff;
+  /* === Phase 8 — Neutrals: 12 档 zinc 灰阶 (比 antd default 更精致) === */
+  --bg: #fafafa;
+  --bg-elevated: #ffffff;
+  --bg-hover: #f5f5f5;
+  --bg-sunken: #f0f0f0;
+  --ink-1: #0a0a0a; /* 主标题 / 大数字 */
+  --ink-2: #404040; /* 正文 */
+  --ink-3: #737373; /* 副文 */
+  --ink-4: #a3a3a3; /* hint / placeholder */
+  --ink-disabled: #d4d4d4;
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-default: rgba(0, 0, 0, 0.1);
+  --border-strong-new: rgba(0, 0, 0, 0.15);
+
+  /* === Brand (violet, 比 indigo 更显贵) === */
+  --brand: #7c3aed;
+  --brand-hover: #6d28d9;
+  --brand-soft: #f5f3ff;
+  --brand-text: #5b21b6;
+
+  /* === A 股涨跌 (Phase 5 红涨绿跌不变, 微调饱和度) === */
   --up: #dc2626;
+  --up-soft: #fef2f2;
+  --up-strong: #b91c1c;
   --down: #16a34a;
-  --warn: #d97706;
+  --down-soft: #f0fdf4;
+  --down-strong: #15803d;
 
-  /* === New 7-tier neutral === */
-  --bg-canvas: #f8fafc;
-  --bg-surface: #ffffff;
-  --bg-subtle: #f1f5f9;
-  --border: #e2e8f0;
-  --border-strong: #cbd5e1;
-  --ink-1: #0f172a;
-  --ink-2: #475569;
-  --ink-3: #94a3b8;
+  /* === Status === */
+  --warning: #f59e0b;
+  --warning-soft: #fffbeb;
+  --info: #0284c7;
+  --info-soft: #f0f9ff;
+  --warn: #f59e0b; /* legacy alias */
 
-  /* === Font scale: 5 tiers (1.25 modular) === */
-  --font-xs: 12px;
-  --font-sm: 13px;
-  --font-md: 15px;
-  --font-lg: 20px;
-  --font-xl: 28px;
-
-  /* === Spacing: 4 tiers === */
+  /* === Spacing: 8 档 (golden ratio inspired) === */
   --space-1: 4px;
   --space-2: 8px;
-  --space-3: 16px;
-  --space-4: 24px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --space-16: 64px;
 
-  /* === Radius: 2 tiers === */
-  --radius-1: 6px;
-  --radius-2: 10px;
+  /* === Radius === */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px; /* 大卡片 */
 
-  /* === Shadow: 2 tiers === */
-  --shadow-1: 0 1px 2px rgba(15, 23, 42, 0.04);
-  --shadow-2: 0 4px 16px rgba(15, 23, 42, 0.08);
+  /* === Shadows (very subtle) === */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.03);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.05), 0 2px 4px rgba(0, 0, 0, 0.03);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.06), 0 4px 8px rgba(0, 0, 0, 0.03);
 
-  /* === Fonts === */
-  --font-sans:
-    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Arial,
-    sans-serif;
-  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+  /* === Typography (perfect fourth ratio) === */
+  --font-display: 'Inter', 'PingFang SC', system-ui, -apple-system, 'Microsoft YaHei', sans-serif;
+  --font-body: 'Inter', 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+  --font-mono: 'SF Mono', 'JetBrains Mono', 'Cascadia Code', Monaco, Consolas, monospace;
 
-  /* === Legacy aliases — old names now point at new tokens.
-        Lets 14k lines of pre-Phase-5 CSS auto-inherit the new look. === */
-  --bg-body: var(--bg-canvas);
-  --bg-body-rgb: 248, 250, 252;
-  --bg-panel: var(--bg-surface);
-  --bg-panel-solid: var(--bg-surface);
-  --bg-panel-alt: var(--bg-surface);
-  --bg-soft: var(--bg-subtle);
-  --bg-elevated: var(--bg-surface);
-  --bg-dark-panel: var(--bg-subtle);
-  --bg-dark-panel-2: var(--bg-subtle);
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --text-3xl: 36px;
+  --text-4xl: 48px; /* KPI 大数字 */
+  --text-5xl: 64px; /* 主页账户总值 */
+
+  --tracking-tight: -0.02em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.025em;
+  --tracking-display: -0.04em; /* 大字号紧凑 */
+
+  --leading-tight: 1.1; /* 大数字 */
+  --leading-snug: 1.3;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.7;
+
+  /* === Transitions (Apple/Stripe 标配 cubic-bezier) === */
+  --t-fast: 120ms cubic-bezier(0.4, 0, 0.2, 1);
+  --t-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --t-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* === Legacy Phase 5 aliases (14k 行旧 CSS 继续生效) === */
+  --bg-canvas: var(--bg);
+  --bg-surface: var(--bg-elevated);
+  --bg-subtle: var(--bg-sunken);
+  --border: var(--border-default);
+  --border-strong: var(--border-strong-new);
+
+  --font-xs: var(--text-sm);
+  --font-sm: var(--text-sm);
+  --font-md: var(--text-md);
+  --font-lg: var(--text-lg);
+  --font-xl: var(--text-2xl);
+
+  --shadow-1: var(--shadow-xs);
+  --shadow-2: var(--shadow-md);
+
+  --radius-1: var(--radius-sm);
+  --radius-2: var(--radius-md);
+
+  --font-sans: var(--font-body);
+
+  /* === Legacy pre-Phase-5 aliases (deep backward compat) === */
+  --bg-body: var(--bg);
+  --bg-body-rgb: 250, 250, 250;
+  --bg-panel: var(--bg-elevated);
+  --bg-panel-solid: var(--bg-elevated);
+  --bg-panel-alt: var(--bg-elevated);
+  --bg-soft: var(--bg-sunken);
+  --bg-dark-panel: var(--bg-sunken);
+  --bg-dark-panel-2: var(--bg-sunken);
 
   --text-main: var(--ink-1);
   --text-secondary: var(--ink-2);
@@ -76,48 +147,43 @@
   --text-inverse: var(--ink-1);
 
   --primary: var(--brand);
-  --primary-strong: var(--brand);
+  --primary-strong: var(--brand-hover);
   --primary-soft: var(--brand-soft);
   --secondary-accent: var(--brand);
   --success: var(--down);
-  --warning: var(--warn);
   --danger: var(--up);
-  --info: var(--brand);
-  --quant-gold: var(--warn);
+  --quant-gold: var(--warning);
 
-  --border-color: var(--border);
-  --divider: var(--border);
+  --border-color: var(--border-default);
+  --divider: var(--border-subtle);
 
-  --shadow-soft: var(--shadow-1);
-  --shadow-medium: var(--shadow-1);
-  --shadow-card: var(--shadow-1);
-  --shadow-floating: var(--shadow-2);
-
-  --radius-sm: var(--radius-1);
-  --radius-md: var(--radius-2);
-  --radius-lg: var(--radius-2);
-  --radius-xl: var(--radius-2);
+  --shadow-soft: var(--shadow-xs);
+  --shadow-medium: var(--shadow-sm);
+  --shadow-card: var(--shadow-xs);
+  --shadow-floating: var(--shadow-md);
 
   --space-2xs: var(--space-1);
   --space-xs: var(--space-2);
   --space-sm: var(--space-2);
-  --space-md: var(--space-3);
-  --space-lg: var(--space-4);
-  --space-xl: var(--space-4);
-  --space-2xl: var(--space-4);
+  --space-md: var(--space-4);
+  --space-lg: var(--space-6);
+  --space-xl: var(--space-8);
+  --space-2xl: var(--space-12);
 
   --header-height: 56px;
   --content-width: 1520px;
 
-  --gradient-page: var(--bg-canvas);
-  --gradient-brand: var(--bg-surface);
-  --gradient-soft: var(--bg-subtle);
-  --font-display: var(--font-sans);
-  --font-body: var(--font-sans);
+  --gradient-page: var(--bg);
+  --gradient-brand: var(--bg-elevated);
+  --gradient-soft: var(--bg-sunken);
 }
 
 * {
   box-sizing: border-box;
+  /* Inter 字符变体 — cv11 = single-story g, ss01 = open digits, tabular nums on demand. */
+  font-feature-settings:
+    'cv11' 1,
+    'ss01' 1;
 }
 
 html,
@@ -129,17 +195,27 @@ body,
 
 body {
   margin: 0;
-  font-family: var(--font-sans);
+  font-family: var(--font-body);
   color: var(--ink-1);
-  background: var(--bg-canvas);
+  background: var(--bg);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
   overflow-y: auto;
   text-rendering: geometricPrecision;
-  font-feature-settings:
-    'tnum' 1,
-    'kern' 1;
+}
+
+/* 全局数字等宽 — KPI / 价格 / 浮盈 一致对齐 */
+.tabular-nums,
+.ant-statistic-content,
+.ant-statistic-content-value,
+.price,
+.pnl,
+.amount {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
 }
 
 a {
@@ -149,7 +225,7 @@ a {
 
 ::selection {
   background: var(--brand-soft);
-  color: var(--ink-1);
+  color: var(--brand-text);
 }
 
 ::-webkit-scrollbar {
@@ -162,12 +238,12 @@ a {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--ink-3);
+  background: rgba(0, 0, 0, 0.2);
 }
 
 .modern-layout {
@@ -14811,217 +14887,651 @@ a {
 }
 
 /* =========================================================================
- * Phase 6 (2026-06-27) — 新手主页 /home 样式.
+ * Phase 8 (2026-06-28) — 高级感主页 + 全局精致化 (Apple Finance × Stripe Dashboard)
  *
- * 用户原话: "我是个股票的新手小白...让新手小白用起来。"
- * 一页 4 区块 (账户 / 推荐 / 持仓 / 提示), 一键跟单 + 一键卖出.
- * 实用极简: 无阴影, 大间距, 大按钮 (height 40px), 圆角 10px.
- * 与简易版 /workspace/easy (.eq-*) 并存, 互不替代.
+ * 用户原话: "继续优化视觉效果, 我要高级感和设计感".
+ *
+ * 设计纪律:
+ *   - 留白奢侈: section gap 48px, card padding 24-32px, item spacing 16-24px.
+ *   - 描边隐忍: rgba(0,0,0,0.06) > 0.10 > 0.15 三档.
+ *   - 数字尊贵: Inter 字体 + tabular-nums + tracking -0.04em for hero.
+ *   - 阴影克制: shadow-md 最多, 全部 <12px blur.
+ *   - 微交互: translateY(-2px) + shadow-md, transition 200ms cubic-bezier.
+ *   - 字号阶梯: 11/12/14/15/18/22/28/36/48/64 共 10 档.
+ *   - 颜色克制: 仅 violet brand + 红涨绿跌 + 中灰文字.
  * ========================================================================= */
+
+/* ----------------------- 主页 shell + section 通用 ----------------------- */
+
 .home-workspace {
-  max-width: 920px;
+  max-width: 1080px;
   margin: 0 auto;
-  padding: 24px 16px 64px;
+  padding: 32px 24px 80px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
-  background: var(--bg-canvas);
+  gap: 48px;
+  background: var(--bg);
   min-height: calc(100vh - 56px);
 }
 
-.home-card {
-  border-radius: 10px !important;
-  border: 1px solid var(--border) !important;
-  background: var(--bg-surface) !important;
-  box-shadow: none !important;
-}
-
-.home-card .ant-card-head {
-  border-bottom: 1px solid var(--border-soft, #f1f5f9);
-  min-height: 48px;
-}
-
-.home-card .ant-card-head-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink-1);
-}
-
-/* --- 区块 1: 账户 --- */
-.home-account-body {
+.home-section {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 20px;
 }
 
-.home-account-label {
-  font-size: 12px;
-  color: var(--ink-3, #94a3b8);
-  letter-spacing: 0.04em;
-}
-
-.home-account-value {
-  font-size: 28px;
-  font-weight: 600;
-  color: var(--ink-1);
-  letter-spacing: -0.01em;
-  line-height: 1.2;
-}
-
-.home-account-sub {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  font-size: 13px;
-}
-
-.home-account-sub-label {
-  color: var(--ink-3, #94a3b8);
-  font-size: 12px;
-}
-
-/* --- 区块 2: 推荐 --- */
-.home-reco-item {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 14px;
-  background: var(--bg-surface);
+.home-section-head {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  transition: border-color 0.15s ease;
-}
-
-.home-reco-item:hover {
-  border-color: var(--brand-soft, #c7d2fe);
-}
-
-.home-reco-row {
-  display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
 }
 
-.home-reco-head {
+.home-section-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  color: var(--ink-1);
+  line-height: var(--leading-snug);
+}
+
+.home-section-subtitle {
+  margin: 4px 0 0;
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+  font-weight: 400;
+}
+
+.home-section-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: var(--tracking-wide);
+}
+
+/* ----------------------- 区块 1: 账户 hero (Apple Finance) ----------------------- */
+
+.home-hero {
+  position: relative;
+  overflow: hidden;
+  padding: 48px 40px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, #ffffff 0%, #faf5ff 100%);
+  border: 1px solid var(--border-subtle);
+}
+
+.home-hero::after {
+  content: '';
+  position: absolute;
+  top: -45%;
+  right: -8%;
+  width: 360px;
+  height: 360px;
+  background: radial-gradient(circle, rgba(124, 58, 237, 0.07) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.home-hero-label {
+  position: relative;
+  z-index: 1;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--ink-3);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+.home-hero-value {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: baseline;
   gap: 8px;
-  flex: 1 1 auto;
-  min-width: 0;
-  flex-wrap: wrap;
+  margin-bottom: 20px;
 }
 
-.home-reco-idx {
+.home-hero-currency {
+  font-size: var(--text-2xl);
+  font-weight: 400;
+  color: var(--ink-3);
+  font-family: var(--font-display);
+}
+
+.home-hero-amount {
+  font-family: var(--font-display);
+  font-size: var(--text-5xl);
+  font-weight: 600;
+  color: var(--ink-1);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-display);
+  font-variant-numeric: tabular-nums;
+}
+
+.home-hero-pnl {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: var(--text-md);
+}
+
+.home-hero-badge {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
-  background: var(--brand-soft, #eef2ff);
-  color: var(--brand, #4338ca);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.home-reco-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink-1);
-}
-
-.home-reco-symbol {
-  font-size: 12px;
-  color: var(--ink-3, #94a3b8);
-  font-family: 'SF Mono', Menlo, Consolas, monospace;
-}
-
-.home-reco-price {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--ink-1);
-  margin-left: 4px;
-}
-
-.home-reco-reason {
-  font-size: 12px;
-  color: var(--ink-2, #475569);
-  line-height: 1.6;
-  display: flex;
   gap: 6px;
-  align-items: baseline;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  background: var(--bg-elevated);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  letter-spacing: var(--tracking-tight);
 }
 
-.home-reco-reason-label {
-  flex: 0 0 auto;
-  color: var(--ink-3, #94a3b8);
-  font-size: 11px;
+.home-hero-pnl-label {
+  color: var(--ink-3);
+  font-size: var(--text-sm);
 }
 
-.home-reco-meta {
-  font-size: 12px;
-  color: var(--ink-3, #94a3b8);
+.home-hero-divider {
+  color: var(--ink-4);
+  font-size: var(--text-sm);
+  margin: 0 4px;
 }
 
-/* --- 区块 3: 持仓 --- */
-.home-pos-item {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 14px;
-  background: var(--bg-surface);
+.home-hero-cumulative,
+.home-hero-cash {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-1);
+  font-size: var(--text-md);
+  letter-spacing: var(--tracking-tight);
+}
+
+.home-hero-cumulative-pct {
+  margin-left: 6px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+/* ----------------------- 区块 2: 推荐 card grid ----------------------- */
+
+.home-reco-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.home-reco-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 28px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 16px;
+  transition:
+    transform var(--t-base),
+    border-color var(--t-base),
+    box-shadow var(--t-base);
 }
 
-.home-pos-row {
+.home-reco-card:hover {
+  border-color: var(--border-default);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.home-reco-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.home-reco-card-name {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.home-reco-card-title {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--ink-1);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-snug);
+}
+
+.home-reco-card-symbol {
+  margin-top: 4px;
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  letter-spacing: var(--tracking-wide);
+}
+
+.home-reco-card-score {
+  text-align: right;
+  min-width: 64px;
+}
+
+.home-reco-card-score-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  color: var(--brand);
+  line-height: 1;
+  letter-spacing: var(--tracking-tight);
+}
+
+.home-reco-card-score-label {
+  margin-top: 4px;
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+}
+
+.home-reco-card-price {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.home-reco-card-price-amount {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  color: var(--ink-1);
+  letter-spacing: var(--tracking-tight);
+}
+
+.home-reco-card-price-change {
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+
+.home-reco-card-reason {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--ink-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.home-reco-card-meta {
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+}
+
+.home-reco-card-meta strong {
+  color: var(--ink-1);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-reco-card-cta.ant-btn-primary {
+  height: 44px !important;
+  border-radius: 10px !important;
+  font-weight: 500;
+  letter-spacing: var(--tracking-tight);
+  background: var(--ink-1) !important;
+  border-color: var(--ink-1) !important;
+  box-shadow: none !important;
+  transition: all var(--t-fast);
+}
+
+.home-reco-card-cta.ant-btn-primary:hover:not(:disabled) {
+  background: var(--ink-2) !important;
+  border-color: var(--ink-2) !important;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm) !important;
+}
+
+.home-reco-card-cta.ant-btn-primary:disabled {
+  opacity: 0.4;
+}
+
+/* 推荐 — 为什么折叠 */
+.home-reco-why {
+  margin-top: -2px;
+  border-top: 1px dashed var(--border-subtle);
+  padding-top: 12px;
+}
+
+.home-reco-why-toggle.ant-btn {
+  padding: 0 !important;
+  height: auto !important;
+  color: var(--ink-2) !important;
+  font-size: var(--text-sm) !important;
+  font-weight: 500;
+}
+
+.home-reco-why-toggle.ant-btn:hover {
+  color: var(--brand) !important;
+}
+
+.home-reco-why-body {
+  margin-top: 10px;
+  padding: 14px 16px;
+  background: var(--bg);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--ink-2);
+}
+
+.home-reco-why-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+  align-items: flex-start;
+}
+
+.home-reco-why-check {
+  flex: 0 0 auto;
+  color: var(--down);
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.home-reco-why-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  margin: 0 4px 4px 0;
+  border-radius: 6px;
+  background: var(--brand-soft);
+  color: var(--brand-text);
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+.home-reco-why-tip {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-subtle);
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+
+.home-reco-why-tip a {
+  color: var(--brand);
+  cursor: pointer;
+  margin: 0 2px;
+  font-weight: 500;
+}
+
+/* ----------------------- 区块 3: 今日学一招 (冷色高级) ----------------------- */
+
+.home-lesson {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  padding: 32px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, var(--brand-soft) 0%, #ffffff 90%);
+  border: 1px solid var(--border-subtle);
+  position: relative;
+  overflow: hidden;
+}
+
+.home-lesson::after {
+  content: '';
+  position: absolute;
+  bottom: -60%;
+  left: -10%;
+  width: 280px;
+  height: 280px;
+  background: radial-gradient(circle, rgba(124, 58, 237, 0.06) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.home-lesson-icon-wrap {
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--brand);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  position: relative;
+  z-index: 1;
+  box-shadow: var(--shadow-xs);
+}
+
+.home-lesson-content {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.home-lesson-eyebrow {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--brand);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.home-lesson-title {
+  margin: 4px 0 10px;
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  color: var(--ink-1);
+  letter-spacing: var(--tracking-tight);
+}
+
+.home-lesson-body {
+  margin: 0;
+  font-size: var(--text-md);
+  line-height: var(--leading-relaxed);
+  color: var(--ink-2);
+}
+
+.home-lesson-cta.ant-btn {
+  padding: 0 !important;
+  margin-top: 12px;
+  height: auto !important;
+  color: var(--brand) !important;
+  font-weight: 500;
+  font-size: var(--text-sm);
+}
+
+.home-lesson-cta.ant-btn:hover {
+  color: var(--brand-hover) !important;
+}
+
+/* ----------------------- 区块 4: 因子表现 grid ----------------------- */
+
+.home-factor-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.home-factor-cell {
+  padding: 20px 24px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color var(--t-base);
+}
+
+.home-factor-cell:hover {
+  border-color: var(--border-default);
+}
+
+.home-factor-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  flex-wrap: wrap;
 }
 
-.home-pos-head {
+.home-factor-name {
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  font-weight: 500;
+}
+
+.home-factor-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.home-factor-hint {
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
+@media (max-width: 720px) {
+  .home-factor-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .home-factor-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ----------------------- 区块 5: 持仓 card grid ----------------------- */
+
+.home-pos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.home-pos-card {
+  padding: 24px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition:
+    border-color var(--t-base),
+    transform var(--t-base),
+    box-shadow var(--t-base);
+}
+
+.home-pos-card:hover {
+  border-color: var(--border-default);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.home-pos-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.home-pos-card-name {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--ink-1);
+  letter-spacing: var(--tracking-tight);
+}
+
+.home-pos-card-symbol {
+  margin-top: 4px;
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  letter-spacing: var(--tracking-wide);
+  font-variant-numeric: tabular-nums;
+}
+
+.home-pos-card-cta.ant-btn {
+  height: 36px !important;
+  border-radius: 8px !important;
+  font-weight: 500;
+}
+
+.home-pos-card-pnl {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  flex: 1 1 auto;
-  min-width: 0;
-  flex-wrap: wrap;
+  padding-top: 4px;
 }
 
-.home-pos-name {
-  font-size: 14px;
+.home-pos-card-pnl-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xl);
   font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+}
+
+.home-pos-card-pnl-pct {
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+
+.home-pos-card-meta {
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+}
+
+.home-pos-card-meta strong {
   color: var(--ink-1);
+  font-weight: 500;
 }
 
-.home-pos-symbol {
-  font-size: 12px;
-  color: var(--ink-3, #94a3b8);
-}
-
-.home-pos-meta {
-  font-size: 12px;
-  color: var(--ink-2, #475569);
-}
-
-/* --- 区块 4: 提示 --- */
-.home-tip-card {
-  background: var(--brand-soft, #eef2ff) !important;
-  border-color: #c7d2fe !important;
-}
+/* ----------------------- 区块 6: 极简 tip ----------------------- */
 
 .home-tip {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--ink-1);
-  line-height: 1.6;
+  gap: 10px;
+  padding: 16px 20px;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+  line-height: var(--leading-relaxed);
 }
 
 .home-tip-dot {
@@ -15029,256 +15539,220 @@ a {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--brand, #4338ca);
+  background: var(--brand);
   margin-top: 8px;
-}
-
-/* --- 极简顶栏 (App.tsx /home 短路渲染) --- */
-.home-shell {
-  min-height: 100vh;
-  background: var(--bg-canvas);
-}
-
-.home-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 56px;
-  padding: 0 24px;
-  background: var(--bg-surface);
-  border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  z-index: 10;
-}
-
-.home-topbar-brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--ink-1);
-}
-
-.home-topbar-brand-icon {
-  color: var(--brand, #4338ca);
-}
-
-.home-topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.home-topbar-user {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  padding: 6px 10px;
-  border-radius: 8px;
-  transition: background 0.15s ease;
-}
-
-.home-topbar-user:hover {
-  background: var(--brand-soft, #eef2ff);
-}
-
-.home-topbar-user-name {
-  font-size: 13px;
-  color: var(--ink-1);
-}
-
-.home-topbar-admin-link {
-  color: var(--ink-3, #94a3b8);
-  font-size: 18px;
-  padding: 6px;
-  border-radius: 6px;
-  transition: all 0.15s ease;
-  display: inline-flex;
-  align-items: center;
-}
-
-.home-topbar-admin-link:hover {
-  color: var(--brand, #4338ca);
-  background: var(--brand-soft, #eef2ff);
 }
 
 /* =========================================================================
- * Phase 7 (2026-06-28) — 主页学习区块
- * 实用极简: 无阴影 / 大间距 / 大字号 / 不花哨.
+ * Phase 8 — 全局精致化: Card / Button / Table / Header / Logo
+ * Tightly scoped, intent: 让全部 antd 默认样式跟着升级到高级感.
  * ========================================================================= */
 
-/* --- 顶栏 "更多功能" 下拉按钮 --- */
-.home-topbar-more {
-  margin-left: 12px;
-  color: var(--brand, #4338ca);
+/* --- Card: subtle border, 无阴影, hover border ramp --- */
+.ant-card {
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: none !important;
+  transition: border-color var(--t-base);
+}
+
+.ant-card:hover {
+  border-color: var(--border-default) !important;
+}
+
+.ant-card .ant-card-head {
+  border-bottom: 1px solid var(--border-subtle) !important;
+  min-height: 48px !important;
+  padding: 0 var(--space-6) !important;
+}
+
+.ant-card .ant-card-head-title {
+  font-size: var(--text-md) !important;
+  font-weight: 600 !important;
+  letter-spacing: var(--tracking-tight);
+  padding: var(--space-3) 0 !important;
+  color: var(--ink-1) !important;
+}
+
+.ant-card .ant-card-body {
+  font-size: var(--text-base);
+  color: var(--ink-2);
+}
+
+/* --- Button: 精致 hover lift, primary 黑色高级 --- */
+.ant-btn {
+  font-weight: 500;
+  border-radius: 8px !important;
+  transition:
+    all var(--t-fast),
+    transform var(--t-fast);
+  letter-spacing: var(--tracking-tight);
+}
+
+.ant-btn-primary {
+  background: var(--brand) !important;
+  border-color: var(--brand) !important;
+  box-shadow: none !important;
+}
+
+.ant-btn-primary:hover:not(:disabled) {
+  background: var(--brand-hover) !important;
+  border-color: var(--brand-hover) !important;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm) !important;
+}
+
+.ant-btn-default:hover:not(:disabled) {
+  border-color: var(--border-strong-new) !important;
+  color: var(--ink-1) !important;
+}
+
+.ant-btn-dangerous {
   font-weight: 500;
 }
 
-.home-topbar-more:hover {
-  background: var(--brand-soft, #eef2ff) !important;
-  color: var(--brand, #4338ca) !important;
+/* --- Table: thead 透明 UPPERCASE 灰, row hover subtle --- */
+.ant-table {
+  font-family: var(--font-body);
 }
 
-/* --- 推荐 "为什么?" 折叠 --- */
-.home-reco-why {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--border, #e2e8f0);
+.ant-table-thead > tr > th {
+  background: transparent !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+  font-size: var(--text-xs) !important;
+  font-weight: 500 !important;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--ink-3) !important;
+  padding: 12px 16px !important;
 }
 
-.home-reco-why-toggle {
-  padding: 0 !important;
-  height: auto !important;
-  color: var(--brand, #4338ca) !important;
-  font-size: 12px !important;
+.ant-table-tbody > tr > td {
+  padding: 14px 16px !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+  font-size: var(--text-base);
+  color: var(--ink-2);
 }
 
-.home-reco-why-body {
-  margin-top: 8px;
-  padding: 10px 12px;
-  background: var(--bg-canvas, #f8fafc);
-  border-radius: 6px;
-  font-size: 12px;
-  line-height: 1.7;
-  color: var(--ink-1);
+.ant-table-tbody > tr:hover > td {
+  background: var(--bg-hover) !important;
 }
 
-.home-reco-why-row {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 4px;
-}
-
-.home-reco-why-check {
-  flex: 0 0 auto;
-  color: var(--down, #16a34a);
-  font-weight: 600;
-}
-
-.home-reco-why-tip {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px dashed var(--border, #e2e8f0);
-  color: var(--ink-2, #475569);
-  font-size: 11px;
-}
-
-.home-reco-why-tip a {
-  color: var(--brand, #4338ca);
-  cursor: pointer;
-  margin: 0 2px;
-}
-
-/* --- 区块 B: 今日学一招 --- */
-.home-lesson-card {
-  background: linear-gradient(180deg, #fff7ed 0%, #fffbf3 100%) !important;
-  border-color: #fed7aa !important;
-}
-
-.home-lesson-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.home-lesson-icon {
-  color: #d97706;
-  font-size: 16px;
-}
-
-.home-lesson-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink-1);
-}
-
-.home-lesson-body {
-  font-size: 13px;
-  line-height: 1.75;
-  color: var(--ink-1);
-}
-
-.home-lesson-cta {
-  padding: 0 !important;
-  margin-top: 6px;
-  height: auto !important;
-  color: #d97706 !important;
-  font-weight: 500;
-}
-
-/* --- 区块 C: 今日因子表现 --- */
-.home-factor-card {
-  background: var(--bg-surface, #ffffff);
-}
-
-.home-factor-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.home-factor-icon {
-  color: var(--brand, #4338ca);
-}
-
-.home-factor-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink-1);
-}
-
-.home-factor-hint {
-  font-size: 12px;
-  color: var(--ink-3, #94a3b8);
-}
-
-.home-factor-grid {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.home-factor-cell {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 10px 6px;
-  background: var(--bg-canvas, #f8fafc);
-  border-radius: 6px;
-  gap: 4px;
-}
-
-.home-factor-name {
-  font-size: 12px;
-  color: var(--ink-2, #475569);
-}
-
-.home-factor-value {
-  font-size: 14px;
-  font-weight: 600;
+.ant-table .price-cell,
+.ant-table .number-cell {
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
-.home-factor-summary {
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--ink-2, #475569);
+/* --- Statistic: 等宽数字 + tracking-tight --- */
+.ant-statistic-content-value {
+  font-family: var(--font-mono) !important;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--tracking-tight);
+  font-weight: 600;
 }
 
-.home-factor-summary-meta {
-  margin-left: 8px;
-  color: var(--ink-3, #94a3b8);
-  font-size: 11px;
+.ant-statistic-title {
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  font-size: var(--text-xs) !important;
+  color: var(--ink-3) !important;
+  font-weight: 500;
 }
 
-@media (max-width: 720px) {
-  .home-factor-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
+/* --- 顶部 header (modern-header) — 字体升级 + tracking --- */
+.header-context strong {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: var(--tracking-tight);
+}
+
+.header-context span {
+  font-weight: 500;
+  letter-spacing: 0.08em;
+}
+
+/* --- Logo --- */
+.modern-logo .logo-icon {
+  background: var(--ink-1);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-xs);
+}
+
+.modern-logo .logo-copy strong {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: var(--tracking-tight);
+  color: var(--ink-1);
+}
+
+.modern-logo .logo-copy em {
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  color: var(--ink-3);
+}
+
+/* --- Sider tweak: subtle bg differentiation --- */
+.modern-sider {
+  background: var(--bg) !important;
+  border-right: 1px solid var(--border-subtle) !important;
+}
+
+.modern-sider-inner {
+  background: var(--bg);
+}
+
+/* --- Menu: rounded selected pill, brand soft --- */
+.modern-menu .ant-menu-item-selected {
+  background: var(--brand-soft) !important;
+  color: var(--brand-text) !important;
+  font-weight: 600;
+}
+
+.modern-menu .ant-menu-item-selected .anticon {
+  color: var(--brand) !important;
+}
+
+/* --- Tag: subtle border-only style --- */
+.ant-tag {
+  border-radius: 6px !important;
+  font-size: var(--text-xs) !important;
+  font-weight: 500;
+  padding: 0 8px !important;
+  letter-spacing: var(--tracking-tight);
+}
+
+/* --- Form input radius + hover --- */
+.ant-input,
+.ant-input-number,
+.ant-select .ant-select-selector,
+.ant-picker {
+  border-radius: 8px !important;
+  border-color: var(--border-default) !important;
+  transition: all var(--t-fast);
+}
+
+.ant-input:hover,
+.ant-input-number:hover,
+.ant-select:hover .ant-select-selector,
+.ant-picker:hover {
+  border-color: var(--brand) !important;
+}
+
+/* --- Skeleton 调色 --- */
+.ant-skeleton-content .ant-skeleton-title,
+.ant-skeleton-content .ant-skeleton-paragraph > li {
+  background: linear-gradient(
+    90deg,
+    var(--bg-sunken) 25%,
+    var(--bg-hover) 37%,
+    var(--bg-sunken) 63%
+  );
+}
+
+/* --- workspace KPI bar 升级 (Phase 8 — 字号 + tracking) --- */
+.workspace-kpi-bar .ant-statistic .ant-statistic-content {
+  font-family: var(--font-mono) !important;
+  font-variant-numeric: tabular-nums;
 }
