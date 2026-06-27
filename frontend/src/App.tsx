@@ -16,7 +16,6 @@ import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from './store/rootReducer';
 import { loginSuccess, logout } from './store/authSlice';
 import { clearUserScopedStorage } from './utils/sessionCleanup';
-import AdminGuard from './components/AdminGuard';
 import { authService } from './services/authService';
 import { API_DOMAIN_URL } from './services/api';
 import { PortfolioProvider } from './contexts/PortfolioContext';
@@ -24,27 +23,13 @@ import GlobalPortfolioSelector from './components/layout/GlobalPortfolioSelector
 import AlertsBell from './components/layout/AlertsBell';
 import CriticalAlertModal from './components/layout/CriticalAlertModal';
 
-const Dashboard = lazy(() => import('./pages/Dashboard'));
-const TodayCommandCenter = lazy(() => import('./pages/TodayCommandCenter'));
-const Backtest = lazy(() => import('./pages/Backtest'));
+// Phase 4 (2026-06-27) 清理: 删除 33 个 legacy pages (~ 4.1 万行)
+// 仅保留 4 个 non-workspace 页面: Login / RecommendationTrace (deep link /signals/:id/trace)
+// / StockDetail (/stock/:symbol) / HealthMonitor (DataWorkspace 内嵌). BacktestResults 仍保留
+// 用于 LabStrategyDetail 的 /legacy/backtest/:id deep link.
 const Login = lazy(() => import('./pages/Login'));
-const Portfolio = lazy(() => import('./pages/Portfolio'));
-const Market = lazy(() => import('./pages/Market'));
-const DataUpdateStatus = lazy(() => import('./pages/DataUpdateStatus'));
 const BacktestResults = lazy(() => import('./components/backtest/BacktestResults'));
-const Profile = lazy(() => import('./pages/Profile'));
-const UserManagement = lazy(() => import('./pages/UserManagement'));
-const AIAdvisor = lazy(() => import('./pages/AIAdvisor'));
-const TaskScheduler = lazy(() => import('./pages/TaskScheduler'));
-const Screener = lazy(() => import('./pages/Screener'));
-const ReviewCenter = lazy(() => import('./pages/ReviewCenter'));
-const StrategyResearchCenter = lazy(() => import('./pages/StrategyResearchCenter'));
 const RecommendationTrace = lazy(() => import('./pages/RecommendationTrace'));
-const AutonomousTradingOverview = lazy(() => import('./pages/AutonomousTradingOverview'));
-const LiveTrading = lazy(() => import('./pages/LiveTrading'));
-const QuantResearchWorkbench = lazy(() => import('./pages/QuantResearchWorkbench'));
-const RiskAlerts = lazy(() => import('./pages/RiskAlerts'));
-const SystemLogs = lazy(() => import('./pages/SystemLogs'));
 const StockDetail = lazy(() => import('./pages/StockDetail'));
 
 // Unified workspace shells (US-001/US-002 + Easy mode).
@@ -567,164 +552,15 @@ const AppContent: React.FC = () => {
               <Route path="/profile" element={<Navigate to="/workspace/settings" replace />} />
               <Route path="/users" element={<Navigate to="/workspace/settings" replace />} />
 
-              {/* Pages still reachable for deep links / iframes — kept off the menu.
-                  Stories US-015..US-018 will fold their useful pieces into the
-                  workspace tabs and these can then be deleted physically. */}
-              <Route
-                path="/legacy/today"
-                element={
-                  <ProtectedRoute>
-                    <TodayCommandCenter />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/portfolio"
-                element={
-                  <ProtectedRoute>
-                    <AutonomousTradingOverview />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/live-trading"
-                element={
-                  <ProtectedRoute>
-                    <LiveTrading />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/quant-research"
-                element={
-                  <ProtectedRoute>
-                    <QuantResearchWorkbench />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/strategy-research"
-                element={
-                  <ProtectedRoute>
-                    <StrategyResearchCenter />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/review"
-                element={
-                  <ProtectedRoute>
-                    <ReviewCenter />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/ai-advisor"
-                element={
-                  <ProtectedRoute>
-                    <AIAdvisor />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/backtest"
-                element={
-                  <ProtectedRoute>
-                    <Backtest />
-                  </ProtectedRoute>
-                }
-              />
+              {/* Pages still reachable for deep links — kept off the menu.
+                  Phase 4 (2026-06-27): 18 个 /legacy/* 路由全部移除 (对应 page 已删).
+                  仅保留 /legacy/backtest/:id (LabStrategyDetail 仍 Link 过来) +
+                  /signals/:id/trace + /recommendation-trade-outcomes/:id. */}
               <Route
                 path="/legacy/backtest/:id"
                 element={
                   <ProtectedRoute>
                     <BacktestDetailRoute />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/risk-alerts"
-                element={
-                  <ProtectedRoute>
-                    <RiskAlerts />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/dashboard"
-                element={
-                  <ProtectedRoute>
-                    <Dashboard />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/market"
-                element={
-                  <ProtectedRoute>
-                    <Market />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/data-update"
-                element={
-                  <ProtectedRoute>
-                    <DataUpdateStatus />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/tasks"
-                element={
-                  <ProtectedRoute>
-                    <AdminGuard>
-                      <TaskScheduler />
-                    </AdminGuard>
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/logs"
-                element={
-                  <ProtectedRoute>
-                    <AdminGuard>
-                      <SystemLogs />
-                    </AdminGuard>
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/portfolio-classic"
-                element={
-                  <ProtectedRoute>
-                    <Portfolio />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/screener"
-                element={
-                  <ProtectedRoute>
-                    <Screener />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/profile"
-                element={
-                  <ProtectedRoute>
-                    <Profile />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/users"
-                element={
-                  <ProtectedRoute>
-                    <AdminGuard>
-                      <UserManagement />
-                    </AdminGuard>
                   </ProtectedRoute>
                 }
               />

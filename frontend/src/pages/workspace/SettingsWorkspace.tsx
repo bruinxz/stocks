@@ -1583,38 +1583,31 @@ const SettingsWorkspace: React.FC = () => {
   };
 
   const renderPlaceholder = () => {
-    // 各占位 tab 给一个具体引导到 legacy 实现页
-    const links: Record<string, { url: string; label: string; desc: string }> = {
+    // Phase 4 (2026-06-27): legacy profile / user-management 页面已删, 这些 tab 暂为占位.
+    // 后续 (P3) 把字段实装在 workspace tab 内. 当前显示一段引导文案.
+    const descriptions: Record<string, { label: string; desc: string }> = {
       profile: {
-        url: '/legacy/profile',
         label: '个人资料',
-        desc: '修改密码 / 头像 / 邮箱 / 风险偏好',
+        desc: '修改密码 / 头像 / 邮箱 / 风险偏好 — 此 tab 内字段编辑能力将在后续 sprint 中接入',
       },
       keys: {
-        url: '/legacy/profile#api-keys',
         label: 'API 密钥',
-        desc: '管理 OpenAI / DeepSeek / Anthropic API key',
+        desc: '管理 OpenAI / DeepSeek / Anthropic API key — 此 tab 待接入',
       },
       users: {
-        url: '/legacy/user-management',
         label: '用户管理',
-        desc: '管理员添加 / 禁用其它用户账号',
+        desc: '管理员添加 / 禁用其它用户账号 — 此 tab 待接入',
       },
     };
-    const target = links[activeKey];
+    const target = descriptions[activeKey];
     return (
       <Card>
         <Empty
           description={
             target ? (
               <Space direction="vertical" align="center">
-                <span style={{ fontSize: 14, color: '#666' }}>
-                  本 tab 待整合，请暂时去旧版 {target.label} 页面操作：
-                </span>
+                <span style={{ fontSize: 14, color: '#666' }}>{target.label} (暂未实现)</span>
                 <span style={{ fontSize: 12, color: '#999' }}>{target.desc}</span>
-                <Button type="primary" href={target.url}>
-                  前往旧版 {target.label}
-                </Button>
               </Space>
             ) : (
               `Settings Workspace · ${activeKey} 占位`
