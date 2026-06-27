@@ -563,10 +563,10 @@ const TaskScheduler: React.FC = () => {
     latestDeploymentAudit?.event_type === 'deployment_smoke_failed'
       ? 'critical'
       : latestDeploymentAudit?.event_type === 'deployment_smoke_skipped'
-      ? 'warning'
-      : latestDeploymentAudit
-      ? 'healthy'
-      : 'warning';
+        ? 'warning'
+        : latestDeploymentAudit
+          ? 'healthy'
+          : 'warning';
   const latestShadowBudgetSuggestion = auditLogs.find(
     item => item.event_type === 'live_shadow_budget_suggestion'
   );
@@ -966,12 +966,12 @@ const TaskScheduler: React.FC = () => {
           const statusColor = isMissing
             ? 'red'
             : task.last_run_status === 'FAILED'
-            ? 'red'
-            : task.last_run_status === 'RUNNING'
-            ? 'blue'
-            : task.is_active
-            ? 'green'
-            : 'gray';
+              ? 'red'
+              : task.last_run_status === 'RUNNING'
+                ? 'blue'
+                : task.is_active
+                  ? 'green'
+                  : 'gray';
           return {
             color: statusColor,
             children: (
@@ -1148,14 +1148,14 @@ const TaskScheduler: React.FC = () => {
                     : ''
                 } · ${after.base_url || ''}`
               : isShadowBudgetSuggestion
-              ? `建议 ${
-                  shadowAdvice?.budget_label || after.shadow_budget_advice?.label || '-'
-                } · limit ${item.before_parameters?.limit ?? '-'} → ${after.limit ?? '-'} · ${
-                  shadowAdvice?.budget_reason || after.shadow_budget_advice?.reason || ''
-                }`
-              : `${item.operator_username ? `${item.operator_username} · ` : ''}更新 ${
-                  item.changed_keys?.length || 0
-                } 项${item.source_loop_run_id ? ` · 来源 ${item.source_loop_run_id}` : ''}`}
+                ? `建议 ${
+                    shadowAdvice?.budget_label || after.shadow_budget_advice?.label || '-'
+                  } · limit ${item.before_parameters?.limit ?? '-'} → ${after.limit ?? '-'} · ${
+                    shadowAdvice?.budget_reason || after.shadow_budget_advice?.reason || ''
+                  }`
+                : `${item.operator_username ? `${item.operator_username} · ` : ''}更新 ${
+                    item.changed_keys?.length || 0
+                  } 项${item.source_loop_run_id ? ` · 来源 ${item.source_loop_run_id}` : ''}`}
           </Text>
           <div className="task-audit-row__foot">
             <Space wrap size={[6, 6]}>
@@ -1191,8 +1191,9 @@ const TaskScheduler: React.FC = () => {
           </Tag>
           <h1>调度任务中心</h1>
           <p>
-            管理 cron 调度任务，覆盖行情同步、全市场扫描、Agent 复核、模拟盘交易到收益反哺的整条链路。
-            目前共 31 个活跃任务，覆盖开盘前数据预热、盘中实时刷新、盘后 AI 复盘、风控告警全流程。
+            管理 cron 调度任务，覆盖行情同步、全市场扫描、Agent
+            复核、模拟盘交易到收益反哺的整条链路。 目前共 31
+            个活跃任务，覆盖开盘前数据预热、盘中实时刷新、盘后 AI 复盘、风控告警全流程。
           </p>
           <Space wrap>
             <Button
@@ -1323,8 +1324,8 @@ const TaskScheduler: React.FC = () => {
                         {latestDeploymentAudit.event_type === 'deployment_smoke_failed'
                           ? '未通过'
                           : latestDeploymentAudit.event_type === 'deployment_smoke_skipped'
-                          ? '已跳过'
-                          : '已通过'}
+                            ? '已跳过'
+                            : '已通过'}
                       </strong>
                     </div>
                     <Tag
@@ -1332,8 +1333,8 @@ const TaskScheduler: React.FC = () => {
                         latestDeploymentAudit.event_type === 'deployment_smoke_failed'
                           ? 'red'
                           : latestDeploymentAudit.event_type === 'deployment_smoke_skipped'
-                          ? 'gold'
-                          : 'green'
+                            ? 'gold'
+                            : 'green'
                       }
                     >
                       {formatDateTime(latestDeploymentAudit.created_at)}
@@ -1464,8 +1465,8 @@ const TaskScheduler: React.FC = () => {
                             {latestRiskGate.action === 'pause'
                               ? '暂停新增'
                               : latestRiskGate.action === 'reduce'
-                              ? '自动降仓'
-                              : '正常放行'}
+                                ? '自动降仓'
+                                : '正常放行'}
                           </Tag>
                           <Text type="secondary">
                             {latestRiskGate.reason || '组合风险画像正常'}
@@ -1483,8 +1484,8 @@ const TaskScheduler: React.FC = () => {
                               latestRiskProfile.status.level === 'danger'
                                 ? 'red'
                                 : latestRiskProfile.status.level === 'watch'
-                                ? 'gold'
-                                : 'green'
+                                  ? 'gold'
+                                  : 'green'
                             }
                           >
                             {latestRiskProfile.status.label}
@@ -2031,12 +2032,12 @@ const TaskScheduler: React.FC = () => {
                             summary.completed_validations ?? 0
                           } · 待完成 ${summary.pending_validations ?? 0}`
                         : summary.scenario === 'realtime_quote_sync'
-                        ? `请求 ${summary.requested_count ?? '-'} · 落盘 ${
-                            summary.persisted_count ?? 0
-                          } · 覆盖 ${summary.latest_trade_date_symbol_count ?? 0}`
-                        : `归档 ${summary.archived_signal_count ?? '-'} · Agent ${
-                            summary.agent_submitted ?? 0
-                          } · 模拟买入 ${summary.paper_executed ?? summary.paper_planned ?? 0}`}
+                          ? `请求 ${summary.requested_count ?? '-'} · 落盘 ${
+                              summary.persisted_count ?? 0
+                            } · 覆盖 ${summary.latest_trade_date_symbol_count ?? 0}`
+                          : `归档 ${summary.archived_signal_count ?? '-'} · Agent ${
+                              summary.agent_submitted ?? 0
+                            } · 模拟买入 ${summary.paper_executed ?? summary.paper_planned ?? 0}`}
                     </Text>
                   </Space>
                 );

@@ -115,12 +115,24 @@ const LabWorkspace: React.FC = () => {
     ];
     if (isAdmin) {
       baseTabs.push(
-        { key: 'workflow_readiness', label: '工作流体检 (研究员)', icon: <SafetyCertificateOutlined /> },
-        { key: 'walk_forward', label: 'Walk-Forward (研究员)', icon: <SafetyCertificateOutlined /> },
+        {
+          key: 'workflow_readiness',
+          label: '工作流体检 (研究员)',
+          icon: <SafetyCertificateOutlined />,
+        },
+        {
+          key: 'walk_forward',
+          label: 'Walk-Forward (研究员)',
+          icon: <SafetyCertificateOutlined />,
+        },
         { key: 'optimization', label: '优化历史 (研究员)', icon: <NodeIndexOutlined /> },
         { key: 'quarterly_retrain', label: '季度参数重训 (研究员)', icon: <ExperimentOutlined /> },
         { key: 'shadow_run', label: 'Shadow Run (研究员)', icon: <SwapOutlined /> },
-        { key: 'overfit_metrics', label: 'OverfitMetrics (研究员)', icon: <SafetyCertificateOutlined /> },
+        {
+          key: 'overfit_metrics',
+          label: 'OverfitMetrics (研究员)',
+          icon: <SafetyCertificateOutlined />,
+        },
         { key: 'advanced_quant', label: '高级量化 (研究员)', icon: <SafetyCertificateOutlined /> }
       );
     }
@@ -715,8 +727,8 @@ const NewBacktestTab: React.FC<{
                 pollingTask?.status === 'FAILED'
                   ? 'exception'
                   : pollingTask?.status === 'COMPLETED'
-                  ? 'success'
-                  : 'active'
+                    ? 'success'
+                    : 'active'
               }
             />
             {pollingTask?.error_message && (
@@ -1120,8 +1132,8 @@ const CompareChartCard: React.FC<{ items: BacktestCompareItem[] }> = ({ items })
         const cum = Number.isFinite(Number(point?.cumulative_return_pct))
           ? Number(point.cumulative_return_pct)
           : total > 0 && initial > 0
-          ? (total / initial - 1) * 100
-          : 0;
+            ? (total / initial - 1) * 100
+            : 0;
         row[`task_${item.task_id}`] = Number(cum.toFixed(2));
       });
     });

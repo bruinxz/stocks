@@ -486,8 +486,8 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
           ? Number(row.stop_loss_price)
           : null
         : row.take_profit_price !== null
-        ? Number(row.take_profit_price)
-        : null;
+          ? Number(row.take_profit_price)
+          : null;
     setEditingValue(initial);
   };
 
@@ -1495,8 +1495,7 @@ const EquityCurveTab: React.FC<EquityCurveTabProps> = ({ snapshots, kpis }) => {
               precision={1}
               suffix="%"
               valueStyle={{
-                color:
-                  kpis.winRate >= 55 ? '#16a34a' : kpis.winRate >= 45 ? undefined : '#dc2626',
+                color: kpis.winRate >= 55 ? '#16a34a' : kpis.winRate >= 45 ? undefined : '#dc2626',
               }}
             />
           </Col>
@@ -1601,11 +1600,7 @@ const DailyAttributionTab: React.FC<DailyAttributionTabProps> = ({
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       {/* US-123 [PM-010] backend 真值卡 — 在 cron 报告就绪时显示 */}
       {!backendVm.hidden && (
-        <BackendAttributionCard
-          vm={backendVm}
-          loading={backendLoading}
-          error={backendError}
-        />
+        <BackendAttributionCard vm={backendVm} loading={backendLoading} error={backendError} />
       )}
       {backendVm.hidden && backendLoading && (
         <Card title="日归因 (cron 报告加载中...)">
@@ -1683,7 +1678,9 @@ const DailyAttributionTab: React.FC<DailyAttributionTabProps> = ({
               <Statistic
                 title="成交笔数"
                 value={vm.tradeCount}
-                suffix={vm.tradeCount > 0 ? `（买 ${vm.buyCount} / 卖 ${vm.sellCount}）` : undefined}
+                suffix={
+                  vm.tradeCount > 0 ? `（买 ${vm.buyCount} / 卖 ${vm.sellCount}）` : undefined
+                }
               />
             </Col>
           </Row>
@@ -1881,9 +1878,7 @@ const BackendAttributionCard: React.FC<BackendAttributionCardProps> = ({ vm, loa
           <Statistic
             title="成交笔数"
             value={vm.tradeCount}
-            suffix={
-              vm.tradeCount > 0 ? `（买 ${vm.buyCount} / 卖 ${vm.sellCount}）` : undefined
-            }
+            suffix={vm.tradeCount > 0 ? `（买 ${vm.buyCount} / 卖 ${vm.sellCount}）` : undefined}
           />
         </Col>
       </Row>
@@ -1964,10 +1959,7 @@ const BackendAttributionCard: React.FC<BackendAttributionCardProps> = ({ vm, loa
                   {vm.industryTop.map(it => {
                     const pnl = Number(it.pnl) || 0;
                     return (
-                      <Tag
-                        key={it.industry}
-                        color={pnl >= 0 ? 'green' : 'red'}
-                      >
+                      <Tag key={it.industry} color={pnl >= 0 ? 'green' : 'red'}>
                         {it.industry} {pnl >= 0 ? '+' : ''}¥{pnl.toFixed(0)}
                       </Tag>
                     );
@@ -3295,9 +3287,7 @@ const CorrelationTab: React.FC<{ portfolioId?: number }> = ({ portfolioId }) => 
                     />
                   </Col>
                   <Col xs={24} md={6}>
-                    {c.dominant_industry && (
-                      <Tag color="red">主导行业: {c.dominant_industry}</Tag>
-                    )}
+                    {c.dominant_industry && <Tag color="red">主导行业: {c.dominant_industry}</Tag>}
                   </Col>
                 </Row>
               </Card>

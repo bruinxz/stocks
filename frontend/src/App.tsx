@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
-import { Layout, ConfigProvider, Menu, Avatar, Dropdown, Spin, Button } from 'antd';
+import { Layout, ConfigProvider, Menu, Avatar, Dropdown, Spin } from 'antd';
 import {
   BrowserRouter as Router,
   Routes,
@@ -16,7 +16,6 @@ import {
   BarChartOutlined,
   DownOutlined,
   HomeOutlined,
-  AppstoreOutlined,
 } from '@ant-design/icons';
 import zhCN from 'antd/locale/zh_CN';
 import { useSelector, useDispatch } from 'react-redux';
@@ -255,51 +254,6 @@ const AppContent: React.FC = () => {
     return items;
   }, [isAdmin]);
 
-  // /home 顶栏"更多功能" 下拉 — 去掉 /home 本身 (已在主页).
-  // 让 /home 不再是"死胡同" — 一键能进任意其他页面, 包括简易版.
-  const moreMenuProps: MenuProps = useMemo(
-    () => ({
-      items: [
-        {
-          key: '/workspace/easy',
-          icon: <RocketOutlined />,
-          label: <Link to="/workspace/easy">简易版 (4 步教学)</Link>,
-        },
-        {
-          key: '/workspace/portfolio',
-          icon: <PieChartOutlined />,
-          label: <Link to="/workspace/portfolio">持仓</Link>,
-        },
-        {
-          key: '/workspace/lab',
-          icon: <ExperimentOutlined />,
-          label: <Link to="/workspace/lab">实验室</Link>,
-        },
-        {
-          key: '/workspace/settings',
-          icon: <SettingOutlined />,
-          label: <Link to="/workspace/settings">设置</Link>,
-        },
-        ...(isAdmin
-          ? [
-              { type: 'divider' as const },
-              {
-                key: '/workspace/data',
-                icon: <DatabaseOutlined />,
-                label: <Link to="/workspace/data">数据中心 (管理员)</Link>,
-              },
-              {
-                key: '/workspace/system',
-                icon: <InfoCircleOutlined />,
-                label: <Link to="/workspace/system">系统介绍 (管理员)</Link>,
-              },
-            ]
-          : []),
-      ],
-    }),
-    [isAdmin]
-  );
-
   const flatMenuItems = useMemo(() => flattenMenu(mainMenuItems), [mainMenuItems]);
   const menuPath = useMemo(() => resolveMenuPath(location.pathname), [location.pathname]);
   const selectedMenu =
@@ -363,63 +317,11 @@ const AppContent: React.FC = () => {
     );
   }
 
-  // Phase 7 (2026-06-28) — 新手主页 /home 短路渲染.
-  // 顶栏 = Logo + "更多功能" 下拉 + 用户名菜单. "更多功能"让 /home 不再是"死胡同":
-  // 用户随时能从主页进任意菜单 (包括简易版), 不分 admin / 普通用户.
-  // ProtectedRoute 仍生效 — 未登录跳 /login.
-  if (location.pathname === '/home') {
-    return (
-      <div className="home-shell">
-        <div className="home-topbar">
-          <div className="home-topbar-brand">
-            <BarChartOutlined className="home-topbar-brand-icon" />
-            <span>我的投资</span>
-            {token && (
-              <Dropdown menu={moreMenuProps} placement="bottomLeft" trigger={['click']}>
-                <Button
-                  type="text"
-                  size="small"
-                  className="home-topbar-more"
-                  icon={<AppstoreOutlined />}
-                >
-                  更多功能 <DownOutlined style={{ fontSize: 10 }} />
-                </Button>
-              </Dropdown>
-            )}
-          </div>
-          <div className="home-topbar-actions">
-            {token && (
-              <Dropdown menu={userMenuProps} placement="bottomRight" trigger={['click']}>
-                <div className="home-topbar-user">
-                  <Avatar
-                    size={28}
-                    style={{ backgroundColor: '#4338ca', fontSize: 12 }}
-                    icon={<UserOutlined />}
-                    src={avatarSrc}
-                  />
-                  <span className="home-topbar-user-name">{displayUsername}</span>
-                  <DownOutlined style={{ fontSize: 10, color: 'var(--ink-3, #94a3b8)' }} />
-                </div>
-              </Dropdown>
-            )}
-          </div>
-        </div>
-        <Suspense fallback={routeFallback}>
-          <Routes>
-            <Route
-              path="/home"
-              element={
-                <ProtectedRoute>
-                  <HomeWorkspace />
-                </ProtectedRoute>
-              }
-            />
-          </Routes>
-        </Suspense>
-        <CriticalAlertModal />
-      </div>
-    );
-  }
+  // Phase 7.5 (2026-06-28) — /home 改回走标准 ModernAppLayout (Sider + Header).
+  // 用户反馈: "主页为什么没有导航栏, 布局要保持一致".
+  // Phase 6/7 的短路渲染让 /home 没有左侧 sider, 与其他 workspace 不一致.
+  // 现在 /home 与 /workspace/* 共用同一 shell, 视觉统一.
+  // (短路保留给 /workspace/easy — 简易版要独占整屏)
 
   if (location.pathname.startsWith('/workspace/easy')) {
     return (
@@ -503,6 +405,16 @@ const AppContent: React.FC = () => {
               {/* Phase 6 (2026-06-27) — 登录默认进 /home (新手主页),
                   admin 走右上 ⚙ 进 /admin/today (实为 /workspace/today). */}
               <Route path="/" element={<Navigate to="/home" replace />} />
+
+              {/* Phase 7.5 (2026-06-28) — /home 加入标准 Layout, 与其他 workspace 视觉一致. */}
+              <Route
+                path="/home"
+                element={
+                  <ProtectedRoute>
+                    <HomeWorkspace />
+                  </ProtectedRoute>
+                }
+              />
 
               {/* Unified workspaces (US-001) */}
               <Route

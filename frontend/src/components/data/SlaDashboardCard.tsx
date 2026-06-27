@@ -78,10 +78,10 @@ const SlaDashboardCard: React.FC<SlaDashboardCardProps> = ({ healthData }) => {
               vm.overall_level === 'critical'
                 ? 'red'
                 : vm.overall_level === 'degraded'
-                ? 'orange'
-                : vm.overall_level === 'healthy'
-                ? 'green'
-                : 'default'
+                  ? 'orange'
+                  : vm.overall_level === 'healthy'
+                    ? 'green'
+                    : 'default'
             }
           >
             {overallLabel}
@@ -159,10 +159,10 @@ const SlaDashboardCard: React.FC<SlaDashboardCardProps> = ({ healthData }) => {
                         cat.level === 'critical'
                           ? 'red'
                           : cat.level === 'degraded'
-                          ? 'orange'
-                          : cat.level === 'healthy'
-                          ? 'green'
-                          : 'default'
+                            ? 'orange'
+                            : cat.level === 'healthy'
+                              ? 'green'
+                              : 'default'
                       }
                     >
                       {tagText}

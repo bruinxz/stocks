@@ -1162,8 +1162,8 @@ const DataUpdateStatus: React.FC = () => {
                 {record.metadata?.commercial_tier === 'free'
                   ? '免费'
                   : record.metadata?.commercial_tier === 'internal_service'
-                  ? '内部服务'
-                  : '付费增强'}
+                    ? '内部服务'
+                    : '付费增强'}
               </Tag>
             </div>
           </div>
@@ -1192,8 +1192,8 @@ const DataUpdateStatus: React.FC = () => {
               Number(score || 0) >= 75
                 ? '#16a34a'
                 : Number(score || 0) >= 45
-                ? '#ea580c'
-                : '#dc2626'
+                  ? '#ea580c'
+                  : '#dc2626'
             }
           />
         ),
@@ -1384,8 +1384,8 @@ const DataUpdateStatus: React.FC = () => {
                       Number(quantReadiness.score || 0) >= 82
                         ? '#0f8f6b'
                         : Number(quantReadiness.score || 0) >= 62
-                        ? '#2764b8'
-                        : '#d97706'
+                          ? '#2764b8'
+                          : '#d97706'
                     }
                   />
                 </div>
@@ -1859,10 +1859,10 @@ const DataUpdateStatus: React.FC = () => {
               {coverage?.coverage_status === 'real_ready'
                 ? '真实源就绪'
                 : coverage?.coverage_status === 'derived_ready'
-                ? '派生因子就绪'
-                : coverage?.coverage_status === 'limited'
-                ? '覆盖不足'
-                : '等待落盘'}
+                  ? '派生因子就绪'
+                  : coverage?.coverage_status === 'limited'
+                    ? '覆盖不足'
+                    : '等待落盘'}
             </Tag>
             <Tag>
               真实源占比：

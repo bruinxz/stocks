@@ -74,10 +74,10 @@ const AlertsBell: React.FC<AlertsBellProps> = ({ enableWebSocket = true }) => {
     mode === 'ws'
       ? ' (实时)'
       : mode === 'polling'
-      ? ' (轮询)'
-      : mode === 'error'
-      ? ' (拉取失败)'
-      : '';
+        ? ' (轮询)'
+        : mode === 'error'
+          ? ' (拉取失败)'
+          : '';
   const tooltipText = errored
     ? '拉取告警失败 — 网络异常, 已保留上次未读数; 点击仍可跳转风控中心'
     : `${buildBellTooltip(unreadCount)}${modeSuffix}`;

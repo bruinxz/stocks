@@ -84,10 +84,7 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
   );
 
   const hasTabs = Boolean(tabs && tabs.length > 0);
-  const activeTab = useMemo(
-    () => (tabs || []).find(t => t.key === activeKey),
-    [tabs, activeKey]
-  );
+  const activeTab = useMemo(() => (tabs || []).find(t => t.key === activeKey), [tabs, activeKey]);
 
   // Tap-then-go: when user taps a tab in the mobile drawer, switch + close.
   const handleMobileMenuClick: MenuProps['onClick'] = ({ key }) => {

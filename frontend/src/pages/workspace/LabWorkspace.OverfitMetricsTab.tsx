@@ -110,8 +110,8 @@ const OverfitMetricsTab: React.FC = () => {
   const promotionAlertType: 'success' | 'warning' | 'error' = vm.promotion.ready
     ? 'success'
     : vm.promotion.level === 'critical'
-    ? 'error'
-    : 'warning';
+      ? 'error'
+      : 'warning';
 
   // ---- Table columns ----
   const columns = useMemo(
@@ -294,10 +294,10 @@ const OverfitMetricsTab: React.FC = () => {
                   vm.distribution.passRate == null
                     ? '#888'
                     : vm.distribution.passRate >= 0.7
-                    ? '#16a34a'
-                    : vm.distribution.passRate >= 0.5
-                    ? '#fa8c16'
-                    : '#dc2626',
+                      ? '#16a34a'
+                      : vm.distribution.passRate >= 0.5
+                        ? '#fa8c16'
+                        : '#dc2626',
               }}
             />
           </Col>

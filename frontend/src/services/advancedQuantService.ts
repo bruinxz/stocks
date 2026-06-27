@@ -116,10 +116,15 @@ export interface GovernorEvaluateResult {
 
 // --- Research Integrity ---
 export const runResearchAudit = (input: any) =>
-  api.post<{ success: boolean; data: ResearchIntegrityReport }>('/advanced-quant/research-integrity/audit', input);
+  api.post<{ success: boolean; data: ResearchIntegrityReport }>(
+    '/advanced-quant/research-integrity/audit',
+    input
+  );
 
 export const listResearchAudits = (limit = 30) =>
-  api.get<{ success: boolean; data: ResearchIntegrityReport[] }>(`/advanced-quant/research-integrity/recent?limit=${limit}`);
+  api.get<{ success: boolean; data: ResearchIntegrityReport[] }>(
+    `/advanced-quant/research-integrity/recent?limit=${limit}`
+  );
 
 export const getResearchAuditByBacktest = (source: string, backtest_id: number) =>
   api.get<{ success: boolean; data: ResearchIntegrityReport | null }>(
@@ -156,7 +161,10 @@ export const listExecutionFeasibility = (limit = 50, decision?: string) => {
 
 // --- Meta-label ---
 export const decideMetaLabel = (input: any) =>
-  api.post<{ success: boolean; data: MetaLabelDecisionResult }>('/advanced-quant/meta-label/decide', input);
+  api.post<{ success: boolean; data: MetaLabelDecisionResult }>(
+    '/advanced-quant/meta-label/decide',
+    input
+  );
 
 export const trainMetaLabel = (rows: Array<{ features: any; label: 0 | 1 }>) =>
   api.post<{ success: boolean; data: any }>('/advanced-quant/meta-label/train', { rows });
@@ -164,7 +172,10 @@ export const trainMetaLabel = (rows: Array<{ features: any; label: 0 | 1 }>) =>
 export const getMetaLabelModel = () =>
   api.get<{ success: boolean; data: any }>('/advanced-quant/meta-label/model');
 
-export const listMetaLabelDecisions = (limit = 50, filters: { decision?: string; strategy_key?: string } = {}) => {
+export const listMetaLabelDecisions = (
+  limit = 50,
+  filters: { decision?: string; strategy_key?: string } = {}
+) => {
   const params: any = { limit };
   if (filters.decision) params.decision = filters.decision;
   if (filters.strategy_key) params.strategy_key = filters.strategy_key;
@@ -188,10 +199,13 @@ export const listPortfolioConstructions = (limit = 30) =>
 
 // --- Equity Curve Governor ---
 export const evaluateGovernor = (portfolio_id: number, as_of_date?: string) =>
-  api.post<{ success: boolean; data: GovernorEvaluateResult }>('/advanced-quant/governor/evaluate', {
-    portfolio_id,
-    as_of_date,
-  });
+  api.post<{ success: boolean; data: GovernorEvaluateResult }>(
+    '/advanced-quant/governor/evaluate',
+    {
+      portfolio_id,
+      as_of_date,
+    }
+  );
 
 export const evaluateGovernorAll = () =>
   api.post<{
@@ -256,10 +270,10 @@ export const getCompositeRebalanceStatus = () =>
   );
 
 export const pauseCompositeRebalance = (paused: boolean) =>
-  api.post<{ success: boolean; data: { paused: boolean; affected_count: number; message: string } }>(
-    '/advanced-quant/composite-rebalance/pause',
-    { paused }
-  );
+  api.post<{
+    success: boolean;
+    data: { paused: boolean; affected_count: number; message: string };
+  }>('/advanced-quant/composite-rebalance/pause', { paused });
 
 export const runCompositeRebalance = (input: {
   portfolio_id: number;
@@ -268,5 +282,4 @@ export const runCompositeRebalance = (input: {
   trade_date?: string;
   dry_run?: boolean;
   persist?: boolean;
-}) =>
-  api.post<{ success: boolean; data: any }>('/advanced-quant/composite-rebalance/run', input);
+}) => api.post<{ success: boolean; data: any }>('/advanced-quant/composite-rebalance/run', input);

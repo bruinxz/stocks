@@ -57,7 +57,12 @@ interface WorkflowReadinessTabProps {
 
 const STATUS_META: Record<
   QuantWorkflowStatus,
-  { label: string; color: string; progress: 'success' | 'normal' | 'exception'; icon: React.ReactNode }
+  {
+    label: string;
+    color: string;
+    progress: 'success' | 'normal' | 'exception';
+    icon: React.ReactNode;
+  }
 > = {
   ready: {
     label: '通过',
@@ -97,7 +102,9 @@ const WorkflowReadinessTab: React.FC<WorkflowReadinessTabProps> = ({ strategies,
   const latestCompletedTask = useMemo(
     () =>
       [...completedTasks].sort(
-        (a, b) => dayjs(b.updated_at || b.created_at).valueOf() - dayjs(a.updated_at || a.created_at).valueOf()
+        (a, b) =>
+          dayjs(b.updated_at || b.created_at).valueOf() -
+          dayjs(a.updated_at || a.created_at).valueOf()
       )[0],
     [completedTasks]
   );
@@ -238,7 +245,13 @@ const WorkflowReadinessTab: React.FC<WorkflowReadinessTabProps> = ({ strategies,
       data-testid="workflow-readiness-tab"
     >
       <Alert
-        type={verdict?.status === 'ready' ? 'success' : verdict?.status === 'degraded' ? 'warning' : 'info'}
+        type={
+          verdict?.status === 'ready'
+            ? 'success'
+            : verdict?.status === 'degraded'
+              ? 'warning'
+              : 'info'
+        }
         showIcon
         message="阶段 1-3 量化工作流体检"
         description="这是自评表单：不会自动拉取数据库、启动回测或解锁真实 canary；结论只用于提示下一步人工操作。"
@@ -254,7 +267,11 @@ const WorkflowReadinessTab: React.FC<WorkflowReadinessTabProps> = ({ strategies,
                 策略预设
               </Space>
             }
-            extra={<Tag color={riskColor(selectedPreset.risk_level)}>{riskLabel(selectedPreset.risk_level)}</Tag>}
+            extra={
+              <Tag color={riskColor(selectedPreset.risk_level)}>
+                {riskLabel(selectedPreset.risk_level)}
+              </Tag>
+            }
           >
             <Space direction="vertical" size={12} style={{ width: '100%' }}>
               <Select
@@ -354,7 +371,10 @@ const WorkflowReadinessTab: React.FC<WorkflowReadinessTabProps> = ({ strategies,
                   </Paragraph>
                   <Space size={8} wrap>
                     <GateTag ok={Boolean(verdict?.can_start_backtest)} label="可启动回测" />
-                    <GateTag ok={Boolean(verdict?.can_start_paper_trading)} label="可进入纸面交易" />
+                    <GateTag
+                      ok={Boolean(verdict?.can_start_paper_trading)}
+                      label="可进入纸面交易"
+                    />
                     <GateTag
                       ok={Boolean(verdict?.can_promote_paper_to_canary)}
                       label="可进入小仓观察"
@@ -424,7 +444,11 @@ const WorkflowReadinessTab: React.FC<WorkflowReadinessTabProps> = ({ strategies,
                 <Form.Item label="点时数据" name="point_in_time_ready" valuePropName="checked">
                   <Switch checkedChildren="是" unCheckedChildren="否" />
                 </Form.Item>
-                <Form.Item label="复权处理" name="corporate_action_adjusted" valuePropName="checked">
+                <Form.Item
+                  label="复权处理"
+                  name="corporate_action_adjusted"
+                  valuePropName="checked"
+                >
                   <Switch checkedChildren="是" unCheckedChildren="否" />
                 </Form.Item>
                 <Form.Item label="基准可用" name="benchmark_ready" valuePropName="checked">
@@ -614,7 +638,10 @@ const StageCard: React.FC<{ stage: QuantWorkflowStage }> = ({ stage }) => {
 };
 
 const GateTag: React.FC<{ ok: boolean; label: string }> = ({ ok, label }) => (
-  <Tag color={ok ? 'green' : 'default'} icon={ok ? <CheckCircleOutlined /> : <CloseCircleOutlined />}>
+  <Tag
+    color={ok ? 'green' : 'default'}
+    icon={ok ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
+  >
     {label}
   </Tag>
 );

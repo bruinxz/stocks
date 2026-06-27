@@ -108,7 +108,9 @@ const AdvancedQuantTab: React.FC = () => {
   const [feasibilityList, setFeasibilityList] = useState<ExecutionFeasibilityReport[]>([]);
   const [feasibilityLoading, setFeasibilityLoading] = useState(false);
   const [feasibilityForm] = Form.useForm();
-  const [feasibilityResult, setFeasibilityResult] = useState<ExecutionFeasibilityReport | null>(null);
+  const [feasibilityResult, setFeasibilityResult] = useState<ExecutionFeasibilityReport | null>(
+    null
+  );
   const [checkingFeasibility, setCheckingFeasibility] = useState(false);
 
   // === Meta-label ===
@@ -143,7 +145,8 @@ const AdvancedQuantTab: React.FC = () => {
         listPortfolioConstructions(30),
       ]);
       if (audits.status === 'fulfilled') setAuditList(audits.value.data.data || []);
-      if (feasibilities.status === 'fulfilled') setFeasibilityList(feasibilities.value.data.data || []);
+      if (feasibilities.status === 'fulfilled')
+        setFeasibilityList(feasibilities.value.data.data || []);
       if (model.status === 'fulfilled') setMetaModel(model.value.data.data);
       if (decisions.status === 'fulfilled') setMetaDecisions(decisions.value.data.data || []);
       if (portfolios.status === 'fulfilled') setPortfolioList(portfolios.value.data.data || []);
@@ -199,7 +202,9 @@ const AdvancedQuantTab: React.FC = () => {
       });
       if (data?.success) {
         setFeasibilityResult(data.data);
-        message.success(`评分完成: ${data.data.decision} (${data.data.composite_score.toFixed(0)})`);
+        message.success(
+          `评分完成: ${data.data.decision} (${data.data.composite_score.toFixed(0)})`
+        );
       }
     } catch (e: any) {
       message.error(e?.response?.data?.message || e?.message || '评估失败');
@@ -373,7 +378,9 @@ const AdvancedQuantTab: React.FC = () => {
                         <ul style={{ paddingLeft: 20, fontSize: 12 }}>
                           {r.lookahead_issues.slice(0, 5).map((iss, i) => (
                             <li key={i}>
-                              <Tag color={iss.severity === 'high' ? 'red' : 'orange'}>{iss.severity}</Tag>
+                              <Tag color={iss.severity === 'high' ? 'red' : 'orange'}>
+                                {iss.severity}
+                              </Tag>
                               {iss.pattern} @ {iss.file.split('/').slice(-2).join('/')}:{iss.line}
                             </li>
                           ))}
@@ -433,7 +440,12 @@ const AdvancedQuantTab: React.FC = () => {
               <Row gutter={8}>
                 <Col span={12}>
                   <Form.Item name="target_qty" label="数量 (股)" rules={[{ required: true }]}>
-                    <InputNumber style={{ width: '100%' }} min={100} step={100} placeholder="1000" />
+                    <InputNumber
+                      style={{ width: '100%' }}
+                      min={100}
+                      step={100}
+                      placeholder="1000"
+                    />
                   </Form.Item>
                 </Col>
                 <Col span={12}>
@@ -480,7 +492,11 @@ const AdvancedQuantTab: React.FC = () => {
                       />
                     </Col>
                     <Col span={6}>
-                      <Statistic title="价差" value={feasibilityResult.spread_score ?? '—'} valueStyle={{ fontSize: 14 }} />
+                      <Statistic
+                        title="价差"
+                        value={feasibilityResult.spread_score ?? '—'}
+                        valueStyle={{ fontSize: 14 }}
+                      />
                     </Col>
                     <Col span={6}>
                       <Statistic
@@ -555,7 +571,9 @@ const AdvancedQuantTab: React.FC = () => {
             size="small"
             extra={
               metaModel ? (
-                <Tag color="blue">{metaModel.version} (acc={metaModel.insample_accuracy})</Tag>
+                <Tag color="blue">
+                  {metaModel.version} (acc={metaModel.insample_accuracy})
+                </Tag>
               ) : (
                 <Tag color="default">无训练模型 (fallback rule)</Tag>
               )

@@ -93,8 +93,8 @@ const ShadowRunTab: React.FC = () => {
   const promotionAlertType: 'success' | 'warning' | 'error' = vm.promotion.ready
     ? 'success'
     : vm.promotion.level === 'critical'
-    ? 'error'
-    : 'warning';
+      ? 'error'
+      : 'warning';
 
   const renderHealthTag = (level: HealthLevel) => (
     <Tag color={HEALTH_LEVEL_COLOR[level]}>{HEALTH_LEVEL_LABEL[level]}</Tag>
@@ -134,8 +134,8 @@ const ShadowRunTab: React.FC = () => {
               v >= ERROR_RATE_CRITICAL
                 ? '#dc2626'
                 : v >= ERROR_RATE_DEGRADED
-                ? '#d48806'
-                : '#16a34a',
+                  ? '#d48806'
+                  : '#16a34a',
           }}
         >
           {formatPercent(v)}
@@ -154,8 +154,8 @@ const ShadowRunTab: React.FC = () => {
               v < CONFIDENCE_DEGRADED_MIN
                 ? '#dc2626'
                 : v < CONFIDENCE_HEALTHY_MIN
-                ? '#d48806'
-                : '#16a34a',
+                  ? '#d48806'
+                  : '#16a34a',
           }}
         >
           {formatPercent(v)}
@@ -174,8 +174,8 @@ const ShadowRunTab: React.FC = () => {
               v > DATA_MISSING_DEGRADED_MAX
                 ? '#dc2626'
                 : v > DATA_MISSING_HEALTHY_MAX
-                ? '#d48806'
-                : '#16a34a',
+                  ? '#d48806'
+                  : '#16a34a',
           }}
         >
           {Number.isFinite(v) ? v.toFixed(2) : '—'}
@@ -268,8 +268,8 @@ const ShadowRunTab: React.FC = () => {
                       vm.consistencyLevel === 'healthy'
                         ? '#16a34a'
                         : vm.consistencyLevel === 'degraded'
-                        ? '#d48806'
-                        : '#dc2626',
+                          ? '#d48806'
+                          : '#dc2626',
                   }}
                   suffix={renderHealthTag(vm.consistencyLevel)}
                 />
@@ -370,8 +370,8 @@ const ShadowRunTab: React.FC = () => {
                         vm.forwardReturn.mean_pct === null
                           ? undefined
                           : vm.forwardReturn.mean_pct >= 0
-                          ? '#dc2626'
-                          : '#0f8f6b',
+                            ? '#dc2626'
+                            : '#0f8f6b',
                     }}
                   />
                 </Col>

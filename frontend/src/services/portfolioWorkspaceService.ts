@@ -461,11 +461,13 @@ export interface CorrelationReport {
   diversification_level: 'high' | 'medium' | 'low' | 'insufficient';
 }
 
-export async function getCorrelationReport(params: {
-  portfolio_id?: number;
-  lookback_days?: number;
-  cluster_threshold?: number;
-} = {}): Promise<CorrelationReport> {
+export async function getCorrelationReport(
+  params: {
+    portfolio_id?: number;
+    lookback_days?: number;
+    cluster_threshold?: number;
+  } = {}
+): Promise<CorrelationReport> {
   const res = await api.get('/portfolio/correlation', { params });
   if (!res.data?.success) {
     throw new Error(res.data?.message || '获取相关性报告失败');

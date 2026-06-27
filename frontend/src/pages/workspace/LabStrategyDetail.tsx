@@ -521,7 +521,8 @@ const EdgeHypothesisEditor: React.FC<{
       form.setFieldsValue({
         thesis: hypo.thesis || '',
         category: hypo.category || undefined,
-        expected_edge_pct: typeof hypo.expected_edge_pct === 'number' ? hypo.expected_edge_pct : null,
+        expected_edge_pct:
+          typeof hypo.expected_edge_pct === 'number' ? hypo.expected_edge_pct : null,
         expected_holding_days:
           typeof hypo.expected_holding_days === 'number' ? hypo.expected_holding_days : null,
         key_factors: Array.isArray(hypo.key_factors) ? hypo.key_factors : [],
@@ -661,7 +662,13 @@ const EdgeHypothesisEditor: React.FC<{
               label="预期年化 alpha (%)"
               tooltip="超额收益的预期值（相对基准）。带正负号"
             >
-              <InputNumber min={-50} max={50} step={0.5} style={{ width: '100%' }} placeholder="3.5" />
+              <InputNumber
+                min={-50}
+                max={50}
+                step={0.5}
+                style={{ width: '100%' }}
+                placeholder="3.5"
+              />
             </Form.Item>
           </Col>
           <Col span={12}>
@@ -680,7 +687,11 @@ const EdgeHypothesisEditor: React.FC<{
           label="熔断阈值"
           tooltip="kill_switch_metric 的数值阈值，低于此值触发停用"
         >
-          <InputNumber step={0.1} style={{ width: '100%' }} placeholder="0.5 (e.g. sharpe<0.5 停用)" />
+          <InputNumber
+            step={0.1}
+            style={{ width: '100%' }}
+            placeholder="0.5 (e.g. sharpe<0.5 停用)"
+          />
         </Form.Item>
 
         <Form.Item
@@ -755,7 +766,8 @@ const EdgeHypothesisCard: React.FC<{
             <Space direction="vertical" size={8}>
               <Text>
                 本策略尚未填写可证伪的 alpha 假设。Phase 4 promotion 门禁要求所有策略必须填写
-                edge_hypothesis.thesis (≥10 字符) / category / kill_switch_metric 才能 promote 成 champion。
+                edge_hypothesis.thesis (≥10 字符) / category / kill_switch_metric 才能 promote 成
+                champion。
               </Text>
               <Button type="primary" icon={<EditOutlined />} onClick={() => setEditorOpen(true)}>
                 立即填写
@@ -776,11 +788,13 @@ const EdgeHypothesisCard: React.FC<{
   const thesis = String(hypo.thesis || '').trim();
   const category = hypo.category || null;
   const expectedEdge = typeof hypo.expected_edge_pct === 'number' ? hypo.expected_edge_pct : null;
-  const expectedHolding = typeof hypo.expected_holding_days === 'number' ? hypo.expected_holding_days : null;
+  const expectedHolding =
+    typeof hypo.expected_holding_days === 'number' ? hypo.expected_holding_days : null;
   const keyFactors = Array.isArray(hypo.key_factors) ? hypo.key_factors : [];
   const failureModes = Array.isArray(hypo.failure_modes) ? hypo.failure_modes : [];
   const killMetric = hypo.kill_switch_metric || null;
-  const killThreshold = typeof hypo.kill_switch_threshold === 'number' ? hypo.kill_switch_threshold : null;
+  const killThreshold =
+    typeof hypo.kill_switch_threshold === 'number' ? hypo.kill_switch_threshold : null;
   const evidence = hypo.evidence_link || null;
 
   return (
@@ -793,8 +807,8 @@ const EdgeHypothesisCard: React.FC<{
           <Space>
             <Text strong>Edge Hypothesis (alpha 假设)</Text>
             <Tag color="processing">Phase 4</Tag>
-            {gateStatus && (
-              gateStatus.all_satisfied ? (
+            {gateStatus &&
+              (gateStatus.all_satisfied ? (
                 <Tooltip title="所有必填字段已填，promotion 门禁放行">
                   <Tag color="success" icon={<CheckCircleOutlined />}>
                     Gate 通过
@@ -806,8 +820,7 @@ const EdgeHypothesisCard: React.FC<{
                     Gate 拦截
                   </Tag>
                 </Tooltip>
-              )
-            )}
+              ))}
           </Space>
         }
         extra={
@@ -816,68 +829,70 @@ const EdgeHypothesisCard: React.FC<{
           </Button>
         }
       >
-      {thesis && (
-        <Paragraph style={{ marginBottom: 12, fontSize: 14, lineHeight: 1.6 }}>
-          <Text type="secondary">假设：</Text>
-          <Text strong>{thesis}</Text>
-        </Paragraph>
-      )}
-      <Row gutter={[16, 8]}>
-        {category && (
-          <Col xs={12} md={6}>
-            <Text type="secondary">类别：</Text>
-            <Tag color="blue">{category}</Tag>
-          </Col>
+        {thesis && (
+          <Paragraph style={{ marginBottom: 12, fontSize: 14, lineHeight: 1.6 }}>
+            <Text type="secondary">假设：</Text>
+            <Text strong>{thesis}</Text>
+          </Paragraph>
         )}
-        {expectedEdge !== null && (
-          <Col xs={12} md={6}>
-            <Text type="secondary">预期年化 alpha：</Text>
-            <Text strong style={{ color: expectedEdge > 0 ? '#16a34a' : '#dc2626' }}>
-              {expectedEdge.toFixed(1)}%
-            </Text>
-          </Col>
+        <Row gutter={[16, 8]}>
+          {category && (
+            <Col xs={12} md={6}>
+              <Text type="secondary">类别：</Text>
+              <Tag color="blue">{category}</Tag>
+            </Col>
+          )}
+          {expectedEdge !== null && (
+            <Col xs={12} md={6}>
+              <Text type="secondary">预期年化 alpha：</Text>
+              <Text strong style={{ color: expectedEdge > 0 ? '#16a34a' : '#dc2626' }}>
+                {expectedEdge.toFixed(1)}%
+              </Text>
+            </Col>
+          )}
+          {expectedHolding !== null && (
+            <Col xs={12} md={6}>
+              <Text type="secondary">预期持仓：</Text>
+              <Text strong>{expectedHolding} 天</Text>
+            </Col>
+          )}
+          {killMetric && (
+            <Col xs={12} md={6}>
+              <Text type="secondary">熔断指标：</Text>
+              <Tag color="red">
+                {killMetric} {killThreshold !== null ? `< ${killThreshold}` : ''}
+              </Tag>
+            </Col>
+          )}
+        </Row>
+        {keyFactors.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <Text type="secondary">关键因子：</Text>
+            <Space size={[4, 4]} wrap>
+              {keyFactors.map((f: string) => (
+                <Tag key={f}>{f}</Tag>
+              ))}
+            </Space>
+          </div>
         )}
-        {expectedHolding !== null && (
-          <Col xs={12} md={6}>
-            <Text type="secondary">预期持仓：</Text>
-            <Text strong>{expectedHolding} 天</Text>
-          </Col>
+        {failureModes.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <Text type="secondary">已知失效场景：</Text>
+            <ul style={{ marginBottom: 0, paddingLeft: 20, color: '#666' }}>
+              {failureModes.map((m: string, i: number) => (
+                <li key={i} style={{ fontSize: 14 }}>
+                  {m}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
-        {killMetric && (
-          <Col xs={12} md={6}>
-            <Text type="secondary">熔断指标：</Text>
-            <Tag color="red">
-              {killMetric} {killThreshold !== null ? `< ${killThreshold}` : ''}
-            </Tag>
-          </Col>
+        {evidence && (
+          <div style={{ marginTop: 8 }}>
+            <Text type="secondary">学术引用：</Text>
+            <Text code>{evidence}</Text>
+          </div>
         )}
-      </Row>
-      {keyFactors.length > 0 && (
-        <div style={{ marginTop: 8 }}>
-          <Text type="secondary">关键因子：</Text>
-          <Space size={[4, 4]} wrap>
-            {keyFactors.map((f: string) => (
-              <Tag key={f}>{f}</Tag>
-            ))}
-          </Space>
-        </div>
-      )}
-      {failureModes.length > 0 && (
-        <div style={{ marginTop: 8 }}>
-          <Text type="secondary">已知失效场景：</Text>
-          <ul style={{ marginBottom: 0, paddingLeft: 20, color: '#666' }}>
-            {failureModes.map((m: string, i: number) => (
-              <li key={i} style={{ fontSize: 14 }}>{m}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {evidence && (
-        <div style={{ marginTop: 8 }}>
-          <Text type="secondary">学术引用：</Text>
-          <Text code>{evidence}</Text>
-        </div>
-      )}
       </Card>
       <EdgeHypothesisEditor
         open={editorOpen}
