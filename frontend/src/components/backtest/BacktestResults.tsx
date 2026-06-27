@@ -119,8 +119,8 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
         metrics.sharpe_ratio >= 1
           ? 'icon-green'
           : metrics.sharpe_ratio >= 0.5
-          ? 'icon-orange'
-          : 'icon-red',
+            ? 'icon-orange'
+            : 'icon-red',
     },
     {
       name: '最大回撤',
@@ -143,8 +143,8 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
         metrics.win_rate >= 0.6
           ? 'icon-green'
           : metrics.win_rate >= 0.5
-          ? 'icon-orange'
-          : 'icon-red',
+            ? 'icon-orange'
+            : 'icon-red',
     },
     {
       name: '盈亏比',
@@ -155,8 +155,8 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
         metrics.profit_loss_ratio >= 1.5
           ? '#16a34a'
           : metrics.profit_loss_ratio >= 1
-          ? '#faad14'
-          : '#dc2626',
+            ? '#faad14'
+            : '#dc2626',
       cardClass:
         metrics.profit_loss_ratio >= 1.5
           ? 'stat-card stat-card-green'
@@ -165,8 +165,8 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
         metrics.profit_loss_ratio >= 1.5
           ? 'icon-green'
           : metrics.profit_loss_ratio >= 1
-          ? 'icon-orange'
-          : 'icon-red',
+            ? 'icon-orange'
+            : 'icon-red',
     },
   ];
 
@@ -451,12 +451,12 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
                   {backtestInfo.strategyType === 'moving_average_crossover'
                     ? '均线交叉'
                     : backtestInfo.strategyType === 'rsi'
-                    ? 'RSI策略'
-                    : backtestInfo.strategyType === 'macd'
-                    ? 'MACD策略'
-                    : backtestInfo.strategyType === 'bollinger_bands'
-                    ? '布林带策略'
-                    : backtestInfo.strategyType}
+                      ? 'RSI策略'
+                      : backtestInfo.strategyType === 'macd'
+                        ? 'MACD策略'
+                        : backtestInfo.strategyType === 'bollinger_bands'
+                          ? '布林带策略'
+                          : backtestInfo.strategyType}
                 </Descriptions.Item>
                 <Descriptions.Item label="初始资金">
                   ¥{backtestInfo.initial_capital.toLocaleString()}

@@ -141,7 +141,11 @@ const SettingsWorkspace: React.FC = () => {
         { key: 'portfolio-construction', label: '组合构建 (admin)', icon: <ApartmentOutlined /> },
         { key: 'analysis-engine', label: '分析引擎 (admin)', icon: <ThunderboltOutlined /> },
         { key: 'risk-parameters', label: '风控参数中心 (admin)', icon: <SafetyOutlined /> },
-        { key: 'strategy-kill-switch', label: '策略 kill-switch (admin)', icon: <PoweroffOutlined /> },
+        {
+          key: 'strategy-kill-switch',
+          label: '策略 kill-switch (admin)',
+          icon: <PoweroffOutlined />,
+        },
         { key: 'todo-suggestions', label: '待办建议 (admin)', icon: <BulbOutlined /> },
         { key: 'black-swan', label: '黑天鹅历史 (admin)', icon: <AlertOutlined /> },
         { key: 'users', label: '用户管理 (admin)', icon: <TeamOutlined /> }
@@ -1257,10 +1261,10 @@ const SettingsWorkspace: React.FC = () => {
                   realtimeAlertTestResult.status === 'sent'
                     ? 'success'
                     : realtimeAlertTestResult.status === 'partial'
-                    ? 'warning'
-                    : realtimeAlertTestResult.status === 'skipped'
-                    ? 'info'
-                    : 'error'
+                      ? 'warning'
+                      : realtimeAlertTestResult.status === 'skipped'
+                        ? 'info'
+                        : 'error'
                 }
                 showIcon
                 message={`派发结果：${realtimeAlertTestResult.status}${
@@ -1715,8 +1719,8 @@ const DigestPreviewModal: React.FC<DigestPreviewModalProps> = ({ open, result, o
                       (pnl?.pnl_today ?? 0) > 0
                         ? '#dc2626'
                         : (pnl?.pnl_today ?? 0) < 0
-                        ? '#16a34a'
-                        : '#999',
+                          ? '#16a34a'
+                          : '#999',
                   }}
                 />
               </Col>
@@ -1731,8 +1735,8 @@ const DigestPreviewModal: React.FC<DigestPreviewModalProps> = ({ open, result, o
                       (pnl?.pnl_today_pct ?? 0) > 0
                         ? '#dc2626'
                         : (pnl?.pnl_today_pct ?? 0) < 0
-                        ? '#16a34a'
-                        : '#999',
+                          ? '#16a34a'
+                          : '#999',
                   }}
                 />
               </Col>
@@ -1963,8 +1967,8 @@ const WeeklyReviewPreviewModal: React.FC<WeeklyReviewPreviewModalProps> = ({
                       (pnl?.pnl_amount ?? 0) > 0
                         ? '#dc2626'
                         : (pnl?.pnl_amount ?? 0) < 0
-                        ? '#16a34a'
-                        : '#999',
+                          ? '#16a34a'
+                          : '#999',
                   }}
                 />
               </Col>
@@ -1979,8 +1983,8 @@ const WeeklyReviewPreviewModal: React.FC<WeeklyReviewPreviewModalProps> = ({
                       (pnl?.pnl_pct ?? 0) > 0
                         ? '#dc2626'
                         : (pnl?.pnl_pct ?? 0) < 0
-                        ? '#16a34a'
-                        : '#999',
+                          ? '#16a34a'
+                          : '#999',
                   }}
                 />
               </Col>
@@ -2211,8 +2215,8 @@ const WeChatBindModal: React.FC<WeChatBindModalProps> = ({
               status === 'bound'
                 ? '已成功绑定！'
                 : status === 'expired'
-                ? '轮询超时（2 分钟），可点击"重新生成"再试'
-                : '请用微信扫码 → 关注公众号 → 自动绑定（页面会自动刷新）'
+                  ? '轮询超时（2 分钟），可点击"重新生成"再试'
+                  : '请用微信扫码 → 关注公众号 → 自动绑定（页面会自动刷新）'
             }
             description={
               <Text type="secondary" style={{ fontSize: 12 }}>

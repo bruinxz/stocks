@@ -27,9 +27,7 @@ const GlobalPortfolioSelector: React.FC = () => {
         title={
           <span>
             当前盘: {only.name}
-            {stratCount > 0 || factorCount > 0
-              ? ` · ${stratCount} 策略 / ${factorCount} 因子`
-              : ''}
+            {stratCount > 0 || factorCount > 0 ? ` · ${stratCount} 策略 / ${factorCount} 因子` : ''}
             {only.auto_trade_enabled ? ' · 自动跟单 ON' : ''}
           </span>
         }
@@ -57,14 +55,14 @@ const GlobalPortfolioSelector: React.FC = () => {
       options={portfolios.map(p => {
         const stratCount = p.strategy_display?.length ?? p.strategy_keys?.length ?? 0;
         const factorCount = p.factor_display?.length ?? p.enabled_factors?.length ?? 0;
-        const meta = stratCount > 0 || factorCount > 0 ? ` · ${stratCount}策略/${factorCount}因子` : '';
+        const meta =
+          stratCount > 0 || factorCount > 0 ? ` · ${stratCount}策略/${factorCount}因子` : '';
         const auto = p.auto_trade_enabled ? ' · 🟣自动' : '';
         return {
           value: p.id,
-          label: `${p.name} · ${p.position_count ?? (p as any).positions_count ?? 0} 持仓 · ¥${Number(p.total_value).toLocaleString(
-            undefined,
-            { maximumFractionDigits: 0 }
-          )}${meta}${auto}`,
+          label: `${p.name} · ${p.position_count ?? (p as any).positions_count ?? 0} 持仓 · ¥${Number(
+            p.total_value
+          ).toLocaleString(undefined, { maximumFractionDigits: 0 })}${meta}${auto}`,
         };
       })}
     />

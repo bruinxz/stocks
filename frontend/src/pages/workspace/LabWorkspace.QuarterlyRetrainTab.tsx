@@ -57,10 +57,10 @@ const formatPrimaryMetric = (c: RetrainCandidate) => {
     c.primary_metric_kind === 'dsr'
       ? 'DSR'
       : c.primary_metric_kind === 'mean_test_sharpe'
-      ? 'meanSharpe'
-      : c.primary_metric_kind === 'deflated_sharpe'
-      ? 'DeflatedSharpe'
-      : '';
+        ? 'meanSharpe'
+        : c.primary_metric_kind === 'deflated_sharpe'
+          ? 'DeflatedSharpe'
+          : '';
   const tone = c.primary_metric > 0.5 ? '#16a34a' : c.primary_metric > 0 ? '#1677ff' : '#dc2626';
   return (
     <Tooltip title={`${label}: ${c.primary_metric.toFixed(4)}`}>

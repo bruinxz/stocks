@@ -1013,7 +1013,7 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
             // US-046 AI 权重对照: 右侧显示 "AI N%" + "Δ +M%" 的 chip
             const aiVal = aiWeights[factor.name];
             const aiSuggested = typeof aiVal === 'number';
-            const delta = aiSuggested ? weightDeltas[factor.name] ?? 0 : null;
+            const delta = aiSuggested ? (weightDeltas[factor.name] ?? 0) : null;
             // delta 颜色: |delta| < 2% 灰色 (基本一致) / 正值 (用户高于 AI) 红 / 负值 (用户低于 AI) 绿
             const deltaColor =
               delta === null || Math.abs(delta) < 2 ? '#999' : delta > 0 ? '#dc2626' : '#16a34a';
@@ -1536,8 +1536,8 @@ const IndustryBoardTab: React.FC<{
                             p.main_inflow_ratio == null
                               ? 'default'
                               : p.main_inflow_ratio > 0
-                              ? 'red'
-                              : 'green'
+                                ? 'red'
+                                : 'green'
                           }
                         >
                           {p.trade_date.slice(5)}: {fmtPct(p.main_inflow_ratio)}
@@ -1652,7 +1652,6 @@ const IndustryBoardTab: React.FC<{
               <div
                 key={`${n.publish_time}-${i}`}
                 style={{
-                  
                   marginLeft: -18,
                   paddingLeft: 14,
                   marginBottom: 12,
@@ -2276,7 +2275,6 @@ const SentimentBoardTab: React.FC<{
                   <div
                     key={`${n.publish_time}-${i}`}
                     style={{
-                      
                       marginLeft: -18,
                       paddingLeft: 14,
                       marginBottom: 10,
@@ -2872,7 +2870,7 @@ const FactorDetailDrawer: React.FC<FactorDetailDrawerProps> = ({
   onRetry,
 }) => {
   const category = detail
-    ? CATEGORY_DISPLAY[detail.category] ?? CATEGORY_DISPLAY.other
+    ? (CATEGORY_DISPLAY[detail.category] ?? CATEGORY_DISPLAY.other)
     : CATEGORY_DISPLAY.other;
 
   return (

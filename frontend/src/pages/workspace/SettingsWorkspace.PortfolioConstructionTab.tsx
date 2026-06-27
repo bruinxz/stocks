@@ -53,26 +53,27 @@ interface PCConfigResponse {
   default: PortfolioConstructionConfig;
 }
 
-const MODE_OPTIONS: Array<{ value: ConstructionMode; label: string; desc: string; tone: string }> = [
-  {
-    value: 'off',
-    label: 'Off (默认)',
-    desc: '完全跟以前一样 — buy-decision loop 走 per-signal 流程, 零行为变化',
-    tone: 'default',
-  },
-  {
-    value: 'shadow',
-    label: 'Shadow (预演)',
-    desc: '后台跑组合构建 + 日志 + Activation Dashboard 可见, 但实际下单仓位**不**替换. 用于"看看会怎样"',
-    tone: 'warning',
-  },
-  {
-    value: 'hard',
-    label: 'Hard (真切换)',
-    desc: '用组合构建输出的 weight × 100 替换 per-signal 仓位. **真正改变下单行为**',
-    tone: 'error',
-  },
-];
+const MODE_OPTIONS: Array<{ value: ConstructionMode; label: string; desc: string; tone: string }> =
+  [
+    {
+      value: 'off',
+      label: 'Off (默认)',
+      desc: '完全跟以前一样 — buy-decision loop 走 per-signal 流程, 零行为变化',
+      tone: 'default',
+    },
+    {
+      value: 'shadow',
+      label: 'Shadow (预演)',
+      desc: '后台跑组合构建 + 日志 + Activation Dashboard 可见, 但实际下单仓位**不**替换. 用于"看看会怎样"',
+      tone: 'warning',
+    },
+    {
+      value: 'hard',
+      label: 'Hard (真切换)',
+      desc: '用组合构建输出的 weight × 100 替换 per-signal 仓位. **真正改变下单行为**',
+      tone: 'error',
+    },
+  ];
 
 const METHOD_OPTIONS: Array<{ value: ConstructionMethod; label: string; desc: string }> = [
   {
@@ -141,7 +142,9 @@ const PortfolioConstructionTab: React.FC = () => {
       const next: { config: PortfolioConstructionConfig } = resp.data?.data;
       // 重置 view + draft (用 server 归一化后值 — 防止 lenient normalize 让 hasChanges 永真)
       setView(prev =>
-        prev ? { ...prev, config: next.config, is_default: false } : { config: next.config, is_default: false, default: next.config }
+        prev
+          ? { ...prev, config: next.config, is_default: false }
+          : { config: next.config, is_default: false, default: next.config }
       );
       setDraft(next.config);
       message.success(resp.data?.message || '已保存');
@@ -224,7 +227,9 @@ const PortfolioConstructionTab: React.FC = () => {
               >
                 <Radio.Group
                   value={draft.mode}
-                  onChange={e => setDraft(prev => (prev ? { ...prev, mode: e.target.value } : prev))}
+                  onChange={e =>
+                    setDraft(prev => (prev ? { ...prev, mode: e.target.value } : prev))
+                  }
                   style={{ width: '100%' }}
                 >
                   <Space direction="vertical" style={{ width: '100%' }}>
@@ -283,9 +288,7 @@ const PortfolioConstructionTab: React.FC = () => {
                   max={252}
                   value={draft.lookback_days}
                   onChange={v =>
-                    setDraft(prev =>
-                      prev ? { ...prev, lookback_days: Number(v ?? 60) } : prev
-                    )
+                    setDraft(prev => (prev ? { ...prev, lookback_days: Number(v ?? 60) } : prev))
                   }
                   style={{ width: '100%' }}
                   addonAfter="天"
@@ -308,9 +311,7 @@ const PortfolioConstructionTab: React.FC = () => {
                   max={200}
                   value={draft.max_candidates}
                   onChange={v =>
-                    setDraft(prev =>
-                      prev ? { ...prev, max_candidates: Number(v ?? 30) } : prev
-                    )
+                    setDraft(prev => (prev ? { ...prev, max_candidates: Number(v ?? 30) } : prev))
                   }
                   style={{ width: '100%' }}
                   addonAfter="只"
@@ -334,9 +335,7 @@ const PortfolioConstructionTab: React.FC = () => {
                   step={0.01}
                   value={draft.max_weight}
                   onChange={v =>
-                    setDraft(prev =>
-                      prev ? { ...prev, max_weight: Number(v ?? 0.15) } : prev
-                    )
+                    setDraft(prev => (prev ? { ...prev, max_weight: Number(v ?? 0.15) } : prev))
                   }
                   style={{ width: '100%' }}
                   addonAfter="比例 (0-1)"
@@ -380,9 +379,9 @@ const PortfolioConstructionTab: React.FC = () => {
               description={
                 <Text style={{ fontSize: 12 }}>
                   Hard 模式会直接替换每笔信号的下单仓位为组合构建输出的 weight × 100.
-                  历史数据不足的候选会被 PortfolioConstructionService 退化为 equal_weight;
-                  cov 矩阵无法估算时 adapter 返回 null 走 fail-open (回退到 per-signal).
-                  建议先在 shadow 模式跑 ≥ 1 周再切到 hard.
+                  历史数据不足的候选会被 PortfolioConstructionService 退化为 equal_weight; cov
+                  矩阵无法估算时 adapter 返回 null 走 fail-open (回退到 per-signal). 建议先在 shadow
+                  模式跑 ≥ 1 周再切到 hard.
                 </Text>
               }
             />
@@ -392,8 +391,8 @@ const PortfolioConstructionTab: React.FC = () => {
 
       <Paragraph style={{ marginTop: 16, fontSize: 12, color: 'var(--text-muted)' }}>
         配置存于 <code>User.risk_config.portfolio_construction</code> JSONB. 调用方:{' '}
-        <code>backend/src/portfolio/internal/PortfolioConstructionAdapter.ts</code>.
-        修改后 <strong>下一次 autopilot cron 跑时生效</strong> (不影响当前已在 loop 中的批次).
+        <code>backend/src/portfolio/internal/PortfolioConstructionAdapter.ts</code>. 修改后{' '}
+        <strong>下一次 autopilot cron 跑时生效</strong> (不影响当前已在 loop 中的批次).
       </Paragraph>
     </Card>
   );

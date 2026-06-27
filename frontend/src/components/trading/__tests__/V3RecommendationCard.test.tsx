@@ -126,7 +126,14 @@ describe('V3RecommendationCard / orderDimensions', () => {
   test('未知 key 静默丢弃 (不破坏渲染)', () => {
     const input: any[] = [
       mkDim('popularity', 50),
-      { key: 'unknown_dim', bar_value: 99, label: '?', raw_score: 0, confidence: 0, subs_present: 0 },
+      {
+        key: 'unknown_dim',
+        bar_value: 99,
+        label: '?',
+        raw_score: 0,
+        confidence: 0,
+        subs_present: 0,
+      },
     ];
     const out = orderDimensions(input);
     expect(out[0]?.key).toBe('popularity');

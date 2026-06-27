@@ -259,9 +259,7 @@ const PortfolioManagementPanel: React.FC = () => {
     async (row: PortfolioListItem, next: boolean) => {
       try {
         // 乐观更新 (UX: Switch 立即拨动)
-        setList(prev =>
-          prev.map(p => (p.id === row.id ? { ...p, auto_trade_enabled: next } : p))
-        );
+        setList(prev => prev.map(p => (p.id === row.id ? { ...p, auto_trade_enabled: next } : p)));
         await portfolioCrudService.updatePortfolio(row.id, { auto_trade_enabled: next });
         message.success(
           `"${row.name}" 自动跟单已${next ? '开启' : '关闭'} — 14:35 cron 将${next ? '' : '不'}下单`
@@ -269,9 +267,7 @@ const PortfolioManagementPanel: React.FC = () => {
         await refreshPortfolioContext();
       } catch (err: unknown) {
         // 回滚
-        setList(prev =>
-          prev.map(p => (p.id === row.id ? { ...p, auto_trade_enabled: !next } : p))
-        );
+        setList(prev => prev.map(p => (p.id === row.id ? { ...p, auto_trade_enabled: !next } : p)));
         message.error(err instanceof Error ? err.message : String(err));
       }
     },
@@ -362,7 +358,9 @@ const PortfolioManagementPanel: React.FC = () => {
       width: 120,
       align: 'right',
       render: (v: number) => (
-        <Text strong>{`¥${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}</Text>
+        <Text
+          strong
+        >{`¥${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}</Text>
       ),
     },
     {
@@ -404,17 +402,31 @@ const PortfolioManagementPanel: React.FC = () => {
             <Space size={[4, 4]} wrap>
               {stratPreview.map(c => (
                 <Tooltip key={c.key} title={c.brief || c.key}>
-                  <Tag color="blue" style={{ marginInlineEnd: 0 }}>{c.name}</Tag>
+                  <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+                    {c.name}
+                  </Tag>
                 </Tooltip>
               ))}
               {stratExtra > 0 && (
-                <Tooltip title={(chips || []).slice(previewCount).map(c => c.name).join(' · ')}>
+                <Tooltip
+                  title={(chips || [])
+                    .slice(previewCount)
+                    .map(c => c.name)
+                    .join(' · ')}
+                >
                   <Tag color="default">+{stratExtra} 策略</Tag>
                 </Tooltip>
               )}
             </Space>
             {factorsTotal > 0 && (
-              <Tooltip title={factors.map(f => f.name).slice(0, 8).join(' · ') + (factors.length > 8 ? ` …+${factors.length - 8}` : '')}>
+              <Tooltip
+                title={
+                  factors
+                    .map(f => f.name)
+                    .slice(0, 8)
+                    .join(' · ') + (factors.length > 8 ? ` …+${factors.length - 8}` : '')
+                }
+              >
                 <Tag color="geekblue" style={{ marginInlineEnd: 0, fontSize: 11 }}>
                   共 {factorsTotal} 因子 (详情可见)
                 </Tag>
@@ -448,11 +460,7 @@ const PortfolioManagementPanel: React.FC = () => {
       width: 80,
       align: 'center',
       render: (active: boolean) =>
-        active ? (
-          <CheckCircleTwoTone twoToneColor="#52c41a" />
-        ) : (
-          <Tag color="default">停用</Tag>
-        ),
+        active ? <CheckCircleTwoTone twoToneColor="#52c41a" /> : <Tag color="default">停用</Tag>,
     },
     {
       title: '操作',
@@ -484,8 +492,9 @@ const PortfolioManagementPanel: React.FC = () => {
               title={`确认重置 "${row.name}"?`}
               description={
                 <Paragraph style={{ marginBottom: 0 }}>
-                  所有持仓将清空, 资金恢复到 <Text strong>¥{row.initial_capital.toLocaleString()}</Text>
-                  . <Text type="danger">不可撤销</Text>.
+                  所有持仓将清空, 资金恢复到{' '}
+                  <Text strong>¥{row.initial_capital.toLocaleString()}</Text>.{' '}
+                  <Text type="danger">不可撤销</Text>.
                 </Paragraph>
               }
               okText="确认重置"
@@ -507,10 +516,10 @@ const PortfolioManagementPanel: React.FC = () => {
               cancelText="取消"
               onConfirm={() => void handleDelete(row)}
             >
-            <Tooltip title="删除">
-              <Button size="small" type="text" danger icon={<DeleteOutlined />} />
-            </Tooltip>
-          </Popconfirm>
+              <Tooltip title="删除">
+                <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+              </Tooltip>
+            </Popconfirm>
           )}
         </Space>
       ),
@@ -642,7 +651,11 @@ const PortfolioManagementPanel: React.FC = () => {
           >
             <Input placeholder="例如: 因子组合 1 / 龙头打板 / 财报反转" />
           </Form.Item>
-          <Form.Item name="description" label="描述 (可选)" rules={[{ max: 1000, message: '描述最多 1000 字' }]}>
+          <Form.Item
+            name="description"
+            label="描述 (可选)"
+            rules={[{ max: 1000, message: '描述最多 1000 字' }]}
+          >
             <Input.TextArea
               placeholder="这个模拟盘的用途 / 选股逻辑 / 风控偏好"
               autoSize={{ minRows: 2, maxRows: 4 }}
@@ -725,7 +738,9 @@ const PortfolioManagementPanel: React.FC = () => {
             <Spin tip="加载详情..." />
           </div>
         )}
-        {drawerError && <Alert type="error" showIcon message="加载失败" description={drawerError} />}
+        {drawerError && (
+          <Alert type="error" showIcon message="加载失败" description={drawerError} />
+        )}
         {drawerData && !drawerLoading && (
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
             <Card size="small" title="基本信息">
@@ -747,11 +762,7 @@ const PortfolioManagementPanel: React.FC = () => {
                 </Text>
                 <Text>
                   <strong>自动跟单:</strong>{' '}
-                  {drawerData.auto_trade_enabled ? (
-                    <Tag color="purple">开启</Tag>
-                  ) : (
-                    <Tag>关闭</Tag>
-                  )}
+                  {drawerData.auto_trade_enabled ? <Tag color="purple">开启</Tag> : <Tag>关闭</Tag>}
                 </Text>
                 <Text>
                   <strong>创建时间:</strong>{' '}
@@ -902,7 +913,12 @@ interface TransferShimProps {
   dataSource: TransferProps<{ key: string }>['dataSource'];
   placeholder?: string;
 }
-const TransferShim: React.FC<TransferShimProps> = ({ value, onChange, dataSource, placeholder }) => {
+const TransferShim: React.FC<TransferShimProps> = ({
+  value,
+  onChange,
+  dataSource,
+  placeholder,
+}) => {
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   return (
     <Transfer

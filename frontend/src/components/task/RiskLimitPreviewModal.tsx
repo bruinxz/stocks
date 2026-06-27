@@ -23,7 +23,13 @@ type Props = {
 };
 
 const decisionColor = (action?: string) =>
-  action === 'support' ? 'green' : action === 'caution' ? 'orange' : action === 'observe' ? 'blue' : 'default';
+  action === 'support'
+    ? 'green'
+    : action === 'caution'
+      ? 'orange'
+      : action === 'observe'
+        ? 'blue'
+        : 'default';
 
 export const RiskLimitPreviewModal: React.FC<Props> = ({
   open,
@@ -125,17 +131,19 @@ export const RiskLimitPreviewModal: React.FC<Props> = ({
                 <Tag>
                   置信≥
                   {Number(
-                    riskFieldGateAdvice.current_parameters.risk_threshold_field_min_confidence ?? 0.45
+                    riskFieldGateAdvice.current_parameters.risk_threshold_field_min_confidence ??
+                      0.45
                   ).toFixed(2)}
                 </Tag>
                 <Tag>
                   样本≥
-                  {riskFieldGateAdvice.current_parameters.risk_threshold_field_min_sample_count ?? 3}
+                  {riskFieldGateAdvice.current_parameters.risk_threshold_field_min_sample_count ??
+                    3}
                 </Tag>
                 <Tag>
                   触发≥
-                  {riskFieldGateAdvice.current_parameters.risk_threshold_field_min_triggered_count ??
-                    1}
+                  {riskFieldGateAdvice.current_parameters
+                    .risk_threshold_field_min_triggered_count ?? 1}
                 </Tag>
                 <Tag>
                   同向≥

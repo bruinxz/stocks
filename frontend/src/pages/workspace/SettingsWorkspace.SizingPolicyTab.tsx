@@ -133,8 +133,9 @@ const SizingPolicyTab: React.FC = () => {
           message="Phase 2 硬切换已启用 — 实际下单按 sizing 策略执行"
           description={
             <Paragraph style={{ marginBottom: 0 }}>
-              当前 method=<Text code>{draft?.method}</Text>，PaperTradingAutomationService 每笔下单的实际仓位
-              都由 decideSizing 计算后**真正生效** (替换 effectiveTargetPct)。日志 prefix
+              当前 method=<Text code>{draft?.method}</Text>，PaperTradingAutomationService
+              每笔下单的实际仓位 都由 decideSizing 计算后**真正生效** (替换
+              effectiveTargetPct)。日志 prefix
               <Text code>[hard-sizing]</Text>。Kelly 负 edge 或决策 = 0 时会跳过该笔交易。
             </Paragraph>
           }
@@ -146,9 +147,10 @@ const SizingPolicyTab: React.FC = () => {
           message="Phase 2 多元化仓位 sizing — 当前为 shadow mode"
           description={
             <Paragraph style={{ marginBottom: 0 }}>
-              选择 vol_target / atr_based / kelly 后，PaperTradingAutomationService 会在每次下单时**并行计算**新 sizing 结果并写入日志
-              (<Text code>[shadow-sizing]</Text>)，但**实际下单仍使用现有 equal_pct 行为**。
-              观察 7-14 天后，开启下方「硬切换」开关让 sizing 决策真正生效。
+              选择 vol_target / atr_based / kelly 后，PaperTradingAutomationService
+              会在每次下单时**并行计算**新 sizing 结果并写入日志 (<Text code>[shadow-sizing]</Text>
+              )，但**实际下单仍使用现有 equal_pct 行为**。 观察 7-14 天后，开启下方「硬切换」开关让
+              sizing 决策真正生效。
             </Paragraph>
           }
         />
@@ -202,10 +204,7 @@ const SizingPolicyTab: React.FC = () => {
             />
           </Form.Item>
 
-          <Form.Item
-            noStyle
-            shouldUpdate={(prev, curr) => prev.method !== curr.method}
-          >
+          <Form.Item noStyle shouldUpdate={(prev, curr) => prev.method !== curr.method}>
             {({ getFieldValue }) => {
               const method = getFieldValue('method');
               if (method === 'equal_pct') return null;
@@ -226,8 +225,8 @@ const SizingPolicyTab: React.FC = () => {
                           </Tooltip>
                         </Space>
                         <Text type="secondary" style={{ fontSize: 12 }}>
-                          开启后，下一笔下单将按所选 sizing 方法实际计算的仓位生效，
-                          不再是 equal_pct 行为。建议先观察 7-14 天 shadow log 后再开。
+                          开启后，下一笔下单将按所选 sizing 方法实际计算的仓位生效， 不再是
+                          equal_pct 行为。建议先观察 7-14 天 shadow log 后再开。
                         </Text>
                       </Space>
                     </Col>
@@ -265,10 +264,7 @@ const SizingPolicyTab: React.FC = () => {
             </Col>
           </Row>
 
-          <Form.Item
-            noStyle
-            shouldUpdate={(prev, curr) => prev.method !== curr.method}
-          >
+          <Form.Item noStyle shouldUpdate={(prev, curr) => prev.method !== curr.method}>
             {({ getFieldValue }) => {
               const method = getFieldValue('method') as SizingMethod;
               if (method === 'vol_target') {
@@ -286,10 +282,7 @@ const SizingPolicyTab: React.FC = () => {
                         </Form.Item>
                       </Col>
                       <Col span={12}>
-                        <Form.Item
-                          name="vol_max_lookback_days"
-                          label="vol 计算回看天数"
-                        >
+                        <Form.Item name="vol_max_lookback_days" label="vol 计算回看天数">
                           <InputNumber min={5} max={252} style={{ width: '100%' }} />
                         </Form.Item>
                       </Col>
@@ -308,7 +301,13 @@ const SizingPolicyTab: React.FC = () => {
                           label="atr_risk_pct (每笔最大亏损 %)"
                           tooltip="每笔交易最多亏 X% equity，默认 1%"
                         >
-                          <InputNumber min={0.1} max={5} step={0.1} suffix="%" style={{ width: '100%' }} />
+                          <InputNumber
+                            min={0.1}
+                            max={5}
+                            step={0.1}
+                            suffix="%"
+                            style={{ width: '100%' }}
+                          />
                         </Form.Item>
                       </Col>
                       <Col span={12}>
@@ -328,14 +327,18 @@ const SizingPolicyTab: React.FC = () => {
                 return (
                   <Card size="small" style={{ marginBottom: 12, background: '#fff7e6' }}>
                     <Text strong>kelly 参数</Text>
-                    <Paragraph style={{ marginTop: 8, marginBottom: 8, fontSize: 12, color: '#666' }}>
-                      <Text strong>公式：</Text>f* = (p×b - q) / b，其中 p=胜率, q=1-p, b=平均盈利/平均亏损。
+                    <Paragraph
+                      style={{ marginTop: 8, marginBottom: 8, fontSize: 12, color: '#666' }}
+                    >
+                      <Text strong>公式：</Text>f* = (p×b - q) / b，其中 p=胜率, q=1-p,
+                      b=平均盈利/平均亏损。
                       <br />
-                      <Text strong>实际仓位：</Text>equity × f* × Kelly乘数。业界惯用 0.25 (Quarter Kelly) 或 0.5 (Half Kelly)
-                      因为满 Kelly 波动太大。
+                      <Text strong>实际仓位：</Text>equity × f* × Kelly乘数。业界惯用 0.25 (Quarter
+                      Kelly) 或 0.5 (Half Kelly) 因为满 Kelly 波动太大。
                       <br />
-                      <Text strong>样本量门槛：</Text>历史交易数 &lt; 阈值时自动退化到 base_position_pct，防止数据噪声放大。
-                      胜率/赔率从策略历史 outcome 聚合，定期刷新。
+                      <Text strong>样本量门槛：</Text>历史交易数 &lt; 阈值时自动退化到
+                      base_position_pct，防止数据噪声放大。 胜率/赔率从策略历史 outcome
+                      聚合，定期刷新。
                     </Paragraph>
                     <Row gutter={16} style={{ marginTop: 12 }}>
                       <Col span={12}>
@@ -344,12 +347,7 @@ const SizingPolicyTab: React.FC = () => {
                           label="kelly_fraction_multiplier (Kelly 乘数)"
                           tooltip="0.25 = 1/4 Kelly (稳健推荐); 0.5 = 1/2 Kelly; 1.0 = 满 Kelly (激进)"
                         >
-                          <InputNumber
-                            min={0.05}
-                            max={1.0}
-                            step={0.05}
-                            style={{ width: '100%' }}
-                          />
+                          <InputNumber min={0.05} max={1.0} step={0.05} style={{ width: '100%' }} />
                         </Form.Item>
                       </Col>
                       <Col span={12}>
@@ -693,13 +691,7 @@ const KillSwitchPanel: React.FC = () => {
             刷新
           </Button>
           {report && report.triggered > 0 && (
-            <Button
-              danger
-              type="primary"
-              loading={applying}
-              onClick={onApply}
-              size="small"
-            >
+            <Button danger type="primary" loading={applying} onClick={onApply} size="small">
               立即禁用 {report.triggered} 个触发策略
             </Button>
           )}
@@ -737,9 +729,7 @@ const KillSwitchPanel: React.FC = () => {
             style={{ marginBottom: 12 }}
             message={
               <Space wrap>
-                <span>
-                  共 {report.skipped_no_kill_switch} 个策略未配置 kill_switch
-                </span>
+                <span>共 {report.skipped_no_kill_switch} 个策略未配置 kill_switch</span>
                 <span>·</span>
                 <span>{report.skipped_disabled} 个已禁用</span>
                 <span>·</span>

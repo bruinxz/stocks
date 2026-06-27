@@ -320,12 +320,12 @@ export const ActionPlanCard: React.FC<ActionPlanCardProps> = ({
               {actionPlan.position_action === 'maintain'
                 ? actionPlan.position_action_label
                 : actionPlan.position_action === 'avoid'
-                ? actionPlan.position_action_label
-                : actionPlan.position_action === 'close'
-                ? actionPlan.position_action_label
-                : actionPlan.suggested_position_pct != null
-                ? `${(actionPlan.suggested_position_pct * 100).toFixed(1)}%`
-                : '—'}
+                  ? actionPlan.position_action_label
+                  : actionPlan.position_action === 'close'
+                    ? actionPlan.position_action_label
+                    : actionPlan.suggested_position_pct != null
+                      ? `${(actionPlan.suggested_position_pct * 100).toFixed(1)}%`
+                      : '—'}
             </Text>
           </Col>
           <Col span={12}>

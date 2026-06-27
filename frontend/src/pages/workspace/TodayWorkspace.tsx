@@ -370,8 +370,8 @@ const TodayWorkspace: React.FC = () => {
             totalReturn == null
               ? ' —'
               : totalReturnPct != null
-              ? ` (${(totalReturnPct * 100).toFixed(2)}%)`
-              : ''
+                ? ` (${(totalReturnPct * 100).toFixed(2)}%)`
+                : ''
           }
           valueStyle={{ color: pnlColor(totalReturn) }}
         />
@@ -738,10 +738,10 @@ const MarketJudgmentCard: React.FC = () => {
                 data.benchmark_atr_14d_pct == null
                   ? '基准 ATR 数据缺失'
                   : data.benchmark_atr_14d_pct >= 5
-                  ? '极高波动（已下调建议仓位 10%）'
-                  : data.benchmark_atr_14d_pct >= 3
-                  ? '高波动（已下调建议仓位 5%）'
-                  : '波动正常'
+                    ? '极高波动（已下调建议仓位 10%）'
+                    : data.benchmark_atr_14d_pct >= 3
+                      ? '高波动（已下调建议仓位 5%）'
+                      : '波动正常'
               }
             >
               <Statistic
@@ -771,8 +771,8 @@ const MarketJudgmentCard: React.FC = () => {
                   data.benchmark_return_20d_pct == null
                     ? undefined
                     : data.benchmark_return_20d_pct >= 0
-                    ? '#dc2626'
-                    : '#16a34a',
+                      ? '#dc2626'
+                      : '#16a34a',
               }}
             />
           </Col>
@@ -848,7 +848,7 @@ const MarketJudgmentCard: React.FC = () => {
         </div>
 
         {/* 第三行：一句话 brief */}
-        <div style={{ paddingLeft: 8, }}>
+        <div style={{ paddingLeft: 8 }}>
           <Text type="secondary" style={{ fontSize: 12 }}>
             今日小结
           </Text>
@@ -1161,7 +1161,7 @@ const CallAuctionCard: React.FC<{ portfolioId: number | null }> = ({ portfolioId
         )}
 
         {/* brief 一句话 */}
-        <div style={{ paddingLeft: 8, }}>
+        <div style={{ paddingLeft: 8 }}>
           <Text type="secondary" style={{ fontSize: 12 }}>
             异动小结
           </Text>
@@ -1417,7 +1417,7 @@ const MarketBriefCard: React.FC = () => {
                 </Col>
               ))}
               <Col xs={24} lg={8}>
-                <div style={{ paddingLeft: 8, }}>
+                <div style={{ paddingLeft: 8 }}>
                   <Text type="secondary" style={{ fontSize: 12 }}>
                     AI 一句话观点
                   </Text>
@@ -1465,7 +1465,7 @@ const MarketBriefCard: React.FC = () => {
                 </Tooltip>
               </Col>
               <Col xs={24} md={24} lg={14}>
-                <div style={{ paddingLeft: 8, }}>
+                <div style={{ paddingLeft: 8 }}>
                   <Text type="secondary" style={{ fontSize: 12 }}>
                     AI 一句话观点
                   </Text>
@@ -2658,8 +2658,7 @@ const DragonHeadCard: React.FC<{
                   dataIndex: 'industry',
                   width: 80,
                   ellipsis: true,
-                  render: (v: string | null | undefined) =>
-                    v ? <Tag color="blue">{v}</Tag> : '—',
+                  render: (v: string | null | undefined) => (v ? <Tag color="blue">{v}</Tag> : '—'),
                 },
               ]}
               expandable={{

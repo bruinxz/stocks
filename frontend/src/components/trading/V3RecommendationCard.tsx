@@ -342,9 +342,7 @@ const V3RecommendationCard: React.FC<V3RecommendationCardProps> = ({ item, onCli
                         padding: '6px 8px',
                         marginBottom: idx === playbookItems!.length - 1 ? 0 : 4,
                         background: p.avoid ? '#fff1f0' : '#fafafa',
-                        borderLeft: p.avoid
-                          ? '3px solid #cf1322'
-                          : `3px solid ${color}`,
+                        borderLeft: p.avoid ? '3px solid #cf1322' : `3px solid ${color}`,
                         borderRadius: 4,
                       }}
                       data-testid={`v3-card-${item.symbol}-playbook-${p.bucket}`}

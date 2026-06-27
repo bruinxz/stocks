@@ -68,7 +68,9 @@ export function computeAIRawScore(item: {
  * pure, 不读全局, 可单独测.
  */
 export function normalizeAIWeights(rawScores: Record<string, number>): Record<string, number> {
-  const names = Object.keys(rawScores).filter(n => rawScores[n] > 0 && Number.isFinite(rawScores[n]));
+  const names = Object.keys(rawScores).filter(
+    n => rawScores[n] > 0 && Number.isFinite(rawScores[n])
+  );
   if (names.length === 0) return {};
   const total = names.reduce((acc, n) => acc + rawScores[n], 0);
   if (total <= 0) return {};
@@ -79,7 +81,11 @@ export function normalizeAIWeights(rawScores: Record<string, number>): Record<st
     exact: (rawScores[n] / total) * 100,
   }));
   // 转成 0.1 精度单元数 (×10 后 floor), 剩余加和应该是 1000 - sumFloor
-  const floors = scaled.map(s => ({ name: s.name, units: Math.floor(s.exact * 10), frac: s.exact * 10 - Math.floor(s.exact * 10) }));
+  const floors = scaled.map(s => ({
+    name: s.name,
+    units: Math.floor(s.exact * 10),
+    frac: s.exact * 10 - Math.floor(s.exact * 10),
+  }));
   const sumUnits = floors.reduce((acc, f) => acc + f.units, 0);
   // target = 1000 units (== 100.0 %); deficit > 0 时给余数最大的 N 个 +1 unit
   let deficit = 1000 - sumUnits;

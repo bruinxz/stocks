@@ -10,7 +10,21 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Card, Table, Tag, Space, Spin, Alert, Empty, Typography, Statistic, Row, Col, Radio, Tooltip } from 'antd';
+import {
+  Card,
+  Table,
+  Tag,
+  Space,
+  Spin,
+  Alert,
+  Empty,
+  Typography,
+  Statistic,
+  Row,
+  Col,
+  Radio,
+  Tooltip,
+} from 'antd';
 import api from '../../services/api';
 
 const { Text } = Typography;
@@ -127,7 +141,8 @@ const BlockTradesTab: React.FC = () => {
           <Space wrap>
             {stats.top_buyers.map(([buyer, amount], i) => (
               <Tag key={buyer} color={i === 0 ? 'red' : i === 1 ? 'orange' : 'blue'}>
-                {buyer.length > 24 ? buyer.substring(0, 22) + '…' : buyer} · {(amount / 1e8).toFixed(2)} 亿
+                {buyer.length > 24 ? buyer.substring(0, 22) + '…' : buyer} ·{' '}
+                {(amount / 1e8).toFixed(2)} 亿
               </Tag>
             ))}
           </Space>
@@ -153,13 +168,15 @@ const BlockTradesTab: React.FC = () => {
         }
       >
         {loading && !trades.length ? (
-          <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+          <div style={{ textAlign: 'center', padding: 40 }}>
+            <Spin />
+          </div>
         ) : trades.length === 0 ? (
           <Empty description="近期无大宗交易数据" />
         ) : (
           <Table
             size="small"
-            rowKey={(r) => `${r.trade_date}-${r.stock_code}-${r.buyer}-${r.amount}`}
+            rowKey={r => `${r.trade_date}-${r.stock_code}-${r.buyer}-${r.amount}`}
             dataSource={trades}
             pagination={{ pageSize: 30, size: 'small' }}
             scroll={{ x: 'max-content' }}
@@ -178,7 +195,9 @@ const BlockTradesTab: React.FC = () => {
                 render: (_: any, r: BlockTrade) => (
                   <Space size={4}>
                     <Text strong>{r.stock_name || r.stock_code}</Text>
-                    <Text code style={{ fontSize: 12 }}>{r.stock_code}</Text>
+                    <Text code style={{ fontSize: 12 }}>
+                      {r.stock_code}
+                    </Text>
                   </Space>
                 ),
               },
@@ -194,21 +213,23 @@ const BlockTradesTab: React.FC = () => {
                 dataIndex: 'close_price',
                 width: 80,
                 align: 'right' as const,
-                render: (v: number | null) => v ? `¥${Number(v).toFixed(2)}` : '—',
+                render: (v: number | null) => (v ? `¥${Number(v).toFixed(2)}` : '—'),
               },
               {
                 title: '折溢价',
                 dataIndex: 'premium_pct',
                 width: 90,
                 align: 'right' as const,
-                sorter: (a: BlockTrade, b: BlockTrade) => (a.premium_pct ?? 0) - (b.premium_pct ?? 0),
+                sorter: (a: BlockTrade, b: BlockTrade) =>
+                  (a.premium_pct ?? 0) - (b.premium_pct ?? 0),
                 render: (v: number | null) => {
                   if (v == null) return '—';
                   const n = Number(v);
                   const color = n > 5 ? '#dc2626' : n < -5 ? '#16a34a' : '#999';
                   return (
                     <Text style={{ color, fontWeight: Math.abs(n) > 5 ? 600 : 400 }}>
-                      {n > 0 ? '+' : ''}{n.toFixed(2)}%
+                      {n > 0 ? '+' : ''}
+                      {n.toFixed(2)}%
                     </Text>
                   );
                 },
@@ -218,10 +239,9 @@ const BlockTradesTab: React.FC = () => {
                 dataIndex: 'amount',
                 width: 90,
                 align: 'right' as const,
-                sorter: (a: BlockTrade, b: BlockTrade) => (Number(a.amount) || 0) - (Number(b.amount) || 0),
-                render: (v: number) => (
-                  <Text strong>{(Number(v) / 1e8).toFixed(2)} 亿</Text>
-                ),
+                sorter: (a: BlockTrade, b: BlockTrade) =>
+                  (Number(a.amount) || 0) - (Number(b.amount) || 0),
+                render: (v: number) => <Text strong>{(Number(v) / 1e8).toFixed(2)} 亿</Text>,
               },
               {
                 title: '当日涨跌',
@@ -233,7 +253,8 @@ const BlockTradesTab: React.FC = () => {
                   const n = Number(v);
                   return (
                     <Text style={{ color: n >= 0 ? '#dc2626' : '#16a34a' }}>
-                      {n > 0 ? '+' : ''}{n.toFixed(2)}%
+                      {n > 0 ? '+' : ''}
+                      {n.toFixed(2)}%
                     </Text>
                   );
                 },

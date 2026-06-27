@@ -496,8 +496,8 @@ const WalkForwardTab: React.FC<WalkForwardTabProps> = ({ strategies }) => {
                     summary.verdict === 'PASS'
                       ? 'success'
                       : summary.verdict === 'FAIL'
-                      ? 'error'
-                      : 'warning'
+                        ? 'error'
+                        : 'warning'
                   }
                 >
                   {summary.verdict}
@@ -525,8 +525,8 @@ const WalkForwardTab: React.FC<WalkForwardTabProps> = ({ strategies }) => {
                       ? summary.dsr >= 0.95
                         ? '#16a34a'
                         : summary.dsr >= 0.8
-                        ? '#fa8c16'
-                        : '#dc2626'
+                          ? '#fa8c16'
+                          : '#dc2626'
                       : undefined,
                 }}
                 suffix={
