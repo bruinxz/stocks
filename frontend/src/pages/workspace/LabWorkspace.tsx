@@ -77,6 +77,10 @@ import {
   OptimizationRunSummary,
 } from '../../services/labService';
 import StrategyCopilotPanel from '../../components/trading/StrategyCopilotPanel';
+import {
+  formatRelative as formatLabRelative,
+  formatDateTime as formatLabDateTime,
+} from '../../utils/timeFormat';
 
 const { Text, Paragraph } = Typography;
 const { RangePicker } = DatePicker;
@@ -422,6 +426,7 @@ const LabWorkspace: React.FC = () => {
         {mineSubView === 'list' ? (
           <MyStrategiesTab
             strategies={strategies}
+            tasks={tasks}
             loading={loading}
             onClone={handleClone}
             onEdit={setEditingStrategy}
@@ -725,11 +730,29 @@ const STRATEGY_RISK_DISPLAY: Record<string, { label: string; color: string }> = 
 
 const MyStrategiesTab: React.FC<{
   strategies: QuantStrategyItem[];
+  tasks: BacktestTask[];
   loading: boolean;
   onClone: (s: QuantStrategyItem) => void;
   onEdit: (s: QuantStrategyItem) => void;
   onOpenDetail: (s: QuantStrategyItem) => void;
-}> = ({ strategies, loading, onClone, onEdit, onOpenDetail }) => {
+}> = ({ strategies, tasks, loading, onClone, onEdit, onOpenDetail }) => {
+  // Phase 10 — 每条策略的"最近回测时间" — 从 tasks 列表里挑最新一条命中此 strategy_key
+  // 的 created_at. tasks 接 listBacktestTasks (limit=50), 覆盖最近 50 次, 足够"最近活动"
+  // 这种语义. 没有命中时显 "暂无回测".
+  const lastBacktestByKey = useMemo(() => {
+    const map = new Map<string, BacktestTask>();
+    for (const t of tasks) {
+      const keys = Array.isArray(t.strategy_keys) ? t.strategy_keys : [];
+      for (const k of keys) {
+        const prev = map.get(k);
+        // 取 updated_at > created_at; 任一更新的 task 覆盖
+        const tTime = new Date(t.updated_at || t.created_at).getTime();
+        const prevTime = prev ? new Date(prev.updated_at || prev.created_at).getTime() : 0;
+        if (!prev || tTime > prevTime) map.set(k, t);
+      }
+    }
+    return map;
+  }, [tasks]);
   if (loading && strategies.length === 0) {
     return (
       <Card>
@@ -801,6 +824,29 @@ const MyStrategiesTab: React.FC<{
                   策略 key：
                 </Text>
                 <Text code>{strategy.strategy_key}</Text>
+              </div>
+              {/* Phase 10 — 数据新鲜度: 最近一次回测时间 */}
+              <div style={{ marginTop: 6 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  最近回测：
+                </Text>
+                {(() => {
+                  const last = lastBacktestByKey.get(strategy.strategy_key);
+                  if (!last) {
+                    return (
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        暂无 (近 50 次回测中未出现)
+                      </Text>
+                    );
+                  }
+                  return (
+                    <Tooltip title={formatLabDateTime(last.updated_at || last.created_at)}>
+                      <Text style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}>
+                        {formatLabRelative(last.updated_at || last.created_at)}
+                      </Text>
+                    </Tooltip>
+                  );
+                })()}
               </div>
               {Array.isArray(strategy.tags) && strategy.tags.length > 0 && (
                 <div style={{ marginTop: 8 }}>
