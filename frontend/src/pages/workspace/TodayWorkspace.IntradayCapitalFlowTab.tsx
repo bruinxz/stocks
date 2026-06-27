@@ -183,7 +183,7 @@ const IntradayCapitalFlowTab: React.FC = () => {
             return `${ind.industry_name} ${latestYi > 0 ? '+' : ''}${latestYi.toFixed(1)}亿`;
           },
           color,
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: strength >= 5 ? 'bold' : 'normal',
         },
         z: strength >= 5 ? 3 : strength >= 1 ? 2 : 1, // 强信号画在最上面
@@ -214,13 +214,13 @@ const IntradayCapitalFlowTab: React.FC = () => {
         type: 'category',
         data: xAxisData,
         boundaryGap: false,
-        axisLabel: { fontSize: 11 },
+        axisLabel: { fontSize: 12 },
       },
       yAxis: {
         type: 'value',
         name: '累计净流入 (亿元)',
-        nameTextStyle: { fontSize: 11 },
-        axisLabel: { fontSize: 11 },
+        nameTextStyle: { fontSize: 12 },
+        axisLabel: { fontSize: 12 },
         splitLine: { lineStyle: { color: '#f0f0f0' } },
       },
       series,

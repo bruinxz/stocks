@@ -270,7 +270,7 @@ const StrategyKillSwitchTab: React.FC = () => {
               render: (_: unknown, row) => (
                 <Space direction="vertical" size={0}>
                   <Text strong>{row.display_name}</Text>
-                  <Text type="secondary" code style={{ fontSize: 11 }}>
+                  <Text type="secondary" code style={{ fontSize: 12 }}>
                     {row.strategy_key}
                   </Text>
                 </Space>
@@ -344,7 +344,7 @@ const StrategyKillSwitchTab: React.FC = () => {
         />
       )}
 
-      <Paragraph style={{ marginTop: 12, fontSize: 11, color: 'var(--text-muted)' }}>
+      <Paragraph style={{ marginTop: 12, fontSize: 12, color: 'var(--text-muted)' }}>
         操作落地: <code>PATCH /api/quant/strategies/:key {`{enabled: bool}`}</code> →
         <code>backend/src/quant/engine/internal/QuantStrategyService.updateStrategyConfig</code>.
         下次 <code>resolveStrategyKeys()</code> 调用时生效 (大约 1 个 daily-pipeline 周期).

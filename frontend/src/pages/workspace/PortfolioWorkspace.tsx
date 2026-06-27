@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSelector } from 'react-redux';
+import { RootState } from '../../store/rootReducer';
 import { useNavigate } from 'react-router-dom';
 import {
   Alert,
@@ -26,6 +28,7 @@ import {
   message,
 } from 'antd';
 import {
+  BarChartOutlined,
   CheckOutlined,
   CloseOutlined,
   EditOutlined,
@@ -34,7 +37,6 @@ import {
   RadarChartOutlined,
   ReadOutlined,
   ReloadOutlined,
-  RobotOutlined,
   SettingOutlined,
   StopOutlined,
   UnorderedListOutlined,
@@ -146,16 +148,27 @@ const BENCHMARK_LABEL = '沪深 300';
 type WindowKey = '30d' | '90d' | '1y' | 'all';
 
 const PortfolioWorkspace: React.FC = () => {
-  const tabs: WorkspaceTab[] = [
-    { key: 'positions', label: '当前持仓', icon: <WalletOutlined /> },
-    { key: 'equity', label: '资金曲线', icon: <LineChartOutlined /> },
-    { key: 'attribution', label: '日归因', icon: <RobotOutlined /> },
-    { key: 'trades', label: '交易明细', icon: <UnorderedListOutlined /> },
-    { key: 'journal', label: '复盘日记', icon: <ReadOutlined /> },
-    { key: 'error-patterns', label: 'AI 日记 + 错误模式', icon: <ExclamationCircleOutlined /> },
-    { key: 'correlation', label: '相关性矩阵', icon: <RadarChartOutlined /> },
-    { key: 'manage', label: '模拟盘管理', icon: <SettingOutlined /> },
-  ];
+  // Phase 3 (2026-06-27): tab 8 → 4 (普通用户) / 8 (admin).
+  // 普通用户: 当前持仓 (默认) / 交易明细 / 资金曲线 / 复盘日记.
+  // 日归因 / AI 日记+错误模式 / 相关性矩阵 / 模拟盘管理 = 研究 / 高级功能.
+  const isAdmin = useSelector((s: RootState) => s.auth.user?.role === 'admin');
+  const tabs: WorkspaceTab[] = useMemo(() => {
+    const baseTabs: WorkspaceTab[] = [
+      { key: 'positions', label: '当前持仓', icon: <WalletOutlined /> },
+      { key: 'trades', label: '交易明细', icon: <UnorderedListOutlined /> },
+      { key: 'equity', label: '资金曲线', icon: <LineChartOutlined /> },
+      { key: 'journal', label: '复盘日记', icon: <ReadOutlined /> },
+    ];
+    if (isAdmin) {
+      baseTabs.push(
+        { key: 'attribution', label: '日归因 (admin)', icon: <BarChartOutlined /> },
+        { key: 'error-patterns', label: '错误模式 (admin)', icon: <ExclamationCircleOutlined /> },
+        { key: 'correlation', label: '相关性矩阵 (admin)', icon: <RadarChartOutlined /> },
+        { key: 'manage', label: '模拟盘管理 (admin)', icon: <SettingOutlined /> }
+      );
+    }
+    return baseTabs;
+  }, [isAdmin]);
   const [activeKey, setActiveKey] = useState<string>('positions');
 
   // ---- 主数据 ----
@@ -915,7 +928,7 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
         <Space size="small">
           <Button
             size="small"
-            icon={<RobotOutlined />}
+            icon={<BarChartOutlined />}
             onClick={() => setAiTarget({ symbol: row.symbol, name: row.name || null })}
             title="AI 解读：基本面 / 技术面 / 资金面 / 新闻面 / 情绪面"
           >
@@ -1055,7 +1068,7 @@ const PositionMobileCard: React.FC<PositionMobileCardProps> = ({
     <Card size="small">
       <Space direction="vertical" size={2} style={{ width: '100%' }}>
         <Space size={8} align="center" style={{ marginBottom: 6 }}>
-          <Text strong style={{ fontSize: 15 }}>
+          <Text strong style={{ fontSize: 14 }}>
             {row.name || row.symbol}
           </Text>
           <Text code style={{ fontSize: 12 }}>
@@ -1219,7 +1232,7 @@ const PositionMobileCard: React.FC<PositionMobileCardProps> = ({
         </div>
 
         <div className="workspace-mobile-card-actions">
-          <Button icon={<RobotOutlined />} onClick={onOpenAI} size="middle">
+          <Button icon={<BarChartOutlined />} onClick={onOpenAI} size="middle">
             AI 解读
           </Button>
           <Popconfirm
@@ -1364,10 +1377,10 @@ const EquityCurveTab: React.FC<EquityCurveTabProps> = ({ snapshots, kpis }) => {
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData} margin={{ top: 12, right: 20, left: 0, bottom: 12 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={32} />
+              <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={32} />
               <YAxis
                 domain={['dataMin - 1', 'dataMax + 1']}
-                tick={{ fontSize: 11 }}
+                tick={{ fontSize: 12 }}
                 tickFormatter={(v: number) => `${v.toFixed(1)}`}
               />
               <RechartsTooltip
@@ -1463,7 +1476,7 @@ const EquityCurveTab: React.FC<EquityCurveTabProps> = ({ snapshots, kpis }) => {
                       : '#cf1322',
               }}
             />
-            <div style={{ fontSize: 11, color: '#999', marginTop: 4 }}>
+            <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
               {kpis.sampleConfidence === 'high'
                 ? '✓ 样本充足, 指标可信'
                 : kpis.sampleConfidence === 'medium'
@@ -1618,7 +1631,7 @@ const DailyAttributionTab: React.FC<DailyAttributionTabProps> = ({
         <Card
           title={
             <Space>
-              <RobotOutlined />
+              <BarChartOutlined />
               <span>
                 {vm.anchorDate} 日归因 (heuristic 现算, 对比 {vm.prevDate})
               </span>
@@ -1791,7 +1804,7 @@ interface BackendAttributionCardProps {
 const BackendAttributionCard: React.FC<BackendAttributionCardProps> = ({ vm, loading, error }) => {
   const titleNode = (
     <Space>
-      <RobotOutlined />
+      <BarChartOutlined />
       <span>{vm.date} 日归因 (cron 真值)</span>
       {vm.status === 'ok' && <Tag color="green">已生成</Tag>}
       {vm.status === 'skipped' && <Tag color="default">已跳过</Tag>}
@@ -2024,7 +2037,7 @@ const BackendAttributionCard: React.FC<BackendAttributionCardProps> = ({ vm, loa
                           +¥{v.toFixed(2)}
                         </Text>
                         {row.realized_pnl_pct !== null && (
-                          <Text type="secondary" style={{ fontSize: 11 }}>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
                             {row.realized_pnl_pct >= 0 ? '+' : ''}
                             {row.realized_pnl_pct.toFixed(2)}%
                           </Text>
@@ -2076,7 +2089,7 @@ const BackendAttributionCard: React.FC<BackendAttributionCardProps> = ({ vm, loa
                           ¥{v.toFixed(2)}
                         </Text>
                         {row.realized_pnl_pct !== null && (
-                          <Text type="secondary" style={{ fontSize: 11 }}>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
                             {row.realized_pnl_pct >= 0 ? '+' : ''}
                             {row.realized_pnl_pct.toFixed(2)}%
                           </Text>
@@ -2316,7 +2329,7 @@ const TradeMobileCard: React.FC<{ row: TradeRow }> = ({ row }) => {
           <Text strong style={{ fontSize: 14 }}>
             {row.name || row.symbol}
           </Text>
-          <Text code style={{ fontSize: 11 }}>
+          <Text code style={{ fontSize: 12 }}>
             {row.symbol}
           </Text>
         </Space>
@@ -2507,19 +2520,19 @@ const JournalTab: React.FC<JournalTabProps> = ({ list, onListRefresh }) => {
                       cursor: 'pointer',
                       background: selectedBucketKey === bucket.key ? '#e6f4ff' : 'transparent',
                       padding: '6px 12px',
-                      borderRadius: 6,
+                      borderRadius: 8,
                     }}
                   >
                     <Space direction="vertical" size={2} style={{ width: '100%' }}>
                       <Space wrap>
-                        <Text strong style={{ fontSize: 13 }}>
+                        <Text strong style={{ fontSize: 14 }}>
                           {bucket.label}
                         </Text>
                         <Tag>{bucket.journalCount} 篇</Tag>
                       </Space>
                       <Space wrap size={4}>
                         {bucket.dominantMood && (
-                          <Tag color="purple" style={{ marginInlineEnd: 0 }}>
+                          <Tag color="blue" style={{ marginInlineEnd: 0 }}>
                             {bucket.dominantMood}
                           </Tag>
                         )}
@@ -2553,13 +2566,13 @@ const JournalTab: React.FC<JournalTabProps> = ({ list, onListRefresh }) => {
                     cursor: 'pointer',
                     background: selectedDate === item.date ? '#e6f4ff' : 'transparent',
                     padding: '6px 12px',
-                    borderRadius: 6,
+                    borderRadius: 8,
                   }}
                 >
                   <Space>
                     <Text strong>{item.date}</Text>
                     {item.mood && item.mood !== '未生成' ? (
-                      <Tag color="purple">{item.mood}</Tag>
+                      <Tag color="blue">{item.mood}</Tag>
                     ) : (
                       <Tag>无 AI 总结</Tag>
                     )}
@@ -2631,7 +2644,7 @@ const JournalTab: React.FC<JournalTabProps> = ({ list, onListRefresh }) => {
             <Space>
               <ReadOutlined />
               <span>{selectedDate ? `${selectedDate} 复盘` : '请选择日期'}</span>
-              {detail?.mood && detail.mood !== '未生成' && <Tag color="purple">{detail.mood}</Tag>}
+              {detail?.mood && detail.mood !== '未生成' && <Tag color="blue">{detail.mood}</Tag>}
             </Space>
           }
         >
@@ -3123,7 +3136,7 @@ const CorrelationTab: React.FC<{ portfolioId?: number }> = ({ portfolioId }) => 
                 <table
                   style={{
                     borderCollapse: 'collapse',
-                    fontSize: 11,
+                    fontSize: 12,
                     width: 'auto',
                   }}
                 >
@@ -3134,7 +3147,7 @@ const CorrelationTab: React.FC<{ portfolioId?: number }> = ({ portfolioId }) => 
                           padding: '4px 8px',
                           textAlign: 'left',
                           borderBottom: '1px solid #eee',
-                          fontSize: 11,
+                          fontSize: 12,
                         }}
                       >
                         symbol
@@ -3146,7 +3159,7 @@ const CorrelationTab: React.FC<{ portfolioId?: number }> = ({ portfolioId }) => 
                             padding: '4px 6px',
                             textAlign: 'center',
                             borderBottom: '1px solid #eee',
-                            fontSize: 11,
+                            fontSize: 12,
                             writingMode: 'vertical-rl',
                             height: 80,
                           }}
@@ -3164,7 +3177,7 @@ const CorrelationTab: React.FC<{ portfolioId?: number }> = ({ portfolioId }) => 
                             padding: '4px 8px',
                             fontWeight: 500,
                             borderRight: '1px solid #eee',
-                            fontSize: 11,
+                            fontSize: 12,
                             whiteSpace: 'nowrap',
                           }}
                         >
@@ -3198,7 +3211,7 @@ const CorrelationTab: React.FC<{ portfolioId?: number }> = ({ portfolioId }) => 
                 <div
                   style={{
                     marginTop: 12,
-                    fontSize: 11,
+                    fontSize: 12,
                     color: '#888',
                     display: 'flex',
                     alignItems: 'center',
@@ -3280,7 +3293,7 @@ const CorrelationTab: React.FC<{ portfolioId?: number }> = ({ portfolioId }) => 
                   </Col>
                   <Col xs={24} md={6}>
                     {c.dominant_industry && (
-                      <Tag color="volcano">主导行业: {c.dominant_industry}</Tag>
+                      <Tag color="red">主导行业: {c.dominant_industry}</Tag>
                     )}
                   </Col>
                 </Row>

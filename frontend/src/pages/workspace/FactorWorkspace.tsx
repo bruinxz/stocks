@@ -32,7 +32,7 @@ import {
   SlidersOutlined,
   OrderedListOutlined,
   ReloadOutlined,
-  RobotOutlined,
+  BarChartOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
@@ -118,14 +118,14 @@ const DEFAULT_WEIGHTS: Record<string, number> = {
 /** 因子风格分类的中文 + 颜色映射，统一展示视觉 */
 const CATEGORY_DISPLAY: Record<string, { label: string; color: string }> = {
   value: { label: '价值', color: 'blue' },
-  quality: { label: '质量', color: 'cyan' },
+  quality: { label: '质量', color: 'blue' },
   growth: { label: '成长', color: 'green' },
   momentum: { label: '动量', color: 'orange' },
-  volatility: { label: '波动', color: 'purple' },
-  liquidity: { label: '流动性', color: 'gold' },
-  sentiment: { label: '情绪', color: 'magenta' },
+  volatility: { label: '波动', color: 'blue' },
+  liquidity: { label: '流动性', color: 'default' },
+  sentiment: { label: '情绪', color: 'red' },
   flow: { label: '资金流', color: 'red' },
-  event: { label: '事件', color: 'volcano' },
+  event: { label: '事件', color: 'red' },
   other: { label: '其他', color: 'default' },
 };
 
@@ -150,7 +150,7 @@ const FACTOR_HEALTH_DISPLAY: Record<
   },
   unstable: {
     label: '不稳',
-    color: 'gold',
+    color: 'default',
     tip: '有方向但 IC_IR 不够稳健，谨慎使用',
   },
   weak: { label: '失效', color: 'red', tip: '|IC_90d| < 0.01，因子已失效，建议停用' },
@@ -194,7 +194,7 @@ const FactorWorkspace: React.FC = () => {
     { key: 'weights', label: '权重调参', icon: <SlidersOutlined /> },
     { key: 'picks', label: '今日选股清单', icon: <OrderedListOutlined /> },
     { key: 'board', label: '行业决策', icon: <ThunderboltOutlined /> },
-    { key: 'sentiment', label: '舆情雷达', icon: <RobotOutlined /> },
+    { key: 'sentiment', label: '舆情雷达', icon: <BarChartOutlined /> },
     { key: 'macro', label: '宏观环境', icon: <FundOutlined /> },
     { key: 'block', label: '大宗交易', icon: <FundOutlined /> },
     // US-048 (FE-009) — 行业 ETF 申赎资金流 + 政策要闻 2 个新 tab
@@ -745,7 +745,7 @@ const FactorWorkspace: React.FC = () => {
                       {tpl.industryNeutral && <Tag color="blue">行业中性</Tag>}
                       {tpl.excludeST && <Tag color="orange">剔除 ST</Tag>}
                       {tpl.excludeNew60d && <Tag color="orange">剔除次新</Tag>}
-                      <Text type="secondary" style={{ fontSize: 11 }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
                         保存于 {formatSavedAt(tpl.savedAt)}
                       </Text>
                     </Space>
@@ -971,7 +971,7 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
               }
             >
               <Button
-                icon={<RobotOutlined />}
+                icon={<BarChartOutlined />}
                 onClick={onApplyAIWeights}
                 disabled={!aiHasRecommendation}
                 data-testid="apply-ai-weights-btn"
@@ -1047,7 +1047,7 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
                     style={{
                       minWidth: 110,
                       textAlign: 'right',
-                      fontSize: 11,
+                      fontSize: 12,
                       lineHeight: 1.4,
                     }}
                     data-testid={`ai-weight-chip-${factor.name}`}
@@ -1066,7 +1066,7 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
                         </div>
                       </>
                     ) : (
-                      <Text type="secondary" style={{ fontSize: 11 }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
                         AI —
                       </Text>
                     )}
@@ -1222,7 +1222,7 @@ const PicksTab: React.FC<{
         <Space>
           <Tag color="blue">universe {picks.universe_size}</Tag>
           <Tag color="green">eligible {picks.eligible_count}</Tag>
-          {picks.params && <Tag color="purple">topN {picks.params.topN}</Tag>}
+          {picks.params && <Tag color="blue">topN {picks.params.topN}</Tag>}
         </Space>
       }
     >
@@ -1428,7 +1428,7 @@ const IndustryBoardTab: React.FC<{
                   render: (name: string, row) => (
                     <div>
                       <div style={{ fontWeight: 500 }}>{name}</div>
-                      <div style={{ fontSize: 11, color: '#999' }}>{row.industry_code}</div>
+                      <div style={{ fontSize: 12, color: '#999' }}>{row.industry_code}</div>
                     </div>
                   ),
                 },
@@ -1499,13 +1499,13 @@ const IndustryBoardTab: React.FC<{
                       <div>
                         <div style={{ fontWeight: 500, fontSize: 12 }}>
                           {row.today.leader_stock_name}{' '}
-                          <span style={{ color: '#999', fontSize: 11 }}>
+                          <span style={{ color: '#999', fontSize: 12 }}>
                             {row.today.leader_stock_code}
                           </span>
                         </div>
                         <div
                           style={{
-                            fontSize: 11,
+                            fontSize: 12,
                             color: pctColor(row.today.leader_stock_change_pct),
                           }}
                         >
@@ -1560,7 +1560,7 @@ const IndustryBoardTab: React.FC<{
           <Card
             title={
               <Space>
-                <RobotOutlined />
+                <BarChartOutlined />
                 今日热门概念
               </Space>
             }
@@ -1588,10 +1588,10 @@ const IndustryBoardTab: React.FC<{
                         )}
                         {c.rank != null && <Tag style={{ marginLeft: 4 }}>#{c.rank}</Tag>}
                       </div>
-                      <Tag color="purple">{c.heat_score.toLocaleString()}</Tag>
+                      <Tag color="blue">{c.heat_score.toLocaleString()}</Tag>
                     </div>
                     {c.related_stocks.length > 0 && (
-                      <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+                      <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
                         关联:{' '}
                         {c.related_stocks.map(s => (
                           <Tag key={s.stock_code} style={{ marginBottom: 2 }}>
@@ -1652,7 +1652,7 @@ const IndustryBoardTab: React.FC<{
               <div
                 key={`${n.publish_time}-${i}`}
                 style={{
-                  borderLeft: '3px solid #1890ff',
+                  
                   marginLeft: -18,
                   paddingLeft: 14,
                   marginBottom: 12,
@@ -1661,7 +1661,7 @@ const IndustryBoardTab: React.FC<{
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                  <Text strong style={{ fontSize: 13 }} ellipsis={{ tooltip: n.title }}>
+                  <Text strong style={{ fontSize: 14 }} ellipsis={{ tooltip: n.title }}>
                     {n.url ? (
                       <a href={n.url} target="_blank" rel="noopener noreferrer">
                         {n.title}
@@ -1676,7 +1676,7 @@ const IndustryBoardTab: React.FC<{
                     {n.source}
                   </Tag>
                 </div>
-                <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>
+                <div style={{ fontSize: 12, color: '#999', marginTop: 2 }}>
                   {formatNewsTime(n.publish_time)} {n.category && <Tag>{n.category}</Tag>}
                 </div>
               </div>
@@ -1710,7 +1710,7 @@ const SparklinePctRow: React.FC<{
               width: 14,
               height: h,
               background: color,
-              borderRadius: 2,
+              borderRadius: 8,
               opacity: v == null ? 0.4 : 0.85,
             }}
           />
@@ -1909,7 +1909,7 @@ const SentimentBoardTab: React.FC<{
                     render: (_v, row) => (
                       <div>
                         <div style={{ fontSize: 12, fontWeight: 500 }}>{row.stock_name || '—'}</div>
-                        <div style={{ fontSize: 11, color: '#999' }}>{row.stock_code}</div>
+                        <div style={{ fontSize: 12, color: '#999' }}>{row.stock_code}</div>
                       </div>
                     ),
                   },
@@ -1997,7 +1997,7 @@ const SentimentBoardTab: React.FC<{
                       <div>
                         <div style={{ fontSize: 12, fontWeight: 500 }}>{v}</div>
                         {row.related_stock_code && (
-                          <div style={{ fontSize: 11, color: '#1890ff' }}>
+                          <div style={{ fontSize: 12, color: '#1890ff' }}>
                             {row.related_stock_code}
                           </div>
                         )}
@@ -2040,13 +2040,13 @@ const SentimentBoardTab: React.FC<{
           <Card
             title={
               <Space>
-                <RobotOutlined style={{ color: '#fa8c16' }} />
+                <BarChartOutlined style={{ color: '#fa8c16' }} />
                 异动股 — Rank 突变 top 10
               </Space>
             }
             size="small"
             extra={
-              <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 今日 rank 较 5 日均值跃升越多 = 关注度突增
               </Typography.Text>
             }
@@ -2078,7 +2078,7 @@ const SentimentBoardTab: React.FC<{
                     render: (_v, row) => (
                       <div>
                         <div style={{ fontSize: 12, fontWeight: 500 }}>{row.stock_name || '—'}</div>
-                        <div style={{ fontSize: 11, color: '#999' }}>{row.stock_code}</div>
+                        <div style={{ fontSize: 12, color: '#999' }}>{row.stock_code}</div>
                       </div>
                     ),
                   },
@@ -2134,7 +2134,7 @@ const SentimentBoardTab: React.FC<{
             }
             size="small"
             extra={
-              <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 紫色 = 综合评分 (0-100), 橙色 = 机构参与度 (%)
               </Typography.Text>
             }
@@ -2173,11 +2173,11 @@ const SentimentBoardTab: React.FC<{
                       margin={{ top: 8, right: 32, bottom: 8, left: 64 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-                      <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11 }} />
+                      <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 12 }} />
                       <YAxis
                         type="category"
                         dataKey="label"
-                        tick={{ fontSize: 11 }}
+                        tick={{ fontSize: 12 }}
                         width={88}
                         interval={0}
                       />
@@ -2192,7 +2192,7 @@ const SentimentBoardTab: React.FC<{
                                 border: '1px solid #ddd',
                                 padding: 8,
                                 fontSize: 12,
-                                borderRadius: 4,
+                                borderRadius: 8,
                               }}
                             >
                               <div style={{ fontWeight: 500 }}>
@@ -2209,7 +2209,7 @@ const SentimentBoardTab: React.FC<{
                           );
                         }}
                       />
-                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      <Legend wrapperStyle={{ fontSize: 12 }} />
                       <Bar
                         dataKey="comment_score"
                         name="综合评分"
@@ -2244,7 +2244,7 @@ const SentimentBoardTab: React.FC<{
             size="small"
             extra={
               data.keywords_used && (
-                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   关键词: {data.keywords_used.join(' / ')}
                 </Typography.Text>
               )
@@ -2276,7 +2276,7 @@ const SentimentBoardTab: React.FC<{
                   <div
                     key={`${n.publish_time}-${i}`}
                     style={{
-                      borderLeft: '3px solid #722ed1',
+                      
                       marginLeft: -18,
                       paddingLeft: 14,
                       marginBottom: 10,
@@ -2285,7 +2285,7 @@ const SentimentBoardTab: React.FC<{
                     }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                      <Text strong style={{ fontSize: 13 }} ellipsis={{ tooltip: n.title }}>
+                      <Text strong style={{ fontSize: 14 }} ellipsis={{ tooltip: n.title }}>
                         {n.url ? (
                           <a href={n.url} target="_blank" rel="noopener noreferrer">
                             {n.title}
@@ -2302,7 +2302,7 @@ const SentimentBoardTab: React.FC<{
                         {n.source}
                       </Tag>
                     </div>
-                    <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>
+                    <div style={{ fontSize: 12, color: '#999', marginTop: 2 }}>
                       {formatNewsTime(n.publish_time)}
                       {n.category && <Tag style={{ marginLeft: 4 }}>{n.category}</Tag>}
                     </div>
@@ -2446,7 +2446,7 @@ const IndustryHeatmapTab: React.FC<{
         }
         extra={
           <Space>
-            {data?.universe_size != null && <Tag color="purple">命中 {data.universe_size} 只</Tag>}
+            {data?.universe_size != null && <Tag color="blue">命中 {data.universe_size} 只</Tag>}
             <Button.Group size="small">
               <Button
                 type={viewMode === 'table' ? 'primary' : 'default'}
@@ -2528,7 +2528,7 @@ const IndustryHeatmapTab: React.FC<{
                   render: (v: string, r: any) => (
                     <div>
                       <div style={{ fontWeight: 500 }}>{v}</div>
-                      <div style={{ fontSize: 11, color: '#999' }}>{r._sample_count} 只样本</div>
+                      <div style={{ fontSize: 12, color: '#999' }}>{r._sample_count} 只样本</div>
                     </div>
                   ),
                 },
@@ -2543,7 +2543,7 @@ const IndustryHeatmapTab: React.FC<{
                       style={{
                         background: zColor(z),
                         padding: '4px 6px',
-                        borderRadius: 3,
+                        borderRadius: 8,
                         textAlign: 'center',
                         fontSize: 12,
                         fontWeight: z != null && Math.abs(z) > 1 ? 600 : 400,
@@ -2616,7 +2616,7 @@ function buildHeatmapOption(data: FactorIndustryHeatmapResponse | null): Record<
       type: 'category',
       data: yCategories,
       splitArea: { show: true },
-      axisLabel: { interval: 0, fontSize: 11 },
+      axisLabel: { interval: 0, fontSize: 12 },
     },
     visualMap: {
       min: -visualBound,
@@ -2723,7 +2723,7 @@ function buildPreviewColumns(
             render: (_: unknown, record: FactorPreviewSignal) => (
               <Button
                 size="small"
-                icon={<RobotOutlined />}
+                icon={<BarChartOutlined />}
                 onClick={() => onAnalyze(record)}
                 title="AI 解读：基本面 / 技术面 / 资金面 / 新闻面 / 情绪面"
               >
@@ -2807,7 +2807,7 @@ function buildLatestPickColumns(
             render: (_: unknown, record: FactorPreviewSignal) => (
               <Button
                 size="small"
-                icon={<RobotOutlined />}
+                icon={<BarChartOutlined />}
                 onClick={() => onAnalyze(record)}
                 title="AI 解读：基本面 / 技术面 / 资金面 / 新闻面 / 情绪面"
               >
@@ -2955,8 +2955,8 @@ const FactorDetailDrawer: React.FC<FactorDetailDrawerProps> = ({
                   margin={{ top: 8, right: 16, left: 0, bottom: 8 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-                  <XAxis dataKey="period_end" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} domain={['auto', 'auto']} />
+                  <XAxis dataKey="period_end" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} domain={['auto', 'auto']} />
                   <Tooltip
                     formatter={(value: number, name: string) => [
                       value != null ? value.toFixed(4) : '—',
@@ -3012,9 +3012,9 @@ const FactorDetailDrawer: React.FC<FactorDetailDrawerProps> = ({
                   margin={{ top: 8, right: 16, left: 0, bottom: 8 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-                  <XAxis dataKey="trade_date" tick={{ fontSize: 11 }} minTickGap={32} />
+                  <XAxis dataKey="trade_date" tick={{ fontSize: 12 }} minTickGap={32} />
                   <YAxis
-                    tick={{ fontSize: 11 }}
+                    tick={{ fontSize: 12 }}
                     domain={['auto', 'auto']}
                     tickFormatter={v => Number(v).toFixed(3)}
                   />

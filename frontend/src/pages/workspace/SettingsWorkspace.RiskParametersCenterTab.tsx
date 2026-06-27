@@ -334,9 +334,7 @@ const RiskParametersCenterTab: React.FC = () => {
               <Tag color="processing">
                 启用 guard: {enabledGuards + 1}/{totalGuards} (position_limits 默认启用)
               </Tag>
-              <Tag color="purple">US-066 风控参数中心</Tag>
-              <Tag color="cyan">US-135 PR-020 全 8 维度</Tag>
-              <Tag color="magenta">US-137 EX-012 对账阈值</Tag>
+              {/* Phase 3 (2026-06-27): US-XXX 装饰 Tag 已退役. */}
             </Space>
           </div>
         }
@@ -2136,7 +2134,7 @@ const RiskParametersCenterTab: React.FC = () => {
         )}
       </Card>
 
-      <Paragraph style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+      <Paragraph style={{ fontSize: 12, color: 'var(--text-muted)' }}>
         所有配置存于 <code>User.risk_config.&lt;guard_name&gt;</code> JSONB。修改后{' '}
         <strong>下一次 guard cron / pre-trade 检查时生效</strong> (不影响当前已在 loop
         中的批次)。前端不做 strict 校验, 非法值被 backend normalizeXxxConfig 静默退到 default —

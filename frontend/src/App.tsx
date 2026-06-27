@@ -66,7 +66,6 @@ import {
   SettingOutlined,
   ExperimentOutlined,
   DatabaseOutlined,
-  FilterOutlined,
   PieChartOutlined,
   InfoCircleOutlined,
   RocketOutlined,
@@ -136,7 +135,9 @@ const routeSelectionAliases: Array<[RegExp, string]> = [
   [/^\/today(\/.*)?$/, '/workspace/today'],
   [/^\/dashboard(\/.*)?$/, '/workspace/today'],
   [/^\/portfolio(\/.*)?$/, '/workspace/portfolio'],
-  [/^\/screener(\/.*)?$/, '/workspace/factors'],
+  [/^\/screener(\/.*)?$/, '/workspace/lab'],
+  // Phase 3 (2026-06-27): 选股因子合并到实验室二级 tab — /workspace/factors 已不在主菜单.
+  [/^\/workspace\/factors(\/.*)?$/, '/workspace/lab'],
   [/^\/market(\/.*)?$/, '/workspace/data'],
   [/^\/data-update(\/.*)?$/, '/workspace/data'],
   [/^\/tasks(\/.*)?$/, '/workspace/data'],
@@ -231,21 +232,34 @@ const AppContent: React.FC = () => {
     navigate('/login');
   };
 
-  // US-001: collapse the legacy 38-page sprawl into top-level workspaces.
-  // Each workspace owns a tabbed inner layout (built out in later stories).
+  // Phase 3 UI 简化 (2026-06-27): 主菜单 8 → 5 — 用户原话"页面太复杂".
+  //   1. 简易版 (默认登陆落地, 不动)
+  //   2. 今日
+  //   3. 持仓
+  //   4. 实验室 (吸收: 选股因子 / AI 顾问)
+  //   5. 设置 (admin only 下额外展现: 数据中心 / 系统介绍 / 用户管理)
+  // - 选股因子 → 合并到「实验室」二级 tab
+  // - 数据中心 / 系统介绍 → admin 才看到顶层菜单, 非 admin 走右上 "?" 按钮访问系统介绍
+  // - 旧 8 项的所有路由 (/workspace/factors /data /system) 全部保留, 不删任何
+  //   workspace 文件 — 只是顶层菜单层把它们隐藏起来.
+  const isAdmin = user?.role === 'admin';
   const mainMenuItems: MenuProps['items'] = useMemo(
-    () => [
-      menuLink('/workspace/easy', <RocketOutlined />, '简易版'),
-      menuLink('/workspace/today', <CompassOutlined />, '今日作战'),
-      menuLink('/workspace/factors', <FilterOutlined />, '选股因子'),
-      menuLink('/workspace/lab', <ExperimentOutlined />, '策略实验室'),
-      menuLink('/workspace/portfolio', <PieChartOutlined />, '持仓与复盘'),
-      menuLink('/workspace/data', <DatabaseOutlined />, '数据中心'),
-      menuLink('/workspace/settings', <SettingOutlined />, '账号设置'),
-      // Batch AL (2026-06-21) — 用户明确要求新增"系统介绍"
-      menuLink('/workspace/system', <InfoCircleOutlined />, '系统介绍'),
-    ],
-    []
+    () => {
+      const items: MenuProps['items'] = [
+        menuLink('/workspace/easy', <RocketOutlined />, '简易版'),
+        menuLink('/workspace/today', <CompassOutlined />, '今日'),
+        menuLink('/workspace/portfolio', <PieChartOutlined />, '持仓'),
+        menuLink('/workspace/lab', <ExperimentOutlined />, '实验室'),
+        menuLink('/workspace/settings', <SettingOutlined />, '设置'),
+      ];
+      if (isAdmin) {
+        // admin 才在顶层菜单挂"数据中心 / 系统介绍" — 普通用户从设置内访问.
+        items.push(menuLink('/workspace/data', <DatabaseOutlined />, '数据中心'));
+        items.push(menuLink('/workspace/system', <InfoCircleOutlined />, '系统介绍'));
+      }
+      return items;
+    },
+    [isAdmin]
   );
 
   const flatMenuItems = useMemo(() => flattenMenu(mainMenuItems), [mainMenuItems]);

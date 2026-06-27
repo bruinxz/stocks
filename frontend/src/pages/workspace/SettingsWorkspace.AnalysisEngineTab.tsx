@@ -365,7 +365,7 @@ const AnalysisEngineTab: React.FC = () => {
                         <Text strong>{dim.label}</Text>
                       </Tooltip>
                       <br />
-                      <Text type="secondary" style={{ fontSize: 11 }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
                         默认 {dim.defaultPercent}%
                       </Text>
                     </Col>
@@ -399,7 +399,7 @@ const AnalysisEngineTab: React.FC = () => {
         </Form>
       )}
 
-      <Paragraph style={{ marginTop: 16, fontSize: 11, color: 'var(--text-muted)' }}>
+      <Paragraph style={{ marginTop: 16, fontSize: 12, color: 'var(--text-muted)' }}>
         配置存于 <code>User.risk_config.analysis_engine</code> JSONB. 调用方:{' '}
         <code>backend/src/services/analysis-engine/ShadowDoubleRunService.ts</code>. 修改后{' '}
         <strong>下一次 AIAdvisorService.analyzeSingleStock 调用时生效</strong> (不影响当前已在 loop

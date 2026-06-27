@@ -195,7 +195,7 @@ const SizingPolicyTab: React.FC = () => {
                 label: (
                   <div>
                     <div style={{ fontWeight: 600 }}>{o.label}</div>
-                    <div style={{ fontSize: 11, color: '#888' }}>{o.desc}</div>
+                    <div style={{ fontSize: 12, color: '#888' }}>{o.desc}</div>
                   </div>
                 ),
               }))}

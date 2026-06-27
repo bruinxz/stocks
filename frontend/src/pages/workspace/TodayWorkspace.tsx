@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSelector } from 'react-redux';
+import { RootState } from '../../store/rootReducer';
 import {
   Alert,
   Button,
@@ -34,7 +36,7 @@ import {
   ReloadOutlined,
   RightOutlined,
   RiseOutlined,
-  RobotOutlined,
+  BarChartOutlined,
   SafetyCertificateOutlined,
   ThunderboltOutlined,
   WarningOutlined,
@@ -161,16 +163,27 @@ const { RangePicker } = DatePicker;
 // AlertsBell 跳转 query 校验有单一事实源.
 // CA-1: 'core_picks' 作为默认 tab — v3 抖音风刷卡片, 学习自抖音「炒股养家」的
 // "信息密度集中 + 大字评分 + 一句话理由" 信息架构. 保留旧 4 tab 不删.
-const TODAY_WORKSPACE_TABS: WorkspaceTab[] = [
+// Phase 3 (2026-06-27): tab 6 → 3 — 用户原话"页面太复杂".
+//   核心推荐 (默认) / 今日信号 / 风险提醒
+//   关键事件 → 折进核心推荐卡片下方 timeline (后续 story)
+//   风控中心 → 合并到风险提醒, 用 filter level=HIGH 区分
+//   资金流向 → 折进今日信号顶部带状图
+// admin 仍能看到完整 6 tab (研究 / 调试). AlertsBell 跳转 ?tab=risk_center 仍兼容.
+const TODAY_WORKSPACE_TABS_BASE: WorkspaceTab[] = [
   { key: 'core_picks', label: '核心推荐', icon: <FireOutlined /> },
   { key: 'signals', label: '今日信号', icon: <ThunderboltOutlined /> },
-  { key: 'events', label: '关键事件', icon: <BellOutlined /> },
   { key: 'alerts', label: '风险提醒', icon: <AlertOutlined /> },
-  { key: 'risk_center', label: '风控中心', icon: <SafetyCertificateOutlined /> },
-  // BK-4 (2026-06-24): 盘中行业资金流 (10min 自动刷新, 类似抖音"分时累计资金流")
-  { key: 'capital_flow', label: '资金流向', icon: <LineChartOutlined /> },
 ];
-const TODAY_WORKSPACE_TAB_KEYS = TODAY_WORKSPACE_TABS.map(t => t.key);
+const TODAY_WORKSPACE_TABS_ADMIN_EXTRA: WorkspaceTab[] = [
+  { key: 'events', label: '关键事件 (admin)', icon: <BellOutlined /> },
+  { key: 'risk_center', label: '风控中心 (admin)', icon: <SafetyCertificateOutlined /> },
+  // BK-4 (2026-06-24): 盘中行业资金流 (10min 自动刷新, 类似抖音"分时累计资金流")
+  { key: 'capital_flow', label: '资金流向 (admin)', icon: <LineChartOutlined /> },
+];
+const TODAY_WORKSPACE_TAB_KEYS = [
+  ...TODAY_WORKSPACE_TABS_BASE,
+  ...TODAY_WORKSPACE_TABS_ADMIN_EXTRA,
+].map(t => t.key);
 
 const TodayWorkspace: React.FC = () => {
   const navigate = useNavigate();
@@ -178,7 +191,15 @@ const TodayWorkspace: React.FC = () => {
   // US-070 [FE-031]: tab keys 静态 — 用 module-scope const 让 useMemo 不需要 deps,
   // 同时 AlertsBell 点击带的 ?tab= query 也只能落在这 4 个 key 里. 字符串数组
   // inline 在 JSX 之外, 防 React Hook deps lint 抱怨 + 重渲不重建.
-  const tabs: WorkspaceTab[] = TODAY_WORKSPACE_TABS;
+  // Phase 3: admin 看完整 6 tab, 普通用户只看 3 (核心推荐 / 信号 / 风险提醒).
+  const isAdmin = useSelector((s: RootState) => s.auth.user?.role === 'admin');
+  const tabs: WorkspaceTab[] = useMemo(
+    () =>
+      isAdmin
+        ? [...TODAY_WORKSPACE_TABS_BASE, ...TODAY_WORKSPACE_TABS_ADMIN_EXTRA]
+        : TODAY_WORKSPACE_TABS_BASE,
+    [isAdmin]
+  );
   // CA-1: 默认 tab = 'core_picks' (v3 抖音风刷卡片).
   // 旧 4 tab 仍然由 ?tab= query 显式选中 (AlertsBell 跳转兼容).
   const [activeKey, setActiveKey] = useState('core_picks');
@@ -375,7 +396,7 @@ const TodayWorkspace: React.FC = () => {
                     background: '#e6f4ff',
                     color: '#1677ff',
                     padding: '0 6px',
-                    borderRadius: 4,
+                    borderRadius: 8,
                     fontSize: 12,
                   }}
                 >
@@ -393,7 +414,7 @@ const TodayWorkspace: React.FC = () => {
                     background: '#f6ffed',
                     color: '#389e0d',
                     padding: '0 6px',
-                    borderRadius: 4,
+                    borderRadius: 8,
                     fontSize: 12,
                   }}
                 >
@@ -692,13 +713,13 @@ const MarketJudgmentCard: React.FC = () => {
                 title={
                   <Space size={4}>
                     <span style={{ fontSize: 12 }}>建议仓位</span>
-                    <Tag color={positionColor.tag} style={{ fontSize: 10, padding: '0 4px' }}>
+                    <Tag color={positionColor.tag} style={{ fontSize: 12, padding: '0 4px' }}>
                       {data.suggested_position_label}
                     </Tag>
                   </Space>
                 }
                 value={positionPctDisplay}
-                valueStyle={{ fontSize: 22, fontWeight: 600, color: positionColor.text }}
+                valueStyle={{ fontSize: 18, fontWeight: 600, color: positionColor.text }}
               />
             </Tooltip>
           </Col>
@@ -707,7 +728,7 @@ const MarketJudgmentCard: React.FC = () => {
               <Statistic
                 title="大盘环境"
                 value={data.regime_label || regimeLabelFallback(data.regime)}
-                valueStyle={{ fontSize: 16, color: regimeStatColor(data.regime) }}
+                valueStyle={{ fontSize: 18, color: regimeStatColor(data.regime) }}
               />
             </Tooltip>
           </Col>
@@ -730,7 +751,7 @@ const MarketJudgmentCard: React.FC = () => {
                     ? '—'
                     : `${data.benchmark_atr_14d_pct.toFixed(2)}%`
                 }
-                valueStyle={{ fontSize: 16, color: atrColor(data.benchmark_atr_14d_pct) }}
+                valueStyle={{ fontSize: 18, color: atrColor(data.benchmark_atr_14d_pct) }}
               />
             </Tooltip>
           </Col>
@@ -745,7 +766,7 @@ const MarketJudgmentCard: React.FC = () => {
                     }${data.benchmark_return_20d_pct.toFixed(2)}%`
               }
               valueStyle={{
-                fontSize: 16,
+                fontSize: 18,
                 color:
                   data.benchmark_return_20d_pct == null
                     ? undefined
@@ -774,7 +795,7 @@ const MarketJudgmentCard: React.FC = () => {
             )}
             {foreignError && (
               <Tooltip title={foreignError}>
-                <Tag color="orange" style={{ fontSize: 10 }}>
+                <Tag color="orange" style={{ fontSize: 12 }}>
                   数据缺失
                 </Tag>
               </Tooltip>
@@ -810,7 +831,7 @@ const MarketJudgmentCard: React.FC = () => {
                         </span>
                       }
                       valueStyle={{
-                        fontSize: 15,
+                        fontSize: 14,
                         fontWeight: 600,
                         color: idx.change_pct >= 0 ? '#cf1322' : '#3f8600',
                       }}
@@ -827,11 +848,11 @@ const MarketJudgmentCard: React.FC = () => {
         </div>
 
         {/* 第三行：一句话 brief */}
-        <div style={{ paddingLeft: 8, borderLeft: '3px solid #1677ff' }}>
+        <div style={{ paddingLeft: 8, }}>
           <Text type="secondary" style={{ fontSize: 12 }}>
             今日小结
           </Text>
-          <Paragraph style={{ margin: '4px 0 0', fontSize: 13, lineHeight: 1.5, color: '#262626' }}>
+          <Paragraph style={{ margin: '4px 0 0', fontSize: 14, lineHeight: 1.5, color: '#262626' }}>
             {data.brief}
           </Paragraph>
         </div>
@@ -1119,7 +1140,7 @@ const CallAuctionCard: React.FC<{ portfolioId: number | null }> = ({ portfolioId
                       <Tag color="red">{row.continuous_days}板</Tag>
                     )}
                     {row.is_position && <Tag color="blue">持仓</Tag>}
-                    {row.industry && <Tag color="geekblue">{row.industry}</Tag>}
+                    {row.industry && <Tag color="blue">{row.industry}</Tag>}
                   </Space>
                 ),
               },
@@ -1140,11 +1161,11 @@ const CallAuctionCard: React.FC<{ portfolioId: number | null }> = ({ portfolioId
         )}
 
         {/* brief 一句话 */}
-        <div style={{ paddingLeft: 8, borderLeft: '3px solid #fa8c16' }}>
+        <div style={{ paddingLeft: 8, }}>
           <Text type="secondary" style={{ fontSize: 12 }}>
             异动小结
           </Text>
-          <Paragraph style={{ margin: '4px 0 0', fontSize: 13, lineHeight: 1.5, color: '#262626' }}>
+          <Paragraph style={{ margin: '4px 0 0', fontSize: 14, lineHeight: 1.5, color: '#262626' }}>
             {data.brief}
           </Paragraph>
         </div>
@@ -1268,9 +1289,9 @@ const MarketBriefCard: React.FC = () => {
 
   const titleNode = (
     <Space size={8}>
-      <RobotOutlined style={{ color: '#722ed1' }} />
+      <BarChartOutlined style={{ color: '#722ed1' }} />
       <span>AI 大盘速读</span>
-      {brief?.trade_date && <Tag color="purple">{brief.trade_date}</Tag>}
+      {brief?.trade_date && <Tag color="blue">{brief.trade_date}</Tag>}
       {brief?.status === 'partial' && <Tag color="orange">部分数据待补</Tag>}
       {brief?.status === 'failed' && <Tag color="red">数据全缺</Tag>}
       {brief?.nlp_engine && (
@@ -1363,7 +1384,7 @@ const MarketBriefCard: React.FC = () => {
                             color="green"
                             style={{
                               marginLeft: 0,
-                              fontSize: 9,
+                              fontSize: 12,
                               padding: '0 4px',
                               lineHeight: '14px',
                             }}
@@ -1387,7 +1408,7 @@ const MarketBriefCard: React.FC = () => {
                         </span>
                       }
                       valueStyle={{
-                        fontSize: 16,
+                        fontSize: 18,
                         fontWeight: 600,
                         color: idx.change_pct >= 0 ? '#cf1322' : '#3f8600',
                       }}
@@ -1396,14 +1417,14 @@ const MarketBriefCard: React.FC = () => {
                 </Col>
               ))}
               <Col xs={24} lg={8}>
-                <div style={{ paddingLeft: 8, borderLeft: '3px solid #722ed1' }}>
+                <div style={{ paddingLeft: 8, }}>
                   <Text type="secondary" style={{ fontSize: 12 }}>
                     AI 一句话观点
                   </Text>
                   <Paragraph
                     style={{
                       margin: '4px 0 0',
-                      fontSize: 13,
+                      fontSize: 14,
                       lineHeight: 1.5,
                       color: '#262626',
                     }}
@@ -1444,11 +1465,11 @@ const MarketBriefCard: React.FC = () => {
                 </Tooltip>
               </Col>
               <Col xs={24} md={24} lg={14}>
-                <div style={{ paddingLeft: 8, borderLeft: '3px solid #722ed1' }}>
+                <div style={{ paddingLeft: 8, }}>
                   <Text type="secondary" style={{ fontSize: 12 }}>
                     AI 一句话观点
                   </Text>
-                  <Paragraph style={{ margin: '4px 0 0', fontSize: 13, lineHeight: 1.5 }}>
+                  <Paragraph style={{ margin: '4px 0 0', fontSize: 14, lineHeight: 1.5 }}>
                     {aiView}
                   </Paragraph>
                 </div>
@@ -1467,7 +1488,7 @@ const MarketBriefCard: React.FC = () => {
                 precision={brief.northbound_net_amount == null ? undefined : 2}
                 suffix={brief.northbound_net_amount == null ? '' : ' 亿'}
                 valueStyle={{
-                  fontSize: 16,
+                  fontSize: 18,
                   color: northboundColor(brief.northbound_net_amount),
                 }}
               />
@@ -1480,7 +1501,7 @@ const MarketBriefCard: React.FC = () => {
                 value={brief.limit_up_count ?? '—'}
                 suffix={brief.limit_up_count == null ? '' : ' 家'}
                 valueStyle={{
-                  fontSize: 16,
+                  fontSize: 18,
                   color: limitUpColor(brief.limit_up_count),
                 }}
               />
@@ -1589,7 +1610,7 @@ const CorePicksPanel: React.FC<{
         </Row>
         {funnel?.as_of && (
           <div style={{ marginTop: 4 }}>
-            <Text type="secondary" style={{ fontSize: 11 }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>
               as-of {funnel.as_of}
             </Text>
           </div>
@@ -1674,7 +1695,7 @@ const TradingPlanCard: React.FC<{ data: TodaySignalsData }> = ({ data }) => {
         <Space>
           <ThunderboltOutlined style={{ color: '#722ed1' }} />
           <span>今日交易计划</span>
-          <Tag color="purple">{counts.total} 只</Tag>
+          <Tag color="blue">{counts.total} 只</Tag>
         </Space>
       }
       extra={
@@ -1718,10 +1739,10 @@ const TradingPlanCard: React.FC<{ data: TodaySignalsData }> = ({ data }) => {
                     <Text strong style={{ fontSize: 14 }}>
                       {row.name ?? row.stock_code}
                     </Text>
-                    <Text code style={{ fontSize: 11 }}>
+                    <Text code style={{ fontSize: 12 }}>
                       {row.stock_code}
                     </Text>
-                    {row.industry && <Tag color="geekblue">{row.industry}</Tag>}
+                    {row.industry && <Tag color="blue">{row.industry}</Tag>}
                   </Space>
                   <Space size={4} wrap>
                     {row.sources.map(s => (
@@ -1737,7 +1758,7 @@ const TradingPlanCard: React.FC<{ data: TodaySignalsData }> = ({ data }) => {
                   )}
                   <div className="workspace-mobile-card-actions">
                     <Button
-                      icon={<RobotOutlined />}
+                      icon={<BarChartOutlined />}
                       onClick={() =>
                         setAiTarget({
                           symbol: row.stock_code,
@@ -1797,7 +1818,7 @@ const TradingPlanCard: React.FC<{ data: TodaySignalsData }> = ({ data }) => {
                 dataIndex: 'industry',
                 width: 100,
                 ellipsis: true,
-                render: (v: string | null) => (v ? <Tag color="geekblue">{v}</Tag> : '—'),
+                render: (v: string | null) => (v ? <Tag color="blue">{v}</Tag> : '—'),
               },
               {
                 title: '来源策略',
@@ -1852,7 +1873,7 @@ const TradingPlanCard: React.FC<{ data: TodaySignalsData }> = ({ data }) => {
                     </Button>
                     <Button
                       size="small"
-                      icon={<RobotOutlined />}
+                      icon={<BarChartOutlined />}
                       onClick={() =>
                         setAiTarget({
                           symbol: row.stock_code,
@@ -1994,7 +2015,7 @@ const SellSuggestionCard: React.FC<{
                     <Text strong style={{ fontSize: 14 }}>
                       {row.name ?? row.stock_code}
                     </Text>
-                    <Text code style={{ fontSize: 11 }}>
+                    <Text code style={{ fontSize: 12 }}>
                       {row.stock_code}
                     </Text>
                   </Space>
@@ -2296,10 +2317,10 @@ const MultiFactorCard: React.FC<{
                           <Text strong style={{ fontSize: 14 }}>
                             {row.name ?? row.stock_code}
                           </Text>
-                          <Text code style={{ fontSize: 11 }}>
+                          <Text code style={{ fontSize: 12 }}>
                             {row.stock_code}
                           </Text>
-                          {row.industry && <Tag color="geekblue">{row.industry}</Tag>}
+                          {row.industry && <Tag color="blue">{row.industry}</Tag>}
                         </Space>
                         <div className="workspace-mobile-card-row">
                           <span className="label">总分</span>
@@ -2309,7 +2330,7 @@ const MultiFactorCard: React.FC<{
                         </div>
                         <div className="workspace-mobile-card-actions">
                           <Button
-                            icon={<RobotOutlined />}
+                            icon={<BarChartOutlined />}
                             onClick={() =>
                               setAiTarget({
                                 symbol: row.stock_code,
@@ -2354,7 +2375,7 @@ const MultiFactorCard: React.FC<{
                       dataIndex: 'industry',
                       width: 110,
                       render: (v: string | null | undefined) =>
-                        v ? <Tag color="geekblue">{v}</Tag> : '—',
+                        v ? <Tag color="blue">{v}</Tag> : '—',
                     },
                     {
                       title: '综合分',
@@ -2407,7 +2428,7 @@ const MultiFactorCard: React.FC<{
                           </Button>
                           <Button
                             size="small"
-                            icon={<RobotOutlined />}
+                            icon={<BarChartOutlined />}
                             onClick={() =>
                               setAiTarget({
                                 symbol: row.stock_code,
@@ -2582,13 +2603,13 @@ const DragonHeadCard: React.FC<{
                       <Text strong style={{ fontSize: 14 }}>
                         {row.name ?? row.stock_code}
                       </Text>
-                      <Text code style={{ fontSize: 11 }}>
+                      <Text code style={{ fontSize: 12 }}>
                         {row.stock_code}
                       </Text>
                       {row.continuous_days != null && (
                         <Tag color="red">{row.continuous_days}板</Tag>
                       )}
-                      {row.industry && <Tag color="geekblue">{row.industry}</Tag>}
+                      {row.industry && <Tag color="blue">{row.industry}</Tag>}
                     </Space>
                     {row.reason && (
                       <Paragraph style={{ margin: '4px 0 0 0', fontSize: 12 }} type="secondary">
@@ -2638,7 +2659,7 @@ const DragonHeadCard: React.FC<{
                   width: 80,
                   ellipsis: true,
                   render: (v: string | null | undefined) =>
-                    v ? <Tag color="geekblue">{v}</Tag> : '—',
+                    v ? <Tag color="blue">{v}</Tag> : '—',
                 },
               ]}
               expandable={{
@@ -2712,7 +2733,7 @@ const EarningsSurpriseCard: React.FC<{
                       <Text strong style={{ fontSize: 14 }}>
                         {row.name ?? row.stock_code}
                       </Text>
-                      <Text code style={{ fontSize: 11 }}>
+                      <Text code style={{ fontSize: 12 }}>
                         {row.stock_code}
                       </Text>
                       {row.profit_change_low != null && (
@@ -2979,7 +3000,7 @@ const AlertsPanel: React.FC<{ alerts: UnreadRiskAlertItem[]; totalCount: number 
             </Tag>
           )}
           {snoozedCount > 0 && (
-            <Tag color="purple" data-testid="alerts-panel-snoozed-count">
+            <Tag color="blue" data-testid="alerts-panel-snoozed-count">
               已静音 {snoozedCount}
             </Tag>
           )}
@@ -3015,7 +3036,7 @@ const AlertsPanel: React.FC<{ alerts: UnreadRiskAlertItem[]; totalCount: number 
                       {c.total}
                     </Text>
                   </Space>
-                  <Text type="secondary" style={{ fontSize: 11 }}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
                     高 {c.high} · 中 {c.medium} · 低 {c.low}
                   </Text>
                 </Space>
@@ -3116,7 +3137,7 @@ const AlertsPanel: React.FC<{ alerts: UnreadRiskAlertItem[]; totalCount: number 
                         <Tag color={DERIVED_CATEGORY_TAG_COLOR[item.derived_category]}>
                           {DERIVED_CATEGORY_LABEL[item.derived_category]}
                         </Tag>
-                        <Text type="secondary" style={{ fontSize: 11 }}>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
                           {dayjs(item.created_at).format('MM-DD HH:mm')}
                         </Text>
                       </Space>
@@ -3185,7 +3206,7 @@ const AlertsPanel: React.FC<{ alerts: UnreadRiskAlertItem[]; totalCount: number 
                     <Space wrap style={{ width: '100%' }}>
                       <Text code>{item.symbol}</Text>
                       <Text>{item.name || '—'}</Text>
-                      <Tag color="purple">{formatSnoozeRemaining(Date.now(), entry.until)}</Tag>
+                      <Tag color="blue">{formatSnoozeRemaining(Date.now(), entry.until)}</Tag>
                       <Button
                         size="small"
                         type="link"
@@ -3590,7 +3611,7 @@ const RiskAlertCenterPanel: React.FC<{ onUnreadCountChange?: () => void }> = ({
               ellipsis: true,
               render: (v: string | null | undefined) =>
                 v ? (
-                  <Tag color="purple" style={{ fontSize: 11 }}>
+                  <Tag color="blue" style={{ fontSize: 12 }}>
                     {v}
                   </Tag>
                 ) : (
@@ -3800,7 +3821,7 @@ function eventTypeTag(t: KeyEventItem['event_type']): React.ReactNode {
 
 /** US-041 集合竞价异动 type → tag. */
 function auctionTypeTag(t: AuctionAnomalyType): React.ReactNode {
-  if (t === 'one_word') return <Tag color="magenta">一字</Tag>;
+  if (t === 'one_word') return <Tag color="red">一字</Tag>;
   if (t === 'gap_up') return <Tag color="red">高开</Tag>;
   if (t === 'gap_down') return <Tag color="green">低开</Tag>;
   return <Tag>{t}</Tag>;
@@ -3829,8 +3850,8 @@ function levelIcon(level: string): React.ReactNode {
 /** US-077 风控中心 — 告警类别 tag */
 function categoryTag(category: AlertCategory): React.ReactNode {
   if (category === 'position') return <Tag color="blue">{ALERT_CATEGORY_LABEL.position}</Tag>;
-  if (category === 'market') return <Tag color="purple">{ALERT_CATEGORY_LABEL.market}</Tag>;
-  return <Tag color="cyan">{ALERT_CATEGORY_LABEL.individual}</Tag>;
+  if (category === 'market') return <Tag color="blue">{ALERT_CATEGORY_LABEL.market}</Tag>;
+  return <Tag color="blue">{ALERT_CATEGORY_LABEL.individual}</Tag>;
 }
 
 function strategyTag(strategy: string): React.ReactNode {

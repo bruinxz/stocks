@@ -390,7 +390,7 @@ const PortfolioConstructionTab: React.FC = () => {
         </Form>
       )}
 
-      <Paragraph style={{ marginTop: 16, fontSize: 11, color: 'var(--text-muted)' }}>
+      <Paragraph style={{ marginTop: 16, fontSize: 12, color: 'var(--text-muted)' }}>
         配置存于 <code>User.risk_config.portfolio_construction</code> JSONB. 调用方:{' '}
         <code>backend/src/portfolio/internal/PortfolioConstructionAdapter.ts</code>.
         修改后 <strong>下一次 autopilot cron 跑时生效</strong> (不影响当前已在 loop 中的批次).

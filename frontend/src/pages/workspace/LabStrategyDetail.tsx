@@ -310,19 +310,19 @@ const LabStrategyDetail: React.FC = () => {
 const STRATEGY_CATEGORY_DISPLAY: Record<string, { label: string; color: string }> = {
   multi_factor: { label: '多因子', color: 'blue' },
   momentum: { label: '动量', color: 'orange' },
-  event_driven: { label: '事件驱动', color: 'volcano' },
-  trend: { label: '趋势', color: 'cyan' },
-  reversal: { label: '反转', color: 'purple' },
+  event_driven: { label: '事件驱动', color: 'red' },
+  trend: { label: '趋势', color: 'blue' },
+  reversal: { label: '反转', color: 'blue' },
   value: { label: '价值', color: 'green' },
-  quality: { label: '质量', color: 'gold' },
-  pattern: { label: '形态', color: 'magenta' },
-  mean_reversion: { label: '均值回归', color: 'purple' },
+  quality: { label: '质量', color: 'default' },
+  pattern: { label: '形态', color: 'red' },
+  mean_reversion: { label: '均值回归', color: 'blue' },
   other: { label: '其他', color: 'default' },
 };
 
 const STRATEGY_RISK_DISPLAY: Record<string, { label: string; color: string }> = {
   low: { label: '低风险', color: 'green' },
-  medium: { label: '中风险', color: 'gold' },
+  medium: { label: '中风险', color: 'default' },
   high: { label: '高风险', color: 'red' },
 };
 
@@ -447,7 +447,7 @@ const StrategyMetaCard: React.FC<{
               style={{
                 background: '#fafafa',
                 border: '1px solid #f0f0f0',
-                borderRadius: 4,
+                borderRadius: 8,
                 padding: 12,
                 maxHeight: 240,
                 overflow: 'auto',
@@ -467,7 +467,7 @@ const StrategyMetaCard: React.FC<{
               style={{
                 background: '#fafafa',
                 border: '1px solid #f0f0f0',
-                borderRadius: 4,
+                borderRadius: 8,
                 padding: 12,
                 maxHeight: 240,
                 overflow: 'auto',
@@ -867,7 +867,7 @@ const EdgeHypothesisCard: React.FC<{
           <Text type="secondary">已知失效场景：</Text>
           <ul style={{ marginBottom: 0, paddingLeft: 20, color: '#666' }}>
             {failureModes.map((m: string, i: number) => (
-              <li key={i} style={{ fontSize: 13 }}>{m}</li>
+              <li key={i} style={{ fontSize: 14 }}>{m}</li>
             ))}
           </ul>
         </div>
@@ -928,7 +928,7 @@ const LiveBindingCard: React.FC<{ detail: StrategyDetailResponse }> = ({ detail 
             实盘运行中 — 该策略近 7 个交易日均有信号生成
           </Tag>
         ) : live_binding.enabled ? (
-          <Tag color="gold" icon={<CloseCircleOutlined />}>
+          <Tag color="default" icon={<CloseCircleOutlined />}>
             策略启用但近 7 日无信号 — 可能处于事件驱动 / 月度调仓的等待期
           </Tag>
         ) : (
@@ -957,7 +957,7 @@ const BacktestListCard: React.FC<{ backtests: StrategyDetailBacktest[] }> = ({ b
           <Link to={`/legacy/backtest/${row.id}`}>
             <Text strong>{text}</Text>
           </Link>
-          <Text type="secondary" style={{ fontSize: 11 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
             #{row.id} · 创建 {dayjs(row.created_at).format('MM-DD HH:mm')}
           </Text>
         </Space>
@@ -993,7 +993,7 @@ const BacktestListCard: React.FC<{ backtests: StrategyDetailBacktest[] }> = ({ b
             {percentTag(row.strategy_metrics.total_return_pct)}
             {row.strategy_metrics.is_champion && (
               <Tooltip title="该策略在此回测中夺冠">
-                <Tag color="gold" style={{ marginInlineEnd: 0 }}>
+                <Tag color="default" style={{ marginInlineEnd: 0 }}>
                   冠
                 </Tag>
               </Tooltip>
@@ -1098,7 +1098,7 @@ const LatestICCard: React.FC<{ detail: StrategyDetailResponse }> = ({ detail }) 
       title={
         <Space>
           最新 IC 报告
-          <Tag color="cyan">{latest_ic.look_forward_days} 日窗口</Tag>
+          <Tag color="blue">{latest_ic.look_forward_days} 日窗口</Tag>
         </Space>
       }
       extra={
