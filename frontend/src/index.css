@@ -1,66 +1,118 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&family=Noto+Sans+SC:wght@400;500;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&display=swap');
 
+/*
+ * Phase 5 (2026-06-27) — 视觉重设计 (方向 B: 极简专业 + 金融数据感).
+ * 详见 docs/audit/design_system_2026_06_27.md.
+ *
+ * 重命名后的新 token (--brand / --ink-1 / --bg-canvas / --shadow-1 / ...)
+ * 与旧 token (--primary / --text-main / --shadow-card / ...) 同时存在 —
+ * 旧 token 现在指向新值, 让 14K 行历史 CSS 自动继承新外观, 不必逐条 refactor.
+ * 配色: 8 → 5 (brand indigo + up 红 + down 绿 + warn 橙). 圆角: 4 → 2 (6 / 10).
+ * 阴影: 4 → 2 (subtle + floating). 字号: 引入 5 档黄金比例 (12/13/15/20/28).
+ * 字体: 删除 IBM Plex Sans/Noto Sans SC Google Fonts → 走 system stack 节省首屏字体下载.
+ */
 :root {
   color-scheme: light;
 
-  --bg-body: #f7fafc;
-  --bg-body-rgb: 247, 250, 252;
-  --bg-panel: rgba(255, 255, 255, 0.92);
-  --bg-panel-solid: #ffffff;
-  --bg-panel-alt: #fbfdff;
-  --bg-soft: #edf4fa;
-  --bg-elevated: rgba(255, 255, 255, 0.98);
-  --bg-dark-panel: #f6fbff;
-  --bg-dark-panel-2: #eef6fb;
+  /* === New 5-color brand palette === */
+  --brand: #4338ca;
+  --brand-soft: #eef2ff;
+  --up: #dc2626;
+  --down: #16a34a;
+  --warn: #d97706;
 
-  --text-main: #111827;
-  --text-secondary: #4b5565;
-  --text-muted: #8793a4;
-  --text-inverse: #173047;
+  /* === New 7-tier neutral === */
+  --bg-canvas: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-subtle: #f1f5f9;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --ink-1: #0f172a;
+  --ink-2: #475569;
+  --ink-3: #94a3b8;
 
-  --primary: #2764b8;
-  --primary-strong: #173f72;
-  --primary-soft: #eaf2ff;
-  --secondary-accent: #0fa6a6;
-  --success: #008f6b;
-  --warning: #b7791f;
-  --danger: #d14343;
-  --info: #0877b8;
-  --quant-gold: #d6a64f;
+  /* === Font scale: 5 tiers (1.25 modular) === */
+  --font-xs: 12px;
+  --font-sm: 13px;
+  --font-md: 15px;
+  --font-lg: 20px;
+  --font-xl: 28px;
 
-  --border-color: rgba(15, 23, 42, 0.09);
-  --border-strong: rgba(29, 95, 208, 0.2);
-  --divider: rgba(15, 23, 42, 0.07);
+  /* === Spacing: 4 tiers === */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
 
-  --shadow-soft: 0 10px 28px rgba(15, 23, 42, 0.055);
-  --shadow-medium: 0 20px 50px rgba(15, 23, 42, 0.1);
-  --shadow-card: 0 12px 34px rgba(18, 36, 63, 0.075);
-  --shadow-floating: 0 28px 76px rgba(7, 17, 31, 0.24);
+  /* === Radius: 2 tiers === */
+  --radius-1: 6px;
+  --radius-2: 10px;
 
-  --radius-sm: 10px;
-  --radius-md: 14px;
-  --radius-lg: 20px;
-  --radius-xl: 28px;
+  /* === Shadow: 2 tiers === */
+  --shadow-1: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-2: 0 4px 16px rgba(15, 23, 42, 0.08);
 
-  --space-2xs: 4px;
-  --space-xs: 8px;
-  --space-sm: 12px;
-  --space-md: 16px;
-  --space-lg: 24px;
-  --space-xl: 32px;
-  --space-2xl: 40px;
+  /* === Fonts === */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei',
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
 
-  --header-height: 64px;
+  /* === Legacy aliases — old names now point at new tokens.
+        Lets 14k lines of pre-Phase-5 CSS auto-inherit the new look. === */
+  --bg-body: var(--bg-canvas);
+  --bg-body-rgb: 248, 250, 252;
+  --bg-panel: var(--bg-surface);
+  --bg-panel-solid: var(--bg-surface);
+  --bg-panel-alt: var(--bg-surface);
+  --bg-soft: var(--bg-subtle);
+  --bg-elevated: var(--bg-surface);
+  --bg-dark-panel: var(--bg-subtle);
+  --bg-dark-panel-2: var(--bg-subtle);
+
+  --text-main: var(--ink-1);
+  --text-secondary: var(--ink-2);
+  --text-muted: var(--ink-3);
+  --text-inverse: var(--ink-1);
+
+  --primary: var(--brand);
+  --primary-strong: var(--brand);
+  --primary-soft: var(--brand-soft);
+  --secondary-accent: var(--brand);
+  --success: var(--down);
+  --warning: var(--warn);
+  --danger: var(--up);
+  --info: var(--brand);
+  --quant-gold: var(--warn);
+
+  --border-color: var(--border);
+  --divider: var(--border);
+
+  --shadow-soft: var(--shadow-1);
+  --shadow-medium: var(--shadow-1);
+  --shadow-card: var(--shadow-1);
+  --shadow-floating: var(--shadow-2);
+
+  --radius-sm: var(--radius-1);
+  --radius-md: var(--radius-2);
+  --radius-lg: var(--radius-2);
+  --radius-xl: var(--radius-2);
+
+  --space-2xs: var(--space-1);
+  --space-xs: var(--space-2);
+  --space-sm: var(--space-2);
+  --space-md: var(--space-3);
+  --space-lg: var(--space-4);
+  --space-xl: var(--space-4);
+  --space-2xl: var(--space-4);
+
+  --header-height: 56px;
   --content-width: 1520px;
 
-  --gradient-page: radial-gradient(circle at 8% -8%, rgba(39, 100, 184, 0.1), transparent 30%),
-    radial-gradient(circle at 92% 2%, rgba(15, 166, 166, 0.09), transparent 27%),
-    linear-gradient(180deg, #ffffff 0%, #f7fafc 46%, #f1f6fb 100%);
-  --gradient-brand: linear-gradient(145deg, #ffffff 0%, #eef7ff 58%, #e8fbfb 128%);
-  --gradient-soft: linear-gradient(135deg, rgba(39, 100, 184, 0.07), rgba(15, 166, 166, 0.07));
-  --font-display: 'IBM Plex Sans', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-body: 'IBM Plex Sans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --font-mono: 'JetBrains Mono', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', monospace;
+  --gradient-page: var(--bg-canvas);
+  --gradient-brand: var(--bg-surface);
+  --gradient-soft: var(--bg-subtle);
+  --font-display: var(--font-sans);
+  --font-body: var(--font-sans);
 }
 
 * {
@@ -76,10 +128,9 @@ body,
 
 body {
   margin: 0;
-  font-family: var(--font-body);
-  color: var(--text-main);
-  background: var(--gradient-page);
-  background-attachment: fixed;
+  font-family: var(--font-sans);
+  color: var(--ink-1);
+  background: var(--bg-canvas);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
@@ -94,8 +145,8 @@ a {
 }
 
 ::selection {
-  background: rgba(29, 95, 208, 0.18);
-  color: var(--text-main);
+  background: var(--brand-soft);
+  color: var(--ink-1);
 }
 
 ::-webkit-scrollbar {
@@ -108,17 +159,17 @@ a {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(29, 95, 208, 0.22);
+  background: var(--border-strong);
   border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(29, 95, 208, 0.36);
+  background: var(--ink-3);
 }
 
 .modern-layout {
   min-height: 100vh;
-  background: transparent !important;
+  background: var(--bg-canvas) !important;
   position: relative;
 }
 
@@ -126,35 +177,10 @@ a {
   min-width: 0;
 }
 
-.modern-layout::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(rgba(15, 23, 42, 0.026) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(15, 23, 42, 0.022) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.56), transparent 24%);
-  background-size: 44px 44px, 44px 44px, 100% 100%;
-  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.86), transparent 78%);
-  -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.86), transparent 78%);
-  z-index: 0;
-}
-
-.modern-layout::after {
-  content: '';
-  position: fixed;
-  inset: auto -12% -26% 42%;
-  height: 42vh;
-  pointer-events: none;
-  background: radial-gradient(ellipse at center, rgba(0, 167, 194, 0.12), transparent 64%);
-  filter: blur(12px);
-  z-index: 0;
-}
-
 .modern-sider {
-  background: transparent !important;
-  padding: 16px 0 16px 16px;
-  border-right: none !important;
+  background: var(--bg-surface) !important;
+  padding: 0;
+  border-right: 1px solid var(--border) !important;
   height: 100vh;
   position: sticky !important;
   top: 0;
@@ -163,42 +189,22 @@ a {
 }
 
 .modern-sider-inner {
-  height: calc(100vh - 32px);
+  height: 100vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-radius: var(--radius-xl);
-  background: radial-gradient(circle at 6% 0%, rgba(15, 166, 166, 0.16), transparent 28%),
-    radial-gradient(circle at 100% 0%, rgba(39, 100, 184, 0.12), transparent 32%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 251, 255, 0.94));
-  color: var(--text-inverse);
-  box-shadow: 0 20px 54px rgba(39, 73, 111, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.78);
-  border: 1px solid rgba(39, 100, 184, 0.12);
+  border-radius: 0;
+  background: var(--bg-surface);
+  color: var(--ink-1);
+  box-shadow: none;
+  border: none;
   z-index: 2;
   position: relative;
 }
 
-.modern-sider-inner::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(90deg, rgba(39, 100, 184, 0.035) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(39, 100, 184, 0.03) 1px, transparent 1px);
-  background-size: 34px 34px;
-  opacity: 0.56;
-}
-
+.modern-sider-inner::before,
 .modern-sider-inner::after {
-  content: '';
-  position: absolute;
-  top: 18px;
-  right: -40px;
-  width: 140px;
-  height: 140px;
-  pointer-events: none;
-  background: radial-gradient(circle, rgba(15, 166, 166, 0.16), transparent 64%);
-  filter: blur(2px);
+  display: none;
 }
 
 .modern-sider-inner > div {
@@ -213,64 +219,53 @@ a {
 .modern-logo {
   display: flex;
   align-items: center;
-  gap: 12px;
-  height: 82px;
-  padding: 0 22px;
-  color: var(--text-main);
-  border-bottom: 1px solid rgba(39, 100, 184, 0.08);
+  gap: var(--space-2);
+  height: var(--header-height);
+  padding: 0 var(--space-3);
+  color: var(--ink-1);
+  border-bottom: 1px solid var(--border);
   position: relative;
 }
 
 .modern-logo::after {
-  content: '';
-  position: absolute;
-  left: 24px;
-  right: 24px;
-  bottom: -1px;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    rgba(39, 100, 184, 0.42),
-    rgba(15, 166, 166, 0.34),
-    transparent
-  );
+  display: none;
 }
 
 .modern-logo .logo-icon {
-  width: 38px;
-  height: 38px;
+  width: 32px;
+  height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 14px;
-  background: linear-gradient(145deg, rgba(39, 100, 184, 0.95), rgba(15, 166, 166, 0.86));
+  border-radius: var(--radius-1);
+  background: var(--brand);
   color: #ffffff;
-  font-size: 18px;
-  box-shadow: 0 10px 22px rgba(15, 166, 166, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  font-size: 16px;
+  box-shadow: none;
 }
 
 .modern-logo .logo-copy {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  line-height: 1.05;
+  line-height: 1.1;
 }
 
 .modern-logo .logo-copy strong {
-  font-size: 18px;
-  font-weight: 900;
-  letter-spacing: 0.06em;
-  color: var(--text-main);
+  font-size: var(--font-md);
+  font-weight: 700;
+  letter-spacing: 0;
+  color: var(--ink-1);
 }
 
 .modern-logo .logo-copy em {
-  margin-top: 5px;
+  margin-top: 2px;
   font-size: 10px;
   font-style: normal;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+  font-weight: 500;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--text-muted);
+  color: var(--ink-3);
 }
 
 .modern-menu {
@@ -287,29 +282,30 @@ a {
 }
 
 .modern-menu .ant-menu-submenu {
-  margin: 3px 0;
+  margin: 0;
 }
 
 .modern-menu .ant-menu-item,
 .modern-menu .ant-menu-submenu-title {
   position: relative;
-  height: 42px !important;
-  line-height: 42px !important;
-  margin: 2px 0 !important;
-  border-radius: 13px !important;
-  color: var(--text-secondary) !important;
-  font-size: 14px;
-  font-weight: 700;
-  transition: all 0.22s ease;
+  height: 40px !important;
+  line-height: 40px !important;
+  margin: 2px 8px !important;
+  padding-inline: 12px !important;
+  border-radius: var(--radius-1) !important;
+  color: var(--ink-2) !important;
+  font-size: var(--font-sm);
+  font-weight: 500;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .modern-menu .ant-menu-submenu-title {
-  color: #24425e !important;
+  color: var(--ink-2) !important;
 }
 
 .modern-menu .ant-menu-submenu-open > .ant-menu-submenu-title {
-  background: rgba(39, 100, 184, 0.065) !important;
-  color: var(--primary-strong) !important;
+  background: var(--bg-subtle) !important;
+  color: var(--ink-1) !important;
 }
 
 .modern-menu .ant-menu-item .ant-menu-title-content a {
@@ -318,39 +314,29 @@ a {
 
 .modern-menu .ant-menu-item .anticon,
 .modern-menu .ant-menu-submenu-title .anticon {
-  color: rgba(39, 100, 184, 0.78);
+  color: var(--ink-3);
 }
 
 .modern-menu .ant-menu-item:hover,
 .modern-menu .ant-menu-submenu-title:hover {
-  background: rgba(39, 100, 184, 0.075) !important;
-  color: var(--primary-strong) !important;
-  transform: translateX(2px);
+  background: var(--bg-subtle) !important;
+  color: var(--ink-1) !important;
+  transform: none;
 }
 
 .modern-menu .ant-menu-item-selected {
-  background: linear-gradient(
-    90deg,
-    rgba(232, 242, 255, 0.96),
-    rgba(231, 250, 250, 0.9)
-  ) !important;
-  color: var(--primary-strong) !important;
-  box-shadow: 0 10px 22px rgba(39, 100, 184, 0.1), inset 0 0 0 1px rgba(39, 100, 184, 0.14);
+  background: var(--brand-soft) !important;
+  color: var(--brand) !important;
+  box-shadow: none;
+  font-weight: 600;
 }
 
 .modern-menu .ant-menu-item-selected .anticon {
-  color: var(--primary) !important;
+  color: var(--brand) !important;
 }
 
 .modern-menu .ant-menu-item-selected::before {
-  content: '';
-  position: absolute;
-  left: 8px;
-  top: 12px;
-  bottom: 12px;
-  width: 3px;
-  border-radius: 999px;
-  background: linear-gradient(180deg, var(--primary), var(--secondary-accent));
+  display: none;
 }
 
 .modern-menu .ant-menu-item-selected::after {
@@ -358,7 +344,7 @@ a {
 }
 
 .modern-menu .ant-menu-submenu-arrow {
-  color: rgba(36, 66, 94, 0.52) !important;
+  color: var(--ink-3) !important;
 }
 
 .modern-menu .ant-menu-inline {
@@ -371,11 +357,11 @@ a {
   position: sticky;
   top: 0;
   z-index: 50;
-  background: rgba(250, 253, 255, 0.82) !important;
-  backdrop-filter: blur(20px) saturate(1.08);
-  -webkit-backdrop-filter: blur(20px) saturate(1.08);
-  border-bottom: 1px solid rgba(39, 100, 184, 0.075);
-  padding: 0 30px !important;
+  background: var(--bg-surface) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: 1px solid var(--border);
+  padding: 0 var(--space-4) !important;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -384,26 +370,26 @@ a {
 .header-context {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: var(--space-2);
   min-width: 0;
   line-height: 1;
 }
 
 .header-context span {
   position: relative;
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(39, 100, 184, 0.075);
-  color: var(--primary-strong);
-  font-size: 12px;
-  font-weight: 900;
-  letter-spacing: 0.08em;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: var(--font-xs);
+  font-weight: 500;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 .header-context strong {
-  color: var(--text-main);
-  font-size: 15px;
+  color: var(--ink-1);
+  font-size: var(--font-md);
   font-weight: 900;
   letter-spacing: -0.02em;
 }
@@ -417,29 +403,28 @@ a {
 .header-user-dropdown {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: 154px;
-  height: 46px;
-  padding: 5px 8px 5px 6px;
-  border-radius: 999px;
+  gap: var(--space-2);
+  min-width: 0;
+  height: 40px;
+  padding: 4px 12px 4px 6px;
+  border-radius: var(--radius-1);
   cursor: pointer;
-  border: 1px solid rgba(39, 100, 184, 0.12);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(246, 251, 255, 0.88));
-  box-shadow: 0 10px 28px rgba(39, 73, 111, 0.09), inset 0 1px 0 rgba(255, 255, 255, 0.82);
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease,
-    background 0.2s ease;
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .header-user-dropdown:hover {
-  transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.98);
-  border-color: rgba(39, 100, 184, 0.22);
-  box-shadow: 0 14px 34px rgba(39, 73, 111, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.86);
+  transform: none;
+  background: var(--bg-subtle);
+  border-color: var(--border);
+  box-shadow: none;
 }
 
 .header-user-dropdown .ant-avatar {
-  background: linear-gradient(135deg, var(--primary), var(--secondary-accent)) !important;
-  box-shadow: 0 8px 18px rgba(39, 100, 184, 0.18);
+  background: var(--brand) !important;
+  box-shadow: none;
 }
 
 .header-user-copy {
@@ -447,29 +432,29 @@ a {
   flex-direction: column;
   flex: 1 1 auto;
   min-width: 0;
-  line-height: 1.12;
+  line-height: 1.15;
 }
 
 .header-user-copy strong {
-  max-width: 86px;
+  max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--text-main);
-  font-size: 13px;
-  font-weight: 900;
+  color: var(--ink-1);
+  font-size: var(--font-sm);
+  font-weight: 600;
   white-space: nowrap;
 }
 
 .header-user-copy em {
-  margin-top: 4px;
-  color: var(--text-muted);
+  margin-top: 2px;
+  color: var(--ink-3);
   font-size: 11px;
   font-style: normal;
-  font-weight: 800;
+  font-weight: 500;
 }
 
 .header-user-caret {
-  color: rgba(75, 85, 101, 0.72);
+  color: var(--ink-3);
   font-size: 10px;
 }
 
@@ -479,7 +464,7 @@ a {
   width: min(var(--content-width), 100%);
   min-height: calc(100vh - var(--header-height));
   margin: 0 auto;
-  padding: 24px 30px 38px;
+  padding: var(--space-4) var(--space-4) var(--space-4);
   overflow: visible;
 }
 
@@ -516,37 +501,23 @@ a {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 16px;
+  gap: var(--space-3);
   position: relative;
   z-index: 2;
-  margin: -8px 0 22px;
-  padding: 20px 22px 20px;
-  border-radius: 22px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(248, 252, 255, 0.82));
-  border: 1px solid rgba(39, 100, 184, 0.09);
-  box-shadow: 0 14px 36px rgba(39, 73, 111, 0.065);
-  backdrop-filter: blur(14px) saturate(1.04);
-  -webkit-backdrop-filter: blur(14px) saturate(1.04);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-2);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-1);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   overflow: hidden;
 }
 
-.page-header-modern::before {
-  content: '';
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 5px;
-  background: linear-gradient(180deg, var(--primary), var(--secondary-accent));
-}
-
+.page-header-modern::before,
 .page-header-modern::after {
-  content: '';
-  position: absolute;
-  right: -44px;
-  top: -72px;
-  width: 220px;
-  height: 220px;
-  pointer-events: none;
-  background: radial-gradient(circle, rgba(0, 167, 194, 0.14), transparent 64%);
+  display: none;
 }
 
 .page-header-modern > * {
@@ -556,34 +527,30 @@ a {
 
 .page-title-modern {
   margin: 0;
-  font-size: 28px;
-  line-height: 1.15;
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  color: var(--text-main);
-  font-family: var(--font-display);
+  font-size: var(--font-lg);
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink-1);
+  font-family: var(--font-sans);
 }
 
 .page-subtitle-modern {
-  margin: 8px 0 0;
-  font-size: 14px;
-  line-height: 1.6;
-  color: var(--text-secondary);
+  margin: 4px 0 0;
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  color: var(--ink-2);
 }
 
 .modern-card,
 .card-modern {
   position: relative;
   overflow: hidden;
-  border-radius: var(--radius-lg) !important;
-  border: 1px solid rgba(15, 23, 42, 0.085) !important;
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.94),
-    rgba(248, 250, 252, 0.96)
-  ) !important;
-  box-shadow: var(--shadow-card) !important;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  border-radius: var(--radius-2) !important;
+  border: 1px solid var(--border) !important;
+  background: var(--bg-surface) !important;
+  box-shadow: var(--shadow-1) !important;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .ant-tabs {
@@ -14296,4 +14263,304 @@ a {
   .workspace-kpi-bar__actions .ant-btn {
     min-height: 38px;
   }
+}
+
+/* ============================================================================
+ * Phase 5 (2026-06-27) — 视觉重设计 全局覆盖层 (方向 B).
+ *
+ * 这一段位于文件末尾, 用更高 specificity + 更晚加载顺序 来覆盖前面 14k 行
+ * 历史 CSS 中遗留的 linear-gradient / box-shadow / 多余圆角 / 多色派系.
+ * 详见 docs/audit/design_system_2026_06_27.md (方向 B — 极简专业).
+ *
+ * 注意: 不动 .eq-* (简易版命名空间), 简易版的暖纸色风格由 EasyQuantWorkspace.css
+ * 独立管理, contract test 24/24 守护.
+ * ========================================================================= */
+
+/* === antd 全局 Card: 统一 1px border + 浅阴影 + radius-2, 删除所有 inline gradient === */
+.ant-card:not(.eq-card) {
+  border-radius: var(--radius-2) !important;
+  border: 1px solid var(--border) !important;
+  background: var(--bg-surface) !important;
+  box-shadow: var(--shadow-1) !important;
+}
+
+.ant-card:not(.eq-card) > .ant-card-head {
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  min-height: 44px;
+  padding: 0 16px;
+}
+
+.ant-card:not(.eq-card) > .ant-card-head .ant-card-head-title {
+  font-size: var(--font-md);
+  font-weight: 600;
+  color: var(--ink-1);
+  padding: 12px 0;
+}
+
+.ant-card:not(.eq-card) > .ant-card-head .ant-card-extra {
+  padding: 0;
+}
+
+/* === antd Table: 紧凑头/行, brand-soft hover, 等宽数字 === */
+.ant-table:not(.eq-table) {
+  font-size: var(--font-sm);
+  color: var(--ink-1);
+}
+
+.ant-table-wrapper:not(.eq-table-wrapper) .ant-table {
+  border-radius: var(--radius-2);
+}
+
+.ant-table-thead > tr > th {
+  background: var(--bg-subtle) !important;
+  color: var(--ink-2) !important;
+  font-size: var(--font-xs) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.02em;
+  border-bottom: 1px solid var(--border) !important;
+  padding: 10px 12px !important;
+}
+
+.ant-table-tbody > tr > td {
+  padding: 10px 12px !important;
+  border-bottom: 1px solid var(--border) !important;
+  color: var(--ink-1);
+}
+
+.ant-table-tbody > tr:hover > td {
+  background: var(--brand-soft) !important;
+}
+
+.ant-table-tbody > tr.ant-table-row-selected > td {
+  background: var(--brand-soft) !important;
+}
+
+/* === Statistic: 等宽数字 + 统一字号. 全局打 tnum 让所有数字对齐 === */
+.ant-statistic .ant-statistic-content,
+.ant-statistic-content-value,
+.ant-statistic-content-prefix,
+.ant-statistic-content-suffix {
+  font-family: var(--font-mono) !important;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+.ant-statistic .ant-statistic-content {
+  font-size: var(--font-xl);
+  font-weight: 600;
+  color: var(--ink-1);
+  line-height: 1.2;
+}
+
+.ant-statistic .ant-statistic-title {
+  font-size: var(--font-xs);
+  color: var(--ink-3);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  margin-bottom: 4px;
+}
+
+/* === Tag: 平淡背景 + 短 radius + 无 border (除已显式 color={...} 的 Tag) === */
+.ant-tag {
+  border-radius: var(--radius-1);
+  padding: 1px 8px;
+  font-size: var(--font-xs);
+  font-weight: 500;
+  line-height: 18px;
+  border: 1px solid transparent;
+}
+
+/* antd 默认无 color prop 的 Tag — 把灰背景统一成 bg-subtle */
+.ant-tag:not([class*='ant-tag-']),
+.ant-tag.ant-tag-default {
+  background: var(--bg-subtle);
+  color: var(--ink-2);
+  border-color: transparent;
+}
+
+/* === Button: 圆角小, 字号 sm, hover 不抬升, primary 用 brand === */
+.ant-btn {
+  border-radius: var(--radius-1);
+  font-weight: 500;
+  font-size: var(--font-sm);
+  box-shadow: none !important;
+}
+
+.ant-btn-primary {
+  background: var(--brand);
+  border-color: var(--brand);
+}
+
+.ant-btn-primary:hover,
+.ant-btn-primary:focus {
+  background: #3730a3 !important;
+  border-color: #3730a3 !important;
+}
+
+/* === Input / Select / DatePicker: 圆角小, border 统一 === */
+.ant-input,
+.ant-input-affix-wrapper,
+.ant-select:not(.ant-select-customize-input) .ant-select-selector,
+.ant-picker {
+  border-radius: var(--radius-1) !important;
+  border-color: var(--border) !important;
+}
+
+.ant-input:hover,
+.ant-input-affix-wrapper:hover,
+.ant-select:not(.ant-select-customize-input):hover .ant-select-selector,
+.ant-picker:hover {
+  border-color: var(--brand) !important;
+}
+
+/* === Tabs: 底线 + brand 选中色, 删除蓝灰多色 === */
+.ant-tabs .ant-tabs-tab {
+  font-size: var(--font-sm);
+  font-weight: 500;
+  color: var(--ink-2);
+  padding: 10px 0;
+}
+
+.ant-tabs .ant-tabs-tab:hover {
+  color: var(--ink-1);
+}
+
+.ant-tabs .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: var(--brand) !important;
+  font-weight: 600;
+}
+
+.ant-tabs .ant-tabs-ink-bar {
+  background: var(--brand) !important;
+}
+
+/* === Modal / Drawer: 阴影改为 shadow-2, 圆角 radius-2 === */
+.ant-modal-content,
+.ant-drawer-content {
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-2);
+}
+
+.ant-modal-header,
+.ant-drawer-header {
+  border-bottom: 1px solid var(--border);
+}
+
+/* === 价格 / 涨跌 utility class — workspace 内可用 className 替换内联 color === */
+.num-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+.up-text {
+  color: var(--up);
+  font-weight: 600;
+}
+
+.down-text {
+  color: var(--down);
+  font-weight: 600;
+}
+
+.muted-text {
+  color: var(--ink-3);
+}
+
+/* === 删除全局 fade-in-up 的 translate, 减少卡片首次渲染的位移噪音 === */
+.fade-in-up {
+  animation: none;
+}
+
+/* === Phase 5 — WorkspaceLayout 自适应 + tabs rail 紧凑 === */
+.workspace-shell {
+  gap: var(--space-3);
+}
+
+.workspace-kpi-bar {
+  border: 1px solid var(--border) !important;
+  background: var(--bg-surface) !important;
+  box-shadow: var(--shadow-1) !important;
+  border-radius: var(--radius-2) !important;
+}
+
+.workspace-kpi-bar .ant-card-body {
+  padding: 12px 20px !important;
+  height: 100% !important;
+}
+
+.workspace-kpi-bar__inner {
+  gap: var(--space-3);
+}
+
+.workspace-kpi-bar__title {
+  position: relative;
+  padding-right: var(--space-3);
+}
+
+.workspace-kpi-bar__title::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1px;
+  height: 32px;
+  background: var(--border);
+}
+
+.workspace-kpi-bar__title .ant-typography {
+  font-size: var(--font-lg) !important;
+  font-weight: 600 !important;
+  color: var(--ink-1) !important;
+  letter-spacing: -0.01em;
+}
+
+.workspace-kpi-bar__title .ant-typography + .ant-typography {
+  font-size: var(--font-xs) !important;
+  color: var(--ink-3) !important;
+  font-weight: 400 !important;
+  margin-top: 2px !important;
+}
+
+.workspace-side-tabs {
+  border: 1px solid var(--border) !important;
+  background: var(--bg-surface) !important;
+  box-shadow: var(--shadow-1) !important;
+  border-radius: var(--radius-2) !important;
+}
+
+.workspace-side-tabs .ant-card-body {
+  padding: 6px !important;
+}
+
+.workspace-side-tabs .ant-menu-item {
+  height: 36px !important;
+  line-height: 36px !important;
+  font-size: var(--font-sm);
+  font-weight: 500;
+  border-radius: var(--radius-1) !important;
+  margin: 2px 0 !important;
+  color: var(--ink-2);
+}
+
+.workspace-side-tabs .ant-menu-item:hover {
+  background: var(--bg-subtle) !important;
+  color: var(--ink-1) !important;
+}
+
+.workspace-side-tabs .ant-menu-item-selected {
+  background: var(--brand-soft) !important;
+  color: var(--brand) !important;
+  font-weight: 600;
+}
+
+/* === Phase 5 — 让保留的旧 page-* 装饰也变素 (策略详情 / 个股详情等) === */
+.modern-card,
+.card-modern {
+  border-radius: var(--radius-2) !important;
+  border: 1px solid var(--border) !important;
+  background: var(--bg-surface) !important;
+  box-shadow: var(--shadow-1) !important;
 }
