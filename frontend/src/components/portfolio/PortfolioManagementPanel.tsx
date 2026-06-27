@@ -70,6 +70,8 @@ import {
   UpdatePortfolioInput,
 } from '../../services/portfolioCrudService';
 import { usePortfolio } from '../../contexts/PortfolioContext';
+import { useSelector } from 'react-redux';
+import { RootState } from '../../store/rootReducer';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -102,6 +104,11 @@ const PortfolioManagementPanel: React.FC = () => {
   const [drawerData, setDrawerData] = useState<PortfolioDetail | null>(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [drawerError, setDrawerError] = useState<string | null>(null);
+
+  // Phase 2 (2026-06-27) — 模拟盘统一为 1 个综合主盘. 新建/重置/删除 仅 admin
+  // 可见, 避免普通用户绕过统一主盘.
+  const currentUser = useSelector((s: RootState) => s.auth.user);
+  const isAdmin = currentUser?.role === 'admin';
 
   // Form
   const [form] = Form.useForm<FormValues>();
@@ -462,43 +469,49 @@ const PortfolioManagementPanel: React.FC = () => {
               onClick={() => void openDrawer(row.id)}
             />
           </Tooltip>
-          <Tooltip title="编辑">
-            <Button
-              size="small"
-              type="text"
-              icon={<EditOutlined />}
-              onClick={() => openEdit(row)}
-            />
-          </Tooltip>
-          <Popconfirm
-            title={`确认重置 "${row.name}"?`}
-            description={
-              <Paragraph style={{ marginBottom: 0 }}>
-                所有持仓将清空, 资金恢复到 <Text strong>¥{row.initial_capital.toLocaleString()}</Text>
-                . <Text type="danger">不可撤销</Text>.
-              </Paragraph>
-            }
-            okText="确认重置"
-            okButtonProps={{ danger: true }}
-            cancelText="取消"
-            onConfirm={() => void handleReset(row)}
-          >
-            <Tooltip title="重置 (清仓 + 重置 cash)">
-              <Button size="small" type="text" icon={<ReloadOutlined />} />
+          {isAdmin && (
+            <Tooltip title="编辑">
+              <Button
+                size="small"
+                type="text"
+                icon={<EditOutlined />}
+                onClick={() => openEdit(row)}
+              />
             </Tooltip>
-          </Popconfirm>
-          <Popconfirm
-            title={`确认软删除 "${row.name}"?`}
-            description="已成交的 trades / snapshots 会保留, 列表中不再显示."
-            okText="确认删除"
-            okButtonProps={{ danger: true }}
-            cancelText="取消"
-            onConfirm={() => void handleDelete(row)}
-          >
+          )}
+          {isAdmin && (
+            <Popconfirm
+              title={`确认重置 "${row.name}"?`}
+              description={
+                <Paragraph style={{ marginBottom: 0 }}>
+                  所有持仓将清空, 资金恢复到 <Text strong>¥{row.initial_capital.toLocaleString()}</Text>
+                  . <Text type="danger">不可撤销</Text>.
+                </Paragraph>
+              }
+              okText="确认重置"
+              okButtonProps={{ danger: true }}
+              cancelText="取消"
+              onConfirm={() => void handleReset(row)}
+            >
+              <Tooltip title="重置 (清仓 + 重置 cash)">
+                <Button size="small" type="text" icon={<ReloadOutlined />} />
+              </Tooltip>
+            </Popconfirm>
+          )}
+          {isAdmin && (
+            <Popconfirm
+              title={`确认软删除 "${row.name}"?`}
+              description="已成交的 trades / snapshots 会保留, 列表中不再显示."
+              okText="确认删除"
+              okButtonProps={{ danger: true }}
+              cancelText="取消"
+              onConfirm={() => void handleDelete(row)}
+            >
             <Tooltip title="删除">
               <Button size="small" type="text" danger icon={<DeleteOutlined />} />
             </Tooltip>
           </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -550,12 +563,22 @@ const PortfolioManagementPanel: React.FC = () => {
             <Button icon={<ReloadOutlined />} onClick={() => void loadAll()} loading={loading}>
               刷新
             </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              新建模拟盘
-            </Button>
+            {isAdmin && (
+              <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+                新建模拟盘
+              </Button>
+            )}
           </Space>
         }
       >
+        {!isAdmin && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="Phase 2 (2026-06-27): 已统一为 1 个『综合策略主盘』, 新建 / 编辑 / 重置 / 删除 仅管理员可见."
+          />
+        )}
         <Alert
           type="info"
           showIcon
@@ -572,7 +595,11 @@ const PortfolioManagementPanel: React.FC = () => {
             emptyText: (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="还没有模拟盘 — 点 '新建模拟盘' 创建你的第一个"
+                description={
+                  isAdmin
+                    ? "还没有模拟盘 — 点 '新建模拟盘' 创建你的第一个"
+                    : '当前账号下没有模拟盘 (请联系管理员)'
+                }
               />
             ),
           }}
