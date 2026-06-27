@@ -130,6 +130,45 @@ export function explainNonTradeDay(date: Date | string): string | null {
 }
 
 /**
+ * 返回给定 Date 的 Asia/Shanghai 时区日期 (YYYY-MM-DD).
+ * 与 isAShareTradeDay 同源 (走 Intl.DateTimeFormat), 不论 host 时区如何结果一致.
+ */
+export function getShanghaiDate(date: Date | string): string {
+  return toShanghaiParts(date).isoDate;
+}
+
+/**
+ * 计算两个日期之间的 A 股交易日数 (左开右闭: from < d <= to).
+ *
+ * 用途: DataFreshnessCheck 算 daily_bars staleness — "周五入库 周一 18:30 检查"
+ * 自然日 lag=3 但实际只跳过了 1 个交易日 (周一), 用本函数得 1, 比自然日 lag 准.
+ *
+ * 边界:
+ *   - from === to → 0 (同日无 gap)
+ *   - from > to → 负数, 但实际 caller 不应该调反向, 这里保守返 0
+ *   - 跳过周末 + 2026/2027 hard-coded 节假日
+ *
+ * @param from ISO date (YYYY-MM-DD) 或 Date — 起点 (不计入)
+ * @param to ISO date (YYYY-MM-DD) 或 Date — 终点 (计入, 若是交易日)
+ * @returns from 到 to 之间 (不含 from, 含 to) 的交易日数
+ */
+export function countTradingDaysBetween(from: Date | string, to: Date | string): number {
+  const fromIso = typeof from === 'string' ? from : getShanghaiDate(from);
+  const toIso = typeof to === 'string' ? to : getShanghaiDate(to);
+  if (fromIso >= toIso) return 0;
+  // 步进 1 自然天直到 to (含). 节假日表只覆盖 2026/2027, 跨度短不影响性能.
+  let count = 0;
+  // 用 UTC midnight 累加 1 天, 避开 DST/时区问题. CST 无 DST 实际无影响, 但保守.
+  let cursor = new Date(fromIso + 'T00:00:00+08:00');
+  const end = new Date(toIso + 'T00:00:00+08:00');
+  while (cursor.getTime() < end.getTime()) {
+    cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000);
+    if (isAShareTradeDay(cursor)) count += 1;
+  }
+  return count;
+}
+
+/**
  * 判断给定时刻是否在 A 股可下单时段 (Asia/Shanghai 09:30-11:30 + 13:00-15:00) 且是交易日.
  *
  * 与 PaperTradingFacade._placeOrderInner 的 guard 同源, 抽出来给 autoBuyFromSignals
