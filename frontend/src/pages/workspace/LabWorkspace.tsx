@@ -14,6 +14,7 @@ import {
   InputNumber,
   Progress,
   Row,
+  Segmented,
   Select,
   Space,
   Spin,
@@ -32,7 +33,6 @@ import {
   EditOutlined,
   ExperimentOutlined,
   NodeIndexOutlined,
-  TrophyOutlined,
   PlayCircleOutlined,
   PlusSquareOutlined,
   ReloadOutlined,
@@ -101,44 +101,36 @@ const DEFAULT_BENCHMARK = 'sh.000300'; // 沪深 300
 const POLL_INTERVAL_MS = 3000;
 
 const LabWorkspace: React.FC = () => {
-  // Phase 3 (2026-06-27): tab 11 → 5 (admin) / 4 (普通用户).
-  // 用户原话"页面太复杂": 普通用户只用 我的策略 / 新建回测 / 策略排行 / 回测对比;
-  // 工作流体检 / Walk-Forward / 优化历史 / 季度重训 / Shadow Run / OverfitMetrics /
-  // 高级量化 = 研究员级别, 折叠在 admin only.
+  // Phase 9 (2026-06-28): tab 11 → 4 (普通用户) / 4 (admin).
+  // 用户原话"页面太复杂、Tab 太多, 完全不知道怎么操作". 进一步把 Phase 3 的 11 项收成 4 个一级 tab:
+  //   1. 我的策略  ← 旧 mine + leaderboard (内部 Segmented 切"列表 / 排行")
+  //   2. 新建回测  ← 旧 new
+  //   3. 评估报告  ← 旧 walk_forward + optimization + shadow_run + overfit_metrics + quarterly_retrain
+  //                  (内部 Segmented "综合 / 走查 / 寻优 / 影子 / 过拟合 / 季度")
+  //   4. 进阶      ← 旧 compare + workflow_readiness + advanced_quant
+  //                  (内部 Segmented "回测对比 / 工作流体检 / 高级量化", 默认对比)
+  // 旧 tab 的 React 组件全部保留, 只是重新挂在新 4 项之下 (Segmented 子视图).
   const isAdmin = useSelector((s: RootState) => s.auth.user?.role === 'admin');
   const tabs: WorkspaceTab[] = useMemo(() => {
-    const baseTabs: WorkspaceTab[] = [
-      { key: 'mine', label: '我的策略', icon: <ExperimentOutlined /> },
-      { key: 'new', label: '新建回测', icon: <PlusSquareOutlined /> },
-      { key: 'leaderboard', label: '策略排行', icon: <TrophyOutlined /> },
-      { key: 'compare', label: '回测对比', icon: <SwapOutlined /> },
+    return [
+      { key: 'my-strategies', label: '我的策略', icon: <ExperimentOutlined /> },
+      { key: 'new-backtest', label: '新建回测', icon: <PlusSquareOutlined /> },
+      { key: 'evaluation', label: '评估报告', icon: <SafetyCertificateOutlined /> },
+      { key: 'advanced', label: '进阶', icon: <NodeIndexOutlined /> },
     ];
-    if (isAdmin) {
-      baseTabs.push(
-        {
-          key: 'workflow_readiness',
-          label: '工作流体检 (研究员)',
-          icon: <SafetyCertificateOutlined />,
-        },
-        {
-          key: 'walk_forward',
-          label: 'Walk-Forward (研究员)',
-          icon: <SafetyCertificateOutlined />,
-        },
-        { key: 'optimization', label: '优化历史 (研究员)', icon: <NodeIndexOutlined /> },
-        { key: 'quarterly_retrain', label: '季度参数重训 (研究员)', icon: <ExperimentOutlined /> },
-        { key: 'shadow_run', label: 'Shadow Run (研究员)', icon: <SwapOutlined /> },
-        {
-          key: 'overfit_metrics',
-          label: 'OverfitMetrics (研究员)',
-          icon: <SafetyCertificateOutlined />,
-        },
-        { key: 'advanced_quant', label: '高级量化 (研究员)', icon: <SafetyCertificateOutlined /> }
-      );
-    }
-    return baseTabs;
+    // isAdmin is only relevant within "进阶" tab — 工作流体检 / 高级量化 子视图自带 admin 提示
+    // 普通用户也能看到 tab 但 Segmented 内部会显示"研究员专用"卡片占位
   }, [isAdmin]);
-  const [activeKey, setActiveKey] = useState('mine');
+  const [activeKey, setActiveKey] = useState('my-strategies');
+
+  // Phase 9 — 每个一级 tab 内的子视图 Segmented 状态
+  const [mineSubView, setMineSubView] = useState<'list' | 'leaderboard'>('list');
+  const [evalSubView, setEvalSubView] = useState<
+    'overview' | 'walkforward' | 'optimization' | 'shadow' | 'overfit' | 'quarterly'
+  >('overview');
+  const [advancedSubView, setAdvancedSubView] = useState<
+    'compare' | 'workflow' | 'advanced'
+  >('compare');
 
   // US-078: 从策略详情页跳回来时携带 location.state，自动触发 clone/edit/newRun
   const location = useLocation();
@@ -233,7 +225,7 @@ const LabWorkspace: React.FC = () => {
         params_text: Object.keys(defaults).length ? JSON.stringify(defaults, null, 2) : '',
       });
       setSeedStrategyKey(strategy.strategy_key);
-      setActiveKey('new');
+      setActiveKey('new-backtest');
       message.info(
         `已加载策略 "${strategy.name || strategy.strategy_key}" 的默认参数到新建回测表单`
       );
@@ -320,7 +312,7 @@ const LabWorkspace: React.FC = () => {
         message.success(`回测任务已创建（task_id=${createdTaskId}），正在轮询执行进度…`);
         setPollingTaskId(Number(createdTaskId));
         await refresh();
-        setActiveKey('mine');
+        setActiveKey('my-strategies');
       } else {
         message.warning('任务已创建但未取到 task_id，请手动刷新');
         await refresh();
@@ -390,7 +382,8 @@ const LabWorkspace: React.FC = () => {
     </Button>
   );
 
-  // ---- render tab body ----
+  // ---- render tab body (Phase 9: 4 个一级 tab, 每个内部用 Segmented 切子视图) ----
+  // 每个一级 tab 顶部统一加 ws-tab-header (eyebrow + title + subtitle) Stripe 风
   let body: React.ReactNode;
   if (loadError) {
     body = (
@@ -406,69 +399,210 @@ const LabWorkspace: React.FC = () => {
         }
       />
     );
-  } else if (activeKey === 'workflow_readiness') {
-    body = <WorkflowReadinessTab strategies={strategies} tasks={tasks} />;
-  } else if (activeKey === 'mine') {
+  } else if (activeKey === 'my-strategies') {
+    // ===== Tab 1: 我的策略 (列表 + 排行) =====
     body = (
-      <MyStrategiesTab
-        strategies={strategies}
-        loading={loading}
-        onClone={handleClone}
-        onEdit={setEditingStrategy}
-        onOpenDetail={s =>
-          navigate(`/workspace/lab/strategies/${encodeURIComponent(s.strategy_key)}`)
-        }
-      />
+      <>
+        <div className="ws-tab-header">
+          <div className="ws-tab-eyebrow">LAB · 策略实验室</div>
+          <h1 className="ws-tab-title">我的策略</h1>
+          <p className="ws-tab-subtitle">
+            查看已注册的所有量化策略, 克隆参数或跳转策略详情, 切到 “策略排行” 看历史回测综合得分。
+          </p>
+        </div>
+        <Segmented
+          className="ws-tab-segmented"
+          options={[
+            { label: '策略列表', value: 'list' },
+            { label: '策略排行', value: 'leaderboard' },
+          ]}
+          value={mineSubView}
+          onChange={v => setMineSubView(v as typeof mineSubView)}
+        />
+        {mineSubView === 'list' ? (
+          <MyStrategiesTab
+            strategies={strategies}
+            loading={loading}
+            onClone={handleClone}
+            onEdit={setEditingStrategy}
+            onOpenDetail={s =>
+              navigate(`/workspace/lab/strategies/${encodeURIComponent(s.strategy_key)}`)
+            }
+          />
+        ) : (
+          <LeaderboardTab
+            strategiesMeta={strategies.map(s => ({
+              strategy_key: s.strategy_key,
+              name: (s as any).name || s.strategy_key,
+            }))}
+          />
+        )}
+      </>
     );
-  } else if (activeKey === 'leaderboard') {
+  } else if (activeKey === 'new-backtest') {
+    // ===== Tab 2: 新建回测 =====
     body = (
-      <LeaderboardTab
-        strategiesMeta={strategies.map(s => ({
-          strategy_key: s.strategy_key,
-          name: (s as any).name || s.strategy_key,
-        }))}
-      />
+      <>
+        <div className="ws-tab-header">
+          <div className="ws-tab-eyebrow">LAB · 策略实验室</div>
+          <h1 className="ws-tab-title">新建回测</h1>
+          <p className="ws-tab-subtitle">
+            选择策略 + 时间窗 + 资金参数, 后端 worker 跑完即可在 “我的策略” 或 “进阶 · 回测对比” 看结果。
+          </p>
+        </div>
+        <NewBacktestTab
+          form={form}
+          strategies={strategies}
+          submitting={submitting}
+          seedStrategyKey={seedStrategyKey}
+          onSubmit={handleSubmitBacktest}
+          pollingTaskId={pollingTaskId}
+          tasks={tasks}
+        />
+      </>
     );
-  } else if (activeKey === 'new') {
+  } else if (activeKey === 'evaluation') {
+    // ===== Tab 3: 评估报告 (走查 / 寻优 / 影子 / 过拟合 / 季度) =====
     body = (
-      <NewBacktestTab
-        form={form}
-        strategies={strategies}
-        submitting={submitting}
-        seedStrategyKey={seedStrategyKey}
-        onSubmit={handleSubmitBacktest}
-        pollingTaskId={pollingTaskId}
-        tasks={tasks}
-      />
+      <>
+        <div className="ws-tab-header">
+          <div className="ws-tab-eyebrow">LAB · 策略实验室</div>
+          <h1 className="ws-tab-title">评估报告</h1>
+          <p className="ws-tab-subtitle">
+            综合评估当前策略的样本外稳定性 · 包含 Walk-Forward / 寻优历史 / Shadow Run / 过拟合指标 / 季度参数重训。
+          </p>
+        </div>
+        <Segmented
+          className="ws-tab-segmented"
+          options={[
+            { label: '综合评估', value: 'overview' },
+            { label: 'Walk-Forward 走查', value: 'walkforward' },
+            { label: '参数寻优历史', value: 'optimization' },
+            { label: 'Shadow 影子运行', value: 'shadow' },
+            { label: '过拟合诊断', value: 'overfit' },
+            { label: '季度重训', value: 'quarterly' },
+          ]}
+          value={evalSubView}
+          onChange={v => setEvalSubView(v as typeof evalSubView)}
+        />
+        {evalSubView === 'overview' ? (
+          <Card>
+            <Space direction="vertical" size={16} style={{ width: '100%' }}>
+              <Alert
+                type="info"
+                showIcon
+                message="综合评估总览"
+                description={
+                  <Space direction="vertical" size={4}>
+                    <Text>
+                      策略上线前的 “体检套件”——从 6 个角度独立打分, 任何一项严重 fail 都建议
+                      暂缓上线。点上方 Segmented 切到细分视图查看每一项详情。
+                    </Text>
+                    <Text type="secondary">
+                      推荐路径: Walk-Forward 走查 → 过拟合诊断 → Shadow 影子运行 (≥ 2 周) →
+                      季度参数重训 → 上线。
+                    </Text>
+                  </Space>
+                }
+              />
+              <Row gutter={[16, 16]}>
+                <Col xs={24} md={8}>
+                  <Card hoverable onClick={() => setEvalSubView('walkforward')}>
+                    <Statistic title="Walk-Forward" value="样本外稳定" suffix="↗" />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      滚动 train→test 验证, 看策略在未见过的窗口表现是否衰减。
+                    </Text>
+                  </Card>
+                </Col>
+                <Col xs={24} md={8}>
+                  <Card hoverable onClick={() => setEvalSubView('optimization')}>
+                    <Statistic title="参数寻优" value="GridSearch / Bayesian" />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      过往寻优历史 + 每组 trial 的 in-sample / out-sample 表现。
+                    </Text>
+                  </Card>
+                </Col>
+                <Col xs={24} md={8}>
+                  <Card hoverable onClick={() => setEvalSubView('shadow')}>
+                    <Statistic title="Shadow Run" value="实时模拟" />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      把策略挂在实时行情上空跑, 看决策与实际成交是否一致。
+                    </Text>
+                  </Card>
+                </Col>
+                <Col xs={24} md={8}>
+                  <Card hoverable onClick={() => setEvalSubView('overfit')}>
+                    <Statistic title="过拟合诊断" value="DSR / PBO" />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      Deflated Sharpe Ratio + Probability of Backtest Overfitting。
+                    </Text>
+                  </Card>
+                </Col>
+                <Col xs={24} md={8}>
+                  <Card hoverable onClick={() => setEvalSubView('quarterly')}>
+                    <Statistic title="季度重训" value="参数刷新" />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      每季度按 lifecycle policy 重训, 防止策略静态老化。
+                    </Text>
+                  </Card>
+                </Col>
+              </Row>
+            </Space>
+          </Card>
+        ) : evalSubView === 'walkforward' ? (
+          <WalkForwardTab strategies={strategies} />
+        ) : evalSubView === 'optimization' ? (
+          <OptimizationRunsTab />
+        ) : evalSubView === 'shadow' ? (
+          <ShadowRunTab />
+        ) : evalSubView === 'overfit' ? (
+          <OverfitMetricsTab />
+        ) : (
+          <QuarterlyRetrainTab
+            strategies={
+              strategies as Array<QuantStrategyItem & { lifecycle_policy?: Record<string, any> }>
+            }
+          />
+        )}
+      </>
     );
-  } else if (activeKey === 'walk_forward') {
-    body = <WalkForwardTab strategies={strategies} />;
-  } else if (activeKey === 'optimization') {
-    body = <OptimizationRunsTab />;
-  } else if (activeKey === 'quarterly_retrain') {
-    body = (
-      <QuarterlyRetrainTab
-        strategies={
-          strategies as Array<QuantStrategyItem & { lifecycle_policy?: Record<string, any> }>
-        }
-      />
-    );
-  } else if (activeKey === 'shadow_run') {
-    body = <ShadowRunTab />;
-  } else if (activeKey === 'overfit_metrics') {
-    body = <OverfitMetricsTab />;
-  } else if (activeKey === 'advanced_quant') {
-    body = <AdvancedQuantTab />;
   } else {
+    // ===== Tab 4: 进阶 (回测对比 / 工作流体检 / 高级量化) =====
     body = (
-      <CompareTab
-        completedTasks={completedTasks}
-        selectedIds={selectedCompareIds}
-        onSelectionChange={setSelectedCompareIds}
-        compareLoading={compareLoading}
-        compareResult={compareResult}
-        onCompare={handleCompare}
-      />
+      <>
+        <div className="ws-tab-header">
+          <div className="ws-tab-eyebrow">LAB · 策略实验室</div>
+          <h1 className="ws-tab-title">进阶</h1>
+          <p className="ws-tab-subtitle">
+            研究员级别工具 — 横向对比 N 个回测、检查工作流装配是否齐备、调整高级量化引擎参数。
+            新手可跳过, 按需展开使用。
+          </p>
+        </div>
+        <Segmented
+          className="ws-tab-segmented"
+          options={[
+            { label: '回测对比', value: 'compare' },
+            { label: '工作流体检', value: 'workflow' },
+            { label: '高级量化引擎', value: 'advanced' },
+          ]}
+          value={advancedSubView}
+          onChange={v => setAdvancedSubView(v as typeof advancedSubView)}
+        />
+        {advancedSubView === 'compare' ? (
+          <CompareTab
+            completedTasks={completedTasks}
+            selectedIds={selectedCompareIds}
+            onSelectionChange={setSelectedCompareIds}
+            compareLoading={compareLoading}
+            compareResult={compareResult}
+            onCompare={handleCompare}
+          />
+        ) : advancedSubView === 'workflow' ? (
+          <WorkflowReadinessTab strategies={strategies} tasks={tasks} />
+        ) : (
+          <AdvancedQuantTab />
+        )}
+      </>
     );
   }
 
@@ -560,7 +694,7 @@ const LabWorkspace: React.FC = () => {
             params_text: JSON.stringify(merged, null, 2),
           });
           setSeedStrategyKey(targetKey);
-          setActiveKey('new');
+          setActiveKey('new-backtest');
         }}
       />
     </WorkspaceLayout>
