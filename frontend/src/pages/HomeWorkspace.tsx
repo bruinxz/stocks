@@ -20,10 +20,27 @@
  *   6. 全局去 emoji icon → antd Outlined.
  *   7. 数字全部走 Intl.NumberFormat('zh-CN') 千分位.
  *   8. 跟单 / 卖出按钮: violet → 黑色 (--ink-1, 比 brand 更高级).
+ *
+ * Phase 10 (2026-06-28) — 时间维度补全 + 视觉再优化.
+ * 用户原话: "推荐现在应该是在每天的任何时间段都有可能触发吧, 跟随时机来的, 所以
+ * 页面上是不是要加入时间的间隔, 能更好看到每个时间段都推荐了哪些. 不只这个地方,
+ * 考虑下其他地方是不是也需要时间, 时间是个很重要的参考. 同时再进行一版全模块的
+ * 视觉优化."
+ *   A. 推荐区按 30min 时间桶分组 + 时段标签 (盘前 / 上午盘 / ...).
+ *   B. hero 数据时间 pill + 卡片右上 "信号 HH:MM" + 学一招/因子 "HH:MM 更新".
+ *   C. hero 数字 64→72px + ¥ 上紫色 + 30 日 sparkline + 推荐卡 mini 信息行 + stagger
+ *      fade-in 动画.
+ *   D. 时间格式集中走 utils/timeFormat.ts.
+ *
+ * 推荐时间来源契约 (向前兼容): 当前 V3RecommendationItem 后端不输出 created_at —
+ * 前端按可选字段读 `(rec as any).created_at / signal_created_at / generated_at /
+ * metadata?.trigger_time`, 任一可解析即用; 全部缺失则降级为不分组 + 标注 "今日推荐"
+ * (signal_date 显示在 head). TODO(P2, backend): V3RecommendationController.enrichSignal
+ * 把 signal.created_at 透传成 ISO 字符串, 前端无改动即生效时段分组.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Empty, Modal, Result, Skeleton, Tooltip, message } from 'antd';
+import { Button, Empty, Modal, Result, Skeleton, Space, Tooltip, message } from 'antd';
 import {
   ArrowUpOutlined,
   ArrowDownOutlined,
@@ -37,9 +54,21 @@ import {
   CheckOutlined,
 } from '@ant-design/icons';
 import { usePortfolio } from '../contexts/PortfolioContext';
-import { getPortfolio, placeTrade, PositionRow } from '../services/portfolioWorkspaceService';
+import {
+  getPortfolio,
+  getSnapshots,
+  placeTrade,
+  PositionRow,
+  SnapshotRow,
+} from '../services/portfolioWorkspaceService';
 import { todayWorkspaceService, AccountSummary } from '../services/todayWorkspaceService';
 import { getV3Recommendations, V3RecommendationItem } from '../services/v3RecommendationService';
+import {
+  formatClock,
+  formatHourMin,
+  bucketToHalfHour,
+  tradingSessionLabel,
+} from '../utils/timeFormat';
 
 // ---------------------------------------------------------------------------
 //  helpers — 本文件内联, 新手主页不再拆 helper 文件
@@ -182,6 +211,89 @@ const Sparkline: React.FC<{ data: number[]; color: string }> = ({ data, color })
   );
 };
 
+/**
+ * Phase 10 — Hero 资产 sparkline (260×40, 比上面 Sparkline 更宽).
+ * 入参是 snapshot.total_value 序列, color brand violet.
+ */
+const HeroSparkline: React.FC<{ data: number[] }> = ({ data }) => {
+  if (data.length < 2) return null;
+  const w = 260;
+  const h = 40;
+  const max = Math.max(...data);
+  const min = Math.min(...data);
+  const range = max - min || 1;
+  const points = data
+    .map((v, i) => `${(i / (data.length - 1)) * w},${h - ((v - min) / range) * h}`)
+    .join(' ');
+  // 渐变填充
+  const lastY = h - ((data[data.length - 1] - min) / range) * h;
+  return (
+    <svg width={w} height={h} aria-hidden="true" className="home-hero-sparkline">
+      <defs>
+        <linearGradient id="hero-spark-grad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--brand)" stopOpacity="0.18" />
+          <stop offset="100%" stopColor="var(--brand)" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <polygon
+        fill="url(#hero-spark-grad)"
+        points={`0,${h} ${points} ${w},${h}`}
+      />
+      <polyline
+        fill="none"
+        stroke="var(--brand)"
+        strokeWidth={1.75}
+        points={points}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx={w} cy={lastY} r={3} fill="var(--brand)" />
+    </svg>
+  );
+};
+
+// ---------------------------------------------------------------------------
+//  Phase 10 — 推荐时段分组
+// ---------------------------------------------------------------------------
+
+interface TimeGroup {
+  key: string;
+  clock: string; // "09:00" or "时间未知"
+  session: string; // "盘前" / "上午盘" / ...
+  items: V3RecommendationItem[];
+}
+
+/**
+ * Phase 10 — 从一条 V3RecommendationItem 上探测时间字段.
+ *
+ * 字段优先级 (后端 v3 controller 当前未透传 created_at, 这里穷举可能字段以便后端
+ * 加字段后前端不需要改):
+ *   1. created_at        — Sequelize 模型默认字段
+ *   2. signal_created_at — V3RecommendationController 后续若改名透传
+ *   3. generated_at      — 旧 controller 命名 (e.g. AIAdvisorService)
+ *   4. metadata.trigger_time — IntradayOpportunityScan 走的字段
+ *
+ * 返回 ISO 字符串或 Date; 全缺/解析失败 返 null.
+ */
+function extractRecoTime(rec: V3RecommendationItem): string | Date | null {
+  const anyRec = rec as unknown as Record<string, any>;
+  const candidates: any[] = [
+    anyRec.created_at,
+    anyRec.signal_created_at,
+    anyRec.generated_at,
+    anyRec.metadata?.trigger_time,
+  ];
+  for (const c of candidates) {
+    if (!c) continue;
+    if (c instanceof Date) {
+      return Number.isFinite(c.getTime()) ? c : null;
+    }
+    const d = new Date(c);
+    if (Number.isFinite(d.getTime())) return c;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 //  组件
 // ---------------------------------------------------------------------------
@@ -202,6 +314,12 @@ const HomeWorkspace: React.FC = () => {
   const [positions, setPositions] = useState<PositionRow[]>([]);
   const [posLoading, setPosLoading] = useState(true);
   const [posError, setPosError] = useState<string | null>(null);
+
+  // Phase 10 — hero 30 日资产 sparkline. 失败静默 (sparkline 缺即不渲染).
+  const [snapshots, setSnapshots] = useState<SnapshotRow[]>([]);
+
+  // Phase 10 — "数据时间" 显示用. 任一区块刷新成功就刷新此时间, 让用户感知数据新鲜度.
+  const [dataTime, setDataTime] = useState<Date>(() => new Date());
 
   // 跟单 / 卖出去重 — 同一 symbol 单击多次保护
   const [busySymbol, setBusySymbol] = useState<string | null>(null);
@@ -239,6 +357,7 @@ const HomeWorkspace: React.FC = () => {
         alerts_limit: 0,
       });
       setAccount(data.account);
+      setDataTime(new Date());
     } catch (err: unknown) {
       setAccountError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -250,8 +369,10 @@ const HomeWorkspace: React.FC = () => {
     setRecLoading(true);
     setRecError(null);
     try {
-      const data = await getV3Recommendations({ limit: 3 });
+      // Phase 10: 拉 20 条 (盘前 + 盘中 + 盘后), 不再只取 3 条 — 时段分组需要看全天.
+      const data = await getV3Recommendations({ limit: 20 });
       setRecommendations(data.recommendations || []);
+      setDataTime(new Date());
     } catch (err: unknown) {
       setRecError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -265,6 +386,7 @@ const HomeWorkspace: React.FC = () => {
     try {
       const data = await getPortfolio(selectedPortfolioId);
       setPositions(data.positions || []);
+      setDataTime(new Date());
     } catch (err: unknown) {
       setPosError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -272,11 +394,22 @@ const HomeWorkspace: React.FC = () => {
     }
   }, [selectedPortfolioId]);
 
+  // Phase 10 — hero sparkline. 资产曲线快照, 失败不阻塞 hero 渲染.
+  const loadSnapshots = useCallback(async () => {
+    try {
+      const data = await getSnapshots(selectedPortfolioId);
+      setSnapshots(data || []);
+    } catch {
+      // 静默 — sparkline 缺失不显示, 但账户主数字不应被影响.
+    }
+  }, [selectedPortfolioId]);
+
   useEffect(() => {
     void loadAccount();
     void loadRecommendations();
     void loadPositions();
-  }, [loadAccount, loadRecommendations, loadPositions]);
+    void loadSnapshots();
+  }, [loadAccount, loadRecommendations, loadPositions, loadSnapshots]);
 
   // -------- 一键跟单 --------
   const handleFollowBuy = useCallback(
@@ -402,17 +535,257 @@ const HomeWorkspace: React.FC = () => {
     [recommendations, followedSymbols]
   );
 
+  /**
+   * Phase 10 — 时段分组.
+   *
+   * 后端 V3RecommendationController.enrichSignal 目前未透传 created_at, 故前端按可选
+   * 字段链探测时间: `created_at` → `signal_created_at` → `generated_at` →
+   * `metadata.trigger_time`. 任一可解析即用; 全部缺失返 hasTime=false 走"不分组"降级
+   * (推荐都丢进 'today' 单桶, head 只显示信号日期 + 推荐数).
+   *
+   * 字符串解析失败按 invalid 处理 (toDate 返 null), 同样降级.
+   */
+  const timeGroups = useMemo(() => {
+    if (visibleRecommendations.length === 0) {
+      return { hasTime: false, groups: [] as TimeGroup[] };
+    }
+    let anyHasTime = false;
+    const bucketMap = new Map<string, V3RecommendationItem[]>();
+    for (const rec of visibleRecommendations) {
+      const candidate = extractRecoTime(rec);
+      if (candidate) {
+        anyHasTime = true;
+        const key = bucketToHalfHour(candidate);
+        const list = bucketMap.get(key) || [];
+        list.push(rec);
+        bucketMap.set(key, list);
+      } else {
+        const list = bucketMap.get('__no_time__') || [];
+        list.push(rec);
+        bucketMap.set('__no_time__', list);
+      }
+    }
+    if (!anyHasTime) {
+      return { hasTime: false, groups: [] as TimeGroup[] };
+    }
+    // 按时间桶升序 (盘前 → 盘后); '__no_time__' 排末尾
+    const keys = Array.from(bucketMap.keys()).sort((a, b) => {
+      if (a === '__no_time__') return 1;
+      if (b === '__no_time__') return -1;
+      return a.localeCompare(b);
+    });
+    const groups: TimeGroup[] = keys.map(k => {
+      const items = bucketMap.get(k)!;
+      if (k === '__no_time__') {
+        return { key: k, clock: '时间未知', session: '其他', items };
+      }
+      // 用桶内第一条 (sorted by extracted time) 的真实时间算 session label
+      const firstTime = extractRecoTime(items[0])!;
+      return {
+        key: k,
+        clock: k,
+        session: tradingSessionLabel(firstTime),
+        items,
+      };
+    });
+    return { hasTime: true, groups };
+  }, [visibleRecommendations]);
+
   // 派生: 今日 / 累计 颜色
   const todayPnl = account?.pnl_yesterday ?? null;
   const totalReturn = account?.total_return ?? null;
   const totalReturnPct = ((account?.total_return_pct ?? null) || 0) * 100;
+
+  // Phase 10 — hero sparkline 数据 (最近 30 个 snapshot.total_value).
+  const heroSparkData = useMemo(() => {
+    if (!snapshots || snapshots.length < 2) return [] as number[];
+    return snapshots
+      .slice(-30)
+      .map(s => Number(s.total_value))
+      .filter(v => Number.isFinite(v));
+  }, [snapshots]);
+
+  // Phase 10 — 推荐卡片渲染. 抽出来给"按时间分组" + "降级不分组"两种 path 复用.
+  const renderRecoCard = useCallback(
+    (rec: V3RecommendationItem, indexInGroup: number) => {
+      const isBusy = busySymbol === rec.symbol;
+      const price = rec.current_price;
+      const shares = price ? yuanToShares(DEFAULT_FOLLOW_AMOUNT, price) : 0;
+      const whyOpen = whyOpenSet.has(rec.symbol);
+      const recoTime = extractRecoTime(rec);
+      const DIM_TO_FACTOR: Record<string, { factor: string; copy: string }> = {
+        logic: { factor: '价值', copy: '基本面与估值逻辑通顺' },
+        capital: { factor: '动量/资金', copy: '主力资金流入, 短期动能强' },
+        popularity: { factor: '人气', copy: '题材热度高, 关注度集中' },
+        structure: { factor: '质量', copy: '价格结构健康, 风险可控' },
+      };
+      const strongFactors = (rec.dimensions || [])
+        .filter(d => d.bar_value >= 60 && DIM_TO_FACTOR[d.key])
+        .map(d => ({
+          name: DIM_TO_FACTOR[d.key].factor,
+          detail: DIM_TO_FACTOR[d.key].copy,
+          score: Math.round(d.bar_value),
+          label: d.label,
+        }));
+      const conf = rec.dimensions?.length
+        ? Math.round(
+            rec.dimensions.reduce((s, d) => s + (d.bar_value || 0), 0) /
+              rec.dimensions.length
+          )
+        : 80;
+      // Phase 10 — mini meta line (预期波动 / 持有 / 风险). 没有 metadata 时用启发式默认.
+      const expectedVol = rec.amplitude_pct
+        ? `±${rec.amplitude_pct.toFixed(1)}%`
+        : '±3%';
+      const holdRange =
+        rec.decision?.position_action === 'maintain'
+          ? '5-15 日'
+          : rec.decision?.risk_level === 'high'
+            ? '2-5 日'
+            : '5-10 日';
+      const riskLabel =
+        rec.decision?.risk_level === 'high'
+          ? '高'
+          : rec.decision?.risk_level === 'low'
+            ? '低'
+            : '中';
+      // stagger fade-in: 给一个 inline --i 让 CSS 用作 animation-delay multiplier
+      const staggerStyle = {
+        ['--reco-card-index' as any]: indexInGroup,
+      } as React.CSSProperties;
+      return (
+        <article
+          key={rec.symbol}
+          className="home-reco-card home-reco-card--anim"
+          style={staggerStyle}
+        >
+          {recoTime && (
+            <span className="home-reco-card-time" title="信号触发时间">
+              信号 {formatHourMin(recoTime)}
+            </span>
+          )}
+          <div className="home-reco-card-head">
+            <div className="home-reco-card-name">
+              <div className="home-reco-card-title">{rec.name || rec.symbol}</div>
+              <div className="home-reco-card-symbol">{rec.symbol}</div>
+            </div>
+            <div className="home-reco-card-score">
+              <div className="home-reco-card-score-value tabular-nums">{conf}</div>
+              <div className="home-reco-card-score-label">置信度</div>
+            </div>
+          </div>
+          <div className="home-reco-card-price">
+            <span className="home-reco-card-price-amount tabular-nums">
+              {formatYuan(price)}
+            </span>
+            <span
+              className="home-reco-card-price-change tabular-nums"
+              style={{ color: pnlColor(rec.change_pct) }}
+            >
+              {formatPct(rec.change_pct)}
+            </span>
+          </div>
+          {rec.recommend_reason && (
+            <p className="home-reco-card-reason">{rec.recommend_reason}</p>
+          )}
+          <div className="home-reco-card-meta">
+            建议买入约 <strong>¥{formatInt(DEFAULT_FOLLOW_AMOUNT)}</strong> · 约{' '}
+            <strong>{formatInt(shares) || '—'}</strong> 股
+          </div>
+          {/* Phase 10 — mini 信息行 (波动 / 持有 / 风险). 紧贴 CTA 上方. */}
+          <div className="home-reco-card-mini">
+            <span className="home-reco-card-mini-item">
+              <span className="home-reco-card-mini-label">预期波动</span>
+              <span className="home-reco-card-mini-value">{expectedVol}</span>
+            </span>
+            <span className="home-reco-card-mini-dot" aria-hidden>·</span>
+            <span className="home-reco-card-mini-item">
+              <span className="home-reco-card-mini-label">持有</span>
+              <span className="home-reco-card-mini-value">{holdRange}</span>
+            </span>
+            <span className="home-reco-card-mini-dot" aria-hidden>·</span>
+            <span className="home-reco-card-mini-item">
+              <span className="home-reco-card-mini-label">风险</span>
+              <span className="home-reco-card-mini-value">{riskLabel}</span>
+            </span>
+          </div>
+          <Button
+            type="primary"
+            icon={<ShoppingCartOutlined />}
+            onClick={() => handleFollowBuy(rec)}
+            loading={isBusy}
+            disabled={!price}
+            block
+            className="home-reco-card-cta"
+          >
+            一键跟单 ¥{formatInt(DEFAULT_FOLLOW_AMOUNT)}
+          </Button>
+          {/* hover 右上箭头 hint — 暗示 "可点进详情". 用 CSS 控制可见性, 始终 mount 防 layout 跳. */}
+          <span className="home-reco-card-arrow" aria-hidden>
+            <ArrowRightOutlined />
+          </span>
+          {/* Phase 7: 为什么推荐这只? — 翻译成新手能懂的因子语言. */}
+          <div className="home-reco-why">
+            <Button
+              type="link"
+              size="small"
+              className="home-reco-why-toggle"
+              onClick={() => toggleWhy(rec.symbol)}
+              icon={<BookOutlined />}
+            >
+              为什么推荐这只? {whyOpen ? <CaretUpOutlined /> : <CaretDownOutlined />}
+            </Button>
+            {whyOpen && (
+              <div className="home-reco-why-body">
+                {strongFactors.length > 0 ? (
+                  strongFactors.map(f => (
+                    <div key={f.name} className="home-reco-why-row">
+                      <CheckOutlined className="home-reco-why-check" />
+                      <span>
+                        {f.label}: {f.detail} ({f.score}/100) — 对应「{f.name}因子」
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="home-reco-why-row">
+                    <CheckOutlined className="home-reco-why-check" />
+                    <span>AI 综合 4 维度 (人气/逻辑/资金/结构) 判断, 暂无单项突出强项</span>
+                  </div>
+                )}
+                {rec.highlight_tags && rec.highlight_tags.length > 0 && (
+                  <div className="home-reco-why-row">
+                    <CheckOutlined className="home-reco-why-check" />
+                    <span>
+                      亮点标签:{' '}
+                      {rec.highlight_tags.map(t => (
+                        <span key={t} className="home-reco-why-pill">
+                          {t}
+                        </span>
+                      ))}
+                    </span>
+                  </div>
+                )}
+                <div className="home-reco-why-tip">
+                  <BulbOutlined /> 当 3 个或以上因子同时正向, 历史胜率约 62% — 点
+                  <a onClick={() => navigate('/workspace/easy')}> 简易版 </a>
+                  学完整 4 步教学.
+                </div>
+              </div>
+            )}
+          </div>
+        </article>
+      );
+    },
+    [busySymbol, handleFollowBuy, navigate, toggleWhy, whyOpenSet]
+  );
 
   // ---------------------------------------------------------------------------
   //  Render
   // ---------------------------------------------------------------------------
   return (
     <div className="home-workspace">
-      {/* ===== Phase 8 — 区块 1: 账户总值 hero (64px 大数字 + radial gradient) ===== */}
+      {/* ===== Phase 8 — 区块 1: 账户总值 hero (64px 大数字 + radial gradient) =====
+          Phase 10 — 72px + violet ¥ + 30 日 sparkline + 数据时间 pill. */}
       <section className="home-hero">
         {accountLoading ? (
           <Skeleton active paragraph={{ rows: 3 }} />
@@ -425,12 +798,23 @@ const HomeWorkspace: React.FC = () => {
           />
         ) : (
           <>
-            <div className="home-hero-label">账户总值</div>
+            <div className="home-hero-label">
+              账户总值
+              <span className="home-hero-data-pill" title="本页数据最近一次刷新时间 (上海)">
+                数据 · {formatClock(dataTime)}
+              </span>
+            </div>
             <div className="home-hero-value">
               <span className="home-hero-currency">¥</span>
               <span className="home-hero-amount tabular-nums">
                 {formatAmount(account?.total_value)}
               </span>
+              {heroSparkData.length >= 2 && (
+                <span className="home-hero-spark-wrap" aria-label="近 30 日资产曲线">
+                  <HeroSparkline data={heroSparkData} />
+                  <span className="home-hero-spark-caption">近 30 日</span>
+                </span>
+              )}
             </div>
             <div className="home-hero-pnl">
               <span
@@ -464,13 +848,18 @@ const HomeWorkspace: React.FC = () => {
         )}
       </section>
 
-      {/* ===== Phase 8 — 区块 2: 今日 AI 推荐 (大卡片 grid + 黑色 CTA + hover lift) ===== */}
+      {/* ===== Phase 8 — 区块 2: 今日 AI 推荐 (大卡片 grid + 黑色 CTA + hover lift) =====
+          Phase 10 — 按 30min 时间桶分组, 每组 head 显示 HH:MM + 时段标签 (盘前/上午盘/...).
+          后端字段缺失时降级为不分组. */}
       <section className="home-section">
         <header className="home-section-head">
           <div>
             <h2 className="home-section-title">今日推荐</h2>
             <p className="home-section-subtitle">
-              AI 多维度分析 · {visibleRecommendations.length} 只候选 · 每日 09:30 更新
+              AI 多维度分析 · {visibleRecommendations.length} 只候选
+              {timeGroups.hasTime
+                ? ` · 跨 ${timeGroups.groups.length} 个时段`
+                : ' · 每日 09:30 起持续刷新'}
             </p>
           </div>
           <Button
@@ -502,128 +891,24 @@ const HomeWorkspace: React.FC = () => {
                 : '今天的推荐都跟过了, 明天再来'
             }
           />
+        ) : timeGroups.hasTime ? (
+          <div className="home-reco-time-groups">
+            {timeGroups.groups.map(group => (
+              <div key={group.key} className="home-reco-time-group">
+                <div className="home-reco-time-head">
+                  <span className="home-reco-time-clock">{group.clock}</span>
+                  <span className="home-reco-time-session">{group.session}</span>
+                  <span className="home-reco-time-count">{group.items.length} 只</span>
+                </div>
+                <div className="home-reco-grid">
+                  {group.items.map((rec, idx) => renderRecoCard(rec, idx))}
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
           <div className="home-reco-grid">
-            {visibleRecommendations.map(rec => {
-              const isBusy = busySymbol === rec.symbol;
-              const price = rec.current_price;
-              const shares = price ? yuanToShares(DEFAULT_FOLLOW_AMOUNT, price) : 0;
-              const whyOpen = whyOpenSet.has(rec.symbol);
-              // Phase 7: 把现有 dimensions (人气/逻辑/资金/结构) 翻译成新手能懂的"哪个量化因子".
-              const DIM_TO_FACTOR: Record<string, { factor: string; copy: string }> = {
-                logic: { factor: '价值', copy: '基本面与估值逻辑通顺' },
-                capital: { factor: '动量/资金', copy: '主力资金流入, 短期动能强' },
-                popularity: { factor: '人气', copy: '题材热度高, 关注度集中' },
-                structure: { factor: '质量', copy: '价格结构健康, 风险可控' },
-              };
-              const strongFactors = (rec.dimensions || [])
-                .filter(d => d.bar_value >= 60 && DIM_TO_FACTOR[d.key])
-                .map(d => ({
-                  name: DIM_TO_FACTOR[d.key].factor,
-                  detail: DIM_TO_FACTOR[d.key].copy,
-                  score: Math.round(d.bar_value),
-                  label: d.label,
-                }));
-              // 置信度 — 取所有 dimension 的均值 (0-100), 若没有 dimensions 走 80 fallback.
-              const conf = rec.dimensions?.length
-                ? Math.round(
-                    rec.dimensions.reduce((s, d) => s + (d.bar_value || 0), 0) /
-                      rec.dimensions.length
-                  )
-                : 80;
-              return (
-                <article key={rec.symbol} className="home-reco-card">
-                  <div className="home-reco-card-head">
-                    <div className="home-reco-card-name">
-                      <div className="home-reco-card-title">{rec.name || rec.symbol}</div>
-                      <div className="home-reco-card-symbol">{rec.symbol}</div>
-                    </div>
-                    <div className="home-reco-card-score">
-                      <div className="home-reco-card-score-value tabular-nums">{conf}</div>
-                      <div className="home-reco-card-score-label">置信度</div>
-                    </div>
-                  </div>
-                  <div className="home-reco-card-price">
-                    <span className="home-reco-card-price-amount tabular-nums">
-                      {formatYuan(price)}
-                    </span>
-                    <span
-                      className="home-reco-card-price-change tabular-nums"
-                      style={{ color: pnlColor(rec.change_pct) }}
-                    >
-                      {formatPct(rec.change_pct)}
-                    </span>
-                  </div>
-                  {rec.recommend_reason && (
-                    <p className="home-reco-card-reason">{rec.recommend_reason}</p>
-                  )}
-                  <div className="home-reco-card-meta">
-                    建议买入约 <strong>¥{formatInt(DEFAULT_FOLLOW_AMOUNT)}</strong> · 约{' '}
-                    <strong>{formatInt(shares) || '—'}</strong> 股
-                  </div>
-                  <Button
-                    type="primary"
-                    icon={<ShoppingCartOutlined />}
-                    onClick={() => handleFollowBuy(rec)}
-                    loading={isBusy}
-                    disabled={!price}
-                    block
-                    className="home-reco-card-cta"
-                  >
-                    一键跟单
-                  </Button>
-                  {/* Phase 7: 为什么推荐这只? — 翻译成新手能懂的因子语言. */}
-                  <div className="home-reco-why">
-                    <Button
-                      type="link"
-                      size="small"
-                      className="home-reco-why-toggle"
-                      onClick={() => toggleWhy(rec.symbol)}
-                      icon={<BookOutlined />}
-                    >
-                      为什么推荐这只? {whyOpen ? <CaretUpOutlined /> : <CaretDownOutlined />}
-                    </Button>
-                    {whyOpen && (
-                      <div className="home-reco-why-body">
-                        {strongFactors.length > 0 ? (
-                          strongFactors.map(f => (
-                            <div key={f.name} className="home-reco-why-row">
-                              <CheckOutlined className="home-reco-why-check" />
-                              <span>
-                                {f.label}: {f.detail} ({f.score}/100) — 对应「{f.name}因子」
-                              </span>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="home-reco-why-row">
-                            <CheckOutlined className="home-reco-why-check" />
-                            <span>AI 综合 4 维度 (人气/逻辑/资金/结构) 判断, 暂无单项突出强项</span>
-                          </div>
-                        )}
-                        {rec.highlight_tags && rec.highlight_tags.length > 0 && (
-                          <div className="home-reco-why-row">
-                            <CheckOutlined className="home-reco-why-check" />
-                            <span>
-                              亮点标签:{' '}
-                              {rec.highlight_tags.map(t => (
-                                <span key={t} className="home-reco-why-pill">
-                                  {t}
-                                </span>
-                              ))}
-                            </span>
-                          </div>
-                        )}
-                        <div className="home-reco-why-tip">
-                          <BulbOutlined /> 当 3 个或以上因子同时正向, 历史胜率约 62% — 点
-                          <a onClick={() => navigate('/workspace/easy')}> 简易版 </a>
-                          学完整 4 步教学.
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </article>
-              );
-            })}
+            {visibleRecommendations.map((rec, idx) => renderRecoCard(rec, idx))}
           </div>
         )}
       </section>
@@ -634,7 +919,10 @@ const HomeWorkspace: React.FC = () => {
           <BookOutlined />
         </div>
         <div className="home-lesson-content">
-          <div className="home-lesson-eyebrow">今日学一招</div>
+          <div className="home-lesson-eyebrow">
+            今日学一招
+            <span className="home-lesson-time">{formatHourMin(dataTime)} 更新</span>
+          </div>
           <div className="home-lesson-title">{todayLesson.title}</div>
           <p className="home-lesson-body">{todayLesson.body}</p>
           <Button
@@ -657,7 +945,10 @@ const HomeWorkspace: React.FC = () => {
               6 大核心因子今天的强弱 · 「{topFactor.name}」最强 · {topFactor.hint}
             </p>
           </div>
-          <span className="home-section-pill">示例数据</span>
+          <Space size={8}>
+            <span className="home-section-time">{formatHourMin(dataTime)} 更新</span>
+            <span className="home-section-pill">示例数据</span>
+          </Space>
         </header>
         <div className="home-factor-grid">
           {MOCK_FACTOR_PERFORMANCE.map(f => {
@@ -685,7 +976,22 @@ const HomeWorkspace: React.FC = () => {
         <header className="home-section-head">
           <div>
             <h2 className="home-section-title">我的持仓</h2>
-            <p className="home-section-subtitle">{positions.length} 只 · 一键卖出全部</p>
+            <p className="home-section-subtitle">
+              {positions.length} 只
+              {(() => {
+                if (positions.length === 0) return ' · 暂无';
+                const days = positions
+                  .map(p => {
+                    const d = new Date(p.created_at);
+                    if (!Number.isFinite(d.getTime())) return null;
+                    return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400_000));
+                  })
+                  .filter((v): v is number => v !== null);
+                if (days.length === 0) return ' · 一键卖出全部';
+                const avg = Math.round(days.reduce((a, b) => a + b, 0) / days.length);
+                return ` · 平均持有 ${avg} 天 · 一键卖出全部`;
+              })()}
+            </p>
           </div>
           <Button
             type="text"
@@ -713,6 +1019,13 @@ const HomeWorkspace: React.FC = () => {
               const isBusy = busySymbol === pos.symbol;
               const costBasis = pos.quantity * pos.avg_cost;
               const pctChange = costBasis > 0 ? (pos.unrealized_pnl / costBasis) * 100 : null;
+              // Phase 10 — 持仓天数 (自然日, 不扣周末). 与 PortfolioWorkspace 同口径.
+              const daysHeld = (() => {
+                const d = new Date(pos.created_at);
+                if (!Number.isFinite(d.getTime())) return null;
+                const diff = Math.floor((Date.now() - d.getTime()) / 86400_000);
+                return Math.max(0, diff);
+              })();
               return (
                 <article key={pos.id} className="home-pos-card">
                   <div className="home-pos-card-head">
@@ -751,6 +1064,12 @@ const HomeWorkspace: React.FC = () => {
                   </div>
                   <div className="home-pos-card-meta">
                     现价 <strong className="tabular-nums">{formatYuan(pos.current_price)}</strong>
+                    {daysHeld != null && (
+                      <>
+                        {' '}
+                        · 持 <strong className="tabular-nums">{daysHeld}</strong> 天
+                      </>
+                    )}
                   </div>
                 </article>
               );

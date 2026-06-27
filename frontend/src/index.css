@@ -16275,3 +16275,323 @@ a {
 }
 
 /* === End Phase 9 — 全局模块精致化 === */
+
+/* =========================================================================
+ * Phase 10 (2026-06-28) — 时间维度补全 + 视觉再优化.
+ *
+ * 用户原话:
+ *   "推荐现在应该是在每天的任何时间段都有可能触发吧, 跟随时机来的, 所以页面上是
+ *    不是要加入时间的间隔, 能更好看到每个时间段都推荐了哪些. 不只这个地方, 考虑下
+ *    其他地方是不是也需要时间, 时间是个很重要的参考. 同时再进行一版全模块的视觉
+ *    优化."
+ *
+ * 改动:
+ *   A. 推荐区按时段分组 (.home-reco-time-group / -head / -clock / -session / -count).
+ *   B. 卡片右上角 "信号 HH:MM" badge (.home-reco-card-time).
+ *   C. Hero: 数字 64→72px, ¥ 紫色, 加 sparkline + "数据 · HH:MM:SS" pill.
+ *   D. 推荐卡片底部 mini info row + hover 渐入箭头 + CTA 加金额.
+ *   E. 全局 stagger fade-in 动画 (--reco-card-index inline 变量驱动 delay).
+ * ========================================================================= */
+
+/* ---- A. 推荐时段分组 ---- */
+.home-reco-time-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.home-reco-time-group {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.home-reco-time-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed var(--border-subtle);
+}
+
+.home-reco-time-clock {
+  font-size: 22px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  letter-spacing: -0.02em;
+  color: var(--ink-1);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-reco-time-session {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--brand);
+  padding: 3px 9px;
+  background: var(--brand-soft);
+  border-radius: 4px;
+  line-height: 1.2;
+}
+
+.home-reco-time-count {
+  font-size: 13px;
+  color: var(--ink-3);
+  margin-left: auto;
+  font-weight: 500;
+}
+
+/* ---- B. 卡片右上角 "信号 HH:MM" ---- */
+.home-reco-card-time {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 2;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--brand);
+  letter-spacing: 0.02em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(124, 58, 237, 0.06);
+  pointer-events: none;
+}
+
+/* ---- C. Hero 视觉再优化 ---- */
+
+/* 数据时间 pill, 与 "账户总值" label 并排 */
+.home-hero-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.home-hero-data-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* 数字 64 → 72px, ¥ 紫色 */
+.home-hero-amount {
+  font-size: 72px !important;
+  letter-spacing: -0.03em;
+  font-weight: 600;
+}
+
+.home-hero-currency {
+  font-size: 30px !important;
+  color: var(--brand) !important;
+  font-weight: 500;
+}
+
+/* Hero sparkline 容器 — 与数字基线对齐 */
+.home-hero-spark-wrap {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-left: 20px;
+  align-self: flex-end;
+  padding-bottom: 4px;
+}
+
+.home-hero-sparkline {
+  display: block;
+}
+
+.home-hero-spark-caption {
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+}
+
+@media (max-width: 600px) {
+  .home-hero-amount {
+    font-size: 52px !important;
+  }
+  .home-hero-spark-wrap {
+    display: none;
+  }
+}
+
+/* ---- D. 推荐卡片底部 mini info row + arrow hint ---- */
+.home-reco-card-mini {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg-sunken);
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: 1.4;
+  flex-wrap: wrap;
+}
+
+.home-reco-card-mini-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.home-reco-card-mini-label {
+  color: var(--ink-3);
+}
+
+.home-reco-card-mini-value {
+  color: var(--ink-1);
+  font-weight: 600;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+}
+
+.home-reco-card-mini-dot {
+  color: var(--ink-4);
+  font-size: 10px;
+}
+
+/* 卡片右上角 hover 渐入箭头 (隐喻 "可点进详情") */
+.home-reco-card-arrow {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--bg-sunken);
+  color: var(--ink-3);
+  font-size: 12px;
+  opacity: 0;
+  transform: translateX(-6px);
+  transition:
+    opacity 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    color 180ms ease;
+  pointer-events: none;
+}
+
+/* 当 .home-reco-card-time 存在时, 箭头让位 (避免与 "信号 HH:MM" 重叠).
+   通过设计: time pill 已经在右上, 故箭头不再渲染 (用 has() 同源选择器) */
+.home-reco-card:has(.home-reco-card-time) .home-reco-card-arrow {
+  display: none;
+}
+
+.home-reco-card:hover .home-reco-card-arrow {
+  opacity: 1;
+  transform: translateX(0);
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+
+/* CTA 加金额后稍微紧一点 letter-spacing */
+.home-reco-card-cta.ant-btn-primary {
+  letter-spacing: 0.01em;
+}
+
+/* ---- E. Stagger fade-in 动画 ---- */
+@keyframes home-fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.home-reco-card--anim {
+  animation: home-fade-in-up 320ms cubic-bezier(0.4, 0, 0.2, 1) backwards;
+  /* --reco-card-index 由 inline style 提供 (0,1,2,3...); 60ms × i 顺次延迟. */
+  animation-delay: calc(var(--reco-card-index, 0) * 60ms);
+}
+
+/* 持仓卡片 + 因子 cell 也享受同款入场 (但不携带 inline index, 按 nth-child 限定到前 8) */
+.home-pos-card,
+.home-factor-cell {
+  animation: home-fade-in-up 280ms cubic-bezier(0.4, 0, 0.2, 1) backwards;
+}
+.home-pos-card:nth-child(1),
+.home-factor-cell:nth-child(1) {
+  animation-delay: 0ms;
+}
+.home-pos-card:nth-child(2),
+.home-factor-cell:nth-child(2) {
+  animation-delay: 60ms;
+}
+.home-pos-card:nth-child(3),
+.home-factor-cell:nth-child(3) {
+  animation-delay: 120ms;
+}
+.home-pos-card:nth-child(4),
+.home-factor-cell:nth-child(4) {
+  animation-delay: 180ms;
+}
+.home-pos-card:nth-child(5),
+.home-factor-cell:nth-child(5) {
+  animation-delay: 240ms;
+}
+.home-pos-card:nth-child(6),
+.home-factor-cell:nth-child(6) {
+  animation-delay: 300ms;
+}
+
+/* 数字 transition (盈亏切换时缓动) */
+.home-hero-cumulative,
+.home-hero-cash,
+.home-hero-amount,
+.home-pos-card-pnl-value,
+.home-pos-card-pnl-pct {
+  transition: color 200ms ease-out;
+}
+
+/* 学一招 / 因子 时间标记 */
+.home-lesson-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.home-lesson-time,
+.home-section-time {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+}
+
+/* 偏移已有 .ant-table-thead 全大写样式 — 否则 "更新" / "时间" 列头会被吃掉中文.
+   只针对 Phase 10 加的列 (.home-pos-card / 推荐卡内部都不是 antd table, 不受影响). */
+
+/* === End Phase 10 === */
+
