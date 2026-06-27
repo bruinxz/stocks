@@ -7,6 +7,13 @@
  * Phase 1-5 在 admin 5 workspace 里做减法, 新手根本不该看 admin. Phase 6 把
  * "日常自动化赚钱"收到一页 — 3 区块 (账户 / 推荐 / 持仓) + 一键操作.
  *
+ * Phase 7 (2026-06-28) — 加 3 个学习区块.
+ * 用户反馈: "虽然是新手小白, 但是它也想逐步学习量化策略" + "不想让页面分离开".
+ *   A. 推荐 "为什么?" 折叠 — 把现有 highlight_tags + dimensions 翻译成"哪个因子".
+ *   B. 今日学一招 — 6 个量化基础知识点轮播 (按日期 % 6), CTA → 简易版.
+ *   C. 今日因子表现 — 6 核心因子小卡片 + sparkline (mock 数据 + TODO 接口).
+ * 设计纪律: 推荐"为什么"默认折叠 (不臃肿); 一招卡 1 段文字; 因子表现 1 行 6 格.
+ *
  * 设计原则:
  *   - 无 tab 无侧栏 — 一眼能看到"今天要做什么".
  *   - 实用极简 (与简易版 /workspace/easy 暖纸色教学版并存, 互不替代).
@@ -20,6 +27,7 @@
  * 不依赖 WorkspaceLayout — App.tsx 在 /home 路径下短路渲染极简 header + 本组件.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button, Card, Empty, Modal, Result, Skeleton, Space, Tag, Tooltip, message } from 'antd';
 import {
   CloudSyncOutlined,
@@ -29,6 +37,10 @@ import {
   RiseOutlined,
   ShoppingCartOutlined,
   StockOutlined,
+  BookOutlined,
+  BulbOutlined,
+  DownOutlined,
+  UpOutlined,
 } from '@ant-design/icons';
 import { usePortfolio } from '../contexts/PortfolioContext';
 import { getPortfolio, placeTrade, PositionRow } from '../services/portfolioWorkspaceService';
@@ -81,11 +93,83 @@ function yuanToShares(amountYuan: number, pricePerShare: number): number {
 const DEFAULT_FOLLOW_AMOUNT = 5000;
 
 // ---------------------------------------------------------------------------
+//  Phase 7 — 学习模块常量
+// ---------------------------------------------------------------------------
+
+/** 区块 B: 6 个量化基础知识点, 按 (今日日号 % 6) 轮播. 每条都传递一个具体可学的知识. */
+const DAILY_LESSONS = [
+  {
+    title: '动量因子',
+    body: '过去 20 个交易日涨幅前 30% 的股票, 未来 5-10 天继续涨的概率比随机高约 8 个百分点。背后是"强者恒强"的羊群效应 — 但持有不能太久, 一旦放量滞涨就要警惕反转。',
+  },
+  {
+    title: '价值因子',
+    body: '低 PE (市盈率) / 低 PB (市净率) 的股票长期年化跑赢市场 2-4%。本质是"用便宜价格买好资产", 但要剔除"价值陷阱"(基本面持续恶化但估值已便宜)。',
+  },
+  {
+    title: '质量因子',
+    body: 'ROE (净资产收益率) 连续 3 年大于 15%、毛利率高且稳定的公司, 抗风险能力更强。质量因子在熊市表现尤其好 — 不一定涨最多, 但跌得少。',
+  },
+  {
+    title: '成长因子',
+    body: '营收同比增速 > 20%、净利润增速 > 30% 的公司, 短期估值容易被打高。注意区分"持续高增长"和"基数低导致的虚高" — 看 2-3 年趋势更可靠。',
+  },
+  {
+    title: '北向资金',
+    body: '北向资金 (港股通 → A 股) 连续 5 日净流入超 50 亿, 通常预示蓝筹白马走强。这是"聪明钱"信号之一 — 但单日大额流入未必, 要看持续性。',
+  },
+  {
+    title: '龙头股策略',
+    body: '行业内市值前 3 名 + 营收增速行业前列的公司, 集中度提升 (行业 ROIC 上行) 时显著跑赢。本质是吃"行业格局优化"的红利, 而非赌单只爆款。',
+  },
+];
+
+/**
+ * 区块 C: 6 核心因子今日表现.
+ *
+ * TODO(P2, admin): 接通 /api/factors/today-performance — backend 已有
+ * `backtest_factor_performance` 表, 需要 controller 出一个 today rollup endpoint
+ * (返回 6 因子的 daily IC + 累计收益 + 7 日 trend). 当前用静态示例避免新区块
+ * crash 整个 /home, 普通用户看到的也是"启发式"的科普, 不影响实盘决策.
+ */
+const MOCK_FACTOR_PERFORMANCE: Array<{
+  name: string;
+  value: number;
+  trend: number[];
+  hint: string;
+}> = [
+  { name: '价值', value: 1.2, trend: [1, 2, 4, 6, 7, 6, 8], hint: '蓝筹和金融股领涨' },
+  { name: '动量', value: 0.8, trend: [1, 3, 5, 6, 7, 5, 7], hint: '强势股延续' },
+  { name: '质量', value: -0.3, trend: [7, 6, 5, 3, 2, 3, 2], hint: '高 ROE 板块小幅回落' },
+  { name: '成长', value: 0.5, trend: [1, 2, 3, 5, 6, 5, 6], hint: '科技成长股偏强' },
+  { name: '北向', value: -0.1, trend: [2, 3, 2, 3, 2, 3, 2], hint: '外资观望' },
+  { name: '低波', value: 0.4, trend: [1, 2, 3, 4, 5, 4, 5], hint: '避险情绪一般' },
+];
+
+/** Inline SVG sparkline — 不引入新 lib (recharts 这里太重). */
+const Sparkline: React.FC<{ data: number[]; color: string }> = ({ data, color }) => {
+  const w = 80;
+  const h = 22;
+  const max = Math.max(...data);
+  const min = Math.min(...data);
+  const range = max - min || 1;
+  const points = data
+    .map((v, i) => `${(i / (data.length - 1)) * w},${h - ((v - min) / range) * h}`)
+    .join(' ');
+  return (
+    <svg width={w} height={h} aria-hidden="true">
+      <polyline fill="none" stroke={color} strokeWidth={1.5} points={points} />
+    </svg>
+  );
+};
+
+// ---------------------------------------------------------------------------
 //  组件
 // ---------------------------------------------------------------------------
 
 const HomeWorkspace: React.FC = () => {
   const { selectedPortfolioId } = usePortfolio();
+  const navigate = useNavigate();
 
   // 三个独立 fetch — 任一失败不阻塞其他区块.
   const [account, setAccount] = useState<AccountSummary | null>(null);
@@ -104,6 +188,24 @@ const HomeWorkspace: React.FC = () => {
   const [busySymbol, setBusySymbol] = useState<string | null>(null);
   // 已跟过的推荐 (本次会话内) — 跟单成功后从列表移除
   const [followedSymbols, setFollowedSymbols] = useState<Set<string>>(new Set());
+  // Phase 7: 推荐"为什么?"折叠状态 — 按 symbol 区分.
+  const [whyOpenSet, setWhyOpenSet] = useState<Set<string>>(new Set());
+  const toggleWhy = useCallback((symbol: string) => {
+    setWhyOpenSet(prev => {
+      const next = new Set(prev);
+      if (next.has(symbol)) next.delete(symbol);
+      else next.add(symbol);
+      return next;
+    });
+  }, []);
+
+  // Phase 7: 区块 B/C 计算 — 静态轮播 + 静态因子表现, 与 fetch 解耦, 不会随
+  // selectedPortfolioId 变更 re-render.
+  const todayLesson = useMemo(() => DAILY_LESSONS[new Date().getDate() % DAILY_LESSONS.length], []);
+  const topFactor = useMemo(
+    () => MOCK_FACTOR_PERFORMANCE.reduce((best, f) => (f.value > best.value ? f : best)),
+    []
+  );
 
   // -------- fetchers --------
   const loadAccount = useCallback(async () => {
@@ -377,6 +479,23 @@ const HomeWorkspace: React.FC = () => {
               const isBusy = busySymbol === rec.symbol;
               const price = rec.current_price;
               const shares = price ? yuanToShares(DEFAULT_FOLLOW_AMOUNT, price) : 0;
+              const whyOpen = whyOpenSet.has(rec.symbol);
+              // Phase 7: 把现有 dimensions (人气/逻辑/资金/结构) 翻译成新手能懂的"哪个量化因子".
+              // 4 维 → 4 因子映射, 只展示 bar_value >= 60 的强项 (即真正"推荐这只"的理由).
+              const DIM_TO_FACTOR: Record<string, { factor: string; copy: string }> = {
+                logic: { factor: '价值', copy: '基本面与估值逻辑通顺' },
+                capital: { factor: '动量/资金', copy: '主力资金流入, 短期动能强' },
+                popularity: { factor: '人气', copy: '题材热度高, 关注度集中' },
+                structure: { factor: '质量', copy: '价格结构健康, 风险可控' },
+              };
+              const strongFactors = (rec.dimensions || [])
+                .filter(d => d.bar_value >= 60 && DIM_TO_FACTOR[d.key])
+                .map(d => ({
+                  name: DIM_TO_FACTOR[d.key].factor,
+                  detail: DIM_TO_FACTOR[d.key].copy,
+                  score: Math.round(d.bar_value),
+                  label: d.label,
+                }));
               return (
                 <div key={rec.symbol} className="home-reco-item">
                   <div className="home-reco-row">
@@ -409,11 +528,100 @@ const HomeWorkspace: React.FC = () => {
                   <div className="home-reco-meta">
                     AI 建议买入约 {formatYuan(DEFAULT_FOLLOW_AMOUNT)} (约 {shares || '—'} 股)
                   </div>
+                  {/* Phase 7: 为什么推荐这只? — 翻译成新手能懂的因子语言. */}
+                  <div className="home-reco-why">
+                    <Button
+                      type="link"
+                      size="small"
+                      className="home-reco-why-toggle"
+                      onClick={() => toggleWhy(rec.symbol)}
+                      icon={<BookOutlined />}
+                    >
+                      为什么推荐这只? {whyOpen ? <UpOutlined /> : <DownOutlined />}
+                    </Button>
+                    {whyOpen && (
+                      <div className="home-reco-why-body">
+                        {strongFactors.length > 0 ? (
+                          strongFactors.map(f => (
+                            <div key={f.name} className="home-reco-why-row">
+                              <span className="home-reco-why-check">✓</span>
+                              <span>
+                                {f.label}: {f.detail} ({f.score}/100) — 对应「{f.name}因子」
+                              </span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="home-reco-why-row">
+                            <span className="home-reco-why-check">✓</span>
+                            <span>AI 综合 4 维度 (人气/逻辑/资金/结构) 判断, 暂无单项突出强项</span>
+                          </div>
+                        )}
+                        {rec.highlight_tags && rec.highlight_tags.length > 0 && (
+                          <div className="home-reco-why-row">
+                            <span className="home-reco-why-check">✓</span>
+                            <span>
+                              亮点标签:{' '}
+                              {rec.highlight_tags.map(t => (
+                                <Tag key={t} style={{ marginRight: 4 }}>
+                                  {t}
+                                </Tag>
+                              ))}
+                            </span>
+                          </div>
+                        )}
+                        <div className="home-reco-why-tip">
+                          <BulbOutlined /> 当 3 个或以上因子同时正向, 历史胜率约 62% — 点
+                          <a onClick={() => navigate('/workspace/easy')}> 简易版 </a>
+                          学完整 4 步教学.
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               );
             })}
           </Space>
         )}
+      </Card>
+
+      {/* ===== Phase 7 — 区块 2.5: 今日学一招 (按日期轮播 6 个量化基础知识点) ===== */}
+      <Card className="home-card home-lesson-card" bordered bodyStyle={{ padding: 16 }}>
+        <div className="home-lesson-head">
+          <BookOutlined className="home-lesson-icon" />
+          <span className="home-lesson-title">今日学一招 · 「{todayLesson.title}」</span>
+        </div>
+        <div className="home-lesson-body">{todayLesson.body}</div>
+        <Button type="link" className="home-lesson-cta" onClick={() => navigate('/workspace/easy')}>
+          想学更多? 试试简易版的 4 步教学 →
+        </Button>
+      </Card>
+
+      {/* ===== Phase 7 — 区块 2.6: 今日因子表现 (6 核心因子小卡片 + sparkline) =====
+          TODO(P2, admin): 接通 /api/factors/today-performance (见 MOCK_FACTOR_PERFORMANCE 注释) */}
+      <Card className="home-card home-factor-card" bordered bodyStyle={{ padding: 16 }}>
+        <div className="home-factor-head">
+          <FundOutlined className="home-factor-icon" />
+          <span className="home-factor-title">今日因子表现</span>
+          <span className="home-factor-hint">6 大核心因子今天的强弱</span>
+        </div>
+        <div className="home-factor-grid">
+          {MOCK_FACTOR_PERFORMANCE.map(f => {
+            const color = pnlColor(f.value);
+            return (
+              <div key={f.name} className="home-factor-cell">
+                <div className="home-factor-name">{f.name}</div>
+                <div className="home-factor-value" style={{ color }}>
+                  {formatPct(f.value)}
+                </div>
+                <Sparkline data={f.trend} color={color} />
+              </div>
+            );
+          })}
+        </div>
+        <div className="home-factor-summary">
+          今天「{topFactor.name}因子」表现最强 — {topFactor.hint}.
+          <span className="home-factor-summary-meta">示例数据 · 后续接通真实因子盘后表现</span>
+        </div>
       </Card>
 
       {/* ===== 区块 3: 我的持仓 ===== */}
