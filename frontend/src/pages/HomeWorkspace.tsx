@@ -8,39 +8,33 @@
  * "日常自动化赚钱"收到一页 — 3 区块 (账户 / 推荐 / 持仓) + 一键操作.
  *
  * Phase 7 (2026-06-28) — 加 3 个学习区块.
- * 用户反馈: "虽然是新手小白, 但是它也想逐步学习量化策略" + "不想让页面分离开".
- *   A. 推荐 "为什么?" 折叠 — 把现有 highlight_tags + dimensions 翻译成"哪个因子".
- *   B. 今日学一招 — 6 个量化基础知识点轮播 (按日期 % 6), CTA → 简易版.
- *   C. 今日因子表现 — 6 核心因子小卡片 + sparkline (mock 数据 + TODO 接口).
- * 设计纪律: 推荐"为什么"默认折叠 (不臃肿); 一招卡 1 段文字; 因子表现 1 行 6 格.
+ * Phase 7.5 (2026-06-28) — /home 走标准 Sider+Header Layout.
  *
- * 设计原则:
- *   - 无 tab 无侧栏 — 一眼能看到"今天要做什么".
- *   - 实用极简 (与简易版 /workspace/easy 暖纸色教学版并存, 互不替代).
- *   - 一键跟单 / 一键卖出 = 1 次 confirm + 1 次 POST, < 3 步搞定.
- *   - 完全复用现有后端 endpoint:
- *       GET  /api/today/v3-recommendations  (top 3)
- *       GET  /api/today/signals             (账户 KPI)
- *       GET  /api/paper-trading             (持仓)
- *       POST /api/paper-trading/trade       (一键跟单 / 一键卖出)
- *
- * 不依赖 WorkspaceLayout — App.tsx 在 /home 路径下短路渲染极简 header + 本组件.
+ * Phase 8 (2026-06-28) — 高级感重设计.
+ * 用户原话: "继续优化视觉效果, 我要高级感和设计感".
+ *   1. 账户区: 28px → 64px 大数字 + radial gradient + UPPERCASE label, Apple Finance 风.
+ *   2. 推荐卡: 列表行式 → 大尺寸卡片 grid (padding 32px) + hover lift, Stripe Dashboard 风.
+ *   3. 学一招: 暖纸色 → 冷色高级 (浅紫 brand-soft 背景).
+ *   4. 因子表现: 6 列挤压 → 大间距卡片 + 加大 sparkline.
+ *   5. 持仓: 列表行 → 卡片网格 + 等宽数字 + 浮盈大字号.
+ *   6. 全局去 emoji icon → antd Outlined.
+ *   7. 数字全部走 Intl.NumberFormat('zh-CN') 千分位.
+ *   8. 跟单 / 卖出按钮: violet → 黑色 (--ink-1, 比 brand 更高级).
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Card, Empty, Modal, Result, Skeleton, Space, Tag, Tooltip, message } from 'antd';
+import { Button, Empty, Modal, Result, Skeleton, Tooltip, message } from 'antd';
 import {
-  CloudSyncOutlined,
-  DollarOutlined,
-  FundOutlined,
+  ArrowUpOutlined,
+  ArrowDownOutlined,
   ReloadOutlined,
-  RiseOutlined,
   ShoppingCartOutlined,
-  StockOutlined,
   BookOutlined,
   BulbOutlined,
-  DownOutlined,
-  UpOutlined,
+  CaretDownOutlined,
+  CaretUpOutlined,
+  ArrowRightOutlined,
+  CheckOutlined,
 } from '@ant-design/icons';
 import { usePortfolio } from '../contexts/PortfolioContext';
 import { getPortfolio, placeTrade, PositionRow } from '../services/portfolioWorkspaceService';
@@ -51,10 +45,22 @@ import { getV3Recommendations, V3RecommendationItem } from '../services/v3Recomm
 //  helpers — 本文件内联, 新手主页不再拆 helper 文件
 // ---------------------------------------------------------------------------
 
+const NF_INT = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 });
+const NF_MONEY = new Intl.NumberFormat('zh-CN', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+/** 纯数字部分 (不带 ¥), 千分位 + 2 位小数. Phase 8 — 大字号 hero 用. */
+function formatAmount(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return '—';
+  return NF_MONEY.format(n);
+}
+
 /** 千分位 + 2 位小数, 带 ¥ 前缀. n=null/undefined → '—'. */
 function formatYuan(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '—';
-  return `¥${n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `¥${NF_MONEY.format(n)}`;
 }
 
 /** 带符号 + 1 位百分比. n=null → '—'. */
@@ -68,12 +74,18 @@ function formatPct(n: number | null | undefined): string {
 function formatPnl(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return '—';
   const sign = n > 0 ? '+' : '';
-  return `${sign}¥${Math.abs(n).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `${sign}¥${NF_MONEY.format(Math.abs(n))}`;
+}
+
+/** 整数千分位 — 用于"约 5,000 元". */
+function formatInt(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return '—';
+  return NF_INT.format(n);
 }
 
 /** A 股惯例: 涨红跌绿. 0 / null → 灰. */
 function pnlColor(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n) || n === 0) return 'var(--ink-3, #94a3b8)';
+  if (n == null || !Number.isFinite(n) || n === 0) return 'var(--ink-3, #737373)';
   return n > 0 ? 'var(--up, #dc2626)' : 'var(--down, #16a34a)';
 }
 
@@ -146,10 +158,10 @@ const MOCK_FACTOR_PERFORMANCE: Array<{
   { name: '低波', value: 0.4, trend: [1, 2, 3, 4, 5, 4, 5], hint: '避险情绪一般' },
 ];
 
-/** Inline SVG sparkline — 不引入新 lib (recharts 这里太重). */
+/** Inline SVG sparkline — 不引入新 lib (recharts 这里太重). Phase 8 加大: w 100 h 32 + 1.75 stroke. */
 const Sparkline: React.FC<{ data: number[]; color: string }> = ({ data, color }) => {
-  const w = 80;
-  const h = 22;
+  const w = 100;
+  const h = 32;
   const max = Math.max(...data);
   const min = Math.min(...data);
   const range = max - min || 1;
@@ -158,7 +170,14 @@ const Sparkline: React.FC<{ data: number[]; color: string }> = ({ data, color })
     .join(' ');
   return (
     <svg width={w} height={h} aria-hidden="true">
-      <polyline fill="none" stroke={color} strokeWidth={1.5} points={points} />
+      <polyline
+        fill="none"
+        stroke={color}
+        strokeWidth={1.75}
+        points={points}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 };
@@ -277,13 +296,13 @@ const HomeWorkspace: React.FC = () => {
               买入 <strong>{rec.name || rec.symbol}</strong> ({rec.symbol})
             </div>
             <div>
-              数量: <strong>{shares} 股</strong> (约 {formatYuan(estAmount)})
+              数量: <strong>{formatInt(shares)} 股</strong> (约 {formatYuan(estAmount)})
             </div>
             <div>
               当前价: <strong>{formatYuan(price)}</strong>
             </div>
-            <div style={{ marginTop: 8, color: 'var(--ink-3, #94a3b8)', fontSize: 12 }}>
-              新手默认每单 ¥5,000 — 实际成交价以盘口为准
+            <div style={{ marginTop: 8, color: 'var(--ink-3, #737373)', fontSize: 12 }}>
+              新手默认每单 ¥{formatInt(DEFAULT_FOLLOW_AMOUNT)} — 实际成交价以盘口为准
             </div>
           </div>
         ),
@@ -298,7 +317,7 @@ const HomeWorkspace: React.FC = () => {
               quantity: shares,
               portfolio_id: selectedPortfolioId,
             });
-            message.success(`已买入 ${rec.name || rec.symbol} ${shares} 股`);
+            message.success(`已买入 ${rec.name || rec.symbol} ${formatInt(shares)} 股`);
             setFollowedSymbols(prev => {
               const next = new Set(prev);
               next.add(rec.symbol);
@@ -329,7 +348,7 @@ const HomeWorkspace: React.FC = () => {
         content: (
           <div style={{ fontSize: 14, lineHeight: 1.7 }}>
             <div>
-              卖出全部 <strong>{pos.quantity} 股</strong> {pos.name || pos.symbol}
+              卖出全部 <strong>{formatInt(pos.quantity)} 股</strong> {pos.name || pos.symbol}
             </div>
             <div>
               预计金额: <strong>{formatYuan(estAmount)}</strong>
@@ -340,7 +359,7 @@ const HomeWorkspace: React.FC = () => {
                 {formatPnl(pos.unrealized_pnl)}
               </strong>
             </div>
-            <div style={{ marginTop: 8, color: 'var(--ink-3, #94a3b8)', fontSize: 12 }}>
+            <div style={{ marginTop: 8, color: 'var(--ink-3, #737373)', fontSize: 12 }}>
               实际成交价以盘口为准
             </div>
           </div>
@@ -383,15 +402,20 @@ const HomeWorkspace: React.FC = () => {
     [recommendations, followedSymbols]
   );
 
+  // 派生: 今日 / 累计 颜色
+  const todayPnl = account?.pnl_yesterday ?? null;
+  const totalReturn = account?.total_return ?? null;
+  const totalReturnPct = ((account?.total_return_pct ?? null) || 0) * 100;
+
   // ---------------------------------------------------------------------------
   //  Render
   // ---------------------------------------------------------------------------
   return (
     <div className="home-workspace">
-      {/* ===== 区块 1: 账户总值 ===== */}
-      <Card className="home-card home-account-card" bordered bodyStyle={{ padding: 24 }}>
+      {/* ===== Phase 8 — 区块 1: 账户总值 hero (64px 大数字 + radial gradient) ===== */}
+      <section className="home-hero">
         {accountLoading ? (
-          <Skeleton active paragraph={{ rows: 2 }} />
+          <Skeleton active paragraph={{ rows: 3 }} />
         ) : accountError ? (
           <Result
             status="warning"
@@ -400,51 +424,55 @@ const HomeWorkspace: React.FC = () => {
             extra={<Button onClick={loadAccount}>重试</Button>}
           />
         ) : (
-          <div className="home-account-body">
-            <div className="home-account-label">
-              <DollarOutlined style={{ marginRight: 6 }} />
-              账户总值
+          <>
+            <div className="home-hero-label">账户总值</div>
+            <div className="home-hero-value">
+              <span className="home-hero-currency">¥</span>
+              <span className="home-hero-amount tabular-nums">
+                {formatAmount(account?.total_value)}
+              </span>
             </div>
-            <div className="home-account-value">{formatYuan(account?.total_value)}</div>
-            <Space size={24} wrap style={{ marginTop: 8 }}>
-              <span className="home-account-sub">
-                <span className="home-account-sub-label">今日</span>
-                <span style={{ color: pnlColor(account?.pnl_yesterday ?? null) }}>
-                  {formatPnl(account?.pnl_yesterday ?? null)}
-                </span>
+            <div className="home-hero-pnl">
+              <span
+                className="home-hero-badge"
+                style={{ color: pnlColor(todayPnl), borderColor: pnlColor(todayPnl) + '33' }}
+              >
+                {(todayPnl ?? 0) >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />}{' '}
+                {formatPnl(todayPnl)}
               </span>
-              <span className="home-account-sub">
-                <span className="home-account-sub-label">累计</span>
-                <span style={{ color: pnlColor(account?.total_return ?? null) }}>
-                  {formatPnl(account?.total_return ?? null)}
-                  <span style={{ marginLeft: 4, fontSize: 12 }}>
-                    ({formatPct(((account?.total_return_pct ?? null) || 0) * 100)})
-                  </span>
-                </span>
+              <span className="home-hero-pnl-label">今日盈亏</span>
+              <span className="home-hero-divider" aria-hidden="true">
+                /
               </span>
-              <span className="home-account-sub">
-                <span className="home-account-sub-label">可用现金</span>
-                <span>{formatYuan(account?.current_cash)}</span>
+              <span className="home-hero-pnl-label">累计</span>
+              <span
+                className="home-hero-cumulative tabular-nums"
+                style={{ color: pnlColor(totalReturn) }}
+              >
+                {formatPnl(totalReturn)}
+                <span className="home-hero-cumulative-pct">({formatPct(totalReturnPct)})</span>
               </span>
-            </Space>
-          </div>
+              <span className="home-hero-divider" aria-hidden="true">
+                /
+              </span>
+              <span className="home-hero-pnl-label">可用现金</span>
+              <span className="home-hero-cash tabular-nums">
+                {formatYuan(account?.current_cash)}
+              </span>
+            </div>
+          </>
         )}
-      </Card>
+      </section>
 
-      {/* ===== 区块 2: 今日 AI 推荐 ===== */}
-      <Card
-        className="home-card"
-        bordered
-        title={
-          <span>
-            <RiseOutlined style={{ marginRight: 6, color: 'var(--brand, #4338ca)' }} />
-            今天 AI 推荐
-            <Tag style={{ marginLeft: 8 }} color="processing">
-              {visibleRecommendations.length} 只
-            </Tag>
-          </span>
-        }
-        extra={
+      {/* ===== Phase 8 — 区块 2: 今日 AI 推荐 (大卡片 grid + 黑色 CTA + hover lift) ===== */}
+      <section className="home-section">
+        <header className="home-section-head">
+          <div>
+            <h2 className="home-section-title">今日推荐</h2>
+            <p className="home-section-subtitle">
+              AI 多维度分析 · {visibleRecommendations.length} 只候选 · 每日 09:30 更新
+            </p>
+          </div>
           <Button
             type="text"
             icon={<ReloadOutlined />}
@@ -453,11 +481,12 @@ const HomeWorkspace: React.FC = () => {
           >
             刷新
           </Button>
-        }
-        bodyStyle={{ padding: 16 }}
-      >
+        </header>
         {recLoading ? (
-          <Skeleton active paragraph={{ rows: 3 }} />
+          <div className="home-reco-grid">
+            <Skeleton active paragraph={{ rows: 4 }} />
+            <Skeleton active paragraph={{ rows: 4 }} />
+          </div>
         ) : recError ? (
           <Result
             status="warning"
@@ -474,14 +503,13 @@ const HomeWorkspace: React.FC = () => {
             }
           />
         ) : (
-          <Space direction="vertical" size={12} style={{ width: '100%' }}>
-            {visibleRecommendations.map((rec, idx) => {
+          <div className="home-reco-grid">
+            {visibleRecommendations.map(rec => {
               const isBusy = busySymbol === rec.symbol;
               const price = rec.current_price;
               const shares = price ? yuanToShares(DEFAULT_FOLLOW_AMOUNT, price) : 0;
               const whyOpen = whyOpenSet.has(rec.symbol);
               // Phase 7: 把现有 dimensions (人气/逻辑/资金/结构) 翻译成新手能懂的"哪个量化因子".
-              // 4 维 → 4 因子映射, 只展示 bar_value >= 60 的强项 (即真正"推荐这只"的理由).
               const DIM_TO_FACTOR: Record<string, { factor: string; copy: string }> = {
                 logic: { factor: '价值', copy: '基本面与估值逻辑通顺' },
                 capital: { factor: '动量/资金', copy: '主力资金流入, 短期动能强' },
@@ -496,38 +524,54 @@ const HomeWorkspace: React.FC = () => {
                   score: Math.round(d.bar_value),
                   label: d.label,
                 }));
+              // 置信度 — 取所有 dimension 的均值 (0-100), 若没有 dimensions 走 80 fallback.
+              const conf = rec.dimensions?.length
+                ? Math.round(
+                    rec.dimensions.reduce((s, d) => s + (d.bar_value || 0), 0) /
+                      rec.dimensions.length
+                  )
+                : 80;
               return (
-                <div key={rec.symbol} className="home-reco-item">
-                  <div className="home-reco-row">
-                    <div className="home-reco-head">
-                      <span className="home-reco-idx">{idx + 1}</span>
-                      <span className="home-reco-name">{rec.name || rec.symbol}</span>
-                      <span className="home-reco-symbol">{rec.symbol}</span>
-                      <span className="home-reco-price">{formatYuan(price)}</span>
-                      <span style={{ color: pnlColor(rec.change_pct), fontSize: 12 }}>
-                        {formatPct(rec.change_pct)}
-                      </span>
+                <article key={rec.symbol} className="home-reco-card">
+                  <div className="home-reco-card-head">
+                    <div className="home-reco-card-name">
+                      <div className="home-reco-card-title">{rec.name || rec.symbol}</div>
+                      <div className="home-reco-card-symbol">{rec.symbol}</div>
                     </div>
-                    <Button
-                      type="primary"
-                      icon={<ShoppingCartOutlined />}
-                      onClick={() => handleFollowBuy(rec)}
-                      loading={isBusy}
-                      disabled={!price}
-                      style={{ height: 40, borderRadius: 8, fontWeight: 500 }}
+                    <div className="home-reco-card-score">
+                      <div className="home-reco-card-score-value tabular-nums">{conf}</div>
+                      <div className="home-reco-card-score-label">置信度</div>
+                    </div>
+                  </div>
+                  <div className="home-reco-card-price">
+                    <span className="home-reco-card-price-amount tabular-nums">
+                      {formatYuan(price)}
+                    </span>
+                    <span
+                      className="home-reco-card-price-change tabular-nums"
+                      style={{ color: pnlColor(rec.change_pct) }}
                     >
-                      一键跟单
-                    </Button>
+                      {formatPct(rec.change_pct)}
+                    </span>
                   </div>
                   {rec.recommend_reason && (
-                    <div className="home-reco-reason">
-                      <span className="home-reco-reason-label">理由</span>
-                      {rec.recommend_reason}
-                    </div>
+                    <p className="home-reco-card-reason">{rec.recommend_reason}</p>
                   )}
-                  <div className="home-reco-meta">
-                    AI 建议买入约 {formatYuan(DEFAULT_FOLLOW_AMOUNT)} (约 {shares || '—'} 股)
+                  <div className="home-reco-card-meta">
+                    建议买入约 <strong>¥{formatInt(DEFAULT_FOLLOW_AMOUNT)}</strong> · 约{' '}
+                    <strong>{formatInt(shares) || '—'}</strong> 股
                   </div>
+                  <Button
+                    type="primary"
+                    icon={<ShoppingCartOutlined />}
+                    onClick={() => handleFollowBuy(rec)}
+                    loading={isBusy}
+                    disabled={!price}
+                    block
+                    className="home-reco-card-cta"
+                  >
+                    一键跟单
+                  </Button>
                   {/* Phase 7: 为什么推荐这只? — 翻译成新手能懂的因子语言. */}
                   <div className="home-reco-why">
                     <Button
@@ -537,14 +581,14 @@ const HomeWorkspace: React.FC = () => {
                       onClick={() => toggleWhy(rec.symbol)}
                       icon={<BookOutlined />}
                     >
-                      为什么推荐这只? {whyOpen ? <UpOutlined /> : <DownOutlined />}
+                      为什么推荐这只? {whyOpen ? <CaretUpOutlined /> : <CaretDownOutlined />}
                     </Button>
                     {whyOpen && (
                       <div className="home-reco-why-body">
                         {strongFactors.length > 0 ? (
                           strongFactors.map(f => (
                             <div key={f.name} className="home-reco-why-row">
-                              <span className="home-reco-why-check">✓</span>
+                              <CheckOutlined className="home-reco-why-check" />
                               <span>
                                 {f.label}: {f.detail} ({f.score}/100) — 对应「{f.name}因子」
                               </span>
@@ -552,19 +596,19 @@ const HomeWorkspace: React.FC = () => {
                           ))
                         ) : (
                           <div className="home-reco-why-row">
-                            <span className="home-reco-why-check">✓</span>
+                            <CheckOutlined className="home-reco-why-check" />
                             <span>AI 综合 4 维度 (人气/逻辑/资金/结构) 判断, 暂无单项突出强项</span>
                           </div>
                         )}
                         {rec.highlight_tags && rec.highlight_tags.length > 0 && (
                           <div className="home-reco-why-row">
-                            <span className="home-reco-why-check">✓</span>
+                            <CheckOutlined className="home-reco-why-check" />
                             <span>
                               亮点标签:{' '}
                               {rec.highlight_tags.map(t => (
-                                <Tag key={t} style={{ marginRight: 4 }}>
+                                <span key={t} className="home-reco-why-pill">
                                   {t}
-                                </Tag>
+                                </span>
                               ))}
                             </span>
                           </div>
@@ -577,78 +621,81 @@ const HomeWorkspace: React.FC = () => {
                       </div>
                     )}
                   </div>
-                </div>
+                </article>
               );
             })}
-          </Space>
+          </div>
         )}
-      </Card>
+      </section>
 
-      {/* ===== Phase 7 — 区块 2.5: 今日学一招 (按日期轮播 6 个量化基础知识点) ===== */}
-      <Card className="home-card home-lesson-card" bordered bodyStyle={{ padding: 16 }}>
-        <div className="home-lesson-head">
-          <BookOutlined className="home-lesson-icon" />
-          <span className="home-lesson-title">今日学一招 · 「{todayLesson.title}」</span>
+      {/* ===== Phase 8 — 区块 3: 今日学一招 (冷色高级 — 浅紫 brand-soft 背景) ===== */}
+      <section className="home-lesson">
+        <div className="home-lesson-icon-wrap">
+          <BookOutlined />
         </div>
-        <div className="home-lesson-body">{todayLesson.body}</div>
-        <Button type="link" className="home-lesson-cta" onClick={() => navigate('/workspace/easy')}>
-          想学更多? 试试简易版的 4 步教学 →
-        </Button>
-      </Card>
+        <div className="home-lesson-content">
+          <div className="home-lesson-eyebrow">今日学一招</div>
+          <div className="home-lesson-title">{todayLesson.title}</div>
+          <p className="home-lesson-body">{todayLesson.body}</p>
+          <Button
+            type="link"
+            className="home-lesson-cta"
+            onClick={() => navigate('/workspace/easy')}
+          >
+            想学更多 — 简易版 4 步教学 <ArrowRightOutlined />
+          </Button>
+        </div>
+      </section>
 
-      {/* ===== Phase 7 — 区块 2.6: 今日因子表现 (6 核心因子小卡片 + sparkline) =====
-          TODO(P2, admin): 接通 /api/factors/today-performance (见 MOCK_FACTOR_PERFORMANCE 注释) */}
-      <Card className="home-card home-factor-card" bordered bodyStyle={{ padding: 16 }}>
-        <div className="home-factor-head">
-          <FundOutlined className="home-factor-icon" />
-          <span className="home-factor-title">今日因子表现</span>
-          <span className="home-factor-hint">6 大核心因子今天的强弱</span>
-        </div>
+      {/* ===== Phase 8 — 区块 4: 今日因子表现 (3 列 2 行 + 大 sparkline) =====
+          TODO(P2, admin): 接通 /api/factors/today-performance */}
+      <section className="home-section">
+        <header className="home-section-head">
+          <div>
+            <h2 className="home-section-title">今日因子表现</h2>
+            <p className="home-section-subtitle">
+              6 大核心因子今天的强弱 · 「{topFactor.name}」最强 · {topFactor.hint}
+            </p>
+          </div>
+          <span className="home-section-pill">示例数据</span>
+        </header>
         <div className="home-factor-grid">
           {MOCK_FACTOR_PERFORMANCE.map(f => {
             const color = pnlColor(f.value);
             return (
               <div key={f.name} className="home-factor-cell">
-                <div className="home-factor-name">{f.name}</div>
-                <div className="home-factor-value" style={{ color }}>
-                  {formatPct(f.value)}
+                <div className="home-factor-row">
+                  <div>
+                    <div className="home-factor-name">{f.name}</div>
+                    <div className="home-factor-value tabular-nums" style={{ color }}>
+                      {formatPct(f.value)}
+                    </div>
+                  </div>
+                  <Sparkline data={f.trend} color={color} />
                 </div>
-                <Sparkline data={f.trend} color={color} />
+                <div className="home-factor-hint">{f.hint}</div>
               </div>
             );
           })}
         </div>
-        <div className="home-factor-summary">
-          今天「{topFactor.name}因子」表现最强 — {topFactor.hint}.
-          <span className="home-factor-summary-meta">示例数据 · 后续接通真实因子盘后表现</span>
-        </div>
-      </Card>
+      </section>
 
-      {/* ===== 区块 3: 我的持仓 ===== */}
-      <Card
-        className="home-card"
-        bordered
-        title={
-          <span>
-            <FundOutlined style={{ marginRight: 6, color: 'var(--brand, #4338ca)' }} />
-            我的持仓
-            <Tag style={{ marginLeft: 8 }} color="default">
-              {positions.length} 只
-            </Tag>
-          </span>
-        }
-        extra={
+      {/* ===== Phase 8 — 区块 5: 我的持仓 (卡片网格 + 等宽数字 + 浮盈大字号) ===== */}
+      <section className="home-section">
+        <header className="home-section-head">
+          <div>
+            <h2 className="home-section-title">我的持仓</h2>
+            <p className="home-section-subtitle">{positions.length} 只 · 一键卖出全部</p>
+          </div>
           <Button
             type="text"
-            icon={<CloudSyncOutlined />}
+            icon={<ReloadOutlined />}
             onClick={loadPositions}
             loading={posLoading}
           >
             刷新
           </Button>
-        }
-        bodyStyle={{ padding: 16 }}
-      >
+        </header>
         {posLoading ? (
           <Skeleton active paragraph={{ rows: 3 }} />
         ) : posError ? (
@@ -661,75 +708,75 @@ const HomeWorkspace: React.FC = () => {
         ) : positions.length === 0 ? (
           <Empty description="还没有持仓 — 跟上面的 AI 推荐买一只试试" />
         ) : (
-          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <div className="home-pos-grid">
             {positions.map(pos => {
               const isBusy = busySymbol === pos.symbol;
               const costBasis = pos.quantity * pos.avg_cost;
               const pctChange = costBasis > 0 ? (pos.unrealized_pnl / costBasis) * 100 : null;
               return (
-                <div key={pos.id} className="home-pos-item">
-                  <div className="home-pos-row">
-                    <div className="home-pos-head">
-                      <StockOutlined style={{ marginRight: 6, color: 'var(--ink-3, #94a3b8)' }} />
-                      <span className="home-pos-name">{pos.name || pos.symbol}</span>
-                      <span className="home-pos-symbol">
-                        {pos.quantity} 股 @ {formatYuan(pos.avg_cost)}
-                      </span>
+                <article key={pos.id} className="home-pos-card">
+                  <div className="home-pos-card-head">
+                    <div>
+                      <div className="home-pos-card-name">{pos.name || pos.symbol}</div>
+                      <div className="home-pos-card-symbol">
+                        {formatInt(pos.quantity)} 股 @ {formatYuan(pos.avg_cost)}
+                      </div>
                     </div>
                     <Tooltip title="一键卖出全部持仓">
                       <Button
                         danger
                         onClick={() => handleSellAll(pos)}
                         loading={isBusy}
-                        style={{ height: 40, borderRadius: 8, fontWeight: 500 }}
+                        className="home-pos-card-cta"
                       >
-                        一键卖出
+                        卖出
                       </Button>
                     </Tooltip>
                   </div>
-                  <div className="home-pos-meta">
-                    现价 <strong>{formatYuan(pos.current_price)}</strong>
-                    <span style={{ marginLeft: 16 }}>
-                      浮盈{' '}
-                      <strong style={{ color: pnlColor(pos.unrealized_pnl) }}>
-                        {formatPnl(pos.unrealized_pnl)}
-                      </strong>
-                      {pctChange != null && (
-                        <span style={{ color: pnlColor(pos.unrealized_pnl), marginLeft: 4 }}>
-                          ({formatPct(pctChange)})
-                        </span>
-                      )}
+                  <div className="home-pos-card-pnl">
+                    <span
+                      className="home-pos-card-pnl-value tabular-nums"
+                      style={{ color: pnlColor(pos.unrealized_pnl) }}
+                    >
+                      {formatPnl(pos.unrealized_pnl)}
                     </span>
+                    {pctChange != null && (
+                      <span
+                        className="home-pos-card-pnl-pct tabular-nums"
+                        style={{ color: pnlColor(pos.unrealized_pnl) }}
+                      >
+                        {formatPct(pctChange)}
+                      </span>
+                    )}
                   </div>
-                </div>
+                  <div className="home-pos-card-meta">
+                    现价 <strong className="tabular-nums">{formatYuan(pos.current_price)}</strong>
+                  </div>
+                </article>
               );
             })}
-          </Space>
-        )}
-      </Card>
-
-      {/* ===== 区块 4: 今日提示 (静态, 复用 account 已知字段) ===== */}
-      {!accountLoading && !accountError && account && (
-        <Card className="home-card home-tip-card" bordered bodyStyle={{ padding: 16 }}>
-          <div className="home-tip">
-            <span className="home-tip-dot" />
-            <span>
-              {(() => {
-                const cashPct =
-                  account.total_value > 0
-                    ? (account.current_cash / account.total_value) * 100
-                    : 100;
-                if (cashPct >= 80) {
-                  return '当前仓位较轻 — 可关注上面的 AI 推荐, 单只建议 5% 以内';
-                }
-                if (cashPct <= 20) {
-                  return '当前仓位较重 — 大盘震荡时优先减仓盈利较多的';
-                }
-                return '当前仓位适中 — 跟踪持仓表现, 跌破成本 7% 应止损';
-              })()}
-            </span>
           </div>
-        </Card>
+        )}
+      </section>
+
+      {/* ===== 区块 6: 今日提示 (静态 hint, 极简一行) ===== */}
+      {!accountLoading && !accountError && account && (
+        <section className="home-tip">
+          <span className="home-tip-dot" aria-hidden="true" />
+          <span>
+            {(() => {
+              const cashPct =
+                account.total_value > 0 ? (account.current_cash / account.total_value) * 100 : 100;
+              if (cashPct >= 80) {
+                return '当前仓位较轻 — 可关注上面的 AI 推荐, 单只建议 5% 以内';
+              }
+              if (cashPct <= 20) {
+                return '当前仓位较重 — 大盘震荡时优先减仓盈利较多的';
+              }
+              return '当前仓位适中 — 跟踪持仓表现, 跌破成本 7% 应止损';
+            })()}
+          </span>
+        </section>
       )}
     </div>
   );
