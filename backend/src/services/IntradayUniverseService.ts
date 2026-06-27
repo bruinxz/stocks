@@ -37,6 +37,7 @@ import { normalizeSymbol } from '../utils/stockSymbol';
 // ---------------------------------------------------------------------------
 
 export type IntradayUniverseSource =
+  | 'priority'
   | 'position'
   | 'favorite'
   | 'top_gainer'
@@ -58,6 +59,12 @@ export interface ResolveUniverseOptions {
   max_size?: number;
   /** 是否纳入涨/跌幅榜 + 成交额榜, 默认 true. 仅持仓 / 自选场景可关. */
   include_market_movers?: boolean;
+  /**
+   * 优先级 symbol 列表 — 必须在 universe 中, 不会被截断淘汰.
+   * 默认 = DEFAULT_PRIORITY_SYMBOLS (CPO 热门 9 只), 传 [] 关闭, 传 [...]
+   * 覆盖. 任何时候这些 symbol 都先入 map + 永不被 truncateToMax 淘汰.
+   */
+  priority_symbols?: ReadonlyArray<string>;
 }
 
 export interface IntradayUniverseDataSource {
@@ -85,7 +92,29 @@ const DEFAULT_MIN_SIZE = 200;
 const DEFAULT_MAX_SIZE = 500;
 
 /**
+ * 默认 priority symbols — CPO (光模块 / 光通信) 9 只主板热门票.
+ * 这些 symbol 永远入 universe (不论 min / max), 也不会被 truncateToMax 淘汰.
+ * 用 'priority' source 标签写入 map (优先级 = 0, 比 'position'=1 还高).
+ *
+ *   sh.601138 工业富联 / sh.600487 亨通光电 / sh.600522 中天科技
+ *   sh.601869 长飞光纤 / sh.600498 烽火通信 / sh.600105 永鼎股份
+ *   sh.600183 生益科技 / sz.000063 中兴通讯 / sz.000988 华工科技
+ */
+export const DEFAULT_PRIORITY_SYMBOLS: ReadonlyArray<string> = Object.freeze([
+  'sh.601138',
+  'sh.600487',
+  'sh.600522',
+  'sh.601869',
+  'sh.600498',
+  'sh.600105',
+  'sh.600183',
+  'sz.000063',
+  'sz.000988',
+]);
+
+/**
  * 按 priority 顺序保留 entries, 截到 maxSize.
+ *   0. priority (DEFAULT_PRIORITY_SYMBOLS 或 caller 自定义 — 永不被截)
  *   1. position
  *   2. yesterday_limit_up
  *   3. top_gainer
@@ -98,6 +127,7 @@ const DEFAULT_MAX_SIZE = 500;
  * tie-break: 按字母序稳定排.
  */
 const SOURCE_PRIORITY: Record<IntradayUniverseSource, number> = {
+  priority: 0,
   position: 1,
   yesterday_limit_up: 2,
   top_gainer: 3,
@@ -111,14 +141,27 @@ export function truncateToMax(
   entries: IntradayUniverseEntry[],
   maxSize: number
 ): IntradayUniverseEntry[] {
-  if (entries.length <= maxSize) return [...entries];
-  const sorted = [...entries].sort((a, b) => {
+  // priority symbols 永远保留 — 即使总数 > maxSize. 先把 priority 拎出来,
+  // 剩余 slot = max(0, maxSize - priority.length) 再按优先级排序填充.
+  const priorityEntries: IntradayUniverseEntry[] = [];
+  const others: IntradayUniverseEntry[] = [];
+  for (const e of entries) {
+    if (e.sources.includes('priority')) priorityEntries.push(e);
+    else others.push(e);
+  }
+  // priority 内部按字母序稳定排
+  priorityEntries.sort((a, b) => a.symbol.localeCompare(b.symbol));
+  const remaining = Math.max(0, maxSize - priorityEntries.length);
+  if (others.length <= remaining) {
+    return [...priorityEntries, ...others];
+  }
+  const sortedOthers = [...others].sort((a, b) => {
     const pa = Math.min(...a.sources.map(s => SOURCE_PRIORITY[s] ?? 99));
     const pb = Math.min(...b.sources.map(s => SOURCE_PRIORITY[s] ?? 99));
     if (pa !== pb) return pa - pb;
     return a.symbol.localeCompare(b.symbol);
   });
-  return sorted.slice(0, maxSize);
+  return [...priorityEntries, ...sortedOthers.slice(0, remaining)];
 }
 
 /**
@@ -170,8 +213,16 @@ export class IntradayUniverseService {
     const minSize = Math.max(1, options.min_size ?? DEFAULT_MIN_SIZE);
     const maxSize = Math.max(minSize, options.max_size ?? DEFAULT_MAX_SIZE);
     const includeMovers = options.include_market_movers !== false;
+    // priority_symbols: undefined → 用默认 9 只; 显式 [] → 关闭; [...] → 覆盖
+    const prioritySymbols: ReadonlyArray<string> =
+      options.priority_symbols ?? DEFAULT_PRIORITY_SYMBOLS;
 
     const map = new Map<string, IntradayUniverseEntry>();
+
+    // 0) priority symbols — 最优先, 永不被截断
+    if (prioritySymbols.length > 0) {
+      mergeSymbolsIntoMap(map, prioritySymbols, 'priority');
+    }
 
     // 1) 持仓股
     try {

@@ -17,6 +17,12 @@
  *  [11] resolveUniverse: 单子源 throw 不阻塞主流程 (fail-OPEN)
  *  [12] resolveUniverse: include_market_movers=false 不调涨跌幅 / 成交额
  *  [13] resolveUniverse: min_size 不足时用市值补齐
+ *  [14] resolveUniverse: 全部 throw → 走 market_cap fallback
+ *  [15] resolveUniverse: 全部 throw 包括 fallback → 返空不抛
+ *  [16] resolveUniverse: 默认 9 只 priority 永远在 universe (CPO)
+ *  [17] resolveUniverse: priority_symbols=[] 关闭默认 priority
+ *  [18] resolveUniverse: 自定义 priority_symbols 覆盖默认
+ *  [19] resolveUniverse: priority 永远不被 max_size 截断 (超 max 也保)
  */
 import {
   IntradayUniverseService,
@@ -25,6 +31,7 @@ import {
   truncateToMax,
   mergeSymbolsIntoMap,
   stockCodeToSymbol,
+  DEFAULT_PRIORITY_SYMBOLS,
 } from '../../src/services/IntradayUniverseService';
 
 let ok = 0;
@@ -138,7 +145,7 @@ async function main(): Promise<void> {
       },
     });
     const svc = new IntradayUniverseService(ds);
-    const out = await svc.resolveUniverse({ min_size: 1, max_size: 100 });
+    const out = await svc.resolveUniverse({ min_size: 1, max_size: 100, priority_symbols: [] });
     expectEqual('out len=3', out.length, 3);
     expectTrue('contains sh.600519', out.includes('sh.600519'));
     expectTrue('contains sh.600036', out.includes('sh.600036'));
@@ -156,7 +163,7 @@ async function main(): Promise<void> {
       },
     });
     const svc = new IntradayUniverseService(ds);
-    const out = await svc.resolveUniverse({ min_size: 1, max_size: 100 });
+    const out = await svc.resolveUniverse({ min_size: 1, max_size: 100, priority_symbols: [] });
     expectEqual('gainer limit=200', gainerLimit, 200);
     expectEqual('out len=2', out.length, 2);
   }
@@ -172,7 +179,7 @@ async function main(): Promise<void> {
       },
     });
     const svc = new IntradayUniverseService(ds);
-    const out = await svc.resolveUniverse({ min_size: 1, max_size: 100 });
+    const out = await svc.resolveUniverse({ min_size: 1, max_size: 100, priority_symbols: [] });
     expectEqual('loser limit=50', loserLimit, 50);
     expectEqual('len=1', out.length, 1);
   }
@@ -186,7 +193,7 @@ async function main(): Promise<void> {
       },
     });
     const svc = new IntradayUniverseService(ds);
-    const out = await svc.resolveUniverse({ min_size: 1, max_size: 100 });
+    const out = await svc.resolveUniverse({ min_size: 1, max_size: 100, priority_symbols: [] });
     expectEqual('len=2', out.length, 2);
     expectTrue('contains 300750', out.includes('sz.300750'));
   }
@@ -207,7 +214,7 @@ async function main(): Promise<void> {
       },
     });
     const svc = new IntradayUniverseService(ds);
-    const out = await svc.resolveUniverse({ min_size: 200, max_size: 500 });
+    const out = await svc.resolveUniverse({ min_size: 200, max_size: 500, priority_symbols: [] });
     expectTrue('fallback 被调', fallbackCalled);
     expectEqual('fallback 拿 max=500', receivedLimit, 500);
     expectEqual('out 长度=500', out.length, 500);
@@ -234,7 +241,7 @@ async function main(): Promise<void> {
       },
     });
     const svc = new IntradayUniverseService(ds);
-    const out = await svc.resolveUniverse({ min_size: 1, max_size: 10 });
+    const out = await svc.resolveUniverse({ min_size: 1, max_size: 10, priority_symbols: [] });
     expectEqual('截到 max=10', out.length, 10);
     for (const p of positions) {
       expectTrue(`持仓 ${p} 必保留 (优先级最高)`, out.includes(p));
@@ -257,7 +264,7 @@ async function main(): Promise<void> {
       },
     });
     const svc = new IntradayUniverseService(ds);
-    const out = await svc.resolveUniverse({ min_size: 1, max_size: 100 });
+    const out = await svc.resolveUniverse({ min_size: 1, max_size: 100, priority_symbols: [] });
     expectEqual('out len=3 (不是 4)', out.length, 3);
     // 检查每个 symbol 只出现一次
     const seen = new Set(out);
@@ -279,7 +286,7 @@ async function main(): Promise<void> {
       },
     });
     const svc = new IntradayUniverseService(ds);
-    const out = await svc.resolveUniverse({ min_size: 1, max_size: 100 });
+    const out = await svc.resolveUniverse({ min_size: 1, max_size: 100, priority_symbols: [] });
     expectEqual('len=2 (gainer 失败被吞)', out.length, 2);
     expectTrue('600519 保留', out.includes('sh.600519'));
     expectTrue('300750 保留', out.includes('sz.300750'));
@@ -315,6 +322,7 @@ async function main(): Promise<void> {
       min_size: 1,
       max_size: 100,
       include_market_movers: false,
+      priority_symbols: [],
     });
     expectTrue('position 仍被调', posCalled);
     expectTrue('gainer 跳过', !gainerCalled);
@@ -341,7 +349,7 @@ async function main(): Promise<void> {
       },
     });
     const svc = new IntradayUniverseService(ds);
-    const out = await svc.resolveUniverse({ min_size: 30, max_size: 500 });
+    const out = await svc.resolveUniverse({ min_size: 30, max_size: 500, priority_symbols: [] });
     expectTrue('fallback 调到补 min', fallbackCalled);
     expectEqual('fallback 拿 min=30', fallbackLimit, 30);
     // 持仓 1 个 + market_cap 50 个 → 51 个 (假设 normalized 后无重叠)
@@ -380,7 +388,7 @@ async function main(): Promise<void> {
       },
     });
     const svc = new IntradayUniverseService(ds);
-    const out = await svc.resolveUniverse({ min_size: 1, max_size: 100 });
+    const out = await svc.resolveUniverse({ min_size: 1, max_size: 100, priority_symbols: [] });
     expectTrue('fallback called', fallbackCalled);
     expectEqual('out len=100', out.length, 100);
   }
@@ -397,8 +405,110 @@ async function main(): Promise<void> {
       },
     });
     const svc = new IntradayUniverseService(ds);
-    const out = await svc.resolveUniverse({ min_size: 1, max_size: 100 });
+    const out = await svc.resolveUniverse({ min_size: 1, max_size: 100, priority_symbols: [] });
     expectEqual('空数组', out, []);
+  }
+
+  // [16] resolveUniverse: 默认 9 只 priority 永远在 universe
+  console.log('[16] resolveUniverse 默认 priority (CPO 9 只) 永在 universe...');
+  {
+    const ds = makeDs({
+      async listPositionSymbols() {
+        return ['sh.600519'];
+      },
+    });
+    const svc = new IntradayUniverseService(ds);
+    // 不传 priority_symbols → 用默认 DEFAULT_PRIORITY_SYMBOLS
+    const out = await svc.resolveUniverse({ min_size: 1, max_size: 100 });
+    expectEqual(
+      'CPO 9 只全部在 universe',
+      DEFAULT_PRIORITY_SYMBOLS.filter(s => out.includes(s)).length,
+      DEFAULT_PRIORITY_SYMBOLS.length
+    );
+    expectTrue('持仓 sh.600519 也在', out.includes('sh.600519'));
+    expectEqual(
+      'len = 9 (priority) + 1 (position) — 持仓不与 priority 重叠',
+      out.length,
+      DEFAULT_PRIORITY_SYMBOLS.length + 1
+    );
+  }
+
+  // [17] resolveUniverse: priority_symbols=[] 关闭默认 priority
+  console.log('[17] resolveUniverse priority_symbols=[] 关闭...');
+  {
+    const ds = makeDs({
+      async listPositionSymbols() {
+        return ['sh.600519'];
+      },
+    });
+    const svc = new IntradayUniverseService(ds);
+    const out = await svc.resolveUniverse({
+      min_size: 1,
+      max_size: 100,
+      priority_symbols: [],
+    });
+    expectEqual('len=1 (无 priority)', out.length, 1);
+    for (const cpo of DEFAULT_PRIORITY_SYMBOLS) {
+      expectTrue(`CPO ${cpo} 不在 universe`, !out.includes(cpo));
+    }
+  }
+
+  // [18] resolveUniverse: 自定义 priority_symbols 覆盖默认
+  console.log('[18] resolveUniverse 自定义 priority_symbols 覆盖默认...');
+  {
+    const custom = ['sh.600900', 'sz.002594'];
+    const ds = makeDs({
+      async listPositionSymbols() {
+        return ['sh.600519'];
+      },
+    });
+    const svc = new IntradayUniverseService(ds);
+    const out = await svc.resolveUniverse({
+      min_size: 1,
+      max_size: 100,
+      priority_symbols: custom,
+    });
+    for (const c of custom) {
+      expectTrue(`自定义 priority ${c} 在 universe`, out.includes(c));
+    }
+    for (const cpo of DEFAULT_PRIORITY_SYMBOLS) {
+      expectTrue(`默认 CPO ${cpo} 被替换, 不在 universe`, !out.includes(cpo));
+    }
+    expectTrue('持仓 sh.600519 仍在', out.includes('sh.600519'));
+    expectEqual('len = 2 priority + 1 position', out.length, 3);
+  }
+
+  // [19] resolveUniverse: priority 永远不被 max_size 截断
+  console.log('[19] resolveUniverse priority 永不被 max 截断 (即使 max < priority.length)...');
+  {
+    // 持仓 + 涨幅榜共 100+ 票, 默认 priority 9 只, max=5 < 9
+    const positions = Array.from({ length: 50 }, (_, i) =>
+      `sh.${String(700000 + i).padStart(6, '0')}`
+    );
+    const gainers = Array.from({ length: 200 }, (_, i) =>
+      `sh.${String(710000 + i).padStart(6, '0')}`
+    );
+    const ds = makeDs({
+      async listPositionSymbols() {
+        return positions;
+      },
+      async listTopGainerSymbols() {
+        return gainers;
+      },
+    });
+    const svc = new IntradayUniverseService(ds);
+    // max_size=5, 但 priority 有 9 只 → priority 必须全在, 其它都被截掉
+    const out = await svc.resolveUniverse({ min_size: 1, max_size: 5 });
+    expectEqual(
+      'CPO 9 只全保留 (超 max=5 也保)',
+      DEFAULT_PRIORITY_SYMBOLS.filter(s => out.includes(s)).length,
+      DEFAULT_PRIORITY_SYMBOLS.length
+    );
+    expectEqual(
+      'out.length === priority.length (其它全被挤掉)',
+      out.length,
+      DEFAULT_PRIORITY_SYMBOLS.length
+    );
   }
 
   console.log('\n========================================');
