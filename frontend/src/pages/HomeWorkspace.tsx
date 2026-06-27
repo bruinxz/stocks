@@ -20,18 +20,7 @@
  * 不依赖 WorkspaceLayout — App.tsx 在 /home 路径下短路渲染极简 header + 本组件.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  Button,
-  Card,
-  Empty,
-  Modal,
-  Result,
-  Skeleton,
-  Space,
-  Tag,
-  Tooltip,
-  message,
-} from 'antd';
+import { Button, Card, Empty, Modal, Result, Skeleton, Space, Tag, Tooltip, message } from 'antd';
 import {
   CloudSyncOutlined,
   DollarOutlined,
@@ -42,19 +31,9 @@ import {
   StockOutlined,
 } from '@ant-design/icons';
 import { usePortfolio } from '../contexts/PortfolioContext';
-import {
-  getPortfolio,
-  placeTrade,
-  PositionRow,
-} from '../services/portfolioWorkspaceService';
-import {
-  todayWorkspaceService,
-  AccountSummary,
-} from '../services/todayWorkspaceService';
-import {
-  getV3Recommendations,
-  V3RecommendationItem,
-} from '../services/v3RecommendationService';
+import { getPortfolio, placeTrade, PositionRow } from '../services/portfolioWorkspaceService';
+import { todayWorkspaceService, AccountSummary } from '../services/todayWorkspaceService';
+import { getV3Recommendations, V3RecommendationItem } from '../services/v3RecommendationService';
 
 // ---------------------------------------------------------------------------
 //  helpers — 本文件内联, 新手主页不再拆 helper 文件
@@ -254,7 +233,8 @@ const HomeWorkspace: React.FC = () => {
               预计金额: <strong>{formatYuan(estAmount)}</strong>
             </div>
             <div>
-              当前浮盈: <strong style={{ color: pnlColor(pos.unrealized_pnl) }}>
+              当前浮盈:{' '}
+              <strong style={{ color: pnlColor(pos.unrealized_pnl) }}>
                 {formatPnl(pos.unrealized_pnl)}
               </strong>
             </div>
@@ -307,11 +287,7 @@ const HomeWorkspace: React.FC = () => {
   return (
     <div className="home-workspace">
       {/* ===== 区块 1: 账户总值 ===== */}
-      <Card
-        className="home-card home-account-card"
-        bordered
-        bodyStyle={{ padding: 24 }}
-      >
+      <Card className="home-card home-account-card" bordered bodyStyle={{ padding: 24 }}>
         {accountLoading ? (
           <Skeleton active paragraph={{ rows: 2 }} />
         ) : accountError ? (
@@ -481,8 +457,7 @@ const HomeWorkspace: React.FC = () => {
             {positions.map(pos => {
               const isBusy = busySymbol === pos.symbol;
               const costBasis = pos.quantity * pos.avg_cost;
-              const pctChange =
-                costBasis > 0 ? (pos.unrealized_pnl / costBasis) * 100 : null;
+              const pctChange = costBasis > 0 ? (pos.unrealized_pnl / costBasis) * 100 : null;
               return (
                 <div key={pos.id} className="home-pos-item">
                   <div className="home-pos-row">
