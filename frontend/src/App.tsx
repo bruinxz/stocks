@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
-import { Layout, ConfigProvider, Menu, Avatar, Dropdown, Spin } from 'antd';
+import { Layout, ConfigProvider, Menu, Avatar, Dropdown, Spin, Button } from 'antd';
 import {
   BrowserRouter as Router,
   Routes,
@@ -15,7 +15,8 @@ import {
   LogoutOutlined,
   BarChartOutlined,
   DownOutlined,
-  SettingOutlined as AdminEntryIcon,
+  HomeOutlined,
+  AppstoreOutlined,
 } from '@ant-design/icons';
 import zhCN from 'antd/locale/zh_CN';
 import { useSelector, useDispatch } from 'react-redux';
@@ -59,7 +60,6 @@ const SettingsWorkspace = lazy(() => import('./pages/workspace/SettingsWorkspace
 const SystemWorkspace = lazy(() => import('./pages/workspace/SystemWorkspace'));
 
 import {
-  CompassOutlined,
   SettingOutlined,
   ExperimentOutlined,
   DatabaseOutlined,
@@ -229,32 +229,76 @@ const AppContent: React.FC = () => {
     navigate('/login');
   };
 
-  // Phase 6 (2026-06-27) — 主菜单 admin-only.
-  // 用户原话: 新手"用不起来" → 普通用户登录直接进 /home, 不看任何菜单/侧栏.
-  // admin 仍能从 /home 右上角 ⚙ 入 /admin/today (即 /workspace/today), 走老路径.
-  // Phase 3 的 5 项菜单完全保留, 但只对 admin 渲染:
-  //   1. 今日 (今日作战)
-  //   2. 持仓
-  //   3. 实验室
-  //   4. 设置
-  //   5. 数据中心 / 系统介绍 (admin only)
-  // 注: 简易版 /workspace/easy 留在 admin 主菜单之外 — 由 App.tsx 自有路由进入.
+  // Phase 7 (2026-06-28) — 主菜单"统一一套".
+  // 用户反馈: "我即是管理员, 也是新手小白想学习量化, 不想让页面分离开" + "简易版
+  // 那个 Tab 和页面怎么没有了". 修复:
+  //   1. 所有用户看一样的菜单 (admin 只多 2 项 admin-only 数据/系统);
+  //   2. 简易版回主菜单作为"教学路径";
+  //   3. /home 仍是默认登录页, 但通过顶栏"更多功能"下拉也能进任意菜单.
+  // 5 项基础 + 2 项 admin-only:
+  //   主页 / 简易版 / 持仓 / 实验室 / 设置  (admin: + 数据中心 / 系统介绍)
+  // /workspace/today 不再上一级菜单 — /home 已是新手的"今日入口", admin 可通过
+  // 实验室 / 数据中心 / 顶栏更多 进入. 路由仍保留 (deep link 兼容).
   const isAdmin = user?.role === 'admin';
   const mainMenuItems: MenuProps['items'] = useMemo(() => {
-    if (!isAdmin) {
-      // 普通用户: 主菜单完全隐藏 — /home 一页搞定.
-      return [];
-    }
-    return [
-      menuLink('/workspace/today', <CompassOutlined />, '今日'),
+    const items: MenuProps['items'] = [
+      menuLink('/home', <HomeOutlined />, '主页'),
+      menuLink('/workspace/easy', <RocketOutlined />, '简易版'),
       menuLink('/workspace/portfolio', <PieChartOutlined />, '持仓'),
       menuLink('/workspace/lab', <ExperimentOutlined />, '实验室'),
       menuLink('/workspace/settings', <SettingOutlined />, '设置'),
-      menuLink('/workspace/data', <DatabaseOutlined />, '数据中心'),
-      menuLink('/workspace/system', <InfoCircleOutlined />, '系统介绍'),
-      menuLink('/workspace/easy', <RocketOutlined />, '简易版'),
     ];
+    if (isAdmin) {
+      items.push(menuLink('/workspace/data', <DatabaseOutlined />, '数据中心'));
+      items.push(menuLink('/workspace/system', <InfoCircleOutlined />, '系统介绍'));
+    }
+    return items;
   }, [isAdmin]);
+
+  // /home 顶栏"更多功能" 下拉 — 去掉 /home 本身 (已在主页).
+  // 让 /home 不再是"死胡同" — 一键能进任意其他页面, 包括简易版.
+  const moreMenuProps: MenuProps = useMemo(
+    () => ({
+      items: [
+        {
+          key: '/workspace/easy',
+          icon: <RocketOutlined />,
+          label: <Link to="/workspace/easy">简易版 (4 步教学)</Link>,
+        },
+        {
+          key: '/workspace/portfolio',
+          icon: <PieChartOutlined />,
+          label: <Link to="/workspace/portfolio">持仓</Link>,
+        },
+        {
+          key: '/workspace/lab',
+          icon: <ExperimentOutlined />,
+          label: <Link to="/workspace/lab">实验室</Link>,
+        },
+        {
+          key: '/workspace/settings',
+          icon: <SettingOutlined />,
+          label: <Link to="/workspace/settings">设置</Link>,
+        },
+        ...(isAdmin
+          ? [
+              { type: 'divider' as const },
+              {
+                key: '/workspace/data',
+                icon: <DatabaseOutlined />,
+                label: <Link to="/workspace/data">数据中心 (管理员)</Link>,
+              },
+              {
+                key: '/workspace/system',
+                icon: <InfoCircleOutlined />,
+                label: <Link to="/workspace/system">系统介绍 (管理员)</Link>,
+              },
+            ]
+          : []),
+      ],
+    }),
+    [isAdmin]
+  );
 
   const flatMenuItems = useMemo(() => flattenMenu(mainMenuItems), [mainMenuItems]);
   const menuPath = useMemo(() => resolveMenuPath(location.pathname), [location.pathname]);
@@ -262,9 +306,9 @@ const AppContent: React.FC = () => {
     flatMenuItems
       .filter(item => menuPath === item.key || menuPath.startsWith(`${item.key}/`))
       .sort((a, b) => b.key.length - a.key.length)[0] || flatMenuItems[0];
-  const selectedKey = selectedMenu?.key || '/workspace/today';
+  const selectedKey = selectedMenu?.key || '/home';
   const currentSection = selectedMenu?.section || '工作台';
-  const currentPageTitle = selectedMenu?.title || '今日作战';
+  const currentPageTitle = selectedMenu?.title || '主页';
   const selectedParentKeys = useMemo(
     () => selectedMenu?.parentKeys || [],
     [selectedMenu?.parentKeys]
@@ -319,8 +363,9 @@ const AppContent: React.FC = () => {
     );
   }
 
-  // Phase 6 (2026-06-27) — 新手主页 /home 短路渲染 (无 Sider / 无 admin Header).
-  // 极简顶栏 = Logo + 用户名 + (admin 才看到) ⚙ 进 /admin/today (走 admin 旧菜单).
+  // Phase 7 (2026-06-28) — 新手主页 /home 短路渲染.
+  // 顶栏 = Logo + "更多功能" 下拉 + 用户名菜单. "更多功能"让 /home 不再是"死胡同":
+  // 用户随时能从主页进任意菜单 (包括简易版), 不分 admin / 普通用户.
   // ProtectedRoute 仍生效 — 未登录跳 /login.
   if (location.pathname === '/home') {
     return (
@@ -329,13 +374,20 @@ const AppContent: React.FC = () => {
           <div className="home-topbar-brand">
             <BarChartOutlined className="home-topbar-brand-icon" />
             <span>我的投资</span>
+            {token && (
+              <Dropdown menu={moreMenuProps} placement="bottomLeft" trigger={['click']}>
+                <Button
+                  type="text"
+                  size="small"
+                  className="home-topbar-more"
+                  icon={<AppstoreOutlined />}
+                >
+                  更多功能 <DownOutlined style={{ fontSize: 10 }} />
+                </Button>
+              </Dropdown>
+            )}
           </div>
           <div className="home-topbar-actions">
-            {isAdmin && (
-              <Link to="/workspace/today" className="home-topbar-admin-link" title="进入管理后台">
-                <AdminEntryIcon />
-              </Link>
-            )}
             {token && (
               <Dropdown menu={userMenuProps} placement="bottomRight" trigger={['click']}>
                 <div className="home-topbar-user">
