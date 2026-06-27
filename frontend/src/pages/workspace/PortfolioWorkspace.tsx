@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSelector } from 'react-redux';
+import { RootState } from '../../store/rootReducer';
 import { useNavigate } from 'react-router-dom';
 import {
   Alert,
@@ -26,6 +28,7 @@ import {
   message,
 } from 'antd';
 import {
+  BarChartOutlined,
   CheckOutlined,
   CloseOutlined,
   EditOutlined,
@@ -146,16 +149,27 @@ const BENCHMARK_LABEL = '沪深 300';
 type WindowKey = '30d' | '90d' | '1y' | 'all';
 
 const PortfolioWorkspace: React.FC = () => {
-  const tabs: WorkspaceTab[] = [
-    { key: 'positions', label: '当前持仓', icon: <WalletOutlined /> },
-    { key: 'equity', label: '资金曲线', icon: <LineChartOutlined /> },
-    { key: 'attribution', label: '日归因', icon: <RobotOutlined /> },
-    { key: 'trades', label: '交易明细', icon: <UnorderedListOutlined /> },
-    { key: 'journal', label: '复盘日记', icon: <ReadOutlined /> },
-    { key: 'error-patterns', label: 'AI 日记 + 错误模式', icon: <ExclamationCircleOutlined /> },
-    { key: 'correlation', label: '相关性矩阵', icon: <RadarChartOutlined /> },
-    { key: 'manage', label: '模拟盘管理', icon: <SettingOutlined /> },
-  ];
+  // Phase 3 (2026-06-27): tab 8 → 4 (普通用户) / 8 (admin).
+  // 普通用户: 当前持仓 (默认) / 交易明细 / 资金曲线 / 复盘日记.
+  // 日归因 / AI 日记+错误模式 / 相关性矩阵 / 模拟盘管理 = 研究 / 高级功能.
+  const isAdmin = useSelector((s: RootState) => s.auth.user?.role === 'admin');
+  const tabs: WorkspaceTab[] = useMemo(() => {
+    const baseTabs: WorkspaceTab[] = [
+      { key: 'positions', label: '当前持仓', icon: <WalletOutlined /> },
+      { key: 'trades', label: '交易明细', icon: <UnorderedListOutlined /> },
+      { key: 'equity', label: '资金曲线', icon: <LineChartOutlined /> },
+      { key: 'journal', label: '复盘日记', icon: <ReadOutlined /> },
+    ];
+    if (isAdmin) {
+      baseTabs.push(
+        { key: 'attribution', label: '日归因 (admin)', icon: <BarChartOutlined /> },
+        { key: 'error-patterns', label: '错误模式 (admin)', icon: <ExclamationCircleOutlined /> },
+        { key: 'correlation', label: '相关性矩阵 (admin)', icon: <RadarChartOutlined /> },
+        { key: 'manage', label: '模拟盘管理 (admin)', icon: <SettingOutlined /> }
+      );
+    }
+    return baseTabs;
+  }, [isAdmin]);
   const [activeKey, setActiveKey] = useState<string>('positions');
 
   // ---- 主数据 ----

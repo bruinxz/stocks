@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSelector } from 'react-redux';
+import { RootState } from '../../store/rootReducer';
 import {
   Alert,
   Button,
@@ -99,19 +101,31 @@ const DEFAULT_BENCHMARK = 'sh.000300'; // 沪深 300
 const POLL_INTERVAL_MS = 3000;
 
 const LabWorkspace: React.FC = () => {
-  const tabs: WorkspaceTab[] = [
-    { key: 'workflow_readiness', label: '工作流体检', icon: <SafetyCertificateOutlined /> },
-    { key: 'mine', label: '我的策略', icon: <ExperimentOutlined /> },
-    { key: 'leaderboard', label: '策略排行', icon: <TrophyOutlined /> },
-    { key: 'new', label: '新建回测', icon: <PlusSquareOutlined /> },
-    { key: 'compare', label: '回测对比', icon: <SwapOutlined /> },
-    { key: 'walk_forward', label: 'Walk-Forward', icon: <SafetyCertificateOutlined /> },
-    { key: 'optimization', label: '优化历史', icon: <NodeIndexOutlined /> },
-    { key: 'quarterly_retrain', label: '季度参数重训', icon: <ExperimentOutlined /> },
-    { key: 'shadow_run', label: 'Shadow Run', icon: <SwapOutlined /> },
-    { key: 'overfit_metrics', label: 'OverfitMetrics', icon: <SafetyCertificateOutlined /> },
-    { key: 'advanced_quant', label: '高级量化', icon: <SafetyCertificateOutlined /> },
-  ];
+  // Phase 3 (2026-06-27): tab 11 → 5 (admin) / 4 (普通用户).
+  // 用户原话"页面太复杂": 普通用户只用 我的策略 / 新建回测 / 策略排行 / 回测对比;
+  // 工作流体检 / Walk-Forward / 优化历史 / 季度重训 / Shadow Run / OverfitMetrics /
+  // 高级量化 = 研究员级别, 折叠在 admin only.
+  const isAdmin = useSelector((s: RootState) => s.auth.user?.role === 'admin');
+  const tabs: WorkspaceTab[] = useMemo(() => {
+    const baseTabs: WorkspaceTab[] = [
+      { key: 'mine', label: '我的策略', icon: <ExperimentOutlined /> },
+      { key: 'new', label: '新建回测', icon: <PlusSquareOutlined /> },
+      { key: 'leaderboard', label: '策略排行', icon: <TrophyOutlined /> },
+      { key: 'compare', label: '回测对比', icon: <SwapOutlined /> },
+    ];
+    if (isAdmin) {
+      baseTabs.push(
+        { key: 'workflow_readiness', label: '工作流体检 (研究员)', icon: <SafetyCertificateOutlined /> },
+        { key: 'walk_forward', label: 'Walk-Forward (研究员)', icon: <SafetyCertificateOutlined /> },
+        { key: 'optimization', label: '优化历史 (研究员)', icon: <NodeIndexOutlined /> },
+        { key: 'quarterly_retrain', label: '季度参数重训 (研究员)', icon: <ExperimentOutlined /> },
+        { key: 'shadow_run', label: 'Shadow Run (研究员)', icon: <SwapOutlined /> },
+        { key: 'overfit_metrics', label: 'OverfitMetrics (研究员)', icon: <SafetyCertificateOutlined /> },
+        { key: 'advanced_quant', label: '高级量化 (研究员)', icon: <SafetyCertificateOutlined /> }
+      );
+    }
+    return baseTabs;
+  }, [isAdmin]);
   const [activeKey, setActiveKey] = useState('mine');
 
   // US-078: 从策略详情页跳回来时携带 location.state，自动触发 clone/edit/newRun

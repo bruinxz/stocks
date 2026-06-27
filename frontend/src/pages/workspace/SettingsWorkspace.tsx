@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSelector } from 'react-redux';
+import { RootState } from '../../store/rootReducer';
 import {
   Alert,
   Button,
@@ -121,21 +123,34 @@ const DEFAULT_CONFIG: NotificationChannelsConfig = {
 };
 
 const SettingsWorkspace: React.FC = () => {
-  const tabs: WorkspaceTab[] = [
-    { key: 'profile', label: '个人资料', icon: <UserOutlined /> },
-    { key: 'keys', label: 'API 密钥', icon: <KeyOutlined /> },
-    { key: 'push-channels', label: '推送渠道', icon: <NotificationOutlined /> },
-    { key: 'notifications', label: '通知设置', icon: <BellOutlined /> },
-    { key: 'sizing', label: '仓位策略', icon: <CalculatorOutlined /> },
-    { key: 'portfolio-construction', label: '组合构建', icon: <ApartmentOutlined /> },
-    { key: 'analysis-engine', label: '分析引擎', icon: <ThunderboltOutlined /> },
-    { key: 'risk-parameters', label: '风控参数中心', icon: <SafetyOutlined /> },
-    { key: 'strategy-kill-switch', label: '策略 kill-switch', icon: <PoweroffOutlined /> },
-    { key: 'todo-suggestions', label: '待办建议', icon: <BulbOutlined /> },
-    { key: 'black-swan', label: '黑天鹅历史', icon: <AlertOutlined /> },
-    { key: 'users', label: '用户管理', icon: <TeamOutlined /> },
-  ];
-  const [activeKey, setActiveKey] = useState('push-channels');
+  // Phase 3 (2026-06-27): tab 12 → 4 (普通用户) / 12 (admin).
+  // 普通用户只看到: 个人资料 (默认) / API 密钥 / 通知设置 / 推送渠道.
+  // 仓位策略 / 组合构建 / 分析引擎 / 风控参数 / 策略 kill-switch / 待办建议 /
+  // 黑天鹅历史 / 用户管理 = admin 专属, 折叠在下方.
+  const isAdmin = useSelector((s: RootState) => s.auth.user?.role === 'admin');
+  const tabs: WorkspaceTab[] = useMemo(() => {
+    const baseTabs: WorkspaceTab[] = [
+      { key: 'profile', label: '个人资料', icon: <UserOutlined /> },
+      { key: 'keys', label: 'API 密钥', icon: <KeyOutlined /> },
+      { key: 'notifications', label: '通知设置', icon: <BellOutlined /> },
+      { key: 'push-channels', label: '推送渠道', icon: <NotificationOutlined /> },
+    ];
+    if (isAdmin) {
+      baseTabs.push(
+        { key: 'sizing', label: '仓位策略 (admin)', icon: <CalculatorOutlined /> },
+        { key: 'portfolio-construction', label: '组合构建 (admin)', icon: <ApartmentOutlined /> },
+        { key: 'analysis-engine', label: '分析引擎 (admin)', icon: <ThunderboltOutlined /> },
+        { key: 'risk-parameters', label: '风控参数中心 (admin)', icon: <SafetyOutlined /> },
+        { key: 'strategy-kill-switch', label: '策略 kill-switch (admin)', icon: <PoweroffOutlined /> },
+        { key: 'todo-suggestions', label: '待办建议 (admin)', icon: <BulbOutlined /> },
+        { key: 'black-swan', label: '黑天鹅历史 (admin)', icon: <AlertOutlined /> },
+        { key: 'users', label: '用户管理 (admin)', icon: <TeamOutlined /> }
+      );
+    }
+    return baseTabs;
+  }, [isAdmin]);
+  // Phase 3: 默认 tab 改为 profile (而不是 push-channels) — 用户进设置最先想看的是"我是谁".
+  const [activeKey, setActiveKey] = useState('profile');
 
   // --- 通知设置 state -----------------------------------------------------
   const [config, setConfig] = useState<NotificationChannelsConfig | null>(null);

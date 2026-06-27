@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSelector } from 'react-redux';
+import { RootState } from '../../store/rootReducer';
 import {
   Alert,
   Button,
@@ -161,16 +163,27 @@ const { RangePicker } = DatePicker;
 // AlertsBell 跳转 query 校验有单一事实源.
 // CA-1: 'core_picks' 作为默认 tab — v3 抖音风刷卡片, 学习自抖音「炒股养家」的
 // "信息密度集中 + 大字评分 + 一句话理由" 信息架构. 保留旧 4 tab 不删.
-const TODAY_WORKSPACE_TABS: WorkspaceTab[] = [
+// Phase 3 (2026-06-27): tab 6 → 3 — 用户原话"页面太复杂".
+//   核心推荐 (默认) / 今日信号 / 风险提醒
+//   关键事件 → 折进核心推荐卡片下方 timeline (后续 story)
+//   风控中心 → 合并到风险提醒, 用 filter level=HIGH 区分
+//   资金流向 → 折进今日信号顶部带状图
+// admin 仍能看到完整 6 tab (研究 / 调试). AlertsBell 跳转 ?tab=risk_center 仍兼容.
+const TODAY_WORKSPACE_TABS_BASE: WorkspaceTab[] = [
   { key: 'core_picks', label: '核心推荐', icon: <FireOutlined /> },
   { key: 'signals', label: '今日信号', icon: <ThunderboltOutlined /> },
-  { key: 'events', label: '关键事件', icon: <BellOutlined /> },
   { key: 'alerts', label: '风险提醒', icon: <AlertOutlined /> },
-  { key: 'risk_center', label: '风控中心', icon: <SafetyCertificateOutlined /> },
-  // BK-4 (2026-06-24): 盘中行业资金流 (10min 自动刷新, 类似抖音"分时累计资金流")
-  { key: 'capital_flow', label: '资金流向', icon: <LineChartOutlined /> },
 ];
-const TODAY_WORKSPACE_TAB_KEYS = TODAY_WORKSPACE_TABS.map(t => t.key);
+const TODAY_WORKSPACE_TABS_ADMIN_EXTRA: WorkspaceTab[] = [
+  { key: 'events', label: '关键事件 (admin)', icon: <BellOutlined /> },
+  { key: 'risk_center', label: '风控中心 (admin)', icon: <SafetyCertificateOutlined /> },
+  // BK-4 (2026-06-24): 盘中行业资金流 (10min 自动刷新, 类似抖音"分时累计资金流")
+  { key: 'capital_flow', label: '资金流向 (admin)', icon: <LineChartOutlined /> },
+];
+const TODAY_WORKSPACE_TAB_KEYS = [
+  ...TODAY_WORKSPACE_TABS_BASE,
+  ...TODAY_WORKSPACE_TABS_ADMIN_EXTRA,
+].map(t => t.key);
 
 const TodayWorkspace: React.FC = () => {
   const navigate = useNavigate();
@@ -178,7 +191,15 @@ const TodayWorkspace: React.FC = () => {
   // US-070 [FE-031]: tab keys 静态 — 用 module-scope const 让 useMemo 不需要 deps,
   // 同时 AlertsBell 点击带的 ?tab= query 也只能落在这 4 个 key 里. 字符串数组
   // inline 在 JSX 之外, 防 React Hook deps lint 抱怨 + 重渲不重建.
-  const tabs: WorkspaceTab[] = TODAY_WORKSPACE_TABS;
+  // Phase 3: admin 看完整 6 tab, 普通用户只看 3 (核心推荐 / 信号 / 风险提醒).
+  const isAdmin = useSelector((s: RootState) => s.auth.user?.role === 'admin');
+  const tabs: WorkspaceTab[] = useMemo(
+    () =>
+      isAdmin
+        ? [...TODAY_WORKSPACE_TABS_BASE, ...TODAY_WORKSPACE_TABS_ADMIN_EXTRA]
+        : TODAY_WORKSPACE_TABS_BASE,
+    [isAdmin]
+  );
   // CA-1: 默认 tab = 'core_picks' (v3 抖音风刷卡片).
   // 旧 4 tab 仍然由 ?tab= query 显式选中 (AlertsBell 跳转兼容).
   const [activeKey, setActiveKey] = useState('core_picks');
