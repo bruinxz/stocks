@@ -23,6 +23,7 @@ import { quantStrategyFeedbackService } from '../quant/engine/internal/QuantStra
 import { quantStrategyParamVersionService } from '../quant/engine/internal/QuantStrategyParamVersionService';
 import { quantDataService } from '../quant/engine/internal/QuantDataService';
 import { realtimeQuoteService } from '../data/services/RealtimeQuoteService';
+import { intradayUniverseService } from './IntradayUniverseService';
 import { aiInvestmentSignalService } from './AIInvestmentSignalService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
 import { paperTradingAutomationService } from '../portfolio/internal/PaperTradingAutomationService';
@@ -1036,38 +1037,86 @@ class SchedulerService {
           : Array.isArray(parameters.stock_symbols)
           ? parameters.stock_symbols
           : undefined;
-        // Batch AR (2026-06-21): default 600 → 5000 to cover 全 A 股 universe.
-        // Audit 2026-06-21 found only 807 distinct symbols in realtime_quotes
-        // over 7d, because limit defaulted to 600 + getStocks itself capped to
-        // 1000. Now both caps are 5000 so a single cron tick covers ~5500
-        // listed names (with ST/退 filters in QuantDataService.getStocks).
-        const limit = this.toPositiveInt(
-          parameters.limit || parameters.quote_sync_limit || parameters.max_stocks,
-          5000,
-          5000
-        );
+        // CE-A (2026-06-25): 新 universe_source='intraday' 分支 — 拿 IntradayUniverseService
+        // 解析 ≤500 票活跃 universe 替代全市场 5500. 老 universe='market' / limit=5000
+        // 路径完全保留, 见下面 else 分支. 触发器: cron parameters.universe_source='intraday'.
+        const universeSource = String(parameters.universe_source || '').toLowerCase();
         const source = parameters.source || parameters.data_source || 'auto';
-        const universe = parameters.universe === 'favorites' ? 'favorites' : 'market';
-        const batchSize = this.toPositiveInt(
-          parameters.batch_size || parameters.batchSize,
-          300,
-          500
-        );
-        const stocks = rawSymbols?.length
-          ? []
-          : await quantDataService.getStocks({
-              universe,
-              user_id: parameters.user_id,
-              limit,
+        let targetSymbols: string[];
+        let universe: string;
+        let batchSize: number;
+        if (rawSymbols?.length) {
+          // 手工指定 symbols — 优先级最高, 跳过 universe 解析.
+          targetSymbols = rawSymbols
+            .map((symbol: any) => String(symbol || '').trim())
+            .filter(Boolean);
+          universe = 'manual';
+          batchSize = this.toPositiveInt(
+            parameters.batch_size || parameters.batchSize,
+            300,
+            500
+          );
+        } else if (universeSource === 'intraday') {
+          // CE-A 新路径: intraday universe (持仓 + 涨跌幅榜 + 涨停 + 成交额)
+          const minSize = this.toPositiveInt(parameters.min_size, 200, 1000);
+          const maxSize = this.toPositiveInt(
+            parameters.limit || parameters.max_size,
+            500,
+            1000
+          );
+          batchSize = this.toPositiveInt(
+            parameters.batch_size || parameters.batchSize,
+            100,
+            500
+          );
+          try {
+            targetSymbols = await intradayUniverseService.resolveUniverse({
+              min_size: minSize,
+              max_size: maxSize,
             });
-        let targetSymbols: string[] = rawSymbols?.length
-          ? rawSymbols.map((symbol: any) => String(symbol || '').trim()).filter(Boolean)
-          : stocks.map(stock => stock.symbol);
+          } catch (err: any) {
+            logger.warn(
+              `[realtime-quote-sync] intraday universe 解析失败, fallback empty: ${
+                err?.message || err
+              }`
+            );
+            targetSymbols = [];
+          }
+          universe = 'intraday';
+          logger.info(
+            `[realtime-quote-sync] universe_source=intraday resolved ${targetSymbols.length} symbols (min=${minSize}, max=${maxSize})`
+          );
+        } else {
+          // 老路径: universe='market'|'favorites', limit 默认 5000 全 A 股扫.
+          const limit = this.toPositiveInt(
+            parameters.limit || parameters.quote_sync_limit || parameters.max_stocks,
+            5000,
+            5000
+          );
+          universe = parameters.universe === 'favorites' ? 'favorites' : 'market';
+          batchSize = this.toPositiveInt(
+            parameters.batch_size || parameters.batchSize,
+            300,
+            500
+          );
+          const stocks = await quantDataService.getStocks({
+            universe: universe as 'market' | 'favorites',
+            user_id: parameters.user_id,
+            limit,
+          });
+          targetSymbols = stocks.map(stock => stock.symbol);
+        }
 
         // 2026-06-21 数据 sync 修复: 默认 universe 始终覆盖 当前持仓 + 全部用户的
         // FavoriteStock + 6 只目标 / 候选票, 确保 AI 引擎下游不会因为单股缺行情失败.
         // parameters.skip_extra_universe=true 时跳过 (例如 ops 手工只刷指定标的).
-        if (!rawSymbols?.length && parameters.skip_extra_universe !== true) {
+        // CE-A (2026-06-25): universe_source='intraday' 时同样跳过 — 内部已覆盖
+        // 持仓 + 自选 + 涨跌幅榜 + 涨停 + 成交额, 不重复 enrich (避免破坏 max=500 约束).
+        if (
+          !rawSymbols?.length &&
+          parameters.skip_extra_universe !== true &&
+          universeSource !== 'intraday'
+        ) {
           try {
             // eslint-disable-next-line @typescript-eslint/no-var-requires
             const { PaperTradingPosition } = require('../models/PaperTradingPosition');
@@ -6230,6 +6279,54 @@ class SchedulerService {
               )}`
           );
         }
+      } else if (task.type === 'INTRADAY_OPPORTUNITY_SCAN') {
+        // CE-B (2026-06-26) — 盘中实时机会规则引擎.
+        // 拉 IntradayUniverseService.resolveUniverse() → 10 类 detector → analyzeStock
+        // 二次审核 → intradayOpportunityPusher.push. parameters 支持:
+        //   - min_final_score (默认 65)
+        //   - target_groups (默认 ['business'])
+        //   - rules (subset 限定; 默认全 10 类)
+        //   - dry_run
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          intradayOpportunityWatcher,
+        } = require('./IntradayOpportunityWatcher');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const minFinal =
+          Number.isFinite(Number(parameters.min_final_score)) &&
+          Number(parameters.min_final_score) >= 0
+            ? Number(parameters.min_final_score)
+            : 65;
+        const targetGroups = Array.isArray(parameters.target_groups)
+          ? parameters.target_groups
+          : ['business'];
+        const rules = Array.isArray(parameters.rules) ? parameters.rules : undefined;
+        const scanRes = await intradayOpportunityWatcher.scan({
+          min_final_score: minFinal,
+          target_groups: targetGroups,
+          rules,
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: scanRes.scanned_count,
+          completed_items: scanRes.pushed_count,
+          failed_items: scanRes.errors.length,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'intraday_opportunity_scan',
+            scanned: scanRes.scanned_count,
+            hits: scanRes.hit_count,
+            pushed: scanRes.pushed_count,
+            skipped: scanRes.skipped_count,
+            errors: scanRes.errors.length,
+            min_final_score: minFinal,
+          },
+        });
+        logger.info(
+          `[INTRADAY_OPPORTUNITY_SCAN] scanned=${scanRes.scanned_count} hits=${scanRes.hit_count} ` +
+            `pushed=${scanRes.pushed_count} skipped=${scanRes.skipped_count} errors=${scanRes.errors.length}`
+        );
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }

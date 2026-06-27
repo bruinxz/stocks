@@ -73,12 +73,22 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     owner: 'data',
     description: '历史 K 线回补',
   },
+  // 实时行情快照刷新 — 支持 2 种 cron 模式:
+  //   (A) 老 universe='market' / limit=5000: 20min 间隔, '5,25 9,10,13,14 * * 1-5'
+  //       覆盖全 A 股 5500 票, AI 引擎下游需要.
+  //   (B) CE-A 新 universe_source='intraday' / limit=500: 2min 间隔
+  //       '*/2 9-11,13-14 * * 1-5'. 走 IntradayUniverseService 选 ≤500 票活跃
+  //       universe (持仓 + 涨跌幅榜 + 涨停 + 成交额), batch_size=100. 给实时机会
+  //       推送 / 异动告警类下游用. ops 在 prod 手动 INSERT 新 ScheduledTask 行启用,
+  //       不在 ensureDefaultTasks 里默认 active=true (避免代码层强加新 cron).
   {
     type: 'REALTIME_QUOTE_SYNC',
     category: 'data_sync',
     owner: 'data',
     intraday: true,
-    description: '盘中实时行情快照刷新 (TradingAgents prompt 数据源)',
+    recommendedCron: '*/2 9-11,13-14 * * 1-5',
+    description:
+      '盘中实时行情快照刷新 (TradingAgents prompt 数据源). 2 模式: market 全量 (20min) / intraday 活跃 ≤500 (2min, CE-A)',
   },
   {
     type: 'BENCHMARK_INDEX_SYNC',
@@ -722,6 +732,19 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     owner: 'ops',
     recommendedCron: '0 2 * * *',
     description: '每日 02:00 全库 pg_dump → backups/YYYY-MM-DD.sql.gz, 保留 30 天',
+  },
+  // CE-B (2026-06-26) — 盘中实时机会规则引擎.
+  // 每 3min 拉 IntradayUniverseService.resolveUniverse() (≤500 票) → 跑 10 类
+  // detector → 命中走 analyzeStock 二次审核 (overall_confidence × 100 ≥ 65) →
+  // 调 intradayOpportunityPusher.push (内置 dedup / circuit breaker / 飞书 fan-out).
+  // ops 在生产 INSERT 新 ScheduledTask 行启用; 默认不在 ensureDefaultTasks 强加.
+  {
+    type: 'INTRADAY_OPPORTUNITY_SCAN',
+    category: 'quant_engine',
+    owner: 'quant',
+    intraday: true,
+    recommendedCron: '*/3 9-11,13-14 * * 1-5',
+    description: '盘中 3min 跑 10 类机会规则 → analyzeStock 二次审核 → 飞书机会卡片推送',
   },
 ]);
 

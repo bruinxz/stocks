@@ -133,13 +133,34 @@ async function main() {
   assertEqual('lag 0 → ok', d2.status, 'ok');
   const d3 = await checkDailyBar(new FakeDataSource({ dailyMax: '2026-06-21' }), now);
   assertEqual('lag 1 (默认 ≤1) → ok', d3.status, 'ok');
-  const d4 = await checkDailyBar(new FakeDataSource({ dailyMax: '2026-06-18' }), now);
-  assertEqual('lag 4 → fail', d4.status, 'fail');
+  // 2026-06-27 修复后用 trade-day lag (周末 + 节假日不计入), 之前自然日 lag=4 现 = 2 (只缺 6-22 工作日, 6-19 端午 / 6-20 周六 / 6-21 周日 都跳过)
+  // 用 6-17 (上周三) 拿 maxDate 强制 2 个交易日 lag: 缺 6-18 周四 + 6-22 周一 (跳过 6-19 端午 + 6-20/21 周末)
+  const d4 = await checkDailyBar(new FakeDataSource({ dailyMax: '2026-06-17' }), now);
+  assertEqual('trade-day lag 2 (跨端午周末) → fail', d4.status, 'fail');
   const dNon = await checkDailyBar(
     new FakeDataSource({ dailyMax: null }),
     new Date('2026-06-21T03:00:00Z')
   );
   assertEqual('非工作日 → ok', dNon.status, 'ok');
+
+  // 2026-06-27 prod 事故回归: "周五入库 周二 18:30 检查" — 自然日 lag=4 但
+  // 周末不算入库间隔, 只缺周一+周二两个交易日 → fail. 旧 diffDays 版会算 4
+  // 但 off-by-one bug (UTC+1) 让 lag 永远显示 ≤1 静默通过, 修复后正确判 fail.
+  const tueAfterClose = new Date('2026-06-30T10:30:00Z'); // 周二 18:30 CST
+  const dWeekend = await checkDailyBar(
+    new FakeDataSource({ dailyMax: '2026-06-26' }), // 周五入库
+    tueAfterClose
+  );
+  assertEqual('周五入库 周二 18:30 (缺 周一+周二) → fail', dWeekend.status, 'fail');
+  assertEqual('详情中显示缺 2 个交易日', /缺 2 个交易日/.test(dWeekend.detail), true);
+
+  // "周五入库 周一 18:30 检查" — 只缺周一 1 个交易日, lag=1 == threshold → ok
+  const monAfterClose = new Date('2026-06-29T10:30:00Z'); // 周一 18:30 CST
+  const dMon = await checkDailyBar(
+    new FakeDataSource({ dailyMax: '2026-06-26' }),
+    monAfterClose
+  );
+  assertEqual('周五入库 周一 18:30 (缺 周一 1 个交易日) → ok', dMon.status, 'ok');
 
   // ===========================================================================
   console.log('\n[4] checkFactorStdZero...');

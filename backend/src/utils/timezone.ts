@@ -58,6 +58,8 @@ export function convertUTCToEast8(utcDate: string | Date): string {
  * (如 `2026-06-25T08:09:00.597Z`), 用户读到 "08:09" 以为系统时间错了 (实际是 16:09 北京).
  * 改用本函数后, 时区上下文显式标注 (UTC+8), 不可能再误读.
  *
+ * CE-C (2026-06-25): IntradayOpportunityPusher 卡片"触发时间" footer 同款使用本 helper.
+ *
  * @param date 可选, 默认为当前时间; 也接受 string (ISO) / Date.
  * @returns 形如 `2026-06-25 16:09:00 (UTC+8)`
  */
