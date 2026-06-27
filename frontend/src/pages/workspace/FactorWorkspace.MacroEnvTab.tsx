@@ -141,7 +141,7 @@ const MacroEnvTab: React.FC = () => {
               <Statistic
                 title="当前市场环境"
                 value={regime.market_regime_label || regime.market_regime}
-                valueStyle={{ fontSize: 28, color: regimeColor(regime.market_regime) }}
+                valueStyle={{ fontSize: 18, color: regimeColor(regime.market_regime) }}
               />
               <div style={{ marginTop: 6 }}>
                 <Tag color="blue">沪深 300 20日: {regime.benchmark_return_20d_pct?.toFixed(2)}%</Tag>
@@ -181,7 +181,7 @@ const MacroEnvTab: React.FC = () => {
                     />
                   </Tooltip>
                   {v.yoy_pct != null && (
-                    <div style={{ fontSize: 11, color: '#999', marginTop: 4 }}>
+                    <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
                       yoy {v.yoy_pct.toFixed(2)}%
                     </div>
                   )}
@@ -217,7 +217,7 @@ const MacroEnvTab: React.FC = () => {
                     suffix={
                       v.change_5d_pct != null ? (
                         <span style={{
-                          fontSize: 11,
+                          fontSize: 12,
                           marginLeft: 6,
                           color: Number(v.change_5d_pct) >= 0 ? '#cf1322' : '#3f8600',
                         }}>
@@ -226,7 +226,7 @@ const MacroEnvTab: React.FC = () => {
                       ) : undefined
                     }
                   />
-                  <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>
+                  <div style={{ fontSize: 12, color: '#999', marginTop: 2 }}>
                     {v.date}
                   </div>
                 </Card>
@@ -237,8 +237,8 @@ const MacroEnvTab: React.FC = () => {
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={qvixChartData}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-              <YAxis tick={{ fontSize: 10 }} />
+              <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+              <YAxis tick={{ fontSize: 12 }} />
               <RechartsTooltip />
               <Legend />
               <Line type="monotone" dataKey="50etf" stroke="#f39c12" dot={false} name="50ETF" />
@@ -288,7 +288,7 @@ const MacroEnvTab: React.FC = () => {
                 width: 92,
                 render: (v: string) => (
                   <a onClick={() => navigate(`/stock/${v}`)}>
-                    <Text code style={{ fontSize: 11 }}>{v}</Text>
+                    <Text code style={{ fontSize: 12 }}>{v}</Text>
                   </a>
                 ),
               },
@@ -357,14 +357,14 @@ const MacroEnvTab: React.FC = () => {
                 dataIndex: 'buyer',
                 width: 200,
                 ellipsis: true,
-                render: (v: string) => <Text style={{ fontSize: 11 }}>{v || '—'}</Text>,
+                render: (v: string) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text>,
               },
               {
                 title: '卖方',
                 dataIndex: 'seller',
                 width: 200,
                 ellipsis: true,
-                render: (v: string) => <Text style={{ fontSize: 11 }}>{v || '—'}</Text>,
+                render: (v: string) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text>,
               },
             ]}
           />

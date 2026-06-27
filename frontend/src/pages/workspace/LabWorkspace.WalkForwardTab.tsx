@@ -414,7 +414,7 @@ const WalkForwardTab: React.FC<WalkForwardTabProps> = ({ strategies }) => {
         key: 'best_params_json',
         render: (params: any) =>
           params && Object.keys(params).length ? (
-            <Text code style={{ fontSize: 11 }}>
+            <Text code style={{ fontSize: 12 }}>
               {JSON.stringify(params)}
             </Text>
           ) : (

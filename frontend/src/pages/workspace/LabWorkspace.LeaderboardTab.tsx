@@ -155,7 +155,7 @@ const LeaderboardTab: React.FC<{
         <div>beta: {attr.beta == null ? '—' : attr.beta.toFixed(2)}</div>
         <div>样本数: {attr.sample_count}</div>
         {attr.period_start && attr.period_end && (
-          <div style={{ color: '#999', fontSize: 11 }}>
+          <div style={{ color: '#999', fontSize: 12 }}>
             区间: {attr.period_start} ~ {attr.period_end}
           </div>
         )}
@@ -186,7 +186,7 @@ const LeaderboardTab: React.FC<{
         <Space>
           <TrophyOutlined style={{ color: '#fa8c16' }} />
           <span>策略排行榜</span>
-          <Tag color="purple">{items.length} 个策略</Tag>
+          <Tag color="blue">{items.length} 个策略</Tag>
         </Space>
       }
       extra={
@@ -234,7 +234,7 @@ const LeaderboardTab: React.FC<{
               render: (k: string) => (
                 <div>
                   <Text strong>{nameMap.get(k) || k}</Text>
-                  <div style={{ fontSize: 10, color: '#999' }}>{k}</div>
+                  <div style={{ fontSize: 12, color: '#999' }}>{k}</div>
                 </div>
               ),
             },
@@ -334,8 +334,8 @@ const LeaderboardTab: React.FC<{
                 const label = d.toISOString().slice(0, 10);
                 return (
                   <Tooltip title={v}>
-                    <Text style={{ fontSize: 11 }}>{label}</Text>
-                    <div style={{ fontSize: 10, color: '#999' }}>
+                    <Text style={{ fontSize: 12 }}>{label}</Text>
+                    <div style={{ fontSize: 12, color: '#999' }}>
                       {days === 0 ? '今日' : `${days}天前`}
                     </div>
                   </Tooltip>
@@ -345,7 +345,7 @@ const LeaderboardTab: React.FC<{
           ]}
         />
       )}
-      <div style={{ marginTop: 12, fontSize: 11, color: '#999' }}>
+      <div style={{ marginTop: 12, fontSize: 12, color: '#999' }}>
         说明：每个策略取最新一次回测结果。夏普&gt;1.5 = 优秀，&gt;0.5 = 可用，&lt;0 =
         亏损。回撤&gt;20% 高风险。
       </div>

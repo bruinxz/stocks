@@ -500,7 +500,7 @@ const LabWorkspace: React.FC = () => {
                 style={{
                   background: '#fafafa',
                   border: '1px solid #f0f0f0',
-                  borderRadius: 4,
+                  borderRadius: 8,
                   padding: 12,
                   maxHeight: 360,
                   overflow: 'auto',
@@ -562,18 +562,18 @@ const LabWorkspace: React.FC = () => {
 const STRATEGY_CATEGORY_DISPLAY: Record<string, { label: string; color: string }> = {
   multi_factor: { label: '多因子', color: 'blue' },
   momentum: { label: '动量', color: 'orange' },
-  event_driven: { label: '事件驱动', color: 'volcano' },
-  trend: { label: '趋势', color: 'cyan' },
-  reversal: { label: '反转', color: 'purple' },
+  event_driven: { label: '事件驱动', color: 'red' },
+  trend: { label: '趋势', color: 'blue' },
+  reversal: { label: '反转', color: 'blue' },
   value: { label: '价值', color: 'green' },
-  quality: { label: '质量', color: 'gold' },
-  pattern: { label: '形态', color: 'magenta' },
+  quality: { label: '质量', color: 'default' },
+  pattern: { label: '形态', color: 'red' },
   other: { label: '其他', color: 'default' },
 };
 
 const STRATEGY_RISK_DISPLAY: Record<string, { label: string; color: string }> = {
   low: { label: '低风险', color: 'green' },
-  medium: { label: '中风险', color: 'gold' },
+  medium: { label: '中风险', color: 'default' },
   high: { label: '高风险', color: 'red' },
 };
 
@@ -980,7 +980,7 @@ const CompareTab: React.FC<{
       render: (text: string, row: BacktestTask) => (
         <Space direction="vertical" size={0}>
           <Text strong>{text}</Text>
-          <Text type="secondary" style={{ fontSize: 11 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
             #{row.id} · 创建 {dayjs(row.created_at).format('MM-DD HH:mm')}
           </Text>
         </Space>
@@ -1004,7 +1004,7 @@ const CompareTab: React.FC<{
       render: (keys: string[]) => (
         <Space size={4} wrap>
           {(keys || []).slice(0, 3).map(k => (
-            <Tag key={k} style={{ fontSize: 11 }}>
+            <Tag key={k} style={{ fontSize: 12 }}>
               {k}
             </Tag>
           ))}
@@ -1143,8 +1143,8 @@ const CompareChartCard: React.FC<{ items: BacktestCompareItem[] }> = ({ items })
         <ResponsiveContainer>
           <LineChart data={data}>
             <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={30} />
-            <YAxis tickFormatter={v => `${v}%`} tick={{ fontSize: 11 }} />
+            <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
+            <YAxis tickFormatter={v => `${v}%`} tick={{ fontSize: 12 }} />
             <RechartsTooltip
               formatter={(value: any) => [`${Number(value).toFixed(2)}%`, '累计收益']}
             />
@@ -1275,8 +1275,8 @@ const CompareDrawdownCard: React.FC<{
         <ResponsiveContainer>
           <AreaChart data={merged}>
             <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={30} />
-            <YAxis tickFormatter={v => `${v}%`} tick={{ fontSize: 11 }} domain={['auto', 0]} />
+            <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
+            <YAxis tickFormatter={v => `${v}%`} tick={{ fontSize: 12 }} domain={['auto', 0]} />
             <RechartsTooltip formatter={(value: any) => [`${Number(value).toFixed(2)}%`, '回撤']} />
             <ReferenceLine y={0} stroke="#999" />
             <Legend />
@@ -1378,7 +1378,7 @@ const CompareRollingSharpeCard: React.FC<{
       title={`滚动夏普曲线（${windowDays} 日窗口 — 冠军策略，越高越稳）`}
       extra={
         <Tooltip title="窗口不足的日期不显示（Recharts connectNulls 跳过）。年化系数 sqrt(252)。">
-          <Tag color="cyan">window={windowDays}</Tag>
+          <Tag color="blue">window={windowDays}</Tag>
         </Tooltip>
       }
     >
@@ -1397,8 +1397,8 @@ const CompareRollingSharpeCard: React.FC<{
         <ResponsiveContainer>
           <LineChart data={merged}>
             <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={30} />
-            <YAxis tick={{ fontSize: 11 }} />
+            <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
+            <YAxis tick={{ fontSize: 12 }} />
             <RechartsTooltip
               formatter={(value: any) =>
                 value === null || value === undefined
@@ -1503,7 +1503,7 @@ const CompareMonthlyReturnsCard: React.FC<{
                       {item.task_name}
                     </Text>
                     {item.best_strategy_name && (
-                      <Text type="secondary" style={{ fontSize: 11 }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
                         · {item.best_strategy_name}
                       </Text>
                     )}
@@ -1570,13 +1570,13 @@ const MonthlyHeatmap: React.FC<{ response: BacktestMonthlyReturnsResponse }> = (
         type: 'category',
         data: monthLabels,
         splitArea: { show: true },
-        axisLabel: { fontSize: 11 },
+        axisLabel: { fontSize: 12 },
       },
       yAxis: {
         type: 'category',
         data: yearLabels,
         splitArea: { show: true },
-        axisLabel: { fontSize: 11 },
+        axisLabel: { fontSize: 12 },
       },
       visualMap: {
         min: -symMax,
@@ -1587,7 +1587,7 @@ const MonthlyHeatmap: React.FC<{ response: BacktestMonthlyReturnsResponse }> = (
         bottom: 4,
         itemWidth: 14,
         itemHeight: 110,
-        textStyle: { fontSize: 11 },
+        textStyle: { fontSize: 12 },
         // A 股语义：red = up（赚钱）, green = down（亏钱）
         inRange: {
           color: [
@@ -1610,7 +1610,7 @@ const MonthlyHeatmap: React.FC<{ response: BacktestMonthlyReturnsResponse }> = (
           data: seriesData,
           label: {
             show: true,
-            fontSize: 10,
+            fontSize: 12,
             formatter: (p: any) =>
               p.data?.[2] !== undefined ? `${Number(p.data[2]).toFixed(1)}%` : '',
           },
@@ -1713,7 +1713,7 @@ const CompareTableCard: React.FC<{ result: BacktestCompareResponse }> = ({ resul
           <Text strong style={{ fontSize: 12 }}>
             {item.task_name}
           </Text>
-          <Text type="secondary" style={{ fontSize: 11 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
             #{item.task_id}
           </Text>
         </Space>
@@ -1734,11 +1734,11 @@ const CompareTableCard: React.FC<{ result: BacktestCompareResponse }> = ({ resul
             <Space size={4}>
               <CheckCircleOutlined style={{ color: COMPARE_COLORS[idx % COMPARE_COLORS.length] }} />
               {percentTag(cell.total_return_pct)}
-              <Text type="secondary" style={{ fontSize: 11 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
                 / 超额 {fmtPct(cell.excess_return_pct)}
               </Text>
             </Space>
-            <Text type="secondary" style={{ fontSize: 11 }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>
               回撤 {fmtPct(cell.max_drawdown_pct)} · 夏普{' '}
               {Number(cell.sharpe_ratio || 0).toFixed(2)} · {cell.trade_count || 0} 笔 · 换手{' '}
               {fmtPct(cell.turnover_rate ? cell.turnover_rate * 100 : 0)}
@@ -1855,8 +1855,8 @@ const OptimizationRunsTab: React.FC = () => {
 
   const typeMeta: Record<string, { color: string; label: string }> = {
     grid_search: { color: 'blue', label: 'Grid Search' },
-    bayesian: { color: 'purple', label: 'Bayesian' },
-    walk_forward: { color: 'volcano', label: 'Walk-Forward' },
+    bayesian: { color: 'blue', label: 'Bayesian' },
+    walk_forward: { color: 'red', label: 'Walk-Forward' },
   };
 
   const verdictMeta: Record<string, { color: string; label: string }> = {
@@ -2072,8 +2072,8 @@ const OptimizationRunsTab: React.FC = () => {
                     style={{
                       background: '#f8fafc',
                       padding: 8,
-                      borderRadius: 4,
-                      fontSize: 11,
+                      borderRadius: 8,
+                      fontSize: 12,
                       maxHeight: 200,
                       overflow: 'auto',
                     }}
@@ -2088,8 +2088,8 @@ const OptimizationRunsTab: React.FC = () => {
                       style={{
                         background: '#f8fafc',
                         padding: 8,
-                        borderRadius: 4,
-                        fontSize: 11,
+                        borderRadius: 8,
+                        fontSize: 12,
                         maxHeight: 200,
                         overflow: 'auto',
                       }}
@@ -2104,8 +2104,8 @@ const OptimizationRunsTab: React.FC = () => {
                     style={{
                       background: '#f8fafc',
                       padding: 8,
-                      borderRadius: 4,
-                      fontSize: 11,
+                      borderRadius: 8,
+                      fontSize: 12,
                       maxHeight: 200,
                       overflow: 'auto',
                     }}

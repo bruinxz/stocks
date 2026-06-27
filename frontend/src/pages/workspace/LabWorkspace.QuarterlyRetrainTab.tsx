@@ -65,7 +65,7 @@ const formatPrimaryMetric = (c: RetrainCandidate) => {
   return (
     <Tooltip title={`${label}: ${c.primary_metric.toFixed(4)}`}>
       <Text style={{ color: tone, fontWeight: 500 }}>{c.primary_metric.toFixed(3)}</Text>
-      <Text type="secondary" style={{ fontSize: 10, marginLeft: 4 }}>
+      <Text type="secondary" style={{ fontSize: 12, marginLeft: 4 }}>
         {label}
       </Text>
     </Tooltip>
@@ -175,7 +175,7 @@ const QuarterlyRetrainTab: React.FC<QuarterlyRetrainTabProps> = ({ strategies = 
           <Space>
             <ExperimentOutlined />
             <Text strong>季度参数重训面板</Text>
-            <Tag color="geekblue">US-050 / FE-011</Tag>
+            {/* Phase 3 (2026-06-27): US-XXX 装饰 Tag 已退役. */}
           </Space>
         }
         extra={
@@ -267,7 +267,7 @@ const QuarterlyRetrainTab: React.FC<QuarterlyRetrainTabProps> = ({ strategies = 
                   title={
                     <Space>
                       <Text strong>{displayName}</Text>
-                      <Text type="secondary" style={{ fontSize: 11 }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
                         {strategyName}
                       </Text>
                       {shadow ? (

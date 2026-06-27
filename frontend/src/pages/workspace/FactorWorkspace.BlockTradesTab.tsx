@@ -140,7 +140,7 @@ const BlockTradesTab: React.FC = () => {
         title={
           <Space>
             <span>大宗交易明细</span>
-            <Tag color="purple">{trades.length} 笔</Tag>
+            <Tag color="blue">{trades.length} 笔</Tag>
           </Space>
         }
         extra={
@@ -178,7 +178,7 @@ const BlockTradesTab: React.FC = () => {
                 render: (_: any, r: BlockTrade) => (
                   <Space size={4}>
                     <Text strong>{r.stock_name || r.stock_code}</Text>
-                    <Text code style={{ fontSize: 10 }}>{r.stock_code}</Text>
+                    <Text code style={{ fontSize: 12 }}>{r.stock_code}</Text>
                   </Space>
                 ),
               },
@@ -245,7 +245,7 @@ const BlockTradesTab: React.FC = () => {
                 ellipsis: true,
                 render: (v: string) => (
                   <Tooltip title={v}>
-                    <Text style={{ fontSize: 11 }}>{v || '—'}</Text>
+                    <Text style={{ fontSize: 12 }}>{v || '—'}</Text>
                   </Tooltip>
                 ),
               },
@@ -256,7 +256,7 @@ const BlockTradesTab: React.FC = () => {
                 ellipsis: true,
                 render: (v: string) => (
                   <Tooltip title={v}>
-                    <Text style={{ fontSize: 11 }}>{v || '—'}</Text>
+                    <Text style={{ fontSize: 12 }}>{v || '—'}</Text>
                   </Tooltip>
                 ),
               },

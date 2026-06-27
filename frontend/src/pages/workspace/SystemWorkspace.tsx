@@ -76,7 +76,7 @@ const MARKDOWN_COMPONENTS = {
 
 const STATUS_LABEL: Record<string, { label: string; color: string }> = {
   pending: { label: '待处理', color: 'default' },
-  in_progress: { label: '处理中', color: 'gold' },
+  in_progress: { label: '处理中', color: 'default' },
   resolved: { label: '已解决', color: 'green' },
   dismissed: { label: '已忽略', color: 'red' },
 };
@@ -84,7 +84,7 @@ const STATUS_LABEL: Record<string, { label: string; color: string }> = {
 const CLASSIFICATION_LABEL: Record<string, { label: string; color: string }> = {
   bug: { label: 'Bug', color: 'red' },
   feature_request: { label: '功能建议', color: 'blue' },
-  question: { label: '使用问题', color: 'cyan' },
+  question: { label: '使用问题', color: 'blue' },
   praise: { label: '好评', color: 'green' },
   other: { label: '其他', color: 'default' },
 };
@@ -238,7 +238,7 @@ function FeedbackTab() {
                               src={buildImageSrc(url)}
                               width={96}
                               height={96}
-                              style={{ objectFit: 'cover', borderRadius: 4 }}
+                              style={{ objectFit: 'cover', borderRadius: 8 }}
                             />
                           ))}
                         </Space>

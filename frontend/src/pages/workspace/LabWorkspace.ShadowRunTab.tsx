@@ -192,7 +192,7 @@ const ShadowRunTab: React.FC = () => {
           <Space>
             <SwapOutlined />
             <Text strong>多维引擎 Shadow vs 生产对比</Text>
-            <Tag color="geekblue">US-051 / FE-012</Tag>
+            {/* Phase 3 (2026-06-27): US-XXX 装饰 Tag 已退役. */}
           </Space>
         }
         extra={
@@ -319,7 +319,7 @@ const ShadowRunTab: React.FC = () => {
               title={
                 <Space>
                   <Text strong>Analyzer 健康度</Text>
-                  <Text type="secondary" style={{ fontSize: 11 }}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
                     起始: {vm.since || '—'} · 共 {vm.analyzers.length} 个 analyzer
                   </Text>
                 </Space>

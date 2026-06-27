@@ -555,7 +555,7 @@ const AdvancedQuantTab: React.FC = () => {
             size="small"
             extra={
               metaModel ? (
-                <Tag color="purple">{metaModel.version} (acc={metaModel.insample_accuracy})</Tag>
+                <Tag color="blue">{metaModel.version} (acc={metaModel.insample_accuracy})</Tag>
               ) : (
                 <Tag color="default">无训练模型 (fallback rule)</Tag>
               )
@@ -622,7 +622,7 @@ const AdvancedQuantTab: React.FC = () => {
                   dataIndex: 'method',
                   key: 'method',
                   width: 110,
-                  render: (v: string) => <Tag color="cyan">{v}</Tag>,
+                  render: (v: string) => <Tag color="blue">{v}</Tag>,
                 },
                 {
                   title: 'N',
@@ -693,13 +693,13 @@ const AdvancedQuantTab: React.FC = () => {
               <Card size="small" bordered hoverable>
                 <Statistic
                   title={
-                    <Tag color={TIER_COLOR[tier]} style={{ fontSize: 11 }}>
+                    <Tag color={TIER_COLOR[tier]} style={{ fontSize: 12 }}>
                       {TIER_LABEL[tier]}
                     </Tag>
                   }
                   value={governorByTier[tier] ?? 0}
                   suffix="个"
-                  valueStyle={{ fontSize: 16 }}
+                  valueStyle={{ fontSize: 18 }}
                 />
               </Card>
             </Col>

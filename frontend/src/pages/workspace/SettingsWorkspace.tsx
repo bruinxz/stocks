@@ -277,42 +277,22 @@ const SettingsWorkspace: React.FC = () => {
     );
   }, [activeKey, config, pushView]);
 
+  // Phase 3 (2026-06-27): 装饰性 US-XXX / Sprint NN+ Tag 已退役 (用户原话"AI 感太强").
+  // 仅保留功能性按钮 (刷新). 元数据信息回归到 git commit message + jsdoc.
   const headerActions =
     activeKey === 'notifications' ? (
-      <Space>
-        <Button icon={<ReloadOutlined />} onClick={() => void refresh()} loading={loading}>
-          刷新
-        </Button>
-        <Tag color="processing">US-063 通知通道</Tag>
-      </Space>
+      <Button icon={<ReloadOutlined />} onClick={() => void refresh()} loading={loading}>
+        刷新
+      </Button>
     ) : activeKey === 'push-channels' ? (
-      <Space>
-        <Button
-          icon={<ReloadOutlined />}
-          onClick={() => void refreshPushChannels()}
-          loading={pushLoading}
-        >
-          刷新
-        </Button>
-        <Tag color="purple">US-080 推送渠道</Tag>
-      </Space>
-    ) : activeKey === 'sizing' ? (
-      <Tag color="cyan">仓位策略 (Sprint 26+)</Tag>
-    ) : activeKey === 'portfolio-construction' ? (
-      <Tag color="geekblue">组合构建 (Sprint 29+)</Tag>
-    ) : activeKey === 'analysis-engine' ? (
-      <Tag color="volcano">US-065 分析引擎接入</Tag>
-    ) : activeKey === 'risk-parameters' ? (
-      <Tag color="red">US-066 风控参数中心</Tag>
-    ) : activeKey === 'strategy-kill-switch' ? (
-      <Tag color="red">US-069 策略 kill-switch</Tag>
-    ) : activeKey === 'todo-suggestions' ? (
-      <Tag color="gold">US-068 待办建议</Tag>
-    ) : activeKey === 'black-swan' ? (
-      <Tag color="red">US-133 PR-018 黑天鹅历史</Tag>
-    ) : (
-      <Tag color="processing">待迁移现有个人中心 / 用户管理页</Tag>
-    );
+      <Button
+        icon={<ReloadOutlined />}
+        onClick={() => void refreshPushChannels()}
+        loading={pushLoading}
+      >
+        刷新
+      </Button>
+    ) : null;
 
   // ---- 单字段更新 helpers ------------------------------------------------
 
@@ -1628,7 +1608,7 @@ const SettingsWorkspace: React.FC = () => {
           description={
             target ? (
               <Space direction="vertical" align="center">
-                <span style={{ fontSize: 13, color: '#666' }}>
+                <span style={{ fontSize: 14, color: '#666' }}>
                   本 tab 待整合，请暂时去旧版 {target.label} 页面操作：
                 </span>
                 <span style={{ fontSize: 12, color: '#999' }}>{target.desc}</span>

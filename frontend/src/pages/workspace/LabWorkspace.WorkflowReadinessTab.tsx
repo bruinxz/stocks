@@ -67,7 +67,7 @@ const STATUS_META: Record<
   },
   degraded: {
     label: '需复核',
-    color: 'gold',
+    color: 'default',
     progress: 'normal',
     icon: <WarningOutlined />,
   },
