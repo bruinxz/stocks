@@ -15756,3 +15756,522 @@ a {
   font-family: var(--font-mono) !important;
   font-variant-numeric: tabular-nums;
 }
+
+/* ============================================================================
+ * Phase 9 (2026-06-28) — 全局模块精致化
+ *   用户原话: "细化到每一个模块, 每一个展示"
+ *
+ * 升级模块 (B.1 - B.10):
+ *   B.1  modern-sider  — 220px Sider, violet 渐变 logo + 大圆角 menu pill
+ *   B.2  modern-header — 56px 顶 nav, 去 user pill (回 sider 底部)
+ *   B.3  workspace-kpi-bar — 28px 大标题, 透明背景 + 1px 分隔线
+ *   B.4  ant-card      — 14px 大圆角, hover translateY(-1px)
+ *   B.5  ant-table     — 11px UPPERCASE thead, 16px 行高
+ *   B.6  ant-input/select/picker — 8px 圆角, focus 紫色光圈
+ *   B.7  ant-btn       — 8px 圆角, primary 用 ink-1 (黑)
+ *   B.8  ant-tag       — 6px 圆角 + soft 背景, 去边框
+ *   B.9  ws-tab-header — Stripe 风 eyebrow + 32px h1 + 副标题
+ *   B.10 home-reco-card — hover 顶部 accent line (violet)
+ * ============================================================================ */
+
+/* ---------- B.1 modern-sider 升级 ---------- */
+.modern-sider {
+  background: var(--bg-elevated) !important;
+  border-right: 1px solid var(--border-subtle) !important;
+}
+.modern-sider-inner {
+  padding: 20px 10px;
+  background: var(--bg-elevated);
+}
+.modern-logo {
+  display: flex !important;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 10px 22px !important;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 14px;
+  height: auto !important;
+}
+.modern-logo .logo-icon {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 10px !important;
+  background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%) !important;
+  color: #ffffff !important;
+  font-size: 17px !important;
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.25) !important;
+  flex-shrink: 0;
+}
+.modern-logo .logo-copy strong {
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.025em !important;
+  color: var(--ink-1) !important;
+  line-height: 1.2;
+}
+.modern-logo .logo-copy em {
+  font-size: 10px !important;
+  font-style: normal;
+  letter-spacing: 0.04em !important;
+  color: var(--ink-3) !important;
+  margin-top: 2px;
+}
+.modern-menu {
+  padding: 6px 4px 18px !important;
+}
+.modern-menu .ant-menu-item,
+.modern-menu .ant-menu-submenu-title {
+  height: 40px !important;
+  line-height: 40px !important;
+  margin: 2px 4px !important;
+  border-radius: 8px !important;
+  padding-inline: 12px !important;
+  font-size: 13.5px !important;
+  font-weight: 500 !important;
+  color: var(--ink-2) !important;
+  transition: background 120ms cubic-bezier(0.4, 0, 0.2, 1),
+    color 120ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.modern-menu .ant-menu-item:hover,
+.modern-menu .ant-menu-submenu-title:hover {
+  background: var(--bg-hover) !important;
+  color: var(--ink-1) !important;
+}
+.modern-menu .ant-menu-item-selected {
+  background: var(--bg-sunken) !important;
+  color: var(--ink-1) !important;
+  font-weight: 600 !important;
+}
+.modern-menu .ant-menu-item-selected .anticon {
+  color: var(--ink-1) !important;
+}
+.modern-menu .anticon {
+  font-size: 15px !important;
+}
+
+/* ---------- B.2 modern-header 升级 ---------- */
+.modern-header {
+  background: var(--bg-elevated) !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+  padding: 0 28px !important;
+  height: 56px !important;
+  line-height: 56px !important;
+  box-shadow: none !important;
+}
+.header-context {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.header-context span {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase;
+  color: var(--ink-3) !important;
+  background: transparent !important;
+  padding: 0 !important;
+}
+.header-context strong {
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.015em !important;
+  color: var(--ink-1) !important;
+}
+
+/* ---------- B.3 workspace-kpi-bar 升级 ---------- */
+.workspace-kpi-bar {
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+  border-radius: 0 !important;
+  margin-bottom: 24px !important;
+  box-shadow: none !important;
+}
+.workspace-kpi-bar .ant-card-body {
+  padding: 20px 4px 22px !important;
+}
+.workspace-kpi-bar__title h4.ant-typography {
+  font-size: 26px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.025em !important;
+  margin: 0 0 6px !important;
+  color: var(--ink-1) !important;
+  line-height: 1.15;
+}
+.workspace-kpi-bar__title .ant-typography {
+  font-size: 13.5px !important;
+  color: var(--ink-3) !important;
+}
+.workspace-kpi-bar .ant-statistic-title {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase;
+  color: var(--ink-3) !important;
+}
+.workspace-kpi-bar .ant-statistic-content {
+  font-size: 22px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.015em !important;
+  color: var(--ink-1) !important;
+}
+
+/* workspace 左侧 tab rail — 透明背景 + 右侧 1px 分隔线 */
+.workspace-side-tabs {
+  background: transparent !important;
+  border: none !important;
+  border-right: 1px solid var(--border-subtle) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 0 12px 0 0 !important;
+}
+.workspace-side-tabs .ant-card-body {
+  padding: 0 !important;
+}
+.workspace-side-tabs .ant-menu-item {
+  height: 38px !important;
+  line-height: 38px !important;
+  border-radius: 8px !important;
+  font-size: 13.5px !important;
+  font-weight: 500 !important;
+  margin: 2px 0 !important;
+}
+
+/* ---------- B.4 ant-card 全局微调 ---------- */
+.ant-card {
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 12px !important;
+  box-shadow: none !important;
+  transition: border-color 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.ant-card-hoverable:hover {
+  border-color: var(--border-default) !important;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm) !important;
+}
+.ant-card-head {
+  border-bottom: 1px solid var(--border-subtle) !important;
+  padding: 0 22px !important;
+  min-height: 54px !important;
+}
+.ant-card-head-title {
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+  padding: 17px 0 !important;
+}
+.ant-card-body {
+  padding: 22px !important;
+}
+.ant-card-small > .ant-card-head {
+  min-height: 44px !important;
+  padding: 0 16px !important;
+}
+.ant-card-small > .ant-card-head .ant-card-head-title {
+  font-size: 13.5px !important;
+  padding: 12px 0 !important;
+}
+.ant-card-small > .ant-card-body {
+  padding: 16px !important;
+}
+
+/* ---------- B.5 ant-table 全局精致化 ---------- */
+.ant-table-wrapper {
+  border-radius: 10px;
+  overflow: hidden;
+}
+.ant-table {
+  background: transparent !important;
+}
+.ant-table-thead > tr > th {
+  background: var(--bg) !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.05em !important;
+  text-transform: uppercase;
+  color: var(--ink-3) !important;
+  padding: 13px 14px !important;
+}
+.ant-table-tbody > tr > td {
+  padding: 14px !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+  font-size: 13.5px;
+  color: var(--ink-1);
+  vertical-align: middle;
+}
+.ant-table-tbody > tr:hover > td {
+  background: var(--bg-hover) !important;
+}
+.ant-table-tbody > tr:last-child > td {
+  border-bottom: none !important;
+}
+.ant-table.ant-table-small .ant-table-thead > tr > th {
+  padding: 10px 12px !important;
+}
+.ant-table.ant-table-small .ant-table-tbody > tr > td {
+  padding: 10px 12px !important;
+  font-size: 13px;
+}
+
+/* 数字列等宽 (workspace 内通用) */
+.ant-table-cell.tabular-nums,
+.ant-statistic-content,
+.workspace-kpi-bar .ant-statistic-content {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- B.6 Form 控件全局升级 ---------- */
+.ant-input,
+.ant-input-number-input,
+.ant-select-selector,
+.ant-picker {
+  border-radius: 8px !important;
+  border-color: var(--border-default) !important;
+  font-size: 13.5px !important;
+  transition: border-color 120ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 120ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.ant-input:hover,
+.ant-input-number:hover,
+.ant-select:hover .ant-select-selector,
+.ant-picker:hover {
+  border-color: var(--ink-4) !important;
+}
+.ant-input:focus,
+.ant-input-focused,
+.ant-input-number-focused,
+.ant-select-focused .ant-select-selector,
+.ant-picker-focused {
+  border-color: var(--brand) !important;
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1) !important;
+}
+.ant-form-item-label > label {
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  color: var(--ink-2) !important;
+  letter-spacing: -0.005em;
+}
+.ant-input-number {
+  border-radius: 8px !important;
+}
+
+/* ---------- B.7 ant-btn 微调 ---------- */
+.ant-btn {
+  border-radius: 8px !important;
+  font-weight: 500 !important;
+  transition: background 120ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 120ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 120ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 120ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.ant-btn-lg {
+  height: 44px !important;
+  padding: 0 20px !important;
+  font-size: 14px !important;
+}
+.ant-btn-sm {
+  border-radius: 6px !important;
+  font-size: 12.5px !important;
+}
+.ant-btn-primary {
+  background: var(--ink-1) !important;
+  border-color: var(--ink-1) !important;
+  color: #ffffff !important;
+}
+.ant-btn-primary:hover:not(:disabled) {
+  background: var(--ink-2) !important;
+  border-color: var(--ink-2) !important;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm) !important;
+}
+.ant-btn-primary:disabled,
+.ant-btn-primary[disabled] {
+  background: var(--ink-disabled) !important;
+  border-color: var(--ink-disabled) !important;
+  color: #ffffff !important;
+}
+.ant-btn-default {
+  border-color: var(--border-default) !important;
+  color: var(--ink-1) !important;
+  background: var(--bg-elevated) !important;
+}
+.ant-btn-default:hover:not(:disabled) {
+  border-color: var(--ink-3) !important;
+  background: var(--bg-hover) !important;
+  color: var(--ink-1) !important;
+}
+.ant-btn-text:hover:not(:disabled) {
+  background: var(--bg-hover) !important;
+}
+.ant-btn-link {
+  padding-inline: 0 !important;
+}
+
+/* ---------- B.8 ant-tag / Badge 简化 ---------- */
+.ant-tag {
+  border: 1px solid var(--border-subtle) !important;
+  background: var(--bg-sunken) !important;
+  color: var(--ink-2) !important;
+  font-size: 11.5px !important;
+  font-weight: 500 !important;
+  letter-spacing: -0.005em;
+  border-radius: 6px !important;
+  padding: 2px 8px !important;
+  line-height: 18px !important;
+}
+.ant-tag-success,
+.ant-tag-green {
+  background: var(--down-soft) !important;
+  color: var(--down-strong) !important;
+  border-color: transparent !important;
+}
+.ant-tag-error,
+.ant-tag-red {
+  background: var(--up-soft) !important;
+  color: var(--up-strong) !important;
+  border-color: transparent !important;
+}
+.ant-tag-warning,
+.ant-tag-orange,
+.ant-tag-gold {
+  background: var(--warning-soft) !important;
+  color: var(--warning) !important;
+  border-color: transparent !important;
+}
+.ant-tag-processing,
+.ant-tag-blue {
+  background: var(--brand-soft) !important;
+  color: var(--brand-text) !important;
+  border-color: transparent !important;
+}
+
+/* ---------- B.9 ws-tab-header (Phase 9 - Stripe 风页头三件套) ---------- */
+.ws-tab-header {
+  margin-bottom: 28px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.ws-tab-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 8px;
+}
+.ws-tab-title {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: var(--ink-1);
+  margin: 0 0 8px;
+  line-height: 1.1;
+}
+.ws-tab-subtitle {
+  font-size: 14.5px;
+  color: var(--ink-3);
+  margin: 0;
+  max-width: 720px;
+  line-height: 1.55;
+}
+.ws-tab-segmented {
+  margin-bottom: 28px;
+}
+.ws-tab-segmented.ant-segmented {
+  background: var(--bg-sunken) !important;
+  padding: 4px !important;
+  border-radius: 10px !important;
+}
+.ws-tab-segmented .ant-segmented-item {
+  font-weight: 500 !important;
+  font-size: 13.5px !important;
+  padding: 4px 14px !important;
+  border-radius: 7px !important;
+  color: var(--ink-3) !important;
+  transition: color 120ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.ws-tab-segmented .ant-segmented-item:hover {
+  color: var(--ink-1) !important;
+}
+.ws-tab-segmented .ant-segmented-item-selected {
+  background: var(--bg-elevated) !important;
+  color: var(--ink-1) !important;
+  font-weight: 600 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+}
+.ws-tab-segmented .ant-segmented-item-label {
+  line-height: 24px !important;
+  min-height: 24px !important;
+}
+
+/* ---------- B.10 home-reco-card hover accent line ---------- */
+.home-reco-card {
+  position: relative;
+  overflow: hidden;
+}
+.home-reco-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--brand) 50%, transparent 100%);
+  opacity: 0;
+  transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 1;
+  pointer-events: none;
+}
+.home-reco-card:hover::before {
+  opacity: 1;
+}
+
+/* HomeWorkspace 推荐 "为什么" 折叠区升级 (B.9 ext) */
+.home-reco-why-toggle {
+  padding: 0 !important;
+  height: auto !important;
+  color: var(--ink-3) !important;
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+  margin-top: 14px;
+}
+.home-reco-why-toggle:hover {
+  color: var(--brand) !important;
+  background: transparent !important;
+}
+.home-reco-why-body {
+  margin-top: 10px;
+  padding: 14px;
+  background: var(--bg-sunken);
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+}
+.home-reco-why-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  margin-bottom: 6px;
+}
+.home-reco-why-check {
+  color: var(--brand);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.home-reco-why-tip {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-default);
+  font-style: italic;
+}
+
+/* === End Phase 9 — 全局模块精致化 === */

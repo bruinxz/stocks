@@ -1729,7 +1729,7 @@ const SettingsWorkspace: React.FC = () => {
                   <Card hoverable onClick={() => setRiskSubView('todos')}>
                     <Statistic title="待办建议" value="AI 提醒" />
                     <Text type="secondary" style={{ fontSize: 12 }}>
-                      系统每日扫描你的持仓 + 策略状态生成"建议事项", 已读后自动归档。
+                      系统每日扫描你的持仓 + 策略状态生成「建议事项」, 已读后自动归档。
                     </Text>
                   </Card>
                 </Col>
