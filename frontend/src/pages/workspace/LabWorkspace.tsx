@@ -1019,7 +1019,7 @@ const CompareTab: React.FC<{
       render: (_: any, row: BacktestTask) => {
         const ret = row.run_summary?.best_return_pct;
         return Number.isFinite(Number(ret)) ? (
-          <Text strong style={{ color: Number(ret) >= 0 ? '#cf1322' : '#0f8f6b' }}>
+          <Text strong style={{ color: Number(ret) >= 0 ? '#dc2626' : '#0f8f6b' }}>
             {Number(ret).toFixed(2)}%
           </Text>
         ) : (
@@ -1102,7 +1102,7 @@ const CompareTab: React.FC<{
   );
 };
 
-const COMPARE_COLORS = ['#1677ff', '#52c41a', '#fa8c16', '#eb2f96'];
+const COMPARE_COLORS = ['#1677ff', '#16a34a', '#fa8c16', '#eb2f96'];
 
 const CompareChartCard: React.FC<{ items: BacktestCompareItem[] }> = ({ items }) => {
   // 将每个任务的 best_equity_curve 转成 [{ date, [task_id_X]: returnPct, ...}] 的形式
@@ -1559,7 +1559,7 @@ const MonthlyHeatmap: React.FC<{ response: BacktestMonthlyReturnsResponse }> = (
           const m = months[xi];
           const y = years[yi];
           if (m === undefined || y === undefined) return '';
-          const color = v >= 0 ? '#cf1322' : '#0f8f6b';
+          const color = v >= 0 ? '#dc2626' : '#0f8f6b';
           return `<b>${y}年${m}月</b><br/><span style="color:${color}">${v >= 0 ? '+' : ''}${Number(
             v
           ).toFixed(2)}%</span>`;
@@ -1787,7 +1787,7 @@ function percentTag(value?: number | null) {
   }
   const v = Number(value);
   return (
-    <Text strong style={{ color: v >= 0 ? '#cf1322' : '#0f8f6b' }}>
+    <Text strong style={{ color: v >= 0 ? '#dc2626' : '#0f8f6b' }}>
       {v.toFixed(2)}%
     </Text>
   );
@@ -1991,7 +1991,7 @@ const OptimizationRunsTab: React.FC = () => {
                 const v = r.summary?.mean_test_sharpe;
                 if (v === undefined || v === null) return '—';
                 return (
-                  <Text style={{ color: v > 0 ? '#3f8600' : v < 0 ? '#cf1322' : '#888' }}>
+                  <Text style={{ color: v > 0 ? '#16a34a' : v < 0 ? '#dc2626' : '#888' }}>
                     {Number(v).toFixed(3)}
                   </Text>
                 );
@@ -2015,7 +2015,7 @@ const OptimizationRunsTab: React.FC = () => {
                 if (v === undefined || v === null) return '—';
                 // PBO > 0.5 表示过拟合可能性高
                 return (
-                  <Text style={{ color: v > 0.5 ? '#cf1322' : '#888' }}>
+                  <Text style={{ color: v > 0.5 ? '#dc2626' : '#888' }}>
                     {Number(v).toFixed(3)}
                   </Text>
                 );
@@ -2034,7 +2034,7 @@ const OptimizationRunsTab: React.FC = () => {
                 return (
                   <Tooltip title={r.metadata_json?.deflated_sharpe?.explanation || ''}>
                     <Text
-                      style={{ color: sig ? '#3f8600' : '#cf1322', fontWeight: sig ? 600 : 400 }}
+                      style={{ color: sig ? '#16a34a' : '#dc2626', fontWeight: sig ? 600 : 400 }}
                     >
                       {Number(v).toFixed(3)}
                       {sig ? ' ✓' : ' ✗'}

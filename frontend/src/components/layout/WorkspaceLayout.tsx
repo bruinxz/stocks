@@ -41,27 +41,23 @@ export interface WorkspaceLayoutProps {
 }
 
 /**
- * Shared shell for the 6 unified workspaces introduced in US-002.
+ * Shared shell for the unified workspaces (US-002, refined in Phase 5 2026-06-27).
  *
  * Layout (desktop, ≥ 768px):
- *   ┌──────────── KPI bar (96px) ──────────────────────┐
- *   │ title / subtitle │ kpiSlot │ headerActions       │
+ *   ┌──────────── KPI bar (auto height, min 56px) ─────┐
+ *   │ title │ kpiSlot │ headerActions                   │
  *   ├──────────┬───────────────────────────────────────┤
- *   │ 220px    │                                       │
+ *   │ 180px    │                                       │
  *   │ tabs     │   children                            │
  *   │ rail     │                                       │
  *   └──────────┴───────────────────────────────────────┘
  *
- * Mobile (< 768px, US-095):
- *   - Left-rail Menu is hidden; a 「☰ 标签」button appears at top-left of the
- *     content area which opens a top-anchored Drawer with the same Menu.
- *   - Tab selection closes the Drawer automatically (tap-then-go UX).
- *   - KPI bar wraps onto multiple lines; the inner flex collapses gracefully
- *     via `.workspace-kpi-bar__inner` media query in index.css.
+ * Mobile (< 768px, US-095): drawer-triggered tabs, KPI bar wraps.
  *
- * The shell deliberately stays presentational — tab content is fully owned by
- * the parent workspace page. Workspace shells that don't need secondary nav
- * can simply omit `tabs` to get a clean header + content split.
+ * Phase 5 visual notes (docs/audit/design_system_2026_06_27.md):
+ *   - KPI bar height: 固定 96px → auto (min 56px), 让标题+KPI 单行紧凑.
+ *   - Tabs rail width: 220px → 180px, brand-soft selected pill, 删除 box-shadow.
+ *   - 删除外层 Card 包裹的"假浮岛"感, 改为底部 1px border 分隔.
  */
 const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
   title,
@@ -103,8 +99,8 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
     <div className="workspace-shell">
       <Card
         className="workspace-kpi-bar"
-        bodyStyle={{ padding: '16px 24px', height: '100%' }}
-        style={{ height: isMobile ? 'auto' : 96, marginBottom: 16 }}
+        bodyStyle={{ padding: '12px 20px' }}
+        style={{ marginBottom: 16 }}
       >
         <div className="workspace-kpi-bar__inner">
           <div className="workspace-kpi-bar__title">
@@ -112,7 +108,7 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
               {title}
             </Title>
             {subtitle ? (
-              <Paragraph type="secondary" style={{ margin: 0, fontSize: 13 }}>
+              <Paragraph type="secondary" style={{ margin: 0, fontSize: 12 }}>
                 {subtitle}
               </Paragraph>
             ) : null}
@@ -147,8 +143,8 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
         {hasTabs && !isMobile ? (
           <Card
             className="workspace-side-tabs"
-            bodyStyle={{ padding: 8 }}
-            style={{ width: 220, flexShrink: 0 }}
+            bodyStyle={{ padding: 6 }}
+            style={{ width: 180, flexShrink: 0 }}
           >
             <Menu
               mode="inline"

@@ -104,7 +104,7 @@ const BlockTradesTab: React.FC = () => {
                 title="溢价>5% (抢筹)"
                 value={stats.premium_trades}
                 suffix="笔"
-                valueStyle={{ color: '#cf1322' }}
+                valueStyle={{ color: '#dc2626' }}
               />
             </Card>
           </Col>
@@ -114,7 +114,7 @@ const BlockTradesTab: React.FC = () => {
                 title="折价>5% (甩货)"
                 value={stats.discount_trades}
                 suffix="笔"
-                valueStyle={{ color: '#3f8600' }}
+                valueStyle={{ color: '#16a34a' }}
               />
             </Card>
           </Col>
@@ -205,7 +205,7 @@ const BlockTradesTab: React.FC = () => {
                 render: (v: number | null) => {
                   if (v == null) return '—';
                   const n = Number(v);
-                  const color = n > 5 ? '#cf1322' : n < -5 ? '#3f8600' : '#999';
+                  const color = n > 5 ? '#dc2626' : n < -5 ? '#16a34a' : '#999';
                   return (
                     <Text style={{ color, fontWeight: Math.abs(n) > 5 ? 600 : 400 }}>
                       {n > 0 ? '+' : ''}{n.toFixed(2)}%
@@ -232,7 +232,7 @@ const BlockTradesTab: React.FC = () => {
                   if (v == null) return '—';
                   const n = Number(v);
                   return (
-                    <Text style={{ color: n >= 0 ? '#cf1322' : '#3f8600' }}>
+                    <Text style={{ color: n >= 0 ? '#dc2626' : '#16a34a' }}>
                       {n > 0 ? '+' : ''}{n.toFixed(2)}%
                     </Text>
                   );

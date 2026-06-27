@@ -40,9 +40,9 @@ import type { SnapshotRow, TradeRow } from '../../services/portfolioWorkspaceSer
 // ---------- 常量与颜色 ----------
 
 /** 上涨色 — antd `3f8600` 主绿, 与持仓盈亏同色 */
-export const DAILY_PNL_POSITIVE_COLOR = '#3f8600';
+export const DAILY_PNL_POSITIVE_COLOR = '#16a34a';
 /** 下跌色 — antd `cf1322` 主红, 与持仓盈亏同色 */
-export const DAILY_PNL_NEGATIVE_COLOR = '#cf1322';
+export const DAILY_PNL_NEGATIVE_COLOR = '#dc2626';
 /** 中性灰 — flat 0 时 */
 export const DAILY_PNL_NEUTRAL_COLOR = '#1f1f1f';
 

@@ -523,10 +523,10 @@ const WalkForwardTab: React.FC<WalkForwardTabProps> = ({ strategies }) => {
                   color:
                     summary?.dsr !== null && summary?.dsr !== undefined
                       ? summary.dsr >= 0.95
-                        ? '#3f8600'
+                        ? '#16a34a'
                         : summary.dsr >= 0.8
                         ? '#fa8c16'
-                        : '#cf1322'
+                        : '#dc2626'
                       : undefined,
                 }}
                 suffix={
@@ -546,8 +546,8 @@ const WalkForwardTab: React.FC<WalkForwardTabProps> = ({ strategies }) => {
                   color:
                     summary?.pbo !== null && summary?.pbo !== undefined
                       ? summary.pbo < 0.5
-                        ? '#3f8600'
-                        : '#cf1322'
+                        ? '#16a34a'
+                        : '#dc2626'
                       : undefined,
                 }}
                 suffix={
@@ -589,7 +589,7 @@ const WalkForwardTab: React.FC<WalkForwardTabProps> = ({ strategies }) => {
                     summary?.out_of_sample_decay !== null &&
                     summary?.out_of_sample_decay !== undefined
                       ? summary.out_of_sample_decay <= 0
-                        ? '#3f8600'
+                        ? '#16a34a'
                         : '#fa8c16'
                       : undefined,
                 }}

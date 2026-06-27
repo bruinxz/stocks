@@ -132,10 +132,10 @@ const ShadowRunTab: React.FC = () => {
           style={{
             color:
               v >= ERROR_RATE_CRITICAL
-                ? '#cf1322'
+                ? '#dc2626'
                 : v >= ERROR_RATE_DEGRADED
                 ? '#d48806'
-                : '#3f8600',
+                : '#16a34a',
           }}
         >
           {formatPercent(v)}
@@ -152,10 +152,10 @@ const ShadowRunTab: React.FC = () => {
           style={{
             color:
               v < CONFIDENCE_DEGRADED_MIN
-                ? '#cf1322'
+                ? '#dc2626'
                 : v < CONFIDENCE_HEALTHY_MIN
                 ? '#d48806'
-                : '#3f8600',
+                : '#16a34a',
           }}
         >
           {formatPercent(v)}
@@ -172,10 +172,10 @@ const ShadowRunTab: React.FC = () => {
           style={{
             color:
               v > DATA_MISSING_DEGRADED_MAX
-                ? '#cf1322'
+                ? '#dc2626'
                 : v > DATA_MISSING_HEALTHY_MAX
                 ? '#d48806'
-                : '#3f8600',
+                : '#16a34a',
           }}
         >
           {Number.isFinite(v) ? v.toFixed(2) : '—'}
@@ -266,10 +266,10 @@ const ShadowRunTab: React.FC = () => {
                   valueStyle={{
                     color:
                       vm.consistencyLevel === 'healthy'
-                        ? '#3f8600'
+                        ? '#16a34a'
                         : vm.consistencyLevel === 'degraded'
                         ? '#d48806'
-                        : '#cf1322',
+                        : '#dc2626',
                   }}
                   suffix={renderHealthTag(vm.consistencyLevel)}
                 />
@@ -370,7 +370,7 @@ const ShadowRunTab: React.FC = () => {
                         vm.forwardReturn.mean_pct === null
                           ? undefined
                           : vm.forwardReturn.mean_pct >= 0
-                          ? '#cf1322'
+                          ? '#dc2626'
                           : '#0f8f6b',
                     }}
                   />

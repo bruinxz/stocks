@@ -832,7 +832,7 @@ const EdgeHypothesisCard: React.FC<{
         {expectedEdge !== null && (
           <Col xs={12} md={6}>
             <Text type="secondary">预期年化 alpha：</Text>
-            <Text strong style={{ color: expectedEdge > 0 ? '#3f8600' : '#cf1322' }}>
+            <Text strong style={{ color: expectedEdge > 0 ? '#16a34a' : '#dc2626' }}>
               {expectedEdge.toFixed(1)}%
             </Text>
           </Col>
@@ -908,7 +908,7 @@ const LiveBindingCard: React.FC<{ detail: StrategyDetailResponse }> = ({ detail 
             title="近 7 日信号数"
             value={live_binding.recent_signal_count}
             suffix="条"
-            valueStyle={{ color: bound ? '#cf1322' : undefined }}
+            valueStyle={{ color: bound ? '#dc2626' : undefined }}
           />
         </Col>
         <Col xs={24} md={8}>
@@ -1114,7 +1114,7 @@ const LatestICCard: React.FC<{ detail: StrategyDetailResponse }> = ({ detail }) 
             value={latest_ic.ic_mean === null ? '—' : Number(latest_ic.ic_mean).toFixed(4)}
             valueStyle={{
               color:
-                latest_ic.ic_mean !== null && Number(latest_ic.ic_mean) > 0 ? '#cf1322' : '#0f8f6b',
+                latest_ic.ic_mean !== null && Number(latest_ic.ic_mean) > 0 ? '#dc2626' : '#0f8f6b',
             }}
           />
         </Col>
@@ -1124,7 +1124,7 @@ const LatestICCard: React.FC<{ detail: StrategyDetailResponse }> = ({ detail }) 
             value={latest_ic.ic_ir === null ? '—' : Number(latest_ic.ic_ir).toFixed(2)}
             valueStyle={{
               color:
-                latest_ic.ic_ir !== null && Number(latest_ic.ic_ir) >= 0.5 ? '#cf1322' : undefined,
+                latest_ic.ic_ir !== null && Number(latest_ic.ic_ir) >= 0.5 ? '#dc2626' : undefined,
             }}
           />
         </Col>
@@ -1244,7 +1244,7 @@ function percentTag(value?: number | null) {
   }
   const v = Number(value);
   return (
-    <Text strong style={{ color: v >= 0 ? '#cf1322' : '#0f8f6b' }}>
+    <Text strong style={{ color: v >= 0 ? '#dc2626' : '#0f8f6b' }}>
       {v.toFixed(2)}%
     </Text>
   );

@@ -330,7 +330,7 @@ const AppContent: React.FC = () => {
 
   return (
     <Layout className="modern-layout">
-      <Sider width={256} className="modern-sider">
+      <Sider width={220} className="modern-sider">
         <div className="modern-sider-inner">
           <div>
             <div className="modern-logo">
@@ -596,31 +596,57 @@ const App: React.FC = () => {
     <ConfigProvider
       locale={zhCN}
       theme={{
+        // Phase 5 (2026-06-27) — 视觉重设计 (方向 B: 极简专业).
+        // 详见 docs/audit/design_system_2026_06_27.md. token 与 index.css :root
+        // 严格保持同源 (--brand / --ink-1 / --bg-canvas / radius-1 / shadow-1).
         token: {
-          colorPrimary: '#1f3a5f',
-          colorInfo: '#2f6f73',
-          colorSuccess: '#1f8a70',
-          colorWarning: '#c9822b',
-          colorError: '#c94b4b',
-          borderRadius: 12,
-          fontFamily:
-            "'IBM Plex Sans', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif",
+          colorPrimary: '#4338ca',
+          colorInfo: '#4338ca',
+          // A 股惯例 — 红涨绿跌. success 用于跌 (绿), error 用于涨 (红).
+          colorSuccess: '#16a34a',
+          colorWarning: '#d97706',
+          colorError: '#dc2626',
+          colorTextBase: '#0f172a',
+          colorBgBase: '#ffffff',
+          colorBgLayout: '#f8fafc',
           colorBgContainer: '#ffffff',
-          colorText: '#1e252b',
-          colorTextSecondary: '#65727e',
+          colorBorder: '#e2e8f0',
+          colorBorderSecondary: '#e2e8f0',
+          colorText: '#0f172a',
+          colorTextSecondary: '#475569',
+          colorTextTertiary: '#94a3b8',
+          colorLink: '#4338ca',
+          borderRadius: 6,
+          borderRadiusLG: 10,
+          borderRadiusSM: 4,
+          fontSize: 13,
+          fontSizeLG: 15,
+          fontSizeXL: 20,
+          fontFamily:
+            "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif",
+          boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)',
+          boxShadowSecondary: '0 4px 16px rgba(15, 23, 42, 0.08)',
+          controlHeight: 32,
         },
         components: {
-          Button: { borderRadius: 10, controlHeight: 36, fontWeight: 600 },
-          Card: { borderRadiusLG: 16 },
+          Button: { borderRadius: 6, controlHeight: 32, fontWeight: 500 },
+          Card: { borderRadiusLG: 10, paddingLG: 16 },
           Table: {
-            borderRadius: 14,
-            headerBg: '#f7f1e7',
-            headerColor: '#55616c',
-            rowHoverBg: '#fbf7ef',
+            borderRadius: 10,
+            headerBg: '#f1f5f9',
+            headerColor: '#475569',
+            rowHoverBg: '#eef2ff',
+            cellPaddingBlock: 10,
+            cellPaddingInline: 12,
           },
-          Input: { borderRadius: 10, controlHeight: 36 },
-          Select: { borderRadius: 10, controlHeight: 36 },
-          DatePicker: { borderRadius: 10, controlHeight: 36 },
+          Input: { borderRadius: 6, controlHeight: 32 },
+          Select: { borderRadius: 6, controlHeight: 32 },
+          DatePicker: { borderRadius: 6, controlHeight: 32 },
+          Tag: { borderRadiusSM: 4 },
+          Statistic: { titleFontSize: 12, contentFontSize: 28 },
+          Tabs: { titleFontSize: 13, inkBarColor: '#4338ca' },
+          Modal: { borderRadiusLG: 10 },
+          Drawer: { borderRadiusLG: 10 },
         },
       }}
     >

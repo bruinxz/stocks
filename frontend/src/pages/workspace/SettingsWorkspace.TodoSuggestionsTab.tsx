@@ -315,7 +315,7 @@ const TodoSuggestionsTab: React.FC = () => {
               value={view?.by_priority.critical ?? 0}
               suffix="项"
               valueStyle={{
-                color: view?.by_priority.critical ? '#cf1322' : undefined,
+                color: view?.by_priority.critical ? '#dc2626' : undefined,
               }}
             />
           </Col>

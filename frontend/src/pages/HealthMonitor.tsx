@@ -86,7 +86,7 @@ const HealthMonitor: React.FC = () => {
       <Card
         title={
           <Space>
-            <HeartOutlined style={{ color: '#cf1322' }} />
+            <HeartOutlined style={{ color: '#dc2626' }} />
             <span>系统健康总览</span>
             {health && <Tag color="blue">运行 {formatUptime(health.uptime_seconds)}</Tag>}
           </Space>

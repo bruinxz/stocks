@@ -174,7 +174,7 @@ const StockExplorer: React.FC = () => {
           const price = formatPrice(v);
           const pct = Number(row.change_percent);
           const hasChange = Number.isFinite(pct) && pct !== 0;
-          const color = hasChange ? (pct >= 0 ? '#cf1322' : '#3f8600') : '#999';
+          const color = hasChange ? (pct >= 0 ? '#dc2626' : '#16a34a') : '#999';
           return (
             <div style={{ textAlign: 'right' }}>
               <div style={{ fontSize: 12, fontWeight: 500, color }}>{price}</div>

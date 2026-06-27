@@ -122,11 +122,11 @@ export const ACTION_LABELS_V2: Readonly<Record<ActionV2, string>> = Object.freez
 /** action 颜色 — 红=买 (中股惯例) / 绿=卖 / 蓝=持 */
 export const ACTION_COLORS_V2: Readonly<Record<ActionV2, string>> = Object.freeze({
   strong_buy: '#9b1f00',
-  buy: '#f5222d',
+  buy: '#dc2626',
   add: '#fa541c',
   hold: '#1890ff',
   reduce: '#73d13d',
-  sell: '#52c41a',
+  sell: '#16a34a',
   strong_sell: '#135200',
 });
 
@@ -151,9 +151,9 @@ export function scoreToBarValue(score: number | null | undefined): number {
  */
 export function scoreToColor(score: number | null | undefined): string {
   if (typeof score !== 'number' || !Number.isFinite(score)) return '#bfbfbf';
-  if (score >= 50) return '#f5222d'; // 强利多
+  if (score >= 50) return '#dc2626'; // 强利多
   if (score >= 20) return '#fa541c'; // 弱利多
-  if (score <= -50) return '#52c41a'; // 强利空
+  if (score <= -50) return '#16a34a'; // 强利空
   if (score <= -20) return '#73d13d'; // 弱利空
   return '#1890ff'; // 中性
 }
@@ -164,9 +164,9 @@ export function scoreToColor(score: number | null | undefined): string {
  */
 export function confidenceToColor(confidence: number | null | undefined): string {
   if (typeof confidence !== 'number' || !Number.isFinite(confidence)) return '#bfbfbf';
-  if (confidence < 0.3) return '#f5222d';
+  if (confidence < 0.3) return '#dc2626';
   if (confidence < 0.6) return '#fa8c16';
-  return '#52c41a';
+  return '#16a34a';
 }
 
 // ===========================================================================

@@ -529,7 +529,7 @@ const ChatBubble: React.FC<{
         )}
       </div>
       {isUser && (
-        <Avatar size={28} icon={<UserOutlined />} style={{ background: '#52c41a', flexShrink: 0 }} />
+        <Avatar size={28} icon={<UserOutlined />} style={{ background: '#16a34a', flexShrink: 0 }} />
       )}
     </div>
   );

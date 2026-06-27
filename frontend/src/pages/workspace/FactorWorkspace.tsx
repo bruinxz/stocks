@@ -164,15 +164,15 @@ const FACTOR_HEALTH_DISPLAY: Record<
 /** IC_90d 数值染色: ≥0.03 绿 / ≤-0.03 红 (反向有效) / 其它默认; null → undefined 让组件用默认色 */
 function ic90dColor(v: number | null): string | undefined {
   if (v === null || !Number.isFinite(v)) return undefined;
-  if (v >= 0.03) return '#52c41a';
-  if (v <= -0.03) return '#cf1322';
+  if (v >= 0.03) return '#16a34a';
+  if (v <= -0.03) return '#dc2626';
   return undefined;
 }
 
 /** IC_IR 数值染色: |ir|≥0.5 绿稳健 / |ir|≥0.3 不染色 (灰区) / |ir|<0.3 灰; null → undefined */
 function icIrColor(v: number | null): string | undefined {
   if (v === null || !Number.isFinite(v)) return undefined;
-  if (Math.abs(v) >= 0.5) return '#52c41a';
+  if (Math.abs(v) >= 0.5) return '#16a34a';
   return undefined;
 }
 
@@ -1016,7 +1016,7 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
             const delta = aiSuggested ? weightDeltas[factor.name] ?? 0 : null;
             // delta 颜色: |delta| < 2% 灰色 (基本一致) / 正值 (用户高于 AI) 红 / 负值 (用户低于 AI) 绿
             const deltaColor =
-              delta === null || Math.abs(delta) < 2 ? '#999' : delta > 0 ? '#cf1322' : '#52c41a';
+              delta === null || Math.abs(delta) < 2 ? '#999' : delta > 0 ? '#dc2626' : '#16a34a';
             return (
               <Col xs={24} md={12} key={factor.name}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -1324,11 +1324,11 @@ const IndustryBoardTab: React.FC<{
   // 单元格颜色: 涨幅越正越红, 越负越绿 (中国 A 股配色)
   const pctColor = (pct: number | null): string => {
     if (pct == null || !Number.isFinite(pct)) return '#999';
-    return pct > 0 ? '#cf1322' : pct < 0 ? '#389e0d' : '#666';
+    return pct > 0 ? '#dc2626' : pct < 0 ? '#16a34a' : '#666';
   };
   const flowColor = (val: number | null): string => {
     if (val == null || !Number.isFinite(val)) return '#999';
-    return val > 0 ? '#cf1322' : val < 0 ? '#389e0d' : '#666';
+    return val > 0 ? '#dc2626' : val < 0 ? '#16a34a' : '#666';
   };
   const fmtBigMoney = (val: number | null): string => {
     if (val == null || !Number.isFinite(val)) return '—';
@@ -1481,9 +1481,9 @@ const IndustryBoardTab: React.FC<{
                     const dn = row.today.declining_count ?? 0;
                     return (
                       <span style={{ fontSize: 12 }}>
-                        <span style={{ color: '#cf1322' }}>{up}</span>
+                        <span style={{ color: '#dc2626' }}>{up}</span>
                         <span style={{ color: '#999' }}> / </span>
-                        <span style={{ color: '#389e0d' }}>{dn}</span>
+                        <span style={{ color: '#16a34a' }}>{dn}</span>
                       </span>
                     );
                   },
@@ -1701,7 +1701,7 @@ const SparklinePctRow: React.FC<{
         const p = points.find(x => x.trade_date === d);
         const v = p?.change_pct ?? null;
         const h = v == null ? 4 : Math.max(2, (Math.abs(v) / max) * 24);
-        const color = v == null ? '#e0e0e0' : v >= 0 ? '#cf1322' : '#389e0d';
+        const color = v == null ? '#e0e0e0' : v >= 0 ? '#dc2626' : '#16a34a';
         return (
           <div
             key={d}
@@ -1794,7 +1794,7 @@ const SentimentBoardTab: React.FC<{
 
   const rankColor = (rank: number | null | undefined): string => {
     if (rank == null) return '#999';
-    if (rank <= 10) return '#cf1322';
+    if (rank <= 10) return '#dc2626';
     if (rank <= 20) return '#fa8c16';
     if (rank <= 50) return '#faad14';
     return '#666';
@@ -1865,7 +1865,7 @@ const SentimentBoardTab: React.FC<{
           <Card
             title={
               <Space>
-                <ThunderboltOutlined style={{ color: '#cf1322' }} />
+                <ThunderboltOutlined style={{ color: '#dc2626' }} />
                 全市场人气榜 (东财 top {data.today_hot_rank_top20.length})
               </Space>
             }
@@ -2020,7 +2020,7 @@ const SentimentBoardTab: React.FC<{
                     align: 'right',
                     render: (v: number | null) => {
                       if (v == null) return <span style={{ fontSize: 12, color: '#999' }}>—</span>;
-                      const color = v > 0 ? '#cf1322' : v < 0 ? '#389e0d' : '#666';
+                      const color = v > 0 ? '#dc2626' : v < 0 ? '#16a34a' : '#666';
                       const arrow = v > 0 ? '↑' : v < 0 ? '↓' : '';
                       return (
                         <span style={{ fontSize: 12, color }}>
@@ -2105,7 +2105,7 @@ const SentimentBoardTab: React.FC<{
                     align: 'right',
                     sorter: (a, b) => (a.rank_breakout_delta ?? 0) - (b.rank_breakout_delta ?? 0),
                     render: (v: number | null) => (
-                      <span style={{ fontSize: 12, fontWeight: 600, color: '#cf1322' }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: '#dc2626' }}>
                         +{fmtNum(v)}
                       </span>
                     ),
@@ -2203,7 +2203,7 @@ const SentimentBoardTab: React.FC<{
                                 机构参与: {p.institution_participation}%
                               </div>
                               {p.hot_rank_em != null && (
-                                <div style={{ color: '#cf1322' }}>人气榜 #{p.hot_rank_em}</div>
+                                <div style={{ color: '#dc2626' }}>人气榜 #{p.hot_rank_em}</div>
                               )}
                             </div>
                           );
@@ -2681,7 +2681,7 @@ function buildPreviewColumns(
         a.composite_score - b.composite_score,
       defaultSortOrder: 'descend' as const,
       render: (v: number) => (
-        <Text strong style={{ color: v > 0 ? '#52c41a' : '#f5222d' }}>
+        <Text strong style={{ color: v > 0 ? '#16a34a' : '#dc2626' }}>
           {v.toFixed(3)}
         </Text>
       ),
@@ -2707,7 +2707,7 @@ function buildPreviewColumns(
       render: (_: unknown, record: FactorPreviewSignal) => {
         const z = record.factor_z_scores[name] ?? 0;
         return (
-          <Text style={{ color: z > 0 ? '#52c41a' : z < 0 ? '#f5222d' : undefined }}>
+          <Text style={{ color: z > 0 ? '#16a34a' : z < 0 ? '#dc2626' : undefined }}>
             {z.toFixed(2)}
           </Text>
         );
@@ -2759,7 +2759,7 @@ function buildLatestPickColumns(
         a.composite_score - b.composite_score,
       defaultSortOrder: 'descend' as const,
       render: (v: number) => (
-        <Text strong style={{ color: v > 0 ? '#52c41a' : '#f5222d' }}>
+        <Text strong style={{ color: v > 0 ? '#16a34a' : '#dc2626' }}>
           {v.toFixed(3)}
         </Text>
       ),
@@ -2855,11 +2855,11 @@ interface FactorDetailDrawerProps {
 }
 
 const QUINTILE_COLORS: Record<'Q1' | 'Q2' | 'Q3' | 'Q4' | 'Q5', string> = {
-  Q1: '#f5222d', // 空头组 红
+  Q1: '#dc2626', // 空头组 红
   Q2: '#fa8c16',
   Q3: '#bfbfbf', // 中性 灰
   Q4: '#73d13d',
-  Q5: '#52c41a', // 多头组 深绿
+  Q5: '#16a34a', // 多头组 深绿
 };
 
 const FactorDetailDrawer: React.FC<FactorDetailDrawerProps> = ({

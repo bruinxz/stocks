@@ -2213,8 +2213,8 @@ const DataUpdateStatus: React.FC = () => {
     if (!updateStats) return null;
 
     const successRateData = [
-      { name: '成功', value: updateStats.successfulUpdates, color: '#52c41a' },
-      { name: '失败', value: updateStats.failedUpdates, color: '#f5222d' },
+      { name: '成功', value: updateStats.successfulUpdates, color: '#16a34a' },
+      { name: '失败', value: updateStats.failedUpdates, color: '#dc2626' },
       { name: '进行中', value: updateStats.inProgressUpdates, color: '#1890ff' },
     ];
 

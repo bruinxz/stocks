@@ -176,7 +176,7 @@ const MacroEnvTab: React.FC = () => {
                       suffix={INDICATOR_UNIT[key] || ''}
                       valueStyle={{
                         fontSize: 18,
-                        color: key === 'pmi' ? (v.value >= 50 ? '#3f8600' : '#cf1322') : '#1677ff',
+                        color: key === 'pmi' ? (v.value >= 50 ? '#16a34a' : '#dc2626') : '#1677ff',
                       }}
                     />
                   </Tooltip>
@@ -219,7 +219,7 @@ const MacroEnvTab: React.FC = () => {
                         <span style={{
                           fontSize: 12,
                           marginLeft: 6,
-                          color: Number(v.change_5d_pct) >= 0 ? '#cf1322' : '#3f8600',
+                          color: Number(v.change_5d_pct) >= 0 ? '#dc2626' : '#16a34a',
                         }}>
                           5d {Number(v.change_5d_pct) >= 0 ? '+' : ''}{v.change_5d_pct}%
                         </span>
@@ -321,7 +321,7 @@ const MacroEnvTab: React.FC = () => {
                 sorter: (a: BlockTrade, b: BlockTrade) => (a.premium_pct ?? 0) - (b.premium_pct ?? 0),
                 render: (v: number | null) => {
                   if (v == null) return '—';
-                  const color = v >= 0 ? '#cf1322' : '#3f8600';
+                  const color = v >= 0 ? '#dc2626' : '#16a34a';
                   const label = v >= 0 ? '溢价' : '折价';
                   return (
                     <Tag color={Math.abs(v) > 5 ? (v > 0 ? 'red' : 'green') : 'default'}>
@@ -346,7 +346,7 @@ const MacroEnvTab: React.FC = () => {
                 render: (v: number | null) => {
                   if (v == null) return '—';
                   return (
-                    <span style={{ color: v >= 0 ? '#cf1322' : '#3f8600', fontSize: 12 }}>
+                    <span style={{ color: v >= 0 ? '#dc2626' : '#16a34a', fontSize: 12 }}>
                       {v >= 0 ? '+' : ''}{v.toFixed(2)}%
                     </span>
                   );
@@ -376,9 +376,9 @@ const MacroEnvTab: React.FC = () => {
 
 function regimeColor(regime: string): string {
   switch (regime) {
-    case 'bull': return '#3f8600';
-    case 'bear': return '#cf1322';
-    case 'stress': return '#cf1322';
+    case 'bull': return '#16a34a';
+    case 'bear': return '#dc2626';
+    case 'stress': return '#dc2626';
     case 'rebound': return '#fa8c16';
     case 'range': return '#1677ff';
     default: return '#999';

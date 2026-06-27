@@ -60,9 +60,9 @@ export const RECOMMENDATION_LABELS: Record<RecommendationKey, string> = {
 
 export const RECOMMENDATION_COLORS: Record<RecommendationKey, string> = {
   strong_buy: '#9b1f00',
-  buy: '#f5222d',
+  buy: '#dc2626',
   hold: '#1890ff',
-  sell: '#52c41a',
+  sell: '#16a34a',
   strong_sell: '#135200',
   unknown: '#8c8c8c',
 };

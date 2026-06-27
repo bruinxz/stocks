@@ -79,7 +79,7 @@ const DataMissingAlertsCard: React.FC<DataMissingAlertsCardProps> = ({ healthDat
       ? DATA_MISSING_SEVERITY_COLOR.critical
       : vm.warning > 0
       ? DATA_MISSING_SEVERITY_COLOR.warning
-      : '#52c41a';
+      : '#16a34a';
 
   return (
     <Card

@@ -152,7 +152,7 @@ const StrategyKillSwitchTab: React.FC = () => {
         okText: cfg.okText,
         okButtonProps: { danger: cfg.danger },
         cancelText: '取消',
-        icon: <ExclamationCircleOutlined style={{ color: '#f5222d' }} />,
+        icon: <ExclamationCircleOutlined style={{ color: '#dc2626' }} />,
         onOk: () => doToggle(row, nextEnabled),
       });
     },
@@ -213,13 +213,13 @@ const StrategyKillSwitchTab: React.FC = () => {
           title="启用中"
           value={kpi.enabledCount}
           suffix="只"
-          valueStyle={{ color: '#3f8600' }}
+          valueStyle={{ color: '#16a34a' }}
         />
         <Statistic
           title="已禁用"
           value={kpi.disabledCount}
           suffix="只"
-          valueStyle={{ color: kpi.disabledCount > 0 ? '#cf1322' : '#999' }}
+          valueStyle={{ color: kpi.disabledCount > 0 ? '#dc2626' : '#999' }}
         />
         <Statistic
           title="高风险启用中"
