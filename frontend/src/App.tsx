@@ -10,7 +10,13 @@ import {
   useNavigate,
   useParams,
 } from 'react-router-dom';
-import { UserOutlined, LogoutOutlined, BarChartOutlined, DownOutlined } from '@ant-design/icons';
+import {
+  UserOutlined,
+  LogoutOutlined,
+  BarChartOutlined,
+  DownOutlined,
+  SettingOutlined as AdminEntryIcon,
+} from '@ant-design/icons';
 import zhCN from 'antd/locale/zh_CN';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from './store/rootReducer';
@@ -31,6 +37,12 @@ const Login = lazy(() => import('./pages/Login'));
 const BacktestResults = lazy(() => import('./components/backtest/BacktestResults'));
 const RecommendationTrace = lazy(() => import('./pages/RecommendationTrace'));
 const StockDetail = lazy(() => import('./pages/StockDetail'));
+
+// Phase 6 (2026-06-27) — 新手主页 /home.
+// 用户原话: "我是个股票的新手小白, 想要用这套系统来帮我自动化赚钱, 但是现在
+// 还是太复杂". /home 是新手登录后的唯一一页 (无 tab 无侧栏), 3 区块 + 一键操作.
+// 与简易版 /workspace/easy (教学暖纸色) 并存, 互不替代.
+const HomeWorkspace = lazy(() => import('./pages/HomeWorkspace'));
 
 // Unified workspace shells (US-001/US-002 + Easy mode).
 const EasyQuantWorkspace = lazy(() => import('./pages/workspace/EasyQuantWorkspace'));
@@ -217,35 +229,32 @@ const AppContent: React.FC = () => {
     navigate('/login');
   };
 
-  // Phase 3 UI 简化 (2026-06-27): 主菜单 8 → 5 — 用户原话"页面太复杂".
-  //   1. 简易版 (默认登陆落地, 不动)
-  //   2. 今日
-  //   3. 持仓
-  //   4. 实验室 (吸收: 选股因子 / AI 顾问)
-  //   5. 设置 (admin only 下额外展现: 数据中心 / 系统介绍 / 用户管理)
-  // - 选股因子 → 合并到「实验室」二级 tab
-  // - 数据中心 / 系统介绍 → admin 才看到顶层菜单, 非 admin 走右上 "?" 按钮访问系统介绍
-  // - 旧 8 项的所有路由 (/workspace/factors /data /system) 全部保留, 不删任何
-  //   workspace 文件 — 只是顶层菜单层把它们隐藏起来.
+  // Phase 6 (2026-06-27) — 主菜单 admin-only.
+  // 用户原话: 新手"用不起来" → 普通用户登录直接进 /home, 不看任何菜单/侧栏.
+  // admin 仍能从 /home 右上角 ⚙ 入 /admin/today (即 /workspace/today), 走老路径.
+  // Phase 3 的 5 项菜单完全保留, 但只对 admin 渲染:
+  //   1. 今日 (今日作战)
+  //   2. 持仓
+  //   3. 实验室
+  //   4. 设置
+  //   5. 数据中心 / 系统介绍 (admin only)
+  // 注: 简易版 /workspace/easy 留在 admin 主菜单之外 — 由 App.tsx 自有路由进入.
   const isAdmin = user?.role === 'admin';
-  const mainMenuItems: MenuProps['items'] = useMemo(
-    () => {
-      const items: MenuProps['items'] = [
-        menuLink('/workspace/easy', <RocketOutlined />, '简易版'),
-        menuLink('/workspace/today', <CompassOutlined />, '今日'),
-        menuLink('/workspace/portfolio', <PieChartOutlined />, '持仓'),
-        menuLink('/workspace/lab', <ExperimentOutlined />, '实验室'),
-        menuLink('/workspace/settings', <SettingOutlined />, '设置'),
-      ];
-      if (isAdmin) {
-        // admin 才在顶层菜单挂"数据中心 / 系统介绍" — 普通用户从设置内访问.
-        items.push(menuLink('/workspace/data', <DatabaseOutlined />, '数据中心'));
-        items.push(menuLink('/workspace/system', <InfoCircleOutlined />, '系统介绍'));
-      }
-      return items;
-    },
-    [isAdmin]
-  );
+  const mainMenuItems: MenuProps['items'] = useMemo(() => {
+    if (!isAdmin) {
+      // 普通用户: 主菜单完全隐藏 — /home 一页搞定.
+      return [];
+    }
+    return [
+      menuLink('/workspace/today', <CompassOutlined />, '今日'),
+      menuLink('/workspace/portfolio', <PieChartOutlined />, '持仓'),
+      menuLink('/workspace/lab', <ExperimentOutlined />, '实验室'),
+      menuLink('/workspace/settings', <SettingOutlined />, '设置'),
+      menuLink('/workspace/data', <DatabaseOutlined />, '数据中心'),
+      menuLink('/workspace/system', <InfoCircleOutlined />, '系统介绍'),
+      menuLink('/workspace/easy', <RocketOutlined />, '简易版'),
+    ];
+  }, [isAdmin]);
 
   const flatMenuItems = useMemo(() => flattenMenu(mainMenuItems), [mainMenuItems]);
   const menuPath = useMemo(() => resolveMenuPath(location.pathname), [location.pathname]);
@@ -307,6 +316,56 @@ const AppContent: React.FC = () => {
           <Route path="/login" element={<Login />} />
         </Routes>
       </Suspense>
+    );
+  }
+
+  // Phase 6 (2026-06-27) — 新手主页 /home 短路渲染 (无 Sider / 无 admin Header).
+  // 极简顶栏 = Logo + 用户名 + (admin 才看到) ⚙ 进 /admin/today (走 admin 旧菜单).
+  // ProtectedRoute 仍生效 — 未登录跳 /login.
+  if (location.pathname === '/home') {
+    return (
+      <div className="home-shell">
+        <div className="home-topbar">
+          <div className="home-topbar-brand">
+            <BarChartOutlined className="home-topbar-brand-icon" />
+            <span>我的投资</span>
+          </div>
+          <div className="home-topbar-actions">
+            {isAdmin && (
+              <Link to="/workspace/today" className="home-topbar-admin-link" title="进入管理后台">
+                <AdminEntryIcon />
+              </Link>
+            )}
+            {token && (
+              <Dropdown menu={userMenuProps} placement="bottomRight" trigger={['click']}>
+                <div className="home-topbar-user">
+                  <Avatar
+                    size={28}
+                    style={{ backgroundColor: '#4338ca', fontSize: 12 }}
+                    icon={<UserOutlined />}
+                    src={avatarSrc}
+                  />
+                  <span className="home-topbar-user-name">{displayUsername}</span>
+                  <DownOutlined style={{ fontSize: 10, color: 'var(--ink-3, #94a3b8)' }} />
+                </div>
+              </Dropdown>
+            )}
+          </div>
+        </div>
+        <Suspense fallback={routeFallback}>
+          <Routes>
+            <Route
+              path="/home"
+              element={
+                <ProtectedRoute>
+                  <HomeWorkspace />
+                </ProtectedRoute>
+              }
+            />
+          </Routes>
+        </Suspense>
+        <CriticalAlertModal />
+      </div>
     );
   }
 
@@ -389,8 +448,9 @@ const AppContent: React.FC = () => {
         <Content className="modern-layout-content">
           <Suspense fallback={routeFallback}>
             <Routes>
-              {/* Default still lands existing users in the today workspace. */}
-              <Route path="/" element={<Navigate to="/workspace/today" replace />} />
+              {/* Phase 6 (2026-06-27) — 登录默认进 /home (新手主页),
+                  admin 走右上 ⚙ 进 /admin/today (实为 /workspace/today). */}
+              <Route path="/" element={<Navigate to="/home" replace />} />
 
               {/* Unified workspaces (US-001) */}
               <Route
@@ -581,8 +641,8 @@ const AppContent: React.FC = () => {
                 }
               />
 
-              {/* Anything else: park in today workspace */}
-              <Route path="*" element={<Navigate to="/workspace/today" replace />} />
+              {/* Anything else: 回 /home (新手主页) — Phase 6 之前是 /workspace/today */}
+              <Route path="*" element={<Navigate to="/home" replace />} />
             </Routes>
           </Suspense>
         </Content>

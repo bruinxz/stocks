@@ -32,7 +32,9 @@ const Login: React.FC = () => {
 
         message.success('登录成功！');
 
-        const from = (location.state as any)?.from?.pathname || '/dashboard';
+        // Phase 6 (2026-06-27): 登录后默认进 /home (新手主页 — 3 区块极简一页搞定).
+        // admin / 普通用户都默认 /home; admin 通过右上角 ⚙ 入 /admin/today.
+        const from = (location.state as any)?.from?.pathname || '/home';
         navigate(from, { replace: true });
       }
     } catch (error: any) {

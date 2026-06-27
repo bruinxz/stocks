@@ -14577,3 +14577,298 @@ a {
   background: var(--bg-surface) !important;
   box-shadow: var(--shadow-1) !important;
 }
+
+/* =========================================================================
+ * Phase 6 (2026-06-27) — 新手主页 /home 样式.
+ *
+ * 用户原话: "我是个股票的新手小白...让新手小白用起来。"
+ * 一页 4 区块 (账户 / 推荐 / 持仓 / 提示), 一键跟单 + 一键卖出.
+ * 实用极简: 无阴影, 大间距, 大按钮 (height 40px), 圆角 10px.
+ * 与简易版 /workspace/easy (.eq-*) 并存, 互不替代.
+ * ========================================================================= */
+.home-workspace {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  background: var(--bg-canvas);
+  min-height: calc(100vh - 56px);
+}
+
+.home-card {
+  border-radius: 10px !important;
+  border: 1px solid var(--border) !important;
+  background: var(--bg-surface) !important;
+  box-shadow: none !important;
+}
+
+.home-card .ant-card-head {
+  border-bottom: 1px solid var(--border-soft, #f1f5f9);
+  min-height: 48px;
+}
+
+.home-card .ant-card-head-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+/* --- 区块 1: 账户 --- */
+.home-account-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.home-account-label {
+  font-size: 12px;
+  color: var(--ink-3, #94a3b8);
+  letter-spacing: 0.04em;
+}
+
+.home-account-value {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--ink-1);
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+.home-account-sub {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.home-account-sub-label {
+  color: var(--ink-3, #94a3b8);
+  font-size: 12px;
+}
+
+/* --- 区块 2: 推荐 --- */
+.home-reco-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.15s ease;
+}
+
+.home-reco-item:hover {
+  border-color: var(--brand-soft, #c7d2fe);
+}
+
+.home-reco-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.home-reco-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.home-reco-idx {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: var(--brand-soft, #eef2ff);
+  color: var(--brand, #4338ca);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.home-reco-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+.home-reco-symbol {
+  font-size: 12px;
+  color: var(--ink-3, #94a3b8);
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+}
+
+.home-reco-price {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-1);
+  margin-left: 4px;
+}
+
+.home-reco-reason {
+  font-size: 12px;
+  color: var(--ink-2, #475569);
+  line-height: 1.6;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.home-reco-reason-label {
+  flex: 0 0 auto;
+  color: var(--ink-3, #94a3b8);
+  font-size: 11px;
+}
+
+.home-reco-meta {
+  font-size: 12px;
+  color: var(--ink-3, #94a3b8);
+}
+
+/* --- 区块 3: 持仓 --- */
+.home-pos-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.home-pos-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.home-pos-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.home-pos-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+.home-pos-symbol {
+  font-size: 12px;
+  color: var(--ink-3, #94a3b8);
+}
+
+.home-pos-meta {
+  font-size: 12px;
+  color: var(--ink-2, #475569);
+}
+
+/* --- 区块 4: 提示 --- */
+.home-tip-card {
+  background: var(--brand-soft, #eef2ff) !important;
+  border-color: #c7d2fe !important;
+}
+
+.home-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-1);
+  line-height: 1.6;
+}
+
+.home-tip-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--brand, #4338ca);
+  margin-top: 8px;
+}
+
+/* --- 极简顶栏 (App.tsx /home 短路渲染) --- */
+.home-shell {
+  min-height: 100vh;
+  background: var(--bg-canvas);
+}
+
+.home-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 56px;
+  padding: 0 24px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.home-topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+.home-topbar-brand-icon {
+  color: var(--brand, #4338ca);
+}
+
+.home-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.home-topbar-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 8px;
+  transition: background 0.15s ease;
+}
+
+.home-topbar-user:hover {
+  background: var(--brand-soft, #eef2ff);
+}
+
+.home-topbar-user-name {
+  font-size: 13px;
+  color: var(--ink-1);
+}
+
+.home-topbar-admin-link {
+  color: var(--ink-3, #94a3b8);
+  font-size: 18px;
+  padding: 6px;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+}
+
+.home-topbar-admin-link:hover {
+  color: var(--brand, #4338ca);
+  background: var(--brand-soft, #eef2ff);
+}
