@@ -61,20 +61,50 @@ const A_SHARE_HOLIDAYS_2027 = new Set<string>([
 ]);
 
 /**
+ * 内部 helper — 把任意 Date 转成 Asia/Shanghai 时区的 { isoDate, dow }.
+ *
+ * **历史踩坑 (2026-06-27 prod 事故):** 原实现用 `d.getTime() + 8h - d.getTimezoneOffset() * 60_000`
+ * 手算 offset, 在已经处于 CST 时区 (offset=-480) 的进程上等价于 `+8h - (-480 min) = +16h`,
+ * 让周五 16:00+ 全部被误判成周六, 30+ 个 cron 在周五盘后被节假日 guard 错杀.
+ *
+ * 正确做法: 直接走 `Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' })`,
+ * 让 IANA 时区库做转换, 不论 host 进程时区如何 (UTC / CST / 其它) 结果一致.
+ */
+function toShanghaiParts(date: Date | string): { isoDate: string; dow: number } {
+  const d = typeof date === 'string' ? new Date(date + 'T00:00:00+08:00') : date;
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'short',
+  });
+  const parts = fmt.formatToParts(d);
+  const get = (type: string): string => parts.find(p => p.type === type)?.value || '';
+  const isoDate = `${get('year')}-${get('month')}-${get('day')}`;
+  const dowMap: Record<string, number> = {
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
+  };
+  const dow = dowMap[get('weekday')] ?? -1;
+  return { isoDate, dow };
+}
+
+/**
  * 判断给定日期是否 A 股交易日.
  *
  * @param date Date 对象 or ISO string (YYYY-MM-DD)
  * @returns true if 工作日 + 非节假日 (或调休补班日)
  */
 export function isAShareTradeDay(date: Date | string): boolean {
-  const d = typeof date === 'string' ? new Date(date + 'T00:00:00+08:00') : date;
-  // 使用 Asia/Shanghai 时区判断
-  const shanghaiOffset = 8 * 60 * 60 * 1000;
-  const sh = new Date(d.getTime() + shanghaiOffset - d.getTimezoneOffset() * 60_000);
-  const isoDate = sh.toISOString().slice(0, 10);
+  const { isoDate, dow } = toShanghaiParts(date);
 
   // 周末 → 除非是调休补班日
-  const dow = sh.getUTCDay(); // 0=Sun 6=Sat
   if (dow === 0 || dow === 6) {
     return A_SHARE_MAKEUP_WORKDAYS_2026.has(isoDate);
   }
@@ -90,11 +120,7 @@ export function isAShareTradeDay(date: Date | string): boolean {
  * 返回原因 string. 用于日志/审计.
  */
 export function explainNonTradeDay(date: Date | string): string | null {
-  const d = typeof date === 'string' ? new Date(date + 'T00:00:00+08:00') : date;
-  const shanghaiOffset = 8 * 60 * 60 * 1000;
-  const sh = new Date(d.getTime() + shanghaiOffset - d.getTimezoneOffset() * 60_000);
-  const isoDate = sh.toISOString().slice(0, 10);
-  const dow = sh.getUTCDay();
+  const { isoDate, dow } = toShanghaiParts(date);
   if (dow === 0) return `周日 (${isoDate})`;
   if (dow === 6) return `周六 (${isoDate})`;
   if (A_SHARE_HOLIDAYS_2026.has(isoDate) || A_SHARE_HOLIDAYS_2027.has(isoDate)) {
