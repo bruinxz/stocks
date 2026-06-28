@@ -62,7 +62,8 @@ import {
   CheckOutlined,
 } from '@ant-design/icons';
 import { motion, useReducedMotion } from 'framer-motion';
-import Tilt from 'react-parallax-tilt';
+// Phase 14 (2026-06-28) — 删除 react-parallax-tilt 装饰. Stripe Dashboard
+// 不用 3D tilt — 高级感靠克制. Spring stagger 也改为 200ms fade-in.
 import { usePortfolio } from '../contexts/PortfolioContext';
 import {
   getPortfolio,
@@ -315,18 +316,9 @@ const HomeWorkspace: React.FC = () => {
   // Phase 11 — prefers-reduced-motion 用户禁用动画时 framer-motion + tilt 全部禁用
   const reduceMotion = useReducedMotion();
 
-  // Phase 11 — hero 鼠标跟随 spotlight. 用 ref + CSS variable 写 % 值,
-  // 不用 state 避免 60fps re-render. CSS .home-hero::after 读 --mouse-x/y.
+  // Phase 14 — 删除 hero 鼠标 spotlight 跟随 (Stripe 不做装饰特效).
+  // heroRef 仅保留 (motion.section 需要), mouse-move handler 移除.
   const heroRef = useRef<HTMLElement | null>(null);
-  const handleHeroMouseMove = useCallback((e: React.MouseEvent<HTMLElement>) => {
-    const el = heroRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
-    el.style.setProperty('--mouse-x', `${x}%`);
-    el.style.setProperty('--mouse-y', `${y}%`);
-  }, []);
 
   // 三个独立 fetch — 任一失败不阻塞其他区块.
   const [account, setAccount] = useState<AccountSummary | null>(null);
@@ -806,35 +798,16 @@ const HomeWorkspace: React.FC = () => {
       if (reduceMotion) {
         return cardInner;
       }
+      // Phase 14 — Tilt 3D 删除. 仅保留 200ms fade (无 spring 弹性, 无位移).
       return (
         <motion.div
           key={rec.symbol}
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{
-            type: 'spring',
-            stiffness: 220,
-            damping: 26,
-            delay: Math.min(indexInGroup * 0.06, 0.5),
-          }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.2, delay: Math.min(indexInGroup * 0.03, 0.3) }}
           className="home-reco-tilt"
         >
-          <Tilt
-            tiltMaxAngleX={5}
-            tiltMaxAngleY={5}
-            tiltReverse={false}
-            glareEnable
-            glareMaxOpacity={0.18}
-            glareColor="#a78bfa"
-            glarePosition="all"
-            glareBorderRadius="16px"
-            transitionSpeed={500}
-            scale={1.01}
-            perspective={1200}
-            gyroscope={false}
-          >
-            {cardInner}
-          </Tilt>
+          {cardInner}
         </motion.div>
       );
     },
@@ -852,7 +825,6 @@ const HomeWorkspace: React.FC = () => {
       <motion.section
         ref={heroRef as React.RefObject<HTMLElement>}
         className="home-hero"
-        onMouseMove={reduceMotion ? undefined : handleHeroMouseMove}
         initial={reduceMotion ? false : { opacity: 0, y: 12 }}
         animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
@@ -1031,27 +1003,16 @@ const HomeWorkspace: React.FC = () => {
           </section>
         );
         if (reduceMotion) return lessonInner;
+        // Phase 14 — Tilt 3D + glare 删除. 浅色 Stripe 卡 + 200ms fade.
         return (
           <motion.div
-            initial={{ opacity: 0, y: 14 }}
-            whileInView={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
             viewport={{ once: true, margin: '-80px' }}
-            transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: 0.2 }}
             className="home-lesson-tilt"
           >
-            <Tilt
-              tiltMaxAngleX={2.5}
-              tiltMaxAngleY={2.5}
-              glareEnable
-              glareMaxOpacity={0.08}
-              glareColor="#a78bfa"
-              glarePosition="all"
-              glareBorderRadius="20px"
-              transitionSpeed={600}
-              perspective={1600}
-            >
-              {lessonInner}
-            </Tilt>
+            {lessonInner}
           </motion.div>
         );
       })()}
@@ -1197,35 +1158,16 @@ const HomeWorkspace: React.FC = () => {
               if (reduceMotion) {
                 return inner;
               }
-              const glareColor =
-                (pos.unrealized_pnl ?? 0) >= 0 ? '#dc2626' /* up red */ : '#16a34a' /* down green */;
+              // Phase 14 — Tilt + glare 删除. 持仓卡用 200ms fade-in.
               return (
                 <motion.div
                   key={pos.id}
-                  initial={{ opacity: 0, y: 14 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{
-                    type: 'spring',
-                    stiffness: 220,
-                    damping: 26,
-                    delay: Math.min(posIdx * 0.05, 0.4),
-                  }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.2, delay: Math.min(posIdx * 0.03, 0.3) }}
                   className="home-pos-tilt"
                 >
-                  <Tilt
-                    tiltMaxAngleX={3}
-                    tiltMaxAngleY={3}
-                    glareEnable
-                    glareMaxOpacity={0.1}
-                    glareColor={glareColor}
-                    glarePosition="all"
-                    glareBorderRadius="16px"
-                    transitionSpeed={500}
-                    scale={1.005}
-                    perspective={1400}
-                  >
-                    {inner}
-                  </Tilt>
+                  {inner}
                 </motion.div>
               );
             })}
