@@ -54,6 +54,8 @@ import {
   ZAxis,
 } from 'recharts';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
+import WorkspaceHero from '../../components/layout/WorkspaceHero';
+import { AnimatePresence, motion } from 'framer-motion';
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
 import MacroEnvTab from './FactorWorkspace.MacroEnvTab';
 import BlockTradesTab from './FactorWorkspace.BlockTradesTab';
@@ -647,8 +649,32 @@ const FactorWorkspace: React.FC = () => {
         onTabChange={setActiveKey}
         kpiSlot={kpiSlot}
         headerActions={headerActions}
+        hero={
+          <WorkspaceHero
+            eyebrow="Factor · 选股因子库"
+            title="选股因子"
+            subtitle="多因子打分 · 行业中性 · 实时排名 · 历史轨迹回溯"
+            variant="violet"
+            metrics={[
+              { label: '注册因子', value: registeredCount, unit: '只', emphasis: true },
+              { label: '宇宙样本', value: totalUniverse.toLocaleString(), unit: '只' },
+              { label: '最新数据', value: latestDateLabel },
+            ]}
+          />
+        }
+        themed
       >
-        {body}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeKey}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          >
+            {body}
+          </motion.div>
+        </AnimatePresence>
       </WorkspaceLayout>
       <FactorDetailDrawer
         open={drawerOpen}
