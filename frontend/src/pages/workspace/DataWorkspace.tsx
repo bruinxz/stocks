@@ -230,17 +230,21 @@ const DataWorkspace: React.FC = () => {
       }
       themed
     >
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={activeKey}
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -4 }}
-          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-        >
-          {renderTab()}
-        </motion.div>
-      </AnimatePresence>
+      {/* Phase 16 — sc-datav 借鉴: admin 区极淡 grid 背景 (48px 单元), 暗示 "在
+          数据空间里". 用户 tab (Home/Portfolio/Lab/Settings) 保持纯白. */}
+      <div className="workspace-grid-bg" style={{ padding: '8px 0', minHeight: '100%' }}>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeKey}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          >
+            {renderTab()}
+          </motion.div>
+        </AnimatePresence>
+      </div>
     </WorkspaceLayout>
   );
 };
