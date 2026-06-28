@@ -605,7 +605,10 @@ const SystemWorkspace: React.FC = () => {
       activeKey={activeKey}
       onTabChange={k => setActiveKey(k as SystemTabKey)}
     >
-      {renderTab()}
+      {/* Phase 16 — sc-datav 借鉴: admin 区 grid 背景 (与 DataWorkspace 同款). */}
+      <div className="workspace-grid-bg" style={{ padding: '8px 0', minHeight: '100%' }}>
+        {renderTab()}
+      </div>
     </WorkspaceLayout>
   );
 };
