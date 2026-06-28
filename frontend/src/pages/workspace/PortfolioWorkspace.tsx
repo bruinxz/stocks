@@ -124,6 +124,10 @@ import {
 } from './positionMetricsHelpers';
 import { usePortfolio } from '../../contexts/PortfolioContext';
 import { translateAxiosTradingError, translateTradingError } from '../../utils/tradingErrorMap';
+import {
+  formatMoney,
+  formatMoneyNumber,
+} from '../../utils/formatMoney';
 
 const { Text, Paragraph } = Typography;
 const { RangePicker } = DatePicker;
@@ -385,14 +389,22 @@ const PortfolioWorkspace: React.FC = () => {
       metrics={[
         {
           label: '总市值',
-          value: kpis.totalValue >= 10000 ? (kpis.totalValue / 10000).toFixed(2) : kpis.totalValue.toFixed(2),
-          unit: kpis.totalValue >= 10000 ? '万元' : '元',
+          // Phase 13 (2026-06-28): 用户原话 — 单位统一为 "元", 不再换算 "万元".
+          // 截图反馈 "万元" 灰字与紫色 hero 背景对比度极低看不清.
+          // 千分位 + 2 位小数 + tabular-nums (Inter font-feature) 已足够清晰展示
+          // 10 位以内的金额. ¥ 前缀单独控制颜色 (紫色) 在 hero 渐变文字之上.
+          value: formatMoneyNumber(kpis.totalValue),
+          unit: '元',
           emphasis: true,
         },
         {
           label: '浮动盈亏',
-          value: `${kpis.todayUnrealized >= 0 ? '+' : ''}${kpis.todayUnrealized >= 10000 || kpis.todayUnrealized <= -10000 ? (kpis.todayUnrealized / 10000).toFixed(2) : kpis.todayUnrealized.toFixed(0)}`,
-          unit: Math.abs(kpis.todayUnrealized) >= 10000 ? '万元' : '元',
+          // 带符号: +X,XXX.XX / -X,XXX.XX (零无符号 0.00).
+          value:
+            kpis.todayUnrealized === 0
+              ? formatMoneyNumber(0)
+              : (kpis.todayUnrealized > 0 ? '+' : '') + formatMoneyNumber(kpis.todayUnrealized),
+          unit: '元',
           tone: kpis.todayUnrealized > 0 ? 'up' : kpis.todayUnrealized < 0 ? 'down' : undefined,
         },
         {
@@ -1011,9 +1023,9 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
           <WalletOutlined />
           <span>当前持仓 · {positions.length} 只</span>
           <Tag color="blue">
-            总市值 ¥{positions.reduce((acc, p) => acc + Number(p.market_value), 0).toLocaleString()}
+            总市值 {formatMoney(positions.reduce((acc, p) => acc + Number(p.market_value), 0))}
           </Tag>
-          <Tag>现金 ¥{Number(data?.portfolio.current_cash || 0).toLocaleString()}</Tag>
+          <Tag>现金 {formatMoney(Number(data?.portfolio.current_cash || 0))}</Tag>
         </Space>
       }
     >
