@@ -17622,3 +17622,123 @@ a {
 
 /* === End Phase 12 === */
 
+/* =========================================================================
+ * Phase 13 (2026-06-28) — 细节精修
+ *
+ * 用户原话:
+ *   1. "持仓-总市值, 万元都跟背景同色了, 完全看不出来, 单位统一为元"
+ *      → CSS 层: hero unit / KPI suffix 文字提高对比度 + tabular-nums.
+ *      → TS 层: 移除 万元/亿元 换算, 全站统一 ¥ + 千分位 + 元 (formatMoney.ts).
+ *   2. "图1红框, 选中时显示有问题" (SettingsWorkspace 左侧菜单选中态溢出)
+ *      → Menu item selected 背景延伸到右侧空白区, 与卡片右边界没对齐.
+ *      → 修法: 让 menu item 的 selected pill 限制在 menu 容器内 (margin-inline +
+ *        width:auto), 而非默认 width:100% calc 撑满到 Card 边缘 (含 Card 6px padding).
+ *
+ * 同时全站扫的细节问题:
+ *   A. workspace-side-tabs 选中态 pill 在 menu item 之外溢出 (Settings/Portfolio/Lab/Data)
+ *   B. modern-menu (App Sider) 选中态 same fix
+ *   C. workspace-mobile-drawer Menu 同款 fix
+ *   D. ws-hero metric unit 对比度提升: violet variant 用 brand-300 而不是 brand-700
+ *   E. ws-tab-segmented selected 阴影过重导致溢出感, 改更轻
+ *   F. Table cell hover 边界对齐: tbody td 的 hover 背景在 sticky col / fixed col 边界
+ *      不一致, 用 background-clip: padding-box 收齐.
+ * ========================================================================= */
+
+/* ---- A & B & C: Menu 选中 pill 严格限制在 menu 容器 (不溢出右侧空白) ---- */
+
+/* Workspace 左侧 secondary tabs (Settings/Portfolio/Lab/Data/...) */
+.workspace-side-tabs .ant-menu-inline,
+.workspace-side-tabs .ant-menu {
+  width: 100% !important;
+  border-inline-end: none !important;
+}
+.workspace-side-tabs .ant-menu-item {
+  /* 用 margin 把 item 缩进 — selected 紫色背景只在 item 内, 不撑满 Card */
+  margin: 2px 4px !important;
+  width: calc(100% - 8px) !important;
+  padding-inline: 12px !important;
+  overflow: hidden;
+}
+.workspace-side-tabs .ant-menu-item::after {
+  display: none !important; /* antd 默认右侧竖线 — workspace 左 rail 不需要 */
+}
+
+/* App 顶级 modern-menu Sider (主菜单) — 同款 fix */
+.modern-menu .ant-menu-item {
+  margin: 2px 4px !important;
+  width: calc(100% - 8px) !important;
+  overflow: hidden;
+}
+.modern-menu .ant-menu-submenu-title {
+  margin: 2px 4px !important;
+  width: calc(100% - 8px) !important;
+  overflow: hidden;
+}
+.modern-menu .ant-menu-sub.ant-menu-inline {
+  background: transparent !important;
+}
+.modern-menu .ant-menu-sub .ant-menu-item {
+  /* 子菜单 item 也加缩进, 避免 selected pill 撑到 Sider 右边界 */
+  margin: 2px 8px !important;
+  width: calc(100% - 16px) !important;
+}
+
+/* Mobile drawer 中的菜单 — 同款 fix */
+.workspace-mobile-drawer .ant-menu-item {
+  margin: 2px 4px !important;
+  width: calc(100% - 8px) !important;
+  overflow: hidden;
+}
+
+/* ---- D: Hero metric unit 对比度提升 ---- */
+/* 之前 unit (元/万元/只/%) 用 brand-700 紫文字 在深紫 hero 上对比度极低 (用户反馈).
+ * 改成更浅的 brand-300 + 提高字重让单位可读. */
+.ws-hero--violet .ws-hero__metric-unit {
+  color: rgba(216, 180, 254, 0.92) !important; /* violet-300 */
+  font-weight: 500 !important;
+  letter-spacing: 0.02em;
+}
+.ws-hero--admin .ws-hero__metric-unit {
+  color: rgba(244, 244, 245, 0.85) !important;
+  font-weight: 500 !important;
+}
+
+/* ---- E: Segmented selected 阴影减轻 ---- */
+.ws-tab-segmented .ant-segmented-item-selected {
+  /* 之前 shadow 0 1px 3px + 0 1px 2px 双层导致 selected pill 看起来在容器外 */
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06) !important;
+}
+
+/* ---- F: Table hover 背景边界齐 (sticky/fixed col 不裂) ---- */
+.ws-themed-area .ant-table-tbody > tr.ant-table-row:hover > td,
+.ws-themed-area .ant-table-tbody > tr.ant-table-row-selected > td {
+  background-clip: padding-box;
+}
+
+/* ---- 全局 KPI bar / hero 数字等宽对齐 (Phase 13 ext) ---- */
+.workspace-kpi-bar .ant-statistic-content-value,
+.workspace-kpi-bar .ant-statistic-content-prefix,
+.workspace-kpi-bar .ant-statistic-content-suffix,
+.ws-hero__metric-value {
+  font-variant-numeric: tabular-nums !important;
+}
+
+/* ---- Dropdown 选中态对齐 (antd Select 下拉 / Cascader) ---- */
+.ant-select-dropdown .ant-select-item-option-selected:not(.ant-select-item-option-disabled) {
+  background: var(--brand-soft) !important;
+  color: var(--brand-text) !important;
+}
+
+/* ---- Popconfirm 中危按钮颜色 (统一红色 ink, 不是橙) ---- */
+.ant-popconfirm .ant-popconfirm-buttons .ant-btn-primary.ant-btn-dangerous {
+  background: #dc2626 !important;
+  border-color: #dc2626 !important;
+}
+.ant-popconfirm .ant-popconfirm-buttons .ant-btn-primary.ant-btn-dangerous:hover {
+  background: #b91c1c !important;
+  border-color: #b91c1c !important;
+}
+
+/* === End Phase 13 === */
+
+
