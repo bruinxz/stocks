@@ -83,6 +83,18 @@ export interface CriticalAnnouncementPushOptions {
   dry_run?: boolean;
   /** 单批上限覆盖 (默认 CRITICAL_ANNOUNCEMENT_MAX_PUSH_PER_BATCH) */
   max_per_batch?: number;
+  /**
+   * Phase 10 缺漏 P1-3 (2026-06-28) — 元告警 hook 注入点 (测试). 默认
+   * pushSystemAdminAlertFireAndForget, fail-OPEN. 主流程跑完若 failed > 0
+   * 推一次元告警 (dedup_key='critical_announcement_push_fail', 1h dedup).
+   */
+  meta_alert_push?: (input: {
+    dedup_key: string;
+    level: 'WARN';
+    title: string;
+    body_markdown: string;
+    triggered_at: string;
+  }) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -356,6 +368,42 @@ export class CriticalAnnouncementPushService {
             options.dry_run === true
           }`
       );
+
+      // Phase 10 缺漏 P1-3 (2026-06-28): 失败 > 0 时推一条元告警 — 当 webhook
+      // URL 配错 / 飞书 rate limit 让 critical 公告 silent drop 时, OPS 能从
+      // SystemAdminAlertPusher 1h dedup 内收到 1 条 "本次推 N 失败" 元告警.
+      if (failed > 0) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const sysMod = require('./SystemAdminAlertPusher');
+          const pushFn =
+            options.meta_alert_push ||
+            (sysMod && typeof sysMod.pushSystemAdminAlertFireAndForget === 'function'
+              ? sysMod.pushSystemAdminAlertFireAndForget
+              : null);
+          if (pushFn) {
+            pushFn({
+              dedup_key: 'critical_announcement_push_fail',
+              level: 'WARN',
+              title: `[WARN] critical 公告推送失败 ${failed}/${toPush.length}`,
+              body_markdown:
+                `**触发原因**: 本次 critical 公告推送有 ${failed} 条失败 ` +
+                `(succeeded=${succeeded}, attempted=${toPush.length})\n` +
+                `**dedup**: 1h 内本元告警只推 1 次\n` +
+                `**排查方向**: OPS_ALERT_FEISHU_WEBHOOK URL / 飞书 rate limit / ` +
+                `webhookFailOpen retry pending`,
+              triggered_at: new Date().toISOString(),
+            });
+          }
+        } catch (metaErr: any) {
+          // fail-OPEN: 元告警失败不应让本次 pushBatch 返 error
+          logger.warn(
+            `[CriticalAnnouncementPush] meta-alert push 异常 (吞错保护): ${
+              metaErr?.message || metaErr
+            }`
+          );
+        }
+      }
 
       return {
         scanned,

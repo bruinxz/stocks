@@ -481,6 +481,61 @@ async function testProductionSingleton(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 10 缺漏 P1-3: 元告警在 failed > 0 时触发
+// ---------------------------------------------------------------------------
+
+async function testMetaAlertOnFailures(): Promise<void> {
+  // 3 critical, 2 fail 1 ok → 元告警应被调
+  const { poster } = makeFakePoster({
+    perCall: [
+      { ok: true },
+      { ok: false, message: 'feishu 4xx' },
+      { ok: false, message: 'feishu rate limit' },
+    ],
+  });
+  const svc = new CriticalAnnouncementPushService(poster);
+  const metaCalls: any[] = [];
+  const res = await svc.pushBatch(
+    [
+      makeRecord({ stock_code: '001' }),
+      makeRecord({ stock_code: '002' }),
+      makeRecord({ stock_code: '003' }),
+    ],
+    {
+      meta_alert_push: input => metaCalls.push(input),
+    },
+    { OPS_ALERT_FEISHU_WEBHOOK: 'https://hook' }
+  );
+  assertEqual('meta-alert: failed=2', res.failed, 2);
+  assertEqual('meta-alert: succeeded=1', res.succeeded, 1);
+  assertEqual('meta-alert: 推 1 次', metaCalls.length, 1);
+  assertEqual(
+    'meta-alert: dedup_key=critical_announcement_push_fail',
+    metaCalls[0]?.dedup_key,
+    'critical_announcement_push_fail'
+  );
+  assertEqual('meta-alert: level=WARN', metaCalls[0]?.level, 'WARN');
+  assert(
+    'meta-alert: title 含 2/3',
+    String(metaCalls[0]?.title || '').includes('2/3')
+  );
+}
+
+async function testMetaAlertNotCalledWhenAllSucceed(): Promise<void> {
+  // 全成功 → 元告警不调
+  const { poster } = makeFakePoster({ ok: true });
+  const svc = new CriticalAnnouncementPushService(poster);
+  const metaCalls: any[] = [];
+  const res = await svc.pushBatch(
+    [makeRecord({ stock_code: '001' }), makeRecord({ stock_code: '002' })],
+    { meta_alert_push: input => metaCalls.push(input) },
+    { OPS_ALERT_FEISHU_WEBHOOK: 'https://hook' }
+  );
+  assertEqual('all-succeed: failed=0', res.failed, 0);
+  assertEqual('all-succeed: 元告警 0 次', metaCalls.length, 0);
+}
+
+// ---------------------------------------------------------------------------
 // Meta-guard: AnnouncementNLPService.syncDate 真接入了本 service.
 // 与 cron-registry [5] / portfolio-construction-adapter 同款源码扫描 guard.
 // ---------------------------------------------------------------------------
@@ -542,6 +597,8 @@ async function main(): Promise<void> {
   await testPushBatchOptionsWebhookOverride();
   await testPushBatchTopLevelCatch();
   await testProductionSingleton();
+  await testMetaAlertOnFailures();
+  await testMetaAlertNotCalledWhenAllSucceed();
 
   testSyncDateWiringMetaGuard();
 
