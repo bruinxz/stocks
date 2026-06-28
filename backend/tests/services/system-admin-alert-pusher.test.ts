@@ -24,6 +24,10 @@ import {
   buildSystemAdminAlertCard,
   pushSystemAdminAlert,
 } from '../../src/services/SystemAdminAlertPusher';
+import {
+  markDispatcherFeishuForAlert,
+  clearDispatcherFeishuMarksForTests,
+} from '../../src/services/RealtimeAlertDispatcher';
 
 let passed = 0;
 let failed = 0;
@@ -244,6 +248,122 @@ async function main() {
     { dedup_state: dedup4, now_ms: 1_700_000_000_000 }
   );
   assertEqual('无 env 配置 - 不挂', typeof r7.pushed, 'boolean');
+
+  // ===========================================================================
+  console.log('\n[6] Phase 10 冗余 P1-2: dispatcher fan-out 去重...');
+  process.env.OPS_ALERT_FEISHU_WEBHOOK = 'https://feishu.test/webhook/p10-dedupe';
+  clearDispatcherFeishuMarksForTests();
+  // (a) caller_alert_id=999 + dispatcher 已 mark 同 URL → feishu skip
+  {
+    const nowTest = 1_700_000_001_000;
+    markDispatcherFeishuForAlert(999, 'https://feishu.test/webhook/p10-dedupe', nowTest);
+    const postCalls: any[] = [];
+    const r = await pushSystemAdminAlert(
+      {
+        dedup_key: 'risk:sh.600519:HIGH:p10-skip',
+        level: 'HIGH',
+        title: 't',
+        body_markdown: 'b',
+        caller_alert_id: 999,
+      },
+      {
+        dedup_state: new Map(),
+        now_ms: nowTest + 100,
+        feishu_post: async (url, body) => {
+          postCalls.push({ url, body });
+          return { data: { code: 0 } };
+        },
+      }
+    );
+    assertEqual('p10 dedupe: feishu attempted=false', r.feishu.attempted, false);
+    assertEqual('p10 dedupe: feishu success=false', r.feishu.success, false);
+    assert(
+      'p10 dedupe: feishu.message 含 dispatcher 已推送',
+      String(r.feishu.message || '').includes('dispatcher')
+    );
+    assertEqual('p10 dedupe: postCalls=0 (未调 axios)', postCalls.length, 0);
+  }
+  // (b) caller_alert_id=999 但 dispatcher mark 的是不同 URL → feishu 仍发
+  clearDispatcherFeishuMarksForTests();
+  {
+    const nowTest = 1_700_000_002_000;
+    markDispatcherFeishuForAlert(999, 'https://feishu.test/webhook/different-url', nowTest);
+    const postCalls: any[] = [];
+    const r = await pushSystemAdminAlert(
+      {
+        dedup_key: 'risk:sh.600519:HIGH:p10-diff-url',
+        level: 'HIGH',
+        title: 't',
+        body_markdown: 'b',
+        caller_alert_id: 999,
+      },
+      {
+        dedup_state: new Map(),
+        now_ms: nowTest + 100,
+        feishu_post: async (url, body) => {
+          postCalls.push({ url, body });
+          return { data: { code: 0 } };
+        },
+      }
+    );
+    assertEqual('p10 diff URL: feishu attempted=true', r.feishu.attempted, true);
+    assertEqual('p10 diff URL: feishu success=true', r.feishu.success, true);
+    assertEqual('p10 diff URL: postCalls=1', postCalls.length, 1);
+  }
+  // (c) dispatcher mark 超 10s TTL → 视为过期, feishu 仍发
+  clearDispatcherFeishuMarksForTests();
+  {
+    const nowTest = 1_700_000_003_000;
+    markDispatcherFeishuForAlert(999, 'https://feishu.test/webhook/p10-dedupe', nowTest);
+    const postCalls: any[] = [];
+    const r = await pushSystemAdminAlert(
+      {
+        dedup_key: 'risk:sh.600519:HIGH:p10-ttl',
+        level: 'HIGH',
+        title: 't',
+        body_markdown: 'b',
+        caller_alert_id: 999,
+      },
+      {
+        dedup_state: new Map(),
+        now_ms: nowTest + 11_000, // 超过 10s TTL
+        feishu_post: async () => {
+          postCalls.push(1);
+          return { data: { code: 0 } };
+        },
+      }
+    );
+    assertEqual('p10 TTL: feishu attempted=true', r.feishu.attempted, true);
+    assertEqual('p10 TTL: postCalls=1', postCalls.length, 1);
+  }
+  // (d) 未传 caller_alert_id → 不走去重路径 (兼容旧 caller)
+  clearDispatcherFeishuMarksForTests();
+  {
+    const nowTest = 1_700_000_004_000;
+    markDispatcherFeishuForAlert(999, 'https://feishu.test/webhook/p10-dedupe', nowTest);
+    const postCalls: any[] = [];
+    const r = await pushSystemAdminAlert(
+      {
+        dedup_key: 'risk:sh.600519:HIGH:p10-no-caller',
+        level: 'HIGH',
+        title: 't',
+        body_markdown: 'b',
+        // caller_alert_id 不传
+      },
+      {
+        dedup_state: new Map(),
+        now_ms: nowTest + 100,
+        feishu_post: async () => {
+          postCalls.push(1);
+          return { data: { code: 0 } };
+        },
+      }
+    );
+    assertEqual('p10 no caller: feishu attempted=true', r.feishu.attempted, true);
+    assertEqual('p10 no caller: postCalls=1', postCalls.length, 1);
+  }
+  clearDispatcherFeishuMarksForTests();
+  delete process.env.OPS_ALERT_FEISHU_WEBHOOK;
 
   // 还原 env
   if (origFeishu !== undefined) process.env.OPS_ALERT_FEISHU_WEBHOOK = origFeishu;
