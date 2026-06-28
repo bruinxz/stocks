@@ -693,6 +693,36 @@ loggerModule.logger.error = () => undefined;
   }
 
   // =========================================================================
+  console.log('\n[12] Phase 10 验证 (audit 验收) — critical 路径 OPS 群只收 1 条 (card from hook)...');
+  // 用户原话: "把没做的继续做完", item 5 = "验证冗余 #1 修复后无回归".
+  // AC: RiskAlertService.write({severity: 'critical'}) → OPS 群只收 1 条 (card from
+  // hook), 不再收 text + card 两条 (Phase 10 P0-1 修复). 本 case 显式验证 RiskAlertService
+  // 默认 (force_feishu_text 未传) 路径 postFeishuOps=0 次 + realtime dispatcher 仍触发
+  // (hook 在 prod 会通过 SystemAdminAlertPusher 把唯一一张 interactive card 推到 OPS).
+  {
+    process.env.OPS_ALERT_FEISHU_WEBHOOK = 'https://feishu.test/webhook/p10-verify';
+    const ds = new FakeDataSource();
+    const svc = new RiskAlertService(ds);
+    const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.CRITICAL }));
+    // critical → planned channels = [inbox, feishu, im, toast]
+    assertEqual('p10 verify: planned 4 通道', r.planned_channels.length, 4);
+    // 但 feishu 通道 skip (P0-1 修复: hook 兜底)
+    const feishu = r.channels.find(c => c.channel === 'feishu')!;
+    assert('p10 verify: feishu skipped=true', feishu.skipped === true);
+    assertEqual('p10 verify: postFeishuOps 调 0 次 (避免双推)', ds.feishuCalls.length, 0);
+    // inbox 仍写入
+    const inbox = r.channels.find(c => c.channel === 'inbox')!;
+    assert('p10 verify: inbox success', inbox.success === true);
+    assert('p10 verify: alert_id 存在', typeof r.alert_id === 'number');
+    // realtime dispatcher 仍触发 — prod 在 hook 内由 SystemAdminAlertPusher 推一张 card 到 OPS
+    assertEqual('p10 verify: realtime dispatcher 1 次 (hook 兜底路径)', ds.realtimeCalls.length, 1);
+    assertEqual('p10 verify: realtime alert_id 透传', ds.realtimeCalls[0].alert_id, r.alert_id);
+    // im 仍发 (与 feishu 不同的通道, 不触发去重)
+    assertEqual('p10 verify: im 调 1 次 (邮件路径不去重)', ds.imCalls.length, 1);
+    delete process.env.OPS_ALERT_FEISHU_WEBHOOK;
+  }
+
+  // =========================================================================
   // Summary
   // =========================================================================
   setTimeout(() => {
