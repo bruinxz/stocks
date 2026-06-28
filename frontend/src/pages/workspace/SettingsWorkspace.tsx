@@ -43,6 +43,8 @@ import {
   SafetyOutlined,
 } from '@ant-design/icons';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
+import WorkspaceHero from '../../components/layout/WorkspaceHero';
+import { AnimatePresence, motion } from 'framer-motion';
 import SizingPolicyTab from './SettingsWorkspace.SizingPolicyTab';
 import PortfolioConstructionTab from './SettingsWorkspace.PortfolioConstructionTab';
 import AnalysisEngineTab from './SettingsWorkspace.AnalysisEngineTab';
@@ -1810,8 +1812,42 @@ const SettingsWorkspace: React.FC = () => {
       onTabChange={setActiveKey}
       kpiSlot={kpiSlot}
       headerActions={headerActions}
+      hero={
+        <WorkspaceHero
+          eyebrow="Settings · 账号中心"
+          title="账号与系统设置"
+          subtitle="个人资料 · 通知中心 · 风控参数 · 用户管理 — 一站式控制中心"
+          variant="violet"
+          metrics={[
+            { label: '角色', value: isAdmin ? 'Admin' : 'User', emphasis: true },
+            {
+              label: '启用通道',
+              value: config
+                ? [config.feishu.enabled, config.email.enabled].filter(Boolean).length
+                : 0,
+              unit: '个',
+            },
+            {
+              label: '日报',
+              value: config?.feishu?.daily_digest ? '开' : '关',
+              tone: config?.feishu?.daily_digest ? 'down' : undefined,
+            },
+          ]}
+        />
+      }
+      themed
     >
-      {body}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={activeKey}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -4 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+        >
+          {body}
+        </motion.div>
+      </AnimatePresence>
       <DigestPreviewModal
         open={previewOpen}
         result={previewResult}

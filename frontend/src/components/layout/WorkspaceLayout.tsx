@@ -38,6 +38,19 @@ export interface WorkspaceLayoutProps {
   headerActions?: React.ReactNode;
   /** Main content area for the active tab. */
   children?: React.ReactNode;
+  /**
+   * Phase 12 — optional hero slot rendered ABOVE the KPI bar.
+   * Pass a fully styled `<WorkspaceHero ... />` from the workspace.
+   * When set, the KPI bar still renders for sticky reference numbers.
+   */
+  hero?: React.ReactNode;
+  /**
+   * Phase 12 — opt into the unified themed cards/tables/inputs.
+   * When true, the content wrapper gets `.ws-themed-area` which cascades
+   * the Phase 12 design system to all inner `.ant-card`/`.ant-table`
+   * via the `ws-card-themed` rules.
+   */
+  themed?: boolean;
 }
 
 /**
@@ -68,6 +81,8 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
   kpiSlot,
   headerActions,
   children,
+  hero,
+  themed,
 }) => {
   const isMobile = useIsMobile();
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
@@ -94,6 +109,7 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
 
   return (
     <div className="workspace-shell">
+      {hero ? <div className="workspace-hero-slot">{hero}</div> : null}
       <Card
         className="workspace-kpi-bar"
         bodyStyle={{ padding: '12px 20px' }}
@@ -152,7 +168,10 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
             />
           </Card>
         ) : null}
-        <div className="workspace-content" style={{ flex: 1, minWidth: 0 }}>
+        <div
+          className={['workspace-content', themed ? 'ws-themed-area' : ''].filter(Boolean).join(' ')}
+          style={{ flex: 1, minWidth: 0 }}
+        >
           {children}
         </div>
       </div>

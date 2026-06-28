@@ -17093,3 +17093,532 @@ a {
 
 /* === End Phase 11 === */
 
+/* ===========================================================================
+ * Phase 12 (2026-06-28) — 全站工作区精细化 (Portfolio / Lab / Settings / Data)
+ *
+ * 用户原话: "每个 Tab 下面的每个模块, 你都能精细优化, 高级感+设计感, 整体统一".
+ *
+ * 4 个统一原语 (跨 4 个工作区复用):
+ *   1. .ws-hero          — 暗色/浅紫/admin 灰 三套 hero (Eyebrow + 大字 + KPI)
+ *   2. .ws-card-themed   — 12px radius / 1px subtle border / hover lift / 24px padding
+ *   3. .ws-table-themed  — 11px UPPERCASE thead / row hover / A股红绿
+ *   4. .ws-segmented-pill — bg-sunken pill / 选中 bg-elevated + shadow-sm
+ *
+ * 三套 Hero variant:
+ *   - .ws-hero--violet  普通用户工作区 (Portfolio / Lab / Settings)
+ *   - .ws-hero--dark    系统工作区 (System / Home — 已存在)
+ *   - .ws-hero--admin   admin 工作区 (Data — 深灰)
+ *
+ * 哲学: WorkspaceLayout 的 KPI bar 仍保留 (顶部 sticky 数字 96px),
+ *       但顶部之上加 hero 块, 整体形成 "Hero (大数字+故事) → KPI bar (实时) → tabs+content" 三层.
+ *       既保 Phase 11 视觉张力, 又能在 4 个工作区精细复用.
+ * --------------------------------------------------------------------------- */
+
+/* --- Hero base (3 variant 共享) --- */
+.ws-hero {
+  position: relative;
+  isolation: isolate;
+  padding: 40px 36px;
+  margin-bottom: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  box-shadow:
+    0 10px 30px -8px rgba(0, 0, 0, 0.22),
+    0 2px 6px rgba(0, 0, 0, 0.05);
+}
+
+.ws-hero__inner {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+  flex-wrap: wrap;
+}
+
+.ws-hero__left {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.ws-hero__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 14px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.ws-hero__title {
+  font-size: 32px;
+  line-height: 1.15;
+  font-weight: 700;
+  margin: 0 0 10px 0;
+  letter-spacing: -0.02em;
+}
+
+.ws-hero__subtitle {
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 0;
+  max-width: 560px;
+}
+
+.ws-hero__right {
+  display: flex;
+  gap: 28px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: flex-end;
+}
+
+.ws-hero__metric {
+  text-align: right;
+  min-width: 100px;
+}
+
+.ws-hero__metric-label {
+  display: block;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 10px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.ws-hero__metric-value {
+  font-feature-settings: 'tnum' 1, 'cv11' 1;
+  font-variant-numeric: tabular-nums;
+  font-size: 36px;
+  line-height: 1.0;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.ws-hero__metric-value--lg {
+  font-size: 48px;
+}
+
+.ws-hero__metric-unit {
+  font-size: 14px;
+  font-weight: 500;
+  margin-left: 4px;
+  opacity: 0.7;
+}
+
+/* --- Hero variant: violet (普通用户工作区默认) --- */
+.ws-hero--violet {
+  background: linear-gradient(135deg, #0a0613 0%, #1a0b2e 55%, #1f0d35 100%);
+  color: #ffffff;
+}
+.ws-hero--violet::before {
+  content: '';
+  position: absolute;
+  inset: -40%;
+  background:
+    radial-gradient(circle at 20% 22%, rgba(124, 58, 237, 0.55) 0%, transparent 45%),
+    radial-gradient(circle at 78% 70%, rgba(167, 139, 250, 0.42) 0%, transparent 52%),
+    radial-gradient(circle at 50% 96%, rgba(192, 132, 252, 0.35) 0%, transparent 55%);
+  filter: blur(60px) saturate(140%);
+  z-index: 0;
+  animation: ws-hero-aurora 24s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+.ws-hero--violet .ws-hero__eyebrow {
+  color: rgba(192, 132, 252, 0.95);
+}
+.ws-hero--violet .ws-hero__title {
+  background: linear-gradient(180deg, #ffffff 0%, rgba(255, 255, 255, 0.78) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.ws-hero--violet .ws-hero__subtitle {
+  color: rgba(255, 255, 255, 0.65);
+}
+.ws-hero--violet .ws-hero__metric-label {
+  color: rgba(255, 255, 255, 0.5);
+}
+.ws-hero--violet .ws-hero__metric-value {
+  background: linear-gradient(180deg, #ffffff 0%, rgba(255, 255, 255, 0.82) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.ws-hero--violet .ws-hero__metric-unit {
+  color: rgba(192, 132, 252, 1);
+}
+.ws-hero--violet .ws-hero__metric-value--up {
+  background: linear-gradient(180deg, #fb7185 0%, #dc2626 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.ws-hero--violet .ws-hero__metric-value--down {
+  background: linear-gradient(180deg, #4ade80 0%, #16a34a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* --- Hero variant: admin (深灰) --- */
+.ws-hero--admin {
+  background: linear-gradient(135deg, #18181b 0%, #27272a 55%, #1c1c1e 100%);
+  color: #ffffff;
+}
+.ws-hero--admin::before {
+  content: '';
+  position: absolute;
+  inset: -30%;
+  background:
+    radial-gradient(circle at 18% 24%, rgba(82, 82, 91, 0.5) 0%, transparent 45%),
+    radial-gradient(circle at 80% 70%, rgba(113, 113, 122, 0.36) 0%, transparent 52%);
+  filter: blur(60px);
+  z-index: 0;
+  pointer-events: none;
+}
+.ws-hero--admin .ws-hero__eyebrow {
+  color: rgba(244, 244, 245, 0.75);
+}
+.ws-hero--admin .ws-hero__title,
+.ws-hero--admin .ws-hero__metric-value {
+  color: #ffffff;
+}
+.ws-hero--admin .ws-hero__subtitle,
+.ws-hero--admin .ws-hero__metric-label {
+  color: rgba(244, 244, 245, 0.55);
+}
+.ws-hero--admin .ws-hero__metric-unit {
+  color: rgba(244, 244, 245, 0.7);
+}
+
+@keyframes ws-hero-aurora {
+  0% {
+    transform: translate(0%, 0%) rotate(0deg) scale(1);
+  }
+  50% {
+    transform: translate(-3%, 2%) rotate(130deg) scale(1.05);
+  }
+  100% {
+    transform: translate(3%, -2%) rotate(260deg) scale(0.98);
+  }
+}
+
+/* mobile — hero 收紧 */
+@media (max-width: 767px) {
+  .ws-hero {
+    padding: 28px 22px;
+    border-radius: 16px;
+  }
+  .ws-hero__title {
+    font-size: 24px;
+  }
+  .ws-hero__inner {
+    gap: 20px;
+  }
+  .ws-hero__right {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 18px;
+  }
+  .ws-hero__metric {
+    text-align: left;
+  }
+  .ws-hero__metric-value {
+    font-size: 28px;
+  }
+  .ws-hero__metric-value--lg {
+    font-size: 32px;
+  }
+}
+
+/* --- Unified themed Card (per Phase 12 spec) --- */
+.ws-card-themed.ant-card {
+  border-radius: 12px !important;
+  border: 1px solid var(--border-subtle) !important;
+  background: var(--bg-elevated);
+  transition:
+    border-color 200ms ease,
+    box-shadow 220ms ease,
+    transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.03),
+    0 1px 0 rgba(0, 0, 0, 0.015) inset;
+}
+.ws-card-themed.ant-card:hover {
+  border-color: rgba(124, 58, 237, 0.22);
+  transform: translateY(-1px);
+  box-shadow:
+    0 10px 24px -10px rgba(124, 58, 237, 0.12),
+    0 4px 8px -2px rgba(0, 0, 0, 0.04);
+}
+.ws-card-themed.ant-card > .ant-card-head {
+  border-bottom: 1px solid var(--border-subtle) !important;
+  padding: 0 20px !important;
+  min-height: 52px !important;
+}
+.ws-card-themed.ant-card > .ant-card-head .ant-card-head-title {
+  font-size: 15px !important;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--ink-1);
+}
+.ws-card-themed.ant-card > .ant-card-body {
+  padding: 20px !important;
+}
+.ws-card-themed.ant-card.ant-card-small > .ant-card-body {
+  padding: 14px 16px !important;
+}
+.ws-card-themed.ant-card.ant-card-small > .ant-card-head {
+  padding: 0 16px !important;
+  min-height: 44px !important;
+}
+.ws-card-themed.ant-card.ant-card-small > .ant-card-head .ant-card-head-title {
+  font-size: 14px !important;
+}
+
+/* --- Unified Table (per Phase 12 spec) --- */
+.ws-card-themed .ant-table-thead > tr > th {
+  font-size: 11px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--ink-3) !important;
+  background: var(--bg-sunken) !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+}
+.ws-card-themed .ant-table-thead > tr > th::before {
+  display: none !important;
+}
+.ws-card-themed .ant-table-tbody > tr > td {
+  font-size: 13px;
+  padding: 12px 14px !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+}
+.ws-card-themed .ant-table-tbody > tr:hover > td {
+  background: rgba(124, 58, 237, 0.04) !important;
+}
+.ws-card-themed .ant-table-tbody > tr:last-child > td {
+  border-bottom: none !important;
+}
+.ws-card-themed .ant-table-cell.ant-table-cell-row-hover {
+  background: rgba(124, 58, 237, 0.04) !important;
+}
+
+/* --- Statistic 内嵌 ws-card-themed: tabular-nums + 精致字号 --- */
+.ws-card-themed .ant-statistic-content,
+.ws-card-themed .ant-statistic-content-value {
+  font-feature-settings: 'tnum' 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* --- Segmented pill 升级 --- */
+.ws-card-themed .ant-segmented {
+  background: var(--bg-sunken) !important;
+  padding: 3px !important;
+  border-radius: 8px !important;
+}
+.ws-card-themed .ant-segmented .ant-segmented-item-selected {
+  background: var(--bg-elevated) !important;
+  border-radius: 6px !important;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.06),
+    0 1px 2px rgba(0, 0, 0, 0.04) !important;
+}
+
+/* --- Inputs 内嵌 ws-card-themed: 8px 圆角 + 紫色光圈 --- */
+.ws-card-themed .ant-input,
+.ws-card-themed .ant-input-number,
+.ws-card-themed .ant-select-selector,
+.ws-card-themed .ant-picker {
+  border-radius: 8px !important;
+}
+.ws-card-themed .ant-input:focus,
+.ws-card-themed .ant-input-focused,
+.ws-card-themed .ant-input-number-focused,
+.ws-card-themed .ant-select-focused .ant-select-selector,
+.ws-card-themed .ant-picker-focused {
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1) !important;
+  border-color: rgba(124, 58, 237, 0.45) !important;
+}
+
+/* --- Empty state 内嵌 ws-card-themed --- */
+.ws-card-themed .ant-empty {
+  padding: 24px 0;
+}
+.ws-card-themed .ant-empty-description {
+  color: var(--ink-3);
+}
+
+/* --- 工作区内容包裹: 卡片之间 16px 标准 gap --- */
+.ws-content-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* --- ws-themed-area: 整个工作区内容区域自动套 Phase 12 统一样式 ---
+ * 解决了在 4 个超大工作区里逐个加 className="ws-card-themed" 的重复工作.
+ * 凡 WorkspaceLayout `themed` 时, 内部所有顶层 ant-card 都按 Phase 12 规范渲染.
+ */
+.ws-themed-area > .ant-card,
+.ws-themed-area > .ant-row > .ant-col > .ant-card,
+.ws-themed-area > .ant-space > div > .ant-card,
+.ws-themed-area > .ant-space-vertical > .ant-space-item > .ant-card,
+.ws-themed-area .ws-content-stack > .ant-card {
+  border-radius: 12px !important;
+  border: 1px solid var(--border-subtle) !important;
+  background: var(--bg-elevated);
+  transition:
+    border-color 200ms ease,
+    box-shadow 220ms ease,
+    transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.03),
+    0 1px 0 rgba(0, 0, 0, 0.015) inset;
+}
+.ws-themed-area > .ant-card:hover,
+.ws-themed-area > .ant-row > .ant-col > .ant-card:hover,
+.ws-themed-area > .ant-space > div > .ant-card:hover,
+.ws-themed-area > .ant-space-vertical > .ant-space-item > .ant-card:hover,
+.ws-themed-area .ws-content-stack > .ant-card:hover {
+  border-color: rgba(124, 58, 237, 0.22);
+  transform: translateY(-1px);
+  box-shadow:
+    0 10px 24px -10px rgba(124, 58, 237, 0.12),
+    0 4px 8px -2px rgba(0, 0, 0, 0.04);
+}
+
+/* head 字号 + padding 收紧 */
+.ws-themed-area .ant-card > .ant-card-head {
+  border-bottom: 1px solid var(--border-subtle) !important;
+  padding: 0 20px !important;
+  min-height: 52px !important;
+}
+.ws-themed-area .ant-card > .ant-card-head .ant-card-head-title {
+  font-size: 15px !important;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--ink-1);
+}
+.ws-themed-area .ant-card > .ant-card-body {
+  padding: 20px !important;
+}
+.ws-themed-area .ant-card.ant-card-small > .ant-card-body {
+  padding: 14px 16px !important;
+}
+.ws-themed-area .ant-card.ant-card-small > .ant-card-head {
+  padding: 0 16px !important;
+  min-height: 44px !important;
+}
+.ws-themed-area .ant-card.ant-card-small > .ant-card-head .ant-card-head-title {
+  font-size: 14px !important;
+}
+
+/* table 全域 */
+.ws-themed-area .ant-table-thead > tr > th {
+  font-size: 11px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--ink-3) !important;
+  background: var(--bg-sunken) !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+}
+.ws-themed-area .ant-table-thead > tr > th::before {
+  display: none !important;
+}
+.ws-themed-area .ant-table-tbody > tr > td {
+  font-size: 13px;
+  padding: 12px 14px !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+}
+.ws-themed-area .ant-table-tbody > tr:hover > td {
+  background: rgba(124, 58, 237, 0.04) !important;
+}
+.ws-themed-area .ant-table-cell.ant-table-cell-row-hover {
+  background: rgba(124, 58, 237, 0.04) !important;
+}
+
+/* statistic 内嵌 tabular-nums */
+.ws-themed-area .ant-statistic-content,
+.ws-themed-area .ant-statistic-content-value {
+  font-feature-settings: 'tnum' 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* segmented pill */
+.ws-themed-area .ant-segmented {
+  background: var(--bg-sunken) !important;
+  padding: 3px !important;
+  border-radius: 8px !important;
+}
+.ws-themed-area .ant-segmented .ant-segmented-item-selected {
+  background: var(--bg-elevated) !important;
+  border-radius: 6px !important;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.06),
+    0 1px 2px rgba(0, 0, 0, 0.04) !important;
+}
+
+/* inputs */
+.ws-themed-area .ant-input,
+.ws-themed-area .ant-input-number,
+.ws-themed-area .ant-select:not(.ant-select-customize-input) .ant-select-selector,
+.ws-themed-area .ant-picker {
+  border-radius: 8px !important;
+}
+.ws-themed-area .ant-input:focus,
+.ws-themed-area .ant-input-focused,
+.ws-themed-area .ant-input-number-focused,
+.ws-themed-area .ant-select-focused:not(.ant-select-customize-input) .ant-select-selector,
+.ws-themed-area .ant-picker-focused {
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1) !important;
+  border-color: rgba(124, 58, 237, 0.45) !important;
+}
+
+/* primary 按钮 — 黑色 ink-1 (Phase 12 spec) */
+.ws-themed-area .ant-btn-primary:not(.ant-btn-dangerous):not([disabled]) {
+  background: var(--ink-1) !important;
+  border-color: var(--ink-1) !important;
+}
+.ws-themed-area .ant-btn-primary:not(.ant-btn-dangerous):not([disabled]):hover,
+.ws-themed-area .ant-btn-primary:not(.ant-btn-dangerous):not([disabled]):focus {
+  background: #1f1f23 !important;
+  border-color: #1f1f23 !important;
+}
+
+/* --- Tab content 切换微动效 --- */
+.ws-tab-enter {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.ws-tab-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 220ms ease, transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-hero--violet::before,
+  .ws-hero--admin::before {
+    animation: none !important;
+  }
+  .ws-card-themed.ant-card:hover {
+    transform: none !important;
+  }
+}
+
+/* === End Phase 12 === */
+

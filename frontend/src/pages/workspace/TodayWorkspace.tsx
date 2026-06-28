@@ -43,6 +43,8 @@ import {
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
+import WorkspaceHero from '../../components/layout/WorkspaceHero';
+import { AnimatePresence, motion } from 'framer-motion';
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { usePortfolio } from '../../contexts/PortfolioContext';
@@ -557,8 +559,52 @@ const TodayWorkspace: React.FC = () => {
         onTabChange={handleTabChange}
         kpiSlot={kpiSlot}
         headerActions={headerActions}
+        hero={
+          <WorkspaceHero
+            eyebrow="Today · 开盘前作战"
+            title="今日作战"
+            subtitle={subtitle}
+            variant="violet"
+            metrics={
+              data
+                ? [
+                    {
+                      label: '当日信号',
+                      value:
+                        (data.multi_factor?.signals?.length || 0) +
+                        (data.dragon_head?.candidates?.length || 0) +
+                        (data.earnings_surprise?.candidates?.length || 0),
+                      unit: '条',
+                      emphasis: true,
+                    },
+                    {
+                      label: '关键事件',
+                      value: (data.key_events || []).length,
+                      unit: '项',
+                    },
+                    {
+                      label: '未读告警',
+                      value: data.unread_alert_count || 0,
+                      unit: '条',
+                      tone:
+                        (data.unread_alert_count || 0) > 0 ? 'up' : undefined,
+                    },
+                  ]
+                : []
+            }
+          />
+        }
+        themed
       >
-        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeKey}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <Space direction="vertical" size={16} style={{ width: '100%' }}>
           {/* hotfix-AL (2026-06-21): MarketJudgment / CallAuction / MarketBrief
               是 "今日大盘速读" 概览, 只属于 "今日信号" tab. 此前一直把这 3 张大卡
               render 在所有 tab 之上 (~600-800px 高), 用户点击 "关键事件 / 风险提醒
@@ -573,6 +619,8 @@ const TodayWorkspace: React.FC = () => {
           )}
           {body}
         </Space>
+        </motion.div>
+      </AnimatePresence>
       </WorkspaceLayout>
       <ApplyResultModal
         result={applyResult}

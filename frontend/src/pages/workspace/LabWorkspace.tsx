@@ -55,8 +55,10 @@ import {
 } from 'recharts';
 import ReactECharts from 'echarts-for-react';
 import dayjs, { Dayjs } from 'dayjs';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useLocation, useNavigate } from 'react-router-dom';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
+import WorkspaceHero from '../../components/layout/WorkspaceHero';
 import LeaderboardTab from './LabWorkspace.LeaderboardTab';
 import WalkForwardTab from './LabWorkspace.WalkForwardTab';
 import AdvancedQuantTab from './LabWorkspace.AdvancedQuantTab';
@@ -620,8 +622,37 @@ const LabWorkspace: React.FC = () => {
       onTabChange={setActiveKey}
       kpiSlot={kpiSlot}
       headerActions={headerActions}
+      hero={
+        <WorkspaceHero
+          eyebrow="Lab · 策略实验室"
+          title="策略实验室"
+          subtitle="29+ 个真实策略 · 一站式回测 / 寻优 / 影子运行 / Walk-Forward 体检"
+          variant="violet"
+          metrics={[
+            { label: '注册策略', value: strategies.length, unit: '个', emphasis: true },
+            { label: '进行中回测', value: runningTasks.length, unit: '项' },
+            { label: '近 7 日完成', value: last7DaysCount, unit: '次' },
+            {
+              label: '总回测',
+              value: tasks.length,
+              unit: '次',
+            },
+          ]}
+        />
+      }
+      themed
     >
-      {body}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={activeKey}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -4 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+        >
+          {body}
+        </motion.div>
+      </AnimatePresence>
       <Drawer
         title={editingStrategy ? `编辑参数 · ${editingStrategy.name}` : ''}
         width={520}
