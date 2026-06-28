@@ -773,6 +773,34 @@ export class PaperTradingFacade {
         (error?.statusCode === 404 ? 'NOT_FOUND' : inferOrderFailureCode(error?.message)) ||
         'unknown';
       incrementOrderTotal(direction, 'failed', code);
+      // Phase 10 通知审计 (2026-06-28) — 之前 placeOrder 顶层 throw 只走 metric +
+      // re-throw, 运维群一条都不推, 出问题只能靠 user 在 UI 上叫. 现在 fire-and-forget
+      // 推一条 ops 告警, 1h dedup (by direction + code) 防 burst.
+      // 不阻塞 throw 路径; pusher 内部 fail-OPEN; 用户原话 "凌晨出问题没人知道".
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const sysMod = require('../services/SystemAdminAlertPusher');
+        const symbol = options?.symbol || 'unknown';
+        const portfolioId = (options as any)?.portfolio_id || 'unknown';
+        sysMod.pushSystemAdminAlertFireAndForget({
+          dedup_key: `order_throw:${direction}:${code}`,
+          level: 'WARN',
+          title: `[ORDER FAIL] ${direction.toUpperCase()} ${symbol} - ${code}`,
+          body_markdown:
+            `**user_id**: ${options?.user_id ?? 'unknown'}\n` +
+            `**portfolio_id**: ${portfolioId}\n` +
+            `**direction**: ${direction}\n` +
+            `**symbol**: ${symbol}\n` +
+            `**quantity**: ${options?.quantity ?? 'unknown'}\n` +
+            `**code**: ${code}\n` +
+            `**error**:\n\`\`\`\n${String(error?.message || error).slice(0, 800)}\n\`\`\``,
+          triggered_at: new Date().toISOString(),
+        });
+      } catch (sysErr: any) {
+        logger.warn(
+          `[PaperTradingFacade.placeOrder] ops alert push 异常 (吞错): ${sysErr?.message || sysErr}`
+        );
+      }
       throw error;
     }
   }

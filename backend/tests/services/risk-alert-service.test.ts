@@ -263,11 +263,15 @@ loggerModule.logger.error = () => undefined;
   console.log('\n[5] write() 3 级 severity 路由 (AC 主验收)...');
 
   // CRITICAL：inbox + feishu + im + toast，且触发 realtime
+  // Phase 10 (2026-06-28): inbox 写入成功后 feishu 默认 skip (由 afterCreate hook 推 card 兜底),
+  // 此 case 显式 force_feishu_text=true 验证 runFeishu 路径仍可强发 text.
   {
     process.env.OPS_ALERT_FEISHU_WEBHOOK = 'https://feishu.test/webhook/abc';
     const ds = new FakeDataSource();
     const svc = new RiskAlertService(ds);
-    const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.CRITICAL }));
+    const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.CRITICAL }), {
+      force_feishu_text: true,
+    });
     assertEqual('critical: planned_channels', r.planned_channels, [
       'inbox',
       'feishu',
@@ -311,11 +315,14 @@ loggerModule.logger.error = () => undefined;
   }
 
   // HIGH：inbox + feishu（不发 im / toast），且触发 realtime
+  // Phase 10: 同样需 force_feishu_text=true 才会真发 text
   {
     process.env.OPS_ALERT_FEISHU_WEBHOOK = 'https://feishu.test/webhook/high';
     const ds = new FakeDataSource();
     const svc = new RiskAlertService(ds);
-    const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.HIGH }));
+    const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.HIGH }), {
+      force_feishu_text: true,
+    });
     assertEqual('high: planned_channels', r.planned_channels, ['inbox', 'feishu']);
     assertEqual('high: channels.length=2', r.channels.length, 2);
     assertEqual('high: feishu 调 1 次', ds.feishuCalls.length, 1);
@@ -376,11 +383,14 @@ loggerModule.logger.error = () => undefined;
   }
 
   // feishu webhook 未配置 → channel skipped
+  // Phase 10: force_feishu_text=true 让 runFeishu 真跑, 才能验 env-缺失分支
   {
     delete process.env.OPS_ALERT_FEISHU_WEBHOOK;
     const ds = new FakeDataSource();
     const svc = new RiskAlertService(ds);
-    const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.HIGH }));
+    const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.HIGH }), {
+      force_feishu_text: true,
+    });
     const feishu = r.channels.find(c => c.channel === 'feishu')!;
     assert('feishu 缺 url: success=false', feishu.success === false);
     assert('feishu 缺 url: skipped=true', feishu.skipped === true);
@@ -391,11 +401,14 @@ loggerModule.logger.error = () => undefined;
   }
 
   // feishu 调用失败（webhook 504） → channel failed 不传染 inbox / im
+  // Phase 10: force_feishu_text=true 让 runFeishu 真跑
   {
     process.env.OPS_ALERT_FEISHU_WEBHOOK = 'https://feishu.test/webhook/y';
     const ds = new FakeDataSource({ feishuFails: true });
     const svc = new RiskAlertService(ds);
-    const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.CRITICAL }));
+    const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.CRITICAL }), {
+      force_feishu_text: true,
+    });
     const feishu = r.channels.find(c => c.channel === 'feishu')!;
     assert('feishu fail: success=false', feishu.success === false);
     assert('feishu fail: error 含 fake', String(feishu.error || '').includes('fake feishu fail'));
@@ -406,11 +419,14 @@ loggerModule.logger.error = () => undefined;
   }
 
   // feishu adapter throw（DataSource 抛 sync error）→ 仍兜底成 channel failed
+  // Phase 10: force_feishu_text=true 让 runFeishu 真跑
   {
     process.env.OPS_ALERT_FEISHU_WEBHOOK = 'https://feishu.test/webhook/z';
     const ds = new FakeDataSource({ feishuThrows: true });
     const svc = new RiskAlertService(ds);
-    const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.HIGH }));
+    const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.HIGH }), {
+      force_feishu_text: true,
+    });
     const feishu = r.channels.find(c => c.channel === 'feishu')!;
     assert('feishu throw: success=false', feishu.success === false);
     assert(
@@ -488,13 +504,14 @@ loggerModule.logger.error = () => undefined;
     delete process.env.OPS_ALERT_FEISHU_WEBHOOK;
   }
 
-  // feishu_webhook_url 覆盖 env
+  // feishu_webhook_url 覆盖 env (Phase 10: 需 force_feishu_text=true 让 runFeishu 真跑)
   {
     process.env.OPS_ALERT_FEISHU_WEBHOOK = 'https://env.example.com/wh';
     const ds = new FakeDataSource();
     const svc = new RiskAlertService(ds);
     const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.HIGH }), {
       feishu_webhook_url: 'https://opt.example.com/wh',
+      force_feishu_text: true,
     });
     assertEqual('feishu_webhook_url 覆盖 env', ds.feishuCalls[0].url, 'https://opt.example.com/wh');
     assert('write 成功', r.channels.find(c => c.channel === 'feishu')!.success === true);
@@ -607,6 +624,72 @@ loggerModule.logger.error = () => undefined;
     });
     const md = (ds.createCalls[0] as any).metadata;
     assertEqual('override=[toast]: planned_channels 自动 prepend inbox', md?.toast, true);
+  }
+
+  // =========================================================================
+  console.log('\n[11] Phase 10 通知审计 — runFeishu 与 afterCreate hook 去重...');
+  // 默认 (force_feishu_text 未传): inbox 成功后 feishu channel skip
+  // (RiskAlert.afterCreate hook 会推 interactive card 兜底, 避免双推)
+  {
+    process.env.OPS_ALERT_FEISHU_WEBHOOK = 'https://feishu.test/webhook/p10';
+    const ds = new FakeDataSource();
+    const svc = new RiskAlertService(ds);
+    const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.HIGH }));
+    const feishu = r.channels.find(c => c.channel === 'feishu')!;
+    assert('phase 10 default: feishu skipped=true', feishu.skipped === true);
+    assert('phase 10 default: feishu attempted=false', feishu.attempted === false);
+    assert(
+      'phase 10 default: feishu message 含 hook 接管说明',
+      String(feishu.message || '').includes('hook')
+    );
+    assertEqual('phase 10 default: DataSource.postFeishuOps 0 次', ds.feishuCalls.length, 0);
+    // inbox 仍写入
+    assert('phase 10 default: inbox success', r.channels.find(c => c.channel === 'inbox')!.success === true);
+    // realtime dispatcher 仍触发
+    assertEqual('phase 10 default: realtime dispatch 1 次', ds.realtimeCalls.length, 1);
+    delete process.env.OPS_ALERT_FEISHU_WEBHOOK;
+  }
+  // force_feishu_text=true: runFeishu 真发 text (兼容 audit-task-parameters-dry-run.ts 等老 caller)
+  {
+    process.env.OPS_ALERT_FEISHU_WEBHOOK = 'https://feishu.test/webhook/force';
+    const ds = new FakeDataSource();
+    const svc = new RiskAlertService(ds);
+    const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.HIGH }), {
+      force_feishu_text: true,
+    });
+    const feishu = r.channels.find(c => c.channel === 'feishu')!;
+    assert('phase 10 force: feishu success=true', feishu.success === true);
+    assertEqual('phase 10 force: DataSource.postFeishuOps 1 次', ds.feishuCalls.length, 1);
+    delete process.env.OPS_ALERT_FEISHU_WEBHOOK;
+  }
+  // override_channels=['feishu'] 不含 inbox: alertId 自然 undefined, feishu 仍发 (兼容路径)
+  {
+    process.env.OPS_ALERT_FEISHU_WEBHOOK = 'https://feishu.test/webhook/no-inbox';
+    const ds = new FakeDataSource();
+    const svc = new RiskAlertService(ds);
+    const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.HIGH }), {
+      override_channels: ['feishu'], // 内部会 prepend inbox, 但 caller 显式不要 inbox 的语义需走 override
+    });
+    // override_channels=['feishu'] 会 prepend inbox -> alertId 写入 -> 默认仍 skip;
+    // 这里只验"显式 override 也不破坏 dedup 行为"
+    const feishu = r.channels.find(c => c.channel === 'feishu')!;
+    assert(
+      'phase 10 override: 仍走 dedup 路径 (skip)',
+      feishu.skipped === true
+    );
+    delete process.env.OPS_ALERT_FEISHU_WEBHOOK;
+  }
+  // override_channels=['feishu'] + createReturnsBadId: alertId undefined -> feishu 仍发
+  {
+    process.env.OPS_ALERT_FEISHU_WEBHOOK = 'https://feishu.test/webhook/badid';
+    const ds = new FakeDataSource({ createReturnsBadId: true });
+    const svc = new RiskAlertService(ds);
+    const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.HIGH }));
+    const feishu = r.channels.find(c => c.channel === 'feishu')!;
+    // inbox 写入但 id=NaN -> alertId undefined -> 默认条件 fallback 走 runFeishu
+    assert('phase 10 badId: alertId undefined -> feishu 真发', feishu.attempted === true);
+    assertEqual('phase 10 badId: DataSource.postFeishuOps 1 次', ds.feishuCalls.length, 1);
+    delete process.env.OPS_ALERT_FEISHU_WEBHOOK;
   }
 
   // =========================================================================
