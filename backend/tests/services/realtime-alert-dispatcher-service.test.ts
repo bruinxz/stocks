@@ -66,6 +66,10 @@ import {
   buildRiskAlertSmsParams,
   SMS_TEMPLATE_RISK_ALERT_ENV,
   SMS_SIGN_NAME_ENV,
+  markDispatcherFeishuForAlert,
+  isDispatcherFeishuPendingForAlert,
+  clearDispatcherFeishuMarksForTests,
+  getDispatcherFeishuMarksSnapshotForTests,
 } from '../../src/services/RealtimeAlertDispatcher';
 
 import {
@@ -1156,6 +1160,93 @@ function makeInput(overrides: Partial<RealtimeAlertInput> = {}): RealtimeAlertIn
   // 内部 fail-OPEN，单测仅断言 svc 实例创建成功。
   const svc35 = new RealtimeAlertDispatcher();
   assert('默认 ctor', svc35 instanceof RealtimeAlertDispatcher);
+
+  // =========================================================================
+  console.log('\n[36] Phase 10 冗余 P1-2: markDispatcherFeishuForAlert / isDispatcherFeishuPendingForAlert...');
+  clearDispatcherFeishuMarksForTests();
+  // 基础: mark + 查同 URL → true
+  markDispatcherFeishuForAlert(1001, 'https://feishu.test/foo', 1_700_000_000_000);
+  assertEqual(
+    'mark+查同 URL 同 alert',
+    isDispatcherFeishuPendingForAlert(1001, 'https://feishu.test/foo', 1_700_000_000_100),
+    true
+  );
+  // 不同 URL → false
+  assertEqual(
+    '不同 URL → false',
+    isDispatcherFeishuPendingForAlert(1001, 'https://feishu.test/bar', 1_700_000_000_100),
+    false
+  );
+  // 不同 alertId → false
+  assertEqual(
+    '不同 alertId → false',
+    isDispatcherFeishuPendingForAlert(2222, 'https://feishu.test/foo', 1_700_000_000_100),
+    false
+  );
+  // 超 10s TTL → false
+  assertEqual(
+    '超 10s TTL → false',
+    isDispatcherFeishuPendingForAlert(1001, 'https://feishu.test/foo', 1_700_000_000_000 + 11_000),
+    false
+  );
+  // alertId 非法 → 无操作
+  markDispatcherFeishuForAlert(0, 'https://feishu.test/foo', 1_700_000_000_000);
+  markDispatcherFeishuForAlert(NaN as any, 'https://feishu.test/foo', 1_700_000_000_000);
+  assertEqual(
+    '非法 alertId 不 mark',
+    isDispatcherFeishuPendingForAlert(0, 'https://feishu.test/foo', 1_700_000_000_100),
+    false
+  );
+  // 空 URL → 无操作
+  clearDispatcherFeishuMarksForTests();
+  markDispatcherFeishuForAlert(1001, '', 1_700_000_000_000);
+  assertEqual(
+    '空 URL 不 mark',
+    isDispatcherFeishuPendingForAlert(1001, '', 1_700_000_000_100),
+    false
+  );
+
+  // dispatch() 内 mark URL — feishu 通道实际推送时 markDispatcherFeishuForAlert 被调
+  clearDispatcherFeishuMarksForTests();
+  const users36 = new Map<number, FakeUserState | null>();
+  users36.set(1, {
+    username: 'u',
+    config: configFull({
+      feishu: { webhook_url: 'https://feishu.test/marked-by-dispatch' },
+      email: { enabled: false },
+      sms: { enabled: false },
+    }),
+  });
+  const ds36 = new FakeDataSource({
+    users: users36,
+    sendFeishu: async () => ({ success: true, data: { code: 0 } } as any),
+  });
+  const svc36 = new RealtimeAlertDispatcher(ds36);
+  await svc36.dispatch(makeInput({ alert_id: 5555 }));
+  const snap = getDispatcherFeishuMarksSnapshotForTests();
+  assert('dispatch 内 mark: 5555 已记录', snap.has(5555));
+  assertEqual(
+    'dispatch 内 mark: URL 正确',
+    snap.get(5555)?.url,
+    'https://feishu.test/marked-by-dispatch'
+  );
+  clearDispatcherFeishuMarksForTests();
+
+  // dry_run 不 mark
+  const users36b = new Map<number, FakeUserState | null>();
+  users36b.set(1, {
+    username: 'u',
+    config: configFull({
+      feishu: { webhook_url: 'https://feishu.test/no-mark-dryrun' },
+      email: { enabled: false },
+      sms: { enabled: false },
+    }),
+  });
+  const ds36b = new FakeDataSource({ users: users36b });
+  const svc36b = new RealtimeAlertDispatcher(ds36b);
+  await svc36b.dispatch(makeInput({ alert_id: 5556 }), { dry_run: true });
+  assert('dry_run 不 mark', !getDispatcherFeishuMarksSnapshotForTests().has(5556));
+  clearDispatcherFeishuMarksForTests();
 
   // =========================================================================
   console.log('\n--------------------------------------------------------------');

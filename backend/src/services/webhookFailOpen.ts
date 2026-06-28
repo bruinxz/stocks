@@ -295,6 +295,18 @@ export interface RetryPendingFallbacksInput {
   now?: Date;
   /** 可选 DataSource (默认生产). */
   source?: WebhookFallbackLogDataSource;
+  /**
+   * Phase 10 缺漏 P1-4 (2026-06-28): 元告警 hook (测试注入).
+   * 默认 pushSystemAdminAlertFireAndForget. 整 cron 跑完 dead_count > 0 时推 1 次
+   * (dedup_key='webhook_fallback_dead_burst', 1h dedup).
+   */
+  meta_alert_push?: (input: {
+    dedup_key: string;
+    level: 'HIGH';
+    title: string;
+    body_markdown: string;
+    triggered_at: string;
+  }) => void;
 }
 
 export interface RetryPendingFallbacksSummary {
@@ -419,6 +431,45 @@ export async function retryPendingFallbacks(
       status: 'retry_failed',
       last_error: info.last_error,
     });
+  }
+
+  // Phase 10 缺漏 P1-4 (2026-06-28): 本次 cron 跑出 dead row → 一次性元告警.
+  // dead = 重试到上限仍失败 = 该消息永久丢弃, OPS 必须人工干预 (查 webhook_url
+  // 配置 / 飞书侧 rate limit / 模板格式). 元告警 dedup_key 让 1h 内 N 个 dead
+  // 只推 1 次, 避免风暴.
+  if (summary.dead_count > 0) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const sysMod = require('./SystemAdminAlertPusher');
+      const pushFn =
+        input.meta_alert_push ||
+        (sysMod && typeof sysMod.pushSystemAdminAlertFireAndForget === 'function'
+          ? sysMod.pushSystemAdminAlertFireAndForget
+          : null);
+      if (pushFn) {
+        const deadIds = summary.per_row
+          .filter(r => r.status === 'dead')
+          .map(r => `${r.id}(${r.scenario})`)
+          .slice(0, 10) // 截 10 个防 body 太长
+          .join(', ');
+        pushFn({
+          dedup_key: 'webhook_fallback_dead_burst',
+          level: 'HIGH',
+          title: `[HIGH] webhook fallback ${summary.dead_count} 条进入 dead 状态`,
+          body_markdown:
+            `**触发原因**: WEBHOOK_FALLBACK_RETRY cron 本次跑出 ${summary.dead_count} 条 dead row\n` +
+            `**含义**: 这些消息重试到 max_attempts 仍失败, 已**永久丢弃**\n` +
+            `**dead row IDs**: ${deadIds}${summary.dead_count > 10 ? ` ...+${summary.dead_count - 10}` : ''}\n` +
+            `**dedup**: 1h 内本元告警只推 1 次 (SystemAdminAlertPusher 默认窗口)\n` +
+            `**排查方向**: webhook URL 配置 / 飞书 rate limit / payload schema`,
+          triggered_at: now.toISOString(),
+        });
+      }
+    } catch (metaErr: any) {
+      logger.warn(
+        `[webhookFailOpen] dead-burst 元告警 push 异常 (吞错保护): ${metaErr?.message || metaErr}`
+      );
+    }
   }
 
   return summary;

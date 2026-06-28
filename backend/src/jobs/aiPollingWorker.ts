@@ -18,6 +18,7 @@ import { paperTradingAutomationService } from '../portfolio/internal/PaperTradin
 import { RecommendationLoopPolicySnapshot } from '../models/RecommendationLoopPolicySnapshot';
 import { quantFusionAuditService } from '../quant/engine/internal/QuantFusionAuditService';
 import { AGENT_ONLY_PORTFOLIO_NAME } from '../portfolio/internal/PaperTradingPortfolioFamilies';
+import { recordAiPollingFailureForBurst } from './aiPollingBurstDetector';
 
 const akshareClient = new AKShareClient();
 const aiPollingWorkerDisabled =
@@ -591,4 +592,16 @@ aiPollingQueue.on('failed', async (job, err) => {
   await updateLogProgress(job.data.executionLogId, false, job.data.scheduler_task_type);
   // 两类失败都报飞书 — 之前 discard 路径完全静默, 运维永远不知道远端 FAILED.
   await feishuTaskReportService.reportAiPollingFailure(job.data, err, job.id);
+
+  // Phase 10 缺漏 P0-2 (2026-06-28): 5min 滑动窗口 ≥ 10 次失败 → HIGH burst 告警
+  // (feishuTaskReportService.reportAiPollingFailure 当前是 stub no-op, 单 job 失败
+  // 静默; burst 检测兜底让运维至少知道 "有什么事爆了"). dedup_key='ai_polling_burst'
+  // 1h dedup 防 burst 内反复推.
+  try {
+    recordAiPollingFailureForBurst();
+  } catch (burstErr: any) {
+    logger.warn(
+      `[ai-polling] burst detector 异常 (吞错保护): ${burstErr?.message || burstErr}`
+    );
+  }
 });

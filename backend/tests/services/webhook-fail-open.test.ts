@@ -582,6 +582,99 @@ function makeFakeDataSource(): {
   }
 
   // =========================================================================
+  // [8] Phase 10 缺漏 P1-4 — dead row 元告警
+  // =========================================================================
+  console.log('\n[8] Phase 10 缺漏 P1-4: dead row 元告警...');
+  // (a) dead_count=0 → 不调元告警
+  {
+    const { ds, state } = makeFakeDataSource();
+    const metaCalls: any[] = [];
+    state.pendingRows = [];
+    const sum = await retryPendingFallbacks({
+      source: ds,
+      dispatchers: {},
+      meta_alert_push: input => metaCalls.push(input),
+    });
+    assertEqual('[8a] dead_count=0', sum.dead_count, 0);
+    assertEqual('[8a] meta-alert 不调', metaCalls.length, 0);
+  }
+  // (b) dead_count=2 → 调 1 次 dead-burst 元告警
+  {
+    const { ds, state } = makeFakeDataSource();
+    const metaCalls: any[] = [];
+    const now = new Date('2026-06-20T10:00:00Z');
+    const mkDeadRow = (id: number) => ({
+      id,
+      channel: 'feishu' as const,
+      scenario: 'sendDailyDigestCard',
+      webhook_url: 'https://x',
+      payload: {},
+      last_error: '504',
+      last_status_code: 504,
+      attempts: 4,
+      max_attempts: 5,
+      status: 'pending' as const,
+      next_retry_at: now,
+      last_attempt_at: null,
+      sent_at: null,
+      dead_at: null,
+      metadata: {},
+    });
+    state.pendingRows = [mkDeadRow(101), mkDeadRow(102)];
+    const sum = await retryPendingFallbacks({
+      source: ds,
+      now,
+      dispatchers: {
+        sendDailyDigestCard: async () => ({ success: false, message: '504' }),
+      },
+      meta_alert_push: input => metaCalls.push(input),
+    });
+    assertEqual('[8b] dead_count=2', sum.dead_count, 2);
+    assertEqual('[8b] meta-alert 调 1 次', metaCalls.length, 1);
+    assertEqual('[8b] dedup_key', metaCalls[0]?.dedup_key, 'webhook_fallback_dead_burst');
+    assertEqual('[8b] level=HIGH', metaCalls[0]?.level, 'HIGH');
+    assert('[8b] title 含 2 条', String(metaCalls[0]?.title || '').includes('2 条'));
+    assert('[8b] body 含 101', String(metaCalls[0]?.body_markdown || '').includes('101'));
+    assert('[8b] body 含 102', String(metaCalls[0]?.body_markdown || '').includes('102'));
+  }
+  // (c) retry_failed (非 dead) 不触发元告警
+  {
+    const { ds, state } = makeFakeDataSource();
+    const metaCalls: any[] = [];
+    const now = new Date('2026-06-20T11:00:00Z');
+    state.pendingRows = [
+      {
+        id: 200,
+        channel: 'feishu',
+        scenario: 'sendDailyDigestCard',
+        webhook_url: 'https://x',
+        payload: {},
+        last_error: '500',
+        last_status_code: 500,
+        attempts: 1, // attempts+1=2 < 5 max → retry_failed, 不 dead
+        max_attempts: 5,
+        status: 'pending',
+        next_retry_at: now,
+        last_attempt_at: null,
+        sent_at: null,
+        dead_at: null,
+        metadata: {},
+      },
+    ];
+    const sum = await retryPendingFallbacks({
+      source: ds,
+      now,
+      dispatchers: {
+        sendDailyDigestCard: async () => ({ success: false, message: '500' }),
+      },
+      meta_alert_push: input => metaCalls.push(input),
+    });
+    assertEqual('[8c] retry_failed_count=1', sum.retry_failed_count, 1);
+    assertEqual('[8c] dead_count=0', sum.dead_count, 0);
+    assertEqual('[8c] meta-alert 不调', metaCalls.length, 0);
+  }
+
+  // =========================================================================
   // Summary
   // =========================================================================
   setTimeout(() => {

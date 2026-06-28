@@ -89,6 +89,12 @@ export interface SystemAdminAlertInput {
   trace_id?: string;
   /** 跳转 URL */
   deeplink?: string;
+  /**
+   * Phase 10 冗余 P1-2 (2026-06-28): caller (RiskAlert.afterCreate) 知道这一条 push
+   * 对应哪条 RiskAlert. dispatcher 在 dispatch() feishu 路径上若已 mark 同 alert + 同
+   * webhook URL, pusher 跳过 feishu (避免双推). 不传 = 不去重, 走原路径.
+   */
+  caller_alert_id?: number;
 }
 
 export interface SystemAdminAlertPushResult {
@@ -126,6 +132,29 @@ function resolveAdminEmails(): string[] {
     .split(',')
     .map(s => s.trim())
     .filter(s => s.length > 0 && s.includes('@'));
+}
+
+/**
+ * Phase 10 冗余 P1-2 (2026-06-28) — dispatcher fan-out 去重 helper.
+ * 检查 RealtimeAlertDispatcher 是否已在 10s TTL 窗口内对同一 alert + 同 webhook URL 推送
+ * 过. lazy-require 防 RealtimeAlertDispatcher 顶层 import 循环 (本 service 已被多处
+ * lazy-require, 反向 import 会形成 cycle).
+ */
+function isDispatcherFeishuPendingForCaller(
+  alertId: number | undefined,
+  feishuUrl: string,
+  nowMs: number
+): boolean {
+  if (typeof alertId !== 'number' || !Number.isFinite(alertId) || alertId <= 0) return false;
+  if (!feishuUrl) return false;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mod = require('./RealtimeAlertDispatcher');
+    if (typeof mod.isDispatcherFeishuPendingForAlert !== 'function') return false;
+    return mod.isDispatcherFeishuPendingForAlert(alertId, feishuUrl, nowMs) === true;
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -291,6 +320,14 @@ export async function pushSystemAdminAlert(
       success: false,
       message:
         '未配置 OPS_ALERT_FEISHU_WEBHOOK / FEISHU_RECOMMENDATION_BOT_WEBHOOK / FEISHU_BOT_WEBHOOK',
+    };
+  } else if (isDispatcherFeishuPendingForCaller(input.caller_alert_id, feishuUrl, now)) {
+    // Phase 10 冗余 P1-2: dispatcher 已 mark 同 alert + 同 webhook URL → skip 避免双推
+    result.feishu = {
+      attempted: false,
+      success: false,
+      message:
+        'dispatcher 已对 alert_id 推送同 URL, skip duplicate card (Phase 10 fan-out 去重)',
     };
   } else {
     result.feishu.attempted = true;
