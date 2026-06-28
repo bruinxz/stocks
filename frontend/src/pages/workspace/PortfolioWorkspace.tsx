@@ -56,7 +56,9 @@ import {
   YAxis,
 } from 'recharts';
 import dayjs, { Dayjs } from 'dayjs';
+import { AnimatePresence, motion } from 'framer-motion';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
+import WorkspaceHero from '../../components/layout/WorkspaceHero';
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
 import TradeReasonCell from '../../components/trading/TradeReasonCell';
 import PortfolioManagementPanel from '../../components/portfolio/PortfolioManagementPanel';
@@ -373,6 +375,41 @@ const PortfolioWorkspace: React.FC = () => {
     body = null;
   }
 
+  // Phase 12 hero — 大字 + KPI, 与 KPI bar 互补 (hero=故事+大数 / kpi-bar=实时 4 项)
+  const hero = (
+    <WorkspaceHero
+      eyebrow="Portfolio · 实盘交易"
+      title="持仓与复盘"
+      subtitle="模拟盘持仓、资金曲线、交易明细与复盘日记 — 赚亏闭环 · 全链路真实数据"
+      variant="violet"
+      metrics={[
+        {
+          label: '总市值',
+          value: kpis.totalValue >= 10000 ? (kpis.totalValue / 10000).toFixed(2) : kpis.totalValue.toFixed(2),
+          unit: kpis.totalValue >= 10000 ? '万元' : '元',
+          emphasis: true,
+        },
+        {
+          label: '浮动盈亏',
+          value: `${kpis.todayUnrealized >= 0 ? '+' : ''}${kpis.todayUnrealized >= 10000 || kpis.todayUnrealized <= -10000 ? (kpis.todayUnrealized / 10000).toFixed(2) : kpis.todayUnrealized.toFixed(0)}`,
+          unit: Math.abs(kpis.todayUnrealized) >= 10000 ? '万元' : '元',
+          tone: kpis.todayUnrealized > 0 ? 'up' : kpis.todayUnrealized < 0 ? 'down' : undefined,
+        },
+        {
+          label: '当月收益',
+          value: `${kpis.monthReturnPct >= 0 ? '+' : ''}${kpis.monthReturnPct.toFixed(2)}`,
+          unit: '%',
+          tone: kpis.monthReturnPct > 0 ? 'up' : kpis.monthReturnPct < 0 ? 'down' : undefined,
+        },
+        {
+          label: '持仓',
+          value: kpis.positionCount,
+          unit: '只',
+        },
+      ]}
+    />
+  );
+
   return (
     <WorkspaceLayout
       title="持仓与复盘"
@@ -382,8 +419,20 @@ const PortfolioWorkspace: React.FC = () => {
       onTabChange={setActiveKey}
       kpiSlot={kpiSlot}
       headerActions={headerActions}
+      hero={hero}
+      themed
     >
-      {body}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={activeKey}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -4 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+        >
+          {body}
+        </motion.div>
+      </AnimatePresence>
     </WorkspaceLayout>
   );
 };
