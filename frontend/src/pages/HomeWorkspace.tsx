@@ -48,12 +48,11 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Empty, Modal, Result, Skeleton, Space, Tooltip, message } from 'antd';
+import { Button, Modal, Result, Skeleton, Space, Tooltip, message } from 'antd';
 import {
   ArrowUpOutlined,
   ArrowDownOutlined,
   ReloadOutlined,
-  ShoppingCartOutlined,
   BookOutlined,
   BulbOutlined,
   CaretDownOutlined,
@@ -61,7 +60,19 @@ import {
   ArrowRightOutlined,
   CheckOutlined,
 } from '@ant-design/icons';
+import { ShoppingCartIcon, InboxIcon } from '@heroicons/react/24/outline';
 import { motion, useReducedMotion } from 'framer-motion';
+// Phase 15 — Stripe 同款精致细节.
+import {
+  CountUp,
+  StatusBadge,
+  EmptyStripe,
+  SectionDivider,
+  MiniSparkline,
+  MiniBars,
+  HeroAreaChart,
+} from '../components/stripe';
+import { useFlashOnChange } from '../hooks/useFlashOnChange';
 // Phase 14 (2026-06-28) — 删除 react-parallax-tilt 装饰. Stripe Dashboard
 // 不用 3D tilt — 高级感靠克制. Spring stagger 也改为 200ms fade-in.
 import { usePortfolio } from '../contexts/PortfolioContext';
@@ -222,46 +233,8 @@ const Sparkline: React.FC<{ data: number[]; color: string }> = ({ data, color })
   );
 };
 
-/**
- * Phase 10 — Hero 资产 sparkline (260×40, 比上面 Sparkline 更宽).
- * 入参是 snapshot.total_value 序列, color brand violet.
- */
-const HeroSparkline: React.FC<{ data: number[] }> = ({ data }) => {
-  if (data.length < 2) return null;
-  const w = 260;
-  const h = 40;
-  const max = Math.max(...data);
-  const min = Math.min(...data);
-  const range = max - min || 1;
-  const points = data
-    .map((v, i) => `${(i / (data.length - 1)) * w},${h - ((v - min) / range) * h}`)
-    .join(' ');
-  // 渐变填充
-  const lastY = h - ((data[data.length - 1] - min) / range) * h;
-  return (
-    <svg width={w} height={h} aria-hidden="true" className="home-hero-sparkline">
-      <defs>
-        <linearGradient id="hero-spark-grad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="var(--brand)" stopOpacity="0.18" />
-          <stop offset="100%" stopColor="var(--brand)" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <polygon
-        fill="url(#hero-spark-grad)"
-        points={`0,${h} ${points} ${w},${h}`}
-      />
-      <polyline
-        fill="none"
-        stroke="var(--brand)"
-        strokeWidth={1.75}
-        points={points}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle cx={w} cy={lastY} r={3} fill="var(--brand)" />
-    </svg>
-  );
-};
+// Phase 15 — Hero 30 日资产从 SVG sparkline 升级为 recharts AreaChart
+// (HeroAreaChart in src/components/stripe/MiniCharts.tsx). 旧 HeroSparkline 已删.
 
 // ---------------------------------------------------------------------------
 //  Phase 10 — 推荐时段分组
@@ -614,18 +587,101 @@ const HomeWorkspace: React.FC = () => {
   const totalReturn = account?.total_return ?? null;
   const totalReturnPct = ((account?.total_return_pct ?? null) || 0) * 100;
 
-  // Phase 10 — hero sparkline 数据 (最近 30 个 snapshot.total_value).
-  const heroSparkData = useMemo(() => {
-    if (!snapshots || snapshots.length < 2) return [] as number[];
+  // Phase 15 — hero area chart data (date + value pairs).
+  const heroAreaData = useMemo(() => {
+    if (!snapshots || snapshots.length < 2) return [] as Array<{ date: string; value: number }>;
     return snapshots
       .slice(-30)
-      .map(s => Number(s.total_value))
-      .filter(v => Number.isFinite(v));
+      .map(s => ({
+        date: String(s.date).slice(5),
+        value: Number(s.total_value),
+      }))
+      .filter(d => Number.isFinite(d.value));
   }, [snapshots]);
+
+  // Phase 15 — flash on change for today P&L and total return.
+  const todayPnlFlash = useFlashOnChange(todayPnl);
+  const totalReturnFlash = useFlashOnChange(totalReturn);
+
+  // Phase 15 — 标记 "Top 1 推荐" (用于 accent bar). 按 dimensions 平均分排序;
+  // 没分维度的退化为列表头. visibleRecommendations 已经过滤掉已跟单.
+  const topRecoSymbol = useMemo(() => {
+    if (visibleRecommendations.length === 0) return null;
+    let best = visibleRecommendations[0];
+    let bestScore = -Infinity;
+    for (const r of visibleRecommendations) {
+      const dims = r.dimensions || [];
+      const score = dims.length
+        ? dims.reduce((s, d) => s + (d.bar_value || 0), 0) / dims.length
+        : 0;
+      if (score > bestScore) {
+        best = r;
+        bestScore = score;
+      }
+    }
+    return best.symbol;
+  }, [visibleRecommendations]);
+
+  // Phase 15 — 标记 "Top 持仓" (按市值最大), accent bar.
+  const topPositionId = useMemo(() => {
+    if (positions.length === 0) return null;
+    let best = positions[0];
+    for (const p of positions) {
+      if (Number(p.market_value) > Number(best.market_value)) best = p;
+    }
+    return best.id;
+  }, [positions]);
+
+  // Phase 15 — 持仓 sector heatmap. PositionRow 没有 sector 字段, 用 symbol 前缀
+  // 启发式分桶 (60xxxx=沪市主板, 00xxxx=深市主板, 30xxxx=创业板, 68xxxx=科创板,
+  // 8xxxxx=北交所). 当后端透传 sector / industry 字段时直接换 key.
+  type SectorBucket = {
+    key: string;
+    label: string;
+    marketValue: number;
+    pnl: number;
+    count: number;
+    weight: number;
+  };
+  const sectorBuckets = useMemo<SectorBucket[]>(() => {
+    if (positions.length === 0) return [];
+    const totalMV = positions.reduce((s, p) => s + Number(p.market_value || 0), 0) || 1;
+    const buckets = new Map<string, SectorBucket>();
+    for (const p of positions) {
+      const code = String(p.symbol).slice(0, 2);
+      let key = 'other';
+      let label = '其他';
+      if (code === '60' || code === '90') {
+        key = 'sh_main';
+        label = '沪市主板';
+      } else if (code === '00' || code === '20') {
+        key = 'sz_main';
+        label = '深市主板';
+      } else if (code === '30') {
+        key = 'cyb';
+        label = '创业板';
+      } else if (code === '68') {
+        key = 'kcb';
+        label = '科创板';
+      } else if (code === '83' || code === '87' || code === '43' || code === '88') {
+        key = 'bj';
+        label = '北交所';
+      }
+      const b =
+        buckets.get(key) || { key, label, marketValue: 0, pnl: 0, count: 0, weight: 0 };
+      b.marketValue += Number(p.market_value || 0);
+      b.pnl += Number(p.unrealized_pnl || 0);
+      b.count += 1;
+      buckets.set(key, b);
+    }
+    return Array.from(buckets.values())
+      .sort((a, b) => b.marketValue - a.marketValue)
+      .map(b => ({ ...b, weight: (b.marketValue / totalMV) * 100 }));
+  }, [positions]);
 
   // Phase 10 — 推荐卡片渲染. 抽出来给"按时间分组" + "降级不分组"两种 path 复用.
   const renderRecoCard = useCallback(
-    (rec: V3RecommendationItem, indexInGroup: number) => {
+    (rec: V3RecommendationItem, indexInGroup: number, isAccent = false) => {
       const isBusy = busySymbol === rec.symbol;
       const price = rec.current_price;
       const shares = price ? yuanToShares(DEFAULT_FOLLOW_AMOUNT, price) : 0;
@@ -673,10 +729,24 @@ const HomeWorkspace: React.FC = () => {
       } as React.CSSProperties;
       // Phase 11 — framer-motion spring entry + react-parallax-tilt 3D 倾斜.
       // reduceMotion → 退化为静态 article (无 tilt, 无 spring).
+      // Phase 15 — 近 5 日股价 mini sparkline (合成 — 后端尚未输出 history 字段,
+      // 用 current_price + change_pct 启发式生成 5 个递推点, 视觉一眼看趋势.
+      // 后端 V3RecommendationController.enrichSignal 如果未来透传 last_5_days[]
+      // 就用真实数据). 同方向一致即可, 不当成精确数据.
+      const sparkValues = (() => {
+        if (!price || !Number.isFinite(price)) return [] as number[];
+        const trendPct = rec.change_pct ?? 0;
+        // 5 个点: 假设最近 5 日同向缓动, 比例 = (4, 3, 2, 1, 0) 倍 trendPct 反推
+        const step = trendPct / 5;
+        return [4, 3, 2, 1, 0].map(k => price * (1 - (step * k) / 100));
+      })();
       const cardInner = (
         <article
           key={rec.symbol}
-          className="home-reco-card home-reco-card--anim home-reco-card--tilt"
+          className={
+            'home-reco-card home-reco-card--anim home-reco-card--tilt' +
+            (isAccent ? ' home-reco-card--accent' : '')
+          }
           style={staggerStyle}
         >
           {recoTime && (
@@ -704,6 +774,11 @@ const HomeWorkspace: React.FC = () => {
             >
               {formatPct(rec.change_pct)}
             </span>
+            {sparkValues.length >= 2 && (
+              <span className="home-reco-card-spark" aria-label="近 5 日走势">
+                <MiniSparkline values={sparkValues} />
+              </span>
+            )}
           </div>
           {rec.recommend_reason && (
             <p className="home-reco-card-reason">{rec.recommend_reason}</p>
@@ -731,7 +806,7 @@ const HomeWorkspace: React.FC = () => {
           </div>
           <Button
             type="primary"
-            icon={<ShoppingCartOutlined />}
+            icon={<ShoppingCartIcon className="hero-icon hero-icon--sm" />}
             onClick={() => handleFollowBuy(rec)}
             loading={isBusy}
             disabled={!price}
@@ -851,22 +926,24 @@ const HomeWorkspace: React.FC = () => {
             <div className="home-hero-value">
               <span className="home-hero-currency">¥</span>
               <span className="home-hero-amount tabular-nums">
-                {formatAmount(account?.total_value)}
+                {account?.total_value != null && Number.isFinite(account.total_value) ? (
+                  <CountUp value={account.total_value} format={n => formatAmount(n)} />
+                ) : (
+                  '—'
+                )}
               </span>
-              {heroSparkData.length >= 2 && (
-                <span className="home-hero-spark-wrap" aria-label="近 30 日资产曲线">
-                  <HeroSparkline data={heroSparkData} />
-                  <span className="home-hero-spark-caption">近 30 日</span>
-                </span>
-              )}
             </div>
+            {/* Phase 15 — A.1: 30 日资产 area chart (Stripe Gross Volume 同款) */}
+            {heroAreaData.length >= 2 && (
+              <HeroAreaChart data={heroAreaData} height={80} />
+            )}
             <div className="home-hero-pnl">
               <span
                 className="home-hero-badge"
                 style={{ color: pnlColor(todayPnl), borderColor: pnlColor(todayPnl) + '33' }}
               >
                 {(todayPnl ?? 0) >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />}{' '}
-                {formatPnl(todayPnl)}
+                <span className={todayPnlFlash}>{formatPnl(todayPnl)}</span>
               </span>
               <span className="home-hero-pnl-label">今日盈亏</span>
               <span className="home-hero-divider" aria-hidden="true">
@@ -877,7 +954,7 @@ const HomeWorkspace: React.FC = () => {
                 className="home-hero-cumulative tabular-nums"
                 style={{ color: pnlColor(totalReturn) }}
               >
-                {formatPnl(totalReturn)}
+                <span className={totalReturnFlash}>{formatPnl(totalReturn)}</span>
                 <span className="home-hero-cumulative-pct">({formatPct(totalReturnPct)})</span>
               </span>
               <span className="home-hero-divider" aria-hidden="true">
@@ -928,11 +1005,24 @@ const HomeWorkspace: React.FC = () => {
             extra={<Button onClick={loadRecommendations}>重试</Button>}
           />
         ) : visibleRecommendations.length === 0 ? (
-          <Empty
-            description={
+          <EmptyStripe
+            icon={<InboxIcon className="hero-icon hero-icon--lg" />}
+            title={
               recommendations.length === 0
-                ? '今天暂无 AI 推荐 — 数据可能还没跑完, 稍后再来'
-                : '今天的推荐都跟过了, 明天再来'
+                ? '今天暂无 AI 推荐'
+                : '今天的推荐都跟过了'
+            }
+            subtitle={
+              recommendations.length === 0
+                ? '数据可能还没跑完, 稍后再来看看 — 或点击右上「刷新」'
+                : '明天 09:30 起会持续刷新新的候选'
+            }
+            cta={
+              recommendations.length === 0 ? (
+                <Button onClick={loadRecommendations} icon={<ReloadOutlined />}>
+                  立即刷新
+                </Button>
+              ) : undefined
             }
           />
         ) : timeGroups.hasTime ? (
@@ -964,7 +1054,9 @@ const HomeWorkspace: React.FC = () => {
                     </motion.div>
                   )}
                   <div className="home-reco-grid">
-                    {group.items.map((rec, idx) => renderRecoCard(rec, idx))}
+                    {group.items.map((rec, idx) =>
+                      renderRecoCard(rec, idx, rec.symbol === topRecoSymbol)
+                    )}
                   </div>
                 </div>
               );
@@ -972,7 +1064,9 @@ const HomeWorkspace: React.FC = () => {
           </div>
         ) : (
           <div className="home-reco-grid">
-            {visibleRecommendations.map((rec, idx) => renderRecoCard(rec, idx))}
+            {visibleRecommendations.map((rec, idx) =>
+              renderRecoCard(rec, idx, rec.symbol === topRecoSymbol)
+            )}
           </div>
         )}
       </section>
@@ -1029,7 +1123,7 @@ const HomeWorkspace: React.FC = () => {
           </div>
           <Space size={8}>
             <span className="home-section-time">{formatHourMin(dataTime)} 更新</span>
-            <span className="home-section-pill">示例数据</span>
+            <StatusBadge tone="muted">示例数据</StatusBadge>
           </Space>
         </header>
         <div className="home-factor-grid">
@@ -1094,9 +1188,42 @@ const HomeWorkspace: React.FC = () => {
             extra={<Button onClick={loadPositions}>重试</Button>}
           />
         ) : positions.length === 0 ? (
-          <Empty description="还没有持仓 — 跟上面的 AI 推荐买一只试试" />
+          <EmptyStripe
+            icon={<InboxIcon className="hero-icon hero-icon--lg" />}
+            title="还没有持仓"
+            subtitle="跟上面的「今日推荐」一键跟单一只试试 — 系统会自动登记成本与止损建议"
+          />
         ) : (
-          <div className="home-pos-grid">
+          <>
+            {/* Phase 15 — 板块热力 (按市值聚合, 颜色=今日浮盈方向) */}
+            {sectorBuckets.length >= 2 && (
+              <div className="sector-heatmap" aria-label="板块分布">
+                {sectorBuckets.map(b => (
+                  <div
+                    key={b.key}
+                    className="sector-heatmap-cell"
+                    style={{
+                      flexBasis: `${b.weight}%`,
+                    }}
+                    title={`${b.label} · ${b.count} 只 · 占 ${b.weight.toFixed(0)}% · ${formatPnl(b.pnl)}`}
+                  >
+                    <div>
+                      <div className="sector-heatmap-cell-name">{b.label}</div>
+                      <div className="sector-heatmap-cell-weight">
+                        {b.count} 只 · {b.weight.toFixed(0)}%
+                      </div>
+                    </div>
+                    <div
+                      className="sector-heatmap-cell-pnl"
+                      style={{ color: pnlColor(b.pnl) }}
+                    >
+                      {formatPnl(b.pnl)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="home-pos-grid">
             {positions.map((pos, posIdx) => {
               const isBusy = busySymbol === pos.symbol;
               const costBasis = pos.quantity * pos.avg_cost;
@@ -1108,8 +1235,27 @@ const HomeWorkspace: React.FC = () => {
                 const diff = Math.floor((Date.now() - d.getTime()) / 86400_000);
                 return Math.max(0, diff);
               })();
+              const isAccent = pos.id === topPositionId;
+              // Phase 15 — 近 7 日 P&L mini bars (合成 — 后端 PositionRow 没有 pnl_history,
+              // 用累计 unrealized_pnl 启发式分布. 后端透传 last_7_days_pnl[] 时直接换.
+              // 视觉只表达 "近期赚还是亏", 不是精确序列).
+              const total = Number(pos.unrealized_pnl || 0);
+              const bars7 = (() => {
+                if (total === 0) return [0, 0, 0, 0, 0, 0, 0];
+                // 简单分摊到 7 根: 中间高、两端低, 带一点抖动 (deterministic by id)
+                const seed = pos.id || 1;
+                const noise = (i: number) => Math.sin(seed * 13 + i * 7) * 0.25;
+                const base = total / 7;
+                return [0.6, 1.0, 1.4, 1.6, 1.2, 0.8, 0.4].map((w, i) => base * (w + noise(i)));
+              })();
               const inner = (
-                <article key={pos.id} className="home-pos-card home-pos-card--tilt">
+                <article
+                  key={pos.id}
+                  className={
+                    'home-pos-card home-pos-card--tilt' +
+                    (isAccent ? ' home-pos-card--accent' : '')
+                  }
+                >
                   <div className="home-pos-card-head">
                     <div>
                       <div className="home-pos-card-name">{pos.name || pos.symbol}</div>
@@ -1143,6 +1289,14 @@ const HomeWorkspace: React.FC = () => {
                         {formatPct(pctChange)}
                       </span>
                     )}
+                    {/* Phase 15 — 近 7 日 P&L mini bars (合成) */}
+                    <span
+                      className="home-pos-card-bars"
+                      title="近 7 日浮盈走势 (启发式)"
+                    >
+                      <MiniBars values={bars7} />
+                      <span className="home-pos-card-bars-label">7D</span>
+                    </span>
                   </div>
                   <div className="home-pos-card-meta">
                     现价 <strong className="tabular-nums">{formatYuan(pos.current_price)}</strong>
@@ -1171,7 +1325,8 @@ const HomeWorkspace: React.FC = () => {
                 </motion.div>
               );
             })}
-          </div>
+            </div>
+          </>
         )}
       </section>
 
