@@ -1,10 +1,16 @@
 /**
  * SystemWorkspace — Batch AL (2026-06-21) — 系统介绍 + 操作手册 + 更新日志 + 架构图 + 用户反馈.
  *
+ * Phase 11 (2026-06-28) — 视觉与内容重写.
+ *   - 内容: systemWorkspaceContent.ts 全面对齐 Phase 1-11 现状
+ *     (7 menu / 78 cron / 29 策略 / 22 因子 / 7 通知 service / id=65 主盘).
+ *   - 视觉: 系统介绍 tab 顶部加 system-hero (暗色 aurora) + bento 关键统计;
+ *     intro/manual/changelog/architecture 4 个静态 tab 都包 motion 入场.
+ *
  * Mount: /workspace/system
  *
  * 5 个 tab:
- *   - intro        系统介绍 (markdown 静态)
+ *   - intro        系统介绍 (hero + bento + markdown 静态)
  *   - manual       操作手册 (markdown 静态)
  *   - changelog    更新日志 (markdown 静态)
  *   - architecture 架构图 (markdown 静态 + 跳转到 DataWorkspace 实时 SystemTopologyMap 提示)
@@ -47,6 +53,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import dayjs from 'dayjs';
+import { motion, useReducedMotion } from 'framer-motion';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import {
   SYSTEM_ARCHITECTURE_MD,
@@ -98,6 +105,175 @@ function MarkdownCard({ content }: { content: string }) {
         </ReactMarkdown>
       </div>
     </Card>
+  );
+}
+
+/**
+ * Phase 11 — 系统介绍 hero (暗色 aurora) + bento 关键统计.
+ * 这是 intro tab 顶部的 "封面页" — 给用户一个 30 秒看完的整体印象, 详细内容在下方
+ * markdown 里继续展开.
+ *
+ * 数字硬编码反映"当前架构状态" (与下方 markdown 同源, 改动需同步):
+ *   - 78 cron (backend/src/constants/cronRegistry.ts 计数)
+ *   - 29 策略 (backend/src/quant/engine/StrategyRegistry.ts register 次数)
+ *   - 22 因子 / 8 analyzer (架构常量)
+ *   - 7 notification service (backend/src/services 计数)
+ *   - 11 Phase (迄今完成的视觉/架构 phase 数)
+ *   - 5500 A 股覆盖
+ */
+const SYSTEM_HERO_STATS: Array<{ value: string; label: string; suffix?: string }> = [
+  { value: '5,500', label: 'A 股覆盖', suffix: '+' },
+  { value: '78', label: 'Cron 任务' },
+  { value: '29', label: '策略' },
+  { value: '22', label: '因子' },
+];
+
+const SYSTEM_BENTO: Array<{ eyebrow: string; title: string; body: string; list?: string[] }> = [
+  {
+    eyebrow: '主菜单',
+    title: '5 通用 + 2 admin',
+    body: 'Phase 9 精简后的稳态结构. 新手只看主页 + 简易版即可上手, admin 多 2 项管理入口.',
+    list: ['主页', '简易版', '持仓', '实验室', '设置', '+ 数据中心 (admin)', '+ 系统介绍 (admin)'],
+  },
+  {
+    eyebrow: '通知 / 告警',
+    title: '7 service · 两层',
+    body: 'Phase 10 通知 audit 完成: 个人 (drawer/SSE) + OPS 群 (card) 严格收口, 不双推.',
+    list: [
+      'NotificationService',
+      'RealtimeAlertDispatcher',
+      'SystemAdminAlertPusher',
+      'FeishuBotWebhookService',
+      'EmailNotificationService',
+      'RiskAlertService',
+      'webhookFailOpen',
+    ],
+  },
+  {
+    eyebrow: 'AI 分析引擎',
+    title: '8 analyzer 并发',
+    body: 'Fundamental / Technical / MoneyFlow / Sentiment / News / IndustryRegime / Risk / Announcement, 走 shadow → hard 灰度.',
+  },
+  {
+    eyebrow: '风控',
+    title: '8 闸门 fail-closed',
+    body: 'Pre-trade compliance + 涨跌停 + T+1 + 行业集中度 + Drawdown + 黑天鹅 + 限售解禁, 风控不可用 = 拒单.',
+  },
+  {
+    eyebrow: '复盘闭环',
+    title: '日 / 周 / 月 / 季',
+    body: 'DailyAttribution → AIDiary → ErrorPatternReport → ImprovementSuggestion → 用户 apply → 30 天效果回采.',
+  },
+  {
+    eyebrow: '实盘',
+    title: '综合策略主盘 (id=65)',
+    body: '当前唯一活跃实盘. 模拟盘可多开横向对比策略组合, 30min 对账主动告警.',
+  },
+];
+
+const SystemHero: React.FC = () => {
+  const reduceMotion = useReducedMotion();
+  return (
+    <motion.section
+      className="system-hero"
+      initial={reduceMotion ? false : { opacity: 0, y: 12 }}
+      animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+    >
+      <div className="system-hero-eyebrow">QuantX · A 股 Alpha 平台</div>
+      <h1 className="system-hero-title">让新手也能自动化在 A 股赚钱</h1>
+      <p className="system-hero-blurb">
+        多策略组合 + 严格风控 + 持续迭代. 数据 / 因子 / 策略 / 风控 / 执行 / 复盘
+        六层闭环, 每一笔交易都可追溯、可解释、可复盘.
+      </p>
+      <div className="system-hero-stats">
+        {SYSTEM_HERO_STATS.map((s, i) => {
+          const inner = (
+            <div className="system-hero-stat">
+              <div className="system-hero-stat-value">
+                {s.value}
+                {s.suffix ? <span className="system-hero-stat-suffix">{s.suffix}</span> : null}
+              </div>
+              <div className="system-hero-stat-label">{s.label}</div>
+            </div>
+          );
+          if (reduceMotion) return <div key={s.label}>{inner}</div>;
+          return (
+            <motion.div
+              key={s.label}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{
+                duration: 0.32,
+                delay: 0.15 + i * 0.06,
+                ease: [0.22, 1, 0.36, 1],
+              }}
+            >
+              {inner}
+            </motion.div>
+          );
+        })}
+      </div>
+    </motion.section>
+  );
+};
+
+const SystemBento: React.FC = () => {
+  const reduceMotion = useReducedMotion();
+  return (
+    <div className="system-bento">
+      {SYSTEM_BENTO.map((card, i) => {
+        const inner = (
+          <article className="system-bento-card">
+            <div className="system-bento-card-eyebrow">{card.eyebrow}</div>
+            <h3 className="system-bento-card-title">{card.title}</h3>
+            <p className="system-bento-card-body">{card.body}</p>
+            {card.list && card.list.length > 0 ? (
+              <ul className="system-bento-card-list">
+                {card.list.map(item => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            ) : null}
+          </article>
+        );
+        if (reduceMotion) return <div key={card.title}>{inner}</div>;
+        return (
+          <motion.div
+            key={card.title}
+            initial={{ opacity: 0, y: 12 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: '-40px' }}
+            transition={{
+              duration: 0.32,
+              delay: Math.min(i * 0.05, 0.3),
+              ease: [0.22, 1, 0.36, 1],
+            }}
+          >
+            {inner}
+          </motion.div>
+        );
+      })}
+    </div>
+  );
+};
+
+/**
+ * Markdown tab with framer-motion entry — 用于 manual / changelog / architecture 三个
+ * tab, 切换时有 fade-up 入场. intro tab 不走这个 (intro 有自己的 hero + bento).
+ */
+function MotionMarkdownCard({ content }: { content: string }) {
+  const reduceMotion = useReducedMotion();
+  const card = <MarkdownCard content={content} />;
+  if (reduceMotion) return card;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+    >
+      {card}
+    </motion.div>
   );
 }
 
@@ -393,11 +569,17 @@ const SystemWorkspace: React.FC = () => {
   const renderTab = () => {
     switch (activeKey) {
       case 'intro':
-        return <MarkdownCard content={SYSTEM_INTRO_MD} />;
+        return (
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <SystemHero />
+            <SystemBento />
+            <MotionMarkdownCard content={SYSTEM_INTRO_MD} />
+          </Space>
+        );
       case 'manual':
-        return <MarkdownCard content={SYSTEM_MANUAL_MD} />;
+        return <MotionMarkdownCard content={SYSTEM_MANUAL_MD} />;
       case 'changelog':
-        return <MarkdownCard content={SYSTEM_CHANGELOG_MD} />;
+        return <MotionMarkdownCard content={SYSTEM_CHANGELOG_MD} />;
       case 'architecture':
         // Batch AQ (2026-06-21) — 把实时拓扑组件 <SystemTopologyMap /> 从 DataWorkspace
         // 迁过来 (用户原话: 架构图应该挂在 "系统介绍" 而不是 "数据中心"), 下方保留
@@ -405,7 +587,7 @@ const SystemWorkspace: React.FC = () => {
         return (
           <Space direction="vertical" size={12} style={{ width: '100%' }}>
             <SystemTopologyMap />
-            <MarkdownCard content={SYSTEM_ARCHITECTURE_MD} />
+            <MotionMarkdownCard content={SYSTEM_ARCHITECTURE_MD} />
           </Space>
         );
       case 'feedback':
