@@ -147,6 +147,13 @@ export interface RiskAlertWriteOptions {
   feishu_webhook_url?: string;
   /** 取决于 caller — 默认从 user 表读取 */
   im_address?: string;
+  /**
+   * Phase 10 通知审计 (2026-06-28) — 强制走 runFeishu text 推送, 即便 inbox 已写入
+   * 且 afterCreate hook 会推一张 interactive card. 默认 false: 让 hook card 成为
+   * 唯一 ops 推送源避免双推. 仅 audit-task-parameters-dry-run.ts 等需要纯文本格式
+   * 的 caller 应显式打开.
+   */
+  force_feishu_text?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -500,7 +507,28 @@ export class RiskAlertService {
     const fanoutPromises: Array<Promise<RiskAlertChannelResult>> = [];
 
     if (plannedChannels.includes('feishu')) {
-      fanoutPromises.push(this.runFeishu(input, options));
+      // Phase 10 通知审计 (2026-06-28): 当 inbox 写入成功 (alertId 已知) 时,
+      // RiskAlert.afterCreate hook 会通过 SystemAdminAlertPusher 推一张更完整的
+      // interactive card 到同一个 OPS_ALERT_FEISHU_WEBHOOK; 这里再发一条 text msg
+      // 会让 OPS 群几秒内收到两条覆盖率 ~90% 重叠的内容. 当 alertId 存在 ->
+      // 跳过本路径, 让 hook 的 card 成为唯一 ops 推送源.
+      //
+      // 兼容路径: caller 显式 override_channels=['feishu'] 不走 inbox (alertId
+      // 仍是 undefined) 的旧场景, 仍发 text msg, 行为不变.
+      // 也兼容: caller 显式 options.force_feishu_text=true (供 audit-task-
+      // parameters-dry-run.ts 等需要文本格式的场景强发 text).
+      if (typeof alertId !== 'number' || options.force_feishu_text === true) {
+        fanoutPromises.push(this.runFeishu(input, options));
+      } else {
+        channels.push({
+          channel: 'feishu',
+          attempted: false,
+          success: false,
+          skipped: true,
+          message:
+            'inbox 写入成功后由 afterCreate hook 接管 ops 推送, skip duplicate text (Phase 10)',
+        });
+      }
     }
     if (plannedChannels.includes('im')) {
       fanoutPromises.push(this.runIm(input, options));
