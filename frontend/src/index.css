@@ -18023,4 +18023,389 @@ a {
 
 /* === End Phase 14 === */
 
+/* =========================================================================
+ * Phase 15 (2026-06-28) — "Stripe 减法之后的精致加法".
+ *
+ * 用户原话: "设计感是不是可以再加一些呢".
+ *
+ * Phase 14 把所有装饰删干净 (减法). Phase 15 是 Stripe 自己在减法之后加的精致细节:
+ *   - inline mini chart (sparkline / bars / area)
+ *   - 左侧 brand accent bar (.card-stripe--accent)
+ *   - hover 行 reveal action (.row-stripe)
+ *   - 数字 count-up 入场 + flash on change
+ *   - 精致 status dot pill (.status-badge)
+ *   - 精致 empty state (.empty-stripe)
+ *   - section divider 中央 brand dot (.section-divider)
+ *   - tab underline 改 Stripe 紫 (已在 Phase 14 part 部分有)
+ *
+ * 所有动画走 200ms ease-out (除了 count-up 0.6s ease-out — Stripe 标配).
+ * 不用 spring / glow / 3D / mesh — 那些 Phase 11 已经验证错误.
+ *
+ * Brand: #635bff (Phase 14 已设). Radius: 4/6/8 only. Shadow: 2 档 only.
+ * ========================================================================= */
+
+/* ---------- A.1 Hero area chart 容器 ---------- */
+.hero-area-chart {
+  margin-top: 16px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.hero-area-chart .recharts-tooltip-cursor {
+  stroke: #e5e7eb !important;
+}
+
+/* ---------- A.2 推荐卡 mini sparkline 位置 ----------
+ * 卡片头部右侧已经有 "置信度 99" + 可能的 "信号 HH:MM" (top-right).
+ * Sparkline 摆在卡片底部 — 与价格行同列、CTA 上方; 不占头部宽度.
+ */
+.home-reco-card-spark {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  height: 16px;
+  pointer-events: none;
+}
+/* 让价格行右对齐 spark — 价格 + 涨跌幅 居左, spark 居右 */
+.home-reco-card-price {
+  align-items: center;
+}
+.home-reco-card {
+  position: relative;
+}
+/* 给 spark 让出 right padding 空间, 避免和 conf score 撞 */
+.home-reco-card-time {
+  /* 紧贴 spark 下方 — 与 Phase 10 保持一致, 不挪动 */
+}
+
+/* ---------- A.3 持仓卡 mini bars 位置 ---------- */
+.home-pos-card-bars {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  font-size: 11px;
+  color: #6b7280;
+}
+.home-pos-card-bars .home-pos-card-bars-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ---------- A.4 持仓 sector heatmap ---------- */
+.sector-heatmap {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 6px;
+  padding: 16px 0 4px;
+}
+.sector-heatmap-cell {
+  position: relative;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  padding: 14px 12px;
+  min-height: 64px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: transform 150ms ease;
+}
+.sector-heatmap-cell:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+.sector-heatmap-cell-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #0a0a0a;
+  letter-spacing: -0.005em;
+  line-height: 1.2;
+}
+.sector-heatmap-cell-weight {
+  font-size: 11px;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+}
+.sector-heatmap-cell-pnl {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.005em;
+  margin-top: 4px;
+}
+
+/* ---------- B.1 卡片左侧 brand accent bar ---------- */
+.card-stripe {
+  position: relative;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 20px 24px;
+  box-shadow: inset 3px 0 0 transparent, 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: box-shadow 200ms ease;
+}
+.card-stripe--accent {
+  box-shadow: inset 3px 0 0 #635bff, 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.card-stripe:hover {
+  box-shadow: inset 3px 0 0 transparent, 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+.card-stripe--accent:hover {
+  box-shadow: inset 3px 0 0 #635bff, 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+/* Phase 15 — home-reco-card top 1 (accent) 与 home-pos-card best (accent) */
+.home-reco-card--accent {
+  box-shadow: inset 3px 0 0 #635bff, 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+}
+.home-reco-card--accent:hover {
+  box-shadow: inset 3px 0 0 #635bff, 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+}
+.home-pos-card--accent {
+  box-shadow: inset 3px 0 0 #635bff, 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+}
+.home-pos-card--accent:hover {
+  box-shadow: inset 3px 0 0 #635bff, 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+}
+.home-lesson {
+  box-shadow: inset 3px 0 0 #635bff, 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+}
+.home-lesson:hover {
+  box-shadow: inset 3px 0 0 #635bff, 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+}
+
+/* ---------- B.2 表格 row hover reveal action ---------- */
+.ant-table-tbody .row-stripe-action {
+  opacity: 0;
+  transition: opacity 150ms ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 500;
+}
+.ant-table-tbody > tr:hover .row-stripe-action,
+.ant-table-tbody > tr.ant-table-row-hover .row-stripe-action {
+  opacity: 1;
+}
+.row-stripe-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  color: #635bff;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+}
+.row-stripe-action-btn:hover {
+  background: #f5f4ff;
+  color: #4f46e5;
+}
+
+/* ---------- B.3 number count-up — 在 motion.span 上, CSS 不需特殊 ---------- */
+
+/* ---------- B.4 数据变化 flash pulse ---------- */
+@keyframes value-flash-up {
+  0% {
+    background-color: rgba(220, 38, 38, 0.10);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+@keyframes value-flash-down {
+  0% {
+    background-color: rgba(22, 163, 74, 0.10);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.value-flash {
+  border-radius: 4px;
+  padding: 0 4px;
+  margin: 0 -4px;
+}
+.value-flash--up {
+  animation: value-flash-up 650ms ease-out;
+}
+.value-flash--down {
+  animation: value-flash-down 650ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .value-flash--up,
+  .value-flash--down {
+    animation: none !important;
+  }
+}
+
+/* ---------- B.5 Status badge (dot pill) ---------- */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 2px 6px;
+  border-radius: 4px;
+  background: #f3f4f6;
+  color: #374151;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.status-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+.status-badge-label {
+  display: inline-block;
+}
+.status-badge--muted {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+.status-badge--active {
+  background: #f0fdf4;
+  color: #16a34a;
+}
+.status-badge--paused {
+  background: #fef9c3;
+  color: #ca8a04;
+}
+.status-badge--failed {
+  background: #fef2f2;
+  color: #dc2626;
+}
+.status-badge--running {
+  background: #eff6ff;
+  color: #2563eb;
+}
+.status-badge--brand {
+  background: #f5f4ff;
+  color: #635bff;
+}
+
+/* ---------- B.6 Empty Stripe ---------- */
+.empty-stripe {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 48px 24px;
+  color: #6b7280;
+  gap: 12px;
+}
+.empty-stripe-icon {
+  display: inline-flex;
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  background: #fafafa;
+  border: 1px solid #f3f4f6;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+}
+.empty-stripe-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+  letter-spacing: -0.005em;
+}
+.empty-stripe-subtitle {
+  font-size: 13px;
+  color: #6b7280;
+  line-height: 1.5;
+  max-width: 320px;
+}
+.empty-stripe-cta {
+  margin-top: 4px;
+}
+
+/* ---------- B.7 Section divider w/ brand dot ---------- */
+.section-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 32px 0 16px;
+}
+.section-divider::before,
+.section-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #f3f4f6;
+}
+.section-divider-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #635bff;
+  margin: 0 16px;
+  flex: 0 0 auto;
+}
+
+/* ---------- B.8 Tabs underline tweak: 让 ink-bar 平滑滑过 ---------- */
+.ant-tabs-ink-bar {
+  background: #635bff !important;
+  height: 2px !important;
+  border-radius: 0 !important;
+  transition: left 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    width 200ms cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+.ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #0a0a0a !important;
+  font-weight: 600 !important;
+}
+.ant-tabs-tab:not(.ant-tabs-tab-active) .ant-tabs-tab-btn {
+  color: #6b7280 !important;
+  font-weight: 500 !important;
+}
+.ant-tabs-tab:not(.ant-tabs-tab-active):hover .ant-tabs-tab-btn {
+  color: #374151 !important;
+}
+
+/* ---------- C.1/C.2 Heroicons 默认尺寸 (24×24, stroke 1.5) ----------
+ * 用法: <ChartBarIcon className="hero-icon" /> 默认 18×18 (匹配 antd 14px line-height).
+ * 主菜单图标可加 className="hero-icon hero-icon--menu" 拉到 18px. */
+.hero-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-block;
+  vertical-align: -3px;
+  stroke-width: 1.5;
+}
+.hero-icon--sm {
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+}
+.hero-icon--lg {
+  width: 24px;
+  height: 24px;
+  vertical-align: -5px;
+}
+
+/* ---------- A.5 因子 IC bars 内联尺寸 — 容器无需特殊 CSS, SVG 自带 width/height ---------- */
+.factor-ic-bars {
+  display: block;
+  margin-top: 6px;
+}
+
+/* === End Phase 15 === */
+
 
