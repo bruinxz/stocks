@@ -19,6 +19,7 @@ import {
 } from '@ant-design/icons';
 import zhCN from 'antd/locale/zh_CN';
 import { useSelector, useDispatch } from 'react-redux';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { RootState } from './store/rootReducer';
 import { loginSuccess, logout } from './store/authSlice';
 import { clearUserScopedStorage } from './utils/sessionCleanup';
@@ -76,6 +77,34 @@ const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
   const location = useLocation();
   if (!token) return <Navigate to="/login" state={{ from: location }} replace />;
   return children;
+};
+
+/**
+ * Phase 11 — Route-level page transition.
+ *
+ * 用 AnimatePresence + key=pathname 让每次 path 切换出一个 fade + 8px slide-up,
+ * 持续 200ms. prefers-reduced-motion 用户直接 children, 跳过包装.
+ *
+ * 不动 Routes 自己 — 只在外层包一个 motion.div, 避免影响嵌套路由 / Navigate.
+ */
+const RouteTransition: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const location = useLocation();
+  const reduceMotion = useReducedMotion();
+  if (reduceMotion) return <>{children}</>;
+  return (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.div
+        key={location.pathname}
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -4 }}
+        transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+        className="page-transition-wrap"
+      >
+        {children}
+      </motion.div>
+    </AnimatePresence>
+  );
 };
 
 const BacktestDetailRoute: React.FC = () => {
@@ -401,7 +430,8 @@ const AppContent: React.FC = () => {
         </Header>
         <Content className="modern-layout-content">
           <Suspense fallback={routeFallback}>
-            <Routes>
+            <RouteTransition>
+              <Routes location={location}>
               {/* Phase 6 (2026-06-27) — 登录默认进 /home (新手主页),
                   admin 走右上 ⚙ 进 /admin/today (实为 /workspace/today). */}
               <Route path="/" element={<Navigate to="/home" replace />} />
@@ -607,7 +637,8 @@ const AppContent: React.FC = () => {
 
               {/* Anything else: 回 /home (新手主页) — Phase 6 之前是 /workspace/today */}
               <Route path="*" element={<Navigate to="/home" replace />} />
-            </Routes>
+              </Routes>
+            </RouteTransition>
           </Suspense>
         </Content>
       </Layout>

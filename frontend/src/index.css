@@ -16595,3 +16595,501 @@ a {
 
 /* === End Phase 10 === */
 
+/* =========================================================================
+ * Phase 11 (2026-06-28) — 高级感 + 3D 视觉重构.
+ *
+ * 用户原话:
+ *   "在进行一轮的视觉特效重构优化, 我觉得设计感和高级感还不足, 甚至可以引入一些
+ *    3D 提效, 你可以看 github 上有一些开源的技能或者特效库, 你可以按需使用上.
+ *    做完之后, 看下系统介绍里面的相关内容, 是不是按照现状要做一些改动和优化."
+ *
+ * 引入的库:
+ *   - framer-motion (~30KB gz)        — spring physics, layout/exit/enter 动画
+ *   - react-parallax-tilt (~5KB gz)   — 鼠标 3D 倾斜 + glare 高光
+ *
+ * 视觉范式 (一致性 > 装饰):
+ *   - hero 区: 深色玻璃质 + aurora gradient + spotlight (鼠标跟随)
+ *   - 卡片: parallax tilt 3D (推荐 / 持仓 / 学一招 — "可操作的展示位")
+ *   - 全局: sider + header 玻璃质 (backdrop-filter blur 20px + saturate 180%)
+ *   - 学一招: mesh gradient 背景 (双 radial + noise 4%)
+ *   - 微交互: spring stagger / hover scale 1.02 / 数字 spring count-up
+ *
+ * 无障碍: prefers-reduced-motion → 关掉 aurora 旋转 / spotlight / tilt / spring
+ *         (所有库本身也支持; 这里 CSS 兜底)
+ * ========================================================================= */
+
+/* ---------------------------------------------------------------------------
+ *  P11.1 — Hero 区: 深色玻璃 + aurora + spotlight
+ *  覆写 P10 的浅色 hero, 整体翻成 Apple Vision Pro 风暗色, 数字仍是黑底白字
+ *  但白字用 gradient text 让有"质感"而非平面化.
+ * --------------------------------------------------------------------------- */
+.home-hero {
+  background: linear-gradient(135deg, #0a0a0a 0%, #18181b 55%, #1c1c1e 100%) !important;
+  color: #ffffff !important;
+  isolation: isolate;
+  padding: 56px 48px !important;
+  border-radius: 24px !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow:
+    0 10px 30px -8px rgba(0, 0, 0, 0.25),
+    0 2px 6px rgba(0, 0, 0, 0.06);
+  /* mouse position 由 JS 写入 --mouse-x/y (0-100%) */
+  --mouse-x: 50%;
+  --mouse-y: 50%;
+}
+
+/* aurora 渐变层 — 3 个 radial blob 缓慢旋转 */
+.home-hero::before {
+  content: '';
+  position: absolute;
+  inset: -40%;
+  background:
+    radial-gradient(circle at 18% 24%, rgba(124, 58, 237, 0.55) 0%, transparent 45%),
+    radial-gradient(circle at 78% 68%, rgba(96, 165, 250, 0.42) 0%, transparent 50%),
+    radial-gradient(circle at 52% 90%, rgba(192, 132, 252, 0.38) 0%, transparent 55%);
+  filter: blur(60px) saturate(140%);
+  z-index: -2;
+  animation: p11-aurora-shift 24s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+/* spotlight 跟随鼠标 (P11) */
+.home-hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    520px circle at var(--mouse-x) var(--mouse-y),
+    rgba(255, 255, 255, 0.08),
+    transparent 42%
+  );
+  /* P10 旧的紫色光斑被替换 — 这里只保留 spotlight, 简洁 */
+  top: 0 !important;
+  right: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  background-image: radial-gradient(
+    520px circle at var(--mouse-x) var(--mouse-y),
+    rgba(255, 255, 255, 0.08),
+    transparent 42%
+  );
+  z-index: -1;
+  pointer-events: none;
+  transition: opacity 200ms ease;
+}
+
+/* noise grain 4% — 高级感"颗粒" */
+.home-hero > .home-hero-noise {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.6 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.05;
+  z-index: -1;
+  pointer-events: none;
+  mix-blend-mode: overlay;
+}
+
+@keyframes p11-aurora-shift {
+  0% {
+    transform: translate(0%, 0%) rotate(0deg) scale(1);
+  }
+  50% {
+    transform: translate(-3%, 2%) rotate(130deg) scale(1.05);
+  }
+  100% {
+    transform: translate(3%, -2%) rotate(260deg) scale(0.98);
+  }
+}
+
+/* hero 文字色 反转 — 暗底浅字 */
+.home-hero .home-hero-label,
+.home-hero .home-hero-pnl-label,
+.home-hero .home-hero-divider,
+.home-hero .home-hero-spark-caption {
+  color: rgba(255, 255, 255, 0.55) !important;
+}
+
+.home-hero-data-pill {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  color: rgba(255, 255, 255, 0.75) !important;
+}
+
+.home-hero .home-hero-currency {
+  color: rgba(167, 139, 250, 1) !important; /* violet-400, 暗底足够亮 */
+  font-weight: 500;
+}
+
+/* 数字: 用 gradient text 让有立体感 (Apple/Stripe hero 数字) */
+.home-hero .home-hero-amount {
+  background: linear-gradient(180deg, #ffffff 0%, rgba(255, 255, 255, 0.78) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.15);
+}
+
+.home-hero .home-hero-cumulative,
+.home-hero .home-hero-cash {
+  color: rgba(255, 255, 255, 0.92) !important;
+}
+
+/* hero badge 暗底版 — 透明边框 + 高对比文字 */
+.home-hero .home-hero-badge {
+  background: rgba(255, 255, 255, 0.07) !important;
+}
+
+/* hero sparkline 暗底配色: 折线用紫色, 填充改成浅紫渐变 */
+.home-hero-sparkline polyline {
+  stroke: rgba(167, 139, 250, 1) !important; /* violet-400 */
+}
+.home-hero-sparkline circle {
+  fill: rgba(167, 139, 250, 1) !important;
+}
+
+/* ---------------------------------------------------------------------------
+ *  P11.2 — Glassmorphism: sider + header
+ *  从 Phase 8 的 solid 白底升级成磨砂玻璃, 与暗色 hero 有视觉张力
+ * --------------------------------------------------------------------------- */
+.modern-sider {
+  background: rgba(255, 255, 255, 0.72) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border-right: 1px solid rgba(0, 0, 0, 0.06) !important;
+}
+
+.modern-sider-inner {
+  background: transparent !important;
+}
+
+.modern-header {
+  background: rgba(255, 255, 255, 0.72) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06) !important;
+}
+
+/* logo 升级: 加微光感 hover */
+.modern-logo .logo-icon {
+  background: linear-gradient(135deg, #8b5cf6 0%, #5b21b6 100%) !important;
+  box-shadow:
+    0 2px 8px rgba(124, 58, 237, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
+  transition: transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 240ms ease;
+}
+
+.modern-logo:hover .logo-icon {
+  transform: rotate(8deg) scale(1.05);
+  box-shadow:
+    0 4px 16px rgba(124, 58, 237, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
+}
+
+/* ---------------------------------------------------------------------------
+ *  P11.3 — Reco/Position card: tilt + 渐变 border + 微光
+ *  parallax-tilt 由 JS 加 transform; 这里强化"卡片本身"的精致感.
+ * --------------------------------------------------------------------------- */
+.home-reco-card,
+.home-pos-card {
+  position: relative;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  transition:
+    border-color 200ms ease,
+    box-shadow 240ms ease;
+  /* tilt wrapper 给 overflow:visible 才能投影 — card 内部仍 hidden */
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* hover 时 border 转紫 + 阴影 lift */
+.home-reco-card:hover,
+.home-pos-card:hover {
+  border-color: rgba(124, 58, 237, 0.25);
+  box-shadow:
+    0 10px 28px -8px rgba(124, 58, 237, 0.12),
+    0 4px 10px -2px rgba(0, 0, 0, 0.04);
+}
+
+/* P11 — 推荐卡左上 corner 紫色 accent (新增第二条 ::before)
+   不与 P10 ::before 冲突: 用 ::after 上方 (corner 装饰), P10 的 hover accent line
+   保留. 这里给 corner glow. */
+.home-reco-card::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  width: 60%;
+  height: 1px;
+  background: linear-gradient(90deg, var(--brand) 0%, rgba(124, 58, 237, 0) 100%);
+  opacity: 0;
+  transition: opacity 200ms ease;
+  pointer-events: none;
+}
+
+.home-reco-card:hover::after {
+  opacity: 1;
+}
+
+/* tilt 容器: 防止 overflow 裁掉 glare */
+.home-reco-tilt,
+.home-pos-tilt,
+.home-lesson-tilt {
+  border-radius: 16px;
+  transform-style: preserve-3d;
+  /* parallax-tilt 输出的 inline transform 不需要 overflow: hidden */
+}
+
+/* ---------------------------------------------------------------------------
+ *  P11.4 — 学一招卡片: mesh gradient + noise
+ * --------------------------------------------------------------------------- */
+.home-lesson {
+  position: relative !important;
+  background:
+    radial-gradient(at 0% 0%, rgba(124, 58, 237, 0.10) 0%, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(96, 165, 250, 0.08) 0%, transparent 50%),
+    var(--bg-elevated) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 20px !important;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.home-lesson::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.45 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.04;
+  pointer-events: none;
+  mix-blend-mode: overlay;
+  z-index: 0;
+}
+
+.home-lesson > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ---------------------------------------------------------------------------
+ *  P11.5 — SystemWorkspace hero (新页面架构总览)
+ * --------------------------------------------------------------------------- */
+.system-hero {
+  position: relative;
+  padding: 48px 40px;
+  border-radius: 24px;
+  background: linear-gradient(135deg, #0f0a1c 0%, #1e1338 60%, #0f0a1c 100%);
+  color: #ffffff;
+  overflow: hidden;
+  isolation: isolate;
+  margin-bottom: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 10px 30px -8px rgba(0, 0, 0, 0.25);
+}
+
+.system-hero::before {
+  content: '';
+  position: absolute;
+  inset: -40%;
+  background:
+    radial-gradient(circle at 22% 30%, rgba(167, 139, 250, 0.5) 0%, transparent 45%),
+    radial-gradient(circle at 78% 70%, rgba(56, 189, 248, 0.4) 0%, transparent 50%);
+  filter: blur(80px);
+  z-index: -2;
+  animation: p11-aurora-shift 32s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+.system-hero-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 12px;
+}
+
+.system-hero-title {
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  margin: 0 0 20px;
+  background: linear-gradient(180deg, #ffffff 0%, rgba(255, 255, 255, 0.78) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.system-hero-blurb {
+  font-size: 15px;
+  line-height: 1.7;
+  color: rgba(255, 255, 255, 0.78);
+  margin: 0 0 28px;
+  max-width: 720px;
+}
+
+.system-hero-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 32px;
+  margin-top: 8px;
+}
+
+@media (max-width: 720px) {
+  .system-hero-stats {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+  }
+  .system-hero-title {
+    font-size: 30px;
+  }
+}
+
+.system-hero-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.system-hero-stat-value {
+  font-size: 36px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
+  line-height: 1;
+  color: #ffffff;
+  font-family: var(--font-mono);
+}
+
+.system-hero-stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.system-hero-stat-suffix {
+  font-size: 15px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.55);
+  margin-left: 4px;
+}
+
+/* P11.5b — System bento grid (overview tab) */
+.system-bento {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+@media (max-width: 980px) {
+  .system-bento {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .system-bento {
+    grid-template-columns: 1fr;
+  }
+}
+
+.system-bento-card {
+  position: relative;
+  padding: 24px;
+  border-radius: 16px;
+  background:
+    radial-gradient(at 0% 0%, rgba(124, 58, 237, 0.06) 0%, transparent 60%),
+    var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+  isolation: isolate;
+  transition: border-color 200ms ease, transform 200ms ease, box-shadow 200ms ease;
+}
+
+.system-bento-card:hover {
+  border-color: rgba(124, 58, 237, 0.2);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px -6px rgba(124, 58, 237, 0.1);
+}
+
+.system-bento-card-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--brand);
+  margin-bottom: 8px;
+}
+
+.system-bento-card-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ink-1);
+  margin: 0 0 12px;
+  letter-spacing: -0.015em;
+}
+
+.system-bento-card-body {
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--ink-2);
+  margin: 0;
+}
+
+.system-bento-card-list {
+  margin: 12px 0 0;
+  padding-left: 16px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+/* ---------------------------------------------------------------------------
+ *  P11.6 — 全局: 减少 box-shadow 厚重感, 用更细腻的层次
+ * --------------------------------------------------------------------------- */
+
+/* 推荐 / 持仓卡 hover 不再 translate (tilt 已经替代) — 避免双重位移颤动 */
+.home-reco-card.home-reco-card--tilt:hover,
+.home-pos-card.home-pos-card--tilt:hover {
+  transform: none;
+}
+
+/* ---------------------------------------------------------------------------
+ *  P11.7 — Page transition wrapper
+ * --------------------------------------------------------------------------- */
+.page-transition-wrap {
+  /* 保持 layout 高度稳定, 不要因 motion 出现而塌缩 */
+  will-change: transform, opacity;
+}
+
+/* ---------------------------------------------------------------------------
+ *  P11.8 — prefers-reduced-motion 兜底
+ *  覆盖所有 P11 引入的旋转 / spotlight 跟随 / 数字 spring
+ * --------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .home-hero::before,
+  .system-hero::before {
+    animation: none !important;
+  }
+  .home-hero::after {
+    display: none !important;
+  }
+  .modern-logo:hover .logo-icon {
+    transform: none !important;
+  }
+  .home-reco-card,
+  .home-pos-card,
+  .system-bento-card {
+    transition: none !important;
+  }
+}
+
+/* === End Phase 11 === */
+

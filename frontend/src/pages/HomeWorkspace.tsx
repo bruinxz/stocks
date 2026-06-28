@@ -32,13 +32,21 @@
  *      fade-in 动画.
  *   D. 时间格式集中走 utils/timeFormat.ts.
  *
+ * Phase 11 (2026-06-28) — 3D 特效 + 高级感.
+ * 用户原话: "在进行一轮的视觉特效重构优化, 我觉得设计感和高级感还不足, 甚至可以
+ * 引入一些 3D 提效..."
+ *   1. Hero 改为暗色 + aurora gradient + spotlight 鼠标跟随 (framer-motion mount 动画).
+ *   2. 推荐卡 / 持仓卡 / 学一招卡套 react-parallax-tilt (5° 倾斜 + glare).
+ *   3. stagger spring entry — framer-motion 替代 CSS animation-delay.
+ *   4. prefers-reduced-motion → 全部退化静态.
+ *
  * 推荐时间来源契约 (向前兼容): 当前 V3RecommendationItem 后端不输出 created_at —
  * 前端按可选字段读 `(rec as any).created_at / signal_created_at / generated_at /
  * metadata?.trigger_time`, 任一可解析即用; 全部缺失则降级为不分组 + 标注 "今日推荐"
  * (signal_date 显示在 head). TODO(P2, backend): V3RecommendationController.enrichSignal
  * 把 signal.created_at 透传成 ISO 字符串, 前端无改动即生效时段分组.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Empty, Modal, Result, Skeleton, Space, Tooltip, message } from 'antd';
 import {
@@ -53,6 +61,8 @@ import {
   ArrowRightOutlined,
   CheckOutlined,
 } from '@ant-design/icons';
+import { motion, useReducedMotion } from 'framer-motion';
+import Tilt from 'react-parallax-tilt';
 import { usePortfolio } from '../contexts/PortfolioContext';
 import {
   getPortfolio,
@@ -301,6 +311,22 @@ function extractRecoTime(rec: V3RecommendationItem): string | Date | null {
 const HomeWorkspace: React.FC = () => {
   const { selectedPortfolioId } = usePortfolio();
   const navigate = useNavigate();
+
+  // Phase 11 — prefers-reduced-motion 用户禁用动画时 framer-motion + tilt 全部禁用
+  const reduceMotion = useReducedMotion();
+
+  // Phase 11 — hero 鼠标跟随 spotlight. 用 ref + CSS variable 写 % 值,
+  // 不用 state 避免 60fps re-render. CSS .home-hero::after 读 --mouse-x/y.
+  const heroRef = useRef<HTMLElement | null>(null);
+  const handleHeroMouseMove = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    const el = heroRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    el.style.setProperty('--mouse-x', `${x}%`);
+    el.style.setProperty('--mouse-y', `${y}%`);
+  }, []);
 
   // 三个独立 fetch — 任一失败不阻塞其他区块.
   const [account, setAccount] = useState<AccountSummary | null>(null);
@@ -653,10 +679,12 @@ const HomeWorkspace: React.FC = () => {
       const staggerStyle = {
         ['--reco-card-index' as any]: indexInGroup,
       } as React.CSSProperties;
-      return (
+      // Phase 11 — framer-motion spring entry + react-parallax-tilt 3D 倾斜.
+      // reduceMotion → 退化为静态 article (无 tilt, 无 spring).
+      const cardInner = (
         <article
           key={rec.symbol}
-          className="home-reco-card home-reco-card--anim"
+          className="home-reco-card home-reco-card--anim home-reco-card--tilt"
           style={staggerStyle}
         >
           {recoTime && (
@@ -775,8 +803,42 @@ const HomeWorkspace: React.FC = () => {
           </div>
         </article>
       );
+      if (reduceMotion) {
+        return cardInner;
+      }
+      return (
+        <motion.div
+          key={rec.symbol}
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{
+            type: 'spring',
+            stiffness: 220,
+            damping: 26,
+            delay: Math.min(indexInGroup * 0.06, 0.5),
+          }}
+          className="home-reco-tilt"
+        >
+          <Tilt
+            tiltMaxAngleX={5}
+            tiltMaxAngleY={5}
+            tiltReverse={false}
+            glareEnable
+            glareMaxOpacity={0.18}
+            glareColor="#a78bfa"
+            glarePosition="all"
+            glareBorderRadius="16px"
+            transitionSpeed={500}
+            scale={1.01}
+            perspective={1200}
+            gyroscope={false}
+          >
+            {cardInner}
+          </Tilt>
+        </motion.div>
+      );
     },
-    [busySymbol, handleFollowBuy, navigate, toggleWhy, whyOpenSet]
+    [busySymbol, handleFollowBuy, navigate, reduceMotion, toggleWhy, whyOpenSet]
   );
 
   // ---------------------------------------------------------------------------
@@ -785,8 +847,18 @@ const HomeWorkspace: React.FC = () => {
   return (
     <div className="home-workspace">
       {/* ===== Phase 8 — 区块 1: 账户总值 hero (64px 大数字 + radial gradient) =====
-          Phase 10 — 72px + violet ¥ + 30 日 sparkline + 数据时间 pill. */}
-      <section className="home-hero">
+          Phase 10 — 72px + violet ¥ + 30 日 sparkline + 数据时间 pill.
+          Phase 11 — 暗色 aurora + spotlight 鼠标跟随 + framer-motion mount 动画. */}
+      <motion.section
+        ref={heroRef as React.RefObject<HTMLElement>}
+        className="home-hero"
+        onMouseMove={reduceMotion ? undefined : handleHeroMouseMove}
+        initial={reduceMotion ? false : { opacity: 0, y: 12 }}
+        animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+      >
+        {/* P11 noise grain overlay — pure CSS via background-image */}
+        <div className="home-hero-noise" aria-hidden />
         {accountLoading ? (
           <Skeleton active paragraph={{ rows: 3 }} />
         ) : accountError ? (
@@ -846,7 +918,7 @@ const HomeWorkspace: React.FC = () => {
             </div>
           </>
         )}
-      </section>
+      </motion.section>
 
       {/* ===== Phase 8 — 区块 2: 今日 AI 推荐 (大卡片 grid + 黑色 CTA + hover lift) =====
           Phase 10 — 按 30min 时间桶分组, 每组 head 显示 HH:MM + 时段标签 (盘前/上午盘/...).
@@ -893,18 +965,38 @@ const HomeWorkspace: React.FC = () => {
           />
         ) : timeGroups.hasTime ? (
           <div className="home-reco-time-groups">
-            {timeGroups.groups.map(group => (
-              <div key={group.key} className="home-reco-time-group">
+            {timeGroups.groups.map((group, gIdx) => {
+              const head = (
                 <div className="home-reco-time-head">
                   <span className="home-reco-time-clock">{group.clock}</span>
                   <span className="home-reco-time-session">{group.session}</span>
                   <span className="home-reco-time-count">{group.items.length} 只</span>
                 </div>
-                <div className="home-reco-grid">
-                  {group.items.map((rec, idx) => renderRecoCard(rec, idx))}
+              );
+              return (
+                <div key={group.key} className="home-reco-time-group">
+                  {reduceMotion ? (
+                    head
+                  ) : (
+                    <motion.div
+                      initial={{ opacity: 0, x: -16 }}
+                      whileInView={{ opacity: 1, x: 0 }}
+                      viewport={{ once: true, margin: '-40px' }}
+                      transition={{
+                        duration: 0.32,
+                        delay: gIdx * 0.04,
+                        ease: [0.22, 1, 0.36, 1],
+                      }}
+                    >
+                      {head}
+                    </motion.div>
+                  )}
+                  <div className="home-reco-grid">
+                    {group.items.map((rec, idx) => renderRecoCard(rec, idx))}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <div className="home-reco-grid">
@@ -913,27 +1005,56 @@ const HomeWorkspace: React.FC = () => {
         )}
       </section>
 
-      {/* ===== Phase 8 — 区块 3: 今日学一招 (冷色高级 — 浅紫 brand-soft 背景) ===== */}
-      <section className="home-lesson">
-        <div className="home-lesson-icon-wrap">
-          <BookOutlined />
-        </div>
-        <div className="home-lesson-content">
-          <div className="home-lesson-eyebrow">
-            今日学一招
-            <span className="home-lesson-time">{formatHourMin(dataTime)} 更新</span>
-          </div>
-          <div className="home-lesson-title">{todayLesson.title}</div>
-          <p className="home-lesson-body">{todayLesson.body}</p>
-          <Button
-            type="link"
-            className="home-lesson-cta"
-            onClick={() => navigate('/workspace/easy')}
+      {/* ===== Phase 8 — 区块 3: 今日学一招 (冷色高级 — 浅紫 brand-soft 背景) =====
+          Phase 11 — mesh gradient + noise + parallax tilt. */}
+      {(() => {
+        const lessonInner = (
+          <section className="home-lesson">
+            <div className="home-lesson-icon-wrap">
+              <BookOutlined />
+            </div>
+            <div className="home-lesson-content">
+              <div className="home-lesson-eyebrow">
+                今日学一招
+                <span className="home-lesson-time">{formatHourMin(dataTime)} 更新</span>
+              </div>
+              <div className="home-lesson-title">{todayLesson.title}</div>
+              <p className="home-lesson-body">{todayLesson.body}</p>
+              <Button
+                type="link"
+                className="home-lesson-cta"
+                onClick={() => navigate('/workspace/easy')}
+              >
+                想学更多 — 简易版 4 步教学 <ArrowRightOutlined />
+              </Button>
+            </div>
+          </section>
+        );
+        if (reduceMotion) return lessonInner;
+        return (
+          <motion.div
+            initial={{ opacity: 0, y: 14 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: '-80px' }}
+            transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+            className="home-lesson-tilt"
           >
-            想学更多 — 简易版 4 步教学 <ArrowRightOutlined />
-          </Button>
-        </div>
-      </section>
+            <Tilt
+              tiltMaxAngleX={2.5}
+              tiltMaxAngleY={2.5}
+              glareEnable
+              glareMaxOpacity={0.08}
+              glareColor="#a78bfa"
+              glarePosition="all"
+              glareBorderRadius="20px"
+              transitionSpeed={600}
+              perspective={1600}
+            >
+              {lessonInner}
+            </Tilt>
+          </motion.div>
+        );
+      })()}
 
       {/* ===== Phase 8 — 区块 4: 今日因子表现 (3 列 2 行 + 大 sparkline) =====
           TODO(P2, admin): 接通 /api/factors/today-performance */}
@@ -1015,7 +1136,7 @@ const HomeWorkspace: React.FC = () => {
           <Empty description="还没有持仓 — 跟上面的 AI 推荐买一只试试" />
         ) : (
           <div className="home-pos-grid">
-            {positions.map(pos => {
+            {positions.map((pos, posIdx) => {
               const isBusy = busySymbol === pos.symbol;
               const costBasis = pos.quantity * pos.avg_cost;
               const pctChange = costBasis > 0 ? (pos.unrealized_pnl / costBasis) * 100 : null;
@@ -1026,8 +1147,8 @@ const HomeWorkspace: React.FC = () => {
                 const diff = Math.floor((Date.now() - d.getTime()) / 86400_000);
                 return Math.max(0, diff);
               })();
-              return (
-                <article key={pos.id} className="home-pos-card">
+              const inner = (
+                <article key={pos.id} className="home-pos-card home-pos-card--tilt">
                   <div className="home-pos-card-head">
                     <div>
                       <div className="home-pos-card-name">{pos.name || pos.symbol}</div>
@@ -1072,6 +1193,40 @@ const HomeWorkspace: React.FC = () => {
                     )}
                   </div>
                 </article>
+              );
+              if (reduceMotion) {
+                return inner;
+              }
+              const glareColor =
+                (pos.unrealized_pnl ?? 0) >= 0 ? '#dc2626' /* up red */ : '#16a34a' /* down green */;
+              return (
+                <motion.div
+                  key={pos.id}
+                  initial={{ opacity: 0, y: 14 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{
+                    type: 'spring',
+                    stiffness: 220,
+                    damping: 26,
+                    delay: Math.min(posIdx * 0.05, 0.4),
+                  }}
+                  className="home-pos-tilt"
+                >
+                  <Tilt
+                    tiltMaxAngleX={3}
+                    tiltMaxAngleY={3}
+                    glareEnable
+                    glareMaxOpacity={0.1}
+                    glareColor={glareColor}
+                    glarePosition="all"
+                    glareBorderRadius="16px"
+                    transitionSpeed={500}
+                    scale={1.005}
+                    perspective={1400}
+                  >
+                    {inner}
+                  </Tilt>
+                </motion.div>
               );
             })}
           </div>
