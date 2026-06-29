@@ -11,7 +11,7 @@ import {
   ReloadOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import { BacktestDetail, BacktestStrategyResult } from '../../services/labService';
+import { BacktestDetail, BacktestStrategyResult, BacktestTask } from '../../services/labService';
 import easyQuantService, {
   EasyQuantResearchAudit,
   EasyQuantTemplateView,
@@ -40,7 +40,7 @@ import {
 } from './easyQuantHooks';
 import './EasyQuantWorkspace.css';
 
-type DrawerKey = StepKey | 'guide' | 'ledger' | null;
+type DrawerKey = StepKey | 'guide' | 'ledger' | 'history' | null;
 type BacktestReportTab = 'metrics' | 'trades' | 'blocks';
 
 interface ReportMetricRow {
@@ -315,6 +315,82 @@ const normalizeEasyQuantRunConfig = (
   };
 };
 
+const isEasyQuantTemplateId = (value: unknown): value is EasyQuantTemplateId =>
+  EASY_QUANT_TEMPLATES.some(template => template.id === value);
+
+const pickHistoryTaskTemplateId = (
+  task: BacktestTask,
+  fallback: EasyQuantTemplateId
+): EasyQuantTemplateId => {
+  const parameters = task.parameters || {};
+  const parameterTemplateId = parameters.template_id;
+  if (isEasyQuantTemplateId(parameterTemplateId)) {
+    return parameterTemplateId;
+  }
+
+  const strategyKeys = Array.isArray(task.strategy_keys)
+    ? task.strategy_keys
+    : Array.isArray(parameters.strategy_keys)
+      ? parameters.strategy_keys
+      : [];
+  const matchedTemplate = EASY_QUANT_TEMPLATES.find(template =>
+    strategyKeys.includes(template.strategy_key)
+  );
+
+  return matchedTemplate?.id || fallback;
+};
+
+const deriveLookbackYearsFromTask = (
+  task: BacktestTask
+): EasyQuantRunConfig['lookback_years'] | undefined => {
+  const start = new Date(task.start_date);
+  const end = new Date(task.end_date);
+  const days = Math.round((end.getTime() - start.getTime()) / 86400000);
+
+  if (!Number.isFinite(days) || days <= 0) {
+    return undefined;
+  }
+
+  if (days <= 460) {
+    return 1;
+  }
+
+  if (days <= 820) {
+    return 2;
+  }
+
+  return 3;
+};
+
+const buildRunConfigFromHistoryTask = (
+  task: BacktestTask,
+  template: ReturnType<typeof getEasyQuantTemplate>
+): EasyQuantRunConfig =>
+  normalizeEasyQuantRunConfig(template, {
+    initial_capital: Number(task.parameters?.initial_capital || task.initial_capital || 0),
+    lookback_years: deriveLookbackYearsFromTask(task),
+    universe:
+      task.parameters?.universe === 'all' || task.parameters?.universe === 'favorites'
+        ? task.parameters.universe
+        : undefined,
+    candidate_limit: Number(task.parameters?.candidate_limit || 0),
+    max_positions: Number(task.parameters?.max_positions || 0),
+    position_pct: Number(task.parameters?.position_pct || 0),
+  });
+
+const getBacktestStatusLabel = (status?: string) => {
+  const normalized = String(status || '').toUpperCase();
+  const labels: Record<string, string> = {
+    QUEUED: '排队中',
+    RUNNING: '运行中',
+    COMPLETED: '已完成',
+    FAILED: '失败',
+    PENDING: '待运行',
+  };
+
+  return labels[normalized] || status || '未知';
+};
+
 const sectionNavItems: EasyQuantSectionNavItem[] = [
   { id: 'easy-quant-hero', label: '开始' },
   { id: 'easy-quant-flow', label: '动线' },
@@ -539,6 +615,9 @@ const EasyQuantWorkspace: React.FC = () => {
     buildDefaultEasyQuantRunConfig(getEasyQuantTemplate('steady_trend'))
   );
   const [backtestReportTab, setBacktestReportTab] = useState<BacktestReportTab>('metrics');
+  const [historyItems, setHistoryItems] = useState<BacktestTask[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   const clearResearchRunState = useCallback(() => {
     localStorage.removeItem(EASY_QUANT_LAST_RUN_STORAGE_KEY);
@@ -581,6 +660,25 @@ const EasyQuantWorkspace: React.FC = () => {
     setBacktestReportTab(tab);
     setDrawerKey('backtest');
   }, []);
+
+  const loadEasyQuantHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    setHistoryError(null);
+
+    try {
+      const items = await easyQuantService.listEasyQuantBacktestHistory(80);
+      setHistoryItems(items);
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  const openHistoryDrawer = useCallback(() => {
+    setDrawerKey('history');
+    void loadEasyQuantHistory();
+  }, [loadEasyQuantHistory]);
 
   useEffect(() => {
     if (!bootstrap?.selected_template_id) {
@@ -909,7 +1007,7 @@ const EasyQuantWorkspace: React.FC = () => {
   const activeStepIndex = journeySteps.findIndex(step => step.key === activeStep);
   const activeStepData = journeySteps[activeStepIndex] || journeySteps[0];
   const drawerStepData =
-    drawerKey && drawerKey !== 'guide' && drawerKey !== 'ledger'
+    drawerKey && drawerKey !== 'guide' && drawerKey !== 'ledger' && drawerKey !== 'history'
       ? journeySteps.find(step => step.key === drawerKey) || activeStepData
       : activeStepData;
   const drawerTitle =
@@ -917,7 +1015,9 @@ const EasyQuantWorkspace: React.FC = () => {
       ? '动线说明'
       : drawerKey === 'ledger'
         ? '实验账本'
-        : drawerStepData.drawerTitle;
+        : drawerKey === 'history'
+          ? '历史回测'
+          : drawerStepData.drawerTitle;
   const progressPercent = Math.round(((activeStepIndex + 1) / journeySteps.length) * 100);
   const displayUsername = useEasyQuantDisplayUsername();
 
@@ -1147,6 +1247,60 @@ const EasyQuantWorkspace: React.FC = () => {
   const handleResetResearchFlow = () => {
     clearResearchRunState();
     goToStep('template');
+  };
+
+  const handleOpenHistoryBacktest = async (item: BacktestTask) => {
+    const taskId = Number(item.id);
+    if (!Number.isFinite(taskId) || taskId <= 0) {
+      return;
+    }
+
+    const templateId = pickHistoryTaskTemplateId(item, selectedTemplateId);
+    const template = getEasyQuantTemplate(templateId);
+    const nextRunConfig = buildRunConfigFromHistoryTask(item, template);
+    const nextHypothesis =
+      typeof item.parameters?.hypothesis === 'string' && item.parameters.hypothesis.trim()
+        ? item.parameters.hypothesis
+        : template.default_hypothesis;
+
+    restoredRunRef.current = true;
+    runConfigTouchedRef.current = false;
+    setSelectedTemplateId(templateId);
+    setHypothesis(nextHypothesis);
+    setRunConfig(nextRunConfig);
+    setBacktestTaskId(taskId);
+    setBacktestDetail(null);
+    setBacktestError(null);
+    setResearchAudit(null);
+    setResearchAuditError(null);
+    setResearchAuditLoading(false);
+    setObservationMessage(null);
+    setDrawerKey(null);
+    setActiveStep('backtest');
+    localStorage.setItem(
+      EASY_QUANT_LAST_RUN_STORAGE_KEY,
+      JSON.stringify({
+        task_id: taskId,
+        template_id: templateId,
+        hypothesis: nextHypothesis,
+        run_config: nextRunConfig,
+        saved_at: Date.now(),
+      } satisfies EasyQuantLastRunState)
+    );
+
+    try {
+      setBacktestLoading(true);
+      const detail = await easyQuantService.getEasyQuantBacktestDetail(taskId);
+      setBacktestDetail(detail);
+      setResearchAudit(detail?.research_audit || null);
+      const status = String(detail?.task?.status || item.status || '').toUpperCase();
+      setBacktestLoading(status === 'QUEUED' || status === 'RUNNING' || status === 'PENDING');
+    } catch (error) {
+      setBacktestError(error instanceof Error ? error.message : String(error));
+      setBacktestLoading(false);
+    }
+
+    window.requestAnimationFrame(() => scrollToSection('easy-quant-backtest'));
   };
 
   const getSectionClassName = (sectionId: SectionId) =>
@@ -1906,6 +2060,7 @@ const EasyQuantWorkspace: React.FC = () => {
           <button onClick={() => openBacktestDrawer('metrics')}>完整指标</button>
           <button onClick={() => openBacktestDrawer('trades')}>交易明细</button>
           <button onClick={() => openBacktestDrawer('blocks')}>成交阻断</button>
+          <button onClick={openHistoryDrawer}>历史回测</button>
           <button onClick={() => setDrawerKey('ledger')}>实验账本</button>
           <button onClick={() => setDrawerKey('observe')}>观察日志</button>
         </div>
@@ -1966,6 +2121,109 @@ const EasyQuantWorkspace: React.FC = () => {
             </article>
           ))}
         </div>
+      );
+    }
+
+    if (drawerKey === 'history') {
+      return (
+        <>
+          <div className="eq-drawer-note eq-history-intro">
+            <strong>只列简易版回测</strong>
+            <span>点“在简易版查看”会回到当前五步流程；点“专业版详情”会打开完整回测页。</span>
+            <button
+              className="eq-button eq-button--quiet"
+              onClick={() => void loadEasyQuantHistory()}
+            >
+              刷新历史 <ReloadOutlined />
+            </button>
+          </div>
+          {historyError && (
+            <div className="eq-inline-notice eq-inline-notice--error">
+              <p>{explainEasyQuantError(historyError, 'backtest')}</p>
+              <button
+                className="eq-button eq-button--quiet"
+                onClick={() => void loadEasyQuantHistory()}
+              >
+                重试 <ReloadOutlined />
+              </button>
+            </div>
+          )}
+          {historyLoading && (
+            <article className="eq-empty-note eq-history-loading">
+              <span>历史回测</span>
+              <strong>正在读取历史列表</strong>
+              <p>正在读取最近的简易版回测任务。</p>
+            </article>
+          )}
+          {!historyLoading && !historyItems.length && !historyError && (
+            <article className="eq-empty-note">
+              <span>历史回测</span>
+              <strong>还没有简易版回测</strong>
+              <p>跑完一次真实回测后，这里会保留入口，方便复看报告或进入专业详情。</p>
+            </article>
+          )}
+          {!historyLoading && historyItems.length > 0 && (
+            <div className="eq-history-list">
+              {historyItems.map(item => {
+                const templateId = pickHistoryTaskTemplateId(item, selectedTemplateId);
+                const template = getEasyQuantTemplate(templateId);
+                const bestReturn = item.run_summary?.best_return_pct;
+                const bestDrawdown = item.run_summary?.best_max_drawdown_pct;
+                return (
+                  <article key={item.id} className="eq-history-card">
+                    <div className="eq-history-card-head">
+                      <span>
+                        #{item.id} · {getBacktestStatusLabel(item.status)}
+                      </span>
+                      <strong>{item.task_name}</strong>
+                    </div>
+                    <div className="eq-history-meta">
+                      <span>模板：{template.name}</span>
+                      <span>
+                        区间：{formatDateOnly(item.start_date)} 至 {formatDateOnly(item.end_date)}
+                      </span>
+                      <span>初始资金：{formatMoneyValue(item.initial_capital)}</span>
+                      <span>
+                        最好收益：
+                        <b
+                          className={
+                            (toFiniteNumber(bestReturn) ?? 0) >= 0
+                              ? 'eq-metric-value--good'
+                              : 'eq-metric-value--bad'
+                          }
+                        >
+                          {formatPercentValue(bestReturn)}
+                        </b>
+                      </span>
+                      <span>
+                        最大回撤：{formatPercentValue(Math.abs(toFiniteNumber(bestDrawdown) ?? 0))}
+                      </span>
+                    </div>
+                    <p>
+                      {item.run_summary?.conclusion ||
+                        item.error_message ||
+                        '这条历史回测可以在简易版复看，也可以进入专业版查看全部指标。'}
+                    </p>
+                    <div className="eq-history-actions">
+                      <button
+                        className="eq-button eq-button--dark"
+                        onClick={() => void handleOpenHistoryBacktest(item)}
+                      >
+                        在简易版查看
+                      </button>
+                      <Link
+                        className="eq-button eq-button--quiet"
+                        to={`/legacy/backtest/${item.id}`}
+                      >
+                        专业版详情 <ExportOutlined />
+                      </Link>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </>
       );
     }
 

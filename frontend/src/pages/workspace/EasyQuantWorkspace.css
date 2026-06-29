@@ -1859,6 +1859,85 @@
   line-height: 1.65;
 }
 
+.eq-history-intro {
+  align-items: stretch;
+}
+
+.eq-history-intro .eq-button {
+  width: fit-content;
+  margin-top: 4px;
+}
+
+.eq-history-list {
+  display: grid;
+  gap: 12px;
+  margin: 18px;
+}
+
+.eq-history-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--eq-soft-line);
+  border-radius: 14px;
+  background: rgba(247, 242, 232, 0.44);
+}
+
+.eq-history-card-head {
+  display: grid;
+  gap: 6px;
+}
+
+.eq-history-card-head span,
+.eq-history-meta span {
+  color: var(--eq-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.eq-history-card-head strong {
+  font-size: 19px;
+  line-height: 1.35;
+}
+
+.eq-history-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.eq-history-meta span {
+  padding: 6px 8px;
+  border: 1px solid var(--eq-soft-line);
+  border-radius: 999px;
+  background: rgba(251, 248, 241, 0.58);
+}
+
+.eq-history-meta b {
+  margin-left: 2px;
+  font-weight: 900;
+}
+
+.eq-history-card p {
+  margin: 0;
+  color: var(--eq-muted);
+  line-height: 1.65;
+}
+
+.eq-history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.eq-history-actions .eq-button {
+  min-height: 38px;
+}
+
+.eq-history-loading {
+  margin: 18px;
+}
+
 .eq-drawer-list article {
   padding: 16px;
 }

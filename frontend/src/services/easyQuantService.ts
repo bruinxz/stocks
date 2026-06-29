@@ -2,11 +2,13 @@ import api from './api';
 import {
   BacktestResearchAudit,
   BacktestDetail,
+  BacktestTask,
   CreateBacktestResponse,
   QuantStrategyItem,
   QuantWorkflowPreset,
   createBacktestTask,
   getBacktestDetail,
+  listBacktestTasks,
   listQuantStrategies,
   listWorkflowPresets,
 } from './labService';
@@ -211,6 +213,20 @@ export async function getEasyQuantBacktestDetail(taskId: number): Promise<Backte
   return getBacktestDetail(taskId);
 }
 
+export function isEasyQuantBacktestTask(task: BacktestTask): boolean {
+  return (
+    task.parameters?.easy_mode === true ||
+    task.parameters?.easy_mode === 'true' ||
+    task.task_name?.startsWith('简易版-') ||
+    EASY_QUANT_TEMPLATES.some(template => task.parameters?.template_id === template.id)
+  );
+}
+
+export async function listEasyQuantBacktestHistory(limit = 50): Promise<BacktestTask[]> {
+  const tasks = await listBacktestTasks(limit);
+  return tasks.filter(isEasyQuantBacktestTask);
+}
+
 export async function getEasyQuantResearchAudit(
   taskId: number
 ): Promise<EasyQuantResearchAudit | null> {
@@ -242,6 +258,7 @@ export const easyQuantService = {
   loadEasyQuantBootstrap,
   runEasyQuantBacktest,
   getEasyQuantBacktestDetail,
+  listEasyQuantBacktestHistory,
   getEasyQuantResearchAudit,
   createEasyQuantObservationPortfolio,
 };

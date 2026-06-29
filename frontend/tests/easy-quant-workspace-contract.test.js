@@ -123,6 +123,14 @@ assert(
     !service.includes('/live-trading')
 );
 assert(
+  'easy history reuses quant backtest list and filters simplified runs',
+  service.includes('listBacktestTasks') &&
+    service.includes('listEasyQuantBacktestHistory') &&
+    service.includes('isEasyQuantBacktestTask') &&
+    service.includes('task.parameters?.easy_mode') &&
+    service.includes("task.task_name?.startsWith('简易版-')")
+);
+assert(
   'easy workspace relies on environment API routing instead of hard-coded dev database hosts',
   !forbiddenEasyRuntimeLiteralPattern.test([page, service, labService, hooks, templates, helpers].join('\n')) &&
     service.includes("import api from './api'") &&
@@ -253,6 +261,19 @@ assert(
     page.includes('exit_reason') &&
     page.includes('买入原因') &&
     page.includes('卖出原因')
+);
+assert(
+  'easy workspace has a history drawer with simplified and professional actions',
+  page.includes("type DrawerKey = StepKey | 'guide' | 'ledger' | 'history' | null") &&
+    page.includes('历史回测') &&
+    page.includes('historyItems') &&
+    page.includes('loadEasyQuantHistory') &&
+    page.includes('handleOpenHistoryBacktest') &&
+    page.includes('在简易版查看') &&
+    page.includes('专业版详情') &&
+    page.includes('eq-history-list') &&
+    page.includes('eq-history-card') &&
+    page.includes('to={`/legacy/backtest/${item.id}`}')
 );
 assert(
   'full metrics include benchmark, final value, cost, and execution diagnostics',
