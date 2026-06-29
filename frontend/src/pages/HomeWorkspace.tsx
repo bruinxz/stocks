@@ -1060,6 +1060,29 @@ const HomeWorkspace: React.FC = () => {
   // ---------------------------------------------------------------------------
   return (
     <div className="home-workspace">
+      {/* PR-L emergency stop-loss banner (2026-06-29) — PR-K 回测证实 win 32% (低于
+          50% 随机), 实盘 paper -10,798 元. 自动跟单已停, UI 显著警示, 单击跟单
+          会先弹风险评估 Modal. data-testid 给 frontend contract test 用. */}
+      <Alert
+        type="warning"
+        showIcon
+        banner
+        data-testid="home-emergency-banner"
+        style={{ marginBottom: 16 }}
+        message={
+          <span style={{ fontSize: 14, fontWeight: 600 }}>
+            <WarningOutlined style={{ marginRight: 6 }} />
+            推荐系统处于评估期 — 仅供参考, 不要直接跟单
+          </span>
+        }
+        description={
+          <span style={{ fontSize: 12, color: '#7c3aed' }}>
+            30 天回测发现当前评分模型存在反向偏差, 自动跟单已暂停.
+            研究升级中, 预计 1-2 周后恢复. 详见{' '}
+            <a onClick={() => navigate('/workspace/today?tab=risk_center')}>风控中心</a>.
+          </span>
+        }
+      />
       {/* ===== Phase 8 — 区块 1: 账户总值 hero (64px 大数字 + radial gradient) =====
           Phase 10 — 72px + violet ¥ + 30 日 sparkline + 数据时间 pill.
           Phase 11 — 暗色 aurora + spotlight 鼠标跟随 + framer-motion mount 动画. */}
