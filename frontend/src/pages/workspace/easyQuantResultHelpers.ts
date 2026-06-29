@@ -36,20 +36,38 @@ export const EASY_QUANT_OBSERVATION_THRESHOLDS = {
   min_trade_count: 5,
 };
 
-const formatPct = (value?: number | null) =>
-  typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(2)}%` : '暂无';
+const toFiniteNumber = (value: unknown): number | null => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
 
-const formatWinRatePct = (value?: number | null) => {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+};
+
+const formatPct = (value?: unknown) => {
+  const numericValue = toFiniteNumber(value);
+  return numericValue !== null ? `${numericValue.toFixed(2)}%` : '暂无';
+};
+
+const formatWinRatePct = (value?: unknown) => {
+  const numericValue = toFiniteNumber(value);
+  if (numericValue === null) {
     return '暂无';
   }
 
-  const normalized = value >= 0 && value <= 1 ? value * 100 : value;
+  const normalized = numericValue >= 0 && numericValue <= 1 ? numericValue * 100 : numericValue;
   return `${normalized.toFixed(2)}%`;
 };
 
-const formatNumber = (value?: number | null) =>
-  typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : '暂无';
+const formatNumber = (value?: unknown) => {
+  const numericValue = toFiniteNumber(value);
+  return numericValue !== null ? numericValue.toFixed(2) : '暂无';
+};
 
 function pickBestResult(detail: BacktestDetail | null): BacktestStrategyResult | null {
   if (!detail?.results?.length) {
@@ -57,8 +75,8 @@ function pickBestResult(detail: BacktestDetail | null): BacktestStrategyResult |
   }
 
   return [...detail.results].sort((a, b) => {
-    const aSharpe = Number.isFinite(a.sharpe_ratio) ? a.sharpe_ratio : -999;
-    const bSharpe = Number.isFinite(b.sharpe_ratio) ? b.sharpe_ratio : -999;
+    const aSharpe = toFiniteNumber(a.sharpe_ratio) ?? -999;
+    const bSharpe = toFiniteNumber(b.sharpe_ratio) ?? -999;
     return bSharpe - aSharpe;
   })[0];
 }
@@ -95,11 +113,11 @@ function buildMetricsFromResult(result: BacktestStrategyResult | null): EasyQuan
     return [];
   }
 
-  const totalReturn = result.total_return_pct;
-  const drawdown = Math.abs(result.max_drawdown_pct);
-  const sharpe = result.sharpe_ratio;
-  const trades = result.trade_count;
-  const winRate = result.win_rate;
+  const totalReturn = toFiniteNumber(result.total_return_pct);
+  const drawdown = Math.abs(toFiniteNumber(result.max_drawdown_pct) ?? 0);
+  const sharpe = toFiniteNumber(result.sharpe_ratio);
+  const trades = Math.round(toFiniteNumber(result.trade_count) ?? 0);
+  const winRate = toFiniteNumber(result.win_rate);
 
   return [
     {
@@ -107,7 +125,7 @@ function buildMetricsFromResult(result: BacktestStrategyResult | null): EasyQuan
       label: '总收益',
       value: formatPct(totalReturn),
       explanation: '这代表这段历史区间内策略整体赚了多少。',
-      tone: totalReturn > 0 ? 'good' : 'bad',
+      tone: totalReturn !== null && totalReturn > 0 ? 'good' : 'bad',
     },
     {
       key: 'drawdown',
@@ -121,7 +139,12 @@ function buildMetricsFromResult(result: BacktestStrategyResult | null): EasyQuan
       label: '夏普比率',
       value: formatNumber(sharpe),
       explanation: '这代表收益相对波动是否划算，新手先看 0.8 以上。',
-      tone: sharpe >= 1 ? 'good' : sharpe >= 0.8 ? 'watch' : 'bad',
+      tone:
+        sharpe !== null && sharpe >= 1
+          ? 'good'
+          : sharpe !== null && sharpe >= 0.8
+            ? 'watch'
+            : 'bad',
     },
     {
       key: 'trades',
@@ -210,10 +233,10 @@ export function buildEasyQuantBacktestVerdict(
     };
   }
 
-  const totalReturn = result.total_return_pct;
-  const drawdown = Math.abs(result.max_drawdown_pct);
-  const sharpe = result.sharpe_ratio;
-  const trades = result.trade_count;
+  const totalReturn = toFiniteNumber(result.total_return_pct) ?? 0;
+  const drawdown = Math.abs(toFiniteNumber(result.max_drawdown_pct) ?? 0);
+  const sharpe = toFiniteNumber(result.sharpe_ratio) ?? 0;
+  const trades = toFiniteNumber(result.trade_count) ?? 0;
   const thresholds = EASY_QUANT_OBSERVATION_THRESHOLDS;
 
   const canCreateObservation =
@@ -248,7 +271,10 @@ export function buildEasyQuantBacktestVerdict(
   };
 }
 
-export function explainEasyQuantError(message: string): string {
+export function explainEasyQuantError(
+  message: string,
+  context: 'bootstrap' | 'backtest' | 'audit' = 'backtest'
+): string {
   const lower = message.toLowerCase();
 
   if (lower.includes('unauthorized') || lower.includes('401')) {
@@ -260,6 +286,14 @@ export function explainEasyQuantError(message: string): string {
   }
 
   if (lower.includes('timeout') || lower.includes('超时') || lower.includes('超过')) {
+    if (context === 'bootstrap') {
+      return '读取数据和运行状态超时，请稍后刷新或查看数据明细。';
+    }
+
+    if (context === 'audit') {
+      return '可信度审计读取超时，请稍后刷新结果。';
+    }
+
     return '回测运行时间过长，请稍后刷新结果。';
   }
 

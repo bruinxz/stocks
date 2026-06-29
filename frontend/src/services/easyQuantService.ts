@@ -15,6 +15,7 @@ import {
   EASY_QUANT_TEMPLATES,
   EasyQuantTemplate,
   EasyQuantTemplateId,
+  EasyQuantRunConfig,
   buildEasyQuantBacktestPayload,
   getEasyQuantTemplate,
 } from '../pages/workspace/easyQuantTemplates';
@@ -51,6 +52,14 @@ export interface EasyQuantBootstrap {
 
 export type EasyQuantResearchAudit = BacktestResearchAudit;
 
+async function readOptional<T>(reader: Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await reader;
+  } catch {
+    return fallback;
+  }
+}
+
 function normalizeHealthStatus(rawStatus: unknown): EasyQuantHealthStatus {
   const value = String(rawStatus || '').toLowerCase();
 
@@ -58,22 +67,22 @@ function normalizeHealthStatus(rawStatus: unknown): EasyQuantHealthStatus {
     return 'ready';
   }
 
-  if (['blocked', 'error', 'failed', 'fail'].includes(value)) {
+  if (['blocked', 'error', 'failed', 'fail', 'critical'].includes(value)) {
     return 'blocked';
   }
 
-  if (['degraded', 'warning', 'warn', 'caution'].includes(value)) {
+  if (['degraded', 'warning', 'warn', 'caution', 'risk'].includes(value)) {
     return 'degraded';
   }
 
-  return 'blocked';
+  return 'degraded';
 }
 
 function unwrapHealth(res: any, fallback: string): EasyQuantHealthSnapshot {
   if (!res) {
     return {
-      status: 'blocked',
-      conclusion: fallback,
+      status: 'degraded',
+      conclusion: `部分健康检查没有拿到完整结论：${fallback}`,
       raw: null,
     };
   }
@@ -142,8 +151,8 @@ function buildHealthVerdict(
 
 export async function loadEasyQuantBootstrap(): Promise<EasyQuantBootstrap> {
   const [strategies, workflowPresets, dataFreshnessRes, runtimeHealthRes] = await Promise.all([
-    listQuantStrategies(),
-    listWorkflowPresets(),
+    readOptional(listQuantStrategies(), []),
+    readOptional(listWorkflowPresets(), []),
     api.get('/quant/data-freshness').catch(error => {
       const response = (error as { response?: unknown }).response;
       return response || null;
@@ -157,7 +166,10 @@ export async function loadEasyQuantBootstrap(): Promise<EasyQuantBootstrap> {
   const strategyByKey = new Map(strategies.map(item => [item.strategy_key, item]));
   const templates = EASY_QUANT_TEMPLATES.map(template => {
     const backendStrategy = strategyByKey.get(template.strategy_key);
-    const available = backendStrategy?.enabled !== false && Boolean(backendStrategy);
+    const available =
+      strategies.length === 0
+        ? true
+        : Boolean(backendStrategy) && backendStrategy?.enabled !== false;
 
     return {
       ...template,
@@ -169,10 +181,11 @@ export async function loadEasyQuantBootstrap(): Promise<EasyQuantBootstrap> {
 
   const dataFreshness = unwrapHealth(dataFreshnessRes, '没有拿到行情数据健康结论。');
   const runtimeHealth = unwrapHealth(runtimeHealthRes, '没有拿到系统运行健康结论。');
+  const selectedTemplateId = templates.find(template => template.available)?.id || 'steady_trend';
 
   return {
     templates,
-    selected_template_id: 'steady_trend',
+    selected_template_id: selectedTemplateId,
     workflow_presets: workflowPresets,
     data_freshness: dataFreshness,
     runtime_health: runtimeHealth,
@@ -182,10 +195,11 @@ export async function loadEasyQuantBootstrap(): Promise<EasyQuantBootstrap> {
 
 export async function runEasyQuantBacktest(
   templateId: EasyQuantTemplateId,
-  hypothesis?: string
+  hypothesis?: string,
+  runConfig?: EasyQuantRunConfig
 ): Promise<CreateBacktestResponse> {
   const template = getEasyQuantTemplate(templateId);
-  const payload = buildEasyQuantBacktestPayload(template, hypothesis);
+  const payload = buildEasyQuantBacktestPayload(template, hypothesis, runConfig);
   return createBacktestTask({
     ...payload,
     easy_mode: true,
@@ -207,14 +221,17 @@ export async function getEasyQuantResearchAudit(
   return res.data.data as EasyQuantResearchAudit;
 }
 
-export async function createEasyQuantObservationPortfolio(templateId: EasyQuantTemplateId) {
+export async function createEasyQuantObservationPortfolio(
+  templateId: EasyQuantTemplateId,
+  runConfig?: EasyQuantRunConfig
+) {
   const template = getEasyQuantTemplate(templateId);
   const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
 
   return portfolioCrudService.createPortfolio({
     name: `简易观察-${template.name}-${timestamp}`,
     description: `由简易版模板 ${template.name} 创建，仅用于模拟观察。`,
-    initial_capital: template.default_initial_capital,
+    initial_capital: runConfig?.initial_capital || template.default_initial_capital,
     strategy_keys: [template.strategy_key],
     enabled_factors: [],
     auto_trade_enabled: false,

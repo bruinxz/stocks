@@ -74,6 +74,32 @@ const execution = buildExecutionArtifactFromRejectedOrders([
 assert('rejected orders map to reject', execution.status === 'reject');
 assert('execution summary explains count', execution.summary.includes('2'));
 
+const modeledExecution = buildExecutionArtifactFromRejectedOrders(
+  [
+    { reason: 'max_positions', detail: '已持仓 6 ≥ 上限 6' },
+    { reason: 'max_positions', detail: '已持仓 6 ≥ 上限 6' },
+    { reason: 'limit_up_block_buy', detail: '涨停买入不可成交' },
+    { reason: 'lot_or_cash_too_small', detail: '目标金额不足以买入 1 手' },
+  ],
+  {
+    buy_fill_count: 12,
+    sell_fill_count: 8,
+  }
+);
+assert('modeled rejects with fills become watch', modeledExecution.status === 'watch');
+assert(
+  'execution summary groups repeated reasons',
+  modeledExecution.summary.includes('仓位上限 2 笔') &&
+    !modeledExecution.summary.includes('已持仓 6 ≥ 上限 6；已持仓 6 ≥ 上限 6')
+);
+
+const modeledVerdict = buildCredibilitySummary({
+  backtest_artifact: { status: 'pass', summary: '真实成交后收益为正。' },
+  integrity_artifact: { status: 'pass', summary: '没有发现未来函数。' },
+  execution_artifact: modeledExecution,
+});
+assert('modeled execution watch allows observation', modeledVerdict.can_create_observation);
+
 const easyVerdict = buildCredibilitySummary({
   backtest_artifact: { status: 'pass', summary: '冠军策略收益为正。' },
   integrity_artifact: { status: 'pass', summary: '没有发现未来函数。' },

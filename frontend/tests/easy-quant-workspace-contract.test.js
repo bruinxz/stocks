@@ -50,6 +50,10 @@ function findRepoRoot(start = process.cwd()) {
   }
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 console.log('\n## Easy Quant workspace frontend contract');
 
 const app = read('frontend/src/App.tsx');
@@ -60,6 +64,16 @@ const labService = read('frontend/src/services/labService.ts');
 const hooks = read('frontend/src/pages/workspace/easyQuantHooks.ts');
 const templates = read('frontend/src/pages/workspace/easyQuantTemplates.ts');
 const helpers = read('frontend/src/pages/workspace/easyQuantResultHelpers.ts');
+const forbiddenEasyRuntimeLiterals = [
+  ['stock', '_backtest', '_dev'].join(''),
+  ['stock', '_dev'].join(''),
+  ['127', '0', '0', '1:15432'].join('.'),
+  ['REACT_APP_API_BASE_URL=http://127', '0', '0', '1:3002'].join('.'),
+  ['103', '242', '3', '87'].join('.'),
+];
+const forbiddenEasyRuntimeLiteralPattern = new RegExp(
+  forbiddenEasyRuntimeLiterals.map(escapeRegExp).join('|')
+);
 
 assert(
   'App lazy loads EasyQuantWorkspace',
@@ -86,9 +100,7 @@ assert(
 );
 assert(
   'page covers the beginner flow',
-  ['选择策略模板', '查数据', '回测报告', '可信度', '模拟观察'].every(label =>
-    page.includes(label)
-  )
+  ['选择策略模板', '查数据', '回测报告', '可信度', '模拟观察'].every(label => page.includes(label))
 );
 assert(
   'page adds credibility step before observation',
@@ -105,24 +117,66 @@ assert(
   'easy service calls existing quant and paper APIs only',
   service.includes("api.get('/quant/data-freshness'") &&
     service.includes("api.get('/quant/runtime-health'") &&
-    service.includes("api.get(`/quant/backtests/${taskId}/research-audit`)") &&
+    service.includes('api.get(`/quant/backtests/${taskId}/research-audit`)') &&
     service.includes('createBacktestTask') &&
     service.includes('createPortfolio') &&
     !service.includes('/live-trading')
+);
+assert(
+  'easy workspace relies on environment API routing instead of hard-coded dev database hosts',
+  !forbiddenEasyRuntimeLiteralPattern.test([page, service, labService, hooks, templates, helpers].join('\n')) &&
+    service.includes("import api from './api'") &&
+    service.includes('createBacktestTask')
+);
+assert(
+  'bootstrap tolerates slow optional lists without turning the whole screen into an error',
+  service.includes('readOptional(listQuantStrategies(), [])') &&
+    service.includes('readOptional(listWorkflowPresets(), [])') &&
+    /strategies\.length === 0\s*\?\s*true\s*:\s*Boolean\(backendStrategy\)/.test(service)
+);
+assert(
+  'easy mode defaults to an available template after backend strategy state loads',
+  service.includes('templates.find(template => template.available)?.id') &&
+    page.includes('bootstrap.selected_template_id') &&
+    page.includes('currentTemplate?.available === false')
 );
 assert(
   'easy service sends easy-mode research payload',
   service.includes('easy_mode: true') && service.includes('hypothesis')
 );
 assert(
+  'easy run config exposes bounded beginner controls before backtest',
+  templates.includes('EasyQuantRunConfig') &&
+    templates.includes('buildDefaultEasyQuantRunConfig') &&
+    service.includes('runConfig?: EasyQuantRunConfig') &&
+    page.includes('eq-run-config') &&
+    ['初始资金', '回测区间', '股票池', '单票仓位', '最大持仓'].every(label =>
+      page.includes(label)
+    ) &&
+    page.includes('updateRunConfig') &&
+    page.includes('run_config')
+);
+assert(
   'easy service reads research audit',
   service.includes('getEasyQuantResearchAudit') && service.includes('/research-audit')
 );
 assert(
-  'health checks fail closed on unknown or business failure',
-  /return 'blocked';[\s\S]{0,80}\n}/.test(
-    service.match(/function normalizeHealthStatus[\s\S]*?\n}/)?.[0] || ''
-  ) &&
+  'completed backtests keep polling audit until phase-one artifacts are complete',
+  page.includes('REQUIRED_RESEARCH_ARTIFACT_TYPES') &&
+    ['backtest', 'integrity_audit', 'execution_audit'].every(type => page.includes(type)) &&
+    page.includes('isResearchAuditComplete') &&
+    page.includes('pickMostCompleteResearchAudit') &&
+    page.includes('EASY_QUANT_AUDIT_POLL_INTERVAL_MS') &&
+    page.includes('EASY_QUANT_AUDIT_POLL_TIMEOUT_MS') &&
+    page.includes('getEasyQuantResearchAudit(taskId)') &&
+    page.includes('resolvedResearchAudit') &&
+    page.includes('researchAuditComplete')
+);
+assert(
+  'health checks map quant risk/warn to cautious research instead of blocking the phase-one flow',
+  service.includes("['degraded', 'warning', 'warn', 'caution', 'risk']") &&
+    service.includes('部分健康检查没有拿到完整结论') &&
+    service.includes('can_run_backtest: true') &&
     service.includes('res?.data?.success === false') &&
     service.includes('can_run_backtest: false')
 );
@@ -166,22 +220,59 @@ assert(
   ['ma_trend', 'breakout_atr', 'low_volatility_quality'].every(key => templates.includes(key))
 );
 assert(
+  'beginner templates send position_pct as whole percent values',
+  /default_position_pct:\s*12/.test(templates) &&
+    /default_position_pct:\s*10/.test(templates) &&
+    !/default_position_pct:\s*0\.\d+/.test(templates)
+);
+assert(
   'result helpers support backend verdict with local fallback thresholds',
   helpers.includes('pickBackendVerdict') &&
     helpers.includes('credibility_verdict') &&
     helpers.includes('EASY_QUANT_OBSERVATION_THRESHOLDS') &&
-    helpers.includes('Math.abs(result.max_drawdown_pct)')
+    helpers.includes('Math.abs(toFiniteNumber(result.max_drawdown_pct) ?? 0)')
 );
 assert(
   'result helpers normalize ratio win rate for beginner display',
   helpers.includes('formatWinRatePct') &&
-    helpers.includes('value >= 0 && value <= 1 ? value * 100 : value') &&
+    helpers.includes('toFiniteNumber') &&
+    helpers.includes("typeof value === 'string'") &&
+    helpers.includes(
+      'numericValue >= 0 && numericValue <= 1 ? numericValue * 100 : numericValue'
+    ) &&
     helpers.includes('value: formatWinRatePct(winRate)')
+);
+assert(
+  'backtest drawer has real report tabs instead of duplicating main cards',
+  page.includes('eq-report-tabs') &&
+    ['完整指标', '交易明细', '成交阻断'].every(label => page.includes(label)) &&
+    page.includes('reportMetricGroups') &&
+    page.includes('tradeRows') &&
+    page.includes('blockedOrderRows') &&
+    page.includes('entry_reason') &&
+    page.includes('exit_reason') &&
+    page.includes('买入原因') &&
+    page.includes('卖出原因')
+);
+assert(
+  'full metrics include benchmark, final value, cost, and execution diagnostics',
+  ['年化收益', '基准收益', '超额收益', '最终资产', '换手率', '手续费', '印花税', '滑点成本'].every(
+    label => page.includes(label)
+  ) &&
+    page.includes('execution_diagnostics') &&
+    page.includes('rejected_orders_json')
 );
 assert(
   'observation is gated by credibility verdict',
   helpers.includes('credibility_verdict') &&
     page.includes('researchAuditVerdict.can_create_observation')
+);
+assert(
+  'credibility verdict includes a plain next-step action hint',
+  page.includes('credibilityActionHint') &&
+    page.includes('eq-action-brief') &&
+    page.includes('先观察 5 到 10 个交易日') &&
+    page.includes('先处理')
 );
 assert(
   'beginner errors are translated into plain Chinese',
@@ -191,15 +282,73 @@ assert(
     helpers.includes("lower.includes('超时')")
 );
 assert(
+  'bootstrap timeout copy is distinct from real backtest timeout copy',
+  helpers.includes("context: 'bootstrap' | 'backtest' | 'audit'") &&
+    helpers.includes('读取数据和运行状态超时') &&
+    page.includes("explainEasyQuantError(bootstrapError, 'bootstrap')") &&
+    page.includes("explainEasyQuantError(backtestError, 'backtest')") &&
+    page.includes("explainEasyQuantError(researchAuditError, 'audit')")
+);
+assert(
+  'backtest running state shows elapsed progress and a refresh path instead of static waiting',
+  hooks.includes('useEasyQuantElapsedSeconds') &&
+    page.includes('backtestElapsedSeconds') &&
+    page.includes('eq-running-status') &&
+    page.includes('正在排队和计算') &&
+    page.includes('仍在运行') &&
+    page.includes('刷新结果')
+);
+assert(
+  'backtest running state explains the live phase instead of waiting until final failure',
+  page.includes('backtestRunningStages') &&
+    page.includes('eq-running-timeline') &&
+    ['提交任务', '排队', '计算收益', '写入可信度'].every(label => page.includes(label)) &&
+    page.includes('backtestFailureGuidance') &&
+    page.includes('失败发生在') &&
+    page.includes('hasCompletedResearchAudit') &&
+    page.includes("completedResearchAuditVerdict !== 'pending'") &&
+    css.includes('eq-running-timeline') &&
+    css.includes('eq-running-node--active') &&
+    css.includes('eq-running-node--done') &&
+    css.includes('eq-running-dot')
+);
+assert(
+  'easy workspace restores the last local backtest after refresh and clears it when restarting',
+  page.includes('EASY_QUANT_LAST_RUN_STORAGE_KEY') &&
+    /localStorage\.setItem\(\s*EASY_QUANT_LAST_RUN_STORAGE_KEY/.test(page) &&
+    /localStorage\.getItem\(\s*EASY_QUANT_LAST_RUN_STORAGE_KEY/.test(page) &&
+    page.includes('handleResetResearchFlow') &&
+    /localStorage\.removeItem\(\s*EASY_QUANT_LAST_RUN_STORAGE_KEY/.test(page)
+);
+assert(
+  'data bootstrap loading explains progress instead of silent waiting',
+  hooks.includes('bootstrapElapsedSeconds') &&
+    hooks.includes('reloadBootstrap') &&
+    page.includes('bootstrapLoadingSteps') &&
+    page.includes('远端 dev 库响应较慢') &&
+    page.includes('这不是回测失败') &&
+    page.includes('重新检查') &&
+    css.includes('eq-loading-status') &&
+    css.includes('eq-status-sheen') &&
+    css.includes('eq-lens-breathe')
+);
+assert(
+  'loading motion respects reduced motion and mobile layout',
+  /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.eq-verdict-card--loading::after[\s\S]*?display:\s*none/.test(
+    css
+  ) &&
+    /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.eq-running-node--active/.test(css) &&
+    /@media \(max-width:\s*820px\)[\s\S]*?\.eq-loading-steps[\s\S]*?grid-template-columns:\s*1fr/.test(
+      css
+    )
+);
+assert(
   'copy keeps one data-checking term and removes duplicate current-step card',
   !/检查数据|数据体检|当前步骤/.test(page) &&
     page.includes('下一步：查数据') &&
     page.includes('查数据详情')
 );
-assert(
-  'ledger drawer is available',
-  page.includes('实验账本') && page.includes('eq-ledger')
-);
+assert('ledger drawer is available', page.includes('实验账本') && page.includes('eq-ledger'));
 assert(
   'template selection is expressed by selected card state',
   page.includes('eq-template-check') && !page.includes('已选模板')

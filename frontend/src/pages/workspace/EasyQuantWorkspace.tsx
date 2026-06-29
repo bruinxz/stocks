@@ -11,14 +11,16 @@ import {
   ReloadOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import { BacktestDetail } from '../../services/labService';
+import { BacktestDetail, BacktestStrategyResult } from '../../services/labService';
 import easyQuantService, {
   EasyQuantResearchAudit,
   EasyQuantTemplateView,
 } from '../../services/easyQuantService';
 import {
   EASY_QUANT_TEMPLATES,
+  EasyQuantRunConfig,
   EasyQuantTemplateId,
+  buildDefaultEasyQuantRunConfig,
   getEasyQuantTemplate,
 } from './easyQuantTemplates';
 import {
@@ -33,11 +35,43 @@ import {
   useEasyQuantBacktestPolling,
   useEasyQuantBootstrap,
   useEasyQuantDisplayUsername,
+  useEasyQuantElapsedSeconds,
   useEasyQuantSectionScrollSpy,
 } from './easyQuantHooks';
 import './EasyQuantWorkspace.css';
 
 type DrawerKey = StepKey | 'guide' | 'ledger' | null;
+type BacktestReportTab = 'metrics' | 'trades' | 'blocks';
+
+interface ReportMetricRow {
+  label: string;
+  value: string;
+  detail: string;
+  tone?: 'good' | 'watch' | 'bad' | 'neutral';
+}
+
+interface ReportMetricGroup {
+  title: string;
+  rows: ReportMetricRow[];
+}
+
+const EASY_QUANT_LAST_RUN_STORAGE_KEY = 'easy_quant_last_run_v1';
+const EASY_QUANT_LAST_RUN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const EASY_QUANT_AUDIT_POLL_INTERVAL_MS = 3000;
+const EASY_QUANT_AUDIT_POLL_TIMEOUT_MS = 2 * 60 * 1000;
+const REQUIRED_RESEARCH_ARTIFACT_TYPES = [
+  'backtest',
+  'integrity_audit',
+  'execution_audit',
+] as const;
+
+interface EasyQuantLastRunState {
+  task_id: number;
+  template_id: EasyQuantTemplateId;
+  hypothesis?: string;
+  run_config?: EasyQuantRunConfig;
+  saved_at: number;
+}
 
 interface JourneyStep {
   key: StepKey;
@@ -95,6 +129,190 @@ const templateSketchById: Record<EasyQuantTemplateId, 'trend' | 'cross' | 'shiel
   steady_trend: 'trend',
   breakout_ma: 'cross',
   low_vol_value: 'shield',
+};
+
+function getResearchAuditCompletenessScore(audit?: EasyQuantResearchAudit | null): number {
+  if (!audit) {
+    return 0;
+  }
+
+  const verdict = String(audit.credibility_verdict?.verdict || '').toLowerCase();
+  const terminalVerdict = verdict && verdict !== 'pending';
+  const artifactTypes = new Set((audit.artifacts || []).map(item => item.artifact_type));
+  const completedArtifacts = (audit.artifacts || []).filter(
+    item => String(item.status || '').toLowerCase() !== 'pending'
+  ).length;
+
+  return (
+    (terminalVerdict ? 100 : 0) +
+    REQUIRED_RESEARCH_ARTIFACT_TYPES.filter(type => artifactTypes.has(type)).length * 10 +
+    completedArtifacts
+  );
+}
+
+function pickMostCompleteResearchAudit(
+  primary?: EasyQuantResearchAudit | null,
+  secondary?: EasyQuantResearchAudit | null
+): EasyQuantResearchAudit | null {
+  if (!primary) {
+    return secondary || null;
+  }
+
+  if (!secondary) {
+    return primary;
+  }
+
+  return getResearchAuditCompletenessScore(primary) >= getResearchAuditCompletenessScore(secondary)
+    ? primary
+    : secondary;
+}
+
+function isResearchAuditComplete(audit?: EasyQuantResearchAudit | null): boolean {
+  if (!audit) {
+    return false;
+  }
+
+  const verdict = String(audit.credibility_verdict?.verdict || '').toLowerCase();
+  if (!verdict || verdict === 'pending') {
+    return false;
+  }
+
+  return REQUIRED_RESEARCH_ARTIFACT_TYPES.every(type =>
+    (audit.artifacts || []).some(
+      item => item.artifact_type === type && String(item.status || '').toLowerCase() !== 'pending'
+    )
+  );
+}
+
+function trimSentenceEnding(text?: string): string {
+  return String(text || '').replace(/[。.!！]+$/g, '');
+}
+
+const toFiniteNumber = (value: unknown): number | null => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+};
+
+const formatPercentValue = (value: unknown, fallback = '暂无') => {
+  const numericValue = toFiniteNumber(value);
+  return numericValue === null ? fallback : `${numericValue.toFixed(2)}%`;
+};
+
+const formatRatioAsPercent = (value: unknown, fallback = '暂无') => {
+  const numericValue = toFiniteNumber(value);
+  return numericValue === null ? fallback : `${(numericValue * 100).toFixed(2)}%`;
+};
+
+const formatNumberValue = (value: unknown, digits = 2, fallback = '暂无') => {
+  const numericValue = toFiniteNumber(value);
+  return numericValue === null ? fallback : numericValue.toFixed(digits);
+};
+
+const formatMoneyValue = (value: unknown, fallback = '暂无') => {
+  const numericValue = toFiniteNumber(value);
+  if (numericValue === null) {
+    return fallback;
+  }
+
+  if (Math.abs(numericValue) >= 10000) {
+    return `${(numericValue / 10000).toFixed(Math.abs(numericValue) >= 100000 ? 0 : 1)}万`;
+  }
+
+  return `${Math.round(numericValue).toLocaleString('zh-CN')}元`;
+};
+
+const formatDateOnly = (value: unknown) => {
+  const text = String(value || '').slice(0, 10);
+  return text || '未记录';
+};
+
+const formatUniverseLabel = (universe: EasyQuantRunConfig['universe']) =>
+  universe === 'favorites' ? '自选股' : '全市场候选';
+
+const pickBestBacktestResult = (detail?: BacktestDetail | null): BacktestStrategyResult | null => {
+  if (!detail?.results?.length) {
+    return null;
+  }
+
+  return [...detail.results].sort((a, b) => {
+    const aReturn = toFiniteNumber(a.total_return_pct) ?? -999999;
+    const bReturn = toFiniteNumber(b.total_return_pct) ?? -999999;
+    return bReturn - aReturn;
+  })[0];
+};
+
+const getExecutionDiagnostics = (result?: BacktestStrategyResult | null): Record<string, any> =>
+  ((result?.metrics_json || {}) as any).execution_diagnostics || {};
+
+const getRejectedOrders = (result?: BacktestStrategyResult | null): any[] =>
+  Array.isArray(result?.rejected_orders_json) ? result?.rejected_orders_json || [] : [];
+
+const getBlockedReasonLabel = (reason: unknown) => {
+  const value = String(reason || 'unknown');
+  const labels: Record<string, string> = {
+    max_positions: '仓位上限',
+    already_holding: '已有持仓',
+    limit_up_block_buy: '涨停买入',
+    limit_up_blocked_buy: '涨停买入',
+    limit_down_block_sell: '跌停卖出',
+    limit_down_blocked_sell: '跌停卖出',
+    t_plus_one_block: 'T+1 限制',
+    t_plus_1_violation: 'T+1 限制',
+    suspended_or_zero_volume: '停牌或零成交',
+    st_filtered: 'ST 过滤',
+    turnover_below_threshold: '流动性不足',
+    next_bar_missing: '次日行情缺失',
+    next_exit_bar_missing: '次日退出行情缺失',
+    lot_or_cash_too_small: '金额不足',
+    cash_not_enough: '现金不足',
+    unknown: '其他原因',
+  };
+
+  return labels[value] || value.replace(/_/g, ' ');
+};
+
+const normalizeEasyQuantRunConfig = (
+  template: ReturnType<typeof getEasyQuantTemplate>,
+  saved?: Partial<EasyQuantRunConfig> | null
+): EasyQuantRunConfig => {
+  const fallback = buildDefaultEasyQuantRunConfig(template);
+  const lookback = Number(saved?.lookback_years);
+  const initialCapital = Number(saved?.initial_capital);
+  const candidateLimit = Number(saved?.candidate_limit);
+  const maxPositions = Number(saved?.max_positions);
+  const positionPct = Number(saved?.position_pct);
+
+  return {
+    initial_capital:
+      Number.isFinite(initialCapital) && initialCapital > 0
+        ? initialCapital
+        : fallback.initial_capital,
+    lookback_years: [1, 2, 3].includes(lookback)
+      ? (lookback as EasyQuantRunConfig['lookback_years'])
+      : fallback.lookback_years,
+    universe:
+      saved?.universe === 'all' || saved?.universe === 'favorites'
+        ? saved.universe
+        : fallback.universe,
+    candidate_limit:
+      Number.isFinite(candidateLimit) && candidateLimit > 0
+        ? Math.round(candidateLimit)
+        : fallback.candidate_limit,
+    max_positions:
+      Number.isFinite(maxPositions) && maxPositions > 0
+        ? Math.round(maxPositions)
+        : fallback.max_positions,
+    position_pct:
+      Number.isFinite(positionPct) && positionPct > 0 ? positionPct : fallback.position_pct,
+  };
 };
 
 const sectionNavItems: EasyQuantSectionNavItem[] = [
@@ -277,12 +495,16 @@ const EasyQuantWorkspace: React.FC = () => {
   const snapRestoreTimerRef = useRef<number | null>(null);
   const navLockTimerRef = useRef<number | null>(null);
   const programmaticSectionRef = useRef<SectionId | null>(null);
+  const restoredRunRef = useRef(false);
+  const runConfigTouchedRef = useRef(false);
   const [activeStep, setActiveStep] = useState<StepKey>('template');
   const [selectedTemplateId, setSelectedTemplateId] = useState<EasyQuantTemplateId>('steady_trend');
-  const { bootstrap, bootstrapLoading, bootstrapError } = useEasyQuantBootstrap();
+  const { bootstrap, bootstrapLoading, bootstrapError, bootstrapElapsedSeconds, reloadBootstrap } =
+    useEasyQuantBootstrap();
   const [backtestTaskId, setBacktestTaskId] = useState<number | null>(null);
   const [backtestDetail, setBacktestDetail] = useState<BacktestDetail | null>(null);
   const [backtestLoading, setBacktestLoading] = useState(false);
+  const backtestElapsedSeconds = useEasyQuantElapsedSeconds(backtestLoading);
   const [backtestError, setBacktestError] = useState<string | null>(null);
   const [researchAudit, setResearchAudit] = useState<EasyQuantResearchAudit | null>(null);
   const [researchAuditLoading, setResearchAuditLoading] = useState(false);
@@ -313,19 +535,306 @@ const EasyQuantWorkspace: React.FC = () => {
     [selectedTemplateId, templatesForView]
   );
   const [hypothesis, setHypothesis] = useState(selectedTemplateData.default_hypothesis);
+  const [runConfig, setRunConfig] = useState<EasyQuantRunConfig>(() =>
+    buildDefaultEasyQuantRunConfig(getEasyQuantTemplate('steady_trend'))
+  );
+  const [backtestReportTab, setBacktestReportTab] = useState<BacktestReportTab>('metrics');
+
+  const clearResearchRunState = useCallback(() => {
+    localStorage.removeItem(EASY_QUANT_LAST_RUN_STORAGE_KEY);
+    setBacktestTaskId(null);
+    setBacktestDetail(null);
+    setBacktestLoading(false);
+    setBacktestError(null);
+    setResearchAudit(null);
+    setResearchAuditLoading(false);
+    setResearchAuditError(null);
+    setObservationMessage(null);
+  }, []);
+
+  const updateRunConfig = useCallback(
+    (patch: Partial<EasyQuantRunConfig>) => {
+      runConfigTouchedRef.current = true;
+      clearResearchRunState();
+      setRunConfig(current =>
+        normalizeEasyQuantRunConfig(selectedTemplateData, { ...current, ...patch })
+      );
+    },
+    [clearResearchRunState, selectedTemplateData]
+  );
+
+  const handleTemplateSelect = useCallback(
+    (templateId: EasyQuantTemplateId) => {
+      if (selectedTemplateId !== templateId) {
+        clearResearchRunState();
+      }
+      const nextTemplate = getEasyQuantTemplate(templateId);
+      runConfigTouchedRef.current = false;
+      setSelectedTemplateId(templateId);
+      setHypothesis(nextTemplate.default_hypothesis);
+      setRunConfig(buildDefaultEasyQuantRunConfig(nextTemplate));
+    },
+    [clearResearchRunState, selectedTemplateId]
+  );
+
+  const openBacktestDrawer = useCallback((tab: BacktestReportTab = 'metrics') => {
+    setBacktestReportTab(tab);
+    setDrawerKey('backtest');
+  }, []);
 
   useEffect(() => {
-    setHypothesis(selectedTemplateData.default_hypothesis);
-  }, [selectedTemplateData.default_hypothesis, selectedTemplateId]);
+    if (!bootstrap?.selected_template_id) {
+      return;
+    }
 
+    setSelectedTemplateId(currentTemplateId => {
+      const currentTemplate = bootstrap.templates.find(item => item.id === currentTemplateId);
+      return currentTemplate?.available === false
+        ? bootstrap.selected_template_id
+        : currentTemplateId;
+    });
+  }, [bootstrap]);
+
+  useEffect(() => {
+    if (restoredRunRef.current) {
+      restoredRunRef.current = false;
+      return;
+    }
+
+    const defaultTemplate = getEasyQuantTemplate(selectedTemplateId);
+    setHypothesis(defaultTemplate.default_hypothesis);
+    if (!runConfigTouchedRef.current) {
+      setRunConfig(buildDefaultEasyQuantRunConfig(defaultTemplate));
+    }
+  }, [selectedTemplateId]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(EASY_QUANT_LAST_RUN_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+
+      const saved = JSON.parse(raw) as Partial<EasyQuantLastRunState>;
+      const taskId = Number(saved.task_id);
+      const savedAt = Number(saved.saved_at);
+      const templateId = saved.template_id;
+      const templateExists = EASY_QUANT_TEMPLATES.some(template => template.id === templateId);
+      const isFresh =
+        Number.isFinite(savedAt) && Date.now() - savedAt <= EASY_QUANT_LAST_RUN_MAX_AGE_MS;
+
+      if (!Number.isFinite(taskId) || taskId <= 0 || !templateExists || !isFresh) {
+        localStorage.removeItem(EASY_QUANT_LAST_RUN_STORAGE_KEY);
+        return;
+      }
+
+      restoredRunRef.current = true;
+      runConfigTouchedRef.current = false;
+      setSelectedTemplateId(templateId as EasyQuantTemplateId);
+      if (typeof saved.hypothesis === 'string' && saved.hypothesis.trim()) {
+        setHypothesis(saved.hypothesis);
+      }
+      setRunConfig(
+        normalizeEasyQuantRunConfig(
+          getEasyQuantTemplate(templateId as EasyQuantTemplateId),
+          saved.run_config
+        )
+      );
+      setBacktestTaskId(taskId);
+      setBacktestLoading(true);
+      setBacktestError(null);
+      setActiveStep('backtest');
+      setActiveSectionId('easy-quant-backtest');
+    } catch {
+      localStorage.removeItem(EASY_QUANT_LAST_RUN_STORAGE_KEY);
+    }
+  }, []);
+
+  const resolvedResearchAudit = useMemo(
+    () => pickMostCompleteResearchAudit(researchAudit, backtestDetail?.research_audit),
+    [backtestDetail?.research_audit, researchAudit]
+  );
+  const researchAuditComplete = useMemo(
+    () => isResearchAuditComplete(resolvedResearchAudit),
+    [resolvedResearchAudit]
+  );
   const backtestVerdict: EasyQuantBacktestVerdict = useMemo(
-    () => buildEasyQuantBacktestVerdict(backtestDetail, researchAudit),
-    [backtestDetail, researchAudit]
+    () => buildEasyQuantBacktestVerdict(backtestDetail, resolvedResearchAudit),
+    [backtestDetail, resolvedResearchAudit]
   );
   const researchAuditVerdict = backtestVerdict;
+  const bestBacktestResult = useMemo(
+    () => pickBestBacktestResult(backtestDetail),
+    [backtestDetail]
+  );
+  const executionDiagnostics = useMemo(
+    () => getExecutionDiagnostics(bestBacktestResult),
+    [bestBacktestResult]
+  );
+  const reportMetricGroups = useMemo<ReportMetricGroup[]>(() => {
+    if (!bestBacktestResult) {
+      return [];
+    }
+
+    const metrics = bestBacktestResult.metrics_json || {};
+
+    return [
+      {
+        title: '收益',
+        rows: [
+          {
+            label: '总收益',
+            value: formatPercentValue(bestBacktestResult.total_return_pct),
+            detail: '策略在这段历史区间的整体收益。',
+            tone: (toFiniteNumber(bestBacktestResult.total_return_pct) ?? 0) >= 0 ? 'good' : 'bad',
+          },
+          {
+            label: '年化收益',
+            value: formatPercentValue(bestBacktestResult.annual_return_pct),
+            detail: '把这段结果折算到一年后的近似速度。',
+          },
+          {
+            label: '基准收益',
+            value: formatPercentValue(bestBacktestResult.benchmark_return_pct),
+            detail: '用于对照的指数或基准在同一时期的收益。',
+          },
+          {
+            label: '超额收益',
+            value: formatPercentValue(bestBacktestResult.excess_return_pct),
+            detail: '策略相对基准多赚或少赚的部分。',
+            tone: (toFiniteNumber(bestBacktestResult.excess_return_pct) ?? 0) >= 0 ? 'good' : 'bad',
+          },
+          {
+            label: '最终资产',
+            value: formatMoneyValue((metrics as any).final_value),
+            detail: '回测结束时的总资产估算。',
+          },
+        ],
+      },
+      {
+        title: '风险',
+        rows: [
+          {
+            label: '最大回撤',
+            value: formatPercentValue(
+              Math.abs(toFiniteNumber(bestBacktestResult.max_drawdown_pct) ?? 0)
+            ),
+            detail: '历史过程中从高点到低点的最大亏损幅度。',
+            tone:
+              Math.abs(toFiniteNumber(bestBacktestResult.max_drawdown_pct) ?? 0) <= 20
+                ? 'good'
+                : 'watch',
+          },
+          {
+            label: '夏普比率',
+            value: formatNumberValue(bestBacktestResult.sharpe_ratio),
+            detail: '收益相对波动是否划算。',
+          },
+          {
+            label: 'Calmar',
+            value: formatNumberValue((metrics as any).calmar_ratio),
+            detail: '年化收益和最大回撤的折中。',
+          },
+          {
+            label: 'Sortino',
+            value: formatNumberValue((metrics as any).sortino_ratio),
+            detail: '更关注下跌波动的风险收益比。',
+          },
+        ],
+      },
+      {
+        title: '交易',
+        rows: [
+          {
+            label: '交易次数',
+            value: formatNumberValue(bestBacktestResult.trade_count, 0),
+            detail: '完整买卖闭环的数量，太少时结果更容易偶然。',
+          },
+          {
+            label: '胜率',
+            value: formatPercentValue(bestBacktestResult.win_rate),
+            detail: '赚钱交易占比，要和盈亏比一起看。',
+          },
+          {
+            label: '盈亏比',
+            value: formatNumberValue(bestBacktestResult.profit_factor),
+            detail: '盈利交易合计相对亏损交易合计的比例。',
+          },
+          {
+            label: '平均持有',
+            value: `${formatNumberValue(bestBacktestResult.avg_holding_days, 1)}天`,
+            detail: '每笔交易平均持有多久。',
+          },
+          {
+            label: '换手率',
+            value: formatRatioAsPercent((metrics as any).turnover_ratio),
+            detail: '交易额相对平均资产的比例。',
+          },
+        ],
+      },
+      {
+        title: '成本与执行',
+        rows: [
+          {
+            label: '手续费',
+            value: formatMoneyValue(executionDiagnostics.total_commission),
+            detail: '买卖双边佣金估算。',
+          },
+          {
+            label: '印花税',
+            value: formatMoneyValue(executionDiagnostics.total_stamp_tax),
+            detail: 'A 股卖出侧印花税估算。',
+          },
+          {
+            label: '过户费',
+            value: formatMoneyValue(executionDiagnostics.total_transfer_fee),
+            detail: '交易过户费用估算。',
+          },
+          {
+            label: '滑点成本',
+            value: formatMoneyValue(executionDiagnostics.total_slippage_cost),
+            detail: '成交价相对参考价的不利偏移估算。',
+          },
+          {
+            label: '成交尝试',
+            value: `${formatNumberValue(executionDiagnostics.buy_fill_count, 0)}买 / ${formatNumberValue(
+              executionDiagnostics.sell_fill_count,
+              0
+            )}卖`,
+            detail: '实际成交的买入和卖出次数。',
+          },
+        ],
+      },
+    ];
+  }, [bestBacktestResult, executionDiagnostics]);
+  const tradeRows = useMemo(
+    () =>
+      [...(backtestDetail?.trades || [])].sort((a, b) =>
+        String(b.buy_date || '').localeCompare(String(a.buy_date || ''))
+      ),
+    [backtestDetail?.trades]
+  );
+  const blockedOrderRows = useMemo(
+    () =>
+      getRejectedOrders(bestBacktestResult).sort((a, b) =>
+        String(b.trade_date || '').localeCompare(String(a.trade_date || ''))
+      ),
+    [bestBacktestResult]
+  );
+  const blockedReasonRows = useMemo(
+    () =>
+      Object.entries((executionDiagnostics.block_reasons || {}) as Record<string, number>)
+        .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))
+        .map(([reason, count]) => ({
+          reason,
+          count,
+          label: getBlockedReasonLabel(reason),
+        })),
+    [executionDiagnostics]
+  );
   const researchArtifacts = useMemo(
-    () => researchAudit?.artifacts || backtestDetail?.research_audit?.artifacts || [],
-    [backtestDetail, researchAudit]
+    () => resolvedResearchAudit?.artifacts || [],
+    [resolvedResearchAudit]
   );
   const dataCheckItems = useMemo(
     () => [
@@ -352,6 +861,25 @@ const EasyQuantWorkspace: React.FC = () => {
     ],
     [bootstrap]
   );
+  const bootstrapLoadingSteps = useMemo(
+    () => [
+      { label: '策略库', detail: '读取模板和策略开关' },
+      { label: '行情数据', detail: '确认行情闭环状态' },
+      { label: '运行环境', detail: '检查队列和运行健康' },
+      { label: '流程预设', detail: '读取安全边界' },
+    ],
+    []
+  );
+  const bootstrapLoadingStepIndex = Math.min(
+    bootstrapLoadingSteps.length - 1,
+    Math.floor(bootstrapElapsedSeconds / 4)
+  );
+  const bootstrapLoadingTitle =
+    bootstrapElapsedSeconds >= 12 ? '仍在完成启动体检' : '正在读取数据状态';
+  const bootstrapLoadingSummary =
+    bootstrapElapsedSeconds >= 12
+      ? '远端 dev 库响应较慢，仍在检查运行健康；这不是回测失败，也还没有开始下单。'
+      : '正在按顺序读取策略库、行情数据、运行环境和流程预设。';
   const observationEvents = useMemo(
     () => [
       {
@@ -403,13 +931,45 @@ const EasyQuantWorkspace: React.FC = () => {
     setObservationMessage(null);
 
     try {
-      const created = await easyQuantService.runEasyQuantBacktest(selectedTemplateId, hypothesis);
+      const created = await easyQuantService.runEasyQuantBacktest(
+        selectedTemplateId,
+        hypothesis,
+        runConfig
+      );
       setBacktestTaskId(created.task_id);
+      localStorage.setItem(
+        EASY_QUANT_LAST_RUN_STORAGE_KEY,
+        JSON.stringify({
+          task_id: created.task_id,
+          template_id: selectedTemplateId,
+          hypothesis,
+          run_config: runConfig,
+          saved_at: Date.now(),
+        } satisfies EasyQuantLastRunState)
+      );
     } catch (error) {
       setBacktestError(error instanceof Error ? error.message : String(error));
       setBacktestLoading(false);
     }
-  }, [hypothesis, selectedTemplateId]);
+  }, [hypothesis, runConfig, selectedTemplateId]);
+
+  const handleRefreshBacktestResult = useCallback(async () => {
+    if (!backtestTaskId) {
+      return;
+    }
+
+    setBacktestError(null);
+    try {
+      const detail = await easyQuantService.getEasyQuantBacktestDetail(backtestTaskId);
+      setBacktestDetail(detail);
+      const status = detail?.task?.status;
+      if (status === 'COMPLETED' || status === 'FAILED') {
+        setBacktestLoading(false);
+      }
+    } catch (error) {
+      setBacktestError(error instanceof Error ? error.message : String(error));
+    }
+  }, [backtestTaskId]);
 
   useEasyQuantBacktestPolling(
     backtestTaskId,
@@ -425,51 +985,80 @@ const EasyQuantWorkspace: React.FC = () => {
     }
 
     if (backtestDetail.research_audit) {
-      setResearchAudit(backtestDetail.research_audit);
+      setResearchAudit(current =>
+        pickMostCompleteResearchAudit(backtestDetail.research_audit, current)
+      );
+    }
+
+    if (isResearchAuditComplete(backtestDetail.research_audit)) {
+      setResearchAuditLoading(false);
       return undefined;
     }
 
     let cancelled = false;
-    setResearchAuditLoading(true);
-    setResearchAuditError(null);
+    let pollTimer: number | null = null;
+    const startedAt = Date.now();
 
-    easyQuantService
-      .getEasyQuantResearchAudit(taskId)
-      .then(audit => {
-        if (!cancelled) {
-          setResearchAudit(audit);
+    const pollAudit = async () => {
+      setResearchAuditLoading(true);
+      setResearchAuditError(null);
+
+      try {
+        const audit = await easyQuantService.getEasyQuantResearchAudit(taskId);
+        if (cancelled) {
+          return;
         }
-      })
-      .catch(error => {
+
+        setResearchAudit(current => pickMostCompleteResearchAudit(audit, current));
+
+        if (
+          isResearchAuditComplete(audit) ||
+          Date.now() - startedAt > EASY_QUANT_AUDIT_POLL_TIMEOUT_MS
+        ) {
+          setResearchAuditLoading(false);
+          return;
+        }
+
+        pollTimer = window.setTimeout(pollAudit, EASY_QUANT_AUDIT_POLL_INTERVAL_MS);
+      } catch (error) {
         if (!cancelled) {
           setResearchAuditError(error instanceof Error ? error.message : String(error));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
           setResearchAuditLoading(false);
         }
-      });
+      }
+    };
+
+    void pollAudit();
 
     return () => {
       cancelled = true;
+      if (pollTimer) {
+        window.clearTimeout(pollTimer);
+      }
     };
-  }, [backtestDetail, backtestTaskId]);
+  }, [
+    backtestDetail?.research_audit,
+    backtestDetail?.task?.id,
+    backtestDetail?.task?.status,
+    backtestTaskId,
+  ]);
 
   const handleCreateObservation = useCallback(async () => {
     setObservationCreating(true);
     setObservationMessage(null);
 
     try {
-      const created =
-        await easyQuantService.createEasyQuantObservationPortfolio(selectedTemplateId);
+      const created = await easyQuantService.createEasyQuantObservationPortfolio(
+        selectedTemplateId,
+        runConfig
+      );
       setObservationMessage(`已创建模拟观察组合：${created.name}`);
     } catch (error) {
       setObservationMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setObservationCreating(false);
     }
-  }, [selectedTemplateId]);
+  }, [runConfig, selectedTemplateId]);
 
   useEasyQuantSectionScrollSpy(
     scrollRootRef,
@@ -555,6 +1144,11 @@ const EasyQuantWorkspace: React.FC = () => {
     window.requestAnimationFrame(() => scrollToSection(sectionByStep[stepKey]));
   };
 
+  const handleResetResearchFlow = () => {
+    clearResearchRunState();
+    goToStep('template');
+  };
+
   const getSectionClassName = (sectionId: SectionId) =>
     `eq-screen-section ${visibleSections[sectionId] ? 'eq-screen-section--visible' : ''}`;
 
@@ -562,6 +1156,110 @@ const EasyQuantWorkspace: React.FC = () => {
     setActiveStep('template');
     window.requestAnimationFrame(() => scrollToSection('easy-quant-flow'));
   };
+  const backtestRunningTitle =
+    backtestElapsedSeconds >= 90 ? '仍在运行' : backtestTaskId ? '正在排队和计算' : '正在提交任务';
+  const backtestRunningSummary =
+    backtestElapsedSeconds >= 90
+      ? '回测仍在后台执行，可以继续等待，也可以点刷新结果查看最新状态。'
+      : backtestTaskId
+        ? '任务已经提交，正在等待后端计算收益、回撤和成交记录。'
+        : '正在创建回测任务，拿到任务号后会自动开始轮询结果。';
+  const rawBacktestStatus = String(backtestDetail?.task?.status || '').toUpperCase();
+  const backtestProgress = Number(backtestDetail?.task?.progress || 0);
+  const completedResearchAuditVerdict = String(
+    resolvedResearchAudit?.credibility_verdict?.verdict || ''
+  ).toLowerCase();
+  const hasCompletedResearchAudit =
+    Boolean(completedResearchAuditVerdict) &&
+    completedResearchAuditVerdict !== 'pending' &&
+    researchAuditComplete;
+  const backtestRunningStageIndex = !backtestTaskId
+    ? 0
+    : rawBacktestStatus === 'QUEUED'
+      ? 1
+      : researchAuditLoading || hasCompletedResearchAudit
+        ? 3
+        : rawBacktestStatus === 'COMPLETED'
+          ? 3
+          : 2;
+  const backtestRunningStages = useMemo(
+    () =>
+      [
+        {
+          label: '提交任务',
+          detail: backtestTaskId ? `任务号 ${backtestTaskId}` : '正在创建任务号',
+        },
+        {
+          label: '排队',
+          detail:
+            rawBacktestStatus === 'QUEUED'
+              ? '等待回测 worker 接手'
+              : backtestTaskId
+                ? '已进入计算队列'
+                : '拿到任务号后排队',
+        },
+        {
+          label: '计算收益',
+          detail:
+            backtestProgress > 0 && rawBacktestStatus === 'RUNNING'
+              ? `当前进度 ${backtestProgress}%`
+              : '计算收益、回撤和成交记录',
+        },
+        {
+          label: '写入可信度',
+          detail: hasCompletedResearchAudit
+            ? '审计结论已写入'
+            : researchAuditLoading
+              ? '正在写实验账本'
+              : rawBacktestStatus === 'COMPLETED'
+                ? '正在生成审计结论'
+                : '回测完成后自动审计',
+        },
+      ].map((stage, index) => ({
+        ...stage,
+        state:
+          backtestError && index === backtestRunningStageIndex
+            ? 'error'
+            : index < backtestRunningStageIndex
+              ? 'done'
+              : index === backtestRunningStageIndex
+                ? 'active'
+                : 'waiting',
+      })),
+    [
+      backtestError,
+      backtestProgress,
+      backtestRunningStageIndex,
+      backtestTaskId,
+      hasCompletedResearchAudit,
+      rawBacktestStatus,
+      researchAuditLoading,
+    ]
+  );
+  const backtestFailureGuidance = useMemo(() => {
+    if (!backtestError) {
+      return null;
+    }
+
+    const failedStage =
+      backtestRunningStages.find(stage => stage.state === 'error') ||
+      backtestRunningStages[backtestRunningStageIndex] ||
+      backtestRunningStages[0];
+    const taskMessage = backtestDetail?.task?.error_message;
+    const detail = taskMessage
+      ? `后端回测任务返回：${taskMessage}。可以先刷新结果确认状态；如果仍失败，重新跑一次会保留同样的模板和假设。`
+      : '这通常是提交、轮询或后端计算临时失败。可以先刷新结果；如果任务不存在或仍失败，再重新跑一次。';
+
+    return {
+      title: `失败发生在${failedStage.label}`,
+      detail,
+    };
+  }, [
+    backtestDetail?.task?.error_message,
+    backtestError,
+    backtestRunningStageIndex,
+    backtestRunningStages,
+  ]);
 
   const credibilityItems = useMemo(() => {
     const getArtifact = (artifact_type: string) =>
@@ -593,6 +1291,47 @@ const EasyQuantWorkspace: React.FC = () => {
       summary: item.artifact?.summary || item.fallback,
     }));
   }, [backtestDetail, researchArtifacts, researchAuditLoading]);
+  const credibilityActionHint = useMemo(() => {
+    const firstBlockingReason = researchAuditVerdict.blocking_reasons?.[0];
+    const firstWatchReason = researchAuditVerdict.watch_reasons?.[0];
+
+    if (researchAuditLoading) {
+      return {
+        title: '正在生成可信度结论',
+        detail: '系统正在把回测来源、未来数据检查和 A 股成交约束写进实验账本。',
+      };
+    }
+
+    if (!backtestDetail) {
+      return {
+        title: '先跑一次真实回测',
+        detail: '不用提前判断收益好坏，先让系统生成可追溯的回测和审计记录。',
+      };
+    }
+
+    if (!researchAuditVerdict.can_create_observation) {
+      return {
+        title: '暂时不要进入观察',
+        detail: firstBlockingReason
+          ? `先处理：${trimSentenceEnding(firstBlockingReason)}。处理后重新跑回测，再看可信度是否放行。`
+          : '先处理数据、模板或审计缺口。修正后重新跑回测，再看可信度是否放行。',
+      };
+    }
+
+    if (researchAuditVerdict.status === 'caution') {
+      return {
+        title: '可以小步观察，但不要放大仓位',
+        detail: firstWatchReason
+          ? `先观察 5 到 10 个交易日，重点看：${trimSentenceEnding(firstWatchReason)}。`
+          : '先观察 5 到 10 个交易日，重点看信号、成交和回撤是否稳定。',
+      };
+    }
+
+    return {
+      title: '可以进入模拟观察',
+      detail: '先观察 5 到 10 个交易日，确认信号、成交和回撤都稳定后，再考虑更复杂配置。',
+    };
+  }, [backtestDetail, researchAuditLoading, researchAuditVerdict]);
 
   const renderStage = (stageKey: StepKey = activeStep) => {
     if (stageKey === 'data') {
@@ -605,18 +1344,55 @@ const EasyQuantWorkspace: React.FC = () => {
             <h2>查数据</h2>
             <p>先确认数据可靠，再进入回测。新手不需要理解每个字段，只看是否可以继续。</p>
           </div>
-          <div className="eq-verdict-card">
+          <div className={`eq-verdict-card ${bootstrapLoading ? 'eq-verdict-card--loading' : ''}`}>
             <JourneySketch type="lens" />
             <div>
               <span className="eq-soft-label">体检结果</span>
-              <strong>{bootstrap?.health_verdict.title || '正在读取数据状态'}</strong>
-              <p>{bootstrap?.health_verdict.summary || '正在读取后端数据健康和运行健康。'}</p>
+              <strong>
+                {bootstrapLoading
+                  ? bootstrapLoadingTitle
+                  : bootstrap?.health_verdict.title || '正在读取数据状态'}
+              </strong>
+              <p>
+                {bootstrapLoading
+                  ? bootstrapLoadingSummary
+                  : bootstrap?.health_verdict.summary || '正在读取后端数据健康和运行健康。'}
+              </p>
             </div>
           </div>
           {bootstrapError && (
-            <p className="eq-state-error">{explainEasyQuantError(bootstrapError)}</p>
+            <div className="eq-inline-notice eq-inline-notice--error">
+              <p>{explainEasyQuantError(bootstrapError, 'bootstrap')}</p>
+              <button className="eq-button eq-button--quiet" onClick={reloadBootstrap}>
+                重新检查 <ReloadOutlined />
+              </button>
+            </div>
           )}
-          {bootstrapLoading && <p className="eq-state-muted">正在检查策略和数据状态...</p>}
+          {bootstrapLoading && (
+            <div className="eq-loading-status" aria-live="polite">
+              <div className="eq-loading-line">
+                <span>已检查 {bootstrapElapsedSeconds} 秒</span>
+                <i aria-hidden="true" />
+              </div>
+              <div className="eq-loading-steps">
+                {bootstrapLoadingSteps.map((item, index) => {
+                  const state =
+                    index < bootstrapLoadingStepIndex
+                      ? 'done'
+                      : index === bootstrapLoadingStepIndex
+                        ? 'active'
+                        : 'waiting';
+
+                  return (
+                    <span key={item.label} className={`eq-loading-step eq-loading-step--${state}`}>
+                      <b>{item.label}</b>
+                      <em>{item.detail}</em>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {bootstrap?.health_verdict && (
             <p className={`eq-state-${bootstrap.health_verdict.status}`}>
               {bootstrap.health_verdict.title}：{bootstrap.health_verdict.summary}
@@ -667,6 +1443,23 @@ const EasyQuantWorkspace: React.FC = () => {
             <h2>回测报告</h2>
             <p>先看一个结论，再决定要不要进入模拟观察。详细指标放在抽屉里慢慢看。</p>
           </div>
+          <div className="eq-run-summary-strip" aria-label="本次回测配置">
+            <span>
+              初始资金 <strong>{formatMoneyValue(runConfig.initial_capital)}</strong>
+            </span>
+            <span>
+              回测区间 <strong>近{runConfig.lookback_years}年</strong>
+            </span>
+            <span>
+              股票池 <strong>{formatUniverseLabel(runConfig.universe)}</strong>
+            </span>
+            <span>
+              仓位{' '}
+              <strong>
+                {runConfig.position_pct}% / 最多{runConfig.max_positions}只
+              </strong>
+            </span>
+          </div>
           <div className="eq-result-hero">
             <div>
               <span className="eq-soft-label">真实回测结论</span>
@@ -679,10 +1472,57 @@ const EasyQuantWorkspace: React.FC = () => {
             </div>
             <JourneySketch type="chart" />
           </div>
-          {backtestError && (
-            <p className="eq-state-error">{explainEasyQuantError(backtestError)}</p>
-          )}
           {backtestTaskId && <p className="eq-state-muted">回测任务 ID：{backtestTaskId}</p>}
+          {(backtestLoading || backtestError) && (
+            <div
+              className={`eq-running-status ${backtestError ? 'eq-running-status--error' : ''}`}
+              aria-live="polite"
+            >
+              <div>
+                <span>{backtestError ? backtestFailureGuidance?.title : backtestRunningTitle}</span>
+                <strong>
+                  {backtestError ? '需要处理后再继续' : `已运行 ${backtestElapsedSeconds} 秒`}
+                </strong>
+              </div>
+              <p>
+                {backtestError
+                  ? backtestFailureGuidance?.detail ||
+                    explainEasyQuantError(backtestError, 'backtest')
+                  : backtestRunningSummary}
+              </p>
+              <div className="eq-running-timeline" aria-label="回测运行阶段">
+                {backtestRunningStages.map(stage => (
+                  <span
+                    key={stage.label}
+                    className={`eq-running-node eq-running-node--${stage.state}`}
+                  >
+                    <b>{stage.label}</b>
+                    <em>{stage.detail}</em>
+                  </span>
+                ))}
+              </div>
+              {!backtestError && (
+                <div className="eq-loading-line">
+                  <span>正在读取任务状态</span>
+                  <i aria-hidden="true" />
+                </div>
+              )}
+              <div className="eq-running-actions">
+                <button
+                  className="eq-button eq-button--quiet"
+                  disabled={!backtestTaskId}
+                  onClick={handleRefreshBacktestResult}
+                >
+                  刷新结果 <ReloadOutlined />
+                </button>
+                {backtestError && (
+                  <button className="eq-button eq-button--quiet" onClick={handleRunBacktest}>
+                    重新跑一次 <PlayCircleOutlined />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           <div className="eq-inline-metrics eq-inline-metrics--four">
             {backtestVerdict.beginner_metrics.length ? (
               backtestVerdict.beginner_metrics.map(metric => (
@@ -710,8 +1550,17 @@ const EasyQuantWorkspace: React.FC = () => {
             >
               查看可信度 <ArrowRightOutlined />
             </button>
-            <button className="eq-button eq-button--quiet" onClick={() => setDrawerKey('backtest')}>
+            <button
+              className="eq-button eq-button--quiet"
+              onClick={() => openBacktestDrawer('metrics')}
+            >
               查看完整指标
+            </button>
+            <button
+              className="eq-button eq-button--quiet"
+              onClick={() => openBacktestDrawer('trades')}
+            >
+              查看交易明细
             </button>
           </div>
         </article>
@@ -741,7 +1590,7 @@ const EasyQuantWorkspace: React.FC = () => {
             <JourneySketch type="shield" />
           </div>
           {researchAuditError && (
-            <p className="eq-state-error">{explainEasyQuantError(researchAuditError)}</p>
+            <p className="eq-state-error">{explainEasyQuantError(researchAuditError, 'audit')}</p>
           )}
           {backtestTaskId && (
             <p className="eq-state-muted">实验账本关联回测任务：{backtestTaskId}</p>
@@ -757,6 +1606,10 @@ const EasyQuantWorkspace: React.FC = () => {
                 <p>{item.summary}</p>
               </article>
             ))}
+          </div>
+          <div className={`eq-action-brief eq-action-brief--${researchAuditVerdict.status}`}>
+            <strong>{credibilityActionHint.title}</strong>
+            <p>{credibilityActionHint.detail}</p>
           </div>
           <div className="eq-stage-actions">
             <button
@@ -819,7 +1672,7 @@ const EasyQuantWorkspace: React.FC = () => {
             <Link className="eq-button eq-button--quiet" to="/workspace/portfolio">
               去模拟盘查看
             </Link>
-            <button className="eq-button eq-button--quiet" onClick={() => goToStep('template')}>
+            <button className="eq-button eq-button--quiet" onClick={handleResetResearchFlow}>
               重新选模板
             </button>
           </div>
@@ -843,7 +1696,7 @@ const EasyQuantWorkspace: React.FC = () => {
               className={`eq-template-card ${
                 selectedTemplateId === template.id ? 'eq-template-card--active' : ''
               }`}
-              onClick={() => setSelectedTemplateId(template.id)}
+              onClick={() => handleTemplateSelect(template.id)}
               aria-pressed={selectedTemplateId === template.id}
               disabled={template.available === false}
             >
@@ -859,13 +1712,139 @@ const EasyQuantWorkspace: React.FC = () => {
                   {template.beginner_summary}
                   {template.available === false ? ` ${template.unavailable_reason}` : ''}
                 </em>
+                <small className="eq-template-best-for">{template.best_for}</small>
               </span>
+              <div className="eq-template-facts">
+                <small>买入：{template.buy_logic_label}</small>
+                <small>卖出：{template.sell_logic_label}</small>
+                <small>周期：{template.holding_period_label}</small>
+              </div>
               <small className={`eq-risk-tag eq-risk-tag--${getRiskTone(template.risk_label)}`}>
                 {template.risk_label}
               </small>
             </button>
           ))}
         </div>
+        <section className="eq-run-config" aria-label="轻量回测配置">
+          <div className="eq-run-config-head">
+            <span>轻量配置</span>
+            <em>{selectedTemplateData.risk_note}</em>
+          </div>
+          <div className="eq-config-group">
+            <span>初始资金</span>
+            <div className="eq-config-options">
+              {[100000, 200000, 500000, 1000000].map(amount => (
+                <button
+                  key={amount}
+                  type="button"
+                  className={`eq-config-chip ${
+                    runConfig.initial_capital === amount ? 'eq-config-chip--active' : ''
+                  }`}
+                  onClick={() => updateRunConfig({ initial_capital: amount })}
+                >
+                  {formatMoneyValue(amount)}
+                </button>
+              ))}
+            </div>
+            <input
+              className="eq-config-input"
+              type="number"
+              min={10000}
+              step={10000}
+              aria-label="自定义初始资金"
+              value={runConfig.initial_capital}
+              onChange={event =>
+                updateRunConfig({
+                  initial_capital: Math.max(10000, Number(event.target.value) || 10000),
+                })
+              }
+            />
+          </div>
+          <div className="eq-config-group">
+            <span>回测区间</span>
+            <div className="eq-config-options">
+              {[
+                { value: 1, label: '近1年' },
+                { value: 2, label: '近2年' },
+                { value: 3, label: '近3年' },
+              ].map(option => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`eq-config-chip ${
+                    runConfig.lookback_years === option.value ? 'eq-config-chip--active' : ''
+                  }`}
+                  onClick={() =>
+                    updateRunConfig({
+                      lookback_years: option.value as EasyQuantRunConfig['lookback_years'],
+                    })
+                  }
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="eq-config-group">
+            <span>股票池</span>
+            <div className="eq-config-options">
+              {[
+                { value: 'favorites', label: '自选股', candidate_limit: 80 },
+                { value: 'all', label: '全市场候选', candidate_limit: 160 },
+              ].map(option => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`eq-config-chip ${
+                    runConfig.universe === option.value ? 'eq-config-chip--active' : ''
+                  }`}
+                  onClick={() =>
+                    updateRunConfig({
+                      universe: option.value as EasyQuantRunConfig['universe'],
+                      candidate_limit: option.candidate_limit,
+                    })
+                  }
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="eq-config-group">
+            <span>单票仓位</span>
+            <div className="eq-config-options">
+              {[5, 10, 12, 15].map(positionPct => (
+                <button
+                  key={positionPct}
+                  type="button"
+                  className={`eq-config-chip ${
+                    runConfig.position_pct === positionPct ? 'eq-config-chip--active' : ''
+                  }`}
+                  onClick={() => updateRunConfig({ position_pct: positionPct })}
+                >
+                  {positionPct}%
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="eq-config-group">
+            <span>最大持仓</span>
+            <div className="eq-config-options">
+              {[3, 6, 8, 10].map(maxPositions => (
+                <button
+                  key={maxPositions}
+                  type="button"
+                  className={`eq-config-chip ${
+                    runConfig.max_positions === maxPositions ? 'eq-config-chip--active' : ''
+                  }`}
+                  onClick={() => updateRunConfig({ max_positions: maxPositions })}
+                >
+                  {maxPositions}只
+                </button>
+              ))}
+            </div>
+          </div>
+        </section>
         <label className="eq-hypothesis">
           <span>研究假设</span>
           <textarea
@@ -924,7 +1903,9 @@ const EasyQuantWorkspace: React.FC = () => {
         <div className="eq-quick-list">
           <button onClick={() => setDrawerKey('template')}>模板对比</button>
           <button onClick={() => setDrawerKey('data')}>查数据</button>
-          <button onClick={() => setDrawerKey('backtest')}>回测指标</button>
+          <button onClick={() => openBacktestDrawer('metrics')}>完整指标</button>
+          <button onClick={() => openBacktestDrawer('trades')}>交易明细</button>
+          <button onClick={() => openBacktestDrawer('blocks')}>成交阻断</button>
           <button onClick={() => setDrawerKey('ledger')}>实验账本</button>
           <button onClick={() => setDrawerKey('observe')}>观察日志</button>
         </div>
@@ -990,23 +1971,179 @@ const EasyQuantWorkspace: React.FC = () => {
 
     if (drawerKey === 'backtest') {
       return (
-        <div className="eq-drawer-list">
-          {backtestVerdict.beginner_metrics.length ? (
-            backtestVerdict.beginner_metrics.map(metric => (
-              <article key={metric.key}>
-                <span>{metric.label}</span>
-                <strong>{metric.value}</strong>
-                <p>{metric.explanation}</p>
-              </article>
-            ))
-          ) : (
-            <article>
-              <span>回测指标</span>
-              <strong>待生成</strong>
-              <p>完成一次真实回测后，这里会显示收益、回撤、夏普等解释。</p>
-            </article>
+        <>
+          <div className="eq-report-tabs" role="tablist" aria-label="回测报告标签">
+            {[
+              { key: 'metrics', label: '完整指标' },
+              { key: 'trades', label: '交易明细' },
+              { key: 'blocks', label: '成交阻断' },
+            ].map(tab => (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={backtestReportTab === tab.key}
+                className={backtestReportTab === tab.key ? 'eq-report-tab--active' : ''}
+                onClick={() => setBacktestReportTab(tab.key as BacktestReportTab)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          {backtestReportTab === 'metrics' && (
+            <div className="eq-report-panel">
+              {reportMetricGroups.length ? (
+                reportMetricGroups.map(group => (
+                  <section key={group.title} className="eq-report-group">
+                    <h3>{group.title}</h3>
+                    <div className="eq-report-metric-grid">
+                      {group.rows.map(row => (
+                        <article key={`${group.title}-${row.label}`}>
+                          <span>{row.label}</span>
+                          <strong className={row.tone ? `eq-metric-value--${row.tone}` : undefined}>
+                            {row.value}
+                          </strong>
+                          <p>{row.detail}</p>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+                ))
+              ) : (
+                <article className="eq-empty-note">
+                  <span>完整指标</span>
+                  <strong>待生成</strong>
+                  <p>完成一次真实回测后，这里会展示收益、风险、交易和成本的完整分组。</p>
+                </article>
+              )}
+            </div>
           )}
-        </div>
+          {backtestReportTab === 'trades' && (
+            <div className="eq-report-panel">
+              <div className="eq-report-summary">
+                <span>交易明细</span>
+                <strong>{tradeRows.length ? `${tradeRows.length} 笔` : '暂无完整交易'}</strong>
+                <p>这里展示每笔交易的买入原因、卖出原因、持有天数和实际盈亏。</p>
+              </div>
+              {tradeRows.length ? (
+                <div className="eq-report-list">
+                  {tradeRows.slice(0, 40).map((trade, index) => {
+                    const entry_reason =
+                      trade.entry_reason || '策略信号触发买入，后端没有返回更细原因。';
+                    const exit_reason =
+                      trade.exit_reason || '策略退出或达到风控条件，后端没有返回更细原因。';
+                    const tradeReturn = toFiniteNumber(trade.return_pct);
+                    return (
+                      <article
+                        key={`${trade.symbol}-${trade.buy_date}-${index}`}
+                        className="eq-trade-card"
+                      >
+                        <div className="eq-trade-card-head">
+                          <span>{trade.symbol}</span>
+                          <strong>{trade.name || '未命名股票'}</strong>
+                          <em
+                            className={
+                              tradeReturn !== null && tradeReturn >= 0
+                                ? 'eq-metric-value--good'
+                                : 'eq-metric-value--bad'
+                            }
+                          >
+                            {formatPercentValue(trade.return_pct)}
+                          </em>
+                        </div>
+                        <div className="eq-trade-meta">
+                          <span>
+                            买入 {formatDateOnly(trade.buy_date)} @{' '}
+                            {formatNumberValue(trade.buy_price)}
+                          </span>
+                          <span>
+                            卖出 {formatDateOnly(trade.sell_date)} @{' '}
+                            {formatNumberValue(trade.sell_price)}
+                          </span>
+                          <span>数量 {formatNumberValue(trade.quantity, 0)}</span>
+                          <span>盈亏 {formatMoneyValue(trade.pnl)}</span>
+                          <span>持有 {formatNumberValue(trade.holding_days, 0)}天</span>
+                        </div>
+                        <div className="eq-trade-reasons">
+                          <p>
+                            <span>买入原因</span>
+                            {entry_reason}
+                          </p>
+                          <p>
+                            <span>卖出原因</span>
+                            {exit_reason}
+                          </p>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <article className="eq-empty-note">
+                  <span>交易明细</span>
+                  <strong>没有完整买卖闭环</strong>
+                  <p>这可能是区间较短、模板过于保守，或所有候选单都被 A 股成交约束挡住。</p>
+                </article>
+              )}
+            </div>
+          )}
+          {backtestReportTab === 'blocks' && (
+            <div className="eq-report-panel">
+              <div className="eq-block-summary">
+                <article>
+                  <span>买入成交</span>
+                  <strong>{formatNumberValue(executionDiagnostics.buy_fill_count, 0)}</strong>
+                </article>
+                <article>
+                  <span>卖出成交</span>
+                  <strong>{formatNumberValue(executionDiagnostics.sell_fill_count, 0)}</strong>
+                </article>
+                <article>
+                  <span>被挡订单</span>
+                  <strong>{formatNumberValue(executionDiagnostics.rejected_order_count, 0)}</strong>
+                </article>
+              </div>
+              {blockedReasonRows.length ? (
+                <div className="eq-block-reasons">
+                  {blockedReasonRows.map(item => (
+                    <span key={item.reason}>
+                      {item.label} <strong>{item.count}</strong>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              {blockedOrderRows.length ? (
+                <div className="eq-report-list">
+                  {blockedOrderRows.slice(0, 40).map((order, index) => (
+                    <article
+                      key={`${order.symbol}-${order.trade_date}-${order.reason}-${index}`}
+                      className="eq-block-card"
+                    >
+                      <div className="eq-trade-card-head">
+                        <span>{formatDateOnly(order.trade_date)}</span>
+                        <strong>
+                          {order.name || order.symbol || '未知标的'} ·{' '}
+                          {String(order.side || '').toUpperCase() === 'SELL' ||
+                          String(order.side || '').toLowerCase() === 'sell'
+                            ? '卖出'
+                            : '买入'}
+                        </strong>
+                        <em>{getBlockedReasonLabel(order.reason)}</em>
+                      </div>
+                      <p>{order.detail || '后端没有返回更细的阻断说明。'}</p>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <article className="eq-empty-note">
+                  <span>成交阻断</span>
+                  <strong>暂无被挡订单</strong>
+                  <p>这表示当前结果里没有记录涨跌停、停牌、T+1 或资金不足导致的跳过订单。</p>
+                </article>
+              )}
+            </div>
+          )}
+        </>
       );
     }
 

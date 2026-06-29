@@ -83,9 +83,13 @@ export function mapResearchIntegrityArtifact(report: any): ResearchArtifactDraft
 }
 
 export function buildExecutionArtifactFromRejectedOrders(
-  rejectedOrders: any[] = []
+  rejectedOrders: any[] = [],
+  diagnostics: Record<string, any> = {}
 ): ResearchArtifactDraft {
   const rows = Array.isArray(rejectedOrders) ? rejectedOrders : [];
+  const buyFillCount = Number(diagnostics.buy_fill_count || 0);
+  const sellFillCount = Number(diagnostics.sell_fill_count || 0);
+  const fillCount = buyFillCount + sellFillCount;
   if (rows.length === 0) {
     return {
       artifact_type: 'execution_audit',
@@ -103,27 +107,75 @@ export function buildExecutionArtifactFromRejectedOrders(
     acc[reason] = (acc[reason] || 0) + 1;
     return acc;
   }, {});
-  const hardReasons = ['limit_up', 'limit_down', 'suspended', 't_plus_1'];
+  const hardReasons = [
+    'limit_up',
+    'limit_down',
+    'suspended',
+    't_plus_1',
+    'st_filtered',
+    'next_bar_missing',
+    'next_exit_bar_missing',
+  ];
+  const sizingReasons = ['lot_or_cash_too_small', 'cash_not_enough'];
   const hasHardBlock = Object.keys(reasonCounts).some(reason =>
     hardReasons.some(token => reason.includes(token))
   );
-  const details = rows
-    .map(item => String(item?.detail || item?.reason || '').trim())
-    .filter(Boolean)
-    .slice(0, 3);
+  const hasSizingBlock = Object.keys(reasonCounts).some(reason =>
+    sizingReasons.some(token => reason.includes(token))
+  );
+  const reasonLabels: Record<string, string> = {
+    max_positions: '仓位上限',
+    already_holding: '已有持仓',
+    limit_up_block_buy: '涨停买入',
+    limit_up_blocked_buy: '涨停买入',
+    limit_down_block_sell: '跌停卖出',
+    limit_down_blocked_sell: '跌停卖出',
+    t_plus_one_block: 'T+1 限制',
+    t_plus_1_violation: 'T+1 限制',
+    suspended_or_zero_volume: '停牌或零成交',
+    st_filtered: 'ST 过滤',
+    turnover_below_threshold: '流动性不足',
+    next_bar_missing: '次日行情缺失',
+    next_exit_bar_missing: '次日退出行情缺失',
+    lot_or_cash_too_small: '金额不足',
+    cash_not_enough: '现金不足',
+    unknown: '其他原因',
+  };
+  const groupedReasons = Object.entries(reasonCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([reason, count]) => ({
+      reason,
+      count,
+      label: reasonLabels[reason] || reason.replace(/_/g, ' '),
+    }));
+  const reasonSummary = groupedReasons
+    .slice(0, 5)
+    .map(item => `${item.label} ${item.count} 笔`)
+    .join('，');
+  const status: QuantResearchArtifactStatus =
+    fillCount > 0 ? 'watch' : hasHardBlock || hasSizingBlock ? 'reject' : 'watch';
+  const summary =
+    status === 'reject'
+      ? `未形成可观察成交，且有 ${rows.length} 笔订单受约束影响${
+          reasonSummary ? `：${reasonSummary}` : '。'
+        }`
+      : `A 股约束已纳入回测：共跳过 ${rows.length} 笔候选/退出单${
+          reasonSummary ? `，${reasonSummary}` : ''
+        }。`;
 
   return {
     artifact_type: 'execution_audit',
     source_type: 'quant_backtest_rejected_orders',
     source_id: null,
-    status: hasHardBlock ? 'reject' : 'watch',
+    status,
     title: 'A股成交约束',
-    summary: `发现 ${rows.length} 笔订单受 A 股成交规则影响${
-      details.length ? `：${details.join('；')}` : '。'
-    }`,
+    summary,
     payload_json: {
       rejected_order_count: rows.length,
+      buy_fill_count: buyFillCount,
+      sell_fill_count: sellFillCount,
       reason_counts: reasonCounts,
+      grouped_reasons: groupedReasons,
       rejected_orders: rows,
     },
   };
@@ -223,6 +275,17 @@ function asPlain(row: any) {
 
 function artifactByType(artifacts: any[], artifact_type: string) {
   return artifacts.find(item => item.artifact_type === artifact_type) || null;
+}
+
+function aggregateExecutionDiagnostics(results: QuantBacktestResult[]) {
+  return results.reduce<Record<string, number>>((acc, result) => {
+    const metrics = (result.metrics_json || {}) as any;
+    const diagnostics = metrics.execution_diagnostics || {};
+    for (const key of ['buy_fill_count', 'sell_fill_count', 'rejected_order_count']) {
+      acc[key] = (acc[key] || 0) + Number(diagnostics[key] || 0);
+    }
+    return acc;
+  }, {});
 }
 
 function buildBacktestArtifact(task: QuantBacktestTask, bestResult: QuantBacktestResult | null) {
@@ -448,7 +511,10 @@ export class ResearchExperimentService {
     const rejectedOrders = results.flatMap(result =>
       Array.isArray(result.rejected_orders_json) ? result.rejected_orders_json : []
     );
-    const executionArtifact = buildExecutionArtifactFromRejectedOrders(rejectedOrders);
+    const executionArtifact = buildExecutionArtifactFromRejectedOrders(
+      rejectedOrders,
+      aggregateExecutionDiagnostics(results)
+    );
     await this.replaceArtifact(experiment.id, task.id, executionArtifact);
 
     const credibility = buildCredibilitySummary({

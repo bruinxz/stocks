@@ -4,7 +4,7 @@
   "description": "A-share stock backtesting backend",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "NODE_ENV=development nodemon --exec \"ts-node --transpile-only src/index.ts\"",
+    "dev": "NODE_ENV=development nodemon --watch src --ext ts,json --exec \"ts-node --transpile-only src/index.ts\"",
     "build": "tsc",
     "start": "NODE_ENV=production node dist/index.js",
     "test": "ts-node --transpile-only src/scripts/run-tests.ts",

@@ -399,6 +399,57 @@ export class QuantBacktestService {
     };
   }
 
+  private buildPendingResearchAudit(experiment: any) {
+    if (!experiment) return null;
+    const credibility_verdict = {
+      verdict: 'pending',
+      can_create_observation: false,
+      blocking_reasons: [],
+      watch_reasons: [],
+      next_action_label: '回到查数据',
+      title: '可信度待生成',
+      summary: '回测完成后会自动生成可信度结论。',
+    };
+    return {
+      experiment: typeof experiment.toJSON === 'function' ? experiment.toJSON() : experiment,
+      artifacts: [],
+      credibility_verdict,
+      can_create_observation: false,
+      blocking_reasons: [],
+      watch_reasons: [],
+      next_action_label: '回到查数据',
+    };
+  }
+
+  private buildQueuedBacktestPayload(task: QuantBacktestTask, experiment: any) {
+    const run_summary = this.buildTaskRunSummary(task, []);
+    return {
+      task: {
+        ...task.toJSON(),
+        run_summary,
+      },
+      results: [],
+      trades: [],
+      run_summary,
+      research_audit: this.buildPendingResearchAudit(experiment),
+    };
+  }
+
+  private resolveCreateQueueDelayMs(options: QuantBacktestOptions) {
+    const rawOptions = options as any;
+    const explicit = Number(rawOptions.queue_delay_ms ?? rawOptions.queueDelayMs);
+    if (Number.isFinite(explicit) && explicit >= 0) {
+      return Math.min(Math.floor(explicit), 10_000);
+    }
+    if (!rawOptions.easy_mode) {
+      return 0;
+    }
+    const configured = Number(process.env.EASY_QUANT_BACKTEST_QUEUE_DELAY_MS ?? 1500);
+    return Number.isFinite(configured)
+      ? Math.min(Math.max(0, Math.floor(configured)), 10_000)
+      : 1500;
+  }
+
   private async enqueueExistingTask(task: QuantBacktestTask, options: QuantBacktestOptions) {
     const job = await quantBacktestQueue.add(
       { task_id: task.id, user_id: task.user_id, options },
@@ -419,6 +470,29 @@ export class QuantBacktestService {
       },
     } as any);
     return { task: await this.getBacktest(task.id), queue_job_id: job.id };
+  }
+
+  private persistQueueJobIdAfterResponse(
+    task: QuantBacktestTask,
+    options: QuantBacktestOptions,
+    queue_job_id: string | number
+  ) {
+    setImmediate(() => {
+      task
+        .update({
+          parameters: {
+            ...(options as any),
+            queue_job_id,
+          },
+        } as any)
+        .catch((error: any) => {
+          logger.warn(
+            `[quant-backtest] queue job id persistence failed for task ${task.id}: ${
+              error?.message || error
+            }`
+          );
+        });
+    });
   }
 
   async createBacktestTask(options: QuantBacktestOptions, user_id?: number, asyncMode = true) {
@@ -443,14 +517,15 @@ export class QuantBacktestService {
       constraint_policy_json: rawOptions.constraint_policy_json || {},
     });
 
+    let researchExperiment: any = null;
     try {
-      const experiment = await researchExperimentService.createOrAttachForBacktest(
+      researchExperiment = await researchExperimentService.createOrAttachForBacktest(
         normalizedOptions,
         task,
         user_id
       );
-      if (experiment) {
-        (normalizedOptions as any).experiment_id = experiment.id;
+      if (researchExperiment) {
+        (normalizedOptions as any).experiment_id = researchExperiment.id;
       }
     } catch (error: any) {
       logger.warn(`[quant-backtest] research experiment attach failed: ${error?.message || error}`);
@@ -466,18 +541,14 @@ export class QuantBacktestService {
       { task_id: task.id, user_id, options: normalizedOptions },
       {
         jobId: `quant-backtest-task-${task.id}-${Date.now()}`,
+        delay: this.resolveCreateQueueDelayMs(normalizedOptions),
       }
     );
 
-    await task.update({
-      parameters: {
-        ...(normalizedOptions as any),
-        queue_job_id: job.id,
-      },
-    });
+    this.persistQueueJobIdAfterResponse(task, normalizedOptions, job.id);
 
     return {
-      task: await this.getBacktest(task.id),
+      task: this.buildQueuedBacktestPayload(task, researchExperiment),
       queued: true,
       queue_job_id: job.id,
       summary: {

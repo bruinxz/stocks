@@ -135,6 +135,7 @@ export interface BacktestStrategyResult {
   avg_holding_days?: number;
   equity_curve_json: Array<{ date: string; total_value: number }>;
   metrics_json?: Record<string, any>;
+  rejected_orders_json?: any[];
 }
 
 export interface BacktestDetail {
