@@ -392,6 +392,19 @@ export class CriticalAnnouncementPushService {
           });
           continue;
         }
+        // PR-L emergency stop-loss gate (2026-06-29) — 高 conf 反向, 暂停 OPS 群推送.
+        // inbox (writeUserInboxAlerts 上方已执行) 仍写, 不阻塞 UI / RiskAlert.
+        if (isEmergencyConfGated(rec)) {
+          logger.warn(
+            `[PR-L emergency] skip OPS push for ${rec.stock_code} "${String(rec.original_title || '').slice(0, 30)}" — conf>=${EMERGENCY_CONF_GATE_THRESHOLD} 反向 (见 PR-K 30 天回测)`
+          );
+          items.push({
+            stock_code: rec.stock_code, original_title: rec.original_title,
+            attempted: false, success: false, skipped: true,
+            skip_reason: EMERGENCY_CONF_GATE_SKIP_REASON,
+          });
+          continue;
+        }
         try {
           const r = await this.poster(webhook as string, { msg_type: 'text', content: { text } });
           if (r.success) {
