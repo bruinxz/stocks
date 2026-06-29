@@ -6279,6 +6279,131 @@ class SchedulerService {
               )}`
           );
         }
+      } else if (task.type === 'ANNOUNCEMENT_NLP') {
+        // PR-A (2026-06-29): 公告 NLP 全市场扫描 — sync-announcements.ts CLI 之前
+        // 一直没注册成 cron, announcement_summaries 表从 2026-06-09 后 0 更新.
+        // 每日 17:00 全市场 (--all --with-ai=false 走启发式, 不调远端 AI 省钱).
+        // 写 announcement_summaries.priority / event_type. critical 级走
+        // CriticalAnnouncementPushService 推 OPS 飞书群. 周末也跑.
+        // fail-OPEN: spawn 失败仅写 failed_items=1 + warn 不抛, 与 ANALYST_FORECAST_SYNC /
+        // SHAREHOLDER_COUNT_SYNC 同款 async runScriptAsync 防 event loop 阻塞.
+        const pathANN = require('path');
+        // prod = dist/scripts/sync-announcements.js; ts-node dev 仍需走 .ts.
+        // 与 FACTOR_SCORE_COMPUTE / ANALYST_FORECAST_SYNC 同款"prod 优先 .js"约定.
+        const compiledANN = pathANN.resolve(
+          __dirname,
+          '..',
+          'scripts',
+          'sync-announcements.js'
+        );
+        const argsANN: string[] = [compiledANN];
+        // parameters override; 默认全市场启发式
+        if (parameters.symbol) argsANN.push(`--symbol=${parameters.symbol}`);
+        if (parameters.date) argsANN.push(`--date=${parameters.date}`);
+        if (parameters.backfill) argsANN.push(`--backfill=${parameters.backfill}`);
+        if (parameters.with_ai === true) argsANN.push('--with-ai');
+        if (parameters.force === true) argsANN.push('--force');
+        if (parameters.dry_run === true) argsANN.push('--dry-run');
+        if (Number.isFinite(Number(parameters.interval_ms))) {
+          argsANN.push(`--interval-ms=${Number(parameters.interval_ms)}`);
+        }
+        const t0ANN = Date.now();
+        const rANN = await this.runScriptAsync('/usr/bin/node', argsANN, {
+          cwd: pathANN.resolve(__dirname, '..', '..'),
+          timeoutMs: 60 * 60_000, // 1h
+        });
+        const elapsedANN = ((Date.now() - t0ANN) / 1000).toFixed(1);
+        const okANN = rANN.code === 0;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: 1,
+          completed_items: okANN ? 1 : 0,
+          failed_items: okANN ? 0 : 1,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: okANN ? null : (rANN.stderr || '').substring(0, 500),
+          result_summary: {
+            scenario: 'announcement_nlp_sync',
+            elapsed_seconds: Number(elapsedANN),
+            status: okANN ? 'SUCCESS' : 'FAILED',
+            with_ai: parameters.with_ai === true,
+          },
+        });
+        if (okANN) {
+          logger.info(`[ANNOUNCEMENT_NLP] done in ${elapsedANN}s`);
+        } else {
+          logger.warn(
+            `[ANNOUNCEMENT_NLP] failed code=${rANN.code} after ${elapsedANN}s: ${(
+              rANN.stderr || ''
+            ).substring(0, 200)}`
+          );
+        }
+      } else if (task.type === 'KOL_AGGREGATE') {
+        // PR-A (2026-06-29): KOL 观点聚合 — sync-kol-opinions.ts CLI 之前从未被
+        // cron 调用过, kol_opinions 整张空表. 每日 18:30 跑 --favorites
+        // --lookback-days=14 把用户收藏股票的 KOL 观点 (券商研报 + 个股新闻 +
+        // 热门概念代理) 聚合落表, 给 NewsAnalyzer + BullishEventDetector 消费.
+        // 周末也跑 — 研报 / 媒体 周末仍有内容.
+        // fail-OPEN: spawn 失败仅 failed_items=1 + warn, runScriptAsync 防阻塞.
+        const pathKOL = require('path');
+        const compiledKOL = pathKOL.resolve(
+          __dirname,
+          '..',
+          'scripts',
+          'sync-kol-opinions.js'
+        );
+        const argsKOL: string[] = [compiledKOL];
+        // 模式: favorites 默认 (parameters 可 override 为 --all / --stocks=...)
+        if (parameters.stock) {
+          argsKOL.push(`--stock=${parameters.stock}`);
+        } else if (Array.isArray(parameters.stocks) && parameters.stocks.length > 0) {
+          argsKOL.push(`--stocks=${parameters.stocks.join(',')}`);
+        } else if (parameters.all === true) {
+          argsKOL.push('--all');
+        } else {
+          // 默认 favorites (与 ensureDefaultTasks 一致)
+          argsKOL.push('--favorites');
+        }
+        const lookbackKOL = Number.isFinite(Number(parameters.lookback_days))
+          ? Number(parameters.lookback_days)
+          : 14;
+        argsKOL.push(`--lookback-days=${lookbackKOL}`);
+        if (Number.isFinite(Number(parameters.limit))) {
+          argsKOL.push(`--limit=${Number(parameters.limit)}`);
+        }
+        if (Number.isFinite(Number(parameters.interval_ms))) {
+          argsKOL.push(`--interval-ms=${Number(parameters.interval_ms)}`);
+        }
+        if (parameters.dry_run === true) argsKOL.push('--dry-run');
+        const t0KOL = Date.now();
+        const rKOL = await this.runScriptAsync('/usr/bin/node', argsKOL, {
+          cwd: pathKOL.resolve(__dirname, '..', '..'),
+          timeoutMs: 2 * 60 * 60_000, // 2h
+        });
+        const elapsedKOL = ((Date.now() - t0KOL) / 1000).toFixed(1);
+        const okKOL = rKOL.code === 0;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: 1,
+          completed_items: okKOL ? 1 : 0,
+          failed_items: okKOL ? 0 : 1,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: okKOL ? null : (rKOL.stderr || '').substring(0, 500),
+          result_summary: {
+            scenario: 'kol_aggregate',
+            elapsed_seconds: Number(elapsedKOL),
+            status: okKOL ? 'SUCCESS' : 'FAILED',
+            lookback_days: lookbackKOL,
+          },
+        });
+        if (okKOL) {
+          logger.info(`[KOL_AGGREGATE] done in ${elapsedKOL}s`);
+        } else {
+          logger.warn(
+            `[KOL_AGGREGATE] failed code=${rKOL.code} after ${elapsedKOL}s: ${(
+              rKOL.stderr || ''
+            ).substring(0, 200)}`
+          );
+        }
       } else if (task.type === 'INTRADAY_OPPORTUNITY_SCAN') {
         // CE-B (2026-06-26) — 盘中实时机会规则引擎.
         // 拉 IntradayUniverseService.resolveUniverse() → 10 类 detector → analyzeStock
@@ -7613,22 +7738,27 @@ class SchedulerService {
         is_active: true,
         parameters: {},
       },
+      // PR-A (2026-06-29): SNOWBALL / STOCK_SENTIMENT / SOCIAL_SENTIMENT cron
+      // 从 '* * 1-5' 改 '* * *' 周末也跑 — 雪球 / 论坛 / 社媒 周末讨论照旧.
+      // 保留工作日的: K 线 / 因子 / 回测 / 策略信号 / 实盘对账 (周末本无意义).
       {
         name: '雪球热门话题当日 sync (Batch AB)',
         type: 'SNOWBALL_HOT_KEYWORD_SYNC',
-        cron_expression: '0 16 * * 1-5',
+        cron_expression: '0 16 * * *',
         is_active: true,
         parameters: {},
       },
       {
         name: '个股关注度当日 sync (Batch AB)',
         type: 'STOCK_SENTIMENT_SYNC',
-        cron_expression: '30 16 * * 1-5',
+        cron_expression: '30 16 * * *',
         is_active: true,
         parameters: { universe: 'market', limit: 200 },
       },
       // Batch AG (2026-06-18): 市场新闻 / 财经事件 — 让 TradingAgents prompt 注入
       // 'recent_news[]' 上下文 + 行业决策面板时间线展示. 高频(30 min/盘中) + 收尾裁剪.
+      // PR-A (2026-06-29): 盘中 sync 保留工作日 (盘外没行情驱动); 17:17 收尾整理
+      // 早已是 * * * 全周 7 天 (新闻周末仍发).
       {
         name: '市场新闻 sync — 盘中每 30 分钟 (Batch AG)',
         type: 'MARKET_NEWS_SYNC',
@@ -7647,7 +7777,7 @@ class SchedulerService {
       {
         name: '社媒/舆情综合 sync (Batch AH)',
         type: 'SOCIAL_SENTIMENT_SYNC',
-        cron_expression: '20 16 * * 1-5',
+        cron_expression: '20 16 * * *',
         is_active: true,
         parameters: { universe_limit: 200, rank_lookback_days: 5 },
       },
@@ -7657,6 +7787,27 @@ class SchedulerService {
         cron_expression: '40 16 * * 1-5',
         is_active: true,
         parameters: { limit: 50 },
+      },
+      // PR-A (2026-06-29): ANNOUNCEMENT_NLP 全市场公告 NLP — 之前 sync-announcements.ts
+      // CLI 存在但没注册成 cron, announcement_summaries 表从 2026-06-09 后 0 更新.
+      // 每天 17:00 跑全市场启发式 (--all --with-ai=false), 周末也跑 — 公告系统
+      // 周末仍有临时公告 (停牌 / 重大事项 / 风险提示).
+      {
+        name: '全市场公告 NLP 抽取 (PR-A)',
+        type: 'ANNOUNCEMENT_NLP',
+        cron_expression: '0 17 * * *',
+        is_active: true,
+        parameters: { symbol: '全部', with_ai: false },
+      },
+      // PR-A (2026-06-29): KOL_AGGREGATE 收藏股票 KOL 观点聚合 — 之前从未跑过 cron,
+      // kol_opinions 整张空表. 每天 18:30 跑收藏股票 14 天 lookback,
+      // 给 NewsAnalyzer + BullishEventDetector 消费. 周末也跑.
+      {
+        name: 'KOL 观点聚合 - 收藏股票 (PR-A)',
+        type: 'KOL_AGGREGATE',
+        cron_expression: '30 18 * * *',
+        is_active: true,
+        parameters: { lookback_days: 14, limit: 10 },
       },
       // ===========================================================================
       // Macro 串联补丁 (2026-06-21) — Batch AJ: 把 14 个已注册并已实现但 ensureDefaultTasks

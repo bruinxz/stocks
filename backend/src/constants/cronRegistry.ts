@@ -203,25 +203,55 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     type: 'SNOWBALL_HOT_KEYWORD_SYNC',
     category: 'data_sync',
     owner: 'data',
-    description: '雪球热门话题词同步',
+    recommendedCron: '0 16 * * *',
+    description: '雪球热门话题词同步 (周末也跑 — 雪球周末仍有讨论)',
   },
   {
     type: 'STOCK_SENTIMENT_SYNC',
     category: 'data_sync',
     owner: 'data',
-    description: '个股情绪聚合同步',
+    recommendedCron: '30 16 * * *',
+    description: '个股情绪聚合同步 (周末也跑 — 周末无新交易但用户讨论照旧)',
   },
   {
     type: 'MARKET_NEWS_SYNC',
     category: 'data_sync',
     owner: 'data',
-    description: '宏观 / 行情新闻同步',
+    description: '宏观 / 行情新闻同步 (盘中 30min + 收尾 17:17, 17:17 全周 7 天)',
   },
   {
     type: 'SOCIAL_SENTIMENT_SYNC',
     category: 'data_sync',
     owner: 'data',
-    description: '社交媒体 / 论坛情绪同步',
+    recommendedCron: '20 16 * * *',
+    description: '社交媒体 / 论坛情绪同步 (周末也跑 — 用户讨论 7×24)',
+  },
+  // PR-A (2026-06-29): 公告 NLP 全市场扫描. 之前只有 sync-announcements.ts CLI
+  // 存在但没注册成 cron, 导致 announcement_summaries 表自 2026-06-09 后 0 更新.
+  // 现在每天 17:00 跑当日全市场 (--all --with-ai=false 走启发式, 不调远端 AI),
+  // 写 announcement_summaries.priority / event_type. critical 级会触发
+  // CriticalAnnouncementPushService 推 OPS 飞书群. 周末也跑 — 公告系统周末仍有
+  // 临时公告 (停牌 / 重大事项 / 风险提示).
+  {
+    type: 'ANNOUNCEMENT_NLP',
+    category: 'data_sync',
+    owner: 'data',
+    recommendedCron: '0 17 * * *',
+    description:
+      '每天 17:00 全市场公告 NLP 抽取 (sync-announcements --all) → announcement_summaries.priority/event_type. critical 级会触发 CriticalAnnouncementPushService 推 OPS 飞书群. 周末也跑.',
+  },
+  // PR-A (2026-06-29): KOL 观点聚合 cron 接入. sync-kol-opinions.ts CLI 存在但
+  // 之前从未被 cron 调用过, kol_opinions 整张表是空的. 现在每天 18:30 跑
+  // --favorites --lookback-days=14 把用户收藏股票的 KOL 观点聚合落表, 给
+  // NewsAnalyzer + BullishEventDetector 消费. 周末也跑 — 研报 / 媒体 / 集体市场
+  // 周末仍有内容.
+  {
+    type: 'KOL_AGGREGATE',
+    category: 'data_sync',
+    owner: 'data',
+    recommendedCron: '30 18 * * *',
+    description:
+      '每天 18:30 KOL 观点聚合 (sync-kol-opinions --favorites --lookback-days=14) → kol_opinions. NewsAnalyzer + BullishEventDetector 消费. 周末也跑.',
   },
   {
     type: 'MARKET_HOT_SEARCH_SYNC',
