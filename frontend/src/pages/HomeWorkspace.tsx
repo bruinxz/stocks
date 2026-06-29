@@ -1062,6 +1062,17 @@ const HomeWorkspace: React.FC = () => {
       // industry_sentiment='strong'|'weak'. 后端 merge 后 UI 自动 pick up.
       const signalType = (rec as any).signal_type as 'reversal' | 'momentum' | undefined;
       const industrySentiment = (rec as any).industry_sentiment as 'strong' | 'weak' | undefined;
+      // PR-O5 (2026-06-30) — 题材发酵 5 阶段 badge. 后端透传 theme_phase 缺失 → 不渲染.
+      // 仅在 launch / outbreak / climax / recession 显示 (germinate 信号弱不打扰).
+      const themePhase = (rec as any).theme_phase as
+        | 'germinate'
+        | 'launch'
+        | 'outbreak'
+        | 'climax'
+        | 'recession'
+        | null
+        | undefined;
+      const themeIsMainline = Boolean((rec as any).theme_is_mainline);
       const cardInner = (
         <article
           key={rec.symbol}
@@ -1209,7 +1220,12 @@ const HomeWorkspace: React.FC = () => {
             <strong>{formatInt(shares) || '—'}</strong> 股
           </div>
           {/* PR-M4 (2026-06-29) — 单仓 5% cap 警示 + 反转/动量 + 板块强弱 badge. */}
-          {(sizingCapWarn || signalType || industrySentiment) && (
+          {/* PR-O5 (2026-06-30) — 题材发酵 5 阶段 badge (theme_phase ∈ {launch,outbreak,climax,recession}). */}
+          {(sizingCapWarn ||
+            signalType ||
+            industrySentiment ||
+            (themePhase && themePhase !== 'germinate') ||
+            themeIsMainline) && (
             <div
               className="home-reco-card-badges"
               data-testid="home-reco-card-badges"
@@ -1299,6 +1315,89 @@ const HomeWorkspace: React.FC = () => {
                   title="弱势板块 — 不建议买入"
                 >
                   ⚠️ 弱势板块
+                </span>
+              )}
+              {/* PR-O5 (2026-06-30) — 题材发酵 5 阶段 badge. */}
+              {themePhase === 'launch' && (
+                <span
+                  data-testid="home-reco-theme-launch"
+                  style={{
+                    fontSize: 11,
+                    color: '#c2410c',
+                    background: '#fff7ed',
+                    border: '1px solid #fdba74',
+                    borderRadius: 4,
+                    padding: '2px 6px',
+                  }}
+                  title="题材启动 — 首板出现, 推次龙头 + 跟风 (T+1 机会)"
+                >
+                  🚀 题材启动
+                </span>
+              )}
+              {themePhase === 'outbreak' && (
+                <span
+                  data-testid="home-reco-theme-outbreak"
+                  style={{
+                    fontSize: 11,
+                    color: '#dc2626',
+                    background: '#fef2f2',
+                    border: '1px solid #fca5a5',
+                    borderRadius: 4,
+                    padding: '2px 6px',
+                    fontWeight: 600,
+                  }}
+                  title="板块爆发 — 涨停 5+ / 连板 ≥ 2, 推中军 + 龙头接力"
+                >
+                  🔥 板块爆发
+                </span>
+              )}
+              {themePhase === 'climax' && (
+                <span
+                  data-testid="home-reco-theme-climax"
+                  style={{
+                    fontSize: 11,
+                    color: '#7c2d92',
+                    background: '#fdf4ff',
+                    border: '1px solid #e9d5ff',
+                    borderRadius: 4,
+                    padding: '2px 6px',
+                    fontWeight: 600,
+                  }}
+                  title="高潮警示 — 涨停 10+ / 连板 ≥ 4, 顶部博弈区, 建议减仓不追"
+                >
+                  💥 高潮警示
+                </span>
+              )}
+              {themePhase === 'recession' && (
+                <span
+                  data-testid="home-reco-theme-recession"
+                  style={{
+                    fontSize: 11,
+                    color: '#475569',
+                    background: '#f1f5f9',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: 4,
+                    padding: '2px 6px',
+                  }}
+                  title="题材退潮 — 炸板率高或较昨日明显回落, 建议换主线"
+                >
+                  📉 题材退潮
+                </span>
+              )}
+              {themeIsMainline && themePhase !== 'recession' && themePhase !== 'germinate' && (
+                <span
+                  data-testid="home-reco-theme-mainline"
+                  style={{
+                    fontSize: 11,
+                    color: '#b45309',
+                    background: '#fefce8',
+                    border: '1px solid #fde68a',
+                    borderRadius: 4,
+                    padding: '2px 6px',
+                  }}
+                  title="当日热点主线 (composite_score top-3 + 启动/爆发/高潮)"
+                >
+                  ⭐ 主线
                 </span>
               )}
             </div>

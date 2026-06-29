@@ -56,6 +56,12 @@ import {
 } from '../../services/analysis-engine/v3DetailBuilder';
 // PR-M3 (2026-06-29) — confidence 反向修正 (PR-K hotfix)
 import { sourceTypeWinRateAdjuster } from '../../services/SourceTypeWinRateAdjuster';
+// PR-O5 (2026-06-30) — 题材发酵 5 阶段 detector enrichSignal 透传
+import {
+  FERMENTATION_PHASE_LABELS,
+  FERMENTATION_PHASE_ICONS,
+  type FermentationPhase,
+} from '../../services/ThemeFermentationDetector';
 
 // ---------------------------------------------------------------------------
 //  常量
@@ -578,8 +584,17 @@ class V3RecommendationController {
         selected = selected.filter(s => allow.has(normalizeTimingTagFromMetadata((s as any).metadata)));
       }
 
+      // PR-O5 (2026-06-30) — 题材发酵 5 阶段 enrichment.
+      // 一次批量拉 theme_fermentation_phases 最新一天 (大概率 = actualDateUsed, 也可能 actualDateUsed-1d
+      // 若 detector 16:30 还没跑完). 用 Map<industry, {phase, is_mainline}> 注入 enrichSignal 避免 N+1.
+      // fail-OPEN: 拉表失败 → 空 map, 推荐卡 theme_phase 字段缺失, 前端 badge 自动隐藏.
+      const themePhaseByIndustry = await this.loadThemePhaseMap(actualDateUsed).catch(err => {
+        logger.warn(`v3-recommendations theme phase load failed: ${err?.message ?? err}`);
+        return new Map<string, { phase: FermentationPhase; is_mainline: boolean }>();
+      });
+
       const recommendations = await Promise.all(
-        selected.map(signal => this.enrichSignal(signal).catch(err => {
+        selected.map(signal => this.enrichSignal(signal, themePhaseByIndustry).catch(err => {
           logger.warn(`v3-recommendations enrich failed for ${signal.symbol}: ${err?.message ?? err}`);
           return this.minimalSignalView(signal);
         }))
@@ -664,9 +679,52 @@ class V3RecommendationController {
   }
 
   /**
+   * PR-O5 (2026-06-30) — 批量拉 theme_fermentation_phases 最新一天的相位
+   * (优先 preferredDate, 找不到 fallback 最近一天). 一次性 SQL, 返 Map<industry, {phase, is_mainline}>.
+   *
+   * fail-OPEN: 出错 → 空 map, 调用方继续走推荐. 上层 .catch 已兜底, 这里 try/catch 防底层
+   * sequelize import / query 异常.
+   */
+  private async loadThemePhaseMap(
+    preferredDate: string
+  ): Promise<Map<string, { phase: FermentationPhase; is_mainline: boolean }>> {
+    const out = new Map<string, { phase: FermentationPhase; is_mainline: boolean }>();
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const sequelizeModule = require('../../config/database');
+      const sequelize = sequelizeModule.default || sequelizeModule.sequelize;
+      const sql = `
+        WITH effective_date AS (
+          SELECT MAX(trade_date) AS d
+          FROM theme_fermentation_phases
+          WHERE trade_date <= :preferred
+        )
+        SELECT tfp.industry, tfp.phase, tfp.is_mainline
+        FROM theme_fermentation_phases tfp
+        JOIN effective_date ed ON tfp.trade_date = ed.d
+        WHERE ed.d IS NOT NULL;
+      `;
+      const [rows] = await sequelize.query(sql, { replacements: { preferred: preferredDate } });
+      for (const r of (rows as any[]) || []) {
+        if (!r?.industry || !r?.phase) continue;
+        out.set(String(r.industry), {
+          phase: String(r.phase) as FermentationPhase,
+          is_mainline: Boolean(r.is_mainline),
+        });
+      }
+    } catch (err: any) {
+      logger.warn(`loadThemePhaseMap fallback empty: ${err?.message ?? err}`);
+    }
+    return out;
+  }
+
+  /**
    * 把单条 archive signal 翻成 v3 卡片视图. 任一子查询失败 fall-back 部分字段 null.
    */
-  private async enrichSignal(signal: AIInvestmentSignal): Promise<Record<string, unknown>> {
+  private async enrichSignal(
+    signal: AIInvestmentSignal,
+    themePhaseByIndustry?: Map<string, { phase: FermentationPhase; is_mainline: boolean }>
+  ): Promise<Record<string, unknown>> {
     const symbol = String(signal.symbol);
     const stock = await Stock.findOne({ where: { symbol } }).catch(() => null);
     const stockId = stock?.id ?? null;
@@ -925,6 +983,25 @@ class V3RecommendationController {
       );
     }
 
+    // PR-O5 (2026-06-30) — 题材发酵相位 enrichment.
+    // theme_phase 缺失 → 字段 null, 前端 badge 自动隐藏 (向前兼容).
+    let themePhase: FermentationPhase | null = null;
+    let themePhaseLabel: string | null = null;
+    let themePhaseIcon: string | null = null;
+    let themeIsMainline = false;
+    try {
+      const ind = stock?.industry ? String(stock.industry) : null;
+      if (ind && themePhaseByIndustry && themePhaseByIndustry.has(ind)) {
+        const entry = themePhaseByIndustry.get(ind)!;
+        themePhase = entry.phase;
+        themePhaseLabel = FERMENTATION_PHASE_LABELS[entry.phase] ?? null;
+        themePhaseIcon = FERMENTATION_PHASE_ICONS[entry.phase] ?? null;
+        themeIsMainline = entry.is_mainline === true;
+      }
+    } catch (err: any) {
+      logger.warn(`v3-recommendations theme phase enrich failed for ${symbol}: ${err?.message ?? err}`);
+    }
+
     return {
       symbol,
       name: signal.name ?? stock?.name ?? null,
@@ -983,6 +1060,11 @@ class V3RecommendationController {
       limit_up_continuous_days: Number.isFinite(Number(metadata?.continuous_days)) && metadata?.source === 'limit_up_board_detector'
         ? Number(metadata.continuous_days)
         : null,
+      // PR-O5 (2026-06-30) — 题材发酵 5 阶段透传 (字段缺失 → 前端 badge 自动隐藏).
+      theme_phase: themePhase,
+      theme_phase_label: themePhaseLabel,
+      theme_phase_icon: themePhaseIcon,
+      theme_is_mainline: themeIsMainline,
     };
   }
 
@@ -1050,6 +1132,11 @@ class V3RecommendationController {
           ? Number(m.continuous_days)
           : null;
       })(),
+      // PR-O5 (2026-06-30) — minimal view 也写出 theme_phase null 字段, 防 UI 报 undefined.
+      theme_phase: null,
+      theme_phase_label: null,
+      theme_phase_icon: null,
+      theme_is_mainline: false,
       enrich_failed: true,
     };
   }

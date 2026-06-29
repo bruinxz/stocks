@@ -868,7 +868,19 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     owner: 'quant',
     recommendedCron: '30 15 * * 1-5',
     description:
-      'PR-O2 每日 15:30 跑涨停板 20+ 战法 detector — 一字/T字/二板加速/地天板/接力 等. 命中写 RiskAlert + AIInvestmentSignal (source_type=limit_up_board), 让前端 /home 推荐卡显示 pattern badge.',  },
+      'PR-O2 每日 15:30 跑涨停板 20+ 战法 detector — 一字/T字/二板加速/地天板/接力 等. 命中写 RiskAlert + AIInvestmentSignal (source_type=limit_up_board), 让前端 /home 推荐卡显示 pattern badge.',
+  },
+  // PR-O5 (2026-06-30) — 题材发酵 5 阶段 detector. 消费 PR-M3 industry_sentiment_indices
+  // (16:00 写完) + 昨日 phase, 给每个板块打 germinate/launch/outbreak/climax/recession 标签 +
+  // 主线切换检测. 工作日 16:30 跑.
+  {
+    type: 'THEME_FERMENTATION_DETECT',
+    category: 'analytics',
+    owner: 'quant',
+    recommendedCron: '30 16 * * 1-5',
+    description:
+      '工作日 16:30 跑题材发酵 5 阶段 detector — 消费 industry_sentiment_indices + 昨日 phase, 给每个板块打 germinate/launch/outbreak/climax/recession 标签 + 检测主线切换. PR-I-v2 §6.4 板块/题材轮动战法落地. 给推荐 service 用 "启动/爆发推次龙头, 高潮 reduce, 退潮换主线" 决策.',
+  },
 ]);
 
 const CRON_REGISTRY_BY_TYPE: ReadonlyMap<string, CronTaskDefinition> = new Map(

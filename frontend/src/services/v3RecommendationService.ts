@@ -163,6 +163,19 @@ export interface V3RecommendationItem {
   limit_up_pattern_label?: string | null;
   /** PR-O2 — 当日连板数 (含当日). 1 = 首板; 2 = 二板. */
   limit_up_continuous_days?: number | null;
+  /**
+   * PR-O5 (2026-06-30) — 题材发酵 5 阶段 (后端透传, 缺失 → 字段 null, badge 自动隐藏).
+   *   germinate — 🌱 萌芽 (1-3 只票轻微异动, 信号弱, 不推)
+   *   launch    — 🚀 启动 (首只涨停, 推次龙头 + 跟风)
+   *   outbreak  — 🔥 爆发 (涨停 5+, 推中军 + 龙头接力)
+   *   climax    — 💥 高潮 (涨停 10+, **不推, 持仓 reduce**)
+   *   recession — 📉 退潮 (炸板率高 / 较昨日减半, 推主线切换)
+   */
+  theme_phase?: 'germinate' | 'launch' | 'outbreak' | 'climax' | 'recession' | null;
+  theme_phase_label?: string | null;
+  theme_phase_icon?: string | null;
+  /** 当日热点主线 (composite_score top-3 + phase ∈ {launch, outbreak, climax}). */
+  theme_is_mainline?: boolean;
   /** enrichSignal 失败兜底视图标记 — UI 可选显示 "数据加载部分失败" 提示. */
   enrich_failed?: boolean;
 }
