@@ -824,6 +824,56 @@
 
 > **我们系统覆盖 18 / 122 = 14.8% 的全体 A 股短线战法**.
 
+### Part F-2: 30 canonical 战法 × PR 系列 详细映射 (用户原话要的表)
+
+> "真落地" = 影响 scoreStock 或触发推荐; "半落地" = 数据进库但下游不消费, 或 timing 在跑但逻辑共用; "未落地" = 完全无代码.
+
+| 战法 | 对应 PR | 是否真落地 | 关键代码 / 证据 |
+|------|---------|-----------|--------------|
+| A1 一字板 | PR-M2 (AuctionSnapshot pattern='one_word') | 半落地 | `AuctionSnapshotSyncService.classifyAuctionPattern` 计算 pattern, 但 `grep AuctionSnapshot.findAll` 0 处下游 |
+| A2 缩量涨停 | PR-M2 (`shrink_limit` 枚举) | 未落地 | service 注释 "暂归入 one_word", 未单独识别 |
+| A3 高开巨量 | PR-M2 (`high_open_volume`) | 半落地 | pattern 写库, 下游 0 消费 |
+| A4 9:24 撤单 | PR-M2 (需 9:20+9:25 双 snapshot) | 未落地 | `AuctionSnapshotSyncService` 只在 9:25 跑, 没拉 9:20 |
+| A5 北向竞价大单 | 无 PR | 未落地 | 无北向竞价数据源 |
+| A6 隔夜外盘消化 | PR-M1 `overnight_signals` | 真落地 (部分) | sync 进库, "大盘方向 detector" 概念存在; `OpeningRushDetector` 不存在 → 实际仅触发 timing 标签 |
+| A7 低开 V 反 | 无 PR | 未落地 | 需 9:30-9:31 1-min K, IntradayKlineSyncService 录 30-min, 粒度不够 |
+| A8 30 分钟首动量 | PR-M2 (INTRADAY_KLINE_30MIN_SYNC) | 半落地 | 30-min K 线写库, `IntradayMomentumDetector` 走涨幅/量比 detect, 不是 Zhang/Ma/Zhu 2019 R² 模型 |
+| A9 涨停突破 (打板) | 无 PR | 未落地 | 无封单金额实时计算 |
+| A10 主力净流入领涨 | PR-A (`INDUSTRY_FLOW_SYNC`) | 半落地 | `IndustryFlowIntradayService` 板块层有, 个股层无 |
+| A11 跳空缺口回补 | 无 PR | 未落地 | 无 gap detector |
+| A12 量比突增 | PR-H `IntradayMomentumDetector` | 半落地 | 涨幅 detect 有, 量比突增专项分支未 code-path 化 |
+| A13 二板加速 | 无 PR | 未落地 | 无"连板天数 + 当日封板时刻"字段 |
+| A14 板块联动确认 | PR-M3 `IndustrySentimentAggregator` | 真落地 | `industry_sentiment_indices.composite_score` 写库 + `MultiFactorAlphaStrategy.scoreStock` 消费 → +20% 加权 |
+| A15 涨停回封 | 无 PR | 未落地 | 无"涨停打开次数"字段 |
+| A16 滞涨补涨 | PR-M3 (板块情绪 high → 该板块未涨停个股加权) | 半落地 | composite_score 用了, "补涨/滞涨"专项无 |
+| A17 T 字板 | PR-M2 (`t_word` 枚举) | 未落地 | service 注释 "需 intraday 数据, 本服务不识别" |
+| A18 北向 11:25 加仓 | 无 PR | 未落地 | 无北向分时数据源 |
+| A19 午后开盘竞价 | PR-H (`afternoon_kick` `55 12 * * 1-5`) | 半落地 | timing 在跑, strategy_keys 跟 opening_rush 共用, **无午盘 specific 逻辑** |
+| A20 午间利好催化 | PR-A 公告 NLP + PR-B BullishEvent | 半落地 | 公告 17:00 跑, BullishEventDetector `*/30` 跑, 触发 alert 推飞书, **不进 confidence** |
+| A21 午后衰竭反转 | PR-M3 `reversal_sell` detector | 真落地 | `IntradayReversalDetector` 找涨幅 > +5% + RSI > 70 → reversal_sell signal |
+| A22 日内反转买入 | PR-M3 `reversal_buy` detector | 真落地 | `IntradayReversalDetector` 找跌幅 < -3% + 周线趋势仍向上 → reversal_buy |
+| A23 主升浪加仓 | 无 PR | 未落地 | 仓位是 PR-M4 5% cap, 不动态加仓 |
+| A24 横盘缩量蓄势 | 无 PR | 未落地 | 无 alligator squeeze detector |
+| A25 尾盘半小时拉升 | PR-H (`closing_grab` `30 14 * * 1-5`) | 半落地 | timing 在跑, strategy_keys 跟 opening_rush 一样, **无尾盘 specific 逻辑** (Yang 2022 last-hour momentum 模型没实现) |
+| A26 尾盘涨停封单 | 无 PR | 未落地 | 无 14:30+ 封单强度信号 |
+| A27 ETF 调仓尾盘冲击 | 无 PR | 未落地 | 无月末调仓日识别 |
+| A28 14:57 集合竞价封单博弈 | 无 PR | 未落地 | 无收盘竞价数据源 |
+| A29 隔夜公告催化 | PR-A `ANNOUNCEMENT_NLP` + PR-B `BULLISH_EVENT_DETECT` | 半落地 | sentiment NLP 跑, critical_announcement 触发 alert, **不进 scoreStock** |
+| A30 隔夜外盘信号 | PR-M1 `OVERNIGHT_SIGNAL_SYNC` | 真落地 | A50/HK/Nasdaq/DXY/VIX 5 源 cron `*/30 0-9,21-23 * * *` sync `overnight_signals` 表 |
+| A31 龙虎榜机构跟单 | PR-A `DAILY_UPDATE` 含龙虎榜 | 未落地 | `dragon_tiger_list` 表存在, 席位行为 detector 0 (Part G-3 待补) |
+| A32 KOL 集中看多 | PR-B `BullishEventDetectorService.detectKolConsensus` | 真落地 (但仅 alert) | ≥ 3 V4+ 大 V 24h 看多 → 推飞书 + 写 RiskAlert, 不进 score |
+| A33 地天板 | 无 PR | 未落地 | 无早盘跌停 + 盘中翻红 + 涨停封板联合识别 |
+
+### Part F-2 统计
+
+| 落地等级 | 战法数 (从 33) | 占比 |
+|---------|--------------|-----|
+| 真落地 (影响推荐 / 加权) | 5 (A14 / A21 / A22 / A30 + A6 / A32 部分) | **15%** |
+| 半落地 (数据写库下游不消费, 或 timing 共用逻辑) | 11 (A1 / A3 / A8 / A10 / A12 / A16 / A19 / A20 / A25 / A29 + A32 部分) | **33%** |
+| 未落地 (无代码) | 17 | **52%** |
+
+> **33% 战法处于"半落地"状态**, 这是用户原话"避免两套分离"最严重的体现 — 数据建好了, 但没人读 / 时机在跑但逻辑跟战法库无关. **解决方案**: 写 `OpeningRushDetector` (现在 5 处注释 0 处实现), 把 PR-M1 + M2 + M3 三张表 join 起来, 喂进 scoreStock.
+
 ---
 
 ## Part G: 5 个**未挖掘**的高价值流派 / 缺口
