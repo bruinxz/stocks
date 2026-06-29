@@ -96,6 +96,18 @@ export const GLOBAL_WINDOW_MS = 60 * 1000;
 /** in-process dedup buffer LRU 上限 (跨进程不共享, 重启清空). */
 export const DEDUP_BUFFER_LRU_LIMIT = 1000;
 
+/**
+ * PR-L emergency stop-loss (2026-06-29):
+ * PR-K 30 天回测证实当前推荐系统 confidence_score 反向 — high(≥70) win 30% <
+ * low(<50) win 40%. 该 gate 在 push entry 处暂停 conf≥70 的飞书推送 (audit 仍写一行
+ * 留痕, dedup buffer 不消耗). **等 PR-I 战法库 + conf evaluator 修复后, 把
+ * EMERGENCY_CONF_GATE 切回 false** — 现阶段优先 fail-closed (高 conf 一律不推) 防
+ * 用户群被毒推. UI 仍显示推荐 (HomeWorkspace banner 警示).
+ */
+export const EMERGENCY_CONF_GATE = true;
+export const EMERGENCY_CONF_GATE_THRESHOLD = 70;
+export const EMERGENCY_CONF_GATE_SKIP_REASON = 'emergency_stop_loss_conf_gate';
+
 const DEFAULT_FRONTEND_BASE = 'http://localhost:3000';
 
 // ---------------------------------------------------------------------------
