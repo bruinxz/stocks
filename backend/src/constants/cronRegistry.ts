@@ -881,6 +881,49 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '工作日 16:30 跑题材发酵 5 阶段 detector — 消费 industry_sentiment_indices + 昨日 phase, 给每个板块打 germinate/launch/outbreak/climax/recession 标签 + 检测主线切换. PR-I-v2 §6.4 板块/题材轮动战法落地. 给推荐 service 用 "启动/爆发推次龙头, 高潮 reduce, 退潮换主线" 决策.',
   },
+  // PR-O3 (2026-06-29) — Opening rush detector. 工作日 9:26 (集合竞价撮合 9:25 后 1min,
+  // 留余量给 AUCTION_SNAPSHOT_SYNC 9:25 写完) 跑, 消费 overnight_signals + auction_snapshots
+  // 识别隔夜信号 + auction pattern (高开 / 跳空 / 一字封板 / 等), 命中即写 AIInvestmentSignal
+  // (source_type='opening_rush_detector', metadata.timing_tag='opening_rush'). fail-OPEN.
+  // PR-P (2026-06-30): 接通 cron, 之前 PR-O3 只加 service 没注册 cron, prod 部署后不会跑.
+  {
+    type: 'OPENING_RUSH_DETECT',
+    category: 'quant_engine',
+    owner: 'quant',
+    intraday: true,
+    recommendedCron: '26 9 * * 1-5',
+    description:
+      'PR-O3 工作日 9:26 跑 opening rush detector — 消费 overnight_signals + auction_snapshots, 识别隔夜信号 + auction pattern (高开/跳空/一字封板/等), 命中写 AIInvestmentSignal (source_type=opening_rush_detector, timing_tag=opening_rush). fail-OPEN.',
+  },
+  // PR-O3 (2026-06-29) — 盘中价量异动 6 类 detector (volume_surge / main_force_inflow /
+  // limit_up_breakout / sector_link_undermove / broken_refill / second_board_acceleration).
+  // 工作日盘中每 30min 跑一次 (10:00, 10:30, 11:00, 11:30, 13:00, 13:30, 14:00, 14:30).
+  // 命中即写 RiskAlert + AIInvestmentSignal (source_type='intraday_price_volume_anomaly',
+  // metadata.timing_tag='intraday_anomaly'). 24h dedup. fail-OPEN.
+  // PR-P (2026-06-30): 接通 cron, 之前 PR-O3 只加 service 没注册 cron, prod 部署后不会跑.
+  {
+    type: 'INTRADAY_PRICE_VOLUME_ANOMALY',
+    category: 'quant_engine',
+    owner: 'quant',
+    intraday: true,
+    recommendedCron: '*/30 10,11,13,14 * * 1-5',
+    description:
+      'PR-O3 盘中每 30 min 跑 6 类价量异动 detector (volume_surge/main_force_inflow/limit_up_breakout/sector_link_undermove/broken_refill/second_board_acceleration). 命中写 RiskAlert + AIInvestmentSignal (timing_tag=intraday_anomaly). 24h dedup. fail-OPEN.',
+  },
+  // PR-O3 (2026-06-29) — Last-hour 尾盘动量 detector. 学术依据 Zhang/Ma/Zhu 2019 EM —
+  // 中国市场 9:30-10:00 r1 预测 14:30-15:00 r2 最 robust 的 alpha 之一.
+  // 工作日 14:30 跑 (尾盘启动点), r1>+1% buy → AIInvestmentSignal
+  // (source_type='last_hour_momentum', metadata.timing_tag='closing_grab'). fail-OPEN.
+  // PR-P (2026-06-30): 接通 cron, 之前 PR-O3 只加 service 没注册 cron, prod 部署后不会跑.
+  {
+    type: 'LAST_HOUR_MOMENTUM',
+    category: 'quant_engine',
+    owner: 'quant',
+    intraday: true,
+    recommendedCron: '30 14 * * 1-5',
+    description:
+      'PR-O3 14:30 跑尾盘动量 detector (r1 9:30-10:00 → r2 14:30-15:00 预测). 命中写 AIInvestmentSignal (source_type=last_hour_momentum, timing_tag=closing_grab). 论文: Zhang/Ma/Zhu 2019 EM. fail-OPEN.',
+  },
 ]);
 
 const CRON_REGISTRY_BY_TYPE: ReadonlyMap<string, CronTaskDefinition> = new Map(
