@@ -336,7 +336,7 @@ export function toBareCode(symbol: string): string {
 // Detectors (纯函数, 全 export)
 // ---------------------------------------------------------------------------
 
-/** detector 1: critical 公告 (sentiment != '负面'). */
+/** detector 1: critical 公告 (sentiment = '正面' 严格 — 不允许中性, 防 ST 警示误报). */
 export function detectCriticalAnnouncementHits(
   rows: AnnouncementRow[],
   code_to_name: Map<string, string>
@@ -345,8 +345,15 @@ export function detectCriticalAnnouncementHits(
   for (const r of rows || []) {
     if (!r || !r.stock_code) continue;
     if (String(r.priority || '').toLowerCase() !== 'critical') continue;
-    const senti = String(r.sentiment || '').trim();
-    if (senti === '负面') continue; // 负面 critical 走 CriticalAnnouncementPushService
+    // STRICT: 仅"正面" critical 公告才算利好. 中性 / 负面 / null 都跳过.
+    // 真实世界 fail-case: ST 警示 / 处罚类公告 sentiment 常被标 '中性' (内容是利空但措辞中立),
+    // 之前 sentiment != '负面' 的宽松过滤会把这类全推成"利好" → 用户反感.
+    // 利空类已由 CriticalAnnouncementPushService 独立通道推, 这里只关心真利好.
+    if (String(r.sentiment || '').trim() !== '正面') continue;
+    // 额外保险: event_type 是 "处罚" / "解禁" / "减持" 这种利空类直接跳过,
+    // 即使 AI 误标 sentiment=正面 也不推 (双道防线).
+    const evt = String(r.event_type || '').trim();
+    if (evt === '处罚' || evt === '解禁' || evt === '减持') continue;
     const stock_code = String(r.stock_code).trim();
     const name = r.stock_name || code_to_name.get(stock_code) || stock_code;
     const titlePart = r.summary || r.original_title || '';

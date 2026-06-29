@@ -239,13 +239,15 @@ const annCritPositive: AnnouncementRow = {
   url: 'https://example.com/p.pdf',
 };
 const annCritNegative: AnnouncementRow = { ...annCritPositive, stock_code: '600519', stock_name: '贵州茅台', sentiment: '负面' };
+const annCritNeutral: AnnouncementRow = { ...annCritPositive, stock_code: '600600', stock_name: '青岛啤酒', sentiment: '中性' };
+const annCritPunish: AnnouncementRow = { ...annCritPositive, stock_code: '300290', stock_name: '荣科科技', sentiment: '正面', event_type: '处罚' };
 const annHigh: AnnouncementRow = { ...annCritPositive, stock_code: '600519', priority: 'high' };
 
 const annHits = detectCriticalAnnouncementHits(
-  [annCritPositive, annCritNegative, annHigh],
+  [annCritPositive, annCritNegative, annCritNeutral, annCritPunish, annHigh],
   annNames
 );
-assertEqual('critical 公告 — 只命中正面/中性, 排除负面 + 非 critical', annHits.length, 1);
+assertEqual('critical 公告 — STRICT: 只命中 sentiment=正面 + 非利空 event_type', annHits.length, 1);
 assertEqual('critical 公告 — stock_code', annHits[0].stock_code, '000988');
 assertEqual('critical 公告 — detector', annHits[0].detector, 'critical_announcement');
 assertEqual('critical 公告 — score=80', annHits[0].score, 80);
