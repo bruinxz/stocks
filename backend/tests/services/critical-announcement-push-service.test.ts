@@ -16,6 +16,10 @@ import {
   CRITICAL_ANNOUNCEMENT_MAX_TEXT_LEN,
   CRITICAL_ANNOUNCEMENT_USER_ALERT_MAX_MSG_LEN,
   CRITICAL_ANNOUNCEMENT_RULE_ID,
+  EMERGENCY_CONF_GATE,
+  EMERGENCY_CONF_GATE_THRESHOLD,
+  EMERGENCY_CONF_GATE_SKIP_REASON,
+  isEmergencyConfGated,
   shouldPushRecord,
   buildCriticalAnnouncementText,
   buildUserAlertMessage,
@@ -602,6 +606,105 @@ async function testUserAlertsDryRunNoWrite(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// PR-L (2026-06-29) — emergency conf gate tests.
+// 见 CriticalAnnouncementPushService.ts 顶部 EMERGENCY_CONF_GATE 注释:
+// PR-K 30 天回测证实 conf>=70 反向 (win 30% < low<50 win 40%).
+// gate 在 push 循环里直接 skip OPS 群推送, **inbox (writeUserInboxAlerts) 仍写**.
+// ---------------------------------------------------------------------------
+async function testEmergencyConfGateConstants(): Promise<void> {
+  assertEqual('PR-L: EMERGENCY_CONF_GATE 默认 true', EMERGENCY_CONF_GATE, true);
+  assertEqual('PR-L: threshold=70', EMERGENCY_CONF_GATE_THRESHOLD, 70);
+  assertEqual(
+    'PR-L: skip_reason 字符串常量',
+    EMERGENCY_CONF_GATE_SKIP_REASON,
+    'emergency_stop_loss_conf_gate'
+  );
+}
+
+async function testEmergencyConfGateHelper(): Promise<void> {
+  // record 直接带 confidence_score 字段 (顶层)
+  const r1 = isEmergencyConfGated({ ...makeRecord(), confidence_score: 80 } as any);
+  assertEqual('PR-L: top conf=80 拦截', r1, true);
+
+  // 边界: conf=70 也拦截 (>= 严格)
+  const r2 = isEmergencyConfGated({ ...makeRecord(), confidence_score: 70 } as any);
+  assertEqual('PR-L: top conf=70 边界拦截', r2, true);
+
+  // conf=69 不拦截
+  const r3 = isEmergencyConfGated({ ...makeRecord(), confidence_score: 69 } as any);
+  assertEqual('PR-L: top conf=69 不拦截', r3, false);
+
+  // 全部缺失 → false
+  const r4 = isEmergencyConfGated(makeRecord());
+  assertEqual('PR-L: 全部缺失 conf 不拦截', r4, false);
+
+  // metadata.fusion_score fallback
+  const r5 = isEmergencyConfGated({ ...makeRecord(), metadata: { fusion_score: 88 } } as any);
+  assertEqual('PR-L: metadata.fusion_score=88 拦截', r5, true);
+
+  // metadata.confidence_score fallback
+  const r6 = isEmergencyConfGated({
+    ...makeRecord(),
+    metadata: { confidence_score: 75 },
+  } as any);
+  assertEqual('PR-L: metadata.confidence_score=75 拦截', r6, true);
+
+  // NaN 不拦截
+  const r7 = isEmergencyConfGated({ ...makeRecord(), confidence_score: NaN } as any);
+  assertEqual('PR-L: NaN 不拦截', r7, false);
+}
+
+async function testEmergencyConfGateBlocksOpsPush(): Promise<void> {
+  const { poster, calls } = makeFakePoster({ ok: true });
+  const svc = new CriticalAnnouncementPushService(poster);
+  const { dataSource } = makeFakeDataSource({ holdings: {} });
+  // record 带 conf=80 → OPS 群推送应被 gate 拦截
+  const recHigh = { ...makeRecord({ stock_code: '600519' }), confidence_score: 80 } as any;
+  const res = await svc.pushBatch([recHigh], { data_source: dataSource }, {
+    OPS_ALERT_FEISHU_WEBHOOK: 'https://hook',
+  });
+  assertEqual('PR-L: matched 1', res.matched, 1);
+  assertEqual('PR-L: attempted 1 (循环进入)', res.attempted, 1);
+  assertEqual('PR-L: succeeded 0 (gate 拦截)', res.succeeded, 0);
+  assertEqual('PR-L: failed 0 (skip 非 fail)', res.failed, 0);
+  assertEqual('PR-L: poster 不调', calls.length, 0);
+  assertEqual('PR-L: items[0] skipped=true', res.items[0]?.skipped, true);
+  assertEqual(
+    'PR-L: items[0] skip_reason=emergency_stop_loss_conf_gate',
+    res.items[0]?.skip_reason,
+    'emergency_stop_loss_conf_gate'
+  );
+
+  // 反例: conf=60 应正常推送
+  const { poster: poster2, calls: calls2 } = makeFakePoster({ ok: true });
+  const svc2 = new CriticalAnnouncementPushService(poster2);
+  const recLow = { ...makeRecord({ stock_code: '600520' }), confidence_score: 60 } as any;
+  const res2 = await svc2.pushBatch([recLow], { data_source: dataSource }, {
+    OPS_ALERT_FEISHU_WEBHOOK: 'https://hook',
+  });
+  assertEqual('PR-L: conf=60 不拦截 succeeded=1', res2.succeeded, 1);
+  assertEqual('PR-L: conf=60 poster 调 1 次', calls2.length, 1);
+}
+
+async function testEmergencyConfGateInboxStillWritten(): Promise<void> {
+  // 关键: 即使 OPS push 被 gate 拦截, user inbox RiskAlert 仍写 — 两条通道独立.
+  const { poster, calls } = makeFakePoster({ ok: true });
+  const svc = new CriticalAnnouncementPushService(poster);
+  const { dataSource, created } = makeFakeDataSource({
+    holdings: { '600519': [101, 202] },
+  });
+  const recHigh = { ...makeRecord({ stock_code: '600519' }), confidence_score: 90 } as any;
+  const res = await svc.pushBatch([recHigh], { data_source: dataSource }, {
+    OPS_ALERT_FEISHU_WEBHOOK: 'https://hook',
+  });
+  assertEqual('PR-L inbox: poster 不调 (gate)', calls.length, 0);
+  assertEqual('PR-L inbox: user_alerts=2 (101+202)', res.user_alerts, 2);
+  assertEqual('PR-L inbox: RiskAlert created=2', created.length, 2);
+  assertEqual('PR-L inbox: user_id list', created.map(c => c.user_id).sort(), [101, 202]);
+  assertEqual('PR-L inbox: rule_id', created[0].rule_id, CRITICAL_ANNOUNCEMENT_RULE_ID);
+}
+
+// ---------------------------------------------------------------------------
 // Meta-guard: AnnouncementNLPService.syncDate 真接入了本 service.
 // ---------------------------------------------------------------------------
 
@@ -661,6 +764,12 @@ async function main(): Promise<void> {
   await testUserAlertsFindThrowFailOpen();
   await testUserAlertsNoWebhookStillWrites();
   await testUserAlertsDryRunNoWrite();
+
+  // PR-L (2026-06-29)
+  await testEmergencyConfGateConstants();
+  await testEmergencyConfGateHelper();
+  await testEmergencyConfGateBlocksOpsPush();
+  await testEmergencyConfGateInboxStillWritten();
 
   testSyncDateWiringMetaGuard();
 
