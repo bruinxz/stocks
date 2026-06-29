@@ -6760,6 +6760,116 @@ class SchedulerService {
             `dist=germ${r.phase_distribution.germinate}/lau${r.phase_distribution.launch}/out${r.phase_distribution.outbreak}/cli${r.phase_distribution.climax}/rec${r.phase_distribution.recession} ` +
             `switch_events=${r.mainline_switch_events.length} errors=${r.errors?.length || 0}`
         );
+      } else if (task.type === 'OPENING_RUSH_DETECT') {
+        // PR-O3 (2026-06-29) — Opening rush detector. 工作日 9:26 (集合竞价撮合 9:25 后 1min)
+        // 跑, 消费 overnight_signals + auction_snapshots, 识别隔夜信号 + auction pattern
+        // (高开 / 跳空 / 一字封板 / 等), 命中即写 AIInvestmentSignal (source_type=
+        // 'opening_rush_detector', metadata.timing_tag='opening_rush'). fail-OPEN per-symbol.
+        // PR-P (2026-06-30): 补 cron dispatch, 之前 PR-O3 只加 service 没注册 cron.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { openingRushDetector } = require('./OpeningRushDetector');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await openingRushDetector.runOnce({
+          dry_run: parameters.dry_run === true,
+          force: parameters.force === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned,
+          completed_items: r.written,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: r.scenario,
+            trade_date: r.trade_date,
+            scanned: r.scanned,
+            matched: r.matched,
+            written: r.written,
+            by_pattern: r.by_pattern,
+            overnight_direction: r.overnight_direction,
+            overnight_reason: r.overnight_reason,
+            skipped_reason: r.skipped_reason,
+            errors: r.errors?.length || 0,
+            dry_run: r.dry_run,
+          },
+        });
+        logger.info(
+          `[OPENING_RUSH_DETECT] trade_date=${r.trade_date} scanned=${r.scanned} ` +
+            `matched=${r.matched} written=${r.written} dir=${r.overnight_direction} ` +
+            `skip=${r.skipped_reason || 'none'} errors=${r.errors?.length || 0} ` +
+            `by_pattern=${JSON.stringify(r.by_pattern)}`
+        );
+      } else if (task.type === 'INTRADAY_PRICE_VOLUME_ANOMALY') {
+        // PR-O3 (2026-06-29) — 盘中价量异动 6 类 detector. 工作日盘中每 30min 跑一次.
+        // 命中写 RiskAlert + AIInvestmentSignal (source_type='intraday_price_volume_anomaly',
+        // metadata.timing_tag='intraday_anomaly'). 24h dedup. fail-OPEN per-symbol.
+        // PR-P (2026-06-30): 补 cron dispatch.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          intradayPriceVolumeAnomalyDetector,
+        } = require('./IntradayPriceVolumeAnomalyDetector');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await intradayPriceVolumeAnomalyDetector.runOnce({
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned,
+          completed_items: r.written_signals,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: r.scenario,
+            trade_date: r.trade_date,
+            scanned: r.scanned,
+            matched: r.matched,
+            written_alerts: r.written_alerts,
+            written_signals: r.written_signals,
+            by_type: r.by_type,
+            skipped_reason: r.skipped_reason,
+            errors: r.errors?.length || 0,
+            dry_run: r.dry_run,
+          },
+        });
+        logger.info(
+          `[INTRADAY_PRICE_VOLUME_ANOMALY] trade_date=${r.trade_date} scanned=${r.scanned} ` +
+            `matched=${r.matched} alerts=${r.written_alerts} signals=${r.written_signals} ` +
+            `skip=${r.skipped_reason || 'none'} errors=${r.errors?.length || 0} ` +
+            `by_type=${JSON.stringify(r.by_type)}`
+        );
+      } else if (task.type === 'LAST_HOUR_MOMENTUM') {
+        // PR-O3 (2026-06-29) — Last-hour 尾盘动量 detector. 学术: Zhang/Ma/Zhu 2019 EM
+        // (中国市场 9:30-10:00 r1 → 14:30-15:00 r2 最 robust). 工作日 14:30 跑, r1>+1% buy →
+        // AIInvestmentSignal (source_type='last_hour_momentum', metadata.timing_tag='closing_grab').
+        // fail-OPEN per-symbol. PR-P (2026-06-30): 补 cron dispatch.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { lastHourMomentumDetector } = require('./LastHourMomentumDetector');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await lastHourMomentumDetector.runOnce({
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned,
+          completed_items: r.written,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: r.scenario,
+            trade_date: r.trade_date,
+            scanned: r.scanned,
+            matched: r.matched,
+            written: r.written,
+            skipped_reason: r.skipped_reason,
+            errors: r.errors?.length || 0,
+            dry_run: r.dry_run,
+          },
+        });
+        logger.info(
+          `[LAST_HOUR_MOMENTUM] trade_date=${r.trade_date} scanned=${r.scanned} ` +
+            `matched=${r.matched} written=${r.written} ` +
+            `skip=${r.skipped_reason || 'none'} errors=${r.errors?.length || 0}`
+        );
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }
@@ -8306,6 +8416,34 @@ class SchedulerService {
         name: '题材发酵 5 阶段 detector (PR-O5)',
         type: 'THEME_FERMENTATION_DETECT',
         cron_expression: '30 16 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // PR-O3 (2026-06-29) — Opening rush detector. PR-P (2026-06-30) 补 cron seed:
+      // 之前 PR-O3 加了 service 但没 seed, fresh DB 启动后不会跑.
+      // 工作日 9:26 跑 (AUCTION_SNAPSHOT_SYNC 9:25 写完留 1min 余量).
+      {
+        name: 'Opening rush detector (PR-O3)',
+        type: 'OPENING_RUSH_DETECT',
+        cron_expression: '26 9 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // PR-O3 (2026-06-29) — 盘中价量异动 6 类 detector. PR-P (2026-06-30) 补 cron seed.
+      // 盘中每 30min 跑 (10:00, 10:30, 11:00, 11:30, 13:00, 13:30, 14:00, 14:30).
+      {
+        name: '盘中价量异动 detector (PR-O3)',
+        type: 'INTRADAY_PRICE_VOLUME_ANOMALY',
+        cron_expression: '*/30 10,11,13,14 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // PR-O3 (2026-06-29) — Last-hour 尾盘动量 detector. PR-P (2026-06-30) 补 cron seed.
+      // 学术: Zhang/Ma/Zhu 2019 EM 中国市场 r1 → r2 alpha 最 robust.
+      {
+        name: '尾盘动量 detector (PR-O3)',
+        type: 'LAST_HOUR_MOMENTUM',
+        cron_expression: '30 14 * * 1-5',
         is_active: true,
         parameters: { dry_run: false },
       },
