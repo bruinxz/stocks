@@ -126,6 +126,8 @@ import { IntradayOpportunityPush } from '../models/IntradayOpportunityPush';
 // PR-M2 (2026-06-29) — 集合竞价快照 + 盘中 30-min K 线 (A 股最 robust 日内 alpha)
 import { AuctionSnapshot } from '../models/AuctionSnapshot';
 import { IntradayKline30Min } from '../models/IntradayKline30Min';
+// PR-M3 (2026-06-29) — 板块情绪指数日度聚合
+import { IndustrySentimentIndex } from '../models/IndustrySentimentIndex';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -273,6 +275,8 @@ const sequelize = new Sequelize({
     // PR-M2 (2026-06-29) — 集合竞价快照 + 盘中 30-min K 线
     AuctionSnapshot,
     IntradayKline30Min,
+    // PR-M3 (2026-06-29) — 板块情绪指数日度聚合
+    IndustrySentimentIndex,
   ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {

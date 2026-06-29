@@ -54,6 +54,8 @@ import {
   type ObservationPointsContext,
   type RiskRulesContext,
 } from '../../services/analysis-engine/v3DetailBuilder';
+// PR-M3 (2026-06-29) — confidence 反向修正 (PR-K hotfix)
+import { sourceTypeWinRateAdjuster } from '../../services/SourceTypeWinRateAdjuster';
 
 // ---------------------------------------------------------------------------
 //  常量
@@ -894,6 +896,30 @@ class V3RecommendationController {
       }
     }
 
+    // PR-M3 (2026-06-29): confidence 反向修正 (PR-K hotfix).
+    // PR-K 实证发现高 conf 推荐 win 30% < 低 conf win 40% (反向). 临时方案: 若该
+    // source_type 近 30 日 win_rate < 50% 且样本 >= 10, 把 raw conf 取负 (100 - raw),
+    // 让前端 / paper trading 按修正后 conf 排序, 反向之后高 conf 反而是真高质量.
+    // 长远方案: 重写因子 / 校准 conf — PR-M4+ 计划.
+    // fail-open: adjuster 内部 throw 仅 warn, 返 raw conf 不动 — 保守不"乱反".
+    let confAdjustment: any = {
+      confidence_score_raw: signal.confidence_score ?? null,
+      confidence_score_adjusted: signal.confidence_score ?? null,
+      adjustment_reason: 'no_data' as const,
+      source_win_rate: null,
+      source_sample_size: 0,
+    };
+    try {
+      confAdjustment = await sourceTypeWinRateAdjuster.adjust(
+        signal.confidence_score == null ? null : Number(signal.confidence_score),
+        String(signal.source_type || '')
+      );
+    } catch (err: any) {
+      logger.warn(
+        `v3-recommendations conf adjustment failed for ${symbol}: ${err?.message ?? err}`
+      );
+    }
+
     return {
       symbol,
       name: signal.name ?? stock?.name ?? null,
@@ -915,7 +941,14 @@ class V3RecommendationController {
       decision: {
         action: signal.decision,
         normalized_decision: signal.normalized_decision,
+        // 默认 confidence_score 字段保留 raw 原值 (前端老路径兼容)
         confidence_score: signal.confidence_score ?? null,
+        // PR-M3 — 新增字段, 前端可优先用 adjusted 排序
+        confidence_score_raw: confAdjustment.confidence_score_raw,
+        confidence_score_adjusted: confAdjustment.confidence_score_adjusted,
+        confidence_adjustment_reason: confAdjustment.adjustment_reason,
+        confidence_source_win_rate: confAdjustment.source_win_rate,
+        confidence_source_sample_size: confAdjustment.source_sample_size,
         risk_level: signal.risk_level ?? null,
         entry_zone: metadata?.entry_zone ?? null,
         stop_loss: metadata?.stop_loss ?? null,
