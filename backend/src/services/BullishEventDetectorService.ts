@@ -220,6 +220,22 @@ export interface BullishDataSource {
   }): Promise<{ created_ids: number[]; failed: number }>;
   /** active user_ids (paper_trading_portfolios.is_active=true 的 user_id 集) */
   listActiveUserIds(): Promise<number[]>;
+  /**
+   * PR-H (2026-06-29) — 把命中也写一行 AIInvestmentSignal (source_type='quant_recommendation',
+   * metadata.timing_tag='intraday_anomaly') 让 V3RecommendationController 前端推荐卡显示
+   * ⚡ 盘中异动 标签. 失败仅 warn 不阻塞主流程, 返 signal_id (created/found).
+   * 与 RiskAlert 并存: RiskAlert 走 bell 通知 + OPS 飞书; AIInvestmentSignal 走推荐流.
+   */
+  writeIntradaySignal(input: {
+    symbol: string;
+    prefixed_symbol: string;
+    name: string;
+    signal_date: string;
+    detector_label: string;
+    detector: string;
+    reason: string;
+    score: number;
+  }): Promise<{ signal_id: number | null }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -853,6 +869,78 @@ class DefaultBullishDataSource implements BullishDataSource {
       return [];
     }
   }
+
+  /**
+   * PR-H — 把命中也写一行 AIInvestmentSignal, 让 V3RecommendationController 推荐流能识别
+   * source_type='quant_recommendation', metadata.timing_tag='intraday_anomaly' → 前端
+   * ⚡ 盘中异动 标签. source_id 用 `bullish_${detector}_${symbol}_${date}` 保 idempotent
+   * (同日同 detector 同股不重复写). 失败仅 warn 不抛.
+   */
+  async writeIntradaySignal(input: {
+    symbol: string;
+    prefixed_symbol: string;
+    name: string;
+    signal_date: string;
+    detector_label: string;
+    detector: string;
+    reason: string;
+    score: number;
+  }): Promise<{ signal_id: number | null }> {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { AIInvestmentSignal, AISignalSourceType, AISignalDecision } = require('../models/AIInvestmentSignal');
+      const source_type = AISignalSourceType.QUANT_RECOMMENDATION;
+      const source_id = `bullish_${input.detector}_${input.symbol}_${input.signal_date}`;
+      const score = Math.max(0, Math.min(100, Math.round(Number(input.score) || 70)));
+      const payload = {
+        source_type,
+        source_id,
+        symbol: input.prefixed_symbol,
+        name: input.name,
+        signal_date: input.signal_date,
+        decision: 'BUY',
+        normalized_decision: AISignalDecision.BUY,
+        confidence_score: score,
+        risk_level: 'medium',
+        rationale: input.reason,
+        detail: JSON.stringify({
+          detector: input.detector,
+          detector_label: input.detector_label,
+          reason: input.reason,
+          source: 'bullish_event_detector',
+        }),
+        metadata: {
+          // PR-H — 盘中异动 tag, 前端 ⚡ 标签 + "30 分钟内买入" 文案靠它.
+          timing_tag: 'intraday_anomaly',
+          bullish_detector: input.detector,
+          bullish_detector_label: input.detector_label,
+          source: 'bullish_event_detector',
+          // recommend_reason fallback (enrichSignal 优先用 metadata.recommend_reason)
+          recommend_reason: input.reason,
+        },
+      };
+      const [record, isCreated] = await AIInvestmentSignal.findOrCreate({
+        where: { source_type, source_id },
+        defaults: payload,
+      });
+      if (!isCreated) {
+        // 已存在 → 不覆盖 metadata; 仅在 score 升级时更新 rationale + confidence_score.
+        try {
+          if ((record.confidence_score ?? 0) < score) {
+            await record.update({ confidence_score: score, rationale: input.reason });
+          }
+        } catch (e: any) {
+          logger.warn(
+            `[BullishEventDetector] writeIntradaySignal update failed: ${e?.message || e}`
+          );
+        }
+      }
+      return { signal_id: record?.id ?? null };
+    } catch (e: any) {
+      logger.warn(`[BullishEventDetector] writeIntradaySignal failed: ${e?.message || e}`);
+      return { signal_id: null };
+    }
+  }
 }
 
 export const DEFAULT_BULLISH_DATA_SOURCE: BullishDataSource = new DefaultBullishDataSource();
@@ -1027,6 +1115,47 @@ export class BullishEventDetectorService {
       } catch (e: any) {
         result.errors.push({
           where: `feishu_push:${hit.stock_code}:${hit.detector}`,
+          reason: e?.message || String(e),
+        });
+      }
+      // (c) PR-H — 写一行 AIInvestmentSignal 让前端推荐流显示 ⚡ 盘中异动 卡.
+      //     失败仅 warn 不阻塞主流程, 走 source_type='quant_recommendation' +
+      //     metadata.timing_tag='intraday_anomaly'. V3RecommendationController fallback
+      //     已自动从 quant_recommendation 拉今日 buy/strong_buy 信号, 此 row 自然被选.
+      try {
+        // 起 confidence 70 — 多次命中升级 (writeIntradaySignal 内部对比保留高分).
+        // 真实场景: critical_announcement / kol_consensus 起 80; positive_news /
+        // attention_spike 起 70. 用 detector 分级反映置信度而不写死.
+        const baseScore =
+          hit.detector === 'critical_announcement' ? 82 :
+          hit.detector === 'kol_consensus' ? 78 :
+          hit.detector === 'attention_spike' ? 72 :
+          70;
+        const todayShanghai = (() => {
+          // signal_date 用 Asia/Shanghai 今日 (与 v3 controller parseDate 对齐)
+          try {
+            return new Intl.DateTimeFormat('en-CA', {
+              timeZone: 'Asia/Shanghai',
+              year: 'numeric', month: '2-digit', day: '2-digit',
+            }).format(now);
+          } catch {
+            return new Date().toISOString().slice(0, 10);
+          }
+        })();
+        await this.ds.writeIntradaySignal({
+          symbol: hit.stock_code,
+          prefixed_symbol: prefixedSymbol,
+          name: hit.stock_name,
+          signal_date: todayShanghai,
+          detector_label: hit.detector_label,
+          detector: hit.detector,
+          reason: hit.reason,
+          score: baseScore,
+        });
+      } catch (e: any) {
+        // writeIntradaySignal 自身已 fail-OPEN, 此 try/catch 仅做最后兜底
+        result.errors.push({
+          where: `write_intraday_signal:${hit.stock_code}:${hit.detector}`,
           reason: e?.message || String(e),
         });
       }

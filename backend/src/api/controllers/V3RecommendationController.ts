@@ -107,6 +107,38 @@ function parseDate(raw: any): string {
 }
 
 /**
+ * PR-H (2026-06-29) — 推荐时机标签 5 个值, 与 backend
+ * AIInvestmentSignalService.RecommendationTimingTag 对齐.
+ *
+ *   opening_rush     — 🌅 早盘抢 (9:25 集合竞价后, 建议 9:30-10:00 买入)
+ *   afternoon_kick   — ☀️ 午后攻 (12:55, 建议 13:00-13:30 买入)
+ *   closing_grab     — 🌆 尾盘埋 (14:30, 建议 14:30-14:55 买入)
+ *   overnight        — 🌙 隔夜潜伏 (15:30 盘后, 建议 *次日* 9:30 开盘后买)
+ *   intraday_anomaly — ⚡ 盘中异动 (实时触发, 30 分钟内买)
+ *
+ * 缺失 / 历史 row 没写 metadata.timing_tag → 默认归为 'overnight' (与生产
+ * 既有 cron 32 15 * * 1-5 语义一致, 不破坏既有 UI 默认值).
+ */
+const TIMING_TAG_VALUES = ['opening_rush', 'afternoon_kick', 'closing_grab', 'overnight', 'intraday_anomaly'] as const;
+type TimingTag = (typeof TIMING_TAG_VALUES)[number];
+
+function normalizeTimingTagFromMetadata(metadata: any): TimingTag {
+  const raw = String(metadata?.timing_tag || '').trim().toLowerCase();
+  return (TIMING_TAG_VALUES as readonly string[]).includes(raw) ? (raw as TimingTag) : 'overnight';
+}
+
+function parseTimingFilter(raw: any): TimingTag[] | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed || trimmed === 'all') return null;
+  const parts = trimmed
+    .split(',')
+    .map(s => s.trim())
+    .filter((s): s is TimingTag => (TIMING_TAG_VALUES as readonly string[]).includes(s));
+  return parts.length > 0 ? parts : null;
+}
+
+/**
  * Batch CD (2026-06-25): shift ISO date YYYY-MM-DD by N days.
  * 给 V3 endpoint fallback 查询用 — 找最近 N 天的 signal.
  */
@@ -530,6 +562,15 @@ class V3RecommendationController {
         selected = applyElasticLimit(candidateRows, baseN, maxElastic, ELASTIC_CONFIDENCE_GAP);
       }
 
+      // PR-H — 按 ?timing=opening_rush,afternoon_kick,... 过滤. 'all' / 缺失 = 不过滤.
+      // 过滤在 selected 之后做 (而非 query 时), 因 metadata.timing_tag 是 JSONB 字段, SQL
+      // 过滤需要 ORM JSON ops 增加复杂度; selected 最多 5 行, JS 内过滤一次开销可忽略.
+      const timingFilter = parseTimingFilter(req.query.timing);
+      if (timingFilter && timingFilter.length > 0) {
+        const allow = new Set<string>(timingFilter);
+        selected = selected.filter(s => allow.has(normalizeTimingTagFromMetadata((s as any).metadata)));
+      }
+
       const recommendations = await Promise.all(
         selected.map(signal => this.enrichSignal(signal).catch(err => {
           logger.warn(`v3-recommendations enrich failed for ${signal.symbol}: ${err?.message ?? err}`);
@@ -890,6 +931,8 @@ class V3RecommendationController {
       risk_rules: riskRules,
       signal_id: signal.id,
       signal_date: signal.signal_date,
+      // PR-H — 推荐时机标签透传 UI. 缺失 → 'overnight' (符合历史 cron 15:32 写入语义).
+      timing_tag: normalizeTimingTagFromMetadata(metadata),
     };
   }
 
@@ -936,6 +979,8 @@ class V3RecommendationController {
       ],
       signal_id: signal.id,
       signal_date: signal.signal_date,
+      // PR-H — minimal view 也透传 timing_tag (enrichSignal 失败兜底).
+      timing_tag: normalizeTimingTagFromMetadata((signal as any).metadata),
       enrich_failed: true,
     };
   }

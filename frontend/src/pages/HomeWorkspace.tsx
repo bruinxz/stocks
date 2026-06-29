@@ -173,6 +173,49 @@ function yuanToShares(amountYuan: number, pricePerShare: number): number {
 const DEFAULT_FOLLOW_AMOUNT = 5000;
 
 // ---------------------------------------------------------------------------
+//  PR-H (2026-06-29) — 推荐时机标签 5 个 (与 backend AIInvestmentSignalService 对齐)
+//
+//  字段 timing_tag 由 V3RecommendationController 从 AIInvestmentSignal.metadata 读取并透传.
+//  缺失 → 默认 'overnight' (兼容历史 cron 15:32 写入的 row).
+//  UI 卡片左上角 pill 显示 icon + label, hover title 给"建议买入窗口"提示.
+//  卡片底部还有一条"建议买入窗口"长文 (overnight 用蓝色突出 "明早 9:30 集合竞价后买入" 防误解).
+// ---------------------------------------------------------------------------
+type TimingTagKey = 'opening_rush' | 'afternoon_kick' | 'closing_grab' | 'overnight' | 'intraday_anomaly';
+
+const TIMING_TAG_META: Record<TimingTagKey, { label: string; icon: string; color: string; window: string }> = {
+  opening_rush: {
+    label: '早盘抢',
+    icon: '🌅',
+    color: '#dc2626', // red-600
+    window: '建议 9:30-10:00 内买入 (基于集合竞价 + 隔夜外盘 catalysts)',
+  },
+  afternoon_kick: {
+    label: '午后攻',
+    icon: '☀️',
+    color: '#f59e0b', // amber-500
+    window: '建议 13:00-13:30 内买入 (基于早盘资金 + 午间消息)',
+  },
+  closing_grab: {
+    label: '尾盘埋',
+    icon: '🌆',
+    color: '#7c3aed', // violet-600
+    window: '建议 14:30-14:55 内买入 (避开 14:57 集合竞价)',
+  },
+  overnight: {
+    label: '隔夜潜伏',
+    icon: '🌙',
+    color: '#1e40af', // blue-800
+    window: '【明早 9:30 集合竞价后买入】今日盘后扫描, 基于全天复盘 + 龙虎榜 + 公告',
+  },
+  intraday_anomaly: {
+    label: '盘中异动',
+    icon: '⚡',
+    color: '#16a34a', // green-600
+    window: '建议 30 分钟内买入 (盘中实时触发, 时效性强)',
+  },
+};
+
+// ---------------------------------------------------------------------------
 //  Phase 7 — 学习模块常量
 // ---------------------------------------------------------------------------
 
@@ -918,6 +961,37 @@ const HomeWorkspace: React.FC = () => {
               信号 {formatHourMin(recoTime)}
             </span>
           )}
+          {/* PR-H — 推荐时机标签 (左上). 后端 timing_tag 缺失默认 'overnight' (隔夜潜伏). */}
+          {(() => {
+            const meta = TIMING_TAG_META[(rec.timing_tag || 'overnight') as TimingTagKey] || TIMING_TAG_META.overnight;
+            return (
+              <span
+                className="home-reco-card-timing"
+                title={meta.window}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  position: 'absolute',
+                  top: 8,
+                  left: 8,
+                  padding: '3px 9px',
+                  borderRadius: 12,
+                  fontSize: 11,
+                  lineHeight: '16px',
+                  fontWeight: 600,
+                  color: '#fff',
+                  background: meta.color,
+                  boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
+                  zIndex: 2,
+                  letterSpacing: '0.02em',
+                }}
+              >
+                <span aria-hidden>{meta.icon}</span>
+                <span>{meta.label}</span>
+              </span>
+            );
+          })()}
           <div className="home-reco-card-head">
             <div className="home-reco-card-name">
               <div className="home-reco-card-title">{rec.name || rec.symbol}</div>
@@ -946,6 +1020,40 @@ const HomeWorkspace: React.FC = () => {
           </div>
           {rec.recommend_reason && (
             <p className="home-reco-card-reason">{rec.recommend_reason}</p>
+          )}
+          {/* PR-H — 时机建议买入窗口提示. overnight 用蓝色突出 "明早 9:30 集合竞价后买入". */}
+          {(rec.timing_tag === 'overnight' || !rec.timing_tag) && (
+            <div
+              className="home-reco-card-window"
+              style={{
+                fontSize: 12,
+                color: '#1e40af',
+                background: 'rgba(30, 64, 175, 0.08)',
+                padding: '6px 10px',
+                borderRadius: 6,
+                border: '1px solid rgba(30, 64, 175, 0.18)',
+                fontWeight: 500,
+              }}
+            >
+              🌙 此推荐为明日预谋 · <strong>明早 9:30 集合竞价后买入</strong>
+            </div>
+          )}
+          {rec.timing_tag && rec.timing_tag !== 'overnight' && (
+            <div
+              className="home-reco-card-window"
+              style={{
+                fontSize: 12,
+                color: TIMING_TAG_META[rec.timing_tag as TimingTagKey]?.color || '#666',
+                background: 'rgba(0, 0, 0, 0.03)',
+                padding: '6px 10px',
+                borderRadius: 6,
+                border: `1px solid ${TIMING_TAG_META[rec.timing_tag as TimingTagKey]?.color || '#ccc'}33`,
+                fontWeight: 500,
+              }}
+            >
+              {TIMING_TAG_META[rec.timing_tag as TimingTagKey]?.icon || '⏰'}{' '}
+              {TIMING_TAG_META[rec.timing_tag as TimingTagKey]?.window || '建议尽快买入'}
+            </div>
           )}
           <div className="home-reco-card-meta">
             建议买入约 <strong>¥{formatInt(DEFAULT_FOLLOW_AMOUNT)}</strong> · 约{' '}
@@ -1170,7 +1278,7 @@ const HomeWorkspace: React.FC = () => {
               AI 多维度分析 · {visibleRecommendations.length} 只候选
               {timeGroups.hasTime
                 ? ` · 跨 ${timeGroups.groups.length} 个时段`
-                : ' · 每日 09:30 起持续刷新'}
+                : ' · 4 时机推荐 (早盘抢 / 午后攻 / 尾盘埋 / 隔夜潜伏) + 实时异动追踪'}
             </p>
           </div>
           <Button
@@ -1205,7 +1313,7 @@ const HomeWorkspace: React.FC = () => {
             subtitle={
               recommendations.length === 0
                 ? '数据可能还没跑完, 稍后再来看看 — 或点击右上「刷新」'
-                : '明天 09:30 起会持续刷新新的候选'
+                : '明早 9:25 集合竞价后会自动刷新今日早盘机会'
             }
             cta={
               recommendations.length === 0 ? (

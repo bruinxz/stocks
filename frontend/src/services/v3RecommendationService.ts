@@ -138,6 +138,15 @@ export interface V3RecommendationItem {
   signal_id: number;
   /** 后端归档时的 signal_date (YYYY-MM-DD). */
   signal_date: string;
+  /**
+   * PR-H (2026-06-29) — 推荐时机标签 (后端透传, 缺失默认 'overnight').
+   *   opening_rush     — 🌅 早盘抢 (9:25 集合竞价后, 9:30-10:00 买)
+   *   afternoon_kick   — ☀️ 午后攻 (12:55, 13:00-13:30 买)
+   *   closing_grab     — 🌆 尾盘埋 (14:30, 14:30-14:55 买)
+   *   overnight        — 🌙 隔夜潜伏 (15:32, **次日** 9:30 集合竞价后买)
+   *   intraday_anomaly — ⚡ 盘中异动 (实时, 30 min 内买)
+   */
+  timing_tag?: 'opening_rush' | 'afternoon_kick' | 'closing_grab' | 'overnight' | 'intraday_anomaly';
   /** enrichSignal 失败兜底视图标记 — UI 可选显示 "数据加载部分失败" 提示. */
   enrich_failed?: boolean;
 }

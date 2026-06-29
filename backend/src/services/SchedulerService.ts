@@ -1536,6 +1536,12 @@ class SchedulerService {
               ? Boolean(parameters.notifyToFeishuBot)
               : true,
           params_by_strategy: parameters.params_by_strategy || parameters.paramsByStrategy,
+          // PR-H (2026-06-29) — 推荐时机标签. cron parameters.timing_tag 透传到 archive 写入
+          // AIInvestmentSignal.metadata.timing_tag → 前端推荐卡 badge. 5 个值:
+          // opening_rush(9:25早盘抢) / afternoon_kick(12:55午后攻) / closing_grab(14:30尾盘埋) /
+          // overnight(15:30隔夜潜伏, 默认) / intraday_anomaly(盘中异动 detector 走另一路).
+          // 未传 → 沿用默认 'overnight' (符合历史 cron 行为, 兼容已部署 row).
+          timing_tag: parameters.timing_tag || parameters.timingTag,
         });
 
         const agentSubmitted = Array.isArray(result.agent_analysis?.submitted)
@@ -6873,6 +6879,8 @@ class SchedulerService {
         cron_expression: '32 15 * * 1-5',
         is_active: true,
         parameters: {
+          // PR-H (2026-06-29) — 15:32 跑的是"明日预谋", UI 卡片标 🌙 隔夜潜伏, 建议次日 9:30 买.
+          timing_tag: 'overnight',
           username: 'stock',
           use_autonomous_portfolio: true,
           portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
@@ -6963,9 +6971,13 @@ class SchedulerService {
       {
         name: '量化策略开盘机会扫描',
         type: 'QUANT_DAILY_PIPELINE',
-        cron_expression: '35 9 * * 1-5',
+        cron_expression: '25 9 * * 1-5',
         is_active: true,
         parameters: {
+          // PR-H — 9:25 集合竞价撮合 (9:25:00) 后立即跑, UI 卡片标 🌅 早盘抢, 建议 9:30-10:00 买入.
+          // 此前 cron 是 35 9, 在开盘 5 分钟之后才生成信号, 用户错过开盘最优买点.
+          // 拉前到 9:25 是 PRD 决策: 集合竞价撮合后立即扫描, 9:30 开盘即可参考.
+          timing_tag: 'opening_rush',
           username: 'stock',
           use_autonomous_portfolio: true,
           portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
@@ -7051,6 +7063,109 @@ class SchedulerService {
           record_type: '量化策略开盘机会扫描',
         },
       },
+      // PR-H (2026-06-29) — 午后开盘扫描 (12:55, 距 13:00 午盘 5min). UI 标 ☀️ 午后攻.
+      //   集合竞价信号 + 早盘资金流 / 午间消息驱动. agent_session='afternoon' 让信号链路区分.
+      //   submit_agent_analysis/run_paper_trading=false: 减负 (只生成信号给用户看, 不自动跟单).
+      {
+        name: '量化策略午后开盘扫描 (PR-H)',
+        type: 'QUANT_DAILY_PIPELINE',
+        cron_expression: '55 12 * * 1-5',
+        is_active: true,
+        parameters: {
+          timing_tag: 'afternoon_kick',
+          username: 'stock',
+          use_autonomous_portfolio: true,
+          portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
+          initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+          universe: 'market',
+          strategy_keys: [
+            'multi_factor_ranking',
+            'relative_strength_momentum',
+            'ma_trend',
+            'volume_price_confirmation',
+            'multi_factor_alpha',
+          ],
+          lookback_days: 180,
+          candidate_limit: 180,
+          refresh_realtime_quotes: true,
+          sync_factors_before_scan: false,
+          quote_sync_limit: 360,
+          realtime_quote_source: 'auto',
+          min_score: 72,
+          archive_limit: 15,
+          max_industry_candidates: 3,
+          max_strategy_candidates: 4,
+          submit_agent_analysis: false,
+          agent_session: 'afternoon',
+          agent_auto_paper_trade: false,
+          run_paper_trading: false,
+          dry_run: false,
+          paper_trade_limit: 2,
+          max_positions: 8,
+          default_position_pct: 4,
+          max_position_pct: 8,
+          min_trade_amount: 3000,
+          use_entry_risk_guard: true,
+          block_limit_up: true,
+          block_limit_down: true,
+          block_suspended: true,
+          block_buy_on_runtime_risk: true,
+          report_to_feishu: false,
+          notify_to_feishu_bot: false,
+          record_type: '量化策略午后开盘扫描',
+        },
+      },
+      // PR-H (2026-06-29) — 尾盘扫描 (14:30, 距 14:57 收盘集合竞价 27min). UI 标 🌆 尾盘埋.
+      //   全天量比 + 主力净流入 + 尾盘拉升驱动. 建议 14:30-14:55 内买入 (避开 14:57 集合竞价).
+      {
+        name: '量化策略尾盘扫描 (PR-H)',
+        type: 'QUANT_DAILY_PIPELINE',
+        cron_expression: '30 14 * * 1-5',
+        is_active: true,
+        parameters: {
+          timing_tag: 'closing_grab',
+          username: 'stock',
+          use_autonomous_portfolio: true,
+          portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
+          initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+          universe: 'market',
+          strategy_keys: [
+            'multi_factor_ranking',
+            'relative_strength_momentum',
+            'ma_trend',
+            'volume_price_confirmation',
+            'multi_factor_alpha',
+          ],
+          lookback_days: 180,
+          candidate_limit: 180,
+          refresh_realtime_quotes: true,
+          sync_factors_before_scan: false,
+          quote_sync_limit: 360,
+          realtime_quote_source: 'auto',
+          min_score: 72,
+          archive_limit: 15,
+          max_industry_candidates: 3,
+          max_strategy_candidates: 4,
+          submit_agent_analysis: false,
+          agent_session: 'closing',
+          agent_auto_paper_trade: false,
+          run_paper_trading: false,
+          dry_run: false,
+          paper_trade_limit: 2,
+          max_positions: 8,
+          default_position_pct: 4,
+          max_position_pct: 8,
+          min_trade_amount: 3000,
+          use_entry_risk_guard: true,
+          block_limit_up: true,
+          block_limit_down: true,
+          block_suspended: true,
+          block_buy_on_runtime_risk: true,
+          report_to_feishu: false,
+          notify_to_feishu_bot: false,
+          record_type: '量化策略尾盘扫描',
+        },
+      },
       {
         name: '量化开盘链路看门狗',
         type: 'QUANT_OPEN_WATCHDOG',
@@ -7058,8 +7173,11 @@ class SchedulerService {
         is_active: true,
         parameters: {
           target_task_name: '量化策略开盘机会扫描',
-          expected_after_time: '09:35',
-          latest_allowed_minutes: 15,
+          // PR-H — 开盘扫描提前到 9:25, watchdog expected_after 也下调到 09:25.
+          // 整体宽限窗口仍是 9:55 (开盘后 25 min). 集合竞价 9:25 撮合 + 量化扫描需要 ~5min,
+          // 一般 9:30-9:32 完成. latest_allowed_minutes 30 让"9:25 跑→9:50 落库"仍 healthy.
+          expected_after_time: '09:25',
+          latest_allowed_minutes: 30,
           min_quant_signals: 1,
           min_archived_signals: 1,
           require_fresh_quote: true,

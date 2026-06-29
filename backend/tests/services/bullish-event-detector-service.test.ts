@@ -100,13 +100,23 @@ interface FakeDSCalls {
     title: string;
     body_markdown: string;
   }>;
+  writeIntradaySignal: Array<{
+    symbol: string;
+    prefixed_symbol: string;
+    name: string;
+    signal_date: string;
+    detector_label: string;
+    detector: string;
+    reason: string;
+    score: number;
+  }>;
 }
 
 function makeFakeDS(data: FakeDSData = {}): {
   ds: BullishDataSource;
   calls: FakeDSCalls;
 } {
-  const calls: FakeDSCalls = { writeRiskAlerts: [], feishuPush: [] };
+  const calls: FakeDSCalls = { writeRiskAlerts: [], feishuPush: [], writeIntradaySignal: [] };
   const maybeThrow = (k: keyof BullishDataSource): void => {
     if (data.throws && data.throws[k]) throw new Error(data.throws[k] as string);
   };
@@ -159,6 +169,11 @@ function makeFakeDS(data: FakeDSData = {}): {
     async listActiveUserIds() {
       maybeThrow('listActiveUserIds');
       return data.activeUserIds || [];
+    },
+    async writeIntradaySignal(input) {
+      maybeThrow('writeIntradaySignal');
+      calls.writeIntradaySignal.push(input);
+      return { signal_id: calls.writeIntradaySignal.length };
     },
   };
   return { ds, calls };
@@ -484,6 +499,18 @@ async function testAllDetectorHit(): Promise<void> {
     assertEqual('write — rule_id=stock_bullish_event', c.rule_id, 'stock_bullish_event');
     assert('write — message 含 dedup_key tag', /\[dedup_key:[^\]]+\]/.test(c.message));
     assertEqual('write — user_ids = active users', c.user_ids, [1, 2]);
+  }
+  // PR-H — writeIntradaySignal 每命中也调一次 (与 RiskAlert 1:1, 让前端推荐流能识别 ⚡ 盘中异动)
+  assert(
+    'PR-H — writeIntradaySignal 调用次数 == pushed 数',
+    calls.writeIntradaySignal.length === r.pushed
+  );
+  for (const c of calls.writeIntradaySignal) {
+    assert('PR-H — writeIntradaySignal symbol 是 6 位', /^\d{6}$/.test(c.symbol));
+    assert('PR-H — writeIntradaySignal prefixed_symbol 是 sh\\./sz\\. 前缀', /^(sh|sz)\.\d{6}$/.test(c.prefixed_symbol));
+    assert('PR-H — writeIntradaySignal score 在 [0,100]', c.score >= 0 && c.score <= 100);
+    assert('PR-H — writeIntradaySignal signal_date YYYY-MM-DD', /^\d{4}-\d{2}-\d{2}$/.test(c.signal_date));
+    assert('PR-H — writeIntradaySignal detector 非空', typeof c.detector === 'string' && c.detector.length > 0);
   }
 }
 
