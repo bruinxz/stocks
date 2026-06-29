@@ -45,10 +45,21 @@
  * metadata?.trigger_time`, 任一可解析即用; 全部缺失则降级为不分组 + 标注 "今日推荐"
  * (signal_date 显示在 head). TODO(P2, backend): V3RecommendationController.enrichSignal
  * 把 signal.created_at 透传成 ISO 字符串, 前端无改动即生效时段分组.
+ *
+ * PR-L emergency stop-loss (2026-06-29):
+ * PR-K 回测证实当前推荐系统 30 天 buy 推荐 T+5 win 32% (低于 50% 随机), paper 同期
+ * PnL -10,798 元. 紧急止损 UI:
+ *   1. 顶部 <Alert type="warning"> 红色横幅 — "推荐系统处于评估期, 仅供参考".
+ *   2. 每张推荐卡 "一键跟单" 按钮文字改 "手动评估 (暂停一键跟单)" + 灰底.
+ *   3. handleFollowBuy 改为先弹 Modal "我已了解, 继续手动买入" 才走原下单路径.
+ *   4. 后端 paper_trading_portfolios.auto_trade_enabled 全部 SQL UPDATE = false.
+ *   5. 后端 IntradayOpportunityPusher / CriticalAnnouncementPushService 加 conf≥70
+ *      EMERGENCY_CONF_GATE — 高 conf 反向 (audit 仍写, OPS 飞书群停推).
+ * 等 PR-I 战法库 + conf evaluator 修复后, 把 EMERGENCY_CONF_GATE 切回 false, 移除 banner.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Modal, Result, Skeleton, Space, Tooltip, message } from 'antd';
+import { Alert, Button, Modal, Result, Skeleton, Space, Tooltip, message } from 'antd';
 import {
   ArrowUpOutlined,
   ArrowDownOutlined,
@@ -59,6 +70,7 @@ import {
   CaretUpOutlined,
   ArrowRightOutlined,
   CheckOutlined,
+  WarningOutlined,
 } from '@ant-design/icons';
 import { ShoppingCartIcon, InboxIcon } from '@heroicons/react/24/outline';
 import { motion, useReducedMotion } from 'framer-motion';
