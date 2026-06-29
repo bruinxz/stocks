@@ -87,6 +87,8 @@ export * from './ShareholderTradeRecord';
 export * from './MarginTradingBalance';
 export * from './ETFFlow';
 export * from './ETFCreationRedemption';
+// PR-M1 (2026-06-29) — 隔夜信号矩阵 (A50/HK/Nasdaq/DXY/VIX)
+export * from './OvernightSignal';
 export * from './MarketNews';
 export * from './SocialSentimentSnapshot';
 export * from './MarketHotSearch';

@@ -89,6 +89,8 @@ import { ShareholderTradeRecord } from '../models/ShareholderTradeRecord';
 import { MarginTradingBalance } from '../models/MarginTradingBalance';
 import { ETFFlow } from '../models/ETFFlow';
 import { ETFCreationRedemption } from '../models/ETFCreationRedemption';
+// PR-M1 (2026-06-29) — 隔夜信号矩阵
+import { OvernightSignal } from '../models/OvernightSignal';
 import { MarketNews } from '../models/MarketNews';
 import { SocialSentimentSnapshot } from '../models/SocialSentimentSnapshot';
 import { MarketHotSearch } from '../models/MarketHotSearch';
@@ -232,6 +234,7 @@ const sequelize = new Sequelize({
     MarginTradingBalance,
     ETFFlow,
     ETFCreationRedemption,
+    OvernightSignal,
     MarketNews,
     SocialSentimentSnapshot,
     MarketHotSearch,
