@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store/rootReducer';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Alert,
   Button,
@@ -29,6 +29,7 @@ import {
 } from 'antd';
 import {
   BarChartOutlined,
+  BellOutlined,
   CheckOutlined,
   CloseOutlined,
   EditOutlined,
@@ -128,6 +129,9 @@ import {
   formatMoney,
   formatMoneyNumber,
 } from '../../utils/formatMoney';
+// PR-C 风控中心 v2 — "我的提醒" tab 复用 panel, positionSymbols 限定到当前持仓.
+// AlertsBell 普通用户点击落到这里 (admin 落到 TodayWorkspace?tab=risk_center).
+import RiskAlertCenterPanel from './RiskAlertCenterPanel';
 
 const { Text, Paragraph } = Typography;
 const { RangePicker } = DatePicker;
@@ -164,6 +168,8 @@ const PortfolioWorkspace: React.FC = () => {
       { key: 'trades', label: '交易明细', icon: <UnorderedListOutlined /> },
       { key: 'equity', label: '资金曲线', icon: <LineChartOutlined /> },
       { key: 'journal', label: '复盘日记', icon: <ReadOutlined /> },
+      // PR-C: 我的提醒 — 用户持仓相关告警 + 高优先级风控事件 (AlertsBell 普通用户落点).
+      { key: 'alerts', label: '我的提醒', icon: <BellOutlined /> },
     ];
     if (isAdmin) {
       baseTabs.push(
@@ -176,6 +182,17 @@ const PortfolioWorkspace: React.FC = () => {
     return baseTabs;
   }, [isAdmin]);
   const [activeKey, setActiveKey] = useState<string>('positions');
+
+  // PR-C: AlertsBell 普通用户点击 → /workspace/portfolio?tab=alerts.
+  // 一次性应用 query (与 TodayWorkspace 同款模式), 之后用户手动切 tab 不被 query 覆盖.
+  const location = useLocation();
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const tab = params.get('tab');
+    if (tab && tabs.some(t => t.key === tab)) {
+      setActiveKey(tab);
+    }
+  }, [location.search, tabs]);
 
   // ---- 主数据 ----
   const [portfolioData, setPortfolioData] = useState<PortfolioWithPositions | null>(null);
@@ -369,6 +386,17 @@ const PortfolioWorkspace: React.FC = () => {
     body = <TradesTab trades={trades} />;
   } else if (activeKey === 'journal') {
     body = <JournalTab list={journalList} onListRefresh={() => void refresh()} />;
+  } else if (activeKey === 'alerts') {
+    // PR-C: positionSymbols = 当前持仓代码 → panel "持仓相关" view 按此过滤;
+    // 普通用户进入默认 positions view, 立刻看到自己关心的告警 (而非全局噪音).
+    body = (
+      <RiskAlertCenterPanel
+        positionSymbols={(portfolioData?.positions ?? []).map(p => p.symbol)}
+        initialView="positions"
+        title="我的提醒"
+        onUnreadCountChange={() => void refresh()}
+      />
+    );
   } else if (activeKey === 'error-patterns') {
     body = <ErrorPatternsTab trades={trades} journalList={journalList} />;
   } else if (activeKey === 'correlation') {
