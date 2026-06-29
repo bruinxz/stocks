@@ -776,6 +776,19 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     recommendedCron: '*/3 9-11,13-14 * * 1-5',
     description: '盘中 3min 跑 10 类机会规则 → analyzeStock 二次审核 → 飞书机会卡片推送',
   },
+  // PR-B (2026-06-29) — 利好事件主动推送. 用户原话 "周末利好华工科技的新闻你看到了吗,
+  // 这类新闻你需要发消息提示我". 系统缺一条主动扫"利好新闻 / 业绩预喜公告 / 关注度突
+  // 增 / KOL 集中看多"的链路, 本 cron 每 30min 跑一次 4 detector, 命中即写 RiskAlert
+  // (level=MEDIUM, rule_id='stock_bullish_event') + 推 OPS 飞书群. 24h dedup 通过
+  // RiskAlert.message 末尾追加 [dedup_key:STOCK:DETECTOR:YYYY-MM-DD] 实现. 周末也跑.
+  {
+    type: 'BULLISH_EVENT_DETECT',
+    category: 'risk_control',
+    owner: 'quant',
+    recommendedCron: '*/30 * * * *',
+    description:
+      '每 30 分钟扫描用户持仓 + 自选 + 近 30 日推荐过的股票, 4 类利好 detector (critical 公告 / 正面新闻 / 关注度突增 / KOL 集中关注), 命中写 RiskAlert + 飞书 OPS 群. 24h dedup. 用户 2026-06-28 诉求落地.',
+  },
 ]);
 
 const CRON_REGISTRY_BY_TYPE: ReadonlyMap<string, CronTaskDefinition> = new Map(
