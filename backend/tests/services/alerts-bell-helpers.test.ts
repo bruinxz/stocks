@@ -203,6 +203,42 @@ assert('[6.9] -1000 → MIN', clampPollInterval(-1000) === MIN_POLL_INTERVAL_MS)
 }
 
 // ============================================================
+// [7b] PR-C 普通用户 href + 角色路由
+// ============================================================
+{
+  // 跨 monorepo 动态 require, 避开顶层 import 改动 (与已有 import 同款相对 path).
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const helpers = require('../../../frontend/src/pages/workspace/alertsBellHelpers');
+  const userHref: string = helpers.buildAlertsBellHrefForUser();
+  assert('[7b.1] user href 落 portfolio', userHref.includes('/workspace/portfolio'));
+  assert('[7b.2] user href 落 alerts tab', userHref.endsWith('?tab=alerts'));
+  assert(
+    '[7b.3] admin → 风控中心 href',
+    helpers.buildAlertsBellHrefForRole(true) === buildAlertsBellHref()
+  );
+  assert(
+    '[7b.4] 非 admin → 普通用户 href',
+    helpers.buildAlertsBellHrefForRole(false) === userHref
+  );
+  assert(
+    '[7b.5] undefined → 默认普通用户 (保守不暴露 admin 入口)',
+    helpers.buildAlertsBellHrefForRole(undefined) === userHref
+  );
+  assert(
+    '[7b.6] null → 默认普通用户',
+    helpers.buildAlertsBellHrefForRole(null) === userHref
+  );
+  assert(
+    '[7b.7] USER_TARGET_PATH 常量正确',
+    helpers.ALERTS_BELL_USER_TARGET_PATH === '/workspace/portfolio'
+  );
+  assert(
+    '[7b.8] USER_TARGET_TAB_KEY 常量正确',
+    helpers.ALERTS_BELL_USER_TARGET_TAB_KEY === 'alerts'
+  );
+}
+
+// ============================================================
 // [8] META-GUARD fs+regex — 守 helper / UI / wiring 全同步
 // ============================================================
 const FRONTEND_ROOT = join(__dirname, '..', '..', '..', 'frontend', 'src');

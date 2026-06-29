@@ -141,3 +141,33 @@ export const ALERTS_BELL_TARGET_TAB_KEY = 'risk_center';
 export function buildAlertsBellHref(): string {
   return `${ALERTS_BELL_TARGET_PATH}?tab=${ALERTS_BELL_TARGET_TAB_KEY}`;
 }
+
+/**
+ * 普通用户的目标路径 — PortfolioWorkspace "我的提醒" tab.
+ *
+ * PR-C 风控中心 v2: admin 仍落 TodayWorkspace risk_center (含 6 tab 全部 admin 工具),
+ * 普通用户落 PortfolioWorkspace?tab=alerts (持仓 view 默认 + 仅看自己关心的告警).
+ * 后者复用同款 RiskAlertCenterPanel 组件, 仅传不同 initialView + positionSymbols.
+ *
+ * 抽 const 让单测能守 "未来 refactor 改路径不会偷偷把普通用户带到 admin 页".
+ */
+export const ALERTS_BELL_USER_TARGET_PATH = '/workspace/portfolio';
+export const ALERTS_BELL_USER_TARGET_TAB_KEY = 'alerts';
+
+/**
+ * 普通用户的完整目标 URL.
+ *
+ * Caller 用 navigate(buildAlertsBellHrefForUser()) 即可.
+ */
+export function buildAlertsBellHrefForUser(): string {
+  return `${ALERTS_BELL_USER_TARGET_PATH}?tab=${ALERTS_BELL_USER_TARGET_TAB_KEY}`;
+}
+
+/**
+ * 按角色取目标 URL — admin → 风控中心 (含全部规则), 其它 → 我的提醒 (按持仓过滤).
+ *
+ * isAdmin 缺省 / undefined / null → 普通用户 (默认更保守, 避免把普通用户误带到 admin 页).
+ */
+export function buildAlertsBellHrefForRole(isAdmin: boolean | null | undefined): string {
+  return isAdmin === true ? buildAlertsBellHref() : buildAlertsBellHrefForUser();
+}
