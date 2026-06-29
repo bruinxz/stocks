@@ -41,37 +41,47 @@ assert('"600519.SH" 后缀 → "600519"', stripSuffix('600519.SH') === '600519')
 assert('"000001.SZ" 后缀 → "000001"', stripSuffix('000001.SZ') === '000001');
 
 // [2] rowsToFavoriteStockCodes — happy path
+// 关键: sequelize {raw:true, nest:true} 用模型名小写作为关联 alias.
+// FavoriteStock 没有 as: 'Stock', 所以是 row.stock.symbol, 不是 row.Stock.symbol.
 console.log('\n[2] rowsToFavoriteStockCodes happy path...');
 const happy = rowsToFavoriteStockCodes([
-  { Stock: { symbol: 'sh.600519' } },
-  { Stock: { symbol: 'sz.000001' } },
-  { Stock: { symbol: '600036.SH' } },
+  { stock: { symbol: 'sh.600519' } },
+  { stock: { symbol: 'sz.000001' } },
+  { stock: { symbol: '600036.SH' } },
 ]);
 assert('3 rows → 3 codes', happy.length === 3, `got=${JSON.stringify(happy)}`);
 assert('order 保留', happy[0] === '600519' && happy[1] === '000001' && happy[2] === '600036');
 
+// [2b] 大写 Stock 键名应该 silent 0 codes (锁死大小写敏感, 防 alias 改写)
+console.log('\n[2b] 大写 Stock 键名 → 0 codes (锁死小写 nest alias)...');
+const uppercased = rowsToFavoriteStockCodes([
+  { Stock: { symbol: 'sh.600519' } } as any,
+  { Stock: { symbol: 'sz.000001' } } as any,
+]);
+assert('大写 Stock → 0 codes', uppercased.length === 0, `got=${JSON.stringify(uppercased)}`);
+
 // [3] dedup
 console.log('\n[3] dedup...');
 const dedup = rowsToFavoriteStockCodes([
-  { Stock: { symbol: 'sh.600519' } },
-  { Stock: { symbol: '600519.SH' } },
-  { Stock: { symbol: 'sh.600519' } },
+  { stock: { symbol: 'sh.600519' } },
+  { stock: { symbol: '600519.SH' } },
+  { stock: { symbol: 'sh.600519' } },
 ]);
 assert('3 重复 → 1 code', dedup.length === 1, `got=${JSON.stringify(dedup)}`);
 assert('保留 6 位', dedup[0] === '600519');
 
-// [4] null / missing Stock / 非 6 位过滤
+// [4] null / missing stock / 非 6 位过滤
 console.log('\n[4] null + 残缺 + invalid symbol...');
 const dirty = rowsToFavoriteStockCodes([
   null,
-  { Stock: null },
-  { Stock: { symbol: null } },
-  { Stock: { symbol: '' } },
-  { Stock: { symbol: 'XYZ' } }, // 非 6 位数字
-  { Stock: { symbol: 'sh.ABC123' } }, // 含字母
-  { Stock: { symbol: '12345' } }, // 5 位
-  { Stock: { symbol: '1234567' } }, // 7 位
-  { Stock: { symbol: '600519' } }, // 合法
+  { stock: null },
+  { stock: { symbol: null } },
+  { stock: { symbol: '' } },
+  { stock: { symbol: 'XYZ' } }, // 非 6 位数字
+  { stock: { symbol: 'sh.ABC123' } }, // 含字母
+  { stock: { symbol: '12345' } }, // 5 位
+  { stock: { symbol: '1234567' } }, // 7 位
+  { stock: { symbol: '600519' } }, // 合法
 ] as any);
 assert('只留 1 个合法', dirty.length === 1, `got=${JSON.stringify(dirty)}`);
 assert('保留是 600519', dirty[0] === '600519');
