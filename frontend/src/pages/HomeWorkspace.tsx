@@ -102,6 +102,12 @@ import {
 } from '../services/portfolioWorkspaceService';
 import { todayWorkspaceService, AccountSummary } from '../services/todayWorkspaceService';
 import { getV3Recommendations, V3RecommendationItem } from '../services/v3RecommendationService';
+// PR-M4 (2026-06-29): /home 顶部 "今日市场" 卡 — 复用既有 MarketJudgmentService
+// (恒指/纳指/标普/道指 4 个海外指数 + regime bull/bear/range/...).
+import {
+  getMarketJudgmentToday,
+  MarketJudgmentResult,
+} from '../services/marketJudgmentService';
 import {
   formatClock,
   formatHourMin,
@@ -171,6 +177,40 @@ function yuanToShares(amountYuan: number, pricePerShare: number): number {
 //  默认建议跟单金额 — 新手主页固定 5000 元/单, 不让用户填表
 // ---------------------------------------------------------------------------
 const DEFAULT_FOLLOW_AMOUNT = 5000;
+
+// PR-M4 (2026-06-29) — 单仓 5% hard cap 前端镜像值. 后端 backend/src/portfolio/
+// PaperTradingFacade.ts 同款常量 (PR_M4_SINGLE_POSITION_CAP_PCT). 前端用来在推荐卡
+// 上 *预测* 建议金额是否会被 cap (`buildSizingCapWarn`), 不与后端 cap 实际值漂移.
+// 改值时务必两边同步.
+const PR_M4_FRONTEND_SINGLE_POSITION_CAP_PCT = 5;
+
+/**
+ * PR-M4 (2026-06-29) — 给推荐卡算"建议金额会不会被 5% cap 降低".
+ *
+ * input.total_value <= 0 → null (新账户, cap 不生效, 不显示警示).
+ * input.target_amount <= cap → null (没超, 不显示).
+ * 超 → 返回 { capped: true, cap_amount, original }.
+ *
+ * 单测: backend/tests/services/risk-center-helpers.test.ts (跨 monorepo 范式).
+ */
+export function buildSizingCapWarn(input: {
+  target_amount: number;
+  total_value: number | null | undefined;
+  cap_pct?: number;
+}): { capped: boolean; cap_amount: number; original: number } | null {
+  const total = Number(input.total_value);
+  const target = Number(input.target_amount);
+  const capPct = Number.isFinite(input.cap_pct as number) && (input.cap_pct as number) > 0
+    ? (input.cap_pct as number)
+    : PR_M4_FRONTEND_SINGLE_POSITION_CAP_PCT;
+  if (!Number.isFinite(total) || total <= 0) return null;
+  if (!Number.isFinite(target) || target <= 0) return null;
+  const cap = (total * capPct) / 100;
+  if (target > cap) {
+    return { capped: true, cap_amount: cap, original: target };
+  }
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 //  PR-H (2026-06-29) — 推荐时机标签 5 个 (与 backend AIInvestmentSignalService 对齐)
@@ -369,6 +409,12 @@ const HomeWorkspace: React.FC = () => {
   // Phase 10 — hero 30 日资产 sparkline. 失败静默 (sparkline 缺即不渲染).
   const [snapshots, setSnapshots] = useState<SnapshotRow[]>([]);
 
+  // PR-M4 (2026-06-29): 今日市场卡 — 4 海外指数 + regime. 失败静默 (整卡兜底降级,
+  // 不能拖累 hero / 推荐主流程).
+  const [marketJudgment, setMarketJudgment] = useState<MarketJudgmentResult | null>(null);
+  const [marketJudgmentLoading, setMarketJudgmentLoading] = useState(true);
+  const [marketJudgmentError, setMarketJudgmentError] = useState<string | null>(null);
+
   // Phase 10 — "数据时间" 显示用. 任一区块刷新成功就刷新此时间, 让用户感知数据新鲜度.
   const [dataTime, setDataTime] = useState<Date>(() => new Date());
 
@@ -455,12 +501,29 @@ const HomeWorkspace: React.FC = () => {
     }
   }, [selectedPortfolioId]);
 
+  // PR-M4 (2026-06-29) — 今日市场: 4 海外指数 (恒指/纳指/标普/道指) + regime
+  // (bull/bear/range/rebound/stress/unknown). MarketJudgmentService 已在 TodayWorkspace
+  // 接入, 这里复用 same endpoint, 渲染轻量版让新手主页一眼看到大盘方向.
+  const loadMarketJudgment = useCallback(async () => {
+    setMarketJudgmentLoading(true);
+    setMarketJudgmentError(null);
+    try {
+      const data = await getMarketJudgmentToday();
+      setMarketJudgment(data);
+    } catch (err: unknown) {
+      setMarketJudgmentError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMarketJudgmentLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadAccount();
     void loadRecommendations();
     void loadPositions();
     void loadSnapshots();
-  }, [loadAccount, loadRecommendations, loadPositions, loadSnapshots]);
+    void loadMarketJudgment();
+  }, [loadAccount, loadRecommendations, loadPositions, loadSnapshots, loadMarketJudgment]);
 
   // -------- 一键跟单 --------
   // PR-L emergency stop-loss (2026-06-29):
@@ -947,6 +1010,17 @@ const HomeWorkspace: React.FC = () => {
         const step = trendPct / 5;
         return [4, 3, 2, 1, 0].map(k => price * (1 - (step * k) / 100));
       })();
+      // PR-M4 (2026-06-29) — 建议金额 vs 5% cap 预测. account.total_value 缺失 (未登录 /
+      // 拉取失败) → 不显示警示.
+      const sizingCapWarn = buildSizingCapWarn({
+        target_amount: DEFAULT_FOLLOW_AMOUNT,
+        total_value: account?.total_value ?? null,
+      });
+      // PR-M4 / PR-M2/M3 — 反转 vs 动量 / 板块强弱 badge. backend 字段缺失时 badge 不渲染.
+      // 这两个字段是前向兼容 — PR-M2 加 signal_type='reversal'|'momentum', PR-M3 加
+      // industry_sentiment='strong'|'weak'. 后端 merge 后 UI 自动 pick up.
+      const signalType = (rec as any).signal_type as 'reversal' | 'momentum' | undefined;
+      const industrySentiment = (rec as any).industry_sentiment as 'strong' | 'weak' | undefined;
       const cardInner = (
         <article
           key={rec.symbol}
@@ -1059,6 +1133,101 @@ const HomeWorkspace: React.FC = () => {
             建议买入约 <strong>¥{formatInt(DEFAULT_FOLLOW_AMOUNT)}</strong> · 约{' '}
             <strong>{formatInt(shares) || '—'}</strong> 股
           </div>
+          {/* PR-M4 (2026-06-29) — 单仓 5% cap 警示 + 反转/动量 + 板块强弱 badge. */}
+          {(sizingCapWarn || signalType || industrySentiment) && (
+            <div
+              className="home-reco-card-badges"
+              data-testid="home-reco-card-badges"
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 6,
+                marginTop: 6,
+                marginBottom: 2,
+              }}
+            >
+              {sizingCapWarn && (
+                <span
+                  data-testid="home-reco-sizing-cap-warn"
+                  style={{
+                    fontSize: 11,
+                    color: '#d97706',
+                    background: '#fff7ed',
+                    border: '1px solid #fed7aa',
+                    borderRadius: 4,
+                    padding: '2px 6px',
+                  }}
+                  title={`5% 单仓硬上限 ¥${formatInt(sizingCapWarn.cap_amount)}. 系统级风控, 不可改`}
+                >
+                  ⚖️ 已自动降低到 5% 上限
+                </span>
+              )}
+              {signalType === 'reversal' && (
+                <span
+                  data-testid="home-reco-signal-reversal"
+                  style={{
+                    fontSize: 11,
+                    color: '#7c3aed',
+                    background: '#f5f3ff',
+                    border: '1px solid #ddd6fe',
+                    borderRadius: 4,
+                    padding: '2px 6px',
+                  }}
+                  title="反转买入 — 超跌后修复"
+                >
+                  🔄 反转
+                </span>
+              )}
+              {signalType === 'momentum' && (
+                <span
+                  data-testid="home-reco-signal-momentum"
+                  style={{
+                    fontSize: 11,
+                    color: '#dc2626',
+                    background: '#fef2f2',
+                    border: '1px solid #fecaca',
+                    borderRadius: 4,
+                    padding: '2px 6px',
+                  }}
+                  title="动量买入 — 趋势已确认"
+                >
+                  📈 动量
+                </span>
+              )}
+              {industrySentiment === 'strong' && (
+                <span
+                  data-testid="home-reco-industry-strong"
+                  style={{
+                    fontSize: 11,
+                    color: '#dc2626',
+                    background: '#fef2f2',
+                    border: '1px solid #fecaca',
+                    borderRadius: 4,
+                    padding: '2px 6px',
+                  }}
+                  title="强势板块 — 资金流入"
+                >
+                  👑 强势板块
+                </span>
+              )}
+              {industrySentiment === 'weak' && (
+                <span
+                  data-testid="home-reco-industry-weak"
+                  style={{
+                    fontSize: 11,
+                    color: '#6b7280',
+                    background: '#f3f4f6',
+                    border: '1px solid #d1d5db',
+                    borderRadius: 4,
+                    padding: '2px 6px',
+                  }}
+                  title="弱势板块 — 不建议买入"
+                >
+                  ⚠️ 弱势板块
+                </span>
+              )}
+            </div>
+          )}
           {/* Phase 10 — mini 信息行 (波动 / 持有 / 风险). 紧贴 CTA 上方. */}
           <div className="home-reco-card-mini">
             <span className="home-reco-card-mini-item">
@@ -1160,7 +1329,7 @@ const HomeWorkspace: React.FC = () => {
         </motion.div>
       );
     },
-    [busySymbol, handleFollowBuy, navigate, reduceMotion, toggleWhy, whyOpenSet]
+    [account, busySymbol, handleFollowBuy, navigate, reduceMotion, toggleWhy, whyOpenSet]
   );
 
   // ---------------------------------------------------------------------------
@@ -1266,6 +1435,116 @@ const HomeWorkspace: React.FC = () => {
           </>
         )}
       </motion.section>
+
+      {/* ===== PR-M4 (2026-06-29) — 今日市场卡 (4 海外指数 + regime + 仓位建议) =====
+          复用 /api/today/market-judgment 既有数据源 (TodayWorkspace 同款), 让新手
+          在主页一眼看到 "大盘偏多还是偏空, 该不该敢上仓位". failure 时静默 — 不
+          打断主流程, 用户能继续看推荐 + 持仓.
+
+          字段映射:
+            - regime: bull/bear/range/rebound/stress/unknown → 偏多/偏空/震荡/反弹/极端/未知
+            - suggested_position_pct: 0..1 → "建议仓位 N%"
+            - overnight_summary.avg_change_pct: 昨夜 4 海外均涨幅 → 涨/跌颜色
+            - overnight_foreign[]: 4 个海外指数明细 (恒指 / 纳指 / 标普 / 道指)
+      */}
+      <section className="home-section home-market-section">
+        {marketJudgmentLoading && !marketJudgment ? (
+          <Skeleton active paragraph={{ rows: 2 }} />
+        ) : marketJudgmentError && !marketJudgment ? null /* 失败静默, 不渲染整段 */ : marketJudgment ? (
+          <div
+            className="home-market-card"
+            data-testid="home-market-card"
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'minmax(180px, auto) 1fr',
+              gap: 24,
+              padding: '20px 24px',
+              borderRadius: 12,
+              background: 'linear-gradient(135deg, #fafbff 0%, #f5f7fb 100%)',
+              border: '1px solid #ececf3',
+            }}
+          >
+            <div>
+              <div style={{ fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+                今日市场 · {marketJudgment.trade_date}
+              </div>
+              {(() => {
+                const r = marketJudgment.regime;
+                const labelMap: Record<string, { text: string; icon: string; color: string }> = {
+                  bull: { text: '偏多', icon: '🌞', color: '#dc2626' },
+                  bear: { text: '偏空', icon: '🌧️', color: '#16a34a' },
+                  range: { text: '震荡', icon: '🌥️', color: '#6366f1' },
+                  rebound: { text: '反弹', icon: '🌤️', color: '#dc2626' },
+                  stress: { text: '极端', icon: '⛈️', color: '#9ca3af' },
+                  unknown: { text: '未知', icon: '❓', color: '#9ca3af' },
+                };
+                const meta = labelMap[r] || labelMap.unknown;
+                return (
+                  <>
+                    <div
+                      data-testid="home-market-regime"
+                      style={{ fontSize: 24, fontWeight: 700, color: meta.color, lineHeight: 1.2, marginBottom: 4 }}
+                    >
+                      {meta.icon} {meta.text}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#525252' }}>
+                      建议仓位{' '}
+                      <strong style={{ color: meta.color }}>
+                        {Number.isFinite(marketJudgment.suggested_position_pct)
+                          ? `${Math.round(marketJudgment.suggested_position_pct * 100)}%`
+                          : '—'}
+                      </strong>{' '}
+                      ·{' '}
+                      <span style={{ color: '#9ca3af' }}>
+                        {marketJudgment.suggested_position_label}
+                      </span>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
+                gap: 12,
+                alignSelf: 'center',
+              }}
+            >
+              {(marketJudgment.overnight_foreign || []).slice(0, 4).map(q => (
+                <div
+                  key={q.symbol}
+                  style={{
+                    background: '#fff',
+                    border: '1px solid #ececf3',
+                    borderRadius: 8,
+                    padding: '8px 12px',
+                  }}
+                  data-testid={`home-market-overseas-${q.symbol}`}
+                >
+                  <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 2 }}>{q.name}</div>
+                  <div
+                    className="tabular-nums"
+                    style={{
+                      fontSize: 16,
+                      fontWeight: 600,
+                      color: q.change_pct >= 0 ? '#dc2626' : '#16a34a',
+                    }}
+                  >
+                    {q.change_pct >= 0 ? '+' : ''}
+                    {q.change_pct.toFixed(2)}%
+                  </div>
+                </div>
+              ))}
+              {(marketJudgment.overnight_foreign || []).length === 0 && (
+                <div style={{ fontSize: 12, color: '#9ca3af', gridColumn: '1 / -1' }}>
+                  昨夜外盘数据缺失
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null}
+      </section>
 
       {/* ===== Phase 8 — 区块 2: 今日 AI 推荐 (大卡片 grid + 黑色 CTA + hover lift) =====
           Phase 10 — 按 30min 时间桶分组, 每组 head 显示 HH:MM + 时段标签 (盘前/上午盘/...).

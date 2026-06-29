@@ -178,6 +178,67 @@ export const RULE_ID_META: Readonly<Record<string, RuleIdMeta>> = Object.freeze(
     category: 'opportunity',
     categoryLabel: '机会',
   },
+  // ---- PR-M4 (2026-06-29) — 仓位风控 hard caps ----
+  // 系统级单仓 5% + 板块 25% hard cap. PR-K 回测 win 32%, 用户授权.
+  sizing_cap_exceeded: {
+    label: '⚖️ 单仓 5% 上限',
+    icon: '⚖️',
+    color: '#d97706',
+    category: 'risk',
+    categoryLabel: '风险',
+  },
+  industry_concentration_cap_exceeded: {
+    label: '📊 板块 25% 上限',
+    icon: '📊',
+    color: '#d97706',
+    category: 'risk',
+    categoryLabel: '风险',
+  },
+  // ---- PR-M2/M3 (2026-06-29) — 盘中异动 / 反转 / 板块强弱 (前向兼容) ----
+  // 这些 rule_id 待 PR-M2/M3 后端 merged 后才会真实写入 RiskAlert; 前端先注册中文
+  // 映射, 一旦 backend 真实发出 alert UI 立刻能识别 (避免用户先看到生硬英文).
+  intraday_momentum_buy: {
+    label: '📈 日内动量买入',
+    icon: '📈',
+    color: '#dc2626',
+    category: 'opportunity',
+    categoryLabel: '机会',
+  },
+  intraday_momentum_sell: {
+    label: '📉 日内动量卖出',
+    icon: '📉',
+    color: '#16a34a',
+    category: 'risk',
+    categoryLabel: '风险',
+  },
+  reversal_buy: {
+    label: '🔄 反转买入',
+    icon: '🔄',
+    color: '#dc2626',
+    category: 'opportunity',
+    categoryLabel: '机会',
+  },
+  reversal_sell: {
+    label: '🔄 反转卖出',
+    icon: '🔄',
+    color: '#16a34a',
+    category: 'risk',
+    categoryLabel: '风险',
+  },
+  leader_industry: {
+    label: '👑 龙头板块',
+    icon: '👑',
+    color: '#dc2626',
+    category: 'opportunity',
+    categoryLabel: '机会',
+  },
+  weak_industry: {
+    label: '⚠️ 弱势板块',
+    icon: '⚠️',
+    color: '#9ca3af',
+    category: 'risk',
+    categoryLabel: '风险',
+  },
 });
 
 /** unknown rule_id 的兜底元数据 — 灰色 + 显示原 rule_id 文本. */
