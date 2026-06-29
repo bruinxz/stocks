@@ -73,6 +73,45 @@ export interface SignalVerificationDiagnosisOptions extends SignalQueryOptions {
   detail_limit?: number;
 }
 
+/**
+ * PR-H (2026-06-29) — 推荐时机标签. 5 个 tag 表达"什么时间生成 / 什么时间该买入":
+ *   opening_rush    — 🌅 早盘抢 (9:25 集合竞价后批量, 建议 9:30-10:00 内买入)
+ *   afternoon_kick  — ☀️ 午后攻 (12:55 午后开盘前批量, 建议 13:00-13:30 买入)
+ *   closing_grab    — 🌆 尾盘埋 (14:30 尾盘批量, 建议 14:30-14:55 买入)
+ *   overnight       — 🌙 隔夜潜伏 (15:30 盘后批量, 建议**次日**9:30 集合竞价后买入)
+ *   intraday_anomaly— ⚡ 盘中异动 (持续触发, 建议 30 分钟内买入)
+ *
+ * cron 在 SchedulerService 注入 parameters.timing_tag, 走 QuantFusionService.runDailyPipeline
+ * → archiveQuantRecommendations → metadata.timing_tag. V3RecommendationController 把它
+ * 透传到 UI 卡片右上角 badge + "建议买入窗口" 文案.
+ *
+ * 未设 / 缺失 → 默认 'overnight' (兼容历史 cron 不传 tag 的 row).
+ */
+export type RecommendationTimingTag =
+  | 'opening_rush'
+  | 'afternoon_kick'
+  | 'closing_grab'
+  | 'overnight'
+  | 'intraday_anomaly';
+
+export const RECOMMENDATION_TIMING_TAGS: readonly RecommendationTimingTag[] = Object.freeze([
+  'opening_rush',
+  'afternoon_kick',
+  'closing_grab',
+  'overnight',
+  'intraday_anomaly',
+]);
+
+export function normalizeTimingTag(value: any): RecommendationTimingTag {
+  if (typeof value === 'string') {
+    const trimmed = value.trim().toLowerCase();
+    if ((RECOMMENDATION_TIMING_TAGS as readonly string[]).includes(trimmed)) {
+      return trimmed as RecommendationTimingTag;
+    }
+  }
+  return 'overnight';
+}
+
 export interface QuantRecommendationArchiveOptions {
   candidates: QuantRecommendationItem[];
   universe?: string;
@@ -85,6 +124,8 @@ export interface QuantRecommendationArchiveOptions {
   strategy_variant?: Record<string, any>;
   environment_policy?: Record<string, any>;
   environment_policy_snapshot_id?: string;
+  /** PR-H — 推荐时机标签, 默认 'overnight' (隔夜潜伏, 次日开盘买). */
+  timing_tag?: RecommendationTimingTag | string;
 }
 
 export interface TradingAgentsStructuredDecision {
@@ -1294,6 +1335,7 @@ export class AIInvestmentSignalService {
     const universe = options.universe || 'favorites';
     const style = options.style || 'balanced';
     const loop_run_id = options.loop_run_id;
+    const timing_tag = normalizeTimingTag(options.timing_tag);
     let created = 0;
     let updated = 0;
     const signal_ids: number[] = [];
@@ -1410,6 +1452,8 @@ export class AIInvestmentSignalService {
         price_change_pct: toNumber(candidate.change_percent),
         metadata: {
           quant_candidate: true,
+          // PR-H — 推荐时机标签, UI 卡片 badge + "建议买入窗口" 文案. 默认 overnight.
+          timing_tag,
           universe,
           style,
           as_of: options.as_of,
