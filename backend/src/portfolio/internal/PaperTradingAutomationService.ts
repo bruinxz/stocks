@@ -3677,6 +3677,8 @@ class PaperTradingAutomationService {
         universe,
         style,
         as_of: generated.as_of,
+        // PR-H — 透传时机标签 (来自 cron parameters.timing_tag, 默认 overnight).
+        timing_tag: (options as any).timing_tag,
       });
 
       if (toBoolean(options.verify_signals, false)) {

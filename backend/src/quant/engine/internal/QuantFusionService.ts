@@ -127,6 +127,13 @@ export interface QuantDailyPipelineOptions {
   factor_provider?: 'auto' | 'local_derived' | 'tushare' | 'eastmoney';
   block_buy_on_runtime_risk?: boolean;
   run_strategy_portfolio_experiments?: boolean;
+  /**
+   * PR-H (2026-06-29) — 推荐时机标签, 透传到 archiveQuantRecommendations →
+   * AIInvestmentSignal.metadata.timing_tag → V3RecommendationController 给前端卡片 badge.
+   * 5 个 tag: opening_rush / afternoon_kick / closing_grab / overnight / intraday_anomaly.
+   * 未传 → 默认 'overnight'.
+   */
+  timing_tag?: string;
 }
 
 interface QuantFusionCandidate {
@@ -1971,6 +1978,14 @@ export class QuantFusionService {
           quant_candidate: true,
           quant_framework_signal: true,
           fusion_version: 'quant_agent_v1',
+          // PR-H — 推荐时机标签 (opening_rush/afternoon_kick/closing_grab/overnight/intraday_anomaly).
+          // 缺失默认 'overnight'. UI badge + 建议买入窗口文案靠它.
+          timing_tag: (() => {
+            const tag = String(options.timing_tag || '').trim().toLowerCase();
+            return ['opening_rush', 'afternoon_kick', 'closing_grab', 'overnight', 'intraday_anomaly'].includes(tag)
+              ? tag
+              : 'overnight';
+          })(),
           universe: options.universe || 'market',
           as_of: candidate.trade_date,
           source: 'quant_framework',
