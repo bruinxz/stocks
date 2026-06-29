@@ -96,6 +96,18 @@ export const GLOBAL_WINDOW_MS = 60 * 1000;
 /** in-process dedup buffer LRU 上限 (跨进程不共享, 重启清空). */
 export const DEDUP_BUFFER_LRU_LIMIT = 1000;
 
+/**
+ * PR-L emergency stop-loss (2026-06-29):
+ * PR-K 30 天回测证实当前推荐系统 confidence_score 反向 — high(≥70) win 30% <
+ * low(<50) win 40%. 该 gate 在 push entry 处暂停 conf≥70 的飞书推送 (audit 仍写一行
+ * 留痕, dedup buffer 不消耗). **等 PR-I 战法库 + conf evaluator 修复后, 把
+ * EMERGENCY_CONF_GATE 切回 false** — 现阶段优先 fail-closed (高 conf 一律不推) 防
+ * 用户群被毒推. UI 仍显示推荐 (HomeWorkspace banner 警示).
+ */
+export const EMERGENCY_CONF_GATE = true;
+export const EMERGENCY_CONF_GATE_THRESHOLD = 70;
+export const EMERGENCY_CONF_GATE_SKIP_REASON = 'emergency_stop_loss_conf_gate';
+
 const DEFAULT_FRONTEND_BASE = 'http://localhost:3000';
 
 // ---------------------------------------------------------------------------
@@ -162,8 +174,8 @@ export interface PushedGroupResult {
 export interface PushResult {
   ok: boolean;
   pushed_groups: PushedGroupResult[];
-  /** 顶层 skip 原因 — 'deduped' / 'circuit_breaker' / 'dry_run' / 'no_webhook' (无任何 group 成功) */
-  skipped_reason?: 'deduped' | 'no_webhook' | 'circuit_breaker' | 'dry_run' | 'invalid_input';
+  /** 顶层 skip 原因 — 'deduped' / 'circuit_breaker' / 'dry_run' / 'no_webhook' (无任何 group 成功) / PR-L 'emergency_stop_loss_conf_gate' */
+  skipped_reason?: 'deduped' | 'no_webhook' | 'circuit_breaker' | 'dry_run' | 'invalid_input' | 'emergency_stop_loss_conf_gate';
   dedup_signature: string;
   /** caller 调试用 — buildOpportunityCard 输出 */
   card_payload?: any;
@@ -174,6 +186,19 @@ export interface PushResult {
 // ---------------------------------------------------------------------------
 // Pure helpers (exported for unit testing)
 // ---------------------------------------------------------------------------
+
+/** PR-L (2026-06-29) — confidence_score ≥ threshold 时拦截推送. NaN/null → 不拦截.
+ *  pure (export for test). 见顶部 EMERGENCY_CONF_GATE 注释. */
+export function isEmergencyConfGated(
+  decision: OpportunityDecision,
+  threshold: number = EMERGENCY_CONF_GATE_THRESHOLD
+): boolean {
+  if (!EMERGENCY_CONF_GATE) return false;
+  if (!decision) return false;
+  const n = Number(decision.confidence_score);
+  if (!Number.isFinite(n)) return false;
+  return n >= threshold;
+}
 
 /** 取 trigger_rule 对应 TTL; 未知 rule 走 DEFAULT_TTL_MS. */
 export function ttlForTriggerRule(rule: string): number {
@@ -650,6 +675,33 @@ export class IntradayOpportunityPusher {
         ok: false,
         pushed_groups: [],
         skipped_reason: 'invalid_input',
+        dedup_signature: '',
+      };
+    }
+
+    // PR-L emergency stop-loss gate (2026-06-29) — 高 conf 反向, push entry 处直接拦截.
+    // dry_run 仍跳过该 gate (UI 预览不受影响). audit 仍写一行留痕便于回查.
+    if (!options.dry_run && isEmergencyConfGated(normalized.decision)) {
+      logger.warn(
+        `[PR-L emergency] skip push for ${normalized.symbol} conf=${normalized.decision.confidence_score} ` +
+          `(high conf 反向 — 见 PR-K 30 天回测; 等 conf evaluator 修复)`
+      );
+      if (options.persist !== false) {
+        await this.safePersist(
+          normalized,
+          (options.target_groups || [OPPORTUNITY_TARGET_GROUPS.BUSINESS]).join(','),
+          {
+            ok: false,
+            dedup_signature: '',
+            skipped_reason: EMERGENCY_CONF_GATE_SKIP_REASON,
+            pushed_groups: [],
+          }
+        );
+      }
+      return {
+        ok: false,
+        pushed_groups: [],
+        skipped_reason: 'emergency_stop_loss_conf_gate',
         dedup_signature: '',
       };
     }

@@ -45,10 +45,21 @@
  * metadata?.trigger_time`, 任一可解析即用; 全部缺失则降级为不分组 + 标注 "今日推荐"
  * (signal_date 显示在 head). TODO(P2, backend): V3RecommendationController.enrichSignal
  * 把 signal.created_at 透传成 ISO 字符串, 前端无改动即生效时段分组.
+ *
+ * PR-L emergency stop-loss (2026-06-29):
+ * PR-K 回测证实当前推荐系统 30 天 buy 推荐 T+5 win 32% (低于 50% 随机), paper 同期
+ * PnL -10,798 元. 紧急止损 UI:
+ *   1. 顶部 <Alert type="warning"> 红色横幅 — "推荐系统处于评估期, 仅供参考".
+ *   2. 每张推荐卡 "一键跟单" 按钮文字改 "手动评估 (暂停一键跟单)" + 灰底.
+ *   3. handleFollowBuy 改为先弹 Modal "我已了解, 继续手动买入" 才走原下单路径.
+ *   4. 后端 paper_trading_portfolios.auto_trade_enabled 全部 SQL UPDATE = false.
+ *   5. 后端 IntradayOpportunityPusher / CriticalAnnouncementPushService 加 conf≥70
+ *      EMERGENCY_CONF_GATE — 高 conf 反向 (audit 仍写, OPS 飞书群停推).
+ * 等 PR-I 战法库 + conf evaluator 修复后, 把 EMERGENCY_CONF_GATE 切回 false, 移除 banner.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Modal, Result, Skeleton, Space, Tooltip, message } from 'antd';
+import { Alert, Button, Modal, Result, Skeleton, Space, Tooltip, message } from 'antd';
 import {
   ArrowUpOutlined,
   ArrowDownOutlined,
@@ -59,6 +70,7 @@ import {
   CaretUpOutlined,
   ArrowRightOutlined,
   CheckOutlined,
+  WarningOutlined,
 } from '@ant-design/icons';
 import { ShoppingCartIcon, InboxIcon } from '@heroicons/react/24/outline';
 import { motion, useReducedMotion } from 'framer-motion';
@@ -408,7 +420,12 @@ const HomeWorkspace: React.FC = () => {
   }, [loadAccount, loadRecommendations, loadPositions, loadSnapshots]);
 
   // -------- 一键跟单 --------
-  const handleFollowBuy = useCallback(
+  // PR-L emergency stop-loss (2026-06-29):
+  // PR-K 30 天回测证实推荐系统 win 32% (低于 50% 随机), 实盘 paper -10,798 元.
+  // 自动跟单已在后端 paper_trading_portfolios 表全停 (auto_trade_enabled=false).
+  // 前端 "一键跟单" 按钮先弹 emergency 风险评估 Modal, 用户 "我已了解, 继续手动
+  // 买入" 才走原下单路径 (showFollowBuyConfirmModal).
+  const showFollowBuyConfirmModal = useCallback(
     (rec: V3RecommendationItem) => {
       const price = rec.current_price;
       if (!price || price <= 0) {
@@ -465,6 +482,46 @@ const HomeWorkspace: React.FC = () => {
       });
     },
     [loadAccount, loadPositions, selectedPortfolioId]
+  );
+
+  // PR-L: handleFollowBuy 改为先弹 emergency 风险评估, "我已了解, 继续手动买入"
+  // 才走原下单路径 (showFollowBuyConfirmModal). data-testid 给 contract test 用.
+  const handleFollowBuy = useCallback(
+    (rec: V3RecommendationItem) => {
+      Modal.confirm({
+        title: (
+          <span data-testid="home-emergency-modal-title">
+            <WarningOutlined style={{ color: '#dc2626', marginRight: 8 }} />
+            推荐系统处于评估期 — 请确认是否继续
+          </span>
+        ),
+        icon: null,
+        width: 520,
+        content: (
+          <div style={{ fontSize: 14, lineHeight: 1.8 }}>
+            <p style={{ marginBottom: 8 }}>系统推荐模型经 30 天回测发现:</p>
+            <ul style={{ paddingLeft: 20, marginBottom: 12 }}>
+              <li>整体胜率 <strong>32%</strong> (低于 50% 随机)</li>
+              <li>高置信度推荐反而表现更差 (反向)</li>
+              <li>实盘累计亏损 <strong>10,798 元</strong></li>
+            </ul>
+            <p style={{ marginBottom: 0, color: 'var(--ink-3, #737373)' }}>
+              已暂停自动跟单. 您可手动评估后自行决定, 但<strong>强烈建议小仓试探</strong>.
+              详见{' '}
+              <a onClick={() => navigate('/workspace/today?tab=risk_center')}>
+                风控中心
+              </a>
+              .
+            </p>
+          </div>
+        ),
+        okText: '我已了解, 继续手动买入',
+        cancelText: '取消',
+        okButtonProps: { danger: true },
+        onOk: () => showFollowBuyConfirmModal(rec),
+      });
+    },
+    [navigate, showFollowBuyConfirmModal]
   );
 
   // -------- 一键卖出 --------
@@ -912,15 +969,17 @@ const HomeWorkspace: React.FC = () => {
             </span>
           </div>
           <Button
-            type="primary"
+            type="default"
             icon={<ShoppingCartIcon className="hero-icon hero-icon--sm" />}
             onClick={() => handleFollowBuy(rec)}
             loading={isBusy}
             disabled={!price}
             block
-            className="home-reco-card-cta"
+            className="home-reco-card-cta home-reco-card-cta--paused"
+            data-testid="home-reco-cta-paused"
+            style={{ background: '#f5f5f5', color: '#525252', borderColor: '#d4d4d4' }}
           >
-            一键跟单 ¥{formatInt(DEFAULT_FOLLOW_AMOUNT)}
+            手动评估 (暂停一键跟单)
           </Button>
           {/* hover 右上箭头 hint — 暗示 "可点进详情". 用 CSS 控制可见性, 始终 mount 防 layout 跳. */}
           <span className="home-reco-card-arrow" aria-hidden>
@@ -1001,6 +1060,29 @@ const HomeWorkspace: React.FC = () => {
   // ---------------------------------------------------------------------------
   return (
     <div className="home-workspace">
+      {/* PR-L emergency stop-loss banner (2026-06-29) — PR-K 回测证实 win 32% (低于
+          50% 随机), 实盘 paper -10,798 元. 自动跟单已停, UI 显著警示, 单击跟单
+          会先弹风险评估 Modal. data-testid 给 frontend contract test 用. */}
+      <Alert
+        type="warning"
+        showIcon
+        banner
+        data-testid="home-emergency-banner"
+        style={{ marginBottom: 16 }}
+        message={
+          <span style={{ fontSize: 14, fontWeight: 600 }}>
+            <WarningOutlined style={{ marginRight: 6 }} />
+            推荐系统处于评估期 — 仅供参考, 不要直接跟单
+          </span>
+        }
+        description={
+          <span style={{ fontSize: 12, color: '#7c3aed' }}>
+            30 天回测发现当前评分模型存在反向偏差, 自动跟单已暂停.
+            研究升级中, 预计 1-2 周后恢复. 详见{' '}
+            <a onClick={() => navigate('/workspace/today?tab=risk_center')}>风控中心</a>.
+          </span>
+        }
+      />
       {/* ===== Phase 8 — 区块 1: 账户总值 hero (64px 大数字 + radial gradient) =====
           Phase 10 — 72px + violet ¥ + 30 日 sparkline + 数据时间 pill.
           Phase 11 — 暗色 aurora + spotlight 鼠标跟随 + framer-motion mount 动画. */}
