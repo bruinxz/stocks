@@ -112,3 +112,5 @@ export * from './AuctionSnapshot';
 export * from './IntradayKline30Min';
 // PR-M3 (2026-06-29) — 板块情绪指数日度聚合
 export * from './IndustrySentimentIndex';
+// PR-O5 (2026-06-30) — 题材发酵 5 阶段日度分类
+export * from './ThemeFermentationPhase';

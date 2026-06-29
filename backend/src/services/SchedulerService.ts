@@ -6727,6 +6727,39 @@ class SchedulerService {
             `errors=${r.errors?.length || 0} skip=${r.skipped_reason || 'none'} ` +
             `by_pattern=${JSON.stringify(r.by_pattern)}`
         );
+      } else if (task.type === 'THEME_FERMENTATION_DETECT') {
+        // PR-O5 (2026-06-30) — 题材发酵 5 阶段 detector. 消费 PR-M3 industry_sentiment_indices
+        // (16:00 写完) + 昨日 phase, 给每个板块打 germinate/launch/outbreak/climax/recession
+        // 标签 + 检测主线切换事件. 工作日 16:30 跑.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { themeFermentationDetector } = require('./ThemeFermentationDetector');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await themeFermentationDetector.runOnce({
+          dry_run: parameters.dry_run === true,
+          trade_date: typeof parameters.trade_date === 'string' ? parameters.trade_date : undefined,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.industries_scanned,
+          completed_items: r.industries_written,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'theme_fermentation_detect',
+            trade_date: r.trade_date,
+            industries_scanned: r.industries_scanned,
+            industries_written: r.industries_written,
+            phase_distribution: r.phase_distribution,
+            mainline_switch_events: r.mainline_switch_events.length,
+            errors: r.errors?.length || 0,
+          },
+        });
+        logger.info(
+          `[THEME_FERMENTATION_DETECT] trade_date=${r.trade_date} scanned=${r.industries_scanned} ` +
+            `written=${r.industries_written} ` +
+            `dist=germ${r.phase_distribution.germinate}/lau${r.phase_distribution.launch}/out${r.phase_distribution.outbreak}/cli${r.phase_distribution.climax}/rec${r.phase_distribution.recession} ` +
+            `switch_events=${r.mainline_switch_events.length} errors=${r.errors?.length || 0}`
+        );
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }
@@ -8263,6 +8296,16 @@ class SchedulerService {
         name: 'PR-O2 涨停板战法 detector (15:30)',
         type: 'LIMIT_UP_BOARD_DETECT',
         cron_expression: '30 15 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // PR-O5 (2026-06-30): THEME_FERMENTATION_DETECT 题材发酵 5 阶段 detector.
+      // 消费 PR-M3 industry_sentiment_indices (16:00 写完) + 昨日 phase, 给每个板块打
+      // germinate/launch/outbreak/climax/recession 标签 + 检测主线切换. 工作日 16:30 跑.
+      {
+        name: '题材发酵 5 阶段 detector (PR-O5)',
+        type: 'THEME_FERMENTATION_DETECT',
+        cron_expression: '30 16 * * 1-5',
         is_active: true,
         parameters: { dry_run: false },
       },
