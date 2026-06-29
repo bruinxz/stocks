@@ -969,15 +969,17 @@ const HomeWorkspace: React.FC = () => {
             </span>
           </div>
           <Button
-            type="primary"
+            type="default"
             icon={<ShoppingCartIcon className="hero-icon hero-icon--sm" />}
             onClick={() => handleFollowBuy(rec)}
             loading={isBusy}
             disabled={!price}
             block
-            className="home-reco-card-cta"
+            className="home-reco-card-cta home-reco-card-cta--paused"
+            data-testid="home-reco-cta-paused"
+            style={{ background: '#f5f5f5', color: '#525252', borderColor: '#d4d4d4' }}
           >
-            一键跟单 ¥{formatInt(DEFAULT_FOLLOW_AMOUNT)}
+            手动评估 (暂停一键跟单)
           </Button>
           {/* hover 右上箭头 hint — 暗示 "可点进详情". 用 CSS 控制可见性, 始终 mount 防 layout 跳. */}
           <span className="home-reco-card-arrow" aria-hidden>
