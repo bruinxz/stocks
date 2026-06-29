@@ -525,6 +525,7 @@
   border: 1px solid rgba(201, 99, 56, 0.42);
   border-radius: 999px;
   color: var(--eq-clay) !important;
+  font-family: inherit;
   font-size: 11px !important;
   line-height: 1;
   vertical-align: text-top;
@@ -545,10 +546,11 @@
   width: max-content;
   max-width: min(282px, calc(100vw - 40px));
   padding: 9px 10px;
-  border: 1px solid rgba(23, 21, 18, 0.18);
+  border: 1px solid rgba(201, 99, 56, 0.34);
   border-radius: 9px;
-  background: var(--eq-ink);
-  color: var(--eq-paper) !important;
+  background: var(--eq-sheet);
+  color: var(--eq-ink) !important;
+  font-family: inherit;
   font-size: 12px !important;
   font-weight: 800 !important;
   line-height: 1.55 !important;
@@ -569,9 +571,9 @@
   bottom: -5px;
   width: 8px;
   height: 8px;
-  border-right: 1px solid rgba(23, 21, 18, 0.18);
-  border-bottom: 1px solid rgba(23, 21, 18, 0.18);
-  background: var(--eq-ink);
+  border-right: 1px solid rgba(201, 99, 56, 0.34);
+  border-bottom: 1px solid rgba(201, 99, 56, 0.34);
+  background: var(--eq-sheet);
   transform: translateX(-50%) rotate(45deg);
 }
 

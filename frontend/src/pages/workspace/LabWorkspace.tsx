@@ -111,9 +111,15 @@ const labStoryHints = {
   initialCapital: '初始资金会影响仓位规模、资金不足阻断和最终收益解释。',
 } as const;
 
+const labStoryTooltipIconStyle: React.CSSProperties = {
+  color: 'rgba(0, 0, 0, 0.45)',
+  cursor: 'help',
+  fontSize: 13,
+};
+
 const StoryTooltip: React.FC<{ story: keyof typeof labStoryHints }> = ({ story }) => (
   <Tooltip title={labStoryHints[story]}>
-    <InfoCircleOutlined style={{ color: '#8c8c8c', cursor: 'help', fontSize: 13 }} />
+    <InfoCircleOutlined style={labStoryTooltipIconStyle} />
   </Tooltip>
 );
 

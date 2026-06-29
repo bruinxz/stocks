@@ -60,6 +60,12 @@ assert(
       '账本负责把假设、回测任务、审计 artifact 和最终结论串起来。',
     ].every(text => page.includes(text))
 );
+assert(
+  'professional story tooltip icon uses one centralized visual treatment',
+  page.includes('labStoryTooltipIconStyle') &&
+    page.includes('style={labStoryTooltipIconStyle}') &&
+    !page.includes("style={{ color: '#8c8c8c', cursor: 'help', fontSize: 13 }}")
+);
 assert('lab service lists research experiments', service.includes('listResearchExperiments'));
 assert('lab service fetches research experiment detail', service.includes('getResearchExperiment'));
 assert('lab service runs experiment audit', service.includes('runResearchExperimentAudit'));

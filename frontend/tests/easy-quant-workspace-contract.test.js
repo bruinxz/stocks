@@ -64,6 +64,8 @@ const labService = read('frontend/src/services/labService.ts');
 const hooks = read('frontend/src/pages/workspace/easyQuantHooks.ts');
 const templates = read('frontend/src/pages/workspace/easyQuantTemplates.ts');
 const helpers = read('frontend/src/pages/workspace/easyQuantResultHelpers.ts');
+const storyHintCss = css.match(/\.eq-story-hint\s*\{[\s\S]*?\n\}/)?.[0] || '';
+const storyBubbleCss = css.match(/\.eq-story-bubble\s*\{[\s\S]*?\n\}/)?.[0] || '';
 const forbiddenEasyRuntimeLiterals = [
   ['stock', '_backtest', '_dev'].join(''),
   ['stock', '_dev'].join(''),
@@ -291,6 +293,14 @@ assert(
       '找回以前的简易版回测；可在这里复看，也可跳专业版深挖。',
       '串起研究假设、数据审计、成交约束和最终可信度。',
     ].every(text => page.includes(text))
+);
+assert(
+  'easy story hints keep the warm-paper visual language and typography',
+  storyHintCss.includes('font-family: inherit') &&
+    storyBubbleCss.includes('background: var(--eq-sheet)') &&
+    storyBubbleCss.includes('color: var(--eq-ink)') &&
+    storyBubbleCss.includes('border: 1px solid rgba(201, 99, 56, 0.34)') &&
+    !storyBubbleCss.includes('background: var(--eq-ink)')
 );
 assert(
   'full metrics include benchmark, final value, cost, and execution diagnostics',
