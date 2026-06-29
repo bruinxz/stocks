@@ -8,7 +8,7 @@ import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 import { DEFAULT_BENCHMARK_INDICES } from './BenchmarkIndexService';
-import { isBeijingExchange } from '../quant/marketLimits';
+import { isBeijingExchange, inferMarketSegment } from '../quant/marketLimits';
 import {
   marketEnvironmentService,
   type MarketEnvironmentSnapshot,
@@ -427,6 +427,96 @@ function getStyleWeights(style: RecommendationStyle): Record<string, number> {
   }
 }
 
+/**
+ * PR-N (2026-06-29): 板块多样性候选池默认 25%.
+ *
+ * 配合 [[applyBoardDiversity]] 在 [[QuantRecommendationService.getCandidateStocks]]
+ * 落地. 解决 PR-J 揭示的"存储模块 11/11 0 推荐"根因 — 老 SQL 按 change_percent
+ * DESC NULLS LAST 排序导致 sh.688/sz.001/sz.301 等 change_percent 频繁 NULL 的
+ * 新股 / 次新股被结构性排到第 1000+ 位永远进不了候选池.
+ *
+ * 25% 是经验值: 假设 4 板 (main/star/chinext/bj), 每板 25% = round-robin 平均
+ * 一份兜底; 余 75% 按 change_percent 排序 + 兜底候选混合, 仍让"今日活跃" 优先.
+ * 0 = 关闭多样性 (退回老逻辑, 单测验证).
+ */
+export const DEFAULT_BOARD_DIVERSITY_PCT = 0.25;
+
+/**
+ * PR-N: 把 stocks 按市场板块 (main/star/chinext/bj) 分桶后, 按比例 + round-robin
+ * 拼装 `limit` 个候选, 让小板块也有保留名额.
+ *
+ * 算法:
+ *   1. diversityCount = round(limit × diversityPct).
+ *   2. 把入参 stocks 按板块分桶 (顺序保留原排序, 即 change_percent DESC).
+ *   3. 多样性 quota: 按 [star, chinext, bj, main] round-robin 各取 1, 重复 diversityCount 次,
+ *      跳过已空板块 — 小板块 (star/chinext/bj) 优先于 main 进入 diversity quota.
+ *   4. 余下 quota: 从剩余 stocks (按原顺序) 依次取, 跳过已被 diversity 路径选过的.
+ *   5. 输出顺序: 先 diversity 行 (按 round-robin), 再 main-quota 行.
+ *
+ * 边界:
+ *   - stocks.length ≤ limit: 直接返回原数组拷贝 (无需多样性).
+ *   - diversityPct=0: 退化为 stocks.slice(0, limit).
+ *   - 单一板块: diversity quota 全落到该板, 输出 == slice(0, limit).
+ *   - unknown 板块 (含错误格式 symbol): 不进 round-robin, 仅在 main quota 中按顺序取.
+ *
+ * 纯函数 / export 让单测能脱 DB 验证.
+ */
+export function applyBoardDiversity<T extends { symbol?: string | null }>(
+  stocks: T[],
+  limit: number,
+  diversityPct: number = DEFAULT_BOARD_DIVERSITY_PCT
+): T[] {
+  if (stocks.length <= limit) return stocks.slice();
+  const clampedPct = Math.max(0, Math.min(1, diversityPct));
+  if (clampedPct === 0) return stocks.slice(0, limit);
+  const diversityCount = Math.round(limit * clampedPct);
+  if (diversityCount <= 0) return stocks.slice(0, limit);
+  const buckets: Record<'main' | 'star' | 'chinext' | 'bj', T[]> = {
+    main: [],
+    star: [],
+    chinext: [],
+    bj: [],
+  };
+  for (const s of stocks) {
+    const seg = inferMarketSegment(s.symbol);
+    if (seg === 'main' || seg === 'star' || seg === 'chinext' || seg === 'bj') {
+      buckets[seg].push(s);
+    }
+  }
+  const picked = new Set<T>();
+  const out: T[] = [];
+  const order: Array<keyof typeof buckets> = ['star', 'chinext', 'bj', 'main'];
+  const cursors: Record<keyof typeof buckets, number> = { main: 0, star: 0, chinext: 0, bj: 0 };
+  let diversityLeft = diversityCount;
+  while (diversityLeft > 0) {
+    let progressed = false;
+    for (const seg of order) {
+      if (diversityLeft <= 0) break;
+      const bucket = buckets[seg];
+      const cur = cursors[seg];
+      if (cur < bucket.length) {
+        const item = bucket[cur];
+        cursors[seg] = cur + 1;
+        if (!picked.has(item)) {
+          picked.add(item);
+          out.push(item);
+          diversityLeft -= 1;
+          progressed = true;
+        }
+      }
+    }
+    if (!progressed) break;
+  }
+  for (const s of stocks) {
+    if (out.length >= limit) break;
+    if (!picked.has(s)) {
+      picked.add(s);
+      out.push(s);
+    }
+  }
+  return out;
+}
+
 export class QuantRecommendationService {
   async runStrategyExperiment(options: QuantRecommendationExperimentOptions = {}) {
     const baseUniverse = options.universe || 'market';
@@ -785,6 +875,13 @@ export class QuantRecommendationService {
      * favorites universe 模式下不应用此过滤 (用户自选股就是最终意图)。
      */
     include_bj?: boolean;
+    /**
+     * PR-N (2026-06-29): 板块多样性保留比例 — 解决 PR-J 揭示的存储模块 0/11 推荐
+     * 根因 (universe SQL 按 change_percent DESC NULLS LAST 排序 + Math.min(limit*2, 1000)
+     * 二段缩水, 让 sh.688 / sz.301 / sz.001 等 change_percent 频繁 NULL/stale 的
+     * 板块被结构性挤出候选池). 默认 0.25 (25%); 0 = 关闭多样性 (退回老逻辑).
+     */
+    board_diversity_pct?: number;
   }): Promise<Stock[]> {
     const includeBJ = options.include_bj === true;
     const filterBJ = (stocks: Stock[]) =>
@@ -878,10 +975,24 @@ export class QuantRecommendationService {
         ['updated_at', 'DESC'],
         ['total_market_cap', 'DESC NULLS LAST'],
       ] as any,
-      // 多取一些以补偿 BJ 过滤后的损失
-      limit: includeBJ ? options.limit : Math.min(options.limit * 2, 1000),
+      // PR-N (2026-06-29): 1000 → 2000 cap + limit*4 — 让板块多样性 selector
+      // 有足够候选可分配. 老 1000 cap 让 change_percent NULL/stale 的新股
+      // (sh.688 / sz.001 / sz.301) 系统性落榜, 是 PR-J 11/11 存储模块 0 推荐的
+      // 数据层根因之一. A 股 listed ≈ 5500, 2000 cap 让所有板块都至少进
+      // 200-400 候选有机会被 diversity selector 看到.
+      limit: Math.min(options.limit * 4, 2000),
     });
     const filtered = filterBJ(rawStocks);
+    // PR-N (2026-06-29): 应用板块多样性保留 — 让 sh.688 / sz.301 等非主板候选有
+    // ≥ board_diversity_pct 名额, 解决 change_percent NULL/stale 让新股结构性
+    // 落榜的问题. 默认 25%, 传 0 关闭.
+    const diversityPct = Math.max(
+      0,
+      Math.min(1, options.board_diversity_pct ?? DEFAULT_BOARD_DIVERSITY_PCT)
+    );
+    if (diversityPct > 0 && filtered.length > options.limit) {
+      return applyBoardDiversity(filtered, options.limit, diversityPct);
+    }
     return filtered.slice(0, options.limit);
   }
 

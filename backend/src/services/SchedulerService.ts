@@ -934,10 +934,13 @@ class SchedulerService {
             type: 'daily_update',
             date: today,
             forceUpdate: Boolean(parameters.force_update || parameters.forceUpdate || isManual),
+            // PR-N (2026-06-29): default 300 → 2000, cap 2000 → 6000 — 全 A 股
+            // 5500 票一次覆盖. 老 cap 让 sh.688 / sz.001 / sz.301 板块新股
+            // 永远轮不到 sync, 是 PR-J 11/11 存储模块 0 推荐的数据层根因.
             max_stocks: this.toPositiveInt(
               parameters.max_stocks || parameters.maxStocks,
-              300,
-              2000
+              2000,
+              6000
             ),
             execution_log_id: executionLog?.id,
             scheduled_task_id: task.id,
@@ -6909,7 +6912,12 @@ class SchedulerService {
         is_active: true,
         parameters: {
           force_update: false,
-          max_stocks: 300,
+          // PR-N (2026-06-29): 300 → 2000 — 解决 PR-J 揭示的 sh.688 / sz.001 /
+          // sz.301 板块永远 sync 不到的根因. A 股 listed ≈ 5500, 300 cap 让
+          // 缺 daily_bars 的新股每天只能补 ~300 只, 排到第二天又被更新更晚的票
+          // 挤掉, 形成永远轮不到的死循环. 2000 让 3 个交易日全市场覆盖一次,
+          // 实测 5 并发 ≈ 单股 200ms × 2000 = ~7 分钟跑完, 不堵塞盘后任务.
+          max_stocks: 2000,
         },
       },
       {
