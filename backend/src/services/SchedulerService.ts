@@ -6452,6 +6452,40 @@ class SchedulerService {
           `[INTRADAY_OPPORTUNITY_SCAN] scanned=${scanRes.scanned_count} hits=${scanRes.hit_count} ` +
             `pushed=${scanRes.pushed_count} skipped=${scanRes.skipped_count} errors=${scanRes.errors.length}`
         );
+      } else if (task.type === 'BULLISH_EVENT_DETECT') {
+        // PR-B (2026-06-29) — 个股利好主动推送. 用户原话 "周末利好华工科技的新闻你看到了吗,
+        // 这类新闻你需要发消息提示我". 4 detector (critical 公告 / 正面新闻 / 关注度突增 /
+        // KOL 集中关注), 命中写 RiskAlert(level=MEDIUM) + 推 OPS 飞书群. 24h dedup 走
+        // RiskAlert.message tag. fail-OPEN: runOnce 永不 throw — 整次失败也保证 cron tick
+        // 进 SUCCESS, 异常通过 result_summary.errors 暴露.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { bullishEventDetectorService } = require('./BullishEventDetectorService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await bullishEventDetectorService.runOnce({
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned,
+          completed_items: r.pushed,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'bullish_event_detect',
+            scanned: r.scanned,
+            detected: r.detected,
+            pushed: r.pushed,
+            deduped: r.deduped,
+            by_detector: r.by_detector,
+            errors: r.errors?.length || 0,
+            dry_run: r.dry_run,
+          },
+        });
+        logger.info(
+          `[BULLISH_EVENT_DETECT] scanned=${r.scanned} detected=${r.detected} pushed=${r.pushed} ` +
+            `deduped=${r.deduped} errors=${r.errors?.length || 0} ` +
+            `by_detector=${JSON.stringify(r.by_detector)}`
+        );
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }
@@ -7808,6 +7842,17 @@ class SchedulerService {
         cron_expression: '30 18 * * *',
         is_active: true,
         parameters: { lookback_days: 14, limit: 10 },
+      },
+      // PR-B (2026-06-29): BULLISH_EVENT_DETECT 个股利好主动推送. 用户原话
+      // "周末利好华工科技的新闻你看到了吗, 这类新闻你需要发消息提示我".
+      // 每 30min 跑 4 detector (critical 公告 / 正面新闻 / 关注度突增 / KOL 集中看多),
+      // 命中写 RiskAlert + 推 OPS 飞书群. 24h dedup. 周末 / 盘前盘后都跑.
+      {
+        name: '个股利好主动推送 (PR-B)',
+        type: 'BULLISH_EVENT_DETECT',
+        cron_expression: '*/30 * * * *',
+        is_active: true,
+        parameters: { dry_run: false },
       },
       // ===========================================================================
       // Macro 串联补丁 (2026-06-21) — Batch AJ: 把 14 个已注册并已实现但 ensureDefaultTasks
