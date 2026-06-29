@@ -77,6 +77,10 @@ function makeDs(overrides: Partial<IntradayUniverseDataSource> = {}): IntradayUn
     async listTopMarketCapSymbols() {
       return [];
     },
+    async listTopByBoardSymbols() {
+      // PR-N (2026-06-29) 新方法 — 默认返空让既有测试无副作用.
+      return [];
+    },
     ...overrides,
   };
 }

@@ -44,7 +44,8 @@ export type IntradayUniverseSource =
   | 'top_loser'
   | 'yesterday_limit_up'
   | 'top_turnover'
-  | 'market_cap_fallback';
+  | 'market_cap_fallback'
+  | 'board_diversity_fallback';
 
 export interface IntradayUniverseEntry {
   symbol: string;
@@ -65,6 +66,15 @@ export interface ResolveUniverseOptions {
    * 覆盖. 任何时候这些 symbol 都先入 map + 永不被 truncateToMax 淘汰.
    */
   priority_symbols?: ReadonlyArray<string>;
+  /**
+   * PR-N (2026-06-29): 是否纳入板块多样性兜底 (sh.688 科创 / sz.30x 创业 /
+   * sh.6+sz.0xx 主板 / bj 北交各取 top N 按市值). 默认 true. 关闭 = 退回 CE-A
+   * 老路径, 全靠主板大盘股 + 涨跌幅榜兜底.
+   *
+   * 解决 PR-J 揭示的"realtime_quotes 对 sh.688 11 只存储票零历史 quote"根因.
+   * 关闭场景: 单测 / 临时调试不需要新股 quote.
+   */
+  include_board_diversity?: boolean;
 }
 
 export interface IntradayUniverseDataSource {
@@ -82,6 +92,15 @@ export interface IntradayUniverseDataSource {
   listTopTurnoverSymbols(limit: number): Promise<string[]>;
   /** 兜底: stocks 表 is_listed=true 按 total_market_cap DESC 前 N. */
   listTopMarketCapSymbols(limit: number): Promise<string[]>;
+  /**
+   * PR-N (2026-06-29) 板块多样性兜底: 按板块前缀 (sh.688 科创 / sz.30x 创业 /
+   * sh.6+sz.0xx 主板 / bj 北交) 取 top N 按 total_market_cap DESC.
+   *
+   * 解决 PR-J 揭示的 "realtime_quotes 对 sh.688 11 只存储票零历史 quote" 根因 —
+   * listTopMarketCapSymbols 老兜底全是 sh.60x 主板大盘股, 让 sh.688 / sz.30x
+   * 板块新股永远轮不到 quote 池. 本方法保证 4 板各有 ≥ top-N 名额.
+   */
+  listTopByBoardSymbols(board: 'star' | 'chinext' | 'main' | 'bj', limit: number): Promise<string[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +153,9 @@ const SOURCE_PRIORITY: Record<IntradayUniverseSource, number> = {
   top_loser: 4,
   top_turnover: 5,
   favorite: 6,
+  // PR-N (2026-06-29): 板块多样性兜底优先于普通市值兜底, 让 sh.688/sz.30x
+  // top-cap 票优先于通用市值排序兜底进 universe.
+  board_diversity_fallback: 8,
   market_cap_fallback: 9,
 };
 
@@ -213,6 +235,8 @@ export class IntradayUniverseService {
     const minSize = Math.max(1, options.min_size ?? DEFAULT_MIN_SIZE);
     const maxSize = Math.max(minSize, options.max_size ?? DEFAULT_MAX_SIZE);
     const includeMovers = options.include_market_movers !== false;
+    // PR-N (2026-06-29): 板块多样性默认 ON. 关闭场景: 单测 / 临时调试.
+    const includeBoardDiversity = options.include_board_diversity !== false;
     // priority_symbols: undefined → 用默认 9 只; 显式 [] → 关闭; [...] → 覆盖
     const prioritySymbols: ReadonlyArray<string> =
       options.priority_symbols ?? DEFAULT_PRIORITY_SYMBOLS;
@@ -285,6 +309,29 @@ export class IntradayUniverseService {
         logger.warn(
           `[IntradayUniverseService] listTopTurnoverSymbols failed: ${(err as Error)?.message || err}`
         );
+      }
+    }
+
+    // 7) PR-N (2026-06-29) 板块多样性兜底: sh.688 / sz.30x / sh.6+sz.0xx / bj 4 板
+    //    各取 top-cap N 票, 解决 PR-J 揭示的 "realtime_quotes 对 sh.688 11 只存储票
+    //    零历史 quote" 根因. 持仓 / 涨跌幅 / 涨停 / 成交额 子源全偏置主板, 新股
+    //    (sh.688 / sz.301) 永远轮不到. perBoard = max(10, floor(max_size*0.05));
+    //    默认 max=500 → 25 票/板, 4 板 ≈ 100 票, 占 max 的 20% — 不挤掉活跃股,
+    //    但保证 hot 板块新股进 quote 池. 单测 / 调试可关 (include_board_diversity=false).
+    if (includeBoardDiversity) {
+      const perBoard = Math.max(10, Math.floor(maxSize * 0.05));
+      const boards: Array<'star' | 'chinext' | 'main' | 'bj'> = ['star', 'chinext', 'main', 'bj'];
+      for (const b of boards) {
+        try {
+          const rows = await this.ds.listTopByBoardSymbols(b, perBoard);
+          mergeSymbolsIntoMap(map, rows, 'board_diversity_fallback');
+        } catch (err: unknown) {
+          logger.warn(
+            `[IntradayUniverseService] listTopByBoardSymbols(${b}) failed: ${
+              (err as Error)?.message || err
+            }`
+          );
+        }
       }
     }
 
@@ -481,6 +528,57 @@ class DefaultIntradayUniverseDataSource implements IntradayUniverseDataSource {
       attributes: ['symbol'],
       where: { is_listed: true },
       order: [['total_market_cap', 'DESC NULLS LAST']],
+      limit,
+      raw: true,
+    });
+    return (rows || [])
+      .map(r => String((r as any)?.symbol || '').trim())
+      .filter(Boolean);
+  }
+
+  /**
+   * PR-N (2026-06-29) 板块多样性兜底实现: 按板块前缀 (sh.688/sh.689 科创,
+   * sz.30x 创业, sh.6+sz.0xx 主板, bj 北交) 取 top-cap 票.
+   */
+  async listTopByBoardSymbols(
+    board: 'star' | 'chinext' | 'main' | 'bj',
+    limit: number
+  ): Promise<string[]> {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { Stock } = require('../models/Stock');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { Op } = require('sequelize');
+    let where: any = { is_listed: true };
+    if (board === 'star') {
+      where = {
+        ...where,
+        [Op.or]: [
+          { symbol: { [Op.like]: 'sh.688%' } },
+          { symbol: { [Op.like]: 'sh.689%' } },
+        ],
+      };
+    } else if (board === 'chinext') {
+      where = { ...where, symbol: { [Op.like]: 'sz.30%' } };
+    } else if (board === 'main') {
+      where = {
+        ...where,
+        [Op.or]: [
+          { symbol: { [Op.like]: 'sh.60%' } },
+          { symbol: { [Op.like]: 'sz.00%' } },
+          { symbol: { [Op.like]: 'sz.001%' } },
+          { symbol: { [Op.like]: 'sz.002%' } },
+        ],
+      };
+    } else if (board === 'bj') {
+      where = { ...where, symbol: { [Op.like]: 'bj.%' } };
+    }
+    const rows: Array<{ symbol: string }> = await Stock.findAll({
+      attributes: ['symbol'],
+      where,
+      order: [
+        ['total_market_cap', 'DESC NULLS LAST'],
+        ['circulating_market_cap', 'DESC NULLS LAST'],
+      ],
       limit,
       raw: true,
     });

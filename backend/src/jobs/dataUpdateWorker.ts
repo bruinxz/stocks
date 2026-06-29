@@ -87,7 +87,10 @@ export class DataUpdateWorker {
    * 处理每日数据更新
    */
   private async processDailyUpdate(job: Job<DataUpdateJobData>) {
-    const { date, forceUpdate = false, max_stocks = 300 } = job.data;
+    // PR-N (2026-06-29): default 300 → 2000 — 全 A 股 ≈ 5500, 老 default
+    // 让 sh.688 / sz.001 / sz.301 板块新股永远轮不到日更. 与
+    // SchedulerService ensureDefaultTasks + caller 上限同步.
+    const { date, forceUpdate = false, max_stocks = 2000 } = job.data;
     const lockKey = LockKeys.DAILY_UPDATE(date);
     let lockValue: string | null = null;
     let renewTimer: NodeJS.Timeout | null = null;
