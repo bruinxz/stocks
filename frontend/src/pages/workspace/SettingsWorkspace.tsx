@@ -671,6 +671,7 @@ const SettingsWorkspace: React.FC = () => {
         'earnings_alert',
         'risk_alert',
         'weekly_review',
+        'stock_bullish_event',
       ];
       const channels: NotificationChannelKey[] = ['feishu', 'email', 'wechat', 'sms'];
       for (const ev of events) {
@@ -1324,11 +1325,32 @@ const SettingsWorkspace: React.FC = () => {
     }
 
     const draft = pushDraft;
-    const EVENTS: Array<{ key: NotificationEventKey; label: string; hint: string }> = [
-      { key: 'daily_digest', label: '当日交易日报', hint: '15:30 收盘后推送' },
-      { key: 'earnings_alert', label: '业绩预告即时提醒', hint: '持仓股 + 自选股' },
-      { key: 'risk_alert', label: '高优先级风控告警', hint: 'HIGH 级实时分发' },
-      { key: 'weekly_review', label: '上周复盘报告', hint: '周一 08:00 HTML 邮件' },
+    /**
+     * PR-D (2026-06-29): 给每个事件加 `category` 字段 — Tag 渲染 "类别" 列.
+     * routine=日常 / risk=风控 / opportunity=机会 (新增).
+     */
+    type EventCategory = 'routine' | 'risk' | 'opportunity';
+    const CATEGORY_META: Record<EventCategory, { label: string; color: string }> = {
+      routine: { label: '日常', color: 'default' },
+      risk: { label: '风控', color: 'red' },
+      opportunity: { label: '机会', color: 'green' },
+    };
+    const EVENTS: Array<{
+      key: NotificationEventKey;
+      label: string;
+      hint: string;
+      category: EventCategory;
+    }> = [
+      { key: 'daily_digest', label: '当日交易日报', hint: '15:30 收盘后推送', category: 'routine' },
+      { key: 'earnings_alert', label: '业绩预告即时提醒', hint: '持仓股 + 自选股', category: 'risk' },
+      { key: 'risk_alert', label: '高优先级风控告警', hint: 'HIGH 级实时分发', category: 'risk' },
+      { key: 'weekly_review', label: '上周复盘报告', hint: '周一 08:00 HTML 邮件', category: 'routine' },
+      {
+        key: 'stock_bullish_event',
+        label: '个股利好事件',
+        hint: '持仓 / 自选 / 推荐过的股票收到关键公告 / 正面新闻 / KOL 集中关注 / 关注度突增',
+        category: 'opportunity',
+      },
     ];
     const CHANNELS: Array<{
       key: NotificationChannelKey;
@@ -1540,11 +1562,16 @@ const SettingsWorkspace: React.FC = () => {
               {
                 title: '事件类型',
                 dataIndex: 'label',
-                width: 220,
+                width: 240,
                 fixed: 'left',
                 render: (label: string, row) => (
-                  <Space direction="vertical" size={0}>
-                    <Text strong>{label}</Text>
+                  <Space direction="vertical" size={2}>
+                    <Space size={6}>
+                      <Tag color={CATEGORY_META[row.category].color}>
+                        {CATEGORY_META[row.category].label}
+                      </Tag>
+                      <Text strong>{label}</Text>
+                    </Space>
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       {row.hint}
                     </Text>
@@ -1585,6 +1612,13 @@ const SettingsWorkspace: React.FC = () => {
             提示：单元格灰色 &quot;—&quot; 表示该通道当前架构下不支持该事件类型。通道总开关
             关闭时（顶部 Card 右上 Switch）所有事件勾选都不会生效——保存后仍会 disabled。
             订阅事件总数与右上角 KPI 同步。
+            <br />
+            <Tag color="green" style={{ marginRight: 4 }}>
+              机会
+            </Tag>
+            类事件（如个股利好）由 CriticalAnnouncementPushService 触发, 持仓
+            该股票的用户会自动收到一条 inbox RiskAlert（红点 + 详情）；勾选邮件 / 飞书
+            后还会推送到对应通道。
           </Text>
         </Card>
       </Space>

@@ -51,7 +51,12 @@ export function parseApplyRecommendationBody(body: unknown): {
  *
  * 设计逻辑见 `NotificationConfigMatrixView` jsdoc。
  */
-type NotificationEventKey = 'daily_digest' | 'earnings_alert' | 'risk_alert' | 'weekly_review';
+type NotificationEventKey =
+  | 'daily_digest'
+  | 'earnings_alert'
+  | 'risk_alert'
+  | 'weekly_review'
+  | 'stock_bullish_event';
 type NotificationChannelKey = 'feishu' | 'email' | 'wechat' | 'sms';
 
 interface MatrixCell {
@@ -83,6 +88,10 @@ export const NOTIFICATION_APPLICABLE_MATRIX: Record<
   earnings_alert: { feishu: true, email: false, wechat: true, sms: false },
   risk_alert: { feishu: true, email: true, wechat: true, sms: true },
   weekly_review: { feishu: false, email: true, wechat: false, sms: false },
+  // PR-D (2026-06-29): 个股利好/利空关键公告事件 — 由 CriticalAnnouncementPushService
+  // (PR-E) 触发 OPS 群飞书 push + 持仓用户 inbox RiskAlert. UI 让用户额外勾选
+  // "我邮箱也想收 critical 公告" 时, RealtimeAlertDispatcher 走 email 通道.
+  stock_bullish_event: { feishu: true, email: true, wechat: false, sms: false },
 };
 
 const APPLICABLE_MATRIX = NOTIFICATION_APPLICABLE_MATRIX;
@@ -92,6 +101,7 @@ const EVENT_ORDER: NotificationEventKey[] = [
   'earnings_alert',
   'risk_alert',
   'weekly_review',
+  'stock_bullish_event',
 ];
 
 const CHANNEL_ORDER: NotificationChannelKey[] = ['feishu', 'email', 'wechat', 'sms'];
@@ -144,6 +154,8 @@ export function buildMatrixView(cfg: NotificationChannelsConfig): NotificationCo
       sms: 'risk_alert',
     },
     weekly_review: { email: 'weekly_review' },
+    // PR-D (2026-06-29): 个股利好/利空事件子开关
+    stock_bullish_event: { feishu: 'stock_bullish_event', email: 'stock_bullish_event' },
   };
 
   const matrix = {} as Record<NotificationEventKey, Record<NotificationChannelKey, MatrixCell>>;
@@ -213,6 +225,7 @@ export function matrixUpdatesToConfigPatch(updates: any): Partial<NotificationCh
         earnings_alert: 'earnings_alert',
         risk_alert: 'risk_alert',
         weekly_review: 'weekly_review',
+        stock_bullish_event: 'stock_bullish_event',
       };
       const field = fieldByEvent[event];
       patch[channel] = { ...(patch[channel] || {}), [field]: v };

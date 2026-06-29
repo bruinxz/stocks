@@ -544,12 +544,16 @@ export async function sendRealtimeAlertTest(
  *   - earnings_alert: 业绩预告即时提醒 (持仓股 / 自选股)
  *   - risk_alert: HIGH 级风控告警 (实时多通道)
  *   - weekly_review: 上周复盘报告 (周一 08:00 邮件)
+ *   - stock_bullish_event: PR-D (2026-06-29) — 个股利好/利空关键公告
+ *     (持仓股 critical 公告即时通知, 由 CriticalAnnouncementPushService 写
+ *     RiskAlert + OPS 群飞书 push)
  */
 export type NotificationEventKey =
   | 'daily_digest'
   | 'earnings_alert'
   | 'risk_alert'
-  | 'weekly_review';
+  | 'weekly_review'
+  | 'stock_bullish_event';
 
 export type NotificationChannelKey = 'feishu' | 'email' | 'wechat' | 'sms';
 
