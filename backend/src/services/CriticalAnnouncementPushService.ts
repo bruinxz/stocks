@@ -60,6 +60,46 @@ export const CRITICAL_ANNOUNCEMENT_USER_ALERT_MAX_MSG_LEN = 1000;
 /** PR-E: RiskAlert rule_id 常量 — 与 RealtimeAlertDispatcher dedup signature 对齐 */
 export const CRITICAL_ANNOUNCEMENT_RULE_ID = 'announcement_critical';
 
+/**
+ * PR-L emergency stop-loss (2026-06-29):
+ * PR-K 回测证实当前 confidence_score 反向 — high(≥70) win 30% < low(<50) win 40%.
+ * 该 gate 在 OPS 飞书 push entry 处暂停 conf≥70 的推送 (user inbox RiskAlert 仍写,
+ * UI 不受影响). conf 字段从 record.confidence_score / metadata.fusion_score /
+ * metadata.confidence_score 三者按优先级取数, 任一 ≥ EMERGENCY_CONF_GATE_THRESHOLD
+ * 即拦截. **等 PR-I 战法库 + conf evaluator 修复后, 把 EMERGENCY_CONF_GATE 切回
+ * false** — 现阶段优先 fail-closed (高 conf 一律不推 OPS 群) 防 OPS 群被毒推.
+ */
+export const EMERGENCY_CONF_GATE = true;
+export const EMERGENCY_CONF_GATE_THRESHOLD = 70;
+export const EMERGENCY_CONF_GATE_SKIP_REASON = 'emergency_stop_loss_conf_gate';
+
+/**
+ * PR-L: 从 NLP record 提取 confidence_score (兼容多字段命名), 任一 ≥ threshold
+ * 返 true. 全部缺失 / 非数字 → false (不拦截).
+ * pure (export for test).
+ */
+export function isEmergencyConfGated(
+  record: AnnouncementNLPRecord,
+  threshold: number = EMERGENCY_CONF_GATE_THRESHOLD
+): boolean {
+  if (!EMERGENCY_CONF_GATE) return false;
+  if (!record) return false;
+  const meta = (record as any).metadata || {};
+  const candidates = [
+    (record as any).confidence_score,
+    meta.confidence_score,
+    meta.fusion_score,
+    meta.final_score,
+    (record as any).fusion_score,
+    (record as any).final_score,
+  ];
+  for (const c of candidates) {
+    const n = Number(c);
+    if (Number.isFinite(n) && n >= threshold) return true;
+  }
+  return false;
+}
+
 export interface CriticalAnnouncementPushItemResult {
   stock_code: string;
   original_title: string;
