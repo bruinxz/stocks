@@ -211,5 +211,35 @@ assert(
   !/#2764b8|#1f3a5f|geekblue|蓝色后台/.test(page + css)
 );
 
+// ---------------------------------------------------------------------------
+// PR-L emergency stop-loss (2026-06-29) — HomeWorkspace guards.
+// 见 frontend/src/pages/HomeWorkspace.tsx 顶部 PR-L 注释:
+// PR-K 30 天回测证实 win 32%, 必须把"一键跟单"按钮变灰 + 加 banner + 弹 Modal.
+// 这些断言只检 source 关键字 (不验视觉) — 防止 PR-L 警示在后续重构里被无意删除.
+// ---------------------------------------------------------------------------
+const home = read('frontend/src/pages/HomeWorkspace.tsx');
+assert(
+  'PR-L: HomeWorkspace banner data-testid + Alert',
+  home.includes('data-testid="home-emergency-banner"') &&
+    /Alert[\s\S]{0,300}?type="warning"[\s\S]{0,400}?推荐系统处于评估期/.test(home)
+);
+assert(
+  'PR-L: reco CTA button changed from 一键跟单 to 手动评估',
+  home.includes('手动评估 (暂停一键跟单)') &&
+    home.includes('data-testid="home-reco-cta-paused"') &&
+    !/>\s*一键跟单 ¥/.test(home)
+);
+assert(
+  'PR-L: handleFollowBuy wraps emergency Modal first',
+  home.includes('data-testid="home-emergency-modal-title"') &&
+    home.includes('我已了解, 继续手动买入') &&
+    /Modal\.confirm\(\{[\s\S]{0,1500}?我已了解, 继续手动买入/.test(home)
+);
+assert(
+  'PR-L: doc header records emergency context',
+  home.includes('PR-L emergency stop-loss (2026-06-29)') &&
+    home.includes('EMERGENCY_CONF_GATE')
+);
+
 console.log(`\nResult: ${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
