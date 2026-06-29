@@ -225,10 +225,7 @@ export function detectLimitUpBreakout(quote: QuoteLike): boolean {
   return quote.change_percent >= LIMIT_UP_BREAKOUT_CHANGE_PCT_THRESHOLD;
 }
 
-export function detectSectorLinkUndermove(
-  quote: QuoteLike,
-  industryLimitUpCount: number
-): boolean {
+export function detectSectorLinkUndermove(quote: QuoteLike, industryLimitUpCount: number): boolean {
   if (industryLimitUpCount < SECTOR_LINK_LIMIT_UP_COUNT) return false;
   if (quote.change_percent === null) return false;
   return quote.change_percent < 2.0;
@@ -285,7 +282,9 @@ export function buildAnomalyReason(
     case 'limit_up_breakout':
       return `${label} · 当前涨幅 ${pct} 接近涨停`;
     case 'sector_link_undermove':
-      return `${label} · ${extra.industryName || '板块'} 已 ${SECTOR_LINK_LIMIT_UP_COUNT}+ 涨停, 自身 ${pct} 滞涨`;
+      return `${label} · ${
+        extra.industryName || '板块'
+      } 已 ${SECTOR_LINK_LIMIT_UP_COUNT}+ 涨停, 自身 ${pct} 滞涨`;
     case 'broken_refill': {
       const opens = extra.record?.limit_up_open_times ?? 0;
       return `${label} · 当日炸板 ${opens} 次后回封`;
@@ -443,8 +442,7 @@ class DefaultPriceVolumeAnomalyDataSource implements PriceVolumeAnomalyDataSourc
         industry: r.industry ?? null,
         continuous_days: r.continuous_days !== null ? Number(r.continuous_days) : null,
         limit_up_time: r.limit_up_time ?? null,
-        limit_up_open_times:
-          r.limit_up_open_times !== null ? Number(r.limit_up_open_times) : null,
+        limit_up_open_times: r.limit_up_open_times !== null ? Number(r.limit_up_open_times) : null,
       }));
     } catch (e: any) {
       logger.warn(`[PVAnomaly] loadLimitUpToday failed: ${e?.message || e}`);
@@ -691,8 +689,8 @@ export class IntradayPriceVolumeAnomalyDetector {
     for (const q of quotes) {
       try {
         const avg20d = avgMap.get(q.symbol) ?? null;
-        const industryFlow = q.industry ? (flowMap.get(q.industry) ?? null) : null;
-        const industryLimitN = q.industry ? (industryLimitUpCount.get(q.industry) ?? 0) : 0;
+        const industryFlow = q.industry ? flowMap.get(q.industry) ?? null : null;
+        const industryLimitN = q.industry ? industryLimitUpCount.get(q.industry) ?? 0 : 0;
         const luRecord =
           limitUpBySymbol.get(q.symbol) ||
           limitUpBySymbol.get(q.symbol.replace(/^(sh\.|sz\.|bj\.)/, '')) ||

@@ -238,8 +238,8 @@ export function buildHitReason(
       overnight.market_direction === 'bullish'
         ? '走强'
         : overnight.market_direction === 'bearish'
-          ? '走弱'
-          : '中性';
+        ? '走弱'
+        : '中性';
     overnightTag = ` · 隔夜${tagWord} (${overnight.reason})`;
   }
   return `${battleLabel} · 开盘 ${pctStr}${overnightTag}`;

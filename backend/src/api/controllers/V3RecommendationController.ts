@@ -354,10 +354,7 @@ export function buildPriceWindow(
   if (!Number.isFinite(first) || !Number.isFinite(last) || first <= 0) return null;
   const cumPct = ((last - first) / first) * 100;
   const sparkline: SparklinePoint[] = window.map(b => ({
-    date:
-      b.time instanceof Date
-        ? b.time.toISOString().slice(0, 10)
-        : String(b.time).slice(0, 10),
+    date: b.time instanceof Date ? b.time.toISOString().slice(0, 10) : String(b.time).slice(0, 10),
     close: Number(b.close) || 0,
   }));
   return { cumulative_change_pct: Math.round(cumPct * 100) / 100, sparkline };
@@ -375,7 +372,12 @@ export function computeAmplitude(
   const hi = Number(today?.high);
   const lo = Number(today?.low);
   const prevClose = Number(prev?.close);
-  if (!Number.isFinite(hi) || !Number.isFinite(lo) || !Number.isFinite(prevClose) || prevClose <= 0) {
+  if (
+    !Number.isFinite(hi) ||
+    !Number.isFinite(lo) ||
+    !Number.isFinite(prevClose) ||
+    prevClose <= 0
+  ) {
     return null;
   }
   return Math.round(((hi - lo) / prevClose) * 100 * 100) / 100;
@@ -420,10 +422,7 @@ export function computeATR20(
  * 从 60 日内 daily_bars 找近期最低 low — playbook low_mild 兜底 support_level.
  * (优先级: per_dimension.technical.evidence 含 "支撑" label → 此函数; 当前实现只取后者.)
  */
-export function findRecentLow(
-  bars: Array<{ low?: number }>,
-  lookback = 60
-): number | null {
+export function findRecentLow(bars: Array<{ low?: number }>, lookback = 60): number | null {
   if (!Array.isArray(bars) || bars.length === 0) return null;
   const window = bars.slice(-lookback);
   let min = Infinity;
@@ -474,10 +473,7 @@ export function buildEvidenceText(perDim: PerDimensionLike[]): string {
  * 从 60 日内 daily_bars 找近期最高 high — observation_points 阻力位兜底.
  * (优先级: per_dimension.technical.evidence 含 "阻力"/"压力" label → 此函数兜底.)
  */
-export function findRecentHigh(
-  bars: Array<{ high?: number }>,
-  lookback = 60
-): number | null {
+export function findRecentHigh(bars: Array<{ high?: number }>, lookback = 60): number | null {
   if (!Array.isArray(bars) || bars.length === 0) return null;
   const window = bars.slice(-lookback);
   let max = -Infinity;
@@ -550,7 +546,7 @@ class V3RecommendationController {
       // 让 OpeningRushDetector / IntradayPriceVolumeAnomalyDetector / LastHourMomentumDetector /
       // LimitUpBoard / ThemeFermentation 写入的信号能在 V3 卡片显示. 历史 fallback 行为保留:
       // 当天为空时回退到最近 7 天内最新一个有信号的日期 (兼容 daily_bars 滞后导致的 signal_date 漂移).
-      let actualSourceUsed: string = 'fan_in';
+      let actualSourceUsed = 'fan_in';
       let actualDateUsed = date;
 
       // 拉 100 条候选 (fan-in 多 source 可能更多), 应用弹性扩展后再切 top N
@@ -615,7 +611,9 @@ class V3RecommendationController {
       const timingFilter = parseTimingFilter(req.query.timing);
       if (timingFilter && timingFilter.length > 0) {
         const allow = new Set<string>(timingFilter);
-        selected = selected.filter(s => allow.has(normalizeTimingTagFromMetadata((s as any).metadata)));
+        selected = selected.filter(s =>
+          allow.has(normalizeTimingTagFromMetadata((s as any).metadata))
+        );
       }
 
       // PR-O5 (2026-06-30) — 题材发酵 5 阶段 enrichment.
@@ -628,10 +626,14 @@ class V3RecommendationController {
       });
 
       const recommendations = await Promise.all(
-        selected.map(signal => this.enrichSignal(signal, themePhaseByIndustry).catch(err => {
-          logger.warn(`v3-recommendations enrich failed for ${signal.symbol}: ${err?.message ?? err}`);
-          return this.minimalSignalView(signal);
-        }))
+        selected.map(signal =>
+          this.enrichSignal(signal, themePhaseByIndustry).catch(err => {
+            logger.warn(
+              `v3-recommendations enrich failed for ${signal.symbol}: ${err?.message ?? err}`
+            );
+            return this.minimalSignalView(signal);
+          })
+        )
       );
 
       const funnel = await this.queryFunnel(actualDateUsed).catch(err => {
@@ -775,9 +777,7 @@ class V3RecommendationController {
         .catch(() => []);
     }
 
-    const priceWindow = buildPriceWindow(
-      bars.map(b => ({ time: b.time, close: Number(b.close) }))
-    );
+    const priceWindow = buildPriceWindow(bars.map(b => ({ time: b.time, close: Number(b.close) })));
     const amplitude = computeAmplitude(
       bars.map(b => ({
         high: Number(b.high),
@@ -798,20 +798,20 @@ class V3RecommendationController {
       rtRow && Number.isFinite(Number(rtRow.current_price))
         ? Number(rtRow.current_price)
         : lastBar
-          ? Number(lastBar.close)
-          : null;
+        ? Number(lastBar.close)
+        : null;
     const changePct =
       rtRow && Number.isFinite(Number(rtRow.change_percent))
         ? Number(rtRow.change_percent)
         : lastBar && lastBar.change_percent !== undefined
-          ? Number(lastBar.change_percent)
-          : null;
+        ? Number(lastBar.change_percent)
+        : null;
     const turnoverRate =
       lastBar && lastBar.turnover_rate !== undefined
         ? Number(lastBar.turnover_rate)
         : stock && stock.turnover_rate !== undefined
-          ? Number(stock.turnover_rate)
-          : null;
+        ? Number(stock.turnover_rate)
+        : null;
 
     // 4 维聚合
     const perDim = extractPerDimension(signal);
@@ -839,7 +839,8 @@ class V3RecommendationController {
     } catch {
       // ignore
     }
-    if (!recommendReason && signal.rationale) recommendReason = String(signal.rationale).slice(0, 120);
+    if (!recommendReason && signal.rationale)
+      recommendReason = String(signal.rationale).slice(0, 120);
 
     const metadata: any = signal.metadata ?? {};
     const entryZone: [number, number] | null = Array.isArray(metadata?.entry_zone)
@@ -852,10 +853,14 @@ class V3RecommendationController {
       bars.length >= 2
         ? Number(bars[bars.length - 2]?.close)
         : lastBar
-          ? Number(lastBar.close)
-          : NaN;
+        ? Number(lastBar.close)
+        : NaN;
     const supportLevel =
-      extractSupportLevel(perDim) ?? findRecentLow(bars.map(b => ({ low: Number(b.low) })), 60);
+      extractSupportLevel(perDim) ??
+      findRecentLow(
+        bars.map(b => ({ low: Number(b.low) })),
+        60
+      );
     const atr20d = computeATR20(
       bars.map(b => ({ high: Number(b.high), low: Number(b.low), close: Number(b.close) })),
       20
@@ -891,19 +896,20 @@ class V3RecommendationController {
 
     // ----- CA-3: 详情区结构化模板 — 技术面 / 观察点 / 风险硬规则 -----
     // amount_yi 从 last bar.turnover (元) → 亿; market_cap_yi 从 circulating → 亿
-    const lastBarTurnover = lastBar && (lastBar as any).turnover !== undefined
-      ? Number((lastBar as any).turnover)
-      : null;
+    const lastBarTurnover =
+      lastBar && (lastBar as any).turnover !== undefined ? Number((lastBar as any).turnover) : null;
     const amountYi =
-      typeof lastBarTurnover === 'number' && Number.isFinite(lastBarTurnover) && lastBarTurnover >= 0
+      typeof lastBarTurnover === 'number' &&
+      Number.isFinite(lastBarTurnover) &&
+      lastBarTurnover >= 0
         ? Math.round((lastBarTurnover / 1e8) * 100) / 100
         : null;
     const marketCapSource =
       stock?.circulating_market_cap != null && Number(stock.circulating_market_cap) > 0
         ? Number(stock.circulating_market_cap)
         : stock?.total_market_cap != null && Number(stock.total_market_cap) > 0
-          ? Number(stock.total_market_cap)
-          : null;
+        ? Number(stock.total_market_cap)
+        : null;
     const marketCapYi =
       marketCapSource != null && Number.isFinite(marketCapSource)
         ? Math.round((marketCapSource / 1e8) * 100) / 100
@@ -915,9 +921,7 @@ class V3RecommendationController {
       const prevs = bars.slice(-6, -1); // 取倒数 2-6 共 5 根
       const todayVol = Number(today?.volume);
       if (Number.isFinite(todayVol) && todayVol >= 0 && prevs.length > 0) {
-        const sums = prevs
-          .map(b => Number(b?.volume))
-          .filter(v => Number.isFinite(v) && v >= 0);
+        const sums = prevs.map(b => Number(b?.volume)).filter(v => Number.isFinite(v) && v >= 0);
         if (sums.length > 0) {
           const avg = sums.reduce((a, b) => a + b, 0) / sums.length;
           if (avg > 0) volumeRatio = Math.round((todayVol / avg) * 100) / 100;
@@ -928,15 +932,22 @@ class V3RecommendationController {
     const technicalEvidenceText = buildTechnicalEvidenceText(perDim);
     const sentimentDim = perDim.find(d => d.analyzer_key === 'sentiment');
     const sentimentScore =
-      sentimentDim && Number.isFinite(Number(sentimentDim.score)) ? Number(sentimentDim.score) : null;
+      sentimentDim && Number.isFinite(Number(sentimentDim.score))
+        ? Number(sentimentDim.score)
+        : null;
     const industryDim = perDim.find(d => d.analyzer_key === 'industry_regime');
     const industryScore =
       industryDim && Number.isFinite(Number(industryDim.score)) ? Number(industryDim.score) : null;
     const hasIndustryTheme =
-      (industryScore !== null && industryScore > 50) || (sentimentScore !== null && sentimentScore > 50);
+      (industryScore !== null && industryScore > 50) ||
+      (sentimentScore !== null && sentimentScore > 50);
     const todayHigh = lastBar ? Number((lastBar as any).high) : null;
     const resistanceLevel =
-      extractResistanceLevel(perDim) ?? findRecentHigh(bars.map(b => ({ high: Number(b.high) })), 60);
+      extractResistanceLevel(perDim) ??
+      findRecentHigh(
+        bars.map(b => ({ high: Number(b.high) })),
+        60
+      );
     const hasShortTermResistance = SHORT_TERM_RESISTANCE_KEYWORDS.some(kw =>
       technicalEvidenceText.includes(kw)
     );
@@ -1033,7 +1044,9 @@ class V3RecommendationController {
         themeIsMainline = entry.is_mainline === true;
       }
     } catch (err: any) {
-      logger.warn(`v3-recommendations theme phase enrich failed for ${symbol}: ${err?.message ?? err}`);
+      logger.warn(
+        `v3-recommendations theme phase enrich failed for ${symbol}: ${err?.message ?? err}`
+      );
     }
 
     return {

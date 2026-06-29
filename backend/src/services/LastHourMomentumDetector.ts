@@ -194,9 +194,7 @@ export const PRODUCTION_LAST_HOUR_MOMENTUM_DATA_SOURCE: LastHourMomentumDataSour
   new DefaultLastHourMomentumDataSource();
 
 export class LastHourMomentumDetector {
-  constructor(
-    private ds: LastHourMomentumDataSource = PRODUCTION_LAST_HOUR_MOMENTUM_DATA_SOURCE
-  ) {}
+  constructor(private ds: LastHourMomentumDataSource = PRODUCTION_LAST_HOUR_MOMENTUM_DATA_SOURCE) {}
 
   async runOnce(options: LastHourRunOptions = {}): Promise<LastHourRunResult> {
     const now = options.now || new Date();
