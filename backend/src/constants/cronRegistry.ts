@@ -805,6 +805,35 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '每 30 分钟扫描用户持仓 + 自选 + 近 30 日推荐过的股票, 4 类利好 detector (critical 公告 / 正面新闻 / 关注度突增 / KOL 集中关注), 命中写 RiskAlert + 飞书 OPS 群. 24h dedup. 用户 2026-06-28 诉求落地.',
   },
+  // PR-M2 (2026-06-29) — 集合竞价 snapshot + 30-min K 线 + 日内动量 detector.
+  // 学术依据: Han/Hu/Jia 2023 SSRN (集合竞价信息含量) + Zhang/Ma/Zhu 2019 EM (9:30-10:00 预测 14:30-15:00, 中国市场最 robust).
+  {
+    type: 'AUCTION_SNAPSHOT_SYNC',
+    category: 'data_sync',
+    owner: 'quant',
+    intraday: true,
+    recommendedCron: '25 9 * * 1-5',
+    description:
+      'PR-M2 集合竞价撮合后 (9:25) 拉 universe ~500 票开盘价 + 量 + 昨收, 计算 7+1 战法 pattern → 写 auction_snapshots.',
+  },
+  {
+    type: 'INTRADAY_KLINE_30MIN_SYNC',
+    category: 'data_sync',
+    owner: 'quant',
+    intraday: true,
+    recommendedCron: '5 10,11,13,14 * * 1-5',
+    description:
+      'PR-M2 盘中每 30 分钟拉 universe ~500 票当日 30-min K 线 → 写 intraday_klines_30min.',
+  },
+  {
+    type: 'INTRADAY_MOMENTUM_DETECT',
+    category: 'risk_control',
+    owner: 'quant',
+    intraday: true,
+    recommendedCron: '25 14 * * 1-5',
+    description:
+      'PR-M2 14:25 跑日内动量 detector. r1>+1% buy 推全 user, r1<-1% 持仓 sell. 论文: Zhang/Ma/Zhu 2019 EM.',
+  },
 ]);
 
 const CRON_REGISTRY_BY_TYPE: ReadonlyMap<string, CronTaskDefinition> = new Map(

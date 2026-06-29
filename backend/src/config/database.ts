@@ -123,6 +123,9 @@ import { StrategyTcaMultiplier } from '../models/StrategyTcaMultiplier';
 import { UserFeedback } from '../models/UserFeedback';
 // Batch CE-C (2026-06-25) — 实时机会推送审计 model
 import { IntradayOpportunityPush } from '../models/IntradayOpportunityPush';
+// PR-M2 (2026-06-29) — 集合竞价快照 + 盘中 30-min K 线 (A 股最 robust 日内 alpha)
+import { AuctionSnapshot } from '../models/AuctionSnapshot';
+import { IntradayKline30Min } from '../models/IntradayKline30Min';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -267,6 +270,9 @@ const sequelize = new Sequelize({
     UserFeedback,
     // Batch CE-C (2026-06-25) — 实时机会推送审计
     IntradayOpportunityPush,
+    // PR-M2 (2026-06-29) — 集合竞价快照 + 盘中 30-min K 线
+    AuctionSnapshot,
+    IntradayKline30Min,
   ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {

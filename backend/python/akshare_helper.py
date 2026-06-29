@@ -712,6 +712,88 @@ def get_realtime_quotes(symbols: str) -> Dict[str, Any]:
         print(f"Error getting real-time quotes: {e}", file=sys.stderr)
         return {}
 
+
+def get_auction_snapshot_batch(symbols_csv: str) -> List[Dict[str, Any]]:
+    """
+    PR-M2 2026-06-29 — 集合竞价 / 9:25 后开盘快照批量抓取.
+    一次性 stock_zh_a_spot_em() 拉全市场, 然后按 symbols_csv 过滤; 比 per-symbol 调用快 100x+.
+
+    输入:
+        symbols_csv: e.g. 'sh.600519,sz.000001,bj.873169' (任意非空 ≤500)
+    输出 (list of dict, 每个 dict 含):
+        symbol (原前缀如 sh.600519), name (中文), open, high, low, current, prev_close, volume, turnover.
+        缺失的 symbol 不出现; NaN 字段返 None.
+    """
+    try:
+        symbol_list = [s.strip() for s in symbols_csv.split(',') if s.strip()]
+        if not symbol_list:
+            return []
+        pure_to_orig = {}
+        for code in symbol_list:
+            pure = code.split('.')[-1] if ('.' in code) else code
+            pure_to_orig[pure] = code
+
+        df = ak.stock_zh_a_spot_em()
+        if df is None or df.empty:
+            return []
+        out: List[Dict[str, Any]] = []
+        for pure, orig in pure_to_orig.items():
+            row_df = df[df['代码'] == pure]
+            if row_df.empty:
+                continue
+            row = row_df.iloc[0]
+            out.append({
+                "symbol": orig,
+                "name": str(row['名称']) if pd.notna(row.get('名称')) else None,
+                "open": safe_float_value(row.get('今开')),
+                "high": safe_float_value(row.get('最高')),
+                "low": safe_float_value(row.get('最低')),
+                "current": safe_float_value(row.get('最新价')),
+                "prev_close": safe_float_value(row.get('昨收')),
+                "volume": safe_float_value(row.get('成交量')),
+                "turnover": safe_float_value(row.get('成交额')),
+            })
+        return out
+    except Exception as e:
+        print(f"Error in get_auction_snapshot_batch: {e}", file=sys.stderr)
+        return []
+
+
+def get_intraday_klines_30min(code: str) -> List[Dict[str, Any]]:
+    """
+    PR-M2 2026-06-29 — 单只股票当日 30-min K 线.
+
+    AKShare stock_zh_a_hist_min_em(period='30') 返回最近 N 日累计, 调用方 (TS service) 只
+    取 trade_date >= today 的行.
+
+    输出 (list of dict):
+        time   (str 'YYYY-MM-DD HH:MM:SS', bar 结束时刻)
+        open, high, low, close (float)
+        volume (float, 手数), money (float, 元 — 成交额)
+    """
+    try:
+        pure_code = code
+        if code.startswith('sh.') or code.startswith('sz.') or code.startswith('bj.'):
+            pure_code = code.split('.')[1]
+        df = ak.stock_zh_a_hist_min_em(symbol=pure_code, period='30', adjust='qfq')
+        if df is None or df.empty:
+            return []
+        result: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            result.append({
+                "time": str(row['时间']) if pd.notna(row.get('时间')) else None,
+                "open": safe_float_value(row.get('开盘')),
+                "high": safe_float_value(row.get('最高')),
+                "low": safe_float_value(row.get('最低')),
+                "close": safe_float_value(row.get('收盘')),
+                "volume": safe_float_value(row.get('成交量')),
+                "money": safe_float_value(row.get('成交额')),
+            })
+        return result
+    except Exception as e:
+        print(f"Error get_intraday_klines_30min for {code}: {e}", file=sys.stderr)
+        return []
+
 def health_check(code: str, start_date: str, end_date: str) -> Dict[str, Any]:
     """Lightweight health probe for AKShare. Avoids full-market and indicator endpoints."""
     pure_code = code
@@ -5968,10 +6050,24 @@ def main():
             if len(sys.argv) < 3:
                 print(json.dumps({"error": "Missing symbols for get_realtime_quotes"}), file=sys.stderr)
                 sys.exit(1)
-            
+
             symbols = sys.argv[2]
             result = get_realtime_quotes(symbols)
-            
+
+        elif command == "get_auction_snapshot_batch":
+            # PR-M2 2026-06-29 — 集合竞价批量快照
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing symbols_csv for get_auction_snapshot_batch"}), file=sys.stderr)
+                sys.exit(1)
+            result = get_auction_snapshot_batch(sys.argv[2])
+
+        elif command == "get_intraday_klines_30min":
+            # PR-M2 2026-06-29 — 单股 30-min K 线
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing code for get_intraday_klines_30min"}), file=sys.stderr)
+                sys.exit(1)
+            result = get_intraday_klines_30min(sys.argv[2])
+
         elif command == "get_intraday_bars":
             if len(sys.argv) < 3:
                 print(json.dumps({"error": "Missing code for get_intraday_bars"}), file=sys.stderr)
