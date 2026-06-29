@@ -6688,6 +6688,45 @@ class SchedulerService {
           `[INTRADAY_REVERSAL_DETECT] scanned=${r.scanned} hits=${r.hits.length} ` +
             `buy=${r.by_type.reversal_buy} sell=${r.by_type.reversal_sell} errors=${r.errors?.length || 0}`
         );
+      } else if (task.type === 'LIMIT_UP_BOARD_DETECT') {
+        // PR-O2 (2026-06-29) — 涨停板战法 detector (20+ pattern). PR-I-v2 战法库 §1
+        // 流派 1 落地率 0% → 50%. 每日 15:30 跑 (盘后), 对 limit_up_stocks 全表逐票运行
+        // 20+ classifier (一字 / T 字 / 烂板 / 强势板 / 弱转强 / 中军 / 二板加速 / 二板回封 /
+        // 二板填谷 / 二进三 / 高位连板加速 / 板块最高板 / 连板天梯 / 地天板 / 烂板反包 /
+        // 跌停反包 / 炸板回封 / 炸板换手 / 龙头接力 / 跟风接力), 命中即写 RiskAlert
+        // (rule_id='limit_up_<pattern>', level=MEDIUM) + 写 AIInvestmentSignal
+        // (source_type='limit_up_board', metadata.timing_tag='overnight'). fail-OPEN.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { limitUpBoardDetectorService } = require('./LimitUpBoardDetector');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await limitUpBoardDetectorService.runOnce({
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned,
+          completed_items: r.pushed,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'limit_up_board_detect',
+            trade_date: r.trade_date,
+            scanned: r.scanned,
+            total_hits: r.total_hits,
+            pushed: r.pushed,
+            deduped: r.deduped,
+            by_pattern: r.by_pattern,
+            errors: r.errors?.length || 0,
+            skipped_reason: r.skipped_reason,
+            dry_run: r.dry_run,
+          },
+        });
+        logger.info(
+          `[LIMIT_UP_BOARD_DETECT] trade_date=${r.trade_date} scanned=${r.scanned} ` +
+            `total_hits=${r.total_hits} pushed=${r.pushed} deduped=${r.deduped} ` +
+            `errors=${r.errors?.length || 0} skip=${r.skipped_reason || 'none'} ` +
+            `by_pattern=${JSON.stringify(r.by_pattern)}`
+        );
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }
@@ -8213,6 +8252,17 @@ class SchedulerService {
         name: '反转 detector (PR-M3)',
         type: 'INTRADAY_REVERSAL_DETECT',
         cron_expression: '10 15 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // PR-O2 (2026-06-29) — 涨停板战法 detector. PR-I-v2 战法库 §1 流派 1 落地率 0% → 50%.
+      // 每日 15:30 跑 (盘后 5min 余量, 在 LIMIT_UP_SYNC 15:10 之后), 对 limit_up_stocks 全表
+      // 跑 20+ classifier, 命中写 RiskAlert + AIInvestmentSignal (source_type='limit_up_board',
+      // metadata.timing_tag='overnight'). 让前端 /home 推荐卡能看到 "🚀 一字板" / "📈 二板加速" badge.
+      {
+        name: 'PR-O2 涨停板战法 detector (15:30)',
+        type: 'LIMIT_UP_BOARD_DETECT',
+        cron_expression: '30 15 * * 1-5',
         is_active: true,
         parameters: { dry_run: false },
       },

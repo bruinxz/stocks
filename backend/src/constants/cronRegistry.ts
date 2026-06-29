@@ -856,6 +856,19 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '工作日 15:10 跑反转 detector — 找今日 < -3% 且周/月线趋势仍向上的票 (reversal_buy, T+1 反弹) 或 > +5% 且 RSI(14) > 70 的票 (reversal_sell, 短期超买回调). 学术: Hsu/Viswanathan 2018 JPM cited 71 + Zhang & Zhu 2024 IREF.',
   },
+  // PR-O2 (2026-06-29) — 涨停板战法 detector. PR-I-v2 战法库 §1 流派 1 落地率 0% → 50%.
+  // 每日 15:30 跑 (盘后, 在 LIMIT_UP_SYNC 15:10 之后), 对 limit_up_stocks 全表跑 20+ classifier:
+  // 一字 / T 字 / 烂板 / 强势板 / 弱转强 / 中军 / 二板加速 / 二板回封 / 二板填谷 / 二进三 /
+  // 高位连板加速 / 板块最高板 / 连板天梯 / 地天板 / 烂板反包 / 跌停反包 / 炸板回封 / 炸板换手 /
+  // 龙头接力 / 跟风接力. 命中写 RiskAlert (rule_id='limit_up_<pattern>', level=MEDIUM) +
+  // AIInvestmentSignal (source_type='limit_up_board', metadata.timing_tag='overnight'). 24h dedup.
+  {
+    type: 'LIMIT_UP_BOARD_DETECT',
+    category: 'risk_control',
+    owner: 'quant',
+    recommendedCron: '30 15 * * 1-5',
+    description:
+      'PR-O2 每日 15:30 跑涨停板 20+ 战法 detector — 一字/T字/二板加速/地天板/接力 等. 命中写 RiskAlert + AIInvestmentSignal (source_type=limit_up_board), 让前端 /home 推荐卡显示 pattern badge.',  },
 ]);
 
 const CRON_REGISTRY_BY_TYPE: ReadonlyMap<string, CronTaskDefinition> = new Map(

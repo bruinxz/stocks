@@ -82,11 +82,16 @@ const BUY_DECISIONS: ReadonlyArray<string> = Object.freeze(['buy', 'strong_buy']
 /**
  * 当日 candidate 候选信号来源 (funnel 中段). analysis_engine + quant_recommendation +
  * tradingagents 三种"AI 生成"的归一为 candidate; daily_screener 只是规则引擎不算.
+ *
+ * PR-O2 (2026-06-29): limit_up_board 涨停板战法 detector 写入的信号也算 candidate —
+ * source_type='limit_up_board', metadata.timing_tag='overnight' + metadata.pattern=<战法>.
+ * 让前端 /home 推荐卡显示 "🚀 一字板" / "📈 二板加速" 等 badge.
  */
 const CANDIDATE_SOURCE_TYPES: ReadonlyArray<string> = Object.freeze([
   AISignalSourceType.ANALYSIS_ENGINE,
   'quant_recommendation',
   'tradingagents',
+  'limit_up_board',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -966,6 +971,18 @@ class V3RecommendationController {
       signal_date: signal.signal_date,
       // PR-H — 推荐时机标签透传 UI. 缺失 → 'overnight' (符合历史 cron 15:32 写入语义).
       timing_tag: normalizeTimingTagFromMetadata(metadata),
+      // PR-O2 (2026-06-29) — 涨停板战法 pattern badge. 仅 source_type='limit_up_board' 写入,
+      // 其它 source 默认 null. 前端 /home 推荐卡见到 limit_up_pattern 非空就额外加一个
+      // "🚀 一字板" / "📈 二板加速" 等 badge.
+      limit_up_pattern: typeof metadata?.pattern === 'string' && metadata?.source === 'limit_up_board_detector'
+        ? String(metadata.pattern)
+        : null,
+      limit_up_pattern_label: typeof metadata?.pattern_label === 'string' && metadata?.source === 'limit_up_board_detector'
+        ? String(metadata.pattern_label)
+        : null,
+      limit_up_continuous_days: Number.isFinite(Number(metadata?.continuous_days)) && metadata?.source === 'limit_up_board_detector'
+        ? Number(metadata.continuous_days)
+        : null,
     };
   }
 
@@ -1014,6 +1031,25 @@ class V3RecommendationController {
       signal_date: signal.signal_date,
       // PR-H — minimal view 也透传 timing_tag (enrichSignal 失败兜底).
       timing_tag: normalizeTimingTagFromMetadata((signal as any).metadata),
+      // PR-O2 — minimal view 也透传 limit_up_pattern (enrich 失败时仍出 badge).
+      limit_up_pattern: (() => {
+        const m = (signal as any).metadata;
+        return typeof m?.pattern === 'string' && m?.source === 'limit_up_board_detector'
+          ? String(m.pattern)
+          : null;
+      })(),
+      limit_up_pattern_label: (() => {
+        const m = (signal as any).metadata;
+        return typeof m?.pattern_label === 'string' && m?.source === 'limit_up_board_detector'
+          ? String(m.pattern_label)
+          : null;
+      })(),
+      limit_up_continuous_days: (() => {
+        const m = (signal as any).metadata;
+        return Number.isFinite(Number(m?.continuous_days)) && m?.source === 'limit_up_board_detector'
+          ? Number(m.continuous_days)
+          : null;
+      })(),
       enrich_failed: true,
     };
   }
