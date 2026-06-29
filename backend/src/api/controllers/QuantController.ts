@@ -631,6 +631,17 @@ export class QuantController {
     }
   }
 
+  async getBacktestExecutionConstraintAudit(req: AuthenticatedRequest, res: Response) {
+    try {
+      const data = await backtestEngine.getBacktestExecutionConstraintAudit(Number(req.params.id));
+      if (!data) return res.status(404).json({ success: false, message: '成交约束审计不存在' });
+      res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error('获取回测成交约束审计失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
   async getBacktest(req: Request, res: Response) {
     try {
       const data = await backtestEngine.get(Number(req.params.id));

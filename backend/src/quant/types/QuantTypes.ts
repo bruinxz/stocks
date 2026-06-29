@@ -167,6 +167,7 @@ export interface QuantStrategyRuntimeOptions {
 export interface QuantBacktestOptions {
   task_name?: string;
   easy_mode?: boolean;
+  create_research_experiment?: boolean;
   experiment_id?: number;
   template_id?: string;
   hypothesis?: string;

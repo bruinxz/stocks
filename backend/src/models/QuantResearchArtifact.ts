@@ -3,6 +3,7 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
 export type QuantResearchArtifactType =
   | 'backtest'
   | 'integrity_audit'
+  | 'point_in_time_audit'
   | 'execution_audit'
   | 'credibility_summary';
 

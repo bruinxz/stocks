@@ -8,12 +8,18 @@ import { QuantBacktestTask } from '../../models/QuantBacktestTask';
 import { QuantBacktestResult } from '../../models/QuantBacktestResult';
 import { QuantBacktestOptions } from '../../quant/types/QuantTypes';
 import { ResearchIntegrityService } from './ResearchIntegrityService';
+import { buildPointInTimeArtifact } from './PointInTimeAuditService';
 import { logger } from '../../utils/logger';
 
 export type QuantResearchVerdict = 'pending' | 'pass' | 'watch' | 'reject' | 'insufficient';
 
 export type ResearchArtifactDraft = {
-  artifact_type?: 'backtest' | 'integrity_audit' | 'execution_audit' | 'credibility_summary';
+  artifact_type?:
+    | 'backtest'
+    | 'integrity_audit'
+    | 'point_in_time_audit'
+    | 'execution_audit'
+    | 'credibility_summary';
   source_type?: string | null;
   source_id?: number | null;
   status: QuantResearchArtifactStatus;
@@ -40,6 +46,20 @@ export interface ResearchAuditPayload {
   blocking_reasons: string[];
   watch_reasons: string[];
   next_action_label: string;
+}
+
+export interface ExecutionConstraintAuditPayload {
+  task_id: number;
+  experiment: any | null;
+  artifact: any;
+  status: QuantResearchArtifactStatus;
+  title: string;
+  summary: string;
+  rejected_order_count: number;
+  rejected_orders: any[];
+  reason_counts: Record<string, number>;
+  grouped_reasons: any[];
+  diagnostics: Record<string, any>;
 }
 
 function statusToReason(artifact: Pick<ResearchArtifactDraft, 'status' | 'summary'>): string {
@@ -184,11 +204,13 @@ export function buildExecutionArtifactFromRejectedOrders(
 export function buildCredibilitySummary(input: {
   backtest_artifact?: Pick<ResearchArtifactDraft, 'status' | 'summary'> | null;
   integrity_artifact?: Pick<ResearchArtifactDraft, 'status' | 'summary'> | null;
+  point_in_time_artifact?: Pick<ResearchArtifactDraft, 'status' | 'summary'> | null;
   execution_artifact?: Pick<ResearchArtifactDraft, 'status' | 'summary'> | null;
 }): CredibilitySummary {
   const artifacts = [
     input.backtest_artifact,
     input.integrity_artifact,
+    input.point_in_time_artifact,
     input.execution_artifact,
   ].filter(Boolean) as Array<Pick<ResearchArtifactDraft, 'status' | 'summary'>>;
   const statuses = artifacts.map(item => item.status);
@@ -275,6 +297,10 @@ function asPlain(row: any) {
 
 function artifactByType(artifacts: any[], artifact_type: string) {
   return artifacts.find(item => item.artifact_type === artifact_type) || null;
+}
+
+function rawOptionsFromTask(task: QuantBacktestTask): Record<string, any> {
+  return task.parameters && typeof task.parameters === 'object' ? task.parameters : {};
 }
 
 function aggregateExecutionDiagnostics(results: QuantBacktestResult[]) {
@@ -371,6 +397,16 @@ export class ResearchExperimentService {
       constraint_policy_json: input.constraint_policy_json || {},
       summary_json: {},
     } as any);
+    if (input.task_id) {
+      await QuantBacktestTask.update(
+        {
+          experiment_id: experiment.id,
+          data_policy_json: input.data_policy_json || {},
+          constraint_policy_json: input.constraint_policy_json || {},
+        } as any,
+        { where: { id: input.task_id } }
+      );
+    }
     return experiment;
   }
 
@@ -395,7 +431,7 @@ export class ResearchExperimentService {
       }
     }
 
-    if (!rawOptions.easy_mode) return null;
+    if (rawOptions.create_research_experiment === false) return null;
 
     const experiment = await this.createExperiment(
       {
@@ -448,7 +484,11 @@ export class ResearchExperimentService {
     } as any);
   }
 
-  private async findExperimentForTask(task: QuantBacktestTask) {
+  private async findExperimentForTask(task: QuantBacktestTask, preferred_experiment_id?: number) {
+    if (preferred_experiment_id) {
+      const preferred = await QuantResearchExperiment.findByPk(preferred_experiment_id);
+      if (preferred && Number(preferred.task_id) === Number(task.id)) return preferred;
+    }
     if (task.experiment_id) {
       const byId = await QuantResearchExperiment.findByPk(task.experiment_id);
       if (byId) return byId;
@@ -456,10 +496,13 @@ export class ResearchExperimentService {
     return QuantResearchExperiment.findOne({ where: { task_id: task.id } });
   }
 
-  async runAuditForBacktest(task_id: number): Promise<ResearchAuditPayload | null> {
+  async runAuditForBacktest(
+    task_id: number,
+    preferred_experiment_id?: number
+  ): Promise<ResearchAuditPayload | null> {
     const task = await QuantBacktestTask.findByPk(task_id);
     if (!task) return null;
-    const experiment = await this.findExperimentForTask(task);
+    const experiment = await this.findExperimentForTask(task, preferred_experiment_id);
     if (!experiment) return null;
 
     const results = await QuantBacktestResult.findAll({
@@ -508,6 +551,13 @@ export class ResearchExperimentService {
     }
     await this.replaceArtifact(experiment.id, task.id, integrityArtifact);
 
+    const pointInTimeArtifact = buildPointInTimeArtifact({
+      data_policy_json: task.data_policy_json || rawOptionsFromTask(task)?.data_policy_json || {},
+      constraint_policy_json:
+        task.constraint_policy_json || rawOptionsFromTask(task)?.constraint_policy_json || {},
+    });
+    await this.replaceArtifact(experiment.id, task.id, pointInTimeArtifact);
+
     const rejectedOrders = results.flatMap(result =>
       Array.isArray(result.rejected_orders_json) ? result.rejected_orders_json : []
     );
@@ -520,6 +570,7 @@ export class ResearchExperimentService {
     const credibility = buildCredibilitySummary({
       backtest_artifact: backtestArtifact,
       integrity_artifact: integrityArtifact,
+      point_in_time_artifact: pointInTimeArtifact,
       execution_artifact: executionArtifact,
     });
     await this.replaceArtifact(experiment.id, task.id, {
@@ -565,6 +616,7 @@ export class ResearchExperimentService {
       buildCredibilitySummary({
         backtest_artifact: artifactByType(artifacts, 'backtest'),
         integrity_artifact: artifactByType(artifacts, 'integrity_audit'),
+        point_in_time_artifact: artifactByType(artifacts, 'point_in_time_audit'),
         execution_artifact: artifactByType(artifacts, 'execution_audit'),
       });
     return {
@@ -575,6 +627,55 @@ export class ResearchExperimentService {
       blocking_reasons: credibility_verdict.blocking_reasons || [],
       watch_reasons: credibility_verdict.watch_reasons || [],
       next_action_label: credibility_verdict.next_action_label || '回到查数据',
+    };
+  }
+
+  async getBacktestExecutionConstraintAudit(
+    task_id: number
+  ): Promise<ExecutionConstraintAuditPayload | null> {
+    const task = await QuantBacktestTask.findByPk(task_id);
+    if (!task) return null;
+    const experiment = await this.findExperimentForTask(task);
+    let artifact: any | null = null;
+    if (experiment) {
+      artifact = await QuantResearchArtifact.findOne({
+        where: { experiment_id: experiment.id, task_id: task.id, artifact_type: 'execution_audit' },
+        order: [['created_at', 'DESC']],
+      });
+    }
+
+    if (!artifact) {
+      const results = await QuantBacktestResult.findAll({
+        where: { task_id },
+        order: [['total_return_pct', 'DESC']],
+      });
+      const rejectedOrders = results.flatMap(result =>
+        Array.isArray(result.rejected_orders_json) ? result.rejected_orders_json : []
+      );
+      artifact = buildExecutionArtifactFromRejectedOrders(
+        rejectedOrders,
+        aggregateExecutionDiagnostics(results)
+      );
+    } else {
+      artifact = asPlain(artifact);
+    }
+
+    const payload = artifact.payload_json || {};
+    return {
+      task_id,
+      experiment: experiment ? asPlain(experiment) : null,
+      artifact,
+      status: artifact.status,
+      title: artifact.title || 'A股成交约束',
+      summary: artifact.summary || '',
+      rejected_order_count: Number(payload.rejected_order_count || 0),
+      rejected_orders: Array.isArray(payload.rejected_orders) ? payload.rejected_orders : [],
+      reason_counts: payload.reason_counts || {},
+      grouped_reasons: payload.grouped_reasons || [],
+      diagnostics: {
+        buy_fill_count: Number(payload.buy_fill_count || 0),
+        sell_fill_count: Number(payload.sell_fill_count || 0),
+      },
     };
   }
 
@@ -607,7 +708,7 @@ export class ResearchExperimentService {
   async runAuditForExperiment(id: number, user_id?: number) {
     const experiment = await this.getExperiment(id, user_id);
     if (!experiment?.task_id) return null;
-    return this.runAuditForBacktest(Number(experiment.task_id));
+    return this.runAuditForBacktest(Number(experiment.task_id), id);
   }
 }
 

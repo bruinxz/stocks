@@ -81,6 +81,10 @@ export class BacktestEngine {
     return researchExperimentService.getBacktestResearchAudit(taskId);
   }
 
+  getBacktestExecutionConstraintAudit(taskId: number) {
+    return researchExperimentService.getBacktestExecutionConstraintAudit(taskId);
+  }
+
   retry(id: number, user_id?: number) {
     return quantBacktestService.retryBacktest(id, user_id);
   }

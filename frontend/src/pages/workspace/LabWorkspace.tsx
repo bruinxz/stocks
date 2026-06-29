@@ -73,6 +73,9 @@ import {
   BacktestRollingSharpeResponse,
   CreateBacktestPayload,
   OptimizationRunSummary,
+  ResearchExperiment,
+  BacktestResearchAudit,
+  BacktestExecutionConstraintAudit,
 } from '../../services/labService';
 import StrategyCopilotPanel from '../../components/trading/StrategyCopilotPanel';
 
@@ -104,6 +107,9 @@ const LabWorkspace: React.FC = () => {
     { key: 'mine', label: '我的策略', icon: <ExperimentOutlined /> },
     { key: 'leaderboard', label: '策略排行', icon: <TrophyOutlined /> },
     { key: 'new', label: '新建回测', icon: <PlusSquareOutlined /> },
+    { key: 'research_ledger', label: '实验账本', icon: <ExperimentOutlined /> },
+    { key: 'data_audit', label: '数据审计', icon: <SafetyCertificateOutlined /> },
+    { key: 'execution_constraints', label: '成交约束', icon: <CheckCircleOutlined /> },
     { key: 'compare', label: '回测对比', icon: <SwapOutlined /> },
     { key: 'walk_forward', label: 'Walk-Forward', icon: <SafetyCertificateOutlined /> },
     { key: 'optimization', label: '优化历史', icon: <NodeIndexOutlined /> },
@@ -121,6 +127,7 @@ const LabWorkspace: React.FC = () => {
   // ---- 主数据：策略列表 + 回测任务列表 ----
   const [strategies, setStrategies] = useState<QuantStrategyItem[]>([]);
   const [tasks, setTasks] = useState<BacktestTask[]>([]);
+  const [researchExperiments, setResearchExperiments] = useState<ResearchExperiment[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -128,12 +135,14 @@ const LabWorkspace: React.FC = () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const [strategyList, taskList] = await Promise.all([
+      const [strategyList, taskList, experimentList] = await Promise.all([
         labService.listQuantStrategies(),
         labService.listBacktestTasks(50),
+        labService.listResearchExperiments(50).catch(() => []),
       ]);
       setStrategies(strategyList);
       setTasks(taskList);
+      setResearchExperiments(experimentList);
     } catch (err: unknown) {
       const messageStr = err instanceof Error ? err.message : String(err);
       setLoadError(messageStr);
@@ -200,6 +209,7 @@ const LabWorkspace: React.FC = () => {
       form.setFieldsValue({
         task_name: `克隆-${strategy.name || strategy.strategy_key}-${today.format('YYYYMMDD')}`,
         strategy_keys: [strategy.strategy_key],
+        hypothesis: `验证 ${strategy.name || strategy.strategy_key} 在当前股票池和时间窗口内是否具备可复现收益。`,
         range: [startDate, today],
         initial_capital: DEFAULT_INITIAL_CAPITAL,
         benchmark_symbol: DEFAULT_BENCHMARK,
@@ -274,6 +284,10 @@ const LabWorkspace: React.FC = () => {
       }
       const payload: CreateBacktestPayload = {
         task_name: values.task_name || `回测-${dayjs().format('MMDD-HHmm')}`,
+        create_research_experiment: true,
+        hypothesis:
+          values.hypothesis ||
+          `验证 ${values.strategy_keys?.join(', ')} 在当前股票池的可复现收益。`,
         universe: values.universe,
         strategy_keys: values.strategy_keys,
         start_date: start.format('YYYY-MM-DD'),
@@ -285,6 +299,24 @@ const LabWorkspace: React.FC = () => {
         execution_timing: values.execution_timing,
         enable_t_plus_one: values.enable_t_plus_one !== false,
         params_by_strategy: Object.keys(paramsByStrategy).length ? paramsByStrategy : undefined,
+        data_policy_json: {
+          point_in_time: true,
+          disclosure_date_required: true,
+          universe_as_of_required: true,
+          missing_policy: 'insufficient',
+          audit_coverage: {
+            disclosure_date: 'strategy_factor_as_of_guard',
+            universe_visibility: 'backtest_universe_as_of_guard',
+          },
+        },
+        constraint_policy_json: {
+          market: 'A_SHARE',
+          t_plus_one: values.enable_t_plus_one !== false,
+          block_limit_up: true,
+          block_limit_down: true,
+          block_suspended: true,
+          lot_size: 100,
+        },
       };
       setSubmitting(true);
       const result = await labService.createBacktestTask(payload);
@@ -415,6 +447,19 @@ const LabWorkspace: React.FC = () => {
         tasks={tasks}
       />
     );
+  } else if (activeKey === 'research_ledger') {
+    body = (
+      <ResearchLedgerTab
+        experiments={researchExperiments}
+        tasks={tasks}
+        loading={loading}
+        onRefresh={refresh}
+      />
+    );
+  } else if (activeKey === 'data_audit') {
+    body = <DataAuditTab tasks={tasks} experiments={researchExperiments} />;
+  } else if (activeKey === 'execution_constraints') {
+    body = <ExecutionConstraintAuditTab tasks={tasks} experiments={researchExperiments} />;
   } else if (activeKey === 'walk_forward') {
     body = <WalkForwardTab strategies={strategies} />;
   } else if (activeKey === 'optimization') {
@@ -701,8 +746,8 @@ const NewBacktestTab: React.FC<{
                 pollingTask?.status === 'FAILED'
                   ? 'exception'
                   : pollingTask?.status === 'COMPLETED'
-                  ? 'success'
-                  : 'active'
+                    ? 'success'
+                    : 'active'
               }
             />
             {pollingTask?.error_message && (
@@ -770,6 +815,19 @@ const NewBacktestTab: React.FC<{
                     label: `${s.name || s.strategy_key} (${s.strategy_key})`,
                     disabled: s.enabled === false,
                   }))}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24}>
+              <Form.Item
+                label="研究假设"
+                name="hypothesis"
+                rules={[{ required: true, message: '请输入本次实验要验证的假设' }]}
+                extra="实验账本会记录这个假设，并把后续数据审计、成交约束审计和回测结论挂在同一条链路下。"
+              >
+                <Input.TextArea
+                  rows={2}
+                  placeholder="例如：验证低波动多因子在最近两年自选股池中是否能获得稳定超额收益"
                 />
               </Form.Item>
             </Col>
@@ -867,7 +925,391 @@ const NewBacktestTab: React.FC<{
 };
 
 // ============================================================================
-// Tab 3 — 回测对比
+// Tab 3 — 阶段一：实验账本 / 数据审计 / 成交约束
+// ============================================================================
+
+const ResearchLedgerTab: React.FC<{
+  experiments: ResearchExperiment[];
+  tasks: BacktestTask[];
+  loading: boolean;
+  onRefresh: () => void;
+}> = ({ experiments, tasks, loading, onRefresh }) => {
+  const [auditLoadingId, setAuditLoadingId] = useState<number | null>(null);
+  const taskById = useMemo(() => new Map(tasks.map(task => [task.id, task])), [tasks]);
+
+  const runAudit = async (id: number) => {
+    setAuditLoadingId(id);
+    try {
+      await labService.runResearchExperimentAudit(id);
+      message.success('审计已刷新');
+      await onRefresh();
+    } catch (error: any) {
+      message.error(`审计失败：${error?.message || error}`);
+    } finally {
+      setAuditLoadingId(null);
+    }
+  };
+
+  const columns = [
+    {
+      title: '实验账本',
+      key: 'ledger',
+      render: (_: any, row: ResearchExperiment) => (
+        <Space direction="vertical" size={2}>
+          <Text strong>{row.hypothesis || row.experiment_key}</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            #{row.id} · {row.strategy_key} · {compactDate(row.start_date)} ~{' '}
+            {compactDate(row.end_date)}
+          </Text>
+        </Space>
+      ),
+    },
+    {
+      title: '审计状态',
+      dataIndex: 'verdict',
+      key: 'verdict',
+      width: 130,
+      render: (verdict: string) => researchVerdictTag(verdict),
+    },
+    {
+      title: '回测任务',
+      key: 'task',
+      width: 220,
+      render: (_: any, row: ResearchExperiment) => {
+        const task = row.task_id ? taskById.get(Number(row.task_id)) : null;
+        return task ? (
+          <Space direction="vertical" size={0}>
+            <Text>{task.task_name}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              #{task.id} · {statusLabel(task.status)}
+            </Text>
+          </Space>
+        ) : (
+          <Text type="secondary">未绑定回测</Text>
+        );
+      },
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 160,
+      render: (_: any, row: ResearchExperiment) => (
+        <Button
+          size="small"
+          icon={<ReloadOutlined />}
+          loading={auditLoadingId === row.id}
+          disabled={!row.task_id}
+          onClick={() => runAudit(row.id)}
+        >
+          重新审计
+        </Button>
+      ),
+    },
+  ];
+
+  return (
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Alert
+        type="info"
+        showIcon
+        message="阶段一实验账本"
+        description="每次研究回测都会绑定研究假设、数据策略、成交约束和审计 artifact，用来回答：结果从哪里来、有没有偷看未来、真实 A 股规则下还能不能成交。"
+      />
+      <Card title="实验账本" extra={<Button onClick={onRefresh}>刷新</Button>}>
+        <Table<ResearchExperiment>
+          rowKey="id"
+          loading={loading}
+          columns={columns}
+          dataSource={experiments}
+          pagination={{ pageSize: 10 }}
+        />
+      </Card>
+    </Space>
+  );
+};
+
+const DataAuditTab: React.FC<{
+  tasks: BacktestTask[];
+  experiments: ResearchExperiment[];
+}> = ({ tasks, experiments }) => {
+  const completedTasks = useMemo(
+    () => tasks.filter(task => String(task.status).toUpperCase() === 'COMPLETED'),
+    [tasks]
+  );
+  const [taskId, setTaskId] = useState<number | null>(completedTasks[0]?.id || null);
+  const [audit, setAudit] = useState<BacktestResearchAudit | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!taskId && completedTasks[0]?.id) setTaskId(completedTasks[0].id);
+  }, [completedTasks, taskId]);
+
+  useEffect(() => {
+    if (!taskId) return;
+    let cancelled = false;
+    setLoading(true);
+    labService
+      .getBacktestResearchAudit(taskId)
+      .then(data => {
+        if (!cancelled) setAudit(data);
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setAudit(null);
+          message.warning(`数据审计暂不可用：${error?.message || error}`);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [taskId]);
+
+  const selectedTask = tasks.find(task => task.id === taskId) || null;
+  const backtestArtifact = audit?.artifacts.find(item => item.artifact_type === 'backtest');
+  const integrityArtifact = audit?.artifacts.find(item => item.artifact_type === 'integrity_audit');
+  const pitArtifact = audit?.artifacts.find(item => item.artifact_type === 'point_in_time_audit');
+  const credibility = audit?.credibility_verdict;
+  const taskExperiment = experiments.find(item => item.task_id === taskId);
+
+  return (
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Card
+        title="数据审计"
+        extra={
+          <Select
+            style={{ width: 360 }}
+            placeholder="选择已完成回测"
+            value={taskId || undefined}
+            onChange={value => setTaskId(Number(value))}
+            options={completedTasks.map(task => ({
+              value: task.id,
+              label: `#${task.id} ${task.task_name}`,
+            }))}
+          />
+        }
+      >
+        {completedTasks.length === 0 ? (
+          <Empty description="还没有已完成回测" />
+        ) : loading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}>
+            <Spin tip="读取数据审计…" />
+          </div>
+        ) : (
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <Alert
+              type={
+                credibility?.verdict === 'reject'
+                  ? 'error'
+                  : credibility?.verdict === 'pass'
+                    ? 'success'
+                    : 'warning'
+              }
+              showIcon
+              message={credibility?.title || '审计状态待生成'}
+              description={credibility?.summary || '回测完成后会自动生成研究审计。'}
+            />
+            <Row gutter={[16, 16]}>
+              <Col xs={24} md={8}>
+                <AuditArtifactCard title="回测来源" artifact={backtestArtifact} />
+              </Col>
+              <Col xs={24} md={8}>
+                <AuditArtifactCard title="未来数据检查" artifact={integrityArtifact} />
+              </Col>
+              <Col xs={24} md={8}>
+                <AuditArtifactCard title="点时数据审计" artifact={pitArtifact} />
+              </Col>
+            </Row>
+            <Card size="small" title="理论收益 vs 审计后收益 vs 可成交收益">
+              <Row gutter={[16, 16]}>
+                <Col xs={24} md={8}>
+                  <Statistic
+                    title="理论收益"
+                    value={selectedTask?.run_summary?.best_return_pct ?? 0}
+                    precision={2}
+                    suffix="%"
+                  />
+                </Col>
+                <Col xs={24} md={8}>
+                  <Statistic
+                    title="审计后收益"
+                    value={
+                      credibility?.verdict === 'reject' || credibility?.verdict === 'insufficient'
+                        ? 0
+                        : (selectedTask?.run_summary?.best_return_pct ?? 0)
+                    }
+                    precision={2}
+                    suffix="%"
+                  />
+                </Col>
+                <Col xs={24} md={8}>
+                  <Statistic
+                    title="可成交收益"
+                    value={selectedTask?.run_summary?.best_return_pct ?? 0}
+                    precision={2}
+                    suffix="%"
+                  />
+                </Col>
+              </Row>
+              <Text type="secondary" style={{ display: 'block', marginTop: 12 }}>
+                实验 #{taskExperiment?.id || audit?.experiment?.id || '—'} ·{' '}
+                {selectedTask?.task_name || '—'}
+              </Text>
+            </Card>
+          </Space>
+        )}
+      </Card>
+    </Space>
+  );
+};
+
+const ExecutionConstraintAuditTab: React.FC<{
+  tasks: BacktestTask[];
+  experiments: ResearchExperiment[];
+}> = ({ tasks, experiments }) => {
+  const completedTasks = useMemo(
+    () => tasks.filter(task => String(task.status).toUpperCase() === 'COMPLETED'),
+    [tasks]
+  );
+  const [taskId, setTaskId] = useState<number | null>(completedTasks[0]?.id || null);
+  const [audit, setAudit] = useState<BacktestExecutionConstraintAudit | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!taskId && completedTasks[0]?.id) setTaskId(completedTasks[0].id);
+  }, [completedTasks, taskId]);
+
+  useEffect(() => {
+    if (!taskId) return;
+    let cancelled = false;
+    setLoading(true);
+    labService
+      .getBacktestExecutionConstraintAudit(taskId)
+      .then(data => {
+        if (!cancelled) setAudit(data);
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setAudit(null);
+          message.warning(`成交约束审计暂不可用：${error?.message || error}`);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [taskId]);
+
+  const selectedTask = tasks.find(task => task.id === taskId) || null;
+  const taskExperiment = experiments.find(item => item.task_id === taskId);
+  const reasonRows = audit?.grouped_reasons || [];
+
+  return (
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Card
+        title="成交约束"
+        extra={
+          <Select
+            style={{ width: 360 }}
+            placeholder="选择已完成回测"
+            value={taskId || undefined}
+            onChange={value => setTaskId(Number(value))}
+            options={completedTasks.map(task => ({
+              value: task.id,
+              label: `#${task.id} ${task.task_name}`,
+            }))}
+          />
+        }
+      >
+        {completedTasks.length === 0 ? (
+          <Empty description="还没有已完成回测" />
+        ) : loading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}>
+            <Spin tip="读取成交约束审计…" />
+          </div>
+        ) : (
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <Alert
+              type={
+                audit?.status === 'reject' || audit?.status === 'error'
+                  ? 'error'
+                  : audit?.status === 'pass'
+                    ? 'success'
+                    : 'warning'
+              }
+              showIcon
+              message={audit?.title || 'A股成交约束'}
+              description={audit?.summary || '等待回测生成成交约束结论。'}
+            />
+            <Row gutter={[16, 16]}>
+              <Col xs={24} md={6}>
+                <Statistic title="跳过/拒单" value={audit?.rejected_order_count || 0} suffix="笔" />
+              </Col>
+              <Col xs={24} md={6}>
+                <Statistic
+                  title="买入成交"
+                  value={audit?.diagnostics?.buy_fill_count || 0}
+                  suffix="笔"
+                />
+              </Col>
+              <Col xs={24} md={6}>
+                <Statistic
+                  title="卖出成交"
+                  value={audit?.diagnostics?.sell_fill_count || 0}
+                  suffix="笔"
+                />
+              </Col>
+              <Col xs={24} md={6}>
+                <Statistic title="审计状态" value={audit?.status || 'pending'} />
+              </Col>
+            </Row>
+            <Table
+              size="small"
+              rowKey="reason"
+              columns={[
+                { title: '原因', dataIndex: 'label', key: 'label' },
+                { title: '代码', dataIndex: 'reason', key: 'reason' },
+                { title: '数量', dataIndex: 'count', key: 'count', width: 100 },
+              ]}
+              dataSource={reasonRows}
+              pagination={false}
+              locale={{ emptyText: '没有涨停、跌停、停牌或 T+1 阻断记录' }}
+            />
+            <Text type="secondary">
+              实验 #{taskExperiment?.id || audit?.experiment?.id || '—'} ·{' '}
+              {selectedTask?.task_name || '—'}
+            </Text>
+          </Space>
+        )}
+      </Card>
+    </Space>
+  );
+};
+
+const AuditArtifactCard: React.FC<{
+  title: string;
+  artifact?: BacktestResearchAudit['artifacts'][number];
+}> = ({ title, artifact }) => (
+  <Card size="small" title={title} extra={artifact ? artifactStatusTag(artifact.status) : null}>
+    <Paragraph style={{ minHeight: 72 }}>{artifact?.summary || '暂无审计结论。'}</Paragraph>
+    {artifact?.payload_json?.issue_slots && (
+      <Space wrap>
+        {artifact.payload_json.issue_slots.map((slot: any) => (
+          <Tag key={slot.key} color={artifactStatusColor(slot.status)}>
+            {slot.label || slot.key}: {slot.status}
+          </Tag>
+        ))}
+      </Space>
+    )}
+  </Card>
+);
+
+// ============================================================================
+// Tab 4 — 回测对比
 // ============================================================================
 
 const CompareTab: React.FC<{
@@ -1013,6 +1455,12 @@ const CompareTab: React.FC<{
         );
       },
     },
+    {
+      title: '审计状态',
+      key: 'research_verdict',
+      width: 120,
+      render: (_: any, row: BacktestTask) => researchVerdictTag(row.run_summary?.research_verdict),
+    },
   ];
 
   return (
@@ -1106,8 +1554,8 @@ const CompareChartCard: React.FC<{ items: BacktestCompareItem[] }> = ({ items })
         const cum = Number.isFinite(Number(point?.cumulative_return_pct))
           ? Number(point.cumulative_return_pct)
           : total > 0 && initial > 0
-          ? (total / initial - 1) * 100
-          : 0;
+            ? (total / initial - 1) * 100
+            : 0;
         row[`task_${item.task_id}`] = Number(cum.toFixed(2));
       });
     });
@@ -1803,6 +2251,35 @@ function statusLabel(status?: string) {
     PENDING: '待运行',
   };
   return labels[String(status || '').toUpperCase()] || status || '—';
+}
+
+function artifactStatusColor(status?: string) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'pass') return 'green';
+  if (s === 'watch') return 'gold';
+  if (s === 'reject' || s === 'error') return 'red';
+  if (s === 'insufficient' || s === 'pending') return 'orange';
+  return 'default';
+}
+
+function artifactStatusLabel(status?: string) {
+  const labels: Record<string, string> = {
+    pass: '通过',
+    watch: '需谨慎',
+    reject: '阻断',
+    insufficient: '数据不足',
+    pending: '待生成',
+    error: '失败',
+  };
+  return labels[String(status || '').toLowerCase()] || status || '待生成';
+}
+
+function artifactStatusTag(status?: string) {
+  return <Tag color={artifactStatusColor(status)}>{artifactStatusLabel(status)}</Tag>;
+}
+
+function researchVerdictTag(verdict?: string | null) {
+  return artifactStatusTag(verdict || 'pending');
 }
 
 // ============================================================

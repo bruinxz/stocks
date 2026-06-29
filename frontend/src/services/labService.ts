@@ -81,7 +81,12 @@ export interface ResearchCredibilityVerdict {
 
 export interface ResearchAuditArtifact {
   id?: number;
-  artifact_type: 'backtest' | 'integrity_audit' | 'execution_audit' | 'credibility_summary';
+  artifact_type:
+    | 'backtest'
+    | 'integrity_audit'
+    | 'point_in_time_audit'
+    | 'execution_audit'
+    | 'credibility_summary';
   status: 'pending' | 'pass' | 'watch' | 'reject' | 'insufficient' | 'error';
   title: string;
   summary?: string | null;
@@ -97,6 +102,41 @@ export interface BacktestResearchAudit {
   blocking_reasons: string[];
   watch_reasons: string[];
   next_action_label: string;
+}
+
+export interface ResearchExperiment {
+  id: number;
+  experiment_key: string;
+  hypothesis?: string | null;
+  strategy_key: string;
+  template_id?: string | null;
+  task_id?: number | null;
+  status: string;
+  verdict: ResearchCredibilityVerdictValue;
+  start_date: string;
+  end_date: string;
+  universe: string;
+  symbols?: string[];
+  data_policy_json?: Record<string, any>;
+  constraint_policy_json?: Record<string, any>;
+  summary_json?: Record<string, any>;
+  created_at: string;
+  updated_at?: string;
+  artifacts?: ResearchAuditArtifact[];
+}
+
+export interface BacktestExecutionConstraintAudit {
+  task_id: number;
+  experiment: Record<string, any> | null;
+  artifact: ResearchAuditArtifact;
+  status: ResearchAuditArtifact['status'];
+  title: string;
+  summary: string;
+  rejected_order_count: number;
+  rejected_orders: any[];
+  reason_counts: Record<string, number>;
+  grouped_reasons: Array<{ reason: string; count: number; label: string }>;
+  diagnostics: Record<string, any>;
 }
 
 export interface BacktestTask {
@@ -163,11 +203,54 @@ export async function getBacktestDetail(id: number): Promise<BacktestDetail | nu
   return res.data.data as BacktestDetail;
 }
 
+export async function getBacktestResearchAudit(taskId: number): Promise<BacktestResearchAudit> {
+  const res = await api.get(`/quant/backtests/${taskId}/research-audit`);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '获取回测研究审计失败');
+  }
+  return res.data.data as BacktestResearchAudit;
+}
+
+export async function getBacktestExecutionConstraintAudit(
+  taskId: number
+): Promise<BacktestExecutionConstraintAudit> {
+  const res = await api.get(`/quant/backtests/${taskId}/execution-constraint-audit`);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '获取成交约束审计失败');
+  }
+  return res.data.data as BacktestExecutionConstraintAudit;
+}
+
+export async function listResearchExperiments(limit = 50): Promise<ResearchExperiment[]> {
+  const res = await api.get('/quant/research-experiments', { params: { limit } });
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '获取研究实验账本失败');
+  }
+  return (res.data.data || []) as ResearchExperiment[];
+}
+
+export async function getResearchExperiment(id: number): Promise<ResearchExperiment> {
+  const res = await api.get(`/quant/research-experiments/${id}`);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '获取研究实验详情失败');
+  }
+  return res.data.data as ResearchExperiment;
+}
+
+export async function runResearchExperimentAudit(id: number): Promise<BacktestResearchAudit> {
+  const res = await api.post(`/quant/research-experiments/${id}/run-audit`);
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '运行研究实验审计失败');
+  }
+  return res.data.data as BacktestResearchAudit;
+}
+
 // ---------- /api/quant/backtests POST (create) -----------------------------
 
 export interface CreateBacktestPayload {
   task_name?: string;
   easy_mode?: boolean;
+  create_research_experiment?: boolean;
   experiment_id?: number;
   template_id?: string;
   hypothesis?: string;
@@ -947,6 +1030,11 @@ export const labService = {
   listQuantStrategies,
   listBacktestTasks,
   getBacktestDetail,
+  getBacktestResearchAudit,
+  getBacktestExecutionConstraintAudit,
+  listResearchExperiments,
+  getResearchExperiment,
+  runResearchExperimentAudit,
   createBacktestTask,
   compareBacktests,
   getBacktestDrawdownSeries,
