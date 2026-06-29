@@ -174,8 +174,8 @@ export interface PushedGroupResult {
 export interface PushResult {
   ok: boolean;
   pushed_groups: PushedGroupResult[];
-  /** 顶层 skip 原因 — 'deduped' / 'circuit_breaker' / 'dry_run' / 'no_webhook' (无任何 group 成功) */
-  skipped_reason?: 'deduped' | 'no_webhook' | 'circuit_breaker' | 'dry_run' | 'invalid_input';
+  /** 顶层 skip 原因 — 'deduped' / 'circuit_breaker' / 'dry_run' / 'no_webhook' (无任何 group 成功) / PR-L 'emergency_stop_loss_conf_gate' */
+  skipped_reason?: 'deduped' | 'no_webhook' | 'circuit_breaker' | 'dry_run' | 'invalid_input' | 'emergency_stop_loss_conf_gate';
   dedup_signature: string;
   /** caller 调试用 — buildOpportunityCard 输出 */
   card_payload?: any;
@@ -186,6 +186,19 @@ export interface PushResult {
 // ---------------------------------------------------------------------------
 // Pure helpers (exported for unit testing)
 // ---------------------------------------------------------------------------
+
+/** PR-L (2026-06-29) — confidence_score ≥ threshold 时拦截推送. NaN/null → 不拦截.
+ *  pure (export for test). 见顶部 EMERGENCY_CONF_GATE 注释. */
+export function isEmergencyConfGated(
+  decision: OpportunityDecision,
+  threshold: number = EMERGENCY_CONF_GATE_THRESHOLD
+): boolean {
+  if (!EMERGENCY_CONF_GATE) return false;
+  if (!decision) return false;
+  const n = Number(decision.confidence_score);
+  if (!Number.isFinite(n)) return false;
+  return n >= threshold;
+}
 
 /** 取 trigger_rule 对应 TTL; 未知 rule 走 DEFAULT_TTL_MS. */
 export function ttlForTriggerRule(rule: string): number {
