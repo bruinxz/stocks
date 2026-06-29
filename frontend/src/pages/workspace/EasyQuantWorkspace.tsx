@@ -7,6 +7,7 @@ import {
   CloseOutlined,
   DownOutlined,
   ExportOutlined,
+  InfoCircleOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
   UserOutlined,
@@ -130,6 +131,56 @@ const templateSketchById: Record<EasyQuantTemplateId, 'trend' | 'cross' | 'shiel
   breakout_ma: 'cross',
   low_vol_value: 'shield',
 };
+
+const easyQuantStoryHints = {
+  data: '确认行情、因子和运行环境够不够支撑这次研究。',
+  hypothesis: '说明这次想验证什么，后续账本、审计和报告都会挂在这条链路上。',
+  metrics: '看完整收益、回撤、成本和交易质量，确认结论不是只看一个数字。',
+  trades: '复盘每笔买卖发生的时间、盈亏，以及系统给出的买入/卖出原因。',
+  blocks: '看哪些订单被涨跌停、停牌、T+1 或资金不足挡住。',
+  history: '找回以前的简易版回测；可在这里复看，也可跳专业版深挖。',
+  ledger: '串起研究假设、数据审计、成交约束和最终可信度。',
+  credibility: '先排除偷看未来和不可成交，再决定是否进入模拟观察。',
+} as const;
+
+type EasyQuantStoryHintKey = keyof typeof easyQuantStoryHints;
+
+const backtestReportStoryByTab: Record<BacktestReportTab, EasyQuantStoryHintKey> = {
+  metrics: 'metrics',
+  trades: 'trades',
+  blocks: 'blocks',
+};
+
+const credibilityStoryByKey: Record<string, EasyQuantStoryHintKey> = {
+  backtest: 'ledger',
+  integrity: 'credibility',
+  execution: 'blocks',
+};
+
+function StoryHint({
+  story,
+  label = '说明',
+  focusable = true,
+}: {
+  story: EasyQuantStoryHintKey;
+  label?: string;
+  focusable?: boolean;
+}) {
+  const text = easyQuantStoryHints[story];
+
+  return (
+    <span
+      className="eq-story-hint"
+      tabIndex={focusable ? 0 : undefined}
+      aria-label={`${label}：${text}`}
+    >
+      <InfoCircleOutlined aria-hidden="true" />
+      <span className="eq-story-bubble" role="tooltip">
+        {text}
+      </span>
+    </span>
+  );
+}
 
 function getResearchAuditCompletenessScore(audit?: EasyQuantResearchAudit | null): number {
   if (!audit) {
@@ -1495,7 +1546,9 @@ const EasyQuantWorkspace: React.FC = () => {
             <span>当前任务</span>
           </div>
           <div className="eq-stage-copy">
-            <h2>查数据</h2>
+            <h2>
+              查数据 <StoryHint story="data" label="查数据说明" />
+            </h2>
             <p>先确认数据可靠，再进入回测。新手不需要理解每个字段，只看是否可以继续。</p>
           </div>
           <div className={`eq-verdict-card ${bootstrapLoading ? 'eq-verdict-card--loading' : ''}`}>
@@ -1594,7 +1647,9 @@ const EasyQuantWorkspace: React.FC = () => {
             <span>当前任务</span>
           </div>
           <div className="eq-stage-copy">
-            <h2>回测报告</h2>
+            <h2>
+              回测报告 <StoryHint story="metrics" label="回测报告说明" />
+            </h2>
             <p>先看一个结论，再决定要不要进入模拟观察。详细指标放在抽屉里慢慢看。</p>
           </div>
           <div className="eq-run-summary-strip" aria-label="本次回测配置">
@@ -1728,7 +1783,9 @@ const EasyQuantWorkspace: React.FC = () => {
             <span>当前任务</span>
           </div>
           <div className="eq-stage-copy">
-            <h2>可信度</h2>
+            <h2>
+              可信度 <StoryHint story="credibility" label="可信度说明" />
+            </h2>
             <p>先确认这次研究没有偷看未来，也没有违反 A 股成交规则，再进入模拟观察。</p>
           </div>
           <div className="eq-credibility-hero">
@@ -1755,7 +1812,13 @@ const EasyQuantWorkspace: React.FC = () => {
                 key={item.key}
                 className={`eq-credibility-card eq-credibility-card--${getArtifactTone(item.status)}`}
               >
-                <span>{item.label}</span>
+                <span>
+                  {item.label}
+                  <StoryHint
+                    story={credibilityStoryByKey[item.key] || 'credibility'}
+                    label={`${item.label}说明`}
+                  />
+                </span>
                 <strong>{getArtifactStatusLabel(item.status)}</strong>
                 <p>{item.summary}</p>
               </article>
@@ -2000,7 +2063,9 @@ const EasyQuantWorkspace: React.FC = () => {
           </div>
         </section>
         <label className="eq-hypothesis">
-          <span>研究假设</span>
+          <span>
+            研究假设 <StoryHint story="hypothesis" label="研究假设说明" />
+          </span>
           <textarea
             value={hypothesis}
             onChange={event => setHypothesis(event.target.value)}
@@ -2128,7 +2193,9 @@ const EasyQuantWorkspace: React.FC = () => {
       return (
         <>
           <div className="eq-drawer-note eq-history-intro">
-            <strong>只列简易版回测</strong>
+            <strong>
+              只列简易版回测 <StoryHint story="history" label="历史回测说明" />
+            </strong>
             <span>点“在简易版查看”会回到当前五步流程；点“专业版详情”会打开完整回测页。</span>
             <button
               className="eq-button eq-button--quiet"
@@ -2245,6 +2312,11 @@ const EasyQuantWorkspace: React.FC = () => {
                 onClick={() => setBacktestReportTab(tab.key as BacktestReportTab)}
               >
                 {tab.label}
+                <StoryHint
+                  story={backtestReportStoryByTab[tab.key as BacktestReportTab]}
+                  label={`${tab.label}说明`}
+                  focusable={false}
+                />
               </button>
             ))}
           </div>
@@ -2409,7 +2481,9 @@ const EasyQuantWorkspace: React.FC = () => {
       return (
         <div className="eq-ledger">
           <article>
-            <span>研究假设</span>
+            <span>
+              研究假设 <StoryHint story="hypothesis" label="研究假设说明" />
+            </span>
             <strong>{hypothesis || selectedTemplateData.default_hypothesis}</strong>
             <p>
               模板：{selectedTemplateData.name}。回测任务：
@@ -2418,13 +2492,21 @@ const EasyQuantWorkspace: React.FC = () => {
           </article>
           {credibilityItems.map(item => (
             <article key={item.key}>
-              <span>{item.label}</span>
+              <span>
+                {item.label}
+                <StoryHint
+                  story={credibilityStoryByKey[item.key] || 'ledger'}
+                  label={`${item.label}说明`}
+                />
+              </span>
               <strong>{getArtifactStatusLabel(item.status)}</strong>
               <p>{item.summary}</p>
             </article>
           ))}
           <article>
-            <span>最终结论</span>
+            <span>
+              最终结论 <StoryHint story="ledger" label="实验账本说明" />
+            </span>
             <strong>{researchAuditVerdict.title}</strong>
             <p>{researchAuditVerdict.summary}</p>
           </article>

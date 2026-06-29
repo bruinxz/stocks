@@ -132,7 +132,9 @@ assert(
 );
 assert(
   'easy workspace relies on environment API routing instead of hard-coded dev database hosts',
-  !forbiddenEasyRuntimeLiteralPattern.test([page, service, labService, hooks, templates, helpers].join('\n')) &&
+  !forbiddenEasyRuntimeLiteralPattern.test(
+    [page, service, labService, hooks, templates, helpers].join('\n')
+  ) &&
     service.includes("import api from './api'") &&
     service.includes('createBacktestTask')
 );
@@ -274,6 +276,21 @@ assert(
     page.includes('eq-history-list') &&
     page.includes('eq-history-card') &&
     page.includes('to={`/legacy/backtest/${item.id}`}')
+);
+assert(
+  'easy workspace exposes concise user-story hints through icon hover tooltips',
+  page.includes('easyQuantStoryHints') &&
+    page.includes('StoryHint') &&
+    css.includes('eq-story-hint') &&
+    css.includes('eq-story-bubble') &&
+    [
+      '说明这次想验证什么，后续账本、审计和报告都会挂在这条链路上。',
+      '看完整收益、回撤、成本和交易质量，确认结论不是只看一个数字。',
+      '复盘每笔买卖发生的时间、盈亏，以及系统给出的买入/卖出原因。',
+      '看哪些订单被涨跌停、停牌、T+1 或资金不足挡住。',
+      '找回以前的简易版回测；可在这里复看，也可跳专业版深挖。',
+      '串起研究假设、数据审计、成交约束和最终可信度。',
+    ].every(text => page.includes(text))
 );
 assert(
   'full metrics include benchmark, final value, cost, and execution diagnostics',

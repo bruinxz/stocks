@@ -47,6 +47,19 @@ assert(
   'professional report compares theory/audit/executable returns',
   page.includes('理论收益') && page.includes('审计后收益') && page.includes('可成交收益')
 );
+assert(
+  'professional phase one surfaces concise user-story hints through tooltips',
+  page.includes('labStoryHints') &&
+    page.includes('StoryTooltip') &&
+    page.includes('InfoCircleOutlined') &&
+    [
+      '把策略、股票池、区间和假设固定下来，方便以后复盘这次研究从哪来。',
+      '确认当时真的能看到这些数据，避免用未来公告、未来成分股或补齐后的数据作弊。',
+      '把理论信号放进 A 股真实限制里，看看涨跌停、停牌、T+1 和资金是否挡单。',
+      '先看未经审计、审计后、可成交三层收益差异，再决定要不要深挖。',
+      '账本负责把假设、回测任务、审计 artifact 和最终结论串起来。',
+    ].every(text => page.includes(text))
+);
 assert('lab service lists research experiments', service.includes('listResearchExperiments'));
 assert('lab service fetches research experiment detail', service.includes('getResearchExperiment'));
 assert('lab service runs experiment audit', service.includes('runResearchExperimentAudit'));

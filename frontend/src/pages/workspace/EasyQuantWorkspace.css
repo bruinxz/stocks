@@ -514,6 +514,73 @@
   min-width: 150px;
 }
 
+.eq-story-hint {
+  position: relative;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  border: 1px solid rgba(201, 99, 56, 0.42);
+  border-radius: 999px;
+  color: var(--eq-clay) !important;
+  font-size: 11px !important;
+  line-height: 1;
+  vertical-align: text-top;
+  cursor: help;
+  flex: 0 0 auto;
+}
+
+.eq-story-hint:focus-visible {
+  outline: 2px solid rgba(201, 99, 56, 0.32);
+  outline-offset: 2px;
+}
+
+.eq-story-bubble {
+  position: absolute;
+  bottom: calc(100% + 9px);
+  left: 50%;
+  z-index: 45;
+  width: max-content;
+  max-width: min(282px, calc(100vw - 40px));
+  padding: 9px 10px;
+  border: 1px solid rgba(23, 21, 18, 0.18);
+  border-radius: 9px;
+  background: var(--eq-ink);
+  color: var(--eq-paper) !important;
+  font-size: 12px !important;
+  font-weight: 800 !important;
+  line-height: 1.55 !important;
+  white-space: normal;
+  text-align: left;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 4px);
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.eq-story-bubble::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 8px;
+  height: 8px;
+  border-right: 1px solid rgba(23, 21, 18, 0.18);
+  border-bottom: 1px solid rgba(23, 21, 18, 0.18);
+  background: var(--eq-ink);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.eq-story-hint:hover .eq-story-bubble,
+.eq-story-hint:focus-visible .eq-story-bubble {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 .eq-scroll-cue {
   position: absolute;
   left: 50%;
@@ -1178,12 +1245,7 @@
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    110deg,
-    transparent 0%,
-    rgba(201, 99, 56, 0.08) 46%,
-    transparent 72%
-  );
+  background: linear-gradient(110deg, transparent 0%, rgba(201, 99, 56, 0.08) 46%, transparent 72%);
   transform: translateX(-100%);
   animation: eq-status-sheen 2.4s cubic-bezier(0.16, 1, 0.3, 1) infinite;
   pointer-events: none;
@@ -1969,6 +2031,10 @@
 }
 
 .eq-report-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   min-height: 36px;
   border: 0;
   border-radius: 9px;

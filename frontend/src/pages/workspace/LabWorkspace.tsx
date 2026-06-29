@@ -29,6 +29,7 @@ import {
   CopyOutlined,
   EditOutlined,
   ExperimentOutlined,
+  InfoCircleOutlined,
   NodeIndexOutlined,
   TrophyOutlined,
   PlayCircleOutlined,
@@ -100,6 +101,21 @@ const { RangePicker } = DatePicker;
 const DEFAULT_INITIAL_CAPITAL = 200000;
 const DEFAULT_BENCHMARK = 'sh.000300'; // 沪深 300
 const POLL_INTERVAL_MS = 3000;
+
+const labStoryHints = {
+  newBacktest: '把策略、股票池、区间和假设固定下来，方便以后复盘这次研究从哪来。',
+  dataAudit: '确认当时真的能看到这些数据，避免用未来公告、未来成分股或补齐后的数据作弊。',
+  execution: '把理论信号放进 A 股真实限制里，看看涨跌停、停牌、T+1 和资金是否挡单。',
+  returns: '先看未经审计、审计后、可成交三层收益差异，再决定要不要深挖。',
+  ledger: '账本负责把假设、回测任务、审计 artifact 和最终结论串起来。',
+  initialCapital: '初始资金会影响仓位规模、资金不足阻断和最终收益解释。',
+} as const;
+
+const StoryTooltip: React.FC<{ story: keyof typeof labStoryHints }> = ({ story }) => (
+  <Tooltip title={labStoryHints[story]}>
+    <InfoCircleOutlined style={{ color: '#8c8c8c', cursor: 'help', fontSize: 13 }} />
+  </Tooltip>
+);
 
 const LabWorkspace: React.FC = () => {
   const tabs: WorkspaceTab[] = [
@@ -820,7 +836,12 @@ const NewBacktestTab: React.FC<{
             </Col>
             <Col xs={24}>
               <Form.Item
-                label="研究假设"
+                label={
+                  <Space size={4}>
+                    研究假设
+                    <StoryTooltip story="newBacktest" />
+                  </Space>
+                }
                 name="hypothesis"
                 rules={[{ required: true, message: '请输入本次实验要验证的假设' }]}
                 extra="实验账本会记录这个假设，并把后续数据审计、成交约束审计和回测结论挂在同一条链路下。"
@@ -841,7 +862,15 @@ const NewBacktestTab: React.FC<{
               </Form.Item>
             </Col>
             <Col xs={24} md={6}>
-              <Form.Item label="初始资金" name="initial_capital">
+              <Form.Item
+                label={
+                  <Space size={4}>
+                    初始资金
+                    <StoryTooltip story="initialCapital" />
+                  </Space>
+                }
+                name="initial_capital"
+              >
                 <InputNumber<number>
                   min={10000}
                   max={100000000}
@@ -1012,10 +1041,23 @@ const ResearchLedgerTab: React.FC<{
       <Alert
         type="info"
         showIcon
-        message="阶段一实验账本"
+        message={
+          <Space size={6}>
+            阶段一实验账本
+            <StoryTooltip story="ledger" />
+          </Space>
+        }
         description="每次研究回测都会绑定研究假设、数据策略、成交约束和审计 artifact，用来回答：结果从哪里来、有没有偷看未来、真实 A 股规则下还能不能成交。"
       />
-      <Card title="实验账本" extra={<Button onClick={onRefresh}>刷新</Button>}>
+      <Card
+        title={
+          <Space size={6}>
+            实验账本
+            <StoryTooltip story="ledger" />
+          </Space>
+        }
+        extra={<Button onClick={onRefresh}>刷新</Button>}
+      >
         <Table<ResearchExperiment>
           rowKey="id"
           loading={loading}
@@ -1077,7 +1119,12 @@ const DataAuditTab: React.FC<{
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card
-        title="数据审计"
+        title={
+          <Space size={6}>
+            数据审计
+            <StoryTooltip story="dataAudit" />
+          </Space>
+        }
         extra={
           <Select
             style={{ width: 360 }}
@@ -1122,7 +1169,15 @@ const DataAuditTab: React.FC<{
                 <AuditArtifactCard title="点时数据审计" artifact={pitArtifact} />
               </Col>
             </Row>
-            <Card size="small" title="理论收益 vs 审计后收益 vs 可成交收益">
+            <Card
+              size="small"
+              title={
+                <Space size={6}>
+                  理论收益 vs 审计后收益 vs 可成交收益
+                  <StoryTooltip story="returns" />
+                </Space>
+              }
+            >
               <Row gutter={[16, 16]}>
                 <Col xs={24} md={8}>
                   <Statistic
@@ -1211,7 +1266,12 @@ const ExecutionConstraintAuditTab: React.FC<{
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card
-        title="成交约束"
+        title={
+          <Space size={6}>
+            成交约束
+            <StoryTooltip story="execution" />
+          </Space>
+        }
         extra={
           <Select
             style={{ width: 360 }}
