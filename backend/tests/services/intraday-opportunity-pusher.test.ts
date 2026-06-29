@@ -151,7 +151,9 @@ class FakeDS implements PusherDataSource {
 function makeInput(overrides: Partial<OpportunityInput> = {}): OpportunityInput {
   const decision: OpportunityDecision = {
     action: 'buy',
-    confidence_score: 75,
+    // PR-L (2026-06-29): 默认 conf 改为 65 (< 70 threshold), 不触发 emergency gate.
+    // EMERGENCY_CONF_GATE 单测见 [push_e2e: PR-L conf gate >= 70 拦截] case.
+    confidence_score: 65,
     risk_level: 'medium',
     suggested_position_pct: 8.5,
     entry_zone: [123.45, 125.67],
@@ -667,6 +669,94 @@ function makeInput(overrides: Partial<OpportunityInput> = {}): OpportunityInput 
   // TS 不允许 'xxx' 作为 OpportunityTargetGroup, 用 cast 模拟运行时坏 input
   const r30 = await svc30.push(makeInput(), { target_groups: ['xxx' as any] });
   assertEqual('未知 group → no_webhook', r30.pushed_groups[0].status, 'no_webhook');
+
+  // ==========================================================================
+  console.log('\n[31] PR-L emergency stop-loss gate — conf >= 70 拦截 (audit 仍写)...');
+  // 见 IntradayOpportunityPusher 顶部 EMERGENCY_CONF_GATE 注释:
+  // PR-K 30 天回测证实 conf>=70 反向 (win 30% < low<50 win 40%).
+  // gate 在 push entry 处直接 return skipped, **audit 仍写一行** 留痕便于回查.
+  // dry_run 仍跳过该 gate (UI 预览不受影响).
+  process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK = 'https://feishu.test/biz';
+  const ds31 = new FakeDS({});
+  const svc31 = new IntradayOpportunityPusher(ds31);
+  const r31a = await svc31.push(
+    makeInput({
+      symbol: 'sh.600000',
+      decision: {
+        action: 'buy',
+        confidence_score: 80,
+        risk_level: 'medium',
+        suggested_position_pct: 5,
+        entry_zone: [10, 11],
+        stop_loss: 9,
+        take_profit: 12,
+      },
+    })
+  );
+  assertEqual('conf=80 拦截 ok=false', r31a.ok, false);
+  assertEqual('skipped_reason=emergency_stop_loss_conf_gate', r31a.skipped_reason, 'emergency_stop_loss_conf_gate');
+  assertEqual('无 group sent (gate 直接 return)', r31a.pushed_groups.length, 0);
+  assertEqual('webhook 不调', ds31.sendCalls.length, 0);
+  assertEqual('audit 仍写 1 行 (留痕)', ds31.auditCalls.length, 1);
+  assertEqual(
+    'audit push_result.skipped_reason=emergency_stop_loss_conf_gate',
+    (ds31.auditCalls[0].push_result as any).skipped_reason,
+    'emergency_stop_loss_conf_gate'
+  );
+
+  // 边界: conf=70 也拦截 (>= 严格)
+  const r31b = await svc31.push(
+    makeInput({
+      symbol: 'sh.600001',
+      decision: {
+        action: 'buy',
+        confidence_score: 70,
+        risk_level: 'medium',
+        suggested_position_pct: 5,
+        entry_zone: [10, 11],
+        stop_loss: 9,
+        take_profit: 12,
+      },
+    })
+  );
+  assertEqual('conf=70 边界拦截', r31b.skipped_reason, 'emergency_stop_loss_conf_gate');
+
+  // 反例: conf=69 不拦截 (< threshold) → 正常 push
+  const r31c = await svc31.push(
+    makeInput({
+      symbol: 'sh.600002',
+      decision: {
+        action: 'buy',
+        confidence_score: 69,
+        risk_level: 'medium',
+        suggested_position_pct: 5,
+        entry_zone: [10, 11],
+        stop_loss: 9,
+        take_profit: 12,
+      },
+    })
+  );
+  assertEqual('conf=69 不拦截 ok=true', r31c.ok, true);
+  assertEqual('conf=69 status=sent', r31c.pushed_groups[0]?.status, 'sent');
+
+  // dry_run 即使 conf>=70 也不拦截
+  const r31d = await svc31.push(
+    makeInput({
+      symbol: 'sh.600003',
+      decision: {
+        action: 'buy',
+        confidence_score: 90,
+        risk_level: 'medium',
+        suggested_position_pct: 5,
+        entry_zone: [10, 11],
+        stop_loss: 9,
+        take_profit: 12,
+      },
+    }),
+    { dry_run: true }
+  );
+  assertEqual('dry_run 跳过 gate ok=true', r31d.ok, true);
+  assertEqual('dry_run skipped_reason=dry_run (非 emergency)', r31d.skipped_reason, 'dry_run');
 
   // ==========================================================================
   console.log('\n--------------------------------------------------------------');
