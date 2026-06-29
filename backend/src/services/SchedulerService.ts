@@ -1536,6 +1536,12 @@ class SchedulerService {
               ? Boolean(parameters.notifyToFeishuBot)
               : true,
           params_by_strategy: parameters.params_by_strategy || parameters.paramsByStrategy,
+          // PR-H (2026-06-29) — 推荐时机标签. cron parameters.timing_tag 透传到 archive 写入
+          // AIInvestmentSignal.metadata.timing_tag → 前端推荐卡 badge. 5 个值:
+          // opening_rush(9:25早盘抢) / afternoon_kick(12:55午后攻) / closing_grab(14:30尾盘埋) /
+          // overnight(15:30隔夜潜伏, 默认) / intraday_anomaly(盘中异动 detector 走另一路).
+          // 未传 → 沿用默认 'overnight' (符合历史 cron 行为, 兼容已部署 row).
+          timing_tag: parameters.timing_tag || parameters.timingTag,
         });
 
         const agentSubmitted = Array.isArray(result.agent_analysis?.submitted)
