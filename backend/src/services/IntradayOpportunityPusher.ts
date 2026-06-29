@@ -679,6 +679,33 @@ export class IntradayOpportunityPusher {
       };
     }
 
+    // PR-L emergency stop-loss gate (2026-06-29) — 高 conf 反向, push entry 处直接拦截.
+    // dry_run 仍跳过该 gate (UI 预览不受影响). audit 仍写一行留痕便于回查.
+    if (!options.dry_run && isEmergencyConfGated(normalized.decision)) {
+      logger.warn(
+        `[PR-L emergency] skip push for ${normalized.symbol} conf=${normalized.decision.confidence_score} ` +
+          `(high conf 反向 — 见 PR-K 30 天回测; 等 conf evaluator 修复)`
+      );
+      if (options.persist !== false) {
+        await this.safePersist(
+          normalized,
+          (options.target_groups || [OPPORTUNITY_TARGET_GROUPS.BUSINESS]).join(','),
+          {
+            ok: false,
+            dedup_signature: '',
+            skipped_reason: EMERGENCY_CONF_GATE_SKIP_REASON,
+            pushed_groups: [],
+          }
+        );
+      }
+      return {
+        ok: false,
+        pushed_groups: [],
+        skipped_reason: 'emergency_stop_loss_conf_gate',
+        dedup_signature: '',
+      };
+    }
+
     const now = Number.isFinite(options.now_ms_override)
       ? Number(options.now_ms_override)
       : Date.now();
