@@ -138,6 +138,22 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '工作日 18:00 拉前一交易日 30+ 行业 ETF 净流入 / 份额 (AKShare fund_etf_fund_daily_em + fund_etf_hist_em) → etf_creation_redemption',
   },
+  // PR-M1 (2026-06-29): 隔夜信号矩阵 — A50 期指 + 港股恒指 + 美股纳指/DXY/VIX.
+  // 北京时间 21-23 (隔夜美股开盘) + 0-9 (隔夜+早盘前) 每 15min 跑一次,
+  // 5 个 source 并行 (fail-OPEN). 给 9:25 早盘 QuantRecommendationService /
+  // OpeningRushDetectorService 消费判定大盘方向, 避免普跌日盲推 (PR-I 教训).
+  // 数据源真实可调: index_global_em + stock_hk_index_spot_em +
+  // index_us_stock_sina(.IXIC/.VIX) + forex_spot_em.
+  // 不限工作日: 周末美股已收 (跑出空数据无害); 一日 ~36 次 × 5 source = 180 行
+  // (~90 KB / 日).
+  {
+    type: 'OVERNIGHT_SIGNAL_SYNC',
+    category: 'data_sync',
+    owner: 'data',
+    recommendedCron: '*/15 0-9,21-23 * * *',
+    description:
+      'A50 期指 + 港股恒指 + 美股纳指/DXY/VIX 隔夜信号矩阵 — 给早盘 QuantRecommendationService 消费 (5 source fail-OPEN, *15 min)',
+  },
   // BJ-8 (2026-06-24): 市场情绪指数每日计算 - 真因 MarketSentimentIndexService 写
   //   全自动 (US-057), 但 cron 没有调度, 仅 sync-market-sentiment 脚本手动跑过 2 次
   //   (2026-06-09 + 06-11), 之后停摆 13 日 → DATA_FRESHNESS_CHECK 永远 fail.

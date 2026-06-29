@@ -650,6 +650,20 @@ export class QuantRecommendationService {
     total_candidates: number;
     analyzed_candidates: number;
     recommendations: QuantRecommendationItem[];
+    /** PR-M1 (2026-06-29): 隔夜信号大盘方向上下文 - UI 在 9:25 早盘卡片消费 */
+    overnight_context?: {
+      market_direction: 'bullish' | 'neutral' | 'bearish' | 'unknown';
+      reason: string;
+      source_count: number;
+      as_of: string;
+      signals: Array<{
+        signal_type: string;
+        source: string;
+        value: number;
+        change_pct: number | null;
+        collected_at: string;
+      }>;
+    };
   }> {
     const universe = options.universe || 'favorites';
     const style = options.style || 'balanced';
@@ -699,6 +713,38 @@ export class QuantRecommendationService {
     const selectedRecommendations = recommendations.slice(0, limit);
     await this.attachMarketEnvironment(selectedRecommendations);
 
+    // PR-M1 (2026-06-29): 隔夜信号大盘方向上下文 fail-OPEN.
+    // 加载过去 12h 的 A50/HK/Nasdaq/DXY/VIX 信号, 推出 bullish/neutral/bearish
+    // 方向 + 解释短句, 给 UI 早盘卡片消费. 该 service 抖动 / 表不存在 / 无数据
+    // 一律 fail-OPEN 返回 undefined (推荐主流程不受影响).
+    let overnightContext: any = undefined;
+    try {
+      /* eslint-disable @typescript-eslint/no-var-requires */
+      const {
+        overnightSignalSyncService,
+      } = require('./OvernightSignalSyncService');
+      /* eslint-enable @typescript-eslint/no-var-requires */
+      const ctx = await overnightSignalSyncService.loadRecentContext();
+      overnightContext = {
+        market_direction: ctx.market_direction,
+        reason: ctx.reason,
+        source_count: ctx.source_count,
+        as_of: ctx.as_of.toISOString(),
+        signals: Array.from(ctx.signals.values()).map((s: any) => ({
+          signal_type: s.signal_type,
+          source: s.source,
+          value: s.value,
+          change_pct: s.change_pct,
+          collected_at:
+            s.collected_at instanceof Date
+              ? s.collected_at.toISOString()
+              : String(s.collected_at),
+        })),
+      };
+    } catch (err: any) {
+      logger.warn(`隔夜信号上下文加载失败 (fail-OPEN): ${err?.message || err}`);
+    }
+
     return {
       as_of: moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm:ss'),
       universe,
@@ -706,6 +752,7 @@ export class QuantRecommendationService {
       total_candidates: stocks.length,
       analyzed_candidates: recommendations.length,
       recommendations: selectedRecommendations,
+      overnight_context: overnightContext,
     };
   }
 

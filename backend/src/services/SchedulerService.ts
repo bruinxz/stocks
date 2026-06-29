@@ -5949,6 +5949,49 @@ class SchedulerService {
             }`
           );
         }
+      } else if (task.type === 'OVERNIGHT_SIGNAL_SYNC') {
+        // PR-M1 (2026-06-29) — 隔夜信号矩阵 sync cron 入口.
+        // 北京时间 21-23 (隔夜美股开盘) + 0-9 (隔夜+早盘前) 每 15min 跑一次,
+        // 5 个 source (A50 / 港股恒指 / 纳指 / DXY / VIX) fail-OPEN.
+        // 给早盘 QuantRecommendationService.loadOvernightContext 消费判定大盘方向.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          overnightSignalSyncService,
+        } = require('./OvernightSignalSyncService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        try {
+          const r = await overnightSignalSyncService.syncAllSources();
+          const succeeded = !r.error;
+          await this.safeUpdateExecutionLog(executionLog, {
+            total_items: 5, // 期望 source 数
+            completed_items: Number(r.fetched) || 0,
+            failed_items: succeeded ? 5 - (Number(r.fetched) || 0) : 5,
+            status: 'COMPLETED',
+            completed_at: new Date(),
+            error_message: r.error || null,
+            result_summary: {
+              scenario: 'overnight_signal_sync',
+              fetched: r.fetched,
+              upserted: r.upserted,
+              per_source: r.per_source,
+              collected_at: r.collected_at,
+              error: r.error || null,
+            },
+          });
+          if (succeeded) {
+            logger.info(
+              `[OVERNIGHT_SIGNAL_SYNC] fetched=${r.fetched}/5 upserted=${r.upserted} ` +
+                `sources=[${r.per_source
+                  .filter((s: any) => s.ok)
+                  .map((s: any) => `${s.signal_type}:${s.change_pct ?? '-'}%`)
+                  .join(', ')}]`
+            );
+          } else {
+            logger.warn(`[OVERNIGHT_SIGNAL_SYNC] FAIL ${r.error || 'unknown_error'}`);
+          }
+        } catch (e: any) {
+          logger.warn(`[OVERNIGHT_SIGNAL_SYNC] outage: ${e?.message ?? e}`);
+        }
       } else if (task.type === 'INDUSTRY_FLOW_INTRADAY_SYNC') {
         // BK-2 (2026-06-24): 盘中 10min 行业资金流时序快照. fail-OPEN: 单点漏没关系.
         /* eslint-disable @typescript-eslint/no-var-requires */
@@ -8126,6 +8169,15 @@ class SchedulerService {
         name: '行业 ETF 资金流 daily sync',
         type: 'ETF_FLOW_SYNC',
         cron_expression: '0 18 * * 1-5',
+        is_active: true,
+        parameters: {},
+      },
+      {
+        // PR-M1 (2026-06-29) — 隔夜信号矩阵 (A50/HK/Nasdaq/DXY/VIX) cron seed.
+        // 北京时间 21-23 (隔夜美股开盘) + 0-9 (隔夜+早盘前) 每 15min 跑一次.
+        name: '隔夜信号矩阵 sync (A50/HK/Nasdaq/DXY/VIX)',
+        type: 'OVERNIGHT_SIGNAL_SYNC',
+        cron_expression: '*/15 0-9,21-23 * * *',
         is_active: true,
         parameters: {},
       },
