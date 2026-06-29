@@ -6628,6 +6628,63 @@ class SchedulerService {
             `buy=${r.matched_buy} sell=${r.matched_sell} written=${r.written_alerts} ` +
             `deduped=${r.deduped} errors=${r.errors?.length || 0} skip=${r.skipped_reason || 'none'}`
         );
+      } else if (task.type === 'INDUSTRY_SENTIMENT_AGGREGATE') {
+        // PR-M3 (2026-06-29) — 板块情绪指数日度聚合. 学术: 龙头战法 4 核心因子
+        // (板块涨停数 / 连板高度 / 封板率 / 炸板率) + 30 日板块动量 z-score.
+        // 每日 16:00 (工作日) 跑, 给推荐 service 消费做"龙头板块加权 / 弱势板块直接 skip".
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { industrySentimentAggregator } = require('./IndustrySentimentAggregator');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await industrySentimentAggregator.runOnce({
+          dry_run: parameters.dry_run === true,
+          trade_date: typeof parameters.trade_date === 'string' ? parameters.trade_date : undefined,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.industries_scanned,
+          completed_items: r.industries_written,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'industry_sentiment_aggregate',
+            trade_date: r.trade_date,
+            industries_scanned: r.industries_scanned,
+            industries_written: r.industries_written,
+            errors: r.errors?.length || 0,
+          },
+        });
+        logger.info(
+          `[INDUSTRY_SENTIMENT_AGGREGATE] trade_date=${r.trade_date} scanned=${r.industries_scanned} ` +
+            `written=${r.industries_written} errors=${r.errors?.length || 0}`
+        );
+      } else if (task.type === 'INTRADAY_REVERSAL_DETECT') {
+        // PR-M3 (2026-06-29) — 反转 (reversal) detector. 学术: Hsu 2018 JPM / Zhang & Zhu 2024 IREF
+        // 4 篇独立研究共识 — A 股因 T+1 + 散户主导 → 短期反转主导, 而非动量.
+        // 找今日 < -3% 且周月线趋势仍向上 → reversal_buy; > +5% 且 RSI > 70 → reversal_sell.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { intradayReversalDetector } = require('./IntradayReversalDetector');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await intradayReversalDetector.runOnce({
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned,
+          completed_items: r.hits.length,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'intraday_reversal_detect',
+            scanned: r.scanned,
+            hits: r.hits.length,
+            by_type: r.by_type,
+            errors: r.errors?.length || 0,
+          },
+        });
+        logger.info(
+          `[INTRADAY_REVERSAL_DETECT] scanned=${r.scanned} hits=${r.hits.length} ` +
+            `buy=${r.by_type.reversal_buy} sell=${r.by_type.reversal_sell} errors=${r.errors?.length || 0}`
+        );
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }
@@ -8128,6 +8185,26 @@ class SchedulerService {
         name: 'PR-M2 日内动量 detector (14:25)',
         type: 'INTRADAY_MOMENTUM_DETECT',
         cron_expression: '25 14 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // PR-M3 (2026-06-29): INDUSTRY_SENTIMENT_AGGREGATE 板块情绪指数日度聚合.
+      // 学术依据 PR-I 报告第 3 个致命短板 — 龙头战法 4 核心因子 (涨停数 / 连板高度 / 封板率 / 炸板率)
+      // + 30 日板块动量 z-score. 工作日 16:00 跑 (limit_up sync 在 15:35-15:40 之后).
+      {
+        name: '板块情绪指数日度聚合 (PR-M3)',
+        type: 'INDUSTRY_SENTIMENT_AGGREGATE',
+        cron_expression: '0 16 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // PR-M3 (2026-06-29): INTRADAY_REVERSAL_DETECT 反转 detector.
+      // 学术依据 PR-I 报告第 4 个致命短板 — A 股因 T+1 + 散户主导 → 短期反转主导, 而非动量.
+      // 每日 15:10 跑 (收盘前 10min, 让 RT quote 已稳定但还未 sync 到 daily_bars).
+      {
+        name: '反转 detector (PR-M3)',
+        type: 'INTRADAY_REVERSAL_DETECT',
+        cron_expression: '10 15 * * 1-5',
         is_active: true,
         parameters: { dry_run: false },
       },

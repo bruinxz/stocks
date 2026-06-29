@@ -834,6 +834,28 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       'PR-M2 14:25 跑日内动量 detector. r1>+1% buy 推全 user, r1<-1% 持仓 sell. 论文: Zhang/Ma/Zhu 2019 EM.',
   },
+  // PR-M3 (2026-06-29) — 板块情绪指数日度聚合. 学术 + 大 V 共识 (龙头战法 4 核心因子:
+  // 涨停数 / 连板高度 / 封板率 / 炸板率) + 30 日板块动量 z-score. 工作日 16:00 跑
+  // (limit_up sync 在 15:35-15:40 之后), 给推荐 service 消费做 "龙头板块加权 / 弱势板块 skip".
+  {
+    type: 'INDUSTRY_SENTIMENT_AGGREGATE',
+    category: 'analytics',
+    owner: 'quant',
+    recommendedCron: '0 16 * * 1-5',
+    description:
+      '工作日 16:00 跑板块情绪指数聚合 — 从 limit_up_stocks JOIN stocks.industry GROUP BY industry, 算 4 大龙头因子 (涨停数 / 连板高度 / 封板率 / 炸板率) + 30 日板块动量 z-score → composite_score 写 industry_sentiment_indices. PR-I 报告第 3 个致命短板.',
+  },
+  // PR-M3 (2026-06-29) — 反转 (reversal) detector. A 股因 T+1 + 散户主导 → 短期反转主导
+  // 而非动量 (4 篇学术研究共识). 每日 15:10 跑 (收盘前 10min, RT quote 已稳定但 daily_bars
+  // 还未 sync), 给 PR-K 高 conf 反向问题提供独立通道.
+  {
+    type: 'INTRADAY_REVERSAL_DETECT',
+    category: 'risk_control',
+    owner: 'quant',
+    recommendedCron: '10 15 * * 1-5',
+    description:
+      '工作日 15:10 跑反转 detector — 找今日 < -3% 且周/月线趋势仍向上的票 (reversal_buy, T+1 反弹) 或 > +5% 且 RSI(14) > 70 的票 (reversal_sell, 短期超买回调). 学术: Hsu/Viswanathan 2018 JPM cited 71 + Zhang & Zhu 2024 IREF.',
+  },
 ]);
 
 const CRON_REGISTRY_BY_TYPE: ReadonlyMap<string, CronTaskDefinition> = new Map(

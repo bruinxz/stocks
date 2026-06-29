@@ -110,3 +110,5 @@ export * from './EquityCurveGovernorState';
 // PR-M2 (2026-06-29) — 集合竞价快照 + 盘中 30-min K 线
 export * from './AuctionSnapshot';
 export * from './IntradayKline30Min';
+// PR-M3 (2026-06-29) — 板块情绪指数日度聚合
+export * from './IndustrySentimentIndex';
