@@ -256,6 +256,47 @@ const TIMING_TAG_META: Record<TimingTagKey, { label: string; icon: string; color
 };
 
 // ---------------------------------------------------------------------------
+//  PR-O2 (2026-06-29) — 涨停板战法 pattern badge (PR-I-v2 战法库 §1).
+//  source_type='limit_up_board' 的 signal 才出, 其它源 limit_up_pattern=null.
+//  与 PR-H 的 TIMING_TAG_META 并列显示在卡片右上 (timing tag 在左上).
+//
+//  Icon 设计:
+//    - 一字/T 字 / 强势板 → 🚀 (火箭, 最强)
+//    - 二板加速 / 二进三 / 高位连板 → 📈 (上升)
+//    - 反包系 (地天 / 烂板反包 / 跌停反包) → 🔄 (反转)
+//    - 炸板回封 → 💥 (爆破后稳)
+//    - 接力 (龙头 / 跟风) → 🤝
+//    - 兜底 → 🔥
+// ---------------------------------------------------------------------------
+const LIMIT_UP_PATTERN_META: Record<string, { icon: string; color: string }> = {
+  one_word: { icon: '🚀', color: '#dc2626' },
+  t_word: { icon: '🚀', color: '#dc2626' },
+  broken: { icon: '⚠️', color: '#f59e0b' },
+  strong_first_board: { icon: '🚀', color: '#dc2626' },
+  weak_to_strong: { icon: '🔥', color: '#f97316' },
+  zhongjun: { icon: '👑', color: '#a16207' },
+  second_board_accelerate: { icon: '📈', color: '#dc2626' },
+  second_board_refill: { icon: '🔄', color: '#0891b2' },
+  second_board_filling: { icon: '📉', color: '#f59e0b' },
+  two_to_three: { icon: '📈', color: '#dc2626' },
+  high_consecutive_accelerate: { icon: '📈', color: '#dc2626' },
+  consecutive_height_play: { icon: '👑', color: '#a16207' },
+  consecutive_ladder: { icon: '🪜', color: '#7c3aed' },
+  di_tian: { icon: '🔄', color: '#dc2626' },
+  broken_refill_next_day: { icon: '🔄', color: '#0891b2' },
+  limit_down_refill: { icon: '🔄', color: '#0891b2' },
+  broken_refill: { icon: '💥', color: '#f97316' },
+  broken_refill_with_turnover: { icon: '💥', color: '#f97316' },
+  leader_takeover: { icon: '🤝', color: '#7c3aed' },
+  follow_play: { icon: '🤝', color: '#7c3aed' },
+};
+
+function getLimitUpPatternMeta(pattern: string | null | undefined): { icon: string; color: string } {
+  if (!pattern) return { icon: '🔥', color: '#dc2626' };
+  return LIMIT_UP_PATTERN_META[String(pattern)] || { icon: '🔥', color: '#dc2626' };
+}
+
+// ---------------------------------------------------------------------------
 //  Phase 7 — 学习模块常量
 // ---------------------------------------------------------------------------
 
@@ -1063,6 +1104,40 @@ const HomeWorkspace: React.FC = () => {
               >
                 <span aria-hidden>{meta.icon}</span>
                 <span>{meta.label}</span>
+              </span>
+            );
+          })()}
+          {/* PR-O2 — 涨停板战法 badge (右上). 仅 source_type='limit_up_board' 的 signal 出. */}
+          {rec.limit_up_pattern && rec.limit_up_pattern_label && (() => {
+            const meta = getLimitUpPatternMeta(rec.limit_up_pattern);
+            const daysSuffix = rec.limit_up_continuous_days && rec.limit_up_continuous_days > 1
+              ? ` · ${rec.limit_up_continuous_days}板`
+              : '';
+            return (
+              <span
+                className="home-reco-card-limit-up"
+                title={`涨停战法: ${rec.limit_up_pattern_label}${daysSuffix} (PR-I-v2 战法库)`}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  position: 'absolute',
+                  top: 8,
+                  right: 8,
+                  padding: '3px 9px',
+                  borderRadius: 12,
+                  fontSize: 11,
+                  lineHeight: '16px',
+                  fontWeight: 600,
+                  color: '#fff',
+                  background: meta.color,
+                  boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
+                  zIndex: 2,
+                  letterSpacing: '0.02em',
+                }}
+              >
+                <span aria-hidden>{meta.icon}</span>
+                <span>{rec.limit_up_pattern_label}{daysSuffix}</span>
               </span>
             );
           })()}

@@ -147,6 +147,22 @@ export interface V3RecommendationItem {
    *   intraday_anomaly — ⚡ 盘中异动 (实时, 30 min 内买)
    */
   timing_tag?: 'opening_rush' | 'afternoon_kick' | 'closing_grab' | 'overnight' | 'intraday_anomaly';
+  /**
+   * PR-O2 (2026-06-29) — 涨停板战法 pattern key (后端 LimitUpBoardDetector 写入).
+   * 仅 source_type='limit_up_board' 的 signal 才非空; 其它 source 默认 null.
+   * 前端 /home 推荐卡见到非空就额外加一个 "🚀 一字板" / "📈 二板加速" 等 badge.
+   * 值域: one_word / t_word / broken / strong_first_board / weak_to_strong / zhongjun /
+   *       second_board_accelerate / second_board_refill / second_board_filling / two_to_three /
+   *       high_consecutive_accelerate / consecutive_height_play / consecutive_ladder /
+   *       di_tian / broken_refill_next_day / limit_down_refill /
+   *       broken_refill / broken_refill_with_turnover /
+   *       leader_takeover / follow_play
+   */
+  limit_up_pattern?: string | null;
+  /** PR-O2 — 中文 label (e.g. "一字板", "二板加速"), 后端 PR-I-v2 战法名透传. */
+  limit_up_pattern_label?: string | null;
+  /** PR-O2 — 当日连板数 (含当日). 1 = 首板; 2 = 二板. */
+  limit_up_continuous_days?: number | null;
   /** enrichSignal 失败兜底视图标记 — UI 可选显示 "数据加载部分失败" 提示. */
   enrich_failed?: boolean;
 }
