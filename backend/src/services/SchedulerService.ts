@@ -6492,6 +6492,99 @@ class SchedulerService {
             `deduped=${r.deduped} errors=${r.errors?.length || 0} ` +
             `by_detector=${JSON.stringify(r.by_detector)}`
         );
+      } else if (task.type === 'AUCTION_SNAPSHOT_SYNC') {
+        // PR-M2 (2026-06-29) — 9:25 集合竞价后开盘快照. 学术: Han/Hu/Jia 2023 + Gu/Ren 2010.
+        // 写 auction_snapshots; 给 OpeningRushDetector / UI 卡片消费. fail-OPEN.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { auctionSnapshotSyncService } = require('./AuctionSnapshotSyncService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await auctionSnapshotSyncService.runOnce({
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned,
+          completed_items: r.inserted,
+          failed_items: Math.max(0, r.scanned - r.inserted),
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: r.scenario,
+            trade_date: r.trade_date,
+            scanned: r.scanned,
+            inserted: r.inserted,
+            by_pattern: r.by_pattern,
+            skipped_reason: r.skipped_reason,
+            dry_run: r.dry_run,
+          },
+        });
+        logger.info(
+          `[AUCTION_SNAPSHOT_SYNC] trade_date=${r.trade_date} scanned=${r.scanned} inserted=${r.inserted} ` +
+            `skip=${r.skipped_reason || 'none'} by_pattern=${JSON.stringify(r.by_pattern)}`
+        );
+      } else if (task.type === 'INTRADAY_KLINE_30MIN_SYNC') {
+        // PR-M2 (2026-06-29) — 盘中 30-min K 线时序同步.
+        // 学术: Zhang/Ma/Zhu 2019 EM (9:30-10:00 预测 14:30-15:00). fail-OPEN per-symbol.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { intradayKlineSyncService } = require('./IntradayKlineSyncService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await intradayKlineSyncService.runOnce({
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned_symbols,
+          completed_items: r.succeeded_symbols,
+          failed_items: Math.max(0, r.scanned_symbols - r.succeeded_symbols),
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: r.scenario,
+            trade_date: r.trade_date,
+            scanned_symbols: r.scanned_symbols,
+            succeeded_symbols: r.succeeded_symbols,
+            total_klines: r.total_klines,
+            inserted: r.inserted,
+            skipped_reason: r.skipped_reason,
+            dry_run: r.dry_run,
+          },
+        });
+        logger.info(
+          `[INTRADAY_KLINE_30MIN_SYNC] trade_date=${r.trade_date} scanned=${r.scanned_symbols} ` +
+            `ok=${r.succeeded_symbols} klines=${r.total_klines} inserted=${r.inserted} ` +
+            `skip=${r.skipped_reason || 'none'}`
+        );
+      } else if (task.type === 'INTRADAY_MOMENTUM_DETECT') {
+        // PR-M2 (2026-06-29) — 14:25 日内动量 detector.
+        // r1>+1% buy → 全 user; r1<-1% 持仓 sell. 24h dedup. fail-OPEN.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { intradayMomentumDetector } = require('./IntradayMomentumDetector');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await intradayMomentumDetector.runOnce({
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned,
+          completed_items: r.written_alerts,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: r.scenario,
+            trade_date: r.trade_date,
+            scanned: r.scanned,
+            matched_buy: r.matched_buy,
+            matched_sell: r.matched_sell,
+            written_alerts: r.written_alerts,
+            deduped: r.deduped,
+            errors: r.errors?.length || 0,
+            skipped_reason: r.skipped_reason,
+            dry_run: r.dry_run,
+          },
+        });
+        logger.info(
+          `[INTRADAY_MOMENTUM_DETECT] trade_date=${r.trade_date} scanned=${r.scanned} ` +
+            `buy=${r.matched_buy} sell=${r.matched_sell} written=${r.written_alerts} ` +
+            `deduped=${r.deduped} errors=${r.errors?.length || 0} skip=${r.skipped_reason || 'none'}`
+        );
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }
@@ -7969,6 +8062,29 @@ class SchedulerService {
         name: '个股利好主动推送 (PR-B)',
         type: 'BULLISH_EVENT_DETECT',
         cron_expression: '*/30 * * * *',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // PR-M2 (2026-06-29) — 集合竞价 snapshot + 30-min K 线 + 日内动量 detector.
+      // 学术: Han/Hu/Jia 2023 SSRN + Zhang/Ma/Zhu 2019 EM ("mainly evident in China").
+      {
+        name: 'PR-M2 集合竞价快照 (9:25)',
+        type: 'AUCTION_SNAPSHOT_SYNC',
+        cron_expression: '25 9 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      {
+        name: 'PR-M2 盘中 30-min K 线 sync (每 30min)',
+        type: 'INTRADAY_KLINE_30MIN_SYNC',
+        cron_expression: '5 10,11,13,14 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      {
+        name: 'PR-M2 日内动量 detector (14:25)',
+        type: 'INTRADAY_MOMENTUM_DETECT',
+        cron_expression: '25 14 * * 1-5',
         is_active: true,
         parameters: { dry_run: false },
       },
