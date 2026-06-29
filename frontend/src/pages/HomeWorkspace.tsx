@@ -420,7 +420,12 @@ const HomeWorkspace: React.FC = () => {
   }, [loadAccount, loadRecommendations, loadPositions, loadSnapshots]);
 
   // -------- 一键跟单 --------
-  const handleFollowBuy = useCallback(
+  // PR-L emergency stop-loss (2026-06-29):
+  // PR-K 30 天回测证实推荐系统 win 32% (低于 50% 随机), 实盘 paper -10,798 元.
+  // 自动跟单已在后端 paper_trading_portfolios 表全停 (auto_trade_enabled=false).
+  // 前端 "一键跟单" 按钮先弹 emergency 风险评估 Modal, 用户 "我已了解, 继续手动
+  // 买入" 才走原下单路径 (showFollowBuyConfirmModal).
+  const showFollowBuyConfirmModal = useCallback(
     (rec: V3RecommendationItem) => {
       const price = rec.current_price;
       if (!price || price <= 0) {
@@ -477,6 +482,46 @@ const HomeWorkspace: React.FC = () => {
       });
     },
     [loadAccount, loadPositions, selectedPortfolioId]
+  );
+
+  // PR-L: handleFollowBuy 改为先弹 emergency 风险评估, "我已了解, 继续手动买入"
+  // 才走原下单路径 (showFollowBuyConfirmModal). data-testid 给 contract test 用.
+  const handleFollowBuy = useCallback(
+    (rec: V3RecommendationItem) => {
+      Modal.confirm({
+        title: (
+          <span data-testid="home-emergency-modal-title">
+            <WarningOutlined style={{ color: '#dc2626', marginRight: 8 }} />
+            推荐系统处于评估期 — 请确认是否继续
+          </span>
+        ),
+        icon: null,
+        width: 520,
+        content: (
+          <div style={{ fontSize: 14, lineHeight: 1.8 }}>
+            <p style={{ marginBottom: 8 }}>系统推荐模型经 30 天回测发现:</p>
+            <ul style={{ paddingLeft: 20, marginBottom: 12 }}>
+              <li>整体胜率 <strong>32%</strong> (低于 50% 随机)</li>
+              <li>高置信度推荐反而表现更差 (反向)</li>
+              <li>实盘累计亏损 <strong>10,798 元</strong></li>
+            </ul>
+            <p style={{ marginBottom: 0, color: 'var(--ink-3, #737373)' }}>
+              已暂停自动跟单. 您可手动评估后自行决定, 但<strong>强烈建议小仓试探</strong>.
+              详见{' '}
+              <a onClick={() => navigate('/workspace/today?tab=risk_center')}>
+                风控中心
+              </a>
+              .
+            </p>
+          </div>
+        ),
+        okText: '我已了解, 继续手动买入',
+        cancelText: '取消',
+        okButtonProps: { danger: true },
+        onOk: () => showFollowBuyConfirmModal(rec),
+      });
+    },
+    [navigate, showFollowBuyConfirmModal]
   );
 
   // -------- 一键卖出 --------
