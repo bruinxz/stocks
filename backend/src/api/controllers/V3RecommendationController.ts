@@ -92,12 +92,38 @@ const BUY_DECISIONS: ReadonlyArray<string> = Object.freeze(['buy', 'strong_buy']
  * PR-O2 (2026-06-29): limit_up_board 涨停板战法 detector 写入的信号也算 candidate —
  * source_type='limit_up_board', metadata.timing_tag='overnight' + metadata.pattern=<战法>.
  * 让前端 /home 推荐卡显示 "🚀 一字板" / "📈 二板加速" 等 badge.
+ *
+ * PR-O3 (2026-06-30) — 新增 3 个真消费 detector source_type 接通 PR-M1/M2/M3 数据
+ * (opening_rush_detector / intraday_price_volume_anomaly / last_hour_momentum).
+ *
+ * PR-O5 (2026-06-30) — 题材发酵 (theme_fermentation) 5 阶段 detector 写入信号.
  */
-const CANDIDATE_SOURCE_TYPES: ReadonlyArray<string> = Object.freeze([
+export const CANDIDATE_SOURCE_TYPES: ReadonlyArray<string> = Object.freeze([
   AISignalSourceType.ANALYSIS_ENGINE,
-  'quant_recommendation',
-  'tradingagents',
-  'limit_up_board',
+  AISignalSourceType.QUANT_RECOMMENDATION,
+  AISignalSourceType.TRADING_AGENTS,
+  AISignalSourceType.OPENING_RUSH_DETECTOR,
+  AISignalSourceType.INTRADAY_PRICE_VOLUME_ANOMALY,
+  AISignalSourceType.LAST_HOUR_MOMENTUM,
+  AISignalSourceType.LIMIT_UP_BOARD,
+  AISignalSourceType.THEME_FERMENTATION,
+]);
+
+/**
+ * PR-O3 fan-in: V3 推荐查询的全部 source_type. 单独常量便于未来调整 funnel vs query 时不耦合.
+ * 之前 V3 只查 ANALYSIS_ENGINE → 永远 0 行 (3 个 active user mode='off') → fallback
+ * QUANT_RECOMMENDATION. 改 fan-in 后, OpeningRushDetector / IntradayPriceVolumeAnomalyDetector /
+ * LastHourMomentumDetector / LimitUpBoardDetector / ThemeFermentationDetector 写入的信号
+ * 也能在前端 V3 卡片显示.
+ */
+export const V3_FANIN_SOURCE_TYPES: ReadonlyArray<string> = Object.freeze([
+  AISignalSourceType.ANALYSIS_ENGINE,
+  AISignalSourceType.QUANT_RECOMMENDATION,
+  AISignalSourceType.OPENING_RUSH_DETECTOR,
+  AISignalSourceType.INTRADAY_PRICE_VOLUME_ANOMALY,
+  AISignalSourceType.LAST_HOUR_MOMENTUM,
+  AISignalSourceType.LIMIT_UP_BOARD,
+  AISignalSourceType.THEME_FERMENTATION,
 ]);
 
 // ---------------------------------------------------------------------------
@@ -132,15 +158,23 @@ function parseDate(raw: any): string {
  * 缺失 / 历史 row 没写 metadata.timing_tag → 默认归为 'overnight' (与生产
  * 既有 cron 32 15 * * 1-5 语义一致, 不破坏既有 UI 默认值).
  */
-const TIMING_TAG_VALUES = ['opening_rush', 'afternoon_kick', 'closing_grab', 'overnight', 'intraday_anomaly'] as const;
-type TimingTag = (typeof TIMING_TAG_VALUES)[number];
+export const TIMING_TAG_VALUES = [
+  'opening_rush',
+  'afternoon_kick',
+  'closing_grab',
+  'overnight',
+  'intraday_anomaly',
+] as const;
+export type TimingTag = (typeof TIMING_TAG_VALUES)[number];
 
-function normalizeTimingTagFromMetadata(metadata: any): TimingTag {
-  const raw = String(metadata?.timing_tag || '').trim().toLowerCase();
+export function normalizeTimingTagFromMetadata(metadata: any): TimingTag {
+  const raw = String(metadata?.timing_tag || '')
+    .trim()
+    .toLowerCase();
   return (TIMING_TAG_VALUES as readonly string[]).includes(raw) ? (raw as TimingTag) : 'overnight';
 }
 
-function parseTimingFilter(raw: any): TimingTag[] | null {
+export function parseTimingFilter(raw: any): TimingTag[] | null {
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim().toLowerCase();
   if (!trimmed || trimmed === 'all') return null;
@@ -512,21 +546,17 @@ class V3RecommendationController {
       const requested = clampLimit(req.query.limit);
       const baseN = Math.min(requested, DEFAULT_RECOMMEND_LIMIT);
 
-      // Batch CD (2026-06-25): V3 endpoint 兜底 ANALYSIS_ENGINE → QUANT_RECOMMENDATION.
-      // 真因: 生产环境 3 个 active user analysis_engine.mode='off' (全是 'off'),
-      // 所以 ai_investment_signals 从未写入 source_type='analysis_engine' 行, 历史全是
-      // quant_recommendation. V3 endpoint 之前只查 ANALYSIS_ENGINE → 永远 0 条 → 推荐空.
-      // 此外: archive 的 signal_date 取的是 candidate.trend 最后一根 bar 的 time -
-      // 而 daily_bars 滞后 1-3 天 (今天 cron 跑前 daily_bars 最新只到 yesterday),
-      // 所以 signal_date 永远不是 today. 此处加 fallback: 优先 ANALYSIS_ENGINE today,
-      // 不空就用; 空了走 QUANT_RECOMMENDATION 最近 7 天的最新一天.
-      let actualSourceUsed = AISignalSourceType.ANALYSIS_ENGINE;
+      // PR-O3 (2026-06-30) fan-in: 同时查 V3_FANIN_SOURCE_TYPES (含 4 个新 detector source),
+      // 让 OpeningRushDetector / IntradayPriceVolumeAnomalyDetector / LastHourMomentumDetector /
+      // LimitUpBoard / ThemeFermentation 写入的信号能在 V3 卡片显示. 历史 fallback 行为保留:
+      // 当天为空时回退到最近 7 天内最新一个有信号的日期 (兼容 daily_bars 滞后导致的 signal_date 漂移).
+      let actualSourceUsed: string = 'fan_in';
       let actualDateUsed = date;
 
-      // 拉 50 条候选, 应用弹性扩展后再切 top N
+      // 拉 100 条候选 (fan-in 多 source 可能更多), 应用弹性扩展后再切 top N
       let candidateRows = await AIInvestmentSignal.findAll({
         where: {
-          source_type: AISignalSourceType.ANALYSIS_ENGINE,
+          source_type: { [Op.in]: V3_FANIN_SOURCE_TYPES as string[] },
           signal_date: date,
           normalized_decision: { [Op.in]: BUY_DECISIONS as string[] },
         },
@@ -534,16 +564,16 @@ class V3RecommendationController {
           ['confidence_score', 'DESC'],
           ['created_at', 'DESC'],
         ],
-        limit: 50,
+        limit: 100,
       });
 
       if (candidateRows.length === 0) {
-        // Fallback: query quant_recommendation 最近 5 个交易日 (含今天) 中最新一天有数据的
+        // Fallback: 最近 7 天 cover 长假
         const fallbackRows = await AIInvestmentSignal.findAll({
           where: {
-            source_type: AISignalSourceType.QUANT_RECOMMENDATION,
+            source_type: { [Op.in]: V3_FANIN_SOURCE_TYPES as string[] },
             signal_date: {
-              [Op.gte]: shiftDate(date, -7), // 最近 7 天 cover 长假
+              [Op.gte]: shiftDate(date, -7),
               [Op.lte]: date,
             },
             normalized_decision: { [Op.in]: BUY_DECISIONS as string[] },
@@ -553,17 +583,21 @@ class V3RecommendationController {
             ['confidence_score', 'DESC'],
             ['created_at', 'DESC'],
           ],
-          limit: 50,
+          limit: 100,
         });
 
         if (fallbackRows.length > 0) {
-          // 只取最新一天的 (与 ANALYSIS_ENGINE 单天语义一致)
+          // 只取最新一天的 (与单天语义一致)
           actualDateUsed = String(fallbackRows[0].signal_date).slice(0, 10);
-          actualSourceUsed = AISignalSourceType.QUANT_RECOMMENDATION;
           candidateRows = fallbackRows.filter(
             r => String(r.signal_date).slice(0, 10) === actualDateUsed
           );
         }
+      }
+
+      // 推断 actualSourceUsed (展示用): 取 top1 的 source_type
+      if (candidateRows.length > 0) {
+        actualSourceUsed = String(candidateRows[0].source_type);
       }
 
       // 应用弹性扩展; 用户显式 limit > 3 则按 limit 截断 (不再弹性), 反之走 elastic 到 5.
@@ -611,7 +645,7 @@ class V3RecommendationController {
           as_of: actualDateUsed,
           requested_date: date,
           source_used: actualSourceUsed,
-          fallback_applied: actualDateUsed !== date || actualSourceUsed !== AISignalSourceType.ANALYSIS_ENGINE,
+          fallback_applied: actualDateUsed !== date,
           recommendations,
           funnel,
         },

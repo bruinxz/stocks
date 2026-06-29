@@ -13,6 +13,31 @@ export enum AISignalSourceType {
    * (后者写 AIStockAnalysisReport, 不写本表).
    */
   ANALYSIS_ENGINE = 'analysis_engine',
+  /**
+   * PR-O3 (2026-06-30) — 早盘抢 (9:25 集合竞价 + PR-M1 隔夜信号融合).
+   * 由 `OpeningRushDetector.runOnce` 写入. timing_tag='opening_rush'.
+   */
+  OPENING_RUSH_DETECTOR = 'opening_rush_detector',
+  /**
+   * PR-O3 (2026-06-30) — 盘中价量异动 (量比突增 / 主力净流入 / 接近涨停 /
+   * 板块联动滞涨 / 炸板回封 / 二板秒封).
+   * 由 `IntradayPriceVolumeAnomalyDetector.runOnce` 写入. timing_tag='intraday_anomaly'.
+   */
+  INTRADAY_PRICE_VOLUME_ANOMALY = 'intraday_price_volume_anomaly',
+  /**
+   * PR-O3 (2026-06-30) — 尾盘动量 (Yang/Li/Wang 2022 CFRI A 股最稳 alpha,
+   * r1 9:30-10:00 收益预测 r2 14:30-15:00). 由 `LastHourMomentumDetector.runOnce` 写入.
+   * timing_tag='closing_grab'.
+   */
+  LAST_HOUR_MOMENTUM = 'last_hour_momentum',
+  /**
+   * PR-O3 (2026-06-30) — 涨停板战法 (LimitUpBoardDetector, 预留 PR-O2 接入).
+   */
+  LIMIT_UP_BOARD = 'limit_up_board',
+  /**
+   * PR-O3 (2026-06-30) — 题材发酵 (ThemeFermentationDetector, 已存在但本 enum 未列).
+   */
+  THEME_FERMENTATION = 'theme_fermentation',
 }
 
 export enum AISignalDecision {
