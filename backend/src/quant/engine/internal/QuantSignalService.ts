@@ -53,11 +53,12 @@ function mapRawToScoreByQuantile(rawValues: number[]): Map<number, number> {
 }
 
 function inferLimitThreshold(symbol: string, name?: string | null): number {
-  const normalized = String(symbol || '').toLowerCase();
-  if (/(^|\*)ST|退/i.test(String(name || ''))) return 5 * 0.97;
-  if (/^sh\.688/.test(normalized) || /^sz\.300/.test(normalized)) return 20 * 0.97;
-  if (/^bj\./.test(normalized)) return 30 * 0.97;
-  return 10 * 0.97;
+  const normalized = String(symbol || '').trim().toLowerCase();
+  const code = normalized.replace(/^(sh|sz|bj)[.:-]?/, '').replace(/\D/g, '');
+  if (/(^|\*)ST|退/i.test(String(name || ''))) return 4.9;
+  if (/^688/.test(code) || /^30[01]/.test(code)) return 19.9;
+  if (/^bj[.:-]?/.test(normalized) || /^(8|4|920)/.test(code)) return 29.9;
+  return 9.9;
 }
 
 function buildSignalExecutionProfile(

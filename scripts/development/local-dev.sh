@@ -590,9 +590,12 @@ start_tunnel() {
       exit 1
       ;;
   esac
-  ssh \
-    "${ssh_auth_options[@]}" \
-    -f -N \
+  local ssh_command=(ssh)
+  if [ "${#ssh_auth_options[@]}" -gt 0 ]; then
+    ssh_command+=("${ssh_auth_options[@]}")
+  fi
+  ssh_command+=(
+    -f -N
     -o ExitOnForwardFailure=yes \
     -o ServerAliveInterval=30 \
     -o ServerAliveCountMax=3 \
@@ -602,6 +605,8 @@ start_tunnel() {
     -L "$LOCAL_DB_PORT:$REMOTE_DB_HOST:$REMOTE_DB_PORT" \
     -p "$SSH_PORT" \
     "$SSH_USER@$SSH_HOST"
+  )
+  "${ssh_command[@]}"
 
   wait_for_port "$LOCAL_DB_PORT" "DB tunnel" 15
   existing_pid="$(port_listener_pid "$LOCAL_DB_PORT")"

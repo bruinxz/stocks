@@ -68,6 +68,11 @@ function readIsoDate(row: Record<string, any>, keys: string[]): string | null {
   for (const key of keys) {
     const value = row?.[key];
     if (value === null || value === undefined || value === '') continue;
+    if (value instanceof Date) return value.toISOString().slice(0, 10);
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime()) && /^\d{4}-\d{2}-\d{2}/.test(parsed.toISOString())) {
+      return parsed.toISOString().slice(0, 10);
+    }
     return String(value).slice(0, 10);
   }
   return null;
@@ -215,9 +220,9 @@ export function buildPointInTimeArtifact(input: PointInTimeArtifactInput) {
       policySlot(
         'disclosure_date',
         '披露日可见性',
-        coverage ? 'pass' : dataPolicy.disclosure_date_required ? 'insufficient' : 'watch',
+        dataPolicy.disclosure_date_required ? 'insufficient' : 'watch',
         coverage
-          ? '数据策略声明披露日由策略/因子层按 as-of 过滤。'
+          ? '数据策略声明披露日由策略/因子层按 as-of 过滤，但本次没有提供行级审计样本。'
           : dataPolicy.disclosure_date_required
           ? '缺少披露日行级审计样本，无法证明财报/公告数据点时可见。'
           : '未要求披露日行级审计，建议补充。'
@@ -248,9 +253,9 @@ export function buildPointInTimeArtifact(input: PointInTimeArtifactInput) {
       policySlot(
         'universe_visibility',
         '股票池历史可见性',
-        coverage ? 'pass' : dataPolicy.universe_as_of_required ? 'insufficient' : 'watch',
+        dataPolicy.universe_as_of_required ? 'insufficient' : 'watch',
         coverage
-          ? '股票池/行业/指数成分声明按历史版本或 as-of 快照读取。'
+          ? '股票池/行业/指数成分声明按历史版本或 as-of 快照读取，但本次没有提供行级审计样本。'
           : dataPolicy.universe_as_of_required
           ? '缺少股票池历史版本审计样本，无法证明未使用未来成分。'
           : '未强制要求股票池历史版本审计，建议补充。'

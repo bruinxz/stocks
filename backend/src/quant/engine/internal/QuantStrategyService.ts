@@ -298,6 +298,7 @@ export class QuantStrategyService {
   }
 
   async getDefaultParamsByStrategy(strategy_keys?: string[] | string) {
+    await this.ensureRegistrySynced();
     const explicitKeys = normalizeStrategyKeys(strategy_keys);
     const keys = explicitKeys.length ? explicitKeys : await this.resolveStrategyKeys(strategy_keys);
     if (!keys.length) return {};

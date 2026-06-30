@@ -77,14 +77,14 @@ function normalizeHealthStatus(rawStatus: unknown): EasyQuantHealthStatus {
     return 'degraded';
   }
 
-  return 'degraded';
+  return 'blocked';
 }
 
 function unwrapHealth(res: any, fallback: string): EasyQuantHealthSnapshot {
   if (!res) {
     return {
-      status: 'degraded',
-      conclusion: `部分健康检查没有拿到完整结论：${fallback}`,
+      status: 'blocked',
+      conclusion: `健康检查没有拿到完整结论：${fallback}`,
       raw: null,
     };
   }
@@ -152,8 +152,10 @@ function buildHealthVerdict(
 }
 
 export async function loadEasyQuantBootstrap(): Promise<EasyQuantBootstrap> {
-  const [strategies, workflowPresets, dataFreshnessRes, runtimeHealthRes] = await Promise.all([
-    readOptional(listQuantStrategies(), []),
+  const [strategyResult, workflowPresets, dataFreshnessRes, runtimeHealthRes] = await Promise.all([
+    listQuantStrategies()
+      .then(value => ({ ok: true as const, value }))
+      .catch(error => ({ ok: false as const, error })),
     readOptional(listWorkflowPresets(), []),
     api.get('/quant/data-freshness').catch(error => {
       const response = (error as { response?: unknown }).response;
@@ -165,18 +167,22 @@ export async function loadEasyQuantBootstrap(): Promise<EasyQuantBootstrap> {
     }),
   ]);
 
+  const strategies = strategyResult.ok ? strategyResult.value : [];
+  const strategyLoadFailed = !strategyResult.ok;
   const strategyByKey = new Map(strategies.map(item => [item.strategy_key, item]));
   const templates = EASY_QUANT_TEMPLATES.map(template => {
     const backendStrategy = strategyByKey.get(template.strategy_key);
     const available =
-      strategies.length === 0
-        ? true
-        : Boolean(backendStrategy) && backendStrategy?.enabled !== false;
+      !strategyLoadFailed && Boolean(backendStrategy) && backendStrategy?.enabled !== false;
 
     return {
       ...template,
       available,
-      unavailable_reason: available ? undefined : '这个策略当前不可用，请先换一个模板。',
+      unavailable_reason: available
+        ? undefined
+        : strategyLoadFailed
+          ? '策略列表加载失败，请刷新后再试。'
+          : '这个策略当前不可用，请先换一个模板。',
       backend_strategy: backendStrategy,
     };
   });

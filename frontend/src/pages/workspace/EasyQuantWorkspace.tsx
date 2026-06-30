@@ -625,6 +625,8 @@ const EasyQuantWorkspace: React.FC = () => {
   const programmaticSectionRef = useRef<SectionId | null>(null);
   const restoredRunRef = useRef(false);
   const runConfigTouchedRef = useRef(false);
+  const hypothesisTouchedRef = useRef(false);
+  const latestEmbeddedResearchAuditRef = useRef<EasyQuantResearchAudit | null>(null);
   const [activeStep, setActiveStep] = useState<StepKey>('template');
   const [selectedTemplateId, setSelectedTemplateId] = useState<EasyQuantTemplateId>('steady_trend');
   const { bootstrap, bootstrapLoading, bootstrapError, bootstrapElapsedSeconds, reloadBootstrap } =
@@ -701,6 +703,7 @@ const EasyQuantWorkspace: React.FC = () => {
       }
       const nextTemplate = getEasyQuantTemplate(templateId);
       runConfigTouchedRef.current = false;
+      hypothesisTouchedRef.current = false;
       setSelectedTemplateId(templateId);
       setHypothesis(nextTemplate.default_hypothesis);
       setRunConfig(buildDefaultEasyQuantRunConfig(nextTemplate));
@@ -752,7 +755,9 @@ const EasyQuantWorkspace: React.FC = () => {
     }
 
     const defaultTemplate = getEasyQuantTemplate(selectedTemplateId);
-    setHypothesis(defaultTemplate.default_hypothesis);
+    if (!hypothesisTouchedRef.current) {
+      setHypothesis(defaultTemplate.default_hypothesis);
+    }
     if (!runConfigTouchedRef.current) {
       setRunConfig(buildDefaultEasyQuantRunConfig(defaultTemplate));
     }
@@ -780,13 +785,19 @@ const EasyQuantWorkspace: React.FC = () => {
 
       restoredRunRef.current = true;
       runConfigTouchedRef.current = false;
+      hypothesisTouchedRef.current = Boolean(
+        typeof saved.hypothesis === 'string' && saved.hypothesis.trim()
+      );
       setSelectedTemplateId(templateId as EasyQuantTemplateId);
+      const restoredTemplate = getEasyQuantTemplate(templateId as EasyQuantTemplateId);
       if (typeof saved.hypothesis === 'string' && saved.hypothesis.trim()) {
         setHypothesis(saved.hypothesis);
+      } else {
+        setHypothesis(restoredTemplate.default_hypothesis);
       }
       setRunConfig(
         normalizeEasyQuantRunConfig(
-          getEasyQuantTemplate(templateId as EasyQuantTemplateId),
+          restoredTemplate,
           saved.run_config
         )
       );
@@ -795,6 +806,9 @@ const EasyQuantWorkspace: React.FC = () => {
       setBacktestError(null);
       setActiveStep('backtest');
       setActiveSectionId('easy-quant-backtest');
+      window.setTimeout(() => {
+        restoredRunRef.current = false;
+      }, 0);
     } catch {
       localStorage.removeItem(EASY_QUANT_LAST_RUN_STORAGE_KEY);
     }
@@ -804,6 +818,17 @@ const EasyQuantWorkspace: React.FC = () => {
     () => pickMostCompleteResearchAudit(researchAudit, backtestDetail?.research_audit),
     [backtestDetail?.research_audit, researchAudit]
   );
+  useEffect(() => {
+    const embeddedAudit = backtestDetail?.research_audit || null;
+    latestEmbeddedResearchAuditRef.current = embeddedAudit;
+    if (!embeddedAudit) {
+      return;
+    }
+    setResearchAudit(current => pickMostCompleteResearchAudit(embeddedAudit, current));
+    if (isResearchAuditComplete(embeddedAudit)) {
+      setResearchAuditLoading(false);
+    }
+  }, [backtestDetail?.research_audit]);
   const researchAuditComplete = useMemo(
     () => isResearchAuditComplete(resolvedResearchAudit),
     [resolvedResearchAudit]
@@ -1136,13 +1161,12 @@ const EasyQuantWorkspace: React.FC = () => {
       return undefined;
     }
 
-    if (backtestDetail.research_audit) {
-      setResearchAudit(current =>
-        pickMostCompleteResearchAudit(backtestDetail.research_audit, current)
-      );
+    const embeddedAudit = latestEmbeddedResearchAuditRef.current;
+    if (embeddedAudit) {
+      setResearchAudit(current => pickMostCompleteResearchAudit(embeddedAudit, current));
     }
 
-    if (isResearchAuditComplete(backtestDetail.research_audit)) {
+    if (isResearchAuditComplete(embeddedAudit)) {
       setResearchAuditLoading(false);
       return undefined;
     }
@@ -1189,7 +1213,6 @@ const EasyQuantWorkspace: React.FC = () => {
       }
     };
   }, [
-    backtestDetail?.research_audit,
     backtestDetail?.task?.id,
     backtestDetail?.task?.status,
     backtestTaskId,
@@ -1317,6 +1340,7 @@ const EasyQuantWorkspace: React.FC = () => {
 
     restoredRunRef.current = true;
     runConfigTouchedRef.current = false;
+    hypothesisTouchedRef.current = true;
     setSelectedTemplateId(templateId);
     setHypothesis(nextHypothesis);
     setRunConfig(nextRunConfig);
@@ -1339,6 +1363,9 @@ const EasyQuantWorkspace: React.FC = () => {
         saved_at: Date.now(),
       } satisfies EasyQuantLastRunState)
     );
+    window.setTimeout(() => {
+      restoredRunRef.current = false;
+    }, 0);
 
     try {
       setBacktestLoading(true);
@@ -2077,7 +2104,10 @@ const EasyQuantWorkspace: React.FC = () => {
           </span>
           <textarea
             value={hypothesis}
-            onChange={event => setHypothesis(event.target.value)}
+            onChange={event => {
+              hypothesisTouchedRef.current = true;
+              setHypothesis(event.target.value);
+            }}
             rows={3}
           />
         </label>

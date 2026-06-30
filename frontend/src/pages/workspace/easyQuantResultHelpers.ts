@@ -101,7 +101,7 @@ function pickCredibilityVerdict(
   const credibility_verdict =
     researchAudit?.credibility_verdict || detail?.research_audit?.credibility_verdict || null;
 
-  if (!credibility_verdict?.verdict) {
+  if (!credibility_verdict?.verdict || credibility_verdict.verdict === 'pending') {
     return null;
   }
 

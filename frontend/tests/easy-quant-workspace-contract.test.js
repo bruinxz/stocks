@@ -142,10 +142,13 @@ assert(
     service.includes('createBacktestTask')
 );
 assert(
-  'bootstrap tolerates slow optional lists without turning the whole screen into an error',
-  service.includes('readOptional(listQuantStrategies(), [])') &&
+  'bootstrap keeps workflow presets optional but fails closed when strategies cannot load',
+  service.includes('listQuantStrategies()') &&
+    service.includes('strategyLoadFailed') &&
     service.includes('readOptional(listWorkflowPresets(), [])') &&
-    /strategies\.length === 0\s*\?\s*true\s*:\s*Boolean\(backendStrategy\)/.test(service)
+    service.includes('!strategyLoadFailed && Boolean(backendStrategy)') &&
+    service.includes('策略列表加载失败，请刷新后再试。') &&
+    !/strategies\.length === 0\s*\?\s*true/.test(service)
 );
 assert(
   'easy mode defaults to an available template after backend strategy state loads',
@@ -186,9 +189,10 @@ assert(
     page.includes('researchAuditComplete')
 );
 assert(
-  'health checks map quant risk/warn to cautious research instead of blocking the phase-one flow',
+  'health checks map warn to caution but fail closed on missing or unknown state',
   service.includes("['degraded', 'warning', 'warn', 'caution', 'risk']") &&
-    service.includes('部分健康检查没有拿到完整结论') &&
+    service.includes('健康检查没有拿到完整结论') &&
+    /return\s+'blocked';\s*\n\}/.test(service) &&
     service.includes('can_run_backtest: true') &&
     service.includes('res?.data?.success === false') &&
     service.includes('can_run_backtest: false')
@@ -242,6 +246,7 @@ assert(
   'result helpers support backend verdict with local fallback thresholds',
   helpers.includes('pickBackendVerdict') &&
     helpers.includes('credibility_verdict') &&
+    helpers.includes("credibility_verdict.verdict === 'pending'") &&
     helpers.includes('EASY_QUANT_OBSERVATION_THRESHOLDS') &&
     helpers.includes('Math.abs(toFiniteNumber(result.max_drawdown_pct) ?? 0)')
 );
@@ -338,6 +343,13 @@ assert(
   'observation is gated by credibility verdict',
   helpers.includes('credibility_verdict') &&
     page.includes('researchAuditVerdict.can_create_observation')
+);
+assert(
+  'easy workspace preserves edited hypothesis and keeps audit polling stable',
+  page.includes('hypothesisTouchedRef') &&
+    page.includes('latestEmbeddedResearchAuditRef') &&
+    page.includes('pickMostCompleteResearchAudit(embeddedAudit, current)') &&
+    !/backtestDetail\?\.research_audit,\s*\n\s*backtestDetail\?\.task\?\.id/.test(page)
 );
 assert(
   'credibility verdict includes a plain next-step action hint',

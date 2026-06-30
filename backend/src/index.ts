@@ -614,6 +614,29 @@ async function ensureQuantStrategyRuntimeSchema() {
   }
 }
 
+async function ensureQuantBacktestTaskRuntimeSchema() {
+  if (!(await publicTableExists('quant_backtest_tasks'))) {
+    return;
+  }
+
+  await addColumnIfMissing('quant_backtest_tasks', 'experiment_id', 'INTEGER');
+  await addColumnIfMissing(
+    'quant_backtest_tasks',
+    'data_policy_json',
+    `JSONB NOT NULL DEFAULT '{}'::jsonb`
+  );
+  await addColumnIfMissing(
+    'quant_backtest_tasks',
+    'constraint_policy_json',
+    `JSONB NOT NULL DEFAULT '{}'::jsonb`
+  );
+  await createPublicIndexIfMissing(
+    'quant_backtest_tasks',
+    'idx_quant_backtest_tasks_experiment_id',
+    ['experiment_id']
+  );
+}
+
 async function ensureTaskExecutionLogRuntimeSchema() {
   if (!(await publicTableExists('task_execution_logs'))) {
     return;
@@ -769,6 +792,7 @@ async function syncRuntimeModel(model: any, label: string): Promise<boolean> {
 
 async function syncRecommendationRuntimeTables(): Promise<void> {
   await ensureRecommendationLoopRuntimeSchema();
+  await ensureQuantBacktestTaskRuntimeSchema();
   await ensureTaskExecutionLogRuntimeSchema();
   await ensureLiveTradingRuntimeSchema();
 

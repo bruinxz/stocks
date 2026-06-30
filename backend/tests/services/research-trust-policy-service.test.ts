@@ -54,10 +54,10 @@ const trustedBacktest = researchTrustPolicyService.normalizeBacktestOptions({
 } as any);
 
 assert('normalizer forces next_open execution', trustedBacktest.execution_timing === 'next_open');
-assert('normalizer forces T+1 on', trustedBacktest.enable_t_plus_one === true);
-assert('normalizer forces limit-up buy block on', trustedBacktest.block_limit_up === true);
-assert('normalizer forces limit-down sell block on', trustedBacktest.block_limit_down === true);
-assert('normalizer forces suspended block on', trustedBacktest.block_suspended === true);
+assert('normalizer preserves explicit T+1 override', trustedBacktest.enable_t_plus_one === false);
+assert('normalizer preserves explicit limit-up override', trustedBacktest.block_limit_up === false);
+assert('normalizer preserves explicit limit-down override', trustedBacktest.block_limit_down === false);
+assert('normalizer preserves explicit suspended override', trustedBacktest.block_suspended === false);
 assert(
   'data policy forces point_in_time on',
   trustedBacktest.data_policy_json.point_in_time === true
@@ -71,13 +71,13 @@ assert(
   trustedBacktest.data_policy_json.audit_coverage?.factor_snapshot_as_of === true
 );
 assert(
-  'constraint policy forces T+1 on',
-  trustedBacktest.constraint_policy_json.enable_t_plus_one === true
+  'constraint policy preserves explicit T+1 override',
+  trustedBacktest.constraint_policy_json.enable_t_plus_one === false
 );
 assert(
-  'constraint policy forces limit blocks on',
-  trustedBacktest.constraint_policy_json.block_limit_up === true &&
-    trustedBacktest.constraint_policy_json.block_limit_down === true
+  'constraint policy preserves explicit limit overrides',
+  trustedBacktest.constraint_policy_json.block_limit_up === false &&
+    trustedBacktest.constraint_policy_json.block_limit_down === false
 );
 
 const factorWhere = buildPointInTimeFactorWhere(['sh.600000'], '2025-06-30');
@@ -106,10 +106,10 @@ const executionGate = researchTrustPolicyService.evaluateExecutionGate({
   quote: { price: 12.34, source: 'daily_bar' },
   policy: { block_limit_up: false },
 });
-assert('execution gate cannot be disabled for limit-up buy', executionGate.allowed === false);
+assert('execution gate respects explicit limit-up override', executionGate.allowed === true);
 assert(
-  'execution gate explains limit-up buy block',
-  executionGate.reasons.join('；').includes('涨停')
+  'execution gate reports allow label when override is explicit',
+  executionGate.label.includes('可模拟成交')
 );
 
 const replayArtifact = researchTrustPolicyService.buildAuditedReturnReplayArtifact({
@@ -187,14 +187,14 @@ assert(
   rerunOptions.strategy_keys?.[0] === 'multi_factor_alpha'
 );
 assert('trusted rerun forces PIT policy', rerunOptions.data_policy_json?.point_in_time === true);
-assert('trusted rerun forces execution policy', rerunOptions.enable_t_plus_one === true);
+assert('trusted rerun preserves explicit execution override', rerunOptions.enable_t_plus_one === false);
 
 console.log('\n## Research trust wiring meta-guards');
 
 const quantDataSrc = readSrc('quant/engine/internal/QuantDataService.ts');
 assert(
   'QuantDataService computes factorAsOfDate',
-  /const\s+factorAsOfDate\s*=\s*options\.as_of_date\s*\|\|\s*options\.end_date/.test(quantDataSrc)
+  /const\s+factorAsOfDate\s*=\s*options\.as_of_date\s*\|\|\s*options\.start_date/.test(quantDataSrc)
 );
 assert(
   'QuantDataService filters factor_date with buildPointInTimeFactorWhere',
@@ -216,7 +216,7 @@ assert(
   'ResearchExperimentService stores audited return replay artifact',
   researchExperimentSrc.includes('buildAuditedReturnReplayArtifact') &&
     researchExperimentSrc.includes('auditedReturnArtifact') &&
-    /replaceArtifact\s*\(\s*experiment\.id,\s*task\.id,\s*auditedReturnArtifact\s*\)/.test(
+    /replaceArtifact\s*\(\s*lockedExperiment\.id,\s*task\.id,\s*draft/.test(
       researchExperimentSrc
     )
 );
@@ -234,7 +234,18 @@ assert(
   'ResearchExperimentService syncs trusted rerun result back to original task artifact',
   researchExperimentSrc.includes('syncTrustedRerunBackToOriginal') &&
     researchExperimentSrc.includes('trusted_backtest_task_actual') &&
-    researchExperimentSrc.includes('source_task_id')
+    researchExperimentSrc.includes('source_task_id') &&
+    researchExperimentSrc.includes('refreshCredibilitySummary')
+);
+assert(
+  'ResearchExperimentService checks task and experiment ownership for audit reads',
+  researchExperimentSrc.includes('sameOwner(task.user_id, user_id)') &&
+    researchExperimentSrc.includes('sameOwner(experiment.user_id, user_id)')
+);
+
+assert(
+  'QuantBacktestService merges queue job id without overwriting worker parameters',
+  backtestSrc.includes('COALESCE("parameters",') && backtestSrc.includes('queue_job_id')
 );
 
 const signalSrc = readSrc('quant/engine/internal/QuantSignalService.ts');

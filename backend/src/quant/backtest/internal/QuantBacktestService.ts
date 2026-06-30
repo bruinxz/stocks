@@ -13,7 +13,8 @@ import { quantStrategyService } from '../../engine/internal/QuantStrategyService
 import { researchExperimentService } from '../../../services/research/ResearchExperimentService';
 import { researchTrustPolicyService } from '../../../services/research/ResearchTrustPolicyService';
 import { logger } from '../../../utils/logger';
-import { Op } from 'sequelize';
+import { literal, Op } from 'sequelize';
+import sequelize from '../../../config/database';
 import { incrementBacktestTotal } from '../../../metrics/PrometheusRegistry';
 
 function maxSegmentDrawdown(curve: any[]): number {
@@ -475,17 +476,19 @@ export class QuantBacktestService {
 
   private persistQueueJobIdAfterResponse(
     task: QuantBacktestTask,
-    options: QuantBacktestOptions,
     queue_job_id: string | number
   ) {
     setImmediate(() => {
-      task
-        .update({
-          parameters: {
-            ...(options as any),
-            queue_job_id,
-          },
-        } as any)
+      QuantBacktestTask.update(
+        {
+          parameters: literal(
+            `COALESCE("parameters", '{}'::jsonb) || ${sequelize.escape(
+              JSON.stringify({ queue_job_id })
+            )}::jsonb`
+          ) as any,
+        } as any,
+        { where: { id: task.id } }
+      )
         .catch((error: any) => {
           logger.warn(
             `[quant-backtest] queue job id persistence failed for task ${task.id}: ${
@@ -530,7 +533,18 @@ export class QuantBacktestService {
         (normalizedOptions as any).experiment_id = researchExperiment.id;
       }
     } catch (error: any) {
-      logger.warn(`[quant-backtest] research experiment attach failed: ${error?.message || error}`);
+      await task.update({
+        status: 'FAILED',
+        progress: 100,
+        error_message: error?.message || String(error),
+        parameters: {
+          ...(normalizedOptions as any),
+          last_stage: 'research_experiment_attach_failed',
+          last_error: error?.message || String(error),
+          run_failed_at: new Date().toISOString(),
+        },
+      } as any);
+      throw error;
     }
 
     if (!asyncMode) {
@@ -547,7 +561,7 @@ export class QuantBacktestService {
       }
     );
 
-    this.persistQueueJobIdAfterResponse(task, normalizedOptions, job.id);
+    this.persistQueueJobIdAfterResponse(task, job.id);
 
     return {
       task: this.buildQueuedBacktestPayload(task, researchExperiment),
@@ -842,6 +856,7 @@ export class QuantBacktestService {
         symbols: options.symbols,
         start_date: options.start_date,
         end_date: options.end_date,
+        as_of_date: (options as any).as_of_date || options.start_date,
         warmup_days: 160,
         limit: options.candidate_limit || 120,
         include_realtime_quote: false,
@@ -950,7 +965,11 @@ export class QuantBacktestService {
       let researchAudit: any = null;
       if (task.experiment_id) {
         try {
-          researchAudit = await researchExperimentService.runAuditForBacktest(task.id);
+          researchAudit = await researchExperimentService.runAuditForBacktest(
+            task.id,
+            undefined,
+            runtime.user_id ?? task.user_id
+          );
         } catch (error: any) {
           logger.warn(
             `[quant-backtest] research audit failed for task ${task.id}: ${error?.message || error}`
@@ -1079,9 +1098,10 @@ export class QuantBacktestService {
     }));
   }
 
-  async getBacktest(id: number) {
+  async getBacktest(id: number, user_id?: number) {
     const task = await QuantBacktestTask.findByPk(id);
     if (!task) return null;
+    if (user_id && task.user_id && Number(task.user_id) !== Number(user_id)) return null;
     const results = await QuantBacktestResult.findAll({
       where: { task_id: id },
       order: [['total_return_pct', 'DESC']],
@@ -1092,10 +1112,16 @@ export class QuantBacktestService {
       limit: 500,
     });
     let research_audit: any = null;
-    try {
-      research_audit = await researchExperimentService.getBacktestResearchAudit(id);
-    } catch (error: any) {
-      logger.warn(`[quant-backtest] load research audit failed: ${error?.message || error}`);
+    if (task.experiment_id) {
+      try {
+        research_audit = await researchExperimentService.getBacktestResearchAudit(
+          id,
+          user_id,
+          task
+        );
+      } catch (error: any) {
+        logger.warn(`[quant-backtest] load research audit failed: ${error?.message || error}`);
+      }
     }
     return {
       task: {

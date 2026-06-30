@@ -44,6 +44,17 @@ function toFiniteNumber(value: any, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function toBooleanDefault(value: any, fallback: boolean): boolean {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'y'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'n'].includes(normalized)) return false;
+  }
+  return Boolean(value);
+}
+
 function asObject(value: any): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
@@ -193,12 +204,12 @@ export class ResearchTrustPolicyService {
   buildConstraintPolicy(input: Record<string, any> = {}) {
     return {
       ...input,
-      enable_t_plus_one: true,
-      block_limit_up: true,
-      block_limit_down: true,
-      block_suspended: true,
-      block_st: true,
-      block_st_stocks: true,
+      enable_t_plus_one: toBooleanDefault(input.enable_t_plus_one, true),
+      block_limit_up: toBooleanDefault(input.block_limit_up, true),
+      block_limit_down: toBooleanDefault(input.block_limit_down, true),
+      block_suspended: toBooleanDefault(input.block_suspended, true),
+      block_st: toBooleanDefault(input.block_st, true),
+      block_st_stocks: toBooleanDefault(input.block_st_stocks, true),
       lot_size: Math.max(100, toFiniteNumber(input.lot_size, 100)),
       enforcement: {
         ...asObject(input.enforcement),
@@ -211,18 +222,33 @@ export class ResearchTrustPolicyService {
   normalizeBacktestOptions(options: QuantBacktestOptions): QuantBacktestOptions {
     const raw = options as any;
     const dataPolicy = this.buildDataPolicy(raw.data_policy_json, {
-      as_of_date: raw.end_date,
+      as_of_date: raw.as_of_date || raw.start_date,
+      start_date: raw.start_date,
       end_date: raw.end_date,
     });
-    const constraintPolicy = this.buildConstraintPolicy(raw.constraint_policy_json);
+    const constraintInput = { ...asObject(raw.constraint_policy_json) };
+    for (const key of [
+      'enable_t_plus_one',
+      'block_limit_up',
+      'block_limit_down',
+      'block_suspended',
+      'block_st',
+      'block_st_stocks',
+      'lot_size',
+    ]) {
+      if (constraintInput[key] === undefined && raw[key] !== undefined) {
+        constraintInput[key] = raw[key];
+      }
+    }
+    const constraintPolicy = this.buildConstraintPolicy(constraintInput);
     return {
       ...options,
       execution_timing: 'next_open',
-      enable_t_plus_one: true,
-      block_limit_up: true,
-      block_limit_down: true,
-      block_suspended: true,
-      block_st_stocks: true,
+      enable_t_plus_one: constraintPolicy.enable_t_plus_one,
+      block_limit_up: constraintPolicy.block_limit_up,
+      block_limit_down: constraintPolicy.block_limit_down,
+      block_suspended: constraintPolicy.block_suspended,
+      block_st_stocks: constraintPolicy.block_st_stocks,
       lot_size: Math.max(100, toFiniteNumber(raw.lot_size, 100)),
       data_policy_json: dataPolicy,
       constraint_policy_json: constraintPolicy,
@@ -260,7 +286,6 @@ export class ResearchTrustPolicyService {
       initial_capital: input.initial_capital ?? rawParams.initial_capital,
       commission_rate: input.commission_rate ?? rawParams.commission_rate,
       slippage_rate: input.slippage_rate ?? rawParams.slippage_rate,
-      create_research_experiment: false,
       trusted_rerun: true,
       trusted_rerun_of_task_id: Number(input.source_task_id),
       trusted_rerun_experiment_id: input.experiment_id || null,

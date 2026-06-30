@@ -59,6 +59,20 @@ const missingDisclosure = auditDisclosureVisibility({
 assert('missing announce_date is insufficient', missingDisclosure.status === 'insufficient');
 assert('missing announce_date is counted', missingDisclosure.missing_disclosure_count === 1);
 
+const dateObjectDisclosure = auditDisclosureVisibility({
+  source_name: 'earnings_forecast',
+  as_of_date: '2026-04-15',
+  rows: [
+    {
+      stock_code: '600519',
+      report_period: '2026Q1',
+      report_date: new Date('2026-03-31T00:00:00.000Z'),
+      announce_date: new Date('2026-04-10T00:00:00.000Z'),
+    },
+  ],
+});
+assert('disclosure audit handles Date objects as ISO dates', dateObjectDisclosure.status === 'pass');
+
 const membership = auditHistoricalMembershipVisibility({
   source_name: 'CSI300',
   as_of_date: '2026-05-01',
@@ -97,6 +111,17 @@ const insufficientPitArtifact = buildPointInTimeArtifact({
 });
 
 assert('PIT artifact marks missing data insufficient', insufficientPitArtifact.status === 'insufficient');
+
+const noSamplePitArtifact = buildPointInTimeArtifact({
+  data_policy_json: {
+    point_in_time: true,
+    disclosure_date_required: true,
+    universe_as_of_required: true,
+  },
+  disclosure_checks: [],
+  universe_checks: [],
+});
+assert('PIT artifact does not pass only from declared coverage', noSamplePitArtifact.status === 'insufficient');
 
 console.log(`\nResult: ${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

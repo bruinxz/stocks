@@ -622,7 +622,7 @@ export class QuantController {
 
   async getBacktestResearchAudit(req: AuthenticatedRequest, res: Response) {
     try {
-      const data = await backtestEngine.getBacktestResearchAudit(Number(req.params.id));
+      const data = await backtestEngine.getBacktestResearchAudit(Number(req.params.id), req.user?.id);
       if (!data) return res.status(404).json({ success: false, message: '回测审计不存在' });
       res.json({ success: true, data });
     } catch (error: any) {
@@ -633,7 +633,10 @@ export class QuantController {
 
   async getBacktestExecutionConstraintAudit(req: AuthenticatedRequest, res: Response) {
     try {
-      const data = await backtestEngine.getBacktestExecutionConstraintAudit(Number(req.params.id));
+      const data = await backtestEngine.getBacktestExecutionConstraintAudit(
+        Number(req.params.id),
+        req.user?.id
+      );
       if (!data) return res.status(404).json({ success: false, message: '成交约束审计不存在' });
       res.json({ success: true, data });
     } catch (error: any) {
@@ -642,9 +645,9 @@ export class QuantController {
     }
   }
 
-  async getBacktest(req: Request, res: Response) {
+  async getBacktest(req: AuthenticatedRequest, res: Response) {
     try {
-      const data = await backtestEngine.get(Number(req.params.id));
+      const data = await backtestEngine.get(Number(req.params.id), req.user?.id);
       if (!data) return res.status(404).json({ success: false, message: '跑分任务不存在' });
       res.json({ success: true, data });
     } catch (error: any) {

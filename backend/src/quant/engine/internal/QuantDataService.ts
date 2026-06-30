@@ -128,12 +128,12 @@ export class QuantDataService {
     warmup_days?: number;
     limit?: number;
     include_realtime_quote?: boolean;
-    /** audit S-7 修复: 历史回测 as-of 日期, 默认 end_date 防生存者偏差 */
+    /** 历史回测 as-of 日期；不传时因子快照按 start_date 截断，避免全窗口看见 end_date 因子。 */
     as_of_date?: string;
   }): Promise<QuantStockContext[]> {
     const stocks = await this.getStocks({
       ...options,
-      as_of_date: options.as_of_date || options.end_date,
+      as_of_date: options.as_of_date || options.start_date,
     });
     const latestQuotes =
       options.include_realtime_quote === false
@@ -151,7 +151,7 @@ export class QuantDataService {
       if (!latestQuoteBySymbol.has(quote.symbol)) latestQuoteBySymbol.set(quote.symbol, quote);
     }
     const stockSymbols = stocks.map(stock => stock.symbol);
-    const factorAsOfDate = options.as_of_date || options.end_date;
+    const factorAsOfDate = options.as_of_date || options.start_date;
     const [valuationRows, moneyFlowRows, fundamentalRows] = await Promise.all([
       StockValuationFactor.findAll({
         where: buildPointInTimeFactorWhere(stockSymbols, factorAsOfDate),

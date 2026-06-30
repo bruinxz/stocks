@@ -57,8 +57,8 @@ export class BacktestEngine {
     return quantBacktestService.listBacktests(user_id, limit);
   }
 
-  get(id: number) {
-    return quantBacktestService.getBacktest(id);
+  get(id: number, user_id?: number) {
+    return quantBacktestService.getBacktest(id, user_id);
   }
 
   listResearchExperiments(options: { user_id?: number; limit?: number } = {}) {
@@ -77,12 +77,12 @@ export class BacktestEngine {
     return researchExperimentService.runAuditForExperiment(id, user_id);
   }
 
-  getBacktestResearchAudit(taskId: number) {
-    return researchExperimentService.getBacktestResearchAudit(taskId);
+  getBacktestResearchAudit(taskId: number, user_id?: number) {
+    return researchExperimentService.getBacktestResearchAudit(taskId, user_id);
   }
 
-  getBacktestExecutionConstraintAudit(taskId: number) {
-    return researchExperimentService.getBacktestExecutionConstraintAudit(taskId);
+  getBacktestExecutionConstraintAudit(taskId: number, user_id?: number) {
+    return researchExperimentService.getBacktestExecutionConstraintAudit(taskId, user_id);
   }
 
   retry(id: number, user_id?: number) {

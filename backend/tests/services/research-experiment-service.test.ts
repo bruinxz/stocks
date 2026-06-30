@@ -57,6 +57,16 @@ assert(
   insufficientSummary.next_action_label.includes('查数据')
 );
 
+const pendingReplaySummary = buildCredibilitySummary({
+  backtest_artifact: { status: 'pass', summary: '回测完成。' },
+  integrity_artifact: { status: 'pass', summary: '没有发现未来函数。' },
+  point_in_time_artifact: { status: 'pass', summary: '点时检查通过。' },
+  execution_artifact: { status: 'pass', summary: '无硬阻断。' },
+  audited_return_artifact: { status: 'pending', summary: '可信重跑正在排队。' },
+});
+assert('pending audited return blocks observation', pendingReplaySummary.verdict === 'insufficient');
+assert('pending audited return reason is visible', pendingReplaySummary.blocking_reasons[0].includes('重跑'));
+
 const integrity = mapResearchIntegrityArtifact({
   verdict: 'FAIL',
   summary_message: '检测到未来函数。',
