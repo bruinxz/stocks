@@ -924,6 +924,24 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       'PR-O3 14:30 跑尾盘动量 detector (r1 9:30-10:00 → r2 14:30-15:00 预测). 命中写 AIInvestmentSignal (source_type=last_hour_momentum, timing_tag=closing_grab). 论文: Zhang/Ma/Zhu 2019 EM. fail-OPEN.',
   },
+  // PR-O6 (2026-06-30) — 午后开盘攻 (12:55-13:30) detector. 战法库 §A19-A22 4 类 pattern.
+  // 工作日 13:01 (午后 13:00 开盘 1min 后) 跑, 留时间给 REALTIME_QUOTE_SYNC 13:00 写一次数据.
+  // 命中写 AIInvestmentSignal (source_type=afternoon_kick_detector, timing_tag=afternoon_kick)
+  // 4 patterns:
+  //   - A19 strong_open    13:01 vs 11:30 涨 > 0.5% + 量比 > 1.2 → buy
+  //   - A20 noon_catalyst  12:00-13:00 critical 公告 + 13:01 涨 > 2% → buy
+  //   - A21 exhaustion     上午涨 > +3% + 13:00 开盘 < 11:30 close → reduce(RiskAlert HIGH)
+  //   - A22 sector_kick    上午板块涨停 ≤ 1 + 午后板块涨停 ≥ 2 → buy (跟风)
+  // fail-OPEN per-symbol, dedup `afternoon_kick::${pattern}::${symbol}::${trade_date}` 一日一行.
+  {
+    type: 'AFTERNOON_KICK_DETECT',
+    category: 'quant_engine',
+    owner: 'quant',
+    intraday: true,
+    recommendedCron: '1 13 * * 1-5',
+    description:
+      'PR-O6 13:01 跑午后开盘攻 detector — 战法库 §A19-A22 4 类 pattern (strong_open/noon_catalyst/exhaustion/sector_kick). 命中写 AIInvestmentSignal (source_type=afternoon_kick_detector, timing_tag=afternoon_kick) + RiskAlert (exhaustion HIGH, 其它 MEDIUM). fail-OPEN.',
+  },
 ]);
 
 const CRON_REGISTRY_BY_TYPE: ReadonlyMap<string, CronTaskDefinition> = new Map(

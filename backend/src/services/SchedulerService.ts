@@ -6870,6 +6870,44 @@ class SchedulerService {
             `matched=${r.matched} written=${r.written} ` +
             `skip=${r.skipped_reason || 'none'} errors=${r.errors?.length || 0}`
         );
+      } else if (task.type === 'AFTERNOON_KICK_DETECT') {
+        // PR-O6 (2026-06-30) — 午后开盘攻 detector. 战法库 §A19-A22 4 类 pattern.
+        // 工作日 13:01 (午后 13:00 开盘 1min 后, REALTIME_QUOTE_SYNC 13:00 写完留 buffer) 跑.
+        // 命中写 AIInvestmentSignal (source_type='afternoon_kick_detector',
+        // metadata.timing_tag='afternoon_kick') + RiskAlert (exhaustion HIGH, 其它 MEDIUM).
+        // fail-OPEN per-symbol, dedup `afternoon_kick::${pattern}::${symbol}::${trade_date}`.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { afternoonKickDetector } = require('./AfternoonKickDetector');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await afternoonKickDetector.runOnce({
+          dry_run: parameters.dry_run === true,
+          force: parameters.force === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned,
+          completed_items: r.written_signals,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: r.scenario,
+            trade_date: r.trade_date,
+            scanned: r.scanned,
+            matched: r.matched,
+            written_signals: r.written_signals,
+            written_alerts: r.written_alerts,
+            by_pattern: r.by_pattern,
+            skipped_reason: r.skipped_reason,
+            errors: r.errors?.length || 0,
+            dry_run: r.dry_run,
+          },
+        });
+        logger.info(
+          `[AFTERNOON_KICK_DETECT] trade_date=${r.trade_date} scanned=${r.scanned} ` +
+            `matched=${r.matched} written_signals=${r.written_signals} ` +
+            `written_alerts=${r.written_alerts} skip=${r.skipped_reason || 'none'} ` +
+            `errors=${r.errors?.length || 0} by_pattern=${JSON.stringify(r.by_pattern)}`
+        );
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }
@@ -8444,6 +8482,15 @@ class SchedulerService {
         name: '尾盘动量 detector (PR-O3)',
         type: 'LAST_HOUR_MOMENTUM',
         cron_expression: '30 14 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // PR-O6 (2026-06-30) — 午后开盘攻 detector. 战法库 §A19-A22 4 类 pattern.
+      // 工作日 13:01 (午后 13:00 开盘 1min 后, REALTIME_QUOTE_SYNC 13:00 写完留 buffer) 跑.
+      {
+        name: '午后开盘攻 detector (PR-O6)',
+        type: 'AFTERNOON_KICK_DETECT',
+        cron_expression: '1 13 * * 1-5',
         is_active: true,
         parameters: { dry_run: false },
       },

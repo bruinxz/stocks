@@ -38,6 +38,12 @@ export enum AISignalSourceType {
    * PR-O3 (2026-06-30) — 题材发酵 (ThemeFermentationDetector, 已存在但本 enum 未列).
    */
   THEME_FERMENTATION = 'theme_fermentation',
+  /**
+   * PR-O6 (2026-06-30) — 午后开盘攻 (12:55-13:30 4 类 pattern):
+   *   A19 午后强势开盘 / A20 午间利好引爆 / A21 午后衰竭反转 / A22 板块联动午后启动.
+   * 由 `AfternoonKickDetector.runOnce` 写入. timing_tag='afternoon_kick'.
+   */
+  AFTERNOON_KICK_DETECTOR = 'afternoon_kick_detector',
 }
 
 export enum AISignalDecision {
