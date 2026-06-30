@@ -261,7 +261,9 @@ const ActivationDashboard: React.FC = () => {
         render: (v: string, row: RecentTrade) => (
           <span style={{ fontSize: 12 }}>
             <strong>{v}</strong>
-            {row.name ? <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>{row.name}</span> : null}
+            {row.name ? (
+              <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>{row.name}</span>
+            ) : null}
           </span>
         ),
       },
@@ -275,20 +277,20 @@ const ActivationDashboard: React.FC = () => {
             v === 'executed'
               ? 'success'
               : v === 'rejected'
-              ? 'error'
-              : v === 'skipped'
-              ? 'warning'
-              : 'default';
+                ? 'error'
+                : v === 'skipped'
+                  ? 'warning'
+                  : 'default';
           const label =
             v === 'executed'
               ? '成交'
               : v === 'rejected'
-              ? '拒单'
-              : v === 'skipped'
-              ? '跳过'
-              : v === 'planned'
-              ? '计划'
-              : '未知';
+                ? '拒单'
+                : v === 'skipped'
+                  ? '跳过'
+                  : v === 'planned'
+                    ? '计划'
+                    : '未知';
           return <Tag color={tone}>{label}</Tag>;
         },
       },
@@ -303,18 +305,18 @@ const ActivationDashboard: React.FC = () => {
                 m === '★'
                   ? 'rgba(0, 143, 107, 0.18)'
                   : m === '✓'
-                  ? 'rgba(39, 100, 184, 0.14)'
-                  : m === '✗'
-                  ? 'rgba(209, 67, 67, 0.18)'
-                  : 'rgba(191, 191, 191, 0.18)';
+                    ? 'rgba(39, 100, 184, 0.14)'
+                    : m === '✗'
+                      ? 'rgba(209, 67, 67, 0.18)'
+                      : 'rgba(191, 191, 191, 0.18)';
               const fg =
                 m === '★'
                   ? 'var(--success)'
                   : m === '✓'
-                  ? 'var(--primary)'
-                  : m === '✗'
-                  ? 'var(--danger)'
-                  : 'var(--text-muted)';
+                    ? 'var(--primary)'
+                    : m === '✗'
+                      ? 'var(--danger)'
+                      : 'var(--text-muted)';
               // Sprint 31: tooltip 展示真实 detail (features_used / snapshot_source / multiplier 等)
               const detail = row.layer_details?.[layer];
               const tooltipBody = (
@@ -327,9 +329,7 @@ const ActivationDashboard: React.FC = () => {
                       {Object.entries(detail).map(([k, v]) => (
                         <div key={k} style={{ marginBottom: 2 }}>
                           <span style={{ color: 'rgba(255,255,255,0.6)' }}>{k}:</span>{' '}
-                          <span style={{ fontFamily: 'monospace' }}>
-                            {formatDetailValue(v)}
-                          </span>
+                          <span style={{ fontFamily: 'monospace' }}>{formatDetailValue(v)}</span>
                         </div>
                       ))}
                     </div>
@@ -468,9 +468,7 @@ const ActivationDashboard: React.FC = () => {
             <Col xs={12} md={6}>
               <Statistic
                 title={
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                    {days}d 总信号
-                  </span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{days}d 总信号</span>
                 }
                 value={data.total_signals}
                 valueStyle={{ fontSize: 22, fontWeight: 600 }}
@@ -512,7 +510,14 @@ const ActivationDashboard: React.FC = () => {
               background: 'rgba(248, 250, 252, 0.5)',
             }}
           >
-            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10, color: 'var(--text-secondary)' }}>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                marginBottom: 10,
+                color: 'var(--text-secondary)',
+              }}
+            >
               8 层激活概览 · <span style={{ color: 'rgba(39, 100, 184, 0.6)' }}>■ 已通过</span> ·{' '}
               <span style={{ color: 'rgba(0, 143, 107, 0.8)' }}>■ 真改了仓位</span> ·{' '}
               <span style={{ color: 'rgba(209, 67, 67, 0.8)' }}>■ 被拦</span> ·{' '}
@@ -541,8 +546,7 @@ const ActivationDashboard: React.FC = () => {
                 />
                 <div style={{ fontSize: 11, color: 'var(--text-secondary)', textAlign: 'right' }}>
                   通 <strong>{s.reached}</strong>
-                  <span style={{ color: 'var(--text-muted)', margin: '0 4px' }}>·</span>
-                  改{' '}
+                  <span style={{ color: 'var(--text-muted)', margin: '0 4px' }}>·</span>改{' '}
                   <strong style={{ color: 'var(--success)' }}>
                     {s.contributed}
                     {s.reached > 0 && (
@@ -551,8 +555,7 @@ const ActivationDashboard: React.FC = () => {
                       </span>
                     )}
                   </strong>
-                  <span style={{ color: 'var(--text-muted)', margin: '0 4px' }}>·</span>
-                  拦{' '}
+                  <span style={{ color: 'var(--text-muted)', margin: '0 4px' }}>·</span>拦{' '}
                   <strong style={{ color: 'var(--danger)' }}>
                     {s.blocked}
                     {s.reached > 0 && (
@@ -569,7 +572,14 @@ const ActivationDashboard: React.FC = () => {
           {/* 下方双栏 */}
           <Row gutter={[16, 16]}>
             <Col xs={24} lg={10}>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: 'var(--text-secondary)' }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  marginBottom: 8,
+                  color: 'var(--text-secondary)',
+                }}
+              >
                 <ThunderboltOutlined style={{ color: 'var(--danger)', marginRight: 4 }} />
                 Top 拦截原因
               </div>
@@ -581,7 +591,7 @@ const ActivationDashboard: React.FC = () => {
                 />
               ) : (
                 <Table<BlockReason>
-                  rowKey={(r) => `${r.layer}-${r.reason}`}
+                  rowKey={r => `${r.layer}-${r.reason}`}
                   size="small"
                   columns={blockReasonColumns}
                   dataSource={data.top_block_reasons}
@@ -590,7 +600,14 @@ const ActivationDashboard: React.FC = () => {
               )}
             </Col>
             <Col xs={24} lg={14}>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: 'var(--text-secondary)' }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  marginBottom: 8,
+                  color: 'var(--text-secondary)',
+                }}
+              >
                 <CheckCircleOutlined style={{ color: 'var(--primary)', marginRight: 4 }} />
                 最近 10 笔信号 (含 skipped / rejected)
               </div>
@@ -605,7 +622,9 @@ const ActivationDashboard: React.FC = () => {
             </Col>
           </Row>
 
-          <div style={{ marginTop: 12, fontSize: 11, color: 'var(--text-muted)', textAlign: 'right' }}>
+          <div
+            style={{ marginTop: 12, fontSize: 11, color: 'var(--text-muted)', textAlign: 'right' }}
+          >
             生成于 {new Date(data.generated_at).toLocaleString('zh-CN')}
           </div>
         </>
@@ -643,9 +662,7 @@ function formatDetailValue(v: any): string {
   if (Array.isArray(v)) return v.length === 0 ? '[]' : v.map(formatDetailValue).join(', ');
   if (typeof v === 'object') {
     const entries = Object.entries(v).slice(0, 4);
-    return entries
-      .map(([k, vv]) => `${k}=${formatDetailValue(vv)}`)
-      .join(' / ');
+    return entries.map(([k, vv]) => `${k}=${formatDetailValue(vv)}`).join(' / ');
   }
   return String(v);
 }

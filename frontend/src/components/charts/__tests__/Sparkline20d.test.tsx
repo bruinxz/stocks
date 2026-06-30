@@ -5,11 +5,7 @@
  * 这两个 helper 是 Sparkline 颜色决策 + 数据清洗的核心, 错了 polyline 会断 / 串色.
  */
 
-import {
-  sanitizeSparklineData,
-  pickSparklineColor,
-  Sparkline20dPoint,
-} from '../Sparkline20d';
+import { sanitizeSparklineData, pickSparklineColor, Sparkline20dPoint } from '../Sparkline20d';
 
 describe('Sparkline20d / sanitizeSparklineData', () => {
   test('空数组返空', () => {
@@ -60,11 +56,7 @@ describe('Sparkline20d / sanitizeSparklineData', () => {
   });
 
   test('缺 date 字段的项被丢弃', () => {
-    const input: any[] = [
-      { close: 100 },
-      { date: '2026-06-21', close: 102 },
-      null,
-    ];
+    const input: any[] = [{ close: 100 }, { date: '2026-06-21', close: 102 }, null];
     expect(sanitizeSparklineData(input)).toEqual([{ date: '2026-06-21', close: 102 }]);
   });
 });

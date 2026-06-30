@@ -79,7 +79,9 @@ export interface TradeReasonCellProps {
 
 function ReasonDetailContent({ reason }: { reason: TradeReasonPayload | null | undefined }) {
   if (!reason || !reason.source) {
-    return <Empty description="无理由数据 (historical trade)" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+    return (
+      <Empty description="无理由数据 (historical trade)" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+    );
   }
   const sourceLabel = SOURCE_LABEL[reason.source] || reason.source;
   return (
@@ -136,8 +138,7 @@ function ReasonDetailContent({ reason }: { reason: TradeReasonPayload | null | u
             <Text type="secondary">
               type={reason.risk_trigger.type}
               {reason.risk_trigger.indicator && ` · ${reason.risk_trigger.indicator}`}
-              {reason.risk_trigger.actual !== undefined &&
-                ` · 实际=${reason.risk_trigger.actual}`}
+              {reason.risk_trigger.actual !== undefined && ` · 实际=${reason.risk_trigger.actual}`}
               {reason.risk_trigger.threshold !== undefined &&
                 ` · 阈值=${reason.risk_trigger.threshold}`}
             </Text>

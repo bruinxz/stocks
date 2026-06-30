@@ -280,7 +280,7 @@ const BlackSwanHistoryTab: React.FC = () => {
           <Statistic title="总数 (当前页)" value={summary.total} />
         </Col>
         <Col span={4}>
-          <Statistic title="极端" value={summary.critical} valueStyle={{ color: '#cf1322' }} />
+          <Statistic title="极端" value={summary.critical} valueStyle={{ color: '#dc2626' }} />
         </Col>
         <Col span={4}>
           <Statistic title="高" value={summary.high} valueStyle={{ color: '#fa541c' }} />
@@ -440,7 +440,7 @@ const BlackSwanEventDetailDrawer: React.FC<BlackSwanEventDetailDrawerProps> = ({
           <AlertOutlined />
           <span>黑天鹅事件详情 {event ? `#${event.id}` : ''}</span>
           {postmortem && (
-            <Tag color="purple">
+            <Tag color="blue">
               复盘 {sectionStatus.filled}/{sectionStatus.total} 段
             </Tag>
           )}
@@ -506,7 +506,7 @@ const BlackSwanEventDetailDrawer: React.FC<BlackSwanEventDetailDrawerProps> = ({
                 overflow: 'auto',
                 background: '#f6f8fa',
                 padding: 8,
-                borderRadius: 4,
+                borderRadius: 8,
               }}
             >
               {JSON.stringify(event.detail || {}, null, 2)}
@@ -614,7 +614,7 @@ const PostmortemSectionView: React.FC<PostmortemSectionViewProps> = ({ section, 
         overflow: 'auto',
         background: '#f6f8fa',
         padding: 8,
-        borderRadius: 4,
+        borderRadius: 8,
       }}
     >
       {JSON.stringify(section, null, 2)}

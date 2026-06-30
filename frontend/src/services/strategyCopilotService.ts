@@ -11,11 +11,7 @@ import api from './api';
  * 数据形态对齐 backend StrategyCopilotService.CopilotResponse。
  */
 
-export type CopilotIntent =
-  | 'explain_backtest'
-  | 'suggest_params'
-  | 'generate_draft'
-  | 'general';
+export type CopilotIntent = 'explain_backtest' | 'suggest_params' | 'generate_draft' | 'general';
 
 export const COPILOT_INTENT_LABELS: Record<CopilotIntent, string> = {
   explain_backtest: '解释回测',
@@ -84,9 +80,7 @@ export interface AskCopilotRequest {
  *
  * status='partial' 仍正常返回（启发式 fallback），UI 应按 reply / suggested_params 渲染。
  */
-export async function askStrategyCopilot(
-  request: AskCopilotRequest
-): Promise<CopilotResponse> {
+export async function askStrategyCopilot(request: AskCopilotRequest): Promise<CopilotResponse> {
   const response = await api.post<{
     success: boolean;
     data: CopilotResponse;

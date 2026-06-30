@@ -77,13 +77,18 @@ program
       } else if (opts.stocks && (opts.stocks as string[]).length) {
         stockCodes = opts.stocks as string[];
       } else if (opts.favorites) {
+        // PR-A hotfix (2026-06-29): FavoriteStock 没有 symbol 列, 只有 stock_id FK.
+        // 之前 attributes:['symbol'] 直接 SQL 报 'column "symbol" does not exist',
+        // 整次 cron 失败. 改 include Stock 取 symbol; raw+nest 后 sequelize 用模型
+        // 关联默认 alias (小写 'stock', 没有 as:) → row.stock.symbol. 这里类型/键名
+        // 必须用小写, 否则拿到 undefined.
         const rows = (await FavoriteStock.findAll({
-          attributes: ['symbol'],
+          attributes: [],
+          include: [{ model: Stock, attributes: ['symbol'], required: true }],
           raw: true,
-        })) as unknown as Array<{ symbol: string }>;
-        stockCodes = Array.from(
-          new Set(rows.map(r => stripSuffix(r.symbol)).filter(c => /^\d{6}$/.test(c)))
-        );
+          nest: true,
+        })) as unknown as Array<{ stock: { symbol: string } }>;
+        stockCodes = rowsToFavoriteStockCodes(rows);
         logger.info(`[sync-kol-opinions] resolved ${stockCodes.length} favorites from DB`);
       } else if (opts.all) {
         const rows = (await Stock.findAll({
@@ -148,7 +153,7 @@ program
     }
   });
 
-function stripSuffix(symbol: string | null | undefined): string {
+export function stripSuffix(symbol: string | null | undefined): string {
   if (!symbol) return '';
   const s = symbol.trim();
   if (!s) return '';
@@ -162,4 +167,25 @@ function stripSuffix(symbol: string | null | undefined): string {
   return before;
 }
 
-program.parseAsync(process.argv);
+/**
+ * PR-A hotfix (2026-06-29): 把 favorites → stockCodes 的 row 整理逻辑做成纯函数,
+ * 便于单测锁死 nest:true 时 row.stock.symbol 嵌套结构 (sequelize 默认 association
+ * alias 用模型名小写: 'stock', 大写 'Stock' 拿到 undefined), 避免下一个 refactor
+ * 又把 include 写回成 attributes:['symbol'] (FavoriteStock 表无 symbol 列, 整次
+ * cron 挂). 输入是 FavoriteStock.findAll({include:[Stock], raw:true, nest:true})
+ * 的返回结构.
+ */
+export function rowsToFavoriteStockCodes(
+  rows: Array<{ stock?: { symbol?: string | null } | null } | null>
+): string[] {
+  return Array.from(
+    new Set(
+      (rows || []).map(r => stripSuffix(r?.stock?.symbol || '')).filter(c => /^\d{6}$/.test(c))
+    )
+  );
+}
+
+// CLI entrypoint guard: 只在直接执行时 parse argv, import 时不执行 (单测安全).
+if (require.main === module) {
+  program.parseAsync(process.argv);
+}

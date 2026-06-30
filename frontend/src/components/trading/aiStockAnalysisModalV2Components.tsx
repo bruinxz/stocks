@@ -320,23 +320,23 @@ export const ActionPlanCard: React.FC<ActionPlanCardProps> = ({
               {actionPlan.position_action === 'maintain'
                 ? actionPlan.position_action_label
                 : actionPlan.position_action === 'avoid'
-                ? actionPlan.position_action_label
-                : actionPlan.position_action === 'close'
-                ? actionPlan.position_action_label
-                : actionPlan.suggested_position_pct != null
-                ? `${(actionPlan.suggested_position_pct * 100).toFixed(1)}%`
-                : '—'}
+                  ? actionPlan.position_action_label
+                  : actionPlan.position_action === 'close'
+                    ? actionPlan.position_action_label
+                    : actionPlan.suggested_position_pct != null
+                      ? `${(actionPlan.suggested_position_pct * 100).toFixed(1)}%`
+                      : '—'}
             </Text>
           </Col>
           <Col span={12}>
             <Text type="secondary">止损价：</Text>
-            <Text strong style={{ color: '#52c41a' }}>
+            <Text strong style={{ color: '#16a34a' }}>
               {actionPlan.stop_loss != null ? `¥${actionPlan.stop_loss.toFixed(2)}` : '—'}
             </Text>
           </Col>
           <Col span={12}>
             <Text type="secondary">止盈价：</Text>
-            <Text strong style={{ color: '#f5222d' }}>
+            <Text strong style={{ color: '#dc2626' }}>
               {actionPlan.take_profit != null ? `¥${actionPlan.take_profit.toFixed(2)}` : '—'}
             </Text>
           </Col>

@@ -57,7 +57,7 @@ const LEVEL_META: Record<
   }
 > = {
   green: {
-    color: '#52c41a',
+    color: '#16a34a',
     label: '健康',
     icon: <CheckCircleOutlined />,
     antColor: 'success',
@@ -69,7 +69,7 @@ const LEVEL_META: Record<
     antColor: 'warning',
   },
   red: {
-    color: '#f5222d',
+    color: '#dc2626',
     label: '严重滞后',
     icon: <ExclamationCircleOutlined />,
     antColor: 'error',
@@ -392,8 +392,8 @@ const DataHealthCard: React.FC<DataHealthCardProps> = ({ card, syncing, syncDisa
     card.lag_trading_days === null
       ? '—'
       : card.category === 'daily'
-      ? `${card.lag_trading_days} 个交易日`
-      : `${card.lag_trading_days} 天`;
+        ? `${card.lag_trading_days} 个交易日`
+        : `${card.lag_trading_days} 天`;
   const lastSyncText = card.last_sync_at
     ? dayjs(card.last_sync_at).format('YYYY-MM-DD HH:mm')
     : '从未同步';
@@ -495,7 +495,7 @@ const DataHealthCard: React.FC<DataHealthCardProps> = ({ card, syncing, syncDisa
             <Button
               size="small"
               icon={<CopyOutlined />}
-              onClick={(e) => {
+              onClick={e => {
                 e.stopPropagation();
                 const cmd = CLI_COMMANDS[card.sync_source] || `npm run sync:${card.sync_source}`;
                 navigator.clipboard?.writeText(cmd).catch(() => {

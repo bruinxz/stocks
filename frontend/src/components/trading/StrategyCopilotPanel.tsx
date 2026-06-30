@@ -425,7 +425,11 @@ const ChatBubble: React.FC<{
       }}
     >
       {!isUser && (
-        <Avatar size={28} icon={<RobotOutlined />} style={{ background: '#1890ff', flexShrink: 0 }} />
+        <Avatar
+          size={28}
+          icon={<RobotOutlined />}
+          style={{ background: '#1890ff', flexShrink: 0 }}
+        />
       )}
       <div style={{ display: 'flex', flexDirection: 'column', maxWidth: '85%' }}>
         <div style={bubbleStyle}>
@@ -529,7 +533,11 @@ const ChatBubble: React.FC<{
         )}
       </div>
       {isUser && (
-        <Avatar size={28} icon={<UserOutlined />} style={{ background: '#52c41a', flexShrink: 0 }} />
+        <Avatar
+          size={28}
+          icon={<UserOutlined />}
+          style={{ background: '#16a34a', flexShrink: 0 }}
+        />
       )}
     </div>
   );

@@ -130,6 +130,14 @@ export interface PlaceOrderOptions {
    */
   bypass_feasibility?: boolean;
   /**
+   * PR-M4 (2026-06-29): 跳过仓位风控 hard caps (5% 单仓 / 25% 板块). 仅给系统级
+   * 强制路径用 — closePosition / GuardSellExecutor 强平 / IndustryConcentrationGuard
+   * rebalance SELL 等. SELL 路径目前本来就不调 cap (cap 在 BUY 块内), 该 flag 主要给
+   * 未来扩 SELL cap 时留 escape hatch + 让 closePosition 默认 bypass=true.
+   * **普通 UI BUY / TodaySignals shadow autopilot / RebalanceEngine BUY 绝不要传**.
+   */
+  bypass_sizing_caps?: boolean;
+  /**
    * 可选 pre-trade compliance 上下文 — 由 caller (策略层) 注入信号元数据,
    * facade 内不再二次查 DB. 缺省时仅跑 wizard 子规则中不依赖元数据的分支
    * (NEXT_DAY_CHASE / FREQUENT_TRADING / MIN_HOLDING_PERIOD 仍能命中).
@@ -176,6 +184,8 @@ export interface ClosePositionOptions {
   bypass_compliance?: boolean;
   /** US-015 (EX-001): closePosition 默认 bypass=true (强平 SELL 不该被 feasibility gate 拦) */
   bypass_feasibility?: boolean;
+  /** PR-M4 (2026-06-29): closePosition 默认 bypass=true (SELL 路径目前无 cap, flag 兼容) */
+  bypass_sizing_caps?: boolean;
   /** AL-3 (2026-06-21): 操作理由 — 默认 source='close_position' */
   trade_reason?: import('./internal/tradeReasonBuilder').TradeReason;
   trade_reason_summary?: string;
@@ -601,6 +611,229 @@ export function buildPreTradeComplianceDraft(input: {
   };
 }
 
+// ---------------------------------------------------------------------------
+//  PR-M4 (2026-06-29): 仓位风控 hard caps
+//
+//  上下文: PR-K 30 天回测发现当前推荐系统 win 32% (低于 50% 随机), 实盘 paper
+//  -10,798 元; 电力/交通/煤炭 44% 持仓亏 6%. 用户授权两道 hard cap:
+//    1. 单仓 5%  — 每只票最多占 portfolio.total_value 的 5%
+//    2. 板块 25% — 同一行业累计最多占 portfolio.total_value 的 25%
+//
+//  两道 cap 的语义不同:
+//    - single position: **soft cap** — 自动把 cost 降到 5% 上限, 仍下单 (用户能买入,
+//      只是金额变少 — 体验友好). 写 WARN 级 log + 让 caller 在 result 里看到
+//      capped 标记 (放行 result.sizing_capped=true).
+//    - industry: **hard reject** — 行业已超 25% (或新加单会让它超), 直接拒单
+//      throw err.code='INDUSTRY_CONCENTRATION_CAP_EXCEEDED'. 用户感受到 "这板块
+//      不能再加了". 因为 industry 切片是组合级风险, 强 cap 必要.
+//
+//  与现有 PositionLimitGuard / IndustryConcentrationGuard (US-047 / US-052) 的关系:
+//    - PositionLimitGuard 阈值由 user.risk_config.position_limits 决定, 默认
+//      max_single_stock_pct=0.10 / max_single_industry_pct=0.30 — 用户改了就改.
+//    - PR-M4 cap 是**系统级最终防线** — 不受用户 config 影响, 5%/25% hardcoded.
+//      用户即使把 PositionLimitGuard 调到 50% 也过不了 PR-M4 这道墙.
+//    - 关系: PositionLimitGuard 先跑 (caller 配的 strict 阈值), 通过后再跑 PR-M4
+//      (系统统一防线). 两道叠加 — 任一拒单都不下.
+//
+//  与 facade 既有结构的对齐:
+//    - 沿用 export 纯函数 + class method "wrapper" 范式 (与 evaluateQuoteStaleness /
+//      evaluateLimitUpDownBlock / buildPreTradeComplianceDraft 同款), 单测可
+//      ts-node 直接 import 验证.
+//    - cap 阈值 export 常量 (PR_M4_*_CAP_PCT) — 测试 + UI 都可 import 对齐,
+//      未来调阈值只改这一处.
+// ---------------------------------------------------------------------------
+
+/**
+ * 单仓硬上限 (5%) — portfolio.total_value 的最大占比.
+ * PR-M4 系统级防线, 不受用户 risk_config 影响.
+ */
+export const PR_M4_SINGLE_POSITION_CAP_PCT = 5; // 0-100, 表 %
+
+/**
+ * 行业集中度硬上限 (25%) — 同行业累计 market_value 占 portfolio.total_value 的最大比.
+ * PR-M4 系统级防线, 不受用户 risk_config 影响.
+ */
+export const PR_M4_INDUSTRY_CONCENTRATION_CAP_PCT = 25; // 0-100, 表 %
+
+/** PR-M4 单仓 cap 评估结果. */
+export interface SinglePositionCapDecision {
+  /** true = 放行 (可能 capped); false = 不可能放行 (理论上不会, 单仓 cap 只 soft cap). */
+  ok: boolean;
+  /** 真正能下的 cost (元) — 输入超 cap 时自动降到 cap. 等于 proposed_cost 时未 capped. */
+  effective_cost: number;
+  /** 当 effective_cost < proposed_cost 时为 true. */
+  capped: boolean;
+  /** sizing cap 在元的绝对值. */
+  cap_amount: number;
+  /** 决策依据细节. */
+  detail: {
+    proposed_cost: number;
+    total_value: number;
+    cap_pct: number;
+    cap_amount: number;
+    capped: boolean;
+  };
+}
+
+/**
+ * 评估单笔 BUY 是否超 PR-M4 单仓 5% 硬上限.
+ *
+ * 设计取舍 (soft cap vs hard reject):
+ *   - 选 soft cap — 超额自动降到 5% 上限, 让用户能下单 (体验友好).
+ *   - 用户拿到 result.capped=true 后 UI 应显示 "已自动降低到 5% 上限".
+ *
+ * 边界:
+ *   - total_value <= 0 (空账户 — 初始资金已 0) → 不 cap, 让 caller 走到资金不足拒单.
+ *   - proposed_cost <= 0 → 不可能 — caller 之前应该拦下了, 这里保护性 ok=true 直传.
+ *   - cap 计算用 5% × total_value, 不含 cash/position 切分 — total_value 已含两者.
+ */
+export function evaluateSinglePositionCap(input: {
+  proposed_cost: number;
+  total_value: number;
+  cap_pct?: number;
+}): SinglePositionCapDecision {
+  const capPct =
+    Number.isFinite(input.cap_pct as number) && (input.cap_pct as number) > 0
+      ? (input.cap_pct as number)
+      : PR_M4_SINGLE_POSITION_CAP_PCT;
+  const proposed = Number(input.proposed_cost) || 0;
+  const total = Number(input.total_value) || 0;
+  if (proposed <= 0 || total <= 0) {
+    return {
+      ok: true,
+      effective_cost: proposed,
+      capped: false,
+      cap_amount: 0,
+      detail: {
+        proposed_cost: proposed,
+        total_value: total,
+        cap_pct: capPct,
+        cap_amount: 0,
+        capped: false,
+      },
+    };
+  }
+  const cap = (total * capPct) / 100;
+  if (proposed > cap) {
+    return {
+      ok: true,
+      effective_cost: cap,
+      capped: true,
+      cap_amount: cap,
+      detail: {
+        proposed_cost: proposed,
+        total_value: total,
+        cap_pct: capPct,
+        cap_amount: cap,
+        capped: true,
+      },
+    };
+  }
+  return {
+    ok: true,
+    effective_cost: proposed,
+    capped: false,
+    cap_amount: cap,
+    detail: {
+      proposed_cost: proposed,
+      total_value: total,
+      cap_pct: capPct,
+      cap_amount: cap,
+      capped: false,
+    },
+  };
+}
+
+/** PR-M4 行业 cap 评估结果. */
+export interface IndustryConcentrationCapDecision {
+  /** true = 放行; false = 拒单 (industry 已超 cap 或新加单会超). */
+  ok: boolean;
+  /** 当前行业累计 market_value (元), 含其他持仓. */
+  industry_value: number;
+  /** 加上新单 cost 后的预估值. */
+  industry_value_after: number;
+  /** cap 阈值 (元). */
+  cap_amount: number;
+  /** 拒单时返回的 reason code. */
+  code?: 'INDUSTRY_CONCENTRATION_CAP_EXCEEDED';
+  /** 拒单时人类可读说明. */
+  message?: string;
+  /** 决策依据细节. */
+  detail: {
+    industry: string;
+    industry_value: number;
+    industry_value_after: number;
+    cap_pct: number;
+    cap_amount: number;
+    total_value: number;
+    proposed_cost: number;
+  };
+}
+
+/**
+ * 评估单笔 BUY 是否会让所属行业累计市值超 PR-M4 板块 25% 硬上限.
+ *
+ * 边界:
+ *   - industry 缺失 (null/empty/whitespace) → 不拒单 (未分类股不能用于判定),
+ *     但 detail.industry='__UNKNOWN__'. 未分类持仓的"行业集中度"概念不适用.
+ *   - total_value <= 0 → 不拒单 (空账户), 让 caller 走资金不足.
+ *   - industry_value + proposed_cost > cap_amount → 拒单. 用 `>` 严格不等
+ *     (与 US-047 / US-052 既有 industry 上限一致 — 25% 边界可达, 超出才拒).
+ *
+ * 不在此处查 DB — caller 传 (industry, industry_value) 让本函数纯逻辑判定.
+ */
+export function evaluateIndustryConcentrationCap(input: {
+  industry: string | null | undefined;
+  industry_value: number;
+  proposed_cost: number;
+  total_value: number;
+  cap_pct?: number;
+}): IndustryConcentrationCapDecision {
+  const capPct =
+    Number.isFinite(input.cap_pct as number) && (input.cap_pct as number) > 0
+      ? (input.cap_pct as number)
+      : PR_M4_INDUSTRY_CONCENTRATION_CAP_PCT;
+  const industry =
+    typeof input.industry === 'string' && input.industry.trim()
+      ? input.industry.trim()
+      : '__UNKNOWN__';
+  const total = Number(input.total_value) || 0;
+  const industryVal = Number(input.industry_value) || 0;
+  const proposed = Number(input.proposed_cost) || 0;
+  const cap = (total * capPct) / 100;
+  const after = industryVal + proposed;
+  const detail = {
+    industry,
+    industry_value: industryVal,
+    industry_value_after: after,
+    cap_pct: capPct,
+    cap_amount: cap,
+    total_value: total,
+    proposed_cost: proposed,
+  };
+  if (total <= 0) {
+    return { ok: true, industry_value: industryVal, industry_value_after: after, cap_amount: cap, detail };
+  }
+  if (industry === '__UNKNOWN__') {
+    return { ok: true, industry_value: industryVal, industry_value_after: after, cap_amount: cap, detail };
+  }
+  if (after > cap) {
+    return {
+      ok: false,
+      industry_value: industryVal,
+      industry_value_after: after,
+      cap_amount: cap,
+      code: 'INDUSTRY_CONCENTRATION_CAP_EXCEEDED',
+      message:
+        `板块 ${industry} 已占 ¥${industryVal.toFixed(0)} (含本单为 ¥${after.toFixed(0)}), ` +
+        `超 ${capPct}% 系统硬上限 ¥${cap.toFixed(0)} — 已拒单. ` +
+        `请先减仓该板块或选择其他板块标的`,
+      detail,
+    };
+  }
+  return { ok: true, industry_value: industryVal, industry_value_after: after, cap_amount: cap, detail };
+}
+
 export class PaperTradingFacade {
   private dataService: DataService;
 
@@ -773,12 +1006,43 @@ export class PaperTradingFacade {
         (error?.statusCode === 404 ? 'NOT_FOUND' : inferOrderFailureCode(error?.message)) ||
         'unknown';
       incrementOrderTotal(direction, 'failed', code);
+      // Phase 10 通知审计 (2026-06-28) — 之前 placeOrder 顶层 throw 只走 metric +
+      // re-throw, 运维群一条都不推, 出问题只能靠 user 在 UI 上叫. 现在 fire-and-forget
+      // 推一条 ops 告警, 1h dedup (by direction + code) 防 burst.
+      // 不阻塞 throw 路径; pusher 内部 fail-OPEN; 用户原话 "凌晨出问题没人知道".
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const sysMod = require('../services/SystemAdminAlertPusher');
+        const symbol = options?.symbol || 'unknown';
+        const portfolioId = (options as any)?.portfolio_id || 'unknown';
+        sysMod.pushSystemAdminAlertFireAndForget({
+          dedup_key: `order_throw:${direction}:${code}`,
+          level: 'WARN',
+          title: `[ORDER FAIL] ${direction.toUpperCase()} ${symbol} - ${code}`,
+          body_markdown:
+            `**user_id**: ${options?.user_id ?? 'unknown'}\n` +
+            `**portfolio_id**: ${portfolioId}\n` +
+            `**direction**: ${direction}\n` +
+            `**symbol**: ${symbol}\n` +
+            `**quantity**: ${options?.quantity ?? 'unknown'}\n` +
+            `**code**: ${code}\n` +
+            `**error**:\n\`\`\`\n${String(error?.message || error).slice(0, 800)}\n\`\`\``,
+          triggered_at: new Date().toISOString(),
+        });
+      } catch (sysErr: any) {
+        logger.warn(
+          `[PaperTradingFacade.placeOrder] ops alert push 异常 (吞错): ${sysErr?.message || sysErr}`
+        );
+      }
       throw error;
     }
   }
 
   private async _placeOrderInner(options: PlaceOrderOptions) {
-    const { user_id, symbol, direction, quantity } = options;
+    const { user_id, symbol, direction } = options;
+    // PR-M4 (2026-06-29): quantity 必须可变 — sizing cap soft-floor 会重算 quantity.
+    // 原 destructure const quantity 改成 let, 但不破坏外部 options.quantity 校验.
+    let quantity = options.quantity;
 
     if (!symbol || !direction || !quantity || quantity <= 0) {
       throw new Error('无效的交易参数');
@@ -950,11 +1214,13 @@ export class PaperTradingFacade {
 
     if (direction === 'BUY') {
       const execute_price = current_price * (1 + slippage);
-      const cost = execute_price * quantity;
+      // PR-M4 (2026-06-29): cost/commission/transferFee/totalCost 改 let — sizing cap
+      // soft-floor 会自动降 quantity 后整体重算. 见下方 PR-M4 cap 段.
+      let cost = execute_price * quantity;
       const rawCommission = cost * commissionRate;
-      const commission = Math.max(rawCommission, minCommission);
-      const transferFee = cost * transferFeeRate;
-      const totalCost = cost + commission + transferFee;
+      let commission = Math.max(rawCommission, minCommission);
+      let transferFee = cost * transferFeeRate;
+      let totalCost = cost + commission + transferFee;
 
       // ---- audit S-3 修复: 涨停板拦截 (用 evaluateLimitUpDownBlock 纯函数) ----
       // 之前 BUY/SELL 完全不查涨跌停, 模拟盘可下单到 300xxx 创业板涨 18% / 920xxx
@@ -1157,6 +1423,120 @@ export class PaperTradingFacade {
           logger.warn(
             `[facade.placeOrder] feasibility gate check failed (fail-open): ${err?.message || err}`
           );
+        }
+      }
+
+      // ============ PR-M4 (2026-06-29): 仓位风控 hard caps ============
+      // 上下文: PR-K 回测证实当前推荐 win 32% (亏 -10,798 元), 电力/交通/煤炭
+      // 44% 持仓亏 6%. 用户授权 5% 单仓 + 25% 板块两道系统级 hard cap.
+      //
+      // 这里同时跑 5% 单仓 (soft cap, 自动降低 quantity) + 25% 板块 (hard reject):
+      //   - 5% cap 命中: quantity 自动 floor 到 100 股整数倍 + cost / commission /
+      //     transferFee / totalCost 全部重算. quantity 重算后 <= 0 直接拒单
+      //     (SIZING_CAP_TOO_SMALL — 即使 5% cap 也容不下 100 股, 账户太小).
+      //   - 25% cap 命中: throw INDUSTRY_CONCENTRATION_CAP_EXCEEDED, 不下单.
+      //
+      // 注意: 这两道 cap 在 PositionLimitGuard (US-047) 之后跑 — US-047 用户 config
+      // 可调; PR-M4 是系统终极防线, 即便用户把 user.risk_config 调到 50% 也过不了.
+      // bypass_sizing_caps=true 跳过两道 (强平 / closePosition 才用; UI 普通 BUY 不要传).
+      let sizingCapDecision: ReturnType<typeof evaluateSinglePositionCap> | null = null;
+      let industryCapDecision: ReturnType<typeof evaluateIndustryConcentrationCap> | null = null;
+      if (!(options as any).bypass_sizing_caps) {
+        // 1) 计算 portfolio.total_value (cash + 所有持仓 market_value). 不依赖
+        //    portfolio.total_value 列 — 该列只在 getPortfolio 时刷新, 可能 stale.
+        const allPositions = await PaperTradingPosition.findAll({
+          where: { portfolio_id: portfolio.id },
+        });
+        const currentMarketValue = allPositions.reduce(
+          (s, p) => s + (Number(p.market_value) || 0),
+          0
+        );
+        const currentTotalValue =
+          (Number(portfolio.current_cash) || 0) + currentMarketValue;
+
+        // 2) 单仓 5% 上限 — soft cap, 超额自动降 quantity.
+        sizingCapDecision = evaluateSinglePositionCap({
+          proposed_cost: cost,
+          total_value: currentTotalValue,
+        });
+        if (sizingCapDecision.capped) {
+          const capAmount = sizingCapDecision.effective_cost;
+          // floor 到 100 股板手 (与 RebalanceEngine MIN_TRADE_LOT_SIZE=100 一致)
+          const newQuantity = Math.floor(capAmount / (execute_price * 100)) * 100;
+          if (newQuantity <= 0) {
+            const err: any = new Error(
+              `单仓 5% 上限 (¥${capAmount.toFixed(0)}) 不足 100 股 ${symbol} ` +
+                `(单股需 ¥${(execute_price * 100).toFixed(0)}), 拒单. 账户规模过小或股价过高.`
+            );
+            err.statusCode = 400;
+            err.code = 'SIZING_CAP_TOO_SMALL';
+            err.detail = {
+              ...sizingCapDecision.detail,
+              execute_price,
+              min_lot_cost: execute_price * 100,
+            };
+            throw err;
+          }
+          logger.warn(
+            `[facade.placeOrder][PR-M4 sizing_cap] user=${user_id} ${symbol} ` +
+              `建议买入 ${quantity} 股 (¥${cost.toFixed(0)}) 超 5% 上限 (¥${capAmount.toFixed(0)}) ` +
+              `→ 自动降到 ${newQuantity} 股`
+          );
+          quantity = newQuantity;
+          cost = execute_price * quantity;
+          const newRawCommission = cost * commissionRate;
+          commission = Math.max(newRawCommission, minCommission);
+          transferFee = cost * transferFeeRate;
+          totalCost = cost + commission + transferFee;
+        }
+
+        // 3) 板块 25% 上限 — hard reject. 查同行业其他持仓 (含 stockInfo.industry).
+        //    stockInfo 上面已经 fetch. industry 缺失走 UNKNOWN sentinel → 不拒单.
+        const targetIndustry =
+          (stockInfo as any)?.industry &&
+          typeof (stockInfo as any).industry === 'string' &&
+          (stockInfo as any).industry.trim()
+            ? (stockInfo as any).industry.trim()
+            : null;
+        let industryValue = 0;
+        if (targetIndustry) {
+          // 查其他持仓的 industry — N+1 查询可以接受, paper 持仓量小 (< 50).
+          // 之后若性能不够再走 JOIN.
+          const positionSymbols = allPositions.map(p => p.symbol).filter(s => !!s);
+          if (positionSymbols.length > 0) {
+            const stocks = await Stock.findAll({
+              where: { symbol: { [Op.in]: positionSymbols } },
+              attributes: ['symbol', 'industry'],
+            });
+            const industryBySymbol = new Map<string, string | null>();
+            for (const s of stocks) {
+              industryBySymbol.set(s.symbol, (s as any).industry || null);
+            }
+            for (const p of allPositions) {
+              const ind = industryBySymbol.get(p.symbol) || null;
+              if (ind && ind === targetIndustry) {
+                industryValue += Number(p.market_value) || 0;
+              }
+            }
+          }
+        }
+        industryCapDecision = evaluateIndustryConcentrationCap({
+          industry: targetIndustry,
+          industry_value: industryValue,
+          proposed_cost: cost,
+          total_value: currentTotalValue,
+        });
+        if (!industryCapDecision.ok) {
+          logger.warn(
+            `[facade.placeOrder][PR-M4 industry_cap] user=${user_id} ${symbol} ` +
+              `板块 ${industryCapDecision.detail.industry} 已占 ¥${industryValue.toFixed(0)}, ` +
+              `本单 ¥${cost.toFixed(0)} 加后超 25% cap ¥${industryCapDecision.cap_amount.toFixed(0)} — 拒单`
+          );
+          const err: any = new Error(industryCapDecision.message);
+          err.statusCode = 400;
+          err.code = industryCapDecision.code;
+          err.detail = industryCapDecision.detail;
+          throw err;
         }
       }
 
@@ -1499,6 +1879,10 @@ export class PaperTradingFacade {
       // (SELL 路径 facade 本来就不调 gate; 但显式 bypass=true 表达系统级强制路径,
       // 与未来若扩 SELL gate 时的契约一致).
       bypass_feasibility: options.bypass_feasibility !== false,
+      // PR-M4 (2026-06-29): closePosition 是 SELL, 当前 cap 仅作用于 BUY (cap 内部
+      // 在 BUY 块内, SELL 走不到). 但显式传 true 让未来若扩 SELL cap 时不会被拦,
+      // 与 bypass_compliance / bypass_feasibility 同款"系统级强制路径"语义.
+      bypass_sizing_caps: options.bypass_sizing_caps !== false,
       // AL-3 (2026-06-21): closePosition 默认 source='close_position', caller
       // 可传 trade_reason 覆盖 (例如 IndustryConcentrationGuard 传 industry_concentration).
       trade_reason:

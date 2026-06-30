@@ -265,8 +265,8 @@ const SystemLogs: React.FC = () => {
                       log.level === 'error'
                         ? '#ffb4b4'
                         : log.level === 'warn'
-                        ? '#ffd18a'
-                        : '#dbe7f5',
+                          ? '#ffd18a'
+                          : '#dbe7f5',
                   }}
                 >
                   {log.message}

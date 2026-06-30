@@ -111,7 +111,7 @@ const BulkBackfillButton: React.FC<BulkBackfillButtonProps> = ({ healthData, onB
           sync_source: target.sync_source,
           display_name: target.display_name,
           ok: Boolean(res?.success),
-          message: res?.success ? '同步完成' : res?.error ?? '后端返回 success=false',
+          message: res?.success ? '同步完成' : (res?.error ?? '后端返回 success=false'),
         });
       } catch (err: any) {
         results.push({
@@ -203,10 +203,10 @@ const BulkBackfillButton: React.FC<BulkBackfillButtonProps> = ({ healthData, onB
     plan.counts.sync_error > 0
       ? 'red'
       : plan.counts.severe_lag > 0
-      ? 'orange'
-      : plan.total > 0
-      ? 'blue'
-      : 'green';
+        ? 'orange'
+        : plan.total > 0
+          ? 'blue'
+          : 'green';
 
   const progressPct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
 
@@ -216,7 +216,7 @@ const BulkBackfillButton: React.FC<BulkBackfillButtonProps> = ({ healthData, onB
         <Space>
           <ThunderboltOutlined
             style={{
-              color: tagColor === 'red' ? '#f5222d' : tagColor === 'orange' ? '#faad14' : '#1890ff',
+              color: tagColor === 'red' ? '#dc2626' : tagColor === 'orange' ? '#faad14' : '#1890ff',
             }}
           />
           <Text strong>一键补抓</Text>
@@ -244,8 +244,8 @@ const BulkBackfillButton: React.FC<BulkBackfillButtonProps> = ({ healthData, onB
             {running
               ? `补抓中… (${progress.done}/${progress.total})`
               : plan.total > 0
-              ? `一键补抓 ${plan.total} 个`
-              : '一键补抓'}
+                ? `一键补抓 ${plan.total} 个`
+                : '一键补抓'}
           </Button>
         </Tooltip>
       }

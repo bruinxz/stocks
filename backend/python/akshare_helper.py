@@ -712,6 +712,88 @@ def get_realtime_quotes(symbols: str) -> Dict[str, Any]:
         print(f"Error getting real-time quotes: {e}", file=sys.stderr)
         return {}
 
+
+def get_auction_snapshot_batch(symbols_csv: str) -> List[Dict[str, Any]]:
+    """
+    PR-M2 2026-06-29 — 集合竞价 / 9:25 后开盘快照批量抓取.
+    一次性 stock_zh_a_spot_em() 拉全市场, 然后按 symbols_csv 过滤; 比 per-symbol 调用快 100x+.
+
+    输入:
+        symbols_csv: e.g. 'sh.600519,sz.000001,bj.873169' (任意非空 ≤500)
+    输出 (list of dict, 每个 dict 含):
+        symbol (原前缀如 sh.600519), name (中文), open, high, low, current, prev_close, volume, turnover.
+        缺失的 symbol 不出现; NaN 字段返 None.
+    """
+    try:
+        symbol_list = [s.strip() for s in symbols_csv.split(',') if s.strip()]
+        if not symbol_list:
+            return []
+        pure_to_orig = {}
+        for code in symbol_list:
+            pure = code.split('.')[-1] if ('.' in code) else code
+            pure_to_orig[pure] = code
+
+        df = ak.stock_zh_a_spot_em()
+        if df is None or df.empty:
+            return []
+        out: List[Dict[str, Any]] = []
+        for pure, orig in pure_to_orig.items():
+            row_df = df[df['代码'] == pure]
+            if row_df.empty:
+                continue
+            row = row_df.iloc[0]
+            out.append({
+                "symbol": orig,
+                "name": str(row['名称']) if pd.notna(row.get('名称')) else None,
+                "open": safe_float_value(row.get('今开')),
+                "high": safe_float_value(row.get('最高')),
+                "low": safe_float_value(row.get('最低')),
+                "current": safe_float_value(row.get('最新价')),
+                "prev_close": safe_float_value(row.get('昨收')),
+                "volume": safe_float_value(row.get('成交量')),
+                "turnover": safe_float_value(row.get('成交额')),
+            })
+        return out
+    except Exception as e:
+        print(f"Error in get_auction_snapshot_batch: {e}", file=sys.stderr)
+        return []
+
+
+def get_intraday_klines_30min(code: str) -> List[Dict[str, Any]]:
+    """
+    PR-M2 2026-06-29 — 单只股票当日 30-min K 线.
+
+    AKShare stock_zh_a_hist_min_em(period='30') 返回最近 N 日累计, 调用方 (TS service) 只
+    取 trade_date >= today 的行.
+
+    输出 (list of dict):
+        time   (str 'YYYY-MM-DD HH:MM:SS', bar 结束时刻)
+        open, high, low, close (float)
+        volume (float, 手数), money (float, 元 — 成交额)
+    """
+    try:
+        pure_code = code
+        if code.startswith('sh.') or code.startswith('sz.') or code.startswith('bj.'):
+            pure_code = code.split('.')[1]
+        df = ak.stock_zh_a_hist_min_em(symbol=pure_code, period='30', adjust='qfq')
+        if df is None or df.empty:
+            return []
+        result: List[Dict[str, Any]] = []
+        for _, row in df.iterrows():
+            result.append({
+                "time": str(row['时间']) if pd.notna(row.get('时间')) else None,
+                "open": safe_float_value(row.get('开盘')),
+                "high": safe_float_value(row.get('最高')),
+                "low": safe_float_value(row.get('最低')),
+                "close": safe_float_value(row.get('收盘')),
+                "volume": safe_float_value(row.get('成交量')),
+                "money": safe_float_value(row.get('成交额')),
+            })
+        return result
+    except Exception as e:
+        print(f"Error get_intraday_klines_30min for {code}: {e}", file=sys.stderr)
+        return []
+
 def health_check(code: str, start_date: str, end_date: str) -> Dict[str, Any]:
     """Lightweight health probe for AKShare. Avoids full-market and indicator endpoints."""
     pure_code = code
@@ -5628,6 +5710,309 @@ def get_concept_hot_keywords_reverse(stock_codes_csv: str, per_stock_limit: int 
     return out
 
 
+# ============================================================================
+# PR-M1 (2026-06-29) — 隔夜信号矩阵 (5 个核心 source).
+#
+# 模式 (与 ETF_FLOW / margin_balance 同款):
+#   - 每个 source 一个独立函数返回 dict | None
+#   - get_overnight_signals 顶层 dispatcher 把全部 source 跑一遍, 返一个 list
+#   - 每个 source 内部 try AKShare 端点链 (e.g. index_global_em ->
+#     stock_us_spot_em -> 等), 任一抖动 fail-OPEN 返 None, 不阻塞其他 source
+#   - TS 服务层负责 bulkCreate / upsert / collected_at
+#
+# AC endpoint substitution 范式 (与 US-034 / US-091 / US-092 同款 4 处文档同步):
+#   AKShare 全球指数 / VIX 端点命名漂移频繁 (`index_global` /
+#   `index_global_em` / `stock_us_famous_spot_em` 等), 用 try/except 链兼容.
+# ============================================================================
+
+
+def _overnight_akshare_call(fn_name: str, **kwargs) -> Optional[pd.DataFrame]:
+    """安全调 AKShare 函数 — 返 dataframe 或 None (端点不存在 / 调用异常)."""
+    fn = getattr(ak, fn_name, None)
+    if fn is None:
+        print(f"[overnight] AKShare endpoint missing: {fn_name}", file=sys.stderr)
+        return None
+    try:
+        df = fn(**kwargs) if kwargs else fn()
+        if df is None or (hasattr(df, 'empty') and df.empty):
+            return None
+        return df
+    except Exception as e:
+        print(f"[overnight] {fn_name} fail: {e}", file=sys.stderr)
+        return None
+
+
+def _overnight_find_row(df: pd.DataFrame, name_substrings: List[str]) -> Optional[pd.Series]:
+    """按中英文 substring 在 dataframe 多个可能的 name 列中匹配第一行."""
+    if df is None or df.empty:
+        return None
+    candidates = ['名称', 'name', '代码', 'symbol', '简称', 'short_name']
+    name_col = None
+    for c in candidates:
+        if c in df.columns:
+            name_col = c
+            break
+    if name_col is None:
+        return None
+    series = df[name_col].astype(str)
+    for sub in name_substrings:
+        mask = series.str.contains(sub, na=False, case=False, regex=False)
+        hit = df[mask]
+        if not hit.empty:
+            return hit.iloc[0]
+    return None
+
+
+def _overnight_pick(row: pd.Series, candidates: List[str]) -> Optional[float]:
+    """按列名 candidates 顺序提第一个非空的 float 值."""
+    if row is None:
+        return None
+    for c in candidates:
+        if c in row.index:
+            v = row[c]
+            try:
+                if pd.notna(v) and v != '-' and v != '':
+                    f = float(v)
+                    if f == f:  # NaN check (NaN != NaN)
+                        return f
+            except (ValueError, TypeError):
+                continue
+    return None
+
+
+def _overnight_row_to_json(row: pd.Series) -> Dict[str, Any]:
+    """pandas Series -> JSON-friendly dict (NaN -> None)."""
+    if row is None:
+        return {}
+    out: Dict[str, Any] = {}
+    for k, v in row.items():
+        if pd.isna(v):
+            out[str(k)] = None
+        elif isinstance(v, (int, float)):
+            out[str(k)] = float(v) if v == v else None
+        else:
+            out[str(k)] = str(v)
+    return out
+
+
+def _overnight_sync_a50_future() -> Optional[Dict[str, Any]]:
+    """富时中国 A50 期指 (新加坡盘) - Han/Hu/Jia 2023 实证为 A 股开盘 price
+    discovery 主通道."""
+    df = _overnight_akshare_call('index_global_em')
+    if df is not None:
+        row = _overnight_find_row(df, ['富时中国A50', 'FTSE China A50', 'A50'])
+        if row is not None:
+            val = _overnight_pick(row, ['最新价', '现价', 'price', 'close'])
+            chg = _overnight_pick(row, ['涨跌幅', 'change_pct', 'pct_change'])
+            if val is not None:
+                return {
+                    'signal_type': 'a50_future',
+                    'source': 'index_global_em',
+                    'value': val,
+                    'change_pct': chg,
+                    'raw_payload': _overnight_row_to_json(row),
+                }
+
+    df = _overnight_akshare_call('futures_global_em')
+    if df is not None:
+        row = _overnight_find_row(df, ['A50'])
+        if row is not None:
+            val = _overnight_pick(row, ['最新价', 'price'])
+            chg = _overnight_pick(row, ['涨跌幅', 'change_pct'])
+            if val is not None:
+                return {
+                    'signal_type': 'a50_future',
+                    'source': 'futures_global_em',
+                    'value': val,
+                    'change_pct': chg,
+                    'raw_payload': _overnight_row_to_json(row),
+                }
+
+    print("[overnight] a50_future not found in any endpoint", file=sys.stderr)
+    return None
+
+
+def _overnight_sync_hk_hsi() -> Optional[Dict[str, Any]]:
+    """港股恒生指数 - Stefan 2020 AH 股联动."""
+    df = _overnight_akshare_call('stock_hk_index_spot_em')
+    if df is not None:
+        row = _overnight_find_row(df, ['恒生指数', '恒指', 'HSI'])
+        if row is not None:
+            val = _overnight_pick(row, ['最新价', '现价', 'price'])
+            chg = _overnight_pick(row, ['涨跌幅', 'change_pct'])
+            if val is not None:
+                return {
+                    'signal_type': 'hk_hsi',
+                    'source': 'stock_hk_index_spot_em',
+                    'value': val,
+                    'change_pct': chg,
+                    'raw_payload': _overnight_row_to_json(row),
+                }
+
+    df = _overnight_akshare_call('index_global_em')
+    if df is not None:
+        row = _overnight_find_row(df, ['恒生指数', '恒指', 'HSI'])
+        if row is not None:
+            val = _overnight_pick(row, ['最新价', 'price'])
+            chg = _overnight_pick(row, ['涨跌幅', 'change_pct'])
+            if val is not None:
+                return {
+                    'signal_type': 'hk_hsi',
+                    'source': 'index_global_em',
+                    'value': val,
+                    'change_pct': chg,
+                    'raw_payload': _overnight_row_to_json(row),
+                }
+
+    print("[overnight] hk_hsi not found", file=sys.stderr)
+    return None
+
+
+def _overnight_sync_us_nasdaq() -> Optional[Dict[str, Any]]:
+    """美股纳指 - PR-I 实证关联半导体/AI/新能源车."""
+    df = _overnight_akshare_call('index_us_stock_sina', symbol='.IXIC')
+    if df is not None:
+        try:
+            last = df.iloc[-1]
+            val = _overnight_pick(last, ['close', '收盘', 'price'])
+            chg = None
+            if len(df) >= 2:
+                prev = _overnight_pick(df.iloc[-2], ['close', '收盘', 'price'])
+                if val is not None and prev is not None and prev != 0:
+                    chg = (val - prev) / prev * 100.0
+            if val is not None:
+                return {
+                    'signal_type': 'us_nasdaq',
+                    'source': 'index_us_stock_sina',
+                    'value': val,
+                    'change_pct': chg,
+                    'raw_payload': _overnight_row_to_json(last),
+                }
+        except Exception as e:
+            print(f"[overnight] us_nasdaq sina parse fail: {e}", file=sys.stderr)
+
+    df = _overnight_akshare_call('index_global_em')
+    if df is not None:
+        row = _overnight_find_row(df, ['纳斯达克', 'NASDAQ', 'IXIC'])
+        if row is not None:
+            val = _overnight_pick(row, ['最新价', 'price'])
+            chg = _overnight_pick(row, ['涨跌幅', 'change_pct'])
+            if val is not None:
+                return {
+                    'signal_type': 'us_nasdaq',
+                    'source': 'index_global_em',
+                    'value': val,
+                    'change_pct': chg,
+                    'raw_payload': _overnight_row_to_json(row),
+                }
+
+    print("[overnight] us_nasdaq not found", file=sys.stderr)
+    return None
+
+
+def _overnight_sync_us_dxy() -> Optional[Dict[str, Any]]:
+    """美元指数 DXY - 影响黄金/有色/出口/航空."""
+    df = _overnight_akshare_call('forex_spot_em')
+    if df is not None:
+        row = _overnight_find_row(df, ['美元指数', 'USD Index', 'DXY'])
+        if row is not None:
+            val = _overnight_pick(row, ['最新价', '现价', 'price'])
+            chg = _overnight_pick(row, ['涨跌幅', 'change_pct'])
+            if val is not None:
+                return {
+                    'signal_type': 'us_dxy',
+                    'source': 'forex_spot_em',
+                    'value': val,
+                    'change_pct': chg,
+                    'raw_payload': _overnight_row_to_json(row),
+                }
+
+    df = _overnight_akshare_call('index_global_em')
+    if df is not None:
+        row = _overnight_find_row(df, ['美元指数', 'USD Index', 'DXY'])
+        if row is not None:
+            val = _overnight_pick(row, ['最新价', 'price'])
+            chg = _overnight_pick(row, ['涨跌幅', 'change_pct'])
+            if val is not None:
+                return {
+                    'signal_type': 'us_dxy',
+                    'source': 'index_global_em',
+                    'value': val,
+                    'change_pct': chg,
+                    'raw_payload': _overnight_row_to_json(row),
+                }
+
+    print("[overnight] us_dxy not found", file=sys.stderr)
+    return None
+
+
+def _overnight_sync_us_vix() -> Optional[Dict[str, Any]]:
+    """VIX 恐慌指数 - VIX > 25 -> A 股低开偏空."""
+    df = _overnight_akshare_call('index_us_stock_sina', symbol='.VIX')
+    if df is not None:
+        try:
+            last = df.iloc[-1]
+            val = _overnight_pick(last, ['close', '收盘', 'price'])
+            chg = None
+            if len(df) >= 2:
+                prev = _overnight_pick(df.iloc[-2], ['close', '收盘', 'price'])
+                if val is not None and prev is not None and prev != 0:
+                    chg = (val - prev) / prev * 100.0
+            if val is not None:
+                return {
+                    'signal_type': 'us_vix',
+                    'source': 'index_us_stock_sina',
+                    'value': val,
+                    'change_pct': chg,
+                    'raw_payload': _overnight_row_to_json(last),
+                }
+        except Exception as e:
+            print(f"[overnight] us_vix sina parse fail: {e}", file=sys.stderr)
+
+    df = _overnight_akshare_call('index_global_em')
+    if df is not None:
+        row = _overnight_find_row(df, ['VIX', '恐慌指数'])
+        if row is not None:
+            val = _overnight_pick(row, ['最新价', 'price'])
+            chg = _overnight_pick(row, ['涨跌幅', 'change_pct'])
+            if val is not None:
+                return {
+                    'signal_type': 'us_vix',
+                    'source': 'index_global_em',
+                    'value': val,
+                    'change_pct': chg,
+                    'raw_payload': _overnight_row_to_json(row),
+                }
+
+    print("[overnight] us_vix not found", file=sys.stderr)
+    return None
+
+
+def get_overnight_signals() -> List[Dict[str, Any]]:
+    """顶层 dispatcher - 跑全部 5 个 source, 返回 list of dict.
+
+    每个 source 独立 try/except, 失败 fail-OPEN 仅 stderr 警告, 不阻塞其他.
+    返回数组中只含成功的 source (TS 层根据数组长度判断哪些 source 在线).
+    """
+    out: List[Dict[str, Any]] = []
+    syncers = [
+        ('a50_future', _overnight_sync_a50_future),
+        ('hk_hsi', _overnight_sync_hk_hsi),
+        ('us_nasdaq', _overnight_sync_us_nasdaq),
+        ('us_dxy', _overnight_sync_us_dxy),
+        ('us_vix', _overnight_sync_us_vix),
+    ]
+    for name, fn in syncers:
+        try:
+            row = fn()
+            if row is not None:
+                out.append(row)
+        except Exception as e:
+            print(f"[overnight] {name} EXCEPTION: {e}", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+    return out
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -5665,10 +6050,24 @@ def main():
             if len(sys.argv) < 3:
                 print(json.dumps({"error": "Missing symbols for get_realtime_quotes"}), file=sys.stderr)
                 sys.exit(1)
-            
+
             symbols = sys.argv[2]
             result = get_realtime_quotes(symbols)
-            
+
+        elif command == "get_auction_snapshot_batch":
+            # PR-M2 2026-06-29 — 集合竞价批量快照
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing symbols_csv for get_auction_snapshot_batch"}), file=sys.stderr)
+                sys.exit(1)
+            result = get_auction_snapshot_batch(sys.argv[2])
+
+        elif command == "get_intraday_klines_30min":
+            # PR-M2 2026-06-29 — 单股 30-min K 线
+            if len(sys.argv) < 3:
+                print(json.dumps({"error": "Missing code for get_intraday_klines_30min"}), file=sys.stderr)
+                sys.exit(1)
+            result = get_intraday_klines_30min(sys.argv[2])
+
         elif command == "get_intraday_bars":
             if len(sys.argv) < 3:
                 print(json.dumps({"error": "Missing code for get_intraday_bars"}), file=sys.stderr)
@@ -5983,6 +6382,12 @@ def main():
                 except (ValueError, TypeError):
                     per_stock_limit = 3
             result = get_concept_hot_keywords_reverse(codes_csv, per_stock_limit=per_stock_limit)
+
+        elif command == "get_overnight_signals":
+            # PR-M1: 隔夜信号矩阵 - 一次性返 5 个 source dict 数组
+            # (a50_future / hk_hsi / us_nasdaq / us_dxy / us_vix).
+            # 不接受参数, fail-OPEN 内部 try/except.
+            result = get_overnight_signals()
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

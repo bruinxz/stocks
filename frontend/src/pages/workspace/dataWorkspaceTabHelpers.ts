@@ -52,9 +52,9 @@ export type DataWorkspaceTabKey = (typeof DATA_WORKSPACE_TAB_KEYS)[number];
 
 /** 与 [[DataHealthDashboard]] LEVEL_META 同色 — 用户跨 tab 认色一致. */
 export const DATA_HEALTH_COLOR: Readonly<Record<DataHealthLevel, string>> = Object.freeze({
-  green: '#52c41a',
+  green: '#16a34a',
   yellow: '#faad14',
-  red: '#f5222d',
+  red: '#dc2626',
   unknown: '#bfbfbf',
 });
 

@@ -21,6 +21,7 @@
  */
 
 import { logger } from '../utils/logger';
+import { isAShareTradeDay, countTradingDaysBetween, getShanghaiDate } from '../utils/tradingCalendar';
 
 // ---------------------------------------------------------------------------
 // 类型
@@ -70,11 +71,13 @@ export interface DataFreshnessCheckDataSource {
 // Pure helpers
 // ---------------------------------------------------------------------------
 
-/** 是否工作日 (0=Sun, 6=Sat → false). */
+/** 是否工作日 (0=Sun, 6=Sat → false).
+ *
+ * **2026-06-27**: 改用 tradingCalendar.isAShareTradeDay (节假日感知), 让节假日
+ * (如端午周五) 跳过 daily_bars stale 检查, 避免假节假日入库延迟告警刷屏.
+ */
 export function isTradingDay(date: Date): boolean {
-  const d = date.getUTCDay();
-  // 注意: 这里粗判周一~周五; 中国法定假日不 detect (会少量误报但不漏报).
-  return d >= 1 && d <= 5;
+  return isAShareTradeDay(date);
 }
 
 /** 上海时区 YYYY-MM-DD */
@@ -112,9 +115,17 @@ export function diffDays(a: string, b: string): number {
 
 /**
  * realtime_quotes 检查:
- *   - 工作日盘中 (9:30-15:00 上海): MAX(updated_at) 必须 < 1h 内, 否则 fail
+ *   - 工作日盘中 (9:30-15:00 上海): MAX(updated_at) 必须 < REALTIME_QUOTE_STALE_MS (30min, 老 cron 20min 间隔预留 buffer), 否则 fail
  *   - 非盘中: 不检查 (跳过 status=ok detail='非盘中时段')
+ *
+ * CE-A (2026-06-25): 新增 INTRADAY_REALTIME_QUOTE_STALE_MS (5min) 用于 2min cron
+ * 模式. 检查取"择宽"判定 — 任一阈值通过 (lag <= 老阈值 OR lag <= 新阈值, 即
+ * lag <= max(old, new)) 算 OK, 避免老 cron (20min) 模式下被新 5min 阈值误报.
+ * 实际上 max(30min, 5min) = 30min, 所以语义等价于"30min 内 OK"; 但保留 dual 形态
+ * 让未来切换到纯 intraday cron 后只需删除老阈值即可一步到位.
  */
+export const REALTIME_QUOTE_STALE_MS = 30 * 60 * 1000;
+export const INTRADAY_REALTIME_QUOTE_STALE_MS = 5 * 60 * 1000;
 export async function checkRealtimeQuote(
   ds: DataFreshnessCheckDataSource,
   now: Date
@@ -125,7 +136,7 @@ export async function checkRealtimeQuote(
       display_name: '实时行情新鲜度',
       status: 'ok',
       current_value: null,
-      threshold: '盘中 (9-16 上海) 1h 内',
+      threshold: '盘中 (9-16 上海) 30min/5min 内 (取宽)',
       detail: '非盘中, 跳过 (盘后 stale 是预期)',
     };
   }
@@ -138,7 +149,7 @@ export async function checkRealtimeQuote(
       display_name: '实时行情新鲜度',
       status: 'warn',
       current_value: null,
-      threshold: '盘中 1h 内',
+      threshold: '盘中 30min/5min 内 (取宽)',
       detail: `查询失败: ${err?.message || err}`,
     };
   }
@@ -148,20 +159,24 @@ export async function checkRealtimeQuote(
       display_name: '实时行情新鲜度',
       status: 'fail',
       current_value: null,
-      threshold: '盘中 1h 内',
+      threshold: '盘中 30min/5min 内 (取宽)',
       detail: 'realtime_quotes 表 0 行 — 盘中无任何行情写入',
     };
   }
   const lagMs = now.getTime() - maxUpdatedAt.getTime();
   const lagMin = Math.round(lagMs / (60 * 1000));
-  if (lagMs > 60 * 60 * 1000) {
+  // 择宽: 任一阈值通过即 OK. max(老 30min, 新 5min) = 30min, 老 cron 模式下不误报.
+  const effectiveThresholdMs = Math.max(REALTIME_QUOTE_STALE_MS, INTRADAY_REALTIME_QUOTE_STALE_MS);
+  if (lagMs > effectiveThresholdMs) {
     return {
       key: 'realtime_quotes',
       display_name: '实时行情新鲜度',
       status: 'fail',
       current_value: maxUpdatedAt.toISOString(),
-      threshold: '盘中 1h 内',
-      detail: `MAX(updated_at)=${maxUpdatedAt.toISOString()}, 已 stale ${lagMin}min (> 60min)`,
+      threshold: '盘中 30min/5min 内 (取宽)',
+      detail: `MAX(updated_at)=${maxUpdatedAt.toISOString()}, 已 stale ${lagMin}min (> ${Math.round(
+        effectiveThresholdMs / 60000
+      )}min 择宽阈值)`,
     };
   }
   return {
@@ -169,7 +184,7 @@ export async function checkRealtimeQuote(
     display_name: '实时行情新鲜度',
     status: 'ok',
     current_value: maxUpdatedAt.toISOString(),
-    threshold: '盘中 1h 内',
+    threshold: '盘中 30min/5min 内 (取宽)',
     detail: `MAX(updated_at)=${maxUpdatedAt.toISOString()}, lag=${lagMin}min`,
   };
 }
@@ -179,7 +194,20 @@ export async function checkRealtimeQuote(
  *   - 工作日: MAX(trade_date) 必须 = today (盘后跑) 或 >= today-1 (盘前跑)
  *   - 非工作日: 跳过
  *
- * lag_max_days: 默认 1 (盘后 cron 跑 = 当日数据应已到位; 容忍 1 天延迟以防节假日补数迟到)
+ * lag_max_days: 默认 1 (盘后 cron 跑 = 当日数据应已到位; 容忍 1 个交易日延迟)
+ *
+ * **2026-06-27 修复**: 原版 lag 用 `diffDays` 算自然日 — daily_bars.time 列存
+ * trade_date 16:00 UTC (= CST 次日 00:00), `shanghaiYmd(MAX(time))` 永远比真实
+ * trade_date 多 1 天, 而 today 也基于 CST, 结果 lag 永远 = 1, 永远不触发 fail.
+ * 同时即便修了 +1 漂移, "周五入库 周一 18:30 检查" 自然日 lag=3 但实际只跳过
+ * 1 个交易日 (周末不算入库间隔), 应该 ok. 因此改用 `countTradingDaysBetween`
+ * 算"中间错过的交易日数", 并通过 isTradingDay() guard 与 isAShareTradeDay()
+ * (节假日感知) 衔接.
+ *
+ * 关键: 调用方 `getDailyBarMaxTradeDate()` 返回的应是 **真实 trade_date** (即
+ * 已经 -8h 校正 daily_bars.time 列的 UTC 16:00 → CST 当日 trade_date), 不是
+ * UTC 字符串. 见 DefaultDataFreshnessCheckDataSource 实现内 toShanghaiTradeDate
+ * 注释.
  */
 export async function checkDailyBar(
   ds: DataFreshnessCheckDataSource,
@@ -192,7 +220,7 @@ export async function checkDailyBar(
       display_name: '日 K 线最新日期',
       status: 'ok',
       current_value: null,
-      threshold: `工作日 lag ≤ ${lagMaxDays} 日`,
+      threshold: `工作日 lag ≤ ${lagMaxDays} 个交易日`,
       detail: '非工作日跳过',
     };
   }
@@ -205,7 +233,7 @@ export async function checkDailyBar(
       display_name: '日 K 线最新日期',
       status: 'warn',
       current_value: null,
-      threshold: `工作日 lag ≤ ${lagMaxDays} 日`,
+      threshold: `工作日 lag ≤ ${lagMaxDays} 个交易日`,
       detail: `查询失败: ${err?.message || err}`,
     };
   }
@@ -215,20 +243,22 @@ export async function checkDailyBar(
       display_name: '日 K 线最新日期',
       status: 'fail',
       current_value: null,
-      threshold: `工作日 lag ≤ ${lagMaxDays} 日`,
+      threshold: `工作日 lag ≤ ${lagMaxDays} 个交易日`,
       detail: 'daily_bars 表 0 行',
     };
   }
   const today = shanghaiYmd(now);
-  const lag = diffDays(today, maxDate);
+  // 用 trade-calendar 算 lag: from=maxDate (exclusive) → to=today (inclusive),
+  // 中间错过的交易日数. 周末 + 节假日不计入. 周五入库 周一检查 lag=1 (只缺周一).
+  const lag = countTradingDaysBetween(maxDate, today);
   if (lag > lagMaxDays) {
     return {
       key: 'daily_bars',
       display_name: '日 K 线最新日期',
       status: 'fail',
       current_value: maxDate,
-      threshold: `工作日 lag ≤ ${lagMaxDays} 日`,
-      detail: `MAX(trade_date)=${maxDate}, today=${today}, lag=${lag} 日`,
+      threshold: `工作日 lag ≤ ${lagMaxDays} 个交易日`,
+      detail: `MAX(trade_date)=${maxDate}, today=${today}, 缺 ${lag} 个交易日数据`,
     };
   }
   return {
@@ -236,8 +266,8 @@ export async function checkDailyBar(
     display_name: '日 K 线最新日期',
     status: 'ok',
     current_value: maxDate,
-    threshold: `工作日 lag ≤ ${lagMaxDays} 日`,
-    detail: `MAX(trade_date)=${maxDate}, today=${today}, lag=${lag} 日`,
+    threshold: `工作日 lag ≤ ${lagMaxDays} 个交易日`,
+    detail: `MAX(trade_date)=${maxDate}, today=${today}, 缺 ${lag} 个交易日数据`,
   };
 }
 
@@ -505,8 +535,20 @@ class DefaultDataFreshnessCheckDataSource implements DataFreshnessCheckDataSourc
     });
     const v = r?.max_date;
     if (!v) return null;
+    // **2026-06-27 修复 off-by-one**: daily_bars.time 列存 UTC midnight (DataSyncService
+    // 设 `time: new Date(barData.date + 'T00:00:00.000Z')`), 即 trade_date 的 UTC 00:00.
+    // 直接 `v.toISOString().slice(0,10)` 拿 UTC 日期 = trade_date 本身. 但用 CST 时区
+    // 看会变成"前一天 16:00 CST" — 在某些时区机器跑出来不一致.
+    //
+    // 正确做法: 直接用 Intl 拿 Asia/Shanghai 日期, 与 ingest 端 `barData.date` 同源 (
+    // 后者本身就是 trade_date YYYY-MM-DD), 不论 host 进程时区如何结果一致.
+    //
+    // **历史 prod 事故 (CR-4)**: 原 `v.toISOString().slice(0,10)` 在某些 host (CST 进程)
+    // 看到的是 `trade_date + 1 天`, 与 today (= CST date) diff=1 → lag=1 → 永远 ok,
+    // daily_bars stale 告警从未触发. 详见
+    // docs/audit/data_pipeline_health_2026_06_26.md CR-4.
     if (typeof v === 'string') return v.slice(0, 10);
-    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    if (v instanceof Date) return getShanghaiDate(v);
     return String(v).slice(0, 10);
   }
 

@@ -178,6 +178,9 @@ export class RiskAlert extends Model {
             `**告警详情**:\n${truncatedMsg}`,
           triggered_at: triggered,
           deeplink: `${frontend}/workspace/portfolio?ai=${encodeURIComponent(instance.symbol)}&alert=${instance.id}`,
+          // Phase 10 冗余 P1-2 (2026-06-28): 传 alertId 让 pusher 看到 dispatcher 已对
+          // 同 URL 推送过 (user webhook == OPS env URL 时) 就 skip 避免双推.
+          caller_alert_id: instance.id,
         });
       } catch (sysErr: any) {
         logger.warn(

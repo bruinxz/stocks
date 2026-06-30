@@ -12,6 +12,7 @@ import {
   InputNumber,
   Progress,
   Row,
+  Segmented,
   Select,
   Space,
   Spin,
@@ -31,7 +32,6 @@ import {
   ExperimentOutlined,
   InfoCircleOutlined,
   NodeIndexOutlined,
-  TrophyOutlined,
   PlayCircleOutlined,
   PlusSquareOutlined,
   ReloadOutlined,
@@ -54,8 +54,10 @@ import {
 } from 'recharts';
 import ReactECharts from 'echarts-for-react';
 import dayjs, { Dayjs } from 'dayjs';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useLocation, useNavigate } from 'react-router-dom';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
+import WorkspaceHero from '../../components/layout/WorkspaceHero';
 import LeaderboardTab from './LabWorkspace.LeaderboardTab';
 import WalkForwardTab from './LabWorkspace.WalkForwardTab';
 import AdvancedQuantTab from './LabWorkspace.AdvancedQuantTab';
@@ -79,6 +81,10 @@ import {
   BacktestExecutionConstraintAudit,
 } from '../../services/labService';
 import StrategyCopilotPanel from '../../components/trading/StrategyCopilotPanel';
+import {
+  formatRelative as formatLabRelative,
+  formatDateTime as formatLabDateTime,
+} from '../../utils/timeFormat';
 
 const { Text, Paragraph } = Typography;
 const { RangePicker } = DatePicker;
@@ -124,23 +130,40 @@ const StoryTooltip: React.FC<{ story: keyof typeof labStoryHints }> = ({ story }
 );
 
 const LabWorkspace: React.FC = () => {
-  const tabs: WorkspaceTab[] = [
-    { key: 'workflow_readiness', label: '工作流体检', icon: <SafetyCertificateOutlined /> },
-    { key: 'mine', label: '我的策略', icon: <ExperimentOutlined /> },
-    { key: 'leaderboard', label: '策略排行', icon: <TrophyOutlined /> },
-    { key: 'new', label: '新建回测', icon: <PlusSquareOutlined /> },
-    { key: 'research_ledger', label: '实验账本', icon: <ExperimentOutlined /> },
-    { key: 'data_audit', label: '数据审计', icon: <SafetyCertificateOutlined /> },
-    { key: 'execution_constraints', label: '成交约束', icon: <CheckCircleOutlined /> },
-    { key: 'compare', label: '回测对比', icon: <SwapOutlined /> },
-    { key: 'walk_forward', label: 'Walk-Forward', icon: <SafetyCertificateOutlined /> },
-    { key: 'optimization', label: '优化历史', icon: <NodeIndexOutlined /> },
-    { key: 'quarterly_retrain', label: '季度参数重训', icon: <ExperimentOutlined /> },
-    { key: 'shadow_run', label: 'Shadow Run', icon: <SwapOutlined /> },
-    { key: 'overfit_metrics', label: 'OverfitMetrics', icon: <SafetyCertificateOutlined /> },
-    { key: 'advanced_quant', label: '高级量化', icon: <SafetyCertificateOutlined /> },
-  ];
-  const [activeKey, setActiveKey] = useState('mine');
+  // Phase 9 (2026-06-28): tab 11 → 4 (普通用户) / 4 (admin).
+  // 用户原话"页面太复杂、Tab 太多, 完全不知道怎么操作". 进一步把 Phase 3 的 11 项收成 4 个一级 tab:
+  //   1. 我的策略  ← 旧 mine + leaderboard (内部 Segmented 切"列表 / 排行")
+  //   2. 新建回测  ← 旧 new
+  //   3. 评估报告  ← 阶段一研究审计 + walk_forward + optimization + shadow_run + overfit_metrics + quarterly_retrain
+  //   4. 进阶      ← 旧 compare + workflow_readiness + advanced_quant
+  //                  (内部 Segmented "回测对比 / 工作流体检 / 高级量化", 默认对比)
+  // 旧 tab 的 React 组件全部保留, 只是重新挂在新 4 项之下 (Segmented 子视图).
+  const tabs: WorkspaceTab[] = useMemo(() => {
+    return [
+      { key: 'my-strategies', label: '我的策略', icon: <ExperimentOutlined /> },
+      { key: 'new-backtest', label: '新建回测', icon: <PlusSquareOutlined /> },
+      { key: 'evaluation', label: '评估报告', icon: <SafetyCertificateOutlined /> },
+      { key: 'advanced', label: '进阶', icon: <NodeIndexOutlined /> },
+    ];
+  }, []);
+  const [activeKey, setActiveKey] = useState('my-strategies');
+
+  // Phase 9 — 每个一级 tab 内的子视图 Segmented 状态
+  const [mineSubView, setMineSubView] = useState<'list' | 'leaderboard'>('list');
+  const [evalSubView, setEvalSubView] = useState<
+    | 'overview'
+    | 'ledger'
+    | 'data-audit'
+    | 'execution'
+    | 'walkforward'
+    | 'optimization'
+    | 'shadow'
+    | 'overfit'
+    | 'quarterly'
+  >('overview');
+  const [advancedSubView, setAdvancedSubView] = useState<'compare' | 'workflow' | 'advanced'>(
+    'compare'
+  );
 
   // US-078: 从策略详情页跳回来时携带 location.state，自动触发 clone/edit/newRun
   const location = useLocation();
@@ -239,7 +262,7 @@ const LabWorkspace: React.FC = () => {
         params_text: Object.keys(defaults).length ? JSON.stringify(defaults, null, 2) : '',
       });
       setSeedStrategyKey(strategy.strategy_key);
-      setActiveKey('new');
+      setActiveKey('new-backtest');
       message.info(
         `已加载策略 "${strategy.name || strategy.strategy_key}" 的默认参数到新建回测表单`
       );
@@ -348,7 +371,7 @@ const LabWorkspace: React.FC = () => {
         message.success(`回测任务已创建（task_id=${createdTaskId}），正在轮询执行进度…`);
         setPollingTaskId(Number(createdTaskId));
         await refresh();
-        setActiveKey('mine');
+        setActiveKey('my-strategies');
       } else {
         message.warning('任务已创建但未取到 task_id，请手动刷新');
         await refresh();
@@ -418,7 +441,8 @@ const LabWorkspace: React.FC = () => {
     </Button>
   );
 
-  // ---- render tab body ----
+  // ---- render tab body (Phase 9: 4 个一级 tab, 每个内部用 Segmented 切子视图) ----
+  // 每个一级 tab 顶部统一加 ws-tab-header (eyebrow + title + subtitle) Stripe 风
   let body: React.ReactNode;
   if (loadError) {
     body = (
@@ -434,82 +458,251 @@ const LabWorkspace: React.FC = () => {
         }
       />
     );
-  } else if (activeKey === 'workflow_readiness') {
-    body = <WorkflowReadinessTab strategies={strategies} tasks={tasks} />;
-  } else if (activeKey === 'mine') {
+  } else if (activeKey === 'my-strategies') {
+    // ===== Tab 1: 我的策略 (列表 + 排行) =====
     body = (
-      <MyStrategiesTab
-        strategies={strategies}
-        loading={loading}
-        onClone={handleClone}
-        onEdit={setEditingStrategy}
-        onOpenDetail={s =>
-          navigate(`/workspace/lab/strategies/${encodeURIComponent(s.strategy_key)}`)
-        }
-      />
+      <>
+        <div className="ws-tab-header">
+          <div className="ws-tab-eyebrow">LAB · 策略实验室</div>
+          <h1 className="ws-tab-title">我的策略</h1>
+          <p className="ws-tab-subtitle">
+            查看已注册的所有量化策略, 克隆参数或跳转策略详情, 切到 “策略排行” 看历史回测综合得分。
+          </p>
+        </div>
+        <Segmented
+          className="ws-tab-segmented"
+          options={[
+            { label: '策略列表', value: 'list' },
+            { label: '策略排行', value: 'leaderboard' },
+          ]}
+          value={mineSubView}
+          onChange={v => setMineSubView(v as typeof mineSubView)}
+        />
+        {mineSubView === 'list' ? (
+          <MyStrategiesTab
+            strategies={strategies}
+            tasks={tasks}
+            loading={loading}
+            onClone={handleClone}
+            onEdit={setEditingStrategy}
+            onOpenDetail={s =>
+              navigate(`/workspace/lab/strategies/${encodeURIComponent(s.strategy_key)}`)
+            }
+          />
+        ) : (
+          <LeaderboardTab
+            strategiesMeta={strategies.map(s => ({
+              strategy_key: s.strategy_key,
+              name: (s as any).name || s.strategy_key,
+            }))}
+          />
+        )}
+      </>
     );
-  } else if (activeKey === 'leaderboard') {
+  } else if (activeKey === 'new-backtest') {
+    // ===== Tab 2: 新建回测 =====
     body = (
-      <LeaderboardTab
-        strategiesMeta={strategies.map(s => ({
-          strategy_key: s.strategy_key,
-          name: (s as any).name || s.strategy_key,
-        }))}
-      />
+      <>
+        <div className="ws-tab-header">
+          <div className="ws-tab-eyebrow">LAB · 策略实验室</div>
+          <h1 className="ws-tab-title">新建回测</h1>
+          <p className="ws-tab-subtitle">
+            选择策略 + 时间窗 + 资金参数, 后端 worker 跑完即可在 “我的策略” 或 “进阶 · 回测对比”
+            看结果。
+          </p>
+        </div>
+        <NewBacktestTab
+          form={form}
+          strategies={strategies}
+          submitting={submitting}
+          seedStrategyKey={seedStrategyKey}
+          onSubmit={handleSubmitBacktest}
+          pollingTaskId={pollingTaskId}
+          tasks={tasks}
+        />
+      </>
     );
-  } else if (activeKey === 'new') {
+  } else if (activeKey === 'evaluation') {
+    // ===== Tab 3: 评估报告 (研究审计 / 走查 / 寻优 / 影子 / 过拟合 / 季度) =====
     body = (
-      <NewBacktestTab
-        form={form}
-        strategies={strategies}
-        submitting={submitting}
-        seedStrategyKey={seedStrategyKey}
-        onSubmit={handleSubmitBacktest}
-        pollingTaskId={pollingTaskId}
-        tasks={tasks}
-      />
+      <>
+        <div className="ws-tab-header">
+          <div className="ws-tab-eyebrow">LAB · 策略实验室</div>
+          <h1 className="ws-tab-title">评估报告</h1>
+          <p className="ws-tab-subtitle">
+            综合评估当前策略的可信度和样本外稳定性 · 包含实验账本 / 数据审计 / 成交约束 /
+            Walk-Forward / 寻优历史 / Shadow Run。
+          </p>
+        </div>
+        <Segmented
+          className="ws-tab-segmented"
+          options={[
+            { label: '综合评估', value: 'overview' },
+            { label: '实验账本', value: 'ledger' },
+            { label: '数据审计', value: 'data-audit' },
+            { label: '成交约束', value: 'execution' },
+            { label: 'Walk-Forward 走查', value: 'walkforward' },
+            { label: '参数寻优历史', value: 'optimization' },
+            { label: 'Shadow 影子运行', value: 'shadow' },
+            { label: '过拟合诊断', value: 'overfit' },
+            { label: '季度重训', value: 'quarterly' },
+          ]}
+          value={evalSubView}
+          onChange={v => setEvalSubView(v as typeof evalSubView)}
+        />
+        {evalSubView === 'overview' ? (
+          <Card>
+            <Space direction="vertical" size={16} style={{ width: '100%' }}>
+              <Alert
+                type="info"
+                showIcon
+                message="综合评估总览"
+                description={
+                  <Space direction="vertical" size={4}>
+                    <Text>
+                      策略上线前的 “体检套件”——从数据、成交、泛化和稳定性角度独立打分, 任何一项严重
+                      fail 都建议 暂缓上线。点上方 Segmented 切到细分视图查看每一项详情。
+                    </Text>
+                    <Text type="secondary">
+                      推荐路径: 实验账本 → 数据审计 → 成交约束 → Walk-Forward 走查 → 过拟合诊断 →
+                      Shadow 影子运行 (≥ 2 周) → 上线。
+                    </Text>
+                  </Space>
+                }
+              />
+              <Row gutter={[16, 16]}>
+                <Col xs={24} md={8}>
+                  <Card hoverable onClick={() => setEvalSubView('ledger')}>
+                    <Statistic title="实验账本" value={researchExperiments.length} suffix="条" />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      串起假设、回测任务、审计 artifact 和最终结论。
+                    </Text>
+                  </Card>
+                </Col>
+                <Col xs={24} md={8}>
+                  <Card hoverable onClick={() => setEvalSubView('data-audit')}>
+                    <Statistic title="数据审计" value="PIT / as-of" />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      检查是否误用未来公告、未来成分股或补齐后的数据。
+                    </Text>
+                  </Card>
+                </Col>
+                <Col xs={24} md={8}>
+                  <Card hoverable onClick={() => setEvalSubView('execution')}>
+                    <Statistic title="成交约束" value="A 股规则" />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      统一查看涨跌停、停牌、T+1、整手和资金阻断。
+                    </Text>
+                  </Card>
+                </Col>
+                <Col xs={24} md={8}>
+                  <Card hoverable onClick={() => setEvalSubView('walkforward')}>
+                    <Statistic title="Walk-Forward" value="样本外稳定" suffix="↗" />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      滚动 train→test 验证, 看策略在未见过的窗口表现是否衰减。
+                    </Text>
+                  </Card>
+                </Col>
+                <Col xs={24} md={8}>
+                  <Card hoverable onClick={() => setEvalSubView('optimization')}>
+                    <Statistic title="参数寻优" value="GridSearch / Bayesian" />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      过往寻优历史 + 每组 trial 的 in-sample / out-sample 表现。
+                    </Text>
+                  </Card>
+                </Col>
+                <Col xs={24} md={8}>
+                  <Card hoverable onClick={() => setEvalSubView('shadow')}>
+                    <Statistic title="Shadow Run" value="实时模拟" />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      把策略挂在实时行情上空跑, 看决策与实际成交是否一致。
+                    </Text>
+                  </Card>
+                </Col>
+                <Col xs={24} md={8}>
+                  <Card hoverable onClick={() => setEvalSubView('overfit')}>
+                    <Statistic title="过拟合诊断" value="DSR / PBO" />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      Deflated Sharpe Ratio + Probability of Backtest Overfitting。
+                    </Text>
+                  </Card>
+                </Col>
+                <Col xs={24} md={8}>
+                  <Card hoverable onClick={() => setEvalSubView('quarterly')}>
+                    <Statistic title="季度重训" value="参数刷新" />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      每季度按 lifecycle policy 重训, 防止策略静态老化。
+                    </Text>
+                  </Card>
+                </Col>
+              </Row>
+            </Space>
+          </Card>
+        ) : evalSubView === 'ledger' ? (
+          <ResearchLedgerTab
+            experiments={researchExperiments}
+            tasks={tasks}
+            loading={loading}
+            onRefresh={refresh}
+          />
+        ) : evalSubView === 'data-audit' ? (
+          <DataAuditTab tasks={tasks} experiments={researchExperiments} />
+        ) : evalSubView === 'execution' ? (
+          <ExecutionConstraintAuditTab tasks={tasks} experiments={researchExperiments} />
+        ) : evalSubView === 'walkforward' ? (
+          <WalkForwardTab strategies={strategies} />
+        ) : evalSubView === 'optimization' ? (
+          <OptimizationRunsTab />
+        ) : evalSubView === 'shadow' ? (
+          <ShadowRunTab />
+        ) : evalSubView === 'overfit' ? (
+          <OverfitMetricsTab />
+        ) : (
+          <QuarterlyRetrainTab
+            strategies={
+              strategies as Array<QuantStrategyItem & { lifecycle_policy?: Record<string, any> }>
+            }
+          />
+        )}
+      </>
     );
-  } else if (activeKey === 'research_ledger') {
-    body = (
-      <ResearchLedgerTab
-        experiments={researchExperiments}
-        tasks={tasks}
-        loading={loading}
-        onRefresh={refresh}
-      />
-    );
-  } else if (activeKey === 'data_audit') {
-    body = <DataAuditTab tasks={tasks} experiments={researchExperiments} />;
-  } else if (activeKey === 'execution_constraints') {
-    body = <ExecutionConstraintAuditTab tasks={tasks} experiments={researchExperiments} />;
-  } else if (activeKey === 'walk_forward') {
-    body = <WalkForwardTab strategies={strategies} />;
-  } else if (activeKey === 'optimization') {
-    body = <OptimizationRunsTab />;
-  } else if (activeKey === 'quarterly_retrain') {
-    body = (
-      <QuarterlyRetrainTab
-        strategies={
-          strategies as Array<QuantStrategyItem & { lifecycle_policy?: Record<string, any> }>
-        }
-      />
-    );
-  } else if (activeKey === 'shadow_run') {
-    body = <ShadowRunTab />;
-  } else if (activeKey === 'overfit_metrics') {
-    body = <OverfitMetricsTab />;
-  } else if (activeKey === 'advanced_quant') {
-    body = <AdvancedQuantTab />;
   } else {
+    // ===== Tab 4: 进阶 (回测对比 / 工作流体检 / 高级量化) =====
     body = (
-      <CompareTab
-        completedTasks={completedTasks}
-        selectedIds={selectedCompareIds}
-        onSelectionChange={setSelectedCompareIds}
-        compareLoading={compareLoading}
-        compareResult={compareResult}
-        onCompare={handleCompare}
-      />
+      <>
+        <div className="ws-tab-header">
+          <div className="ws-tab-eyebrow">LAB · 策略实验室</div>
+          <h1 className="ws-tab-title">进阶</h1>
+          <p className="ws-tab-subtitle">
+            研究员级别工具 — 横向对比 N 个回测、检查工作流装配是否齐备、调整高级量化引擎参数。
+            新手可跳过, 按需展开使用。
+          </p>
+        </div>
+        <Segmented
+          className="ws-tab-segmented"
+          options={[
+            { label: '回测对比', value: 'compare' },
+            { label: '工作流体检', value: 'workflow' },
+            { label: '高级量化引擎', value: 'advanced' },
+          ]}
+          value={advancedSubView}
+          onChange={v => setAdvancedSubView(v as typeof advancedSubView)}
+        />
+        {advancedSubView === 'compare' ? (
+          <CompareTab
+            completedTasks={completedTasks}
+            selectedIds={selectedCompareIds}
+            onSelectionChange={setSelectedCompareIds}
+            compareLoading={compareLoading}
+            compareResult={compareResult}
+            onCompare={handleCompare}
+          />
+        ) : advancedSubView === 'workflow' ? (
+          <WorkflowReadinessTab strategies={strategies} tasks={tasks} />
+        ) : (
+          <AdvancedQuantTab />
+        )}
+      </>
     );
   }
 
@@ -522,8 +715,37 @@ const LabWorkspace: React.FC = () => {
       onTabChange={setActiveKey}
       kpiSlot={kpiSlot}
       headerActions={headerActions}
+      hero={
+        <WorkspaceHero
+          eyebrow="Lab · 策略实验室"
+          title="策略实验室"
+          subtitle="29+ 个真实策略 · 一站式回测 / 寻优 / 影子运行 / Walk-Forward 体检"
+          variant="violet"
+          metrics={[
+            { label: '注册策略', value: strategies.length, unit: '个', emphasis: true },
+            { label: '进行中回测', value: runningTasks.length, unit: '项' },
+            { label: '近 7 日完成', value: last7DaysCount, unit: '次' },
+            {
+              label: '总回测',
+              value: tasks.length,
+              unit: '次',
+            },
+          ]}
+        />
+      }
+      themed
     >
-      {body}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={activeKey}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -4 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+        >
+          {body}
+        </motion.div>
+      </AnimatePresence>
       <Drawer
         title={editingStrategy ? `编辑参数 · ${editingStrategy.name}` : ''}
         width={520}
@@ -553,7 +775,7 @@ const LabWorkspace: React.FC = () => {
                 style={{
                   background: '#fafafa',
                   border: '1px solid #f0f0f0',
-                  borderRadius: 4,
+                  borderRadius: 8,
                   padding: 12,
                   maxHeight: 360,
                   overflow: 'auto',
@@ -601,7 +823,7 @@ const LabWorkspace: React.FC = () => {
             params_text: JSON.stringify(merged, null, 2),
           });
           setSeedStrategyKey(targetKey);
-          setActiveKey('new');
+          setActiveKey('new-backtest');
         }}
       />
     </WorkspaceLayout>
@@ -615,28 +837,46 @@ const LabWorkspace: React.FC = () => {
 const STRATEGY_CATEGORY_DISPLAY: Record<string, { label: string; color: string }> = {
   multi_factor: { label: '多因子', color: 'blue' },
   momentum: { label: '动量', color: 'orange' },
-  event_driven: { label: '事件驱动', color: 'volcano' },
-  trend: { label: '趋势', color: 'cyan' },
-  reversal: { label: '反转', color: 'purple' },
+  event_driven: { label: '事件驱动', color: 'red' },
+  trend: { label: '趋势', color: 'blue' },
+  reversal: { label: '反转', color: 'blue' },
   value: { label: '价值', color: 'green' },
-  quality: { label: '质量', color: 'gold' },
-  pattern: { label: '形态', color: 'magenta' },
+  quality: { label: '质量', color: 'default' },
+  pattern: { label: '形态', color: 'red' },
   other: { label: '其他', color: 'default' },
 };
 
 const STRATEGY_RISK_DISPLAY: Record<string, { label: string; color: string }> = {
   low: { label: '低风险', color: 'green' },
-  medium: { label: '中风险', color: 'gold' },
+  medium: { label: '中风险', color: 'default' },
   high: { label: '高风险', color: 'red' },
 };
 
 const MyStrategiesTab: React.FC<{
   strategies: QuantStrategyItem[];
+  tasks: BacktestTask[];
   loading: boolean;
   onClone: (s: QuantStrategyItem) => void;
   onEdit: (s: QuantStrategyItem) => void;
   onOpenDetail: (s: QuantStrategyItem) => void;
-}> = ({ strategies, loading, onClone, onEdit, onOpenDetail }) => {
+}> = ({ strategies, tasks, loading, onClone, onEdit, onOpenDetail }) => {
+  // Phase 10 — 每条策略的"最近回测时间" — 从 tasks 列表里挑最新一条命中此 strategy_key
+  // 的 created_at. tasks 接 listBacktestTasks (limit=50), 覆盖最近 50 次, 足够"最近活动"
+  // 这种语义. 没有命中时显 "暂无回测".
+  const lastBacktestByKey = useMemo(() => {
+    const map = new Map<string, BacktestTask>();
+    for (const t of tasks) {
+      const keys = Array.isArray(t.strategy_keys) ? t.strategy_keys : [];
+      for (const k of keys) {
+        const prev = map.get(k);
+        // 取 updated_at > created_at; 任一更新的 task 覆盖
+        const tTime = new Date(t.updated_at || t.created_at).getTime();
+        const prevTime = prev ? new Date(prev.updated_at || prev.created_at).getTime() : 0;
+        if (!prev || tTime > prevTime) map.set(k, t);
+      }
+    }
+    return map;
+  }, [tasks]);
   if (loading && strategies.length === 0) {
     return (
       <Card>
@@ -708,6 +948,29 @@ const MyStrategiesTab: React.FC<{
                   策略 key：
                 </Text>
                 <Text code>{strategy.strategy_key}</Text>
+              </div>
+              {/* Phase 10 — 数据新鲜度: 最近一次回测时间 */}
+              <div style={{ marginTop: 6 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  最近回测：
+                </Text>
+                {(() => {
+                  const last = lastBacktestByKey.get(strategy.strategy_key);
+                  if (!last) {
+                    return (
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        暂无 (近 50 次回测中未出现)
+                      </Text>
+                    );
+                  }
+                  return (
+                    <Tooltip title={formatLabDateTime(last.updated_at || last.created_at)}>
+                      <Text style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}>
+                        {formatLabRelative(last.updated_at || last.created_at)}
+                      </Text>
+                    </Tooltip>
+                  );
+                })()}
               </div>
               {Array.isArray(strategy.tags) && strategy.tags.length > 0 && (
                 <div style={{ marginTop: 8 }}>
@@ -1474,7 +1737,7 @@ const CompareTab: React.FC<{
       render: (text: string, row: BacktestTask) => (
         <Space direction="vertical" size={0}>
           <Text strong>{text}</Text>
-          <Text type="secondary" style={{ fontSize: 11 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
             #{row.id} · 创建 {dayjs(row.created_at).format('MM-DD HH:mm')}
           </Text>
         </Space>
@@ -1498,7 +1761,7 @@ const CompareTab: React.FC<{
       render: (keys: string[]) => (
         <Space size={4} wrap>
           {(keys || []).slice(0, 3).map(k => (
-            <Tag key={k} style={{ fontSize: 11 }}>
+            <Tag key={k} style={{ fontSize: 12 }}>
               {k}
             </Tag>
           ))}
@@ -1513,7 +1776,7 @@ const CompareTab: React.FC<{
       render: (_: any, row: BacktestTask) => {
         const ret = row.run_summary?.best_return_pct;
         return Number.isFinite(Number(ret)) ? (
-          <Text strong style={{ color: Number(ret) >= 0 ? '#cf1322' : '#0f8f6b' }}>
+          <Text strong style={{ color: Number(ret) >= 0 ? '#dc2626' : '#0f8f6b' }}>
             {Number(ret).toFixed(2)}%
           </Text>
         ) : (
@@ -1602,7 +1865,7 @@ const CompareTab: React.FC<{
   );
 };
 
-const COMPARE_COLORS = ['#1677ff', '#52c41a', '#fa8c16', '#eb2f96'];
+const COMPARE_COLORS = ['#1677ff', '#16a34a', '#fa8c16', '#eb2f96'];
 
 const CompareChartCard: React.FC<{ items: BacktestCompareItem[] }> = ({ items }) => {
   // 将每个任务的 best_equity_curve 转成 [{ date, [task_id_X]: returnPct, ...}] 的形式
@@ -1643,8 +1906,8 @@ const CompareChartCard: React.FC<{ items: BacktestCompareItem[] }> = ({ items })
         <ResponsiveContainer>
           <LineChart data={data}>
             <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={30} />
-            <YAxis tickFormatter={v => `${v}%`} tick={{ fontSize: 11 }} />
+            <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
+            <YAxis tickFormatter={v => `${v}%`} tick={{ fontSize: 12 }} />
             <RechartsTooltip
               formatter={(value: any) => [`${Number(value).toFixed(2)}%`, '累计收益']}
             />
@@ -1775,8 +2038,8 @@ const CompareDrawdownCard: React.FC<{
         <ResponsiveContainer>
           <AreaChart data={merged}>
             <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={30} />
-            <YAxis tickFormatter={v => `${v}%`} tick={{ fontSize: 11 }} domain={['auto', 0]} />
+            <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
+            <YAxis tickFormatter={v => `${v}%`} tick={{ fontSize: 12 }} domain={['auto', 0]} />
             <RechartsTooltip formatter={(value: any) => [`${Number(value).toFixed(2)}%`, '回撤']} />
             <ReferenceLine y={0} stroke="#999" />
             <Legend />
@@ -1878,7 +2141,7 @@ const CompareRollingSharpeCard: React.FC<{
       title={`滚动夏普曲线（${windowDays} 日窗口 — 冠军策略，越高越稳）`}
       extra={
         <Tooltip title="窗口不足的日期不显示（Recharts connectNulls 跳过）。年化系数 sqrt(252)。">
-          <Tag color="cyan">window={windowDays}</Tag>
+          <Tag color="blue">window={windowDays}</Tag>
         </Tooltip>
       }
     >
@@ -1897,8 +2160,8 @@ const CompareRollingSharpeCard: React.FC<{
         <ResponsiveContainer>
           <LineChart data={merged}>
             <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={30} />
-            <YAxis tick={{ fontSize: 11 }} />
+            <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={30} />
+            <YAxis tick={{ fontSize: 12 }} />
             <RechartsTooltip
               formatter={(value: any) =>
                 value === null || value === undefined
@@ -2003,7 +2266,7 @@ const CompareMonthlyReturnsCard: React.FC<{
                       {item.task_name}
                     </Text>
                     {item.best_strategy_name && (
-                      <Text type="secondary" style={{ fontSize: 11 }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
                         · {item.best_strategy_name}
                       </Text>
                     )}
@@ -2059,7 +2322,7 @@ const MonthlyHeatmap: React.FC<{ response: BacktestMonthlyReturnsResponse }> = (
           const m = months[xi];
           const y = years[yi];
           if (m === undefined || y === undefined) return '';
-          const color = v >= 0 ? '#cf1322' : '#0f8f6b';
+          const color = v >= 0 ? '#dc2626' : '#0f8f6b';
           return `<b>${y}年${m}月</b><br/><span style="color:${color}">${v >= 0 ? '+' : ''}${Number(
             v
           ).toFixed(2)}%</span>`;
@@ -2070,13 +2333,13 @@ const MonthlyHeatmap: React.FC<{ response: BacktestMonthlyReturnsResponse }> = (
         type: 'category',
         data: monthLabels,
         splitArea: { show: true },
-        axisLabel: { fontSize: 11 },
+        axisLabel: { fontSize: 12 },
       },
       yAxis: {
         type: 'category',
         data: yearLabels,
         splitArea: { show: true },
-        axisLabel: { fontSize: 11 },
+        axisLabel: { fontSize: 12 },
       },
       visualMap: {
         min: -symMax,
@@ -2087,7 +2350,7 @@ const MonthlyHeatmap: React.FC<{ response: BacktestMonthlyReturnsResponse }> = (
         bottom: 4,
         itemWidth: 14,
         itemHeight: 110,
-        textStyle: { fontSize: 11 },
+        textStyle: { fontSize: 12 },
         // A 股语义：red = up（赚钱）, green = down（亏钱）
         inRange: {
           color: [
@@ -2110,7 +2373,7 @@ const MonthlyHeatmap: React.FC<{ response: BacktestMonthlyReturnsResponse }> = (
           data: seriesData,
           label: {
             show: true,
-            fontSize: 10,
+            fontSize: 12,
             formatter: (p: any) =>
               p.data?.[2] !== undefined ? `${Number(p.data[2]).toFixed(1)}%` : '',
           },
@@ -2213,7 +2476,7 @@ const CompareTableCard: React.FC<{ result: BacktestCompareResponse }> = ({ resul
           <Text strong style={{ fontSize: 12 }}>
             {item.task_name}
           </Text>
-          <Text type="secondary" style={{ fontSize: 11 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
             #{item.task_id}
           </Text>
         </Space>
@@ -2234,11 +2497,11 @@ const CompareTableCard: React.FC<{ result: BacktestCompareResponse }> = ({ resul
             <Space size={4}>
               <CheckCircleOutlined style={{ color: COMPARE_COLORS[idx % COMPARE_COLORS.length] }} />
               {percentTag(cell.total_return_pct)}
-              <Text type="secondary" style={{ fontSize: 11 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
                 / 超额 {fmtPct(cell.excess_return_pct)}
               </Text>
             </Space>
-            <Text type="secondary" style={{ fontSize: 11 }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>
               回撤 {fmtPct(cell.max_drawdown_pct)} · 夏普{' '}
               {Number(cell.sharpe_ratio || 0).toFixed(2)} · {cell.trade_count || 0} 笔 · 换手{' '}
               {fmtPct(cell.turnover_rate ? cell.turnover_rate * 100 : 0)}
@@ -2292,7 +2555,7 @@ function percentTag(value?: number | null) {
   }
   const v = Number(value);
   return (
-    <Text strong style={{ color: v >= 0 ? '#cf1322' : '#0f8f6b' }}>
+    <Text strong style={{ color: v >= 0 ? '#dc2626' : '#0f8f6b' }}>
       {v.toFixed(2)}%
     </Text>
   );
@@ -2389,8 +2652,8 @@ const OptimizationRunsTab: React.FC = () => {
 
   const typeMeta: Record<string, { color: string; label: string }> = {
     grid_search: { color: 'blue', label: 'Grid Search' },
-    bayesian: { color: 'purple', label: 'Bayesian' },
-    walk_forward: { color: 'volcano', label: 'Walk-Forward' },
+    bayesian: { color: 'blue', label: 'Bayesian' },
+    walk_forward: { color: 'red', label: 'Walk-Forward' },
   };
 
   const verdictMeta: Record<string, { color: string; label: string }> = {
@@ -2525,7 +2788,7 @@ const OptimizationRunsTab: React.FC = () => {
                 const v = r.summary?.mean_test_sharpe;
                 if (v === undefined || v === null) return '—';
                 return (
-                  <Text style={{ color: v > 0 ? '#3f8600' : v < 0 ? '#cf1322' : '#888' }}>
+                  <Text style={{ color: v > 0 ? '#16a34a' : v < 0 ? '#dc2626' : '#888' }}>
                     {Number(v).toFixed(3)}
                   </Text>
                 );
@@ -2549,7 +2812,7 @@ const OptimizationRunsTab: React.FC = () => {
                 if (v === undefined || v === null) return '—';
                 // PBO > 0.5 表示过拟合可能性高
                 return (
-                  <Text style={{ color: v > 0.5 ? '#cf1322' : '#888' }}>
+                  <Text style={{ color: v > 0.5 ? '#dc2626' : '#888' }}>
                     {Number(v).toFixed(3)}
                   </Text>
                 );
@@ -2568,7 +2831,7 @@ const OptimizationRunsTab: React.FC = () => {
                 return (
                   <Tooltip title={r.metadata_json?.deflated_sharpe?.explanation || ''}>
                     <Text
-                      style={{ color: sig ? '#3f8600' : '#cf1322', fontWeight: sig ? 600 : 400 }}
+                      style={{ color: sig ? '#16a34a' : '#dc2626', fontWeight: sig ? 600 : 400 }}
                     >
                       {Number(v).toFixed(3)}
                       {sig ? ' ✓' : ' ✗'}
@@ -2606,8 +2869,8 @@ const OptimizationRunsTab: React.FC = () => {
                     style={{
                       background: '#f8fafc',
                       padding: 8,
-                      borderRadius: 4,
-                      fontSize: 11,
+                      borderRadius: 8,
+                      fontSize: 12,
                       maxHeight: 200,
                       overflow: 'auto',
                     }}
@@ -2622,8 +2885,8 @@ const OptimizationRunsTab: React.FC = () => {
                       style={{
                         background: '#f8fafc',
                         padding: 8,
-                        borderRadius: 4,
-                        fontSize: 11,
+                        borderRadius: 8,
+                        fontSize: 12,
                         maxHeight: 200,
                         overflow: 'auto',
                       }}
@@ -2638,8 +2901,8 @@ const OptimizationRunsTab: React.FC = () => {
                     style={{
                       background: '#f8fafc',
                       padding: 8,
-                      borderRadius: 4,
-                      fontSize: 11,
+                      borderRadius: 8,
+                      fontSize: 12,
                       maxHeight: 200,
                       overflow: 'auto',
                     }}

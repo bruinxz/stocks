@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSelector } from 'react-redux';
+import { RootState } from '../../store/rootReducer';
 import {
   Alert,
   Button,
@@ -11,6 +13,7 @@ import {
   Input,
   Modal,
   Row,
+  Segmented,
   Space,
   Spin,
   Statistic,
@@ -22,7 +25,6 @@ import {
 } from 'antd';
 import {
   UserOutlined,
-  KeyOutlined,
   BellOutlined,
   NotificationOutlined,
   TeamOutlined,
@@ -37,15 +39,12 @@ import {
   WechatOutlined,
   MailOutlined,
   MessageOutlined,
-  CalculatorOutlined,
-  ApartmentOutlined,
   ThunderboltOutlined,
   SafetyOutlined,
-  BulbOutlined,
-  PoweroffOutlined,
-  AlertOutlined,
 } from '@ant-design/icons';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
+import WorkspaceHero from '../../components/layout/WorkspaceHero';
+import { AnimatePresence, motion } from 'framer-motion';
 import SizingPolicyTab from './SettingsWorkspace.SizingPolicyTab';
 import PortfolioConstructionTab from './SettingsWorkspace.PortfolioConstructionTab';
 import AnalysisEngineTab from './SettingsWorkspace.AnalysisEngineTab';
@@ -121,21 +120,43 @@ const DEFAULT_CONFIG: NotificationChannelsConfig = {
 };
 
 const SettingsWorkspace: React.FC = () => {
-  const tabs: WorkspaceTab[] = [
-    { key: 'profile', label: '个人资料', icon: <UserOutlined /> },
-    { key: 'keys', label: 'API 密钥', icon: <KeyOutlined /> },
-    { key: 'push-channels', label: '推送渠道', icon: <NotificationOutlined /> },
-    { key: 'notifications', label: '通知设置', icon: <BellOutlined /> },
-    { key: 'sizing', label: '仓位策略', icon: <CalculatorOutlined /> },
-    { key: 'portfolio-construction', label: '组合构建', icon: <ApartmentOutlined /> },
-    { key: 'analysis-engine', label: '分析引擎', icon: <ThunderboltOutlined /> },
-    { key: 'risk-parameters', label: '风控参数中心', icon: <SafetyOutlined /> },
-    { key: 'strategy-kill-switch', label: '策略 kill-switch', icon: <PoweroffOutlined /> },
-    { key: 'todo-suggestions', label: '待办建议', icon: <BulbOutlined /> },
-    { key: 'black-swan', label: '黑天鹅历史', icon: <AlertOutlined /> },
-    { key: 'users', label: '用户管理', icon: <TeamOutlined /> },
-  ];
-  const [activeKey, setActiveKey] = useState('push-channels');
+  // Phase 9 (2026-06-28): tab 12 → 4 (普通用户) / 5 (admin).
+  // 用户原话"Tab 太多, 完全不知道怎么操作". 进一步把 Phase 3 的 12 项收成 4 个一级 tab:
+  //   1. 个人  ← 旧 profile + keys (内部 Segmented "资料 / API 密钥")
+  //   2. 通知  ← 旧 notifications + push-channels (内部 Segmented "通知类型 / 推送渠道")
+  //   3. 风控  ← 旧 risk-parameters + strategy-kill-switch + black-swan + todo-suggestions
+  //             (内部 Segmented "风控总览 / 参数中心 / kill-switch / 黑天鹅 / 待办建议")
+  //   4. 高级 (admin only) ← 旧 sizing + portfolio-construction + analysis-engine
+  //                          (内部 Segmented "仓位策略 / 组合构建 / 分析引擎")
+  //   5. 用户管理 (admin only) ← 旧 users
+  // 所有旧 Tab React 组件全部保留, 只是重新分组挂在新 4-5 项之下 (Segmented 子视图).
+  const isAdmin = useSelector((s: RootState) => s.auth.user?.role === 'admin');
+  const tabs: WorkspaceTab[] = useMemo(() => {
+    const baseTabs: WorkspaceTab[] = [
+      { key: 'profile', label: '个人', icon: <UserOutlined /> },
+      { key: 'notify', label: '通知', icon: <BellOutlined /> },
+      { key: 'risk', label: '风控', icon: <SafetyOutlined /> },
+    ];
+    if (isAdmin) {
+      baseTabs.push(
+        { key: 'advanced', label: '高级', icon: <ThunderboltOutlined /> },
+        { key: 'users', label: '用户管理', icon: <TeamOutlined /> }
+      );
+    }
+    return baseTabs;
+  }, [isAdmin]);
+  // Phase 9: 默认 tab 仍是 profile (用户进设置最先想看的是"我是谁")
+  const [activeKey, setActiveKey] = useState('profile');
+
+  // Phase 9 — 每个一级 tab 内的子视图 Segmented 状态
+  const [profileSubView, setProfileSubView] = useState<'profile' | 'keys'>('profile');
+  const [notifySubView, setNotifySubView] = useState<'types' | 'channels'>('types');
+  const [riskSubView, setRiskSubView] = useState<
+    'overview' | 'parameters' | 'kill-switch' | 'black-swan' | 'todos'
+  >('overview');
+  const [advancedSubView, setAdvancedSubView] = useState<
+    'sizing' | 'portfolio' | 'analysis'
+  >('sizing');
 
   // --- 通知设置 state -----------------------------------------------------
   const [config, setConfig] = useState<NotificationChannelsConfig | null>(null);
@@ -218,17 +239,18 @@ const SettingsWorkspace: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    // lazy-load: 仅当用户切到 push-channels 才拉
-    if (activeKey !== 'push-channels') return;
+    // lazy-load: 仅当用户切到通知 tab 的 "推送渠道" 子视图才拉
+    if (activeKey !== 'notify' || notifySubView !== 'channels') return;
     if (pushView || pushLoading || pushError) return;
     void refreshPushChannels();
-  }, [activeKey, pushView, pushLoading, pushError, refreshPushChannels]);
+  }, [activeKey, notifySubView, pushView, pushLoading, pushError, refreshPushChannels]);
 
   // KPI 统计 — 渠道启用计数 + 日报开关状态
   const kpiSlot = useMemo(() => {
-    // 推送渠道页用 pushView 数据；其他 tab 用 config (走 /notification-channels)
+    // 推送渠道子视图用 pushView 数据；其他场景用 config (走 /notification-channels)
+    const onPushChannels = activeKey === 'notify' && notifySubView === 'channels';
     const cfgForKpi: NotificationChannelsConfig | null =
-      activeKey === 'push-channels' ? pushView?.raw || null : config;
+      onPushChannels ? pushView?.raw || null : config;
     const active = cfgForKpi
       ? [
           cfgForKpi.feishu.enabled ? '飞书' : null,
@@ -236,9 +258,9 @@ const SettingsWorkspace: React.FC = () => {
           // wechat / sms 后端 dispatch 暂未接入，不参与 KPI 计数
         ].filter(Boolean).length
       : 0;
-    // 推送渠道页额外显示"已订阅事件数"——所有矩阵格中 enabled=true 的总数
+    // 推送渠道子视图额外显示"已订阅事件数"——所有矩阵格中 enabled=true 的总数
     let subscribedCount = 0;
-    if (activeKey === 'push-channels' && pushView) {
+    if (onPushChannels && pushView) {
       for (const event of Object.values(pushView.matrix)) {
         for (const cell of Object.values(event)) {
           if (cell.applicable && cell.enabled) subscribedCount += 1;
@@ -249,55 +271,34 @@ const SettingsWorkspace: React.FC = () => {
       <Space size={32}>
         <Statistic title="账号角色" value="—" />
         <Statistic title="启用通道" value={active} suffix="个" />
-        {activeKey === 'push-channels' ? (
+        {onPushChannels ? (
           <Statistic title="已订阅事件" value={subscribedCount} suffix="项" />
         ) : (
           <Statistic
             title="飞书日报"
             value={cfgForKpi?.feishu.daily_digest ? '开启' : '关闭'}
-            valueStyle={{ color: cfgForKpi?.feishu.daily_digest ? '#3f8600' : '#999' }}
+            valueStyle={{ color: cfgForKpi?.feishu.daily_digest ? '#16a34a' : '#999' }}
           />
         )}
       </Space>
     );
-  }, [activeKey, config, pushView]);
+  }, [activeKey, notifySubView, config, pushView]);
 
+  // Phase 9: headerActions 只在 notify tab 上显示刷新按钮 (按子视图切换 refresh 目标)
   const headerActions =
-    activeKey === 'notifications' ? (
-      <Space>
-        <Button icon={<ReloadOutlined />} onClick={() => void refresh()} loading={loading}>
-          刷新
-        </Button>
-        <Tag color="processing">US-063 通知通道</Tag>
-      </Space>
-    ) : activeKey === 'push-channels' ? (
-      <Space>
-        <Button
-          icon={<ReloadOutlined />}
-          onClick={() => void refreshPushChannels()}
-          loading={pushLoading}
-        >
-          刷新
-        </Button>
-        <Tag color="purple">US-080 推送渠道</Tag>
-      </Space>
-    ) : activeKey === 'sizing' ? (
-      <Tag color="cyan">仓位策略 (Sprint 26+)</Tag>
-    ) : activeKey === 'portfolio-construction' ? (
-      <Tag color="geekblue">组合构建 (Sprint 29+)</Tag>
-    ) : activeKey === 'analysis-engine' ? (
-      <Tag color="volcano">US-065 分析引擎接入</Tag>
-    ) : activeKey === 'risk-parameters' ? (
-      <Tag color="red">US-066 风控参数中心</Tag>
-    ) : activeKey === 'strategy-kill-switch' ? (
-      <Tag color="red">US-069 策略 kill-switch</Tag>
-    ) : activeKey === 'todo-suggestions' ? (
-      <Tag color="gold">US-068 待办建议</Tag>
-    ) : activeKey === 'black-swan' ? (
-      <Tag color="red">US-133 PR-018 黑天鹅历史</Tag>
-    ) : (
-      <Tag color="processing">待迁移现有个人中心 / 用户管理页</Tag>
-    );
+    activeKey === 'notify' && notifySubView === 'types' ? (
+      <Button icon={<ReloadOutlined />} onClick={() => void refresh()} loading={loading}>
+        刷新
+      </Button>
+    ) : activeKey === 'notify' && notifySubView === 'channels' ? (
+      <Button
+        icon={<ReloadOutlined />}
+        onClick={() => void refreshPushChannels()}
+        loading={pushLoading}
+      >
+        刷新
+      </Button>
+    ) : null;
 
   // ---- 单字段更新 helpers ------------------------------------------------
 
@@ -670,6 +671,7 @@ const SettingsWorkspace: React.FC = () => {
         'earnings_alert',
         'risk_alert',
         'weekly_review',
+        'stock_bullish_event',
       ];
       const channels: NotificationChannelKey[] = ['feishu', 'email', 'wechat', 'sms'];
       for (const ev of events) {
@@ -1262,10 +1264,10 @@ const SettingsWorkspace: React.FC = () => {
                   realtimeAlertTestResult.status === 'sent'
                     ? 'success'
                     : realtimeAlertTestResult.status === 'partial'
-                    ? 'warning'
-                    : realtimeAlertTestResult.status === 'skipped'
-                    ? 'info'
-                    : 'error'
+                      ? 'warning'
+                      : realtimeAlertTestResult.status === 'skipped'
+                        ? 'info'
+                        : 'error'
                 }
                 showIcon
                 message={`派发结果：${realtimeAlertTestResult.status}${
@@ -1323,11 +1325,32 @@ const SettingsWorkspace: React.FC = () => {
     }
 
     const draft = pushDraft;
-    const EVENTS: Array<{ key: NotificationEventKey; label: string; hint: string }> = [
-      { key: 'daily_digest', label: '当日交易日报', hint: '15:30 收盘后推送' },
-      { key: 'earnings_alert', label: '业绩预告即时提醒', hint: '持仓股 + 自选股' },
-      { key: 'risk_alert', label: '高优先级风控告警', hint: 'HIGH 级实时分发' },
-      { key: 'weekly_review', label: '上周复盘报告', hint: '周一 08:00 HTML 邮件' },
+    /**
+     * PR-D (2026-06-29): 给每个事件加 `category` 字段 — Tag 渲染 "类别" 列.
+     * routine=日常 / risk=风控 / opportunity=机会 (新增).
+     */
+    type EventCategory = 'routine' | 'risk' | 'opportunity';
+    const CATEGORY_META: Record<EventCategory, { label: string; color: string }> = {
+      routine: { label: '日常', color: 'default' },
+      risk: { label: '风控', color: 'red' },
+      opportunity: { label: '机会', color: 'green' },
+    };
+    const EVENTS: Array<{
+      key: NotificationEventKey;
+      label: string;
+      hint: string;
+      category: EventCategory;
+    }> = [
+      { key: 'daily_digest', label: '当日交易日报', hint: '15:30 收盘后推送', category: 'routine' },
+      { key: 'earnings_alert', label: '业绩预告即时提醒', hint: '持仓股 + 自选股', category: 'risk' },
+      { key: 'risk_alert', label: '高优先级风控告警', hint: 'HIGH 级实时分发', category: 'risk' },
+      { key: 'weekly_review', label: '上周复盘报告', hint: '周一 08:00 HTML 邮件', category: 'routine' },
+      {
+        key: 'stock_bullish_event',
+        label: '个股利好事件',
+        hint: '持仓 / 自选 / 推荐过的股票收到关键公告 / 正面新闻 / KOL 集中关注 / 关注度突增',
+        category: 'opportunity',
+      },
     ];
     const CHANNELS: Array<{
       key: NotificationChannelKey;
@@ -1493,7 +1516,10 @@ const SettingsWorkspace: React.FC = () => {
                   size="small"
                   type="link"
                   icon={<QrcodeOutlined />}
-                  onClick={() => setActiveKey('notifications')}
+                  onClick={() => {
+                    setActiveKey('notify');
+                    setNotifySubView('types');
+                  }}
                   style={{ paddingLeft: 0 }}
                 >
                   打开扫码界面 →
@@ -1536,11 +1562,16 @@ const SettingsWorkspace: React.FC = () => {
               {
                 title: '事件类型',
                 dataIndex: 'label',
-                width: 220,
+                width: 240,
                 fixed: 'left',
                 render: (label: string, row) => (
-                  <Space direction="vertical" size={0}>
-                    <Text strong>{label}</Text>
+                  <Space direction="vertical" size={2}>
+                    <Space size={6}>
+                      <Tag color={CATEGORY_META[row.category].color}>
+                        {CATEGORY_META[row.category].label}
+                      </Tag>
+                      <Text strong>{label}</Text>
+                    </Space>
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       {row.hint}
                     </Text>
@@ -1581,86 +1612,276 @@ const SettingsWorkspace: React.FC = () => {
             提示：单元格灰色 &quot;—&quot; 表示该通道当前架构下不支持该事件类型。通道总开关
             关闭时（顶部 Card 右上 Switch）所有事件勾选都不会生效——保存后仍会 disabled。
             订阅事件总数与右上角 KPI 同步。
+            <br />
+            <Tag color="green" style={{ marginRight: 4 }}>
+              机会
+            </Tag>
+            类事件（如个股利好）由 CriticalAnnouncementPushService 触发, 持仓
+            该股票的用户会自动收到一条 inbox RiskAlert（红点 + 详情）；勾选邮件 / 飞书
+            后还会推送到对应通道。
           </Text>
         </Card>
       </Space>
     );
   };
 
-  const renderPlaceholder = () => {
-    // 各占位 tab 给一个具体引导到 legacy 实现页
-    const links: Record<string, { url: string; label: string; desc: string }> = {
-      profile: {
-        url: '/legacy/profile',
-        label: '个人资料',
-        desc: '修改密码 / 头像 / 邮箱 / 风险偏好',
-      },
-      keys: {
-        url: '/legacy/profile#api-keys',
-        label: 'API 密钥',
-        desc: '管理 OpenAI / DeepSeek / Anthropic API key',
-      },
-      users: {
-        url: '/legacy/user-management',
-        label: '用户管理',
-        desc: '管理员添加 / 禁用其它用户账号',
-      },
-    };
-    const target = links[activeKey];
-    return (
-      <Card>
-        <Empty
-          description={
-            target ? (
-              <Space direction="vertical" align="center">
-                <span style={{ fontSize: 13, color: '#666' }}>
-                  本 tab 待整合，请暂时去旧版 {target.label} 页面操作：
-                </span>
-                <span style={{ fontSize: 12, color: '#999' }}>{target.desc}</span>
-                <Button type="primary" href={target.url}>
-                  前往旧版 {target.label}
-                </Button>
-              </Space>
-            ) : (
-              `Settings Workspace · ${activeKey} 占位`
-            )
-          }
+  const renderPlaceholder = (target: { label: string; desc: string }) => (
+    <Card>
+      <Empty
+        description={
+          <Space direction="vertical" align="center">
+            <span style={{ fontSize: 14, color: '#666' }}>{target.label} (暂未实现)</span>
+            <span style={{ fontSize: 12, color: '#999' }}>{target.desc}</span>
+          </Space>
+        }
+      />
+    </Card>
+  );
+
+  // ---- Phase 9: 主 body render (4-5 个一级 tab, 每个内部 Segmented 切子视图) ----
+  let body: React.ReactNode;
+  if (activeKey === 'profile') {
+    // ===== Tab 1: 个人 (资料 + API 密钥) =====
+    body = (
+      <>
+        <div className="ws-tab-header">
+          <div className="ws-tab-eyebrow">SETTINGS · 账号设置</div>
+          <h1 className="ws-tab-title">个人</h1>
+          <p className="ws-tab-subtitle">
+            修改个人资料 / 密码 / 头像, 或管理你绑定的 AI 模型 API 密钥。
+          </p>
+        </div>
+        <Segmented
+          className="ws-tab-segmented"
+          options={[
+            { label: '个人资料', value: 'profile' },
+            { label: 'API 密钥', value: 'keys' },
+          ]}
+          value={profileSubView}
+          onChange={v => setProfileSubView(v as typeof profileSubView)}
         />
-      </Card>
+        {profileSubView === 'profile'
+          ? renderPlaceholder({
+              label: '个人资料',
+              desc: '修改密码 / 头像 / 邮箱 / 风险偏好 — 字段编辑能力将在后续 sprint 中接入',
+            })
+          : renderPlaceholder({
+              label: 'API 密钥',
+              desc: '管理 OpenAI / DeepSeek / Anthropic API key — 此 tab 待接入',
+            })}
+      </>
     );
-  };
+  } else if (activeKey === 'notify') {
+    // ===== Tab 2: 通知 (通知类型 + 推送渠道) =====
+    body = (
+      <>
+        <div className="ws-tab-header">
+          <div className="ws-tab-eyebrow">SETTINGS · 账号设置</div>
+          <h1 className="ws-tab-title">通知</h1>
+          <p className="ws-tab-subtitle">
+            配置你想在什么时机、用什么渠道收到提醒 — 飞书机器人 / 邮件 / 微信公众号 / 阿里云短信。
+          </p>
+        </div>
+        <Segmented
+          className="ws-tab-segmented"
+          options={[
+            { label: '通知类型', value: 'types' },
+            { label: '推送渠道', value: 'channels' },
+          ]}
+          value={notifySubView}
+          onChange={v => setNotifySubView(v as typeof notifySubView)}
+        />
+        {notifySubView === 'types' ? renderNotifications() : renderPushChannels()}
+      </>
+    );
+  } else if (activeKey === 'risk') {
+    // ===== Tab 3: 风控 (总览 + 参数中心 + kill-switch + 黑天鹅 + 待办建议) =====
+    body = (
+      <>
+        <div className="ws-tab-header">
+          <div className="ws-tab-eyebrow">SETTINGS · 账号设置</div>
+          <h1 className="ws-tab-title">风控</h1>
+          <p className="ws-tab-subtitle">
+            风控参数中心 — 止损 / 单股 / 行业 / 黑天鹅熔断 + 策略 kill-switch + 待办建议。
+          </p>
+        </div>
+        <Segmented
+          className="ws-tab-segmented"
+          options={[
+            { label: '风控总览', value: 'overview' },
+            { label: '参数中心', value: 'parameters' },
+            { label: 'Kill-Switch', value: 'kill-switch' },
+            { label: '黑天鹅历史', value: 'black-swan' },
+            { label: '待办建议', value: 'todos' },
+          ]}
+          value={riskSubView}
+          onChange={v => setRiskSubView(v as typeof riskSubView)}
+        />
+        {riskSubView === 'overview' ? (
+          <Card>
+            <Space direction="vertical" size={16} style={{ width: '100%' }}>
+              <Alert
+                type="info"
+                showIcon
+                message="风控总览"
+                description={
+                  <Space direction="vertical" size={4}>
+                    <Text>
+                      系统已默认开启 4 类自动保护 (单股止损 / 行业集中度 / 黑天鹅熔断 / 策略
+                      kill-switch), 普通用户无需配置即可获得保护; 切到下方 Segmented 可调整阈值。
+                    </Text>
+                    <Text type="secondary">
+                      参数中心修改后需保存并重启 worker; kill-switch 与黑天鹅历史可即时生效。
+                    </Text>
+                  </Space>
+                }
+              />
+              <Row gutter={[16, 16]}>
+                <Col xs={24} md={12}>
+                  <Card hoverable onClick={() => setRiskSubView('parameters')}>
+                    <Statistic title="参数中心" value="止损 / 单股 / 行业" />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      调整全局风控阈值 (单股最大仓位 / 行业集中度上限 / ATR 倍数等)。
+                    </Text>
+                  </Card>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Card hoverable onClick={() => setRiskSubView('kill-switch')}>
+                    <Statistic title="Kill-Switch" value="一键停策略" />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      策略连续亏损 / 历史回撤超限时, 一键禁用当前策略所有新信号。
+                    </Text>
+                  </Card>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Card hoverable onClick={() => setRiskSubView('black-swan')}>
+                    <Statistic title="黑天鹅历史" value="熔断回放" />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      查看历史触发的熔断事件及后续策略表现, 用于阈值复盘。
+                    </Text>
+                  </Card>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Card hoverable onClick={() => setRiskSubView('todos')}>
+                    <Statistic title="待办建议" value="AI 提醒" />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      系统每日扫描你的持仓 + 策略状态生成「建议事项」, 已读后自动归档。
+                    </Text>
+                  </Card>
+                </Col>
+              </Row>
+            </Space>
+          </Card>
+        ) : riskSubView === 'parameters' ? (
+          <RiskParametersCenterTab />
+        ) : riskSubView === 'kill-switch' ? (
+          <StrategyKillSwitchTab />
+        ) : riskSubView === 'black-swan' ? (
+          <BlackSwanHistoryTab />
+        ) : (
+          <TodoSuggestionsTab />
+        )}
+      </>
+    );
+  } else if (activeKey === 'advanced') {
+    // ===== Tab 4: 高级 (admin only) =====
+    body = (
+      <>
+        <div className="ws-tab-header">
+          <div className="ws-tab-eyebrow">SETTINGS · 账号设置</div>
+          <h1 className="ws-tab-title">高级</h1>
+          <p className="ws-tab-subtitle">
+            策略数学引擎参数 — 仓位策略 / 组合构建 / 分析引擎 (DeepSeek vs Anthropic 等)。
+          </p>
+        </div>
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="这里是策略数学引擎参数, 修改后可能影响实盘信号"
+          description="非研究员请保持默认值。改动会写入 user.risk_config + 全局 strategy_config, 实时生效。"
+        />
+        <Segmented
+          className="ws-tab-segmented"
+          options={[
+            { label: '仓位策略', value: 'sizing' },
+            { label: '组合构建', value: 'portfolio' },
+            { label: '分析引擎', value: 'analysis' },
+          ]}
+          value={advancedSubView}
+          onChange={v => setAdvancedSubView(v as typeof advancedSubView)}
+        />
+        {advancedSubView === 'sizing' ? (
+          <SizingPolicyTab />
+        ) : advancedSubView === 'portfolio' ? (
+          <PortfolioConstructionTab />
+        ) : (
+          <AnalysisEngineTab />
+        )}
+      </>
+    );
+  } else {
+    // ===== Tab 5: 用户管理 (admin only) =====
+    body = (
+      <>
+        <div className="ws-tab-header">
+          <div className="ws-tab-eyebrow">SETTINGS · 账号设置</div>
+          <h1 className="ws-tab-title">用户管理</h1>
+          <p className="ws-tab-subtitle">管理员添加 / 禁用其它用户账号 — 此 tab 待接入。</p>
+        </div>
+        {renderPlaceholder({
+          label: '用户管理',
+          desc: '管理员添加 / 禁用其它用户账号 — 此 tab 待接入',
+        })}
+      </>
+    );
+  }
 
   return (
     <WorkspaceLayout
       title="账号设置"
-      subtitle="个人资料、API 密钥、通知、用户管理等设置入口。"
+      subtitle="个人资料、API 密钥、通知、风控、用户管理等设置入口。"
       tabs={tabs}
       activeKey={activeKey}
       onTabChange={setActiveKey}
       kpiSlot={kpiSlot}
       headerActions={headerActions}
+      hero={
+        <WorkspaceHero
+          eyebrow="Settings · 账号中心"
+          title="账号与系统设置"
+          subtitle="个人资料 · 通知中心 · 风控参数 · 用户管理 — 一站式控制中心"
+          variant="violet"
+          metrics={[
+            { label: '角色', value: isAdmin ? 'Admin' : 'User', emphasis: true },
+            {
+              label: '启用通道',
+              value: config
+                ? [config.feishu.enabled, config.email.enabled].filter(Boolean).length
+                : 0,
+              unit: '个',
+            },
+            {
+              label: '日报',
+              value: config?.feishu?.daily_digest ? '开' : '关',
+              tone: config?.feishu?.daily_digest ? 'down' : undefined,
+            },
+          ]}
+        />
+      }
+      themed
     >
-      {activeKey === 'notifications' ? (
-        renderNotifications()
-      ) : activeKey === 'push-channels' ? (
-        renderPushChannels()
-      ) : activeKey === 'sizing' ? (
-        <SizingPolicyTab />
-      ) : activeKey === 'portfolio-construction' ? (
-        <PortfolioConstructionTab />
-      ) : activeKey === 'analysis-engine' ? (
-        <AnalysisEngineTab />
-      ) : activeKey === 'risk-parameters' ? (
-        <RiskParametersCenterTab />
-      ) : activeKey === 'strategy-kill-switch' ? (
-        <StrategyKillSwitchTab />
-      ) : activeKey === 'todo-suggestions' ? (
-        <TodoSuggestionsTab />
-      ) : activeKey === 'black-swan' ? (
-        <BlackSwanHistoryTab />
-      ) : (
-        renderPlaceholder()
-      )}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={activeKey}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -4 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+        >
+          {body}
+        </motion.div>
+      </AnimatePresence>
       <DigestPreviewModal
         open={previewOpen}
         result={previewResult}
@@ -1725,10 +1946,10 @@ const DigestPreviewModal: React.FC<DigestPreviewModalProps> = ({ open, result, o
                   valueStyle={{
                     color:
                       (pnl?.pnl_today ?? 0) > 0
-                        ? '#cf1322'
+                        ? '#dc2626'
                         : (pnl?.pnl_today ?? 0) < 0
-                        ? '#3f8600'
-                        : '#999',
+                          ? '#16a34a'
+                          : '#999',
                   }}
                 />
               </Col>
@@ -1741,10 +1962,10 @@ const DigestPreviewModal: React.FC<DigestPreviewModalProps> = ({ open, result, o
                   valueStyle={{
                     color:
                       (pnl?.pnl_today_pct ?? 0) > 0
-                        ? '#cf1322'
+                        ? '#dc2626'
                         : (pnl?.pnl_today_pct ?? 0) < 0
-                        ? '#3f8600'
-                        : '#999',
+                          ? '#16a34a'
+                          : '#999',
                   }}
                 />
               </Col>
@@ -1973,10 +2194,10 @@ const WeeklyReviewPreviewModal: React.FC<WeeklyReviewPreviewModalProps> = ({
                   valueStyle={{
                     color:
                       (pnl?.pnl_amount ?? 0) > 0
-                        ? '#cf1322'
+                        ? '#dc2626'
                         : (pnl?.pnl_amount ?? 0) < 0
-                        ? '#3f8600'
-                        : '#999',
+                          ? '#16a34a'
+                          : '#999',
                   }}
                 />
               </Col>
@@ -1989,10 +2210,10 @@ const WeeklyReviewPreviewModal: React.FC<WeeklyReviewPreviewModalProps> = ({
                   valueStyle={{
                     color:
                       (pnl?.pnl_pct ?? 0) > 0
-                        ? '#cf1322'
+                        ? '#dc2626'
                         : (pnl?.pnl_pct ?? 0) < 0
-                        ? '#3f8600'
-                        : '#999',
+                          ? '#16a34a'
+                          : '#999',
                   }}
                 />
               </Col>
@@ -2050,7 +2271,7 @@ const WeeklyReviewPreviewModal: React.FC<WeeklyReviewPreviewModalProps> = ({
                         dataIndex: 'realized_pnl',
                         align: 'right',
                         render: (v: number) => (
-                          <Text style={{ color: '#cf1322' }}>+{v.toFixed(2)}</Text>
+                          <Text style={{ color: '#dc2626' }}>+{v.toFixed(2)}</Text>
                         ),
                       },
                     ]}
@@ -2077,7 +2298,7 @@ const WeeklyReviewPreviewModal: React.FC<WeeklyReviewPreviewModalProps> = ({
                         dataIndex: 'realized_pnl',
                         align: 'right',
                         render: (v: number) => (
-                          <Text style={{ color: '#3f8600' }}>{v.toFixed(2)}</Text>
+                          <Text style={{ color: '#16a34a' }}>{v.toFixed(2)}</Text>
                         ),
                       },
                     ]}
@@ -2223,8 +2444,8 @@ const WeChatBindModal: React.FC<WeChatBindModalProps> = ({
               status === 'bound'
                 ? '已成功绑定！'
                 : status === 'expired'
-                ? '轮询超时（2 分钟），可点击"重新生成"再试'
-                : '请用微信扫码 → 关注公众号 → 自动绑定（页面会自动刷新）'
+                  ? '轮询超时（2 分钟），可点击"重新生成"再试'
+                  : '请用微信扫码 → 关注公众号 → 自动绑定（页面会自动刷新）'
             }
             description={
               <Text type="secondary" style={{ fontSize: 12 }}>

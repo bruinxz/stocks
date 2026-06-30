@@ -1,6 +1,25 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Card, Input, Table, Spin, Tag, Space, Select, Button, Typography, message, Tooltip } from 'antd';
-import { SearchOutlined, ReloadOutlined, PushpinFilled, PushpinOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
+import {
+  Card,
+  Input,
+  Table,
+  Spin,
+  Tag,
+  Space,
+  Select,
+  Button,
+  Typography,
+  message,
+  Tooltip,
+} from 'antd';
+import {
+  SearchOutlined,
+  ReloadOutlined,
+  PushpinFilled,
+  PushpinOutlined,
+  StarOutlined,
+  StarFilled,
+} from '@ant-design/icons';
 import api from '../../services/api';
 import StockDetailPanel from '../stock/StockDetailPanel';
 
@@ -113,8 +132,11 @@ const StockExplorer: React.FC = () => {
       return;
     }
     try {
-      const promises = pinned.map((sym) =>
-        api.get(`/stocks/${sym}`).then(r => r.data?.data?.stock as StockRow).catch(() => null)
+      const promises = pinned.map(sym =>
+        api
+          .get(`/stocks/${sym}`)
+          .then(r => r.data?.data?.stock as StockRow)
+          .catch(() => null)
       );
       const results = await Promise.all(promises);
       setPinnedStocks(results.filter((x): x is StockRow => !!x));
@@ -128,8 +150,8 @@ const StockExplorer: React.FC = () => {
   }, [fetchPinnedQuotes]);
 
   const togglePin = useCallback((symbol: string) => {
-    setPinned((prev) => {
-      const next = prev.includes(symbol) ? prev.filter((s) => s !== symbol) : [...prev, symbol];
+    setPinned(prev => {
+      const next = prev.includes(symbol) ? prev.filter(s => s !== symbol) : [...prev, symbol];
       savePinned(next);
       message.success(prev.includes(symbol) ? '已取消置顶' : '已置顶');
       return next;
@@ -147,18 +169,32 @@ const StockExplorer: React.FC = () => {
         title: '代码',
         dataIndex: 'symbol',
         width: 92,
-        render: (v: string) => <Text code style={{ fontSize: 11 }}>{v}</Text>,
+        render: (v: string) => (
+          <Text code style={{ fontSize: 11 }}>
+            {v}
+          </Text>
+        ),
       },
       {
         title: '名称',
         dataIndex: 'name',
         render: (v: string, row: StockRow) => (
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <div
+              style={{
+                fontWeight: 500,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
               {v}
             </div>
             {row.industry && (
-              <Tag color="geekblue" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px', marginTop: 2 }}>
+              <Tag
+                color="geekblue"
+                style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px', marginTop: 2 }}
+              >
                 {row.industry}
               </Tag>
             )}
@@ -174,13 +210,14 @@ const StockExplorer: React.FC = () => {
           const price = formatPrice(v);
           const pct = Number(row.change_percent);
           const hasChange = Number.isFinite(pct) && pct !== 0;
-          const color = hasChange ? (pct >= 0 ? '#cf1322' : '#3f8600') : '#999';
+          const color = hasChange ? (pct >= 0 ? '#dc2626' : '#16a34a') : '#999';
           return (
             <div style={{ textAlign: 'right' }}>
               <div style={{ fontSize: 12, fontWeight: 500, color }}>{price}</div>
               {hasChange && (
                 <div style={{ fontSize: 10, color }}>
-                  {pct > 0 ? '+' : ''}{pct.toFixed(2)}%
+                  {pct > 0 ? '+' : ''}
+                  {pct.toFixed(2)}%
                 </div>
               )}
             </div>
@@ -198,8 +235,10 @@ const StockExplorer: React.FC = () => {
               <Button
                 size="small"
                 type="text"
-                icon={isPinned ? <PushpinFilled style={{ color: '#fa8c16' }} /> : <PushpinOutlined />}
-                onClick={(e) => {
+                icon={
+                  isPinned ? <PushpinFilled style={{ color: '#fa8c16' }} /> : <PushpinOutlined />
+                }
+                onClick={e => {
                   e.stopPropagation();
                   togglePin(row.symbol);
                 }}
@@ -234,7 +273,7 @@ const StockExplorer: React.FC = () => {
                 size="small"
                 type={showOnlyPinned ? 'primary' : 'default'}
                 icon={showOnlyPinned ? <StarFilled /> : <StarOutlined />}
-                onClick={() => setShowOnlyPinned((v) => !v)}
+                onClick={() => setShowOnlyPinned(v => !v)}
               >
                 {pinned.length}
               </Button>
@@ -259,13 +298,13 @@ const StockExplorer: React.FC = () => {
             placeholder="搜索代码或名称 (如 600519 / 茅台)"
             prefix={<SearchOutlined />}
             value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
+            onChange={e => setSearchInput(e.target.value)}
             disabled={showOnlyPinned}
           />
           <Select
             style={{ width: '100%' }}
             value={market}
-            onChange={(v) => {
+            onChange={v => {
               setMarket(v);
               setPage(1);
             }}
@@ -294,10 +333,10 @@ const StockExplorer: React.FC = () => {
                     setPage(p);
                     setPageSize(ps);
                   },
-                  showTotal: (t) => `共 ${t}`,
+                  showTotal: t => `共 ${t}`,
                 }
           }
-          onRow={(record) => ({
+          onRow={record => ({
             onClick: () => setSelected(record),
             style: {
               cursor: 'pointer',
@@ -315,7 +354,9 @@ const StockExplorer: React.FC = () => {
           selected ? (
             <Space>
               <span>{selected.name}</span>
-              <Text code style={{ fontSize: 11 }}>{selected.symbol}</Text>
+              <Text code style={{ fontSize: 11 }}>
+                {selected.symbol}
+              </Text>
               {selected.industry && <Tag color="geekblue">{selected.industry}</Tag>}
               {pinned.includes(selected.symbol) && <PushpinFilled style={{ color: '#fa8c16' }} />}
             </Space>

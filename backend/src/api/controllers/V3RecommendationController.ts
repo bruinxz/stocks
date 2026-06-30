@@ -54,6 +54,14 @@ import {
   type ObservationPointsContext,
   type RiskRulesContext,
 } from '../../services/analysis-engine/v3DetailBuilder';
+// PR-M3 (2026-06-29) — confidence 反向修正 (PR-K hotfix)
+import { sourceTypeWinRateAdjuster } from '../../services/SourceTypeWinRateAdjuster';
+// PR-O5 (2026-06-30) — 题材发酵 5 阶段 detector enrichSignal 透传
+import {
+  FERMENTATION_PHASE_LABELS,
+  FERMENTATION_PHASE_ICONS,
+  type FermentationPhase,
+} from '../../services/ThemeFermentationDetector';
 
 // ---------------------------------------------------------------------------
 //  常量
@@ -80,11 +88,42 @@ const BUY_DECISIONS: ReadonlyArray<string> = Object.freeze(['buy', 'strong_buy']
 /**
  * 当日 candidate 候选信号来源 (funnel 中段). analysis_engine + quant_recommendation +
  * tradingagents 三种"AI 生成"的归一为 candidate; daily_screener 只是规则引擎不算.
+ *
+ * PR-O2 (2026-06-29): limit_up_board 涨停板战法 detector 写入的信号也算 candidate —
+ * source_type='limit_up_board', metadata.timing_tag='overnight' + metadata.pattern=<战法>.
+ * 让前端 /home 推荐卡显示 "🚀 一字板" / "📈 二板加速" 等 badge.
+ *
+ * PR-O3 (2026-06-30) — 新增 3 个真消费 detector source_type 接通 PR-M1/M2/M3 数据
+ * (opening_rush_detector / intraday_price_volume_anomaly / last_hour_momentum).
+ *
+ * PR-O5 (2026-06-30) — 题材发酵 (theme_fermentation) 5 阶段 detector 写入信号.
  */
-const CANDIDATE_SOURCE_TYPES: ReadonlyArray<string> = Object.freeze([
+export const CANDIDATE_SOURCE_TYPES: ReadonlyArray<string> = Object.freeze([
   AISignalSourceType.ANALYSIS_ENGINE,
-  'quant_recommendation',
-  'tradingagents',
+  AISignalSourceType.QUANT_RECOMMENDATION,
+  AISignalSourceType.TRADING_AGENTS,
+  AISignalSourceType.OPENING_RUSH_DETECTOR,
+  AISignalSourceType.INTRADAY_PRICE_VOLUME_ANOMALY,
+  AISignalSourceType.LAST_HOUR_MOMENTUM,
+  AISignalSourceType.LIMIT_UP_BOARD,
+  AISignalSourceType.THEME_FERMENTATION,
+]);
+
+/**
+ * PR-O3 fan-in: V3 推荐查询的全部 source_type. 单独常量便于未来调整 funnel vs query 时不耦合.
+ * 之前 V3 只查 ANALYSIS_ENGINE → 永远 0 行 (3 个 active user mode='off') → fallback
+ * QUANT_RECOMMENDATION. 改 fan-in 后, OpeningRushDetector / IntradayPriceVolumeAnomalyDetector /
+ * LastHourMomentumDetector / LimitUpBoardDetector / ThemeFermentationDetector 写入的信号
+ * 也能在前端 V3 卡片显示.
+ */
+export const V3_FANIN_SOURCE_TYPES: ReadonlyArray<string> = Object.freeze([
+  AISignalSourceType.ANALYSIS_ENGINE,
+  AISignalSourceType.QUANT_RECOMMENDATION,
+  AISignalSourceType.OPENING_RUSH_DETECTOR,
+  AISignalSourceType.INTRADAY_PRICE_VOLUME_ANOMALY,
+  AISignalSourceType.LAST_HOUR_MOMENTUM,
+  AISignalSourceType.LIMIT_UP_BOARD,
+  AISignalSourceType.THEME_FERMENTATION,
 ]);
 
 // ---------------------------------------------------------------------------
@@ -104,6 +143,46 @@ function clampLimit(raw: any): number {
 function parseDate(raw: any): string {
   if (typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
   return todayInShanghai();
+}
+
+/**
+ * PR-H (2026-06-29) — 推荐时机标签 5 个值, 与 backend
+ * AIInvestmentSignalService.RecommendationTimingTag 对齐.
+ *
+ *   opening_rush     — 🌅 早盘抢 (9:25 集合竞价后, 建议 9:30-10:00 买入)
+ *   afternoon_kick   — ☀️ 午后攻 (12:55, 建议 13:00-13:30 买入)
+ *   closing_grab     — 🌆 尾盘埋 (14:30, 建议 14:30-14:55 买入)
+ *   overnight        — 🌙 隔夜潜伏 (15:30 盘后, 建议 *次日* 9:30 开盘后买)
+ *   intraday_anomaly — ⚡ 盘中异动 (实时触发, 30 分钟内买)
+ *
+ * 缺失 / 历史 row 没写 metadata.timing_tag → 默认归为 'overnight' (与生产
+ * 既有 cron 32 15 * * 1-5 语义一致, 不破坏既有 UI 默认值).
+ */
+export const TIMING_TAG_VALUES = [
+  'opening_rush',
+  'afternoon_kick',
+  'closing_grab',
+  'overnight',
+  'intraday_anomaly',
+] as const;
+export type TimingTag = (typeof TIMING_TAG_VALUES)[number];
+
+export function normalizeTimingTagFromMetadata(metadata: any): TimingTag {
+  const raw = String(metadata?.timing_tag || '')
+    .trim()
+    .toLowerCase();
+  return (TIMING_TAG_VALUES as readonly string[]).includes(raw) ? (raw as TimingTag) : 'overnight';
+}
+
+export function parseTimingFilter(raw: any): TimingTag[] | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed || trimmed === 'all') return null;
+  const parts = trimmed
+    .split(',')
+    .map(s => s.trim())
+    .filter((s): s is TimingTag => (TIMING_TAG_VALUES as readonly string[]).includes(s));
+  return parts.length > 0 ? parts : null;
 }
 
 /**
@@ -275,10 +354,7 @@ export function buildPriceWindow(
   if (!Number.isFinite(first) || !Number.isFinite(last) || first <= 0) return null;
   const cumPct = ((last - first) / first) * 100;
   const sparkline: SparklinePoint[] = window.map(b => ({
-    date:
-      b.time instanceof Date
-        ? b.time.toISOString().slice(0, 10)
-        : String(b.time).slice(0, 10),
+    date: b.time instanceof Date ? b.time.toISOString().slice(0, 10) : String(b.time).slice(0, 10),
     close: Number(b.close) || 0,
   }));
   return { cumulative_change_pct: Math.round(cumPct * 100) / 100, sparkline };
@@ -296,7 +372,12 @@ export function computeAmplitude(
   const hi = Number(today?.high);
   const lo = Number(today?.low);
   const prevClose = Number(prev?.close);
-  if (!Number.isFinite(hi) || !Number.isFinite(lo) || !Number.isFinite(prevClose) || prevClose <= 0) {
+  if (
+    !Number.isFinite(hi) ||
+    !Number.isFinite(lo) ||
+    !Number.isFinite(prevClose) ||
+    prevClose <= 0
+  ) {
     return null;
   }
   return Math.round(((hi - lo) / prevClose) * 100 * 100) / 100;
@@ -341,10 +422,7 @@ export function computeATR20(
  * 从 60 日内 daily_bars 找近期最低 low — playbook low_mild 兜底 support_level.
  * (优先级: per_dimension.technical.evidence 含 "支撑" label → 此函数; 当前实现只取后者.)
  */
-export function findRecentLow(
-  bars: Array<{ low?: number }>,
-  lookback = 60
-): number | null {
+export function findRecentLow(bars: Array<{ low?: number }>, lookback = 60): number | null {
   if (!Array.isArray(bars) || bars.length === 0) return null;
   const window = bars.slice(-lookback);
   let min = Infinity;
@@ -395,10 +473,7 @@ export function buildEvidenceText(perDim: PerDimensionLike[]): string {
  * 从 60 日内 daily_bars 找近期最高 high — observation_points 阻力位兜底.
  * (优先级: per_dimension.technical.evidence 含 "阻力"/"压力" label → 此函数兜底.)
  */
-export function findRecentHigh(
-  bars: Array<{ high?: number }>,
-  lookback = 60
-): number | null {
+export function findRecentHigh(bars: Array<{ high?: number }>, lookback = 60): number | null {
   if (!Array.isArray(bars) || bars.length === 0) return null;
   const window = bars.slice(-lookback);
   let max = -Infinity;
@@ -453,6 +528,53 @@ const SHORT_TERM_RESISTANCE_KEYWORDS: ReadonlyArray<string> = Object.freeze([
 /** evidence 含 "超买" → 触发情绪过热风险. */
 const OVERBOUGHT_KEYWORDS: ReadonlyArray<string> = Object.freeze(['超买']);
 
+/**
+ * PR-S (2026-06-30) Bug B3 fix — 同股 dedup.
+ *
+ * 用户实测 /home 浙江东日 sh.600113 重复显示 4 次. 根因:
+ *   - intraday_price_volume_anomaly detector 每 30min cron 跑一次, 全天 7+ 次都新写入
+ *   - V3 endpoint 直接喂全部 AIInvestmentSignal 给前端
+ *   → 同股 N 条全部展开 → 推荐卡 N 张重复
+ *
+ * 修复: 按 symbol 聚合, 同股保留 confidence_score 最高那条 (并列时保留 source_type 字典序靠前的,
+ * 让 'analysis_engine' 等真 AI engine 信号优先于 detector heuristic 信号).
+ *
+ * 注: detector 端也修了 source_id 一日一行 (Bug B1), 此处是 V3 endpoint 的双保险 —
+ * 即使历史数据有重复 row, 前端也只见一张卡.
+ */
+export function dedupBySymbol(rows: AIInvestmentSignal[]): AIInvestmentSignal[] {
+  const bySymbol = new Map<string, AIInvestmentSignal>();
+  for (const row of rows) {
+    const sym = String(row.symbol);
+    const existing = bySymbol.get(sym);
+    if (!existing) {
+      bySymbol.set(sym, row);
+      continue;
+    }
+    const curConf = Number(row.confidence_score ?? 0);
+    const exConf = Number(existing.confidence_score ?? 0);
+    if (curConf > exConf) {
+      bySymbol.set(sym, row);
+      continue;
+    }
+    if (curConf === exConf) {
+      // 同分: 优先 analysis_engine / quant_recommendation 等 AI engine, 弱化 detector heuristic.
+      const curSrc = String(row.source_type ?? '');
+      const exSrc = String(existing.source_type ?? '');
+      if (curSrc < exSrc) {
+        bySymbol.set(sym, row);
+      }
+    }
+  }
+  // 保持 confidence_score 降序 (与查询 ORDER BY 一致)
+  return Array.from(bySymbol.values()).sort((a, b) => {
+    const ca = Number(a.confidence_score ?? 0);
+    const cb = Number(b.confidence_score ?? 0);
+    if (cb !== ca) return cb - ca;
+    return 0;
+  });
+}
+
 // ---------------------------------------------------------------------------
 //  Controller
 // ---------------------------------------------------------------------------
@@ -467,21 +589,17 @@ class V3RecommendationController {
       const requested = clampLimit(req.query.limit);
       const baseN = Math.min(requested, DEFAULT_RECOMMEND_LIMIT);
 
-      // Batch CD (2026-06-25): V3 endpoint 兜底 ANALYSIS_ENGINE → QUANT_RECOMMENDATION.
-      // 真因: 生产环境 3 个 active user analysis_engine.mode='off' (全是 'off'),
-      // 所以 ai_investment_signals 从未写入 source_type='analysis_engine' 行, 历史全是
-      // quant_recommendation. V3 endpoint 之前只查 ANALYSIS_ENGINE → 永远 0 条 → 推荐空.
-      // 此外: archive 的 signal_date 取的是 candidate.trend 最后一根 bar 的 time -
-      // 而 daily_bars 滞后 1-3 天 (今天 cron 跑前 daily_bars 最新只到 yesterday),
-      // 所以 signal_date 永远不是 today. 此处加 fallback: 优先 ANALYSIS_ENGINE today,
-      // 不空就用; 空了走 QUANT_RECOMMENDATION 最近 7 天的最新一天.
-      let actualSourceUsed = AISignalSourceType.ANALYSIS_ENGINE;
+      // PR-O3 (2026-06-30) fan-in: 同时查 V3_FANIN_SOURCE_TYPES (含 4 个新 detector source),
+      // 让 OpeningRushDetector / IntradayPriceVolumeAnomalyDetector / LastHourMomentumDetector /
+      // LimitUpBoard / ThemeFermentation 写入的信号能在 V3 卡片显示. 历史 fallback 行为保留:
+      // 当天为空时回退到最近 7 天内最新一个有信号的日期 (兼容 daily_bars 滞后导致的 signal_date 漂移).
+      let actualSourceUsed = 'fan_in';
       let actualDateUsed = date;
 
-      // 拉 50 条候选, 应用弹性扩展后再切 top N
+      // 拉 100 条候选 (fan-in 多 source 可能更多), 应用弹性扩展后再切 top N
       let candidateRows = await AIInvestmentSignal.findAll({
         where: {
-          source_type: AISignalSourceType.ANALYSIS_ENGINE,
+          source_type: { [Op.in]: V3_FANIN_SOURCE_TYPES as string[] },
           signal_date: date,
           normalized_decision: { [Op.in]: BUY_DECISIONS as string[] },
         },
@@ -489,16 +607,16 @@ class V3RecommendationController {
           ['confidence_score', 'DESC'],
           ['created_at', 'DESC'],
         ],
-        limit: 50,
+        limit: 100,
       });
 
       if (candidateRows.length === 0) {
-        // Fallback: query quant_recommendation 最近 5 个交易日 (含今天) 中最新一天有数据的
+        // Fallback: 最近 7 天 cover 长假
         const fallbackRows = await AIInvestmentSignal.findAll({
           where: {
-            source_type: AISignalSourceType.QUANT_RECOMMENDATION,
+            source_type: { [Op.in]: V3_FANIN_SOURCE_TYPES as string[] },
             signal_date: {
-              [Op.gte]: shiftDate(date, -7), // 最近 7 天 cover 长假
+              [Op.gte]: shiftDate(date, -7),
               [Op.lte]: date,
             },
             normalized_decision: { [Op.in]: BUY_DECISIONS as string[] },
@@ -508,17 +626,31 @@ class V3RecommendationController {
             ['confidence_score', 'DESC'],
             ['created_at', 'DESC'],
           ],
-          limit: 50,
+          limit: 100,
         });
 
         if (fallbackRows.length > 0) {
-          // 只取最新一天的 (与 ANALYSIS_ENGINE 单天语义一致)
+          // 只取最新一天的 (与单天语义一致)
           actualDateUsed = String(fallbackRows[0].signal_date).slice(0, 10);
-          actualSourceUsed = AISignalSourceType.QUANT_RECOMMENDATION;
           candidateRows = fallbackRows.filter(
             r => String(r.signal_date).slice(0, 10) === actualDateUsed
           );
         }
+      }
+
+      // 推断 actualSourceUsed (展示用): 取 top1 的 source_type
+      if (candidateRows.length > 0) {
+        actualSourceUsed = String(candidateRows[0].source_type);
+      }
+
+      // PR-S Bug B3 (2026-06-30): 按 symbol dedup — 同股保留最高 confidence 一条.
+      // 防 intraday_price_volume_anomaly 等 detector 每 30min cron 多次写入造成同股多卡重复.
+      const totalBeforeDedup = candidateRows.length;
+      candidateRows = dedupBySymbol(candidateRows);
+      if (totalBeforeDedup !== candidateRows.length) {
+        logger.info(
+          `[V3] dedup ${totalBeforeDedup} → ${candidateRows.length} (by symbol, date=${actualDateUsed})`
+        );
       }
 
       // 应用弹性扩展; 用户显式 limit > 3 则按 limit 截断 (不再弹性), 反之走 elastic 到 5.
@@ -530,11 +662,35 @@ class V3RecommendationController {
         selected = applyElasticLimit(candidateRows, baseN, maxElastic, ELASTIC_CONFIDENCE_GAP);
       }
 
+      // PR-H — 按 ?timing=opening_rush,afternoon_kick,... 过滤. 'all' / 缺失 = 不过滤.
+      // 过滤在 selected 之后做 (而非 query 时), 因 metadata.timing_tag 是 JSONB 字段, SQL
+      // 过滤需要 ORM JSON ops 增加复杂度; selected 最多 5 行, JS 内过滤一次开销可忽略.
+      const timingFilter = parseTimingFilter(req.query.timing);
+      if (timingFilter && timingFilter.length > 0) {
+        const allow = new Set<string>(timingFilter);
+        selected = selected.filter(s =>
+          allow.has(normalizeTimingTagFromMetadata((s as any).metadata))
+        );
+      }
+
+      // PR-O5 (2026-06-30) — 题材发酵 5 阶段 enrichment.
+      // 一次批量拉 theme_fermentation_phases 最新一天 (大概率 = actualDateUsed, 也可能 actualDateUsed-1d
+      // 若 detector 16:30 还没跑完). 用 Map<industry, {phase, is_mainline}> 注入 enrichSignal 避免 N+1.
+      // fail-OPEN: 拉表失败 → 空 map, 推荐卡 theme_phase 字段缺失, 前端 badge 自动隐藏.
+      const themePhaseByIndustry = await this.loadThemePhaseMap(actualDateUsed).catch(err => {
+        logger.warn(`v3-recommendations theme phase load failed: ${err?.message ?? err}`);
+        return new Map<string, { phase: FermentationPhase; is_mainline: boolean }>();
+      });
+
       const recommendations = await Promise.all(
-        selected.map(signal => this.enrichSignal(signal).catch(err => {
-          logger.warn(`v3-recommendations enrich failed for ${signal.symbol}: ${err?.message ?? err}`);
-          return this.minimalSignalView(signal);
-        }))
+        selected.map(signal =>
+          this.enrichSignal(signal, themePhaseByIndustry).catch(err => {
+            logger.warn(
+              `v3-recommendations enrich failed for ${signal.symbol}: ${err?.message ?? err}`
+            );
+            return this.minimalSignalView(signal);
+          })
+        )
       );
 
       const funnel = await this.queryFunnel(actualDateUsed).catch(err => {
@@ -548,7 +704,7 @@ class V3RecommendationController {
           as_of: actualDateUsed,
           requested_date: date,
           source_used: actualSourceUsed,
-          fallback_applied: actualDateUsed !== date || actualSourceUsed !== AISignalSourceType.ANALYSIS_ENGINE,
+          fallback_applied: actualDateUsed !== date,
           recommendations,
           funnel,
         },
@@ -616,9 +772,52 @@ class V3RecommendationController {
   }
 
   /**
+   * PR-O5 (2026-06-30) — 批量拉 theme_fermentation_phases 最新一天的相位
+   * (优先 preferredDate, 找不到 fallback 最近一天). 一次性 SQL, 返 Map<industry, {phase, is_mainline}>.
+   *
+   * fail-OPEN: 出错 → 空 map, 调用方继续走推荐. 上层 .catch 已兜底, 这里 try/catch 防底层
+   * sequelize import / query 异常.
+   */
+  private async loadThemePhaseMap(
+    preferredDate: string
+  ): Promise<Map<string, { phase: FermentationPhase; is_mainline: boolean }>> {
+    const out = new Map<string, { phase: FermentationPhase; is_mainline: boolean }>();
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const sequelizeModule = require('../../config/database');
+      const sequelize = sequelizeModule.default || sequelizeModule.sequelize;
+      const sql = `
+        WITH effective_date AS (
+          SELECT MAX(trade_date) AS d
+          FROM theme_fermentation_phases
+          WHERE trade_date <= :preferred
+        )
+        SELECT tfp.industry, tfp.phase, tfp.is_mainline
+        FROM theme_fermentation_phases tfp
+        JOIN effective_date ed ON tfp.trade_date = ed.d
+        WHERE ed.d IS NOT NULL;
+      `;
+      const [rows] = await sequelize.query(sql, { replacements: { preferred: preferredDate } });
+      for (const r of (rows as any[]) || []) {
+        if (!r?.industry || !r?.phase) continue;
+        out.set(String(r.industry), {
+          phase: String(r.phase) as FermentationPhase,
+          is_mainline: Boolean(r.is_mainline),
+        });
+      }
+    } catch (err: any) {
+      logger.warn(`loadThemePhaseMap fallback empty: ${err?.message ?? err}`);
+    }
+    return out;
+  }
+
+  /**
    * 把单条 archive signal 翻成 v3 卡片视图. 任一子查询失败 fall-back 部分字段 null.
    */
-  private async enrichSignal(signal: AIInvestmentSignal): Promise<Record<string, unknown>> {
+  private async enrichSignal(
+    signal: AIInvestmentSignal,
+    themePhaseByIndustry?: Map<string, { phase: FermentationPhase; is_mainline: boolean }>
+  ): Promise<Record<string, unknown>> {
     const symbol = String(signal.symbol);
     const stock = await Stock.findOne({ where: { symbol } }).catch(() => null);
     const stockId = stock?.id ?? null;
@@ -635,9 +834,7 @@ class V3RecommendationController {
         .catch(() => []);
     }
 
-    const priceWindow = buildPriceWindow(
-      bars.map(b => ({ time: b.time, close: Number(b.close) }))
-    );
+    const priceWindow = buildPriceWindow(bars.map(b => ({ time: b.time, close: Number(b.close) })));
     const amplitude = computeAmplitude(
       bars.map(b => ({
         high: Number(b.high),
@@ -658,20 +855,20 @@ class V3RecommendationController {
       rtRow && Number.isFinite(Number(rtRow.current_price))
         ? Number(rtRow.current_price)
         : lastBar
-          ? Number(lastBar.close)
-          : null;
+        ? Number(lastBar.close)
+        : null;
     const changePct =
       rtRow && Number.isFinite(Number(rtRow.change_percent))
         ? Number(rtRow.change_percent)
         : lastBar && lastBar.change_percent !== undefined
-          ? Number(lastBar.change_percent)
-          : null;
+        ? Number(lastBar.change_percent)
+        : null;
     const turnoverRate =
       lastBar && lastBar.turnover_rate !== undefined
         ? Number(lastBar.turnover_rate)
         : stock && stock.turnover_rate !== undefined
-          ? Number(stock.turnover_rate)
-          : null;
+        ? Number(stock.turnover_rate)
+        : null;
 
     // 4 维聚合
     const perDim = extractPerDimension(signal);
@@ -699,7 +896,8 @@ class V3RecommendationController {
     } catch {
       // ignore
     }
-    if (!recommendReason && signal.rationale) recommendReason = String(signal.rationale).slice(0, 120);
+    if (!recommendReason && signal.rationale)
+      recommendReason = String(signal.rationale).slice(0, 120);
 
     const metadata: any = signal.metadata ?? {};
     const entryZone: [number, number] | null = Array.isArray(metadata?.entry_zone)
@@ -712,10 +910,14 @@ class V3RecommendationController {
       bars.length >= 2
         ? Number(bars[bars.length - 2]?.close)
         : lastBar
-          ? Number(lastBar.close)
-          : NaN;
+        ? Number(lastBar.close)
+        : NaN;
     const supportLevel =
-      extractSupportLevel(perDim) ?? findRecentLow(bars.map(b => ({ low: Number(b.low) })), 60);
+      extractSupportLevel(perDim) ??
+      findRecentLow(
+        bars.map(b => ({ low: Number(b.low) })),
+        60
+      );
     const atr20d = computeATR20(
       bars.map(b => ({ high: Number(b.high), low: Number(b.low), close: Number(b.close) })),
       20
@@ -751,19 +953,20 @@ class V3RecommendationController {
 
     // ----- CA-3: 详情区结构化模板 — 技术面 / 观察点 / 风险硬规则 -----
     // amount_yi 从 last bar.turnover (元) → 亿; market_cap_yi 从 circulating → 亿
-    const lastBarTurnover = lastBar && (lastBar as any).turnover !== undefined
-      ? Number((lastBar as any).turnover)
-      : null;
+    const lastBarTurnover =
+      lastBar && (lastBar as any).turnover !== undefined ? Number((lastBar as any).turnover) : null;
     const amountYi =
-      typeof lastBarTurnover === 'number' && Number.isFinite(lastBarTurnover) && lastBarTurnover >= 0
+      typeof lastBarTurnover === 'number' &&
+      Number.isFinite(lastBarTurnover) &&
+      lastBarTurnover >= 0
         ? Math.round((lastBarTurnover / 1e8) * 100) / 100
         : null;
     const marketCapSource =
       stock?.circulating_market_cap != null && Number(stock.circulating_market_cap) > 0
         ? Number(stock.circulating_market_cap)
         : stock?.total_market_cap != null && Number(stock.total_market_cap) > 0
-          ? Number(stock.total_market_cap)
-          : null;
+        ? Number(stock.total_market_cap)
+        : null;
     const marketCapYi =
       marketCapSource != null && Number.isFinite(marketCapSource)
         ? Math.round((marketCapSource / 1e8) * 100) / 100
@@ -775,9 +978,7 @@ class V3RecommendationController {
       const prevs = bars.slice(-6, -1); // 取倒数 2-6 共 5 根
       const todayVol = Number(today?.volume);
       if (Number.isFinite(todayVol) && todayVol >= 0 && prevs.length > 0) {
-        const sums = prevs
-          .map(b => Number(b?.volume))
-          .filter(v => Number.isFinite(v) && v >= 0);
+        const sums = prevs.map(b => Number(b?.volume)).filter(v => Number.isFinite(v) && v >= 0);
         if (sums.length > 0) {
           const avg = sums.reduce((a, b) => a + b, 0) / sums.length;
           if (avg > 0) volumeRatio = Math.round((todayVol / avg) * 100) / 100;
@@ -788,15 +989,22 @@ class V3RecommendationController {
     const technicalEvidenceText = buildTechnicalEvidenceText(perDim);
     const sentimentDim = perDim.find(d => d.analyzer_key === 'sentiment');
     const sentimentScore =
-      sentimentDim && Number.isFinite(Number(sentimentDim.score)) ? Number(sentimentDim.score) : null;
+      sentimentDim && Number.isFinite(Number(sentimentDim.score))
+        ? Number(sentimentDim.score)
+        : null;
     const industryDim = perDim.find(d => d.analyzer_key === 'industry_regime');
     const industryScore =
       industryDim && Number.isFinite(Number(industryDim.score)) ? Number(industryDim.score) : null;
     const hasIndustryTheme =
-      (industryScore !== null && industryScore > 50) || (sentimentScore !== null && sentimentScore > 50);
+      (industryScore !== null && industryScore > 50) ||
+      (sentimentScore !== null && sentimentScore > 50);
     const todayHigh = lastBar ? Number((lastBar as any).high) : null;
     const resistanceLevel =
-      extractResistanceLevel(perDim) ?? findRecentHigh(bars.map(b => ({ high: Number(b.high) })), 60);
+      extractResistanceLevel(perDim) ??
+      findRecentHigh(
+        bars.map(b => ({ high: Number(b.high) })),
+        60
+      );
     const hasShortTermResistance = SHORT_TERM_RESISTANCE_KEYWORDS.some(kw =>
       technicalEvidenceText.includes(kw)
     );
@@ -853,6 +1061,51 @@ class V3RecommendationController {
       }
     }
 
+    // PR-M3 (2026-06-29): confidence 反向修正 (PR-K hotfix).
+    // PR-K 实证发现高 conf 推荐 win 30% < 低 conf win 40% (反向). 临时方案: 若该
+    // source_type 近 30 日 win_rate < 50% 且样本 >= 10, 把 raw conf 取负 (100 - raw),
+    // 让前端 / paper trading 按修正后 conf 排序, 反向之后高 conf 反而是真高质量.
+    // 长远方案: 重写因子 / 校准 conf — PR-M4+ 计划.
+    // fail-open: adjuster 内部 throw 仅 warn, 返 raw conf 不动 — 保守不"乱反".
+    let confAdjustment: any = {
+      confidence_score_raw: signal.confidence_score ?? null,
+      confidence_score_adjusted: signal.confidence_score ?? null,
+      adjustment_reason: 'no_data' as const,
+      source_win_rate: null,
+      source_sample_size: 0,
+    };
+    try {
+      confAdjustment = await sourceTypeWinRateAdjuster.adjust(
+        signal.confidence_score == null ? null : Number(signal.confidence_score),
+        String(signal.source_type || '')
+      );
+    } catch (err: any) {
+      logger.warn(
+        `v3-recommendations conf adjustment failed for ${symbol}: ${err?.message ?? err}`
+      );
+    }
+
+    // PR-O5 (2026-06-30) — 题材发酵相位 enrichment.
+    // theme_phase 缺失 → 字段 null, 前端 badge 自动隐藏 (向前兼容).
+    let themePhase: FermentationPhase | null = null;
+    let themePhaseLabel: string | null = null;
+    let themePhaseIcon: string | null = null;
+    let themeIsMainline = false;
+    try {
+      const ind = stock?.industry ? String(stock.industry) : null;
+      if (ind && themePhaseByIndustry && themePhaseByIndustry.has(ind)) {
+        const entry = themePhaseByIndustry.get(ind)!;
+        themePhase = entry.phase;
+        themePhaseLabel = FERMENTATION_PHASE_LABELS[entry.phase] ?? null;
+        themePhaseIcon = FERMENTATION_PHASE_ICONS[entry.phase] ?? null;
+        themeIsMainline = entry.is_mainline === true;
+      }
+    } catch (err: any) {
+      logger.warn(
+        `v3-recommendations theme phase enrich failed for ${symbol}: ${err?.message ?? err}`
+      );
+    }
+
     return {
       symbol,
       name: signal.name ?? stock?.name ?? null,
@@ -874,7 +1127,14 @@ class V3RecommendationController {
       decision: {
         action: signal.decision,
         normalized_decision: signal.normalized_decision,
+        // 默认 confidence_score 字段保留 raw 原值 (前端老路径兼容)
         confidence_score: signal.confidence_score ?? null,
+        // PR-M3 — 新增字段, 前端可优先用 adjusted 排序
+        confidence_score_raw: confAdjustment.confidence_score_raw,
+        confidence_score_adjusted: confAdjustment.confidence_score_adjusted,
+        confidence_adjustment_reason: confAdjustment.adjustment_reason,
+        confidence_source_win_rate: confAdjustment.source_win_rate,
+        confidence_source_sample_size: confAdjustment.source_sample_size,
         risk_level: signal.risk_level ?? null,
         entry_zone: metadata?.entry_zone ?? null,
         stop_loss: metadata?.stop_loss ?? null,
@@ -890,6 +1150,25 @@ class V3RecommendationController {
       risk_rules: riskRules,
       signal_id: signal.id,
       signal_date: signal.signal_date,
+      // PR-H — 推荐时机标签透传 UI. 缺失 → 'overnight' (符合历史 cron 15:32 写入语义).
+      timing_tag: normalizeTimingTagFromMetadata(metadata),
+      // PR-O2 (2026-06-29) — 涨停板战法 pattern badge. 仅 source_type='limit_up_board' 写入,
+      // 其它 source 默认 null. 前端 /home 推荐卡见到 limit_up_pattern 非空就额外加一个
+      // "🚀 一字板" / "📈 二板加速" 等 badge.
+      limit_up_pattern: typeof metadata?.pattern === 'string' && metadata?.source === 'limit_up_board_detector'
+        ? String(metadata.pattern)
+        : null,
+      limit_up_pattern_label: typeof metadata?.pattern_label === 'string' && metadata?.source === 'limit_up_board_detector'
+        ? String(metadata.pattern_label)
+        : null,
+      limit_up_continuous_days: Number.isFinite(Number(metadata?.continuous_days)) && metadata?.source === 'limit_up_board_detector'
+        ? Number(metadata.continuous_days)
+        : null,
+      // PR-O5 (2026-06-30) — 题材发酵 5 阶段透传 (字段缺失 → 前端 badge 自动隐藏).
+      theme_phase: themePhase,
+      theme_phase_label: themePhaseLabel,
+      theme_phase_icon: themePhaseIcon,
+      theme_is_mainline: themeIsMainline,
     };
   }
 
@@ -936,6 +1215,32 @@ class V3RecommendationController {
       ],
       signal_id: signal.id,
       signal_date: signal.signal_date,
+      // PR-H — minimal view 也透传 timing_tag (enrichSignal 失败兜底).
+      timing_tag: normalizeTimingTagFromMetadata((signal as any).metadata),
+      // PR-O2 — minimal view 也透传 limit_up_pattern (enrich 失败时仍出 badge).
+      limit_up_pattern: (() => {
+        const m = (signal as any).metadata;
+        return typeof m?.pattern === 'string' && m?.source === 'limit_up_board_detector'
+          ? String(m.pattern)
+          : null;
+      })(),
+      limit_up_pattern_label: (() => {
+        const m = (signal as any).metadata;
+        return typeof m?.pattern_label === 'string' && m?.source === 'limit_up_board_detector'
+          ? String(m.pattern_label)
+          : null;
+      })(),
+      limit_up_continuous_days: (() => {
+        const m = (signal as any).metadata;
+        return Number.isFinite(Number(m?.continuous_days)) && m?.source === 'limit_up_board_detector'
+          ? Number(m.continuous_days)
+          : null;
+      })(),
+      // PR-O5 (2026-06-30) — minimal view 也写出 theme_phase null 字段, 防 UI 报 undefined.
+      theme_phase: null,
+      theme_phase_label: null,
+      theme_phase_icon: null,
+      theme_is_mainline: false,
       enrich_failed: true,
     };
   }

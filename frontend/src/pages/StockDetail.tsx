@@ -10,14 +10,7 @@ const StockDetail: React.FC = () => {
   const { symbol } = useParams<{ symbol: string }>();
   const navigate = useNavigate();
 
-  return (
-    <StockDetailPanel
-      symbol={symbol || ''}
-      showBack
-      onBack={() => navigate(-1)}
-      showHeader
-    />
-  );
+  return <StockDetailPanel symbol={symbol || ''} showBack onBack={() => navigate(-1)} showHeader />;
 };
 
 export default StockDetail;

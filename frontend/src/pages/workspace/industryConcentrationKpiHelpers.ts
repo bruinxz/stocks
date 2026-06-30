@@ -33,7 +33,7 @@ import { UNKNOWN_INDUSTRY_LABEL } from '../../services/portfolioWorkspaceService
 export const INDUSTRY_KPI_WARN_PCT = 0.25;
 
 /** 红色 — antd `cf1322` 主红, 与最大回撤 KPI 同色 (同语义: 危险) */
-export const INDUSTRY_KPI_WARN_COLOR = '#cf1322';
+export const INDUSTRY_KPI_WARN_COLOR = '#dc2626';
 
 /** 中性灰 — 默认 valueStyle, 与 antd Statistic 默认接近 */
 export const INDUSTRY_KPI_NEUTRAL_COLOR = '#1f1f1f';

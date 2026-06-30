@@ -73,12 +73,22 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     owner: 'data',
     description: '历史 K 线回补',
   },
+  // 实时行情快照刷新 — 支持 2 种 cron 模式:
+  //   (A) 老 universe='market' / limit=5000: 20min 间隔, '5,25 9,10,13,14 * * 1-5'
+  //       覆盖全 A 股 5500 票, AI 引擎下游需要.
+  //   (B) CE-A 新 universe_source='intraday' / limit=500: 2min 间隔
+  //       '*/2 9-11,13-14 * * 1-5'. 走 IntradayUniverseService 选 ≤500 票活跃
+  //       universe (持仓 + 涨跌幅榜 + 涨停 + 成交额), batch_size=100. 给实时机会
+  //       推送 / 异动告警类下游用. ops 在 prod 手动 INSERT 新 ScheduledTask 行启用,
+  //       不在 ensureDefaultTasks 里默认 active=true (避免代码层强加新 cron).
   {
     type: 'REALTIME_QUOTE_SYNC',
     category: 'data_sync',
     owner: 'data',
     intraday: true,
-    description: '盘中实时行情快照刷新 (TradingAgents prompt 数据源)',
+    recommendedCron: '*/2 9-11,13-14 * * 1-5',
+    description:
+      '盘中实时行情快照刷新 (TradingAgents prompt 数据源). 2 模式: market 全量 (20min) / intraday 活跃 ≤500 (2min, CE-A)',
   },
   {
     type: 'BENCHMARK_INDEX_SYNC',
@@ -127,6 +137,22 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     recommendedCron: '0 18 * * 1-5',
     description:
       '工作日 18:00 拉前一交易日 30+ 行业 ETF 净流入 / 份额 (AKShare fund_etf_fund_daily_em + fund_etf_hist_em) → etf_creation_redemption',
+  },
+  // PR-M1 (2026-06-29): 隔夜信号矩阵 — A50 期指 + 港股恒指 + 美股纳指/DXY/VIX.
+  // 北京时间 21-23 (隔夜美股开盘) + 0-9 (隔夜+早盘前) 每 15min 跑一次,
+  // 5 个 source 并行 (fail-OPEN). 给 9:25 早盘 QuantRecommendationService /
+  // OpeningRushDetectorService 消费判定大盘方向, 避免普跌日盲推 (PR-I 教训).
+  // 数据源真实可调: index_global_em + stock_hk_index_spot_em +
+  // index_us_stock_sina(.IXIC/.VIX) + forex_spot_em.
+  // 不限工作日: 周末美股已收 (跑出空数据无害); 一日 ~36 次 × 5 source = 180 行
+  // (~90 KB / 日).
+  {
+    type: 'OVERNIGHT_SIGNAL_SYNC',
+    category: 'data_sync',
+    owner: 'data',
+    recommendedCron: '*/15 0-9,21-23 * * *',
+    description:
+      'A50 期指 + 港股恒指 + 美股纳指/DXY/VIX 隔夜信号矩阵 — 给早盘 QuantRecommendationService 消费 (5 source fail-OPEN, *15 min)',
   },
   // BJ-8 (2026-06-24): 市场情绪指数每日计算 - 真因 MarketSentimentIndexService 写
   //   全自动 (US-057), 但 cron 没有调度, 仅 sync-market-sentiment 脚本手动跑过 2 次
@@ -193,25 +219,55 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     type: 'SNOWBALL_HOT_KEYWORD_SYNC',
     category: 'data_sync',
     owner: 'data',
-    description: '雪球热门话题词同步',
+    recommendedCron: '0 16 * * *',
+    description: '雪球热门话题词同步 (周末也跑 — 雪球周末仍有讨论)',
   },
   {
     type: 'STOCK_SENTIMENT_SYNC',
     category: 'data_sync',
     owner: 'data',
-    description: '个股情绪聚合同步',
+    recommendedCron: '30 16 * * *',
+    description: '个股情绪聚合同步 (周末也跑 — 周末无新交易但用户讨论照旧)',
   },
   {
     type: 'MARKET_NEWS_SYNC',
     category: 'data_sync',
     owner: 'data',
-    description: '宏观 / 行情新闻同步',
+    description: '宏观 / 行情新闻同步 (盘中 30min + 收尾 17:17, 17:17 全周 7 天)',
   },
   {
     type: 'SOCIAL_SENTIMENT_SYNC',
     category: 'data_sync',
     owner: 'data',
-    description: '社交媒体 / 论坛情绪同步',
+    recommendedCron: '20 16 * * *',
+    description: '社交媒体 / 论坛情绪同步 (周末也跑 — 用户讨论 7×24)',
+  },
+  // PR-A (2026-06-29): 公告 NLP 全市场扫描. 之前只有 sync-announcements.ts CLI
+  // 存在但没注册成 cron, 导致 announcement_summaries 表自 2026-06-09 后 0 更新.
+  // 现在每天 17:00 跑当日全市场 (--all --with-ai=false 走启发式, 不调远端 AI),
+  // 写 announcement_summaries.priority / event_type. critical 级会触发
+  // CriticalAnnouncementPushService 推 OPS 飞书群. 周末也跑 — 公告系统周末仍有
+  // 临时公告 (停牌 / 重大事项 / 风险提示).
+  {
+    type: 'ANNOUNCEMENT_NLP',
+    category: 'data_sync',
+    owner: 'data',
+    recommendedCron: '0 17 * * *',
+    description:
+      '每天 17:00 全市场公告 NLP 抽取 (sync-announcements --all) → announcement_summaries.priority/event_type. critical 级会触发 CriticalAnnouncementPushService 推 OPS 飞书群. 周末也跑.',
+  },
+  // PR-A (2026-06-29): KOL 观点聚合 cron 接入. sync-kol-opinions.ts CLI 存在但
+  // 之前从未被 cron 调用过, kol_opinions 整张表是空的. 现在每天 18:30 跑
+  // --favorites --lookback-days=14 把用户收藏股票的 KOL 观点聚合落表, 给
+  // NewsAnalyzer + BullishEventDetector 消费. 周末也跑 — 研报 / 媒体 / 集体市场
+  // 周末仍有内容.
+  {
+    type: 'KOL_AGGREGATE',
+    category: 'data_sync',
+    owner: 'data',
+    recommendedCron: '30 18 * * *',
+    description:
+      '每天 18:30 KOL 观点聚合 (sync-kol-opinions --favorites --lookback-days=14) → kol_opinions. NewsAnalyzer + BullishEventDetector 消费. 周末也跑.',
   },
   {
     type: 'MARKET_HOT_SEARCH_SYNC',
@@ -722,6 +778,151 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     owner: 'ops',
     recommendedCron: '0 2 * * *',
     description: '每日 02:00 全库 pg_dump → backups/YYYY-MM-DD.sql.gz, 保留 30 天',
+  },
+  // CE-B (2026-06-26) — 盘中实时机会规则引擎.
+  // 每 3min 拉 IntradayUniverseService.resolveUniverse() (≤500 票) → 跑 10 类
+  // detector → 命中走 analyzeStock 二次审核 (overall_confidence × 100 ≥ 65) →
+  // 调 intradayOpportunityPusher.push (内置 dedup / circuit breaker / 飞书 fan-out).
+  // ops 在生产 INSERT 新 ScheduledTask 行启用; 默认不在 ensureDefaultTasks 强加.
+  {
+    type: 'INTRADAY_OPPORTUNITY_SCAN',
+    category: 'quant_engine',
+    owner: 'quant',
+    intraday: true,
+    recommendedCron: '*/3 9-11,13-14 * * 1-5',
+    description: '盘中 3min 跑 10 类机会规则 → analyzeStock 二次审核 → 飞书机会卡片推送',
+  },
+  // PR-B (2026-06-29) — 利好事件主动推送. 用户原话 "周末利好华工科技的新闻你看到了吗,
+  // 这类新闻你需要发消息提示我". 系统缺一条主动扫"利好新闻 / 业绩预喜公告 / 关注度突
+  // 增 / KOL 集中看多"的链路, 本 cron 每 30min 跑一次 4 detector, 命中即写 RiskAlert
+  // (level=MEDIUM, rule_id='stock_bullish_event') + 推 OPS 飞书群. 24h dedup 通过
+  // RiskAlert.message 末尾追加 [dedup_key:STOCK:DETECTOR:YYYY-MM-DD] 实现. 周末也跑.
+  {
+    type: 'BULLISH_EVENT_DETECT',
+    category: 'risk_control',
+    owner: 'quant',
+    recommendedCron: '*/30 * * * *',
+    description:
+      '每 30 分钟扫描用户持仓 + 自选 + 近 30 日推荐过的股票, 4 类利好 detector (critical 公告 / 正面新闻 / 关注度突增 / KOL 集中关注), 命中写 RiskAlert + 飞书 OPS 群. 24h dedup. 用户 2026-06-28 诉求落地.',
+  },
+  // PR-M2 (2026-06-29) — 集合竞价 snapshot + 30-min K 线 + 日内动量 detector.
+  // 学术依据: Han/Hu/Jia 2023 SSRN (集合竞价信息含量) + Zhang/Ma/Zhu 2019 EM (9:30-10:00 预测 14:30-15:00, 中国市场最 robust).
+  {
+    type: 'AUCTION_SNAPSHOT_SYNC',
+    category: 'data_sync',
+    owner: 'quant',
+    intraday: true,
+    recommendedCron: '25 9 * * 1-5',
+    description:
+      'PR-M2 集合竞价撮合后 (9:25) 拉 universe ~500 票开盘价 + 量 + 昨收, 计算 7+1 战法 pattern → 写 auction_snapshots.',
+  },
+  {
+    type: 'INTRADAY_KLINE_30MIN_SYNC',
+    category: 'data_sync',
+    owner: 'quant',
+    intraday: true,
+    recommendedCron: '5 10,11,13,14 * * 1-5',
+    description:
+      'PR-M2 盘中每 30 分钟拉 universe ~500 票当日 30-min K 线 → 写 intraday_klines_30min.',
+  },
+  {
+    type: 'INTRADAY_MOMENTUM_DETECT',
+    category: 'risk_control',
+    owner: 'quant',
+    intraday: true,
+    recommendedCron: '25 14 * * 1-5',
+    description:
+      'PR-M2 14:25 跑日内动量 detector. r1>+1% buy 推全 user, r1<-1% 持仓 sell. 论文: Zhang/Ma/Zhu 2019 EM.',
+  },
+  // PR-M3 (2026-06-29) — 板块情绪指数日度聚合. 学术 + 大 V 共识 (龙头战法 4 核心因子:
+  // 涨停数 / 连板高度 / 封板率 / 炸板率) + 30 日板块动量 z-score. 工作日 16:00 跑
+  // (limit_up sync 在 15:35-15:40 之后), 给推荐 service 消费做 "龙头板块加权 / 弱势板块 skip".
+  {
+    type: 'INDUSTRY_SENTIMENT_AGGREGATE',
+    category: 'analytics',
+    owner: 'quant',
+    recommendedCron: '0 16 * * 1-5',
+    description:
+      '工作日 16:00 跑板块情绪指数聚合 — 从 limit_up_stocks JOIN stocks.industry GROUP BY industry, 算 4 大龙头因子 (涨停数 / 连板高度 / 封板率 / 炸板率) + 30 日板块动量 z-score → composite_score 写 industry_sentiment_indices. PR-I 报告第 3 个致命短板.',
+  },
+  // PR-M3 (2026-06-29) — 反转 (reversal) detector. A 股因 T+1 + 散户主导 → 短期反转主导
+  // 而非动量 (4 篇学术研究共识). 每日 15:10 跑 (收盘前 10min, RT quote 已稳定但 daily_bars
+  // 还未 sync), 给 PR-K 高 conf 反向问题提供独立通道.
+  {
+    type: 'INTRADAY_REVERSAL_DETECT',
+    category: 'risk_control',
+    owner: 'quant',
+    recommendedCron: '10 15 * * 1-5',
+    description:
+      '工作日 15:10 跑反转 detector — 找今日 < -3% 且周/月线趋势仍向上的票 (reversal_buy, T+1 反弹) 或 > +5% 且 RSI(14) > 70 的票 (reversal_sell, 短期超买回调). 学术: Hsu/Viswanathan 2018 JPM cited 71 + Zhang & Zhu 2024 IREF.',
+  },
+  // PR-O2 (2026-06-29) — 涨停板战法 detector. PR-I-v2 战法库 §1 流派 1 落地率 0% → 50%.
+  // 每日 15:30 跑 (盘后, 在 LIMIT_UP_SYNC 15:10 之后), 对 limit_up_stocks 全表跑 20+ classifier:
+  // 一字 / T 字 / 烂板 / 强势板 / 弱转强 / 中军 / 二板加速 / 二板回封 / 二板填谷 / 二进三 /
+  // 高位连板加速 / 板块最高板 / 连板天梯 / 地天板 / 烂板反包 / 跌停反包 / 炸板回封 / 炸板换手 /
+  // 龙头接力 / 跟风接力. 命中写 RiskAlert (rule_id='limit_up_<pattern>', level=MEDIUM) +
+  // AIInvestmentSignal (source_type='limit_up_board', metadata.timing_tag='overnight'). 24h dedup.
+  {
+    type: 'LIMIT_UP_BOARD_DETECT',
+    category: 'risk_control',
+    owner: 'quant',
+    recommendedCron: '30 15 * * 1-5',
+    description:
+      'PR-O2 每日 15:30 跑涨停板 20+ 战法 detector — 一字/T字/二板加速/地天板/接力 等. 命中写 RiskAlert + AIInvestmentSignal (source_type=limit_up_board), 让前端 /home 推荐卡显示 pattern badge.',
+  },
+  // PR-O5 (2026-06-30) — 题材发酵 5 阶段 detector. 消费 PR-M3 industry_sentiment_indices
+  // (16:00 写完) + 昨日 phase, 给每个板块打 germinate/launch/outbreak/climax/recession 标签 +
+  // 主线切换检测. 工作日 16:30 跑.
+  {
+    type: 'THEME_FERMENTATION_DETECT',
+    category: 'analytics',
+    owner: 'quant',
+    recommendedCron: '30 16 * * 1-5',
+    description:
+      '工作日 16:30 跑题材发酵 5 阶段 detector — 消费 industry_sentiment_indices + 昨日 phase, 给每个板块打 germinate/launch/outbreak/climax/recession 标签 + 检测主线切换. PR-I-v2 §6.4 板块/题材轮动战法落地. 给推荐 service 用 "启动/爆发推次龙头, 高潮 reduce, 退潮换主线" 决策.',
+  },
+  // PR-O3 (2026-06-29) — Opening rush detector. 工作日 9:26 (集合竞价撮合 9:25 后 1min,
+  // 留余量给 AUCTION_SNAPSHOT_SYNC 9:25 写完) 跑, 消费 overnight_signals + auction_snapshots
+  // 识别隔夜信号 + auction pattern (高开 / 跳空 / 一字封板 / 等), 命中即写 AIInvestmentSignal
+  // (source_type='opening_rush_detector', metadata.timing_tag='opening_rush'). fail-OPEN.
+  // PR-P (2026-06-30): 接通 cron, 之前 PR-O3 只加 service 没注册 cron, prod 部署后不会跑.
+  {
+    type: 'OPENING_RUSH_DETECT',
+    category: 'quant_engine',
+    owner: 'quant',
+    intraday: true,
+    recommendedCron: '26 9 * * 1-5',
+    description:
+      'PR-O3 工作日 9:26 跑 opening rush detector — 消费 overnight_signals + auction_snapshots, 识别隔夜信号 + auction pattern (高开/跳空/一字封板/等), 命中写 AIInvestmentSignal (source_type=opening_rush_detector, timing_tag=opening_rush). fail-OPEN.',
+  },
+  // PR-O3 (2026-06-29) — 盘中价量异动 6 类 detector (volume_surge / main_force_inflow /
+  // limit_up_breakout / sector_link_undermove / broken_refill / second_board_acceleration).
+  // 工作日盘中每 30min 跑一次 (10:00, 10:30, 11:00, 11:30, 13:00, 13:30, 14:00, 14:30).
+  // 命中即写 RiskAlert + AIInvestmentSignal (source_type='intraday_price_volume_anomaly',
+  // metadata.timing_tag='intraday_anomaly'). 24h dedup. fail-OPEN.
+  // PR-P (2026-06-30): 接通 cron, 之前 PR-O3 只加 service 没注册 cron, prod 部署后不会跑.
+  {
+    type: 'INTRADAY_PRICE_VOLUME_ANOMALY',
+    category: 'quant_engine',
+    owner: 'quant',
+    intraday: true,
+    recommendedCron: '*/30 10,11,13,14 * * 1-5',
+    description:
+      'PR-O3 盘中每 30 min 跑 6 类价量异动 detector (volume_surge/main_force_inflow/limit_up_breakout/sector_link_undermove/broken_refill/second_board_acceleration). 命中写 RiskAlert + AIInvestmentSignal (timing_tag=intraday_anomaly). 24h dedup. fail-OPEN.',
+  },
+  // PR-O3 (2026-06-29) — Last-hour 尾盘动量 detector. 学术依据 Zhang/Ma/Zhu 2019 EM —
+  // 中国市场 9:30-10:00 r1 预测 14:30-15:00 r2 最 robust 的 alpha 之一.
+  // 工作日 14:30 跑 (尾盘启动点), r1>+1% buy → AIInvestmentSignal
+  // (source_type='last_hour_momentum', metadata.timing_tag='closing_grab'). fail-OPEN.
+  // PR-P (2026-06-30): 接通 cron, 之前 PR-O3 只加 service 没注册 cron, prod 部署后不会跑.
+  {
+    type: 'LAST_HOUR_MOMENTUM',
+    category: 'quant_engine',
+    owner: 'quant',
+    intraday: true,
+    recommendedCron: '30 14 * * 1-5',
+    description:
+      'PR-O3 14:30 跑尾盘动量 detector (r1 9:30-10:00 → r2 14:30-15:00 预测). 命中写 AIInvestmentSignal (source_type=last_hour_momentum, timing_tag=closing_grab). 论文: Zhang/Ma/Zhu 2019 EM. fail-OPEN.',
   },
 ]);
 

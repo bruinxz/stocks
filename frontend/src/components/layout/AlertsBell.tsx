@@ -37,8 +37,10 @@ import React, { useCallback } from 'react';
 import { Badge, Tooltip } from 'antd';
 import { BellOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import { useSelector } from 'react-redux';
+import type { RootState } from '../../store/rootReducer';
 import {
-  buildAlertsBellHref,
+  buildAlertsBellHrefForRole,
   buildBellTooltip,
   classifyAlertsBellSeverity,
   formatBadgeText,
@@ -62,10 +64,14 @@ const AlertsBell: React.FC<AlertsBellProps> = ({ enableWebSocket = true }) => {
   const navigate = useNavigate();
   const { unreadCount, mode } = useAlertsRealtime({ enableWebSocket });
   const errored = mode === 'error';
+  // PR-C 风控中心 v2: admin → /workspace/today?tab=risk_center (含全部规则的中心),
+  // 普通用户 → /workspace/portfolio?tab=alerts (按持仓过滤的"我的提醒").
+  // buildAlertsBellHrefForRole 内部调 buildAlertsBellHref, META-GUARD substring 仍命中.
+  const isAdmin = useSelector((s: RootState) => s.auth.user?.role === 'admin');
 
   const handleClick = useCallback(() => {
-    navigate(buildAlertsBellHref());
-  }, [navigate]);
+    navigate(buildAlertsBellHrefForRole(isAdmin));
+  }, [navigate, isAdmin]);
 
   const severity = classifyAlertsBellSeverity(unreadCount);
   const badgeText = formatBadgeText(unreadCount);
@@ -74,10 +80,10 @@ const AlertsBell: React.FC<AlertsBellProps> = ({ enableWebSocket = true }) => {
     mode === 'ws'
       ? ' (实时)'
       : mode === 'polling'
-      ? ' (轮询)'
-      : mode === 'error'
-      ? ' (拉取失败)'
-      : '';
+        ? ' (轮询)'
+        : mode === 'error'
+          ? ' (拉取失败)'
+          : '';
   const tooltipText = errored
     ? '拉取告警失败 — 网络异常, 已保留上次未读数; 点击仍可跳转风控中心'
     : `${buildBellTooltip(unreadCount)}${modeSuffix}`;
@@ -96,6 +102,7 @@ const AlertsBell: React.FC<AlertsBellProps> = ({ enableWebSocket = true }) => {
         data-severity={severity}
         data-unread={String(unreadCount)}
         data-mode={mode}
+        data-role={isAdmin ? 'admin' : 'user'}
         onClick={handleClick}
         onKeyDown={e => {
           if (e.key === 'Enter' || e.key === ' ') {

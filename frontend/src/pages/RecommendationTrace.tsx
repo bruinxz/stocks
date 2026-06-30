@@ -134,16 +134,16 @@ const RecommendationTrace: React.FC = () => {
               step.key === 'quant'
                 ? `${(step.evidence || []).length} 条量化证据`
                 : step.key === 'agent'
-                ? `${(step.evidence || []).length} 条融合证据`
-                : step.key === 'risk'
-                ? `仓位 ${formatPercent(step.evidence?.position_pct)}`
-                : step.key === 'entry'
-                ? formatMoney(outcome?.entry_price)
-                : step.key === 'exit'
-                ? outcome?.trade_status === 'closed'
-                  ? formatMoney(outcome?.exit_price)
-                  : formatMoney(outcome?.latest_price)
-                : sourceLabel(outcome?.source_type)
+                  ? `${(step.evidence || []).length} 条融合证据`
+                  : step.key === 'risk'
+                    ? `仓位 ${formatPercent(step.evidence?.position_pct)}`
+                    : step.key === 'entry'
+                      ? formatMoney(outcome?.entry_price)
+                      : step.key === 'exit'
+                        ? outcome?.trade_status === 'closed'
+                          ? formatMoney(outcome?.exit_price)
+                          : formatMoney(outcome?.latest_price)
+                        : sourceLabel(outcome?.source_type)
             }`
           : '等待证据',
       }));

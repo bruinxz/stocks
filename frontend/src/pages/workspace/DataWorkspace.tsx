@@ -9,6 +9,8 @@ import {
   StockOutlined,
 } from '@ant-design/icons';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
+import WorkspaceHero from '../../components/layout/WorkspaceHero';
+import { AnimatePresence, motion } from 'framer-motion';
 import DataHealthDashboard from '../../components/data/DataHealthDashboard';
 import StockExplorer from '../../components/data/StockExplorer';
 // Batch AQ (2026-06-21) — SystemTopologyMap 已迁到 系统介绍 → 架构图
@@ -212,8 +214,37 @@ const DataWorkspace: React.FC = () => {
       onTabChange={k => setActiveKey(k as DataWorkspaceTabKey)}
       kpiSlot={kpiSlot}
       headerActions={headerActions}
+      hero={
+        <WorkspaceHero
+          eyebrow="Data · 管理员视图"
+          title="数据中心"
+          subtitle="行情同步 · 调度任务 · 系统日志 · 健康监控 — admin 级别全链路可观测性"
+          variant="admin"
+          metrics={vm.kpis.slice(0, 3).map((k, idx) => ({
+            label: k.title,
+            value: k.value === undefined || k.value === null ? '—' : String(k.value),
+            unit: k.suffix,
+            emphasis: idx === 0,
+          }))}
+        />
+      }
+      themed
     >
-      {renderTab()}
+      {/* Phase 16 — sc-datav 借鉴: admin 区极淡 grid 背景 (48px 单元), 暗示 "在
+          数据空间里". 用户 tab (Home/Portfolio/Lab/Settings) 保持纯白. */}
+      <div className="workspace-grid-bg" style={{ padding: '8px 0', minHeight: '100%' }}>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeKey}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          >
+            {renderTab()}
+          </motion.div>
+        </AnimatePresence>
+      </div>
     </WorkspaceLayout>
   );
 };

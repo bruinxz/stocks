@@ -50,16 +50,16 @@ const { Text, Paragraph } = Typography;
 /** 中股惯例: 涨红跌绿. null/0 灰. */
 function changePctColor(pct: number | null): string {
   if (pct == null || !Number.isFinite(pct) || pct === 0) return '#8c8c8c';
-  return pct > 0 ? '#cf1322' : '#52c41a';
+  return pct > 0 ? '#dc2626' : '#16a34a';
 }
 
 /** 4 维评分大字颜色: ≥80 红强 / 60-79 橙中 / 40-59 灰 / <40 绿弱. */
 export function dimensionScoreColor(barValue: number | null | undefined): string {
   if (typeof barValue !== 'number' || !Number.isFinite(barValue)) return '#8c8c8c';
-  if (barValue >= 80) return '#cf1322';
+  if (barValue >= 80) return '#dc2626';
   if (barValue >= 60) return '#fa8c16';
   if (barValue >= 40) return '#8c8c8c';
-  return '#52c41a';
+  return '#16a34a';
 }
 
 /** confidence_tier → 卡片 border 强度 (高 confidence 加深 border). */
@@ -96,13 +96,13 @@ const DIMENSION_ORDER: ReadonlyArray<V3DimensionItem['key']> = Object.freeze([
 export function playbookVerdictColor(verdict: V3PlaybookItem['verdict']): string {
   switch (verdict) {
     case 'buy':
-      return '#cf1322';
+      return '#dc2626';
     case 'hold':
       return '#fa8c16';
     case 'observe':
       return '#1890ff';
     case 'avoid':
-      return '#52c41a';
+      return '#16a34a';
     default:
       return '#8c8c8c';
   }
@@ -342,9 +342,7 @@ const V3RecommendationCard: React.FC<V3RecommendationCardProps> = ({ item, onCli
                         padding: '6px 8px',
                         marginBottom: idx === playbookItems!.length - 1 ? 0 : 4,
                         background: p.avoid ? '#fff1f0' : '#fafafa',
-                        borderLeft: p.avoid
-                          ? '3px solid #cf1322'
-                          : `3px solid ${color}`,
+                        borderLeft: p.avoid ? '3px solid #cf1322' : `3px solid ${color}`,
                         borderRadius: 4,
                       }}
                       data-testid={`v3-card-${item.symbol}-playbook-${p.bucket}`}
@@ -367,7 +365,7 @@ const V3RecommendationCard: React.FC<V3RecommendationCardProps> = ({ item, onCli
                         </Text>
                         {p.avoid && (
                           <WarningOutlined
-                            style={{ color: '#cf1322', marginLeft: 4, fontSize: 12 }}
+                            style={{ color: '#dc2626', marginLeft: 4, fontSize: 12 }}
                           />
                         )}
                       </div>
@@ -449,7 +447,7 @@ const V3RecommendationCard: React.FC<V3RecommendationCardProps> = ({ item, onCli
               background: '#fff1f0',
             }}
             message={
-              <Text style={{ fontSize: 13, fontWeight: 600, color: '#cf1322' }}>风险硬规则</Text>
+              <Text style={{ fontSize: 13, fontWeight: 600, color: '#dc2626' }}>风险硬规则</Text>
             }
             description={
               <ul

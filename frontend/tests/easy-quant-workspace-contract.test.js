@@ -463,5 +463,87 @@ assert(
   !/#2764b8|#1f3a5f|geekblue|蓝色后台/.test(page + css)
 );
 
+// ---------------------------------------------------------------------------
+// PR-L emergency stop-loss (2026-06-29) — HomeWorkspace guards.
+// 见 frontend/src/pages/HomeWorkspace.tsx 顶部 PR-L 注释:
+// PR-K 30 天回测证实 win 32%, 必须把"一键跟单"按钮变灰 + 加 banner + 弹 Modal.
+// 这些断言只检 source 关键字 (不验视觉) — 防止 PR-L 警示在后续重构里被无意删除.
+// ---------------------------------------------------------------------------
+const home = read('frontend/src/pages/HomeWorkspace.tsx');
+assert(
+  'PR-L: HomeWorkspace banner data-testid + Alert',
+  home.includes('data-testid="home-emergency-banner"') &&
+    /Alert[\s\S]{0,300}?type="warning"[\s\S]{0,400}?推荐系统处于评估期/.test(home)
+);
+assert(
+  'PR-L: reco CTA button changed from 一键跟单 to 手动评估',
+  home.includes('手动评估 (暂停一键跟单)') &&
+    home.includes('data-testid="home-reco-cta-paused"') &&
+    !/>\s*一键跟单 ¥/.test(home)
+);
+assert(
+  'PR-L: handleFollowBuy wraps emergency Modal first',
+  home.includes('data-testid="home-emergency-modal-title"') &&
+    home.includes('我已了解, 继续手动买入') &&
+    /Modal\.confirm\(\{[\s\S]{0,1500}?我已了解, 继续手动买入/.test(home)
+);
+assert(
+  'PR-L: doc header records emergency context',
+  home.includes('PR-L emergency stop-loss (2026-06-29)') && home.includes('EMERGENCY_CONF_GATE')
+);
+
+// ---------------------------------------------------------------------------
+// PR-M4 (2026-06-29) — HomeWorkspace 仓位风控 hard caps + UI 整合.
+// 见 backend/src/portfolio/PaperTradingFacade.ts PR-M4 段 (5% 单仓 / 25% 板块).
+// 这些断言只检 source 关键字 — 防止 PR-M4 UI 在后续重构里被无意删除.
+// ---------------------------------------------------------------------------
+assert(
+  'PR-M4: HomeWorkspace 今日市场卡 data-testid',
+  home.includes('data-testid="home-market-card"') &&
+    home.includes('data-testid="home-market-regime"')
+);
+assert(
+  'PR-M4: HomeWorkspace 加载 marketJudgment',
+  home.includes('getMarketJudgmentToday') &&
+    home.includes('setMarketJudgment(') &&
+    home.includes('loadMarketJudgment')
+);
+assert(
+  'PR-M4: HomeWorkspace export buildSizingCapWarn helper',
+  home.includes('export function buildSizingCapWarn') &&
+    home.includes('PR_M4_FRONTEND_SINGLE_POSITION_CAP_PCT = 5')
+);
+assert(
+  'PR-M4: 推荐卡 badges (sizing_cap / signal_type / industry_sentiment)',
+  home.includes('data-testid="home-reco-card-badges"') &&
+    home.includes('data-testid="home-reco-sizing-cap-warn"') &&
+    home.includes('已自动降低到 5% 上限')
+);
+assert(
+  'PR-M4: 推荐卡 前向兼容反转/动量 badge (PR-M2 backend 字段未 merged 也不挂)',
+  home.includes('signal_type') &&
+    home.includes("'reversal'") &&
+    home.includes("'momentum'") &&
+    home.includes('data-testid="home-reco-signal-reversal"') &&
+    home.includes('data-testid="home-reco-signal-momentum"')
+);
+assert(
+  'PR-M4: 推荐卡 前向兼容板块强弱 badge (PR-M3 backend 字段未 merged 也不挂)',
+  home.includes('industry_sentiment') &&
+    home.includes("'strong'") &&
+    home.includes("'weak'") &&
+    home.includes('data-testid="home-reco-industry-strong"') &&
+    home.includes('data-testid="home-reco-industry-weak"')
+);
+assert(
+  'PR-M4: riskCenterHelpers 加 PR-M4 rule_id 中文映射',
+  read('frontend/src/pages/workspace/riskCenterHelpers.ts').includes('sizing_cap_exceeded') &&
+    read('frontend/src/pages/workspace/riskCenterHelpers.ts').includes(
+      'industry_concentration_cap_exceeded'
+    ) &&
+    read('frontend/src/pages/workspace/riskCenterHelpers.ts').includes('单仓 5% 上限') &&
+    read('frontend/src/pages/workspace/riskCenterHelpers.ts').includes('板块 25% 上限')
+);
+
 console.log(`\nResult: ${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

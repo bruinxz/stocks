@@ -91,6 +91,8 @@ import { ShareholderTradeRecord } from '../models/ShareholderTradeRecord';
 import { MarginTradingBalance } from '../models/MarginTradingBalance';
 import { ETFFlow } from '../models/ETFFlow';
 import { ETFCreationRedemption } from '../models/ETFCreationRedemption';
+// PR-M1 (2026-06-29) — 隔夜信号矩阵
+import { OvernightSignal } from '../models/OvernightSignal';
 import { MarketNews } from '../models/MarketNews';
 import { SocialSentimentSnapshot } from '../models/SocialSentimentSnapshot';
 import { MarketHotSearch } from '../models/MarketHotSearch';
@@ -121,6 +123,15 @@ import { EquityCurveGovernorState } from '../models/EquityCurveGovernorState';
 import { StrategyTcaMultiplier } from '../models/StrategyTcaMultiplier';
 // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环 model
 import { UserFeedback } from '../models/UserFeedback';
+// Batch CE-C (2026-06-25) — 实时机会推送审计 model
+import { IntradayOpportunityPush } from '../models/IntradayOpportunityPush';
+// PR-M2 (2026-06-29) — 集合竞价快照 + 盘中 30-min K 线 (A 股最 robust 日内 alpha)
+import { AuctionSnapshot } from '../models/AuctionSnapshot';
+import { IntradayKline30Min } from '../models/IntradayKline30Min';
+// PR-M3 (2026-06-29) — 板块情绪指数日度聚合
+import { IndustrySentimentIndex } from '../models/IndustrySentimentIndex';
+// PR-O5 (2026-06-30) — 题材发酵 5 阶段日度分类
+import { ThemeFermentationPhase } from '../models/ThemeFermentationPhase';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -234,6 +245,7 @@ const sequelize = new Sequelize({
     MarginTradingBalance,
     ETFFlow,
     ETFCreationRedemption,
+    OvernightSignal,
     MarketNews,
     SocialSentimentSnapshot,
     MarketHotSearch,
@@ -264,6 +276,15 @@ const sequelize = new Sequelize({
     StrategyTcaMultiplier,
     // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环
     UserFeedback,
+    // Batch CE-C (2026-06-25) — 实时机会推送审计
+    IntradayOpportunityPush,
+    // PR-M2 (2026-06-29) — 集合竞价快照 + 盘中 30-min K 线
+    AuctionSnapshot,
+    IntradayKline30Min,
+    // PR-M3 (2026-06-29) — 板块情绪指数日度聚合
+    IndustrySentimentIndex,
+    // PR-O5 (2026-06-30) — 题材发酵 5 阶段日度分类
+    ThemeFermentationPhase,
   ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {

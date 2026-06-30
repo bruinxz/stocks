@@ -1,6 +1,24 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Card, Row, Col, Statistic, Tag, Space, Spin, Alert, Button, Descriptions, Empty } from 'antd';
-import { ReloadOutlined, HeartOutlined, DatabaseOutlined, ApiOutlined, CloudOutlined } from '@ant-design/icons';
+import {
+  Card,
+  Row,
+  Col,
+  Statistic,
+  Tag,
+  Space,
+  Spin,
+  Alert,
+  Button,
+  Descriptions,
+  Empty,
+} from 'antd';
+import {
+  ReloadOutlined,
+  HeartOutlined,
+  DatabaseOutlined,
+  ApiOutlined,
+  CloudOutlined,
+} from '@ant-design/icons';
 import api from '../services/api';
 
 interface HealthDetail {
@@ -86,7 +104,7 @@ const HealthMonitor: React.FC = () => {
       <Card
         title={
           <Space>
-            <HeartOutlined style={{ color: '#cf1322' }} />
+            <HeartOutlined style={{ color: '#dc2626' }} />
             <span>系统健康总览</span>
             {health && <Tag color="blue">运行 {formatUptime(health.uptime_seconds)}</Tag>}
           </Space>
@@ -184,14 +202,14 @@ const HealthMonitor: React.FC = () => {
         )}
 
         {health && (
-          <Descriptions
-            size="small"
-            column={2}
-            style={{ marginTop: 16 }}
-            bordered
-          >
+          <Descriptions size="small" column={2} style={{ marginTop: 16 }} bordered>
             {Object.entries(health)
-              .filter(([k]) => !['db', 'redis', 'tradingAgents', 'akshare', 'feishu', 'uptime_seconds'].includes(k))
+              .filter(
+                ([k]) =>
+                  !['db', 'redis', 'tradingAgents', 'akshare', 'feishu', 'uptime_seconds'].includes(
+                    k
+                  )
+              )
               .map(([k, v]) => (
                 <Descriptions.Item key={k} label={k}>
                   {typeof v === 'object' ? JSON.stringify(v) : String(v)}
@@ -211,23 +229,41 @@ const HealthMonitor: React.FC = () => {
                 const order = { red: 0, yellow: 1, unknown: 2, green: 3 };
                 return (order[a.level] ?? 9) - (order[b.level] ?? 9);
               })
-              .map((d) => (
+              .map(d => (
                 <Col xs={12} sm={8} md={6} key={d.key}>
                   <Card
                     size="small"
                     title={<span style={{ fontSize: 13 }}>{d.display_name}</span>}
                     extra={
-                      d.level === 'green' ? <Tag color="green">正常</Tag> :
-                      d.level === 'yellow' ? <Tag color="orange">滞后</Tag> :
-                      d.level === 'red' ? <Tag color="red">严重</Tag> :
-                      <Tag>未知</Tag>
+                      d.level === 'green' ? (
+                        <Tag color="green">正常</Tag>
+                      ) : d.level === 'yellow' ? (
+                        <Tag color="orange">滞后</Tag>
+                      ) : d.level === 'red' ? (
+                        <Tag color="red">严重</Tag>
+                      ) : (
+                        <Tag>未知</Tag>
+                      )
                     }
                   >
-                    <Statistic title="最新数据日" value={d.latest_data_date || '—'} valueStyle={{ fontSize: 13 }} />
+                    <Statistic
+                      title="最新数据日"
+                      value={d.latest_data_date || '—'}
+                      valueStyle={{ fontSize: 13 }}
+                    />
                     <div style={{ marginTop: 6 }}>
                       <Space size={4}>
                         <span style={{ fontSize: 12 }}>滞后</span>
-                        <Tag color={d.lag_trading_days != null && d.lag_trading_days > 3 ? 'red' : d.lag_trading_days != null && d.lag_trading_days > 0 ? 'orange' : 'blue'} style={{ fontSize: 11 }}>
+                        <Tag
+                          color={
+                            d.lag_trading_days != null && d.lag_trading_days > 3
+                              ? 'red'
+                              : d.lag_trading_days != null && d.lag_trading_days > 0
+                                ? 'orange'
+                                : 'blue'
+                          }
+                          style={{ fontSize: 11 }}
+                        >
                           {d.lag_trading_days != null ? `${d.lag_trading_days} 个交易日` : '—'}
                         </Tag>
                       </Space>

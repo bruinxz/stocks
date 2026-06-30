@@ -186,6 +186,77 @@ export interface RealtimeAlertCardPayload {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 10 (2026-06-28) — 冗余 P1-2 协调器:
+// dispatcher 即将推 feishu webhook URL 时, 把 (alert_id → webhook_url + ts) 写入
+// 一个短期 Map (TTL 10s). SystemAdminAlertPusher 在 RiskAlert.afterCreate hook
+// 路径上看到 caller_alert_id 时查表, 若该 alert 的 dispatcher 即将/已发同 URL
+// → skip duplicate card (避免一次 RiskAlert HIGH 触发 dispatcher + pusher 各发
+// 一张相似卡片到同一 OPS 群).
+//
+// 设计要点:
+//   - 进程内 Map, key=alert_id (number), value={url, ts}
+//   - TTL 10s 足够 dispatcher 完成 feishu POST + pusher 收到 fireAndForget;
+//     超过 10s 自然过期, 不影响后续真正独立的告警
+//   - 不引入 Redis (与现有 in-memory dedup Map 同款), 进程重启清空可接受
+//   - 跨进程 (e.g. cluster mode) 不去重 — 这是已知妥协, 真要去重需要走 Redis
+// ---------------------------------------------------------------------------
+
+interface DispatcherFeishuMark {
+  url: string;
+  ts: number;
+}
+
+const DISPATCHER_FEISHU_MARK_TTL_MS = 10_000;
+const dispatcherFeishuMarks = new Map<number, DispatcherFeishuMark>();
+
+/**
+ * Mark 一条 alert 的 dispatcher feishu 即将发送的 webhook URL. SystemAdminAlertPusher
+ * 调 isDispatcherFeishuPendingForAlert 时若 URL 相同 + ts 在 10s 内 → 视为重复, 跳过.
+ */
+export function markDispatcherFeishuForAlert(alertId: number, url: string, nowMs: number = Date.now()): void {
+  if (!Number.isFinite(alertId) || alertId <= 0) return;
+  if (!url) return;
+  dispatcherFeishuMarks.set(alertId, { url, ts: nowMs });
+  // LRU trim: 防内存无限增长 (告警量峰值 200/小时 远低于 1000, 10s TTL 自然过期).
+  if (dispatcherFeishuMarks.size > 1000) {
+    const cutoff = nowMs - DISPATCHER_FEISHU_MARK_TTL_MS;
+    for (const [id, mark] of dispatcherFeishuMarks) {
+      if (mark.ts < cutoff) dispatcherFeishuMarks.delete(id);
+    }
+  }
+}
+
+/**
+ * Pusher 调此方法判定: 给定 alertId + 即将发的 webhook URL, dispatcher 是否已在 10s 内
+ * 标记过同 URL? 是则 caller 应 skip 避免双推.
+ */
+export function isDispatcherFeishuPendingForAlert(
+  alertId: number,
+  url: string,
+  nowMs: number = Date.now()
+): boolean {
+  if (!Number.isFinite(alertId) || alertId <= 0) return false;
+  if (!url) return false;
+  const mark = dispatcherFeishuMarks.get(alertId);
+  if (!mark) return false;
+  if (nowMs - mark.ts > DISPATCHER_FEISHU_MARK_TTL_MS) {
+    dispatcherFeishuMarks.delete(alertId);
+    return false;
+  }
+  return mark.url === url;
+}
+
+/** 测试入口 — 清空 marks (单测之间隔离). */
+export function clearDispatcherFeishuMarksForTests(): void {
+  dispatcherFeishuMarks.clear();
+}
+
+/** 测试入口 — 暴露 snapshot 供断言. */
+export function getDispatcherFeishuMarksSnapshotForTests(): Map<number, DispatcherFeishuMark> {
+  return new Map(dispatcherFeishuMarks);
+}
+
+// ---------------------------------------------------------------------------
 // Pure helpers (exported for unit testing)
 // ---------------------------------------------------------------------------
 
@@ -856,6 +927,16 @@ export class RealtimeAlertDispatcher {
           safeString(userConfig.feishu.webhook_url) ||
           safeString(process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK) ||
           safeString(process.env.FEISHU_BOT_WEBHOOK);
+        // Phase 10 冗余 P1-2: mark URL 让 SystemAdminAlertPusher 在 hook 路径上
+        // 看到同 alertId + 同 URL 时 skip 避免双推 (user webhook == OPS env URL 时).
+        if (
+          !dryRun &&
+          typeof input.alert_id === 'number' &&
+          Number.isFinite(input.alert_id) &&
+          webhookUrl
+        ) {
+          markDispatcherFeishuForAlert(input.alert_id, webhookUrl);
+        }
         const r = await this.dataSource.sendFeishuCard(cardPayload, webhookUrl);
         return adaptChannelResult(REALTIME_ALERT_CHANNELS.FEISHU, r);
       }

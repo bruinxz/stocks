@@ -82,5 +82,5 @@ export function fmtETFMoney(val: number | null | undefined): string {
 /** 净流入颜色: 正=红 (申购热), 负=绿 (赎回), 零/null=灰. A 股配色. */
 export function inflowColor(val: number | null | undefined): string {
   if (val == null || !Number.isFinite(val)) return '#999';
-  return val > 0 ? '#cf1322' : val < 0 ? '#389e0d' : '#666';
+  return val > 0 ? '#dc2626' : val < 0 ? '#16a34a' : '#666';
 }

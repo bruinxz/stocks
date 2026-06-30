@@ -110,8 +110,8 @@ const OverfitMetricsTab: React.FC = () => {
   const promotionAlertType: 'success' | 'warning' | 'error' = vm.promotion.ready
     ? 'success'
     : vm.promotion.level === 'critical'
-    ? 'error'
-    : 'warning';
+      ? 'error'
+      : 'warning';
 
   // ---- Table columns ----
   const columns = useMemo(
@@ -262,7 +262,7 @@ const OverfitMetricsTab: React.FC = () => {
             <Statistic
               title="PASS"
               value={vm.distribution.pass}
-              valueStyle={{ color: '#3f8600' }}
+              valueStyle={{ color: '#16a34a' }}
               prefix={<CheckCircleOutlined />}
             />
           </Col>
@@ -270,7 +270,7 @@ const OverfitMetricsTab: React.FC = () => {
             <Statistic
               title="FAIL"
               value={vm.distribution.fail}
-              valueStyle={{ color: '#cf1322' }}
+              valueStyle={{ color: '#dc2626' }}
               prefix={<ExclamationCircleOutlined />}
             />
           </Col>
@@ -294,10 +294,10 @@ const OverfitMetricsTab: React.FC = () => {
                   vm.distribution.passRate == null
                     ? '#888'
                     : vm.distribution.passRate >= 0.7
-                    ? '#3f8600'
-                    : vm.distribution.passRate >= 0.5
-                    ? '#fa8c16'
-                    : '#cf1322',
+                      ? '#16a34a'
+                      : vm.distribution.passRate >= 0.5
+                        ? '#fa8c16'
+                        : '#dc2626',
               }}
             />
           </Col>

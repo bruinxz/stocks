@@ -176,17 +176,17 @@ const ETFFlowTab: React.FC = () => {
             title="覆盖 ETF"
             value={aggregated.length}
             suffix="只"
-            valueStyle={{ fontSize: 16 }}
+            valueStyle={{ fontSize: 18 }}
           />
           <Statistic
             title={`近 ${days} 日累计净流入`}
             value={fmtMoney(totalNetInflow)}
-            valueStyle={{ fontSize: 16, color: inflowColor(totalNetInflow) }}
+            valueStyle={{ fontSize: 18, color: inflowColor(totalNetInflow) }}
           />
           <Statistic
             title="累计 AUM"
             value={fmtMoney(totalAUM)}
-            valueStyle={{ fontSize: 16, color: '#722ed1' }}
+            valueStyle={{ fontSize: 18, color: '#722ed1' }}
           />
         </Space>
       </Card>
@@ -222,7 +222,7 @@ const ETFFlowTab: React.FC = () => {
                       <div>
                         <div style={{ fontWeight: 500, fontSize: 12 }}>
                           {r.etf_name}{' '}
-                          <Text type="secondary" style={{ fontSize: 11 }}>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
                             {r.etf_code}
                           </Text>
                         </div>
@@ -277,7 +277,7 @@ const ETFFlowTab: React.FC = () => {
                       <div>
                         <div style={{ fontWeight: 500, fontSize: 12 }}>
                           {r.etf_name}{' '}
-                          <Text type="secondary" style={{ fontSize: 11 }}>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
                             {r.etf_code}
                           </Text>
                         </div>
@@ -311,7 +311,7 @@ const ETFFlowTab: React.FC = () => {
         title={
           <Space>
             <span>ETF 资金流明细</span>
-            <Tag color="purple">{data?.data?.length ?? 0} 条</Tag>
+            <Tag color="blue">{data?.data?.length ?? 0} 条</Tag>
             {industry && <Tag color="blue">行业: {industry}</Tag>}
           </Space>
         }
@@ -347,7 +347,7 @@ const ETFFlowTab: React.FC = () => {
                 render: (_v, r) => (
                   <div>
                     <Text strong>{r.etf_name}</Text>{' '}
-                    <Text code style={{ fontSize: 11 }}>
+                    <Text code style={{ fontSize: 12 }}>
                       {r.etf_code}
                     </Text>
                   </div>

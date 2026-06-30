@@ -92,7 +92,7 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
       value: metrics.total_return,
       formattedValue: `${(metrics.total_return * 100).toFixed(2)}%`,
       icon: metrics.total_return >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />,
-      color: metrics.total_return >= 0 ? '#3f8600' : '#cf1322',
+      color: metrics.total_return >= 0 ? '#16a34a' : '#dc2626',
       cardClass:
         metrics.total_return >= 0 ? 'stat-card stat-card-green' : 'stat-card stat-card-red',
       iconClass: metrics.total_return >= 0 ? 'icon-green' : 'icon-red',
@@ -102,7 +102,7 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
       value: metrics.annualized_return,
       formattedValue: `${(metrics.annualized_return * 100).toFixed(2)}%`,
       icon: <RiseOutlined />,
-      color: metrics.annualized_return >= 0 ? '#3f8600' : '#cf1322',
+      color: metrics.annualized_return >= 0 ? '#16a34a' : '#dc2626',
       cardClass: 'stat-card stat-card-blue',
       iconClass: metrics.annualized_return >= 0 ? 'icon-green' : 'icon-red',
     },
@@ -112,22 +112,22 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
       formattedValue: metrics.sharpe_ratio.toFixed(2),
       icon: <DollarOutlined />,
       color:
-        metrics.sharpe_ratio >= 1 ? '#3f8600' : metrics.sharpe_ratio >= 0.5 ? '#faad14' : '#cf1322',
+        metrics.sharpe_ratio >= 1 ? '#16a34a' : metrics.sharpe_ratio >= 0.5 ? '#faad14' : '#dc2626',
       cardClass:
         metrics.sharpe_ratio >= 1 ? 'stat-card stat-card-purple' : 'stat-card stat-card-orange',
       iconClass:
         metrics.sharpe_ratio >= 1
           ? 'icon-green'
           : metrics.sharpe_ratio >= 0.5
-          ? 'icon-orange'
-          : 'icon-red',
+            ? 'icon-orange'
+            : 'icon-red',
     },
     {
       name: '最大回撤',
       value: metrics.max_drawdown,
       formattedValue: `${(metrics.max_drawdown * 100).toFixed(2)}%`,
       icon: <FallOutlined />,
-      color: '#cf1322',
+      color: '#dc2626',
       cardClass: 'stat-card stat-card-red',
       iconClass: 'icon-red',
     },
@@ -136,15 +136,15 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
       value: metrics.win_rate,
       formattedValue: `${(metrics.win_rate * 100).toFixed(1)}%`,
       icon: <ArrowUpOutlined />,
-      color: metrics.win_rate >= 0.6 ? '#3f8600' : metrics.win_rate >= 0.5 ? '#faad14' : '#cf1322',
+      color: metrics.win_rate >= 0.6 ? '#16a34a' : metrics.win_rate >= 0.5 ? '#faad14' : '#dc2626',
       cardClass:
         metrics.win_rate >= 0.6 ? 'stat-card stat-card-cyan' : 'stat-card stat-card-orange',
       iconClass:
         metrics.win_rate >= 0.6
           ? 'icon-green'
           : metrics.win_rate >= 0.5
-          ? 'icon-orange'
-          : 'icon-red',
+            ? 'icon-orange'
+            : 'icon-red',
     },
     {
       name: '盈亏比',
@@ -153,10 +153,10 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
       icon: <DollarOutlined />,
       color:
         metrics.profit_loss_ratio >= 1.5
-          ? '#3f8600'
+          ? '#16a34a'
           : metrics.profit_loss_ratio >= 1
-          ? '#faad14'
-          : '#cf1322',
+            ? '#faad14'
+            : '#dc2626',
       cardClass:
         metrics.profit_loss_ratio >= 1.5
           ? 'stat-card stat-card-green'
@@ -165,8 +165,8 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
         metrics.profit_loss_ratio >= 1.5
           ? 'icon-green'
           : metrics.profit_loss_ratio >= 1
-          ? 'icon-orange'
-          : 'icon-red',
+            ? 'icon-orange'
+            : 'icon-red',
     },
   ];
 
@@ -209,7 +209,7 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
       dataIndex: 'profit',
       key: 'profit',
       render: (profit: number) => (
-        <span style={{ color: profit >= 0 ? '#3f8600' : '#cf1322', fontWeight: 'bold' }}>
+        <span style={{ color: profit >= 0 ? '#16a34a' : '#dc2626', fontWeight: 'bold' }}>
           ¥{profit.toFixed(2)}
         </span>
       ),
@@ -358,7 +358,7 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
                       <strong>总计</strong>
                     </Table.Summary.Cell>
                     <Table.Summary.Cell index={5}>
-                      <strong style={{ color: metrics.total_return >= 0 ? '#3f8600' : '#cf1322' }}>
+                      <strong style={{ color: metrics.total_return >= 0 ? '#16a34a' : '#dc2626' }}>
                         ¥
                         {trades
                           .reduce((sum: number, trade: any) => sum + trade.profit, 0)
@@ -451,12 +451,12 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
                   {backtestInfo.strategyType === 'moving_average_crossover'
                     ? '均线交叉'
                     : backtestInfo.strategyType === 'rsi'
-                    ? 'RSI策略'
-                    : backtestInfo.strategyType === 'macd'
-                    ? 'MACD策略'
-                    : backtestInfo.strategyType === 'bollinger_bands'
-                    ? '布林带策略'
-                    : backtestInfo.strategyType}
+                      ? 'RSI策略'
+                      : backtestInfo.strategyType === 'macd'
+                        ? 'MACD策略'
+                        : backtestInfo.strategyType === 'bollinger_bands'
+                          ? '布林带策略'
+                          : backtestInfo.strategyType}
                 </Descriptions.Item>
                 <Descriptions.Item label="初始资金">
                   ¥{backtestInfo.initial_capital.toLocaleString()}

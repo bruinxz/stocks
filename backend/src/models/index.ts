@@ -87,6 +87,8 @@ export * from './ShareholderTradeRecord';
 export * from './MarginTradingBalance';
 export * from './ETFFlow';
 export * from './ETFCreationRedemption';
+// PR-M1 (2026-06-29) — 隔夜信号矩阵 (A50/HK/Nasdaq/DXY/VIX)
+export * from './OvernightSignal';
 export * from './MarketNews';
 export * from './SocialSentimentSnapshot';
 export * from './MarketHotSearch';
@@ -105,3 +107,10 @@ export * from './MetaLabelDecision';
 export * from './PortfolioConstructionResult';
 // Sprint 3 资金曲线 governor 状态
 export * from './EquityCurveGovernorState';
+// PR-M2 (2026-06-29) — 集合竞价快照 + 盘中 30-min K 线
+export * from './AuctionSnapshot';
+export * from './IntradayKline30Min';
+// PR-M3 (2026-06-29) — 板块情绪指数日度聚合
+export * from './IndustrySentimentIndex';
+// PR-O5 (2026-06-30) — 题材发酵 5 阶段日度分类
+export * from './ThemeFermentationPhase';

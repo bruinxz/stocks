@@ -220,7 +220,7 @@ const PolicyNewsTab: React.FC = () => {
         title={
           <Space>
             <span>政策要闻时间线</span>
-            <Tag color="purple">{visibleRows.length} 条</Tag>
+            <Tag color="blue">{visibleRows.length} 条</Tag>
             {topicFilter && (
               <Tag color={TOPIC_COLOR[topicFilter]}>{POLICY_TOPIC_LABELS[topicFilter]}</Tag>
             )}
@@ -255,14 +255,14 @@ const PolicyNewsTab: React.FC = () => {
                     n.topic === 'monetary'
                       ? '#faad14'
                       : n.topic === 'regulatory'
-                      ? '#cf1322'
-                      : n.topic === 'fiscal'
-                      ? '#fa8c16'
-                      : n.topic === 'capital_market'
-                      ? '#1890ff'
-                      : n.topic === 'industry'
-                      ? '#722ed1'
-                      : '#52c41a'
+                        ? '#dc2626'
+                        : n.topic === 'fiscal'
+                          ? '#fa8c16'
+                          : n.topic === 'capital_market'
+                            ? '#1890ff'
+                            : n.topic === 'industry'
+                              ? '#722ed1'
+                              : '#16a34a'
                   }`,
                   marginLeft: -18,
                   paddingLeft: 14,
@@ -272,7 +272,7 @@ const PolicyNewsTab: React.FC = () => {
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                  <Text strong style={{ fontSize: 13 }} ellipsis={{ tooltip: n.title }}>
+                  <Text strong style={{ fontSize: 14 }} ellipsis={{ tooltip: n.title }}>
                     {n.url ? (
                       <a href={n.url} target="_blank" rel="noopener noreferrer">
                         {n.title}
@@ -292,7 +292,7 @@ const PolicyNewsTab: React.FC = () => {
                     <Tag color={sourceColor(n.source)}>{n.source}</Tag>
                   </Space>
                 </div>
-                <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>
+                <div style={{ fontSize: 12, color: '#999', marginTop: 2 }}>
                   {formatNewsTime(n.publish_time)}
                   {n.category && <Tag style={{ marginLeft: 4 }}>{n.category}</Tag>}
                 </div>

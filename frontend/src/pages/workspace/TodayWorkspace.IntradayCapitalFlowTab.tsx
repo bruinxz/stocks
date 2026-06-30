@@ -65,11 +65,11 @@ function toHHMM(iso: string): string {
 /** 红 (流入) → 绿 (流出) 渐变. 与中股惯例一致 (红涨绿跌). */
 function inflowColor(yi: number | null): string {
   if (yi === null) return '#999';
-  if (yi >= 5) return '#cf1322'; // 强流入
-  if (yi >= 1) return '#f5222d';
+  if (yi >= 5) return '#dc2626'; // 强流入
+  if (yi >= 1) return '#dc2626';
   if (yi >= 0) return '#fa8c16';
   if (yi >= -1) return '#7cb305';
-  if (yi >= -5) return '#52c41a';
+  if (yi >= -5) return '#16a34a';
   return '#237804'; // 强流出
 }
 
@@ -183,7 +183,7 @@ const IntradayCapitalFlowTab: React.FC = () => {
             return `${ind.industry_name} ${latestYi > 0 ? '+' : ''}${latestYi.toFixed(1)}亿`;
           },
           color,
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: strength >= 5 ? 'bold' : 'normal',
         },
         z: strength >= 5 ? 3 : strength >= 1 ? 2 : 1, // 强信号画在最上面
@@ -203,7 +203,7 @@ const IntradayCapitalFlowTab: React.FC = () => {
             .slice(0, 10)
             .map(p => {
               const yi = p.value as number;
-              const color = yi >= 0 ? '#cf1322' : '#52c41a';
+              const color = yi >= 0 ? '#dc2626' : '#16a34a';
               return `<span style="color:${color};">●</span> ${p.seriesName}: <b style="color:${color}">${yi >= 0 ? '+' : ''}${yi.toFixed(2)}亿</b>`;
             })
             .join('<br/>');
@@ -214,13 +214,13 @@ const IntradayCapitalFlowTab: React.FC = () => {
         type: 'category',
         data: xAxisData,
         boundaryGap: false,
-        axisLabel: { fontSize: 11 },
+        axisLabel: { fontSize: 12 },
       },
       yAxis: {
         type: 'value',
         name: '累计净流入 (亿元)',
-        nameTextStyle: { fontSize: 11 },
-        axisLabel: { fontSize: 11 },
+        nameTextStyle: { fontSize: 12 },
+        axisLabel: { fontSize: 12 },
         splitLine: { lineStyle: { color: '#f0f0f0' } },
       },
       series,
@@ -306,7 +306,7 @@ const IntradayCapitalFlowTab: React.FC = () => {
           </Space>
         }
       >
-        {error && <div style={{ color: '#cf1322', padding: 8 }}>{error}</div>}
+        {error && <div style={{ color: '#dc2626', padding: 8 }}>{error}</div>}
         <Spin spinning={loading} tip="拉取盘中资金流...">
           {!data || data.industries.length === 0 ? (
             <Empty
@@ -356,7 +356,7 @@ const IntradayCapitalFlowTab: React.FC = () => {
                         v === null ? (
                           '-'
                         ) : (
-                          <Text strong style={{ color: v >= 0 ? '#cf1322' : '#52c41a' }}>
+                          <Text strong style={{ color: v >= 0 ? '#dc2626' : '#16a34a' }}>
                             {v > 0 ? '+' : ''}
                             {v.toFixed(2)}
                           </Text>
@@ -371,7 +371,7 @@ const IntradayCapitalFlowTab: React.FC = () => {
                         v === null ? (
                           '-'
                         ) : (
-                          <Text style={{ color: v >= 0 ? '#cf1322' : '#52c41a', fontSize: 12 }}>
+                          <Text style={{ color: v >= 0 ? '#dc2626' : '#16a34a', fontSize: 12 }}>
                             {v > 0 ? '+' : ''}
                             {v.toFixed(2)}%
                           </Text>

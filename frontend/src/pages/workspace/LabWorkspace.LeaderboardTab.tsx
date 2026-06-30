@@ -97,7 +97,7 @@ const LeaderboardTab: React.FC<{
   const pctRender = (v: any, redIfNeg = true) => {
     const n = num(v);
     if (n == null) return <Text type="secondary">—</Text>;
-    const color = redIfNeg ? (n >= 0 ? '#cf1322' : '#3f8600') : '#1677ff';
+    const color = redIfNeg ? (n >= 0 ? '#dc2626' : '#16a34a') : '#1677ff';
     return (
       <Text style={{ color, fontWeight: 500 }}>
         {n >= 0 ? '+' : ''}
@@ -109,7 +109,7 @@ const LeaderboardTab: React.FC<{
   const sharpeRender = (v: any) => {
     const n = num(v);
     if (n == null) return <Text type="secondary">—</Text>;
-    const color = n >= 1.5 ? '#cf1322' : n >= 0.5 ? '#fa8c16' : n >= 0 ? '#1677ff' : '#3f8600';
+    const color = n >= 1.5 ? '#dc2626' : n >= 0.5 ? '#fa8c16' : n >= 0 ? '#1677ff' : '#16a34a';
     return <Text style={{ color, fontWeight: 500 }}>{n.toFixed(2)}</Text>;
   };
 
@@ -155,7 +155,7 @@ const LeaderboardTab: React.FC<{
         <div>beta: {attr.beta == null ? '—' : attr.beta.toFixed(2)}</div>
         <div>样本数: {attr.sample_count}</div>
         {attr.period_start && attr.period_end && (
-          <div style={{ color: '#999', fontSize: 11 }}>
+          <div style={{ color: '#999', fontSize: 12 }}>
             区间: {attr.period_start} ~ {attr.period_end}
           </div>
         )}
@@ -169,7 +169,7 @@ const LeaderboardTab: React.FC<{
       );
     }
     // A 股语义: 红涨绿跌 — 跑赢 = 红
-    const color = excess >= 0 ? '#cf1322' : '#3f8600';
+    const color = excess >= 0 ? '#dc2626' : '#16a34a';
     return (
       <Tooltip title={tooltipContent}>
         <Text style={{ color, fontWeight: 500 }}>
@@ -186,7 +186,7 @@ const LeaderboardTab: React.FC<{
         <Space>
           <TrophyOutlined style={{ color: '#fa8c16' }} />
           <span>策略排行榜</span>
-          <Tag color="purple">{items.length} 个策略</Tag>
+          <Tag color="blue">{items.length} 个策略</Tag>
         </Space>
       }
       extra={
@@ -218,7 +218,7 @@ const LeaderboardTab: React.FC<{
               key: 'rank',
               width: 40,
               render: (_: any, __: any, idx: number) => {
-                const colors = ['#cf1322', '#fa8c16', '#fadb14', '#1677ff', '#1677ff'];
+                const colors = ['#dc2626', '#fa8c16', '#fadb14', '#1677ff', '#1677ff'];
                 const color = idx < 5 ? colors[Math.min(idx, 4)] : '#999';
                 return (
                   <Text strong style={{ color, fontSize: 14 }}>
@@ -234,7 +234,7 @@ const LeaderboardTab: React.FC<{
               render: (k: string) => (
                 <div>
                   <Text strong>{nameMap.get(k) || k}</Text>
-                  <div style={{ fontSize: 10, color: '#999' }}>{k}</div>
+                  <div style={{ fontSize: 12, color: '#999' }}>{k}</div>
                 </div>
               ),
             },
@@ -298,7 +298,7 @@ const LeaderboardTab: React.FC<{
                 const n = num(v);
                 if (n == null) return <Text type="secondary">—</Text>;
                 const color =
-                  Math.abs(n) > 20 ? '#cf1322' : Math.abs(n) > 10 ? '#fa8c16' : '#3f8600';
+                  Math.abs(n) > 20 ? '#dc2626' : Math.abs(n) > 10 ? '#fa8c16' : '#16a34a';
                 return <Text style={{ color, fontWeight: 500 }}>{n.toFixed(2)}%</Text>;
               },
             },
@@ -312,7 +312,7 @@ const LeaderboardTab: React.FC<{
                 if (n == null) return <Text type="secondary">—</Text>;
                 // win_rate 可能是 0-1 或 0-100, 兼容
                 const pct = n > 1 ? n : n * 100;
-                const color = pct >= 60 ? '#cf1322' : pct >= 50 ? '#fa8c16' : '#3f8600';
+                const color = pct >= 60 ? '#dc2626' : pct >= 50 ? '#fa8c16' : '#16a34a';
                 return <Text style={{ color }}>{pct.toFixed(1)}%</Text>;
               },
             },
@@ -334,8 +334,8 @@ const LeaderboardTab: React.FC<{
                 const label = d.toISOString().slice(0, 10);
                 return (
                   <Tooltip title={v}>
-                    <Text style={{ fontSize: 11 }}>{label}</Text>
-                    <div style={{ fontSize: 10, color: '#999' }}>
+                    <Text style={{ fontSize: 12 }}>{label}</Text>
+                    <div style={{ fontSize: 12, color: '#999' }}>
                       {days === 0 ? '今日' : `${days}天前`}
                     </div>
                   </Tooltip>
@@ -345,7 +345,7 @@ const LeaderboardTab: React.FC<{
           ]}
         />
       )}
-      <div style={{ marginTop: 12, fontSize: 11, color: '#999' }}>
+      <div style={{ marginTop: 12, fontSize: 12, color: '#999' }}>
         说明：每个策略取最新一次回测结果。夏普&gt;1.5 = 优秀，&gt;0.5 = 可用，&lt;0 =
         亏损。回撤&gt;20% 高风险。
       </div>

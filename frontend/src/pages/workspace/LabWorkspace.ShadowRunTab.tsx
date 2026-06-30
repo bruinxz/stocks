@@ -93,8 +93,8 @@ const ShadowRunTab: React.FC = () => {
   const promotionAlertType: 'success' | 'warning' | 'error' = vm.promotion.ready
     ? 'success'
     : vm.promotion.level === 'critical'
-    ? 'error'
-    : 'warning';
+      ? 'error'
+      : 'warning';
 
   const renderHealthTag = (level: HealthLevel) => (
     <Tag color={HEALTH_LEVEL_COLOR[level]}>{HEALTH_LEVEL_LABEL[level]}</Tag>
@@ -132,10 +132,10 @@ const ShadowRunTab: React.FC = () => {
           style={{
             color:
               v >= ERROR_RATE_CRITICAL
-                ? '#cf1322'
+                ? '#dc2626'
                 : v >= ERROR_RATE_DEGRADED
-                ? '#d48806'
-                : '#3f8600',
+                  ? '#d48806'
+                  : '#16a34a',
           }}
         >
           {formatPercent(v)}
@@ -152,10 +152,10 @@ const ShadowRunTab: React.FC = () => {
           style={{
             color:
               v < CONFIDENCE_DEGRADED_MIN
-                ? '#cf1322'
+                ? '#dc2626'
                 : v < CONFIDENCE_HEALTHY_MIN
-                ? '#d48806'
-                : '#3f8600',
+                  ? '#d48806'
+                  : '#16a34a',
           }}
         >
           {formatPercent(v)}
@@ -172,10 +172,10 @@ const ShadowRunTab: React.FC = () => {
           style={{
             color:
               v > DATA_MISSING_DEGRADED_MAX
-                ? '#cf1322'
+                ? '#dc2626'
                 : v > DATA_MISSING_HEALTHY_MAX
-                ? '#d48806'
-                : '#3f8600',
+                  ? '#d48806'
+                  : '#16a34a',
           }}
         >
           {Number.isFinite(v) ? v.toFixed(2) : '—'}
@@ -192,7 +192,7 @@ const ShadowRunTab: React.FC = () => {
           <Space>
             <SwapOutlined />
             <Text strong>多维引擎 Shadow vs 生产对比</Text>
-            <Tag color="geekblue">US-051 / FE-012</Tag>
+            {/* Phase 3 (2026-06-27): US-XXX 装饰 Tag 已退役. */}
           </Space>
         }
         extra={
@@ -266,10 +266,10 @@ const ShadowRunTab: React.FC = () => {
                   valueStyle={{
                     color:
                       vm.consistencyLevel === 'healthy'
-                        ? '#3f8600'
+                        ? '#16a34a'
                         : vm.consistencyLevel === 'degraded'
-                        ? '#d48806'
-                        : '#cf1322',
+                          ? '#d48806'
+                          : '#dc2626',
                   }}
                   suffix={renderHealthTag(vm.consistencyLevel)}
                 />
@@ -319,7 +319,7 @@ const ShadowRunTab: React.FC = () => {
               title={
                 <Space>
                   <Text strong>Analyzer 健康度</Text>
-                  <Text type="secondary" style={{ fontSize: 11 }}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
                     起始: {vm.since || '—'} · 共 {vm.analyzers.length} 个 analyzer
                   </Text>
                 </Space>
@@ -370,8 +370,8 @@ const ShadowRunTab: React.FC = () => {
                         vm.forwardReturn.mean_pct === null
                           ? undefined
                           : vm.forwardReturn.mean_pct >= 0
-                          ? '#cf1322'
-                          : '#0f8f6b',
+                            ? '#dc2626'
+                            : '#0f8f6b',
                     }}
                   />
                 </Col>

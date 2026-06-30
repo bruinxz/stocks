@@ -23,6 +23,7 @@ import { quantStrategyFeedbackService } from '../quant/engine/internal/QuantStra
 import { quantStrategyParamVersionService } from '../quant/engine/internal/QuantStrategyParamVersionService';
 import { quantDataService } from '../quant/engine/internal/QuantDataService';
 import { realtimeQuoteService } from '../data/services/RealtimeQuoteService';
+import { intradayUniverseService } from './IntradayUniverseService';
 import { aiInvestmentSignalService } from './AIInvestmentSignalService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
 import { paperTradingAutomationService } from '../portfolio/internal/PaperTradingAutomationService';
@@ -933,10 +934,13 @@ class SchedulerService {
             type: 'daily_update',
             date: today,
             forceUpdate: Boolean(parameters.force_update || parameters.forceUpdate || isManual),
+            // PR-N (2026-06-29): default 300 → 2000, cap 2000 → 6000 — 全 A 股
+            // 5500 票一次覆盖. 老 cap 让 sh.688 / sz.001 / sz.301 板块新股
+            // 永远轮不到 sync, 是 PR-J 11/11 存储模块 0 推荐的数据层根因.
             max_stocks: this.toPositiveInt(
               parameters.max_stocks || parameters.maxStocks,
-              300,
-              2000
+              2000,
+              6000
             ),
             execution_log_id: executionLog?.id,
             scheduled_task_id: task.id,
@@ -1036,38 +1040,86 @@ class SchedulerService {
           : Array.isArray(parameters.stock_symbols)
           ? parameters.stock_symbols
           : undefined;
-        // Batch AR (2026-06-21): default 600 → 5000 to cover 全 A 股 universe.
-        // Audit 2026-06-21 found only 807 distinct symbols in realtime_quotes
-        // over 7d, because limit defaulted to 600 + getStocks itself capped to
-        // 1000. Now both caps are 5000 so a single cron tick covers ~5500
-        // listed names (with ST/退 filters in QuantDataService.getStocks).
-        const limit = this.toPositiveInt(
-          parameters.limit || parameters.quote_sync_limit || parameters.max_stocks,
-          5000,
-          5000
-        );
+        // CE-A (2026-06-25): 新 universe_source='intraday' 分支 — 拿 IntradayUniverseService
+        // 解析 ≤500 票活跃 universe 替代全市场 5500. 老 universe='market' / limit=5000
+        // 路径完全保留, 见下面 else 分支. 触发器: cron parameters.universe_source='intraday'.
+        const universeSource = String(parameters.universe_source || '').toLowerCase();
         const source = parameters.source || parameters.data_source || 'auto';
-        const universe = parameters.universe === 'favorites' ? 'favorites' : 'market';
-        const batchSize = this.toPositiveInt(
-          parameters.batch_size || parameters.batchSize,
-          300,
-          500
-        );
-        const stocks = rawSymbols?.length
-          ? []
-          : await quantDataService.getStocks({
-              universe,
-              user_id: parameters.user_id,
-              limit,
+        let targetSymbols: string[];
+        let universe: string;
+        let batchSize: number;
+        if (rawSymbols?.length) {
+          // 手工指定 symbols — 优先级最高, 跳过 universe 解析.
+          targetSymbols = rawSymbols
+            .map((symbol: any) => String(symbol || '').trim())
+            .filter(Boolean);
+          universe = 'manual';
+          batchSize = this.toPositiveInt(
+            parameters.batch_size || parameters.batchSize,
+            300,
+            500
+          );
+        } else if (universeSource === 'intraday') {
+          // CE-A 新路径: intraday universe (持仓 + 涨跌幅榜 + 涨停 + 成交额)
+          const minSize = this.toPositiveInt(parameters.min_size, 200, 1000);
+          const maxSize = this.toPositiveInt(
+            parameters.limit || parameters.max_size,
+            500,
+            1000
+          );
+          batchSize = this.toPositiveInt(
+            parameters.batch_size || parameters.batchSize,
+            100,
+            500
+          );
+          try {
+            targetSymbols = await intradayUniverseService.resolveUniverse({
+              min_size: minSize,
+              max_size: maxSize,
             });
-        let targetSymbols: string[] = rawSymbols?.length
-          ? rawSymbols.map((symbol: any) => String(symbol || '').trim()).filter(Boolean)
-          : stocks.map(stock => stock.symbol);
+          } catch (err: any) {
+            logger.warn(
+              `[realtime-quote-sync] intraday universe 解析失败, fallback empty: ${
+                err?.message || err
+              }`
+            );
+            targetSymbols = [];
+          }
+          universe = 'intraday';
+          logger.info(
+            `[realtime-quote-sync] universe_source=intraday resolved ${targetSymbols.length} symbols (min=${minSize}, max=${maxSize})`
+          );
+        } else {
+          // 老路径: universe='market'|'favorites', limit 默认 5000 全 A 股扫.
+          const limit = this.toPositiveInt(
+            parameters.limit || parameters.quote_sync_limit || parameters.max_stocks,
+            5000,
+            5000
+          );
+          universe = parameters.universe === 'favorites' ? 'favorites' : 'market';
+          batchSize = this.toPositiveInt(
+            parameters.batch_size || parameters.batchSize,
+            300,
+            500
+          );
+          const stocks = await quantDataService.getStocks({
+            universe: universe as 'market' | 'favorites',
+            user_id: parameters.user_id,
+            limit,
+          });
+          targetSymbols = stocks.map(stock => stock.symbol);
+        }
 
         // 2026-06-21 数据 sync 修复: 默认 universe 始终覆盖 当前持仓 + 全部用户的
         // FavoriteStock + 6 只目标 / 候选票, 确保 AI 引擎下游不会因为单股缺行情失败.
         // parameters.skip_extra_universe=true 时跳过 (例如 ops 手工只刷指定标的).
-        if (!rawSymbols?.length && parameters.skip_extra_universe !== true) {
+        // CE-A (2026-06-25): universe_source='intraday' 时同样跳过 — 内部已覆盖
+        // 持仓 + 自选 + 涨跌幅榜 + 涨停 + 成交额, 不重复 enrich (避免破坏 max=500 约束).
+        if (
+          !rawSymbols?.length &&
+          parameters.skip_extra_universe !== true &&
+          universeSource !== 'intraday'
+        ) {
           try {
             // eslint-disable-next-line @typescript-eslint/no-var-requires
             const { PaperTradingPosition } = require('../models/PaperTradingPosition');
@@ -1487,6 +1539,12 @@ class SchedulerService {
               ? Boolean(parameters.notifyToFeishuBot)
               : true,
           params_by_strategy: parameters.params_by_strategy || parameters.paramsByStrategy,
+          // PR-H (2026-06-29) — 推荐时机标签. cron parameters.timing_tag 透传到 archive 写入
+          // AIInvestmentSignal.metadata.timing_tag → 前端推荐卡 badge. 5 个值:
+          // opening_rush(9:25早盘抢) / afternoon_kick(12:55午后攻) / closing_grab(14:30尾盘埋) /
+          // overnight(15:30隔夜潜伏, 默认) / intraday_anomaly(盘中异动 detector 走另一路).
+          // 未传 → 沿用默认 'overnight' (符合历史 cron 行为, 兼容已部署 row).
+          timing_tag: parameters.timing_tag || parameters.timingTag,
         });
 
         const agentSubmitted = Array.isArray(result.agent_analysis?.submitted)
@@ -5894,6 +5952,49 @@ class SchedulerService {
             }`
           );
         }
+      } else if (task.type === 'OVERNIGHT_SIGNAL_SYNC') {
+        // PR-M1 (2026-06-29) — 隔夜信号矩阵 sync cron 入口.
+        // 北京时间 21-23 (隔夜美股开盘) + 0-9 (隔夜+早盘前) 每 15min 跑一次,
+        // 5 个 source (A50 / 港股恒指 / 纳指 / DXY / VIX) fail-OPEN.
+        // 给早盘 QuantRecommendationService.loadOvernightContext 消费判定大盘方向.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          overnightSignalSyncService,
+        } = require('./OvernightSignalSyncService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        try {
+          const r = await overnightSignalSyncService.syncAllSources();
+          const succeeded = !r.error;
+          await this.safeUpdateExecutionLog(executionLog, {
+            total_items: 5, // 期望 source 数
+            completed_items: Number(r.fetched) || 0,
+            failed_items: succeeded ? 5 - (Number(r.fetched) || 0) : 5,
+            status: 'COMPLETED',
+            completed_at: new Date(),
+            error_message: r.error || null,
+            result_summary: {
+              scenario: 'overnight_signal_sync',
+              fetched: r.fetched,
+              upserted: r.upserted,
+              per_source: r.per_source,
+              collected_at: r.collected_at,
+              error: r.error || null,
+            },
+          });
+          if (succeeded) {
+            logger.info(
+              `[OVERNIGHT_SIGNAL_SYNC] fetched=${r.fetched}/5 upserted=${r.upserted} ` +
+                `sources=[${r.per_source
+                  .filter((s: any) => s.ok)
+                  .map((s: any) => `${s.signal_type}:${s.change_pct ?? '-'}%`)
+                  .join(', ')}]`
+            );
+          } else {
+            logger.warn(`[OVERNIGHT_SIGNAL_SYNC] FAIL ${r.error || 'unknown_error'}`);
+          }
+        } catch (e: any) {
+          logger.warn(`[OVERNIGHT_SIGNAL_SYNC] outage: ${e?.message ?? e}`);
+        }
       } else if (task.type === 'INDUSTRY_FLOW_INTRADAY_SYNC') {
         // BK-2 (2026-06-24): 盘中 10min 行业资金流时序快照. fail-OPEN: 单点漏没关系.
         /* eslint-disable @typescript-eslint/no-var-requires */
@@ -6230,6 +6331,545 @@ class SchedulerService {
               )}`
           );
         }
+      } else if (task.type === 'ANNOUNCEMENT_NLP') {
+        // PR-A (2026-06-29): 公告 NLP 全市场扫描 — sync-announcements.ts CLI 之前
+        // 一直没注册成 cron, announcement_summaries 表从 2026-06-09 后 0 更新.
+        // 每日 17:00 全市场 (--all --with-ai=false 走启发式, 不调远端 AI 省钱).
+        // 写 announcement_summaries.priority / event_type. critical 级走
+        // CriticalAnnouncementPushService 推 OPS 飞书群. 周末也跑.
+        // fail-OPEN: spawn 失败仅写 failed_items=1 + warn 不抛, 与 ANALYST_FORECAST_SYNC /
+        // SHAREHOLDER_COUNT_SYNC 同款 async runScriptAsync 防 event loop 阻塞.
+        const pathANN = require('path');
+        // prod = dist/scripts/sync-announcements.js; ts-node dev 仍需走 .ts.
+        // 与 FACTOR_SCORE_COMPUTE / ANALYST_FORECAST_SYNC 同款"prod 优先 .js"约定.
+        const compiledANN = pathANN.resolve(
+          __dirname,
+          '..',
+          'scripts',
+          'sync-announcements.js'
+        );
+        const argsANN: string[] = [compiledANN];
+        // parameters override; 默认全市场启发式
+        if (parameters.symbol) argsANN.push(`--symbol=${parameters.symbol}`);
+        if (parameters.date) argsANN.push(`--date=${parameters.date}`);
+        if (parameters.backfill) argsANN.push(`--backfill=${parameters.backfill}`);
+        if (parameters.with_ai === true) argsANN.push('--with-ai');
+        if (parameters.force === true) argsANN.push('--force');
+        if (parameters.dry_run === true) argsANN.push('--dry-run');
+        if (Number.isFinite(Number(parameters.interval_ms))) {
+          argsANN.push(`--interval-ms=${Number(parameters.interval_ms)}`);
+        }
+        const t0ANN = Date.now();
+        const rANN = await this.runScriptAsync('/usr/bin/node', argsANN, {
+          cwd: pathANN.resolve(__dirname, '..', '..'),
+          timeoutMs: 60 * 60_000, // 1h
+        });
+        const elapsedANN = ((Date.now() - t0ANN) / 1000).toFixed(1);
+        const okANN = rANN.code === 0;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: 1,
+          completed_items: okANN ? 1 : 0,
+          failed_items: okANN ? 0 : 1,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: okANN ? null : (rANN.stderr || '').substring(0, 500),
+          result_summary: {
+            scenario: 'announcement_nlp_sync',
+            elapsed_seconds: Number(elapsedANN),
+            status: okANN ? 'SUCCESS' : 'FAILED',
+            with_ai: parameters.with_ai === true,
+          },
+        });
+        if (okANN) {
+          logger.info(`[ANNOUNCEMENT_NLP] done in ${elapsedANN}s`);
+        } else {
+          logger.warn(
+            `[ANNOUNCEMENT_NLP] failed code=${rANN.code} after ${elapsedANN}s: ${(
+              rANN.stderr || ''
+            ).substring(0, 200)}`
+          );
+        }
+      } else if (task.type === 'KOL_AGGREGATE') {
+        // PR-A (2026-06-29): KOL 观点聚合 — sync-kol-opinions.ts CLI 之前从未被
+        // cron 调用过, kol_opinions 整张空表. 每日 18:30 跑 --favorites
+        // --lookback-days=14 把用户收藏股票的 KOL 观点 (券商研报 + 个股新闻 +
+        // 热门概念代理) 聚合落表, 给 NewsAnalyzer + BullishEventDetector 消费.
+        // 周末也跑 — 研报 / 媒体 周末仍有内容.
+        // fail-OPEN: spawn 失败仅 failed_items=1 + warn, runScriptAsync 防阻塞.
+        const pathKOL = require('path');
+        const compiledKOL = pathKOL.resolve(
+          __dirname,
+          '..',
+          'scripts',
+          'sync-kol-opinions.js'
+        );
+        const argsKOL: string[] = [compiledKOL];
+        // 模式: favorites 默认 (parameters 可 override 为 --all / --stocks=...)
+        if (parameters.stock) {
+          argsKOL.push(`--stock=${parameters.stock}`);
+        } else if (Array.isArray(parameters.stocks) && parameters.stocks.length > 0) {
+          argsKOL.push(`--stocks=${parameters.stocks.join(',')}`);
+        } else if (parameters.all === true) {
+          argsKOL.push('--all');
+        } else {
+          // 默认 favorites (与 ensureDefaultTasks 一致)
+          argsKOL.push('--favorites');
+        }
+        const lookbackKOL = Number.isFinite(Number(parameters.lookback_days))
+          ? Number(parameters.lookback_days)
+          : 14;
+        argsKOL.push(`--lookback-days=${lookbackKOL}`);
+        if (Number.isFinite(Number(parameters.limit))) {
+          argsKOL.push(`--limit=${Number(parameters.limit)}`);
+        }
+        if (Number.isFinite(Number(parameters.interval_ms))) {
+          argsKOL.push(`--interval-ms=${Number(parameters.interval_ms)}`);
+        }
+        if (parameters.dry_run === true) argsKOL.push('--dry-run');
+        const t0KOL = Date.now();
+        const rKOL = await this.runScriptAsync('/usr/bin/node', argsKOL, {
+          cwd: pathKOL.resolve(__dirname, '..', '..'),
+          timeoutMs: 2 * 60 * 60_000, // 2h
+        });
+        const elapsedKOL = ((Date.now() - t0KOL) / 1000).toFixed(1);
+        const okKOL = rKOL.code === 0;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: 1,
+          completed_items: okKOL ? 1 : 0,
+          failed_items: okKOL ? 0 : 1,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: okKOL ? null : (rKOL.stderr || '').substring(0, 500),
+          result_summary: {
+            scenario: 'kol_aggregate',
+            elapsed_seconds: Number(elapsedKOL),
+            status: okKOL ? 'SUCCESS' : 'FAILED',
+            lookback_days: lookbackKOL,
+          },
+        });
+        if (okKOL) {
+          logger.info(`[KOL_AGGREGATE] done in ${elapsedKOL}s`);
+        } else {
+          logger.warn(
+            `[KOL_AGGREGATE] failed code=${rKOL.code} after ${elapsedKOL}s: ${(
+              rKOL.stderr || ''
+            ).substring(0, 200)}`
+          );
+        }
+      } else if (task.type === 'INTRADAY_OPPORTUNITY_SCAN') {
+        // CE-B (2026-06-26) — 盘中实时机会规则引擎.
+        // 拉 IntradayUniverseService.resolveUniverse() → 10 类 detector → analyzeStock
+        // 二次审核 → intradayOpportunityPusher.push. parameters 支持:
+        //   - min_final_score (默认 65)
+        //   - target_groups (默认 ['business'])
+        //   - rules (subset 限定; 默认全 10 类)
+        //   - dry_run
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          intradayOpportunityWatcher,
+        } = require('./IntradayOpportunityWatcher');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const minFinal =
+          Number.isFinite(Number(parameters.min_final_score)) &&
+          Number(parameters.min_final_score) >= 0
+            ? Number(parameters.min_final_score)
+            : 65;
+        const targetGroups = Array.isArray(parameters.target_groups)
+          ? parameters.target_groups
+          : ['business'];
+        const rules = Array.isArray(parameters.rules) ? parameters.rules : undefined;
+        const scanRes = await intradayOpportunityWatcher.scan({
+          min_final_score: minFinal,
+          target_groups: targetGroups,
+          rules,
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: scanRes.scanned_count,
+          completed_items: scanRes.pushed_count,
+          failed_items: scanRes.errors.length,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'intraday_opportunity_scan',
+            scanned: scanRes.scanned_count,
+            hits: scanRes.hit_count,
+            pushed: scanRes.pushed_count,
+            skipped: scanRes.skipped_count,
+            errors: scanRes.errors.length,
+            min_final_score: minFinal,
+          },
+        });
+        logger.info(
+          `[INTRADAY_OPPORTUNITY_SCAN] scanned=${scanRes.scanned_count} hits=${scanRes.hit_count} ` +
+            `pushed=${scanRes.pushed_count} skipped=${scanRes.skipped_count} errors=${scanRes.errors.length}`
+        );
+      } else if (task.type === 'BULLISH_EVENT_DETECT') {
+        // PR-B (2026-06-29) — 个股利好主动推送. 用户原话 "周末利好华工科技的新闻你看到了吗,
+        // 这类新闻你需要发消息提示我". 4 detector (critical 公告 / 正面新闻 / 关注度突增 /
+        // KOL 集中关注), 命中写 RiskAlert(level=MEDIUM) + 推 OPS 飞书群. 24h dedup 走
+        // RiskAlert.message tag. fail-OPEN: runOnce 永不 throw — 整次失败也保证 cron tick
+        // 进 SUCCESS, 异常通过 result_summary.errors 暴露.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { bullishEventDetectorService } = require('./BullishEventDetectorService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await bullishEventDetectorService.runOnce({
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned,
+          completed_items: r.pushed,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'bullish_event_detect',
+            scanned: r.scanned,
+            detected: r.detected,
+            pushed: r.pushed,
+            deduped: r.deduped,
+            by_detector: r.by_detector,
+            errors: r.errors?.length || 0,
+            dry_run: r.dry_run,
+          },
+        });
+        logger.info(
+          `[BULLISH_EVENT_DETECT] scanned=${r.scanned} detected=${r.detected} pushed=${r.pushed} ` +
+            `deduped=${r.deduped} errors=${r.errors?.length || 0} ` +
+            `by_detector=${JSON.stringify(r.by_detector)}`
+        );
+      } else if (task.type === 'AUCTION_SNAPSHOT_SYNC') {
+        // PR-M2 (2026-06-29) — 9:25 集合竞价后开盘快照. 学术: Han/Hu/Jia 2023 + Gu/Ren 2010.
+        // 写 auction_snapshots; 给 OpeningRushDetector / UI 卡片消费. fail-OPEN.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { auctionSnapshotSyncService } = require('./AuctionSnapshotSyncService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await auctionSnapshotSyncService.runOnce({
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned,
+          completed_items: r.inserted,
+          failed_items: Math.max(0, r.scanned - r.inserted),
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: r.scenario,
+            trade_date: r.trade_date,
+            scanned: r.scanned,
+            inserted: r.inserted,
+            by_pattern: r.by_pattern,
+            skipped_reason: r.skipped_reason,
+            dry_run: r.dry_run,
+          },
+        });
+        logger.info(
+          `[AUCTION_SNAPSHOT_SYNC] trade_date=${r.trade_date} scanned=${r.scanned} inserted=${r.inserted} ` +
+            `skip=${r.skipped_reason || 'none'} by_pattern=${JSON.stringify(r.by_pattern)}`
+        );
+      } else if (task.type === 'INTRADAY_KLINE_30MIN_SYNC') {
+        // PR-M2 (2026-06-29) — 盘中 30-min K 线时序同步.
+        // 学术: Zhang/Ma/Zhu 2019 EM (9:30-10:00 预测 14:30-15:00). fail-OPEN per-symbol.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { intradayKlineSyncService } = require('./IntradayKlineSyncService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await intradayKlineSyncService.runOnce({
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned_symbols,
+          completed_items: r.succeeded_symbols,
+          failed_items: Math.max(0, r.scanned_symbols - r.succeeded_symbols),
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: r.scenario,
+            trade_date: r.trade_date,
+            scanned_symbols: r.scanned_symbols,
+            succeeded_symbols: r.succeeded_symbols,
+            total_klines: r.total_klines,
+            inserted: r.inserted,
+            skipped_reason: r.skipped_reason,
+            dry_run: r.dry_run,
+          },
+        });
+        logger.info(
+          `[INTRADAY_KLINE_30MIN_SYNC] trade_date=${r.trade_date} scanned=${r.scanned_symbols} ` +
+            `ok=${r.succeeded_symbols} klines=${r.total_klines} inserted=${r.inserted} ` +
+            `skip=${r.skipped_reason || 'none'}`
+        );
+      } else if (task.type === 'INTRADAY_MOMENTUM_DETECT') {
+        // PR-M2 (2026-06-29) — 14:25 日内动量 detector.
+        // r1>+1% buy → 全 user; r1<-1% 持仓 sell. 24h dedup. fail-OPEN.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { intradayMomentumDetector } = require('./IntradayMomentumDetector');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await intradayMomentumDetector.runOnce({
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned,
+          completed_items: r.written_alerts,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: r.scenario,
+            trade_date: r.trade_date,
+            scanned: r.scanned,
+            matched_buy: r.matched_buy,
+            matched_sell: r.matched_sell,
+            written_alerts: r.written_alerts,
+            deduped: r.deduped,
+            errors: r.errors?.length || 0,
+            skipped_reason: r.skipped_reason,
+            dry_run: r.dry_run,
+          },
+        });
+        logger.info(
+          `[INTRADAY_MOMENTUM_DETECT] trade_date=${r.trade_date} scanned=${r.scanned} ` +
+            `buy=${r.matched_buy} sell=${r.matched_sell} written=${r.written_alerts} ` +
+            `deduped=${r.deduped} errors=${r.errors?.length || 0} skip=${r.skipped_reason || 'none'}`
+        );
+      } else if (task.type === 'INDUSTRY_SENTIMENT_AGGREGATE') {
+        // PR-M3 (2026-06-29) — 板块情绪指数日度聚合. 学术: 龙头战法 4 核心因子
+        // (板块涨停数 / 连板高度 / 封板率 / 炸板率) + 30 日板块动量 z-score.
+        // 每日 16:00 (工作日) 跑, 给推荐 service 消费做"龙头板块加权 / 弱势板块直接 skip".
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { industrySentimentAggregator } = require('./IndustrySentimentAggregator');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await industrySentimentAggregator.runOnce({
+          dry_run: parameters.dry_run === true,
+          trade_date: typeof parameters.trade_date === 'string' ? parameters.trade_date : undefined,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.industries_scanned,
+          completed_items: r.industries_written,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'industry_sentiment_aggregate',
+            trade_date: r.trade_date,
+            industries_scanned: r.industries_scanned,
+            industries_written: r.industries_written,
+            errors: r.errors?.length || 0,
+          },
+        });
+        logger.info(
+          `[INDUSTRY_SENTIMENT_AGGREGATE] trade_date=${r.trade_date} scanned=${r.industries_scanned} ` +
+            `written=${r.industries_written} errors=${r.errors?.length || 0}`
+        );
+      } else if (task.type === 'INTRADAY_REVERSAL_DETECT') {
+        // PR-M3 (2026-06-29) — 反转 (reversal) detector. 学术: Hsu 2018 JPM / Zhang & Zhu 2024 IREF
+        // 4 篇独立研究共识 — A 股因 T+1 + 散户主导 → 短期反转主导, 而非动量.
+        // 找今日 < -3% 且周月线趋势仍向上 → reversal_buy; > +5% 且 RSI > 70 → reversal_sell.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { intradayReversalDetector } = require('./IntradayReversalDetector');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await intradayReversalDetector.runOnce({
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned,
+          completed_items: r.hits.length,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'intraday_reversal_detect',
+            scanned: r.scanned,
+            hits: r.hits.length,
+            by_type: r.by_type,
+            errors: r.errors?.length || 0,
+          },
+        });
+        logger.info(
+          `[INTRADAY_REVERSAL_DETECT] scanned=${r.scanned} hits=${r.hits.length} ` +
+            `buy=${r.by_type.reversal_buy} sell=${r.by_type.reversal_sell} errors=${r.errors?.length || 0}`
+        );
+      } else if (task.type === 'LIMIT_UP_BOARD_DETECT') {
+        // PR-O2 (2026-06-29) — 涨停板战法 detector (20+ pattern). PR-I-v2 战法库 §1
+        // 流派 1 落地率 0% → 50%. 每日 15:30 跑 (盘后), 对 limit_up_stocks 全表逐票运行
+        // 20+ classifier (一字 / T 字 / 烂板 / 强势板 / 弱转强 / 中军 / 二板加速 / 二板回封 /
+        // 二板填谷 / 二进三 / 高位连板加速 / 板块最高板 / 连板天梯 / 地天板 / 烂板反包 /
+        // 跌停反包 / 炸板回封 / 炸板换手 / 龙头接力 / 跟风接力), 命中即写 RiskAlert
+        // (rule_id='limit_up_<pattern>', level=MEDIUM) + 写 AIInvestmentSignal
+        // (source_type='limit_up_board', metadata.timing_tag='overnight'). fail-OPEN.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { limitUpBoardDetectorService } = require('./LimitUpBoardDetector');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await limitUpBoardDetectorService.runOnce({
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned,
+          completed_items: r.pushed,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'limit_up_board_detect',
+            trade_date: r.trade_date,
+            scanned: r.scanned,
+            total_hits: r.total_hits,
+            pushed: r.pushed,
+            deduped: r.deduped,
+            by_pattern: r.by_pattern,
+            errors: r.errors?.length || 0,
+            skipped_reason: r.skipped_reason,
+            dry_run: r.dry_run,
+          },
+        });
+        logger.info(
+          `[LIMIT_UP_BOARD_DETECT] trade_date=${r.trade_date} scanned=${r.scanned} ` +
+            `total_hits=${r.total_hits} pushed=${r.pushed} deduped=${r.deduped} ` +
+            `errors=${r.errors?.length || 0} skip=${r.skipped_reason || 'none'} ` +
+            `by_pattern=${JSON.stringify(r.by_pattern)}`
+        );
+      } else if (task.type === 'THEME_FERMENTATION_DETECT') {
+        // PR-O5 (2026-06-30) — 题材发酵 5 阶段 detector. 消费 PR-M3 industry_sentiment_indices
+        // (16:00 写完) + 昨日 phase, 给每个板块打 germinate/launch/outbreak/climax/recession
+        // 标签 + 检测主线切换事件. 工作日 16:30 跑.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { themeFermentationDetector } = require('./ThemeFermentationDetector');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await themeFermentationDetector.runOnce({
+          dry_run: parameters.dry_run === true,
+          trade_date: typeof parameters.trade_date === 'string' ? parameters.trade_date : undefined,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.industries_scanned,
+          completed_items: r.industries_written,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'theme_fermentation_detect',
+            trade_date: r.trade_date,
+            industries_scanned: r.industries_scanned,
+            industries_written: r.industries_written,
+            phase_distribution: r.phase_distribution,
+            mainline_switch_events: r.mainline_switch_events.length,
+            errors: r.errors?.length || 0,
+          },
+        });
+        logger.info(
+          `[THEME_FERMENTATION_DETECT] trade_date=${r.trade_date} scanned=${r.industries_scanned} ` +
+            `written=${r.industries_written} ` +
+            `dist=germ${r.phase_distribution.germinate}/lau${r.phase_distribution.launch}/out${r.phase_distribution.outbreak}/cli${r.phase_distribution.climax}/rec${r.phase_distribution.recession} ` +
+            `switch_events=${r.mainline_switch_events.length} errors=${r.errors?.length || 0}`
+        );
+      } else if (task.type === 'OPENING_RUSH_DETECT') {
+        // PR-O3 (2026-06-29) — Opening rush detector. 工作日 9:26 (集合竞价撮合 9:25 后 1min)
+        // 跑, 消费 overnight_signals + auction_snapshots, 识别隔夜信号 + auction pattern
+        // (高开 / 跳空 / 一字封板 / 等), 命中即写 AIInvestmentSignal (source_type=
+        // 'opening_rush_detector', metadata.timing_tag='opening_rush'). fail-OPEN per-symbol.
+        // PR-P (2026-06-30): 补 cron dispatch, 之前 PR-O3 只加 service 没注册 cron.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { openingRushDetector } = require('./OpeningRushDetector');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await openingRushDetector.runOnce({
+          dry_run: parameters.dry_run === true,
+          force: parameters.force === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned,
+          completed_items: r.written,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: r.scenario,
+            trade_date: r.trade_date,
+            scanned: r.scanned,
+            matched: r.matched,
+            written: r.written,
+            by_pattern: r.by_pattern,
+            overnight_direction: r.overnight_direction,
+            overnight_reason: r.overnight_reason,
+            skipped_reason: r.skipped_reason,
+            errors: r.errors?.length || 0,
+            dry_run: r.dry_run,
+          },
+        });
+        logger.info(
+          `[OPENING_RUSH_DETECT] trade_date=${r.trade_date} scanned=${r.scanned} ` +
+            `matched=${r.matched} written=${r.written} dir=${r.overnight_direction} ` +
+            `skip=${r.skipped_reason || 'none'} errors=${r.errors?.length || 0} ` +
+            `by_pattern=${JSON.stringify(r.by_pattern)}`
+        );
+      } else if (task.type === 'INTRADAY_PRICE_VOLUME_ANOMALY') {
+        // PR-O3 (2026-06-29) — 盘中价量异动 6 类 detector. 工作日盘中每 30min 跑一次.
+        // 命中写 RiskAlert + AIInvestmentSignal (source_type='intraday_price_volume_anomaly',
+        // metadata.timing_tag='intraday_anomaly'). 24h dedup. fail-OPEN per-symbol.
+        // PR-P (2026-06-30): 补 cron dispatch.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          intradayPriceVolumeAnomalyDetector,
+        } = require('./IntradayPriceVolumeAnomalyDetector');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await intradayPriceVolumeAnomalyDetector.runOnce({
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned,
+          completed_items: r.written_signals,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: r.scenario,
+            trade_date: r.trade_date,
+            scanned: r.scanned,
+            matched: r.matched,
+            written_alerts: r.written_alerts,
+            written_signals: r.written_signals,
+            by_type: r.by_type,
+            skipped_reason: r.skipped_reason,
+            errors: r.errors?.length || 0,
+            dry_run: r.dry_run,
+          },
+        });
+        logger.info(
+          `[INTRADAY_PRICE_VOLUME_ANOMALY] trade_date=${r.trade_date} scanned=${r.scanned} ` +
+            `matched=${r.matched} alerts=${r.written_alerts} signals=${r.written_signals} ` +
+            `skip=${r.skipped_reason || 'none'} errors=${r.errors?.length || 0} ` +
+            `by_type=${JSON.stringify(r.by_type)}`
+        );
+      } else if (task.type === 'LAST_HOUR_MOMENTUM') {
+        // PR-O3 (2026-06-29) — Last-hour 尾盘动量 detector. 学术: Zhang/Ma/Zhu 2019 EM
+        // (中国市场 9:30-10:00 r1 → 14:30-15:00 r2 最 robust). 工作日 14:30 跑, r1>+1% buy →
+        // AIInvestmentSignal (source_type='last_hour_momentum', metadata.timing_tag='closing_grab').
+        // fail-OPEN per-symbol. PR-P (2026-06-30): 补 cron dispatch.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { lastHourMomentumDetector } = require('./LastHourMomentumDetector');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await lastHourMomentumDetector.runOnce({
+          dry_run: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned,
+          completed_items: r.written,
+          failed_items: r.errors?.length || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: r.scenario,
+            trade_date: r.trade_date,
+            scanned: r.scanned,
+            matched: r.matched,
+            written: r.written,
+            skipped_reason: r.skipped_reason,
+            errors: r.errors?.length || 0,
+            dry_run: r.dry_run,
+          },
+        });
+        logger.info(
+          `[LAST_HOUR_MOMENTUM] trade_date=${r.trade_date} scanned=${r.scanned} ` +
+            `matched=${r.matched} written=${r.written} ` +
+            `skip=${r.skipped_reason || 'none'} errors=${r.errors?.length || 0}`
+        );
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }
@@ -6511,7 +7151,12 @@ class SchedulerService {
         is_active: true,
         parameters: {
           force_update: false,
-          max_stocks: 300,
+          // PR-N (2026-06-29): 300 → 2000 — 解决 PR-J 揭示的 sh.688 / sz.001 /
+          // sz.301 板块永远 sync 不到的根因. A 股 listed ≈ 5500, 300 cap 让
+          // 缺 daily_bars 的新股每天只能补 ~300 只, 排到第二天又被更新更晚的票
+          // 挤掉, 形成永远轮不到的死循环. 2000 让 3 个交易日全市场覆盖一次,
+          // 实测 5 并发 ≈ 单股 200ms × 2000 = ~7 分钟跑完, 不堵塞盘后任务.
+          max_stocks: 2000,
         },
       },
       {
@@ -6617,6 +7262,8 @@ class SchedulerService {
         cron_expression: '32 15 * * 1-5',
         is_active: true,
         parameters: {
+          // PR-H (2026-06-29) — 15:32 跑的是"明日预谋", UI 卡片标 🌙 隔夜潜伏, 建议次日 9:30 买.
+          timing_tag: 'overnight',
           username: 'stock',
           use_autonomous_portfolio: true,
           portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
@@ -6707,9 +7354,13 @@ class SchedulerService {
       {
         name: '量化策略开盘机会扫描',
         type: 'QUANT_DAILY_PIPELINE',
-        cron_expression: '35 9 * * 1-5',
+        cron_expression: '25 9 * * 1-5',
         is_active: true,
         parameters: {
+          // PR-H — 9:25 集合竞价撮合 (9:25:00) 后立即跑, UI 卡片标 🌅 早盘抢, 建议 9:30-10:00 买入.
+          // 此前 cron 是 35 9, 在开盘 5 分钟之后才生成信号, 用户错过开盘最优买点.
+          // 拉前到 9:25 是 PRD 决策: 集合竞价撮合后立即扫描, 9:30 开盘即可参考.
+          timing_tag: 'opening_rush',
           username: 'stock',
           use_autonomous_portfolio: true,
           portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
@@ -6795,6 +7446,109 @@ class SchedulerService {
           record_type: '量化策略开盘机会扫描',
         },
       },
+      // PR-H (2026-06-29) — 午后开盘扫描 (12:55, 距 13:00 午盘 5min). UI 标 ☀️ 午后攻.
+      //   集合竞价信号 + 早盘资金流 / 午间消息驱动. agent_session='afternoon' 让信号链路区分.
+      //   submit_agent_analysis/run_paper_trading=false: 减负 (只生成信号给用户看, 不自动跟单).
+      {
+        name: '量化策略午后开盘扫描 (PR-H)',
+        type: 'QUANT_DAILY_PIPELINE',
+        cron_expression: '55 12 * * 1-5',
+        is_active: true,
+        parameters: {
+          timing_tag: 'afternoon_kick',
+          username: 'stock',
+          use_autonomous_portfolio: true,
+          portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
+          initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+          universe: 'market',
+          strategy_keys: [
+            'multi_factor_ranking',
+            'relative_strength_momentum',
+            'ma_trend',
+            'volume_price_confirmation',
+            'multi_factor_alpha',
+          ],
+          lookback_days: 180,
+          candidate_limit: 180,
+          refresh_realtime_quotes: true,
+          sync_factors_before_scan: false,
+          quote_sync_limit: 360,
+          realtime_quote_source: 'auto',
+          min_score: 72,
+          archive_limit: 15,
+          max_industry_candidates: 3,
+          max_strategy_candidates: 4,
+          submit_agent_analysis: false,
+          agent_session: 'afternoon',
+          agent_auto_paper_trade: false,
+          run_paper_trading: false,
+          dry_run: false,
+          paper_trade_limit: 2,
+          max_positions: 8,
+          default_position_pct: 4,
+          max_position_pct: 8,
+          min_trade_amount: 3000,
+          use_entry_risk_guard: true,
+          block_limit_up: true,
+          block_limit_down: true,
+          block_suspended: true,
+          block_buy_on_runtime_risk: true,
+          report_to_feishu: false,
+          notify_to_feishu_bot: false,
+          record_type: '量化策略午后开盘扫描',
+        },
+      },
+      // PR-H (2026-06-29) — 尾盘扫描 (14:30, 距 14:57 收盘集合竞价 27min). UI 标 🌆 尾盘埋.
+      //   全天量比 + 主力净流入 + 尾盘拉升驱动. 建议 14:30-14:55 内买入 (避开 14:57 集合竞价).
+      {
+        name: '量化策略尾盘扫描 (PR-H)',
+        type: 'QUANT_DAILY_PIPELINE',
+        cron_expression: '30 14 * * 1-5',
+        is_active: true,
+        parameters: {
+          timing_tag: 'closing_grab',
+          username: 'stock',
+          use_autonomous_portfolio: true,
+          portfolio_name: AUTONOMOUS_PORTFOLIO_NAME,
+          initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
+          universe: 'market',
+          strategy_keys: [
+            'multi_factor_ranking',
+            'relative_strength_momentum',
+            'ma_trend',
+            'volume_price_confirmation',
+            'multi_factor_alpha',
+          ],
+          lookback_days: 180,
+          candidate_limit: 180,
+          refresh_realtime_quotes: true,
+          sync_factors_before_scan: false,
+          quote_sync_limit: 360,
+          realtime_quote_source: 'auto',
+          min_score: 72,
+          archive_limit: 15,
+          max_industry_candidates: 3,
+          max_strategy_candidates: 4,
+          submit_agent_analysis: false,
+          agent_session: 'closing',
+          agent_auto_paper_trade: false,
+          run_paper_trading: false,
+          dry_run: false,
+          paper_trade_limit: 2,
+          max_positions: 8,
+          default_position_pct: 4,
+          max_position_pct: 8,
+          min_trade_amount: 3000,
+          use_entry_risk_guard: true,
+          block_limit_up: true,
+          block_limit_down: true,
+          block_suspended: true,
+          block_buy_on_runtime_risk: true,
+          report_to_feishu: false,
+          notify_to_feishu_bot: false,
+          record_type: '量化策略尾盘扫描',
+        },
+      },
       {
         name: '量化开盘链路看门狗',
         type: 'QUANT_OPEN_WATCHDOG',
@@ -6802,8 +7556,11 @@ class SchedulerService {
         is_active: true,
         parameters: {
           target_task_name: '量化策略开盘机会扫描',
-          expected_after_time: '09:35',
-          latest_allowed_minutes: 15,
+          // PR-H — 开盘扫描提前到 9:25, watchdog expected_after 也下调到 09:25.
+          // 整体宽限窗口仍是 9:55 (开盘后 25 min). 集合竞价 9:25 撮合 + 量化扫描需要 ~5min,
+          // 一般 9:30-9:32 完成. latest_allowed_minutes 30 让"9:25 跑→9:50 落库"仍 healthy.
+          expected_after_time: '09:25',
+          latest_allowed_minutes: 30,
           min_quant_signals: 1,
           min_archived_signals: 1,
           require_fresh_quote: true,
@@ -7516,22 +8273,27 @@ class SchedulerService {
         is_active: true,
         parameters: {},
       },
+      // PR-A (2026-06-29): SNOWBALL / STOCK_SENTIMENT / SOCIAL_SENTIMENT cron
+      // 从 '* * 1-5' 改 '* * *' 周末也跑 — 雪球 / 论坛 / 社媒 周末讨论照旧.
+      // 保留工作日的: K 线 / 因子 / 回测 / 策略信号 / 实盘对账 (周末本无意义).
       {
         name: '雪球热门话题当日 sync (Batch AB)',
         type: 'SNOWBALL_HOT_KEYWORD_SYNC',
-        cron_expression: '0 16 * * 1-5',
+        cron_expression: '0 16 * * *',
         is_active: true,
         parameters: {},
       },
       {
         name: '个股关注度当日 sync (Batch AB)',
         type: 'STOCK_SENTIMENT_SYNC',
-        cron_expression: '30 16 * * 1-5',
+        cron_expression: '30 16 * * *',
         is_active: true,
         parameters: { universe: 'market', limit: 200 },
       },
       // Batch AG (2026-06-18): 市场新闻 / 财经事件 — 让 TradingAgents prompt 注入
       // 'recent_news[]' 上下文 + 行业决策面板时间线展示. 高频(30 min/盘中) + 收尾裁剪.
+      // PR-A (2026-06-29): 盘中 sync 保留工作日 (盘外没行情驱动); 17:17 收尾整理
+      // 早已是 * * * 全周 7 天 (新闻周末仍发).
       {
         name: '市场新闻 sync — 盘中每 30 分钟 (Batch AG)',
         type: 'MARKET_NEWS_SYNC',
@@ -7550,7 +8312,7 @@ class SchedulerService {
       {
         name: '社媒/舆情综合 sync (Batch AH)',
         type: 'SOCIAL_SENTIMENT_SYNC',
-        cron_expression: '20 16 * * 1-5',
+        cron_expression: '20 16 * * *',
         is_active: true,
         parameters: { universe_limit: 200, rank_lookback_days: 5 },
       },
@@ -7560,6 +8322,130 @@ class SchedulerService {
         cron_expression: '40 16 * * 1-5',
         is_active: true,
         parameters: { limit: 50 },
+      },
+      // PR-A (2026-06-29): ANNOUNCEMENT_NLP 全市场公告 NLP — 之前 sync-announcements.ts
+      // CLI 存在但没注册成 cron, announcement_summaries 表从 2026-06-09 后 0 更新.
+      // 每天 17:00 跑全市场启发式 (--all --with-ai=false), 周末也跑 — 公告系统
+      // 周末仍有临时公告 (停牌 / 重大事项 / 风险提示).
+      {
+        name: '全市场公告 NLP 抽取 (PR-A)',
+        type: 'ANNOUNCEMENT_NLP',
+        cron_expression: '0 17 * * *',
+        is_active: true,
+        parameters: { symbol: '全部', with_ai: false },
+      },
+      // PR-A (2026-06-29): KOL_AGGREGATE 收藏股票 KOL 观点聚合 — 之前从未跑过 cron,
+      // kol_opinions 整张空表. 每天 18:30 跑收藏股票 14 天 lookback,
+      // 给 NewsAnalyzer + BullishEventDetector 消费. 周末也跑.
+      {
+        name: 'KOL 观点聚合 - 收藏股票 (PR-A)',
+        type: 'KOL_AGGREGATE',
+        cron_expression: '30 18 * * *',
+        is_active: true,
+        parameters: { lookback_days: 14, limit: 10 },
+      },
+      // PR-B (2026-06-29): BULLISH_EVENT_DETECT 个股利好主动推送. 用户原话
+      // "周末利好华工科技的新闻你看到了吗, 这类新闻你需要发消息提示我".
+      // 每 30min 跑 4 detector (critical 公告 / 正面新闻 / 关注度突增 / KOL 集中看多),
+      // 命中写 RiskAlert + 推 OPS 飞书群. 24h dedup. 周末 / 盘前盘后都跑.
+      {
+        name: '个股利好主动推送 (PR-B)',
+        type: 'BULLISH_EVENT_DETECT',
+        cron_expression: '*/30 * * * *',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // PR-M2 (2026-06-29) — 集合竞价 snapshot + 30-min K 线 + 日内动量 detector.
+      // 学术: Han/Hu/Jia 2023 SSRN + Zhang/Ma/Zhu 2019 EM ("mainly evident in China").
+      {
+        name: 'PR-M2 集合竞价快照 (9:25)',
+        type: 'AUCTION_SNAPSHOT_SYNC',
+        cron_expression: '25 9 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      {
+        name: 'PR-M2 盘中 30-min K 线 sync (每 30min)',
+        type: 'INTRADAY_KLINE_30MIN_SYNC',
+        cron_expression: '5 10,11,13,14 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      {
+        name: 'PR-M2 日内动量 detector (14:25)',
+        type: 'INTRADAY_MOMENTUM_DETECT',
+        cron_expression: '25 14 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // PR-M3 (2026-06-29): INDUSTRY_SENTIMENT_AGGREGATE 板块情绪指数日度聚合.
+      // 学术依据 PR-I 报告第 3 个致命短板 — 龙头战法 4 核心因子 (涨停数 / 连板高度 / 封板率 / 炸板率)
+      // + 30 日板块动量 z-score. 工作日 16:00 跑 (limit_up sync 在 15:35-15:40 之后).
+      {
+        name: '板块情绪指数日度聚合 (PR-M3)',
+        type: 'INDUSTRY_SENTIMENT_AGGREGATE',
+        cron_expression: '0 16 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // PR-M3 (2026-06-29): INTRADAY_REVERSAL_DETECT 反转 detector.
+      // 学术依据 PR-I 报告第 4 个致命短板 — A 股因 T+1 + 散户主导 → 短期反转主导, 而非动量.
+      // 每日 15:10 跑 (收盘前 10min, 让 RT quote 已稳定但还未 sync 到 daily_bars).
+      {
+        name: '反转 detector (PR-M3)',
+        type: 'INTRADAY_REVERSAL_DETECT',
+        cron_expression: '10 15 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // PR-O2 (2026-06-29) — 涨停板战法 detector. PR-I-v2 战法库 §1 流派 1 落地率 0% → 50%.
+      // 每日 15:30 跑 (盘后 5min 余量, 在 LIMIT_UP_SYNC 15:10 之后), 对 limit_up_stocks 全表
+      // 跑 20+ classifier, 命中写 RiskAlert + AIInvestmentSignal (source_type='limit_up_board',
+      // metadata.timing_tag='overnight'). 让前端 /home 推荐卡能看到 "🚀 一字板" / "📈 二板加速" badge.
+      {
+        name: 'PR-O2 涨停板战法 detector (15:30)',
+        type: 'LIMIT_UP_BOARD_DETECT',
+        cron_expression: '30 15 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // PR-O5 (2026-06-30): THEME_FERMENTATION_DETECT 题材发酵 5 阶段 detector.
+      // 消费 PR-M3 industry_sentiment_indices (16:00 写完) + 昨日 phase, 给每个板块打
+      // germinate/launch/outbreak/climax/recession 标签 + 检测主线切换. 工作日 16:30 跑.
+      {
+        name: '题材发酵 5 阶段 detector (PR-O5)',
+        type: 'THEME_FERMENTATION_DETECT',
+        cron_expression: '30 16 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // PR-O3 (2026-06-29) — Opening rush detector. PR-P (2026-06-30) 补 cron seed:
+      // 之前 PR-O3 加了 service 但没 seed, fresh DB 启动后不会跑.
+      // 工作日 9:26 跑 (AUCTION_SNAPSHOT_SYNC 9:25 写完留 1min 余量).
+      {
+        name: 'Opening rush detector (PR-O3)',
+        type: 'OPENING_RUSH_DETECT',
+        cron_expression: '26 9 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // PR-O3 (2026-06-29) — 盘中价量异动 6 类 detector. PR-P (2026-06-30) 补 cron seed.
+      // 盘中每 30min 跑 (10:00, 10:30, 11:00, 11:30, 13:00, 13:30, 14:00, 14:30).
+      {
+        name: '盘中价量异动 detector (PR-O3)',
+        type: 'INTRADAY_PRICE_VOLUME_ANOMALY',
+        cron_expression: '*/30 10,11,13,14 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // PR-O3 (2026-06-29) — Last-hour 尾盘动量 detector. PR-P (2026-06-30) 补 cron seed.
+      // 学术: Zhang/Ma/Zhu 2019 EM 中国市场 r1 → r2 alpha 最 robust.
+      {
+        name: '尾盘动量 detector (PR-O3)',
+        type: 'LAST_HOUR_MOMENTUM',
+        cron_expression: '30 14 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
       },
       // ===========================================================================
       // Macro 串联补丁 (2026-06-21) — Batch AJ: 把 14 个已注册并已实现但 ensureDefaultTasks
@@ -7715,6 +8601,15 @@ class SchedulerService {
         name: '行业 ETF 资金流 daily sync',
         type: 'ETF_FLOW_SYNC',
         cron_expression: '0 18 * * 1-5',
+        is_active: true,
+        parameters: {},
+      },
+      {
+        // PR-M1 (2026-06-29) — 隔夜信号矩阵 (A50/HK/Nasdaq/DXY/VIX) cron seed.
+        // 北京时间 21-23 (隔夜美股开盘) + 0-9 (隔夜+早盘前) 每 15min 跑一次.
+        name: '隔夜信号矩阵 sync (A50/HK/Nasdaq/DXY/VIX)',
+        type: 'OVERNIGHT_SIGNAL_SYNC',
+        cron_expression: '*/15 0-9,21-23 * * *',
         is_active: true,
         parameters: {},
       },

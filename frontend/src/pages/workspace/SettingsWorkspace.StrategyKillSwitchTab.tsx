@@ -152,7 +152,7 @@ const StrategyKillSwitchTab: React.FC = () => {
         okText: cfg.okText,
         okButtonProps: { danger: cfg.danger },
         cancelText: '取消',
-        icon: <ExclamationCircleOutlined style={{ color: '#f5222d' }} />,
+        icon: <ExclamationCircleOutlined style={{ color: '#dc2626' }} />,
         onOk: () => doToggle(row, nextEnabled),
       });
     },
@@ -213,13 +213,13 @@ const StrategyKillSwitchTab: React.FC = () => {
           title="启用中"
           value={kpi.enabledCount}
           suffix="只"
-          valueStyle={{ color: '#3f8600' }}
+          valueStyle={{ color: '#16a34a' }}
         />
         <Statistic
           title="已禁用"
           value={kpi.disabledCount}
           suffix="只"
-          valueStyle={{ color: kpi.disabledCount > 0 ? '#cf1322' : '#999' }}
+          valueStyle={{ color: kpi.disabledCount > 0 ? '#dc2626' : '#999' }}
         />
         <Statistic
           title="高风险启用中"
@@ -270,7 +270,7 @@ const StrategyKillSwitchTab: React.FC = () => {
               render: (_: unknown, row) => (
                 <Space direction="vertical" size={0}>
                   <Text strong>{row.display_name}</Text>
-                  <Text type="secondary" code style={{ fontSize: 11 }}>
+                  <Text type="secondary" code style={{ fontSize: 12 }}>
                     {row.strategy_key}
                   </Text>
                 </Space>
@@ -344,7 +344,7 @@ const StrategyKillSwitchTab: React.FC = () => {
         />
       )}
 
-      <Paragraph style={{ marginTop: 12, fontSize: 11, color: 'var(--text-muted)' }}>
+      <Paragraph style={{ marginTop: 12, fontSize: 12, color: 'var(--text-muted)' }}>
         操作落地: <code>PATCH /api/quant/strategies/:key {`{enabled: bool}`}</code> →
         <code>backend/src/quant/engine/internal/QuantStrategyService.updateStrategyConfig</code>.
         下次 <code>resolveStrategyKeys()</code> 调用时生效 (大约 1 个 daily-pipeline 周期).

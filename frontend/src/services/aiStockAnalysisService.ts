@@ -18,12 +18,7 @@ import api from './api';
  *   - status: 'completed' | 'partial' | 'failed' | 'pending'
  */
 
-export type AnalysisDimension =
-  | 'fundamental'
-  | 'technical'
-  | 'capital'
-  | 'news'
-  | 'sentiment';
+export type AnalysisDimension = 'fundamental' | 'technical' | 'capital' | 'news' | 'sentiment';
 
 export const ALL_ANALYSIS_DIMENSIONS: AnalysisDimension[] = [
   'fundamental',
@@ -41,13 +36,7 @@ export const DIMENSION_LABELS: Record<AnalysisDimension, string> = {
   sentiment: '情绪面',
 };
 
-export type RecommendationKey =
-  | 'strong_buy'
-  | 'buy'
-  | 'hold'
-  | 'sell'
-  | 'strong_sell'
-  | 'unknown';
+export type RecommendationKey = 'strong_buy' | 'buy' | 'hold' | 'sell' | 'strong_sell' | 'unknown';
 
 export const RECOMMENDATION_LABELS: Record<RecommendationKey, string> = {
   strong_buy: '强烈买入',
@@ -60,9 +49,9 @@ export const RECOMMENDATION_LABELS: Record<RecommendationKey, string> = {
 
 export const RECOMMENDATION_COLORS: Record<RecommendationKey, string> = {
   strong_buy: '#9b1f00',
-  buy: '#f5222d',
+  buy: '#dc2626',
   hold: '#1890ff',
-  sell: '#52c41a',
+  sell: '#16a34a',
   strong_sell: '#135200',
   unknown: '#8c8c8c',
 };
@@ -105,10 +94,11 @@ export interface AnalyzeSingleStockResult {
 export async function analyzeSingleStock(
   request: SingleStockAnalysisRequest
 ): Promise<AnalyzeSingleStockResult> {
-  const response = await api.post<{ success: boolean; data: AnalyzeSingleStockResult; message?: string }>(
-    '/ai/analyze-stock',
-    request
-  );
+  const response = await api.post<{
+    success: boolean;
+    data: AnalyzeSingleStockResult;
+    message?: string;
+  }>('/ai/analyze-stock', request);
   if (!response.data?.success) {
     throw new Error(response.data?.message || 'AI 分析请求失败');
   }

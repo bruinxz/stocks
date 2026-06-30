@@ -66,6 +66,12 @@ export interface NotificationChannelsConfig {
     daily_digest: boolean;
     earnings_alert: boolean;
     risk_alert: boolean;
+    /**
+     * PR-D (2026-06-29) — 个股利好/利空关键公告事件 (持仓 / 自选股
+     * critical 公告 — 由 CriticalAnnouncementPushService 处理).
+     * 默认开 (与既有 risk_alert / earnings_alert 同款 opt-out 行为).
+     */
+    stock_bullish_event: boolean;
   };
   email: {
     enabled: boolean;
@@ -73,6 +79,11 @@ export interface NotificationChannelsConfig {
     weekly_review: boolean;
     /** US-067 — 高优先级风控告警邮件订阅 */
     risk_alert: boolean;
+    /**
+     * PR-D (2026-06-29) — 个股利好/利空关键公告事件邮件订阅. 默认关 (邮件
+     * 通道默认全关, 用户主动启用).
+     */
+    stock_bullish_event: boolean;
   };
   wechat: {
     enabled: boolean;
@@ -104,12 +115,14 @@ export const DEFAULT_NOTIFICATION_CONFIG: NotificationChannelsConfig = Object.fr
     daily_digest: true,
     earnings_alert: true,
     risk_alert: true,
+    stock_bullish_event: true,
   },
   email: {
     enabled: false,
     address: '',
     weekly_review: false,
     risk_alert: false,
+    stock_bullish_event: false,
   },
   wechat: {
     enabled: false,
@@ -285,6 +298,10 @@ export function normalizeNotificationConfig(raw: any): NotificationChannelsConfi
         DEFAULT_NOTIFICATION_CONFIG.feishu.earnings_alert
       ),
       risk_alert: safeBoolean(feishuRaw.risk_alert, DEFAULT_NOTIFICATION_CONFIG.feishu.risk_alert),
+      stock_bullish_event: safeBoolean(
+        feishuRaw.stock_bullish_event,
+        DEFAULT_NOTIFICATION_CONFIG.feishu.stock_bullish_event
+      ),
     },
     email: {
       enabled: safeBoolean(emailRaw.enabled, DEFAULT_NOTIFICATION_CONFIG.email.enabled),
@@ -294,6 +311,10 @@ export function normalizeNotificationConfig(raw: any): NotificationChannelsConfi
         DEFAULT_NOTIFICATION_CONFIG.email.weekly_review
       ),
       risk_alert: safeBoolean(emailRaw.risk_alert, DEFAULT_NOTIFICATION_CONFIG.email.risk_alert),
+      stock_bullish_event: safeBoolean(
+        emailRaw.stock_bullish_event,
+        DEFAULT_NOTIFICATION_CONFIG.email.stock_bullish_event
+      ),
     },
     wechat: {
       enabled: safeBoolean(wechatRaw.enabled, DEFAULT_NOTIFICATION_CONFIG.wechat.enabled),

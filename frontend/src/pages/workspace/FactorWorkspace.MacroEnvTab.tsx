@@ -10,8 +10,30 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { Card, Row, Col, Statistic, Tag, Space, Spin, Alert, Empty, Typography, Tooltip, Table } from 'antd';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer } from 'recharts';
+import {
+  Card,
+  Row,
+  Col,
+  Statistic,
+  Tag,
+  Space,
+  Spin,
+  Alert,
+  Empty,
+  Typography,
+  Tooltip,
+  Table,
+} from 'antd';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  Legend,
+  ResponsiveContainer,
+} from 'recharts';
 import api from '../../services/api';
 import { useNavigate } from 'react-router-dom';
 
@@ -24,7 +46,10 @@ interface MacroIndicatorsResponse {
 
 interface QvixResponse {
   latest: Record<string, { date: string; close: number; change_5d_pct: string | null }>;
-  series: Record<string, Array<{ date: string; close: number; open: number; high: number; low: number }>>;
+  series: Record<
+    string,
+    Array<{ date: string; close: number; open: number; high: number; low: number }>
+  >;
 }
 
 interface RegimeSnapshot {
@@ -141,18 +166,21 @@ const MacroEnvTab: React.FC = () => {
               <Statistic
                 title="当前市场环境"
                 value={regime.market_regime_label || regime.market_regime}
-                valueStyle={{ fontSize: 28, color: regimeColor(regime.market_regime) }}
+                valueStyle={{ fontSize: 18, color: regimeColor(regime.market_regime) }}
               />
               <div style={{ marginTop: 6 }}>
-                <Tag color="blue">沪深 300 20日: {regime.benchmark_return_20d_pct?.toFixed(2)}%</Tag>
+                <Tag color="blue">
+                  沪深 300 20日: {regime.benchmark_return_20d_pct?.toFixed(2)}%
+                </Tag>
                 <Tag color="orange">60日回撤: {regime.benchmark_drawdown_60d_pct?.toFixed(2)}%</Tag>
               </div>
             </Col>
             <Col xs={24} md={16}>
               <Paragraph type="secondary" style={{ margin: 0 }}>
-                regime 分类基于：基准价格 + 市场宽度 (up_20d_ratio={regime.breadth?.up_20d_ratio?.toFixed(1)}%, 强势行业{regime.breadth?.strong_industry_count}/弱势{regime.breadth?.weak_industry_count}) +{' '}
-                <Text strong>宏观指标 (PMI/M2/国债)</Text> +{' '}
-                <Text strong>QVIX (恐慌指数)</Text>
+                regime 分类基于：基准价格 + 市场宽度 (up_20d_ratio=
+                {regime.breadth?.up_20d_ratio?.toFixed(1)}%, 强势行业
+                {regime.breadth?.strong_industry_count}/弱势{regime.breadth?.weak_industry_count}) +{' '}
+                <Text strong>宏观指标 (PMI/M2/国债)</Text> + <Text strong>QVIX (恐慌指数)</Text>
               </Paragraph>
             </Col>
           </Row>
@@ -161,7 +189,9 @@ const MacroEnvTab: React.FC = () => {
 
       {/* 宏观指标 KPI */}
       {loading && !indicators ? (
-        <Card><Spin /></Card>
+        <Card>
+          <Spin />
+        </Card>
       ) : indicators?.latest ? (
         <Card size="small" title="宏观经济指标">
           <Row gutter={[12, 12]}>
@@ -176,12 +206,12 @@ const MacroEnvTab: React.FC = () => {
                       suffix={INDICATOR_UNIT[key] || ''}
                       valueStyle={{
                         fontSize: 18,
-                        color: key === 'pmi' ? (v.value >= 50 ? '#3f8600' : '#cf1322') : '#1677ff',
+                        color: key === 'pmi' ? (v.value >= 50 ? '#16a34a' : '#dc2626') : '#1677ff',
                       }}
                     />
                   </Tooltip>
                   {v.yoy_pct != null && (
-                    <div style={{ fontSize: 11, color: '#999', marginTop: 4 }}>
+                    <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
                       yoy {v.yoy_pct.toFixed(2)}%
                     </div>
                   )}
@@ -216,19 +246,20 @@ const MacroEnvTab: React.FC = () => {
                     valueStyle={{ fontSize: 18 }}
                     suffix={
                       v.change_5d_pct != null ? (
-                        <span style={{
-                          fontSize: 11,
-                          marginLeft: 6,
-                          color: Number(v.change_5d_pct) >= 0 ? '#cf1322' : '#3f8600',
-                        }}>
-                          5d {Number(v.change_5d_pct) >= 0 ? '+' : ''}{v.change_5d_pct}%
+                        <span
+                          style={{
+                            fontSize: 12,
+                            marginLeft: 6,
+                            color: Number(v.change_5d_pct) >= 0 ? '#dc2626' : '#16a34a',
+                          }}
+                        >
+                          5d {Number(v.change_5d_pct) >= 0 ? '+' : ''}
+                          {v.change_5d_pct}%
                         </span>
                       ) : undefined
                     }
                   />
-                  <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>
-                    {v.date}
-                  </div>
+                  <div style={{ fontSize: 12, color: '#999', marginTop: 2 }}>{v.date}</div>
                 </Card>
               </Col>
             ))}
@@ -237,12 +268,19 @@ const MacroEnvTab: React.FC = () => {
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={qvixChartData}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-              <YAxis tick={{ fontSize: 10 }} />
+              <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+              <YAxis tick={{ fontSize: 12 }} />
               <RechartsTooltip />
               <Legend />
               <Line type="monotone" dataKey="50etf" stroke="#f39c12" dot={false} name="50ETF" />
-              <Line type="monotone" dataKey="300etf" stroke="#cf1322" dot={false} name="300ETF" strokeWidth={2} />
+              <Line
+                type="monotone"
+                dataKey="300etf"
+                stroke="#cf1322"
+                dot={false}
+                name="300ETF"
+                strokeWidth={2}
+              />
               <Line type="monotone" dataKey="500etf" stroke="#722ed1" dot={false} name="500ETF" />
               <Line type="monotone" dataKey="cyb" stroke="#13c2c2" dot={false} name="创业板" />
             </LineChart>
@@ -288,7 +326,9 @@ const MacroEnvTab: React.FC = () => {
                 width: 92,
                 render: (v: string) => (
                   <a onClick={() => navigate(`/stock/${v}`)}>
-                    <Text code style={{ fontSize: 11 }}>{v}</Text>
+                    <Text code style={{ fontSize: 12 }}>
+                      {v}
+                    </Text>
                   </a>
                 ),
               },
@@ -318,14 +358,16 @@ const MacroEnvTab: React.FC = () => {
                 dataIndex: 'premium_pct',
                 width: 90,
                 align: 'right' as const,
-                sorter: (a: BlockTrade, b: BlockTrade) => (a.premium_pct ?? 0) - (b.premium_pct ?? 0),
+                sorter: (a: BlockTrade, b: BlockTrade) =>
+                  (a.premium_pct ?? 0) - (b.premium_pct ?? 0),
                 render: (v: number | null) => {
                   if (v == null) return '—';
-                  const color = v >= 0 ? '#cf1322' : '#3f8600';
+                  const color = v >= 0 ? '#dc2626' : '#16a34a';
                   const label = v >= 0 ? '溢价' : '折价';
                   return (
                     <Tag color={Math.abs(v) > 5 ? (v > 0 ? 'red' : 'green') : 'default'}>
-                      {label} {v >= 0 ? '+' : ''}{v.toFixed(2)}%
+                      {label} {v >= 0 ? '+' : ''}
+                      {v.toFixed(2)}%
                     </Tag>
                   );
                 },
@@ -346,8 +388,9 @@ const MacroEnvTab: React.FC = () => {
                 render: (v: number | null) => {
                   if (v == null) return '—';
                   return (
-                    <span style={{ color: v >= 0 ? '#cf1322' : '#3f8600', fontSize: 12 }}>
-                      {v >= 0 ? '+' : ''}{v.toFixed(2)}%
+                    <span style={{ color: v >= 0 ? '#dc2626' : '#16a34a', fontSize: 12 }}>
+                      {v >= 0 ? '+' : ''}
+                      {v.toFixed(2)}%
                     </span>
                   );
                 },
@@ -357,14 +400,14 @@ const MacroEnvTab: React.FC = () => {
                 dataIndex: 'buyer',
                 width: 200,
                 ellipsis: true,
-                render: (v: string) => <Text style={{ fontSize: 11 }}>{v || '—'}</Text>,
+                render: (v: string) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text>,
               },
               {
                 title: '卖方',
                 dataIndex: 'seller',
                 width: 200,
                 ellipsis: true,
-                render: (v: string) => <Text style={{ fontSize: 11 }}>{v || '—'}</Text>,
+                render: (v: string) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text>,
               },
             ]}
           />
@@ -376,12 +419,18 @@ const MacroEnvTab: React.FC = () => {
 
 function regimeColor(regime: string): string {
   switch (regime) {
-    case 'bull': return '#3f8600';
-    case 'bear': return '#cf1322';
-    case 'stress': return '#cf1322';
-    case 'rebound': return '#fa8c16';
-    case 'range': return '#1677ff';
-    default: return '#999';
+    case 'bull':
+      return '#16a34a';
+    case 'bear':
+      return '#dc2626';
+    case 'stress':
+      return '#dc2626';
+    case 'rebound':
+      return '#fa8c16';
+    case 'range':
+      return '#1677ff';
+    default:
+      return '#999';
   }
 }
 

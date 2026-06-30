@@ -199,8 +199,7 @@ const TodoSuggestionsTab: React.FC = () => {
             message.success(`已应用建议: ${row.title.slice(0, 40)}`);
             await refresh();
           } catch (err: any) {
-            const msg =
-              err?.response?.data?.message || err?.message || String(err) || '应用失败';
+            const msg = err?.response?.data?.message || err?.message || String(err) || '应用失败';
             message.error(`应用失败: ${msg}`);
           } finally {
             setApplyingId(null);
@@ -315,7 +314,7 @@ const TodoSuggestionsTab: React.FC = () => {
               value={view?.by_priority.critical ?? 0}
               suffix="项"
               valueStyle={{
-                color: view?.by_priority.critical ? '#cf1322' : undefined,
+                color: view?.by_priority.critical ? '#dc2626' : undefined,
               }}
             />
           </Col>
@@ -422,9 +421,7 @@ const TodoSuggestionsTab: React.FC = () => {
                 dataIndex: 'action',
                 key: 'action_type',
                 width: 140,
-                render: (a: ImprovementSuggestionRow['action']) => (
-                  <Tag>{a?.type || 'noop'}</Tag>
-                ),
+                render: (a: ImprovementSuggestionRow['action']) => <Tag>{a?.type || 'noop'}</Tag>,
               },
               {
                 title: '生成时间',
@@ -504,8 +501,8 @@ const TodoSuggestionsTab: React.FC = () => {
               loading
                 ? '加载中...'
                 : view
-                ? '当前无待办 — 链路健康 / 无黑天鹅 / 无改进建议'
-                : '尚未加载数据'
+                  ? '当前无待办 — 链路健康 / 无黑天鹅 / 无改进建议'
+                  : '尚未加载数据'
             }
           />
         )}

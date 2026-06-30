@@ -40,9 +40,9 @@ import type {
 // ---------- 常量与颜色 ----------
 
 /** 上涨色 — 与 [[dailyAttributionHelpers]] / 持仓盈亏同色 */
-export const ATTRIBUTION_POSITIVE_COLOR = '#3f8600';
+export const ATTRIBUTION_POSITIVE_COLOR = '#16a34a';
 /** 下跌色 — 同上 */
-export const ATTRIBUTION_NEGATIVE_COLOR = '#cf1322';
+export const ATTRIBUTION_NEGATIVE_COLOR = '#dc2626';
 /** 中性灰 — 0 贡献的维度 */
 export const ATTRIBUTION_NEUTRAL_COLOR = '#bfbfbf';
 
@@ -207,9 +207,10 @@ export function extractDimensionContribs(
  * 注意: pie size 用 absValue (因为正负贡献都要可见), color 用 value 符号.
  * pctOfAbs 仅在 totalAbs > 0 时填; 全 0 时返 0 让 UI 显示 "无数据" 占位.
  */
-export function buildAttributionPieData(
-  contribs: Record<AttributionDimensionKey, number>
-): { slices: AttributionPieSlice[]; totalAbs: number } {
+export function buildAttributionPieData(contribs: Record<AttributionDimensionKey, number>): {
+  slices: AttributionPieSlice[];
+  totalAbs: number;
+} {
   const totalAbs = ATTRIBUTION_DIMENSION_ORDER.reduce(
     (sum, key) => sum + Math.abs(safeNumber(contribs[key])),
     0
@@ -271,7 +272,11 @@ export function buildAttributionAiSummaryFallback(
   const text = `${date} 总盈亏 ${sign}${totalPnl.toFixed(2)} 元 (${pctStr}), 成交 ${tradeCount} 笔`;
   if (text.length > ATTRIBUTION_AI_SUMMARY_MAX_CHARS) {
     // Array.from 切字符避免中间断 unicode surrogate pair (与 [[AI_VIEW_MAX_CHARS]] 同款)
-    return Array.from(text).slice(0, ATTRIBUTION_AI_SUMMARY_MAX_CHARS - 1).join('') + '…';
+    return (
+      Array.from(text)
+        .slice(0, ATTRIBUTION_AI_SUMMARY_MAX_CHARS - 1)
+        .join('') + '…'
+    );
   }
   return text;
 }
@@ -336,9 +341,7 @@ export function buildPortfolioAttributionCardViewModel(
 
   const statusRaw = String(report.status || '');
   const status: PortfolioAttributionCardViewModel['status'] =
-    statusRaw === 'ok' || statusRaw === 'skipped' || statusRaw === 'failed'
-      ? statusRaw
-      : 'unknown';
+    statusRaw === 'ok' || statusRaw === 'skipped' || statusRaw === 'failed' ? statusRaw : 'unknown';
   const statusReason = status === 'ok' ? null : report.reason || null;
 
   const industryTop = Array.isArray(breakdown?.industry_contrib)

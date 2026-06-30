@@ -39,7 +39,9 @@ export async function getSizingPolicy(): Promise<SizingPolicyWithDefaults> {
   return res.data.data as SizingPolicyWithDefaults;
 }
 
-export async function updateSizingPolicy(payload: Partial<SizingPolicyConfig>): Promise<SizingPolicyConfig> {
+export async function updateSizingPolicy(
+  payload: Partial<SizingPolicyConfig>
+): Promise<SizingPolicyConfig> {
   const res = await api.put('/risk/sizing-policy', payload);
   if (!res.data?.success) throw new Error(res.data?.message || '更新 sizing policy 失败');
   return res.data.data as SizingPolicyConfig;
@@ -98,11 +100,13 @@ export interface SizingAuditReport {
   recent_rows: SizingAuditRow[];
 }
 
-export async function getSizingAudit(params: {
-  lookback_days?: number;
-  portfolio_id?: number;
-  method?: string;
-} = {}): Promise<SizingAuditReport> {
+export async function getSizingAudit(
+  params: {
+    lookback_days?: number;
+    portfolio_id?: number;
+    method?: string;
+  } = {}
+): Promise<SizingAuditReport> {
   const res = await api.get('/risk/sizing-audit', { params });
   if (!res.data?.success) throw new Error(res.data?.message || '获取 sizing audit 失败');
   return res.data.data as SizingAuditReport;

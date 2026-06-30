@@ -31,8 +31,8 @@ export const DeploymentAuditSummary: React.FC<Props> = ({ audit }) => {
             {audit.event_type === 'deployment_smoke_failed'
               ? '未通过'
               : audit.event_type === 'deployment_smoke_skipped'
-              ? '已跳过'
-              : '已通过'}
+                ? '已跳过'
+                : '已通过'}
           </strong>
         </div>
         <Space wrap size={6}>
@@ -62,9 +62,7 @@ export const DeploymentAuditSummary: React.FC<Props> = ({ audit }) => {
               <Text ellipsis={{ tooltip: item.message }}>
                 {item.name || item.path || '未知检查点'}
               </Text>
-              <Tag color={item.critical ? 'red' : 'orange'}>
-                {item.critical ? '关键' : '可选'}
-              </Tag>
+              <Tag color={item.critical ? 'red' : 'orange'}>{item.critical ? '关键' : '可选'}</Tag>
             </div>
           ))}
         </div>

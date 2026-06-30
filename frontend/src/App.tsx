@@ -10,13 +10,27 @@ import {
   useNavigate,
   useParams,
 } from 'react-router-dom';
-import { UserOutlined, LogoutOutlined, BarChartOutlined, DownOutlined } from '@ant-design/icons';
+import {
+  UserOutlined,
+  LogoutOutlined,
+  BarChartOutlined,
+  DownOutlined,
+} from '@ant-design/icons';
+import {
+  HomeIcon,
+  RocketLaunchIcon,
+  ChartPieIcon,
+  BeakerIcon,
+  Cog6ToothIcon,
+  CircleStackIcon,
+  InformationCircleIcon,
+} from '@heroicons/react/24/outline';
 import zhCN from 'antd/locale/zh_CN';
 import { useSelector, useDispatch } from 'react-redux';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { RootState } from './store/rootReducer';
 import { loginSuccess, logout } from './store/authSlice';
 import { clearUserScopedStorage } from './utils/sessionCleanup';
-import AdminGuard from './components/AdminGuard';
 import { authService } from './services/authService';
 import { API_DOMAIN_URL } from './services/api';
 import { PortfolioProvider } from './contexts/PortfolioContext';
@@ -24,28 +38,20 @@ import GlobalPortfolioSelector from './components/layout/GlobalPortfolioSelector
 import AlertsBell from './components/layout/AlertsBell';
 import CriticalAlertModal from './components/layout/CriticalAlertModal';
 
-const Dashboard = lazy(() => import('./pages/Dashboard'));
-const TodayCommandCenter = lazy(() => import('./pages/TodayCommandCenter'));
-const Backtest = lazy(() => import('./pages/Backtest'));
+// Phase 4 (2026-06-27) 清理: 删除 33 个 legacy pages (~ 4.1 万行)
+// 仅保留 4 个 non-workspace 页面: Login / RecommendationTrace (deep link /signals/:id/trace)
+// / StockDetail (/stock/:symbol) / HealthMonitor (DataWorkspace 内嵌). BacktestResults 仍保留
+// 用于 LabStrategyDetail 的 /legacy/backtest/:id deep link.
 const Login = lazy(() => import('./pages/Login'));
-const Portfolio = lazy(() => import('./pages/Portfolio'));
-const Market = lazy(() => import('./pages/Market'));
-const DataUpdateStatus = lazy(() => import('./pages/DataUpdateStatus'));
 const BacktestResults = lazy(() => import('./components/backtest/BacktestResults'));
-const Profile = lazy(() => import('./pages/Profile'));
-const UserManagement = lazy(() => import('./pages/UserManagement'));
-const AIAdvisor = lazy(() => import('./pages/AIAdvisor'));
-const TaskScheduler = lazy(() => import('./pages/TaskScheduler'));
-const Screener = lazy(() => import('./pages/Screener'));
-const ReviewCenter = lazy(() => import('./pages/ReviewCenter'));
-const StrategyResearchCenter = lazy(() => import('./pages/StrategyResearchCenter'));
 const RecommendationTrace = lazy(() => import('./pages/RecommendationTrace'));
-const AutonomousTradingOverview = lazy(() => import('./pages/AutonomousTradingOverview'));
-const LiveTrading = lazy(() => import('./pages/LiveTrading'));
-const QuantResearchWorkbench = lazy(() => import('./pages/QuantResearchWorkbench'));
-const RiskAlerts = lazy(() => import('./pages/RiskAlerts'));
-const SystemLogs = lazy(() => import('./pages/SystemLogs'));
 const StockDetail = lazy(() => import('./pages/StockDetail'));
+
+// Phase 6 (2026-06-27) — 新手主页 /home.
+// 用户原话: "我是个股票的新手小白, 想要用这套系统来帮我自动化赚钱, 但是现在
+// 还是太复杂". /home 是新手登录后的唯一一页 (无 tab 无侧栏), 3 区块 + 一键操作.
+// 与简易版 /workspace/easy (教学暖纸色) 并存, 互不替代.
+const HomeWorkspace = lazy(() => import('./pages/HomeWorkspace'));
 
 // Unified workspace shells (US-001/US-002 + Easy mode).
 const EasyQuantWorkspace = lazy(() => import('./pages/workspace/EasyQuantWorkspace'));
@@ -61,17 +67,6 @@ const SettingsWorkspace = lazy(() => import('./pages/workspace/SettingsWorkspace
 // 的限制面向 PRD US-001; 本批用户授权扩到 7 shell).
 const SystemWorkspace = lazy(() => import('./pages/workspace/SystemWorkspace'));
 
-import {
-  CompassOutlined,
-  SettingOutlined,
-  ExperimentOutlined,
-  DatabaseOutlined,
-  FilterOutlined,
-  PieChartOutlined,
-  InfoCircleOutlined,
-  RocketOutlined,
-} from '@ant-design/icons';
-
 import type { MenuProps } from 'antd';
 
 const { Header, Content, Sider } = Layout;
@@ -81,6 +76,34 @@ const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
   const location = useLocation();
   if (!token) return <Navigate to="/login" state={{ from: location }} replace />;
   return children;
+};
+
+/**
+ * Phase 11 — Route-level page transition.
+ *
+ * 用 AnimatePresence + key=pathname 让每次 path 切换出一个 fade + 8px slide-up,
+ * 持续 200ms. prefers-reduced-motion 用户直接 children, 跳过包装.
+ *
+ * 不动 Routes 自己 — 只在外层包一个 motion.div, 避免影响嵌套路由 / Navigate.
+ */
+const RouteTransition: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const location = useLocation();
+  const reduceMotion = useReducedMotion();
+  if (reduceMotion) return <>{children}</>;
+  return (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.div
+        key={location.pathname}
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -4 }}
+        transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+        className="page-transition-wrap"
+      >
+        {children}
+      </motion.div>
+    </AnimatePresence>
+  );
 };
 
 const BacktestDetailRoute: React.FC = () => {
@@ -136,7 +159,9 @@ const routeSelectionAliases: Array<[RegExp, string]> = [
   [/^\/today(\/.*)?$/, '/workspace/today'],
   [/^\/dashboard(\/.*)?$/, '/workspace/today'],
   [/^\/portfolio(\/.*)?$/, '/workspace/portfolio'],
-  [/^\/screener(\/.*)?$/, '/workspace/factors'],
+  [/^\/screener(\/.*)?$/, '/workspace/lab'],
+  // Phase 3 (2026-06-27): 选股因子合并到实验室二级 tab — /workspace/factors 已不在主菜单.
+  [/^\/workspace\/factors(\/.*)?$/, '/workspace/lab'],
   [/^\/market(\/.*)?$/, '/workspace/data'],
   [/^\/data-update(\/.*)?$/, '/workspace/data'],
   [/^\/tasks(\/.*)?$/, '/workspace/data'],
@@ -231,22 +256,31 @@ const AppContent: React.FC = () => {
     navigate('/login');
   };
 
-  // US-001: collapse the legacy 38-page sprawl into top-level workspaces.
-  // Each workspace owns a tabbed inner layout (built out in later stories).
-  const mainMenuItems: MenuProps['items'] = useMemo(
-    () => [
-      menuLink('/workspace/easy', <RocketOutlined />, '简易版'),
-      menuLink('/workspace/today', <CompassOutlined />, '今日作战'),
-      menuLink('/workspace/factors', <FilterOutlined />, '选股因子'),
-      menuLink('/workspace/lab', <ExperimentOutlined />, '策略实验室'),
-      menuLink('/workspace/portfolio', <PieChartOutlined />, '持仓与复盘'),
-      menuLink('/workspace/data', <DatabaseOutlined />, '数据中心'),
-      menuLink('/workspace/settings', <SettingOutlined />, '账号设置'),
-      // Batch AL (2026-06-21) — 用户明确要求新增"系统介绍"
-      menuLink('/workspace/system', <InfoCircleOutlined />, '系统介绍'),
-    ],
-    []
-  );
+  // Phase 7 (2026-06-28) — 主菜单"统一一套".
+  // 用户反馈: "我即是管理员, 也是新手小白想学习量化, 不想让页面分离开" + "简易版
+  // 那个 Tab 和页面怎么没有了". 修复:
+  //   1. 所有用户看一样的菜单 (admin 只多 2 项 admin-only 数据/系统);
+  //   2. 简易版回主菜单作为"教学路径";
+  //   3. /home 仍是默认登录页, 但通过顶栏"更多功能"下拉也能进任意菜单.
+  // 5 项基础 + 2 项 admin-only:
+  //   主页 / 简易版 / 持仓 / 实验室 / 设置  (admin: + 数据中心 / 系统介绍)
+  // /workspace/today 不再上一级菜单 — /home 已是新手的"今日入口", admin 可通过
+  // 实验室 / 数据中心 / 顶栏更多 进入. 路由仍保留 (deep link 兼容).
+  const isAdmin = user?.role === 'admin';
+  const mainMenuItems: MenuProps['items'] = useMemo(() => {
+    const items: MenuProps['items'] = [
+      menuLink('/home', <HomeIcon className="hero-icon" />, '主页'),
+      menuLink('/workspace/easy', <RocketLaunchIcon className="hero-icon" />, '简易版'),
+      menuLink('/workspace/portfolio', <ChartPieIcon className="hero-icon" />, '持仓'),
+      menuLink('/workspace/lab', <BeakerIcon className="hero-icon" />, '实验室'),
+      menuLink('/workspace/settings', <Cog6ToothIcon className="hero-icon" />, '设置'),
+    ];
+    if (isAdmin) {
+      items.push(menuLink('/workspace/data', <CircleStackIcon className="hero-icon" />, '数据中心'));
+      items.push(menuLink('/workspace/system', <InformationCircleIcon className="hero-icon" />, '系统介绍'));
+    }
+    return items;
+  }, [isAdmin]);
 
   const flatMenuItems = useMemo(() => flattenMenu(mainMenuItems), [mainMenuItems]);
   const menuPath = useMemo(() => resolveMenuPath(location.pathname), [location.pathname]);
@@ -254,9 +288,9 @@ const AppContent: React.FC = () => {
     flatMenuItems
       .filter(item => menuPath === item.key || menuPath.startsWith(`${item.key}/`))
       .sort((a, b) => b.key.length - a.key.length)[0] || flatMenuItems[0];
-  const selectedKey = selectedMenu?.key || '/workspace/today';
+  const selectedKey = selectedMenu?.key || '/home';
   const currentSection = selectedMenu?.section || '工作台';
-  const currentPageTitle = selectedMenu?.title || '今日作战';
+  const currentPageTitle = selectedMenu?.title || '主页';
   const selectedParentKeys = useMemo(
     () => selectedMenu?.parentKeys || [],
     [selectedMenu?.parentKeys]
@@ -311,6 +345,12 @@ const AppContent: React.FC = () => {
     );
   }
 
+  // Phase 7.5 (2026-06-28) — /home 改回走标准 ModernAppLayout (Sider + Header).
+  // 用户反馈: "主页为什么没有导航栏, 布局要保持一致".
+  // Phase 6/7 的短路渲染让 /home 没有左侧 sider, 与其他 workspace 不一致.
+  // 现在 /home 与 /workspace/* 共用同一 shell, 视觉统一.
+  // (短路保留给 /workspace/easy — 简易版要独占整屏)
+
   if (location.pathname.startsWith('/workspace/easy')) {
     return (
       <Suspense fallback={routeFallback}>
@@ -331,7 +371,7 @@ const AppContent: React.FC = () => {
 
   return (
     <Layout className="modern-layout">
-      <Sider width={256} className="modern-sider">
+      <Sider width={220} className="modern-sider">
         <div className="modern-sider-inner">
           <div>
             <div className="modern-logo">
@@ -373,7 +413,7 @@ const AppContent: React.FC = () => {
                 <div className="header-user-dropdown">
                   <Avatar
                     size={36}
-                    style={{ backgroundColor: '#1f3a5f', fontSize: 14 }}
+                    style={{ backgroundColor: '#0a0a0a', fontSize: 14 }}
                     icon={<UserOutlined />}
                     src={avatarSrc}
                   />
@@ -389,9 +429,21 @@ const AppContent: React.FC = () => {
         </Header>
         <Content className="modern-layout-content">
           <Suspense fallback={routeFallback}>
-            <Routes>
-              {/* Default still lands existing users in the today workspace. */}
-              <Route path="/" element={<Navigate to="/workspace/today" replace />} />
+            <RouteTransition>
+              <Routes location={location}>
+              {/* Phase 6 (2026-06-27) — 登录默认进 /home (新手主页),
+                  admin 走右上 ⚙ 进 /admin/today (实为 /workspace/today). */}
+              <Route path="/" element={<Navigate to="/home" replace />} />
+
+              {/* Phase 7.5 (2026-06-28) — /home 加入标准 Layout, 与其他 workspace 视觉一致. */}
+              <Route
+                path="/home"
+                element={
+                  <ProtectedRoute>
+                    <HomeWorkspace />
+                  </ProtectedRoute>
+                }
+              />
 
               {/* Unified workspaces (US-001) */}
               <Route
@@ -553,164 +605,15 @@ const AppContent: React.FC = () => {
               <Route path="/profile" element={<Navigate to="/workspace/settings" replace />} />
               <Route path="/users" element={<Navigate to="/workspace/settings" replace />} />
 
-              {/* Pages still reachable for deep links / iframes — kept off the menu.
-                  Stories US-015..US-018 will fold their useful pieces into the
-                  workspace tabs and these can then be deleted physically. */}
-              <Route
-                path="/legacy/today"
-                element={
-                  <ProtectedRoute>
-                    <TodayCommandCenter />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/portfolio"
-                element={
-                  <ProtectedRoute>
-                    <AutonomousTradingOverview />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/live-trading"
-                element={
-                  <ProtectedRoute>
-                    <LiveTrading />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/quant-research"
-                element={
-                  <ProtectedRoute>
-                    <QuantResearchWorkbench />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/strategy-research"
-                element={
-                  <ProtectedRoute>
-                    <StrategyResearchCenter />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/review"
-                element={
-                  <ProtectedRoute>
-                    <ReviewCenter />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/ai-advisor"
-                element={
-                  <ProtectedRoute>
-                    <AIAdvisor />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/backtest"
-                element={
-                  <ProtectedRoute>
-                    <Backtest />
-                  </ProtectedRoute>
-                }
-              />
+              {/* Pages still reachable for deep links — kept off the menu.
+                  Phase 4 (2026-06-27): 18 个 /legacy/* 路由全部移除 (对应 page 已删).
+                  仅保留 /legacy/backtest/:id (LabStrategyDetail 仍 Link 过来) +
+                  /signals/:id/trace + /recommendation-trade-outcomes/:id. */}
               <Route
                 path="/legacy/backtest/:id"
                 element={
                   <ProtectedRoute>
                     <BacktestDetailRoute />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/risk-alerts"
-                element={
-                  <ProtectedRoute>
-                    <RiskAlerts />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/dashboard"
-                element={
-                  <ProtectedRoute>
-                    <Dashboard />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/market"
-                element={
-                  <ProtectedRoute>
-                    <Market />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/data-update"
-                element={
-                  <ProtectedRoute>
-                    <DataUpdateStatus />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/tasks"
-                element={
-                  <ProtectedRoute>
-                    <AdminGuard>
-                      <TaskScheduler />
-                    </AdminGuard>
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/logs"
-                element={
-                  <ProtectedRoute>
-                    <AdminGuard>
-                      <SystemLogs />
-                    </AdminGuard>
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/portfolio-classic"
-                element={
-                  <ProtectedRoute>
-                    <Portfolio />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/screener"
-                element={
-                  <ProtectedRoute>
-                    <Screener />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/profile"
-                element={
-                  <ProtectedRoute>
-                    <Profile />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/legacy/users"
-                element={
-                  <ProtectedRoute>
-                    <AdminGuard>
-                      <UserManagement />
-                    </AdminGuard>
                   </ProtectedRoute>
                 }
               />
@@ -731,9 +634,10 @@ const AppContent: React.FC = () => {
                 }
               />
 
-              {/* Anything else: park in today workspace */}
-              <Route path="*" element={<Navigate to="/workspace/today" replace />} />
-            </Routes>
+              {/* Anything else: 回 /home (新手主页) — Phase 6 之前是 /workspace/today */}
+              <Route path="*" element={<Navigate to="/home" replace />} />
+              </Routes>
+            </RouteTransition>
           </Suspense>
         </Content>
       </Layout>
@@ -746,31 +650,101 @@ const App: React.FC = () => {
     <ConfigProvider
       locale={zhCN}
       theme={{
+        // Phase 14 (2026-06-28) — Stripe Dashboard 视觉重构 (减法).
+        // brand 从 violet #7c3aed 切到 Stripe 紫 #635bff (与官网 Dashboard 同源).
+        // 全站圆角收 6/8 (不再 10/16); shadow 收 2 档极轻; Tabs/Menu/Table 全部走
+        // Stripe 风 (灰底 thead UPPERCASE / underline tab / 浅紫 menu selected).
         token: {
-          colorPrimary: '#1f3a5f',
-          colorInfo: '#2f6f73',
-          colorSuccess: '#1f8a70',
-          colorWarning: '#c9822b',
-          colorError: '#c94b4b',
-          borderRadius: 12,
-          fontFamily:
-            "'IBM Plex Sans', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif",
+          colorPrimary: '#635bff',
+          colorInfo: '#635bff',
+          // A 股惯例 — 红涨绿跌. success 用于跌 (绿), error 用于涨 (红).
+          colorSuccess: '#16a34a',
+          colorWarning: '#f59e0b',
+          colorError: '#dc2626',
+          colorTextBase: '#0a0a0a',
+          colorBgBase: '#ffffff',
+          colorBgLayout: '#fafafa',
           colorBgContainer: '#ffffff',
-          colorText: '#1e252b',
-          colorTextSecondary: '#65727e',
+          colorBorder: '#e5e7eb',
+          colorBorderSecondary: '#f3f4f6',
+          colorText: '#0a0a0a',
+          colorTextSecondary: '#374151',
+          colorTextTertiary: '#6b7280',
+          colorLink: '#635bff',
+          colorLinkHover: '#7a73ff',
+          borderRadius: 6,
+          borderRadiusLG: 8,
+          borderRadiusSM: 4,
+          fontSize: 14,
+          fontSizeLG: 16,
+          fontSizeXL: 18,
+          fontSizeHeading1: 28,
+          fontSizeHeading2: 20,
+          fontSizeHeading3: 18,
+          fontSizeHeading4: 16,
+          fontFamily:
+            "'Inter', 'PingFang SC', system-ui, -apple-system, 'Microsoft YaHei', sans-serif",
+          boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+          boxShadowSecondary: '0 1px 2px rgba(0,0,0,0.04)',
+          controlHeight: 36,
+          controlHeightLG: 40,
+          motionDurationFast: '120ms',
+          motionDurationMid: '200ms',
+          motionDurationSlow: '300ms',
         },
         components: {
-          Button: { borderRadius: 10, controlHeight: 36, fontWeight: 600 },
-          Card: { borderRadiusLG: 16 },
-          Table: {
-            borderRadius: 14,
-            headerBg: '#f7f1e7',
-            headerColor: '#55616c',
-            rowHoverBg: '#fbf7ef',
+          Button: {
+            borderRadius: 6,
+            controlHeight: 36,
+            controlHeightLG: 40,
+            fontWeight: 500,
+            primaryShadow: '0 1px 2px rgba(0,0,0,0.05)',
           },
-          Input: { borderRadius: 10, controlHeight: 36 },
-          Select: { borderRadius: 10, controlHeight: 36 },
-          DatePicker: { borderRadius: 10, controlHeight: 36 },
+          Card: {
+            borderRadiusLG: 8,
+            paddingLG: 20,
+            boxShadowTertiary: '0 1px 2px rgba(0,0,0,0.04)',
+            colorBorderSecondary: '#e5e7eb',
+          },
+          Table: {
+            borderRadius: 8,
+            headerBg: '#fafafa',
+            headerColor: '#6b7280',
+            headerSplitColor: 'transparent',
+            rowHoverBg: '#fafafa',
+            cellPaddingBlock: 14,
+            cellPaddingInline: 16,
+          },
+          Input: { borderRadius: 6, controlHeight: 36 },
+          Select: { borderRadius: 6, controlHeight: 36 },
+          DatePicker: { borderRadius: 6, controlHeight: 36 },
+          Tag: { borderRadiusSM: 4 },
+          Statistic: {
+            titleFontSize: 11,
+            contentFontSize: 28,
+            fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
+          },
+          Tabs: {
+            titleFontSize: 14,
+            inkBarColor: '#635bff',
+            itemSelectedColor: '#0a0a0a',
+            itemHoverColor: '#0a0a0a',
+            itemColor: '#6b7280',
+          },
+          Modal: { borderRadiusLG: 8 },
+          Drawer: { borderRadiusLG: 8 },
+          Menu: {
+            itemHeight: 36,
+            itemBorderRadius: 6,
+            itemSelectedBg: '#f5f4ff',
+            itemSelectedColor: '#635bff',
+            itemHoverBg: '#f3f4f6',
+          },
+          Segmented: {
+            itemSelectedBg: '#ffffff',
+            itemSelectedColor: '#0a0a0a',
+            trackBg: '#f3f4f6',
+          },
         },
       }}
     >

@@ -282,10 +282,10 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
                   reco === 'strong_buy' || reco === 'buy'
                     ? 'success'
                     : reco === 'strong_sell' || reco === 'sell'
-                    ? 'error'
-                    : reco === 'unknown'
-                    ? 'warning'
-                    : 'info'
+                      ? 'error'
+                      : reco === 'unknown'
+                        ? 'warning'
+                        : 'info'
                 }
                 showIcon
                 icon={<BulbOutlined />}
@@ -352,7 +352,7 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
 
               {/* 元数据 / 报告 ID */}
               <Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
-                <CheckCircleOutlined style={{ marginRight: 4, color: '#52c41a' }} />
+                <CheckCircleOutlined style={{ marginRight: 4, color: '#16a34a' }} />
                 Report ID：<Text code>{result.report_id}</Text>
                 {result.persisted ? ' · 已归档' : ' · 未归档'}
                 {result.generated_at &&
@@ -363,7 +363,7 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
 
           {result && useV2Layout && v2View && (
             <Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
-              <CheckCircleOutlined style={{ marginRight: 4, color: '#52c41a' }} />
+              <CheckCircleOutlined style={{ marginRight: 4, color: '#16a34a' }} />
               Report ID：<Text code>{result.report_id}</Text>
               {result.persisted ? ' · 已归档' : ' · 未归档'} · 引擎{' '}
               <Text code>{v2View.engine_variant}</Text>
@@ -401,7 +401,8 @@ const V2Layout: React.FC<{
   result: AnalyzeSingleStockResult;
   view: V2ViewModel;
 }> = ({ result, view }) => {
-  const { dimensions, action_plan, data_quality, overall_confidence, tradingagents_narrative } = view;
+  const { dimensions, action_plan, data_quality, overall_confidence, tradingagents_narrative } =
+    view;
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
       {/* 顶部总览: 综合建议 + 置信 + 风险 + 数据质量 */}
@@ -412,12 +413,12 @@ const V2Layout: React.FC<{
           action_plan.action === 'add'
             ? 'success'
             : action_plan.action === 'strong_sell' ||
-              action_plan.action === 'sell' ||
-              action_plan.action === 'reduce'
-            ? 'error'
-            : action_plan.action === 'hold'
-            ? 'info'
-            : 'warning'
+                action_plan.action === 'sell' ||
+                action_plan.action === 'reduce'
+              ? 'error'
+              : action_plan.action === 'hold'
+                ? 'info'
+                : 'warning'
         }
         showIcon
         icon={<BulbOutlined />}
@@ -480,12 +481,14 @@ const V2Layout: React.FC<{
                                 : ''
                             }`
                           : undefined,
-                      weight: d.score !== null && d.score !== undefined ? Number(d.score) : undefined,
+                      weight:
+                        d.score !== null && d.score !== undefined ? Number(d.score) : undefined,
                     })),
                   confidence: overall_confidence ?? undefined,
-                  key_reasons: pickActionRiskWarnings(action_plan, 5).length > 0
-                    ? pickActionRiskWarnings(action_plan, 5)
-                    : [`综合 8 维度评分给出"${action_plan.action_label}"建议`],
+                  key_reasons:
+                    pickActionRiskWarnings(action_plan, 5).length > 0
+                      ? pickActionRiskWarnings(action_plan, 5)
+                      : [`综合 8 维度评分给出"${action_plan.action_label}"建议`],
                   ai_summary: (result as any)?.summary || (result as any)?.recommendation_text,
                 } as TradeReasonPayload
               }
@@ -556,23 +559,50 @@ const V2Layout: React.FC<{
           <Title level={5} style={{ marginBottom: 12 }}>
             <RobotOutlined style={{ marginRight: 6 }} />
             研报式叙述 (TradingAgents)
-            <Tag color="purple" style={{ marginLeft: 8, fontSize: 11 }}>叙事补充</Tag>
+            <Tag color="purple" style={{ marginLeft: 8, fontSize: 11 }}>
+              叙事补充
+            </Tag>
           </Title>
           <Space direction="vertical" size={8} style={{ width: '100%' }}>
             {tradingagents_narrative.fundamental && (
-              <Alert type="info" message={<b>基本面</b>} description={tradingagents_narrative.fundamental} showIcon={false} />
+              <Alert
+                type="info"
+                message={<b>基本面</b>}
+                description={tradingagents_narrative.fundamental}
+                showIcon={false}
+              />
             )}
             {tradingagents_narrative.technical && (
-              <Alert type="info" message={<b>技术面</b>} description={tradingagents_narrative.technical} showIcon={false} />
+              <Alert
+                type="info"
+                message={<b>技术面</b>}
+                description={tradingagents_narrative.technical}
+                showIcon={false}
+              />
             )}
             {tradingagents_narrative.capital && (
-              <Alert type="info" message={<b>资金面</b>} description={tradingagents_narrative.capital} showIcon={false} />
+              <Alert
+                type="info"
+                message={<b>资金面</b>}
+                description={tradingagents_narrative.capital}
+                showIcon={false}
+              />
             )}
             {tradingagents_narrative.news && (
-              <Alert type="info" message={<b>新闻面</b>} description={tradingagents_narrative.news} showIcon={false} />
+              <Alert
+                type="info"
+                message={<b>新闻面</b>}
+                description={tradingagents_narrative.news}
+                showIcon={false}
+              />
             )}
             {tradingagents_narrative.sentiment && (
-              <Alert type="info" message={<b>情绪面</b>} description={tradingagents_narrative.sentiment} showIcon={false} />
+              <Alert
+                type="info"
+                message={<b>情绪面</b>}
+                description={tradingagents_narrative.sentiment}
+                showIcon={false}
+              />
             )}
             {!tradingagents_narrative.fundamental &&
               !tradingagents_narrative.technical &&
@@ -580,7 +610,12 @@ const V2Layout: React.FC<{
               !tradingagents_narrative.news &&
               !tradingagents_narrative.sentiment &&
               tradingagents_narrative.raw_text && (
-                <Alert type="info" message={<b>综合叙述</b>} description={tradingagents_narrative.raw_text} showIcon={false} />
+                <Alert
+                  type="info"
+                  message={<b>综合叙述</b>}
+                  description={tradingagents_narrative.raw_text}
+                  showIcon={false}
+                />
               )}
           </Space>
         </div>
