@@ -1119,8 +1119,26 @@ const DataAuditTab: React.FC<{
   const backtestArtifact = audit?.artifacts.find(item => item.artifact_type === 'backtest');
   const integrityArtifact = audit?.artifacts.find(item => item.artifact_type === 'integrity_audit');
   const pitArtifact = audit?.artifacts.find(item => item.artifact_type === 'point_in_time_audit');
+  const auditedReturnArtifact = audit?.artifacts.find(
+    item => item.artifact_type === 'audited_return_replay'
+  );
   const credibility = audit?.credibility_verdict;
   const taskExperiment = experiments.find(item => item.task_id === taskId);
+  const auditedReturnPayload = auditedReturnArtifact?.payload_json || {};
+  const theoreticalReturn = pickFiniteNumber(
+    auditedReturnPayload.theoretical_return_pct,
+    selectedTask?.run_summary?.best_return_pct ?? 0
+  );
+  const auditedReturn = pickFiniteNumber(
+    auditedReturnPayload.audited_return_pct,
+    credibility?.verdict === 'reject' || credibility?.verdict === 'insufficient'
+      ? 0
+      : theoreticalReturn
+  );
+  const executableReturn = pickFiniteNumber(
+    auditedReturnPayload.executable_return_pct,
+    theoreticalReturn
+  );
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -1186,37 +1204,19 @@ const DataAuditTab: React.FC<{
             >
               <Row gutter={[16, 16]}>
                 <Col xs={24} md={8}>
-                  <Statistic
-                    title="理论收益"
-                    value={selectedTask?.run_summary?.best_return_pct ?? 0}
-                    precision={2}
-                    suffix="%"
-                  />
+                  <Statistic title="理论收益" value={theoreticalReturn} precision={2} suffix="%" />
                 </Col>
                 <Col xs={24} md={8}>
-                  <Statistic
-                    title="审计后收益"
-                    value={
-                      credibility?.verdict === 'reject' || credibility?.verdict === 'insufficient'
-                        ? 0
-                        : (selectedTask?.run_summary?.best_return_pct ?? 0)
-                    }
-                    precision={2}
-                    suffix="%"
-                  />
+                  <Statistic title="审计后收益" value={auditedReturn} precision={2} suffix="%" />
                 </Col>
                 <Col xs={24} md={8}>
-                  <Statistic
-                    title="可成交收益"
-                    value={selectedTask?.run_summary?.best_return_pct ?? 0}
-                    precision={2}
-                    suffix="%"
-                  />
+                  <Statistic title="可成交收益" value={executableReturn} precision={2} suffix="%" />
                 </Col>
               </Row>
               <Text type="secondary" style={{ display: 'block', marginTop: 12 }}>
                 实验 #{taskExperiment?.id || audit?.experiment?.id || '—'} ·{' '}
-                {selectedTask?.task_name || '—'}
+                {selectedTask?.task_name || '—'} ·{' '}
+                {auditedReturnArtifact?.summary || '后端回放收益生成后会优先展示。'}
               </Text>
             </Card>
           </Space>
@@ -2279,6 +2279,11 @@ const CompareTableCard: React.FC<{ result: BacktestCompareResponse }> = ({ resul
 function fmtPct(value?: number | null, precision = 2) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—';
   return `${Number(value).toFixed(precision)}%`;
+}
+
+function pickFiniteNumber(value: unknown, fallback: number) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : fallback;
 }
 
 function percentTag(value?: number | null) {

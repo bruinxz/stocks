@@ -9,7 +9,12 @@ import { QuantBacktestResult } from '../../models/QuantBacktestResult';
 import { QuantBacktestOptions } from '../../quant/types/QuantTypes';
 import { ResearchIntegrityService } from './ResearchIntegrityService';
 import { buildPointInTimeArtifact } from './PointInTimeAuditService';
+import {
+  buildAuditedReturnReplayArtifact,
+  researchTrustPolicyService,
+} from './ResearchTrustPolicyService';
 import { logger } from '../../utils/logger';
+import { quantBacktestQueue } from '../../jobs/quantBacktestQueue';
 
 export type QuantResearchVerdict = 'pending' | 'pass' | 'watch' | 'reject' | 'insufficient';
 
@@ -19,6 +24,7 @@ export type ResearchArtifactDraft = {
     | 'integrity_audit'
     | 'point_in_time_audit'
     | 'execution_audit'
+    | 'audited_return_replay'
     | 'credibility_summary';
   source_type?: string | null;
   source_id?: number | null;
@@ -314,6 +320,20 @@ function aggregateExecutionDiagnostics(results: QuantBacktestResult[]) {
   }, {});
 }
 
+function bestResultToPayload(result: QuantBacktestResult | null) {
+  if (!result) return null;
+  return {
+    result_id: result.id,
+    strategy_key: result.strategy_key,
+    strategy_name: result.strategy_name,
+    total_return_pct: Number(result.total_return_pct || 0),
+    annual_return_pct: Number(result.annual_return_pct || 0),
+    max_drawdown_pct: Number(result.max_drawdown_pct || 0),
+    sharpe_ratio: Number(result.sharpe_ratio || 0),
+    trade_count: Number(result.trade_count || 0),
+  };
+}
+
 function buildBacktestArtifact(task: QuantBacktestTask, bestResult: QuantBacktestResult | null) {
   if (!bestResult) {
     return {
@@ -378,6 +398,13 @@ export class ResearchExperimentService {
       hypothesis: input.hypothesis || '',
       created_at: Date.now(),
     };
+    const dataPolicy = researchTrustPolicyService.buildDataPolicy(input.data_policy_json || {}, {
+      as_of_date: input.end_date,
+      end_date: input.end_date,
+    });
+    const constraintPolicy = researchTrustPolicyService.buildConstraintPolicy(
+      input.constraint_policy_json || {}
+    );
     const experiment = await QuantResearchExperiment.create({
       user_id: user_id || null,
       experiment_key: `qresearch_${shortHash(seed)}`,
@@ -392,17 +419,17 @@ export class ResearchExperimentService {
       universe: input.universe || 'market',
       symbols: input.symbols || [],
       params_json: input.params_json || input.params_by_strategy || {},
-      data_policy_json: input.data_policy_json || {},
+      data_policy_json: dataPolicy,
       cost_policy_json: input.cost_policy_json || {},
-      constraint_policy_json: input.constraint_policy_json || {},
+      constraint_policy_json: constraintPolicy,
       summary_json: {},
     } as any);
     if (input.task_id) {
       await QuantBacktestTask.update(
         {
           experiment_id: experiment.id,
-          data_policy_json: input.data_policy_json || {},
-          constraint_policy_json: input.constraint_policy_json || {},
+          data_policy_json: dataPolicy,
+          constraint_policy_json: constraintPolicy,
         } as any,
         { where: { id: input.task_id } }
       );
@@ -420,12 +447,18 @@ export class ResearchExperimentService {
     if (explicitExperimentId > 0) {
       const existing = await QuantResearchExperiment.findByPk(explicitExperimentId);
       if (existing) {
+        const dataPolicy = researchTrustPolicyService.buildDataPolicy(
+          rawOptions.data_policy_json || existing.data_policy_json || {},
+          { as_of_date: rawOptions.end_date || existing.end_date }
+        );
+        const constraintPolicy = researchTrustPolicyService.buildConstraintPolicy(
+          rawOptions.constraint_policy_json || existing.constraint_policy_json || {}
+        );
         await existing.update({ task_id: task.id, status: 'running' } as any);
         await task.update({
           experiment_id: existing.id,
-          data_policy_json: rawOptions.data_policy_json || existing.data_policy_json || {},
-          constraint_policy_json:
-            rawOptions.constraint_policy_json || existing.constraint_policy_json || {},
+          data_policy_json: dataPolicy,
+          constraint_policy_json: constraintPolicy,
         } as any);
         return existing;
       }
@@ -452,8 +485,8 @@ export class ResearchExperimentService {
     );
     await task.update({
       experiment_id: experiment.id,
-      data_policy_json: rawOptions.data_policy_json || {},
-      constraint_policy_json: rawOptions.constraint_policy_json || {},
+      data_policy_json: experiment.data_policy_json || {},
+      constraint_policy_json: experiment.constraint_policy_json || {},
     } as any);
     return experiment;
   }
@@ -482,6 +515,155 @@ export class ResearchExperimentService {
       summary: draft.summary,
       payload_json: draft.payload_json || {},
     } as any);
+  }
+
+  private async ensureTrustedRerunTask(
+    task: QuantBacktestTask,
+    experiment: QuantResearchExperiment,
+    artifact: ResearchArtifactDraft
+  ): Promise<ResearchArtifactDraft> {
+    if (researchTrustPolicyService.isTrustedRerunTask(rawOptionsFromTask(task))) {
+      return artifact;
+    }
+    const summary = experiment.summary_json || {};
+    const existingTaskId = Number(
+      summary.trusted_rerun_task_id || artifact.payload_json?.trusted_rerun_task_id || 0
+    );
+    if (existingTaskId > 0) {
+      const existing = await QuantBacktestTask.findByPk(existingTaskId);
+      return {
+        ...artifact,
+        status: existing?.status === 'COMPLETED' ? artifact.status : 'pending',
+        summary:
+          existing?.status === 'COMPLETED'
+            ? artifact.summary
+            : `可信重跑任务 #${existingTaskId} 已创建，等待队列完成后更新审计后收益。`,
+        payload_json: {
+          ...(artifact.payload_json || {}),
+          trusted_rerun_task_id: existingTaskId,
+          trusted_rerun_status: existing?.status || 'QUEUED',
+          replay_method:
+            existing?.status === 'COMPLETED'
+              ? artifact.payload_json?.replay_method
+              : 'trusted_backtest_task_queued',
+        },
+      };
+    }
+
+    const rerunOptions = researchTrustPolicyService.buildTrustedRerunOptions({
+      source_task_id: task.id,
+      experiment_id: experiment.id,
+      task_name: task.task_name,
+      universe: task.universe,
+      strategy_keys: task.strategy_keys || [],
+      symbols: task.symbols || [],
+      start_date: task.start_date,
+      end_date: task.end_date,
+      initial_capital: Number(task.initial_capital || 0),
+      commission_rate: Number(task.commission_rate || 0),
+      slippage_rate: Number(task.slippage_rate || 0),
+      parameters: rawOptionsFromTask(task),
+    });
+    const rerunTask = await QuantBacktestTask.create({
+      user_id: task.user_id || null,
+      experiment_id: experiment.id,
+      task_name: rerunOptions.task_name,
+      universe: rerunOptions.universe || 'market',
+      strategy_keys: rerunOptions.strategy_keys || [],
+      symbols: rerunOptions.symbols || [],
+      start_date: rerunOptions.start_date,
+      end_date: rerunOptions.end_date,
+      initial_capital: rerunOptions.initial_capital || task.initial_capital || 200000,
+      commission_rate: rerunOptions.commission_rate ?? task.commission_rate ?? 0.0003,
+      slippage_rate: rerunOptions.slippage_rate ?? task.slippage_rate ?? 0.0005,
+      status: 'QUEUED',
+      progress: 0,
+      parameters: rerunOptions,
+      data_policy_json: rerunOptions.data_policy_json || {},
+      constraint_policy_json: rerunOptions.constraint_policy_json || {},
+    } as any);
+    const job = await quantBacktestQueue.add(
+      { task_id: rerunTask.id, user_id: task.user_id, options: rerunOptions },
+      {
+        jobId: `quant-backtest-trusted-rerun-${task.id}-${rerunTask.id}-${Date.now()}`,
+        delay: 0,
+      }
+    );
+    const nextSummary = {
+      ...summary,
+      trusted_rerun_task_id: rerunTask.id,
+      trusted_rerun_source_task_id: task.id,
+      trusted_rerun_status: 'QUEUED',
+      trusted_rerun_queue_job_id: job.id,
+    };
+    await experiment.update({ summary_json: nextSummary } as any);
+    return {
+      ...artifact,
+      status: 'pending',
+      summary: `可信重跑任务 #${rerunTask.id} 已自动创建，完成后会用真实重跑结果更新审计后收益。`,
+      payload_json: {
+        ...(artifact.payload_json || {}),
+        trusted_rerun_task_id: rerunTask.id,
+        trusted_rerun_status: 'QUEUED',
+        trusted_rerun_queue_job_id: job.id,
+        replay_method: 'trusted_backtest_task_queued',
+      },
+    };
+  }
+
+  private async syncTrustedRerunBackToOriginal(
+    task: QuantBacktestTask,
+    bestResult: QuantBacktestResult | null,
+    pointInTimeArtifact: ResearchArtifactDraft,
+    executionArtifact: ResearchArtifactDraft
+  ) {
+    const raw = rawOptionsFromTask(task);
+    const source_task_id = Number(raw.trusted_rerun_of_task_id || 0);
+    if (!source_task_id || !task.experiment_id) return;
+    const originalArtifact = await QuantResearchArtifact.findOne({
+      where: {
+        experiment_id: task.experiment_id,
+        task_id: source_task_id,
+        artifact_type: 'audited_return_replay',
+      },
+      order: [['created_at', 'DESC']],
+    });
+    const originalPayload = originalArtifact?.payload_json || {};
+    const rerunPayload = bestResultToPayload(bestResult);
+    const executableReturn = Number(rerunPayload?.total_return_pct ?? 0);
+    const executableAnnualReturn = Number(rerunPayload?.annual_return_pct ?? executableReturn);
+    const executableDrawdown = Math.abs(Number(rerunPayload?.max_drawdown_pct ?? 0));
+    const status: QuantResearchArtifactStatus = !bestResult
+      ? 'insufficient'
+      : pointInTimeArtifact.status === 'reject' || executionArtifact.status === 'reject'
+      ? 'watch'
+      : 'pass';
+    await this.replaceArtifact(Number(task.experiment_id), source_task_id, {
+      artifact_type: 'audited_return_replay',
+      source_type: 'trusted_backtest_task_actual',
+      source_id: bestResult?.id || task.id,
+      status,
+      title: '审计后收益重跑',
+      summary: bestResult
+        ? `可信重跑任务 #${task.id} 已完成，可成交收益 ${executableReturn.toFixed(2)}%。`
+        : `可信重跑任务 #${task.id} 未生成有效结果。`,
+      payload_json: {
+        ...originalPayload,
+        source_task_id,
+        trusted_rerun_task_id: task.id,
+        trusted_rerun_result_id: bestResult?.id || null,
+        trusted_rerun_status: task.status,
+        trusted_rerun_result: rerunPayload,
+        audited_return_pct: executableReturn,
+        executable_return_pct: executableReturn,
+        audited_annual_return_pct: executableAnnualReturn,
+        executable_annual_return_pct: executableAnnualReturn,
+        executable_max_drawdown_pct: executableDrawdown,
+        replay_method: 'trusted_backtest_task_actual',
+        point_in_time_status: pointInTimeArtifact.status,
+        execution_status: executionArtifact.status,
+      },
+    });
   }
 
   private async findExperimentForTask(task: QuantBacktestTask, preferred_experiment_id?: number) {
@@ -566,6 +748,27 @@ export class ResearchExperimentService {
       aggregateExecutionDiagnostics(results)
     );
     await this.replaceArtifact(experiment.id, task.id, executionArtifact);
+
+    let auditedReturnArtifact: ResearchArtifactDraft = buildAuditedReturnReplayArtifact({
+      best_result: bestResult ? asPlain(bestResult) : null,
+      point_in_time_artifact: pointInTimeArtifact,
+      execution_artifact: executionArtifact,
+    });
+    if (researchTrustPolicyService.isTrustedRerunTask(rawOptionsFromTask(task))) {
+      await this.syncTrustedRerunBackToOriginal(
+        task,
+        bestResult,
+        pointInTimeArtifact,
+        executionArtifact
+      );
+    } else {
+      auditedReturnArtifact = await this.ensureTrustedRerunTask(
+        task,
+        experiment,
+        auditedReturnArtifact
+      );
+    }
+    await this.replaceArtifact(experiment.id, task.id, auditedReturnArtifact);
 
     const credibility = buildCredibilitySummary({
       backtest_artifact: backtestArtifact,

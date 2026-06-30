@@ -874,6 +874,27 @@
   line-height: 1.7;
 }
 
+.eq-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.eq-report-history-link {
+  width: fit-content;
+  min-height: 36px;
+  padding-inline: 14px;
+  border-color: rgba(201, 99, 56, 0.28);
+  color: var(--eq-clay);
+  background: rgba(201, 99, 56, 0.07);
+}
+
+.eq-report-history-link:hover {
+  border-color: rgba(201, 99, 56, 0.42);
+  background: rgba(201, 99, 56, 0.11);
+}
+
 .eq-template-cards {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

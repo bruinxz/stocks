@@ -10,6 +10,7 @@ import { Stock } from '../../../models/Stock';
 import { logger } from '../../../utils/logger';
 import { realtimeQuoteService } from '../../../data/services/RealtimeQuoteService';
 import { quantStrategyService } from './QuantStrategyService';
+import { researchTrustPolicyService } from '../../../services/research/ResearchTrustPolicyService';
 
 /**
  * Sprint 40 #2: 组合级策略 (multi_factor_alpha / ensemble_strategy) 的 strategy_key 集合.
@@ -49,6 +50,46 @@ function mapRawToScoreByQuantile(rawValues: number[]): Map<number, number> {
     out.set(v, round(60 + normalized * 35, 4));
   }
   return out;
+}
+
+function inferLimitThreshold(symbol: string, name?: string | null): number {
+  const normalized = String(symbol || '').toLowerCase();
+  if (/(^|\*)ST|退/i.test(String(name || ''))) return 5 * 0.97;
+  if (/^sh\.688/.test(normalized) || /^sz\.300/.test(normalized)) return 20 * 0.97;
+  if (/^bj\./.test(normalized)) return 30 * 0.97;
+  return 10 * 0.97;
+}
+
+function buildSignalExecutionProfile(
+  signal: QuantSignalResult,
+  stock: Stock | undefined,
+  context: any
+) {
+  const symbol = signal.symbol;
+  const name = signal.name || stock?.name || symbol;
+  const latestChangePercent =
+    signal.factors?.latest_change_percent ??
+    context?.change_percent ??
+    (stock as any)?.change_percent;
+  const latestPrice =
+    signal.entry_price ??
+    context?.latest_price ??
+    (stock as any)?.price ??
+    signal.factors?.latest_price;
+  const threshold = inferLimitThreshold(symbol, name);
+  const numericChange = Number(latestChangePercent);
+  return {
+    symbol,
+    name,
+    is_st: /(^|\*)ST|退/i.test(String(name || '')),
+    is_suspended: Boolean((stock as any)?.is_suspended || context?.is_suspended),
+    is_limit_up: Number.isFinite(numericChange) && numericChange >= threshold,
+    is_limit_down: Number.isFinite(numericChange) && numericChange <= -threshold,
+    latest_change_percent: Number.isFinite(numericChange) ? numericChange : undefined,
+    latest_price: latestPrice,
+    price_source: context?.price_source || 'daily_bar',
+    data_status: (stock as any)?.data_status,
+  };
 }
 
 /**
@@ -152,6 +193,7 @@ export class QuantSignalService {
     include_realtime_quote?: boolean;
   }) {
     const trade_date = options.trade_date || dateOnly(new Date());
+    const trustedDataPolicy = researchTrustPolicyService.buildSignalDataPolicy({ trade_date });
     let quoteSync: any = null;
     if (options.refresh_realtime_quotes) {
       try {
@@ -160,6 +202,7 @@ export class QuantSignalService {
           user_id: options.user_id,
           symbols: options.symbols,
           limit: options.quote_sync_limit || options.candidate_limit || 180,
+          as_of_date: trade_date,
         });
         quoteSync = await realtimeQuoteService.syncQuotesForSymbols(
           stocksForQuoteSync.map(stock => stock.symbol),
@@ -183,6 +226,7 @@ export class QuantSignalService {
       symbols: options.symbols,
       start_date: dateOnly(start),
       end_date: trade_date,
+      as_of_date: trade_date,
       warmup_days: 80,
       limit: options.candidate_limit || 180,
       include_realtime_quote:
@@ -377,6 +421,23 @@ export class QuantSignalService {
       const stockBySymbol = new Map(stockRecords.map(stock => [stock.symbol, stock]));
       for (const signal of limited) {
         const stock = stockBySymbol.get(signal.symbol);
+        const signalContext = contextBySymbol.get(signal.symbol);
+        const executionProfile = buildSignalExecutionProfile(signal, stock, signalContext);
+        const signalExecutionGate = researchTrustPolicyService.evaluateExecutionGate({
+          side: signal.signal === 'sell' ? 'SELL' : 'BUY',
+          symbol: signal.symbol,
+          profile: executionProfile,
+          quote: {
+            price: executionProfile.latest_price,
+            source: executionProfile.price_source,
+          },
+        });
+        const riskFlags = signalExecutionGate.allowed
+          ? signal.risk_flags || []
+          : [
+              ...(signal.risk_flags || []),
+              ...signalExecutionGate.reasons.map(reason => `成交约束：${reason}`),
+            ].slice(0, 8);
         let marketEnvironment: any = null;
         try {
           marketEnvironment = await marketEnvironmentService.getEnvironmentForStock(signal.symbol, {
@@ -407,7 +468,7 @@ export class QuantSignalService {
           stop_loss_price: signal.stop_loss_price,
           take_profit_price: signal.take_profit_price,
           reason: (signal.reasons || []).slice(0, 4).join('；'),
-          risk_flags: signal.risk_flags || [],
+          risk_flags: riskFlags,
           raw_factors: {
             ...(signal.factors || {}),
             param_version_key:
@@ -436,9 +497,14 @@ export class QuantSignalService {
             industry: stock?.industry,
             market_regime: marketEnvironment?.market_regime,
             industry_regime: marketEnvironment?.industry?.regime,
+            trusted_data_policy: trustedDataPolicy,
+            trusted_execution_gate: signalExecutionGate,
           },
           agent_eligible:
-            signal.score >= 72 && signal.signal === 'buy' && (signal.risk_flags || []).length <= 2,
+            signal.score >= 72 &&
+            signal.signal === 'buy' &&
+            riskFlags.length <= 2 &&
+            signalExecutionGate.allowed,
           agent_status: 'pending',
         });
       }

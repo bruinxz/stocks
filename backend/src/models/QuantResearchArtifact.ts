@@ -5,6 +5,7 @@ export type QuantResearchArtifactType =
   | 'integrity_audit'
   | 'point_in_time_audit'
   | 'execution_audit'
+  | 'audited_return_replay'
   | 'credibility_summary';
 
 export type QuantResearchArtifactStatus =

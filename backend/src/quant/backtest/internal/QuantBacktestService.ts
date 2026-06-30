@@ -11,6 +11,7 @@ import { selectBenchmarkForStrategyKeys } from '../BenchmarkSelector';
 import { quantStrategyExperimentService } from '../../engine/internal/QuantStrategyExperimentService';
 import { quantStrategyService } from '../../engine/internal/QuantStrategyService';
 import { researchExperimentService } from '../../../services/research/ResearchExperimentService';
+import { researchTrustPolicyService } from '../../../services/research/ResearchTrustPolicyService';
 import { logger } from '../../../utils/logger';
 import { Op } from 'sequelize';
 import { incrementBacktestTotal } from '../../../metrics/PrometheusRegistry';
@@ -496,7 +497,8 @@ export class QuantBacktestService {
   }
 
   async createBacktestTask(options: QuantBacktestOptions, user_id?: number, asyncMode = true) {
-    const normalizedOptions = this.withDefaultExecutionOptions(options);
+    const trustedOptions = researchTrustPolicyService.normalizeBacktestOptions(options);
+    const normalizedOptions = this.withDefaultExecutionOptions(trustedOptions);
     const rawOptions = normalizedOptions as any;
     const task = await QuantBacktestTask.create({
       user_id,

@@ -7,6 +7,7 @@ import {
   CloseOutlined,
   DownOutlined,
   ExportOutlined,
+  HistoryOutlined,
   InfoCircleOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
@@ -1651,6 +1652,14 @@ const EasyQuantWorkspace: React.FC = () => {
               回测报告 <StoryHint story="metrics" label="回测报告说明" />
             </h2>
             <p>先看一个结论，再决定要不要进入模拟观察。详细指标放在抽屉里慢慢看。</p>
+            <div className="eq-report-actions">
+              <button
+                className="eq-button eq-button--quiet eq-report-history-link"
+                onClick={openHistoryDrawer}
+              >
+                历史回测 <HistoryOutlined />
+              </button>
+            </div>
           </div>
           <div className="eq-run-summary-strip" aria-label="本次回测配置">
             <span>
@@ -2120,14 +2129,14 @@ const EasyQuantWorkspace: React.FC = () => {
       <div className="eq-quick-card">
         <span>快捷入口</span>
         <div className="eq-quick-list">
-          <button onClick={() => setDrawerKey('template')}>模板对比</button>
-          <button onClick={() => setDrawerKey('data')}>查数据</button>
-          <button onClick={() => openBacktestDrawer('metrics')}>完整指标</button>
-          <button onClick={() => openBacktestDrawer('trades')}>交易明细</button>
-          <button onClick={() => openBacktestDrawer('blocks')}>成交阻断</button>
           <button onClick={openHistoryDrawer}>历史回测</button>
-          <button onClick={() => setDrawerKey('ledger')}>实验账本</button>
+          <button onClick={() => openBacktestDrawer('trades')}>交易明细</button>
+          <button onClick={() => openBacktestDrawer('metrics')}>完整指标</button>
+          <button onClick={() => setDrawerKey('data')}>查数据</button>
+          <button onClick={() => setDrawerKey('template')}>模板对比</button>
           <button onClick={() => setDrawerKey('observe')}>观察日志</button>
+          <button onClick={() => openBacktestDrawer('blocks')}>成交阻断</button>
+          <button onClick={() => setDrawerKey('ledger')}>实验账本</button>
         </div>
       </div>
     </aside>

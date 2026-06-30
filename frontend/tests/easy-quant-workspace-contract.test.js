@@ -66,6 +66,7 @@ const templates = read('frontend/src/pages/workspace/easyQuantTemplates.ts');
 const helpers = read('frontend/src/pages/workspace/easyQuantResultHelpers.ts');
 const storyHintCss = css.match(/\.eq-story-hint\s*\{[\s\S]*?\n\}/)?.[0] || '';
 const storyBubbleCss = css.match(/\.eq-story-bubble\s*\{[\s\S]*?\n\}/)?.[0] || '';
+const quickEntryBlock = page.match(/<div className="eq-quick-list">([\s\S]*?)<\/div>/)?.[1] || '';
 const forbiddenEasyRuntimeLiterals = [
   ['stock', '_backtest', '_dev'].join(''),
   ['stock', '_dev'].join(''),
@@ -278,6 +279,29 @@ assert(
     page.includes('eq-history-list') &&
     page.includes('eq-history-card') &&
     page.includes('to={`/legacy/backtest/${item.id}`}')
+);
+assert(
+  'history entry is discoverable from the backtest report surface',
+  page.includes('eq-report-actions') &&
+    page.includes('eq-report-history-link') &&
+    /回测报告[\s\S]{0,2600}?eq-report-history-link[\s\S]{0,260}?历史回测/.test(page)
+);
+assert(
+  'quick entries are ordered by expected beginner usage frequency',
+  [
+    '历史回测',
+    '交易明细',
+    '完整指标',
+    '查数据',
+    '模板对比',
+    '观察日志',
+    '成交阻断',
+    '实验账本',
+  ].every((label, index, labels) => {
+    const current = quickEntryBlock.indexOf(label);
+    const previous = index === 0 ? -1 : quickEntryBlock.indexOf(labels[index - 1]);
+    return current >= 0 && current > previous;
+  })
 );
 assert(
   'easy workspace exposes concise user-story hints through icon hover tooltips',

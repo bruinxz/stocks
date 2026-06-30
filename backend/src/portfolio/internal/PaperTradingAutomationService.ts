@@ -64,11 +64,15 @@ import {
   summarizeTradeReason,
 } from './tradeReasonBuilder';
 import { loadProtectionPricesForUser } from './positionProtectionDefaults';
-import { shouldSkipForUserDedup, PRODUCTION_CROSS_PORTFOLIO_DEDUP_DATA_SOURCE } from './crossPortfolioDedup';
+import {
+  shouldSkipForUserDedup,
+  PRODUCTION_CROSS_PORTFOLIO_DEDUP_DATA_SOURCE,
+} from './crossPortfolioDedup';
 import {
   CONFIDENCE_DRIVEN_DEFAULT_MIN_TRADE_AMOUNT,
   deriveTargetPctFromConfidence,
 } from '../sizing/SignalDrivenSizing';
+import { researchTrustPolicyService } from '../../services/research/ResearchTrustPolicyService';
 
 export const DEFAULT_PAPER_TRADING_INITIAL_CAPITAL = 200000;
 
@@ -2851,7 +2855,10 @@ class PaperTradingAutomationService {
       // target_pct × totalValue < 5000, 把 targetAmount 抬到 max(raw, 5000),
       // 受 availableCash * 0.98 cap.
       const rawTargetAmount = totalValue * (effectiveTargetPct / 100);
-      const cb2FlooredAmount = Math.max(rawTargetAmount, CONFIDENCE_DRIVEN_DEFAULT_MIN_TRADE_AMOUNT);
+      const cb2FlooredAmount = Math.max(
+        rawTargetAmount,
+        CONFIDENCE_DRIVEN_DEFAULT_MIN_TRADE_AMOUNT
+      );
       const targetAmount = Math.min(cb2FlooredAmount, availableCash * 0.98);
       if (targetAmount < min_trade_amount && !minLotSample) {
         await skip(`目标交易金额低于最小阈值 ${min_trade_amount}`);
@@ -5687,7 +5694,11 @@ class PaperTradingAutomationService {
     // 同步写 outcome.closed → cooldown 永远查不到这种止损. 补一个 paper_trading_trades
     // 维度的 fallback: 最近 cooldown_days_after_loss 天内有 direction='SELL' 且 realized_pnl < 0
     // 的同标的 trade, 也算 cooldown hit.
-    let cooldownHitFromTrade: { exit_date: string; total_pnl_pct: number | null; realized_pnl_pct: number | null } | null = null;
+    let cooldownHitFromTrade: {
+      exit_date: string;
+      total_pnl_pct: number | null;
+      realized_pnl_pct: number | null;
+    } | null = null;
     if (options.cooldown_days_after_loss > 0 && !cooldownHit) {
       try {
         const cutoff = moment()
@@ -5709,16 +5720,26 @@ class PaperTradingAutomationService {
           const amount = Number((recentLossSell as any).amount) || 1;
           const pnlPct = amount > 0 ? (pnl / amount) * 100 : null;
           cooldownHitFromTrade = {
-            exit_date: moment((recentLossSell as any).created_at).tz('Asia/Shanghai').format('YYYY-MM-DD'),
+            exit_date: moment((recentLossSell as any).created_at)
+              .tz('Asia/Shanghai')
+              .format('YYYY-MM-DD'),
             total_pnl_pct: pnlPct,
             realized_pnl_pct: pnlPct,
           };
           logger.warn(
-            `[paper-auto] cooldown_from_trade hit ${normalizedSymbol} — recent SELL @${(recentLossSell as any).execute_price} pnl=${pnl} on ${cooldownHitFromTrade.exit_date}, suppress new BUY (within ${options.cooldown_days_after_loss}d)`
+            `[paper-auto] cooldown_from_trade hit ${normalizedSymbol} — recent SELL @${
+              (recentLossSell as any).execute_price
+            } pnl=${pnl} on ${cooldownHitFromTrade.exit_date}, suppress new BUY (within ${
+              options.cooldown_days_after_loss
+            }d)`
           );
         }
       } catch (e: any) {
-        logger.warn(`[paper-auto] cooldown_from_trade query failed for ${normalizedSymbol}: ${e?.message ?? e}`);
+        logger.warn(
+          `[paper-auto] cooldown_from_trade query failed for ${normalizedSymbol}: ${
+            e?.message ?? e
+          }`
+        );
       }
     }
     const effectiveCooldownHit = cooldownHit || cooldownHitFromTrade;
@@ -5987,6 +6008,18 @@ class PaperTradingAutomationService {
     block_st?: boolean;
   }): ExecutionRealityDecision {
     const { side, profile } = options;
+    const sharedGate = researchTrustPolicyService.evaluateExecutionGate({
+      side,
+      symbol: profile.symbol,
+      profile,
+      quote: options.quote,
+      policy: {
+        block_limit_up: options.block_limit_up,
+        block_limit_down: options.block_limit_down,
+        block_suspended: options.block_suspended,
+        block_st: options.block_st,
+      },
+    });
     const checks: Record<string, any> = {
       block_st: options.block_st !== false,
       block_suspended: options.block_suspended !== false,
@@ -5996,8 +6029,9 @@ class PaperTradingAutomationService {
       latest_change_percent: profile.latest_change_percent,
       data_status: profile.data_status,
       quote_freshness_status: profile.quote_freshness_status,
+      research_trust_gate: sharedGate.checks,
     };
-    const reasons: string[] = [];
+    const reasons: string[] = [...sharedGate.reasons];
     const quotePrice = toOptionalNumber(options.quote?.price);
     const price = quotePrice || profile.latest_price;
     const turnover = toOptionalNumber(profile.realtime_turnover_yuan);
@@ -6005,28 +6039,6 @@ class PaperTradingAutomationService {
     const effectiveTurnover = Math.max(toNumber(turnover, 0), avgTurnover);
     const minTurnover = toNumber(options.min_avg_turnover_yuan, 0);
 
-    if (!price || price <= 0) {
-      reasons.push('执行可行性：没有有效现价，无法模拟成交');
-    }
-    if (options.block_st !== false && profile.is_st && side === 'BUY') {
-      reasons.push('执行可行性：ST/退市风险标的禁止新增买入');
-    }
-    if (options.block_suspended !== false && profile.is_suspended) {
-      reasons.push('执行可行性：最新交易日停牌，无法成交');
-    }
-    if (profile.data_status && ['no_data', 'conflict'].includes(profile.data_status)) {
-      reasons.push(`执行可行性：数据状态 ${profile.data_status}，成交假设不可信`);
-    }
-    if (side === 'BUY' && options.block_limit_up !== false && profile.is_limit_up) {
-      reasons.push(
-        `执行可行性：涨幅 ${profile.latest_change_percent ?? '--'}%，疑似涨停，买入可能排队无法成交`
-      );
-    }
-    if (side === 'SELL' && options.block_limit_down !== false && profile.is_limit_down) {
-      reasons.push(
-        `执行可行性：跌幅 ${profile.latest_change_percent ?? '--'}%，疑似跌停，卖出可能无法成交`
-      );
-    }
     if (
       side === 'BUY' &&
       minTurnover > 0 &&

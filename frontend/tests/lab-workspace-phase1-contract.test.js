@@ -48,6 +48,13 @@ assert(
   page.includes('理论收益') && page.includes('审计后收益') && page.includes('可成交收益')
 );
 assert(
+  'professional report uses backend audited return replay artifact',
+  page.includes("artifact_type === 'audited_return_replay'") &&
+    page.includes('audited_return_pct') &&
+    page.includes('executable_return_pct') &&
+    service.includes("'audited_return_replay'")
+);
+assert(
   'professional phase one surfaces concise user-story hints through tooltips',
   page.includes('labStoryHints') &&
     page.includes('StoryTooltip') &&

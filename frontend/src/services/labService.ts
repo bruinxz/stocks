@@ -86,6 +86,7 @@ export interface ResearchAuditArtifact {
     | 'integrity_audit'
     | 'point_in_time_audit'
     | 'execution_audit'
+    | 'audited_return_replay'
     | 'credibility_summary';
   status: 'pending' | 'pass' | 'watch' | 'reject' | 'insufficient' | 'error';
   title: string;
