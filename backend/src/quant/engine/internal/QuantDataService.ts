@@ -8,6 +8,7 @@ import { StockMoneyFlowFactor } from '../../../models/StockMoneyFlowFactor';
 import { StockValuationFactor } from '../../../models/StockValuationFactor';
 import { normalizeSymbol } from '../../../utils/stockSymbol';
 import { QuantBar, QuantStockContext, QuantUniverse } from '../../types/QuantTypes';
+import { buildPointInTimeFactorWhere } from '../../../services/research/ResearchTrustPolicyService';
 
 function toDateOnly(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
@@ -127,12 +128,12 @@ export class QuantDataService {
     warmup_days?: number;
     limit?: number;
     include_realtime_quote?: boolean;
-    /** audit S-7 修复: 历史回测 as-of 日期, 默认 end_date 防生存者偏差 */
+    /** 历史回测 as-of 日期；不传时因子快照按 start_date 截断，避免全窗口看见 end_date 因子。 */
     as_of_date?: string;
   }): Promise<QuantStockContext[]> {
     const stocks = await this.getStocks({
       ...options,
-      as_of_date: options.as_of_date || options.end_date,
+      as_of_date: options.as_of_date || options.start_date,
     });
     const latestQuotes =
       options.include_realtime_quote === false
@@ -149,9 +150,11 @@ export class QuantDataService {
     for (const quote of latestQuotes) {
       if (!latestQuoteBySymbol.has(quote.symbol)) latestQuoteBySymbol.set(quote.symbol, quote);
     }
+    const stockSymbols = stocks.map(stock => stock.symbol);
+    const factorAsOfDate = options.as_of_date || options.start_date;
     const [valuationRows, moneyFlowRows, fundamentalRows] = await Promise.all([
       StockValuationFactor.findAll({
-        where: { symbol: { [Op.in]: stocks.map(stock => stock.symbol) } },
+        where: buildPointInTimeFactorWhere(stockSymbols, factorAsOfDate),
         order: [
           ['symbol', 'ASC'],
           ['factor_date', 'DESC'],
@@ -159,7 +162,7 @@ export class QuantDataService {
         limit: Math.max(stocks.length * 3, 50),
       }).catch(() => [] as StockValuationFactor[]),
       StockMoneyFlowFactor.findAll({
-        where: { symbol: { [Op.in]: stocks.map(stock => stock.symbol) } },
+        where: buildPointInTimeFactorWhere(stockSymbols, factorAsOfDate),
         order: [
           ['symbol', 'ASC'],
           ['factor_date', 'DESC'],
@@ -167,7 +170,7 @@ export class QuantDataService {
         limit: Math.max(stocks.length * 3, 50),
       }).catch(() => [] as StockMoneyFlowFactor[]),
       StockFundamentalFactor.findAll({
-        where: { symbol: { [Op.in]: stocks.map(stock => stock.symbol) } },
+        where: buildPointInTimeFactorWhere(stockSymbols, factorAsOfDate),
         order: [
           ['symbol', 'ASC'],
           ['factor_date', 'DESC'],

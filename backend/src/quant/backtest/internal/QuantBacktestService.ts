@@ -10,8 +10,11 @@ import { benchmarkIndexService } from '../../../services/BenchmarkIndexService';
 import { selectBenchmarkForStrategyKeys } from '../BenchmarkSelector';
 import { quantStrategyExperimentService } from '../../engine/internal/QuantStrategyExperimentService';
 import { quantStrategyService } from '../../engine/internal/QuantStrategyService';
+import { researchExperimentService } from '../../../services/research/ResearchExperimentService';
+import { researchTrustPolicyService } from '../../../services/research/ResearchTrustPolicyService';
 import { logger } from '../../../utils/logger';
-import { Op } from 'sequelize';
+import { literal, Op } from 'sequelize';
+import sequelize from '../../../config/database';
 import { incrementBacktestTotal } from '../../../metrics/PrometheusRegistry';
 
 function maxSegmentDrawdown(curve: any[]): number {
@@ -398,6 +401,57 @@ export class QuantBacktestService {
     };
   }
 
+  private buildPendingResearchAudit(experiment: any) {
+    if (!experiment) return null;
+    const credibility_verdict = {
+      verdict: 'pending',
+      can_create_observation: false,
+      blocking_reasons: [],
+      watch_reasons: [],
+      next_action_label: '回到查数据',
+      title: '可信度待生成',
+      summary: '回测完成后会自动生成可信度结论。',
+    };
+    return {
+      experiment: typeof experiment.toJSON === 'function' ? experiment.toJSON() : experiment,
+      artifacts: [],
+      credibility_verdict,
+      can_create_observation: false,
+      blocking_reasons: [],
+      watch_reasons: [],
+      next_action_label: '回到查数据',
+    };
+  }
+
+  private buildQueuedBacktestPayload(task: QuantBacktestTask, experiment: any) {
+    const run_summary = this.buildTaskRunSummary(task, []);
+    return {
+      task: {
+        ...task.toJSON(),
+        run_summary,
+      },
+      results: [],
+      trades: [],
+      run_summary,
+      research_audit: this.buildPendingResearchAudit(experiment),
+    };
+  }
+
+  private resolveCreateQueueDelayMs(options: QuantBacktestOptions) {
+    const rawOptions = options as any;
+    const explicit = Number(rawOptions.queue_delay_ms ?? rawOptions.queueDelayMs);
+    if (Number.isFinite(explicit) && explicit >= 0) {
+      return Math.min(Math.floor(explicit), 10_000);
+    }
+    if (!rawOptions.easy_mode) {
+      return 0;
+    }
+    const configured = Number(process.env.EASY_QUANT_BACKTEST_QUEUE_DELAY_MS ?? 1500);
+    return Number.isFinite(configured)
+      ? Math.min(Math.max(0, Math.floor(configured)), 10_000)
+      : 1500;
+  }
+
   private async enqueueExistingTask(task: QuantBacktestTask, options: QuantBacktestOptions) {
     const job = await quantBacktestQueue.add(
       { task_id: task.id, user_id: task.user_id, options },
@@ -420,10 +474,38 @@ export class QuantBacktestService {
     return { task: await this.getBacktest(task.id), queue_job_id: job.id };
   }
 
+  private persistQueueJobIdAfterResponse(
+    task: QuantBacktestTask,
+    queue_job_id: string | number
+  ) {
+    setImmediate(() => {
+      QuantBacktestTask.update(
+        {
+          parameters: literal(
+            `COALESCE("parameters", '{}'::jsonb) || ${sequelize.escape(
+              JSON.stringify({ queue_job_id })
+            )}::jsonb`
+          ) as any,
+        } as any,
+        { where: { id: task.id } }
+      )
+        .catch((error: any) => {
+          logger.warn(
+            `[quant-backtest] queue job id persistence failed for task ${task.id}: ${
+              error?.message || error
+            }`
+          );
+        });
+    });
+  }
+
   async createBacktestTask(options: QuantBacktestOptions, user_id?: number, asyncMode = true) {
-    const normalizedOptions = this.withDefaultExecutionOptions(options);
+    const trustedOptions = researchTrustPolicyService.normalizeBacktestOptions(options);
+    const normalizedOptions = this.withDefaultExecutionOptions(trustedOptions);
+    const rawOptions = normalizedOptions as any;
     const task = await QuantBacktestTask.create({
       user_id,
+      experiment_id: Number(rawOptions.experiment_id || 0) || null,
       task_name: options.task_name || `量化策略跑分 ${options.start_date}~${options.end_date}`,
       universe: options.universe || 'market',
       strategy_keys: options.strategy_keys,
@@ -436,7 +518,34 @@ export class QuantBacktestService {
       status: asyncMode ? 'QUEUED' : 'RUNNING',
       progress: asyncMode ? 0 : 10,
       parameters: normalizedOptions,
+      data_policy_json: rawOptions.data_policy_json || {},
+      constraint_policy_json: rawOptions.constraint_policy_json || {},
     });
+
+    let researchExperiment: any = null;
+    try {
+      researchExperiment = await researchExperimentService.createOrAttachForBacktest(
+        normalizedOptions,
+        task,
+        user_id
+      );
+      if (researchExperiment) {
+        (normalizedOptions as any).experiment_id = researchExperiment.id;
+      }
+    } catch (error: any) {
+      await task.update({
+        status: 'FAILED',
+        progress: 100,
+        error_message: error?.message || String(error),
+        parameters: {
+          ...(normalizedOptions as any),
+          last_stage: 'research_experiment_attach_failed',
+          last_error: error?.message || String(error),
+          run_failed_at: new Date().toISOString(),
+        },
+      } as any);
+      throw error;
+    }
 
     if (!asyncMode) {
       return this.processBacktestTask(task.id, normalizedOptions, {
@@ -448,18 +557,14 @@ export class QuantBacktestService {
       { task_id: task.id, user_id, options: normalizedOptions },
       {
         jobId: `quant-backtest-task-${task.id}-${Date.now()}`,
+        delay: this.resolveCreateQueueDelayMs(normalizedOptions),
       }
     );
 
-    await task.update({
-      parameters: {
-        ...(normalizedOptions as any),
-        queue_job_id: job.id,
-      },
-    });
+    this.persistQueueJobIdAfterResponse(task, job.id);
 
     return {
-      task: await this.getBacktest(task.id),
+      task: this.buildQueuedBacktestPayload(task, researchExperiment),
       queued: true,
       queue_job_id: job.id,
       summary: {
@@ -751,6 +856,7 @@ export class QuantBacktestService {
         symbols: options.symbols,
         start_date: options.start_date,
         end_date: options.end_date,
+        as_of_date: (options as any).as_of_date || options.start_date,
         warmup_days: 160,
         limit: options.candidate_limit || 120,
         include_realtime_quote: false,
@@ -856,6 +962,20 @@ export class QuantBacktestService {
         },
       } as any);
       const experimentResult = await quantStrategyExperimentService.recordBacktestTask(task.id);
+      let researchAudit: any = null;
+      if (task.experiment_id) {
+        try {
+          researchAudit = await researchExperimentService.runAuditForBacktest(
+            task.id,
+            undefined,
+            runtime.user_id ?? task.user_id
+          );
+        } catch (error: any) {
+          logger.warn(
+            `[quant-backtest] research audit failed for task ${task.id}: ${error?.message || error}`
+          );
+        }
+      }
 
       // US-072 Prometheus: 每条策略结果各增 1 个 `backtest_total{strategy, result='success'}`
       // —— 一个 task 可能跑多策略，per-strategy 计数让 Grafana 能按策略看通过率。
@@ -891,7 +1011,9 @@ export class QuantBacktestService {
           best_excess_return_pct: round(best?.excess_return_pct || 0, 2),
           best_validation_verdict: best?.validation?.verdict,
           experiment_count: experimentResult.recorded,
+          research_verdict: researchAudit?.credibility_verdict?.verdict || null,
         },
+        research_audit: researchAudit,
       };
     } catch (error: any) {
       await this.markTaskFailed(task.id, error);
@@ -976,9 +1098,10 @@ export class QuantBacktestService {
     }));
   }
 
-  async getBacktest(id: number) {
+  async getBacktest(id: number, user_id?: number) {
     const task = await QuantBacktestTask.findByPk(id);
     if (!task) return null;
+    if (user_id && task.user_id && Number(task.user_id) !== Number(user_id)) return null;
     const results = await QuantBacktestResult.findAll({
       where: { task_id: id },
       order: [['total_return_pct', 'DESC']],
@@ -988,6 +1111,18 @@ export class QuantBacktestService {
       order: [['buy_date', 'DESC']],
       limit: 500,
     });
+    let research_audit: any = null;
+    if (task.experiment_id) {
+      try {
+        research_audit = await researchExperimentService.getBacktestResearchAudit(
+          id,
+          user_id,
+          task
+        );
+      } catch (error: any) {
+        logger.warn(`[quant-backtest] load research audit failed: ${error?.message || error}`);
+      }
+    }
     return {
       task: {
         ...task.toJSON(),
@@ -996,6 +1131,7 @@ export class QuantBacktestService {
       results,
       trades,
       run_summary: this.buildTaskRunSummary(task, results),
+      research_audit,
     };
   }
 

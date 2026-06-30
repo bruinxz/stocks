@@ -60,6 +60,18 @@ scripts/development/local-dev.sh --help
 scripts/development/local-dev.sh status
 ```
 
+状态里后端会额外显示 DB-backed 健康，例如：
+
+```text
+backend   running  pid=12345  port=3002  backend-db=ok
+```
+
+如果看到 `backend-db=down(tunnel)` 或 `backend-db=down(api)`，说明后端进程还在，但已经不能正常访问测试库。此时不要只看 `/health`，直接执行：
+
+```bash
+scripts/development/local-dev.sh repair
+```
+
 停止全部本地服务：
 
 ```bash
@@ -82,6 +94,14 @@ tmp/local-dev/
 ```
 
 在 macOS 上，脚本会优先使用当前用户的 `launchctl` 临时托管后端和前端进程；因此 `start` 返回后服务仍会保留，`status` 和 `stop` 也可以在新的终端里继续使用。在非 macOS 环境下，脚本会退回到普通 `nohup` 后台启动。
+
+SSH 隧道默认使用密码优先模式，避免本机 SSH agent 里过多 key 导致 `Too many authentication failures` 后还没来得及输入密码就失败。如果你已经配置好可用私钥，可以改用：
+
+```bash
+export STOCKS_DEV_SSH_AUTH_MODE=auto
+```
+
+脚本会把上次使用过的 SSH host 缓存在 `tmp/local-dev/ssh-host`，方便 `repair` 在新终端里复用；缓存里不保存密码。
 
 ## 三档启动模式
 
@@ -301,7 +321,8 @@ scripts/development/local-dev.sh check
 - DB 隧道可用。
 - Redis 可用。
 - 后端 `/health` 返回正常。
-- `/api/stocks?limit=1` 返回成功。
+- DB-backed `/api/stocks?limit=1` 返回成功。
+- `status` 显示 `backend-db=ok`。
 
 ## 推荐日常流程
 
@@ -336,3 +357,11 @@ scripts/development/local-dev.sh status
 scripts/development/local-dev.sh logs backend
 scripts/development/local-dev.sh check
 ```
+
+如果页面报 `connect ECONNREFUSED 127.0.0.1:15432`，优先执行：
+
+```bash
+scripts/development/local-dev.sh repair
+```
+
+`repair` 会重新确认 Redis、SSH 数据库隧道、后端和前端，并且最后必须通过 DB-backed 接口检查，否则会失败并提示看日志。

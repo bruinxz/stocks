@@ -9,17 +9,20 @@ RUNTIME_DIR="$ROOT_DIR/tmp/local-dev"
 SSH_USER="${STOCKS_DEV_SSH_USER:-ops}"
 SSH_HOST="${STOCKS_DEV_SSH_HOST:-}"
 SSH_PORT="${STOCKS_DEV_SSH_PORT:-14126}"
+SSH_AUTH_MODE="${STOCKS_DEV_SSH_AUTH_MODE:-password}"
 LOCAL_DB_PORT="${STOCKS_DEV_LOCAL_DB_PORT:-15432}"
 REMOTE_DB_HOST="${STOCKS_DEV_REMOTE_DB_HOST:-127.0.0.1}"
 REMOTE_DB_PORT="${STOCKS_DEV_REMOTE_DB_PORT:-5432}"
 BACKEND_PORT="${STOCKS_DEV_BACKEND_PORT:-3002}"
 FRONTEND_PORT="${STOCKS_DEV_FRONTEND_PORT:-3001}"
 REDIS_PORT="${STOCKS_DEV_REDIS_PORT:-6379}"
+BACKEND_DB_CHECK_TIMEOUT="${STOCKS_DEV_BACKEND_DB_CHECK_TIMEOUT:-8}"
 
 TUNNEL_PID="$RUNTIME_DIR/db-tunnel.pid"
 BACKEND_PID="$RUNTIME_DIR/backend.pid"
 FRONTEND_PID="$RUNTIME_DIR/frontend.pid"
 REDIS_PID="$RUNTIME_DIR/redis.pid"
+SSH_HOST_CACHE="$RUNTIME_DIR/ssh-host"
 TUNNEL_LOG="$RUNTIME_DIR/db-tunnel.log"
 BACKEND_LOG="$RUNTIME_DIR/backend.log"
 FRONTEND_LOG="$RUNTIME_DIR/frontend.log"
@@ -44,6 +47,7 @@ Usage:
   $(basename "$0") restart [safe|quant|full|all|backend|frontend|tunnel|redis]
   $(basename "$0") status
   $(basename "$0") check
+  $(basename "$0") repair
   $(basename "$0") logs [backend|frontend|tunnel|redis]
 
 Defaults:
@@ -59,6 +63,7 @@ Environment overrides:
   STOCKS_DEV_SSH_USER      default: ops
   STOCKS_DEV_SSH_HOST      required: remote SSH host for the dev DB tunnel
   STOCKS_DEV_SSH_PORT      default: 14126
+  STOCKS_DEV_SSH_AUTH_MODE default: password; use auto to try SSH keys first
   STOCKS_DEV_LOCAL_DB_PORT default: 15432
   STOCKS_DEV_BACKEND_PORT  default: 3002
   STOCKS_DEV_FRONTEND_PORT default: 3001
@@ -355,6 +360,47 @@ wait_for_http() {
   done
 }
 
+backend_db_probe_url() {
+  printf 'http://127.0.0.1:%s/api/stocks?limit=1' "$BACKEND_PORT"
+}
+
+check_backend_db() {
+  curl -fsS --max-time "$BACKEND_DB_CHECK_TIMEOUT" "$(backend_db_probe_url)"
+}
+
+wait_for_backend_db() {
+  local timeout="${1:-40}"
+  local start
+  start="$(date +%s)"
+  while true; do
+    if check_backend_db >/dev/null 2>&1; then
+      log "Backend DB-backed API is ready: $(backend_db_probe_url)"
+      return 0
+    fi
+    if [ $(( $(date +%s) - start )) -ge "$timeout" ]; then
+      log "Backend DB-backed API did not become ready within ${timeout}s"
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+backend_db_status() {
+  if ! nc -z 127.0.0.1 "$BACKEND_PORT" >/dev/null 2>&1; then
+    printf 'backend-db=down'
+    return 0
+  fi
+  if ! nc -z 127.0.0.1 "$LOCAL_DB_PORT" >/dev/null 2>&1; then
+    printf 'backend-db=down(tunnel)'
+    return 0
+  fi
+  if check_backend_db >/dev/null 2>&1; then
+    printf 'backend-db=ok'
+  else
+    printf 'backend-db=down(api)'
+  fi
+}
+
 kill_tree() {
   local pid="$1"
   local child
@@ -491,12 +537,6 @@ start_redis() {
 }
 
 start_tunnel() {
-  if [ -z "$SSH_HOST" ]; then
-    log "STOCKS_DEV_SSH_HOST is required to start the DB tunnel."
-    log "Example: STOCKS_DEV_SSH_HOST=<remote-host> $0 start safe"
-    exit 1
-  fi
-
   remove_stale_pid "$TUNNEL_PID"
   if is_service_running "$TUNNEL_PID"; then
     log "DB tunnel already running (pid $(cat "$TUNNEL_PID"))"
@@ -511,11 +551,51 @@ start_tunnel() {
     return 0
   fi
 
+  if [ -z "$SSH_HOST" ] && [ -f "$SSH_HOST_CACHE" ]; then
+    SSH_HOST="$(cat "$SSH_HOST_CACHE")"
+  fi
+
+  if [ -z "$SSH_HOST" ]; then
+    log "STOCKS_DEV_SSH_HOST is required to start the DB tunnel."
+    log "Example: STOCKS_DEV_SSH_HOST=<remote-host> $0 start safe"
+    exit 1
+  fi
+
+  printf '%s\n' "$SSH_HOST" > "$SSH_HOST_CACHE"
+
   log "Starting DB tunnel: 127.0.0.1:$LOCAL_DB_PORT -> $SSH_HOST:$REMOTE_DB_PORT"
-  log "SSH may ask for the $SSH_USER password unless you have a key configured."
+  log "SSH may ask for the $SSH_USER password. Set STOCKS_DEV_SSH_AUTH_MODE=auto to try keys first."
   : > "$TUNNEL_LOG"
-  ssh \
-    -f -N \
+  local ssh_auth_options=()
+  case "$SSH_AUTH_MODE" in
+    password)
+      ssh_auth_options=(
+        -o PreferredAuthentications=password,keyboard-interactive
+        -o PubkeyAuthentication=no
+        -o NumberOfPasswordPrompts=3
+      )
+      ;;
+    auto)
+      ssh_auth_options=()
+      ;;
+    key)
+      ssh_auth_options=(
+        -o BatchMode=yes
+        -o PreferredAuthentications=publickey
+      )
+      ;;
+    *)
+      log "Unknown STOCKS_DEV_SSH_AUTH_MODE: $SSH_AUTH_MODE"
+      log "Expected password, auto, or key."
+      exit 1
+      ;;
+  esac
+  local ssh_command=(ssh)
+  if [ "${#ssh_auth_options[@]}" -gt 0 ]; then
+    ssh_command+=("${ssh_auth_options[@]}")
+  fi
+  ssh_command+=(
+    -f -N
     -o ExitOnForwardFailure=yes \
     -o ServerAliveInterval=30 \
     -o ServerAliveCountMax=3 \
@@ -525,6 +605,8 @@ start_tunnel() {
     -L "$LOCAL_DB_PORT:$REMOTE_DB_HOST:$REMOTE_DB_PORT" \
     -p "$SSH_PORT" \
     "$SSH_USER@$SSH_HOST"
+  )
+  "${ssh_command[@]}"
 
   wait_for_port "$LOCAL_DB_PORT" "DB tunnel" 15
   existing_pid="$(port_listener_pid "$LOCAL_DB_PORT")"
@@ -541,10 +623,18 @@ start_backend() {
   remove_stale_pid "$BACKEND_PID"
   if is_launchd_service_running "$BACKEND_LABEL" "$BACKEND_PID"; then
     log "Backend already running (pid $(cat "$BACKEND_PID"))"
+    wait_for_backend_db 20 || {
+      log "Backend is running but cannot reach the dev DB. Try: $0 repair"
+      exit 1
+    }
     return 0
   fi
   if is_service_running "$BACKEND_PID"; then
     log "Backend already running (pid $(cat "$BACKEND_PID"))"
+    wait_for_backend_db 20 || {
+      log "Backend is running but cannot reach the dev DB. Try: $0 repair"
+      exit 1
+    }
     return 0
   fi
   if [ -n "$(port_listener_pid "$BACKEND_PORT")" ]; then
@@ -571,6 +661,11 @@ start_backend() {
 
   wait_for_http "http://127.0.0.1:$BACKEND_PORT/health" "Backend" 40 || {
     log "Backend failed to become healthy. Recent log:"
+    tail -n 80 "$BACKEND_LOG" || true
+    exit 1
+  }
+  wait_for_backend_db 40 || {
+    log "Backend process is healthy, but its DB-backed API is not ready. Recent log:"
     tail -n 80 "$BACKEND_LOG" || true
     exit 1
   }
@@ -729,6 +824,7 @@ managed_status_line() {
   local pid_file="$2"
   local port="$3"
   local launchd_label="$4"
+  local status_command="${5:-}"
   local pid
   pid="$(pid_from_file "$pid_file")"
   if ! is_pid_running "$pid"; then
@@ -739,7 +835,15 @@ managed_status_line() {
   fi
 
   if is_pid_running "$pid"; then
-    printf '%-10s running  pid=%s  port=%s\n' "$label" "$pid" "$port"
+    local extra=""
+    if [ -n "$status_command" ]; then
+      extra="$($status_command 2>/dev/null || true)"
+    fi
+    if [ -n "$extra" ]; then
+      printf '%-10s running  pid=%s  port=%s  %s\n' "$label" "$pid" "$port" "$extra"
+    else
+      printf '%-10s running  pid=%s  port=%s\n' "$label" "$pid" "$port"
+    fi
   else
     printf '%-10s stopped  port=%s\n' "$label" "$port"
   fi
@@ -760,7 +864,7 @@ status() {
   else
     printf '%-10s stopped  port=%s\n' "redis" "$REDIS_PORT"
   fi
-  managed_status_line "backend" "$BACKEND_PID" "$BACKEND_PORT" "$BACKEND_LABEL"
+  managed_status_line "backend" "$BACKEND_PID" "$BACKEND_PORT" "$BACKEND_LABEL" backend_db_status
   managed_status_line "frontend" "$FRONTEND_PID" "$FRONTEND_PORT" "$FRONTEND_LABEL"
   printf 'logs       %s\n' "$RUNTIME_DIR"
 }
@@ -770,12 +874,25 @@ check() {
   nc -zv 127.0.0.1 "$LOCAL_DB_PORT"
   log "Checking Redis"
   nc -zv 127.0.0.1 "$REDIS_PORT"
-  log "Checking backend health"
+  log "Checking backend process health"
   curl -fsS "http://127.0.0.1:$BACKEND_PORT/health"
   printf '\n'
   log "Checking backend DB-backed stock endpoint"
-  curl -fsS "http://127.0.0.1:$BACKEND_PORT/api/stocks?limit=1"
+  check_backend_db
   printf '\n'
+}
+
+repair() {
+  log "Repairing local dev runtime"
+  ensure_backend_env
+  assert_backend_env_points_to_dev_db
+  start_redis
+  start_tunnel
+  start_backend
+  start_frontend
+  log "Verifying DB-backed backend API"
+  check_backend_db >/dev/null
+  log "Repair complete. $(backend_db_status)"
 }
 
 logs() {
@@ -833,6 +950,10 @@ case "$command" in
     ;;
   status) status ;;
   check) check ;;
+  repair)
+    configure_mode "$CURRENT_MODE"
+    repair
+    ;;
   logs) logs "${2:-backend}" ;;
   -h|--help|help|'') usage ;;
   *)

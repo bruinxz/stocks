@@ -166,6 +166,11 @@ export interface QuantStrategyRuntimeOptions {
 
 export interface QuantBacktestOptions {
   task_name?: string;
+  easy_mode?: boolean;
+  create_research_experiment?: boolean;
+  experiment_id?: number;
+  template_id?: string;
+  hypothesis?: string;
   universe?: QuantUniverse;
   symbols?: string[];
   strategy_keys: string[];
@@ -198,6 +203,8 @@ export interface QuantBacktestOptions {
   candidate_limit?: number;
   min_score?: number;
   params_by_strategy?: Record<string, Record<string, any>>;
+  data_policy_json?: Record<string, any>;
+  constraint_policy_json?: Record<string, any>;
   /**
    * audit S-1 修复: 组合级策略 (MultiFactorAlpha / DragonHead 等实现了
    * generateSignals(date) 的策略) 的预计算信号; key=strategy_key, value 是

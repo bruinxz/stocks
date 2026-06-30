@@ -13,11 +13,7 @@ const WORKFLOW_READINESS_BODY_LIMIT_BYTES = 100 * 1024;
 const optionalNumber = (field: string, min: number, max: number) =>
   body(field).optional({ nullable: true }).isFloat({ min, max });
 const optionalBoolean = (field: string) => body(field).optional({ nullable: true }).isBoolean();
-const workflowReadinessBodySizeGuard = (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+const workflowReadinessBodySizeGuard = (req: Request, res: Response, next: NextFunction) => {
   const contentLength = Number(req.headers['content-length'] || 0);
   if (Number.isFinite(contentLength) && contentLength > WORKFLOW_READINESS_BODY_LIMIT_BYTES) {
     return res.status(413).json({
@@ -442,6 +438,30 @@ router.post(
   quantController.refreshParamLifecycle.bind(quantController)
 );
 
+router.get(
+  '/research-experiments',
+  authController.authenticate,
+  quantController.listResearchExperiments.bind(quantController)
+);
+
+router.post(
+  '/research-experiments',
+  authController.authenticate,
+  quantController.createResearchExperiment.bind(quantController)
+);
+
+router.get(
+  '/research-experiments/:id',
+  authController.authenticate,
+  quantController.getResearchExperiment.bind(quantController)
+);
+
+router.post(
+  '/research-experiments/:id/run-audit',
+  authController.authenticate,
+  quantController.runResearchExperimentAudit.bind(quantController)
+);
+
 /**
  * @openapi
  * /api/quant/backtests:
@@ -702,6 +722,18 @@ router.get(
   '/backtests',
   authController.authenticate,
   quantController.listBacktests.bind(quantController)
+);
+
+router.get(
+  '/backtests/:id/research-audit',
+  authController.authenticate,
+  quantController.getBacktestResearchAudit.bind(quantController)
+);
+
+router.get(
+  '/backtests/:id/execution-constraint-audit',
+  authController.authenticate,
+  quantController.getBacktestExecutionConstraintAudit.bind(quantController)
 );
 
 /**

@@ -70,6 +70,13 @@ export function pickDryRunStrategyKeysFromRecords(
 }
 
 export class QuantStrategyService {
+  private registrySyncPromise: Promise<QuantStrategyModel[]> | null = null;
+  private registrySyncedAt = 0;
+  private readonly registrySyncTtlMs = (() => {
+    const value = Number(process.env.QUANT_STRATEGY_REGISTRY_SYNC_TTL_MS);
+    return Number.isFinite(value) ? Math.max(30_000, value) : 5 * 60 * 1000;
+  })();
+
   private defaultExecutionPolicy(definition: any) {
     return {
       max_position_pct:
@@ -107,7 +114,7 @@ export class QuantStrategyService {
     };
   }
 
-  async syncRegistry() {
+  private async runRegistrySync() {
     const definitions = strategyRegistry.list();
     const records = [];
     for (const definition of definitions) {
@@ -164,11 +171,30 @@ export class QuantStrategyService {
       await record.update(patch);
       records.push(record);
     }
+    this.registrySyncedAt = Date.now();
     return records;
   }
 
+  async syncRegistry() {
+    if (this.registrySyncPromise) {
+      return this.registrySyncPromise;
+    }
+
+    this.registrySyncPromise = this.runRegistrySync().finally(() => {
+      this.registrySyncPromise = null;
+    });
+    return this.registrySyncPromise;
+  }
+
+  private async ensureRegistrySynced() {
+    if (Date.now() - this.registrySyncedAt < this.registrySyncTtlMs) {
+      return [];
+    }
+    return this.syncRegistry();
+  }
+
   async listStrategies() {
-    await this.syncRegistry();
+    await this.ensureRegistrySynced();
     return QuantStrategyModel.findAll({
       order: [
         ['display_order', 'ASC NULLS LAST'],
@@ -234,10 +260,10 @@ export class QuantStrategyService {
   }
 
   async resolveStrategyKeys(strategy_keys?: string[] | string): Promise<string[]> {
-    await this.syncRegistry();
     const requested = normalizeStrategyKeys(strategy_keys);
     if (requested.length > 0) return requested;
 
+    await this.ensureRegistrySynced();
     const enabledRecords = await QuantStrategyModel.findAll({
       where: { enabled: true },
       order: [
@@ -266,14 +292,15 @@ export class QuantStrategyService {
    * 返回值是 string[]，调用方可以直接传给 `dry_run_strategy_keys` 参数。
    */
   async getDryRunStrategyKeys(): Promise<string[]> {
-    await this.syncRegistry();
+    await this.ensureRegistrySynced();
     const records = await QuantStrategyModel.findAll({});
     return pickDryRunStrategyKeysFromRecords(records);
   }
 
   async getDefaultParamsByStrategy(strategy_keys?: string[] | string) {
-    await this.syncRegistry();
-    const keys = await this.resolveStrategyKeys(strategy_keys);
+    await this.ensureRegistrySynced();
+    const explicitKeys = normalizeStrategyKeys(strategy_keys);
+    const keys = explicitKeys.length ? explicitKeys : await this.resolveStrategyKeys(strategy_keys);
     if (!keys.length) return {};
 
     const records = await QuantStrategyModel.findAll({ where: { strategy_key: keys } });
@@ -290,7 +317,7 @@ export class QuantStrategyService {
   }
 
   async getRuntimePoliciesByStrategy(strategy_keys?: string[] | string) {
-    await this.syncRegistry();
+    await this.ensureRegistrySynced();
     const keys = await this.resolveStrategyKeys(strategy_keys);
     if (!keys.length) return {};
 
@@ -336,7 +363,7 @@ export class QuantStrategyService {
    * 当前绑定到实盘。这是简化判断，避免引入新的 portfolio-strategy mapping 表。
    */
   async getStrategyDetail(strategy_key: string) {
-    await this.syncRegistry();
+    await this.ensureRegistrySynced();
     const strategy = await QuantStrategyModel.findOne({ where: { strategy_key } });
     if (!strategy) return null;
 

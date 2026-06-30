@@ -1,17 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from 'react';
 import { useSelector } from 'react-redux';
 import { BacktestDetail } from '../../services/labService';
 import easyQuantService, { EasyQuantBootstrap } from '../../services/easyQuantService';
 import { RootState } from '../../store/rootReducer';
 
-export type EasyQuantStepKey = 'template' | 'data' | 'backtest' | 'observe';
+export type EasyQuantStepKey = 'template' | 'data' | 'backtest' | 'credibility' | 'observe';
 export type EasyQuantSectionId =
   | 'easy-quant-hero'
   | 'easy-quant-flow'
   | 'easy-quant-template'
   | 'easy-quant-data'
   | 'easy-quant-backtest'
+  | 'easy-quant-credibility'
   | 'easy-quant-observe';
 
 export interface EasyQuantSectionNavItem {
@@ -45,15 +46,25 @@ export function useEasyQuantBootstrap(): {
   bootstrap: EasyQuantBootstrap | null;
   bootstrapLoading: boolean;
   bootstrapError: string | null;
+  bootstrapElapsedSeconds: number;
+  reloadBootstrap: () => void;
 } {
   const [bootstrap, setBootstrap] = useState<EasyQuantBootstrap | null>(null);
   const [bootstrapLoading, setBootstrapLoading] = useState(false);
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const [bootstrapElapsedSeconds, setBootstrapElapsedSeconds] = useState(0);
+  const [reloadSeq, setReloadSeq] = useState(0);
+  const reloadBootstrap = useCallback(() => setReloadSeq(value => value + 1), []);
 
   useEffect(() => {
     let cancelled = false;
+    let elapsedTimer: number | null = null;
     setBootstrapLoading(true);
     setBootstrapError(null);
+    setBootstrapElapsedSeconds(0);
+    elapsedTimer = window.setInterval(() => {
+      setBootstrapElapsedSeconds(value => value + 1);
+    }, 1000);
 
     easyQuantService
       .loadEasyQuantBootstrap()
@@ -68,6 +79,10 @@ export function useEasyQuantBootstrap(): {
         }
       })
       .finally(() => {
+        if (elapsedTimer) {
+          window.clearInterval(elapsedTimer);
+          elapsedTimer = null;
+        }
         if (!cancelled) {
           setBootstrapLoading(false);
         }
@@ -75,10 +90,34 @@ export function useEasyQuantBootstrap(): {
 
     return () => {
       cancelled = true;
+      if (elapsedTimer) {
+        window.clearInterval(elapsedTimer);
+      }
     };
-  }, []);
+  }, [reloadSeq]);
 
-  return { bootstrap, bootstrapLoading, bootstrapError };
+  return { bootstrap, bootstrapLoading, bootstrapError, bootstrapElapsedSeconds, reloadBootstrap };
+}
+
+export function useEasyQuantElapsedSeconds(active: boolean): number {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!active) {
+      setElapsedSeconds(0);
+      return undefined;
+    }
+
+    const startedAt = Date.now();
+    setElapsedSeconds(0);
+    const timer = window.setInterval(() => {
+      setElapsedSeconds(Math.max(1, Math.floor((Date.now() - startedAt) / 1000)));
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [active]);
+
+  return elapsedSeconds;
 }
 
 export function useEasyQuantBacktestPolling(
