@@ -49,6 +49,21 @@ export const SECOND_BOARD_LIMIT_TIME_CUTOFF = '09:35:00';
 export const DEFAULT_UNIVERSE_LIMIT = 500;
 export const DEFAULT_TOP_K = 30;
 
+/**
+ * PR-S (2026-06-30) Bug B2 fix — 方向过滤阈值.
+ *
+ * 用户实测: 巨化 sh.600160 跌 -7.51% 当日仍被推 BUY (杀跌 + 量增 误报).
+ *
+ * 修复约束:
+ *   - volume_surge / main_force_inflow / limit_up_breakout: 必须 change_pct > 0 (价涨) 才推
+ *   - sector_link_undermove: 板块涨停 ≥ 3 + 自己 change_pct >= 0 (允许平盘滞涨, 但不允许杀跌)
+ *   - broken_refill / second_board_acceleration: 数据源 LimitUpStock 已隐含涨停状态, 无需价向过滤
+ *
+ * 杀跌 (price down + volume surge) = 恐慌出货 ≠ BUY signal. 任何 detector 推 BUY 前都必须
+ * 校 change_pct 方向, 否则推荐质量崩盘.
+ */
+export const POSITIVE_DIRECTION_CHANGE_PCT_THRESHOLD = 0;
+
 export const SOURCE_TYPE_PRICE_VOLUME = 'intraday_price_volume_anomaly';
 export const TIMING_TAG_INTRADAY_ANOMALY = 'intraday_anomaly';
 
@@ -203,6 +218,10 @@ export function detectVolumeSurge(
 ): boolean {
   if (!avg20d || avg20d <= 0) return false;
   if (quote.volume === null || quote.volume === undefined || quote.volume <= 0) return false;
+  // PR-S Bug B2: 杀跌 + 放量 = 恐慌出货 ≠ BUY. 必须价涨才推.
+  if (quote.change_percent === null || quote.change_percent <= POSITIVE_DIRECTION_CHANGE_PCT_THRESHOLD) {
+    return false;
+  }
   const sh = moment(now).tz('Asia/Shanghai');
   const minutes = sh.hour() * 60 + sh.minute();
   let elapsed = 0;
@@ -221,17 +240,23 @@ export function detectMainForceInflow(quote: QuoteLike, flow: IndustryFlowLike |
   if (!flow) return false;
   if (flow.main_inflow === null || flow.main_inflow <= 0) return false;
   if (quote.change_percent === null) return false;
+  // PR-S Bug B2: 与现有 > 5% 阈值天然蕴含 > 0, 这里写显式 guard 防未来阈值调整漏掉方向校验.
+  if (quote.change_percent <= POSITIVE_DIRECTION_CHANGE_PCT_THRESHOLD) return false;
   return quote.change_percent > MAIN_INFLOW_CHANGE_PCT_THRESHOLD;
 }
 
 export function detectLimitUpBreakout(quote: QuoteLike): boolean {
   if (quote.change_percent === null) return false;
+  // PR-S Bug B2: 与现有 >= 9% 阈值天然蕴含 > 0, 这里写显式 guard 防未来阈值调整漏掉方向校验.
+  if (quote.change_percent <= POSITIVE_DIRECTION_CHANGE_PCT_THRESHOLD) return false;
   return quote.change_percent >= LIMIT_UP_BREAKOUT_CHANGE_PCT_THRESHOLD;
 }
 
 export function detectSectorLinkUndermove(quote: QuoteLike, industryLimitUpCount: number): boolean {
   if (industryLimitUpCount < SECTOR_LINK_LIMIT_UP_COUNT) return false;
   if (quote.change_percent === null) return false;
+  // PR-S Bug B2: 板块涨 + 自己**杀跌** ≠ 滞涨, 那是脱节砸盘. 滞涨要求 0 ≤ self < 2%.
+  if (quote.change_percent < POSITIVE_DIRECTION_CHANGE_PCT_THRESHOLD) return false;
   return quote.change_percent < 2.0;
 }
 
@@ -300,15 +325,31 @@ export function buildAnomalyReason(
   }
 }
 
+/**
+ * PR-S (2026-06-30) Bug B1 fix — source_id 改成每日稳定 ID.
+ *
+ * 原 30min slot 设计在生产 7+ 次 cron 间会写出 7 行 ai_investment_signals (同股同型),
+ * V3 前端不 dedup 直接展开 → 推荐卡重复显示 4 次 (用户实测 sh.600113 浙江东日).
+ *
+ * 改成 `pv_anomaly::${type}::${symbol}::${tradeDate}` 一日一行: AIInvestmentSignal.findOrCreate
+ * 天然走 UPSERT 语义 (where 命中则不更新, defaults 仅 create 时生效). 第一次 cron 写入即定型,
+ * 后续 cron 同 source_id 都被跳过, 一天最多 1 条 / (symbol, anomaly_type).
+ *
+ * windowMs / now 参数保留: 单测可以传 windowMs <= 0 退化到旧的"每分钟一桶"行为做兼容测试,
+ * 但生产 caller 不传 → 走每日稳定 ID.
+ */
 export function buildAnomalySourceId(
   type: AnomalyType,
   symbol: string,
   tradeDate: string,
-  windowMs: number = 30 * 60 * 1000,
+  windowMs: number = 0,
   now: Date = new Date()
 ): string {
-  const slot = Math.floor(now.getTime() / windowMs);
-  return `pv_anomaly::${type}::${symbol}::${tradeDate}::${slot}`;
+  if (windowMs && windowMs > 0) {
+    const slot = Math.floor(now.getTime() / windowMs);
+    return `pv_anomaly::${type}::${symbol}::${tradeDate}::${slot}`;
+  }
+  return `pv_anomaly::${type}::${symbol}::${tradeDate}`;
 }
 
 class DefaultPriceVolumeAnomalyDataSource implements PriceVolumeAnomalyDataSource {
@@ -750,7 +791,7 @@ export class IntradayPriceVolumeAnomalyDetector {
       }
       try {
         const signalRows = picked.map(h => ({
-          source_id: buildAnomalySourceId(h.anomaly_type, h.symbol, tradeDate, 30 * 60 * 1000, now),
+          source_id: buildAnomalySourceId(h.anomaly_type, h.symbol, tradeDate, 0, now),
           symbol: h.symbol,
           name: h.name,
           signal_date: tradeDate,

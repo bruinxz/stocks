@@ -1432,10 +1432,27 @@ const HomeWorkspace: React.FC = () => {
           >
             手动评估 (暂停一键跟单)
           </Button>
-          {/* hover 右上箭头 hint — 暗示 "可点进详情". 用 CSS 控制可见性, 始终 mount 防 layout 跳. */}
-          <span className="home-reco-card-arrow" aria-hidden>
+          {/* PR-S (2026-06-30) Bug B4 fix — 右上箭头 onClick 跳 /stock/:symbol. 用户实测发现
+              原 span 只是 CSS 装饰, 点击无反应. 现在改成可交互 button-like, navigate 到个股
+              详情看 K 线 + 历史明细. event.stopPropagation 防冒泡触发其它 onClick. */}
+          <button
+            type="button"
+            className="home-reco-card-arrow"
+            data-testid="home-reco-card-arrow"
+            aria-label={`查看 ${rec.name || rec.symbol} 详情`}
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/stock/${rec.symbol}`);
+            }}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              padding: 0,
+              cursor: 'pointer',
+            }}
+          >
             <ArrowRightOutlined />
-          </span>
+          </button>
           {/* Phase 7: 为什么推荐这只? — 翻译成新手能懂的因子语言. */}
           <div className="home-reco-why">
             <Button

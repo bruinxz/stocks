@@ -15,6 +15,7 @@ import {
   TIMING_TAG_VALUES,
   normalizeTimingTagFromMetadata,
   parseTimingFilter,
+  dedupBySymbol,
 } from '../../src/api/controllers/V3RecommendationController';
 import { AISignalSourceType } from '../../src/models/AIInvestmentSignal';
 
@@ -160,6 +161,53 @@ function equal<T>(label: string, actual: T, expected: T): void {
   );
 
   equal('all invalid → null', parseTimingFilter('foo,bar,baz'), null);
+
+  // -------- PR-S Bug B3 (2026-06-30) — dedupBySymbol --------
+  const fakeRow = (symbol: string, conf: number, source_type: string, id: number): any => ({
+    symbol,
+    confidence_score: conf,
+    source_type,
+    id,
+  });
+
+  // 同股 4 条 → 留 1 条 (最高 conf)
+  const dup4 = [
+    fakeRow('sh.600113', 70, 'intraday_price_volume_anomaly', 1),
+    fakeRow('sh.600113', 85, 'intraday_price_volume_anomaly', 2),
+    fakeRow('sh.600113', 60, 'intraday_price_volume_anomaly', 3),
+    fakeRow('sh.600113', 80, 'intraday_price_volume_anomaly', 4),
+  ];
+  const dedup1 = dedupBySymbol(dup4);
+  equal('B3 dedup 4→1', dedup1.length, 1);
+  equal('B3 dedup 留 conf=85', dedup1[0].confidence_score, 85);
+
+  // 多股各 N 条 → 每股 1 条 (最高)
+  const dup5 = [
+    fakeRow('sh.600519', 90, 'analysis_engine', 1),
+    fakeRow('sh.600519', 85, 'intraday_price_volume_anomaly', 2),
+    fakeRow('sz.000001', 80, 'analysis_engine', 3),
+    fakeRow('sz.000001', 75, 'intraday_price_volume_anomaly', 4),
+    fakeRow('sh.600036', 70, 'analysis_engine', 5),
+  ];
+  const dedup2 = dedupBySymbol(dup5);
+  equal('B3 dedup 3 股各 1 条', dedup2.length, 3);
+  equal('B3 dedup top 是 600519 (90)', dedup2[0].symbol, 'sh.600519');
+  equal('B3 dedup 排序降序 → 600036 末尾', dedup2[2].symbol, 'sh.600036');
+
+  // 同分 tie-break: analysis_engine 优先于 intraday_price_volume_anomaly (字典序 a < i)
+  const tieDup = [
+    fakeRow('sh.600113', 80, 'intraday_price_volume_anomaly', 1),
+    fakeRow('sh.600113', 80, 'analysis_engine', 2),
+  ];
+  const tieDedup = dedupBySymbol(tieDup);
+  equal('B3 dedup tie 保 analysis_engine', tieDedup[0].source_type, 'analysis_engine');
+
+  // 空数组 → 空数组
+  equal('B3 dedup [] → []', dedupBySymbol([]).length, 0);
+
+  // 单条 → 不变
+  const single = dedupBySymbol([fakeRow('sh.600519', 90, 'analysis_engine', 1)]);
+  equal('B3 dedup [1] → [1]', single.length, 1);
 
   console.log(
     `\n========= V3RecommendationController fan-in tests: ${pass} pass, ${fail} fail =========`

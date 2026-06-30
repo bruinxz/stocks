@@ -528,6 +528,53 @@ const SHORT_TERM_RESISTANCE_KEYWORDS: ReadonlyArray<string> = Object.freeze([
 /** evidence 含 "超买" → 触发情绪过热风险. */
 const OVERBOUGHT_KEYWORDS: ReadonlyArray<string> = Object.freeze(['超买']);
 
+/**
+ * PR-S (2026-06-30) Bug B3 fix — 同股 dedup.
+ *
+ * 用户实测 /home 浙江东日 sh.600113 重复显示 4 次. 根因:
+ *   - intraday_price_volume_anomaly detector 每 30min cron 跑一次, 全天 7+ 次都新写入
+ *   - V3 endpoint 直接喂全部 AIInvestmentSignal 给前端
+ *   → 同股 N 条全部展开 → 推荐卡 N 张重复
+ *
+ * 修复: 按 symbol 聚合, 同股保留 confidence_score 最高那条 (并列时保留 source_type 字典序靠前的,
+ * 让 'analysis_engine' 等真 AI engine 信号优先于 detector heuristic 信号).
+ *
+ * 注: detector 端也修了 source_id 一日一行 (Bug B1), 此处是 V3 endpoint 的双保险 —
+ * 即使历史数据有重复 row, 前端也只见一张卡.
+ */
+export function dedupBySymbol(rows: AIInvestmentSignal[]): AIInvestmentSignal[] {
+  const bySymbol = new Map<string, AIInvestmentSignal>();
+  for (const row of rows) {
+    const sym = String(row.symbol);
+    const existing = bySymbol.get(sym);
+    if (!existing) {
+      bySymbol.set(sym, row);
+      continue;
+    }
+    const curConf = Number(row.confidence_score ?? 0);
+    const exConf = Number(existing.confidence_score ?? 0);
+    if (curConf > exConf) {
+      bySymbol.set(sym, row);
+      continue;
+    }
+    if (curConf === exConf) {
+      // 同分: 优先 analysis_engine / quant_recommendation 等 AI engine, 弱化 detector heuristic.
+      const curSrc = String(row.source_type ?? '');
+      const exSrc = String(existing.source_type ?? '');
+      if (curSrc < exSrc) {
+        bySymbol.set(sym, row);
+      }
+    }
+  }
+  // 保持 confidence_score 降序 (与查询 ORDER BY 一致)
+  return Array.from(bySymbol.values()).sort((a, b) => {
+    const ca = Number(a.confidence_score ?? 0);
+    const cb = Number(b.confidence_score ?? 0);
+    if (cb !== ca) return cb - ca;
+    return 0;
+  });
+}
+
 // ---------------------------------------------------------------------------
 //  Controller
 // ---------------------------------------------------------------------------
@@ -594,6 +641,16 @@ class V3RecommendationController {
       // 推断 actualSourceUsed (展示用): 取 top1 的 source_type
       if (candidateRows.length > 0) {
         actualSourceUsed = String(candidateRows[0].source_type);
+      }
+
+      // PR-S Bug B3 (2026-06-30): 按 symbol dedup — 同股保留最高 confidence 一条.
+      // 防 intraday_price_volume_anomaly 等 detector 每 30min cron 多次写入造成同股多卡重复.
+      const totalBeforeDedup = candidateRows.length;
+      candidateRows = dedupBySymbol(candidateRows);
+      if (totalBeforeDedup !== candidateRows.length) {
+        logger.info(
+          `[V3] dedup ${totalBeforeDedup} → ${candidateRows.length} (by symbol, date=${actualDateUsed})`
+        );
       }
 
       // 应用弹性扩展; 用户显式 limit > 3 则按 limit 截断 (不再弹性), 反之走 elastic 到 5.
