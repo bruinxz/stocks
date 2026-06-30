@@ -28,6 +28,10 @@ import { isAShareTradeDay } from '../utils/tradingCalendar';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { intradayUniverseService } from './IntradayUniverseService';
 import { numberOrNull } from './AuctionSnapshotSyncService';
+import { ensureModelsRegistered } from '../config/database';
+
+// PR-Q (2026-06-30): cold-path Model not initialized hot-fix (AR-1 范式).
+ensureModelsRegistered();
 
 export const MOMENTUM_BUY_THRESHOLD_PCT = 1.0;
 export const MOMENTUM_SELL_THRESHOLD_PCT = -1.0;

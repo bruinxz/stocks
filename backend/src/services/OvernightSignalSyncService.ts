@@ -6,6 +6,10 @@ import {
   OvernightSignalRow,
   overnightSignalClient,
 } from '../data/sources/OvernightSignalClient';
+import { ensureModelsRegistered } from '../config/database';
+
+// PR-Q (2026-06-30): cold-path Model not initialized hot-fix (AR-1 范式).
+ensureModelsRegistered();
 
 /**
  * 隔夜信号矩阵同步服务 — PR-M1.

@@ -60,6 +60,10 @@ import { logger } from '../utils/logger';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { isAShareTradeDay } from '../utils/tradingCalendar';
 import moment from 'moment-timezone';
+import { ensureModelsRegistered } from '../config/database';
+
+// PR-Q (2026-06-30): cold-path Model not initialized hot-fix (AR-1 范式).
+ensureModelsRegistered();
 
 // ===========================================================================
 //  Types
