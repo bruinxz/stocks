@@ -162,17 +162,21 @@ class DefaultIntradayMomentumDataSource implements IntradayMomentumDataSource {
       const endTs = moment
         .tz(`${tradeDate} 10:00:00`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Shanghai')
         .toDate();
+      // PR-R (2026-06-30): sequelize 把 raw `IN (:t1, :t2)` 解析成 IN (?, ?) 时,
+      // Date 类型在 Postgres prepared statement 里会变成 'syntax error at or near ","'.
+      // 改用 Model.findAll + Op.in 让 sequelize 走 ORM 安全 binding (跑 prod 验证 ok).
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { Op } = require('sequelize');
+      const modelRows = await IntradayKline30Min.findAll({
+        where: {
+          symbol: { [Op.in]: symbols },
+          kline_time: { [Op.in]: [startTs, endTs] },
+        },
+        attributes: ['symbol', 'kline_time', 'close'],
+        raw: true,
+      });
       const rows: Array<{ symbol: string; kline_time: string | Date; close: string | number | null }> =
-        await sequelize.query(
-          `SELECT symbol, kline_time, close
-           FROM intraday_klines_30min
-           WHERE symbol = ANY(:symbols)
-             AND kline_time IN (:t1, :t2)`,
-          {
-            replacements: { symbols, t1: startTs, t2: endTs },
-            type: sequelize.QueryTypes.SELECT,
-          }
-        );
+        modelRows as any[];
       const map = new Map<
         string,
         { close_9_30: number | null; close_10_00: number | null }
