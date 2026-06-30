@@ -104,7 +104,12 @@ export const DEDUP_BUFFER_LRU_LIMIT = 1000;
  * EMERGENCY_CONF_GATE 切回 false** — 现阶段优先 fail-closed (高 conf 一律不推) 防
  * 用户群被毒推. UI 仍显示推荐 (HomeWorkspace banner 警示).
  */
-export const EMERGENCY_CONF_GATE = true;
+/**
+ * PR-W (2026-06-30) — 解除 PR-L 紧急 conf gate.
+ * 用户实测明确反馈"飞书没收到通知". PR-L 把 conf≥70 的飞书推送全 gate 是 over-fix.
+ * 改回 false 让推送正常. 反向 conf 修复走 PR-M3 SourceTypeWinRateAdjuster (已部署).
+ */
+export const EMERGENCY_CONF_GATE = false;
 export const EMERGENCY_CONF_GATE_THRESHOLD = 70;
 export const EMERGENCY_CONF_GATE_SKIP_REASON = 'emergency_stop_loss_conf_gate';
 

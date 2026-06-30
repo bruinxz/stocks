@@ -671,11 +671,10 @@ function makeInput(overrides: Partial<OpportunityInput> = {}): OpportunityInput 
   assertEqual('未知 group → no_webhook', r30.pushed_groups[0].status, 'no_webhook');
 
   // ==========================================================================
-  console.log('\n[31] PR-L emergency stop-loss gate — conf >= 70 拦截 (audit 仍写)...');
-  // 见 IntradayOpportunityPusher 顶部 EMERGENCY_CONF_GATE 注释:
-  // PR-K 30 天回测证实 conf>=70 反向 (win 30% < low<50 win 40%).
-  // gate 在 push entry 处直接 return skipped, **audit 仍写一行** 留痕便于回查.
-  // dry_run 仍跳过该 gate (UI 预览不受影响).
+  console.log('\n[31] PR-W: EMERGENCY_CONF_GATE 解除 — conf>=70 不再拦截 (PR-L 行为已通过 PR-M3 取代)...');
+  // PR-W (2026-06-30): 用户实测 prod 反馈 "飞书没收到通知". PR-L gate=true 是 over-fix.
+  // 反向 conf 修复改走 PR-M3 SourceTypeWinRateAdjuster (已部署). gate=false 后 conf=80
+  // 等正常推送, 不再 skip.
   process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK = 'https://feishu.test/biz';
   const ds31 = new FakeDS({});
   const svc31 = new IntradayOpportunityPusher(ds31);
@@ -693,18 +692,10 @@ function makeInput(overrides: Partial<OpportunityInput> = {}): OpportunityInput 
       },
     })
   );
-  assertEqual('conf=80 拦截 ok=false', r31a.ok, false);
-  assertEqual('skipped_reason=emergency_stop_loss_conf_gate', r31a.skipped_reason, 'emergency_stop_loss_conf_gate');
-  assertEqual('无 group sent (gate 直接 return)', r31a.pushed_groups.length, 0);
-  assertEqual('webhook 不调', ds31.sendCalls.length, 0);
-  assertEqual('audit 仍写 1 行 (留痕)', ds31.auditCalls.length, 1);
-  assertEqual(
-    'audit push_result.skipped_reason=emergency_stop_loss_conf_gate',
-    (ds31.auditCalls[0].push_result as any).skipped_reason,
-    'emergency_stop_loss_conf_gate'
-  );
+  assertEqual('PR-W: conf=80 gate=false → ok=true', r31a.ok, true);
+  assertEqual('PR-W: conf=80 status=sent (推送通过)', r31a.pushed_groups[0]?.status, 'sent');
 
-  // 边界: conf=70 也拦截 (>= 严格)
+  // 边界: conf=70 也通过
   const r31b = await svc31.push(
     makeInput({
       symbol: 'sh.600001',
@@ -719,9 +710,9 @@ function makeInput(overrides: Partial<OpportunityInput> = {}): OpportunityInput 
       },
     })
   );
-  assertEqual('conf=70 边界拦截', r31b.skipped_reason, 'emergency_stop_loss_conf_gate');
+  assertEqual('PR-W: conf=70 边界通过 ok=true', r31b.ok, true);
 
-  // 反例: conf=69 不拦截 (< threshold) → 正常 push
+  // 反例: conf=69 不变 (本来就 < threshold)
   const r31c = await svc31.push(
     makeInput({
       symbol: 'sh.600002',
@@ -739,7 +730,7 @@ function makeInput(overrides: Partial<OpportunityInput> = {}): OpportunityInput 
   assertEqual('conf=69 不拦截 ok=true', r31c.ok, true);
   assertEqual('conf=69 status=sent', r31c.pushed_groups[0]?.status, 'sent');
 
-  // dry_run 即使 conf>=70 也不拦截
+  // dry_run 一致行为
   const r31d = await svc31.push(
     makeInput({
       symbol: 'sh.600003',
@@ -755,8 +746,8 @@ function makeInput(overrides: Partial<OpportunityInput> = {}): OpportunityInput 
     }),
     { dry_run: true }
   );
-  assertEqual('dry_run 跳过 gate ok=true', r31d.ok, true);
-  assertEqual('dry_run skipped_reason=dry_run (非 emergency)', r31d.skipped_reason, 'dry_run');
+  assertEqual('dry_run ok=true', r31d.ok, true);
+  assertEqual('dry_run skipped_reason=dry_run', r31d.skipped_reason, 'dry_run');
 
   // ==========================================================================
   console.log('\n--------------------------------------------------------------');

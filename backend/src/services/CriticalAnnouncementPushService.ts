@@ -69,7 +69,14 @@ export const CRITICAL_ANNOUNCEMENT_RULE_ID = 'announcement_critical';
  * 即拦截. **等 PR-I 战法库 + conf evaluator 修复后, 把 EMERGENCY_CONF_GATE 切回
  * false** — 现阶段优先 fail-closed (高 conf 一律不推 OPS 群) 防 OPS 群被毒推.
  */
-export const EMERGENCY_CONF_GATE = true;
+/**
+ * PR-W (2026-06-30) — 解除 PR-L 紧急 conf gate.
+ * 用户 prod 实测明确反馈"飞书没收到通知", PR-L 把 conf≥70 的 OPS 飞书推送
+ * 全 gate 掉是 over-fix. 改回 false 让飞书推送正常. user inbox / RiskAlert 仍
+ * 独立写, /home banner 仍在 (前端 PR-L 还在但只是评估期提示). 真正反向 conf
+ * 修复走 PR-M3 SourceTypeWinRateAdjuster (已部署), 让真假 high-conf 自动区分.
+ */
+export const EMERGENCY_CONF_GATE = false;
 export const EMERGENCY_CONF_GATE_THRESHOLD = 70;
 export const EMERGENCY_CONF_GATE_SKIP_REASON = 'emergency_stop_loss_conf_gate';
 
