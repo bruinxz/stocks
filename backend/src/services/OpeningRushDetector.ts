@@ -36,6 +36,12 @@ import {
   type OvernightContext,
   type MarketDirection,
 } from './OvernightSignalSyncService';
+import { ensureModelsRegistered } from '../config/database';
+
+// PR-Q (2026-06-30): cold-path Model not initialized hot-fix (AR-1 范式).
+// 任何 caller (CLI / node -e / 单测 / 直接 require detector) 在 require 本模块时
+// 立即触发 sequelize addModels, 避免首次 Model.findAll/create 抛 "needs to be added".
+ensureModelsRegistered();
 
 export const PATTERN_TO_BATTLE_PLAY: Record<string, string> = Object.freeze({
   one_word: 'one_word_play',

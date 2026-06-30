@@ -37,6 +37,10 @@ import { isAShareTradeDay } from '../utils/tradingCalendar';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { intradayUniverseService } from './IntradayUniverseService';
 import { numberOrNull } from './AuctionSnapshotSyncService';
+import { ensureModelsRegistered } from '../config/database';
+
+// PR-Q (2026-06-30): cold-path Model not initialized hot-fix (AR-1 范式).
+ensureModelsRegistered();
 
 export const PER_SYMBOL_TIMEOUT_MS = 15_000;
 export const BATCH_CONCURRENCY = 4;

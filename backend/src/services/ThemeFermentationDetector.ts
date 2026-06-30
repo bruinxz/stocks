@@ -35,6 +35,10 @@
  */
 
 import { logger } from '../utils/logger';
+import { ensureModelsRegistered } from '../config/database';
+
+// PR-Q (2026-06-30): cold-path Model not initialized hot-fix (AR-1 范式).
+ensureModelsRegistered();
 
 // ---------------------------------------------------------------------------
 // Types

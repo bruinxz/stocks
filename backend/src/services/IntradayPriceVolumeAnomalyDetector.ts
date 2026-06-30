@@ -35,6 +35,10 @@ import moment from 'moment-timezone';
 import { Op } from 'sequelize';
 import { isAShareTradeDay } from '../utils/tradingCalendar';
 import { normalizeSymbol } from '../utils/stockSymbol';
+import { ensureModelsRegistered } from '../config/database';
+
+// PR-Q (2026-06-30): cold-path Model not initialized hot-fix (AR-1 范式).
+ensureModelsRegistered();
 
 export const VOLUME_SURGE_RATIO_THRESHOLD = 2.0;
 export const MAIN_INFLOW_CHANGE_PCT_THRESHOLD = 5.0;

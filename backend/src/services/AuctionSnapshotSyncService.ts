@@ -46,6 +46,10 @@ import { inferMarketSegment, getLimitPct } from '../quant/marketLimits';
 import { isSTName } from '../utils/stNameUtils';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { intradayUniverseService } from './IntradayUniverseService';
+import { ensureModelsRegistered } from '../config/database';
+
+// PR-Q (2026-06-30): cold-path Model not initialized hot-fix (AR-1 范式).
+ensureModelsRegistered();
 
 // ---------------------------------------------------------------------------
 // 常量

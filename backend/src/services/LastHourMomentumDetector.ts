@@ -33,6 +33,10 @@ import {
   classifyMomentumSignal,
   intradayMomentumDetector as productionIntradayMomentum,
 } from './IntradayMomentumDetector';
+import { ensureModelsRegistered } from '../config/database';
+
+// PR-Q (2026-06-30): cold-path Model not initialized hot-fix (AR-1 范式).
+ensureModelsRegistered();
 
 export const SOURCE_TYPE_LAST_HOUR = 'last_hour_momentum';
 export const TIMING_TAG_CLOSING_GRAB = 'closing_grab';
