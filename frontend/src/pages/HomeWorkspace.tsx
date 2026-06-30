@@ -735,6 +735,18 @@ const HomeWorkspace: React.FC = () => {
     [recommendations, followedSymbols]
   );
 
+  // PR-W (2026-06-30) — 分 "推荐" vs "盘中异动观察".
+  // signal_kind='watch' 是 intraday_price_volume_anomaly 类的单点异动信号,
+  // 用户应当自己判断, 不能直接当推荐跟单. 缺 signal_kind 默认 'recommendation' 兜底.
+  const recommendationItems = useMemo(
+    () => visibleRecommendations.filter(r => (r.signal_kind || 'recommendation') === 'recommendation'),
+    [visibleRecommendations]
+  );
+  const watchItems = useMemo(
+    () => visibleRecommendations.filter(r => r.signal_kind === 'watch'),
+    [visibleRecommendations]
+  );
+
   /**
    * Phase 10 — 时段分组.
    *
@@ -746,12 +758,14 @@ const HomeWorkspace: React.FC = () => {
    * 字符串解析失败按 invalid 处理 (toDate 返 null), 同样降级.
    */
   const timeGroups = useMemo(() => {
-    if (visibleRecommendations.length === 0) {
+    // PR-W: 只对真推荐分时段, watch (盘中异动) 单独 section.
+    const source = recommendationItems;
+    if (source.length === 0) {
       return { hasTime: false, groups: [] as TimeGroup[] };
     }
     let anyHasTime = false;
     const bucketMap = new Map<string, V3RecommendationItem[]>();
-    for (const rec of visibleRecommendations) {
+    for (const rec of source) {
       const candidate = extractRecoTime(rec);
       if (candidate) {
         anyHasTime = true;
@@ -789,7 +803,7 @@ const HomeWorkspace: React.FC = () => {
       };
     });
     return { hasTime: true, groups };
-  }, [visibleRecommendations]);
+  }, [recommendationItems]);
 
   // 派生: 今日 / 累计 颜色
   const todayPnl = account?.pnl_yesterday ?? null;
@@ -1745,10 +1759,11 @@ const HomeWorkspace: React.FC = () => {
           <div>
             <h2 className="home-section-title">今日推荐</h2>
             <p className="home-section-subtitle">
-              AI 多维度分析 · {visibleRecommendations.length} 只候选
+              AI 多维度分析 · {recommendationItems.length} 只候选
+              {watchItems.length > 0 && ` · 另有 ${watchItems.length} 只盘中异动 (见下方)`}
               {timeGroups.hasTime
                 ? ` · 跨 ${timeGroups.groups.length} 个时段`
-                : ' · 4 时机推荐 (早盘抢 / 午后攻 / 尾盘埋 / 隔夜潜伏) + 实时异动追踪'}
+                : ' · 4 时机推荐 (早盘抢 / 午后攻 / 尾盘埋 / 隔夜潜伏)'}
             </p>
           </div>
           <Button
@@ -1832,12 +1847,46 @@ const HomeWorkspace: React.FC = () => {
           </div>
         ) : (
           <div className="home-reco-grid">
-            {visibleRecommendations.map((rec, idx) =>
+            {recommendationItems.map((rec, idx) =>
               renderRecoCard(rec, idx, rec.symbol === topRecoSymbol)
             )}
           </div>
         )}
       </section>
+
+      {/* PR-W (2026-06-30) — 盘中异动观察区 (与"今日推荐"严格分开).
+          来源: signal_kind='watch' (intraday_price_volume_anomaly 单点 detector).
+          用户应当自己判断, 不能直接当推荐跟单. */}
+      {watchItems.length > 0 && (
+        <section className="home-section home-section--watch" data-testid="home-watch-section">
+          <header className="home-section-header">
+            <h2 className="home-section-title">
+              <span style={{ fontSize: 16, marginRight: 8 }}>⚡</span>
+              盘中异动观察
+              <span
+                style={{
+                  marginLeft: 12,
+                  fontSize: 11,
+                  fontWeight: 500,
+                  padding: '2px 8px',
+                  borderRadius: 4,
+                  background: '#fef3c7',
+                  color: '#92400e',
+                  verticalAlign: 'middle',
+                }}
+              >
+                仅供参考 · 单点信号 · 需自行判断
+              </span>
+            </h2>
+            <p className="home-section-subtitle">
+              系统扫到的盘中量价异动 ({watchItems.length} 只), <strong>不是推荐</strong>. 涨势 + 量配合的可关注, 单点信号请结合自身判断.
+            </p>
+          </header>
+          <div className="home-reco-grid">
+            {watchItems.map((rec, idx) => renderRecoCard(rec, idx, false))}
+          </div>
+        </section>
+      )}
 
       {/* ===== Phase 8 — 区块 3: 今日学一招 (冷色高级 — 浅紫 brand-soft 背景) =====
           Phase 11 — mesh gradient + noise + parallax tilt. */}

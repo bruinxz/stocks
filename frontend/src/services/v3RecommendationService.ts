@@ -139,6 +139,18 @@ export interface V3RecommendationItem {
   /** 后端归档时的 signal_date (YYYY-MM-DD). */
   signal_date: string;
   /**
+   * PR-W (2026-06-30) — 信号创建时间 ISO (后端 signal.created_at 透传).
+   * 前端 /home 推荐卡用 formatHourMin 显示 "信号 HH:MM". 缺失则不显示时间标签.
+   */
+  created_at?: string | null;
+  /**
+   * PR-W (2026-06-30) — 信号分类: 区分 "推荐" vs "盘中异动观察".
+   *   recommendation — 真推荐 (多因子综合 / 涨停板战法 / 题材发酵等, 应当行动)
+   *   watch          — 仅观察 (盘中价量异动单点信号, 用户自己判断)
+   * 前端应 2 个 section 分开展示, 不能让用户误把 "watch" 当推荐跟单.
+   */
+  signal_kind?: 'recommendation' | 'watch';
+  /**
    * PR-H (2026-06-29) — 推荐时机标签 (后端透传, 缺失默认 'overnight').
    *   opening_rush     — 🌅 早盘抢 (9:25 集合竞价后, 9:30-10:00 买)
    *   afternoon_kick   — ☀️ 午后攻 (12:55, 13:00-13:30 买)
