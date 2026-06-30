@@ -283,6 +283,68 @@ function equal<T>(label: string, actual: T, expected: T): void {
   equal('dry_run wroteSignals=0', wroteSignals.length, 0);
   equal('dry_run wroteAlerts=0', wroteAlerts.length, 0);
 
+  // -------- PR-S Bug B2 (2026-06-30) — 方向过滤: 杀跌不推 --------
+  const downQ: QuoteLike = {
+    symbol: 'sh.600160',
+    name: '巨化',
+    industry: '化工',
+    current_price: 90,
+    change_percent: -7.5,
+    volume: 1000000,
+    turnover: 90000000,
+  };
+  const flatQ: QuoteLike = { ...baseQ, change_percent: 0 };
+  const upQ: QuoteLike = { ...baseQ, change_percent: 3 };
+
+  // volume_surge: 跌 -7.5% + 量增 = 杀跌, 不推
+  equal('B2 volume_surge 跌-7.5% 量增 → false', detectVolumeSurge(downQ, 100000, at1100), false);
+  equal('B2 volume_surge 持平 0% → false', detectVolumeSurge(flatQ, 100000, at1100), false);
+  equal('B2 volume_surge 涨+3% → true', detectVolumeSurge(upQ, 100000, at1100), true);
+
+  // main_force_inflow: 跌票即使板块净流入也不推
+  equal('B2 main_force 跌-3%, inflow>0 → false', detectMainForceInflow({ ...baseQ, change_percent: -3 }, flow), false);
+  equal('B2 main_force 跌-7%, inflow>0 → false', detectMainForceInflow({ ...baseQ, change_percent: -7 }, flow), false);
+
+  // limit_up_breakout: 跌停或跌幅大不推 (与现有 >= 9% 阈值蕴含但显式 guard)
+  equal('B2 limit_up_breakout 跌-9.5% → false', detectLimitUpBreakout({ ...baseQ, change_percent: -9.5 }), false);
+
+  // sector_link_undermove: 板块涨停 ≥ 3 但自己杀跌 ≠ 滞涨 = 脱节砸盘
+  equal(
+    'B2 sector_link 板块涨 + 自己跌 -3% → false',
+    detectSectorLinkUndermove({ ...baseQ, change_percent: -3 }, 3),
+    false
+  );
+  equal(
+    'B2 sector_link 板块涨 + 自己 0% → true (允许平盘滞涨)',
+    detectSectorLinkUndermove({ ...baseQ, change_percent: 0 }, 3),
+    true
+  );
+
+  // -------- PR-S Bug B1 (2026-06-30) — source_id 默认每日稳定 --------
+  const sidA = buildAnomalySourceId(
+    'volume_surge',
+    'sh.600113',
+    '2026-06-30',
+    undefined,
+    new Date('2026-06-30T01:30:00Z')
+  );
+  const sidB = buildAnomalySourceId(
+    'volume_surge',
+    'sh.600113',
+    '2026-06-30',
+    undefined,
+    new Date('2026-06-30T07:00:00Z')
+  );
+  equal('B1 同股同日 source_id 一致 (默认每日)', sidA, sidB);
+  check('B1 source_id 不含 slot 后缀 (默认)', !/::\d+$/.test(sidA));
+  const sidC = buildAnomalySourceId('volume_surge', 'sh.600113', '2026-06-29');
+  check('B1 不同日 source_id 不同', sidA !== sidC);
+  const sidD = buildAnomalySourceId('main_force_inflow', 'sh.600113', '2026-06-30');
+  check('B1 同股不同 type source_id 不同', sidA !== sidD);
+
+  // -------- PR-S 回归: happy 路径 4 个 quote 中 sh.600000 滞涨 +1% 仍触发 sector_link --------
+  // (already covered by 'happy by_type.sector_link_undermove=1' above — 显式留 anchor)
+
   console.log(`\n========= IntradayPriceVolumeAnomalyDetector tests: ${pass} pass, ${fail} fail =========`);
   if (fail > 0) process.exit(1);
 })();
