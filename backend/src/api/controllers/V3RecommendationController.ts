@@ -107,6 +107,7 @@ export const CANDIDATE_SOURCE_TYPES: ReadonlyArray<string> = Object.freeze([
   AISignalSourceType.LAST_HOUR_MOMENTUM,
   AISignalSourceType.LIMIT_UP_BOARD,
   AISignalSourceType.THEME_FERMENTATION,
+  AISignalSourceType.AFTERNOON_KICK_DETECTOR,
 ]);
 
 /**
@@ -124,7 +125,42 @@ export const V3_FANIN_SOURCE_TYPES: ReadonlyArray<string> = Object.freeze([
   AISignalSourceType.LAST_HOUR_MOMENTUM,
   AISignalSourceType.LIMIT_UP_BOARD,
   AISignalSourceType.THEME_FERMENTATION,
+  AISignalSourceType.AFTERNOON_KICK_DETECTOR,
 ]);
+
+/**
+ * PR-W (2026-06-30) — 信号分类: 区分 "推荐" vs "盘中异动观察".
+ *
+ * 用户实测 prod 截图发现: 全部信号都是 "intraday_price_volume_anomaly" 单点 detector,
+ * 但前端 /home 都标 "推荐", 用户误以为系统强推这只票. 实际上 PVAnomaly 只是
+ * "扫到量价异动" — 是不是真值得 buy 还要看其它维度 (基本面 / 资金面 / 板块).
+ *
+ * 真推荐 (signal_kind='recommendation'):
+ *   - analysis_engine: 8 维 multi-dim 综合
+ *   - quant_recommendation: 多因子排名 top N
+ *   - opening_rush_detector: 隔夜信号 + auction 综合判断
+ *   - last_hour_momentum: 9:30-10:00 r1 上涨预测尾盘
+ *   - limit_up_board: 涨停板战法 20 pattern 系统化分类
+ *   - theme_fermentation: 板块发酵 5 阶段判断
+ *
+ * 仅盘中观察 (signal_kind='watch'):
+ *   - intraday_price_volume_anomaly: 单点异动信号, 用户应自己判断
+ *
+ * 前端应 2 个 section 分开展示: "今日推荐" + "盘中异动观察".
+ */
+const RECOMMENDATION_SOURCES = new Set<string>([
+  String(AISignalSourceType.ANALYSIS_ENGINE),
+  String(AISignalSourceType.QUANT_RECOMMENDATION),
+  String(AISignalSourceType.OPENING_RUSH_DETECTOR),
+  String(AISignalSourceType.LAST_HOUR_MOMENTUM),
+  String(AISignalSourceType.LIMIT_UP_BOARD),
+  String(AISignalSourceType.THEME_FERMENTATION),
+]);
+
+export function deriveSignalKind(sourceType: string | null | undefined): 'recommendation' | 'watch' {
+  if (!sourceType) return 'recommendation';
+  return RECOMMENDATION_SOURCES.has(String(sourceType)) ? 'recommendation' : 'watch';
+}
 
 // ---------------------------------------------------------------------------
 //  helpers
@@ -1150,6 +1186,11 @@ class V3RecommendationController {
       risk_rules: riskRules,
       signal_id: signal.id,
       signal_date: signal.signal_date,
+      // PR-W (2026-06-30) — 信号创建时间 + 信号分类 (推荐 vs 观察) 透传.
+      created_at: signal.created_at
+        ? (signal.created_at instanceof Date ? signal.created_at.toISOString() : String(signal.created_at))
+        : null,
+      signal_kind: deriveSignalKind(signal.source_type),
       // PR-H — 推荐时机标签透传 UI. 缺失 → 'overnight' (符合历史 cron 15:32 写入语义).
       timing_tag: normalizeTimingTagFromMetadata(metadata),
       // PR-O2 (2026-06-29) — 涨停板战法 pattern badge. 仅 source_type='limit_up_board' 写入,
@@ -1215,6 +1256,13 @@ class V3RecommendationController {
       ],
       signal_id: signal.id,
       signal_date: signal.signal_date,
+      // PR-W (2026-06-30) — minimal view 也透传 created_at + signal_kind.
+      created_at: (signal as any).created_at
+        ? ((signal as any).created_at instanceof Date
+            ? (signal as any).created_at.toISOString()
+            : String((signal as any).created_at))
+        : null,
+      signal_kind: deriveSignalKind((signal as any).source_type),
       // PR-H — minimal view 也透传 timing_tag (enrichSignal 失败兜底).
       timing_tag: normalizeTimingTagFromMetadata((signal as any).metadata),
       // PR-O2 — minimal view 也透传 limit_up_pattern (enrich 失败时仍出 badge).
