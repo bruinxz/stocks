@@ -43,17 +43,17 @@ fi
 
 echo "[docs-deploy] local HEAD: $LOCAL_HEAD"
 
-# 远程 git pull (只 pull, 不 rebuild)
-REMOTE_CMD="cd $REMOTE_ROOT && git fetch origin $BRANCH && git checkout $BRANCH && git pull origin $BRANCH && ls -la docs/ | head -5 && git log -1 --oneline"
-ENC=$(echo "$REMOTE_CMD" | base64)
+# /opt/stocks/current 是 symlink 到 releases/<timestamp>, 每个 release 是独立
+# 复制体 (无 .git). 因此不能用 git pull, 直接用 rsync 把本地 docs/ 推上去即可.
+LOCAL_DOCS="$(cd "$(dirname "$0")/../.." && pwd)/docs/"
+echo "[docs-deploy] rsync 本地 $LOCAL_DOCS → $SSH_USER@$SSH_HOST:$REMOTE_ROOT/docs/"
 
-echo "[docs-deploy] 远程执行 git pull..."
-sshpass -p "$DEPLOY_PASSWORD" ssh \
-  -o StrictHostKeyChecking=no \
-  -o ConnectTimeout=15 \
-  -p "$SSH_PORT" \
-  "$SSH_USER@$SSH_HOST" \
-  "echo $ENC | base64 -d | bash"
+sshpass -p "$DEPLOY_PASSWORD" rsync -avz --delete \
+  -e "ssh -o StrictHostKeyChecking=no -p $SSH_PORT" \
+  "$LOCAL_DOCS" \
+  "$SSH_USER@$SSH_HOST:$REMOTE_ROOT/docs/"
+
+echo "[docs-deploy] 完成 — API 下次请求会直接读磁盘新内容 (无需 restart)"
 
 echo ""
 echo "[docs-deploy] ✅ 完成! 文档已生效, 无需 restart backend."
