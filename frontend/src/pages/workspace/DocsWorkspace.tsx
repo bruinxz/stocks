@@ -147,6 +147,94 @@ function buildMarkdownComponents(onAddComment: (key: string, snippet: string) =>
     h3: makeHeading(3),
     h4: makeHeading(4),
     p: ({ node: _node, ...props }: any) => <Paragraph {...props} />,
+    // GFM 表格支持
+    table: ({ node: _node, children, ...props }: any) => (
+      <div style={{ overflowX: 'auto', marginBottom: 16 }}>
+        <table
+          style={{
+            borderCollapse: 'collapse',
+            width: '100%',
+            fontSize: 13,
+            border: '1px solid #e6e6e6',
+          }}
+          {...props}
+        >
+          {children}
+        </table>
+      </div>
+    ),
+    thead: ({ node: _node, children, ...props }: any) => (
+      <thead style={{ background: '#fafafa' }} {...props}>
+        {children}
+      </thead>
+    ),
+    tbody: ({ node: _node, ...props }: any) => <tbody {...props} />,
+    tr: ({ node: _node, ...props }: any) => (
+      <tr style={{ borderBottom: '1px solid #e6e6e6' }} {...props} />
+    ),
+    th: ({ node: _node, style: thStyle, ...props }: any) => (
+      <th
+        style={{
+          padding: '8px 12px',
+          textAlign: thStyle?.textAlign || 'left',
+          fontWeight: 600,
+          border: '1px solid #e6e6e6',
+          verticalAlign: 'top',
+          ...thStyle,
+        }}
+        {...props}
+      />
+    ),
+    td: ({ node: _node, style: tdStyle, ...props }: any) => (
+      <td
+        style={{
+          padding: '8px 12px',
+          border: '1px solid #f0f0f0',
+          verticalAlign: 'top',
+          ...tdStyle,
+        }}
+        {...props}
+      />
+    ),
+    // 列表 (确保没被 antd Typography 打乱)
+    ul: ({ node: _node, ...props }: any) => (
+      <ul style={{ paddingLeft: 24, marginBottom: 12 }} {...props} />
+    ),
+    ol: ({ node: _node, ...props }: any) => (
+      <ol style={{ paddingLeft: 24, marginBottom: 12 }} {...props} />
+    ),
+    li: ({ node: _node, ...props }: any) => <li style={{ marginBottom: 4 }} {...props} />,
+    // 引用块
+    blockquote: ({ node: _node, children, ...props }: any) => (
+      <blockquote
+        style={{
+          borderLeft: '4px solid #1677ff',
+          background: '#f0f7ff',
+          padding: '8px 16px',
+          margin: '12px 0',
+          color: 'rgba(0,0,0,0.75)',
+        }}
+        {...props}
+      >
+        {children}
+      </blockquote>
+    ),
+    // 分隔线
+    hr: ({ node: _node, ...props }: any) => (
+      <hr style={{ border: 'none', borderTop: '1px solid #e6e6e6', margin: '24px 0' }} {...props} />
+    ),
+    // 链接 — 打开新标签
+    a: ({ node: _node, href, children, ...props }: any) => (
+      <a
+        href={href}
+        target={href?.startsWith('http') ? '_blank' : undefined}
+        rel={href?.startsWith('http') ? 'noopener noreferrer' : undefined}
+        style={{ color: '#1677ff', textDecoration: 'underline' }}
+        {...props}
+      >
+        {children}
+      </a>
+    ),
     code: ({ node: _node, inline, className, children, ...props }: any) => {
       return inline ? (
         <code

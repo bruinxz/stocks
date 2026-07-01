@@ -34,7 +34,12 @@ const Login: React.FC = () => {
 
         // Phase 6 (2026-06-27): 登录后默认进 /home (新手主页 — 3 区块极简一页搞定).
         // admin / 普通用户都默认 /home; admin 通过右上角 ⚙ 入 /admin/today.
-        const from = (location.state as any)?.from?.pathname || '/home';
+        // 2026-07-01 fix: 保留原 URL 的 search/hash, 例如 /workspace/docs?path=xxx.md
+        const fromLoc = (location.state as any)?.from;
+        let from = '/home';
+        if (fromLoc?.pathname) {
+          from = fromLoc.pathname + (fromLoc.search || '') + (fromLoc.hash || '');
+        }
         navigate(from, { replace: true });
       }
     } catch (error: any) {
