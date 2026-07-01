@@ -38,9 +38,13 @@ import {
   CheckCircleOutlined,
   CommentOutlined,
   DeleteOutlined,
+  DoubleLeftOutlined,
+  DoubleRightOutlined,
   FileMarkdownOutlined,
   FolderOpenOutlined,
   FolderOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
   MessageOutlined,
   ReloadOutlined,
   RobotOutlined,
@@ -540,6 +544,24 @@ const DocsWorkspace: React.FC = () => {
   const [newContent, setNewContent] = useState('');
   const [replyTo, setReplyTo] = useState<{ parentId: number; threadRootId: number } | null>(null);
   const [posting, setPosting] = useState(false);
+
+  // 侧栏折叠状态 (localStorage 记住用户偏好)
+  const [treeCollapsed, setTreeCollapsed] = useState<boolean>(
+    localStorage.getItem('docsWorkspace_treeCollapsed') === '1'
+  );
+  const [commentsCollapsed, setCommentsCollapsed] = useState<boolean>(
+    localStorage.getItem('docsWorkspace_commentsCollapsed') === '1'
+  );
+  const toggleTree = () => {
+    const next = !treeCollapsed;
+    setTreeCollapsed(next);
+    localStorage.setItem('docsWorkspace_treeCollapsed', next ? '1' : '0');
+  };
+  const toggleComments = () => {
+    const next = !commentsCollapsed;
+    setCommentsCollapsed(next);
+    localStorage.setItem('docsWorkspace_commentsCollapsed', next ? '1' : '0');
+  };
   const commentPanelRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
 
@@ -812,7 +834,20 @@ const DocsWorkspace: React.FC = () => {
   const fileMtimeStr = fileMtime ? dayjs(fileMtime).format('YYYY-MM-DD HH:mm:ss') : '';
 
   return (
-    <div style={{ padding: 24, minHeight: '100vh', background: '#f5f5f5' }}>
+    <div
+      className="docs-workspace-root"
+      style={{
+        // 打破外层 .modern-layout-content 的 padding + max-width, 让文档铺满
+        // (通过 negative margin 抵消 padding, 100vw 抵消 max-width)
+        margin: 'calc(var(--space-4) * -1)',
+        width: 'calc(100% + var(--space-4) * 2)',
+        height: 'calc(100vh - var(--header-height, 56px))',
+        background: '#fff',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }}
+    >
       <style>
         {`
           .doc-heading-wrapper:hover .doc-heading-comment-btn {
@@ -853,71 +888,123 @@ const DocsWorkspace: React.FC = () => {
           .markdown-body h3 { margin-top: 16px !important; margin-bottom: 8px !important; }
           .markdown-body h4 { margin-top: 12px !important; margin-bottom: 6px !important; }
           .markdown-body > *:first-child { margin-top: 0 !important; }
+
+          /* 折叠面板过渡动画 */
+          .docs-collapsible {
+            transition: width 0.2s ease, flex-basis 0.2s ease;
+          }
         `}
       </style>
-      <Card
-        title={
-          <Space size={8}>
-            <FolderOpenOutlined style={{ color: '#1677ff' }} />
-            <span style={{ fontWeight: 600 }}>文档</span>
-            <Tag color="blue" style={{ margin: 0 }}>Admin</Tag>
-            <Tag color="green" style={{ margin: 0 }}>热更新</Tag>
-          </Space>
-        }
-        extra={
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={handleRefresh}
-            loading={treeLoading}
-            size="small"
-          >
-            刷新
-          </Button>
-        }
-        bodyStyle={{ padding: 0 }}
-      >
-        <div style={{ display: 'flex', minHeight: 600 }}>
-          {/* 左: 文件树 (更紧凑, 280px) */}
-          <div
-            style={{
-              width: 280,
-              flex: '0 0 280px',
-              borderRight: '1px solid #f0f0f0',
-              padding: '12px 8px',
-              maxHeight: '85vh',
-              overflow: 'auto',
-              background: '#fafafa',
-              boxSizing: 'border-box',
-            }}
-          >
-            {treeLoading ? (
-              <Spin />
-            ) : tree ? (
-              <Tree
-                className="docs-compact-tree"
-                treeData={treeData}
-                expandedKeys={expandedKeys}
-                onExpand={(keys) => setExpandedKeys(keys)}
-                selectedKeys={selectedPath ? [selectedPath] : []}
-                onSelect={handleSelect}
-                blockNode
-              />
-            ) : (
-              <Empty description="暂无文档" />
-            )}
-          </div>
 
-          {/* 中: 内容 */}
-          <div
-            style={{
-              flex: '1 1 auto',
-              padding: 24,
-              maxHeight: '85vh',
-              overflowY: 'auto',
-              minWidth: 0,
-            }}
-          >
-            {!selectedPath ? (
+      {/* 顶部 toolbar — 极简, 只显示当前文档信息 + 全局操作 */}
+      <div
+        style={{
+          height: 40,
+          flexShrink: 0,
+          display: 'flex',
+          alignItems: 'center',
+          padding: '0 12px',
+          borderBottom: '1px solid #f0f0f0',
+          background: '#fafafa',
+          gap: 12,
+          fontSize: 13,
+        }}
+      >
+        <Tooltip title={treeCollapsed ? '展开目录' : '收起目录'}>
+          <Button
+            type="text"
+            size="small"
+            icon={treeCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+            onClick={toggleTree}
+          />
+        </Tooltip>
+        <FolderOpenOutlined style={{ color: '#1677ff' }} />
+        <span style={{ fontWeight: 600 }}>文档</span>
+        {selectedPath && (
+          <>
+            <span style={{ color: '#8c8c8c' }}>/</span>
+            <span style={{ color: '#262626' }}>{selectedPath}</span>
+            {fileMtimeStr && (
+              <span style={{ color: '#bfbfbf', fontSize: 12, marginLeft: 4 }}>
+                {fileMtimeStr}
+              </span>
+            )}
+          </>
+        )}
+        <div style={{ flex: 1 }} />
+        <Tag color="blue" style={{ margin: 0 }}>Admin</Tag>
+        <Tag color="green" style={{ margin: 0 }}>热更新</Tag>
+        <Button
+          icon={<ReloadOutlined />}
+          onClick={handleRefresh}
+          loading={treeLoading}
+          size="small"
+          type="text"
+        />
+        <Tooltip title={commentsCollapsed ? '展开评论' : '收起评论'}>
+          <Button
+            type="text"
+            size="small"
+            icon={commentsCollapsed ? <DoubleLeftOutlined /> : <DoubleRightOutlined />}
+            onClick={toggleComments}
+          />
+        </Tooltip>
+      </div>
+
+      {/* 三栏容器 */}
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        {/* 左: 文件树 */}
+        <div
+          className="docs-collapsible"
+          style={{
+            width: treeCollapsed ? 0 : 260,
+            flex: treeCollapsed ? '0 0 0' : '0 0 260px',
+            borderRight: treeCollapsed ? 'none' : '1px solid #f0f0f0',
+            padding: treeCollapsed ? 0 : '10px 8px',
+            overflow: 'auto',
+            background: '#fafafa',
+            boxSizing: 'border-box',
+          }}
+        >
+          {!treeCollapsed && (
+            <>
+              {treeLoading ? (
+                <Spin />
+              ) : tree ? (
+                <Tree
+                  className="docs-compact-tree"
+                  treeData={treeData}
+                  expandedKeys={expandedKeys}
+                  onExpand={(keys) => setExpandedKeys(keys)}
+                  selectedKeys={selectedPath ? [selectedPath] : []}
+                  onSelect={handleSelect}
+                  blockNode
+                />
+              ) : (
+                <Empty description="暂无文档" />
+              )}
+            </>
+          )}
+        </div>
+
+        {/* 中: 内容 */}
+        <div
+          style={{
+            flex: '1 1 auto',
+            padding: '20px 32px',
+            overflowY: 'auto',
+            minWidth: 0,
+          }}
+        >
+          {!selectedPath ? (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                height: '100%',
+              }}
+            >
               <Empty
                 description={
                   <div>
@@ -928,129 +1015,135 @@ const DocsWorkspace: React.FC = () => {
                   </div>
                 }
               />
-            ) : (
-              <Spin spinning={fileLoading}>
-                <div style={{ marginBottom: 16 }}>
-                  <Space>
-                    <Text strong>{selectedPath}</Text>
-                    {fileMtimeStr && (
-                      <Text type="secondary" style={{ fontSize: 12 }}>
-                        最后修改: {fileMtimeStr}
-                      </Text>
-                    )}
-                  </Space>
-                </div>
-                <div className="markdown-body">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    components={markdownComponents as any}
-                  >
-                    {fileContent}
-                  </ReactMarkdown>
-                </div>
-              </Spin>
-            )}
-          </div>
+            </div>
+          ) : (
+            <Spin spinning={fileLoading}>
+              <div
+                className="markdown-body"
+                style={{ maxWidth: 960, margin: '0 auto' }}
+              >
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={markdownComponents as any}
+                >
+                  {fileContent}
+                </ReactMarkdown>
+              </div>
+            </Spin>
+          )}
+        </div>
 
-          {/* 右: 评论面板 (350px) */}
-          <div
-            ref={commentPanelRef}
-            style={{
-              width: 350,
-              flex: '0 0 350px',
-              borderLeft: '1px solid #f0f0f0',
-              padding: 14,
-              maxHeight: '85vh',
-              overflow: 'auto',
-              background: '#fbfbfd',
-              boxSizing: 'border-box',
-            }}
-          >
-            {!selectedPath ? (
-              <Empty description="选择文档后可评论" />
-            ) : (
-              <>
-                <div style={{ marginBottom: 12 }}>
-                  <Space>
-                    <MessageOutlined />
-                    <Text strong>评论</Text>
-                    <Badge count={threads.filter((t) => t.root.status === 'open').length} />
-                    <Button
-                      size="small"
-                      type="text"
-                      icon={<CheckCircleOutlined />}
-                      onClick={() => setShowResolved(!showResolved)}
-                    >
-                      {showResolved ? '隐藏已解决' : '显示已解决'}
-                    </Button>
-                  </Space>
-                </div>
-
-                <Spin spinning={commentsLoading}>
-                  {threads.length === 0 ? (
-                    <Empty description="暂无评论, hover 段落标题添加" />
-                  ) : (
-                    threads.map((t) => (
-                      <Card
-                        key={t.root.id}
+        {/* 右: 评论面板 */}
+        <div
+          ref={commentPanelRef}
+          className="docs-collapsible"
+          style={{
+            width: commentsCollapsed ? 0 : 340,
+            flex: commentsCollapsed ? '0 0 0' : '0 0 340px',
+            borderLeft: commentsCollapsed ? 'none' : '1px solid #f0f0f0',
+            padding: commentsCollapsed ? 0 : 14,
+            overflow: 'auto',
+            background: '#fbfbfd',
+            boxSizing: 'border-box',
+          }}
+        >
+          {!commentsCollapsed && (
+            <>
+              {!selectedPath ? (
+                <Empty description="选择文档后可评论" />
+              ) : (
+                <>
+                  <div style={{ marginBottom: 12 }}>
+                    <Space>
+                      <MessageOutlined />
+                      <Text strong>评论</Text>
+                      <Badge count={threads.filter((t) => t.root.status === 'open').length} />
+                      <Button
                         size="small"
-                        style={{
-                          marginBottom: 12,
-                          background: t.root.status === 'resolved' ? '#f6ffed' : '#fff',
-                          border: `1px solid ${t.root.status === 'resolved' ? '#b7eb8f' : '#f0f0f0'}`,
-                        }}
-                        bodyStyle={{ padding: 12 }}
+                        type="text"
+                        icon={<CheckCircleOutlined />}
+                        onClick={() => setShowResolved(!showResolved)}
                       >
-                        {/* 显示锚定预览 */}
-                        {t.root.anchor_type !== 'doc' && (
-                          <div
-                            style={{
-                              fontSize: 11,
-                              color: '#8c8c8c',
-                              background: '#f0f2f5',
-                              padding: '4px 8px',
-                              borderRadius: 4,
-                              marginBottom: 8,
-                              cursor: 'pointer',
-                            }}
-                            title="点击定位到原文"
-                          >
-                            📎 {t.root.anchor_snippet || t.root.anchor_key}
-                          </div>
-                        )}
-                        {/* 根评论 */}
-                        <CommentItem
-                          comment={t.root}
-                          currentUserId={currentUserId}
-                          isAdmin={isAdmin}
-                          isRoot={true}
-                          onReply={handleReply}
-                          onEdit={handleEdit}
-                          onDelete={handleDelete}
-                          onToggleResolved={handleToggleResolved}
-                        />
-                        {/* 回复 */}
-                        {t.replies.map((r) => (
-                          <div key={r.id} style={{ paddingLeft: 16 }}>
-                            <CommentItem
-                              comment={r}
-                              currentUserId={currentUserId}
-                              isAdmin={isAdmin}
-                              isRoot={false}
-                              onReply={handleReply}
-                              onEdit={handleEdit}
-                              onDelete={handleDelete}
-                            />
-                          </div>
-                        ))}
-                      </Card>
-                    ))
-                  )}
-                </Spin>
+                        {showResolved ? '隐藏已解决' : '显示已解决'}
+                      </Button>
+                    </Space>
+                  </div>
 
-                {/* 底部 composer */}
-                <div ref={composerRef} style={{ marginTop: 12 }}>
-                  <Card size="small" bodyStyle={{ padding: 12 }}>
+                  <Spin spinning={commentsLoading}>
+                    {threads.length === 0 ? (
+                      <Empty description="暂无评论, hover 段落标题添加" />
+                    ) : (
+                      threads.map((t) => (
+                        <div
+                          key={t.root.id}
+                          style={{
+                            marginBottom: 10,
+                            padding: 10,
+                            borderRadius: 6,
+                            background: t.root.status === 'resolved' ? '#f6ffed' : '#fff',
+                            border: `1px solid ${
+                              t.root.status === 'resolved' ? '#b7eb8f' : '#f0f0f0'
+                            }`,
+                          }}
+                        >
+                          {/* 显示锚定预览 */}
+                          {t.root.anchor_type !== 'doc' && (
+                            <div
+                              style={{
+                                fontSize: 11,
+                                color: '#8c8c8c',
+                                background: '#f0f2f5',
+                                padding: '4px 8px',
+                                borderRadius: 4,
+                                marginBottom: 8,
+                                cursor: 'pointer',
+                              }}
+                              title="点击定位到原文"
+                            >
+                              📎 {t.root.anchor_snippet || t.root.anchor_key}
+                            </div>
+                          )}
+                          {/* 根评论 */}
+                          <CommentItem
+                            comment={t.root}
+                            currentUserId={currentUserId}
+                            isAdmin={isAdmin}
+                            isRoot={true}
+                            onReply={handleReply}
+                            onEdit={handleEdit}
+                            onDelete={handleDelete}
+                            onToggleResolved={handleToggleResolved}
+                          />
+                          {/* 回复 */}
+                          {t.replies.map((r) => (
+                            <div key={r.id} style={{ paddingLeft: 16 }}>
+                              <CommentItem
+                                comment={r}
+                                currentUserId={currentUserId}
+                                isAdmin={isAdmin}
+                                isRoot={false}
+                                onReply={handleReply}
+                                onEdit={handleEdit}
+                                onDelete={handleDelete}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      ))
+                    )}
+                  </Spin>
+
+                  {/* 底部 composer */}
+                  <div
+                    ref={composerRef}
+                    style={{
+                      marginTop: 12,
+                      padding: 10,
+                      border: '1px solid #e6e6e6',
+                      borderRadius: 6,
+                      background: '#fff',
+                    }}
+                  >
                     {newAnchor && !replyTo && (
                       <div
                         style={{
@@ -1118,13 +1211,13 @@ const DocsWorkspace: React.FC = () => {
                         发布
                       </Button>
                     </div>
-                  </Card>
-                </div>
-              </>
-            )}
-          </div>
+                  </div>
+                </>
+              )}
+            </>
+          )}
         </div>
-      </Card>
+      </div>
     </div>
   );
 };
