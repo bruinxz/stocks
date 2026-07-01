@@ -375,6 +375,146 @@ override    = 允许, 但走审计流程 (二次确认 + 写理由 + 入库)
 
 综合分 = 各因子 z-score × 权重, 加起来 (Momentum 单独存 shadow 分, 不参与排名)
 
+**因子具体计算公式 (Wave 1 开发口径)**:
+
+大白话: 每只 ETF 的每个因子分, 都是**"先把 ETF 展开成成分股 → 每个成分股算这个因子的原始值 → 加权平均得到 ETF 的原始值 → 在 ETF 池内做 z-score 标准化"**. 权重用成分股在指数中的权重 (`index_components.weight`).
+
+**通用: ETF → 成分股展开**
+```sql
+-- 宽基/风格因子/行业 ETF: 用 index_components (跟踪指数)
+SELECT stock_code, weight
+FROM index_components
+WHERE index_code = <etf_tracked_index>       -- e.g. '000300.SH' (沪深300)
+  AND trade_date = <point_in_time_month>     -- point-in-time, 用当月末快照
+```
+
+**Fallback**: 若 `index_components` 无该 ETF 数据, 使用 `fund_top_holdings` (基金前十) — 覆盖 60-80% 权重 已足够代表. 若两个都空, 该 ETF 从当月 candidate 池剔除.
+
+**因子 1: Value (估值, 权重 0.40)**
+
+- 目的: 挑便宜的 ETF (PB 低、PE 低、股息率高)
+- 原始值 (成分股层):
+  ```
+  stock_value_raw = z(1/pb) + z(1/pe_ttm) + z(dividend_yield)
+  ```
+  - `1/pb` = 市净率倒数 (账面价值 / 市值). 越高 = 越便宜
+  - `1/pe_ttm` = 市盈率倒数. 越高 = 盈利越好
+  - `dividend_yield` = 股息率. 越高 = 分红越多
+  - **z-score in universe** = 在**全部候选 ETF 的所有成分股**里做横截面 z-score (不是 ETF 内部)
+- 数据源:
+  ```sql
+  SELECT db.stock_id, db.pe, db.pb,
+         COALESCE(fr.dividend_yield, 0) AS dividend_yield
+  FROM daily_bars db
+  LEFT JOIN financial_reports fr ON fr.stock_code = db.stock.symbol
+    AND fr.report_date = latest_before(<factor_date>)
+  WHERE db.time = <factor_date>              -- 月末最后交易日
+  ```
+- ETF 层聚合:
+  ```
+  etf_value_raw = Σ (weight_i × stock_value_raw_i) / Σ weight_i
+  ```
+- 缺失处理: 单成分股某字段缺 → 该字段用 universe median 填充; 若 > 30% 成分股缺关键字段 → 该 ETF 当月标 `data_incomplete`, 不参与排名
+
+**因子 2: Quality (质量, 权重 0.30)**
+
+- 目的: 挑好公司 (ROE 高, 利润稳)
+- 原始值 (成分股层):
+  ```
+  stock_quality_raw = z(roe) + z(-stddev_5y_net_profit) + z(roe_5y_avg)
+  ```
+  - `roe` = 净资产收益率 (最近报告期)
+  - `stddev_5y_net_profit` = 过去 5 年净利润的标准差 (取负 → 越小越好, 稳定的高分)
+  - `roe_5y_avg` = 过去 5 年 ROE 均值 (吸收当期噪音)
+- 数据源:
+  ```sql
+  SELECT sff.symbol, sff.roe, sff.net_profit_growth
+  FROM stock_fundamental_factors sff
+  WHERE sff.factor_date = <factor_date_point_in_time>
+    AND sff.report_period = latest_annual_before(<factor_date>)
+
+  -- 5 年 ROE 序列
+  SELECT stock_code, roe, report_date
+  FROM financial_reports
+  WHERE report_type = 'annual'
+    AND stock_code IN (<etf_constituents>)
+    AND report_date BETWEEN (factor_date - 5 years) AND factor_date
+  ```
+- ETF 层聚合: 与 Value 同 (成分权重加权)
+- Point-in-time 约束: 财报有滞后, 3 月末算 4 月的 Quality 因子必须用**已披露**的年报 (通常上一年的年报 4 月底才全披露), 用 `stock_fundamental_factors.report_period` + `factor_date` 严格早于 factor_date 至少 30 天
+
+**因子 3: LowVol (低波动, 权重 0.30)**
+
+- 目的: 挑波动小的 ETF (股价平稳)
+- 原始值 (ETF 层直接算, **不下沉到成分股**):
+  ```
+  etf_lowvol_raw = z(-vol_60d) × 0.6 + z(-vol_20d) × 0.4
+  ```
+  - `vol_60d` = 过去 60 个交易日**每日 log-return** 的标准差 × sqrt(252) → 年化波动率. 取负 = 越低越好
+  - `vol_20d` = 过去 20 个交易日的年化波动率
+  - 60 天权重 0.6, 20 天权重 0.4 → 主要看中长期波动, 兼顾近月
+- 数据源:
+  ```sql
+  SELECT time, close, prev_close
+  FROM daily_bars
+  WHERE stock_id = <etf_stock_id>
+    AND time BETWEEN (factor_date - 90 天) AND factor_date
+    AND is_trading_day = true
+  ORDER BY time
+  -- 计算 log_return = LN(close / prev_close)
+  ```
+- 缺失处理: 交易日数据缺失 > 5 天 → 该 ETF 当月剔除
+- z-score in universe = 在全部候选 ETF 之间做横截面标准化
+
+**因子 4: Momentum (动量, 权重 0.0 shadow only)**
+
+- 目的: 观察题材/热点 ETF 是否有短期动量
+- 原始值 (ETF 层):
+  ```
+  etf_momentum_raw = z(return_20d) - z(return_5d) × 0.3
+  ```
+  - `return_20d` = ETF 过去 20 个交易日累计收益 = close(t) / close(t-20) - 1
+  - `return_5d` = 过去 5 日累计收益, **减去它** = 反转过滤 (短期猛涨的可能是过热, 打折扣, 参考 Hsu 2017 A股短期动量反转)
+- 数据源:
+  ```sql
+  SELECT time, close FROM daily_bars
+  WHERE stock_id = <etf_stock_id>
+    AND time BETWEEN (factor_date - 30 天) AND factor_date
+  ORDER BY time
+  ```
+- 用途: **不进入 total_score**, 但每月单独存 `momentum_shadow` 列, walk-forward 观察 6 个月后再决定是否入正式权重
+
+**综合分公式**:
+
+```
+etf_total_score(t) =
+    0.40 × z(etf_value_raw)
+  + 0.30 × z(etf_quality_raw)
+  + 0.30 × z(etf_lowvol_raw)
+  + 0.00 × z(etf_momentum_raw)   -- shadow only
+```
+
+**Universe 定义** (排名池):
+- 46-63 只 ETF 候选池 (§4.1 表格)
+- 通过 L1 eligibility_gate (§5.2): 上市 ≥ 180 天, 日均成交额 ≥ 2000 万, 非停牌, 数据完整率 ≥ 90%
+
+**排名 → BUY/SELL**:
+```
+top_5 = ETF_universe ORDER BY etf_total_score DESC LIMIT 5
+top_6 = ETF_universe ORDER BY etf_total_score DESC LIMIT 6
+
+current_holdings SET DIFF (top_6)  → SELL  (掉出 top 6)
+top_4  SET DIFF (current_holdings) → BUY   (新进入 top 4, 严格用 top 4 避免边界抖动)
+其余                                → HOLD
+```
+
+**数据 backfill 时间线** (支撑首次计算):
+- daily_bars for 46-63 只 ETF + 所有成分股: 2022-01-01 至今 (T1)
+- index_components: 每月末快照 (T2)
+- stock_fundamental_factors: 季度快照 (T2)
+- financial_reports 5 年年报: 2019-01-01 至今 (T3)
+- 详见 §13.4 数据回填计划
+
 **再平衡** (什么时候换股):
 - 频率: 月度 (每月最后交易日 22:00 计算, **次月第一交易日 9:40 后分批限价/VWAP 执行**)
 - 持仓: top 4-5 只 ETF, 单只 12-15%, 核心总仓位 60-70%
