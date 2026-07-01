@@ -123,6 +123,8 @@ import { EquityCurveGovernorState } from '../models/EquityCurveGovernorState';
 import { StrategyTcaMultiplier } from '../models/StrategyTcaMultiplier';
 // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环 model
 import { UserFeedback } from '../models/UserFeedback';
+// docs viewer 评论系统 (飞书式) — 2026-07-01
+import { DocumentComment } from '../models/DocumentComment';
 // Batch CE-C (2026-06-25) — 实时机会推送审计 model
 import { IntradayOpportunityPush } from '../models/IntradayOpportunityPush';
 // PR-M2 (2026-06-29) — 集合竞价快照 + 盘中 30-min K 线 (A 股最 robust 日内 alpha)
@@ -276,6 +278,8 @@ const sequelize = new Sequelize({
     StrategyTcaMultiplier,
     // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环
     UserFeedback,
+    // docs 评论系统 — 2026-07-01
+    DocumentComment,
     // Batch CE-C (2026-06-25) — 实时机会推送审计
     IntradayOpportunityPush,
     // PR-M2 (2026-06-29) — 集合竞价快照 + 盘中 30-min K 线
