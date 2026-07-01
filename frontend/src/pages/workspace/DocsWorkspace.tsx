@@ -278,15 +278,17 @@ function convertToTreeData(node: DocsTreeNode, threadCounts?: Record<string, num
   const isFile = node.type === 'file';
   const openCount = isFile ? threadCounts?.[node.path] || 0 : 0;
 
+  // 把 icon + 文件名 + 徽章 + 日期 全部放同一行 span, 用 inline-flex 严格保证不换行.
+  // 不用 antd Tree 的 showIcon prop (会额外插一层 span 导致空隙 + 换行).
   const titleNode = (
     <span
       style={{
         display: 'inline-flex',
-        alignItems: 'baseline',
-        gap: 8,
+        alignItems: 'center',
+        gap: 6,
         maxWidth: '100%',
         overflow: 'hidden',
-        verticalAlign: 'middle',
+        lineHeight: 1.4,
       }}
       title={
         isFile && node.mtime
@@ -294,28 +296,41 @@ function convertToTreeData(node: DocsTreeNode, threadCounts?: Record<string, num
           : node.name
       }
     >
+      <span style={{ flexShrink: 0, color: isFile ? '#8c8c8c' : '#faad14', fontSize: 13 }}>
+        {isFile ? <FileMarkdownOutlined /> : <FolderOutlined />}
+      </span>
       <span
         style={{
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
-          maxWidth: 200,
-          display: 'inline-block',
-          verticalAlign: 'baseline',
+          flex: '1 1 auto',
+          minWidth: 0,
+          fontSize: 13,
         }}
       >
         {node.name}
       </span>
       {openCount > 0 && (
-        <Tag color="orange" style={{ fontSize: 10, padding: '0 4px', margin: 0, lineHeight: '16px' }}>
+        <span
+          style={{
+            fontSize: 10,
+            background: '#fa8c16',
+            color: '#fff',
+            padding: '0 6px',
+            borderRadius: 8,
+            lineHeight: '14px',
+            flexShrink: 0,
+          }}
+        >
           {openCount}
-        </Tag>
+        </span>
       )}
       {isFile && node.mtime && (
         <span
           style={{
-            fontSize: 11,
-            color: 'rgba(0,0,0,0.45)',
+            fontSize: 10,
+            color: 'rgba(0,0,0,0.35)',
             whiteSpace: 'nowrap',
             flexShrink: 0,
           }}
@@ -329,7 +344,7 @@ function convertToTreeData(node: DocsTreeNode, threadCounts?: Record<string, num
   return {
     key,
     title: titleNode,
-    icon: isFile ? <FileMarkdownOutlined /> : <FolderOutlined />,
+    // 不设 icon (走 title 内联), 也不设 isLeaf 靠 children 判断
     isLeaf: isFile,
     children: node.children?.map((c) => convertToTreeData(c, threadCounts)),
   };
@@ -803,39 +818,72 @@ const DocsWorkspace: React.FC = () => {
           .doc-heading-wrapper:hover .doc-heading-comment-btn {
             opacity: 1 !important;
           }
+
+          /* 紧凑 tree — 让每行短小, 缩进小 */
+          .docs-compact-tree .ant-tree-treenode {
+            padding: 0 !important;
+            width: 100%;
+          }
+          .docs-compact-tree .ant-tree-node-content-wrapper {
+            padding: 2px 4px !important;
+            min-height: 22px !important;
+            line-height: 22px !important;
+            width: calc(100% - 20px);
+          }
+          .docs-compact-tree .ant-tree-switcher {
+            width: 16px !important;
+            line-height: 22px !important;
+            display: inline-flex !important;
+            align-items: center;
+            justify-content: center;
+          }
+          .docs-compact-tree .ant-tree-indent-unit {
+            width: 14px !important;
+          }
+          .docs-compact-tree .ant-tree-node-content-wrapper:hover {
+            background: #f0f0f0 !important;
+          }
+          .docs-compact-tree .ant-tree-node-selected {
+            background: #e6f4ff !important;
+          }
+
+          /* markdown body 主要样式 */
+          .markdown-body h1 { margin-top: 24px !important; margin-bottom: 12px !important; }
+          .markdown-body h2 { margin-top: 20px !important; margin-bottom: 10px !important; }
+          .markdown-body h3 { margin-top: 16px !important; margin-bottom: 8px !important; }
+          .markdown-body h4 { margin-top: 12px !important; margin-bottom: 6px !important; }
+          .markdown-body > *:first-child { margin-top: 0 !important; }
         `}
       </style>
       <Card
         title={
-          <Space>
-            <FolderOpenOutlined />
-            <span>文档浏览</span>
-            <Tag color="blue">Admin</Tag>
-            <Tag color="green">运行时读取 · 支持热更新</Tag>
-            <Tag color="purple">飞书式评论</Tag>
+          <Space size={8}>
+            <FolderOpenOutlined style={{ color: '#1677ff' }} />
+            <span style={{ fontWeight: 600 }}>文档</span>
+            <Tag color="blue" style={{ margin: 0 }}>Admin</Tag>
+            <Tag color="green" style={{ margin: 0 }}>热更新</Tag>
           </Space>
         }
         extra={
-          <Space>
-            <Button
-              icon={<ReloadOutlined />}
-              onClick={handleRefresh}
-              loading={treeLoading}
-            >
-              刷新
-            </Button>
-          </Space>
+          <Button
+            icon={<ReloadOutlined />}
+            onClick={handleRefresh}
+            loading={treeLoading}
+            size="small"
+          >
+            刷新
+          </Button>
         }
         bodyStyle={{ padding: 0 }}
       >
         <div style={{ display: 'flex', minHeight: 600 }}>
-          {/* 左: 文件树 */}
+          {/* 左: 文件树 (更紧凑, 280px) */}
           <div
             style={{
-              width: 320,
-              flex: '0 0 320px',
+              width: 280,
+              flex: '0 0 280px',
               borderRight: '1px solid #f0f0f0',
-              padding: 16,
+              padding: '12px 8px',
               maxHeight: '85vh',
               overflow: 'auto',
               background: '#fafafa',
@@ -846,7 +894,7 @@ const DocsWorkspace: React.FC = () => {
               <Spin />
             ) : tree ? (
               <Tree
-                showIcon
+                className="docs-compact-tree"
                 treeData={treeData}
                 expandedKeys={expandedKeys}
                 onExpand={(keys) => setExpandedKeys(keys)}
@@ -904,14 +952,14 @@ const DocsWorkspace: React.FC = () => {
             )}
           </div>
 
-          {/* 右: 评论面板 */}
+          {/* 右: 评论面板 (350px) */}
           <div
             ref={commentPanelRef}
             style={{
-              width: 380,
-              flex: '0 0 380px',
+              width: 350,
+              flex: '0 0 350px',
               borderLeft: '1px solid #f0f0f0',
-              padding: 16,
+              padding: 14,
               maxHeight: '85vh',
               overflow: 'auto',
               background: '#fbfbfd',
