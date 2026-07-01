@@ -24,6 +24,7 @@ import {
   Cog6ToothIcon,
   CircleStackIcon,
   InformationCircleIcon,
+  DocumentTextIcon,
 } from '@heroicons/react/24/outline';
 import zhCN from 'antd/locale/zh_CN';
 import { useSelector, useDispatch } from 'react-redux';
@@ -66,6 +67,7 @@ const SettingsWorkspace = lazy(() => import('./pages/workspace/SettingsWorkspace
 // 例外打破"6 shell 固定" — 用户原话明确要求新增 (workspace/CLAUDE.md
 // 的限制面向 PRD US-001; 本批用户授权扩到 7 shell).
 const SystemWorkspace = lazy(() => import('./pages/workspace/SystemWorkspace'));
+const DocsWorkspace = lazy(() => import('./pages/workspace/DocsWorkspace'));
 
 import type { MenuProps } from 'antd';
 
@@ -278,6 +280,7 @@ const AppContent: React.FC = () => {
     if (isAdmin) {
       items.push(menuLink('/workspace/data', <CircleStackIcon className="hero-icon" />, '数据中心'));
       items.push(menuLink('/workspace/system', <InformationCircleIcon className="hero-icon" />, '系统介绍'));
+      items.push(menuLink('/workspace/docs', <DocumentTextIcon className="hero-icon" />, '文档'));
     }
     return items;
   }, [isAdmin]);
@@ -509,6 +512,15 @@ const AppContent: React.FC = () => {
                 element={
                   <ProtectedRoute>
                     <SystemWorkspace />
+                  </ProtectedRoute>
+                }
+              />
+              {/* 文档浏览 (admin) — 运行时读 docs/ 目录, 支持热更新 */}
+              <Route
+                path="/workspace/docs"
+                element={
+                  <ProtectedRoute>
+                    <DocsWorkspace />
                   </ProtectedRoute>
                 }
               />

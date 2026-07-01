@@ -71,6 +71,7 @@ import settingsRoutes from './api/routes/settings.routes';
 import dataRoutes from './api/routes/data.routes';
 import macroRoutes from './api/routes/macro.routes';
 import improvementSuggestionRoutes from './api/routes/improvementSuggestion.routes';
+import docsRoutes from './api/routes/docs.routes';
 // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环
 import { userFeedbackMeRoutes, userFeedbackAdminRoutes } from './api/routes/userFeedback.routes';
 import bridgeRoutes from './live-trading/routes/bridge.routes';
@@ -304,6 +305,8 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/data', dataRoutes);
 app.use('/api/macro', macroRoutes);
 app.use('/api/me/improvement-suggestions', improvementSuggestionRoutes);
+// 文档浏览 (admin only, 运行时读 docs/ 目录, 支持热更新)
+app.use('/api/docs', docsRoutes);
 // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环
 app.use('/api/me/feedbacks', userFeedbackMeRoutes);
 app.use('/api/admin/feedbacks', userFeedbackAdminRoutes);
