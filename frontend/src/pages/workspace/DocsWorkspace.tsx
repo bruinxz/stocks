@@ -69,7 +69,7 @@ const MARKDOWN_COMPONENTS = {
 /**
  * 将后端目录树转成 antd Tree 的 DataNode 格式
  */
-function convertToTreeData(node: DocsTreeNode, parentKey: string = ''): DataNode {
+function convertToTreeData(node: DocsTreeNode, parentKey = ''): DataNode {
   const key = node.path || node.name;
   const isFile = node.type === 'file';
 
