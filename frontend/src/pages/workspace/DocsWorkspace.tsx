@@ -507,7 +507,10 @@ const DocsWorkspace: React.FC = () => {
 
   const [tree, setTree] = useState<DocsTreeNode | null>(null);
   const [treeLoading, setTreeLoading] = useState(false);
-  const [selectedPath, setSelectedPath] = useState<string | null>(urlPath);
+  // 初始 selectedPath 设为 null, 让下面 useEffect 触发 loadFile(urlPath).
+  // 不能在这里直接用 urlPath 初始化, 否则 `urlPath !== selectedPath` 永远 false,
+  // 首次加载页面时不会去请求文件内容 → 页面空白.
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string>('');
   const [fileMtime, setFileMtime] = useState<string>('');
   const [fileLoading, setFileLoading] = useState(false);
