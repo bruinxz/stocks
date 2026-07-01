@@ -7,7 +7,7 @@ export type AnchorType = 'heading' | 'line' | 'paragraph' | 'doc';
 export interface CommentUser {
   id: number;
   username: string;
-  display_name?: string | null;
+  nickname?: string | null;
   role: string;
 }
 

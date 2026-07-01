@@ -402,7 +402,7 @@ const CommentItem: React.FC<CommentItemProps> = ({
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(comment.content);
   const canEdit = comment.user_id === currentUserId || isAdmin;
-  const authorName = comment.user?.display_name || comment.user?.username || `user#${comment.user_id}`;
+  const authorName = comment.user?.nickname || comment.user?.username || `user#${comment.user_id}`;
   const isAI = comment.author_kind === 'ai';
 
   return (

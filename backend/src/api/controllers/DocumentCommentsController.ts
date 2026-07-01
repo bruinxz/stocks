@@ -43,7 +43,7 @@ export class DocumentCommentsController {
           {
             model: User,
             as: 'user',
-            attributes: ['id', 'username', 'display_name', 'role'],
+            attributes: ['id', 'username', 'nickname', 'role'],
           },
         ],
         order: [['created_at', 'ASC']],
@@ -167,7 +167,7 @@ export class DocumentCommentsController {
 
       // 返回时 include user
       const withUser = await DocumentComment.findByPk(comment.id, {
-        include: [{ model: User, as: 'user', attributes: ['id', 'username', 'display_name', 'role'] }],
+        include: [{ model: User, as: 'user', attributes: ['id', 'username', 'nickname', 'role'] }],
       });
 
       res.json({ success: true, data: withUser });
@@ -241,7 +241,7 @@ export class DocumentCommentsController {
       await comment.update(updates);
 
       const withUser = await DocumentComment.findByPk(comment.id, {
-        include: [{ model: User, as: 'user', attributes: ['id', 'username', 'display_name', 'role'] }],
+        include: [{ model: User, as: 'user', attributes: ['id', 'username', 'nickname', 'role'] }],
       });
 
       res.json({ success: true, data: withUser });
