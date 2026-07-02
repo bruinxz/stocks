@@ -704,6 +704,17 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '工作日 16:30 跑题材发酵 5 阶段 detector — 消费 industry_sentiment_indices + 昨日 phase, 给每个板块打 germinate/launch/outbreak/climax/recession 标签 + 检测主线切换. PR-I-v2 §6.4 板块/题材轮动战法落地. 给推荐 service 用 "启动/爆发推次龙头, 高潮 reduce, 退潮换主线" 决策.',
   },
+  // 批6 (2026-07) — ETF 因子轮动月度再平衡. 信号优先重构主线核心 (Core 70%),
+  // 替代旧 29 策略融合. 每月 1 号 09:30 跑四因子打分 (Value/Quality/LowVol) top4买/
+  // top6卖缓冲带, 落 AIInvestmentSignal(action=TARGET_WEIGHT, rebalance_id).
+  {
+    type: 'ETF_FACTOR_ROTATION_REBALANCE',
+    category: 'analytics',
+    owner: 'quant',
+    recommendedCron: '30 9 1 * *',
+    description:
+      '每月 1 号 09:30 跑 ETF 因子轮动月度再平衡 — 46-63 只候选 ETF 四因子打分 (Value 0.40 / Quality 0.30 / LowVol 0.30 / Momentum shadow), top4 买 / top6 卖缓冲带, 单只<=15% 核心总仓<=70%, 落 action=TARGET_WEIGHT 信号供 V3 展示 + paper 执行. 信号优先重构主线核心 (Core 70%).',
+  },
 ]);
 
 const CRON_REGISTRY_BY_TYPE: ReadonlyMap<string, CronTaskDefinition> = new Map(

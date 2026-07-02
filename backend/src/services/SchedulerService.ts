@@ -5472,6 +5472,43 @@ class SchedulerService {
             `dist=germ${r.phase_distribution.germinate}/lau${r.phase_distribution.launch}/out${r.phase_distribution.outbreak}/cli${r.phase_distribution.climax}/rec${r.phase_distribution.recession} ` +
             `switch_events=${r.mainline_switch_events.length} errors=${r.errors?.length || 0}`
         );
+      } else if (task.type === 'ETF_FACTOR_ROTATION_REBALANCE') {
+        // 批6 — ETF 因子轮动月度再平衡 (核心 70% 主线). ETFRotationService 读当前 ETF
+        // 持仓 -> 四因子打分 -> top4买/top6卖 -> 落 AIInvestmentSignal(action=TARGET_WEIGHT,
+        // rebalance_id=rebalance-YYYY-MM). 每月首个交易日 09:30 跑.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { etfRotationService } = require('./etf/ETFRotationService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await etfRotationService.runMonthlyRebalance({
+          asOfDate: typeof parameters.as_of === 'string' ? parameters.as_of : undefined,
+          portfolioId: Number.isFinite(parameters.portfolio_id)
+            ? Number(parameters.portfolio_id)
+            : undefined,
+          dryRun: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.signals.length,
+          completed_items: r.created + r.updated,
+          failed_items: r.skipped_data_incomplete,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'etf_factor_rotation_rebalance',
+            rebalance_id: r.rebalance_id,
+            as_of_date: r.as_of_date,
+            portfolio_id: r.portfolio_id,
+            current_holdings: r.current_holdings,
+            created: r.created,
+            updated: r.updated,
+            skipped_data_incomplete: r.skipped_data_incomplete,
+            confidence: r.confidence,
+          },
+        });
+        logger.info(
+          `[ETF_FACTOR_ROTATION_REBALANCE] ${r.rebalance_id} holdings=[${r.current_holdings.join(',')}] ` +
+            `created=${r.created} updated=${r.updated} skipped=${r.skipped_data_incomplete} ` +
+            `confidence=${r.confidence.toFixed(3)}`
+        );
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }
@@ -6631,6 +6668,16 @@ class SchedulerService {
         name: '题材发酵 5 阶段 detector (PR-O5)',
         type: 'THEME_FERMENTATION_DETECT',
         cron_expression: '30 16 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // 批6 (2026-07): ETF_FACTOR_ROTATION_REBALANCE — 核心 70% 主线月度再平衡.
+      // 每月 1 号 09:30 跑 (非交易日顺延由 detector 内部 as-of 处理), 四因子打分 top4买/
+      // top6卖, 落 action=TARGET_WEIGHT 信号供 V3 展示 + paper 执行. 替代旧 29 策略融合主线.
+      {
+        name: 'ETF 因子轮动月度再平衡 (批6)',
+        type: 'ETF_FACTOR_ROTATION_REBALANCE',
+        cron_expression: '30 9 1 * *',
         is_active: true,
         parameters: { dry_run: false },
       },
