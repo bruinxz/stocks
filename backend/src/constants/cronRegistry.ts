@@ -726,6 +726,16 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '工作日 17:00 跑卫星题材 fan-out — 读当日 theme_fermentation_phases, 把 launch/outbreak 题材 top_codes 扇出成个股 BUY 信号 (climax → SELL 减仓, recession/germinate → skip), 落 AIInvestmentSignal(source_type=theme_event, action=BUY/SELL, theme_id, 卫星 -7% soft 止损 / +20% 止盈). 信号优先重构卫星 (Satellite 20%) 主信号产出层 (§6.2-B).',
   },
+  // 批6d (2026-07, §4.2) — 卫星自动退出. 每日 EOD 扫卫星仓做硬止损/止盈/时间退出/主动止损,
+  // 走 executeGuardSells; 组合级 60 日滚动亏损冻结 + 连续 3 月 alpha<0 永久停. 工作日 15:10.
+  {
+    type: 'SATELLITE_AUTO_EXIT',
+    category: 'analytics',
+    owner: 'quant',
+    recommendedCron: '10 15 * * 1-5',
+    description:
+      '工作日 15:10 (收盘后) 跑卫星自动退出 (§4.2) — 扫 theme_event 卫星持仓, 按 -15% 硬止损 / +20% 止盈 / 21 交易日时间退出 / -7% 主动止损(主题仍活跃且盘中反弹>3% 时缓冲 T+1 复核) 裁决, 走 executeGuardSells 保留完整记账链. 组合级风控: 60 日滚动窗口卫星累计亏损 >5% 冻结卫星 30 天; 自然月连续 3 月 alpha<0 永久停用卫星资金归核心. 卫星 (Satellite 20%) 退出执行层.',
+  },
 ]);
 
 const CRON_REGISTRY_BY_TYPE: ReadonlyMap<string, CronTaskDefinition> = new Map(

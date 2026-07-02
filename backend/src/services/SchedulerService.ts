@@ -5543,6 +5543,43 @@ class SchedulerService {
             `themes=${r.themes_actionable} created=${r.created} updated=${r.updated} ` +
             `skip_phase=${r.skipped_phase} skip_nocodes=${r.skipped_no_codes}`
         );
+      } else if (task.type === 'SATELLITE_AUTO_EXIT') {
+        // 批6d (§4.2) — 卫星自动退出. 每日 EOD 扫所有卫星仓 (theme_event open outcome ∩
+        // 现有持仓), 按 §4.2 规则裁决: -15% 硬止损 / +20% 止盈 / 21 交易日时间退出 /
+        // -7% 主动止损(带缓冲); 走 executeGuardSells 保留完整记账链. 另做组合级风控:
+        // 60 日滚动亏损 >5% 冻结 30 天; 连续 3 月 alpha<0 永久停卫星. 工作日 15:10 跑.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { autoExitService } = require('./exit/AutoExitService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await autoExitService.runOnce({
+          tradeDate: typeof parameters.trade_date === 'string' ? parameters.trade_date : undefined,
+          dryRun: parameters.dry_run === true,
+          userId: typeof parameters.user_id === 'number' ? parameters.user_id : undefined,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.scanned_positions,
+          completed_items: r.exit_triggers,
+          failed_items: r.sell_result?.failed || 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'satellite_auto_exit',
+            trade_date: r.trade_date,
+            dry_run: r.dry_run,
+            scanned_positions: r.scanned_positions,
+            exit_triggers: r.exit_triggers,
+            buffered: r.buffered,
+            rolling_freezes: r.rolling_freezes,
+            alpha_permanent_stops: r.alpha_permanent_stops,
+            sell_succeeded: r.sell_result?.succeeded || 0,
+            sell_failed: r.sell_result?.failed || 0,
+          },
+        });
+        logger.info(
+          `[SATELLITE_AUTO_EXIT] trade_date=${r.trade_date} dry=${r.dry_run} ` +
+            `scanned=${r.scanned_positions} triggers=${r.exit_triggers} buffered=${r.buffered} ` +
+            `freezes=${r.rolling_freezes} alphaStops=${r.alpha_permanent_stops}`
+        );
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }
@@ -6723,6 +6760,16 @@ class SchedulerService {
         name: '卫星题材 fan-out (批6c)',
         type: 'THEME_EVENT_FANOUT',
         cron_expression: '0 17 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // 批6d (2026-07, §4.2): SATELLITE_AUTO_EXIT — 卫星自动退出. 每日 EOD (15:10, 收盘后)
+      // 扫卫星仓做 -15%硬止损/+20%止盈/21交易日时间退出/-7%主动止损(带缓冲), 走 executeGuardSells;
+      // 组合级 60 日滚动亏损>5% 冻结 30 天, 连续 3 月 alpha<0 永久停卫星. 工作日 15:10 跑.
+      {
+        name: '卫星自动退出 (批6d)',
+        type: 'SATELLITE_AUTO_EXIT',
+        cron_expression: '10 15 * * 1-5',
         is_active: true,
         parameters: { dry_run: false },
       },
