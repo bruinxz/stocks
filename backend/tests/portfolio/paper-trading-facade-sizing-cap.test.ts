@@ -42,13 +42,13 @@ function assert(name: string, cond: boolean, detail = ''): void {
 }
 
 // ---------------------------------------------------------------------------
-// [1] 常量护栏 — 用户授权 5% / 25%, 不能被无意改动
+// [1] 常量护栏 — 用户授权 15% / 25% (PR-M4 2026-07 信号优先重构上调), 不能被无意改动
 // ---------------------------------------------------------------------------
 function test_constants() {
   console.log('\n[1] 常量护栏');
   assert(
-    'PR_M4_SINGLE_POSITION_CAP_PCT === 5',
-    PR_M4_SINGLE_POSITION_CAP_PCT === 5
+    'PR_M4_SINGLE_POSITION_CAP_PCT === 15',
+    PR_M4_SINGLE_POSITION_CAP_PCT === 15
   );
   assert(
     'PR_M4_INDUSTRY_CONCENTRATION_CAP_PCT === 25',
@@ -67,17 +67,17 @@ function test_single_position_cap_ok() {
   });
   assert('proposed 4000 / total 100000 → ok 不 cap', r.ok && !r.capped);
   assert('effective_cost === 4000', r.effective_cost === 4000);
-  assert('cap_amount === 5000 (5%×100000)', r.cap_amount === 5000);
+  assert('cap_amount === 15000 (15%×100000)', r.cap_amount === 15000);
 }
 
 function test_single_position_cap_capped() {
   const r = evaluateSinglePositionCap({
-    proposed_cost: 10000,
+    proposed_cost: 20000,
     total_value: 100000,
   });
-  assert('proposed 10000 / total 100000 → ok capped', r.ok && r.capped);
-  assert('effective_cost === 5000 (5%×100000)', r.effective_cost === 5000);
-  assert('cap_amount === 5000', r.cap_amount === 5000);
+  assert('proposed 20000 / total 100000 → ok capped', r.ok && r.capped);
+  assert('effective_cost === 15000 (15%×100000)', r.effective_cost === 15000);
+  assert('cap_amount === 15000', r.cap_amount === 15000);
   assert('detail.capped === true', r.detail.capped === true);
 }
 
@@ -102,10 +102,10 @@ function test_single_position_cap_override() {
 function test_single_position_cap_boundary_exact() {
   // proposed === cap → 用 `>` 严格 → 不 cap
   const r = evaluateSinglePositionCap({
-    proposed_cost: 5000,
+    proposed_cost: 15000,
     total_value: 100000,
   });
-  assert('proposed exactly 5% → 不 cap (用 > 严格)', r.ok && !r.capped);
+  assert('proposed exactly 15% → 不 cap (用 > 严格)', r.ok && !r.capped);
 }
 
 // ---------------------------------------------------------------------------

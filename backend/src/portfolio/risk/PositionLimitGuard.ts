@@ -64,15 +64,18 @@ export interface PositionLimitsConfig {
 }
 
 /**
- * Project-wide defaults per AC: max 20 holdings, 10% per stock, 30% per industry.
+ * Project-wide defaults per AC (PR-M4 2026-07 更新): max 20 holdings, 15% per stock, 25% per industry.
  *
  * `Object.freeze` (per the US-037 codebase pattern) keeps callers from
  * accidentally mutating the shared default in-place.
  */
 export const DEFAULT_POSITION_LIMITS: PositionLimitsConfig = Object.freeze({
   max_positions: 20,
-  max_single_stock_pct: 0.1,
-  max_single_industry_pct: 0.3,
+  // PR-M4 (2026-07 信号优先重构): 核心-卫星架构下放宽单票/单板块上限.
+  // 单票 10% → 15% (核心 ETF 持仓集中度更高); 单板块 30% → 25% (行业更分散).
+  // 核心总仓位 ≤70% 硬顶在 ETF 轮动服务 (批6) 引入 core/satellite 分桶后落地.
+  max_single_stock_pct: 0.15,
+  max_single_industry_pct: 0.25,
 });
 
 // ---------------------------------------------------------------------------

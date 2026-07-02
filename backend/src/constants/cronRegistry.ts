@@ -185,26 +185,6 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     recommendedCron: '0 16 * * *',
     description: '雪球热门话题词同步 (周末也跑 — 雪球周末仍有讨论)',
   },
-  {
-    type: 'STOCK_SENTIMENT_SYNC',
-    category: 'data_sync',
-    owner: 'data',
-    recommendedCron: '30 16 * * *',
-    description: '个股情绪聚合同步 (周末也跑 — 周末无新交易但用户讨论照旧)',
-  },
-  {
-    type: 'MARKET_NEWS_SYNC',
-    category: 'data_sync',
-    owner: 'data',
-    description: '宏观 / 行情新闻同步 (盘中 30min + 收尾 17:17, 17:17 全周 7 天)',
-  },
-  {
-    type: 'SOCIAL_SENTIMENT_SYNC',
-    category: 'data_sync',
-    owner: 'data',
-    recommendedCron: '20 16 * * *',
-    description: '社交媒体 / 论坛情绪同步 (周末也跑 — 用户讨论 7×24)',
-  },
   // PR-A (2026-06-29): 公告 NLP 全市场扫描. 之前只有 sync-announcements.ts CLI
   // 存在但没注册成 cron, 导致 announcement_summaries 表自 2026-06-09 后 0 更新.
   // 现在每天 17:00 跑当日全市场 (--all --with-ai=false 走启发式, 不调远端 AI),
@@ -231,12 +211,6 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     recommendedCron: '30 18 * * *',
     description:
       '每天 18:30 KOL 观点聚合 (sync-kol-opinions --favorites --lookback-days=14) → kol_opinions. NewsAnalyzer + BullishEventDetector 消费. 周末也跑.',
-  },
-  {
-    type: 'MARKET_HOT_SEARCH_SYNC',
-    category: 'data_sync',
-    owner: 'data',
-    description: '市场热搜词同步',
   },
   {
     type: 'DRAGON_TIGER_SYNC',
@@ -752,14 +726,6 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
   // PR-M3 (2026-06-29) — 板块情绪指数日度聚合. 学术 + 大 V 共识 (龙头战法 4 核心因子:
   // 涨停数 / 连板高度 / 封板率 / 炸板率) + 30 日板块动量 z-score. 工作日 16:00 跑
   // (limit_up sync 在 15:35-15:40 之后), 给推荐 service 消费做 "龙头板块加权 / 弱势板块 skip".
-  {
-    type: 'INDUSTRY_SENTIMENT_AGGREGATE',
-    category: 'analytics',
-    owner: 'quant',
-    recommendedCron: '0 16 * * 1-5',
-    description:
-      '工作日 16:00 跑板块情绪指数聚合 — 从 limit_up_stocks JOIN stocks.industry GROUP BY industry, 算 4 大龙头因子 (涨停数 / 连板高度 / 封板率 / 炸板率) + 30 日板块动量 z-score → composite_score 写 industry_sentiment_indices. PR-I 报告第 3 个致命短板.',
-  },
   // PR-O5 (2026-06-30) — 题材发酵 5 阶段 detector. 消费 PR-M3 industry_sentiment_indices
   // (16:00 写完) + 昨日 phase, 给每个板块打 germinate/launch/outbreak/climax/recession 标签 +
   // 主线切换检测. 工作日 16:30 跑.

@@ -130,7 +130,7 @@ export interface PlaceOrderOptions {
    */
   bypass_feasibility?: boolean;
   /**
-   * PR-M4 (2026-06-29): 跳过仓位风控 hard caps (5% 单仓 / 25% 板块). 仅给系统级
+   * PR-M4 (2026-06-29): 跳过仓位风控 hard caps (15% 单仓 / 25% 板块). 仅给系统级
    * 强制路径用 — closePosition / GuardSellExecutor 强平 / IndustryConcentrationGuard
    * rebalance SELL 等. SELL 路径目前本来就不调 cap (cap 在 BUY 块内), 该 flag 主要给
    * 未来扩 SELL cap 时留 escape hatch + 让 closePosition 默认 bypass=true.
@@ -629,8 +629,8 @@ export function buildPreTradeComplianceDraft(input: {
 //
 //  与现有 PositionLimitGuard / IndustryConcentrationGuard (US-047 / US-052) 的关系:
 //    - PositionLimitGuard 阈值由 user.risk_config.position_limits 决定, 默认
-//      max_single_stock_pct=0.10 / max_single_industry_pct=0.30 — 用户改了就改.
-//    - PR-M4 cap 是**系统级最终防线** — 不受用户 config 影响, 5%/25% hardcoded.
+//      max_single_stock_pct=0.15 / max_single_industry_pct=0.25 — 用户改了就改.
+//    - PR-M4 cap 是**系统级最终防线** — 不受用户 config 影响, 15%/25% hardcoded.
 //      用户即使把 PositionLimitGuard 调到 50% 也过不了 PR-M4 这道墙.
 //    - 关系: PositionLimitGuard 先跑 (caller 配的 strict 阈值), 通过后再跑 PR-M4
 //      (系统统一防线). 两道叠加 — 任一拒单都不下.
@@ -644,10 +644,11 @@ export function buildPreTradeComplianceDraft(input: {
 // ---------------------------------------------------------------------------
 
 /**
- * 单仓硬上限 (5%) — portfolio.total_value 的最大占比.
+ * 单仓硬上限 (15%) — portfolio.total_value 的最大占比.
  * PR-M4 系统级防线, 不受用户 risk_config 影响.
+ * (2026-07 信号优先重构: 核心-卫星架构下核心 ETF 持仓可达 15%, 由 5% 上调到 15%.)
  */
-export const PR_M4_SINGLE_POSITION_CAP_PCT = 5; // 0-100, 表 %
+export const PR_M4_SINGLE_POSITION_CAP_PCT = 15; // 0-100, 表 %
 
 /**
  * 行业集中度硬上限 (25%) — 同行业累计 market_value 占 portfolio.total_value 的最大比.

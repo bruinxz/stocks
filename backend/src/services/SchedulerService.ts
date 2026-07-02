@@ -43,7 +43,6 @@ import { industrySyncService } from '../data/services/IndustrySyncService';
 import { limitUpSyncService } from '../data/services/LimitUpSyncService';
 import { northboundSyncService } from '../data/services/NorthboundSyncService';
 import { snowballHotKeywordSyncService } from '../data/services/SnowballHotKeywordSyncService';
-import { stockSentimentSyncService } from '../data/services/StockSentimentSyncService';
 import { dailyTradingDigestService } from './DailyTradingDigestService';
 import { earningsForecastWatcher } from './EarningsForecastWatcher';
 import { weeklyReviewReportService } from './WeeklyReviewReportService';
@@ -2564,161 +2563,6 @@ class SchedulerService {
         });
         logger.info(
           `[snowball-keyword-sync] ${date} 完成: fetched=${result.fetched} 新进=${result.new_keywords_count}`
-        );
-      } else if (task.type === 'STOCK_SENTIMENT_SYNC') {
-        // Batch AB (2026-06-18): 个股关注度 (东财人气榜 rank 倒数代理 post_count).
-        // east_money_qa 因子依赖. 默认仅自选股 + 量化候选, 限 50-200 只防 AKShare 限频.
-        // 推荐 cron: '30 16 * * 1-5'.
-        const limit = parameters.limit ? Number(parameters.limit) : 100;
-        const universe = parameters.universe === 'market' ? 'market' : 'favorites';
-        // 取候选股: market 模式 = 流通市值 top N; favorites 模式 = 所有 user 的 FavoriteStock + 量化 top
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { Stock } = require('../models/Stock');
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { Op } = require('sequelize');
-        const candidates =
-          universe === 'market'
-            ? await Stock.findAll({
-                where: {
-                  is_listed: true,
-                  name: { [Op.notLike]: '%ST%' },
-                },
-                order: [['circulating_market_cap', 'DESC']],
-                limit,
-                attributes: ['symbol'],
-                raw: true,
-              })
-            : await Stock.findAll({
-                attributes: ['symbol'],
-                limit,
-                raw: true,
-              });
-        const codes = (candidates as any[])
-          .map(s => {
-            // 兼容 'sz.300085' / '300085.SZ' / 纯 6 位 — 提取最后 6 位数字
-            const digits = String(s.symbol || '').replace(/[^0-9]/g, '');
-            return digits.length >= 6 ? digits.slice(-6) : '';
-          })
-          .filter(c => /^\d{6}$/.test(c));
-        const result = await stockSentimentSyncService.syncStocks(codes, {
-          intervalMs: 250,
-        });
-        await this.safeUpdateExecutionLog(executionLog, {
-          total_items: codes.length,
-          success_count: result.succeeded || 0,
-          failed_count: result.failed || 0,
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          error_message: null,
-          result_summary: {
-            scenario: 'stock_sentiment_sync',
-            universe,
-            limit,
-            total: result.total_stocks,
-            succeeded: result.succeeded,
-            failed: result.failed,
-            skipped: result.skipped,
-          },
-        });
-        logger.info(
-          `[stock-sentiment-sync] universe=${universe} limit=${limit} 完成: succeeded=${result.succeeded} failed=${result.failed}`
-        );
-      } else if (task.type === 'MARKET_NEWS_SYNC') {
-        // Batch AG (2026-06-18): 市场新闻 / 财经事件 sync.
-        // 多源 (财联社电报 / 东财全球 / 新浪) fallback + 去重入库 market_news 表.
-        // 推荐 cron: '*/30 9-15 * * 1-5' (盘中每 30min) + '0 17,21 * * 1-5' (盘后).
-        // 可选 parameters.limit 控制单次拉取行数 (默认 80).
-        // 可选 parameters.prune_days 触发 pruneOld (默认不裁剪, 设 30 表示删 30 天前).
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { marketNewsSyncService } = require('../data/services/MarketNewsSyncService');
-        const limit = parameters.limit ? Number(parameters.limit) : 80;
-        const result = await marketNewsSyncService.syncOnce({ limit });
-        let pruneDeleted = 0;
-        if (parameters.prune_days) {
-          const pruneRes = await marketNewsSyncService.pruneOld(Number(parameters.prune_days));
-          pruneDeleted = pruneRes.deleted;
-        }
-        await this.safeUpdateExecutionLog(executionLog, {
-          total_items: result.fetched || 0,
-          success_count: result.upserted || 0,
-          failed_count: result.error ? 1 : 0,
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          error_message: result.error || null,
-          result_summary: {
-            scenario: 'market_news_sync',
-            fetched: result.fetched,
-            upserted: result.upserted,
-            skipped: result.skipped,
-            prune_deleted: pruneDeleted,
-          },
-        });
-        logger.info(
-          `[market-news-sync] 完成: fetched=${result.fetched} upserted=${result.upserted} skipped=${result.skipped} pruned=${pruneDeleted}`
-        );
-      } else if (task.type === 'SOCIAL_SENTIMENT_SYNC') {
-        // Batch AH (2026-06-18): 社媒/舆情综合 (东财人气榜 + 综合评分) sync.
-        // 推荐 cron: '20 16 * * 1-5' (盘后, 错开北向 16:15 / 雪球 16:00).
-        // 可选 parameters.universe_limit (默认 200, top 流通市值).
-        // 可选 parameters.rank_lookback_days (默认 5, rank_breakout_delta 计算窗口).
-        const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
-        const date = parameters.date || today;
-        const limit = parameters.universe_limit ? Number(parameters.universe_limit) : 200;
-        const lookback = parameters.rank_lookback_days ? Number(parameters.rank_lookback_days) : 5;
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const {
-          socialSentimentSyncService,
-        } = require('../data/services/SocialSentimentSyncService');
-        const result = await socialSentimentSyncService.syncDate(date, {
-          universeLimit: limit,
-          rankLookbackDays: lookback,
-        });
-        await this.safeUpdateExecutionLog(executionLog, {
-          total_items: result.universe_size || 0,
-          success_count: result.upserted || 0,
-          failed_count: result.error ? 1 : 0,
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          error_message: result.error || null,
-          result_summary: {
-            scenario: 'social_sentiment_sync',
-            date,
-            universe_size: result.universe_size,
-            fetched: result.fetched,
-            upserted: result.upserted,
-            history_days_available: result.history_days_available,
-          },
-        });
-        logger.info(
-          `[social-sentiment-sync] ${date} 完成: universe=${result.universe_size} upserted=${result.upserted} history_days=${result.history_days_available}`
-        );
-      } else if (task.type === 'MARKET_HOT_SEARCH_SYNC') {
-        // Batch AH (2026-06-18): 百度 A 股搜索热度榜 sync.
-        // 推荐 cron: '40 16 * * 1-5' (盘后, 错开其它 16:xx sync).
-        const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
-        const date = parameters.date || today;
-        const limit = parameters.limit ? Number(parameters.limit) : 50;
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const {
-          marketHotSearchSyncService,
-        } = require('../data/services/MarketHotSearchSyncService');
-        const result = await marketHotSearchSyncService.syncDate(date, { limit });
-        await this.safeUpdateExecutionLog(executionLog, {
-          total_items: result.fetched || 0,
-          success_count: result.upserted || 0,
-          failed_count: result.error ? 1 : 0,
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          error_message: result.error || null,
-          result_summary: {
-            scenario: 'market_hot_search_sync',
-            date,
-            fetched: result.fetched,
-            upserted: result.upserted,
-          },
-        });
-        logger.info(
-          `[market-hot-search-sync] ${date} 完成: fetched=${result.fetched} upserted=${result.upserted}`
         );
       } else if (task.type === 'STRATEGY_KILL_SWITCH_CHECK') {
         // Phase 4+ 策略熔断监控 — 评估每个策略的 kill_switch_metric (定义在
@@ -6050,35 +5894,6 @@ class SchedulerService {
             `deduped=${r.deduped} errors=${r.errors?.length || 0} ` +
             `by_detector=${JSON.stringify(r.by_detector)}`
         );
-      } else if (task.type === 'INDUSTRY_SENTIMENT_AGGREGATE') {
-        // PR-M3 (2026-06-29) — 板块情绪指数日度聚合. 学术: 龙头战法 4 核心因子
-        // (板块涨停数 / 连板高度 / 封板率 / 炸板率) + 30 日板块动量 z-score.
-        // 每日 16:00 (工作日) 跑, 给推荐 service 消费做"龙头板块加权 / 弱势板块直接 skip".
-        /* eslint-disable @typescript-eslint/no-var-requires */
-        const { industrySentimentAggregator } = require('./IndustrySentimentAggregator');
-        /* eslint-enable @typescript-eslint/no-var-requires */
-        const r = await industrySentimentAggregator.runOnce({
-          dry_run: parameters.dry_run === true,
-          trade_date: typeof parameters.trade_date === 'string' ? parameters.trade_date : undefined,
-        });
-        await this.safeUpdateExecutionLog(executionLog, {
-          total_items: r.industries_scanned,
-          completed_items: r.industries_written,
-          failed_items: r.errors?.length || 0,
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          result_summary: {
-            scenario: 'industry_sentiment_aggregate',
-            trade_date: r.trade_date,
-            industries_scanned: r.industries_scanned,
-            industries_written: r.industries_written,
-            errors: r.errors?.length || 0,
-          },
-        });
-        logger.info(
-          `[INDUSTRY_SENTIMENT_AGGREGATE] trade_date=${r.trade_date} scanned=${r.industries_scanned} ` +
-            `written=${r.industries_written} errors=${r.errors?.length || 0}`
-        );
       } else if (task.type === 'THEME_FERMENTATION_DETECT') {
         // PR-O5 (2026-06-30) — 题材发酵 5 阶段 detector. 消费 PR-M3 industry_sentiment_indices
         // (16:00 写完) + 昨日 phase, 给每个板块打 germinate/launch/outbreak/climax/recession
@@ -6324,10 +6139,6 @@ class SchedulerService {
       'LIMIT_UP_SYNC',
       'NORTHBOUND_SYNC',
       'SNOWBALL_HOT_KEYWORD_SYNC',
-      'STOCK_SENTIMENT_SYNC',
-      'MARKET_NEWS_SYNC',
-      'SOCIAL_SENTIMENT_SYNC',
-      'MARKET_HOT_SEARCH_SYNC',
       // Batch AH review (2026-06-18): 把 factor 计算也加入 catch-up,
       // 这样 deploy 重启或者 17:30 错过都会自动补跑. compute 比较重 (~30min),
       // 但 deploy 重启发生频率低; 加 60min 最小间隔避免短时间内反复触发.
@@ -7232,46 +7043,6 @@ class SchedulerService {
         is_active: true,
         parameters: {},
       },
-      {
-        name: '个股关注度当日 sync (Batch AB)',
-        type: 'STOCK_SENTIMENT_SYNC',
-        cron_expression: '30 16 * * *',
-        is_active: true,
-        parameters: { universe: 'market', limit: 200 },
-      },
-      // Batch AG (2026-06-18): 市场新闻 / 财经事件 — 让 TradingAgents prompt 注入
-      // 'recent_news[]' 上下文 + 行业决策面板时间线展示. 高频(30 min/盘中) + 收尾裁剪.
-      // PR-A (2026-06-29): 盘中 sync 保留工作日 (盘外没行情驱动); 17:17 收尾整理
-      // 早已是 * * * 全周 7 天 (新闻周末仍发).
-      {
-        name: '市场新闻 sync — 盘中每 30 分钟 (Batch AG)',
-        type: 'MARKET_NEWS_SYNC',
-        cron_expression: '7,37 9-15 * * 1-5',
-        is_active: true,
-        parameters: { limit: 80 },
-      },
-      {
-        name: '市场新闻 sync — 收盘整理 + 裁剪 30 天前 (Batch AG)',
-        type: 'MARKET_NEWS_SYNC',
-        cron_expression: '17 17 * * *',
-        is_active: true,
-        parameters: { limit: 80, prune_days: 30 },
-      },
-      // Batch AH (2026-06-18): 社媒/舆情综合数据 + 百度热搜
-      {
-        name: '社媒/舆情综合 sync (Batch AH)',
-        type: 'SOCIAL_SENTIMENT_SYNC',
-        cron_expression: '20 16 * * *',
-        is_active: true,
-        parameters: { universe_limit: 200, rank_lookback_days: 5 },
-      },
-      {
-        name: '百度热搜榜 sync (Batch AH)',
-        type: 'MARKET_HOT_SEARCH_SYNC',
-        cron_expression: '40 16 * * 1-5',
-        is_active: true,
-        parameters: { limit: 50 },
-      },
       // PR-A (2026-06-29): ANNOUNCEMENT_NLP 全市场公告 NLP — 之前 sync-announcements.ts
       // CLI 存在但没注册成 cron, announcement_summaries 表从 2026-06-09 后 0 更新.
       // 每天 17:00 跑全市场启发式 (--all --with-ai=false), 周末也跑 — 公告系统
@@ -7324,16 +7095,6 @@ class SchedulerService {
         name: 'PR-M2 日内动量 detector (14:25)',
         type: 'INTRADAY_MOMENTUM_DETECT',
         cron_expression: '25 14 * * 1-5',
-        is_active: true,
-        parameters: { dry_run: false },
-      },
-      // PR-M3 (2026-06-29): INDUSTRY_SENTIMENT_AGGREGATE 板块情绪指数日度聚合.
-      // 学术依据 PR-I 报告第 3 个致命短板 — 龙头战法 4 核心因子 (涨停数 / 连板高度 / 封板率 / 炸板率)
-      // + 30 日板块动量 z-score. 工作日 16:00 跑 (limit_up sync 在 15:35-15:40 之后).
-      {
-        name: '板块情绪指数日度聚合 (PR-M3)',
-        type: 'INDUSTRY_SENTIMENT_AGGREGATE',
-        cron_expression: '0 16 * * 1-5',
         is_active: true,
         parameters: { dry_run: false },
       },
