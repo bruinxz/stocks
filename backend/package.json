@@ -55,6 +55,7 @@
     "run:walk-forward": "ts-node src/scripts/run-walk-forward.ts",
     "reprocess:root-cause": "ts-node --transpile-only src/scripts/reprocess-outcome-root-cause.ts",
     "run:regime-backtest": "ts-node src/scripts/run-regime-backtest.ts",
+    "run:factor-backtest": "ts-node src/scripts/run-factor-backtest.ts",
     "run:monte-carlo": "ts-node src/scripts/run-monte-carlo.ts",
     "optimize:portfolio": "ts-node src/scripts/optimize-portfolio.ts",
     "train:meta-label": "ts-node src/scripts/train-meta-label.ts",
