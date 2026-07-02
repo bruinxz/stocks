@@ -28,6 +28,12 @@ export enum AISignalSourceType {
    * action = 'TARGET_WEIGHT', 带 rebalance_id.
    */
   ETF_FACTOR_ROTATION = 'etf_factor_rotation',
+  /**
+   * 批6/§4.3 — 现金 10% 闲置管理 (CashAllocationService 月度写入). 收益现金 (5%)
+   * 配置到国债 ETF 511010 / 短融 ETF 511360; 应急现金 (5%) 留活期不落信号.
+   * action = 'TARGET_WEIGHT', 带 rebalance_id, metadata.core_satellite_bucket='cash'.
+   */
+  CASH_MANAGEMENT = 'cash_management',
 }
 
 export enum AISignalDecision {

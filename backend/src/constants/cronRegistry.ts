@@ -715,6 +715,16 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '每月 1 号 09:30 跑 ETF 因子轮动月度再平衡 — 46-63 只候选 ETF 四因子打分 (Value 0.40 / Quality 0.30 / LowVol 0.30 / Momentum shadow), top4 买 / top6 卖缓冲带, 单只<=15% 核心总仓<=70%, 落 action=TARGET_WEIGHT 信号供 V3 展示 + paper 执行. 信号优先重构主线核心 (Core 70%).',
   },
+  // 批6d (2026-07, §4.3) — 现金 10% 闲置管理. 收益现金 5% 配国债 ETF 511010 / 短融 ETF 511360,
+  // 应急现金 5% 留活期不落信号. 每月 1 号 09:35 (核心再平衡后) 跑.
+  {
+    type: 'CASH_ALLOCATION_REBALANCE',
+    category: 'analytics',
+    owner: 'quant',
+    recommendedCron: '35 9 1 * *',
+    description:
+      '每月 1 号 09:35 (核心再平衡后) 跑现金 10% 闲置管理 (§4.3) — 收益现金 5% 均分到国债 ETF 511010 / 短融 ETF 511360 (各 2.5%, 年化~3%), 落 action=TARGET_WEIGHT 信号 (source_type=cash_management, bucket=cash); 应急现金 5% 留活期(~2%)不落信号. 现金层压舱石不做短线. 主线现金 (Cash 10%) 层.',
+  },
   // 批6c (2026-07, §6.2-B) — 卫星题材 fan-out. ThemeFermentationDetector 是 soft-layer 只写
   // theme_fermentation_phases; 本 cron 读当日 phase 把 top_codes 扇出成个股信号进主信号表.
   // 工作日 17:00 跑 (在 THEME_FERMENTATION_DETECT 16:30 之后).

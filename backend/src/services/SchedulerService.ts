@@ -5513,6 +5513,44 @@ class SchedulerService {
             `created=${r.created} updated=${r.updated} skipped=${r.skipped_data_incomplete} ` +
             `confidence=${r.confidence.toFixed(3)}`
         );
+      } else if (task.type === 'CASH_ALLOCATION_REBALANCE') {
+        // 批6d (§4.3) — 现金 10% 闲置管理. 收益现金 5% 配国债 ETF 511010 / 短融 ETF 511360,
+        // 落 AIInvestmentSignal(source_type=cash_management, action=TARGET_WEIGHT,
+        // rebalance_id). 应急现金 5% 留活期不落信号. 每月首个交易日 09:35 跑 (核心再平衡后).
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { cashAllocationService } = require('./cash/CashAllocationService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await cashAllocationService.runMonthlyRebalance({
+          asOfDate: typeof parameters.as_of === 'string' ? parameters.as_of : undefined,
+          portfolioId: Number.isFinite(parameters.portfolio_id)
+            ? Number(parameters.portfolio_id)
+            : undefined,
+          dryRun: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.instruments.length,
+          completed_items: r.created + r.updated,
+          failed_items: 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'cash_allocation_rebalance',
+            rebalance_id: r.rebalance_id,
+            as_of_date: r.as_of_date,
+            portfolio_id: r.portfolio_id,
+            emergency_pct: r.emergency_pct,
+            yield_pct: r.yield_pct,
+            instruments: r.instruments.map((x: any) => x.code),
+            created: r.created,
+            updated: r.updated,
+          },
+        });
+        logger.info(
+          `[CASH_ALLOCATION_REBALANCE] ${r.rebalance_id} instruments=[${r.instruments
+            .map((x: any) => x.code)
+            .join(',')}] created=${r.created} updated=${r.updated} ` +
+            `emergency=${r.emergency_pct}% yield=${r.yield_pct}%`
+        );
       } else if (task.type === 'THEME_EVENT_FANOUT') {
         // 批6c (§6.2-B) — 卫星题材 fan-out. ThemeFermentationDetector 是 soft-layer 只写
         // theme_fermentation_phases; 本 handler 读当日 phase 行, 把 top_codes 扇出成个股信号
@@ -6753,6 +6791,16 @@ class SchedulerService {
         name: 'ETF 因子轮动月度再平衡 (批6)',
         type: 'ETF_FACTOR_ROTATION_REBALANCE',
         cron_expression: '30 9 1 * *',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // 批6d (2026-07, §4.3): CASH_ALLOCATION_REBALANCE — 现金 10% 闲置管理. 收益现金 5%
+      // 配国债 ETF 511010 / 短融 ETF 511360, 落 cash_management target-weight 信号. 应急
+      // 现金 5% 留活期不落信号. 每月 1 号 09:35 (核心 09:30 再平衡后) 跑.
+      {
+        name: '现金 10% 闲置管理 (批6d)',
+        type: 'CASH_ALLOCATION_REBALANCE',
+        cron_expression: '35 9 1 * *',
         is_active: true,
         parameters: { dry_run: false },
       },
