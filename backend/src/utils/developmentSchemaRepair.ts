@@ -116,6 +116,22 @@ const COMPATIBILITY_COLUMNS: ColumnDefinition[] = [
   { table: 'scheduled_tasks', column: 'last_run_status', definition: 'VARCHAR(50)' },
 
   { table: 'ai_investment_signals', column: 'loop_run_id', definition: 'VARCHAR(80)' },
+  // §2.2 Signal 原子字段 (批5e 迁移 phase 1: 加字段, 全 NULL 允许, 应用层双写).
+  // phase 2 (7 天后) 加索引; phase 3 (30 天后) 对 BUY 的 lifecycle_id 加 NOT NULL.
+  { table: 'ai_investment_signals', column: 'action', definition: 'VARCHAR(20)' },
+  { table: 'ai_investment_signals', column: 'confidence', definition: 'DECIMAL(5, 4)' },
+  { table: 'ai_investment_signals', column: 'lifecycle_id', definition: 'VARCHAR(80)' },
+  { table: 'ai_investment_signals', column: 'theme_id', definition: 'VARCHAR(80)' },
+  { table: 'ai_investment_signals', column: 'rebalance_id', definition: 'VARCHAR(40)' },
+  { table: 'ai_investment_signals', column: 'target_pct', definition: 'DECIMAL(6, 2)' },
+  { table: 'ai_investment_signals', column: 'expected_value', definition: 'DECIMAL(10, 4)' },
+  { table: 'ai_investment_signals', column: 'recommended_size_pct', definition: 'DECIMAL(6, 2)' },
+  { table: 'ai_investment_signals', column: 'entry_price_strategy', definition: 'VARCHAR(20)' },
+  { table: 'ai_investment_signals', column: 'stop_loss_pct', definition: 'DECIMAL(6, 2)' },
+  { table: 'ai_investment_signals', column: 'take_profit_pct', definition: 'DECIMAL(6, 2)' },
+  { table: 'ai_investment_signals', column: 'cooldown_until', definition: 'TIMESTAMP WITH TIME ZONE' },
+  { table: 'ai_investment_signals', column: 'gate_pass', definition: 'BOOLEAN' },
+  { table: 'ai_investment_signals', column: 'gate_reason', definition: 'TEXT' },
   { table: 'recommendation_trade_outcomes', column: 'loop_run_id', definition: 'VARCHAR(80)' },
   {
     table: 'recommendation_loop_policy_snapshots',

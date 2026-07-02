@@ -229,6 +229,129 @@ export class AIInvestmentSignal extends Model {
   })
   declare metadata: Record<string, any>;
 
+  // ========================================================================
+  // §2.2 Signal 原子字段 (SIGNAL_FIRST_PLAN) — 批5e 迁移 phase 1: 加字段, 全部
+  // NULL 允许, 应用层双写. phase 2 (观察 7 天后) 加索引; phase 3 (30 天后) 对
+  // BUY signal 的 lifecycle_id 加 NOT NULL. 参见 §2.3 Migration 顺序 / §13.1.
+  //
+  // 说明: source_detector 由既有 source_type 承担 (broad category = 谁给的),
+  // 不另设冗余列 (§0.4 规范 > 快, 避免两列语义重叠留脏). action 与既有
+  // normalized_decision 并存: normalized_decision 保留 buy/sell/hold 细分,
+  // action 是 §2.2 规范的粗粒度 BUY/SELL/TARGET_WEIGHT (TARGET_WEIGHT 为 ETF
+  // 再平衡新增, 老 decision 枚举无法表达). confidence 是 0-1 真实胜率 (Wilson
+  // 下界, §5.1), 与既有 confidence_score (0-100 打分) 语义不同, 故并存.
+  // ========================================================================
+
+  @Column({
+    type: DataType.STRING(20),
+    allowNull: true,
+    comment: "§2.2 粗粒度动作: 'BUY' | 'SELL' | 'TARGET_WEIGHT' (ETF 调目标比例)",
+  })
+  declare action?: string;
+
+  @Column({
+    type: DataType.DECIMAL(5, 4),
+    allowNull: true,
+    comment: '§5.1 该 detector 历史真实胜率 (Wilson 下界, 0-1), 区别于 confidence_score 打分',
+  })
+  declare confidence?: number;
+
+  @Column({
+    type: DataType.STRING(80),
+    allowNull: true,
+    field: 'lifecycle_id',
+    comment: '§2.3 BUY-SELL 配对: <detector>-<symbol>-<yyyymmddhhmm>, 每次 BUY 新 id',
+  })
+  declare lifecycle_id?: string;
+
+  @Column({
+    type: DataType.STRING(80),
+    allowNull: true,
+    field: 'theme_id',
+    comment: '§2.3 卫星题材标识: <industry_slug>-<launch_date>, 同题材多股共享',
+  })
+  declare theme_id?: string;
+
+  @Column({
+    type: DataType.STRING(40),
+    allowNull: true,
+    field: 'rebalance_id',
+    comment: '§2.3 月度再平衡组标识: rebalance-YYYY-MM, 一次再平衡所有 signal 共享',
+  })
+  declare rebalance_id?: string;
+
+  @Column({
+    type: DataType.DECIMAL(6, 2),
+    allowNull: true,
+    field: 'target_pct',
+    comment: '§2.2 TARGET_WEIGHT 时目标仓位 %',
+  })
+  declare target_pct?: number;
+
+  @Column({
+    type: DataType.DECIMAL(10, 4),
+    allowNull: true,
+    field: 'expected_value',
+    comment: '§5.2 EV = confidence×avg_win - (1-confidence)×avg_loss',
+  })
+  declare expected_value?: number;
+
+  @Column({
+    type: DataType.DECIMAL(6, 2),
+    allowNull: true,
+    field: 'recommended_size_pct',
+    comment: '§2.2 建议仓位 % (占总资金)',
+  })
+  declare recommended_size_pct?: number;
+
+  @Column({
+    type: DataType.STRING(20),
+    allowNull: true,
+    field: 'entry_price_strategy',
+    comment: "§2.2 进场方式: 'auction_open' | 'observe_15min' | 'skip'",
+  })
+  declare entry_price_strategy?: string;
+
+  @Column({
+    type: DataType.DECIMAL(6, 2),
+    allowNull: true,
+    field: 'stop_loss_pct',
+    comment: '§4.2 止损 %',
+  })
+  declare stop_loss_pct?: number;
+
+  @Column({
+    type: DataType.DECIMAL(6, 2),
+    allowNull: true,
+    field: 'take_profit_pct',
+    comment: '§4.2 止盈 %',
+  })
+  declare take_profit_pct?: number;
+
+  @Column({
+    type: DataType.DATE,
+    allowNull: true,
+    field: 'cooldown_until',
+    comment: '§2.2 冷却截止时间',
+  })
+  declare cooldown_until?: Date;
+
+  @Column({
+    type: DataType.BOOLEAN,
+    allowNull: true,
+    field: 'gate_pass',
+    comment: '§5.2 是否通过 gate (L1-L4)',
+  })
+  declare gate_pass?: boolean;
+
+  @Column({
+    type: DataType.TEXT,
+    allowNull: true,
+    field: 'gate_reason',
+    comment: '§5.2 gate 通过/拒绝原因 (eligibility_fail / risk_fail / cost_fail / ev_fail 等)',
+  })
+  declare gate_reason?: string;
+
   @CreatedAt
   @Column({ field: 'created_at' })
   declare created_at: Date;
