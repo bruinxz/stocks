@@ -101,12 +101,10 @@ export const CANDIDATE_SOURCE_TYPES: ReadonlyArray<string> = Object.freeze([
   AISignalSourceType.ANALYSIS_ENGINE,
   AISignalSourceType.QUANT_RECOMMENDATION,
   AISignalSourceType.TRADING_AGENTS,
-  AISignalSourceType.OPENING_RUSH_DETECTOR,
-  AISignalSourceType.INTRADAY_PRICE_VOLUME_ANOMALY,
-  AISignalSourceType.LAST_HOUR_MOMENTUM,
-  AISignalSourceType.LIMIT_UP_BOARD,
-  AISignalSourceType.THEME_FERMENTATION,
-  AISignalSourceType.AFTERNOON_KICK_DETECTOR,
+  // 批5: 主线转 ETF 因子轮动 + 卫星题材, 日内 detector source 已删除.
+  AISignalSourceType.ETF_FACTOR_ROTATION, // 核心 §4.1 (批6 接入)
+  AISignalSourceType.THEME_EVENT, // 卫星 §6.2 (批6 fan-out)
+  AISignalSourceType.THEME_FERMENTATION, // 历史兼容
 ]);
 
 /**
@@ -119,12 +117,9 @@ export const CANDIDATE_SOURCE_TYPES: ReadonlyArray<string> = Object.freeze([
 export const V3_FANIN_SOURCE_TYPES: ReadonlyArray<string> = Object.freeze([
   AISignalSourceType.ANALYSIS_ENGINE,
   AISignalSourceType.QUANT_RECOMMENDATION,
-  AISignalSourceType.OPENING_RUSH_DETECTOR,
-  AISignalSourceType.INTRADAY_PRICE_VOLUME_ANOMALY,
-  AISignalSourceType.LAST_HOUR_MOMENTUM,
-  AISignalSourceType.LIMIT_UP_BOARD,
-  AISignalSourceType.THEME_FERMENTATION,
-  AISignalSourceType.AFTERNOON_KICK_DETECTOR,
+  AISignalSourceType.ETF_FACTOR_ROTATION, // 核心 ETF 排名 (批6 接入)
+  AISignalSourceType.THEME_EVENT, // 卫星题材事件 (批6 fan-out)
+  AISignalSourceType.THEME_FERMENTATION, // 历史兼容
 ]);
 
 /**
@@ -150,9 +145,8 @@ export const V3_FANIN_SOURCE_TYPES: ReadonlyArray<string> = Object.freeze([
 const RECOMMENDATION_SOURCES = new Set<string>([
   String(AISignalSourceType.ANALYSIS_ENGINE),
   String(AISignalSourceType.QUANT_RECOMMENDATION),
-  String(AISignalSourceType.OPENING_RUSH_DETECTOR),
-  String(AISignalSourceType.LAST_HOUR_MOMENTUM),
-  String(AISignalSourceType.LIMIT_UP_BOARD),
+  String(AISignalSourceType.ETF_FACTOR_ROTATION),
+  String(AISignalSourceType.THEME_EVENT),
   String(AISignalSourceType.THEME_FERMENTATION),
 ]);
 

@@ -6620,94 +6620,17 @@ class SchedulerService {
         is_active: true,
         parameters: { dry_run: false },
       },
-      // PR-M2 (2026-06-29) — 集合竞价 snapshot + 30-min K 线 + 日内动量 detector.
-      // 学术: Han/Hu/Jia 2023 SSRN + Zhang/Ma/Zhu 2019 EM ("mainly evident in China").
-      {
-        name: 'PR-M2 集合竞价快照 (9:25)',
-        type: 'AUCTION_SNAPSHOT_SYNC',
-        cron_expression: '25 9 * * 1-5',
-        is_active: true,
-        parameters: { dry_run: false },
-      },
-      {
-        name: 'PR-M2 盘中 30-min K 线 sync (每 30min)',
-        type: 'INTRADAY_KLINE_30MIN_SYNC',
-        cron_expression: '5 10,11,13,14 * * 1-5',
-        is_active: true,
-        parameters: { dry_run: false },
-      },
-      {
-        name: 'PR-M2 日内动量 detector (14:25)',
-        type: 'INTRADAY_MOMENTUM_DETECT',
-        cron_expression: '25 14 * * 1-5',
-        is_active: true,
-        parameters: { dry_run: false },
-      },
-      // PR-M3 (2026-06-29): INTRADAY_REVERSAL_DETECT 反转 detector.
-      // 学术依据 PR-I 报告第 4 个致命短板 — A 股因 T+1 + 散户主导 → 短期反转主导, 而非动量.
-      // 每日 15:10 跑 (收盘前 10min, 让 RT quote 已稳定但还未 sync 到 daily_bars).
-      {
-        name: '反转 detector (PR-M3)',
-        type: 'INTRADAY_REVERSAL_DETECT',
-        cron_expression: '10 15 * * 1-5',
-        is_active: true,
-        parameters: { dry_run: false },
-      },
-      // PR-O2 (2026-06-29) — 涨停板战法 detector. PR-I-v2 战法库 §1 流派 1 落地率 0% → 50%.
-      // 每日 15:30 跑 (盘后 5min 余量, 在 LIMIT_UP_SYNC 15:10 之后), 对 limit_up_stocks 全表
-      // 跑 20+ classifier, 命中写 RiskAlert + AIInvestmentSignal (source_type='limit_up_board',
-      // metadata.timing_tag='overnight'). 让前端 /home 推荐卡能看到 "🚀 一字板" / "📈 二板加速" badge.
-      {
-        name: 'PR-O2 涨停板战法 detector (15:30)',
-        type: 'LIMIT_UP_BOARD_DETECT',
-        cron_expression: '30 15 * * 1-5',
-        is_active: true,
-        parameters: { dry_run: false },
-      },
-      // PR-O5 (2026-06-30): THEME_FERMENTATION_DETECT 题材发酵 5 阶段 detector.
+      // 批5: PR-M2/M3/O2/O3/O6 日内 detector cron seed 已随日内 detector 删除下线
+      // (AUCTION_SNAPSHOT_SYNC / INTRADAY_KLINE_30MIN_SYNC / INTRADAY_MOMENTUM /
+      // INTRADAY_REVERSAL / LIMIT_UP_BOARD / OPENING_RUSH / INTRADAY_PRICE_VOLUME_ANOMALY /
+      // LAST_HOUR_MOMENTUM / AFTERNOON_KICK). 主线转 ETF 因子轮动 + 卫星题材, 不做日内.
+      // PR-O5 (2026-06-30): THEME_FERMENTATION_DETECT 题材发酵 5 阶段 detector (卫星保留).
       // 消费 PR-M3 industry_sentiment_indices (16:00 写完) + 昨日 phase, 给每个板块打
       // germinate/launch/outbreak/climax/recession 标签 + 检测主线切换. 工作日 16:30 跑.
       {
         name: '题材发酵 5 阶段 detector (PR-O5)',
         type: 'THEME_FERMENTATION_DETECT',
         cron_expression: '30 16 * * 1-5',
-        is_active: true,
-        parameters: { dry_run: false },
-      },
-      // PR-O3 (2026-06-29) — Opening rush detector. PR-P (2026-06-30) 补 cron seed:
-      // 之前 PR-O3 加了 service 但没 seed, fresh DB 启动后不会跑.
-      // 工作日 9:26 跑 (AUCTION_SNAPSHOT_SYNC 9:25 写完留 1min 余量).
-      {
-        name: 'Opening rush detector (PR-O3)',
-        type: 'OPENING_RUSH_DETECT',
-        cron_expression: '26 9 * * 1-5',
-        is_active: true,
-        parameters: { dry_run: false },
-      },
-      // PR-O3 (2026-06-29) — 盘中价量异动 6 类 detector. PR-P (2026-06-30) 补 cron seed.
-      // 盘中每 30min 跑 (10:00, 10:30, 11:00, 11:30, 13:00, 13:30, 14:00, 14:30).
-      {
-        name: '盘中价量异动 detector (PR-O3)',
-        type: 'INTRADAY_PRICE_VOLUME_ANOMALY',
-        cron_expression: '*/30 10,11,13,14 * * 1-5',
-        is_active: true,
-        parameters: { dry_run: false },
-      },
-      // PR-O3 (2026-06-29) — Last-hour 尾盘动量 detector. PR-P (2026-06-30) 补 cron seed.
-      // 学术: Zhang/Ma/Zhu 2019 EM 中国市场 r1 → r2 alpha 最 robust.
-      {
-        name: '尾盘动量 detector (PR-O3)',
-        type: 'LAST_HOUR_MOMENTUM',
-        cron_expression: '30 14 * * 1-5',
-        is_active: true,
-        parameters: { dry_run: false },
-      },
-      // PR-O6 (2026-06-30) — 午后开盘攻 detector. 战法库 §A19-A22 4 类 pattern.
-      // 工作日 13:01 (午后 13:00 开盘 1min 后, REALTIME_QUOTE_SYNC 13:00 写完留 buffer) 跑.
-      {
-        name: '午后开盘攻 detector (PR-O6)',
-        type: 'AFTERNOON_KICK_DETECT',
-        cron_expression: '1 13 * * 1-5',
         is_active: true,
         parameters: { dry_run: false },
       },
