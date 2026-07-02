@@ -15,11 +15,8 @@
  *
  * 输入 null / undefined / 纯空白 → false。
  *
- * 调用方：MultiFactorAlphaStrategy / DragonHeadMomentumStrategy /
- *   EarningsSurpriseStrategy / NorthboundFollowStrategy /
- *   SectorRotationLeaderStrategy / HighDividendValueStrategy /
- *   BreakoutStrategy / GARPStrategy / GameTraderRelayStrategy /
- *   AShareConstraintEngine（共 9 个 strategy + 1 个 backtest 约束引擎）。
+ * 调用方：ETFRotationStrategy 个股只读视图 / AShareConstraintEngine
+ *   （回测约束引擎）等需要判定 ST/退市名称的场景。
  *
  * 改判定逻辑时只改这里，调用方零修改。
  */

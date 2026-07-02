@@ -956,27 +956,19 @@ export class DefaultEnhancedTradingJournalDataSource implements EnhancedTradingJ
       const { todaySignalsService } = require('./TodaySignalsService');
       const signals = await todaySignalsService.getTodaySignals({
         trade_date,
-        dragon_head_limit: limit,
-        earnings_limit: Math.min(limit, 10),
       });
       const out: string[] = [];
-      const mfa: any[] = Array.isArray(signals?.multi_factor?.signals)
-        ? signals.multi_factor.signals
+      // 信号优先重构 批5: 明日候选取 ETF 因子轮动 BUY/HOLD (target_weight > 0)
+      const etf: any[] = Array.isArray(signals?.etf_rotation?.signals)
+        ? signals.etf_rotation.signals
         : [];
-      for (const s of mfa.filter(x => x?.signal_type === 'BUY' || x?.signal_type === 'HOLD')) {
-        const sym = String(s.stock_code || s.symbol || '').trim();
-        if (sym) out.push(sym);
+      const picks = etf
+        .filter(x => x?.action === 'buy' || x?.action === 'hold' || Number(x?.target_weight) > 0)
+        .sort((a, b) => Number(b?.score ?? 0) - Number(a?.score ?? 0));
+      for (const s of picks) {
+        const sym = String(s.etf_code || s.symbol || '').trim();
+        if (sym && !out.includes(sym)) out.push(sym);
         if (out.length >= limit) break;
-      }
-      if (out.length < limit) {
-        const dh: any[] = Array.isArray(signals?.dragon_head?.candidates)
-          ? signals.dragon_head.candidates
-          : [];
-        for (const c of dh) {
-          const sym = String(c.stock_code || c.symbol || '').trim();
-          if (sym && !out.includes(sym)) out.push(sym);
-          if (out.length >= limit) break;
-        }
       }
       return out;
     } catch (err: any) {

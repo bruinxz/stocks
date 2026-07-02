@@ -1,77 +1,44 @@
-import { Op, fn, col } from 'sequelize';
+import { fn, col } from 'sequelize';
 import { logger } from '../utils/logger';
 import { paperTradingFacade } from '../portfolio/PaperTradingFacade';
-import {
-  MultiFactorAlphaStrategy,
-  MultiFactorAlphaSignal,
-} from '../quant/strategies/MultiFactorAlphaStrategy';
-import {
-  DragonHeadMomentumStrategy,
-  DragonHeadSignal,
-} from '../quant/strategies/DragonHeadMomentumStrategy';
-import {
-  EarningsSurpriseStrategy,
-  EarningsSurpriseSignal,
-} from '../quant/strategies/EarningsSurpriseStrategy';
+import { ETFRotationStrategy, ETFRotationSignal } from '../quant/strategies/ETFRotationStrategy';
 import { FactorScore } from '../models/FactorScore';
-import { LimitUpStock } from '../models/LimitUpStock';
-import { EarningsForecast } from '../models/EarningsForecast';
 import { RiskAlert } from '../models/RiskAlert';
 import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
 import { PaperTradingPosition } from '../models/PaperTradingPosition';
 import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
+import { getETFProfile } from '../constants/etfIndustry';
 
 /**
- * TodaySignalsService — US-018 今日作战工作区后端聚合器
+ * TodaySignalsService — 今日作战工作区后端聚合器 (信号优先重构 批5 改造版)
  *
- * 把三条策略的当日信号 + 关键事件 + 风险告警一站式聚合，提供给前端
- * `/workspace/today` 页面：
+ * 旧版聚合 3 条 per-stock 策略 (多因子/龙头/业绩超预期); 批5 主线切换为
+ * **ETF 因子轮动 (核心 70%)** 单一策略, 本 service 只对外聚合:
  *
- *   - MultiFactorAlphaStrategy 当日（按 factor_scores 最新 trade_date）调仓增量
- *   - DragonHeadMomentumStrategy 今日候选 BUY top-N
- *   - EarningsSurpriseStrategy 今日入选 (announce_date == today) candidates
+ *   - ETFRotationStrategy 当日 (按 factor_scores 最新 trade_date) 月度再平衡信号
+ *     (top4 买 / top6 卖缓冲带, 目标权重 §4.1)
+ *   - 账户摘要 + 未读风险告警 + 今日关键事件 (业绩预告 / 高连板, 只读展示)
  *
- * 设计要点：
- *   1. **三个策略并发运行** (Promise.all)，任一策略失败 → 该 block 返回
- *      `error: <message>` 字段；其余 block 仍正常输出（避免一个数据缺失
- *      把整页打挂）。
- *   2. **previousSelection 用真实持仓**：MultiFactorAlpha 用 portfolio 的
- *      stock_code 集合（去掉 .SH/.SZ 后缀）；DragonHead/EarningsSurprise
- *      因为需要结构化 Position(entry_date/entry_price)，简化为空数组
- *      （首次评估场景；调用方可后续传入历史）。
- *   3. **trade_date 默认取 factor_scores 最新一日**（与 FactorController 一致）。
- *      调用方可显式传 `?date=YYYY-MM-DD` 覆盖。
- *   4. **applySignals 把 BUY 信号转成 placeOrder 调用**；按"今日新进入选"做白名单，
- *      已持有的 HOLD 信号不重复下单。SELL 信号目前不自动平仓（避免误杀），
- *      只在 UI 展示。
- *
- * 与现有 TodayCommandCenterService 的关系：
- *   - 旧 service 是全栈聚合大杂烩（推荐 + AI 信号 + 任务健康 + 风控 ...），
- *     已被 `/api/today/command-center` 端点使用，不动它。
- *   - 本 service 是 US-018 工作区专用聚合器，只对三条策略 + 事件/告警/账户摘要。
+ * 设计要点:
+ *   1. ETF 轮动是**组合级**策略, 走 generateSignals(tradeDate); 失败 → block
+ *      返回 error 字段, 其余 (账户/告警/事件) 仍正常输出。
+ *   2. currentHoldings 用真实持仓 ETF 代码 (去 sh./sz. 后缀), 算 BUY/SELL/HOLD 增量。
+ *   3. trade_date 默认取 factor_scores 最新一日; 调用方可显式传 `?date=YYYY-MM-DD`。
+ *   4. applySignals 把 BUY 信号按目标权重换算金额下到模拟盘 (ETF 100 份最小手数),
+ *      已持有的 HOLD 不重复下单; SELL 不自动平仓 (只 UI 展示, 由再平衡引擎/风控执行)。
  */
 
 // ---------- Types ---------------------------------------------------------
 
 export interface AccountSummary {
-  /** 账户净值（含现金 + 持仓市值） */
   total_value: number;
-  /** 可用现金 */
   current_cash: number;
-  /** 持仓市值 */
   position_value: number;
-  /** 今日盈亏 = today.total_value - 最近一次 snapshot (排除今天本身) 的 total_value。
-   *  即 "今日相对昨日收盘的浮盈"。无 snapshot 历史返回 null。 */
   pnl_yesterday: number | null;
-  /** 当月收益 = today.total_value - 月初 snapshot.total_value（无月初 snapshot 返回 null） */
   pnl_month_to_date: number | null;
-  /** 期初本金（portfolio.initial_capital） */
   initial_capital: number;
-  /** 总收益 = total_value - initial_capital（投入以来累计浮盈） */
   total_return: number;
-  /** 总收益率 = total_return / initial_capital（initial_capital ≤ 0 时为 null） */
   total_return_pct: number | null;
-  /** portfolio 是否存在 */
   portfolio_id: number | null;
 }
 
@@ -84,92 +51,52 @@ export interface UnreadRiskAlertItem {
   created_at: string;
 }
 
-export interface MultiFactorBlock {
+export interface ETFRotationBlock {
   trade_date: string | null;
-  /** 实际跑出的 BUY/HOLD/SELL 增量信号（注意：previousSelection = 持仓里 MFA 持有的部分） */
-  signals: MultiFactorAlphaSignal[];
-  /** 新进入选数（BUY count） */
-  new_picks: number;
-  /** 剔除数（SELL count） */
-  drops: number;
-  /** 保留数（HOLD count） */
-  keeps: number;
-  /** 目标持仓 stock_code 数组（top-N，已应用行业中性） */
-  target_portfolio: string[];
-  error?: string;
-}
-
-export interface DragonHeadBlock {
-  trade_date: string | null;
-  /** 今日 BUY 候选信号（已 cap 在 5 只） */
-  candidates: DragonHeadSignal[];
-  /** 候选过滤过程中"通过 5 维过滤"的总数（未 cap 前） */
-  eligible_count: number;
-  /** 涨停池总数（filtered.limit_up_pool_size） */
-  limit_up_pool_size?: number;
-  /** 当日市场情绪指数（用于判定是否被闸门阻塞） */
-  market_sentiment_value?: number | null;
-  /** 是否被市场情绪闸门阻塞 */
-  market_sentiment_blocked?: boolean;
-  /** 各维度过滤计数（用于诊断为何 0 信号） */
-  filter_stats?: Record<string, number>;
-  error?: string;
-}
-
-export interface EarningsSurpriseBlock {
-  trade_date: string | null;
-  /** 今日 BUY 候选信号（已 cap 在 3 只） */
-  candidates: EarningsSurpriseSignal[];
-  /** 当日公告的预告条数（未筛选前） */
-  forecast_pool_size: number;
-  /** 通过双确认的候选总数（未 cap 前） */
-  eligible_count: number;
-  /** 北向数据是否缺失 — 缺失时已 fail-OPEN 但提示用户 */
-  northbound_missing?: boolean;
-  /** 各维度过滤计数 */
-  filter_stats?: Record<string, number>;
+  /** 全 universe 打分 + BUY/SELL/HOLD 增量信号 (含目标权重) */
+  signals: ETFRotationSignal[];
+  /** 新买入数 (BUY count) */
+  buy_count: number;
+  /** 卖出数 (SELL count) */
+  sell_count: number;
+  /** 持有数 (HOLD count) */
+  hold_count: number;
+  /** 核心桶目标总仓位 (Σ target_weight, ≤ 0.70) */
+  core_total_weight: number;
+  /** 换仓后应持有的 ETF 6 位代码 (target_weight > 0) */
+  target_holdings: string[];
   error?: string;
 }
 
 export interface KeyEventItem {
-  /** earnings_surprise / earnings_announcement / limit_up_chain */
   event_type: 'earnings_surprise' | 'earnings_announcement' | 'limit_up_chain';
   stock_code: string;
   stock_name: string | null;
-  /** 一句话事件摘要（如 "预增 50%+", "三连板", "扭亏"） */
   summary: string;
-  /** 排序值；越大越靠前展示（如 profit_change_low 或 continuous_days） */
   rank_value: number;
-  /** 额外字段（forecast_type / profit_change / continuous_days 等，UI 可选展示） */
   metadata?: Record<string, unknown>;
 }
 
 export interface TodaySignalsResult {
   /** 信号查询 as-of 日期 */
   trade_date: string | null;
-  /** 账户摘要（可能为 null：未建账户） */
+  /** 账户摘要 (可能为 null: 未建账户) */
   account: AccountSummary | null;
-  /** 未读风险告警（最近 20 条） */
+  /** 未读风险告警 (最近 N 条) */
   unread_alerts: UnreadRiskAlertItem[];
   unread_alert_count: number;
-  /** 中部三列 */
-  multi_factor: MultiFactorBlock;
-  dragon_head: DragonHeadBlock;
-  earnings_surprise: EarningsSurpriseBlock;
-  /** 底部关键事件（按 event_type 分组前已合并排序） */
+  /** 核心主线: ETF 因子轮动 */
+  etf_rotation: ETFRotationBlock;
+  /** 底部关键事件 (只读展示) */
   key_events: KeyEventItem[];
 }
 
 export interface TodaySignalsOptions {
   user_id?: number;
   username?: string;
-  /** 覆盖 as-of 日期 YYYY-MM-DD；缺省 = factor_scores 最新一日，否则今天 */
+  /** 覆盖 as-of 日期 YYYY-MM-DD; 缺省 = factor_scores 最新一日 */
   trade_date?: string;
-  /** DragonHead 候选 cap（AC: 默认 5） */
-  dragon_head_limit?: number;
-  /** EarningsSurprise 候选 cap（AC: 默认 3，硬上限 10） */
-  earnings_limit?: number;
-  /** 未读告警 cap（默认 20） */
+  /** 未读告警 cap (默认 20) */
   alerts_limit?: number;
   /** 显式 portfolio_id (多账户多盘场景必须传, 防串盘) */
   portfolio_id?: number;
@@ -178,32 +105,27 @@ export interface TodaySignalsOptions {
 export interface ApplySignalsOptions {
   user_id: number;
   username?: string;
-  /** 覆盖 as-of 日期；缺省 = 同 getTodaySignals 默认 */
   trade_date?: string;
-  /** 每个 BUY 信号下单买入金额（元）；默认 5000 元 */
+  /** 无账户净值兜底时每个 BUY 信号的下单金额 (元); 默认 5000 */
   per_order_amount?: number;
-  /** 总下单数上限（防误触一次买入几十只）；默认 20 */
+  /** 总下单数上限; 默认 20 */
   max_orders?: number;
-  /** 显式 portfolio_id (多账户多盘场景必须传, 决定下到哪个盘) */
+  /** 显式 portfolio_id (决定下到哪个盘) */
   portfolio_id?: number;
 }
 
 export interface ApplySignalsResult {
   trade_date: string | null;
-  /** 本次下单成功条数 */
   placed: number;
-  /** 跳过条数（已持有 / 价格缺失 / 现金不足） */
   skipped: number;
-  /** 下单明细 */
   orders: Array<{
-    strategy: 'multi_factor' | 'dragon_head' | 'earnings_surprise';
+    strategy: 'etf_rotation';
     symbol: string;
     name: string | null;
     quantity: number;
     expected_amount: number;
     status: 'placed' | 'skipped' | 'failed';
     reason?: string;
-    /** 实际成交价（成功时填入） */
     execute_price?: number;
   }>;
 }
@@ -211,22 +133,13 @@ export interface ApplySignalsResult {
 // ---------- Service -------------------------------------------------------
 
 export class TodaySignalsService {
-  private readonly multiFactorStrategy: MultiFactorAlphaStrategy;
-  private readonly dragonHeadStrategy: DragonHeadMomentumStrategy;
-  private readonly earningsSurpriseStrategy: EarningsSurpriseStrategy;
+  private readonly etfRotationStrategy: ETFRotationStrategy;
 
-  /**
-   * In-memory cache for /today/signals — TTL 90s.
-   * Key: `${trade_date_override||'auto'}|${user_id||0}|${dragonLimit}|${earningsLimit}|${alertsLimit}`
-   * 一日内同一用户的相同参数请求直接返回 cached（量化 pipeline 一天才跑一次，没必要每次重算）。
-   */
   private cache = new Map<string, { expiresAt: number; payload: TodaySignalsResult }>();
   private readonly CACHE_TTL_MS = 90_000;
 
   constructor() {
-    this.multiFactorStrategy = new MultiFactorAlphaStrategy();
-    this.dragonHeadStrategy = new DragonHeadMomentumStrategy();
-    this.earningsSurpriseStrategy = new EarningsSurpriseStrategy();
+    this.etfRotationStrategy = new ETFRotationStrategy();
   }
 
   /**
@@ -234,15 +147,12 @@ export class TodaySignalsService {
    */
   async getTodaySignals(options: TodaySignalsOptions): Promise<TodaySignalsResult> {
     const tradeDate = await this.resolveTradeDate(options.trade_date);
-    const dragonHeadLimit = clampInt(options.dragon_head_limit, 5, 1, 50);
-    const earningsLimit = clampInt(options.earnings_limit, 3, 1, 10);
     const alertsLimit = clampInt(options.alerts_limit, 20, 1, 100);
 
-    // 缓存命中检查 — 90s TTL；refresh=true 或显式 use_cache=false 跳过
     const useCache = (options as any).use_cache !== false && !(options as any).refresh;
     const cacheKey = `${options.trade_date || 'auto'}|${options.user_id || 0}|${
       options.portfolio_id || 0
-    }|${dragonHeadLimit}|${earningsLimit}|${alertsLimit}`;
+    }|${alertsLimit}`;
     if (useCache) {
       const hit = this.cache.get(cacheKey);
       if (hit && hit.expiresAt > Date.now()) {
@@ -252,8 +162,6 @@ export class TodaySignalsService {
     }
 
     const userId = options.user_id;
-    // 修复 (2026-06-17 串盘): 优先 portfolio_id 精确匹配, 缺则 user 名下 active id ASC 第一个.
-    // 之前 findOne({user_id}) 任意返回 1 行, user 4 有 8 盘 → 每次刷新 KPI 不同盘.
     let portfolio: PaperTradingPortfolio | null = null;
     if (options.portfolio_id) {
       portfolio = await PaperTradingPortfolio.findOne({
@@ -269,67 +177,49 @@ export class TodaySignalsService {
       ? await PaperTradingPosition.findAll({ where: { portfolio_id: portfolio.id } })
       : [];
 
-    const previousSelectionForMFA = positions.map(p => stripSuffix(p.symbol));
+    // 当前持有的 ETF 代码 (只取白名单 ETF, 去后缀) 作为轮动增量基准
+    const currentHoldings = positions
+      .map(p => stripSuffix(p.symbol))
+      .filter(code => !!getETFProfile(code));
 
-    // 并发跑三条策略 + 账户摘要 + 告警 + 事件 — 任一失败不应阻塞其他
-    const [multiFactorBlock, dragonHeadBlock, earningsBlock, accountSummary, alerts, keyEvents] =
-      await Promise.all([
-        this.computeMultiFactorBlock(tradeDate, previousSelectionForMFA).catch(e => ({
-          trade_date: tradeDate,
-          signals: [],
-          new_picks: 0,
-          drops: 0,
-          keeps: 0,
-          target_portfolio: [],
-          error: `MultiFactorAlpha 失败：${errMsg(e)}`,
-        })) as Promise<MultiFactorBlock>,
-        this.computeDragonHeadBlock(tradeDate, dragonHeadLimit).catch(e => ({
-          trade_date: tradeDate,
-          candidates: [],
-          eligible_count: 0,
-          error: `DragonHeadMomentum 失败：${errMsg(e)}`,
-        })) as Promise<DragonHeadBlock>,
-        this.computeEarningsSurpriseBlock(tradeDate, earningsLimit).catch(e => ({
-          trade_date: tradeDate,
-          candidates: [],
-          forecast_pool_size: 0,
-          eligible_count: 0,
-          error: `EarningsSurprise 失败：${errMsg(e)}`,
-        })) as Promise<EarningsSurpriseBlock>,
-        this.computeAccountSummary(portfolio, positions).catch(e => {
-          logger.warn('TodaySignalsService: account summary failed', e);
-          return null;
-        }) as Promise<AccountSummary | null>,
-        userId
-          ? this.loadUnreadAlerts(userId, alertsLimit).catch(e => {
-              logger.warn('TodaySignalsService: unread alerts failed', e);
-              return { rows: [], count: 0 };
-            })
-          : Promise.resolve({ rows: [], count: 0 }),
-        this.loadKeyEvents(tradeDate).catch(e => {
-          logger.warn('TodaySignalsService: key events failed', e);
-          return [];
-        }) as Promise<KeyEventItem[]>,
-      ]);
+    const [etfBlock, accountSummary, alerts, keyEvents] = await Promise.all([
+      this.computeETFRotationBlock(tradeDate, currentHoldings).catch(e => ({
+        trade_date: tradeDate,
+        signals: [],
+        buy_count: 0,
+        sell_count: 0,
+        hold_count: 0,
+        core_total_weight: 0,
+        target_holdings: [],
+        error: `ETF 因子轮动失败：${errMsg(e)}`,
+      })) as Promise<ETFRotationBlock>,
+      this.computeAccountSummary(portfolio, positions).catch(e => {
+        logger.warn('TodaySignalsService: account summary failed', e);
+        return null;
+      }) as Promise<AccountSummary | null>,
+      userId
+        ? this.loadUnreadAlerts(userId, alertsLimit).catch(e => {
+            logger.warn('TodaySignalsService: unread alerts failed', e);
+            return { rows: [], count: 0 };
+          })
+        : Promise.resolve({ rows: [], count: 0 }),
+      this.loadKeyEvents(tradeDate).catch(e => {
+        logger.warn('TodaySignalsService: key events failed', e);
+        return [];
+      }) as Promise<KeyEventItem[]>,
+    ]);
 
     const payload: TodaySignalsResult = {
       trade_date: tradeDate,
       account: accountSummary,
       unread_alerts: alerts.rows,
       unread_alert_count: alerts.count,
-      multi_factor: multiFactorBlock,
-      dragon_head: dragonHeadBlock,
-      earnings_surprise: earningsBlock,
+      etf_rotation: etfBlock,
       key_events: keyEvents,
     };
 
-    // 写入缓存（90s TTL）
     if (useCache) {
-      this.cache.set(cacheKey, {
-        expiresAt: Date.now() + this.CACHE_TTL_MS,
-        payload,
-      });
-      // 简单 GC：cache 超过 50 条时清理过期项
+      this.cache.set(cacheKey, { expiresAt: Date.now() + this.CACHE_TTL_MS, payload });
       if (this.cache.size > 50) {
         const now = Date.now();
         for (const [k, v] of this.cache) {
@@ -342,14 +232,7 @@ export class TodaySignalsService {
   }
 
   /**
-   * POST /api/today/apply-signals 的核心实现。
-   *
-   * 流程：
-   *   1. 重新跑一次 getTodaySignals（保证下单决策与 UI 看到的一致）
-   *   2. 收集所有"今日新进入选" BUY 信号（不下 HOLD / SELL）
-   *   3. 按 per_order_amount + 100 股最小手数估算下单 quantity
-   *   4. 逐笔调 paperTradingFacade.placeOrder，捕获异常成 skipped/failed
-   *   5. 返回明细供前端 toast / 跳转持仓页
+   * POST /api/today/apply-signals — 把 ETF 轮动 BUY 信号按目标权重下到模拟盘。
    */
   async applySignals(options: ApplySignalsOptions): Promise<ApplySignalsResult> {
     if (!options.user_id) {
@@ -362,50 +245,10 @@ export class TodaySignalsService {
       user_id: options.user_id,
       username: options.username,
       trade_date: options.trade_date,
+      portfolio_id: options.portfolio_id,
     });
 
-    // 收集所有 BUY 信号 — 三个策略合并，按策略名打标
-    type Candidate = {
-      strategy: 'multi_factor' | 'dragon_head' | 'earnings_surprise';
-      symbol: string; // .SH/.SZ 后缀格式
-      name: string | null;
-      reference_price?: number;
-    };
-    const candidates: Candidate[] = [];
-
-    for (const s of signals.multi_factor.signals) {
-      if (s.signal !== 'buy') continue;
-      candidates.push({
-        strategy: 'multi_factor',
-        symbol: inferSymbol(s.stock_code),
-        name: s.name ?? null,
-      });
-    }
-    for (const s of signals.dragon_head.candidates) {
-      if (s.signal !== 'buy') continue;
-      candidates.push({
-        strategy: 'dragon_head',
-        symbol: inferSymbol(s.stock_code),
-        name: s.name ?? null,
-        reference_price: s.reference_price,
-      });
-    }
-    for (const s of signals.earnings_surprise.candidates) {
-      if (s.signal !== 'buy') continue;
-      candidates.push({
-        strategy: 'earnings_surprise',
-        symbol: inferSymbol(s.stock_code),
-        name: s.name ?? null,
-        reference_price: s.reference_price,
-      });
-    }
-
-    const orders: ApplySignalsResult['orders'] = [];
-    let placed = 0;
-    let skipped = 0;
-
-    // 已持有的股票（任何策略已建仓）→ 跳过避免重复 BUY
-    // 修复 (2026-06-17 串盘): 优先 portfolio_id, 决定 dedup + apply target portfolio
+    // 决定下单目标盘 + 账户净值 (目标权重换算金额)
     let portfolio: PaperTradingPortfolio | null;
     if (options.portfolio_id) {
       portfolio = await PaperTradingPortfolio.findOne({
@@ -417,6 +260,8 @@ export class TodaySignalsService {
         order: [['id', 'ASC']],
       });
     }
+    const totalValue = portfolio ? Number(portfolio.total_value ?? 0) : 0;
+
     const heldSymbols = new Set<string>();
     if (portfolio) {
       const positions = await PaperTradingPosition.findAll({
@@ -425,48 +270,69 @@ export class TodaySignalsService {
       for (const p of positions) heldSymbols.add(p.symbol);
     }
 
+    type Candidate = {
+      symbol: string; // sh./sz. 后缀格式
+      name: string | null;
+      target_weight: number;
+    };
+    const candidates: Candidate[] = signals.etf_rotation.signals
+      .filter(s => s.action === 'buy')
+      .map(s => ({
+        symbol: inferEtfSymbol(s.etf_code),
+        name: s.name ?? getETFProfile(s.etf_code)?.name ?? null,
+        target_weight: s.target_weight,
+      }));
+
+    const orders: ApplySignalsResult['orders'] = [];
+    let placed = 0;
+    let skipped = 0;
     const seenInBatch = new Set<string>();
+
     for (const c of candidates) {
       if (placed >= maxOrders) break;
       if (heldSymbols.has(c.symbol) || seenInBatch.has(c.symbol)) {
         orders.push({
-          strategy: c.strategy,
+          strategy: 'etf_rotation',
           symbol: c.symbol,
           name: c.name,
           quantity: 0,
-          expected_amount: perOrderAmount,
+          expected_amount: 0,
           status: 'skipped',
-          reason: heldSymbols.has(c.symbol) ? '已持有该股票' : '本批次已下过单',
+          reason: heldSymbols.has(c.symbol) ? '已持有该 ETF' : '本批次已下过单',
         });
         skipped += 1;
         continue;
       }
       seenInBatch.add(c.symbol);
 
-      // 估算 quantity：reference_price 优先；否则从最新 daily_bar 拉真实价（避免用 10 元假设导致超买）
-      let priceHint = c.reference_price && c.reference_price > 0 ? c.reference_price : null;
-      if (!priceHint) {
-        try {
-          // 拉最新一天 daily_bar.close
-          const { DailyBar } = require('../models/DailyBar');
-          const { Stock } = require('../models/Stock');
-          const stock = await Stock.findOne({ where: { symbol: c.symbol }, raw: true });
-          if (stock) {
-            const lastBar = await DailyBar.findOne({
-              where: { stock_id: stock.id },
-              order: [['time', 'DESC']],
-              raw: true,
-            });
-            if (lastBar && lastBar.close > 0) priceHint = Number(lastBar.close);
-          }
-        } catch {
-          // ignore
+      // 目标金额 = 目标权重 × 账户净值; 无净值兜底 perOrderAmount
+      const targetAmount =
+        totalValue > 0 && c.target_weight > 0
+          ? Math.round(c.target_weight * totalValue)
+          : perOrderAmount;
+
+      // ETF 价格: 从最新 daily_bar 拉真实价 (避免假设价超买)
+      let priceHint: number | null = null;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { DailyBar } = require('../models/DailyBar');
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { Stock } = require('../models/Stock');
+        const stock = await Stock.findOne({ where: { symbol: c.symbol }, raw: true });
+        if (stock) {
+          const lastBar = await DailyBar.findOne({
+            where: { stock_id: stock.id },
+            order: [['time', 'DESC']],
+            raw: true,
+          });
+          if (lastBar && lastBar.close > 0) priceHint = Number(lastBar.close);
         }
+      } catch {
+        // ignore
       }
       if (!priceHint || priceHint <= 0) {
-        // 兜底跳过 — 不能用 10 元假设否则会下单 500 股 = 数万实际金额
         orders.push({
-          strategy: c.strategy,
+          strategy: 'etf_rotation',
           symbol: c.symbol,
           name: c.name,
           quantity: 0,
@@ -477,46 +343,21 @@ export class TodaySignalsService {
         skipped += 1;
         continue;
       }
-      // 100 股是 A 股最小手数。
-      // 策略：100 股最少 = priceHint × 100；若 < perOrderAmount × 3 (容忍 3 倍)，按 100 股下单
-      // 若 > perOrderAmount × 3 (太贵 → 仓位会超 max_single_stock_pct 10%) 则跳过
-      const min100Cost = priceHint * 100;
-      const MAX_OVER_RATIO = 3; // 100 股最大相比 perOrderAmount 的倍数（5000 × 3 = 15000，对应 7.5% 仓位 / 200k 总值）
-      if (min100Cost > perOrderAmount * MAX_OVER_RATIO) {
-        orders.push({
-          strategy: c.strategy,
-          symbol: c.symbol,
-          name: c.name,
-          quantity: 0,
-          expected_amount: 0,
-          status: 'skipped',
-          reason: `单价 ¥${priceHint.toFixed(2)} 过高 (100 股 ¥${min100Cost.toFixed(
-            0
-          )} > 3 × ¥${perOrderAmount}), 跳过避免仓位过大`,
-        });
-        skipped += 1;
-        continue;
-      }
-      // 优先按 perOrderAmount 整 100 股；不够 100 股就用最小 100
-      const rawQty = Math.floor(perOrderAmount / priceHint);
+
+      // ETF 100 份最小手数; 按 targetAmount 整 100 份, 不足 100 用最小 100
+      const rawQty = Math.floor(targetAmount / priceHint);
       const quantity = rawQty >= 100 ? Math.floor(rawQty / 100) * 100 : 100;
 
       try {
-        // AL-3 (2026-06-21): TodaySignals 自动下单也写 reason. candidate 仅有
-        // strategy / symbol / name, 没 signal_id, 给最小占位 reason 让 UI 知道
-        // "来自今日信号列表".
-        const {
-          buildTradeReasonFromSignal,
-          summarizeTradeReason,
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-        } = require('../portfolio/internal/tradeReasonBuilder');
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { buildTradeReasonFromSignal, summarizeTradeReason } = require('../portfolio/internal/tradeReasonBuilder');
         const reason = buildTradeReasonFromSignal({
-          strategy_key: (c as any).strategy,
-          reasons: [`今日信号: ${(c as any).strategy} 推荐 ${c.symbol}`],
+          strategy_key: 'etf_factor_rotation',
+          reasons: [`ETF 因子轮动: 目标权重 ${(c.target_weight * 100).toFixed(1)}% 买入 ${c.symbol}`],
         });
         const result = await paperTradingFacade.placeOrder({
           user_id: options.user_id,
-          portfolio_id: portfolio?.id, // 修复 (2026-06-17 串盘): 显式指定 target portfolio
+          portfolio_id: portfolio?.id,
           symbol: c.symbol,
           direction: 'BUY',
           quantity,
@@ -525,22 +366,22 @@ export class TodaySignalsService {
         });
         placed += 1;
         orders.push({
-          strategy: c.strategy,
+          strategy: 'etf_rotation',
           symbol: c.symbol,
           name: c.name,
           quantity,
-          expected_amount: perOrderAmount,
+          expected_amount: targetAmount,
           status: 'placed',
           execute_price: (result as { execute_price?: number })?.execute_price,
         });
       } catch (e: unknown) {
         skipped += 1;
         orders.push({
-          strategy: c.strategy,
+          strategy: 'etf_rotation',
           symbol: c.symbol,
           name: c.name,
           quantity,
-          expected_amount: perOrderAmount,
+          expected_amount: targetAmount,
           status: 'failed',
           reason: errMsg(e),
         });
@@ -557,7 +398,7 @@ export class TodaySignalsService {
 
   // ---------- 内部 ---------------------------------------------------------
 
-  /** factor_scores 最新一日；空表 → 今天 UTC ISO */
+  /** factor_scores 最新一日; 空表 → null */
   private async resolveTradeDate(override?: string): Promise<string | null> {
     if (override && /^\d{4}-\d{2}-\d{2}$/.test(override)) {
       return override;
@@ -577,115 +418,37 @@ export class TodaySignalsService {
     return latest.toISOString().slice(0, 10);
   }
 
-  private async computeMultiFactorBlock(
+  private async computeETFRotationBlock(
     tradeDate: string | null,
-    previousSelection: string[]
-  ): Promise<MultiFactorBlock> {
+    currentHoldings: string[]
+  ): Promise<ETFRotationBlock> {
     if (!tradeDate) {
       return {
         trade_date: null,
         signals: [],
-        new_picks: 0,
-        drops: 0,
-        keeps: 0,
-        target_portfolio: [],
+        buy_count: 0,
+        sell_count: 0,
+        hold_count: 0,
+        core_total_weight: 0,
+        target_holdings: [],
         error: 'factor_scores 表为空，请先运行 npm run compute:factors',
       };
     }
-    const result = await this.multiFactorStrategy.generateSignals(tradeDate, { previousSelection });
-    const buyCount = result.signals.filter(s => s.signal === 'buy').length;
-    const sellCount = result.signals.filter(s => s.signal === 'sell').length;
-    const holdCount = result.signals.filter(s => s.signal === 'hold').length;
+    const signals = await this.etfRotationStrategy.generateSignals(tradeDate, { currentHoldings });
+    const buyCount = signals.filter(s => s.action === 'buy').length;
+    const sellCount = signals.filter(s => s.action === 'sell').length;
+    const holdCount = signals.filter(s => s.action === 'hold').length;
+    const targetHoldings = signals.filter(s => s.target_weight > 0).map(s => s.etf_code);
+    const coreTotalWeight =
+      Math.round(signals.reduce((sum, s) => sum + (s.target_weight || 0), 0) * 10000) / 10000;
     return {
-      trade_date: result.trade_date,
-      signals: result.signals,
-      new_picks: buyCount,
-      drops: sellCount,
-      keeps: holdCount,
-      target_portfolio: result.target_portfolio,
-    };
-  }
-
-  private async computeDragonHeadBlock(
-    tradeDate: string | null,
-    limit: number
-  ): Promise<DragonHeadBlock> {
-    if (!tradeDate) {
-      return {
-        trade_date: null,
-        candidates: [],
-        eligible_count: 0,
-        error: '缺少 trade_date',
-      };
-    }
-
-    // DragonHead 依赖 limit_up_stocks (push2.eastmoney 数据滞后于 factor_scores)。
-    // 用 limit_up_stocks 表自己的最新 trade_date，而不是全局 tradeDate。
-    let effectiveDate = tradeDate;
-    try {
-      const latestRow: any = await LimitUpStock.findOne({
-        attributes: [[fn('MAX', col('trade_date')), 'd']],
-        where: { trade_date: { [Op.lte]: tradeDate } },
-        raw: true,
-      });
-      const latest = latestRow?.d;
-      if (latest) {
-        if (typeof latest === 'string') {
-          effectiveDate = latest.slice(0, 10);
-        } else if (latest instanceof Date) {
-          effectiveDate = latest.toISOString().slice(0, 10);
-        }
-      }
-    } catch (e) {
-      // 失败回退到 tradeDate
-    }
-
-    const result = await this.dragonHeadStrategy.generateSignals(effectiveDate, {
-      currentPositions: [],
-    });
-    const buys = result.signals.filter(s => s.signal === 'buy').slice(0, limit);
-    return {
-      trade_date: result.trade_date,
-      candidates: buys,
-      eligible_count: result.eligible_count,
-      limit_up_pool_size: result.filtered?.limit_up_pool_size ?? 0,
-      market_sentiment_value: result.market_sentiment?.value ?? null,
-      market_sentiment_blocked: result.market_sentiment?.blocked ?? false,
-      filter_stats: {
-        one_word_board: result.filtered?.one_word_board ?? 0,
-        fail_continuous_days: result.filtered?.fail_continuous_days ?? 0,
-        fail_industry_top: result.filtered?.fail_industry_top ?? 0,
-        fail_industry_unknown: result.filtered?.fail_industry_unknown ?? 0,
-        fail_meta_missing: result.filtered?.fail_meta_missing ?? 0,
-        fail_market_cap: result.filtered?.fail_market_cap ?? 0,
-        fail_famous_yz: result.filtered?.fail_famous_yz ?? 0,
-        sentiment_blocked: result.filtered?.sentiment_blocked ?? 0,
-      },
-    };
-  }
-
-  private async computeEarningsSurpriseBlock(
-    tradeDate: string | null,
-    limit: number
-  ): Promise<EarningsSurpriseBlock> {
-    if (!tradeDate) {
-      return {
-        trade_date: null,
-        candidates: [],
-        forecast_pool_size: 0,
-        eligible_count: 0,
-        error: '缺少 trade_date',
-      };
-    }
-    const result = await this.earningsSurpriseStrategy.generateSignals(tradeDate, {
-      currentPositions: [],
-    });
-    const buys = result.signals.filter(s => s.signal === 'buy').slice(0, limit);
-    return {
-      trade_date: result.trade_date,
-      candidates: buys,
-      forecast_pool_size: result.filtered.forecast_pool_size,
-      eligible_count: result.eligible_count,
+      trade_date: tradeDate,
+      signals,
+      buy_count: buyCount,
+      sell_count: sellCount,
+      hold_count: holdCount,
+      core_total_weight: coreTotalWeight,
+      target_holdings: targetHoldings,
     };
   }
 
@@ -698,7 +461,6 @@ export class TodaySignalsService {
     const currentCash = Number(portfolio.current_cash ?? 0);
     const positionValue = positions.reduce((sum, p) => sum + Number(p.market_value ?? 0), 0);
 
-    // 找昨日 snapshot + 当月初 snapshot；DATEONLY 字段按字符串比较
     const recent = (await PaperTradingSnapshot.findAll({
       attributes: ['date', 'total_value'],
       where: { portfolio_id: portfolio.id },
@@ -711,8 +473,6 @@ export class TodaySignalsService {
     let pnlMonthToDate: number | null = null;
 
     if (recent.length > 0) {
-      // 昨日：取**昨日及之前**最新一条 snapshot 与今值差额
-      // (排除今天本身——否则今值-今值=0，"昨日盈亏" 总是 0)
       const todayIso = new Date().toISOString().slice(0, 10);
       const yesterdayOrEarlier = recent.find(r => String(r.date) < todayIso);
       if (yesterdayOrEarlier) {
@@ -722,7 +482,6 @@ export class TodaySignalsService {
         }
       }
 
-      // 当月初：找当月第一条 snapshot
       const today = new Date();
       const monthStart = `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(
         2,
@@ -791,17 +550,18 @@ export class TodaySignalsService {
   }
 
   /**
-   * "今日关键事件" — 业绩预告（is_surprise 优先）+ 高连板涨停股。
-   *
-   * 数据源：
-   *   - EarningsForecast where announce_date == tradeDate
-   *   - LimitUpStock where trade_date == tradeDate AND continuous_days >= 3
-   *
-   * 排序：超预期业绩 (rank=profit_change_low) → 普通业绩公告 →
-   *      高连板涨停 (rank=continuous_days)。最多 30 条。
+   * "今日关键事件" — 业绩预告 (is_surprise 优先) + 高连板涨停股 (只读展示)。
+   * 数据源: EarningsForecast (announce_date == tradeDate) + LimitUpStock
+   * (trade_date == tradeDate AND continuous_days >= 3)。最多 30 条。
    */
   private async loadKeyEvents(tradeDate: string | null): Promise<KeyEventItem[]> {
     if (!tradeDate) return [];
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { Op } = require('sequelize');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { EarningsForecast } = require('../models/EarningsForecast');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { LimitUpStock } = require('../models/LimitUpStock');
 
     const [forecasts, limitUps] = await Promise.all([
       EarningsForecast.findAll({
@@ -890,7 +650,6 @@ export class TodaySignalsService {
     }
 
     events.sort((a, b) => {
-      // 超预期优先（rank > 1M），其次按 rank 降序
       if (a.event_type === 'earnings_surprise' && b.event_type !== 'earnings_surprise') return -1;
       if (b.event_type === 'earnings_surprise' && a.event_type !== 'earnings_surprise') return 1;
       return b.rank_value - a.rank_value;
@@ -921,20 +680,20 @@ function stripSuffix(symbol: string): string {
   if (i < 0) return s;
   const before = s.slice(0, i);
   const after = s.slice(i + 1);
-  // 前缀格式 (sh./sz./bj.) — 2 字母 alpha + 数字
   if (/^[a-zA-Z]{2}$/.test(before)) return after;
   return before;
 }
 
-/** "600519" → "600519.SH"；"000001" → "000001.SZ"；"688981" → "688981.SH"；"8/4 开头" → ".BJ" */
-function inferSymbol(code: string): string {
-  if (code.includes('.')) return code;
+/**
+ * ETF 6 位代码 → stocks 表 symbol 前缀格式。
+ * 沪市 ETF: 51/56/58/50 开头 → sh.; 深市 ETF: 15/16/18 开头 → sz.。
+ * 已含 `.`/前缀则原样返回。
+ */
+function inferEtfSymbol(code: string): string {
   if (!code) return code;
-  const first = code.charAt(0);
-  // stocks 表存的是 sh./sz./bj. 前缀格式
-  if (first === '6' || first === '9' || first === '7') return `sh.${code}`;
-  if (first === '0' || first === '2' || first === '3') return `sz.${code}`;
-  if (first === '8' || first === '4') return `bj.${code}`;
+  if (code.includes('.')) return code;
+  if (/^5/.test(code)) return `sh.${code}`;
+  if (/^1/.test(code)) return `sz.${code}`;
   return `sh.${code}`;
 }
 

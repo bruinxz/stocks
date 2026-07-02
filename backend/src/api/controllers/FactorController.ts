@@ -13,11 +13,8 @@ import { SnowballHotKeyword } from '../../models/SnowballHotKeyword';
 import { MarketNews } from '../../models/MarketNews';
 import { SocialSentimentSnapshot } from '../../models/SocialSentimentSnapshot';
 import { MarketHotSearch } from '../../models/MarketHotSearch';
-import {
-  MultiFactorAlphaStrategy,
-  DEFAULT_MULTI_FACTOR_ALPHA_WEIGHTS,
-  MultiFactorAlphaParams,
-} from '../../quant/strategies/MultiFactorAlphaStrategy';
+import { ETFRotationStrategy } from '../../quant/strategies/ETFRotationStrategy';
+import { ETF_FACTOR_WEIGHTS_V0, ETFFactorWeights } from '../../quant/etf/ETFFactorService';
 import {
   factorDetailService,
   clampLimitDays,
@@ -27,16 +24,16 @@ import {
 /**
  * FactorController — US-015 因子选股工作区后端
  *
- * 三个 HTTP 端点：
+ * HTTP 端点：
  *   GET  /api/factors/overview                      → 8 因子列表 + 最新计算日 + 覆盖统计
- *   POST /api/factors/preview                       → 自定义权重 + 参数预览 top-N 选股
- *   GET  /api/strategies/multi-factor/latest-picks  → 多因子策略最近一次调仓结果
+ *   POST /api/factors/preview                       → ETF 因子权重敏感性预览 (轮动信号)
+ *   GET  /api/strategies/multi-factor/latest-picks  → ETF 因子轮动最近一次再平衡信号
  *
  * 依赖：
  *   - factorRegistry (单例) ← library/*.ts 在 import-time self-register
- *   - MultiFactorAlphaStrategy (默认 PRODUCTION_DATA_SOURCE，走 FactorScore + Stock)
+ *   - ETFRotationStrategy (§4.1 四因子 ETF 轮动, 组合级 generateSignals)
  *
- * 注意：MFA `latest-picks` 路由必须在 strategy.routes.ts 的 `/:strategyId` 之前注册，
+ * 注意：`latest-picks` 路由必须在 strategy.routes.ts 的 `/:strategyId` 之前注册，
  *      否则会被 :strategyId 通配。本 controller 仅暴露 handler，路由次序由
  *      strategy.routes.ts 负责。
  */
@@ -65,7 +62,7 @@ export class FactorController {
     }
   }
 
-  private readonly multiFactorStrategy = new MultiFactorAlphaStrategy();
+  private readonly etfRotationStrategy = new ETFRotationStrategy();
 
   // ---------- GET /api/factors/overview --------------------------------------
   /**
@@ -202,7 +199,7 @@ export class FactorController {
 
   // ---------- POST /api/factors/preview --------------------------------------
   /**
-   * 自定义权重 + 参数预览多因子选股结果。
+   * ETF 因子权重敏感性预览 — 覆盖 §4.1 四因子权重, 返回 ETF 轮动信号。
    *
    * 请求 body（全部可选）：
    *   {
@@ -222,14 +219,11 @@ export class FactorController {
       const body = (req.body ?? {}) as Partial<{
         trade_date: unknown;
         weights: unknown;
-        topN: unknown;
-        industryNeutral: unknown;
-        maxPerIndustry: unknown;
-        excludeST: unknown;
-        excludeNew60d: unknown;
+        currentHoldings: unknown;
+        universe: unknown;
       }>;
 
-      // 1) 确定 trade_date：用户传了用用户的；否则取库里最新
+      // 1) 确定 as-of 因子截面日：用户传了用用户的；否则取库里最新
       let tradeDate: string;
       if (typeof body.trade_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.trade_date)) {
         tradeDate = body.trade_date;
@@ -245,48 +239,46 @@ export class FactorController {
         tradeDate = latest;
       }
 
-      // 2) 构造 override params；非法字段直接拒绝
-      const override: Partial<MultiFactorAlphaParams> = {};
+      // 2) ETF 因子权重覆盖 (敏感性预览)。缺省用 §4.1 V0 (0.4/0.3/0.3/0.0)。
+      //    允许 momentum=0 (影子因子), 故用专用校验 (>=0), 而非 per-stock 的 >0。
+      let weights: Partial<ETFFactorWeights> | undefined;
       if (body.weights !== undefined) {
-        if (!isWeightRecord(body.weights)) {
+        if (!isEtfWeightRecord(body.weights)) {
           res.status(400).json({
             success: false,
-            message: 'weights must be an object of {factor_name: number > 0}',
+            message: 'weights must be an object of {value|quality|lowvol|momentum: number >= 0}',
           });
           return;
         }
-        override.weights = body.weights;
+        weights = body.weights as Partial<ETFFactorWeights>;
       }
-      if (body.topN !== undefined) {
-        const n = Number(body.topN);
-        if (!Number.isInteger(n) || n <= 0 || n > 500) {
-          res
-            .status(400)
-            .json({ success: false, message: 'topN must be a positive integer ≤ 500' });
-          return;
-        }
-        override.topN = n;
-      }
-      if (body.industryNeutral !== undefined)
-        override.industryNeutral = Boolean(body.industryNeutral);
-      if (body.maxPerIndustry !== undefined) {
-        const n = Number(body.maxPerIndustry);
-        if (!Number.isInteger(n) || n <= 0) {
-          res
-            .status(400)
-            .json({ success: false, message: 'maxPerIndustry must be a positive integer' });
-          return;
-        }
-        override.maxPerIndustry = n;
-      }
-      if (body.excludeST !== undefined) override.excludeST = Boolean(body.excludeST);
-      if (body.excludeNew60d !== undefined) override.excludeNew60d = Boolean(body.excludeNew60d);
 
-      const result = await this.multiFactorStrategy.generateSignals(tradeDate, {
-        params: override,
+      const currentHoldings = Array.isArray(body.currentHoldings)
+        ? (body.currentHoldings as unknown[]).filter(x => typeof x === 'string').map(String)
+        : undefined;
+      const universe = Array.isArray(body.universe)
+        ? (body.universe as unknown[]).filter(x => typeof x === 'string').map(String)
+        : undefined;
+
+      const signals = await this.etfRotationStrategy.generateSignals(tradeDate, {
+        weights,
+        currentHoldings,
+        universe,
       });
 
-      res.json({ success: true, data: result });
+      res.json({
+        success: true,
+        data: {
+          trade_date: tradeDate,
+          strategy_key: 'etf_factor_rotation',
+          weights: { ...ETF_FACTOR_WEIGHTS_V0, ...(weights ?? {}) },
+          signals,
+          buy_count: signals.filter(s2 => s2.action === 'buy').length,
+          sell_count: signals.filter(s2 => s2.action === 'sell').length,
+          hold_count: signals.filter(s2 => s2.action === 'hold').length,
+          universe_size: signals.length,
+        },
+      });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error('FactorController.previewSelection failed:', error);
@@ -294,7 +286,7 @@ export class FactorController {
     }
   }
 
-  // ---------- GET /api/strategies/multi-factor/latest-picks ------------------
+  // ---------- GET /api/strategies/multi-factor/latest-picks (ETF 轮动) -------
   /**
    * 多因子策略最近一次调仓结果。
    *
@@ -312,19 +304,30 @@ export class FactorController {
           success: true,
           data: {
             trade_date: null,
-            target_portfolio: [],
+            strategy_key: 'etf_factor_rotation',
             signals: [],
-            filtered: { st: 0, new60d: 0, industry_capped: 0, no_factor_data: 0 },
-            params: null,
+            buy_count: 0,
+            sell_count: 0,
+            hold_count: 0,
             universe_size: 0,
-            eligible_count: 0,
             note: 'factor_scores 表为空 — 请先运行 npm run compute:factors',
           },
         });
         return;
       }
-      const result = await this.multiFactorStrategy.generateSignals(latest);
-      res.json({ success: true, data: result });
+      const signals = await this.etfRotationStrategy.generateSignals(latest);
+      res.json({
+        success: true,
+        data: {
+          trade_date: latest,
+          strategy_key: 'etf_factor_rotation',
+          signals,
+          buy_count: signals.filter(s => s.action === 'buy').length,
+          sell_count: signals.filter(s => s.action === 'sell').length,
+          hold_count: signals.filter(s => s.action === 'hold').length,
+          universe_size: signals.length,
+        },
+      });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error('FactorController.getMultiFactorLatestPicks failed:', error);
@@ -1314,12 +1317,14 @@ function normalizeDateIso(value: string | Date | null | undefined): string | nul
 }
 
 /** 校验 weights 是 Record<string, number> 且所有 value > 0 */
-function isWeightRecord(value: unknown): value is Record<string, number> {
+function isEtfWeightRecord(value: unknown): value is Record<string, number> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const allowed = new Set(['value', 'quality', 'lowvol', 'momentum']);
   const entries = Object.entries(value as Record<string, unknown>);
   if (entries.length === 0) return false;
-  for (const [, v] of entries) {
-    if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return false;
+  for (const [k, v] of entries) {
+    if (!allowed.has(k)) return false;
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return false;
   }
   return true;
 }
@@ -1348,9 +1353,6 @@ function toNum(value: number | string | null | undefined): number | null {
   const n = typeof value === 'string' ? Number(value) : value;
   return Number.isFinite(n) ? n : null;
 }
-
-// Re-export the default weights so factor.routes.ts (and tests) can advertise them
-export { DEFAULT_MULTI_FACTOR_ALPHA_WEIGHTS };
 
 // ---------- US-045 因子健康列 (FE-006) ------------------------------------
 //

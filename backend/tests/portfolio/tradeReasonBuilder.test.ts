@@ -55,7 +55,7 @@ function test_signal_full() {
   const r = buildTradeReasonFromSignal(
     {
       id: 4242,
-      strategy_key: 'MultiFactorAlphaStrategy',
+      strategy_key: 'etf_factor_rotation',
       confidence_score: 78,
       factors: { PE_TTM: 12.3, north_flow_5d: 230_000_000, MA20: '突破' },
       reasons: ['PE 12.3 低估', '北向 +2.3 亿', 'MA20 上穿 MA60'],
@@ -70,13 +70,13 @@ function test_signal_full() {
   );
 
   assert('signal_full.source', r.source === 'auto_buy_from_signals', `got ${r.source}`);
-  assert('signal_full.strategy_key', r.strategy_key === 'MultiFactorAlphaStrategy');
+  assert('signal_full.strategy_key', r.strategy_key === 'etf_factor_rotation');
   assert('signal_full.signal_id', r.signal_id === 4242);
   assert('signal_full.confidence', r.confidence === 78);
   assert('signal_full.key_reasons_count', r.key_reasons.length === 3);
   assert(
     'signal_full.evidence_has_strategy',
-    r.evidence.some(e => /MultiFactorAlpha/.test(e.label))
+    r.evidence.some(e => /etf_factor_rotation/.test(e.label))
   );
   assert(
     'signal_full.evidence_has_factors',

@@ -344,7 +344,7 @@ console.log('\n[executionPrice] next_open / same_close / twap_proxy + 滑点');
 // isSTName 共享回归测试 —— 必须与 strategy 层一致
 // ================================================================
 
-console.log('\n[isSTName] 共享逻辑回归（与 MultiFactorAlphaStrategy 一致）');
+console.log('\n[isSTName] 共享逻辑回归（与 isSTName 共享逻辑一致）');
 
 (function testIsSTName() {
   assert('null_not_st', !isSTName(null));

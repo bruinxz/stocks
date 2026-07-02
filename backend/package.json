@@ -68,8 +68,7 @@
     "seed:mock": "ts-node src/scripts/seed-mock-data.ts",
     "report:factor-ic": "ts-node --transpile-only src/scripts/compute-factor-ic.ts",
     "walk-forward": "ts-node --transpile-only src/scripts/run-walk-forward.ts",
-    "data:status": "ts-node src/scripts/data-cli.ts status",
-    "smoke-test": "ts-node --transpile-only src/scripts/integration-smoke-test.ts"
+    "data:status": "ts-node src/scripts/data-cli.ts status"
   },
   "keywords": [
     "stock",

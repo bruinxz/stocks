@@ -7,11 +7,14 @@
  * 范围:
  *   - isValidStrategyKey 校验逻辑（snake_case 合法 / 大写非法 / path traversal 非法 / 数字开头非法）
  *   - buildSourceMap 扫描 strategies/ 真实目录，断言已注册策略可被读取
- *   - getStrategySource happy path（多个真实 strategy_key 都能拿到内容）
+ *   - getStrategySource happy path（真实 strategy_key 能拿到内容）
  *   - getStrategySource invalid_strategy_key 抛错
  *   - getStrategySource strategy_not_found 抛错（白名单查不到）
  *   - listAvailableStrategyKeys 排序 + 字段
  *   - 缓存：第二次调用不再扫盘（通过 process timing 间接断言）
+ *
+ * 批5 (2026-07): 主线收敛为 ETF 因子轮动单策略，旧的 30 策略融合体系已删。
+ *   本测试断言目标同步改为 etf_factor_rotation → ETFRotationStrategy.ts。
  */
 
 import {
@@ -37,10 +40,10 @@ function assert(name: string, cond: boolean, details?: string): void {
 
 async function main() {
   console.log('--- isValidStrategyKey ---');
-  assert("合法 'multi_factor_alpha'", isValidStrategyKey('multi_factor_alpha'));
+  assert("合法 'etf_factor_rotation'", isValidStrategyKey('etf_factor_rotation'));
   assert("合法 'a'", isValidStrategyKey('a'));
   assert("合法 'abc_123'", isValidStrategyKey('abc_123'));
-  assert("非法 'MultiFactorAlpha'（大写）", !isValidStrategyKey('MultiFactorAlpha'));
+  assert("非法 'EtfFactorRotation'（大写）", !isValidStrategyKey('EtfFactorRotation'));
   assert("非法 '../etc/passwd'（path traversal）", !isValidStrategyKey('../etc/passwd'));
   assert("非法 '1abc'（数字开头）", !isValidStrategyKey('1abc'));
   assert("非法 ''（空字符串）", !isValidStrategyKey(''));
@@ -54,56 +57,47 @@ async function main() {
   const strategiesDir = path.resolve(process.cwd(), 'src/quant/strategies');
   const sourceMap = buildSourceMap(strategiesDir);
   assert(
-    `扫描到至少 25 个 strategy_key (实际 ${sourceMap.size})`,
-    sourceMap.size >= 25,
-    `expected >=25, got ${sourceMap.size}`
+    `扫描到至少 1 个 strategy_key (实际 ${sourceMap.size})`,
+    sourceMap.size >= 1,
+    `expected >=1, got ${sourceMap.size}`
   );
 
   console.log('--- 关键已知 strategy_key 都在 map 内 ---');
-  const knownKeys = [
-    'multi_factor_alpha',
-    'dragon_head_momentum',
-    'earnings_surprise',
-    'high_dividend_value',
-    'breakout_strategy',
-    'ensemble_strategy',
-    'garp_strategy',
-    'ma_trend',
-  ];
+  const knownKeys = ['etf_factor_rotation'];
   for (const k of knownKeys) {
     assert(`map 含 ${k}`, sourceMap.has(k));
   }
 
   console.log('--- 文件名 / 路径合理 ---');
-  const mfa = sourceMap.get('multi_factor_alpha');
-  if (mfa) {
+  const etf = sourceMap.get('etf_factor_rotation');
+  if (etf) {
     assert(
-      `multi_factor_alpha → MultiFactorAlphaStrategy.ts (实际 ${mfa.filename})`,
-      mfa.filename === 'MultiFactorAlphaStrategy.ts'
+      `etf_factor_rotation → ETFRotationStrategy.ts (实际 ${etf.filename})`,
+      etf.filename === 'ETFRotationStrategy.ts'
     );
     assert(
-      `relative_path 形如 src/quant/strategies/* (实际 ${mfa.relative_path})`,
-      mfa.relative_path.includes('quant/strategies') &&
-        mfa.relative_path.endsWith('MultiFactorAlphaStrategy.ts')
+      `relative_path 形如 src/quant/strategies/* (实际 ${etf.relative_path})`,
+      etf.relative_path.includes('quant/strategies') &&
+        etf.relative_path.endsWith('ETFRotationStrategy.ts')
     );
     assert(
-      `absolute_path 是绝对路径 (实际 ${mfa.absolute_path})`,
-      path.isAbsolute(mfa.absolute_path) && mfa.absolute_path.endsWith('.ts')
+      `absolute_path 是绝对路径 (实际 ${etf.absolute_path})`,
+      path.isAbsolute(etf.absolute_path) && etf.absolute_path.endsWith('.ts')
     );
   } else {
     failed += 1;
-    console.log('  ✗ multi_factor_alpha 不在 map 内（前面断言已捕获）');
+    console.log('  ✗ etf_factor_rotation 不在 map 内（前面断言已捕获）');
   }
 
   console.log('--- getStrategySource happy path ---');
   resetSourceMapCache();
   const service = new QuantStrategySourceService();
 
-  const r1 = await service.getStrategySource('multi_factor_alpha');
-  assert('返回 strategy_key 一致', r1.strategy_key === 'multi_factor_alpha');
+  const r1 = await service.getStrategySource('etf_factor_rotation');
+  assert('返回 strategy_key 一致', r1.strategy_key === 'etf_factor_rotation');
   assert(
-    `返回 filename === MultiFactorAlphaStrategy.ts (实际 ${r1.filename})`,
-    r1.filename === 'MultiFactorAlphaStrategy.ts'
+    `返回 filename === ETFRotationStrategy.ts (实际 ${r1.filename})`,
+    r1.filename === 'ETFRotationStrategy.ts'
   );
   assert(`content 非空（实际长度 ${r1.content.length}）`, r1.content.length > 100);
   assert(
@@ -154,7 +148,7 @@ async function main() {
 
   console.log('--- listAvailableStrategyKeys ---');
   const list = service.listAvailableStrategyKeys();
-  assert(`返回数组 (实际 ${list.length})`, Array.isArray(list) && list.length >= 25);
+  assert(`返回数组 (实际 ${list.length})`, Array.isArray(list) && list.length >= 1);
   assert(
     '按 strategy_key 升序',
     list.every((entry, i) => i === 0 || list[i - 1].strategy_key <= entry.strategy_key)
@@ -172,15 +166,15 @@ async function main() {
   console.log('--- 缓存命中：第二次调用更快 ---');
   // 第一次调用已经触发缓存生成；第二次应该不再扫盘
   const t1 = Date.now();
-  await service.getStrategySource('multi_factor_alpha');
+  await service.getStrategySource('etf_factor_rotation');
   const t2 = Date.now();
   // 不做严格 timing 断言（CI 抖动大），仅断言 < 200ms（足够检测出"如果没缓存就重新扫盘"的回归）
   assert(`第二次调用 < 200ms (实际 ${t2 - t1}ms)`, t2 - t1 < 200);
 
   console.log('--- resetSourceMapCache 后重新扫描仍可用 ---');
   resetSourceMapCache();
-  const r2 = await service.getStrategySource('dragon_head_momentum');
-  assert('reset 后仍能拿到 dragon_head_momentum', r2.strategy_key === 'dragon_head_momentum');
+  const r2 = await service.getStrategySource('etf_factor_rotation');
+  assert('reset 后仍能拿到 etf_factor_rotation', r2.strategy_key === 'etf_factor_rotation');
 
   console.log('\n----------------------------------------');
   console.log(`Tests: ${passed} passed, ${failed} failed`);

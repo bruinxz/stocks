@@ -38,8 +38,8 @@ class TodayController {
   /**
    * GET /api/today/signals
    *
-   * US-018 今日作战工作区聚合接口：3 个策略当日信号 + 账户摘要 +
-   * 风险告警 + 关键事件。详见 TodaySignalsService。
+   * 今日作战工作区聚合接口 (信号优先重构 批5): ETF 因子轮动当日信号 +
+   * 账户摘要 + 风险告警 + 关键事件。详见 TodaySignalsService。
    */
   async getTodaySignals(req: AuthenticatedRequest, res: Response) {
     try {
@@ -47,10 +47,8 @@ class TodayController {
         user_id: req.user?.id,
         username: req.user?.username,
         trade_date: req.query.trade_date as string | undefined,
-        dragon_head_limit: optionalInt(req.query.dragon_head_limit),
-        earnings_limit: optionalInt(req.query.earnings_limit),
         alerts_limit: optionalInt(req.query.alerts_limit),
-        // 修复 (2026-06-17 串盘): 透传 portfolio_id 决定 KPI / MFA 差分基线用哪个盘
+        // 修复 (2026-06-17 串盘): 透传 portfolio_id 决定 KPI / 轮动增量基线用哪个盘
         portfolio_id: optionalInt(req.query.portfolio_id),
       });
       res.json({ success: true, data });
@@ -66,7 +64,7 @@ class TodayController {
   /**
    * POST /api/today/apply-signals
    *
-   * 把三策略当日 BUY 信号一键下到模拟盘。详见 TodaySignalsService.applySignals。
+   * 把 ETF 因子轮动 BUY 信号按目标权重一键下到模拟盘。详见 TodaySignalsService.applySignals。
    */
   async applyTodaySignals(req: AuthenticatedRequest, res: Response) {
     try {

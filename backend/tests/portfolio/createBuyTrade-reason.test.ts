@@ -189,7 +189,7 @@ function test_full_chain_smoke() {
   const buyReason = buildTradeReasonFromSignal(
     {
       id: 100,
-      strategy_key: 'MultiFactorAlphaStrategy',
+      strategy_key: 'etf_factor_rotation',
       confidence_score: 80,
       reasons: ['北向 +2.3 亿', 'PE 12.3 低估', 'MA20 突破'],
       market_environment: { market_regime: 'up' },

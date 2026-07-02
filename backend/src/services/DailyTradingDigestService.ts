@@ -157,12 +157,14 @@ export interface DigestTradeRow {
 export interface DigestCandidateRow {
   symbol: string;
   name?: string | null;
-  /** 'multi_factor' / 'dragon_head' / 'earnings_surprise' */
-  strategy: 'multi_factor' | 'dragon_head' | 'earnings_surprise';
-  /** 排序分（多因子用 composite_score / 龙头用 entry_signal_strength / 业绩超预期用 surprise_score） */
+  /** 'etf_rotation' — 信号优先重构 批5: 主线唯一为 ETF 因子轮动 */
+  strategy: 'etf_rotation';
+  /** 排序分 (ETF 四因子 total_score) */
   score?: number | null;
   /** 一句话原因摘要 */
   reason?: string | null;
+  /** ETF 目标权重 (0..0.15) */
+  target_weight?: number | null;
 }
 
 export interface DigestPnLSummary {
@@ -478,14 +480,7 @@ export function formatTradeLine(row: DigestTradeRow): string {
  * 一行候选："[多因子] 600519 贵州茅台 综合分 91.2 — 高质量+低波"
  */
 export function formatCandidateLine(row: DigestCandidateRow): string {
-  const label =
-    row.strategy === 'multi_factor'
-      ? '[多因子]'
-      : row.strategy === 'dragon_head'
-      ? '[龙头]'
-      : row.strategy === 'earnings_surprise'
-      ? '[业绩]'
-      : `[${row.strategy}]`;
+  const label = row.strategy === 'etf_rotation' ? '[ETF轮动]' : `[${row.strategy}]`;
   const name = row.name ? `${row.symbol} ${row.name}` : row.symbol;
   // 注意：必须显式 null/undefined check 防 `Number(null) === 0` JS 大坑（CLAUDE.md US-031）
   const hasScore =
@@ -830,8 +825,6 @@ export class DefaultDailyTradingDigestDataSource implements DailyTradingDigestDa
       const { todaySignalsService } = require('./TodaySignalsService');
       signals = await todaySignalsService.getTodaySignals({
         trade_date: options.trade_date,
-        dragon_head_limit: options.per_strategy_limit,
-        earnings_limit: Math.min(options.per_strategy_limit, 10),
       });
     } catch (err: any) {
       logger.warn(
@@ -843,60 +836,21 @@ export class DefaultDailyTradingDigestDataSource implements DailyTradingDigestDa
     }
 
     const out: DigestCandidateRow[] = [];
-    // 多因子 — target_portfolio 是 stock_code[]，没有 score; 用 signals 数组里的 composite_score 拿到分
-    const mfaSignals: any[] = Array.isArray(signals?.multi_factor?.signals)
-      ? signals.multi_factor.signals
+    // ETF 因子轮动 — 取 BUY/HOLD (target_weight > 0) 作为明日候选, 按 total_score 排序
+    const etfSignals: any[] = Array.isArray(signals?.etf_rotation?.signals)
+      ? signals.etf_rotation.signals
       : [];
-    const buySignals = mfaSignals.filter(
-      s => s?.signal_type === 'BUY' || s?.signal_type === 'HOLD'
-    );
-    for (const s of buySignals.slice(0, options.per_strategy_limit)) {
+    const picks = etfSignals
+      .filter(s => s?.action === 'buy' || s?.action === 'hold' || Number(s?.target_weight) > 0)
+      .sort((a, b) => Number(b?.score ?? 0) - Number(a?.score ?? 0));
+    for (const s of picks.slice(0, options.per_strategy_limit)) {
       out.push({
-        strategy: 'multi_factor',
-        symbol: String(s.stock_code || s.symbol || '').trim(),
-        // 上游 strategy 返回 `name`，老代码用 `stock_name` 一直 null —
-        // 优先 `name`，然后 `stock_name` 兼容。
-        name: s.name || s.stock_name || null,
-        score: Number.isFinite(Number(s.composite_score))
-          ? Number(s.composite_score)
-          : Number.isFinite(Number(s.score))
-          ? Number(s.score)
-          : null,
-        reason: s.industry || s.reason || null,
-      });
-    }
-    // 龙头
-    const dragonCands: any[] = Array.isArray(signals?.dragon_head?.candidates)
-      ? signals.dragon_head.candidates
-      : [];
-    for (const c of dragonCands.slice(0, options.per_strategy_limit)) {
-      out.push({
-        strategy: 'dragon_head',
-        symbol: String(c.stock_code || c.symbol || '').trim(),
-        name: c.name || c.stock_name || null,
-        score: Number.isFinite(Number(c.entry_signal_strength))
-          ? Number(c.entry_signal_strength)
-          : Number.isFinite(Number(c.famous_yz_net_buy))
-          ? Number(c.famous_yz_net_buy) / 1e8
-          : null,
-        reason: c.reason || c.industry || null,
-      });
-    }
-    // 业绩超预期
-    const earnCands: any[] = Array.isArray(signals?.earnings_surprise?.candidates)
-      ? signals.earnings_surprise.candidates
-      : [];
-    for (const c of earnCands.slice(0, options.per_strategy_limit)) {
-      out.push({
-        strategy: 'earnings_surprise',
-        symbol: String(c.stock_code || c.symbol || '').trim(),
-        name: c.name || c.stock_name || null,
-        score: Number.isFinite(Number(c.surprise_score))
-          ? Number(c.surprise_score)
-          : Number.isFinite(Number(c.forecast_change_low))
-          ? Number(c.forecast_change_low)
-          : null,
-        reason: c.reason || c.forecast_type || null,
+        strategy: 'etf_rotation',
+        symbol: String(s.etf_code || s.symbol || '').trim(),
+        name: s.name || null,
+        score: Number.isFinite(Number(s.score)) ? Number(s.score) : null,
+        reason: Array.isArray(s.reasons) && s.reasons.length ? String(s.reasons[0]) : null,
+        target_weight: Number.isFinite(Number(s.target_weight)) ? Number(s.target_weight) : null,
       });
     }
     // 兜底：strategy 没填 name 时按 stock_code 批量回查 Stock 表填回去

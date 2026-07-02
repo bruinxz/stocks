@@ -1,18 +1,14 @@
 import { QuantStrategy } from '../strategies/QuantStrategy';
-import { MultiFactorAlphaStrategy } from '../strategies/MultiFactorAlphaStrategy';
-import { DragonHeadMomentumStrategy } from '../strategies/DragonHeadMomentumStrategy';
-import { EarningsSurpriseStrategy } from '../strategies/EarningsSurpriseStrategy';
+import { ETFRotationStrategy } from '../strategies/ETFRotationStrategy';
 import { QuantStrategyDefinition } from '../types/QuantTypes';
 
 export class StrategyRegistry {
   private strategies = new Map<string, QuantStrategy>();
 
   constructor() {
-    // 批3 (2026-07): 信号优先重构 — 29 策略削至 3 个保留策略.
-    // multi_factor_alpha (enabled) + 龙头动量 + 业绩超预期, 均被 TodaySignalsService 直接消费.
-    this.register(new MultiFactorAlphaStrategy());
-    this.register(new DragonHeadMomentumStrategy());
-    this.register(new EarningsSurpriseStrategy());
+    // 批5 (2026-07): 信号优先重构 — 个股 3 策略主线退役, 核心主线切换为 ETF 因子轮动.
+    // etf_factor_rotation 是唯一注册策略 (核心 70%, 组合级 generateSignals), 卫星题材走事件轮询.
+    this.register(new ETFRotationStrategy());
   }
 
   register(strategy: QuantStrategy) {
