@@ -171,9 +171,6 @@ router.get('/correlation', authController.authenticate, portfolioController.getC
 // IMPORTANT: /exposure 同理
 router.get('/exposure', authController.authenticate, portfolioController.getExposure);
 
-// IMPORTANT: /behavior-bias 同理
-router.get('/behavior-bias', authController.authenticate, portfolioController.getBehaviorBias);
-
 /**
  * @openapi
  * /api/portfolio/industry-concentration-summary:

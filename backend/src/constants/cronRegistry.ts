@@ -117,19 +117,7 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '工作日 18:00 拉前一交易日 30+ 行业 ETF 净流入 / 份额 (AKShare fund_etf_fund_daily_em + fund_etf_hist_em) → etf_creation_redemption',
   },
-  // BJ-8 (2026-06-24): 市场情绪指数每日计算 - 真因 MarketSentimentIndexService 写
-  //   全自动 (US-057), 但 cron 没有调度, 仅 sync-market-sentiment 脚本手动跑过 2 次
-  //   (2026-06-09 + 06-11), 之后停摆 13 日 → DATA_FRESHNESS_CHECK 永远 fail.
-  //   现在工作日 17:30 自动 sync (盘后 30min, daily_bar/limit_up 已落 + 早于 18:30
-  //   DATA_FRESHNESS_CHECK 1h 让 sentiment 当天能算上).
-  {
-    type: 'MARKET_SENTIMENT_INDEX_SYNC',
-    category: 'data_sync',
-    owner: 'data',
-    recommendedCron: '30 17 * * 1-5',
-    description:
-      '工作日 17:30 计算并持久化当日全市场情绪指数 (4 维: 涨跌停 + 北向 + 融资 + QA 热度) → market_sentiment_indices',
-  },
+  // 批5: MARKET_SENTIMENT_INDEX_SYNC 已下线 (MarketSentimentIndexService 移除)
   // BF-3 (2026-06-23): 数据陈旧度检查 - 工作日盘后 18:30 (ETF_FLOW_SYNC 后 30min, 让本日数据落库再检)
   // 检 5 项: realtime_quotes 1h+ stale / daily_bars 不是 today / factor std=0 > 2 / cron FAILED / sentiment 陈旧
   // 命中任一阈值 → RiskAlert MEDIUM + Lark OPS 群推 (1h dedup)
@@ -271,18 +259,8 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     intraday: true,
     description: '盘中 quant 健康守护 (异常时触发熔断)',
   },
-  {
-    type: 'AI_DAILY_SCREENER',
-    category: 'quant_engine',
-    owner: 'ai',
-    description: 'AI 日级筛选器 (TradingAgents 批处理)',
-  },
-  {
-    type: 'AUTO_RECOMMENDATION_LOOP',
-    category: 'quant_engine',
-    owner: 'ai',
-    description: '推荐闭环 (生成 → 审批 → 评估 → 反馈)',
-  },
+  // 批5: AI_DAILY_SCREENER 已下线 (QuantRecommendationService 移除, 待批6 ETF 候选接入)
+  // 批5: AUTO_RECOMMENDATION_LOOP 已下线 (AutomatedRecommendationLoopService 移除, 待批6 ETF 轮动闭环)
 
   // ===== L4 模拟盘 =====
   {
@@ -384,13 +362,7 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     owner: 'risk',
     description: '组合净值守卫日评 (策略熔断 / 降仓)',
   },
-  {
-    type: 'STRATEGY_KILL_SWITCH_CHECK',
-    category: 'risk_control',
-    owner: 'risk',
-    intraday: true,
-    description: '策略级 kill switch 巡检 (失败率 / 连败 / pnl)',
-  },
+  // 批5: STRATEGY_KILL_SWITCH_CHECK 已下线 (StrategyKillSwitchMonitor 移除; 熔断改由 EquityCurveGovernor)
 
   // ===== L5 实盘相关 =====
   {
@@ -438,12 +410,7 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     owner: 'analytics',
     description: '研究产物完整性审计',
   },
-  {
-    type: 'EARNINGS_FORECAST_WATCH',
-    category: 'analytics',
-    owner: 'analytics',
-    description: '业绩预告监控 / 提醒',
-  },
+  // 批5: EARNINGS_FORECAST_WATCH 已下线 (EarningsForecastWatcher 移除)
   {
     type: 'WEEKLY_REVIEW_EMAIL',
     category: 'analytics',

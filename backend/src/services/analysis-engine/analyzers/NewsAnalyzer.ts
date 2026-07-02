@@ -17,11 +17,43 @@
 
 import { BaseAnalyzer, RawAnalyzerResult, weightedMean } from './BaseAnalyzer';
 import type { AnalyzerContext, AnalyzerKey, EvidenceItem } from '../AnalyzerTypes';
-import {
-  authorityWeightedSentiment,
-  type KOLOpinionRecord,
-  type KOLSource,
-} from '../../KOLAggregatorService';
+// 批5: KOL 情绪源已下线 — 原从 KOLAggregatorService 导入的类型/权重内联到本文件,
+// 让 NewsAnalyzer 的 KOL 相关导出类型/helper 仍可独立编译 (analyze 已不再消费 KOL).
+export type KOLSource =
+  | 'research_report'
+  | 'east_money_news'
+  | 'xq_hot_concept'
+  | 'etf_flow'
+  | 'policy_doc';
+
+export interface KOLOpinionRecord {
+  stock_code: string;
+  kol_name: string;
+  opinion_date: string;
+  kol_source: KOLSource;
+  opinion_summary: string;
+  sentiment_score: number | null;
+  url: string | null;
+  raw_payload: Record<string, unknown>;
+}
+
+const SOURCE_AUTHORITY: Readonly<Record<string, number>> = Object.freeze({
+  research_report: 0.6,
+  east_money_news: 0.3,
+  xq_hot_concept: 0.4,
+  kol: 0.4,
+  etf_flow: 0.5,
+  policy_doc: 0.8,
+});
+const SOURCE_AUTHORITY_DEFAULT = 0.3;
+
+export function authorityWeightedSentiment(rec: KOLOpinionRecord): number {
+  const s = rec.sentiment_score;
+  const absS = s !== null && Number.isFinite(s) ? Math.abs(s as number) : 0;
+  const auth =
+    (rec.kol_source && SOURCE_AUTHORITY[rec.kol_source]) ?? SOURCE_AUTHORITY_DEFAULT;
+  return absS * (typeof auth === 'number' ? auth : SOURCE_AUTHORITY_DEFAULT);
+}
 
 interface AnnouncementRecord {
   ann_date: string;
@@ -190,31 +222,9 @@ export const PRODUCTION_NEWS_ANALYZER_SOURCE: NewsAnalyzerDataSource = {
       return [];
     }
   },
-  async aggregateKOLForStock(stockCode) {
-    try {
-      // KOLAggregator 严格要求 6 位 stock_code (e.g. '300750'); analyzer ctx 通常
-      // 是 'sz.300750' 形态, 必须 strip 前缀否则 aggregateForStock 直接返
-      // error='Invalid stock_code format'.
-      const code = toSixDigitStockCode(stockCode);
-      if (!code) return [];
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { kolAggregatorService } = require('../../KOLAggregatorService');
-      // dryRun: true — analyzer 只是读端, 不应触发 KOLAggregator 的 saveOpinions 落库
-      // (旧实现传的不是合法 option 仍走 persist 默认路径; 修复为 dryRun=true).
-      const res = await kolAggregatorService.aggregateForStock(code, { dryRun: true });
-      return (res?.opinions || []).map((o: any) => ({
-        kol_name: o.kol_name,
-        kol_source: o.kol_source,
-        opinion_date: o.opinion_date,
-        opinion_summary: o.opinion_summary,
-        sentiment_score:
-          o.sentiment_score === null || o.sentiment_score === undefined
-            ? null
-            : Number(o.sentiment_score),
-      }));
-    } catch (_e) {
-      return [];
-    }
+  async aggregateKOLForStock(_stockCode) {
+    // 批5: KOL 情绪源已下线 — 恒返空数组 (KOLAggregatorService 已删除).
+    return [];
   },
 };
 
@@ -225,11 +235,9 @@ export class NewsAnalyzer extends BaseAnalyzer {
     super();
   }
 
-  // Batch AO (2026-06-21): announcements + news 大量股票全缺 (cninfo IRM 仅 bj9xx 全覆盖)
-  // → 旧版严格要求两者全到 (2/2 缺时 ≥50% 触发 BaseAnalyzer conf=0). 改为只要 KOL 在
-  // 即认为 News 维度有信号 (KOL 真聚合了研报/财经新闻/概念热议 5 类来源, 是当前最稳定的
-  // 替代数据源). 让 conf 反映真实可用度而非全或无.
-  protected requiredFields: readonly string[] = ['kol'];
+  // 批5: KOL 情绪源已下线 — News 维度回退到 公告(2/3) + 新闻(1/3) 两源加权.
+  // 不再硬性要求任一源全到, conf = 到位源数 / 2 反映真实可用度.
+  protected requiredFields: readonly string[] = [];
 
   protected async run(ctx: AnalyzerContext): Promise<RawAnalyzerResult> {
     const dataMissing: string[] = [];
@@ -245,7 +253,8 @@ export class NewsAnalyzer extends BaseAnalyzer {
       const neg = anns.filter(a => a.sentiment === '负面').length;
       const net = anns.length > 0 ? (pos - neg) / anns.length : 0;
       const annScore = net * 60; // [-60, 60]
-      partials.push({ value: annScore, weight: 0.5 });
+      // 批5: 公告权重 2/3 (原 0.5, KOL 下线后重新归一; weightedMean 按到位权重归一).
+      partials.push({ value: annScore, weight: 2 });
       evidence.push({
         label: `公告 ${anns.length} 条 (+${pos} / -${neg})`,
         detail: anns
@@ -254,7 +263,7 @@ export class NewsAnalyzer extends BaseAnalyzer {
           .join(' | '),
         metric_value: net,
         direction: annScore > 5 ? 'bullish' : annScore < -5 ? 'bearish' : 'neutral',
-        weight: 0.5,
+        weight: 2,
       });
     }
 
@@ -271,7 +280,8 @@ export class NewsAnalyzer extends BaseAnalyzer {
       } else {
         const avg = scored.reduce((a, b) => a + b, 0) / scored.length;
         const newsScore = Math.max(-50, Math.min(50, avg * 100));
-        partials.push({ value: newsScore, weight: 0.25 });
+        // 批5: 新闻权重 1/3 (原 0.25, KOL 下线后重新归一).
+        partials.push({ value: newsScore, weight: 1 });
         evidence.push({
           label: `新闻 ${news.length} 条 (avg sentiment ${avg.toFixed(2)})`,
           detail: news
@@ -280,50 +290,19 @@ export class NewsAnalyzer extends BaseAnalyzer {
             .join(' | '),
           metric_value: avg,
           direction: avg > 0.1 ? 'bullish' : avg < -0.1 ? 'bearish' : 'neutral',
-          weight: 0.25,
+          weight: 1,
         });
       }
     }
 
-    // 3) KOL — 走 KOLAggregator 真聚合 (US-036): 5 类来源 (研报 / 财经新闻 /
-    //    热门概念 / ETF 资金 / 政策) 加权汇总, 权威源 (研报 / 政策) 占主导.
-    const kol = await this.source.aggregateKOLForStock(ctx.stock.code);
-    if (!kol.length) {
-      dataMissing.push('kol');
-    } else {
-      const avg = weightedAvgKOLSentiment(kol);
-      if (avg === null) {
-        // 全部 KOL 意见 sentiment_score=null/0 — 无信号, 与 "无 KOL 数据" 区分
-        dataMissing.push('kol_sentiment_score');
-      } else {
-        const kolScore = Math.max(-40, Math.min(40, avg * 80));
-        partials.push({ value: kolScore, weight: 0.25 });
-        // 按来源分桶计数, 让 label 看清结构 ("研报 3 / 政策 1 / 新闻 6")
-        const bySrc = new Map<string, number>();
-        for (const r of kol) {
-          const tag = formatKOLSourceLabel(r.kol_source);
-          bySrc.set(tag, (bySrc.get(tag) || 0) + 1);
-        }
-        const srcSummary = Array.from(bySrc.entries())
-          .map(([t, c]) => `${t} ${c}`)
-          .join(' / ');
-        evidence.push({
-          label: `KOL 聚合 ${kol.length} 条 (${srcSummary}, 加权情绪 ${avg.toFixed(2)})`,
-          detail: buildKOLEvidenceDetail(kol, 3),
-          metric_value: avg,
-          direction: avg > 0.1 ? 'bullish' : avg < -0.1 ? 'bearish' : 'neutral',
-          weight: 0.25,
-        });
-      }
-    }
+    // 批5: KOL 情绪源已下线 — 原 KOL 加权子源整段移除, 仅保留 公告 + 新闻 两源.
 
     const score = weightedMean(partials) ?? 0;
-    const total = 3;
+    const total = 2;
     const have =
       total -
       (dataMissing.includes('announcements') ? 1 : 0) -
-      (dataMissing.includes('news') ? 1 : 0) -
-      (dataMissing.includes('kol') ? 1 : 0);
+      (dataMissing.includes('news') ? 1 : 0);
     const confidence = have / total;
 
     return {
@@ -332,7 +311,6 @@ export class NewsAnalyzer extends BaseAnalyzer {
       data_sources: [
         { name: 'announcements_nlp', as_of: ctx.as_of, is_realtime: false },
         { name: 'market_news', as_of: ctx.as_of, is_realtime: false },
-        { name: 'kol_aggregator', as_of: ctx.as_of, is_realtime: false },
       ],
       confidence,
       data_missing: dataMissing,

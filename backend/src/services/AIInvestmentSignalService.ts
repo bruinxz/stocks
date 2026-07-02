@@ -12,7 +12,14 @@ import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 import { DataSyncService } from '../data/services/DataSyncService';
 import { benchmarkIndexService } from './BenchmarkIndexService';
-import type { QuantRecommendationItem } from './QuantRecommendationService';
+// 批5: QuantRecommendationService 已下线 — 本地最小化候选类型 (仅归档用, 字段松散读取).
+export interface QuantRecommendationItem {
+  symbol: string;
+  name?: string;
+  score?: number;
+  action?: string;
+  [key: string]: any;
+}
 import { marketEnvironmentService } from './MarketEnvironmentService';
 import {
   archiveAnalysisEngineResult,

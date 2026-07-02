@@ -306,43 +306,10 @@ function metaGuardSrc(relPath: string): string {
   return fs.readFileSync(abs, 'utf-8');
 }
 
-function testMetaGuard_CallersUseHelper() {
-  console.log('\n## [5] META-GUARD: 4 caller 已切到 buildAIPollingJobOptions, 不再 inline');
-  const callers = [
-    'src/api/controllers/QuantRecommendationController.ts',
-    'src/services/AutomatedRecommendationLoopService.ts',
-    'src/services/SchedulerService.ts',
-    'src/quant/engine/internal/QuantFusionService.ts',
-  ];
-  for (const rel of callers) {
-    const src = metaGuardSrc(rel);
-    assert(
-      `${rel}: import buildAIPollingJobOptions from aiPollingEnqueue`,
-      /import\s*\{\s*buildAIPollingJobOptions\s*\}\s*from\s*['"][^'"]*aiPollingEnqueue['"]/.test(
-        src
-      )
-    );
-    assert(
-      `${rel}: 调用 buildAIPollingJobOptions({ taskId:`,
-      /buildAIPollingJobOptions\(\s*\{\s*taskId:/.test(src)
-    );
-    // 反向 — 不再 inline 写 `jobId: \`ai-poll-${...}\``
-    assert(
-      `${rel}: 不再 inline 写 jobId: \`ai-poll-…\``,
-      !/jobId:\s*`ai-poll-\$\{/.test(src)
-    );
-    // 反向 — 不再 inline 写 attempts: 10 紧跟 backoff fixed 3*60*1000 这一组合
-    // (单独 attempts: 10 在 schema 校验 / 别处可能合法, 用强组合避免误伤)
-    assert(
-      `${rel}: 不再 inline 写 backoff fixed 3*60*1000 (single source of truth)`,
-      !/backoff:\s*\{\s*type:\s*['"]fixed['"]\s*,\s*delay:\s*3\s*\*\s*60\s*\*\s*1000/.test(src)
-    );
-    assert(
-      `${rel}: 不再 inline 写 removeOnComplete: { count: 1000 }`,
-      !/removeOnComplete:\s*\{\s*count:\s*1000\s*\}/.test(src)
-    );
-  }
-}
+// 批5: 原 [5] META-GUARD (4 caller 使用 helper) 已删除 —
+// 其 3 个被检 caller (QuantRecommendationController / AutomatedRecommendationLoopService /
+// QuantFusionService) 已在前序批次删除, SchedulerService 的 AI_DAILY_SCREENER 分支亦下线,
+// 不再有 caller 入队 AI 轮询任务. helper 自身单元测试 ([1]-[4], [5b]) 仍保留.
 
 function testMetaGuard_HelperSingleSourceOfTruth() {
   console.log('\n## [5b] helper 自身是单事实源: aiPollingEnqueue.ts 含全部默认值');
@@ -390,7 +357,6 @@ function testMetaGuard_HelperSingleSourceOfTruth() {
     await testEnqueueAddThrow();
     await testEnqueueOverride();
     testProductionDataSourceSmoke();
-    testMetaGuard_CallersUseHelper();
     testMetaGuard_HelperSingleSourceOfTruth();
   } catch (err: any) {
     failed++;

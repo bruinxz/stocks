@@ -14,9 +14,7 @@ import { computeNextRunAt, isImplausibleNextRun } from '../utils/cronNextRun';
 import { LIVE_AUDIT_EVENT_TYPES } from '../live-trading/auditEvents';
 import { dataUpdateQueue } from '../jobs/dataUpdateQueue';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
-import { buildAIPollingJobOptions } from '../jobs/aiPollingEnqueue';
 import { aiAdvisorService } from './AIAdvisorService';
-import { quantRecommendationService } from './QuantRecommendationService';
 import { quantOpenWatchdogService } from '../quant/health/internal/QuantOpenWatchdogService';
 import { quantStrategyParamVersionService } from '../quant/engine/internal/QuantStrategyParamVersionService';
 import { quantDataService } from '../quant/engine/internal/QuantDataService';
@@ -44,13 +42,11 @@ import { limitUpSyncService } from '../data/services/LimitUpSyncService';
 import { northboundSyncService } from '../data/services/NorthboundSyncService';
 import { snowballHotKeywordSyncService } from '../data/services/SnowballHotKeywordSyncService';
 import { dailyTradingDigestService } from './DailyTradingDigestService';
-import { earningsForecastWatcher } from './EarningsForecastWatcher';
 import { weeklyReviewReportService } from './WeeklyReviewReportService';
 import { marketBriefService } from './MarketBriefService';
 import { enhancedTradingJournalService } from './EnhancedTradingJournalService';
 import { cleanupOldDataService } from './CleanupOldDataService';
 import { benchmarkIndexService } from './BenchmarkIndexService';
-import { automatedRecommendationLoopService } from './AutomatedRecommendationLoopService';
 import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeService';
 import { taskParameterAuditService } from './TaskParameterAuditService';
 import { liveTradingService } from '../live-trading/services/LiveTradingService';
@@ -2565,53 +2561,23 @@ class SchedulerService {
           `[snowball-keyword-sync] ${date} 完成: fetched=${result.fetched} 新进=${result.new_keywords_count}`
         );
       } else if (task.type === 'STRATEGY_KILL_SWITCH_CHECK') {
-        // Phase 4+ 策略熔断监控 — 评估每个策略的 kill_switch_metric (定义在
-        // edge_hypothesis 内)；低于 kill_switch_threshold 触发自动 enabled=false。
-        //
-        // Batch N (2026-06-17, B4 fix): 默认 dry_run=false 让 kill_switch 真生效.
-        // 旧默认 dry_run=true "保守" 实际上让整套 kill_switch lever 永远不触发 —
-        // 运维通常不会盯每个 task 配置, 反向更危险. 现在显式想"只评估" 的 task
-        // 需要在 parameters 里 set dry_run=true (staging cron / 开发环境).
-        const dryRun =
-          parameters.dry_run !== undefined
-            ? Boolean(parameters.dry_run)
-            : parameters.dryRun !== undefined
-            ? Boolean(parameters.dryRun)
-            : false; // Batch N: 默认 false 让熔断真触发, "误关"由 evaluateAll 内部阈值/样本量门槛防止
-        const { strategyKillSwitchMonitor } = require('../services/StrategyKillSwitchMonitor');
-        const result = await strategyKillSwitchMonitor.evaluateAll({ dry_run: dryRun });
+        // 批5: StrategyKillSwitchMonitor 已下线 — 保留 task 分支避免 DB 存量任务报错,
+        // 直接标记 COMPLETED 空跑 (不再评估 / 禁用任何策略).
+        void parameters;
         await this.safeUpdateExecutionLog(executionLog, {
-          total_items: result.total_strategies,
-          completed_items: result.evaluated,
-          failed_items: result.errors.length,
+          total_items: 0,
+          completed_items: 0,
+          failed_items: 0,
           status: 'COMPLETED',
           completed_at: new Date(),
           error_message: null,
           result_summary: {
             scenario: 'strategy_kill_switch_check',
-            total_strategies: result.total_strategies,
-            evaluated: result.evaluated,
-            triggered: result.triggered,
-            skipped_no_kill_switch: result.skipped_no_kill_switch,
-            skipped_disabled: result.skipped_disabled,
-            skipped_insufficient_data: result.skipped_insufficient_data,
-            dry_run: dryRun,
-            triggered_strategies: result.evaluations
-              .filter((e: any) => e.triggered)
-              .map((e: any) => ({
-                strategy_key: e.strategy_key,
-                metric: e.metric,
-                threshold: e.threshold,
-                observed: e.observed_value,
-                reason: e.reason,
-              })),
+            retired: true,
+            message: '该能力已下线',
           },
         });
-        logger.info(
-          `策略熔断评估完成。总策略 ${result.total_strategies}，` +
-            `评估 ${result.evaluated}，触发 ${result.triggered}` +
-            (dryRun ? '（dry-run，未真正禁用）' : '（已自动 disable）')
-        );
+        logger.info('[STRATEGY_KILL_SWITCH_CHECK] 已下线 — 空跑跳过');
       } else if (task.type === 'EQUITY_CURVE_GOVERNOR_DAILY_EVAL') {
         // Sprint 3: 资金曲线 Governor 每日评估 — 对所有 portfolio 评估 5 档健康度。
         // 默认 persist=true，写入 EquityCurveGovernorState，触发档位切换告警。
@@ -3141,106 +3107,22 @@ class SchedulerService {
             (dryRun ? '（dry-run，未实际推送）' : '')
         );
       } else if (task.type === 'EARNINGS_FORECAST_WATCH') {
-        // US-064 — 业绩预告即时提醒。`mode` 参数控制走持仓即时 (held) 还是自选
-        // 盘后汇总 (watchlist)，缺省 = 'both' (持仓 + 自选都跑)。
-        // `user_id` 可选 (扫单用户)；`dry_run`=true 仅预演不推送。
-        const targetUserId = parameters.user_id || parameters.userId;
-        const dryRun =
-          parameters.dry_run !== undefined
-            ? Boolean(parameters.dry_run)
-            : parameters.dryRun !== undefined
-            ? Boolean(parameters.dryRun)
-            : false;
-        const recentDays =
-          parameters.recent_days !== undefined
-            ? Number(parameters.recent_days)
-            : parameters.recentDays !== undefined
-            ? Number(parameters.recentDays)
-            : undefined;
-        const mode = String(parameters.mode || 'both').toLowerCase();
-        const runHeld = mode === 'both' || mode === 'held';
-        const runWatchlist = mode === 'both' || mode === 'watchlist';
-
-        const heldResult = runHeld
-          ? await earningsForecastWatcher.scanHeldStocks({
-              user_id: targetUserId ? Number(targetUserId) : undefined,
-              trade_date: parameters.trade_date || parameters.tradeDate,
-              dry_run: dryRun,
-              recent_days: recentDays,
-            })
-          : null;
-        const watchlistResult = runWatchlist
-          ? await earningsForecastWatcher.scanWatchlistStocks({
-              user_id: targetUserId ? Number(targetUserId) : undefined,
-              trade_date: parameters.trade_date || parameters.tradeDate,
-              dry_run: dryRun,
-              recent_days: recentDays,
-            })
-          : null;
-
-        const totalSent = (heldResult?.sent_count ?? 0) + (watchlistResult?.sent_count ?? 0);
-        const totalSkipped =
-          (heldResult?.skipped_count ?? 0) + (watchlistResult?.skipped_count ?? 0);
-        const totalFailed = (heldResult?.failed_count ?? 0) + (watchlistResult?.failed_count ?? 0);
-        const totalScanned = Math.max(
-          heldResult?.scanned_users ?? 0,
-          watchlistResult?.scanned_users ?? 0
-        );
-
+        // 批5: EarningsForecastWatcher 已下线 — 保留 task 分支避免存量任务报错, 空跑 COMPLETED.
+        void parameters;
         await this.safeUpdateExecutionLog(executionLog, {
-          total_items:
-            (heldResult?.scanned_forecasts ?? 0) + (watchlistResult?.scanned_forecasts ?? 0),
-          completed_items: totalSent,
-          failed_items: totalFailed,
+          total_items: 0,
+          completed_items: 0,
+          failed_items: 0,
           status: 'COMPLETED',
           completed_at: new Date(),
           error_message: null,
           result_summary: {
             scenario: 'earnings_forecast_watch',
-            mode,
-            trade_date: heldResult?.trade_date || watchlistResult?.trade_date,
-            scanned_users: totalScanned,
-            held: heldResult
-              ? {
-                  scanned_forecasts: heldResult.scanned_forecasts,
-                  sent_count: heldResult.sent_count,
-                  skipped_count: heldResult.skipped_count,
-                  failed_count: heldResult.failed_count,
-                  events: heldResult.per_event.map(e => ({
-                    event_id: e.event_id,
-                    symbol: e.symbol,
-                    user_id: e.user_id,
-                    status: e.status,
-                    sent: e.sent,
-                    error: e.error,
-                    skip_reason: e.skip_reason,
-                  })),
-                }
-              : null,
-            watchlist: watchlistResult
-              ? {
-                  scanned_forecasts: watchlistResult.scanned_forecasts,
-                  sent_count: watchlistResult.sent_count,
-                  skipped_count: watchlistResult.skipped_count,
-                  failed_count: watchlistResult.failed_count,
-                  per_user: watchlistResult.per_user.map(u => ({
-                    event_id: u.event_id,
-                    user_id: u.user_id,
-                    forecast_count: u.forecast_count,
-                    status: u.status,
-                    sent: u.sent,
-                    error: u.error,
-                    skip_reason: u.skip_reason,
-                  })),
-                }
-              : null,
-            dry_run: dryRun,
+            retired: true,
+            message: '该能力已下线',
           },
         });
-        logger.info(
-          `业绩预告推送完成。mode=${mode}，已发 ${totalSent}，跳过 ${totalSkipped}，失败 ${totalFailed}` +
-            (dryRun ? '（dry-run，未实际推送）' : '')
-        );
+        logger.info('[EARNINGS_FORECAST_WATCH] 已下线 — 空跑跳过');
       } else if (task.type === 'WEEKLY_REVIEW_EMAIL') {
         // US-065 — 每周一 08:00 发上周复盘邮件（HTML, SMTP via env）。
         // `user_id` 可选 (扫单用户)；`dry_run`=true 仅预演不推送；
@@ -3638,365 +3520,42 @@ class SchedulerService {
             (journalDryRun ? '（dry-run，未实际写表）' : '')
         );
       } else if (task.type === 'AUTO_RECOMMENDATION_LOOP') {
-        const result = await automatedRecommendationLoopService.run({
-          username: parameters.username || 'stock',
-          ...portfolioParams,
-          universe: parameters.universe === 'favorites' ? 'favorites' : 'market',
-          style: ['balanced', 'momentum', 'value', 'low_risk'].includes(parameters.style)
-            ? parameters.style
-            : 'balanced',
-          candidate_limit: this.toPositiveInt(parameters.candidate_limit, 30, 100),
-          candidate_pool_limit: this.toPositiveInt(parameters.candidate_pool_limit, 360, 1000),
-          lookback_days: this.toPositiveInt(parameters.lookback_days, 120, 360),
-          min_bars: this.toPositiveInt(parameters.min_bars, 35, 120),
-          exclude_st:
-            parameters.exclude_st !== undefined
-              ? Boolean(parameters.exclude_st)
-              : parameters.excludeSt !== undefined
-              ? Boolean(parameters.excludeSt)
-              : true,
-          min_market_cap_yi:
-            parameters.min_market_cap_yi !== undefined
-              ? Number(parameters.min_market_cap_yi)
-              : parameters.minMarketCapYi !== undefined
-              ? Number(parameters.minMarketCapYi)
-              : 30,
-          archive_limit: this.toPositiveInt(parameters.archive_limit, 30, 100),
-          verify_signals:
-            parameters.verify_signals !== undefined
-              ? Boolean(parameters.verify_signals)
-              : parameters.verifySignals !== undefined
-              ? Boolean(parameters.verifySignals)
-              : true,
-          run_paper_trading:
-            parameters.run_paper_trading !== undefined
-              ? Boolean(parameters.run_paper_trading)
-              : parameters.runPaperTrading !== undefined
-              ? Boolean(parameters.runPaperTrading)
-              : true,
-          dry_run:
-            parameters.dry_run !== undefined
-              ? Boolean(parameters.dry_run)
-              : parameters.dryRun !== undefined
-              ? Boolean(parameters.dryRun)
-              : false,
-          paper_trade_limit: this.toPositiveInt(parameters.paper_trade_limit, 3, 20),
-          paper_trade_scan_limit: this.toPositiveInt(parameters.paper_trade_scan_limit, 150, 500),
-          min_score: Number(parameters.min_score || parameters.minScore || 72),
-          max_positions: this.toPositiveInt(parameters.max_positions, 8, 30),
-          default_position_pct: Number(
-            parameters.default_position_pct || parameters.defaultPositionPct || 5
-          ),
-          max_position_pct: Number(parameters.max_position_pct || parameters.maxPositionPct || 10),
-          min_trade_amount: Number(
-            parameters.min_trade_amount || parameters.minTradeAmount || 3000
-          ),
-          use_outcome_feedback:
-            parameters.use_outcome_feedback !== undefined
-              ? Boolean(parameters.use_outcome_feedback)
-              : parameters.useOutcomeFeedback !== undefined
-              ? Boolean(parameters.useOutcomeFeedback)
-              : true,
-          use_policy_version_feedback:
-            parameters.use_policy_version_feedback !== undefined
-              ? Boolean(parameters.use_policy_version_feedback)
-              : parameters.usePolicyVersionFeedback !== undefined
-              ? Boolean(parameters.usePolicyVersionFeedback)
-              : true,
-          policy_version_lookback_limit: this.toPositiveInt(
-            parameters.policy_version_lookback_limit || parameters.policyVersionLookbackLimit,
-            120,
-            1000
-          ),
-          use_strategy_experiment_feedback:
-            parameters.use_strategy_experiment_feedback !== undefined
-              ? Boolean(parameters.use_strategy_experiment_feedback)
-              : parameters.useStrategyExperimentFeedback !== undefined
-              ? Boolean(parameters.useStrategyExperimentFeedback)
-              : true,
-          strategy_experiment_min_quality_delta: Number(
-            parameters.strategy_experiment_min_quality_delta ||
-              parameters.strategyExperimentMinQualityDelta ||
-              4
-          ),
-          strategy_experiment_limit: this.toPositiveInt(
-            parameters.strategy_experiment_limit || parameters.strategyExperimentLimit,
-            12,
-            50
-          ),
-          strategy_experiment_pool_limit: this.toPositiveInt(
-            parameters.strategy_experiment_pool_limit || parameters.strategyExperimentPoolLimit,
-            240,
-            1000
-          ),
-          outcome_feedback_lookback_days: this.toPositiveInt(
-            parameters.outcome_feedback_lookback_days || parameters.outcomeFeedbackLookbackDays,
-            365,
-            3650
-          ),
-          outcome_feedback_min_closed_samples: this.toPositiveInt(
-            parameters.outcome_feedback_min_closed_samples ||
-              parameters.outcomeFeedbackMinClosedSamples,
-            5,
-            100
-          ),
-          use_profit_gate:
-            parameters.use_profit_gate !== undefined
-              ? Boolean(parameters.use_profit_gate)
-              : parameters.useProfitGate !== undefined
-              ? Boolean(parameters.useProfitGate)
-              : true,
-          profit_gate_horizon:
-            parameters.profit_gate_horizon || parameters.profitGateHorizon || '5d',
-          profit_gate_min_samples: this.toPositiveInt(
-            parameters.profit_gate_min_samples || parameters.profitGateMinSamples,
-            5,
-            100
-          ),
-          profit_gate_min_quality_score: Number(
-            parameters.profit_gate_min_quality_score || parameters.profitGateMinQualityScore || 45
-          ),
-          use_entry_risk_guard:
-            parameters.use_entry_risk_guard !== undefined
-              ? Boolean(parameters.use_entry_risk_guard)
-              : parameters.useEntryRiskGuard !== undefined
-              ? Boolean(parameters.useEntryRiskGuard)
-              : true,
-          max_daily_new_positions: this.toPositiveInt(
-            parameters.max_daily_new_positions || parameters.maxDailyNewPositions,
-            3,
-            20
-          ),
-          max_daily_new_exposure_pct: Number(
-            parameters.max_daily_new_exposure_pct || parameters.maxDailyNewExposurePct || 12
-          ),
-          max_total_exposure_pct: Number(
-            parameters.max_total_exposure_pct || parameters.maxTotalExposurePct || 60
-          ),
-          max_industry_exposure_pct: Number(
-            parameters.max_industry_exposure_pct || parameters.maxIndustryExposurePct || 25
-          ),
-          min_cash_reserve_pct: Number(
-            parameters.min_cash_reserve_pct || parameters.minCashReservePct || 8
-          ),
-          max_portfolio_drawdown_pct: Number(
-            parameters.max_portfolio_drawdown_pct || parameters.maxPortfolioDrawdownPct || 12
-          ),
-          max_single_stock_volatility_pct: Number(
-            parameters.max_single_stock_volatility_pct ||
-              parameters.maxSingleStockVolatilityPct ||
-              7
-          ),
-          max_position_correlation: Number(
-            parameters.max_position_correlation || parameters.maxPositionCorrelation || 0.82
-          ),
-          max_portfolio_var_pct: Number(
-            parameters.max_portfolio_var_pct || parameters.maxPortfolioVarPct || 10
-          ),
-          min_avg_turnover_yuan: Number(
-            parameters.min_avg_turnover_yuan || parameters.minAvgTurnoverYuan || 30000000
-          ),
-          cooldown_days_after_loss: this.toPositiveInt(
-            parameters.cooldown_days_after_loss || parameters.cooldownDaysAfterLoss,
-            12,
-            120
-          ),
-          block_limit_up:
-            parameters.block_limit_up !== undefined
-              ? Boolean(parameters.block_limit_up)
-              : parameters.blockLimitUp !== undefined
-              ? Boolean(parameters.blockLimitUp)
-              : true,
-          block_limit_down:
-            parameters.block_limit_down !== undefined
-              ? Boolean(parameters.block_limit_down)
-              : parameters.blockLimitDown !== undefined
-              ? Boolean(parameters.blockLimitDown)
-              : true,
-          block_suspended:
-            parameters.block_suspended !== undefined
-              ? Boolean(parameters.block_suspended)
-              : parameters.blockSuspended !== undefined
-              ? Boolean(parameters.blockSuspended)
-              : true,
-          agent_auto_paper_trade:
-            parameters.agent_auto_paper_trade !== undefined
-              ? Boolean(parameters.agent_auto_paper_trade)
-              : parameters.agentAutoPaperTrade !== undefined
-              ? Boolean(parameters.agentAutoPaperTrade)
-              : true,
-          agent_only_auto_paper_trade:
-            parameters.agent_only_auto_paper_trade !== undefined
-              ? Boolean(parameters.agent_only_auto_paper_trade)
-              : parameters.agentOnlyAutoPaperTrade !== undefined
-              ? Boolean(parameters.agentOnlyAutoPaperTrade)
-              : true,
-          agent_only_paper_trade_min_score: Number(
-            parameters.agent_only_paper_trade_min_score ||
-              parameters.agentOnlyPaperTradeMinScore ||
-              parameters.agent_min_score ||
-              parameters.agentMinScore ||
-              72
-          ),
-          agent_only_paper_trade_max_positions: this.toPositiveInt(
-            parameters.agent_only_paper_trade_max_positions ||
-              parameters.agentOnlyPaperTradeMaxPositions ||
-              parameters.max_positions ||
-              parameters.maxPositions,
-            8,
-            30
-          ),
-          agent_only_paper_trade_default_position_pct: Number(
-            parameters.agent_only_paper_trade_default_position_pct ||
-              parameters.agentOnlyPaperTradeDefaultPositionPct ||
-              4
-          ),
-          agent_only_paper_trade_max_position_pct: Number(
-            parameters.agent_only_paper_trade_max_position_pct ||
-              parameters.agentOnlyPaperTradeMaxPositionPct ||
-              8
-          ),
-          agent_only_paper_trade_min_trade_amount: Number(
-            parameters.agent_only_paper_trade_min_trade_amount ||
-              parameters.agentOnlyPaperTradeMinTradeAmount ||
-              parameters.min_trade_amount ||
-              parameters.minTradeAmount ||
-              3000
-          ),
-          submit_agent_analysis:
-            parameters.submit_agent_analysis !== undefined
-              ? Boolean(parameters.submit_agent_analysis)
-              : parameters.submitAgentAnalysis !== undefined
-              ? Boolean(parameters.submitAgentAnalysis)
-              : true,
-          agent_max_count: this.toPositiveInt(parameters.agent_max_count, 5, 10),
-          agent_min_score: Number(parameters.agent_min_score || parameters.agentMinScore || 72),
-          agent_session: parameters.agent_session || parameters.agentSession || 'close',
-          target_date: parameters.target_date || parameters.targetDate || today,
-          task_label: task.name,
-          execution_log_id: executionLog?.id,
-          report_to_feishu:
-            parameters.report_to_feishu !== undefined
-              ? Boolean(parameters.report_to_feishu)
-              : parameters.reportToFeishu !== undefined
-              ? Boolean(parameters.reportToFeishu)
-              : true,
-          record_type: parameters.record_type || parameters.recordType || '全市场荐股闭环',
-        });
-
+        // 批5: AutomatedRecommendationLoopService 已下线 — 全市场自动推荐闭环停用,
+        // 空跑 COMPLETED (待批6 ETF 轮动闭环接入).
+        void parameters;
+        void portfolioParams;
         await this.safeUpdateExecutionLog(executionLog, {
-          total_items: result.generated?.total_candidates || 0,
-          completed_items: result.generated?.analyzed_candidates || 0,
-          failed_items: result.paper_trading?.skipped || 0,
+          total_items: 0,
+          completed_items: 0,
+          failed_items: 0,
           status: 'COMPLETED',
           completed_at: new Date(),
           error_message: null,
+          result_summary: {
+            scenario: 'auto_recommendation_loop',
+            retired: true,
+            message: '该能力已下线',
+          },
         });
-
-        logger.info(
-          `全市场荐股闭环完成。候选 ${result.generated?.analyzed_candidates}/${
-            result.generated?.total_candidates
-          }，归档 ${result.archive?.total}，模拟盘 ${
-            result.paper_trading?.executed ?? result.paper_trading?.planned ?? 0
-          }`
-        );
+        logger.info('[AUTO_RECOMMENDATION_LOOP] 已下线 — 空跑跳过');
       } else if (task.type === 'AI_DAILY_SCREENER') {
-        logger.info('触发 AI_DAILY_SCREENER 任务，使用多因子候选池进行 TradingAgents 深度分析...');
-
-        const candidateLimit = Math.min(
-          Number(parameters.candidate_limit || parameters.limit || 10),
-          30
-        );
-        const universe = parameters.universe === 'market' ? 'market' : 'favorites';
-        const style = ['balanced', 'momentum', 'value', 'low_risk'].includes(parameters.style)
-          ? parameters.style
-          : 'balanced';
-        const targetDate = parameters.target_date || today;
-
-        const candidateResult = await quantRecommendationService.generateRecommendations({
-          universe,
-          style,
-          limit: candidateLimit,
-          lookback_days: Number(parameters.lookback_days || 120),
-          candidate_pool_limit: this.toPositiveInt(parameters.candidate_pool_limit, 240, 1000),
-          exclude_st:
-            parameters.exclude_st !== undefined
-              ? Boolean(parameters.exclude_st)
-              : parameters.excludeSt !== undefined
-              ? Boolean(parameters.excludeSt)
-              : true,
-          min_market_cap_yi:
-            parameters.min_market_cap_yi !== undefined
-              ? Number(parameters.min_market_cap_yi)
-              : parameters.minMarketCapYi !== undefined
-              ? Number(parameters.minMarketCapYi)
-              : 30,
-          include_trend: false,
+        // 批5: QuantRecommendationService 已下线 — 全市场量化候选池不再产出,
+        // 该 AI 筛选任务无候选可提交, 空跑 COMPLETED (待批6 ETF 轮动候选接入).
+        void parameters;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: 0,
+          completed_items: 0,
+          failed_items: 0,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: null,
+          result_summary: {
+            scenario: 'ai_daily_screener',
+            retired: true,
+            message: '该能力已下线',
+          },
         });
-
-        const candidates = candidateResult.recommendations;
-        let count = 0;
-        let failed = 0;
-
-        await this.safeUpdateExecutionLog(executionLog, { total_items: candidates.length });
-
-        for (const candidate of candidates) {
-          try {
-            const res = await aiAdvisorService.analyzeStock(candidate.symbol, targetDate, true);
-            if (res && res.task_id) {
-              const pollingJobOptions = buildAIPollingJobOptions({ taskId: res.task_id });
-              if (!pollingJobOptions) {
-                logger.warn(`跳过股票 ${candidate.symbol} 入队: TradingAgents 返回的 task_id 非法`);
-                failed++;
-                continue;
-              }
-              await aiPollingQueue.add(
-                {
-                  taskId: res.task_id,
-                  symbol: candidate.symbol,
-                  name: candidate.name,
-                  executionLogId: executionLog?.id,
-                  taskLabel: task.name,
-                  quant_score: candidate.score,
-                  quant_factors: candidate.factors,
-                  quant_reasons: candidate.reasons,
-                  quant_warnings: candidate.warnings,
-                  data_quality_score: candidate.data_quality_score,
-                  data_quality_bucket: candidate.data_quality_bucket,
-                  data_quality: candidate.data_quality,
-                  recommendation_style: style,
-                  recommendation_source: universe,
-                  agent_session: parameters.agent_session,
-                },
-                // US-019 / EX-005: jobId/attempts/backoff/retention 统一由 aiPollingEnqueue 单点供给.
-                pollingJobOptions
-              );
-              count++;
-            }
-          } catch (err: any) {
-            logger.error(`提交股票 ${candidate.symbol} 的 AI 分析任务失败:`, err);
-            failed++;
-          }
-        }
-
-        logger.info(
-          `AI_DAILY_SCREENER 候选任务提交完成，候选池 ${candidateResult.analyzed_candidates}/${candidateResult.total_candidates}，成功提交 ${count} 个异步分析任务`
-        );
-
-        // 状态保留为 IN_PROGRESS，由 bull worker 来更新为 COMPLETED 或 FAILED
-        await this.safeUpdateExecutionLog(executionLog, { failed_items: failed });
-        // 如果没有成功提交的任务，说明已经结束了
-        if (count === 0) {
-          await this.safeUpdateExecutionLog(executionLog, {
-            status: 'COMPLETED',
-            completed_at: new Date(),
-          });
-          await feishuTaskReportService.reportTaskExecutionLog(executionLog, {
-            record_type: 'AI定时任务完成',
-            task_type: 'AI_DAILY_SCREENER',
-            result: { message: '无候选股票成功提交 AI 分析任务', submitted: count, failed },
-          });
-        }
+        logger.info('[AI_DAILY_SCREENER] 已下线 — 空跑跳过');
       } else if (task.type === 'CLEANUP_OLD_DATA') {
         // US-097 — 每周日凌晨 3 点跑旧数据清理:
         //   - quant_backtest_tasks + cascade results/trades (默认 90 天)
@@ -5430,22 +4989,8 @@ class SchedulerService {
           );
         }
       } else if (task.type === 'MARKET_SENTIMENT_INDEX_SYNC') {
-        // BJ-8 (2026-06-24): 工作日 17:30 全市场情绪指数计算 (US-057).
-        // computeAndPersist 内部 4 维度 safeAwait fallback (per-dim 死单独不阻塞),
-        // 任一全死时 limit_diff 仍能算 (= 0-0), 写 index_value=50 中性. fail-OPEN.
-        /* eslint-disable @typescript-eslint/no-var-requires */
-        const { marketSentimentIndexService } = require('./MarketSentimentIndexService');
-        /* eslint-enable @typescript-eslint/no-var-requires */
-        try {
-          const result = await marketSentimentIndexService.computeAndPersist({});
-          logger.info(
-            `[MARKET_SENTIMENT_INDEX_SYNC] trade_date=${result.trade_date} index_value=${result.index_value.toFixed(2)} persisted=${!result.dry_run}`
-          );
-        } catch (e: any) {
-          // 整体异常仍 warn 不抛 (与 ETF_FLOW_SYNC 同款 fail-OPEN 模式),
-          // 让 cron 标 success, 失败由 DATA_FRESHNESS_CHECK 18:30 监测 + 告警.
-          logger.warn(`[MARKET_SENTIMENT_INDEX_SYNC] failed: ${e?.message ?? e}`);
-        }
+        // 批5: MarketSentimentIndexService 已下线 — 保留 task 分支避免存量任务报错, 空跑 COMPLETED.
+        logger.info('[MARKET_SENTIMENT_INDEX_SYNC] 已下线 — 空跑跳过');
       } else if (task.type === 'DATA_FRESHNESS_CHECK') {
         // BF-3 (2026-06-23): 工作日 18:30 检查 5 项数据陈旧度 + 命中阈值推 Lark + 写 RiskAlert MEDIUM
         // fail-OPEN: runDataFreshnessCheck 内部 per-item try/catch, 整体不抛.

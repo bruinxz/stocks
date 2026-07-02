@@ -9,7 +9,6 @@ import { quantBacktestQueue } from '../jobs/quantBacktestQueue';
 import { logger } from '../utils/logger';
 import { riskThresholdStabilityService } from './RiskThresholdStabilityService';
 import { taskParameterAuditService, TaskParameterAuditOperator } from './TaskParameterAuditService';
-import { fieldGateAdjustmentAttributionService } from './FieldGateAdjustmentAttributionService';
 import { runtimeSchemaHealthService } from './RuntimeSchemaHealthService';
 
 type HealthLevel = 'healthy' | 'warning' | 'critical';
@@ -900,15 +899,9 @@ export class TaskAutomationHealthService {
       tasks.find(task => task.type === 'AUTO_RECOMMENDATION_LOOP') ||
       tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE') ||
       null;
-    const params =
-      sourceTask?.parameters && typeof sourceTask.parameters === 'object'
-        ? sourceTask.parameters
-        : {};
-    return fieldGateAdjustmentAttributionService.build(snapshots, {
-      source: params.risk_threshold_field_gate_update_source,
-      changed_at: params.risk_threshold_stability_updated_at || sourceTask?.updated_at,
-      task_name: sourceTask?.name,
-    });
+    // 批5: FieldGateAdjustmentAttributionService 已下线 — 返回中性 null (归因能力停用).
+    void sourceTask;
+    return null;
   }
 
   private buildRiskThresholdFieldGateAdvice(snapshots: any[] = [], config: any = {}) {

@@ -30,26 +30,8 @@ export interface SentimentBaselineSource {
 
 export const PRODUCTION_SENTIMENT_BASELINE_SOURCE: SentimentBaselineSource = {
   async getMarketSentimentPercentile(_asOf) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { marketSentimentIndexService } = require('../../MarketSentimentIndexService');
-      const latest = await marketSentimentIndexService.getLatest?.();
-      // 不同实现字段名可能不同, 兜底找一个数值字段.
-      if (!latest) return null;
-      const candidates = [
-        latest.percentile,
-        latest.sentiment_percentile,
-        latest.percentile_60d,
-        latest.score,
-      ];
-      for (const c of candidates) {
-        const n = Number(c);
-        if (Number.isFinite(n)) return Math.max(0, Math.min(100, n));
-      }
-      return null;
-    } catch (_e) {
-      return null;
-    }
+    // 批5: 市场情绪指数源已下线 — baseline 不可用, 恒返 null.
+    return null;
   },
 };
 

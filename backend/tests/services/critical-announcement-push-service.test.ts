@@ -614,7 +614,7 @@ async function testUserAlertsDryRunNoWrite(): Promise<void> {
 async function testEmergencyConfGateConstants(): Promise<void> {
   // PR-W (2026-06-30): EMERGENCY_CONF_GATE 默认改 false 让飞书推送恢复. 用户实测
   // 明确反馈 "飞书没收到通知" → PR-L 反向防御 over-fix. 反向 conf 修复改走
-  // PR-M3 SourceTypeWinRateAdjuster (已部署, 数据驱动调整每个 source 的 conf).
+  // PR-M3 SourceTypeWinRateAdjuster (批5 已下线; 反向 conf 修复能力停用, gate 常量本身不受影响).
   assertEqual('PR-W: EMERGENCY_CONF_GATE 默认 false (PR-L 解除)', EMERGENCY_CONF_GATE, false);
   assertEqual('PR-L: threshold=70 (保留供未来手动开启)', EMERGENCY_CONF_GATE_THRESHOLD, 70);
   assertEqual(

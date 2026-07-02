@@ -50,7 +50,7 @@ import {
   TOPIC_SUBCATEGORIES,
   NLP_ENGINES,
   SubtopicCategory,
-} from '../../../src/services/EastMoneyQATopicService';
+} from '../../../src/services/qa/qaTopicClassification';
 import { StockQARow } from '../../../src/data/sources/StockQAClient';
 import { EastMoneyQAStat } from '../../../src/models/EastMoneyQAStat';
 

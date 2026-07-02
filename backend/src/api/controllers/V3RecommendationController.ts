@@ -55,7 +55,6 @@ import {
   type RiskRulesContext,
 } from '../../services/analysis-engine/v3DetailBuilder';
 // PR-M3 (2026-06-29) — confidence 反向修正 (PR-K hotfix)
-import { sourceTypeWinRateAdjuster } from '../../services/SourceTypeWinRateAdjuster';
 // PR-O5 (2026-06-30) — 题材发酵 5 阶段 detector enrichSignal 透传
 import {
   FERMENTATION_PHASE_LABELS,
@@ -1110,16 +1109,7 @@ class V3RecommendationController {
       source_win_rate: null,
       source_sample_size: 0,
     };
-    try {
-      confAdjustment = await sourceTypeWinRateAdjuster.adjust(
-        signal.confidence_score == null ? null : Number(signal.confidence_score),
-        String(signal.source_type || '')
-      );
-    } catch (err: any) {
-      logger.warn(
-        `v3-recommendations conf adjustment failed for ${symbol}: ${err?.message ?? err}`
-      );
-    }
+    // 批5: SourceTypeWinRateAdjuster 已下线 — 保留 raw = adjusted 中性值 (不再反向修正).
 
     // PR-O5 (2026-06-30) — 题材发酵相位 enrichment.
     // theme_phase 缺失 → 字段 null, 前端 badge 自动隐藏 (向前兼容).

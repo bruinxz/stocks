@@ -5,7 +5,6 @@ import {
   AnalysisDimension,
 } from '../../services/AIAdvisorService';
 import { AIStockAnalysisReport } from '../../models/AIStockAnalysisReport';
-import { kolAggregatorService } from '../../services/KOLAggregatorService';
 import { logger } from '../../utils/logger';
 import { Stock } from '../../models/Stock';
 import { Op } from 'sequelize';
@@ -18,15 +17,6 @@ import {
   technicalAnalysisService,
   normalizeLookbackDays,
 } from '../../services/TechnicalAnalysisService';
-import {
-  strategyCopilotService,
-  CopilotIntent,
-  COPILOT_INTENTS,
-  buildPromptContext,
-  buildPromptText,
-  normalizeIntent,
-  buildConversationId,
-} from '../../services/StrategyCopilotService';
 import { marketBriefService } from '../../services/MarketBriefService';
 import { TRADING_AGENTS_BASE_URL } from '../../config/externalServices';
 
@@ -560,77 +550,9 @@ export class AIAdvisorController {
    *
    * **不抛 500 给前端**: refresh 失败时降级为已落库数据 + warning 字段。
    */
-  async getKOLOpinions(req: Request, res: Response, next: NextFunction) {
-    try {
-      const stockCodeQuery = (req.query.stock_code as string | undefined)?.trim();
-      if (!stockCodeQuery) {
-        return res.status(400).json({ success: false, message: 'stock_code query 参数不能为空' });
-      }
-      const limit = Math.min(
-        Math.max(parseInt((req.query.limit as string) || '10', 10) || 10, 1),
-        50
-      );
-      const refresh = String(req.query.refresh || '').toLowerCase() === 'true';
-
-      // 把 sh.600519 / 股票名称 转成 6 位 pure code
-      let pureCode: string;
-      if (/^\d{6}$/.test(stockCodeQuery)) {
-        pureCode = stockCodeQuery;
-      } else {
-        const resolved = await this.resolveTicker(stockCodeQuery);
-        if (!resolved) {
-          return res
-            .status(404)
-            .json({ success: false, message: `无法识别股票: ${stockCodeQuery}` });
-        }
-        // resolved 形如 sh.600519 / sz.000001 → 取最后 6 位
-        const m = resolved.match(/(\d{6})$/);
-        if (!m) {
-          return res.status(400).json({
-            success: false,
-            message: `无法从 ${resolved} 中提取 6 位股票代码`,
-          });
-        }
-        pureCode = m[1];
-      }
-
-      let warning: string | undefined;
-      let refreshed = false;
-      if (refresh) {
-        try {
-          const aggResult = await kolAggregatorService.aggregateForStock(pureCode, {
-            limit,
-          });
-          refreshed = aggResult.persisted;
-          if (aggResult.error) {
-            warning = `刷新失败 (已降级为已落库数据): ${aggResult.error}`;
-          }
-        } catch (refreshError) {
-          // catch-all fallback (service 一般自己 catch, 这里是双重防御)
-          warning = `刷新失败 (已降级): ${(refreshError as Error).message}`;
-          logger.warn(
-            `getKOLOpinions refresh(${pureCode}) outer-catch: ${(refreshError as Error).message}`
-          );
-        }
-      }
-
-      // 读取已落库数据 (refresh 落库后也走同一路径，保证 UI 一致性)
-      const opinions = await kolAggregatorService.listOpinions(pureCode, limit);
-
-      return res.json({
-        success: true,
-        data: {
-          stock_code: pureCode,
-          total: opinions.length,
-          opinions,
-          refreshed,
-          warning,
-        },
-      });
-    } catch (error: any) {
-      logger.error('getKOLOpinions 失败:', error);
-      return res.status(500).json({ success: false, message: error.message });
-    }
+  async getKOLOpinions(_req: Request, res: Response, _next: NextFunction) {
+    // 批5: KOLAggregatorService 已下线 — 该能力已停用.
+    return res.status(410).json({ success: false, message: '该能力已下线' });
   }
 
   // ---------------------------------------------------------------------------
@@ -693,246 +615,22 @@ export class AIAdvisorController {
   }
 
   // ---------------------------------------------------------------------------
-  //  US-062 — AI 策略人机协同 (Copilot)
+  //  US-062 — AI 策略人机协同 (Copilot) — 批5: StrategyCopilotService 已下线
   // ---------------------------------------------------------------------------
 
-  /**
-   * POST /api/ai/strategy-copilot
-   *
-   * 用户在 /workspace/lab 右下角聊天面板输入问题 → 同步返回 reply。
-   *
-   * Body:
-   *   - prompt:           用户问句 (必填，trim 后不可为空)
-   *   - strategy_key:     当前选中策略 (可选, 影响 prompt 上下文)
-   *   - intent_override:  显式指定意图 (可选, UI 主动选时传)
-   *   - dry_run:          不写表 (默认 false)
-   *   - task_label:       任务来源标签
-   *   - conversation_id:  续接同一对话上下文 (前端多轮对话用)
-   *
-   * Returns:
-   *   { success: true, data: CopilotResponse }
-   */
-  async askStrategyCopilot(req: Request, res: Response, _next: NextFunction) {
-    try {
-      const body = req.body || {};
-      const promptInput = typeof body.prompt === 'string' ? body.prompt.trim() : '';
-      if (!promptInput) {
-        return res.status(400).json({ success: false, message: 'prompt 不能为空' });
-      }
-
-      const userId = (req as any).user?.id;
-      const result = await strategyCopilotService.askCopilot(promptInput, {
-        strategy_key:
-          typeof body.strategy_key === 'string' && body.strategy_key.trim().length > 0
-            ? body.strategy_key.trim()
-            : undefined,
-        intent_override:
-          typeof body.intent_override === 'string'
-            ? (body.intent_override as CopilotIntent)
-            : undefined,
-        dry_run: body.dry_run === true,
-        task_label: typeof body.task_label === 'string' ? body.task_label : undefined,
-        user_id: typeof userId === 'number' ? userId : undefined,
-        conversation_id:
-          typeof body.conversation_id === 'string' && body.conversation_id.trim().length > 0
-            ? body.conversation_id.trim()
-            : undefined,
-      });
-
-      return res.json({ success: true, data: result });
-    } catch (error: any) {
-      logger.error('askStrategyCopilot 失败:', error);
-      return res.status(500).json({ success: false, message: error.message });
-    }
+  /** POST /api/ai/strategy-copilot — 批5: 该能力已下线 */
+  async askStrategyCopilot(_req: Request, res: Response, _next: NextFunction) {
+    return res.status(410).json({ success: false, message: '该能力已下线' });
   }
 
-  /**
-   * GET /api/ai/strategy-copilot/stream — SSE 流式返回
-   *
-   * Query:
-   *   - prompt:         用户问句 (必填)
-   *   - strategy_key:   当前选中策略 (可选)
-   *   - intent_override: 显式意图 (可选)
-   *   - task_label:     任务来源标签
-   *   - conversation_id: 续接同一对话 (可选)
-   *
-   * SSE events:
-   *   - event: status,    data: {phase: "loading_context", strategy_key}
-   *   - event: context,   data: {strategy, backtests}
-   *   - event: status,    data: {phase: "calling_ai"}
-   *   - event: payload,   data: <raw chunk> (上游 SSE 透传, 若可用)
-   *   - event: completed, data: <CopilotResponse>
-   *   - event: error,     data: {message}
-   *
-   * NOTE: 与 streamSingleStockAnalysis 同款 — EventSource 无法方便传 Bearer Header,
-   * 故此 endpoint 不挂 auth (与 ai.routes.ts /analyze/stream 一致)。
-   */
-  async streamStrategyCopilot(req: Request, res: Response, _next: NextFunction) {
-    try {
-      const promptInput =
-        typeof req.query.prompt === 'string' ? (req.query.prompt as string).trim() : '';
-      if (!promptInput) {
-        return res.status(400).json({ success: false, message: 'prompt 不能为空' });
-      }
-      const strategyKey =
-        typeof req.query.strategy_key === 'string' &&
-        (req.query.strategy_key as string).trim().length > 0
-          ? (req.query.strategy_key as string).trim()
-          : null;
-      const intentOverride =
-        typeof req.query.intent_override === 'string'
-          ? (req.query.intent_override as CopilotIntent)
-          : undefined;
-      const taskLabel = (req.query.task_label as string) || 'lab_copilot_stream';
-      const conversationIdRaw =
-        typeof req.query.conversation_id === 'string'
-          ? (req.query.conversation_id as string).trim()
-          : '';
-
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-      res.flushHeaders?.();
-
-      const sendEvent = (event: string, data: any) => {
-        res.write(`event: ${event}\n`);
-        res.write(`data: ${JSON.stringify(data)}\n\n`);
-      };
-
-      const intent = normalizeIntent(promptInput, intentOverride);
-      const conversationId = conversationIdRaw || buildConversationId(new Date());
-
-      sendEvent('status', {
-        phase: 'loading_context',
-        strategy_key: strategyKey,
-        intent,
-        conversation_id: conversationId,
-      });
-
-      // 先发 context 让 UI 立刻显示策略元数据 + 回测摘要，再等 AI 回复
-      let context: { strategy: any; backtests: any[] } = { strategy: null, backtests: [] };
-      try {
-        context = await strategyCopilotService.loadContext(strategyKey);
-      } catch (ctxErr: any) {
-        logger.warn(`streamStrategyCopilot loadContext failed: ${ctxErr.message}`);
-      }
-      sendEvent('context', context);
-
-      sendEvent('status', { phase: 'calling_ai' });
-
-      // 尝试透传上游 TradingAgents SSE 流；若上游不支持 stream 模式，降级为同步路径
-      try {
-        const promptContext = buildPromptContext({
-          strategy: context.strategy,
-          backtests: context.backtests,
-          user_prompt: promptInput,
-          intent,
-        });
-        const promptText = buildPromptText(promptContext);
-
-        const streamResponse = await axios
-          .get(`${TRADING_AGENTS_URL}/api/strategy-copilot/stream`, {
-            responseType: 'stream',
-            timeout: 600000, // 10 分钟; copilot 对话比 K 线解读快但仍可能慢
-            headers: { Accept: 'text/event-stream' },
-            params: {
-              prompt: promptText,
-              intent,
-              strategy_key: strategyKey || undefined,
-            },
-          })
-          .catch((err: any) => {
-            // 上游不支持 stream 或不可达 → 降级同步路径
-            logger.warn(
-              `TradingAgents Copilot SSE unavailable, falling back to sync: ${err.message}`
-            );
-            return null;
-          });
-
-        if (streamResponse) {
-          let streamedBuffer = '';
-          streamResponse.data.on('data', (chunk: Buffer) => {
-            const text = chunk.toString('utf8');
-            streamedBuffer += text;
-            const events = streamedBuffer.split('\n\n');
-            streamedBuffer = events.pop() || '';
-            for (const evt of events) {
-              const dataLine = evt.split('\n').find(line => line.startsWith('data:'));
-              if (!dataLine) continue;
-              const payloadStr = dataLine.replace(/^data:\s*/, '');
-              try {
-                sendEvent('payload', JSON.parse(payloadStr));
-              } catch {
-                sendEvent('payload', { raw: payloadStr });
-              }
-            }
-          });
-
-          await new Promise<void>(resolve => {
-            streamResponse.data.on('end', () => resolve());
-            streamResponse.data.on('error', (err: any) => {
-              logger.warn(`Upstream Copilot SSE error: ${err.message}`);
-              resolve();
-            });
-            req.on('close', () => {
-              streamResponse.data.destroy();
-              resolve();
-            });
-          });
-        }
-
-        // 最终一次 sync 调用拉回 final structured result + 落库
-        sendEvent('status', { phase: 'finalizing' });
-        const userId = (req as any).user?.id;
-        const finalResult = await strategyCopilotService.askCopilot(promptInput, {
-          strategy_key: strategyKey || undefined,
-          intent_override: intentOverride,
-          task_label: taskLabel,
-          user_id: typeof userId === 'number' ? userId : undefined,
-          conversation_id: conversationId,
-        });
-        sendEvent('completed', finalResult);
-        res.end();
-      } catch (innerErr: any) {
-        logger.error('streamStrategyCopilot upstream error:', innerErr);
-        sendEvent('error', { message: innerErr.message || '上游 SSE 失败' });
-        res.end();
-      }
-    } catch (error: any) {
-      logger.error('streamStrategyCopilot 失败:', error);
-      if (!res.headersSent) {
-        res.status(500).json({ success: false, message: error.message });
-      } else {
-        try {
-          res.write(`event: error\n`);
-          res.write(`data: ${JSON.stringify({ message: error.message })}\n\n`);
-          res.end();
-        } catch {
-          /* ignore */
-        }
-      }
-    }
+  /** GET /api/ai/strategy-copilot/stream — 批5: 该能力已下线 */
+  async streamStrategyCopilot(_req: Request, res: Response, _next: NextFunction) {
+    return res.status(410).json({ success: false, message: '该能力已下线' });
   }
 
-  /**
-   * GET /api/ai/strategy-copilot/context?strategy_key=...&lookback=5
-   *
-   * 仅返回 (strategy, backtests) 上下文供 UI 在打开聊天面板时立即显示
-   * "你现在选中的策略 + 它最近 5 次回测" 等。不调远端 AI。
-   */
-  async getStrategyCopilotContext(req: Request, res: Response, _next: NextFunction) {
-    try {
-      const strategyKey = (req.query.strategy_key as string | undefined)?.trim() || null;
-      const lookback = req.query.lookback;
-      const context = await strategyCopilotService.loadContext(
-        strategyKey,
-        lookback === undefined ? undefined : Number(lookback)
-      );
-      return res.json({ success: true, data: context });
-    } catch (error: any) {
-      logger.error('getStrategyCopilotContext 失败:', error);
-      return res.status(500).json({ success: false, message: error.message });
-    }
+  /** GET /api/ai/strategy-copilot/context — 批5: 该能力已下线 */
+  async getStrategyCopilotContext(_req: Request, res: Response, _next: NextFunction) {
+    return res.status(410).json({ success: false, message: '该能力已下线' });
   }
 
   /**

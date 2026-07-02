@@ -673,7 +673,7 @@ function makeInput(overrides: Partial<OpportunityInput> = {}): OpportunityInput 
   // ==========================================================================
   console.log('\n[31] PR-W: EMERGENCY_CONF_GATE 解除 — conf>=70 不再拦截 (PR-L 行为已通过 PR-M3 取代)...');
   // PR-W (2026-06-30): 用户实测 prod 反馈 "飞书没收到通知". PR-L gate=true 是 over-fix.
-  // 反向 conf 修复改走 PR-M3 SourceTypeWinRateAdjuster (已部署). gate=false 后 conf=80
+  // 反向 conf 修复原走 PR-M3 SourceTypeWinRateAdjuster (批5 已下线). gate=false 后 conf=80
   // 等正常推送, 不再 skip.
   process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK = 'https://feishu.test/biz';
   const ds31 = new FakeDS({});

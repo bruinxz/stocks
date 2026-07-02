@@ -17,7 +17,6 @@ import { RealtimeQuote } from '../../models/RealtimeQuote';
 import { User } from '../../models/User';
 import { RecommendationTradeOutcome } from '../../models/RecommendationTradeOutcome';
 import { SizingDecisionAudit } from '../../models/SizingDecisionAudit';
-import { quantRecommendationService } from '../../services/QuantRecommendationService';
 import { aiInvestmentSignalService } from '../../services/AIInvestmentSignalService';
 import { feishuTaskReportService } from '../../services/FeishuTaskReportService';
 import { marketEnvironmentService } from '../../services/MarketEnvironmentService';
@@ -34,7 +33,6 @@ import {
   normalizeSizingPolicyConfig,
   SizingDecision,
 } from '../PositionSizingPolicy';
-import { strategyKellyStatsService } from '../../services/StrategyKellyStatsService';
 import { equityCurveGovernorService } from '../../services/governor/EquityCurveGovernorService';
 import { metaLabelService } from '../../services/meta/MetaLabelService';
 import { executionFeasibilityService } from '../../services/execution/ExecutionFeasibilityService';
@@ -1978,12 +1976,9 @@ class PaperTradingAutomationService {
         );
         const regimeForMeta = environmentPolicy.market_regime || 'range';
         // capturedEvDecision 已在外层 hoisted (line 1878 之上), 这里不再 redeclare.
-        let kellyForMeta: { win_rate?: number; payoff_ratio?: number } | null = null;
-        if (strategyKeyForMeta && strategyKeyForMeta !== 'unknown') {
-          kellyForMeta = await strategyKellyStatsService
-            .getStats(strategyKeyForMeta)
-            .catch(() => null);
-        }
+        // 批5: StrategyKellyStatsService 已下线 — kellyForMeta 保持 null, 下游用中性默认值.
+        const kellyForMeta: { win_rate?: number; payoff_ratio?: number } | null = null;
+        void strategyKeyForMeta;
         // Sprint 28: 从 environmentPolicy.market_environment 抽真实 breadth + 波动率
         // Sprint 34 (短板 #2a 真生效): 优先用真实 benchmark_atr_14d_pct (Wilder ATR),
         // 缺数据时 fallback 到 drawdown 代理 (向后兼容).
@@ -2443,20 +2438,12 @@ class PaperTradingAutomationService {
           // 仅在用户主动启用 vol_target/atr_based/kelly 时才计算（节省开销）
 
           // Kelly 模式：从 outcome 聚合 winRate/payoff/sample
-          let kellyStats = null;
-          if (sizingPolicy.method === 'kelly') {
-            const strategyKey =
-              (signal as any)?.metadata?.strategy_key ||
-              (signal as any)?.metadata?.signal_metadata?.strategy_key ||
-              null;
-            if (strategyKey) {
-              // Batch P (2026-06-17, E1): 透传 portfolio_id, Kelly 系数按盘统计
-              // 不再让一个盘差表现污染所有盘的 sizing.
-              kellyStats = await strategyKellyStatsService
-                .getStats(strategyKey, undefined, portfolio.id)
-                .catch(() => null);
-            }
-          }
+          // 批5: StrategyKellyStatsService 已下线 — kellyStats 保持 null, Kelly sizing 退回未加权默认.
+          const kellyStats: {
+            win_rate?: number;
+            payoff_ratio?: number;
+            sample_size?: number;
+          } | null = null;
 
           // Sprint 40 (优先级 #5): 给 sizing 注入真实个股 20 日年化波动率 + 14 日 ATR.
           // 之前 vol_annualized/atr 都传 undefined → vol_target/atr_based sizing 退化
@@ -3661,23 +3648,12 @@ class PaperTradingAutomationService {
         50
       );
 
-      generated = await quantRecommendationService.generateRecommendations({
-        user_id: portfolio.user_id,
-        universe,
-        style,
-        limit: candidateLimit,
-        lookback_days: toPositiveInt(options.lookback_days, 120, 3650),
-        candidate_pool_limit: toPositiveInt(
-          options.candidate_pool_limit,
-          universe === 'market'
-            ? Math.max(candidateLimit * 12, 240)
-            : Math.max(candidateLimit * 6, 60),
-          1000
-        ),
-        exclude_st: true,
-        min_market_cap_yi: 30,
-        include_trend: true,
-      });
+      // 批5: 旧全市场推荐已下线, 待批6 ETF 轮动候选接入
+      // (原 quantRecommendationService.generateRecommendations 已删除, 暂产出空候选)
+      void universe;
+      void style;
+      void candidateLimit;
+      generated = { recommendations: [], as_of: new Date().toISOString() };
 
       archive = await aiInvestmentSignalService.archiveQuantRecommendations({
         candidates: generated.recommendations || [],

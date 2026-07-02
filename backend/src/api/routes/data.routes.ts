@@ -22,7 +22,6 @@ const authController = new AuthController();
 
 router.get('/health-status', authController.authenticate, dataController.getHealthStatus);
 router.get('/system-topology', authController.authenticate, dataController.getSystemTopology);
-router.get('/market-breadth', authController.authenticate, dataController.getMarketBreadth);
 router.get('/quality-deep-check', authController.authenticate, dataController.getQualityDeepCheck);
 router.get('/dragon-tiger', authController.authenticate, dataController.listDragonTiger);
 router.get('/etf-flow', authController.authenticate, dataController.listEtfFlow);

@@ -15,8 +15,6 @@ import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { paperTradingAutomationService } from '../portfolio/internal/PaperTradingAutomationService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
-import { recommendationLoopPolicySnapshotService } from './RecommendationLoopPolicySnapshotService';
-import { budgetPolicyVersionSnapshotService } from './BudgetPolicyVersionSnapshotService';
 import { buildTradePolicyExplain } from './TradePolicyExplainService';
 import { normalizeSymbol, extractMarket } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
@@ -30,7 +28,6 @@ import { classifyTradeRootCause, TradeRootCauseInput } from './TradeRootCauseCla
 // Phase 5+: 自动生成事后复盘 (亏损/wrong_entry/wrong_regime 等触发)
 import { tradePostmortemService } from './TradePostmortemService';
 // Phase 2+: Kelly sizing 统计聚合（写新 outcome 后 invalidate 缓存）
-import { strategyKellyStatsService } from './StrategyKellyStatsService';
 
 export interface RecommendationTradeOutcomeRefreshOptions {
   user_id?: number;
@@ -975,12 +972,8 @@ export class RecommendationTradeOutcomeService {
           .filter((value): value is string => Boolean(value))
       )
     );
-    if (loopRunIds.length > 0) {
-      await recommendationLoopPolicySnapshotService.refreshOutcomeMetrics({
-        loop_run_ids: loopRunIds,
-        limit: Math.max(loopRunIds.length, 1),
-      });
-    }
+    // 批5: RecommendationLoopPolicySnapshotService 已下线 — 快照刷新副作用移除.
+    void loopRunIds;
 
     return result;
   }
@@ -1596,16 +1589,8 @@ export class RecommendationTradeOutcomeService {
       strong_outcome: strongOutcome,
     });
 
-    const policyDashboard = await recommendationLoopPolicySnapshotService
-      .getDashboard({
-        username: options.username,
-        universe: 'market',
-        limit: 120,
-      } as any)
-      .catch(error => {
-        logger.warn(`读取策略版本优化建议失败: ${error?.message || error}`);
-        return null;
-      });
+    // 批5: RecommendationLoopPolicySnapshotService 已下线 — promotion 建议不再可用.
+    const policyDashboard: any = null;
     const promotion = policyDashboard?.promotion || null;
     const nextPolicy = {
       recommended_style: promotion?.recommended_style || 'balanced',
@@ -1690,17 +1675,8 @@ export class RecommendationTradeOutcomeService {
         base_version: rawBudgetPolicyVersion,
       });
     }
+    // 批5: BudgetPolicyVersionSnapshotService 已下线 — version intelligence 不再可用.
     let budgetPolicyVersionIntelligence: any = null;
-    try {
-      budgetPolicyVersionIntelligence =
-        await budgetPolicyVersionSnapshotService.getVersionIntelligence({
-          current_version: budgetPolicyVersion,
-          limit: 160,
-          min_closed_count: 3,
-        });
-    } catch (error: any) {
-      logger.warn(`读取预算权重持久化版本智能失败: ${error?.message || error}`);
-    }
     let rollbackPlan = asPlainObject(budgetPolicyVersionIntelligence?.rollback_plan);
     rollbackPlan = this.applyBudgetPolicyRollbackAuditBlock(
       rollbackPlan,
@@ -1721,12 +1697,7 @@ export class RecommendationTradeOutcomeService {
         },
         base_version: budgetPolicyVersion,
       });
-      budgetPolicyVersionIntelligence =
-        await budgetPolicyVersionSnapshotService.getVersionIntelligence({
-          current_version: budgetPolicyVersion,
-          limit: 160,
-          min_closed_count: 3,
-        });
+      // 批5: BudgetPolicyVersionSnapshotService 已下线 — 回滚后不再重取 intelligence.
     }
     budgetPolicyVersion = this.attachBudgetPolicyVersionGuard(
       budgetPolicyVersion,
@@ -1739,13 +1710,8 @@ export class RecommendationTradeOutcomeService {
       (budgetPolicyVersionIntelligence as any).rollback_plan = rollbackPlan;
     }
     (budgetPolicyVersion as any).rollback_audit = budgetPolicyRollbackAudit;
-    const budgetPolicyVersionSnapshot = await budgetPolicyVersionSnapshotService.recordVersion(
-      budgetPolicyVersion,
-      {
-        username: options.username,
-        source: 'autonomous_optimization_dashboard',
-      }
-    );
+    // 批5: BudgetPolicyVersionSnapshotService 已下线 — 版本快照落库副作用移除.
+    const budgetPolicyVersionSnapshot: any = null;
     if (budgetPolicyVersionSnapshot) {
       (budgetPolicyVersion as any).snapshot_record_id = budgetPolicyVersionSnapshot.id;
       (budgetPolicyVersion as any).snapshot_recorded_at = budgetPolicyVersionSnapshot.updated_at;
@@ -3336,14 +3302,12 @@ export class RecommendationTradeOutcomeService {
     });
     if (existing) {
       await existing.update(payload);
-      // Phase 2+ Kelly: invalidate 缓存让下次 sizing 用最新统计
-      strategyKellyStatsService.invalidateAll();
+      // 批5: StrategyKellyStatsService 已下线 — 缓存失效副作用移除.
       return existing;
     }
 
     const created = await RecommendationTradeOutcome.create(payload as any);
-    // Phase 2+ Kelly: invalidate 缓存让下次 sizing 用最新统计
-    strategyKellyStatsService.invalidateAll();
+    // 批5: StrategyKellyStatsService 已下线 — 缓存失效副作用移除.
     return created;
   }
 

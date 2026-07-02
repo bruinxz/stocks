@@ -449,31 +449,6 @@ router.put('/sizing-policy', authController.authenticate, riskController.updateS
 router.get('/sizing-audit', authController.authenticate, riskController.getSizingAudit);
 
 /**
- * @swagger
- * /api/risk/kill-switch-status:
- *   get:
- *     summary: Phase 4+ 策略熔断状态评估
- *     parameters:
- *       - in: query
- *         name: dry_run
- *         schema: { type: string, default: "true" }
- *         description: "true (默认) = 只评估不真正禁用；false = 触发的策略立即禁用"
- *     responses:
- *       200: { description: 评估报告 + 触发策略列表 }
- */
-router.get('/kill-switch-status', authController.authenticate, riskController.getKillSwitchStatus);
-
-/**
- * @swagger
- * /api/risk/market-top-status:
- *   get:
- *     summary: Phase 8 市场顶部前瞻预警
- *     responses:
- *       200: { description: 5 维信号 + top_score + level }
- */
-router.get('/market-top-status', authController.authenticate, riskController.getMarketTopStatus);
-
-/**
  * @openapi
  * /api/risk/analysis-engine-config:
  *   get:

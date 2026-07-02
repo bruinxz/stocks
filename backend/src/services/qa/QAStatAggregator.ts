@@ -47,7 +47,7 @@ import {
   TOPIC_SUBCATEGORY_PRIORITY,
   SUBTOPIC_VALUES,
   NLP_ENGINES,
-} from '../EastMoneyQATopicService';
+} from './qaTopicClassification';
 import { logger } from '../../utils/logger';
 
 // ---------------------------------------------------------------------------

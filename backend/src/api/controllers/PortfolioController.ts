@@ -568,34 +568,6 @@ export class PortfolioController {
   }
 
   /**
-   * GET /api/portfolio/behavior-bias
-   * Phase 8: 4 种行为偏差诊断 (追涨/过度交易/套牢/落袋为安过早) + health_score
-   *
-   * Query: ?lookback_days=90
-   */
-  async getBehaviorBias(req: Request, res: Response) {
-    try {
-      const user_id = (req as any).user?.id;
-      if (!user_id) {
-        return res.status(401).json({ success: false, message: '未登录' });
-      }
-      const lookbackDays = req.query.lookback_days
-        ? Math.max(7, Math.min(365, parseInt(String(req.query.lookback_days), 10)))
-        : 90;
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { behaviorBiasDetector } = require('../../services/BehaviorBiasDetector');
-      const report = await behaviorBiasDetector.getReport(user_id, lookbackDays);
-      res.json({ success: true, data: report });
-    } catch (error: any) {
-      logger.error('获取 behavior bias 失败:', error);
-      res.status(500).json({
-        success: false,
-        message: error?.message || '获取 behavior bias 失败',
-      });
-    }
-  }
-
-  /**
    * GET /api/portfolio/:id/attribution/daily?date=YYYY-MM-DD
    * US-084 [PM-007] — DailyAttribution route + controller.
    *

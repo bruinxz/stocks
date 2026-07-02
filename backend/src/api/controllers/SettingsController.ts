@@ -3,7 +3,6 @@ import {
   dailyTradingDigestService,
   NotificationChannelsConfig,
 } from '../../services/DailyTradingDigestService';
-import { earningsForecastWatcher } from '../../services/EarningsForecastWatcher';
 import { weeklyReviewReportService } from '../../services/WeeklyReviewReportService';
 import { weChatOAService } from '../../services/WeChatOAService';
 import { realtimeAlertDispatcher } from '../../services/RealtimeAlertDispatcher';
@@ -405,69 +404,14 @@ export class SettingsController {
    *   - 扫自选股 (watchlist path) — 返回合并的 digest payload；
    * 不实际推送 webhook + 不写 dedup buffer，让用户多次预演。
    */
-  async previewEarningsForecast(req: Request, res: Response, _next: NextFunction) {
-    try {
-      const user_id = (req as any).user.id;
-      const body = req.body || {};
-      const heldResult = await earningsForecastWatcher.scanHeldStocks({
-        user_id,
-        dry_run: true,
-        trade_date: body.trade_date,
-        recent_days: body.recent_days,
-        frontend_base_url: body.frontend_base_url,
-      });
-      const watchlistResult = await earningsForecastWatcher.scanWatchlistStocks({
-        user_id,
-        dry_run: true,
-        trade_date: body.trade_date,
-        recent_days: body.recent_days,
-        frontend_base_url: body.frontend_base_url,
-      });
-      res.json({
-        success: true,
-        data: {
-          held: heldResult,
-          watchlist: watchlistResult,
-        },
-      });
-    } catch (error: any) {
-      logger.error('预览业绩预告推送失败:', error);
-      res.status(500).json({ success: false, message: error.message });
-    }
+  /** POST /api/settings/earnings-forecast/preview — 批5: EarningsForecastWatcher 已下线 */
+  async previewEarningsForecast(_req: Request, res: Response, _next: NextFunction) {
+    return res.status(410).json({ success: false, message: '该能力已下线' });
   }
 
-  /**
-   * POST /api/settings/earnings-forecast/scan (US-064)
-   * 立即扫描当前用户的持仓 + 自选股业绩预告并实际推送（同 scheduler cron 流程）。
-   * dedup buffer 会被更新避免下次重发；适用于手动触发或冒烟测试。
-   */
-  async scanEarningsForecastNow(req: Request, res: Response, _next: NextFunction) {
-    try {
-      const user_id = (req as any).user.id;
-      const body = req.body || {};
-      const heldResult = await earningsForecastWatcher.scanHeldStocks({
-        user_id,
-        dry_run: false,
-        trade_date: body.trade_date,
-        recent_days: body.recent_days,
-        frontend_base_url: body.frontend_base_url,
-      });
-      const watchlistResult = await earningsForecastWatcher.scanWatchlistStocks({
-        user_id,
-        dry_run: false,
-        trade_date: body.trade_date,
-        recent_days: body.recent_days,
-        frontend_base_url: body.frontend_base_url,
-      });
-      res.json({
-        success: true,
-        data: { held: heldResult, watchlist: watchlistResult },
-        message: '业绩预告扫描完成',
-      });
-    } catch (error: any) {
-      logger.error('手动触发业绩预告扫描失败:', error);
-      res.status(500).json({ success: false, message: error.message });
-    }
+  /** POST /api/settings/earnings-forecast/scan — 批5: EarningsForecastWatcher 已下线 */
+  async scanEarningsForecastNow(_req: Request, res: Response, _next: NextFunction) {
+    return res.status(410).json({ success: false, message: '该能力已下线' });
   }
 
   /**
