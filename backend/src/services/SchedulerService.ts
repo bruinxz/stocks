@@ -5509,6 +5509,40 @@ class SchedulerService {
             `created=${r.created} updated=${r.updated} skipped=${r.skipped_data_incomplete} ` +
             `confidence=${r.confidence.toFixed(3)}`
         );
+      } else if (task.type === 'THEME_EVENT_FANOUT') {
+        // 批6c (§6.2-B) — 卫星题材 fan-out. ThemeFermentationDetector 是 soft-layer 只写
+        // theme_fermentation_phases; 本 handler 读当日 phase 行, 把 top_codes 扇出成个股信号
+        // 落 AIInvestmentSignal(source_type='theme_event', action=BUY/SELL, theme_id). 每日
+        // 在 THEME_FERMENTATION_DETECT 之后跑 (17:00).
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { themeEventFanoutService } = require('./theme/ThemeEventFanoutService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await themeEventFanoutService.runFanout({
+          tradeDate: typeof parameters.trade_date === 'string' ? parameters.trade_date : undefined,
+          dryRun: parameters.dry_run === true,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.themes_actionable,
+          completed_items: r.created + r.updated,
+          failed_items: r.skipped_no_codes,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'theme_event_fanout',
+            trade_date: r.trade_date,
+            phases_scanned: r.phases_scanned,
+            themes_actionable: r.themes_actionable,
+            created: r.created,
+            updated: r.updated,
+            skipped_phase: r.skipped_phase,
+            skipped_no_codes: r.skipped_no_codes,
+          },
+        });
+        logger.info(
+          `[THEME_EVENT_FANOUT] trade_date=${r.trade_date} phases=${r.phases_scanned} ` +
+            `themes=${r.themes_actionable} created=${r.created} updated=${r.updated} ` +
+            `skip_phase=${r.skipped_phase} skip_nocodes=${r.skipped_no_codes}`
+        );
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);
       }
@@ -6678,6 +6712,17 @@ class SchedulerService {
         name: 'ETF 因子轮动月度再平衡 (批6)',
         type: 'ETF_FACTOR_ROTATION_REBALANCE',
         cron_expression: '30 9 1 * *',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+      // 批6c (2026-07, §6.2-B): THEME_EVENT_FANOUT — 卫星题材 fan-out. 读当日
+      // theme_fermentation_phases (detector 16:30 已写), 把 launch/outbreak 题材的 top_codes
+      // 扇出成个股 BUY 信号 (climax → SELL 减仓) 落 AIInvestmentSignal(source_type=theme_event).
+      // 工作日 17:00 跑, 在 THEME_FERMENTATION_DETECT (16:30) 之后.
+      {
+        name: '卫星题材 fan-out (批6c)',
+        type: 'THEME_EVENT_FANOUT',
+        cron_expression: '0 17 * * 1-5',
         is_active: true,
         parameters: { dry_run: false },
       },

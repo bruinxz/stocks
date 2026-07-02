@@ -715,6 +715,17 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '每月 1 号 09:30 跑 ETF 因子轮动月度再平衡 — 46-63 只候选 ETF 四因子打分 (Value 0.40 / Quality 0.30 / LowVol 0.30 / Momentum shadow), top4 买 / top6 卖缓冲带, 单只<=15% 核心总仓<=70%, 落 action=TARGET_WEIGHT 信号供 V3 展示 + paper 执行. 信号优先重构主线核心 (Core 70%).',
   },
+  // 批6c (2026-07, §6.2-B) — 卫星题材 fan-out. ThemeFermentationDetector 是 soft-layer 只写
+  // theme_fermentation_phases; 本 cron 读当日 phase 把 top_codes 扇出成个股信号进主信号表.
+  // 工作日 17:00 跑 (在 THEME_FERMENTATION_DETECT 16:30 之后).
+  {
+    type: 'THEME_EVENT_FANOUT',
+    category: 'analytics',
+    owner: 'quant',
+    recommendedCron: '0 17 * * 1-5',
+    description:
+      '工作日 17:00 跑卫星题材 fan-out — 读当日 theme_fermentation_phases, 把 launch/outbreak 题材 top_codes 扇出成个股 BUY 信号 (climax → SELL 减仓, recession/germinate → skip), 落 AIInvestmentSignal(source_type=theme_event, action=BUY/SELL, theme_id, 卫星 -7% soft 止损 / +20% 止盈). 信号优先重构卫星 (Satellite 20%) 主信号产出层 (§6.2-B).',
+  },
 ]);
 
 const CRON_REGISTRY_BY_TYPE: ReadonlyMap<string, CronTaskDefinition> = new Map(
