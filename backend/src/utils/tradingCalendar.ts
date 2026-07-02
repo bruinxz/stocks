@@ -138,6 +138,28 @@ export function getShanghaiDate(date: Date | string): string {
 }
 
 /**
+ * 返回 <= 给定日期的最近一个 A 股交易日 (含当日).
+ *
+ * 用途 (§6.2-A PR-O5): LIMIT_UP_SYNC / 题材 fan-out 的 cron 可能在周末/节假日触发
+ * (或补跑), 此时"今天"没有行情数据, 全链空跑. 用本函数把目标日回退到最近交易日,
+ * 避免 fetched=0 空转.
+ *
+ * 节假日表只覆盖 2026/2027, 超范围按周末规则回退 (最多回退 10 天兜底防死循环).
+ *
+ * @param date ISO date (YYYY-MM-DD) 或 Date, 默认当前时刻的上海日期
+ * @returns 最近交易日 ISO date (YYYY-MM-DD)
+ */
+export function latestTradeDateOnOrBefore(date: Date | string = new Date()): string {
+  let cursor = new Date(getShanghaiDate(date) + 'T00:00:00+08:00');
+  for (let i = 0; i < 10; i++) {
+    if (isAShareTradeDay(cursor)) return getShanghaiDate(cursor);
+    cursor = new Date(cursor.getTime() - 24 * 60 * 60 * 1000);
+  }
+  // 兜底: 10 天内找不到 (节假日表异常), 返回原始日期不再回退
+  return getShanghaiDate(date);
+}
+
+/**
  * 计算两个日期之间的 A 股交易日数 (左开右闭: from < d <= to).
  *
  * 用途: DataFreshnessCheck 算 daily_bars staleness — "周五入库 周一 18:30 检查"

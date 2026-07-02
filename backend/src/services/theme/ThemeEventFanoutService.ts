@@ -24,6 +24,7 @@
  *   实际下单前的仓位/边界/EV gate 由下游执行层 (AutoExitService + PaperTrading EV gate) 裁决.
  */
 
+import { Op } from 'sequelize';
 import {
   AIInvestmentSignal,
   AISignalDecision,
@@ -108,6 +109,26 @@ export class ThemeEventFanoutService {
     private readonly calibration: ConfidenceCalibrationService = confidenceCalibrationService
   ) {}
 
+  /**
+   * §6.2-A: 取最近一个有 phase 行的 trade_date (<= 今天). 若 phase 表全空返回今天.
+   * 避免 cron 周末/节假日触发时对着空当天空转.
+   */
+  private async resolveLatestPhaseDate(): Promise<string> {
+    const today = this.getChinaToday();
+    try {
+      const row: any = await ThemeFermentationPhase.findOne({
+        attributes: ['trade_date'],
+        where: { trade_date: { [Op.lte]: today } },
+        order: [['trade_date', 'DESC']],
+        raw: true,
+      });
+      if (row?.trade_date) return this.toDateStr(row.trade_date);
+    } catch (e: any) {
+      logger.warn(`[ThemeEventFanout] resolveLatestPhaseDate failed: ${e?.message || e}`);
+    }
+    return today;
+  }
+
   private getChinaToday(): string {
     return new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Shanghai',
@@ -163,7 +184,9 @@ export class ThemeEventFanoutService {
    * 主入口: 读当日 phase → fan-out top_codes → 落 THEME_EVENT 信号.
    */
   async runFanout(options: ThemeEventFanoutOptions = {}): Promise<ThemeEventFanoutResult> {
-    const tradeDate = options.tradeDate ?? this.getChinaToday();
+    // §6.2-A PR-O5: 未显式指定日期时, 挑"最近一个有 phase 行的交易日"而不是"今天"
+    // (今天可能是周末/节假日/detector 尚未跑, phase 表当天为空 → fan-out 空转).
+    const tradeDate = options.tradeDate ?? (await this.resolveLatestPhaseDate());
     const maxCodes = Number.isFinite(options.maxCodesPerTheme)
       ? Math.max(1, options.maxCodesPerTheme as number)
       : MAX_CODES_PER_THEME;

@@ -2390,8 +2390,12 @@ class SchedulerService {
       } else if (task.type === 'LIMIT_UP_SYNC') {
         // Batch AB (2026-06-18): 涨停股池当日 sync (zt_pool + strong_pool 合并).
         // DragonHead / GameTraderRelay / LinkageStrategy 都依赖. 推荐 cron: '10 15 * * 1-5'.
-        const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
-        const date = parameters.date || today;
+        // 批6d (§6.2-A PR-O5): cron 若在周末/节假日触发 (或补跑), "今天"没行情 → 全链空跑.
+        // 用 latestTradeDateOnOrBefore 把目标日回退到最近交易日, 避免 fetched=0 空转.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { latestTradeDateOnOrBefore } = require('../utils/tradingCalendar');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const date = parameters.date || latestTradeDateOnOrBefore(new Date());
         const result = await limitUpSyncService.syncDate(date);
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: result.fetched || 0,
