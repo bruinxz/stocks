@@ -40,12 +40,11 @@ import AlertsBell from './components/layout/AlertsBell';
 import CriticalAlertModal from './components/layout/CriticalAlertModal';
 
 // Phase 4 (2026-06-27) 清理: 删除 33 个 legacy pages (~ 4.1 万行)
-// 仅保留 4 个 non-workspace 页面: Login / RecommendationTrace (deep link /signals/:id/trace)
-// / StockDetail (/stock/:symbol) / HealthMonitor (DataWorkspace 内嵌). BacktestResults 仍保留
+// 仅保留 non-workspace 页面: Login / StockDetail (/stock/:symbol) / HealthMonitor
+// (DataWorkspace 内嵌). BacktestResults 仍保留
 // 用于 LabStrategyDetail 的 /legacy/backtest/:id deep link.
 const Login = lazy(() => import('./pages/Login'));
 const BacktestResults = lazy(() => import('./components/backtest/BacktestResults'));
-const RecommendationTrace = lazy(() => import('./pages/RecommendationTrace'));
 const StockDetail = lazy(() => import('./pages/StockDetail'));
 
 // Phase 6 (2026-06-27) — 新手主页 /home.
@@ -626,22 +625,6 @@ const AppContent: React.FC = () => {
                 element={
                   <ProtectedRoute>
                     <BacktestDetailRoute />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/signals/:id/trace"
-                element={
-                  <ProtectedRoute>
-                    <RecommendationTrace />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/recommendation-trade-outcomes/:id"
-                element={
-                  <ProtectedRoute>
-                    <RecommendationTrace />
                   </ProtectedRoute>
                 }
               />

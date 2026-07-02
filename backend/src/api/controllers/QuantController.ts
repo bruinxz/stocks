@@ -793,25 +793,6 @@ export class QuantController {
     }
   }
 
-  async runDailyPipeline(req: AuthenticatedRequest, res: Response) {
-    try {
-      const strategy_keys = await strategyEngine.resolveStrategyKeys(
-        req.body?.strategy_keys || req.body?.strategyKeys
-      );
-      const params_by_strategy = req.body?.params_by_strategy || req.body?.paramsByStrategy;
-      const result = await strategyEngine.runDailyPipeline({
-        ...req.body,
-        strategy_keys,
-        params_by_strategy,
-        user_id: req.user?.id,
-      });
-      res.json({ success: true, data: result });
-    } catch (error: any) {
-      logger.error('运行量化融合闭环失败:', error);
-      res.status(500).json({ success: false, message: error.message });
-    }
-  }
-
   async listSignals(req: Request, res: Response) {
     try {
       const signals = await signalEngine.list(req.query as any);
@@ -852,30 +833,6 @@ export class QuantController {
       res.json({ success: true, data: policy });
     } catch (error: any) {
       logger.error('获取量化策略资金分配建议失败:', error);
-      res.status(500).json({ success: false, message: error.message });
-    }
-  }
-
-  async listFusionAudits(req: AuthenticatedRequest, res: Response) {
-    try {
-      const audits = await signalEngine.listAudits(req.query as any);
-      res.json({ success: true, data: audits });
-    } catch (error: any) {
-      logger.error('获取量化融合审计失败:', error);
-      res.status(500).json({ success: false, message: error.message });
-    }
-  }
-
-  async getRankings(req: AuthenticatedRequest, res: Response) {
-    try {
-      const data = await signalEngine.getRankings({
-        trade_date: req.query.trade_date as string,
-        signal_date: (req.query.signal_date || req.query.trade_date) as string,
-        limit: Number(req.query.limit || 30),
-      });
-      res.json({ success: true, data });
-    } catch (error: any) {
-      logger.error('获取量化排行榜失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   }

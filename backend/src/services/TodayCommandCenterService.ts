@@ -4,7 +4,6 @@ import { paperTradingDashboardService } from '../portfolio/internal/PaperTrading
 import { paperTradingRiskProfileService } from '../portfolio/internal/PaperTradingRiskProfileService';
 import { taskAutomationHealthService } from './TaskAutomationHealthService';
 import { quantSignalService } from '../quant/engine/internal/QuantSignalService';
-import { quantFusionAuditService } from '../quant/engine/internal/QuantFusionAuditService';
 import { realtimeQuoteService } from '../data/services/RealtimeQuoteService';
 import { AIInvestmentSignal } from '../models/AIInvestmentSignal';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
@@ -265,23 +264,17 @@ class TodayCommandCenterService {
   }
 
   private async getRankings(tradeDate: string, limit: number) {
-    const [quantDashboard, fusionDashboard] = await Promise.all([
-      quantSignalService.getRankingDashboard({ trade_date: tradeDate, limit }),
-      quantFusionAuditService.getRankingDashboard({ signal_date: tradeDate, limit }),
-    ]);
+    // 批3: 融合审计 (quantFusionAuditService) 已删, 排行榜只保留纯量化维度.
+    const quantDashboard = await quantSignalService.getRankingDashboard({
+      trade_date: tradeDate,
+      limit,
+    });
     const quantSummary: any = quantDashboard.summary || {};
-    const fusionSummary: any = fusionDashboard.summary || {};
     return {
       quant_rankings: quantDashboard.quant_rankings || [],
-      fusion_rankings: fusionDashboard.fusion_rankings || [],
+      fusion_rankings: [] as any[],
       summary: {
-        ...fusionSummary,
         ...quantSummary,
-        fusion_count: fusionSummary.fusion_count || 0,
-        fusion_buy_count: fusionSummary.fusion_buy_count ?? fusionSummary.buy_count ?? 0,
-        fusion_watch_count: fusionSummary.fusion_watch_count ?? fusionSummary.watch_count ?? 0,
-        fusion_avoid_count: fusionSummary.fusion_avoid_count ?? fusionSummary.avoid_count ?? 0,
-        agent_rescored: Boolean(fusionSummary.agent_rescored),
       },
     };
   }

@@ -16,7 +16,6 @@ import { logger } from '../utils/logger';
 import moment from 'moment-timezone';
 import { paperTradingAutomationService } from '../portfolio/internal/PaperTradingAutomationService';
 import { RecommendationLoopPolicySnapshot } from '../models/RecommendationLoopPolicySnapshot';
-import { quantFusionAuditService } from '../quant/engine/internal/QuantFusionAuditService';
 import { AGENT_ONLY_PORTFOLIO_NAME } from '../portfolio/internal/PaperTradingPortfolioFamilies';
 import { recordAiPollingFailureForBurst } from './aiPollingBurstDetector';
 
@@ -340,30 +339,8 @@ if (aiPollingWorkerDisabled) {
 
         let paperTradingResult: any = null;
         let fusionAudit: any = null;
-        if (archivedSignal && scheduler_task_type === 'QUANT_DAILY_PIPELINE') {
-          try {
-            fusionAudit = await quantFusionAuditService.recordAgentFusion(archivedSignal, {
-              task_id: taskId,
-              quant_score,
-              strategy_key,
-              strategy_variant,
-              current_price: currentPrice,
-            });
-            await archivedSignal.update({
-              metadata: {
-                ...(archivedSignal.metadata || {}),
-                quant_fusion_audit_id: fusionAudit.id,
-                quant_fusion_final_score: fusionAudit.final_score,
-                quant_fusion_final_decision: fusionAudit.final_decision,
-                quant_fusion_rationale: fusionAudit.rationale,
-                quant_framework_signal: true,
-                quant_agent_fusion: true,
-              },
-            });
-          } catch (auditError: any) {
-            logger.warn(`量化-Agent 融合审计写入失败 ${taskId}: ${auditError.message}`);
-          }
-        }
+        // 批3: 量化-Agent 融合审计 (quantFusionAuditService) 已删, QUANT_DAILY_PIPELINE
+        // 任务类型不再存在; fusionAudit 恒为 null, 融合自动跟单路径自然关闭.
 
         const shouldAutoTradeQuantFusion =
           Boolean(auto_paper_trade) &&

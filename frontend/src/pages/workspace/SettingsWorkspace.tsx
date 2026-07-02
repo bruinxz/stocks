@@ -50,7 +50,6 @@ import PortfolioConstructionTab from './SettingsWorkspace.PortfolioConstructionT
 import AnalysisEngineTab from './SettingsWorkspace.AnalysisEngineTab';
 import RiskParametersCenterTab from './SettingsWorkspace.RiskParametersCenterTab';
 import TodoSuggestionsTab from './SettingsWorkspace.TodoSuggestionsTab';
-import StrategyKillSwitchTab from './SettingsWorkspace.StrategyKillSwitchTab';
 import BlackSwanHistoryTab from './SettingsWorkspace.BlackSwanHistoryTab';
 import {
   loadNotificationChannels,
@@ -152,7 +151,7 @@ const SettingsWorkspace: React.FC = () => {
   const [profileSubView, setProfileSubView] = useState<'profile' | 'keys'>('profile');
   const [notifySubView, setNotifySubView] = useState<'types' | 'channels'>('types');
   const [riskSubView, setRiskSubView] = useState<
-    'overview' | 'parameters' | 'kill-switch' | 'black-swan' | 'todos'
+    'overview' | 'parameters' | 'black-swan' | 'todos'
   >('overview');
   const [advancedSubView, setAdvancedSubView] = useState<
     'sizing' | 'portfolio' | 'analysis'
@@ -1710,7 +1709,6 @@ const SettingsWorkspace: React.FC = () => {
           options={[
             { label: '风控总览', value: 'overview' },
             { label: '参数中心', value: 'parameters' },
-            { label: 'Kill-Switch', value: 'kill-switch' },
             { label: '黑天鹅历史', value: 'black-swan' },
             { label: '待办建议', value: 'todos' },
           ]}
@@ -1746,14 +1744,6 @@ const SettingsWorkspace: React.FC = () => {
                   </Card>
                 </Col>
                 <Col xs={24} md={12}>
-                  <Card hoverable onClick={() => setRiskSubView('kill-switch')}>
-                    <Statistic title="Kill-Switch" value="一键停策略" />
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      策略连续亏损 / 历史回撤超限时, 一键禁用当前策略所有新信号。
-                    </Text>
-                  </Card>
-                </Col>
-                <Col xs={24} md={12}>
                   <Card hoverable onClick={() => setRiskSubView('black-swan')}>
                     <Statistic title="黑天鹅历史" value="熔断回放" />
                     <Text type="secondary" style={{ fontSize: 12 }}>
@@ -1774,8 +1764,6 @@ const SettingsWorkspace: React.FC = () => {
           </Card>
         ) : riskSubView === 'parameters' ? (
           <RiskParametersCenterTab />
-        ) : riskSubView === 'kill-switch' ? (
-          <StrategyKillSwitchTab />
         ) : riskSubView === 'black-swan' ? (
           <BlackSwanHistoryTab />
         ) : (

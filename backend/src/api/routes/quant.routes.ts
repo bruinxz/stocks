@@ -958,24 +958,6 @@ router.get(
 
 /**
  * @openapi
- * /api/quant/daily-pipeline/run:
- *   post:
- *     tags: [量化 Quant]
- *     summary: 执行日度量化流水线
- *     security: [{ bearerAuth: [] }]
- *     responses:
- *       200: { description: 执行结果 }
- *       400: { description: 参数错误 }
- *       401: { description: 未授权 }
- */
-router.post(
-  '/daily-pipeline/run',
-  authController.authenticate,
-  quantController.runDailyPipeline.bind(quantController)
-);
-
-/**
- * @openapi
  * /api/quant/strategy-weights:
  *   get:
  *     tags: [量化 Quant]
@@ -1026,42 +1008,6 @@ router.get(
   '/allocation-policy',
   authController.authenticate,
   quantController.getAllocationPolicy.bind(quantController)
-);
-
-/**
- * @openapi
- * /api/quant/fusion-audits:
- *   get:
- *     tags: [量化 Quant]
- *     summary: 获取融合审计记录
- *     security: [{ bearerAuth: [] }]
- *     responses:
- *       200: { description: 审计记录 }
- *       400: { description: 参数错误 }
- *       401: { description: 未授权 }
- */
-router.get(
-  '/fusion-audits',
-  authController.authenticate,
-  quantController.listFusionAudits.bind(quantController)
-);
-
-/**
- * @openapi
- * /api/quant/rankings:
- *   get:
- *     tags: [量化 Quant]
- *     summary: 获取量化排名
- *     security: [{ bearerAuth: [] }]
- *     responses:
- *       200: { description: 排名列表 }
- *       400: { description: 参数错误 }
- *       401: { description: 未授权 }
- */
-router.get(
-  '/rankings',
-  authController.authenticate,
-  quantController.getRankings.bind(quantController)
 );
 
 /**

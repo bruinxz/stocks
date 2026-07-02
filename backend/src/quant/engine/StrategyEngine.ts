@@ -9,7 +9,6 @@ import { quantStrategyService } from './internal/QuantStrategyService';
 import { quantStrategyExperimentService } from './internal/QuantStrategyExperimentService';
 import { quantStrategyParamVersionService } from './internal/QuantStrategyParamVersionService';
 import { quantStrategyFeedbackService } from './internal/QuantStrategyFeedbackService';
-import { quantFusionService } from './internal/QuantFusionService';
 import { quantStrategySourceService } from './internal/QuantStrategySourceService';
 
 export interface UpdateStrategyConfigInput {
@@ -180,10 +179,6 @@ export class StrategyEngine {
       max_weight_pct: options.max_weight_pct ?? 35,
       min_weight_pct: options.min_weight_pct ?? 4,
     });
-  }
-
-  runDailyPipeline(options: any): Promise<any> {
-    return quantFusionService.runDailyPipeline(options);
   }
 }
 

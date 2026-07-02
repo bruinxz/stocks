@@ -60,7 +60,6 @@ import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/Workspace
 import WorkspaceHero from '../../components/layout/WorkspaceHero';
 import LeaderboardTab from './LabWorkspace.LeaderboardTab';
 import WalkForwardTab from './LabWorkspace.WalkForwardTab';
-import AdvancedQuantTab from './LabWorkspace.AdvancedQuantTab';
 import QuarterlyRetrainTab from './LabWorkspace.QuarterlyRetrainTab';
 import ShadowRunTab from './LabWorkspace.ShadowRunTab';
 import OverfitMetricsTab from './LabWorkspace.OverfitMetricsTab';
@@ -161,7 +160,7 @@ const LabWorkspace: React.FC = () => {
     | 'overfit'
     | 'quarterly'
   >('overview');
-  const [advancedSubView, setAdvancedSubView] = useState<'compare' | 'workflow' | 'advanced'>(
+  const [advancedSubView, setAdvancedSubView] = useState<'compare' | 'workflow'>(
     'compare'
   );
 
@@ -683,7 +682,6 @@ const LabWorkspace: React.FC = () => {
           options={[
             { label: '回测对比', value: 'compare' },
             { label: '工作流体检', value: 'workflow' },
-            { label: '高级量化引擎', value: 'advanced' },
           ]}
           value={advancedSubView}
           onChange={v => setAdvancedSubView(v as typeof advancedSubView)}
@@ -697,10 +695,8 @@ const LabWorkspace: React.FC = () => {
             compareResult={compareResult}
             onCompare={handleCompare}
           />
-        ) : advancedSubView === 'workflow' ? (
-          <WorkflowReadinessTab strategies={strategies} tasks={tasks} />
         ) : (
-          <AdvancedQuantTab />
+          <WorkflowReadinessTab strategies={strategies} tasks={tasks} />
         )}
       </>
     );

@@ -81,7 +81,7 @@ export interface SignalVerificationDiagnosisOptions extends SignalQueryOptions {
  *   overnight       — 🌙 隔夜潜伏 (15:30 盘后批量, 建议**次日**9:30 集合竞价后买入)
  *   intraday_anomaly— ⚡ 盘中异动 (持续触发, 建议 30 分钟内买入)
  *
- * cron 在 SchedulerService 注入 parameters.timing_tag, 走 QuantFusionService.runDailyPipeline
+ * cron 在 SchedulerService 注入 parameters.timing_tag (批3 后融合 pipeline 已删)
  * → archiveQuantRecommendations → metadata.timing_tag. V3RecommendationController 把它
  * 透传到 UI 卡片右上角 badge + "建议买入窗口" 文案.
  *

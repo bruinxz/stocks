@@ -285,12 +285,6 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
 
   // ===== L3 量化引擎 =====
   {
-    type: 'QUANT_DAILY_PIPELINE',
-    category: 'quant_engine',
-    owner: 'quant',
-    description: '量化主流水线 (扫描 → 信号 → AI 审批 → 模拟盘买入)',
-  },
-  {
     type: 'QUANT_PARAM_MAINTENANCE',
     category: 'quant_engine',
     owner: 'quant',

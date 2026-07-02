@@ -2,7 +2,7 @@
  * aiPollingEnqueue.ts — US-019 / EX-005 aiPollingQueue dedup 持久化统一入口
  *
  * BETA-3 (2026-06-18, audit M-15) 在 4 处 caller (QuantRecommendationController /
- * AutomatedRecommendationLoopService / SchedulerService / QuantFusionService) 各自
+ * AutomatedRecommendationLoopService / SchedulerService) 各自
  * 内联了相同的 add 选项块:
  *
  *   { jobId: `ai-poll-${task_id}`, attempts: 10,
