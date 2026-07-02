@@ -28,7 +28,6 @@ import {
   ClockCircleOutlined,
   FireOutlined,
   FundOutlined,
-  LineChartOutlined,
   ReloadOutlined,
   RightOutlined,
   RiseOutlined,
@@ -114,16 +113,8 @@ import {
   MarketRegime,
   OvernightForeignQuote,
 } from '../../services/marketJudgmentService';
-import {
-  getCallAuctionToday,
-  CallAuctionAnomalyResult,
-  AuctionAnomalyItem,
-  AuctionAnomalyType,
-} from '../../services/callAuctionService';
 import api from '../../services/api';
 import { markSingleRiskAlertRead } from '../../services/riskAlertService';
-// BK-4 (2026-06-24): 盘中行业资金流向 tab — lazy 加载该 tab 才加载 ECharts.
-import IntradayCapitalFlowTab from './TodayWorkspace.IntradayCapitalFlowTab';
 // CA-1b: v3 抖音风核心推荐 tab — 4 维评分卡片 + 5 档 playbook + 详情区.
 import {
   getV3Recommendations,
@@ -167,8 +158,6 @@ const TODAY_WORKSPACE_TABS_BASE: WorkspaceTab[] = [
 const TODAY_WORKSPACE_TABS_ADMIN_EXTRA: WorkspaceTab[] = [
   { key: 'events', label: '关键事件 (admin)', icon: <BellOutlined /> },
   { key: 'risk_center', label: '风控中心 (admin)', icon: <SafetyCertificateOutlined /> },
-  // BK-4 (2026-06-24): 盘中行业资金流 (10min 自动刷新, 类似抖音"分时累计资金流")
-  { key: 'capital_flow', label: '资金流向 (admin)', icon: <LineChartOutlined /> },
 ];
 const TODAY_WORKSPACE_TAB_KEYS = [
   ...TODAY_WORKSPACE_TABS_BASE,
@@ -528,9 +517,6 @@ const TodayWorkspace: React.FC = () => {
     body = <AlertsPanel alerts={data.unread_alerts} totalCount={data.unread_alert_count} />;
   } else if (activeKey === 'risk_center') {
     body = <RiskAlertCenterPanel onUnreadCountChange={refresh} />;
-  } else if (activeKey === 'capital_flow') {
-    // BK-4 (2026-06-24): 盘中行业资金流 (10min auto-refresh, 截图类多线图)
-    body = <IntradayCapitalFlowTab />;
   }
 
   const subtitle = data?.trade_date
@@ -601,7 +587,6 @@ const TodayWorkspace: React.FC = () => {
           {activeKey === 'signals' && (
             <>
               <MarketJudgmentCard />
-              <CallAuctionCard portfolioId={selectedPortfolioId ?? null} />
               <MarketBriefCard />
             </>
           )}
@@ -898,321 +883,6 @@ const MarketJudgmentCard: React.FC = () => {
             type={data.status === 'failed' ? 'error' : 'warning'}
             showIcon
             message={data.message}
-            style={{ marginBottom: 0 }}
-          />
-        )}
-      </Space>
-    </Card>
-  );
-};
-
-// ---------------------------------------------------------------------------
-// CallAuctionCard (US-041 / FE-002) — 集合竞价异动
-// ---------------------------------------------------------------------------
-
-/**
- * 「集合竞价异动」9:25 后展示一字 / 高开 / 低开异动。
- *
- * Universe (待观察池) = 昨日 LimitUpStock (连板/强势股池) + 当前 portfolio 持仓.
- *
- * 时机:
- *   - 9:25 前: 卡片显示 timing 提示, 不展示行情 (集合竞价未结束);
- *   - 9:25 后: 拉行情并 join universe, 展示命中异动的股票.
- *
- * 状态语义 (与 MarketJudgmentCard 同款):
- *   - ok       全部成功, 淡蓝 banner;
- *   - partial  单维失败, 黄色 Alert 显示 components.<x>.error;
- *   - failed   全失败, 红色 Alert.
- *
- * 自动刷新:
- *   - 9:25-9:35 之间每 20s 自动 refresh (集合竞价后开盘前的关键窗口);
- *   - 其它时段 mount 拉一次, 用户手动 refresh.
- */
-const CallAuctionCard: React.FC<{ portfolioId: number | null }> = ({ portfolioId }) => {
-  const [data, setData] = useState<CallAuctionAnomalyResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const navigate = useNavigate();
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await getCallAuctionToday({
-        portfolio_id: portfolioId ?? undefined,
-      });
-      setData(result);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  }, [portfolioId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  // 9:25-9:35 之间每 20s 自动 refresh (关键窗口, 行情快速变化)
-  useEffect(() => {
-    const isAuctionWindow = (): boolean => {
-      const now = dayjs();
-      const day = now.day();
-      if (day === 0 || day === 6) return false;
-      const minutes = now.hour() * 60 + now.minute();
-      return minutes >= 9 * 60 + 25 && minutes <= 9 * 60 + 35;
-    };
-    if (!isAuctionWindow()) return;
-    const tm = setInterval(() => void load(), 20_000);
-    return () => clearInterval(tm);
-  }, [load]);
-
-  const titleNode = (
-    <Space size={8}>
-      <ThunderboltOutlined style={{ color: '#fa8c16' }} />
-      <span>集合竞价异动</span>
-      {data?.trade_date && <Tag color="orange">{data.trade_date}</Tag>}
-      {data?.server_clock && (
-        <Tag color={data.is_after_auction ? 'green' : 'default'}>{data.server_clock}</Tag>
-      )}
-      {data && !data.is_after_auction && <Tag color="default">集合竞价未结束</Tag>}
-      {data?.status === 'partial' && <Tag color="orange">部分数据待补</Tag>}
-      {data?.status === 'failed' && <Tag color="red">数据全缺</Tag>}
-    </Space>
-  );
-
-  const extra = (
-    <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
-      刷新
-    </Button>
-  );
-
-  if (loading && !data) {
-    return (
-      <Card size="small" title={titleNode} extra={extra}>
-        <div style={{ textAlign: 'center', padding: 24 }}>
-          <Spin tip="加载集合竞价异动..." />
-        </div>
-      </Card>
-    );
-  }
-
-  if (error && !data) {
-    return (
-      <Card size="small" title={titleNode} extra={extra}>
-        <Alert
-          type="error"
-          showIcon
-          message="集合竞价异动加载失败"
-          description={error}
-          action={
-            <Button size="small" onClick={() => void load()}>
-              重试
-            </Button>
-          }
-        />
-      </Card>
-    );
-  }
-
-  if (!data) {
-    return (
-      <Card size="small" title={titleNode} extra={extra}>
-        <Empty description="暂无数据" />
-      </Card>
-    );
-  }
-
-  const timingError = data.components?.timing?.error || null;
-  const universeError = data.components?.universe?.error || null;
-  const quotesError = data.components?.quotes?.error || null;
-
-  return (
-    <Card size="small" title={titleNode} extra={extra}>
-      <Space direction="vertical" size={12} style={{ width: '100%' }}>
-        {/* KPI 行: 观察池 / 一字 / 高开 / 低开 */}
-        <Row gutter={[12, 8]} align="middle">
-          <Col xs={12} md={6}>
-            <Statistic
-              title={<span style={{ fontSize: 12 }}>观察池</span>}
-              value={data.universe_size}
-              suffix="只"
-              valueStyle={{ fontSize: 18, fontWeight: 600, color: '#1677ff' }}
-            />
-          </Col>
-          <Col xs={12} md={6}>
-            <Tooltip title="一字板 — 开 = 高 = 低 = 涨停, 通常买不到">
-              <Statistic
-                title={<span style={{ fontSize: 12 }}>一字板</span>}
-                value={data.summary.one_word_count}
-                suffix="只"
-                valueStyle={{
-                  fontSize: 18,
-                  fontWeight: 600,
-                  color: data.summary.one_word_count > 0 ? '#dc2626' : '#8c8c8c',
-                }}
-              />
-            </Tooltip>
-          </Col>
-          <Col xs={12} md={6}>
-            <Tooltip title={`高开 ≥ +${3}% — 跳空缺口入选范围`}>
-              <Statistic
-                title={<span style={{ fontSize: 12 }}>高开</span>}
-                value={data.summary.gap_up_count}
-                suffix="只"
-                valueStyle={{
-                  fontSize: 18,
-                  fontWeight: 600,
-                  color: data.summary.gap_up_count > 0 ? '#dc2626' : '#8c8c8c',
-                }}
-              />
-            </Tooltip>
-          </Col>
-          <Col xs={12} md={6}>
-            <Tooltip title={`低开 ≤ -${3}% — 止损 / 减持信号`}>
-              <Statistic
-                title={<span style={{ fontSize: 12 }}>低开</span>}
-                value={data.summary.gap_down_count}
-                suffix="只"
-                valueStyle={{
-                  fontSize: 18,
-                  fontWeight: 600,
-                  color: data.summary.gap_down_count > 0 ? '#16a34a' : '#8c8c8c',
-                }}
-              />
-            </Tooltip>
-          </Col>
-        </Row>
-
-        {/* timing 提示: 集合竞价未结束 */}
-        {timingError && (
-          <Alert type="info" showIcon message={timingError} style={{ marginBottom: 0 }} />
-        )}
-
-        {/* 异动列表 */}
-        {data.anomalies.length === 0 ? (
-          <Empty
-            description={
-              data.is_after_auction ? '集合竞价后无异动 (全部平开)' : '集合竞价未结束, 暂无开盘价'
-            }
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-          />
-        ) : (
-          <Table<AuctionAnomalyItem>
-            size="small"
-            rowKey="symbol"
-            dataSource={data.anomalies}
-            pagination={false}
-            scroll={{ x: 'max-content', y: 320 }}
-            columns={[
-              {
-                title: '异动',
-                dataIndex: 'anomaly_type',
-                width: 80,
-                render: (v: AuctionAnomalyType) => auctionTypeTag(v),
-                filters: [
-                  { text: '一字板', value: 'one_word' },
-                  { text: '高开', value: 'gap_up' },
-                  { text: '低开', value: 'gap_down' },
-                ],
-                onFilter: (val, row) => row.anomaly_type === val,
-              },
-              {
-                title: '代码',
-                dataIndex: 'symbol',
-                width: 100,
-                render: (v: string) => (
-                  <a onClick={() => navigate(`/stock/${v}`)}>
-                    <Text code style={{ fontSize: 12 }}>
-                      {v}
-                    </Text>
-                  </a>
-                ),
-              },
-              {
-                title: '名称',
-                dataIndex: 'name',
-                width: 110,
-                ellipsis: true,
-                render: (v: string | null, row: AuctionAnomalyItem) =>
-                  v ? <a onClick={() => navigate(`/stock/${row.symbol}`)}>{v}</a> : '—',
-              },
-              {
-                title: '开盘涨跌',
-                dataIndex: 'open_change_pct',
-                width: 90,
-                align: 'right' as const,
-                sorter: (a: AuctionAnomalyItem, b: AuctionAnomalyItem) =>
-                  (a.open_change_pct ?? 0) - (b.open_change_pct ?? 0),
-                render: (v: number | null) =>
-                  v == null ? (
-                    <Text type="secondary">—</Text>
-                  ) : (
-                    <Text strong style={{ color: v >= 0 ? '#dc2626' : '#16a34a' }}>
-                      {v >= 0 ? '+' : ''}
-                      {v.toFixed(2)}%
-                    </Text>
-                  ),
-              },
-              {
-                title: '开/昨收',
-                key: 'open_prev',
-                width: 130,
-                render: (_: unknown, row: AuctionAnomalyItem) => (
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {row.open != null ? row.open.toFixed(2) : '—'} /{' '}
-                    {row.prev_close != null ? row.prev_close.toFixed(2) : '—'}
-                  </Text>
-                ),
-              },
-              {
-                title: '来源',
-                key: 'source_tags',
-                width: 130,
-                render: (_: unknown, row: AuctionAnomalyItem) => (
-                  <Space size={4} wrap>
-                    {row.was_yesterday_limit_up && row.continuous_days != null && (
-                      <Tag color="red">{row.continuous_days}板</Tag>
-                    )}
-                    {row.is_position && <Tag color="blue">持仓</Tag>}
-                    {row.industry && <Tag color="blue">{row.industry}</Tag>}
-                  </Space>
-                ),
-              },
-              {
-                title: '说明',
-                dataIndex: 'note',
-                ellipsis: true,
-                render: (v: string) => (
-                  <Tooltip title={v} placement="topLeft">
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      {v}
-                    </Text>
-                  </Tooltip>
-                ),
-              },
-            ]}
-          />
-        )}
-
-        {/* brief 一句话 */}
-        <div style={{ paddingLeft: 8 }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            异动小结
-          </Text>
-          <Paragraph style={{ margin: '4px 0 0', fontSize: 14, lineHeight: 1.5, color: '#262626' }}>
-            {data.brief}
-          </Paragraph>
-        </div>
-
-        {/* 错误折叠成单 Alert (universe/quotes 失败) */}
-        {data.status !== 'ok' && !timingError && (
-          <Alert
-            type={data.status === 'failed' ? 'error' : 'warning'}
-            showIcon
-            message={data.message}
-            description={[universeError, quotesError].filter(Boolean).join(' / ') || undefined}
             style={{ marginBottom: 0 }}
           />
         )}
@@ -3469,14 +3139,6 @@ function eventTypeTag(t: KeyEventItem['event_type']): React.ReactNode {
   if (t === 'earnings_surprise') return <Tag color="red">超预期</Tag>;
   if (t === 'earnings_announcement') return <Tag color="blue">业绩</Tag>;
   return <Tag color="orange">连板</Tag>;
-}
-
-/** US-041 集合竞价异动 type → tag. */
-function auctionTypeTag(t: AuctionAnomalyType): React.ReactNode {
-  if (t === 'one_word') return <Tag color="red">一字</Tag>;
-  if (t === 'gap_up') return <Tag color="red">高开</Tag>;
-  if (t === 'gap_down') return <Tag color="green">低开</Tag>;
-  return <Tag>{t}</Tag>;
 }
 
 function eventTypeIcon(t: KeyEventItem['event_type']): React.ReactNode {

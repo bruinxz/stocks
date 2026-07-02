@@ -11,12 +11,6 @@ router.get(
   authController.authenticate,
   todayController.getCommandCenter.bind(todayController)
 );
-router.get(
-  '/opening-readiness',
-  authController.authenticate,
-  todayController.getOpeningReadiness.bind(todayController)
-);
-
 // US-018 — Today Workspace 聚合接口
 router.get(
   '/signals',
@@ -34,13 +28,6 @@ router.get(
   '/market-judgment',
   authController.authenticate,
   todayController.getMarketJudgment.bind(todayController)
-);
-
-// US-041 — 集合竞价异动卡片 (9:25 后展示一字/高开/低开)
-router.get(
-  '/call-auction',
-  authController.authenticate,
-  todayController.getCallAuctionAnomalies.bind(todayController)
 );
 
 // CA-1 — 抖音风 v3 推荐卡片 (4 维评分 + 漏斗 stats)

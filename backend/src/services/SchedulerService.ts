@@ -23,7 +23,6 @@ import { quantStrategyFeedbackService } from '../quant/engine/internal/QuantStra
 import { quantStrategyParamVersionService } from '../quant/engine/internal/QuantStrategyParamVersionService';
 import { quantDataService } from '../quant/engine/internal/QuantDataService';
 import { realtimeQuoteService } from '../data/services/RealtimeQuoteService';
-import { intradayUniverseService } from './IntradayUniverseService';
 import { aiInvestmentSignalService } from './AIInvestmentSignalService';
 import { feishuTaskReportService } from './FeishuTaskReportService';
 import { paperTradingAutomationService } from '../portfolio/internal/PaperTradingAutomationService';
@@ -59,7 +58,6 @@ import { recommendationTradeOutcomeService } from './RecommendationTradeOutcomeS
 import { taskParameterAuditService } from './TaskParameterAuditService';
 import { liveTradingService } from '../live-trading/services/LiveTradingService';
 import { User } from '../models/User';
-import { openingReadinessService } from './OpeningReadinessService';
 import {
   AUTONOMOUS_PORTFOLIO_NAME,
   DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
@@ -1040,10 +1038,6 @@ class SchedulerService {
           : Array.isArray(parameters.stock_symbols)
           ? parameters.stock_symbols
           : undefined;
-        // CE-A (2026-06-25): 新 universe_source='intraday' 分支 — 拿 IntradayUniverseService
-        // 解析 ≤500 票活跃 universe 替代全市场 5500. 老 universe='market' / limit=5000
-        // 路径完全保留, 见下面 else 分支. 触发器: cron parameters.universe_source='intraday'.
-        const universeSource = String(parameters.universe_source || '').toLowerCase();
         const source = parameters.source || parameters.data_source || 'auto';
         let targetSymbols: string[];
         let universe: string;
@@ -1058,36 +1052,6 @@ class SchedulerService {
             parameters.batch_size || parameters.batchSize,
             300,
             500
-          );
-        } else if (universeSource === 'intraday') {
-          // CE-A 新路径: intraday universe (持仓 + 涨跌幅榜 + 涨停 + 成交额)
-          const minSize = this.toPositiveInt(parameters.min_size, 200, 1000);
-          const maxSize = this.toPositiveInt(
-            parameters.limit || parameters.max_size,
-            500,
-            1000
-          );
-          batchSize = this.toPositiveInt(
-            parameters.batch_size || parameters.batchSize,
-            100,
-            500
-          );
-          try {
-            targetSymbols = await intradayUniverseService.resolveUniverse({
-              min_size: minSize,
-              max_size: maxSize,
-            });
-          } catch (err: any) {
-            logger.warn(
-              `[realtime-quote-sync] intraday universe 解析失败, fallback empty: ${
-                err?.message || err
-              }`
-            );
-            targetSymbols = [];
-          }
-          universe = 'intraday';
-          logger.info(
-            `[realtime-quote-sync] universe_source=intraday resolved ${targetSymbols.length} symbols (min=${minSize}, max=${maxSize})`
           );
         } else {
           // 老路径: universe='market'|'favorites', limit 默认 5000 全 A 股扫.
@@ -1117,8 +1081,7 @@ class SchedulerService {
         // 持仓 + 自选 + 涨跌幅榜 + 涨停 + 成交额, 不重复 enrich (避免破坏 max=500 约束).
         if (
           !rawSymbols?.length &&
-          parameters.skip_extra_universe !== true &&
-          universeSource !== 'intraday'
+          parameters.skip_extra_universe !== true
         ) {
           try {
             // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -1701,83 +1664,17 @@ class SchedulerService {
         const user = await User.findOne({ where: { username } });
         if (!user) throw new Error(`未找到影子执行用户：${username}`);
         const userId = Number((user as any).id);
-        const requireReadiness =
-          parameters.require_opening_readiness !== undefined
-            ? Boolean(parameters.require_opening_readiness)
-            : parameters.requireOpeningReadiness !== undefined
-            ? Boolean(parameters.requireOpeningReadiness)
-            : true;
-        const allowDegraded =
-          parameters.allow_degraded_readiness !== undefined
-            ? Boolean(parameters.allow_degraded_readiness)
-            : parameters.allowDegradedReadiness !== undefined
-            ? Boolean(parameters.allowDegradedReadiness)
-            : true;
-        const readiness = requireReadiness
-          ? await openingReadinessService.getReadiness({
-              user_id: userId,
-              username,
-              trade_date: parameters.trade_date || parameters.tradeDate || today,
-              factor_limit: this.toPositiveInt(
-                parameters.factor_limit || parameters.factorLimit,
-                220,
-                1000
-              ),
-              use_cache: parameters.use_cache !== false && parameters.useCache !== false,
-              cache_ttl_ms: this.toPositiveInt(
-                parameters.cache_ttl_ms || parameters.cacheTtlMs,
-                90_000,
-                5 * 60 * 1000
-              ),
-            })
-          : null;
-        const readinessBlocked =
-          readiness &&
-          (readiness.status === 'blocked' || (!allowDegraded && readiness.status !== 'ready'));
-        let result: any;
-        if (readinessBlocked) {
-          result = {
-            generated_at: new Date().toISOString(),
-            mode: 'shadow_only',
-            skipped: true,
-            reason: readiness?.conclusion || '开盘就绪门禁未通过，本轮不生成新的影子成交样本。',
-            readiness: readiness
-              ? {
-                  status: readiness.status,
-                  status_label: readiness.status_label,
-                  conclusion: readiness.conclusion,
-                  buy_gate: readiness.buy_gate,
-                }
-              : null,
-            summary: {
-              selected_count: 0,
-              shadow_executed_count: 0,
-              blocked_count: 0,
-              real_order_submitted: 0,
-              conclusion:
-                readiness?.conclusion || '开盘就绪门禁未通过，本轮不生成新的影子成交样本。',
-            },
-          };
-        } else {
-          result = await liveTradingService.runShadowAutopilot(userId, {
-            limit: this.toPositiveInt(parameters.limit || parameters.shadow_limit, 2, 10),
-            source: parameters.source || task.name || 'scheduled_live_shadow_autopilot',
-            dry_run:
-              parameters.dry_run !== undefined
-                ? Boolean(parameters.dry_run)
-                : parameters.dryRun !== undefined
-                ? Boolean(parameters.dryRun)
-                : false,
-          });
-          result.readiness = readiness
-            ? {
-                status: readiness.status,
-                status_label: readiness.status_label,
-                conclusion: readiness.conclusion,
-                buy_gate: readiness.buy_gate,
-              }
-            : null;
-        }
+        // 批２: 开盘就绪门禁 (OpeningReadinessService) 已删, 影子执行不再受 readiness gate 约束.
+        const result: any = await liveTradingService.runShadowAutopilot(userId, {
+          limit: this.toPositiveInt(parameters.limit || parameters.shadow_limit, 2, 10),
+          source: parameters.source || task.name || 'scheduled_live_shadow_autopilot',
+          dry_run:
+            parameters.dry_run !== undefined
+              ? Boolean(parameters.dry_run)
+              : parameters.dryRun !== undefined
+              ? Boolean(parameters.dryRun)
+              : false,
+        });
         const outcomes = await liveTradingService.getShadowAutopilotOutcomes(userId, {
           limit: this.toPositiveInt(parameters.outcome_limit || parameters.outcomeLimit, 30, 100),
           horizons: Array.isArray(parameters.horizons)
@@ -5952,79 +5849,6 @@ class SchedulerService {
             }`
           );
         }
-      } else if (task.type === 'OVERNIGHT_SIGNAL_SYNC') {
-        // PR-M1 (2026-06-29) — 隔夜信号矩阵 sync cron 入口.
-        // 北京时间 21-23 (隔夜美股开盘) + 0-9 (隔夜+早盘前) 每 15min 跑一次,
-        // 5 个 source (A50 / 港股恒指 / 纳指 / DXY / VIX) fail-OPEN.
-        // 给早盘 QuantRecommendationService.loadOvernightContext 消费判定大盘方向.
-        /* eslint-disable @typescript-eslint/no-var-requires */
-        const {
-          overnightSignalSyncService,
-        } = require('./OvernightSignalSyncService');
-        /* eslint-enable @typescript-eslint/no-var-requires */
-        try {
-          const r = await overnightSignalSyncService.syncAllSources();
-          const succeeded = !r.error;
-          await this.safeUpdateExecutionLog(executionLog, {
-            total_items: 5, // 期望 source 数
-            completed_items: Number(r.fetched) || 0,
-            failed_items: succeeded ? 5 - (Number(r.fetched) || 0) : 5,
-            status: 'COMPLETED',
-            completed_at: new Date(),
-            error_message: r.error || null,
-            result_summary: {
-              scenario: 'overnight_signal_sync',
-              fetched: r.fetched,
-              upserted: r.upserted,
-              per_source: r.per_source,
-              collected_at: r.collected_at,
-              error: r.error || null,
-            },
-          });
-          if (succeeded) {
-            logger.info(
-              `[OVERNIGHT_SIGNAL_SYNC] fetched=${r.fetched}/5 upserted=${r.upserted} ` +
-                `sources=[${r.per_source
-                  .filter((s: any) => s.ok)
-                  .map((s: any) => `${s.signal_type}:${s.change_pct ?? '-'}%`)
-                  .join(', ')}]`
-            );
-          } else {
-            logger.warn(`[OVERNIGHT_SIGNAL_SYNC] FAIL ${r.error || 'unknown_error'}`);
-          }
-        } catch (e: any) {
-          logger.warn(`[OVERNIGHT_SIGNAL_SYNC] outage: ${e?.message ?? e}`);
-        }
-      } else if (task.type === 'INDUSTRY_FLOW_INTRADAY_SYNC') {
-        // BK-2 (2026-06-24): 盘中 10min 行业资金流时序快照. fail-OPEN: 单点漏没关系.
-        /* eslint-disable @typescript-eslint/no-var-requires */
-        const { industryFlowIntradayService } = require('./IndustryFlowIntradayService');
-        /* eslint-enable @typescript-eslint/no-var-requires */
-        try {
-          const r = await industryFlowIntradayService.pullSnapshot();
-          if (r.skipped_reason) {
-            logger.info(
-              `[INDUSTRY_FLOW_INTRADAY_SYNC] skipped reason=${r.skipped_reason} ts=${r.snapshot_ts.toISOString()}`
-            );
-          } else {
-            logger.info(
-              `[INDUSTRY_FLOW_INTRADAY_SYNC] ts=${r.snapshot_ts.toISOString()} upserted=${r.inserted}`
-            );
-          }
-        } catch (e: any) {
-          logger.warn(`[INDUSTRY_FLOW_INTRADAY_SYNC] failed: ${e?.message ?? e}`);
-        }
-      } else if (task.type === 'INDUSTRY_FLOW_INTRADAY_CLEANUP') {
-        // BK-2 (2026-06-24): 每日 16:00 删 > 3 日老 intraday 快照. fail-OPEN.
-        /* eslint-disable @typescript-eslint/no-var-requires */
-        const { industryFlowIntradayService } = require('./IndustryFlowIntradayService');
-        /* eslint-enable @typescript-eslint/no-var-requires */
-        try {
-          const n = await industryFlowIntradayService.cleanup(3);
-          logger.info(`[INDUSTRY_FLOW_INTRADAY_CLEANUP] deleted=${n}`);
-        } catch (e: any) {
-          logger.warn(`[INDUSTRY_FLOW_INTRADAY_CLEANUP] failed: ${e?.message ?? e}`);
-        }
       } else if (task.type === 'MARKET_SENTIMENT_INDEX_SYNC') {
         // BJ-8 (2026-06-24): 工作日 17:30 全市场情绪指数计算 (US-057).
         // computeAndPersist 内部 4 维度 safeAwait fallback (per-dim 死单独不阻塞),
@@ -6456,54 +6280,6 @@ class SchedulerService {
             ).substring(0, 200)}`
           );
         }
-      } else if (task.type === 'INTRADAY_OPPORTUNITY_SCAN') {
-        // CE-B (2026-06-26) — 盘中实时机会规则引擎.
-        // 拉 IntradayUniverseService.resolveUniverse() → 10 类 detector → analyzeStock
-        // 二次审核 → intradayOpportunityPusher.push. parameters 支持:
-        //   - min_final_score (默认 65)
-        //   - target_groups (默认 ['business'])
-        //   - rules (subset 限定; 默认全 10 类)
-        //   - dry_run
-        /* eslint-disable @typescript-eslint/no-var-requires */
-        const {
-          intradayOpportunityWatcher,
-        } = require('./IntradayOpportunityWatcher');
-        /* eslint-enable @typescript-eslint/no-var-requires */
-        const minFinal =
-          Number.isFinite(Number(parameters.min_final_score)) &&
-          Number(parameters.min_final_score) >= 0
-            ? Number(parameters.min_final_score)
-            : 65;
-        const targetGroups = Array.isArray(parameters.target_groups)
-          ? parameters.target_groups
-          : ['business'];
-        const rules = Array.isArray(parameters.rules) ? parameters.rules : undefined;
-        const scanRes = await intradayOpportunityWatcher.scan({
-          min_final_score: minFinal,
-          target_groups: targetGroups,
-          rules,
-          dry_run: parameters.dry_run === true,
-        });
-        await this.safeUpdateExecutionLog(executionLog, {
-          total_items: scanRes.scanned_count,
-          completed_items: scanRes.pushed_count,
-          failed_items: scanRes.errors.length,
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          result_summary: {
-            scenario: 'intraday_opportunity_scan',
-            scanned: scanRes.scanned_count,
-            hits: scanRes.hit_count,
-            pushed: scanRes.pushed_count,
-            skipped: scanRes.skipped_count,
-            errors: scanRes.errors.length,
-            min_final_score: minFinal,
-          },
-        });
-        logger.info(
-          `[INTRADAY_OPPORTUNITY_SCAN] scanned=${scanRes.scanned_count} hits=${scanRes.hit_count} ` +
-            `pushed=${scanRes.pushed_count} skipped=${scanRes.skipped_count} errors=${scanRes.errors.length}`
-        );
       } else if (task.type === 'BULLISH_EVENT_DETECT') {
         // PR-B (2026-06-29) — 个股利好主动推送. 用户原话 "周末利好华工科技的新闻你看到了吗,
         // 这类新闻你需要发消息提示我". 4 detector (critical 公告 / 正面新闻 / 关注度突增 /
@@ -6538,99 +6314,6 @@ class SchedulerService {
             `deduped=${r.deduped} errors=${r.errors?.length || 0} ` +
             `by_detector=${JSON.stringify(r.by_detector)}`
         );
-      } else if (task.type === 'AUCTION_SNAPSHOT_SYNC') {
-        // PR-M2 (2026-06-29) — 9:25 集合竞价后开盘快照. 学术: Han/Hu/Jia 2023 + Gu/Ren 2010.
-        // 写 auction_snapshots; 给 OpeningRushDetector / UI 卡片消费. fail-OPEN.
-        /* eslint-disable @typescript-eslint/no-var-requires */
-        const { auctionSnapshotSyncService } = require('./AuctionSnapshotSyncService');
-        /* eslint-enable @typescript-eslint/no-var-requires */
-        const r = await auctionSnapshotSyncService.runOnce({
-          dry_run: parameters.dry_run === true,
-        });
-        await this.safeUpdateExecutionLog(executionLog, {
-          total_items: r.scanned,
-          completed_items: r.inserted,
-          failed_items: Math.max(0, r.scanned - r.inserted),
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          result_summary: {
-            scenario: r.scenario,
-            trade_date: r.trade_date,
-            scanned: r.scanned,
-            inserted: r.inserted,
-            by_pattern: r.by_pattern,
-            skipped_reason: r.skipped_reason,
-            dry_run: r.dry_run,
-          },
-        });
-        logger.info(
-          `[AUCTION_SNAPSHOT_SYNC] trade_date=${r.trade_date} scanned=${r.scanned} inserted=${r.inserted} ` +
-            `skip=${r.skipped_reason || 'none'} by_pattern=${JSON.stringify(r.by_pattern)}`
-        );
-      } else if (task.type === 'INTRADAY_KLINE_30MIN_SYNC') {
-        // PR-M2 (2026-06-29) — 盘中 30-min K 线时序同步.
-        // 学术: Zhang/Ma/Zhu 2019 EM (9:30-10:00 预测 14:30-15:00). fail-OPEN per-symbol.
-        /* eslint-disable @typescript-eslint/no-var-requires */
-        const { intradayKlineSyncService } = require('./IntradayKlineSyncService');
-        /* eslint-enable @typescript-eslint/no-var-requires */
-        const r = await intradayKlineSyncService.runOnce({
-          dry_run: parameters.dry_run === true,
-        });
-        await this.safeUpdateExecutionLog(executionLog, {
-          total_items: r.scanned_symbols,
-          completed_items: r.succeeded_symbols,
-          failed_items: Math.max(0, r.scanned_symbols - r.succeeded_symbols),
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          result_summary: {
-            scenario: r.scenario,
-            trade_date: r.trade_date,
-            scanned_symbols: r.scanned_symbols,
-            succeeded_symbols: r.succeeded_symbols,
-            total_klines: r.total_klines,
-            inserted: r.inserted,
-            skipped_reason: r.skipped_reason,
-            dry_run: r.dry_run,
-          },
-        });
-        logger.info(
-          `[INTRADAY_KLINE_30MIN_SYNC] trade_date=${r.trade_date} scanned=${r.scanned_symbols} ` +
-            `ok=${r.succeeded_symbols} klines=${r.total_klines} inserted=${r.inserted} ` +
-            `skip=${r.skipped_reason || 'none'}`
-        );
-      } else if (task.type === 'INTRADAY_MOMENTUM_DETECT') {
-        // PR-M2 (2026-06-29) — 14:25 日内动量 detector.
-        // r1>+1% buy → 全 user; r1<-1% 持仓 sell. 24h dedup. fail-OPEN.
-        /* eslint-disable @typescript-eslint/no-var-requires */
-        const { intradayMomentumDetector } = require('./IntradayMomentumDetector');
-        /* eslint-enable @typescript-eslint/no-var-requires */
-        const r = await intradayMomentumDetector.runOnce({
-          dry_run: parameters.dry_run === true,
-        });
-        await this.safeUpdateExecutionLog(executionLog, {
-          total_items: r.scanned,
-          completed_items: r.written_alerts,
-          failed_items: r.errors?.length || 0,
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          result_summary: {
-            scenario: r.scenario,
-            trade_date: r.trade_date,
-            scanned: r.scanned,
-            matched_buy: r.matched_buy,
-            matched_sell: r.matched_sell,
-            written_alerts: r.written_alerts,
-            deduped: r.deduped,
-            errors: r.errors?.length || 0,
-            skipped_reason: r.skipped_reason,
-            dry_run: r.dry_run,
-          },
-        });
-        logger.info(
-          `[INTRADAY_MOMENTUM_DETECT] trade_date=${r.trade_date} scanned=${r.scanned} ` +
-            `buy=${r.matched_buy} sell=${r.matched_sell} written=${r.written_alerts} ` +
-            `deduped=${r.deduped} errors=${r.errors?.length || 0} skip=${r.skipped_reason || 'none'}`
-        );
       } else if (task.type === 'INDUSTRY_SENTIMENT_AGGREGATE') {
         // PR-M3 (2026-06-29) — 板块情绪指数日度聚合. 学术: 龙头战法 4 核心因子
         // (板块涨停数 / 连板高度 / 封板率 / 炸板率) + 30 日板块动量 z-score.
@@ -6659,73 +6342,6 @@ class SchedulerService {
         logger.info(
           `[INDUSTRY_SENTIMENT_AGGREGATE] trade_date=${r.trade_date} scanned=${r.industries_scanned} ` +
             `written=${r.industries_written} errors=${r.errors?.length || 0}`
-        );
-      } else if (task.type === 'INTRADAY_REVERSAL_DETECT') {
-        // PR-M3 (2026-06-29) — 反转 (reversal) detector. 学术: Hsu 2018 JPM / Zhang & Zhu 2024 IREF
-        // 4 篇独立研究共识 — A 股因 T+1 + 散户主导 → 短期反转主导, 而非动量.
-        // 找今日 < -3% 且周月线趋势仍向上 → reversal_buy; > +5% 且 RSI > 70 → reversal_sell.
-        /* eslint-disable @typescript-eslint/no-var-requires */
-        const { intradayReversalDetector } = require('./IntradayReversalDetector');
-        /* eslint-enable @typescript-eslint/no-var-requires */
-        const r = await intradayReversalDetector.runOnce({
-          dry_run: parameters.dry_run === true,
-        });
-        await this.safeUpdateExecutionLog(executionLog, {
-          total_items: r.scanned,
-          completed_items: r.hits.length,
-          failed_items: r.errors?.length || 0,
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          result_summary: {
-            scenario: 'intraday_reversal_detect',
-            scanned: r.scanned,
-            hits: r.hits.length,
-            by_type: r.by_type,
-            errors: r.errors?.length || 0,
-          },
-        });
-        logger.info(
-          `[INTRADAY_REVERSAL_DETECT] scanned=${r.scanned} hits=${r.hits.length} ` +
-            `buy=${r.by_type.reversal_buy} sell=${r.by_type.reversal_sell} errors=${r.errors?.length || 0}`
-        );
-      } else if (task.type === 'LIMIT_UP_BOARD_DETECT') {
-        // PR-O2 (2026-06-29) — 涨停板战法 detector (20+ pattern). PR-I-v2 战法库 §1
-        // 流派 1 落地率 0% → 50%. 每日 15:30 跑 (盘后), 对 limit_up_stocks 全表逐票运行
-        // 20+ classifier (一字 / T 字 / 烂板 / 强势板 / 弱转强 / 中军 / 二板加速 / 二板回封 /
-        // 二板填谷 / 二进三 / 高位连板加速 / 板块最高板 / 连板天梯 / 地天板 / 烂板反包 /
-        // 跌停反包 / 炸板回封 / 炸板换手 / 龙头接力 / 跟风接力), 命中即写 RiskAlert
-        // (rule_id='limit_up_<pattern>', level=MEDIUM) + 写 AIInvestmentSignal
-        // (source_type='limit_up_board', metadata.timing_tag='overnight'). fail-OPEN.
-        /* eslint-disable @typescript-eslint/no-var-requires */
-        const { limitUpBoardDetectorService } = require('./LimitUpBoardDetector');
-        /* eslint-enable @typescript-eslint/no-var-requires */
-        const r = await limitUpBoardDetectorService.runOnce({
-          dry_run: parameters.dry_run === true,
-        });
-        await this.safeUpdateExecutionLog(executionLog, {
-          total_items: r.scanned,
-          completed_items: r.pushed,
-          failed_items: r.errors?.length || 0,
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          result_summary: {
-            scenario: 'limit_up_board_detect',
-            trade_date: r.trade_date,
-            scanned: r.scanned,
-            total_hits: r.total_hits,
-            pushed: r.pushed,
-            deduped: r.deduped,
-            by_pattern: r.by_pattern,
-            errors: r.errors?.length || 0,
-            skipped_reason: r.skipped_reason,
-            dry_run: r.dry_run,
-          },
-        });
-        logger.info(
-          `[LIMIT_UP_BOARD_DETECT] trade_date=${r.trade_date} scanned=${r.scanned} ` +
-            `total_hits=${r.total_hits} pushed=${r.pushed} deduped=${r.deduped} ` +
-            `errors=${r.errors?.length || 0} skip=${r.skipped_reason || 'none'} ` +
-            `by_pattern=${JSON.stringify(r.by_pattern)}`
         );
       } else if (task.type === 'THEME_FERMENTATION_DETECT') {
         // PR-O5 (2026-06-30) — 题材发酵 5 阶段 detector. 消费 PR-M3 industry_sentiment_indices
@@ -6759,154 +6375,6 @@ class SchedulerService {
             `written=${r.industries_written} ` +
             `dist=germ${r.phase_distribution.germinate}/lau${r.phase_distribution.launch}/out${r.phase_distribution.outbreak}/cli${r.phase_distribution.climax}/rec${r.phase_distribution.recession} ` +
             `switch_events=${r.mainline_switch_events.length} errors=${r.errors?.length || 0}`
-        );
-      } else if (task.type === 'OPENING_RUSH_DETECT') {
-        // PR-O3 (2026-06-29) — Opening rush detector. 工作日 9:26 (集合竞价撮合 9:25 后 1min)
-        // 跑, 消费 overnight_signals + auction_snapshots, 识别隔夜信号 + auction pattern
-        // (高开 / 跳空 / 一字封板 / 等), 命中即写 AIInvestmentSignal (source_type=
-        // 'opening_rush_detector', metadata.timing_tag='opening_rush'). fail-OPEN per-symbol.
-        // PR-P (2026-06-30): 补 cron dispatch, 之前 PR-O3 只加 service 没注册 cron.
-        /* eslint-disable @typescript-eslint/no-var-requires */
-        const { openingRushDetector } = require('./OpeningRushDetector');
-        /* eslint-enable @typescript-eslint/no-var-requires */
-        const r = await openingRushDetector.runOnce({
-          dry_run: parameters.dry_run === true,
-          force: parameters.force === true,
-        });
-        await this.safeUpdateExecutionLog(executionLog, {
-          total_items: r.scanned,
-          completed_items: r.written,
-          failed_items: r.errors?.length || 0,
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          result_summary: {
-            scenario: r.scenario,
-            trade_date: r.trade_date,
-            scanned: r.scanned,
-            matched: r.matched,
-            written: r.written,
-            by_pattern: r.by_pattern,
-            overnight_direction: r.overnight_direction,
-            overnight_reason: r.overnight_reason,
-            skipped_reason: r.skipped_reason,
-            errors: r.errors?.length || 0,
-            dry_run: r.dry_run,
-          },
-        });
-        logger.info(
-          `[OPENING_RUSH_DETECT] trade_date=${r.trade_date} scanned=${r.scanned} ` +
-            `matched=${r.matched} written=${r.written} dir=${r.overnight_direction} ` +
-            `skip=${r.skipped_reason || 'none'} errors=${r.errors?.length || 0} ` +
-            `by_pattern=${JSON.stringify(r.by_pattern)}`
-        );
-      } else if (task.type === 'INTRADAY_PRICE_VOLUME_ANOMALY') {
-        // PR-O3 (2026-06-29) — 盘中价量异动 6 类 detector. 工作日盘中每 30min 跑一次.
-        // 命中写 RiskAlert + AIInvestmentSignal (source_type='intraday_price_volume_anomaly',
-        // metadata.timing_tag='intraday_anomaly'). 24h dedup. fail-OPEN per-symbol.
-        // PR-P (2026-06-30): 补 cron dispatch.
-        /* eslint-disable @typescript-eslint/no-var-requires */
-        const {
-          intradayPriceVolumeAnomalyDetector,
-        } = require('./IntradayPriceVolumeAnomalyDetector');
-        /* eslint-enable @typescript-eslint/no-var-requires */
-        const r = await intradayPriceVolumeAnomalyDetector.runOnce({
-          dry_run: parameters.dry_run === true,
-        });
-        await this.safeUpdateExecutionLog(executionLog, {
-          total_items: r.scanned,
-          completed_items: r.written_signals,
-          failed_items: r.errors?.length || 0,
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          result_summary: {
-            scenario: r.scenario,
-            trade_date: r.trade_date,
-            scanned: r.scanned,
-            matched: r.matched,
-            written_alerts: r.written_alerts,
-            written_signals: r.written_signals,
-            by_type: r.by_type,
-            skipped_reason: r.skipped_reason,
-            errors: r.errors?.length || 0,
-            dry_run: r.dry_run,
-          },
-        });
-        logger.info(
-          `[INTRADAY_PRICE_VOLUME_ANOMALY] trade_date=${r.trade_date} scanned=${r.scanned} ` +
-            `matched=${r.matched} alerts=${r.written_alerts} signals=${r.written_signals} ` +
-            `skip=${r.skipped_reason || 'none'} errors=${r.errors?.length || 0} ` +
-            `by_type=${JSON.stringify(r.by_type)}`
-        );
-      } else if (task.type === 'LAST_HOUR_MOMENTUM') {
-        // PR-O3 (2026-06-29) — Last-hour 尾盘动量 detector. 学术: Zhang/Ma/Zhu 2019 EM
-        // (中国市场 9:30-10:00 r1 → 14:30-15:00 r2 最 robust). 工作日 14:30 跑, r1>+1% buy →
-        // AIInvestmentSignal (source_type='last_hour_momentum', metadata.timing_tag='closing_grab').
-        // fail-OPEN per-symbol. PR-P (2026-06-30): 补 cron dispatch.
-        /* eslint-disable @typescript-eslint/no-var-requires */
-        const { lastHourMomentumDetector } = require('./LastHourMomentumDetector');
-        /* eslint-enable @typescript-eslint/no-var-requires */
-        const r = await lastHourMomentumDetector.runOnce({
-          dry_run: parameters.dry_run === true,
-        });
-        await this.safeUpdateExecutionLog(executionLog, {
-          total_items: r.scanned,
-          completed_items: r.written,
-          failed_items: r.errors?.length || 0,
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          result_summary: {
-            scenario: r.scenario,
-            trade_date: r.trade_date,
-            scanned: r.scanned,
-            matched: r.matched,
-            written: r.written,
-            skipped_reason: r.skipped_reason,
-            errors: r.errors?.length || 0,
-            dry_run: r.dry_run,
-          },
-        });
-        logger.info(
-          `[LAST_HOUR_MOMENTUM] trade_date=${r.trade_date} scanned=${r.scanned} ` +
-            `matched=${r.matched} written=${r.written} ` +
-            `skip=${r.skipped_reason || 'none'} errors=${r.errors?.length || 0}`
-        );
-      } else if (task.type === 'AFTERNOON_KICK_DETECT') {
-        // PR-O6 (2026-06-30) — 午后开盘攻 detector. 战法库 §A19-A22 4 类 pattern.
-        // 工作日 13:01 (午后 13:00 开盘 1min 后, REALTIME_QUOTE_SYNC 13:00 写完留 buffer) 跑.
-        // 命中写 AIInvestmentSignal (source_type='afternoon_kick_detector',
-        // metadata.timing_tag='afternoon_kick') + RiskAlert (exhaustion HIGH, 其它 MEDIUM).
-        // fail-OPEN per-symbol, dedup `afternoon_kick::${pattern}::${symbol}::${trade_date}`.
-        /* eslint-disable @typescript-eslint/no-var-requires */
-        const { afternoonKickDetector } = require('./AfternoonKickDetector');
-        /* eslint-enable @typescript-eslint/no-var-requires */
-        const r = await afternoonKickDetector.runOnce({
-          dry_run: parameters.dry_run === true,
-          force: parameters.force === true,
-        });
-        await this.safeUpdateExecutionLog(executionLog, {
-          total_items: r.scanned,
-          completed_items: r.written_signals,
-          failed_items: r.errors?.length || 0,
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          result_summary: {
-            scenario: r.scenario,
-            trade_date: r.trade_date,
-            scanned: r.scanned,
-            matched: r.matched,
-            written_signals: r.written_signals,
-            written_alerts: r.written_alerts,
-            by_pattern: r.by_pattern,
-            skipped_reason: r.skipped_reason,
-            errors: r.errors?.length || 0,
-            dry_run: r.dry_run,
-          },
-        });
-        logger.info(
-          `[AFTERNOON_KICK_DETECT] trade_date=${r.trade_date} scanned=${r.scanned} ` +
-            `matched=${r.matched} written_signals=${r.written_signals} ` +
-            `written_alerts=${r.written_alerts} skip=${r.skipped_reason || 'none'} ` +
-            `errors=${r.errors?.length || 0} by_pattern=${JSON.stringify(r.by_pattern)}`
         );
       } else {
         throw new Error(`Unsupported task type: ${task.type}`);

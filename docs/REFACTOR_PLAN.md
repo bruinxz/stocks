@@ -93,7 +93,7 @@ models/      → ~92 个 (删日内/融合/个股因子相关表; 龙虎榜/北�
 风控辅助: `RiskAlertService` `RiskThresholdAttributionService` `RiskThresholdStabilityService` `SizingAuditService` `PortfolioCorrelationService` `TradeComplianceChecker` `TradePolicyExplainService`
 研究辅助: `AnalysisEngineService`(月度调仓给用户看行业分析) `TechnicalAnalysisService` `AnnouncementNLPService` `MarketBriefService`
 
-**历史遗留判定** (引用面核查后定案): **留 5** — `ExposureCoachService`(组合 exposure API 展示) `BenchmarkIndexService`(ETF 基准对比) `RealtimeIndexService`(大盘指数展示/regime) `MarketBriefService`(市场简报展示) `UserFeedbackService`(用户反馈); **删 3** — `QuantOpeningPreflightService`(消费方 StrategyResearchController 已删) `OpeningReadinessService`(开盘就绪, 偏日内; 顺清 TodayController/Scheduler/TodayCommandCenter 调用点) `SparklinePngService`(消费方 IntradayOpportunityPusher 已删; 前端 sparkline 是客户端 Sparkline20d/MiniCharts, 与此后端 PNG 无关)
+**历史遗留判定** (引用面核查后定案): **留 5** — `ExposureCoachService`(组合 exposure API 展示) `BenchmarkIndexService`(ETF 基准对比) `RealtimeIndexService`(大盘指数展示/regime) `MarketBriefService`(市场简报展示) `UserFeedbackService`(用户反馈); **删 3** — `QuantOpeningPreflightService`(**订正**: 消费方 `StrategyResearchController` 仍在, 已随批3 controller 删除一并处理, 批2 暂留) `OpeningReadinessService`(开盘就绪, 偏日内; 顺清 TodayController/Scheduler/TodayCommandCenter 调用点) `SparklinePngService`(消费方 IntradayOpportunityPusher 已删; 前端 sparkline 是客户端 Sparkline20d/MiniCharts, 与此后端 PNG 无关)
 
 ### 2.2 services/ 子目录 (21 个)
 
@@ -134,7 +134,7 @@ models/      → ~92 个 (删日内/融合/个股因子相关表; 龙虎榜/北�
 
 | 文件 | 处置 |
 |---|---|
-| `aiPollingBurstDetector` | 删除 — 日内 burst 探测 |
+| `aiPollingBurstDetector` | 保留 — 实为 **AI 轮询失败 burst 监控** (运维告警基建, 非日内交易信号); 被 `aiPollingWorker` 消费, 引用面核查后定案保留 |
 | `aiPollingEnqueue` `aiPollingQueue` `aiPollingWorker` | 改造 — 从全市场个股轮询改卫星题材轮询 |
 | `dataUpdateQueue` `dataUpdateWorker` | 改造 — 数据源精简后同步调整 |
 | `quantBacktestQueue` `quantBacktestWorker` | 保留 — **真** 7 关回测队列 (连 `quant/backtest`) |

@@ -10,7 +10,6 @@ import { AIInvestmentSignal } from '../models/AIInvestmentSignal';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
-import { openingReadinessService } from './OpeningReadinessService';
 import { paperTradingTuningApplyService } from '../portfolio/internal/PaperTradingTuningApplyService';
 
 type CommandAction = 'buy' | 'watch' | 'hold' | 'sell' | 'avoid';
@@ -96,7 +95,6 @@ class TodayCommandCenterService {
       rankings,
       quotePersistence,
       latestFeishuLog,
-      openingReadiness,
       tuningCandidates,
       canarySnapshots,
     ] = await Promise.all([
@@ -136,19 +134,6 @@ class TodayCommandCenterService {
         logger.warn(`今日作战台读取飞书任务日志失败: ${error?.message || error}`);
         return null;
       }),
-      openingReadinessService
-        .getReadiness({
-          user_id: options.user_id,
-          username: options.username,
-          trade_date: tradeDate,
-          factor_limit: 220,
-          use_cache: true,
-          cache_ttl_ms: 90_000,
-        })
-        .catch(error => {
-          logger.warn(`今日作战台读取开盘可信检查失败: ${error?.message || error}`);
-          return null;
-        }),
       paperTradingTuningApplyService
         .getTuningCandidates({
           user_id: options.user_id,
@@ -227,7 +212,6 @@ class TodayCommandCenterService {
         sellCandidates,
         summary,
         riskProfile,
-        openingReadiness,
       }),
       summary,
       buy_candidates: candidates.filter(item => item.action === 'buy'),
@@ -237,7 +221,6 @@ class TodayCommandCenterService {
       positions,
       readiness,
       discipline,
-      opening_readiness: openingReadiness,
       risk_profile: riskProfile,
       automation_health: automationHealth
         ? {
@@ -748,38 +731,7 @@ class TodayCommandCenterService {
     sellCandidates: any[];
     summary: any;
     riskProfile: any;
-    openingReadiness?: any;
   }) {
-    if (payload.openingReadiness) {
-      const readiness = payload.openingReadiness;
-      const buyGate = readiness.buy_gate || {};
-      const nextActions = Array.isArray(readiness.next_actions) ? readiness.next_actions : [];
-      return {
-        tone:
-          readiness.status === 'ready'
-            ? 'action'
-            : readiness.status === 'degraded'
-            ? 'hold'
-            : 'wait',
-        headline: readiness.status_label || readiness.conclusion,
-        reason: readiness.conclusion,
-        risk:
-          buyGate.reason ||
-          readiness.portfolio?.risk_label ||
-          payload.riskProfile?.status?.conclusion ||
-          '按开盘可信检查执行',
-        next_actions: nextActions.length
-          ? nextActions.slice(0, 3).map((item: any) => item.title || item.description)
-          : [
-              buyGate.allowed
-                ? `最多新增 ${buyGate.max_new_positions || 0} 只，默认仓位 ${
-                    buyGate.default_position_pct || 0
-                  }%`
-                : '暂停新增买入，先修复开盘链路',
-              '收盘后进入收益复盘中心看模拟交易是否赚钱',
-            ],
-      };
-    }
     const buyCount = payload.candidates.filter(item => item.action === 'buy').length;
     const watchCount = payload.candidates.filter(item => item.action !== 'buy').length;
     const sellCount = payload.sellCandidates.length;
