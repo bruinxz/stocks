@@ -39,6 +39,38 @@ export class BaostockClient extends PythonMarketDataClient {
     return this.callPythonScript('baostock_get_trade_dates', start_date, end_date);
   }
 
+  /**
+   * Batch BB (2026-07-03): 批量取核心宽基成分股真实 PE/PB/PS(+可选 ROE).
+   * 东方财富服务器边缘 IP 被封 (502) 时的可持续免登录替代源.
+   * @param codes  任意格式股票代码数组 (600000 / sh.600000 / 600000.SH)
+   * @param asOf   因子日期 YYYY-MM-DD, 默认今日
+   * @param withRoe 是否附带 roeAvg (季度频率, 慢一倍)
+   */
+  async getValuationBatch(
+    codes: string[],
+    asOf?: string,
+    withRoe = false
+  ): Promise<
+    Array<{
+      symbol: string;
+      factor_date: string;
+      pe_ttm: number;
+      pb: number;
+      ps_ttm: number;
+      roe: number | null;
+      roe_stat_date?: string;
+    }>
+  > {
+    if (!codes.length) return [];
+    logger.info(`Fetching baostock valuation batch for ${codes.length} codes (withRoe=${withRoe})`);
+    return this.callPythonScript(
+      'baostock_get_valuation_batch',
+      codes.join(','),
+      asOf || '',
+      withRoe ? '1' : '0'
+    );
+  }
+
   getStatus() {
     return {
       ...this.getBaseStatus(),

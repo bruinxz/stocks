@@ -102,18 +102,43 @@ export class DefaultETFFactorDataSource implements ETFFactorDataSource {
     if (!codes.length) return out;
     const start = lookbackStartDate(asOfDate, 120);
     const rows = (await StockValuationFactor.findAll({
-      attributes: ['symbol', 'factor_date', 'pe_ttm', 'pb'],
+      attributes: ['symbol', 'factor_date', 'pe_ttm', 'pb', 'source'],
       where: { factor_date: { [Op.gte]: start, [Op.lte]: asOfDate } },
       raw: true,
-    })) as unknown as Array<{ symbol: string; factor_date: string; pe_ttm: any; pb: any }>;
+    })) as unknown as Array<{
+      symbol: string;
+      factor_date: string;
+      pe_ttm: any;
+      pb: any;
+      source: string;
+    }>;
     const universe = new Set(codes);
-    const latest = new Map<string, { pe: number; pb: number; date: string }>();
+    // 同一 factor_date 下多源共存 (uniq 约束含 source): 真实源 (baostock/tushare/eastmoney)
+    // 优先于 local_derived 弱代理, 避免 fake pe/pb 盖过真实值。数值越大越优先。
+    const sourceRank = (src: string): number => {
+      switch (String(src || '').toLowerCase()) {
+        case 'tushare':
+          return 4;
+        case 'baostock':
+          return 3;
+        case 'eastmoney':
+          return 2;
+        default:
+          return 1; // local_derived / 其它
+      }
+    };
+    const latest = new Map<string, { pe: number; pb: number; date: string; rank: number }>();
     for (const r of rows) {
       const code = stripSuffix(r.symbol);
       if (!universe.has(code)) continue;
       const prev = latest.get(code);
-      if (!prev || r.factor_date > prev.date) {
-        latest.set(code, { pe: Number(r.pe_ttm), pb: Number(r.pb), date: r.factor_date });
+      const rank = sourceRank(r.source);
+      const better =
+        !prev ||
+        r.factor_date > prev.date ||
+        (r.factor_date === prev.date && rank > prev.rank);
+      if (better) {
+        latest.set(code, { pe: Number(r.pe_ttm), pb: Number(r.pb), date: r.factor_date, rank });
       }
     }
     for (const [code, v] of latest) out.set(code, { pe: v.pe, pb: v.pb });

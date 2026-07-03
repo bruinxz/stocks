@@ -247,6 +247,106 @@ def baostock_get_trade_dates(start_date: str, end_date: str) -> List[str]:
         silent_bs_logout(bs)
 
 
+def baostock_get_valuation_batch(
+    codes_csv: str, as_of: str = "", with_roe: str = "0"
+) -> List[Dict[str, Any]]:
+    """
+    Batch BB (2026-07-03, Signal-First 主线命脉): 批量取核心宽基 ETF 成分股的
+    真实 PE(TTM)/PB(MRQ)/PS(TTM) — 作为东方财富 (服务器边缘 IP 被封, 502) 的
+    可持续免登录替代源. baostock 单会话登录一次, 顺序拉每只票近 ~15 交易日 K 线
+    (query_history_k_data_plus 内含 peTTM/pbMRQ/psTTM), 取最后一根非空估值行.
+
+    with_roe='1' 时额外调 query_profit_data 拿 roeAvg (季度频率, 慢一倍); 默认关.
+    baostock 非线程安全 (并发 query 会 hang), 故只能顺序; ~740ms/票, 789 只核心
+    成分约 10min, 契合 DERIVED_FACTOR_SYNC 的 20min 调度上限.
+
+    入参 codes_csv: 逗号分隔, 任意格式 (600000 / sh.600000 / 600000.SH 皆可).
+    出参: [{symbol(sh.600000), factor_date, pe_ttm, pb, ps_ttm, roe(可空)}].
+    """
+    codes = [c.strip() for c in (codes_csv or "").split(",") if c.strip()]
+    if not codes:
+        return []
+    as_of = (as_of or datetime.now().strftime("%Y-%m-%d")).strip()[:10]
+    want_roe = str(with_roe) in ("1", "true", "True", "yes")
+
+    # 估值回看窗口: 停牌/节假日容错, 往回 25 自然日足够覆盖 >=1 个交易日
+    from datetime import datetime as _dt, timedelta as _td
+    try:
+        end_d = _dt.strptime(as_of, "%Y-%m-%d")
+    except Exception:
+        end_d = _dt.now()
+    start_s = (end_d - _td(days=25)).strftime("%Y-%m-%d")
+
+    # ROE 报告期: 从 as_of 反推最近可能已披露的季度, 逐季回退直到取到值
+    def _profit_quarters(ref: "_dt"):
+        y, m = ref.year, ref.month
+        q = (m - 1) // 3 + 1
+        out = []
+        for _ in range(6):  # 最多回退 6 个季度 (1.5 年)
+            q -= 1
+            if q == 0:
+                q = 4
+                y -= 1
+            out.append((y, q))
+        return out
+
+    bs = baostock_login()
+    results: List[Dict[str, Any]] = []
+    try:
+        for raw in codes:
+            code = to_baostock_code(raw)
+            item: Dict[str, Any] = {
+                "symbol": normalize_symbol(raw),
+                "factor_date": as_of,
+                "pe_ttm": 0.0,
+                "pb": 0.0,
+                "ps_ttm": 0.0,
+                "roe": None,
+            }
+            try:
+                rs = bs.query_history_k_data_plus(
+                    code,
+                    "date,code,close,peTTM,pbMRQ,psTTM",
+                    start_date=start_s,
+                    end_date=as_of,
+                    frequency="d",
+                    adjustflag="3",
+                )
+                last = None
+                while rs.next():
+                    row = dict(zip(getattr(rs, "fields", []), rs.get_row_data()))
+                    if safe_float(row.get("peTTM")) != 0 or safe_float(row.get("pbMRQ")) != 0:
+                        last = row
+                if last:
+                    item["factor_date"] = last.get("date") or as_of
+                    item["pe_ttm"] = safe_float(last.get("peTTM"))
+                    item["pb"] = safe_float(last.get("pbMRQ"))
+                    item["ps_ttm"] = safe_float(last.get("psTTM"))
+            except Exception as exc:  # 单票失败不影响整批
+                item["error"] = f"kdata: {exc}"
+
+            if want_roe:
+                try:
+                    for (yy, qq) in _profit_quarters(end_d):
+                        rp = bs.query_profit_data(code=code, year=yy, quarter=qq)
+                        got = None
+                        while rp.next():
+                            got = dict(zip(getattr(rp, "fields", []), rp.get_row_data()))
+                            break
+                        if got and got.get("roeAvg") not in (None, ""):
+                            # baostock roeAvg 为小数 (0.105687), 统一乘 100 转百分数与其它源对齐
+                            item["roe"] = round(safe_float(got.get("roeAvg")) * 100, 4)
+                            item["roe_stat_date"] = got.get("statDate")
+                            break
+                except Exception as exc:
+                    item["roe_error"] = f"profit: {exc}"
+
+            results.append(item)
+        return results
+    finally:
+        silent_bs_logout(bs)
+
+
 def tushare_client(token: str):
     if not token:
         raise RuntimeError("Tushare token is empty")
@@ -541,6 +641,14 @@ def main() -> None:
             output_success(baostock_get_stock_basic(args[0]))
         elif command == "baostock_get_trade_dates":
             output_success(baostock_get_trade_dates(args[0], args[1]))
+        elif command == "baostock_get_valuation_batch":
+            output_success(
+                baostock_get_valuation_batch(
+                    args[0],
+                    args[1] if len(args) > 1 else "",
+                    args[2] if len(args) > 2 else "0",
+                )
+            )
         elif command == "tushare_get_all_stocks":
             output_success(tushare_get_all_stocks(args[0]))
         elif command == "tushare_get_daily_data":

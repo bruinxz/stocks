@@ -6,6 +6,7 @@ import { normalizeSymbol } from '../../utils/stockSymbol';
 import { logger } from '../../utils/logger';
 import { TushareClient } from '../sources/TushareClient';
 import { EastMoneyClient } from '../sources/EastMoneyClient';
+import { BaostockClient } from '../sources/BaostockClient';
 import { StockValuationFactor } from '../../models/StockValuationFactor';
 import { StockMoneyFlowFactor } from '../../models/StockMoneyFlowFactor';
 import { StockFundamentalFactor } from '../../models/StockFundamentalFactor';
@@ -13,7 +14,7 @@ import sequelize from '../../config/database';
 
 
 type FactorScope = 'favorites' | 'market' | 'custom';
-type FactorProviderName = 'auto' | 'local_derived' | 'tushare' | 'eastmoney';
+type FactorProviderName = 'auto' | 'local_derived' | 'tushare' | 'eastmoney' | 'baostock';
 
 function dateOnly(value: Date | string): string {
   if (typeof value === 'string') return value.slice(0, 10);
@@ -132,6 +133,7 @@ export class StockFactorService {
     undefined,
     Number(process.env.EASTMONEY_FACTOR_TIMEOUT_MS || 12000)
   );
+  private baostockClient = new BaostockClient(process.env.PYTHON_PATH || undefined);
 
   async runProviderSmokeTest(
     options: { provider?: FactorProviderName; symbol?: string; as_of?: string } = {}
@@ -235,6 +237,11 @@ export class StockFactorService {
       providers.push('eastmoney');
     } else if (requestedProvider === 'local_derived') {
       providers.push('local_derived');
+    } else if (requestedProvider === 'baostock') {
+      // baostock: 免登录、服务器可达 (东方财富边缘 IP 被封时的可持续估值/ROE 源)。
+      // 单会话顺序拉取 ~740ms/票, 仅适合核心宽基成分范围; local_derived 兜底补齐资金流。
+      providers.push('baostock');
+      providers.push('local_derived');
     } else {
       if (preferRealProvider && tushareEnabled) providers.push('tushare');
       if (preferRealProvider) providers.push('eastmoney');
@@ -257,6 +264,12 @@ export class StockFactorService {
           has_token: false,
           required_env: [],
           note: '东方财富免费实时源已启用，用于补充价格、PE/PB、市值、换手率与弱资金流代理；无需 token，但需控制并发。',
+        },
+        baostock: {
+          enabled: true,
+          has_token: false,
+          required_env: ['baostock Python 包 (venv)'],
+          note: 'baostock 免登录源已启用：顺序拉取真实 PE(TTM)/PB(MRQ)/PS(TTM) 与季度 roeAvg；服务器可达，作为东方财富被封时的可持续替代，仅适合核心宽基成分范围。',
         },
         local_derived: {
           enabled: true,
@@ -529,6 +542,168 @@ export class StockFactorService {
     );
   }
 
+  /**
+   * Batch BB (2026-07-03, 主线命脉可持续化): baostock 免登录源落 stock_valuation_factors
+   * (真实 PE/PB/PS) 与 stock_fundamental_factors (季度 roeAvg → quality)。
+   *
+   * 背景: 东方财富免费快照在生产服务器边缘 IP 被封 (502), DERIVED_FACTOR_SYNC 名义
+   *   SUCCESS 实为 SKIP, PE/PB 全靠 Mac 手动回填 — 不可持续。baostock 服务器可达且免
+   *   token, 但单会话顺序 ~740ms/票, 无法在 20min 内跑完全 A 股 (~5500)。
+   *
+   * 设计: 仅覆盖 "核心宽基 ETF 成分股" 范围 (沪深300/中证500/上证50/科创50/创业板/红利,
+   *   去重 ~789 只) — 这正是 ETF 因子轮动 (Core 70%) 打分的实际 universe, 全市场其余票
+   *   不参与 Core 排名, 无需 baostock 真实估值。若显式传入 symbols/favorites 则按传入范围。
+   *
+   * 分块: Python 客户端硬超时 120s, 顺序 740ms/票 → 每块 <=120 只 (~89s 余量);
+   *   with_roe 时 ROE 查询再翻倍, 每块降到 60 只。
+   */
+  private async syncBaostockFactors(stocks: Stock[], options: FactorSyncOptions = {}) {
+    const withRoe = process.env.BAOSTOCK_WITH_ROE !== 'false';
+    const empty = {
+      requested: stocks.length,
+      processed: 0,
+      upserts: { valuation: 0, money_flow: 0, fundamental: 0 },
+      errors: [] as string[],
+    };
+    if (!stocks.length) return empty;
+
+    // 全市场范围时收敛到核心宽基成分 universe (baostock 顺序拉取无法覆盖全 A 股)。
+    // scope=custom/favorites (显式股票池) 时按原样, 不收敛。
+    let targetStocks = stocks;
+    const isBroadMarket = !options.symbols?.length && options.scope !== 'favorites';
+    if (isBroadMarket) {
+      const coreSymbols = await this.getCoreUniverseSymbols(options.as_of);
+      if (coreSymbols.size) {
+        const filtered = stocks.filter(st => coreSymbols.has(normalizeSymbol(st.symbol)));
+        if (filtered.length) targetStocks = filtered;
+      }
+    }
+
+    const factorDate = options.as_of || new Date().toISOString().slice(0, 10);
+    const chunkSize = withRoe
+      ? Number(process.env.BAOSTOCK_ROE_CHUNK || 60)
+      : Number(process.env.BAOSTOCK_CHUNK || 120);
+    const stockBySymbol = new Map(targetStocks.map(st => [normalizeSymbol(st.symbol), st]));
+    let processed = 0;
+    let valuation = 0;
+    let fundamental = 0;
+    const errors: string[] = [];
+
+    for (let i = 0; i < targetStocks.length; i += chunkSize) {
+      const chunk = targetStocks.slice(i, i + chunkSize);
+      let rows: Array<{
+        symbol: string;
+        factor_date: string;
+        pe_ttm: number;
+        pb: number;
+        ps_ttm: number;
+        roe: number | null;
+        roe_stat_date?: string;
+      }> = [];
+      try {
+        rows = await this.baostockClient.getValuationBatch(
+          chunk.map(st => st.symbol),
+          options.as_of,
+          withRoe
+        );
+      } catch (error: any) {
+        errors.push(`baostock_chunk_${i}: ${error?.message || error}`);
+        continue;
+      }
+
+      for (const row of rows) {
+        const symbol = normalizeSymbol(row.symbol);
+        const stock = stockBySymbol.get(symbol);
+        if (!stock) continue;
+        const pe = toNumber(row.pe_ttm);
+        const pb = toNumber(row.pb);
+        const ps = toNumber(row.ps_ttm);
+        const rowDate = row.factor_date || factorDate;
+        const rawPayload = {
+          provider: 'baostock',
+          source_note:
+            'baostock free (no-token) source: peTTM/pbMRQ/psTTM from query_history_k_data_plus, roeAvg from query_profit_data. Sustainable replacement for IP-blocked EastMoney on core broad-based universe.',
+          row,
+        };
+
+        if (pe > 0 || pb > 0 || ps > 0) {
+          const valuationScore = clamp(
+            (pe > 0 ? clamp(100 - Math.min(pe * 1.85, 95)) : 50) * 0.42 +
+              (pb > 0 ? clamp(100 - Math.min(pb * 14, 95)) : 50) * 0.34 +
+              (ps > 0 ? clamp(100 - Math.min(ps * 9, 95)) : 55) * 0.24
+          );
+          await StockValuationFactor.upsert({
+            stock_id: stock.id,
+            symbol: stock.symbol,
+            name: stock.name,
+            factor_date: rowDate,
+            pe_ttm: pe || undefined,
+            pb: pb || undefined,
+            valuation_score: round(valuationScore, 4),
+            source: 'baostock',
+            raw_payload: rawPayload,
+          } as any);
+          valuation++;
+        }
+
+        if (withRoe && row.roe !== null && row.roe !== undefined) {
+          const roe = toNumber(row.roe);
+          await StockFundamentalFactor.upsert({
+            stock_id: stock.id,
+            symbol: stock.symbol,
+            name: stock.name,
+            factor_date: rowDate,
+            report_period: (row.roe_stat_date || rowDate).slice(0, 7),
+            roe: roe || undefined,
+            quality_score: this.scoreEastMoneyQuality({ roe, pe_ttm: pe, pb }),
+            source: 'baostock',
+            raw_payload: rawPayload,
+          } as any);
+          fundamental++;
+        }
+        processed++;
+      }
+    }
+
+    if (!processed && targetStocks.length) errors.push('baostock_no_rows_returned');
+
+    return {
+      requested: targetStocks.length,
+      processed,
+      upserts: { valuation, money_flow: 0, fundamental },
+      errors: errors.slice(0, 20),
+    };
+  }
+
+  /**
+   * 核心宽基 ETF 成分股 universe (归一化后带前缀的 symbol 集合)。
+   * 取 index_components 中 6 个核心宽基指数最新 trade_date 的成分并集, 与 stocks 表
+   * 交叉。用于把 baostock 顺序拉取范围收敛到 Core 轮动实际打分的股票池。
+   */
+  private async getCoreUniverseSymbols(asOf?: string): Promise<Set<string>> {
+    const CORE_INDEXES = ['000300', '000905', '000016', '000688', '399673', '000015'];
+    try {
+      const rows = (await sequelize.query(
+        `SELECT DISTINCT stock_code FROM index_components
+         WHERE index_code IN (:indexes)
+           AND (:asOf IS NULL OR trade_date <= :asOf)`,
+        {
+          replacements: { indexes: CORE_INDEXES, asOf: asOf || null },
+          type: QueryTypes.SELECT,
+        }
+      )) as Array<{ stock_code: string }>;
+      const out = new Set<string>();
+      for (const r of rows) {
+        const norm = normalizeSymbol(r.stock_code);
+        if (norm) out.add(norm);
+      }
+      return out;
+    } catch (error: any) {
+      logger.warn(`getCoreUniverseSymbols 失败, 退回全范围: ${error?.message || error}`);
+      return new Set();
+    }
+  }
+
   private async syncEastMoneyFactors(stocks: Stock[], options: FactorSyncOptions = {}) {
     if (!stocks.length) {
       return {
@@ -799,7 +974,7 @@ export class StockFactorService {
       );
       const realProviderRate = Number(coverage.source_quality?.real_provider_rate || 0);
       const requiresRealProvider = providerPlan.providers.some(provider =>
-        ['tushare', 'eastmoney'].includes(provider)
+        ['tushare', 'eastmoney', 'baostock'].includes(provider)
       );
       const shouldSkip =
         coverage.latest_trade_date &&
@@ -859,6 +1034,14 @@ export class StockFactorService {
     let valuationUpserts = 0;
     let moneyFlowUpserts = 0;
     let fundamentalUpserts = 0;
+
+    if (providerPlan.providers.includes('baostock')) {
+      const baostockResult = await this.syncBaostockFactors(stocks, options);
+      providerResults.baostock = baostockResult;
+      // baostock 真实估值/ROE 计入顶层 upserts, 让 CLI/调度日志反映真实落盘量。
+      valuationUpserts += baostockResult.upserts.valuation;
+      fundamentalUpserts += baostockResult.upserts.fundamental;
+    }
 
     if (providerPlan.providers.includes('local_derived')) {
       const barsByStock = await this.getBarsByStock(stocks, options.as_of);

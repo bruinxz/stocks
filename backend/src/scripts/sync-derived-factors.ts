@@ -26,7 +26,7 @@
  *   npm run sync:derived-factors -- --skip-if-coverage-gte=95   # 覆盖率达标即跳过重复落盘
  *
  * 选项:
- *   --provider=<eastmoney|tushare|local_derived|auto>  默认 eastmoney
+ *   --provider=<eastmoney|baostock|tushare|local_derived|auto>  默认 eastmoney
  *   --scope=<market|favorites|custom>                  默认 market
  *   --symbols=<code,code,...>                          自定义股票池 (带市场前缀或纯6位皆可)
  *   --limit=<n>                                         全市场落盘上限, 默认 6000 (覆盖全 A 股)
@@ -49,7 +49,7 @@ const program = new Command();
 program
   .name('sync-derived-factors')
   .description('派生因子(估值/质量/资金流)入库 — 默认东方财富免费源')
-  .option('--provider <name>', '数据源: eastmoney|tushare|local_derived|auto', 'eastmoney')
+  .option('--provider <name>', '数据源: eastmoney|baostock|tushare|local_derived|auto', 'eastmoney')
   .option('--scope <scope>', '范围: market|favorites|custom', 'market')
   .option('--symbols <codes>', '逗号分隔股票代码 (自定义股票池)')
   .option('--limit <n>', '全市场落盘上限', '6000')
