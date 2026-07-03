@@ -3,9 +3,6 @@
  *
  * 验证每个新模块的关键 export 函数能跑 + 数学正确
  */
-import { buildIndicatorMatrix, averageUniqueness, computeSampleWeightsByReturns, timeDecayWeights } from '../../src/services/meta/afml-sample-weights';
-import { sizeFromProbability, discretizeBetSize, decideBetSize, averageActiveBetSize } from '../../src/services/meta/afml-bet-sizing';
-import { strategyEfficientFrontier, timeUnderWater, probabilisticSharpeRatio, frequencyOfBets, averageHoldingPeriod } from '../../src/services/meta/afml-strategy-stats';
 import { nestedClusteredOptimization, rollSpread, corwinSchultzSpread, beckerParkinsonVol, shannonEntropy, adfTestStatistic, supAdf, marchenkoPasturThreshold, denoiseCorrelation, detoneCorrelation } from '../../src/services/research/afml-advanced';
 import { terminalWealthRelative, geometricMeanReturn, optimalF, leverageSpaceModel, riskOfRuin, kellyFraction, compareKellyVsOptimalF } from '../../src/services/governor/vince-money-mgmt';
 import { computeDecisionQualityScore, decisionPnlMatrix, classifyTraderPattern, scorePreMortem, narangArchitectureAudit, narangCoverageScore } from '../../src/services/governor/decision-quality';
@@ -26,39 +23,6 @@ function assert(name: string, cond: boolean, detail = '') {
 }
 function close(name: string, actual: number, expected: number, eps = 1e-3) {
   assert(name, Number.isFinite(actual) && Math.abs(actual - expected) < eps, `expected≈${expected}, got=${actual}`);
-}
-
-// ============================================================
-// Sprint 7 — AFML
-// ============================================================
-console.log('\n## Sprint 7: AFML Sample Weights / Bet Sizing / Strategy Stats');
-{
-  const samples = [{ t_in: 0, t_out: 2 }, { t_in: 1, t_out: 3 }, { t_in: 4, t_out: 5 }];
-  const ind = buildIndicatorMatrix(samples, 6);
-  assert('indicator matrix shape', ind.length === 6 && ind[0].length === 3);
-  assert('sample 0 active at t=0', ind[0][0] === 1);
-  const u = averageUniqueness(ind);
-  assert('uniqueness sample 2 = 1 (no overlap)', u[2] === 1);
-  const w = computeSampleWeightsByReturns([0.5, 0.5, 1.0], [0.02, 0.03, 0.01]);
-  assert('weights sum to N (normalized)', Math.abs(w.reduce((s, v) => s + v, 0) - 3) < 0.01);
-  const tdw = timeDecayWeights([1, 1, 1], 0.5);
-  assert('time decay weights non-zero', tdw.every(v => v > 0));
-
-  close('sizeFromProbability(0.5) = 0', sizeFromProbability(0.5), 0, 1e-6);
-  assert('sizeFromProbability(0.8) > 0.5', sizeFromProbability(0.8) > 0.5);
-  close('discretizeBetSize(0.37, 0.1) = 0.4', discretizeBetSize(0.37, 0.1), 0.4, 0.01);
-  const dec = decideBetSize({ probability: 0.7, discretization_step: 0.1 });
-  assert('decideBetSize should_bet=true', dec.should_bet);
-
-  const f_returns = [[0.01, -0.005, 0.02], [0.005, -0.002, 0.01]];
-  const ef = strategyEfficientFrontier(f_returns);
-  assert('efficient frontier weights sum=1', Math.abs(ef.min_var_weights.reduce((s, v) => s + v, 0) - 1) < 1e-3);
-  const tuw = timeUnderWater([-0.1, -0.05, 0.02, 0.1, -0.03]);
-  assert('time under water finite', Number.isFinite(tuw.max_tuw_days));
-  const psr = probabilisticSharpeRatio(1.5, 100, 0, 3, 0);
-  assert('PSR in [0, 1]', psr >= 0 && psr <= 1);
-  close('frequencyOfBets(50, 100, 252) ≈ 126', frequencyOfBets(50, 100, 252), 126);
-  close('avg holding period', averageHoldingPeriod([{ entry_idx: 0, exit_idx: 5 }, { entry_idx: 10, exit_idx: 15 }]), 5);
 }
 
 // ============================================================

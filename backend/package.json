@@ -59,7 +59,6 @@
     "run:factor-backtest": "ts-node src/scripts/run-factor-backtest.ts",
     "run:monte-carlo": "ts-node src/scripts/run-monte-carlo.ts",
     "optimize:portfolio": "ts-node src/scripts/optimize-portfolio.ts",
-    "train:meta-label": "ts-node src/scripts/train-meta-label.ts",
     "train:meta-label-v2": "ts-node src/scripts/train-meta-label-v2.ts",
     "run:benchmark-attribution": "ts-node src/scripts/run-benchmark-attribution.ts",
     "run:industry-attribution": "ts-node src/scripts/run-industry-attribution.ts",

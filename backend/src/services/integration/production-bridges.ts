@@ -24,7 +24,8 @@ import {
   HMMParams,
 } from '../research/hmm-regime';
 import { StrategyPosterior, BetaBernoulliPosterior } from '../portfolio/thompson-sampling';
-import { MetaLabelModel } from '../meta/MetaLabelService';
+// 批5: 旧 meta/MetaLabelService 已退役; checkpoint 持久化改用结构化通用类型 (JSON 落盘, 不依赖 v1 模型结构)。
+type MetaLabelModel = Record<string, unknown>;
 import { callAuctionClearing } from '../execution/harris-full';
 import { optimalLiquidationTrajectory } from '../execution/almgren-chriss';
 import { carverPositionSize } from '../execution/carver-johnson-chan';

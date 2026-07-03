@@ -51,11 +51,6 @@ import '../config/database';
 import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
 import { logger } from '../utils/logger';
 import {
-  metaLabelService,
-  predictConfidence,
-  RawSignalFeatures,
-} from '../services/meta/MetaLabelService';
-import {
   tripleBarrierLabeler,
   TRIPLE_BARRIER_LABELS,
   normalizeBarrierOptions,
@@ -126,14 +121,10 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  const baseModel = metaLabelService.getModel();
-  if (!baseModel) {
-    console.error(
-      '❌ V1 base model 不存在, 请先跑 npm run train:meta-label -- --since-days=180 生成 V1 模型'
-    );
-    process.exit(1);
-  }
-  console.log(`✅ V1 base model: ${baseModel.version} (samples=${baseModel.trained_samples})`);
+  // 批5: 旧 V1 logistic MetaLabel 已退役 (运行期 confidence 改用 Wilson 下界,
+  //   见 ConfidenceCalibrationService §5.1). 本 V2 训练只保留两件运行期仍需的产物:
+  //   (1) isotonic 校准曲线 — 现以"信号存量分"为 raw 输入 (更诚实, 无需 v1 模型);
+  //   (2) ev_stats_by_regime — EVDecisionService 的 avg_win/avg_loss 主源。
 
   // 1. 加载 closed outcomes
   const cutoff = new Date(Date.now() - opts.sinceDays * 24 * 3600 * 1000);
@@ -184,29 +175,20 @@ async function main(): Promise<void> {
     else if (tb.label === TRIPLE_BARRIER_LABELS.LOWER_HIT) labelDist.lower++;
     else labelDist.time++;
 
-    // b. 预测 V1 raw confidence
+    // b. raw confidence = 信号存量分归一化到 [0,1] (退役 v1 logistic 后的诚实口径)
     const meta = o.metadata || {};
-    const features: RawSignalFeatures = {
-      signal_score: Number(meta?.signal_score ?? meta?.final_score ?? 75),
-      signal_source: String(meta?.signal_source || 'unknown'),
-      regime: String(meta?.market_regime || meta?.regime || 'range'),
-      market_breadth_score: Number(meta?.market_breadth_score ?? 50),
-      strategy_recent_winrate_30d: Number(meta?.strategy_recent_winrate ?? 0.5),
-      strategy_recent_payoff_30d: Number(meta?.strategy_recent_payoff ?? 1.0),
-      market_vol_atr: Number(meta?.market_vol_atr ?? 4),
-      pre_check_feasibility_score: Number(meta?.pre_check_feasibility_score ?? 50),
-    };
-    const prediction = predictConfidence(baseModel, features);
+    const rawScore = Number(meta?.signal_score ?? meta?.final_score ?? 75);
+    const rawConfidence = Math.max(0, Math.min(1, rawScore / 100));
 
     // c. 收集 calibration sample (binary outcome: UPPER=1, others=0)
     const binaryOutcome: 0 | 1 = tb.label === TRIPLE_BARRIER_LABELS.UPPER_HIT ? 1 : 0;
     calibrationSamples.push({
-      raw_confidence: prediction.confidence,
+      raw_confidence: rawConfidence,
       outcome: binaryOutcome,
     });
 
     // d. 累积 per-regime EV stats
-    const regime = features.regime || 'range';
+    const regime = String(meta?.market_regime || meta?.regime || 'range');
     const stats = regimeStats.get(regime) || { wins: [], losses: [], total: 0 };
     stats.total++;
     const pnlPct = Number(tb.pnl_pct);
@@ -266,7 +248,7 @@ async function main(): Promise<void> {
   // 5. 持久化
   const v2Model: V2ModelOnDisk = {
     version: `v2-${Date.now()}`,
-    base_model_version: baseModel.version,
+    base_model_version: 'v1-retired-batch5',
     calibration,
     barrier_options: barrierOpts,
     label_distribution: labelDist,

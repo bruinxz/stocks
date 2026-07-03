@@ -5,7 +5,7 @@
  *
  *   1. 输入: 5 个候选股票 + 各自历史 daily_returns + alpha_scores
  *
- *   2. MetaLabel 过滤 — 二层模型判断每个 signal 是否值得下注
+ *   2. 候选过滤 (MetaLabel 已退役, pass-through) — 见批5 §5.1/§5.2
  *
  *   3. ExecutionFeasibility 评估 — 涨跌停 / 流动性 / spread / 状态约束
  *
@@ -25,7 +25,6 @@ import {
   ExecutionFeasibilityService,
   ExecutionFeasibilityDataSource,
 } from '../../src/services/execution/ExecutionFeasibilityService';
-import { MetaLabelService } from '../../src/services/meta/MetaLabelService';
 import { PortfolioConstructionService } from '../../src/services/portfolio/PortfolioConstructionService';
 import {
   EquityCurveGovernorService,
@@ -115,7 +114,6 @@ async function main() {
   };
   const feasibilityService = new ExecutionFeasibilityService(fakeFeasibilitySource);
 
-  const metaService = new MetaLabelService();
   const portfolioService = new PortfolioConstructionService();
 
   // Governor: fake source — 模拟健康 portfolio
@@ -145,33 +143,11 @@ async function main() {
   assert('6 个候选股票准备就绪', candidates.length === 6);
 
   // ============================================================
-  // Step 3: MetaLabel 过滤 — 给每个候选打 confidence 分
+  // Step 3: 候选过滤 — 批5 旧 MetaLabelService (v1 logistic) 已退役,
+  //   运行期改用 ConfidenceCalibrationService(Wilson) + EV gate (见 §5.1/§5.2)。
+  //   本集成测试聚焦 Feasibility/Portfolio/Governor 链路, 候选过滤此处 pass-through。
   // ============================================================
-  const metaDecisions: Array<{ candidate: Candidate; bet: boolean; confidence: number }> = [];
-  for (const c of candidates) {
-    const r = await metaService.shouldBet(
-      {
-        symbol: c.symbol,
-        as_of_date: '2026-06-13',
-        features: {
-          signal_score: c.alpha_score,
-          signal_source: c.source,
-          regime: 'bull',
-          market_breadth_score: 20,
-          strategy_recent_winrate_30d: 0.55,
-          strategy_recent_payoff_30d: 1.3,
-          market_vol_atr: 4,
-        },
-      },
-      { persist: false, threshold: 0.55 }
-    );
-    metaDecisions.push({ candidate: c, bet: r.decision === 'bet', confidence: r.confidence });
-  }
-  const betCount = metaDecisions.filter(d => d.bet).length;
-  console.log(`  → MetaLabel: ${betCount}/${candidates.length} 个候选通过过滤`);
-  assert('MetaLabel 至少 4 个 bet (高 alpha 应 bet)', betCount >= 4);
-
-  const survived = metaDecisions.filter(d => d.bet).map(d => d.candidate);
+  const survived = [...candidates];
 
   // ============================================================
   // Step 4: ExecutionFeasibility 评估 — 每个候选都 fillable?
