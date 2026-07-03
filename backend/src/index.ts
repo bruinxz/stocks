@@ -59,7 +59,6 @@ import internalRoutes from './api/routes/internal.routes';
 import quantRoutes from './api/routes/quant.routes';
 import todayRoutes from './api/routes/today.routes';
 import reviewRoutes from './api/routes/review.routes';
-import signalTraceRoutes from './api/routes/signalTrace.routes';
 import liveTradingRoutes from './live-trading/routes/liveTrading.routes';
 import factorRoutes from './api/routes/factor.routes';
 import announcementRoutes from './api/routes/announcement.routes';
@@ -287,7 +286,6 @@ app.use('/api/internal', internalRoutes); // 给TradingAgents预留的安全数�
 app.use('/api/quant', quantRoutes);
 app.use('/api/today', todayRoutes);
 app.use('/api/review', reviewRoutes);
-app.use('/api/signals', signalTraceRoutes);
 // bridge 路由必须比 liveTradingRoutes **先**挂载，否则会被前者全局 authController.authenticate 拦下
 app.use('/api/live-trading/bridge', bridgeRoutes);
 app.use('/api/live-trading', liveTradingRoutes);
