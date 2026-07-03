@@ -1621,3 +1621,36 @@ cron-registry 双向一致性单测只守 dispatch↔registry 两点, seed 一�
 - `tsc --noEmit` = 0 err; `cron-registry.test.ts` = 757 ok / 0 failed。
 - DB: 6 个批5 下线 cron 全部 inactive (5 个批9 + 1 个批9#2)。
 - 全后端下线标记逐类定性完毕, **除出口 B (计划既定后期能力) 外无遗留尾巴**。计划闭环复核结束。
+
+---
+
+## 附录 AC — 批10 冗余全量清除 + 计划实现度终审 (commit 74d909e)
+
+**触发**: 用户要求"用 subagent 再次整体仔细 review 一遍，把计划全部实现，冗余部分全部去掉，一次干净合理完整的重构"。三个并行 audit subagent 全库复审 + 主线交叉核验。
+
+### AC.1 批10 清除清单 (每处零残留引用已验证)
+
+| 子批 | 处置 | 依据 |
+|---|---|---|
+| 10-1 | 删 OVERNIGHT_SIGNAL_SYNC seed + 迁移脚本 | 计划要求删除却被重新 seed 且无 dispatch 分支,每 15min 触发 line-5755 throw (真 bug) |
+| 10-2 | 删 strategy-copilot 僵尸全链 (前端 Panel+service+挂载 / ai.routes 3 路由 / Controller 3 handler+bind) | 批5 已下线 service,残留 410 空壳 |
+| 10-3 | 删 kol-opinions + earnings-forecast/preview+scan 路由与 410 handler | KOLAggregator/EarningsForecastWatcher 批5 已下线;保留 live 的 earnings_alert 通知与 wechat test-send |
+| 10-4 | ① DataHealthDashboard 删 market_sentiment/kol_opinions 死 sync 映射 ② TaskAutomationHealthService 删 AUTO_RECOMMENDATION_LOOP 3 死 find + const ③ ETFRotationStrategy 删死 default_params caps (实由 ETFRankingService 常量强制) ④ 删孤儿 PersonalityStrategyMatcher.ts + 其 stale 单测 (批8 已删表, no-op, 零 src 引用) | 全部死代码/孤儿 |
+
+### AC.2 计划实现度终审 — 三项 "未实现" 经定性属出口 B, 非尾巴
+
+Agent 审计标记的 3 处 "计划缺实现",经核对 §2.3/§7.1/§4.4 + Wave 时间线 (§9.1) + 附录 AB.3,全部属**执行层 (出口 B / Wave 3+)** 产物,当前主交付物为**信号 (出口 A)**:
+
+| 项 | 计划位置 | 定性 |
+|---|---|---|
+| `recommendation_trade_outcomes` 加 rebalance_id/theme_id | §7.1 (line 1025) | PnL 归因列,唯一写入方是自动执行下单闭环 (出口 B)。现在建列无写入方=新脏东西 |
+| `orphan_sells` 表 | §2.3 (line 336) | SELL 找不到 BUY 的兜底表,仅在自动 SELL 执行时产生行 (出口 B) |
+| §4.4 卫星 T+1 Entry 三分支 | §4.4 (line 761) | 集合竞价/限价追高执行逻辑,属下单路径 (出口 B),Wave 3 灰度上线才接 |
+
+**原则**: 提前建这些空表/空列而无 producer,本身违反"不留脏东西"。故它们不是本次收尾尾巴,而是计划既定的 Wave 3+ 能力,到出口 B 阶段随下单路径一并落地。
+
+### AC.3 最终状态
+- 工作树干净,批10 = 单个可回滚 commit 74d909e。
+- `tsc --noEmit` backend = 0 err;frontend production build = 成功 (仅 __tests__ 预存的 @types/jest 噪声,与本次无关)。
+- `cron-registry.test.ts` = 757 ok / 0 failed。
+- **全后端/前端下线残留逐类清除完毕,除出口 B (计划既定后期能力) 外无遗留尾巴。Signal-First 重构冗余清除阶段闭环。**
