@@ -846,30 +846,7 @@ export class AIAdvisorService {
       } catch (err: any) {
         // LimitUpStock 表可能不存在或当日无数据, silent
       }
-      // 5) 热门概念: SnowballHotKeyword 关联
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { SnowballHotKeyword } = require('../models/SnowballHotKeyword');
-        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-          .toISOString()
-          .slice(0, 10);
-        const keywords = await SnowballHotKeyword.findAll({
-          where: { trade_date: { [Op.gte]: sevenDaysAgo } },
-          attributes: ['keyword', 'related_stocks_json'],
-          limit: 200,
-          raw: true,
-        });
-        const concepts: string[] = [];
-        for (const k of keywords as any[]) {
-          const related = Array.isArray(k.related_stocks_json) ? k.related_stocks_json : [];
-          if (related.some((r: any) => String(r?.stock_code || '').trim() === code)) {
-            if (!concepts.includes(k.keyword)) concepts.push(k.keyword);
-          }
-        }
-        if (concepts.length) ctx.hot_concepts = concepts.slice(0, 8);
-      } catch (err: any) {
-        logger.warn(`buildAnalyzeContext SnowballHotKeyword 失败: ${err?.message}`);
-      }
+      // 5) 热门概念: SnowballHotKeyword 表已删除
 
       // 6) 近期市场要闻 — Batch AG (2026-06-18) MarketNews top 5
       try {

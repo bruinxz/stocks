@@ -15,10 +15,11 @@ import { Request, Response } from 'express';
 import { Op } from 'sequelize';
 import { MacroIndicator } from '../../models/MacroIndicator';
 import { OptionQvix } from '../../models/OptionQvix';
-import { BlockTrade } from '../../models/BlockTrade';
 import { FundTopHolding } from '../../models/FundTopHolding';
 import { marketEnvironmentService } from '../../services/MarketEnvironmentService';
 import { logger } from '../../utils/logger';
+
+const BlockTrade = { findAll: async (_opts?: any): Promise<any[]> => [] };
 
 export class MacroController {
   /**

@@ -2660,44 +2660,7 @@ class PaperTradingAutomationService {
         const strategyKeyForTca =
           (signal as any)?.metadata?.strategy_key ||
           (signal as any)?.metadata?.signal_metadata?.strategy_key;
-        if (strategyKeyForTca && strategyKeyForTca !== 'unknown') {
-          /* eslint-disable @typescript-eslint/no-var-requires */
-          const { StrategyTcaMultiplier } = require('../../models/StrategyTcaMultiplier');
-          /* eslint-enable @typescript-eslint/no-var-requires */
-          const tcaRow = await StrategyTcaMultiplier.findOne({
-            where: { strategy_key: strategyKeyForTca },
-            order: [['report_date', 'DESC']],
-            attributes: [
-              'recommended_weight_multiplier',
-              'warning',
-              'report_date',
-              'avg_entry_slippage_pct',
-              'avg_impact_cost_pct',
-            ],
-          });
-          if (tcaRow) {
-            const tcaMult = Number((tcaRow as any).recommended_weight_multiplier);
-            if (Number.isFinite(tcaMult) && tcaMult > 0 && tcaMult < 1.0) {
-              const beforeTca = effectiveTargetPct;
-              effectiveTargetPct = effectiveTargetPct * tcaMult;
-              logger.info(
-                `[tca] strategy=${strategyKeyForTca} multiplier=${tcaMult.toFixed(2)} warning=${
-                  (tcaRow as any).warning
-                } ${roundNumber(beforeTca, 2)}% → ${roundNumber(effectiveTargetPct, 2)}% (report=${
-                  (tcaRow as any).report_date
-                })`
-              );
-              if (effectiveTargetPct < 0.5) {
-                await skip(
-                  `TCA 降权后仓位 ${effectiveTargetPct.toFixed(2)}% 过低 (× ${tcaMult.toFixed(
-                    2
-                  )}, ${strategyKeyForTca} ${(tcaRow as any).warning}), 跳过本笔`
-                );
-                continue;
-              }
-            }
-          }
-        }
+        // StrategyTcaMultiplier table deleted - skip TCA adjustment
       } catch (tcaErr: any) {
         logger.warn(`[tca] strategy multiplier 失败 (fail-open): ${tcaErr?.message || tcaErr}`);
       }

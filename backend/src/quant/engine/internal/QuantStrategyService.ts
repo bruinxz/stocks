@@ -1,10 +1,20 @@
 import { Op } from 'sequelize';
-import { QuantStrategyModel } from '../../../models/QuantStrategyModel';
 import { QuantBacktestTask } from '../../../models/QuantBacktestTask';
 import { QuantBacktestResult } from '../../../models/QuantBacktestResult';
-import { QuantSignal } from '../../../models/QuantSignal';
 import { FactorICResult } from '../../../models/FactorICResult';
 import { strategyRegistry } from '../../engine/StrategyRegistry';
+
+// Stub for deleted QuantStrategyModel table
+const QuantStrategyModel = {
+  findOrCreate: async (_opts: any) => [{ update: async () => {}, enabled: true, default_params: {}, execution_policy: {}, environment_policy: {}, lifecycle_policy: {}, edge_hypothesis: {}, strategy_key: '', name: '', description: '', category: '', risk_level: 'medium', tags: [], toJSON: () => ({}) }, false] as [any, boolean],
+  findAll: async (_opts?: any): Promise<any[]> => [],
+  findOne: async (_opts?: any): Promise<any> => null,
+};
+// Stub for deleted QuantSignal table
+const QuantSignal = {
+  count: async (_opts?: any): Promise<number> => 0,
+  findOne: async (_opts?: any): Promise<any> => null,
+};
 
 function asPlainObject<T = any>(value: any): T {
   if (!value || typeof value !== 'object') return {} as T;
@@ -70,7 +80,7 @@ export function pickDryRunStrategyKeysFromRecords(
 }
 
 export class QuantStrategyService {
-  private registrySyncPromise: Promise<QuantStrategyModel[]> | null = null;
+  private registrySyncPromise: Promise<any[]> | null = null;
   private registrySyncedAt = 0;
   private readonly registrySyncTtlMs = (() => {
     const value = Number(process.env.QUANT_STRATEGY_REGISTRY_SYNC_TTL_MS);
@@ -114,7 +124,7 @@ export class QuantStrategyService {
     };
   }
 
-  private async runRegistrySync() {
+  private async runRegistrySync(): Promise<any[]> {
     const definitions = strategyRegistry.list();
     const records = [];
     for (const definition of definitions) {
@@ -484,18 +494,11 @@ export class QuantStrategyService {
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
         .toISOString()
         .slice(0, 10);
-      const recentCount = await QuantSignal.count({
-        where: { strategy_key, trade_date: { [Op.gte]: sevenDaysAgo } },
-      });
-      const lastSignal = await QuantSignal.findOne({
-        where: { strategy_key },
-        order: [['trade_date', 'DESC']],
-        attributes: ['trade_date'],
-      });
+      const recentCount = 0;
       live_binding = {
         enabled: strategy.enabled !== false,
         recent_signal_count: recentCount,
-        last_signal_date: lastSignal?.trade_date || null,
+        last_signal_date: null,
       };
     } catch {
       // keep defaults

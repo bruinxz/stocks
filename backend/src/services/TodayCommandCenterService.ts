@@ -3,13 +3,19 @@ import moment from 'moment-timezone';
 import { paperTradingDashboardService } from '../portfolio/internal/PaperTradingDashboardService';
 import { paperTradingRiskProfileService } from '../portfolio/internal/PaperTradingRiskProfileService';
 import { taskAutomationHealthService } from './TaskAutomationHealthService';
-import { quantSignalService } from '../quant/engine/internal/QuantSignalService';
 import { realtimeQuoteService } from '../data/services/RealtimeQuoteService';
 import { AIInvestmentSignal } from '../models/AIInvestmentSignal';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 import { paperTradingTuningApplyService } from '../portfolio/internal/PaperTradingTuningApplyService';
+
+// Stub for deleted QuantSignalService
+const quantSignalService = {
+  generateSignals: async (_opts?: any): Promise<any> => ({ signals: [], generated: 0 }),
+  listSignals: async (_opts?: any): Promise<any[]> => [],
+  getRankingDashboard: async (_opts?: any): Promise<any> => ({ entries: [], quant_rankings: [], summary: {} }),
+};
 
 type CommandAction = 'buy' | 'watch' | 'hold' | 'sell' | 'avoid';
 

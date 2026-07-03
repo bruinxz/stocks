@@ -5,12 +5,13 @@ import { drawdownCircuitBreaker } from '../../portfolio/risk/DrawdownCircuitBrea
 import { marketRegimeAlertService } from '../../portfolio/risk/MarketRegimeAlertService';
 import { perStockStopLossGuard } from '../../portfolio/risk/PerStockStopLossGuard';
 import { industryConcentrationGuard } from '../../portfolio/risk/IndustryConcentrationGuard';
-import { blackSwanWatchdog } from '../../portfolio/risk/BlackSwanWatchdog';
 import { morningRiskCheckupService } from '../../portfolio/risk/MorningRiskCheckupService';
 import { sizingPolicyService } from '../../portfolio/risk/SizingPolicyService';
 import { sizingAuditService } from '../../services/SizingAuditService';
 import { reconciliationAlertService } from '../../live-trading/services/ReconciliationAlertService';
 import { logger } from '../../utils/logger';
+
+const blackSwanWatchdog = { getConfig: async (_userId?: any): Promise<any> => ({}), updateConfig: async (_userId?: any, _cfg?: any): Promise<any> => ({}) };
 
 /**
  * RiskController — US-047 (position limits) + US-048 (trailing stop)

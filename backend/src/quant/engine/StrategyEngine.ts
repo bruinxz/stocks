@@ -6,10 +6,23 @@
  * See backend/src/quant/CLAUDE.md for the facade rules.
  */
 import { quantStrategyService } from './internal/QuantStrategyService';
-import { quantStrategyExperimentService } from './internal/QuantStrategyExperimentService';
-import { quantStrategyParamVersionService } from './internal/QuantStrategyParamVersionService';
 import { quantStrategyFeedbackService } from './internal/QuantStrategyFeedbackService';
 import { quantStrategySourceService } from './internal/QuantStrategySourceService';
+
+// Stubs for deleted services
+const quantStrategyExperimentService = {
+  getExperimentSummary: async (_opts?: any) => ({ experiments: [], count: 0 }),
+  getParamsByStrategySuggestion: async (_opts?: any): Promise<any[]> => [],
+};
+const quantStrategyParamVersionService = {
+  getDashboard: async (_opts?: any) => ({ versions: [], count: 0 }),
+  getActiveParamsForScan: async (_opts?: any) => ({}),
+  refreshVersionsFromExperiments: async (_opts?: any) => ({ created: 0, updated: 0 }),
+  createPendingValidationsFromSignals: async (_opts?: any) => ({ created: 0 }),
+  refreshValidationReturns: async (_opts?: any) => ({ updated: 0 }),
+  evaluateAndApplyLifecycle: async (_opts?: any) => ({ promoted: 0, degraded: 0 }),
+  upsertGridSearchCandidates: async (_opts?: any) => ({ upserted: 0 }),
+};
 
 export interface UpdateStrategyConfigInput {
   enabled?: boolean;

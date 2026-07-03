@@ -45,13 +45,9 @@ export class StrategyRegistry {
    * enabled (会绕过 kill-switch).
    */
   async resolveFromDb(strategy_keys?: string[]): Promise<QuantStrategy[]> {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { QuantStrategyModel } = require('../../models/QuantStrategyModel');
+    // QuantStrategyModel table deleted - fall back to in-memory registry
     const records: Array<{ strategy_key: string; enabled: boolean }> =
-      await QuantStrategyModel.findAll({
-        attributes: ['strategy_key', 'enabled'],
-        raw: true,
-      });
+      [...this.strategies.values()].map(s => ({ strategy_key: s.definition.strategy_key, enabled: s.definition.enabled }));
     const enabledKeys = new Set(records.filter(r => r.enabled === true).map(r => r.strategy_key));
     if (!strategy_keys?.length) {
       return [...this.strategies.values()].filter(s => enabledKeys.has(s.definition.strategy_key));

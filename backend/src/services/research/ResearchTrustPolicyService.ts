@@ -1,6 +1,7 @@
 import { Op } from 'sequelize';
 import { QuantBacktestOptions } from '../../quant/types/QuantTypes';
-import { QuantResearchArtifactStatus } from '../../models/QuantResearchArtifact';
+// QuantResearchArtifact deleted - use local type
+type QuantResearchArtifactStatus = 'pending' | 'pass' | 'watch' | 'reject' | 'insufficient' | string;
 
 type ExecutionSide = 'BUY' | 'SELL';
 

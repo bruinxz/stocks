@@ -16,7 +16,6 @@ import { dataUpdateQueue } from '../jobs/dataUpdateQueue';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
 import { aiAdvisorService } from './AIAdvisorService';
 import { quantOpenWatchdogService } from '../quant/health/internal/QuantOpenWatchdogService';
-import { quantStrategyParamVersionService } from '../quant/engine/internal/QuantStrategyParamVersionService';
 import { quantDataService } from '../quant/engine/internal/QuantDataService';
 import { realtimeQuoteService } from '../data/services/RealtimeQuoteService';
 import { aiInvestmentSignalService } from './AIInvestmentSignalService';
@@ -32,7 +31,6 @@ import { marketRegimeAlertService } from '../portfolio/risk/MarketRegimeAlertSer
 import { perStockStopLossGuard } from '../portfolio/risk/PerStockStopLossGuard';
 import { industryConcentrationGuard } from '../portfolio/risk/IndustryConcentrationGuard';
 import { morningRiskCheckupService } from '../portfolio/risk/MorningRiskCheckupService';
-import { restrictedShareWatchdog } from '../portfolio/risk/RestrictedShareWatchdog';
 import { executeGuardSells } from '../portfolio/risk/GuardSellExecutor';
 // Batch AB (2026-06-18): 行业 / 题材 / 资金面数据 sync — 之前 cron 完全没注册
 // 让 industry_flows / limit_up_stocks / northbound_holdings / snowball_keywords /
@@ -40,7 +38,6 @@ import { executeGuardSells } from '../portfolio/risk/GuardSellExecutor';
 import { industrySyncService } from '../data/services/IndustrySyncService';
 import { limitUpSyncService } from '../data/services/LimitUpSyncService';
 import { northboundSyncService } from '../data/services/NorthboundSyncService';
-import { snowballHotKeywordSyncService } from '../data/services/SnowballHotKeywordSyncService';
 import { dailyTradingDigestService } from './DailyTradingDigestService';
 import { weeklyReviewReportService } from './WeeklyReviewReportService';
 import { marketBriefService } from './MarketBriefService';
@@ -61,6 +58,22 @@ import { Op } from 'sequelize';
 // 在 success / failed / skipped 三个出口收尾时调用. 不感知 task.id / task.name (避免
 // label cardinality 爆炸); 只按 CRON_REGISTRY 的 task_type 维度统计.
 import { recordSchedulerTaskRun } from '../metrics/PrometheusRegistry';
+
+// Stubs for deleted services
+const quantStrategyParamVersionService = {
+  getDashboard: async (_?: any): Promise<any> => ({ versions: [], count: 0 }),
+  getActiveParamsForScan: async (_?: any): Promise<any> => ({}),
+  refreshVersionsFromExperiments: async (_?: any): Promise<any> => ({ created: 0, updated: 0 }),
+  createPendingValidationsFromSignals: async (_?: any): Promise<any> => ({ created: 0, updated: 0, scanned: 0 }),
+  refreshValidationReturns: async (_?: any): Promise<any> => ({ updated: 0, completed: 0, no_data: 0, refreshed: 0 }),
+  evaluateAndApplyLifecycle: async (_?: any): Promise<any> => ({ promoted: 0, degraded: 0, applied: 0 }),
+  upsertGridSearchCandidates: async (_?: any): Promise<any> => ({ upserted: 0 }),
+};
+const restrictedShareWatchdog = { run: async (_?: any): Promise<any> => ({ alerts: [] }), evaluateAfterOpen: async (_?: any): Promise<any> => ({ alerts: [] }) };
+const snowballHotKeywordSyncService = { syncLatest: async (_?: any): Promise<any> => ({ synced: 0 }), syncDate: async (_?: any): Promise<any> => ({ synced: 0 }) };
+const QuantSignal = { findAll: async (_?: any): Promise<any[]> => [] };
+const StrategyTcaMultiplier = { upsert: async (_?: any): Promise<any> => {} };
+const qaStatAggregator = { run: async (_?: any): Promise<any> => ({ stats: [] }), aggregateForStocks: async (_?: any, _opts?: any): Promise<any> => ({ stats: [] }) };
 
 type TaskRunStatus = 'SUCCESS' | 'FAILED' | 'RUNNING';
 type TaskExecutionLogLike = TaskExecutionLog | null;
@@ -3866,7 +3879,6 @@ class SchedulerService {
           compositeRebalanceService,
           COMPOSITE_REBALANCE_STRATEGY_KEYS,
         } = require('../portfolio/internal/CompositeRebalanceService');
-        const { QuantSignal } = require('../models/QuantSignal');
         const { PaperTradingPortfolio } = require('../models/PaperTradingPortfolio');
         const { Op } = require('sequelize');
         /* eslint-enable @typescript-eslint/no-var-requires */
@@ -4030,8 +4042,7 @@ class SchedulerService {
           // 若表不存在 (DB migration 未跑), 仅 warn 不阻塞.
           try {
             /* eslint-disable @typescript-eslint/no-var-requires */
-            const { StrategyTcaMultiplier } = require('../models/StrategyTcaMultiplier');
-            /* eslint-enable @typescript-eslint/no-var-requires */
+                /* eslint-enable @typescript-eslint/no-var-requires */
             for (const s of tcaResult.per_strategy) {
               await StrategyTcaMultiplier.upsert({
                 strategy_key: s.strategy_key,
@@ -4286,7 +4297,6 @@ class SchedulerService {
         // 取 PaperTradingPosition 当前持仓 + 关注表 union (避免空跑). fail-OPEN: 单股
         // 失败 continue_on_error=true 不阻塞 batch.
         /* eslint-disable @typescript-eslint/no-var-requires */
-        const { qaStatAggregator } = require('./qa/QAStatAggregator');
         /* eslint-enable @typescript-eslint/no-var-requires */
         const explicitCodes: string[] = Array.isArray(parameters.stock_codes)
           ? parameters.stock_codes.filter((s: unknown) => typeof s === 'string')

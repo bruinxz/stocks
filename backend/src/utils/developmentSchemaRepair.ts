@@ -2,7 +2,6 @@ import sequelize from '../config/database';
 import { logger } from './logger';
 import { ScheduledTask } from '../models/ScheduledTask';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
-import { DailyScreener } from '../models/DailyScreener';
 import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
 import { PaperTradingPosition } from '../models/PaperTradingPosition';
 import { PaperTradingTrade } from '../models/PaperTradingTrade';
@@ -243,7 +242,6 @@ export async function repairLegacyDevelopmentSchema(): Promise<void> {
     await Promise.all([
       ScheduledTask.sync(),
       TaskExecutionLog.sync(),
-      DailyScreener.sync(),
       FavoriteStock.sync(),
       PaperTradingPortfolio.sync(),
       PaperTradingPosition.sync(),

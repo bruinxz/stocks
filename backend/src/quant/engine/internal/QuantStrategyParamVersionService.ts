@@ -2,21 +2,38 @@ import { Op } from 'sequelize';
 import { createHash } from 'crypto';
 import moment from 'moment-timezone';
 import { DailyBar } from '../../../models/DailyBar';
-import { QuantSignal } from '../../../models/QuantSignal';
-import { QuantStrategyParamValidation } from '../../../models/QuantStrategyParamValidation';
-import { QuantStrategyParamVersion } from '../../../models/QuantStrategyParamVersion';
 import { RecommendationTradeOutcome } from '../../../models/RecommendationTradeOutcome';
 import { PaperTradingPortfolio } from '../../../models/PaperTradingPortfolio';
 import { Stock } from '../../../models/Stock';
 import { OptimizationRun } from '../../../models/OptimizationRun';
-import { QuantStrategyModel } from '../../../models/QuantStrategyModel';
 import { benchmarkIndexService } from '../../../services/BenchmarkIndexService';
 import { PARAM_EXPERIMENT_PORTFOLIO_NAME } from '../../../portfolio/internal/PaperTradingDashboardService';
 import { normalizeSymbol } from '../../../utils/stockSymbol';
 import { logger } from '../../../utils/logger';
 import { round } from '../../engine/QuantMath';
 import { strategyRegistry } from '../../engine/StrategyRegistry';
-import { quantStrategyExperimentService } from './QuantStrategyExperimentService';
+
+// Stubs for deleted tables and services
+const QuantSignal = {
+  findAll: async (_opts?: any): Promise<any[]> => [],
+  count: async (_opts?: any): Promise<number> => 0,
+};
+const QuantStrategyParamValidation = {
+  findOrCreate: async (_opts: any): Promise<[any, boolean]> => [{ update: async () => {}, toJSON: () => ({}) }, false],
+  findAll: async (_opts?: any): Promise<any[]> => [],
+};
+const QuantStrategyParamVersion = {
+  findAll: async (_opts?: any): Promise<any[]> => [],
+  findOne: async (_opts?: any): Promise<any> => null,
+  findOrCreate: async (_opts: any): Promise<[any, boolean]> => [{ update: async () => {}, toJSON: () => ({}) }, false],
+};
+const QuantStrategyModel = {
+  findAll: async (_opts?: any): Promise<any[]> => [],
+};
+const quantStrategyExperimentService = {
+  getExperimentSummary: async (_opts?: any) => ({ experiments: [], count: 0 }),
+  getParamsByStrategySuggestion: async (_opts?: any): Promise<any[]> => [],
+};
 
 type ParamSuggestionPayload = Awaited<
   ReturnType<typeof quantStrategyExperimentService.getParamsByStrategySuggestion>
@@ -742,7 +759,7 @@ export class QuantStrategyParamVersionService {
         })
       : [];
     const excludedVersions = await this.getScanExcludedVersions(strategyKeys);
-    const excludedByStrategy = new Map<string, QuantStrategyParamVersion[]>();
+    const excludedByStrategy = new Map<string, any[]>();
     for (const version of excludedVersions) {
       if (!excludedByStrategy.has(version.strategy_key)) {
         excludedByStrategy.set(version.strategy_key, []);
@@ -750,7 +767,7 @@ export class QuantStrategyParamVersionService {
       excludedByStrategy.get(version.strategy_key)!.push(version);
     }
     const versions = rawVersions.filter(version => !this.shouldExcludeFromScan(version));
-    const versionsByStrategy = new Map<string, QuantStrategyParamVersion[]>();
+    const versionsByStrategy = new Map<string, any[]>();
     for (const version of versions) {
       if (!versionsByStrategy.has(version.strategy_key)) {
         versionsByStrategy.set(version.strategy_key, []);
@@ -888,7 +905,7 @@ export class QuantStrategyParamVersionService {
     const candidates = (options.groups || [])
       .map(group => ({ group, best: group?.best }))
       .filter(item => item.best?.strategy_key && item.best?.params);
-    const versions: QuantStrategyParamVersion[] = [];
+    const versions: any[] = [];
 
     for (const { group, best } of candidates) {
       if (toNumber(best.rank_score, -9999) < minRankScore) continue;
@@ -964,7 +981,7 @@ export class QuantStrategyParamVersionService {
       (suggestions as any)?.recommended_params_by_strategy
     );
 
-    const versions: QuantStrategyParamVersion[] = [];
+    const versions: any[] = [];
     const adoptedByStrategy: Record<string, ParamVersionPlain> = {};
     const recommendedParamsForScan: Record<string, Record<string, any>> = {};
 
@@ -1120,7 +1137,7 @@ export class QuantStrategyParamVersionService {
     }
 
     const versions = await QuantStrategyParamVersion.findAll();
-    const latestVersionByStrategy = new Map<string, QuantStrategyParamVersion>();
+    const latestVersionByStrategy = new Map<string, any>();
     for (const version of versions) {
       const existing = latestVersionByStrategy.get(version.strategy_key);
       const priority = this.versionPriority(version);
@@ -1237,7 +1254,7 @@ export class QuantStrategyParamVersionService {
     let completed = 0;
     let pending = 0;
     let noData = 0;
-    const touched: QuantStrategyParamValidation[] = [];
+    const touched: any[] = [];
     const stockCache = new Map<string, Stock | null>();
     const barsCache = new Map<number, DailyBar[]>();
 
@@ -2483,7 +2500,7 @@ export class QuantStrategyParamVersionService {
     return { active: false, cooldown_until: cooldownUntil || null, reason: '' };
   }
 
-  private versionPriority(version: QuantStrategyParamVersion) {
+  private versionPriority(version: any) {
     const status = String(version.status || '').toLowerCase();
     const type = String(version.version_type || '').toLowerCase();
     if (this.shouldExcludeFromScan(version)) return -10;
@@ -2506,10 +2523,10 @@ export class QuantStrategyParamVersionService {
         ['strategy_key', 'ASC'],
         ['updated_at', 'DESC'],
       ],
-    }).catch(() => [] as QuantStrategyParamVersion[]);
+    }).catch(() => [] as any[]);
   }
 
-  private shouldExcludeFromScan(version: QuantStrategyParamVersion) {
+  private shouldExcludeFromScan(version: any) {
     const status = String(version.status || '').toLowerCase();
     const metadata = asPlainObject(version.metadata);
     const cooldownUntil = String(metadata.lifecycle_cooldown_until || '').slice(0, 10);
@@ -2518,7 +2535,7 @@ export class QuantStrategyParamVersionService {
     return status === 'rolled_back';
   }
 
-  private selectBestScanVersion(versions: QuantStrategyParamVersion[]) {
+  private selectBestScanVersion(versions: any[]) {
     return [...versions].sort((a, b) => {
       const priorityDelta = this.versionPriority(b) - this.versionPriority(a);
       if (priorityDelta !== 0) return priorityDelta;
@@ -2533,9 +2550,9 @@ export class QuantStrategyParamVersionService {
 
   private buildScanSelectionDiagnostic(
     definition: any,
-    selected: QuantStrategyParamVersion,
-    candidates: QuantStrategyParamVersion[],
-    excluded: QuantStrategyParamVersion[] = []
+    selected: any,
+    candidates: any[],
+    excluded: any[] = []
   ) {
     const ranked = [...candidates].sort((a, b) => {
       const priorityDelta = this.versionPriority(b) - this.versionPriority(a);
@@ -2581,7 +2598,7 @@ export class QuantStrategyParamVersionService {
     };
   }
 
-  private explainScanExclusion(candidate: QuantStrategyParamVersion) {
+  private explainScanExclusion(candidate: any) {
     const metadata = asPlainObject(candidate.metadata);
     const cooldownUntil = String(metadata.lifecycle_cooldown_until || '').slice(0, 10);
     const status = String(candidate.status || '').toLowerCase();
@@ -2595,8 +2612,8 @@ export class QuantStrategyParamVersionService {
   }
 
   private explainWhyNotSelected(
-    candidate: QuantStrategyParamVersion,
-    selected: QuantStrategyParamVersion
+    candidate: any,
+    selected: any
   ) {
     if (!selected) return '无已选版本。';
     const candidatePriority = this.versionPriority(candidate);

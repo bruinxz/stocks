@@ -327,26 +327,11 @@ import { RecommendationTradeOutcome } from './models/RecommendationTradeOutcome'
 import { PaperTradingOrderIntent } from './models/PaperTradingOrderIntent';
 import { PaperTradingOrderIntentOutcome } from './models/PaperTradingOrderIntentOutcome';
 import { PaperTradingCanaryReviewSnapshot } from './models/PaperTradingCanaryReviewSnapshot';
-import { RecommendationLoopPolicySnapshot } from './models/RecommendationLoopPolicySnapshot';
-import { BudgetPolicyVersionSnapshot } from './models/BudgetPolicyVersionSnapshot';
-import { QuantStrategyModel } from './models/QuantStrategyModel';
 import { QuantBacktestTask } from './models/QuantBacktestTask';
 import { QuantBacktestResult } from './models/QuantBacktestResult';
 import { QuantBacktestTrade } from './models/QuantBacktestTrade';
-import { QuantSignal } from './models/QuantSignal';
-import { QuantStrategyPerformanceSnapshot } from './models/QuantStrategyPerformanceSnapshot';
-import { QuantStrategyWeight } from './models/QuantStrategyWeight';
-import { QuantStrategyExperiment } from './models/QuantStrategyExperiment';
-import { QuantResearchExperiment } from './models/QuantResearchExperiment';
-import { QuantResearchArtifact } from './models/QuantResearchArtifact';
-import { QuantStrategyParamVersion } from './models/QuantStrategyParamVersion';
-import { QuantStrategyParamValidation } from './models/QuantStrategyParamValidation';
-import { QuantFusionAudit } from './models/QuantFusionAudit';
 import { TaskParameterAuditLog } from './models/TaskParameterAuditLog';
 import { RealtimeQuote } from './models/RealtimeQuote';
-import { StockFundamentalFactor } from './models/StockFundamentalFactor';
-import { StockMoneyFlowFactor } from './models/StockMoneyFlowFactor';
-import { StockValuationFactor } from './models/StockValuationFactor';
 import { LiveBrokerAccount } from './models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from './models/LiveAccountSnapshot';
 import { LivePosition } from './models/LivePosition';
@@ -367,7 +352,6 @@ import { ExecutionFeasibilityRecord } from './models/ExecutionFeasibilityRecord'
 import { MetaLabelDecision } from './models/MetaLabelDecision';
 import { PortfolioConstructionResult } from './models/PortfolioConstructionResult';
 import { EquityCurveGovernorState } from './models/EquityCurveGovernorState';
-import { StrategyTcaMultiplier } from './models/StrategyTcaMultiplier';
 import { killSwitchService } from './live-trading/services/KillSwitchService';
 import { bridgeCommandExpiryService } from './live-trading/services/BridgeCommandExpiryService';
 // main 上 QuantStrategyService 位于 quant/engine/internal/，dev_lym 旧路径 quant/services/ 已不存在
@@ -795,25 +779,10 @@ async function syncRecommendationRuntimeTables(): Promise<void> {
     { model: PaperTradingOrderIntent, label: 'PaperTradingOrderIntent' },
     { model: PaperTradingOrderIntentOutcome, label: 'PaperTradingOrderIntentOutcome' },
     { model: PaperTradingCanaryReviewSnapshot, label: 'PaperTradingCanaryReviewSnapshot' },
-    { model: RecommendationLoopPolicySnapshot, label: 'RecommendationLoopPolicySnapshot' },
-    { model: BudgetPolicyVersionSnapshot, label: 'BudgetPolicyVersionSnapshot' },
-    { model: QuantStrategyModel, label: 'QuantStrategyModel' },
     { model: QuantBacktestTask, label: 'QuantBacktestTask' },
     { model: QuantBacktestResult, label: 'QuantBacktestResult' },
     { model: QuantBacktestTrade, label: 'QuantBacktestTrade' },
-    { model: QuantSignal, label: 'QuantSignal' },
-    { model: QuantStrategyPerformanceSnapshot, label: 'QuantStrategyPerformanceSnapshot' },
-    { model: QuantStrategyWeight, label: 'QuantStrategyWeight' },
-    { model: QuantStrategyExperiment, label: 'QuantStrategyExperiment' },
-    { model: QuantResearchExperiment, label: 'QuantResearchExperiment' },
-    { model: QuantResearchArtifact, label: 'QuantResearchArtifact' },
-    { model: QuantStrategyParamVersion, label: 'QuantStrategyParamVersion' },
-    { model: QuantStrategyParamValidation, label: 'QuantStrategyParamValidation' },
-    { model: QuantFusionAudit, label: 'QuantFusionAudit' },
     { model: RealtimeQuote, label: 'RealtimeQuote' },
-    { model: StockFundamentalFactor, label: 'StockFundamentalFactor' },
-    { model: StockMoneyFlowFactor, label: 'StockMoneyFlowFactor' },
-    { model: StockValuationFactor, label: 'StockValuationFactor' },
     { model: TaskParameterAuditLog, label: 'TaskParameterAuditLog' },
     { model: LiveBrokerAccount, label: 'LiveBrokerAccount' },
     { model: LiveAccountSnapshot, label: 'LiveAccountSnapshot' },
@@ -834,7 +803,6 @@ async function syncRecommendationRuntimeTables(): Promise<void> {
     { model: MetaLabelDecision, label: 'MetaLabelDecision' },
     { model: PortfolioConstructionResult, label: 'PortfolioConstructionResult' },
     { model: EquityCurveGovernorState, label: 'EquityCurveGovernorState' },
-    { model: StrategyTcaMultiplier, label: 'StrategyTcaMultiplier' },
   ];
 
   const results = [];

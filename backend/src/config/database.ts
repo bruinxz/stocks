@@ -8,7 +8,6 @@ import { FavoriteStock } from '../models/FavoriteStock';
 import { DataUpdateLog } from '../models/DataUpdateLog';
 import { ScheduledTask } from '../models/ScheduledTask';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
-import { DailyScreener } from '../models/DailyScreener';
 import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
 import { PaperTradingPosition } from '../models/PaperTradingPosition';
 import { PaperTradingTrade } from '../models/PaperTradingTrade';
@@ -22,39 +21,21 @@ import { PortfolioSimulation } from '../models/PortfolioSimulation';
 import { DataSourceHealth } from '../models/DataSourceHealth';
 import { AIInvestmentSignal } from '../models/AIInvestmentSignal';
 import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
-import { RecommendationLoopPolicySnapshot } from '../models/RecommendationLoopPolicySnapshot';
-import { BudgetPolicyVersionSnapshot } from '../models/BudgetPolicyVersionSnapshot';
-import { QuantStrategyModel } from '../models/QuantStrategyModel';
 import { QuantBacktestTask } from '../models/QuantBacktestTask';
 import { QuantBacktestResult } from '../models/QuantBacktestResult';
 import { QuantBacktestTrade } from '../models/QuantBacktestTrade';
-import { QuantSignal } from '../models/QuantSignal';
-import { QuantStrategyPerformanceSnapshot } from '../models/QuantStrategyPerformanceSnapshot';
-import { QuantStrategyWeight } from '../models/QuantStrategyWeight';
-import { QuantStrategyExperiment } from '../models/QuantStrategyExperiment';
-import { QuantResearchExperiment } from '../models/QuantResearchExperiment';
-import { QuantResearchArtifact } from '../models/QuantResearchArtifact';
-import { QuantStrategyParamVersion } from '../models/QuantStrategyParamVersion';
-import { QuantStrategyParamValidation } from '../models/QuantStrategyParamValidation';
-import { QuantFusionAudit } from '../models/QuantFusionAudit';
 import { TaskParameterAuditLog } from '../models/TaskParameterAuditLog';
 import { RealtimeQuote } from '../models/RealtimeQuote';
-import { StockFundamentalFactor } from '../models/StockFundamentalFactor';
-import { StockMoneyFlowFactor } from '../models/StockMoneyFlowFactor';
-import { StockValuationFactor } from '../models/StockValuationFactor';
 import { NorthboundHolding } from '../models/NorthboundHolding';
 import { DragonTigerBoard } from '../models/DragonTigerBoard';
 import { LimitUpStock } from '../models/LimitUpStock';
 import { IndustryFlow } from '../models/IndustryFlow';
-import { IndustryFlowIntraday } from '../models/IndustryFlowIntraday';
 import { FactorScore } from '../models/FactorScore';
 import { EarningsForecast } from '../models/EarningsForecast';
 import { IndexComponent } from '../models/IndexComponent';
 import { DividendHistory } from '../models/DividendHistory';
 import { FinancialReport } from '../models/FinancialReport';
 import { AnalystForecast } from '../models/AnalystForecast';
-import { StockSentiment } from '../models/StockSentiment';
-import { ShareholderCount } from '../models/ShareholderCount';
 import { OptimizationRun } from '../models/OptimizationRun';
 import { OptimizationResult } from '../models/OptimizationResult';
 import { WalkForwardResult } from '../models/WalkForwardResult';
@@ -63,44 +44,30 @@ import { CostSensitivityResult } from '../models/CostSensitivityResult';
 import { FactorICResult } from '../models/FactorICResult';
 import { FactorCorrelationResult } from '../models/FactorCorrelationResult';
 import { MonteCarloResult } from '../models/MonteCarloResult';
-import { StrategyPortfolioResult } from '../models/StrategyPortfolioResult';
 import { BenchmarkAttributionResult } from '../models/BenchmarkAttributionResult';
 import { IndustryAttributionResult } from '../models/IndustryAttributionResult';
 import { DailyAttributionReport } from '../models/DailyAttributionReport';
 import { AIDiaryEntry } from '../models/AIDiaryEntry';
 import { ErrorPatternReport } from '../models/ErrorPatternReport';
 import { ImprovementSuggestion } from '../models/ImprovementSuggestion';
-import { PersonalityStrategyMatchReport } from '../models/PersonalityStrategyMatchReport';
 import { BlackSwanEvent } from '../models/BlackSwanEvent';
 import { BlackSwanPostmortemReport } from '../models/BlackSwanPostmortemReport';
 import { WebhookFallbackLog } from '../models/WebhookFallbackLog';
 import { MorningRiskCheckup } from '../models/MorningRiskCheckup';
 import { AIStockAnalysisReport } from '../models/AIStockAnalysisReport';
-import { KOLOpinion } from '../models/KOLOpinion';
 import { MarketSentimentIndex } from '../models/MarketSentimentIndex';
 import { MarketBrief } from '../models/MarketBrief';
-import { SnowballHotKeyword } from '../models/SnowballHotKeyword';
 import { AnnouncementSummary } from '../models/AnnouncementSummary';
 import { AnnouncementEventRelation } from '../models/AnnouncementEventRelation';
-import { EastMoneyQATopic } from '../models/EastMoneyQATopic';
-import { EastMoneyQAStat } from '../models/EastMoneyQAStat';
-import { KOLAuthorStat } from '../models/KOLAuthorStat';
 import { TechnicalAnalysisReport } from '../models/TechnicalAnalysisReport';
-import { RestrictedShareRelease } from '../models/RestrictedShareRelease';
-import { ShareholderTradeRecord } from '../models/ShareholderTradeRecord';
-import { MarginTradingBalance } from '../models/MarginTradingBalance';
 import { ETFFlow } from '../models/ETFFlow';
 import { ETFCreationRedemption } from '../models/ETFCreationRedemption';
 // PR-M1 (2026-06-29) — 隔夜信号矩阵
-import { OvernightSignal } from '../models/OvernightSignal';
 import { MarketNews } from '../models/MarketNews';
-import { SocialSentimentSnapshot } from '../models/SocialSentimentSnapshot';
-import { MarketHotSearch } from '../models/MarketHotSearch';
 // 2026-06-11 新增 4 个数据维度
 import { MacroIndicator } from '../models/MacroIndicator';
 import { FundTopHolding } from '../models/FundTopHolding';
 import { OptionQvix } from '../models/OptionQvix';
-import { BlockTrade } from '../models/BlockTrade';
 import { LiveBrokerAccount } from '../models/LiveBrokerAccount';
 import { LiveAccountSnapshot } from '../models/LiveAccountSnapshot';
 import { LivePosition } from '../models/LivePosition';
@@ -120,16 +87,12 @@ import { ExecutionFeasibilityRecord } from '../models/ExecutionFeasibilityRecord
 import { MetaLabelDecision } from '../models/MetaLabelDecision';
 import { PortfolioConstructionResult } from '../models/PortfolioConstructionResult';
 import { EquityCurveGovernorState } from '../models/EquityCurveGovernorState';
-import { StrategyTcaMultiplier } from '../models/StrategyTcaMultiplier';
 // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环 model
 import { UserFeedback } from '../models/UserFeedback';
 // docs viewer 评论系统 (飞书式) — 2026-07-01
 import { DocumentComment } from '../models/DocumentComment';
 // Batch CE-C (2026-06-25) — 实时机会推送审计 model
-import { IntradayOpportunityPush } from '../models/IntradayOpportunityPush';
 // PR-M2 (2026-06-29) — 集合竞价快照 + 盘中 30-min K 线 (A 股最 robust 日内 alpha)
-import { AuctionSnapshot } from '../models/AuctionSnapshot';
-import { IntradayKline30Min } from '../models/IntradayKline30Min';
 // PR-M3 (2026-06-29) — 板块情绪指数日度聚合
 import { IndustrySentimentIndex } from '../models/IndustrySentimentIndex';
 // PR-O5 (2026-06-30) — 题材发酵 5 阶段日度分类
@@ -164,7 +127,6 @@ const sequelize = new Sequelize({
     DataUpdateLog,
     ScheduledTask,
     TaskExecutionLog,
-    DailyScreener,
     PaperTradingPortfolio,
     PaperTradingPosition,
     PaperTradingTrade,
@@ -178,39 +140,21 @@ const sequelize = new Sequelize({
     DataSourceHealth,
     AIInvestmentSignal,
     RecommendationTradeOutcome,
-    RecommendationLoopPolicySnapshot,
-    BudgetPolicyVersionSnapshot,
-    QuantStrategyModel,
     QuantBacktestTask,
     QuantBacktestResult,
     QuantBacktestTrade,
-    QuantSignal,
-    QuantStrategyPerformanceSnapshot,
-    QuantStrategyWeight,
-    QuantStrategyExperiment,
-    QuantResearchExperiment,
-    QuantResearchArtifact,
-    QuantStrategyParamVersion,
-    QuantStrategyParamValidation,
-    QuantFusionAudit,
     TaskParameterAuditLog,
     RealtimeQuote,
-    StockFundamentalFactor,
-    StockMoneyFlowFactor,
-    StockValuationFactor,
     NorthboundHolding,
     DragonTigerBoard,
     LimitUpStock,
     IndustryFlow,
-    IndustryFlowIntraday,
     FactorScore,
     EarningsForecast,
     IndexComponent,
     DividendHistory,
     FinancialReport,
     AnalystForecast,
-    StockSentiment,
-    ShareholderCount,
     OptimizationRun,
     OptimizationResult,
     WalkForwardResult,
@@ -219,43 +163,29 @@ const sequelize = new Sequelize({
     FactorICResult,
     FactorCorrelationResult,
     MonteCarloResult,
-    StrategyPortfolioResult,
     BenchmarkAttributionResult,
     IndustryAttributionResult,
     DailyAttributionReport,
     AIDiaryEntry,
     ErrorPatternReport,
     ImprovementSuggestion,
-    PersonalityStrategyMatchReport,
     BlackSwanEvent,
     BlackSwanPostmortemReport,
     WebhookFallbackLog,
     MorningRiskCheckup,
     AIStockAnalysisReport,
-    KOLOpinion,
     MarketSentimentIndex,
     MarketBrief,
-    SnowballHotKeyword,
     AnnouncementSummary,
     AnnouncementEventRelation,
-    EastMoneyQATopic,
-    EastMoneyQAStat,
-    KOLAuthorStat,
     TechnicalAnalysisReport,
-    RestrictedShareRelease,
-    ShareholderTradeRecord,
-    MarginTradingBalance,
     ETFFlow,
     ETFCreationRedemption,
-    OvernightSignal,
     MarketNews,
-    SocialSentimentSnapshot,
-    MarketHotSearch,
     // 2026-06-11 新增 4 个数据维度
     MacroIndicator,
     FundTopHolding,
     OptionQvix,
-    BlockTrade,
     LiveBrokerAccount,
     LiveAccountSnapshot,
     LivePosition,
@@ -275,16 +205,12 @@ const sequelize = new Sequelize({
     MetaLabelDecision,
     PortfolioConstructionResult,
     EquityCurveGovernorState,
-    StrategyTcaMultiplier,
     // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环
     UserFeedback,
     // docs 评论系统 — 2026-07-01
     DocumentComment,
     // Batch CE-C (2026-06-25) — 实时机会推送审计
-    IntradayOpportunityPush,
     // PR-M2 (2026-06-29) — 集合竞价快照 + 盘中 30-min K 线
-    AuctionSnapshot,
-    IntradayKline30Min,
     // PR-M3 (2026-06-29) — 板块情绪指数日度聚合
     IndustrySentimentIndex,
     // PR-O5 (2026-06-30) — 题材发酵 5 阶段日度分类

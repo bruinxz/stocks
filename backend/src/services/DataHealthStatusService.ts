@@ -4,17 +4,19 @@ import { DragonTigerBoard } from '../models/DragonTigerBoard';
 import { LimitUpStock } from '../models/LimitUpStock';
 import { IndustryFlow } from '../models/IndustryFlow';
 import { FinancialReport } from '../models/FinancialReport';
-import { SnowballHotKeyword } from '../models/SnowballHotKeyword';
 import { AnalystForecast } from '../models/AnalystForecast';
-import { ShareholderCount } from '../models/ShareholderCount';
 import { DividendHistory } from '../models/DividendHistory';
 import { EarningsForecast } from '../models/EarningsForecast';
 import { AnnouncementSummary } from '../models/AnnouncementSummary';
-import { StockSentiment } from '../models/StockSentiment';
 import { MarketSentimentIndex } from '../models/MarketSentimentIndex';
-import { KOLOpinion } from '../models/KOLOpinion';
 import { DailyBar } from '../models/DailyBar';
 import { logger } from '../utils/logger';
+
+// Stubs for deleted models
+const SnowballHotKeyword = { findAll: async (_?: any): Promise<any[]> => [], max: async (_?: any) => null, count: async (_?: any) => 0 };
+const ShareholderCount = { findAll: async (_?: any): Promise<any[]> => [], max: async (_?: any) => null, count: async (_?: any) => 0 };
+const StockSentiment = { findAll: async (_?: any): Promise<any[]> => [], max: async (_?: any) => null, count: async (_?: any) => 0 };
+const KOLOpinion = { findAll: async (_?: any): Promise<any[]> => [], max: async (_?: any) => null, count: async (_?: any) => 0 };
 
 /**
  * US-079 数据健康度看板

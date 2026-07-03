@@ -24,26 +24,20 @@
  */
 
 import './AnalystConsensusFactor';
-import './BlockTradeSignalFactor';
-import './ConceptHeatFactor';
 import './DragonTigerFactor';
 import './EarningsSurpriseFactor';
-import './EastMoneyQAFactor';
 import './FundConsensusFactor';
 import './GradualBreakoutFactor';
 import './GrowthFactor';
 import './IndustryMomentumFactor';
-import './InsiderTradeFactor';
 import './LiquidityFactor';
 import './LowVolFactor';
-import './MarginFlowFactor';
 import './MomentumFactor';
 import './MomentumReversalFactor';
 import './MoneyFlowFactor';
 import './NorthboundFactor';
 import './QualityFactor';
 import './QualityHighFactor';
-import './ShareholderConcentrationFactor';
 import './ValueFactor';
 
 export {}; // 保留 ESM 模块标记

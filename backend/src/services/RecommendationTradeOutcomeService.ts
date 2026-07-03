@@ -9,8 +9,6 @@ import { PaperTradingTrade } from '../models/PaperTradingTrade';
 import { DailyBar } from '../models/DailyBar';
 import { Stock } from '../models/Stock';
 import { User } from '../models/User';
-import { QuantSignal } from '../models/QuantSignal';
-import { QuantFusionAudit } from '../models/QuantFusionAudit';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { paperTradingAutomationService } from '../portfolio/internal/PaperTradingAutomationService';
@@ -27,6 +25,10 @@ import {
 import { classifyTradeRootCause, TradeRootCauseInput } from './TradeRootCauseClassifier';
 // Phase 5+: 自动生成事后复盘 (亏损/wrong_entry/wrong_regime 等触发)
 import { tradePostmortemService } from './TradePostmortemService';
+
+// Stubs for deleted models
+const QuantSignal = { findAll: async (_?: any): Promise<any[]> => [] };
+const QuantFusionAudit = { findAll: async (_?: any): Promise<any[]> => [] };
 // Phase 2+: Kelly sizing 统计聚合（写新 outcome 后 invalidate 缓存）
 
 export interface RecommendationTradeOutcomeRefreshOptions {
@@ -3503,8 +3505,8 @@ export class RecommendationTradeOutcomeService {
     metadata: Record<string, any>;
     signalMetadata: Record<string, any>;
     paperTrading: Record<string, any>;
-    quantSignals: QuantSignal[];
-    fusionAudits: QuantFusionAudit[];
+    quantSignals: any[];
+    fusionAudits: any[];
     taskLogs: TaskExecutionLog[];
     strategyKey: string;
     traceUrl: string;
@@ -3615,8 +3617,8 @@ export class RecommendationTradeOutcomeService {
     metadata: Record<string, any>;
     signalMetadata: Record<string, any>;
     paperTrading: Record<string, any>;
-    quantSignals: QuantSignal[];
-    fusionAudits: QuantFusionAudit[];
+    quantSignals: any[];
+    fusionAudits: any[];
     trades: PaperTradingTrade[];
     taskLogs: TaskExecutionLog[];
     strategyKey: string;
@@ -3757,8 +3759,8 @@ export class RecommendationTradeOutcomeService {
     signalMetadata: Record<string, any>;
     paperTrading: Record<string, any>;
     strategyKey: string;
-    quantSignals: QuantSignal[];
-    fusionAudits: QuantFusionAudit[];
+    quantSignals: any[];
+    fusionAudits: any[];
   }): Record<string, any> {
     const {
       outcome,
@@ -3822,8 +3824,8 @@ export class RecommendationTradeOutcomeService {
     signal?: AIInvestmentSignal | null;
     metadata: Record<string, any>;
     signalMetadata: Record<string, any>;
-    quantSignals: QuantSignal[];
-    fusionAudits: QuantFusionAudit[];
+    quantSignals: any[];
+    fusionAudits: any[];
   }): string {
     const { outcome, signal, metadata, signalMetadata, quantSignals, fusionAudits } = params;
     const reasons = [

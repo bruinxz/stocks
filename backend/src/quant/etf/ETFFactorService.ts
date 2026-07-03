@@ -23,14 +23,16 @@
 
 import { Op } from 'sequelize';
 import { DailyBar } from '../../models/DailyBar';
-import { StockValuationFactor } from '../../models/StockValuationFactor';
-import { StockFundamentalFactor } from '../../models/StockFundamentalFactor';
 import { FinancialReport } from '../../models/FinancialReport';
 import { DividendHistory } from '../../models/DividendHistory';
 import { zscore } from '../factors/normalization';
 import { stripSuffix, inferStockSymbol, lookbackStartDate } from '../factors/library/_helpers';
 import { Stock } from '../../models/Stock';
 import { ETFConstituentExpander, etfConstituentExpander, ETFConstituents } from './ETFConstituentExpander';
+
+// Stubs for deleted factor tables
+const StockValuationFactor = { findAll: async (_opts?: any): Promise<any[]> => [] };
+const StockFundamentalFactor = { findAll: async (_opts?: any): Promise<any[]> => [] };
 
 /** 因子权重 V0 (§4.1 表, Momentum shadow 不入实盘). 可覆盖做敏感性网格. */
 export interface ETFFactorWeights {

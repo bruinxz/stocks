@@ -3,12 +3,8 @@ import { Stock } from '../../../models/Stock';
 import { DailyBar } from '../../../models/DailyBar';
 import { FavoriteStock } from '../../../models/FavoriteStock';
 import { RealtimeQuote } from '../../../models/RealtimeQuote';
-import { StockFundamentalFactor } from '../../../models/StockFundamentalFactor';
-import { StockMoneyFlowFactor } from '../../../models/StockMoneyFlowFactor';
-import { StockValuationFactor } from '../../../models/StockValuationFactor';
 import { normalizeSymbol } from '../../../utils/stockSymbol';
 import { QuantBar, QuantStockContext, QuantUniverse } from '../../types/QuantTypes';
-import { buildPointInTimeFactorWhere } from '../../../services/research/ResearchTrustPolicyService';
 
 function toDateOnly(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
@@ -152,32 +148,7 @@ export class QuantDataService {
     }
     const stockSymbols = stocks.map(stock => stock.symbol);
     const factorAsOfDate = options.as_of_date || options.start_date;
-    const [valuationRows, moneyFlowRows, fundamentalRows] = await Promise.all([
-      StockValuationFactor.findAll({
-        where: buildPointInTimeFactorWhere(stockSymbols, factorAsOfDate),
-        order: [
-          ['symbol', 'ASC'],
-          ['factor_date', 'DESC'],
-        ],
-        limit: Math.max(stocks.length * 3, 50),
-      }).catch(() => [] as StockValuationFactor[]),
-      StockMoneyFlowFactor.findAll({
-        where: buildPointInTimeFactorWhere(stockSymbols, factorAsOfDate),
-        order: [
-          ['symbol', 'ASC'],
-          ['factor_date', 'DESC'],
-        ],
-        limit: Math.max(stocks.length * 3, 50),
-      }).catch(() => [] as StockMoneyFlowFactor[]),
-      StockFundamentalFactor.findAll({
-        where: buildPointInTimeFactorWhere(stockSymbols, factorAsOfDate),
-        order: [
-          ['symbol', 'ASC'],
-          ['factor_date', 'DESC'],
-        ],
-        limit: Math.max(stocks.length * 3, 50),
-      }).catch(() => [] as StockFundamentalFactor[]),
-    ]);
+    const [valuationRows, moneyFlowRows, fundamentalRows]: [any[], any[], any[]] = [[], [], []];
     const latestBySymbol = <T extends { symbol: string; factor_date?: string; source?: string }>(
       rows: T[]
     ) => {

@@ -1269,57 +1269,9 @@ export function createProductionPersonalityStrategyMatcherDataSource(): Personal
     },
     async loadActiveStrategies() {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { QuantStrategyWeight } = require('../../models/QuantStrategyWeight');
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { QuantStrategyModel } = require('../../models/QuantStrategyModel');
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { Op } = require('sequelize');
-        const weights = await QuantStrategyWeight.findAll({
-          where: { action: { [Op.ne]: 'disabled' } },
-        });
-        const keys: string[] = Array.from(
-          new Set(weights.map((w: { strategy_key: string }) => w.strategy_key).filter(Boolean))
-        );
-        const models = keys.length
-          ? await QuantStrategyModel.findAll({
-              where: { strategy_key: { [Op.in]: keys } },
-            })
-          : [];
-        const modelMap = new Map<string, Record<string, unknown>>();
-        for (const m of models) {
-          const j = typeof m.toJSON === 'function' ? m.toJSON() : m;
-          modelMap.set(String(j.strategy_key), j);
-        }
-        return weights.map((r: { toJSON?: () => Record<string, unknown> }) => {
-          const j = typeof r.toJSON === 'function' ? r.toJSON() : (r as Record<string, unknown>);
-          const key = safeString(j.strategy_key);
-          const m = modelMap.get(key) || {};
-          return {
-            strategy_key: key,
-            strategy_name: safeString(j.strategy_name) || safeString(m.name) || key,
-            category: safeString(m.category) || null,
-            weight: safeFinite(j.weight, 0),
-            action: safeString(j.action) || 'observe',
-            quality_score:
-              j.quality_score == null
-                ? null
-                : Number.isFinite(Number(j.quality_score))
-                ? Number(j.quality_score)
-                : null,
-            tags: Array.isArray(m.tags) ? (m.tags as string[]) : [],
-            default_params:
-              m.default_params && typeof m.default_params === 'object'
-                ? (m.default_params as Record<string, unknown>)
-                : {},
-          };
-        });
+        // QuantStrategyWeight and QuantStrategyModel tables deleted
+        return [];
       } catch (err) {
-        logger.warn(
-          `[personality-match] PRODUCTION loadActiveStrategies threw: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        );
         return [];
       }
     },
@@ -1360,18 +1312,10 @@ export function createProductionPersonalityStrategyMatcherDataSource(): Personal
     },
     async upsertPersonalityMatchReport(row) {
       try {
-        const {
-          PersonalityStrategyMatchReport,
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-        } = require('../../models/PersonalityStrategyMatchReport');
-        await PersonalityStrategyMatchReport.upsert(row);
+        // PersonalityStrategyMatchReport table deleted
         return { ok: true };
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.warn(
-          `[personality-match] PRODUCTION upsertPersonalityMatchReport user=${row.user_id} period_end=${row.period_end} threw: ${msg}`
-        );
-        return { ok: false, reason: 'upsert_threw', error: msg };
+        return { ok: false, reason: 'upsert_threw' };
       }
     },
   };

@@ -2,10 +2,12 @@ import moment from 'moment-timezone';
 import { Op } from 'sequelize';
 import { ScheduledTask } from '../../../models/ScheduledTask';
 import { TaskExecutionLog } from '../../../models/TaskExecutionLog';
-import { QuantSignal } from '../../../models/QuantSignal';
 import { AIInvestmentSignal, AISignalSourceType } from '../../../models/AIInvestmentSignal';
 import { PaperTradingTrade } from '../../../models/PaperTradingTrade';
 import { realtimeQuoteService } from '../../../data/services/RealtimeQuoteService';
+
+// Stub for deleted QuantSignal model
+const QuantSignal = { count: async (_?: any): Promise<number> => 0 };
 
 type WatchdogStatus = 'healthy' | 'warning' | 'critical';
 

@@ -1,11 +1,13 @@
 import moment from 'moment-timezone';
 import { AIInvestmentSignal } from '../../../models/AIInvestmentSignal';
-import { QuantFusionAudit } from '../../../models/QuantFusionAudit';
-import { QuantSignal } from '../../../models/QuantSignal';
-import { QuantStrategyParamValidation } from '../../../models/QuantStrategyParamValidation';
 import { RealtimeQuote } from '../../../models/RealtimeQuote';
 import { RecommendationTradeOutcome } from '../../../models/RecommendationTradeOutcome';
 import { stockFactorService } from '../../../data/services/StockFactorService';
+
+// Stubs for deleted models
+const QuantSignal = { findOne: async (_?: any) => null, count: async (_?: any) => 0 };
+const QuantFusionAudit = { findOne: async (_?: any) => null, count: async (_?: any) => 0 };
+const QuantStrategyParamValidation = { findOne: async (_?: any) => null, count: async (_?: any) => 0 };
 
 function toNumber(value: any, fallback = 0): number {
   const parsed = Number(value);

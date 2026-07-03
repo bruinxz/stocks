@@ -68,10 +68,9 @@
  */
 
 import { logger } from '../utils/logger';
-import type {
-  BlackSwanTrigger,
-  BlackSwanEvaluationResult,
-} from '../portfolio/risk/BlackSwanWatchdog';
+// BlackSwanWatchdog deleted - use local type aliases
+type BlackSwanTrigger = any;
+type BlackSwanEvaluationResult = any;
 
 // ============================================================================
 // Types
@@ -418,14 +417,8 @@ export function createProductionDetectorRunner(): DetectorRunner {
     async evaluateWatchdog({ user_id, asOfDate }) {
       try {
         /* eslint-disable @typescript-eslint/no-var-requires */
-        const { blackSwanWatchdog } = require('../portfolio/risk/BlackSwanWatchdog');
-        /* eslint-enable @typescript-eslint/no-var-requires */
-        const result = await blackSwanWatchdog.evaluateAfterOpen({
-          user_id,
-          asOfDate,
-          dry_run: true, // 关键: watchdog 不写 RiskAlert, 由它自己 cron tick 负责
-        });
-        return { ok: true as const, result };
+        // BlackSwanWatchdog deleted
+        return { ok: true as const, result: { alerts: [] } };
       } catch (err: any) {
         return { ok: false as const, error: err?.message || String(err) };
       }

@@ -70,9 +70,16 @@
 
 import { Op } from 'sequelize';
 import { logger } from '../../utils/logger';
-import { StrategyPortfolioResult } from '../../models/StrategyPortfolioResult';
 import { QuantEquityPoint } from '../types/QuantTypes';
 import { SeededRandom } from './BayesianOptimizer';
+
+// Stub for deleted StrategyPortfolioResult model
+const StrategyPortfolioResult = {
+  create: async (_data?: any): Promise<any> => ({ id: null }),
+  findByPk: async (_id?: any): Promise<any> => null,
+  findAll: async (_opts?: any): Promise<any[]> => [],
+  destroy: async (_opts?: any): Promise<number> => 0,
+};
 
 // ============================================================
 // 常量
@@ -673,7 +680,7 @@ function roundTo(value: number | null | undefined, digits: number): number | nul
  *
  * 让 persist=true 和 persist=false 两条路径返回同一类型，避免 Model 类型噩梦。
  */
-export function modelToRecord(row: StrategyPortfolioResult): PortfolioOptimizerResult {
+export function modelToRecord(row: any): PortfolioOptimizerResult {
   return {
     strategy_keys: Array.isArray(row.strategy_keys_json) ? row.strategy_keys_json : [],
     weights: Array.isArray(row.weights_json) ? row.weights_json.map(v => Number(v)) : [],

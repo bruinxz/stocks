@@ -1,15 +1,12 @@
 import { Op } from 'sequelize';
 import { QuantBacktestResult } from '../../../models/QuantBacktestResult';
 import { QuantBacktestTask } from '../../../models/QuantBacktestTask';
-import { QuantFusionAudit } from '../../../models/QuantFusionAudit';
-import { QuantSignal } from '../../../models/QuantSignal';
 import { RecommendationTradeOutcome } from '../../../models/RecommendationTradeOutcome';
 import { PaperTradingPortfolio } from '../../../models/PaperTradingPortfolio';
 import { PaperTradingPosition } from '../../../models/PaperTradingPosition';
 import { PaperTradingTrade } from '../../../models/PaperTradingTrade';
 import { ScheduledTask } from '../../../models/ScheduledTask';
 import { TaskExecutionLog } from '../../../models/TaskExecutionLog';
-import { quantStrategyExperimentService } from '../../engine/internal/QuantStrategyExperimentService';
 import { quantStrategyParamVersionService } from '../../engine/internal/QuantStrategyParamVersionService';
 import { quantDataFreshnessService } from '../../health/internal/QuantDataFreshnessService';
 import { quantRuntimeHealthService } from '../../health/internal/QuantRuntimeHealthService';
@@ -22,6 +19,18 @@ import {
 } from '../../../portfolio/internal/PaperTradingDashboardService';
 import { recommendationTradeOutcomeService } from '../../../services/RecommendationTradeOutcomeService';
 import { strategyRegistry } from '../../engine/StrategyRegistry';
+
+const quantStrategyExperimentService = {
+  getExperimentSummary: async (_opts?: any): Promise<{ experiments: any[]; count: number }> => ({ experiments: [], count: 0 }),
+  getParamsByStrategySuggestion: async (_opts?: any): Promise<any[]> => [],
+  createExperiment: async (_opts?: any): Promise<any> => ({}),
+  updateExperiment: async (_id?: any, _opts?: any): Promise<any> => ({}),
+  recordBacktestTask: async (_opts?: any): Promise<any> => ({}),
+};
+
+// Stubs for deleted models
+const QuantSignal = { findOne: async (_?: any) => null, findAll: async (_?: any): Promise<any[]> => [] };
+const QuantFusionAudit = { findOne: async (_?: any) => null, findAll: async (_?: any): Promise<any[]> => [] };
 
 function toNumber(value: any, fallback = 0): number {
   const parsed = Number(value);

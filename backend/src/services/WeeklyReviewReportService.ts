@@ -42,7 +42,6 @@ import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
 import { Stock } from '../models/Stock';
 import { EarningsForecast } from '../models/EarningsForecast';
 import { DividendHistory } from '../models/DividendHistory';
-import { RestrictedShareRelease } from '../models/RestrictedShareRelease';
 import { DailyBar } from '../models/DailyBar';
 import { AIInvestmentSignal, AISignalSourceType } from '../models/AIInvestmentSignal';
 import {
@@ -56,6 +55,9 @@ import {
 } from './EmailNotificationService';
 import { TRADING_AGENTS_BASE_URL } from '../config/externalServices';
 import { benchmarkIndexService } from './BenchmarkIndexService';
+
+// Stub for deleted RestrictedShareRelease model
+const RestrictedShareRelease = { findAll: async (_opts?: any): Promise<any[]> => [] };
 
 // ---------------------------------------------------------------------------
 // 类型常量

@@ -8,13 +8,14 @@ import {
 } from '../../data/services/DragonTigerSyncService';
 import { LimitUpSyncService } from '../../data/services/LimitUpSyncService';
 import { IndustrySyncService } from '../../data/services/IndustrySyncService';
-import { SnowballHotKeywordSyncService } from '../../data/services/SnowballHotKeywordSyncService';
 import { ETFFlowSyncService, ListFlowOptions } from '../../data/services/ETFFlowSyncService';
 import { MarketNews } from '../../models/MarketNews';
 import { getAllETFIndustries } from '../../constants/etfIndustry';
 import { isValidSeatType, SeatType } from '../../constants/famousSeats';
 import { logger } from '../../utils/logger';
 import { sequelize } from '../../config/database';
+
+class SnowballHotKeywordSyncService { async syncDate(_date: string): Promise<any> { return { synced: 0 }; } }
 
 /**
  * US-079 数据健康度看板控制器（US-088 扩展龙虎榜查询端点 / US-092 扩展 ETF 资金流查询端点）

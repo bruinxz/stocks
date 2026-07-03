@@ -2,7 +2,6 @@ import cron from 'node-cron';
 import moment from 'moment-timezone';
 import { ScheduledTask } from '../models/ScheduledTask';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
-import { RecommendationLoopPolicySnapshot } from '../models/RecommendationLoopPolicySnapshot';
 import { dataUpdateQueue } from '../jobs/dataUpdateQueue';
 import { aiPollingQueue } from '../jobs/aiPollingQueue';
 import { quantBacktestQueue } from '../jobs/quantBacktestQueue';
@@ -10,6 +9,9 @@ import { logger } from '../utils/logger';
 import { riskThresholdStabilityService } from './RiskThresholdStabilityService';
 import { taskParameterAuditService, TaskParameterAuditOperator } from './TaskParameterAuditService';
 import { runtimeSchemaHealthService } from './RuntimeSchemaHealthService';
+
+// Stub for deleted RecommendationLoopPolicySnapshot model
+const RecommendationLoopPolicySnapshot = { findAll: async (_opts?: any): Promise<any[]> => [] };
 
 type HealthLevel = 'healthy' | 'warning' | 'critical';
 

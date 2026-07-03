@@ -21,7 +21,9 @@ import { spawn } from 'child_process';
 import sequelize from '../config/database';
 import '../models';
 import { logger } from '../utils/logger';
-import { MacroIndicator, OptionQvix, BlockTrade, FundTopHolding } from '../models';
+import { MacroIndicator, OptionQvix, FundTopHolding } from '../models';
+
+const BlockTrade = { bulkCreate: async (_records: any[], _opts?: any): Promise<any[]> => [] };
 
 const PYTHON = process.env.PYTHON_BIN || '/opt/stocks/shared/venv/bin/python';
 const HELPER = process.env.AKSHARE_HELPER || `${process.cwd()}/python/akshare_helper.py`;

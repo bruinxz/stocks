@@ -1,9 +1,7 @@
-import { QuantResearchArtifactStatus } from '../../models/QuantResearchArtifact';
+// QuantResearchArtifactStatus from deleted model - local definition
+type QuantResearchArtifactStatus = 'pending' | 'pass' | 'watch' | 'reject' | 'insufficient';
 
-export type PointInTimeAuditStatus = Extract<
-  QuantResearchArtifactStatus,
-  'pass' | 'watch' | 'reject' | 'insufficient'
->;
+export type PointInTimeAuditStatus = 'pass' | 'watch' | 'reject' | 'insufficient';
 
 export interface DisclosureVisibilityInput {
   source_name: string;

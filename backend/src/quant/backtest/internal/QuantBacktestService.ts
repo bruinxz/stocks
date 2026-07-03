@@ -8,7 +8,6 @@ import { round } from '../../engine/QuantMath';
 import { quantBacktestQueue } from '../../../jobs/quantBacktestQueue';
 import { benchmarkIndexService } from '../../../services/BenchmarkIndexService';
 import { selectBenchmarkForStrategyKeys } from '../BenchmarkSelector';
-import { quantStrategyExperimentService } from '../../engine/internal/QuantStrategyExperimentService';
 import { quantStrategyService } from '../../engine/internal/QuantStrategyService';
 import { researchExperimentService } from '../../../services/research/ResearchExperimentService';
 import { researchTrustPolicyService } from '../../../services/research/ResearchTrustPolicyService';
@@ -16,6 +15,15 @@ import { logger } from '../../../utils/logger';
 import { literal, Op } from 'sequelize';
 import sequelize from '../../../config/database';
 import { incrementBacktestTotal } from '../../../metrics/PrometheusRegistry';
+
+// Stub for deleted quantStrategyExperimentService
+const quantStrategyExperimentService = {
+  getExperimentSummary: async (_opts?: any) => ({ experiments: [], count: 0 }),
+  getParamsByStrategySuggestion: async (_opts?: any): Promise<any[]> => [],
+  createExperiment: async (_opts?: any): Promise<any> => null,
+  updateExperiment: async (_id?: any, _opts?: any): Promise<any> => null,
+  recordBacktestTask: async (_taskId?: any): Promise<any> => null,
+};
 
 function maxSegmentDrawdown(curve: any[]): number {
   let peak = -Infinity;

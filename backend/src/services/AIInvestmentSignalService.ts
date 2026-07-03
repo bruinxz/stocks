@@ -5,7 +5,6 @@ import {
   AISignalDecision,
   AISignalSourceType,
 } from '../models/AIInvestmentSignal';
-import { DailyScreener } from '../models/DailyScreener';
 import { DailyBar } from '../models/DailyBar';
 import { Stock } from '../models/Stock';
 import { normalizeSymbol } from '../utils/stockSymbol';
@@ -1075,7 +1074,8 @@ export class AIInvestmentSignalService {
   }
 
   async syncFromDailyScreeners(): Promise<{ created: number; updated: number; total: number }> {
-    const screeners = await DailyScreener.findAll({ order: [['created_at', 'DESC']] });
+    // DailyScreener table deleted
+    const screeners: any[] = [];
     let created = 0;
     let updated = 0;
 

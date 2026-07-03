@@ -9,12 +9,13 @@ import { FactorICResult } from '../../models/FactorICResult';
 import { Stock } from '../../models/Stock';
 import { IndustryFlow } from '../../models/IndustryFlow';
 import { LimitUpStock } from '../../models/LimitUpStock';
-import { SnowballHotKeyword } from '../../models/SnowballHotKeyword';
 import { MarketNews } from '../../models/MarketNews';
-import { SocialSentimentSnapshot } from '../../models/SocialSentimentSnapshot';
-import { MarketHotSearch } from '../../models/MarketHotSearch';
 import { ETFRotationStrategy } from '../../quant/strategies/ETFRotationStrategy';
 import { ETF_FACTOR_WEIGHTS_V0, ETFFactorWeights } from '../../quant/etf/ETFFactorService';
+
+const SnowballHotKeyword = { findAll: async (_opts?: any): Promise<any[]> => [] };
+const SocialSentimentSnapshot = { findOne: async (_opts?: any): Promise<any> => null, findAll: async (_opts?: any): Promise<any[]> => [], count: async (_opts?: any): Promise<number> => 0 };
+const MarketHotSearch = { findAll: async (_opts?: any): Promise<any[]> => [] };
 import {
   factorDetailService,
   clampLimitDays,

@@ -723,27 +723,8 @@ class DefaultBullishDataSource implements BullishDataSource {
   ): Promise<SentimentDailyRow[]> {
     if (!bareCodes || bareCodes.length === 0) return [];
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { StockSentiment } = require('../models/StockSentiment');
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { Op } = require('sequelize');
-      const cutoff = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
-      const cutoffDate = cutoff.toISOString().slice(0, 10);
-      const rows: any[] = await StockSentiment.findAll({
-        attributes: ['stock_code', 'trade_date', 'post_count', 'rank', 'heat_score'],
-        where: {
-          stock_code: { [Op.in]: bareCodes },
-          trade_date: { [Op.gte]: cutoffDate },
-        },
-        raw: true,
-      });
-      return (rows || []).map((r: any) => ({
-        stock_code: String(r.stock_code),
-        trade_date: String(r.trade_date),
-        post_count: r.post_count === null || r.post_count === undefined ? null : Number(r.post_count),
-        rank: r.rank === null || r.rank === undefined ? null : Number(r.rank),
-        heat_score: r.heat_score === null || r.heat_score === undefined ? null : Number(r.heat_score),
-      }));
+      // StockSentiment table deleted
+      return [];
     } catch (e: any) {
       logger.warn(`[BullishEventDetector] listSentimentsByCodes failed: ${e?.message || e}`);
       return [];
@@ -756,31 +737,8 @@ class DefaultBullishDataSource implements BullishDataSource {
   ): Promise<KolOpinionRow[]> {
     if (!bareCodes || bareCodes.length === 0) return [];
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { KOLOpinion } = require('../models/KOLOpinion');
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { Op } = require('sequelize');
-      const cutoff = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000);
-      const cutoffDate = cutoff.toISOString().slice(0, 10);
-      const rows: any[] = await KOLOpinion.findAll({
-        attributes: ['stock_code', 'kol_name', 'opinion_date', 'kol_source', 'opinion_summary', 'sentiment_score'],
-        where: {
-          stock_code: { [Op.in]: bareCodes },
-          opinion_date: { [Op.gte]: cutoffDate },
-        },
-        raw: true,
-      });
-      return (rows || []).map((r: any) => ({
-        stock_code: String(r.stock_code),
-        kol_name: String(r.kol_name || ''),
-        opinion_date: String(r.opinion_date),
-        kol_source: String(r.kol_source || ''),
-        opinion_summary: String(r.opinion_summary || ''),
-        sentiment_score:
-          r.sentiment_score === null || r.sentiment_score === undefined
-            ? null
-            : Number(r.sentiment_score),
-      }));
+      // KOLOpinion table deleted
+      return [];
     } catch (e: any) {
       logger.warn(`[BullishEventDetector] listRecentKolOpinions failed: ${e?.message || e}`);
       return [];
