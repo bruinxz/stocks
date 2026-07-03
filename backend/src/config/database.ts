@@ -306,7 +306,7 @@ const sequelize = new Sequelize({
  *       不触发 `config/database.ts` 的副作用导入, 模型保持 un-initialized,
  *       第一次访问报 `"X" needs to be added to a Sequelize instance`.
  *
- * 方案: 每个会走 cold path 的 service entry (e.g. AnalysisEngineService) 在
+ * 方案: 每个会走 cold path 的 service entry (e.g. PaperTradingAutomationService) 在
  *       文件顶部 `import '../../config/database';` 触发本模块加载, 构造函数
  *       内 `new Sequelize({...models: [...]})` 已把所有模型 addModels 一次.
  *       本 helper 做防御性 idempotent 兜底: 若发现 sequelize.models 为空

@@ -6,11 +6,9 @@ export enum AISignalSourceType {
   QUANT_RECOMMENDATION = 'quant_recommendation',
   MANUAL_ANALYSIS = 'manual_analysis',
   /**
-   * US-020 [AE-001] 多维分析引擎 hard mode 产物 — 由
-   * `AIInvestmentSignalService.archiveAnalysisEngineResult` 落库,
-   * 让 PaperTradingAutomationService / Dashboard / Attribution 能识别
-   * `analysis_engine` 来源并在 hard mode 下跟单. 不破坏 shadow mode 行为
-   * (后者写 AIStockAnalysisReport, 不写本表).
+   * 历史来源 — 早期多维分析引擎 (analysis-engine hard mode) 落库的信号来源.
+   * 引擎本身已下线, 本枚举值保留兼容历史 DB 行, 供
+   * PaperTradingAutomationService / Dashboard / Attribution 识别与展示 `analysis_engine` 来源.
    */
   ANALYSIS_ENGINE = 'analysis_engine',
   /**
