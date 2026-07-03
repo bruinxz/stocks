@@ -42,6 +42,12 @@ export interface CronTaskDefinition {
   intraday?: boolean;
   /** 默认 dry_run (parameter audit 会比对) */
   dryRunDefault?: boolean;
+  /**
+   * 已下线墓碑: 底层 service 在批5移除, SchedulerService 仅保留空跑 dispatch 分支
+   * 防止 DB 存量任务触发 `Unsupported task type` 抛错. ensureDefaultTasks 不再 seed,
+   * 也不应有新 DB 任务使用. 登记在此仅为通过 cron-registry 双向一致性单测 (dispatch 有→registry 必须有).
+   */
+  retired?: boolean;
 }
 
 /**
@@ -117,7 +123,14 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '工作日 18:00 拉前一交易日 30+ 行业 ETF 净流入 / 份额 (AKShare fund_etf_fund_daily_em + fund_etf_hist_em) → etf_creation_redemption',
   },
-  // 批5: MARKET_SENTIMENT_INDEX_SYNC 已下线 (MarketSentimentIndexService 移除)
+  {
+    // 批5 墓碑: MarketSentimentIndexService 移除, SchedulerService 仅空跑分支.
+    type: 'MARKET_SENTIMENT_INDEX_SYNC',
+    category: 'data_sync',
+    owner: 'quant',
+    retired: true,
+    description: '[已下线] 市场情绪指数同步 — 批5 移除 service, 保留空跑分支防存量任务报错',
+  },
   // BF-3 (2026-06-23): 数据陈旧度检查 - 工作日盘后 18:30 (ETF_FLOW_SYNC 后 30min, 让本日数据落库再检)
   // 检 5 项: realtime_quotes 1h+ stale / daily_bars 不是 today / factor std=0 > 2 / cron FAILED / sentiment 陈旧
   // 命中任一阈值 → RiskAlert MEDIUM + Lark OPS 群推 (1h dedup)
@@ -274,8 +287,22 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     intraday: true,
     description: '盘中 quant 健康守护 (异常时触发熔断)',
   },
-  // 批5: AI_DAILY_SCREENER 已下线 (QuantRecommendationService 移除, 待批6 ETF 候选接入)
-  // 批5: AUTO_RECOMMENDATION_LOOP 已下线 (AutomatedRecommendationLoopService 移除, 待批6 ETF 轮动闭环)
+  {
+    // 批5 墓碑: QuantRecommendationService 移除, 全市场量化候选池不再产出.
+    type: 'AI_DAILY_SCREENER',
+    category: 'quant_engine',
+    owner: 'quant',
+    retired: true,
+    description: '[已下线] AI 每日选股 — 批5 移除 service, 保留空跑分支防存量任务报错',
+  },
+  {
+    // 批5 墓碑: AutomatedRecommendationLoopService 移除, 全市场荐股闭环停用.
+    type: 'AUTO_RECOMMENDATION_LOOP',
+    category: 'quant_engine',
+    owner: 'quant',
+    retired: true,
+    description: '[已下线] 全市场自动荐股闭环 — 批5 移除 service, 保留空跑分支防存量任务报错',
+  },
 
   // ===== L4 模拟盘 =====
   {
@@ -377,7 +404,14 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     owner: 'risk',
     description: '组合净值守卫日评 (策略熔断 / 降仓)',
   },
-  // 批5: STRATEGY_KILL_SWITCH_CHECK 已下线 (StrategyKillSwitchMonitor 移除; 熔断改由 EquityCurveGovernor)
+  {
+    // 批5 墓碑: StrategyKillSwitchMonitor 移除, 熔断改由 EquityCurveGovernor.
+    type: 'STRATEGY_KILL_SWITCH_CHECK',
+    category: 'risk_control',
+    owner: 'quant',
+    retired: true,
+    description: '[已下线] 策略熔断检查 — 批5 移除 service (熔断改由 EquityCurveGovernor), 保留空跑分支防存量任务报错',
+  },
 
   // ===== L5 实盘相关 =====
   {
@@ -425,7 +459,14 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     owner: 'analytics',
     description: '研究产物完整性审计',
   },
-  // 批5: EARNINGS_FORECAST_WATCH 已下线 (EarningsForecastWatcher 移除)
+  {
+    // 批5 墓碑: EarningsForecastWatcher 移除.
+    type: 'EARNINGS_FORECAST_WATCH',
+    category: 'data_sync',
+    owner: 'quant',
+    retired: true,
+    description: '[已下线] 业绩预告监控 — 批5 移除 service, 保留空跑分支防存量任务报错',
+  },
   {
     type: 'WEEKLY_REVIEW_EMAIL',
     category: 'analytics',
