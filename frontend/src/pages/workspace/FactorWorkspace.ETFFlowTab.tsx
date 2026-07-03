@@ -1,8 +1,8 @@
 /**
  * US-048 [FE-009] FactorWorkspace ETF 资金流 Tab.
  *
- * 展示行业 ETF 申赎资金流（近 N 日累计净流入 + 单日明细），与既有 BlockTradesTab /
- * MacroEnvTab 同款"FactorWorkspace 子 tab"形态。
+ * 展示行业 ETF 申赎资金流（近 N 日累计净流入 + 单日明细），与 MacroEnvTab
+ * 同款"FactorWorkspace 子 tab"形态。
  *
  * 数据来自 GET /api/data/etf-flow (US-092 落库, DataController.listEtfFlow):
  *   - 后端返 `{ industries: string[], data: FlowEntry[] }`

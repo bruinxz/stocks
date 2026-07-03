@@ -58,7 +58,6 @@ import WorkspaceHero from '../../components/layout/WorkspaceHero';
 import { AnimatePresence, motion } from 'framer-motion';
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
 import MacroEnvTab from './FactorWorkspace.MacroEnvTab';
-import BlockTradesTab from './FactorWorkspace.BlockTradesTab';
 import ETFFlowTab from './FactorWorkspace.ETFFlowTab';
 import PolicyNewsTab from './FactorWorkspace.PolicyNewsTab';
 import { computeAIWeights, computeWeightDeltas } from './factorAIWeightHelpers';
@@ -198,7 +197,6 @@ const FactorWorkspace: React.FC = () => {
     { key: 'board', label: '行业决策', icon: <ThunderboltOutlined /> },
     { key: 'sentiment', label: '舆情雷达', icon: <BarChartOutlined /> },
     { key: 'macro', label: '宏观环境', icon: <FundOutlined /> },
-    { key: 'block', label: '大宗交易', icon: <FundOutlined /> },
     // US-048 (FE-009) — 行业 ETF 申赎资金流 + 政策要闻 2 个新 tab
     { key: 'etf', label: 'ETF 资金流', icon: <FundOutlined /> },
     { key: 'policy', label: '政策要闻', icon: <FundOutlined /> },
@@ -626,8 +624,6 @@ const FactorWorkspace: React.FC = () => {
     );
   } else if (activeKey === 'macro') {
     body = <MacroEnvTab />;
-  } else if (activeKey === 'block') {
-    body = <BlockTradesTab />;
   } else if (activeKey === 'etf') {
     // US-048 (FE-009): 行业 ETF 申赎资金流 — 内部 lazy fetch, 第一次切到该 tab 才拉
     body = <ETFFlowTab />;
