@@ -34,6 +34,7 @@
     "sync:industry-flow": "ts-node src/scripts/sync-industry-flow.ts",
     "sync:earnings-forecast": "ts-node src/scripts/sync-earnings-forecast.ts",
     "sync:index-components": "ts-node src/scripts/sync-index-components.ts",
+    "sync:derived-factors": "ts-node src/scripts/sync-derived-factors.ts",
     "sync:dividend-history": "ts-node src/scripts/sync-dividend-history.ts",
     "sync:financial-report": "ts-node src/scripts/sync-financial-report.ts",
     "sync:analyst-forecast": "ts-node src/scripts/sync-analyst-forecast.ts",

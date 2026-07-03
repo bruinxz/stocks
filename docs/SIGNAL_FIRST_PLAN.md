@@ -1475,3 +1475,63 @@ if PR-L 紧急停损触发:
 - T1-T5 完成后, 跑一次**完整性检查**: 每个 ETF 至少有 90% 交易日数据, 因子分不为 null
 - 完整性 < 90% 的 ETF 从候选池删除
 - 完整性 90-99% 的 ETF 保留但标注"数据有缺失"
+
+---
+
+## 附录 Z — Plan A 因子数据链落地 (2026-07-03)
+
+上文 §回填 的 T2/T3 (ETF 成分股财务因子 + 因子分) 由本节的具体脚本 + 调度实现。
+**采用 Plan A(东方财富免费源)**:纯 TS HTTP 客户端,无需 Python/akshare/Tushare token,
+零成本、开箱即用。仅 ETF→成分股映射(index_components)仍依赖 AKShare。
+
+### Z.1 命脉数据链(为什么必须有)
+
+Core 70% = ETF 因子轮动。`ETFFactorService` 打分读三张表:
+- `stock_valuation_factors`(value)、`stock_fundamental_factors`(quality)、`stock_money_flow_factors`
+- 经 `ETFConstituentExpander`(读 `index_components` / `fund_top_holdings`)把 ETF 展开成成分股做横截面 z-score
+
+**任一环空 → `data_incomplete=true` → `total_score=-Infinity` → `ETFRankingService` 全过滤 → Core 腿空仓。**
+故三张因子表 + 成分股表必须有稳定的定时写入源。重构前这些表全空、且写入方法无 CLI/无 cron。
+
+### Z.2 新增脚本 / 调度
+
+| 组件 | 类型 | 说明 |
+|---|---|---|
+| `backend/src/scripts/sync-derived-factors.ts` | CLI | 包装 `stockFactorService.syncDerivedFactors({provider:'eastmoney'})`,落三张因子表。`npm run sync:derived-factors` |
+| `DERIVED_FACTOR_SYNC` | cron 任务 | 每交易日 **17:00**(早于 FACTOR_SCORE_COMPUTE 17:30),`provider=eastmoney limit=6000`,覆盖率≥95% 跳过重复落盘 |
+| `INDEX_COMPONENT_SYNC` | cron 任务 | 每周一 **07:00** 同步 6 个宽基指数成分股(AKShare),供成分展开 |
+| `sync-index-components.ts` | CLI(已存在) | `INDEX_COMPONENT_SYNC` 调用它;依赖 AKShare(Python) |
+| `sync-extra-dims --dim=fund` | CLI(已存在) | `fund_top_holdings` 兜底映射,季报披露后手动/季度跑 |
+
+均已登记到 `cronRegistry.ts` 白名单 + `ensureDefaultTasks` seed。`DERIVED_FACTOR_SYNC`
+加入 catch-up 白名单(60min cooldown):**部署重启 / 错过 17:00 窗口会自动补跑**,满足"部署即开跑"。
+
+另:`StockFactorService.resolveStocks` 全市场 cap 由 1000 提到 6000 —
+否则宽基 ETF 成分缺口 >30% 触发 data_incomplete 硬门。
+
+### Z.3 部署首刷顺序(在服务器上执行)
+
+```bash
+cd backend
+# 1) 成分股(周度数据,首刷必须先跑;依赖 AKShare,需 PYTHON_PATH 指向装了 akshare 的解释器)
+npm run sync:index-components -- --indexes=000300,000905,000016,000688,399673,000015 --date=$(date +%F)
+# 2) 派生因子(命脉,东方财富免费源,~5500 票批量快照 5-20min)
+npm run sync:derived-factors -- --provider=eastmoney --limit=6000
+# 3) 因子打分
+npm run compute:factors -- --date=$(date +%F)
+# 4) 验证 Core 腿非空
+#    跑 ETFRotationService.runMonthlyRebalance(dryRun) 或 ETF_FACTOR_ROTATION_REBALANCE 手动触发
+#    确认 skipped_data_incomplete 不再等于全部候选、current_holdings 非空
+```
+
+之后由 scheduler 托管:`INDEX_COMPONENT_SYNC`(周一 07:00)→ `DERIVED_FACTOR_SYNC`(每日 17:00)
+→ `FACTOR_SCORE_COMPUTE`(17:30)→ `FACTOR_IC_COMPUTE`(19:00)→ `ETF_FACTOR_ROTATION_REBALANCE`(每月首交易日 09:30)。
+
+### Z.4 环境依赖
+
+- **东方财富**:无 token,纯 HTTP(`push2.eastmoney.com`);需服务器能出网访问东财。本地 Mac 出网被限
+  (socket hang up),故按用户要求在服务器跑。并发由 `EASTMONEY_FACTOR_CONCURRENCY`(默认 5)控制。
+- **AKShare**(仅 index_components):`PYTHON_PATH` 指向装了 akshare 的解释器;未装则该任务失败但不影响
+  eastmoney 因子链(宽基 ETF 可退回 `fund_top_holdings` 兜底)。
+- **已知无关问题**:`sequelize.sync({alter:true})` 对 `northbound_holdings` enum 列生成非法 `USING` SQL,
+  dev 模式建表会报错。生产用 `NODE_ENV=production`(跳过 alter)或既有 migration,不受影响。

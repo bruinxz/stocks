@@ -3795,6 +3795,102 @@ class SchedulerService {
           result_summary: { scenario: 'extra_dims_sync', dims, results },
         });
         logger.info(`[EXTRA_DIMS_SYNC] done: ${JSON.stringify(results)}`);
+      } else if (task.type === 'DERIVED_FACTOR_SYNC') {
+        // Plan A (2026-07, 主线命脉): 每日盘后落 stock_valuation_factors /
+        // stock_fundamental_factors / stock_money_flow_factors 三张因子表 —
+        // ETF 因子轮动 (Core 70%) 打分的唯一数据源。空表 → data_incomplete 硬门
+        // → Core 腿空仓。默认 provider=eastmoney (纯 HTTP, 无需 Python/token)。
+        // cron 必须早于 FACTOR_SCORE_COMPUTE (17:30), 排在 17:00。
+        // 走 compiled .js (与 FACTOR_SCORE_COMPUTE 同款 prod 约定; ts-node 是 dev dep)。
+        const path = require('path');
+        const compiledScript = path.resolve(__dirname, '..', 'scripts', 'sync-derived-factors.js');
+        const provider: string =
+          typeof parameters.provider === 'string' ? parameters.provider : 'eastmoney';
+        const limit = this.toPositiveInt(parameters.limit, 6000, 6000);
+        const args = [compiledScript, `--provider=${provider}`, `--limit=${limit}`];
+        if (typeof parameters.as_of === 'string') args.push(`--as-of=${parameters.as_of}`);
+        if (parameters.skip_if_coverage_gte !== undefined) {
+          args.push(`--skip-if-coverage-gte=${Number(parameters.skip_if_coverage_gte)}`);
+        }
+        const t0 = Date.now();
+        const r = await this.runScriptAsync('/usr/bin/node', args, {
+          cwd: path.resolve(__dirname, '..', '..'),
+          timeoutMs: 20 * 60_000, // 全 A 股 ~5500 票批量快照, 给 20 min 上限
+        });
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+        const ok = r.code === 0;
+        if (ok) {
+          logger.info(`[DERIVED_FACTOR_SYNC] done in ${elapsed}s provider=${provider} limit=${limit}`);
+        } else {
+          logger.warn(
+            `[DERIVED_FACTOR_SYNC] failed code=${r.code} after ${elapsed}s: ${(
+              r.stderr || ''
+            ).substring(0, 200)}`
+          );
+        }
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: 1,
+          success_count: ok ? 1 : 0,
+          failed_count: ok ? 0 : 1,
+          result_summary: {
+            scenario: 'derived_factor_sync',
+            provider,
+            limit,
+            elapsed_seconds: Number(elapsed),
+            ok,
+          },
+        });
+      } else if (task.type === 'INDEX_COMPONENT_SYNC') {
+        // Plan A (2026-07): 同步宽基指数成份股 → index_components 表, 供
+        // ETFConstituentExpander 把 ETF 展开成成份股做因子横截面。走 AKShare
+        // (index_stock_cons_sina), 依赖 Python; 成份仅季度调样, 故周度跑足够。
+        // 默认同步 etfIndexMap 覆盖的 6 个高置信映射指数。
+        const path = require('path');
+        const compiledScript = path.resolve(
+          __dirname,
+          '..',
+          'scripts',
+          'sync-index-components.js'
+        );
+        const indexes: string[] = Array.isArray(parameters.indexes)
+          ? parameters.indexes
+          : ['000300', '000905', '000016', '000688', '399673', '000015'];
+        const date: string =
+          parameters.date ||
+          parameters.trade_date ||
+          moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
+        const args = [compiledScript, `--indexes=${indexes.join(',')}`, `--date=${date}`];
+        if (parameters.force === true) args.push('--force');
+        const t0 = Date.now();
+        const r = await this.runScriptAsync('/usr/bin/node', args, {
+          cwd: path.resolve(__dirname, '..', '..'),
+          timeoutMs: 15 * 60_000, // 6 指数 × AKShare 3 请求, 给 15 min 上限
+        });
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+        const ok = r.code === 0;
+        if (ok) {
+          logger.info(
+            `[INDEX_COMPONENT_SYNC] done in ${elapsed}s indexes=[${indexes.join(',')}] date=${date}`
+          );
+        } else {
+          logger.warn(
+            `[INDEX_COMPONENT_SYNC] failed code=${r.code} after ${elapsed}s: ${(
+              r.stderr || ''
+            ).substring(0, 200)}`
+          );
+        }
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: indexes.length,
+          success_count: ok ? indexes.length : 0,
+          failed_count: ok ? 0 : indexes.length,
+          result_summary: {
+            scenario: 'index_component_sync',
+            indexes,
+            date,
+            elapsed_seconds: Number(elapsed),
+            ok,
+          },
+        });
       } else if (task.type === 'FACTOR_SCORE_COMPUTE') {
         // Sprint 40 (你提的优先级 #1): 每日盘后 factor_scores 生成任务.
         // 之前只有 FACTOR_IC_COMPUTE 没有 FACTOR_SCORE_COMPUTE — IC 算的前提是
@@ -5872,10 +5968,14 @@ class SchedulerService {
       // 这样 deploy 重启或者 17:30 错过都会自动补跑. compute 比较重 (~30min),
       // 但 deploy 重启发生频率低; 加 60min 最小间隔避免短时间内反复触发.
       'FACTOR_SCORE_COMPUTE',
+      // Plan A (2026-07): 派生因子同步是 ETF 轮动命脉数据, deploy 首刷 / 错过 17:00
+      // 窗口都要自动补跑, 否则 Core 70% 腿空仓. 重活 (~5-20min), 加 60min cooldown.
+      'DERIVED_FACTOR_SYNC',
     ]);
-    // 重活儿不能短时间内反复触发: FACTOR_SCORE_COMPUTE 需要 60min cooldown
+    // 重活儿不能短时间内反复触发: FACTOR_SCORE_COMPUTE / DERIVED_FACTOR_SYNC 需要 60min cooldown
     const COOLDOWN_MIN: Record<string, number> = {
       FACTOR_SCORE_COMPUTE: 60,
+      DERIVED_FACTOR_SYNC: 60,
     };
 
     const todayStart = moment().tz('Asia/Shanghai').startOf('day').toDate();
@@ -6581,6 +6681,34 @@ class SchedulerService {
         is_active: true,
         parameters: {
           dims: ['macro', 'qvix'],
+        },
+      },
+      {
+        // Plan A (2026-07, 主线命脉): 每日盘后 17:00 落三张派生因子表
+        // (估值/质量/资金流) — ETF 因子轮动 (Core 70%) 打分的唯一数据源.
+        // 必须早于 FACTOR_SCORE_COMPUTE (17:30). provider=eastmoney 纯 HTTP 免费源.
+        name: '每日派生因子同步 (东方财富)',
+        type: 'DERIVED_FACTOR_SYNC',
+        cron_expression: '0 17 * * 1-5',
+        is_active: true,
+        parameters: {
+          provider: 'eastmoney',
+          limit: 6000,
+          // 覆盖率已达 95% 且当日已落则跳过重复落盘, 缩短耗时
+          skip_if_coverage_gte: 95,
+        },
+      },
+      {
+        // Plan A (2026-07): 每周一开盘前 07:00 同步宽基指数成份股 → index_components,
+        // 供 ETFConstituentExpander 把 ETF 展开做因子横截面. 成份季度调样, 周度足够.
+        // 默认 etfIndexMap 覆盖的 6 个高置信映射指数. 依赖 AKShare (Python).
+        name: '宽基指数成份股同步 (周度)',
+        type: 'INDEX_COMPONENT_SYNC',
+        cron_expression: '0 7 * * 1',
+        is_active: true,
+        parameters: {
+          indexes: ['000300', '000905', '000016', '000688', '399673', '000015'],
+          require_trading_day: false,
         },
       },
       {

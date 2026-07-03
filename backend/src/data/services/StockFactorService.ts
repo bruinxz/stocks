@@ -284,7 +284,10 @@ export class StockFactorService {
   }
 
   private async resolveStocks(options: FactorSyncOptions = {}): Promise<Stock[]> {
-    const limit = Math.min(Math.max(Number(options.limit || 120), 1), 1000);
+    // Plan A (2026-07): cap 1000 → 6000。ETF 成分股展开覆盖全 A 股 (~5500 票),
+    // 旧 1000 上限会让宽基 ETF (沪深300/中证500/中证1000) 成分缺口 >30% 触发
+    // data_incomplete 硬门, 导致 Core 70% 腿空仓。与 DAILY_UPDATE 的 6000 全票约定对齐。
+    const limit = Math.min(Math.max(Number(options.limit || 120), 1), 6000);
     if (options.symbols?.length) {
       const symbols = [...new Set(options.symbols.map(normalizeSymbol).filter(Boolean))];
       return Stock.findAll({

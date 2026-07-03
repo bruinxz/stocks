@@ -213,6 +213,21 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description: '扩展维度 (estimize / 公告 NLP / qa-topic 等) 数据同步',
   },
   {
+    type: 'DERIVED_FACTOR_SYNC',
+    category: 'data_sync',
+    owner: 'data',
+    recommendedCron: '0 17 * * 1-5',
+    description:
+      '派生因子(估值/质量/资金流)落库 — 东方财富免费源, ETF 因子轮动(Core 70%)命脉数据',
+  },
+  {
+    type: 'INDEX_COMPONENT_SYNC',
+    category: 'data_sync',
+    owner: 'data',
+    recommendedCron: '0 7 * * 1',
+    description: '宽基指数成份股同步(AKShare) — 供 ETF→成份股展开做因子横截面',
+  },
+  {
     type: 'DATA_QUALITY_SCAN',
     category: 'data_sync',
     owner: 'data',
