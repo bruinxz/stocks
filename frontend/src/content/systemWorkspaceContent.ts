@@ -615,10 +615,9 @@ export const SYSTEM_ARCHITECTURE_MD = `# 系统架构图
 | 文档 | 内容 |
 |---|---|
 | \`docs/trader-system/00_overview.md\` | 操盘手方法论 + 6 大模块 |
-| \`docs/trader-system/30_strategy_overview.md\` | 29 策略详细 |
 | \`docs/trader-system/80_ai_analysis_engine.md\` | AI 引擎 v2 设计 |
 | \`docs/audit/full_completion_2026_06_21.md\` | 早期 147 story 完整实施记录 |
 | \`docs/audit/deployment_2026_06_21.md\` | 部署坑 + ops 三账号 |
 | \`backend/src/constants/cronRegistry.ts\` | 78 cron 任务事实源 |
-| \`backend/src/quant/engine/StrategyRegistry.ts\` | 29 策略事实源 |
+| \`backend/src/quant/strategies/ETFRotationStrategy.ts\` | ETF 因子轮动主线策略 |
 `;
