@@ -194,7 +194,7 @@ models/      → ~92 个 (删日内/融合/个股因子相关表; 龙虎榜/北�
 
 **删除 routes**: `advancedQuant` `strategy` `strategyResearch` `sentiment` (个股情绪) `signalTrace`(旧) `analysisEngineShadow`(✅D6 删) — 及对应 controller。
 **删除 controllers**: `QuantRecommendationController` `AdvancedQuantController` `StrategyController` `StrategyResearchController` `SentimentController` `ScreenerController` `AISignalController`(旧) 等。
-**改造**: `V3RecommendationController` (改 ETF 排名 + 卫星题材展示 — 计划档 §7.1); `PaperTradingController` (接 EV gate)。
+**改造**: `V3RecommendationController` (✅批7k 完成 — deriveCoreSatellite 分核心/卫星/现金桶, 前端据此分区展示); `PaperTradingController` (接 EV gate)。
 **保留 (含删前必做的断引用)**: `PortfolioController` `BacktestController`(⚠️ 现 import `src/backtest`, 删前改指 `quant/backtest`) `FactorController`(⚠️ 现 import `quant/strategies/MultiFactorAlphaStrategy`, 删策略前需断开/改用 ETF 因子服务) `RiskController` `RiskAlertController` `ReviewController` `JournalController` `TodayController` `DataController` `MarketController` `MacroController` `BlackSwanEventController` `AuthController` `UserController` `SettingsController` `TaskController` `LogController` `DocsController` `AnnouncementController` `StockController`(个股实盘查看) 等。
 **新增定性**: `QuantController`(审计发现未定性; 现 import `quant/engine/StrategyEngine`+`quant/strategies`+`quant/backtest`) → **改造** — 剥离 engine/strategies 依赖, 仅保留其对 `quant/backtest` 的调用(接一键回测), 或若无独立价值则随 engine/strategies 删。
 **改造需断引用**: `TodaySignalsService`(§2.1 已列改造) 现 import `MultiFactorAlpha/DragonHeadMomentum/EarningsSurprise` 三个将删策略, 改造时必须断开这三处 import。
@@ -221,7 +221,7 @@ models/      → ~92 个 (删日内/融合/个股因子相关表; 龙虎榜/北�
 
 | 页面 | 处置 |
 |---|---|
-| `HomeWorkspace.tsx` | 改造 — 删装饰(见 3.3), 主视图改 ETF 排名+卫星+现金 三栏 |
+| `HomeWorkspace.tsx` | ✅改造完成 (批7i) — 主视图改 ETF 因子轮动排名表 + 卫星题材 (批7k 只留 satellite 桶) |
 | `RecommendationTrace.tsx` | 删除 — 个股推荐追溯 (旧主线) |
 | `StockDetail.tsx` | **保留** — ETF 详情 + 个股实盘数据查看页 (实时行情 / 龙虎榜 / 北向 只读展示, D3 已拍板) |
 | `TaskScheduler.tsx` `SystemLogs.tsx` `HealthMonitor.tsx` `DataUpdateStatus.tsx` `Login.tsx` | 保留 — 运维/登录基础页 |
@@ -229,10 +229,10 @@ models/      → ~92 个 (删日内/融合/个股因子相关表; 龙虎榜/北�
 ### 3.2 pages/workspace/ tabs
 
 **保留/改造**:
-- `FactorWorkspace.tsx` + `ETFFlowTab` `MacroEnvTab` `PolicyNewsTab` → 改 ETF 因子视图 (保留)
+- `FactorWorkspace.tsx` + `ETFFlowTab` `MacroEnvTab` `PolicyNewsTab` → 改 ETF 因子视图 (保留) — ✅选股清单 tab 改 ETF 调仓 (批7j)
 - `PortfolioWorkspace` `LabWorkspace`(+WalkForward/Overfit/ShadowRun/Leaderboard 回测 tab) → 保留
 - `SettingsWorkspace` (+RiskParameters/SizingPolicy/PortfolioConstruction tab) → 保留
-- `TodayWorkspace.tsx` → 改造 (删 `IntradayCapitalFlowTab`)
+- `TodayWorkspace.tsx` → 改造 (删 `IntradayCapitalFlowTab`) — ✅core_picks tab 文案改题材机会 (批7k)
 - `EasyQuantWorkspace` + `easyQuant*` helpers → **保留** (一键回测入口, D2 已拍板; 仅接 7 关回测, 不接已删的 30 策略)
 - `DataWorkspace` `DocsWorkspace` `SystemWorkspace` → 保留
 
@@ -305,7 +305,7 @@ models/      → ~92 个 (删日内/融合/个股因子相关表; 龙虎榜/北�
 4. **批4 — 删社媒情绪数据源**: data/sources 社媒/KOL/情绪类 + data/services sync (先删 sync 再删 client) + models 情绪/问答表(直删)。**注: 龙虎榜/北向 client/sync/model 不在本批, 保留供查看。**
 5. **批5 — 改造**: 4 因子 ETF 化 + PaperTradingAutomation 接 EV gate + V3Controller + AIInvestmentSignal schema + 通知时机收敛 (§2.12)。
 6. **批6 — 新建** (计划档 §7.4, 15-19 天): ETFRotationService / FactorCalculatorService / ConfidenceCalibrationService / AutoExitService / 精简数据源 / PR-O5 修复 / 战略镜子 UI。
-7. **批7 — 前端装饰清理** + docs 清理 + scripts 清理。
+7. **批7 — 前端装饰清理** + docs 清理 + scripts 清理。(进行中: 7a-7k 已提交 — 装饰删除/系统介绍/HomeWorkspace/FactorWorkspace/V3展示; 剩 docs 指南重写 + 战略镜子 UI)
 8. **批8 — models 物理删** (随批2-4 同期直删; 删前 grep 确认无引用 + pg_dump 备份, 无观察期)。
 
 **前后端删除时序绑定** (前端删除项必须与对应后端同批, 避免删出死路由/空 tab):
