@@ -249,8 +249,6 @@ export function matrixUpdatesToConfigPatch(updates: any): Partial<NotificationCh
  *   PUT /api/settings/notification-config — US-080 矩阵反向 patch + 单字段同步
  *   POST /api/settings/daily-digest/preview — dry-run preview 当日日报
  *   POST /api/settings/daily-digest/send — 立即推送当日日报
- *   POST /api/settings/earnings-forecast/scan — 立即扫描持仓 + 自选股推送 (US-064)
- *   POST /api/settings/earnings-forecast/preview — dry-run preview 业绩预告推送 (US-064)
  *   POST /api/settings/email-config — 更新邮件通道开关 / 接收地址 / weekly_review 开关 (US-065)
  *   POST /api/settings/weekly-review/preview — dry-run preview 上周复盘邮件 payload (US-065)
  *   POST /api/settings/weekly-review/send — 立即发上周复盘邮件 (US-065)
@@ -395,23 +393,6 @@ export class SettingsController {
       logger.error('手动触发日报失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
-  }
-
-  /**
-   * POST /api/settings/earnings-forecast/preview (US-064)
-   * dry_run 预演当前用户当日的业绩预告推送 payload：
-   *   - 扫持仓股 (held path) — 返回每条 forecast 的 single-card payload；
-   *   - 扫自选股 (watchlist path) — 返回合并的 digest payload；
-   * 不实际推送 webhook + 不写 dedup buffer，让用户多次预演。
-   */
-  /** POST /api/settings/earnings-forecast/preview — 批5: EarningsForecastWatcher 已下线 */
-  async previewEarningsForecast(_req: Request, res: Response, _next: NextFunction) {
-    return res.status(410).json({ success: false, message: '该能力已下线' });
-  }
-
-  /** POST /api/settings/earnings-forecast/scan — 批5: EarningsForecastWatcher 已下线 */
-  async scanEarningsForecastNow(_req: Request, res: Response, _next: NextFunction) {
-    return res.status(410).json({ success: false, message: '该能力已下线' });
   }
 
   /**

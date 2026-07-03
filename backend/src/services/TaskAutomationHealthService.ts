@@ -247,7 +247,7 @@ const CHAIN_CONFIGS: HealthChainConfig[] = [
   },
 ];
 
-const RISK_LIMIT_TARGET_TASK_TYPES = ['AUTO_RECOMMENDATION_LOOP', 'QUANT_DAILY_PIPELINE'];
+const RISK_LIMIT_TARGET_TASK_TYPES = ['QUANT_DAILY_PIPELINE'];
 
 const RISK_LIMIT_PARAMETER_KEYS = [
   'min_cash_reserve_pct',
@@ -901,7 +901,6 @@ export class TaskAutomationHealthService {
     snapshots: any[] = []
   ) {
     const sourceTask =
-      tasks.find(task => task.type === 'AUTO_RECOMMENDATION_LOOP') ||
       tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE') ||
       null;
     // 批5: FieldGateAdjustmentAttributionService 已下线 — 返回中性 null (归因能力停用).
@@ -1018,7 +1017,6 @@ export class TaskAutomationHealthService {
 
   private resolveRiskThresholdStabilityConfig(tasks: any[]) {
     const sourceTask =
-      tasks.find(task => task.type === 'AUTO_RECOMMENDATION_LOOP') ||
       tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE') ||
       null;
     return riskThresholdStabilityService.buildConfigFromParameters(sourceTask?.parameters);
@@ -1026,7 +1024,6 @@ export class TaskAutomationHealthService {
 
   private resolveRiskThresholdFieldGateConfig(tasks: any[]) {
     const sourceTask =
-      tasks.find(task => task.type === 'AUTO_RECOMMENDATION_LOOP') ||
       tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE') ||
       null;
     const params =

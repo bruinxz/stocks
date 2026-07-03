@@ -34,11 +34,7 @@ export class AIAdvisorController {
     this.streamSingleStockAnalysis = this.streamSingleStockAnalysis.bind(this);
     this.getReportById = this.getReportById.bind(this);
     this.listReports = this.listReports.bind(this);
-    this.getKOLOpinions = this.getKOLOpinions.bind(this);
     this.getTechnicalAnalysis = this.getTechnicalAnalysis.bind(this);
-    this.askStrategyCopilot = this.askStrategyCopilot.bind(this);
-    this.streamStrategyCopilot = this.streamStrategyCopilot.bind(this);
-    this.getStrategyCopilotContext = this.getStrategyCopilotContext.bind(this);
     this.getMarketBriefToday = this.getMarketBriefToday.bind(this);
   }
 
@@ -533,27 +529,6 @@ export class AIAdvisorController {
     }
   }
 
-  /**
-   * GET /api/ai/kol-opinions?stock_code=000001&limit=10&refresh=false
-   *
-   * US-056 — 返回某只股票最新 N 条 KOL 观点 (券商研报 / 个股新闻 / 热门概念代理)。
-   *
-   * Query 参数:
-   *   stock_code  6 位代码 / sh.600519 / 股票名称 — 必填
-   *   limit       返回行数 (默认 10, 范围 1-50)
-   *   refresh     'true' 时主动跑 KOLAggregatorService.aggregateForStock 拉取最新 +
-   *               落库 + 返回; 默认 false 仅从已落库的 KOLOpinion 表查询。
-   *               refresh 模式可能耗时 5-15s (Python 子进程 + 远端 API)。
-   *
-   * 返回 schema:
-   *   { success, data: { stock_code, total, opinions: KOLOpinion[], refreshed: boolean } }
-   *
-   * **不抛 500 给前端**: refresh 失败时降级为已落库数据 + warning 字段。
-   */
-  async getKOLOpinions(_req: Request, res: Response, _next: NextFunction) {
-    // 批5: KOLAggregatorService 已下线 — 该能力已停用.
-    return res.status(410).json({ success: false, message: '该能力已下线' });
-  }
 
   // ---------------------------------------------------------------------------
   //  US-061 — AI 大模型技术面 K 线解读
@@ -614,24 +589,6 @@ export class AIAdvisorController {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  //  US-062 — AI 策略人机协同 (Copilot) — 批5: StrategyCopilotService 已下线
-  // ---------------------------------------------------------------------------
-
-  /** POST /api/ai/strategy-copilot — 批5: 该能力已下线 */
-  async askStrategyCopilot(_req: Request, res: Response, _next: NextFunction) {
-    return res.status(410).json({ success: false, message: '该能力已下线' });
-  }
-
-  /** GET /api/ai/strategy-copilot/stream — 批5: 该能力已下线 */
-  async streamStrategyCopilot(_req: Request, res: Response, _next: NextFunction) {
-    return res.status(410).json({ success: false, message: '该能力已下线' });
-  }
-
-  /** GET /api/ai/strategy-copilot/context — 批5: 该能力已下线 */
-  async getStrategyCopilotContext(_req: Request, res: Response, _next: NextFunction) {
-    return res.status(410).json({ success: false, message: '该能力已下线' });
-  }
 
   /**
    * GET /api/ai/market-brief/today

@@ -78,7 +78,6 @@ import {
   BacktestResearchAudit,
   BacktestExecutionConstraintAudit,
 } from '../../services/labService';
-import StrategyCopilotPanel from '../../components/trading/StrategyCopilotPanel';
 import {
   formatRelative as formatLabRelative,
   formatDateTime as formatLabDateTime,
@@ -780,35 +779,6 @@ const LabWorkspace: React.FC = () => {
           </Space>
         )}
       </Drawer>
-      <StrategyCopilotPanel
-        currentStrategyKey={seedStrategyKey}
-        onApplySuggestedParams={(params, strategyKey) => {
-          // Copilot 建议参数 → 把建议合并进新建回测表单的 params_text JSON
-          const targetKey = strategyKey || seedStrategyKey;
-          if (!targetKey) {
-            message.warning('请先在"我的策略"克隆一条策略，Copilot 才能把建议参数写入新建回测表单');
-            return;
-          }
-          const existingRaw = (form.getFieldValue('params_text') as string) || '';
-          let merged: Record<string, any> = { ...params };
-          if (existingRaw.trim()) {
-            try {
-              const existing = JSON.parse(existingRaw);
-              if (existing && typeof existing === 'object') {
-                merged = { ...existing, ...params };
-              }
-            } catch {
-              /* ignore invalid existing JSON; replace with suggested */
-            }
-          }
-          form.setFieldsValue({
-            strategy_keys: [targetKey],
-            params_text: JSON.stringify(merged, null, 2),
-          });
-          setSeedStrategyKey(targetKey);
-          setActiveKey('new-backtest');
-        }}
-      />
     </WorkspaceLayout>
   );
 };

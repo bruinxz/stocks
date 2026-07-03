@@ -71,8 +71,6 @@ export class ETFRotationStrategy extends QuantStrategy {
       weights: { value: 0.4, quality: 0.3, lowvol: 0.3, momentum: 0.0 },
       buyBand: 4,
       sellBand: 6,
-      singleCapPct: 0.15,
-      coreTotalCapPct: 0.7,
     },
     enabled: true,
     risk_level: 'low',

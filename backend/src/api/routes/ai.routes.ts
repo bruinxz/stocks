@@ -83,15 +83,6 @@ router.post(
 );
 
 /**
- * @route GET /api/ai/kol-opinions
- * @desc US-056 — 行业大 V / 券商 / 媒体 / 集体市场对某只股票的最新观点聚合
- *       (券商研报 + 个股新闻 + 热门概念代理 3 来源)。
- *       Query: stock_code (必填), limit (1-50, 默认 10), refresh ('true' 主动刷新)
- * @access Private
- */
-router.get('/kol-opinions', authController.authenticate, aiAdvisorController.getKOLOpinions);
-
-/**
  * @route POST /api/ai/technical-analysis
  * @desc US-061 — 大模型技术面 K 线解读
  *       Body: { stock_code (必填), lookback_days (默认 60, 20-250),
@@ -104,43 +95,6 @@ router.post(
   '/technical-analysis',
   authController.authenticate,
   aiAdvisorController.getTechnicalAnalysis
-);
-
-/**
- * @route POST /api/ai/strategy-copilot
- * @desc US-062 — AI 策略人机协同 (Copilot) 同步聊天
- *       Body: { prompt (必填), strategy_key, intent_override, dry_run,
- *               task_label, conversation_id }
- *       Returns: CopilotResponse (reply, suggested_params, strategy_draft, ...)
- * @access Private
- */
-router.post(
-  '/strategy-copilot',
-  authController.authenticate,
-  aiAdvisorController.askStrategyCopilot
-);
-
-/**
- * @route GET /api/ai/strategy-copilot/stream
- * @desc US-062 — AI Copilot SSE 流式返回
- *       Query: prompt (必填), strategy_key, intent_override, task_label, conversation_id
- *       SSE events: status / context / payload (上游透传) / completed / error
- * @access Public (EventSource 无法方便传 Bearer Header, 同 /analyze/stream)
- *
- * NOTE: 必须在 /strategy-copilot/context 之前注册，否则 EventSource 会被 :param
- * 风格 catchall 消费。（顺序无 catchall 路由也不冲突，但保持一致避免日后被搬乱。）
- */
-router.get('/strategy-copilot/stream', aiAdvisorController.streamStrategyCopilot);
-
-/**
- * @route GET /api/ai/strategy-copilot/context?strategy_key=...&lookback=5
- * @desc US-062 — 仅返回策略元 + 最近 N 次回测，不调远端 AI
- * @access Private
- */
-router.get(
-  '/strategy-copilot/context',
-  authController.authenticate,
-  aiAdvisorController.getStrategyCopilotContext
 );
 
 /**

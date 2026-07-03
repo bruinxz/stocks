@@ -6952,15 +6952,6 @@ class SchedulerService {
         parameters: {},
       },
       {
-        // PR-M1 (2026-06-29) — 隔夜信号矩阵 (A50/HK/Nasdaq/DXY/VIX) cron seed.
-        // 北京时间 21-23 (隔夜美股开盘) + 0-9 (隔夜+早盘前) 每 15min 跑一次.
-        name: '隔夜信号矩阵 sync (A50/HK/Nasdaq/DXY/VIX)',
-        type: 'OVERNIGHT_SIGNAL_SYNC',
-        cron_expression: '*/15 0-9,21-23 * * *',
-        is_active: true,
-        parameters: {},
-      },
-      {
         // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环 cron seed.
         // 每 30 分钟扫 status='pending' 且 (reviewed_at IS NULL OR > 6h) 的反馈,
         // 跑启发式分类器 + 优先级 + 摘要. 不自动 resolve — 留 admin 手工触发.

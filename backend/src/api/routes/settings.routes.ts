@@ -146,42 +146,6 @@ router.post(
 
 /**
  * @openapi
- * /api/settings/earnings-forecast/preview:
- *   post:
- *     tags: [设置 Settings]
- *     summary: dry-run 预览当日业绩预告推送 payload (US-064)
- *     security: [{ bearerAuth: [] }]
- *     responses:
- *       200: { description: 预览成功, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
- *       400: { description: 参数错误 }
- *       401: { description: 未授权 }
- */
-router.post(
-  '/earnings-forecast/preview',
-  authController.authenticate,
-  settingsController.previewEarningsForecast
-);
-
-/**
- * @openapi
- * /api/settings/earnings-forecast/scan:
- *   post:
- *     tags: [设置 Settings]
- *     summary: 扫描持仓与自选股业绩预告并推送 (US-064)
- *     security: [{ bearerAuth: [] }]
- *     responses:
- *       200: { description: 推送成功, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
- *       400: { description: 参数错误 }
- *       401: { description: 未授权 }
- */
-router.post(
-  '/earnings-forecast/scan',
-  authController.authenticate,
-  settingsController.scanEarningsForecastNow
-);
-
-/**
- * @openapi
  * /api/settings/email-config:
  *   post:
  *     tags: [设置 Settings]

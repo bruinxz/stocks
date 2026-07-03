@@ -380,8 +380,6 @@ const CLI_COMMANDS: Record<string, string> = {
   announcements: 'npm run sync:announcements -- --date=YYYY-MM-DD',
   qa_topics: 'npm run sync:qa-topics -- --stock=600519',
   index_components: 'npm run sync:index-components -- --index=000300 --date=YYYY-MM-DD',
-  market_sentiment: 'npm run sync:market-sentiment',
-  kol_opinions: 'npm run sync:kol-opinions',
   stock_sentiment: 'npm run sync:stock-sentiment',
 };
 
