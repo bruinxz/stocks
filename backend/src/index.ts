@@ -71,7 +71,8 @@ import docsRoutes from './api/routes/docs.routes';
 import { userFeedbackMeRoutes, userFeedbackAdminRoutes } from './api/routes/userFeedback.routes';
 import bridgeRoutes from './live-trading/routes/bridge.routes';
 import './jobs/dataUpdateWorker'; // 初始化数据更新队列处理器
-import './jobs/aiPollingWorker'; // 初始化 AI 分析轮询队列处理器
+// [批10 收尾] aiPollingWorker 已随旧个股 AI 打分链路(DailyScreener/QuantFusionAudit/PaperTradingAutomation)在批8物理删除;
+// ai_polling 队列已无 producer(enqueueAIPollingJob 无调用方),仅保留 queue 句柄供健康监控。此处副作用 import 移除以修复启动崩溃。
 import './jobs/quantBacktestWorker'; // 初始化量化跑分队列处理器
 import { schedulerService } from './services/SchedulerService';
 import { repairLegacyDevelopmentSchema } from './utils/developmentSchemaRepair';
