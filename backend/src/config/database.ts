@@ -35,6 +35,9 @@ import { EarningsForecast } from '../models/EarningsForecast';
 import { IndexComponent } from '../models/IndexComponent';
 import { DividendHistory } from '../models/DividendHistory';
 import { FinancialReport } from '../models/FinancialReport';
+import { StockValuationFactor } from '../models/StockValuationFactor';
+import { StockFundamentalFactor } from '../models/StockFundamentalFactor';
+import { StockMoneyFlowFactor } from '../models/StockMoneyFlowFactor';
 import { AnalystForecast } from '../models/AnalystForecast';
 import { OptimizationRun } from '../models/OptimizationRun';
 import { OptimizationResult } from '../models/OptimizationResult';
@@ -154,6 +157,9 @@ const sequelize = new Sequelize({
     IndexComponent,
     DividendHistory,
     FinancialReport,
+    StockValuationFactor,
+    StockFundamentalFactor,
+    StockMoneyFlowFactor,
     AnalystForecast,
     OptimizationRun,
     OptimizationResult,

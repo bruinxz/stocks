@@ -22,8 +22,8 @@ import { Op } from 'sequelize';
 import { Factor } from '../types';
 import { factorRegistry } from '../FactorRegistry';
 import { stripSuffix, isFiniteNumber, lookbackStartDate } from './_helpers';
+import { StockValuationFactor } from '../../../models/StockValuationFactor';
 
-const StockValuationFactor = { findAll: async (_?: any): Promise<any[]> => [] };
 
 export const valueFactor: Factor = {
   name: 'value',

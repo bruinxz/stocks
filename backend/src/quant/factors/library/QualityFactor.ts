@@ -24,8 +24,8 @@ import { Op } from 'sequelize';
 import { Factor } from '../types';
 import { factorRegistry } from '../FactorRegistry';
 import { stripSuffix, isFiniteNumber, lookbackStartDate } from './_helpers';
+import { StockFundamentalFactor } from '../../../models/StockFundamentalFactor';
 
-const StockFundamentalFactor = { findAll: async (_?: any): Promise<any[]> => [] };
 
 const FIVE_YEARS_DAYS = 365 * 5;
 

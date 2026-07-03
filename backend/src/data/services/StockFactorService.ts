@@ -6,11 +6,11 @@ import { normalizeSymbol } from '../../utils/stockSymbol';
 import { logger } from '../../utils/logger';
 import { TushareClient } from '../sources/TushareClient';
 import { EastMoneyClient } from '../sources/EastMoneyClient';
+import { StockValuationFactor } from '../../models/StockValuationFactor';
+import { StockMoneyFlowFactor } from '../../models/StockMoneyFlowFactor';
+import { StockFundamentalFactor } from '../../models/StockFundamentalFactor';
 import sequelize from '../../config/database';
 
-const StockValuationFactor = { upsert: async (_opts?: any): Promise<any> => [null, false], findOne: async (_opts?: any): Promise<any> => null, findAll: async (_opts?: any): Promise<any[]> => [] };
-const StockMoneyFlowFactor = { upsert: async (_opts?: any): Promise<any> => [null, false], findOne: async (_opts?: any): Promise<any> => null, findAll: async (_opts?: any): Promise<any[]> => [] };
-const StockFundamentalFactor = { upsert: async (_opts?: any): Promise<any> => [null, false], findOne: async (_opts?: any): Promise<any> => null, findAll: async (_opts?: any): Promise<any[]> => [] };
 
 type FactorScope = 'favorites' | 'market' | 'custom';
 type FactorProviderName = 'auto' | 'local_derived' | 'tushare' | 'eastmoney';
