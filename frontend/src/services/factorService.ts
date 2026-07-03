@@ -259,84 +259,6 @@ export async function getIndustryBoard(opts?: {
   return res.data.data as IndustryBoardResponse;
 }
 
-// ---------- /api/factors/sentiment-board (Batch AH 2026-06-18) -------------
-
-export interface SentimentBoardHotRankRow {
-  stock_code: string;
-  stock_name: string | null;
-  hot_rank_em: number;
-  comment_score: number | null;
-  institution_participation: number | null;
-  focus_index: number | null;
-}
-
-export interface SentimentBoardBaiduRow {
-  keyword: string;
-  rank: number;
-  search_index: number | null;
-  change_rate: number | null;
-  related_stock_code: string | null;
-}
-
-export interface SentimentBoardBreakoutRow {
-  stock_code: string;
-  stock_name: string | null;
-  hot_rank_em: number | null;
-  rank_5d_avg: number | null;
-  rank_breakout_delta: number | null;
-  comment_score: number | null;
-}
-
-export interface SentimentBoardScatterPoint {
-  stock_code: string;
-  stock_name: string | null;
-  comment_score: number;
-  institution_participation: number;
-  hot_rank_em: number | null;
-}
-
-export interface SentimentBoardNewsItem {
-  title: string;
-  publish_time: string;
-  source: string;
-  category: string | null;
-  url: string | null;
-}
-
-export interface SentimentBoardResponse {
-  trade_date: string | null;
-  today_iso?: string;
-  lag_days?: number;
-  data_staleness?: 'fresh' | 'recent' | 'stale' | 'very_stale';
-  today_hot_rank_top20: SentimentBoardHotRankRow[];
-  today_baidu_top20: SentimentBoardBaiduRow[];
-  rank_breakouts: SentimentBoardBreakoutRow[];
-  sentiment_scatter: SentimentBoardScatterPoint[];
-  recent_sentiment_news: SentimentBoardNewsItem[];
-  universe_size: number;
-  keywords_used?: string[];
-  block_errors?: Record<string, string>;
-  note?: string;
-}
-
-export async function getSentimentBoard(opts?: {
-  date?: string;
-  top?: number;
-  newsKeywordsCsv?: string;
-}): Promise<SentimentBoardResponse> {
-  const params: Record<string, string | number> = {};
-  if (opts?.date) params.date = opts.date;
-  if (opts?.top) params.top = opts.top;
-  if (opts?.newsKeywordsCsv) params.news_keywords_csv = opts.newsKeywordsCsv;
-  const res = await api.get('/factors/sentiment-board', {
-    params: Object.keys(params).length > 0 ? params : undefined,
-  });
-  if (!res.data?.success) {
-    throw new Error(res.data?.message || '获取舆情雷达面板失败');
-  }
-  return res.data.data as SentimentBoardResponse;
-}
-
 // ---------- /api/factors/:name/detail (US-094) -----------------------------
 
 export interface FactorICHistoryPoint {
@@ -400,7 +322,6 @@ export const factorService = {
   getEtfRotationLatestPicks,
   getIndustryHeatmap,
   getIndustryBoard,
-  getSentimentBoard,
   getFactorDetail,
 };
 

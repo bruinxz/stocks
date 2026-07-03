@@ -13,9 +13,6 @@ import { MarketNews } from '../../models/MarketNews';
 import { ETFRotationStrategy } from '../../quant/strategies/ETFRotationStrategy';
 import { ETF_FACTOR_WEIGHTS_V0, ETFFactorWeights } from '../../quant/etf/ETFFactorService';
 
-const SnowballHotKeyword = { findAll: async (_opts?: any): Promise<any[]> => [] };
-const SocialSentimentSnapshot = { findOne: async (_opts?: any): Promise<any> => null, findAll: async (_opts?: any): Promise<any[]> => [], count: async (_opts?: any): Promise<number> => 0 };
-const MarketHotSearch = { findAll: async (_opts?: any): Promise<any[]> => [] };
 import {
   factorDetailService,
   clampLimitDays,
@@ -532,12 +529,11 @@ export class FactorController {
    * Batch AF (2026-06-18) — 行业决策面板 (面向"今天买什么板块/什么股").
    *
    * 和老 industry-heatmap (因子 z_score 平均) 完全不同：本端点直接读
-   * IndustryFlow / LimitUpStock / SnowballHotKeyword 真盘口数据,
+   * IndustryFlow / LimitUpStock 真盘口数据,
    * 让用户在一个屏幕看到:
    *   - "今天哪些板块在涨 + 主力在流入" (industries — 按今日 main_inflow desc)
    *   - "板块龙头股 + 涨停个数" (一眼看到能跟谁)
    *   - "近 5 日的连续表现" (per industry 时间序列, 用于辨"持续轮动" vs "一日游")
-   *   - "今日热门概念 / 关联股" (跨行业主题, 比如 'AI 算力')
    *
    * Query:
    *   - date?: YYYY-MM-DD  缺省 = IndustryFlow 最新交易日
@@ -555,17 +551,12 @@ export class FactorController {
    *                leader_stock_code, leader_stock_name, leader_stock_change_pct },
    *       series: Array<{ trade_date, change_pct, main_inflow_ratio }>   // 长度 = lookback
    *     }],
-   *     hot_concepts: [{
-   *       keyword, heat_score, rank, is_new,
-   *       related_stocks: [{stock_code, stock_name}]   // 截断 top 5
-   *     }],
    *     universe_size: number,    // 当日 IndustryFlow 行数
    *     note?: string,
    *   }
    *
    * 设计:
    *   - 不做 join: IndustryFlow 已宽表 (含 leader stock + limit_up_count), 一次查就够
-   *   - hot_concepts 来自 SnowballHotKeyword 当日榜单 (按 heat_score desc, 取 top 12)
    *   - 缓存 5min (盘中只在 15:30 sync 后变化, 缓存命中率高)
    */
   async getIndustryBoard(req: Request, res: Response) {
@@ -608,7 +599,6 @@ export class FactorController {
             trade_date: null,
             dates: [],
             industries: [],
-            hot_concepts: [],
             universe_size: 0,
             note: 'industry_flows 表为空 — 请在 SchedulerService 启用 INDUSTRY_FLOW_SYNC 后再访问',
           },
@@ -641,7 +631,6 @@ export class FactorController {
             trade_date: tradeDate,
             dates: [],
             industries: [],
-            hot_concepts: [],
             universe_size: 0,
             note: `${tradeDate} 当日 industry_flows 无数据 — 该日可能未做 sync`,
           },
@@ -734,36 +723,6 @@ export class FactorController {
         };
       });
 
-      // 5) 今日热门概念 (top 12 by heat_score)
-      // SnowballHotKeyword 表里 keyword = 股票简称 (按数据源约定), 用户在前端能直观
-      // 看到当下市场关注度排前的标的。
-      const conceptRows = (await SnowballHotKeyword.findAll({
-        where: { trade_date: tradeDate },
-        attributes: ['keyword', 'heat_score', 'rank', 'is_new', 'related_stocks_json'],
-        order: [['heat_score', 'DESC']],
-        limit: 12,
-        raw: true,
-      })) as unknown as Array<{
-        keyword: string;
-        heat_score: number | string | null;
-        rank: number | string | null;
-        is_new: boolean;
-        related_stocks_json: any;
-      }>;
-      const hot_concepts = conceptRows.map(r => {
-        const related = Array.isArray(r.related_stocks_json) ? r.related_stocks_json : [];
-        return {
-          keyword: r.keyword,
-          heat_score: toNum(r.heat_score) ?? 0,
-          rank: toNum(r.rank),
-          is_new: Boolean(r.is_new),
-          related_stocks: related.slice(0, 5).map((s: any) => ({
-            stock_code: String(s?.stock_code ?? ''),
-            stock_name: String(s?.stock_name ?? ''),
-          })),
-        };
-      });
-
       // 6) 今日涨停统计 (附加 KPI) — 注意 limit_up_today 是当前 trade_date (可能滞后) 的
       const limitUpToday = await LimitUpStock.count({ where: { trade_date: tradeDate } });
 
@@ -821,7 +780,6 @@ export class FactorController {
         data_staleness: dataStaleness,
         dates,
         industries,
-        hot_concepts,
         universe_size: todayRows.length,
         limit_up_today: limitUpToday,
         recent_news: recentNews,
@@ -831,341 +789,6 @@ export class FactorController {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error('FactorController.getIndustryBoard failed:', error);
-      res.status(500).json({ success: false, message });
-    }
-  }
-
-  // ---------- GET /api/factors/sentiment-board -------------------------------
-  /**
-   * Batch AH (2026-06-18) — 舆情雷达面板.
-   *
-   * 一站式聚合 (避免前端发 N 个请求):
-   *   - today_hot_rank_top20:   东财人气榜 top 20 (按 hot_rank_em ASC)
-   *   - today_baidu_top20:      百度搜索热度榜 top 20 (按 rank ASC)
-   *   - rank_breakouts:         今日 rank 较 5 日均值跃升 top 10 (异动股发现)
-   *   - sentiment_scatter:      机构参与 vs 综合评分 散点 (top-100 universe)
-   *   - recent_sentiment_news:  MarketNews 中含情绪关键词的近 2 日要闻
-   *
-   * 每个 block 独立 try/catch + fallback (同 TodayWorkspace 3-card 范式),
-   * 单 block 失败不阻塞其它 block. 缓存 5min.
-   *
-   * Query:
-   *   - date?: YYYY-MM-DD (default = social_sentiment_snapshots 最新日)
-   *   - top?:  number     (1-50, default 20)
-   *   - breakout_lookback?: number (1-20, default 5)
-   *   - news_keywords_csv?: 覆盖默认情绪关键词 (用","分隔)
-   *
-   * 数据依赖: 需要 SocialSentimentSyncService + MarketHotSearchSyncService cron
-   * 已运行. 全 empty 时返回 note 提示运维.
-   */
-  async getSentimentBoard(req: Request, res: Response) {
-    try {
-      const dateParam = typeof req.query.date === 'string' ? req.query.date.trim() : '';
-      if (dateParam && !/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
-        res.status(400).json({ success: false, message: 'date 必须为 YYYY-MM-DD 格式' });
-        return;
-      }
-      const topRaw = Number(req.query.top);
-      const top = Number.isInteger(topRaw) && topRaw > 0 ? Math.min(50, topRaw) : 20;
-
-      const cacheKey = `sentiment-board:${dateParam || 'auto'}:${top}`;
-      const cached = this.getCached<any>(cacheKey);
-      if (cached) {
-        res.json({ success: true, data: cached });
-        return;
-      }
-
-      // 1) 确定 trade_date — social_sentiment_snapshots 最新一日
-      let tradeDate: string | null;
-      if (dateParam) {
-        tradeDate = dateParam;
-      } else {
-        const row = (await SocialSentimentSnapshot.findOne({
-          attributes: [[fn('MAX', col('trade_date')), 'd']],
-          raw: true,
-        })) as unknown as { d?: string | Date | null } | null;
-        tradeDate = normalizeDateIso(row?.d ?? null);
-      }
-
-      if (!tradeDate) {
-        res.json({
-          success: true,
-          data: {
-            trade_date: null,
-            today_hot_rank_top20: [],
-            today_baidu_top20: [],
-            rank_breakouts: [],
-            sentiment_scatter: [],
-            recent_sentiment_news: [],
-            universe_size: 0,
-            note: 'social_sentiment_snapshots 表为空 — 请运行 npm run sync:social-sentiment 或等待 cron (16:20)',
-          },
-        });
-        return;
-      }
-
-      // 2) 各 block 独立 try/catch
-      const errors: Record<string, string> = {};
-
-      // 2a) today_hot_rank_top20
-      let today_hot_rank_top20: any[] = [];
-      try {
-        const rows = (await SocialSentimentSnapshot.findAll({
-          where: {
-            trade_date: tradeDate,
-            hot_rank_em: { [Op.ne]: null },
-          },
-          attributes: [
-            'stock_code',
-            'stock_name',
-            'hot_rank_em',
-            'comment_score',
-            'institution_participation',
-            'focus_index',
-          ],
-          order: [['hot_rank_em', 'ASC']],
-          limit: top,
-          raw: true,
-        })) as unknown as Array<{
-          stock_code: string;
-          stock_name: string | null;
-          hot_rank_em: number;
-          comment_score: number | string | null;
-          institution_participation: number | string | null;
-          focus_index: number | string | null;
-        }>;
-        today_hot_rank_top20 = rows.map(r => ({
-          stock_code: r.stock_code,
-          stock_name: r.stock_name,
-          hot_rank_em: r.hot_rank_em,
-          comment_score: toNum(r.comment_score),
-          institution_participation: toNum(r.institution_participation),
-          focus_index: toNum(r.focus_index),
-        }));
-      } catch (err) {
-        errors.today_hot_rank_top20 = (err as Error).message;
-        logger.warn(`sentiment-board hot_rank block failed: ${(err as Error).message}`);
-      }
-
-      // 2b) today_baidu_top20
-      let today_baidu_top20: any[] = [];
-      try {
-        const rows = (await MarketHotSearch.findAll({
-          where: { trade_date: tradeDate },
-          attributes: ['keyword', 'rank', 'search_index', 'change_rate', 'related_stock_code'],
-          order: [['rank', 'ASC']],
-          limit: top,
-          raw: true,
-        })) as unknown as Array<{
-          keyword: string;
-          rank: number;
-          search_index: number | string | null;
-          change_rate: number | string | null;
-          related_stock_code: string | null;
-        }>;
-        today_baidu_top20 = rows.map(r => ({
-          keyword: r.keyword,
-          rank: r.rank,
-          search_index: toNum(r.search_index),
-          change_rate: toNum(r.change_rate),
-          related_stock_code: r.related_stock_code,
-        }));
-      } catch (err) {
-        errors.today_baidu_top20 = (err as Error).message;
-        logger.warn(`sentiment-board baidu block failed: ${(err as Error).message}`);
-      }
-
-      // 2c) rank_breakouts
-      let rank_breakouts: any[] = [];
-      try {
-        const rows = (await SocialSentimentSnapshot.findAll({
-          where: {
-            trade_date: tradeDate,
-            rank_breakout_delta: { [Op.gt]: 0 },
-          },
-          attributes: [
-            'stock_code',
-            'stock_name',
-            'hot_rank_em',
-            'rank_5d_avg',
-            'rank_breakout_delta',
-            'comment_score',
-          ],
-          order: [['rank_breakout_delta', 'DESC']],
-          limit: 10,
-          raw: true,
-        })) as unknown as Array<{
-          stock_code: string;
-          stock_name: string | null;
-          hot_rank_em: number | null;
-          rank_5d_avg: number | string | null;
-          rank_breakout_delta: number | string | null;
-          comment_score: number | string | null;
-        }>;
-        rank_breakouts = rows.map(r => ({
-          stock_code: r.stock_code,
-          stock_name: r.stock_name,
-          hot_rank_em: r.hot_rank_em,
-          rank_5d_avg: toNum(r.rank_5d_avg),
-          rank_breakout_delta: toNum(r.rank_breakout_delta),
-          comment_score: toNum(r.comment_score),
-        }));
-      } catch (err) {
-        errors.rank_breakouts = (err as Error).message;
-        logger.warn(`sentiment-board breakout block failed: ${(err as Error).message}`);
-      }
-
-      // 2d) sentiment_scatter (top-100 universe by comment_score)
-      let sentiment_scatter: any[] = [];
-      try {
-        const rows = (await SocialSentimentSnapshot.findAll({
-          where: {
-            trade_date: tradeDate,
-            comment_score: { [Op.ne]: null },
-            institution_participation: { [Op.ne]: null },
-          },
-          attributes: [
-            'stock_code',
-            'stock_name',
-            'comment_score',
-            'institution_participation',
-            'hot_rank_em',
-          ],
-          order: [['comment_score', 'DESC']],
-          limit: 100,
-          raw: true,
-        })) as unknown as Array<{
-          stock_code: string;
-          stock_name: string | null;
-          comment_score: number | string;
-          institution_participation: number | string;
-          hot_rank_em: number | null;
-        }>;
-        sentiment_scatter = rows
-          .map(r => {
-            const cs = toNum(r.comment_score);
-            const ip = toNum(r.institution_participation);
-            if (cs == null || ip == null) return null;
-            return {
-              stock_code: r.stock_code,
-              stock_name: r.stock_name,
-              comment_score: cs,
-              institution_participation: ip,
-              hot_rank_em: r.hot_rank_em,
-            };
-          })
-          .filter(Boolean);
-      } catch (err) {
-        errors.sentiment_scatter = (err as Error).message;
-        logger.warn(`sentiment-board scatter block failed: ${(err as Error).message}`);
-      }
-
-      // 2e) recent_sentiment_news — MarketNews 关键词过滤
-      const newsKeywordsRaw = String(req.query.news_keywords_csv || '').trim();
-      const defaultKw = [
-        '情绪',
-        '关注',
-        '抢筹',
-        '炒作',
-        '热度',
-        '躁动',
-        '人气',
-        '风口',
-        '逼空',
-        '机构',
-        '游资',
-        '主力',
-        '调研',
-        '增持',
-        '减持',
-        '券商',
-        '研报',
-        '热门',
-        '板块',
-        '题材',
-        '概念',
-        '龙头',
-      ];
-      const newsKeywords = newsKeywordsRaw
-        ? newsKeywordsRaw
-            .split(',')
-            .map(s => s.trim())
-            .filter(Boolean)
-        : defaultKw;
-      let recent_sentiment_news: any[] = [];
-      try {
-        const twoDaysAgo = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
-        const orClauses = newsKeywords.map(kw => ({ title: { [Op.iLike]: `%${kw}%` } }));
-        let newsRows = (await MarketNews.findAll({
-          where: {
-            publish_date: { [Op.gte]: twoDaysAgo },
-            [Op.or]: orClauses,
-          },
-          attributes: ['title', 'publish_time', 'source', 'category', 'url'],
-          order: [['publish_time', 'DESC']],
-          limit: 30,
-          raw: true,
-        })) as unknown as Array<{
-          title: string;
-          publish_time: Date | string;
-          source: string;
-          category: string | null;
-          url: string | null;
-        }>;
-        // Fallback: 关键词过滤命中 0 → 直接拿近 2 日 top 15 最新
-        if (newsRows.length === 0) {
-          newsRows = (await MarketNews.findAll({
-            where: { publish_date: { [Op.gte]: twoDaysAgo } },
-            attributes: ['title', 'publish_time', 'source', 'category', 'url'],
-            order: [['publish_time', 'DESC']],
-            limit: 15,
-            raw: true,
-          })) as any;
-        }
-        recent_sentiment_news = newsRows.map(n => ({
-          title: n.title,
-          publish_time:
-            n.publish_time instanceof Date ? n.publish_time.toISOString() : String(n.publish_time),
-          source: n.source,
-          category: n.category,
-          url: n.url,
-        }));
-      } catch (err) {
-        errors.recent_sentiment_news = (err as Error).message;
-        logger.warn(`sentiment-board news block failed: ${(err as Error).message}`);
-      }
-
-      const universeSize = await SocialSentimentSnapshot.count({
-        where: { trade_date: tradeDate },
-      });
-
-      const todayIso = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
-      const lagDays = Math.max(
-        0,
-        Math.round((new Date(todayIso).getTime() - new Date(tradeDate).getTime()) / 86_400_000)
-      );
-      const dataStaleness =
-        lagDays === 0 ? 'fresh' : lagDays <= 2 ? 'recent' : lagDays <= 7 ? 'stale' : 'very_stale';
-
-      const payload = {
-        trade_date: tradeDate,
-        today_iso: todayIso,
-        lag_days: lagDays,
-        data_staleness: dataStaleness,
-        today_hot_rank_top20,
-        today_baidu_top20,
-        rank_breakouts,
-        sentiment_scatter,
-        recent_sentiment_news,
-        universe_size: universeSize,
-        keywords_used: newsKeywords,
-        ...(Object.keys(errors).length > 0 ? { block_errors: errors } : {}),
-      };
-      this.setCached(cacheKey, payload);
-      res.json({ success: true, data: payload });
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error('FactorController.getSentimentBoard failed:', error);
       res.status(500).json({ success: false, message });
     }
   }
