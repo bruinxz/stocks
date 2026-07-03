@@ -3541,8 +3541,12 @@ class PaperTradingAutomationService {
         50
       );
 
-      // 批5: 旧全市场推荐已下线, 待批6 ETF 轮动候选接入
-      // (原 quantRecommendationService.generateRecommendations 已删除, 暂产出空候选)
+      // 批5/批9 定性: 旧全市场荐股链路 (QuantRecommendationService) 已永久下线, 唯一
+      // 产出 source_type=quant_recommendation 信号的服务已删除, 故 refreshRecommendations
+      // 分支恒产出空候选 —— 保留分支仅为兼容 UI/autonomous HTTP 入口 (删除会抛错), 非活能力.
+      // Core 70% 已由 ETFRotationService 落 action=TARGET_WEIGHT 信号 (出口 A: V3 展示 + 用户拍板);
+      // 其 paper 自动执行属计划出口 B (后期), 需独立 TARGET_WEIGHT 再平衡执行路径, 不复用本 buy 跟单链.
+      // 批9: 已退役空跑的 '推荐信号模拟盘跟单' cron seed (见 migrations/2026-07-03-retire-quant-rec-paper-sync.sql).
       void universe;
       void style;
       void candidateLimit;
