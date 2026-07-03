@@ -3759,8 +3759,7 @@ class SchedulerService {
         // 新维度同步 — 走 child_process 调用 sync:extra-dims CLI 复用既有逻辑
         const dims: string[] = Array.isArray(parameters.dims)
           ? parameters.dims
-          : ['macro', 'qvix', 'block'];
-        const blockDays: number = this.toPositiveInt(parameters.block_days, 7, 60);
+          : ['macro', 'qvix'];
         const results: Record<string, string> = {};
         // BJ-6: spawnSync replaced by runScriptAsync, no longer need require
         const path = require('path');
@@ -3772,14 +3771,6 @@ class SchedulerService {
             scriptPath,
             `--dim=${dim}`,
           ];
-          if (dim === 'block') {
-            const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
-            const start = moment()
-              .tz('Asia/Shanghai')
-              .subtract(blockDays, 'days')
-              .format('YYYY-MM-DD');
-            args.push(`--start=${start}`, `--end=${today}`);
-          }
           const t0 = Date.now();
           // BJ-6 (2026-06-23): 换 runScriptAsync 防 event loop 阻塞 (跟 BJ-5 BH-2/BH-3 同款)
           const r = await this.runScriptAsync('/usr/bin/node', args, {
@@ -6579,7 +6570,7 @@ class SchedulerService {
         },
       },
       {
-        // 新维度数据同步（宏观/期权波动率/大宗交易）
+        // 新维度数据同步（宏观/期权波动率）
         // 每个交易日盘后 16:30 跑，足够覆盖当日宏观/QVIX 更新
         // fund 维度需要 --year 参数，单独手动 / 季报披露后跑
         name: '新维度数据同步',
@@ -6587,8 +6578,7 @@ class SchedulerService {
         cron_expression: '30 16 * * 1-5',
         is_active: true,
         parameters: {
-          dims: ['macro', 'qvix', 'block'],
-          block_days: 7,
+          dims: ['macro', 'qvix'],
         },
       },
       {

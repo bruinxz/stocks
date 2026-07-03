@@ -5,14 +5,12 @@
  * 数据维度：
  *   1. 宏观经济指标（PMI/CPI/M2/SHIBOR/10Y国债/GDP）→ macro_indicators
  *   2. 期权波动率指数（50/300/500ETF + 创业板 QVIX）→ option_qvix
- *   3. 大宗交易明细（折溢价 + 营业部）→ block_trades
  *   4. 公募基金重仓股（季报）→ fund_top_holdings (单独跑慢，可选)
  *
  * Usage:
- *   npm run sync:extra-dims                 # 默认跑 1+2+3 (快)
+ *   npm run sync:extra-dims                 # 默认跑 macro+qvix (快)
  *   npm run sync:extra-dims -- --dim=macro
  *   npm run sync:extra-dims -- --dim=qvix
- *   npm run sync:extra-dims -- --dim=block --start=2026-06-01 --end=2026-06-10
  *   npm run sync:extra-dims -- --dim=fund --funds=001186,005827 --date=2025
  */
 
@@ -22,8 +20,6 @@ import sequelize from '../config/database';
 import '../models';
 import { logger } from '../utils/logger';
 import { MacroIndicator, OptionQvix, FundTopHolding } from '../models';
-
-const BlockTrade = { bulkCreate: async (_records: any[], _opts?: any): Promise<any[]> => [] };
 
 const PYTHON = process.env.PYTHON_BIN || '/opt/stocks/shared/venv/bin/python';
 const HELPER = process.env.AKSHARE_HELPER || `${process.cwd()}/python/akshare_helper.py`;
@@ -138,36 +134,6 @@ async function syncQvix() {
   return total;
 }
 
-async function syncBlockTrades(startDate: string, endDate: string) {
-  logger.info(`[extra-dims] 拉大宗交易 ${startDate} → ${endDate}...`);
-  const rows = (await callPython('get_block_trades', [startDate, endDate], 180_000)) as any[];
-  if (!Array.isArray(rows) || rows.length === 0) {
-    logger.warn('  无数据');
-    return 0;
-  }
-  const records = rows
-    .filter(r => r.trade_date && r.stock_code && r.amount && Number.isFinite(r.amount))
-    .map(r => ({
-      trade_date: r.trade_date,
-      stock_code: r.stock_code,
-      stock_name: r.stock_name || null,
-      price: r.price,
-      close_price: r.close_price,
-      volume: r.volume,
-      amount: r.amount,
-      premium_pct: r.premium_pct,
-      change_pct: r.change_pct,
-      buyer: r.buyer || '',
-      seller: r.seller || '',
-      source: 'akshare',
-    }));
-  if (records.length === 0) return 0;
-  // ignoreDuplicates 简化处理：unique key 冲突就跳过
-  await BlockTrade.bulkCreate(records, { ignoreDuplicates: true });
-  logger.info(`  block_trades: upserted ${records.length}`);
-  return records.length;
-}
-
 async function syncFundHoldings(fundCodes: string[], date: string) {
   logger.info(`[extra-dims] 拉 ${fundCodes.length} 个基金重仓 (${date})...`);
   const rows = (await callPython(
@@ -219,10 +185,8 @@ async function syncFundHoldings(fundCodes: string[], date: string) {
 const program = new Command();
 program
   .name('sync-extra-dims')
-  .description('同步 4 个新数据维度: 宏观 / 期权 / 大宗 / 基金')
-  .option('--dim <name>', '维度 (all|macro|qvix|block|fund)', 'all')
-  .option('--start <date>', '大宗交易区间起点 (YYYY-MM-DD)', '2026-06-01')
-  .option('--end <date>', '大宗交易区间终点 (YYYY-MM-DD)', '2026-06-10')
+  .description('同步数据维度: 宏观 / 期权 / 基金')
+  .option('--dim <name>', '维度 (all|macro|qvix|fund)', 'all')
   .option('--funds <codes>', '基金代码 csv (基金维度)')
   .option('--date <date>', '基金 date 参数 (e.g. "2025" 或 "20250630")', '2025')
   .parse(process.argv);
@@ -238,9 +202,6 @@ const opts = program.opts();
     }
     if (opts.dim === 'all' || opts.dim === 'qvix') {
       total += await syncQvix();
-    }
-    if (opts.dim === 'all' || opts.dim === 'block') {
-      total += await syncBlockTrades(opts.start, opts.end);
     }
     if (opts.dim === 'fund') {
       // 默认 universe = 12 只有代表性的主动权益/灵活配置基金

@@ -7,13 +7,12 @@ const macroController = new MacroController();
 const authController = new AuthController();
 
 /**
- * /api/macro/* — 宏观数据 / 期权波动率 / 大宗交易 / 基金重仓
+ * /api/macro/* — 宏观数据 / 期权波动率 / 基金重仓
  */
 
 router.get('/indicators', authController.authenticate, macroController.getIndicators);
 router.get('/qvix', authController.authenticate, macroController.getQvix);
 router.get('/regime-snapshot', authController.authenticate, macroController.getRegimeSnapshot);
-router.get('/block-trades', authController.authenticate, macroController.getBlockTrades);
 router.get(
   '/fund-holdings/:stock_code',
   authController.authenticate,

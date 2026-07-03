@@ -5,7 +5,6 @@
  *   - GET /api/macro/indicators        最新 PMI/CPI/M2/SHIBOR/国债/GDP
  *   - GET /api/macro/qvix              QVIX 时间序列 (4 个标的)
  *   - GET /api/macro/regime-snapshot   完整 market_environment (含 macro+qvix)
- *   - GET /api/macro/block-trades      大宗交易最近 N 天
  *   - GET /api/macro/fund-holdings/:stock_code 某只股票被哪些公募重仓
  *
  * 给 FactorWorkspace 的"宏观环境"tab 用.
@@ -18,8 +17,6 @@ import { OptionQvix } from '../../models/OptionQvix';
 import { FundTopHolding } from '../../models/FundTopHolding';
 import { marketEnvironmentService } from '../../services/MarketEnvironmentService';
 import { logger } from '../../utils/logger';
-
-const BlockTrade = { findAll: async (_opts?: any): Promise<any[]> => [] };
 
 export class MacroController {
   /**
@@ -121,31 +118,6 @@ export class MacroController {
       res.json({ success: true, data: snap });
     } catch (e: any) {
       logger.error('macro getRegimeSnapshot failed:', e);
-      res.status(500).json({ success: false, message: e?.message });
-    }
-  };
-
-  /**
-   * GET /api/macro/block-trades
-   * 最近 N 天大宗交易，按交易额降序
-   */
-  getBlockTrades = async (req: Request, res: Response) => {
-    try {
-      const days = Math.min(Number(req.query.days) || 7, 60);
-      const limit = Math.min(Number(req.query.limit) || 100, 500);
-      const sinceDate = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
-      const rows = await BlockTrade.findAll({
-        where: { trade_date: { [Op.gte]: sinceDate } },
-        order: [
-          ['trade_date', 'DESC'],
-          ['amount', 'DESC'],
-        ],
-        limit,
-        raw: true,
-      });
-      res.json({ success: true, data: { items: rows, count: rows.length } });
-    } catch (e: any) {
-      logger.error('macro getBlockTrades failed:', e);
       res.status(500).json({ success: false, message: e?.message });
     }
   };
