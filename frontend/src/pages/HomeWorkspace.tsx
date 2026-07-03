@@ -77,9 +77,7 @@ import { motion, useReducedMotion } from 'framer-motion';
 // Phase 15 — Stripe 同款精致细节.
 // Phase 16 — sc-datav 借鉴: LiveIndicator.
 import {
-  StatusBadge,
   EmptyStripe,
-  SectionDivider,
   MiniSparkline,
   MiniBars,
   HeroAreaChart,
@@ -99,6 +97,8 @@ import {
 } from '../services/portfolioWorkspaceService';
 import { todayWorkspaceService, AccountSummary } from '../services/todayWorkspaceService';
 import { getV3Recommendations, V3RecommendationItem } from '../services/v3RecommendationService';
+// 新主线 §4.1 — 核心 ETF 因子轮动最新调仓 (ETFRotationStrategy).
+import { getEtfRotationLatestPicks, EtfRotationSignal } from '../services/factorService';
 // PR-M4 (2026-06-29): /home 顶部 "今日市场" 卡 — 复用既有 MarketJudgmentService
 // (恒指/纳指/标普/道指 4 个海外指数 + regime bull/bear/range/...).
 import {
@@ -333,44 +333,6 @@ const DAILY_LESSONS = [
  * (返回 6 因子的 daily IC + 累计收益 + 7 日 trend). 当前用静态示例避免新区块
  * crash 整个 /home, 普通用户看到的也是"启发式"的科普, 不影响实盘决策.
  */
-const MOCK_FACTOR_PERFORMANCE: Array<{
-  name: string;
-  value: number;
-  trend: number[];
-  hint: string;
-}> = [
-  { name: '价值', value: 1.2, trend: [1, 2, 4, 6, 7, 6, 8], hint: '蓝筹和金融股领涨' },
-  { name: '动量', value: 0.8, trend: [1, 3, 5, 6, 7, 5, 7], hint: '强势股延续' },
-  { name: '质量', value: -0.3, trend: [7, 6, 5, 3, 2, 3, 2], hint: '高 ROE 板块小幅回落' },
-  { name: '成长', value: 0.5, trend: [1, 2, 3, 5, 6, 5, 6], hint: '科技成长股偏强' },
-  { name: '北向', value: -0.1, trend: [2, 3, 2, 3, 2, 3, 2], hint: '外资观望' },
-  { name: '低波', value: 0.4, trend: [1, 2, 3, 4, 5, 4, 5], hint: '避险情绪一般' },
-];
-
-/** Inline SVG sparkline — 不引入新 lib (recharts 这里太重). Phase 8 加大: w 100 h 32 + 1.75 stroke. */
-const Sparkline: React.FC<{ data: number[]; color: string }> = ({ data, color }) => {
-  const w = 100;
-  const h = 32;
-  const max = Math.max(...data);
-  const min = Math.min(...data);
-  const range = max - min || 1;
-  const points = data
-    .map((v, i) => `${(i / (data.length - 1)) * w},${h - ((v - min) / range) * h}`)
-    .join(' ');
-  return (
-    <svg width={w} height={h} aria-hidden="true">
-      <polyline
-        fill="none"
-        stroke={color}
-        strokeWidth={1.75}
-        points={points}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-};
-
 // Phase 15 — Hero 30 日资产从 SVG sparkline 升级为 recharts AreaChart
 // (HeroAreaChart in src/components/stripe/MiniCharts.tsx). 旧 HeroSparkline 已删.
 
@@ -444,6 +406,13 @@ const HomeWorkspace: React.FC = () => {
   const [posLoading, setPosLoading] = useState(true);
   const [posError, setPosError] = useState<string | null>(null);
 
+  // 新主线 §4.1 — 核心 ETF 因子轮动排名. 失败不阻塞其他区块.
+  const [etfSignals, setEtfSignals] = useState<EtfRotationSignal[]>([]);
+  const [etfLoading, setEtfLoading] = useState(true);
+  const [etfError, setEtfError] = useState<string | null>(null);
+  const [etfTradeDate, setEtfTradeDate] = useState<string | null>(null);
+  const [etfNote, setEtfNote] = useState<string | undefined>(undefined);
+
   // Phase 10 — hero 30 日资产 sparkline. 失败静默 (sparkline 缺即不渲染).
   const [snapshots, setSnapshots] = useState<SnapshotRow[]>([]);
 
@@ -474,10 +443,6 @@ const HomeWorkspace: React.FC = () => {
   // Phase 7: 区块 B/C 计算 — 静态轮播 + 静态因子表现, 与 fetch 解耦, 不会随
   // selectedPortfolioId 变更 re-render.
   const todayLesson = useMemo(() => DAILY_LESSONS[new Date().getDate() % DAILY_LESSONS.length], []);
-  const topFactor = useMemo(
-    () => MOCK_FACTOR_PERFORMANCE.reduce((best, f) => (f.value > best.value ? f : best)),
-    []
-  );
 
   // -------- fetchers --------
   const loadAccount = useCallback(async () => {
@@ -529,6 +494,23 @@ const HomeWorkspace: React.FC = () => {
     }
   }, [selectedPortfolioId]);
 
+  // 新主线 §4.1 — 核心 ETF 因子轮动最新调仓 (月度机械再平衡信号).
+  const loadEtfRotation = useCallback(async () => {
+    setEtfLoading(true);
+    setEtfError(null);
+    try {
+      const data = await getEtfRotationLatestPicks();
+      setEtfSignals(data.signals || []);
+      setEtfTradeDate(data.trade_date);
+      setEtfNote(data.note);
+      setDataTime(new Date());
+    } catch (err: unknown) {
+      setEtfError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEtfLoading(false);
+    }
+  }, []);
+
   // Phase 10 — hero sparkline. 资产曲线快照, 失败不阻塞 hero 渲染.
   const loadSnapshots = useCallback(async () => {
     try {
@@ -559,9 +541,10 @@ const HomeWorkspace: React.FC = () => {
     void loadAccount();
     void loadRecommendations();
     void loadPositions();
+    void loadEtfRotation();
     void loadSnapshots();
     void loadMarketJudgment();
-  }, [loadAccount, loadRecommendations, loadPositions, loadSnapshots, loadMarketJudgment]);
+  }, [loadAccount, loadRecommendations, loadPositions, loadEtfRotation, loadSnapshots, loadMarketJudgment]);
 
   // -------- 一键跟单 --------
   // PR-L emergency stop-loss (2026-06-29):
@@ -1652,13 +1635,11 @@ const HomeWorkspace: React.FC = () => {
       <section className="home-section">
         <header className="home-section-head">
           <div>
-            <h2 className="home-section-title">今日推荐</h2>
+            <h2 className="home-section-title">卫星题材机会</h2>
             <p className="home-section-subtitle">
-              AI 多维度分析 · {recommendationItems.length} 只候选
+              卫星 20% · 题材/事件 · 过 EV gate 才建议 · 单只 ≤5% 总仓 ≤20% · {recommendationItems.length} 只候选
               {watchItems.length > 0 && ` · 另有 ${watchItems.length} 只盘中异动 (见下方)`}
-              {timeGroups.hasTime
-                ? ` · 跨 ${timeGroups.groups.length} 个时段`
-                : ' · 4 时机推荐 (早盘抢 / 午后攻 / 尾盘埋 / 隔夜潜伏)'}
+              {timeGroups.hasTime ? ` · 跨 ${timeGroups.groups.length} 个时段` : ''}
             </p>
           </div>
           <Button
@@ -1823,40 +1804,96 @@ const HomeWorkspace: React.FC = () => {
         );
       })()}
 
-      {/* ===== Phase 8 — 区块 4: 今日因子表现 (3 列 2 行 + 大 sparkline) =====
-          TODO(P2, admin): 接通 /api/factors/today-performance */}
-      <section className="home-section">
+      {/* ===== 区块 4: 核心 ETF 因子轮动排名 (新主线 §4.1) =====
+          核心 70% = ETFRotationStrategy 四因子 (价值 0.40 / 质量 0.30 / 低波 0.30 /
+          动量 shadow 0). 月度机械再平衡, buy/sell/hold + target_weight. 数据来自
+          /strategies/multi-factor/latest-picks. 失败静默降级, 不阻塞持仓与卫星. */}
+      <section className="home-section" data-testid="home-etf-section">
         <header className="home-section-head">
           <div>
-            <h2 className="home-section-title">今日因子表现</h2>
+            <h2 className="home-section-title">核心 ETF 因子轮动</h2>
             <p className="home-section-subtitle">
-              6 大核心因子今天的强弱 · 「{topFactor.name}」最强 · {topFactor.hint}
+              核心 70% · 价值 0.40 / 质量 0.30 / 低波 0.30 · 月度机械再平衡, 不设单笔止损
+              {etfTradeDate ? ` · 数据日 ${etfTradeDate}` : ''}
             </p>
           </div>
           <Space size={8}>
-            <span className="home-section-time">{formatHourMin(dataTime)} 更新</span>
-            <StatusBadge tone="muted">示例数据</StatusBadge>
+            <Button
+              type="text"
+              icon={<ReloadOutlined />}
+              onClick={loadEtfRotation}
+              loading={etfLoading}
+            >
+              刷新
+            </Button>
+            <Button type="link" onClick={() => navigate('/workspace/factor')}>
+              全部因子 <ArrowRightOutlined />
+            </Button>
           </Space>
         </header>
-        <div className="home-factor-grid">
-          {MOCK_FACTOR_PERFORMANCE.map(f => {
-            const color = pnlColor(f.value);
-            return (
-              <div key={f.name} className="home-factor-cell">
-                <div className="home-factor-row">
-                  <div>
-                    <div className="home-factor-name">{f.name}</div>
-                    <div className="home-factor-value tabular-nums" style={{ color }}>
-                      {formatPct(f.value)}
-                    </div>
-                  </div>
-                  <Sparkline data={f.trend} color={color} />
+        {etfLoading ? (
+          <Skeleton active paragraph={{ rows: 4 }} />
+        ) : etfError ? (
+          <Result
+            status="warning"
+            title="ETF 排名加载失败"
+            subTitle={etfError}
+            extra={<Button onClick={loadEtfRotation}>重试</Button>}
+          />
+        ) : etfSignals.length === 0 ? (
+          <EmptyStripe
+            icon={<InboxIcon className="hero-icon hero-icon--lg" />}
+            title="暂无 ETF 因子排名"
+            subtitle={etfNote || '因子数据可能还没跑完 — 稍后再来或点右上「刷新」'}
+          />
+        ) : (
+          <div className="home-etf-table" role="table" aria-label="核心 ETF 因子轮动排名">
+            <div className="home-etf-row home-etf-row--head" role="row">
+              <span>排名</span>
+              <span>ETF</span>
+              <span>综合分</span>
+              <span>目标权重</span>
+              <span>动作</span>
+              <span className="home-etf-factors-col">因子 z (价/质/波)</span>
+            </div>
+            {etfSignals.slice(0, 8).map(sig => {
+              const actionMeta =
+                sig.action === 'buy'
+                  ? { label: '买入', color: '#dc2626' }
+                  : sig.action === 'sell'
+                    ? { label: '卖出', color: '#16a34a' }
+                    : { label: '持有', color: '#6b7280' };
+              return (
+                <div key={sig.etf_code} className="home-etf-row" role="row">
+                  <span className="home-etf-rank tabular-nums">{sig.rank}</span>
+                  <span className="home-etf-name">
+                    <strong>{sig.name || sig.etf_code}</strong>
+                    <span className="home-etf-code tabular-nums">{sig.etf_code}</span>
+                    {sig.data_incomplete && (
+                      <Tooltip title="成分/行情数据不完整, 该分数仅供参考">
+                        <span className="home-etf-warn">数据不全</span>
+                      </Tooltip>
+                    )}
+                  </span>
+                  <span className="home-etf-score tabular-nums">{sig.score.toFixed(3)}</span>
+                  <span className="home-etf-weight tabular-nums">
+                    {(sig.target_weight * 100).toFixed(1)}%
+                  </span>
+                  <span
+                    className="home-etf-action"
+                    style={{ color: actionMeta.color, borderColor: actionMeta.color + '33' }}
+                  >
+                    {actionMeta.label}
+                  </span>
+                  <span className="home-etf-factors tabular-nums home-etf-factors-col">
+                    {sig.factors.value_z.toFixed(2)} / {sig.factors.quality_z.toFixed(2)} /{' '}
+                    {sig.factors.lowvol_z.toFixed(2)}
+                  </span>
                 </div>
-                <div className="home-factor-hint">{f.hint}</div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       {/* ===== Phase 8 — 区块 5: 我的持仓 (卡片网格 + 等宽数字 + 浮盈大字号) ===== */}
@@ -1903,7 +1940,7 @@ const HomeWorkspace: React.FC = () => {
           <EmptyStripe
             icon={<InboxIcon className="hero-icon hero-icon--lg" />}
             title="还没有持仓"
-            subtitle="跟上面的「今日推荐」一键跟单一只试试 — 系统会自动登记成本与止损建议"
+            subtitle="跟上面的「卫星题材机会」建仓一只试试 — 系统会自动登记成本与止损建议 (单只 ≤5%)"
           />
         ) : (
           <div className="home-pos-fly-wrap">

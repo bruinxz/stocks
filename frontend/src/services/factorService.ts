@@ -114,6 +114,55 @@ export async function getLatestMultiFactorPicks(): Promise<FactorPreviewResponse
   return res.data.data as FactorPreviewResponse;
 }
 
+// ---------- ETF 因子轮动 latest-picks (新主线 §4.1) --------------------------
+// 后端 /strategies/multi-factor/latest-picks 已收敛为 ETF 因子轮动信号 (ETFRotationStrategy).
+// 旧的 getLatestMultiFactorPicks() 把响应强转成个股 FactorPreviewResponse, 字段不匹配 —
+// 新代码一律用下面的强类型版本.
+
+export interface EtfRotationFactorZ {
+  value_z: number;
+  quality_z: number;
+  lowvol_z: number;
+  momentum_z: number; // shadow, 权重 0
+  value_raw: number | null;
+  quality_raw: number | null;
+  lowvol_raw: number | null;
+  momentum_raw: number | null;
+  constituent_source: string;
+}
+
+export interface EtfRotationSignal {
+  strategy_key: string;
+  etf_code: string;
+  name?: string;
+  action: 'buy' | 'sell' | 'hold';
+  score: number;
+  rank: number;
+  target_weight: number;
+  factors: EtfRotationFactorZ;
+  reasons: string[];
+  data_incomplete: boolean;
+}
+
+export interface EtfRotationLatestResponse {
+  trade_date: string | null;
+  strategy_key: string;
+  signals: EtfRotationSignal[];
+  buy_count: number;
+  sell_count: number;
+  hold_count: number;
+  universe_size: number;
+  note?: string;
+}
+
+export async function getEtfRotationLatestPicks(): Promise<EtfRotationLatestResponse> {
+  const res = await api.get('/strategies/multi-factor/latest-picks');
+  if (!res.data?.success) {
+    throw new Error(res.data?.message || '获取 ETF 因子轮动最新调仓失败');
+  }
+  return res.data.data as EtfRotationLatestResponse;
+}
+
 // ---------- /api/factors/industry-heatmap ----------------------------------
 
 export interface FactorHeatmapCell {
@@ -361,6 +410,7 @@ export const factorService = {
   listFactorsOverview,
   previewFactorSelection,
   getLatestMultiFactorPicks,
+  getEtfRotationLatestPicks,
   getIndustryHeatmap,
   getIndustryBoard,
   getSentimentBoard,

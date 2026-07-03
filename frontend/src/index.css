@@ -15372,65 +15372,109 @@ a {
 
 /* ----------------------- 区块 4: 因子表现 grid ----------------------- */
 
-.home-factor-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.home-factor-cell {
-  padding: 20px 24px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+.home-etf-table {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  transition: border-color var(--t-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-elevated);
 }
 
-.home-factor-cell:hover {
-  border-color: var(--border-default);
-}
-
-.home-factor-row {
-  display: flex;
+.home-etf-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1.6fr) 84px 84px 64px minmax(0, 1.4fr);
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--text-sm);
 }
 
-.home-factor-name {
-  font-size: var(--text-sm);
+.home-etf-row:last-child {
+  border-bottom: none;
+}
+
+.home-etf-row--head {
+  font-size: var(--text-xs);
   color: var(--ink-3);
   text-transform: uppercase;
   letter-spacing: var(--tracking-wide);
-  font-weight: 500;
-}
-
-.home-factor-value {
-  font-family: var(--font-mono);
-  font-size: var(--text-xl);
+  background: var(--bg-subtle);
   font-weight: 600;
-  letter-spacing: var(--tracking-tight);
-  font-variant-numeric: tabular-nums;
-  margin-top: 2px;
 }
 
-.home-factor-hint {
+.home-etf-rank {
+  font-family: var(--font-mono);
+  color: var(--ink-3);
+  text-align: center;
+}
+
+.home-etf-name {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.home-etf-name strong {
+  font-weight: 600;
+  color: var(--ink-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-etf-code {
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--ink-3);
 }
 
-@media (max-width: 720px) {
-  .home-factor-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+.home-etf-warn {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: 10px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #fef3c7;
+  color: #92400e;
+  width: fit-content;
 }
 
-@media (max-width: 480px) {
-  .home-factor-grid {
-    grid-template-columns: 1fr;
+.home-etf-score,
+.home-etf-weight,
+.home-etf-factors {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.home-etf-weight {
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+.home-etf-factors {
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
+.home-etf-action {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-align: center;
+  padding: 2px 8px;
+  border: 1px solid;
+  border-radius: 999px;
+  width: fit-content;
+}
+
+@media (max-width: 720px) {
+  .home-etf-row {
+    grid-template-columns: 36px minmax(0, 1.6fr) 72px 64px;
+  }
+  .home-etf-factors-col {
+    display: none;
   }
 }
 
@@ -16531,33 +16575,26 @@ a {
   animation-delay: calc(var(--reco-card-index, 0) * 60ms);
 }
 
-/* 持仓卡片 + 因子 cell 也享受同款入场 (但不携带 inline index, 按 nth-child 限定到前 8) */
-.home-pos-card,
-.home-factor-cell {
+/* 持仓卡片享受同款入场 (但不携带 inline index, 按 nth-child 限定到前 6) */
+.home-pos-card {
   animation: home-fade-in-up 280ms cubic-bezier(0.4, 0, 0.2, 1) backwards;
 }
-.home-pos-card:nth-child(1),
-.home-factor-cell:nth-child(1) {
+.home-pos-card:nth-child(1) {
   animation-delay: 0ms;
 }
-.home-pos-card:nth-child(2),
-.home-factor-cell:nth-child(2) {
+.home-pos-card:nth-child(2) {
   animation-delay: 60ms;
 }
-.home-pos-card:nth-child(3),
-.home-factor-cell:nth-child(3) {
+.home-pos-card:nth-child(3) {
   animation-delay: 120ms;
 }
-.home-pos-card:nth-child(4),
-.home-factor-cell:nth-child(4) {
+.home-pos-card:nth-child(4) {
   animation-delay: 180ms;
 }
-.home-pos-card:nth-child(5),
-.home-factor-cell:nth-child(5) {
+.home-pos-card:nth-child(5) {
   animation-delay: 240ms;
 }
-.home-pos-card:nth-child(6),
-.home-factor-cell:nth-child(6) {
+.home-pos-card:nth-child(6) {
   animation-delay: 300ms;
 }
 
