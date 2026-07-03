@@ -61,7 +61,6 @@ import WorkspaceHero from '../../components/layout/WorkspaceHero';
 import LeaderboardTab from './LabWorkspace.LeaderboardTab';
 import WalkForwardTab from './LabWorkspace.WalkForwardTab';
 import QuarterlyRetrainTab from './LabWorkspace.QuarterlyRetrainTab';
-import ShadowRunTab from './LabWorkspace.ShadowRunTab';
 import OverfitMetricsTab from './LabWorkspace.OverfitMetricsTab';
 import WorkflowReadinessTab from './LabWorkspace.WorkflowReadinessTab';
 import {
@@ -133,7 +132,7 @@ const LabWorkspace: React.FC = () => {
   // 用户原话"页面太复杂、Tab 太多, 完全不知道怎么操作". 进一步把 Phase 3 的 11 项收成 4 个一级 tab:
   //   1. 我的策略  ← 旧 mine + leaderboard (内部 Segmented 切"列表 / 排行")
   //   2. 新建回测  ← 旧 new
-  //   3. 评估报告  ← 阶段一研究审计 + walk_forward + optimization + shadow_run + overfit_metrics + quarterly_retrain
+  //   3. 评估报告  ← 阶段一研究审计 + walk_forward + optimization + overfit_metrics + quarterly_retrain
   //   4. 进阶      ← 旧 compare + workflow_readiness + advanced_quant
   //                  (内部 Segmented "回测对比 / 工作流体检 / 高级量化", 默认对比)
   // 旧 tab 的 React 组件全部保留, 只是重新挂在新 4 项之下 (Segmented 子视图).
@@ -156,7 +155,6 @@ const LabWorkspace: React.FC = () => {
     | 'execution'
     | 'walkforward'
     | 'optimization'
-    | 'shadow'
     | 'overfit'
     | 'quarterly'
   >('overview');
@@ -542,7 +540,6 @@ const LabWorkspace: React.FC = () => {
             { label: '成交约束', value: 'execution' },
             { label: 'Walk-Forward 走查', value: 'walkforward' },
             { label: '参数寻优历史', value: 'optimization' },
-            { label: 'Shadow 影子运行', value: 'shadow' },
             { label: '过拟合诊断', value: 'overfit' },
             { label: '季度重训', value: 'quarterly' },
           ]}
@@ -611,14 +608,6 @@ const LabWorkspace: React.FC = () => {
                   </Card>
                 </Col>
                 <Col xs={24} md={8}>
-                  <Card hoverable onClick={() => setEvalSubView('shadow')}>
-                    <Statistic title="Shadow Run" value="实时模拟" />
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      把策略挂在实时行情上空跑, 看决策与实际成交是否一致。
-                    </Text>
-                  </Card>
-                </Col>
-                <Col xs={24} md={8}>
                   <Card hoverable onClick={() => setEvalSubView('overfit')}>
                     <Statistic title="过拟合诊断" value="DSR / PBO" />
                     <Text type="secondary" style={{ fontSize: 12 }}>
@@ -652,8 +641,6 @@ const LabWorkspace: React.FC = () => {
           <WalkForwardTab strategies={strategies} />
         ) : evalSubView === 'optimization' ? (
           <OptimizationRunsTab />
-        ) : evalSubView === 'shadow' ? (
-          <ShadowRunTab />
         ) : evalSubView === 'overfit' ? (
           <OverfitMetricsTab />
         ) : (

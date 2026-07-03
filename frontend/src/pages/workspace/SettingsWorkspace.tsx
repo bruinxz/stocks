@@ -47,7 +47,6 @@ import WorkspaceHero from '../../components/layout/WorkspaceHero';
 import { AnimatePresence, motion } from 'framer-motion';
 import SizingPolicyTab from './SettingsWorkspace.SizingPolicyTab';
 import PortfolioConstructionTab from './SettingsWorkspace.PortfolioConstructionTab';
-import AnalysisEngineTab from './SettingsWorkspace.AnalysisEngineTab';
 import RiskParametersCenterTab from './SettingsWorkspace.RiskParametersCenterTab';
 import TodoSuggestionsTab from './SettingsWorkspace.TodoSuggestionsTab';
 import BlackSwanHistoryTab from './SettingsWorkspace.BlackSwanHistoryTab';
@@ -125,8 +124,8 @@ const SettingsWorkspace: React.FC = () => {
   //   2. 通知  ← 旧 notifications + push-channels (内部 Segmented "通知类型 / 推送渠道")
   //   3. 风控  ← 旧 risk-parameters + strategy-kill-switch + black-swan + todo-suggestions
   //             (内部 Segmented "风控总览 / 参数中心 / kill-switch / 黑天鹅 / 待办建议")
-  //   4. 高级 (admin only) ← 旧 sizing + portfolio-construction + analysis-engine
-  //                          (内部 Segmented "仓位策略 / 组合构建 / 分析引擎")
+  //   4. 高级 (admin only) ← 旧 sizing + portfolio-construction
+  //                          (内部 Segmented "仓位策略 / 组合构建")
   //   5. 用户管理 (admin only) ← 旧 users
   // 所有旧 Tab React 组件全部保留, 只是重新分组挂在新 4-5 项之下 (Segmented 子视图).
   const isAdmin = useSelector((s: RootState) => s.auth.user?.role === 'admin');
@@ -154,7 +153,7 @@ const SettingsWorkspace: React.FC = () => {
     'overview' | 'parameters' | 'black-swan' | 'todos'
   >('overview');
   const [advancedSubView, setAdvancedSubView] = useState<
-    'sizing' | 'portfolio' | 'analysis'
+    'sizing' | 'portfolio'
   >('sizing');
 
   // --- 通知设置 state -----------------------------------------------------
@@ -1794,17 +1793,14 @@ const SettingsWorkspace: React.FC = () => {
           options={[
             { label: '仓位策略', value: 'sizing' },
             { label: '组合构建', value: 'portfolio' },
-            { label: '分析引擎', value: 'analysis' },
           ]}
           value={advancedSubView}
           onChange={v => setAdvancedSubView(v as typeof advancedSubView)}
         />
         {advancedSubView === 'sizing' ? (
           <SizingPolicyTab />
-        ) : advancedSubView === 'portfolio' ? (
-          <PortfolioConstructionTab />
         ) : (
-          <AnalysisEngineTab />
+          <PortfolioConstructionTab />
         )}
       </>
     );
