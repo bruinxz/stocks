@@ -7011,6 +7011,44 @@ class SchedulerService {
         is_active: true,
         parameters: { age_hours: 6, limit: 200 },
       },
+      // ===========================================================================
+      // 批9 补漏 (2026-07-03): 4 个已注册 + 已实现 dispatch 但从未 seed 的 cron.
+      // git 溯源: BH-2/BH-3/BF-3/BF-4 引入时只加了 cronRegistry + dispatch, 漏了 ensureDefaultTasks,
+      // Batch AJ 补 14 个漏 seed 时又遗漏这 4 个 → fresh DB / DR 重建后这些 cron 不会自动起跑.
+      // cron_expression 全部对齐 cronRegistry.ts 的 recommendedCron.
+      // ===========================================================================
+      {
+        // BH-2: 周一 03:00 全市场 sync 分析师研报 → 修 analyst_consensus factor std<0.02 真因.
+        name: '分析师研报全市场 sync (批9补漏)',
+        type: 'ANALYST_FORECAST_SYNC',
+        cron_expression: '0 3 * * 1',
+        is_active: true,
+        parameters: {},
+      },
+      {
+        // BH-3: 周三 02:00 全市场 sync 股东户数 → 修 shareholder_concentration factor std<0.10 真因.
+        name: '股东户数全市场 sync (批9补漏)',
+        type: 'SHAREHOLDER_COUNT_SYNC',
+        cron_expression: '0 2 * * 3',
+        is_active: true,
+        parameters: {},
+      },
+      {
+        // BF-3: 工作日 18:30 检查 5 项数据陈旧度 → 命中阈值推 Lark + RiskAlert MEDIUM.
+        name: '数据陈旧度检查 (批9补漏)',
+        type: 'DATA_FRESHNESS_CHECK',
+        cron_expression: '30 18 * * 1-5',
+        is_active: true,
+        parameters: {},
+      },
+      {
+        // BF-4: 工作日 21:00 聚合 7 段健康指标 → Lark OPS 群 + admin 邮箱 (INFO 级).
+        name: '每日健康日报 (批9补漏)',
+        type: 'DAILY_HEALTH_REPORT',
+        cron_expression: '0 21 * * 1-5',
+        is_active: true,
+        parameters: {},
+      },
     ];
 
     for (const taskData of defaultTasks) {
