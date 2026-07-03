@@ -151,6 +151,14 @@ export interface V3RecommendationItem {
    */
   signal_kind?: 'recommendation' | 'watch';
   /**
+   * 批7j/§7.1 — 核心-卫星桶 (后端 deriveCoreSatellite 透传).
+   *   core      — 核心 ETF 因子轮动 (70%, HomeWorkspace 因子排名表已单独展示, 推荐卡列表不重复)
+   *   satellite — 卫星题材/事件 (20%, 推荐卡列表展示, 单只 ≤5% 总仓 ≤20%)
+   *   cash      — 现金管理 (10%, 不进推荐卡)
+   * 缺失默认 'satellite' 兜底 (历史个股信号).
+   */
+  core_satellite?: 'core' | 'satellite' | 'cash';
+  /**
    * PR-H (2026-06-29) — 推荐时机标签 (后端透传, 缺失默认 'overnight').
    *   opening_rush     — 🌅 早盘抢 (9:25 集合竞价后, 9:30-10:00 买)
    *   afternoon_kick   — ☀️ 午后攻 (12:55, 13:00-13:30 买)

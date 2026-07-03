@@ -155,6 +155,25 @@ export function deriveSignalKind(sourceType: string | null | undefined): 'recomm
   return RECOMMENDATION_SOURCES.has(String(sourceType)) ? 'recommendation' : 'watch';
 }
 
+/**
+ * 批7j/§7.1 — 核心-卫星桶归类. 用户主线 = 核心 70% (ETF 因子轮动) + 卫星 20% (题材/事件) + 现金 10%.
+ * 前端据此把信号分区展示: 核心 ETF 走 HomeWorkspace 因子排名表, 卫星题材走 V3 推荐卡列表,
+ * 现金桶不进推荐卡. 优先读 metadata.core_satellite_bucket (ETFRotationService='core' /
+ * ThemeEventFanoutService='satellite' / CashAllocationService='cash' 写入), 缺失 → 按 source_type 兜底.
+ */
+export function deriveCoreSatellite(
+  sourceType: string | null | undefined,
+  metadata?: Record<string, unknown> | null
+): 'core' | 'satellite' | 'cash' {
+  const bucket = String(metadata?.core_satellite_bucket ?? '').trim().toLowerCase();
+  if (bucket === 'core' || bucket === 'satellite' || bucket === 'cash') return bucket;
+  const src = String(sourceType ?? '');
+  if (src === String(AISignalSourceType.ETF_FACTOR_ROTATION)) return 'core';
+  if (src === String(AISignalSourceType.CASH_MANAGEMENT)) return 'cash';
+  // theme_event / theme_fermentation / 历史个股信号 → 卫星
+  return 'satellite';
+}
+
 // ---------------------------------------------------------------------------
 //  helpers
 // ---------------------------------------------------------------------------
@@ -1175,6 +1194,8 @@ class V3RecommendationController {
         ? (signal.created_at instanceof Date ? signal.created_at.toISOString() : String(signal.created_at))
         : null,
       signal_kind: deriveSignalKind(signal.source_type),
+      // 批7j/§7.1 — 核心-卫星桶: 前端据此把核心 ETF 与卫星题材分区展示.
+      core_satellite: deriveCoreSatellite(signal.source_type, metadata),
       // PR-H — 推荐时机标签透传 UI. 缺失 → 'overnight' (符合历史 cron 15:32 写入语义).
       timing_tag: normalizeTimingTagFromMetadata(metadata),
       // PR-O2 (2026-06-29) — 涨停板战法 pattern badge. 仅 source_type='limit_up_board' 写入,
@@ -1247,6 +1268,7 @@ class V3RecommendationController {
             : String((signal as any).created_at))
         : null,
       signal_kind: deriveSignalKind((signal as any).source_type),
+      core_satellite: deriveCoreSatellite((signal as any).source_type, (signal as any).metadata),
       // PR-H — minimal view 也透传 timing_tag (enrichSignal 失败兜底).
       timing_tag: normalizeTimingTagFromMetadata((signal as any).metadata),
       // PR-O2 — minimal view 也透传 limit_up_pattern (enrich 失败时仍出 badge).

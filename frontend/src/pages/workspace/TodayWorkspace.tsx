@@ -151,7 +151,7 @@ const { Text, Paragraph } = Typography;
 //   资金流向 → 折进今日信号顶部带状图
 // admin 仍能看到完整 6 tab (研究 / 调试). AlertsBell 跳转 ?tab=risk_center 仍兼容.
 const TODAY_WORKSPACE_TABS_BASE: WorkspaceTab[] = [
-  { key: 'core_picks', label: '核心推荐', icon: <FireOutlined /> },
+  { key: 'core_picks', label: '题材机会', icon: <FireOutlined /> },
   { key: 'signals', label: '今日信号', icon: <ThunderboltOutlined /> },
   { key: 'alerts', label: '风险提醒', icon: <AlertOutlined /> },
 ];
@@ -1260,7 +1260,7 @@ const CorePicksPanel: React.FC<{
     return (
       <Card>
         <div style={{ textAlign: 'center', padding: 48 }}>
-          <Spin tip="加载核心推荐..." />
+          <Spin tip="加载题材机会..." />
         </div>
       </Card>
     );
@@ -1271,7 +1271,7 @@ const CorePicksPanel: React.FC<{
         <Alert
           type="warning"
           showIcon
-          message="核心推荐加载失败"
+          message="题材机会加载失败"
           description={error}
           action={
             <Button size="small" onClick={onReload}>
@@ -1307,7 +1307,7 @@ const CorePicksPanel: React.FC<{
           </Col>
           <Col xs={8}>
             <Statistic
-              title={<span style={{ fontSize: 12 }}>核心推荐</span>}
+              title={<span style={{ fontSize: 12 }}>题材机会</span>}
               value={funnel?.selected ?? recommendations.length}
               suffix=" 只"
               valueStyle={{ fontSize: 18, color: '#dc2626', fontWeight: 700 }}
@@ -1329,10 +1329,10 @@ const CorePicksPanel: React.FC<{
             image={Empty.PRESENTED_IMAGE_SIMPLE}
             description={
               <Space direction="vertical" size={4} align="center">
-                <Text>今日尚无核心推荐</Text>
+                <Text>今日尚无题材机会</Text>
                 <Text type="secondary" style={{ fontSize: 12 }}>
-                  请确认 quant pipeline cron 已运行 (analysis_engine archive → AIInvestmentSignal);
-                  或切换到「今日信号」tab 查看其它策略.
+                  卫星题材需过 EV gate 才建议 (单只 ≤5% · 总仓 ≤20%); 无题材信号属正常;
+                  核心 ETF 因子轮动排名见首页, 或切换到「今日信号」tab 查看其它信号.
                 </Text>
               </Space>
             }

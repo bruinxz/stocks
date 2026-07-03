@@ -711,7 +711,12 @@ const HomeWorkspace: React.FC = () => {
 
   // -------- 计算派生值 --------
   const visibleRecommendations = useMemo(
-    () => recommendations.filter(r => !followedSymbols.has(r.symbol)),
+    // 批7j/§7.1 — 核心 ETF (core_satellite='core') 已由上方"核心 ETF 因子轮动"排名表展示,
+    // 卫星题材机会列表只保留 satellite 桶 (缺失默认非 core 都算卫星, 向前兼容历史个股信号).
+    () =>
+      recommendations.filter(
+        r => !followedSymbols.has(r.symbol) && (r.core_satellite ?? 'satellite') !== 'core'
+      ),
     [recommendations, followedSymbols]
   );
 
