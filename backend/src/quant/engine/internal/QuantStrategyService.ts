@@ -4,13 +4,15 @@ import { QuantBacktestResult } from '../../../models/QuantBacktestResult';
 import { FactorICResult } from '../../../models/FactorICResult';
 import { strategyRegistry } from '../../engine/StrategyRegistry';
 
-// Stub for deleted QuantStrategyModel table
+// ⚠️ DEPRECATED STUB — 以下"模型"是 批8 (2026-07-03 物理删表 D7) 已删除的 Sequelize
+// model 的占位替身,仅为让依赖它们的历史代码路径继续编译。方法恒返回空/惰性对象,
+// 即该数据维度已永久下线、优雅降级为"无数据"。请勿基于此新增业务逻辑。
 const QuantStrategyModel = {
   findOrCreate: async (_opts: any) => [{ update: async () => {}, enabled: true, default_params: {}, execution_policy: {}, environment_policy: {}, lifecycle_policy: {}, edge_hypothesis: {}, strategy_key: '', name: '', description: '', category: '', risk_level: 'medium', tags: [], toJSON: () => ({}) }, false] as [any, boolean],
   findAll: async (_opts?: any): Promise<any[]> => [],
   findOne: async (_opts?: any): Promise<any> => null,
 };
-// Stub for deleted QuantSignal table
+// ⚠️ DEPRECATED STUB (同上, QuantSignal 表已于 批8 删除) — 恒返回空。
 const QuantSignal = {
   count: async (_opts?: any): Promise<number> => 0,
   findOne: async (_opts?: any): Promise<any> => null,

@@ -32,7 +32,6 @@ import { stripSuffix, inferStockSymbol, lookbackStartDate } from '../factors/lib
 import { Stock } from '../../models/Stock';
 import { ETFConstituentExpander, etfConstituentExpander, ETFConstituents } from './ETFConstituentExpander';
 
-// Stubs for deleted factor tables
 
 /** 因子权重 V0 (§4.1 表, Momentum shadow 不入实盘). 可覆盖做敏感性网格. */
 export interface ETFFactorWeights {

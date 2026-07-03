@@ -59,7 +59,9 @@ import { Op } from 'sequelize';
 // label cardinality 爆炸); 只按 CRON_REGISTRY 的 task_type 维度统计.
 import { recordSchedulerTaskRun } from '../metrics/PrometheusRegistry';
 
-// Stubs for deleted services
+// ⚠️ DEPRECATED STUB — 以下"服务"是 批3/批8 精简量化 pipeline 时已删除的 service
+// 的占位替身,仅为让依赖它们的历史调度路径继续编译。所有方法恒返回空结果 (no-op),
+// 即对应能力已永久下线、优雅降级。请勿基于此扩展逻辑;应改接真实实现或移除调用方。
 const quantStrategyParamVersionService = {
   getDashboard: async (_?: any): Promise<any> => ({ versions: [], count: 0 }),
   getActiveParamsForScan: async (_?: any): Promise<any> => ({}),

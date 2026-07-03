@@ -6,7 +6,10 @@ import { AIInvestmentSignal, AISignalSourceType } from '../../../models/AIInvest
 import { PaperTradingTrade } from '../../../models/PaperTradingTrade';
 import { realtimeQuoteService } from '../../../data/services/RealtimeQuoteService';
 
-// Stub for deleted QuantSignal model
+// ⚠️ DEPRECATED STUB — 以下"模型"是 批8 (2026-07-03 物理删表 D7) 已删除的 Sequelize
+// model 的占位替身,仅为让依赖它们的历史代码路径继续编译。所有方法恒返回空
+// (findAll→[] / findOne→null / count→0),即该数据维度已永久下线、优雅降级为"无数据"。
+// 请勿在此基础上新增业务逻辑;新功能应改接真实数据源或整段移除调用方。
 const QuantSignal = { count: async (_?: any): Promise<number> => 0 };
 
 type WatchdogStatus = 'healthy' | 'warning' | 'critical';

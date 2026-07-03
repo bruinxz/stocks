@@ -13,7 +13,9 @@ import { logger } from '../../../utils/logger';
 import { round } from '../../engine/QuantMath';
 import { strategyRegistry } from '../../engine/StrategyRegistry';
 
-// Stubs for deleted tables and services
+// ⚠️ DEPRECATED STUB — 以下"模型"是 批8 (2026-07-03 物理删表 D7) 已删除的 Sequelize
+// model 的占位替身,仅为让依赖它们的历史代码路径继续编译。方法恒返回空/惰性对象,
+// 即该数据维度已永久下线、优雅降级为"无数据"。请勿基于此新增业务逻辑。
 const QuantSignal = {
   findAll: async (_opts?: any): Promise<any[]> => [],
   count: async (_opts?: any): Promise<number> => 0,

@@ -12,7 +12,10 @@ import { MarketSentimentIndex } from '../models/MarketSentimentIndex';
 import { DailyBar } from '../models/DailyBar';
 import { logger } from '../utils/logger';
 
-// Stubs for deleted models
+// ⚠️ DEPRECATED STUB — 以下"模型"是 批8 (2026-07-03 物理删表 D7) 已删除的 Sequelize
+// model 的占位替身,仅为让依赖它们的历史代码路径继续编译。所有方法恒返回空
+// (findAll→[] / findOne→null / count→0),即该数据维度已永久下线、优雅降级为"无数据"。
+// 请勿在此基础上新增业务逻辑;新功能应改接真实数据源或整段移除调用方。
 const SnowballHotKeyword = { findAll: async (_?: any): Promise<any[]> => [], max: async (_?: any) => null, count: async (_?: any) => 0 };
 const ShareholderCount = { findAll: async (_?: any): Promise<any[]> => [], max: async (_?: any) => null, count: async (_?: any) => 0 };
 const StockSentiment = { findAll: async (_?: any): Promise<any[]> => [], max: async (_?: any) => null, count: async (_?: any) => 0 };
