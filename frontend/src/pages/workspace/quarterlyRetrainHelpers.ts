@@ -10,7 +10,7 @@
  * 与 backend 解耦: 数据全部复用既有 listOptimizationRuns / listQuantStrategies 端点,
  * 不需要新加 API. 业务逻辑 (季度聚合 / 候选排序 / shadow 判定) 全部抽到本文件 pure helper,
  * 单测在 backend/tests/services/ 跑 ts-node 不依赖 jsdom (与 [[factorAIWeightHelpers]] /
- * [[factorPickReasonHelpers]] / [[etfFlowHelpers]] 同款 frontend pure helper 范式).
+ * [[etfFlowHelpers]] 同款 frontend pure helper 范式).
  *
  * 设计取舍:
  *  - "季度" 定义按自然年: Q1=1-3 月 / Q2=4-6 / Q3=7-9 / Q4=10-12, 与财报披露季度一致.

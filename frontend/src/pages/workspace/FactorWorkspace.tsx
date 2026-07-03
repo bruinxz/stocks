@@ -68,7 +68,6 @@ import {
   listComboTemplates,
   saveComboTemplate,
 } from './factorComboTemplateHelpers';
-import { buildShortPickReason } from './factorPickReasonHelpers';
 import {
   factorService,
   FactorDetailResponse,
@@ -77,6 +76,8 @@ import {
   FactorOverviewResponse,
   FactorPreviewResponse,
   FactorPreviewSignal,
+  EtfRotationLatestResponse,
+  EtfRotationSignal,
   IndustryBoardResponse,
   SentimentBoardResponse,
 } from '../../services/factorService';
@@ -89,7 +90,7 @@ const { Text } = Typography;
  * 4 个 tab：
  *  - 因子总览：8 个因子卡片，展示注册元数据 + factor_scores 表覆盖统计
  *  - 权重调参：8 滑块（自动归一化到 100%）+ "预览" 按钮触发 POST /factors/preview
- *  - 今日选股清单：表格展示 MFA 最近一次调仓结果，可折叠看 8 因子 z_score 明细
+ *  - ETF 调仓清单：表格展示 ETF 因子轮动最近一次调仓结果，可折叠看 4 因子 z_score 明细
  *  - 行业热力 (US-074)：行业 × 因子的 z_score 平均值 echarts 热力图
  *
  * 数据流：
@@ -193,7 +194,7 @@ const FactorWorkspace: React.FC = () => {
   const tabs: WorkspaceTab[] = [
     { key: 'overview', label: '因子总览', icon: <FundOutlined /> },
     { key: 'weights', label: '权重调参', icon: <SlidersOutlined /> },
-    { key: 'picks', label: '今日选股清单', icon: <OrderedListOutlined /> },
+    { key: 'picks', label: 'ETF 调仓清单', icon: <OrderedListOutlined /> },
     { key: 'board', label: '行业决策', icon: <ThunderboltOutlined /> },
     { key: 'sentiment', label: '舆情雷达', icon: <BarChartOutlined /> },
     { key: 'macro', label: '宏观环境', icon: <FundOutlined /> },
@@ -205,7 +206,7 @@ const FactorWorkspace: React.FC = () => {
 
   // --- overview + latest picks (loaded together on mount) ---
   const [overview, setOverview] = useState<FactorOverviewResponse | null>(null);
-  const [latestPicks, setLatestPicks] = useState<FactorPreviewResponse | null>(null);
+  const [latestPicks, setLatestPicks] = useState<EtfRotationLatestResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -215,7 +216,7 @@ const FactorWorkspace: React.FC = () => {
     try {
       const [ov, pk] = await Promise.all([
         factorService.listFactorsOverview(),
-        factorService.getLatestMultiFactorPicks(),
+        factorService.getEtfRotationLatestPicks(),
       ]);
       setOverview(ov);
       setLatestPicks(pk);
@@ -1196,15 +1197,13 @@ const WeightsTab: React.FC<WeightsTabProps> = ({
 };
 
 // ============================================================================
-// Tab 3 — 今日选股清单（MFA 最新调仓）
+// Tab 3 — ETF 调仓清单（ETF 因子轮动最新调仓）
 // ============================================================================
 
 const PicksTab: React.FC<{
-  picks: FactorPreviewResponse | null;
+  picks: EtfRotationLatestResponse | null;
   loading: boolean;
 }> = ({ picks, loading }) => {
-  const [aiTarget, setAiTarget] = useState<{ symbol: string; name: string | null } | null>(null);
-
   if (loading && !picks) {
     return (
       <Card>
@@ -1214,73 +1213,73 @@ const PicksTab: React.FC<{
       </Card>
     );
   }
-  if (!picks || picks.note) {
+  if (!picks || picks.note || !picks.signals.length) {
     return (
       <Card>
         <Empty
           description={
             picks?.note ||
-            'factor_scores 表为空 — 请先运行 npm run compute:factors -- --date=YYYY-MM-DD'
+            'ETF 因子轮动无信号 — 请先运行 npm run compute:factors -- --date=YYYY-MM-DD'
           }
         />
       </Card>
     );
   }
-  const factorNames = picks.params
-    ? Object.keys(picks.params.weights).filter(name => picks.params!.weights[name] > 0)
-    : [];
-  const columns = buildLatestPickColumns(factorNames, (row: FactorPreviewSignal) =>
-    setAiTarget({ symbol: row.stock_code, name: row.name || null })
-  );
+  const columns = buildEtfRotationColumns();
   return (
     <Card
       title={
         <Space>
           <OrderedListOutlined />
-          MultiFactorAlpha · {picks.trade_date} · 共 {picks.target_portfolio.length} 只
+          ETF 因子轮动 · {picks.trade_date || '—'} · 共 {picks.signals.length} 只
         </Space>
       }
       extra={
         <Space>
           <Tag color="blue">universe {picks.universe_size}</Tag>
-          <Tag color="green">eligible {picks.eligible_count}</Tag>
-          {picks.params && <Tag color="blue">topN {picks.params.topN}</Tag>}
+          <Tag color="green">买入 {picks.buy_count}</Tag>
+          <Tag color="red">卖出 {picks.sell_count}</Tag>
+          <Tag color="default">持有 {picks.hold_count}</Tag>
         </Space>
       }
     >
-      <Table<FactorPreviewSignal>
+      <Table<EtfRotationSignal>
         size="small"
         columns={columns}
         dataSource={picks.signals}
-        rowKey="stock_code"
+        rowKey="etf_code"
         pagination={{ pageSize: 30, showSizeChanger: true }}
         expandable={{
           expandedRowRender: record => (
             <div style={{ padding: '8px 16px' }}>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {record.reason}
-              </Text>
+              {record.reasons.length > 0 && (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {record.reasons.join(' · ')}
+                </Text>
+              )}
               <div style={{ marginTop: 8 }}>
-                {Object.entries(record.factor_z_scores).map(([name, z]) => (
-                  <Tag key={name} color={z > 0 ? 'green' : z < 0 ? 'red' : 'default'}>
-                    {name}: {z.toFixed(2)}
+                {[
+                  ['价值', record.factors.value_z],
+                  ['质量', record.factors.quality_z],
+                  ['低波', record.factors.lowvol_z],
+                  ['动量', record.factors.momentum_z],
+                ].map(([name, z]) => (
+                  <Tag
+                    key={name as string}
+                    color={(z as number) > 0 ? 'green' : (z as number) < 0 ? 'red' : 'default'}
+                  >
+                    {name}: {(z as number).toFixed(2)}
                   </Tag>
                 ))}
+                {record.data_incomplete && (
+                  <Tag color="orange">数据不全</Tag>
+                )}
               </div>
             </div>
           ),
         }}
         scroll={{ x: 'max-content' }}
       />
-      {aiTarget && (
-        <AIStockAnalysisModal
-          open={!!aiTarget}
-          onClose={() => setAiTarget(null)}
-          stockCode={aiTarget.symbol}
-          stockName={aiTarget.name}
-          taskLabel="factor_latest_pick"
-        />
-      )}
     </Card>
   );
 };
@@ -2756,28 +2755,32 @@ function buildPreviewColumns(
   ];
 }
 
-function buildLatestPickColumns(
-  _factorNames: string[],
-  onAnalyze?: (row: FactorPreviewSignal) => void
-) {
+function buildEtfRotationColumns() {
   return [
     {
-      title: '代码',
-      dataIndex: 'stock_code',
-      key: 'stock_code',
-      width: 100,
+      title: '排名',
+      dataIndex: 'rank',
+      key: 'rank',
+      width: 70,
+      fixed: 'left' as const,
+      sorter: (a: EtfRotationSignal, b: EtfRotationSignal) => a.rank - b.rank,
+      defaultSortOrder: 'ascend' as const,
+      render: (v: number) => <Text strong>#{v}</Text>,
+    },
+    {
+      title: 'ETF 代码',
+      dataIndex: 'etf_code',
+      key: 'etf_code',
+      width: 110,
       fixed: 'left' as const,
     },
-    { title: '名称', dataIndex: 'name', key: 'name', width: 140 },
-    { title: '行业', dataIndex: 'industry', key: 'industry', width: 130 },
+    { title: '名称', dataIndex: 'name', key: 'name', width: 160 },
     {
-      title: '综合得分',
-      dataIndex: 'composite_score',
-      key: 'composite_score',
-      width: 110,
-      sorter: (a: FactorPreviewSignal, b: FactorPreviewSignal) =>
-        a.composite_score - b.composite_score,
-      defaultSortOrder: 'descend' as const,
+      title: '综合分',
+      dataIndex: 'score',
+      key: 'score',
+      width: 100,
+      sorter: (a: EtfRotationSignal, b: EtfRotationSignal) => a.score - b.score,
       render: (v: number) => (
         <Text strong style={{ color: v > 0 ? '#16a34a' : '#dc2626' }}>
           {v.toFixed(3)}
@@ -2785,58 +2788,56 @@ function buildLatestPickColumns(
       ),
     },
     {
-      title: '上次调仓动作',
-      dataIndex: 'signal',
-      key: 'signal',
-      width: 130,
+      title: '目标权重',
+      dataIndex: 'target_weight',
+      key: 'target_weight',
+      width: 100,
+      render: (v: number) => <Text>{(v * 100).toFixed(1)}%</Text>,
+    },
+    {
+      title: '动作',
+      dataIndex: 'action',
+      key: 'action',
+      width: 90,
       render: (v: string) =>
         v === 'buy' ? (
-          <Tag color="green">买入（新进）</Tag>
+          <Tag color="green">买入</Tag>
         ) : v === 'sell' ? (
-          <Tag color="red">卖出（剔除）</Tag>
+          <Tag color="red">卖出</Tag>
         ) : (
           <Tag color="blue">持有</Tag>
         ),
     },
     {
-      title: '理由',
-      key: 'inline_reason',
-      width: 260,
-      render: (_: unknown, record: FactorPreviewSignal) => {
-        const short = buildShortPickReason(record);
-        // Tooltip 显示 backend 原始 reason + composite (展开行也有, 这里给"不点展开"
-        // 的用户兜底); 列默认显示 inline 短理由 (top-2 因子贡献), 与 US-049 PRD AC
-        // "列表内嵌短理由"对齐.
-        const fullTip = record.reason || short;
-        return (
-          <AntTooltip title={fullTip} mouseEnterDelay={0.2}>
-            <Text style={{ fontSize: 12 }} type="secondary">
-              {short}
-            </Text>
-          </AntTooltip>
-        );
-      },
+      title: '价值 z',
+      key: 'value_z',
+      width: 80,
+      render: (_: unknown, r: EtfRotationSignal) => (
+        <Text style={{ color: r.factors.value_z > 0 ? '#16a34a' : r.factors.value_z < 0 ? '#dc2626' : undefined }}>
+          {r.factors.value_z.toFixed(2)}
+        </Text>
+      ),
     },
-    ...(onAnalyze
-      ? [
-          {
-            title: 'AI 解读',
-            key: 'ai_analyze',
-            width: 110,
-            fixed: 'right' as const,
-            render: (_: unknown, record: FactorPreviewSignal) => (
-              <Button
-                size="small"
-                icon={<BarChartOutlined />}
-                onClick={() => onAnalyze(record)}
-                title="AI 解读：基本面 / 技术面 / 资金面 / 新闻面 / 情绪面"
-              >
-                AI 解读
-              </Button>
-            ),
-          },
-        ]
-      : []),
+    {
+      title: '质量 z',
+      key: 'quality_z',
+      width: 80,
+      render: (_: unknown, r: EtfRotationSignal) => (
+        <Text style={{ color: r.factors.quality_z > 0 ? '#16a34a' : r.factors.quality_z < 0 ? '#dc2626' : undefined }}>
+          {r.factors.quality_z.toFixed(2)}
+        </Text>
+      ),
+    },
+    {
+      title: '低波 z',
+      key: 'lowvol_z',
+      width: 80,
+      render: (_: unknown, r: EtfRotationSignal) => (
+        <Text style={{ color: r.factors.lowvol_z > 0 ? '#16a34a' : r.factors.lowvol_z < 0 ? '#dc2626' : undefined }}>
+          {r.factors.lowvol_z.toFixed(2)}
+        </Text>
+      ),
+    },
   ];
 }
 

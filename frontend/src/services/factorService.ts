@@ -6,7 +6,7 @@ import api from './api';
  * 调用 4 个后端端点：
  *   - GET  /api/factors/overview                      → listFactorsOverview()
  *   - POST /api/factors/preview                       → previewFactorSelection(payload)
- *   - GET  /api/strategies/multi-factor/latest-picks  → getLatestMultiFactorPicks()
+ *   - GET  /api/strategies/multi-factor/latest-picks  → getEtfRotationLatestPicks()
  *   - GET  /api/factors/industry-heatmap              → getIndustryHeatmap(date?)  (US-074)
  *
  * 所有响应遵循后端统一信封 `{ success, data, message? }`，
@@ -104,20 +104,8 @@ export async function previewFactorSelection(
   return res.data.data as FactorPreviewResponse;
 }
 
-// ---------- /api/strategies/multi-factor/latest-picks ----------------------
-
-export async function getLatestMultiFactorPicks(): Promise<FactorPreviewResponse> {
-  const res = await api.get('/strategies/multi-factor/latest-picks');
-  if (!res.data?.success) {
-    throw new Error(res.data?.message || '获取多因子最新调仓失败');
-  }
-  return res.data.data as FactorPreviewResponse;
-}
-
-// ---------- ETF 因子轮动 latest-picks (新主线 §4.1) --------------------------
-// 后端 /strategies/multi-factor/latest-picks 已收敛为 ETF 因子轮动信号 (ETFRotationStrategy).
-// 旧的 getLatestMultiFactorPicks() 把响应强转成个股 FactorPreviewResponse, 字段不匹配 —
-// 新代码一律用下面的强类型版本.
+// ---------- /api/strategies/multi-factor/latest-picks (ETF 因子轮动, 新主线 §4.1) ----
+// 后端该端点已收敛为 ETF 因子轮动信号 (ETFRotationStrategy), 用下面的强类型版本消费.
 
 export interface EtfRotationFactorZ {
   value_z: number;
@@ -409,7 +397,6 @@ export async function getFactorDetail(
 export const factorService = {
   listFactorsOverview,
   previewFactorSelection,
-  getLatestMultiFactorPicks,
   getEtfRotationLatestPicks,
   getIndustryHeatmap,
   getIndustryBoard,

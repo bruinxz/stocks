@@ -2,9 +2,8 @@
  * US-057 [FE-018] PortfolioWorkspace 行业集中度 KPI — 纯函数 helper.
  *
  * 把 PortfolioWorkspace.tsx 内联的 `IndustryConcentrationKpi` 渲染逻辑
- * 抽到独立 module 让它真可单测 — 与 [[前端 pure helper 模板]] (US-049
- * factorPickReasonHelpers / US-054 strategy-leaderboard-helpers / US-052
- * overfitMetricsHelpers) 同款思路.
+ * 抽到独立 module 让它真可单测 — 与 [[前端 pure helper 模板]] (US-054
+ * strategy-leaderboard-helpers / US-052 overfitMetricsHelpers) 同款思路.
  *
  * 设计取舍 (与 backend US-012 [PR-007] IndustryConcentrationGuard 对照):
  *   - **不复用后端 alert_pct (35%) 作为红色阈值**: 25% 是 UI 提示用户
