@@ -141,3 +141,4 @@ backups/
 
 # Local runtime artifacts (server backups, rescue snapshots, test reports)
 .artifacts/
+docs/backups/*.sql

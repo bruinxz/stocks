@@ -306,7 +306,7 @@ models/      → ~92 个 (删日内/融合/个股因子相关表; 龙虎榜/北�
 5. **批5 — 改造**: 4 因子 ETF 化 + PaperTradingAutomation 接 EV gate + V3Controller + AIInvestmentSignal schema + 通知时机收敛 (§2.12)。
 6. **批6 — 新建** (计划档 §7.4, 15-19 天): ETFRotationService / FactorCalculatorService / ConfidenceCalibrationService / AutoExitService / 精简数据源 / PR-O5 修复 / 战略镜子 UI。
 7. **批7 — 前端装饰清理** + docs 清理 + scripts 清理。✅ **批7 全部完成** — 7a-7m 已提交：装饰删除/系统介绍/HomeWorkspace/FactorWorkspace/V3展示/战略镜子月度 draft 生成器/USER_GUIDE 重写/FUNCTION_GUIDE 重写/DEVELOPER_GUIDE 重写/trader-system/00_overview 重写
-8. **批8 — models 物理删** (随批2-4 同期直删; 删前 grep 确认无引用 + pg_dump 备份, 无观察期)。
+8. **批8 — models 物理删** ✅ **完成** — 37 张旧策略/个股/社媒/日内表物理删除; 15 个依赖服务文件一并删除; 断引用改造 ~35 文件; pg_dump 备份 1.3GB; DROP TABLE 14 张实际 DB 表 (49→35 tables); 后端 tsc 0 errors。
 
 **前后端删除时序绑定** (前端删除项必须与对应后端同批, 避免删出死路由/空 tab):
 
