@@ -725,6 +725,16 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '每月 1 号 09:35 (核心再平衡后) 跑现金 10% 闲置管理 (§4.3) — 收益现金 5% 均分到国债 ETF 511010 / 短融 ETF 511360 (各 2.5%, 年化~3%), 落 action=TARGET_WEIGHT 信号 (source_type=cash_management, bucket=cash); 应急现金 5% 留活期(~2%)不落信号. 现金层压舱石不做短线. 主线现金 (Cash 10%) 层.',
   },
+  // 批6d (2026-07, §6.1) — 合规 RSS 财经新闻入库. 拉新浪/财联社等 RSS, 关键词题材兜底打
+  // industry 标签, 落 market_news (幂等 + 30 天保留). 主线数据基础的一半 (公告半=sync-announcements).
+  {
+    type: 'RSS_NEWS_SYNC',
+    category: 'data_sync',
+    owner: 'quant',
+    recommendedCron: '*/30 9-15 * * 1-5',
+    description:
+      '交易日盘中每 30 分钟拉合规 RSS 财经源 (新浪财经 / 财联社, feed 可用 RSS_NEWS_FEEDS 环境变量覆盖) — 极简正则解析 item, matchTheme 关键词字典兜底打 industry 标签, findOrCreate 落 market_news (主键 publish_time+title_hash 幂等, 30 天保留期自动清理). 排除爬虫与付费终端 (§6.1 合规). 只写 market_news 不产信号, 供题材探测器/fan-out 消费. 主线数据源 (RSS 主渠道) 层.',
+  },
   // 批6c (2026-07, §6.2-B) — 卫星题材 fan-out. ThemeFermentationDetector 是 soft-layer 只写
   // theme_fermentation_phases; 本 cron 读当日 phase 把 top_codes 扇出成个股信号进主信号表.
   // 工作日 17:00 跑 (在 THEME_FERMENTATION_DETECT 16:30 之后).

@@ -5585,6 +5585,37 @@ class SchedulerService {
             `themes=${r.themes_actionable} created=${r.created} updated=${r.updated} ` +
             `skip_phase=${r.skipped_phase} skip_nocodes=${r.skipped_no_codes}`
         );
+      } else if (task.type === 'RSS_NEWS_SYNC') {
+        // 批6d (§6.1) — 合规 RSS 财经新闻入库. 拉新浪/财联社等 RSS 源, 关键词题材兜底
+        // 打 industry 标签, 落 market_news (findOrCreate 幂等 + 30 天保留期清理). 主线数据
+        // 基础的一半 (另一半=公告已由 sync-announcements 覆盖). 交易日盘中每 30 分钟跑.
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const { rssNewsIngestService } = require('./news/RssNewsIngestService');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const r = await rssNewsIngestService.run({
+          dryRun: parameters.dry_run === true,
+          retentionDays: typeof parameters.retention_days === 'number' ? parameters.retention_days : undefined,
+          timeoutMs: typeof parameters.timeout_ms === 'number' ? parameters.timeout_ms : undefined,
+        });
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: r.total_fetched,
+          completed_items: r.total_created + r.total_updated,
+          failed_items: r.feeds.filter((f: any) => f.error).length,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          result_summary: {
+            scenario: 'rss_news_sync',
+            total_fetched: r.total_fetched,
+            total_created: r.total_created,
+            total_updated: r.total_updated,
+            total_matched_theme: r.total_matched_theme,
+            purged: r.purged,
+          },
+        });
+        logger.info(
+          `[RSS_NEWS_SYNC] fetched=${r.total_fetched} created=${r.total_created} ` +
+            `updated=${r.total_updated} theme=${r.total_matched_theme} purged=${r.purged}`
+        );
       } else if (task.type === 'SATELLITE_AUTO_EXIT') {
         // 批6d (§4.2) — 卫星自动退出. 每日 EOD 扫所有卫星仓 (theme_event open outcome ∩
         // 现有持仓), 按 §4.2 规则裁决: -15% 硬止损 / +20% 止盈 / 21 交易日时间退出 /
@@ -6774,7 +6805,17 @@ class SchedulerService {
       // (AUCTION_SNAPSHOT_SYNC / INTRADAY_KLINE_30MIN_SYNC / INTRADAY_MOMENTUM /
       // INTRADAY_REVERSAL / LIMIT_UP_BOARD / OPENING_RUSH / INTRADAY_PRICE_VOLUME_ANOMALY /
       // LAST_HOUR_MOMENTUM / AFTERNOON_KICK). 主线转 ETF 因子轮动 + 卫星题材, 不做日内.
-      // PR-O5 (2026-06-30): THEME_FERMENTATION_DETECT 题材发酵 5 阶段 detector (卫星保留).
+      // 批6d (2026-07, §6.1): RSS_NEWS_SYNC — 合规 RSS 财经新闻入库. 拉新浪/财联社等 RSS,
+      // 关键词题材兜底打 industry 标签, 落 market_news (幂等 + 30 天保留期清理). 主线数据基础
+      // 的一半 (公告半由 sync-announcements 覆盖). 交易日盘中每 30 分钟跑一次.
+      {
+        name: 'RSS 财经新闻同步 (批6d §6.1)',
+        type: 'RSS_NEWS_SYNC',
+        cron_expression: '*/30 9-15 * * 1-5',
+        is_active: true,
+        parameters: { dry_run: false },
+      },
+            // PR-O5 (2026-06-30): THEME_FERMENTATION_DETECT 题材发酵 5 阶段 detector (卫星保留).
       // 消费 PR-M3 industry_sentiment_indices (16:00 写完) + 昨日 phase, 给每个板块打
       // germinate/launch/outbreak/climax/recession 标签 + 检测主线切换. 工作日 16:30 跑.
       {
