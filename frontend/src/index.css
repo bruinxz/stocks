@@ -18415,74 +18415,12 @@ a {
  * 2.5MB, 风格也与 Phase 14/15 Stripe 减法冲突). 只用纯 CSS + 现有 SVG
  * 借鉴 3 个标志效果, 用最克制的方式融入浅色 dashboard:
  *
- *   16.1  侧边扫光 (.card-stripe--scan)        — 给 3 张重点卡每 4s 滑过紫色微光
- *   16.2  SVG 飞线 (.fly-line-svg)              — 板块矩形 → 持仓卡的视觉连接
  *   16.3  Admin 区 grid 背景 (.workspace-grid-bg) — 数据中心 / 系统介绍 极淡数据空间感
  *   16.4  Hero pulse (.value-pulse-fresh)        — 数据更新瞬间紫色背景闪
  *   16.5  Live indicator (.live-indicator)       — 实时绿点 + 脉冲 ring (盘后退化静态)
  *
  * 全部支持 prefers-reduced-motion (无障碍).
  * ===================================================================== */
-
-/* ---------- 16.1 侧边扫光卡 ---------- */
-.card-stripe--scan {
-  position: relative;
-  overflow: hidden;
-}
-.card-stripe--scan::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -40%;
-  width: 30%;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(99, 91, 255, 0.10) 50%,
-    transparent 100%
-  );
-  transform: skewX(-12deg);
-  animation: card-scan 4s ease-in-out infinite;
-  pointer-events: none;
-  z-index: 3;
-}
-@keyframes card-scan {
-  0%,
-  100% {
-    left: -40%;
-  }
-  50% {
-    left: 110%;
-  }
-}
-
-/* ---------- 16.2 SVG fly-line dash 流动 ---------- */
-@keyframes fly-line-dash {
-  to {
-    stroke-dashoffset: -22;
-  }
-}
-
-/* sector heatmap 容器需要 relative + overflow visible 让 fly-line 能从 cell 顶部
- * 延伸到下方持仓卡. */
-.sector-heatmap-with-fly {
-  position: relative;
-  overflow: visible;
-}
-/* 板块卡 hover 时给一点 brand 强调 */
-.sector-heatmap-cell--active {
-  border-color: rgba(99, 91, 255, 0.45);
-  box-shadow: 0 4px 12px rgba(99, 91, 255, 0.10);
-  transform: translateY(-1px);
-}
-/* 飞线高亮目标持仓卡 (浅紫描边 + lift) */
-.home-pos-card--fly-target {
-  border-color: rgba(99, 91, 255, 0.45) !important;
-  box-shadow: 0 4px 14px rgba(99, 91, 255, 0.12);
-  transform: translateY(-1px);
-  transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
-}
 
 /* ---------- 16.3 Admin grid background (极淡, 几乎看不见) ---------- */
 .workspace-grid-bg {
@@ -18555,14 +18493,6 @@ a {
 
 /* ---------- 16.x prefers-reduced-motion 退化 ---------- */
 @media (prefers-reduced-motion: reduce) {
-  .card-stripe--scan::after {
-    animation: none;
-    opacity: 0;
-  }
-  .fly-line-svg path,
-  .fly-line-svg circle {
-    animation: none !important;
-  }
   .value-pulse-fresh {
     animation: none;
   }

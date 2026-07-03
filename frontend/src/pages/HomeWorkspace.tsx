@@ -75,9 +75,8 @@ import {
 import { ShoppingCartIcon, InboxIcon } from '@heroicons/react/24/outline';
 import { motion, useReducedMotion } from 'framer-motion';
 // Phase 15 — Stripe 同款精致细节.
-// Phase 16 — sc-datav 借鉴: LiveIndicator + FlyLine.
+// Phase 16 — sc-datav 借鉴: LiveIndicator.
 import {
-  CountUp,
   StatusBadge,
   EmptyStripe,
   SectionDivider,
@@ -85,8 +84,6 @@ import {
   MiniBars,
   HeroAreaChart,
   LiveIndicator,
-  FlyLine,
-  type FlyLineSegment,
 } from '../components/stripe';
 import { useFlashOnChange } from '../hooks/useFlashOnChange';
 import { usePulseOnChange } from '../hooks/usePulseOnChange';
@@ -826,8 +823,6 @@ const HomeWorkspace: React.FC = () => {
   const todayPnlFlash = useFlashOnChange(todayPnl);
   const totalReturnFlash = useFlashOnChange(totalReturn);
   // Phase 16 — Hero 总资产 pulse — 数据从 API 更新瞬间紫色背景闪 600ms.
-  // 注意区分 count-up: count-up 是数字滚动 (CountUp 组件已处理), pulse 是背景闪,
-  // 两者叠加共同强化"数据刚刚更新"暗示, 不冲突.
   const totalValuePulse = usePulseOnChange(account?.total_value);
 
   // Phase 15 — 标记 "Top 1 推荐" (用于 accent bar). 按 dimensions 平均分排序;
@@ -857,23 +852,6 @@ const HomeWorkspace: React.FC = () => {
       if (Number(p.market_value) > Number(best.market_value)) best = p;
     }
     return best.id;
-  }, [positions]);
-
-  // Phase 16 — 标记 "今日浮盈最大持仓" (sc-datav 借鉴的扫光只给这一张, 而不是
-  // 市值最大那张, 因为"今日 winner"比"持仓最重"更值得关注). 若全部负盈 → null,
-  // 不给扫光 (避免给亏损卡上动效暗示"特别关注").
-  const topWinnerPositionId = useMemo(() => {
-    if (positions.length === 0) return null;
-    let best: PositionRow | null = null;
-    let bestPnl = 0;
-    for (const p of positions) {
-      const pnl = Number(p.unrealized_pnl || 0);
-      if (pnl > bestPnl) {
-        best = p;
-        bestPnl = pnl;
-      }
-    }
-    return best ? best.id : null;
   }, [positions]);
 
   // Phase 15 — 持仓 sector heatmap. PositionRow 没有 sector 字段, 用 symbol 前缀
@@ -922,87 +900,6 @@ const HomeWorkspace: React.FC = () => {
       .sort((a, b) => b.marketValue - a.marketValue)
       .map(b => ({ ...b, weight: (b.marketValue / totalMV) * 100 }));
   }, [positions]);
-
-  // Phase 16 — sector → position ids 映射 (FlyLine hover 联动). 同 buckets 的口径,
-  // 不重写代码 -- 用 position symbol 前缀算 sector key.
-  const positionSectorKey = useCallback((p: PositionRow): string => {
-    const code = String(p.symbol).slice(0, 2);
-    if (code === '60' || code === '90') return 'sh_main';
-    if (code === '00' || code === '20') return 'sz_main';
-    if (code === '30') return 'cyb';
-    if (code === '68') return 'kcb';
-    if (code === '83' || code === '87' || code === '43' || code === '88') return 'bj';
-    return 'other';
-  }, []);
-
-  // hover 中的 sector key (null = 无 hover, 不画飞线).
-  const [hoveredSectorKey, setHoveredSectorKey] = useState<string | null>(null);
-  // sector heatmap 容器引用 (画 FlyLine 需要 containerRect 做相对坐标).
-  const sectorHeatmapRef = useRef<HTMLDivElement | null>(null);
-  // 飞线 segments — 在 hover 时同步计算. resize / scroll 不重算 (用户 hover 时不太
-  // 会同时滚动; SVG 一帧绘出即结束, 不画 1s 也不会出现"漂移"问题).
-  const [flySegments, setFlySegments] = useState<FlyLineSegment[]>([]);
-  const [flyTargetIds, setFlyTargetIds] = useState<Set<number>>(new Set());
-  const [flyBox, setFlyBox] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
-
-  const computeFlyLines = useCallback(
-    (sectorKey: string) => {
-      const container = sectorHeatmapRef.current;
-      if (!container) return;
-      const cRect = container.getBoundingClientRect();
-      const cellEl = container.querySelector<HTMLElement>(
-        `[data-sector-key="${sectorKey}"]`
-      );
-      if (!cellEl) return;
-      const cellRect = cellEl.getBoundingClientRect();
-      const fromX = cellRect.left - cRect.left + cellRect.width / 2;
-      const fromY = cellRect.bottom - cRect.top;
-      // 找到下方所有同 sector 的持仓卡 (article[data-position-id])
-      const matchedIds = positions
-        .filter(p => positionSectorKey(p) === sectorKey)
-        .map(p => p.id);
-      const segments: FlyLineSegment[] = [];
-      // posGrid 与 sector-heatmap 在同一个 home-pos 容器 — query from container parent
-      const parent = container.parentElement;
-      if (!parent) return;
-      const pRect = parent.getBoundingClientRect();
-      // 但 SVG 容器仍以 sector heatmap container 为基准 (上方画).
-      // 这里让 container 高度延伸到下方持仓卡末端 — 用 dynamic box 替代.
-      let maxBottom = cellRect.bottom;
-      for (const id of matchedIds) {
-        const posEl = parent.querySelector<HTMLElement>(
-          `article[data-position-id="${id}"]`
-        );
-        if (!posEl) continue;
-        const pr = posEl.getBoundingClientRect();
-        const toX = pr.left - cRect.left + pr.width / 2;
-        const toY = pr.top - cRect.top;
-        segments.push({ fromX, fromY, toX, toY });
-        if (pr.bottom > maxBottom) maxBottom = pr.bottom;
-      }
-      void pRect;
-      const w = cRect.width;
-      const h = Math.max(cRect.height, maxBottom - cRect.top + 4);
-      setFlySegments(segments);
-      setFlyTargetIds(new Set(matchedIds));
-      setFlyBox({ w, h });
-    },
-    [positions, positionSectorKey]
-  );
-
-  const handleSectorEnter = useCallback(
-    (sectorKey: string) => {
-      setHoveredSectorKey(sectorKey);
-      // 下一帧计算 (等 hover style 应用完, 减少首次 jitter)
-      requestAnimationFrame(() => computeFlyLines(sectorKey));
-    },
-    [computeFlyLines]
-  );
-  const handleSectorLeave = useCallback(() => {
-    setHoveredSectorKey(null);
-    setFlySegments([]);
-    setFlyTargetIds(new Set());
-  }, []);
 
   // Phase 10 — 推荐卡片渲染. 抽出来给"按时间分组" + "降级不分组"两种 path 复用.
   const renderRecoCard = useCallback(
@@ -1092,7 +989,7 @@ const HomeWorkspace: React.FC = () => {
           key={rec.symbol}
           className={
             'home-reco-card home-reco-card--anim home-reco-card--tilt' +
-            (isAccent ? ' home-reco-card--accent card-stripe--scan' : '')
+            (isAccent ? ' home-reco-card--accent' : '')
           }
           style={staggerStyle}
         >
@@ -1598,11 +1495,9 @@ const HomeWorkspace: React.FC = () => {
             <div className="home-hero-value">
               <span className="home-hero-currency">¥</span>
               <span className={`home-hero-amount tabular-nums ${totalValuePulse}`}>
-                {account?.total_value != null && Number.isFinite(account.total_value) ? (
-                  <CountUp value={account.total_value} format={n => formatAmount(n)} />
-                ) : (
-                  '—'
-                )}
+                {account?.total_value != null && Number.isFinite(account.total_value)
+                  ? formatAmount(account.total_value)
+                  : '—'}
               </span>
             </div>
             {/* Phase 15 — A.1: 30 日资产 area chart (Stripe Gross Volume 同款) */}
@@ -1892,7 +1787,7 @@ const HomeWorkspace: React.FC = () => {
           Phase 11 — mesh gradient + noise + parallax tilt. */}
       {(() => {
         const lessonInner = (
-          <section className="home-lesson card-stripe--scan">
+          <section className="home-lesson">
             <div className="home-lesson-icon-wrap">
               <BookOutlined />
             </div>
@@ -2011,31 +1906,18 @@ const HomeWorkspace: React.FC = () => {
             subtitle="跟上面的「今日推荐」一键跟单一只试试 — 系统会自动登记成本与止损建议"
           />
         ) : (
-          <div className="home-pos-fly-wrap" style={{ position: 'relative' }}>
-            {/* Phase 15 — 板块热力 (按市值聚合, 颜色=今日浮盈方向)
-                Phase 16 — sc-datav 借鉴: hover 板块矩形 → SVG 飞线连接到下方该板块持仓卡. */}
+          <div className="home-pos-fly-wrap">
+            {/* Phase 15 — 板块热力 (按市值聚合, 颜色=今日浮盈方向) */}
             {sectorBuckets.length >= 2 && (
-              <div
-                className="sector-heatmap sector-heatmap-with-fly"
-                aria-label="板块分布"
-                ref={sectorHeatmapRef}
-              >
-                {sectorBuckets.map(b => {
-                  const isHover = hoveredSectorKey === b.key;
-                  return (
+              <div className="sector-heatmap" aria-label="板块分布">
+                {sectorBuckets.map(b => (
                   <div
                     key={b.key}
-                    data-sector-key={b.key}
-                    className={
-                      'sector-heatmap-cell' +
-                      (isHover ? ' sector-heatmap-cell--active' : '')
-                    }
+                    className="sector-heatmap-cell"
                     style={{
                       flexBasis: `${b.weight}%`,
                     }}
-                    title={`${b.label} · ${b.count} 只 · 占 ${b.weight.toFixed(0)}% · ${formatPnl(b.pnl)} · hover 可见联动飞线`}
-                    onMouseEnter={() => handleSectorEnter(b.key)}
-                    onMouseLeave={handleSectorLeave}
+                    title={`${b.label} · ${b.count} 只 · 占 ${b.weight.toFixed(0)}% · ${formatPnl(b.pnl)}`}
                   >
                     <div>
                       <div className="sector-heatmap-cell-name">{b.label}</div>
@@ -2050,15 +1932,7 @@ const HomeWorkspace: React.FC = () => {
                       {formatPnl(b.pnl)}
                     </div>
                   </div>
-                  );
-                })}
-                {flySegments.length > 0 && !reduceMotion && (
-                  <FlyLine
-                    segments={flySegments}
-                    width={flyBox.w}
-                    height={flyBox.h}
-                  />
-                )}
+                ))}
               </div>
             )}
             <div className="home-pos-grid">
@@ -2074,7 +1948,6 @@ const HomeWorkspace: React.FC = () => {
                 return Math.max(0, diff);
               })();
               const isAccent = pos.id === topPositionId;
-              const isWinner = pos.id === topWinnerPositionId;
               // Phase 15 — 近 7 日 P&L mini bars (合成 — 后端 PositionRow 没有 pnl_history,
               // 用累计 unrealized_pnl 启发式分布. 后端透传 last_7_days_pnl[] 时直接换.
               // 视觉只表达 "近期赚还是亏", 不是精确序列).
@@ -2090,12 +1963,9 @@ const HomeWorkspace: React.FC = () => {
               const inner = (
                 <article
                   key={pos.id}
-                  data-position-id={pos.id}
                   className={
                     'home-pos-card home-pos-card--tilt' +
-                    (isAccent ? ' home-pos-card--accent' : '') +
-                    (isWinner ? ' card-stripe--scan' : '') +
-                    (flyTargetIds.has(pos.id) ? ' home-pos-card--fly-target' : '')
+                    (isAccent ? ' home-pos-card--accent' : '')
                   }
                 >
                   <div className="home-pos-card-head">
