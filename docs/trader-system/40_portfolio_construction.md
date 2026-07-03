@@ -1,171 +1,75 @@
-# 40 — 组合构造（Portfolio Construction）
+# 40 — 组合构造（核心 70% / 卫星 20% / 现金 10%）
 
-> 把 N 个策略各自给出的 signal/score 融合成一份**全账户级**的目标持仓（target_portfolio），再交给 sizing → 风控 → 执行落地。这一步决定了"组合的方差从哪里来"——做得不好，10 个策略合起来的 sharpe 还不如最好那一个。
+> 本文档已随重构改写。旧的「6-10 个个股策略 signal fusion → 去重 → 冲突仲裁 → regime 配权」架构已删除（那套依赖已删的 `QuantFusionService` 和 29 个策略）。新主线是固定的 **核心-卫星** 结构，组合构造不再「融合多策略」，而是「把三个桶各自的目标持仓拼起来并守住硬边界」。依据见 `SIGNAL_FIRST_PLAN.md` §4。
 
 ---
 
 ## A. 操盘手心智
 
-我同时跟 6-10 个策略：MFA / DragonHead / Breakout / LeftSideReversal / HighDividendValue / EarningsSurprise / NorthboundFollow / CTA100Momentum / SectorRotationLeader / GARP。每个策略每天给我一份**候选清单**（symbol → conviction_score）。我做四件事：
+不再同时跟 10 个策略抢仓位。组合就三个桶，各管各的、互不越界：
 
-1. **去重**：两个策略同时推 600519，不能算两份仓位。
-2. **冲突仲裁**：MFA 想 BUY 600519、LeftSideReversal 想 SELL 600519 → 谁说了算？默认按"近 30 天 IR 加权"或硬优先级表。
-3. **配权**：MFA 在 bull regime 加权 0.4，在 bear regime 降到 0.15。
-4. **去相关**：单股聚合后还得看行业相关性——10 个仓位全在新能源就完蛋。
+```
+核心 70%  = ETF 因子轮动（月度机械换仓，稳中求进，是收益主要来源）
+卫星 20%  = 题材事件驱动（个股，波动大，严控上限，探索沙盒）
+现金 10%  = 5% 应急 + 5% 国债/短融 ETF（压舱石，不做短线）
+```
 
-输出一份 `Map<symbol, target_weight>`，sum(weight) ≤ 0.95（留 5% 现金缓冲）。
+三桶解耦是设计核心：**底线目标（年化 8-10%）交给核心兜底，冲刺目标（10-15%）交给卫星，两者互不绑架**。卫星即使被冻结/永久停，核心仍能兜住底线（§10.4 降级结构）。所以组合构造这一步不做「跨桶融合」，而是：
+
+1. **各桶独立产目标持仓**：核心出 `Map<etf, target_weight>`，卫星出 `Map<theme_stock, target_weight>`。
+2. **硬边界守门**：核心总仓 ≤ 70%、卫星总仓 ≤ 20%、单 ETF ≤ 15%、单题材股 ≤ 5%、单板块 ≤ 25%。
+3. **不做跨桶去重/仲裁**：ETF 与个股不会撞码；核心月度、卫星事件驱动，节奏不同，无需仲裁。
+4. **现金是余量**：`1 − 核心实际仓 − 卫星实际仓`，不足打满时自动落回现金桶。
 
 ---
 
 ## B. 系统设计
 
-### B.1 数据流
+### B.1 核心桶目标持仓
+
+由 `ETFRankingService.decide()`（纯函数，`backend/src/quant/etf/`）产出，口径 §4.1：
 
 ```
-策略 1: generateSignals(T) → {symbol, signal, score, conviction}[]
-策略 2: ...
-策略 N: ...
-                ↓
-        SignalFusion
-   ┌──────────────────────────┐
-   │ 1. 去重 (per-symbol agg) │
-   │ 2. 冲突仲裁              │
-   │ 3. regime 加权融合       │
-   │ 4. 因子级相关性扣减      │
-   │ 5. 归一化到 sum(w) ≤ 0.95│
-   └──────────────────────────┘
-                ↓
-    Map<symbol, target_weight>
-                ↓
-   PortfolioOptimizer (可选: 最大化 sharpe)
-                ↓
-    RebalanceEngine.rebalance(targetWeights)
-                ↓
-   生成 BUY/SELL 单 → facade.placeOrder
+raw_w_i    = etf_total_score_i / Σ(选中 ETF 的 score)   # 按因子分分配
+scaled_w_i = raw_w_i × 70%                              # 缩放到核心总仓硬顶
+final_w_i  = min(scaled_w_i, 15%)                        # 单只封顶
+# 封顶溢出按分数再分配给未封顶 ETF（一轮再归一）
 ```
 
-### B.2 融合算法
+- 常量：`CORE_TOTAL_CAP_PCT = 0.7`、`SINGLE_ETF_CAP_PCT = 0.15`、`BUY_BAND = 4`、`SELL_BAND = 6`
+- total_score 可能为负（z-score 合成），分配前 shift 使 min ≥ 0 保证权重非负
+- 稳态持有 4-6 只 ETF
 
-**Step 1 — Per-symbol score aggregation**：
+### B.2 卫星桶目标持仓
 
-```
-combined_score(s) = Σ_i w_i * normalize(score_i(s)) * regime_multiplier(i)
-```
+由题材事件 detector 触发（`ThemeFermentation` 等），过 EV gate（§5.2 L4）后建仓：
 
-- `w_i` = 策略 i 的基础权重（由 IR/IC monitor 滚动维护）
-- `normalize` = 把每个策略的 score 映射到统一 [0, 100] 分位区间
-- `regime_multiplier` = 当前市场 regime 下该策略的加权倍数（bull/bear/range）
+- 单只题材股 ≤ 5%
+- 目标持仓 3-4 只
+- 卫星总仓 ≤ 20%（硬顶，不允许扩）
+- 退出由 `AutoExitService`（§4.2）执行，见 42_rebalancing.md
 
-**Step 2 — 冲突仲裁**：
+### B.3 组合级硬边界（`risk_gate` L2）
 
-| 场景 | 仲裁规则 |
-|---|---|
-| 一只票被 A BUY、被 B SELL | 取 combined_score 高者；若打平按"防御优先"（SELL 胜） |
-| 两个 BUY 候选行业冲突（行业上限 25%） | 按 combined_score 排序，行业累计 cap |
-| 同 symbol 被多个策略 BUY | combined_score 取 weighted avg，attribution 记每个策略贡献 |
-
-**Step 3 — Regime 加权**：
-
-```
-regime_multiplier(strategy_i, regime):
-  bull:  momentum 类 1.3, low_vol 0.7, dividend 0.5
-  bear:  momentum 0.5, low_vol 1.3, dividend 1.5
-  range: 趋势类 0.7, 反转类 1.3, 龙头 0.9
-```
-
-regime 来源：`MarketRegimeAlertService.getMarketRegimeStatus()` (位于 `backend/src/portfolio/risk/MarketRegimeAlertService.ts`)
-
-**Step 4 — 相关性扣减**：
-
-每天根据 FactorCorrelationReport 输出的相关性矩阵，对"两两 ρ > 0.7"的策略：把更小 IR 的那个的权重 × 0.5。
-
-**Step 5 — 归一化**：
-
-```
-sum_w = Σ target_weight
-if sum_w > 0.95:
-    scale = 0.95 / sum_w
-    target_weight[s] *= scale   # 留 5% 现金
-```
-
-### B.3 输出契约
-
-```ts
-interface PortfolioConstructionResult {
-  trade_date: string;
-  target_weights: Map<string, number>;   // symbol → weight (sum ≤ 0.95)
-  regime: 'bull' | 'bear' | 'range';
-  contributing_strategies: Record<string, string[]>;  // symbol → [strategy_key,...]
-  evidence_per_symbol: Record<string, { score: number; reasons: string[] }>;
-  diagnostics: {
-    n_strategies_run: number;
-    n_symbols_pre_dedup: number;
-    n_symbols_post_dedup: number;
-    conflict_count: number;
-    cash_buffer_pct: number;
-  };
-}
-```
-
----
-
-## C. 现状 review
-
-### C.1 没有真正的"组合构造层"
-
-- **入口**：`backend/src/quant/engine/internal/QuantSignalService.ts:496-601` — `runCompositeStrategies` 调每个组合级策略的 `generateSignals(trade_date)`，把结果**线性 concat**成 `QuantSignalResult[]` 写 `QuantSignal` 表，**没有跨策略融合**。
-- **后果**：MFA 出 30 个 BUY、DragonHead 出 20 个、Ensemble 出 25 个 → 数据库 75 行 QuantSignal，对同一只 600519 可能 3 行 conflict，但没人合并。
-
-### C.2 fusion 真正发生在 PaperTradingAutomationService.autoBuyFromSignals
-
-- **证据**：`backend/src/portfolio/internal/PaperTradingAutomationService.ts:3091-3197` — 在最末端"按 QuantSignal 逐行 createBuyTrade"时按 strategy_key/portfolio 维度逐条下单，没有 portfolio-level 目标权重的概念。
-- 每个策略实际上**独立维护自己的 portfolio**（用 portfolio_id 隔离），不存在"全账户 target weight"。
-- 多策略共账场景目前是"先到先得 + cash 抢占"，不是组合构造。
-
-### C.3 PortfolioOptimizer 存在但**未接入**
-
-- **证据**：`backend/src/quant/backtest/PortfolioOptimizer.ts:1-100,711-784` — US-044 已实现 projected_gradient 求解器，能在 N 个策略历史日收益上求 max-sharpe 权重。
-- 主要消费方仅 CLI `optimize-portfolio.ts` + 未来 US-016 实验室 tab；**生产链路 0 调用**。
-- 即使有人调，输出 `weights: {strategy_key → weight}` 是**策略级权重**，不是**symbol 级目标权重**——需要再下一步把"策略 → symbol"的目标传到 RebalanceEngine。
-
-### C.4 regime 加权未实现
-
-- `MarketRegimeAlertService` (`backend/src/portfolio/risk/MarketRegimeAlertService.ts:1-100`) 只产 RiskAlert（3 日跌 / 20 日跌 / 死叉），**没有暴露 regime 状态**给策略融合层。
-- MFA `evaluate` 退化为 hold (`MultiFactorAlphaStrategy.ts:500-517`)，也没读 regime；只在 generateSignals 内部按自己的 sub-strategy 做权重，不跨策略融合。
-
-### C.5 conflict 检测靠数据库 UNIQUE
-
-- `QuantSignal` 表 (UNIQUE on `(strategy_key, symbol, trade_date)`) 让同策略同票同日只能写一条，但**跨策略 conflict 无任何检测**。
-- 一只票被 5 个策略推荐时，下游 `autoBuyFromSignals` 会跑 5 次 createBuyTrade（被 PositionLimitGuard 兜底）。
-
----
-
-## D. 改造方案
-
-### D.1 user story
-
-| ID | 故事 | 验收 |
+| 边界 | 阈值 | 出处 |
 |---|---|---|
-| US-PC-1 | **创建 `PortfolioConstructionService`** 位于 `backend/src/portfolio/PortfolioConstructionService.ts`；入口 `buildTargetPortfolio(user_id, trade_date)` 读 QuantSignal 当日所有 strategy 输出 → 跑融合 → 返回 `PortfolioConstructionResult` | 1 个 happy-path 单测：3 个策略 + 重叠 symbols，输出 weight sum ≤ 0.95 |
-| US-PC-2 | **regime 加权 hook**：把 `MarketRegimeAlertService.getMarketRegimeStatus()` 输出的 3 个信号映射到 `regime: bull/bear/range` 枚举；融合时用 regime_multiplier 表 | 1 个单测：bear regime 下 momentum 类策略权重确认被乘 0.5 |
-| US-PC-3 | **接入 PortfolioOptimizer**：构造层用最近 60 日 strategy IR 跑 `optimize` 拿权重作为融合先验，每月跑一次写 `StrategyWeightSnapshot` 表 | 跑一次得到非空 weights，权重之和 = 1.0 |
-| US-PC-4 | **接 RebalanceEngine**：自动撮合 cron 在 `autoBuyFromSignals` 之前先调 `PortfolioConstructionService.buildTargetPortfolio` → `rebalanceEngine.rebalance(target_weights, {execute:true})`；旧 autoBuy 路径作为 fallback | 一个集成测：构造 → rebalance 全链路，最终 portfolio 持仓符合 target_weights ± 0.5% |
-| US-PC-5 | **conflict 仲裁审计**：`QuantSignalAttribution` 表新增 `conflict_resolution` 字段（'unanimous' / 'winner_takes_all' / 'weighted_avg'），融合时记录 | dashboard 能查"过去 7 天有多少 conflict 被仲裁，哪些 symbol 频繁冲突" |
-| US-PC-6 | **shadow → hard cutover 切换**：默认 `portfolio_construction_enabled=false`，开启后才走新链路；连跑 2 周 shadow，shadow_delta 报表呈现"如果上线，今日实际持仓会变化哪些" | 用户在 SettingsWorkspace 翻 toggle，shadow log 进 `[shadow-construction]` |
+| 单 ETF | ≤ 15% | §4.1 |
+| 核心总仓 | ≤ 70% | §4.1 硬顶 |
+| 单题材股 | ≤ 5% | §4.2 |
+| 卫星总仓 | ≤ 20% | §4.2 硬顶 |
+| 单板块 | ≤ 25% | PR-M4 |
+| 组合 60 日回撤 | < 20% | §5.2 |
 
-### D.2 与 PortfolioOptimizer 的关系（明确）
+### B.4 卫星熔断（防止无限吞钱，`AutoExitService`）
 
-- **PortfolioOptimizer (US-044)** 答：每个策略给多少 capital 上限（策略级权重 `w_i`）。
-- **PortfolioConstructionService (本 US-PC-1)** 答：根据每个策略的具体 signal，全账户应持什么 symbol、多大权重（symbol 级 `w_symbol`）。
-- 关系：`w_symbol = Σ_i (w_i × conviction_i_on_symbol × regime_multiplier_i × correlation_penalty)`。
-- 顺序：每月 optimizer 跑一次更新 `w_i` → 每日 construction 跑用 `w_i` 融合 signals → 写 target_weights。
+- 卫星 **60 天滚动窗口** 累计亏损 > 组合 5% → 冻结 30 天，只留核心
+- **自然月连续 3 个月** 卫星 alpha < 0 → 卫星永久停止，资金转入核心
+- PR-L 组合级熔断触发 → 冻新单（§5.4）
 
 ---
 
-## E. 验收口径
+## C. 边界
 
-- 跑 3 个月历史 paper trading：组合 sharpe ≥ max(单策略 sharpe) × 1.2
-- 同 symbol 跨策略 conflict 仲裁审计可查
-- regime 切换（bull → bear）触发后 7 天内组合仓位明显倾向 low_vol / dividend
-- shadow vs hard cutover 的"今日持仓 delta"小于 5%（防止上线日大换手）
-- 文件位置：`backend/src/portfolio/PortfolioConstructionService.ts`（新建）+ 引用方 `PaperTradingAutomationService.ts` 改成 construction-first 路径
+- 组合构造**不产信号**（信号来自 §20 引擎 + 卫星 detector），只做拼装 + 守边界。
+- **不做多策略 fusion**：旧 `SignalFusion`/`crossPortfolioDedup`（D5 已删）不再存在。
+- sum(核心 + 卫星) ≤ 90%，其余落现金桶（§4.3）。
