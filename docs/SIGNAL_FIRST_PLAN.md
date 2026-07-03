@@ -1535,3 +1535,49 @@ npm run compute:factors -- --date=$(date +%F)
   eastmoney 因子链(宽基 ETF 可退回 `fund_top_holdings` 兜底)。
 - **已知无关问题**:`sequelize.sync({alter:true})` 对 `northbound_holdings` enum 列生成非法 `USING` SQL,
   dev 模式建表会报错。生产用 `NODE_ENV=production`(跳过 alter)或既有 migration,不受影响。
+
+## 附录 AA — 批9 调度器残留清理 + 计划闭环复核 (2026-07-03)
+
+### AA.1 起因
+
+复核"非本次范围"提法时发现: 批5 下线 5 个 service 时**只做了一半** —— 删了 service、
+把 dispatch 改成空跑桩、cronRegistry 移除条目, 但**漏删 `ensureDefaultTasks` 里的 seed**,
+导致 fresh DB / 存量 DB 仍把这些"已下线"任务当 active 每天空转。cron-registry 一致性单测
+因此长期 1 failed(dispatch 有分支、registry 无条目)。这不是"历史漂移", 是下线未收尾。
+
+### AA.2 清理批5下线残留 (commit 2a33a61)
+
+| 动作 | 细节 |
+|---|---|
+| 删死 seed | `AI_DAILY_SCREENER`×4 / `AUTO_RECOMMENDATION_LOOP`×1 / `EARNINGS_FORECAST_WATCH`×2 / `STRATEGY_KILL_SWITCH_CHECK`×1 |
+| 删死分支 | `全市场荐股闭环` 参数补丁 if 块(80行)+ `patchAutonomousPortfolioParameters` Set 项 |
+| 保留 dispatch 空跑桩 | dispatch 链末尾兜底会 `throw Unsupported task type`; 桩是 DB 存量任务的安全网, 非脏物 |
+| registry 转 retired | 5 个墓碑注释 → 正式 `retired: true` 条目(新增 `CronTaskDefinition.retired` 字段) |
+| DB 迁移 | `2026-07-03-retire-batch5-offline-crons.sql`(+回滚): 按 type 幂等 disable 存量任务 |
+
+### AA.3 计划闭环复核 — 发现对称的"上线做一半" (commit 8c07d7f)
+
+用同一把尺子扫 registry↔seed↔dispatch 三方一致性, 发现 4 个 cron **从引入至今从未 seed**
+(git 溯源确认), Batch AJ 补漏时又遗漏 → fresh DB / DR 重建后不会自动起跑:
+
+| type | 引入 | 性质 |
+|---|---|---|
+| `ANALYST_FORECAST_SYNC` | BH-2 | 修 analyst_consensus 因子 std<0.02 真因 — **Signal-First 主线** |
+| `SHAREHOLDER_COUNT_SYNC` | BH-3 | 修 shareholder_concentration 因子 std<0.10 真因 — **主线** |
+| `DATA_FRESHNESS_CHECK` | BF-3 | 数据陈旧度告警 |
+| `DAILY_HEALTH_REPORT` | BF-4 | 每日健康日报 |
+
+已补 4 处 seed, cron_expression 对齐 cronRegistry recommendedCron。
+
+### AA.4 最终自洽状态
+
+- registry 81 个 = 活 77 个**全部 seed** + 5 个 retired 墓碑**不 seed**(正确)
+- seed / dispatch / registry 三方完全对齐
+- 验证: `tsc --noEmit` 0 错误; `cron-registry.test.ts` **757 ok / 0 failed**(原 1 failed)
+- 本地 DB 迁移实测 `UPDATE 3` + 幂等复跑 `UPDATE 0`
+
+### AA.5 元教训
+
+"下线"和"上线"都必须走完 **dispatch + registry + seed + DB** 四点闭环, 缺一点就留尾巴:
+下线漏删 seed → 死任务空转; 上线漏加 seed → 活能力 fresh DB 起不来。
+cron-registry 双向一致性单测只守 dispatch↔registry 两点, seed 一致性靠本次复核补上。
