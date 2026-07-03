@@ -305,7 +305,7 @@ models/      → ~92 个 (删日内/融合/个股因子相关表; 龙虎榜/北�
 4. **批4 — 删社媒情绪数据源**: data/sources 社媒/KOL/情绪类 + data/services sync (先删 sync 再删 client) + models 情绪/问答表(直删)。**注: 龙虎榜/北向 client/sync/model 不在本批, 保留供查看。**
 5. **批5 — 改造**: 4 因子 ETF 化 + PaperTradingAutomation 接 EV gate + V3Controller + AIInvestmentSignal schema + 通知时机收敛 (§2.12)。
 6. **批6 — 新建** (计划档 §7.4, 15-19 天): ETFRotationService / FactorCalculatorService / ConfidenceCalibrationService / AutoExitService / 精简数据源 / PR-O5 修复 / 战略镜子 UI。
-7. **批7 — 前端装饰清理** + docs 清理 + scripts 清理。(进行中: 7a-7l 已提交 — 装饰删除/系统介绍/HomeWorkspace/FactorWorkspace/V3展示/战略镜子月度 draft 生成器; 剩 docs 指南重写)
+7. **批7 — 前端装饰清理** + docs 清理 + scripts 清理。✅ **批7 全部完成** — 7a-7m 已提交：装饰删除/系统介绍/HomeWorkspace/FactorWorkspace/V3展示/战略镜子月度 draft 生成器/USER_GUIDE 重写/FUNCTION_GUIDE 重写/DEVELOPER_GUIDE 重写/trader-system/00_overview 重写
 8. **批8 — models 物理删** (随批2-4 同期直删; 删前 grep 确认无引用 + pg_dump 备份, 无观察期)。
 
 **前后端删除时序绑定** (前端删除项必须与对应后端同批, 避免删出死路由/空 tab):
