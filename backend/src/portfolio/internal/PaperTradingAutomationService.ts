@@ -34,12 +34,11 @@ import {
   SizingDecision,
 } from '../PositionSizingPolicy';
 import { equityCurveGovernorService } from '../../services/governor/EquityCurveGovernorService';
-import { metaLabelService } from '../../services/meta/MetaLabelService';
 import { executionFeasibilityService } from '../../services/execution/ExecutionFeasibilityService';
 // Sprint 42-A: wire 6 advanced services into buy pipeline
 import { eventIntelligenceLayer } from '../../services/event-intelligence/EventIntelligenceLayer';
-import { isotonicCalibrator } from '../../services/meta-v2/IsotonicCalibrator';
 import { evDecisionService } from '../../services/meta-v2/EVDecisionService';
+import { confidenceCalibrationService } from '../../services/calibration/ConfidenceCalibrationService';
 import { executionPolicyRouter } from '../../services/execution/ExecutionPolicyRouter';
 import {
   newActivation,
@@ -1965,148 +1964,75 @@ class PaperTradingAutomationService {
       //     至少 90 天 lookback (StrategyKellyStatsService 强制 MIN_LOOKBACK_DAYS=90).
       // 修复 CRITICAL #5 (2026-06-16): hoisted to outer signal-loop scope 让 markSignalExecuted
       // 透传 ev_decision (内层 try block 的 metaDetail 在外层拿不到).
+      // 批5 §5.1/§5.2: confidence 校准 (Wilson 下界) + gate 分层。
+      // 旧 MetaLabelService (logistic regression) 已下线; confidence 主口径改用
+      // ConfidenceCalibrationService — 基于 recommendation_trade_outcomes 真实结算的
+      // Wilson 90% 下界 (按 source_type + regime 分层, 样本不足自动降权/纸面)。
+      // Gate 分层 (§5.2): ETF 核心 (etf_factor_rotation/cash_management) 跳过 L4 EV gate
+      // (月度因子排名替代), 卫星 (theme_event 等) 必过 EV gate。
       let capturedEvDecision: any = null;
       try {
-        const strategyKeyForMeta =
-          (signal as any)?.metadata?.strategy_key ||
-          (signal as any)?.metadata?.signal_metadata?.strategy_key ||
-          'unknown';
-        const signalScoreRaw = Number(
-          (signal as any).confidence_score ?? (signal as any).final_score ?? 75
-        );
-        const regimeForMeta = environmentPolicy.market_regime || 'range';
-        // capturedEvDecision 已在外层 hoisted (line 1878 之上), 这里不再 redeclare.
-        // 批5: StrategyKellyStatsService 已下线 — kellyForMeta 保持 null, 下游用中性默认值.
-        const kellyForMeta: { win_rate?: number; payoff_ratio?: number } | null = null;
-        void strategyKeyForMeta;
-        // Sprint 28: 从 environmentPolicy.market_environment 抽真实 breadth + 波动率
-        // Sprint 34 (短板 #2a 真生效): 优先用真实 benchmark_atr_14d_pct (Wilder ATR),
-        // 缺数据时 fallback 到 drawdown 代理 (向后兼容).
-        const envSnapshot = (environmentPolicy as any)?.market_environment || {};
-        const breadthScore = Number(envSnapshot?.breadth?.up_20d_ratio ?? 50);
-        const realAtrPct = Number(envSnapshot?.benchmark_atr_14d_pct);
-        const benchmarkDrawdownPct = Math.abs(Number(envSnapshot?.benchmark_drawdown_60d_pct ?? 0));
-        // 真 ATR 在 → 用真 ATR; 缺 → 退回 drawdown 代理 (不是 0!)
-        const marketVolFeature =
-          Number.isFinite(realAtrPct) && realAtrPct > 0
-            ? realAtrPct
-            : Number.isFinite(benchmarkDrawdownPct)
-            ? benchmarkDrawdownPct
-            : 4;
+        const sourceTypeForGate = String((signal as any).source_type || 'unknown');
+        const isCoreSignal =
+          sourceTypeForGate === AISignalSourceType.ETF_FACTOR_ROTATION ||
+          sourceTypeForGate === AISignalSourceType.CASH_MANAGEMENT;
+        const regimeForGate = environmentPolicy.market_regime || 'range';
 
-        // Sprint 34 (短板 #2b): 该 symbol 近 7 天 ExecutionFeasibility 平均 composite_score
-        // 作为 MetaLabel pre-check feature. 缺数据 → 50 (中性). fail-open 不阻塞.
-        let preCheckFeasibilityScore = 50;
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const { ExecutionFeasibilityRecord } = require('../../models/ExecutionFeasibilityRecord');
-          const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10);
-          const recentRecords = await ExecutionFeasibilityRecord.findAll({
-            where: {
-              symbol: signal.symbol,
-              as_of_date: { [Op.gte]: sevenDaysAgo },
-            },
-            attributes: ['composite_score'],
-            order: [['created_at', 'DESC']],
-            limit: 20,
-          });
-          if (recentRecords.length > 0) {
-            const sum = recentRecords.reduce(
-              (s: number, r: any) => s + Number(r.composite_score || 50),
-              0
-            );
-            preCheckFeasibilityScore = sum / recentRecords.length;
-          }
-        } catch (feasFetchErr: any) {
-          logger.warn(
-            `[meta-label] pre-check feasibility fetch failed (默认 50): ${
-              feasFetchErr?.message || feasFetchErr
-            }`
-          );
-        }
-        const metaDecision = await metaLabelService.shouldBet(
-          {
-            signal_id: (signal as any).id,
-            signal_source: (signal as any).source_type || 'unknown',
-            symbol: signal.symbol,
-            strategy_key: strategyKeyForMeta,
-            as_of_date: new Date().toISOString().slice(0, 10),
-            features: {
-              signal_score: Number.isFinite(signalScoreRaw) ? signalScoreRaw : 75,
-              signal_source: (signal as any).source_type || 'unknown',
-              regime: String(regimeForMeta),
-              // Sprint 28: 真实市场宽度 (0-100, 上涨股票占比), 不再是固定 0
-              market_breadth_score: Number.isFinite(breadthScore) ? breadthScore : 50,
-              strategy_recent_winrate_30d: Number(kellyForMeta?.win_rate ?? 0.5),
-              strategy_recent_payoff_30d: Number(kellyForMeta?.payoff_ratio ?? 1.0),
-              // Sprint 34 (短板 #2a 真生效): 真 Wilder ATR(14) pct, 缺数据退 drawdown 代理
-              market_vol_atr: Number.isFinite(marketVolFeature) ? marketVolFeature : 4,
-              // Sprint 34 (短板 #2b): 该 symbol 近 7d feasibility 平均分作为 pre-check
-              pre_check_feasibility_score: preCheckFeasibilityScore,
-            },
-          },
-          { persist: true }
-        );
-        // Sprint 27: L3 元决策 - MetaLabel 已运行;
-        // bet → contributed (过了二层模型置信度门槛), skip → blocked.
-        const metaDetail = {
-          meta_label_decision_id: (metaDecision as any).persisted_id || null,
-          confidence: metaDecision.confidence,
-          decision: metaDecision.decision,
-          model_version: metaDecision.model_version,
-          threshold: metaDecision.threshold,
-          // Sprint 28: 把真实 features 也存到 activation detail, 方便 dashboard 排查
-          // Sprint 34: 补 atr_real / drawdown_proxy 区分两个来源
-          features_used: {
-            breadth_score: Number.isFinite(breadthScore) ? breadthScore : 50,
-            market_vol_atr_used: Number.isFinite(marketVolFeature) ? marketVolFeature : 4,
-            atr_real_pct: Number.isFinite(realAtrPct) && realAtrPct > 0 ? realAtrPct : null,
-            benchmark_drawdown_pct: Number.isFinite(benchmarkDrawdownPct)
-              ? benchmarkDrawdownPct
-              : 4,
-            vol_source:
-              Number.isFinite(realAtrPct) && realAtrPct > 0 ? 'atr_14d' : 'drawdown_60d_proxy',
-            winrate: Number(kellyForMeta?.win_rate ?? 0.5),
-            payoff: Number(kellyForMeta?.payoff_ratio ?? 1.0),
-            // Sprint 34 (短板 #2b): pre-check feasibility score 来源 + 值
-            pre_check_feasibility_score: preCheckFeasibilityScore,
-          },
+        // §5.1 confidence = Wilson 下界 (按 source_type + regime 分层, 与 EVDecisionService 同源)
+        const calib = await confidenceCalibrationService.calibrate(sourceTypeForGate, regimeForGate, {
+          portfolioId: portfolio.id,
+        });
+        const calibDetail = {
+          confidence: calib.confidence,
+          win_rate_raw: calib.win_rate_raw,
+          n_samples: calib.n_samples,
+          avg_win_pct: calib.avg_win_pct,
+          avg_loss_pct: calib.avg_loss_pct,
+          profit_factor: calib.profit_factor,
+          brier_score: calib.brier_score,
+          reliability: calib.reliability.label,
+          allow_live: calib.reliability.allow_live,
+          sizing_multiplier: calib.reliability.sizing_multiplier,
+          cold_start: calib.cold_start,
+          regime: regimeForGate,
+          window: `${calib.window_start}~${calib.window_end}`,
         };
-        if (metaDecision.decision === 'skip') {
-          markBlocked(activation, 'L3_meta', metaDetail);
-          await skip(
-            `MetaLabel 决定不下注: confidence=${metaDecision.confidence.toFixed(3)} < threshold=${
-              metaDecision.threshold
-            } (${metaDecision.model_version})`
-          );
-          continue;
-        }
-        markContributed(activation, 'L3_meta', metaDetail);
 
-        // Sprint 42-A (新接入): IsotonicCalibrator + EVDecisionService
-        // 把 metaDecision.confidence (logistic regression raw) 经 isotonic 校准成真实胜率,
-        // 再算 EV = p × avg_win - (1-p) × avg_loss - cost. 把 event_filter multiplier 直接乘到
-        // calibrated prob 让"有事件加持"提高 EV 通过率.
-        //
-        // 失败时 fail-open (不阻塞下单), 但 EV='skip' 则 hard skip 本 signal.
-        try {
-          const rawConfidence = Number(metaDecision.confidence);
-          const calibratedProb = isotonicCalibrator.calibrate(rawConfidence);
-          // event multiplier 应用到 calibrated prob (clamp [0,1])
-          const finalProb = Math.max(0, Math.min(1, calibratedProb * eventFilterMultiplier));
+        if (isCoreSignal) {
+          // L4 EV gate 跳过 (§5.2): 核心 ETF 由月度因子排名决定, 只透传 confidence 供展示/sizing。
+          markContributed(activation, 'L3_meta', {
+            calibration: calibDetail,
+            ev_gate: 'skipped_core',
+          });
+        } else {
+          // 卫星必过 L4 EV gate。§5.1 冷启动/样本不足 → 纸面模式, 不下实盘、不进 EV gate。
+          if (!calib.reliability.allow_live) {
+            markBlocked(activation, 'L3_meta', {
+              calibration: calibDetail,
+              reason: 'paper_mode_cold_start',
+            });
+            await skip(
+              `样本不足/校准不可靠, 纸面模式 (n=${calib.n_samples}, ${calib.reliability.display}), 不进 EV gate`,
+              { metadata: { calibration: calibDetail } }
+            );
+            continue;
+          }
+          // event multiplier 直接乘到 calibrated confidence (clamp [0,1]) 后进 EV 决策。
+          const finalProb = Math.max(0, Math.min(1, calib.confidence * eventFilterMultiplier));
+          const strategyKeyForGate =
+            (signal as any)?.metadata?.strategy_key ||
+            (signal as any)?.metadata?.signal_metadata?.strategy_key ||
+            sourceTypeForGate;
           const evResult = await evDecisionService.decide({
             symbol: signal.symbol,
-            strategy_key: strategyKeyForMeta,
-            regime: String(regimeForMeta),
+            strategy_key: strategyKeyForGate,
+            regime: regimeForGate,
             calibrated_win_prob: finalProb,
             as_of_date: new Date().toISOString().slice(0, 10),
-            // Batch P (2026-06-17, E1): 透传当前 portfolio_id, 让 EV 按盘统计
-            // 不再让一个盘差表现污染所有盘的 EV gate.
             portfolio_id: portfolio.id,
           });
           const evDetail = {
-            raw_confidence: rawConfidence,
-            calibrated_prob: calibratedProb,
+            calibrated_confidence: calib.confidence,
             event_filter_multiplier: eventFilterMultiplier,
             final_prob: finalProb,
             ev: evResult.ev,
@@ -2119,23 +2045,27 @@ class PaperTradingAutomationService {
             decision: evResult.decision,
             reason: evResult.reason,
           };
-          // EV gate hard skip
           if (evResult.decision === 'skip') {
+            markBlocked(activation, 'L3_meta', { calibration: calibDetail, ev_decision: evDetail });
             await skip(`EV 负期望: ${evResult.reason}`, {
-              metadata: { ev_decision: evDetail, event_filter: eventFilterResult },
+              metadata: {
+                calibration: calibDetail,
+                ev_decision: evDetail,
+                event_filter: eventFilterResult,
+              },
             });
             continue;
           }
-          // 通过 → 写到 activation L3 detail 给 dashboard
-          (metaDetail as any).ev_decision = evDetail;
-          (metaDetail as any).event_filter = eventFilterResult;
+          markContributed(activation, 'L3_meta', {
+            calibration: calibDetail,
+            ev_decision: evDetail,
+            event_filter: eventFilterResult,
+          });
           capturedEvDecision = evDetail;
-        } catch (evErr: any) {
-          logger.warn(`[ev-gate] failed (fail-open): ${evErr?.message || evErr}`);
         }
       } catch (err: any) {
-        // fail-open: MetaLabel 失败仅 warn; activation 不 mark (保持 reached=false 以区别"真过了"和"出错跳过").
-        logger.warn(`[meta-label] gate failed (fail-open): ${err?.message || err}`);
+        // fail-open: 校准/EV gate 失败仅 warn, 不阻塞下单 (保持 reached=false 区别"真过"和"出错跳过")。
+        logger.warn(`[confidence-ev-gate] failed (fail-open): ${err?.message || err}`);
       }
 
       const strategyVariant = asPlainObject(metadata.strategy_variant);
