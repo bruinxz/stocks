@@ -55,6 +55,11 @@ export function inferStockSymbol(code: string): string {
   if (head === '6') return `sh.${code}`;
   if (head === '0' || head === '3') return `sz.${code}`;
   if (head === '4' || head === '8' || head === '9') return `bj.${code}`;
+  // [fix 2026-07-03] ETF/基金代码: 5 开头(50/51/52/56/58...)为沪市 → sh.,
+  // 1 开头(15/16/18...)为深市 → sz.。旧逻辑无此分支, 5 开头 ETF 落到 sz. 兜底
+  // → 查不到 Stock → ETF close 序列为空 → LowVol 恒为 null → 整只 ETF data_incomplete。
+  if (head === '5') return `sh.${code}`;
+  if (head === '1') return `sz.${code}`;
   // 兜底 .sz 保证 Stock 查询不空
   return `sz.${code}`;
 }
