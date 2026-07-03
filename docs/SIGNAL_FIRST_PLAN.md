@@ -1581,3 +1581,43 @@ npm run compute:factors -- --date=$(date +%F)
 "下线"和"上线"都必须走完 **dispatch + registry + seed + DB** 四点闭环, 缺一点就留尾巴:
 下线漏删 seed → 死任务空转; 上线漏加 seed → 活能力 fresh DB 起不来。
 cron-registry 双向一致性单测只守 dispatch↔registry 两点, seed 一致性靠本次复核补上。
+
+## 附录 AB — 批9 补漏#2 + 89 处下线标记全量定性 (2026-07-03)
+
+### AB.1 起因
+附录 AA 用"下线/上线做一半"这把尺子扫完 cron 四点后, 继续对全后端 `已下线 / 空跑 / DEPRECATED / 已废弃 / 已移除` 标记 (89 处 / 27 文件) 逐类定性, 排查是否还有同型尾巴。
+
+### AB.2 发现并收尾: 第 6 个"下线做一半"
+**`推荐信号模拟盘跟单` cron** (PAPER_TRADING_AUTO_SYNC, `40 15 * * 1-5`, DB id=7):
+- `refresh_recommendations=true` + `source_type='quant_recommendation'`。
+- 批5 已删 `QuantRecommendationService` — 全系统再无服务产出 `quant_recommendation` 信号。
+- 后果: `runAutoSync` 的 `refreshRecommendations` 分支恒归档 0 条; `autoBuyFromSignals` 亦查不到新信号 → **每交易日 15:40 纯空跑**。
+- 与批9 清理的 5 个批5 下线 cron 同型 (service 删了 / seed 没删), 属遗漏的**第 6 个**。
+
+**收尾 (commit 7b77a00)**:
+
+| 动作 | 位置 |
+|---|---|
+| 删空跑 seed 块 | `SchedulerService.ensureDefaultTasks` |
+| 空候选分支补"批5/批9 定性"注释 (保留兼容 UI/autonomous HTTP 入口) | `PaperTradingAutomationService.runAutoSync` |
+| DB 存量置 inactive (幂等 by name+type) + rollback | `migrations/2026-07-03-retire-quant-rec-paper-sync.sql` |
+
+> 保留 `refreshRecommendations` 分支 (未删): HTTP `auto_sync` / `autonomous_auto_sync` 入口仍在, 删分支会抛错。分支已恒空跑并注释说明。
+
+### AB.3 关键定性: Core 70% paper 执行 = 出口 B (后期), 不在本次范围
+- ETF 轮动信号: `decision=BUY, normalized_decision=BUY`, 但 `action='TARGET_WEIGHT'` (再平衡语义, 非 `'buy'` 动作)。
+- `autoBuyFromSignals` 粗筛只放行 `metadata.action==='buy'` → **ETF 轮动信号即使被跟单 cron 拾取也会被 action 粗筛全拒**。
+- 结论: Core 70% 的 paper 自动执行需**独立 TARGET_WEIGHT 再平衡执行路径**, 不复用 quant_recommendation buy 跟单链。按计划 §层2, 自动执行 = **出口 B (后期)**; 当前主交付物是**信号** (出口 A: ETFRotationService 落信号 → V3 展示 → 用户拍板), 已闭环。故此项非收尾尾巴, 属计划既定的后期能力。
+
+### AB.4 其余 87 处标记定性 (全部已闭环, 无尾巴)
+| 类别 | 数量级 | 定性 |
+|---|---|---|
+| 批8 删表 DEPRECATED STUB (恒返回 `[]`/`null`/`0`) | ~13 文件 | 优雅降级墓碑; 消费方全在 backtest / performance / health / report **侧支**, 非 Core-Satellite 交易决策链。有横幅文档。 |
+| 批5 service 下线的调用点中性化 (`SourceTypeWinRateAdjuster` / `KOLAggregatorService` / `StrategyKellyStatsService` / `RecommendationLoopPolicySnapshot` / `BudgetPolicyVersionSnapshot` / `FieldGateAdjustmentAttribution` 等) | ~10 处 | service 已删, 调用点返回中性值 / null; grep 确认无任何活代码 `new`/调用, 仅剩注释。已闭环。 |
+| HTTP 410 端点 (`earnings-forecast` / `strategy-copilot` / `kol` 等) | ~7 处 | 能力下线后端点显式返 410; 契约明确。 |
+| 其它 (`train-meta-label-v2` 版本串 / `BacktestEngine` events 省内存 / `check-l8-activation` 硬编码移除 evidence / `tradingCalendar` 回退注释) | ~5 处 | 非下线残留, 是正常实现注释。 |
+
+### AB.5 最终状态
+- `tsc --noEmit` = 0 err; `cron-registry.test.ts` = 757 ok / 0 failed。
+- DB: 6 个批5 下线 cron 全部 inactive (5 个批9 + 1 个批9#2)。
+- 全后端下线标记逐类定性完毕, **除出口 B (计划既定后期能力) 外无遗留尾巴**。计划闭环复核结束。
