@@ -2273,12 +2273,22 @@ def get_index_components(index_code: str, trade_date: str) -> List[Dict[str, Any
                 print(f"Weight endpoint failed (non-fatal): {e}", file=sys.stderr)
 
         # ----- 3) 列名柔性映射 -----
+        # [fix 2026-07-03] index_stock_cons_sina 同时返回 'symbol'(=sh600000, 带市场前缀)
+        # 与 'code'(=600000, 纯 6 位) 两列。旧逻辑把 'symbol' 与 'code' 同权, 且按列序
+        # 命中 'symbol' 在前 → raw_code='sh600000' 过不了 isdigit() → 300 行全被跳过。
+        # 现在: (a) 优先选纯代码列 ('品种代码'/'股票代码'/'证券代码'/'code'), 仅当都缺失
+        # 才回退到 'symbol'; (b) 下游用 re 抽取末尾 6 位数字, 兼容带前后缀写法。
         code_col: Optional[str] = None
         name_col: Optional[str] = None
+        _cols_str = [str(c) for c in df_cons.columns]
+        for cand in ('品种代码', '股票代码', '证券代码', 'code'):
+            if cand in _cols_str:
+                code_col = cand
+                break
+        if not code_col and 'symbol' in _cols_str:
+            code_col = 'symbol'
         for col in df_cons.columns:
             col_s = str(col)
-            if col_s in ('品种代码', '股票代码', '证券代码', 'code', 'symbol') and not code_col:
-                code_col = col_s
             if col_s in ('品种名称', '股票名称', '证券简称', 'name', '股票简称') and not name_col:
                 name_col = col_s
 
@@ -2294,7 +2304,11 @@ def get_index_components(index_code: str, trade_date: str) -> List[Dict[str, Any
             raw_code = row.get(code_col)
             if raw_code is None or pd.isna(raw_code):
                 continue
-            stock_code = str(raw_code).strip().zfill(6)
+            # [fix 2026-07-03] 抽取末尾连续 6 位数字, 兼容 'sh600000'/'600000.SH'/'600000'
+            _m = re.search(r'(\d{6})', str(raw_code))
+            if not _m:
+                continue
+            stock_code = _m.group(1)
             # 跳过已重复或非数字代码（部分接口含非 A 股标的）
             if not stock_code.isdigit() or len(stock_code) != 6:
                 continue
