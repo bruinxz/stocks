@@ -101,10 +101,7 @@ import { getV3Recommendations, V3RecommendationItem } from '../services/v3Recomm
 import { getEtfRotationLatestPicks, EtfRotationSignal } from '../services/factorService';
 // PR-M4 (2026-06-29): /home 顶部 "今日市场" 卡 — 复用既有 MarketJudgmentService
 // (恒指/纳指/标普/道指 4 个海外指数 + regime bull/bear/range/...).
-import {
-  getMarketJudgmentToday,
-  MarketJudgmentResult,
-} from '../services/marketJudgmentService';
+import { getMarketJudgmentToday, MarketJudgmentResult } from '../services/marketJudgmentService';
 import {
   formatClock,
   formatHourMin,
@@ -160,6 +157,12 @@ function pnlColor(n: number | null | undefined): string {
   return n > 0 ? 'var(--up, #dc2626)' : 'var(--down, #16a34a)';
 }
 
+/** 定点小数, null/NaN → '—'. 用于因子 z / 综合分等可能缺失的数值. */
+function formatFixed(n: number | null | undefined, digits: number): string {
+  if (n == null || !Number.isFinite(n)) return '—';
+  return n.toFixed(digits);
+}
+
 /** 把元转成 A 股手数 (100 股整). 不足 100 → 100, 上限到下一个百位. */
 function yuanToShares(amountYuan: number, pricePerShare: number): number {
   if (!Number.isFinite(amountYuan) || !Number.isFinite(pricePerShare) || pricePerShare <= 0) {
@@ -197,9 +200,10 @@ export function buildSizingCapWarn(input: {
 }): { capped: boolean; cap_amount: number; original: number } | null {
   const total = Number(input.total_value);
   const target = Number(input.target_amount);
-  const capPct = Number.isFinite(input.cap_pct as number) && (input.cap_pct as number) > 0
-    ? (input.cap_pct as number)
-    : PR_M4_FRONTEND_SINGLE_POSITION_CAP_PCT;
+  const capPct =
+    Number.isFinite(input.cap_pct as number) && (input.cap_pct as number) > 0
+      ? (input.cap_pct as number)
+      : PR_M4_FRONTEND_SINGLE_POSITION_CAP_PCT;
   if (!Number.isFinite(total) || total <= 0) return null;
   if (!Number.isFinite(target) || target <= 0) return null;
   const cap = (total * capPct) / 100;
@@ -217,9 +221,17 @@ export function buildSizingCapWarn(input: {
 //  UI 卡片左上角 pill 显示 icon + label, hover title 给"建议买入窗口"提示.
 //  卡片底部还有一条"建议买入窗口"长文 (overnight 用蓝色突出 "明早 9:30 集合竞价后买入" 防误解).
 // ---------------------------------------------------------------------------
-type TimingTagKey = 'opening_rush' | 'afternoon_kick' | 'closing_grab' | 'overnight' | 'intraday_anomaly';
+type TimingTagKey =
+  | 'opening_rush'
+  | 'afternoon_kick'
+  | 'closing_grab'
+  | 'overnight'
+  | 'intraday_anomaly';
 
-const TIMING_TAG_META: Record<TimingTagKey, { label: string; icon: string; color: string; window: string }> = {
+const TIMING_TAG_META: Record<
+  TimingTagKey,
+  { label: string; icon: string; color: string; window: string }
+> = {
   opening_rush: {
     label: '早盘抢',
     icon: '🌅',
@@ -288,7 +300,10 @@ const LIMIT_UP_PATTERN_META: Record<string, { icon: string; color: string }> = {
   follow_play: { icon: '🤝', color: '#7c3aed' },
 };
 
-function getLimitUpPatternMeta(pattern: string | null | undefined): { icon: string; color: string } {
+function getLimitUpPatternMeta(pattern: string | null | undefined): {
+  icon: string;
+  color: string;
+} {
   if (!pattern) return { icon: '🔥', color: '#dc2626' };
   return LIMIT_UP_PATTERN_META[String(pattern)] || { icon: '🔥', color: '#dc2626' };
 }
@@ -544,7 +559,14 @@ const HomeWorkspace: React.FC = () => {
     void loadEtfRotation();
     void loadSnapshots();
     void loadMarketJudgment();
-  }, [loadAccount, loadRecommendations, loadPositions, loadEtfRotation, loadSnapshots, loadMarketJudgment]);
+  }, [
+    loadAccount,
+    loadRecommendations,
+    loadPositions,
+    loadEtfRotation,
+    loadSnapshots,
+    loadMarketJudgment,
+  ]);
 
   // -------- 一键跟单 --------
   // PR-L emergency stop-loss (2026-06-29):
@@ -628,17 +650,17 @@ const HomeWorkspace: React.FC = () => {
           <div style={{ fontSize: 14, lineHeight: 1.8 }}>
             <p style={{ marginBottom: 8 }}>系统推荐模型经 30 天回测发现:</p>
             <ul style={{ paddingLeft: 20, marginBottom: 12 }}>
-              <li>整体胜率 <strong>32%</strong> (低于 50% 随机)</li>
+              <li>
+                整体胜率 <strong>32%</strong> (低于 50% 随机)
+              </li>
               <li>高置信度推荐反而表现更差 (反向)</li>
-              <li>实盘累计亏损 <strong>10,798 元</strong></li>
+              <li>
+                实盘累计亏损 <strong>10,798 元</strong>
+              </li>
             </ul>
             <p style={{ marginBottom: 0, color: 'var(--ink-3, #737373)' }}>
-              已暂停自动跟单. 您可手动评估后自行决定, 但<strong>强烈建议小仓试探</strong>.
-              详见{' '}
-              <a onClick={() => navigate('/workspace/today?tab=risk_center')}>
-                风控中心
-              </a>
-              .
+              已暂停自动跟单. 您可手动评估后自行决定, 但<strong>强烈建议小仓试探</strong>. 详见{' '}
+              <a onClick={() => navigate('/workspace/today?tab=risk_center')}>风控中心</a>.
             </p>
           </div>
         ),
@@ -724,7 +746,8 @@ const HomeWorkspace: React.FC = () => {
   // signal_kind='watch' 是 intraday_price_volume_anomaly 类的单点异动信号,
   // 用户应当自己判断, 不能直接当推荐跟单. 缺 signal_kind 默认 'recommendation' 兜底.
   const recommendationItems = useMemo(
-    () => visibleRecommendations.filter(r => (r.signal_kind || 'recommendation') === 'recommendation'),
+    () =>
+      visibleRecommendations.filter(r => (r.signal_kind || 'recommendation') === 'recommendation'),
     [visibleRecommendations]
   );
   const watchItems = useMemo(
@@ -877,8 +900,7 @@ const HomeWorkspace: React.FC = () => {
         key = 'bj';
         label = '北交所';
       }
-      const b =
-        buckets.get(key) || { key, label, marketValue: 0, pnl: 0, count: 0, weight: 0 };
+      const b = buckets.get(key) || { key, label, marketValue: 0, pnl: 0, count: 0, weight: 0 };
       b.marketValue += Number(p.market_value || 0);
       b.pnl += Number(p.unrealized_pnl || 0);
       b.count += 1;
@@ -913,14 +935,11 @@ const HomeWorkspace: React.FC = () => {
         }));
       const conf = rec.dimensions?.length
         ? Math.round(
-            rec.dimensions.reduce((s, d) => s + (d.bar_value || 0), 0) /
-              rec.dimensions.length
+            rec.dimensions.reduce((s, d) => s + (d.bar_value || 0), 0) / rec.dimensions.length
           )
         : 80;
       // Phase 10 — mini meta line (预期波动 / 持有 / 风险). 没有 metadata 时用启发式默认.
-      const expectedVol = rec.amplitude_pct
-        ? `±${rec.amplitude_pct.toFixed(1)}%`
-        : '±3%';
+      const expectedVol = rec.amplitude_pct ? `±${rec.amplitude_pct.toFixed(1)}%` : '±3%';
       const holdRange =
         rec.decision?.position_action === 'maintain'
           ? '5-15 日'
@@ -988,7 +1007,9 @@ const HomeWorkspace: React.FC = () => {
           )}
           {/* PR-H — 推荐时机标签 (左上). 后端 timing_tag 缺失默认 'overnight' (隔夜潜伏). */}
           {(() => {
-            const meta = TIMING_TAG_META[(rec.timing_tag || 'overnight') as TimingTagKey] || TIMING_TAG_META.overnight;
+            const meta =
+              TIMING_TAG_META[(rec.timing_tag || 'overnight') as TimingTagKey] ||
+              TIMING_TAG_META.overnight;
             return (
               <span
                 className="home-reco-card-timing"
@@ -1018,39 +1039,45 @@ const HomeWorkspace: React.FC = () => {
             );
           })()}
           {/* PR-O2 — 涨停板战法 badge (右上). 仅 source_type='limit_up_board' 的 signal 出. */}
-          {rec.limit_up_pattern && rec.limit_up_pattern_label && (() => {
-            const meta = getLimitUpPatternMeta(rec.limit_up_pattern);
-            const daysSuffix = rec.limit_up_continuous_days && rec.limit_up_continuous_days > 1
-              ? ` · ${rec.limit_up_continuous_days}板`
-              : '';
-            return (
-              <span
-                className="home-reco-card-limit-up"
-                title={`涨停战法: ${rec.limit_up_pattern_label}${daysSuffix} (PR-I-v2 战法库)`}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  position: 'absolute',
-                  top: 8,
-                  right: 8,
-                  padding: '3px 9px',
-                  borderRadius: 12,
-                  fontSize: 11,
-                  lineHeight: '16px',
-                  fontWeight: 600,
-                  color: '#fff',
-                  background: meta.color,
-                  boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
-                  zIndex: 2,
-                  letterSpacing: '0.02em',
-                }}
-              >
-                <span aria-hidden>{meta.icon}</span>
-                <span>{rec.limit_up_pattern_label}{daysSuffix}</span>
-              </span>
-            );
-          })()}
+          {rec.limit_up_pattern &&
+            rec.limit_up_pattern_label &&
+            (() => {
+              const meta = getLimitUpPatternMeta(rec.limit_up_pattern);
+              const daysSuffix =
+                rec.limit_up_continuous_days && rec.limit_up_continuous_days > 1
+                  ? ` · ${rec.limit_up_continuous_days}板`
+                  : '';
+              return (
+                <span
+                  className="home-reco-card-limit-up"
+                  title={`涨停战法: ${rec.limit_up_pattern_label}${daysSuffix} (PR-I-v2 战法库)`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    position: 'absolute',
+                    top: 8,
+                    right: 8,
+                    padding: '3px 9px',
+                    borderRadius: 12,
+                    fontSize: 11,
+                    lineHeight: '16px',
+                    fontWeight: 600,
+                    color: '#fff',
+                    background: meta.color,
+                    boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
+                    zIndex: 2,
+                    letterSpacing: '0.02em',
+                  }}
+                >
+                  <span aria-hidden>{meta.icon}</span>
+                  <span>
+                    {rec.limit_up_pattern_label}
+                    {daysSuffix}
+                  </span>
+                </span>
+              );
+            })()}
           <div className="home-reco-card-head">
             <div className="home-reco-card-name">
               <div className="home-reco-card-title">{rec.name || rec.symbol}</div>
@@ -1062,9 +1089,7 @@ const HomeWorkspace: React.FC = () => {
             </div>
           </div>
           <div className="home-reco-card-price">
-            <span className="home-reco-card-price-amount tabular-nums">
-              {formatYuan(price)}
-            </span>
+            <span className="home-reco-card-price-amount tabular-nums">{formatYuan(price)}</span>
             <span
               className="home-reco-card-price-change tabular-nums"
               style={{ color: pnlColor(rec.change_pct) }}
@@ -1077,9 +1102,7 @@ const HomeWorkspace: React.FC = () => {
               </span>
             )}
           </div>
-          {rec.recommend_reason && (
-            <p className="home-reco-card-reason">{rec.recommend_reason}</p>
-          )}
+          {rec.recommend_reason && <p className="home-reco-card-reason">{rec.recommend_reason}</p>}
           {/* PR-H — 时机建议买入窗口提示. overnight 用蓝色突出 "明早 9:30 集合竞价后买入". */}
           {(rec.timing_tag === 'overnight' || !rec.timing_tag) && (
             <div
@@ -1307,12 +1330,16 @@ const HomeWorkspace: React.FC = () => {
               <span className="home-reco-card-mini-label">预期波动</span>
               <span className="home-reco-card-mini-value">{expectedVol}</span>
             </span>
-            <span className="home-reco-card-mini-dot" aria-hidden>·</span>
+            <span className="home-reco-card-mini-dot" aria-hidden>
+              ·
+            </span>
             <span className="home-reco-card-mini-item">
               <span className="home-reco-card-mini-label">持有</span>
               <span className="home-reco-card-mini-value">{holdRange}</span>
             </span>
-            <span className="home-reco-card-mini-dot" aria-hidden>·</span>
+            <span className="home-reco-card-mini-dot" aria-hidden>
+              ·
+            </span>
             <span className="home-reco-card-mini-item">
               <span className="home-reco-card-mini-label">风险</span>
               <span className="home-reco-card-mini-value">{riskLabel}</span>
@@ -1339,7 +1366,7 @@ const HomeWorkspace: React.FC = () => {
             className="home-reco-card-arrow"
             data-testid="home-reco-card-arrow"
             aria-label={`查看 ${rec.name || rec.symbol} 详情`}
-            onClick={(e) => {
+            onClick={e => {
               e.stopPropagation();
               navigate(`/stock/${rec.symbol}`);
             }}
@@ -1444,9 +1471,8 @@ const HomeWorkspace: React.FC = () => {
         }
         description={
           <span style={{ fontSize: 12, color: '#7c3aed' }}>
-            30 天回测发现当前评分模型存在反向偏差, 自动跟单已暂停.
-            研究升级中, 预计 1-2 周后恢复. 详见{' '}
-            <a onClick={() => navigate('/workspace/today?tab=risk_center')}>风控中心</a>.
+            30 天回测发现当前评分模型存在反向偏差, 自动跟单已暂停. 研究升级中, 预计 1-2 周后恢复.
+            详见 <a onClick={() => navigate('/workspace/today?tab=risk_center')}>风控中心</a>.
           </span>
         }
       />
@@ -1489,9 +1515,7 @@ const HomeWorkspace: React.FC = () => {
               </span>
             </div>
             {/* Phase 15 — A.1: 30 日资产 area chart (Stripe Gross Volume 同款) */}
-            {heroAreaData.length >= 2 && (
-              <HeroAreaChart data={heroAreaData} height={80} />
-            )}
+            {heroAreaData.length >= 2 && <HeroAreaChart data={heroAreaData} height={80} />}
             <div className="home-hero-pnl">
               <span
                 className="home-hero-badge"
@@ -1538,7 +1562,8 @@ const HomeWorkspace: React.FC = () => {
       <section className="home-section home-market-section">
         {marketJudgmentLoading && !marketJudgment ? (
           <Skeleton active paragraph={{ rows: 2 }} />
-        ) : marketJudgmentError && !marketJudgment ? null /* 失败静默, 不渲染整段 */ : marketJudgment ? (
+        ) : marketJudgmentError &&
+          !marketJudgment ? null /* 失败静默, 不渲染整段 */ : marketJudgment ? (
           <div
             className="home-market-card"
             data-testid="home-market-card"
@@ -1553,7 +1578,15 @@ const HomeWorkspace: React.FC = () => {
             }}
           >
             <div>
-              <div style={{ fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: '#9ca3af',
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.5,
+                  marginBottom: 6,
+                }}
+              >
                 今日市场 · {marketJudgment.trade_date}
               </div>
               {(() => {
@@ -1571,7 +1604,13 @@ const HomeWorkspace: React.FC = () => {
                   <>
                     <div
                       data-testid="home-market-regime"
-                      style={{ fontSize: 24, fontWeight: 700, color: meta.color, lineHeight: 1.2, marginBottom: 4 }}
+                      style={{
+                        fontSize: 24,
+                        fontWeight: 700,
+                        color: meta.color,
+                        lineHeight: 1.2,
+                        marginBottom: 4,
+                      }}
                     >
                       {meta.icon} {meta.text}
                     </div>
@@ -1616,11 +1655,12 @@ const HomeWorkspace: React.FC = () => {
                     style={{
                       fontSize: 16,
                       fontWeight: 600,
-                      color: q.change_pct >= 0 ? '#dc2626' : '#16a34a',
+                      color: (q.change_pct ?? 0) >= 0 ? '#dc2626' : '#16a34a',
                     }}
                   >
-                    {q.change_pct >= 0 ? '+' : ''}
-                    {q.change_pct.toFixed(2)}%
+                    {q.change_pct == null || !Number.isFinite(q.change_pct)
+                      ? '—'
+                      : `${q.change_pct >= 0 ? '+' : ''}${q.change_pct.toFixed(2)}%`}
                   </div>
                 </div>
               ))}
@@ -1642,7 +1682,8 @@ const HomeWorkspace: React.FC = () => {
           <div>
             <h2 className="home-section-title">卫星题材机会</h2>
             <p className="home-section-subtitle">
-              卫星 20% · 题材/事件 · 过 EV gate 才建议 · 单只 ≤5% 总仓 ≤20% · {recommendationItems.length} 只候选
+              卫星 20% · 题材/事件 · 过 EV gate 才建议 · 单只 ≤5% 总仓 ≤20% ·{' '}
+              {recommendationItems.length} 只候选
               {watchItems.length > 0 && ` · 另有 ${watchItems.length} 只盘中异动 (见下方)`}
               {timeGroups.hasTime ? ` · 跨 ${timeGroups.groups.length} 个时段` : ''}
             </p>
@@ -1671,11 +1712,7 @@ const HomeWorkspace: React.FC = () => {
         ) : visibleRecommendations.length === 0 ? (
           <EmptyStripe
             icon={<InboxIcon className="hero-icon hero-icon--lg" />}
-            title={
-              recommendations.length === 0
-                ? '今天暂无 AI 推荐'
-                : '今天的推荐都跟过了'
-            }
+            title={recommendations.length === 0 ? '今天暂无 AI 推荐' : '今天的推荐都跟过了'}
             subtitle={
               recommendations.length === 0
                 ? '数据可能还没跑完, 稍后再来看看 — 或点击右上「刷新」'
@@ -1760,7 +1797,8 @@ const HomeWorkspace: React.FC = () => {
               </span>
             </h2>
             <p className="home-section-subtitle">
-              系统扫到的盘中量价异动 ({watchItems.length} 只), <strong>不是推荐</strong>. 涨势 + 量配合的可关注, 单点信号请结合自身判断.
+              系统扫到的盘中量价异动 ({watchItems.length} 只), <strong>不是推荐</strong>. 涨势 +
+              量配合的可关注, 单点信号请结合自身判断.
             </p>
           </header>
           <div className="home-reco-grid">
@@ -1880,9 +1918,11 @@ const HomeWorkspace: React.FC = () => {
                       </Tooltip>
                     )}
                   </span>
-                  <span className="home-etf-score tabular-nums">{sig.score.toFixed(3)}</span>
+                  <span className="home-etf-score tabular-nums">{formatFixed(sig.score, 3)}</span>
                   <span className="home-etf-weight tabular-nums">
-                    {(sig.target_weight * 100).toFixed(1)}%
+                    {sig.target_weight != null && Number.isFinite(sig.target_weight)
+                      ? `${(sig.target_weight * 100).toFixed(1)}%`
+                      : '—'}
                   </span>
                   <span
                     className="home-etf-action"
@@ -1891,8 +1931,9 @@ const HomeWorkspace: React.FC = () => {
                     {actionMeta.label}
                   </span>
                   <span className="home-etf-factors tabular-nums home-etf-factors-col">
-                    {sig.factors.value_z.toFixed(2)} / {sig.factors.quality_z.toFixed(2)} /{' '}
-                    {sig.factors.lowvol_z.toFixed(2)}
+                    {formatFixed(sig.factors?.value_z, 2)} /{' '}
+                    {formatFixed(sig.factors?.quality_z, 2)} /{' '}
+                    {formatFixed(sig.factors?.lowvol_z, 2)}
                   </span>
                 </div>
               );
@@ -1967,10 +2008,7 @@ const HomeWorkspace: React.FC = () => {
                         {b.count} 只 · {b.weight.toFixed(0)}%
                       </div>
                     </div>
-                    <div
-                      className="sector-heatmap-cell-pnl"
-                      style={{ color: pnlColor(b.pnl) }}
-                    >
+                    <div className="sector-heatmap-cell-pnl" style={{ color: pnlColor(b.pnl) }}>
                       {formatPnl(b.pnl)}
                     </div>
                   </div>
@@ -1978,107 +2016,104 @@ const HomeWorkspace: React.FC = () => {
               </div>
             )}
             <div className="home-pos-grid">
-            {positions.map((pos, posIdx) => {
-              const isBusy = busySymbol === pos.symbol;
-              const costBasis = pos.quantity * pos.avg_cost;
-              const pctChange = costBasis > 0 ? (pos.unrealized_pnl / costBasis) * 100 : null;
-              // Phase 10 — 持仓天数 (自然日, 不扣周末). 与 PortfolioWorkspace 同口径.
-              const daysHeld = (() => {
-                const d = new Date(pos.created_at);
-                if (!Number.isFinite(d.getTime())) return null;
-                const diff = Math.floor((Date.now() - d.getTime()) / 86400_000);
-                return Math.max(0, diff);
-              })();
-              const isAccent = pos.id === topPositionId;
-              // Phase 15 — 近 7 日 P&L mini bars (合成 — 后端 PositionRow 没有 pnl_history,
-              // 用累计 unrealized_pnl 启发式分布. 后端透传 last_7_days_pnl[] 时直接换.
-              // 视觉只表达 "近期赚还是亏", 不是精确序列).
-              const total = Number(pos.unrealized_pnl || 0);
-              const bars7 = (() => {
-                if (total === 0) return [0, 0, 0, 0, 0, 0, 0];
-                // 简单分摊到 7 根: 中间高、两端低, 带一点抖动 (deterministic by id)
-                const seed = pos.id || 1;
-                const noise = (i: number) => Math.sin(seed * 13 + i * 7) * 0.25;
-                const base = total / 7;
-                return [0.6, 1.0, 1.4, 1.6, 1.2, 0.8, 0.4].map((w, i) => base * (w + noise(i)));
-              })();
-              const inner = (
-                <article
-                  key={pos.id}
-                  className={
-                    'home-pos-card home-pos-card--tilt' +
-                    (isAccent ? ' home-pos-card--accent' : '')
-                  }
-                >
-                  <div className="home-pos-card-head">
-                    <div>
-                      <div className="home-pos-card-name">{pos.name || pos.symbol}</div>
-                      <div className="home-pos-card-symbol">
-                        {formatInt(pos.quantity)} 股 @ {formatYuan(pos.avg_cost)}
+              {positions.map((pos, posIdx) => {
+                const isBusy = busySymbol === pos.symbol;
+                const costBasis = pos.quantity * pos.avg_cost;
+                const pctChange = costBasis > 0 ? (pos.unrealized_pnl / costBasis) * 100 : null;
+                // Phase 10 — 持仓天数 (自然日, 不扣周末). 与 PortfolioWorkspace 同口径.
+                const daysHeld = (() => {
+                  const d = new Date(pos.created_at);
+                  if (!Number.isFinite(d.getTime())) return null;
+                  const diff = Math.floor((Date.now() - d.getTime()) / 86400_000);
+                  return Math.max(0, diff);
+                })();
+                const isAccent = pos.id === topPositionId;
+                // Phase 15 — 近 7 日 P&L mini bars (合成 — 后端 PositionRow 没有 pnl_history,
+                // 用累计 unrealized_pnl 启发式分布. 后端透传 last_7_days_pnl[] 时直接换.
+                // 视觉只表达 "近期赚还是亏", 不是精确序列).
+                const total = Number(pos.unrealized_pnl || 0);
+                const bars7 = (() => {
+                  if (total === 0) return [0, 0, 0, 0, 0, 0, 0];
+                  // 简单分摊到 7 根: 中间高、两端低, 带一点抖动 (deterministic by id)
+                  const seed = pos.id || 1;
+                  const noise = (i: number) => Math.sin(seed * 13 + i * 7) * 0.25;
+                  const base = total / 7;
+                  return [0.6, 1.0, 1.4, 1.6, 1.2, 0.8, 0.4].map((w, i) => base * (w + noise(i)));
+                })();
+                const inner = (
+                  <article
+                    key={pos.id}
+                    className={
+                      'home-pos-card home-pos-card--tilt' +
+                      (isAccent ? ' home-pos-card--accent' : '')
+                    }
+                  >
+                    <div className="home-pos-card-head">
+                      <div>
+                        <div className="home-pos-card-name">{pos.name || pos.symbol}</div>
+                        <div className="home-pos-card-symbol">
+                          {formatInt(pos.quantity)} 股 @ {formatYuan(pos.avg_cost)}
+                        </div>
                       </div>
+                      <Tooltip title="一键卖出全部持仓">
+                        <Button
+                          danger
+                          onClick={() => handleSellAll(pos)}
+                          loading={isBusy}
+                          className="home-pos-card-cta"
+                        >
+                          卖出
+                        </Button>
+                      </Tooltip>
                     </div>
-                    <Tooltip title="一键卖出全部持仓">
-                      <Button
-                        danger
-                        onClick={() => handleSellAll(pos)}
-                        loading={isBusy}
-                        className="home-pos-card-cta"
-                      >
-                        卖出
-                      </Button>
-                    </Tooltip>
-                  </div>
-                  <div className="home-pos-card-pnl">
-                    <span
-                      className="home-pos-card-pnl-value tabular-nums"
-                      style={{ color: pnlColor(pos.unrealized_pnl) }}
-                    >
-                      {formatPnl(pos.unrealized_pnl)}
-                    </span>
-                    {pctChange != null && (
+                    <div className="home-pos-card-pnl">
                       <span
-                        className="home-pos-card-pnl-pct tabular-nums"
+                        className="home-pos-card-pnl-value tabular-nums"
                         style={{ color: pnlColor(pos.unrealized_pnl) }}
                       >
-                        {formatPct(pctChange)}
+                        {formatPnl(pos.unrealized_pnl)}
                       </span>
-                    )}
-                    {/* Phase 15 — 近 7 日 P&L mini bars (合成) */}
-                    <span
-                      className="home-pos-card-bars"
-                      title="近 7 日浮盈走势 (启发式)"
-                    >
-                      <MiniBars values={bars7} />
-                      <span className="home-pos-card-bars-label">7D</span>
-                    </span>
-                  </div>
-                  <div className="home-pos-card-meta">
-                    现价 <strong className="tabular-nums">{formatYuan(pos.current_price)}</strong>
-                    {daysHeld != null && (
-                      <>
-                        {' '}
-                        · 持 <strong className="tabular-nums">{daysHeld}</strong> 天
-                      </>
-                    )}
-                  </div>
-                </article>
-              );
-              if (reduceMotion) {
-                return inner;
-              }
-              // Phase 14 — Tilt + glare 删除. 持仓卡用 200ms fade-in.
-              return (
-                <motion.div
-                  key={pos.id}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.2, delay: Math.min(posIdx * 0.03, 0.3) }}
-                  className="home-pos-tilt"
-                >
-                  {inner}
-                </motion.div>
-              );
-            })}
+                      {pctChange != null && (
+                        <span
+                          className="home-pos-card-pnl-pct tabular-nums"
+                          style={{ color: pnlColor(pos.unrealized_pnl) }}
+                        >
+                          {formatPct(pctChange)}
+                        </span>
+                      )}
+                      {/* Phase 15 — 近 7 日 P&L mini bars (合成) */}
+                      <span className="home-pos-card-bars" title="近 7 日浮盈走势 (启发式)">
+                        <MiniBars values={bars7} />
+                        <span className="home-pos-card-bars-label">7D</span>
+                      </span>
+                    </div>
+                    <div className="home-pos-card-meta">
+                      现价 <strong className="tabular-nums">{formatYuan(pos.current_price)}</strong>
+                      {daysHeld != null && (
+                        <>
+                          {' '}
+                          · 持 <strong className="tabular-nums">{daysHeld}</strong> 天
+                        </>
+                      )}
+                    </div>
+                  </article>
+                );
+                if (reduceMotion) {
+                  return inner;
+                }
+                // Phase 14 — Tilt + glare 删除. 持仓卡用 200ms fade-in.
+                return (
+                  <motion.div
+                    key={pos.id}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.2, delay: Math.min(posIdx * 0.03, 0.3) }}
+                    className="home-pos-tilt"
+                  >
+                    {inner}
+                  </motion.div>
+                );
+              })}
             </div>
           </div>
         )}

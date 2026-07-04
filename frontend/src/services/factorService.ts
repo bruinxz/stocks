@@ -108,10 +108,10 @@ export async function previewFactorSelection(
 // 后端该端点已收敛为 ETF 因子轮动信号 (ETFRotationStrategy), 用下面的强类型版本消费.
 
 export interface EtfRotationFactorZ {
-  value_z: number;
-  quality_z: number;
-  lowvol_z: number;
-  momentum_z: number; // shadow, 权重 0
+  value_z: number | null;
+  quality_z: number | null;
+  lowvol_z: number | null;
+  momentum_z: number | null; // shadow, 权重 0
   value_raw: number | null;
   quality_raw: number | null;
   lowvol_raw: number | null;
@@ -124,9 +124,9 @@ export interface EtfRotationSignal {
   etf_code: string;
   name?: string;
   action: 'buy' | 'sell' | 'hold';
-  score: number;
+  score: number | null;
   rank: number;
-  target_weight: number;
+  target_weight: number | null;
   factors: EtfRotationFactorZ;
   reasons: string[];
   data_incomplete: boolean;

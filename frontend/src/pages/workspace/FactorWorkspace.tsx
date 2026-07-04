@@ -1231,12 +1231,11 @@ const PicksTab: React.FC<{
                     key={name as string}
                     color={(z as number) > 0 ? 'green' : (z as number) < 0 ? 'red' : 'default'}
                   >
-                    {name}: {(z as number).toFixed(2)}
+                    {name}:{' '}
+                    {z == null || !Number.isFinite(z as number) ? '—' : (z as number).toFixed(2)}
                   </Tag>
                 ))}
-                {record.data_incomplete && (
-                  <Tag color="orange">数据不全</Tag>
-                )}
+                {record.data_incomplete && <Tag color="orange">数据不全</Tag>}
               </div>
             </div>
           ),
@@ -2154,10 +2153,10 @@ function buildEtfRotationColumns() {
       dataIndex: 'score',
       key: 'score',
       width: 100,
-      sorter: (a: EtfRotationSignal, b: EtfRotationSignal) => a.score - b.score,
-      render: (v: number) => (
-        <Text strong style={{ color: v > 0 ? '#16a34a' : '#dc2626' }}>
-          {v.toFixed(3)}
+      sorter: (a: EtfRotationSignal, b: EtfRotationSignal) => (a.score ?? 0) - (b.score ?? 0),
+      render: (v: number | null) => (
+        <Text strong style={{ color: (v ?? 0) > 0 ? '#16a34a' : '#dc2626' }}>
+          {v == null || !Number.isFinite(v) ? '—' : v.toFixed(3)}
         </Text>
       ),
     },
@@ -2166,7 +2165,8 @@ function buildEtfRotationColumns() {
       dataIndex: 'target_weight',
       key: 'target_weight',
       width: 100,
-      render: (v: number) => <Text>{(v * 100).toFixed(1)}%</Text>,
+      render: (v: number | null) =>
+        v == null || !Number.isFinite(v) ? <Text>—</Text> : <Text>{(v * 100).toFixed(1)}%</Text>,
     },
     {
       title: '动作',
@@ -2187,8 +2187,19 @@ function buildEtfRotationColumns() {
       key: 'value_z',
       width: 80,
       render: (_: unknown, r: EtfRotationSignal) => (
-        <Text style={{ color: r.factors.value_z > 0 ? '#16a34a' : r.factors.value_z < 0 ? '#dc2626' : undefined }}>
-          {r.factors.value_z.toFixed(2)}
+        <Text
+          style={{
+            color:
+              (r.factors.value_z ?? 0) > 0
+                ? '#16a34a'
+                : (r.factors.value_z ?? 0) < 0
+                  ? '#dc2626'
+                  : undefined,
+          }}
+        >
+          {r.factors.value_z == null || !Number.isFinite(r.factors.value_z)
+            ? '—'
+            : r.factors.value_z.toFixed(2)}
         </Text>
       ),
     },
@@ -2197,8 +2208,19 @@ function buildEtfRotationColumns() {
       key: 'quality_z',
       width: 80,
       render: (_: unknown, r: EtfRotationSignal) => (
-        <Text style={{ color: r.factors.quality_z > 0 ? '#16a34a' : r.factors.quality_z < 0 ? '#dc2626' : undefined }}>
-          {r.factors.quality_z.toFixed(2)}
+        <Text
+          style={{
+            color:
+              (r.factors.quality_z ?? 0) > 0
+                ? '#16a34a'
+                : (r.factors.quality_z ?? 0) < 0
+                  ? '#dc2626'
+                  : undefined,
+          }}
+        >
+          {r.factors.quality_z == null || !Number.isFinite(r.factors.quality_z)
+            ? '—'
+            : r.factors.quality_z.toFixed(2)}
         </Text>
       ),
     },
@@ -2207,8 +2229,19 @@ function buildEtfRotationColumns() {
       key: 'lowvol_z',
       width: 80,
       render: (_: unknown, r: EtfRotationSignal) => (
-        <Text style={{ color: r.factors.lowvol_z > 0 ? '#16a34a' : r.factors.lowvol_z < 0 ? '#dc2626' : undefined }}>
-          {r.factors.lowvol_z.toFixed(2)}
+        <Text
+          style={{
+            color:
+              (r.factors.lowvol_z ?? 0) > 0
+                ? '#16a34a'
+                : (r.factors.lowvol_z ?? 0) < 0
+                  ? '#dc2626'
+                  : undefined,
+          }}
+        >
+          {r.factors.lowvol_z == null || !Number.isFinite(r.factors.lowvol_z)
+            ? '—'
+            : r.factors.lowvol_z.toFixed(2)}
         </Text>
       ),
     },

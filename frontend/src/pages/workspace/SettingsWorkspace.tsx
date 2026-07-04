@@ -127,7 +127,9 @@ const SettingsWorkspace: React.FC = () => {
   //   4. 高级 (admin only) ← 旧 sizing + portfolio-construction
   //                          (内部 Segmented "仓位策略 / 组合构建")
   //   5. 用户管理 (admin only) ← 旧 users
-  // 所有旧 Tab React 组件全部保留, 只是重新分组挂在新 4-5 项之下 (Segmented 子视图).
+  // 注: 大部分旧 Tab 组件已按上述分组挂在新 4-5 项下 (Segmented 子视图); 但仍有 3 个 tab 是
+  // placeholder 待接入 —— 个人资料(profile) / API 密钥 / 用户管理(users). 其中"用户管理"的后端
+  // CRUD 现成实现见 services/userService.ts (/api/users 仍挂载), 接入时直接调用即可, 勿删该 service.
   const isAdmin = useSelector((s: RootState) => s.auth.user?.role === 'admin');
   const tabs: WorkspaceTab[] = useMemo(() => {
     const baseTabs: WorkspaceTab[] = [
@@ -152,9 +154,7 @@ const SettingsWorkspace: React.FC = () => {
   const [riskSubView, setRiskSubView] = useState<
     'overview' | 'parameters' | 'black-swan' | 'todos'
   >('overview');
-  const [advancedSubView, setAdvancedSubView] = useState<
-    'sizing' | 'portfolio'
-  >('sizing');
+  const [advancedSubView, setAdvancedSubView] = useState<'sizing' | 'portfolio'>('sizing');
 
   // --- 通知设置 state -----------------------------------------------------
   const [config, setConfig] = useState<NotificationChannelsConfig | null>(null);
@@ -247,8 +247,9 @@ const SettingsWorkspace: React.FC = () => {
   const kpiSlot = useMemo(() => {
     // 推送渠道子视图用 pushView 数据；其他场景用 config (走 /notification-channels)
     const onPushChannels = activeKey === 'notify' && notifySubView === 'channels';
-    const cfgForKpi: NotificationChannelsConfig | null =
-      onPushChannels ? pushView?.raw || null : config;
+    const cfgForKpi: NotificationChannelsConfig | null = onPushChannels
+      ? pushView?.raw || null
+      : config;
     const active = cfgForKpi
       ? [
           cfgForKpi.feishu.enabled ? '飞书' : null,
@@ -1340,9 +1341,19 @@ const SettingsWorkspace: React.FC = () => {
       category: EventCategory;
     }> = [
       { key: 'daily_digest', label: '当日交易日报', hint: '15:30 收盘后推送', category: 'routine' },
-      { key: 'earnings_alert', label: '业绩预告即时提醒', hint: '持仓股 + 自选股', category: 'risk' },
+      {
+        key: 'earnings_alert',
+        label: '业绩预告即时提醒',
+        hint: '持仓股 + 自选股',
+        category: 'risk',
+      },
       { key: 'risk_alert', label: '高优先级风控告警', hint: 'HIGH 级实时分发', category: 'risk' },
-      { key: 'weekly_review', label: '上周复盘报告', hint: '周一 08:00 HTML 邮件', category: 'routine' },
+      {
+        key: 'weekly_review',
+        label: '上周复盘报告',
+        hint: '周一 08:00 HTML 邮件',
+        category: 'routine',
+      },
       {
         key: 'stock_bullish_event',
         label: '个股利好事件',
@@ -1797,11 +1808,7 @@ const SettingsWorkspace: React.FC = () => {
           value={advancedSubView}
           onChange={v => setAdvancedSubView(v as typeof advancedSubView)}
         />
-        {advancedSubView === 'sizing' ? (
-          <SizingPolicyTab />
-        ) : (
-          <PortfolioConstructionTab />
-        )}
+        {advancedSubView === 'sizing' ? <SizingPolicyTab /> : <PortfolioConstructionTab />}
       </>
     );
   } else {

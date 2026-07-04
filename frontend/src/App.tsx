@@ -10,12 +10,7 @@ import {
   useNavigate,
   useParams,
 } from 'react-router-dom';
-import {
-  UserOutlined,
-  LogoutOutlined,
-  BarChartOutlined,
-  DownOutlined,
-} from '@ant-design/icons';
+import { UserOutlined, LogoutOutlined, BarChartOutlined, DownOutlined } from '@ant-design/icons';
 import {
   HomeIcon,
   RocketLaunchIcon,
@@ -161,7 +156,9 @@ const routeSelectionAliases: Array<[RegExp, string]> = [
   [/^\/dashboard(\/.*)?$/, '/workspace/today'],
   [/^\/portfolio(\/.*)?$/, '/workspace/portfolio'],
   [/^\/screener(\/.*)?$/, '/workspace/lab'],
-  // Phase 3 (2026-06-27): 选股因子合并到实验室二级 tab — /workspace/factors 已不在主菜单.
+  // /workspace/factors 是独立的"因子/ETF 轮动"工作台(因子总览·权重调参·ETF 调仓清单·行业决策·宏观·资金流·政策),
+  // 功能 **未** 合并进实验室; 仅从主菜单收起, 经 策略详情页按钮 / /screener 进入. 此 alias 只用于让侧边栏高亮"实验室".
+  // WARNING 勿据旧注释误删 FactorWorkspace — 它承载 ETF 轮动主线 (getEtfRotationLatestPicks).
   [/^\/workspace\/factors(\/.*)?$/, '/workspace/lab'],
   [/^\/market(\/.*)?$/, '/workspace/data'],
   [/^\/data-update(\/.*)?$/, '/workspace/data'],
@@ -265,8 +262,9 @@ const AppContent: React.FC = () => {
   //   3. /home 仍是默认登录页, 但通过顶栏"更多功能"下拉也能进任意菜单.
   // 5 项基础 + 2 项 admin-only:
   //   主页 / 简易版 / 持仓 / 实验室 / 设置  (admin: + 数据中心 / 系统介绍)
-  // /workspace/today 不再上一级菜单 — /home 已是新手的"今日入口", admin 可通过
-  // 实验室 / 数据中心 / 顶栏更多 进入. 路由仍保留 (deep link 兼容).
+  // /workspace/today 不在主菜单 — /home 是新手的"今日入口". today 仍是活页面:
+  //   经 首页"风控中心"链接 (?tab=risk_center) / AlertsBell 告警点击 / deep link 进入.
+  //   承载 市场研判·风控中心·今日交易计划 等 (data.earnings_surprise / dragon_head / overnight_foreign).
   const isAdmin = user?.role === 'admin';
   const mainMenuItems: MenuProps['items'] = useMemo(() => {
     const items: MenuProps['items'] = [
@@ -277,8 +275,12 @@ const AppContent: React.FC = () => {
       menuLink('/workspace/settings', <Cog6ToothIcon className="hero-icon" />, '设置'),
     ];
     if (isAdmin) {
-      items.push(menuLink('/workspace/data', <CircleStackIcon className="hero-icon" />, '数据中心'));
-      items.push(menuLink('/workspace/system', <InformationCircleIcon className="hero-icon" />, '系统介绍'));
+      items.push(
+        menuLink('/workspace/data', <CircleStackIcon className="hero-icon" />, '数据中心')
+      );
+      items.push(
+        menuLink('/workspace/system', <InformationCircleIcon className="hero-icon" />, '系统介绍')
+      );
       items.push(menuLink('/workspace/docs', <DocumentTextIcon className="hero-icon" />, '文档'));
     }
     return items;
@@ -433,204 +435,210 @@ const AppContent: React.FC = () => {
           <Suspense fallback={routeFallback}>
             <RouteTransition>
               <Routes location={location}>
-              {/* Phase 6 (2026-06-27) — 登录默认进 /home (新手主页),
+                {/* Phase 6 (2026-06-27) — 登录默认进 /home (新手主页),
                   admin 走右上 ⚙ 进 /admin/today (实为 /workspace/today). */}
-              <Route path="/" element={<Navigate to="/home" replace />} />
+                <Route path="/" element={<Navigate to="/home" replace />} />
 
-              {/* Phase 7.5 (2026-06-28) — /home 加入标准 Layout, 与其他 workspace 视觉一致. */}
-              <Route
-                path="/home"
-                element={
-                  <ProtectedRoute>
-                    <HomeWorkspace />
-                  </ProtectedRoute>
-                }
-              />
+                {/* Phase 7.5 (2026-06-28) — /home 加入标准 Layout, 与其他 workspace 视觉一致. */}
+                <Route
+                  path="/home"
+                  element={
+                    <ProtectedRoute>
+                      <HomeWorkspace />
+                    </ProtectedRoute>
+                  }
+                />
 
-              {/* Unified workspaces (US-001) */}
-              <Route
-                path="/workspace/today"
-                element={
-                  <ProtectedRoute>
-                    <TodayWorkspace />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/workspace/factors"
-                element={
-                  <ProtectedRoute>
-                    <FactorWorkspace />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/workspace/lab"
-                element={
-                  <ProtectedRoute>
-                    <LabWorkspace />
-                  </ProtectedRoute>
-                }
-              />
-              {/* US-078: 策略详情页 — 嵌在 LabWorkspace 概念下（侧边栏仍高亮"策略实验室"） */}
-              <Route
-                path="/workspace/lab/strategies/:id"
-                element={
-                  <ProtectedRoute>
-                    <LabStrategyDetail />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/workspace/portfolio"
-                element={
-                  <ProtectedRoute>
-                    <PortfolioWorkspace />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/workspace/data"
-                element={
-                  <ProtectedRoute>
-                    <DataWorkspace />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/workspace/settings"
-                element={
-                  <ProtectedRoute>
-                    <SettingsWorkspace />
-                  </ProtectedRoute>
-                }
-              />
-              {/* Batch AL (2026-06-21) — SystemWorkspace 入口 */}
-              <Route
-                path="/workspace/system"
-                element={
-                  <ProtectedRoute>
-                    <SystemWorkspace />
-                  </ProtectedRoute>
-                }
-              />
-              {/* 文档浏览 (admin) — 运行时读 docs/ 目录, 支持热更新 */}
-              <Route
-                path="/workspace/docs"
-                element={
-                  <ProtectedRoute>
-                    <DocsWorkspace />
-                  </ProtectedRoute>
-                }
-              />
+                {/* Unified workspaces (US-001) */}
+                <Route
+                  path="/workspace/today"
+                  element={
+                    <ProtectedRoute>
+                      <TodayWorkspace />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/workspace/factors"
+                  element={
+                    <ProtectedRoute>
+                      <FactorWorkspace />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/workspace/lab"
+                  element={
+                    <ProtectedRoute>
+                      <LabWorkspace />
+                    </ProtectedRoute>
+                  }
+                />
+                {/* US-078: 策略详情页 — 嵌在 LabWorkspace 概念下（侧边栏仍高亮"策略实验室"） */}
+                <Route
+                  path="/workspace/lab/strategies/:id"
+                  element={
+                    <ProtectedRoute>
+                      <LabStrategyDetail />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/workspace/portfolio"
+                  element={
+                    <ProtectedRoute>
+                      <PortfolioWorkspace />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/workspace/data"
+                  element={
+                    <ProtectedRoute>
+                      <DataWorkspace />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/workspace/settings"
+                  element={
+                    <ProtectedRoute>
+                      <SettingsWorkspace />
+                    </ProtectedRoute>
+                  }
+                />
+                {/* Batch AL (2026-06-21) — SystemWorkspace 入口 */}
+                <Route
+                  path="/workspace/system"
+                  element={
+                    <ProtectedRoute>
+                      <SystemWorkspace />
+                    </ProtectedRoute>
+                  }
+                />
+                {/* 文档浏览 (admin) — 运行时读 docs/ 目录, 支持热更新 */}
+                <Route
+                  path="/workspace/docs"
+                  element={
+                    <ProtectedRoute>
+                      <DocsWorkspace />
+                    </ProtectedRoute>
+                  }
+                />
 
-              {/* 个股详情页 — 含 K 线、公司信息、历史明细 + AI 解读 */}
-              <Route
-                path="/stock/:symbol"
-                element={
-                  <ProtectedRoute>
-                    <StockDetail />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/stocks/:symbol"
-                element={
-                  <ProtectedRoute>
-                    <StockDetail />
-                  </ProtectedRoute>
-                }
-              />
+                {/* 个股详情页 — 含 K 线、公司信息、历史明细 + AI 解读 */}
+                <Route
+                  path="/stock/:symbol"
+                  element={
+                    <ProtectedRoute>
+                      <StockDetail />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/stocks/:symbol"
+                  element={
+                    <ProtectedRoute>
+                      <StockDetail />
+                    </ProtectedRoute>
+                  }
+                />
 
-              {/* Legacy redirects — duplicate pages now bounce to a workspace home.
+                {/* Legacy redirects — duplicate pages now bounce to a workspace home.
                   Listed in PRD US-001 acceptance criteria. */}
-              <Route path="/today" element={<Navigate to="/workspace/today" replace />} />
-              <Route path="/dashboard" element={<Navigate to="/workspace/today" replace />} />
-              <Route path="/risk-alerts" element={<Navigate to="/workspace/today" replace />} />
-              <Route
-                path="/strategy-experiment-lab"
-                element={<Navigate to="/workspace/lab" replace />}
-              />
-              <Route
-                path="/autonomous-optimization-lab"
-                element={<Navigate to="/workspace/lab" replace />}
-              />
-              <Route
-                path="/quant-backtest-lab"
-                element={<Navigate to="/workspace/lab" replace />}
-              />
-              <Route
-                path="/quant-performance-dashboard"
-                element={<Navigate to="/workspace/lab" replace />}
-              />
-              <Route path="/quant-signal-pool" element={<Navigate to="/workspace/lab" replace />} />
-              <Route
-                path="/quant-strategy-library"
-                element={<Navigate to="/workspace/lab" replace />}
-              />
-              <Route path="/strategy" element={<Navigate to="/workspace/lab" replace />} />
-              <Route path="/recommendations" element={<Navigate to="/workspace/today" replace />} />
-              <Route
-                path="/recommendation-performance"
-                element={<Navigate to="/workspace/portfolio" replace />}
-              />
-              <Route
-                path="/recommendation-trade-outcomes"
-                element={<Navigate to="/workspace/portfolio" replace />}
-              />
-              <Route
-                path="/recommendation-loop-policies"
-                element={<Navigate to="/workspace/portfolio" replace />}
-              />
-              <Route
-                path="/agent-tail-alpha"
-                element={<Navigate to="/workspace/portfolio" replace />}
-              />
-              <Route
-                path="/autonomous-recommendation-tracker"
-                element={<Navigate to="/workspace/portfolio" replace />}
-              />
-              <Route
-                path="/autonomous-trading/overview"
-                element={<Navigate to="/workspace/portfolio" replace />}
-              />
-              <Route
-                path="/autonomous-trading/recommendations"
-                element={<Navigate to="/workspace/portfolio" replace />}
-              />
-              <Route
-                path="/autonomous-trading/optimization"
-                element={<Navigate to="/workspace/lab" replace />}
-              />
-              <Route
-                path="/paper-trading"
-                element={<Navigate to="/workspace/portfolio" replace />}
-              />
-              <Route path="/portfolio" element={<Navigate to="/workspace/portfolio" replace />} />
-              <Route path="/journals" element={<Navigate to="/workspace/portfolio" replace />} />
-              <Route path="/screener" element={<Navigate to="/workspace/factors" replace />} />
-              <Route path="/market" element={<Navigate to="/workspace/data" replace />} />
-              <Route path="/data-update" element={<Navigate to="/workspace/data" replace />} />
-              <Route path="/tasks" element={<Navigate to="/workspace/data" replace />} />
-              <Route path="/logs" element={<Navigate to="/workspace/data" replace />} />
-              <Route path="/profile" element={<Navigate to="/workspace/settings" replace />} />
-              <Route path="/users" element={<Navigate to="/workspace/settings" replace />} />
+                <Route path="/today" element={<Navigate to="/workspace/today" replace />} />
+                <Route path="/dashboard" element={<Navigate to="/workspace/today" replace />} />
+                <Route path="/risk-alerts" element={<Navigate to="/workspace/today" replace />} />
+                <Route
+                  path="/strategy-experiment-lab"
+                  element={<Navigate to="/workspace/lab" replace />}
+                />
+                <Route
+                  path="/autonomous-optimization-lab"
+                  element={<Navigate to="/workspace/lab" replace />}
+                />
+                <Route
+                  path="/quant-backtest-lab"
+                  element={<Navigate to="/workspace/lab" replace />}
+                />
+                <Route
+                  path="/quant-performance-dashboard"
+                  element={<Navigate to="/workspace/lab" replace />}
+                />
+                <Route
+                  path="/quant-signal-pool"
+                  element={<Navigate to="/workspace/lab" replace />}
+                />
+                <Route
+                  path="/quant-strategy-library"
+                  element={<Navigate to="/workspace/lab" replace />}
+                />
+                <Route path="/strategy" element={<Navigate to="/workspace/lab" replace />} />
+                <Route
+                  path="/recommendations"
+                  element={<Navigate to="/workspace/today" replace />}
+                />
+                <Route
+                  path="/recommendation-performance"
+                  element={<Navigate to="/workspace/portfolio" replace />}
+                />
+                <Route
+                  path="/recommendation-trade-outcomes"
+                  element={<Navigate to="/workspace/portfolio" replace />}
+                />
+                <Route
+                  path="/recommendation-loop-policies"
+                  element={<Navigate to="/workspace/portfolio" replace />}
+                />
+                <Route
+                  path="/agent-tail-alpha"
+                  element={<Navigate to="/workspace/portfolio" replace />}
+                />
+                <Route
+                  path="/autonomous-recommendation-tracker"
+                  element={<Navigate to="/workspace/portfolio" replace />}
+                />
+                <Route
+                  path="/autonomous-trading/overview"
+                  element={<Navigate to="/workspace/portfolio" replace />}
+                />
+                <Route
+                  path="/autonomous-trading/recommendations"
+                  element={<Navigate to="/workspace/portfolio" replace />}
+                />
+                <Route
+                  path="/autonomous-trading/optimization"
+                  element={<Navigate to="/workspace/lab" replace />}
+                />
+                <Route
+                  path="/paper-trading"
+                  element={<Navigate to="/workspace/portfolio" replace />}
+                />
+                <Route path="/portfolio" element={<Navigate to="/workspace/portfolio" replace />} />
+                <Route path="/journals" element={<Navigate to="/workspace/portfolio" replace />} />
+                <Route path="/screener" element={<Navigate to="/workspace/factors" replace />} />
+                <Route path="/market" element={<Navigate to="/workspace/data" replace />} />
+                <Route path="/data-update" element={<Navigate to="/workspace/data" replace />} />
+                <Route path="/tasks" element={<Navigate to="/workspace/data" replace />} />
+                <Route path="/logs" element={<Navigate to="/workspace/data" replace />} />
+                <Route path="/profile" element={<Navigate to="/workspace/settings" replace />} />
+                <Route path="/users" element={<Navigate to="/workspace/settings" replace />} />
 
-              {/* Pages still reachable for deep links — kept off the menu.
+                {/* Pages still reachable for deep links — kept off the menu.
                   Phase 4 (2026-06-27): 18 个 /legacy/* 路由全部移除 (对应 page 已删).
                   仅保留 /legacy/backtest/:id (LabStrategyDetail 仍 Link 过来) +
                   /signals/:id/trace + /recommendation-trade-outcomes/:id. */}
-              <Route
-                path="/legacy/backtest/:id"
-                element={
-                  <ProtectedRoute>
-                    <BacktestDetailRoute />
-                  </ProtectedRoute>
-                }
-              />
+                <Route
+                  path="/legacy/backtest/:id"
+                  element={
+                    <ProtectedRoute>
+                      <BacktestDetailRoute />
+                    </ProtectedRoute>
+                  }
+                />
 
-              {/* Anything else: 回 /home (新手主页) — Phase 6 之前是 /workspace/today */}
-              <Route path="*" element={<Navigate to="/home" replace />} />
+                {/* Anything else: 回 /home (新手主页) — Phase 6 之前是 /workspace/today */}
+                <Route path="*" element={<Navigate to="/home" replace />} />
               </Routes>
             </RouteTransition>
           </Suspense>
