@@ -1466,19 +1466,14 @@ const HomeWorkspace: React.FC = () => {
       <Alert
         type="warning"
         showIcon
-        banner
+        closable
         data-testid="home-emergency-banner"
-        style={{ marginBottom: 16 }}
-        message={
-          <span style={{ fontSize: 14, fontWeight: 600 }}>
-            <WarningOutlined style={{ marginRight: 6 }} />
-            推荐系统处于评估期 — 仅供参考, 不要直接跟单
-          </span>
-        }
+        style={{ marginBottom: 12, borderRadius: 8 }}
+        message="推荐系统处于评估期 — 仅供参考，不要直接跟单"
         description={
-          <span style={{ fontSize: 12, color: '#7c3aed' }}>
-            30 天回测发现当前评分模型存在反向偏差, 自动跟单已暂停. 研究升级中, 预计 1-2 周后恢复.
-            详见 <a onClick={() => navigate('/workspace/today?tab=risk_center')}>风控中心</a>.
+          <span style={{ fontSize: 12 }}>
+            当前评分模型存在反向偏差，自动跟单已暂停。
+            <a style={{ marginLeft: 4 }} onClick={() => navigate('/workspace/today?tab=risk_center')}>查看风控中心 →</a>
           </span>
         }
       />

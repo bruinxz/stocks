@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   Checkbox,
+  Descriptions,
   Col,
   Divider,
   Empty,
@@ -1635,15 +1636,31 @@ const SettingsWorkspace: React.FC = () => {
     );
   };
 
+  const currentUser = useSelector((s: RootState) => s.auth.user);
+
+  const renderProfileView = () => (
+    <Card>
+      <Descriptions column={1} size="small" labelStyle={{ width: 100, color: 'var(--ink-3)' }}>
+        <Descriptions.Item label="用户名">{currentUser?.username ?? '—'}</Descriptions.Item>
+        <Descriptions.Item label="邮箱">{currentUser?.email ?? '—'}</Descriptions.Item>
+        <Descriptions.Item label="角色">{currentUser?.role ?? '—'}</Descriptions.Item>
+      </Descriptions>
+      <Alert
+        style={{ marginTop: 16 }}
+        type="info"
+        showIcon
+        message="密码修改、头像上传等编辑功能正在开发中，敬请期待。"
+      />
+    </Card>
+  );
+
   const renderPlaceholder = (target: { label: string; desc: string }) => (
     <Card>
-      <Empty
-        description={
-          <Space direction="vertical" align="center">
-            <span style={{ fontSize: 14, color: '#666' }}>{target.label} (暂未实现)</span>
-            <span style={{ fontSize: 12, color: '#999' }}>{target.desc}</span>
-          </Space>
-        }
+      <Alert
+        type="info"
+        showIcon
+        message={target.label}
+        description={target.desc}
       />
     </Card>
   );
@@ -1655,7 +1672,6 @@ const SettingsWorkspace: React.FC = () => {
     body = (
       <>
         <div className="ws-tab-header">
-          <div className="ws-tab-eyebrow">SETTINGS · 账号设置</div>
           <h1 className="ws-tab-title">个人</h1>
           <p className="ws-tab-subtitle">
             修改个人资料 / 密码 / 头像, 或管理你绑定的 AI 模型 API 密钥。
@@ -1671,13 +1687,10 @@ const SettingsWorkspace: React.FC = () => {
           onChange={v => setProfileSubView(v as typeof profileSubView)}
         />
         {profileSubView === 'profile'
-          ? renderPlaceholder({
-              label: '个人资料',
-              desc: '修改密码 / 头像 / 邮箱 / 风险偏好 — 字段编辑能力将在后续 sprint 中接入',
-            })
+          ? renderProfileView()
           : renderPlaceholder({
               label: 'API 密钥',
-              desc: '管理 OpenAI / DeepSeek / Anthropic API key — 此 tab 待接入',
+              desc: '配置 OpenAI / DeepSeek / Anthropic 等 API 密钥，用于 AI 分析功能。',
             })}
       </>
     );
@@ -1686,7 +1699,6 @@ const SettingsWorkspace: React.FC = () => {
     body = (
       <>
         <div className="ws-tab-header">
-          <div className="ws-tab-eyebrow">SETTINGS · 账号设置</div>
           <h1 className="ws-tab-title">通知</h1>
           <p className="ws-tab-subtitle">
             配置你想在什么时机、用什么渠道收到提醒 — 飞书机器人 / 邮件 / 微信公众号 / 阿里云短信。
@@ -1709,7 +1721,6 @@ const SettingsWorkspace: React.FC = () => {
     body = (
       <>
         <div className="ws-tab-header">
-          <div className="ws-tab-eyebrow">SETTINGS · 账号设置</div>
           <h1 className="ws-tab-title">风控</h1>
           <p className="ws-tab-subtitle">
             风控参数中心 — 止损 / 单股 / 行业 / 黑天鹅熔断 + 策略 kill-switch + 待办建议。
@@ -1788,7 +1799,6 @@ const SettingsWorkspace: React.FC = () => {
     body = (
       <>
         <div className="ws-tab-header">
-          <div className="ws-tab-eyebrow">SETTINGS · 账号设置</div>
           <h1 className="ws-tab-title">高级</h1>
           <p className="ws-tab-subtitle">
             策略数学引擎参数 — 仓位策略 / 组合构建 / 分析引擎 (DeepSeek vs Anthropic 等)。
@@ -1818,7 +1828,6 @@ const SettingsWorkspace: React.FC = () => {
     body = (
       <>
         <div className="ws-tab-header">
-          <div className="ws-tab-eyebrow">SETTINGS · 账号设置</div>
           <h1 className="ws-tab-title">用户管理</h1>
           <p className="ws-tab-subtitle">管理员添加 / 禁用其它用户账号 — 此 tab 待接入。</p>
         </div>

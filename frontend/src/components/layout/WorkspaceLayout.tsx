@@ -67,10 +67,11 @@ export interface WorkspaceLayoutProps {
  *
  * Mobile (< 768px, US-095): drawer-triggered tabs, KPI bar wraps.
  *
- * Phase 5 visual notes (docs/audit/design_system_2026_06_27.md):
- *   - KPI bar height: 固定 96px → auto (min 56px), 让标题+KPI 单行紧凑.
- *   - Tabs rail width: 220px → 180px, brand-soft selected pill, 删除 box-shadow.
- *   - 删除外层 Card 包裹的"假浮岛"感, 改为底部 1px border 分隔.
+ * Phase 24 (2026-07-04) — 去重复标题:
+ *   页面同时传 hero (WorkspaceHero 已展示大标题/副标题) 与 title/subtitle 时,
+ *   KPI bar 不再重复渲染 title/subtitle —— 仅当 hero 缺席时才在 KPI bar 顶部
+ *   显示标题块. 另外, 若 KPI bar 内既无标题块、也无 kpiSlot / headerActions,
+ *   则整条 KPI bar 不渲染, 避免留下一条空 Card.
  */
 const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
   title,
@@ -107,31 +108,41 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
     setMobileDrawerOpen(false);
   };
 
+  // Phase 24 去重复: hero 已经承载了标题/副标题, KPI bar 里就不再重复。
+  const showKpiTitle = !hero;
+  const hasKpiBar = showKpiTitle || Boolean(kpiSlot) || Boolean(headerActions);
+
   return (
     <div className="workspace-shell">
       {hero ? <div className="workspace-hero-slot">{hero}</div> : null}
-      <Card
-        className="workspace-kpi-bar"
-        bodyStyle={{ padding: '12px 20px' }}
-        style={{ marginBottom: 16 }}
-      >
-        <div className="workspace-kpi-bar__inner">
-          <div className="workspace-kpi-bar__title">
-            <Title level={4} style={{ margin: 0 }}>
-              {title}
-            </Title>
-            {subtitle ? (
-              <Paragraph type="secondary" style={{ margin: 0, fontSize: 12 }}>
-                {subtitle}
-              </Paragraph>
+      {hasKpiBar ? (
+        <Card
+          className={['workspace-kpi-bar', showKpiTitle ? '' : 'workspace-kpi-bar--no-title']
+            .filter(Boolean)
+            .join(' ')}
+          bodyStyle={{ padding: '12px 20px' }}
+          style={{ marginBottom: 16 }}
+        >
+          <div className="workspace-kpi-bar__inner">
+            {showKpiTitle ? (
+              <div className="workspace-kpi-bar__title">
+                <Title level={4} style={{ margin: 0 }}>
+                  {title}
+                </Title>
+                {subtitle ? (
+                  <Paragraph type="secondary" style={{ margin: 0, fontSize: 12 }}>
+                    {subtitle}
+                  </Paragraph>
+                ) : null}
+              </div>
             ) : null}
+            <div className="workspace-kpi-bar__metrics">{kpiSlot}</div>
+            <div className="workspace-kpi-bar__actions">
+              {headerActions ? <Space size={8}>{headerActions}</Space> : null}
+            </div>
           </div>
-          <div className="workspace-kpi-bar__metrics">{kpiSlot}</div>
-          <div className="workspace-kpi-bar__actions">
-            {headerActions ? <Space size={8}>{headerActions}</Space> : null}
-          </div>
-        </div>
-      </Card>
+        </Card>
+      ) : null}
 
       {hasTabs && isMobile ? (
         <div className="workspace-mobile-tab-bar">

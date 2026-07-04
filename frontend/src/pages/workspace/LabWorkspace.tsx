@@ -462,7 +462,6 @@ const LabWorkspace: React.FC = () => {
     body = (
       <>
         <div className="ws-tab-header">
-          <div className="ws-tab-eyebrow">LAB · 策略实验室</div>
           <h1 className="ws-tab-title">我的策略</h1>
           <p className="ws-tab-subtitle">
             查看已注册的所有量化策略, 克隆参数或跳转策略详情, 切到 “策略排行” 看历史回测综合得分。
@@ -503,7 +502,6 @@ const LabWorkspace: React.FC = () => {
     body = (
       <>
         <div className="ws-tab-header">
-          <div className="ws-tab-eyebrow">LAB · 策略实验室</div>
           <h1 className="ws-tab-title">新建回测</h1>
           <p className="ws-tab-subtitle">
             选择策略 + 时间窗 + 资金参数, 后端 worker 跑完即可在 “我的策略” 或 “进阶 · 回测对比”
@@ -526,7 +524,6 @@ const LabWorkspace: React.FC = () => {
     body = (
       <>
         <div className="ws-tab-header">
-          <div className="ws-tab-eyebrow">LAB · 策略实验室</div>
           <h1 className="ws-tab-title">评估报告</h1>
           <p className="ws-tab-subtitle">
             综合评估当前策略的可信度和样本外稳定性 · 包含实验账本 / 数据审计 / 成交约束 /
@@ -656,7 +653,6 @@ const LabWorkspace: React.FC = () => {
     body = (
       <>
         <div className="ws-tab-header">
-          <div className="ws-tab-eyebrow">LAB · 策略实验室</div>
           <h1 className="ws-tab-title">进阶</h1>
           <p className="ws-tab-subtitle">
             研究员级别工具 — 横向对比 N 个回测、检查工作流装配是否齐备、调整高级量化引擎参数。

@@ -19419,6 +19419,8 @@ a {
 /* 搜索发起区 */
 .ai-analysis-launch {
   max-width: 640px;
+  margin: 0 auto;
+  padding-top: 8px;
 }
 .ai-analysis-launch__label {
   display: flex;
