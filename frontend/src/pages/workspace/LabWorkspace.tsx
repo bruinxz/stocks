@@ -157,6 +157,15 @@ const LabWorkspace: React.FC = () => {
     | 'overfit'
     | 'quarterly'
   >('overview');
+  // Tab 收敛 (2026-07-04): 评估报告 8 项扁平 Segmented → 两级 (3 组 → 子项).
+  // 组1 核心评估: overview / ledger; 组2 稳健性: walkforward / overfit / quarterly;
+  // 组3 审计: data-audit / execution / optimization.
+  const evalGroupOf = (v: typeof evalSubView): 'core' | 'robust' | 'audit' =>
+    v === 'overview' || v === 'ledger'
+      ? 'core'
+      : v === 'walkforward' || v === 'overfit' || v === 'quarterly'
+        ? 'robust'
+        : 'audit';
   const [advancedSubView, setAdvancedSubView] = useState<'compare' | 'workflow'>(
     'compare'
   );
@@ -531,17 +540,42 @@ const LabWorkspace: React.FC = () => {
           </p>
         </div>
         <Segmented
-          className="ws-tab-segmented"
+          className="ws-tab-segmented ws-tab-segmented--group"
           options={[
-            { label: '综合评估', value: 'overview' },
-            { label: '实验账本', value: 'ledger' },
-            { label: '数据审计', value: 'data-audit' },
-            { label: '成交约束', value: 'execution' },
-            { label: 'Walk-Forward 走查', value: 'walkforward' },
-            { label: '参数寻优历史', value: 'optimization' },
-            { label: '过拟合诊断', value: 'overfit' },
-            { label: '季度重训', value: 'quarterly' },
+            { label: '核心评估', value: 'core' },
+            { label: '稳健性', value: 'robust' },
+            { label: '审计', value: 'audit' },
           ]}
+          value={evalGroupOf(evalSubView)}
+          onChange={g => {
+            const first = {
+              core: 'overview',
+              robust: 'walkforward',
+              audit: 'data-audit',
+            }[g as 'core' | 'robust' | 'audit'] as typeof evalSubView;
+            setEvalSubView(first);
+          }}
+        />
+        <Segmented
+          className="ws-tab-segmented ws-tab-segmented--sub"
+          options={
+            evalGroupOf(evalSubView) === 'core'
+              ? [
+                  { label: '综合评估', value: 'overview' },
+                  { label: '实验账本', value: 'ledger' },
+                ]
+              : evalGroupOf(evalSubView) === 'robust'
+                ? [
+                    { label: 'Walk-Forward 走查', value: 'walkforward' },
+                    { label: '过拟合诊断', value: 'overfit' },
+                    { label: '季度重训', value: 'quarterly' },
+                  ]
+                : [
+                    { label: '数据审计', value: 'data-audit' },
+                    { label: '成交约束', value: 'execution' },
+                    { label: '参数寻优历史', value: 'optimization' },
+                  ]
+          }
           value={evalSubView}
           onChange={v => setEvalSubView(v as typeof evalSubView)}
         />

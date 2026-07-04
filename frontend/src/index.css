@@ -18541,3 +18541,191 @@ a {
 /* === End Phase 16 === */
 
 
+
+
+/* ======================================================================
+ * === Phase 17 — 视觉升级「更鲜明」(direction B) ===
+ * 目标: 更强的层级/对比, 卡片质感更实, 呼吸留白更足, 两级 Segmented
+ * (ws-tab-segmented--group / --sub) 层级清晰. 追加在文件末尾, 赢下 cascade.
+ * 只增强观感, 不改信息架构; A股红涨绿跌不变.
+ * ==================================================================== */
+
+/* ---------- 17.1 卡片质感: 更大圆角 + 更实阴影 + 更足留白 ---------- */
+.ant-card {
+  border-radius: 14px !important;
+  border: 1px solid rgba(15, 23, 42, 0.07) !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04),
+    0 6px 16px -8px rgba(15, 23, 42, 0.08) !important;
+  background: var(--bg-elevated) !important;
+  transition: box-shadow var(--t-base), border-color var(--t-base),
+    transform var(--t-base) !important;
+}
+.ant-card:hover {
+  border-color: rgba(99, 91, 255, 0.22) !important;
+  box-shadow: 0 2px 4px rgba(15, 23, 42, 0.05),
+    0 16px 40px -12px rgba(15, 23, 42, 0.16) !important;
+  transform: translateY(-2px) !important;
+}
+.ant-card > .ant-card-head {
+  border-bottom: 1px solid rgba(15, 23, 42, 0.05) !important;
+  min-height: 54px !important;
+  padding: 0 24px !important;
+}
+.ant-card > .ant-card-head .ant-card-head-title {
+  font-size: 15px !important;
+  font-weight: 650 !important;
+  letter-spacing: var(--tracking-tight) !important;
+  color: var(--ink-1) !important;
+}
+.ant-card > .ant-card-body {
+  padding: 24px 28px !important;
+}
+/* KPI bar 卡片不参与 hover 抬升 (它是容器不是内容卡) */
+.workspace-kpi-bar.ant-card:hover,
+.workspace-side-tabs.ant-card:hover {
+  transform: none !important;
+  border-color: rgba(15, 23, 42, 0.07) !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+}
+
+/* ---------- 17.2 KPI bar 节奏: 更大标题 + 更清分隔 ---------- */
+.workspace-kpi-bar {
+  border-radius: 16px !important;
+  background: linear-gradient(180deg, #ffffff 0%, #fcfcfe 100%) !important;
+  border: 1px solid rgba(15, 23, 42, 0.06) !important;
+}
+.workspace-kpi-bar__inner {
+  padding: 22px 28px !important;
+}
+.workspace-kpi-bar__title h4.ant-typography,
+.workspace-kpi-bar__title .ant-typography {
+  font-size: 30px !important;
+  font-weight: 720 !important;
+  letter-spacing: var(--tracking-display) !important;
+  color: var(--ink-1) !important;
+  line-height: var(--leading-tight) !important;
+}
+.workspace-kpi-bar__title .ant-typography + .ant-typography {
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  color: var(--ink-3) !important;
+  letter-spacing: 0 !important;
+}
+.workspace-kpi-bar .ant-statistic-title {
+  font-size: 12px !important;
+  color: var(--ink-3) !important;
+  letter-spacing: var(--tracking-wide) !important;
+  text-transform: uppercase !important;
+  margin-bottom: 4px !important;
+}
+.workspace-kpi-bar .ant-statistic-content {
+  font-size: 24px !important;
+  font-weight: 680 !important;
+  letter-spacing: var(--tracking-tight) !important;
+  font-variant-numeric: tabular-nums !important;
+}
+
+/* ---------- 17.3 侧栏一级 Tab: 更明确的 selected 态 ---------- */
+.workspace-side-tabs .ant-menu-item {
+  border-radius: 10px !important;
+  font-weight: 550 !important;
+  transition: background var(--t-fast), color var(--t-fast) !important;
+}
+.workspace-side-tabs .ant-menu-item-selected {
+  background: var(--brand-soft) !important;
+  color: var(--brand-text) !important;
+  font-weight: 650 !important;
+}
+.workspace-side-tabs .ant-menu-item-selected::after {
+  border-right-color: var(--brand) !important;
+}
+
+/* ---------- 17.4 两级 Segmented ---------- *
+ * group = 主分组切换 (强调, 更大 pill, 品牌选中态)
+ * sub   = 组内子项 (轻量, 缩进, 中性选中态)
+ * 二者叠放时形成清晰的「主→次」缩进层级. */
+
+/* group: 主分组, 强调 */
+.ws-tab-segmented--group.ant-segmented {
+  background: var(--bg-sunken) !important;
+  padding: 5px !important;
+  border-radius: 12px !important;
+  margin-bottom: 14px !important;
+}
+.ws-tab-segmented--group .ant-segmented-item {
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  padding: 6px 20px !important;
+  color: var(--ink-3) !important;
+}
+.ws-tab-segmented--group .ant-segmented-item:hover {
+  color: var(--ink-1) !important;
+}
+.ws-tab-segmented--group .ant-segmented-item-selected {
+  background: var(--brand) !important;
+  color: #ffffff !important;
+  font-weight: 680 !important;
+  box-shadow: 0 2px 8px -1px rgba(99, 91, 255, 0.45) !important;
+}
+.ws-tab-segmented--group .ant-segmented-item-selected .ant-segmented-item-label {
+  color: #ffffff !important;
+}
+.ws-tab-segmented--group .ant-segmented-thumb {
+  background: var(--brand) !important;
+  box-shadow: 0 2px 8px -1px rgba(99, 91, 255, 0.45) !important;
+}
+
+/* sub: 组内子项, 轻量 + 缩进 */
+.ws-tab-segmented--sub.ant-segmented {
+  background: transparent !important;
+  padding: 0 !important;
+  margin: 0 0 24px 2px !important;
+  border-radius: 0 !important;
+  gap: 4px !important;
+  display: inline-flex !important;
+}
+.ws-tab-segmented--sub .ant-segmented-item {
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  padding: 4px 14px !important;
+  border-radius: 8px !important;
+  color: var(--ink-3) !important;
+  background: transparent !important;
+}
+.ws-tab-segmented--sub .ant-segmented-item:hover {
+  color: var(--ink-1) !important;
+  background: var(--bg-hover) !important;
+}
+.ws-tab-segmented--sub .ant-segmented-item-selected {
+  background: var(--brand-soft) !important;
+  color: var(--brand-text) !important;
+  font-weight: 640 !important;
+  box-shadow: none !important;
+}
+.ws-tab-segmented--sub .ant-segmented-item-selected .ant-segmented-item-label {
+  color: var(--brand-text) !important;
+}
+.ws-tab-segmented--sub .ant-segmented-thumb {
+  background: var(--brand-soft) !important;
+  box-shadow: none !important;
+}
+
+/* ---------- 17.5 单级 ws-tab-segmented 与 group 观感对齐(略强化) ---------- */
+.ws-tab-segmented:not(.ws-tab-segmented--group):not(.ws-tab-segmented--sub)
+  .ant-segmented-item-selected {
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.05) !important;
+}
+
+/* ---------- 17.6 主页风险提醒区块呼吸 ---------- */
+.home-risk-alerts {
+  margin-bottom: var(--space-8) !important;
+}
+
+/* ---------- 17.7 减少动效对 reduced-motion 用户的抬升 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .ant-card:hover {
+    transform: none !important;
+  }
+}
+
+/* === End Phase 17 === */

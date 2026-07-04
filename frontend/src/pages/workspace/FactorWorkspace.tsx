@@ -13,6 +13,7 @@ import {
   Modal,
   Popconfirm,
   Row,
+  Segmented,
   Slider,
   Space,
   Spin,
@@ -190,17 +191,20 @@ function formatSavedAt(raw: string | null | undefined): string {
 }
 
 const FactorWorkspace: React.FC = () => {
+  // Tab 收敛 (2026-07-04): 一级 tab 7 → 3, 把 行业决策/宏观环境/ETF资金流/政策要闻
+  // 4 个合进 'insight' (决策洞察) 下的二级 Segmented. 功能不删, 只重新归组.
   const tabs: WorkspaceTab[] = [
     { key: 'overview', label: '因子总览', icon: <FundOutlined /> },
-    { key: 'weights', label: '权重调参', icon: <SlidersOutlined /> },
     { key: 'picks', label: 'ETF 调仓清单', icon: <OrderedListOutlined /> },
-    { key: 'board', label: '行业决策', icon: <ThunderboltOutlined /> },
-    { key: 'macro', label: '宏观环境', icon: <FundOutlined /> },
-    // US-048 (FE-009) — 行业 ETF 申赎资金流 + 政策要闻 2 个新 tab
-    { key: 'etf', label: 'ETF 资金流', icon: <FundOutlined /> },
-    { key: 'policy', label: '政策要闻', icon: <FundOutlined /> },
+    { key: 'insight', label: '决策洞察', icon: <ThunderboltOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState('overview');
+  // 'overview' 二级子视图: 因子总览 / 权重调参
+  const [overviewSubView, setOverviewSubView] = useState<'overview' | 'weights'>('overview');
+  // 'insight' 二级子视图: 行业决策 / 宏观环境 / ETF资金流 / 政策要闻
+  const [insightSubView, setInsightSubView] = useState<
+    'board' | 'macro' | 'etf' | 'policy'
+  >('board');
 
   // --- overview + latest picks (loaded together on mount) ---
   const [overview, setOverview] = useState<FactorOverviewResponse | null>(null);
@@ -529,15 +533,24 @@ const FactorWorkspace: React.FC = () => {
     );
   } else if (activeKey === 'overview') {
     body = (
-      <FactorOverviewTab
-        factors={overview?.factors ?? []}
-        loading={loading}
-        onCardClick={handleCardClick}
-      />
-    );
-  } else if (activeKey === 'weights') {
-    body = (
-      <WeightsTab
+      <>
+        <Segmented
+          className="ws-tab-segmented"
+          options={[
+            { label: '因子总览', value: 'overview' },
+            { label: '权重调参', value: 'weights' },
+          ]}
+          value={overviewSubView}
+          onChange={v => setOverviewSubView(v as typeof overviewSubView)}
+        />
+        {overviewSubView === 'overview' ? (
+          <FactorOverviewTab
+            factors={overview?.factors ?? []}
+            loading={loading}
+            onCardClick={handleCardClick}
+          />
+        ) : (
+          <WeightsTab
         factors={overview?.factors ?? []}
         weights={weights}
         weightSum={weightSum}
@@ -567,33 +580,40 @@ const FactorWorkspace: React.FC = () => {
           setLoadModalOpen(true);
         }}
       />
+        )}
+      </>
     );
-  } else if (activeKey === 'heatmap') {
+  } else if (activeKey === 'insight') {
+    // 决策洞察 — 行业决策 / 宏观环境 / ETF资金流 / 政策要闻 (二级 Segmented).
     body = (
-      <IndustryHeatmapTab
-        data={heatmap}
-        loading={heatmapLoading}
-        error={heatmapError}
-        onReload={loadHeatmap}
-      />
+      <>
+        <Segmented
+          className="ws-tab-segmented"
+          options={[
+            { label: '行业决策', value: 'board' },
+            { label: '宏观环境', value: 'macro' },
+            { label: 'ETF 资金流', value: 'etf' },
+            { label: '政策要闻', value: 'policy' },
+          ]}
+          value={insightSubView}
+          onChange={v => setInsightSubView(v as typeof insightSubView)}
+        />
+        {insightSubView === 'board' ? (
+          <IndustryBoardTab
+            data={board}
+            loading={boardLoading}
+            error={boardError}
+            onReload={loadBoard}
+          />
+        ) : insightSubView === 'macro' ? (
+          <MacroEnvTab />
+        ) : insightSubView === 'etf' ? (
+          <ETFFlowTab />
+        ) : (
+          <PolicyNewsTab />
+        )}
+      </>
     );
-  } else if (activeKey === 'board') {
-    body = (
-      <IndustryBoardTab
-        data={board}
-        loading={boardLoading}
-        error={boardError}
-        onReload={loadBoard}
-      />
-    );
-  } else if (activeKey === 'macro') {
-    body = <MacroEnvTab />;
-  } else if (activeKey === 'etf') {
-    // US-048 (FE-009): 行业 ETF 申赎资金流 — 内部 lazy fetch, 第一次切到该 tab 才拉
-    body = <ETFFlowTab />;
-  } else if (activeKey === 'policy') {
-    // US-048 (FE-009): 政策要闻 — 从 market-news 流前端关键字过滤出政策类
-    body = <PolicyNewsTab />;
   } else {
     // 'picks'
     body = <PicksTab picks={latestPicks} loading={loading} />;
