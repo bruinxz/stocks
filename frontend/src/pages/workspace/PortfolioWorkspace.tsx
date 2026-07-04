@@ -309,42 +309,10 @@ const PortfolioWorkspace: React.FC = () => {
     };
   }, [portfolioData, snapshots]);
 
-  const kpiSlot = (
-    <Space size={32}>
-      <Statistic title="当前持仓" value={kpis.positionCount} suffix="只" />
-      <Statistic
-        title="浮动盈亏"
-        value={kpis.todayUnrealized}
-        precision={2}
-        prefix="¥"
-        valueStyle={{ color: pnlColor(kpis.todayUnrealized) }}
-      />
-      <Statistic
-        title="当月收益"
-        value={kpis.monthReturnPct}
-        precision={2}
-        suffix="%"
-        valueStyle={{ color: pnlColor(kpis.monthReturnPct) }}
-      />
-      <Statistic
-        title="最大回撤"
-        value={kpis.maxDrawdownPct}
-        precision={2}
-        suffix="%"
-        valueStyle={{ color: '#dc2626' }}
-      />
-      <IndustryConcentrationKpi summary={industryConc} />
-    </Space>
-  );
-
-  const headerActions = (
-    <Space wrap>
-      {/* 2026-06-17: 选盘下拉已上移到全局 App Header (GlobalPortfolioSelector). */}
-      <Button icon={<ReloadOutlined />} onClick={() => void refresh()} loading={loading}>
-        刷新
-      </Button>
-    </Space>
-  );
+  // Phase 25 (2026-07-04): 合并 hero + KPI bar 为单条 — 去掉 kpiSlot 和 headerActions,
+  // 把最大回撤、行业集中度并入 hero metrics, 刷新按钮移至 hero rightSlot 底部.
+  // WorkspaceLayout hasKpiBar = false → 第二条 card 消失, 用户原话 "两个部分合在一起".
+  const industryKpiVm = buildIndustryConcentrationKpiViewModel(industryConc);
 
   let body: React.ReactNode;
   if (loading && !portfolioData) {
@@ -429,46 +397,100 @@ const PortfolioWorkspace: React.FC = () => {
     body = null;
   }
 
-  // Phase 12 hero — 大字 + KPI, 与 KPI bar 互补 (hero=故事+大数 / kpi-bar=实时 4 项)
+  // Phase 25 hero — 单条 hero 承载所有 KPI + 刷新操作, 去掉第二条 KPI bar.
+  // rightSlot: metrics 网格 (5 列) + 底部刷新按钮, 替代原来的 kpiSlot card.
+  const heroMetrics = [
+    {
+      label: '总市值',
+      value: formatMoneyNumber(kpis.totalValue),
+      unit: '元',
+      emphasis: true,
+    },
+    {
+      label: '浮动盈亏',
+      value:
+        kpis.todayUnrealized === 0
+          ? formatMoneyNumber(0)
+          : (kpis.todayUnrealized > 0 ? '+' : '') + formatMoneyNumber(kpis.todayUnrealized),
+      unit: '元',
+      tone: kpis.todayUnrealized > 0 ? 'up' : kpis.todayUnrealized < 0 ? 'down' : undefined,
+    },
+    {
+      label: '当月收益',
+      value: `${kpis.monthReturnPct >= 0 ? '+' : ''}${kpis.monthReturnPct.toFixed(2)}`,
+      unit: '%',
+      tone: kpis.monthReturnPct > 0 ? 'up' : kpis.monthReturnPct < 0 ? 'down' : undefined,
+    },
+    {
+      label: '最大回撤',
+      value: kpis.maxDrawdownPct.toFixed(2),
+      unit: '%',
+      tone: 'down' as const,
+    },
+    {
+      label: '持仓',
+      value: kpis.positionCount,
+      unit: '只',
+    },
+    ...(!industryKpiVm.hidden
+      ? [
+          {
+            label: '行业集中度',
+            value: industryKpiVm.pctNum.toFixed(2),
+            unit: industryKpiVm.suffix.replace(/^[0-9.]+/, '').trim() || '%',
+            tone:
+              industryKpiVm.overAlert
+                ? ('down' as const)
+                : industryKpiVm.overWarn
+                  ? ('down' as const)
+                  : undefined,
+          },
+        ]
+      : []),
+  ];
+
   const hero = (
     <WorkspaceHero
       eyebrow="Portfolio · 实盘交易"
       title="持仓与复盘"
       subtitle="模拟盘持仓、资金曲线、交易明细与复盘日记 — 赚亏闭环 · 全链路真实数据"
       variant="violet"
-      metrics={[
-        {
-          label: '总市值',
-          // Phase 13 (2026-06-28): 用户原话 — 单位统一为 "元", 不再换算 "万元".
-          // 截图反馈 "万元" 灰字与紫色 hero 背景对比度极低看不清.
-          // 千分位 + 2 位小数 + tabular-nums (Inter font-feature) 已足够清晰展示
-          // 10 位以内的金额. ¥ 前缀单独控制颜色 (紫色) 在 hero 渐变文字之上.
-          value: formatMoneyNumber(kpis.totalValue),
-          unit: '元',
-          emphasis: true,
-        },
-        {
-          label: '浮动盈亏',
-          // 带符号: +X,XXX.XX / -X,XXX.XX (零无符号 0.00).
-          value:
-            kpis.todayUnrealized === 0
-              ? formatMoneyNumber(0)
-              : (kpis.todayUnrealized > 0 ? '+' : '') + formatMoneyNumber(kpis.todayUnrealized),
-          unit: '元',
-          tone: kpis.todayUnrealized > 0 ? 'up' : kpis.todayUnrealized < 0 ? 'down' : undefined,
-        },
-        {
-          label: '当月收益',
-          value: `${kpis.monthReturnPct >= 0 ? '+' : ''}${kpis.monthReturnPct.toFixed(2)}`,
-          unit: '%',
-          tone: kpis.monthReturnPct > 0 ? 'up' : kpis.monthReturnPct < 0 ? 'down' : undefined,
-        },
-        {
-          label: '持仓',
-          value: kpis.positionCount,
-          unit: '只',
-        },
-      ]}
+      rightSlot={
+        <div className="portfolio-hero-right">
+          <div className="portfolio-hero-metrics">
+            {heroMetrics.map((m, i) => {
+              const valClass = [
+                'ws-hero__metric-value',
+                m.emphasis ? 'ws-hero__metric-value--lg' : '',
+                m.tone === 'up' ? 'ws-hero__metric-value--up' : '',
+                m.tone === 'down' ? 'ws-hero__metric-value--down' : '',
+              ]
+                .filter(Boolean)
+                .join(' ');
+              return (
+                <div key={i} className="ws-hero__metric">
+                  <span className="ws-hero__metric-label">{m.label}</span>
+                  <span className={valClass}>
+                    {m.value}
+                    {m.unit ? <span className="ws-hero__metric-unit">{m.unit}</span> : null}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="portfolio-hero-actions">
+            <Button
+              size="small"
+              icon={<ReloadOutlined />}
+              onClick={() => void refresh()}
+              loading={loading}
+              style={{ opacity: 0.75 }}
+            >
+              刷新
+            </Button>
+          </div>
+        </div>
+      }
     />
   );
 
@@ -479,8 +501,6 @@ const PortfolioWorkspace: React.FC = () => {
       tabs={tabs}
       activeKey={activeKey}
       onTabChange={setActiveKey}
-      kpiSlot={kpiSlot}
-      headerActions={headerActions}
       hero={hero}
       themed
     >
@@ -2571,7 +2591,8 @@ const JournalTab: React.FC<JournalTabProps> = ({ list, onListRefresh }) => {
   };
 
   return (
-    <Row gutter={16}>
+    <div className="journal-tab-wrap">
+    <Row gutter={[20, 16]}>
       <Col xs={24} md={8} lg={6}>
         <Card
           size="small"
@@ -2838,6 +2859,7 @@ const JournalTab: React.FC<JournalTabProps> = ({ list, onListRefresh }) => {
         </Card>
       </Col>
     </Row>
+    </div>
   );
 };
 

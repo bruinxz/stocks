@@ -19467,3 +19467,75 @@ a {
 }
 
 /* === End Phase 23 === */
+
+/* === Phase 25: Portfolio hero single-bar (2026-07-04) ===
+ * portfolio-hero-right: metrics grid (wrap) + refresh action row below.
+ * Sits inside ws-hero__right, inheriting hero font/color tokens. */
+.portfolio-hero-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.portfolio-hero-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 28px;
+  justify-content: flex-end;
+}
+
+.portfolio-hero-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.portfolio-hero-actions .ant-btn {
+  border-color: rgba(255, 255, 255, 0.25) !important;
+  color: rgba(255, 255, 255, 0.8) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+.portfolio-hero-actions .ant-btn:hover {
+  border-color: rgba(255, 255, 255, 0.5) !important;
+  color: #fff !important;
+  background: rgba(255, 255, 255, 0.14) !important;
+}
+
+@media (max-width: 767px) {
+  .portfolio-hero-right {
+    align-items: flex-start;
+    width: 100%;
+  }
+  .portfolio-hero-metrics {
+    justify-content: flex-start;
+  }
+}
+
+/* === End Phase 25 === */
+
+/* === Phase 25b: JournalTab layout polish ===
+ * Wrap adds a subtle top border + label to visually separate
+ * the journal section from the positions table above it. */
+.journal-tab-wrap {
+  margin-top: 8px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-subtle);
+  position: relative;
+}
+
+.journal-tab-wrap::before {
+  content: "复盘日记";
+  position: absolute;
+  top: -10px;
+  left: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-base);
+  padding: 0 8px 0 0;
+}
+
+/* === End Phase 25b === */
