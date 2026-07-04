@@ -656,8 +656,8 @@ const App: React.FC = () => {
         // 全站圆角收 6/8 (不再 10/16); shadow 收 2 档极轻; Tabs/Menu/Table 全部走
         // Stripe 风 (灰底 thead UPPERCASE / underline tab / 浅紫 menu selected).
         token: {
-          colorPrimary: '#635bff',
-          colorInfo: '#635bff',
+          colorPrimary: '#1a2b4a',
+          colorInfo: '#1a2b4a',
           // A 股惯例 — 红涨绿跌. success 用于跌 (绿), error 用于涨 (红).
           colorSuccess: '#16a34a',
           colorWarning: '#f59e0b',
@@ -671,8 +671,8 @@ const App: React.FC = () => {
           colorText: '#0a0a0a',
           colorTextSecondary: '#374151',
           colorTextTertiary: '#6b7280',
-          colorLink: '#635bff',
-          colorLinkHover: '#7a73ff',
+          colorLink: '#9a6a2e',
+          colorLinkHover: '#b8823d',
           borderRadius: 6,
           borderRadiusLG: 8,
           borderRadiusSM: 4,

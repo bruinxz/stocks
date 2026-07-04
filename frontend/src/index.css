@@ -18729,3 +18729,463 @@ a {
 }
 
 /* === End Phase 17 === */
+
+
+/* ======================================================================
+ * === Phase 18 — 编辑感金融终端 (Editorial Finance Terminal) ===
+ * 彻底跳出 冷白 + SaaS 紫 的通用观感, 改走 金融社论 / broadsheet 方向:
+ *   底色  暖象牙纸 (取代冷白)
+ *   字体  Fraunces 衬线展示字 用于大数字/报头/板块标题 (取代到处 Inter)
+ *   主色  深墨蓝 (结构) + 黄铜金 (强调), A股红涨绿跌保留
+ *   卡片  暖色发丝描边面板, 克制圆角与阴影, 报表质感
+ * 追加在文件最末尾, 赢下全部 cascade. 同时重定义 :root 令牌, 让 14k 行
+ * 历史 CSS 里的 var(--brand)/var(--bg)/... 自动继承新外观.
+ * ==================================================================== */
+
+/* ---------- 18.0 重定义核心令牌 (自动向下继承) ---------- */
+:root {
+  /* 暖纸底 —— 象牙 / 米白, 略带黄调 */
+  --paper: #f3efe4;
+  --paper-elevated: #fbf8f1;
+  --paper-sunken: #e9e3d5;
+  --paper-hover: #efe9db;
+
+  /* 墨色 —— 暖黑, 非纯黑 */
+  --ink-warm-1: #1c1a15;
+  --ink-warm-2: #45403a;
+  --ink-warm-3: #75706a;
+  --ink-warm-4: #a39d94;
+
+  /* 结构主色 —— 深墨蓝 */
+  --navy: #1a2b4a;
+  --navy-2: #2c4368;
+  --navy-soft: #e8ecf3;
+
+  /* 强调 —— 黄铜金 */
+  --brass: #9a6a2e;
+  --brass-bright: #b8823d;
+  --brass-soft: #f2e9d8;
+
+  /* 发丝线 */
+  --hairline: rgba(28, 26, 21, 0.14);
+  --hairline-strong: rgba(28, 26, 21, 0.26);
+  --hairline-faint: rgba(28, 26, 21, 0.08);
+
+  /* 覆盖旧令牌 —— 让历史 CSS 自动换肤 */
+  --bg: var(--paper);
+  --bg-elevated: var(--paper-elevated);
+  --bg-hover: var(--paper-hover);
+  --bg-sunken: var(--paper-sunken);
+  --bg-canvas: var(--paper);
+  --bg-surface: var(--paper-elevated);
+  --bg-subtle: var(--paper-sunken);
+  --bg-body: var(--paper);
+  --bg-panel: var(--paper-elevated);
+  --bg-panel-solid: var(--paper-elevated);
+  --bg-panel-alt: var(--paper-elevated);
+  --bg-soft: var(--paper-sunken);
+
+  --ink-1: var(--ink-warm-1);
+  --ink-2: var(--ink-warm-2);
+  --ink-3: var(--ink-warm-3);
+  --ink-4: var(--ink-warm-4);
+
+  --brand: var(--navy);
+  --brand-hover: var(--navy-2);
+  --brand-soft: var(--navy-soft);
+  --brand-text: var(--navy);
+
+  --border-subtle: var(--hairline-faint);
+  --border-default: var(--hairline);
+  --border-strong-new: var(--hairline-strong);
+  --border: var(--hairline);
+  --border-strong: var(--hairline-strong);
+
+  /* 衬线展示字 —— 账户大数字 / 报头 / 板块标题 */
+  --font-display: 'Fraunces', 'Songti SC', 'STSong', 'PingFang SC', Georgia, serif;
+  --font-serif: 'Fraunces', 'Songti SC', 'STSong', Georgia, serif;
+}
+
+/* ---------- 18.1 全局底色: 暖纸 + 极细纸纹 ---------- */
+body,
+.home-workspace,
+.workspace-shell,
+.ant-layout,
+.ant-layout-content {
+  background-color: var(--paper) !important;
+  color: var(--ink-warm-1);
+}
+body {
+  background-image:
+    radial-gradient(rgba(28, 26, 21, 0.022) 1px, transparent 1px);
+  background-size: 4px 4px;
+}
+
+/* 顶栏: 墨蓝底 + 铜色底线 (报头感) */
+.ant-layout-header {
+  background: var(--navy) !important;
+  border-bottom: 2px solid var(--brass) !important;
+  box-shadow: 0 1px 0 rgba(28, 26, 21, 0.06) !important;
+}
+.ant-layout-header .ant-menu {
+  background: transparent !important;
+  border-bottom: none !important;
+}
+.ant-layout-header .ant-menu-item,
+.ant-layout-header .ant-menu-item a,
+.ant-layout-header .ant-menu-submenu-title {
+  color: rgba(255, 255, 255, 0.78) !important;
+  font-weight: 500 !important;
+}
+.ant-layout-header .ant-menu-item-selected,
+.ant-layout-header .ant-menu-item-selected a,
+.ant-layout-header .ant-menu-item:hover,
+.ant-layout-header .ant-menu-item:hover a {
+  color: #ffffff !important;
+}
+.ant-layout-header .ant-menu-item-selected::after,
+.ant-layout-header .ant-menu-item::after {
+  border-bottom-color: var(--brass-bright) !important;
+}
+
+/* ---------- 18.2 板块标题 / 标题字 → 衬线社论体 ---------- */
+.home-section-title,
+.workspace-kpi-bar__title h4.ant-typography,
+h1.ant-typography,
+h2.ant-typography,
+.ant-typography h1,
+.ant-typography h2 {
+  font-family: var(--font-display) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+  color: var(--ink-warm-1) !important;
+}
+/* 板块标题: 前置铜色短竖条 (报纸栏目标记) */
+.home-section-title {
+  font-size: 22px !important;
+  position: relative;
+  padding-left: 14px;
+}
+.home-section-title::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.18em;
+  bottom: 0.18em;
+  width: 4px;
+  border-radius: 1px;
+  background: var(--brass);
+}
+.home-section-subtitle {
+  color: var(--ink-warm-3) !important;
+  font-size: 13px !important;
+}
+
+/* ---------- 18.3 报头式 Hero (账户总值) ---------- */
+.home-hero {
+  background:
+    linear-gradient(180deg, var(--paper-elevated) 0%, #f7f2e7 100%) !important;
+  color: var(--ink-warm-1) !important;
+  border: 1px solid var(--hairline) !important;
+  border-top: 3px solid var(--navy) !important;
+  border-radius: 4px !important;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 10px 30px -18px rgba(28, 26, 21, 0.28) !important;
+  padding: 30px 34px 34px !important;
+  position: relative !important;
+}
+/* Hero 顶部报头线: 双发丝线 + 铜色分节 */
+.home-hero::before {
+  content: '' !important;
+  display: block !important;
+  position: absolute !important;
+  left: 34px;
+  right: 34px;
+  top: 62px;
+  height: 0 !important;
+  border-top: 1px solid var(--hairline) !important;
+  background: none !important;
+  animation: none !important;
+}
+.home-hero .home-hero-label {
+  color: var(--brass) !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.14em !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+}
+.home-hero .home-hero-pnl-label,
+.home-hero .home-hero-divider,
+.home-hero .home-hero-spark-caption {
+  color: var(--ink-warm-3) !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+}
+.home-hero-data-pill {
+  background: var(--paper-sunken) !important;
+  border: 1px solid var(--hairline) !important;
+  color: var(--ink-warm-3) !important;
+  border-radius: 3px !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  font-size: 12px !important;
+  font-weight: 400 !important;
+}
+/* 账户大数字: 衬线 + 特大 + 暖黑 */
+.home-hero .home-hero-currency {
+  font-family: var(--font-display) !important;
+  color: var(--brass) !important;
+  -webkit-text-fill-color: var(--brass) !important;
+  font-weight: 500 !important;
+  font-size: 30px !important;
+  background: none !important;
+}
+.home-hero .home-hero-amount {
+  font-family: var(--font-display) !important;
+  background: none !important;
+  -webkit-text-fill-color: var(--ink-warm-1) !important;
+  color: var(--ink-warm-1) !important;
+  font-size: 60px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.02em !important;
+  line-height: 1.02 !important;
+  text-shadow: none !important;
+  font-variant-numeric: tabular-nums !important;
+}
+.home-hero .home-hero-cumulative,
+.home-hero .home-hero-cash {
+  color: var(--ink-warm-1) !important;
+  font-weight: 600 !important;
+  font-variant-numeric: tabular-nums !important;
+}
+.home-hero .home-hero-badge {
+  background: var(--paper-elevated) !important;
+  border: 1px solid var(--hairline) !important;
+  border-radius: 3px !important;
+  color: var(--ink-warm-1) !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+}
+
+/* ---------- 18.4 卡片: 暖纸发丝面板 (报表格感) ---------- */
+.ant-card {
+  background: var(--paper-elevated) !important;
+  border: 1px solid var(--hairline) !important;
+  border-radius: 5px !important;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset,
+    0 4px 14px -10px rgba(28, 26, 21, 0.22) !important;
+  transition: box-shadow var(--t-base), border-color var(--t-base),
+    transform var(--t-base) !important;
+}
+.ant-card:hover {
+  border-color: var(--hairline-strong) !important;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset,
+    0 12px 30px -14px rgba(28, 26, 21, 0.3) !important;
+  transform: translateY(-2px) !important;
+}
+.ant-card > .ant-card-head {
+  border-bottom: 1px solid var(--hairline) !important;
+  min-height: 52px !important;
+  padding: 0 22px !important;
+  background: linear-gradient(180deg, #fdfbf6 0%, var(--paper-elevated) 100%) !important;
+}
+.ant-card > .ant-card-head .ant-card-head-title {
+  font-family: var(--font-display) !important;
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+  color: var(--ink-warm-1) !important;
+}
+.ant-card > .ant-card-body {
+  padding: 22px 24px !important;
+}
+.workspace-kpi-bar.ant-card:hover,
+.workspace-side-tabs.ant-card:hover {
+  transform: none !important;
+}
+
+/* ---------- 18.5 KPI bar: 报头面板 ---------- */
+.workspace-kpi-bar {
+  background: linear-gradient(180deg, var(--paper-elevated) 0%, #f7f2e7 100%) !important;
+  border: 1px solid var(--hairline) !important;
+  border-top: 3px solid var(--navy) !important;
+  border-radius: 4px !important;
+}
+.workspace-kpi-bar__title h4.ant-typography,
+.workspace-kpi-bar__title .ant-typography {
+  font-family: var(--font-display) !important;
+  font-size: 26px !important;
+  font-weight: 600 !important;
+  color: var(--ink-warm-1) !important;
+}
+.workspace-kpi-bar .ant-statistic-title {
+  color: var(--brass) !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.1em !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+}
+.workspace-kpi-bar .ant-statistic-content {
+  font-family: var(--font-display) !important;
+  color: var(--ink-warm-1) !important;
+  font-weight: 600 !important;
+  font-variant-numeric: tabular-nums !important;
+}
+
+/* ---------- 18.6 侧栏一级 Tab ---------- */
+.workspace-side-tabs {
+  background: var(--paper-elevated) !important;
+  border: 1px solid var(--hairline) !important;
+  border-radius: 4px !important;
+}
+.workspace-side-tabs .ant-menu {
+  background: transparent !important;
+}
+.workspace-side-tabs .ant-menu-item {
+  border-radius: 3px !important;
+  font-weight: 550 !important;
+  color: var(--ink-warm-2) !important;
+}
+.workspace-side-tabs .ant-menu-item-selected {
+  background: var(--navy) !important;
+  color: #ffffff !important;
+  font-weight: 650 !important;
+}
+.workspace-side-tabs .ant-menu-item-selected a,
+.workspace-side-tabs .ant-menu-item-selected .anticon {
+  color: #ffffff !important;
+}
+.workspace-side-tabs .ant-menu-item:not(.ant-menu-item-selected):hover {
+  background: var(--paper-sunken) !important;
+  color: var(--ink-warm-1) !important;
+}
+.workspace-side-tabs .ant-menu-item-selected::after {
+  border-right-color: var(--brass) !important;
+}
+
+/* ---------- 18.7 两级 Segmented (墨蓝 group / 铜金 sub) ---------- */
+.ws-tab-segmented.ant-segmented,
+.ws-tab-segmented--group.ant-segmented {
+  background: var(--paper-sunken) !important;
+  border: 1px solid var(--hairline) !important;
+  border-radius: 4px !important;
+  padding: 4px !important;
+}
+.ws-tab-segmented .ant-segmented-item,
+.ws-tab-segmented--group .ant-segmented-item {
+  color: var(--ink-warm-3) !important;
+  border-radius: 3px !important;
+}
+.ws-tab-segmented .ant-segmented-item:hover,
+.ws-tab-segmented--group .ant-segmented-item:hover {
+  color: var(--ink-warm-1) !important;
+}
+.ws-tab-segmented .ant-segmented-item-selected,
+.ws-tab-segmented--group .ant-segmented-item-selected,
+.ws-tab-segmented .ant-segmented-thumb,
+.ws-tab-segmented--group .ant-segmented-thumb {
+  background: var(--navy) !important;
+  color: #ffffff !important;
+  box-shadow: 0 1px 3px rgba(28, 26, 21, 0.22) !important;
+}
+.ws-tab-segmented .ant-segmented-item-selected .ant-segmented-item-label,
+.ws-tab-segmented--group .ant-segmented-item-selected .ant-segmented-item-label {
+  color: #ffffff !important;
+}
+/* sub: 透明底 + 铜金选中 */
+.ws-tab-segmented--sub.ant-segmented {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+}
+.ws-tab-segmented--sub .ant-segmented-item {
+  color: var(--ink-warm-3) !important;
+  border-radius: 3px !important;
+}
+.ws-tab-segmented--sub .ant-segmented-item:hover {
+  color: var(--ink-warm-1) !important;
+  background: var(--paper-hover) !important;
+}
+.ws-tab-segmented--sub .ant-segmented-item-selected,
+.ws-tab-segmented--sub .ant-segmented-thumb {
+  background: var(--brass-soft) !important;
+  color: var(--brass) !important;
+  box-shadow: none !important;
+}
+.ws-tab-segmented--sub .ant-segmented-item-selected .ant-segmented-item-label {
+  color: var(--brass) !important;
+  font-weight: 650 !important;
+}
+
+/* ---------- 18.8 按钮: primary 墨蓝, 次级发丝描边 ---------- */
+.ant-btn-primary {
+  background: var(--navy) !important;
+  border-color: var(--navy) !important;
+  border-radius: 4px !important;
+  font-weight: 600 !important;
+  box-shadow: 0 1px 2px rgba(28, 26, 21, 0.14) !important;
+}
+.ant-btn-primary:hover {
+  background: var(--navy-2) !important;
+  border-color: var(--navy-2) !important;
+}
+.ant-btn-default {
+  background: var(--paper-elevated) !important;
+  border: 1px solid var(--hairline-strong) !important;
+  border-radius: 4px !important;
+  color: var(--ink-warm-1) !important;
+}
+.ant-btn-default:hover {
+  border-color: var(--navy) !important;
+  color: var(--navy) !important;
+}
+/* 链接 / 文字按钮 → 铜金 */
+.ant-btn-link,
+a:not(.ant-btn):not(.ant-menu-item a) {
+  color: var(--brass) !important;
+}
+.ant-btn-link:hover,
+a:not(.ant-btn):not(.ant-menu-item a):hover {
+  color: var(--brass-bright) !important;
+}
+
+/* ---------- 18.9 表格: 报表条纹 + 墨蓝表头 ---------- */
+.ant-table-thead > tr > th {
+  background: var(--paper-sunken) !important;
+  color: var(--ink-warm-2) !important;
+  font-family: var(--font-body) !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  border-bottom: 1px solid var(--hairline-strong) !important;
+}
+.ant-table-tbody > tr > td {
+  border-bottom: 1px solid var(--hairline-faint) !important;
+}
+.ant-table-tbody > tr:hover > td {
+  background: var(--brass-soft) !important;
+}
+
+/* ---------- 18.10 板块标题字号(通用 h2) ---------- */
+.home-section-head h2 {
+  font-family: var(--font-display) !important;
+}
+
+/* ---------- 18.11 数字统一 tabular ---------- */
+.tabular-nums,
+.ant-statistic-content-value {
+  font-variant-numeric: tabular-nums !important;
+}
+
+/* ---------- 18.12 reduced-motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .ant-card:hover {
+    transform: none !important;
+  }
+}
+
+/* === End Phase 18 === */
