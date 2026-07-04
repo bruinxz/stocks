@@ -19246,4 +19246,18 @@ a {
   color: var(--accent, #1677ff) !important;
 }
 
+/* Phase 21 — 全局侧边导航分组标题 (决策 / 研究 / 系统). */
+.modern-menu .ant-menu-item-group-title {
+  padding: 16px 20px 6px !important;
+  color: var(--ink-3, #9ca3af) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.72;
+}
+.modern-menu .ant-menu-item-group:first-child .ant-menu-item-group-title {
+  padding-top: 4px !important;
+}
+
 /* === End Phase 20 === */

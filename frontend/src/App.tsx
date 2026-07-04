@@ -13,7 +13,9 @@ import {
 import { UserOutlined, LogoutOutlined, BarChartOutlined, DownOutlined } from '@ant-design/icons';
 import {
   HomeIcon,
+  BoltIcon,
   ChartPieIcon,
+  ArrowPathIcon,
   BeakerIcon,
   Cog6ToothIcon,
   CircleStackIcon,
@@ -154,11 +156,10 @@ const routeSelectionAliases: Array<[RegExp, string]> = [
   [/^\/today(\/.*)?$/, '/workspace/today'],
   [/^\/dashboard(\/.*)?$/, '/workspace/today'],
   [/^\/portfolio(\/.*)?$/, '/workspace/portfolio'],
-  [/^\/screener(\/.*)?$/, '/workspace/lab'],
-  // /workspace/factors 是独立的"因子/ETF 轮动"工作台(因子总览·权重调参·ETF 调仓清单·行业决策·宏观·资金流·政策),
-  // 功能 **未** 合并进实验室; 仅从主菜单收起, 经 策略详情页按钮 / /screener 进入. 此 alias 只用于让侧边栏高亮"实验室".
-  // WARNING 勿据旧注释误删 FactorWorkspace — 它承载 ETF 轮动主线 (getEtfRotationLatestPicks).
-  [/^\/workspace\/factors(\/.*)?$/, '/workspace/lab'],
+  // /screener 深链高亮到「因子轮动」(现为独立一级入口).
+  [/^\/screener(\/.*)?$/, '/workspace/factors'],
+  // /workspace/factors 现为独立一级菜单「因子轮动」(承载 ETF 轮动主线 getEtfRotationLatestPicks),
+  // 不再折叠进实验室, 故删除旧的 factors→lab selection alias.
   [/^\/market(\/.*)?$/, '/workspace/data'],
   [/^\/data-update(\/.*)?$/, '/workspace/data'],
   [/^\/tasks(\/.*)?$/, '/workspace/data'],
@@ -266,21 +267,39 @@ const AppContent: React.FC = () => {
   //   承载 市场研判·风控中心·今日交易计划 等 (data.earnings_surprise / dragon_head / overnight_foreign).
   const isAdmin = user?.role === 'admin';
   const mainMenuItems: MenuProps['items'] = useMemo(() => {
-    const items: MenuProps['items'] = [
+    // Phase 21 (2026-07-04) — 全局导航分组.
+    // 用户原话: "如果一个页面耦合的子 Tab 太多, 同时这个功能比较重要, 你可以单独抽取出来,
+    //   全局导航栏可以做分组, 然后放多个功能, 这样更清晰方便使用".
+    // 两个"重要但被埋没"的一级功能被单独抽出:
+    //   · 今日作战 /workspace/today (题材机会·今日信号·风险提醒) — 原先只能经首页链接/告警铃进入;
+    //   · 因子轮动 /workspace/factors (ETF 轮动主线) — 原先只能经策略详情/深链进入.
+    // 菜单改为 3 组: 决策(每日可执行) / 研究(策略与因子) / 系统(配置与运维).
+    const decision = [
       menuLink('/home', <HomeIcon className="hero-icon" />, '主页'),
+      menuLink('/workspace/today', <BoltIcon className="hero-icon" />, '今日作战'),
       menuLink('/workspace/portfolio', <ChartPieIcon className="hero-icon" />, '持仓'),
+    ];
+    const research = [
+      menuLink('/workspace/factors', <ArrowPathIcon className="hero-icon" />, '因子轮动'),
       menuLink('/workspace/lab', <BeakerIcon className="hero-icon" />, '实验室'),
+    ];
+    const system = [
       menuLink('/workspace/settings', <Cog6ToothIcon className="hero-icon" />, '设置'),
     ];
     if (isAdmin) {
-      items.push(
+      system.push(
         menuLink('/workspace/data', <CircleStackIcon className="hero-icon" />, '数据中心')
       );
-      items.push(
+      system.push(
         menuLink('/workspace/system', <InformationCircleIcon className="hero-icon" />, '系统介绍')
       );
-      items.push(menuLink('/workspace/docs', <DocumentTextIcon className="hero-icon" />, '文档'));
+      system.push(menuLink('/workspace/docs', <DocumentTextIcon className="hero-icon" />, '文档'));
     }
+    const items: MenuProps['items'] = [
+      { key: 'grp-decision', type: 'group', label: '决策', children: decision },
+      { key: 'grp-research', type: 'group', label: '研究', children: research },
+      { key: 'grp-system', type: 'group', label: '系统', children: system },
+    ];
     return items;
   }, [isAdmin]);
 
