@@ -16,6 +16,6 @@ DATABASE_URL = f"postgresql://{POSTGRES_USER}:{_password}@{POSTGRES_HOST}:{POSTG
 print("Using DATABASE_URL:", f"postgresql://{POSTGRES_USER}:***@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}")
 
 REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
-REDIS_PORT = os.getenv("REDIS_PORT", "6380")
+REDIS_PORT = os.getenv("REDIS_PORT", "6379")
 REDIS_DB = os.getenv("REDIS_DB", "0")
 REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
