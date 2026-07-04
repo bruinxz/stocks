@@ -95,7 +95,7 @@ import {
   PositionRow,
   SnapshotRow,
 } from '../services/portfolioWorkspaceService';
-import { todayWorkspaceService, AccountSummary } from '../services/todayWorkspaceService';
+import { todayWorkspaceService, AccountSummary, UnreadRiskAlertItem } from '../services/todayWorkspaceService';
 import { getV3Recommendations, V3RecommendationItem } from '../services/v3RecommendationService';
 // 新主线 §4.1 — 核心 ETF 因子轮动最新调仓 (ETFRotationStrategy).
 import { getEtfRotationLatestPicks, EtfRotationSignal } from '../services/factorService';
@@ -413,6 +413,10 @@ const HomeWorkspace: React.FC = () => {
   const [accountLoading, setAccountLoading] = useState(true);
   const [accountError, setAccountError] = useState<string | null>(null);
 
+  // 今日作战并入主页 — 未读风险提醒 (Today 独有内容, 主页作为唯一每日入口).
+  // 失败静默: 提醒缺失不阻塞账户主流程.
+  const [unreadAlerts, setUnreadAlerts] = useState<UnreadRiskAlertItem[]>([]);
+
   const [recommendations, setRecommendations] = useState<V3RecommendationItem[]>([]);
   const [recLoading, setRecLoading] = useState(true);
   const [recError, setRecError] = useState<string | null>(null);
@@ -469,9 +473,11 @@ const HomeWorkspace: React.FC = () => {
         // 极简 — 不需要 candidate list 干扰, 但 endpoint 必返这些字段, 一起拿无成本.
         dragon_head_limit: 0,
         earnings_limit: 0,
-        alerts_limit: 0,
+        // 今日作战并入主页: 取未读风险提醒 (Top 3), 主页作为唯一每日入口.
+        alerts_limit: 3,
       });
       setAccount(data.account);
+      setUnreadAlerts(data.unread_alerts || []);
       setDataTime(new Date());
     } catch (err: unknown) {
       setAccountError(err instanceof Error ? err.message : String(err));
@@ -1547,6 +1553,65 @@ const HomeWorkspace: React.FC = () => {
           </>
         )}
       </motion.section>
+
+      {/* ===== 今日作战并入主页 — 未读风险提醒 (Today 独有内容) =====
+          主页作为唯一每日入口: 若持仓触发风控 (止损/回撤/集中度), 在此一眼可见,
+          单击直达风控中心处理. 无未读提醒时整块不渲染 — 保持主页极简. */}
+      {unreadAlerts.length > 0 && (
+        <motion.section
+          className="home-risk-alerts"
+          initial={reduceMotion ? false : { opacity: 0, y: 12 }}
+          animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+          style={{ marginBottom: 16 }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 8,
+            }}
+          >
+            <span style={{ fontSize: 15, fontWeight: 700, color: '#dc2626' }}>
+              <WarningOutlined style={{ marginRight: 6 }} />
+              风险提醒 · {unreadAlerts.length} 条待处理
+            </span>
+            <a
+              style={{ fontSize: 12 }}
+              onClick={() => navigate('/workspace/today?tab=risk_center')}
+            >
+              全部处理 →
+            </a>
+          </div>
+          <Space direction="vertical" size={8} style={{ width: '100%' }}>
+            {unreadAlerts.map(alert => (
+              <Alert
+                key={alert.id}
+                type={alert.level === 'high' ? 'error' : 'warning'}
+                showIcon
+                message={
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>
+                    {alert.name || alert.symbol}
+                    <span style={{ marginLeft: 8, fontWeight: 400, color: '#6b7280' }}>
+                      {alert.message}
+                    </span>
+                  </span>
+                }
+                action={
+                  <Button
+                    size="small"
+                    type="link"
+                    onClick={() => navigate('/workspace/today?tab=risk_center')}
+                  >
+                    处理
+                  </Button>
+                }
+              />
+            ))}
+          </Space>
+        </motion.section>
+      )}
 
       {/* ===== PR-M4 (2026-06-29) — 今日市场卡 (4 海外指数 + regime + 仓位建议) =====
           复用 /api/today/market-judgment 既有数据源 (TodayWorkspace 同款), 让新手
