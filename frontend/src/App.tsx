@@ -20,6 +20,7 @@ import {
   CircleStackIcon,
   InformationCircleIcon,
   DocumentTextIcon,
+  SparklesIcon,
 } from '@heroicons/react/24/outline';
 import zhCN from 'antd/locale/zh_CN';
 import { useSelector, useDispatch } from 'react-redux';
@@ -55,6 +56,9 @@ const FactorWorkspace = lazy(() => import('./pages/workspace/FactorWorkspace'));
 const LabWorkspace = lazy(() => import('./pages/workspace/LabWorkspace'));
 const LabStrategyDetail = lazy(() => import('./pages/workspace/LabStrategyDetail'));
 const PortfolioWorkspace = lazy(() => import('./pages/workspace/PortfolioWorkspace'));
+// AI 分析一级入口 (2026-07-04) — 用户原话: "我希望导航栏有个 Tab 可以直接触发 AI 分析".
+// 独立落地页: 搜股 → 复用 AIStockAnalysisModal 多维度解读.
+const AIAnalysisWorkspace = lazy(() => import('./pages/workspace/AIAnalysisWorkspace'));
 const DataWorkspace = lazy(() => import('./pages/workspace/DataWorkspace'));
 const SettingsWorkspace = lazy(() => import('./pages/workspace/SettingsWorkspace'));
 // Batch AL (2026-06-21) — SystemWorkspace 系统介绍 + 用户反馈闭环.
@@ -277,6 +281,8 @@ const AppContent: React.FC = () => {
     const decision = [
       menuLink('/home', <HomeIcon className="hero-icon" />, '主页'),
       menuLink('/workspace/portfolio', <ChartPieIcon className="hero-icon" />, '持仓'),
+      // AI 分析 (2026-07-04): 导航栏直达的 AI 二次意见入口, 搜任意股 → 多维度解读.
+      menuLink('/workspace/ai-analysis', <SparklesIcon className="hero-icon" />, 'AI 分析'),
     ];
     const research = [
       menuLink('/workspace/factors', <ArrowPathIcon className="hero-icon" />, '因子轮动'),
@@ -504,6 +510,15 @@ const AppContent: React.FC = () => {
                   element={
                     <ProtectedRoute>
                       <PortfolioWorkspace />
+                    </ProtectedRoute>
+                  }
+                />
+                {/* AI 分析一级入口 (2026-07-04) */}
+                <Route
+                  path="/workspace/ai-analysis"
+                  element={
+                    <ProtectedRoute>
+                      <AIAnalysisWorkspace />
                     </ProtectedRoute>
                   }
                 />

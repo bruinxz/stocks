@@ -164,10 +164,12 @@ const PortfolioWorkspace: React.FC = () => {
   const isAdmin = useSelector((s: RootState) => s.auth.user?.role === 'admin');
   const tabs: WorkspaceTab[] = useMemo(() => {
     const baseTabs: WorkspaceTab[] = [
-      { key: 'positions', label: '当前持仓', icon: <WalletOutlined /> },
+      // 合并 (2026-07-04): 用户原话 — "持仓与复盘这两个 Tab 可以合在一起没必要分开".
+      // 「当前持仓」+「复盘日记」并入单个「持仓 · 复盘」tab: 上半区当前持仓,
+      // 下半区复盘日记 (同一心智: 看着持仓做复盘). 普通用户一级 tab 5 → 4.
+      { key: 'positions', label: '持仓 · 复盘', icon: <WalletOutlined /> },
       { key: 'trades', label: '交易明细', icon: <UnorderedListOutlined /> },
       { key: 'equity', label: '资金曲线', icon: <LineChartOutlined /> },
-      { key: 'journal', label: '复盘日记', icon: <ReadOutlined /> },
       // PR-C: 我的提醒 — 用户持仓相关告警 + 高优先级风控事件 (AlertsBell 普通用户落点).
       { key: 'alerts', label: '我的提醒', icon: <BellOutlined /> },
     ];
@@ -189,7 +191,9 @@ const PortfolioWorkspace: React.FC = () => {
   const location = useLocation();
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    const tab = params.get('tab');
+    let tab = params.get('tab');
+    // 合并 (2026-07-04): 复盘日记并入「持仓 · 复盘」, 旧 ?tab=journal 深链重定向到 positions.
+    if (tab === 'journal') tab = 'positions';
     if (tab && tabs.some(t => t.key === tab)) {
       setActiveKey(tab);
     }
@@ -366,19 +370,21 @@ const PortfolioWorkspace: React.FC = () => {
       />
     );
   } else if (activeKey === 'positions') {
+    // 合并 (2026-07-04): 当前持仓 (上) + 复盘日记 (下) 同屏, 一个 tab 内闭环.
     body = (
-      <PositionsTab
-        data={portfolioData}
-        onChangeData={setPortfolioData}
-        onAfterTrade={() => void refresh()}
-      />
+      <div className="ws-stack">
+        <PositionsTab
+          data={portfolioData}
+          onChangeData={setPortfolioData}
+          onAfterTrade={() => void refresh()}
+        />
+        <JournalTab list={journalList} onListRefresh={() => void refresh()} />
+      </div>
     );
   } else if (activeKey === 'equity') {
     body = <EquityCurveTab snapshots={snapshots} kpis={kpis} />;
   } else if (activeKey === 'trades') {
     body = <TradesTab trades={trades} />;
-  } else if (activeKey === 'journal') {
-    body = <JournalTab list={journalList} onListRefresh={() => void refresh()} />;
   } else if (activeKey === 'alerts') {
     // PR-C: positionSymbols = 当前持仓代码 → panel "持仓相关" view 按此过滤;
     // 普通用户进入默认 positions view, 立刻看到自己关心的告警 (而非全局噪音).
@@ -716,7 +722,7 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
             <Space direction="vertical" align="center">
               <Text>当前没有持仓。</Text>
               <Text type="secondary">
-                到「今日作战」工作区一键应用策略信号，或在「策略实验室」运行回测后落地实盘。
+                在「主页」查看今日买卖信号并落地实盘，或到「实验室」运行回测后建仓。
               </Text>
             </Space>
           }

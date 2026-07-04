@@ -154,11 +154,8 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
         style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}
       >
         {hasTabs && !isMobile ? (
-          <Card
-            className="workspace-side-tabs"
-            bodyStyle={{ padding: 6 }}
-            style={{ width: 180, flexShrink: 0 }}
-          >
+          <nav className="workspace-side-tabs" style={{ width: 184, flexShrink: 0 }}>
+            <div className="workspace-side-tabs__eyebrow">视图</div>
             <Menu
               mode="inline"
               selectedKeys={activeKey ? [activeKey] : []}
@@ -166,7 +163,7 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
               items={menuItems}
               style={{ border: 'none', background: 'transparent' }}
             />
-          </Card>
+          </nav>
         ) : null}
         <div
           className={['workspace-content', themed ? 'ws-themed-area' : ''].filter(Boolean).join(' ')}
