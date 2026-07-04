@@ -1674,6 +1674,101 @@ const HomeWorkspace: React.FC = () => {
         ) : null}
       </section>
 
+      {/* ===== 区块 4: 核心 ETF 因子轮动排名 (新主线 §4.1) =====
+          核心 70% = ETFRotationStrategy 四因子 (价值 0.40 / 质量 0.30 / 低波 0.30 /
+          动量 shadow 0). 月度机械再平衡, buy/sell/hold + target_weight. 数据来自
+          /strategies/multi-factor/latest-picks. 失败静默降级, 不阻塞持仓与卫星. */}
+      <section className="home-section" data-testid="home-etf-section">
+        <header className="home-section-head">
+          <div>
+            <h2 className="home-section-title">核心 ETF 因子轮动</h2>
+            <p className="home-section-subtitle">
+              核心 70% · 价值 0.40 / 质量 0.30 / 低波 0.30 · 月度机械再平衡, 不设单笔止损
+              {etfTradeDate ? ` · 数据日 ${etfTradeDate}` : ''}
+            </p>
+          </div>
+          <Space size={8}>
+            <Button
+              type="text"
+              icon={<ReloadOutlined />}
+              onClick={loadEtfRotation}
+              loading={etfLoading}
+            >
+              刷新
+            </Button>
+            <Button type="link" onClick={() => navigate('/workspace/factors')}>
+              全部因子 <ArrowRightOutlined />
+            </Button>
+          </Space>
+        </header>
+        {etfLoading ? (
+          <Skeleton active paragraph={{ rows: 4 }} />
+        ) : etfError ? (
+          <Result
+            status="warning"
+            title="ETF 排名加载失败"
+            subTitle={etfError}
+            extra={<Button onClick={loadEtfRotation}>重试</Button>}
+          />
+        ) : etfSignals.length === 0 ? (
+          <EmptyStripe
+            icon={<InboxIcon className="hero-icon hero-icon--lg" />}
+            title="暂无 ETF 因子排名"
+            subtitle={etfNote || '因子数据可能还没跑完 — 稍后再来或点右上「刷新」'}
+          />
+        ) : (
+          <div className="home-etf-table" role="table" aria-label="核心 ETF 因子轮动排名">
+            <div className="home-etf-row home-etf-row--head" role="row">
+              <span>排名</span>
+              <span>ETF</span>
+              <span>综合分</span>
+              <span>目标权重</span>
+              <span>动作</span>
+              <span className="home-etf-factors-col">因子 z (价/质/波)</span>
+            </div>
+            {etfSignals.slice(0, 8).map(sig => {
+              const actionMeta =
+                sig.action === 'buy'
+                  ? { label: '买入', color: '#dc2626' }
+                  : sig.action === 'sell'
+                    ? { label: '卖出', color: '#16a34a' }
+                    : { label: '持有', color: '#6b7280' };
+              return (
+                <div key={sig.etf_code} className="home-etf-row" role="row">
+                  <span className="home-etf-rank tabular-nums">{sig.rank}</span>
+                  <span className="home-etf-name">
+                    <strong>{sig.name || sig.etf_code}</strong>
+                    <span className="home-etf-code tabular-nums">{sig.etf_code}</span>
+                    {sig.data_incomplete && (
+                      <Tooltip title="成分/行情数据不完整, 该分数仅供参考">
+                        <span className="home-etf-warn">数据不全</span>
+                      </Tooltip>
+                    )}
+                  </span>
+                  <span className="home-etf-score tabular-nums">{formatFixed(sig.score, 3)}</span>
+                  <span className="home-etf-weight tabular-nums">
+                    {sig.target_weight != null && Number.isFinite(sig.target_weight)
+                      ? `${(sig.target_weight * 100).toFixed(1)}%`
+                      : '—'}
+                  </span>
+                  <span
+                    className="home-etf-action"
+                    style={{ color: actionMeta.color, borderColor: actionMeta.color + '33' }}
+                  >
+                    {actionMeta.label}
+                  </span>
+                  <span className="home-etf-factors tabular-nums home-etf-factors-col">
+                    {formatFixed(sig.factors?.value_z, 2)} /{' '}
+                    {formatFixed(sig.factors?.quality_z, 2)} /{' '}
+                    {formatFixed(sig.factors?.lowvol_z, 2)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
       {/* ===== Phase 8 — 区块 2: 今日 AI 推荐 (大卡片 grid + 黑色 CTA + hover lift) =====
           Phase 10 — 按 30min 时间桶分组, 每组 head 显示 HH:MM + 时段标签 (盘前/上午盘/...).
           后端字段缺失时降级为不分组. */}
@@ -1806,141 +1901,6 @@ const HomeWorkspace: React.FC = () => {
           </div>
         </section>
       )}
-
-      {/* ===== Phase 8 — 区块 3: 今日学一招 (冷色高级 — 浅紫 brand-soft 背景) =====
-          Phase 11 — mesh gradient + noise + parallax tilt. */}
-      {(() => {
-        const lessonInner = (
-          <section className="home-lesson">
-            <div className="home-lesson-icon-wrap">
-              <BookOutlined />
-            </div>
-            <div className="home-lesson-content">
-              <div className="home-lesson-eyebrow">
-                今日学一招
-                <span className="home-lesson-time">{formatHourMin(dataTime)} 更新</span>
-              </div>
-              <div className="home-lesson-title">{todayLesson.title}</div>
-              <p className="home-lesson-body">{todayLesson.body}</p>
-              <Button
-                type="link"
-                className="home-lesson-cta"
-                onClick={() => navigate('/workspace/easy')}
-              >
-                想学更多 — 简易版 4 步教学 <ArrowRightOutlined />
-              </Button>
-            </div>
-          </section>
-        );
-        if (reduceMotion) return lessonInner;
-        // Phase 14 — Tilt 3D + glare 删除. 浅色 Stripe 卡 + 200ms fade.
-        return (
-          <motion.div
-            initial={{ opacity: 0 }}
-            whileInView={{ opacity: 1 }}
-            viewport={{ once: true, margin: '-80px' }}
-            transition={{ duration: 0.2 }}
-            className="home-lesson-tilt"
-          >
-            {lessonInner}
-          </motion.div>
-        );
-      })()}
-
-      {/* ===== 区块 4: 核心 ETF 因子轮动排名 (新主线 §4.1) =====
-          核心 70% = ETFRotationStrategy 四因子 (价值 0.40 / 质量 0.30 / 低波 0.30 /
-          动量 shadow 0). 月度机械再平衡, buy/sell/hold + target_weight. 数据来自
-          /strategies/multi-factor/latest-picks. 失败静默降级, 不阻塞持仓与卫星. */}
-      <section className="home-section" data-testid="home-etf-section">
-        <header className="home-section-head">
-          <div>
-            <h2 className="home-section-title">核心 ETF 因子轮动</h2>
-            <p className="home-section-subtitle">
-              核心 70% · 价值 0.40 / 质量 0.30 / 低波 0.30 · 月度机械再平衡, 不设单笔止损
-              {etfTradeDate ? ` · 数据日 ${etfTradeDate}` : ''}
-            </p>
-          </div>
-          <Space size={8}>
-            <Button
-              type="text"
-              icon={<ReloadOutlined />}
-              onClick={loadEtfRotation}
-              loading={etfLoading}
-            >
-              刷新
-            </Button>
-            <Button type="link" onClick={() => navigate('/workspace/factor')}>
-              全部因子 <ArrowRightOutlined />
-            </Button>
-          </Space>
-        </header>
-        {etfLoading ? (
-          <Skeleton active paragraph={{ rows: 4 }} />
-        ) : etfError ? (
-          <Result
-            status="warning"
-            title="ETF 排名加载失败"
-            subTitle={etfError}
-            extra={<Button onClick={loadEtfRotation}>重试</Button>}
-          />
-        ) : etfSignals.length === 0 ? (
-          <EmptyStripe
-            icon={<InboxIcon className="hero-icon hero-icon--lg" />}
-            title="暂无 ETF 因子排名"
-            subtitle={etfNote || '因子数据可能还没跑完 — 稍后再来或点右上「刷新」'}
-          />
-        ) : (
-          <div className="home-etf-table" role="table" aria-label="核心 ETF 因子轮动排名">
-            <div className="home-etf-row home-etf-row--head" role="row">
-              <span>排名</span>
-              <span>ETF</span>
-              <span>综合分</span>
-              <span>目标权重</span>
-              <span>动作</span>
-              <span className="home-etf-factors-col">因子 z (价/质/波)</span>
-            </div>
-            {etfSignals.slice(0, 8).map(sig => {
-              const actionMeta =
-                sig.action === 'buy'
-                  ? { label: '买入', color: '#dc2626' }
-                  : sig.action === 'sell'
-                    ? { label: '卖出', color: '#16a34a' }
-                    : { label: '持有', color: '#6b7280' };
-              return (
-                <div key={sig.etf_code} className="home-etf-row" role="row">
-                  <span className="home-etf-rank tabular-nums">{sig.rank}</span>
-                  <span className="home-etf-name">
-                    <strong>{sig.name || sig.etf_code}</strong>
-                    <span className="home-etf-code tabular-nums">{sig.etf_code}</span>
-                    {sig.data_incomplete && (
-                      <Tooltip title="成分/行情数据不完整, 该分数仅供参考">
-                        <span className="home-etf-warn">数据不全</span>
-                      </Tooltip>
-                    )}
-                  </span>
-                  <span className="home-etf-score tabular-nums">{formatFixed(sig.score, 3)}</span>
-                  <span className="home-etf-weight tabular-nums">
-                    {sig.target_weight != null && Number.isFinite(sig.target_weight)
-                      ? `${(sig.target_weight * 100).toFixed(1)}%`
-                      : '—'}
-                  </span>
-                  <span
-                    className="home-etf-action"
-                    style={{ color: actionMeta.color, borderColor: actionMeta.color + '33' }}
-                  >
-                    {actionMeta.label}
-                  </span>
-                  <span className="home-etf-factors tabular-nums home-etf-factors-col">
-                    {formatFixed(sig.factors?.value_z, 2)} /{' '}
-                    {formatFixed(sig.factors?.quality_z, 2)} /{' '}
-                    {formatFixed(sig.factors?.lowvol_z, 2)}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
 
       {/* ===== Phase 8 — 区块 5: 我的持仓 (卡片网格 + 等宽数字 + 浮盈大字号) ===== */}
       <section className="home-section">
@@ -2118,6 +2078,46 @@ const HomeWorkspace: React.FC = () => {
           </div>
         )}
       </section>
+
+      {/* ===== Phase 8 — 区块 3: 今日学一招 (冷色高级 — 浅紫 brand-soft 背景) =====
+          Phase 11 — mesh gradient + noise + parallax tilt. */}
+      {(() => {
+        const lessonInner = (
+          <section className="home-lesson">
+            <div className="home-lesson-icon-wrap">
+              <BookOutlined />
+            </div>
+            <div className="home-lesson-content">
+              <div className="home-lesson-eyebrow">
+                今日学一招
+                <span className="home-lesson-time">{formatHourMin(dataTime)} 更新</span>
+              </div>
+              <div className="home-lesson-title">{todayLesson.title}</div>
+              <p className="home-lesson-body">{todayLesson.body}</p>
+              <Button
+                type="link"
+                className="home-lesson-cta"
+                onClick={() => navigate('/workspace/easy')}
+              >
+                想学更多 — 简易版 4 步教学 <ArrowRightOutlined />
+              </Button>
+            </div>
+          </section>
+        );
+        if (reduceMotion) return lessonInner;
+        // Phase 14 — Tilt 3D + glare 删除. 浅色 Stripe 卡 + 200ms fade.
+        return (
+          <motion.div
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
+            viewport={{ once: true, margin: '-80px' }}
+            transition={{ duration: 0.2 }}
+            className="home-lesson-tilt"
+          >
+            {lessonInner}
+          </motion.div>
+        );
+      })()}
 
       {/* ===== 区块 6: 今日提示 (静态 hint, 极简一行) ===== */}
       {!accountLoading && !accountError && account && (

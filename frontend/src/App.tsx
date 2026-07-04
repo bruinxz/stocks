@@ -13,7 +13,6 @@ import {
 import { UserOutlined, LogoutOutlined, BarChartOutlined, DownOutlined } from '@ant-design/icons';
 import {
   HomeIcon,
-  RocketLaunchIcon,
   ChartPieIcon,
   BeakerIcon,
   Cog6ToothIcon,
@@ -269,7 +268,6 @@ const AppContent: React.FC = () => {
   const mainMenuItems: MenuProps['items'] = useMemo(() => {
     const items: MenuProps['items'] = [
       menuLink('/home', <HomeIcon className="hero-icon" />, '主页'),
-      menuLink('/workspace/easy', <RocketLaunchIcon className="hero-icon" />, '简易版'),
       menuLink('/workspace/portfolio', <ChartPieIcon className="hero-icon" />, '持仓'),
       menuLink('/workspace/lab', <BeakerIcon className="hero-icon" />, '实验室'),
       menuLink('/workspace/settings', <Cog6ToothIcon className="hero-icon" />, '设置'),
