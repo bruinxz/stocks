@@ -1848,14 +1848,25 @@ const HomeWorkspace: React.FC = () => {
               {timeGroups.hasTime ? ` · 跨 ${timeGroups.groups.length} 个时段` : ''}
             </p>
           </div>
-          <Button
-            type="text"
-            icon={<ReloadOutlined />}
-            onClick={loadRecommendations}
-            loading={recLoading}
-          >
-            刷新
-          </Button>
+          <Space size={4}>
+            {/* 去冗余 (2026-07-04): 今日作战不再进主菜单; 其独有的"今日信号(买卖计划)"
+                经此单一入口进入, 与主页的推荐/风险提醒/市场研判不再重复. */}
+            <Button
+              type="link"
+              size="small"
+              onClick={() => navigate('/workspace/today?tab=signals')}
+            >
+              今日买卖信号 →
+            </Button>
+            <Button
+              type="text"
+              icon={<ReloadOutlined />}
+              onClick={loadRecommendations}
+              loading={recLoading}
+            >
+              刷新
+            </Button>
+          </Space>
         </header>
         {recLoading ? (
           <div className="home-reco-grid">

@@ -43,7 +43,7 @@
 | 路由 | 组件 | 真实入口 |
 |---|---|---|
 | `/workspace/factors` | `FactorWorkspace` | 实验室策略详情页按钮 / `/screener` 别名 / deep link;承载 **ETF 轮动主线** |
-| `/workspace/today` | `TodayWorkspace` | 首页"风控中心"链接 (`?tab=risk_center`) / `AlertsBell` 告警点击 / deep link |
+| `/workspace/today` | `TodayWorkspace` | 首页"今日买卖信号"链接 (`?tab=signals`,其**独有**内容) / 首页"风控中心"链接 (`?tab=risk_center`) / `AlertsBell` 告警点击 / deep link。**2026-07-04 去冗余**:今日作战与首页曾并列一级导致重复,现今日作战不进主菜单,题材机会/风险提醒/市场研判已并入 `/home`,仅"今日信号(买卖计划)"为其独有,经首页单一链接进入。 |
 | `/workspace/lab/strategies/:id` | `LabStrategyDetail` | 实验室"我的策略"点击进入 |
 | `/stock/:symbol` | `StockDetail` | 各处个股链接 |
 

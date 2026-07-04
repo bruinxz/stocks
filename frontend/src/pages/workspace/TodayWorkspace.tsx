@@ -413,9 +413,9 @@ const TodayWorkspace: React.FC = () => {
   // ----- 一键应用全部信号 -----
   const totalBuyCount = useMemo(() => {
     if (!data) return 0;
-    const mfa = data.multi_factor.signals.filter(s => s.signal === 'buy').length;
-    const dh = data.dragon_head.candidates.filter(s => s.signal === 'buy').length;
-    const ev = data.earnings_surprise.candidates.filter(s => s.signal === 'buy').length;
+    const mfa = (data.multi_factor?.signals ?? []).filter(s => s.signal === 'buy').length;
+    const dh = (data.dragon_head?.candidates ?? []).filter(s => s.signal === 'buy').length;
+    const ev = (data.earnings_surprise?.candidates ?? []).filter(s => s.signal === 'buy').length;
     return mfa + dh + ev;
   }, [data]);
 

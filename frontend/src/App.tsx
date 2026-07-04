@@ -13,7 +13,6 @@ import {
 import { UserOutlined, LogoutOutlined, BarChartOutlined, DownOutlined } from '@ant-design/icons';
 import {
   HomeIcon,
-  BoltIcon,
   ChartPieIcon,
   ArrowPathIcon,
   BeakerIcon,
@@ -270,13 +269,13 @@ const AppContent: React.FC = () => {
     // Phase 21 (2026-07-04) — 全局导航分组.
     // 用户原话: "如果一个页面耦合的子 Tab 太多, 同时这个功能比较重要, 你可以单独抽取出来,
     //   全局导航栏可以做分组, 然后放多个功能, 这样更清晰方便使用".
-    // 两个"重要但被埋没"的一级功能被单独抽出:
-    //   · 今日作战 /workspace/today (题材机会·今日信号·风险提醒) — 原先只能经首页链接/告警铃进入;
-    //   · 因子轮动 /workspace/factors (ETF 轮动主线) — 原先只能经策略详情/深链进入.
+    // 因子轮动 /workspace/factors (ETF 轮动主线) 被单独抽为一级 — 原先只能经策略详情/深链进入.
+    // 今日作战 /workspace/today 不进主菜单 (2026-07-04 去冗余): 其 题材机会/风险提醒/市场研判
+    // 已并入 /home (task #55), 再放一级会与主页重复; 仅其独有的"今日信号(买卖计划)"
+    // 经主页链接 / AlertsBell / deep-link 进入 (见 FRONTEND_ARCHITECTURE.md §2).
     // 菜单改为 3 组: 决策(每日可执行) / 研究(策略与因子) / 系统(配置与运维).
     const decision = [
       menuLink('/home', <HomeIcon className="hero-icon" />, '主页'),
-      menuLink('/workspace/today', <BoltIcon className="hero-icon" />, '今日作战'),
       menuLink('/workspace/portfolio', <ChartPieIcon className="hero-icon" />, '持仓'),
     ];
     const research = [
