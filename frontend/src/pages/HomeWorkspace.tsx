@@ -666,7 +666,7 @@ const HomeWorkspace: React.FC = () => {
             </ul>
             <p style={{ marginBottom: 0, color: 'var(--ink-3, #737373)' }}>
               已暂停自动跟单. 您可手动评估后自行决定, 但<strong>强烈建议小仓试探</strong>. 详见{' '}
-              <a onClick={() => navigate('/workspace/today?tab=risk_center')}>风控中心</a>.
+              <a onClick={() => navigate('/portfolio?tab=advanced&sub=risk-center')}>风控中心</a>.
             </p>
           </div>
         ),
@@ -1473,7 +1473,7 @@ const HomeWorkspace: React.FC = () => {
         description={
           <span style={{ fontSize: 12 }}>
             当前评分模型存在反向偏差，自动跟单已暂停。
-            <a style={{ marginLeft: 4 }} onClick={() => navigate('/workspace/today?tab=risk_center')}>查看风控中心 →</a>
+            <a style={{ marginLeft: 4 }} onClick={() => navigate('/portfolio?tab=advanced&sub=risk-center')}>查看风控中心 →</a>
           </span>
         }
       />
@@ -1574,7 +1574,7 @@ const HomeWorkspace: React.FC = () => {
             </span>
             <a
               style={{ fontSize: 12 }}
-              onClick={() => navigate('/workspace/today?tab=risk_center')}
+              onClick={() => navigate('/portfolio?tab=advanced&sub=risk-center')}
             >
               全部处理 →
             </a>
@@ -1597,7 +1597,7 @@ const HomeWorkspace: React.FC = () => {
                   <Button
                     size="small"
                     type="link"
-                    onClick={() => navigate('/workspace/today?tab=risk_center')}
+                    onClick={() => navigate('/portfolio?tab=advanced&sub=risk-center')}
                   >
                     处理
                   </Button>
@@ -1849,7 +1849,7 @@ const HomeWorkspace: React.FC = () => {
             <Button
               type="link"
               size="small"
-              onClick={() => navigate('/workspace/today?tab=signals')}
+              onClick={() => navigate('/portfolio?tab=alerts')}
             >
               今日买卖信号 →
             </Button>

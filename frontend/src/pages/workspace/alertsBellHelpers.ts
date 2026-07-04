@@ -128,7 +128,7 @@ export function clampPollInterval(input: unknown): number {
  * 抽成常量 + helper 让单测能守"点击落点不会被未来 refactor 改错地方".
  * 与 [[strategyKillSwitchHelpers]] 同款"路径单一事实源"思想.
  */
-export const ALERTS_BELL_TARGET_PATH = '/workspace/today';
+export const ALERTS_BELL_TARGET_PATH = '/home';
 export const ALERTS_BELL_TARGET_TAB_KEY = 'risk_center';
 
 /**

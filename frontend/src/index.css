@@ -19541,3 +19541,66 @@ a {
 }
 
 /* === End Phase 25b === */
+/* === Journal Markdown Rendering (Phase 26) === */
+.journal-md-body {
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: var(--ink-1, #222);
+}
+
+.journal-md-body h1,
+.journal-md-body h2 {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 16px 0 6px;
+  color: var(--ink-1, #222);
+  border-bottom: 1px solid var(--border-subtle, #eee);
+  padding-bottom: 4px;
+}
+
+.journal-md-body h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 12px 0 4px;
+  color: var(--ink-2, #444);
+}
+
+.journal-md-body p {
+  margin: 0 0 8px;
+}
+
+.journal-md-body ul,
+.journal-md-body ol {
+  padding-left: 20px;
+  margin: 4px 0 8px;
+}
+
+.journal-md-body li {
+  margin-bottom: 3px;
+}
+
+.journal-md-body strong {
+  color: var(--ink-1, #111);
+}
+
+.journal-md-body blockquote {
+  border-left: 3px solid var(--brand, #6366f1);
+  margin: 8px 0;
+  padding: 4px 12px;
+  color: var(--ink-2, #555);
+  background: var(--bg-hover, #f6f6fa);
+  border-radius: 0 4px 4px 0;
+}
+
+.journal-md-body code {
+  background: var(--bg-hover, #f3f3f8);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.journal-section {
+  padding-bottom: 4px;
+}
+/* === End Journal Markdown === */
+

@@ -150,14 +150,14 @@ const routeSelectionAliases: Array<[RegExp, string]> = [
   [/^\/backtest(\/.+)?$/, '/workspace/lab'],
   [/^\/autonomous-trading(\/.*)?$/, '/workspace/portfolio'],
   [/^\/paper-trading(\/.*)?$/, '/workspace/portfolio'],
-  [/^\/recommendations?(\/.*)?$/, '/workspace/today'],
+  [/^\/recommendations?(\/.*)?$/, '/home'],
   [/^\/recommendation-(performance|trade-outcomes|loop-policies)(\/.*)?$/, '/workspace/portfolio'],
   [/^\/agent-tail-alpha(\/.*)?$/, '/workspace/portfolio'],
   [/^\/strategy-experiment-lab(\/.*)?$/, '/workspace/lab'],
   [/^\/strategy(\/.*)?$/, '/workspace/lab'],
-  [/^\/risk-alerts(\/.*)?$/, '/workspace/today'],
-  [/^\/today(\/.*)?$/, '/workspace/today'],
-  [/^\/dashboard(\/.*)?$/, '/workspace/today'],
+  [/^\/risk-alerts(\/.*)?$/, '/portfolio'],
+  [/^\/today(\/.*)?$/, '/home'],
+  [/^\/dashboard(\/.*)?$/, '/home'],
   [/^\/portfolio(\/.*)?$/, '/workspace/portfolio'],
   // /screener 深链高亮到「因子轮动」(现为独立一级入口).
   [/^\/screener(\/.*)?$/, '/workspace/factors'],
@@ -476,7 +476,7 @@ const AppContent: React.FC = () => {
                   path="/workspace/today"
                   element={
                     <ProtectedRoute>
-                      <TodayWorkspace />
+                      <Navigate to="/home" replace />
                     </ProtectedRoute>
                   }
                 />
@@ -577,9 +577,9 @@ const AppContent: React.FC = () => {
 
                 {/* Legacy redirects — duplicate pages now bounce to a workspace home.
                   Listed in PRD US-001 acceptance criteria. */}
-                <Route path="/today" element={<Navigate to="/workspace/today" replace />} />
-                <Route path="/dashboard" element={<Navigate to="/workspace/today" replace />} />
-                <Route path="/risk-alerts" element={<Navigate to="/workspace/today" replace />} />
+                <Route path="/today" element={<Navigate to="/home" replace />} />
+                <Route path="/dashboard" element={<Navigate to="/home" replace />} />
+                <Route path="/risk-alerts" element={<Navigate to="/portfolio" replace />} />
                 <Route
                   path="/strategy-experiment-lab"
                   element={<Navigate to="/workspace/lab" replace />}

@@ -58,6 +58,8 @@ import {
 } from 'recharts';
 import dayjs, { Dayjs } from 'dayjs';
 import { AnimatePresence, motion } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import WorkspaceHero from '../../components/layout/WorkspaceHero';
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
@@ -130,7 +132,7 @@ import {
   formatMoneyNumber,
 } from '../../utils/formatMoney';
 // PR-C 风控中心 v2 — "我的提醒" tab 复用 panel, positionSymbols 限定到当前持仓.
-// AlertsBell 普通用户点击落到这里 (admin 落到 TodayWorkspace?tab=risk_center).
+// AlertsBell 普通用户点击落到这里 (admin 落到 /portfolio?tab=advanced&sub=risk-center).
 import RiskAlertCenterPanel from './RiskAlertCenterPanel';
 
 const { Text, Paragraph } = Typography;
@@ -183,7 +185,7 @@ const PortfolioWorkspace: React.FC = () => {
   const [activeKey, setActiveKey] = useState<string>('positions');
   // 高级分析 (admin) 二级子视图.
   const [advancedSubView, setAdvancedSubView] = useState<
-    'attribution' | 'error-patterns' | 'correlation' | 'manage'
+    'attribution' | 'error-patterns' | 'correlation' | 'manage' | 'risk-center'
   >('attribution');
 
   // PR-C: AlertsBell 普通用户点击 → /workspace/portfolio?tab=alerts.
@@ -196,6 +198,11 @@ const PortfolioWorkspace: React.FC = () => {
     if (tab === 'journal') tab = 'positions';
     if (tab && tabs.some(t => t.key === tab)) {
       setActiveKey(tab);
+    }
+    // 风控中心 deep link: ?tab=advanced&sub=risk-center
+    const sub = params.get('sub');
+    if (sub === 'risk-center') {
+      setAdvancedSubView('risk-center');
     }
   }, [location.search, tabs]);
 
@@ -374,6 +381,7 @@ const PortfolioWorkspace: React.FC = () => {
             { label: '错误模式', value: 'error-patterns' },
             { label: '相关性矩阵', value: 'correlation' },
             { label: '模拟盘管理', value: 'manage' },
+            { label: '风控中心', value: 'risk-center' },
           ]}
           value={advancedSubView}
           onChange={v => setAdvancedSubView(v as typeof advancedSubView)}
@@ -388,6 +396,12 @@ const PortfolioWorkspace: React.FC = () => {
           <ErrorPatternsTab trades={trades} journalList={journalList} />
         ) : advancedSubView === 'correlation' ? (
           <CorrelationTab portfolioId={portfolioData?.portfolio?.id} />
+        ) : advancedSubView === 'risk-center' ? (
+          <RiskAlertCenterPanel
+            positionSymbols={[]}
+            title="风控中心 (全量)"
+            onUnreadCountChange={() => void refresh()}
+          />
         ) : (
           <PortfolioManagementPanel />
         )}
@@ -2791,10 +2805,10 @@ const JournalTab: React.FC<JournalTabProps> = ({ list, onListRefresh }) => {
             />
           ) : (
             <Space direction="vertical" size={20} style={{ width: '100%' }}>
-              <JournalSection title="市场总结" content={detail.market_summary} />
-              <JournalSection title="持仓点评" content={detail.portfolio_analysis} />
+              <JournalSection title="今日战况" content={detail.market_summary} />
+              <JournalSection title="操作复盘" content={detail.portfolio_analysis} />
               {detail.action_plan && (
-                <JournalSection title="明日策略" content={detail.action_plan} />
+                <JournalSection title="明日推荐" content={detail.action_plan} />
               )}
               {detail.tags && detail.tags.length > 0 && (
                 <div>
@@ -2869,13 +2883,17 @@ interface JournalSectionProps {
 }
 
 const JournalSection: React.FC<JournalSectionProps> = ({ title, content }) => (
-  <div>
-    <Text strong style={{ display: 'block', marginBottom: 4 }}>
+  <div className="journal-section">
+    <Text strong style={{ display: 'block', marginBottom: 8, fontSize: 14 }}>
       {title}
     </Text>
-    <Paragraph style={{ whiteSpace: 'pre-wrap', margin: 0, color: '#444' }}>
-      {content || <Text type="secondary">（无内容）</Text>}
-    </Paragraph>
+    {content ? (
+      <div className="journal-md-body">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      </div>
+    ) : (
+      <Text type="secondary">（无内容）</Text>
+    )}
   </div>
 );
 
