@@ -19045,3 +19045,205 @@ a {
 }
 
 /* === End Phase 19 === */
+
+/* ====================================================================
+ * === Phase 20 — 子导航栏重设计 (underline sub-nav) + 收敛配套 ===
+ * 用户反馈: 子 Tab 太多且子导航栏「不好看」.
+ * 方案: 把 ws-tab-segmented 从「灰底 pill」重设计为「干净的下划线 Tab 栏」——
+ *   透明底 + 底部一条发丝分隔线 + 选中项品牌色文字 + 品牌下划线指示条.
+ *   更接近高级 SaaS 的二级导航观感, 与冷白+Stripe紫基调一致.
+ * 两级场景: group 保留小 pill (强调「主分组」), sub 用下划线 (轻量子项).
+ * 追加在文件末尾, 覆盖 Phase 17 的 pill 样式. A股红涨绿跌不变.
+ * ==================================================================== */
+
+/* ---------- 20.1 单级 ws-tab-segmented → 下划线 Tab 栏 ---------- */
+.ws-tab-segmented.ant-segmented:not(.ws-tab-segmented--group):not(.ws-tab-segmented--sub) {
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08) !important;
+  margin-bottom: 22px !important;
+  gap: 4px !important;
+  color: var(--ink-3) !important;
+}
+.ws-tab-segmented.ant-segmented:not(.ws-tab-segmented--group):not(.ws-tab-segmented--sub)
+  .ant-segmented-group {
+  gap: 2px !important;
+}
+/* 隐藏滑块, 改用下划线表达选中 */
+.ws-tab-segmented:not(.ws-tab-segmented--group):not(.ws-tab-segmented--sub)
+  .ant-segmented-thumb {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.ws-tab-segmented:not(.ws-tab-segmented--group):not(.ws-tab-segmented--sub)
+  .ant-segmented-item {
+  background: transparent !important;
+  border-radius: 0 !important;
+  padding: 9px 16px 11px !important;
+  margin: 0 !important;
+  color: var(--ink-3) !important;
+  font-size: 14px !important;
+  font-weight: 520 !important;
+  position: relative !important;
+  transition: color var(--t-fast) !important;
+}
+.ws-tab-segmented:not(.ws-tab-segmented--group):not(.ws-tab-segmented--sub)
+  .ant-segmented-item::after {
+  content: "" !important;
+  position: absolute !important;
+  left: 16px !important;
+  right: 16px !important;
+  bottom: -1px !important;
+  height: 2px !important;
+  border-radius: 2px 2px 0 0 !important;
+  background: transparent !important;
+  transition: background var(--t-fast) !important;
+}
+.ws-tab-segmented:not(.ws-tab-segmented--group):not(.ws-tab-segmented--sub)
+  .ant-segmented-item:hover {
+  color: var(--ink-1) !important;
+  background: transparent !important;
+}
+.ws-tab-segmented:not(.ws-tab-segmented--group):not(.ws-tab-segmented--sub)
+  .ant-segmented-item-selected {
+  background: transparent !important;
+  color: var(--brand-text) !important;
+  font-weight: 640 !important;
+  box-shadow: none !important;
+}
+.ws-tab-segmented:not(.ws-tab-segmented--group):not(.ws-tab-segmented--sub)
+  .ant-segmented-item-selected::after {
+  background: var(--brand) !important;
+}
+.ws-tab-segmented:not(.ws-tab-segmented--group):not(.ws-tab-segmented--sub)
+  .ant-segmented-item-selected .ant-segmented-item-label {
+  color: var(--brand-text) !important;
+}
+
+/* ---------- 20.2 两级: group = 小 pill (主分组强调) ---------- */
+.ws-tab-segmented--group.ant-segmented {
+  background: var(--bg-sunken) !important;
+  padding: 4px !important;
+  border-radius: 10px !important;
+  margin-bottom: 12px !important;
+  display: inline-flex !important;
+}
+.ws-tab-segmented--group .ant-segmented-item {
+  font-size: 13px !important;
+  font-weight: 580 !important;
+  padding: 5px 16px !important;
+  border-radius: 7px !important;
+  color: var(--ink-3) !important;
+}
+.ws-tab-segmented--group .ant-segmented-item:hover {
+  color: var(--ink-1) !important;
+}
+.ws-tab-segmented--group .ant-segmented-item-selected {
+  background: #ffffff !important;
+  color: var(--brand-text) !important;
+  font-weight: 660 !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.08) !important;
+}
+.ws-tab-segmented--group .ant-segmented-item-selected .ant-segmented-item-label {
+  color: var(--brand-text) !important;
+}
+.ws-tab-segmented--group .ant-segmented-thumb {
+  background: #ffffff !important;
+  border-radius: 7px !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.08) !important;
+}
+
+/* ---------- 20.3 两级: sub = 下划线子项 (轻量, 缩进) ---------- */
+.ws-tab-segmented--sub.ant-segmented {
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08) !important;
+  margin: 0 0 22px 0 !important;
+  display: flex !important;
+}
+.ws-tab-segmented--sub .ant-segmented-thumb {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.ws-tab-segmented--sub .ant-segmented-item {
+  background: transparent !important;
+  border-radius: 0 !important;
+  padding: 8px 14px 10px !important;
+  margin: 0 !important;
+  color: var(--ink-3) !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  position: relative !important;
+}
+.ws-tab-segmented--sub .ant-segmented-item::after {
+  content: "" !important;
+  position: absolute !important;
+  left: 14px !important;
+  right: 14px !important;
+  bottom: -1px !important;
+  height: 2px !important;
+  border-radius: 2px 2px 0 0 !important;
+  background: transparent !important;
+  transition: background var(--t-fast) !important;
+}
+.ws-tab-segmented--sub .ant-segmented-item:hover {
+  color: var(--ink-1) !important;
+  background: transparent !important;
+}
+.ws-tab-segmented--sub .ant-segmented-item-selected {
+  background: transparent !important;
+  color: var(--brand-text) !important;
+  font-weight: 620 !important;
+  box-shadow: none !important;
+}
+.ws-tab-segmented--sub .ant-segmented-item-selected::after {
+  background: var(--brand) !important;
+}
+.ws-tab-segmented--sub .ant-segmented-item-selected .ant-segmented-item-label {
+  color: var(--brand-text) !important;
+}
+
+/* ---------- 20.4 ws-tab-header 与下划线栏的间距收敛 ---------- */
+.ws-tab-header {
+  margin-bottom: 16px !important;
+}
+.ws-tab-eyebrow {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.10em !important;
+  color: var(--ink-4) !important;
+  text-transform: uppercase !important;
+  margin-bottom: 6px !important;
+}
+.ws-tab-title {
+  font-size: 22px !important;
+  font-weight: 680 !important;
+  letter-spacing: var(--tracking-tight) !important;
+  color: var(--ink-1) !important;
+  margin: 0 0 6px !important;
+  line-height: var(--leading-tight) !important;
+}
+.ws-tab-subtitle {
+  font-size: 13px !important;
+  color: var(--ink-3) !important;
+  margin: 0 !important;
+  line-height: var(--leading-normal, 1.6) !important;
+  max-width: 720px !important;
+}
+
+/* 收敛后 hub-and-spoke 子视图的返回链接 (Lab / Settings). */
+.ws-eval-back {
+  margin-bottom: 12px !important;
+}
+.ws-eval-back .ant-btn {
+  padding-left: 0 !important;
+  color: var(--ink-3) !important;
+  font-weight: 560 !important;
+}
+.ws-eval-back .ant-btn:hover {
+  color: var(--accent, #1677ff) !important;
+}
+
+/* === End Phase 20 === */

@@ -172,16 +172,17 @@ const PortfolioWorkspace: React.FC = () => {
       { key: 'alerts', label: '我的提醒', icon: <BellOutlined /> },
     ];
     if (isAdmin) {
-      baseTabs.push(
-        { key: 'attribution', label: '日归因 (admin)', icon: <BarChartOutlined /> },
-        { key: 'error-patterns', label: '错误模式 (admin)', icon: <ExclamationCircleOutlined /> },
-        { key: 'correlation', label: '相关性矩阵 (admin)', icon: <RadarChartOutlined /> },
-        { key: 'manage', label: '模拟盘管理 (admin)', icon: <SettingOutlined /> }
-      );
+      // 收敛 (2026-07-04): 4 个 admin 一级 tab (日归因/错误模式/相关性/模拟盘) 折进单个
+      // "高级分析", 内部用二级 Segmented 切换, admin 一级从 9 → 6.
+      baseTabs.push({ key: 'advanced', label: '高级分析 (admin)', icon: <BarChartOutlined /> });
     }
     return baseTabs;
   }, [isAdmin]);
   const [activeKey, setActiveKey] = useState<string>('positions');
+  // 高级分析 (admin) 二级子视图.
+  const [advancedSubView, setAdvancedSubView] = useState<
+    'attribution' | 'error-patterns' | 'correlation' | 'manage'
+  >('attribution');
 
   // PR-C: AlertsBell 普通用户点击 → /workspace/portfolio?tab=alerts.
   // 一次性应用 query (与 TodayWorkspace 同款模式), 之后用户手动切 tab 不被 query 覆盖.
@@ -374,14 +375,6 @@ const PortfolioWorkspace: React.FC = () => {
     );
   } else if (activeKey === 'equity') {
     body = <EquityCurveTab snapshots={snapshots} kpis={kpis} />;
-  } else if (activeKey === 'attribution') {
-    body = (
-      <DailyAttributionTab
-        snapshots={snapshots}
-        trades={trades}
-        portfolioId={portfolioData?.portfolio?.id ?? null}
-      />
-    );
   } else if (activeKey === 'trades') {
     body = <TradesTab trades={trades} />;
   } else if (activeKey === 'journal') {
@@ -397,12 +390,35 @@ const PortfolioWorkspace: React.FC = () => {
         onUnreadCountChange={() => void refresh()}
       />
     );
-  } else if (activeKey === 'error-patterns') {
-    body = <ErrorPatternsTab trades={trades} journalList={journalList} />;
-  } else if (activeKey === 'correlation') {
-    body = <CorrelationTab portfolioId={portfolioData?.portfolio?.id} />;
-  } else if (activeKey === 'manage') {
-    body = <PortfolioManagementPanel />;
+  } else if (activeKey === 'advanced') {
+    body = (
+      <>
+        <Segmented
+          className="ws-tab-segmented"
+          options={[
+            { label: '日归因', value: 'attribution' },
+            { label: '错误模式', value: 'error-patterns' },
+            { label: '相关性矩阵', value: 'correlation' },
+            { label: '模拟盘管理', value: 'manage' },
+          ]}
+          value={advancedSubView}
+          onChange={v => setAdvancedSubView(v as typeof advancedSubView)}
+        />
+        {advancedSubView === 'attribution' ? (
+          <DailyAttributionTab
+            snapshots={snapshots}
+            trades={trades}
+            portfolioId={portfolioData?.portfolio?.id ?? null}
+          />
+        ) : advancedSubView === 'error-patterns' ? (
+          <ErrorPatternsTab trades={trades} journalList={journalList} />
+        ) : advancedSubView === 'correlation' ? (
+          <CorrelationTab portfolioId={portfolioData?.portfolio?.id} />
+        ) : (
+          <PortfolioManagementPanel />
+        )}
+      </>
+    );
   } else {
     body = null;
   }

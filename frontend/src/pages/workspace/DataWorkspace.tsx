@@ -1,9 +1,7 @@
 import React, { lazy, Suspense, useEffect, useMemo, useState } from 'react';
-import { Card, Empty, Statistic, Space, Tag, Spin, Tooltip, Typography } from 'antd';
+import { Card, Empty, Statistic, Space, Tag, Spin, Tooltip, Typography, Segmented } from 'antd';
 import {
   CloudSyncOutlined,
-  ScheduleOutlined,
-  FileDoneOutlined,
   MonitorOutlined,
   DashboardOutlined,
   StockOutlined,
@@ -47,16 +45,21 @@ const HealthMonitor = lazy(() => import('../HealthMonitor'));
  * `dataWorkspaceTabHelpers.buildDataWorkspaceTabViewModel(activeKey, health)`
  * 派生, 每个 tab 都有 "真内容" 的上下文 KPI, 不再共用同一组固定 statistic.
  */
+/** 收敛后一级 tab key — 运维三视图折进 'ops'. */
+type DataTopTabKey = 'health' | 'stocks' | 'sync' | 'ops';
+
 const DataWorkspace: React.FC = () => {
+  // 收敛 (2026-07-04): 原 6 个一级 tab 里 调度任务/系统日志/健康监控 3 个纯 admin
+  // 运维视图折进单个「运维」tab, 内部用二级 Segmented 切换, 一级 6 → 4.
   const tabs: WorkspaceTab[] = [
     { key: 'health', label: '数据健康', icon: <DashboardOutlined /> },
     { key: 'stocks', label: '个股趋势', icon: <StockOutlined /> },
     { key: 'sync', label: '行情同步', icon: <CloudSyncOutlined /> },
-    { key: 'tasks', label: '调度任务', icon: <ScheduleOutlined /> },
-    { key: 'logs', label: '系统日志', icon: <FileDoneOutlined /> },
-    { key: 'monitoring', label: '健康监控', icon: <MonitorOutlined /> },
+    { key: 'ops', label: '运维', icon: <MonitorOutlined /> },
   ];
-  const [activeKey, setActiveKey] = useState<DataWorkspaceTabKey>('health');
+  const [activeKey, setActiveKey] = useState<DataTopTabKey>('health');
+  // 「运维」二级子视图: 调度任务 / 系统日志 / 健康监控.
+  const [opsSubView, setOpsSubView] = useState<'tasks' | 'logs' | 'monitoring'>('tasks');
   const [healthData, setHealthData] = useState<DataHealthStatusResponse | null>(null);
 
   useEffect(() => {
@@ -80,10 +83,12 @@ const DataWorkspace: React.FC = () => {
       });
   }, []);
 
-  // US-060: tab-aware view model — 切 tab 时 kpiSlot 内容变, 不再永远显示 health 三件套
+  // US-060: tab-aware view model — 切 tab 时 kpiSlot 内容变, 不再永远显示 health 三件套.
+  // 「运维」tab 复用其二级子视图 (tasks/logs/monitoring) 的 view model, KPI 随子视图切.
+  const vmKey: DataWorkspaceTabKey = activeKey === 'ops' ? opsSubView : activeKey;
   const vm: DataWorkspaceTabViewModel = useMemo(
-    () => buildDataWorkspaceTabViewModel(activeKey, healthData),
-    [activeKey, healthData]
+    () => buildDataWorkspaceTabViewModel(vmKey, healthData),
+    [vmKey, healthData]
   );
 
   const kpiSlot = (
@@ -169,30 +174,29 @@ const DataWorkspace: React.FC = () => {
             </Suspense>
           </>
         );
-      case 'tasks':
+      case 'ops':
         return (
           <>
             {overviewBar}
+            <Segmented
+              className="ws-tab-segmented"
+              style={{ marginBottom: 12 }}
+              options={[
+                { label: '调度任务', value: 'tasks' },
+                { label: '系统日志', value: 'logs' },
+                { label: '健康监控', value: 'monitoring' },
+              ]}
+              value={opsSubView}
+              onChange={v => setOpsSubView(v as typeof opsSubView)}
+            />
             <Suspense fallback={fallback}>
-              <TaskScheduler />
-            </Suspense>
-          </>
-        );
-      case 'logs':
-        return (
-          <>
-            {overviewBar}
-            <Suspense fallback={fallback}>
-              <SystemLogs />
-            </Suspense>
-          </>
-        );
-      case 'monitoring':
-        return (
-          <>
-            {overviewBar}
-            <Suspense fallback={fallback}>
-              <HealthMonitor />
+              {opsSubView === 'tasks' ? (
+                <TaskScheduler />
+              ) : opsSubView === 'logs' ? (
+                <SystemLogs />
+              ) : (
+                <HealthMonitor />
+              )}
             </Suspense>
           </>
         );
@@ -211,7 +215,7 @@ const DataWorkspace: React.FC = () => {
       subtitle="行情、北向资金、龙虎榜、涨停板等数据同步与质量监控。"
       tabs={tabs}
       activeKey={activeKey}
-      onTabChange={k => setActiveKey(k as DataWorkspaceTabKey)}
+      onTabChange={k => setActiveKey(k as DataTopTabKey)}
       kpiSlot={kpiSlot}
       headerActions={headerActions}
       hero={

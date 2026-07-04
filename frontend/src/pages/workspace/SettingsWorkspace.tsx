@@ -41,6 +41,7 @@ import {
   MessageOutlined,
   ThunderboltOutlined,
   SafetyOutlined,
+  LeftOutlined,
 } from '@ant-design/icons';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import WorkspaceHero from '../../components/layout/WorkspaceHero';
@@ -1714,17 +1715,18 @@ const SettingsWorkspace: React.FC = () => {
             风控参数中心 — 止损 / 单股 / 行业 / 黑天鹅熔断 + 策略 kill-switch + 待办建议。
           </p>
         </div>
-        <Segmented
-          className="ws-tab-segmented"
-          options={[
-            { label: '风控总览', value: 'overview' },
-            { label: '参数中心', value: 'parameters' },
-            { label: '黑天鹅历史', value: 'black-swan' },
-            { label: '待办建议', value: 'todos' },
-          ]}
-          value={riskSubView}
-          onChange={v => setRiskSubView(v as typeof riskSubView)}
-        />
+        {riskSubView !== 'overview' && (
+          <div className="ws-eval-back">
+            <Button
+              type="text"
+              size="small"
+              icon={<LeftOutlined />}
+              onClick={() => setRiskSubView('overview')}
+            >
+              返回风控总览
+            </Button>
+          </div>
+        )}
         {riskSubView === 'overview' ? (
           <Card>
             <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -1736,7 +1738,7 @@ const SettingsWorkspace: React.FC = () => {
                   <Space direction="vertical" size={4}>
                     <Text>
                       系统已默认开启 4 类自动保护 (单股止损 / 行业集中度 / 黑天鹅熔断 / 策略
-                      kill-switch), 普通用户无需配置即可获得保护; 切到下方 Segmented 可调整阈值。
+                      kill-switch), 普通用户无需配置即可获得保护; 点下方任意卡片进入对应设置项。
                     </Text>
                     <Text type="secondary">
                       参数中心修改后需保存并重启 worker; kill-switch 与黑天鹅历史可即时生效。

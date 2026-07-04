@@ -201,10 +201,6 @@ const FactorWorkspace: React.FC = () => {
   const [activeKey, setActiveKey] = useState('overview');
   // 'overview' 二级子视图: 因子总览 / 权重调参
   const [overviewSubView, setOverviewSubView] = useState<'overview' | 'weights'>('overview');
-  // 'insight' 二级子视图: 行业决策 / 宏观环境 / ETF资金流 / 政策要闻
-  const [insightSubView, setInsightSubView] = useState<
-    'board' | 'macro' | 'etf' | 'policy'
-  >('board');
 
   // --- overview + latest picks (loaded together on mount) ---
   const [overview, setOverview] = useState<FactorOverviewResponse | null>(null);
@@ -446,7 +442,7 @@ const FactorWorkspace: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (activeKey !== 'board') return;
+    if (activeKey !== 'insight') return;
     if (board || boardLoading || boardError) return;
     void loadBoard();
   }, [activeKey, board, boardLoading, boardError, loadBoard]);
@@ -584,35 +580,32 @@ const FactorWorkspace: React.FC = () => {
       </>
     );
   } else if (activeKey === 'insight') {
-    // 决策洞察 — 行业决策 / 宏观环境 / ETF资金流 / 政策要闻 (二级 Segmented).
+    // 决策洞察 (2026-07-04 收敛): 行业决策 / 宏观环境 / ETF资金流 / 政策要闻
+    // 原四个二级 Segmented 合并为单页纵向堆叠, 用小标题分区, 一眼读完全部决策上下文.
     body = (
-      <>
-        <Segmented
-          className="ws-tab-segmented"
-          options={[
-            { label: '行业决策', value: 'board' },
-            { label: '宏观环境', value: 'macro' },
-            { label: 'ETF 资金流', value: 'etf' },
-            { label: '政策要闻', value: 'policy' },
-          ]}
-          value={insightSubView}
-          onChange={v => setInsightSubView(v as typeof insightSubView)}
-        />
-        {insightSubView === 'board' ? (
+      <Space direction="vertical" size={28} style={{ width: '100%' }}>
+        <section>
+          <div className="home-section-title">行业决策</div>
           <IndustryBoardTab
             data={board}
             loading={boardLoading}
             error={boardError}
             onReload={loadBoard}
           />
-        ) : insightSubView === 'macro' ? (
+        </section>
+        <section>
+          <div className="home-section-title">宏观环境</div>
           <MacroEnvTab />
-        ) : insightSubView === 'etf' ? (
+        </section>
+        <section>
+          <div className="home-section-title">ETF 资金流</div>
           <ETFFlowTab />
-        ) : (
+        </section>
+        <section>
+          <div className="home-section-title">政策要闻</div>
           <PolicyNewsTab />
-        )}
-      </>
+        </section>
+      </Space>
     );
   } else {
     // 'picks'

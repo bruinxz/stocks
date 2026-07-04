@@ -31,6 +31,7 @@ import {
   EditOutlined,
   ExperimentOutlined,
   InfoCircleOutlined,
+  LeftOutlined,
   NodeIndexOutlined,
   PlayCircleOutlined,
   PlusSquareOutlined,
@@ -157,15 +158,8 @@ const LabWorkspace: React.FC = () => {
     | 'overfit'
     | 'quarterly'
   >('overview');
-  // Tab 收敛 (2026-07-04): 评估报告 8 项扁平 Segmented → 两级 (3 组 → 子项).
-  // 组1 核心评估: overview / ledger; 组2 稳健性: walkforward / overfit / quarterly;
-  // 组3 审计: data-audit / execution / optimization.
-  const evalGroupOf = (v: typeof evalSubView): 'core' | 'robust' | 'audit' =>
-    v === 'overview' || v === 'ledger'
-      ? 'core'
-      : v === 'walkforward' || v === 'overfit' || v === 'quarterly'
-        ? 'robust'
-        : 'audit';
+  // Tab 收敛 (2026-07-04, v2): 评估报告改为 hub-and-spoke —— 总览卡片网格即导航,
+  // 点卡片进细分视图, 细分视图顶部"返回评估总览"回到 hub. 去掉三层 Segmented 嵌套.
   const [advancedSubView, setAdvancedSubView] = useState<'compare' | 'workflow'>(
     'compare'
   );
@@ -539,46 +533,18 @@ const LabWorkspace: React.FC = () => {
             Walk-Forward / 寻优历史 / Shadow Run。
           </p>
         </div>
-        <Segmented
-          className="ws-tab-segmented ws-tab-segmented--group"
-          options={[
-            { label: '核心评估', value: 'core' },
-            { label: '稳健性', value: 'robust' },
-            { label: '审计', value: 'audit' },
-          ]}
-          value={evalGroupOf(evalSubView)}
-          onChange={g => {
-            const first = {
-              core: 'overview',
-              robust: 'walkforward',
-              audit: 'data-audit',
-            }[g as 'core' | 'robust' | 'audit'] as typeof evalSubView;
-            setEvalSubView(first);
-          }}
-        />
-        <Segmented
-          className="ws-tab-segmented ws-tab-segmented--sub"
-          options={
-            evalGroupOf(evalSubView) === 'core'
-              ? [
-                  { label: '综合评估', value: 'overview' },
-                  { label: '实验账本', value: 'ledger' },
-                ]
-              : evalGroupOf(evalSubView) === 'robust'
-                ? [
-                    { label: 'Walk-Forward 走查', value: 'walkforward' },
-                    { label: '过拟合诊断', value: 'overfit' },
-                    { label: '季度重训', value: 'quarterly' },
-                  ]
-                : [
-                    { label: '数据审计', value: 'data-audit' },
-                    { label: '成交约束', value: 'execution' },
-                    { label: '参数寻优历史', value: 'optimization' },
-                  ]
-          }
-          value={evalSubView}
-          onChange={v => setEvalSubView(v as typeof evalSubView)}
-        />
+        {evalSubView !== 'overview' && (
+          <div className="ws-eval-back">
+            <Button
+              type="text"
+              size="small"
+              icon={<LeftOutlined />}
+              onClick={() => setEvalSubView('overview')}
+            >
+              返回评估总览
+            </Button>
+          </div>
+        )}
         {evalSubView === 'overview' ? (
           <Card>
             <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -590,7 +556,7 @@ const LabWorkspace: React.FC = () => {
                   <Space direction="vertical" size={4}>
                     <Text>
                       策略上线前的 “体检套件”——从数据、成交、泛化和稳定性角度独立打分, 任何一项严重
-                      fail 都建议 暂缓上线。点上方 Segmented 切到细分视图查看每一项详情。
+                      fail 都建议 暂缓上线。点下方任意卡片进入对应细分视图查看详情。
                     </Text>
                     <Text type="secondary">
                       推荐路径: 实验账本 → 数据审计 → 成交约束 → Walk-Forward 走查 → 过拟合诊断 →
