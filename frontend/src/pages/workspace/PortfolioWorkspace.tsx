@@ -178,7 +178,7 @@ const PortfolioWorkspace: React.FC = () => {
     if (isAdmin) {
       // 收敛 (2026-07-04): 4 个 admin 一级 tab (日归因/错误模式/相关性/模拟盘) 折进单个
       // "高级分析", 内部用二级 Segmented 切换, admin 一级从 9 → 6.
-      baseTabs.push({ key: 'advanced', label: '高级分析 (admin)', icon: <BarChartOutlined /> });
+      // 高级分析 tab 已下线 (2026-07-05): 面向小白简洁优先
     }
     return baseTabs;
   }, [isAdmin]);
@@ -370,42 +370,6 @@ const PortfolioWorkspace: React.FC = () => {
         title="我的提醒"
         onUnreadCountChange={() => void refresh()}
       />
-    );
-  } else if (activeKey === 'advanced') {
-    body = (
-      <>
-        <Segmented
-          className="ws-tab-segmented"
-          options={[
-            { label: '日归因', value: 'attribution' },
-            { label: '错误模式', value: 'error-patterns' },
-            { label: '相关性矩阵', value: 'correlation' },
-            { label: '模拟盘管理', value: 'manage' },
-            { label: '风控中心', value: 'risk-center' },
-          ]}
-          value={advancedSubView}
-          onChange={v => setAdvancedSubView(v as typeof advancedSubView)}
-        />
-        {advancedSubView === 'attribution' ? (
-          <DailyAttributionTab
-            snapshots={snapshots}
-            trades={trades}
-            portfolioId={portfolioData?.portfolio?.id ?? null}
-          />
-        ) : advancedSubView === 'error-patterns' ? (
-          <ErrorPatternsTab trades={trades} journalList={journalList} />
-        ) : advancedSubView === 'correlation' ? (
-          <CorrelationTab portfolioId={portfolioData?.portfolio?.id} />
-        ) : advancedSubView === 'risk-center' ? (
-          <RiskAlertCenterPanel
-            positionSymbols={[]}
-            title="风控中心 (全量)"
-            onUnreadCountChange={() => void refresh()}
-          />
-        ) : (
-          <PortfolioManagementPanel />
-        )}
-      </>
     );
   } else {
     body = null;

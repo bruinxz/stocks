@@ -35,31 +35,23 @@ import {
   Alert,
   Button,
   Card,
-  Col,
-  DatePicker,
   Empty,
-  Input,
   Popconfirm,
-  Row,
   Segmented,
-  Select,
   Space,
   Table,
   Tag,
   Typography,
   message,
 } from 'antd';
-import type { TableRowSelection } from 'antd/es/table/interface';
 import {
-  CheckCircleOutlined,
   ReloadOutlined,
   SafetyCertificateOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
-import dayjs, { Dayjs } from 'dayjs';
+import dayjs from 'dayjs';
 import {
   listRiskAlerts,
-  markAlertsAsRead,
   markAllRiskAlertsRead,
   RiskAlertItem,
   RiskAlertListParams,
@@ -78,7 +70,6 @@ import {
 } from './riskCenterHelpers';
 
 const { Text, Paragraph } = Typography;
-const { RangePicker } = DatePicker;
 
 // ---------------------------------------------------------------------------
 // 私有工具函数 — 颜色 / Tag / 文案小工具
@@ -207,28 +198,16 @@ const RiskAlertCenterPanel: React.FC<RiskAlertCenterPanelProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // ---- view + 二级 filter (与原 panel 同) ----
+  // ---- view ----
   const [view, setView] = useState<AlertView>(initialView);
-  const [filterLevel, setFilterLevel] = useState<'HIGH' | 'MEDIUM' | 'LOW' | undefined>(undefined);
-  const [filterType, setFilterType] = useState<AlertCategory | undefined>(undefined);
-  const [filterDateRange, setFilterDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
-  const [filterIsRead, setFilterIsRead] = useState<boolean | undefined>(undefined);
-  const [filterSearch, setFilterSearch] = useState<string>('');
 
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [marking, setMarking] = useState(false);
 
-  // ---- 组装 backend query — useMemo 让 effect deps 稳定 ----
+  // ---- 组装 backend query ----
   const queryParams = useMemo<RiskAlertListParams>(() => {
     const params: RiskAlertListParams = { page, limit: pageSize };
-    if (filterLevel) params.level = filterLevel;
-    if (filterType) params.type = filterType;
-    if (filterIsRead !== undefined) params.is_read = filterIsRead;
-    if (filterSearch.trim()) params.search = filterSearch.trim();
-    if (filterDateRange?.[0]) params.date_from = filterDateRange[0].format('YYYY-MM-DD');
-    if (filterDateRange?.[1]) params.date_to = filterDateRange[1].format('YYYY-MM-DD');
     return params;
-  }, [page, pageSize, filterLevel, filterType, filterIsRead, filterSearch, filterDateRange]);
+  }, [page, pageSize]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -238,7 +217,6 @@ const RiskAlertCenterPanel: React.FC<RiskAlertCenterPanelProps> = ({
       setItems(res.items);
       setTotal(res.total);
       setUnreadCount(res.unread_count);
-      setSelectedIds([]);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
@@ -265,27 +243,6 @@ const RiskAlertCenterPanel: React.FC<RiskAlertCenterPanelProps> = ({
   const heroStats = useMemo(() => computeRiskCenterHeroStats(items), [items]);
   const highUnreadCount = useMemo(() => countUnreadHighAlerts(items), [items]);
 
-  // ---- 批量已读 ----
-  const handleMarkSelected = useCallback(async () => {
-    if (selectedIds.length === 0) {
-      message.info('请先选择告警');
-      return;
-    }
-    setMarking(true);
-    try {
-      const res = await markAlertsAsRead(selectedIds);
-      message.success(`已标记 ${res.updated} 条告警为已读`);
-      setSelectedIds([]);
-      await load();
-      onUnreadCountChange?.();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      message.error(`批量标记失败：${msg}`);
-    } finally {
-      setMarking(false);
-    }
-  }, [selectedIds, load, onUnreadCountChange]);
-
   const handleMarkAll = useCallback(async () => {
     setMarking(true);
     try {
@@ -301,29 +258,10 @@ const RiskAlertCenterPanel: React.FC<RiskAlertCenterPanelProps> = ({
     }
   }, [load, onUnreadCountChange]);
 
-  const handleResetFilters = useCallback(() => {
-    setFilterLevel(undefined);
-    setFilterType(undefined);
-    setFilterDateRange(null);
-    setFilterIsRead(undefined);
-    setFilterSearch('');
-    setPage(1);
-  }, []);
-
   // ---- sticky banner: 直接跳到 critical view ----
   const handleJumpToCritical = useCallback(() => {
     setView('critical');
-    setFilterIsRead(false); // 仅看未读
   }, []);
-
-  // ---- rowSelection: 已读不可选 (post-action 防呆) ----
-  const rowSelection: TableRowSelection<AggregatedAlert> = {
-    selectedRowKeys: selectedIds,
-    onChange: keys => setSelectedIds(keys.map(k => Number(k))),
-    getCheckboxProps: row => ({
-      disabled: row.is_read,
-    }),
-  };
 
   return (
     <Space direction="vertical" size={0} style={{ width: '100%' }}>
@@ -372,7 +310,6 @@ const RiskAlertCenterPanel: React.FC<RiskAlertCenterPanelProps> = ({
             <SafetyCertificateOutlined style={{ color: '#722ed1' }} />
             <span>{title}</span>
             <Tag color={unreadCount > 0 ? 'red' : 'green'}>未读 {unreadCount}</Tag>
-            <Tag color="default">本视图 {aggregated.length} 组 / 全部 {total}</Tag>
           </Space>
         }
         extra={
@@ -385,16 +322,6 @@ const RiskAlertCenterPanel: React.FC<RiskAlertCenterPanelProps> = ({
             >
               刷新
             </Button>
-            <Button
-              type="primary"
-              icon={<CheckCircleOutlined />}
-              disabled={selectedIds.length === 0 || marking}
-              loading={marking && selectedIds.length > 0}
-              onClick={() => void handleMarkSelected()}
-              size="small"
-            >
-              标记选中已读 ({selectedIds.length})
-            </Button>
             <Popconfirm
               title="将所有未读告警标记为已读？"
               description={`此操作会更新 ${unreadCount} 条未读告警，无法撤销`}
@@ -406,7 +333,7 @@ const RiskAlertCenterPanel: React.FC<RiskAlertCenterPanelProps> = ({
               <Button
                 danger
                 disabled={unreadCount === 0 || marking}
-                loading={marking && selectedIds.length === 0}
+                loading={marking}
                 size="small"
               >
                 一键全部已读
@@ -438,97 +365,12 @@ const RiskAlertCenterPanel: React.FC<RiskAlertCenterPanelProps> = ({
             data-testid="risk-center-view-segmented"
           />
 
-          {/* 高级过滤栏 — 默认折叠级别/类型/日期等, 视图已足够覆盖大多数场景 */}
-          <Row gutter={[8, 8]} align="middle">
-            <Col xs={12} md={4}>
-              <Select<'HIGH' | 'MEDIUM' | 'LOW'>
-                placeholder="级别"
-                allowClear
-                style={{ width: '100%' }}
-                value={filterLevel}
-                onChange={v => {
-                  setFilterLevel(v);
-                  setPage(1);
-                }}
-                options={[
-                  { label: '高 (HIGH)', value: 'HIGH' },
-                  { label: '中 (MEDIUM)', value: 'MEDIUM' },
-                  { label: '低 (LOW)', value: 'LOW' },
-                ]}
-              />
-            </Col>
-            <Col xs={12} md={4}>
-              <Select<AlertCategory>
-                placeholder="类型"
-                allowClear
-                style={{ width: '100%' }}
-                value={filterType}
-                onChange={v => {
-                  setFilterType(v);
-                  setPage(1);
-                }}
-                options={[
-                  { label: '持仓', value: 'position' },
-                  { label: '市场', value: 'market' },
-                  { label: '单股', value: 'individual' },
-                ]}
-              />
-            </Col>
-            <Col xs={24} md={7}>
-              <RangePicker
-                style={{ width: '100%' }}
-                value={filterDateRange ?? undefined}
-                onChange={dates => {
-                  setFilterDateRange(dates as [Dayjs | null, Dayjs | null] | null);
-                  setPage(1);
-                }}
-                placeholder={['开始日期', '结束日期']}
-              />
-            </Col>
-            <Col xs={12} md={4}>
-              <Select<'all' | 'unread' | 'read'>
-                placeholder="读取状态"
-                style={{ width: '100%' }}
-                value={filterIsRead === undefined ? 'all' : filterIsRead ? 'read' : 'unread'}
-                onChange={v => {
-                  setFilterIsRead(v === 'all' ? undefined : v === 'read');
-                  setPage(1);
-                }}
-                options={[
-                  { label: '全部', value: 'all' },
-                  { label: '未读', value: 'unread' },
-                  { label: '已读', value: 'read' },
-                ]}
-              />
-            </Col>
-            <Col xs={24} md={5}>
-              <Input.Search
-                placeholder="代码/名称模糊搜索"
-                allowClear
-                value={filterSearch}
-                onChange={e => setFilterSearch(e.target.value)}
-                onSearch={() => setPage(1)}
-              />
-            </Col>
-            <Col xs={24} md={24}>
-              <Space>
-                <Button size="small" onClick={handleResetFilters}>
-                  重置过滤
-                </Button>
-                {selectedIds.length > 0 && (
-                  <Text type="secondary">已选 {selectedIds.length} 条</Text>
-                )}
-              </Space>
-            </Col>
-          </Row>
-
           {/* 主表格 — aggregated rows, 同 (rule_id/symbol/day) 折叠 */}
           <Table<AggregatedAlert>
             size="small"
             rowKey="id"
             loading={loading}
             dataSource={aggregated}
-            rowSelection={rowSelection}
             pagination={{
               defaultPageSize: 30,
               pageSize: 30,

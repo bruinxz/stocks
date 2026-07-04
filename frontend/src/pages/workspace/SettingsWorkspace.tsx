@@ -137,12 +137,11 @@ const SettingsWorkspace: React.FC = () => {
     const baseTabs: WorkspaceTab[] = [
       { key: 'profile', label: '个人', icon: <UserOutlined /> },
       { key: 'notify', label: '通知', icon: <BellOutlined /> },
-      { key: 'risk', label: '风控', icon: <SafetyOutlined /> },
+      // { key: 'risk', label: '风控' }, // 下线 2026-07-05
     ];
     if (isAdmin) {
       baseTabs.push(
-        { key: 'advanced', label: '高级', icon: <ThunderboltOutlined /> },
-        { key: 'users', label: '用户管理', icon: <TeamOutlined /> }
+        // 高级/用户管理 tab 下线 2026-07-05
       );
     }
     return baseTabs;
@@ -1677,21 +1676,7 @@ const SettingsWorkspace: React.FC = () => {
             修改个人资料 / 密码 / 头像, 或管理你绑定的 AI 模型 API 密钥。
           </p>
         </div>
-        <Segmented
-          className="ws-tab-segmented"
-          options={[
-            { label: '个人资料', value: 'profile' },
-            { label: 'API 密钥', value: 'keys' },
-          ]}
-          value={profileSubView}
-          onChange={v => setProfileSubView(v as typeof profileSubView)}
-        />
-        {profileSubView === 'profile'
-          ? renderProfileView()
-          : renderPlaceholder({
-              label: 'API 密钥',
-              desc: '配置 OpenAI / DeepSeek / Anthropic 等 API 密钥，用于 AI 分析功能。',
-            })}
+        {renderProfileView()}
       </>
     );
   } else if (activeKey === 'notify') {
@@ -1704,141 +1689,13 @@ const SettingsWorkspace: React.FC = () => {
             配置你想在什么时机、用什么渠道收到提醒 — 飞书机器人 / 邮件 / 微信公众号 / 阿里云短信。
           </p>
         </div>
-        <Segmented
-          className="ws-tab-segmented"
-          options={[
-            { label: '通知类型', value: 'types' },
-            { label: '推送渠道', value: 'channels' },
-          ]}
-          value={notifySubView}
-          onChange={v => setNotifySubView(v as typeof notifySubView)}
-        />
-        {notifySubView === 'types' ? renderNotifications() : renderPushChannels()}
-      </>
-    );
-  } else if (activeKey === 'risk') {
-    // ===== Tab 3: 风控 (总览 + 参数中心 + kill-switch + 黑天鹅 + 待办建议) =====
-    body = (
-      <>
-        <div className="ws-tab-header">
-          <h1 className="ws-tab-title">风控</h1>
-          <p className="ws-tab-subtitle">
-            风控参数中心 — 止损 / 单股 / 行业 / 黑天鹅熔断 + 策略 kill-switch + 待办建议。
-          </p>
-        </div>
-        {riskSubView !== 'overview' && (
-          <div className="ws-eval-back">
-            <Button
-              type="text"
-              size="small"
-              icon={<LeftOutlined />}
-              onClick={() => setRiskSubView('overview')}
-            >
-              返回风控总览
-            </Button>
-          </div>
-        )}
-        {riskSubView === 'overview' ? (
-          <Card>
-            <Space direction="vertical" size={16} style={{ width: '100%' }}>
-              <Alert
-                type="info"
-                showIcon
-                message="风控总览"
-                description={
-                  <Space direction="vertical" size={4}>
-                    <Text>
-                      系统已默认开启 4 类自动保护 (单股止损 / 行业集中度 / 黑天鹅熔断 / 策略
-                      kill-switch), 普通用户无需配置即可获得保护; 点下方任意卡片进入对应设置项。
-                    </Text>
-                    <Text type="secondary">
-                      参数中心修改后需保存并重启 worker; kill-switch 与黑天鹅历史可即时生效。
-                    </Text>
-                  </Space>
-                }
-              />
-              <Row gutter={[16, 16]}>
-                <Col xs={24} md={12}>
-                  <Card hoverable onClick={() => setRiskSubView('parameters')}>
-                    <Statistic title="参数中心" value="止损 / 单股 / 行业" />
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      调整全局风控阈值 (单股最大仓位 / 行业集中度上限 / ATR 倍数等)。
-                    </Text>
-                  </Card>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Card hoverable onClick={() => setRiskSubView('black-swan')}>
-                    <Statistic title="黑天鹅历史" value="熔断回放" />
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      查看历史触发的熔断事件及后续策略表现, 用于阈值复盘。
-                    </Text>
-                  </Card>
-                </Col>
-                <Col xs={24} md={12}>
-                  <Card hoverable onClick={() => setRiskSubView('todos')}>
-                    <Statistic title="待办建议" value="AI 提醒" />
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      系统每日扫描你的持仓 + 策略状态生成「建议事项」, 已读后自动归档。
-                    </Text>
-                  </Card>
-                </Col>
-              </Row>
-            </Space>
-          </Card>
-        ) : riskSubView === 'parameters' ? (
-          <RiskParametersCenterTab />
-        ) : riskSubView === 'black-swan' ? (
-          <BlackSwanHistoryTab />
-        ) : (
-          <TodoSuggestionsTab />
-        )}
-      </>
-    );
-  } else if (activeKey === 'advanced') {
-    // ===== Tab 4: 高级 (admin only) =====
-    body = (
-      <>
-        <div className="ws-tab-header">
-          <h1 className="ws-tab-title">高级</h1>
-          <p className="ws-tab-subtitle">
-            策略数学引擎参数 — 仓位策略 / 组合构建 / 分析引擎 (DeepSeek vs Anthropic 等)。
-          </p>
-        </div>
-        <Alert
-          type="warning"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="这里是策略数学引擎参数, 修改后可能影响实盘信号"
-          description="非研究员请保持默认值。改动会写入 user.risk_config + 全局 strategy_config, 实时生效。"
-        />
-        <Segmented
-          className="ws-tab-segmented"
-          options={[
-            { label: '仓位策略', value: 'sizing' },
-            { label: '组合构建', value: 'portfolio' },
-          ]}
-          value={advancedSubView}
-          onChange={v => setAdvancedSubView(v as typeof advancedSubView)}
-        />
-        {advancedSubView === 'sizing' ? <SizingPolicyTab /> : <PortfolioConstructionTab />}
+        {renderNotifications()}
       </>
     );
   } else {
-    // ===== Tab 5: 用户管理 (admin only) =====
-    body = (
-      <>
-        <div className="ws-tab-header">
-          <h1 className="ws-tab-title">用户管理</h1>
-          <p className="ws-tab-subtitle">管理员添加 / 禁用其它用户账号 — 此 tab 待接入。</p>
-        </div>
-        {renderPlaceholder({
-          label: '用户管理',
-          desc: '管理员添加 / 禁用其它用户账号 — 此 tab 待接入',
-        })}
-      </>
-    );
+    body = null;
   }
-
+  // advanced + users tabs removed 2026-07-05
   return (
     <WorkspaceLayout
       title="账号设置"
