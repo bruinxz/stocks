@@ -2592,10 +2592,11 @@ const JournalTab: React.FC<JournalTabProps> = ({ list, onListRefresh }) => {
 
   return (
     <div className="journal-tab-wrap">
-    <Row gutter={[20, 16]}>
-      <Col xs={24} md={8} lg={6}>
+    <Row gutter={[20, 16]} align="stretch">
+      <Col xs={24} md={8} lg={7}>
         <Card
           size="small"
+          style={{ height: '100%' }}
           title={
             <Space>
               <ReadOutlined />
@@ -2604,16 +2605,14 @@ const JournalTab: React.FC<JournalTabProps> = ({ list, onListRefresh }) => {
               </span>
             </Space>
           }
-          extra={
-            <DatePicker
-              size="small"
-              allowClear
-              placeholder="选择任意日"
-              value={selectedDate ? dayjs(selectedDate) : null}
-              onChange={d => setSelectedDate(d ? d.format('YYYY-MM-DD') : null)}
-            />
-          }
         >
+          <DatePicker
+            style={{ width: '100%', marginBottom: 8 }}
+            allowClear
+            placeholder="选择任意日开展复盘"
+            value={selectedDate ? dayjs(selectedDate) : null}
+            onChange={d => setSelectedDate(d ? d.format('YYYY-MM-DD') : null)}
+          />
           {/* US-056 [FE-017]: 维度切换 — day/week/month/quarter */}
           <Segmented<JournalPeriod>
             block
@@ -2707,7 +2706,7 @@ const JournalTab: React.FC<JournalTabProps> = ({ list, onListRefresh }) => {
           )}
         </Card>
       </Col>
-      <Col xs={24} md={16} lg={18}>
+      <Col xs={24} md={16} lg={17}>
         {periodKey !== 'day' && currentBucket && (
           <Card
             size="small"
@@ -2764,6 +2763,7 @@ const JournalTab: React.FC<JournalTabProps> = ({ list, onListRefresh }) => {
         )}
         <Card
           size="small"
+          style={{ minHeight: 240 }}
           title={
             <Space>
               <ReadOutlined />
@@ -2779,7 +2779,7 @@ const JournalTab: React.FC<JournalTabProps> = ({ list, onListRefresh }) => {
           ) : detailError ? (
             <Alert type="error" showIcon message="加载日记失败" description={detailError} />
           ) : !selectedDate ? (
-            <Empty description="左侧点击日期或上方选择任意日" />
+            <Empty description="左侧选择日期，或用上方日期选择器直接跳到任意交易日开展复盘" />
           ) : !detail ? (
             <Empty
               description={
