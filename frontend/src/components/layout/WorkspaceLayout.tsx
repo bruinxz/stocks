@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { Button, Card, Drawer, Menu, Space, Typography } from 'antd';
+import { Button, Card, Drawer, Space, Tabs, Typography } from 'antd';
 import { MenuOutlined } from '@ant-design/icons';
-import type { MenuProps } from 'antd';
+
 import { useIsMobile } from '../../hooks/useIsMobile';
 
 const { Title, Paragraph } = Typography;
@@ -88,25 +88,8 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
   const isMobile = useIsMobile();
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
 
-  const menuItems: MenuProps['items'] = useMemo(
-    () =>
-      (tabs || []).map(tab => ({
-        key: tab.key,
-        icon: tab.icon,
-        label: tab.label,
-        disabled: tab.disabled,
-      })),
-    [tabs]
-  );
-
   const hasTabs = Boolean(tabs && tabs.length > 0);
   const activeTab = useMemo(() => (tabs || []).find(t => t.key === activeKey), [tabs, activeKey]);
-
-  // Tap-then-go: when user taps a tab in the mobile drawer, switch + close.
-  const handleMobileMenuClick: MenuProps['onClick'] = ({ key }) => {
-    onTabChange?.(String(key));
-    setMobileDrawerOpen(false);
-  };
 
   // Phase 24 去重复: hero 已经承载了标题/副标题, KPI bar 里就不再重复。
   const showKpiTitle = !hero;
@@ -160,25 +143,26 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
         </div>
       ) : null}
 
-      <div
-        className="workspace-body"
-        style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}
-      >
+      <div className="workspace-body">
         {hasTabs && !isMobile ? (
-          <nav className="workspace-side-tabs" style={{ width: 184, flexShrink: 0 }}>
-            <div className="workspace-side-tabs__eyebrow">视图</div>
-            <Menu
-              mode="inline"
-              selectedKeys={activeKey ? [activeKey] : []}
-              onClick={({ key }) => onTabChange?.(String(key))}
-              items={menuItems}
-              style={{ border: 'none', background: 'transparent' }}
-            />
-          </nav>
+          <Tabs
+            activeKey={activeKey}
+            onChange={key => onTabChange?.(key)}
+            className="workspace-top-tabs"
+            style={{ marginBottom: 16 }}
+            items={(tabs || []).map(tab => ({
+              key: tab.key,
+              label: (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  {tab.icon}{tab.label}
+                </span>
+              ),
+              disabled: tab.disabled,
+            }))}
+          />
         ) : null}
         <div
           className={['workspace-content', themed ? 'ws-themed-area' : ''].filter(Boolean).join(' ')}
-          style={{ flex: 1, minWidth: 0 }}
         >
           {children}
         </div>
@@ -194,12 +178,19 @@ const WorkspaceLayout: React.FC<WorkspaceLayoutProps> = ({
           styles={{ body: { padding: 8 } }}
           className="workspace-mobile-drawer"
         >
-          <Menu
-            mode="inline"
-            selectedKeys={activeKey ? [activeKey] : []}
-            onClick={handleMobileMenuClick}
-            items={menuItems}
-            style={{ border: 'none', background: 'transparent' }}
+          <Tabs
+            activeKey={activeKey}
+            onChange={key => { onTabChange?.(key); setMobileDrawerOpen(false); }}
+            tabPosition="left"
+            items={(tabs || []).map(tab => ({
+              key: tab.key,
+              label: (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  {tab.icon}{tab.label}
+                </span>
+              ),
+              disabled: tab.disabled,
+            }))}
           />
         </Drawer>
       ) : null}
