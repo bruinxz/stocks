@@ -216,8 +216,6 @@ const DataWorkspace: React.FC = () => {
       tabs={tabs}
       activeKey={activeKey}
       onTabChange={k => setActiveKey(k as DataTopTabKey)}
-      kpiSlot={kpiSlot}
-      headerActions={headerActions}
       hero={
         <WorkspaceHero
           eyebrow="Data · 管理员视图"

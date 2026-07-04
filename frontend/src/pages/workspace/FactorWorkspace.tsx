@@ -620,14 +620,15 @@ const FactorWorkspace: React.FC = () => {
         tabs={tabs}
         activeKey={activeKey}
         onTabChange={setActiveKey}
-        kpiSlot={kpiSlot}
-        headerActions={headerActions}
         hero={
           <WorkspaceHero
             eyebrow="Factor · 选股因子库"
             title="选股因子"
             subtitle="多因子打分 · 行业中性 · 实时排名 · 历史轨迹回溯"
             variant="violet"
+            rightSlot={
+              <Button size="small" icon={<ReloadOutlined />} onClick={refresh} loading={loading} style={{ opacity: 0.75 }}>刷新</Button>
+            }
             metrics={[
               { label: '注册因子', value: registeredCount, unit: '只', emphasis: true },
               { label: '宇宙样本', value: totalUniverse.toLocaleString(), unit: '只' },
@@ -1388,7 +1389,6 @@ const IndustryBoardTab: React.FC<{
           />
           <Statistic title="板块数" value={data.universe_size} suffix="个" />
           <Statistic title="涨停" value={data.limit_up_today ?? '—'} suffix="只" />
-          <Statistic title="热门概念" value={data.hot_concepts.length} suffix="条" />
           <Button icon={<ReloadOutlined />} loading={loading} onClick={onReload}>
             刷新
           </Button>
@@ -1397,7 +1397,7 @@ const IndustryBoardTab: React.FC<{
 
       <Row gutter={[16, 16]}>
         {/* 左侧 — 行业排行榜 */}
-        <Col xs={24} lg={16}>
+        <Col xs={24}>
           <Card
             title={
               <Space>
@@ -1551,69 +1551,13 @@ const IndustryBoardTab: React.FC<{
           </Card>
         </Col>
 
-        {/* 右侧 — 今日热门概念 */}
-        <Col xs={24} lg={8}>
-          <Card
-            title={
-              <Space>
-                <BarChartOutlined />
-                今日热门概念
-              </Space>
-            }
-            size="small"
-          >
-            {data.hot_concepts.length === 0 ? (
-              <Empty description="今日 snowball_hot_keywords 无数据 — 请在 SchedulerService 启用 SNOWBALL_HOT_KEYWORD_SYNC" />
-            ) : (
-              <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                {data.hot_concepts.map((c, i) => (
-                  <Card key={`${c.keyword}-${i}`} size="small" bodyStyle={{ padding: 12 }}>
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                      }}
-                    >
-                      <div>
-                        <Text strong>{c.keyword}</Text>
-                        {c.is_new && (
-                          <Tag color="red" style={{ marginLeft: 6 }}>
-                            新进
-                          </Tag>
-                        )}
-                        {c.rank != null && <Tag style={{ marginLeft: 4 }}>#{c.rank}</Tag>}
-                      </div>
-                      <Tag color="blue">{c.heat_score.toLocaleString()}</Tag>
-                    </div>
-                    {c.related_stocks.length > 0 && (
-                      <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
-                        关联:{' '}
-                        {c.related_stocks.map(s => (
-                          <Tag key={s.stock_code} style={{ marginBottom: 2 }}>
-                            {s.stock_name || s.stock_code}
-                          </Tag>
-                        ))}
-                      </div>
-                    )}
-                  </Card>
-                ))}
-              </Space>
-            )}
-            <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 12 }}>
-              数据源: 雪球关注榜 top {data.hot_concepts.length}. heat_score = 当下关注人数,
-              「新进」标签表示前一交易日榜内无此关键词.
-            </Typography.Paragraph>
-          </Card>
-        </Col>
       </Row>
 
       <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
         💡 本面板为决策导向: <Text strong>板块强度榜</Text> 告诉你「今天主力在哪个板块」,{' '}
         <Text strong>龙头股</Text> 告诉你「能跟谁」, <Text strong>近 N 日序列</Text>{' '}
-        告诉你「是日内异动还是持续轮动」, <Text strong>热门概念</Text> 告诉你「市场在炒哪个主题」.
-        数据每日盘后由 SchedulerService 定时 sync 入库 (INDUSTRY_FLOW_SYNC / LIMIT_UP_SYNC /
-        SNOWBALL_HOT_KEYWORD_SYNC).
+        告诉你「是日内异动还是持续轮动」.
+        数据每日盘后由 SchedulerService 定时 sync 入库 (INDUSTRY_FLOW_SYNC / LIMIT_UP_SYNC).
       </Typography.Paragraph>
 
       {/* Batch AG (2026-06-18): 市场新闻时间线 — 给用户'今天市场在关心什么'的上下文 */}

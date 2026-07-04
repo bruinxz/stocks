@@ -531,14 +531,15 @@ const TodayWorkspace: React.FC = () => {
         tabs={tabs}
         activeKey={activeKey}
         onTabChange={handleTabChange}
-        kpiSlot={kpiSlot}
-        headerActions={headerActions}
         hero={
           <WorkspaceHero
             eyebrow="Today · 开盘前作战"
             title="今日作战"
             subtitle={subtitle}
             variant="violet"
+            rightSlot={
+              <Button size="small" icon={<ReloadOutlined />} onClick={() => { if (activeKey === 'core_picks') void loadV3(); else void refresh(); }} loading={loading} style={{ opacity: 0.75 }}>刷新</Button>
+            }
             metrics={
               data
                 ? [

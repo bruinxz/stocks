@@ -1837,8 +1837,6 @@ const SettingsWorkspace: React.FC = () => {
       tabs={tabs}
       activeKey={activeKey}
       onTabChange={setActiveKey}
-      kpiSlot={kpiSlot}
-      headerActions={headerActions}
       hero={
         <WorkspaceHero
           eyebrow="Settings · 账号中心"

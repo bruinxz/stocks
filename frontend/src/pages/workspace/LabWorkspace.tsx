@@ -695,14 +695,15 @@ const LabWorkspace: React.FC = () => {
       tabs={tabs}
       activeKey={activeKey}
       onTabChange={setActiveKey}
-      kpiSlot={kpiSlot}
-      headerActions={headerActions}
       hero={
         <WorkspaceHero
           eyebrow="Lab · 策略实验室"
           title="策略实验室"
           subtitle="29+ 个真实策略 · 一站式回测 / 寻优 / 影子运行 / Walk-Forward 体检"
           variant="violet"
+          rightSlot={
+            <Button size="small" icon={<ReloadOutlined />} onClick={refresh} loading={loading} style={{ opacity: 0.75 }}>刷新</Button>
+          }
           metrics={[
             { label: '注册策略', value: strategies.length, unit: '个', emphasis: true },
             { label: '进行中回测', value: runningTasks.length, unit: '项' },
