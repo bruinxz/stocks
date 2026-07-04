@@ -19261,3 +19261,209 @@ a {
 }
 
 /* === End Phase 20 === */
+
+/* ======================================================================
+ * === Phase 22 (2026-07-04) — 子导航精修 + 细节 ===
+ * 用户原话: "这个子导航的设计很难看". 之前是一张独立白卡 (border+shadow) 竖着
+ * 立在 hero / 内容之间, 三个盒子并列显得笨重. 改为「贴合式导轨」:
+ *   - 去掉卡片外框 (无 border / 无 shadow / 透明底), 融进页面.
+ *   - 顶部加一个极小 eyebrow 分区标签「视图」, 建立层级.
+ *   - item 常态纯文字 (无填充); 选中态= 白底浮起 chip + 品牌左标 + 品牌字.
+ *   - sticky 吸顶, 长内容滚动时导航常驻.
+ * 追加在文件末尾, 赢下 cascade.
+ * ==================================================================== */
+
+/* 外壳: 从 Card 变成透明 nav, 抹掉此前所有 border/shadow/背景 */
+.workspace-side-tabs {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  padding: 4px 8px 4px 0 !important;
+  position: -webkit-sticky !important;
+  position: sticky !important;
+  top: 16px !important;
+  align-self: flex-start !important;
+}
+.workspace-side-tabs.ant-card:hover,
+.workspace-side-tabs:hover {
+  box-shadow: none !important;
+  border: none !important;
+  transform: none !important;
+}
+.workspace-side-tabs .ant-card-body {
+  padding: 0 !important;
+}
+
+/* eyebrow 分区标签 */
+.workspace-side-tabs__eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  padding: 4px 10px 8px;
+  user-select: none;
+}
+
+/* menu 容器 */
+.workspace-side-tabs .ant-menu,
+.workspace-side-tabs .ant-menu-inline {
+  background: transparent !important;
+  border: none !important;
+}
+
+/* item 常态: 纯文字, 无填充, 疏朗 */
+.workspace-side-tabs .ant-menu-item {
+  height: 38px !important;
+  line-height: 38px !important;
+  margin: 2px 0 !important;
+  padding: 0 12px !important;
+  width: 100% !important;
+  border-radius: 9px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  color: var(--ink-2) !important;
+  background: transparent !important;
+  transition: background var(--t-fast), color var(--t-fast),
+    box-shadow var(--t-fast) !important;
+}
+.workspace-side-tabs .ant-menu-item .anticon {
+  color: var(--ink-4) !important;
+  font-size: 15px !important;
+  transition: color var(--t-fast) !important;
+}
+
+/* hover: 极浅底 */
+.workspace-side-tabs .ant-menu-item:hover {
+  background: var(--bg-hover) !important;
+  color: var(--ink-1) !important;
+}
+.workspace-side-tabs .ant-menu-item:hover .anticon {
+  color: var(--ink-2) !important;
+}
+
+/* selected: 白底浮起 chip + 品牌左标 + 品牌字 */
+.workspace-side-tabs .ant-menu-item-selected {
+  background: var(--bg-elevated) !important;
+  color: var(--brand-text) !important;
+  font-weight: 650 !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05),
+    0 4px 10px -6px rgba(15, 23, 42, 0.12) !important;
+  position: relative !important;
+}
+.workspace-side-tabs .ant-menu-item-selected a,
+.workspace-side-tabs .ant-menu-item-selected .ant-menu-title-content {
+  color: var(--brand-text) !important;
+}
+.workspace-side-tabs .ant-menu-item-selected .anticon {
+  color: var(--brand) !important;
+}
+/* 品牌左标 (用 ::before, 关掉 antd 默认 ::after 右边线) */
+.workspace-side-tabs .ant-menu-item-selected::after {
+  display: none !important;
+}
+.workspace-side-tabs .ant-menu-item-selected::before {
+  content: "" !important;
+  position: absolute !important;
+  left: 0 !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  width: 3px !important;
+  height: 16px !important;
+  border-radius: 0 3px 3px 0 !important;
+  background: var(--brand) !important;
+}
+
+/* 移动端 rail 变全宽时恢复正常盒 (不 sticky) */
+@media (max-width: 1024px) {
+  .workspace-side-tabs {
+    position: static !important;
+    padding: 0 0 8px !important;
+  }
+  .workspace-side-tabs__eyebrow {
+    display: none !important;
+  }
+}
+
+/* 合并 tab (持仓·复盘) 内部两个 section 的竖向堆叠间距 */
+.ws-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* === End Phase 22 === */
+
+
+/* ======================================================================
+ * === Phase 23 (2026-07-04) — 「AI 分析」一级入口落地页 ===
+ * 用户原话: "我希望导航栏有个 Tab 可以直接触发 AI 分析".
+ * 独立落地页 AIAnalysisWorkspace: 搜股 → 复用 AIStockAnalysisModal.
+ * 克制取向 (Phase-18 过度设计已被回退): 沿用既有 token, 不新造视觉语言.
+ * ==================================================================== */
+
+/* hero 右侧机器人图标: 柔和品牌底的圆角方块 */
+.ai-analysis-hero-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--brand) 14%, transparent);
+  color: var(--brand);
+  font-size: 28px;
+}
+
+/* 搜索发起区 */
+.ai-analysis-launch {
+  max-width: 640px;
+}
+.ai-analysis-launch__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  margin-bottom: 10px;
+}
+.ai-analysis-launch__label .anticon {
+  color: var(--ink-4);
+}
+
+/* 最近分析区 */
+.ai-analysis-recent {
+  margin-top: 28px;
+}
+.ai-analysis-recent__head {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  margin-bottom: 12px;
+}
+
+/* 最近分析 chip: 轻量描边, hover 微浮起 */
+.ai-analysis-recent__chip {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 !important;
+  padding: 6px 12px !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 999px !important;
+  background: var(--bg-elevated) !important;
+  color: var(--ink-1) !important;
+  cursor: pointer;
+  transition: border-color var(--t-fast), box-shadow var(--t-fast),
+    transform var(--t-fast) !important;
+}
+.ai-analysis-recent__chip:hover {
+  border-color: var(--brand) !important;
+  box-shadow: 0 4px 12px -8px rgba(99, 91, 255, 0.5) !important;
+  transform: translateY(-1px);
+}
+
+/* === End Phase 23 === */
