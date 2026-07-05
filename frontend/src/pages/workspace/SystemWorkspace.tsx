@@ -3,7 +3,7 @@
  *
  * Phase 11 (2026-06-28) — 视觉与内容重写.
  *   - 内容: systemWorkspaceContent.ts 全面对齐 Phase 1-11 现状
- *     (7 menu / 78 cron / 29 策略 / 22 因子 / 7 通知 service / id=65 主盘).
+ *     (7 menu / 81 cron / 29 策略 / 22 因子 / 7 通知 service / id=65 主盘).
  *   - 视觉: 系统介绍 tab 顶部加 system-hero (暗色 aurora) + bento 关键统计;
  *     intro/manual/changelog/architecture 4 个静态 tab 都包 motion 入场.
  *
@@ -114,7 +114,7 @@ function MarkdownCard({ content }: { content: string }) {
  * markdown 里继续展开.
  *
  * 数字硬编码反映"当前架构状态" (与下方 markdown 同源, 改动需同步):
- *   - 78 cron (backend/src/constants/cronRegistry.ts 计数)
+ *   - 81 cron (backend/src/constants/cronRegistry.ts 计数)
  *   - 29 策略 (backend/src/quant/engine/StrategyRegistry.ts register 次数)
  *   - 22 因子 / 8 analyzer (架构常量)
  *   - 7 notification service (backend/src/services 计数)
@@ -123,7 +123,7 @@ function MarkdownCard({ content }: { content: string }) {
  */
 const SYSTEM_HERO_STATS: Array<{ value: string; label: string; suffix?: string }> = [
   { value: '5,500', label: 'A 股覆盖', suffix: '+' },
-  { value: '78', label: 'Cron 任务' },
+  { value: '81', label: 'Cron 任务' },
   { value: '29', label: '策略' },
   { value: '22', label: '因子' },
 ];

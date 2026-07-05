@@ -1698,7 +1698,7 @@ const SettingsWorkspace: React.FC = () => {
         <WorkspaceHero
           eyebrow="Settings · 账号中心"
           title="账号与系统设置"
-          subtitle="个人资料 · 通知中心 · 风控参数 · 用户管理 — 一站式控制中心"
+          subtitle="个人资料 · 通知中心 — 账号与推送渠道设置"
           variant="violet"
           metrics={[
             { label: '角色', value: isAdmin ? 'Admin' : 'User', emphasis: true },

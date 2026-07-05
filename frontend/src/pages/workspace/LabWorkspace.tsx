@@ -465,8 +465,7 @@ const LabWorkspace: React.FC = () => {
         <div className="ws-tab-header">
           <h1 className="ws-tab-title">新建回测</h1>
           <p className="ws-tab-subtitle">
-            选择策略 + 时间窗 + 资金参数, 后端 worker 跑完即可在 “我的策略” 或 “进阶 · 回测对比”
-            看结果。
+            选择策略 + 时间窗 + 资金参数, 后端 worker 跑完后回到 “我的策略” 查看回测结果与净值曲线。
           </p>
         </div>
         <NewBacktestTab
