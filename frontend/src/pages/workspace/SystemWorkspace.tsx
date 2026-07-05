@@ -13,7 +13,7 @@
  *   - intro        系统介绍 (hero + bento + markdown 静态)
  *   - manual       操作手册 (markdown 静态)
  *   - changelog    更新日志 (markdown 静态)
- *   - architecture 架构图 (markdown 静态 + 跳转到 DataWorkspace 实时 SystemTopologyMap 提示)
+ *   - architecture 架构图 (实时 SystemTopologyMap 组件 + markdown 文字说明)
  *   - feedback     用户反馈 (动态 — 新建 / 列表 / 解决回复)
  *
  * 反馈 tab 调:

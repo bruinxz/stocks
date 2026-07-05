@@ -136,7 +136,7 @@ export const SYSTEM_INTRO_MD = `# QuantX A 股 Alpha 平台 — 系统介绍
 
 export const SYSTEM_MANUAL_MD = `# 操作手册
 
-> 端到端指南: 新手 / 高阶两条路径. 完整版见 \`docs/USER_GUIDE.md\`.
+> 端到端指南: 新手 / 高阶两条路径. 本页是精简摘要; 完整原始文档 (USER_GUIDE / FUNCTION_GUIDE 等) 在 **文档中心** \`/workspace/docs\` 内可读并可评论, 以其为准.
 
 ---
 
@@ -242,59 +242,11 @@ export const SYSTEM_ARCHITECTURE_MD = `# 系统架构图
 
 ---
 
-## 一、模块关系 (一图概览)
+## 一、模块关系
 
-\`\`\`
-        ┌────────────────────────────────────────────────┐
-        │  数据层                                          │
-        │  A 股 + 46-63 只候选 ETF + 成分股 / 财务 / 宏观   │
-        │  point-in-time 快照 · 双源校验 · 龙虎榜/北向只读  │
-        └────────────────────────────────────────────────┘
-                            ↓
-        ┌────────────────────────────────────────────────┐
-        │  核心 ETF 因子层 (quant/etf/)                    │
-        │  ETFConstituentExpander → ETFFactorService       │
-        │  Value 0.40 / Quality 0.30 / LowVol 0.30 /       │
-        │  Momentum 0.0 shadow → etf_total_score           │
-        └────────────────────────────────────────────────┘
-                            ↓
-        ┌────────────────────────────────────────────────┐
-        │  排名 + 换仓 (quant/etf/ · services/etf/)         │
-        │  ETFRankingService: top4 买 / top6 卖 缓冲带      │
-        │  → 目标权重 (70% 硬顶 + 15% 封顶)                 │
-        │  ETFRotationService: confidence + rebalance_id    │
-        │  → AIInvestmentSignal(action=TARGET_WEIGHT)       │
-        └────────────────────────────────────────────────┘
-                            ↓
-        ┌────────────────────────────────────────────────┐
-        │  卫星题材层 (services/exit/ + detector)           │
-        │  ThemeFermentation → EV gate → 建仓 (≤5%/≤20%)   │
-        │  AutoExitService: -15% 硬止损 / +20% 止盈 /       │
-        │  21 日时间退出 / -7% 主动止损 / 60日冻结 / 永久停  │
-        └────────────────────────────────────────────────┘
-                            ↓
-        ┌────────────────────────────────────────────────┐
-        │  Gate 4 层 (fail-closed)                         │
-        │  L1 eligibility + L2 risk + L3 cost (必过)       │
-        │  L4 ev_gate (仅卫星; 核心月度排名替代)            │
-        └────────────────────────────────────────────────┘
-                            ↓
-        ┌────────────────────────────────────────────────┐
-        │  执行 + 对账                                     │
-        │  次月首日 9:40 分批限价 / VWAP + 折溢价 gate     │
-        │  broker-bridge (ed25519, KillSwitch fail-safe)   │
-        │  Reconciliation cron (30min)                     │
-        └────────────────────────────────────────────────┘
-                            ↓
-        ┌────────────────────────────────────────────────┐
-        │  复盘 + 校准 + 战略镜子                          │
-        │  ConfidenceCalibrationService (Wilson 下界)      │
-        │  DailyAttribution → AIDiary → ImprovementSuggest │
-        │  月度战略镜子 6 题 (切换/卫星停/主线证伪 阈值)    │
-        └────────────────────────────────────────────────┘
-                            ↓
-        [反馈] → confidence 回灌 sizing / 卫星熔断判定 → 回信号层
-\`\`\`
+六层闭环 **数据 → 核心 ETF 因子 → 排名/换仓 → 卫星题材 → Gate 4 层 → 执行/对账 → 复盘/校准**, 其中反馈会把 confidence 回灌 sizing、并驱动卫星熔断判定.
+
+> 交互式拓扑见本页顶部 \`SystemTopologyMap\`; 逐层的因子权重 / 换仓阈值 / gate 判据 / 退出规则 见「系统介绍」tab §三 信号闭环, 不在此重复.
 
 ---
 

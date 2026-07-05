@@ -25,7 +25,7 @@ import {
   buildDataWorkspaceTabViewModel,
 } from './dataWorkspaceTabHelpers';
 
-// 6 个 tab 都接入 legacy 页面（仍在使用 + 数据真实），用 lazy 减少初始 bundle
+// legacy 页面（仍在使用 + 数据真实），用 lazy 减少初始 bundle
 const DataUpdateStatus = lazy(() => import('../DataUpdateStatus'));
 const TaskScheduler = lazy(() => import('../TaskScheduler'));
 const SystemLogs = lazy(() => import('../SystemLogs'));
@@ -220,7 +220,7 @@ const DataWorkspace: React.FC = () => {
         <WorkspaceHero
           eyebrow="Data · 管理员视图"
           title="数据中心"
-          subtitle="行情同步 · 调度任务 · 系统日志 · 健康监控 — admin 级别全链路可观测性"
+          subtitle="数据健康 · 个股趋势 · 行情同步 · 运维(调度/日志/监控) — admin 级别全链路可观测性"
           variant="admin"
           metrics={vm.kpis.slice(0, 3).map((k, idx) => ({
             label: k.title,

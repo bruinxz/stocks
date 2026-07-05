@@ -1849,7 +1849,7 @@ const HomeWorkspace: React.FC = () => {
             <Button
               type="link"
               size="small"
-              onClick={() => navigate('/portfolio?tab=alerts')}
+              onClick={() => navigate('/workspace/portfolio?tab=alerts')}
             >
               今日买卖信号 →
             </Button>
@@ -2190,25 +2190,6 @@ const HomeWorkspace: React.FC = () => {
         );
       })()}
 
-      {/* ===== 区块 6: 今日提示 (静态 hint, 极简一行) ===== */}
-      {!accountLoading && !accountError && account && (
-        <section className="home-tip">
-          <span className="home-tip-dot" aria-hidden="true" />
-          <span>
-            {(() => {
-              const cashPct =
-                account.total_value > 0 ? (account.current_cash / account.total_value) * 100 : 100;
-              if (cashPct >= 80) {
-                return '当前仓位较轻 — 可关注上面的 AI 推荐, 单只建议 5% 以内';
-              }
-              if (cashPct <= 20) {
-                return '当前仓位较重 — 大盘震荡时优先减仓盈利较多的';
-              }
-              return '当前仓位适中 — 跟踪持仓表现, 跌破成本 7% 应止损';
-            })()}
-          </span>
-        </section>
-      )}
     </div>
   );
 };

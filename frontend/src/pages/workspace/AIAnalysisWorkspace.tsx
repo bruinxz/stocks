@@ -41,9 +41,9 @@ const loadRecent = (): StockHit[] => {
 
 const AIAnalysisWorkspace: React.FC = () => {
   const [keyword, setKeyword] = useState('');
-  const [options, setOptions] = useState<Array<{ value: string; label: React.ReactNode; hit: StockHit }>>(
-    []
-  );
+  const [options, setOptions] = useState<
+    Array<{ value: string; label: React.ReactNode; hit: StockHit }>
+  >([]);
   const [searching, setSearching] = useState(false);
   const [target, setTarget] = useState<StockHit | null>(null);
   const [recent, setRecent] = useState<StockHit[]>(loadRecent);
@@ -136,7 +136,11 @@ const AIAnalysisWorkspace: React.FC = () => {
     if (!trimmed) return;
     // 用户直接敲代码回车 / 点按钮: 优先用第一条候选, 否则按原样当代码.
     const first = options[0]?.hit;
-    trigger(first && first.symbol.toUpperCase() === trimmed.toUpperCase() ? first : first || { symbol: trimmed, name: null });
+    trigger(
+      first && first.symbol.toUpperCase() === trimmed.toUpperCase()
+        ? first
+        : first || { symbol: trimmed, name: null }
+    );
   }, [keyword, options, trigger]);
 
   const hero = useMemo(

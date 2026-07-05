@@ -5982,8 +5982,19 @@ class SchedulerService {
     const candidates = tasks.filter(t => {
       if (!CATCH_UP_WHITELIST.has(t.type)) return false;
       if (!t.is_active) return false;
-      // 已在今天跑过 → skip
-      if (t.last_run_at && new Date(t.last_run_at) >= todayStart) return false;
+      // Data-pipeline fix (2026-07-05): 只有"今天已成功跑过"才 skip catch-up。
+      // _executeTaskLogic 在开跑时就把 last_run_at 置为 now (status=RUNNING)，
+      // 若随后因 DNS/网络失败 (ENOTFOUND / EAI_AGAIN)，last_run_at 仍停在今天但
+      // last_run_status=FAILED。旧逻辑只看 last_run_at≥todayStart 会把这类失败任务
+      // 误判为"今天已跑过"，导致 DNS 恢复后重启也永不补跑 → 静默丢数据。
+      // 现在: 今天成功过才 skip；FAILED / 崩在 RUNNING 的都视为"未完成"，允许续跑。
+      if (
+        t.last_run_at &&
+        new Date(t.last_run_at) >= todayStart &&
+        t.last_run_status === 'SUCCESS'
+      ) {
+        return false;
+      }
       // 冷却时间检查: 重活儿在冷却内不能再 catch-up
       const cooldownMin = COOLDOWN_MIN[t.type];
       if (cooldownMin && t.last_run_at) {

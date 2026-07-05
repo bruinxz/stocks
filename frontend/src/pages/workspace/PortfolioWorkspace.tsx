@@ -1,6 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useSelector } from 'react-redux';
-import { RootState } from '../../store/rootReducer';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Alert,
@@ -16,7 +14,6 @@ import {
   Radio,
   Row,
   Segmented,
-  Select,
   Space,
   Spin,
   Statistic,
@@ -33,24 +30,18 @@ import {
   CheckOutlined,
   CloseOutlined,
   EditOutlined,
-  ExclamationCircleOutlined,
   LineChartOutlined,
-  RadarChartOutlined,
   ReadOutlined,
   ReloadOutlined,
-  SettingOutlined,
   StopOutlined,
   UnorderedListOutlined,
   WalletOutlined,
 } from '@ant-design/icons';
 import {
   CartesianGrid,
-  Cell,
   Legend,
   Line,
   LineChart,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip as RechartsTooltip,
   XAxis,
@@ -136,30 +127,20 @@ const PortfolioWorkspace: React.FC = () => {
   // Phase 3 (2026-06-27): tab 8 → 4 (普通用户) / 8 (admin).
   // 普通用户: 当前持仓 (默认) / 交易明细 / 资金曲线 / 复盘日记.
   // 日归因 / AI 日记+错误模式 / 相关性矩阵 / 模拟盘管理 = 研究 / 高级功能.
-  const isAdmin = useSelector((s: RootState) => s.auth.user?.role === 'admin');
-  const tabs: WorkspaceTab[] = useMemo(() => {
-    const baseTabs: WorkspaceTab[] = [
-      // 合并 (2026-07-04): 用户原话 — "持仓与复盘这两个 Tab 可以合在一起没必要分开".
-      // 「当前持仓」+「复盘日记」并入单个「持仓 · 复盘」tab: 上半区当前持仓,
-      // 下半区复盘日记 (同一心智: 看着持仓做复盘). 普通用户一级 tab 5 → 4.
+  // 主线 ③持仓风控 + ④复盘 的 4 个一级 tab (admin/普通用户一致 — 高级分析已下线).
+  const tabs: WorkspaceTab[] = useMemo(
+    () => [
+      // 合并 (2026-07-04): 「当前持仓」+「复盘日记」并入单个「持仓 · 复盘」tab —
+      // 上半区当前持仓, 下半区复盘日记 (同一心智: 看着持仓做复盘).
       { key: 'positions', label: '持仓 · 复盘', icon: <WalletOutlined /> },
       { key: 'trades', label: '交易明细', icon: <UnorderedListOutlined /> },
       { key: 'equity', label: '资金曲线', icon: <LineChartOutlined /> },
       // PR-C: 我的提醒 — 用户持仓相关告警 + 高优先级风控事件 (AlertsBell 普通用户落点).
       { key: 'alerts', label: '我的提醒', icon: <BellOutlined /> },
-    ];
-    if (isAdmin) {
-      // 收敛 (2026-07-04): 4 个 admin 一级 tab (日归因/错误模式/相关性/模拟盘) 折进单个
-      // "高级分析", 内部用二级 Segmented 切换, admin 一级从 9 → 6.
-      // 高级分析 tab 已下线 (2026-07-05): 面向小白简洁优先
-    }
-    return baseTabs;
-  }, [isAdmin]);
+    ],
+    []
+  );
   const [activeKey, setActiveKey] = useState<string>('positions');
-  // 高级分析 (admin) 二级子视图.
-  const [advancedSubView, setAdvancedSubView] = useState<
-    'attribution' | 'error-patterns' | 'correlation' | 'manage' | 'risk-center'
-  >('attribution');
 
   // PR-C: AlertsBell 普通用户点击 → /workspace/portfolio?tab=alerts.
   // 一次性应用 query (与 TodayWorkspace 同款模式), 之后用户手动切 tab 不被 query 覆盖.
@@ -171,11 +152,6 @@ const PortfolioWorkspace: React.FC = () => {
     if (tab === 'journal') tab = 'positions';
     if (tab && tabs.some(t => t.key === tab)) {
       setActiveKey(tab);
-    }
-    // 风控中心 deep link: ?tab=advanced&sub=risk-center
-    const sub = params.get('sub');
-    if (sub === 'risk-center') {
-      setAdvancedSubView('risk-center');
     }
   }, [location.search, tabs]);
 
@@ -959,14 +935,6 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
       },
     },
     {
-      title: '所属策略',
-      key: 'strategy',
-      width: 110,
-      // 真正的策略归属来自 PaperTradingAttribution / RecommendationOutcome 链路；
-      // 这里用占位"手动"，待 US-088 完善游资归属 / signal→position join 后再展开。
-      render: () => <Tag>手动</Tag>,
-    },
-    {
       title: '操作',
       key: 'actions',
       width: 200,
@@ -1564,7 +1532,6 @@ const TradesTab: React.FC<TradesTabProps> = ({ trades }) => {
   const navigate = useNavigate();
   const [directionFilter, setDirectionFilter] = useState<'all' | 'BUY' | 'SELL'>('all');
   const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
-  const [strategyFilter, setStrategyFilter] = useState<string>('all');
 
   const filtered = useMemo(() => {
     return trades.filter(t => {
@@ -1573,12 +1540,9 @@ const TradesTab: React.FC<TradesTabProps> = ({ trades }) => {
         const day = dayjs(t.created_at);
         if (day.isBefore(dateRange[0], 'day') || day.isAfter(dateRange[1], 'day')) return false;
       }
-      // 策略筛选当前为 placeholder：仅 BUY = "手动 / 自动跟单" 流水
-      // 真正策略归属来自 QuantSignal join (US-088 之后)
-      if (strategyFilter === 'manual' && t.realized_pnl !== null) return false;
       return true;
     });
-  }, [trades, directionFilter, dateRange, strategyFilter]);
+  }, [trades, directionFilter, dateRange]);
 
   if (trades.length === 0) {
     return (
@@ -1709,16 +1673,6 @@ const TradesTab: React.FC<TradesTabProps> = ({ trades }) => {
             <Radio.Button value="BUY">买入</Radio.Button>
             <Radio.Button value="SELL">卖出</Radio.Button>
           </Radio.Group>
-          <Select
-            size="small"
-            value={strategyFilter}
-            onChange={setStrategyFilter}
-            style={{ width: 140 }}
-            options={[
-              { label: '全部策略', value: 'all' },
-              { label: '仅 BUY 流水', value: 'manual' },
-            ]}
-          />
           <RangePicker
             size="small"
             value={dateRange as any}

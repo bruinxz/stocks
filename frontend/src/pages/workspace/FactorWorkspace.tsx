@@ -183,12 +183,13 @@ function formatSavedAt(raw: string | null | undefined): string {
 const FactorWorkspace: React.FC = () => {
   // Tab 收敛 (2026-07-04): 一级 tab 7 → 3, 把 行业决策/宏观环境/ETF资金流/政策要闻
   // 4 个合进 'insight' (决策洞察) 下的二级 Segmented. 功能不删, 只重新归组.
+  // 主线①选股: 'ETF 调仓清单' 是核心动作, 放首位并作为默认落地 tab (2026-07-05).
   const tabs: WorkspaceTab[] = [
-    { key: 'overview', label: '因子总览', icon: <FundOutlined /> },
     { key: 'picks', label: 'ETF 调仓清单', icon: <OrderedListOutlined /> },
+    { key: 'overview', label: '因子总览', icon: <FundOutlined /> },
     { key: 'insight', label: '决策洞察', icon: <ThunderboltOutlined /> },
   ];
-  const [activeKey, setActiveKey] = useState('overview');
+  const [activeKey, setActiveKey] = useState('picks');
   // 'overview' 二级子视图: 因子总览 / 权重调参
   const [overviewSubView, setOverviewSubView] = useState<'overview' | 'weights'>('overview');
 
@@ -1511,69 +1512,6 @@ const IndustryBoardTab: React.FC<{
         数据每日盘后由 SchedulerService 定时 sync 入库 (INDUSTRY_FLOW_SYNC / LIMIT_UP_SYNC).
       </Typography.Paragraph>
 
-      {/* Batch AG (2026-06-18): 市场新闻时间线 — 给用户'今天市场在关心什么'的上下文 */}
-      <Card
-        title={
-          <Space>
-            <FundOutlined />
-            今日要闻 (近 2 日, MARKET_NEWS_SYNC)
-          </Space>
-        }
-        size="small"
-      >
-        {!data.recent_news || data.recent_news.length === 0 ? (
-          <Empty
-            description={
-              <span style={{ fontSize: 12 }}>
-                market_news 表无近 2 日数据 — 请在 SchedulerService 启用{' '}
-                <Text code>MARKET_NEWS_SYNC</Text> 任务 (推荐盘中每 30 分钟一次)
-              </span>
-            }
-          />
-        ) : (
-          <div
-            style={{
-              maxHeight: 400,
-              overflowY: 'auto',
-              borderLeft: '2px solid #f0f0f0',
-              paddingLeft: 16,
-            }}
-          >
-            {data.recent_news.map((n, i) => (
-              <div
-                key={`${n.publish_time}-${i}`}
-                style={{
-                  marginLeft: -18,
-                  paddingLeft: 14,
-                  marginBottom: 12,
-                  paddingBottom: 6,
-                  borderBottom: '1px dashed #eee',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                  <Text strong style={{ fontSize: 14 }} ellipsis={{ tooltip: n.title }}>
-                    {n.url ? (
-                      <a href={n.url} target="_blank" rel="noopener noreferrer">
-                        {n.title}
-                      </a>
-                    ) : (
-                      n.title
-                    )}
-                  </Text>
-                  <Tag
-                    color={n.source === 'cls' ? 'orange' : n.source === 'em' ? 'blue' : 'default'}
-                  >
-                    {n.source}
-                  </Tag>
-                </div>
-                <div style={{ fontSize: 12, color: '#999', marginTop: 2 }}>
-                  {formatNewsTime(n.publish_time)} {n.category && <Tag>{n.category}</Tag>}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
     </Space>
   );
 };
@@ -1610,20 +1548,6 @@ const SparklinePctRow: React.FC<{
   );
 };
 
-/** ISO 'YYYY-MM-DDTHH:mm:ss.sssZ' / 'YYYY-MM-DD HH:mm:ss' → 'MM-DD HH:mm' (本地友好). */
-function formatNewsTime(raw: string | null | undefined): string {
-  if (!raw) return '—';
-  const s = String(raw);
-  // ISO: 取月日时分
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
-  if (m) {
-    return `${m[2]}-${m[3]} ${m[4]}:${m[5]}`;
-  }
-  // 'YYYY-MM-DD' only
-  const md = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (md) return `${md[2]}-${md[3]}`;
-  return s.slice(0, 16);
-}
 
 // ============================================================================
 // Shared column builders

@@ -353,6 +353,15 @@ import { ExecutionFeasibilityRecord } from './models/ExecutionFeasibilityRecord'
 import { MetaLabelDecision } from './models/MetaLabelDecision';
 import { PortfolioConstructionResult } from './models/PortfolioConstructionResult';
 import { EquityCurveGovernorState } from './models/EquityCurveGovernorState';
+// Data-pipeline fix (2026-07-05): ETF 因子轮动命脉数据表必须列入 production runtime sync，
+// 否则 fresh prod 部署 (NODE_ENV=production 跳过 sequelize.sync alter) 后这些表永不创建，
+// ETFConstituentExpander 展开恒为空 → 所有 ETF data_incomplete (前端橙色)，
+// DERIVED_FACTOR_SYNC / INDEX_COMPONENT_SYNC 落库时 'relation does not exist' 静默失败。
+import { IndexComponent } from './models/IndexComponent';
+import { FundTopHolding } from './models/FundTopHolding';
+import { StockValuationFactor } from './models/StockValuationFactor';
+import { StockFundamentalFactor } from './models/StockFundamentalFactor';
+import { StockMoneyFlowFactor } from './models/StockMoneyFlowFactor';
 import { killSwitchService } from './live-trading/services/KillSwitchService';
 import { bridgeCommandExpiryService } from './live-trading/services/BridgeCommandExpiryService';
 // main 上 QuantStrategyService 位于 quant/engine/internal/，dev_lym 旧路径 quant/services/ 已不存在
@@ -804,6 +813,14 @@ async function syncRecommendationRuntimeTables(): Promise<void> {
     { model: MetaLabelDecision, label: 'MetaLabelDecision' },
     { model: PortfolioConstructionResult, label: 'PortfolioConstructionResult' },
     { model: EquityCurveGovernorState, label: 'EquityCurveGovernorState' },
+    // Data-pipeline fix (2026-07-05): ETF 轮动 (Core 70%) 命脉数据表 —
+    // 成份股展开 (index_components / fund_top_holdings) + 三张派生因子表。
+    // 缺表 → ETF 全部 data_incomplete (橙色) + sync job 静默失败。
+    { model: IndexComponent, label: 'IndexComponent' },
+    { model: FundTopHolding, label: 'FundTopHolding' },
+    { model: StockValuationFactor, label: 'StockValuationFactor' },
+    { model: StockFundamentalFactor, label: 'StockFundamentalFactor' },
+    { model: StockMoneyFlowFactor, label: 'StockMoneyFlowFactor' },
   ];
 
   const results = [];
