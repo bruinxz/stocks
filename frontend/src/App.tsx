@@ -51,7 +51,6 @@ const HomeWorkspace = lazy(() => import('./pages/HomeWorkspace'));
 
 // Unified workspace shells (US-001/US-002 + Easy mode).
 const EasyQuantWorkspace = lazy(() => import('./pages/workspace/EasyQuantWorkspace'));
-const TodayWorkspace = lazy(() => import('./pages/workspace/TodayWorkspace'));
 const FactorWorkspace = lazy(() => import('./pages/workspace/FactorWorkspace'));
 const LabWorkspace = lazy(() => import('./pages/workspace/LabWorkspace'));
 const LabStrategyDetail = lazy(() => import('./pages/workspace/LabStrategyDetail'));

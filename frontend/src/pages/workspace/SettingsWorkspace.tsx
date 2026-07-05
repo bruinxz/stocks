@@ -47,11 +47,6 @@ import {
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import WorkspaceHero from '../../components/layout/WorkspaceHero';
 import { AnimatePresence, motion } from 'framer-motion';
-import SizingPolicyTab from './SettingsWorkspace.SizingPolicyTab';
-import PortfolioConstructionTab from './SettingsWorkspace.PortfolioConstructionTab';
-import RiskParametersCenterTab from './SettingsWorkspace.RiskParametersCenterTab';
-import TodoSuggestionsTab from './SettingsWorkspace.TodoSuggestionsTab';
-import BlackSwanHistoryTab from './SettingsWorkspace.BlackSwanHistoryTab';
 import {
   loadNotificationChannels,
   updateNotificationChannels,
@@ -152,10 +147,6 @@ const SettingsWorkspace: React.FC = () => {
   // Phase 9 — 每个一级 tab 内的子视图 Segmented 状态
   const [profileSubView, setProfileSubView] = useState<'profile' | 'keys'>('profile');
   const [notifySubView, setNotifySubView] = useState<'types' | 'channels'>('types');
-  const [riskSubView, setRiskSubView] = useState<
-    'overview' | 'parameters' | 'black-swan' | 'todos'
-  >('overview');
-  const [advancedSubView, setAdvancedSubView] = useState<'sizing' | 'portfolio'>('sizing');
 
   // --- 通知设置 state -----------------------------------------------------
   const [config, setConfig] = useState<NotificationChannelsConfig | null>(null);

@@ -1003,7 +1003,7 @@ export function buildDataMissingAlertsViewModel(
  *   3. 本常量
  */
 export const BULK_BACKFILL_DAILY_SOURCES: ReadonlySet<string> = Object.freeze(
-  new Set<string>(['northbound', 'dragon_tiger', 'limit_up', 'industry_flow', 'snowball_hot'])
+  new Set<string>(['northbound', 'dragon_tiger', 'limit_up', 'industry_flow', 'market_sentiment'])
 );
 
 /** 一键补抓的优先级 — critical=链路报错, warning=lag>SLA, info=零记录, low=正常但 lag>0. */

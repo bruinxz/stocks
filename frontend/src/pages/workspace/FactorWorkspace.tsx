@@ -36,23 +36,16 @@ import {
   BarChartOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
-import ReactECharts from 'echarts-for-react';
 import {
-  Bar,
-  BarChart,
   CartesianGrid,
-  Cell,
   Legend,
   Line,
   LineChart,
   ReferenceLine,
   ResponsiveContainer,
-  Scatter,
-  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
-  ZAxis,
 } from 'recharts';
 import WorkspaceLayout, { WorkspaceTab } from '../../components/layout/WorkspaceLayout';
 import WorkspaceHero from '../../components/layout/WorkspaceHero';
@@ -72,7 +65,6 @@ import {
 import {
   factorService,
   FactorDetailResponse,
-  FactorIndustryHeatmapResponse,
   FactorOverviewItem,
   FactorOverviewResponse,
   FactorPreviewResponse,
@@ -96,8 +88,6 @@ const { Text } = Typography;
  * 数据流：
  *   - 装载时并发拉 /factors/overview + /strategies/multi-factor/latest-picks
  *   - 用户在权重调参 tab 点 "预览" 触发 POST /factors/preview （独立请求，不污染主状态）
- *   - 行业热力 tab 首次进入时 lazy-fire GET /factors/industry-heatmap；缓存结果，
- *     刷新按钮 / 切换日期才会再次请求
  *   - 上方 KPI 条总是反映 overview 拉到的最新数据
  *
  * 边缘情况：
@@ -395,31 +385,6 @@ const FactorWorkspace: React.FC = () => {
     message.success(`已删除模板「${name}」`);
   }, []);
 
-  // --- 行业热力 (US-074) — lazy on first tab activation ---
-  const [heatmap, setHeatmap] = useState<FactorIndustryHeatmapResponse | null>(null);
-  const [heatmapLoading, setHeatmapLoading] = useState(false);
-  const [heatmapError, setHeatmapError] = useState<string | null>(null);
-
-  const loadHeatmap = useCallback(async () => {
-    setHeatmapLoading(true);
-    setHeatmapError(null);
-    try {
-      const data = await factorService.getIndustryHeatmap();
-      setHeatmap(data);
-    } catch (err: unknown) {
-      const messageStr = err instanceof Error ? err.message : String(err);
-      setHeatmapError(messageStr);
-    } finally {
-      setHeatmapLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (activeKey !== 'heatmap') return;
-    if (heatmap || heatmapLoading || heatmapError) return;
-    void loadHeatmap();
-  }, [activeKey, heatmap, heatmapLoading, heatmapError, loadHeatmap]);
-
   // --- 行业决策面板 (Batch AF 2026-06-18) — lazy on first tab activation ---
   // 替代老的因子 z_score 热力, 直接展示 IndustryFlow + LimitUp + 热门概念 真盘口数据。
   // 同款 lazy 三态判定: data || loading || error 短路, 仅在用户首次切到 'board' tab 时拉。
@@ -496,20 +461,6 @@ const FactorWorkspace: React.FC = () => {
   }, [overview]);
   const registeredCount = overview?.factors.length ?? 0;
   const latestDateLabel = overview?.latest_trade_date ?? '—';
-
-  const kpiSlot = (
-    <Space size={32}>
-      <Statistic title="已注册因子" value={registeredCount} suffix="个" />
-      <Statistic title="覆盖股票" value={totalUniverse} suffix="只" />
-      <Statistic title="最新计算日" value={latestDateLabel} />
-    </Space>
-  );
-
-  const headerActions = (
-    <Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>
-      刷新
-    </Button>
-  );
 
   // --- render tab body ---
   let body: React.ReactNode;
@@ -1672,335 +1623,6 @@ function formatNewsTime(raw: string | null | undefined): string {
   const md = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (md) return `${md[2]}-${md[3]}`;
   return s.slice(0, 16);
-}
-
-/**
- * IndustryHeatmapTab — echarts heatmap：行业 × 因子的 z_score 平均值。
- *
- * 视觉编码：
- *   - 横轴：所有已注册因子（数量与因子总览一致）
- *   - 纵轴：申万一级行业（按"行业 × 全因子 z 总和"降序——最受多因子青睐的行业排顶）
- *   - 颜色：z_score 平均值；负值红、正值绿、中性灰白；visualMap 对称 [-1.5, 1.5]
- *
- * 边缘情况：
- *   - factor_scores 表空 / 当日无数据 → 显示 Empty + 后端 note 文案
- *   - 行业有效格 < 1 → Alert 提示前端只能给出有限信息
- *   - 加载失败 → 顶部 Alert + 重试按钮（保留旧成功数据以减少闪烁）
- */
-const IndustryHeatmapTab: React.FC<{
-  data: FactorIndustryHeatmapResponse | null;
-  loading: boolean;
-  error: string | null;
-  onReload: () => void;
-}> = ({ data, loading, error, onReload }) => {
-  const [viewMode, setViewMode] = useState<'chart' | 'table'>('table');
-  const [sortFactor, setSortFactor] = useState<string>('');
-
-  // 计算 heatmap 高度：每个行业 ~28px，留 100px 给坐标轴 / 标题，最少 360px
-  const chartHeight = useMemo(() => {
-    const rows = data?.industries.length ?? 0;
-    return Math.max(360, Math.min(rows * 28 + 100, 1200));
-  }, [data?.industries.length]);
-
-  const option = useMemo(() => buildHeatmapOption(data), [data]);
-
-  // 构造 table 数据：每行 = 一个行业，列 = 各因子的平均 z_score
-  const tableRows = useMemo(() => {
-    if (!data) return [];
-    const cellMap = new Map<string, number>(); // key = `${industry}|${factor}`
-    const sampleMap = new Map<string, number>();
-    for (const c of data.cells) {
-      const k = `${c.industry}|${c.factor}`;
-      cellMap.set(k, c.avg_z);
-      sampleMap.set(k, c.sample_size ?? 0);
-    }
-    return data.industries.map(ind => {
-      const row: Record<string, any> = { industry: ind };
-      let totalSample = 0;
-      let factorSum = 0;
-      let factorN = 0;
-      for (const f of data.factors) {
-        const k = `${ind}|${f}`;
-        const z = cellMap.get(k);
-        row[f] = z != null ? Number(z.toFixed(2)) : null;
-        if (z != null) {
-          factorSum += Math.abs(z);
-          factorN += 1;
-        }
-        totalSample += sampleMap.get(k) || 0;
-      }
-      row._sample_count =
-        totalSample > 0 ? Math.round(totalSample / Math.max(1, data.factors.length)) : 0;
-      row._intensity = factorN > 0 ? factorSum / factorN : 0;
-      return row;
-    });
-  }, [data]);
-
-  const sortedRows = useMemo(() => {
-    if (!sortFactor || sortFactor === '_intensity') {
-      return [...tableRows].sort((a, b) => (b._intensity || 0) - (a._intensity || 0));
-    }
-    return [...tableRows].sort(
-      (a, b) => (b[sortFactor] ?? -Infinity) - (a[sortFactor] ?? -Infinity)
-    );
-  }, [tableRows, sortFactor]);
-
-  // 颜色映射: z 越正越红, 越负越绿
-  const zColor = (z: number | null): string => {
-    if (z == null) return '#f5f5f5';
-    const clamped = Math.max(-2, Math.min(2, z));
-    const intensity = Math.abs(clamped) / 2; // 0..1
-    if (clamped >= 0) {
-      // 红色系: rgba(207, 19, 34, 0..0.8)
-      return `rgba(207, 19, 34, ${0.1 + intensity * 0.5})`;
-    } else {
-      // 绿色系
-      return `rgba(20, 177, 67, ${0.1 + intensity * 0.5})`;
-    }
-  };
-
-  if (loading && !data) {
-    return (
-      <Card>
-        <div style={{ display: 'flex', justifyContent: 'center', padding: 64 }}>
-          <Spin tip="加载行业热力…" />
-        </div>
-      </Card>
-    );
-  }
-  return (
-    <Space direction="vertical" size={12} style={{ width: '100%' }}>
-      {error && (
-        <Alert
-          type="error"
-          showIcon
-          message="加载行业热力失败"
-          description={error}
-          action={
-            <Button size="small" onClick={onReload}>
-              重试
-            </Button>
-          }
-        />
-      )}
-      <Card
-        title={
-          <Space>
-            <AppstoreOutlined />
-            行业 × 因子热力
-            {data?.trade_date && <Tag color="blue">{data.trade_date}</Tag>}
-            <Tag>{data?.industries.length || 0} 个行业</Tag>
-            <Tag>{data?.factors.length || 0} 个因子</Tag>
-          </Space>
-        }
-        extra={
-          <Space>
-            {data?.universe_size != null && <Tag color="blue">命中 {data.universe_size} 只</Tag>}
-            <Button.Group size="small">
-              <Button
-                type={viewMode === 'table' ? 'primary' : 'default'}
-                onClick={() => setViewMode('table')}
-              >
-                表格
-              </Button>
-              <Button
-                type={viewMode === 'chart' ? 'primary' : 'default'}
-                onClick={() => setViewMode('chart')}
-              >
-                热力图
-              </Button>
-            </Button.Group>
-            <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={onReload}>
-              刷新
-            </Button>
-          </Space>
-        }
-      >
-        {!data || data.cells.length === 0 ? (
-          <Empty
-            description={
-              data?.note ||
-              'factor_scores 表为空 — 请先运行 npm run compute:factors -- --date=YYYY-MM-DD'
-            }
-          />
-        ) : viewMode === 'chart' ? (
-          <>
-            <ReactECharts
-              option={option}
-              style={{ width: '100%', height: chartHeight }}
-              notMerge
-              opts={{ renderer: 'canvas' }}
-            />
-            <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 12 }}>
-              颜色越红 = 该行业在该因子上横截面 z_score 平均值越高；越绿越低。
-            </Typography.Paragraph>
-          </>
-        ) : (
-          <>
-            <Space style={{ marginBottom: 12 }} wrap>
-              <span style={{ fontSize: 12, color: '#666' }}>排序：</span>
-              <Button.Group size="small">
-                <Button
-                  type={sortFactor === '_intensity' || !sortFactor ? 'primary' : 'default'}
-                  onClick={() => setSortFactor('_intensity')}
-                >
-                  综合强度
-                </Button>
-                {data.factors.slice(0, 8).map(f => (
-                  <Button
-                    key={f}
-                    type={sortFactor === f ? 'primary' : 'default'}
-                    onClick={() => setSortFactor(f)}
-                  >
-                    {f}
-                  </Button>
-                ))}
-              </Button.Group>
-            </Space>
-            <Table
-              size="small"
-              rowKey="industry"
-              dataSource={sortedRows}
-              pagination={{
-                pageSize: 30,
-                size: 'small',
-                showSizeChanger: true,
-                pageSizeOptions: ['20', '30', '50', '100'],
-              }}
-              scroll={{ x: 'max-content', y: 600 }}
-              columns={[
-                {
-                  title: '行业',
-                  dataIndex: 'industry',
-                  width: 130,
-                  fixed: 'left',
-                  render: (v: string, r: any) => (
-                    <div>
-                      <div style={{ fontWeight: 500 }}>{v}</div>
-                      <div style={{ fontSize: 12, color: '#999' }}>{r._sample_count} 只样本</div>
-                    </div>
-                  ),
-                },
-                ...data.factors.map(f => ({
-                  title: <span style={{ fontSize: 12 }}>{f}</span>,
-                  dataIndex: f,
-                  width: 78,
-                  align: 'center' as const,
-                  sorter: (a: any, b: any) => (a[f] ?? -Infinity) - (b[f] ?? -Infinity),
-                  render: (z: number | null) => (
-                    <div
-                      style={{
-                        background: zColor(z),
-                        padding: '4px 6px',
-                        borderRadius: 8,
-                        textAlign: 'center',
-                        fontSize: 12,
-                        fontWeight: z != null && Math.abs(z) > 1 ? 600 : 400,
-                        color: z != null && Math.abs(z) > 1.5 ? '#fff' : '#333',
-                      }}
-                    >
-                      {z != null ? z.toFixed(2) : '—'}
-                    </div>
-                  ),
-                })),
-              ]}
-            />
-            <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 12 }}>
-              单元格颜色越红 = z_score 越正（行业在该因子上整体占优），越绿 = 越负。点击表头排序。
-            </Typography.Paragraph>
-          </>
-        )}
-      </Card>
-    </Space>
-  );
-};
-
-/** 构造 echarts heatmap option；data 为 null/空时返回空骨架，避免组件挂载报错 */
-function buildHeatmapOption(data: FactorIndustryHeatmapResponse | null): Record<string, unknown> {
-  if (!data || data.cells.length === 0) {
-    return { series: [] };
-  }
-  const xCategories = data.factors;
-  const yCategories = data.industries;
-  const xIndex = new Map<string, number>();
-  xCategories.forEach((c, i) => xIndex.set(c, i));
-  const yIndex = new Map<string, number>();
-  yCategories.forEach((c, i) => yIndex.set(c, i));
-
-  // 转换成 echarts heatmap 数据：[xIdx, yIdx, value]；过滤越界（防御性）
-  const series: Array<[number, number, number]> = [];
-  let absMax = 0.0001;
-  for (const cell of data.cells) {
-    const x = xIndex.get(cell.factor);
-    const y = yIndex.get(cell.industry);
-    if (x == null || y == null) continue;
-    series.push([x, y, cell.avg_z]);
-    if (Math.abs(cell.avg_z) > absMax) absMax = Math.abs(cell.avg_z);
-  }
-  // visualMap 对称范围：[-max, max]，且最低 1.5（避免极小波动被夸大色彩）
-  const visualBound = Math.max(1.5, Number(absMax.toFixed(2)));
-
-  return {
-    grid: { left: 140, right: 30, top: 50, bottom: 80, containLabel: true },
-    tooltip: {
-      position: 'top',
-      formatter: (params: { value: [number, number, number]; data: [number, number, number] }) => {
-        const [xIdx, yIdx, v] = params.value;
-        const factor = xCategories[xIdx] ?? '';
-        const industry = yCategories[yIdx] ?? '';
-        const cell = data.cells.find(c => c.factor === factor && c.industry === industry);
-        const sample = cell?.sample_size ?? 0;
-        return `${industry}<br/><b>${factor}</b><br/>平均 z = <b>${v.toFixed(
-          3
-        )}</b><br/>样本 ${sample} 只`;
-      },
-    },
-    xAxis: {
-      type: 'category',
-      data: xCategories,
-      splitArea: { show: true },
-      axisLabel: { interval: 0, rotate: 30 },
-    },
-    yAxis: {
-      type: 'category',
-      data: yCategories,
-      splitArea: { show: true },
-      axisLabel: { interval: 0, fontSize: 12 },
-    },
-    visualMap: {
-      min: -visualBound,
-      max: visualBound,
-      calculable: true,
-      orient: 'horizontal',
-      left: 'center',
-      bottom: 10,
-      inRange: {
-        // 红→白→绿 对称色带，与"涨绿跌红"A 股语义保持一致 (z 正 = 因子高 = 看多 = 绿)
-        color: [
-          '#d73027',
-          '#f46d43',
-          '#fdae61',
-          '#fee08b',
-          '#ffffbf',
-          '#d9ef8b',
-          '#a6d96a',
-          '#66bd63',
-          '#1a9850',
-        ],
-      },
-    },
-    series: [
-      {
-        name: 'avg_z',
-        type: 'heatmap',
-        data: series,
-        label: { show: false },
-        emphasis: {
-          itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.4)' },
-        },
-      },
-    ],
-  };
 }
 
 // ============================================================================

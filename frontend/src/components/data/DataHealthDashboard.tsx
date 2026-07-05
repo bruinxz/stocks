@@ -334,7 +334,7 @@ const DAILY_SYNC_KEYS = new Set([
   'dragon_tiger',
   'limit_up',
   'industry_flow',
-  'snowball_hot',
+  'market_sentiment',
 ]);
 
 /** 各数据源对应的 CLI 命令 — 用于按钮 disabled 时提示运维命令 */
@@ -343,12 +343,11 @@ const CLI_COMMANDS: Record<string, string> = {
   dragon_tiger: 'npm run sync:dragon-tiger -- --date=YYYY-MM-DD',
   limit_up: 'npm run sync:limit-up -- --date=YYYY-MM-DD',
   industry_flow: 'npm run sync:industry-flow -- --date=YYYY-MM-DD',
-  snowball_hot: 'npm run sync:snowball-keywords',
+  market_sentiment: 'npm run sync:market-sentiment -- --date=YYYY-MM-DD',
   earnings_forecast: 'npm run sync:earnings-forecast -- --report-period=YYYY-MM-DD',
   financial_report: 'npm run sync:financial-report -- --stock=600519',
   dividend_history: 'npm run sync:dividend-history -- --stock=600519',
   analyst_forecast: 'npm run sync:analyst-forecast -- --stock=600519',
-  shareholder_count: 'npm run sync:shareholder-count -- --stock=600519',
   shareholder_trade: 'npm run sync:shareholder-trade',
   restricted_share: 'npm run sync:restricted-share',
   margin_trading: 'npm run sync:margin-trading -- --date=YYYY-MM-DD',
@@ -356,7 +355,6 @@ const CLI_COMMANDS: Record<string, string> = {
   announcements: 'npm run sync:announcements -- --date=YYYY-MM-DD',
   qa_topics: 'npm run sync:qa-topics -- --stock=600519',
   index_components: 'npm run sync:index-components -- --index=000300 --date=YYYY-MM-DD',
-  stock_sentiment: 'npm run sync:stock-sentiment',
 };
 
 const DataHealthCard: React.FC<DataHealthCardProps> = ({ card, syncing, syncDisabled, onSync }) => {
