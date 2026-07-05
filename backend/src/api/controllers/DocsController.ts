@@ -37,7 +37,7 @@ export class DocsController {
   getTree = async (_req: Request, res: Response): Promise<void> => {
     try {
       if (!fs.existsSync(this.docsRoot)) {
-        res.status(404).json({ success: false, message: 'docs 目录不存在', data: null });
+        res.json({ success: true, data: { name: 'docs', type: 'dir', path: '.', children: [] } });
         return;
       }
 

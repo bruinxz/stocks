@@ -12,14 +12,6 @@ import { MarketSentimentIndex } from '../models/MarketSentimentIndex';
 import { DailyBar } from '../models/DailyBar';
 import { logger } from '../utils/logger';
 
-// ⚠️ DEPRECATED STUB — 以下"模型"是 批8 (2026-07-03 物理删表 D7) 已删除的 Sequelize
-// model 的占位替身,仅为让依赖它们的历史代码路径继续编译。所有方法恒返回空
-// (findAll→[] / findOne→null / count→0),即该数据维度已永久下线、优雅降级为"无数据"。
-// 请勿在此基础上新增业务逻辑;新功能应改接真实数据源或整段移除调用方。
-const SnowballHotKeyword = { findAll: async (_?: any): Promise<any[]> => [], max: async (_?: any) => null, count: async (_?: any) => 0 };
-const ShareholderCount = { findAll: async (_?: any): Promise<any[]> => [], max: async (_?: any) => null, count: async (_?: any) => 0 };
-const StockSentiment = { findAll: async (_?: any): Promise<any[]> => [], max: async (_?: any) => null, count: async (_?: any) => 0 };
-const KOLOpinion = { findAll: async (_?: any): Promise<any[]> => [], max: async (_?: any) => null, count: async (_?: any) => 0 };
 
 /**
  * US-079 数据健康度看板
@@ -300,30 +292,8 @@ function getSourceDefinitions(): SourceDefinition[] {
         record_count: await countAll(IndustryFlow),
       }),
     },
-    {
-      key: 'snowball_hot',
-      display_name: '雪球热词',
-      category: 'daily',
-      description: '雪球当日热门关键词与情绪聚合，AKShare snowball 接口',
-      sync_source: 'snowball_hot',
-      loadLatest: async () => ({
-        latest_data_date: await maxFieldDateOnly(SnowballHotKeyword, 'trade_date'),
-        last_sync_at: await maxUpdatedAt(SnowballHotKeyword),
-        record_count: await countAll(SnowballHotKeyword),
-      }),
-    },
-    {
-      key: 'stock_sentiment',
-      display_name: '个股舆情热度',
-      category: 'daily',
-      description: '个股舆情热度（东财问答 / 雪球评论代理），按日聚合',
-      sync_source: 'stock_sentiment',
-      loadLatest: async () => ({
-        latest_data_date: await maxFieldDateOnly(StockSentiment, 'trade_date'),
-        last_sync_at: await maxUpdatedAt(StockSentiment),
-        record_count: await countAll(StockSentiment),
-      }),
-    },
+
+
     {
       key: 'market_sentiment',
       display_name: '市场情绪量化指数',
@@ -384,18 +354,7 @@ function getSourceDefinitions(): SourceDefinition[] {
         record_count: await countAll(DividendHistory),
       }),
     },
-    {
-      key: 'shareholder_count',
-      display_name: '股东户数',
-      category: 'periodic',
-      description: '股东户数 + 户均流通市值，季度披露，per-stock 全量历史',
-      sync_source: 'shareholder_count',
-      loadLatest: async () => ({
-        latest_data_date: await maxFieldDateOnly(ShareholderCount, 'report_date'),
-        last_sync_at: await maxUpdatedAt(ShareholderCount),
-        record_count: await countAll(ShareholderCount),
-      }),
-    },
+
     {
       key: 'announcements',
       display_name: '公告摘要 NLP',
@@ -408,18 +367,7 @@ function getSourceDefinitions(): SourceDefinition[] {
         record_count: await countAll(AnnouncementSummary),
       }),
     },
-    {
-      key: 'kol_opinions',
-      display_name: 'KOL 观点聚合',
-      category: 'event',
-      description: '雪球大 V / 微博财经博主观点抓取与聚合',
-      sync_source: 'kol_opinions',
-      loadLatest: async () => ({
-        latest_data_date: await maxFieldDateOnly(KOLOpinion, 'opinion_date'),
-        last_sync_at: await maxUpdatedAt(KOLOpinion),
-        record_count: await countAll(KOLOpinion),
-      }),
-    },
+
   ];
 }
 

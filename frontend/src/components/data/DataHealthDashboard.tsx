@@ -282,30 +282,6 @@ const DataHealthDashboard: React.FC = () => {
                 value={referenceTradeDate ?? '—'}
                 valueStyle={{ fontSize: 18 }}
               />
-              <Statistic
-                title="健康"
-                value={summary.green}
-                suffix="个"
-                valueStyle={{ color: LEVEL_META.green.color, fontSize: 22 }}
-              />
-              <Statistic
-                title="轻微滞后"
-                value={summary.yellow}
-                suffix="个"
-                valueStyle={{ color: LEVEL_META.yellow.color, fontSize: 22 }}
-              />
-              <Statistic
-                title="严重滞后"
-                value={summary.red}
-                suffix="个"
-                valueStyle={{ color: LEVEL_META.red.color, fontSize: 22 }}
-              />
-              <Statistic
-                title="未知"
-                value={summary.unknown}
-                suffix="个"
-                valueStyle={{ color: LEVEL_META.unknown.color, fontSize: 22 }}
-              />
             </Space>
           </Col>
           <Col>

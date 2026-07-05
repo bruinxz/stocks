@@ -123,7 +123,7 @@ export function clampPollInterval(input: unknown): number {
 }
 
 /**
- * 点击 Bell 后的目标路径 — 风控中心 sub-tab in TodayWorkspace.
+ * 点击 Bell 后的目标路径 — 风控中心 sub-tab.
  *
  * 抽成常量 + helper 让单测能守"点击落点不会被未来 refactor 改错地方".
  * 与 [[strategyKillSwitchHelpers]] 同款"路径单一事实源"思想.
@@ -134,9 +134,6 @@ export const ALERTS_BELL_TARGET_TAB_KEY = 'risk_center';
 /**
  * 完整目标 URL — caller 用 navigate(buildAlertsBellHref()) 即可.
  *
- * TodayWorkspace 用 `?tab=<key>` query string 接 sub-tab 切换 (与 SettingsWorkspace
- * 模式一致). 已存在 tab 不被 query 覆盖 — 这与 useEffect 内 `searchParams.get('tab')`
- * 一次性应用语义对齐.
  */
 export function buildAlertsBellHref(): string {
   return `${ALERTS_BELL_TARGET_PATH}?tab=${ALERTS_BELL_TARGET_TAB_KEY}`;
@@ -145,9 +142,6 @@ export function buildAlertsBellHref(): string {
 /**
  * 普通用户的目标路径 — PortfolioWorkspace "我的提醒" tab.
  *
- * PR-C 风控中心 v2: admin 仍落 TodayWorkspace risk_center (含 6 tab 全部 admin 工具),
- * 普通用户落 PortfolioWorkspace?tab=alerts (持仓 view 默认 + 仅看自己关心的告警).
- * 后者复用同款 RiskAlertCenterPanel 组件, 仅传不同 initialView + positionSymbols.
  *
  * 抽 const 让单测能守 "未来 refactor 改路径不会偷偷把普通用户带到 admin 页".
  */

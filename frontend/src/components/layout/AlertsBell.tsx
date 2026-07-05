@@ -13,8 +13,7 @@
  *   - 未读 ≥ CRITICAL_UNREAD_THRESHOLD → 红色 Badge + 数字 (status='error').
  *   - 未读 ≥ 100 → 显示 "99+".
  *   - hover → Tooltip 文案见 buildBellTooltip() + mode 后缀 (ws/polling).
- *   - click → navigate('/portfolio?tab=advanced&sub=risk-center') 落到风控中心 tab.
- *
+ *   - click → navigate(buildAlertsBellHrefForRole) 落到风控中心. *
  * 错误兜底 (fail-OPEN):
  *   - useAlertsRealtime 内部全 try/catch — 任何 fetch 失败保留上一次 unread count
  *     (不清零, 防"网络抖动一秒红 Badge 跳没了" 假阴性). 与 backend
@@ -64,8 +63,6 @@ const AlertsBell: React.FC<AlertsBellProps> = ({ enableWebSocket = true }) => {
   const navigate = useNavigate();
   const { unreadCount, mode } = useAlertsRealtime({ enableWebSocket });
   const errored = mode === 'error';
-  // PR-C 风控中心 v2: admin → /portfolio?tab=advanced&sub=risk-center (含全部规则的中心),
-  // 普通用户 → /workspace/portfolio?tab=alerts (按持仓过滤的"我的提醒").
   // buildAlertsBellHrefForRole 内部调 buildAlertsBellHref, META-GUARD substring 仍命中.
   const isAdmin = useSelector((s: RootState) => s.auth.user?.role === 'admin');
 
