@@ -482,6 +482,12 @@ const FactorWorkspace: React.FC = () => {
   } else if (activeKey === 'overview') {
     body = (
       <>
+        <div className="ws-tab-header">
+          <h1 className="ws-tab-title">因子库</h1>
+          <p className="ws-tab-subtitle">
+            查看已注册因子的覆盖度与分布, 或切到 “权重调参” 手动配比多因子权重并实时预览选股结果。
+          </p>
+        </div>
         <Segmented
           className="ws-tab-segmented"
           options={[
@@ -535,33 +541,51 @@ const FactorWorkspace: React.FC = () => {
     // 决策洞察 (2026-07-04 收敛): 行业决策 / 宏观环境 / ETF资金流 / 政策要闻
     // 原四个二级 Segmented 合并为单页纵向堆叠, 用小标题分区, 一眼读完全部决策上下文.
     body = (
-      <Space direction="vertical" size={28} style={{ width: '100%' }}>
-        <section>
-          <div className="home-section-title">行业决策</div>
-          <IndustryBoardTab
-            data={board}
-            loading={boardLoading}
-            error={boardError}
-            onReload={loadBoard}
-          />
-        </section>
-        <section>
-          <div className="home-section-title">宏观环境</div>
-          <MacroEnvTab />
-        </section>
-        <section>
-          <div className="home-section-title">ETF 资金流</div>
-          <ETFFlowTab />
-        </section>
-        <section>
-          <div className="home-section-title">政策要闻</div>
-          <PolicyNewsTab />
-        </section>
-      </Space>
+      <>
+        <div className="ws-tab-header">
+          <h1 className="ws-tab-title">决策洞察</h1>
+          <p className="ws-tab-subtitle">
+            行业决策、宏观环境、ETF 资金流与政策要闻并列一屏, 一次读完当日全部选股决策上下文。
+          </p>
+        </div>
+        <div className="ws-content-stack ws-content-stack--lg">
+          <section className="ws-subsection">
+            <div className="ws-subsection-title">行业决策</div>
+            <IndustryBoardTab
+              data={board}
+              loading={boardLoading}
+              error={boardError}
+              onReload={loadBoard}
+            />
+          </section>
+          <section className="ws-subsection">
+            <div className="ws-subsection-title">宏观环境</div>
+            <MacroEnvTab />
+          </section>
+          <section className="ws-subsection">
+            <div className="ws-subsection-title">ETF 资金流</div>
+            <ETFFlowTab />
+          </section>
+          <section className="ws-subsection">
+            <div className="ws-subsection-title">政策要闻</div>
+            <PolicyNewsTab />
+          </section>
+        </div>
+      </>
     );
   } else {
     // 'picks'
-    body = <PicksTab picks={latestPicks} loading={loading} />;
+    body = (
+      <>
+        <div className="ws-tab-header">
+          <h1 className="ws-tab-title">选股结果</h1>
+          <p className="ws-tab-subtitle">
+            当前权重下的多因子选股名单与打分明细 — 点击个股可查看因子贡献拆解。
+          </p>
+        </div>
+        <PicksTab picks={latestPicks} loading={loading} />
+      </>
+    );
   }
 
   return (

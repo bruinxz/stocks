@@ -1460,23 +1460,44 @@ const HomeWorkspace: React.FC = () => {
   // ---------------------------------------------------------------------------
   return (
     <div className="home-workspace">
-      {/* PR-L emergency stop-loss banner (2026-06-29) — PR-K 回测证实 win 32% (低于
-          50% 随机), 实盘 paper -10,798 元. 自动跟单已停, UI 显著警示, 单击跟单
-          会先弹风险评估 Modal. data-testid 给 frontend contract test 用. */}
-      <Alert
-        type="warning"
-        showIcon
-        closable
-        data-testid="home-emergency-banner"
-        style={{ marginBottom: 12, borderRadius: 8 }}
-        message="推荐系统处于评估期 — 仅供参考，不要直接跟单"
-        description={
-          <span style={{ fontSize: 12 }}>
-            当前评分模型存在反向偏差，自动跟单已暂停。
-            <a style={{ marginLeft: 4 }} onClick={() => navigate('/workspace/data')}>查看风控中心 →</a>
-          </span>
-        }
-      />
+      {/* 系统状态横幅 (2026-07-05) — 数据驱动, 取代此前硬编码的 "反向偏差" 永久警示.
+          主线已切换为 ETF 因子轮动 (机械月度再平衡, Core 70%); 旧的全市场荐股模型
+          (胜率 32%, 曾致 paper -10,798 元) 已永久下线. 自动跟单改为按组合 opt-in:
+          portfolio.auto_trade_enabled 默认 false, 用户在设置中为目标组合手动开启后
+          才会被 PAPER_TRADING_AUTO_SYNC cron 执行. 横幅按真实运行态展示, 不再恒显警示. */}
+      {(() => {
+        const flowRunning = etfSignals.length > 0 || recommendations.length > 0;
+        return (
+          <Alert
+            type={flowRunning ? 'info' : 'warning'}
+            showIcon
+            closable
+            data-testid="home-emergency-banner"
+            style={{ marginBottom: 12, borderRadius: 8 }}
+            message={
+              flowRunning
+                ? '系统运行中 — ETF 因子轮动为核心主线'
+                : '主线信号加载中 — 稍候刷新'
+            }
+            description={
+              <span style={{ fontSize: 12 }}>
+                主线流程(选股 → 回测 → 持仓 → 复盘)已打通。自动跟单默认按组合手动开启,
+                如需全自动执行,请在
+                <a
+                  style={{ marginLeft: 2, marginRight: 2 }}
+                  onClick={() => navigate('/workspace/settings')}
+                >
+                  设置
+                </a>
+                中为目标组合开启「自动跟单」。
+                <a style={{ marginLeft: 4 }} onClick={() => navigate('/workspace/data')}>
+                  查看风控中心 →
+                </a>
+              </span>
+            }
+          />
+        );
+      })()}
       {/* ===== Phase 8 — 区块 1: 账户总值 hero (64px 大数字 + radial gradient) =====
           Phase 10 — 72px + violet ¥ + 30 日 sparkline + 数据时间 pill.
           Phase 11 — 暗色 aurora + spotlight 鼠标跟随 + framer-motion mount 动画. */}

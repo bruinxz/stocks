@@ -17101,6 +17101,27 @@ a {
   gap: 16px;
 }
 
+/* Phase 26 (2026-07-05) — 统一 tab 内部纵向节奏 + 子分区标题.
+ * 目的: FactorWorkspace / PortfolioWorkspace 与 LabWorkspace 视觉一致,
+ * 消除各页临时的 Space size={28} / home-section-title 混用。
+ */
+.ws-content-stack--lg {
+  gap: var(--space-6, 24px);
+}
+.ws-subsection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 12px);
+}
+.ws-subsection-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink-1);
+  line-height: 1.3;
+  margin: 0;
+}
+
 /* --- ws-themed-area: 整个工作区内容区域自动套 Phase 12 统一样式 ---
  * 解决了在 4 个超大工作区里逐个加 className="ws-card-themed" 的重复工作.
  * 凡 WorkspaceLayout `themed` 时, 内部所有顶层 ant-card 都按 Phase 12 规范渲染.
@@ -19390,7 +19411,7 @@ a {
 .ws-stack {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: var(--space-6, 24px);
 }
 
 /* === End Phase 22 === */

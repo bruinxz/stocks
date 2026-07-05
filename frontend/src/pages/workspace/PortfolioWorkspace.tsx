@@ -296,19 +296,53 @@ const PortfolioWorkspace: React.FC = () => {
   } else if (activeKey === 'positions') {
     // 合并 (2026-07-04): 当前持仓 (上) + 复盘日记 (下) 同屏, 一个 tab 内闭环.
     body = (
-      <div className="ws-stack">
-        <PositionsTab
-          data={portfolioData}
-          onChangeData={setPortfolioData}
-          onAfterTrade={() => void refresh()}
-        />
-        <JournalTab list={journalList} onListRefresh={() => void refresh()} />
-      </div>
+      <>
+        <div className="ws-tab-header">
+          <h1 className="ws-tab-title">持仓 · 复盘</h1>
+          <p className="ws-tab-subtitle">
+            上半区看当前持仓与浮动盈亏, 下半区对照复盘日记 — 看着持仓做复盘, 一个页面内闭环。
+          </p>
+        </div>
+        <div className="ws-content-stack ws-content-stack--lg">
+          <section className="ws-subsection">
+            <div className="ws-subsection-title">当前持仓</div>
+            <PositionsTab
+              data={portfolioData}
+              onChangeData={setPortfolioData}
+              onAfterTrade={() => void refresh()}
+            />
+          </section>
+          <section className="ws-subsection">
+            <div className="ws-subsection-title">复盘日记</div>
+            <JournalTab list={journalList} onListRefresh={() => void refresh()} />
+          </section>
+        </div>
+      </>
     );
   } else if (activeKey === 'equity') {
-    body = <EquityCurveTab snapshots={snapshots} kpis={kpis} />;
+    body = (
+      <>
+        <div className="ws-tab-header">
+          <h1 className="ws-tab-title">资金曲线</h1>
+          <p className="ws-tab-subtitle">
+            账户净值走势与绩效指标 — 观察收益、回撤与夏普的时间演变。
+          </p>
+        </div>
+        <EquityCurveTab snapshots={snapshots} kpis={kpis} />
+      </>
+    );
   } else if (activeKey === 'trades') {
-    body = <TradesTab trades={trades} />;
+    body = (
+      <>
+        <div className="ws-tab-header">
+          <h1 className="ws-tab-title">交易明细</h1>
+          <p className="ws-tab-subtitle">
+            全部买卖成交流水 — 逐笔核对成交价、数量与盈亏归属。
+          </p>
+        </div>
+        <TradesTab trades={trades} />
+      </>
+    );
   } else if (activeKey === 'alerts') {
     // PR-C: positionSymbols = 当前持仓代码 → panel "持仓相关" view 按此过滤;
     // 普通用户进入默认 positions view, 立刻看到自己关心的告警 (而非全局噪音).
