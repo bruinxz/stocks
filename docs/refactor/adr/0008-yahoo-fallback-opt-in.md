@@ -70,7 +70,7 @@ ALLOW_YAHOO_FALLBACK=false  # 默认关闭
 
 ## 四 · QA 断言（Task #20）
 
-**Task #16** · `test_yahoo_finance_opt_in_flag_default_false.py`
+**Task #16** · `test_yahoo_finance_opt_in_flag_default_false.test.ts`
 
 **4 断言**：
 1. `process.env.ALLOW_YAHOO_FALLBACK !== 'true'` 默认态断言（v1 冻结时）

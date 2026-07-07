@@ -331,7 +331,7 @@ V0：Value **0.40** / Quality **0.30** / LowVol **0.30** / Momentum **0.0**（sh
 **产物**：
 - `contracts/backtest.md §Gate Negative Coverage`（QADocs 主控）
 - `backend/tests/backtest/gates/refs/*.ts`（reference strategies，仅测试用途）
-- 元测 `test_gate_matrix_completeness.py`（缺任何 gate 反例 → 拒 PR）
+- 元测 `test_gate_matrix_completeness.test.ts`（缺任何 gate 反例 → 拒 PR）
 
 **覆盖表 v0**（QADocs msg=49e39ad7；正式列表由 QADocs 起草冻结）：
 
@@ -358,7 +358,7 @@ V0：Value **0.40** / Quality **0.30** / LowVol **0.30** / Momentum **0.0**（sh
 - `backend/tests/backtest/gates/refs/base/**` = 基础 7 反例 + `fixture_ref_alpha`（教具）
 - `backend/tests/backtest/gates/refs/weight_scheme/**` = 4 §11.1 反例
 - 双层 = QADocs 独占（见 `contracts/dir-ownership.md` §1 脚注）
-- 元测 `test_gate_matrix_completeness.py` 独立扫描两层，缺任一 → 拒 PR
+- 元测 `test_gate_matrix_completeness.test.ts` 独立扫描两层，缺任一 → 拒 PR
 
 **关键约束**：
 - **单一失败点**：每反例只违反 1 gate 主拒因
@@ -378,7 +378,7 @@ V0：Value **0.40** / Quality **0.30** / LowVol **0.30** / Momentum **0.0**（sh
 
 **依据**：QADocs msg=2db3bde7 "教具与被测混淆" 反循环论证 → Orchestrator msg=2a86337a 采纳。
 
-**opt-out 域**：`fixture_ref_*` **全域**（含 `refs/base/**` 和 `refs/weight_scheme/**`）不得出现在 §11.1 权重合规验证测试的 import 侧；QADocs `test_gate_g6_regime.py::test_ref_strategy_11_1_weight_compliance` 静态扫描断言防止未来伪证（msg=83cb9b0e §2 + msg=90f087a8 §6 采纳）。
+**opt-out 域**：`fixture_ref_*` **全域**（含 `refs/base/**` 和 `refs/weight_scheme/**`）不得出现在 §11.1 权重合规验证测试的 import 侧；QADocs `test_gate_g6_regime.test.ts::test_ref_strategy_11_1_weight_compliance` 静态扫描断言防止未来伪证（msg=83cb9b0e §2 + msg=90f087a8 §6 采纳）。
 
 ---
 
@@ -522,7 +522,7 @@ V0：Value **0.40** / Quality **0.30** / LowVol **0.30** / Momentum **0.0**（sh
 **opt-out 域**：`fixture_ref_*` 全域（含 `refs/base/**` 和 `refs/weight_scheme/**`）不得出现在 §11.1 权重合规验证测试的 import 侧
 
 **CI 静态断言**：
-- `test_gate_g6_regime.py::test_ref_strategy_11_1_weight_compliance` 静态扫描断言防止未来伪证（msg=83cb9b0e §2 + msg=90f087a8 §6 采纳）
+- `test_gate_g6_regime.test.ts::test_ref_strategy_11_1_weight_compliance` 静态扫描断言防止未来伪证（msg=83cb9b0e §2 + msg=90f087a8 §6 采纳）
 - 教具（`fixture_ref_alpha` + 7 反例）仅用于 gate 基础设施 CI 冒烟
 
 **扩展至卫星层 5-slot / 4-slot 权重**（§Q7 v1）：
@@ -584,7 +584,7 @@ V0：Value **0.40** / Quality **0.30** / LowVol **0.30** / Momentum **0.0**（sh
 - UX 感知无差异
 - 语义呼应"证据补足"
 
-**CI 断言**：QADocs Task #12 `test_satellite_slot_4_slot_renormalization.py` 断言 C · `news_evidence == 0.215`
+**CI 断言**：QADocs Task #12 `test_satellite_slot_4_slot_renormalization.test.ts` 断言 C · `news_evidence == 0.215`
 
 ### §附录 · 跨域权重数值裁决前置校验清单（3 条 · 采纳 msg=c56acff0）
 
@@ -625,7 +625,7 @@ V0：Value **0.40** / Quality **0.30** / LowVol **0.30** / Momentum **0.0**（sh
 - **License 放宽**（自用不上线 · 忽略 LICENSE 合规）与 **独立性红线保留**（技术门禁位）**正交**
 - 本 §独立性红线 = 技术门禁位（非 License 合规位）· CI 层 red 断言保留（Task #15 4 断言全保留）
 - **执行位权威锚** = 25-copyright-independence-v1.1.md §2/§3
-- **CI 层引用锚** = `test_alpha_vantage_independence.py` 4 断言 A/B/C/D
+- **CI 层引用锚** = `test_alpha_vantage_independence.test.ts` 4 断言 A/B/C/D
 
 ### opt-out 域
 

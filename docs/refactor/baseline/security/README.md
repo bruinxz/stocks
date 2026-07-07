@@ -27,7 +27,7 @@ gitleaks detect --source . \
 
 ## §3 CI 门禁位
 
-- QADocs Task #30 `test_gitleaks_baseline_zero_new_hits.py`（**硬门禁** · v1.1 追增位承接 §Gitleaks-Baseline-Guard）
+- QADocs Task #30 `test_gitleaks_baseline_zero_new_hits.test.ts`（**硬门禁** · v1.1 追增位承接 §Gitleaks-Baseline-Guard）
 - ADR-0001 §凭证纪律 · 5 铁律第 3 铁律执行位
 - 首起事件 msg=ed61c397 · 第 2 起事件 msg=15982453 事后加固
 

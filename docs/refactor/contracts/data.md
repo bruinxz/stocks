@@ -223,7 +223,7 @@ function insertFundamentalPit(row: FundamentalPit): void {
 }
 ```
 
-**步骤 4**：QA 断言 (`test_fundamental_pit_schema_v1_1.py`)：
+**步骤 4**：QA 断言 (`test_fundamental_pit_schema_v1_1.test.ts`)：
 - 断言 A：DDL 3 列存在（`information_schema.columns` grep）
 - 断言 B：CHECK constraint 3 值定义
 - 断言 C：v1 写入路径拒 TUSHARE_PRO/MERGED（应用层 unit test）
@@ -270,7 +270,7 @@ function insertFundamentalPit(row: FundamentalPit): void {
 - ADR-0007 quality-factor-fallback（同批 landing）
 - ADR-0009 baostock-gpl-isolation（同批 landing）
 - DataPipeline workspace `notes/40-data-contract-v1-1-e4.md`（源起草）
-- QADocs Task #24 `test_quality_dual_source_divergence_alarm.py`（休眠位 · TUSHARE_PRO 启用后转正）
+- QADocs Task #24 `test_quality_dual_source_divergence_alarm.test.ts`（休眠位 · TUSHARE_PRO 启用后转正）
 
 ---
 

@@ -28,7 +28,7 @@
 
 ## §3.3 Cross-Ref
 
-- QADocs `test_backtest_gate_g1_pit_calibration.py`（G1）· `test_backtest_gate_g2_weight_compliance.py`（G2）· G3-G7 对应 test 文件按本 ADR §3.1 gate # 命名
+- QADocs `test_backtest_gate_g1_pit_calibration.test.ts`（G1）· `test_backtest_gate_g2_weight_compliance.test.ts`（G2）· G3-G7 对应 test 文件按本 ADR §3.1 gate # 命名
 - Task #28 承接位（§Backtest-7-Gates-Cluster · v1.1 追增队列位）
 - ADR-0001 §10.8 权重合规验证锚点 · §附录 §10.8-satellite-footnote
 - ADR-0002 · US-038 Math.random Lint Rule（G4 SeededRandom 联动）

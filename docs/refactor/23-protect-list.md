@@ -17,7 +17,7 @@
 
 **执行**：
 1. Orchestrator 裁定后 · 内容写入 `AGENTS.md` 目录所有权表
-2. QADocs CI job `test_protect_list_no_delete.py`（明日 PR 后 v1.1 追增窗口）: `git diff` 中 `D` 状态命中 glob → PR fail
+2. QADocs CI job `test_protect_list_no_delete.test.ts`（明日 PR 后 v1.1 追增窗口）: `git diff` 中 `D` 状态命中 glob → PR fail
 3. CODEOWNERS 每 glob 组独立分派
 
 ---

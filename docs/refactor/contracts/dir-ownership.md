@@ -48,7 +48,7 @@
 [1] **`refs/**` 双子层**（Orchestrator msg=90f087a8 定；ADR-0001 §10.2a 展开表）：
 - `refs/base/**` = 基础 7 gate 反例 + `fixture_ref_alpha` 教具
 - `refs/weight_scheme/**` = §11.1 4 因子槽反例（`fixture_ref_weight_scheme_{value,quality,lowvol,momentum}_*`）
-- 元测 `test_gate_matrix_completeness.py` 独立扫描两层，缺任一 → 拒 PR
+- 元测 `test_gate_matrix_completeness.test.ts` 独立扫描两层，缺任一 → 拒 PR
 - 仅测试用途，不进生产 `backend/src/backtest/strategies/`
 
 ---

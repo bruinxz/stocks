@@ -1,6 +1,6 @@
 # 25 · 著作权独立性红线 v1.1（灵活性纳入）
 
-**Owner**: @Research 主 + @QADocs 副（Task #15 `test_alpha_vantage_independence.py` 4 断言引用锚）
+**Owner**: @Research 主 + @QADocs 副（Task #15 `test_alpha_vantage_independence.test.ts` 4 断言引用锚）
 **Consumers**: @DataPipeline（Alpha Vantage 独立命名承接）· @Strategy（`us_theme_leader_*` 命名承接）· @QADocs（4 断言引用锚 · jscpd baseline）· @Cleanup（`catalyst_snapshot/**` 零触碰红线）· @Frontend（jscpd `us_*`/`av_function` 前缀 + Independence Declaration 承接）
 **Input**: Orchestrator msg=656c8cf4 · msg=c2b28c7c（自主推进边界令 · 采纳选项 B）· li-yiming msg=4f6d2466（自用不上线 · 忽略 LICENSE）+ msg=ad6585cf（独立性保留 · 灵活性纳入）+ msg=bf74c64c（全权授权）· 原 20-reference-report.md §5
 **Landing**: 独立 PR（QADocs msg=1fa84e6c §3 建议）· Research 主控 · QADocs 副签 review · Orchestrator 签字合入
@@ -60,13 +60,13 @@
 
 ## 3. 执行门禁 · 4 断言保留（QADocs Task #15 主控）
 
-Task #15 `test_alpha_vantage_independence.py` 4 断言 A/B/C/D · **License 放宽令 v1 后仍保留**（作独立性红线技术门禁 · 非 License 合规位 · QADocs msg=77149660 §2 确认全保留）：
+Task #15 `test_alpha_vantage_independence.test.ts` 4 断言 A/B/C/D · **License 放宽令 v1 后仍保留**（作独立性红线技术门禁 · 非 License 合规位 · QADocs msg=77149660 §2 确认全保留）：
 
 | 断言 | 位 | 硬门禁位 | 释义 |
 |---|---|---|---|
 | **A** | jscpd 30% 阈值 | ✅ 硬 | 字面重复度 ≥ 30% 拒 PR · < 30% 通过（"稍微改一改"量化位） |
 | **B** | jscpd < 5% 质量目标 | ⚠ 内控 | 追求指标 · 非门禁 |
-| **C** | `test_reference_project_no_import.py` | ✅ 硬 | 禁 import `docs/refactor/baseline/reference/catalyst_snapshot/**` · 我方独立目录树 |
+| **C** | `test_reference_project_no_import.test.ts` | ✅ 硬 | 禁 import `docs/refactor/baseline/reference/catalyst_snapshot/**` · 我方独立目录树 |
 | **D** | 字段命名独立性 | ✅ 硬 | `us_*` 前缀 / `us_theme_*` / `av_function` 命名 · grep 可区分我方原创 vs catalyst 语义映射 |
 
 ---
@@ -79,7 +79,7 @@ Task #15 `test_alpha_vantage_independence.py` 4 断言 A/B/C/D · **License 放�
 | **@Strategy** | US 主题派生规则命名 | `us_theme_leader_return_5d` / `us_theme_leader_return_20d` / `us_theme_leader_guidance_beat` 前缀呼应（Strategy msg=c1a5024f §4 已锁）· `av_function` 字段命名与 catalyst 参考项目扁平字符串数组差异化（Strategy US Tickers v0 名单 4 字段结构） |
 | **@QADocs** | 4 断言 + v1.1 队列 + ADR-0001 §附录 | Task #15 4 断言 A/B/C/D 全保留 · v1.1 追增队列 21 项（原 24 · License 放宽令 v1 删 #17/#23 · 改造 #19/#22）· ADR-0001 §附录 6 项含 §Independence-Flexibility-Footnote |
 | **@Cleanup** | catalyst_snapshot 零触碰 | `docs/refactor/baseline/reference/catalyst_snapshot/**` = Cleanup 独占窗口零触碰红线（Cleanup msg=67d0be26 §4 + msg=ab4b973d §1 承接确认）· 属独立性技术红线（非 License 合规） |
-| **@Frontend** | jscpd 位 + Independence Declaration | jscpd < 30% 位 + `us_*` / `av_function` 前缀 + PR Independence Declaration + `test_reference_project_no_import.py` 引用锚待本章 landing 后 SHA-lock（Frontend msg=f78bed4b 承接确认） |
+| **@Frontend** | jscpd 位 + Independence Declaration | jscpd < 30% 位 + `us_*` / `av_function` 前缀 + PR Independence Declaration + `test_reference_project_no_import.test.ts` 引用锚待本章 landing 后 SHA-lock（Frontend msg=f78bed4b 承接确认） |
 
 ---
 

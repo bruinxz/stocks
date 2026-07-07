@@ -56,7 +56,7 @@
 
 ## 三 · QA 断言（Task #23 · 降级为信息化）
 
-**Task #22** · `test_baostock_gpl_subprocess_isolation.py`
+**Task #22** · `test_baostock_gpl_subprocess_isolation.test.ts`
 
 **4 断言（信息化 · 非门禁）**：
 - A. 检查 `BAOSTOCK_SUBPROCESS_*` 4 环境变量存在（`process.env` grep 命中）

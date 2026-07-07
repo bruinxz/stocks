@@ -20,7 +20,7 @@ authoritative_ref: Orchestrator msg=656c8cf4
 
 ## §2 CI 层行为（归档后）
 
-- 原 `test_license_allow_list_compliance.py` **skip** 状态（不 red 断言）
+- 原 `test_license_allow_list_compliance.test.ts` **skip** 状态（不 red 断言）
 - 保留文件在 repo 中 · 便于未来激活
 - allow-list-licenses.md v0.2 状态从 Active workspace 稿件转 Archived workspace 稿件（稿件自身状态位管理 · 非 Task # 承接位）
 
