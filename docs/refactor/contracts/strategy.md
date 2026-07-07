@@ -310,7 +310,7 @@ export interface RiskFlagEntry {
 - `backend/src/quant/explain/dictionaries/risk_flag_dictionary.ts`
 - `backend/src/quant/explain/dictionaries/types.ts`
 - `backend/src/quant/explain/dictionaries/README.md`
-- CI 硬门禁 `test_word_dictionary_jscpd_threshold_30.py`（QADocs Task #15）
+- CI 硬门禁 `test_word_dictionary_jscpd_threshold_30.test.ts`（QADocs Task #15）
 
 ### §Q8.5 rebuild 纪律
 

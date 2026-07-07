@@ -7,7 +7,7 @@
 
 ## §Gate Negative Coverage v0.3 · 卫星层扩展
 
-**签发依据**：QADocs v1.1 追增队列第 4 位 · Task #27 `test_gate_negative_coverage_v0_3.py`（追增位）
+**签发依据**：QADocs v1.1 追增队列第 4 位 · Task #27 `test_gate_negative_coverage_v0_3.test.ts`（追增位）
 
 **语义**：Gate 负例覆盖度纪律扩展至卫星层 5-slot / 4-slot 权重合规验证
 
@@ -37,7 +37,7 @@
 | N-10 | 词条字面命中 catalyst 词典 baseline | jscpd baseline 强制 | PR reject |
 | N-11 | 移除 `us_driver_source_unavailable_watch` slug | schema shape 断言 | 单测 fail |
 
-**CI 门禁位**：`test_gate_negative_coverage_v0_3.py`（**硬门禁**）· QADocs Task #27（v1.1 追增队列 20 → 24 项 · 新追 4 位承接 §Gate-Negative-Coverage-v0.3 / §Backtest-7-Gates-Cluster / §No-Math-Random-US-038 / §Gitleaks-Baseline-Guard）
+**CI 门禁位**：`test_gate_negative_coverage_v0_3.test.ts`（**硬门禁**）· QADocs Task #27（v1.1 追增队列 20 → 24 项 · 新追 4 位承接 §Gate-Negative-Coverage-v0.3 / §Backtest-7-Gates-Cluster / §No-Math-Random-US-038 / §Gitleaks-Baseline-Guard）
 
 ---
 

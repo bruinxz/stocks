@@ -42,7 +42,7 @@
 - 依据：Hsu 2017 A 股短期反转 → Momentum 上核心会拖短线化
 - Momentum 只走 walk-forward，6 月后再评估
 - **禁追求最优参数** → 保守权重 + 网格敏感性验证
-- **红线**（Orchestrator msg=2a86337a · ADR-0001 §10.8）：§11.1 权重（V0）合规验证锚点仅走真实历史数据；**禁使用 fake DataSource fixture 结果作为过关证据**。fake fixture 仅用于 gate 基础设施 CI 冒烟（`fixture_ref_alpha` known-pass 教具 + `fixture_ref_*` 反例被拒），不承诺 §11.1 过关。QADocs §10.8 静态扫描断言 `test_gate_g6_regime.py::test_ref_strategy_11_1_weight_compliance` 禁引用 `fixture_ref_*` 全域（base + weight_scheme 两层）导入侧。
+- **红线**（Orchestrator msg=2a86337a · ADR-0001 §10.8）：§11.1 权重（V0）合规验证锚点仅走真实历史数据；**禁使用 fake DataSource fixture 结果作为过关证据**。fake fixture 仅用于 gate 基础设施 CI 冒烟（`fixture_ref_alpha` known-pass 教具 + `fixture_ref_*` 反例被拒），不承诺 §11.1 过关。QADocs §10.8 静态扫描断言 `test_gate_g6_regime.test.ts::test_ref_strategy_11_1_weight_compliance` 禁引用 `fixture_ref_*` 全域（base + weight_scheme 两层）导入侧。
 
 #### §1.2.4 扩展性设计（plugin 化 · 硬性原则 §5）
 - 新因子入库：写 `library/<NameFactor>.ts` + `FactorRegistry.register()` + 单测 `tests/factors/<NameFactor>.test.ts`

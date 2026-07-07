@@ -41,7 +41,7 @@
 
 - Baostock 无 `q_ROA` 直接字段（DataPipeline workspace `notes/70-quality-factor-fallback-baostock.md` §Quality-Factor-Fallback.2 权威表）
 - ROA 走本地派生：`query_profit_data.netProfit / query_balance_data.totalAssets` · join by `(code, year, quarter)`
-- `total_assets = 0` 或 NULL 保护 → `roa = NULL`（非 0/0 除零 · QADocs `test_fundamental_pit_schema_v1_1.py` 断言 D 覆盖）
+- `total_assets = 0` 或 NULL 保护 → `roa = NULL`（非 0/0 除零 · QADocs `test_fundamental_pit_schema_v1_1.test.ts` 断言 D 覆盖）
 - Baostock 财报数据延迟：季报公告后 T+1 到位 · 与 A 股 T+1 时点校准对齐（`available_at ≤ t` PIT 校准）
 
 ---
@@ -64,7 +64,7 @@
 
 ### §3.3 与 QADocs Task #24 关系
 
-Task #24 `test_quality_dual_source_divergence_alarm.py` 双源分歧报警断言 · 当前**休眠状态**（决策 2 = B 单源）· 未来 TUSHARE_PRO 启用 + BAOSTOCK 并存后转正激活
+Task #24 `test_quality_dual_source_divergence_alarm.test.ts` 双源分歧报警断言 · 当前**休眠状态**（决策 2 = B 单源）· 未来 TUSHARE_PRO 启用 + BAOSTOCK 并存后转正激活
 
 ---
 
@@ -112,9 +112,9 @@ Task #24 `test_quality_dual_source_divergence_alarm.py` 双源分歧报警断言
 
 ### §6.2 CI 门禁位（降级）
 
-- ✅ `test_fundamental_pit_schema_v1_1.py` shape 断言（**硬门禁**）
-- ✅ `test_fundamental_pit_schema_v1_1.py` `data_source` 3 值枚举断言（**硬门禁** · v1 只允许 BAOSTOCK 值写入）
-- ⚠️ Task #24 `test_quality_dual_source_divergence_alarm.py`（**休眠位** · 未来 TUSHARE_PRO 启用触发）
+- ✅ `test_fundamental_pit_schema_v1_1.test.ts` shape 断言（**硬门禁**）
+- ✅ `test_fundamental_pit_schema_v1_1.test.ts` `data_source` 3 值枚举断言（**硬门禁** · v1 只允许 BAOSTOCK 值写入）
+- ⚠️ Task #24 `test_quality_dual_source_divergence_alarm.test.ts`（**休眠位** · 未来 TUSHARE_PRO 启用触发）
 - ⚠️ Task #22 Baostock subprocess 隔离建议（QADocs Task #22 · 技术良好实践位 · **非硬门禁** · ADR-0009 降级承接）
 
 ---
