@@ -142,3 +142,7 @@ backups/
 # Local runtime artifacts (server backups, rescue snapshots, test reports)
 .artifacts/
 docs/backups/*.sql
+
+# Verification / QA scratch (Cleanup C-01, 2026-07-07)
+.verify_token
+shots/
