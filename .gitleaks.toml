@@ -1,0 +1,36 @@
+title = "gitleaks config for stocks project"
+
+[[rules]]
+id = "generic-api-key"
+description = "Generic API Key"
+regex = '''(?i)(api[_-]?key|apikey|access[_-]?key|secret[_-]?key)['"\s]*[:=]['"\s]*[a-z0-9_\-]{20,}'''
+tags = ["key", "generic"]
+
+[[rules]]
+id = "generic-secret"
+description = "Generic Secret"
+regex = '''(?i)(secret|password|passwd|pwd|token)['"\s]*[:=]['"\s]*[a-z0-9_\-]{16,}'''
+tags = ["secret", "generic"]
+
+[[rules]]
+id = "alpha-vantage-api-key"
+description = "Alpha Vantage API Key"
+regex = '''(?i)alpha[_-]?vantage[_-]?api[_-]?key['"\s]*[:=]['"\s]*[A-Z0-9]{16}'''
+tags = ["key", "alpha-vantage"]
+
+[[rules]]
+id = "postgres-connection-string"
+description = "Postgres Connection String"
+regex = '''postgres(ql)?://[^:]+:[^@]+@[^/]+/\w+'''
+tags = ["db", "postgres"]
+
+[allowlist]
+paths = [
+  '''\.git/''',
+  '''node_modules/''',
+  '''docs/refactor/baseline/''',
+  '''__tests__/fixtures/''',
+]
+
+[allowlist.commits]
+commits = []
