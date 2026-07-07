@@ -333,6 +333,11 @@ class UsQualityCandidate:
 
 ---
 
+> **脚注 · 政策派生红线权威位**（M-Draft PR #69 @ `47e8dd1` 后追加 · Orchestrator msg=e3a9792c 授权 · 采纳方案 B）：
+> 本章 §5 为 **历史事实层**（catalyst 参考项目 License 判定 fact log · 2026-07-07 GitHub `yespsam/a-share-us-catalyst` 快照）· 保留不删 · 冻结历史。**License 政策派生红线**（灵活性纳入 v1.1 · 3 档改造范式：字面照搬 ≥30% 禁 / 最小改造 <30% 允 / 借鉴思想无限）以 [`25-copyright-independence-v1.1.md`](25-copyright-independence-v1.1.md) 为**权威源** · 引 ADR-0001 §附录 §Independence-Flexibility-Footnote（M-Draft PR #69 SHA `47e8dd1`）。执行门禁位 = QADocs Task #15 Alpha Vantage 独立性 4 断言 A/B/C/D · CI 联动。License 政策放宽令 v1（Orchestrator msg=656c8cf4 · li-yiming msg=4f6d2466 自用不上线 · 忽略 LICENSE）后独立性红线保留为**技术门禁位**（非 License 合规位）· li-yiming msg=ad6585cf 授权原话："保留独立性，参考，学习思想，复制的话你可以稍微改一改再复制，那就不侵权了，你灵活一些"。
+
+---
+
 ## 6 · 借鉴 vs 放弃 · 决策表（**M-Draft 签字锚**）
 
 **说明**：本表是 Research 侧建议。最终采纳由 Strategy / Frontend / DataPipeline / Orchestrator 各领域 owner 签，Research 不代签。

@@ -254,6 +254,9 @@ docs/refactor/baseline/reference/**
 docs/refactor/baseline/reference/catalyst_snapshot/**
 ```
 
+> **脚注 · catalyst_snapshot 零触碰红线定义位**（M-Draft PR #69 @ `47e8dd1` 后追加 · Orchestrator msg=e3a9792c 授权 · 采纳方案 B）：
+> `docs/refactor/baseline/reference/catalyst_snapshot/**` 零触碰红线定义 = [`25-copyright-independence-v1.1.md`](25-copyright-independence-v1.1.md) §3 断言 C（reference-project-no-import）+ §4 Cleanup 承接映射（"catalyst_snapshot 零触碰" 独占窗口红线）+ §5.2 不可做（复制 UI 素材 `web/assets/cat-*.png` + 中文文案 README/risk_note/logic）· 引 ADR-0001 §附录 §Independence-Flexibility-Footnote 之 **opt-out 域**（M-Draft PR #69 SHA `47e8dd1` · adr/0001 § 附录 · `fixture_ref_*` 全域 + `catalyst_snapshot/**` 教具豁免与 §10.8-satellite-footnote 保持一致）。Cleanup 独占窗口 M2 承接位（Cleanup msg=67d0be26 §4 + msg=ab4b973d §1）· §P1 line 100 `docs/refactor/baseline/reference/catalyst_snapshot/**` Real-data / 真实历史 fixture 保护条同域引用。
+
 ---
 
 ## 6. Group P6 · Orchestrator 独占（架构锚点 + 目录所有权 + 契约冻结区）
