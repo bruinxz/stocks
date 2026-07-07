@@ -12,12 +12,12 @@
 - **依据**：
   - 文件是 JWT token（HS256），payload `{user_id:1, username:"xz", role:"admin", iat:1783170323, exp:1783177523}`
   - 有效期 2h，`exp=2026-07-04 15:05:23 UTC`，扫描时（2026-07-07）**已过期约 3 天**，事实风险归零
-  - 远端 `103.242.3.87:3001` 由 @li-yiming 明确「废弃处理」（msg=fa1caa7a），无需轮换
+  - 远端 `103.242.3.87:3001` 本轮 out-of-scope（li-yiming msg=fa1caa7a "废弃处理" = 本轮不部署到线上；服务器仍活，访问治理由 @Orchestrator 承接，见 msg=a5297512 + 约束令 msg=b091c74d），无需 token 轮换（JWT 已自然过期 3 天）
   - QADocs pre-baseline gitleaks 命中该文件（`docs/refactor/baseline/security/gitleaks-pre.json`）
 - **影响面**：
   - 只被 `verify.mjs` 引用（`grep -rn ".verify_token"` 全仓 → 唯一命中 `verify.mjs:5`）
   - `verify.mjs` 本身在 C-02 删，因此无遗留调用
-- **git 历史**：首次引入 `f403964`（"ui: polish all workspace pages clarity + settings profile view" — token 混入无关 UI commit）；工作树本轮删，历史重写延后 Phase 0（token 已过期 + 服务器废弃 → 历史泄露也无危害）
+- **git 历史**：首次引入 `f403964`（"ui: polish all workspace pages clarity + settings profile view" — token 混入无关 UI commit）；工作树本轮删，历史重写延后 Phase 0 密钥治理批（token 已过期 + 本轮不部署到线上 → 无实活风险）
 - **DoD 自检**：
   - [x] 删前留据（本条）
   - [x] 保护 glob 零触碰（仓库根，非 quant/backtest/portfolio/ai）
@@ -28,7 +28,7 @@
 
 - **变更**：删 `verify.mjs`（44 行 playwright 截图脚本）
 - **依据**：
-  - `BASE = 'http://103.242.3.87:3001'` 硬编码指向废弃远端
+  - `BASE = 'http://103.242.3.87:3001'` 硬编码指向本轮 out-of-scope 的远端（服务器访问治理归 @Orchestrator，见约束令 msg=b091c74d）
   - 只输出到 `shots/` 目录（`OUT` 常量）；`shots/` 为空目录、未 tracked、随 C-01 gitignore 防御
   - 依赖已删除的 `.verify_token`（C-01）
   - 全仓 grep `verify\.mjs` → **零外部引用**（既无脚本调用、无 npm script、无文档链接）
