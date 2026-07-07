@@ -125,6 +125,9 @@ grep -rln "ralph" backend/src frontend/src scripts ops 2>/dev/null | head
 
 **E6 结论**：`analyst` 词根残留 1 处 · 位于 Frontend 独占目录 · Frontend 60-* v0.1 或 v1 期间自行清扫 · 与 `<ExplainRadar>`/`<ExplainCard>` 命名迁移一并处理 · 无跨层协调需求。
 
+> **脚注 · 独立性红线映射**（M-Draft PR #69 @ `47e8dd1` 后追加 · Orchestrator msg=e3a9792c 授权 · 采纳方案 B）：
+> 本 §5 Group E 黑名单 5 项 identifier（`catalyst_us` / `analyst_profile` / `nine_cats_report` / `jiudian_cat` / `九点猫`）+ E7 5 因子魔数联合属**独立性红线技术门禁位**（3 档改造范式之"命名撞车禁" · jscpd 30% 硬阈 + 字段命名独立性 D 断言）· 权威源 [`25-copyright-independence-v1.1.md`](25-copyright-independence-v1.1.md) §3 断言 A/D + §5.2 "命名撞车" 禁项 · 引 ADR-0001 §附录 §Independence-Flexibility-Footnote（M-Draft PR #69 SHA `47e8dd1`）。CI 联动 = QADocs Task #15 Alpha Vantage 独立性 4 断言 A/B/C/D + Task #27 §Gate-Negative-Coverage-v0.3 反例矩阵扩展位。License 政策放宽令 v1（Orchestrator msg=656c8cf4）后仍保留（技术门禁位 · 非 License 合规位）· E1-E5 我方 0 命中 · E6 `analyst` 词根残留 1 处属 Frontend 独占目录 60-* v0.1 期间清扫（Frontend 承接位不变）。
+
 ---
 
 ## 6. Group F · Q5 4 传统策略参考扫描 · Strategy 决策依赖
