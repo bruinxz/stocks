@@ -637,6 +637,15 @@ V0：Value **0.40** / Quality **0.30** / LowVol **0.30** / Momentum **0.0**（sh
 ## §附录变更 CHANGELOG
 
 - v1（2026-07-08）· 追加 6 项 · Orchestrator msg=84fa4b84 M-Draft 挪入终裁触发 · 全 6 owner 联署副签
+- v1.1（2026-07-08）· C-01/C-02/C-01b 语义归因说明：
+  - 承接来源 = 本地 preserved 分支 `cleanup/preserved-c01-c02-c01b` 3 SHA
+    - `1ae79ad` · C-01 · `.verify_token` 删 + `.gitignore` 硬化追加 `.verify_token` + `shots/`
+    - `1a42f82` · C-02 · `verify.mjs` orphan 文件删
+    - `849f74e` · C-01b · Orchestrator constraint 依据修订
+  - 已隐含并入 M-Draft PR #69 SHA `47e8dd1`：`docs/refactor/30-cleanup-log.md` 与 `849f74e:30-cleanup-log.md` 空 diff（完全一致）· `.verify_token` / `verify.mjs` 从未 track 进 origin/main · 无实质 delta · `.gitignore` 追加两行随 M-Draft 打包 landing
+  - preserved 分支 = 审计凭证 only · 不 push · 不 rebase · 不 delete · 不 force · 不再起 PR 承接
+  - 由 Cleanup owner msg=d65aec23 尽职核查揭源确认 · Orchestrator msg=68995d76 综合裁决 α 采纳
+  - Cleanup 铁律"删前留据 · 宁可多问"执行到位闭环
 
 ---
 
