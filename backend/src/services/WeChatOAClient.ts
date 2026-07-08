@@ -34,6 +34,7 @@
 
 import axios, { AxiosInstance } from 'axios';
 import { logger } from '../utils/logger';
+import { randomAlphaNonce } from '../utils/randomNonce';
 
 // ---------------------------------------------------------------------------
 // 类型定义
@@ -206,11 +207,7 @@ function parsePositiveIntOrDefault(v: any, fallback: number): number {
 function defaultRand6(): string {
   // 6 位 0-9A-Z 随机，避免与 user_id（数字）混淆
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let out = '';
-  for (let i = 0; i < 6; i++) {
-    out += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return out;
+  return randomAlphaNonce(6, chars);
 }
 
 // ---------------------------------------------------------------------------

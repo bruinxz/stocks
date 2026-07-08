@@ -29,6 +29,7 @@
 import moment from 'moment-timezone';
 
 import { logger } from '../utils/logger';
+import { randHex4 } from '../utils/randomHex';
 import { User } from '../models/User';
 import { dailyTradingDigestService } from './DailyTradingDigestService';
 import type { NotificationChannelsConfig, DigestPayload } from './DailyTradingDigestService';
@@ -250,11 +251,7 @@ export function buildWeChatMessageId(
     options.date && /^\d{8}$/.test(options.date)
       ? options.date
       : moment().tz('Asia/Shanghai').format('YYYYMMDD');
-  const rand4 = options.rand4Provider
-    ? options.rand4Provider()
-    : Math.floor(Math.random() * 0x10000)
-        .toString(16)
-        .padStart(4, '0');
+  const rand4 = options.rand4Provider ? options.rand4Provider() : randHex4();
   return `WECHAT-${user_id}-${path}-${dateStr}-${rand4}`;
 }
 
