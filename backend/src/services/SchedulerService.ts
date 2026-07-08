@@ -4940,6 +4940,70 @@ class SchedulerService {
             }`
           );
         }
+      } else if (task.type === 'TRADING_CALENDAR_SYNC') {
+        // Path C.3 (2026-07-09): TradingCalendarSyncService.syncRange daily 增量同步.
+        // 每日 03:00 Asia/Shanghai 触发 T-1 至 T+30 rolling window · Path C.2 韧性件
+        // (retryWithBackoff [1s,2s,4s] + AKShare fallback + HALF_DAY populate) 生产验证位.
+        // idempotent upsert (trade_date PK) · fail-OPEN warn 不抛 (与 ETF_FLOW_SYNC 一致).
+        /* eslint-disable @typescript-eslint/no-var-requires */
+        const {
+          TradingCalendarSyncService,
+        } = require('../data/services/TradingCalendarSyncService');
+        const { BaostockClient } = require('../data/sources/BaostockClient');
+        const { AKShareClient } = require('../data/sources/AKShareClient');
+        /* eslint-enable @typescript-eslint/no-var-requires */
+        const bs = new BaostockClient();
+        const ak = new AKShareClient();
+        const calSvc = new TradingCalendarSyncService(bs, ak);
+        const tzTodayCal = moment().tz('Asia/Shanghai');
+        const startDateCal =
+          typeof parameters.start_date === 'string' && parameters.start_date.length >= 10
+            ? parameters.start_date.slice(0, 10)
+            : tzTodayCal.clone().subtract(1, 'day').format('YYYY-MM-DD');
+        const endDateCal =
+          typeof parameters.end_date === 'string' && parameters.end_date.length >= 10
+            ? parameters.end_date.slice(0, 10)
+            : tzTodayCal.clone().add(30, 'day').format('YYYY-MM-DD');
+        const calResult = await calSvc.syncRange({
+          startDate: startDateCal,
+          endDate: endDateCal,
+        });
+        const calSucceeded = !calResult.error;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: Number(calResult.total_calendar_days) || 0,
+          completed_items: Number(calResult.upserted) || 0,
+          failed_items: calSucceeded ? 0 : 1,
+          status: 'COMPLETED',
+          completed_at: new Date(),
+          error_message: calResult.error || null,
+          result_summary: {
+            scenario: 'trading_calendar_sync',
+            start_date: startDateCal,
+            end_date: endDateCal,
+            source: calResult.source,
+            baostock_attempts: calResult.baostock_attempts,
+            fallback_used: calResult.fallback_used,
+            total_calendar_days: calResult.total_calendar_days,
+            trading_days: calResult.trading_days,
+            upserted: calResult.upserted,
+            error: calResult.error || null,
+          },
+        });
+        if (calSucceeded) {
+          logger.info(
+            `[TRADING_CALENDAR_SYNC] source=${calResult.source} ` +
+              `baostock_attempts=${calResult.baostock_attempts} ` +
+              `fallback_used=${calResult.fallback_used} ` +
+              `total=${calResult.total_calendar_days} ` +
+              `trading=${calResult.trading_days} upserted=${calResult.upserted}`
+          );
+        } else {
+          logger.warn(
+            `[TRADING_CALENDAR_SYNC] both-source fail: source=${calResult.source} ` +
+              `baostock_attempts=${calResult.baostock_attempts} ` +
+              `fallback_used=${calResult.fallback_used} error=${calResult.error}`
+          );
+        }
       } else if (task.type === 'MARKET_SENTIMENT_INDEX_SYNC') {
         // 批5: MarketSentimentIndexService 已下线 — 保留 task 分支避免存量任务报错, 空跑 COMPLETED.
         logger.info('[MARKET_SENTIMENT_INDEX_SYNC] 已下线 — 空跑跳过');
