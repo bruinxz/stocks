@@ -120,3 +120,19 @@
   - [x] 保护 glob 零触碰
   - [x] tsc clean
   - [x] 副签路由：DataPipeline 副签
+
+## 批次 C-BS-05 · 孤儿 test 文件删除（前置至 C-BS-04 之前 · 保 test import 先解耦）
+
+- **变更**：删 2 个孤儿 test 文件
+  - `backend/tests/services/black-swan-detector-service.test.ts`（516 行 · 依赖 `BlackSwanDetectorService` runBlackSwanDetector · 已断链无生产语义）
+  - `backend/tests/risk/black-swan-watchdog.test.ts`（1723 行 · import `../../src/portfolio/risk/BlackSwanWatchdog` · **该 source 文件在仓中已不存在** · 属死 test）
+- **依据**：
+  - Orchestrator v1.2 冻结清单 · C-BS-05 位（原顺序）
+  - Orchestrator "保 test import 先解耦" 指令 · 顺序前置至 C-BS-04 (DetectorService 整 class 删) 之前 · 避免删 source 时 test 报错
+  - `black-swan-watchdog.test.ts` 揭示 pre-existing 死 test（source 已删但 test 未清 · Cleanup 顺带回收）
+- **影响面**：
+  - 删 2239 行 test 代码 · 无生产运行时影响
+  - test 覆盖率报表移除 detector + watchdog 单测 · 与 Producer STUB 已删语义一致
+- **DoD 自检**：
+  - [x] 删前 grep 复核（`BlackSwanWatchdog` source 不存在）
+  - [x] 独立批次
