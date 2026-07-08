@@ -17,12 +17,14 @@
     "warning_grace_end_sha": "d6a0c1ed",
     "backend_mount_landing_prerequisite": "Backend Phase 1 T+3d `/api/v1/*` mount PR MERGED (armed pending 2026-07-11 24:00 CST)",
     "test_gating_mode": "skip-stub",
-    "test_gating_reason": "backend `/api/v1/*` mount 未 landed · 3 test file (R1 + R2 + Playwright) 全 skip-stub · post Backend mount landing 立即转 hard-fail",
+    "test_gating_env_flag": "RUN_R1_R2_HARD_FAIL",
+    "test_gating_default_behavior": "skip (RUN_R1_R2_HARD_FAIL != '1')",
+    "test_gating_reason": "backend `/api/v1/*` mount 未 landed · 3 test file (R1 + R2 + Playwright) 全 skip-stub default-on · post Backend mount landing 立即转 hard-fail (RUN_R1_R2_HARD_FAIL=1 env set)",
     "test_gating_wire_procedure_step": [
       "Step 1 · Backend mount PR MERGED confirm (gh pr view --json state,mergeCommit)",
       "Step 2 · baseline JSON sha_lock refresh + warning_grace_end_sha 冻结",
-      "Step 3 · 3 test file skip-stub → hard-fail 转换 (SKIP_R1_R2_HARD_FAIL env unset)",
-      "Step 4 · Playwright E2E skip stub → full impl (8 endpoint header assertion)"
+      "Step 3 · 3 test file skip-stub → hard-fail 转换 (RUN_R1_R2_HARD_FAIL=1 CI env set)",
+      "Step 4 · Playwright E2E skip stub → full impl (8 endpoint header assertion · @playwright/test dev dep install)"
     ],
     "exempt_trailer_syntax": "[api-version-exempt: <slug>]",
     "exempt_authority_required": ["owner", "orchestrator"]

@@ -4,8 +4,9 @@
 // SHA-lock: d6a0c1e (baseline: docs/refactor/baseline/api/api-version-header-baseline-d6a0c1e.json)
 //
 // 前置件: Backend Phase 1 T+3d `/api/v1/*` mount PR MERGED
-// 本 test 当前状态: skip-stub (backend mount 未 landed · SKIP_R1_R2_HARD_FAIL=1 skip 通道开放)
-// skip → hard-fail 转换触发件: Backend mount PR MERGED confirmed + SKIP_R1_R2_HARD_FAIL env unset
+// 本 test 当前状态: skip-stub default-on (backend mount 未 landed)
+// skip → hard-fail 转换触发件: Backend mount PR MERGED confirmed + RUN_R1_R2_HARD_FAIL=1 env set
+// baseline JSON policy.test_gating_mode = "skip-stub" · policy.test_gating_wire_procedure_step 定义 4-step wire
 //
 // R1 rule: 所有 app.use('/api/*', ...) route mount 必须走 '/api/v1/*' prefix
 // R1 scope: backend/src/index.ts
@@ -14,7 +15,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const SKIP = process.env.SKIP_R1_R2_HARD_FAIL === '1';
+const SKIP = process.env.RUN_R1_R2_HARD_FAIL !== '1';
 const REPO_ROOT = resolve(__dirname, '../../..');
 const INDEX_TS = resolve(REPO_ROOT, 'backend/src/index.ts');
 const API_MOUNT_RE = /app\.use\(\s*['"`](\/api\/[^'"`]+)['"`]/g;
@@ -24,9 +25,9 @@ const API_MOUNT_RE = /app\.use\(\s*['"`](\/api\/[^'"`]+)['"`]/g;
 
   if (SKIP) {
     console.log(
-      '[skip-stub] R1 /api/v1/* prefix hard-fail SKIPPED · SKIP_R1_R2_HARD_FAIL=1 · Backend Phase 1 T+3d mount 前置件未 landed',
+      '[skip-stub] R1 /api/v1/* prefix hard-fail SKIPPED · RUN_R1_R2_HARD_FAIL != 1 · Backend Phase 1 T+3d mount 前置件未 landed',
     );
-    console.log('[skip-stub] 转 hard-fail 触发件: Backend mount PR MERGED + SKIP_R1_R2_HARD_FAIL env unset');
+    console.log('[skip-stub] 转 hard-fail 触发件: Backend mount PR MERGED + RUN_R1_R2_HARD_FAIL=1 env set');
     console.log(`\n=== test_api_version_r1_hard_fail v0.1 [SKIP-STUB]: 0 pass / 0 fail (skip) ===`);
     process.exit(0);
   }
