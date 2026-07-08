@@ -474,13 +474,18 @@ backend/python/akshare_helper.py::get_snowball_hot_keywords
 
 ---
 
-### 13.4 factor discovery candidate 位（Strategy §Q7 + services/research 层承接位 · Task #35 + Task #36 + PR #81 triple merged 触发）
+### 13.4 factor discovery candidate 位（Strategy §Q7 + services/research 层承接位 · US-038 全 Phase 收官触发）
 
 **Owner**：@Research（本节起草） · **Consumers**：@Strategy（§Q7 因子稳定性 + backtest↔execution 一致性副签 owner）+ @DataPipeline（§Layer-Separation utils 通用位副签）+ @QADocs（`test_pr_l_exception_dual_sign.test.ts` 无覆盖对齐核）
 
 **Rationale**：US-038 Path C landed 后 · `backend/src/services/research/factor-discovery.ts`（M-2 直修位 landed @ `4882b1c`）成为 factor discovery 层 canonical PRNG 消费方 · 定为 candidate 位 · **未来若触碰 §P1 factor 主 glob 或 §P3 数据契约** · 走 §13.1 / §13.2 / §13.3 PR-L 双签例外通道 · 不解除 §P1/§P3 保护
 
-**触发链**：Task #35 PR #79 @ `06dc30e`（SeededRandom 挪 utils/）+ Task #36 PR #80 @ `4882b1c`（M-2 factor-discovery 直修）+ PR #81 v1.4.1 @ `f81ed40`（教训 (d.3) doc→code 落地）triple merged → §13.4 定候补位
+**触发链（US-038 全 Phase 累积 · main 20 PRs 前置）**：
+- Task #35 PR #79 @ `06dc30e`（SeededRandom 挪 utils/）+ Task #36 PR #80 @ `4882b1c`（M-2 factor-discovery 直修）+ PR #81 v1.4.1 @ `f81ed40`（教训 (d.3) doc→code 落地）triple merged → §13.4 定候补位
+- **Phase 1 (WS1)** PR #83 @ `40a9c42`（M-6 uploadFeedback UPLOAD_FILENAME + M-7 CombinedDataSource JITTER_BACKOFF · baseline 13→11）
+- **Phase 2 (WS1)** PR #84 @ `7d7f503`（randHex4 utils/randomHex.ts 抽出 · 4 report services collide 消除 · baseline 11→7 · double helper 分离范式落地首例）
+- **Phase 3 grand-close** PR #85 @ `f8a5a93`（PR-B redisLock · Path A · Option α · Orch 主签）→ PR #86 @ `98fa1f9`（PR-A v2 LocalDataStore · DP 主签 · Path C · crypto.randomUUID）→ PR #87 @ `b04c236`（PR-C services 3 位 + utils/randomNonce.ts NEW · QADocs 主签 · Path A 特批 · triple helper 家族完整）→ PR #88 @ `f8ccf32`（PR-D grand-close middlewares/upload + realtime/alertsWS · QADocs 主签 · baseline JSON **SHA-lock rename `40a9c42.json → b04c236.json`** · baseline entries 归零）
+- **反蔓延门禁转纯守** · baseline entries=0 · 未来任何 factor discovery 相关 PR 新增 `Math.random(` 命中即 CI fail
 
 ---
 
@@ -514,12 +519,29 @@ backend/src/utils/SeededRandom.ts   # Park-Miller minstd_rand0 (Park & Miller 19
 **§13.4 引 canonical PRNG 语义**：
 - factor discovery 层若未来触碰随机数使用位 → **必用 `SeededRandom`** · 严禁 `Math.random()` / `crypto.randomBytes()`（纯随机不可回放 · 与 factor stability 语义冲突）
 - seed 可控 · CI 确定性可保 · backtest↔execution 一致性 100%（Strategy 副签核项 2/3 落地锚）
-- 消费方计数（landed 位 @ `f81ed40`）：
-  - M-2 `backend/src/services/research/factor-discovery.ts:197`（Task #36）
-  - M-3 `backend/src/services/execution/rl-execution.ts:122`（Task #36）
-  - `backend/src/quant/backtest/BayesianOptimizer.ts`（Task #35 import path update）
-  - `backend/src/quant/backtest/MonteCarloStressTest.ts`（Task #35 import path update）
-  - `backend/src/quant/backtest/PortfolioOptimizer.ts`（Task #35 import path update）
+- **triple helper 家族 3 完整落地（Phase 3 grand-close @ `f8ccf32` · 消费方 14 位 · zero cross-utils）**：
+  - **SeededRandom（确定性 PRNG · 6 消费方）**：
+    - M-2 `backend/src/services/research/factor-discovery.ts:197`（Task #36）
+    - M-3 `backend/src/services/execution/rl-execution.ts:122`（Task #36）
+    - `backend/src/quant/backtest/BayesianOptimizer.ts`（Task #35 import path update）
+    - `backend/src/quant/backtest/MonteCarloStressTest.ts`（Task #35 import path update）
+    - `backend/src/quant/backtest/PortfolioOptimizer.ts`（Task #35 import path update）
+    - `backend/src/data/sources/CombinedDataSource.ts:225`（Phase 1 M-7 · JITTER_BACKOFF · PR #83）
+  - **randomHex（crypto hex 硬随机 · 7 消费方 · Phase 2 抽出）**：
+    - `backend/src/services/reports/DailyTradingDigest.ts`（Phase 2 · PR #84）
+    - `backend/src/services/reports/EnhancedTradingJournal.ts`（Phase 2 · PR #84）
+    - `backend/src/services/reports/RealtimeAlertDispatcher.ts`（Phase 2 · PR #84）
+    - `backend/src/services/reports/WeeklyReviewReport.ts`（Phase 2 · PR #84）
+    - `backend/src/middlewares/upload.ts:14`（Phase 3 PR-D · PR #88 · UPLOAD_FILENAME 30-bit → 48-bit 语义超集）
+    - `backend/src/realtime/alertsWebSocketServer.ts:225-227`（Phase 3 PR-D · PR #88 · WEBSOCKET_CLIENTID 16-bit 100% 等价 + fixed-length gain）
+    - `backend/src/services/uploadFeedback.ts:40`（Phase 1 M-6 · PR #83 · UPLOAD_FILENAME）
+  - **randomNonce（crypto alphabet unbiased · 1 消费方 · Phase 3 抽出）**：
+    - services 3 位（AIAdvisorService/WeChatOAClient/WeChatOAService · PR #87 · `crypto.randomInt` rejection-safe · Path A 特批范式）
+- **场景匹配决策规则** (教训 #6 §5 landed)：
+  - **回放可复现** (backtest replay / factor stability CI) → **SeededRandom**（seed 参数 + 确定性）
+  - **非可猜测唯一 ID / nonce hex** → **randomHex**（crypto.randomBytes · 无 unbiased 约束）
+  - **非可猜测字母表 nonce** → **randomNonce**（crypto.randomInt · rejection-safe unbiased）
+  - **UUID v4 语义** → **crypto.randomUUID**（Node built-in · 122-bit）
 
 ---
 
@@ -538,7 +560,8 @@ services/research → services/execution # ❌ 禁 (services 之间禁横向依�
 
 **跨 PR 增量验证基准**：
 - utils/SeededRandom API shape 100% 不变（PR #79 landed 位 · 后续 PR 不改）
-- utils 消费方位（landed 计数）：Task #35 = 3 位 → Task #36 = 5 位
+- **utils 家族独立文件数**：1 (Task #35 SeededRandom) → 2 (Phase 2 PR #84 randomHex) → **3 (Phase 3 PR #87 randomNonce · triple helper 完整)**
+- **utils 消费方位（landed 计数）**：Task #35 = 3 位 → Task #36 = 5 位 → Phase 1 PR #83 = 6 位 → Phase 2 PR #84 = 10 位 → **Phase 3 grand-close @ `f8ccf32` = 14 位**
 - 未来 §13.4 候补位触碰时 · 消费方位增长追踪 · CI 断言位覆盖 seed 传递链
 
 **Strategy §Q7 契约面守护呼应位**：
@@ -546,12 +569,25 @@ services/research → services/execution # ❌ 禁 (services 之间禁横向依�
 
 ---
 
-#### 13.4.4 US-038 baseline landed proof point 引证锚
+#### 13.4.4 US-038 baseline landed proof point 引证锚（全 Phase 收官 @ `f8ccf32` · entries 归零）
 
-**baseline JSON landed proof point**：
-- 引：`docs/refactor/baseline/security/us-038-baseline-06dc30e.json`（Task #36 首建 · sha_lock `06dc30e` · 13 entries）
-- factor-discovery entries 位（M-2 直修前）：`backend/src/services/research/factor-discovery.ts:197`（category=ID_GENERATION）
-- **direct-fix landed proof point**：Task #36 M-2 直修消除 · zero drift 事实位
+**baseline JSON 生命周期链（教训 #9 SHA-lock rename 集中承接落地首例）**：
+- `us-038-baseline-06dc30e.json`（Task #36 首建 · sha_lock `06dc30e` · **13 entries** · v1.2.1 schema · v1.4.1 (d.3.3) grep_pattern_ast_aligned 承接）
+- `us-038-baseline-f81ed40.json`（v1.4.1 doc→code 落地位 · sha_lock `f81ed40` · Phase 1 前）
+- `us-038-baseline-40a9c42.json`（Phase 1 PR #83 承接 · sha_lock `40a9c42` · **11 entries** · burndown 13→11）
+- `us-038-baseline-b04c236.json`（Phase 3 grand-close @ `f8ccf32` PR #88 SHA-lock rename 落地 · sha_lock `b04c236` · **0 entries** · burndown 归零 · 反蔓延门禁转纯守）
+
+**burndown 全域 7 阶段轨迹**（跨 3 Phase）：
+`13 (06dc30e Task #36 首建) → 11 (f81ed40 Phase 1 M-6/M-7 · PR #83) → 7 (40a9c42 Phase 2 randHex4 · PR #84) → 6 (f8a5a93 PR-B · Path A) → 5 (98fa1f9 PR-A v2 · Path C) → 2 (b04c236 PR-C · Path A 特批) → 0 (f8ccf32 PR-D grand-close · Path C)`
+
+**教训 #9 SHA-lock rename 集中承接范式**（Phase 3 4 PR 全 co-守闭合首例）：
+- baseline JSON 文件名 `<sha>.json` 中 `<sha>` = 最后一次 baseline schema/entries 变更的 main SHA
+- Phase 3 4 PR 全串行合入过程中 · rename **集中至最后一 PR grand-close 一次性执行**（`40a9c42.json → b04c236.json` @ PR #88）· 中间态 PR (PR-B/PR-A v2/PR-C) 保 `40a9c42.json` 文件名 · zero 中间态 SHA-lock 漂移 · 4 例 co-守 verify pass
+- 未来 baseline 生命周期治理（US-XXX 系列 baseline schema 演化 · Phase-final SHA-lock 前移）复用锚
+
+**factor-discovery entries direct-fix landed proof point**（zero drift · zero shadow）：
+- Task #36 M-2 直修消除 `backend/src/services/research/factor-discovery.ts:197`（category=ID_GENERATION · SeededRandom.next 承接）
+- Phase 3 grand-close 后 baseline entries=0 · factor-discovery.ts live AST-aligned `Math\.random\(` count=0 · zero drift 事实
 
 **未来 §13.4 候补位触碰时 grep 校核口径**：
 - 引：v1.4.1 (d.3.3) `grep_pattern_ast_aligned` = `Math\.random\(`（CallExpression AST-aligned · doc→code 首例）
@@ -572,8 +608,8 @@ services/research → services/execution # ❌ 禁 (services 之间禁横向依�
 
 **承接位**：
 - @Strategy 6 条起草口径 100% ACK + 4 项副签核项预锁（§Q7 无破 + factor↔backtest 一致性 + backtest↔execution 一致性 + §Layer-Separation 单向下核）
-- @DataPipeline §Layer-Separation utils 通用位副签承接确认（跨 PR 增量验证基准位）
-- Task #35 PR #79 @ `06dc30e`（SeededRandom 挪 utils/）+ Task #36 PR #80 @ `4882b1c`（M-2 factor-discovery 直修）+ PR #81 v1.4.1 @ `f81ed40`（教训 (d.3) doc→code 落地）triple merged 触发链
+- @DataPipeline §Layer-Separation utils 通用位副签承接确认（跨 PR 增量验证基准位 · Phase 3 grand-close 14 消费方 verify pass）
+- **US-038 全 Phase 触发链 landed**：Task #35 PR #79 @ `06dc30e` + Task #36 PR #80 @ `4882b1c` + PR #81 v1.4.1 @ `f81ed40` + Phase 1 PR #83 @ `40a9c42` + Phase 2 PR #84 @ `7d7f503` + Phase 3 grand-close PR #85/86/87/88 @ `f8a5a93/98fa1f9/b04c236/f8ccf32` → §13.4 候补位定稿
 
 **排除项**：本 §13.4 candidate 位在 §P1 主 glob 未直接覆盖（`services/research/**` 未列 §P1 · factor discovery 属新增位）· 本节声明"未来触碰 §P1 factor 主 glob 或 §P3 数据契约 → 走 PR-L 双签通道"位 · 不解除 §P1/§P3 保护 · 命中即触发 §13.3 双签硬门禁
 
@@ -589,9 +625,12 @@ services/research → services/execution # ❌ 禁 (services 之间禁横向依�
 - @Orchestrator msg=95e48f2b · M3 Strategy contracts v1 冻结令
 - @Orchestrator msg=f89e7ac0 §8 · §13 三小节结构令
 - @Orchestrator msg=4c43c009 §一 · pre-review PASS + 3 项 refinement 建议
+- @QADocs msg=3eb193ae · US-038 Phase 3 grand-close 收官 broadcast（4 PR 45min 全串行 landed · baseline 归零 · triple helper 家族完整）
+- @Orchestrator msg=1ddc3c4f · Phase 3 grand-close verify broadcast（main 20 PRs 累积 · 教训 #6/#7/#8/#9 数据集完形）
 - ADR-0001 §附录 §Independence-Flexibility-Footnote · M-Draft PR #69 SHA `47e8dd1`
 - 22-cleanup-candidates §5 Group E 章末脚注（PR-Research-Footnote PR #72 SHA `c3bed08`）
 - 25-copyright-independence-v1.1.md §3 断言 A/B/C/D · §5.2 命名撞车禁项映射
+- **US-038 全 Phase landed SHA 链**：PR #79 `06dc30e` · PR #80 `4882b1c` · PR #81 `f81ed40` · PR #83 `40a9c42`（Phase 1）· PR #84 `7d7f503`（Phase 2）· PR #85 `f8a5a93`（Phase 3 PR-B）· PR #86 `98fa1f9`（Phase 3 PR-A v2）· PR #87 `b04c236`（Phase 3 PR-C）· PR #88 `f8ccf32`（Phase 3 PR-D grand-close · baseline SHA-lock rename 落地）
 
 ---
 
