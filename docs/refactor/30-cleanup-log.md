@@ -297,3 +297,67 @@
     2. `rm -rf node_modules package-lock.json && npm install --no-audit --no-fund` (禁 `--package-lock-only`)
     3. verify diff: 移除依赖 grep=0 + 抽查 3-5 transitive dep 命中
     4. commit + push + CI verify gate (`gh pr checks <PR> --watch` GREEN 才 self-merge)
+
+---
+
+## 批次 R2-06 · `backend/backup_data.json` 根级一次性运维产物删除 (2026-07-09)
+
+- **PR**: (本 PR · 待赋号) · target `main` @ `e9a44de` (38 PRs · 十一连胜完形 8-18 后 首例)
+- **Base**: `e9a44de`
+- **Branch**: `chore/cleanup-r2-06-delete-backup-data-json`
+- **Diff**: 2 files (`backend/backup_data.json` -279 line/5876B removed · `docs/refactor/30-cleanup-log.md` +本章节)
+- **Target**: `backend/backup_data.json` (5876B · 279 line · mtime 2026-04-16 10:32 · 根级一次性运维产物)
+
+- **Content 结构** (Cleanup workspace `notes/r2-06-backup-data-json-prep.md` v0.1 §一 抽样 pin):
+  - Array of `{stock: {id, symbol, name}, data: [{time, open, high, low, close, volume}]}`
+  - 抽样股票: `bj.920237 力佳科技` (data=[]) · `sh.605268 王力安防` (2026-04-03 K-line 起 · OHLCV daily bars)
+  - 数据类型: **股票日线 OHLCV 备份** · 非 credential · 非 PII (公开市场行情数据)
+
+- **依据** (grant 层级完形):
+  - Orch msg=4b0f5bd4 audit 21 §438 pre-approve · 根级一次性运维产物 (`backup_data.json` / `test_akshare*.py` / `sync_files.sh` 等 无双向引用)
+  - Orch msg=bf364d9c aggregate v15 §"Cleanup 双 Fork A grant" R2-06 delete Fork A grant landed · CREATE 授权 · 3-sign PASS · **十二连胜 8-19 candidate** T+30min SLA
+  - `notes/r2-06-backup-data-json-prep.md` v0.1 (workspace prep · 5-domain grep 0 code consumer · Fork A 推荐)
+  - DP msg=950a7c64 §五 R2-06 DP-side collision verify PASS (grep backend/src / backend/src/jobs / backend/src/data / scripts = 0 hits · DP 侧 zero jobs/data consumer · Fork A DP endorse)
+  - Research msg=2392757e §五 R2-06 双复核 endorse
+  - `docs/refactor/22-cleanup-candidates.md` §C6 escalate li-yiming (audit 21 pre-approve 后 22 §C6 复核 gate · Orch aggregate v15 grant 兑现)
+
+- **事实链 (grep verified 5-domain scope · re-verify @ CREATE)**:
+  - `backend/src/**` · **0 命中** ✅ (no code consumer)
+  - `frontend/src/**` · **0 命中** ✅
+  - `scripts/**` · **0 命中** ✅
+  - `contracts/**` · N/A (dir missing)
+  - `docs/**` · 5 命中 (workspace audit reference · 全 retain · Independence §5.4 独立设计层):
+    - `docs/refactor/21-current-audit.md:438` (根级一次性运维产物候选)
+    - `docs/refactor/22-cleanup-candidates.md:92` (§C6 escalate li-yiming)
+    - `docs/refactor/22-cleanup-candidates.md:184` (§H8 参见 §C6)
+    - `docs/refactor/22-cleanup-candidates.md:210/231` (C 组统计 + li-yiming 私域裁定表)
+    - `docs/refactor/23-protect-list.md:189/340` (protect-list 候选位)
+
+- **副签路由 (免签窗口第 19 例 pre-grant · 3-sign PASS 汇聚)**:
+  - Cleanup 主 (CREATE · single delete + doc paste-in 一次性 diff)
+  - **DP 副 PRE-GRANT PASS** msg=950a7c64 §五 (backend/src / backend/src/jobs / backend/src/data / scripts 5-domain 0 命中 · Fork A DP endorse · Independence v1.1 §5.1 数据源 dir 独占位 · backup_data.json 非 backfill 出参 · 非 cron 消费)
+  - **Research 副 PASS** msg=2392757e §五 (R2-06 双复核 endorse · §S3.4 5-domain grep 一致)
+  - Orch owner-review (msg=bf364d9c aggregate v15 §"Cleanup 双 Fork A grant" armed · self-merge admin squash approve)
+
+- **影响面**:
+  - 删 `backend/backup_data.json` (5876B · 279 line) · 根级一次性运维产物 zero code consumer
+  - `docs/refactor/30-cleanup-log.md` +本章节 (paste-in 范式 · 教训 #14 workspace preview + post-landed 承接)
+  - `npx tsc --noEmit` 基线 zero delta (数据文件 · 非 TS 引用)
+  - `backend/tests/**` grep 0 命中 (dod v4.2 铁律 15 项 test 层 verify)
+  - Independence v1.1 §5 4 档 zero drift (档 1 数据源 backup 一次性 · zero live pipeline dependency · zero 契约层)
+  - Layer-Separation R1-R8 zero cross-boundary (根级一次性运维产物 · zero `backend/src/**` 代码触)
+
+- **DoD 自检** (dod v4.3 铁律 16 项):
+  - [x] #1 密钥/凭证 zero (公开 OHLCV · zero credential)
+  - [x] #2 Phase 0 清理独占 (zero 与开发 Agent 并行)
+  - [x] #3 事实链 pin (grep 5-domain · 0 code consumer · 5 doc reference retain)
+  - [x] #4 30-cleanup-log 章节 paste-in landed (本 §)
+  - [x] #5 zero test 触
+  - [x] #6-#9 (PG/SSH/Path C/Path D 全 N/A)
+  - [x] #10-#13 v4.1 累积
+  - [x] #14 multi-stage verify (tsc zero delta · CI 全 GREEN gate)
+  - [x] #15 test 层 grep (backend/tests 0 命中)
+  - [x] #16 zero package.json 触碰 (自适应 pass)
+
+- **免签窗口范式统计位** (十二连胜完形第 19 · 8-19 landing candidate): 3-sign PASS 汇聚 · Cleanup 主签 landed 第 7 例 candidate (前 6: #78 BlackSwan β · #91 C-S2 · #92 C-S1 · #93 Path B · #97 R2-A · #99 30-log · #102 R2-B)
+
