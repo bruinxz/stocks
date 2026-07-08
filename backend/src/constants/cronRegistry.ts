@@ -131,6 +131,21 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     retired: true,
     description: '[已下线] 市场情绪指数同步 — 批5 移除 service, 保留空跑分支防存量任务报错',
   },
+  // Path C.3 (2026-07-09): TradingCalendarSyncService.syncRange daily 增量同步.
+  // Path A M0.5 Day 3 trading_calendar 契约冻结 (PR #94) + Path C 三方完形 (PR #96/#98/#100/#103)
+  // + Path C.2 韧性件三合一 (PR #106 retryWithBackoff [1s,2s,4s] + AKShare fallback + HALF_DAY
+  // populate) 后 daily 生产验证位承接. 每日 03:00 Asia/Shanghai 增量拉 T-1 至 T+30 rolling
+  // window 保证 §D4.1 α PIT next_trade_date(time) code truth 永久兑现 (未来 30 交易日窗口 unblock).
+  // idempotent upsert (trade_date PK) · fail-OPEN warn 不抛 (与 ETF_FLOW_SYNC 一致 pattern).
+  // seed 首版 is_active=false, ops 手动激活 (与 REALTIME_QUOTE_SYNC intraday 模式同 pattern).
+  {
+    type: 'TRADING_CALENDAR_SYNC',
+    category: 'data_sync',
+    owner: 'data',
+    recommendedCron: '0 3 * * *',
+    description:
+      '每日 03:00 (Asia/Shanghai) 增量同步 trading_calendar T-1 至 T+30 rolling window (Baostock 主 + AKShare fallback + retryWithBackoff 三档 · idempotent upsert · Path C.2 韧性件生产验证位)',
+  },
   // BF-3 (2026-06-23): 数据陈旧度检查 - 工作日盘后 18:30 (ETF_FLOW_SYNC 后 30min, 让本日数据落库再检)
   // 检 5 项: realtime_quotes 1h+ stale / daily_bars 不是 today / factor std=0 > 2 / cron FAILED / sentiment 陈旧
   // 命中任一阈值 → RiskAlert MEDIUM + Lark OPS 群推 (1h dedup)
