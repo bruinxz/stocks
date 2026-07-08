@@ -7,7 +7,7 @@
  *   docs/refactor/40-quality-gates.md §Gate-Negative-Coverage-v0.3 (联动位)
  *
  * baseline JSON 权威锚:
- *   docs/refactor/baseline/security/us-038-baseline-f81ed40.json (SHA-locked @ f81ed40 · 11 entries · Task #29 Phase 1 M-6/M-7 burndown · uploadFeedback + CombinedDataSource 直修)
+ *   docs/refactor/baseline/security/us-038-baseline-40a9c42.json (SHA-locked @ 40a9c42 · 7 entries · Task #29 Phase 2 · randHex4() helper 抽出 · 4 场 sha256 collide 消除 · DailyTradingDigest/EnhancedTradingJournal/RealtimeAlertDispatcher/WeeklyReviewReport 下线)
  *
  * 承接位: QADocs Task #29 · v1.1 追增队列第 3 位 · §No-Math-Random-US-038 · Orchestrator msg=0a347004 Path C 裁决
  * 语义: 全 backend/src 递归 .ts (非 .d.ts) 静态扫描 Math.random() 调用 · 剔除注释与字符串字面量内引用
@@ -192,7 +192,7 @@ const BASELINE_JSON_PATH = path.join(
   'refactor',
   'baseline',
   'security',
-  'us-038-baseline-f81ed40.json'
+  'us-038-baseline-40a9c42.json'
 );
 const WHITELIST_PATH_FRAGMENTS = ['__tests__', 'node_modules', 'dist'];
 const REQUIRED_BASELINE_FIELDS: Array<keyof BaselineEntry> = [

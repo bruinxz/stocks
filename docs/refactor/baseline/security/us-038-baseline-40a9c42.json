@@ -3,13 +3,13 @@
   "adr": "docs/refactor/adr/0002-us-038-lint.md",
   "adr_section": "§2.2.1 v1.2.1 · Baseline 允例 + 反蔓延门禁 (Path C) · v1.4.1 (d.3) AST-aligned pattern",
   "rule": "§No-Math-Random-US-038",
-  "sha_lock": "f81ed40",
-  "sha_lock_full_ref": "main @ f81ed40 (PR #81 MERGED · ADR-0001 §附录 v1.4.1 · Phase 1 burndown starting point)",
-  "policy": "反蔓延门禁 · baseline whitelist + drift alarm · 新增命中即 fail · baseline 内命中 warn 但不阻塞 · 只减不增 · 大小上限 = 11 (Phase 1 M-6/M-7 直修后 · 13→11 · 只减不增)",
+  "sha_lock": "40a9c42",
+  "sha_lock_full_ref": "main @ 40a9c42 (PR #83 MERGED · Phase 1 M-6/M-7 直修 · Phase 2 burndown starting point)",
+  "policy": "反蔓延门禁 · baseline whitelist + drift alarm · 新增命中即 fail · baseline 内命中 warn 但不阻塞 · 只减不增 · 大小上限 = 7 (Phase 2 randHex4() helper 抽出 · 4 场 sha256 collide 消除 · 11→7)",
   "authority_anchor_primary": "docs/refactor/adr/0002-us-038-lint.md §2.2.1 (Orchestrator 独占起草 · Path C)",
   "authority_anchor_reference": "backend/tests/quality/test_no_math_random_us_038_rule.test.ts (QADocs 独占 test owner)",
   "grep_pattern_ast_aligned": "Math\\.random\\(",
-  "grep_pattern_ast_aligned_note": "v1.4.1 (d.3) 教训 · CallExpression AST-aligned · 门禁真值 = live call-syntax (11) · raw grep 含 comment/note 引用 (12 = 11 + MarketController:117 comment 承接位)",
+  "grep_pattern_ast_aligned_note": "v1.4.1 (d.3) 教训 · CallExpression AST-aligned · 门禁真值 = live call-syntax (7) · raw grep 含 comment/note 引用 (8 = 7 + MarketController:117 comment 承接位)",
   "category_enum_v1_2": [
     "ID_GENERATION",
     "NONCE",
@@ -20,13 +20,15 @@
   "replacement_api": [
     "crypto.randomUUID()",
     "crypto.randomBytes(N).toString('hex')",
-    "new SeededRandom(seed).next() (utils/SeededRandom · Task #35 landed)"
+    "new SeededRandom(seed).next() (utils/SeededRandom · Task #35 landed)",
+    "randHex4() (utils/randomHex · Task #29 Phase 2 landed · 4 报表 ID_GENERATION 收敛统一)"
   ],
-  "unique_key_note": "联合主键 (file, line, sha256_of_line) 三元组 · 4 场 sha256 collide (DailyTradingDigest:759 + EnhancedTradingJournal:865 + RealtimeAlertDispatcher:635 + WeeklyReviewReport:2198 全 `const n = Math.floor(Math.random() * 0xffff);`) · (file, line) 独立 · 门禁 grep 可分辨",
-  "burndown_target": "11 → 0 · Phase 1 后 · Phase 2 = 4 场 randHex4 helper 重构 (11→7) · Phase 3 = WeChatOA nonce + alertsWebSocketServer clientId + redisLock + LocalDataStore + AIAdvisor + upload.ts (7→0)",
+  "unique_key_note": "联合主键 (file, line, sha256_of_line) 三元组 · 4 场 sha256 collide 已通过 randHex4() helper 抽出统一消除 (DailyTradingDigest:759 + EnhancedTradingJournal:865 + RealtimeAlertDispatcher:635 + WeeklyReviewReport:2198 全部下线)",
+  "burndown_target": "7 → 0 · Phase 3 = WeChatOA nonce + alertsWebSocketServer clientId + redisLock + LocalDataStore + AIAdvisor + upload.ts + WeChatOAService (7→0)",
   "burndown_history": [
     "13 @ 06dc30e (Task #36 baseline 首建)",
-    "11 @ f81ed40 (Phase 1 · M-6 uploadFeedback + M-7 CombinedDataSource 直修)"
+    "11 @ f81ed40 (Phase 1 · M-6 uploadFeedback + M-7 CombinedDataSource 直修)",
+    "7 @ 40a9c42 (Phase 2 · randHex4() helper 抽出 · 4 场 sha256 collide 消除)"
   ],
   "entries": [
     {
@@ -58,27 +60,6 @@
       "note": "rand hex ID · Math.floor(Math.random() * 0x10000)"
     },
     {
-      "file": "backend/src/services/DailyTradingDigestService.ts",
-      "line": 759,
-      "sha256_of_line": "e23d44ae14576a5ce9dbba041726e6986f9263cecba1f43322045681a0e8c94a",
-      "category": "ID_GENERATION",
-      "note": "randHex4() helper · Math.floor(Math.random() * 0xffff)"
-    },
-    {
-      "file": "backend/src/services/EnhancedTradingJournalService.ts",
-      "line": 865,
-      "sha256_of_line": "e23d44ae14576a5ce9dbba041726e6986f9263cecba1f43322045681a0e8c94a",
-      "category": "ID_GENERATION",
-      "note": "randHex4() helper · Math.floor(Math.random() * 0xffff)"
-    },
-    {
-      "file": "backend/src/services/RealtimeAlertDispatcher.ts",
-      "line": 635,
-      "sha256_of_line": "e23d44ae14576a5ce9dbba041726e6986f9263cecba1f43322045681a0e8c94a",
-      "category": "ID_GENERATION",
-      "note": "randHex4() helper · Math.floor(Math.random() * 0xffff)"
-    },
-    {
       "file": "backend/src/services/WeChatOAClient.ts",
       "line": 211,
       "sha256_of_line": "6fda20484356c45a231552c9017b5cd543c91c24296af44a56d3c7bbbbcb4114",
@@ -91,13 +72,6 @@
       "sha256_of_line": "ea3d11efc027b0cd877417e125265c97f59c7b1113a9eec76e6cdb75cac1cd78",
       "category": "NONCE",
       "note": "微信 OA rand · Math.floor(Math.random() * 0x10000)"
-    },
-    {
-      "file": "backend/src/services/WeeklyReviewReportService.ts",
-      "line": 2198,
-      "sha256_of_line": "e23d44ae14576a5ce9dbba041726e6986f9263cecba1f43322045681a0e8c94a",
-      "category": "ID_GENERATION",
-      "note": "randHex4() helper · Math.floor(Math.random() * 0xffff)"
     },
     {
       "file": "backend/src/utils/redisLock.ts",

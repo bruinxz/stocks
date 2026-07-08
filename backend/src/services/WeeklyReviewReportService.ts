@@ -34,6 +34,7 @@ import moment from 'moment-timezone';
 import { Op } from 'sequelize';
 
 import { logger } from '../utils/logger';
+import { randHex4 } from '../utils/randomHex';
 import { User } from '../models/User';
 import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
 import { PaperTradingPosition } from '../models/PaperTradingPosition';
@@ -2192,11 +2193,6 @@ export function formatMoney(v: any): string {
 
 function nowShanghaiDate(): string {
   return moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
-}
-
-function randHex4(): string {
-  const n = Math.floor(Math.random() * 0xffff);
-  return n.toString(16).padStart(4, '0');
 }
 
 // ---------------------------------------------------------------------------
