@@ -689,6 +689,18 @@ V0：Value **0.40** / Quality **0.30** / LowVol **0.30** / Momentum **0.0**（sh
   - **副功效**：本 blocker 在 doc-only PR #77 阶段前置抓 · 未进入 Task #29 baseline JSON PR · 避免下游 baseline 数字连锁错误 · **验证 doc-only PR 副签面价值** · SOP 7 步 Step 3"绝对否定"类事实核硬门禁位建立
   - **audit trail 意义**：跨消息声明性数值传递纪律 = 工程质量事件 · 记录本 §附录 · 事件链完整闭合 · 未来 ADR / 附录起草纪律强制引本条
 
+- v1.4.1（2026-07-08 T+3.5·12:43）· 事件位追加 · **PR #79 / PR #80 数字口径分歧事件 · 教训 (d.3) AST-aligned grep pattern · live vs raw 口径分离**：
+  - **事件**：PR #79 Strategy Task #35 merge 后 SeededRandom 挪位 `backend/src/utils/SeededRandom.ts:14/30` JSDoc 承接原 `BayesianOptimizer.ts:169` "避免引入 Math.random" 措辞 · Orchestrator 期望 raw grep 命中 20→19 · Strategy 实测 raw grep 命中 20→20（注释承接措辞令 raw 计数不变）· Path A 独占裁（msg=10e8850d）：门禁真值 = live call-syntax count（`Math\.random\(` 命中 CallExpression AST-aligned）· comment ≠ code · comment 承接措辞保留 · live 计数 base 15 → HEAD 14 精准
+  - **根因**：ADR-0002 §2.1 门禁语义为"call-syntax execution" · raw `git grep 'Math\.random'`（含 word-boundary 与注释锚）与 `Math\.random\(`（CallExpression AST-aligned）两口径混用 · 数字对齐时口径未预声明 → 双方各自持一口径 → BLOCK 表面为数字对不上 · 实为口径分歧
+  - **教训 (d.3) · AST-aligned grep pattern · 声明性数值必附口径 · 四条 clause**：
+    - (d.3.1) **门禁真值 = live call-syntax count**：`Math\.random\(`（CallExpression AST-aligned）· 命中 `.` 后即调用符号位 · 不含注释锚 / word-boundary 副命中
+    - (d.3.2) **raw grep 为辅助锚**：`git grep 'Math\.random'`（含 comment / word-boundary 命中）仅供路径定位与漂移观测 · 不构成门禁反证 · 不作数字口径基准
+    - (d.3.3) **machine-readable 落地位**：baseline JSON 每份 SHA-lock 版本必含 `grep_pattern_ast_aligned` 字段声明 AST-aligned pattern 字面 · 未来 burndown PR 读 JSON 即可对齐 · 无需 re-trace ADR 事件链（PR #80 `us-038-baseline-06dc30e.json` 首例）
+    - (d.3.4) **触发案例引证事件位链**：PR #79 msg=c98de6ac §二 数字口径预设事件（Orchestrator 期望 20→19）→ msg=6d1bb72a §二 Strategy 根因披露（comment 承接措辞令 raw 不变）→ msg=10e8850d Path A 独占裁（call-syntax execution 门禁语义 · comment ≠ code）→ msg=a3ec6887 PR #80 baseline JSON 教训入代码首例
+  - **入位**：ADR-0002 §2.2.1 v1.2.1 schema `grep_pattern_ast_aligned` 字段隐含约束 · baseline JSON schema 层落地 · 四方 DoD 无需增列（口径分歧本身为 doc-only 事件位 · 无 code diff · SOP 7 步保持不变）
+  - **副功效**：教训 (d) 从"起草侧必先 grep 复核"（d.1/d.2）演进至"grep 口径必附 pattern 字面并入 machine-readable"（d.3）· doc → code 落地首例 · 未来 US-038 相关 PR / burndown / baseline 只读 JSON 一致对齐 · 事件链跨 ADR 完整
+  - **audit trail 意义**：跨口径 grep pattern 传递纪律 = 工程质量事件 · 记录本 §附录 · 事件链完整闭合 · 未来 baseline JSON schema 变更 / burndown PR 强制引本条
+
 ---
 
-**End of ADR-0001 §附录追加块 v1.4**
+**End of ADR-0001 §附录追加块 v1.4.1**
