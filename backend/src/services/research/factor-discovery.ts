@@ -50,6 +50,8 @@
  *   完整 GP 留给 Python (deap / gplearn) — TypeScript 不适合大规模 evolution.
  */
 
+import { SeededRandom } from '../../utils/SeededRandom';
+
 export type FactorOp =
   | '+'
   | '-'
@@ -192,9 +194,11 @@ export function evaluateFactorTree(node: FactorNode, bars: BarHistory): number[]
  *
  * Pure function with optional seeded RNG.
  */
+const defaultFactorDiscoveryRng = new SeededRandom();
+
 export function generateRandomTree(
   max_depth: number,
-  rng: () => number = Math.random,
+  rng: () => number = () => defaultFactorDiscoveryRng.next(),
   options: {
     ops?: FactorOp[];
     leaves?: FactorLeaf[];

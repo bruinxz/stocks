@@ -55,6 +55,10 @@
  *   - 离线训练 + 在线 inference (没做 Deep Q-Network, 因为 tabular 够用)
  */
 
+import { SeededRandom } from '../../utils/SeededRandom';
+
+const defaultRlExecutionRng = new SeededRandom();
+
 export type SpreadBucket = 'tight' | 'normal' | 'wide';
 export type VolBucket = 'low' | 'normal' | 'high';
 
@@ -119,7 +123,7 @@ export function epsilonGreedyAction(
   qtable: QTable,
   state: ExecutionState,
   epsilon: number,
-  rng: () => number = Math.random
+  rng: () => number = () => defaultRlExecutionRng.next()
 ): Action {
   if (rng() < epsilon) {
     return Math.floor(rng() * STANDARD_PARTICIPATION_RATES.length);
