@@ -1020,10 +1020,6 @@ assert('[3.8] sumRecordCount([])=0', sumRecordCount([]) === 0);
     BULK_BACKFILL_DAILY_SOURCES.has('industry_flow')
   );
   assert(
-    '[13.6] BULK_BACKFILL_DAILY_SOURCES 含 snowball_hot',
-    BULK_BACKFILL_DAILY_SOURCES.has('snowball_hot')
-  );
-  assert(
     '[13.7] BULK_BACKFILL_DAILY_SOURCES 不含 financial_report (per-stock 类必须走 CLI)',
     !BULK_BACKFILL_DAILY_SOURCES.has('financial_report')
   );
@@ -1183,11 +1179,10 @@ assert('[3.8] sumRecordCount([])=0', sumRecordCount([]) === 0);
           record_count: 10,
           error: 'http 502',
         }), // sync_error
-        makeCard({ key: 'e', sync_source: 'snowball_hot', lag_trading_days: 0, level: 'green', record_count: 100 }), // 健康
       ])
     );
     assert('[13.31] 混合 → total=4 (4 个需补抓)', plan.total === 4);
-    assert('[13.32] 混合 → daily_sources_total=5', plan.daily_sources_total === 5);
+    assert('[13.32] 混合 → daily_sources_total=4', plan.daily_sources_total === 4);
     assert('[13.33] 混合 → sync_error count=1', plan.counts.sync_error === 1);
     assert('[13.34] 混合 → severe_lag count=1', plan.counts.severe_lag === 1);
     assert('[13.35] 混合 → no_record count=1', plan.counts.no_record === 1);
