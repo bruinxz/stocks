@@ -1,0 +1,222 @@
+{
+  "task": "task-4-m3-15-enum-matrix-lock",
+  "sha_lock": "83aea69c44daaaa8e74613311f085d92fc23e27b",
+  "sha_lock_full_ref": "83aea69c docs(qa): PR-P1-2 R1/R2 hard-fail skip stub + Playwright + api-version baseline (#114)",
+  "policy": {
+    "authority_model": "Backend enum single-source-of-truth · Frontend consume 只读 · zero cross-layer duplication",
+    "duplication_elim_rule": "同 value set (case-sensitive) 且同域语义 → 单一 authority 保留 · 其余 alias import · 域独立即使 shape 同也 retain",
+    "hard_fail_scope": [
+      "backend/src/**/*.ts",
+      "backend/src/**/*.py",
+      "frontend/src/services/**/*.ts",
+      "frontend/src/types/**/*.ts"
+    ],
+    "exempt_trailer_syntax": "[ui-enum-exempt: <slug>]",
+    "exempt_authority_required": ["owner", "orchestrator"],
+    "sop_seal_version": "v0.1 · pre-PR-M3-1 landing",
+    "sop_seal_anchor": "docs/refactor/quality/qadocs-ui-enum-lock-sop.md",
+    "adr_anchor": "docs/refactor/adr/0011-ui-enum-single-source-of-truth.md",
+    "landing_pr_series": [
+      "PR-M3-1 · Backend enum rewire (Backend 主签 · RETAIN 10 + AUTHORITY 2 + ELIM #10 + #12)",
+      "PR-M3-2 · Frontend legacy backtestService 归档 (Frontend 主签 + Cleanup 副签 · ELIM #15)",
+      "PR-M3-3 · docs sync baseline + ADR-0011 + qadocs-ui-enum-lock-sop (QADocs 主签 · 本 PR)",
+      "PR-M3-4 · lint 层 hard-fail (QADocs 主签 · test_ui_enum_lock_matrix + test_no_backtest_service_regression + CI wire)"
+    ]
+  },
+  "entries": [
+    {
+      "id": 1,
+      "enum_name": "US-045 health_class",
+      "path_anchor": "Frontend Path ψ",
+      "authority_file": "backend/src/models/us_045.py OR backend/src/live-trading/us_045.ts",
+      "value_set": ["good", "warn", "bad", "unknown"],
+      "authority_layer": "Backend",
+      "decision": "RETAIN",
+      "duplication_with": null,
+      "consumer_scope": ["Frontend 只读 consume"]
+    },
+    {
+      "id": 2,
+      "enum_name": "AL-3 TradeReasonSource",
+      "path_anchor": "Frontend Path AB",
+      "authority_file": "backend/src/models/trade_reason.py OR backend/src/live-trading/trade_reason.ts",
+      "value_set": ["manual", "rule", "model", "risk", "rebalance", "other"],
+      "authority_layer": "Backend",
+      "decision": "RETAIN",
+      "duplication_with": null,
+      "consumer_scope": ["Frontend 只读 consume"]
+    },
+    {
+      "id": 3,
+      "enum_name": "ResearchCredibilityVerdict",
+      "path_anchor": "Frontend Path AC",
+      "authority_file": "backend/src/models/research_credibility.py OR .ts",
+      "value_set": ["strong", "conditional", "weak", "rejected", "unknown"],
+      "authority_layer": "Backend",
+      "decision": "RETAIN",
+      "duplication_with": null,
+      "consumer_scope": ["Frontend 只读 consume"]
+    },
+    {
+      "id": 4,
+      "enum_name": "QuantWorkflowStatus",
+      "path_anchor": "Frontend Path AC",
+      "authority_file": "backend/src/models/quant_workflow.py OR .ts",
+      "value_set": ["healthy", "degraded", "unhealthy"],
+      "authority_layer": "Backend",
+      "decision": "AUTHORITY",
+      "duplication_with": ["#10 EasyQuantHealthStatus (cross-domain shape 同 · 主 authority)"],
+      "consumer_scope": ["Frontend 只读 consume", "Backend #10 alias import"]
+    },
+    {
+      "id": 5,
+      "enum_name": "Digest.status",
+      "path_anchor": "Frontend Path AD",
+      "authority_file": "backend/src/models/digest.py OR .ts",
+      "value_set": ["pending", "sent", "failed"],
+      "authority_layer": "Backend",
+      "decision": "RETAIN",
+      "duplication_with": null,
+      "consumer_scope": ["Frontend 只读 consume"]
+    },
+    {
+      "id": 6,
+      "enum_name": "Weekly.status",
+      "path_anchor": "Frontend Path AD",
+      "authority_file": "backend/src/models/weekly.py OR .ts",
+      "value_set": ["pending", "sent", "failed"],
+      "authority_layer": "Backend",
+      "decision": "RETAIN",
+      "duplication_with": null,
+      "consumer_scope": ["Frontend 只读 consume"]
+    },
+    {
+      "id": 7,
+      "enum_name": "WeChat.channel_status",
+      "path_anchor": "Frontend Path AD",
+      "authority_file": "backend/src/models/wechat.py OR .ts",
+      "value_set": ["enabled", "disabled"],
+      "authority_layer": "Backend",
+      "decision": "RETAIN",
+      "duplication_with": null,
+      "consumer_scope": ["Frontend 只读 consume"]
+    },
+    {
+      "id": 8,
+      "enum_name": "Event.severity",
+      "path_anchor": "Frontend Path AD",
+      "authority_file": "backend/src/models/event.py OR .ts",
+      "value_set": ["info", "warn", "error", "critical"],
+      "authority_layer": "Backend",
+      "decision": "RETAIN",
+      "duplication_with": null,
+      "consumer_scope": ["Frontend 只读 consume"]
+    },
+    {
+      "id": 9,
+      "enum_name": "Channel.kind",
+      "path_anchor": "Frontend Path AD",
+      "authority_file": "backend/src/models/channel.py OR .ts",
+      "value_set": ["wechat", "email", "webhook"],
+      "authority_layer": "Backend",
+      "decision": "RETAIN",
+      "duplication_with": null,
+      "consumer_scope": ["Frontend 只读 consume"]
+    },
+    {
+      "id": 10,
+      "enum_name": "EasyQuantHealthStatus",
+      "path_anchor": "Frontend Path AE",
+      "authority_file": "backend/src/models/easy_quant.py OR .ts (alias)",
+      "value_set": ["healthy", "degraded", "unhealthy"],
+      "authority_layer": "Backend",
+      "decision": "ELIM",
+      "duplication_with": ["#4 QuantWorkflowStatus (cross-domain shape 同 · 主 authority)"],
+      "elim_action": "alias from #4 · `from quant_workflow import QuantWorkflowStatus as EasyQuantHealthStatus`",
+      "elim_migration_pr": "PR-M3-1"
+    },
+    {
+      "id": 11,
+      "enum_name": "AutomationHealthIssue.level",
+      "path_anchor": "Frontend Path AF",
+      "authority_file": "backend/src/models/automation_health.py OR .ts",
+      "value_set": ["error", "warn"],
+      "authority_layer": "Backend",
+      "decision": "RETAIN",
+      "duplication_with": null,
+      "consumer_scope": ["Frontend 只读 consume"]
+    },
+    {
+      "id": 12,
+      "enum_name": "AutomationHealthChain.status",
+      "path_anchor": "Frontend Path AF",
+      "authority_file": "backend/src/models/automation_health.py OR .ts (alias · domain-internal)",
+      "value_set": ["healthy", "degraded", "unhealthy"],
+      "authority_layer": "Backend",
+      "decision": "ELIM",
+      "duplication_with": ["#13 AutomationHealth.status (domain-local · 主 authority)"],
+      "elim_action": "single field type · direct type alias inside `automation_health` module",
+      "elim_migration_pr": "PR-M3-1"
+    },
+    {
+      "id": 13,
+      "enum_name": "AutomationHealth.status",
+      "path_anchor": "Frontend Path AF",
+      "authority_file": "backend/src/models/automation_health.py OR .ts",
+      "value_set": ["healthy", "degraded", "unhealthy"],
+      "authority_layer": "Backend",
+      "decision": "AUTHORITY",
+      "duplication_with": ["#4 shape 同但语义 domain 独立 (automation 域内独立 authority)", "#12 domain-internal alias"],
+      "consumer_scope": ["Frontend 只读 consume", "Backend #12 alias"],
+      "note": "与 #4 shape 相同但语义 domain 独立 · 保 domain 独立 authority · duplication elim 仅域内 (#12)"
+    },
+    {
+      "id": 14,
+      "enum_name": "apply_mode",
+      "path_anchor": "Frontend Path AF",
+      "authority_file": "backend/src/models/apply_mode.py OR .ts",
+      "value_set": ["shadow", "live"],
+      "authority_layer": "Backend",
+      "decision": "RETAIN",
+      "duplication_with": null,
+      "consumer_scope": ["Frontend 只读 consume"]
+    },
+    {
+      "id": 15,
+      "enum_name": "BacktestResponse.status",
+      "path_anchor": "Frontend Path AG",
+      "authority_file": "frontend/src/services/backtestService.ts (legacy · 归档消)",
+      "value_set": ["pending", "running", "completed", "failed"],
+      "authority_layer": "Frontend legacy · 迁移至 labService BacktestTask.status",
+      "decision": "ELIM",
+      "duplication_with": ["labService BacktestTask.status (dup + legacy overlap · labService authority 存)"],
+      "elim_action": "legacy backtestService.ts 归档整体消 · labService BacktestTask.status authority 存",
+      "elim_migration_pr": "PR-M3-2",
+      "consumer_scan_prerequisite": "grep -rn 'backtestService' frontend/src/ 前置 · 若 zero consumer → DELETE · 若有 consumer → 迁移至 labService"
+    }
+  ],
+  "decision_summary": {
+    "RETAIN_count": 10,
+    "AUTHORITY_count": 2,
+    "ELIM_count": 3,
+    "total": 15,
+    "RETAIN_ids": [1, 2, 3, 5, 6, 7, 8, 9, 11, 14],
+    "AUTHORITY_ids": [4, 13],
+    "ELIM_ids": [10, 12, 15]
+  },
+  "burndown_history": [
+    "83aea69c (PR #114 PR-P1-2 R1/R2 skip-stub + baseline · 本 baseline sha_lock 位)"
+  ],
+  "reference_chain": [
+    "Frontend Path ψ (US-045 health_class 4-enum 初列)",
+    "Frontend Path AB (AL-3 TradeReasonSource 6-enum)",
+    "Frontend Path AC (ResearchCredibilityVerdict + QuantWorkflowStatus)",
+    "Frontend Path AD (Digest/Weekly/WeChat/Event/Channel 5 变体)",
+    "Frontend Path AE (EasyQuantHealthStatus duplication 首例发现)",
+    "Frontend Path AF (AutomationHealth 3-enum + apply_mode)",
+    "Frontend Path AG msg=fcf3083e (backtestService.status 4-enum 承接第 15 项 · 15 项 matrix 完形触发)",
+    "Task #4 M3 (5 大 UI 决色 enum 联合定终锁 M3 · 原范围 5 项 → 累积 15 项)",
+    "workspace v0.1 draft: `notes/task-4-m3-15-enum-matrix-lock-draft.md` (msg=59838b48 · Task #54 landed)"
+  ],
+  "unique_key_note": "Task #4 M3 15 项 UI 决色 enum 联合定终锁 baseline. Backend enum single-source-of-truth authority policy. Frontend consume 只读 · zero cross-layer duplication. duplication_elim_rule: 同 value set (case-sensitive) 且同域语义 → 单一 authority · 其余 alias import. 域独立即使 shape 同也 retain (#4 vs #13 pattern). ADR-0011 anchor + qadocs-ui-enum-lock-sop.md v0.1 seal. burndown_history 起点 `83aea69c` (PR #114 landing) · 后续 PR-M3-1/2/4 landing 累积 refresh."
+}
