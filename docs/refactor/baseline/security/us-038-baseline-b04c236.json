@@ -1,0 +1,39 @@
+{
+  "$schema": "us-038-baseline.v1",
+  "adr": "docs/refactor/adr/0002-us-038-lint.md",
+  "adr_section": "§2.2.1 v1.2.1 · Baseline 允例 + 反蔓延门禁 (Path C) · v1.4.1 (d.3) AST-aligned pattern",
+  "rule": "§No-Math-Random-US-038",
+  "sha_lock": "b04c236",
+  "sha_lock_full_ref": "main @ b04c236 (PR #87 MERGED · Phase 3 PR-C rebase 后 base · grand-close 本 PR (PR-D) 一次性 rename 40a9c42.json → b04c236.json · 教训 #9 4/4 co-守闭合终例 · Phase 3 收官 · US-038 baseline 归零)",
+  "policy": "反蔓延门禁 · baseline whitelist + drift alarm · 新增命中即 fail · baseline 内命中 warn 但不阻塞 · 只减不增 · 大小上限 = 0 (Phase 3 grand-close · US-038 收官 · PR-B utils/redisLock:59 + PR-A data/services/LocalDataStore:398 + PR-C services 3 位 + PR-D middlewares+realtime 2 位 · 7→6→5→2→0 · SHA-lock rename 40a9c42.json → b04c236.json · 教训 #9 grand-close rename 落地首例)",
+  "authority_anchor_primary": "docs/refactor/adr/0002-us-038-lint.md §2.2.1 (Orchestrator 独占起草 · Path C)",
+  "authority_anchor_reference": "backend/tests/quality/test_no_math_random_us_038_rule.test.ts (QADocs 独占 test owner)",
+  "grep_pattern_ast_aligned": "Math\\.random\\(",
+  "grep_pattern_ast_aligned_note": "v1.4.1 (d.3) 教训 · CallExpression AST-aligned · 门禁真值 = live call-syntax (0 · US-038 收官) · raw grep 仅含 comment/note 引用 (randomHex.ts + randomNonce.ts JSDoc 承接位 + MarketController:117 comment 承接位)",
+  "category_enum_v1_2": [
+    "ID_GENERATION",
+    "NONCE",
+    "JITTER_BACKOFF",
+    "UPLOAD_FILENAME",
+    "WEBSOCKET_CLIENTID"
+  ],
+  "replacement_api": [
+    "crypto.randomUUID()",
+    "crypto.randomBytes(N).toString('hex')",
+    "new SeededRandom(seed).next() (utils/SeededRandom · Task #35 landed)",
+    "randHex4() (utils/randomHex · Task #29 Phase 2 landed · 4 报表 ID_GENERATION 收敛统一)",
+    "randomAlphaNonce(len, alphabet) (utils/randomNonce · Task #29 Phase 3 PR-C 首建 · WeChat OA NONCE alphabet nonce · crypto.randomInt rejection-safe · triple helper 分离范式落地首例)"
+  ],
+  "unique_key_note": "联合主键 (file, line, sha256_of_line) 三元组 · Phase 3 全 7 场 sha256 全部消除 · PR-B: redisLock:59 sha256=9dbd0b07… → crypto.randomBytes(6).hex · PR-A: LocalDataStore:398 sha256=430332bd… → crypto.randomUUID() · PR-C: AIAdvisor:404 sha256=d939470a… → randHex4 + WeChatOAClient:211 sha256=6fda2048… → randomAlphaNonce + WeChatOAService:255 sha256=ea3d11ef… → randHex4 · PR-D: upload.ts:14 sha256=dd967912… → crypto.randomBytes(6).hex + alertsWebSocketServer:226 sha256=82984c0e… → randHex4",
+  "burndown_target": "0 → 0 · Phase 3 收官 · US-038 baseline 归零 · 反蔓延门禁转纯守 · 新增命中即 fail",
+  "burndown_history": [
+    "13 @ 06dc30e (Task #36 baseline 首建)",
+    "11 @ f81ed40 (Phase 1 · M-6 uploadFeedback + M-7 CombinedDataSource 直修)",
+    "7 @ 40a9c42 (Phase 2 · randHex4() helper 抽出 · 4 场 sha256 collide 消除)",
+    "6 @ f8a5a93 (Phase 3 PR-B · utils/redisLock:59 直修 · Option α Orchestrator 主签 · Path A 独占裁)",
+    "5 @ 98fa1f9 (Phase 3 PR-A rebase · data/services/LocalDataStore:398 · crypto.randomUUID() 直修 · Path C direct-fix data/services 内 · DP 主签 · 122-bit UUID 语义超集 ~67-bit base36×13)",
+    "2 @ b04c236 (Phase 3 PR-C rebase · services 3 位混批 + utils/randomNonce.ts 首建 · Path A 特批 · triple helper 分离范式落地首例 · AIAdvisor:404 + WeChatOAClient:211 + WeChatOAService:255 下线 · QADocs 主签)",
+    "0 @ <pr-d-sha> (Phase 3 PR-D grand-close · middlewares/upload.ts:14 + realtime/alertsWebSocketServer:226 尾批下线 · SHA-lock rename 40a9c42.json → b04c236.json · Path C · QADocs 主签 · US-038 收官)"
+  ],
+  "entries": []
+}

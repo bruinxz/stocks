@@ -37,6 +37,7 @@ import { IncomingMessage } from 'http';
 import jwt from 'jsonwebtoken';
 
 import { logger } from '../utils/logger';
+import { randHex4 } from '../utils/randomHex';
 import {
   alertsBroadcaster,
   AlertsBroadcaster,
@@ -222,9 +223,7 @@ export function attachAlertsWebSocketServer(
 
   wss.on('connection', (ws: any, _req: IncomingMessage, verified: { user_id: number }) => {
     let alive = true;
-    const clientId = `ws-${verified.user_id}-${Date.now()}-${Math.floor(
-      Math.random() * 0xffff
-    ).toString(16)}`;
+    const clientId = `ws-${verified.user_id}-${Date.now()}-${randHex4()}`;
 
     const client: AlertsBroadcastClient = {
       client_id: clientId,

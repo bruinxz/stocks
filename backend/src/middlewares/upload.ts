@@ -1,5 +1,6 @@
 import multer from 'multer';
 import path from 'path';
+import { randomBytes } from 'crypto';
 import { ensureUploadsRuntime, getAvatarUploadsDir } from '../utils/runtimePaths';
 
 // 优先使用 shared/uploads 或显式 UPLOADS_ROOT，避免发布切换到只读 release 目录导致启动失败。
@@ -11,7 +12,7 @@ const storage = multer.diskStorage({
     cb(null, avatarUploadsDir);
   },
   filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const uniqueSuffix = Date.now() + '-' + randomBytes(6).toString('hex');
     cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
   },
 });

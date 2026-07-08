@@ -7,7 +7,7 @@
  *   docs/refactor/40-quality-gates.md §Gate-Negative-Coverage-v0.3 (联动位)
  *
  * baseline JSON 权威锚:
- *   docs/refactor/baseline/security/us-038-baseline-40a9c42.json (SHA-locked @ 40a9c42 · 2 entries · Task #29 Phase 3 PR-C rebase · services 3 位混批下线 + utils/randomNonce.ts 首建 · triple helper 分离范式落地首例 · AIAdvisorService/WeChatOAClient/WeChatOAService 下线 · post PR-B+PR-A merge · 剩 upload+alertsWS 给 PR-D grand-close)
+ *   docs/refactor/baseline/security/us-038-baseline-b04c236.json (SHA-locked @ b04c236 · 0 entries · Task #29 Phase 3 PR-D grand-close · US-038 收官 · SHA-lock rename 40a9c42.json → b04c236.json · middlewares/upload.ts + realtime/alertsWebSocketServer 尾批下线 · 反蔓延门禁转纯守 · 教训 #9 4/4 co-守闭合终例 · grand-close rename 落地首例)
  *
  * 承接位: QADocs Task #29 · v1.1 追增队列第 3 位 · §No-Math-Random-US-038 · Orchestrator msg=0a347004 Path C 裁决
  * 语义: 全 backend/src 递归 .ts (非 .d.ts) 静态扫描 Math.random() 调用 · 剔除注释与字符串字面量内引用
@@ -192,7 +192,7 @@ const BASELINE_JSON_PATH = path.join(
   'refactor',
   'baseline',
   'security',
-  'us-038-baseline-40a9c42.json'
+  'us-038-baseline-b04c236.json'
 );
 const WHITELIST_PATH_FRAGMENTS = ['__tests__', 'node_modules', 'dist'];
 const REQUIRED_BASELINE_FIELDS: Array<keyof BaselineEntry> = [
@@ -350,7 +350,7 @@ it('断言 D · 真实 Math.random() 调用命中 (正例反证 grep 灵敏度)'
 
 it('断言 F · baseline JSON schema 完整性 · 缺 file/line/sha256/category 任一字段即 fail', () => {
   const baseline = loadBaseline();
-  assert.ok(baseline.entries.length > 0, 'baseline entries 为空 · 请核对 JSON 是否被误清');
+  // Phase 3 grand-close 后 · entries=0 (US-038 收官 · 反蔓延门禁转纯守) · 允空 · schema 完整性仅校验非空 entries 字段
   const brokenEntries: Array<{ index: number; missing: string[] }> = [];
   for (let i = 0; i < baseline.entries.length; i++) {
     const entry = baseline.entries[i] as Partial<BaselineEntry>;
