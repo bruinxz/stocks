@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 import { createObjectCsvWriter } from 'csv-writer';
 import csvParser from 'csv-parser';
 import { logger } from '../../utils/logger';
@@ -395,7 +396,7 @@ export class LocalDataStore {
 
     const newFavorite: LocalFavorite = {
       ...favorite,
-      id: Math.random().toString(36).substring(2, 15),
+      id: randomUUID(),
       created_at: new Date(),
       updated_at: new Date(),
     };
