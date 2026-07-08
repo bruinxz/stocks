@@ -100,6 +100,8 @@ import { DocumentComment } from '../models/DocumentComment';
 import { IndustrySentimentIndex } from '../models/IndustrySentimentIndex';
 // PR-O5 (2026-06-30) — 题材发酵 5 阶段日度分类
 import { ThemeFermentationPhase } from '../models/ThemeFermentationPhase';
+// 2026-07-08 — 交易日历 (§D4.G2 契约 · PR #96 DDL landed @ 6299a3d4)
+import { TradingCalendar } from '../models/TradingCalendar';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -221,6 +223,8 @@ const sequelize = new Sequelize({
     IndustrySentimentIndex,
     // PR-O5 (2026-06-30) — 题材发酵 5 阶段日度分类
     ThemeFermentationPhase,
+    // 2026-07-08 — 交易日历 (§D4.G2 契约 · PR #96 DDL landed @ 6299a3d4)
+    TradingCalendar,
   ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {
