@@ -361,3 +361,53 @@
 
 - **免签窗口范式统计位** (十二连胜完形第 19 · 8-19 landing candidate): 3-sign PASS 汇聚 · Cleanup 主签 landed 第 7 例 candidate (前 6: #78 BlackSwan β · #91 C-S2 · #92 C-S1 · #93 Path B · #97 R2-A · #99 30-log · #102 R2-B)
 
+
+## R3-C · backend/ root 迁移期 exp/debug/py 清理 (2026-07-09)
+
+- **PR**: #TBD (chore/cleanup-r3-c-backend-root-migration-cleanup)
+- **触发**: R3 dead-code scan workspace `notes/cleanup-dead-code-scan-round3.md` v0.1 · Orch aggregate v21 msg=791de15f §八 pre-grant #7 dispatch · **十四连胜 8-21 candidate**
+- **base main**: `9c2eefe8` (post-PR-#108 十三连胜完形 40 PR)
+
+- **删除清单** (4 tracked + 1 untracked · net -50KB):
+
+  | # | 文件 | size | 分类 | 5-domain grep |
+  |---|---|---|---|---|
+  | 1 | `backend/copy_py.exp` | 332B | expect deploy 脚本 (迁移期) | 0 命中 |
+  | 2 | `backend/copy_script.exp` | 291B | expect deploy 脚本 (迁移期) | 0 命中 |
+  | 3 | `backend/run_remote.exp` | 301B | expect deploy 脚本 (迁移期) | 0 命中 |
+  | 4 | `backend/test_em.py` | 1212B | Python 迁移临时验证 | 0 命中 |
+  | 5 | `backend/debug.log` | 47570B | 迁移期 debug 输出 (`.gitignore *.log`) | 0 命中 · 本地 rm only · 不在 git 追踪 |
+
+- **事实链 pin** (5-domain grep):
+  - Command: `grep -rln "<name>" backend/src frontend/src scripts contracts` + `grep -l "..." backend/package.json backend/tsconfig*.json`
+  - `backend/src` 0 命中 · `frontend/src` 0 命中 · `scripts` 0 命中 · `contracts` 0 命中 · `.github/workflows` 0 命中 · `backend/package.json scripts` 0 命中
+  - `docs/refactor` 单命中 `22-cleanup-candidates.md` (audit reference · **本 R3-C 删除即兑现**)
+
+- **grant chain (免签窗口第 21 例 pre-grant · 3-sign PASS 汇聚 pre-armed)**:
+  - Cleanup 主 (CREATE · 4 tracked delete + doc paste-in 一次性 diff)
+  - **Research 副签 pre-armed** (msg=24cb074e §六.5 verbatim: "R3-C PR CREATE Research 副签承接位 armed · SLA T+15min from Cleanup PR CREATE · 4 核项 pre-lock")
+  - **DP 副签 pre-armed** (Orch v21 §八 verbatim: "3 副签 pre-armed: Research §S3.4 grep + DP §D4 model 表 zero touch + QADocs §16 verify")
+  - **QADocs 副签 pre-armed** (同上 · dod v4.3 §16 zero package.json 触碰 verify)
+  - Orch owner-review (msg=791de15f aggregate v21 §八 · pre-grant #7 · self-merge admin squash approve · SLA T+30min)
+
+- **影响面**:
+  - 删 4 tracked exp/py file + 1 untracked debug.log 本地清理 · 根级迁移期一次性工具 · zero code consumer
+  - `docs/refactor/30-cleanup-log.md` +本章节 (paste-in 范式 · 教训 #14 workspace preview + post-landed 承接)
+  - `npx tsc --noEmit` 基线 zero delta (非 TS/JS 引用)
+  - `backend/tests/**` grep 0 命中 (dod v4.3 铁律 §16 test 层 verify)
+  - Independence v1.1 §5 4 档 zero drift (档 1 数据源 exp/py 迁移期临时件 · zero pipeline dependency · zero 契约层)
+  - Layer-Separation R1-R8 zero cross-boundary (backend/ root loose · zero services/quant/strategies/models 触)
+
+- **DoD 自检** (dod v4.3 铁律 16 项):
+  - [x] #1 密钥/凭证 zero (exp 脚本内容 zero credential literal · deploy 目标凭证已由 shared/backend.env 管理)
+  - [x] #2 Phase 0 清理独占 (zero 与开发 Agent 并行)
+  - [x] #3 事实链 pin (grep 5-domain + config 全 0 命中)
+  - [x] #4 30-cleanup-log 章节 paste-in landed (本 §)
+  - [x] #5 zero test 触
+  - [x] #6-#9 (PG/SSH/Path C/Path D 全 N/A · Path D 交叉核 pass workspace §四)
+  - [x] #10-#13 v4.1 累积
+  - [x] #14 multi-stage verify (tsc zero delta · CI 全 GREEN gate)
+  - [x] #15 test 层 grep (backend/tests 0 命中)
+  - [x] #16 zero package.json 触碰 (自适应 pass · lesson-16 v1.0 seal 承接第 7 例)
+
+- **免签窗口范式统计位** (十四连胜 8-21 landing candidate): 3-sign PASS 汇聚 · Cleanup 主签 landed 第 10 例 candidate (前 9: #78 BlackSwan β · #91 C-S2 · #92 C-S1 · #93 Path B · #97 R2-A · #99 R2-A doc · #102 R2-B code · #104 R2-B doc · #107 R2-06 delete)
