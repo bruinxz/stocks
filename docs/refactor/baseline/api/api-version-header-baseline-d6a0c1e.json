@@ -1,0 +1,51 @@
+{
+  "task": "task-51-phase-1-t3d-preflight-r1-r2-hard-fail",
+  "sha_lock": "d6a0c1ed879b6154d0ee6bc7dddad757f217adf9",
+  "sha_lock_full_ref": "d6a0c1ed docs(qa): seal L2 verb hard-fail SOP v1.0 + baseline burndown refresh · PR-P1-1 (#113)",
+  "policy": {
+    "R1_prefix": "/api/v1/",
+    "R1_hard_fail": true,
+    "R1_scope": [
+      "backend/src/index.ts",
+      "backend/src/api/routes/**/*.routes.ts",
+      "backend/src/live-trading/routes/**/*.routes.ts"
+    ],
+    "R2_header_name": "X-API-Version",
+    "R2_header_value": "1",
+    "R2_hard_fail": true,
+    "R2_middleware_mount_path": "backend/src/api/middleware/api-version.ts",
+    "warning_grace_end_sha": "d6a0c1ed",
+    "backend_mount_landing_prerequisite": "Backend Phase 1 T+3d `/api/v1/*` mount PR MERGED (armed pending 2026-07-11 24:00 CST)",
+    "test_gating_mode": "skip-stub",
+    "test_gating_env_flag": "RUN_R1_R2_HARD_FAIL",
+    "test_gating_default_behavior": "skip (RUN_R1_R2_HARD_FAIL != '1')",
+    "test_gating_reason": "backend `/api/v1/*` mount 未 landed · 3 test file (R1 + R2 + Playwright) 全 skip-stub default-on · post Backend mount landing 立即转 hard-fail (RUN_R1_R2_HARD_FAIL=1 env set)",
+    "test_gating_wire_procedure_step": [
+      "Step 1 · Backend mount PR MERGED confirm (gh pr view --json state,mergeCommit)",
+      "Step 2 · baseline JSON sha_lock refresh + warning_grace_end_sha 冻结",
+      "Step 3 · 3 test file skip-stub → hard-fail 转换 (RUN_R1_R2_HARD_FAIL=1 CI env set)",
+      "Step 4 · Playwright E2E skip stub → full impl (8 endpoint header assertion · @playwright/test dev dep install)"
+    ],
+    "exempt_trailer_syntax": "[api-version-exempt: <slug>]",
+    "exempt_authority_required": ["owner", "orchestrator"]
+  },
+  "entries": [],
+  "burndown_history": [
+    "81bc018b (L1-L7 initial · Task #6)",
+    "f8ae20b (Cleanup Task #22 doc paste-in)",
+    "c9680478 (PR #111 L2 hard-fail 5-file test pack)",
+    "b83f51d9 (PR #112 dod v4.4 §17 formalize)",
+    "d6a0c1ed (PR #113 L2 SOP v1.0 seal + baseline refresh)"
+  ],
+  "playwright_e2e_endpoints_pending_phase_2": [
+    "/api/v1/health",
+    "/api/v1/auth/*",
+    "/api/v1/stocks/*",
+    "/api/v1/quant/*",
+    "/api/v1/paper-trading/*",
+    "/api/v1/portfolio/*",
+    "/api/v1/backtests/*",
+    "/api/v1/strategies/*"
+  ],
+  "unique_key_note": "Phase 1 T+3d preflight baseline. R1 = /api/v1/* URL prefix hard-fail assertion (backend/src/index.ts app.use mount 位). R2 = X-API-Version: 1 response header hard-fail (middleware mount 位). 前置件: Backend Phase 1 T+3d /api/v1/* mount PR MERGED. 本 PR-P1-2 CREATE 时 Backend mount 未 landed → 3 test file (R1 + R2 + Playwright) 全部 skip-stub 承接位就位. skip-stub 转 hard-fail 触发条件: Backend mount PR MERGED confirmed + baseline sha_lock refresh + SKIP_R1_R2_HARD_FAIL env unset. burndown_history 演进链: 81bc018b (L1-L7 initial) → f8ae20b (Cleanup doc paste-in) → c9680478 (L2 hard-fail 5-file) → b83f51d9 (dod v4.4 §17 formalize) → d6a0c1ed (L2 SOP v1.0 seal · 本 baseline sha_lock 位). ADR-0010 API Versioning Strategy 承接锚 (PR #105 landed 44fff935)."
+}
