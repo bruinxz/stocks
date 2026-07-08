@@ -3,13 +3,13 @@
   "adr": "docs/refactor/adr/0002-us-038-lint.md",
   "adr_section": "§2.2.1 v1.2.1 · Baseline 允例 + 反蔓延门禁 (Path C) · v1.4.1 (d.3) AST-aligned pattern",
   "rule": "§No-Math-Random-US-038",
-  "sha_lock": "06dc30e",
-  "sha_lock_full_ref": "main @ 06dc30e (PR #79 MERGED · Task #35 SeededRandom utils 层通用位 + M-1 直修红线)",
-  "policy": "反蔓延门禁 · baseline whitelist + drift alarm · 新增命中即 fail · baseline 内命中 warn 但不阻塞 · 只减不增 · 大小上限 = 13 (Task #36 冻结 SHA 时点条目数 · 含 M-4/M-5 utils/middlewares 承接位)",
+  "sha_lock": "f81ed40",
+  "sha_lock_full_ref": "main @ f81ed40 (PR #81 MERGED · ADR-0001 §附录 v1.4.1 · Phase 1 burndown starting point)",
+  "policy": "反蔓延门禁 · baseline whitelist + drift alarm · 新增命中即 fail · baseline 内命中 warn 但不阻塞 · 只减不增 · 大小上限 = 11 (Phase 1 M-6/M-7 直修后 · 13→11 · 只减不增)",
   "authority_anchor_primary": "docs/refactor/adr/0002-us-038-lint.md §2.2.1 (Orchestrator 独占起草 · Path C)",
   "authority_anchor_reference": "backend/tests/quality/test_no_math_random_us_038_rule.test.ts (QADocs 独占 test owner)",
   "grep_pattern_ast_aligned": "Math\\.random\\(",
-  "grep_pattern_ast_aligned_note": "v1.4.1 (d.3) 教训 · CallExpression AST-aligned · 门禁真值 = live call-syntax (13) · raw grep 含 comment/note 引用 (14 = 13 + MarketController:117 comment 承接位)",
+  "grep_pattern_ast_aligned_note": "v1.4.1 (d.3) 教训 · CallExpression AST-aligned · 门禁真值 = live call-syntax (11) · raw grep 含 comment/note 引用 (12 = 11 + MarketController:117 comment 承接位)",
   "category_enum_v1_2": [
     "ID_GENERATION",
     "NONCE",
@@ -23,7 +23,11 @@
     "new SeededRandom(seed).next() (utils/SeededRandom · Task #35 landed)"
   ],
   "unique_key_note": "联合主键 (file, line, sha256_of_line) 三元组 · 4 场 sha256 collide (DailyTradingDigest:759 + EnhancedTradingJournal:865 + RealtimeAlertDispatcher:635 + WeeklyReviewReport:2198 全 `const n = Math.floor(Math.random() * 0xffff);`) · (file, line) 独立 · 门禁 grep 可分辨",
-  "burndown_target": "13 → 0 · QADocs 侧 CHANGELOG 追踪 · 后续 direct fix 通过 utils/SeededRandom 或 crypto API 逐一消除",
+  "burndown_target": "11 → 0 · Phase 1 后 · Phase 2 = 4 场 randHex4 helper 重构 (11→7) · Phase 3 = WeChatOA nonce + alertsWebSocketServer clientId + redisLock + LocalDataStore + AIAdvisor + upload.ts (7→0)",
+  "burndown_history": [
+    "13 @ 06dc30e (Task #36 baseline 首建)",
+    "11 @ f81ed40 (Phase 1 · M-6 uploadFeedback + M-7 CombinedDataSource 直修)"
+  ],
   "entries": [
     {
       "file": "backend/src/data/services/LocalDataStore.ts",
@@ -33,25 +37,11 @@
       "note": "favorite.id 生成 · Math.random().toString(36).substring(2,15)"
     },
     {
-      "file": "backend/src/data/sources/CombinedDataSource.ts",
-      "line": 225,
-      "sha256_of_line": "5d837e0244ba42dfc3436df26e46eb244c9be66a42b7b5df9f8b72d298d17f5c",
-      "category": "JITTER_BACKOFF",
-      "note": "重试延迟 jitter · Math.random() * 0.3 * delay"
-    },
-    {
       "file": "backend/src/middlewares/upload.ts",
       "line": 14,
       "sha256_of_line": "dd96791228ea9eeafecd1a3f6e713b4db0b8c7e64aea5ac046d109f44bd6211b",
       "category": "UPLOAD_FILENAME",
       "note": "上传文件唯一后缀 · Date.now() + Math.round(Math.random() * 1e9)"
-    },
-    {
-      "file": "backend/src/middlewares/uploadFeedback.ts",
-      "line": 40,
-      "sha256_of_line": "cd94adc2d36faf383af22921951ffae6f6f024cca7031b41a3f782650f339529",
-      "category": "UPLOAD_FILENAME",
-      "note": "M-5 · 反馈上传文件名唯一后缀 · `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`"
     },
     {
       "file": "backend/src/realtime/alertsWebSocketServer.ts",

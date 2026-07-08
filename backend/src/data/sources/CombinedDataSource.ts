@@ -9,6 +9,7 @@ import { BaostockClient } from './BaostockClient';
 import { TushareClient } from './TushareClient';
 import { TencentFinanceClient } from './TencentFinanceClient';
 import { logger } from '../../utils/logger';
+import { SeededRandom } from '../../utils/SeededRandom';
 import { toEastMoneyFormat, normalizeSymbol } from '../../utils/stockSymbol';
 import {
   MarketDataFeature,
@@ -19,6 +20,9 @@ import {
   DataSourceHealthService,
   DEFAULT_DATA_PROVIDERS,
 } from '../services/DataSourceHealthService';
+
+const defaultCombinedDataSourceRng = new SeededRandom();
+
 
 // 使用AKShare的接口定义（兼容其他数据源）
 export type StockBasicInfo = AKShareStockBasicInfo;
@@ -222,7 +226,7 @@ export class CombinedDataSource {
         }
 
         const delay = Math.min(initialDelayMs * Math.pow(2, attempt - 1), maxDelayMs);
-        const jitter = Math.random() * 0.3 * delay;
+        const jitter = defaultCombinedDataSourceRng.next() * 0.3 * delay;
         const totalDelay = delay + jitter;
 
         logger.warn(
