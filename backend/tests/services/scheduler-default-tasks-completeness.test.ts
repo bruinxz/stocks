@@ -1,7 +1,7 @@
 /**
  * scheduler-default-tasks-completeness.test.ts
  *
- * Macro 串联补丁 (2026-06-21) — Batch AJ: 14 个之前漏 seed 的 cron + 3 个本批
+ * Macro 串联补丁 (2026-06-21) — Batch AJ: 12 个之前漏 seed 的 cron + 3 个本批
  * 新增 cron 必须全部在 SchedulerService.ensureDefaultTasks 数组里出现.
  *
  * 这是反 drift 的 boot-time guard 的"代码侧"延伸 (initialize() 末尾 warn 是
@@ -12,7 +12,7 @@
  *     tests/services/scheduler-default-tasks-completeness.test.ts
  *
  * 覆盖维度:
- *   [1] 14 个 macro-integration-check report §🚨 #3 列的 cron 全部出现在 seed 数组
+ *   [1] 12 个 macro-integration-check report §🚨 #3 列的 cron 全部出现在 seed 数组
  *   [2] 3 个本批新增 cron (WEEKLY_IMPROVEMENT_SUGGESTION_GENERATE,
  *       DAILY_IMPROVEMENT_EFFECT_TRACK, ETF_FLOW_SYNC) 全部出现在 seed
  *   [3] 每个 seed 的 cron_expression 与 cronRegistry.recommendedCron 一致
@@ -69,10 +69,11 @@ for (const s of seeded) {
 }
 
 // ---------------------------------------------------------------------------
-// [1] + [2] 13 missing + 3 new — 必须全部 seed
+// [1] + [2] 12 missing + 3 new — 必须全部 seed
 // (BLACK_SWAN_DETECT 已在 C-BS-03 批次结构性删除 · 见 30-cleanup-log.md)
+// (WEEKLY_QA_STAT_AGGREGATE 已在 C-S1 批次 §PR-L §13.2 结构性删除)
 // ---------------------------------------------------------------------------
-const MISSING_13 = [
+const MISSING_12 = [
   'BLACK_SWAN_BASELINE',
   'BLACK_SWAN_IMPROVEMENT',
   'BLACK_SWAN_POSTMORTEM',
@@ -85,7 +86,6 @@ const MISSING_13 = [
   'RESEARCH_INTEGRITY_BATCH_AUDIT',
   'SYNC_ALL_STOCKS',
   'WEBHOOK_FALLBACK_RETRY',
-  'WEEKLY_QA_STAT_AGGREGATE',
 ];
 
 const NEW_3 = [
@@ -94,8 +94,8 @@ const NEW_3 = [
   'ETF_FLOW_SYNC',
 ];
 
-console.log('\n[1] 13 个之前漏 seed 的 cron 必须全部 seed...');
-for (const type of MISSING_13) {
+console.log('\n[1] 12 个之前漏 seed 的 cron 必须全部 seed...');
+for (const type of MISSING_12) {
   assert(`[1.${type}] seeded`, seededByType.has(type), `not found in defaultTasks`);
 }
 
@@ -108,7 +108,7 @@ for (const type of NEW_3) {
 // [3] cron_expression 与 registry recommendedCron 一致 (LIVE_RECONCILIATION_GUARD 例外)
 // ---------------------------------------------------------------------------
 console.log('\n[3] seed cron_expression 与 registry recommendedCron 一致...');
-const ALL_CHECK = [...MISSING_13, ...NEW_3].filter(t => t !== 'LIVE_RECONCILIATION_GUARD');
+const ALL_CHECK = [...MISSING_12, ...NEW_3].filter(t => t !== 'LIVE_RECONCILIATION_GUARD');
 for (const type of ALL_CHECK) {
   const def = getCronTaskDefinition(type);
   const rows = seededByType.get(type) || [];
@@ -176,7 +176,7 @@ if (stillUnseeded.length > 0) {
 }
 assertEqual(
   '[6.1] 13 个 macro check 列出的漏 seed type 已全部补齐',
-  MISSING_13.filter(t => !seededTypes.has(t)),
+  MISSING_12.filter(t => !seededTypes.has(t)),
   []
 );
 assertEqual(

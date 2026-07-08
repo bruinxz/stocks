@@ -845,7 +845,6 @@ export class AIAdvisorService {
       } catch (err: any) {
         // LimitUpStock 表可能不存在或当日无数据, silent
       }
-      // 5) 热门概念: SnowballHotKeyword 表已删除
 
       // 6) 近期市场要闻 — Batch AG (2026-06-18) MarketNews top 5
       try {

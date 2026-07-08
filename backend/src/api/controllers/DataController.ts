@@ -15,8 +15,6 @@ import { isValidSeatType, SeatType } from '../../constants/famousSeats';
 import { logger } from '../../utils/logger';
 import { sequelize } from '../../config/database';
 
-class SnowballHotKeywordSyncService { async syncDate(_date: string): Promise<any> { return { synced: 0 }; } }
-
 /**
  * US-079 数据健康度看板控制器（US-088 扩展龙虎榜查询端点 / US-092 扩展 ETF 资金流查询端点）
  *
@@ -25,8 +23,8 @@ class SnowballHotKeywordSyncService { async syncDate(_date: string): Promise<any
  * - GET /api/data/dragon-tiger?stock_code=&seat_type=…   → US-088: 按归属机构查询龙虎榜
  * - GET /api/data/etf-flow?industry=&days=…              → US-092: 行业 ETF 资金流查询
  *
- * 手动触发只覆盖"日级 syncDate(date)"类数据源（北向 / 龙虎榜 / 涨停 / 行业流 /
- * 雪球热词）；周期性数据源（财报 / 业绩预告 / 分析师 / 分红 / 股东户数）和
+ * 手动触发只覆盖"日级 syncDate(date)"类数据源（北向 / 龙虎榜 / 涨停 /
+ * 行业流）；周期性数据源（财报 / 业绩预告 / 分析师 / 分红 / 股东户数）和
  * 事件流数据源（公告 / KOL）的同步走 per-stock 批量模式，靠 cron 调度而非
  * 用户单次按钮触发——本 controller 返回 400 提示用户走运维 CLI 同步。
  */
@@ -1101,7 +1099,7 @@ export class DataController {
    * POST /api/data/sync/:source
    *
    * 触发指定数据源的当日同步。:source 必须对应注册中心的 sync_source 字段
-   * （northbound / dragon_tiger / limit_up / industry_flow / snowball_hot 之一）。
+   * （northbound / dragon_tiger / limit_up / industry_flow 之一）。
    *
    * Body 可选 `date` (YYYY-MM-DD)，默认今天 ISO 日期。
    *
@@ -1128,7 +1126,6 @@ export class DataController {
       dragon_tiger: () => new DragonTigerSyncService().syncDate(date),
       limit_up: () => new LimitUpSyncService().syncDate(date),
       industry_flow: () => new IndustrySyncService().syncDate(date),
-      snowball_hot: () => new SnowballHotKeywordSyncService().syncDate(date),
     };
 
     if (!Object.prototype.hasOwnProperty.call(dailyRoutes, source)) {
