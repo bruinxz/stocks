@@ -5,11 +5,11 @@
   "rule": "§No-Math-Random-US-038",
   "sha_lock": "40a9c42",
   "sha_lock_full_ref": "main @ 40a9c42 (PR #83 MERGED · Phase 1 M-6/M-7 直修 · Phase 2 burndown starting point)",
-  "policy": "反蔓延门禁 · baseline whitelist + drift alarm · 新增命中即 fail · baseline 内命中 warn 但不阻塞 · 只减不增 · 大小上限 = 7 (Phase 2 randHex4() helper 抽出 · 4 场 sha256 collide 消除 · 11→7)",
+  "policy": "反蔓延门禁 · baseline whitelist + drift alarm · 新增命中即 fail · baseline 内命中 warn 但不阻塞 · 只减不增 · 大小上限 = 6 (Phase 3 · PR-B utils/redisLock:59 直修下线 · Option α Orchestrator 主签 · Path A 独占裁 utils 治理连续性 · 7→6)",
   "authority_anchor_primary": "docs/refactor/adr/0002-us-038-lint.md §2.2.1 (Orchestrator 独占起草 · Path C)",
   "authority_anchor_reference": "backend/tests/quality/test_no_math_random_us_038_rule.test.ts (QADocs 独占 test owner)",
   "grep_pattern_ast_aligned": "Math\\.random\\(",
-  "grep_pattern_ast_aligned_note": "v1.4.1 (d.3) 教训 · CallExpression AST-aligned · 门禁真值 = live call-syntax (7) · raw grep 含 comment/note 引用 (8 = 7 + MarketController:117 comment 承接位)",
+  "grep_pattern_ast_aligned_note": "v1.4.1 (d.3) 教训 · CallExpression AST-aligned · 门禁真值 = live call-syntax (6) · raw grep 含 comment/note 引用",
   "category_enum_v1_2": [
     "ID_GENERATION",
     "NONCE",
@@ -24,11 +24,12 @@
     "randHex4() (utils/randomHex · Task #29 Phase 2 landed · 4 报表 ID_GENERATION 收敛统一)"
   ],
   "unique_key_note": "联合主键 (file, line, sha256_of_line) 三元组 · 4 场 sha256 collide 已通过 randHex4() helper 抽出统一消除 (DailyTradingDigest:759 + EnhancedTradingJournal:865 + RealtimeAlertDispatcher:635 + WeeklyReviewReport:2198 全部下线)",
-  "burndown_target": "7 → 0 · Phase 3 = WeChatOA nonce + alertsWebSocketServer clientId + redisLock + LocalDataStore + AIAdvisor + upload.ts + WeChatOAService (7→0)",
+  "burndown_target": "6 → 0 · Phase 3 剩 = LocalDataStore + upload.ts + alertsWebSocketServer + AIAdvisor + WeChatOAClient + WeChatOAService (PR-A/C/D)",
   "burndown_history": [
     "13 @ 06dc30e (Task #36 baseline 首建)",
     "11 @ f81ed40 (Phase 1 · M-6 uploadFeedback + M-7 CombinedDataSource 直修)",
-    "7 @ 40a9c42 (Phase 2 · randHex4() helper 抽出 · 4 场 sha256 collide 消除)"
+    "7 @ 40a9c42 (Phase 2 · randHex4() helper 抽出 · 4 场 sha256 collide 消除)",
+    "6 @ <phase-3-pr-b-sha> (Phase 3 PR-B · utils/redisLock:59 直修 · Option α Orchestrator 主签 · Path A 独占裁)"
   ],
   "entries": [
     {
@@ -72,13 +73,6 @@
       "sha256_of_line": "ea3d11efc027b0cd877417e125265c97f59c7b1113a9eec76e6cdb75cac1cd78",
       "category": "NONCE",
       "note": "微信 OA rand · Math.floor(Math.random() * 0x10000)"
-    },
-    {
-      "file": "backend/src/utils/redisLock.ts",
-      "line": 59,
-      "sha256_of_line": "9dbd0b07b34a0d7b2d99b67bcc7cfedc24d64f38724f2fddb5717bccb179bcd7",
-      "category": "ID_GENERATION",
-      "note": "M-4 · Redis 分布式锁 lockValue · `lock:${Date.now()}:${Math.random().toString(36).substr(2, 9)}` · SET NX 保证唯一性 · Math.random 只降碰撞概率"
     }
   ]
 }

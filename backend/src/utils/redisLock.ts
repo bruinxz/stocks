@@ -1,4 +1,5 @@
 import { createClient, RedisClientType } from 'redis';
+import { randomBytes } from 'crypto';
 import { logger } from './logger';
 
 // Redis客户端实例
@@ -56,7 +57,7 @@ export class RedisLock {
     retryDelay = 500,
     maxRetries = 3
   ): Promise<string | null> {
-    const lockValue = `lock:${Date.now()}:${Math.random().toString(36).substr(2, 9)}`;
+    const lockValue = `lock:${Date.now()}:${randomBytes(6).toString('hex')}`;
     let retries = 0;
 
     while (retries <= maxRetries) {
