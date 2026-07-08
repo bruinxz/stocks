@@ -647,6 +647,33 @@ V0：Value **0.40** / Quality **0.30** / LowVol **0.30** / Momentum **0.0**（sh
   - 由 Cleanup owner msg=d65aec23 尽职核查揭源确认 · Orchestrator msg=68995d76 综合裁决 α 采纳
   - Cleanup 铁律"删前留据 · 宁可多问"执行到位闭环
 
+- v1.2（2026-07-08 T+3.5）· 事件位追加 · **Task #12 v0.1 landed test CI 未真跑事件**：
+  - **事件**：PR #73 (`1de8461`) 合入的 `backend/tests/quality/test_satellite_slot_4_slot_renormalization.test.ts` 使用 `@jest/globals` import · 但项目 test runner = `backend/src/scripts/run-tests.ts` = IIFE + `node:assert/strict` + `process.exit`（非 Jest 语法）· 该 test 在 CI 通道**从未真跑通**（Jest 未配 · IIFE runner 跳过语法孤岛）
+  - **揭源**：Strategy msg=e48a3d43 · Task #12 v2 融合位起草时揭发 · 本地 `npx ts-node --transpile-only <file>` 与 `npx jest <file>` 均 fail
+  - **根因**：test 起草人未 grep 项目 runner 与同域 landed test 语法（IIFE 范式 vs Jest 范式）· 起草即上 · 未本地 verify exit=0
+  - **裁决**（Orchestrator msg=4cd2cb9b §三 + QADocs msg=f186f6de 采纳）：
+    - Task #12 v2 融合位内一并将 test 范式改为项目标准 IIFE（PR #76 · Strategy）
+    - Task #29 独立 PR rewrite（QADocs）
+    - Task #27/#28/#30 起草即 IIFE
+    - **Task #32**：CI 门禁位补齐 · `.github/workflows/*.yml` wire `npm test` = `run-tests.ts`（QADocs 承接位 msg=49a37e4c ACK）
+  - **教训入库**（QADocs `notes/dod-self-check-list.md` 第 5 位自检 · msg=49a37e4c 承接）：
+    - (a) test 起草前 grep 项目 runner（`grep -l "node:assert" tests -r` vs `grep -l "@jest/globals" tests -r` 比例）
+    - (b) 起草时参考同域 landed test 语法（每域至少 grep 1 个 landed test 作模板 · 避免语法孤岛）
+    - (c) `npx ts-node --transpile-only <file>` 本地 verify exit=0（起草即跑 · 不 land 未跑测）
+  - **audit trail 意义**：跨层 SHA-lock test 是否真跑 = 工程质量事件 · 记录本 §附录 · 事件链完整闭合 · 未来 test 起草纪律强制引本条
+
+- v1.3（2026-07-08 T+3.5）· 事件位追加 · **Task #29 US-038 实机跑揭源 11 处生产代码违反 · Path C 采纳事件**：
+  - **事件**：QADocs Task #29 `test_no_math_random_us_038_rule.test.ts` v0 draft rewrite 为 IIFE 后实机跑（SHA `19c5fed`）· 4 断言 3 pass / 1 fail · 断言 B 命中 **11 处** backend/src 生产代码 `Math.random()` 调用
+  - **11 处清单**（QADocs escalation msg=f223ec87 提供）：`LocalDataStore.ts:398` · `CombinedDataSource.ts:225` · `middlewares/upload.ts:14` · `alertsWebSocketServer.ts:226` · `AIAdvisorService.ts:404` · `DailyTradingDigestService.ts:759` · `EnhancedTradingJournalService.ts:865` · `RealtimeAlertDispatcher.ts:635` · `WeChatOAClient.ts:211` · `WeChatOAService.ts:255` · `WeeklyReviewReportService.ts:2198`
+  - **分类**：全部为 ID / nonce / jitter / 上传 filename / WebSocket clientId 场景 · **无一位于 backtest / 因子引擎 / satellite slot / regime 路径**
+  - **裁决**（Orchestrator msg=0a347004 §一）：采纳 Path C（baseline whitelist + 反蔓延门禁）· 理由 3 条：
+    1. 与 gitleaks baseline (Task #30) 同款范式 · CI 门禁一致性
+    2. 不阻塞 M2 独占窗口 · 保 Cleanup BlackSwan β / Strategy Task #12 v2 副签窗口
+    3. 存量债务显性化 + 反蔓延 · baseline 大小 11 → 0 是可视化 KPI
+  - **落地**：ADR-0002 §2.2.1 v1.2 增补 · `docs/refactor/baseline/security/us-038-baseline-<sha>.json` · schema `{file, line, sha256_of_line, category}` · category 5 值枚举（`ID_GENERATION` / `NONCE` / `JITTER_BACKOFF` / `UPLOAD_FILENAME` / `WEBSOCKET_CLIENTID`）
+  - **只减不增**：baseline 只能通过 burndown PR 缩减 · 大小上限 = 冻结 SHA 时点条目数
+  - **audit trail 意义**：US-038 硬门禁从"全禁"演化为"存量豁免 + 反蔓延" · 需完整事件链解释豁免依据 · 未来 burndown PR 引本条
+
 ---
 
-**End of ADR-0001 §附录追加块 v1 workspace**
+**End of ADR-0001 §附录追加块 v1.3**
