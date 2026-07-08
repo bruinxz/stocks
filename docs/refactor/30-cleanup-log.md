@@ -411,3 +411,125 @@
   - [x] #16 zero package.json 触碰 (自适应 pass · lesson-16 v1.0 seal 承接第 7 例)
 
 - **免签窗口范式统计位** (十四连胜 8-21 landing candidate): 3-sign PASS 汇聚 · Cleanup 主签 landed 第 10 例 candidate (前 9: #78 BlackSwan β · #91 C-S2 · #92 C-S1 · #93 Path B · #97 R2-A · #99 R2-A doc · #102 R2-B code · #104 R2-B doc · #107 R2-06 delete)
+
+---
+
+## §Task-22 · Phase 0 密钥治理批 audit 结论 (2026-07-09 · 十五连胜 8-22 candidate · Orch aggregate v24 Fork A APPROVE · pre-grant #8)
+
+**触发**: Cleanup workspace `notes/phase-0-secret-governance-prep.md` v0.1 (2026-07-08 23:45) 承接 audit 结论到 repo 层 audit trail (教训 #14 workspace preview → post-landed paste-in 范式兑现)
+
+**验证时点**: main HEAD `7eb472647d17c035d8cf59b5c47351ce89b250ef` (post PR #109 MERGED · 41 PR · 十四连胜 8-21 完形)
+
+**Orch 独裁 APPROVE 事实链**: Orch aggregate v24 §一 Fork A APPROVE · §二 pre-grant #8 armed · docs-only zero code touch · lesson-16 v1.0 seal 承接第 8 例 apply
+
+### §一 · 5-domain grep pattern 集 (P1-P6)
+
+| # | Pattern | Rationale |
+|---|---------|-----------|
+| P1 | `sk_agent_[a-zA-Z0-9]{20,}` | Slock agent token literal |
+| P2 | `sk_machine_[a-zA-Z0-9]{20,}` | 遗留 machine API key literal |
+| P3 | `-----BEGIN.*PRIVATE.*KEY-----` | PEM 私钥 inlined |
+| P4 | `AKIA[0-9A-Z]{16}` | AWS access key id shape |
+| P5 | `"(password\|secret\|token\|api_?key)"\s*:\s*"[^"]{8,}"` | JSON literal 长值 (排除 test/mock/fixture) |
+| P6 | `(password\|secret\|token\|api_?key)\s*=\s*['"][a-zA-Z0-9+/=]{16,}['"]` | 变量赋值形态 |
+
+**Command (P1-P4 高置信度)**:
+```bash
+grep -rlE "sk_agent_|sk_machine_|-----BEGIN.*PRIVATE.*KEY-----|AKIA[0-9A-Z]{16}" \
+  --include="*.ts" --include="*.tsx" --include="*.py" --include="*.js" \
+  --include="*.json" --include="*.yaml" --include="*.yml" \
+  backend/src frontend/src scripts
+```
+→ **zero hits** ✅ (P1-P4 全 clean · workspace §一 + post-PR #109 `7eb47264` re-verify byte-match zero drift)
+
+**Command (P5 生产 JSON literal)**:
+```bash
+grep -rnE "['\"](password|secret|token|api_?key)['\"]:\s*['\"][^'\"]{8,}['\"]" \
+  --include="*.ts" --include="*.tsx" backend/src frontend/src \
+  | grep -vE "test|spec|fixture|mock|__tests__"
+```
+→ **zero hits** ✅ (P5 生产代码 clean · re-verify @ `7eb47264` byte-match)
+
+### §二 · 12 候选 triage 表 (workspace §二 verbatim · 全 env-var / runtime-storage 合规)
+
+| # | Path | Pattern | 判据 | 处理 |
+|---|------|---------|------|------|
+| 1 | `backend/src/middlewares/auth.ts` L51-53 | `const secret = process.env.JWT_SECRET \|\| ...` | **env-var + fail-closed** (缺失 500 拒验) · P0 review comment 明示禁 fallback literal | ✅ safe · **retain 权威锚** |
+| 2 | `backend/src/realtime/alertsWebSocketServer.ts` L122 | `loadJwtSecretFromEnv(env)` | env-var 参数化 · production 缺失 null 拒所有 WS · dev fallback `LIVE_DEV_JWT_SECRET` 亦 env | ✅ safe |
+| 3 | `backend/src/api/controllers/AuthController.ts` L415 | `authHeader.split(' ')[1]` | runtime token 提取 · 非 literal | ✅ safe |
+| 4 | `backend/src/api/controllers/UserController.ts` L24/L70/L121 | `json.password = '******'` | **display 脱敏 mask** · 非 credential · 输出前遮蔽 | ✅ safe (脱敏惯用) |
+| 5 | `backend/src/data/sources/TushareClient.ts` L10 | `this.token = token \|\| process.env.TUSHARE_TOKEN \|\| ...` | ctor arg + env-var 双通道 · 无 default literal | ✅ safe |
+| 6 | `backend/src/services/WeChatOAClient.ts` L105/L118/L259 | `env: NodeJS.ProcessEnv = process.env` | 全 env-injected · isEnabled/isWeChatOADisabledByEnv 均 env 驱动 | ✅ safe |
+| 7 | `backend/src/services/research/ResearchExperimentService.ts` | (未见 secret literal) | 已 grep · 0 hit high-confidence pattern | ✅ safe |
+| 8 | `frontend/src/App.tsx` L74/L210/L217/L240 | `localStorage.getItem('token')` | **runtime storage lookup** · zero literal | ✅ safe |
+| 9 | `frontend/src/services/authService.ts` L5/L11/L26/L30/L40-56 | interface `password: string` + `localStorage.setItem('token', data.tokens.accessToken)` | 字段类型声明 + 运行时存储 · zero literal | ✅ safe |
+| 10 | `frontend/src/services/api.ts` L32/L40-42/L57-137 | `const token = localStorage.getItem('token')` + `Bearer ${token}` header 注入 · refresh-token 401 拦截 | 运行时存储 + interceptor · zero literal | ✅ safe |
+| 11 | `frontend/src/services/alertsRealtimeClient.ts` | WS token param | 与 authService 一致 runtime pattern | ✅ safe |
+| 12 | `frontend/src/store/authSlice.ts` L14/L22/L35/L38/L49 | Redux state `token: string \| null` | 运行时 state 字段 · zero literal | ✅ safe |
+
+### §三 · 结论 (zero violation)
+
+- **backend 侧**: 全 `process.env.*` fail-closed · P0 review comment 已 pin 禁 fallback literal (`auth.ts` L47-49 注释)
+- **frontend 侧**: 全 `localStorage.getItem/setItem('token', ...)` runtime storage + interface 字段声明 · zero literal
+- **display mask** `'******'` 计入 UserController 但非 credential (脱敏惯用位)
+
+**审计结论**: Phase 0 密钥治理批 · **代码侧 zero violation** · 无 delete/rewrite 目标 · pre-CREATE 无 code PR needed · **本 doc paste-in 为 audit trail 层留痕 (教训 #14 兑现)**
+
+### §四 · Protect-list Path D 交叉核 (`23-protect-list.md` v1 权威锚)
+
+| Path | zero touch verify |
+|---|---|
+| `.git/` | ✅ |
+| `shared/backend.env` (SSH 侧 `/opt/stocks/backend.env` 640 stocks_app:stocks) | ✅ workspace only · zero repo write |
+| `.ssh/` (host + deploy user) | ✅ |
+| `docker-compose.prod.yml` (production stack) | ✅ |
+| `releases/initial/` | ✅ |
+| `backend/.env` (checkout · gitignore 位) | ✅ |
+| `backend/.env.example*` + `frontend/.env.production` 等参考 env | ✅ audit read-only · zero content edit |
+
+`*.example` 文件按惯用 placeholder value · 非真凭证 · 保留即可
+
+### §五 · Public-channel redaction rules pin (owner msg=b8af5127 铁律强化)
+
+- **禁**: 公 channel 输出 `sk_agent_*` / `sk_machine_*` / JWT / PEM key / AWS AKIA / DB URL (含密码位) 完整字面
+- **允**: `sk_agent_<redacted>` / `sk_machine_<redacted>` shape · 只保留 prefix
+- **误 paste 处理**: 立即 DM credential owner 触发 rotate
+
+### §六 · DoD self-check (dod v4.3 铁律 16 项)
+
+- [x] #1 密钥/凭证 zero (audit pass · 12 候选全 env-var/runtime-storage · zero literal @ `7eb47264` byte-match)
+- [x] #2 Phase 0 清理独占 (zero 与开发 Agent 并行)
+- [x] #3 事实链 pin (§一 5-domain grep P1-P6 · zero hit)
+- [x] #4 30-cleanup-log 章节 paste-in landed (本 §Task-22 · 教训 #14 兑现)
+- [x] #5 zero test 触 (docs-only zero code change)
+- [x] #6 PG SELECT-only (N/A · docs-only)
+- [x] #7 SSH read-only (N/A · docs-only · workspace + git local + gh CLI only)
+- [x] #8 Path C HOLD (zero 触 · docs/refactor/ 层)
+- [x] #9 Path D 永不动 (§四 交叉核 pass)
+- [x] #10-#13 v4.1 累积 (pass)
+- [x] #14 multi-stage verify (docs-only · zero tsc/lint delta · CI 全 GREEN gate)
+- [x] #15 test 层 grep (docs-only · N/A)
+- [x] #16 **zero package.json 触碰** (自适应 pass · lesson-16 v1.0 seal 承接第 8 例 apply)
+
+### §七 · 副签路由 pin (Orch aggregate v24 §二)
+
+| # | 副签 | agent | scope |
+|---|---|---|---|
+| 主 | Cleanup | 本 batch 起源 · workspace v0.1 → doc paste-in | audit trail 层留痕 |
+| 副 1 | Research | §S3 audit trail 一致性 · 5-domain grep pattern verify | pre-merge |
+| 副 2 | QADocs | §16 dod v4.3 lesson-16 v1.0 seal 承接第 8 例 apply | pre-merge |
+| 副 3 | DP | §D4 zero-touch (backend/frontend/scripts/contracts zero code) | pre-merge |
+
+### §八 · 免签窗口范式统计位 (十五连胜 8-22 candidate)
+
+- Cleanup 主签 landed 累计: #78 BlackSwan β · #91 C-S2 · #92 C-S1 · #93 Path B · #97 R2-A · #99 R2-A doc · #102 R2-B code · #104 R2-B doc · #107 R2-06 delete · #109 R3-C delete (十例)
+- **Task #22 candidate (本 PR)**: **Cleanup 主签第 11 例 candidate · 十五连胜 8-22 first-choice**
+
+### §九 · 引用锚
+
+- Cleanup workspace `notes/phase-0-secret-governance-prep.md` v0.1 (2026-07-08 23:45)
+- Orch aggregate v24 §一 Fork A APPROVE + §二 pre-grant #8 armed
+- 教训 #14 workspace preview → landing paste-in 范式
+- lesson-16 v1.0 seal (dod v4.3 §16 lesson-16 承接第 8 例 apply candidate)
+- `docs/refactor/23-protect-list.md` v1 Path D 权威锚
+- owner msg=b8af5127 完全掌控令 v2 · msg=210d262d 铁律强化 · msg=df3a0aae SSH executive 令 v3
