@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { logger } from '../utils/logger';
+import { randHex4 } from '../utils/randomHex';
 import { DataSourceHealthService } from '../data/services/DataSourceHealthService';
 import { AIStockAnalysisReport } from '../models/AIStockAnalysisReport';
 import { Stock } from '../models/Stock';
@@ -401,9 +402,7 @@ export function buildReportId(stockCode: string, now: Date = new Date()): string
   const hh = String(now.getUTCHours()).padStart(2, '0');
   const mm = String(now.getUTCMinutes()).padStart(2, '0');
   const ss = String(now.getUTCSeconds()).padStart(2, '0');
-  const rand = Math.floor(Math.random() * 0x10000)
-    .toString(16)
-    .padStart(4, '0');
+  const rand = randHex4();
   return `AI-${short}-${y}${m}${d}${hh}${mm}${ss}-${rand}`;
 }
 
