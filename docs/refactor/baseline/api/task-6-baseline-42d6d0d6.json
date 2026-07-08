@@ -1,0 +1,57 @@
+{
+  "generated_at": "2026-07-08",
+  "sha_lock": "42d6d0d6",
+  "sha_lock_full_ref": "task-6 rebased onto main HEAD 42d6d0d6 (34 PRs · after PR #102 Batch R2-B react-query removal landed · doc-only + frontend-only advance · zero backend layer conflict) · prior rebase at 6d3d831d (32 PRs · after PR #100 §D4.G2 Path C) · initial CREATE at 93c94890 (PR #99) · rebase per lesson-9 SHA-lock rebase-on-main SOP · S9-A escalation 3rd example (Orch fallback approve msg=4b2d59f1)",
+  "policy": {
+    "lint_rules": [
+      "L1_zero_orphan",
+      "L2_verb_narrow",
+      "L3_auth_sensitive",
+      "L4_kebab_case",
+      "L5_async_wrap",
+      "L6_field_leak",
+      "L7_rate_limit"
+    ],
+    "l5_warning_only": true,
+    "l7_warning_only": true,
+    "max_hard_fail_entries": 0
+  },
+  "entries": [],
+  "burndown_history": [
+    {
+      "date": "2026-07-08",
+      "sha": "50ae249e",
+      "action": "initial landing base ref @ pre-CREATE",
+      "hard_fail_count": 0,
+      "l5_warnings": "TBD (baseline warning-only)",
+      "l7_warnings": "TBD (baseline warning-only)"
+    },
+    {
+      "date": "2026-07-08",
+      "sha": "6d3d831d",
+      "action": "rebased onto main post PR #100 §D4.G2 Path C landing (SHA-lock rename per lesson-9)",
+      "hard_fail_count": 0,
+      "l5_warnings": "unchanged",
+      "l7_warnings": "unchanged"
+    },
+    {
+      "date": "2026-07-08",
+      "sha": "42d6d0d6",
+      "action": "re-rebased onto main post PR #103 (doc-only α upgrade) + PR #102 (frontend-only react-query removal) landing · zero merge conflict · S9-A escalation 3rd example Orch fallback approve",
+      "hard_fail_count": 0,
+      "l5_warnings": "unchanged",
+      "l7_warnings": "unchanged"
+    }
+  ],
+  "unique_key_note": "unique_key = file:rule:violation_slug · L5/L7 warning · L1-L4/L6 hard fail",
+  "route_inventory_pin": {
+    "api_routes_ts_count": 27,
+    "live_routes_ts_count": 2,
+    "total_endpoints": 311,
+    "sensitive_routes_l3": [
+      "paperTrading", "quant", "settings", "task", "liveTrading", "bridge",
+      "risk", "riskAlert", "portfolio", "journal", "review", "userFeedback"
+    ],
+    "rate_limit_sensitive_l7": ["paperTrading", "quant", "liveTrading", "bridge"]
+  }
+}
