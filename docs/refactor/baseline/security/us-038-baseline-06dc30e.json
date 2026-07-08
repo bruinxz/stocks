@@ -1,0 +1,120 @@
+{
+  "$schema": "us-038-baseline.v1",
+  "adr": "docs/refactor/adr/0002-us-038-lint.md",
+  "adr_section": "§2.2.1 v1.2.1 · Baseline 允例 + 反蔓延门禁 (Path C) · v1.4.1 (d.3) AST-aligned pattern",
+  "rule": "§No-Math-Random-US-038",
+  "sha_lock": "06dc30e",
+  "sha_lock_full_ref": "main @ 06dc30e (PR #79 MERGED · Task #35 SeededRandom utils 层通用位 + M-1 直修红线)",
+  "policy": "反蔓延门禁 · baseline whitelist + drift alarm · 新增命中即 fail · baseline 内命中 warn 但不阻塞 · 只减不增 · 大小上限 = 13 (Task #36 冻结 SHA 时点条目数 · 含 M-4/M-5 utils/middlewares 承接位)",
+  "authority_anchor_primary": "docs/refactor/adr/0002-us-038-lint.md §2.2.1 (Orchestrator 独占起草 · Path C)",
+  "authority_anchor_reference": "backend/tests/quality/test_no_math_random_us_038_rule.test.ts (QADocs 独占 test owner)",
+  "grep_pattern_ast_aligned": "Math\\.random\\(",
+  "grep_pattern_ast_aligned_note": "v1.4.1 (d.3) 教训 · CallExpression AST-aligned · 门禁真值 = live call-syntax (13) · raw grep 含 comment/note 引用 (14 = 13 + MarketController:117 comment 承接位)",
+  "category_enum_v1_2": [
+    "ID_GENERATION",
+    "NONCE",
+    "JITTER_BACKOFF",
+    "UPLOAD_FILENAME",
+    "WEBSOCKET_CLIENTID"
+  ],
+  "replacement_api": [
+    "crypto.randomUUID()",
+    "crypto.randomBytes(N).toString('hex')",
+    "new SeededRandom(seed).next() (utils/SeededRandom · Task #35 landed)"
+  ],
+  "unique_key_note": "联合主键 (file, line, sha256_of_line) 三元组 · 4 场 sha256 collide (DailyTradingDigest:759 + EnhancedTradingJournal:865 + RealtimeAlertDispatcher:635 + WeeklyReviewReport:2198 全 `const n = Math.floor(Math.random() * 0xffff);`) · (file, line) 独立 · 门禁 grep 可分辨",
+  "burndown_target": "13 → 0 · QADocs 侧 CHANGELOG 追踪 · 后续 direct fix 通过 utils/SeededRandom 或 crypto API 逐一消除",
+  "entries": [
+    {
+      "file": "backend/src/data/services/LocalDataStore.ts",
+      "line": 398,
+      "sha256_of_line": "430332bdf342d42ad62cfab391f0ea98c020e5c223f712cd3062eb09f5016005",
+      "category": "ID_GENERATION",
+      "note": "favorite.id 生成 · Math.random().toString(36).substring(2,15)"
+    },
+    {
+      "file": "backend/src/data/sources/CombinedDataSource.ts",
+      "line": 225,
+      "sha256_of_line": "5d837e0244ba42dfc3436df26e46eb244c9be66a42b7b5df9f8b72d298d17f5c",
+      "category": "JITTER_BACKOFF",
+      "note": "重试延迟 jitter · Math.random() * 0.3 * delay"
+    },
+    {
+      "file": "backend/src/middlewares/upload.ts",
+      "line": 14,
+      "sha256_of_line": "dd96791228ea9eeafecd1a3f6e713b4db0b8c7e64aea5ac046d109f44bd6211b",
+      "category": "UPLOAD_FILENAME",
+      "note": "上传文件唯一后缀 · Date.now() + Math.round(Math.random() * 1e9)"
+    },
+    {
+      "file": "backend/src/middlewares/uploadFeedback.ts",
+      "line": 40,
+      "sha256_of_line": "cd94adc2d36faf383af22921951ffae6f6f024cca7031b41a3f782650f339529",
+      "category": "UPLOAD_FILENAME",
+      "note": "M-5 · 反馈上传文件名唯一后缀 · `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`"
+    },
+    {
+      "file": "backend/src/realtime/alertsWebSocketServer.ts",
+      "line": 226,
+      "sha256_of_line": "82984c0ea5cd8e7631e9879b9140c41c8df67a23839e15a98a50e3281b849a3d",
+      "category": "WEBSOCKET_CLIENTID",
+      "note": "WebSocket clientId · Math.random() * 0xffff"
+    },
+    {
+      "file": "backend/src/services/AIAdvisorService.ts",
+      "line": 404,
+      "sha256_of_line": "d939470a05f5cd2c9328c9eb83ec75b00cf1678c9509415c0a8de1901fbcbda5",
+      "category": "ID_GENERATION",
+      "note": "rand hex ID · Math.floor(Math.random() * 0x10000)"
+    },
+    {
+      "file": "backend/src/services/DailyTradingDigestService.ts",
+      "line": 759,
+      "sha256_of_line": "e23d44ae14576a5ce9dbba041726e6986f9263cecba1f43322045681a0e8c94a",
+      "category": "ID_GENERATION",
+      "note": "randHex4() helper · Math.floor(Math.random() * 0xffff)"
+    },
+    {
+      "file": "backend/src/services/EnhancedTradingJournalService.ts",
+      "line": 865,
+      "sha256_of_line": "e23d44ae14576a5ce9dbba041726e6986f9263cecba1f43322045681a0e8c94a",
+      "category": "ID_GENERATION",
+      "note": "randHex4() helper · Math.floor(Math.random() * 0xffff)"
+    },
+    {
+      "file": "backend/src/services/RealtimeAlertDispatcher.ts",
+      "line": 635,
+      "sha256_of_line": "e23d44ae14576a5ce9dbba041726e6986f9263cecba1f43322045681a0e8c94a",
+      "category": "ID_GENERATION",
+      "note": "randHex4() helper · Math.floor(Math.random() * 0xffff)"
+    },
+    {
+      "file": "backend/src/services/WeChatOAClient.ts",
+      "line": 211,
+      "sha256_of_line": "6fda20484356c45a231552c9017b5cd543c91c24296af44a56d3c7bbbbcb4114",
+      "category": "NONCE",
+      "note": "微信 OA nonceStr · chars[Math.floor(Math.random() * chars.length)]"
+    },
+    {
+      "file": "backend/src/services/WeChatOAService.ts",
+      "line": 255,
+      "sha256_of_line": "ea3d11efc027b0cd877417e125265c97f59c7b1113a9eec76e6cdb75cac1cd78",
+      "category": "NONCE",
+      "note": "微信 OA rand · Math.floor(Math.random() * 0x10000)"
+    },
+    {
+      "file": "backend/src/services/WeeklyReviewReportService.ts",
+      "line": 2198,
+      "sha256_of_line": "e23d44ae14576a5ce9dbba041726e6986f9263cecba1f43322045681a0e8c94a",
+      "category": "ID_GENERATION",
+      "note": "randHex4() helper · Math.floor(Math.random() * 0xffff)"
+    },
+    {
+      "file": "backend/src/utils/redisLock.ts",
+      "line": 59,
+      "sha256_of_line": "9dbd0b07b34a0d7b2d99b67bcc7cfedc24d64f38724f2fddb5717bccb179bcd7",
+      "category": "ID_GENERATION",
+      "note": "M-4 · Redis 分布式锁 lockValue · `lock:${Date.now()}:${Math.random().toString(36).substr(2, 9)}` · SET NX 保证唯一性 · Math.random 只降碰撞概率"
+    }
+  ]
+}
