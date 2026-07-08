@@ -18,6 +18,7 @@
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { ensureUploadsRuntime, getUploadsRoot } from '../utils/runtimePaths';
 
 ensureUploadsRuntime();
@@ -37,7 +38,7 @@ const feedbackStorage = multer.diskStorage({
   },
   filename: function (_req, file, cb) {
     const ext = path.extname(file.originalname || '') || '.bin';
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+    const unique = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
     cb(null, unique);
   },
 });
