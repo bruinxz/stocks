@@ -662,18 +662,33 @@ V0：Value **0.40** / Quality **0.30** / LowVol **0.30** / Momentum **0.0**（sh
     - (c) `npx ts-node --transpile-only <file>` 本地 verify exit=0（起草即跑 · 不 land 未跑测）
   - **audit trail 意义**：跨层 SHA-lock test 是否真跑 = 工程质量事件 · 记录本 §附录 · 事件链完整闭合 · 未来 test 起草纪律强制引本条
 
-- v1.3（2026-07-08 T+3.5）· 事件位追加 · **Task #29 US-038 实机跑揭源 11 处生产代码违反 · Path C 采纳事件**：
-  - **事件**：QADocs Task #29 `test_no_math_random_us_038_rule.test.ts` v0 draft rewrite 为 IIFE 后实机跑（SHA `19c5fed`）· 4 断言 3 pass / 1 fail · 断言 B 命中 **11 处** backend/src 生产代码 `Math.random()` 调用
-  - **11 处清单**（QADocs escalation msg=f223ec87 提供）：`LocalDataStore.ts:398` · `CombinedDataSource.ts:225` · `middlewares/upload.ts:14` · `alertsWebSocketServer.ts:226` · `AIAdvisorService.ts:404` · `DailyTradingDigestService.ts:759` · `EnhancedTradingJournalService.ts:865` · `RealtimeAlertDispatcher.ts:635` · `WeChatOAClient.ts:211` · `WeChatOAService.ts:255` · `WeeklyReviewReportService.ts:2198`
-  - **分类**：全部为 ID / nonce / jitter / 上传 filename / WebSocket clientId 场景 · **无一位于 backtest / 因子引擎 / satellite slot / regime 路径**
-  - **裁决**（Orchestrator msg=0a347004 §一）：采纳 Path C（baseline whitelist + 反蔓延门禁）· 理由 3 条：
+- v1.3（2026-07-08 T+3.5）· 事件位追加 · **Task #29 US-038 实机跑揭源 16 处生产代码违反 · α-strict 采纳事件 · v1.3.1 三方复核事实核修正**：
+  - **事件**：QADocs Task #29 `test_no_math_random_us_038_rule.test.ts` v0 draft rewrite 为 IIFE 后实机跑（SHA `19c5fed`）· 4 断言 3 pass / 1 fail · 断言 B 命中 backend/src 生产代码 `Math.random()` 调用
+  - **v1.3 首报 11 处 · v1.3.1 三方独立 grep 复核揭 16 处**（DataPipeline msg=71fbd3d1 · QADocs msg=e8d84a50 · Strategy msg=cc445895）· 排除 3 注释锚（MarketController:117 // · BayesianOptimizer:31/169 /* · MonteCarloStressTest:48 /*）后 live 生产命中 16 处
+  - **裁决**（Orchestrator msg=0a347004 §一 + msg=165216d0 §二 α-strict 终裁）：**3 处直修红线 + 13 处入 baseline · 5 值枚举维持**
+  - **3 处直修红线**（不入 baseline · 永不入豁免）：
+    - M-1 `backend/src/quant/backtest/internal/QuantBacktestService.ts:665` groupId label · Task #35 Strategy 承接 · `crypto.randomBytes(4).toString('hex')`
+    - M-2 `backend/src/services/research/factor-discovery.ts:197` rng default · Task #36 QADocs Task #29 Path C PR 同批 burndown · SeededRandom default
+    - M-3 `backend/src/services/execution/rl-execution.ts:122` rng default · Task #36 同批 · SeededRandom default（li-yiming "资金链路"红线相邻）
+  - **13 处入 baseline 存量豁免**（原 11 处 f223ec87 清单 + M-4 `backend/src/utils/redisLock.ts:59` `ID_GENERATION` + M-5 `backend/src/middlewares/uploadFeedback.ts:40` `UPLOAD_FILENAME`）· SHA-lock 前移 `19c5fed` → **`a2a9300`**
+  - **schema 联合主键 (file, line, sha256_of_line) 三元组去重**（DataPipeline msg=c5aa4e98 §三 揭 4 处同 sha256 碰撞位）
+  - **α-strict 采纳理由 3 条**：
     1. 与 gitleaks baseline (Task #30) 同款范式 · CI 门禁一致性
     2. 不阻塞 M2 独占窗口 · 保 Cleanup BlackSwan β / Strategy Task #12 v2 副签窗口
-    3. 存量债务显性化 + 反蔓延 · baseline 大小 11 → 0 是可视化 KPI
-  - **落地**：ADR-0002 §2.2.1 v1.2 增补 · `docs/refactor/baseline/security/us-038-baseline-<sha>.json` · schema `{file, line, sha256_of_line, category}` · category 5 值枚举（`ID_GENERATION` / `NONCE` / `JITTER_BACKOFF` / `UPLOAD_FILENAME` / `WEBSOCKET_CLIENTID`）
+    3. 存量债务显性化 + 反蔓延 · baseline 大小 13 → 0 是可视化 KPI
   - **只减不增**：baseline 只能通过 burndown PR 缩减 · 大小上限 = 冻结 SHA 时点条目数
-  - **audit trail 意义**：US-038 硬门禁从"全禁"演化为"存量豁免 + 反蔓延" · 需完整事件链解释豁免依据 · 未来 burndown PR 引本条
+  - **audit trail 意义**：US-038 硬门禁从"全禁"演化为"存量豁免 + 反蔓延 + 敏感路径直修红线" · 需完整事件链解释豁免依据 · 未来 burndown PR 引本条
+
+- v1.4（2026-07-08 T+3.5·11:52）· 事件位追加 · **PR #77 v1.3 声明性数值事实核偏差事件 · 教训 (d) 声明性数值必先 grep 复核**：
+  - **事件**：PR #77 v1.3 事件位声明"11 处 · 无一位于 backtest / 因子引擎"· 三方副签（DataPipeline msg=71fbd3d1 · QADocs msg=e8d84a50 · Strategy msg=cc445895）独立 grep 复核揭 16 处实测 · 5 处未列 · M-1 直接位于 backtest 路径 · 声明伪
+  - **根因**：Orchestrator §附录起草时直引 QADocs escalation msg=f223ec87 声明的"11 处" · 未做全域 grep 事实核（v1.2 教训 (c) "起草即 verify" 之延伸）· QADocs escalation 时可能排除路径或 caller 语义过滤误剔 5 处
+  - **教训 (d) · 声明性数值必先 grep 复核 · 双重责任门禁**：
+    - (d.1) **起草侧**（Orchestrator / any ADR owner 起草 ADR / 附录）：引"N 处"类断言前 · 必先 `git grep -c <pattern> <SHA> -- <path>` 命令 + 输出锚点入 CHANGELOG 引证
+    - (d.2) **绝对否定核**（副签 / 独占裁）：声明"无一位于 X 路径"类绝对否定 · 必配 `git grep -l <pattern> <SHA> -- <path>` 反证空集 · 数字不一致即报 BLOCK
+  - **入位**：Orchestrator DoD + QADocs DoD + Strategy DoD + DataPipeline DoD 四方共编（Strategy `notes/dod-self-check-list.md` v2 教训 #4/#5 · QADocs v1.3 5.a-5.c · DataPipeline v1.4 · Orchestrator MEMORY.md DoD 条 (d)）
+  - **副功效**：本 blocker 在 doc-only PR #77 阶段前置抓 · 未进入 Task #29 baseline JSON PR · 避免下游 baseline 数字连锁错误 · **验证 doc-only PR 副签面价值** · SOP 7 步 Step 3"绝对否定"类事实核硬门禁位建立
+  - **audit trail 意义**：跨消息声明性数值传递纪律 = 工程质量事件 · 记录本 §附录 · 事件链完整闭合 · 未来 ADR / 附录起草纪律强制引本条
 
 ---
 
-**End of ADR-0001 §附录追加块 v1.3**
+**End of ADR-0001 §附录追加块 v1.4**
