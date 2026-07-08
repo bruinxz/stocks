@@ -229,3 +229,71 @@
   - **R2-05** (`backend/src/models/ETFCreationRedemption.ts`): HOLD retain confirmed (DP msg=a727ec79 · 第八例反例首入)
   - **R2-02** (`backend/src/services/integration/production-bridges.ts`): HOLD retain (待 sprint-7-18 smoke 60 模块独立生命周期决策)
   - **R2-06** (`backend/backup_data.json` 5,876B): armed owner Q4 batch 决策窗口
+
+---
+
+## 批次 R2-B · Round-2 frontend 死依赖清理 (react-query removal) (2026-07-08)
+
+- **PR**: [#102](https://github.com/bruinxz/stocks/pull/102) · squash MERGED @ `42d6d0d6` · 23:18
+- **Base**: `6d3d831d` (32 PRs · post PR #100 DP Loader landed · rebased)
+- **Diff**: 2 files (frontend/package.json -1 line + frontend/package-lock.json full-regen 240+/155-)
+- **Branch**: `chore/cleanup-r2-b-react-query-removal` (squashed · deleted post-merge)
+- **Commit stack**:
+  1. `ad2002f` · `frontend/package.json` L29 · remove `"react-query": "^3.39.3"` (single line)
+  2. `b5ad0a7` · `frontend/package-lock.json` full-regen via `npm install` under node 20 (CI node-version match · yaml@2.9.0 transitive restored)
+
+- **依据**:
+  - Orch dispatch msg=09551306 §六 (R2-B redirect · frontend build tarballs → react-query removal)
+  - `notes/cleanup-r2-b-react-query-removal-prep.md` v0.1 (grep 5-domain 0 命中 · Path μ §5 + Path ν §1 25-service sweep 一致)
+
+- **事实链 (grep verified 5-domain scope)**:
+  - `frontend/src/**` · **0 命中** ✅ (Frontend Path μ §5 + Path ν §1 25-service sweep confirm)
+  - `backend/src/**` · 0 命中 ✅
+  - `scripts/**` · 0 命中 ✅
+  - `contracts/**` · 0 命中 ✅
+  - `docs/**` · 1 命中 (`docs/refactor/21-current-audit.md` audit reference · retain 权威锚 · Independence §5.4 独立设计层)
+
+- **CI 二次修复历程 (dod v4.3 铁律 16 项 反例首入 co-owned closure)**:
+  - **首次 commit `ad2002f`** · `npm install --package-lock-only` 生成 lock · CI Frontend job FAIL `Missing: yaml@2.9.0 from lock file`
+  - **Research msg=95dd65aa BLOCK** (23:09) · §S3.4 + Independence + Layer-Separation pre-pass 100% ✅ · CI RED 根因 pin (lock 缺 transitive) · §四 next_action_owner @Cleanup SLA T+5min · §五 dod v4.3 §16 armed candidate
+  - **二次 commit `b5ad0a7`** (23:12) · `nvm use 20` + `rm -rf node_modules package-lock.json && npm install --no-audit --no-fund` · 240+/155- · added 1619 packages · CI GREEN
+  - **教训 #16 formalize** (`notes/lesson-16-package-lock-full-regen.md` v0.1 · 5-owner co-owned):
+    - Cleanup 起源 (msg=74d90eff §二 · `--package-lock-only` 语义偏差反例首入)
+    - Research 副签发现 (msg=95dd65aa §五 · dod v4.3 §16 首入 candidate 提出)
+    - Orch 独裁 formalize (msg=077dd215 §五 · dod v4.2 → v4.3 · 15 → 16 项)
+    - QADocs formalize 承接 (`notes/dod-self-check-list.md` v4.3 §16 落地)
+    - DP endorse (msg=a911de70 §六 · Path C.2 future npm 依赖 verify)
+    - Frontend endorse (msg=3f0f19ba §二 · workspace 层 endorse · Path π §1.2 越界豁免 co-sign)
+
+- **副签路由 (免签窗口第 14 例 pre-grant · 4-owner ledger)**:
+  - Cleanup 主 (CREATE · 二 commit stack `ad2002f` + `b5ad0a7`)
+  - **Frontend 副 PRE-GRANT PASS** msg=5dc69a8f (5-point verify · frontend/** glob 越界豁免 dependency-layer only · lock 全 regen co-sign refresh msg=6cd7a8e8 §二 PASS)
+  - **Research 副 BLOCK → upgrade PASS** (msg=95dd65aa 修复条件 §三 100% 兑现 · post-CI GREEN upgrade retro)
+  - QADocs 副 (dod v4.3 §16 formalize 承接)
+  - Orch owner-review (msg=077dd215 §五 dod v4.3 独裁 armed · self-merge admin squash approve)
+
+- **影响面**:
+  - 删 `frontend/package.json` L29 单行 react-query 直接依赖
+  - 重生 `frontend/package-lock.json` · react-query 及其闭包 drop · yaml@2.9.0 等 transitive 完整恢复
+  - `npx tsc --noEmit` 基线 93 → 93 error 零 delta (全 pre-existing @types/jest 未安装 · 与 react-query 无关)
+  - `frontend/tests/**` grep 0 命中 (dod v4.2 铁律 15 项 test 层 verify)
+  - CI 全 GREEN: Frontend check 2m37s / 2m28s · Backend check 6m4s · Docker/weak-secrets/Detect PASS
+  - Independence v1.1 §5 4 档 zero drift (档 1 数据源 / 档 2 策略因子 / 档 3 Frontend UI 依赖层 Frontend co-sign / 档 4 契约层)
+  - Layer-Separation R1-R8 zero cross-boundary (`frontend/package.json` 依赖层 · zero `frontend/src/**` 代码触)
+
+- **DoD 自检**:
+  - [x] tsc clean (基线 zero delta)
+  - [x] 保护 glob 零触碰 (Path D 永不动)
+  - [x] CI 5 checks CLEAN (Frontend 2m37s + Backend 6m4s + Docker 11s + weak-secrets 14s + Detect 9s)
+  - [x] mergeStateStatus=CLEAN · MERGEABLE
+  - [x] 5-owner 副签汇聚完形 (Cleanup 主 + Frontend + Research upgrade + QADocs + Orch)
+  - [x] dod v4.3 铁律 16 项 反例首入 co-owned closure landed
+
+- **免签窗口范式统计位** (七连胜完形第 14 · 8-14 landing): 23:18 landed · **§D4.G2 shape 五方语义承接完形 + Batch R2-B 全链闭环 双一里程碑** · Cleanup 主签 landed 第 6 例 (前 5: #78 BlackSwan β · #91 C-S2 · #92 C-S1 · #93 Path B · #97 R2-A · #99 R2-A log)
+
+- **主 CI 修复 SOP formalize** (Cleanup 承接位 · post-landing 触发):
+  - 教训 #16 v0.1 `notes/lesson-16-package-lock-full-regen.md` SOP 4 步:
+    1. `unset npm_config_prefix` + `nvm use 20` (CI node-version match)
+    2. `rm -rf node_modules package-lock.json && npm install --no-audit --no-fund` (禁 `--package-lock-only`)
+    3. verify diff: 移除依赖 grep=0 + 抽查 3-5 transitive dep 命中
+    4. commit + push + CI verify gate (`gh pr checks <PR> --watch` GREEN 才 self-merge)
