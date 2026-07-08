@@ -136,3 +136,35 @@
 - **DoD 自检**：
   - [x] 删前 grep 复核（`BlackSwanWatchdog` source 不存在）
   - [x] 独立批次
+
+## 批次 C-BS-04 · DetectorService 整 class + comment 断链
+
+- **变更文件**：
+  1. `backend/src/services/BlackSwanDetectorService.ts` **DELETED**（446 行整文件 · Producer STUB 生产者 · `evaluateWatchdog()` 恒返 `{ alerts: [] }` · lazy-require 无外部 TS import · SchedulerService 侧引用已在 C-BS-03 删除）
+  2. `backend/src/services/BlackSwanPostmortemService.ts` · 3 处 comment 字面改（Q3=γ）：
+     - line 5 "上游 BlackSwanDetectorService (PR-011) 落到 BlackSwanEvent" → "外部写入源落到 BlackSwanEvent"
+     - line 30 fail-OPEN "(与 BlackSwanDetectorService / DbBackupService 同款)" → "(与 DbBackupService 同款)"
+     - line 52-54 SchedulerService 接入 "与 BLACK_SWAN_DETECT 的 '3,33' 错峰 10min" → "BLACK_SWAN_DETECT cron 已在 C-BS-03 批次删除 · BlackSwanEvent 读端由外部写入源承担"
+     - line 187 "与 BLACK_SWAN_DETECT 错峰 10min" → "BlackSwanEvent 读端由外部写入源承担 (C-BS-03 后)"
+     - line 437 lazy-require "(与 BlackSwanDetectorService / DbBackupService 同款)" → "(与 DbBackupService 同款)"
+  3. `backend/tests/services/black-swan-postmortem-service.test.ts:554-556` · assertion 修（Q3=γ）：
+     - 原断言 "8.3 cronRegistry 与 BLACK_SWAN_DETECT 错峰 (前者 13,43 后者 3,33)" 逻辑=同时包含 '13,43' + '3,33'
+     - 新断言 "8.3 cronRegistry BLACK_SWAN_POSTMORTEM cron (13,43 · BlackSwanEvent 读端由外部写入源承担)" 逻辑=包含 '13,43' + 不包含 '3,33'（反向验证 C-BS-03 删除结果）
+  4. `backend/src/services/BlackSwanImprovementSuggestorService.ts:64` · docstring 错峰链去起点：
+     - "3,33 detector → 13,43 postmortem → ..." → "13,43 postmortem → ..."
+  5. `backend/src/services/CounterfactualBaselineService.ts:822` · comment 断链：
+     - "(与 BlackSwanPostmortemService / BlackSwanDetectorService 同款)" → "(与 BlackSwanPostmortemService 同款)"
+- **依据**：
+  - Orchestrator v1.3 补丁清单 msg=04c6bd9e §四 · Q3=γ (Postmortem 3 comment 字面改 + Postmortem test 554-556 断言修 归 C-BS-04) + Q4 (Improvement docstring 归 C-BS-04)
+  - v1.2 冻结清单 C-BS-04 · DetectorService 整 class 删（§4 STUB 生产者 · 探测 msg=fe8020a2 § grep 全引用位揭无外部消费者）
+- **影响面**：
+  - 删 446 行 source · 生产者 STUB 结构性清除
+  - 5 处 comment/docstring/assertion 断链 · audit trail 保留 (`C-BS-03 批次删除`)
+  - Postmortem test 反向验证 registry 中 BLACK_SWAN_DETECT 已消失 · CI 门禁转为断链核
+  - tsc --noEmit 全绿
+  - QuarterlyReport zero-hit 已核 · 无同类命中
+- **DoD 自检**：
+  - [x] 独立 commit
+  - [x] tsc clean
+  - [x] 保护 glob 零触碰
+  - [x] Postmortem test 反向断言 · 与 C-BS-03 删除结果对齐

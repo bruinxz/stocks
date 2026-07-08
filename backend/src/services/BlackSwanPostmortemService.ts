@@ -2,7 +2,7 @@
  * BlackSwanPostmortemService — L4-Portfolio + Risk / US-102 [PR-013]
  * 黑天鹅事件复盘报告主入口
  *
- * 触发后 30 min 内, 把上游 BlackSwanDetectorService (PR-011) 落到 BlackSwanEvent
+ * 触发后 30 min 内, 把外部写入源落到 BlackSwanEvent
  * (PR-010) 的事件, UPSERT 一行 BlackSwanPostmortemReport (PR-012). 本 story 编排
  * 4 段生成 + 落表; 4 段中:
  *   1. event_summary           — **本 story 主入口直接填充**
@@ -27,7 +27,7 @@
  * - event_id (debug) → 仅处理指定事件 id (覆盖 lookback 范围).
  *
  * ============================================================================
- * fail-OPEN (与 BlackSwanDetectorService / DbBackupService 同款)
+ * fail-OPEN (与 DbBackupService 同款)
  * ============================================================================
  * - loadEvents throw → 整次 service 返 success=false + error: events_query_failed
  *   + 0 reports; 不让 SchedulerService cron tick 崩;
@@ -50,8 +50,8 @@
  * SchedulerService 接入
  * ============================================================================
  *   `cronRegistry.ts`: type='BLACK_SWAN_POSTMORTEM', recommendedCron='13,43 * * * *'
- *   (与 BLACK_SWAN_DETECT 的 '3,33' 错峰 10min, 让 detector 先把事件落表 → 本 service
- *   再读出来生成报告; 与 OPS-006 webhook retry '* / 5' 错峰);
+ *   (BLACK_SWAN_DETECT cron 已在 C-BS-03 批次删除 · BlackSwanEvent 读端由外部写入源承担;
+ *    与 OPS-006 webhook retry '* / 5' 错峰);
  *   `SchedulerService._executeTaskLogic`: lazy-require runBlackSwanPostmortem +
  *   getProductionPostmortemRunner, 透传 parameters.dry_run + parameters.event_id +
  *   parameters.lookback_hours.
@@ -184,7 +184,7 @@ export interface PostmortemRunner {
 // 纯函数 helpers (全 export 便于单测)
 // ============================================================================
 
-/** 默认 cron 30min 巡: 推荐 cron 表达式 (Asia/Shanghai), 与 BLACK_SWAN_DETECT 错峰 10min. */
+/** 默认 cron 30min 巡: 推荐 cron 表达式 (Asia/Shanghai). BlackSwanEvent 读端由外部写入源承担 (C-BS-03 后). */
 export const BLACK_SWAN_POSTMORTEM_RECOMMENDED_CRON = '13,43 * * * *';
 
 /** 默认 lookback 窗口 (小时). cron 30min 跑一次, 24h 余量足够覆盖任何漏跑/补跑. */
@@ -434,7 +434,7 @@ export async function runBlackSwanPostmortem(
 /**
  * createProductionPostmortemRunner — production singleton 工厂. 测试不调它.
  *
- * lazy-require 模式 (与 BlackSwanDetectorService / DbBackupService 同款): 单测脱
+ * lazy-require 模式 (与 DbBackupService 同款): 单测脱
  * DB / 脱 sequelize-typescript 走 fake runner 时, 这些 require 不触发.
  */
 export function createProductionPostmortemRunner(): PostmortemRunner {

@@ -551,9 +551,9 @@ assert(
   ''
 );
 assert(
-  '8.3 cronRegistry 与 BLACK_SWAN_DETECT 错峰 (前者 13,43 后者 3,33)',
+  '8.3 cronRegistry BLACK_SWAN_POSTMORTEM cron (13,43 · BlackSwanEvent 读端由外部写入源承担 · BLACK_SWAN_DETECT 已在 C-BS-03 批次删除)',
   REGISTRY_SRC.includes("recommendedCron: '13,43 * * * *'") &&
-    REGISTRY_SRC.includes("recommendedCron: '3,33 * * * *'"),
+    !REGISTRY_SRC.includes("recommendedCron: '3,33 * * * *'"),
   ''
 );
 assert(
