@@ -1,0 +1,20 @@
+{
+  "task": "task-52-l2-verb-hard-fail",
+  "sha_lock": "f8ae20b296927a7f7ccf647209de429588775f34",
+  "sha_lock_full_ref": "f8ae20b docs(cleanup): pin Task #22 密钥治理批 audit 结论 (Fork A doc paste-in · Orch v24 pre-grant #8) (#110)",
+  "policy": {
+    "L2_forbidden_verbs": ["head", "options", "all"],
+    "L2_allowed_verbs": ["get", "post", "put", "delete", "patch"],
+    "L2_scope": [
+      "backend/src/api/routes/**/*.routes.ts",
+      "backend/src/live-trading/routes/**/*.routes.ts"
+    ],
+    "L2_hard_fail": true,
+    "warning_grace_end_sha": "6d3d831d",
+    "exempt_trailer_syntax": "[l2-exempt: <slug>]",
+    "exempt_authority_required": ["owner", "orchestrator"]
+  },
+  "entries": [],
+  "burndown_history": ["81bc018b", "f8ae20b"],
+  "unique_key_note": "L2 verb hard-fail baseline. Task #6 PR #101 landed L2 as warning-only; Task #52 upgrades to hard-fail post 十五连胜 8-22 landing. initial entries=[] · v0 SHA-lock scan @ f8ae20b confirmed zero hit across 29 route files."
+}
