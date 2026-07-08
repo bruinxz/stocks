@@ -474,6 +474,113 @@ backend/python/akshare_helper.py::get_snowball_hot_keywords
 
 ---
 
+### 13.4 factor discovery candidate 位（Strategy §Q7 + services/research 层承接位 · Task #35 + Task #36 + PR #81 triple merged 触发）
+
+**Owner**：@Research（本节起草） · **Consumers**：@Strategy（§Q7 因子稳定性 + backtest↔execution 一致性副签 owner）+ @DataPipeline（§Layer-Separation utils 通用位副签）+ @QADocs（`test_pr_l_exception_dual_sign.test.ts` 无覆盖对齐核）
+
+**Rationale**：US-038 Path C landed 后 · `backend/src/services/research/factor-discovery.ts`（M-2 直修位 landed @ `4882b1c`）成为 factor discovery 层 canonical PRNG 消费方 · 定为 candidate 位 · **未来若触碰 §P1 factor 主 glob 或 §P3 数据契约** · 走 §13.1 / §13.2 / §13.3 PR-L 双签例外通道 · 不解除 §P1/§P3 保护
+
+**触发链**：Task #35 PR #79 @ `06dc30e`（SeededRandom 挪 utils/）+ Task #36 PR #80 @ `4882b1c`（M-2 factor-discovery 直修）+ PR #81 v1.4.1 @ `f81ed40`（教训 (d.3) doc→code 落地）triple merged → §13.4 定候补位
+
+---
+
+#### 13.4.1 candidate 路径 + 语义
+
+```
+# factor discovery 层 canonical PRNG 消费方
+backend/src/services/research/factor-discovery.ts   # M-2 直修位 (landed @ 4882b1c · Task #36)
+```
+
+**candidate 语义**：
+- 当前状态：US-038 baseline entry `factor-discovery.ts:197`（category=ID_GENERATION）**已直修消除** · zero drift proof point
+- 候补位定义：未来任何触碰 §P1 factor 主 glob（`backend/src/quant/factors/**` / `backend/src/services/factor/**`）或 §P3 数据契约（`backend/src/models/**` 六实体 + `backend/src/services/dataSources/**`）的 factor discovery 相关 PR · **必须走 §13.1 / §13.3 双签例外通道**
+- 语义边界：factor discovery service 位于 services/research 层 · 非 satellite §Q7 面 · 语义边界清晰 · 候补位不改 factors/strategies/quant/backtest 核心
+- 与 §13.1 关系：§13.1 已含 `backend/src/services/factor/FactorRegistry.ts` + `Pipeline.ts` · 本 §13.4 factor discovery **补 services/research 侧新增位** · 与 §13.1 无交集 · 独立候补条
+
+---
+
+#### 13.4.2 canonical PRNG 锚（Task #35 landed 位 · Park-Miller minstd_rand0 public domain）
+
+```
+# canonical PRNG 单向下依赖锚
+backend/src/utils/SeededRandom.ts   # Park-Miller minstd_rand0 (Park & Miller 1988 CACM 31.10 public domain · Task #35 PR #79 挪 utils/ landed @ 06dc30e)
+```
+
+**API shape 锁**：
+- `class SeededRandom { constructor(seed?: number = 42); next(): number }`
+- `next()` 返回 [0, 1) · 与 `Math.random()` 分布等价
+- module-level `defaultXxxRng = new SeededRandom()` 承接范式（Task #36 M-2/M-3 落地首例）
+
+**§13.4 引 canonical PRNG 语义**：
+- factor discovery 层若未来触碰随机数使用位 → **必用 `SeededRandom`** · 严禁 `Math.random()` / `crypto.randomBytes()`（纯随机不可回放 · 与 factor stability 语义冲突）
+- seed 可控 · CI 确定性可保 · backtest↔execution 一致性 100%（Strategy 副签核项 2/3 落地锚）
+- 消费方计数（landed 位 @ `f81ed40`）：
+  - M-2 `backend/src/services/research/factor-discovery.ts:197`（Task #36）
+  - M-3 `backend/src/services/execution/rl-execution.ts:122`（Task #36）
+  - `backend/src/quant/backtest/BayesianOptimizer.ts`（Task #35 import path update）
+  - `backend/src/quant/backtest/MonteCarloStressTest.ts`（Task #35 import path update）
+  - `backend/src/quant/backtest/PortfolioOptimizer.ts`（Task #35 import path update）
+
+---
+
+#### 13.4.3 §Layer-Separation 依赖锁（教训 #6 落地 · Strategy Task #16 workspace 教训 #6 100% 对齐）
+
+**红线**：
+```
+utils → services 单向下              # ✅ SeededRandom → factor-discovery (M-2 landed proof point)
+utils → quant/backtest 单向下         # ✅ SeededRandom → BayesianOptimizer/MonteCarlo/PortfolioOpt
+utils → services/execution 单向下     # ✅ SeededRandom → rl-execution (M-3 landed proof point)
+
+# 严禁跨层横向 import (Strategy §Q7 契约面守护红线)
+services/research → quant/backtest    # ❌ 禁 (services 侧禁反向依赖计算核)
+services/research → services/execution # ❌ 禁 (services 之间禁横向依赖)
+```
+
+**跨 PR 增量验证基准**：
+- utils/SeededRandom API shape 100% 不变（PR #79 landed 位 · 后续 PR 不改）
+- utils 消费方位（landed 计数）：Task #35 = 3 位 → Task #36 = 5 位
+- 未来 §13.4 候补位触碰时 · 消费方位增长追踪 · CI 断言位覆盖 seed 传递链
+
+**Strategy §Q7 契约面守护呼应位**：
+- factor discovery service 位于 services/research 层 · 若未来需与 backtest replay 一致注入 seed · **seed 传递必经 utils/SeededRandom** · 单向下依赖不破 · CI 断言位需覆盖 seed 传递链（QADocs `test_pr_l_exception_dual_sign.test.ts` 未来断言 5 承接位）
+
+---
+
+#### 13.4.4 US-038 baseline landed proof point 引证锚
+
+**baseline JSON landed proof point**：
+- 引：`docs/refactor/baseline/security/us-038-baseline-06dc30e.json`（Task #36 首建 · sha_lock `06dc30e` · 13 entries）
+- factor-discovery entries 位（M-2 直修前）：`backend/src/services/research/factor-discovery.ts:197`（category=ID_GENERATION）
+- **direct-fix landed proof point**：Task #36 M-2 直修消除 · zero drift 事实位
+
+**未来 §13.4 候补位触碰时 grep 校核口径**：
+- 引：v1.4.1 (d.3.3) `grep_pattern_ast_aligned` = `Math\.random\(`（CallExpression AST-aligned · doc→code 首例）
+- 门禁真值 = live call-syntax count（不含 comment / word-boundary）
+- baseline JSON schema v1 machine-readable 承接：任何 factor discovery 相关 PR 触碰 US-038 baseline · 必读 JSON 对齐 · 无需 re-trace ADR 事件链
+
+---
+
+#### 13.4.5 momentum_reversal 独立性红线呼应位（§13.1 第 1 项 glob co-守）
+
+**独立性红线守**：
+- `backend/src/backtest/strategies/momentum_reversal/**` A 股独立设计（Barroso 2015 美股结论禁搬）
+- 抽象层区分：PRNG 属**基础设施层** · momentum_reversal 属**因子设计层** · 两层独立 · zero 交集
+- §13.4 factor discovery candidate 位 = 通用 PRNG 消费方 · 不干涉 momentum_reversal 独立性红线
+- 引 ADR-0001 §附录 §Independence-Flexibility-Footnote（M-Draft PR #69 SHA `47e8dd1`）· 3 档改造范式不适用于 PRNG 基础设施
+
+---
+
+**承接位**：
+- @Strategy 6 条起草口径 100% ACK + 4 项副签核项预锁（§Q7 无破 + factor↔backtest 一致性 + backtest↔execution 一致性 + §Layer-Separation 单向下核）
+- @DataPipeline §Layer-Separation utils 通用位副签承接确认（跨 PR 增量验证基准位）
+- Task #35 PR #79 @ `06dc30e`（SeededRandom 挪 utils/）+ Task #36 PR #80 @ `4882b1c`（M-2 factor-discovery 直修）+ PR #81 v1.4.1 @ `f81ed40`（教训 (d.3) doc→code 落地）triple merged 触发链
+
+**排除项**：本 §13.4 candidate 位在 §P1 主 glob 未直接覆盖（`services/research/**` 未列 §P1 · factor discovery 属新增位）· 本节声明"未来触碰 §P1 factor 主 glob 或 §P3 数据契约 → 走 PR-L 双签通道"位 · 不解除 §P1/§P3 保护 · 命中即触发 §13.3 双签硬门禁
+
+**QA 承接位**：§13.4 引 §13.3 4 断言 · **无覆盖扩增** · 若未来 §13.4 候补位触碰 §P1 factor 主 glob → §13.3 断言 1（PR body regex `/PR-L\s+双签/`）自动覆盖 · Task #16 `test_deprecated_data_source_no_import.test.ts` 与本 §13.4 无重叠
+
+---
+
 **Cross-references**：
 - @Strategy msg=509fbf79 · §13.1 4 项 glob 承接
 - @DataPipeline msg=76e3bcbd + msg=f54b383b · §13.2 净化生产验证 + BlackSwan β 揭源
