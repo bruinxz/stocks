@@ -1969,7 +1969,7 @@ export class AnnouncementNLPService {
   }
 
   /**
-   * 按日期闭区间遍历 syncDate (与 SnowballHotKeywordSyncService 同款).
+   * 按日期闭区间遍历 syncDate.
    */
   async syncRange(
     start: string,

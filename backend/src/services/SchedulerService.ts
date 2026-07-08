@@ -33,7 +33,7 @@ import { industryConcentrationGuard } from '../portfolio/risk/IndustryConcentrat
 import { morningRiskCheckupService } from '../portfolio/risk/MorningRiskCheckupService';
 import { executeGuardSells } from '../portfolio/risk/GuardSellExecutor';
 // Batch AB (2026-06-18): 行业 / 题材 / 资金面数据 sync — 之前 cron 完全没注册
-// 让 industry_flows / limit_up_stocks / northbound_holdings / snowball_keywords /
+// 让 industry_flows / limit_up_stocks / northbound_holdings /
 // stock_sentiments 表全部停在旧日期 → 下游因子 / 策略 / TradingAgents prompt 全失明.
 import { industrySyncService } from '../data/services/IndustrySyncService';
 import { limitUpSyncService } from '../data/services/LimitUpSyncService';
@@ -72,10 +72,8 @@ const quantStrategyParamVersionService = {
   upsertGridSearchCandidates: async (_?: any): Promise<any> => ({ upserted: 0 }),
 };
 const restrictedShareWatchdog = { run: async (_?: any): Promise<any> => ({ alerts: [] }), evaluateAfterOpen: async (_?: any): Promise<any> => ({ alerts: [] }) };
-const snowballHotKeywordSyncService = { syncLatest: async (_?: any): Promise<any> => ({ synced: 0 }), syncDate: async (_?: any): Promise<any> => ({ synced: 0 }) };
 const QuantSignal = { findAll: async (_?: any): Promise<any[]> => [] };
 const StrategyTcaMultiplier = { upsert: async (_?: any): Promise<any> => {} };
-const qaStatAggregator = { run: async (_?: any): Promise<any> => ({ stats: [] }), aggregateForStocks: async (_?: any, _opts?: any): Promise<any> => ({ stats: [] }) };
 
 type TaskRunStatus = 'SUCCESS' | 'FAILED' | 'RUNNING';
 type TaskExecutionLogLike = TaskExecutionLog | null;
@@ -2554,30 +2552,6 @@ class SchedulerService {
         } catch (e: any) {
           logger.warn(`[northbound-sync] staleness check failed: ${e?.message || e}`);
         }
-      } else if (task.type === 'SNOWBALL_HOT_KEYWORD_SYNC') {
-        // Batch AB (2026-06-18): 雪球热门话题 sync (AKShare stock_hot_follow_xq).
-        // 当日热点关键词 + 关联个股, UI / sentiment 模块用. 推荐 cron: '0 16 * * 1-5'.
-        const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
-        const date = parameters.date || today;
-        const result = await snowballHotKeywordSyncService.syncDate(date);
-        await this.safeUpdateExecutionLog(executionLog, {
-          total_items: result.fetched || 0,
-          success_count: result.upserted || 0,
-          failed_count: result.error ? 1 : 0,
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          error_message: result.error || null,
-          result_summary: {
-            scenario: 'snowball_hot_keyword_sync',
-            date,
-            fetched: result.fetched,
-            upserted: result.upserted,
-            new_keywords_count: result.new_keywords_count,
-          },
-        });
-        logger.info(
-          `[snowball-keyword-sync] ${date} 完成: fetched=${result.fetched} 新进=${result.new_keywords_count}`
-        );
       } else if (task.type === 'STRATEGY_KILL_SWITCH_CHECK') {
         // 批5: StrategyKillSwitchMonitor 已下线 — 保留 task 分支避免 DB 存量任务报错,
         // 直接标记 COMPLETED 空跑 (不再评估 / 禁用任何策略).
@@ -4379,75 +4353,6 @@ class SchedulerService {
           },
         });
         logger.info(`[PAPER_TRADING_DAILY_SNAPSHOT] ${ok}/${portfolios.length} OK`);
-      } else if (task.type === 'WEEKLY_QA_STAT_AGGREGATE') {
-        // US-038 QA-002 (2026-06-19): 周一 02:00 (≤ AC 04:00 截止) 聚合上周投资者
-        // 问答 → east_money_qa_stats. parameters.stock_codes 显式 list 或 fallback
-        // 取 PaperTradingPosition 当前持仓 + 关注表 union (避免空跑). fail-OPEN: 单股
-        // 失败 continue_on_error=true 不阻塞 batch.
-        /* eslint-disable @typescript-eslint/no-var-requires */
-        /* eslint-enable @typescript-eslint/no-var-requires */
-        const explicitCodes: string[] = Array.isArray(parameters.stock_codes)
-          ? parameters.stock_codes.filter((s: unknown) => typeof s === 'string')
-          : [];
-        const limit = this.toPositiveInt(parameters.limit, 200, 1000);
-        const intervalMs = this.toPositiveInt(parameters.interval_ms, 500, 60000);
-        const dryRun = parameters.dry_run === true;
-        const sinceDate: string | undefined =
-          typeof parameters.since_date === 'string' ? parameters.since_date : undefined;
-        let codes: string[] = explicitCodes;
-        if (codes.length === 0) {
-          // fallback: 取当前 paper trading 持仓 union 关注表; 失败兜底空跑.
-          try {
-            /* eslint-disable @typescript-eslint/no-var-requires */
-            const { PaperTradingPosition } = require('../models/PaperTradingPosition');
-            const { FavoriteStock } = require('../models/FavoriteStock');
-            /* eslint-enable @typescript-eslint/no-var-requires */
-            const positions = await PaperTradingPosition.findAll({
-              attributes: ['stock_code'],
-              group: ['stock_code'],
-              raw: true,
-            });
-            const favorites = await FavoriteStock.findAll({
-              attributes: ['stock_code'],
-              group: ['stock_code'],
-              raw: true,
-            });
-            const set = new Set<string>();
-            for (const r of positions) if (r.stock_code) set.add(String(r.stock_code));
-            for (const r of favorites) if (r.stock_code) set.add(String(r.stock_code));
-            codes = Array.from(set).filter(c => /^\d{6}$/.test(c));
-          } catch (e: any) {
-            logger.warn(`[WEEKLY_QA_STAT_AGGREGATE] fallback codes 获取失败: ${e?.message || e}`);
-            codes = [];
-          }
-        }
-
-        const result = await qaStatAggregator.aggregateForStocks(codes, {
-          limit,
-          dry_run: dryRun,
-          since_date: sinceDate,
-          continue_on_error: true,
-          interval_ms: intervalMs,
-        });
-        await this.safeUpdateExecutionLog(executionLog, {
-          total_items: result.total_stocks,
-          completed_items: result.succeeded,
-          failed_items: result.failed,
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          error_message: null,
-          result_summary: {
-            scenario: 'weekly_qa_stat_aggregate',
-            dry_run: dryRun,
-            total_stocks: result.total_stocks,
-            succeeded: result.succeeded,
-            failed: result.failed,
-          },
-        });
-        logger.info(
-          `[WEEKLY_QA_STAT_AGGREGATE] stocks=${result.total_stocks} ok=${result.succeeded} ` +
-            `fail=${result.failed}${dryRun ? ' (dry_run)' : ''}`
-        );
       } else if (task.type === 'BLACK_SWAN_POSTMORTEM') {
         // US-102 PR-013 — 每 30min 巡最近 24h BlackSwanEvent (PR-010) → 生成
         // BlackSwanPostmortemReport (PR-012). 4 段中本 cron 只填第 1 段
@@ -5907,7 +5812,6 @@ class SchedulerService {
       'INDUSTRY_FLOW_SYNC',
       'LIMIT_UP_SYNC',
       'NORTHBOUND_SYNC',
-      'SNOWBALL_HOT_KEYWORD_SYNC',
       // Batch AH review (2026-06-18): 把 factor 计算也加入 catch-up,
       // 这样 deploy 重启或者 17:30 错过都会自动补跑. compute 比较重 (~30min),
       // 但 deploy 重启发生频率低; 加 60min 最小间隔避免短时间内反复触发.
@@ -6619,8 +6523,8 @@ class SchedulerService {
         is_active: true,
         parameters: { dry_run: false },
       },
-      // Batch AB (2026-06-18): 5 个核心行业 / 题材 / 资金面数据 sync, 之前完全没 cron
-      // 让 industry_flows / limit_up_stocks / northbound_holdings / snowball_keywords /
+      // Batch AB (2026-06-18): 核心行业 / 题材 / 资金面数据 sync, 之前完全没 cron
+      // 让 industry_flows / limit_up_stocks / northbound_holdings /
       // stock_sentiments 表全部停在旧日期 → 下游因子 / 策略 / TradingAgents prompt 全失明.
       {
         name: '行业资金流当日 sync (Batch AB)',
@@ -6646,13 +6550,6 @@ class SchedulerService {
       // PR-A (2026-06-29): SNOWBALL / STOCK_SENTIMENT / SOCIAL_SENTIMENT cron
       // 从 '* * 1-5' 改 '* * *' 周末也跑 — 雪球 / 论坛 / 社媒 周末讨论照旧.
       // 保留工作日的: K 线 / 因子 / 回测 / 策略信号 / 实盘对账 (周末本无意义).
-      {
-        name: '雪球热门话题当日 sync (Batch AB)',
-        type: 'SNOWBALL_HOT_KEYWORD_SYNC',
-        cron_expression: '0 16 * * *',
-        is_active: true,
-        parameters: {},
-      },
       // PR-A (2026-06-29): ANNOUNCEMENT_NLP 全市场公告 NLP — 之前 sync-announcements.ts
       // CLI 存在但没注册成 cron, announcement_summaries 表从 2026-06-09 后 0 更新.
       // 每天 17:00 跑全市场启发式 (--all --with-ai=false), 周末也跑 — 公告系统
@@ -6825,14 +6722,6 @@ class SchedulerService {
         cron_expression: '0 2 * * *',
         is_active: true,
         parameters: { dry_run: false },
-      },
-      {
-        // 周度问答统计聚合 — 周一 02:00 把上周个股投资者问答聚合 (≤ 04:00 截止). cronRegistry analytics.
-        name: '周度问答统计聚合 (Batch AJ)',
-        type: 'WEEKLY_QA_STAT_AGGREGATE',
-        cron_expression: '0 2 * * 1',
-        is_active: true,
-        parameters: {},
       },
       // ===== 黑天鹅 5 stage 错峰 cron — cronRegistry 已设错峰, 这里 seed 同款 schedule =====
       {

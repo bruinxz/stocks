@@ -102,9 +102,9 @@ router.get(
  *     tags: [因子 Factors]
  *     summary: 行业决策面板 (Batch AF 2026-06-18) — 板块资金流 + 龙头 + 热门概念
  *     description: |
- *       基于 IndustryFlow / LimitUpStock / SnowballHotKeyword 真实盘口数据, 替代
+ *       基于 IndustryFlow / LimitUpStock 真实盘口数据, 替代
  *       因子 z_score 抽象热力图, 让用户直接看到 "今天哪个板块在涨 + 主力流入"
- *       + "板块龙头股" + "近 N 日序列" + "今日热门概念"。
+ *       + "板块龙头股" + "近 N 日序列"。
  *     security: [{ bearerAuth: [] }]
  *     parameters:
  *       - { in: query, name: date, required: false, schema: { type: string, format: date } }

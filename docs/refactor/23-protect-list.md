@@ -430,24 +430,30 @@ docs/SIGNAL_FIRST_PLAN.md#11.1
 
 ---
 
-### 13.2 C 类数据源 8 diff 点（DataPipeline owner 承接 · SSH B-2 揭源后 BlackSwan 位补决）
+### 13.2 C 类数据源 8 diff 点（DataPipeline owner 承接 · SSH B-2 揭源后 BlackSwan 位补决 · **Cleanup C-S1/C-S2 landed**）
 
 ```
-# 2 整 client · 已闭合独立性证据链（AIAdvisorService.ts:849 权威注释 "SnowballHotKeyword 表已删除"）
-backend/src/data/sources/SnowballHotKeywordClient.ts
-backend/src/data/sources/StockQAClient.ts
+# 2 整 client · 已闭合独立性证据链 · **DELETED** (Cleanup C-S1)
+# 曾经位置:
+# backend/src/data/sources/SnowballHotKeywordClient.ts   (deleted C-S1)
+# backend/src/data/sources/StockQAClient.ts              (deleted C-S1)
 
-# 4 TS 存根 · Scheduler 2 + DataController 2
-backend/src/services/SchedulerService.ts::snowball_hot_keyword_sync scenario
-backend/src/services/SchedulerService.ts::stockqa_sync scenario
-backend/src/api/controllers/DataController.ts::<snowball 存根>
-backend/src/api/controllers/DataController.ts::<stockqa 存根>
+# 4 TS 存根 · Scheduler 2 + DataController 2 · **DELETED** (Cleanup C-S1)
+# backend/src/services/SchedulerService.ts::snowball_hot_keyword_sync scenario  (deleted C-S1)
+# backend/src/services/SchedulerService.ts::WEEKLY_QA_STAT_AGGREGATE branch      (deleted C-S1)
+# backend/src/api/controllers/DataController.ts::snowball_hot dailyRoute         (deleted C-S1)
+# backend/src/api/controllers/DataController.ts::SnowballHotKeywordSyncService stub (deleted C-S1)
 
-# 1 Python 助手
-backend/python/akshare_helper.py::get_snowball_hot_keywords
+# 1 Python 助手 · **DELETED** (Cleanup C-S1)
+# backend/python/akshare_helper.py::get_snowball_hot_keywords                    (deleted C-S1)
 
-# 3 docstring（无 code · 只注释残留 · grep -rE 'Snowball|StockQA|snowball_hot|stockqa' 命中）
-<3 处 docstring 位 · 具体行号由 C-S2 阶段 grep 输出锁定>
+# 3 docstring · **CLEARED** (Cleanup C-S1)
+# AnnouncementClient.ts / AIAdvisorService.ts / AnnouncementNLPService.ts / factor.routes.ts / data/CLAUDE.md
+# (all ghost symbol refs rewritten or removed)
+
+# 2 orphan tests · **DELETED** (Cleanup C-S2 · PR #91 merged)
+# backend/tests/services/qa/qa-stat-aggregator.test.ts               (deleted C-S2)
+# backend/tests/services/snowball-hot-keyword-sync-service.test.ts   (deleted C-S2)
 ```
 
 **承接位**：QADocs msg=e864ac7b §4 8 diff 点清单 · DataPipeline msg=76e3bcbd 净化生产验证闭合 · Task #11 in_review → M2 Cleanup PR merge 后转 done

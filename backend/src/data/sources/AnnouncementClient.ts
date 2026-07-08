@@ -15,7 +15,7 @@ import { logger } from '../../utils/logger';
  *   - announcement_type 公告类型 (实际数据 50+ 种细分类型, e.g. "三季度报告全文" / "提供/对外担保公告")
  *   - url               网址 (东财详情页, 用户点击可查 PDF)
  *
- * **dumb fetcher 分工** (US-006 LimitUp / US-058 SnowballHotKeyword 同款):
+ * **dumb fetcher 分工** (US-006 LimitUp 同款):
  *   - Python: 拉数据 + 字段映射 + dedup;
  *   - TS NLP (AnnouncementNLPService): 调 AI 抽 summary + sentiment + key_amounts/topics;
  *   - TS Sync (AnnouncementSyncService): 调 client + 调 nlp + bulkCreate upsert.
@@ -81,7 +81,7 @@ export class AnnouncementClient {
   }
 
   /**
-   * 调用 Python 助手脚本 (与 SnowballHotKeywordClient 等同款 {success,data} 契约).
+   * 调用 Python 助手脚本 ({success,data} 契约).
    */
   private callPythonScript(command: string, ...args: string[]): Promise<unknown> {
     return new Promise((resolve, reject) => {

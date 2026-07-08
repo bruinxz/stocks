@@ -446,41 +446,12 @@ suspension-bridged price ratios, post-split PE).
 single-endpoint call); `SHAREHOLDER_COUNT_SKIP_EXISTING=0` equivalent to
 `--force` on the CLI.
 
-## Snowball hot keywords with "新进" baseline tracking (US-058)
+## Snowball hot keywords (US-058, deprecated)
 
-`SnowballHotKeyword` (PK = `(trade_date, keyword)`) lives in the same family as
-US-008 industry-flow — **real-time-only AKShare endpoint** `stock_hot_follow_xq`
-(symbol `'最热门'` / `'本周新增'`) returns "now" data; `trade_date` is the
-**label** the SyncService stamps at scheduling time (post-market). Document
-this in 3 places: model jsdoc, Client jsdoc, SyncService jsdoc.
+雪球热门话题词同步链路已在 §PR-L §13.2 结构性删除 (SnowballHotKeywordClient +
+SyncService + Model + cron + `stock_hot_follow_xq` python helper 均已移除).
+如需重启, 参见 git 历史 (revert §PR-L §13.2 提交链).
 
-**AC-proxy substitution (same pattern as US-034/US-056)**: AC asked for "雪球
-热门话题" but AKShare exposes no topic-dimension endpoint. We map `keyword =
-股票简称` (stock name) and `heat_score = 关注人数` (follower count), keeping
-`related_stocks_json` as a **JSONB array** (currently length 1) so a future
-real-topic data source can populate `[{stock_code, ...}, {stock_code, ...}]`
-without schema migration. Per the codebase pattern, document the AC ↔ proxy
-mapping at 4 spots (Python helper, TS Client, model field comment, Service
-jsdoc).
-
-**"新进" boolean — baseline-search, not naïve `trade_date - 1`**: holidays
-break the simple "yesterday" assumption (long weekends, Chinese New Year 7-9
-days). `SnowballHotKeywordSyncService.loadPreviousKeywords(tradeDate,
-lookbackDays=14)` finds the **most recent date ≤ tradeDate - 1 day with data**
-and uses its keyword set as baseline. If no baseline exists (first sync), all
-rows get `is_new=false` to avoid the 200-strong false-positive blast. Default
-`lookbackDays=14` covers Chinese New Year (longest continuous holiday). The
-same pattern applies to any future "新增 / 突变 / 出现" boolean derived from
-prior trading day (US-088 new positions, US-094 行业突变 surfacing, etc.) —
-**do not** wire a literal `trade_date - 1` query; always go through the
-baseline-search helper.
-
-**Public read API (`GET /api/sentiment/snowball-keywords`)** delivered via
-`SentimentController.getSnowballKeywords`. Query params follow the "loose
-parse, never 4xx" rule: `date` regex-checked (`^\d{4}-\d{2}-\d{2}$`, fall to
-"latest with data" on miss), `only_new=true|1` (anything else is false),
-`limit` clamped to `[1, 1000]`. Service-side `listByDate` does the actual
-SELECT + ORDER BY rank ASC; controller just shapes the response.
 
 **Throttle & CLI**: `--backfill=start,end` runs day-by-day serial sync with
 default `intervalMs=3000` (AKShare-friendly for repeated `stock_hot_follow_xq`

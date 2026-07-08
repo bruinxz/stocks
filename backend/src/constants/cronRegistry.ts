@@ -179,13 +179,6 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     owner: 'data',
     description: '北向资金 / 港股通持股同步',
   },
-  {
-    type: 'SNOWBALL_HOT_KEYWORD_SYNC',
-    category: 'data_sync',
-    owner: 'data',
-    recommendedCron: '0 16 * * *',
-    description: '雪球热门话题词同步 (周末也跑 — 雪球周末仍有讨论)',
-  },
   // PR-A (2026-06-29): 公告 NLP 全市场扫描. 之前只有 sync-announcements.ts CLI
   // 存在但没注册成 cron, 导致 announcement_summaries 表自 2026-06-09 后 0 更新.
   // 现在每天 17:00 跑当日全市场 (--all --with-ai=false 走启发式, 不调远端 AI),
@@ -557,16 +550,6 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     recommendedCron: '30 19 * * *',
     description:
       '每日 19:30 扫 apply ≥ 30 天 + effect_tracked_at IS NULL 的 improvement_suggestions → 计算 effect_metrics 写回 (heuristic Sharpe, fail-OPEN)',
-  },
-  // US-038 QA-002 — 周一 02:00 (早于 AC "周一 04:00 前生成" 截止) 聚合上周
-  // 全市场 (或 ScheduledTask.parameters.stock_codes 显式 list) 投资者问答按
-  // (stock, week) 落 east_money_qa_stats 表.
-  {
-    type: 'WEEKLY_QA_STAT_AGGREGATE',
-    category: 'analytics',
-    owner: 'ai',
-    recommendedCron: '0 2 * * 1',
-    description: '周一 02:00 (≤ AC 04:00) 聚合上周投资者问答 → east_money_qa_stats',
   },
 
   // BF-4 (2026-06-23): 每日健康日报 - 工作日 21:00 (盘后 + ETF/归因/AI 报告均已落库)
