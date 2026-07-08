@@ -61,7 +61,7 @@
  *   `cronRegistry.ts`: type='BLACK_SWAN_IMPROVEMENT', recommendedCron='43,13 * * * *'
  *   (与 BLACK_SWAN_TIMELINE '33,3' 错峰 10min, 让 PR-015 先填 event_timeline →
  *   本 service 再补 improvement_suggestions, 让 cron 跑顺序与段间依赖匹配:
- *   3,33 detector → 13,43 postmortem → 23,53 baseline → 33,3 timeline →
+ *   13,43 postmortem → 23,53 baseline → 33,3 timeline →
  *   43,13 improvement).
  *
  * 注意: BLACK_SWAN_POSTMORTEM 也用 13,43 (主入口 + 本段第二轮). 二者错峰 60min 内

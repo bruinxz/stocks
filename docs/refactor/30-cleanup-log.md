@@ -53,3 +53,118 @@
 - `scripts/deployment/*.js` 4 处 `generic-api-key` → 归 Research 待删清单
 - `.env.example` / `env-validator.test.ts` fixture → Phase 0 内验证脱敏形式
 - git filter-repo 历史重写 → Phase 0 密钥治理批统一执行
+
+---
+
+## 批次 C-BS-01/02 · SKIP（探测阶段事实核偏差）
+
+- **决议**：Cleanup 探测阶段发现 v1.2 冻结清单前 2 条目标不存在于本仓
+  - C-BS-01 目标 `dist/portfolio/risk/BlackSwanWatchdog.js` — 整个 `dist/` 目录不存在（gitignored · npm build 产物）
+  - C-BS-02 目标 `services/black-swan/black-swan-stub.ts` — 空目录 + 该文件不存在于仓根
+- **依据**：探测阶段 msg=fe8020a2 + Orchestrator msg=62d251b1 §一 冻结 v1.2 清单前置事实核 · 转 C-BS-03 首批
+- **零文件变更**：本 skip 项不产生 commit · 记录留痕
+
+## 批次 C-BS-03 · BlackSwan β Cron scenario 结构性删除
+
+- **变更文件**：
+  1. `backend/src/services/SchedulerService.ts`
+     - 删 `BLACK_SWAN_DETECT` scenario dispatch block（原 4451-4505 · 55 行 · lazy-require `BlackSwanDetectorService` + `evaluateWatchdog()` 空跑）
+     - 删 `defaultTasks[]` seed 条目（原 6893-6899 · 7 行 · type=BLACK_SWAN_DETECT · cron='3,33 * * * *'）
+     - 头部注释 "6 stage" → "5 stage"（BLACK_SWAN chain 章节标记 · 保持事实性）
+  2. `backend/src/constants/cronRegistry.ts`
+     - 删 `BLACK_SWAN_DETECT` registry entry（原 606-620 · 15 行 · recommendedCron/tags/tier/PR-011 comment）
+     - TIMELINE 注释：错峰链 "3,33 detector → 13,43 postmortem → 23,53 baseline → 33,3 timeline" → "13,43 postmortem → 23,53 baseline → 33,3 timeline"
+     - IMPROVEMENT 注释：同上 · 去除起点 "3,33 detector →"
+     - POSTMORTEM 注释：restructure "与 BLACK_SWAN_DETECT 错峰 10min (3,33 → 13,43)" → "错峰链 (13,43 postmortem → ...) 上游 BlackSwanEvent 读端由外部写入源承担"
+  3. `backend/tests/services/scheduler-default-tasks-completeness.test.ts`
+     - `MISSING_14` → `MISSING_13` array rename（4 处 · 74/98/111/179）· 去 `'BLACK_SWAN_DETECT'` 条目
+     - 头注释 "14 missing + 3 new" → "13 missing + 3 new" + audit trail 单行引 C-BS-03
+     - console.log "[1] 14 个" → "[1] 13 个"、"[6.1] 14 个" → "[6.1] 13 个"
+- **依据**：
+  - Orchestrator BlackSwan β CONFIRMED 冷冻档裁定 msg=62d251b1 §一 · v1.2 冻结清单 · 第三态（Producer STUB 活 + Consumer/read-side 活 · Cron 生产链断）· §Structural-Deletion-Over-Discipline
+  - v1.3 补丁清单落锤（Orchestrator msg=04c6bd9e §四）· Q1=α（test:76 MISSING_14 归 C-BS-03 · 保持批次内部一致性）· Q2=β（DataController 4 处 blackSwanWatchdogTask 独立 C-BS-03.5 commit）
+  - 探测事实核偏差 v2 escalate（Cleanup msg=e0a38575）· 5 处未列 touchpoint · Q1-Q4 独占裁 · Q1 归本批次
+  - li-yiming 全权掌控令 v2（DM msg=b8af5127 · Orchestrator 承接 msg=a6674a94）
+- **影响面**：
+  - 生产者 STUB · 已断链 · `evaluateWatchdog()` 恒返 `{ alerts: [] }` · 无实机告警产出
+  - Cron `3,33 * * * *` 停跑 · 减少 Scheduler tick log 噪音
+  - Consumer/read-side（`BlackSwanEventController` API + Client）保留 · 由外部写入源承担 · **不影响读端 API 契约**
+  - Postmortem/Baseline/Timeline/Improvement chain 错峰逻辑更新 · 数据流由 BlackSwanEvent 表读端承接（非 Detector 生产）
+- **保护 glob 触碰核**：零命中（`23-protect-list.md` v1 未列 BLACK_SWAN_DETECT 相关路径 · `akshare_helper.py:3280/3341/3401` + `BlackSwanEvent.ts` + `BlackSwanClient.ts` 边界护栏 msg=db566529 全 3 项探测阶段 grep 已核 = 零触）
+- **DoD 自检**：
+  - [x] 删前留据（本条 CHANGELOG）
+  - [x] 独立 commit（本批次单主题）
+  - [x] tsc/lint（本 commit push 前跑）
+  - [x] 保护 glob 零触碰
+  - [x] 副签路由：DataPipeline 副签（Orchestrator msg=83c00d15 §三 · β/γ 类删走 DataPipeline 副签通道）
+
+## 批次 C-BS-03.5 · DataController Dashboard 消费点结构性删除
+
+- **变更文件**：`backend/src/api/controllers/DataController.ts`
+  - 删 `blackSwanWatchdogTask = taskStatus(['BLACK_SWAN_DETECT'])` (line 413)
+  - `blackSwanStatus` 计算：去除 `blackSwanWatchdogTask.status` 依赖 · 改为纯基于 `black_swan_events` 表 7d/24h 计数（读端）
+  - Dashboard node `id: 'black_swan_watchdog'` label='黑天鹅事件检测' · 改为 `id: 'black_swan_events'` label='黑天鹅事件（读端）' · 去 `cron_status/lastRun` 两统计位
+  - Dashboard edges: 删 2 条 `black_swan_watchdog → risk_control/notification` · 保留 1 条并改 source: `black_swan_events → black_swan_postmortem`
+  - L6 注释锚补：追加 C-BS-03 audit trail
+- **依据**：
+  - Orchestrator v1.3 补丁清单 msg=04c6bd9e §四 · Q2=β（DataController 4 处 blackSwanWatchdogTask 归独立 C-BS-03.5 commit）
+  - §Structural-Deletion-Over-Discipline · Producer 已删（C-BS-03）· 消费端逻辑失去意义 · 结构性清除
+  - 保留读端语义：黑天鹅事件仍从 `black_swan_events` 表读取 · 由外部写入源承担 · Dashboard 显示不受影响
+- **影响面**：
+  - Dashboard 数据源治理面：`black_swan_watchdog` 节点 → `black_swan_events` 节点 · label/stats/edges 语义化更新
+  - `blackSwanStatus` 计算逻辑简化：不再依赖已删除的 BLACK_SWAN_DETECT task status · 直接基于事件表计数
+  - 前端消费面无 breaking：dashboard node id 变更但 status/stats 字段结构保持
+  - tsc --noEmit 全绿
+- **DoD 自检**：
+  - [x] 独立 commit（Orchestrator Q2=β 独立性要求）
+  - [x] 保护 glob 零触碰
+  - [x] tsc clean
+  - [x] 副签路由：DataPipeline 副签
+
+## 批次 C-BS-05 · 孤儿 test 文件删除（前置至 C-BS-04 之前 · 保 test import 先解耦）
+
+- **变更**：删 2 个孤儿 test 文件
+  - `backend/tests/services/black-swan-detector-service.test.ts`（516 行 · 依赖 `BlackSwanDetectorService` runBlackSwanDetector · 已断链无生产语义）
+  - `backend/tests/risk/black-swan-watchdog.test.ts`（1723 行 · import `../../src/portfolio/risk/BlackSwanWatchdog` · **该 source 文件在仓中已不存在** · 属死 test）
+- **依据**：
+  - Orchestrator v1.2 冻结清单 · C-BS-05 位（原顺序）
+  - Orchestrator "保 test import 先解耦" 指令 · 顺序前置至 C-BS-04 (DetectorService 整 class 删) 之前 · 避免删 source 时 test 报错
+  - `black-swan-watchdog.test.ts` 揭示 pre-existing 死 test（source 已删但 test 未清 · Cleanup 顺带回收）
+- **影响面**：
+  - 删 2239 行 test 代码 · 无生产运行时影响
+  - test 覆盖率报表移除 detector + watchdog 单测 · 与 Producer STUB 已删语义一致
+- **DoD 自检**：
+  - [x] 删前 grep 复核（`BlackSwanWatchdog` source 不存在）
+  - [x] 独立批次
+
+## 批次 C-BS-04 · DetectorService 整 class + comment 断链
+
+- **变更文件**：
+  1. `backend/src/services/BlackSwanDetectorService.ts` **DELETED**（446 行整文件 · Producer STUB 生产者 · `evaluateWatchdog()` 恒返 `{ alerts: [] }` · lazy-require 无外部 TS import · SchedulerService 侧引用已在 C-BS-03 删除）
+  2. `backend/src/services/BlackSwanPostmortemService.ts` · 3 处 comment 字面改（Q3=γ）：
+     - line 5 "上游 BlackSwanDetectorService (PR-011) 落到 BlackSwanEvent" → "外部写入源落到 BlackSwanEvent"
+     - line 30 fail-OPEN "(与 BlackSwanDetectorService / DbBackupService 同款)" → "(与 DbBackupService 同款)"
+     - line 52-54 SchedulerService 接入 "与 BLACK_SWAN_DETECT 的 '3,33' 错峰 10min" → "BLACK_SWAN_DETECT cron 已在 C-BS-03 批次删除 · BlackSwanEvent 读端由外部写入源承担"
+     - line 187 "与 BLACK_SWAN_DETECT 错峰 10min" → "BlackSwanEvent 读端由外部写入源承担 (C-BS-03 后)"
+     - line 437 lazy-require "(与 BlackSwanDetectorService / DbBackupService 同款)" → "(与 DbBackupService 同款)"
+  3. `backend/tests/services/black-swan-postmortem-service.test.ts:554-556` · assertion 修（Q3=γ）：
+     - 原断言 "8.3 cronRegistry 与 BLACK_SWAN_DETECT 错峰 (前者 13,43 后者 3,33)" 逻辑=同时包含 '13,43' + '3,33'
+     - 新断言 "8.3 cronRegistry BLACK_SWAN_POSTMORTEM cron (13,43 · BlackSwanEvent 读端由外部写入源承担)" 逻辑=包含 '13,43' + 不包含 '3,33'（反向验证 C-BS-03 删除结果）
+  4. `backend/src/services/BlackSwanImprovementSuggestorService.ts:64` · docstring 错峰链去起点：
+     - "3,33 detector → 13,43 postmortem → ..." → "13,43 postmortem → ..."
+  5. `backend/src/services/CounterfactualBaselineService.ts:822` · comment 断链：
+     - "(与 BlackSwanPostmortemService / BlackSwanDetectorService 同款)" → "(与 BlackSwanPostmortemService 同款)"
+- **依据**：
+  - Orchestrator v1.3 补丁清单 msg=04c6bd9e §四 · Q3=γ (Postmortem 3 comment 字面改 + Postmortem test 554-556 断言修 归 C-BS-04) + Q4 (Improvement docstring 归 C-BS-04)
+  - v1.2 冻结清单 C-BS-04 · DetectorService 整 class 删（§4 STUB 生产者 · 探测 msg=fe8020a2 § grep 全引用位揭无外部消费者）
+- **影响面**：
+  - 删 446 行 source · 生产者 STUB 结构性清除
+  - 5 处 comment/docstring/assertion 断链 · audit trail 保留 (`C-BS-03 批次删除`)
+  - Postmortem test 反向验证 registry 中 BLACK_SWAN_DETECT 已消失 · CI 门禁转为断链核
+  - tsc --noEmit 全绿
+  - QuarterlyReport zero-hit 已核 · 无同类命中
+- **DoD 自检**：
+  - [x] 独立 commit
+  - [x] tsc clean
+  - [x] 保护 glob 零触碰
+  - [x] Postmortem test 反向断言 · 与 C-BS-03 删除结果对齐

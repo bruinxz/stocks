@@ -69,11 +69,11 @@ for (const s of seeded) {
 }
 
 // ---------------------------------------------------------------------------
-// [1] + [2] 14 missing + 3 new — 必须全部 seed
+// [1] + [2] 13 missing + 3 new — 必须全部 seed
+// (BLACK_SWAN_DETECT 已在 C-BS-03 批次结构性删除 · 见 30-cleanup-log.md)
 // ---------------------------------------------------------------------------
-const MISSING_14 = [
+const MISSING_13 = [
   'BLACK_SWAN_BASELINE',
-  'BLACK_SWAN_DETECT',
   'BLACK_SWAN_IMPROVEMENT',
   'BLACK_SWAN_POSTMORTEM',
   'BLACK_SWAN_QUARTERLY_SUMMARY',
@@ -94,8 +94,8 @@ const NEW_3 = [
   'ETF_FLOW_SYNC',
 ];
 
-console.log('\n[1] 14 个之前漏 seed 的 cron 必须全部 seed...');
-for (const type of MISSING_14) {
+console.log('\n[1] 13 个之前漏 seed 的 cron 必须全部 seed...');
+for (const type of MISSING_13) {
   assert(`[1.${type}] seeded`, seededByType.has(type), `not found in defaultTasks`);
 }
 
@@ -108,7 +108,7 @@ for (const type of NEW_3) {
 // [3] cron_expression 与 registry recommendedCron 一致 (LIVE_RECONCILIATION_GUARD 例外)
 // ---------------------------------------------------------------------------
 console.log('\n[3] seed cron_expression 与 registry recommendedCron 一致...');
-const ALL_CHECK = [...MISSING_14, ...NEW_3].filter(t => t !== 'LIVE_RECONCILIATION_GUARD');
+const ALL_CHECK = [...MISSING_13, ...NEW_3].filter(t => t !== 'LIVE_RECONCILIATION_GUARD');
 for (const type of ALL_CHECK) {
   const def = getCronTaskDefinition(type);
   const rows = seededByType.get(type) || [];
@@ -175,8 +175,8 @@ if (stillUnseeded.length > 0) {
   console.log('         (本批仅承诺补 17 个; 其它历史 type 维持原样, runtime warn 已加)');
 }
 assertEqual(
-  '[6.1] 14 个 macro check 列出的漏 seed type 已全部补齐',
-  MISSING_14.filter(t => !seededTypes.has(t)),
+  '[6.1] 13 个 macro check 列出的漏 seed type 已全部补齐',
+  MISSING_13.filter(t => !seededTypes.has(t)),
   []
 );
 assertEqual(

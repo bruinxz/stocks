@@ -819,7 +819,7 @@ export async function runCounterfactualBaselineService(
 /**
  * createProductionBaselineRunner — production singleton 工厂. 测试不调它.
  *
- * lazy-require 模式 (与 BlackSwanPostmortemService / BlackSwanDetectorService 同款):
+ * lazy-require 模式 (与 BlackSwanPostmortemService 同款):
  * 单测脱 DB 走 fake runner 时, 这些 require 不触发.
  */
 export function createProductionBaselineRunner(): BaselineRunner {

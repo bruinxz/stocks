@@ -407,21 +407,22 @@ export class DataController {
 
       const reconTask = taskStatus(['LIVE_RECONCILIATION_GUARD']);
 
-      // ---- L6: 新增 industry_concentration / restricted_share_watchdog / black_swan_watchdog ----
+      // ---- L6: 新增 industry_concentration / restricted_share_watchdog ----
+      // (black_swan_watchdog 已在 C-BS-03 批次结构性删除 · Producer STUB + Cron 已废 ·
+      //  黑天鹅事件读端由外部写入源承担 · 见 30-cleanup-log.md)
       const industryTask = taskStatus(['PAPER_TRADING_INDUSTRY_CONCENTRATION_CHECK']);
       const restrictedTask = taskStatus(['PAPER_TRADING_RESTRICTED_SHARE_CHECK']);
-      const blackSwanWatchdogTask = taskStatus(['BLACK_SWAN_DETECT']);
 
       const blackSwanEventRow = await safeQ<any>(
         "SELECT COUNT(*)::int AS n7d, COUNT(*) FILTER (WHERE detected_at > NOW() - INTERVAL '24 hours')::int AS n24h, MAX(detected_at) AS latest FROM black_swan_events WHERE detected_at > NOW() - INTERVAL '7 days'",
         { n7d: 0, n24h: 0, latest: null }
       );
       const blackSwanStatus: StatusKey =
-        blackSwanWatchdogTask.status === 'gray' && blackSwanEventRow.n7d === 0
+        blackSwanEventRow.n7d === 0
           ? 'gray'
           : blackSwanEventRow.n24h > 0
           ? 'yellow'
-          : (blackSwanWatchdogTask.status as StatusKey);
+          : 'green';
 
       // ---- L8: 新增 daily_attribution / ai_diary / improvement_suggestions / black_swan_postmortem ----
       const attrRow = await safeQ<any>(
@@ -845,15 +846,13 @@ export class DataController {
             : '等待首次运行',
         },
         {
-          id: 'black_swan_watchdog',
-          label: '黑天鹅事件检测',
+          id: 'black_swan_events',
+          label: '黑天鹅事件（读端）',
           category: 'L6_risk',
           status: blackSwanStatus,
           stats: {
             events_7d: blackSwanEventRow.n7d,
             events_24h: blackSwanEventRow.n24h,
-            cron_status: blackSwanWatchdogTask.status,
-            lastRun: blackSwanWatchdogTask.lastRun,
           },
           lastAction:
             blackSwanEventRow.n7d === 0
@@ -1068,10 +1067,8 @@ export class DataController {
         { source: 'portfolio', target: 'industry_concentration', label: '持仓快照' },
         { source: 'industry_concentration', target: 'risk_control', label: '行业超限告警' },
         { source: 'restricted_share_watchdog', target: 'risk_control', label: '解禁日告警' },
-        { source: 'black_swan_watchdog', target: 'risk_control', label: '黑天鹅告警' },
-        { source: 'black_swan_watchdog', target: 'notification', label: '黑天鹅通知' },
-        // L6 → L8 黑天鹅复盘
-        { source: 'black_swan_watchdog', target: 'black_swan_postmortem', label: '事件 → 复盘' },
+        // L6 → L8 黑天鹅复盘（读端由外部写入源承担 · watchdog Producer 已删见 C-BS-03）
+        { source: 'black_swan_events', target: 'black_swan_postmortem', label: '事件 → 复盘' },
         // L5/L8 → L8 复盘新增
         { source: 'portfolio', target: 'daily_attribution', label: '每日持仓+收益' },
         { source: 'portfolio', target: 'ai_diary', label: '每日交易' },

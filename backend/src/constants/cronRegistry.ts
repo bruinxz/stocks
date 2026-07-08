@@ -603,28 +603,14 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '每 30 分钟扫 pending 用户反馈 → 启发式分类 + 优先级 + 摘要 (cron 永不自动 resolve)',
   },
-  // US-100 PR-011 — 每 30min 巡 5 类黑天鹅信号 (ST / SUSPENDED / NEWS_KEYWORD /
-  // SHAREHOLDER_REDUCTION / MARKET_REGIME), 复用 BlackSwanWatchdog (US-053)
-  // 当事件枚举器, 把跨 user 拍平 + (event_type, signature) 去重后 bulkCreate
-  // BlackSwanEvent (PR-010); ignoreDuplicates: true 让 UNIQUE
-  // (event_type, signature, detected_at::date) 拦的同事件静默跳过. 与 watchdog
-  // per-user 写 RiskAlert 互补不取代 (本 cron 始终让 watchdog dry_run=true).
-  // fail-OPEN: watchdog/bulkCreate 任一 throw → 仅 failed_items=1 + warn 不抛.
-  {
-    type: 'BLACK_SWAN_DETECT',
-    category: 'risk_control',
-    owner: 'risk',
-    recommendedCron: '3,33 * * * *',
-    description:
-      '每 30min 巡 5 类黑天鹅信号 (ST/SUSPENDED/NEWS_KEYWORD/SHAREHOLDER_REDUCTION/MARKET_REGIME) → 落 BlackSwanEvent (global 视角, 与 BlackSwanWatchdog per-user RiskAlert 互补)',
-  },
   // US-102 PR-013 — 每 30min 巡最近 24h BlackSwanEvent (PR-010) → 生成
   // BlackSwanPostmortemReport (PR-012). 4 段中本 cron 只负责第 1 段 event_summary;
   // PR-014/015/016 各自接力填 counterfactual_baselines / event_timeline /
   // improvement_suggestions. UNIQUE(black_swan_event_id) 让本 cron 重跑走 UPSERT
   // 仅覆盖 event_summary + generated_at + sections_filled — 其余 JSONB 段不出现在
-  // payload 里, sequelize 不动它们 (保留 PR-014/015/016 已写值). 与 BLACK_SWAN_DETECT
-  // 错峰 10min (3,33 → 13,43): detector 先把事件落表, postmortem 再读出来生成报告.
+  // payload 里, sequelize 不动它们 (保留 PR-014/015/016 已写值). 错峰链
+  // (13,43 postmortem → 23,53 baseline → 33,3 timeline → 43,13 improvement) 上游
+  // BlackSwanEvent 读端由外部写入源承担 (本 cron 只消费).
   // fail-OPEN: loadEvents throw → 整次 success=false + error; 单事件 upsert throw →
   // reports_failed +1 但不抛. status 初始 'partial', PR-014/015/016 全填后由它们升 'ok'.
   {
@@ -661,8 +647,8 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
   // sequelize 不动它们; 保留 PR-013/014 已填的 event_summary/counterfactual_baselines,
   // 与 [[多段 JSONB 报告分阶段 UPSERT]] 同款). 与 BLACK_SWAN_BASELINE (23,53)
   // 错峰 10min (33,3): PR-014 先填 baseline → 本 service 再补 event_timeline,
-  // 让 cron 跑顺序与段间依赖匹配 (3,33 detector → 13,43 postmortem →
-  // 23,53 baseline → 33,3 timeline). fail-OPEN: loadCandidates throw →
+  // 让 cron 跑顺序与段间依赖匹配 (13,43 postmortem → 23,53 baseline →
+  // 33,3 timeline). fail-OPEN: loadCandidates throw →
   // success=false + error; 单事件 loadRiskAlerts / upsert throw → skipped/failed
   // 累计但不抛.
   {
@@ -682,7 +668,7 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
   // event_summary/counterfactual_baselines/event_timeline, 与 [[多段 JSONB 报告
   // 分阶段 UPSERT]] 同款). 与 BLACK_SWAN_TIMELINE (33,3) 错峰 10min (43,13):
   // PR-015 先填 timeline → 本 service 再补 improvement_suggestions, 让 cron 跑
-  // 顺序与段间依赖匹配 (3,33 detector → 13,43 postmortem → 23,53 baseline →
+  // 顺序与段间依赖匹配 (13,43 postmortem → 23,53 baseline →
   // 33,3 timeline → 43,13 improvement). 4 段全填后由本 service 升 status='ok'.
   // fail-OPEN: loadCandidates throw → success=false + error; 单事件 engine /
   // upsert throw → skipped/failed 累计但不抛.
