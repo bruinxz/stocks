@@ -168,3 +168,64 @@
   - [x] tsc clean
   - [x] 保护 glob 零触碰
   - [x] Postmortem test 反向断言 · 与 C-BS-03 删除结果对齐
+
+---
+
+## 批次 R2-A · Round-2 backend 死代码首批删除 (2026-07-08)
+
+- **PR**: [#97](https://github.com/bruinxz/stocks/pull/97) · squash MERGED @ `e52b3ab` · 22:18
+- **Base**: `6299a3d4` (28 PRs · post PR #96 trading_calendar Migration DDL landed)
+- **Diff**: 2 files · net -201 LOC · pure delete
+- **Branch**: `chore/cleanup-r2-a-backend-dead-code` (squashed · deleted post-merge)
+
+- **变更文件** (2 files · Python 迁移期临时脚本):
+  1. `backend/test_akshare_fix.py` **DELETED** (75 行 · `backend/` root · 非 `tests/` 目录 · `grep -rln 'test_akshare_fix' backend/ frontend/ scripts/` = 0)
+  2. `backend/test_akshare_direct.py` **DELETED** (126 行 · 同上 · `grep -rln 'test_akshare_direct' backend/ frontend/ scripts/` = 0)
+
+- **依据**:
+  - Orchestrator dispatch msg=baaff9e3 (Round-2 dead-code scan 令) → msg=20f993d2 §二 (R2-A CREATE 令 · 免签窗口第 8 例 pre-grant)
+  - `notes/cleanup-dead-code-scan-round2.md` v0.2 §八 (Path 1 apply + §grep 铁律 v2)
+
+- **R2-01 no-op**: `backend/src/services/black-swan/` 空目录 · git 不 tracking 空目录 · 无需 commit
+- **R2-02 撤销 → HOLD retain**: `backend/src/services/integration/production-bridges.ts` (464 LOC · 15,233 bytes) 保留
+  - 触发事实: QADocs 副签发现 `backend/tests/services/sprint-7-18-smoke.test.ts:16` 活跃 import 7 symbols (`MockBrokerBridge, processOvernightSignals, persistHMMParams, loadHMMParams, persistThompsonPosteriors, loadThompsonPosteriors, persistMetaLabelCheckpoint`)
+  - Research 独立复核确认 `backend/src/scripts/run-tests.ts:64` auto-discover 收纳 `.test.ts` · CI RED 悬念
+  - 归入 sprint-7-18 60 模块 + smoke.test 独立生命周期决策 (armed queue)
+
+- **教训 #12 反向应用第九例反例首入 landed 追认** (5-owner co-ledger):
+  - **起源方**: Cleanup (grep 空间 scope `backend/src frontend/src` 单档判 orphan · 遗漏 `backend/tests`)
+  - **副签盲区**: Research (msg=2399ae2f PASS → msg=ca0e60b3 CORRECTION)
+  - **BLOCK 揭起**: QADocs msg=1e06dbbe (独立全域 grep 拦阻 CI RED landing)
+  - **独立复核 endorse**: Strategy msg=14cf4068 + DP msg=31561303 co-owner confirm
+  - **SOP 4-owner formalize armed**: QADocs S0.5 (多 stage verify) + S0.6 (test 层 grep 铁律) + Research §S3.4 (全域 grep 铁律 · `notes/lesson-11-broadcast-observation-bias.md` v1.2 landed) + Strategy S0.7 (`.test.ts` runtime auto-discover 一致性 CI 静态断言)
+  - **子矩阵 B 群完形**: 第八例 (R2-05 grep 空间 scope · DP owner) · **第九例 (R2-02 verify 时间 stage · Cleanup+Research+QADocs co-owner + DP+Strategy endorse)**
+
+- **副签路由 (5-owner ledger 完形)**:
+  - Cleanup 主 (CREATE msg=e6aeee4b · Path 1 apply msg=fc28cc56)
+  - Research CORRECTION endorse (msg=ca0e60b3) + post-Path1 re-verify PASS (msg=6f93ee1c · §S3.4 铁律首入应用)
+  - Strategy independent endorse (msg=14cf4068)
+  - QADocs CORRECTION PASS (msg=356dff53 · BLOCK 解 · 独立 grep + gh 事实链)
+  - DP re-verify PASS (msg=31561303 · 5 items verbatim)
+  - Orch pre-grant (msg=20f993d2 §五 · 免签窗口第 8 例)
+
+- **影响面**:
+  - 删 201 行 Python 迁移期临时脚本 · pure delete
+  - tsc --noEmit CLEAN + baseline 435 ok / 2 failed 保持
+  - Independence v1.1 §5 4 档 zero drift (档 1 数据源 / 档 2 策略因子 / 档 3 Frontend UI / 档 4 契约层)
+  - Layer-Separation zero cross-boundary (`backend/` root Python · zero services/quant/strategies/models touch)
+
+- **DoD 自检**:
+  - [x] tsc clean
+  - [x] 保护 glob 零触碰
+  - [x] CI 7 checks CLEAN (Backend 2/2 SUCCESS · Frontend SUCCESS · Docker · weak-secrets · Detect changes)
+  - [x] mergeStateStatus=CLEAN · MERGEABLE
+  - [x] 5-owner 副签汇聚完形
+  - [x] 教训 #12 第九例反例首入 co-owner 记账
+
+- **免签窗口范式统计位** (第 8/9/10 例三连胜之首): 22:18 landed · Cleanup 主签 landed 第 5 例 (前 4: #78 BlackSwan β · #91 C-S2 · #92 C-S1 · #93 Path B)
+
+- **R2-B/R2-05/R2-06 承接位** (post-R2-A):
+  - **R2-B** (frontend build tarballs + fix_lint*.sh + refactor.js): HOLD · 等 Frontend Path γ landed · Frontend 主签路由 (frontend/** 越界豁免)
+  - **R2-05** (`backend/src/models/ETFCreationRedemption.ts`): HOLD retain confirmed (DP msg=a727ec79 · 第八例反例首入)
+  - **R2-02** (`backend/src/services/integration/production-bridges.ts`): HOLD retain (待 sprint-7-18 smoke 60 模块独立生命周期决策)
+  - **R2-06** (`backend/backup_data.json` 5,876B): armed owner Q4 batch 决策窗口
