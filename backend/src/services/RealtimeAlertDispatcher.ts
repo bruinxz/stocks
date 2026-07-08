@@ -54,6 +54,7 @@
 import moment from 'moment-timezone';
 
 import { logger } from '../utils/logger';
+import { randHex4 } from '../utils/randomHex';
 import { User } from '../models/User';
 import { feishuBotWebhookService, FeishuBotWebhookSendResult } from './FeishuBotWebhookService';
 import {
@@ -629,11 +630,6 @@ function escapeHtml(value: any): string {
 
 function escapeHtmlAttr(value: any): string {
   return escapeHtml(value);
-}
-
-function randHex4(): string {
-  const n = Math.floor(Math.random() * 0xffff);
-  return n.toString(16).padStart(4, '0');
 }
 
 function nowMs(): number {

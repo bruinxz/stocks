@@ -36,6 +36,7 @@ import { Op } from 'sequelize';
 import moment from 'moment-timezone';
 
 import { logger } from '../utils/logger';
+import { randHex4 } from '../utils/randomHex';
 import { User } from '../models/User';
 import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
 import { PaperTradingPosition } from '../models/PaperTradingPosition';
@@ -859,11 +860,6 @@ function clampInt(v: any, fallback: number, lo: number, hi: number): number {
   const n = Math.floor(Number(v));
   if (!Number.isInteger(n)) return fallback;
   return Math.max(lo, Math.min(hi, n));
-}
-
-function randHex4(): string {
-  const n = Math.floor(Math.random() * 0xffff);
-  return n.toString(16).padStart(4, '0');
 }
 
 function nowShanghaiDate(): string {
