@@ -397,4 +397,95 @@ backend/backup_data.json  # 22 §C6 li-yiming
 
 ---
 
+## 13. PR-L 例外通道 · Strategy 契约 v1 冻结后 v1.1 追增窗口
+
+**Owner**: @Research（本节起草） · **Consumers**: @Strategy（§13.1 4 项路径级 glob 承接） + @DataPipeline（§13.2 C 类数据源 8 diff 点承接） + @QADocs（§13.3 双签 CI 断言 4 条 · `test_pr_l_exception_dual_sign.test.ts` v1.1 追增位承接）
+**Rationale**：M3 Strategy `contracts/strategy.md` v1 冻结后 · Cleanup 独占窗口内允许"例外通道"删除/改写命中 §P1-§P3 保护 glob 的路径 · 必须走**双签 CI 硬门禁**（3 方 reviewers + PR body 字面 + SHA-lock 引用锚）
+**签字**：Orchestrator + Strategy owner or DataPipeline owner + li-yiming（3 方 reviewers · CI 断言 2 硬校验）
+
+---
+
+### 13.1 Strategy 4 项路径级 glob（Strategy owner 承接 · M3 契约冻结时最终锁定）
+
+```
+# 1. 动量反转策略 · A 股独立设计（Barroso 2015 美股结论禁搬）
+backend/src/backtest/strategies/momentum_reversal/**
+
+# 2. A 股约束引擎（pure module · RejectionReason enum + 双边费率 + 过户费默认开）
+backend/src/services/constraint/AShareConstraintEngine.ts
+
+# 3. 因子引擎（稀疏 Map + 中性填补 + 无 zscore 契约锚）
+backend/src/services/factor/FactorRegistry.ts
+backend/src/services/factor/Pipeline.ts
+
+# 4. V0 权重锚文档（只增不删走 ADR · 4 因子槽 V0.4 / Q0.3 / L0.3 / M0.0-shadow）
+docs/SIGNAL_FIRST_PLAN.md#11.1
+```
+
+**承接位**：@Strategy msg=509fbf79 承接 · Strategy `contracts/strategy.md` v1 冻结时最终锁定
+**排除项**：本 §13.1 4 项 glob 在 §P1 主 glob 覆盖内 · 本节声明"允许 PR-L 双签通道命中"位 · 不解除 §P1 保护 · 命中即触发 §13.3 双签硬门禁
+
+> **脚注 · momentum_reversal 独立性证据链呼应位**（Orchestrator msg=4c43c009 §一 建议追加）：
+> `backend/src/backtest/strategies/momentum_reversal/**` A 股独立设计定性引 [`22-cleanup-candidates.md`](22-cleanup-candidates.md) §5 Group E 章末脚注（PR-Research-Footnote PR #72 SHA `c3bed08` landed · 独立性红线映射位）与 [`25-copyright-independence-v1.1.md`](25-copyright-independence-v1.1.md) §Independence-Flexibility-Footnote 3 档改造范式（字面照搬 ≥30% 禁 / 最小改造 <30% 允 / 借鉴思想无限） · 引 ADR-0001 §附录 §Independence-Flexibility-Footnote（M-Draft PR #69 SHA `47e8dd1`）
+
+---
+
+### 13.2 C 类数据源 8 diff 点（DataPipeline owner 承接 · SSH B-2 揭源后 BlackSwan 位补决）
+
+```
+# 2 整 client · 已闭合独立性证据链（AIAdvisorService.ts:849 权威注释 "SnowballHotKeyword 表已删除"）
+backend/src/data/sources/SnowballHotKeywordClient.ts
+backend/src/data/sources/StockQAClient.ts
+
+# 4 TS 存根 · Scheduler 2 + DataController 2
+backend/src/services/SchedulerService.ts::snowball_hot_keyword_sync scenario
+backend/src/services/SchedulerService.ts::stockqa_sync scenario
+backend/src/api/controllers/DataController.ts::<snowball 存根>
+backend/src/api/controllers/DataController.ts::<stockqa 存根>
+
+# 1 Python 助手
+backend/python/akshare_helper.py::get_snowball_hot_keywords
+
+# 3 docstring（无 code · 只注释残留 · grep -rE 'Snowball|StockQA|snowball_hot|stockqa' 命中）
+<3 处 docstring 位 · 具体行号由 C-S2 阶段 grep 输出锁定>
+```
+
+**承接位**：QADocs msg=e864ac7b §4 8 diff 点清单 · DataPipeline msg=76e3bcbd 净化生产验证闭合 · Task #11 in_review → M2 Cleanup PR merge 后转 done
+**BlackSwan 补决位**：`backend/src/data/sources/BlackSwanClient.ts` + `backend/src/services/black-swan/` 属 §13.2 待定项 · 占位 = **TBD-per-Cleanup-BlackSwan-β**（Orchestrator msg=4c43c009 §一 建议 · Cleanup BlackSwan β PR 合入后由 Research follow-up minor PR 精确回填 4 项 delete 路径）
+**Orchestrator msg=19eef843 拆分裁决**：
+- **C-S1**（3 项）· 2 client + Python helper + dispatcher · 独立 tsc/lint/tests + grep 副签点 (a)
+- **C-S2**（≥5 项）· 4 TS 存根 + 3 docstring + Scheduler `snowball_hot_keyword_sync` scenario · 依 C-S1 · 追加 `npm run cron:dry-run` 无 orphan 验证副签点 (c)
+- PR body 硬字段：**"C 类数据源双签删除" 字面 + 8 具体 diff 点清单 + Research 23 v1.1 §13.2 SHA-locked 引用 + C-S1/C-S2 拆分说明**
+
+---
+
+### 13.3 双签 CI 断言 4 条（QADocs `test_pr_l_exception_dual_sign.test.ts` v1.1 追增位承接）
+
+| # | 断言字面 / 门禁位 | 触发条件 | 落地 test 文件 |
+|---|---|---|---|
+| 1 | PR body regex `/PR-L\s+双签\|C\s+类数据源双签删除/` 硬校验 | PR diff 触碰 §13.1 4 项 glob 或 §13.2 8 diff 点任一 | `backend/tests/quality/test_pr_l_exception_dual_sign.test.ts` |
+| 2 | PR reviewers 3 方（Strategy owner or DataPipeline owner + @Orchestrator + li-yiming）· `reviewers.length ≥ 3 && 3 具体 reviewer name 命中` | 同断言 1 | `backend/tests/quality/test_pr_l_exception_dual_sign.test.ts` |
+| 3 | PR body regex `/contracts\/strategy\.md@[0-9a-f]{7,40}/` SHA-locked 引用 | PR body 必附 Strategy `contracts/strategy.md` v1 冻结时 commit SHA（7-40 位 hex） | `backend/tests/quality/test_pr_l_exception_dual_sign.test.ts` |
+| 4 | PR body regex `/V0\s+权重锁\s+4\s+因子槽只增不删走\s+ADR/` 附加字面校验 | PR diff 触碰 `docs/SIGNAL_FIRST_PLAN.md` §11.1 或 §13.1 第 4 项 glob | `backend/tests/quality/test_pr_l_exception_dual_sign.test.ts` |
+
+**QA 落地承接位**：`backend/tests/quality/test_pr_l_exception_dual_sign.test.ts`（QADocs v1.1 追增队列 第 15 项 · Orchestrator msg=4c43c009 §一 建议 · 明写落地 test 文件避免下次 grep 权威锚失焦 · T+3.5 教训 2 应用）
+**Task #16 关联**：弃用数据源禁复活断言（`backend/tests/quality/test_deprecated_data_source_no_import.test.ts`）与本 §13.3 §13.2 8 diff 点组合覆盖 · 无重叠 · Task #16 断言 5 明写 "`test_pr_l_exception_dual_sign.test.ts` §13.2 对齐"
+**Task #24 休眠位**：`backend/tests/quality/test_quality_dual_source_divergence_alarm.test.ts`（Baostock/Tushare Pro 双源分歧 > 5pp 报警 · TUSHARE_PRO 启用后转正 · 当前 SKIP · v1.1 §13 追增不覆盖 · 独立触发）
+
+---
+
+**Cross-references**：
+- @Strategy msg=509fbf79 · §13.1 4 项 glob 承接
+- @DataPipeline msg=76e3bcbd + msg=f54b383b · §13.2 净化生产验证 + BlackSwan β 揭源
+- @QADocs msg=e864ac7b + msg=6e45498a §3 · §13.2 8 diff 点清单 + v1.1 追增队列 23 项（第 15/16/24 项承接位）
+- @Orchestrator msg=19eef843 · C-S1/C-S2 拆分裁决
+- @Orchestrator msg=95e48f2b · M3 Strategy contracts v1 冻结令
+- @Orchestrator msg=f89e7ac0 §8 · §13 三小节结构令
+- @Orchestrator msg=4c43c009 §一 · pre-review PASS + 3 项 refinement 建议
+- ADR-0001 §附录 §Independence-Flexibility-Footnote · M-Draft PR #69 SHA `47e8dd1`
+- 22-cleanup-candidates §5 Group E 章末脚注（PR-Research-Footnote PR #72 SHA `c3bed08`）
+- 25-copyright-independence-v1.1.md §3 断言 A/B/C/D · §5.2 命名撞车禁项映射
+
+---
+
 **Research 交付状态**：Task 5 (`23-protect-list.md`) v1 · 已提交 Orchestrator 裁定 · 入 CI + AGENTS.md 目录所有权表。
