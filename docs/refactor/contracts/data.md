@@ -358,7 +358,7 @@ CREATE INDEX idx_trading_calendar_is_half ON trading_calendar (is_half);
 
 ---
 
-## §D4.1 · `available_at` α 降级策略 (Orch msg=f1afac4c 终裁)
+## §D4.1 · `available_at` α 降级策略 (Orch msg=f1afac4c 终裁 · v0.2.2 α upgrade)
 
 **gap 严重度**：🔴 critical (D3.1 硬约束) · 5 表全无 `available_at` 字段 (backfill 未写)
 
@@ -367,17 +367,35 @@ CREATE INDEX idx_trading_calendar_is_half ON trading_calendar (is_half);
 - 全表 797K rows 均在 7 周内落库 (backfill batch · 非增量 daily append)
 - β soft 降级方案 (`COALESCE(available_at, created_at) ≤ t`) 会误伤所有 t < 2026-05-19 的历史回测 · 全拒
 
-**α 定案** (Orch msg=f1afac4c 终裁):
+**α 定案 v0.2.2** (Orch msg=f1afac4c 终裁 · Path D upgrade @ trading_calendar landed post-#100 `6d3d831d`):
 
 ```
-PIT_FALLBACK_STRATEGY = COALESCE(available_at, time + INTERVAL '1 day') ≤ t
+PIT_FALLBACK_STRATEGY = COALESCE(available_at, next_trade_date(time)) ≤ t
 ```
 
-**语义**：无 `available_at` 时 · 用 `time` (交易日) + 1 交易日近似 · 保证 T+1 可用 (信息公开半日 + 一交易日)
+**语义**：无 `available_at` 时 · 用 `time` (交易日) 的**下一个真实交易日** (`trading_calendar.next_trade_date`) 作近似 · 保证 T+1 真实交易日可用 (跨周末/节假日 look-ahead 偏差 zero)
 
-**依赖**：trading_calendar 表补建 (§D4.G2 承接位) · 前 INTERVAL '1 day' 用日历日近似 · trading_calendar landing 后升级用真实交易日
+**变更史 (α upgrade)**:
+- **v0.2 (前)**: `COALESCE(available_at, time + INTERVAL '1 day')` · 日历日 +1 近似 · trading_calendar 未 landing 时的过渡方案 · 周末/节假日语义偏差 (e.g. 周五 time+1 = 周六 · 实际下一交易日为周一)
+- **v0.2.2 (本次 · Path D)**: `COALESCE(available_at, next_trade_date(time))` · 真实交易日近似 · trading_calendar landed 后升级 · zero look-ahead 偏差
 
-**采集器补写路径 (v1.2)**：各表补 `available_at` 列 · backfill 时用 (announce_date/report_date/time+1) 填充
+**依赖 (v0.2.2 已具足)**:
+- ✅ trading_calendar 契约 §D4.G2 landed @ PR #94 `ad586ef6`
+- ✅ trading_calendar DDL landed @ PR #96 `6299a3d4`
+- ✅ TradingCalendar Model landed @ PR #98 `50ae249e`
+- ✅ TradingCalendarSyncService Loader landed @ PR #100 `6d3d831d` (§D4.G2 shape 四方完形 100% zero drift · Path A M0.5 Day 3 完形)
+
+**next_trade_date(time) 查询语义**:
+- 输入 `time` 为交易日 (daily_bars 保证) · 查 `trading_calendar.next_trade_date WHERE trade_date = time`
+- 输入 `time` 为非交易日 (事件表 announce_date 可能落节假日) · 先查 `trading_calendar WHERE trade_date = time`, 若 `is_open=false`, 直接返回 `next_trade_date`
+- 边界: 表尾无下一交易日 (未来最后一日) → NULL · PIT 门禁自动拒绝 (COALESCE 后仍 NULL · `NULL ≤ t` 恒 false)
+
+**采集器补写路径 (v1.2)**：各表补 `available_at` 列 · backfill 时用 (announce_date/report_date/next_trade_date(time)) 填充
+
+**PIT 使用者影响**:
+- 回测层 (`backend/src/backtest/*`): PIT filter WHERE COALESCE(...) 逻辑升级为 subquery/join `trading_calendar`
+- Strategy 信号层: 事件类信号 available_at 计算跨节假日修正 (春节/国庆等长假 event-drift 消除)
+- 数据质量层: PIT-violation 检测口径升级 · 减少节假日窗口误报
 
 ---
 
@@ -566,7 +584,7 @@ PIT_FALLBACK_STRATEGY = COALESCE(available_at, time + INTERVAL '1 day') ≤ t
 | 1 | §D4.G3 rowcount 预期上修 | 数字修订 | Day 1 §5.4c: 5625×250×2.7≈3.8M | 🟡 |
 | 2 | §D4.2 stock_code 语义分裂 SOP | 语义 pin | Day 1 §2.2 + Day 2 §DDL 4-way | 🟡 |
 | 3 | §D4.7 契约起草名字 vs 实际实现名字校正清单 | docs 层校正 (zero runtime) | 教训 #12 · model-field-divergence.md 5/5 pass · 0 divergence | 🟢 (docs only) |
-| 4 | §D4.1 `available_at` α 降级 | 契约固化 | Orch msg=f1afac4c 裁 · time+T+1 交易日近似 | 🔴 (D3.1 gap) |
+| 4 | §D4.1 `available_at` α 降级 v0.2.2 | 契约固化 + α upgrade | Orch msg=f1afac4c 裁 · v0.2 time+INTERVAL'1 day' 日历近似 → v0.2.2 next_trade_date(time) 真实交易日 (trading_calendar landed post-#100 `6d3d831d`) | 🔴 (D3.1 gap) |
 | 5 | §D4.G daily_bars TimescaleDB hypertable annotation | 结构 pin | Day 2 §一: 139 chunks · chunk_interval=7 days | 🟡 (Strategy §F2 G1 draft 3-month 纠正) |
 | 6 | §D4.G2 trading_calendar 补建承接位 | gap 定盘 | Day 1 §5.2: 双侧缺失 · M2+1 独立分派 armed | 🔴 (D4 gap) |
 | 7 | §D4.8 索引 dedup 候选 | 索引优化 | Day 2 §6.1: 3 表候选 | 🟡 (non-blocking) |
