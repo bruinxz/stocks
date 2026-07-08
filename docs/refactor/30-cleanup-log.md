@@ -97,3 +97,26 @@
   - [x] tsc/lint（本 commit push 前跑）
   - [x] 保护 glob 零触碰
   - [x] 副签路由：DataPipeline 副签（Orchestrator msg=83c00d15 §三 · β/γ 类删走 DataPipeline 副签通道）
+
+## 批次 C-BS-03.5 · DataController Dashboard 消费点结构性删除
+
+- **变更文件**：`backend/src/api/controllers/DataController.ts`
+  - 删 `blackSwanWatchdogTask = taskStatus(['BLACK_SWAN_DETECT'])` (line 413)
+  - `blackSwanStatus` 计算：去除 `blackSwanWatchdogTask.status` 依赖 · 改为纯基于 `black_swan_events` 表 7d/24h 计数（读端）
+  - Dashboard node `id: 'black_swan_watchdog'` label='黑天鹅事件检测' · 改为 `id: 'black_swan_events'` label='黑天鹅事件（读端）' · 去 `cron_status/lastRun` 两统计位
+  - Dashboard edges: 删 2 条 `black_swan_watchdog → risk_control/notification` · 保留 1 条并改 source: `black_swan_events → black_swan_postmortem`
+  - L6 注释锚补：追加 C-BS-03 audit trail
+- **依据**：
+  - Orchestrator v1.3 补丁清单 msg=04c6bd9e §四 · Q2=β（DataController 4 处 blackSwanWatchdogTask 归独立 C-BS-03.5 commit）
+  - §Structural-Deletion-Over-Discipline · Producer 已删（C-BS-03）· 消费端逻辑失去意义 · 结构性清除
+  - 保留读端语义：黑天鹅事件仍从 `black_swan_events` 表读取 · 由外部写入源承担 · Dashboard 显示不受影响
+- **影响面**：
+  - Dashboard 数据源治理面：`black_swan_watchdog` 节点 → `black_swan_events` 节点 · label/stats/edges 语义化更新
+  - `blackSwanStatus` 计算逻辑简化：不再依赖已删除的 BLACK_SWAN_DETECT task status · 直接基于事件表计数
+  - 前端消费面无 breaking：dashboard node id 变更但 status/stats 字段结构保持
+  - tsc --noEmit 全绿
+- **DoD 自检**：
+  - [x] 独立 commit（Orchestrator Q2=β 独立性要求）
+  - [x] 保护 glob 零触碰
+  - [x] tsc clean
+  - [x] 副签路由：DataPipeline 副签
