@@ -15,6 +15,7 @@ import { logger } from '../../../utils/logger';
 import { literal, Op } from 'sequelize';
 import sequelize from '../../../config/database';
 import { incrementBacktestTotal } from '../../../metrics/PrometheusRegistry';
+import { randomBytes } from 'crypto';
 
 // ⚠️ DEPRECATED STUB — 以下"服务"是 批3/批8 精简量化 pipeline 时已删除的 service
 // 的占位替身,仅为让依赖它们的历史代码路径继续编译。方法恒返回空结果 (no-op),
@@ -662,7 +663,7 @@ export class QuantBacktestService {
     const maxTasks = Math.min(Math.max(Number(options.max_tasks || 18), 1), 48);
     const tasks = [];
     let generated = 0;
-    const groupId = `qgrid_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+    const groupId = `qgrid_${Date.now()}_${randomBytes(4).toString('hex')}`;
 
     for (const strategy_key of strategyKeys) {
       const baseParams = {

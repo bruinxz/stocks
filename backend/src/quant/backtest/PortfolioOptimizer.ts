@@ -71,7 +71,7 @@
 import { Op } from 'sequelize';
 import { logger } from '../../utils/logger';
 import { QuantEquityPoint } from '../types/QuantTypes';
-import { SeededRandom } from './BayesianOptimizer';
+import { SeededRandom } from '../../utils/SeededRandom';
 
 // ⚠️ DEPRECATED STUB — 以下"模型"是 批8 (2026-07-03 物理删表 D7) 已删除的 Sequelize
 // model 的占位替身,仅为让依赖它们的历史代码路径继续编译。方法恒返回空/惰性对象,

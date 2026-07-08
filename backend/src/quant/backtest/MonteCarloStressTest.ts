@@ -73,7 +73,7 @@ import { Op } from 'sequelize';
 import { logger } from '../../utils/logger';
 import { MonteCarloResult } from '../../models/MonteCarloResult';
 import { QuantBacktestResult } from '../../models/QuantBacktestResult';
-import { SeededRandom } from './BayesianOptimizer';
+import { SeededRandom } from '../../utils/SeededRandom';
 
 // ============================================================
 // 常量

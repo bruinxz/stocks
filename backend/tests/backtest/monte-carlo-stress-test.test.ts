@@ -42,7 +42,7 @@ import {
   MIN_RETURNS_FOR_SHARPE,
   SHARPE_ANNUALIZATION_FACTOR,
 } from '../../src/quant/backtest/MonteCarloStressTest';
-import { SeededRandom } from '../../src/quant/backtest/BayesianOptimizer';
+import { SeededRandom } from '../../src/utils/SeededRandom';
 
 let failed = 0;
 let passed = 0;

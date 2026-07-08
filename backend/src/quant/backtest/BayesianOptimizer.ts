@@ -48,6 +48,7 @@
 
 import { Op } from 'sequelize';
 import { logger } from '../../utils/logger';
+import { SeededRandom } from '../../utils/SeededRandom';
 import { OptimizationRun } from '../../models/OptimizationRun';
 import { OptimizationResult } from '../../models/OptimizationResult';
 import { strategyRegistry } from '../engine/StrategyRegistry';
@@ -164,34 +165,6 @@ interface ObservedPoint {
 // ============================================================
 // Pure helpers — independently unit-testable
 // ============================================================
-
-/**
- * Park-Miller LCG 简易随机源。同 seed 完全可复现，避免引入 Math.random 让
- * 测试 / 回测 / 论文复现都失败。返回 [0, 1) 的浮点。
- *
- * 周期 2^31 - 1，对贝叶斯优化的 ~100 次采样完全足够。
- */
-export class SeededRandom {
-  private state: number;
-
-  constructor(seed = 42) {
-    // 初始 state 不能为 0，否则 LCG 永远卡在 0
-    const s = Math.floor(Math.abs(seed)) % 2147483647;
-    this.state = s === 0 ? 1 : s;
-  }
-
-  /** 返回 [0, 1) 的浮点 */
-  next(): number {
-    // Park-Miller "minimal standard" minstd_rand0：a = 16807, m = 2^31-1
-    this.state = (this.state * 16807) % 2147483647;
-    return (this.state - 1) / 2147483646;
-  }
-
-  /** [min, max) 浮点 */
-  nextRange(min: number, max: number): number {
-    return min + (max - min) * this.next();
-  }
-}
 
 /**
  * 把参数从原始空间映射到 [0,1]^D。

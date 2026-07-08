@@ -34,7 +34,6 @@
  */
 
 import {
-  SeededRandom,
   normalizeParams,
   denormalizeParams,
   rbfKernel,
@@ -51,6 +50,7 @@ import {
   BayesianOptimizer,
   ParamBounds,
 } from '../../src/quant/backtest/BayesianOptimizer';
+import { SeededRandom } from '../../src/utils/SeededRandom';
 import { BacktestRunner } from '../../src/quant/backtest/GridSearchOptimizer';
 
 let failed = 0;
