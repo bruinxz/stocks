@@ -12,9 +12,17 @@
     "L2_hard_fail": true,
     "warning_grace_end_sha": "6d3d831d",
     "exempt_trailer_syntax": "[l2-exempt: <slug>]",
-    "exempt_authority_required": ["owner", "orchestrator"]
+    "exempt_authority_required": ["owner", "orchestrator"],
+    "sop_seal_version": "v1.0",
+    "sop_seal_anchor": "docs/refactor/quality/qadocs-l2-hard-fail-sop.md",
+    "sop_seal_landing_pr": "PR-P1-1"
   },
   "entries": [],
-  "burndown_history": ["81bc018b", "f8ae20b"],
-  "unique_key_note": "L2 verb hard-fail baseline. Task #6 PR #101 landed L2 as warning-only; Task #52 upgrades to hard-fail post 十五连胜 8-22 landing. initial entries=[] · v0 SHA-lock scan @ f8ae20b confirmed zero hit across 29 route files."
+  "burndown_history": [
+    "81bc018b",
+    "f8ae20b",
+    "c9680478",
+    "b83f51d9"
+  ],
+  "unique_key_note": "L2 verb hard-fail baseline. Task #6 PR #101 landed L2 as warning-only; Task #52 upgrades to hard-fail post 十五连胜 8-22 landing. PR-P1-1 seals SOP v1.0 canonical 4-step verify (baseline SHA-lock + zero-hit scan + warning_grace_end_sha freeze + CI 4-gate wire). initial entries=[] · v0 SHA-lock scan @ f8ae20b confirmed zero hit across 29 route files. burndown_history tracks main advance: 81bc018b (L1-L7) → f8ae20b (Cleanup Task #22 doc paste-in · warning-only → hard-fail baseline pin) → c9680478 (PR #111 L2 hard-fail 5-file test pack landed) → b83f51d9 (PR #112 dod v4.4 §17 formalize landed)."
 }
