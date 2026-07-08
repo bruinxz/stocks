@@ -1,5 +1,5 @@
 /**
- * TradingCalendarSyncService 单测 (Path C · §D4.G2 三方完形后置件).
+ * TradingCalendarSyncService 单测 (Path C · §D4.G2 三方完形后置件 + Path C.2 韧性件).
  *
  * 跑: npx ts-node --transpile-only tests/services/trading-calendar-sync-service.test.ts
  *
@@ -7,14 +7,19 @@
  *   - enumerateDates 边界 (含 start/end · 跨月 · 单日)
  *   - buildCalendarRows prev/next_trade_date 单次线性扫描正确性
  *   - is_half 半日市 gate (仅 is_open=true 才判定)
- *   - Baostock client error path 返回 error 结果 (zero side-effect)
- *   - source 字段固定写 'baostock'
+ *   - Baostock client error path 返回 error 结果 (zero side-effect · fallback 未配)
+ *   - source 字段: baostock 主 / akshare fallback / 参数覆写
+ *   - Path C.2: retryWithBackoff 尝试次数与最终失败传递
+ *   - Path C.2: syncRange Baostock 三次全失败后走 AKShare fallback
+ *   - Path C.2: HALF_DAY_TRADING_DATES 2025-2027 名单落库
  */
 
 import {
   TradingCalendarSyncService,
   enumerateDates,
   buildCalendarRows,
+  retryWithBackoff,
+  getHalfDayTradingDates,
   SyncCalendarResult,
 } from '../../src/data/services/TradingCalendarSyncService';
 
@@ -94,9 +99,18 @@ function equal<T>(label: string, actual: T, expected: T): void {
 
   // ---------------- source 字段固定 ----------------
   check(
-    'all rows source=baostock',
+    'all rows source=baostock (default)',
     rows.every((r) => r.source === 'baostock')
   );
+
+  // ---------------- source 参数覆写 (Path C.2) ----------------
+  const akRows = buildCalendarRows(
+    ['2026-01-02'],
+    new Set<string>(['2026-01-02']),
+    new Set<string>(),
+    'akshare'
+  );
+  equal('source 参数覆写 akshare', akRows[0].source, 'akshare');
 
   // ---------------- is_half 只在 is_open=true 才可能 true ----------------
   const halfContradict = buildCalendarRows(
@@ -110,14 +124,43 @@ function equal<T>(label: string, actual: T, expected: T): void {
     false
   );
 
-  // ---------------- syncRange error path (mock client throws) ----------------
+  // ---------------- Path C.2 · retryWithBackoff 尝试次数 ----------------
+  let calls1 = 0;
+  const okAfter2 = await retryWithBackoff(
+    async () => {
+      calls1 += 1;
+      if (calls1 < 3) throw new Error(`transient ${calls1}`);
+      return 'done';
+    },
+    [10, 10, 10] // 快速三档 · 测试用
+  );
+  equal('retryWithBackoff 第三次成功', okAfter2, 'done');
+  equal('retryWithBackoff 尝试计数=3', calls1, 3);
+
+  let calls2 = 0;
+  let threwRetry = false;
+  try {
+    await retryWithBackoff(
+      async () => {
+        calls2 += 1;
+        throw new Error(`always ${calls2}`);
+      },
+      [10, 10, 10]
+    );
+  } catch (e) {
+    threwRetry = (e as Error).message === 'always 4';
+  }
+  check('retryWithBackoff 四次全败最终抛错', threwRetry);
+  equal('retryWithBackoff 总尝试=4 (attempts+len(delays))', calls2, 4);
+
+  // ---------------- syncRange error path (fallback 未配) ----------------
   const throwingClient = {
     queryTradeDates: async () => {
       throw new Error('mock network fail');
     },
   } as unknown as import('../../src/data/sources/BaostockClient').BaostockClient;
 
-  const svc = new TradingCalendarSyncService(throwingClient);
+  const svc = new TradingCalendarSyncService(throwingClient, undefined, [1, 1, 1]);
   const errResult: SyncCalendarResult = await svc.syncRange({
     startDate: '2026-01-01',
     endDate: '2026-01-07',
@@ -127,6 +170,8 @@ function equal<T>(label: string, actual: T, expected: T): void {
   equal('error result total_calendar_days=0', errResult.total_calendar_days, 0);
   check('error result has error message', errResult.error === 'mock network fail');
   equal('error result source=baostock', errResult.source, 'baostock');
+  equal('error result baostock_attempts=4', errResult.baostock_attempts, 4);
+  equal('error result fallback_used=false', errResult.fallback_used, false);
 
   // ---------------- syncRange input validation ----------------
   let threw = false;
@@ -144,6 +189,86 @@ function equal<T>(label: string, actual: T, expected: T): void {
     threw = true;
   }
   check('start > end throws', threw);
+
+  // ---------------- Path C.2 · Baostock 全败 → AKShare fallback 成功 ----------------
+  let bsCalls = 0;
+  const bsAlwaysFail = {
+    queryTradeDates: async () => {
+      bsCalls += 1;
+      throw new Error(`bs fail ${bsCalls}`);
+    },
+  } as unknown as import('../../src/data/sources/BaostockClient').BaostockClient;
+
+  const akOk = {
+    queryTradeDates: async () => ['2026-01-05', '2026-01-06'],
+  } as unknown as import('../../src/data/sources/AKShareClient').AKShareClient;
+
+  // 需要压制 TradingCalendar.upsert 副作用 — Sequelize 未初始化会 throw
+  const originalUpsert = (await import('../../src/models/TradingCalendar')).TradingCalendar
+    .upsert;
+  let upsertHits = 0;
+  (await import('../../src/models/TradingCalendar')).TradingCalendar.upsert = (async () => {
+    upsertHits += 1;
+    return [null, true] as any;
+  }) as any;
+
+  try {
+    const svcFallback = new TradingCalendarSyncService(bsAlwaysFail, akOk, [1, 1, 1]);
+    const fbResult = await svcFallback.syncRange({
+      startDate: '2026-01-05',
+      endDate: '2026-01-06',
+    });
+    equal('fallback source=akshare', fbResult.source, 'akshare');
+    equal('fallback used=true', fbResult.fallback_used, true);
+    equal('fallback baostock_attempts=4', fbResult.baostock_attempts, 4);
+    equal('fallback total_calendar_days=2', fbResult.total_calendar_days, 2);
+    equal('fallback trading_days=2', fbResult.trading_days, 2);
+    equal('fallback upserted=2', fbResult.upserted, 2);
+    check('fallback upsert called', upsertHits === 2);
+    check('fallback error field cleared', fbResult.error === undefined);
+
+    // Path C.2 · Baostock 全败 + AKShare 也败 → 结构化 error 双源合并
+    const akAlsoFail = {
+      queryTradeDates: async () => {
+        throw new Error('ak fail');
+      },
+    } as unknown as import('../../src/data/sources/AKShareClient').AKShareClient;
+    const svcBothFail = new TradingCalendarSyncService(bsAlwaysFail, akAlsoFail, [1, 1, 1]);
+    const bothResult = await svcBothFail.syncRange({
+      startDate: '2026-01-05',
+      endDate: '2026-01-06',
+    });
+    equal('bothFail source=akshare (fallback attempted)', bothResult.source, 'akshare');
+    equal('bothFail fallback_used=true', bothResult.fallback_used, true);
+    equal('bothFail upserted=0', bothResult.upserted, 0);
+    check(
+      'bothFail error contains baostock + akshare tags',
+      typeof bothResult.error === 'string' &&
+        bothResult.error.includes('baostock:') &&
+        bothResult.error.includes('akshare: ak fail')
+    );
+  } finally {
+    (await import('../../src/models/TradingCalendar')).TradingCalendar.upsert =
+      originalUpsert;
+  }
+
+  // ---------------- Path C.2 · HALF_DAY_TRADING_DATES 2025-2027 名单 ----------------
+  const halfDaySet = getHalfDayTradingDates();
+  check('half-day list 2025-01-27 存在', halfDaySet.has('2025-01-27'));
+  check('half-day list 2025-09-30 存在', halfDaySet.has('2025-09-30'));
+  check('half-day list 2026-02-16 存在', halfDaySet.has('2026-02-16'));
+  check('half-day list 2026-09-24 存在', halfDaySet.has('2026-09-24'));
+  check('half-day list 2026-09-30 存在', halfDaySet.has('2026-09-30'));
+  check('half-day list 2027-02-05 存在', halfDaySet.has('2027-02-05'));
+  check('half-day list 2027-09-14 存在', halfDaySet.has('2027-09-14'));
+  check('half-day list 2027-09-30 存在', halfDaySet.has('2027-09-30'));
+  equal('half-day list 大小=8', halfDaySet.size, 8);
+  check(
+    '半日名单全 YYYY-MM-DD 且 2025-2027',
+    Array.from(halfDaySet).every(
+      (d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= '2025-01-01' && d <= '2027-12-31'
+    )
+  );
 
   // ---------------- 收敛报告 ----------------
   // eslint-disable-next-line no-console

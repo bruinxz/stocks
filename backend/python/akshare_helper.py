@@ -5880,6 +5880,37 @@ def get_overnight_signals() -> List[Dict[str, Any]]:
     return out
 
 
+def akshare_get_trade_dates(start_date: str, end_date: str) -> List[str]:
+    """
+    §D4.G2 Path C.2 备源 · AKShare `tool_trade_date_hist_sina()` (新浪历史交易日) fallback.
+
+    Baostock 主源连续 3 次网络失败后由应用侧走本 fallback (TradingCalendarSyncService 判定).
+    ak.tool_trade_date_hist_sina() 返回 DataFrame · 列名 'trade_date' · 已过滤为交易日 (无休市日).
+    本 helper 只取 [start_date, end_date] 闭区间内 YYYY-MM-DD 字符串列表返回, source 语义与
+    Baostock 同 (只含 is_trading_day=1) — 落库时 source 字段由 TradingCalendarSyncService 覆写为 'akshare'.
+    """
+    if not start_date or not end_date:
+        return []
+    try:
+        df = ak.tool_trade_date_hist_sina()
+    except Exception as e:
+        raise RuntimeError(f"tool_trade_date_hist_sina failed: {e}")
+    if df is None or getattr(df, "empty", True):
+        return []
+    dates: List[str] = []
+    for raw in df["trade_date"].tolist():
+        if raw is None:
+            continue
+        try:
+            s = str(raw)[:10]
+        except Exception:
+            continue
+        if len(s) == 10 and s[4] == "-" and s[7] == "-" and start_date <= s <= end_date:
+            dates.append(s)
+    dates.sort()
+    return dates
+
+
 def main():
     """Main entry point for command line calls"""
     if len(sys.argv) < 2:
@@ -6243,6 +6274,14 @@ def main():
             # (a50_future / hk_hsi / us_nasdaq / us_dxy / us_vix).
             # 不接受参数, fail-OPEN 内部 try/except.
             result = get_overnight_signals()
+
+        elif command == "akshare_get_trade_dates":
+            if len(sys.argv) < 4:
+                print(json.dumps({"error": "Missing parameters for akshare_get_trade_dates"}), file=sys.stderr)
+                sys.exit(1)
+            start_date = sys.argv[2]
+            end_date = sys.argv[3]
+            result = akshare_get_trade_dates(start_date, end_date)
 
         else:
             print(json.dumps({"error": f"Unknown command: {command}"}), file=sys.stderr)

@@ -264,8 +264,13 @@ export class AKShareClient {
    * 查询交易日历（暂不支持）
    */
   async queryTradeDates(start_date: string, end_date: string): Promise<string[]> {
-    logger.warn('AKShareClient.queryTradeDates not implemented');
-    return [];
+    try {
+      const dates = await this.callPythonScript('akshare_get_trade_dates', start_date, end_date);
+      return Array.isArray(dates) ? (dates as string[]) : [];
+    } catch (error) {
+      logger.error('AKShareClient.queryTradeDates failed:', error);
+      throw error;
+    }
   }
 
   /**
