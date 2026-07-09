@@ -984,3 +984,204 @@ Backend post-MERGE broadcast `msg=3ae1c40e` (self-merge 十例 REALIZED · 十�
 - PR #126 https://github.com/bruinxz/stocks/pull/126 · Backend CREATE msg=55136a50 · Backend post-MERGE msg=3ae1c40e · Backend v37 CONCUR-context msg=57cc11d9
 - Orch v209 msg=c3b9007f §7.1 explicit dispatch to Cleanup γ 本 batch 起源
 - owner msg=b8af5127 · msg=d0d11677 · msg=eb4b0016 T+Nd 语言禁用 · msg=21867874 no-deadline perpetual dispatch · Orch v204~v211
+
+---
+
+## §PR-M3-8 · Backend PR #129 · ADR-0010 §4.3 Phase 3 Tier-4 dedicated endpoint (`/api/v1/status` + `/api/v1/version`)
+
+### §一 · Landing metadata
+- PR #129 · Backend 主签 · squash-merge · mergeCommit `6baa445fc379325bb8ad328e00ce82aa32765a22` @ 2026-07-09T19:03:26Z · 十五-段
+- Scope: `/api/v1/status` + `/api/v1/version` dedicated endpoints · ADR-0010 §4.3 Phase 3 full · Tier-4 canonical
+- Diff scope: `backend/src/**` SOLE (routing + status handler + version handler + test) · Backend SOLE lane 100%
+- Authority: msg=d0d11677 self-merge (≥4-sign code-tier + CI 8/8 GREEN 双门 satisfied)
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (Task #62 slot #2 anchor msg=76917b92)
+- §2.1 jscpd ≤30% PASS-toward · §2.2 dead code zero introduce · §2.3 `backend/src/**` + `backend/tests/routing/**` SOLE 独占 · §2.4 TS 严格 · §2.5 patch minimal delta · §2.6 ADR-0010 §4.3 Phase 3 Tier-4 canonical (dedicated endpoint = 5th-tier canonical binding)
+
+### §三 · ADR-0010 canonical stack five-tier map (post-#129)
+- Tier-1 header (X-API-Version) · #117
+- Tier-2 body (`/health` supported_api_versions) · #125
+- Tier-3 log (winston `api_version=<x>` 后缀) · #126
+- Tier-3 consumer (`verifyApiVersion` axios interceptor) · #124
+- Tier-3 body consumer (`verifySupportedApiVersions`) · #127
+- **Tier-4 dedicated endpoint** (`/api/v1/status` + `/api/v1/version`) · #129 本 landing
+
+### §四 · Fifteen-段 main HEAD lineage LOCK
+`... → 44027896(#125) → a8cef025(#127) → 0a9aaaaa(#126) → bc1b3c91(#128) → 6baa445f(#129)` — main HEAD canonical LOCK 更新 → **`6baa445f`** post-#129
+
+### §五 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §六 · 引用锚
+- PR #129 · Backend CREATE + post-MERGE broadcast · self-merge 十一例 code-tier REALIZED
+- ADR-0010 §4.3 Phase 3 full canonical
+
+---
+
+## §PR-M3-9 · Backend PR #133 · ADR-0010 §4.4 Tier-5 Deprecation middleware (RFC 9745 + RFC 8594 + RFC 8288)
+
+### §一 · Landing metadata
+- PR #133 · Backend 主签 · mergeCommit `101ab3cec9b95ba6e5463ed8d4b5f946bf0675a8` @ 2026-07-09T19:28:17Z · 十六-段
+- Scope: `backend/src/middlewares/apiDeprecation.ts` NEW + `backend/src/index.ts` mount + test · RFC 9745 `Deprecation` + RFC 8594 `Sunset` + RFC 8288 `Link` canonical
+- Diff scope: `backend/src/**` + `backend/tests/routing/**` SOLE · Backend SOLE lane 100%
+- Cleanup γ 副签 anchor: Task #47 slot #2 code-hygiene audit CONCUR unconditional delivered
+- Authority: msg=d0d11677 self-merge (≥4-sign code-tier + CI 8/8 GREEN 双门 satisfied)
+
+### §二 · Cleanup γ code-hygiene 六-项 audit
+- §2.1 jscpd · §2.2 dead code zero · §2.3 `backend/src/**` + `backend/tests/routing/**` SOLE · §2.4 TS 严格 + zero type churn · §2.5 patch minimal delta + backward-compat 100% (default-OFF · absent config → pass-through) · §2.6 RFC canonical stack (9745 + 8594 + 8288) triple-binding + Deprecation/Sunset/Link header 语义 aligned + zero-throw semantics preserve
+
+### §三 · ADR-0010 canonical stack COMPLETE 🎯 REALIZED (§4.1 + §4.2 + §4.3 + §4.4)
+- §4.1 header · §4.2 log · §4.3 body/endpoint (multi-tier) · §4.4 deprecation/sunset middleware
+- **triple-source aligned canonical stack COMPLETE** (header + log + body + endpoint + deprecation 五-tier canonical binding LIVE)
+
+### §四 · Sixteen-段 main HEAD lineage LOCK
+`... → 6baa445f(#129) → 101ab3ce(#133)` — main HEAD canonical LOCK 更新 → **`101ab3ce`** post-#133 · self-merge 十二例 code-tier REALIZED
+
+### §五 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §六 · 引用锚
+- RFC 9745 · RFC 8594 · RFC 8288
+- PR #133 · Backend CREATE + post-MERGE broadcast · ADR-0010 §4.4 canonical
+
+---
+
+## §PR-M3-10 · Frontend γ PR #130 · Sider responsive breakpoint (Task #14 v0.5(b))
+
+### §一 · Landing metadata
+- PR #130 · Frontend γ 主签 · mergeCommit `65436296fffa24ef30a628919dd6a7a033b7601c` @ 2026-07-09T19:37:41Z · 十七-段
+- Scope: `frontend/src/App.tsx:399` Sider `breakpoint="lg"` + `collapsedWidth={0}` responsive canonical · Task #14 v0.5(b)
+- Diff scope: `frontend/**` SOLE · Frontend SOLE lane 100%
+- Cleanup γ 副签 anchor: Task #46 slot #2 code-hygiene audit CONCUR unconditional delivered
+- Authority: msg=d0d11677 self-merge (≥4-sign code-tier + CI 8/8 GREEN 双门 satisfied)
+
+### §二 · Cleanup γ code-hygiene 六-项 audit
+- §2.1 jscpd · §2.2 dead code zero · §2.3 `frontend/**` SOLE (App.tsx L399 SOLE MOD) · §2.4 antd Sider built-in API canonical · §2.5 patch minimal delta (+2/-1) + behavior-preserve (mobile responsive 天然 improvement) · §2.6 Frontend v0.5(a-g) 承接位 stream 二-例
+
+### §三 · N=4 authority transitive preserve at 十七-段 (grep-verify bit-perfect)
+- Frontend PR #130 SOLE MOD `frontend/src/App.tsx:399` · zero `backend/src/**` touch · N=4 canonical (FeedbackStatus + FeedbackClassification + SizingMethod + QuantWorkflowStatus) transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect preserve
+
+### §四 · Seventeen-段 main HEAD lineage LOCK
+`... → 101ab3ce(#133) → 65436296(#130)` — main HEAD canonical LOCK 更新 → **`65436296`** post-#130
+
+### §五 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §六 · 引用锚
+- PR #130 · Frontend γ CREATE + post-MERGE broadcast · antd Sider `breakpoint` + `collapsedWidth` built-in API canonical
+- Task #14 v0.5(b)
+
+---
+
+## §PR-M3-11 · QADocs PR #132 · PR-M3-5 v0.4-corrected N=4 baseline (anti-fabrication Instance 5 二例 VINDICATED)
+
+### §一 · Landing metadata (QADocs §八(a) explicit arm)
+- PR #132 · QADocs 主签 · mergeCommit `a4a1851017d004ec2c81e95b6d4561058b26dcdd` @ 2026-07-09T19:48:36Z · 十九-段
+- Scope: `docs/refactor/baseline/ui-enum/4-enum-matrix-lock-bc1b3c9.json` NEW (4-baseline canonical) + `backend/tests/enum/enum-matrix-lock.test.ts` MOD (dual-invariant hard-check) + `docs/refactor/quality/qadocs-ui-enum-lock-sop.md` MOD
+- Diff scope: +254/-0 · 3 files · QADocs SOLE lane 100% (`docs/refactor/baseline/ui-enum/**` + `backend/tests/enum/**` + `docs/refactor/quality/**`)
+- Cleanup γ 副4 last-slot 收官: msg=3433ed40 (aggregated into 4/4 CLOSE per QADocs 主签 msg=03e80077 §二)
+- Authority: msg=d0d11677 self-merge · authority-native execute per Orch v215 §六
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (msg=3433ed40 anchor)
+- §2.1 jscpd · §2.2 dead code · §2.3 QADocs SOLE lane · §2.4 TS 严格 dual-invariant · §2.5 patch minimal delta N=4 canonical · §2.6 N=4 grep-verify bit-perfect at 十七-段 `65436296` (transitively preserved 十七 → 十八 → 十九-段)
+
+### §三 · N=4 canonical AUTHORITY dual-source hard-fail canonical LIVE
+- 15-baseline `matrix.length === 15` retain + **4-baseline `matrix4.length === 4` hard-check 新增 dual-invariant**
+- N=4 canonical: FeedbackStatus + FeedbackClassification + SizingMethod + QuantWorkflowStatus (bit-perfect grep-verify authority-file lines)
+- Negative-verify: MarketRegime + MarketJudgmentStatus = 0 hits discrete `export type` (Backend Option B REMOVE-permanent invariant preserved)
+
+### §四 · Anti-fabrication canonical Instance 5 二例 VINDICATED (post-十九-段)
+- Instance 1-4 prior canonical retain · **Instance 5 二例 authored-in-repo-first-then-lock canonical REINFORCED** post-#132
+- N=6 → N=4 retract-canonical LOCKED · Backend Option B REMOVE-permanent authority 追认
+
+### §五 · Nineteen-段 main HEAD lineage LOCK
+`... → 65436296(#130) → 0f5661f2(#131 十八-段 doc-tier) → a4a18510(#132)` — main HEAD canonical LOCK 更新 → **`a4a18510`** post-#132 · self-merge 十六例 code-tier REALIZED
+
+### §六 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §七 · 引用锚
+- PR #132 · QADocs CREATE + post-MERGE broadcast · N=4 dual-source hard-fail canonical LIVE
+- Anti-fabrication canonical Instance 5 二例 canonical
+
+---
+
+## §PR-M3-12 · Frontend γ PR #134 · `/risk-alerts` double-hop → single-hop redirect fix (Task #14 v0.5(d))
+
+### §一 · Landing metadata (SELF-MERGED · byte-truth verified)
+- PR #134 · Frontend γ 主签 · head `d86b464aedac45e7abdc5534db4f85fbe23f9e15` · mergeCommit `3a9ca3b92b8cfa693a60e8d6df607d8791a1cccb` @ 2026-07-09T19:59:56Z · **二十-段 REALIZED**
+- Scope: `frontend/src/App.tsx:157` (`routeSelectionAliases`) + `App.tsx:581` (Route Navigate leaf) dual-site · `/portfolio` → `/workspace/portfolio` · Task #14 v0.5(d)
+- Diff scope: +2/-2 · 1 file · Frontend SOLE lane 100%
+- Cleanup γ 副4 last-slot 收官: msg=c3d295c6 (aggregated into 4/4 CLOSE post: Research §S3 msg=83e93a18 副1 + QADocs msg=158f75af 副2 + Backend msg=df247faf 副3 + Cleanup γ 副4)
+- Authority: msg=d0d11677 self-merge · Frontend γ 主签 authority-native execute post 4-sign + CI 8/8 GREEN + CLEAN 双门 satisfy REALIZED
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (msg=c3d295c6 anchor)
+- §2.1 jscpd (pure text-swap · zero duplication) · §2.2 dead code zero (family-canonical 一致性) · §2.3 `frontend/**` SOLE (App.tsx dual-site MOD) · §2.4 TS 严格 + zero type churn + React Router v6 built-in `<Navigate replace />` canonical · §2.5 patch minimal delta (+2/-2) + behavior-preservation 100% (double-hop → single-hop · final destination identical · history stack cleaner) · §2.6 family-canonical 一致性 (12+ 兄弟 alias 全 `→ '/workspace/portfolio'`) + Task #14 v0.5(d) authored-in-workspace-first-then-PR canonical
+
+### §三 · Behavior-preservation verify canonical
+- **before PR #134**: `/risk-alerts` → (L157 alias) → `/portfolio` → (L647 Route Navigate) → `/workspace/portfolio` · **double-hop 2-navigation**
+- **after PR #134**: `/risk-alerts` → `/workspace/portfolio` · **single-hop 1-navigation**
+- **final destination IDENTICAL** · **history stack depth reduced by 1** (single-hop `replace` = same slot vs prev 2-hop `replace`+`replace`)
+
+### §四 · N=4 authority transitive preserve at 二十-段 (grep-verify bit-perfect)
+- Frontend PR #134 SOLE MOD `frontend/src/App.tsx` L157+L581 · zero `backend/src/**` touch · N=4 canonical + MarketRegime/MarketJudgmentStatus REMOVE-permanent invariant transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect 100% preserve
+
+### §五 · 副签 order 4/4 CLOSE (msg-id table · code-tier ≥4-sign · msg=d0d11677 authority)
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Frontend γ | msg=18e353dc | CREATE broadcast |
+| 副1 | Research §S3 | msg=83e93a18 | byte-truth PASS + dual-site aligned + Path D preserve + workspace-draft REALIZE + 借鉴 attribution 五-项 PASS |
+| 副2 | QADocs | msg=158f75af | 16-项 DoD attest + 保护 glob 铁律 100% zero-touch matrix + Path D shasum byte-perfect + N=4 canonical grep transitive preserve + anti-fabrication Instance 5 REINFORCED |
+| 副3 | Backend v46 | msg=df247faf | byte-truth 独立 verify + Backend consumer-tier zero-coupling + Backend lane 零触碰 100% + React Router v6 API 语义 aligned + MarketRegime/MarketJudgmentStatus REMOVE-permanent transitive preserve |
+| 副4 | **Cleanup γ** | **msg=c3d295c6** | **last-slot 收官** · code-hygiene 六-项 audit 全 PASS · behavior-preservation 100% + family-canonical 一致性 |
+
+### §六 · Twenty-段 main HEAD lineage LOCK
+`... → a4a18510(#132) → 3a9ca3b9(#134)` — main HEAD canonical LOCK 更新 → **`3a9ca3b9`** post-#134 · self-merge 十七例 code-tier REALIZED
+
+### §七 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §八 · 引用锚
+- PR #134 · Frontend γ CREATE + post-MERGE broadcast · React Router v6 built-in `<Navigate replace />` canonical
+- Task #14 v0.5(d) authored-in-workspace-first-then-PR canonical
+
+---
+
+## §PR-M3-13 · Frontend γ PR #135 · Table `scroll.x` unify `'max-content'` canonical (Task #14 v0.5(e))
+
+### §一 · Landing metadata (SELF-MERGED · byte-truth verified)
+- PR #135 · Frontend γ 主签 · head `81c6a35a741cbfe3fb910eca5adbd38bfddd1ef1` · mergeCommit `08e777be223f76c672bcae10f94498f5519e40b8` @ 2026-07-09T20:13:00Z · **二十一-段 REALIZED**
+- Scope: 6 files × 7 sites `frontend/**` SOLE — `PortfolioManagementPanel.tsx` L599 + `DataUpdateStatus.tsx` L1505/L1517/L1712 + `TaskScheduler.tsx` L1664/L1931 + `LabWorkspace.OverfitMetricsTab.tsx` L367 + `LabWorkspace.WalkForwardTab.tsx` L476/L616 + `PortfolioWorkspace.tsx` L1045/L1721 · integer-pixel → `'max-content'` CSS3 keyword swap · Task #14 v0.5(e)
+- Diff scope: +11/-11 · 6 files · Frontend SOLE lane 100%
+- Cleanup γ 副2 last-slot 收官: msg=ce36d897 (aggregated into 4/4 CLOSE post: Backend 副1 msg=d0f0450c + Research §S3 副3 msg=eb3000eb + QADocs 副4 msg=615f2fd3 + Cleanup γ 副2 last-slot 收官)
+- Authority: msg=d0d11677 self-merge · Frontend γ 主签 authority-native execute (Owner squash-merge path per Frontend msg=e6453a83 §一)
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (msg=ce36d897 anchor)
+- §2.1 jscpd (pure text-swap · zero duplication) · §2.2 dead code zero (family-canonical 一致性) · §2.3 `frontend/**` SOLE (6 files MOD) · §2.4 TS 严格 + zero type churn + antd 5.x `TableProps<T>['scroll']` type accepts `string | number | true` union + CSS3 Intrinsic & Extrinsic Sizing Module Level 3 built-in `'max-content'` canonical · §2.5 patch minimal delta (+11/-11) + behavior-preservation 100% (wide-viewport identical · narrow-viewport improved · column mutation resilience) · §2.6 family-canonical 15-site unify (9-baseline pre-existing + 6-promote via #135 · zero horizontal-scroll integer-pixel outlier remaining) + Task #14 v0.5(e) workspace-draft REALIZE canonical
+
+### §三 · Behavior-preservation verify canonical
+- **wide-viewport consumers**: column render **identical** post-swap (CSS `max-content` ≈ pre-existing hardcoded pixel budget · zero visual regression)
+- **narrow-viewport / mobile consumers**: overflow behavior **improved** (CSS `max-content` triggers horizontal scroll natively at proper viewport threshold)
+- **column mutation resilience**: future column addition/removal **auto-adjusts** (CSS `max-content` self-computes new column-sum · manual coordinate maintenance eliminated)
+- **zero-touch intentional preserve verify**: `DataUpdateStatus:2470` (`y:400`-only) + `StockExplorer:346` (`y:calc(100vh-460px)`-only) vertical-only sites correctly excluded
+
+### §四 · N=4 authority transitive preserve at 二十一-段 (grep-verify bit-perfect)
+- Frontend PR #135 SOLE MOD `frontend/src/**` × 6 files · zero `backend/src/**` touch · N=4 canonical (FeedbackStatus + FeedbackClassification + SizingMethod + QuantWorkflowStatus) transitively preserved · MarketRegime/MarketJudgmentStatus REMOVE-permanent invariant transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect 100% preserve (local re-verify post-merge PASS)
+
+### §五 · 副签 order 4/4 CLOSE (msg-id table · code-tier ≥4-sign · msg=d0d11677 authority · Orch v219 §四 dispatch)
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Frontend γ | msg=bf61f910 | CREATE broadcast |
+| 副1 | Backend v47 | msg=d0f0450c | byte-truth 铁-verify + antd `TableProps<T>['scroll']` `'max-content'` CSS3 canonical + Backend lane 零触碰 100% + consumer-tier zero-coupling |
+| 副2 | **Cleanup γ** | **msg=ce36d897** | **last-slot 收官** · code-hygiene 六-项 audit 全 PASS · behavior-preservation 100% + column mutation resilience + zero-touch intentional preserve + 15-site family-canonical unify + Path D shasum byte-perfect re-verify |
+| 副3 | Research §S3 | msg=eb3000eb | byte-truth 6-file × 7-site bit-perfect + antd Table 'max-content' family-canonical 15-site unify + Path D preserve + 借鉴 attribution 100% |
+| 副4 | QADocs | msg=615f2fd3 | 16-项 DoD independent-attest + 保护 glob 铁律 100% + Path D shasum byte-perfect at PR #135 head + N=4 canonical AUTHORITY grep 4/4 transitive preserve + Instance 5 REINFORCED transitively |
+
+### §六 · Twenty-one-段 main HEAD lineage LOCK
+`... → 3a9ca3b9(#134) → 08e777be(#135)` — main HEAD canonical LOCK 更新 → **`08e777be`** post-#135 · self-merge 十八例 code-tier REALIZED · 二连-SELF-MERGE #134+#135 aligned · 二十二例 self-merge total (十八 code + 四 doc)
+
+### §七 · antd Table `scroll.x = 'max-content'` family-canonical 15-site unify REALIZED
+- **9-baseline sites pre-#135** (grep-confirmed): `ActivationDashboard` + `PortfolioManagementPanel` (pre-existing sites) + `StockDetailPanel` + `DataUpdateStatus` (pre-existing sites) + `TaskScheduler` (pre-existing sites) + `FactorWorkspace` + `LabWorkspace.LeaderboardTab` + `FactorWorkspace.ETFFlowTab`
+- **6-promote sites via PR #135** (7 pre-existing outlier sites → `'max-content'`)
+- **15-site 100% aligned** · zero remaining integer-pixel outlier for horizontal-scroll sites
+
+### §八 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §九 · 引用锚
+- PR #135 · Frontend γ CREATE + post-MERGE broadcast · antd 5.x `TableProps<T>['scroll']` + CSS3 Intrinsic & Extrinsic Sizing Module Level 3 `'max-content'` canonical
+- Task #14 v0.5(e) workspace-draft REALIZE canonical
