@@ -1366,19 +1366,30 @@ const EquityCurveTab: React.FC<EquityCurveTabProps> = ({ snapshots, kpis }) => {
       setBenchmarkSeries([]);
       return;
     }
+    // v0.5(p): race-guard — 快速切窗时抛弃陈旧 benchmark 响应, 避免 stale series 覆盖新窗
+    let ignore = false;
     const startDate = sliced[0].date;
     const endDate = sliced[sliced.length - 1].date;
     setBenchmarkLoading(true);
     setBenchmarkError(null);
     portfolioWorkspaceService
       .fetchBenchmarkHistory(BENCHMARK_SYMBOL, startDate, endDate)
-      .then(setBenchmarkSeries)
+      .then(data => {
+        if (ignore) return;
+        setBenchmarkSeries(data);
+      })
       .catch((err: unknown) => {
+        if (ignore) return;
         const messageStr = err instanceof Error ? err.message : String(err);
         setBenchmarkError(messageStr);
         setBenchmarkSeries([]);
       })
-      .finally(() => setBenchmarkLoading(false));
+      .finally(() => {
+        if (!ignore) setBenchmarkLoading(false);
+      });
+    return () => {
+      ignore = true;
+    };
   }, [sliced]);
 
   const chartData = useMemo(() => {
@@ -1889,16 +1900,27 @@ const JournalTab: React.FC<JournalTabProps> = ({ list, onListRefresh }) => {
       setDetail(null);
       return;
     }
+    // v0.5(p): race-guard — 快速切日期时抛弃陈旧 journal detail 响应
+    let ignore = false;
     setDetailLoading(true);
     setDetailError(null);
     portfolioWorkspaceService
       .getJournalDetail(selectedDate)
-      .then(d => setDetail(d))
+      .then(d => {
+        if (ignore) return;
+        setDetail(d);
+      })
       .catch((err: unknown) => {
+        if (ignore) return;
         const messageStr = err instanceof Error ? err.message : String(err);
         setDetailError(messageStr);
       })
-      .finally(() => setDetailLoading(false));
+      .finally(() => {
+        if (!ignore) setDetailLoading(false);
+      });
+    return () => {
+      ignore = true;
+    };
   }, [selectedDate]);
 
   const handleAppend = async () => {
