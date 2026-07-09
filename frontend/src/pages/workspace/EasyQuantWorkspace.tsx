@@ -1646,7 +1646,7 @@ const EasyQuantWorkspace: React.FC = () => {
             ))}
           </div>
           <div className="eq-stage-actions">
-            <button
+            <button type="button"
               className="eq-button eq-button--dark"
               disabled={
                 bootstrapLoading ||
@@ -1663,7 +1663,7 @@ const EasyQuantWorkspace: React.FC = () => {
             >
               {backtestLoading ? '回测运行中' : '开始真实回测'} <PlayCircleOutlined />
             </button>
-            <button className="eq-button eq-button--quiet" onClick={() => setDrawerKey('data')}>
+            <button type="button" className="eq-button eq-button--quiet" onClick={() => setDrawerKey('data')}>
               查看数据明细
             </button>
           </div>
@@ -1683,7 +1683,7 @@ const EasyQuantWorkspace: React.FC = () => {
             </h2>
             <p>先看一个结论，再决定要不要进入模拟观察。详细指标放在抽屉里慢慢看。</p>
             <div className="eq-report-actions">
-              <button
+              <button type="button"
                 className="eq-button eq-button--quiet eq-report-history-link"
                 onClick={openHistoryDrawer}
               >
@@ -1757,7 +1757,7 @@ const EasyQuantWorkspace: React.FC = () => {
                 </div>
               )}
               <div className="eq-running-actions">
-                <button
+                <button type="button"
                   className="eq-button eq-button--quiet"
                   disabled={!backtestTaskId}
                   onClick={handleRefreshBacktestResult}
@@ -1765,7 +1765,7 @@ const EasyQuantWorkspace: React.FC = () => {
                   刷新结果 <ReloadOutlined />
                 </button>
                 {backtestError && (
-                  <button className="eq-button eq-button--quiet" onClick={handleRunBacktest}>
+                  <button type="button" className="eq-button eq-button--quiet" onClick={handleRunBacktest}>
                     重新跑一次 <PlayCircleOutlined />
                   </button>
                 )}
@@ -1792,20 +1792,20 @@ const EasyQuantWorkspace: React.FC = () => {
             )}
           </div>
           <div className="eq-stage-actions">
-            <button
+            <button type="button"
               className="eq-button eq-button--dark"
               disabled={!backtestDetail || backtestLoading}
               onClick={() => goToStep('credibility')}
             >
               查看可信度 <ArrowRightOutlined />
             </button>
-            <button
+            <button type="button"
               className="eq-button eq-button--quiet"
               onClick={() => openBacktestDrawer('metrics')}
             >
               查看完整指标
             </button>
-            <button
+            <button type="button"
               className="eq-button eq-button--quiet"
               onClick={() => openBacktestDrawer('trades')}
             >
@@ -1871,18 +1871,18 @@ const EasyQuantWorkspace: React.FC = () => {
             <p>{credibilityActionHint.detail}</p>
           </div>
           <div className="eq-stage-actions">
-            <button
+            <button type="button"
               className="eq-button eq-button--dark"
               disabled={!researchAuditVerdict.can_create_observation || researchAuditLoading}
               onClick={() => goToStep('observe')}
             >
               进入模拟观察 <ArrowRightOutlined />
             </button>
-            <button className="eq-button eq-button--quiet" onClick={() => setDrawerKey('ledger')}>
+            <button type="button" className="eq-button eq-button--quiet" onClick={() => setDrawerKey('ledger')}>
               查看实验账本
             </button>
             {!researchAuditVerdict.can_create_observation && (
-              <button className="eq-button eq-button--quiet" onClick={() => goToStep('data')}>
+              <button type="button" className="eq-button eq-button--quiet" onClick={() => goToStep('data')}>
                 回到查数据
               </button>
             )}
@@ -1909,7 +1909,7 @@ const EasyQuantWorkspace: React.FC = () => {
             </article>
             <div className="eq-observe-timeline">
               {observationEvents.map(log => (
-                <button key={`${log.time}-${log.title}`} onClick={() => setDrawerKey('observe')}>
+                <button type="button" key={`${log.time}-${log.title}`} onClick={() => setDrawerKey('observe')}>
                   <time>{log.time}</time>
                   <strong>{log.title}</strong>
                   <span>{log.state}</span>
@@ -1921,7 +1921,7 @@ const EasyQuantWorkspace: React.FC = () => {
             模拟观察只记录虚拟组合，不会下真实订单，也不会自动开启实盘。
           </p>
           <div className="eq-stage-actions">
-            <button
+            <button type="button"
               className="eq-button eq-button--dark"
               disabled={!researchAuditVerdict.can_create_observation || observationCreating}
               onClick={handleCreateObservation}
@@ -1931,7 +1931,7 @@ const EasyQuantWorkspace: React.FC = () => {
             <Link className="eq-button eq-button--quiet" to="/workspace/portfolio">
               去模拟盘查看
             </Link>
-            <button className="eq-button eq-button--quiet" onClick={handleResetResearchFlow}>
+            <button type="button" className="eq-button eq-button--quiet" onClick={handleResetResearchFlow}>
               重新选模板
             </button>
           </div>
@@ -2119,7 +2119,7 @@ const EasyQuantWorkspace: React.FC = () => {
           />
         </label>
         <div className="eq-stage-actions">
-          <button
+          <button type="button"
             className="eq-button eq-button--dark"
             disabled={selectedTemplateData.available === false}
             onClick={() => goToStep('data')}
@@ -2146,7 +2146,7 @@ const EasyQuantWorkspace: React.FC = () => {
         </div>
       </div>
       {journeySteps.map(step => (
-        <button
+        <button type="button"
           key={step.key}
           className={`eq-step-pill ${activeStep === step.key ? 'eq-step-pill--active' : ''}`}
           onClick={() => goToStep(step.key)}
@@ -2166,14 +2166,14 @@ const EasyQuantWorkspace: React.FC = () => {
       <div className="eq-quick-card">
         <span>快捷入口</span>
         <div className="eq-quick-list">
-          <button onClick={openHistoryDrawer}>历史回测</button>
-          <button onClick={() => openBacktestDrawer('trades')}>交易明细</button>
-          <button onClick={() => openBacktestDrawer('metrics')}>完整指标</button>
-          <button onClick={() => setDrawerKey('data')}>查数据</button>
-          <button onClick={() => setDrawerKey('template')}>模板对比</button>
-          <button onClick={() => setDrawerKey('observe')}>观察日志</button>
-          <button onClick={() => openBacktestDrawer('blocks')}>成交阻断</button>
-          <button onClick={() => setDrawerKey('ledger')}>实验账本</button>
+          <button type="button" onClick={openHistoryDrawer}>历史回测</button>
+          <button type="button" onClick={() => openBacktestDrawer('trades')}>交易明细</button>
+          <button type="button" onClick={() => openBacktestDrawer('metrics')}>完整指标</button>
+          <button type="button" onClick={() => setDrawerKey('data')}>查数据</button>
+          <button type="button" onClick={() => setDrawerKey('template')}>模板对比</button>
+          <button type="button" onClick={() => setDrawerKey('observe')}>观察日志</button>
+          <button type="button" onClick={() => openBacktestDrawer('blocks')}>成交阻断</button>
+          <button type="button" onClick={() => setDrawerKey('ledger')}>实验账本</button>
         </div>
       </div>
     </aside>
@@ -2182,7 +2182,7 @@ const EasyQuantWorkspace: React.FC = () => {
   const renderFlowOverview = () => (
     <div className="eq-flow-overview-grid">
       {journeySteps.map(step => (
-        <button
+        <button type="button"
           key={step.key}
           className={`eq-flow-card ${activeStep === step.key ? 'eq-flow-card--active' : ''}`}
           onClick={() => goToStep(step.key)}
@@ -2243,7 +2243,7 @@ const EasyQuantWorkspace: React.FC = () => {
               只列简易版回测 <StoryHint story="history" label="历史回测说明" />
             </strong>
             <span>点“在简易版查看”会回到当前五步流程；点“专业版详情”会打开完整回测页。</span>
-            <button
+            <button type="button"
               className="eq-button eq-button--quiet"
               onClick={() => void loadEasyQuantHistory()}
             >
@@ -2319,7 +2319,7 @@ const EasyQuantWorkspace: React.FC = () => {
                         '这条历史回测可以在简易版复看，也可以进入专业版查看全部指标。'}
                     </p>
                     <div className="eq-history-actions">
-                      <button
+                      <button type="button"
                         className="eq-button eq-button--dark"
                         onClick={() => void handleOpenHistoryBacktest(item)}
                       >
@@ -2613,11 +2613,11 @@ const EasyQuantWorkspace: React.FC = () => {
           </Link>
         </nav>
         <div className="eq-user-tools" aria-label="用户工具">
-          <button className="eq-bell" aria-label="通知">
+          <button type="button" className="eq-bell" aria-label="通知">
             <BellOutlined />
             <span>27</span>
           </button>
-          <button className="eq-user-chip" aria-label="当前用户">
+          <button type="button" className="eq-user-chip" aria-label="当前用户">
             <span className="eq-user-avatar">
               <UserOutlined />
             </span>
@@ -2632,7 +2632,7 @@ const EasyQuantWorkspace: React.FC = () => {
 
       <nav className="eq-section-dots" aria-label="简易版分屏导航">
         {sectionNavItems.map(item => (
-          <button
+          <button type="button"
             key={item.id}
             className={`eq-section-dot ${activeSectionId === item.id ? 'eq-section-dot--active' : ''}`}
             onClick={() => scrollToSection(item.id)}
@@ -2658,7 +2658,7 @@ const EasyQuantWorkspace: React.FC = () => {
                 <h1>开始第一套量化策略</h1>
                 <p>从一个模板开始，按步骤查数据、跑回测、进入模拟观察。</p>
                 <div className="eq-hero-actions">
-                  <button
+                  <button type="button"
                     className="eq-button eq-button--dark eq-button--start"
                     onClick={startGuidedFlow}
                   >
@@ -2681,7 +2681,7 @@ const EasyQuantWorkspace: React.FC = () => {
                 </div>
               </aside>
             </div>
-            <button className="eq-scroll-cue" onClick={startGuidedFlow} aria-label="向下滚动">
+            <button type="button" className="eq-scroll-cue" onClick={startGuidedFlow} aria-label="向下滚动">
               <span>向下滚动</span>
               <ArrowRightOutlined />
             </button>
@@ -2705,7 +2705,7 @@ const EasyQuantWorkspace: React.FC = () => {
                   <i style={{ width: `${progressPercent}%` }} />
                 </div>
               </div>
-              <button className="eq-button eq-button--dark" onClick={() => goToStep('template')}>
+              <button type="button" className="eq-button eq-button--dark" onClick={() => goToStep('template')}>
                 继续：选模板 <ArrowRightOutlined />
               </button>
             </div>
@@ -2780,7 +2780,7 @@ const EasyQuantWorkspace: React.FC = () => {
       </div>
 
       <div className={`eq-drawer-layer ${drawerKey ? 'eq-drawer-layer--open' : ''}`}>
-        <button
+        <button type="button"
           className="eq-drawer-backdrop"
           aria-label="关闭抽屉"
           onClick={() => setDrawerKey(null)}
@@ -2793,7 +2793,7 @@ const EasyQuantWorkspace: React.FC = () => {
         >
           <div className="eq-drawer-head">
             <span>{drawerTitle}</span>
-            <button aria-label="关闭抽屉" onClick={() => setDrawerKey(null)}>
+            <button type="button" aria-label="关闭抽屉" onClick={() => setDrawerKey(null)}>
               <CloseOutlined />
             </button>
           </div>
