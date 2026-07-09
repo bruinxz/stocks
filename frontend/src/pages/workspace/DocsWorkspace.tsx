@@ -595,10 +595,11 @@ const DocsWorkspace: React.FC = () => {
 
   // ============ 加载文档 ============
   const loadFile = useCallback(
-    async (path: string, updateUrl = true) => {
+    async (path: string, updateUrl = true, signal?: AbortSignal) => {
       setFileLoading(true);
       try {
-        const res = await docsService.getFile(path);
+        const res = await docsService.getFile(path, { signal });
+        if (signal?.aborted) return;
         if (res.success && res.data) {
           setFileContent(res.data.content);
           setFileMtime(res.data.mtime);
@@ -613,9 +614,13 @@ const DocsWorkspace: React.FC = () => {
           });
         }
       } catch (err: any) {
+        // v0.5(q): AbortError 是 cleanup 主动取消, 不是真错误 — 静默丢弃
+        if (signal?.aborted || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') {
+          return;
+        }
         message.error(err?.response?.data?.message || '加载文档失败');
       } finally {
-        setFileLoading(false);
+        if (!signal?.aborted) setFileLoading(false);
       }
     },
     [setSearchParams]
@@ -623,18 +628,22 @@ const DocsWorkspace: React.FC = () => {
 
   // ============ 加载评论 ============
   const loadComments = useCallback(
-    async (path: string) => {
+    async (path: string, signal?: AbortSignal) => {
       setCommentsLoading(true);
       try {
-        const res = await docsCommentsService.list(path, showResolved);
+        const res = await docsCommentsService.list(path, showResolved, { signal });
+        if (signal?.aborted) return;
         if (res.success && res.data) {
           setThreads(res.data.threads);
         }
       } catch (err: any) {
-        // 忽略, 评论加载失败不影响文档查看
+        // v0.5(q): AbortError 静默丢弃, 其余保持原静默容错语义
+        if (signal?.aborted || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') {
+          return;
+        }
         setThreads([]);
       } finally {
-        setCommentsLoading(false);
+        if (!signal?.aborted) setCommentsLoading(false);
       }
     },
     [showResolved]
@@ -662,18 +671,25 @@ const DocsWorkspace: React.FC = () => {
   }, [loadTree, loadThreadCounts]);
 
   useEffect(() => {
+    // v0.5(q): fast urlPath 切换时取消陈旧 loadFile fetch, 避免 stale setState 覆盖新文档
+    const ctrl = new AbortController();
     if (urlPath && urlPath !== selectedPath) {
-      loadFile(urlPath, false);
+      loadFile(urlPath, false, ctrl.signal);
     }
+    return () => ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlPath]);
 
   useEffect(() => {
+    // v0.5(q): fast tree 导航 / showResolved 切换时取消陈旧 loadComments fetch,
+    // 避免 stale threads 渲染到已切换后的其他文档上
+    const ctrl = new AbortController();
     if (selectedPath) {
-      loadComments(selectedPath);
+      loadComments(selectedPath, ctrl.signal);
     } else {
       setThreads([]);
     }
+    return () => ctrl.abort();
   }, [selectedPath, showResolved, loadComments]);
 
   // ============ 点击 heading 旁的 💬 按钮 ============
