@@ -808,3 +808,179 @@ Backend 主签 CREATE broadcast `msg=877d3dd9` · post-MERGE broadcast `msg=c667
 - `backend/tests/lint/no-backtest-service-regression.test.ts` L92 `KNOWN_RESIDUAL = 0` hard-fail sentinel 100% retain
 - PR #125 https://github.com/bruinxz/stocks/pull/125 · Backend CREATE msg=877d3dd9 · Backend post-MERGE msg=c667cdd2
 - owner msg=b8af5127 · msg=d0d11677 · msg=a8175861 · msg=eb4b0016 · msg=21867874 · msg=4f6d2466 · msg=702b81be PG SELECT-only · msg=b091c74d SSH root 永久禁 · Orch v204/v204.1/v204.2/v204.3/v204.4/v205/v205.1/v207
+
+---
+
+## §PR-M3-6 · Frontend PR #127 landing entry (post-#127 · Cleanup γ Lane B doc-tier 四例 candidate)
+
+### §一 · Landing metadata
+
+- PR #127 · Frontend 主签 · squash-merge from `44027896` (base) · mergeCommit `a8cef0253af6dde5200f2190a057a44d848504fb` @ 2026-07-09T18:36:24Z
+- Branch: `feat/frontend-a1-phase3-supported-versions` (deleted post-merge)
+- Diff: +315 / −9 · 2 files (`frontend/src/services/httpClient.ts` +115/-8 MOD + `frontend/src/services/__tests__/httpClient.test.ts` +200/-1 MOD)
+- Authority: msg=d0d11677 self-merge (≥4 sign + CI 15 GREEN 双门 satisfied)
+- Escalation lifecycle 三例: 同源 Backend v33.1 msg=0e55b56c → Orch v204.2 msg=bce7055e Lane split → Frontend Lane A-1 next-tier CREATE (Phase 3 body consumer 二次门) → 4-sign → CI GREEN → self-merge
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (Cleanup γ msg=446e9493 slot #3 anchor)
+
+- §2.1 jscpd ≤30% 前瞻 PASS-toward (18 新增 test payload 全 distinct · 5-branch guard 天然差异化)
+- §2.2 dead code zero introduce (5 新增 consumer: `EXPECTED_API_VERSION_MAJOR_NUM` numeric const + `ApiVersionMismatchReason` union 5 body-tier codes + `HealthPayloadShape` interface + `verifySupportedApiVersions(payload, url)` public API + 5 reason codes 全 SOLE consumer)
+- §2.3 `frontend/**` SOLE 独占 (2-file MOD scope · 保护 glob 零触碰 100% · Path D `3246b8cf` 冻结锚 100% preserve grep-verified sha_lock 匹配)
+- §2.4 TS 严格 5-branch guard canonical (body_not_object · body_missing_api_version · body_api_version_major_mismatch · body_missing_supported_api_versions · body_expected_major_not_supported · 零 `any` · 零 `as unknown` unsafe cast)
+- §2.5 dual-source contract Backend PR #125 body surface bit-perfect aligned (`EXPECTED_API_VERSION_MAJOR = '1'` string header path + `EXPECTED_API_VERSION_MAJOR_NUM = 1` numeric body path · 100% aligned with Backend `deriveSupportedMajors('1.0')` → `[1]`)
+- §2.6 unit test 18-case 5-branch cover (positive 4 + negative body_not_object 3 + body_missing_api_version 2 + body_api_version_major_mismatch 2 + body_missing_supported_api_versions 3 + body_expected_major_not_supported 2 + url reflection 2)
+
+### §三 · CI 15 GREEN required-check unconditional
+
+- 14 SUCCESS + 2 SKIPPED · 0 FAIL · mergeStateStatus=CLEAN · mergeable=MERGEABLE · pre-merge headRefOid `19d23f439b029b92d8fd22dcc8b5c939ed5aa18a` bit-perfect
+- 37/37 test PASS pre-CI (19 pre-existing + 18 new)
+
+### §四 · 副签 4/4 code-tier CONCUR msg-id table (msg=d0d11677 authority)
+
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Frontend | `msg=c108e2b8` | 主签 CREATE + PR #127 CI GREEN confirm broadcast msg=b5ca834a |
+| 1 | Backend | `msg=57cc11d9` | 副签 CONCUR unconditional · v37 dual-source contract concur · slot #2 |
+| 2 | Cleanup γ | `msg=446e9493` | 副签 CONCUR unconditional · code-hygiene 六-项 audit 全 PASS · slot #3 |
+| 3 | Research §S3 | `msg=19d2769b` | 副签 CONCUR unconditional (DUODECIMA aggregate) · byte-truth verify · slot #4 |
+
+Frontend post-MERGE broadcast `msg=9e07e044` (self-merge 九例 REALIZED · 十二-段 lineage extend REALIZED).
+
+### §五 · Escalation-canonical 闭环 REALIZED 三例 (code-tier canonical binding LIVE 全链路)
+
+- surface: Backend v33.1 msg=0e55b56c (surface-before-close 首例 · Lane A scope归属 error 首源 · 三-链 escalation-canonical binding source)
+- canonical-accept: Orch v204.2 msg=bce7055e (Lane A → A-1 + A-2 + A-3 split)
+- CREATE-in-lane: Frontend PR #127 msg=c108e2b8 (Lane A-1 Phase 3 next-tier body consumer 二次门 · 承接实现三例 · `frontend/**` SOLE 2-file MOD)
+- 4-sign concur: Frontend + Backend + Cleanup γ + Research §S3 4/4 CONCUR unconditional · CI 15 GREEN · self-merge msg=d0d11677 authority 100% 兑现
+- 闭环 REALIZED 三例: 双 code-tier × Frontend consumer 端到端闭环 三例 REALIZED (Lane A-1 #124 一例 + Lane A-3 #125 二例 + Lane A-1 #127 三例)
+
+### §六 · ADR-0010 §4.3 Phase 3 canonical downstream landed spec scope
+
+- **`frontend/src/services/httpClient.ts` (+115/-8)**:
+  - `EXPECTED_API_VERSION_MAJOR_NUM = 1` numeric const · body-path consumer canonical
+  - `ApiVersionMismatchReason` union 5 body-tier codes (body_not_object + body_missing_api_version + body_missing_supported_api_versions + body_api_version_major_mismatch + body_expected_major_not_supported)
+  - `HealthPayloadShape` interface (api_version + supported_api_versions optional unknown · [k: string]: unknown catch-all)
+  - `verifySupportedApiVersions(payload: unknown, url: string = '/health'): void` public API · 5-branch guard canonical
+- **`frontend/src/services/__tests__/httpClient.test.ts` (+200/-1)**:
+  - 18 test cases (`describe('verifySupportedApiVersions · ADR-0010 §4.3 Phase 3', ...)`)
+  - positive: sanity const + Backend PR #125 landed shape + minor-only "1" + dual-mount 前瞻 supported=[1,2]
+  - negative: 5-branch guard × 全 cover + url reflection ×2
+- **downstream 契约 100% aligned with Backend PR #125 body surface bit-perfect** (git filesystem read verify per Cleanup γ msg=446e9493 §2.5)
+- **triple-source aligned canonical 消费方 端到端闭环 REALIZED code-tier** (header via #124 + body via #127 + log opaque via #126 待 landing)
+
+### §七 · Twelve-段 main HEAD lineage LOCK update
+
+`3246b8cf(#115) → ... → 44027896(#125) → a8cef025(#127)` — main HEAD canonical LOCK 更新 → `a8cef025` · self-merge 四段 pipeline **九例 REALIZED code-tier** post-#127
+
+### §八 · Cleanup γ 三-phase 生命周期 canonical (双-entry 单-PR canonical · 与 §PR-M3-7 共)
+
+- Phase 1 pre-CREATE arm — 承接位 broadcast + workspace-draft LAND (`notes/30-cleanup-log-pr-m3-6-and-pr-m3-7-workspace-draft.md`) · Instance 4 canonical pre-CREATE hygiene 三-项 checklist LOCK · **本 §PR-M3-6 与 §PR-M3-7 双-entry 单-PR canonical**
+- Phase 2 CREATE — 本 doc-PR (§PR-M3-6 + §PR-M3-7 双-entry paste-in · docs-only 单 commit · Cleanup γ SOLE lane)
+- Phase 3 post-MERGE close-out — post-self-merge broadcast · 十六-段 lineage extend byte-truth verify + doc-tier 四例 canonical LOCK
+
+### §九 · DoD self-check (dod v4.4 铁律 16 项 · docs-only)
+
+- [x] #1-#16 全 pass (docs-only · zero code delta · zero test 触 · Path D preserve · package.json 零触碰 · sentinel scope zero-touch)
+
+### §十 · 副签路由 pin (doc-tier 双-sign lane per msg=d0d11677 authority · 与 §PR-M3-7 共)
+
+| # | 副签 | agent | scope |
+|---|---|---|---|
+| 主 | Cleanup γ | 本 batch 起源 · doc-tier 主签 self-merge candidate (doc-tier 四例) | audit trail 层留痕 |
+| 副 1 | Research §S3 | byte-truth verify + PR #127 mergeCommit `a8cef025` + PR #126 mergeCommit `0a9aaaaa` 独立复核 | pre-merge |
+| 副 2 | QADocs | DoD v4.4 checklist + CHANGELOG-adjacent 一致性 verify + anti-fabrication canonical cross-ref | pre-merge |
+
+### §十一 · 引用锚
+
+- `docs/refactor/adr/0010-api-versioning.md` §4.3 Phase 3 spec (body dual-source cross-attest · 5-branch guard canonical · warn-only Phase 3 gate)
+- PR #127 https://github.com/bruinxz/stocks/pull/127 · Frontend CREATE msg=c108e2b8 · Frontend CI GREEN msg=b5ca834a · Frontend post-MERGE msg=9e07e044
+- owner msg=b8af5127 · msg=d0d11677 · msg=eb4b0016 T+Nd 语言禁用 · msg=21867874 no-deadline perpetual dispatch · Orch v204~v211
+
+---
+
+## §PR-M3-7 · Backend PR #126 landing entry (post-#126 · Cleanup γ Lane B doc-tier 四例 candidate · 双-entry 单-PR canonical 与 §PR-M3-6 共)
+
+### §一 · Landing metadata
+
+- PR #126 · Backend 主签 · squash-merge auto-rebase over `a8cef025` (post-#127) · mergeCommit `0a9aaaaac0dae33c9b60111dfeb0492623199db2` @ 2026-07-09T18:39:16Z
+- Branch: `backend/lane-a3-phase2-winston-format` (deleted post-merge)
+- Diff: +229 / −3 · 2 files (`backend/src/utils/logger.ts` +6/-3 MOD + `backend/tests/routing/logger-api-version-format.test.ts` +223 NEW)
+- Authority: msg=d0d11677 self-merge (≥4 sign + CI 8/8 GREEN 双门 satisfied)
+- Escalation lifecycle 四例: 同源 Backend v33.1 msg=0e55b56c → Orch v204.2 msg=bce7055e Lane split → Backend Lane A-3 next-tier CREATE (Phase 2 log format 后缀) → 4-sign → CI GREEN → self-merge
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (Cleanup γ msg=6bb5876b slot #2 anchor)
+
+- §2.1 jscpd ≤30% PASS-toward (`logger.ts` +6/-3 minimal delta · test file assertEq/assertTrue helper ~60 line 共享 shape ≪ 30% jscpd threshold)
+- §2.2 dead code zero introduce (`currentApiVersion()` import extend + `apiVersion` local const + template literal `api_version=<x>` 后缀 + 14-assertion test all live consumer)
+- §2.3 `backend/src/**` + `backend/tests/routing/**` SOLE 独占 (`backend/src/utils/logger.ts` MOD + `backend/tests/routing/logger-api-version-format.test.ts` NEW = Backend SOLE lane 100% · 保护 glob 零触碰 100% · frontend/** + backend/tests/lint/** + backend/tests/enum/** + docs/refactor/** + Path D + 采集/存储侧 + schema.prisma + package.json zero-touch)
+- §2.4 TS 严格 + ALS built-in-only 铁律 aligned + fail-OPEN semantics 100% retain (Node `AsyncLocalStorage` from `node:async_hooks` · zero 第三方 dep · `currentApiVersion()` fallback `-` 与 `currentTraceId()`/`currentModule()` 语义完全对称)
+- §2.5 patch minimal delta +6/-3 backward-compat 100% (guard `if (!/trace_id=/.test(msg))` retain · 已显式在 message 里手写 `trace_id=` 的旧代码不重复追加 · frontend/log-consumer wire-compat 100%)
+- §2.6 triple-source aligned canonical log-tier 端到端闭环 REALIZED (header via #117 + body via #125 + log via #126 本 patch · 三源同 pkg.api_version='1.0' 单-源 canonical)
+
+### §三 · CI 8/8 required-check GREEN unconditional
+
+- Detect ×3 SUCCESS + weak-secrets SUCCESS + Backend check ×2 SUCCESS + enum-matrix-lock SUCCESS + no-backtest-service-regression SUCCESS + Frontend check ×2 SUCCESS + Docker compose ×2 SUCCESS · 0 FAIL
+- 44/44 test PASS (14 new + 30 regression: logging-context 12/12 + health-supported 10/10 + api-v1-mount 8/8)
+- pre-merge headRefOid `19007041ffe5208ab3c20484172811af59bde6d4` bit-perfect
+
+### §四 · 副签 4/4 code-tier CONCUR msg-id table (msg=d0d11677 authority)
+
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Backend | `msg=55136a50` | 主签 CREATE broadcast · v37 authority-CREATE |
+| 1 | Frontend | `msg=679fa137` | 副签 CONCUR unconditional · log-tier opaque render forward-compat concur · slot #1 |
+| 2 | Cleanup γ | `msg=6bb5876b` | 副签 CONCUR unconditional · code-hygiene 六-项 audit + triple-source aligned canonical REALIZED verify · slot #2 |
+| 3 | Research §S3 | `msg=19d2769b` | 副签 CONCUR unconditional (DUODECIMA aggregate) · byte-truth verify · slot #3 |
+| 4 | QADocs | `msg=ff1718f7` | 副签 CONCUR unconditional · DoD v4.4 + sentinel KNOWN_RESIDUAL=0 hard-fail retain · slot #4 |
+
+Backend post-MERGE broadcast `msg=3ae1c40e` (self-merge 十例 REALIZED · 十三-段 lineage extend REALIZED · triple-source aligned canonical 生产+消费 双向-闭合 100% LIVE).
+
+### §五 · Escalation-canonical 闭环 REALIZED 四例双 (code-tier canonical binding LIVE 全链路)
+
+- surface: Backend v33.1 msg=0e55b56c (surface-before-close 首例 · Lane A scope归属 error 首源 · 四-链 escalation-canonical binding source)
+- canonical-accept: Orch v204.2 msg=bce7055e (Lane A → A-1 + A-2 + A-3 split)
+- CREATE-in-lane: Backend PR #126 msg=55136a50 (Lane A-3 Phase 2 next-tier log format 后缀 · 承接实现四例 · `backend/src/**` + `backend/tests/routing/**` SOLE)
+- 4-sign concur: Frontend + Cleanup γ + Research §S3 + QADocs 4/4 CONCUR unconditional · CI 8/8 GREEN · self-merge msg=d0d11677 authority 100% 兑现
+- 闭环 REALIZED 四例双: 双 code-tier 全链路 闭环 REALIZED × 四例 (Lane A-1 #124 一例 + Lane A-3 #125 二例 + Lane A-1 #127 三例 + Lane A-3 #126 四例) · **PR #124→#125→#127→#126 canonical binding LIVE**
+
+### §六 · ADR-0010 §4.2 Phase 2 log format 后缀 landed spec scope
+
+- **`backend/src/utils/logger.ts` (+6/-3)**:
+  - import extend: `import { currentApiVersion, currentModule, currentTraceId } from './loggingContext';` (added `currentApiVersion`)
+  - JSDoc extend: `trace_id=<x> module=<y> api_version=<z>` narrative (ADR-0010 §4.2 Phase 2 canonical)
+  - `appendContext` body extend: `const apiVersion = currentApiVersion(); info.message = \`${msg} trace_id=${traceId} module=${mod} api_version=${apiVersion}\`;`
+  - guard `if (!/trace_id=/.test(msg))` retain — 已手写 `trace_id=` 的 message 不重复追加 (backward-compat 100%)
+- **`backend/tests/routing/logger-api-version-format.test.ts` (+223 NEW)**:
+  - 14 assertions (assertEq/assertTrue helper + `winston.transports.Stream` in-memory sink + inline express `buildTestApp()`)
+  - patterns: `/api_version=-/` (fail-OPEN default) · `/api_version=1\.0/` · `/trace_id=trace-abc/` · `/module=scheduler/` · `/api_version=9\.9/` · `/trace_id=custom-xyz/` · `/trace_id=[A-Za-z0-9-]{1,128}/` · `/trace_id=\S+ module=\S+ api_version=\S+$/`
+- **frontend/log-consumer wire-compat 100%**: `LogEntry.message` opaque render zero-parse dependency · `logService.getLogs`/`SystemLogs.tsx` 无 parse 依赖 · dashboard 直显示 (Frontend msg=679fa137 §一 独立 confirm)
+- **triple-source aligned canonical 生产+消费 双向-闭合 100% REALIZED**: producer Tier-3 log format landing · consumer Tier-3 log opaque forward-compat
+
+### §七 · Thirteen-段 main HEAD lineage LOCK update
+
+`3246b8cf(#115) → ... → 44027896(#125) → a8cef025(#127) → 0a9aaaaa(#126)` — main HEAD canonical LOCK 更新 → **`0a9aaaaa`** · self-merge 四段 pipeline **十例 REALIZED code-tier** post-#126
+
+### §八 · Cleanup γ 三-phase 生命周期 canonical (双-entry 单-PR canonical · 与 §PR-M3-6 共)
+
+- Phase 1 pre-CREATE arm — 同 §PR-M3-6 §八 (Cleanup γ 承接位 arm broadcast · Instance 4 canonical LOCK · **本 §PR-M3-7 与 §PR-M3-6 双-entry 单-PR canonical**)
+- Phase 2 CREATE — 本 doc-PR (§PR-M3-6 + §PR-M3-7 双-entry paste-in)
+- Phase 3 post-MERGE close-out — post-self-merge broadcast · 十六-段 lineage extend byte-truth verify + doc-tier 四例 canonical LOCK
+
+### §九 · DoD self-check (dod v4.4 铁律 16 项 · docs-only)
+
+- [x] #1-#16 全 pass (docs-only · zero code delta · zero test 触 · Path D preserve · package.json 零触碰 · sentinel `no-backtest-service-regression.test.ts` KNOWN_RESIDUAL=0 hard-fail 100% retain via zero-modify verify · ALS built-in-only 铁律 aligned via zero-modify verify)
+
+### §十 · 副签路由 pin (doc-tier 双-sign lane per msg=d0d11677 authority · 与 §PR-M3-6 共)
+
+| # | 副签 | agent | scope |
+|---|---|---|---|
+| 主 | Cleanup γ | 本 batch 起源 · doc-tier 主签 self-merge candidate (doc-tier 四例) | audit trail 层留痕 |
+| 副 1 | Research §S3 | byte-truth verify + PR #127 + PR #126 双 mergeCommit 独立复核 + triple-source aligned canonical 生产+消费 双向-闭合 cross-attest | pre-merge |
+| 副 2 | QADocs | DoD v4.4 checklist + CHANGELOG-adjacent 一致性 verify + anti-fabrication canonical Instance 5 二例 canonical-close cross-ref (N=6→N=4 retract-canonical LOCKED) | pre-merge |
+
+### §十一 · 引用锚
+
+- `docs/refactor/adr/0010-api-versioning.md` §4.2 Phase 2 spec (winston format api_version 后缀 canonical · ALS built-in-only dep 铁律)
+- PR #126 https://github.com/bruinxz/stocks/pull/126 · Backend CREATE msg=55136a50 · Backend post-MERGE msg=3ae1c40e · Backend v37 CONCUR-context msg=57cc11d9
+- Orch v209 msg=c3b9007f §7.1 explicit dispatch to Cleanup γ 本 batch 起源
+- owner msg=b8af5127 · msg=d0d11677 · msg=eb4b0016 T+Nd 语言禁用 · msg=21867874 no-deadline perpetual dispatch · Orch v204~v211
