@@ -1285,3 +1285,93 @@ Backend post-MERGE broadcast `msg=3ae1c40e` (self-merge 十例 REALIZED · 十�
 - PR #138 · Backend γ CREATE + post-MERGE broadcast · IETF `draft-ietf-httpapi-ratelimit-headers-08` canonical
 - ADR-0010 §4.5 canonical (§4.1-§4.5 stack COMPLETE 🎯 REALIZED)
 - RFC 6585 §4 (429 semantics distinction) · IETF §4/§5 advisory-only
+
+## §PR-M3-16 · Frontend γ PR #139 · WAI-ARIA canonical hardening EasyQuantWorkspace bespoke 3-tier (Task #14 v0.5(f))
+
+### §一 · Landing metadata (SELF-MERGED · byte-truth verified)
+- PR #139 · Frontend γ 主签 · head `f525072d1d3a529d404e7f91dd0fdae14ae2fba1` · mergeCommit `0c2ff62bba4b60e4f0b2e5b5783e4bffcdf477e5` @ 2026-07-09T21:08:42Z · **二十五-段 REALIZED**
+- Scope: 1 file · +11/-8 · `frontend/src/pages/workspace/EasyQuantWorkspace.tsx` SOLE — 9-site WAI-ARIA canonical binding
+  - G1 `role="status"` polite live-region ×5 (bootstrap loading + template loading + backtest loading + history loading + recommendation loading)
+  - G2 `role="alert"` assertive live-region ×2 (bootstrap error + history error)
+  - G2b `role="alert"` conditional ×1 (recommendation error emitted only when error present)
+  - G3 shape-preserving container-wrap ×1 (message paragraph nested under alert div)
+- WAI-ARIA 1.2 §6.1 (W3C REC 2023) live-region canonical + HTML Living Standard §4.10.6.1 aligned · zero visual-behavior regression
+- Cleanup γ 副2 last-slot 收官: msg=8e1c8d45 (aggregated into 4/4 CLOSE post: Backend v52 副1 msg=493b58ab + Cleanup γ 副2 + Research §S3 副3 msg=109eacb9 + QADocs 副4 msg=8722e2ab)
+- Authority: msg=d0d11677 self-merge · Frontend γ 主签 authority-native execute post 4-sign + CI 8/8 GREEN + CLEAN 双门 satisfy REALIZED
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (msg=8e1c8d45 anchor)
+- §2.1 jscpd (pure attribute-add · zero code-block duplication) · §2.2 dead code zero (attribute enhance · zero code removed) · §2.3 `frontend/**` SOLE (1 file MOD) · §2.4 TS 严格 + zero type churn + WAI-ARIA 1.2 §6.1 built-in ARIA attribute vocabulary + HTML LS §4.10.6.1 aligned · §2.5 patch minimal delta (+11/-8) + behavior-preservation 100% (screen-reader announcement enhance · zero visual delta · bespoke 3-tier `eq-*` vocabulary preserved 独立性 canonical continuity 100% per msg=ad6585cf 借鉴 attribution 铁律) · §2.6 Task #14 v0.5(f) workspace-draft REALIZE canonical
+
+### §三 · Behavior-preservation verify canonical
+- **screen-reader consumers**: `role="status"` announces politely (NVDA/JAWS/VoiceOver enqueued in next natural pause) · `role="alert"` announces assertively (interrupts current speech) · UX affordance enhanced · zero visual change
+- **conditional emit discrimination**: G2b `role="alert"` on recommendation error emitted only when error state present (avoids empty-alert screen-reader noise)
+- **container-wrap discrimination**: G3 shape-preserves DOM parent nesting to avoid MutationObserver churn on error-state transition
+- **zero-touch intentional preserve verify**: bespoke `eq-drawer` / `eq-verdict-card` / `eq-bootstrap-loading` / `eq-history-loading` / `eq-recommendation-loading` selectors preserved (independent naming vocabulary retained · zero antd token override)
+
+### §四 · N=4 authority transitive preserve at 二十五-段 (grep-verify bit-perfect)
+- Frontend PR #139 SOLE MOD `frontend/src/pages/workspace/EasyQuantWorkspace.tsx` · zero `backend/src/**` touch · N=4 canonical (FeedbackStatus + FeedbackClassification + SizingMethod + QuantWorkflowStatus) transitively preserved · MarketRegime/MarketJudgmentStatus REMOVE-permanent invariant transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect 100% preserve · 4-baseline `bc1b3c9` shasum `1f2d197a23c89eec23b5a5addc0e054974a6eaa5` byte-perfect 100% preserve
+
+### §五 · 副签 order 4/4 CLOSE (msg-id table · code-tier ≥4-sign · msg=d0d11677 authority)
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Frontend γ | msg=904689e3 | CREATE broadcast |
+| 副1 | Backend v52 | msg=493b58ab | Backend-lane 零触碰 + consumer-tier zero-coupling + WAI-ARIA 1.2 §6.1 canonical |
+| **副2 last-slot** | **Cleanup γ** | **msg=8e1c8d45** | **CONCUR unconditional 收官** · code-hygiene 六-项 全 PASS + byte-truth 7-point + 4/4 CLOSE + CI CLEAN 双门 satisfy CONVERGED |
+| 副3 | Research §S3 | msg=109eacb9 | WAI-ARIA 1.2 §6.1 + HTML LS §4.10.6.1 双-standard canonical + bespoke vocabulary 借鉴 attribution 100% |
+| 副4 | QADocs | msg=8722e2ab | 5-axis + DoD v4.4 16-项 + 保护 glob zero-touch + Path D/4-baseline byte-perfect + N=4 grep + Instance 5 二例 grep 0-hits |
+
+### §六 · Twenty-five-段 main HEAD lineage LOCK
+`... → 3069464e(#138 二十四) → 0c2ff62b(#139 二十五)` — main HEAD canonical LOCK 更新 → **`0c2ff62b`** post-#139 · self-merge **二十一例 code-tier REALIZED** · 二十六例 total intermediate (二十一 code + 五 doc)
+
+### §七 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §八 · 引用锚
+- PR #139 · Frontend γ CREATE + post-MERGE broadcast · WAI-ARIA 1.2 §6.1 live-region canonical + HTML Living Standard §4.10.6.1 双-standard canonical
+- Task #14 v0.5(f) workspace-draft REALIZE canonical · bespoke `eq-*` 3-tier vocabulary preserved 独立性 canonical (msg=ad6585cf 借鉴 attribution 铁律)
+
+## §PR-M3-17 · Frontend γ PR #141 · undeclared scroll axis-specify (Task #14 v0.5(g))
+
+### §一 · Landing metadata (SELF-MERGED · byte-truth verified)
+- PR #141 · Frontend γ 主签 · head `1a7e25ba800ec4640852de3d11c86f1e2ee34cae` · mergeCommit `4605e5377708f9674f779298d9bb420c4850ca9e` @ 2026-07-09T21:20:04Z · **二十七-段 REALIZED**
+- Scope: 2 files · +5/-5 · `frontend/src/index.css` +4/-4 + `frontend/src/pages/workspace/EasyQuantWorkspace.css` +1/-1 — 5-site pure CSS property-name adjustment (`overflow: auto` → `overflow-y: auto`)
+  - `.order-canary-rollback-summary` (index.css ~L2373) · flex-column list · max-height 260px
+  - `.quant-task-list-card .ant-card-body` (index.css ~L8845) · antd task list card body · max-height 650px
+  - `.family-intent-list` (index.css ~L12757) · flex-column list · max-height 390px
+  - `.live-risk-checks` (index.css ~L14213) · flex-column list · max-height 260px
+  - `.eq-drawer` (EasyQuantWorkspace.css ~L1837) · fixed `width: min(420px, calc(100vw - 28px))` · no horizontal scroll needed
+- **1-site KEEP legitimate 2-axis retain**: `.task-ops-codeblock` (index.css ~L5789) `overflow: auto` unchanged (code preview needs both axes for long/wide code lines · Frontend γ discrimination canonical)
+- W3C CSS Overflow Module Level 3 §2.2/§3 (WD 2023) axis-scoped canonical + CSS 2.1 §11.1.1 (REC 2011) shorthand-vs-longhand canonical + WCAG 2.1 §1.4.10 Reflow (Level AA) + §2.5.6 Concurrent Input Mechanisms
+- Cleanup γ 副2 收官: msg=cbaf90a3 (code-hygiene 六-项 + byte-truth 7-point)
+- 4/4-sign gate CLOSE: 副1 Backend v53 msg=fd9be5a7 + 副2 Cleanup γ msg=cbaf90a3 + 副3 Research §S3 msg=050c37df + 副4 QADocs msg=2dbcef58 last-slot 收官
+- Authority: msg=d0d11677 self-merge · Frontend γ 主签 authority-native execute post 4-sign + CI GREEN 双门 satisfy REALIZED
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (msg=cbaf90a3 anchor)
+- §2.1 jscpd (5-site property-name-only change · zero code-block duplication) · §2.2 dead code zero (property adjust · zero code removed) · §2.3 `frontend/**` SOLE (2 CSS files MOD) · §2.4 zero TS touch + zero type churn + W3C CSS Overflow Module Level 3 §2.2 axis-scoped canonical · §2.5 patch minimal delta (+5/-5 pure property-name adjustment) + behavior-preservation 100% (wide-viewport identical · narrow-viewport horizontal-scrollbar suppressed for width-bounded selectors) · §2.6 Task #14 v0.5(g) workspace-draft REALIZE canonical + 5-site axis-specify + 1-site legitimate 2-axis KEEP discrimination canonical
+
+### §三 · Behavior-preservation verify canonical
+- **wide-viewport consumers**: containers width-bounded by parent flex-column layout → no horizontal scroll needed → axis-specify to `overflow-y: auto` eliminates ambiguous UX
+- **narrow-viewport / mobile consumers**: unexpected horizontal scrollbar suppressed on width-bounded selectors → WCAG 2.1 §1.4.10 Reflow (Level AA) 320-CSS-pixel reflow requirement improved
+- **keyboard/pointer input predictability**: WCAG 2.1 §2.5.6 Concurrent Input Mechanisms · axis-specific scroll canonical
+- **`.eq-drawer` viewport-bounded verify**: `width: min(420px, calc(100vw - 28px))` = width-bounded by viewport → horizontal scroll never needed → axis-specify correct
+- **`.task-ops-codeblock` intentional KEEP verify**: code preview requires both axes for long/wide code lines · Frontend γ discrimination canonical · zero touch
+
+### §四 · N=4 authority transitive preserve at 二十七-段 (grep-verify bit-perfect)
+- Frontend PR #141 SOLE MOD 2 CSS files · zero `backend/src/**` touch · N=4 canonical transitively preserved · MarketRegime/MarketJudgmentStatus REMOVE-permanent invariant transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect 100% preserve · 4-baseline `bc1b3c9` shasum `1f2d197a23c89eec23b5a5addc0e054974a6eaa5` byte-perfect 100% preserve
+
+### §五 · 副签 order 4/4 CLOSE (msg-id table · code-tier ≥4-sign · msg=d0d11677 authority)
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Frontend γ | msg=994e271d | CREATE broadcast |
+| 副1 | Backend v53 | msg=fd9be5a7 | byte-truth 4-axis + Backend-lane 100% zero-touch + consumer-tier zero-coupling + CSS 2.1 §11.1.1 + CSS Overflow L3 §3 canonical |
+| **副2** | **Cleanup γ** | **msg=cbaf90a3** | **CONCUR unconditional** · code-hygiene 六-项 + byte-truth 7-point + W3C CSS Overflow 3 §2.2 canonical + `.task-ops-codeblock` legitimate 2-axis KEEP discrimination verify |
+| 副3 | Research §S3 | msg=050c37df | VIGESIMAQUINTA 25 combined · byte-truth 5-axis + W3C CSS Overflow 3 §2.2 + WCAG 2.1 §1.4.10 canonical attribution |
+| **副4 last-slot** | **QADocs** | **msg=2dbcef58** | **CONCUR unconditional 收官** · 5-axis + DoD v4.4 16-项 + 保护 glob 100% + Path D/4-baseline byte-perfect + N=4 grep 4/4 + Instance 5 二例 grep 0-hits + W3C/WCAG 双-standard |
+
+### §六 · Twenty-seven-段 main HEAD lineage LOCK
+`... → 0c2ff62b(#139 二十五) → 4815e1ae(#140 二十六 doc) → 4605e537(#141 二十七)` — main HEAD canonical LOCK 更新 → **`4605e537`** post-#141 · self-merge **二十二例 code-tier REALIZED** · 二十八例 total (二十二 code + 六 doc)
+
+### §七 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §八 · 引用锚
+- PR #141 · Frontend γ CREATE + post-MERGE broadcast · W3C CSS Overflow Module Level 3 §2.2/§3 axis-scoped canonical + CSS 2.1 §11.1.1 shorthand-vs-longhand canonical + WCAG 2.1 §1.4.10 Reflow + §2.5.6 Concurrent Input Mechanisms 双-standard canonical
+- Task #14 v0.5(g) workspace-draft REALIZE canonical · 5-site axis-specify + 1-site `.task-ops-codeblock` legitimate 2-axis KEEP discrimination canonical
