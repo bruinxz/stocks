@@ -2,7 +2,7 @@ import winston from 'winston';
 import path from 'path';
 import moment from 'moment-timezone';
 import { ensureLogsRuntime, getLogsRoot } from './runtimePaths';
-import { currentModule, currentTraceId } from './loggingContext';
+import { currentApiVersion, currentModule, currentTraceId } from './loggingContext';
 
 // 强制所有通过 logger 的时间都是北京时间
 const appendTimestamp = winston.format((info, opts: any) => {
@@ -13,7 +13,9 @@ const appendTimestamp = winston.format((info, opts: any) => {
 });
 
 // US-097 [OPS-008] 统一字段注入: 任何 logger.info/warn/error 输出末尾追加
-// `trace_id=<x> module=<y>` 后缀, 让 grep trace_id=<x> 能贯穿一次请求全链路.
+// `trace_id=<x> module=<y> api_version=<z>` 后缀, 让 grep trace_id=<x> 能贯穿一次
+// 请求全链路. api_version 为 ADR-0010 §4.2 Phase 2 canonical, 让 log 也带 API 契约
+// 版本 (与 response header X-API-Version 天然对称).
 // 无 ALS 上下文时 (e.g. boot-time / 后台 cron 没 run 子作用域) 自动返 '-' 占位,
 // 不阻塞 — fail-OPEN. 已显式在 message 里手写 `trace_id=` 的旧代码不重复追加.
 const appendContext = winston.format(info => {
@@ -21,7 +23,8 @@ const appendContext = winston.format(info => {
   if (!/trace_id=/.test(msg)) {
     const traceId = currentTraceId();
     const mod = currentModule();
-    info.message = `${msg} trace_id=${traceId} module=${mod}`;
+    const apiVersion = currentApiVersion();
+    info.message = `${msg} trace_id=${traceId} module=${mod} api_version=${apiVersion}`;
   }
   return info;
 });
