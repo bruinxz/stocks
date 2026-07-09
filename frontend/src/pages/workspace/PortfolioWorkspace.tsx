@@ -876,8 +876,14 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
                 icon={<CheckOutlined />}
                 loading={savingLimit}
                 onClick={() => void handleSaveStopLoss(row)}
+                aria-label="保存止损价"
               />
-              <Button size="small" icon={<CloseOutlined />} onClick={handleCancelEdit} />
+              <Button
+                size="small"
+                icon={<CloseOutlined />}
+                onClick={handleCancelEdit}
+                aria-label="取消编辑"
+              />
             </Space>
           );
         }
@@ -904,6 +910,7 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
               type="text"
               icon={<EditOutlined />}
               onClick={() => handleStartEdit(row, 'stop_loss')}
+              aria-label="编辑止损价"
             />
           </Space>
         );
@@ -935,8 +942,14 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
                 icon={<CheckOutlined />}
                 loading={savingLimit}
                 onClick={() => void handleSaveTakeProfit(row)}
+                aria-label="保存止盈价"
               />
-              <Button size="small" icon={<CloseOutlined />} onClick={handleCancelEdit} />
+              <Button
+                size="small"
+                icon={<CloseOutlined />}
+                onClick={handleCancelEdit}
+                aria-label="取消编辑"
+              />
             </Space>
           );
         }
@@ -963,6 +976,7 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
               type="text"
               icon={<EditOutlined />}
               onClick={() => handleStartEdit(row, 'take_profit')}
+              aria-label="编辑止盈价"
             />
           </Space>
         );
@@ -1217,8 +1231,14 @@ const PositionMobileCard: React.FC<PositionMobileCardProps> = ({
                 icon={<CheckOutlined />}
                 loading={savingLimit}
                 onClick={() => void handleSaveStopLoss(row)}
+                aria-label="保存止损价"
               />
-              <Button size="small" icon={<CloseOutlined />} onClick={handleCancelEdit} />
+              <Button
+                size="small"
+                icon={<CloseOutlined />}
+                onClick={handleCancelEdit}
+                aria-label="取消编辑"
+              />
             </Space>
           ) : (
             <span className="value">
@@ -1233,6 +1253,7 @@ const PositionMobileCard: React.FC<PositionMobileCardProps> = ({
                 icon={<EditOutlined />}
                 onClick={() => handleStartEdit(row, 'stop_loss')}
                 style={{ marginLeft: 4 }}
+                aria-label="编辑止损价"
               />
             </span>
           )}
@@ -1258,8 +1279,14 @@ const PositionMobileCard: React.FC<PositionMobileCardProps> = ({
                 icon={<CheckOutlined />}
                 loading={savingLimit}
                 onClick={() => void handleSaveTakeProfit(row)}
+                aria-label="保存止盈价"
               />
-              <Button size="small" icon={<CloseOutlined />} onClick={handleCancelEdit} />
+              <Button
+                size="small"
+                icon={<CloseOutlined />}
+                onClick={handleCancelEdit}
+                aria-label="取消编辑"
+              />
             </Space>
           ) : (
             <span className="value">
@@ -1274,6 +1301,7 @@ const PositionMobileCard: React.FC<PositionMobileCardProps> = ({
                 icon={<EditOutlined />}
                 onClick={() => handleStartEdit(row, 'take_profit')}
                 style={{ marginLeft: 4 }}
+                aria-label="编辑止盈价"
               />
             </span>
           )}

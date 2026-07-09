@@ -940,6 +940,7 @@ const DocsWorkspace: React.FC = () => {
           loading={treeLoading}
           size="small"
           type="text"
+          aria-label="刷新目录"
         />
         <Tooltip title={commentsCollapsed ? '展开评论' : '收起评论'}>
           <Button

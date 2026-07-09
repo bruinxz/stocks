@@ -310,7 +310,7 @@ const WalkForwardTab: React.FC<WalkForwardTabProps> = ({ strategies }) => {
               查看
             </Button>
             <Popconfirm title="确认删除？" onConfirm={() => onDelete(r)}>
-              <Button size="small" danger icon={<DeleteOutlined />} />
+              <Button size="small" danger icon={<DeleteOutlined />} aria-label="删除运行" />
             </Popconfirm>
           </Space>
         ),

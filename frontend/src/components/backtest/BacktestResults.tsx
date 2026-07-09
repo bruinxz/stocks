@@ -288,6 +288,7 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
               icon={<ArrowLeftOutlined />}
               onClick={onBack}
               style={{ padding: 0 }}
+              aria-label="返回"
             />
           )}
           <div>
