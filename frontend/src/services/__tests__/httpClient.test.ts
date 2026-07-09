@@ -1,5 +1,5 @@
 /**
- * httpClient.test.ts — ADR-0010 §4.1 Phase 1 · verify + interceptor 单测
+ * httpClient.test.ts — ADR-0010 §4.1 Phase 1 + §4.3 Phase 3 · verify + interceptor + body 单测
  *
  * jest (react-scripts test) 环境 · 不依赖真实 axios instance, 用 mock config +
  * 手写 response 覆盖分支.
@@ -10,10 +10,12 @@ import {
   API_VERSION_HEADER,
   ApiVersionMismatchError,
   EXPECTED_API_VERSION_MAJOR,
+  EXPECTED_API_VERSION_MAJOR_NUM,
   attachApiVersionInterceptor,
   extractHeaderMajor,
   extractUrlApiMajor,
   verifyApiVersion,
+  verifySupportedApiVersions,
 } from '../httpClient';
 
 function mkResponse(url: string, headers: Record<string, string> = {}): AxiosResponse {
@@ -213,5 +215,202 @@ describe('attachApiVersionInterceptor', () => {
     attachApiVersionInterceptor(inst as any);
     const upstream = new Error('network down');
     await expect(inst.__handlers.rejected!(upstream)).rejects.toBe(upstream);
+  });
+});
+
+describe('verifySupportedApiVersions · ADR-0010 §4.3 Phase 3', () => {
+  test('EXPECTED_API_VERSION_MAJOR_NUM 常量 sanity = 1 (与 EXPECTED_API_VERSION_MAJOR "1" 对齐)', () => {
+    expect(EXPECTED_API_VERSION_MAJOR_NUM).toBe(1);
+    expect(String(EXPECTED_API_VERSION_MAJOR_NUM)).toBe(EXPECTED_API_VERSION_MAJOR);
+  });
+
+  test('Backend PR #125 landed shape · verify PASS (no throw)', () => {
+    const payload = {
+      status: 'ok',
+      timestamp: '2026-07-10T00:00:00.000Z',
+      api_version: '1.0',
+      supported_api_versions: [1],
+    };
+    expect(() => verifySupportedApiVersions(payload)).not.toThrow();
+  });
+
+  test('minor-only "1" (无 dot) · verify PASS', () => {
+    const payload = { api_version: '1', supported_api_versions: [1] };
+    expect(() => verifySupportedApiVersions(payload)).not.toThrow();
+  });
+
+  test('dual-mount 前瞻 · supported=[1,2] · verify PASS (前端 EXPECTED=1 仍 ∈)', () => {
+    const payload = { api_version: '1.0', supported_api_versions: [1, 2] };
+    expect(() => verifySupportedApiVersions(payload)).not.toThrow();
+  });
+
+  test('null payload → throw body_not_object', () => {
+    let caught: unknown;
+    try {
+      verifySupportedApiVersions(null);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ApiVersionMismatchError);
+    expect((caught as ApiVersionMismatchError).detail.reason).toBe('body_not_object');
+  });
+
+  test('string payload → throw body_not_object', () => {
+    let caught: unknown;
+    try {
+      verifySupportedApiVersions('ok');
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ApiVersionMismatchError);
+    expect((caught as ApiVersionMismatchError).detail.reason).toBe('body_not_object');
+  });
+
+  test('array payload → throw body_not_object', () => {
+    let caught: unknown;
+    try {
+      verifySupportedApiVersions([1, 2, 3]);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ApiVersionMismatchError);
+    expect((caught as ApiVersionMismatchError).detail.reason).toBe('body_not_object');
+  });
+
+  test('缺 api_version → throw body_missing_api_version', () => {
+    let caught: unknown;
+    try {
+      verifySupportedApiVersions({ status: 'ok', supported_api_versions: [1] });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ApiVersionMismatchError);
+    expect((caught as ApiVersionMismatchError).detail.reason).toBe('body_missing_api_version');
+  });
+
+  test('空字符串 api_version → throw body_missing_api_version', () => {
+    let caught: unknown;
+    try {
+      verifySupportedApiVersions({ api_version: '', supported_api_versions: [1] });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ApiVersionMismatchError);
+    expect((caught as ApiVersionMismatchError).detail.reason).toBe('body_missing_api_version');
+  });
+
+  test('api_version "2.0" (前端 EXPECTED "1") → throw body_api_version_major_mismatch', () => {
+    let caught: unknown;
+    try {
+      verifySupportedApiVersions({ api_version: '2.0', supported_api_versions: [2] });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ApiVersionMismatchError);
+    const err = caught as ApiVersionMismatchError;
+    expect(err.detail.reason).toBe('body_api_version_major_mismatch');
+    expect(err.detail.headerVersion).toBe('2.0');
+    expect(err.detail.headerMajor).toBe('2');
+    expect(err.detail.expectedMajor).toBe('1');
+  });
+
+  test('api_version "vNext" (parse fail) → throw body_api_version_major_mismatch', () => {
+    let caught: unknown;
+    try {
+      verifySupportedApiVersions({ api_version: 'vNext', supported_api_versions: [1] });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ApiVersionMismatchError);
+    const err = caught as ApiVersionMismatchError;
+    expect(err.detail.reason).toBe('body_api_version_major_mismatch');
+    expect(err.detail.headerMajor).toBeNull();
+  });
+
+  test('缺 supported_api_versions → throw body_missing_supported_api_versions', () => {
+    let caught: unknown;
+    try {
+      verifySupportedApiVersions({ api_version: '1.0' });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ApiVersionMismatchError);
+    expect((caught as ApiVersionMismatchError).detail.reason).toBe(
+      'body_missing_supported_api_versions'
+    );
+  });
+
+  test('supported_api_versions=[] (空数组) → throw body_missing_supported_api_versions', () => {
+    let caught: unknown;
+    try {
+      verifySupportedApiVersions({ api_version: '1.0', supported_api_versions: [] });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ApiVersionMismatchError);
+    expect((caught as ApiVersionMismatchError).detail.reason).toBe(
+      'body_missing_supported_api_versions'
+    );
+  });
+
+  test('supported_api_versions 非数组 (string) → throw body_missing_supported_api_versions', () => {
+    let caught: unknown;
+    try {
+      verifySupportedApiVersions({ api_version: '1.0', supported_api_versions: '1,2' });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ApiVersionMismatchError);
+    expect((caught as ApiVersionMismatchError).detail.reason).toBe(
+      'body_missing_supported_api_versions'
+    );
+  });
+
+  test('supported=[2,3] (前端 EXPECTED=1 不 ∈) → throw body_expected_major_not_supported', () => {
+    let caught: unknown;
+    try {
+      verifySupportedApiVersions({ api_version: '1.0', supported_api_versions: [2, 3] });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ApiVersionMismatchError);
+    const err = caught as ApiVersionMismatchError;
+    expect(err.detail.reason).toBe('body_expected_major_not_supported');
+    expect(err.detail.expectedMajor).toBe('1');
+  });
+
+  test("supported=['1'] (string 元素, 非 number) → throw body_expected_major_not_supported", () => {
+    let caught: unknown;
+    try {
+      verifySupportedApiVersions({ api_version: '1.0', supported_api_versions: ['1'] });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ApiVersionMismatchError);
+    expect((caught as ApiVersionMismatchError).detail.reason).toBe(
+      'body_expected_major_not_supported'
+    );
+  });
+
+  test('custom url 参数 · reflected in detail.url', () => {
+    let caught: unknown;
+    try {
+      verifySupportedApiVersions(null, '/api/v1/health');
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ApiVersionMismatchError);
+    expect((caught as ApiVersionMismatchError).detail.url).toBe('/api/v1/health');
+  });
+
+  test('默认 url = "/health" · reflected in detail.url', () => {
+    let caught: unknown;
+    try {
+      verifySupportedApiVersions(null);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ApiVersionMismatchError);
+    expect((caught as ApiVersionMismatchError).detail.url).toBe('/health');
   });
 });

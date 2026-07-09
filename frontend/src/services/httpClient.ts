@@ -9,9 +9,12 @@
  * runtime 双源交叉 (code truth 唯一权威 · 前端不 aware 权威锁).
  *
  * 挂点:
- *   Phase 1 (本 patch) — axios response interceptor 只 verify + throw · zero UI 侧改
- *   Phase 2 (T+1w) — Zod schema `.versioned()` marker · Playwright header 断言
- *   Phase 3 (T+2w) — `/health` `supported_api_versions` + `useApiVersionDetect()` hook
+ *   Phase 1 (landed) — axios response interceptor 只 verify + throw · zero UI 侧改
+ *   Phase 2 (T+1w)   — Zod schema `.versioned()` marker · Playwright header 断言
+ *   Phase 3 (本 patch) — `/health` body `api_version` + `supported_api_versions`
+ *     消费方: `verifySupportedApiVersions(payload)` — 与 header `X-API-Version`
+ *     dual-source 天然一致 cross-attest. Backend PR #125 (mergeCommit `44027896`
+ *     ADR-0010 §4.3 partial) 已 landed body surface (backend/src/index.ts:179-186).
  *
  * Baseline: `docs/refactor/baseline/api/api-version-header-baseline-d6a0c1e.json`
  *   R2_header_name = "X-API-Version"
@@ -26,8 +29,20 @@
 import type { AxiosError, AxiosInstance, AxiosResponse } from 'axios';
 
 export const EXPECTED_API_VERSION_MAJOR = '1';
+export const EXPECTED_API_VERSION_MAJOR_NUM = 1;
 export const EXPECTED_URL_VERSION_PREFIX = '/api/v1/';
 export const API_VERSION_HEADER = 'x-api-version';
+
+export type ApiVersionMismatchReason =
+  | 'header_missing'
+  | 'header_major_mismatch'
+  | 'url_prefix_mismatch'
+  | 'url_header_major_diverge'
+  | 'body_not_object'
+  | 'body_missing_api_version'
+  | 'body_missing_supported_api_versions'
+  | 'body_api_version_major_mismatch'
+  | 'body_expected_major_not_supported';
 
 export interface ApiVersionMismatchDetail {
   url: string;
@@ -35,11 +50,7 @@ export interface ApiVersionMismatchDetail {
   headerMajor: string | null;
   urlMajor: string | null;
   expectedMajor: string;
-  reason:
-    | 'header_missing'
-    | 'header_major_mismatch'
-    | 'url_prefix_mismatch'
-    | 'url_header_major_diverge';
+  reason: ApiVersionMismatchReason;
 }
 
 export class ApiVersionMismatchError extends Error {
@@ -165,4 +176,100 @@ export function attachApiVersionInterceptor(instance: AxiosInstance): number {
     },
     (error: AxiosError) => Promise.reject(error)
   );
+}
+
+/**
+ * ADR-0010 §4.3 Phase 3 · `/health` 响应体版本校验
+ *
+ * Backend PR #125 (mergeCommit `44027896`) landed `/health` body:
+ *   { status, timestamp, api_version: "1.0", supported_api_versions: [1] }
+ * (see backend/src/index.ts:179-186 + backend/src/middlewares/apiVersion.ts)
+ *
+ * 与 `verifyApiVersion` (header 主源) 构成 dual-source cross-attest:
+ *   - header `X-API-Version: 1.0` (major "1")
+ *   - body   `api_version: "1.0"` + `supported_api_versions: [1]`
+ * 两者天然一致 (同 `CURRENT_API_VERSION` package.json 源) · 分歧即 canonical violation.
+ *
+ * 语义:
+ *   `body.api_version` 必存 · major 与 `EXPECTED_API_VERSION_MAJOR` 一致.
+ *   `body.supported_api_versions` 必存 · 数组 · `EXPECTED_API_VERSION_MAJOR_NUM` ∈ 数组.
+ *
+ * v2 dual-mount 前瞻: Backend 升级 pkg.api_version → "2.0" 时数组会自动
+ * `[1, 2]` (deriveSupportedMajors + `SUPPORTED_API_VERSIONS = Object.freeze`),
+ * 消费方仍 pass · 前端切换 EXPECTED_* 常量后 header 侧同步.
+ *
+ * `payload` 通常来自 `/health` GET · 但函数纯 · 不依赖 axios · 可 unit test.
+ */
+export interface HealthPayloadShape {
+  api_version?: unknown;
+  supported_api_versions?: unknown;
+  [k: string]: unknown;
+}
+
+export function verifySupportedApiVersions(
+  payload: unknown,
+  url: string = '/health'
+): void {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new ApiVersionMismatchError({
+      url,
+      headerVersion: null,
+      headerMajor: null,
+      urlMajor: null,
+      expectedMajor: EXPECTED_API_VERSION_MAJOR,
+      reason: 'body_not_object',
+    });
+  }
+
+  const body = payload as HealthPayloadShape;
+  const apiVersion = body.api_version;
+
+  if (typeof apiVersion !== 'string' || apiVersion.length === 0) {
+    throw new ApiVersionMismatchError({
+      url,
+      headerVersion: null,
+      headerMajor: null,
+      urlMajor: null,
+      expectedMajor: EXPECTED_API_VERSION_MAJOR,
+      reason: 'body_missing_api_version',
+    });
+  }
+
+  const bodyMajor = extractHeaderMajor(apiVersion);
+  if (bodyMajor !== EXPECTED_API_VERSION_MAJOR) {
+    throw new ApiVersionMismatchError({
+      url,
+      headerVersion: apiVersion,
+      headerMajor: bodyMajor,
+      urlMajor: null,
+      expectedMajor: EXPECTED_API_VERSION_MAJOR,
+      reason: 'body_api_version_major_mismatch',
+    });
+  }
+
+  const supported = body.supported_api_versions;
+  if (!Array.isArray(supported) || supported.length === 0) {
+    throw new ApiVersionMismatchError({
+      url,
+      headerVersion: apiVersion,
+      headerMajor: bodyMajor,
+      urlMajor: null,
+      expectedMajor: EXPECTED_API_VERSION_MAJOR,
+      reason: 'body_missing_supported_api_versions',
+    });
+  }
+
+  const hasExpected = supported.some(
+    (v) => typeof v === 'number' && Number.isFinite(v) && v === EXPECTED_API_VERSION_MAJOR_NUM
+  );
+  if (!hasExpected) {
+    throw new ApiVersionMismatchError({
+      url,
+      headerVersion: apiVersion,
+      headerMajor: bodyMajor,
+      urlMajor: null,
+      expectedMajor: EXPECTED_API_VERSION_MAJOR,
+      reason: 'body_expected_major_not_supported',
+    });
+  }
 }
