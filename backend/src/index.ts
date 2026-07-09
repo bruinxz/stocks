@@ -174,6 +174,15 @@ app.use(apiRateLimitMiddleware());
 import { apiRetryAfterMiddleware } from './middlewares/apiRetryAfter';
 app.use(apiRetryAfterMiddleware());
 
+// ADR-0010 §4.7 · W3C Server-Timing Level 1 (CR 25-May-2022) advisory-observability header.
+// Default OFF (zero-emit when pkg.api_server_timing absent or when static_metrics empty and
+// measure_total false). Patches res.writeHead in-place to stamp Server-Timing at header-flush time
+// (measure_total uses process.hrtime.bigint() ns-precision monotonic clock). Existing Server-Timing
+// set by route handler is preserved (route authority wins). Fail-OPEN skip on invalid metric-name
+// (non-RFC-7230-token) or invalid dur (non-number / negative / NaN / Infinity). Advisory-only.
+import { apiServerTimingMiddleware } from './middlewares/apiServerTiming';
+app.use(apiServerTimingMiddleware());
+
 // US-097 [OPS-008] 日志统一字段 — 给每个 request 分配 / 透传 trace_id 并绑到 AsyncLocalStorage,
 // 任何此 request 链路内 logger.info/warn/error 自动携带 `trace_id=<x> module=http` 后缀.
 // 必须在 httpMetricsMiddleware 之前 (metric 埋点本身的 log 也带 trace_id) 但在 cors/helmet 之后
