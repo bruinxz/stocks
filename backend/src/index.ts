@@ -193,6 +193,18 @@ app.use(apiServerTimingMiddleware());
 import { apiTimingAllowOriginMiddleware } from './middlewares/apiTimingAllowOrigin';
 app.use(apiTimingAllowOriginMiddleware());
 
+// ADR-0010 §4.9 · W3C Trace Context Level 1 (Recommendation 23-Nov-2021) distributed-tracing
+// carrier advisory header (echo-only v0). Reads optional `api_trace_context` block from
+// `backend/package.json`; missing block or both toggles false → zero-emit (default OFF).
+// When a well-formed incoming traceparent (v0 canonical: `00-<32hex>-<16hex>-<2hex>` with
+// non-all-zero trace-id/parent-id) is present, echo it verbatim to the response so downstream
+// observability consumers can correlate request/response. tracestate is pass-through when
+// echo_tracestate=true. Existing traceparent/tracestate set by route handler is preserved
+// (route authority wins). Echo-only v0 does NOT synthesize new trace IDs (defers US-038
+// SeededRandom scope). Enforcement HOLD v2-dual-mount 契约 preserve (advisory · zero-decide-statusCode).
+import { apiTraceContextMiddleware } from './middlewares/apiTraceContext';
+app.use(apiTraceContextMiddleware());
+
 // US-097 [OPS-008] 日志统一字段 — 给每个 request 分配 / 透传 trace_id 并绑到 AsyncLocalStorage,
 // 任何此 request 链路内 logger.info/warn/error 自动携带 `trace_id=<x> module=http` 后缀.
 // 必须在 httpMetricsMiddleware 之前 (metric 埋点本身的 log 也带 trace_id) 但在 cors/helmet 之后
