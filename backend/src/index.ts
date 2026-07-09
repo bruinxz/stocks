@@ -159,6 +159,12 @@ app.use(apiVersionMiddleware());
 import { apiDeprecationMiddleware } from './middlewares/apiDeprecation';
 app.use(apiDeprecationMiddleware());
 
+// ADR-0010 §4.5 · IETF draft-ietf-httpapi-ratelimit-headers-08 (2024) RateLimit + RateLimit-Policy
+// advisory response headers. Default OFF (zero-emit when pkg.api_rate_limit absent). Header-emit
+// only · does NOT enforce 429 · does NOT track counters. Enforcement is a future PR.
+import { apiRateLimitMiddleware } from './middlewares/apiRateLimit';
+app.use(apiRateLimitMiddleware());
+
 // US-097 [OPS-008] 日志统一字段 — 给每个 request 分配 / 透传 trace_id 并绑到 AsyncLocalStorage,
 // 任何此 request 链路内 logger.info/warn/error 自动携带 `trace_id=<x> module=http` 后缀.
 // 必须在 httpMetricsMiddleware 之前 (metric 埋点本身的 log 也带 trace_id) 但在 cors/helmet 之后
