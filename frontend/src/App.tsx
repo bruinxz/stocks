@@ -396,7 +396,7 @@ const AppContent: React.FC = () => {
 
   return (
     <Layout className="modern-layout">
-      <Sider width={220} className="modern-sider">
+      <Sider width={220} breakpoint="md" collapsedWidth={0} className="modern-sider">
         <div className="modern-sider-inner">
           <div>
             <div className="modern-logo">
