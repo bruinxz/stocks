@@ -1,0 +1,96 @@
+# enum-lint.yml — UI enum SSOT hard-fail (ADR-0011 §5 · PR-M3-4).
+#
+# Two jobs (both required for merge on main):
+#   1. enum-matrix-lock            — id=4/10/13 + full-matrix hardening + sha_lock guard + decision_summary integrity
+#   2. no-backtest-service-regression — PR-M3-2 pre-guard (frontend legacy `backtestService` consumer cap)
+#
+# Triggered when backend/tests/, backend/src/quant/, backend/src/models/enums/,
+# frontend/src/, or the baseline JSON changes. `pull_request` fires for every PR
+# against main; `push` gates the branch itself. Sibling to ci.yml (independent
+# workflow · parallel run · required check).
+
+name: enum-lint
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: enum-lint-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect-changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      enum: ${{ steps.filter.outputs.enum }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            enum:
+              - 'backend/tests/enum/**'
+              - 'backend/tests/lint/**'
+              - 'backend/src/quant/workflow/**'
+              - 'backend/src/models/enums/**'
+              - 'backend/src/models/**'
+              - 'frontend/src/**'
+              - 'docs/refactor/baseline/ui-enum/**'
+              - '.github/workflows/enum-lint.yml'
+
+  enum-matrix-lock:
+    name: enum-matrix-lock (ADR-0011 §5)
+    needs: detect-changes
+    if: needs.detect-changes.outputs.enum == 'true' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install deps
+        run: npm ci --silent
+
+      - name: Run enum-matrix-lock
+        run: npx ts-node --transpile-only tests/enum/enum-matrix-lock.test.ts
+
+  no-backtest-service-regression:
+    name: no-backtest-service-regression (PR-M3-2 pre-guard)
+    needs: detect-changes
+    if: needs.detect-changes.outputs.enum == 'true' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install deps
+        run: npm ci --silent
+
+      - name: Run no-backtest-service-regression
+        run: npx ts-node --transpile-only tests/lint/no-backtest-service-regression.test.ts
