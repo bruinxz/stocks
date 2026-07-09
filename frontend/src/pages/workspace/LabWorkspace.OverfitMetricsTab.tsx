@@ -367,7 +367,7 @@ const OverfitMetricsTab: React.FC = () => {
             loading={loading}
             pagination={{ pageSize: 20 }}
             size="small"
-            scroll={{ x: 920 }}
+            scroll={{ x: 'max-content' }}
           />
         )}
         <div style={{ marginTop: 12, fontSize: 12, color: '#999' }}>
