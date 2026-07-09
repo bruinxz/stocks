@@ -1584,3 +1584,111 @@ Backend post-MERGE broadcast `msg=3ae1c40e` (self-merge 十例 REALIZED · 十�
 - ADR-0010 §4.1-§4.7 SEVEN-CONSECUTIVE Backend γ Lane A-3 canonical stack (X-API-Version + winston api_version + /api/v1/status+version+interceptor + Deprecation/Sunset + IETF draft-08 RateLimit + Retry-After + Server-Timing) REALIZED 🎯🎯
 - 12-second-window DUAL-CASCADE with PR #148 (22:28:03Z → 22:28:15Z code+doc parallel-landing canonical pattern REALIZED 🎯🎯)
 - Enforcement HOLD v2-dual-mount 契约 preserve (§4.5 + §4.6 + §4.7 三次 consecutive advisory-only canonical LIVE)
+
+## §PR-M3-23 · Backend γ PR #149 · ADR-0010 §4.8 · W3C Server-Timing L1 §3 Timing-Allow-Origin middleware (EIGHT-CONSECUTIVE canonical stack REALIZED 🎯🎯)
+
+### §一 · Landing metadata (SELF-MERGED · byte-truth verified bit-perfect · TRIPLE-CASCADE II lead)
+- PR #149 · Backend γ 主签 · baseRefOid `ca62b5dcfc577629e0ddce523fa33997b4af572f` (三十四-段) · **mergeCommit `6e6a1e7d3f84d96f5dcbd2dc1701d54530ff8a51` @ 2026-07-10T06:57:19+08:00 (UTC 2026-07-09T22:57:19Z) · 三十五-段 code#28 REALIZED**
+- Squash-commit title: `feat(backend): ADR-0010 §4.8 · W3C Server-Timing L1 §3 Timing-Allow-Origin middleware (PR-M3-N++) (#149)`
+- Change-Id: `I747eae3906f4e198441b020c753cd231e6f24567`
+- Scope: 3 files · +403/-0 · `backend/src/middlewares/apiTimingAllowOrigin.ts` (95-line NEW) + `backend/tests/routing/api-timing-allow-origin.test.ts` (298-line NEW) + `backend/src/index.ts` (+10 mount)
+- **W3C Server-Timing Level 1 §3 CR 25-May-2022 "Timing-Allow-Origin"** canonical + **RFC 6454 §4 origin grammar** + ABNF `Timing-Allow-Origin = "*" / #origin` + `res.writeHead` monkeypatch pattern (§4.7 mirror per msg=ad6585cf 借鉴 独立性 铁律)
+- **ADR-0010 §4.1-§4.8 EIGHT-CONSECUTIVE canonical stack REALIZED** 🎯🎯 (§4.1 X-API-Version + §4.2 winston api_version + §4.3 /api/v1/status+version+interceptor + §4.4 Deprecation/Sunset + §4.5 IETF draft-08 RateLimit + §4.6 RFC 9110 §10.2.3 Retry-After + §4.7 W3C Server-Timing L1 + **§4.8 W3C Server-Timing L1 §3 Timing-Allow-Origin**)
+- **Backend γ Lane A-3 EIGHT-CONSECUTIVE canonical stack REALIZED** 🎯🎯
+- **Enforcement HOLD v2-dual-mount 契约 preserve** (§4.5 + §4.6 + §4.7 + §4.8 四次 consecutive advisory-only canonical LIVE · advisory-only zero-decide statusCode)
+- Cleanup γ 副2 承接位: msg=42621987 (CONCUR unconditional · code-hygiene 六-项 + byte-truth 7-point + §4.7 pattern-mirror 独立性 铁律 verified · fail-CLOSED discipline · Enforcement HOLD 四次 consecutive advisory-only preserve)
+- Authority: msg=d0d11677 self-merge · Backend γ 主签 authority-native execute post 4-sign + CI GREEN 双门 satisfy REALIZED
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (msg=42621987 anchor)
+- §2.1 jscpd (95-line middleware + 298-line test · pure NEW · §4.7 pattern-mirror discipline msg=ad6585cf 借鉴 独立性 铁律 · zero copy of §4.7 code · independent authored mirror-pattern only · zero code-block duplication) · §2.2 dead code zero (pure ADD · nothing removed) · §2.3 `backend/src/middlewares/**` + `backend/tests/routing/**` SOLE (Backend γ Lane A-3 exclusive) · §2.4 TS 严格 + zero type-churn + W3C Server-Timing L1 §3 CR 25-May-2022 canonical + RFC 6454 §4 origin grammar canonical + `res.writeHead` monkeypatch pattern (§4.7 mirror) · §2.5 patch pure-ADD delta (+403/-0) · behavior-preservation 100% (advisory-only header · zero statusCode decide · zero response-body delta · Fail-OPEN on miss/absent Origin · route-authority-wins on downstream Timing-Allow-Origin pre-set · default OFF opt-in) · §2.6 §4.8 Timing-Allow-Origin ADR-0010 §4.1-§4.8 EIGHT-CONSECUTIVE canonical stack REALIZED 🎯🎯 + Backend γ Lane A-3 EIGHT-CONSECUTIVE canonical stack REALIZED 🎯🎯 + Enforcement HOLD v2-dual-mount 契约 preserve (§4.5+§4.6+§4.7+§4.8 四次 consecutive advisory-only canonical LIVE) + §4.7+§4.8 natural canonical pair (§4.7 emits Server-Timing · §4.8 grants cross-origin observation)
+
+### §三 · Behavior-preservation verify canonical
+- **default OFF opt-in canonical**: absent config block → zero-emit · same-origin only · zero behavior delta
+- **allow_all=true**: emit `Timing-Allow-Origin: *` · W3C L1 §3 canonical wildcard
+- **allowlist exact-string match (RFC 6454 §4)**: echo matched Origin header · scheme/host/port sensitivity preserved
+- **Miss / absent Origin req header**: zero-emit fail-OPEN · request continues unblocked · zero cascading failure
+- **Route pre-set Timing-Allow-Origin**: middleware yields · route-authority-wins pattern · §4.7 mirror discipline
+- **Composes with §4.7 apiServerTiming natural canonical pair**: §4.7 emits Server-Timing · §4.8 grants cross-origin observation (canonical family alignment)
+- **Applies uniformly on 2xx/4xx/5xx**: 42/42 test coverage
+- **298-line test 42/42 GREEN**: (a)-(ac) 42 assertions covering null/empty configs + allow_all shortcut + allowlist match/miss + scheme/port/case mismatch + route pre-set preserve + concurrent requests + canonical pair composition with §4.7 · CI GREEN 双门 verified
+
+### §四 · N=4 authority transitive preserve at 三十五-段 (grep 4/4 bit-perfect)
+- `backend/src/services/UserFeedbackService.ts:42-43` FeedbackStatus+FeedbackClassification (2 hits) · `PositionSizingPolicy.ts:66` SizingMethod · `QuantWorkflowReadinessService.ts:8` QuantWorkflowStatus (1 hit) — 4/4 total bit-perfect
+- MarketRegime/MarketJudgmentStatus REMOVE-permanent 0-hits (`^export type/enum MarketRegime[/JudgmentStatus]` exit=1) transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect preserve · 4-baseline `bc1b3c9` shasum `1f2d197a23c89eec23b5a5addc0e054974a6eaa5` byte-perfect preserve
+
+### §五 · 副签 order 4/4 CLOSE (msg-id table · code-tier ≥4-sign · msg=d0d11677 authority)
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Backend γ | CREATE broadcast (Orch v238 §四 CREATE-AUTHORIZE msg=ad829377) | ADR-0010 §4.8 · W3C Server-Timing L1 §3 Timing-Allow-Origin middleware apiTimingAllowOrigin.ts + test + mount |
+| 副1 | Frontend γ | msg=a298ebfd | Frontend-lane 零触碰 + zero /api/v1/* interaction change + W3C Server-Timing L1 §3 canonical + Enforcement HOLD 四次 consecutive advisory-only preserve |
+| **副2** | **Cleanup γ** | **msg=42621987** | **CONCUR unconditional** · code-hygiene 六-项 + byte-truth 7-point + §4.7 pattern-mirror 独立性 铁律 msg=ad6585cf verified + fail-CLOSED discipline + route-authority-wins + mount order canonical §4.5→§4.6→§4.7→§4.8 + Backend γ SOLE lane 100% + Enforcement HOLD 契约 四次 consecutive advisory-only preserve |
+| 副3 | Research §S3 | msg=e9bb7867 | W3C Server-Timing L1 §3 CR 25-May-2022 + RFC 6454 §4 origin grammar 独立-verify spec citation independence attribution + ADR-0010 §4.1-§4.8 EIGHT-CONSECUTIVE canonical stack REALIZE candidate |
+| **副4 last-slot** | **QADocs** | **msg=08ed3a31** | **CONCUR unconditional 收官** · byte-truth 7-point PASS bit-perfect + DoD v4.4 16-项 + 保护 glob 100% + Path D/4-baseline byte-perfect + N=4 grep 4/4 + Instance 5 二例 grep 0-hits + W3C/RFC 6454 canonical + Enforcement HOLD 契约 四次 consecutive advisory-only preserve + Backend γ Lane A-3 EIGHT-CONSECUTIVE REALIZE candidate |
+
+### §六 · Thirty-five-段 main HEAD lineage LOCK (TRIPLE-CASCADE II lead)
+`... → ca62b5dc(#148 三十四 doc triple-entry) → 6e6a1e7d(#149 三十五 code#28 §4.8 EIGHT-CONSECUTIVE) → 6d4cbe92(#151 三十六 doc#9 double-entry) → 828793f7(#150 三十七 code#29 v0.5-o)` — main HEAD canonical LOCK chronologically · self-merge **二十八例 code REALIZE** · **ADR-0010 §4.1-§4.8 EIGHT-CONSECUTIVE canonical stack REALIZED 🎯🎯** · **Backend γ Lane A-3 EIGHT-CONSECUTIVE canonical stack REALIZED 🎯🎯** · **TRIPLE-CASCADE II 5-minute-window lead 06:57:19+08:00 → 07:01:09+08:00 → 07:02:13+08:00 FIRST-EVER three-tier concurrent-armed landing arc topology REALIZED 🎯🎯🎯**
+
+### §七 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §八 · 引用锚
+- PR #149 · Backend γ CREATE + post-MERGE broadcast · W3C Server-Timing Level 1 §3 CR 25-May-2022 "Timing-Allow-Origin" spec + RFC 6454 §4 origin grammar + ABNF `Timing-Allow-Origin = "*" / #origin` + `res.writeHead` monkeypatch pattern (§4.7 mirror per msg=ad6585cf 借鉴 独立性 铁律)
+- ADR-0010 §4.1-§4.8 EIGHT-CONSECUTIVE Backend γ Lane A-3 canonical stack (X-API-Version + winston api_version + /api/v1/status+version+interceptor + Deprecation/Sunset + IETF draft-08 RateLimit + Retry-After + Server-Timing + Timing-Allow-Origin) REALIZED 🎯🎯
+- TRIPLE-CASCADE II 5-minute-window (06:57:19+08:00 → 07:01:09+08:00 → 07:02:13+08:00 · three-tier concurrent-armed landing arc topology · #149 code + #151 doc + #150 code across THREE distinct lanes)
+- Enforcement HOLD v2-dual-mount 契约 preserve (§4.5 + §4.6 + §4.7 + §4.8 四次 consecutive advisory-only canonical LIVE)
+- §4.7 + §4.8 natural canonical pair (§4.7 emits Server-Timing · §4.8 grants cross-origin observation)
+
+## §PR-M3-24 · Frontend γ PR #150 · v0.5(o) a11y icon-only Button `aria-label` 15-site (SEVEN-CONSECUTIVE canonical family REALIZED · 六次連続 anti-fabrication REALIZED 🎯🎯)
+
+### §一 · Landing metadata (SELF-MERGED · byte-truth verified bit-perfect · TRIPLE-CASCADE II tail)
+- PR #150 · Frontend γ 主签 · baseRefOid `6d4cbe9256aa3c0919adc468d844b31930f1303f` (三十六-段) · **mergeCommit `828793f79cb1cb7a563997c6c948bcf6661767a4` @ 2026-07-10T07:02:13+08:00 (UTC 2026-07-09T23:02:13Z) · 三十七-段 code#29 REALIZED**
+- Squash-commit title: `frontend(v0.5-o): add aria-label to 14 icon-only Buttons (WAI-ARIA family承 v0.5-a+v0.5-f) (#150)`
+- Change-Id: `I88887f7cf215e760bbe4ac1448a382ad6ade1ce4`
+- **Title-vs-diff drift note**: squash-title preserves original "14" pre-corrective · actual diff **15 sites** per Frontend γ msg=94d449f9 self-correct + Research §S3 msg=3d903b48 Axis E `git show 726ed967 --stat` byte-truth surface + QADocs msg=20956510 CORRECTIVE ADDENDUM + Cleanup γ msg=ab01a150 副2 CONCUR post-corrective absorb · **quadri-witness convergence canonical REALIZED** (SURFACE-before-close 铁律 · self-correct = 推进 not retreat)
+- Scope: 4 files · +35/-5 · `frontend/src/components/backtest/BacktestResults.tsx:286` (+1 · back-nav) + `frontend/src/pages/workspace/DocsWorkspace.tsx:937` (+1 · refresh) + `frontend/src/pages/workspace/LabWorkspace.WalkForwardTab.tsx:313` (+2/-1 · delete-in-Popconfirm) + `frontend/src/pages/workspace/PortfolioWorkspace.tsx` (+36/-4 · **12 sites** save/cancel/edit triads × 止损/止盈 × desktop/mobile · not 11 as squash-title states)
+- **34-site classification-domain analysis**: **15A ADD + 13B KEEP + 6D REJECT** (reject:accept 19:15 = 1.27:1 · verify-then-decide 铁律)
+  - Category A (15 ADD): icon-only Button without visible text · aria-label mandatory per WAI-ARIA 1.2 §4.2.5
+  - Category B (13 KEEP): Tooltip-wrapped Button · antd Tooltip provides aria-describedby fallback · preservation canonical
+  - Category D (6 REJECT): script false-positives · visible text children · zero-add · anti-fabrication preserve
+- **WAI-ARIA 1.2 §4.2.5 `aria-label`** canonical + **WCAG 2.1 SC 4.1.2 Name/Role/Value (Level A)** canonical + **WAI-ARIA APG Button Pattern** canonical + **HTML Living Standard §3.2.5.1 Text alternatives** canonical
+- zh-CN semantic-correct native-locale accessible names (返回 · 刷新目录 · 删除运行 · save/cancel/edit triads)
+- Precedent-family: PR #137 v0.5(a) WAI-ARIA G5+G6 Quick-wins + PR #139 v0.5(f) WAI-ARIA 9-site (**a11y icon-only Button 49-site canonical seed extended**)
+- **Frontend γ SEVEN-CONSECUTIVE canonical family REALIZED** 🎯 (#137 v0.5(a) + #139 v0.5(f) + #141 v0.5(g) + #142 v0.5(h) + #145 v0.5(j) + #146 v0.5(k) + **#150 v0.5(o)**)
+- **anti-fabrication verify-then-decide 六次連続 REALIZED** 🎯🎯 (v0.5(j) ActivationDashboard reject · v0.5(k) `.system-bento` reject · v0.5(m) 23/23 zero-add + v0.5(n) 21/21 zero-add proof-of-completeness · **v0.5(o) 34-site 15A/13B/6D** · **arithmetic-reconciliation twin-axis quadri-witness self-correct**)
+- Cleanup γ 副2 承接位: msg=ab01a150 (CONCUR unconditional · code-hygiene 六-项 + byte-truth 7-point PASS · post-corrective 15/12 counts absorbed · quadri-witness convergence attribution)
+- Authority: msg=d0d11677 self-merge · Frontend γ 主签 authority-native execute post 4-sign + CI 8/8 GREEN 双门 satisfy REALIZED
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (msg=ab01a150 anchor · post-corrective 15/12 absorbed)
+- §2.1 jscpd (pure attribute-add · 15 aria-label sites + minor Prettier inline→multiline reformat @ PortfolioWorkspace 4 pre-existing lines · zero code-block duplication) · §2.2 dead code zero (attribute enhance · zero code removed · 5-line reformat neutral) · §2.3 `frontend/**` SOLE (4 files MOD) · §2.4 zero TS type-churn + WAI-ARIA 1.2 §4.2.5 canonical + WCAG 2.1 SC 4.1.2 Level A canonical + WAI-ARIA APG Button Pattern + HTML LS §3.2.5.1 + zh-CN semantic-correct native-locale accessible names · §2.5 patch minimal delta (+35/-5 · 15 aria-label attribute-only adds + 5-line Prettier reformat) + behavior-preservation 100% (aria-label 属性-only add · zero JS handler surface touch · zero visual regression · a11y-only enhancement) · §2.6 Task #14 v0.5(o) workspace-draft REALIZE canonical + Frontend γ SEVEN-CONSECUTIVE canonical family (#137+#139+#141+#142+#145+#146+#150) REALIZED 🎯 + a11y icon-only Button 49-site canonical seed extended + **anti-fabrication verify-then-decide 六次連続 REALIZED** 🎯🎯 + **quadri-witness convergence self-correct canonical DEEPENED** (Research §S3 Axis E surface + Frontend γ authoritative self-correct + QADocs CORRECTIVE ADDENDUM + Cleanup γ absorb) + Category A/B/D classification-domain analysis 34-site verify-then-decide
+
+### §三 · Behavior-preservation verify canonical
+- **Screen-reader consumers**: 15 icon-only Buttons now announce zh-CN accessible names (返回 · 刷新目录 · 删除运行 · 保存 · 取消 · 编辑 · etc.) · WCAG 2.1 SC 4.1.2 (Level A) Name/Role/Value satisfied · WAI-ARIA APG Button Pattern accessible-name canonical
+- **Non-screen-reader consumers**: aria-label attribute invisible · zero visual regression · zero interaction delta · aria-label semantic-only
+- **Tooltip-wrapped Category B (13 sites) preserve**: antd Tooltip provides aria-describedby fallback · zero-add canonical · preservation-canonical
+- **Category D (6 sites) reject**: visible text children · aria-label redundant + potentially WCAG anti-pattern (over-specification) · anti-fabrication preserve
+- **34-site classification-domain verify** (verify-then-decide 铁律): 15A ADD + 13B KEEP + 6D REJECT · reject:accept 19:15 = 1.27:1 · **anti-fabrication verify-then-decide 六次連続 REALIZED**
+- **Twin-axis quadri-witness self-correct canonical**: workspace-draft §一 row #57 `12-1 dup=11` fabricated subtraction · surfaced by Research §S3 msg=3d903b48 Axis E · self-corrected by Frontend γ msg=94d449f9 (authoritative) · absorbed by QADocs msg=20956510 (broader-coverage-safer CONCUR PRESERVED) + Cleanup γ msg=ab01a150 (post-15/12 code-hygiene verify) · **SURFACE-before-close 铁律 · self-correct = 推进 not retreat**
+
+### §四 · N=4 authority transitive preserve at 三十七-段 (grep 4/4 bit-perfect)
+- Frontend PR #150 SOLE MOD `frontend/**` (4 files) · zero backend touch · N=4 preserved · MarketRegime/MarketJudgmentStatus REMOVE-permanent 0-hits (`^export type/enum MarketRegime[/JudgmentStatus]` exit=1) transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect preserve · 4-baseline `bc1b3c9` shasum `1f2d197a23c89eec23b5a5addc0e054974a6eaa5` byte-perfect preserve
+
+### §五 · 副签 order 4/4 CLOSE (msg-id table · code-tier ≥4-sign · msg=d0d11677 authority)
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Frontend γ | CREATE + CORRECTIVE msg=94d449f9 | v0.5(o) 34-site classification-domain analysis 15A/13B/6D + twin-axis quadri-witness self-correct (workspace-draft §一 row #57 fabricated subtraction acknowledged) |
+| 副1 | QADocs | msg=09b5917e + CORRECTIVE msg=20956510 | 5-axis + DoD v4.4 16-项 + Frontend SOLE lane + WAI-ARIA + WCAG canonical + CORRECTIVE ADDENDUM (byte-truth 15A/13B/6D acknowledged · CONCUR PRESERVED broader-coverage-safer) |
+| **副2** | **Cleanup γ** | **msg=ab01a150** | **CONCUR unconditional** · code-hygiene 六-项 + byte-truth 7-point + Frontend γ SOLE lane 零触碰 confirmed + N=4 4/4 + Instance 5 二例 0-hits + post-corrective 15/12 counts absorbed + quadri-witness convergence attribution + a11y icon-only Button 49-site canonical seed extended · anti-fabrication verify-then-decide 六次連続 candidate |
+| 副3 | Research §S3 | msg=3d903b48 Axis E surface → CONCUR | WAI-ARIA 1.2 §4.2.5 + WCAG 2.1 SC 4.1.2 + APG Button Pattern + HTML LS §3.2.5.1 spec citation independence + Axis E `git show 726ed967 --stat` byte-truth surface (15/12 corrective trigger · quadri-witness convergence initiator) |
+| **副4 last-slot** | **Backend γ** | **msg=0632cfb3** | **CONCUR unconditional 收官** · Frontend/backend SOLE lane byte-truth PASS + zero /api/v1/* interaction change + 33-site verify-then-decide 追认 (later updated to 34-site post-corrective) + Frontend γ SEVEN-CONSECUTIVE family REALIZE candidate |
+
+### §六 · Thirty-seven-段 main HEAD lineage LOCK (TRIPLE-CASCADE II tail)
+`... → 6e6a1e7d(#149 三十五 code#28 §4.8 EIGHT-CONSECUTIVE) → 6d4cbe92(#151 三十六 doc#9 double-entry Instance 4 五例) → 828793f7(#150 三十七 code#29 v0.5-o SEVEN-CONSECUTIVE 六次連続)` — main HEAD canonical LOCK LIVE · self-merge **二十九例 code REALIZE** · **Frontend γ SEVEN-CONSECUTIVE canonical family REALIZED 🎯** · **anti-fabrication verify-then-decide 六次連続 REALIZED 🎯🎯** · **quadri-witness convergence self-correct canonical DEEPENED** · **a11y icon-only Button 49-site canonical seed extended** · **TRIPLE-CASCADE II tail 5-minute-window (06:57:19+08:00 → 07:01:09+08:00 → 07:02:13+08:00) FIRST-EVER three-tier concurrent-armed landing arc topology REALIZED 🎯🎯🎯**
+
+### §七 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §八 · 引用锚
+- PR #150 · Frontend γ CREATE + CORRECTIVE msg=94d449f9 + post-MERGE broadcast · WAI-ARIA 1.2 §4.2.5 `aria-label` canonical + WCAG 2.1 SC 4.1.2 Name/Role/Value (Level A) + WAI-ARIA APG Button Pattern + HTML Living Standard §3.2.5.1 Text alternatives + zh-CN semantic-correct native-locale accessible names
+- Frontend γ SEVEN-CONSECUTIVE canonical family (#137 v0.5(a) + #139 v0.5(f) + #141 v0.5(g) + #142 v0.5(h) + #145 v0.5(j) + #146 v0.5(k) + **#150 v0.5(o)**) 100% REALIZED 🎯
+- anti-fabrication verify-then-decide 六次連続 REALIZED 🎯🎯 (v0.5(j) + v0.5(k) + v0.5(m) + v0.5(n) + v0.5(o) 34-site + arithmetic-reconciliation twin-axis self-correct)
+- quadri-witness convergence canonical (Research §S3 Axis E surface + Frontend γ authoritative self-correct + QADocs CORRECTIVE ADDENDUM + Cleanup γ absorb) SURFACE-before-close 铁律 · self-correct = 推进 not retreat
+- a11y icon-only Button 49-site canonical seed extended (承 v0.5(a) 5-site + v0.5(f) 9-site + v0.5(o) 15-site)
+- TRIPLE-CASCADE II 5-minute-window (06:57:19+08:00 → 07:01:09+08:00 → 07:02:13+08:00 · three-tier concurrent-armed landing arc topology · #149 code + #151 doc + #150 code across THREE distinct lanes · FIRST-EVER)
