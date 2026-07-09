@@ -45,58 +45,64 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
   const [backtestInfo, setBacktestInfo] = useState<any>(null);
 
   useEffect(() => {
-    loadResults();
-    loadBacktestInfo();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backtest_id]); // eslint-disable-next-line react-hooks/exhaustive-deps
-
-  const loadResults = async () => {
-    setLoading(true);
-    try {
-      const detail = await getBacktestDetail(Number(backtest_id));
-      const primary = detail?.results?.[0];
-      if (!primary) {
-        setResults(null);
-      } else {
-        const equity = (primary.equity_curve_json || []).map((p: any) => ({
-          date: p.date,
-          value: p.total_value,
-        }));
-        const dailyReturns: number[] = [];
-        for (let i = 1; i < equity.length; i += 1) {
-          const prev = equity[i - 1].value;
-          const cur = equity[i].value;
-          dailyReturns.push(prev ? (cur - prev) / prev : 0);
+    // v0.5(p): race-guard — fast backtest_id toggle 时抛弃陈旧响应, 避免 stale setState 污染新回测
+    let ignore = false;
+    const loadResults = async () => {
+      setLoading(true);
+      try {
+        const detail = await getBacktestDetail(Number(backtest_id));
+        if (ignore) return;
+        const primary = detail?.results?.[0];
+        if (!primary) {
+          setResults(null);
+        } else {
+          const equity = (primary.equity_curve_json || []).map((p: any) => ({
+            date: p.date,
+            value: p.total_value,
+          }));
+          const dailyReturns: number[] = [];
+          for (let i = 1; i < equity.length; i += 1) {
+            const prev = equity[i - 1].value;
+            const cur = equity[i].value;
+            dailyReturns.push(prev ? (cur - prev) / prev : 0);
+          }
+          setResults({
+            metrics: {
+              total_return: (primary.total_return_pct || 0) / 100,
+              annualized_return: (primary.annual_return_pct || 0) / 100,
+              sharpe_ratio: primary.sharpe_ratio || 0,
+              max_drawdown: (primary.max_drawdown_pct || 0) / 100,
+              win_rate: primary.win_rate || 0,
+              profit_loss_ratio: primary.profit_factor || 0,
+            },
+            equity_curve: equity,
+            trades: detail?.trades || [],
+            daily_returns: dailyReturns,
+          });
         }
-        setResults({
-          metrics: {
-            total_return: (primary.total_return_pct || 0) / 100,
-            annualized_return: (primary.annual_return_pct || 0) / 100,
-            sharpe_ratio: primary.sharpe_ratio || 0,
-            max_drawdown: (primary.max_drawdown_pct || 0) / 100,
-            win_rate: primary.win_rate || 0,
-            profit_loss_ratio: primary.profit_factor || 0,
-          },
-          equity_curve: equity,
-          trades: detail?.trades || [],
-          daily_returns: dailyReturns,
-        });
+      } catch (error) {
+        if (ignore) return;
+        console.error('加载回测结果失败:', error);
+      } finally {
+        if (!ignore) setLoading(false);
       }
-    } catch (error) {
-      console.error('加载回测结果失败:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadBacktestInfo = async () => {
-    try {
-      const detail = await getBacktestDetail(Number(backtest_id));
-      setBacktestInfo(detail?.task || null);
-    } catch (error) {
-      console.error('加载回测信息失败:', error);
-    }
-  };
+    };
+    const loadBacktestInfo = async () => {
+      try {
+        const detail = await getBacktestDetail(Number(backtest_id));
+        if (ignore) return;
+        setBacktestInfo(detail?.task || null);
+      } catch (error) {
+        if (ignore) return;
+        console.error('加载回测信息失败:', error);
+      }
+    };
+    void loadResults();
+    void loadBacktestInfo();
+    return () => {
+      ignore = true;
+    };
+  }, [backtest_id]);
 
   if (loading) {
     return <Card className="modern-card" variant="borderless" loading={true}></Card>;
