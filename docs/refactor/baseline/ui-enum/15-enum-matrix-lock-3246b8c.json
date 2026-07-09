@@ -2,7 +2,6 @@
   "task": "task-4-m3-15-enum-matrix-lock",
   "sha_lock": "3246b8cf50eb7172a6bed6aa79801dcce3df2625",
   "sha_lock_full_ref": "3246b8cf docs(qa): PR-M3-3 UI enum single-source-of-truth baseline + ADR-0011 + SOP v1.0 seal (#115)",
-  "pending_reason": "Commit 1 of 2 (B3 二-commit). Repo-truth sync id=4 QuantWorkflowStatus value_set healthy/degraded/unhealthy → ready/degraded/blocked + id=10 alias mirror + authority_file factual pin. Awaiting co-signer verify; Commit 2 removes this key and renames file -pending.json → -3246b8c.json (also deletes -83aea69.json). Drift discovered while authoring backend/tests/enum/enum-matrix-lock.test.ts id=4 assertion (PR-M3-1 File 2, id=4 xit skip with cross-reference). Authority: Orch v135 §二 SECOND ratify (code-truth authoritative) + v136 primary decide Q4.a=α + Q4.b=独立 PR + Q4.c=factual authority_file pin.",
   "policy": {
     "authority_model": "Backend enum single-source-of-truth · Frontend consume 只读 · zero cross-layer duplication",
     "duplication_elim_rule": "同 value set (case-sensitive) 且同域语义 → 单一 authority 保留 · 其余 alias import · 域独立即使 shape 同也 retain",
