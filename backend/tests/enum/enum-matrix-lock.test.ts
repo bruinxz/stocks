@@ -222,5 +222,130 @@ assert(
   matrix.every((e) => typeof e.authority_file === 'string' && e.authority_file.length > 0)
 );
 
+// PR-M3-5 v0.4-corrected · dual-source hard-fail canonical.
+// Active-latest 4-baseline snapshot post-Backend Option B REMOVE authority-decision
+// LOCKED (MarketRegime + MarketJudgmentStatus REMOVE-permanent · 匿名 union
+// embedded in interface field 非 discrete `export type`). Path D 15-baseline
+// remains 冻结锚 preserved (assertion block above); 4-baseline is the
+// active-latest byte-truth grep-verified snapshot at HEAD bc1b3c91.
+console.log('\n## PR-M3-5 v0.4-corrected · 4-baseline active-latest hard-check');
+
+function loadBaselineN4(): BaselineFile {
+  const files = fs
+    .readdirSync(baselineDir)
+    .filter((f) => /^4-enum-matrix-lock-.*\.json$/.test(f));
+  if (files.length === 0) {
+    throw new Error(`no 4-baseline JSON found under ${baselineDir}`);
+  }
+  const latest = files.sort()[files.length - 1];
+  const raw = fs.readFileSync(path.join(baselineDir, latest), 'utf8');
+  return JSON.parse(raw) as BaselineFile;
+}
+
+const baseline4 = loadBaselineN4();
+const matrix4 = baseline4.entries;
+
+assert(
+  '4-baseline contains exactly 4 canonical entries (N-verified LOCKED)',
+  matrix4.length === 4,
+  `count=${matrix4.length}`
+);
+
+assert(
+  '4-baseline every entry decision === AUTHORITY (all 4 discrete `export type` grep-PASS)',
+  matrix4.every((e) => e.decision === 'AUTHORITY')
+);
+
+// Bit-perfect authority_file + value_set canonical verify per grep-truth at HEAD.
+const expected4: Array<{ enum_name: string; authority_file: string; value_set: string[] }> = [
+  {
+    enum_name: 'FeedbackStatus',
+    authority_file: 'backend/src/services/UserFeedbackService.ts:42',
+    value_set: ['pending', 'in_progress', 'resolved', 'dismissed'],
+  },
+  {
+    enum_name: 'FeedbackClassification',
+    authority_file: 'backend/src/services/UserFeedbackService.ts:43',
+    value_set: ['bug', 'feature_request', 'question', 'praise', 'other'],
+  },
+  {
+    enum_name: 'SizingMethod',
+    authority_file: 'backend/src/portfolio/PositionSizingPolicy.ts:66',
+    value_set: ['equal_pct', 'vol_target', 'atr_based', 'kelly'],
+  },
+  {
+    enum_name: 'QuantWorkflowStatus',
+    authority_file:
+      'backend/src/quant/workflow/QuantWorkflowReadinessService.ts:8',
+    value_set: ['ready', 'degraded', 'blocked'],
+  },
+];
+
+for (const exp of expected4) {
+  const found = matrix4.find((e) => e.enum_name === exp.enum_name);
+  assert(
+    `4-baseline entry '${exp.enum_name}' present`,
+    !!found
+  );
+  if (found) {
+    assert(
+      `4-baseline '${exp.enum_name}' authority_file === '${exp.authority_file}'`,
+      found.authority_file === exp.authority_file,
+      `actual=${found.authority_file}`
+    );
+    assert(
+      `4-baseline '${exp.enum_name}' value_set bit-perfect canonical`,
+      JSON.stringify(found.value_set) === JSON.stringify(exp.value_set),
+      `actual=${JSON.stringify(found.value_set)}`
+    );
+  }
+}
+
+// QuantWorkflowStatus cross-baseline shape alignment: Path D 15-baseline id=4
+// must equal 4-baseline QuantWorkflowStatus entry (single canonical source of
+// truth · dual-source hard-fail canonical).
+const q4 = matrix4.find((e) => e.enum_name === 'QuantWorkflowStatus');
+assert(
+  'QuantWorkflowStatus value_set aligned across 15-baseline id=4 and 4-baseline (single-source canonical)',
+  JSON.stringify(q4?.value_set) === JSON.stringify(id4?.value_set)
+);
+
+// 4-baseline sha_lock filename-content self-consistency guard.
+const files4 = fs
+  .readdirSync(baselineDir)
+  .filter((f) => /^4-enum-matrix-lock-.*\.json$/.test(f));
+const latestFile4 = files4.sort()[files4.length - 1];
+const shaFromFilename4 = latestFile4
+  .replace(/^4-enum-matrix-lock-/, '')
+  .replace(/\.json$/, '');
+assert(
+  '4-baseline sha_lock first 7 chars match filename slug',
+  baseline4.sha_lock.slice(0, 7) === shaFromFilename4.slice(0, 7),
+  `sha_lock=${baseline4.sha_lock.slice(0, 7)} filename=${shaFromFilename4.slice(0, 7)}`
+);
+
+// 4-baseline decision_summary integrity — invariant guard.
+const summary4 = (baseline4 as unknown as { decision_summary?: DecisionSummary }).decision_summary;
+assert('4-baseline decision_summary present', !!summary4);
+if (summary4) {
+  assert(
+    '4-baseline decision_summary.AUTHORITY_count === 4 (all-AUTHORITY canonical)',
+    summary4.AUTHORITY_count === 4 && summary4.total === 4
+  );
+}
+
+// Negative-verify canonical: MarketRegime + MarketJudgmentStatus must not
+// appear in 4-baseline (Backend Option B REMOVE-permanent LOCKED · 匿名 union
+// embedded in interface field · 非 discrete `export type` grep-verified 0 hits
+// at HEAD bc1b3c91 · Instance 5 二例 VINDICATED).
+assert(
+  '4-baseline zero MarketRegime entry (Backend Option B REMOVE-permanent)',
+  matrix4.every((e) => e.enum_name !== 'MarketRegime')
+);
+assert(
+  '4-baseline zero MarketJudgmentStatus entry (Backend Option B REMOVE-permanent)',
+  matrix4.every((e) => e.enum_name !== 'MarketJudgmentStatus')
+);
+
 console.log(`\nResult: ${passed} passed, ${failed} failed, 0 skipped`);
 process.exit(failed > 0 ? 1 : 0);

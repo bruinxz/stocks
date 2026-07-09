@@ -1,0 +1,84 @@
+{
+  "task": "task-4-m3-4-enum-matrix-lock-active-latest",
+  "sha_lock": "bc1b3c912243ff270b37b5032ecd9d0caa211e64",
+  "sha_lock_full_ref": "bc1b3c91 docs(refactor): 30-cleanup-log §PR-M3-4 + §PR-M3-5 double landing entries (post-#124 + post-#125 · Cleanup γ Lane B doc-tier 三例) (#128)",
+  "policy": {
+    "authority_model": "Backend enum single-source-of-truth · Frontend consume 只读 · zero cross-layer duplication",
+    "N_verified": 4,
+    "N_derivation": "post PR-M3-5 v0.3.1 SURFACE retract (msg=8e664650 anti-fabrication canonical Instance 5 二例 self-enforced authored-in-repo-first-then-lock) + Backend v38 Option B REMOVE-permanent LOCKED (msg=3ae1c40e §八) for MarketRegime + MarketJudgmentStatus (匿名 union embedded in interface field / 0 hits discrete export type)",
+    "coexistence_with_15_baseline": "Path D 15-baseline `15-enum-matrix-lock-3246b8c.json` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` 冻结锚 100% preserve · 本 4-baseline 作为 active-latest snapshot post-#128 canonical byte-truth grep-verified at HEAD bc1b3c91",
+    "hard_fail_scope": [
+      "backend/src/**/*.ts",
+      "backend/src/**/*.py",
+      "frontend/src/services/**/*.ts",
+      "frontend/src/types/**/*.ts"
+    ],
+    "exempt_trailer_syntax": "[ui-enum-exempt: <slug>]",
+    "exempt_authority_required": ["owner", "orchestrator"],
+    "sop_seal_version": "v0.4-corrected · post-Backend Option B REMOVE authority-decision LOCKED · N=4 unconditional canonical",
+    "sop_seal_anchor": "docs/refactor/quality/qadocs-ui-enum-lock-sop.md",
+    "adr_anchor": "docs/refactor/adr/0011-ui-enum-single-source-of-truth.md",
+    "refresh_log_lineage": [
+      "v0.1.1 (msg=b83a4dfa initial 15-baseline)",
+      "v0.2 (workspace draft 33-entry propose · superseded)",
+      "v0.2.1 (workspace draft consolidation)",
+      "v0.3.1 (workspace claim N=6 · retracted)",
+      "v0.4-corrected (msg=8e664650 SURFACE + Backend msg=3ae1c40e Option B REMOVE authority-decision → N=4 verified LOCKED)"
+    ]
+  },
+  "entries": [
+    {
+      "id": 1,
+      "enum_name": "FeedbackStatus",
+      "path_anchor": "US-050 User Feedback Service",
+      "authority_file": "backend/src/services/UserFeedbackService.ts:42",
+      "value_set": ["pending", "in_progress", "resolved", "dismissed"],
+      "authority_layer": "Backend",
+      "decision": "AUTHORITY",
+      "duplication_with": null,
+      "consumer_scope": ["Frontend 只读 consume via type import"]
+    },
+    {
+      "id": 2,
+      "enum_name": "FeedbackClassification",
+      "path_anchor": "US-050 User Feedback Service",
+      "authority_file": "backend/src/services/UserFeedbackService.ts:43",
+      "value_set": ["bug", "feature_request", "question", "praise", "other"],
+      "authority_layer": "Backend",
+      "decision": "AUTHORITY",
+      "duplication_with": null,
+      "consumer_scope": ["Frontend 只读 consume via type import"]
+    },
+    {
+      "id": 3,
+      "enum_name": "SizingMethod",
+      "path_anchor": "Portfolio Position Sizing Policy",
+      "authority_file": "backend/src/portfolio/PositionSizingPolicy.ts:66",
+      "value_set": ["equal_pct", "vol_target", "atr_based", "kelly"],
+      "authority_layer": "Backend",
+      "decision": "AUTHORITY",
+      "duplication_with": null,
+      "consumer_scope": ["Frontend 只读 consume via type import"]
+    },
+    {
+      "id": 4,
+      "enum_name": "QuantWorkflowStatus",
+      "path_anchor": "Quant Workflow Readiness Service",
+      "authority_file": "backend/src/quant/workflow/QuantWorkflowReadinessService.ts:8",
+      "value_set": ["ready", "degraded", "blocked"],
+      "authority_layer": "Backend",
+      "decision": "AUTHORITY",
+      "duplication_with": null,
+      "consumer_scope": ["Frontend 只读 consume via backend/src/models/enums barrel re-export"],
+      "barrel_reexport": "backend/src/models/enums/index.ts:9"
+    }
+  ],
+  "decision_summary": {
+    "AUTHORITY_count": 4,
+    "ELIM_count": 0,
+    "RETAIN_count": 0,
+    "total": 4,
+    "note": "active-latest 4-baseline snapshot 全部为 discrete `export type` AUTHORITY (grep-PASS bit-perfect at HEAD bc1b3c91) · Path D 15-baseline 保留原 RETAIN 10 + AUTHORITY 2 + ELIM 3 = 15 canonical decomposition 100% preserved"
+  },
+  "unique_key_note": "authority_file line-ref 唯一键 (每 entry 一 discrete `export type X = 'a' | 'b' | ...` declaration line) · value_set literal case-sensitive bit-perfect grep-verified at HEAD bc1b3c91"
+}
