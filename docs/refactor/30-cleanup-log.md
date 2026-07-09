@@ -533,3 +533,103 @@ grep -rnE "['\"](password|secret|token|api_?key)['\"]:\s*['\"][^'\"]{8,}['\"]" \
 - lesson-16 v1.0 seal (dod v4.3 §16 lesson-16 承接第 8 例 apply candidate)
 - `docs/refactor/23-protect-list.md` v1 Path D 权威锚
 - owner msg=b8af5127 完全掌控令 v2 · msg=210d262d 铁律强化 · msg=df3a0aae SSH executive 令 v3
+
+---
+
+## §PR-M3-2 · Frontend backtestService.ts 271-line delete · last-consumer migration landing (2026-07-09 · Cleanup γ 主签 doc-tier)
+
+### §一 · Landing metadata
+
+- **PR**: [#121](https://github.com/bruinxz/stocks/pull/121) · Frontend 主签 · squash-merge from `aa099594` (base) · mergeCommit `0fb7c96e` @ `2026-07-09T15:38:08Z`
+- **Branch**: `frontend/pr-m3-2-backtest-service-migrate` (deleted post-merge)
+- **Diff**: +37 / −282 · 3 files
+- **Authority**: `msg=d0d11677` self-merge (≥4 sign + CI 8/8 GREEN → self-merge OK) · Frontend 主签 self-merge REALIZED · owner DM pivot `msg=3c114597` (T+7d 2026-07-16 → T+0 IMMEDIATE EXECUTE) + Orch v197 `msg=de6103bd` 兑现完毕
+- **SLA actual**: PR CREATE T+30min · 副签 gather T+60min · self-merge T+90min · 全 lifecycle T+0 vs original T+7d gate = **5.6d 提前**
+
+### §二 · Cleanup γ verify 三项 (byte-truth 铁-verify PASS via gh api 独立)
+
+| # | file | verify | result |
+|---|---|---|---|
+| A | `backend/tests/lint/no-backtest-service-regression.test.ts` L89-90 | `KNOWN_RESIDUAL = 1` → `= 0` + comment tightened "PR-M3-2 landed · regressions hard-fail CI" | ✓ semantic transition 完成 · hard-fail LIVE at merge time |
+| B | `frontend/src/components/backtest/BacktestResults.tsx` | L23 import `getBacktestDetail from '../../services/labService'` (SOLE labService import) · L53-88 `loadResults` 重写 via `detail.results[0]` adapter + `equity_curve_json`/`daily_returns` derive · L91-95 `loadBacktestInfo` migrated · pre-edit anchor 475L/16071B bit-perfect | ✓ 3-anchor line-exact + bit-perfect anchor + zero-collateral edits |
+| C | `frontend/src/services/backtestService.ts` | DELETED 271 lines · git blob `f69a0f59` → `00000000` · `git grep backtestService` 全库 zero-residual (sole sentinel test reference by design) | ✓ zero-residual grep pass |
+
+### §三 · CI 8/8 required-check GREEN unconditional
+
+Detect changes ✓ · Docker compose validate ✓ · Frontend check (typecheck + lint) ✓ · Backend check (typecheck + lint + test · 6m0s) ✓ · enum-matrix-lock (ADR-0011 §5) ✓ · no-backtest-service-regression (PR-M3-2 pre-guard · `KNOWN_RESIDUAL=0` sentinel hard-fail LIVE) ✓ · weak-secrets ✓ · paths_filter ✓ · mergeStateStatus=CLEAN · mergeable=MERGEABLE
+
+### §四 · 副签 6/6 六方 CONCUR msg-id table
+
+| # | agent | msg | posture |
+|---|---|---|---|
+| 1 | Cleanup γ | `msg=1d26dce0` | 副签 CONCUR unconditional · byte-truth verify PASS · T+2min post-CREATE |
+| 2 | Strategy | `msg=b33354c1` | 副签 CONCUR unconditional · 独立 gh api verify · T+3min post-CREATE |
+| 3 | DataPipeline γ | `msg=19b904b0` | 副签 CONCUR · 采集/存储侧 (collectors/storage/dataSources/database) 零触碰 100% · 六段-lineage `3246b8cf → 036294a7 → 7003e0d3 → feafa6e4 → 93dee066 → aa099594` unchanged corroborated |
+| 4 | Research §S3 | `msg=7c1bfa57` | 副签 CONCUR · 三-item byte-truth 铁-verify via gh api 独立复核 · L92 KNOWN_RESIDUAL=0 + L23 SOLE labService + backtestService.ts 404 + tree 24 files 无残留 |
+| 5 | QADocs | `msg=e65f0a81` | 副签 CONCUR · mergeStateStatus=CLEAN + mergeable=MERGEABLE + diff bit-perfect · CI 8/8 UNCONDITIONAL GREEN · 反-fabrication Instance 2 CLOSE-OUT candidate armed post-MERGE |
+| 6 | Backend v32 | `msg=8ff4b2d1` | 副签 arm posture ready · byte-truth trailing-verify lane (5-sign gate 已跨过 pre-merge) |
+
+Frontend 主签 CREATE broadcast `msg=5fc56cd6` · Cleanup γ post-MERGE close-out `msg=52696810`.
+
+### §五 · 反-Fabrication canonical Instance 2 lifecycle CLOSE-OUT REALIZED-in-repo cross-ref
+
+Instance 2 双-phase template canonical LOCK: **§3.2 baseline** (`KNOWN_RESIDUAL=1` documented at #119 with named threshold + follow-up PR-M3-2 tighten obligation · pre-tighten posture) + **§3.4 realization** (post-#121 tightening obligation discharged in exact single-line edit path predicted · post-tighten close-out).
+
+Companion doc-PR: [#122](https://github.com/bruinxz/stocks/pull/122) · mergeCommit `86d1dd33` @ `2026-07-09T16:03:26Z` · QADocs 主签 self-merge · doc-tier 双-sign lane 首例 canonical LOCK REALIZED · docs/refactor/CHANGELOG.md `[PR-M3-2]` entry + docs/refactor/quality/anti-fabrication-canonical.md §3.4 permanent 落地 at main HEAD `86d1dd33`.
+
+Bit-perfect realization: `KNOWN_RESIDUAL=1→0` (single-line edit predicted § §3.2 → discharged) + comment rewrite ("awaiting PR-M3-2 · must tighten to === 0 at land time" → "PR-M3-2 landed · regressions hard-fail CI") + assertion semantic transition (soft-observe threshold → hard-fail regression sentinel) + companion consumer elimination (backtestService.ts 271-line delete) + zero-residual grep (`git grep backtestService` full-repo zero hits outside sentinel test).
+
+### §六 · 保护 glob zero-collateral audit
+
+- `frontend/**` — 主签授权 lane 100% (Frontend 主签 lane 完全 aligned · 2-file scope: BacktestResults.tsx edit + backtestService.ts DELETE)
+- `backend/src/**` — zero-touch (sentinel test at `backend/tests/lint/**` sole `backend/**` touch · lint-layer only · NOT `src/` code)
+- `采集/存储侧` — protected globs zero touch (collectors/storage/dataSources/database 六段-lineage unchanged per DP γ msg=19b904b0 corroboration)
+- `schema.prisma` — unchanged
+- `package.json` — zero delta
+- `Math.random` — zero touch (US-038 SeededRandom retain)
+- Path D `3246b8cf` — 冻结锚 zero touch (baseline JSON slug + `sha_lock` content field both preserved)
+- Zero force-push · `jscpd ≤30%` hard-gate retained · Alpha Vantage + Baostock + Yahoo opt-in only · License Independence v1.1 retain · 借鉴外部 attribution none
+
+### §七 · Seven-段 main HEAD lineage LOCK update
+
+`3246b8cf(#115) → 036294a7(#116) → 7003e0d3(#117) → feafa6e4(#118) → 93dee066(#119) → aa099594(#120) → 0fb7c96e(#121)` — main HEAD canonical LOCK 更新 → `0fb7c96e` (post-#122 doc-tier LAND: 八段 extended → `86d1dd33`).
+
+### §八 · Cleanup γ 三-phase 生命周期 canonical (类比 双-phase v48/v49 #120 precedent extend)
+
+- **Phase 1 pre-CREATE arm** — `msg=69cec929` 副签 承接位 broadcast · SLA ≤ 15min post PR CREATE · verify 三项 armed
+- **Phase 2 post-CREATE 副签 CONCUR** — `msg=1d26dce0` T+2min post-CREATE actual · unconditional CONCUR (byte-truth verify 全项 PASS)
+- **Phase 3 post-MERGE close-out** — `msg=52696810` post-self-merge · 30-cleanup-log §PR-M3-2 landing entry armed (本 PR)
+
+### §九 · DoD self-check (dod v4.3 铁律 16 项 · docs-only)
+
+- [x] #1 密钥/凭证 zero (docs-only · zero literal)
+- [x] #2 Phase 0 清理独占 (docs-only · not code)
+- [x] #3 事实链 pin (§一-§五 全 PR/msg/SHA/timestamp anchored to independently-verified sources)
+- [x] #4 30-cleanup-log 章节 paste-in landed (本 §PR-M3-2 · 教训 #14 兑现 · post-#122 doc-tier canonical 承接)
+- [x] #5 zero test 触 (docs-only · zero code change)
+- [x] #6 PG SELECT-only (N/A · docs-only)
+- [x] #7 SSH read-only (N/A · docs-only · workspace + git local + gh CLI only)
+- [x] #8 Path C HOLD (zero 触 · docs/refactor/ 层)
+- [x] #9 Path D 永不动 (§六 交叉核 pass)
+- [x] #10-#13 v4.1 累积 (pass)
+- [x] #14 multi-stage verify (docs-only · zero tsc/lint delta · CI 6-check GREEN gate)
+- [x] #15 test 层 grep (docs-only · N/A)
+- [x] #16 zero package.json 触碰 (自适应 pass · lesson-16 v1.0 seal 承接 apply)
+
+### §十 · 副签路由 pin (Orch v204 msg=a061c6f7 §一 Lane B dispatch)
+
+| # | 副签 | agent | scope |
+|---|---|---|---|
+| 主 | Cleanup γ | 本 batch 起源 · doc-tier 主签 self-merge candidate (doc-tier 二例 · 首例 PR #122) | audit trail 层留痕 · Post-MERGE landing entry canonical |
+| 副 1 | Research §S3 | byte-truth verify + 30-cleanup-log cross-ref + PR #121/#122 SHA/timestamp/msg-id 独立复核 | pre-merge |
+| 副 2 | QADocs | CHANGELOG-adjacent 一致性 · docs/refactor/CHANGELOG.md `[PR-M3-2]` entry cross-ref verify | pre-merge |
+
+### §十一 · 引用锚
+
+- `docs/refactor/CHANGELOG.md` `[PR-M3-2] · 2026-07-09` entry (post-#122 landing at main HEAD `86d1dd33`)
+- `docs/refactor/quality/anti-fabrication-canonical.md` §3.2 pre-tighten baseline + §3.4 post-tighten realization 双-phase template canonical LOCK
+- `docs/refactor/quality/pr-m3-2-preguard-runbook.md` Frontend 主签 T+7d recipe (原 runbook)
+- `docs/refactor/23-protect-list.md` v1 Path D 权威锚 (frozen 3246b8cf)
+- `docs/refactor/adr/0011-ui-enum-single-source-of-truth.md` §5 barrel-authority + §6 CI required-check contract
+- PR #121 https://github.com/bruinxz/stocks/pull/121 · PR #122 https://github.com/bruinxz/stocks/pull/122
+- owner msg=b8af5127 完全掌控令 v2 · msg=d0d11677 self-merge 令 · msg=3c114597 IMMEDIATE EXECUTE pivot · msg=a8175861 no-standby 铁律 · msg=1fbdc90d 完全掌控令 v2 静默审视 · Orch v197 msg=de6103bd + v204 msg=a061c6f7
