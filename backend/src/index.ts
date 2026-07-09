@@ -146,7 +146,11 @@ app.use(cookieParser());
 // ADR-0010 §4.1 · Phase 1 · X-API-Version response header (all routes /api/* + /api/v1/*).
 // Placed after body parsers so header lands on error responses too, before requestContext
 // so trace_id log lines can co-emit api_version if desired later.
-import { apiVersionMiddleware } from './middlewares/apiVersion';
+import {
+  apiVersionMiddleware,
+  CURRENT_API_VERSION,
+  SUPPORTED_API_VERSIONS,
+} from './middlewares/apiVersion';
 app.use(apiVersionMiddleware());
 
 // US-097 [OPS-008] 日志统一字段 — 给每个 request 分配 / 透传 trace_id 并绑到 AsyncLocalStorage,
@@ -169,9 +173,16 @@ app.use(httpMetricsMiddleware());
 ensureUploadsRuntime();
 app.use('/uploads', express.static(getUploadsRoot()));
 
-// Health check endpoint
+// Health check endpoint · ADR-0010 §4.3 (partial · supported_api_versions surfaced) +
+// §4.2 co-location (api_version field on health payload mirrors X-API-Version header).
+// Kept intentionally minimal — no DB/Redis probing here (that's /health/detail).
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    api_version: CURRENT_API_VERSION,
+    supported_api_versions: SUPPORTED_API_VERSIONS,
+  });
 });
 
 // US-096 运维：系统启动自检页 —— /health/detail

@@ -15,6 +15,7 @@
  */
 import { Request, Response, NextFunction } from 'express';
 import { generateTraceId, runWithLoggingContext } from '../utils/loggingContext';
+import { CURRENT_API_VERSION } from './apiVersion';
 
 const TRACE_ID_HEADER = 'x-request-id';
 const TRACE_ID_HEADER_ALT = 'x-trace-id';
@@ -50,7 +51,13 @@ export function requestContextMiddleware() {
     // 暴露给业务 handler 偶尔需要 (e.g. 写 audit 时显式传)
     (req as any).trace_id = traceId;
 
-    runWithLoggingContext({ trace_id: traceId, module: 'http' }, () => next());
+    // ADR-0010 §4.2 · Phase 2 · log 上下文携 api_version, downstream logger 走
+    // currentApiVersion() 拿到值. runWithModule 会继承 api_version, cron / dispatcher
+    // 子作用域仍带同一个 API 契约版本.
+    runWithLoggingContext(
+      { trace_id: traceId, module: 'http', api_version: CURRENT_API_VERSION },
+      () => next(),
+    );
   };
 }
 
