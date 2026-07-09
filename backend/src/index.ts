@@ -165,6 +165,15 @@ app.use(apiDeprecationMiddleware());
 import { apiRateLimitMiddleware } from './middlewares/apiRateLimit';
 app.use(apiRateLimitMiddleware());
 
+// ADR-0010 §4.6 · RFC 9110 §10.2.3 Retry-After response header (delay-seconds form).
+// Default OFF (zero-emit when pkg.api_retry_after absent). Patches res.writeHead in-place to
+// stamp Retry-After when res.statusCode matches a configured entry (typically 429/503).
+// Existing Retry-After set by route handler is preserved (route authority wins). Fail-OPEN skip
+// on non-integer / negative / NaN / Infinity seconds. Advisory-only · does NOT decide when to
+// send 429/503 (enforcement is a future PR).
+import { apiRetryAfterMiddleware } from './middlewares/apiRetryAfter';
+app.use(apiRetryAfterMiddleware());
+
 // US-097 [OPS-008] 日志统一字段 — 给每个 request 分配 / 透传 trace_id 并绑到 AsyncLocalStorage,
 // 任何此 request 链路内 logger.info/warn/error 自动携带 `trace_id=<x> module=http` 后缀.
 // 必须在 httpMetricsMiddleware 之前 (metric 埋点本身的 log 也带 trace_id) 但在 cors/helmet 之后
