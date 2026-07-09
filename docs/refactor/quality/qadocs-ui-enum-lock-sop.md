@@ -151,3 +151,48 @@ This precedent codifies the pattern for future skip-stub → live-assert transit
 ---
 
 **v2.0 seal LANDED** (post-#119 `93dee066`) · UI enum single-source-of-truth authority lock canonical · 强制适用所有 15 项 UI 决色 enum · exempt 通道窄门开放 (owner + Orch 双签授权) · **PR-M3-4 lint 层 hard-fail 收官 REALIZED · escalation-over-invention 四段-lifecycle CLOSED · 25 total lint-layer assertions LIVE**
+
+---
+
+## §七 · Refresh log · v0.4-corrected · Backend Option B REMOVE 追认 (PR-M3-5)
+
+### §7.1 · Version lineage
+- **v0.1.1** — initial 15-baseline landed via PR-M3-3 `#115` `3246b8cf` · Path D 冻结锚 canonical
+- **v0.2** — workspace draft 33-entry consolidation propose (superseded)
+- **v0.2.1** — workspace draft consolidation refresh (superseded)
+- **v0.3.1** — workspace claim N=6 candidate (retracted per §7.2)
+- **v0.4-corrected** — post-Backend Option B REMOVE authority-decision LOCKED · **N-verified = 4 unconditional canonical** · fold-in 单 PR (本 PR)
+
+### §7.2 · SURFACE narrative · Instance 5 二例 self-enforced canonical
+At branch-cut for PR-M3-5 v0.3-refreshed (workspace claim N=6 LOCKED), Instance 4 pre-CREATE hygiene 三-项 checklist §(iii) 深化 (workspace draft freshness + filesystem grep-verify canonical) surfaced two entries that failed authored-in-repo-first-then-lock canonical:
+
+- **MarketRegime** — msg=72cf7c77 §二 claim `authority_file = backend/src/quant/market/MarketJudgmentService.ts` · **grep-verify 0 hits** for `export type MarketRegime`. Actual repo truth: `backend/src/services/MarketEnvironmentService.ts:46` embeds an anonymous union literal (`market_regime: 'bull' | 'bear' | ...`) inside the `MarketEnvironmentSnapshot` interface field, and `backend/src/quant/backtest/RegimeSegmentedBacktest.ts:84` derives `RawMarketRegime` via indexed access. Neither is a discrete `export type` canonical enum.
+- **MarketJudgmentStatus** — msg=72cf7c77 §二 claim `authority_file = backend/src/quant/market/MarketJudgmentService.ts` · **grep-verify 0 hits** for `export type MarketJudgmentStatus`. Actual repo truth: `backend/src/services/MarketJudgmentService.ts` exists (US-040 / FE-001 domain), but no discrete `MarketJudgmentStatus` type export.
+
+QADocs SURFACE (msg=8e664650) retracted N=6 → N=4 pre-CREATE per **anti-fabrication canonical Instance 5 二例 self-enforced authored-in-repo-first-then-lock** · surface-before-close 四例 canonical (owner msg=eb4b0016 T+Nd 语言 禁用 + msg=210d262d 不能停 · SURFACE = 推进 non-halt).
+
+### §7.3 · Backend Option B REMOVE-permanent 追认 (msg=3ae1c40e §八)
+Backend v38 authority-decision: MarketRegime + MarketJudgmentStatus **REMOVE-permanent** (Option B canonical · authored-in-repo-first-then-lock 拒绝 fabrication 追认 · discrete `export type` 不 authored) · **N-verified LOCKED = 4 unconditional canonical**.
+
+### §7.4 · N=4 canonical AUTHORITY (grep-PASS bit-perfect at HEAD `bc1b3c91`)
+| # | enum_name | authority_file | value_set |
+|---|---|---|---|
+| 1 | FeedbackStatus | `backend/src/services/UserFeedbackService.ts:42` | `["pending","in_progress","resolved","dismissed"]` |
+| 2 | FeedbackClassification | `backend/src/services/UserFeedbackService.ts:43` | `["bug","feature_request","question","praise","other"]` |
+| 3 | SizingMethod | `backend/src/portfolio/PositionSizingPolicy.ts:66` | `["equal_pct","vol_target","atr_based","kelly"]` |
+| 4 | QuantWorkflowStatus | `backend/src/quant/workflow/QuantWorkflowReadinessService.ts:8` | `["ready","degraded","blocked"]` |
+
+Barrel re-export: `backend/src/models/enums/index.ts:9` `export { QuantWorkflowStatus } from '../../quant/workflow/QuantWorkflowReadinessService';`.
+
+### §7.5 · Path D preserve + dual-source hard-fail canonical
+- **Path D 15-baseline** `docs/refactor/baseline/ui-enum/15-enum-matrix-lock-3246b8c.json` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect **preserved** · 冻结锚 100% retain · assertion #1 `matrix.length === 15` retained
+- **Active-latest 4-baseline** `docs/refactor/baseline/ui-enum/4-enum-matrix-lock-bc1b3c9.json` NEW · assertion #2 `matrix4.length === 4` hard-check + entries value_set bit-perfect + cross-baseline QuantWorkflowStatus single-source alignment + negative-verify MarketRegime/MarketJudgmentStatus absence
+- **Dual-source hard-fail canonical**: either baseline drift trips CI (`enum-matrix-lock` job) · single-source-of-truth invariant across both snapshots
+
+### §7.6 · Instance 5 二例 VINDICATED
+- **Instance 5 首例** (msg=844f57be Backend rename response · reactive external correction) — SizingPolicyMode→SizingMethod · SizingPolicyStatus→QuantWorkflowStatus
+- **Instance 5 二例** (msg=8e664650 QADocs self-enforced authored-in-repo-first-then-lock at branch-cut · zero external correction 依赖) — MarketRegime + MarketJudgmentStatus retract from N=6 lock claim → REMOVE-permanent per Backend Option B (msg=3ae1c40e §八 追认) → **N-verified = 4 canonical**
+
+---
+
+**v0.4-corrected LANDED** (post-PR-M3-5 · base bump 十四-段 `bc1b3c91`) · Backend Option B REMOVE authority-decision LOCKED 追认 · **N-verified 4 unconditional canonical · dual-source hard-fail LIVE · anti-fabrication canonical Instance 5 二例 REALIZED authored-in-repo-first-then-lock**
