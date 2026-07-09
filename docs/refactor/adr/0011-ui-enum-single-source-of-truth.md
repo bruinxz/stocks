@@ -118,11 +118,14 @@ M2 后进入 M3 阶段 · Frontend 15 大 service audit 完形收敛 · 累积 *
 
 ### PR-M3-1 · Backend enum rewire (Backend 主签 · SLA T+5d)
 
-- (a) `quant_workflow.py` 内 `QuantWorkflowStatus` 保 authority (RETAIN #4)
-- (b) `easy_quant.py` 内 `EasyQuantHealthStatus` 消 · 改 `from ..quant_workflow import QuantWorkflowStatus as EasyQuantHealthStatus` (ELIM #10 · backward compat alias)
-- (c) `automation_health.py` 内 `AutomationHealthChain.status` type 直用 `AutomationHealth.status` type (ELIM #12 · domain-internal single type)
-- (d) test 层 assert 15 项 enum value set byte-match · zero drift regression
-- landing scope: `backend/**/*.py` + `backend/tests/enum/**`
+> **v1.1 Stage 1 minimal patch** (PR-M3-1 landing · 2026-07-11 · Backend 主签)
+> Full formalize → PR-M3-3 QADocs 主签 T+3d (baseline JSON schema formalize appendix + qadocs-ui-enum-lock-sop update).
+
+- (a) `backend/src/quant/workflow/QuantWorkflowReadinessService.ts:8` 内 `QuantWorkflowStatus` 保 authority (RETAIN #4) — authority-file explicit-pin (Q4.c factual authority-language correction · repo-truth is entirely TypeScript; earlier ADR listed `.py` files but Backend has no Python sources).
+- (b) `EasyQuantHealthStatus` alias 承接 → **PR-M3-2 T+7d (Frontend 主签)** · frontend-side elim strictly out-of-scope for PR-M3-1 per Layer-Separation R1-R8. PR-M3-1 lands only the Backend authority barrel `backend/src/models/enums/index.ts` re-exporting `QuantWorkflowStatus`; Frontend consumer swap lives in PR-M3-2.
+- (c) `AutomationHealthChain.status` 三-domain **不合并 canonical** — execution (`ready|degraded|blocked`) + infra (`healthy|warning|critical`) + data (`green|yellow|red|unknown`) semantically orthogonal (seven-way unanimous · Orch v131.1 §一(3) + Orch v135 §二 SECOND ratify).
+- (d) test 层: `backend/tests/enum/enum-matrix-lock.test.ts` asserts entries count 15 + decision-enum three-value byte-match; QuantWorkflowStatus value_set assertion currently `xit()`-skipped pending Baseline-fix independent PR (QADocs 主签 · SLA T+2d 2026-07-11 24:00 CST) which syncs `docs/refactor/baseline/ui-enum/15-enum-matrix-lock-83aea69.json` id=4 entry to repo-truth `['ready','degraded','blocked']`; existing baseline sha_lock=83aea69c retained pre-fix (Q4.a Option α · zero-touch existing artifact) — rehydrate PR follows post-fix (Orch v136 §零 Q4.e canonical).
+- landing scope: `backend/src/models/enums/index.ts` + `backend/tests/enum/enum-matrix-lock.test.ts` + this ADR §5 v1.1 Stage 1 minimal patch (Path A shrunk · 2 new + 1 modify per Orch v136 §零 Q4.e).
 - reviewer: Backend 主签 + Strategy 副签 · QADocs 验 M3 完形
 
 ### PR-M3-2 · Frontend legacy backtestService 归档 (Frontend 主签 · SLA T+7d)
