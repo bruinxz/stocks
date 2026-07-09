@@ -323,11 +323,16 @@ app.use('/api/admin/feedbacks', userFeedbackAdminRoutes);
 // Portfolio full-rewrap includes /rebalance-industry sub-route per Orch v131 §二(4)(a).
 import explainCardRoutes from './api/routes/explainCard.routes';
 import screenerRoutes from './api/routes/screener.routes';
+import { statusHandler } from './api/status';
+import { versionHandler } from './api/version';
 app.use('/api/v1/paper-trading', paperTradingRoutes);
 app.use('/api/v1/quant', quantRoutes);
 app.use('/api/v1/portfolio', portfolioRoutes);
 app.use('/api/v1/explain-card', explainCardRoutes);
 app.use('/api/v1/screener', screenerRoutes);
+// ADR-0010 §4.3 Phase 3 canonical · dedicated API contract probe endpoints.
+app.get('/api/v1/status', statusHandler);
+app.get('/api/v1/version', versionHandler);
 
 // US-070 OpenAPI / Swagger UI —— 仅 development 模式暴露 /api-docs（不需鉴权方便联调）
 // production 默认禁用避免泄露内部 endpoint 列表；通过 ENABLE_SWAGGER_UI=true 可强制开启
