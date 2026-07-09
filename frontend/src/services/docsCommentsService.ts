@@ -46,12 +46,16 @@ export interface CreateCommentInput {
 }
 
 export const docsCommentsService = {
+  // v0.5(q): 支持 AbortSignal，用于 useEffect cleanup 时取消陈旧 fetch —
+  // React 18 canonical race-guard, 契合 axios 原生 signal 语义。
   list: async (
     docPath: string,
-    includeResolved = false
+    includeResolved = false,
+    config?: { signal?: AbortSignal }
   ): Promise<{ success: boolean; data: { threads: CommentThread[]; total: number } }> => {
     const res = await api.get('/docs/comments', {
       params: { path: docPath, include_resolved: includeResolved },
+      signal: config?.signal,
     });
     return res.data;
   },
