@@ -12,8 +12,8 @@
  * 不依赖 jest · node 直接跑 (与 backend/src/scripts/run-tests.ts 约定一致):
  *   cd backend && npx ts-node --transpile-only tests/enum/enum-matrix-lock.test.ts
  *
- * Baseline schema (existing sha_lock=83aea69c canonical retain):
- *   { task, sha_lock, sha_lock_full_ref, policy, entries[], unique_key_note }
+ * Baseline schema (sha_lock=3246b8cf post-#118 canonical):
+ *   { task, sha_lock, sha_lock_full_ref, policy, entries[], decision_summary, unique_key_note }
  * Each entry: { id, enum_name, path_anchor, authority_file, value_set,
  *              authority_layer, decision, duplication_with, consumer_scope }
  */
@@ -49,7 +49,6 @@ interface BaselineFile {
 
 let failed = 0;
 let passed = 0;
-let skipped = 0;
 
 function assert(name: string, cond: boolean, detail = ''): void {
   if (cond) {
@@ -59,11 +58,6 @@ function assert(name: string, cond: boolean, detail = ''): void {
     failed += 1;
     console.error(`  FAIL ${name}${detail ? ` (${detail})` : ''}`);
   }
-}
-
-function skip(name: string, reason: string): void {
-  skipped += 1;
-  console.log(`  SKIP ${name} — ${reason}`);
 }
 
 function loadBaseline(): BaselineFile {
@@ -103,12 +97,130 @@ assert(
   probes.length === 3
 );
 
-// SKIP: baseline sha_lock=83aea69c stale (Q4.b independent PR pending · will
-// rehydrate post-baseline-sync). See Orch v136 §零 Q4.e canonical.
-skip(
-  'QuantWorkflowStatus value_set assertion (id=4 baseline byte-match)',
-  'baseline sha_lock=83aea69c stale · Baseline-fix PR pending (QADocs 主签 SLA T+2d)'
+// PR-M3-4 · id=4 live-assert re-hydration (post-#118 `feafa6e4` baseline sync).
+// Escalation-over-invention 四段-lifecycle close: discover (#116) → escalate
+// (skip + reason) → surface (#118 baseline-fix) → close (live-assert here).
+const id4 = matrix.find((e) => e.id === 4);
+assert(
+  'baseline id=4 entry exists',
+  !!id4,
+  id4 ? `enum_name=${id4.enum_name}` : 'missing'
+);
+assert(
+  'id=4 enum_name === QuantWorkflowStatus',
+  id4?.enum_name === 'QuantWorkflowStatus'
+);
+assert(
+  'id=4 value_set === ["ready","degraded","blocked"] (post-#118 code-truth)',
+  JSON.stringify(id4?.value_set) === JSON.stringify(['ready', 'degraded', 'blocked'])
+);
+assert(
+  'id=4 authority_file pins QuantWorkflowReadinessService.ts:8 (Orch v136 Q4.c)',
+  id4?.authority_file ===
+    'backend/src/quant/workflow/QuantWorkflowReadinessService.ts:8'
+);
+assert(
+  'id=4 decision === AUTHORITY',
+  id4?.decision === 'AUTHORITY'
 );
 
-console.log(`\nResult: ${passed} passed, ${failed} failed, ${skipped} skipped`);
+// id=10 EasyQuantHealthStatus mirror invariant — post-#118 alias of id=4.
+const id10 = matrix.find((e) => e.id === 10);
+assert(
+  'baseline id=10 entry exists',
+  !!id10,
+  id10 ? `enum_name=${id10.enum_name}` : 'missing'
+);
+assert(
+  'id=10 value_set mirrors id=4 (alias-consistency canonical)',
+  JSON.stringify(id10?.value_set) === JSON.stringify(id4?.value_set)
+);
+assert(
+  'id=10 decision === ELIM (aliased to id=4)',
+  id10?.decision === 'ELIM'
+);
+
+// id=13 domain-independence — infra taxonomy ≠ id=4 execution taxonomy
+// (ADR §5.3 三-domain 三-face-embodiment: execution + infra + data).
+const id13 = matrix.find((e) => e.id === 13);
+assert(
+  'baseline id=13 entry exists',
+  !!id13,
+  id13 ? `enum_name=${id13.enum_name}` : 'missing'
+);
+assert(
+  'id=13 value_set === ["healthy","degraded","unhealthy"] (infra taxonomy)',
+  JSON.stringify(id13?.value_set) ===
+    JSON.stringify(['healthy', 'degraded', 'unhealthy'])
+);
+assert(
+  'id=13 value_set !== id=4 value_set (domain-independence guard)',
+  JSON.stringify(id13?.value_set) !== JSON.stringify(id4?.value_set)
+);
+assert(
+  'id=13 decision === AUTHORITY (domain-local authority)',
+  id13?.decision === 'AUTHORITY'
+);
+
+// sha_lock filename-content self-consistency guard.
+const files = fs
+  .readdirSync(baselineDir)
+  .filter((f) => /^15-enum-matrix-lock-.*\.json$/.test(f));
+const latestFile = files.sort()[files.length - 1];
+const shaFromFilename = latestFile.replace(/^15-enum-matrix-lock-/, '').replace(/\.json$/, '');
+assert(
+  'baseline sha_lock first 7 chars match filename slug (self-consistency guard)',
+  baseline.sha_lock.slice(0, 7) === shaFromFilename.slice(0, 7),
+  `sha_lock=${baseline.sha_lock.slice(0, 7)} filename=${shaFromFilename.slice(0, 7)}`
+);
+
+// decision_summary integrity — invariant guard against silent decision drift.
+interface DecisionSummary {
+  RETAIN_count: number;
+  AUTHORITY_count: number;
+  ELIM_count: number;
+  total: number;
+}
+const summary = (baseline as unknown as { decision_summary?: DecisionSummary }).decision_summary;
+assert(
+  'decision_summary present',
+  !!summary
+);
+if (summary) {
+  const actualRetain = matrix.filter((e) => e.decision === 'RETAIN').length;
+  const actualAuthority = matrix.filter((e) => e.decision === 'AUTHORITY').length;
+  const actualElim = matrix.filter((e) => e.decision === 'ELIM').length;
+  assert(
+    'decision_summary.RETAIN_count matches actual (RETAIN=10)',
+    summary.RETAIN_count === actualRetain && actualRetain === 10,
+    `declared=${summary.RETAIN_count} actual=${actualRetain}`
+  );
+  assert(
+    'decision_summary.AUTHORITY_count matches actual (AUTHORITY=2)',
+    summary.AUTHORITY_count === actualAuthority && actualAuthority === 2,
+    `declared=${summary.AUTHORITY_count} actual=${actualAuthority}`
+  );
+  assert(
+    'decision_summary.ELIM_count matches actual (ELIM=3)',
+    summary.ELIM_count === actualElim && actualElim === 3,
+    `declared=${summary.ELIM_count} actual=${actualElim}`
+  );
+  assert(
+    'decision_summary.total === 15 (RETAIN 10 + AUTHORITY 2 + ELIM 3)',
+    summary.total === 15 &&
+      summary.RETAIN_count + summary.AUTHORITY_count + summary.ELIM_count === 15
+  );
+}
+
+// Full-matrix value_set shape iterate — no entry may have zero-length value_set.
+assert(
+  'every entry has non-empty value_set',
+  matrix.every((e) => Array.isArray(e.value_set) && e.value_set.length > 0)
+);
+assert(
+  'every entry has non-empty authority_file',
+  matrix.every((e) => typeof e.authority_file === 'string' && e.authority_file.length > 0)
+);
+
+console.log(`\nResult: ${passed} passed, ${failed} failed, 0 skipped`);
 process.exit(failed > 0 ? 1 : 0);
