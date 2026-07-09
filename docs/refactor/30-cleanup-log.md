@@ -1185,3 +1185,103 @@ Backend post-MERGE broadcast `msg=3ae1c40e` (self-merge 十例 REALIZED · 十�
 ### §九 · 引用锚
 - PR #135 · Frontend γ CREATE + post-MERGE broadcast · antd 5.x `TableProps<T>['scroll']` + CSS3 Intrinsic & Extrinsic Sizing Module Level 3 `'max-content'` canonical
 - Task #14 v0.5(e) workspace-draft REALIZE canonical
+
+---
+
+## §PR-M3-14 · Frontend γ PR #137 · aria-busy + type="button" defensive attrs (Task #14 v0.5(a) Quick-wins G5+G6)
+
+### §一 · Landing metadata (SELF-MERGED · byte-truth verified)
+- PR #137 · Frontend γ 主签 · head `59e56fbe33c76232f8da2d046e78101d4422e18f` · mergeCommit `d71ac1d2dd0507c2ccace84c08b76805a43342d8` @ 2026-07-09T20:50:31Z · **二十三-段 REALIZED**
+- Scope: 1 file · +8/-3 · `frontend/src/pages/workspace/EasyQuantWorkspace.tsx` SOLE — 5-site pure-attribute-add (L1582 `.eq-verdict-card` div `aria-busy={bootstrapLoading}` + L1604 bootstrap-error retry `type="button"` + L1952 template card `type="button"` + L2254 history-error retry `type="button"` + L2670 recommendation refresh `type="button"`) · Task #14 v0.5(a) Quick-wins G5+G6
+- Diff scope: +8/-3 · 1 file · Frontend SOLE lane 100%
+- Cleanup γ 副2 收官: msg=ed5aeda5 (aggregated into 4/4 CLOSE post: Backend v50 副1 msg=a629e2e5 + Cleanup γ 副2 + Research §S3 副3 msg=a3c18599 + QADocs 副4 msg=9c72bea7)
+- Authority: msg=d0d11677 self-merge · Frontend γ 主签 authority-native execute post 4-sign + CI 8/8 GREEN + CLEAN 双门 satisfy REALIZED
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (msg=ed5aeda5 anchor)
+- §2.1 jscpd (pure attribute-add · zero duplication) · §2.2 dead code zero (attribute enhance · zero code removed) · §2.3 `frontend/**` SOLE (1 file MOD) · §2.4 TS 严格 + zero type churn + WAI-ARIA 1.2 §6.4.1 `aria-busy` built-in + HTML Living Standard §4.10.6.1 `type="button"` defensive canonical · §2.5 patch minimal delta (+8/-3) + behavior-preservation 100% (screen-reader busy-announce enhance + button-default-submit defensive prevent) · §2.6 Task #14 v0.5(a) Quick-wins G5+G6 workspace-draft REALIZE canonical
+
+### §三 · Behavior-preservation verify canonical
+- **screen-reader consumers**: `aria-busy=true` during `bootstrapLoading` → NVDA/JAWS/VoiceOver announce "busy" status · UX affordance enhanced · zero visual change
+- **button-default-submit defensive**: `type="button"` prevents form-context submit-side-effect · defensive-preventive canonical · zero prior-behavior regression (buttons already outside `<form>` in this file · defensive-preventive against future refactor)
+- **zero-touch intentional preserve verify**: no touch to state/dispatch/effect/handler logic
+
+### §四 · N=4 authority transitive preserve at 二十三-段 (grep-verify bit-perfect)
+- Frontend PR #137 SOLE MOD `frontend/src/pages/workspace/EasyQuantWorkspace.tsx` · zero `backend/src/**` touch · N=4 canonical (FeedbackStatus + FeedbackClassification + SizingMethod + QuantWorkflowStatus) transitively preserved · MarketRegime/MarketJudgmentStatus REMOVE-permanent invariant transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect 100% preserve
+
+### §五 · 副签 order 4/4 CLOSE (msg-id table · code-tier ≥4-sign · msg=d0d11677 authority)
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Frontend γ | msg=4eb01898 | CREATE broadcast |
+| 副1 | Backend v50 | msg=a629e2e5 | byte-truth 4-axis + Backend-lane zero-touch + consumer-tier zero-coupling + WAI-ARIA/HTML 双-standard |
+| 副2 | **Cleanup γ** | **msg=ed5aeda5** | **CONCUR unconditional** · code-hygiene 六-项 全 PASS + byte-truth 7-point + WAI-ARIA/HTML canonical |
+| 副3 | Research §S3 | msg=a3c18599 | WAI-ARIA 1.2 §6.4.1 + HTML Living Standard §4.10.6.1 双-standard canonical |
+| 副4 | QADocs | msg=9c72bea7 | 5-axis + DoD v4.4 16-项 + 保护 glob zero-touch + zero-conflict verify |
+
+### §六 · Twenty-three-段 main HEAD lineage LOCK
+`... → 31cd5477(#136) → d71ac1d2(#137)` — main HEAD canonical LOCK 更新 → **`d71ac1d2`** post-#137 · self-merge 十九例 code-tier REALIZED · 二十四例 total (十九 code + 五 doc) intermediate
+
+### §七 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §八 · 引用锚
+- PR #137 · Frontend γ CREATE + post-MERGE broadcast · WAI-ARIA 1.2 §6.4.1 `aria-busy` + HTML Living Standard §4.10.6.1 `type="button"` 双-standard canonical
+- Task #14 v0.5(a) Quick-wins G5+G6 workspace-draft REALIZE canonical
+
+---
+
+## §PR-M3-15 · Backend γ PR #138 · ADR-0010 §4.5 IETF draft-08 RateLimit + RateLimit-Policy advisory headers · ADR-0010 §4.1-§4.5 canonical stack COMPLETE 🎯 REALIZED
+
+### §一 · Landing metadata (SELF-MERGED · byte-truth verified · 二连-SELF-MERGE #137+#138 aligned 55秒 间隔)
+- PR #138 · Backend γ 主签 · head `c4e640e13a48a864aa5842f305188862191741d6` · mergeCommit `3069464e540fd7bb338a30ebd77de9700595b3c2` @ 2026-07-09T20:51:06Z · **二十四-段 REALIZED**
+- Scope: 3 files · +230/-0 — `backend/src/middlewares/apiRateLimit.ts` NEW +73 (factory + closure + `PKG_RATE_LIMIT_CONFIG` + `Number.isFinite()` NaN guards) + `backend/tests/routing/api-rate-limit.test.ts` NEW +151 (23-assertion IIFE · 13 scenarios (a)-(n)) + `backend/src/index.ts` MOD +6 (mount `app.use(apiRateLimitMiddleware())` after apiDeprecationMiddleware at L164)
+- Wire format: `RateLimit: "default";r=100;t=60` + `RateLimit-Policy: "default";q=100;w=60` (IETF `draft-ietf-httpapi-ratelimit-headers-08` §4/§5 canonical · advisory-only · zero 429 enforcement)
+- Diff scope: +230/-0 · 3 files · Backend SOLE lane 100%
+- Cleanup γ 副2 收官: msg=8df2168f (last-slot · aggregated into 4/4 CLOSE post: Frontend γ 副1 msg=4322e729 + Cleanup γ 副2 + Research §S3 副3 msg=a3c18599 + QADocs 副4 msg=ec93613c)
+- Authority: msg=d0d11677 self-merge · Backend γ 主签 authority-native execute post 4-sign + CI 8/8 GREEN + CLEAN 双门 satisfy REALIZED
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (msg=8df2168f anchor)
+- §2.1 jscpd (§4.4 shape mirror byte-for-byte · architectural template reuse · zero external copy · 借鉴 attribution IETF public spec 100% aligned msg=ad6585cf 铁律) · §2.2 dead code zero · §2.3 `backend/src/**` + `backend/tests/routing/**` SOLE · §2.4 TS 严格 + zero type churn + IETF draft-08 canonical wire-format · §2.5 patch minimal delta (+230/-0) + backward-compat 100% (default-OFF · fail-OPEN · absent `pkg.api_rate_limit` → pass-through) · §2.6 ADR-0010 §4.5 IETF draft-08 canonical + `pkg.api_rate_limit` optional config binding
+
+### §三 · Default-OFF + fail-OPEN canonical (§4.4 shape mirror byte-for-byte)
+- **Default-OFF**: `pkg.api_rate_limit` absent → `PKG_RATE_LIMIT_CONFIG = null` → pass-through closure · zero header emit
+- **Fail-OPEN**: `Number.isFinite()` guards on quota/window/remaining/reset · empty policy_name → "default" · unconditional `next()` · zero throw
+- **Zero enforcement**: advisory-only per IETF draft-08 §4/§5 + RFC 6585 §4 429-semantic distinction · does NOT return 429 · does NOT track counters · does NOT persist state · enforcement adapter (in-memory / Redis / DB / edge-gateway) deferred to future PR
+- **Mount order**: `apiVersion → loggingContext → apiDeprecation → apiRateLimit` (`backend/src/index.ts` L164) · all four advisory-header emit at request-header-flush time · zero ordering coupling
+
+### §四 · ADR-0010 §4.1-§4.5 canonical stack COMPLETE 🎯 REALIZED
+| § | Layer | Producer PR | Consumer PR | Runtime state |
+|---|---|---|---|---|
+| §4.1 | X-API-Version request/response header | #117 Backend (Phase 1 dual-mount) | #124 Frontend httpClient interceptor | LIVE |
+| §4.2 | winston log `api_version` 后缀 | #126 Backend | (log-tier opaque) | LIVE |
+| §4.3 | Body `api_version` + `/api/v1/status` + `/api/v1/version` endpoints | #125 Backend partial + #129 Backend full | #127 Frontend `verifySupportedApiVersions` | LIVE |
+| §4.4 | RFC 9745 Deprecation + RFC 8594 Sunset + RFC 8288 Link | #133 Backend | (advisory-only) | LIVE (default-OFF) |
+| **§4.5** | **IETF draft-08 RateLimit + RateLimit-Policy** | **#138 Backend (本 PR)** | **(advisory-only)** | **LIVE (default-OFF · fail-OPEN)** |
+
+**API-contract exposition loop CLOSED** — clients discover version + supported-versions + deprecation + sunset + rate-limit budget **from headers alone** · zero out-of-band coordination.
+
+### §五 · N=4 authority transitive preserve at 二十四-段 (grep-verify bit-perfect)
+- Backend PR #138 SOLE MOD `backend/src/middlewares/apiRateLimit.ts` NEW + `backend/src/index.ts` mount MOD + `backend/tests/routing/api-rate-limit.test.ts` NEW · zero touch to N=4 canonical AUTHORITY files (FeedbackStatus + FeedbackClassification + SizingMethod + QuantWorkflowStatus transitively preserved) · MarketRegime/MarketJudgmentStatus REMOVE-permanent invariant transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` + 4-baseline `bc1b3c9` shasum `1f2d197a23c89eec23b5a5addc0e054974a6eaa5` byte-perfect 100% preserve (local re-verify post-double-merge PASS)
+
+### §六 · 副签 order 4/4 CLOSE (msg-id table · code-tier ≥4-sign · msg=d0d11677 authority)
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Backend v49 | msg=00efb24d | CREATE broadcast |
+| 副1 | Frontend γ | msg=4322e729 | consumer-tier zero-coupling · grep RateLimit frontend/src/ = 0 · IETF draft-08 advisory-only |
+| 副2 | **Cleanup γ** | **msg=8df2168f** | **CONCUR unconditional last-slot 收官** · code-hygiene 六-项 + byte-truth 7-point + CI 8/8 GREEN + IETF draft-08 canonical + §4.4 shape mirror byte-for-byte |
+| 副3 | Research §S3 | msg=a3c18599 | byte-truth 5-axis + IETF draft-08 canonical attribution + zero-conflict verify |
+| 副4 | QADocs | msg=ec93613c | 5-axis + DoD v4.4 16-项 + IETF draft-08 wire-format shape + Default-OFF/fail-OPEN + 23-assertion IIFE + N=4 canonical AUTHORITY zero-touch |
+
+### §七 · Twenty-four-段 main HEAD lineage LOCK
+`... → d71ac1d2(#137) → 3069464e(#138)` — main HEAD canonical LOCK 更新 → **`3069464e`** post-#138 · self-merge 二十例 code-tier REALIZED · 二连-SELF-MERGE #137+#138 aligned 55秒 间隔 · 二十五例 total (二十 code + 五 doc)
+
+### §八 · IETF draft-ietf-httpapi-ratelimit-headers-08 canonical attribution (借鉴 ≠ copy · msg=ad6585cf 铁律 aligned)
+- **Standard**: IETF `draft-ietf-httpapi-ratelimit-headers-08` (Roberto Polli et al · 2024 · IESG-review) — public IETF Internet-Draft canonical
+- **Wire format canonical**: `RateLimit: "<policy>";r=<remaining>;t=<reset_seconds>` + `RateLimit-Policy: "<policy>";q=<quota>;w=<window_seconds>` (quoted policy-name + semicolon-delimited-zero-space · §4 + §5.1-§5.3 aligned)
+- **§4.4 shape mirror byte-for-byte**: factory + closure + `PKG_RATE_LIMIT_CONFIG` + `CURRENT_RATE_LIMIT_CONFIG` (identical structural mirror to `apiDeprecation.ts` PR #133) · architectural template reuse · zero code copy · zero external lib · zero 3rd-party dep
+- **NOT enforcement layer**: advisory-only header emit · does NOT return 429 · does NOT track counters · does NOT persist state · scope 收敛 correct per RFC 6585 §4 429-semantic distinction · enforcement adapter (in-memory + pluggable Redis/DB/edge-gateway) deferred to future PR
+
+### §九 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §十 · 引用锚
+- PR #138 · Backend γ CREATE + post-MERGE broadcast · IETF `draft-ietf-httpapi-ratelimit-headers-08` canonical
+- ADR-0010 §4.5 canonical (§4.1-§4.5 stack COMPLETE 🎯 REALIZED)
+- RFC 6585 §4 (429 semantics distinction) · IETF §4/§5 advisory-only
