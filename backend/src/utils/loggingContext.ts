@@ -34,6 +34,13 @@ import crypto from 'crypto';
 export interface LoggingContext {
   trace_id?: string;
   module?: string;
+  /**
+   * ADR-0010 §4.2 · Phase 2 · request/response log 对带 api_version 字段.
+   * requestContextMiddleware 把 CURRENT_API_VERSION 注入这里, cron / dispatcher
+   * 走 runWithModule 时会自动继承, downstream logger 可通过 currentApiVersion()
+   * 拿到当前上下文的 api_version (未 run 时返 '-').
+   */
+  api_version?: string;
 }
 
 const storage = new AsyncLocalStorage<LoggingContext>();
@@ -82,6 +89,14 @@ export function currentTraceId(): string {
  */
 export function currentModule(): string {
   return storage.getStore()?.module || '-';
+}
+
+/**
+ * 取 api_version, 不存在返 '-'. ADR-0010 §4.2 · winston format 想在 message 后缀
+ * 追加 `api_version=<x>` 时调本函数.
+ */
+export function currentApiVersion(): string {
+  return storage.getStore()?.api_version || '-';
 }
 
 /**
