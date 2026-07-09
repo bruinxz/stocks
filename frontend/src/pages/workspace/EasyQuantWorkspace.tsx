@@ -1599,7 +1599,7 @@ const EasyQuantWorkspace: React.FC = () => {
             </div>
           </div>
           {bootstrapError && (
-            <div className="eq-inline-notice eq-inline-notice--error">
+            <div className="eq-inline-notice eq-inline-notice--error" role="alert">
               <p>{explainEasyQuantError(bootstrapError, 'bootstrap')}</p>
               <button type="button" className="eq-button eq-button--quiet" onClick={reloadBootstrap}>
                 重新检查 <ReloadOutlined />
@@ -1724,6 +1724,7 @@ const EasyQuantWorkspace: React.FC = () => {
           {(backtestLoading || backtestError) && (
             <div
               className={`eq-running-status ${backtestError ? 'eq-running-status--error' : ''}`}
+              role={backtestError ? 'alert' : undefined}
               aria-live="polite"
             >
               <div>
@@ -1840,7 +1841,9 @@ const EasyQuantWorkspace: React.FC = () => {
             <JourneySketch type="shield" />
           </div>
           {researchAuditError && (
-            <p className="eq-state-error">{explainEasyQuantError(researchAuditError, 'audit')}</p>
+            <div className="eq-inline-notice eq-inline-notice--error" role="alert">
+              <p className="eq-state-error">{explainEasyQuantError(researchAuditError, 'audit')}</p>
+            </div>
           )}
           {backtestTaskId && (
             <p className="eq-state-muted">实验账本关联回测任务：{backtestTaskId}</p>
@@ -2248,7 +2251,7 @@ const EasyQuantWorkspace: React.FC = () => {
             </button>
           </div>
           {historyError && (
-            <div className="eq-inline-notice eq-inline-notice--error">
+            <div className="eq-inline-notice eq-inline-notice--error" role="alert">
               <p>{explainEasyQuantError(historyError, 'backtest')}</p>
               <button
                 type="button"
@@ -2260,14 +2263,14 @@ const EasyQuantWorkspace: React.FC = () => {
             </div>
           )}
           {historyLoading && (
-            <article className="eq-empty-note eq-history-loading">
+            <article className="eq-empty-note eq-history-loading" role="status">
               <span>历史回测</span>
               <strong>正在读取历史列表</strong>
               <p>正在读取最近的简易版回测任务。</p>
             </article>
           )}
           {!historyLoading && !historyItems.length && !historyError && (
-            <article className="eq-empty-note">
+            <article className="eq-empty-note" role="status">
               <span>历史回测</span>
               <strong>还没有简易版回测</strong>
               <p>跑完一次真实回测后，这里会保留入口，方便复看报告或进入专业详情。</p>
@@ -2384,7 +2387,7 @@ const EasyQuantWorkspace: React.FC = () => {
                   </section>
                 ))
               ) : (
-                <article className="eq-empty-note">
+                <article className="eq-empty-note" role="status">
                   <span>完整指标</span>
                   <strong>待生成</strong>
                   <p>完成一次真实回测后，这里会展示收益、风险、交易和成本的完整分组。</p>
@@ -2453,7 +2456,7 @@ const EasyQuantWorkspace: React.FC = () => {
                   })}
                 </div>
               ) : (
-                <article className="eq-empty-note">
+                <article className="eq-empty-note" role="status">
                   <span>交易明细</span>
                   <strong>没有完整买卖闭环</strong>
                   <p>这可能是区间较短、模板过于保守，或所有候选单都被 A 股成交约束挡住。</p>
@@ -2509,7 +2512,7 @@ const EasyQuantWorkspace: React.FC = () => {
                   ))}
                 </div>
               ) : (
-                <article className="eq-empty-note">
+                <article className="eq-empty-note" role="status">
                   <span>成交阻断</span>
                   <strong>暂无被挡订单</strong>
                   <p>这表示当前结果里没有记录涨跌停、停牌、T+1 或资金不足导致的跳过订单。</p>
