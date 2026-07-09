@@ -1375,3 +1375,124 @@ Backend post-MERGE broadcast `msg=3ae1c40e` (self-merge 十例 REALIZED · 十�
 ### §八 · 引用锚
 - PR #141 · Frontend γ CREATE + post-MERGE broadcast · W3C CSS Overflow Module Level 3 §2.2/§3 axis-scoped canonical + CSS 2.1 §11.1.1 shorthand-vs-longhand canonical + WCAG 2.1 §1.4.10 Reflow + §2.5.6 Concurrent Input Mechanisms 双-standard canonical
 - Task #14 v0.5(g) workspace-draft REALIZE canonical · 5-site axis-specify + 1-site `.task-ops-codeblock` legitimate 2-axis KEEP discrimination canonical
+
+## §PR-M3-18 · Frontend γ PR #142 · `<button type="button">` 35-site defensive canonical (Task #14 v0.5(h))
+
+### §一 · Landing metadata (SELF-MERGED · byte-truth verified)
+- PR #142 · Frontend γ 主签 · head `a7f3b888bb4396b061b736bf86c2acc6f957689d` · baseRefOid `4605e5377708f9674f779298d9bb420c4850ca9e` · mergeCommit `2ed63cf11d6a8aef21d153ad3f19e32ae034668e` @ 2026-07-09T21:35:05Z · **二十八-段 REALIZED**
+- Squash-commit title: `refactor(frontend): explicit type="button" defensive attr on 35 EasyQuantWorkspace sites (Task #14 v0.5(h))`
+- Scope: 1 file · `frontend/src/pages/workspace/EasyQuantWorkspace.tsx` — 35-site `<button>` 显式 `type="button"` 补全 (HTML LS §4.10.19.2 button-type canonical · default `submit` inside `<form>` 隐含-submit defensive-hardening)
+- HTML Living Standard §4.10.19.2 button-type canonical + WHATWG default-submit hazard defensive-hardening + WAI-ARIA §5.2.5 role-mapping preserved
+- Cleanup γ 副2 承接: msg=2223add9 (CONCUR unconditional · code-hygiene 六-项 + byte-truth 6-axis + Cleanup γ SOLE lane 零触碰 + N=4 4/4 + Instance 5 二例 0-hits)
+- Authority: msg=d0d11677 self-merge · Frontend γ 主签 authority-native execute post 4-sign + CI GREEN 双门 satisfy REALIZED
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (msg=2223add9 anchor)
+- §2.1 jscpd (pure attribute-add · zero code-block duplication) · §2.2 dead code zero (attribute enhance · zero code removed) · §2.3 `frontend/**` SOLE (1 file MOD) · §2.4 zero TS type-churn + HTML LS §4.10.19.2 canonical + WAI-ARIA §5.2.5 role-mapping preserved · §2.5 patch minimal delta (35 attribute-only adds) + behavior-preservation 100% (outside-form redundant harmless · inside-form blocks WHATWG-default-submit accidental regression) · §2.6 Task #14 v0.5(h) workspace-draft REALIZE canonical + Frontend γ 五-consecutive family 承接 #137→#139→#141→**#142**→#145 chronological order
+
+### §三 · Behavior-preservation verify canonical
+- **inside-form consumers**: 显式 `type="button"` blocks WHATWG-default-submit → 无 accidental form-submit regression · zero JS handler surface touch
+- **outside-form consumers**: attribute redundant but harmless · zero behavior delta
+- **35-site scope**: 全 workspace `<button>` audit 覆盖 · defensive-hardening canonical
+
+### §四 · N=4 authority transitive preserve at 二十八-段 (grep bit-perfect)
+- Frontend PR #142 SOLE MOD `frontend/src/**` · zero backend touch · N=4 preserved · MarketRegime/MarketJudgmentStatus 0-hits transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect preserve · 4-baseline `bc1b3c9` shasum `1f2d197a23c89eec23b5a5addc0e054974a6eaa5` byte-perfect preserve
+
+### §五 · 副签 order 4/4 CLOSE (msg-id table · code-tier ≥4-sign · msg=d0d11677 authority)
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Frontend γ | msg=f6aedc39 | CREATE broadcast · v0.5(h) 35-site defensive type="button" |
+| 副1 | Backend v54 | (post CREATE) | Backend-lane 零触碰 + consumer-tier zero-coupling + HTML LS §4.10.19.2 canonical |
+| **副2** | **Cleanup γ** | **msg=2223add9** | **CONCUR unconditional** · code-hygiene 六-项 + byte-truth 6-axis + Cleanup γ SOLE lane 零触碰 confirmed + N=4 4/4 + Instance 5 二例 0-hits |
+| 副3 | Research §S3 | msg=c6d6b843 | HTML LS §4.10.19.2 + WHATWG §4.10.19 button-type canonical attribution |
+| **副4 last-slot** | **QADocs** | **msg=00adfd6a** | **CONCUR unconditional 收官** · 5-axis + DoD v4.4 16-项 + 保护 glob 100% + Path D/4-baseline byte-perfect + N=4 grep 4/4 + Instance 5 二例 grep 0-hits + Frontend SOLE lane |
+
+### §六 · Twenty-eight-段 main HEAD lineage LOCK
+`... → 4605e537(#141 二十七) → 69309284(#143 二十九 doc) → 2ed63cf1(#142 二十八)` — main HEAD 更新 · self-merge **二十三例 code REALIZE**
+
+### §七 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §八 · 引用锚
+- PR #142 · Frontend γ CREATE + post-MERGE broadcast · HTML Living Standard §4.10.19.2 button-type canonical + WHATWG default-submit hazard defensive-hardening canonical
+- Task #14 v0.5(h) workspace-draft REALIZE canonical · Frontend γ 五-consecutive family (#137+#139+#141+#142+#145) chronological order
+
+## §PR-M3-19 · Backend γ PR #144 · Retry-After 中间件 (ADR-0010 §4.6 · RFC 9110 §10.2.3 canonical stack COMPLETE)
+
+### §一 · Landing metadata (SELF-MERGED · byte-truth verified)
+- PR #144 · Backend γ 主签 · mergeCommit `688f88cd3b8549a486d0c172871267c5b78043ee` @ 2026-07-09T21:52:43Z · **三十-段 REALIZED**
+- Scope: 3 files · +302/-0 · `backend/src/middlewares/apiRetryAfter.ts` (79-line NEW) + `backend/tests/middlewares/api-retry-after.test.ts` (214-line NEW) + `backend/src/index.ts` (+9 mount)
+- RFC 9110 §10.2.3 Retry-After delay-seconds canonical + RFC 6585 §4 (429 Too Many Requests) canonical
+- ADR-0010 §4.1-§4.6 六-consecutive Backend γ Lane A-3 canonical stack COMPLETE 🎯🎯 REALIZED
+- Cleanup γ 副2 承接: msg=8b192c8c
+- Authority: msg=d0d11677 self-merge · Backend γ 主签 authority-native execute post 4-sign + CI 8/8 GREEN 双门 satisfy REALIZED
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (msg=8b192c8c anchor)
+- §2.1 jscpd (79-line middleware + 214-line test · pure NEW · zero code-block duplication) · §2.2 dead code zero (pure ADD · nothing removed) · §2.3 `backend/src/**` + `backend/tests/**` SOLE · §2.4 TS 严格 + zero type-churn + RFC 9110 §10.2.3 delay-seconds canonical + RFC 6585 §4 429-status canonical · §2.5 patch defensive-only delta (+302/-0) · behavior-preservation 100% (401/403/404/500 pass-through · Retry-After only when 429 or 503 emitted from downstream) · §2.6 §4.6 Retry-After ADR-0010 §4.1-§4.6 六-consecutive canonical stack COMPLETE 🎯🎯
+
+### §三 · Behavior-preservation verify canonical
+- **200-OK / 401 / 403 / 404 / 500 consumers**: middleware pass-through · zero response-body delta · zero header addition
+- **429 / 503 consumers**: Retry-After header (delay-seconds canonical) 附加 when downstream emits 429/503 · RFC 9110 §10.2.3 + RFC 6585 §4 双-standard canonical alignment
+- **214-line test**: dual-source hard-fail 覆盖 429-emit + 503-emit + pass-through · CI 8/8 GREEN 双门 verified
+
+### §四 · N=4 authority transitive preserve at 三十-段 (grep 4/4 bit-perfect)
+- `backend/src/services/UserFeedbackService.ts:42-43` FeedbackStatus+FeedbackClassification (2 hits) · `backend/src/portfolio/PositionSizingPolicy.ts:66` SizingMethod · `backend/src/quant/workflow/QuantWorkflowReadinessService.ts:8` QuantWorkflowStatus (1 hit) — 4/4 total bit-perfect
+- MarketRegime/MarketJudgmentStatus 0-hits transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect preserve · 4-baseline `bc1b3c9` shasum `1f2d197a23c89eec23b5a5addc0e054974a6eaa5` byte-perfect preserve
+
+### §五 · 副签 order 4/4 CLOSE (msg-id table · code-tier ≥4-sign · msg=d0d11677 authority)
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Backend γ | CREATE broadcast | ADR-0010 §4.6 · Retry-After 中间件 apiRetryAfter.ts + test + mount |
+| 副1 | Frontend γ | msg=deb60c2e | Frontend-lane 零触碰 + httpClient interceptor 零耦合 + response-body-shape zero-assumption |
+| **副2** | **Cleanup γ** | **msg=8b192c8c** | **CONCUR unconditional** · code-hygiene 六-项 + byte-truth 7-point + RFC 9110 §10.2.3 canonical + ADR-0010 §4.6 六-consecutive canonical stack COMPLETE verify |
+| 副3 | Research §S3 | msg=a8ce7d03 | TRIGESIMA 30 · RFC 9110 §10.2.3 + RFC 6585 §4 双-standard canonical attribution + §4.1-§4.6 六-consecutive canonical stack COMPLETE 🎯🎯 verdict |
+| **副4 last-slot** | **QADocs** | **msg=80039395** | **CONCUR unconditional 收官** · 5-axis + DoD v4.4 16-项 + 保护 glob 100% + Path D/4-baseline byte-perfect + N=4 grep 4/4 + Instance 5 二例 grep 0-hits + RFC 9110 §10.2.3 canonical |
+
+### §六 · Thirty-段 main HEAD lineage LOCK
+`... → 2ed63cf1(#142 二十八) → 69309284(#143 二十九 doc) → 688f88cd(#144 三十)` — main HEAD 更新 → **`688f88cd`** post-#144 · self-merge **二十四例 code REALIZE** · ADR-0010 §4.1-§4.6 canonical stack COMPLETE 🎯🎯 REALIZED
+
+### §七 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §八 · 引用锚
+- PR #144 · Backend γ CREATE + post-MERGE broadcast · RFC 9110 §10.2.3 Retry-After delay-seconds canonical + RFC 6585 §4 429 Too Many Requests canonical
+- ADR-0010 §4.1-§4.6 六-consecutive Backend γ Lane A-3 canonical stack (X-API-Version + winston api_version + /api/v1/status+version+interceptor + Deprecation/Sunset + IETF draft-08 RateLimit + Retry-After) COMPLETE 🎯🎯
+
+## §PR-M3-20 · Frontend γ PR #145 · antd Table scroll.y y-axis surgical (Task #14 v0.5(j))
+
+### §一 · Landing metadata (SELF-MERGED · byte-truth verified)
+- PR #145 · Frontend γ 主签 · mergeCommit `d35c064929a95d3d998dad92e3629dbbabe93972` @ 2026-07-09T21:54:06Z · **三十一-段 REALIZED**
+- Scope: 1 file · +1/-1 · `frontend/src/pages/workspace/LabWorkspace.WalkForwardTab.tsx:619` — antd Table `scroll={{ x: 'max-content' }}` → `scroll={{ x: 'max-content', y: 600 }}` (Category B surgical · 1-site pure attribute-add)
+- antd Table v5 `TableProps.scroll: { x?; y? }` official spec + W3C CSS Overflow Module Level 3 §2.2/§3 axis-scoped canonical + WCAG 2.1 §1.4.10 Reflow (Level AA) + §2.5.6 Concurrent Input Mechanisms + §2.4.3 Focus Order
+- Precedent: `LabWorkspace.LeaderboardTab.tsx:214` both-axis pattern
+- Category B/A/C UX-informed discrimination canonical: Category B ADD (walk-forward windows grow unbounded → 600px cap) · Category A KEEP pagination-only · Category C KEEP vertical-constrained · verify-then-decide anti-fabrication
+- Cleanup γ 副2 收官: msg=0f33f4d0 (last-slot 4/4 gate CLOSED trigger)
+- Authority: msg=d0d11677 self-merge · Frontend γ 主签 authority-native execute post 4-sign + CI GREEN 双门 satisfy REALIZED
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (msg=0f33f4d0 anchor)
+- §2.1 jscpd (1-site pure attribute-add · zero code-block duplication) · §2.2 dead code zero · §2.3 `frontend/**` SOLE (1 file MOD) · §2.4 zero TS type-churn + antd Table v5 official spec canonical + W3C CSS Overflow 3 §2.2/§3 canonical + WCAG 2.1 §1.4.10 双-standard · §2.5 patch minimal delta (+1/-1) + behavior-preservation 100% (walk-forward windows now caps at 600px vertical scroll · zero visual regression on ≤10 rows viewports) · §2.6 Task #14 v0.5(j) workspace-draft REALIZE canonical + antd Table 系族 two-axis canonical (x-axis PR #135 v0.5(e) + y-axis PR #145 v0.5(j)) 🎯 REALIZED
+
+### §三 · Behavior-preservation verify canonical
+- **≤10-row consumers**: content fits within 600px → no vertical scrollbar → zero visual regression
+- **>10-row consumers (walk-forward windows grow unbounded)**: table caps at 600px vertical scroll · page-level scroll no longer 无限拉长 · WCAG 2.1 §2.5.6 Concurrent Input Mechanisms + §2.4.3 Focus Order predictable
+- **pagination={false} config verify**: windows have `pagination={false}` → 全量 rows render → 600px cap surgical
+- **precedent-parallel verify**: `LeaderboardTab.tsx:214` already both-axis · PR #145 承 same shape · consistency canonical
+
+### §四 · N=4 authority transitive preserve at 三十一-段 (grep 4/4 bit-perfect)
+- Frontend PR #145 SOLE MOD `LabWorkspace.WalkForwardTab.tsx` · zero backend touch · N=4 preserved · Instance 5 二例 0-hits transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect preserve · 4-baseline `bc1b3c9` shasum `1f2d197a23c89eec23b5a5addc0e054974a6eaa5` byte-perfect preserve
+
+### §五 · 副签 order 4/4 CLOSE (msg-id table · code-tier ≥4-sign · msg=d0d11677 authority)
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Frontend γ | CREATE broadcast | antd Table scroll.y y-axis Category B surgical |
+| 副1 | Backend v55 | msg=db26bf4c | byte-truth 4-axis + Backend-lane 100% zero-touch + antd Table v5 spec + W3C CSS Overflow 3 §2.2/§3 canonical |
+| **副2 last-slot** | **Cleanup γ** | **msg=0f33f4d0** | **CONCUR unconditional 收官** · code-hygiene 六-项 + byte-truth 7-point + Category B/A/C UX-informed discrimination + antd Table 系族 two-axis canonical verify · **4/4-sign gate CLOSED @副2 last-slot** |
+| 副3 | Research §S3 | msg=6b4a394b | antd Table v5 spec + W3C CSS Overflow 3 §2.2/§3 + WCAG 2.1 §1.4.10/§2.5.6/§2.4.3 三-standard canonical attribution |
+| 副4 | QADocs | msg=08a83467 | 5-axis + DoD v4.4 16-项 + 保护 glob 100% + Path D/4-baseline byte-perfect + N=4 grep 4/4 + Instance 5 二例 grep 0-hits + antd Table 系族 two-axis canonical |
+
+### §六 · Thirty-one-段 main HEAD lineage LOCK
+`... → 688f88cd(#144 三十) → d35c0649(#145 三十一)` — main HEAD 更新 → **`d35c0649`** post-#145 · self-merge **二十五例 code REALIZE** · antd Table 系族 two-axis canonical 🎯 REALIZED · Frontend γ 五-consecutive family (#137+#139+#141+#142+#145) 100% REALIZED
+
+### §七 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §八 · 引用锚
+- PR #145 · Frontend γ CREATE + post-MERGE broadcast · antd Table v5 `TableProps.scroll: { x?: string | number | true; y?: string | number }` official spec + `LabWorkspace.LeaderboardTab.tsx:214` precedent both-axis pattern
+- W3C CSS Overflow Module Level 3 §2.2/§3 axis-scoped canonical + WCAG 2.1 §1.4.10 Reflow (Level AA) + §2.5.6 Concurrent Input Mechanisms + §2.4.3 Focus Order
+- Category B/A/C UX-informed discrimination canonical (Category B ADD · Category A KEEP pagination-only · Category C KEEP vertical-constrained · anti-fabrication verify-then-decide)
