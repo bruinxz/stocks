@@ -86,13 +86,12 @@ if (offenders.length > 0) {
   }
 }
 
-// Baseline residual: BacktestResults.tsx is the last known consumer, awaiting
-// PR-M3-2 (Frontend 主签 · T+7d 2026-07-16) migration to `labService`
-// BacktestTask.status (id=15 legacy elim). Assertion locks the count from
-// growing; PR-M3-2 must tighten this to `=== 0` at land time.
-const KNOWN_RESIDUAL = 1;
+// PR-M3-2 landed: BacktestResults.tsx migrated to `labService` and
+// backtestService.ts removed. Assertion tightened to `=== 0` — regressions
+// (re-introducing a legacy consumer) now hard-fail CI.
+const KNOWN_RESIDUAL = 0;
 assert(
-  `frontend/src consumers of legacy backtestService <= ${KNOWN_RESIDUAL} (PR-M3-2 pre-guard · post-M3-2 tighten to 0)`,
+  `frontend/src consumers of legacy backtestService <= ${KNOWN_RESIDUAL} (post-PR-M3-2 · hard-fail on regression)`,
   offenders.length <= KNOWN_RESIDUAL,
   `offenders=${offenders.length} known-residual=${KNOWN_RESIDUAL}`
 );

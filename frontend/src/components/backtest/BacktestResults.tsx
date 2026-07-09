@@ -20,7 +20,7 @@ import {
   FallOutlined,
   ArrowLeftOutlined,
 } from '@ant-design/icons';
-import { backtestService } from '../../services/backtestService';
+import { getBacktestDetail } from '../../services/labService';
 
 const { TabPane } = Tabs;
 
@@ -53,8 +53,35 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
   const loadResults = async () => {
     setLoading(true);
     try {
-      const data = await backtestService.getBacktestResults(backtest_id);
-      setResults(data.data);
+      const detail = await getBacktestDetail(Number(backtest_id));
+      const primary = detail?.results?.[0];
+      if (!primary) {
+        setResults(null);
+      } else {
+        const equity = (primary.equity_curve_json || []).map((p: any) => ({
+          date: p.date,
+          value: p.total_value,
+        }));
+        const dailyReturns: number[] = [];
+        for (let i = 1; i < equity.length; i += 1) {
+          const prev = equity[i - 1].value;
+          const cur = equity[i].value;
+          dailyReturns.push(prev ? (cur - prev) / prev : 0);
+        }
+        setResults({
+          metrics: {
+            total_return: (primary.total_return_pct || 0) / 100,
+            annualized_return: (primary.annual_return_pct || 0) / 100,
+            sharpe_ratio: primary.sharpe_ratio || 0,
+            max_drawdown: (primary.max_drawdown_pct || 0) / 100,
+            win_rate: primary.win_rate || 0,
+            profit_loss_ratio: primary.profit_factor || 0,
+          },
+          equity_curve: equity,
+          trades: detail?.trades || [],
+          daily_returns: dailyReturns,
+        });
+      }
     } catch (error) {
       console.error('加载回测结果失败:', error);
     } finally {
@@ -64,8 +91,8 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({ backtest_id, onBack }
 
   const loadBacktestInfo = async () => {
     try {
-      const info = await backtestService.getBacktestById(backtest_id);
-      setBacktestInfo(info);
+      const detail = await getBacktestDetail(Number(backtest_id));
+      setBacktestInfo(detail?.task || null);
     } catch (error) {
       console.error('加载回测信息失败:', error);
     }
