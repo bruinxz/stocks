@@ -2370,7 +2370,7 @@ a {
 
 .order-canary-rollback-summary {
   max-height: 260px;
-  overflow: auto;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -8842,7 +8842,7 @@ a {
 
 .quant-task-list-card .ant-card-body {
   max-height: 650px;
-  overflow: auto;
+  overflow-y: auto;
 }
 
 .quant-task-row {
@@ -12754,7 +12754,7 @@ a {
   flex-direction: column;
   gap: 9px;
   max-height: 390px;
-  overflow: auto;
+  overflow-y: auto;
   padding-right: 2px;
 }
 
@@ -14210,7 +14210,7 @@ a {
   flex-direction: column;
   gap: 7px;
   max-height: 260px;
-  overflow: auto;
+  overflow-y: auto;
 }
 
 .live-risk-checks > div {
