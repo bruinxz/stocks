@@ -1,0 +1,115 @@
+{
+  "task": "PR-M3-3 M3 series completion cert · CI enum-lint workflow baseline snapshot",
+  "sha_lock": "93dee066",
+  "sha_lock_full_ref": "post-quintuple-merge main HEAD @ 2026-07-09T09:16:43Z",
+  "workflow_file": ".github/workflows/enum-lint.yml",
+  "workflow_sha256": "cd3500b63865e42b7e1ac9aedb091e5c5f603d42eb878bcfbe04450504e4befe",
+  "workflow_size_bytes": 2930,
+  "workflow_line_count": 96,
+  "concurrency_policy": {
+    "group": "enum-lint-${{ github.workflow }}-${{ github.ref }}",
+    "cancel_in_progress": true
+  },
+  "trigger": {
+    "push_branches": ["**"],
+    "pull_request_branches": ["main"]
+  },
+  "paths_filter": {
+    "action": "dorny/paths-filter@v3",
+    "filter_name": "enum",
+    "paths": [
+      "backend/tests/enum/**",
+      "backend/tests/lint/**",
+      "backend/src/quant/workflow/**",
+      "backend/src/models/enums/**",
+      "backend/src/models/**",
+      "frontend/src/**",
+      "docs/refactor/baseline/ui-enum/**",
+      ".github/workflows/enum-lint.yml"
+    ],
+    "fallback_run_on": "pull_request event (all PRs to main run both jobs regardless of paths)"
+  },
+  "required_jobs": [
+    {
+      "id": "enum-matrix-lock",
+      "name": "enum-matrix-lock (ADR-0011 §5)",
+      "runner": "ubuntu-latest",
+      "timeout_minutes": 10,
+      "node_version": "20",
+      "npm_ci_silent": true,
+      "working_directory": "backend",
+      "run_command": "npx ts-node --transpile-only tests/enum/enum-matrix-lock.test.ts",
+      "test_file": "backend/tests/enum/enum-matrix-lock.test.ts",
+      "test_file_sha256": "a87c5cbfb0d0a44a82e45542c9729d89aa8181b8cf265acf1424342b4c99ac98",
+      "test_file_size_bytes": 7632,
+      "test_file_line_count": 226,
+      "assertion_count": 23,
+      "assertions": [
+        "baseline contains exactly 15 canonical entries (Q7 matrix)",
+        "each entry declares one of three canonical decisions {AUTHORITY,ELIM,RETAIN}",
+        "QuantWorkflowStatus authority barrel exports the three canonical literals (TS compile-time probe)",
+        "baseline id=4 entry exists",
+        "id=4 enum_name === QuantWorkflowStatus",
+        "id=4 value_set === [\"ready\",\"degraded\",\"blocked\"] (post-#118 code-truth)",
+        "id=4 authority_file pins QuantWorkflowReadinessService.ts:8 (Orch v136 Q4.c)",
+        "id=4 decision === AUTHORITY",
+        "baseline id=10 entry exists",
+        "id=10 value_set mirrors id=4 (alias-consistency canonical)",
+        "id=10 decision === ELIM (aliased to id=4)",
+        "baseline id=13 entry exists",
+        "id=13 value_set === [\"healthy\",\"degraded\",\"unhealthy\"] (infra taxonomy)",
+        "id=13 value_set !== id=4 value_set (domain-independence guard)",
+        "id=13 decision === AUTHORITY (domain-local authority)",
+        "baseline sha_lock first 7 chars match filename slug (self-consistency guard)",
+        "decision_summary present",
+        "decision_summary.RETAIN_count matches actual (RETAIN=10)",
+        "decision_summary.AUTHORITY_count matches actual (AUTHORITY=2)",
+        "decision_summary.ELIM_count matches actual (ELIM=3)",
+        "decision_summary.total === 15 (RETAIN 10 + AUTHORITY 2 + ELIM 3)",
+        "every entry has non-empty value_set",
+        "every entry has non-empty authority_file"
+      ]
+    },
+    {
+      "id": "no-backtest-service-regression",
+      "name": "no-backtest-service-regression (PR-M3-2 pre-guard)",
+      "runner": "ubuntu-latest",
+      "timeout_minutes": 10,
+      "node_version": "20",
+      "npm_ci_silent": true,
+      "working_directory": "backend",
+      "run_command": "npx ts-node --transpile-only tests/lint/no-backtest-service-regression.test.ts",
+      "test_file": "backend/tests/lint/no-backtest-service-regression.test.ts",
+      "test_file_sha256": "842d2f4c1b6eacc86d2803d8d8816e2ea2996cc9a798ec54bd4309f0352c1931",
+      "test_file_size_bytes": 3328,
+      "test_file_line_count": 101,
+      "assertion_count": 2,
+      "assertions": [
+        "frontend/src walk found at least one .ts/.tsx file (files.length > 0)",
+        "frontend/src consumers of legacy backtestService <= KNOWN_RESIDUAL (PR-M3-2 pre-guard · post-M3-2 tighten to === 0)"
+      ],
+      "known_residual": 1,
+      "known_residual_file": "frontend/src/components/backtest/BacktestResults.tsx",
+      "known_residual_line": 23,
+      "tighten_target": "backend/tests/lint/no-backtest-service-regression.test.ts:93",
+      "tighten_pr": "PR-M3-2",
+      "tighten_owner": "Frontend 主签",
+      "tighten_sla": "T+7d 2026-07-16 24:00 CST"
+    }
+  ],
+  "total_lint_layer_assertions": 25,
+  "pre_119_baseline": {
+    "assertion_count": 2,
+    "note": "Pre-PR-M3-4 the test file `enum-matrix-lock.test.ts` had only 2 assertions (count == 15 + decision whitelist) with id=4 value_set assertion xit()-skipped. Post-#119 hardening added 21 assertions live."
+  },
+  "policy": {
+    "required_for_merge": true,
+    "cancel_in_progress": true,
+    "checkout_action": "actions/checkout@v4",
+    "setup_node_action": "actions/setup-node@v4",
+    "paths_filter_action": "dorny/paths-filter@v3",
+    "cache": "npm",
+    "cache_dependency_path": "backend/package-lock.json"
+  },
+  "unique_key_note": "CI enum-lint workflow baseline snapshot pinned at main HEAD 93dee066 post-quintuple-merge. Workflow file sha256 + test file sha256 + assertion inventory frozen for drift-audit. Any change to enum-lint.yml or the two required test files triggers baseline refresh in a follow-up PR (per qadocs-ui-enum-lock-sop v2.0 §四a re-hydration precedent)."
+}

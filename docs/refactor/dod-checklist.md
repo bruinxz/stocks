@@ -268,6 +268,28 @@ exempt slug 登记至 `docs/refactor/baseline/quality/dod-17-exempt-<sha>.json` 
 
 **7-owner co-owned closure landed**: QADocs (起源) + Orch (formalize dispatch v18/v19/v20/v21) + Cleanup (lesson-16 姊妹) + DP (Path C.3 pattern) + Strategy (Path ρ/τ/υ/χ 4 例) + Frontend (Path ψ + AA 2 例) + Research (msg=ab81dc08/24cb074e endorse)
 
+#### §17.5 · Post-M3 series self-apply ledger (10-22 例 追增)
+
+M3 UI-enum SSOT series 五段 lineage self-apply cumulative — canonical 17-项 dod §17 pre-flight self-check applied per PR without exception:
+
+| # | example | pattern | anchor |
+|---|---|---|---|
+| 10 | QADocs Task #54 workspace `notes/task-4-m3-15-enum-matrix-lock-draft.md` | 独立起草 · 15 项 enum matrix workspace prep | msg=59838b48 |
+| 11 | PR #115 PR-M3-3 baseline JSON + ADR-0011 + qadocs-ui-enum-lock-sop v1.0 landing (`3246b8cf`) | docs+baseline zero-runtime · owner MERGED @ 2026-07-09T03:25:51 CST | main HEAD `3246b8cf` |
+| 12 | PR #116 PR-M3-1 Backend enum rewire (`036294a7`) | Path A shrunk 2-new+1-modify · barrel + IIFE test id=4 xit skip · escalation-over-invention §1 discover | main HEAD `036294a7` |
+| 13 | PR #117 PR-M3-1-mirror id=10 EasyQuantHealthStatus alias sync (`7003e0d3`) | alias mirror sync landing | main HEAD `7003e0d3` |
+| 14 | PR #118 PR-M3-1-baseline-fix id=4 truth-sync (`feafa6e4`) | independent baseline-fix PR · escalation-over-invention §3 surface · 反-fabrication canonical §1 baseline drift truth-sync | main HEAD `feafa6e4` |
+| 15 | Strategy Path AC docs verbatim reference (v4.4 §17 v0.2 landing) | dod v4.4 §17 v0.2 formalize landing verbatim reference (Task #49) | Task #49 |
+| 16 | PR-DOD-4-4-1 v4.4 §17 formalize landing (Task #55) | §17 canonical formalize doc landing | Task #55 |
+| 17 | PR-P1-1 L2 verb hard-fail SOP v1.0 seal + baseline refresh (Task #56) | test-layer hard-fail SOP seal | Task #56 |
+| 18 | PR-P1-2 R1/R2 hard-fail skip stub + Playwright + api-version baseline (Task #57) | R1/R2 skip-stub pattern establish | Task #57 |
+| 19 | QADocs workspace `notes/pr-m3-5-v0.3-enum-matrix-consolidation-workspace-draft.md` | 独立起草 · v0.3 enum matrix 31→33 consolidation workspace prep (Task #60) | Task #60 |
+| 20 | QADocs workspace `notes/pr-m3-4-lint-layer-workspace-draft.md` | 独立起草 · lint 层 hard-fail 收官 workspace prep (Task #59) | Task #59 |
+| 21 | QADocs workspace `notes/pr-m3-3-docs-sync-m3-series-completion-cert-workspace-draft.md` | 独立起草 · post-#119 docs sync + M3 series completion cert workspace prep (Task #86) | Task #86 |
+| 22 | **PR #119 PR-M3-4 lint-layer 收官 (`93dee066`)** | **owner @li-yiming 亲手 authority-native MERGED @ 2026-07-09T09:16:43Z** · `backend/tests/enum/enum-matrix-lock.test.ts` hardened 23 assertions + `backend/tests/lint/no-backtest-service-regression.test.ts` 2 assertions + `.github/workflows/enum-lint.yml` 二 required jobs · zero-runtime docs+test+CI · zero package.json touch · zero force-push · **escalation-over-invention 四段-lifecycle §4 CLOSE** · **反-fabrication canonical §2 pre-guard honest-observe** · **17-项 dod §17 self-apply 第 22 例** | main HEAD `93dee066` |
+
+**Cumulative ledger**: 22 self-apply 例 (9 §17.4 initial + 13 §17.5 M3-series post-formalize) · zero exempt trailer invoked · 100% 铁律遵守 · 7-owner co-owned closure 全面 embodiment · **escalation-over-invention 四段-lifecycle canonical CLOSED post-#119** · **反-fabrication canonical 二例 formation LOCK REALIZED (Instance 1 #118 + Instance 2 #119)**
+
 **姊妹锚**: `notes/lesson-17-cross-agent-amend-preflight.md` v1 (formalize landed 2026-07-09 01:08 CST)
 
 ---
