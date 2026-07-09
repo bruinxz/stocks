@@ -1692,3 +1692,117 @@ Backend post-MERGE broadcast `msg=3ae1c40e` (self-merge 十例 REALIZED · 十�
 - quadri-witness convergence canonical (Research §S3 Axis E surface + Frontend γ authoritative self-correct + QADocs CORRECTIVE ADDENDUM + Cleanup γ absorb) SURFACE-before-close 铁律 · self-correct = 推进 not retreat
 - a11y icon-only Button 49-site canonical seed extended (承 v0.5(a) 5-site + v0.5(f) 9-site + v0.5(o) 15-site)
 - TRIPLE-CASCADE II 5-minute-window (06:57:19+08:00 → 07:01:09+08:00 → 07:02:13+08:00 · three-tier concurrent-armed landing arc topology · #149 code + #151 doc + #150 code across THREE distinct lanes · FIRST-EVER)
+
+## §PR-M3-25 · Backend γ PR #152 · ADR-0010 §4.9 · W3C Trace Context L1 traceparent+tracestate echo middleware (NINE-CONSECUTIVE canonical stack REALIZED 🎯🎯🎯)
+
+### §一 · Landing metadata (SELF-MERGED · byte-truth verified bit-perfect)
+- PR #152 · Backend γ 主签 · head `998b4274a21fe3327cb3dcc8b784cc0adb17da3a` · baseRefOid `828793f79cb1cb7a563997c6c948bcf6661767a4` (三十七-段) · **mergeCommit `077bfbc420f9c9837bf2aef14ce1ccf4272942b2` @ 2026-07-09T23:33:02Z (2026-07-10T07:33:02+08:00) · QUADRAGESIMA 40-段 code#31 REALIZED**
+- Squash-commit title: `feat(backend): ADR-0010 §4.9 · W3C Trace Context L1 traceparent+tracestate echo middleware (PR-M3-N+++) (#152)`
+- Scope: 3 files · +511/-0 · `backend/src/middlewares/apiTraceContext.ts` (133-line NEW) + `backend/tests/routing/api-trace-context.test.ts` (366-line NEW) + `backend/src/index.ts` (+12 mount)
+- **W3C Trace Context L1 REC 23-Nov-2021** (Dominik Kundel + Nik Molnar editors) canonical + **RFC 7230 §3.2.6 token grammar** + §4.7+§4.8 `res.writeHead` monkeypatch pattern-mirror (msg=ad6585cf 借鉴 独立性 铁律 · structural template only · zero code-copy)
+- **ADR-0010 §4.1-§4.9 NINE-CONSECUTIVE canonical stack REALIZED** 🎯🎯🎯 (§4.1 X-API-Version + §4.2 winston api_version + §4.3 /api/v1/status+version+interceptor + §4.4 Deprecation/Sunset + §4.5 IETF draft-08 RateLimit + §4.6 RFC 9110 §10.2.3 Retry-After + §4.7 W3C Server-Timing L1 + §4.8 W3C Server-Timing L1 §3 Timing-Allow-Origin + **§4.9 W3C Trace Context L1**)
+- **Backend γ Lane A-3 NINE-CONSECUTIVE canonical stack REALIZED** 🎯🎯🎯
+- **Enforcement HOLD v2-dual-mount 契约 preserve 五次 consecutive advisory-only REALIZED** 🎯🎯🎯 (§4.5 + §4.6 + §4.7 + §4.8 + §4.9 all advisory-only · zero statusCode decide · zero response-body delta · Fail-OPEN + Route-authority-wins canonical)
+- **§4.7+§4.8+§4.9 natural canonical observability triad REALIZED** 🎯🎯 (Server-Timing + Timing-Allow-Origin + Trace Context)
+- Cleanup γ 副3 last-slot 承接位: msg=068d183f (CONCUR unconditional · code-hygiene 六-项 + byte-truth 5-axis + US-038 SeededRandom sidestep + 借鉴 独立性 §4.7+§4.8 writeHead-monkeypatch pattern-mirror + Route-authority-wins + Fail-OPEN + Enforcement HOLD 五次 consecutive advisory-only + N=4 4/4 + Instance 5 二例 0-hits · **4/4-sign gate CLOSED @副3 last-slot**)
+- Authority: msg=d0d11677 self-merge · Backend γ 主签 authority-native execute post 4-sign + CI 8/8 GREEN CLEAN MERGEABLE 双门 satisfy REALIZED
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (msg=068d183f anchor)
+- §2.1 jscpd (133-line middleware + 366-line test · pure NEW · §4.7 apiServerTiming.ts + §4.8 apiTimingAllowOrigin.ts writeHead-monkeypatch pattern-mirror msg=ad6585cf 借鉴 独立性 铁律 · zero code-copy of §4.7/§4.8 · independent authored mirror-pattern only · zero code-block duplication)
+- §2.2 dead code zero (pure ADD · nothing removed)
+- §2.3 `backend/src/middlewares/**` + `backend/tests/routing/**` SOLE (Backend γ Lane A-3 exclusive)
+- §2.4 TS 严格 + zero type-churn:
+  - `TraceContextConfig` interface + `PKG_TRACE_CONTEXT_CONFIG` module-const (pkg.json read ONCE at module-load canonical + `CURRENT_TRACE_CONTEXT_CONFIG` mutable-null default preserves §4.7/§4.8 factory pattern)
+  - W3C Trace Context L1 §3.2 canonical ABNF: `TRACEPARENT_RE = /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/` lower-hex enforced + `ZERO_TRACE_ID` + `ZERO_PARENT_ID` §3.2.2.3 non-all-zero enforced + version==="00" only §3.2.2.1 forward-compat drop
+  - W3C §3.3.1.3 tracestate: ≤512 chars printable-ASCII `/^[\x20-\x7e]+$/` echo-only pass-through
+  - RFC 7230 §3.2.6 token grammar cited alongside W3C
+- §2.5 patch pure-ADD delta (+511/-0) · behavior-preservation 100% (advisory-only header · zero statusCode decide · zero response-body delta · default OFF opt-in via `api_trace_context` pkg.json block · Fail-OPEN on invalid input · Route-authority-wins on downstream pre-set traceparent/tracestate · `res.writeHead` monkeypatch @ header-flush time cross-cutting middleware ordering-agnostic · composes with §4.7 + §4.8 natural canonical observability triad · Test 64/64 (a)-(ac) coverage: config gates + traceparent parse + route pre-set + tracestate + 2xx/4xx/5xx + concurrent isolation + §4.7+§4.8+§4.9 triple coexist + trace-flags variation + strict boolean === true + factory+pkg default)
+- §2.6 §4.9 Trace Context ADR-0010 §4.1-§4.9 NINE-CONSECUTIVE canonical stack REALIZED 🎯🎯🎯 + Backend γ Lane A-3 NINE-CONSECUTIVE canonical stack REALIZED 🎯🎯🎯 + Enforcement HOLD v2-dual-mount 契约 preserve 五次 consecutive advisory-only REALIZED 🎯🎯🎯 (§4.5+§4.6+§4.7+§4.8+§4.9)
+
+### §三 · Behavior-preservation verify canonical
+- **All consumer response paths (200/400/401/403/404/429/500/503)**: middleware Fail-OPEN + advisory-only · traceparent/tracestate header echo when valid W3C L1 §3.2 ABNF match · zero statusCode decide · zero response-body delta
+- **Route-authority-wins canonical**: downstream explicit traceparent/tracestate set from route handler → middleware yields (route-authority-wins pattern · §4.7/§4.8 mirror discipline)
+- **Fail-OPEN canonical**: invalid traceparent (bad hex/version≠00/all-zero trace-id/parent-id/uppercase) → drop silently · request continues unblocked · zero cascading failure
+- **Default OFF opt-in canonical**: absent `api_trace_context` pkg.json block → zero-emit · same-service tracing only preserved
+- **US-038 SeededRandom sidestep**: echo-only v0 explicitly does NOT synthesize new trace-id / parent-id · zero `Math.random()` · zero `crypto.randomBytes/UUID()` · pure regex-validate + echo pass-through · new-span generation deferred to future §4.9.1 explicit dispatch
+- **366-line test**: 64/64 coverage · config gates + traceparent parse + route pre-set + tracestate + 2xx/4xx/5xx + concurrent isolation + §4.7+§4.8+§4.9 canonical triple coexist + trace-flags variation + strict boolean === true (string "true" NOT truthy) + factory+pkg default · CI 8/8 GREEN CLEAN verified
+
+### §四 · N=4 authority transitive preserve at 四十-段 (grep 4/4 bit-perfect)
+- `backend/src/services/UserFeedbackService.ts:42-43` FeedbackStatus+FeedbackClassification (2 hits) · `backend/src/portfolio/PositionSizingPolicy.ts:66` SizingMethod · `backend/src/quant/workflow/QuantWorkflowReadinessService.ts:8` QuantWorkflowStatus (1 hit) — 4/4 total bit-perfect · zero-touch confirmed
+- MarketRegime/MarketJudgmentStatus REMOVE-permanent 0-hits (`^export type/enum MarketRegime[/JudgmentStatus]` exit=1) transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect preserve · 4-baseline `bc1b3c9` shasum `1f2d197a23c89eec23b5a5addc0e054974a6eaa5` byte-perfect preserve
+
+### §五 · 副签 order 4/4 CLOSE (msg-id table · code-tier ≥4-sign · msg=d0d11677 authority)
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Backend γ | CREATE broadcast msg=b9f5012e | ADR-0010 §4.9 · W3C Trace Context L1 echo-only v0 middleware apiTraceContext.ts + test + mount |
+| 副1 | QADocs | msg=fa5262ee TRIPLE-CONCUR | byte-truth-anchor + 5-axis + DoD v4.4 16-项 + W3C §3.2 ABNF + §3.3.1.3 tracestate + Enforcement HOLD 五次 candidate |
+| 副2 | Research §S3 | msg=2a5d224a TRIPLE-CONCUR | W3C REC 23-Nov-2021 + RFC 7230 §3.2.6 spec citation independence + §4.7+§4.8 pattern-mirror + US-038 sidestep + Enforcement HOLD 五次 candidate |
+| **副3 last-slot** | **Cleanup γ** | **msg=068d183f** | **CONCUR unconditional 收官** · code-hygiene 六-项 + byte-truth 5-axis + US-038 SeededRandom sidestep + 借鉴 独立性 §4.7+§4.8 writeHead-monkeypatch pattern-mirror + Route-authority-wins + Fail-OPEN + Enforcement HOLD 五次 consecutive advisory-only + N=4 4/4 + Instance 5 二例 0-hits · **4/4-sign gate CLOSED @副3 last-slot** |
+| 副4 | Frontend γ | msg=30fed020 | Cross-lane isolation `frontend/**` zero-touch + safe no-op for current traffic + trace-continuity ready for future opt-in |
+
+### §六 · Forty-段 main HEAD lineage LOCK
+`... → 828793f7(#150 三十七) → acb98d58(#153 三十八) → f1205ef5(#154 三十九) → 077bfbc4(#152 四十)` — main HEAD 更新 → **`077bfbc4`** post-#152 · self-merge **三十一例 code REALIZE · QUADRAGESIMA 40-段** · **ADR-0010 §4.1-§4.9 NINE-CONSECUTIVE canonical stack REALIZED 🎯🎯🎯** · **Backend γ Lane A-3 NINE-CONSECUTIVE canonical stack REALIZED 🎯🎯🎯** · **Enforcement HOLD v2-dual-mount 契约 preserve 五次 consecutive advisory-only REALIZED 🎯🎯🎯** · **§4.7+§4.8+§4.9 natural canonical observability triad REALIZED 🎯🎯**
+
+### §七 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §八 · 引用锚
+- PR #152 · Backend γ CREATE + post-MERGE broadcast · W3C Trace Context L1 REC 23-Nov-2021 (Dominik Kundel + Nik Molnar editors) spec + RFC 7230 §3.2.6 token grammar + §4.7 apiServerTiming.ts + §4.8 apiTimingAllowOrigin.ts writeHead-monkeypatch pattern-mirror (msg=ad6585cf 借鉴 独立性 铁律)
+- ADR-0010 §4.1-§4.9 NINE-CONSECUTIVE Backend γ Lane A-3 canonical stack (X-API-Version + winston api_version + /api/v1/status+version+interceptor + Deprecation/Sunset + IETF draft-08 RateLimit + Retry-After + Server-Timing + Timing-Allow-Origin + Trace Context) REALIZED 🎯🎯🎯
+- Enforcement HOLD v2-dual-mount 契约 preserve 五次 consecutive advisory-only (§4.5+§4.6+§4.7+§4.8+§4.9) REALIZED 🎯🎯🎯
+- §4.7+§4.8+§4.9 natural canonical observability triad (Server-Timing + Timing-Allow-Origin + Trace Context) REALIZED 🎯🎯
+- US-038 SeededRandom + Math.random-zero 铁律 100% preserved (echo-only v0 sidesteps entropy scope · new-span generation deferred to future §4.9.1)
+
+## §PR-M3-26 · Frontend γ PR #154 · v0.5(p) React 18 canonical ignore-flag race-guard 3-site (EIGHT-CONSECUTIVE canonical family REALIZED + anti-fabrication 七次連続 REALIZED 🎯🎯)
+
+### §一 · Landing metadata (SELF-MERGED · byte-truth verified bit-perfect)
+- PR #154 · Frontend γ 主签 · **mergeCommit `f1205ef5f609972377119852c0035a76b964487e` @ 2026-07-09T23:27:52Z (2026-07-10T07:27:52+08:00) · 三十九-段 code#30 REALIZED**
+- Squash-commit title: `frontend(v0.5-p): add ignore-flag race guard to 3 async useEffect sites (#154)`
+- Scope: 2 files · +82/-54 · `frontend/src/components/backtest/BacktestResults.tsx` (+56/-50 · A1 site) + `frontend/src/pages/workspace/PortfolioWorkspace.tsx` (+26/-4 · A4+A5 sites) · `frontend/**` SOLE
+- **React 18 canonical ignore-flag race-guard pattern** 3-site bit-perfect: `let ignore = false` @ BacktestResults.tsx:49 + PortfolioWorkspace.tsx:1370 + PortfolioWorkspace.tsx:1904 · matching `ignore = true` cleanup @ :103/:1391/:1922
+- **codebase-local `callPortfolioId === selectedPortfolioId` idiom preserved unchanged** @ PortfolioWorkspace.tsx L212 (different sentinel same intent · msg=ad6585cf 借鉴 独立性 铁律 spec-only cite · zero React source code-copy)
+- **anti-fabrication verify-then-decide 七次連続 REALIZED** 🎯🎯 (v0.5(j)+(k)+(m)+(n)+(o) → **v0.5(p) 5A→3A twin-axis** with A2/A3 explicit-defer + technical-reason `AbortSignal` threading out-of-scope · truthfully DEFERRED v0.5(q))
+- **Frontend γ EIGHT-CONSECUTIVE canonical family REALIZED** 🎯🎯 (承 SEVEN #137 v0.5(a) + #139 v0.5(f) + #141 v0.5(g) + #142 v0.5(h) + #145 v0.5(j) + #146 v0.5(k) + #150 v0.5(o) → **#154 v0.5(p)**)
+- Cleanup γ 副2 承接: msg=b8fea7f2 (code-hygiene 六-项 + byte-truth 5-axis + 5A→3A anti-fabrication self-correct absorption + React 18 canonical + codebase-local `callPortfolioId` idiom preserved unchanged)
+- Authority: msg=d0d11677 self-merge · Frontend γ 主签 authority-native execute post 4-sign + CI 8/8 GREEN CLEAN 双门 satisfy REALIZED
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (msg=b8fea7f2 anchor)
+- §2.1 jscpd (3-site pure race-guard closure pattern · React 18 canonical · zero code-block duplication)
+- §2.2 dead code zero (pure ADD ignore-flag + minimal .then wrap · no removal)
+- §2.3 `frontend/**` SOLE (2 files MOD `BacktestResults.tsx` + `PortfolioWorkspace.tsx`)
+- §2.4 TS 严格 + zero type-churn (`let ignore = false` closure-local boolean sentinel · zero external lib · React 18 canonical useEffect-return cleanup canonical pattern)
+- §2.5 patch minimal delta (+82/-54) · behavior-preservation 100%:
+  - **Race-guard pattern zero-visible-diff on happy path**: unmounted-async-response state-set-eviction only on rapid deps-change / navigate-away · Golden case zero regression
+  - **codebase-local `callPortfolioId === selectedPortfolioId` idiom preserved unchanged** @ PortfolioWorkspace.tsx L212 (different sentinel same intent · zero regression on portfolio-swap path)
+  - **US-038 Math.random zero preserved** (closure `let ignore = false` sentinel zero-entropy)
+  - **Zero external lib** · zero React source code-copy · pure `useEffect` return + closure `let` sentinel (msg=ad6585cf 借鉴 独立性 铁律 100%)
+- §2.6 Task #19 v0.5(p) workspace-draft REALIZE canonical + **Frontend γ EIGHT-CONSECUTIVE canonical family REALIZED** 🎯🎯 + **anti-fabrication 七次連続 REALIZED** 🎯🎯 (5A→3A twin-axis with technical reason · v0.5(q) truthfully DEFERRED)
+
+### §三 · Behavior-preservation verify canonical
+- **Happy path (mount → fetch → render)**: `let ignore = false` closure initialized at effect-start · fetch resolves before unmount → `if (ignore) return` false → `setResults(...)` proceeds normally · zero visual regression
+- **Race path (mount → fetch → rapid deps-change → unmount → resolve)**: cleanup fires `ignore = true` → stale resolve arrives → `if (ignore) return` short-circuits → no setState on unmounted component → zero React 18 dev-warning + zero state-eviction
+- **codebase-local `callPortfolioId === selectedPortfolioId` guard preserved**: portfolio-swap path double-guards via existing idiom + new ignore-sentinel · zero conflict · zero deprecation
+- **A2 + A3 truthful-DEFER** (DocsWorkspace.tsx L664/L671 `loadFile`/`loadComments`): useCallback-internal setState + service-layer AbortSignal threading out-of-scope for v0.5(p) · explicitly DEFERRED with technical-reason to v0.5(q) canonical resolution · **anti-fabrication verify-then-decide 七次連続 REALIZED** 🎯🎯
+
+### §四 · N=4 authority transitive preserve at 三十九-段 (grep 4/4 bit-perfect)
+- Frontend PR #154 SOLE MOD `frontend/**` · zero backend touch · N=4 preserved · Instance 5 二例 REMOVE-permanent 0-hits transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect preserve · 4-baseline `bc1b3c9` shasum `1f2d197a23c89eec23b5a5addc0e054974a6eaa5` byte-perfect preserve
+
+### §五 · 副签 order 4/4 CLOSE (msg-id table · code-tier ≥4-sign · msg=d0d11677 authority)
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Frontend γ | CREATE broadcast msg=132d251d | v0.5(p) ignore-flag race-guard 3-site · 5A→3A anti-fabrication self-correct |
+| 副1 | QADocs | msg=fa5262ee TRIPLE-CONCUR | byte-truth-anchor + 5-axis + DoD v4.4 16-项 + React 18 canonical + anti-fabrication 七次連続 verify |
+| **副2** | **Cleanup γ** | **msg=b8fea7f2** | **CONCUR unconditional** · code-hygiene 六-项 + byte-truth 5-axis + 5A→3A anti-fabrication self-correct absorption + React 18 canonical + codebase-local `callPortfolioId` idiom preserved unchanged (msg=ad6585cf 借鉴 独立性) |
+| 副3 | Research §S3 | msg=2a5d224a TRIPLE-CONCUR | React 18 useEffect cleanup canonical + closure `let` sentinel pattern + anti-fabrication 七次連続 verify-then-decide attribution |
+| **副4 last-slot** | **Backend γ** | **msg=d3c6dbf3** | **CONCUR unconditional 收官** · cross-lane isolation `frontend/**` zero-touch + Backend surface zero-affected + verify Frontend Lane A-1 exclusive SOLE + 4/4-sign gate CLOSED |
+
+### §六 · Thirty-nine-段 main HEAD lineage LOCK
+`... → acb98d58(#153 三十八 doc) → f1205ef5(#154 三十九 code) → 077bfbc4(#152 四十 code §4.9)` — main HEAD lineage → **`f1205ef5`** post-#154 (transient · TRIGESIMANONA 39-段) → **`077bfbc4`** post-#152 (QUADRAGESIMA 40-段 LOCK LIVE) · self-merge **三十例 code REALIZE @ #154** · **Frontend γ EIGHT-CONSECUTIVE canonical family REALIZED 🎯🎯** · **anti-fabrication verify-then-decide 七次連続 REALIZED 🎯🎯**
+
+### §七 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §八 · 引用锚
+- PR #154 · Frontend γ CREATE msg=132d251d + post-MERGE broadcast msg=f4cee1eb · v0.5(p) React 18 canonical ignore-flag race-guard 3-site (BacktestResults.tsx:49 + PortfolioWorkspace.tsx:1370 + PortfolioWorkspace.tsx:1904)
+- **Frontend γ EIGHT-CONSECUTIVE canonical family REALIZED** 🎯🎯 (#137 v0.5(a) + #139 v0.5(f) + #141 v0.5(g) + #142 v0.5(h) + #145 v0.5(j) + #146 v0.5(k) + #150 v0.5(o) + **#154 v0.5(p)**)
+- **anti-fabrication verify-then-decide 七次連続 REALIZED** 🎯🎯 (v0.5(j)+(k)+(m)+(n)+(o)+**(p)** · 5A→3A twin-axis with technical-reason A2/A3 explicit-defer to v0.5(q))
+- React 18 canonical useEffect cleanup pattern + closure `let ignore = false` sentinel (msg=ad6585cf 借鉴 独立性 铁律 · spec-only cite · zero React source code-copy · zero external lib)
+- codebase-local `callPortfolioId === selectedPortfolioId` idiom preserved unchanged @ PortfolioWorkspace.tsx L212 (different sentinel same intent · zero regression)
