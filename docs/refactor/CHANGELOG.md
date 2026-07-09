@@ -10,8 +10,61 @@ Format: each entry cites the landing SHA, PR number, owner authority (if authori
 
 ## [Unreleased]
 
-- **PR-M3-2** (T+7d 2026-07-16 SLA) — Frontend legacy `backtestService` elim · `BacktestResults.tsx` L23/L56/L67 migrate to `labService` + `frontend/src/services/backtestService.ts` DELETE + `no-backtest-service-regression.test.ts:93` `KNOWN_RESIDUAL = 1;` → `= 0;` tighten. Runbook: `docs/refactor/quality/pr-m3-2-preguard-runbook.md`.
 - **PR-M3-5** (opportunistic) — v0.3 enum matrix consolidation Wave 1 (15→31) + Wave 2 (31→33). Runbook: `docs/refactor/quality/pr-m3-5-consolidation-runbook.md`.
+
+---
+
+## [PR-M3-2] · 2026-07-09
+
+PR #121 · main HEAD `0fb7c96e` · squash-merge from base `aa099594` · mergedAt `2026-07-09T15:38:08Z` · Frontend 主签 self-merge per `msg=d0d11677` (≥4 sign + CI 8/8 GREEN → self-merge authority) · owner DM pivot `msg=3c114597` (T+7d 2026-07-16 → T+0 IMMEDIATE EXECUTE) + Orch v197 `msg=de6103bd` 兑现完毕.
+
+### Diff
+
++37 / −282 · 3 files:
+
+- `frontend/src/services/backtestService.ts` — **DELETED** (271 lines · last consumer migrated)
+- `frontend/src/components/backtest/BacktestResults.tsx` — L23 import `backtestService` → `getBacktestDetail from labService`; L56-72 `loadResults` rewritten via `detail.results[0]` + `equity_curve_json` derive `daily_returns`; L91-95 `loadBacktestInfo` migrated to `getBacktestDetail`, uses `detail?.task` (+32 / −5)
+- `backend/tests/lint/no-backtest-service-regression.test.ts:92` — `const KNOWN_RESIDUAL = 1;` → `= 0;` (sentinel hard-fail on regression LIVE) + comment block rewritten from *"awaiting PR-M3-2 · must tighten to === 0 at land time"* to *"PR-M3-2 landed · regressions hard-fail CI"* (+5 / −6)
+
+### Landing attestation
+
+- **CI 8/8 required-check GREEN unconditional** — Detect changes ✓ · Docker compose validate ✓ · Frontend check (typecheck + lint) ✓ · Backend check (typecheck + lint + test) ✓ · enum-matrix-lock (ADR-0011 §5) ✓ · no-backtest-service-regression (PR-M3-2 pre-guard · `KNOWN_RESIDUAL=0` sentinel hard-fail LIVE) ✓ · weak-secrets ✓ · paths_filter ✓
+- **mergeStateStatus=CLEAN · mergeable=MERGEABLE** at merge time
+- **副签 5/6 六方 CONCUR** — Cleanup γ (`msg=1d26dce0`), Strategy (`msg=b33354c1`), DataPipeline γ (`msg=19b904b0`), Research §S3 (`msg=7c1bfa57`), QADocs (`msg=e65f0a81`); Backend v32 (`msg=8ff4b2d1`) arm posture ready · byte-truth trailing-verify lane. Frontend 主签 CREATE broadcast `msg=5fc56cd6`.
+- **Byte-truth independent-verify** — five agents ran `gh pr view 121 --json` + `gh pr diff 121 --patch` + `git grep backtestService pr-121-verify -- 'frontend/src/**'` (zero-residual · sole sentinel test reference by design) + `gh api repos/.../contents/frontend/src/services/backtestService.ts?ref=0a7f5672` (HTTP 404) independently and CONCUR'd byte-perfect diff match
+
+### 反-Fabrication canonical Instance 2 lifecycle CLOSE-OUT REALIZED
+
+The tightening obligation named in `anti-fabrication-canonical.md` §3.2 (baseline `KNOWN_RESIDUAL=1` at #119 with named threshold + follow-up PR-M3-2 tighten obligation) was discharged in the exact single-line edit path predicted. See `anti-fabrication-canonical.md` §3.4 for the full lifecycle CLOSE-OUT attestation. Instance 2 is now a retrospectively-completed canonical exemplar with both pre-tighten posture (§3.2) and post-tighten close-out (§3.4) as the full lifecycle template.
+
+### Guardrails preserved
+
+- `frontend/**` 主签授权 lane 100% (Frontend 主签 lane 完全 aligned)
+- `backend/src/**` zero-touch (sentinel test at `backend/tests/lint/**` is the sole `backend/**` touch · lint-layer only)
+- `采集/存储侧` protected globs zero touch (DataPipeline lane 六段-lineage `3246b8cf → 036294a7 → 7003e0d3 → feafa6e4 → 93dee066 → aa099594` unchanged corroborated by DP γ `msg=19b904b0`)
+- Path D `3246b8cf` 冻结锚 zero touch (baseline JSON slug + `sha_lock` content field both preserved)
+- `schema.prisma` unchanged
+- `package.json` zero delta
+- `Math.random` zero touch (US-038 SeededRandom retain)
+- Zero force-push
+- `jscpd ≤30%` hard-gate retained
+- Alpha Vantage + Baostock only (data-source discipline)
+- License 红线 SOFTENED · Independence v1.1 retain
+- 借鉴外部 attribution none
+
+### Seven-段 lineage update
+
+`3246b8cf(#115) → 036294a7(#116) → 7003e0d3(#117) → feafa6e4(#118) → 93dee066(#119) → aa099594(#120) → 0fb7c96e(#121)` — main HEAD canonical LOCK 更新 → `0fb7c96e`.
+
+### Owner authority chain
+
+- `msg=d0d11677` — 自签合入 令 (≥4 sign + CI GREEN → self-merge OK · #121 Frontend 主签 self-merge REALIZED)
+- `msg=b8af5127` — 完全掌控 v2 agent autonomy standing
+- `msg=4b30fbed` — 指挥官令 v3 · "一切不需要找我确认" autonomous execution
+- `msg=210d262d` — agents 不能停 · Orch 汇报 continuous-execution
+- `msg=bf74c64c` — 持续推进 keep-progressing
+- `msg=3c114597` — owner DM pivot 令 (PR-M3-2 T+7d 2026-07-16 → T+0 IMMEDIATE EXECUTE)
+- `msg=de6103bd` — Orch v197 IMMEDIATE EXECUTE acceleration acknowledgement
 
 ---
 

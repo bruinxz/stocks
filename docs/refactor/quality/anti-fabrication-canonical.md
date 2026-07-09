@@ -113,6 +113,27 @@ Migration debt exists — pretending it doesn't by silently over-asserting eithe
 
 The threshold constant is the **carrying vessel** for the migration debt: PR-M3-2 lands the elim + tightens the constant to `0` in the same PR. The `KNOWN_RESIDUAL` line becomes zero + comment updates + the pre-guard becomes a regression guard. Single-line edit path.
 
+### §3.4 Lifecycle CLOSE-OUT REALIZED (post-PR #121 · 2026-07-09)
+
+**Instance 2 lifecycle CLOSE-OUT is realized** on 2026-07-09 with the merge of PR #121 (PR-M3-2) at main HEAD `0fb7c96e` (squash-merge from base `aa099594`, mergedAt 2026-07-09T15:38:08Z).
+
+The tightening obligation named in §3.2 was discharged in the exact single-line edit path predicted: at head SHA `0a7f5672`, `backend/tests/lint/no-backtest-service-regression.test.ts:92` transitions
+
+```typescript
+- const KNOWN_RESIDUAL = 1;
++ const KNOWN_RESIDUAL = 0;
+```
+
+with the accompanying comment block rewritten from *"awaiting PR-M3-2 · must tighten this to `=== 0` at land time"* to *"PR-M3-2 landed · regressions (re-introducing a legacy consumer) now hard-fail CI."* The assertion `offenders.length <= KNOWN_RESIDUAL` is preserved — its semantic transitions from soft-cap (baseline residual) to hard-fail regression guard (post-M3-2) purely by threshold constant flip. Single-line edit path predicted; single-line edit path realized.
+
+Companion consumer elim in the same PR: `frontend/src/services/backtestService.ts` DELETED (271 lines · last consumer), `frontend/src/components/backtest/BacktestResults.tsx` L23 import + L56/L67 call-sites migrated to `labService.getBacktestDetail`. Zero-residual `git grep backtestService pr-121-verify -- 'frontend/src/**'` returns empty at head SHA — the sentinel test is the sole remaining reference, by design (lint-layer hard-gate for regression).
+
+**Byte-truth 独立-verify from 五方**: Cleanup γ msg=1d26dce0, Strategy msg=b33354c1, DP γ msg=19b904b0, Research §S3 msg=7c1bfa57, QADocs msg=e65f0a81 — all five independently ran `gh pr view 121` / `gh pr diff 121` / `git grep` / `gh api contents` and CONCUR'd byte-perfect diff match with Frontend broadcast msg=5fc56cd6. Six-方 副签 阵型 CONCUR unconditional per msg=d0d11677 self-merge authority.
+
+CI 8/8 required-check attestation at merge: Detect changes ✓, Docker compose validate ✓, Frontend check (typecheck + lint) ✓, Backend check (typecheck + lint + test) ✓, enum-matrix-lock (ADR-0011 §5) ✓, no-backtest-service-regression (PR-M3-2 pre-guard · KNOWN_RESIDUAL=0 sentinel hard-fail LIVE) ✓, weak-secrets ✓, paths_filter ✓ (mergeStateStatus=CLEAN, mergeable=MERGEABLE).
+
+Instance 2 is now a **retrospectively-completed** canonical exemplar — the pattern is proved end-to-end (documented residual → tightening obligation → follow-up PR → constant flip + companion elim + assertion semantic transition). Future honest-observe instances that reference §3 now have both the pre-tighten posture (§3.2) and the post-tighten close-out (§3.4) as the full lifecycle template.
+
 ---
 
 ## §4 · Instance-pattern comparison
@@ -124,7 +145,7 @@ The threshold constant is the **carrying vessel** for the migration debt: PR-M3-
 | Deliverable | Independent surfacing PR (§3 close-out later) | Named threshold constant + comment + follow-up PR tightens |
 | Failure mode fabricated | Silent mutation in same commit | Silent over-assertion |
 | Detection | Reviewers of unrelated PR see manufactured agreement | Assertion either fails on land or is a no-op silently |
-| Canonical exemplar | PR #118 baseline `83aea69c` → `3246b8cf` sync | PR #119 `KNOWN_RESIDUAL=1` at `no-backtest-service-regression.test.ts:93` |
+| Canonical exemplar | PR #118 baseline `83aea69c` → `3246b8cf` sync | PR #119 `KNOWN_RESIDUAL=1` at `no-backtest-service-regression.test.ts:93` (baseline) → PR #121 `KNOWN_RESIDUAL=0` at `.test.ts:92` (tighten realized §3.4) |
 
 ---
 
@@ -144,4 +165,4 @@ Two canonical instances now exist in-repo. Future occurrences of either pattern 
 
 ---
 
-**反-Fabrication canonical 二例 formation LOCK REALIZED** post-M3 series 收官 `93dee066`. Future truth-sync + honest-observe occurrences follow these patterns by policy.
+**反-Fabrication canonical 二例 formation LOCK REALIZED** post-M3 series 收官 `93dee066`. Instance 2 **lifecycle CLOSE-OUT REALIZED** post-PR #121 land at main HEAD `0fb7c96e` (see §3.4). Future truth-sync + honest-observe occurrences follow these patterns by policy.
