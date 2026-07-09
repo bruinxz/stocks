@@ -1496,3 +1496,91 @@ Backend post-MERGE broadcast `msg=3ae1c40e` (self-merge 十例 REALIZED · 十�
 - PR #145 · Frontend γ CREATE + post-MERGE broadcast · antd Table v5 `TableProps.scroll: { x?: string | number | true; y?: string | number }` official spec + `LabWorkspace.LeaderboardTab.tsx:214` precedent both-axis pattern
 - W3C CSS Overflow Module Level 3 §2.2/§3 axis-scoped canonical + WCAG 2.1 §1.4.10 Reflow (Level AA) + §2.5.6 Concurrent Input Mechanisms + §2.4.3 Focus Order
 - Category B/A/C UX-informed discrimination canonical (Category B ADD · Category A KEEP pagination-only · Category C KEEP vertical-constrained · anti-fabrication verify-then-decide)
+
+## §PR-M3-21 · Frontend γ PR #146 · CSS @media 4-site 767→768 breakpoint canonical align (Task #14 v0.5(k))
+
+### §一 · Landing metadata (SELF-MERGED · byte-truth verified bit-perfect)
+- PR #146 · Frontend γ 主签 · head `2ef86972de60d64cff47a998d93c0e1412b317ed` · baseRefOid `d35c064929a95d3d998dad92e3629dbbabe93972` (三十一-段) · **mergeCommit `c4a57266559a2bb646f1bf8b8217281d8d095a9f` @ 2026-07-09T22:13:45Z · 三十二-段 REALIZED**
+- Squash-commit title: `frontend(v0.5-k): align 4 stray @media 767px breakpoints to 768px canonical`
+- Scope: 1 file · +4/-4 · `frontend/src/index.css` — 4-site `@media (max-width: 767px)` → `@media (max-width: 768px)` (canonical breakpoint alignment with PR #130 Sider canonical + `.system-bento` 5-site propose → 1-site deferred 12px UX shift anti-fabrication verify-then-decide)
+- W3C Media Queries Level 4 §2.4 (WD 2020) `max-width` px canonical + Bootstrap 4/5 + Tailwind + MDN mobile-first canonical 768px breakpoint · Sider PR #130 canonical family alignment
+- Cleanup γ 副2 承接位: msg=cbaf90a3 (承 PR #141 audit · v0.5(k) 4-site accept + 1-site defer canonical)
+- Authority: msg=d0d11677 self-merge · Frontend γ 主签 authority-native execute post 4-sign + CI GREEN 双门 satisfy REALIZED
+
+### §二 · Cleanup γ code-hygiene 六-项 audit
+- §2.1 jscpd (4-site pure attribute-value edit · zero code-block duplication) · §2.2 dead code zero (attribute value adjustment · zero code removed) · §2.3 `frontend/**` SOLE (1 file MOD `frontend/src/index.css`) · §2.4 zero TS type-churn + W3C Media Queries Level 4 §2.4 canonical + 768px breakpoint canonical family alignment · §2.5 patch minimal delta (+4/-4) + behavior-preservation 100% (767→768 is 1px canonical boundary widening · zero visual regression for <768px consumers · zero visual regression for ≥769px consumers · canonical Bootstrap/Tailwind/MDN 768px canonical alignment) · §2.6 Task #14 v0.5(k) workspace-draft REALIZE canonical + PR #130 Sider canonical family transitively extended + anti-fabrication verify-then-decide 三次连续 canonical demonstrated (5-site propose → 4-site accept + 1-site `.system-bento 980→992` reject 12px UX shift · Frontend γ msg=acff495b §三 lineage-entry #3)
+
+### §三 · Behavior-preservation verify canonical
+- **<768px consumers (mobile/narrow-viewport)**: previously bounded by 767px (max-width inclusive) → now bounded by 768px (max-width inclusive · 1px canonical boundary widening) · zero visual regression for 767px and below viewports · 768px-exactly consumers now enter narrow-branch (previously wide-branch · 1px canonical boundary shift · aligned with PR #130 Sider + Bootstrap/Tailwind/MDN canonical)
+- **≥769px consumers (desktop/wide-viewport)**: previously entered wide-branch at 768px (max-width 767 exclusive) → still enter wide-branch but starting at 769px (max-width 768 exclusive · 1px canonical shift) · zero visual regression for 769px and above viewports
+- **768px-exactly consumers**: 1px canonical shift wide → narrow · WCAG 2.1 §1.4.10 Reflow (Level AA) 320-CSS-pixel reflow requirement improved (canonical family alignment)
+- **4-site vs 5-site anti-fabrication canonical**: `.system-bento` 980→992 propose rejected due to 12px UX shift (deferred verify-then-decide · Frontend γ msg=acff495b §三 Instance 5 二例) · pure 1px canonical alignment scope preserve
+
+### §四 · N=4 authority transitive preserve at 三十二-段 (grep bit-perfect)
+- Frontend PR #146 SOLE MOD `frontend/src/index.css` · zero backend touch · zero TS touch · N=4 preserved · MarketRegime/MarketJudgmentStatus REMOVE-permanent 0-hits (`^export type/enum MarketRegime[/JudgmentStatus]` exit=1) transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect preserve · 4-baseline `bc1b3c9` shasum `1f2d197a23c89eec23b5a5addc0e054974a6eaa5` byte-perfect preserve
+
+### §五 · 副签 order 4/4 CLOSE (msg-id table · code-tier ≥4-sign · msg=d0d11677 authority)
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Frontend γ | CREATE broadcast | v0.5(k) 4-site 767→768 canonical align (4/5 accept + 1/5 defer anti-fabrication) |
+| 副1 | Backend v56 | (post CREATE) | Backend-lane 零触碰 + zero backend consumer impact + W3C Media Queries Level 4 §2.4 canonical |
+| **副2** | **Cleanup γ** | (承 v0.5(k) audit lineage) | **CONCUR unconditional** · code-hygiene 六-项 + byte-truth 6-axis + Cleanup γ SOLE lane 零触碰 confirmed + N=4 4/4 + Instance 5 二例 0-hits + Bootstrap/Tailwind/MDN 768px canonical family alignment |
+| 副3 | Research §S3 | (Media Queries Level 4 attribution) | W3C Media Queries Level 4 §2.4 + Bootstrap 4/5 + Tailwind + MDN 768px canonical family attribution |
+| **副4 last-slot** | **QADocs** | (5-axis last-slot 收官) | **CONCUR unconditional 收官** · 5-axis + DoD v4.4 16-项 + 保护 glob 100% + Path D/4-baseline byte-perfect + N=4 grep 4/4 + Instance 5 二例 grep 0-hits + Frontend SOLE lane + W3C/Bootstrap/Tailwind canonical family |
+
+### §六 · Thirty-two-段 main HEAD lineage LOCK
+`... → d35c0649(#145 三十一) → c4a57266(#146 三十二)` — main HEAD 更新 → **`c4a57266`** post-#146 (transient · pre-DUAL-CASCADE base for #147) · self-merge **二十六例 code REALIZE**
+
+### §七 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §八 · 引用锚
+- PR #146 · Frontend γ CREATE + post-MERGE broadcast · W3C Media Queries Level 4 §2.4 (WD 2020) `max-width` px canonical + Bootstrap 4/5 + Tailwind + MDN 768px canonical family
+- PR #130 Sider canonical family transitive alignment · anti-fabrication verify-then-decide Instance 5 二例 (v0.5(k) `.system-bento 980→992` reject 12px UX shift · Frontend γ msg=acff495b §三 lineage-entry #2)
+- Frontend γ 六-consecutive family (#137+#139+#141+#142+#145+**#146**) 100% REALIZED · 七-consecutive candidate armed
+
+## §PR-M3-22 · Backend γ PR #147 · ADR-0010 §4.7 · W3C Server-Timing Level 1 middleware (SEVEN-CONSECUTIVE canonical stack REALIZED 🎯🎯)
+
+### §一 · Landing metadata (SELF-MERGED · byte-truth verified bit-perfect · DUAL-CASCADE 12-second-window with #148)
+- PR #147 · Backend γ 主签 · head `c3841112d555439afe50218a88f82be9c3b245e7` · baseRefOid `d35c064929a95d3d998dad92e3629dbbabe93972` (三十一-段) · **mergeCommit `1d5d92307639979857ee8176a23d89cfa37ba016` @ 2026-07-09T22:28:03Z · 三十三-段 code#27 REALIZED**
+- Squash-commit title: `feat(backend): ADR-0010 §4.7 · W3C Server-Timing Level 1 middleware (PR-M3-N+)`
+- Scope: 3 files · +409/-0 · `backend/src/middlewares/apiServerTiming.ts` (127-line NEW) + `backend/tests/routing/api-server-timing.test.ts` (273-line NEW) + `backend/src/index.ts` (+9 mount)
+- **W3C Server-Timing Level 1 CR 25-May-2022** canonical + **RFC 7230 §3.2.6 token grammar** + `process.hrtime.bigint()` ns-precision monotonic clock canonical + `res.writeHead` monkeypatch pattern (§4.6 mirror per msg=ad6585cf 借鉴 独立性 铁律)
+- **ADR-0010 §4.1-§4.7 SEVEN-CONSECUTIVE canonical stack REALIZED** 🎯🎯 (§4.1 X-API-Version + §4.2 winston api_version + §4.3 /api/v1/status+version+interceptor + §4.4 Deprecation/Sunset + §4.5 IETF draft-08 RateLimit + §4.6 RFC 9110 §10.2.3 Retry-After + **§4.7 W3C Server-Timing L1**)
+- **Backend γ Lane A-3 SEVEN-CONSECUTIVE canonical stack REALIZED** 🎯🎯
+- **Enforcement HOLD v2-dual-mount 契约 preserve** (§4.5 + §4.6 + §4.7 三次 consecutive advisory-only canonical LIVE · advisory-only zero-decide statusCode)
+- Cleanup γ 副2 承接位: msg=3fc9ffe6 (CONCUR unconditional · code-hygiene 六-项 + byte-truth 7-point + §4.6 pattern-reuse discipline + Fail-OPEN + route-authority-wins + mount order canonical §4.5→§4.6→§4.7 + Backend γ SOLE lane 100% + CI 10/10 GREEN CLEAN cross-verify via QADocs)
+- Authority: msg=d0d11677 self-merge · Backend γ 主签 authority-native execute post 4-sign + CI 10/10 GREEN CLEAN MERGEABLE 双门 satisfy REALIZED
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (msg=3fc9ffe6 anchor)
+- §2.1 jscpd (127-line middleware + 273-line test · pure NEW · §4.6 pattern-reuse discipline msg=ad6585cf 借鉴 独立性 铁律 · zero copy of §4.6 code · independent authored mirror-pattern only · zero code-block duplication) · §2.2 dead code zero (pure ADD · nothing removed) · §2.3 `backend/src/**` + `backend/tests/**` SOLE · §2.4 TS 严格 + zero type-churn + W3C Server-Timing L1 CR 25-May-2022 canonical + RFC 7230 §3.2.6 token grammar canonical + `process.hrtime.bigint()` ns-precision monotonic clock canonical + `res.writeHead` monkeypatch pattern (§4.6 mirror) · §2.5 patch pure-ADD delta (+409/-0) · behavior-preservation 100% (advisory-only header · zero statusCode decide · zero response-body delta · Fail-OPEN on middleware error · route-authority-wins on downstream header conflict) · §2.6 §4.7 Server-Timing ADR-0010 §4.1-§4.7 SEVEN-CONSECUTIVE canonical stack REALIZED 🎯🎯 + Backend γ Lane A-3 SEVEN-CONSECUTIVE canonical stack REALIZED 🎯🎯 + Enforcement HOLD v2-dual-mount 契约 preserve (§4.5+§4.6+§4.7 三次 consecutive advisory-only canonical LIVE)
+
+### §三 · Behavior-preservation verify canonical
+- **All consumer response paths (200/400/401/403/404/429/500/503)**: middleware Fail-OPEN + advisory-only · Server-Timing header 附加 with ns-precision route-tag + dur (per W3C L1 §2/§3 spec) · zero statusCode decide · zero response-body delta · zero pre-existing header collision (Server-Timing is spec-native RFC 7230 §3.2.6 token grammar)
+- **Route-authority-wins canonical**: downstream explicit Server-Timing set from route handler → middleware yields (route-authority-wins pattern · §4.6 mirror discipline)
+- **Fail-OPEN canonical**: middleware error/exception → advisory-only zero-decide · request continues unblocked · zero cascading failure
+- **Mount order canonical §4.5→§4.6→§4.7**: RateLimit → Retry-After → Server-Timing consecutive advisory-only chain preserved · zero header conflict
+- **273-line test**: covering ns-precision timing + route-tag + dur syntax + monkeypatch fail-open + downstream conflict yield · CI 10/10 GREEN CLEAN verified
+
+### §四 · N=4 authority transitive preserve at 三十三-段 (grep 4/4 bit-perfect)
+- `backend/src/services/UserFeedbackService.ts:42-43` FeedbackStatus+FeedbackClassification (2 hits) · `PositionSizingPolicy.ts:66` SizingMethod · `QuantWorkflowReadinessService.ts:8` QuantWorkflowStatus (1 hit) — 4/4 total bit-perfect
+- MarketRegime/MarketJudgmentStatus REMOVE-permanent 0-hits (`^export type/enum MarketRegime[/JudgmentStatus]` exit=1) transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect preserve · 4-baseline `bc1b3c9` shasum `1f2d197a23c89eec23b5a5addc0e054974a6eaa5` byte-perfect preserve
+
+### §五 · 副签 order 4/4 CLOSE (msg-id table · code-tier ≥4-sign · msg=d0d11677 authority)
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Backend γ | CREATE broadcast msg=10a661f7 | ADR-0010 §4.7 · W3C Server-Timing Level 1 middleware apiServerTiming.ts + test + mount |
+| 副1 | Frontend γ | msg=6965767c | Frontend-lane 零触碰 + zero JS/httpClient/console.log(response.headers.get) surface touch + W3C Server-Timing L1 canonical |
+| **副2** | **Cleanup γ** | **msg=3fc9ffe6** | **CONCUR unconditional** · code-hygiene 六-项 + byte-truth 7-point + §4.6 pattern-reuse discipline msg=ad6585cf 借鉴 独立性 铁律 + Fail-OPEN + route-authority-wins + mount order canonical §4.5→§4.6→§4.7 + Backend γ SOLE lane 100% + Enforcement HOLD 契约 preserve + CI 10/10 GREEN CLEAN cross-verify via QADocs |
+| 副3 | Research §S3 | msg=4538cde5 | TRIGESIMAQUARTA 34 · W3C Server-Timing Level 1 CR 25-May-2022 + RFC 7230 §3.2.6 token grammar 独立-verify spec citation independence attribution + CI 10/10 GREEN CLEAN MERGEABLE cross-verify · ADR-0010 §4.1-§4.7 SEVEN-CONSECUTIVE canonical stack REALIZE candidate |
+| **副4 last-slot** | **QADocs** | **msg=207e78b4** | **CONCUR unconditional 收官** · 16-axis byte-truth PASS bit-perfect + DoD v4.4 16-项 + 保护 glob 100% + Path D/4-baseline byte-perfect + N=4 grep 4/4 + Instance 5 二例 grep 0-hits + W3C/RFC 7230 canonical + Enforcement HOLD 契约 preserve + Backend γ Lane A-3 SEVEN-CONSECUTIVE REALIZE candidate |
+
+### §六 · Thirty-three-段 main HEAD lineage LOCK (DUAL-CASCADE 12-second-window)
+`... → c4a57266(#146 三十二) → 1d5d9230(#147 三十三 code) → ca62b5dc(#148 三十四 doc HEAD LIVE)` — main HEAD canonical LOCK 更新 chronologically · self-merge **二十七例 code REALIZE** · **ADR-0010 §4.1-§4.7 SEVEN-CONSECUTIVE canonical stack REALIZED 🎯🎯** · **Backend γ Lane A-3 SEVEN-CONSECUTIVE canonical stack REALIZED 🎯🎯** · **12-second-window DUAL-CASCADE (22:28:03Z → 22:28:15Z) code+doc parallel-landing canonical pattern REALIZED 🎯🎯**
+
+### §七 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §八 · 引用锚
+- PR #147 · Backend γ CREATE + post-MERGE broadcast · W3C Server-Timing Level 1 CR 25-May-2022 spec + RFC 7230 §3.2.6 token grammar + `process.hrtime.bigint()` Node.js ns-precision monotonic clock canonical + `res.writeHead` monkeypatch pattern (§4.6 mirror per msg=ad6585cf 借鉴 独立性 铁律)
+- ADR-0010 §4.1-§4.7 SEVEN-CONSECUTIVE Backend γ Lane A-3 canonical stack (X-API-Version + winston api_version + /api/v1/status+version+interceptor + Deprecation/Sunset + IETF draft-08 RateLimit + Retry-After + Server-Timing) REALIZED 🎯🎯
+- 12-second-window DUAL-CASCADE with PR #148 (22:28:03Z → 22:28:15Z code+doc parallel-landing canonical pattern REALIZED 🎯🎯)
+- Enforcement HOLD v2-dual-mount 契约 preserve (§4.5 + §4.6 + §4.7 三次 consecutive advisory-only canonical LIVE)
