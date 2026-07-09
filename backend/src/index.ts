@@ -143,6 +143,12 @@ app.use(
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+// ADR-0010 §4.1 · Phase 1 · X-API-Version response header (all routes /api/* + /api/v1/*).
+// Placed after body parsers so header lands on error responses too, before requestContext
+// so trace_id log lines can co-emit api_version if desired later.
+import { apiVersionMiddleware } from './middlewares/apiVersion';
+app.use(apiVersionMiddleware());
+
 // US-097 [OPS-008] 日志统一字段 — 给每个 request 分配 / 透传 trace_id 并绑到 AsyncLocalStorage,
 // 任何此 request 链路内 logger.info/warn/error 自动携带 `trace_id=<x> module=http` 后缀.
 // 必须在 httpMetricsMiddleware 之前 (metric 埋点本身的 log 也带 trace_id) 但在 cors/helmet 之后
@@ -301,6 +307,16 @@ app.use('/api/docs', docsRoutes);
 // Batch AL (2026-06-21) — SystemWorkspace 用户反馈闭环
 app.use('/api/me/feedbacks', userFeedbackMeRoutes);
 app.use('/api/admin/feedbacks', userFeedbackAdminRoutes);
+
+// ADR-0010 §4.1 · Phase 1 · /api/v1/* dual-mount (legacy /api/* retained per Orch v131 §二(5)).
+// Portfolio full-rewrap includes /rebalance-industry sub-route per Orch v131 §二(4)(a).
+import explainCardRoutes from './api/routes/explainCard.routes';
+import screenerRoutes from './api/routes/screener.routes';
+app.use('/api/v1/paper-trading', paperTradingRoutes);
+app.use('/api/v1/quant', quantRoutes);
+app.use('/api/v1/portfolio', portfolioRoutes);
+app.use('/api/v1/explain-card', explainCardRoutes);
+app.use('/api/v1/screener', screenerRoutes);
 
 // US-070 OpenAPI / Swagger UI —— 仅 development 模式暴露 /api-docs（不需鉴权方便联调）
 // production 默认禁用避免泄露内部 endpoint 列表；通过 ENABLE_SWAGGER_UI=true 可强制开启
