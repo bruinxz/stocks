@@ -1834,7 +1834,7 @@
   right: 14px;
   bottom: 14px;
   width: min(420px, calc(100vw - 28px));
-  overflow: auto;
+  overflow-y: auto;
   border: 1px solid var(--eq-line);
   border-radius: 18px;
   background: var(--eq-sheet);
