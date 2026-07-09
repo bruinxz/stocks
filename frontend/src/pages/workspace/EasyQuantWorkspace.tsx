@@ -1579,7 +1579,10 @@ const EasyQuantWorkspace: React.FC = () => {
             </h2>
             <p>先确认数据可靠，再进入回测。新手不需要理解每个字段，只看是否可以继续。</p>
           </div>
-          <div className={`eq-verdict-card ${bootstrapLoading ? 'eq-verdict-card--loading' : ''}`}>
+          <div
+            className={`eq-verdict-card ${bootstrapLoading ? 'eq-verdict-card--loading' : ''}`}
+            aria-busy={bootstrapLoading}
+          >
             <JourneySketch type="lens" />
             <div>
               <span className="eq-soft-label">体检结果</span>
@@ -1598,7 +1601,7 @@ const EasyQuantWorkspace: React.FC = () => {
           {bootstrapError && (
             <div className="eq-inline-notice eq-inline-notice--error">
               <p>{explainEasyQuantError(bootstrapError, 'bootstrap')}</p>
-              <button className="eq-button eq-button--quiet" onClick={reloadBootstrap}>
+              <button type="button" className="eq-button eq-button--quiet" onClick={reloadBootstrap}>
                 重新检查 <ReloadOutlined />
               </button>
             </div>
@@ -1946,6 +1949,7 @@ const EasyQuantWorkspace: React.FC = () => {
           {templatesForView.map(template => (
             <button
               key={template.id}
+              type="button"
               className={`eq-template-card ${
                 selectedTemplateId === template.id ? 'eq-template-card--active' : ''
               }`}
@@ -2247,6 +2251,7 @@ const EasyQuantWorkspace: React.FC = () => {
             <div className="eq-inline-notice eq-inline-notice--error">
               <p>{explainEasyQuantError(historyError, 'backtest')}</p>
               <button
+                type="button"
                 className="eq-button eq-button--quiet"
                 onClick={() => void loadEasyQuantHistory()}
               >
@@ -2662,7 +2667,7 @@ const EasyQuantWorkspace: React.FC = () => {
               <aside className="eq-recommendation">
                 <div className="eq-rec-top">
                   <strong>今日建议</strong>
-                  <button aria-label="刷新今日建议">
+                  <button type="button" aria-label="刷新今日建议">
                     <ReloadOutlined /> 刷新
                   </button>
                 </div>
