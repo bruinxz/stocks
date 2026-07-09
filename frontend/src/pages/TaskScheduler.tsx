@@ -1664,7 +1664,7 @@ const TaskScheduler: React.FC = () => {
           rowKey="id"
           loading={loading}
           pagination={{ pageSize: 10 }}
-          scroll={{ x: 960 }}
+          scroll={{ x: 'max-content' }}
           locale={{ emptyText: <Empty description="暂无定时任务，请点击右上角新建任务" /> }}
         />
       </Card>
@@ -1931,7 +1931,7 @@ const TaskScheduler: React.FC = () => {
           loading={logLoading}
           pagination={{ pageSize: 10 }}
           size="small"
-          scroll={{ x: 1380 }}
+          scroll={{ x: 'max-content' }}
           columns={[
             {
               title: '状态',

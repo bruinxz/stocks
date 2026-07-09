@@ -599,7 +599,7 @@ const PortfolioManagementPanel: React.FC = () => {
           columns={columns}
           dataSource={list}
           pagination={{ pageSize: 10, showSizeChanger: false }}
-          scroll={{ x: 1500 }}
+          scroll={{ x: 'max-content' }}
           locale={{
             emptyText: (
               <Empty

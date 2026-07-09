@@ -1505,7 +1505,7 @@ const DataUpdateStatus: React.FC = () => {
           size="small"
           pagination={false}
           loading={loading.health}
-          scroll={{ x: 720 }}
+          scroll={{ x: 'max-content' }}
           locale={{ emptyText: <Empty description="暂无动态路由计划" /> }}
         />
 
@@ -1517,7 +1517,7 @@ const DataUpdateStatus: React.FC = () => {
           size="small"
           pagination={false}
           loading={loading.health}
-          scroll={{ x: 900 }}
+          scroll={{ x: 'max-content' }}
           locale={{ emptyText: <Empty description="暂无数据源健康记录" /> }}
         />
       </Card>
@@ -1712,7 +1712,7 @@ const DataUpdateStatus: React.FC = () => {
           size="small"
           loading={loading.quality}
           pagination={{ pageSize: 5, showSizeChanger: false }}
-          scroll={{ x: 900 }}
+          scroll={{ x: 'max-content' }}
           locale={{ emptyText: <Empty description="暂无数据质量画像" /> }}
         />
       </Card>

@@ -476,7 +476,7 @@ const WalkForwardTab: React.FC<WalkForwardTabProps> = ({ strategies }) => {
             loading={loading}
             pagination={{ pageSize: 10 }}
             size="small"
-            scroll={{ x: 1180 }}
+            scroll={{ x: 'max-content' }}
           />
         )}
       </Card>
@@ -616,7 +616,7 @@ const WalkForwardTab: React.FC<WalkForwardTabProps> = ({ strategies }) => {
             loading={windowsLoading}
             pagination={false}
             size="small"
-            scroll={{ x: 1280 }}
+            scroll={{ x: 'max-content' }}
           />
         </Card>
       )}

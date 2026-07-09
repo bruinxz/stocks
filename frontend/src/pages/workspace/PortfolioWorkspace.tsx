@@ -1045,7 +1045,7 @@ const PositionsTab: React.FC<PositionsTabProps> = ({ data, onChangeData, onAfter
           dataSource={positions}
           columns={columns as any}
           pagination={false}
-          scroll={{ x: 1800 }}
+          scroll={{ x: 'max-content' }}
         />
       )}
       {aiTarget && (
@@ -1721,7 +1721,7 @@ const TradesTab: React.FC<TradesTabProps> = ({ trades }) => {
         size="middle"
         dataSource={filtered}
         columns={columns as any}
-        scroll={{ x: 1250 }}
+        scroll={{ x: 'max-content' }}
         pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }}
         style={{ display: isMobile ? 'none' : undefined }}
       />
