@@ -14392,7 +14392,7 @@ a {
   margin-bottom: 8px;
 }
 
-@media (max-width: 767px) {
+@media (max-width: 768px) {
   .workflow-input-card .ant-card-extra {
     width: 100%;
   }
@@ -14552,7 +14552,7 @@ a {
   }
 }
 
-@media (max-width: 767px) {
+@media (max-width: 768px) {
   /* On mobile, KPI metrics inside `workspace-kpi-bar__metrics` (often a
    * <Space>) should wrap and stay readable; antd Space wrap=false by default
    * so we coerce wrapping at the container level. */
@@ -16948,7 +16948,7 @@ a {
 }
 
 /* mobile — hero 收紧 */
-@media (max-width: 767px) {
+@media (max-width: 768px) {
   .ws-hero {
     padding: 28px 22px;
     border-radius: 16px;
@@ -19525,7 +19525,7 @@ a {
   background: rgba(255, 255, 255, 0.14) !important;
 }
 
-@media (max-width: 767px) {
+@media (max-width: 768px) {
   .portfolio-hero-right {
     align-items: flex-start;
     width: 100%;
