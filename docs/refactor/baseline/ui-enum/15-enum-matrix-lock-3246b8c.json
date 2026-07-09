@@ -1,7 +1,7 @@
 {
   "task": "task-4-m3-15-enum-matrix-lock",
-  "sha_lock": "83aea69c44daaaa8e74613311f085d92fc23e27b",
-  "sha_lock_full_ref": "83aea69c docs(qa): PR-P1-2 R1/R2 hard-fail skip stub + Playwright + api-version baseline (#114)",
+  "sha_lock": "3246b8cf50eb7172a6bed6aa79801dcce3df2625",
+  "sha_lock_full_ref": "3246b8cf docs(qa): PR-M3-3 UI enum single-source-of-truth baseline + ADR-0011 + SOP v1.0 seal (#115)",
   "policy": {
     "authority_model": "Backend enum single-source-of-truth · Frontend consume 只读 · zero cross-layer duplication",
     "duplication_elim_rule": "同 value set (case-sensitive) 且同域语义 → 单一 authority 保留 · 其余 alias import · 域独立即使 shape 同也 retain",
@@ -61,8 +61,8 @@
       "id": 4,
       "enum_name": "QuantWorkflowStatus",
       "path_anchor": "Frontend Path AC",
-      "authority_file": "backend/src/models/quant_workflow.py OR .ts",
-      "value_set": ["healthy", "degraded", "unhealthy"],
+      "authority_file": "backend/src/quant/workflow/QuantWorkflowReadinessService.ts:8",
+      "value_set": ["ready", "degraded", "blocked"],
       "authority_layer": "Backend",
       "decision": "AUTHORITY",
       "duplication_with": ["#10 EasyQuantHealthStatus (cross-domain shape 同 · 主 authority)"],
@@ -128,7 +128,7 @@
       "enum_name": "EasyQuantHealthStatus",
       "path_anchor": "Frontend Path AE",
       "authority_file": "backend/src/models/easy_quant.py OR .ts (alias)",
-      "value_set": ["healthy", "degraded", "unhealthy"],
+      "value_set": ["ready", "degraded", "blocked"],
       "authority_layer": "Backend",
       "decision": "ELIM",
       "duplication_with": ["#4 QuantWorkflowStatus (cross-domain shape 同 · 主 authority)"],
@@ -168,7 +168,7 @@
       "decision": "AUTHORITY",
       "duplication_with": ["#4 shape 同但语义 domain 独立 (automation 域内独立 authority)", "#12 domain-internal alias"],
       "consumer_scope": ["Frontend 只读 consume", "Backend #12 alias"],
-      "note": "与 #4 shape 相同但语义 domain 独立 · 保 domain 独立 authority · duplication elim 仅域内 (#12)"
+      "note": "与 #4 shape 相同但语义 domain 独立 · 保 domain 独立 authority · duplication elim 仅域内 (#12) · 注意: id=4 value_set 与 id=13 不再 shape-identical post-sync (id=4 = ready/degraded/blocked execution taxonomy · id=13 = healthy/degraded/unhealthy infra taxonomy) · 三-domain 三-face-embodiment (execution + infra + data) 3/3 完形 canonical retain (ADR §5.3 rule Orch v135 §二 SECOND ratify)"
     },
     {
       "id": 14,
@@ -205,7 +205,8 @@
     "ELIM_ids": [10, 12, 15]
   },
   "burndown_history": [
-    "83aea69c (PR #114 PR-P1-2 R1/R2 skip-stub + baseline · 本 baseline sha_lock 位)"
+    "83aea69c (PR #114 PR-P1-2 R1/R2 skip-stub + baseline · 原 baseline sha_lock 起点)",
+    "3246b8cf (Baseline-fix PR · id=4 QuantWorkflowStatus repo-truth sync healthy/degraded/unhealthy → ready/degraded/blocked · id=10 EasyQuantHealthStatus alias mirror sync · authority_file factual pin backend/src/quant/workflow/QuantWorkflowReadinessService.ts:8 · Orch v136 primary decide Q4.a=α+Q4.b=独立 PR+Q4.c=factual)"
   ],
   "reference_chain": [
     "Frontend Path ψ (US-045 health_class 4-enum 初列)",
@@ -216,7 +217,8 @@
     "Frontend Path AF (AutomationHealth 3-enum + apply_mode)",
     "Frontend Path AG msg=fcf3083e (backtestService.status 4-enum 承接第 15 项 · 15 项 matrix 完形触发)",
     "Task #4 M3 (5 大 UI 决色 enum 联合定终锁 M3 · 原范围 5 项 → 累积 15 项)",
-    "workspace v0.1 draft: `notes/task-4-m3-15-enum-matrix-lock-draft.md` (msg=59838b48 · Task #54 landed)"
+    "workspace v0.1 draft: `notes/task-4-m3-15-enum-matrix-lock-draft.md` (msg=59838b48 · Task #54 landed)",
+    "PR-M3-1 CREATE msg=5ea20139 PR #116 (Backend enum rewire · Path A shrunk 2 new + 1 modify · barrel + IIFE test id=4 xit + ADR §5 v1.1 Stage 1) · concurrent Baseline-fix PR trigger"
   ],
-  "unique_key_note": "Task #4 M3 15 项 UI 决色 enum 联合定终锁 baseline. Backend enum single-source-of-truth authority policy. Frontend consume 只读 · zero cross-layer duplication. duplication_elim_rule: 同 value set (case-sensitive) 且同域语义 → 单一 authority · 其余 alias import. 域独立即使 shape 同也 retain (#4 vs #13 pattern). ADR-0011 anchor + qadocs-ui-enum-lock-sop.md v0.1 seal. burndown_history 起点 `83aea69c` (PR #114 landing) · 后续 PR-M3-1/2/4 landing 累积 refresh."
+  "unique_key_note": "Task #4 M3 15 项 UI 决色 enum 联合定终锁 baseline. Backend enum single-source-of-truth authority policy. Frontend consume 只读 · zero cross-layer duplication. duplication_elim_rule: 同 value set (case-sensitive) 且同域语义 → 单一 authority · 其余 alias import. 域独立即使 shape 同也 retain (#4 vs #13 pattern). ADR-0011 anchor + qadocs-ui-enum-lock-sop.md v0.1 seal. burndown_history 起点 `83aea69c` (PR #114 landing) · post `3246b8cf` id=4/id=10 value_set repo-truth sync (Baseline-fix PR)."
 }
