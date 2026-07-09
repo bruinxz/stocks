@@ -99,7 +99,27 @@ cat docs/refactor/baseline/ui-enum/15-enum-matrix-lock-83aea69.json \
 - **v1.0 seal (本 PR-M3-3 landing)**: baseline JSON + ADR-0011 + 本 SOP formalize landing · sha_lock `83aea69c` · burndown_history 起点
 - **v1.1** (PR-M3-1 Backend rewire landing): burndown_history 追加 · ELIM #10 + #12 alias landed · Backend authority 12 项 verified
 - **v1.2** (PR-M3-2 Frontend legacy elim landing): burndown_history 追加 · ELIM #15 backtestService.ts DELETE landed · Frontend service 15 大 → 14 大
-- **v2.0** (PR-M3-4 lint hard-fail 收官): CI 5-gate wire · `test_ui_enum_lock_matrix.test.ts` + `test_no_backtest_service_regression.test.ts` hard-fail 生效 · zero enum drift regression 铁律
+- **v2.0** (PR-M3-4 lint hard-fail 收官 **LANDED @ #119 `93dee066` @ 2026-07-09T09:16:43Z**): CI enum-lint workflow wire · `backend/tests/enum/enum-matrix-lock.test.ts` **hardened 23 assertions** + `backend/tests/lint/no-backtest-service-regression.test.ts` **2 assertions** hard-fail 生效 · zero enum drift regression 铁律 · **escalation-over-invention 四段-lifecycle CLOSED** (discover #116 → escalate skip+reason → surface #118 → close #119 live-assert) · **pre-#119 skip-stub → post-#119 hard-fail live-assert 语义升级** (id=4 QuantWorkflowStatus value_set assertion from `xit()` skip to full live probe against post-#118 code-truth `["ready","degraded","blocked"]`)
+
+---
+
+## §四a · id=4 re-hydration precedent (v2.0 canonical addendum)
+
+Post-#119 `enum-matrix-lock.test.ts` re-hydrates the previously `xit()`-skipped id=4 value_set assertion via 5 live probes against baseline `3246b8cf`:
+
+| # | Assertion | Guards against |
+|---|-----------|----------------|
+| 1 | `baseline id=4 entry exists` | baseline schema regression (id-key deletion) |
+| 2 | `id=4 enum_name === QuantWorkflowStatus` | enum-name drift under authority rewire |
+| 3 | `id=4 value_set === ["ready","degraded","blocked"]` | baseline drift (Instance 1 反-fabrication canonical prevention) |
+| 4 | `id=4 authority_file pins QuantWorkflowReadinessService.ts:8` | authority-file relocation without baseline sync |
+| 5 | `id=4 decision === AUTHORITY` | classification drift under refactor |
+
+**id=13 domain-independence guard** (companion): id=13 `AutomationHealthChain.status` infra taxonomy `["healthy","degraded","unhealthy"]` MUST remain semantically disjoint from id=4 execution taxonomy — assertion `JSON.stringify(id13.value_set) !== JSON.stringify(id4.value_set)` explicitly prevents future "consolidation temptation" from collapsing the three-domain three-face-embodiment (execution + infra + data) canonical established under Orch v131.1 §一(3) + v135 §二.
+
+**id=10 mirror-invariant guard**: id=10 `EasyQuantHealthStatus` (alias) value_set MUST mirror id=4 exactly · `JSON.stringify(id10.value_set) === JSON.stringify(id4.value_set)` · guards against alias drift under future rename operations.
+
+This precedent codifies the pattern for future skip-stub → live-assert transitions: **surface via independent baseline-fix PR first (§3), then re-hydrate the live probe in the same PR that hardens the lint layer (§4)** — never mutate baseline in-place within the same commit that flips the `xit()` to a live `assert()`.
 
 ---
 
@@ -107,8 +127,9 @@ cat docs/refactor/baseline/ui-enum/15-enum-matrix-lock-83aea69.json \
 
 | test file | 目的 | policy |
 |---|---|---|
-| `backend/tests/quality/test_ui_enum_lock_matrix.test.ts` (PR-M3-4) | 15 项 enum value set drift lint | hard-fail |
-| `backend/tests/quality/test_no_backtest_service_regression.test.ts` (PR-M3-4) | backtestService.ts 归档后 regression 保护 | hard-fail |
+| `backend/tests/enum/enum-matrix-lock.test.ts` (PR-M3-4 #119 LANDED) | 15 项 enum + decision_summary + id=4/10/13 live-assert + full-matrix shape (23 assertions) | **hard-fail LIVE** |
+| `backend/tests/lint/no-backtest-service-regression.test.ts` (PR-M3-4 #119 LANDED) | frontend/src legacy `backtestService` consumer cap (2 assertions · `<= 1` pre-guard) | **hard-fail LIVE** (residual-cap · PR-M3-2 tighten `=== 0`) |
+| `.github/workflows/enum-lint.yml` (PR-M3-4 #119 LANDED) | 二 required CI jobs · paths-filter scoped trigger · Node 20 + 10min timeout | **CI required** |
 | `backend/tests/quality/test_l2_verb_hard_fail.test.ts` (PR #111 landed) | L2 verb hard-fail | hard-fail |
 | `backend/tests/quality/test_api_version_r1_hard_fail.test.ts` (PR #114 landed) | R1 /api/v1/* prefix hard-fail | skip-stub (Backend mount 前置) |
 | `backend/tests/quality/test_api_version_r2_hard_fail.test.ts` (PR #114 landed) | R2 X-API-Version:1 header hard-fail | skip-stub (Backend mount 前置) |
@@ -116,10 +137,12 @@ cat docs/refactor/baseline/ui-enum/15-enum-matrix-lock-83aea69.json \
 
 ---
 
-## §六 · 铁律锚 (v1.0 seal)
+## §六 · 铁律锚 (v2.0 seal)
 
 - 教训 #16 dod v4.3 §16 (package.json delta lock · 本 PR zero package.json 触碰 · lesson-16 v1.0 seal 承接第 13 例 apply candidate)
-- **教训 #17 v1.1 §17** (跨 agent shared repo amend pre-flight SOP · `docs/refactor/dod-checklist.md` §17 302 line canonical · 17 项 铁律 100% 生效 · PR-M3-3 self-apply 第 20 例 candidate)
+- **教训 #17 v1.1 §17** (跨 agent shared repo amend pre-flight SOP · `docs/refactor/dod-checklist.md` §17 302 line canonical · 17 项 铁律 100% 生效)
+- **escalation-over-invention 铁律** (canonical formalize @ `docs/refactor/quality/escalation-over-invention-canonical.md` post-M3 series 收官) — 四段 discover → escalate → surface → close · PR #116/#118/#119 canonical exemplar in-repo
+- **反-fabrication canonical 二例 formation LOCK** (canonical formalize @ `docs/refactor/quality/anti-fabrication-canonical.md` post-M3 series 收官) — Instance 1 #118 baseline drift truth-sync + Instance 2 #119 pre-guard honest-observe
 - 教训 #12 v1.0 (contract vs code truth 五源 zero drift verify SOP)
 - 教训 #14 (workspace preview → landing paste-in 范式 · Task #54 workspace → 本 PR landing)
 - Independence v1.1 §5.4 (100% 原创 · zero 参考项目 fixture)
@@ -127,4 +150,4 @@ cat docs/refactor/baseline/ui-enum/15-enum-matrix-lock-83aea69.json \
 
 ---
 
-**v1.0 seal landing candidate** · UI enum single-source-of-truth authority lock canonical 4-step verify · 强制适用所有 15 项 UI 决色 enum · exempt 通道窄门开放 (owner + Orch 双签授权) · PR-M3-4 lint 层 hard-fail 收官触发生效
+**v2.0 seal LANDED** (post-#119 `93dee066`) · UI enum single-source-of-truth authority lock canonical · 强制适用所有 15 项 UI 决色 enum · exempt 通道窄门开放 (owner + Orch 双签授权) · **PR-M3-4 lint 层 hard-fail 收官 REALIZED · escalation-over-invention 四段-lifecycle CLOSED · 25 total lint-layer assertions LIVE**

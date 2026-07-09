@@ -144,17 +144,61 @@ M2 后进入 M3 阶段 · Frontend 15 大 service audit 完形收敛 · 累积 *
 - landing scope: `docs/refactor/baseline/ui-enum/**` + `docs/refactor/adr/**` + `docs/refactor/quality/**`
 - reviewer: QADocs 主签 · Backend + Frontend + Cleanup + Orch + Research §S3 五路副签
 
-### PR-M3-4 · lint 层 hard-fail (QADocs 主签 · SLA T+9d)
+### PR-M3-4 · lint 层 hard-fail (QADocs 主签 · **LANDED @ #119 · `93dee066` @ 2026-07-09T09:16:43Z**)
 
-- (a) `backend/tests/quality/test_ui_enum_lock_matrix.test.ts` new · walk 15 项 enum 定义 file · assert value set == baseline JSON entries · hard-fail on drift
-- (b) `backend/tests/quality/test_no_backtest_service_regression.test.ts` new · grep `frontend/src/services/backtestService.ts` 存在性 == false · hard-fail on reappearance
-- (c) `.github/workflows/*.yml` wire · CI 4-gate 追加 UI enum lint
-- landing scope: `backend/tests/quality/test_ui_enum_*.test.ts` + `.github/workflows/**`
-- reviewer: QADocs 主签 · Strategy 副签 (test 门禁 authority)
+- (a) `backend/tests/enum/enum-matrix-lock.test.ts` **hardened** · 15 entries + decision_summary integrity + id=4 live-assert re-hydration (post-#118 baseline sync) + id=10 mirror-invariant + id=13 domain-independence guard + sha_lock filename-content self-consistency + full-matrix value_set/authority_file shape iterate — **23 assertions total** (pre-#119 baseline 2 → post-#119 23)
+- (b) `backend/tests/lint/no-backtest-service-regression.test.ts` new · walk `frontend/src/**/*.{ts,tsx}` grep `backtestService` import · assert `offenders.length <= KNOWN_RESIDUAL` (currently `=1` · post-PR-M3-2 tighten `=== 0`) — **2 assertions** (files-found + residual-cap)
+- (c) `.github/workflows/enum-lint.yml` new · 二 required jobs (`enum-matrix-lock` + `no-backtest-service-regression`) · `dorny/paths-filter@v3` scoped trigger (backend/tests/enum + backend/tests/lint + backend/src/quant/workflow + backend/src/models + frontend/src + baseline JSON + workflow self) · Node 20 + 10min timeout + concurrency cancel-in-progress
+- landing scope: `backend/tests/enum/enum-matrix-lock.test.ts` (modify · +21 assertions) + `backend/tests/lint/no-backtest-service-regression.test.ts` (new · 101 LOC) + `.github/workflows/enum-lint.yml` (new · 96 LOC)
+- reviewer LANDED: QADocs 主签 · Backend + Frontend + DataPipeline + Cleanup + Strategy + Research 六方副签 UNCONDITIONAL GREEN · owner @li-yiming 亲手 authority-native MERGED (msg=d0d11677 自签 ≥4 sign + CI GREEN 铁 · 6/6 大幅-super-SATISFY REALIZED)
 
 ---
 
-## §6 · SLA + Landing Order
+## §6 · Post-M3-4 lint-hardening + escalation-over-invention 四段-lifecycle CLOSED
+
+Post-#119 lint layer 收官 REALIZED. The four-段 discover→escalate→surface→close lifecycle canonical is now fully embodied in-repo across PR #116 → #118 → #119:
+
+| 段 | Stage | PR | SHA | Action |
+|----|-------|----|----|--------|
+| §1 | **Discover** | #116 PR-M3-1 | `036294a7` | `xit()` skip on `QuantWorkflowStatus` value_set assertion — baseline `83aea69c` id=4 declared `healthy/degraded/unhealthy` while backend authority pinned `ready/degraded/blocked` (drift discovered) |
+| §2 | **Escalate** | #116 same | `036294a7` | Skip carries `reason` string pointing to Baseline-fix independent PR — no silent skip · no in-place value mutation · escalation-over-invention: escalated to independent PR rather than back-patching baseline in the same commit |
+| §3 | **Surface** | #118 PR-M3-1-baseline-fix | `feafa6e4` | Baseline-fix independent PR authoritatively syncs baseline id=4/id=10 to repo-truth · sha_lock renames `83aea69c` → `3246b8cf` post-fix · authority_file explicit-pin `backend/src/quant/workflow/QuantWorkflowReadinessService.ts:8` |
+| §4 | **Close** | #119 PR-M3-4 | `93dee066` | id=4 live-assert re-hydrated in `enum-matrix-lock.test.ts` (post-#118 baseline canonical value_set) · 21-additional-assertion full-matrix hardening · CI enum-lint 二 required jobs · lint-layer 收官 |
+
+**23-assertion inventory** (post-#119 `enum-matrix-lock.test.ts`):
+1. baseline contains exactly 15 canonical entries
+2. each entry declares one of {AUTHORITY, ELIM, RETAIN}
+3. QuantWorkflowStatus authority barrel exports 3 canonical literals (TS compile-time probe)
+4. baseline id=4 entry exists
+5. id=4 enum_name === QuantWorkflowStatus
+6. id=4 value_set === ["ready","degraded","blocked"] (post-#118 code-truth)
+7. id=4 authority_file pins QuantWorkflowReadinessService.ts:8
+8. id=4 decision === AUTHORITY
+9. baseline id=10 entry exists
+10. id=10 value_set mirrors id=4 (alias-consistency canonical)
+11. id=10 decision === ELIM (aliased to id=4)
+12. baseline id=13 entry exists
+13. id=13 value_set === ["healthy","degraded","unhealthy"] (infra taxonomy)
+14. id=13 value_set !== id=4 value_set (domain-independence guard)
+15. id=13 decision === AUTHORITY (domain-local authority)
+16. baseline sha_lock first 7 chars match filename slug (self-consistency guard)
+17. decision_summary present
+18. decision_summary.RETAIN_count matches actual (RETAIN=10)
+19. decision_summary.AUTHORITY_count matches actual (AUTHORITY=2)
+20. decision_summary.ELIM_count matches actual (ELIM=3)
+21. decision_summary.total === 15
+22. every entry has non-empty value_set
+23. every entry has non-empty authority_file
+
+Plus `no-backtest-service-regression.test.ts` **2 additional assertions** = **25 total lint-layer assertions** (23 + 2) across the two required CI jobs.
+
+**反-fabrication canonical 二例 formation LOCK** (embodied in-repo):
+- **Instance 1** — PR #118 baseline drift truth-sync: baseline `83aea69c` id=4 declared drift value_set → truth-sync to `3246b8cf` matching backend authority pin (rather than "invent" agreement by silently mutating in-place)
+- **Instance 2** — PR #119 pre-guard `KNOWN_RESIDUAL=1` honest-observe: `no-backtest-service-regression.test.ts` documents the current 1 legacy consumer (`BacktestResults.tsx:23`) rather than silently asserting `=== 0` and hiding the residual — awaits PR-M3-2 Frontend 主签 tighten
+
+---
+
+## §7 · SLA + Landing Order
 
 - **workspace v0.1 draft**: `notes/task-4-m3-15-enum-matrix-lock-draft.md` (Task #54 landed · msg=59838b48)
 - **PR-M3-3 (本 PR) landing SLA**: T+5d (2026-07-14 24:00 CST) · **pre-grant #13 二十连胜 8-27 first-line first-choice candidate**
