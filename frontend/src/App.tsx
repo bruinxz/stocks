@@ -154,7 +154,7 @@ const routeSelectionAliases: Array<[RegExp, string]> = [
   [/^\/agent-tail-alpha(\/.*)?$/, '/workspace/portfolio'],
   [/^\/strategy-experiment-lab(\/.*)?$/, '/workspace/lab'],
   [/^\/strategy(\/.*)?$/, '/workspace/lab'],
-  [/^\/risk-alerts(\/.*)?$/, '/portfolio'],
+  [/^\/risk-alerts(\/.*)?$/, '/workspace/portfolio'],
   [/^\/today(\/.*)?$/, '/home'],
   [/^\/dashboard(\/.*)?$/, '/home'],
   [/^\/portfolio(\/.*)?$/, '/workspace/portfolio'],
@@ -578,7 +578,7 @@ const AppContent: React.FC = () => {
                   Listed in PRD US-001 acceptance criteria. */}
                 <Route path="/today" element={<Navigate to="/home" replace />} />
                 <Route path="/dashboard" element={<Navigate to="/home" replace />} />
-                <Route path="/risk-alerts" element={<Navigate to="/portfolio" replace />} />
+                <Route path="/risk-alerts" element={<Navigate to="/workspace/portfolio" replace />} />
                 <Route
                   path="/strategy-experiment-lab"
                   element={<Navigate to="/workspace/lab" replace />}
