@@ -183,6 +183,16 @@ app.use(apiRetryAfterMiddleware());
 import { apiServerTimingMiddleware } from './middlewares/apiServerTiming';
 app.use(apiServerTimingMiddleware());
 
+// ADR-0010 §4.8 · W3C Server-Timing Level 1 §3 "Timing-Allow-Origin" (CR 25-May-2022) cross-origin
+// observation advisory header. Reads optional `api_timing_allow_origin` block from `backend/package.json`;
+// missing block or empty (allow_all=false + empty allowlist) → zero-emit (default OFF · same-origin only).
+// allow_all=true → emit `Timing-Allow-Origin: *`. allowlist exact-match against request Origin → echo.
+// Existing Timing-Allow-Origin set by route handler is preserved (route authority wins). Advisory-only ·
+// composes with §4.7 apiServerTiming (§4.7 emits Server-Timing · §4.8 grants cross-origin observation).
+// MUST come after §4.7 to be meaningful. Enforcement HOLD v2-dual-mount 契约 preserve (advisory · zero-decide-statusCode).
+import { apiTimingAllowOriginMiddleware } from './middlewares/apiTimingAllowOrigin';
+app.use(apiTimingAllowOriginMiddleware());
+
 // US-097 [OPS-008] 日志统一字段 — 给每个 request 分配 / 透传 trace_id 并绑到 AsyncLocalStorage,
 // 任何此 request 链路内 logger.info/warn/error 自动携带 `trace_id=<x> module=http` 后缀.
 // 必须在 httpMetricsMiddleware 之前 (metric 埋点本身的 log 也带 trace_id) 但在 cors/helmet 之后
