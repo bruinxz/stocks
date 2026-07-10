@@ -1,4 +1,4 @@
-import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
+import axios from 'axios';
 
 // 如果没有环境变量，则根据当前页面的 hostname 动态推断后端地址（解决局域网访问时 localhost 连接失败的问题）
 const defaultApiUrl =
@@ -19,21 +19,6 @@ const api = axios.create({
   },
 });
 
-// 是否正在刷新的标记
-let isRefreshing = false;
-// Batch AK (2026-06-21, hotfix): 防止多个并发 401 reject 后全部都触发 location.href
-// 跳转 → 浏览器一直在加载状态 → 看起来"页面一直闪动"。
-// module-level singleton, 只在 unload/manual reset 时清。
-let sessionRedirectingToLogin = false;
-// Batch R (2026-06-17, P1-1 fix): 重试队列每项含 resolve + reject 两个 callback,
-// 让 refresh 失败时能 reject 所有 queued promise (旧实现 requests=[]; 清空数组让
-// queued promise 永远 pending, 配合 SPA 不跳页时 memory leak + loading 圈卡死).
-type QueuedRequest = {
-  resolve: (token: string) => void;
-  reject: (reason: any) => void;
-};
-let requests: QueuedRequest[] = [];
-
 // 请求拦截器
 api.interceptors.request.use(
   config => {
@@ -51,102 +36,7 @@ api.interceptors.request.use(
 // 响应拦截器
 api.interceptors.response.use(
   response => response,
-  async (error: AxiosError) => {
-    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
-
-    // 如果是 401 且不是刷新 token 和 登录的接口，说明 AccessToken 可能过期了
-    if (
-      error.response?.status === 401 &&
-      !originalRequest.url?.includes('/auth/refresh') &&
-      !originalRequest.url?.includes('/auth/login')
-    ) {
-      if (!originalRequest._retry) {
-        originalRequest._retry = true;
-
-        if (!isRefreshing) {
-          isRefreshing = true;
-          try {
-            // 调用刷新接口 (原代码写的 /auth/refresh-token，但路由定义是 /auth/refresh)
-            // 请求中会自动带上包含 refreshToken 的 Cookie
-            const res = await axios.post(
-              `${API_BASE_URL}/auth/refresh`,
-              {},
-              { withCredentials: true }
-            );
-            const { accessToken } = res.data.data;
-
-            // 存入新的 Token
-            localStorage.setItem('token', accessToken);
-
-            // 刷新成功，更新原请求的 token
-            originalRequest.headers.Authorization = `Bearer ${accessToken}`;
-
-            // 重新发送队列里的所有请求
-            requests.forEach(cb => cb.resolve(accessToken));
-            requests = [];
-
-            return api(originalRequest);
-          } catch (refreshError) {
-            // 刷新 Token 也失败了（说明 RefreshToken 彻底过期），只能清空并跳转
-            // Batch R (2026-06-17, P1-1 fix): 显式 reject 所有 queued promise,
-            // 旧实现 requests=[] 清空让 queued promise 永远 pending → memory leak +
-            // SPA 不跳页时 loading 圈永远卡住. 现在 caller 的 await 会进 catch 跳出.
-            requests.forEach(cb =>
-              cb.reject(
-                refreshError instanceof Error ? refreshError : new Error(String(refreshError))
-              )
-            );
-            requests = [];
-            // Batch U (2026-06-17, front-3 fix): 中央化清扫 user-scoped localStorage,
-            // 不再散弹式 removeItem. 避免漏清 aiAdvisor_*/user/stocks_pinned_symbols
-            // 等 key 让下次登录用户读到旧 user 数据. 改用 utils/sessionCleanup helper.
-            try {
-              // eslint-disable-next-line @typescript-eslint/no-var-requires
-              const { clearUserScopedStorage } = require('../utils/sessionCleanup');
-              clearUserScopedStorage();
-            } catch {
-              // fallback 旧逻辑兜底 (理论上 require 不会失败)
-              localStorage.removeItem('token');
-              localStorage.removeItem('pt_selected_portfolio_id');
-              localStorage.removeItem('refreshToken');
-              localStorage.removeItem('username');
-            }
-            // Batch AK (2026-06-21, hotfix): 死循环防线 —
-            // (1) 已经在 /login 时不再 location.href 跳 (浏览器会再次 reload, 配合并发 401
-            //     queued reject 让页面看起来一直闪动); 改用 SPA 内部 noop, 让 caller 的
-            //     Promise.reject 自然冒泡到 UI 报错即可
-            // (2) 用一个 module-level guard 确保 location 跳转只发一次, 防多个并发 401
-            //     全部 reject 后一起触发跳转 → 浏览器加载 → 又跳 → 再加载 → 闪
-            if (typeof window !== 'undefined') {
-              const alreadyOnLogin = window.location.pathname === '/login';
-              if (!alreadyOnLogin && !sessionRedirectingToLogin) {
-                sessionRedirectingToLogin = true;
-                // 后端登出会清除cookie，或者如果刷新失败，需要重新登录获取新的cookie
-                window.location.href = '/login';
-              }
-            }
-            return Promise.reject(refreshError);
-          } finally {
-            isRefreshing = false;
-          }
-        } else {
-          // 正在刷新中，把当前的请求存入队列等待
-          return new Promise((resolve, reject) => {
-            requests.push({
-              resolve: (token: string) => {
-                originalRequest.headers.Authorization = `Bearer ${token}`;
-                resolve(api(originalRequest));
-              },
-              reject: (err: any) => reject(err),
-            });
-          });
-        }
-      }
-    }
-
-    // 其他错误直接抛出
-    return Promise.reject(error);
-  }
+  error => Promise.reject(error)
 );
 
 export default api;
