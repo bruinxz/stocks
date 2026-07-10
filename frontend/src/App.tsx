@@ -34,15 +34,19 @@ import { PortfolioProvider } from './contexts/PortfolioContext';
 import GlobalPortfolioSelector from './components/layout/GlobalPortfolioSelector';
 import AlertsBell from './components/layout/AlertsBell';
 import CriticalAlertModal from './components/layout/CriticalAlertModal';
+import { catDeskRoute } from './pages/catdesk/router';
+import {
+  ProtectedRoute,
+  resolveEffectiveViewer,
+  resolveLoginBypass,
+} from './auth/authBypassPolicy';
 
 // Phase 4 (2026-06-27) 清理: 删除 33 个 legacy pages (~ 4.1 万行)
-// 仅保留 non-workspace 页面: Login / StockDetail (/stock/:symbol) / HealthMonitor
+// 仅保留 non-workspace 页面: StockDetail (/stock/:symbol) / HealthMonitor
 // (DataWorkspace 内嵌). BacktestResults 仍保留
 // 用于 LabStrategyDetail 的 /legacy/backtest/:id deep link.
-const Login = lazy(() => import('./pages/Login'));
 const BacktestResults = lazy(() => import('./components/backtest/BacktestResults'));
 const StockDetail = lazy(() => import('./pages/StockDetail'));
-
 
 // Unified workspace shells (US-001/US-002 + Easy mode).
 const EasyQuantWorkspace = lazy(() => import('./pages/workspace/EasyQuantWorkspace'));
@@ -63,13 +67,6 @@ const DocsWorkspace = lazy(() => import('./pages/workspace/DocsWorkspace'));
 import type { MenuProps } from 'antd';
 
 const { Header, Content, Sider } = Layout;
-
-const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
-  const token = localStorage.getItem('token');
-  const location = useLocation();
-  if (!token) return <Navigate to="/login" state={{ from: location }} replace />;
-  return children;
-};
 
 /**
  * Phase 11 — Route-level page transition.
@@ -233,8 +230,8 @@ const AppContent: React.FC = () => {
     fetchProfile();
   }, [token, user, dispatch]);
 
-  const displayUsername =
-    user?.nickname || user?.username || localStorage.getItem('username') || 'Admin';
+  const effectiveViewer = resolveEffectiveViewer(user, token, localStorage.getItem('username'));
+  const { displayUsername, role: effectiveRole } = effectiveViewer;
   const avatarSrc = user?.avatar_url
     ? user.avatar_url.startsWith('http')
       ? user.avatar_url
@@ -242,12 +239,9 @@ const AppContent: React.FC = () => {
     : undefined;
 
   const handleLogout = () => {
-    // Batch U (2026-06-17, front-3 fix): 中央化清扫, 不再散弹式 removeItem.
-    // 之前漏清 aiAdvisor_* / pt_selected_portfolio_id / user / stocks_pinned_symbols,
-    // 共用浏览器场景下次登录用户读到旧 user 的 AI 研究 / 选盘 / 收藏.
     clearUserScopedStorage();
     dispatch(logout());
-    navigate('/login');
+    navigate('/catdesk');
   };
 
   // Phase 7 (2026-06-28) — 主菜单"统一一套".
@@ -261,7 +255,7 @@ const AppContent: React.FC = () => {
   // /workspace/today 不在主菜单 — /home 是新手的"今日入口". today 仍是活页面:
   //   经 首页"风控中心"链接 (?tab=risk_center) / AlertsBell 告警点击 / deep link 进入.
   //   承载 市场研判·风控中心·今日交易计划 等 (data.earnings_surprise / dragon_head / overnight_foreign).
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = effectiveRole === 'admin';
   const mainMenuItems: MenuProps['items'] = useMemo(() => {
     // Phase 21 (2026-07-04) — 全局导航分组.
     // 用户原话: "如果一个页面耦合的子 Tab 太多, 同时这个功能比较重要, 你可以单独抽取出来,
@@ -354,11 +348,20 @@ const AppContent: React.FC = () => {
     ],
   };
 
-  if (location.pathname === '/login') {
+  const loginBypassDestination = resolveLoginBypass(location.pathname);
+  if (loginBypassDestination) {
+    return <Navigate to={loginBypassDestination} replace />;
+  }
+
+  // catalyst-900 is a dedicated single-page workspace and does not inherit the
+  // legacy application shell. Keep its nested disclaimer route inside the same
+  // visual system while allowing direct, unauthenticated entry.
+  if (location.pathname === '/catdesk' || location.pathname.startsWith('/catdesk/')) {
     return (
       <Suspense fallback={routeFallback}>
-        <Routes>
-          <Route path="/login" element={<Login />} />
+        <Routes location={location}>
+          {catDeskRoute}
+          <Route path="*" element={<Navigate to="/catdesk" replace />} />
         </Routes>
       </Suspense>
     );
@@ -417,34 +420,27 @@ const AppContent: React.FC = () => {
             <span>{currentSection}</span>
             <strong>{currentPageTitle}</strong>
           </div>
-          {token && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-              {/* 2026-06-17 全局选盘下拉. 任何 workspace 通过 usePortfolio() 拿到 selected */}
-              <GlobalPortfolioSelector />
-              {/* US-070 [FE-031] 顶 nav bar 全局告警铃铛 — 60s 轮询未读告警数,
-                  红 Badge ≥10, 点击跳风控中心. */}
-              <AlertsBell />
-              {/* US-074 [FE-035] critical 告警强制弹窗 — 不渲染任何可见 UI 直到
-                  实时推送命中 isCriticalAlert. 全局 mount 在 token 守护下保证
-                  任何 workspace 都能弹. */}
-              <CriticalAlertModal />
-              <Dropdown menu={userMenuProps} placement="bottomRight" trigger={['click']}>
-                <div className="header-user-dropdown">
-                  <Avatar
-                    size={36}
-                    style={{ backgroundColor: '#0a0a0a', fontSize: 14 }}
-                    icon={<UserOutlined />}
-                    src={avatarSrc}
-                  />
-                  <span className="header-user-copy">
-                    <strong>{displayUsername}</strong>
-                    <em>{user?.role === 'admin' ? '管理员' : '已登录'}</em>
-                  </span>
-                  <DownOutlined className="header-user-caret" />
-                </div>
-              </Dropdown>
-            </div>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            {/* Anonymous sessions run as the local default administrator. */}
+            <GlobalPortfolioSelector />
+            <AlertsBell />
+            <CriticalAlertModal />
+            <Dropdown menu={userMenuProps} placement="bottomRight" trigger={['click']}>
+              <div className="header-user-dropdown">
+                <Avatar
+                  size={36}
+                  style={{ backgroundColor: '#0a0a0a', fontSize: 14 }}
+                  icon={<UserOutlined />}
+                  src={avatarSrc}
+                />
+                <span className="header-user-copy">
+                  <strong>{displayUsername}</strong>
+                  <em>{isAdmin ? '管理员' : '已登录'}</em>
+                </span>
+                <DownOutlined className="header-user-caret" />
+              </div>
+            </Dropdown>
+          </div>
         </Header>
         <Content className="modern-layout-content">
           <Suspense fallback={routeFallback}>
@@ -553,7 +549,10 @@ const AppContent: React.FC = () => {
                   Listed in PRD US-001 acceptance criteria. */}
                 <Route path="/today" element={<Navigate to="/catdesk" replace />} />
                 <Route path="/dashboard" element={<Navigate to="/catdesk" replace />} />
-                <Route path="/risk-alerts" element={<Navigate to="/workspace/portfolio" replace />} />
+                <Route
+                  path="/risk-alerts"
+                  element={<Navigate to="/workspace/portfolio" replace />}
+                />
                 <Route
                   path="/strategy-experiment-lab"
                   element={<Navigate to="/workspace/lab" replace />}
