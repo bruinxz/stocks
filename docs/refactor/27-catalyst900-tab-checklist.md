@@ -35,22 +35,23 @@
 - [ ] Frontend route/interceptor + Backend middleware + QADocs #149-#152 同批落地或按依赖安全顺序落地
 - [ ] source grep、实现说明或文档引用均不能替代 executable evidence；任何一项缺失即 BLOCK
 
-### 全局字段字典 (v0.2 · 与 Strategy γ scoring v0.2 + AI-γ v0.2 对齐)
+### 全局字段字典 (v0.3 · 与 Strategy D1 `contracts/scoring.md` + AI D2 `contracts/recommendation.md` 对齐)
 
 | 字段 | 语义 | 数据形态 | 契约锚 |
 |------|------|----------|--------|
-| **Score** | 综合分 | 0-100 数值 · scoring_id (UUIDv4) + snapshot_hash (SHA-256 JCS RFC 8785) | Strategy v0.2 §2.1 |
-| **Score.band** | 评级 | 5档: A≥85 / B 70-84.9 / C 55-69.9 / D 40-54.9 / F<40 · 双粒度 (字母+数字) | Orch v303 LOCK 5 |
-| **6-dim** | 六维打分 | 质量/成长/估值/护城河/趋势/风险 · 各 0-100 | Strategy v0.2 §3.1-§3.6 |
-| **Conviction** | 置信度 | final = clamp(base + Σ adjustments[].delta, 0, 100) · HIGH≥75 / MED 50-74.9 / LOW<50 | Orch v303 LOCK 1+2 |
-| **Conviction.adjustments** | 调整项 | Adjustment[] · len∈[0,5] · delta∈[-20,+20] · Σ∈[-20,+20] · reason≤200 · kind_ref? · source_ref? | Strategy v0.2 §4.1 |
-| **RiskGate** | 风控闸 | 22-trigger (9 US + 3 A股 + 5 JP + 5 KR) · GREEN=通过 / YELLOW=warn(-5) / RED=block(-10) | Orch v303 LOCK 3 + v317 Ruling #8 |
+| **Score** | 综合分 | 0-100 数值 · scoring_id (UUIDv4) + snapshot_hash (SHA-256 JCS RFC 8785) + aggregate `rating` | Strategy v0.3 §2.1-§2.2 |
+| **Score.rating** | 综合评级 | 5档: A≥85 / B 70-84.9 / C 55-69.9 / D 40-54.9 / F<40 · aggregate only | Strategy v0.3 §2.2 · LOCK 5 |
+| **Dimension.band** | 维度评级 | 6-dim 每一维各自的 A/B/C/D/F · 与 aggregate `Score.rating` 并存 | Strategy v0.3 §2.2 |
+| **6-dim** | 六维打分 | 质量/成长/估值/护城河/趋势/风险 · 各 0-100 + per-dimension `band` | Strategy v0.3 §3.1-§3.6 |
+| **Conviction** | 置信度 | final = clamp(base + Σ adjustments[].delta, 0, 100) · HIGH≥75 / MED 50-74.9 / LOW<50 | Strategy v0.3 §4 |
+| **Conviction.adjustments** | 调整项 | Adjustment[] · len∈[0,5] · delta∈[-20,+20] · Σ∈[-20,+20] · reason≤200 · kind_ref? · source_ref? | Strategy v0.3 §4 |
+| **RiskGate** | 风控闸 | 22-trigger (9 US + 3 A股 + 5 JP + 5 KR) · gate=GREEN/YELLOW/RED · trigger severity=info/warn/block | Strategy v0.3 §5.1-§5.3 |
 | **EntryPlan** | 入场计划 | `entry: PriceBand` + `stop: Price` + `targets: Price[]` + `time_horizon` + `invalidation` + numeric `conviction_ref` + `score_ref` | Strategy v0.3 §6 |
 | **EntryPlan.size_hint** | 仓位建议 | `{tier: SizeHintTier, pct: number∈[0,5], disclaimer_key: 'size_hint_advisory', rationale}` | Orch v303 LOCK 9 + Strategy v0.3 §6.3 |
 | **PriceBand / Price** | 带币种价格 | `PriceBand {low, high, currency}` · `Price {value, currency}` · currency∈{USD,CNY,HKD,JPY,KRW} | Strategy v0.3 §6.1 |
 | **SizeHintTier** | 仓位档 | `'TIER_5'│'TIER_3'│'TIER_2'│'TIER_1'│'SKIP'` | DP 180 v0.2.1 tier correction |
 | **CatalystKind** | 催化类型 | 9-enum: earnings/upgrade_downgrade/ma_activity/sector_move/regulator/geo_macro/product/leadership/unclassified | Orch v303 LOCK 6 |
-| **rating_band** | 评级信封 | Score.band 的 envelope mirror · CandidateListEntry 级 | AI-γ v0.2 §4 |
+| **rating_band** | 评级信封 | `CandidateListEntry.rating_band = recommendation.score.rating` 只读镜像 · 不得回指 aggregate `score.band` | AI-γ v0.3 §4 / invariant #11 |
 | **DataSourceBadge** | 数据源 | free-source: Alpha Vantage / Baostock / Yahoo Finance / EDINET / DART | msg=4f6d2466 |
 
 ### 全局 WAI-ARIA 验收
@@ -88,7 +89,7 @@
 ### 表格字段 (per γ-1 MorningBriefTable 8 列)
 - [ ] symbol — A 股代码 · 6 位 (`/^\d{6}$/`)
 - [ ] name — 中文名 · ≤20 字符
-- [ ] score — 0-100 + Band 5-色 (ScoreCell: A=green/B=blue/C=yellow/D=orange/F=red)
+- [ ] score — 0-100 + aggregate Rating 5-色 (A=green/B=blue/C=yellow/D=orange/F=red)
 - [ ] catalystSource — 美股 ticker (`/^[A-Z]{1,5}$/`)
 - [ ] catalystKind — 9-枚举 chip (per Orch v303 LOCK 6)
 - [ ] conviction — 3-色 pill (ConvictionPill: HIGH=green/MED=yellow/LOW=gray)
@@ -127,7 +128,7 @@
 
 ### KPI 条
 - [ ] 池内标的总数
-- [ ] Score ≥80 (Band A+B) 数量
+- [ ] Score ≥80 (aggregate Rating A+B) 数量
 - [ ] 中位数 Score
 - [ ] 数据锚时
 
@@ -138,7 +139,7 @@
 ### 表格字段
 - [ ] 序号 · Ticker · 中文名 · Sector
 - [ ] 质量 (0-100) · 成长 (0-100) · 估值 (0-100) · 护城河 (0-100) · 趋势 (0-100) · 风险 (0-100)
-- [ ] 综合 Score + Band 5-色
+- [ ] 综合 Score + aggregate Rating 5-色
 - [ ] Conviction (3-色 pill + final 数值)
 - [ ] RiskGate (3-色 chip + trigger count)
 
@@ -186,7 +187,7 @@
 
 ### 表格字段
 - [ ] 序号 · 市场 (JP/KR) · Ticker · 名称
-- [ ] Sector · Score + Band · Conviction · RiskGate
+- [ ] Sector · Score + aggregate Rating · Conviction · RiskGate
 - [ ] 汇率敏感度 (0-100) · 涨跌幅 (当日/月/年)
 - [ ] `score` 与 `risk_gate` 键必须存在且允许 `null`；`risk_triggers` 键必须存在且为数组
 
@@ -318,7 +319,7 @@
 
 ### 表格字段
 - [ ] 序号 · 日期 · 覆盖 tab 数
-- [ ] rating_band (envelope mirror per AI-γ v0.2 §4)
+- [ ] rating_band (`recommendation.score.rating` envelope mirror per AI-γ v0.3 §4)
 - [ ] 高 Conviction 标的数
 - [ ] 当日胜负 (T+1 验证)
 - [ ] 摘要 (前 60 字符)
@@ -337,7 +338,7 @@
 
 ---
 
-## 跨-tab 一致性 checklist (verification protocol · v0.2)
+## 跨-tab 一致性 checklist (verification protocol · v0.3)
 
 ### 组件层 (per γ-2 msg=de72dbde shared primitive)
 - [ ] **useAbortableRequest**: 7-tab 使用同一 hook · 每次 fetch 前 abort 上一个 + unmount abort · F-07 + F-13
@@ -353,9 +354,9 @@
 - [ ] **DataSourceBadge**: free-source 标注 · 所有 tab 统一
 
 ### 数据契约层
-- [ ] **Score shape**: scoring_id (UUIDv4) + snapshot_hash (SHA-256 JCS) + band 双粒度 — 与 Strategy v0.2 §2.1 对齐
-- [ ] **Conviction shape**: Adjustment[] Option A — 与 Strategy v0.2 §4 + Orch v303 LOCK 1 对齐
-- [ ] **RiskGate shape**: 22-trigger (9 US + 3 A股 + 5 JP + 5 KR) — 与 Strategy v0.2 §5.3 + Orch v303 LOCK 3 + Orch v317 Ruling #8 对齐
+- [ ] **Score shape**: scoring_id (UUIDv4) + snapshot_hash (SHA-256 JCS) + aggregate `rating`; only dimensions carry `band`
+- [ ] **Conviction shape**: Adjustment[] Option A — 与 Strategy v0.3 §4 + Orch v303 LOCK 1 对齐
+- [ ] **RiskGate shape**: 22-trigger (9 US + 3 A股 + 5 JP + 5 KR) — 与 Strategy v0.3 §5.3 + Orch v303 LOCK 3 + Orch v317 Ruling #8 对齐
     - US 9: EARNINGS_T-2 (warn) + EARNINGS_T-0 (block) + HALT_ACTIVE (block) + MERGER_PENDING (warn) + LITIGATION_MATERIAL (warn) + IV_SHOCK (warn) + LIQUIDITY_LOW (warn) + RESTATEMENT_30D (block) + DELISTING_NOTICE (block)
     - A股 3: ST_TAG (block) + PRICE_LIMIT_APPROACH (warn) + SUSPENDED (block)
     - JP 5: TSE_HALT (block) + EDINET_DELAY (warn) + CORPORATE_GOVERNANCE_ISSUE (warn) + TSE_TOKUBETSU_CHI (warn) + TSE_KANRI (block)
@@ -365,6 +366,7 @@
 - [ ] **MarketScope/currency**: `cn_a→CNY` · `us→USD` · `jp→JPY` · `kr→KRW`; consumers use explicit `market_scope`, never infer only from profile, and never silently FX-convert dimension inputs
 - [ ] **CatalystKind shape**: 9-enum — 与 Orch v303 LOCK 6 对齐
 - [ ] **types.ts v0.2**: 7-item changeset — 与 γ-2 msg=e7e8a154 对齐
+- [ ] **Aggregate rating rule**: reject aggregate `score.band`; require aggregate `score.rating` and preserve per-dimension `band`
 
 ### DDL 约束层 (per DP γ notes/180 v0.2.1 + notes/183)
 - [ ] **us_catalyst_event**: catalyst_kind 9-enum CHECK · UNIQUE (event_source_kind, ingest_source_hash) 幂等
@@ -379,7 +381,7 @@
 - [ ] 配色/字体/间距: design token `var(--cd-*)` · 7-tab 消费无本地覆盖
 - [ ] 响应式: 桌面 ≥1280 主目标 100% · 平板/手机降级明确
 
-### AI-γ 输出硬门 (per AI-γ v0.2 §8 · 14 条)
+### AI-γ 输出硬门 (per AI-γ v0.3 §8)
 - [ ] #1-#9 v0.1 硬门 · #10 kind≠unclassified 拒生成 · #11 rating_band mirror · #12 conviction formula · #13 size_hint pct↔tier byte-map · #14 disclaimer_key='size_hint_advisory'
 
 ---
@@ -392,7 +394,7 @@
 | #2 | HIGH/MED/LOW thresholds | 全局字段字典 + Tab 1/2 filter |
 | #3 | RiskGate base semantics | 全局字段字典 + 跨-tab 数据契约层 |
 | #4 | catalyst_kind adjustment tiers | Tab 1 catalystKind + Conviction adjustment attribution |
-| #5 | Score Band A/B/C/D/F | 全局字段字典 + Tab 1/2 ScoreCell |
+| #5 | Aggregate `Score.rating` A/B/C/D/F + per-dimension `Dimension.band` | 全局字段字典 + Tab 1/2 rating renderer |
 | #6 | CatalystKind 9-enum | 全局字段字典 + Tab 1 filter |
 | #7 | Tab 6 REST polling | `POST /daily-report/generate` + `GET /daily-report/status`; SSE disabled |
 | #8 | Weight profile switcher | Tab 2 可切 · Tab 4 固定 · Tab 1/3/5 default |
@@ -411,7 +413,7 @@
 
 | 依赖源 | 版本 | msg | 状态 |
 |--------|------|-----|------|
-| Strategy γ scoring | v0.2 | 3f7bfd3e | ✅ LAND |
+| Strategy γ scoring | v0.3 | PR #215 · `333eef87` | ✅ LAND |
 | DP γ catalyst-mapping | v0.2.1 | f494e4ad | ✅ LAND |
 | DP γ-2 notes/182 | v0.1 | 11e16e41 | ✅ LAND |
 | Cleanup γ audit | v0.5 | 8675050e | ✅ LAND |
@@ -420,7 +422,7 @@
 | Frontend γ-2 types.ts | v0.2 | e7e8a154 | ✅ LAND |
 | Frontend γ-1 CatDesk-shell | v0.2 | 2f63d119 | ✅ LAND |
 | Backend γ API mapping | v0.2 | 9c0d7b34 | ✅ LAND |
-| AI-γ recommendation | v0.2 | 33836149 | ✅ LAND |
+| AI-γ recommendation | v0.3 | `0454d275` | ✅ LAND |
 | Orch v303 10 canonical LOCK | — | f53c62a0 | ✅ LOCKED |
 | Orch v311 LOCK #11-#13 | — | — | ✅ LOCKED |
 | Orch v316 LOCK #14-#16 | — | — | ✅ LOCKED |
