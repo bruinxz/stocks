@@ -14,6 +14,303 @@ Format: each entry cites the landing SHA, PR number, owner authority (if authori
 
 ---
 
+## [Backend-ADR-0010-§4.11] · 2026-07-10
+
+PR #159 · main HEAD `ca4ccc6a` · squash-merge from base `d7419f3b` · mergedAt `2026-07-10T00:31:13Z` (2026-07-10T08:31:13+08:00 CST) · Backend γ 主签 self-merge per `msg=d0d11677` (≥4 sign + CI 8/8 GREEN → self-merge authority) · **dual-lander with #158 @ 08:29:25 CST → 08:31:13 CST · 1min48s cascade window · zero file-overlap · both branches from same base `d7419f3b` LAND without conflict**.
+
+### Diff
+
++710 / −0 · 3 files (pure ADD):
+
+- `backend/src/middlewares/apiReportingEndpoints.ts` **NEW** (+176) — W3C Reporting API L1 WD (Grigorik + Creager · Aug 2024 CR-track) Reporting-Endpoints response header + Report-To legacy JSON group backward-compat middleware · `TOKEN_RE = /^[!#$%&'*+\-.^_` + "`" + `|~0-9A-Za-z]+$/` RFC 7230 §3.2.6 tchar bit-perfect · `URL_INVALID_RE = /[\x00-\x1f\x7f<>"]/` reject controls · `isValidReportingEndpoint` validator · `formatReportingEndpoints` (RFC 8941 §3.2 dictionary structured field) · `formatReportTo` (Chromium ≤95 legacy JSON group backward-compat) · `clampMaxAge` (default 86400 · cap 30d = 2592000) · `appendHeader` (Route-authority-wins-APPEND · zero overwrite) · `buildApiReportingEndpointsMiddleware` writeHead-monkeypatch (bit-parallel §4.7-§4.10 structural template pattern-mirror only per `msg=ad6585cf`) · Fail-OPEN on empty endpoints · default OFF opt-in
+- `backend/tests/routing/api-reporting-endpoints.test.ts` **NEW** (+521) — Test 33 IIFE scenarios (a)-(ag) × 85 assertions coverage: token validation + URL validation + Structured Fields dictionary output + Report-To legacy JSON emission + max_age clamping + Route-authority-wins-APPEND + config gates + default-OFF + strict boolean === true + writeHead-monkeypatch header-flush order + §4.7+§4.8+§4.9+§4.10+§4.11 QUINTUPLE compose-verify + concurrent isolation
+- `backend/src/index.ts` (+13/-0) — mount after §4.10 `apiWebLinkingMiddleware` · before US-097 `requestContext` AsyncLocalStorage
+
+### Landing attestation
+
+- **CI 8/8 required-check GREEN unconditional** (succ=8 all-SUCCESS · mergeStateStatus=CLEAN)
+- **副签 4/4 CLOSE bit-perfect** — 主 Backend γ (SELF-MERGE anchor · `msg=36a2215c` CI-GREEN + CLEAN broadcast) + 副1 QADocs `msg=302dec93` (10-axis byte-truth + spec-fidelity RFC 8941 §3.2 + RFC 7230 §3.2.6 + W3C Reporting API L1 WD Aug 2024 + writeHead-monkeypatch structural pattern-mirror + HOLD 七次-guard + QUINTUPLE compose-verify + spec-independence + Path D + 4-baseline + N=4 + Instance 5 全 verify PASS · 4/4 gate-CLOSE trigger + CI 8/8 GREEN 双门 satisfy) + 副2 Research §S3 `msg=a1c5050e` (8-axis + QUINTUPLE compose + HOLD 七次-guard PASS) + 副3 Cleanup γ `msg=98bed910` (hygiene 六-项 audit unconditional CONCUR) + 副4 Frontend γ `msg=69f08a6d` (`frontend/**` zero-touch attest)
+
+### ADR-0010 §4.1-§4.11 UNDECIM 11-consecutive canonical stack REALIZED
+
+§4.1 X-API-Version + §4.2 winston `api_version` + §4.3 status/version/interceptor + §4.4 Deprecation/Sunset RFC 8594+RFC 9745 + §4.5 IETF draft-08 RateLimit + §4.6 RFC 9110 §10.2.3 Retry-After + §4.7 W3C Server-Timing L1 + §4.8 W3C Server-Timing L1 §3 Timing-Allow-Origin + §4.9 W3C Trace Context L1 REC + §4.10 RFC 8288 Web Linking + **§4.11 W3C Reporting API L1 Reporting-Endpoints + Report-To** — UNDECIM 11-consecutive canonical stack REALIZED at #159 landing.
+
+### Backend γ Lane A-3 UNDECIM 11-consecutive canonical family REALIZED
+
+Backend γ chronological chain: #125 + #126 + #129 + #133 + #138 + #144 + #147 + #149 + #152 + #156 → **#159** — 十一-consecutive family REALIZED.
+
+### Enforcement HOLD v2-dual-mount 契约 preserve 七次 consecutive advisory-only REALIZED
+
+§4.5 + §4.6 + §4.7 + §4.8 + §4.9 + §4.10 + **§4.11** all preserve advisory-only posture: zero statusCode decide · zero response-body delta · Fail-OPEN on empty/invalid input · Route-authority-wins-APPEND guard · pure header emit at writeHead-flush time · default-OFF opt-in. Seven-consecutive advisory-only canonical stack REALIZED.
+
+### §4.7+§4.8+§4.9+§4.10+§4.11 QUINTUPLE observability+hypermedia+reporting canonical family REALIZED
+
+Server-Timing L1 + Timing-Allow-Origin + Trace Context + Web Linking + **Reporting-Endpoints + Report-To** — composable observability+hypermedia+reporting header quintuple landed as natural canonical family across five consecutive Backend Lane A-3 PRs (#147+#149+#152+#156+#159).
+
+### QUADRAGESIMA-QUARTA + QUINTA 二连-段 dual-lander cascade REALIZED
+
+~2-minute-window dual SELF-MERGE cascade: #158 doc-tier @ 08:29:25 CST (mergeCommit `c0b253bb` · 44-段) → **#159 code-tier @ 08:31:13 CST (mergeCommit `ca4ccc6a` · 45-段)** · 1min48s dual authority-native trigger cascade · both branches CREATE-parallel from same base `d7419f3b` · zero file-overlap (Cleanup γ SOLE `docs/refactor/**` doc-append vs Backend γ SOLE `backend/src/middlewares/**` + `backend/tests/routing/**` + `backend/src/index.ts` mount) · zero mutual rebase conflict · doc-first landing-order canonical sequence per §五 coord precedent (`msg=6519e84b` + `msg=5b7cc58b`) · shape-parallel arc canonical documentation.
+
+### 三十四例 code + 十三例 doc = 四十七例 total REALIZED
+
+Post-#159 landing: **34 code + 13 doc = 四十七例 total REALIZED**. Main HEAD lineage LOCK 更新 → `ca4ccc6a` **QUADRAGESIMA-QUINTA 45-段 canonical LOCK LIVE**.
+
+### 借鉴 独立性 msg=ad6585cf 100% compliance audit (spec-only cite discipline)
+
+- W3C Reporting API L1 WD · Grigorik + Creager · Aug 2024 CR-track — spec-only cite
+- RFC 8941 Structured Fields · Nottingham + Kamp · Feb 2021 · IETF — §3.2 dictionary + §3.3 list ABNF grammar spec-only cite
+- RFC 7230 §3.2.6 · June 2014 · IETF · Fielding+Reschke — token ABNF spec-only cite
+- Chromium 96+ (Nov 2021) + Firefox 100+ (May 2022) + Safari 16.4 (Mar 2023) browser support matrix independence-verify
+- Report-To Chromium ≤95 legacy JSON group backward-compat spec citation
+- structural pattern-mirror to §4.7 `apiServerTiming.ts` + §4.8 `apiTimingAllowOrigin.ts` + §4.9 `apiTraceContext.ts` + §4.10 `apiWebLinking.ts` writeHead-monkeypatch canonical template — pattern-inheritance not code-copy
+- zero external npm — no `reporting-api-*` / no `@opentelemetry/reporting` / no `structured-headers` runtime dep introduced · in-tree canonical implementation · Free-source-only 铁律 `msg=4f6d2466` aligned
+- zero W3C spec code-copy — pure spec-cite for RFC 8941 §3.2 dictionary output format + Reporting API endpoint schema
+
+### Guardrails preserved
+
+- `backend/src/middlewares/**` + `backend/tests/routing/**` + `backend/src/index.ts` mount SOLE (Backend γ Lane A-3 保护 glob 铁律 100%)
+- `frontend/**` + `.github/**` + `package.json` + `schema.prisma` + `docs/**` + `docs/refactor/quality/**` + `backend/tests/enum/**` + `docs/refactor/baseline/ui-enum/**` zero-touch (Frontend γ 副4 `msg=69f08a6d` `frontend/**` attest · QADocs SOLE 保护 glob preserve)
+- Path D `docs/refactor/baseline/ui-enum/15-enum-matrix-lock-3246b8c.json` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect preserve
+- 4-baseline `docs/refactor/baseline/ui-enum/4-enum-matrix-lock-bc1b3c9.json` shasum `1f2d197a23c89eec23b5a5addc0e054974a6eaa5` byte-perfect preserve
+- N=4 canonical AUTHORITY 4/4 preserve (FeedbackStatus + FeedbackClassification + SizingMethod + QuantWorkflowStatus @ `backend/src/**`)
+- Instance 5 二例 REMOVE-permanent preserve (MarketRegime + MarketJudgmentStatus enum/type-def grep exit=1)
+- US-038 SeededRandom + Math.random zero
+- Zero external npm · Free-source-only 铁律 `msg=4f6d2466` aligned
+- Frontend γ Lane A-1 NINE-CONSECUTIVE + anti-fabrication 八次連続 REALIZED preserve (@ #157 LAND)
+- Cleanup γ Lane B doc-tier EIGHT-CONSECUTIVE + Instance 4 八例 REALIZED preserve (@ #158 LAND · §PR-M3-27 double-entry)
+- SSH deploy-user-only (`msg=b091c74d` root永久禁) · PG SELECT-only (`msg=702b81be`) · 凭证 zero literal (`sk_agent_<redacted>`) · Alpha Vantage + Baostock + Yahoo opt-in only (`msg=4f6d2466`) · jscpd ≤30% hard-gate
+
+### Forty-five-段 QUADRAGESIMA-QUINTA lineage update
+
+`... → d7419f3b(#156 四十三 code §4.10) → c0b253bb(#158 四十四 doc §PR-M3-27) → ca4ccc6a(#159 四十五 code §4.11)` — main HEAD canonical LOCK 更新 → `ca4ccc6a` (**四十五-段 canonical LOCK LIVE post-merge · QUADRAGESIMA-QUINTA 45-段 · UNDECIM 11 milestone**).
+
+### Owner authority chain
+
+- `msg=d0d11677` — 自签合入 令 (≥4 sign + CI GREEN → self-merge OK)
+- `msg=b8af5127` — 完全掌控 v2 agent autonomy standing
+- `msg=4b30fbed` — 指挥官令 v3
+- `msg=210d262d` — agents 不能停
+- `msg=ad6585cf` — 借鉴 独立性 铁律
+- `msg=4f6d2466` — Free-source-only lock-out posture
+- `msg=eb4b0016` + `msg=21867874` + `msg=a8175861` — perpetual-dispatch chain
+- Orch v257 `msg=4073af1d` — QUADRAGESIMA-QUINTA 45-段 UNDECIM canonical LOCK LIVE dispatch
+
+---
+
+## [PR-M3-Cleanup-log-27] · 2026-07-10
+
+PR #158 · main HEAD `c0b253bb` · squash-merge from base `d7419f3b` · mergedAt `2026-07-10T00:29:25Z` (2026-07-10T08:29:25+08:00 CST) · Cleanup γ 主签 self-merge per `msg=d0d11677` (≥2 doc-tier sign + CI 8/8 GREEN → self-merge authority · doc-tier canonical dispatch v137 `msg=59c43f65`).
+
+### Diff
+
++131 / −0 · 1 file (pure-append):
+
+- `docs/refactor/30-cleanup-log.md` — append §PR-M3-27 double-entry landing block · §一-§八 canonical section-shape covering Frontend γ #157 v0.5(q) mergeCommit `4c518522` NINE-CONSECUTIVE + 八次連続 anti-fabrication + AbortSignal DocsWorkspace 二-site canonical (`loadFile` L664 + `loadComments` L671) + Backend γ #156 §4.10 mergeCommit `d7419f3b` RFC 8288 Web Linking advisory + Enforcement HOLD 六次 consecutive + TEN-CONSECUTIVE DECIMAL MILESTONE + §4.7+§4.8+§4.9+§4.10 quadruple observability+hypermedia canonical family
+
+### Landing attestation
+
+- **CI 8/8 required-check GREEN unconditional** — `paths_filter` doc-only advisory PASS
+- **mergeStateStatus=CLEAN · mergeable=MERGEABLE** at merge time
+- **副签 ≥2 doc-tier gate CLOSE bit-perfect** — 主 Cleanup γ (SELF-MERGE anchor) + 副1 Research §S3 `msg=c8d55a96` + 副2 QADocs `msg=0e62327b` (byte-truth 8-axis + §PR-M3-27 double-entry canonical shape audit + N=4 transitive + Instance 5 exit=1 preserve verify)
+- **8-section canonical shape-parallel bit-perfect** to Cleanup γ Lane B doc-tier precedent chain
+
+### Cleanup γ Lane B doc-tier EIGHT-CONSECUTIVE canonical family REALIZED
+
+Cleanup γ Lane B doc-PR chronological chain: #128 + #140 + #143 + #148 + #151 + #153 + #155 → **#158** — 八-consecutive family REALIZED. Instance 4 (multi-entry doc-PR canonical) count advances 七例 → **八例 REALIZED**. Cumulative doc-tier: **十三例 doc REALIZED** (十二 → 十三).
+
+### §PR-M3-27 double-entry canonical stack REALIZED
+
+§PR-M3-27 documents two canonical landings in single doc-append block:
+
+- **Frontend γ #157 v0.5(q) mergeCommit `4c518522`** — DocsWorkspace L664/L671 AbortSignal canonical (`loadFile` + `loadComments` · v0.5(p) truthful-DEFER → v0.5(q) truthful-RESOLVE 双向承接 · Frontend γ Lane A-1 NINE-CONSECUTIVE + anti-fabrication 八次連続 REALIZED)
+- **Backend γ #156 §4.10 mergeCommit `d7419f3b`** — RFC 8288 Web Linking advisory middleware (ADR-0010 §4.10 · TEN-CONSECUTIVE DECIMAL MILESTONE · Backend γ Lane A-3 TEN + Enforcement HOLD 六次 + §4.7+§4.8+§4.9+§4.10 quadruple observability+hypermedia canonical family REALIZED)
+
+Double-entry canonical shape structurally parallels §PR-M3-14+§PR-M3-15 (PR #140) + §PR-M3-18+§PR-M3-19+§PR-M3-20 (PR #148 triple) + §PR-M3-23+§PR-M3-24 (PR #153) + §PR-M3-25+§PR-M3-26 (PR #155) precedent chain — multi-entry doc-PR canonical family bit-perfect.
+
+### CASCADE family SOLO IV → SOLO V → SOLO VI → SOLO VII → SOLO VIII five-consecutive SOLO topology REALIZED
+
+Landing sequence shape: DUAL I (12s @ #147+#148) → TRIPLE II (5-min @ #149+#151+#150) → DUAL III (3-min @ #153+#154) → SOLO IV (#152 code @ 40-段) → SOLO V (#155 doc @ 41-段) → SOLO VI (#157 code @ 42-段) → SOLO VII (#156 code @ 43-段) → **SOLO VIII (#158 doc @ 44-段) REALIZED**. Five consecutive SOLO shapes REALIZED (subsequently PR #159 flips into DUAL-CASCADE V dual-lander).
+
+### 三十三例 code + 十三例 doc = 四十六例 total REALIZED
+
+Post-#158 landing: **33 code + 13 doc = 四十六例 total REALIZED**. Main HEAD lineage LOCK 更新 → `c0b253bb` **QUADRAGESIMA-QUARTA 44-段 canonical LOCK LIVE**.
+
+### 借鉴 独立性 msg=ad6585cf 100% compliance audit (spec-only cite discipline)
+
+- Pure doc-tier double-entry citation reproduction (spec-cite-only 100% · no code · no external library dependency)
+- Referenced specs: RFC 8288 IETF (Nottingham Oct 2017) · RFC 7230 §3.2.6 (Fielding+Reschke Jun 2014) · RFC 3986 (Berners-Lee+Fielding+Masinter Jan 2005) · WHATWG DOM AbortController Living Standard · React 18 `useEffect` cleanup contract · axios v0.22 CancelToken (deprecated → AbortController canonical) — spec-only cite
+- Pattern-mirror Cleanup γ Lane B doc-tier §一-§八 8-section shape precedent — structural inheritance not code-copy
+- Zero external npm introduced by doc-append
+
+### Guardrails preserved
+
+- `docs/refactor/30-cleanup-log.md` SOLE (Cleanup γ Lane B 保护 glob 铁律 100%)
+- `backend/**` + `frontend/**` + `.github/**` + `package.json` + `schema.prisma` + `docs/refactor/quality/**` + `backend/tests/enum/**` + `docs/refactor/baseline/ui-enum/**` zero-touch (QADocs SOLE 保护 glob preserve)
+- Path D + 4-baseline byte-perfect preserve
+- N=4 canonical AUTHORITY 4/4 preserve (backend-side untouched by doc-append)
+- Instance 5 二例 REMOVE-permanent preserve
+- ADR-0010 §4.1-§4.10 TEN-CONSECUTIVE + Backend γ Lane A-3 TEN + Enforcement HOLD 六次 transitively preserved
+- Frontend γ Lane A-1 NINE-CONSECUTIVE + anti-fabrication 八次連続 transitively preserved
+- Zero force-push · US-038 SeededRandom retain · jscpd ≤30% hard-gate
+- SSH deploy-user-only · PG SELECT-only · 凭证 zero literal · Free-source-only 铁律 `msg=4f6d2466` aligned
+
+### Forty-four-段 QUADRAGESIMA-QUARTA lineage update
+
+`... → 4c518522(#157 四十二 code v0.5(q)) → d7419f3b(#156 四十三 code §4.10) → c0b253bb(#158 四十四 doc §PR-M3-27)` — main HEAD canonical LOCK 更新 → `c0b253bb` (**四十四-段 canonical LOCK LIVE post-merge · QUADRAGESIMA-QUARTA 44-段**).
+
+### Owner authority chain
+
+- `msg=d0d11677` — 自签合入 令 (≥2 doc-tier sign + CI GREEN → self-merge OK)
+- `msg=b8af5127` — 完全掌控 v2 agent autonomy standing
+- `msg=4b30fbed` — 指挥官令 v3
+- `msg=210d262d` — agents 不能停
+- `msg=59c43f65` — doc-tier canonical dispatch (Orch v137)
+- `msg=ad6585cf` — 借鉴 独立性 铁律
+- Orch v257 `msg=4073af1d` — QUADRAGESIMA-QUARTA 44-段 canonical LOCK LIVE dispatch continuation
+
+---
+
+## [Backend-ADR-0010-§4.10] · 2026-07-10
+
+PR #156 · main HEAD `d7419f3b` · squash-merge from base `4c518522` · mergedAt `2026-07-10T00:23:52Z` (2026-07-10T08:23:52+08:00 CST) · Backend γ 主签 self-merge per `msg=d0d11677`.
+
+### Diff
+
+3 files (pure ADD): `backend/src/middlewares/apiWebLinking.ts` NEW + `backend/tests/routing/api-web-linking.test.ts` NEW + `backend/src/index.ts` mount.
+
+### Highlights
+
+- **RFC 8288 Web Linking Link header advisory middleware** — Route-authority-wins-APPEND · writeHead-monkeypatch structural template pattern-mirror §4.9 canonical · Fail-OPEN on empty rels · default OFF opt-in
+- **ADR-0010 §4.1-§4.10 TEN-CONSECUTIVE DECIMAL MILESTONE canonical stack REALIZED**
+- **Backend γ Lane A-3 TEN-CONSECUTIVE DECIMAL MILESTONE canonical family REALIZED**
+- **Enforcement HOLD v2-dual-mount 契约 preserve 六次 consecutive advisory-only REALIZED**
+- **§4.7+§4.8+§4.9+§4.10 quadruple observability+hypermedia canonical family REALIZED**
+- **CASCADE SOLO IV→V→VI→VII four-consecutive SOLO topology REALIZED** at #156 landing
+
+### 43-段 QUADRAGESIMA-TRIA DECIMAL MILESTONE lineage
+
+`... → 4c518522(#157 四十二 code v0.5(q)) → d7419f3b(#156 四十三 code §4.10)` — 33 code + 12 doc = 四十五例 total REALIZED @ #156 landing.
+
+### Guardrails preserved
+
+- `backend/src/middlewares/**` + `backend/tests/routing/**` + `backend/src/index.ts` mount SOLE
+- Path D + 4-baseline byte-perfect · N=4 4/4 · Instance 5 exit=1
+- 借鉴 独立性 `msg=ad6585cf` (RFC 8288 IETF + RFC 7230 §3.2.6 + RFC 3986 spec-only cite)
+- Zero external npm · Free-source-only 铁律 `msg=4f6d2466` aligned
+
+---
+
+## [Frontend-v0.5-q] · 2026-07-10
+
+PR #157 · main HEAD `4c518522` · squash-merge from base `b3b4769e` · mergedAt `2026-07-10T00:17:15Z` (2026-07-10T08:17:15+08:00 CST) · Frontend γ 主签 self-merge per `msg=d0d11677`.
+
+### Diff
+
+`frontend/src/components/docs/DocsWorkspace.tsx` — `loadFile` L664 + `loadComments` L671 AbortSignal canonical race-guard 双-site cutover (承 v0.5(p) truthful-DEFER 双向承接).
+
+### Highlights
+
+- **Frontend γ Lane A-1 NINE-CONSECUTIVE canonical family REALIZED** — #137 + #139 + #141 + #142 + #145 + #146 + #150 + #154 → **#157** 九-consecutive
+- **反-Fabrication verify-then-decide 八次連続 REALIZED** — v0.5(p) truthful-DEFER → v0.5(q) truthful-RESOLVE 双向承接 · Instance 3 canonical exemplar 主锚
+- **AbortController + `useEffect` cleanup Living Standard canonical** — 承 v0.5(p) `let ignore` sentinel canonical extension via WHATWG DOM AbortController · React 18 `useEffect` cleanup contract · axios v0.22 CancelToken (deprecated → AbortController canonical) — spec-only cite per `msg=ad6585cf`
+- Frontend γ Lane A-1 SOLE (`frontend/**` 保护 glob 铁律 100%) · `backend/**` + `.github/**` + `package.json` + `schema.prisma` zero-touch
+
+### 42-段 QUADRAGESIMA-DUO lineage
+
+`... → b3b4769e(#155 四十一 doc) → 4c518522(#157 四十二 code v0.5(q))` — 32 code + 12 doc = 四十四例 total REALIZED @ #157 landing.
+
+---
+
+## [PR-M3-Cleanup-log-25+26] · 2026-07-10
+
+PR #155 · main HEAD `b3b4769e` · squash-merge from base `077bfbc4` · mergedAt `2026-07-10T00:00:55Z` (2026-07-10T08:00:55+08:00 CST) · Cleanup γ 主签 self-merge per `msg=d0d11677` (doc-tier ≥2 sign + CI 8/8 GREEN · doc-tier canonical dispatch v137 `msg=59c43f65`).
+
+### Diff
+
+`docs/refactor/30-cleanup-log.md` — append §PR-M3-25 (PR #152 §4.9 W3C Trace Context L1 · NINE-CONSECUTIVE + §4.7+§4.8+§4.9 triple observability + Enforcement HOLD 五次) + §PR-M3-26 (PR #154 v0.5(p) 5A→3A truthful-DEFER anti-fabrication 七次連続 · React 18 ignore-flag race-guard 3-site · Frontend γ EIGHT-CONSECUTIVE) double-entry landing block · §一-§八 canonical section-shape.
+
+### Highlights
+
+- **Cleanup γ Lane B doc-tier SEVEN-CONSECUTIVE canonical family REALIZED** — #128 + #140 + #143 + #148 + #151 + #153 → **#155** 七-consecutive
+- **Instance 4 multi-entry doc-PR 七例 REALIZED** — v0.5(p) 5A→3A twin-axis truthful-defer canonical exemplar
+- **十二例 doc REALIZED** (十一 → 十二 · cumulative doc-tier)
+- **41-段 QUADRAGESIMA-PRIMA + 3 = 41-段** lineage update
+
+### Guardrails preserved
+
+- `docs/refactor/30-cleanup-log.md` SOLE · zero backend/frontend/config touch
+- Path D + 4-baseline byte-perfect · N=4 4/4 · Instance 5 exit=1
+
+---
+
+## [Backend-ADR-0010-§4.9] · 2026-07-10
+
+PR #152 · main HEAD `077bfbc4` · squash-merge from base `f1205ef5` · mergedAt `2026-07-10T07:33:02+08:00` · Backend γ 主签 self-merge per `msg=d0d11677`.
+
+### Diff
+
++511 / −0 · 3 files (pure ADD): `backend/src/middlewares/apiTraceContext.ts` NEW (+133 · W3C Trace Context L1 REC 23-Nov-2021 traceparent+tracestate echo · echo-only v0 zero-entropy) + `backend/tests/routing/api-trace-context.test.ts` NEW (+366 · 64/64 (a)-(ac)) + `backend/src/index.ts` mount (+12).
+
+### Highlights
+
+- **ADR-0010 §4.1-§4.9 NINE-CONSECUTIVE canonical stack REALIZED**
+- **Backend γ Lane A-3 NINE-CONSECUTIVE canonical family REALIZED**
+- **Enforcement HOLD 五次 consecutive advisory-only REALIZED**
+- **§4.7+§4.8+§4.9 natural canonical triple observability header family REALIZED**
+- **QUADRAGESIMA 40-段 · 31 code + 10 doc = 四十一例 total REALIZED**
+
+### Guardrails preserved
+
+- 借鉴 独立性 `msg=ad6585cf` 100% (W3C REC 23-Nov-2021 + RFC 7230 §3.2.6 spec-only cite · writeHead-monkeypatch structural template pattern-mirror only)
+- Free-source-only 铁律 `msg=4f6d2466` (no `@opentelemetry/*` external npm dep)
+- Path D + 4-baseline byte-perfect · N=4 4/4 · Instance 5 exit=1 · US-038 SeededRandom + Math.random zero (echo-only v0)
+
+---
+
+## [Frontend-v0.5-p] · 2026-07-10
+
+PR #154 · main HEAD `f1205ef5` · squash-merge from base `acb98d58` · mergedAt `2026-07-09T23:27:52Z` (2026-07-10T07:27:52+08:00 CST) · Frontend γ 主签 self-merge per `msg=d0d11677`.
+
+### Diff
+
++82 / −54 · 2 files: `frontend/src/components/backtest/BacktestResults.tsx` (+56/-50 · dual `getBacktestDetail` sites AbortController ignore-flag race-guard) + `frontend/src/components/portfolio/PortfolioWorkspace.tsx` (+26/-4 · `fetchBenchmarkHistory` L1364 + `getJournalDetail` L1887 sites wrapped).
+
+### Highlights
+
+- **Frontend γ Lane A-1 EIGHT-CONSECUTIVE canonical family REALIZED** — #137 + #139 + #141 + #142 + #145 + #146 + #150 → **#154** 八-consecutive
+- **反-Fabrication verify-then-decide 七次連続 REALIZED** — v0.5(p) 5A→3A twin-axis self-correct: workspace-draft 5A → landing shipped 3A with explicit A2/A3 defer + technical reason
+- **React 18 canonical ignore-flag race-guard pattern** 3-site verified bit-perfect: `let ignore = false; ... if (ignore) return; ... return () => { ignore = true; };` — pure `useEffect` return + closure `let` sentinel · US-038 Math.random zero-entropy preserved
+- **39-段 TRIGESIMANONA · 30 code + 9 doc + 1 v0.5(p) = 四十例 total** candidate
+
+### Guardrails preserved
+
+- `frontend/**` 主签授权 lane 100% (Frontend γ Lane A-1 SOLE)
+- 借鉴 独立性 `msg=ad6585cf` 100% (React 18 pattern spec-only cite)
+
+---
+
+## [PR-M3-Cleanup-log-23+24] · 2026-07-10
+
+PR #153 · main HEAD `acb98d58` · squash-merge from base `828793f7` · mergedAt `2026-07-10T07:24:36+08:00` · Cleanup γ 主签 self-merge per `msg=d0d11677` (doc-tier ≥2 sign + CI 8/8 GREEN · doc-tier canonical dispatch v137 `msg=59c43f65`).
+
+### Diff
+
++108 / −0 · 1 file (pure-append): `docs/refactor/30-cleanup-log.md` L1586→L1694 append two 8-section blocks · §PR-M3-23 (PR #149 §4.8 EIGHT-CONSECUTIVE + CORS Timing-Allow-Origin) + §PR-M3-24 (PR #150 v0.5-o SEVEN-CONSECUTIVE 六次連続 icon-only Button aria-label 14-site).
+
+### Highlights
+
+- **Cleanup γ Lane B doc-tier SIX-CONSECUTIVE canonical family REALIZED** — #128 + #140 + #143 + #148 + #151 → **#153** 六-consecutive
+- **Instance 4 multi-entry doc-PR 六例 REALIZED** — six-instance canonical
+- **FIRST-EVER TRIPLE-CASCADE II code+doc concurrent-landing attribution** documented bit-perfect in §PR-M3-24 §六: 06:57:19+08:00 → 07:01:09+08:00 → 07:02:13+08:00 (~5-minute window · #149 code + #151 doc + #150 code across THREE distinct lanes)
+- **38-段 TRIGESIMOCTO · 30 code + 8 doc + 1 = 三十八例 total** at #153 landing
+
+### Guardrails preserved
+
+- `docs/refactor/30-cleanup-log.md` SOLE (Cleanup γ Lane B 保护 glob 铁律 100%)
+- Path D + 4-baseline byte-perfect · N=4 4/4 · Instance 5 exit=1
+
+---
+
 ## [PR-M3-2] · 2026-07-09
 
 PR #121 · main HEAD `0fb7c96e` · squash-merge from base `aa099594` · mergedAt `2026-07-09T15:38:08Z` · Frontend 主签 self-merge per `msg=d0d11677` (≥4 sign + CI 8/8 GREEN → self-merge authority) · owner DM pivot `msg=3c114597` (T+7d 2026-07-16 → T+0 IMMEDIATE EXECUTE) + Orch v197 `msg=de6103bd` 兑现完毕.
