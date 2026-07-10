@@ -408,6 +408,11 @@ const HomeWorkspace: React.FC = () => {
   // heroRef 仅保留 (motion.section 需要), mouse-move handler 移除.
   const heroRef = useRef<HTMLElement | null>(null);
 
+  // v0.5(w) — 6-way sibling-parallel loader race-guard via shared AbortController.
+  // Mount + selectedPortfolioId dep-change + button-refresh reuse tickControllerRef
+  // abort-then-new; setState guarded by `if (signal?.aborted) return`.
+  const tickControllerRef = useRef<AbortController | null>(null);
+
   // 三个独立 fetch — 任一失败不阻塞其他区块.
   const [account, setAccount] = useState<AccountSummary | null>(null);
   const [accountLoading, setAccountLoading] = useState(true);
@@ -464,107 +469,149 @@ const HomeWorkspace: React.FC = () => {
   const todayLesson = useMemo(() => DAILY_LESSONS[new Date().getDate() % DAILY_LESSONS.length], []);
 
   // -------- fetchers --------
-  const loadAccount = useCallback(async () => {
-    setAccountLoading(true);
-    setAccountError(null);
-    try {
-      const data = await todayWorkspaceService.getTodaySignals({
-        portfolio_id: selectedPortfolioId,
-        // 极简 — 不需要 candidate list 干扰, 但 endpoint 必返这些字段, 一起拿无成本.
-        dragon_head_limit: 0,
-        earnings_limit: 0,
-        // 今日作战并入主页: 取未读风险提醒 (Top 3), 主页作为唯一每日入口.
-        alerts_limit: 3,
-      });
-      setAccount(data.account);
-      setUnreadAlerts(data.unread_alerts || []);
-      setDataTime(new Date());
-    } catch (err: unknown) {
-      setAccountError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setAccountLoading(false);
-    }
-  }, [selectedPortfolioId]);
+  // v0.5(w) — 每个 loader 接受 optional signal (承 v0.5(t/u/v) AbortController canonical).
+  // Aborted axios throws CanceledError (code === 'ERR_CANCELED'); catch swallows silently.
+  // setState guarded by `if (signal?.aborted) return` to prevent stale late-arriver overwrite.
+  const loadAccount = useCallback(
+    async (signal?: AbortSignal) => {
+      setAccountLoading(true);
+      setAccountError(null);
+      try {
+        const data = await todayWorkspaceService.getTodaySignals({
+          portfolio_id: selectedPortfolioId,
+          // 极简 — 不需要 candidate list 干扰, 但 endpoint 必返这些字段, 一起拿无成本.
+          dragon_head_limit: 0,
+          earnings_limit: 0,
+          // 今日作战并入主页: 取未读风险提醒 (Top 3), 主页作为唯一每日入口.
+          alerts_limit: 3,
+        });
+        if (signal?.aborted) return;
+        setAccount(data.account);
+        setUnreadAlerts(data.unread_alerts || []);
+        setDataTime(new Date());
+      } catch (err: unknown) {
+        if (signal?.aborted) return;
+        if ((err as { code?: string })?.code === 'ERR_CANCELED') return;
+        if ((err as { name?: string })?.name === 'CanceledError') return;
+        setAccountError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!signal?.aborted) setAccountLoading(false);
+      }
+    },
+    [selectedPortfolioId]
+  );
 
-  const loadRecommendations = useCallback(async () => {
+  const loadRecommendations = useCallback(async (signal?: AbortSignal) => {
     setRecLoading(true);
     setRecError(null);
     try {
       // Phase 10: 拉 20 条 (盘前 + 盘中 + 盘后), 不再只取 3 条 — 时段分组需要看全天.
       const data = await getV3Recommendations({ limit: 20 });
+      if (signal?.aborted) return;
       setRecommendations(data.recommendations || []);
       setDataTime(new Date());
     } catch (err: unknown) {
+      if (signal?.aborted) return;
+      if ((err as { code?: string })?.code === 'ERR_CANCELED') return;
+      if ((err as { name?: string })?.name === 'CanceledError') return;
       setRecError(err instanceof Error ? err.message : String(err));
     } finally {
-      setRecLoading(false);
+      if (!signal?.aborted) setRecLoading(false);
     }
   }, []);
 
-  const loadPositions = useCallback(async () => {
-    setPosLoading(true);
-    setPosError(null);
-    try {
-      const data = await getPortfolio(selectedPortfolioId);
-      setPositions(data.positions || []);
-      setDataTime(new Date());
-    } catch (err: unknown) {
-      setPosError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setPosLoading(false);
-    }
-  }, [selectedPortfolioId]);
+  const loadPositions = useCallback(
+    async (signal?: AbortSignal) => {
+      setPosLoading(true);
+      setPosError(null);
+      try {
+        const data = await getPortfolio(selectedPortfolioId);
+        if (signal?.aborted) return;
+        setPositions(data.positions || []);
+        setDataTime(new Date());
+      } catch (err: unknown) {
+        if (signal?.aborted) return;
+        if ((err as { code?: string })?.code === 'ERR_CANCELED') return;
+        if ((err as { name?: string })?.name === 'CanceledError') return;
+        setPosError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!signal?.aborted) setPosLoading(false);
+      }
+    },
+    [selectedPortfolioId]
+  );
 
   // 新主线 §4.1 — 核心 ETF 因子轮动最新调仓 (月度机械再平衡信号).
-  const loadEtfRotation = useCallback(async () => {
+  const loadEtfRotation = useCallback(async (signal?: AbortSignal) => {
     setEtfLoading(true);
     setEtfError(null);
     try {
       const data = await getEtfRotationLatestPicks();
+      if (signal?.aborted) return;
       setEtfSignals(data.signals || []);
       setEtfTradeDate(data.trade_date);
       setEtfNote(data.note);
       setDataTime(new Date());
     } catch (err: unknown) {
+      if (signal?.aborted) return;
+      if ((err as { code?: string })?.code === 'ERR_CANCELED') return;
+      if ((err as { name?: string })?.name === 'CanceledError') return;
       setEtfError(err instanceof Error ? err.message : String(err));
     } finally {
-      setEtfLoading(false);
+      if (!signal?.aborted) setEtfLoading(false);
     }
   }, []);
 
   // Phase 10 — hero sparkline. 资产曲线快照, 失败不阻塞 hero 渲染.
-  const loadSnapshots = useCallback(async () => {
-    try {
-      const data = await getSnapshots(selectedPortfolioId);
-      setSnapshots(data || []);
-    } catch {
-      // 静默 — sparkline 缺失不显示, 但账户主数字不应被影响.
-    }
-  }, [selectedPortfolioId]);
+  const loadSnapshots = useCallback(
+    async (signal?: AbortSignal) => {
+      try {
+        const data = await getSnapshots(selectedPortfolioId);
+        if (signal?.aborted) return;
+        setSnapshots(data || []);
+      } catch {
+        // 静默 — sparkline 缺失不显示, 但账户主数字不应被影响.
+      }
+    },
+    [selectedPortfolioId]
+  );
 
   // PR-M4 (2026-06-29) — 今日市场: 4 海外指数 (恒指/纳指/标普/道指) + regime
   // (bull/bear/range/rebound/stress/unknown). MarketJudgmentService 已在 TodayWorkspace
   // 接入, 这里复用 same endpoint, 渲染轻量版让新手主页一眼看到大盘方向.
-  const loadMarketJudgment = useCallback(async () => {
+  const loadMarketJudgment = useCallback(async (signal?: AbortSignal) => {
     setMarketJudgmentLoading(true);
     setMarketJudgmentError(null);
     try {
       const data = await getMarketJudgmentToday();
+      if (signal?.aborted) return;
       setMarketJudgment(data);
     } catch (err: unknown) {
+      if (signal?.aborted) return;
+      if ((err as { code?: string })?.code === 'ERR_CANCELED') return;
+      if ((err as { name?: string })?.name === 'CanceledError') return;
       setMarketJudgmentError(err instanceof Error ? err.message : String(err));
     } finally {
-      setMarketJudgmentLoading(false);
+      if (!signal?.aborted) setMarketJudgmentLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void loadAccount();
-    void loadRecommendations();
-    void loadPositions();
-    void loadEtfRotation();
-    void loadSnapshots();
-    void loadMarketJudgment();
+    // v0.5(w) — 6-way parallel fire under shared AbortController. Prev in-flight
+    // aborted on mount + selectedPortfolioId dep-change. Cleanup on unmount also aborts.
+    tickControllerRef.current?.abort();
+    const controller = new AbortController();
+    tickControllerRef.current = controller;
+    const { signal } = controller;
+    void loadAccount(signal);
+    void loadRecommendations(signal);
+    void loadPositions(signal);
+    void loadEtfRotation(signal);
+    void loadSnapshots(signal);
+    void loadMarketJudgment(signal);
+    return () => {
+      controller.abort();
+    };
   }, [
     loadAccount,
     loadRecommendations,
