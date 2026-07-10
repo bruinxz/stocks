@@ -116,7 +116,9 @@ Authorized Backend C4 response envelopes are:
 {
   "kpi": {
     "nikkei225": { "value": 38000, "change_pct": 0.5, "as_of": "2026-07-10" },
-    "topix": { "value": 2700, "change_pct": 0.3, "as_of": "2026-07-10" }
+    "topix": { "value": 2700, "change_pct": 0.3, "as_of": "2026-07-10" },
+    "usdjpy": { "rate": 160.25, "change_pct": 0.2 },
+    "usdkrw": null
   },
   "rows": [
     {
@@ -131,16 +133,22 @@ Authorized Backend C4 response envelopes are:
       "revenue_by_region": [],
       "fx_beta": 0.75,
       "is_halted": false,
-      "data_sources": ["EDINET", "JPX"]
+      "data_sources": ["EDINET", "JPX"],
+      "score": null,
+      "risk_gate": null,
+      "risk_triggers": []
     }
   ],
   "date": "2026-07-10"
 }
 ```
 
-The detail endpoint returns one row with the same core shape. Score,
-Conviction, RiskGate, and EntryPlan may be joined as contract-backed extensions;
-clients must tolerate their absence while data/scoring integration is staged.
+The KPI object always contains both `usdjpy` and `usdkrw`; each value is either
+`{ rate, change_pct }` or `null`. Every list/detail row always contains
+`score: Score | null`, `risk_gate: RiskGate | null`, and
+`risk_triggers: RiskTrigger[]`. Producers use `null` or an empty array when
+scoring/risk data is unavailable; they must not omit these keys. The detail
+endpoint returns the same required core shape.
 
 ### 1.6 Tab 3 presentation guidance
 
@@ -311,7 +319,7 @@ and fingerprint before joining the whitelist.
 - Cross-market signals use the latest session completed before the decision
   cutoff.
 - Membership and delisting state are resolved as of the snapshot date.
-- `snapshot_id`, `fact_hash`, `source_versions`, profile, and as-of time are
+- `snapshot_id`, `fact_hash`, `source_versions`, strategy, and as-of time are
   immutable replay keys.
 - Forward returns are evaluation outputs and never scoring inputs.
 - Missing PIT news or fundamentals are marked unavailable; current data is not
@@ -325,6 +333,11 @@ GET /api/v1/backtest-pit/:strategy/:as_of
 GET /api/v1/backtest-pit/:strategy/:as_of/holdings
 ```
 
+`:as_of` is the snapshot's ISO timestamp and is matched against `as_of_utc`, not
+the calendar-only `snapshot_day`. URL consumers must percent-encode the
+timestamp, for example `2026-07-10T06%3A00%3A00.000Z`. `snapshot_day` remains
+display/grouping metadata and must not be used as the detail/holdings lookup key.
+
 The list response exposes snapshot metadata and selected metrics:
 
 ```json
@@ -333,7 +346,7 @@ The list response exposes snapshot metadata and selected metrics:
   "snapshots": [
     {
       "snapshot_id": "uuid",
-      "profile": "japan_multibagger",
+      "strategy": "japan_multibagger",
       "snapshot_day": "2026-07-10",
       "as_of_utc": "2026-07-10T06:00:00Z",
       "is_survivorship_biased": false,
@@ -416,26 +429,25 @@ No tab may introduce a second canonical Rating vocabulary.
 
 ---
 
-## 5. Delivery Gaps And Consumer Handoff
+## 5. Delivery Requirements And Consumer Handoff
 
-### 5.1 Sprint 3 delivery matrix
+### 5.1 Stable delivery requirements
 
-| Gap | Owner | Priority | Dependency state at D3 authoring |
+| Requirement | Owner | Priority | Acceptance condition |
 |---|---|---:|---|
-| LOCK #14 endpoints | Backend γ | P0 | C4 authorized; PR pending |
-| LOCK #15 endpoints | Backend γ | P0 | C4 authorized; PR pending |
-| LOCK #16 holdings + six-profile whitelist | Backend γ | P0 | C4 authorized; PR pending |
-| JP/KR collectors | DP γ / DP γ-2 | P0 | late workspace drafts pending |
-| Multibagger candidate pipeline | DP γ / DP γ-2 | P0 | late workspace drafts pending |
-| Backtest PIT precomputation | DP γ | P1 | late workspace draft pending |
-| Multi-market scoring v0.3 | Strategy γ | P0 | D1 authorized; PR pending |
-| Multi-market recommendation | AI-γ | P1 | D2 authorized; PR pending |
-| Tab 3/4 UI | Frontend γ-2 | P0 | C2 authorized; PR pending |
-| Tab 5 UI | Frontend γ-3 | P0 | C3 authorized; PR pending |
-| 152-case quality contract | QADocs γ | P0 | D4 authorized; PR pending |
+| LOCK #14 endpoints | Backend γ | P0 | Exact paths, required nullable score/risk keys, required `risk_triggers`, nullable FX KPI pairs |
+| LOCK #15 endpoints | Backend γ | P0 | Exact paths, `kpi` + `rows`, A/US/JP/KR filters, market-aware profile metadata |
+| LOCK #16 endpoints | Backend γ | P0 | Exact paths, six-profile whitelist, wire field `strategy`, encoded ISO `:as_of` matched to `as_of_utc` |
+| JP/KR collectors | DP γ / DP γ-2 | P0 | Idempotent PIT rows with availability timestamps, source and stale/fallback metadata |
+| Multibagger candidate pipeline | DP γ / DP γ-2 | P0 | Deterministic eligible universe for A/US/JP/KR with fact hash |
+| Backtest PIT precomputation | DP γ | P1 | Immutable snapshots keyed by strategy + `as_of_utc`; no current-data backfill |
+| Multi-market scoring v0.3 | Strategy γ | P0 | Seven profile values, six replay profiles, frozen weights and adapters |
+| Multi-market recommendation | AI-γ | P1 | Consumes Strategy values without duplication; replay metadata complete |
+| Tab 3/4 UI | Frontend γ-2 | P0 | Consumes canonical envelopes and renders required risk/FX/source state |
+| Tab 5 UI | Frontend γ-3 | P0 | Encodes ISO `:as_of`, consumes wire `strategy`, displays PIT/bias limitations |
+| Quality contract | QADocs γ | P0 | Executable coverage for locks, negative PIT cases, trigger/profile cardinality |
 
-This status is intentionally time-bounded. It records dependencies for the D3
-review and is not a substitute for PR or main-branch truth.
+Implementation status belongs in tasks and PRs, not this canonical document.
 
 ### 5.2 Consumer feed checklist
 
@@ -449,6 +461,9 @@ review and is not a substitute for PR or main-branch truth.
 
 - Support all six replay profiles.
 - Fetch holdings lazily through LOCK #16.
+- Percent-encode the ISO `as_of_utc` value for detail/holdings requests and
+  consume the wire field as `strategy`; a local UI `Profile` alias must not
+  change the payload.
 - Display PIT methodology, survivorship-bias state, sample count, and downside.
 
 **Backend γ**
@@ -456,6 +471,8 @@ review and is not a substitute for PR or main-branch truth.
 - Keep all user input parameterized.
 - Use the exact LOCK #14/#15/#16 paths.
 - Return stable JSON envelopes and a six-profile backtest whitelist.
+- Query detail/holdings by `strategy` + `as_of_utc`; do not resolve an encoded
+  timestamp through `snapshot_day`.
 - Keep `custom` out of replay until its weight vector is versioned.
 
 **DP γ / DP γ-2**
@@ -501,5 +518,10 @@ review and is not a substitute for PR or main-branch truth.
 - [ ] JP/KR multibagger weights match Strategy v0.3 and each sum to 1.00.
 - [ ] LOCK #14/#15/#16 paths are exact.
 - [ ] Response envelopes match the authorized Backend C4 implementation.
-- [ ] No pending dependency is described as merged into main.
+- [ ] Tab 3 rows always contain nullable `score`/`risk_gate` and required
+  `risk_triggers`; FX KPI pairs are present and nullable.
+- [ ] Tab 5 wire format uses `strategy`, and encoded ISO `:as_of` resolves
+  against `as_of_utc`.
+- [ ] The canonical document contains requirements rather than volatile
+  implementation status.
 - [ ] Upstream material remains spec-only with zero code copy.
