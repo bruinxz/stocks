@@ -253,13 +253,13 @@ export interface LiveShadowBudgetApplyResult {
 }
 
 export const taskService = {
-  async getTasks(): Promise<ScheduledTask[]> {
-    const response = await api.get('/tasks');
+  async getTasks(signal?: AbortSignal): Promise<ScheduledTask[]> {
+    const response = await api.get('/tasks', { signal });
     return response.data.data;
   },
 
-  async getAutomationHealth(): Promise<AutomationHealth> {
-    const response = await api.get('/tasks/automation-health');
+  async getAutomationHealth(signal?: AbortSignal): Promise<AutomationHealth> {
+    const response = await api.get('/tasks/automation-health', { signal });
     return response.data.data;
   },
 
@@ -285,13 +285,16 @@ export const taskService = {
     return response.data.data;
   },
 
-  async getTaskParameterAudits(params?: {
-    task_id?: number;
-    event_type?: string;
-    limit?: number;
-    watched_only?: boolean;
-  }): Promise<TaskParameterAuditLog[]> {
-    const response = await api.get('/tasks/parameter-audits', { params });
+  async getTaskParameterAudits(
+    params?: {
+      task_id?: number;
+      event_type?: string;
+      limit?: number;
+      watched_only?: boolean;
+    },
+    signal?: AbortSignal
+  ): Promise<TaskParameterAuditLog[]> {
+    const response = await api.get('/tasks/parameter-audits', { params, signal });
     return response.data.data;
   },
 

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Button,
@@ -446,76 +446,116 @@ const TaskScheduler: React.FC = () => {
   const [form] = Form.useForm();
   const [stabilityForm] = Form.useForm();
 
-  const fetchTasks = useCallback(async () => {
+  const fetchTasks = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
-      const data = await taskService.getTasks();
+      const data = await taskService.getTasks(signal);
+      if (signal?.aborted) return;
       setTasks(data);
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED') return;
+      if (signal?.aborted) return;
       message.error('获取任务列表失败');
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, []);
 
-  const fetchHealth = useCallback(async () => {
+  const fetchHealth = useCallback(async (signal?: AbortSignal) => {
     setHealthLoading(true);
     try {
-      const data = await taskService.getAutomationHealth();
+      const data = await taskService.getAutomationHealth(signal);
+      if (signal?.aborted) return;
       setHealth(data);
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED') return;
+      if (signal?.aborted) return;
       message.error('获取自动化健康状态失败');
     } finally {
-      setHealthLoading(false);
+      if (!signal?.aborted) setHealthLoading(false);
     }
   }, []);
 
-  const fetchAuditLogs = useCallback(async () => {
+  const fetchAuditLogs = useCallback(async (signal?: AbortSignal) => {
     setAuditLoading(true);
     try {
       setAuditExpanded(false);
-      const data = await taskService.getTaskParameterAudits({
-        limit: auditFilter === 'deployment' ? 20 : 12,
-        watched_only: auditFilter === 'watched',
-        event_type: auditFilter === 'deployment' ? 'deployment_smoke' : undefined,
-      });
+      const data = await taskService.getTaskParameterAudits(
+        {
+          limit: auditFilter === 'deployment' ? 20 : 12,
+          watched_only: auditFilter === 'watched',
+          event_type: auditFilter === 'deployment' ? 'deployment_smoke' : undefined,
+        },
+        signal
+      );
+      if (signal?.aborted) return;
       setAuditLogs(
         auditFilter === 'deployment'
           ? data.filter(item => String(item.event_type || '').startsWith('deployment_smoke_'))
           : data
       );
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED') return;
+      if (signal?.aborted) return;
       // 审计不阻断主链路展示，旧库首次启动前可能还没有表。
       setAuditLogs([]);
     } finally {
-      setAuditLoading(false);
+      if (!signal?.aborted) setAuditLoading(false);
     }
   }, [auditFilter]);
 
-  const fetchDeploymentAudits = useCallback(async () => {
+  const fetchDeploymentAudits = useCallback(async (signal?: AbortSignal) => {
     setDeploymentAuditLoading(true);
     try {
-      const data = await taskService.getTaskParameterAudits({
-        limit: 6,
-        event_type: 'deployment_smoke',
-        watched_only: false,
-      });
+      const data = await taskService.getTaskParameterAudits(
+        {
+          limit: 6,
+          event_type: 'deployment_smoke',
+          watched_only: false,
+        },
+        signal
+      );
+      if (signal?.aborted) return;
       setDeploymentAudits(
         data.filter(item => String(item.event_type || '').startsWith('deployment_smoke_'))
       );
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED') return;
+      if (signal?.aborted) return;
       setDeploymentAudits([]);
     } finally {
-      setDeploymentAuditLoading(false);
+      if (!signal?.aborted) setDeploymentAuditLoading(false);
     }
   }, []);
 
-  const refreshAll = useCallback(async () => {
-    await Promise.all([fetchTasks(), fetchHealth(), fetchAuditLogs(), fetchDeploymentAudits()]);
+  const refreshAll = useCallback(async (signal?: AbortSignal) => {
+    await Promise.all([
+      fetchTasks(signal),
+      fetchHealth(signal),
+      fetchAuditLogs(signal),
+      fetchDeploymentAudits(signal),
+    ]);
   }, [fetchAuditLogs, fetchDeploymentAudits, fetchHealth, fetchTasks]);
 
+  // 每次 mount / 手动 refresh / mutation-triggered refresh / 按钮 click 用独立 AbortController，
+  // 保证只提交本次结果，旧的 in-flight 请求被 abort，避免 late-arriver 覆盖新状态。
+  const tickControllerRef = useRef<AbortController | null>(null);
+
+  const refreshFresh = useCallback(async () => {
+    if (tickControllerRef.current) tickControllerRef.current.abort();
+    const c = new AbortController();
+    tickControllerRef.current = c;
+    await refreshAll(c.signal);
+  }, [refreshAll]);
+
   useEffect(() => {
-    refreshAll();
+    const mountController = new AbortController();
+    tickControllerRef.current = mountController;
+    void refreshAll(mountController.signal);
+    return () => {
+      if (tickControllerRef.current) tickControllerRef.current.abort();
+      tickControllerRef.current = null;
+    };
   }, [refreshAll]);
 
   const healthTone = health?.status || 'warning';
@@ -608,7 +648,7 @@ const TaskScheduler: React.FC = () => {
         try {
           await taskService.deleteTask(id);
           message.success('删除成功');
-          refreshAll();
+          refreshFresh();
         } catch (error) {
           message.error('删除失败');
         }
@@ -624,7 +664,7 @@ const TaskScheduler: React.FC = () => {
         try {
           await taskService.executeTask(id);
           message.success('任务已在后台触发执行');
-          refreshAll();
+          refreshFresh();
         } catch (error) {
           message.error('触发执行失败');
         }
@@ -653,7 +693,7 @@ const TaskScheduler: React.FC = () => {
         await taskService.createTask(payload);
         message.success('已创建量化全市场扫描任务');
       }
-      await refreshAll();
+      await refreshFresh();
     } catch (error: any) {
       message.error(error?.response?.data?.message || '创建/更新量化任务失败');
     } finally {
@@ -702,7 +742,7 @@ const TaskScheduler: React.FC = () => {
           });
           setRiskLimitPreview(result);
           message.success(result.message || '风险阈值建议已应用');
-          await refreshAll();
+          await refreshFresh();
         } catch (error: any) {
           message.error(error?.response?.data?.message || '应用风险阈值建议失败');
         } finally {
@@ -749,7 +789,7 @@ const TaskScheduler: React.FC = () => {
           message.success(result.message || '影子预算建议已应用');
           setIsShadowBudgetModalVisible(false);
           setShadowBudgetPreview(null);
-          await refreshAll();
+          await refreshFresh();
         } catch (error: any) {
           message.error(error?.response?.data?.message || '应用影子预算建议失败');
         } finally {
@@ -846,7 +886,7 @@ const TaskScheduler: React.FC = () => {
             );
             message.success('稳定性门槛已更新');
             setIsStabilityModalVisible(false);
-            await refreshAll();
+            await refreshFresh();
           } catch (error: any) {
             message.error(error?.response?.data?.message || '稳定性门槛更新失败');
           } finally {
@@ -886,7 +926,7 @@ const TaskScheduler: React.FC = () => {
     try {
       await taskService.updateTask(id, { is_active: checked });
       message.success(checked ? '任务已启用' : '任务已禁用');
-      refreshAll();
+      refreshFresh();
     } catch (error) {
       message.error('状态更新失败');
     }
@@ -916,7 +956,7 @@ const TaskScheduler: React.FC = () => {
         }
 
         setIsModalVisible(false);
-        refreshAll();
+        refreshFresh();
       } catch (error) {
         message.error('操作失败');
       }
@@ -1200,7 +1240,7 @@ const TaskScheduler: React.FC = () => {
               type="primary"
               icon={<ReloadOutlined />}
               loading={loading || healthLoading}
-              onClick={refreshAll}
+              onClick={refreshFresh}
             >
               刷新链路状态
             </Button>
@@ -1309,7 +1349,7 @@ const TaskScheduler: React.FC = () => {
                   size="small"
                   type="link"
                   loading={deploymentAuditLoading}
-                  onClick={fetchDeploymentAudits}
+                  onClick={() => fetchDeploymentAudits()}
                 >
                   刷新
                 </Button>
@@ -1685,7 +1725,7 @@ const TaskScheduler: React.FC = () => {
               <Option value="deployment">部署验证</Option>
               <Option value="all">全部审计</Option>
             </Select>
-            <Button size="small" type="link" loading={auditLoading} onClick={fetchAuditLogs}>
+            <Button size="small" type="link" loading={auditLoading} onClick={() => fetchAuditLogs()}>
               刷新审计
             </Button>
           </Space>
