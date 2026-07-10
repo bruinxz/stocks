@@ -1,9 +1,10 @@
 import hashlib
+import math
 import re
 
 
 class OutputValidator:
-    """Enforce 14 output invariants per contracts/recommendation.md §8."""
+    """Enforce output invariants per contracts/recommendation.md §8."""
 
     def validate(self, recommendation_list: dict) -> list[str]:
         errors = []
@@ -23,9 +24,9 @@ class OutputValidator:
             if len(rec["evidence_refs"]) < 1:
                 errors.append(f"{prefix}: evidence_refs must have >= 1 entry")
 
-            weight_sum = sum(c["weight"] for c in rec["weights"]["contributions"])
-            if abs(weight_sum - 1.0) > 1e-6:
-                errors.append(f"{prefix}: weight sum {weight_sum} != 1.0")
+            errors.extend(
+                self._validate_weight_attribution(rec.get("weights"), prefix)
+            )
 
             markers = set(re.findall(r'\[E(\d+)\]', rec["explanation"]["body"]))
             evidence_ids = {e["id"] for e in rec["evidence_refs"]}
@@ -41,8 +42,9 @@ class OutputValidator:
             if cr and cr["kind"] == "unclassified":
                 errors.append(f"{prefix}: catalyst_relevance.kind must not be unclassified")
 
-            if entry["rating_band"] != rec["score"]["band"]:
-                errors.append(f"{prefix}: rating_band != score.band")
+            score_rating = rec["score"].get("rating")
+            if entry["rating_band"] != score_rating:
+                errors.append(f"{prefix}: rating_band != score.rating")
 
             conv = rec["conviction"]
             expected_final = max(0, min(100, conv["base"] + sum(a["delta"] for a in conv["adjustments"])))
@@ -81,3 +83,55 @@ class OutputValidator:
     def _is_canonical_uri(self, uri: str) -> bool:
         from ai.types import CANONICAL_URI_PREFIXES
         return any(uri.startswith(p) for p in CANONICAL_URI_PREFIXES)
+
+    def _validate_weight_attribution(self, attribution, prefix: str) -> list[str]:
+        errors = []
+        if not isinstance(attribution, dict):
+            return [f"{prefix}: weights must be an object"]
+
+        contributions = attribution.get("contributions")
+        normalized = attribution.get("normalized")
+
+        if not isinstance(contributions, list):
+            return [f"{prefix}: weights.contributions must be an array"]
+
+        if not contributions:
+            if normalized is not False:
+                errors.append(
+                    f"{prefix}: empty contributions require normalized=false"
+                )
+            return errors
+
+        if normalized is not True:
+            errors.append(
+                f"{prefix}: non-empty contributions require normalized=true"
+            )
+
+        weights = []
+        for index, contribution in enumerate(contributions):
+            weight = (
+                contribution.get("weight")
+                if isinstance(contribution, dict)
+                else None
+            )
+            if (
+                isinstance(weight, bool)
+                or not isinstance(weight, (int, float))
+                or not math.isfinite(weight)
+            ):
+                errors.append(
+                    f"{prefix}: contributions[{index}].weight must be finite"
+                )
+                continue
+            weights.append(float(weight))
+
+        if len(weights) != len(contributions):
+            return errors
+
+        l1_sum = sum(abs(weight) for weight in weights)
+        if abs(l1_sum - 1.0) > 1e-6:
+            errors.append(
+                f"{prefix}: contribution L1 sum {l1_sum} != 1.0"
+            )
+
+        return errors

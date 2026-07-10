@@ -1,3 +1,4 @@
+import math
 import uuid as _uuid
 
 
@@ -39,30 +40,62 @@ class AssemblyStage:
         return ctx
 
     def _compute_weights(self, triggers, features):
-        contributions = []
-        total_abs = 0.0
+        raw_contributions = []
 
         for t in triggers:
-            delta = {"STRONG": 0.3, "MEDIUM": 0.2, "WEAK": 0.1}.get(t["strength"], 0.1)
-            total_abs += abs(delta)
-            contributions.append({
+            raw_contribution = {
+                "STRONG": 0.3,
+                "MEDIUM": 0.2,
+                "WEAK": 0.1,
+            }.get(t["strength"], 0.1)
+            raw_contributions.append({
                 "source_kind": "trigger",
                 "source_ref": t["code"],
-                "weight": delta,
+                "raw_contribution": raw_contribution,
             })
 
         for dim in features["score"].get("dims", []):
-            delta = dim["weight"] * dim["score"] / 100.0 * 0.5
-            total_abs += abs(delta)
-            contributions.append({
+            raw_contribution = dim["weight"] * dim["score"] / 100.0 * 0.5
+            raw_contributions.append({
                 "source_kind": "score_dim",
                 "source_ref": dim["key"],
-                "weight": delta,
+                "raw_contribution": raw_contribution,
             })
 
-        base_weight = max(total_abs, 1e-9)
-        for c in contributions:
-            c["weight"] = c["weight"] / base_weight
+        return self._normalize_contributions(raw_contributions)
+
+    @staticmethod
+    def _normalize_contributions(raw_contributions):
+        prepared = []
+        denominator = 0.0
+
+        for raw in raw_contributions:
+            raw_input = raw["raw_contribution"]
+            if isinstance(raw_input, bool):
+                raise ValueError("raw contribution must be a finite number")
+
+            raw_value = float(raw_input)
+            if not math.isfinite(raw_value):
+                raise ValueError("raw contribution must be a finite number")
+
+            prepared.append((raw, raw_value))
+            denominator += abs(raw_value)
+
+        if not math.isfinite(denominator):
+            raise ValueError("raw contribution L1 denominator must be finite")
+
+        if denominator == 0.0:
+            return {"contributions": [], "normalized": False}
+
+        contributions = []
+        for raw, raw_value in prepared:
+            contribution = {
+                key: value
+                for key, value in raw.items()
+                if key != "raw_contribution"
+            }
+            contribution["weight"] = raw_value / denominator
+            contributions.append(contribution)
 
         return {"contributions": contributions, "normalized": True}
 
