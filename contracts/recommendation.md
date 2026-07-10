@@ -71,6 +71,7 @@ type RecommendationScoreSnapshot = {
   scoring_id:      string;   // Strategy-issued UUIDv4 stable id (Strategy γ v0.2 §2.1)
   snapshot_hash:   string;   // SHA-256(JCS(Score minus scoring_id, snapshot_hash)) (Strategy γ v0.2 §2.1)
   profile:         RecommendationProfile;  // projection of Strategy Score.weights_profile; custom excluded
+  market_scope:    "cn_a" | "us" | "jp" | "kr";  // projection of Strategy Score.market_scope
   total:           number;   // 0..100 (denormalized snapshot for O(1) sort)
   rating:          Band;     // projection of Strategy Score.rating
   dims:            ScoreDim[];  // 6-dim breakdown (Q/G/V/M/T/R) · Strategy §2.1
@@ -89,8 +90,9 @@ type ScoreDim = {
 This projection exists for deterministic explanation and O(1) list rendering.
 It is not Strategy's identity-only `ScoreRef`. Its fields MUST be copied from
 the referenced Strategy `Score` without recomputation: `profile` projects
-`weights_profile`, `rating` projects `rating`, and `dims` projects the six
-Strategy dimensions in `Q/G/V/M/T/R` order.
+`weights_profile`, `market_scope` projects `market_scope`, `rating` projects
+`rating`, and `dims` projects the six Strategy dimensions in `Q/G/V/M/T/R`
+order.
 
 ### 2.3 Conviction (reference to scoring.md §4 · Strategy γ SOLE)
 
@@ -416,9 +418,9 @@ Pipeline MUST enforce (fail closed):
 10. `items[*].recommendation.catalyst_relevance.kind != "unclassified"` (unclassified 拒生成硬门 · unclassified events MUST NOT produce recommendations · Sprint 2 分类器 GA 后 backfill 归零)
 11. `items[*].rating_band == items[*].recommendation.score.rating` (envelope mirror invariant)
 12. `items[*].recommendation.conviction.final == clamp(base + Σ adjustments[i].delta, 0, 100)` (Adjustment sum invariant)
-13. `items[*].recommendation.entry_plan.size_hint.pct` MUST byte-map from `size_hint.tier` per SIZE_HINT_TIER_PCT constant
-14. `items[*].recommendation.entry_plan.size_hint.disclaimer_key == "size_hint_advisory"` (disclaimer_key hard-lock)
-15. `(profile, market_scope)` MUST match the §2.11 registry; every `Recommendation.score.profile` MUST equal the list profile; and `score.{scoring_id,snapshot_hash}` MUST byte-match `conviction.score_ref` and `entry_plan.score_ref`
+13. `items[*].recommendation.entry_plan.size_hint.pct` MUST byte-map from `size_hint.tier` per `contracts/scoring.md` §6.3
+14. `items[*].recommendation.entry_plan.size_hint.disclaimer_key == "size_hint_advisory"` per `contracts/scoring.md` §6.3
+15. `(profile, market_scope)` MUST match the §2.11 registry; every `Recommendation.score.{profile,market_scope}` MUST equal the list pair; and `score.{scoring_id,snapshot_hash}` MUST byte-match `conviction.score_ref` and `entry_plan.score_ref`
 16. Every `RiskTrigger` MUST validate against `contracts/scoring.md` §5 for code, severity, gate derivation, and market applicability; recommendation defines no local override
 17. Every `Recommendation.explanation.language` MUST be allowed by the §2.11 language set for the list profile
 
