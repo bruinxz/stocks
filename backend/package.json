@@ -8,7 +8,10 @@
     "ws_frame_type": "server-timing",
     "heartbeat_enabled": false,
     "heartbeat_interval_ms": 30000,
-    "heartbeat_comment": "keep-alive"
+    "heartbeat_comment": "keep-alive",
+    "resume_enabled": false,
+    "resume_history_size": 100,
+    "resume_header_name": "Last-Event-ID"
   },
   "description": "A-share stock backtesting backend",
   "main": "dist/index.js",
