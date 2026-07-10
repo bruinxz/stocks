@@ -3,7 +3,7 @@ import { Select, DatePicker } from 'antd';
 import { LoadingState } from '../../shared/LoadingState';
 import { EmptyState } from '../../shared/EmptyState';
 import { ErrorState } from '../../shared/ErrorState';
-import { DetailSidebar } from '@/shared/components/DetailSidebar';
+import { DetailSidebar } from 'shared/components/DetailSidebar';
 import type { KpiSlot } from '../../shared/KpiBar';
 import { useBacktestData } from './useBacktestData';
 import { SnapshotTable } from './SnapshotTable';

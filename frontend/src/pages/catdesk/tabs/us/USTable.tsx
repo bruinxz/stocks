@@ -1,7 +1,6 @@
 import { Table, Tag, Progress, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import type { CandidateListEntry, Band } from '../../types';
-import { SIZE_HINT_TIER_PCT } from '../../types';
+import type { CandidateListEntry, Band } from '../c1Types';
 
 const BAND_COLOR: Record<Band, string> = {
   A: '#22c55e',
@@ -32,10 +31,10 @@ export function USTable({ data, loading, onRowClick, selectedSymbol }: USTablePr
       title: 'Score',
       key: 'score',
       width: 80,
-      sorter: (a, b) => (a.score?.score ?? 0) - (b.score?.score ?? 0),
+      sorter: (a, b) => (a.score?.total ?? 0) - (b.score?.total ?? 0),
       render: (_, r) => (
         <span style={{ fontFamily: 'var(--cd-font-mono)', fontWeight: 600 }}>
-          {r.score?.score?.toFixed(1) ?? '--'}
+          {r.score?.total.toFixed(1) ?? '--'}
         </span>
       ),
     },
@@ -44,7 +43,7 @@ export function USTable({ data, loading, onRowClick, selectedSymbol }: USTablePr
       key: 'rating_band',
       width: 70,
       render: (_, r) => {
-        const band = r.rating_band ?? r.score?.band;
+        const band = r.score?.rating ?? r.rating_band;
         if (!band) return '--';
         return <Tag color={BAND_COLOR[band] ?? 'default'}>{band}</Tag>;
       },
@@ -74,7 +73,7 @@ export function USTable({ data, loading, onRowClick, selectedSymbol }: USTablePr
         const sh = r.entry_plan?.size_hint;
         if (!sh || sh.tier === 'SKIP')
           return <span style={{ color: 'var(--cd-text-secondary)' }}>--</span>;
-        const pct = SIZE_HINT_TIER_PCT[sh.tier] ?? sh.pct ?? 0;
+        const pct = sh.pct;
         return (
           <Tooltip title="仅参考·非下单 binding · 不构成投资建议">
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -100,10 +99,10 @@ export function USTable({ data, loading, onRowClick, selectedSymbol }: USTablePr
       width: 100,
       render: (_, r) => {
         const ep = r.entry_plan;
-        if (!ep?.price_band) return '--';
+        if (!ep?.entry) return '--';
         return (
           <span style={{ fontFamily: 'var(--cd-font-mono)' }}>
-            {ep.price_band.low.toFixed(2)}-{ep.price_band.high.toFixed(2)}
+            {ep.entry.low.toFixed(2)}-{ep.entry.high.toFixed(2)}
           </span>
         );
       },

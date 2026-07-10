@@ -1,5 +1,5 @@
 import React from 'react';
-import type { DetailSection } from '@/shared/components/DetailSidebar';
+import type { DetailSection } from 'shared/components/DetailSidebar';
 import type { BacktestSnapshotSlot, BacktestHolding } from './types';
 import { HoldingsTable } from './HoldingsTable';
 import { Tag } from 'antd';

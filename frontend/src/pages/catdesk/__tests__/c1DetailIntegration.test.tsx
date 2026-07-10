@@ -1,49 +1,106 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { CandidateListEntry } from '../types';
+import { describe, expect, test } from '@jest/globals';
+import type { Dimension } from 'shared/scoring/types';
+import type { CandidateListEntry } from '../tabs/c1Types';
+import { scoreBandDimensions } from '../tabs/c1Types';
+import { ScoreBreakdownCard } from '../tabs/morning/detail/ScoreBreakdownCard';
 import { buildMorningSections } from '../tabs/morning/detail/buildMorningSections';
 import { buildUSSections } from '../tabs/us/detail/buildUSSections';
+
+const dimension = (score: number, band: Dimension['band']): Dimension => ({
+  score,
+  band,
+  evidence: ['canonical evidence'],
+  inputs: {},
+});
+
+const scoreRef = {
+  scoring_id: '00000000-0000-4000-8000-000000000001',
+  snapshot_hash: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+};
 
 const candidate: CandidateListEntry = {
   symbol: 'NVDA',
   name: 'NVIDIA',
   rating_band: 'A',
   score: {
-    scoring_id: 'score-1',
-    snapshot_hash: '0123456789abcdef',
-    score: 88,
-    band: 'A',
-    dims: [
-      { key: 'quality', score: 90, band: 'A', weight: 0.2 },
-      { key: 'growth', score: 86, band: 'A', weight: 0.2 },
-    ],
-    evidence: ['earnings'],
+    ...scoreRef,
+    ticker: 'NVDA',
+    as_of: '2026-07-10',
+    quality: dimension(90, 'A'),
+    growth: dimension(86, 'A'),
+    valuation: dimension(76, 'B'),
+    moat: dimension(88, 'A'),
+    trend: dimension(84, 'B'),
+    risk: dimension(72, 'B'),
+    weights: {
+      quality: 0.2,
+      growth: 0.2,
+      valuation: 0.15,
+      moat: 0.2,
+      trend: 0.15,
+      risk: 0.1,
+    },
+    weights_profile: 'us_preferred',
+    total: 88,
+    rating: 'A',
+    computed_at: '2026-07-10T00:00:00Z',
+    source_versions: {
+      quality_engine: 'quality@v0.3.0',
+      growth_engine: 'growth@v0.3.0',
+      valuation_engine: 'valuation@v0.3.0',
+      moat_engine: 'moat@v0.3.0',
+      trend_engine: 'trend@v0.3.0',
+      risk_engine: 'risk@v0.3.0',
+    },
   },
   conviction: {
     ticker: 'NVDA',
     as_of: '2026-07-10T00:00:00Z',
     base: 80,
-    score_ref: { scoring_id: 'score-1', snapshot_hash: '0123456789abcdef' },
+    score_ref: scoreRef,
     adjustments: [{ delta: 5, reason: 'earnings beat' }],
     final: 85,
     level: 'HIGH',
   },
   risk_gate: {
-    status: 'YELLOW',
-    triggers: [{ code: 'EARNINGS_T-2', severity: 'medium', detail: '财报窗口临近' }],
+    ticker: 'NVDA',
     evaluated_at: '2026-07-10T00:00:00Z',
+    gate: 'GREEN',
+    triggers: [],
+    ok_to_enter: true,
   },
   entry_plan: {
-    price_band: { low: 150, high: 155, currency: 'USD' },
-    stop: 142,
-    targets: [165, 175],
-    size_hint: { tier: 'TIER_3', pct: 3, disclaimer_key: 'size_hint_advisory' },
+    ticker: 'NVDA',
+    generated_at: '2026-07-10T00:00:00Z',
+    entry: { low: 150, high: 155, currency: 'USD' },
+    stop: { value: 142, currency: 'USD' },
+    targets: [
+      { value: 165, currency: 'USD' },
+      { value: 175, currency: 'USD' },
+    ],
+    size_hint: {
+      tier: 'TIER_3',
+      pct: 3,
+      disclaimer_key: 'size_hint_advisory',
+      rationale: 'high conviction',
+    },
     time_horizon: 'SWING',
     invalidation: '跌破关键支撑',
-    conviction_ref: 'score-1',
+    conviction_ref: 85,
+    score_ref: scoreRef,
   },
 };
 
 describe('C1 detail integration', () => {
+  test('missing canonical score stays unavailable instead of inventing a band', () => {
+    expect(scoreBandDimensions(null)).toEqual([]);
+
+    const markup = renderToStaticMarkup(<ScoreBreakdownCard />);
+    expect(markup).toContain('暂无评分快照');
+    expect(markup).not.toContain('综合: B');
+  });
+
   test('US candidate exposes score, conviction, risk, and entry sections', () => {
     const sections = buildUSSections(candidate);
     expect(sections.map(section => section.key)).toEqual(['score', 'conviction', 'risk', 'entry']);

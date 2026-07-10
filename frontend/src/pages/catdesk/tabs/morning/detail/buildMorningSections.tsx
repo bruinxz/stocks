@@ -1,11 +1,12 @@
-import type { DetailSection } from '@/shared/components/DetailSidebar';
-import type { CandidateListEntry } from '../../../types';
+import type { DetailSection } from 'shared/components/DetailSidebar';
+import { scoreBandDimensions, type CandidateListEntry } from '../../c1Types';
 import { RelevanceBreakdownCard } from './RelevanceBreakdownCard';
 import { AIRecommendationCard } from './AIRecommendationCard';
 import { ScoreBreakdownCard } from './ScoreBreakdownCard';
 import { RiskGateDetailCard } from './RiskGateDetailCard';
 import { ConvictionBreakdownCard } from './ConvictionBreakdownCard';
 import { DataSourceBadge } from './DataSourceBadge';
+import { EntryPlanDetails } from './EntryPlanDetails';
 
 export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
   const sections: DetailSection[] = [
@@ -29,8 +30,8 @@ export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
         <ScoreBreakdownCard
           scoringId={row.score?.scoring_id}
           snapshotHash={row.score?.snapshot_hash}
-          dimensions={row.score?.dims?.map(d => ({ label: d.key, band: d.band }))}
-          totalBand={row.score?.band}
+          dimensions={scoreBandDimensions(row.score)}
+          totalBand={row.score?.rating}
         />
       ),
     },
@@ -43,7 +44,7 @@ export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
           triggers={row.risk_gate?.triggers.map(t => ({
             id: t.code,
             label: t.code,
-            severity: t.severity === 'high' ? 'high' : t.severity === 'medium' ? 'medium' : 'low',
+            severity: t.severity,
             detail: t.detail,
           }))}
         />
@@ -76,47 +77,7 @@ export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
       key: 'entry',
       title: '入场计划',
       ariaLabel: 'Entry plan',
-      content: (
-        <div
-          style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', fontSize: 13 }}
-        >
-          {ep.price_band && (
-            <div>
-              <div style={{ color: 'var(--cd-text-secondary)', fontSize: 11 }}>价格区间</div>
-              <div style={{ fontFamily: 'var(--cd-font-mono)' }}>
-                {ep.price_band.low.toFixed(2)}-{ep.price_band.high.toFixed(2)}{' '}
-                {ep.price_band.currency}
-              </div>
-            </div>
-          )}
-          {ep.stop != null && (
-            <div>
-              <div style={{ color: 'var(--cd-text-secondary)', fontSize: 11 }}>止损</div>
-              <div style={{ fontFamily: 'var(--cd-font-mono)', color: 'var(--cd-down)' }}>
-                {ep.stop.toFixed(2)}
-              </div>
-            </div>
-          )}
-          <div>
-            <div style={{ color: 'var(--cd-text-secondary)', fontSize: 11 }}>时间窗口</div>
-            <div>{ep.time_horizon}</div>
-          </div>
-          {ep.size_hint && (
-            <div>
-              <div style={{ color: 'var(--cd-text-secondary)', fontSize: 11 }}>仓位建议</div>
-              <div style={{ fontFamily: 'var(--cd-font-mono)' }}>
-                {ep.size_hint.tier} ≤{ep.size_hint.pct}%
-              </div>
-            </div>
-          )}
-          {ep.invalidation && (
-            <div style={{ gridColumn: '1 / -1' }}>
-              <div style={{ color: 'var(--cd-text-secondary)', fontSize: 11 }}>失效条件</div>
-              <div>{ep.invalidation}</div>
-            </div>
-          )}
-        </div>
-      ),
+      content: <EntryPlanDetails plan={ep} />,
     });
   }
 
