@@ -151,6 +151,7 @@ The canonical replay whitelist therefore contains **six named registry profiles*
 
 **MarketScope wire canonical**:
 - `MarketScope = "cn_a" | "us" | "jp" | "kr"` is shared by scoring, recommendation and Backend DTOs.
+- The exhaustive local-currency mapping is `cn_a → CNY`, `us → USD`, `jp → JPY`, `kr → KRW`.
 - `us_preferred` and `multibagger` are valid for both `us` and `cn_a`; callers must provide `market_scope`. Profile name alone never defaults A-share to US.
 - Frontend-local display enums map only at the boundary: `A → cn_a`, `US → us`, `JP → jp`, `KR → kr`.
 - JP/KR route query labels `market=JP|KR` map to `jp|kr` before Score assembly.
@@ -215,7 +216,7 @@ interface DimensionAdapter {
 1. The adapter runs at the ingestion/assembly boundary. `runScoringPipeline` remains market-agnostic and consumes the existing six typed `*Inputs`.
 2. `raw.market_scope` must be allowed by the selected profile's §2.4 mapping; an explicit conflicting scope is a validation error, not an override.
 3. `available_at <= as_of` is mandatory. Later filings/prices are excluded before normalization.
-4. Dimension calculations remain in local currency (USD/JPY/KRW). FX (`usdjpy` / `usdkrw`) is presentation/EntryPlan metadata and must not alter dimension inputs.
+4. Dimension calculations remain in the market's local currency: `cn_a → CNY`, `us → USD`, `jp → JPY`, `kr → KRW`. In particular, A-share dimension inputs stay CNY-denominated; FX (`usdjpy` / `usdkrw` or any future display pair) is presentation/EntryPlan metadata and must never silently rewrite dimension inputs.
 5. JP uses J-GAAP/EDINET semantics and TSE 33-sector peers; KR uses K-IFRS/DART semantics and KRX peers. Cross-shareholding/preferred-stock adjustments must be identified in `inputs` and `source_versions`.
 6. Missing required inputs remain missing and reduce evidence/coverage according to the dimension contract; adapters must not silently coerce unknown fundamentals to economic zero.
 7. Bundle assembly must map `normalizeTrend` → `trend_inputs` and `normalizeRisk` → `risk_inputs`. Cross-wiring is a hard contract failure.
@@ -571,6 +572,7 @@ AI-γ `contracts/recommendation.md` 引用:
 6. Replay also persists `market_scope`; generic profiles never infer `us` when the scored security is A-share.
 7. A v0.2 typed bundle can be migrated by supplying explicit `market_scope`; v0.2 snapshots retain recorded weights and engine versions. Recomputing generic `multibagger` under v0.3 is intentionally output-changing.
 8. No migration or `schema.prisma` change is part of D1.
+9. A machine assertion covers the exhaustive `MarketScope → currency` mapping and rejects missing/extra scope or currency values.
 
 ## §12 · Discipline
 
