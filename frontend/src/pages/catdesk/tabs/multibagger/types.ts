@@ -9,7 +9,7 @@ import type {
   RiskGate,
   EntryPlan,
   SizeHintTier,
-} from '@/shared/types/catdesk';
+} from 'shared/types/catdesk';
 
 export type MultibaggerStage = 'seed' | 'early' | 'growth' | 'break_below' | 'deep';
 

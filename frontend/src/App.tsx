@@ -352,6 +352,9 @@ const AppContent: React.FC = () => {
   if (loginBypassDestination) {
     return <Navigate to={loginBypassDestination} replace />;
   }
+  if (location.pathname === '/home') {
+    return <Navigate to="/catdesk" replace />;
+  }
 
   // catalyst-900 is a dedicated single-page workspace and does not inherit the
   // legacy application shell. Keep its nested disclaimer route inside the same
@@ -448,7 +451,6 @@ const AppContent: React.FC = () => {
               <Routes location={location}>
                 {/* catalyst-900: 登录默认进 /catdesk (7-tab SPA). */}
                 <Route path="/" element={<Navigate to="/catdesk" replace />} />
-
                 {/* Unified workspaces (US-001) */}
                 <Route
                   path="/workspace/today"

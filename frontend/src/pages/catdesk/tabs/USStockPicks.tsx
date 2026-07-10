@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
-import { useAbortableRequest } from '@/shared/hooks/useAbortableRequest';
+import { useAbortableRequest } from 'shared/hooks/useAbortableRequest';
 import { LoadingState } from '../shared/LoadingState';
 import { EmptyState } from '../shared/EmptyState';
 import { ErrorState } from '../shared/ErrorState';
@@ -8,8 +8,8 @@ import { USTable } from './us/USTable';
 import { USFilterBar } from './us/USFilterBar';
 import { USKpiSlots } from './us/USKpiSlots';
 import { buildUSSections } from './us/detail/buildUSSections';
-import { DetailSidebar } from '@/shared/components/DetailSidebar';
-import type { CandidateListEntry } from '../types';
+import { DetailSidebar } from 'shared/components/DetailSidebar';
+import type { CandidateListEntry } from './c1Types';
 
 interface USSelectResponse {
   kpi: { total: number; strong_buy: number; avg_score: number; updated_at: string };

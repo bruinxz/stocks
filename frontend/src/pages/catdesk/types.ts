@@ -1,1 +1,1 @@
-export * from '@/shared/types/catdesk';
+export * from 'shared/types/catdesk';

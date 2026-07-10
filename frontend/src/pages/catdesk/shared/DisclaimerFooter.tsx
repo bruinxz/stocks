@@ -15,6 +15,7 @@ export function DisclaimerFooter({ disclaimerKey = 'size_hint_advisory' }: Discl
 
   return (
     <footer
+      data-disclaimer-key={disclaimerKey}
       style={{
         padding: '8px 16px',
         textAlign: 'center',

@@ -1,4 +1,4 @@
-import { useAbortableRequest } from '@/shared/hooks/useAbortableRequest';
+import { useAbortableRequest } from 'shared/hooks/useAbortableRequest';
 import type {
   MultibaggerStage,
   MultibaggerConclusion,

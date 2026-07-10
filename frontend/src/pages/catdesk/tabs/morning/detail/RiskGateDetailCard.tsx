@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Tag } from 'antd';
 import { DownOutlined, RightOutlined } from '@ant-design/icons';
 
-type Severity = 'critical' | 'high' | 'medium' | 'low';
+type Severity = 'info' | 'warn' | 'block';
 
 interface RiskTrigger {
   id: string;
@@ -16,18 +16,10 @@ interface RiskGateDetailCardProps {
 }
 
 const SEVERITY_COLORS: Record<Severity, string> = {
-  critical: 'red',
-  high: 'orange',
-  medium: 'gold',
-  low: 'blue',
+  info: 'blue',
+  warn: 'gold',
+  block: 'red',
 };
-
-const DEFAULT_TRIGGERS: RiskTrigger[] = Array.from({ length: 12 }, (_, i) => ({
-  id: `risk-${i}`,
-  label: `风险触发器 ${i + 1}`,
-  severity: (['critical', 'high', 'medium', 'low'] as Severity[])[i % 4],
-  detail: `风险详情描述 ${i + 1}`,
-}));
 
 const cardStyle: React.CSSProperties = {
   background: 'var(--cd-bg-surface)',
@@ -58,11 +50,11 @@ const detailStyle: React.CSSProperties = {
   color: 'var(--cd-text-secondary)',
 };
 
-export function RiskGateDetailCard({ triggers = DEFAULT_TRIGGERS }: RiskGateDetailCardProps) {
+export function RiskGateDetailCard({ triggers = [] }: RiskGateDetailCardProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const toggle = (id: string) => {
-    setExpanded((prev) => {
+    setExpanded(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -73,10 +65,14 @@ export function RiskGateDetailCard({ triggers = DEFAULT_TRIGGERS }: RiskGateDeta
   return (
     <div style={cardStyle}>
       <div style={titleStyle}>风控门控详情</div>
-      {triggers.map((t) => (
+      {triggers.map(t => (
         <div key={t.id}>
           <div style={rowStyle} onClick={() => toggle(t.id)}>
-            {expanded.has(t.id) ? <DownOutlined style={{ fontSize: 10 }} /> : <RightOutlined style={{ fontSize: 10 }} />}
+            {expanded.has(t.id) ? (
+              <DownOutlined style={{ fontSize: 10 }} />
+            ) : (
+              <RightOutlined style={{ fontSize: 10 }} />
+            )}
             <span style={{ color: 'var(--cd-text-primary)', flex: 1 }}>{t.label}</span>
             <Tag color={SEVERITY_COLORS[t.severity]}>{t.severity}</Tag>
           </div>

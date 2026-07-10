@@ -1,5 +1,5 @@
 import React from 'react';
-import { TableColumn, type TableColumnDef } from '@/shared/components/TableColumn';
+import { TableColumn, type TableColumnDef } from 'shared/components/TableColumn';
 import type { BacktestSnapshotSlot } from './types';
 
 interface SnapshotTableProps {

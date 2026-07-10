@@ -6,9 +6,9 @@ import {
   RiskGateDetailCard,
   ConvictionBreakdownCard,
   DataSourceBadge,
-} from '@/shared/components/DetailSidebar';
-import type { DetailSection } from '@/shared/components/DetailSidebar';
-import type { ScoreDim } from '@/shared/types/catdesk';
+} from 'shared/components/DetailSidebar';
+import type { DetailSection } from 'shared/components/DetailSidebar';
+import type { ScoreDim } from 'shared/types/catdesk';
 import type { MultibaggerRow } from './types';
 
 const { Text } = Typography;
