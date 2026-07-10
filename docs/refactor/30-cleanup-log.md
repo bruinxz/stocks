@@ -3070,3 +3070,57 @@ CASCADE family 14-shape REALIZED (per Orch v269~v286): CASCADE VI QUADRUPLE @ 46
 - US-038 SeededRandom + Math.random-zero 铁律 100% preserved (backend §4.7.2.3 retry-ms literal config + §4.7.2.4 error-reason string config + frontend v0.5(v) TaskScheduler + v0.5(w) HomeWorkspace pure AbortController · no entropy in any of 4 PRs)
 - Path D `docs/refactor/baseline/ui-enum/15-enum-matrix-lock-3246b8c.json` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` + 4-baseline `docs/refactor/baseline/ui-enum/4-enum-matrix-lock-bc1b3c9.json` shasum `1f2d197a23c89eec23b5a5addc0e054974a6eaa5` byte-perfect (all 4 PRs #178+#179+#181+#182 zero baseline/** touch by construction)
 - Browser + Node support matrix: React 18 useEffect + useRef (React 16.8+ hooks · React 18 concurrent-render · Meta) + WHATWG DOM §3.3 AbortController (Chromium 66+ Apr 2018 · FF 57+ Nov 2017 · Safari 12.1+ Mar 2019 · Node 15+ Oct 2020) + WHATWG Fetch §5 signal wire-up (Chromium 66+ Apr 2018) + axios v0.22.0+ (Oct 2021 · MIT) + WHATWG HTML5 SSE §9.2.5 `retry:` reconnection-time + `event: error` frame (Chromium 6+ Sep 2010 · FF 6+ Aug 2011 · Safari 5+ Jun 2010 · Edge 79+ Jan 2020) · WHATWG HTML Living Standard 2014-current · RFC 7230 obsolete-by RFC 9112 but §3.2.6 TOKEN semantics preserved · Node.js Stream `writableEnded` Node 12.9+ Aug 2019
+
+---
+
+## §Sprint-2-D3 · SSE 全 stack DISCARD 归档 + catalyst-900 pivot 记录
+
+> D3 doc-tier 2-sign · Cleanup γ SOLE lane `docs/refactor/30-cleanup-log.md` · Orch v311 PR CREATE-AUTHORIZE
+> 合并原 PR-B (SSE DISCARD) + PR-E (v300 pivot entry) per Orch v310 dispatch
+
+### §D3.1 SSE 全 stack DISCARD 归档
+
+**DISCARD 决定**: catalyst-900 7-tab IA 全量走 REST 轮询 (tab 6 每日日报: `/generate` + `/status?job_id=X` + `/:date`)，SSE 全 stack 不再服务任何 7-tab。
+
+**DISCARD 依据**:
+- Backend γ v0.2 msg=eee7bc71 明示「§4.7.2.6 SSE backoff L3.6 永久归档」
+- Frontend γ-3 tab 5-7 shell v0.1 (msg=4935ac45) 采 REST 轮询
+- audit v0.5 (PR #189 `4554fb00` MERGED `docs/refactor/28-workspace-reuse-audit.md`) §三 DISCARD §4.7.2.6 + §零零零零零.2 §3 硬 DISCARD 确认
+
+**DISCARD 范围** (全部嵌入 `backend/src/middlewares/apiServerTimingStreaming.ts` 982 行):
+- §4.7.2 SSE/WebSocket streaming base
+- §4.7.2.1 SSE keep-alive heartbeat (PR #172)
+- §4.7.2.2 SSE Last-Event-ID resumption L3.2 (PR #176)
+- §4.7.2.3 SSE retry: field L3.3 (PR #179)
+- §4.7.2.4 SSE onerror/error-frame L3.4 (PR #182)
+- §4.7.2.5 SSE reconnection-jitter L3.5 (PR #186)
+
+**SSE 消费方** (仍引用但非 catalyst-900 scope):
+- `backend/src/api/controllers/AIAdvisorController.ts` — AI 分析 SSE stream
+- `backend/src/api/controllers/ImprovementSuggestionController.ts` — improvement suggestion stream
+- `backend/src/api/routes/ai.routes.ts` — SSE route registration
+- `backend/src/live-trading/` 多个文件 — live trading SSE
+
+**代码删除执行方**: Backend γ (per Orch v311 Ruling #3 方案 C · SSE 代码 100% 在 `backend/**` Backend γ SOLE lane)
+
+**替代方案**: REST 轮询 (`/generate` → `/status?job_id=X` 轮询 → `/:date` 取结果) · 已在 tab 6 每日日报实装 · 无用户影响
+
+### §D3.2 catalyst-900 v300 pivot 记录
+
+**pivot 事件**: Orch v300 msg=8131a3b7 宣布 catalyst-900 7-tab 单页 SPA 为唯一产品方向，所有 workspace 需按 KEEP-REUSE / DISCARD / NEW 三分类重新评估。
+
+**Cleanup γ 承接**:
+- audit v0.5 产出 (Task #166 → PR #189 MERGED `4554fb00`) 完成 7 workspace DISCARD + KEEP-REUSE 分类
+- Sprint 2 scope: C8 PR-A (废弃 workspace 删除 · 3 sub-PR) + D3 (SSE DISCARD archive · 本条目)
+- lane 契約 v302 msg=a5297512: Cleanup γ SOLE `docs/refactor/28-*` + `docs/refactor/30-*` + `notes/**`
+
+### §D3.3 铁律 checklist
+
+- [x] workspace-draft-only msg=ed61c397 (本文件 = workspace-draft 直接落地 · Cleanup γ SOLE lane)
+- [x] lane 契約 msg=a5297512 v302 (doc-tier · `docs/refactor/30-*` Cleanup γ SOLE lane · 零越界)
+- [x] schema.prisma untouched (doc-only PR · zero code touch)
+- [x] zero code-copy (doc-only)
+- [x] 借鉴独立性 msg=ad6585cf 100% (doc-only · spec-only citations)
+- [x] 保護 glob 100% (doc-only)
+- [x] Path D + 4-baseline byte-perfect preserve (doc-only · zero baseline/** touch)
+- [x] doc-tier 2-sign gate msg=d0d11677
