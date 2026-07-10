@@ -1,7 +1,10 @@
-import React from 'react';
+import type { CatalystKind } from '../../types';
 
-const SECTORS = ['科技', '医药', '消费', '金融', '能源', '材料', '工业'] as const;
-const CATALYST_KINDS = ['policy', 'earnings', 'sector_rotation', 'insider', 'technical', 'macro', 'news', 'institutional', 'unclassified'] as const;
+const CATALYST_KINDS: CatalystKind[] = [
+  'earnings', 'upgrade_downgrade', 'ma_activity', 'sector_move',
+  'regulator', 'geo_macro', 'product', 'leadership', 'unclassified',
+];
+
 const CONVICTION_LEVELS = ['all', 'med', 'high'] as const;
 
 interface MorningFilterBarProps {
@@ -11,6 +14,7 @@ interface MorningFilterBarProps {
   onSectorChange: (v: string | null) => void;
   onCatalystKindChange: (v: string | null) => void;
   onConvictionChange: (v: (typeof CONVICTION_LEVELS)[number]) => void;
+  sectors: string[];
 }
 
 const chipBase: React.CSSProperties = {
@@ -54,14 +58,14 @@ const labelStyle: React.CSSProperties = {
 };
 
 export function MorningFilterBar(props: MorningFilterBarProps) {
-  const { sector, catalystKind, convictionMin, onSectorChange, onCatalystKindChange, onConvictionChange } = props;
+  const { sector, catalystKind, convictionMin, onSectorChange, onCatalystKindChange, onConvictionChange, sectors } = props;
 
   return (
     <div style={barStyle}>
       <div style={groupStyle}>
         <span style={labelStyle}>板块</span>
         <button type="button" style={sector === null ? chipActive : chipBase} onClick={() => onSectorChange(null)}>全部</button>
-        {SECTORS.map((s) => (
+        {sectors.map((s) => (
           <button key={s} type="button" style={sector === s ? chipActive : chipBase} onClick={() => onSectorChange(s)}>{s}</button>
         ))}
       </div>
