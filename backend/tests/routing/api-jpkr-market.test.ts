@@ -75,8 +75,8 @@ const KPI_ROW = {
   nikkei225: JSON.stringify({ value: '41000.5', change_pct: '0.8', as_of: DATE }),
   topix: JSON.stringify({ value: '2900.25', change_pct: '0.4', as_of: DATE }),
   kospi: null,
-  usdjpy: JSON.stringify({ rate: '160.25', change_pct: '0.5' }),
-  usdkrw: JSON.stringify({ rate: '1380.5', change_pct: '-0.2' }),
+  usdjpy: null,
+  usdkrw: null,
 };
 
 function buildApp(): express.Express {
@@ -124,12 +124,21 @@ async function main(): Promise<void> {
       'risk_triggers mirrors RiskGate triggers',
       JSON.stringify(list.body.rows?.[0]?.risk_triggers) === JSON.stringify(RISK_GATE.triggers)
     );
-    assert('USDJPY snapshot is numeric', list.body.kpi.usdjpy.rate === 160.25);
-    assert('USDKRW snapshot is numeric', list.body.kpi.usdkrw.change_pct === -0.2);
+    assert(
+      'USDJPY snapshot is explicit null until dedicated FX fact exists',
+      list.body.kpi.usdjpy === null
+    );
+    assert(
+      'USDKRW snapshot is explicit null until dedicated FX fact exists',
+      list.body.kpi.usdkrw === null
+    );
 
     const kpiCall = calls[0];
     const listCall = calls[1];
-    assert('KPI SQL uses frozen financial FX column', kpiCall.sql.includes('f.fx_rate_to_usd'));
+    assert(
+      'KPI SQL does not average company financial FX',
+      !kpiCall.sql.includes('fx_rate_to_usd')
+    );
     assert('row SQL uses frozen ticker names', listCall.sql.includes('k.ticker_name_local'));
     assert('row SQL maps disclosure table', listCall.sql.includes('jpkr_disclosure_event'));
     assert('row SQL derives prior-close change', listCall.sql.includes('previous_rows'));
@@ -150,8 +159,8 @@ async function main(): Promise<void> {
     assert('detail returns same locked row shape', Array.isArray(detail.body.risk_triggers));
     const detailCall = calls.at(-1);
     assert(
-      'detail uses symbol and limit=1',
-      detailCall?.replacements.symbol === SYMBOL && detailCall?.replacements.limit === 1
+      'detail uses symbol and limit=2 for ambiguity detection',
+      detailCall?.replacements.symbol === SYMBOL && detailCall?.replacements.limit === 2
     );
 
     rowFixture = [
@@ -159,13 +168,6 @@ async function main(): Promise<void> {
         ...MARKET_ROW,
         score: null,
         risk_gate: null,
-      },
-    ];
-    kpiFixture = [
-      {
-        ...KPI_ROW,
-        usdjpy: null,
-        usdkrw: null,
       },
     ];
     const unavailable = await request(app).get(`/api/v1/jpkr-market/${DATE}?market=JP`);
@@ -195,6 +197,17 @@ async function main(): Promise<void> {
     assert(
       'missing detail returns stable error',
       missing.body.error === 'JPKR market entry not found'
+    );
+
+    rowFixture = [
+      MARKET_ROW,
+      { ...MARKET_ROW, market: 'KR', currency: 'KRW', data_sources: ['krx-marketdata'] },
+    ];
+    const ambiguous = await request(app).get(`/api/v1/jpkr-market/${SYMBOL}/detail?date=${DATE}`);
+    assert('ambiguous detail returns 409', ambiguous.status === 409, `status=${ambiguous.status}`);
+    assert(
+      'ambiguous detail stable error',
+      ambiguous.body.error === 'JPKR market entry is ambiguous'
     );
   } finally {
     (sequelize as any).query = originalQuery;

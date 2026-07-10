@@ -3,6 +3,17 @@ import { QueryTypes } from 'sequelize';
 import { logger } from '../../utils/logger';
 import { sequelize } from '../../config/database';
 
+function parseHoldingsPayload(value: unknown): { ok: true; holdings: any[] } | { ok: false } {
+  if (value == null) return { ok: true, holdings: [] };
+
+  try {
+    const holdings = typeof value === 'string' ? JSON.parse(value) : value;
+    return Array.isArray(holdings) ? { ok: true, holdings } : { ok: false };
+  } catch (_error) {
+    return { ok: false };
+  }
+}
+
 export class BacktestPitController {
   constructor() {
     this.listSnapshots = this.listSnapshots.bind(this);
@@ -73,6 +84,9 @@ export class BacktestPitController {
     try {
       const { strategy, as_of } = req.params;
 
+      // PostgreSQL timestamptz equality compares instants, so equivalent offsets
+      // match the same row. The schema key also includes snapshot_day; LIMIT 2
+      // makes any cross-day duplicate instant fail closed instead of choosing one.
       const rows = await sequelize.query<any>(
         `SELECT bps.snapshot_id,
                 bps.strategy,
@@ -87,12 +101,17 @@ export class BacktestPitController {
          FROM backtest_pit_snapshot bps
          WHERE bps.strategy = :strategy
            AND bps.as_of_utc = CAST(:as_of AS timestamptz)
-         LIMIT 1`,
+         LIMIT 2`,
         { replacements: { strategy, as_of }, type: QueryTypes.SELECT }
       );
 
       if (!rows.length) {
         res.status(404).json({ error: 'Backtest snapshot not found' });
+        return;
+      }
+
+      if (rows.length > 1) {
+        res.status(409).json({ error: 'Backtest snapshot is ambiguous' });
         return;
       }
 
@@ -107,12 +126,13 @@ export class BacktestPitController {
     try {
       const { strategy, as_of } = req.params;
 
+      // Keep the same exact-instant and duplicate-detection semantics as detail.
       const rows = await sequelize.query<any>(
         `SELECT bps.holdings
          FROM backtest_pit_snapshot bps
          WHERE bps.strategy = :strategy
            AND bps.as_of_utc = CAST(:as_of AS timestamptz)
-         LIMIT 1`,
+         LIMIT 2`,
         { replacements: { strategy, as_of }, type: QueryTypes.SELECT }
       );
 
@@ -121,8 +141,19 @@ export class BacktestPitController {
         return;
       }
 
+      if (rows.length > 1) {
+        res.status(409).json({ error: 'Backtest snapshot is ambiguous' });
+        return;
+      }
+
       const holdings = rows[0].holdings;
-      res.json({ holdings: typeof holdings === 'string' ? JSON.parse(holdings) : holdings || [] });
+      const parsed = parseHoldingsPayload(holdings);
+      if (!parsed.ok) {
+        res.status(500).json({ error: 'Invalid backtest holdings payload' });
+        return;
+      }
+
+      res.json({ holdings: parsed.holdings });
     } catch (error: any) {
       logger.error(`[BacktestPitController.getHoldings] ${error?.message || error}`);
       res.status(500).json({ error: 'Failed to fetch backtest holdings' });

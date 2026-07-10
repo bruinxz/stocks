@@ -4,6 +4,8 @@ import { logger } from '../../utils/logger';
 import { sequelize } from '../../config/database';
 
 const VALID_MARKETS = ['A', 'US', 'JP', 'KR'];
+const VALID_STAGES = ['seed', 'early', 'growth', 'break_below', 'deep'];
+const VALID_CONCLUSIONS = ['MULTIBAGGER_2X', 'MULTIBAGGER_5X', 'MULTIBAGGER_10X', 'SKIP'];
 
 function parseJson(value: unknown): any {
   return typeof value === 'string' ? JSON.parse(value) : value;
@@ -12,6 +14,12 @@ function parseJson(value: unknown): any {
 function objectOrNull(value: unknown): Record<string, unknown> | null {
   const parsed = parseJson(value);
   return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+}
+
+function parseEnumList(value: string | undefined, allowed: string[]): string[] | null {
+  if (!value) return [];
+  const values = value.split(',');
+  return values.length > 0 && values.every(item => allowed.includes(item)) ? values : null;
 }
 
 function normalizeCandidate(row: any): any {
@@ -51,14 +59,22 @@ export class MultibaggerController {
       const replacements: Record<string, any> = {};
 
       if (stageParam) {
-        const stages = stageParam.split(',');
+        const stages = parseEnumList(stageParam, VALID_STAGES);
+        if (!stages) {
+          res.status(400).json({ error: 'Invalid stage filter' });
+          return;
+        }
         whereClause += ' AND mu.filter_pass_bitmap IS NOT NULL';
         replacements.stages = stages;
         whereClause += ` AND mu.fundamental_snapshot->>'stage' IN (:stages)`;
       }
 
       if (conclusionParam) {
-        const conclusions = conclusionParam.split(',');
+        const conclusions = parseEnumList(conclusionParam, VALID_CONCLUSIONS);
+        if (!conclusions) {
+          res.status(400).json({ error: 'Invalid conclusion filter' });
+          return;
+        }
         replacements.conclusions = conclusions;
         whereClause += ` AND mu.fundamental_snapshot->>'conclusion' IN (:conclusions)`;
       }

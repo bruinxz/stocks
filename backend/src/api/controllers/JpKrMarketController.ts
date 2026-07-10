@@ -35,31 +35,6 @@ const KPI_SQL = `
       ORDER BY k.trading_day DESC, k.ingested_at DESC
       LIMIT 1
     ) previous_quote ON TRUE
-  ),
-  fx_days AS (
-    SELECT f.market,
-           f.as_of_utc::date AS rate_day,
-           AVG(f.fx_rate_to_usd)::numeric AS local_to_usd
-    FROM jpkr_financial_snapshot f
-    WHERE f.fx_rate_to_usd IS NOT NULL
-      AND f.as_of_utc < CAST(:date AS date) + INTERVAL '1 day'
-    GROUP BY f.market, f.as_of_utc::date
-  ),
-  ranked_fx AS (
-    SELECT fx_days.*,
-           ROW_NUMBER() OVER (
-             PARTITION BY fx_days.market
-             ORDER BY fx_days.rate_day DESC
-           ) AS recency
-    FROM fx_days
-  ),
-  fx_summary AS (
-    SELECT market,
-           MAX(1 / NULLIF(local_to_usd, 0)) FILTER (WHERE recency = 1) AS rate,
-           MAX(1 / NULLIF(local_to_usd, 0)) FILTER (WHERE recency = 2) AS previous_rate
-    FROM ranked_fx
-    WHERE recency <= 2
-    GROUP BY market
   )
   SELECT
     (SELECT CASE WHEN close IS NULL THEN NULL ELSE jsonb_build_object(
@@ -77,23 +52,13 @@ const KPI_SQL = `
        'change_pct', change_pct,
        'as_of', trading_day
      ) END FROM index_quotes WHERE response_key = 'kospi') AS kospi,
-    (SELECT CASE WHEN rate IS NULL OR previous_rate IS NULL THEN NULL
-       ELSE jsonb_build_object(
-         'rate', rate,
-         'change_pct', (rate / NULLIF(previous_rate, 0) - 1) * 100
-       )
-     END FROM fx_summary WHERE market = 'jp') AS usdjpy,
-    (SELECT CASE WHEN rate IS NULL OR previous_rate IS NULL THEN NULL
-       ELSE jsonb_build_object(
-         'rate', rate,
-         'change_pct', (rate / NULLIF(previous_rate, 0) - 1) * 100
-       )
-     END FROM fx_summary WHERE market = 'kr') AS usdkrw
+    NULL::jsonb AS usdjpy,
+    NULL::jsonb AS usdkrw
 `;
 
 const MARKET_ROWS_SQL = `
   WITH current_rows AS (
-    SELECT DISTINCT ON (k.ticker)
+    SELECT DISTINCT ON (k.exchange, k.ticker)
            k.ticker,
            k.ticker_name_local,
            k.ticker_name_en,
@@ -110,7 +75,7 @@ const MARKET_ROWS_SQL = `
         OR (:market = 'JP' AND k.exchange IN ('tse', 'ose'))
         OR (:market = 'KR' AND k.exchange IN ('krx', 'kosdaq'))
       )
-    ORDER BY k.ticker, k.ingested_at DESC
+    ORDER BY k.exchange, k.ticker, k.ingested_at DESC
   ),
   previous_rows AS (
     SELECT DISTINCT ON (k.exchange, k.ticker)
@@ -291,12 +256,17 @@ export class JpKrMarketController {
       const { symbol } = req.params;
       const date = String(req.query.date);
       const rows = await sequelize.query<any>(MARKET_ROWS_SQL, {
-        replacements: { date, market: null, symbol, limit: 1 },
+        replacements: { date, market: null, symbol, limit: 2 },
         type: QueryTypes.SELECT,
       });
 
       if (!rows.length) {
         res.status(404).json({ error: 'JPKR market entry not found' });
+        return;
+      }
+
+      if (rows.length > 1) {
+        res.status(409).json({ error: 'JPKR market entry is ambiguous' });
         return;
       }
 

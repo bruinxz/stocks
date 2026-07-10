@@ -160,6 +160,48 @@ async function main(): Promise<void> {
     assert('invalid market returns 400', invalidMarket.status === 400);
     assert('invalid filters never query DB', calls.length === beforeInvalid);
 
+    const controller =
+      new (require('../../src/api/controllers/MultibaggerController').MultibaggerController)();
+    let directStatus = 0;
+    let directBody: any;
+    await controller.getCandidates(
+      { query: { stage: 'seed,unknown' } } as any,
+      {
+        status(code: number) {
+          directStatus = code;
+          return this;
+        },
+        json(body: any) {
+          directBody = body;
+        },
+      } as any
+    );
+    assert('controller defense rejects invalid stage token', directStatus === 400);
+    assert(
+      'controller defense returns stable stage error',
+      directBody?.error === 'Invalid stage filter'
+    );
+
+    directStatus = 0;
+    directBody = undefined;
+    await controller.getCandidates(
+      { query: { conclusion: 'MULTIBAGGER_5X,UNKNOWN' } } as any,
+      {
+        status(code: number) {
+          directStatus = code;
+          return this;
+        },
+        json(body: any) {
+          directBody = body;
+        },
+      } as any
+    );
+    assert('controller defense rejects invalid conclusion token', directStatus === 400);
+    assert(
+      'controller defense returns stable conclusion error',
+      directBody?.error === 'Invalid conclusion filter'
+    );
+
     const detail = await request(app).get(`/api/v1/multibagger/${SYMBOL}/detail`);
     assert('detail returns deterministic 200', detail.status === 200);
     assert('detail returns normalized candidate', detail.body.symbol === SYMBOL);

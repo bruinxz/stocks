@@ -66,15 +66,27 @@ async function main(): Promise<void> {
   const originalQuery = sequelize.query;
   const calls: QueryCall[] = [];
   let returnEmpty = false;
+  let duplicateRows = false;
+  let holdingsPayload: unknown = SNAPSHOT.holdings;
 
   (sequelize as any).query = async (sql: string, options: any) => {
     calls.push({ sql, replacements: options?.replacements || {} });
     if (returnEmpty) return [];
+    const requestedAsOf = options?.replacements?.as_of;
+    if (requestedAsOf && Date.parse(String(requestedAsOf)) !== Date.parse(AS_OF)) {
+      return [];
+    }
     if (sql.includes('SELECT bps.holdings')) {
-      return [{ holdings: JSON.stringify(SNAPSHOT.holdings) }];
+      if (duplicateRows) {
+        return [{ holdings: [] }, { holdings: [] }];
+      }
+      return [{ holdings: holdingsPayload }];
     }
     if (sql.includes("bps.metrics->>'net_value'")) {
       return [LIST_SNAPSHOT];
+    }
+    if (duplicateRows) {
+      return [SNAPSHOT, { ...SNAPSHOT, snapshot_id: '22222222-2222-4222-8222-222222222222' }];
     }
     return [SNAPSHOT];
   };
@@ -125,7 +137,35 @@ async function main(): Promise<void> {
       'detail matches exact as_of_utc',
       Boolean(detailCall?.sql.includes('bps.as_of_utc = CAST(:as_of AS timestamptz)'))
     );
+    assert(
+      'detail limits to two rows to detect ambiguity',
+      Boolean(detailCall?.sql.includes('LIMIT 2'))
+    );
     assert('detail passes exact timestamp', detailCall?.replacements.as_of === AS_OF);
+
+    const equivalentAsOf = '2026-07-10T14:00:00+08:00';
+    const equivalentDetail = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${encodeURIComponent(equivalentAsOf)}`
+    );
+    assert(
+      'timezone-equivalent as_of reaches exact timestamptz equality',
+      equivalentDetail.status === 200,
+      `status=${equivalentDetail.status}`
+    );
+    assert(
+      'timezone-equivalent replacement is preserved byte-for-byte',
+      calls.at(-1)?.replacements.as_of === equivalentAsOf
+    );
+
+    const nonEquivalentAsOf = '2026-07-10T06:00:01Z';
+    const nonEquivalentDetail = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${encodeURIComponent(nonEquivalentAsOf)}`
+    );
+    assert(
+      'non-equivalent as_of can miss instead of matching unintended row',
+      nonEquivalentDetail.status === 404,
+      `status=${nonEquivalentDetail.status}`
+    );
 
     const holdings = await request(app).get(
       `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings`
@@ -146,6 +186,79 @@ async function main(): Promise<void> {
       'holdings matches exact as_of_utc',
       Boolean(holdingsCall?.sql.includes('bps.as_of_utc = CAST(:as_of AS timestamptz)'))
     );
+    assert(
+      'holdings limits to two rows to detect ambiguity',
+      Boolean(holdingsCall?.sql.includes('LIMIT 2'))
+    );
+
+    holdingsPayload = JSON.stringify(SNAPSHOT.holdings);
+    const stringArrayHoldings = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings`
+    );
+    assert(
+      'JSON string array holdings remain valid',
+      stringArrayHoldings.status === 200 && stringArrayHoldings.body.holdings.length === 1
+    );
+
+    holdingsPayload = null;
+    const nullHoldings = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings`
+    );
+    assert(
+      'null holdings normalize to []',
+      nullHoldings.status === 200 && nullHoldings.body.holdings.length === 0
+    );
+
+    holdingsPayload = undefined;
+    const undefinedHoldings = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings`
+    );
+    assert(
+      'undefined holdings normalize to []',
+      undefinedHoldings.status === 200 && undefinedHoldings.body.holdings.length === 0
+    );
+
+    holdingsPayload = { ticker: 'NVDA' };
+    const objectHoldings = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings`
+    );
+    assert('object holdings returns stable 500', objectHoldings.status === 500);
+    assert(
+      'object holdings stable error',
+      objectHoldings.body.error === 'Invalid backtest holdings payload'
+    );
+
+    holdingsPayload = 'null';
+    const stringNullHoldings = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings`
+    );
+    assert('string null holdings returns stable 500', stringNullHoldings.status === 500);
+    assert(
+      'string null holdings stable error',
+      stringNullHoldings.body.error === 'Invalid backtest holdings payload'
+    );
+
+    holdingsPayload = '{not-json';
+    const malformedHoldings = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings`
+    );
+    assert('malformed holdings returns stable 500', malformedHoldings.status === 500);
+    assert(
+      'malformed holdings stable error',
+      malformedHoldings.body.error === 'Invalid backtest holdings payload'
+    );
+
+    duplicateRows = true;
+    holdingsPayload = SNAPSHOT.holdings;
+    const ambiguousDetail = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}`
+    );
+    assert('duplicate PIT snapshots return 409', ambiguousDetail.status === 409);
+    const ambiguousHoldings = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings`
+    );
+    assert('duplicate PIT holdings return 409', ambiguousHoldings.status === 409);
+    duplicateRows = false;
 
     const beforeInvalid = calls.length;
     const invalidStrategy = await request(app).get('/api/v1/backtest-pit/not-a-strategy');

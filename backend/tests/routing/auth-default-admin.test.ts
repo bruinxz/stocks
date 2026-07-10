@@ -6,8 +6,10 @@
  */
 import express, { Request, Response } from 'express';
 import request from 'supertest';
+import jwt from 'jsonwebtoken';
 import { AuthController } from '../../src/api/controllers/AuthController';
 import { authenticate as authenticateMiddleware } from '../../src/middlewares/auth';
+import { User } from '../../src/models/User';
 
 type CanonicalAdmin = {
   id: number;
@@ -87,6 +89,32 @@ async function main(): Promise<void> {
         isCanonicalAdmin(response.body.user),
         `got=${JSON.stringify(response.body.user)}`
       );
+    }
+
+    const originalFindByPk = User.findByPk;
+    const validToken = jwt.sign(
+      { user_id: 7, username: 'valid-user', role: 'analyst' },
+      process.env.JWT_SECRET as string
+    );
+    const sequelizeUser = {
+      id: 7,
+      username: 'valid-user',
+      role: 'analyst',
+      is_active: true,
+    };
+    (User as any).findByPk = async (id: number) => (id === 7 ? sequelizeUser : null);
+    try {
+      const validResponse = await request(app)
+        .get('/controller-protected')
+        .set('Authorization', `Bearer ${validToken}`);
+      assert('AuthController valid token reaches protected handler', validResponse.status === 200);
+      assert(
+        'AuthController valid token preserves Sequelize user object',
+        JSON.stringify(validResponse.body.user) === JSON.stringify(sequelizeUser),
+        `got=${JSON.stringify(validResponse.body.user)}`
+      );
+    } finally {
+      (User as any).findByPk = originalFindByPk;
     }
   } finally {
     if (previousJwtSecret === undefined) {
