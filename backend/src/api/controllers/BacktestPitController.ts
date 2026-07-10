@@ -3,12 +3,28 @@ import { QueryTypes } from 'sequelize';
 import { logger } from '../../utils/logger';
 import { sequelize } from '../../config/database';
 
+function isValidHoldingRow(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return (
+    typeof row.ticker === 'string' &&
+    row.ticker.trim().length > 0 &&
+    typeof row.weight === 'number' &&
+    Number.isFinite(row.weight) &&
+    typeof row.return_since_entry === 'number' &&
+    Number.isFinite(row.return_since_entry) &&
+    typeof row.is_stale === 'boolean'
+  );
+}
+
 function parseHoldingsPayload(value: unknown): { ok: true; holdings: any[] } | { ok: false } {
   if (value == null) return { ok: true, holdings: [] };
 
   try {
     const holdings = typeof value === 'string' ? JSON.parse(value) : value;
-    return Array.isArray(holdings) ? { ok: true, holdings } : { ok: false };
+    return Array.isArray(holdings) && holdings.every(isValidHoldingRow)
+      ? { ok: true, holdings }
+      : { ok: false };
   } catch (_error) {
     return { ok: false };
   }

@@ -248,6 +248,65 @@ async function main(): Promise<void> {
       malformedHoldings.body.error === 'Invalid backtest holdings payload'
     );
 
+    holdingsPayload = [{ ticker: 'NVDA', return_since_entry: 0.12, is_stale: false }];
+    const missingWeightHoldings = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings`
+    );
+    assert('missing weight holdings returns stable 500', missingWeightHoldings.status === 500);
+
+    holdingsPayload = [
+      {
+        ticker: 'NVDA',
+        weight: Number.POSITIVE_INFINITY,
+        return_since_entry: 0.12,
+        is_stale: false,
+      },
+    ];
+    const nonFiniteWeightHoldings = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings`
+    );
+    assert('non-finite weight holdings returns stable 500', nonFiniteWeightHoldings.status === 500);
+
+    holdingsPayload = [{ ticker: 'NVDA', weight: 0.15, is_stale: false }];
+    const missingReturnHoldings = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings`
+    );
+    assert(
+      'missing return_since_entry holdings returns stable 500',
+      missingReturnHoldings.status === 500
+    );
+
+    holdingsPayload = [
+      { ticker: 'NVDA', weight: 0.15, return_since_entry: Number.NaN, is_stale: false },
+    ];
+    const nonFiniteReturnHoldings = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings`
+    );
+    assert(
+      'non-finite return_since_entry holdings returns stable 500',
+      nonFiniteReturnHoldings.status === 500
+    );
+
+    holdingsPayload = [
+      { ticker: 'NVDA', weight: 0.15, return_since_entry: 0.12, is_stale: 'false' },
+    ];
+    const badStaleHoldings = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings`
+    );
+    assert('non-boolean is_stale holdings returns stable 500', badStaleHoldings.status === 500);
+
+    holdingsPayload = [{ ticker: '', weight: 0.15, return_since_entry: 0.12, is_stale: false }];
+    const emptyTickerHoldings = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings`
+    );
+    assert('empty ticker holdings returns stable 500', emptyTickerHoldings.status === 500);
+
+    holdingsPayload = [{ ticker: 123, weight: 0.15, return_since_entry: 0.12, is_stale: false }];
+    const nonStringTickerHoldings = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings`
+    );
+    assert('non-string ticker holdings returns stable 500', nonStringTickerHoldings.status === 500);
+
     duplicateRows = true;
     holdingsPayload = SNAPSHOT.holdings;
     const ambiguousDetail = await request(app).get(
