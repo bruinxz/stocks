@@ -14,6 +14,178 @@ Format: each entry cites the landing SHA, PR number, owner authority (if authori
 
 ---
 
+## [Backend-γ-§4.7.2.4-SSE-onerror-error-frame-L3.4] · 2026-07-10
+
+PR #182 · main HEAD `a9af5c585e3a298384460e7bf1d244a6949a1084` · squash-merge from parent `e2f9a8f31d062b1c6d8156ddd02be9e0ae83a3c7` (67-段 SEXAGESIMUS-SEPTIMUS · FF-only) · mergedAt `2026-07-10T04:49:00Z` · Backend γ 主签 self-merge per `msg=d0d11677` · **68-段 SEXAGESIMUS-OCTAVUS canonical LOCK REALIZED · CASCADE X 14-of-N 15-way arc-extend REALIZED 15th segment · TRIPLE-DUAL-CREATE 三例 all-lands cascade FIRST-EVER third-lander code-tier (doc #180 66-段 → code #181 67-段 → code #182 68-段 across 3 lanes) · Δt +15m31s post-67-段 (TRIPLE tight-window sub-10m NOT achieved · post-rebase CI queue)**.
+
+### Diff
+
++357 / −2 · 3 files:
+
+- `backend/src/middlewares/apiServerTimingStreaming.ts` (+~105/-1) — §4.7.2.4 SSE onerror / error-frame L3.4 SUB-tier · WHATWG HTML5 §9.2.5 EventSource `onerror` handler + §9.2.6 comment-frame `: error <reason>\n\n` advisory hint canonical dispatch · `emitStreamError(reason: string, retriable?: boolean): void` handler-facing method · `readonly errorReason: string | null` advisory cursor · retriable=true combo emits preceding `retry: <ms>\n\n` control-frame per §4.7.2.3 pairing · Fail-OPEN 6-axis silent no-op (disabled / kind≠sse / closed / writableEnded / invalid-reason / write-throw) · Default-OFF opt-in gate `error_frame_enabled: false` · RFC 7230 §3.2.6 TOKEN 1*tchar ABNF grammar rejects space / CRLF / semicolon / non-string · `buildNoopAdapter` extends `emitStreamError(_, _)` no-op + `errorReason: null` interface completeness · Cross-axis isolation: error emission does NOT bump count / lastEventId / heartbeatCount · Behavior-preservation 100%: no `event: error` / comment-frame emitted when disabled/invalid/never-set
+- `backend/tests/routing/api-server-timing-streaming.test.ts` (+~249/-0) — +46 new assertions covering config-validators (`error_frame_enabled` + `error_frame_default_reason`) + `emitStreamError` frame-shape + Fail-OPEN 6-axis + RFC 7230 §3.2.6 TOKEN reject-then-default + retriable-combo §4.7.2.3 pairing preserve + cross-axis isolation witness + noop-adapter parity · **278/278 PASS** (232 → 278 · +46 new specs)
+- `backend/package.json` (+~3/-1) — test-surface minor bump (`error_frame_enabled` + `error_frame_default_reason` config defaults)
+
+### Landing attestation
+
+- **CI 8/8 required-check GREEN · mergeStateStatus=CLEAN**
+- **副签 4/4 CLOSE** — 主 Backend γ (SELF-MERGE anchor · CREATE msg=683380e8) + 副1 Cleanup γ msg=7cd7f283 (gate CLOSURE · code-hygiene 六-项 6/6 PASS + jscpd + Backend SOLE + Independence 100% + Fail-OPEN 6/6 + SEVEN-tier + anti-fab OCTODECIM 18) + 副3 QADocs msg=3a8a1ed5 (byte-truth 8-axis + code-tier 8-axis verify + HTML5 §9.2.5 QUINTUPLE-CANONICAL + Fail-OPEN 6-axis + RFC 7230 §3.2.6 TOKEN + 278 PASS · 0 FAIL + anti-fab OCTODECIM 18 δ ADOPT) + 副4 Frontend γ cross-lane peer 8-check msg=b76a8973 + Research §S3 msg=63d34556 (byte-truth 8-axis + spec 5-source QUINTUPLE-CANONICAL + L1→L3.4 SEVEN-tier + Fail-OPEN 6/6 + SEPTENDECIM 17)
+
+### Backend γ Lane A-3 OCTODECIM 18-CONSECUTIVE FIRST-EVER top-single-agent-single-lane REALIZED
+
+Backend γ chain: #125 + #126 + #129 + #133 + #138 + #144 + #147 + #149 + #152 + #156 + #159 + #161 + #166 + #169 + #172 + #176 + #179 → **#182** — 十八-consecutive single-agent-single-lane record extended from SEPTENDECIM 17 @ #179.
+
+### ADR-0010 §4.1-§4.15 + §4.7.2.1-4 DUODEVIGINTI 18 canonical stack REALIZED
+
+X-API-Version + winston + status/version + Deprecation/Sunset + RateLimit + Retry-After + Server-Timing + TAO + Trace + Web-Linking + Reporting + Alt-Svc + Content-Digest + §4.14 + §4.15 + §4.7.2.1 + §4.7.2.2 + §4.7.2.3 + **§4.7.2.4**.
+
+### L1→L2→L3→L3.1→L3.2→L3.3→L3.4 SEVEN-tier project-first FIRST-EVER-plus-THREE REALIZED
+
+§4.7 → §4.7.1 → §4.7.2 → §4.7.2.1 → §4.7.2.2 → §4.7.2.3 → **§4.7.2.4** — deepest project-first vertical stack, surpassing SIX-tier @ #179.
+
+### HTML5 §9.2.5 QUINTUPLE-CANONICAL FIRST-EVER-again REALIZED
+
+Single-spec §9.2.5 reuse across L1 (Server-Timing) → L3 (SSE streaming) → L3.1 (keep-alive) → L3.2 (Last-Event-ID) → L3.3 (retry:) → **L3.4 (onerror / event: error)** — deepest single-spec reuse in project history (surpasses QUADRUPLE @ 65-段).
+
+### DUODECUPLE 12-tier §4.7-§4.15 + §4.7.2.1-4 observability family REALIZED
+
+Twelve-tier observability family closure @ 68-段.
+
+### Fail-OPEN 6-axis parity at L3.4 + RFC 7230 §3.2.6 TOKEN grammar validator
+
+disabled + kind≠sse + closed + writableEnded + invalid-reason + write-throw — 6-axis silent no-op parity with §4.7.2.3, plus RFC 7230 §3.2.6 1*tchar ABNF token validator (reject space / CRLF / semicolon / non-string · default fallback to config-resolved `error_frame_default_reason`).
+
+### 70例 SEPTUAGINTA total FIRST-EVER-70-crossing REALIZED
+
+47 code + 23 doc = 70 total examples across all pillars — crosses 70-boundary FIRST-EVER-again.
+
+### anti-fab UNDEVIGINTI 19 quadruple-axis quintuple-consecutive arc REALIZED
+
+63→64→65→66→67→68 six-段 quintuple-consecutive quadruple-axis arc — α REJECT (file-non-existence + wrong-primitive · verified via `msg=ad6585cf` 借鉴 独立性 audit) + β REJECT (wrong-primitive) + γ REJECT (already-LIVE) + δ ADOPT (§4.7.2.4 SSE onerror / error-frame · Orch-named + evidence-grounded byte-truth verified).
+
+### CASCADE X 14-of-N 15-way arc-extend REALIZED
+
+Fifteenth segment in CASCADE X arc — 承 CASCADE X 13-of-N 14-way REALIZED via #181 → 14-of-N 15-way REALIZED via #182.
+
+### TRIPLE-DUAL-CREATE 三例 all-lands cascade FIRST-EVER REALIZED
+
+doc #180 66-段 `9e727411` (04:30:06Z) → code #181 67-段 `e2f9a8f3` (04:33:29Z · Δt +3m23s) → code #182 68-段 `a9af5c58` (04:49:00Z · Δt +15m31s) — three sequential lane-diverse SELF-MERGE lands within 19m tight-band across QADocs + Frontend γ + Backend γ, all off common ancestor 65-段 `6ec73dcc`. TRIPLE tight-window sub-10m NOT achieved on segment 2→3 (post-rebase CI queue overhead), but three-lane all-lands cascade shape FIRST-EVER-in-project.
+
+### Enforcement HOLD v2-dual-mount QUINDECIM 15 CONSECUTIVE preserved
+
+Advisory-only at L3.4 · no v2 hard-gate escalation · QUINDECIM 15 chain preserve.
+
+### 278/278 test suite PASS · +46 new assertions
+
+Backend routing suite grows 232 → 278 with §4.7.2.4-specific coverage — zero regression cross-attest.
+
+### Change-Id
+
+`I42744fb7e91bfe5e7c2c47b7dbb0c024dbd28cef`
+
+---
+
+## [Frontend-γ-v0.5-w-HomeWorkspace-octuple-locus] · 2026-07-10
+
+PR #181 · main HEAD `e2f9a8f31d062b1c6d8156ddd02be9e0ae83a3c7` · squash-merge from parent `9e727411a3d7c3426fe2b1bc986f144c9d9bb54d` (66-段 SEXAGESIMUS-SEXTUS · FF-only) · mergedAt `2026-07-10T04:33:29Z` · Frontend γ 主签 self-merge per `msg=d0d11677` · **67-段 SEXAGESIMUS-SEPTIMUS canonical LOCK REALIZED · TRIPLE-DUAL-CREATE 三例 all-lands second-lander code-tier · Δt +3m23s post-66-段 fastest inter-段 to-date · AbortSignal octuple-locus 八-locus canonical family FIRST-EVER-plus-ONE · 6-way sibling-parallel loader race-guard FIRST-EVER-in-family · File-non-existence anti-fab REJECT precedent FIRST-EVER doctrine LIVE**.
+
+### Diff
+
++101 / −54 · 1 file:
+
+- `frontend/src/pages/HomeWorkspace.tsx` (+101/-54) — React 18 `useRef<AbortController | null>(null)` persistent controller reused across mount + `selectedPortfolioId` dep-change · 6-way sibling-parallel loader race-guard: `loadAccount` + `loadRecommendations` + `loadPositions` + `loadEtfRotation` + `loadSnapshots` + `loadMarketJudgment` each accept optional `signal?: AbortSignal` + guard `setState` with `if (signal?.aborted) return` · `catch` swallows axios `CanceledError` / `code === 'ERR_CANCELED'` / `name === 'CanceledError'` silently · Abort-then-new pattern cancels prior in-flight requests on portfolio switch · unmount cleanup abort · Service fns UNTOUCHED (page-side signal-guard sufficient; 6-service signature-additive Option δ-full DEFER to v0.5(x)+ alt-seed) · 43 hits AbortController / tickControllerRef / signal?.aborted / CanceledError / ERR_CANCELED patterns
+
+### Landing attestation
+
+- **CI 8/8 required-check GREEN · mergeStateStatus=CLEAN**
+- **副签 4/4 CLOSE** — 主 Frontend γ (SELF-MERGE anchor) + 副1 QADocs msg=1d296955 (byte-truth 8-axis + code-tier 8-axis + AbortSignal octuple + 6-way sibling-parallel + anti-fab OCTODECIM 18) + 副3 Cleanup γ + 副4 Backend γ msg=fac61788 + Research §S3 msg=63d34556 witness
+
+### Frontend γ Lane A-1 QUINDECIM 15-CONSECUTIVE REALIZED
+
+Frontend γ chain: v0.5(a-v) → **v0.5(w)** — 十五-consecutive single-agent-single-lane record extended.
+
+### AbortSignal octuple-locus 八-locus canonical family FIRST-EVER-plus-ONE REALIZED
+
+Portfolio (v0.5(r)) + Docs + StockDetail (v0.5(r)) + SystemLogs (v0.5(s)) + HealthMonitor (v0.5(t)) + DataUpdateStatus (v0.5(u)) + TaskScheduler (v0.5(v)) + **HomeWorkspace (v0.5(w))** — octuple 八-locus family closure.
+
+### 6-way sibling-parallel loader race-guard FIRST-EVER-in-family REALIZED
+
+`void loadX(signal) × 6` atomic parallel-fire + shared `tickControllerRef.current = new AbortController()` atomic replacement · behavior-preserving extension of Portfolio-family AbortSignal pattern to 6-way sibling parallel case.
+
+### File-non-existence anti-fab REJECT precedent FIRST-EVER doctrine LIVE REALIZED
+
+Orch-seed-inspiration ≡ byte-truth-verified, NOT naming-literal-mandate — v0.5(w) REJECT Orch-named `SettingsView` / `UserManagementView` / `MarketOverview` non-existence per byte-truth grep, ADOPT HomeWorkspace real 6-way sibling-parallel loader race per evidence-grounded audit. New anti-fab class: file-non-existence α REJECT precedent FIRST-EVER.
+
+### anti-fab OCTODECIM 18 quadruple-axis (α File-non-existence REJECT + β wrong-primitive + γ already-LIVE + δ ADOPT)
+
+### CASCADE X 13-of-N 14-way arc-extend REALIZED
+
+Fourteenth segment · 承 12-of-N 13-way via #180 → 13-of-N 14-way via #181.
+
+### 69例 SEXAGINTA-NOVEM total FIRST-EVER-69-crossing (46 code + 23 doc) REALIZED
+
+### Δt +3m23s @ 66→67 fastest inter-段 to-date
+
+### Enforcement HOLD QUATTUORDECIM 14 CONSECUTIVE preserved
+
+### Change-Id
+
+`Ifbdb0264b3beef26abe5527bd48713f7e14018d2`
+
+---
+
+## [QADocs-CHANGELOG-v0.7-DUODECIM-12-PR-consolidated] · 2026-07-10
+
+PR #180 · main HEAD `9e727411a3d7c3426fe2b1bc986f144c9d9bb54d` · squash-merge from parent `6ec73dccabec7fee4dabb48c42c2c11e9a520009` (65-段 SEXAGESIMUS-QUINTUS · FF-only) · mergedAt `2026-07-10T04:30:06Z` · QADocs 主签 self-merge per `msg=d0d11677` · **66-段 SEXAGESIMUS-SEXTUS canonical LOCK REALIZED · TRIPLE-DUAL-CREATE 三例 all-lands first-lander doc-tier initiate · CHANGELOG 7th release DUODECIM 12-PR consolidated FIRST-EVER largest single doc-PR consolidation · doc-tier VIGINTI-TRES 23 REALIZED**.
+
+### Diff
+
++323 / −0 · 1 file:
+
+- `docs/refactor/CHANGELOG.md` (+323/-0) — 12 reverse-chronological entries under `[Unreleased]` block · scope PRs #168+#169+#170+#171+#172+#173+#174+#175+#176+#177+#178+#179 across 54→65 段 arc coverage · 6 doc + 6 code interleaved balanced-plus (Cleanup γ 5 + Backend γ 4 + Frontend γ 3 arc-shape) · additive-only append · zero rewrite · zero touch of existing entries · QADocs SOLE glob 100% compliant
+
+### Landing attestation
+
+- **CI 8/8 required-check GREEN · mergeStateStatus=CLEAN**
+- **副签 4/4 CLOSE** — 主 QADocs (SELF-MERGE anchor) + 副 Research §S3 msg=439d088f (byte-truth 14-axis + 11-milestone panel) + 副 Cleanup γ doc-tier + Frontend γ + Backend γ + DataPipeline γ + Strategy cross-witness
+
+### CHANGELOG v0.7 DUODECIM 12-PR consolidated scope
+
+- #179 Backend γ §4.7.2.3 SSE retry L3.3 (65-段 · 11-milestone triple-crown)
+- #178 Frontend γ v0.5(v) TaskScheduler AbortSignal septuple-locus (64-段)
+- #177 Cleanup γ §PR-M3-34 single-entry doc-cure (63-段)
+- #176 Backend γ §4.7.2.2 SSE Last-Event-ID L3.2 five-tier (62-段)
+- #175 Cleanup γ §PR-M3-33 dual-entry doc-cure (61-段)
+- #174 Frontend γ v0.5(u) DataUpdateStatus sextuple-locus (60-段)
+- #173 Cleanup γ §PR-M3-32 triple-entry doc-cure (59-段)
+- #172 Backend γ §4.7.2.1 SSE keep-alive L3.1 four-tier (58-段)
+- #171 Frontend γ v0.5(t) HealthMonitor quinque-locus (57-段)
+- #170 Cleanup γ §PR-M3-31 doc-cure (56-段)
+- #169 Backend γ §4.14 §4.7.2 SSE streaming L3 three-tier (55-段)
+- #168 Cleanup γ §PR-M3-30 doc-cure (54-段)
+
+### CASCADE X 12-of-N 13-way arc-extend INITIATE REALIZED
+
+Thirteenth segment initiates CASCADE X arc-extend (doc-tier initiate).
+
+### TRIPLE-DUAL-CREATE first-lander cascade shape doc→code→code precedent FIRST-EVER
+
+doc #180 66-段 (this) → code #181 67-段 → code #182 68-段 three-lane sequential lands FIRST-EVER-in-project.
+
+### doc-tier VIGINTI-TRES 23 REALIZED
+
+Twenty-third doc-tier example · 承 VIGINTI-DUO 22 via §PR-M3-34 → VIGINTI-TRES 23 via #180.
+
+### 68例 DUODESEPTUAGINTA total (45 code + 23 doc) REALIZED
+
+### Per Orch v281 §六 A-2 dispatch (msg=236de60b)
+
+### Change-Id
+
+`I74bfd4dd20db4844a4d099ce043ab803cea60a9d`
+
+---
+
 ## [Backend-γ-§4.7.2.3-SSE-retry-L3.3] · 2026-07-10
 
 PR #179 · main HEAD `6ec73dccabec7fee4dabb48c42c2c11e9a520009` · squash-merge from parent `b47bbea3aacabc369f002121136368626cad3181` (64-段 SEXAGESIMUS-QUARTUS · FF-only) · mergedAt `2026-07-10T03:50:06Z` · Backend γ 主签 self-merge per `msg=d0d11677` · **65-段 SEXAGESIMUS-QUINTUS canonical LOCK REALIZED · CASCADE X 11-of-N 12-way arc-extend FIRST-EVER 12th segment · Δt +2m15s post-64-段 SUB-3m tight-window FIRST-EVER-echo · TRIPLE-SELF-MERGE 三例 sub-10m cascade FIRST-EVER (Cleanup γ #177 → Frontend γ #178 → Backend γ #179 · 8m35s window)**.
