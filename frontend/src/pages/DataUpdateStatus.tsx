@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Card,
   Table,
@@ -372,8 +372,12 @@ const DataUpdateStatus: React.FC = () => {
     end_date: '', // 结束日期 YYYY-MM-DD
   });
 
+  // 每次 setInterval tick / 手动 refresh 用独立的 AbortController，
+  // 旧的 in-flight 请求被 abort，避免 late-arriver 覆盖新状态。
+  const tickControllerRef = useRef<AbortController | null>(null);
+
   // 获取所有数据
-  const fetchAllData = useCallback(async () => {
+  const fetchAllData = useCallback(async (signal?: AbortSignal) => {
     try {
       setLoading(prev => ({
         ...prev,
@@ -400,7 +404,8 @@ const DataUpdateStatus: React.FC = () => {
       const queryString = queryParams.toString();
       const url = queryString ? `/market/update-status?${queryString}` : '/market/update-status';
 
-      const statusResponse = await api.get(url);
+      const statusResponse = await api.get(url, { signal });
+      if (signal?.aborted) return;
       if (statusResponse.data.success) {
         const data = statusResponse.data.data;
         if (data.queue) setQueueStatus(data.queue);
@@ -410,7 +415,8 @@ const DataUpdateStatus: React.FC = () => {
       }
 
       // 获取统计信息
-      const statsResponse = await api.get('/market/update-stats?days=7');
+      const statsResponse = await api.get('/market/update-stats?days=7', { signal });
+      if (signal?.aborted) return;
       if (statsResponse.data.success) {
         setUpdateStats(statsResponse.data.data.stats);
       }
@@ -418,15 +424,18 @@ const DataUpdateStatus: React.FC = () => {
       // 获取系统健康状态
       const [healthResponse, dataSourceHealthResponse, dataQualityResponse, factorResponse] =
         await Promise.all([
-          api.get('/market/health'),
-          api.get('/market/data-sources/health'),
+          api.get('/market/health', { signal }),
+          api.get('/market/data-sources/health', { signal }),
           api.get('/market/data-quality', {
             params: { scope: 'favorites', lookback_days: 180, limit: 50 },
+            signal,
           }),
           api.get('/market/factors/coverage', {
             params: { scope: 'market', limit: 120 },
+            signal,
           }),
         ]);
+      if (signal?.aborted) return;
       const nextSystemHealth = {
         redis: true,
         database: true,
@@ -458,19 +467,33 @@ const DataUpdateStatus: React.FC = () => {
 
       setSystemHealth(nextSystemHealth);
     } catch (error: any) {
+      // axios v0.22+ CanceledError: code='ERR_CANCELED' / name='CanceledError'
+      // late-arriver 已由外层 controller.abort() 主动淘汰，静默吞掉
+      if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') return;
+      if (signal?.aborted) return;
       message.error('获取数据失败: ' + error.message);
     } finally {
-      setLoading(prev => ({
-        ...prev,
-        queue: false,
-        logs: false,
-        stats: false,
-        health: false,
-        quality: false,
-        factors: false,
-      }));
+      if (!signal?.aborted) {
+        setLoading(prev => ({
+          ...prev,
+          queue: false,
+          logs: false,
+          stats: false,
+          health: false,
+          quality: false,
+          factors: false,
+        }));
+      }
     }
   }, [logFilters]);
+
+  // 每次手动 refresh / 筛选变化 / 后置刷新：淘汰上一个 controller，起新的。
+  const refreshFresh = useCallback(() => {
+    if (tickControllerRef.current) tickControllerRef.current.abort();
+    const c = new AbortController();
+    tickControllerRef.current = c;
+    void fetchAllData(c.signal);
+  }, [fetchAllData]);
 
   // 筛选处理函数
   const taskTypeOptions = [
@@ -497,7 +520,7 @@ const DataUpdateStatus: React.FC = () => {
       start_date: '',
       end_date: '',
     });
-    setTimeout(() => fetchAllData(), 100);
+    setTimeout(() => refreshFresh(), 100);
     message.success('筛选条件已重置');
   };
 
@@ -589,7 +612,7 @@ const DataUpdateStatus: React.FC = () => {
   };
 
   const handleRefresh = () => {
-    fetchAllData();
+    refreshFresh();
     message.success('数据已刷新');
   };
 
@@ -729,17 +752,26 @@ const DataUpdateStatus: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchAllData();
+    const mountController = new AbortController();
+    tickControllerRef.current = mountController;
+    void fetchAllData(mountController.signal);
 
-    let intervalId: NodeJS.Timeout;
+    let intervalId: NodeJS.Timeout | undefined;
     if (autoRefresh) {
-      intervalId = setInterval(fetchAllData, refreshInterval * 1000);
+      intervalId = setInterval(() => {
+        if (tickControllerRef.current) tickControllerRef.current.abort();
+        const c = new AbortController();
+        tickControllerRef.current = c;
+        void fetchAllData(c.signal);
+      }, refreshInterval * 1000);
     }
 
     return () => {
       if (intervalId) {
         clearInterval(intervalId);
       }
+      if (tickControllerRef.current) tickControllerRef.current.abort();
+      tickControllerRef.current = null;
     };
   }, [fetchAllData, autoRefresh, refreshInterval]);
 
