@@ -112,8 +112,14 @@ jobs:
 
           tee_word = %w[t e e].join
           tee_pipeline_pattern = Regexp.new("\\|\\s*#{tee_word}(?:\\s|$)")
-          pipefail_pattern = /^\s*set\s+-o\s+pipefail(?:\s|$)/
-          pipe_status_pattern = /PIPESTATUS\s*\[\s*0\s*\]/
+          pipefail_on_pattern = /^\s*set\s+-o\s+pipefail\s*(?:#.*)?$/
+          pipefail_off_pattern = /^\s*set\s+\+o\s+pipefail\s*(?:#.*)?$/
+          immediate_pipe_status_pattern =
+            /^\s*[A-Za-z_][A-Za-z0-9_]*\s*=\s*["']?\$\{PIPESTATUS\s*\[\s*0\s*\]\}["']?\s*(?:#.*)?$/
+          meaningful_command = lambda do |line|
+            stripped = line.strip
+            !stripped.empty? && !stripped.start_with?('#')
+          end
 
           inspect_workflow = lambda do |document|
             violations = []
@@ -123,19 +129,39 @@ jobs:
                 next unless step['run'].is_a?(String)
 
                 lines = step['run'].lines.map(&:chomp)
-                tee_lines = lines.each_index.select { |index| tee_pipeline_pattern.match?(lines[index]) }
-                tee_lines.each_with_index do |tee_line, tee_index_position|
-                  pipeline_count += 1
-                  next_tee_line = tee_lines[tee_index_position + 1] || lines.length
-                  has_pipefail = lines[0...tee_line].any? do |line|
-                    pipefail_pattern.match?(line)
+                pipefail_active = false
+                lines.each_with_index do |line, line_index|
+                  if pipefail_on_pattern.match?(line)
+                    pipefail_active = true
+                    next
                   end
-                  captures_producer_status = lines[(tee_line + 1)...next_tee_line].any? do |line|
-                    pipe_status_pattern.match?(line)
+                  if pipefail_off_pattern.match?(line)
+                    pipefail_active = false
+                    next
                   end
+                  next unless tee_pipeline_pattern.match?(line)
 
-                  unless has_pipefail || captures_producer_status
-                    violations << "#{job_name}/#{step['name'] || "step-#{step_index + 1}"}: line #{tee_line + 1}"
+                  pipeline_count += 1
+                  immediate_line = lines[(line_index + 1)..]&.find do |candidate|
+                    meaningful_command.call(candidate)
+                  end
+                  captures_producer_status =
+                    immediate_line && immediate_pipe_status_pattern.match?(immediate_line)
+
+                  unless pipefail_active || captures_producer_status
+                    reason = if immediate_line&.include?('PIPESTATUS')
+                      'PIPESTATUS[0] capture is not an immediate assignment'
+                    elsif immediate_line
+                      "pipefail inactive and next command is #{immediate_line.strip.inspect}"
+                    else
+                      'pipefail inactive and producer status is not captured'
+                    end
+                    violations << [
+                      job_name,
+                      step['name'] || "step-#{step_index + 1}",
+                      "line #{line_index + 1}",
+                      reason,
+                    ].join('/')
                   end
                 end
               end
@@ -160,11 +186,63 @@ jobs:
           unless mutation_result[:violations].any? do |violation|
             violation.include?('Env validation (check-env, happy path)')
           end
-            raise 'static guard failed to reject a deliberately unsafe mutation'
+            raise 'static guard failed to reject missing pipefail'
+          end
+
+          pipefail_disabled = Marshal.load(Marshal.dump(workflow))
+          disabled_step = pipefail_disabled.fetch('jobs').fetch('backend-check').fetch('steps').find do |step|
+            step['name'] == 'Env validation (check-env, happy path)'
+          end
+          disabled_step['run'] = disabled_step['run'].sub(
+            /^\s*set\s+-o\s+pipefail\s*\n/,
+            "set -o pipefail\nset +o pipefail\n",
+          )
+          disabled_result = inspect_workflow.call(pipefail_disabled)
+          unless disabled_result[:violations].any? do |violation|
+            violation.include?('Env validation (check-env, happy path)')
+          end
+            raise 'static guard failed to reject pipefail disabled before tee'
+          end
+
+          delayed_capture = Marshal.load(Marshal.dump(workflow))
+          negative_env_step = delayed_capture.fetch('jobs').fetch('backend-check').fetch('steps').find do |step|
+            step['name'] == 'Env validation (check-env, fail-fast on missing env)'
+          end
+          delayed_lines = negative_env_step.fetch('run').lines
+          negative_tee_index = delayed_lines.index do |line|
+            tee_pipeline_pattern.match?(line)
+          end
+          raise 'negative-env tee pipeline not found' unless negative_tee_index
+
+          delayed_lines.insert(negative_tee_index + 1, "true\n")
+          negative_env_step['run'] = delayed_lines.join
+          delayed_result = inspect_workflow.call(delayed_capture)
+          unless delayed_result[:violations].any? do |violation|
+            violation.include?('Env validation (check-env, fail-fast on missing env)')
+          end
+            raise 'static guard failed to reject delayed PIPESTATUS[0] capture'
+          end
+
+          docker_job = workflow.fetch('jobs').fetch('docker-check')
+          docker_step = docker_job.fetch('steps').find do |step|
+            step['name'] == 'Validate docker-compose.yml'
+          end
+          docker_upload = docker_job.fetch('steps').find do |step|
+            step['name'] == 'Upload logs on failure'
+          end
+          expected_docker_pipeline = ['|', 'tee', 'docker-compose-config.log'].join(' ')
+          unless docker_step&.fetch('run', '')&.include?(expected_docker_pipeline)
+            raise 'docker compose producer must write docker-compose-config.log in workspace root'
+          end
+          upload_path = docker_upload&.dig('with', 'path').to_s
+          unless upload_path.lines.map(&:strip).include?('docker-compose-config.log')
+            raise 'docker compose failure artifact must upload docker-compose-config.log'
           end
 
           puts "ci.yml parsed; #{current[:pipeline_count]} tee pipeline(s) preserve producer status"
-          puts 'unsafe mutation rejected as expected'
+          puts 'missing/disabled pipefail mutations rejected as expected'
+          puts 'delayed PIPESTATUS[0] mutation rejected as expected'
+          puts 'docker compose log path matches failure artifact'
           RUBY
 
           set +e
@@ -444,7 +522,7 @@ jobs:
           POSTGRES_PASSWORD: ci-only-not-a-real-password
         run: |
           set -o pipefail
-          docker compose -f docker-compose.yml config 2>&1 | tee ../docker-compose-config.log
+          docker compose -f docker-compose.yml config 2>&1 | tee docker-compose-config.log
           # docker compose config 退出码 0 = YAML / 占位符 / 服务声明全合法
           # 任何 typo / env 占位符未填 / volumes 引用错都会 != 0
           echo "compose config OK"
