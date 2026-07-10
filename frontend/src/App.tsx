@@ -43,11 +43,6 @@ const Login = lazy(() => import('./pages/Login'));
 const BacktestResults = lazy(() => import('./components/backtest/BacktestResults'));
 const StockDetail = lazy(() => import('./pages/StockDetail'));
 
-// Phase 6 (2026-06-27) — 新手主页 /home.
-// 用户原话: "我是个股票的新手小白, 想要用这套系统来帮我自动化赚钱, 但是现在
-// 还是太复杂". /home 是新手登录后的唯一一页 (无 tab 无侧栏), 3 区块 + 一键操作.
-// 与简易版 /workspace/easy (教学暖纸色) 并存, 互不替代.
-const HomeWorkspace = lazy(() => import('./pages/HomeWorkspace'));
 
 // Unified workspace shells (US-001/US-002 + Easy mode).
 const EasyQuantWorkspace = lazy(() => import('./pages/workspace/EasyQuantWorkspace'));
@@ -149,14 +144,14 @@ const routeSelectionAliases: Array<[RegExp, string]> = [
   [/^\/backtest(\/.+)?$/, '/workspace/lab'],
   [/^\/autonomous-trading(\/.*)?$/, '/workspace/portfolio'],
   [/^\/paper-trading(\/.*)?$/, '/workspace/portfolio'],
-  [/^\/recommendations?(\/.*)?$/, '/home'],
+  [/^\/recommendations?(\/.*)?$/, '/catdesk'],
   [/^\/recommendation-(performance|trade-outcomes|loop-policies)(\/.*)?$/, '/workspace/portfolio'],
   [/^\/agent-tail-alpha(\/.*)?$/, '/workspace/portfolio'],
   [/^\/strategy-experiment-lab(\/.*)?$/, '/workspace/lab'],
   [/^\/strategy(\/.*)?$/, '/workspace/lab'],
   [/^\/risk-alerts(\/.*)?$/, '/workspace/portfolio'],
-  [/^\/today(\/.*)?$/, '/home'],
-  [/^\/dashboard(\/.*)?$/, '/home'],
+  [/^\/today(\/.*)?$/, '/catdesk'],
+  [/^\/dashboard(\/.*)?$/, '/catdesk'],
   [/^\/portfolio(\/.*)?$/, '/workspace/portfolio'],
   // /screener 深链高亮到「因子轮动」(现为独立一级入口).
   [/^\/screener(\/.*)?$/, '/workspace/factors'],
@@ -278,7 +273,7 @@ const AppContent: React.FC = () => {
     // 经主页链接 / AlertsBell / deep-link 进入 (见 FRONTEND_ARCHITECTURE.md §2).
     // 菜单改为 3 组: 决策(每日可执行) / 研究(策略与因子) / 系统(配置与运维).
     const decision = [
-      menuLink('/home', <HomeIcon className="hero-icon" />, '主页'),
+      menuLink('/catdesk', <HomeIcon className="hero-icon" />, '主页'),
       menuLink('/workspace/portfolio', <ChartPieIcon className="hero-icon" />, '持仓'),
       // AI 分析 (2026-07-04): 导航栏直达的 AI 二次意见入口, 搜任意股 → 多维度解读.
       menuLink('/workspace/ai-analysis', <SparklesIcon className="hero-icon" />, 'AI 分析'),
@@ -313,7 +308,7 @@ const AppContent: React.FC = () => {
     flatMenuItems
       .filter(item => menuPath === item.key || menuPath.startsWith(`${item.key}/`))
       .sort((a, b) => b.key.length - a.key.length)[0] || flatMenuItems[0];
-  const selectedKey = selectedMenu?.key || '/home';
+  const selectedKey = selectedMenu?.key || '/catdesk';
   const currentSection = selectedMenu?.section || '工作台';
   const currentPageTitle = selectedMenu?.title || '主页';
   const selectedParentKeys = useMemo(
@@ -456,26 +451,15 @@ const AppContent: React.FC = () => {
           <Suspense fallback={routeFallback}>
             <RouteTransition>
               <Routes location={location}>
-                {/* Phase 6 (2026-06-27) — 登录默认进 /home (新手主页),
-                  admin 走右上 ⚙ 进 /admin/today (实为 /workspace/today). */}
-                <Route path="/" element={<Navigate to="/home" replace />} />
-
-                {/* Phase 7.5 (2026-06-28) — /home 加入标准 Layout, 与其他 workspace 视觉一致. */}
-                <Route
-                  path="/home"
-                  element={
-                    <ProtectedRoute>
-                      <HomeWorkspace />
-                    </ProtectedRoute>
-                  }
-                />
+                {/* catalyst-900: 登录默认进 /catdesk (7-tab SPA). */}
+                <Route path="/" element={<Navigate to="/catdesk" replace />} />
 
                 {/* Unified workspaces (US-001) */}
                 <Route
                   path="/workspace/today"
                   element={
                     <ProtectedRoute>
-                      <Navigate to="/home" replace />
+                      <Navigate to="/catdesk" replace />
                     </ProtectedRoute>
                   }
                 />
@@ -576,8 +560,8 @@ const AppContent: React.FC = () => {
 
                 {/* Legacy redirects — duplicate pages now bounce to a workspace home.
                   Listed in PRD US-001 acceptance criteria. */}
-                <Route path="/today" element={<Navigate to="/home" replace />} />
-                <Route path="/dashboard" element={<Navigate to="/home" replace />} />
+                <Route path="/today" element={<Navigate to="/catdesk" replace />} />
+                <Route path="/dashboard" element={<Navigate to="/catdesk" replace />} />
                 <Route path="/risk-alerts" element={<Navigate to="/workspace/portfolio" replace />} />
                 <Route
                   path="/strategy-experiment-lab"
@@ -668,7 +652,7 @@ const AppContent: React.FC = () => {
                 />
 
                 {/* Anything else: 回 /home (新手主页) — Phase 6 之前是 /workspace/today */}
-                <Route path="*" element={<Navigate to="/home" replace />} />
+                <Route path="*" element={<Navigate to="/catdesk" replace />} />
               </Routes>
             </RouteTransition>
           </Suspense>
