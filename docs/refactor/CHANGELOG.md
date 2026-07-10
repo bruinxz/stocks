@@ -14,6 +14,287 @@ Format: each entry cites the landing SHA, PR number, owner authority (if authori
 
 ---
 
+## [Frontend-v0.5-s] · 2026-07-10
+
+PR #164 · main HEAD `926b2929b6ec9c8ed23169e13104e44cbcac2f23` · squash-merge from base `d8f4ba7606fc24d346126dd933c0af65c57d11e0` (49-段 QUADRAGESIMA-NONA · squash-onto 51-段) · mergedAt `2026-07-10T01:30:29Z` (2026-07-10T09:30:29+08:00 CST) · Frontend γ 主签 self-merge per `msg=d0d11677` (≥4 sign + CI 8/8 GREEN → self-merge authority) · **52-段 QUINQUAGESIMA-DUO canonical LOCK REALIZED · CASCADE VII 3-way heterogeneous FIRST-EVER 3rd-lander · Δt+2m49s from #165 · Δt+6m21s from #166**.
+
+### Diff
+
++48 / −23 · 2 files:
+
+- `frontend/src/pages/SystemLogs.tsx` (+31/-17) — 3-locus useEffect + setInterval race-guard via `AbortController`: `fetchLogs` useCallback L43 + `fetchStats` useCallback L79 + `autoRefresh setInterval` L100 **per-tick AbortController** (each 3s tick only commits its own result · novel canonical for v0.5(s) SystemLogs first-ever pattern) · `if (signal?.aborted) return` setState-guard cross-cutting · `CanceledError`/`ERR_CANCELED` swallow (axios v0.22+ canonical)
+- `frontend/src/services/logService.ts` (+17/-6) — signature-additive `listLogs(params, config?: { signal?: AbortSignal })` optional 2nd param defaults undefined · axios native `config.signal` pass-through · single-caller isolation grep-verified
+
+### Landing attestation
+
+- **CI 8/8 required-check GREEN** (Detect-changes ×5 + weak-secrets + Backend check SKIPPED+SUCCESS + enum-matrix-lock ×2 + Frontend check ×2 + no-backtest-service-regression ×2 + Docker compose validate SKIPPED+SUCCESS)
+- **副签 4/4 CLOSE bit-perfect** — 主 Frontend γ (SELF-MERGE anchor · `msg=139544a8` CREATE + `msg=a973d1ea` SELF-MERGE broadcast) + 副1 QADocs `msg=722c4319` (10-axis byte-truth + spec-fidelity + quadruple-axis anti-fabrication α-DEFER/β-REJECT/γ-REJECT/δ-ADOPT witness + single-page-caller isolation) + 副2 Cleanup γ `msg=a4d5a118 §二` (jscpd ≤30% 6-line idiomatic boilerplate + `frontend/**` SOLE + US-038 Math.random=0 + CanceledError axios v1.x canonical) + 副3 Research §S3 `msg=d6554dae` (React 18 "You Might Not Need an Effect" §Fetching + axios v0.22.0 config.signal + WHATWG DOM §3.3 AbortSignal spec-only cite + setInterval per-tick AbortController novel-canonical witness) + 副4 Backend γ `msg=f92d0ccc` (cross-lane isolation `backend/**` zero-touch by construction · API-contract cross-touch ∅)
+
+### Frontend γ Lane A-1 UNDECIM 11-CONSECUTIVE REALIZED
+
+Frontend γ chronological chain: #137 + #139 + #141 + #142 + #145 + #146 + #150 + #154 + #157 + #162 → **#164** — 十一-consecutive family REALIZED.
+
+### anti-fabrication verify-then-decide 十次連続 DECIMAL REALIZED — v0.5(s) quadruple-axis capstone
+
+Chain: v0.5(k)→(l)→(m)→(n)→(o)→(p) 5A→3A 七次 (@#154) → v0.5(q) DocsWorkspace 双-site 八次 (@#157) → v0.5(r) triple-axis α/β/γ 九次 (@#162) → **v0.5(s) quadruple-axis α-DEFER (scale-inflation) + β-REJECT (wrong-primitive useTransition/useDeferredValue) + γ-REJECT (already-LIVE Route-Suspense App.tsx:42-67 + DataWorkspace:29-32) + δ-ADOPT (truthful surgical SystemLogs 3-race-site) 十次連続 DECIMAL** — first-ever 4-axis single-PR decision under Owner truthful-only 铁律.
+
+### CASCADE VII 3-way heterogeneous FIRST-EVER cascade shape FULL-REALIZED
+
+**Sequence** (code+doc+code · 6m21s window · unique in 52-段 history):
+- 50-段 QUINQUAGESIMA · PR #166 backend code · `1f9cc6b4` @ 01:24:08Z (1st-lander)
+- 51-段 UNQUINQUAGESIMA · PR #165 docs · `eac8d8f5` @ 01:27:40Z (2nd-lander · Δ+3m32s)
+- 52-段 QUINQUAGESIMA-DUO · PR #164 frontend code · `926b2929` @ 01:30:29Z (3rd-lander · Δ+2m49s)
+
+File-set 3×3 pairwise = ∅ verified (backend/** ∩ docs/** ∩ frontend/** = ∅ by lane 契约 msg=a5297512) · trigger-order permutation-independent by construction · 承 CASCADE VI QUADRUPLE 4-way homogeneous doc+code+doc+code @ 49-段 · CASCADE family 7-shape lineage REALIZED.
+
+### quadruple-locus AbortSignal canonical family REALIZED
+
+v0.5(p) 5-site + v0.5(q) DocsWorkspace + v0.5(r) StockDetailPanel triple + **v0.5(s) SystemLogs triple** = **4-locus canonical stack** — comprehensive React 18 race-guard discipline REALIZED across Frontend γ Lane A-1 arc.
+
+### QUINQUAGESIMA-QUATTUOR 54例 total REALIZED
+
+Post-#164 cumulative: **38 code + 16 doc = 54例** across 52-段 canonical progression.
+
+### Guardrails / discipline
+
+- Path D `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` + 4-baseline `1f2d197a23c89eec23b5a5addc0e054974a6eaa5` byte-perfect (frontend/** SOLE zero baseline touch by construction)
+- N=4 4/4 (FeedbackStatus + FeedbackClassification + SizingMethod + QuantWorkflowStatus) transitively preserved · Instance 5 二例 (MarketRegime + MarketJudgmentStatus) REMOVE-permanent exit=1
+- Frontend γ SOLE `frontend/**` · backend/** zero-touch · docs/** zero-touch · baseline/** zero-touch
+- US-038 Math.random zero (SystemLogs.tsx grep=0 + logService.ts grep=0) · jscpd 6-line idiomatic AbortController boilerplate well under ≤30% hard-gate
+- 借鉴 独立性 `msg=ad6585cf`: React 18 "You Might Not Need an Effect" §Fetching + WHATWG DOM §3.3 AbortController + axios v0.22.0 `config.signal` CHANGELOG + axios v1.x CanceledError spec-only cite · zero code-copy · zero external `use-abort-signal`/`abort-*` npm
+
+### Owner authority chain
+
+b8af5127 · 4f6d2466 · ad6585cf · bf74c64c · 4b30fbed · df3a0aae · a8175861 · 210d262d · d0d11677 · 702b81be · 59c43f65 · a5297512 · 3c114597 · de6103bd · 1fbdc90d · 21867874 · eb4b0016 · b091c74d · Orch v204~v269
+
+---
+
+## [PR-M3-Cleanup-log-29] · 2026-07-10
+
+PR #165 · main HEAD `eac8d8f5` · squash-merge · mergedAt `2026-07-10T01:27:40Z` (2026-07-10T09:27:40+08:00 CST) · Cleanup γ 主签 self-merge per `msg=d0d11677` · **51-段 UNQUINQUAGESIMA canonical LOCK REALIZED · CASCADE VII 2nd-lander · Δt+3m32s from #166**.
+
+### Diff
+
++129 / −0 · 1 file:
+
+- `docs/refactor/30-cleanup-log.md` (+129/-0) additive-only pure-append — §PR-M3-29 **quadruple-entry β** doc-PR landing block · first-ever 4-in-1 in single doc-PR · covers PR #160 §PR-M3-28 doc + PR #161 §4.12 Alt-Svc + PR #163 CHANGELOG v0.5 + PR #162 v0.5(r) StockDetailPanel (all four segments of CASCADE VI QUADRUPLE @ 49-段)
+
+### Landing attestation
+
+- **CI CLEAN**
+- **副签 2/2 CLOSE bit-perfect** — 主 Cleanup γ (SELF-MERGE anchor · `msg=235a87af`) + 副1 Research §S3 `msg=7709374b` (combined with 50-段 追认) + 副2 QADocs `msg=7f018e74` (10-axis byte-truth + CASCADE VI QUADRUPLE doc-mirror canonical 4-entry attest)
+
+### Cleanup γ Lane B doc-tier TEN-CONSECUTIVE DECIMAL REALIZED
+
+Cleanup γ Lane B chronological chain: #128 + #140 + #143 + #148 + #151 + #153 + #155 + #158 + #160 → **#165** — 十-consecutive DECIMAL family REALIZED.
+
+### Instance 4 multi-entry doc-PR canonical 十例 DECEM REALIZED
+
+quadruple-entry β **first-ever 4-in-1 shape** in single doc-PR (unique canonical) — Instance 4 十例 DECEM REALIZED.
+
+### doc-tier 十六例 SEDECIM canonical LOCK REALIZED
+
+Cumulative doc-tier examples: 十五 @ #163 → **十六 @ #165** — SEDECIM canonical LOCK REALIZED.
+
+### Guardrails / discipline
+
+- Path D `9ec3f104…` + 4-baseline `1f2d197a…` byte-perfect
+- Cleanup γ SOLE `docs/refactor/30-cleanup-log.md` · zero code-touch · zero baseline-touch
+- 借鉴 独立性 `msg=ad6585cf`: doc-prose narrative single-file additive-only append · zero code-copy
+
+### Owner authority chain
+
+(same as `[Frontend-v0.5-s]`)
+
+---
+
+## [Backend-ADR-0010-§4.13] · 2026-07-10
+
+PR #166 · main HEAD `1f9cc6b4` · squash-merge · mergedAt `2026-07-10T01:24:08Z` (2026-07-10T09:24:08+08:00 CST) · Backend γ 主签 self-merge per `msg=d0d11677` · **50-段 QUINQUAGESIMA canonical LOCK REALIZED · CASCADE VII 1st-lander**.
+
+### Diff
+
++571 / −19 · 2 files:
+
+- `backend/src/middlewares/apiServerTiming.ts` (+113/-19) — in-place vertical extend §4.7.1 Dynamic Server-Timing L1 §2 API · **三-API** `measure(name, fn)` sync + `measureAsync(name, asyncFn)` reject-rethrow correctness + `start(name)` returning stop-fn closure · dynamic runtime entry emission alongside existing static §4.7 emit · W3C Server-Timing L1 CR canonical · RFC 7230 §3.2.6 quoted-string escape · Node.js `process.hrtime.bigint` v10.7.0+ monotonic
+- `backend/tests/routing/api-server-timing.test.ts` (+458/-0) — 88 IIFE scenarios (a)-(oo) · measure sync success/throw + measureAsync resolve/reject-rethrow correctness + start/stop pairs concurrent + nested duration + route-preset APPEND + §4.7-§4.13 SEXTUPLE compose + standalone helper vectors
+
+### Landing attestation
+
+- **CI 8/8 required-check GREEN**
+- **副签 4/4 CLOSE bit-perfect** — 主 Backend γ (SELF-MERGE anchor · `msg=bd4f9495`) + 副1 QADocs `msg=4b1df9f9` (10-axis byte-truth · Enforcement HOLD 九次-preserve · measureAsync reject-rethrow correctness · 88/0 test verify) + 副2 Research §S3 `msg=d6554dae` (spec-fidelity + SEPTUPLE compose witness) + 副3 Cleanup γ `msg=a4d5a118 §三` (jscpd pattern-mirror in-place well under 30% · backend/** SOLE · Fail-OPEN · N=4 + Instance 5 preserve · HOLD 九次-witness · SEPTUPLE §4.7-§4.13 witness) + 副4 Frontend γ `msg=26f92e14` (frontend/** zero-touch attest)
+
+### ADR-0010 §4.1-§4.13 TREDECIM 13-CONSECUTIVE canonical stack REALIZED
+
+§4.1 X-API-Version + §4.2 winston + §4.3 status/version + §4.4 Deprecation/Sunset + §4.5 IETF RateLimit + §4.6 Retry-After + §4.7 Server-Timing + §4.8 Timing-Allow-Origin + §4.9 Trace Context + §4.10 Web Linking + §4.11 Reporting-Endpoints + §4.12 Alt-Svc + **§4.13 Dynamic Server-Timing** — TREDECIM 13-consecutive canonical stack REALIZED.
+
+### Backend γ Lane A-3 TREDECIM 13-CONSECUTIVE REALIZED
+
+Backend γ chronological chain: #125 + #126 + #129 + #133 + #138 + #144 + #147 + #149 + #152 + #156 + #159 + #161 → **#166** — 十三-consecutive family REALIZED.
+
+### Enforcement HOLD v2-dual-mount 契约 preserve 九次 CONSECUTIVE advisory-only REALIZED
+
+§4.5 + §4.6 + §4.7 + §4.8 + §4.9 + §4.10 + §4.11 + §4.12 + **§4.13** all preserve advisory-only posture: zero statusCode decide · zero response-body delta · Fail-OPEN · Route-authority-wins-APPEND · default-OFF opt-in. Nine-consecutive canonical stack REALIZED.
+
+### SEPTUPLE §4.7-§4.13 observability+hypermedia+reporting+transport+dynamic canonical family REALIZED
+
+Server-Timing L1 + Timing-Allow-Origin + Trace Context + Web Linking + Reporting-Endpoints + Alt-Svc + **Dynamic Server-Timing** — SEPTUPLE composable family REALIZED.
+
+### §4.7.1 Dynamic Server-Timing vertical extend canonical shape REALIZED
+
+**三-API** measure + measureAsync + start pattern — first-ever vertical-of-observability extend (§4.7 static → §4.7.1 dynamic).
+
+### Guardrails / discipline
+
+- Path D `9ec3f104…` + 4-baseline `1f2d197a…` byte-perfect
+- N=4 4/4 · Instance 5 二例 REMOVE-permanent
+- Backend γ SOLE `backend/src/middlewares/**` + `backend/tests/routing/**`
+- frontend/** zero-touch · 采集/存储侧 zero-touch · docs/** zero-touch
+- 借鉴 独立性 `msg=ad6585cf`: W3C Server-Timing L1 CR + RFC 7230 §3.2.6 + Node.js `process.hrtime.bigint` v10.7.0 spec-only cite · zero code-copy · zero external `server-timing-*`/`hrtime-*` npm
+
+### Owner authority chain
+
+(same as `[Frontend-v0.5-s]`)
+
+---
+
+## [Frontend-v0.5-r] · 2026-07-10
+
+PR #162 · main HEAD `d8f4ba7606fc24d346126dd933c0af65c57d11e0` · squash-merge · mergedAt `2026-07-10T00:55:44Z` (2026-07-10T08:55:44+08:00 CST) · Frontend γ 主签 self-merge per `msg=d0d11677` · **49-段 QUADRAGESIMA-NONA canonical LOCK · CASCADE VI QUADRUPLE 4th-of-4 terminal**.
+
+### Diff
+
++63 / −30 · 2 files:
+
+- `frontend/src/components/stock/StockDetailPanel.tsx` (+51/-24) — three useEffect race-guards: `/market/history/{symbol}` L120 + `/factors/stock/{displayCode}` L142 + `listReports` L159 · each with AbortController + cleanup + `signal?.aborted` guard + `CanceledError`/`ERR_CANCELED` swallow
+- `frontend/src/services/aiStockAnalysisService.ts` (+12/-6) — signature-additive `listReports(params, config?: { signal?: AbortSignal })` · axios native `config.signal` pass-through
+
+### Landing attestation
+
+- **CI 8/8 GREEN CLEAN**
+- **副签 5/5 CLOSE bit-perfect** — 主 Frontend γ + 副1 QADocs `msg=b27ab924` + 副2 Cleanup γ `msg=6a546d47` + 副3 Research §S3 `msg=f4896fc4` + 副4 Backend γ `msg=765882e9`
+
+### Frontend γ Lane A-1 TEN-CONSECUTIVE DECIMAL REALIZED (via #162)
+
+#137+#139+#141+#142+#145+#146+#150+#154+#157+#162 — 十-consecutive DECIMAL family REALIZED.
+
+### anti-fabrication verify-then-decide 九次連続 (via #162 triple-axis capstone)
+
+v0.5(k)→(l)→(m)→(n)→(o)→(p) 5A→3A 七次 → v0.5(q) DocsWorkspace 双-site 八次 → **v0.5(r) triple-axis α-REJECT/β-REJECT/γ-ADOPT StockDetailPanel triple race 九次** — nine-consecutive verify-then-decide discipline REALIZED.
+
+### CASCADE VI 4th segment · QUADRUPLE 4-way concurrent SELF-MERGE cascade
+
+CASCADE VI QUADRUPLE (first-ever 4-way concurrent SELF-MERGE cascade in 49-段 history · doc+code+doc+code homogeneous · 3-min-8-sec wall-clock): #160 (doc 46) → #161 (code 47) → #163 (doc 48) → **#162 (code 49 terminal)**.
+
+### Guardrails / discipline
+
+- Path D `9ec3f104…` + 4-baseline `1f2d197a…` byte-perfect
+- N=4 4/4 · Instance 5 二例 REMOVE-permanent grep exit=1
+- Frontend γ SOLE `frontend/**` · backend/** zero-touch · docs/** zero-touch
+- US-038 Math.random zero · jscpd 9-line idiomatic AbortController well below ≤30%
+- 借鉴 独立性 `msg=ad6585cf`: React 18 "You Might Not Need an Effect" §Fetching + WHATWG DOM §3.3 AbortController + axios v0.22.0 `config.signal` CHANGELOG spec-only cite · zero code-copy · zero external `use-abort-signal`/`abort-*` npm
+
+### Owner authority chain
+
+(same as `[Frontend-v0.5-s]`)
+
+---
+
+## [QADocs-CHANGELOG-v0.5-A2] · 2026-07-10
+
+PR #163 · main HEAD `e6391864f4325b17eaa1809ea19256563cf98fa3` · squash-merge · mergedAt `2026-07-10T00:55:39Z` (2026-07-10T08:55:39+08:00 CST) · QADocs 主签 self-merge per `msg=d0d11677` · **48-段 · CASCADE VI QUADRUPLE 3rd-of-4**.
+
+### Diff
+
++297 / −0 · 1 file:
+
+- `docs/refactor/CHANGELOG.md` (+297/-0) additive-only pure-append — 8 reverse-chronological entries for #152 / #153 / #154 / #155 / #157 / #156 / #158 / #159 (CHANGELOG v0.5 8-PR consolidated arc)
+
+### Landing attestation
+
+- **CI CLEAN**
+- **副签 2/2 CLOSE bit-perfect** — 主 QADocs + 副1 Research §S3 `msg=b4dc8911` + 副2 Cleanup γ `msg=e4f0bf7f`
+
+### QUINQUAGESIMA 50例 MILESTONE CROSSED
+
+47→48→49→**50**→51 post-QUADRUPLE-LAND @ #163 anchor.
+
+### 十五例 doc REALIZED · CHANGELOG v0.5 8-PR consolidated dual-lander realization arc REALIZED · Instance 4 doc-tier 承接位 5例 seed
+
+### Guardrails / discipline
+
+- Path D `9ec3f104…` + 4-baseline `1f2d197a…` byte-perfect
+- QADocs SOLE `docs/refactor/CHANGELOG.md` · zero code-touch · zero baseline-touch
+- 借鉴 独立性 `msg=ad6585cf`: W3C Reporting API L1 WD + RFC 7838 + RFC 8288 + RFC 8941 + RFC 7230 + RFC 9110 + W3C Trace Context L1 + WHATWG DOM + React 18 spec-only cite · doc-only pure-append · zero code-copy
+
+### Owner authority chain
+
+(same as `[Frontend-v0.5-s]`)
+
+---
+
+## [Backend-ADR-0010-§4.12] · 2026-07-10
+
+PR #161 · main HEAD `df6814cf26deccfb78e4d0fd88a5c55e3e70352b` · squash-merge · mergedAt `2026-07-10T00:53:36Z` (2026-07-10T08:53:36+08:00 CST) · Backend γ 主签 self-merge per `msg=d0d11677` · **47-段 · CASCADE VI QUADRUPLE 2nd-of-4**.
+
+### Diff
+
++776 / −0 · 3 files (pure ADD):
+
+- `backend/src/middlewares/apiAltSvc.ts` **NEW** (+181) — RFC 7838 canonical Alt-Svc advisory middleware · writeHead-monkeypatch pattern-mirror §4.11 · route-authority-wins-APPEND · default-OFF opt-in via `api_alt_svc` pkg.json · `clear` mode + `ma` clamp 30-day cap + persist flag + TOKEN_RE + AUTHORITY_INVALID_RE + isValidAltSvcEntry + clampMa + formatAltSvcEntry + formatAltSvcServices + appendHeader + buildApiAltSvcMiddleware + apiAltSvcMiddleware + CURRENT_ALT_SVC_CONFIG
+- `backend/tests/routing/api-alt-svc.test.ts` **NEW** (+583) — 94 IIFE scenarios (a)-(aj) · null/empty · clear · single/multi services · ma default/negative/hard-cap · persist · invalid protocol_id/authority · route-preset APPEND · 2xx/4xx/5xx · concurrent isolation · §4.7-§4.12 SEXTUPLE compose · standalone helper vectors · large-set
+- `backend/src/index.ts` (+12/-0) — mount §4.12 after §4.11 · full attribution comment block
+
+### Landing attestation
+
+- **CI 8/8 GREEN**
+- **副签 5/5 CLOSE bit-perfect** — 主 Backend γ `msg=3f7aa948` + 副1 QADocs `msg=4f2803b7` + 副2 Research §S3 `msg=f4896fc4` + 副3 Cleanup γ `msg=9d0e3c0f` + 副4 Frontend γ `msg=6a5a3e2a`
+
+### ADR-0010 §4.1-§4.12 DUODECIM 12-CONSECUTIVE (via #161) · Backend γ Lane A-3 DUODECIM 12-CONSECUTIVE · Enforcement HOLD 八次 CONSECUTIVE advisory-only · SEXTUPLE §4.7-§4.12
+
+### Guardrails / discipline
+
+- Path D `9ec3f104…` + 4-baseline `1f2d197a…` byte-perfect
+- N=4 4/4 · Instance 5 二例 REMOVE-permanent
+- Backend γ SOLE `backend/src/middlewares/**` + `backend/tests/routing/**` + `backend/src/index.ts`
+- frontend/** zero-touch · 采集/存储侧 zero-touch
+- 借鉴 独立性 `msg=ad6585cf`: RFC 7838 Apr 2016 Nottingham+McManus+Reschke + RFC 9114 HTTP/3 + RFC 9113 HTTP/2 + RFC 7230 §3.2.6 spec-only cite · zero code-copy · zero external `alt-svc-*`/`http-alt-svc` npm
+
+### Owner authority chain
+
+(same as `[Frontend-v0.5-s]`)
+
+---
+
+## [PR-M3-Cleanup-log-28] · 2026-07-10
+
+PR #160 · main HEAD `1ce7b055adc0159e4a4705b6779afd11ec245b85` · squash-merge · mergedAt `2026-07-10T00:52:36Z` (2026-07-10T08:52:36+08:00 CST) · Cleanup γ 主签 self-merge per `msg=d0d11677` · **46-段 · CASCADE VI QUADRUPLE 1st-of-4 anchor · first-ever 4-way concurrent SELF-MERGE cascade seed**.
+
+### Diff
+
++71 / −0 · 1 file:
+
+- `docs/refactor/30-cleanup-log.md` (+71/-0) additive-only pure-append — §PR-M3-28 landing block · PR #159 §4.11 ADR-0010 UNDECIM 11-CONSECUTIVE + Backend γ Lane A-3 UNDECIM + Enforcement HOLD 七次 + §4.7-§4.11 QUINTUPLE
+
+### Landing attestation
+
+- **CI CLEAN**
+- **副签 2/2 CLOSE bit-perfect** — 主 Cleanup γ + 副1 Research §S3 `msg=ac6d4dc6` + 副2 QADocs `msg=6931670e`
+
+### Cleanup γ Lane B doc-tier NINE-CONSECUTIVE REALIZED (via #160) · Instance 4 multi-entry doc-PR canonical 九例 · CASCADE VI 1st segment anchor first-ever 4-way concurrent SELF-MERGE cascade
+
+### Guardrails / discipline
+
+- Path D `9ec3f104…` + 4-baseline `1f2d197a…` byte-perfect
+- Cleanup γ SOLE `docs/refactor/30-cleanup-log.md` · zero code-touch · zero baseline-touch
+- 借鉴 独立性 `msg=ad6585cf`: doc-prose narrative single-entry · zero code-copy
+
+### Owner authority chain
+
+(same as `[Frontend-v0.5-s]`)
+
+---
+
 ## [Backend-ADR-0010-§4.11] · 2026-07-10
 
 PR #159 · main HEAD `ca4ccc6a` · squash-merge from base `d7419f3b` · mergedAt `2026-07-10T00:31:13Z` (2026-07-10T08:31:13+08:00 CST) · Backend γ 主签 self-merge per `msg=d0d11677` (≥4 sign + CI 8/8 GREEN → self-merge authority) · **dual-lander with #158 @ 08:29:25 CST → 08:31:13 CST · 1min48s cascade window · zero file-overlap · both branches from same base `d7419f3b` LAND without conflict**.
