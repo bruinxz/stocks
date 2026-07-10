@@ -1,0 +1,23 @@
+frontend/src/pages/TaskScheduler.tsx
+  s_e51f1359125200::t_4ae8a2baec97c0 1,449,452-453,455-457,460,464,467-468,470-472,475,479,483-491,497-499,503,507,510-518,522-524,527,531-537,540-550,552-558,651,667,696,745,792,889,929,959,1243,1352,1728
+frontend/src/services/taskService.ts
+  s_e51f1359125200::t_9837a411e91e64 256-257,261-262,288-297
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5c50e2738629ffef6167877146f6ea9c7ca7e8a4",
+  "prompts": {},
+  "sessions": {
+    "s_e51f1359125200": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6190723b-5310-4a20-9931-b30674689ed4",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
