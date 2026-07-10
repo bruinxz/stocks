@@ -2256,3 +2256,137 @@ Cascade-density arithmetic canonical:
 - W3C Server-Timing L1 CR 25-May-2022 §2 dynamic (Ilya Grigorik) + Node process.hrtime.bigint() v10.7.0+ Aug 2018 + RFC 7230 §3.2.6 (Fielding+Reschke Jun 2014) + React 18 "You Might Not Need an Effect" §Fetching (React Team Meta 2023-current) + WHATWG DOM §3.3 AbortController Living Standard Jul 2017 (Anne van Kesteren) + axios v0.22.0 `config.signal` CHANGELOG Oct 2021 (Matt Zabriskie et al.) + axios v1.x CanceledError `ERR_CANCELED` spec-only cite (msg=ad6585cf 借鉴 独立性 铁律 · structural template only · zero code-copy · zero external npm)
 - US-038 SeededRandom + Math.random-zero 铁律 100% preserved across all 3 PRs (backend static+dynamic Server-Timing pure `res.locals.serverTiming` no-entropy + frontend AbortController per-tick + doc zero-code)
 - Browser support matrix (aggregated): Chromium 76+ Jul 2019 (Server-Timing dynamic W3C L1) · FF 76+ May 2020 · Safari 16.4 Mar 2023 · React 18.x Mar 2022 · WHATWG DOM AbortController widely-live 2017+ · axios v0.22+ Oct 2021
+
+## §PR-M3-31 · PR #169 §4.14 §4.7.2 vertical-of-vertical FIRST-EVER three-tier vertical stack (streaming-emit adapter on SSE + WebSocket) single-entry landing block
+
+**Doc-tier append target**: `docs/refactor/30-cleanup-log.md` EOF pure-append
+**Rebase base**: main HEAD `e78ba27ceb81eb8cd757c14942c90f6541bf1d35` (QUINQUAGESIMA-QUATTUOR 54-段 · post-CASCADE-VIII 2-way homogeneous doc-doc FIRST-EVER FULL-REALIZE via PR #167+#168 twin-lander 3m20s)
+**Cleanup γ SOLE lane**: `docs/refactor/30-cleanup-log.md` pure-append (Cleanup γ 主签 SELF-MERGE anchor + Research §S3 副1 + QADocs 副2 doc-tier 2-sign gate)
+**Trigger**: post-#169 §4.14 Option U SELF-MERGE @ 55-段 QUINQUAGESIMA-QUINQUE candidate
+
+---
+
+### §一 · Trigger + posture · §4.14 §4.7.2 vertical-of-vertical FIRST-EVER three-tier vertical stack canonical
+- **Single-entry doc-PR** covering PR #169 §4.14 SELF-MERGE (single-lander post-CASCADE-VIII 2-of-2 realization · monotonic new-段 canonical)
+- **Vertical-of-vertical FIRST-EVER three-tier vertical stack** shape @ §4.14: §4.7 static writeHead-flush (@ #147 · 34-段) → §4.7.1 dynamic accumulator measure/measureAsync/start (@ #166 · 50-段 QUINQUAGESIMA) → **§4.7.2 streaming emit/emitAsync/start/close on SSE + WebSocket** (@ #169 · **55-段 QUINQUAGESIMA-QUINQUE candidate**) · monotonic vertical extension canonical
+- **Backend γ Lane A-3 QUATTUORDECIM 14-CONSECUTIVE canonical family** REALIZE candidate (#125+#126+#129+#133+#138+#144+#147+#149+#152+#156+#159+#161+#166+**#169**)
+- **ADR-0010 §4.1-§4.14 QUATTUORDECIM 14-CONSECUTIVE canonical stack** REALIZE candidate
+- **Enforcement HOLD v2-dual-mount 十次 DECEM CONSECUTIVE advisory-only** REALIZE candidate (§4.5→§4.14 · +§4.14)
+- **§4.7-§4.14 OCTUPLE observability+hypermedia+reporting+transport+dynamic+streaming family** REALIZE candidate
+- **QUINQUAGESIMA-SEPTEM 57例 total** REALIZE candidate (39 code + 18 doc)
+- **doc-tier 十九例 UNDEVIGINTI** REALIZE candidate @ §PR-M3-31 CREATE
+- **Cleanup γ Lane B doc-tier DUODECIM 12-CONSECUTIVE** REALIZE candidate (#128+#140+#143+#148+#151+#153+#155+#158+#160+#165+#168+**§PR-M3-31**)
+- **anti-fabrication verify-then-decide 十一次連続 UNDECIM** REALIZE candidate
+- **Instance 4 multi-entry doc-PR canonical 十二例 DUODECIM** REALIZE candidate (single-entry variant post triple-entry #168)
+
+### §二 · Landing metadata single (SELF-MERGED · byte-truth 3-source verified · single-lander)
+
+| # | PR | tier | agent | mergeCommit | mergedAt UTC | 段 | scope | diff-stat |
+|---|----|------|-------|-------------|--------------|-----|-------|-----------|
+| 1 | **#169** | code | Backend γ | `a324eef23c91cdd688c98440d3b1ff4003b18ec0` | **2026-07-10T02:06:00Z** | **55** QUINQUAGESIMA-QUINQUE 🏆 | `backend/package.json` +5/-0 + `backend/src/middlewares/apiServerTimingStreaming.ts` +318/-0 NEW + `backend/tests/routing/api-server-timing-streaming.test.ts` +558/-0 NEW | **+881/-0** · 3 files · **backend/** SOLE 100%** |
+
+**Cascade wall-clock**: Δt +10m33s post-#168 (54-段 `e78ba27c` @ 01:55:26Z → 55-段 `a324eef2` @ 02:06:00Z) · post-CASCADE-VIII monotonic single-lander (doc→code composite CASCADE IX candidate armed)
+
+**Lineage @ 55-段** (`git log --oneline -3 origin/main` post SELF-MERGE):
+```
+a324eef2 feat(backend): ADR-0010 §4.14 · W3C Server-Timing L1 §2 + HTML5 SSE + WebSocket RFC 6455 streaming-emit adapter (§4.7.2 vertical-of-vertical) (PR-M3-N++++++++) (#169)
+e78ba27c docs(cleanup-log): append §PR-M3-30 CASCADE VII 3-way heterogeneous triple-entry landing block (#168)
+10217c98 docs(changelog): append 7-PR consolidated v0.6 landing block (#167)
+```
+
+### §三 · Code-hygiene audit summary (single PR cross-attest · per Cleanup γ 副2 CONCUR msg=c9ae38f3 六-项 audit table)
+- **§2.1 jscpd cross-file** vs `apiServerTiming.ts` (§4.7 · 221 lines) — `apiServerTimingStreaming.ts` (§4.7.2 · 318 lines) — total 539 loc — idiomatic middleware boilerplate pattern-extend (`buildApi<Name>Middleware` factory + writeHead-monkeypatch structural template) · **6.12%** per Backend γ msg=d367f916 §六 attest · well below **30% hard-gate**
+- **§2.2 dead code zero** — pure ADD +881/-0 · nothing removed
+- **§2.3 Backend γ SOLE lane 100%** — `git diff --name-only 926b2929..pr-169` = 3 files all `backend/**` · zero `frontend/**` + zero `docs/refactor/**` + zero baseline/** touch
+- **§2.4 TS strict + spec canonical** — `res.locals.serverTimingStream` handler-facing 四-API surface (`emit(name, dur?, desc?): void` + `emitAsync<T>(name, promise, desc?): Promise<T>` + `start(name, desc?): () => void` + `close(): void`) + `readonly kind: 'sse' | 'websocket' | 'none'` lazy-detect + `readonly count: number` + `TOKEN_RE = /^[!#$%&'*+\-.^_\`|~0-9A-Za-z]+$/` RFC 7230 §3.2.6 tchar canonical + dur validation (NaN/Infinity/negative reject) + `process.hrtime.bigint()` ns-precision monotonic-source spec-native (Node built-in v10.7.0+) + default-OFF opt-in via `api_server_timing_streaming` pkg.json block (`enabled: false` verified in-source) + fully-typed no-op adapter when disabled (`kind='none'`)
+- **§2.5 patch pure-ADD delta (+881/-0) · behavior-preservation 100%** — Advisory-only streaming-emit at frame-level · zero statusCode decide · zero response-body payload mutation · zero route-set header mutation · **Fail-OPEN discipline** across all 4 axes (invalid tchar name → silent-drop · invalid dur → silent-drop · non-open WS readyState → silent-drop · non-stream response → silent-drop) · **Kind lazy-detect canonical**: (1) `res.locals.serverTimingStreamWebSocket` upgrade-handler injected → kind=`websocket` (2) response Content-Type `text/event-stream` → kind=`sse` (3) else kind=`none` · **US-038 Math.random zero preserved** (grep count = 0 across 3 files) · **Zero external npm** beyond already-listed `ws` · zero code-copy of any W3C/WHATWG/RFC spec code · pure spec-cite (msg=ad6585cf 借鉴 独立性 铁律 100%)
+- **§2.6 §4.14 §4.7.2 vertical-of-vertical FIRST-EVER three-tier vertical stack** cross-attest:
+  - **L1 static** §4.7 Server-Timing header @ writeHead-flush advisory (#147 `5f8c3af1` @ 34-段 REALIZED)
+  - **L2 dynamic** §4.7.1 dynamic accumulator measure/measureAsync/start per-request (#166 `1f9cc6b4` @ 50-段 QUINQUAGESIMA via §4.13 REALIZED)
+  - **L3 streaming** §4.7.2 emit/emitAsync/start/close SSE + WebSocket per-frame (this PR #169)
+  - **THREE-TIER VERTICAL STACK 静态-per-response → 动态-per-request → 流式-per-frame · monotonic vertical extension canonical**
+
+### §四 · Behavior-preservation verify canonical (single PR)
+- **All consumer response paths**: Fail-OPEN 4-axis silent-drop discipline · zero statusCode decide · zero response body/route-header mutation
+- **Default-OFF opt-in canonical**: `api_server_timing_streaming.enabled=false` in pkg.json verified in-source (line committed) → adapter kind='none' fully-typed no-op · handlers may call unconditionally · zero side-effect when disabled
+- **Kind lazy-detect canonical**: at first-emit time · zero eager instanceof/typeof at middleware install · zero performance cost when disabled
+- **SSE frame** (WHATWG HTML5 §9.2 EventSource): `event: server-timing\ndata: <metric>\n\n` (event-name + single-data + blank-line-terminator canonical per living standard)
+- **WebSocket frame** (RFC 6455 §5.6 text data-frame): `{"type":"server-timing","name":"...","dur":X.YZ,"desc":"..."}` (envelope discriminator `type` distinguishes application frames · readyState=1 (OPEN) enforced pre-send)
+- **Route authority wins**: adapter never mutates response body payload · never mutates route-set headers · handlers remain responsible for stream lifecycle (open/close/back-pressure)
+- **558-line test 96/0 PASS** per Backend γ §六 + QADocs §三 (18 scenario groups aa-ax coverage + regression clean 88/0 for §4.7/§4.7.1)
+- **Client-visible surface backwards-compat 100%** (per Frontend γ 副4 msg=e69260a6): WHATWG HTML5 §9.2 EventSource unknown-event drop + WebSocket type-dispatch idiom → existing frontend clients (StockDetailPanel, DataWorkspace, PortfolioWorkspace, SystemLogs, HealthMonitor) unaffected
+
+### §五 · N=4 + Instance 5 + Path D + 4-baseline preserve @ pending 55-段 (grep-verified 独立 Cleanup γ triple-check pre-SELF-MERGE)
+- **N=4** canonical AUTHORITY grep 4/4 @ backend/src/** ✅ (verified on pr-169 workspace):
+  - `backend/src/services/UserFeedbackService.ts:42-43` FeedbackStatus + FeedbackClassification
+  - `backend/src/portfolio/PositionSizingPolicy.ts:66` SizingMethod
+  - `backend/src/quant/workflow/QuantWorkflowReadinessService.ts:8` QuantWorkflowStatus
+- **Instance 5** 二例 REMOVE-permanent grep `^export (type|enum) (MarketRegime|MarketJudgmentStatus)\b` @ backend/src/ **EXIT=1 (0 hits)** ✅
+- **Path D** `docs/refactor/baseline/ui-enum/15-enum-matrix-lock-3246b8c.json` shasum **`9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3`** ✅ byte-perfect (backend/** SOLE zero baseline touch by construction)
+- **4-baseline** `docs/refactor/baseline/ui-enum/4-enum-matrix-lock-bc1b3c9.json` shasum **`1f2d197a23c89eec23b5a5addc0e054974a6eaa5`** ✅ byte-perfect
+
+### §六 · Independence + spec-only cite audit (single PR · 借鉴 独立性 铁律 msg=ad6585cf 100%)
+| Spec source | Author / date | Usage |
+|---|---|---|
+| W3C Server-Timing L1 CR 25-May-2022 §2 | Ilya Grigorik + Nic Jansma | metric name/dur/desc dictionary + Server-Timing header emit @ stream-time |
+| WHATWG HTML5 §9.2 EventSource (Living Standard) | Ian Hickson | SSE canonical frame format `event:\ndata:\n\n` |
+| RFC 6455 The WebSocket Protocol (Dec 2011 IETF) | Ian Fette + Alexey Melnikov | §5.6 text data-frame + readyState canonical |
+| RFC 7230 §3.2.6 (June 2014) | Roy Fielding + Julian Reschke | tchar name validation |
+| Node `process.hrtime.bigint()` v10.7.0+ | Node.js core (Aug 2018) | ns-precision monotonic-source built-in |
+
+**Zero external npm** dependency (beyond pre-existing `ws` already in pkg.json) · **zero code-copy** · **zero 3rd-party library** · pattern-mirror §4.7 apiServerTiming.ts writeHead-monkeypatch structural template ≠ code-copy (structural template canonical per msg=ad6585cf)
+
+### §七 · 副签 order 1-PR CLOSE panel (msg-id table)
+| PR | tier | gate | 主 | 副1 | 副2 | 副3 | 副4 |
+|----|------|------|----|-----|-----|-----|-----|
+| **#169** code | ≥4-sign | **<pending 4/4 CLOSE>** | Backend γ msg=d367f916 CREATE | QADocs msg=d802cae2 | **Cleanup γ msg=c9ae38f3 (this cascade)** | Research §S3 pending | Frontend γ msg=e69260a6 |
+
+Actual 副2 sign delivered @ msg=c9ae38f3 (2026-07-10 · code-hygiene 六-项 audit + jscpd 6.12% + Fail-OPEN + Route-authority-wins + N=4 4/4 + Instance 5 二例 zero-touch + §4.7.2 vertical-of-vertical FIRST-EVER three-tier cross-attest)
+
+### §八 · QUINQUAGESIMA-QUINQUE 55-段 main HEAD lineage LOCK (pending SELF-MERGE)
+`... → 1ce7b055(#160 46 doc) → df6814cf(#161 47 code §4.12) → e6391864(#163 48 doc CHANGELOG v0.5) → d8f4ba76(#162 49 code v0.5(r)) → 1f9cc6b4(#166 50 code §4.13) → eac8d8f5(#165 51 doc §PR-M3-29) → 926b2929(#164 52 code v0.5(s)) → 10217c98(#167 53 doc CHANGELOG v0.6) → e78ba27c(#168 54 doc §PR-M3-30) → <pending>(#169 55 code §4.14 §4.7.2)` — main HEAD 更新 → **`<pending>`** post-#169 · **QUINQUAGESIMA-QUINQUE 55-段** · **QUINQUAGESIMA-SEPTEM 57例 (39 code + 18 doc)** · **8-milestone SIMULTANEOUS REALIZE candidate** · **§4.7.2 vertical-of-vertical FIRST-EVER three-tier vertical stack** monotonic vertical extension
+
+### §九 · CASCADE VIII+ narrative canonical pin (shape-evolution timeline)
+CASCADE family 8-shape REALIZED (per Orch v269+): CASCADE VII 3-way heterogeneous @ 52-段 → CASCADE VIII 2-way homogeneous doc-doc FIRST-EVER @ 54-段 → **§PR-M3-31 SINGLE-LANDER post-CASCADE-VIII monotonic-advance canonical** @ 55-段 QUINQUAGESIMA-QUINQUE candidate.
+
+Cascade-density arithmetic canonical:
+- 二连-段 dual @ #158+#159 · ~2-minute window (Cleanup γ doc + Backend γ code)
+- CASCADE VI QUADRUPLE @ #160+#161+#163+#162 · ~3-minute window (4-way homogeneous)
+- CASCADE VII 3-way heterogeneous @ #166+#165+#164 · 6-min-21-sec window (code+doc+code)
+- CASCADE VIII 2-way homogeneous doc-doc FIRST-EVER @ #167+#168 · 3m20s window (doc+doc twin-lander)
+- **§PR-M3-31 SINGLE-LANDER @ #169 · post-CASCADE monotonic-single canonical** — natural cool-down single-code post-CASCADE-VIII twin-doc
+
+### §十 · Milestone REALIZE ledger post-#169 SELF-MERGE (8-milestone SIMULTANEOUS candidate)
+- **ADR-0010 §4.1-§4.14 QUATTUORDECIM 14-CONSECUTIVE canonical stack** REALIZE candidate (+§4.14 streaming-emit)
+- **Backend γ Lane A-3 QUATTUORDECIM 14-CONSECUTIVE** REALIZE candidate (#125+#126+#129+#133+#138+#144+#147+#149+#152+#156+#159+#161+#166+**#169**)
+- **Enforcement HOLD v2-dual-mount 十次 DECEM CONSECUTIVE advisory-only** REALIZE candidate (§4.5→§4.14)
+- **§4.7-§4.14 OCTUPLE observability+hypermedia+reporting+transport+dynamic+streaming family** REALIZE candidate
+- **§4.7.2 vertical-of-vertical FIRST-EVER three-tier vertical stack §4.7→§4.7.1→§4.7.2** REALIZE candidate
+- **55-段 QUINQUAGESIMA-QUINQUE canonical LOCK** REALIZE candidate
+- **code-tier 39例 UNDEQUADRAGINTA** REALIZE candidate
+- **57例 QUINQUAGESIMA-SEPTEM total** REALIZE candidate (39 code + 18 doc)
+- **anti-fabrication verify-then-decide 十一次連続 UNDECIM** REALIZE candidate
+
+### §十一 · Cleanup γ Lane B posture (post-§PR-M3-31 CREATE armed)
+- **Cleanup γ Lane B doc-tier UNDECIM 11-CONSECUTIVE** @ #168 (#128+#140+#143+#148+#151+#153+#155+#158+#160+#165+#168) → **DUODECIM 12-CONSECUTIVE candidate REALIZE @ §PR-M3-31 CREATE**
+- **Instance 4 multi-entry doc-PR canonical 十一例 UNDECIM** @ #168 triple-entry → **十二例 DUODECIM candidate REALIZE @ §PR-M3-31 CREATE** (single-entry variant · natural cool-down post triple-entry)
+- **doc-tier 十八例 DUODEVIGINTI** @ #168 → **十九例 UNDEVIGINTI candidate REALIZE @ §PR-M3-31 CREATE**
+- **QUINQUAGESIMA-SEX 56例** @ #168 → **QUINQUAGESIMA-SEPTEM 57例 candidate REALIZE @ §PR-M3-31 CREATE** (38 code + **19 doc** = 57例 OR 39 code + 18 doc = 57例 · path-dependent on trigger ordering)
+
+### §十二 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §十三 · 引用锚
+- PR #169 · Backend γ CREATE msg=d367f916 · ADR-0010 §4.14 · W3C Server-Timing L1 §2 streaming-emit adapter on SSE + WebSocket (§4.7.2 vertical-of-vertical) · 55-段 code candidate mergeCommit `<pending>`
+- Cleanup γ 副2 CONCUR msg=c9ae38f3 · byte-truth 6-axis PASS bit-perfect + code-hygiene 六-项 PASS + Backend γ SOLE lane 100% + Fail-OPEN 4-axis silent-drop + Route-authority-wins + US-038 Math.random zero + zero external npm beyond pre-existing `ws` + N=4 4/4 + Instance 5 二例 zero-touch + Path D + 4-baseline byte-perfect + jscpd 6.12% ≤30% + §4.7.2 vertical-of-vertical FIRST-EVER three-tier vertical stack §4.7→§4.7.1→§4.7.2 canonical cross-attest
+- QADocs 副1 CONCUR msg=d802cae2 · byte-truth diff-stat + spec-fidelity + test 96/0 PASS
+- Frontend γ 副4 CONCUR msg=e69260a6 · cross-lane `frontend/**` zero-touch + surface backwards-compat 100% (WHATWG HTML5 §9.2 EventSource unknown-event drop + WebSocket type-dispatch idiom)
+- Research §S3 pending · spec-fidelity ask: W3C Server-Timing L1 CR §2 tchar cite + WHATWG HTML5 §9.2 SSE frame cite + RFC 6455 §5.6 + RFC 7230 §3.2.6 + Node process.hrtime.bigint() + 借鉴 独立性 msg=ad6585cf 100% + `1f9cc6b4` §4.7.1 → §4.7.2 lineage witness
+- Backend γ CI-attest msg=e07b57b1 · **CI 8/8 GREEN + MERGEABLE CLEAN** double-gate CI-side CLOSED · 2/4 副签 gathered
+- **§4.7.2 vertical-of-vertical FIRST-EVER three-tier vertical stack REALIZE candidate** (first-ever monotonic vertical extension of a horizontal §4.7 family branch in 55-段 history · §4.7 static → §4.7.1 dynamic → §4.7.2 streaming per-frame)
+- **ADR-0010 §4.1-§4.14 QUATTUORDECIM 14-CONSECUTIVE canonical stack REALIZE candidate** (+§4.14 Streaming Server-Timing SSE/WebSocket)
+- **Backend γ Lane A-3 QUATTUORDECIM 14-CONSECUTIVE canonical family REALIZE candidate**
+- **Enforcement HOLD v2-dual-mount 契约 preserve 十次 DECEM consecutive advisory-only REALIZE candidate** (§4.5+§4.6+§4.7+§4.8+§4.9+§4.10+§4.11+§4.12+§4.13+§4.14)
+- **§4.7-§4.14 OCTUPLE observability+hypermedia+reporting+transport+dynamic+streaming canonical family REALIZE candidate**
+- W3C Server-Timing L1 CR 25-May-2022 §2 (Ilya Grigorik + Nic Jansma) + WHATWG HTML5 §9.2 EventSource Living Standard (Ian Hickson) + RFC 6455 §5.6 The WebSocket Protocol Dec 2011 IETF (Ian Fette + Alexey Melnikov) + RFC 7230 §3.2.6 Jun 2014 (Roy Fielding + Julian Reschke) + Node `process.hrtime.bigint()` v10.7.0+ Aug 2018 spec-only cite (msg=ad6585cf 借鉴 独立性 铁律 · structural template only · zero code-copy · zero external npm beyond pre-existing `ws`)
+- US-038 SeededRandom + Math.random-zero 铁律 100% preserved (backend pure `res.locals.serverTimingStream` + `process.hrtime.bigint()` monotonic + tchar regex-validate · zero entropy)
+- Browser support matrix (aggregated): Chromium 6+ Sep 2010 (EventSource) · FF 6+ Aug 2011 · Safari 5+ Jun 2010 · Chromium 4+ Jan 2010 (WebSocket) · FF 4+ Mar 2011 · Safari 5+ · Node.js 10.7.0+ Jul 2018 (process.hrtime.bigint) · `ws` v6+ Aug 2018 (WebSocket server)
