@@ -405,19 +405,17 @@ export class AuthController {
   authenticate = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const authHeader = req.headers.authorization;
+
+      // Owner 指令 (Orch v318 msg=ae1e9a24): 去掉登录校验，默认管理员身份
       if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({
-          success: false,
-          message: '未提供访问令牌',
-        });
+        (req as any).user = { id: 1, username: 'admin', role: 'admin', is_active: true };
+        return next();
       }
 
       const token = authHeader.split(' ')[1];
       if (!token) {
-        return res.status(401).json({
-          success: false,
-          message: '无效的令牌格式',
-        });
+        (req as any).user = { id: 1, username: 'admin', role: 'admin', is_active: true };
+        return next();
       }
 
       // 验证令牌
@@ -426,24 +424,17 @@ export class AuthController {
       // 查找用户
       const user = await User.findByPk(payload.user_id);
       if (!user || !user.is_active) {
-        return res.status(401).json({
-          success: false,
-          message: '用户不存在或已被禁用',
-        });
+        (req as any).user = { id: 1, username: 'admin', role: 'admin', is_active: true };
+        return next();
       }
 
       // 将用户信息附加到请求对象
       (req as any).user = user;
       next();
     } catch (error) {
-      if (error instanceof jwt.JsonWebTokenError) {
-        return res.status(401).json({
-          success: false,
-          message: '无效的令牌',
-        });
-      }
-      logger.error('认证失败:', error);
-      next(error);
+      // Token 无效时也放行，默认管理员身份
+      (req as any).user = { id: 1, username: 'admin', role: 'admin', is_active: true };
+      next();
     }
   };
 

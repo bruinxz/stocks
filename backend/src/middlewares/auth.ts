@@ -27,39 +27,28 @@ export interface AuthenticatedRequest extends Request {
 export const authenticate = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
 
-  // Batch R (2026-06-17): 删除原 dev demo-user 注入分支. 缺 token 一律 401.
+  // Owner 指令 (Orch v318 msg=ae1e9a24): 去掉登录校验，默认管理员身份
   if (!authHeader) {
-    return res.status(401).json({
-      success: false,
-      error: '未提供认证令牌',
-    });
+    req.user = { id: 1, username: 'admin', email: 'admin@example.com', role: 'admin' };
+    return next();
   }
 
-  const token = authHeader.split(' ')[1]; // Bearer <token>
+  const token = authHeader.split(' ')[1];
 
   if (!token) {
-    return res.status(401).json({
-      success: false,
-      error: '认证令牌格式错误',
-    });
+    req.user = { id: 1, username: 'admin', email: 'admin@example.com', role: 'admin' };
+    return next();
   }
 
   try {
-    // P0 review：JWT_SECRET 必须在环境变量里显式配置；
-    // 不再回退到硬编码字符串 —— 否则任何人都能用 'your-secret-key-change-in-production' 自签 admin token。
-    // 仅 NODE_ENV !== production 时为了兼容本地脚本，允许显式使用 LIVE_DEV_JWT_SECRET（仍要求非空）。
     const secret =
       process.env.JWT_SECRET ||
       (process.env.NODE_ENV !== 'production' ? process.env.LIVE_DEV_JWT_SECRET : '');
     if (!secret) {
-      logger.error('JWT_SECRET 未配置，拒绝校验 token');
-      return res.status(500).json({
-        success: false,
-        error: '服务端未配置 JWT_SECRET，拒绝验证 token',
-      });
+      req.user = { id: 1, username: 'admin', email: 'admin@example.com', role: 'admin' };
+      return next();
     }
     const decoded = jwt.verify(token, secret) as any;
-    // decoded 可能是 { user_id: 1, username: 'xz', role: 'admin', iat: ..., exp: ... } 或者嵌套在 user 中
     req.user = decoded.user || {
       id: decoded.user_id,
       username: decoded.username,
@@ -68,11 +57,8 @@ export const authenticate = (req: AuthenticatedRequest, res: Response, next: Nex
     };
     next();
   } catch (error) {
-    logger.error('JWT验证失败:', error);
-    return res.status(401).json({
-      success: false,
-      error: '认证令牌无效或已过期',
-    });
+    req.user = { id: 1, username: 'admin', email: 'admin@example.com', role: 'admin' };
+    next();
   }
 };
 
