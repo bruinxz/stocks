@@ -4,10 +4,11 @@
  * (measure/measureAsync/start handler-facing API) + ADR-0010 §4.7.2.1
  * SSE keep-alive heartbeat sub-vertical (SUB-tier L3.1 extension) +
  * ADR-0010 §4.7.2.2 SSE Last-Event-ID resumption sub-vertical (SUB-tier
- * L3.2 extension).
+ * L3.2 extension) + ADR-0010 §4.7.2.3 SSE `retry:` field reconnect-time
+ * hint sub-vertical (SUB-tier L3.3 extension).
  *
- * Five-tier vertical stack + sub-tier §4.7 → §4.7.1 → §4.7.2 → §4.7.2.1
- * → §4.7.2.2:
+ * Six-tier vertical stack + sub-tier §4.7 → §4.7.1 → §4.7.2 → §4.7.2.1
+ * → §4.7.2.2 → §4.7.2.3:
  *   §4.7     — static Server-Timing header set at writeHead-flush (advisory).
  *   §4.7.1   — dynamic per-request accumulator merged at writeHead-flush.
  *   §4.7.2   — streaming per-metric frame-emit during an open SSE or
@@ -35,9 +36,21 @@
  *              ring-buffer (default 100 frames). WebSocket + none kinds
  *              are no-op (Last-Event-ID is EventSource-native per HTML5
  *              §9.2.5). All operations fail-OPEN.
+ *   §4.7.2.3 — SSE `retry:` field reconnect-time hint (HTML5 §9.2.5 per
+ *              spec: `retry: <ms>\n\n` frame sets the EventSource client's
+ *              reconnection timer to `<ms>` before the next auto-reconnect
+ *              attempt after disconnect; positive-integer only per spec).
+ *              Adds `setReconnectMs(ms: number): void` (validated positive
+ *              integer within `[1, retry_max_ms]` bounds) which serializes
+ *              a `retry: <ms>\n\n` frame + updates internal cursor, and
+ *              `readonly reconnectMs: number | null` (current setting, or
+ *              null before first successful set). WebSocket + none kinds
+ *              are no-op (retry: is EventSource-native per HTML5 §9.2.5).
+ *              All operations fail-OPEN.
  *
  * SSE (HTML5 §9.2 Server-Sent Events canonical) frame format:
  *   id: <id>\n         (optional; when present, updates client cursor)
+ *   retry: <ms>\n\n    (§4.7.2.3 standalone control-frame; sets reconnect timer)
  *   event: server-timing\n
  *   data: {name;dur=X.YZ;desc="..."}\n
  *   \n
@@ -57,7 +70,10 @@
  *       "heartbeat_comment": "keep-alive",
  *       "resume_enabled": false,
  *       "resume_history_size": 100,
- *       "resume_header_name": "Last-Event-ID"
+ *       "resume_header_name": "Last-Event-ID",
+ *       "retry_enabled": false,
+ *       "retry_default_ms": 3000,
+ *       "retry_max_ms": 300000
  *     }
  *   }
  *
@@ -102,6 +118,9 @@ export interface ServerTimingStreamingConfig {
   resume_enabled?: boolean;
   resume_history_size?: number;
   resume_header_name?: string;
+  retry_enabled?: boolean;
+  retry_default_ms?: number;
+  retry_max_ms?: number;
 }
 
 export type ServerTimingStreamKind = 'sse' | 'websocket' | 'none';
@@ -175,6 +194,11 @@ export interface ServerTimingStreamAdapter {
    */
   readonly lastEventId: string | null;
   /**
+   * §4.7.2.3 · Last SSE `retry:` reconnect-time hint successfully emitted
+   * in ms (advisory; `null` before the first successful setReconnectMs).
+   */
+  readonly reconnectMs: number | null;
+  /**
    * §4.7.2.2 · Replay cached frames strictly-after the given event id
    * (SSE `Last-Event-ID` reconnect cursor per HTML5 §9.2.5). Iterates
    * the bounded ring-buffer LIFO-ordered from oldest→newest and invokes
@@ -189,6 +213,16 @@ export interface ServerTimingStreamAdapter {
     sinceId: string | null | undefined,
     replay: (entry: ServerTimingResumeEntry) => void
   ): void;
+  /**
+   * §4.7.2.3 · Set the SSE `retry:` field reconnect-time hint per HTML5
+   * §9.2.5. Emits a standalone `retry: <ms>\n\n` control-frame and updates
+   * the internal `reconnectMs` cursor. Validates `ms` as a positive
+   * integer within `[1, retry_max_ms]` bounds (default cap 300000ms = 5m).
+   * No-op when kind !== 'sse', response already ended, retry disabled, or
+   * ms fails validation. Never throws. Handler-facing surface for
+   * server-hinted client reconnection-timer control.
+   */
+  setReconnectMs(ms: number): void;
 }
 
 /**
@@ -307,6 +341,33 @@ function getLastEventIdFromHeader(
   return TOKEN_RE.test(value) ? value : null;
 }
 
+// §4.7.2.3 · SSE `retry:` field reconnect-time hint (HTML5 §9.2.5).
+// Per spec, the `retry:` field value MUST be a positive integer (ms) — the
+// EventSource client parses and applies it as its next reconnection delay.
+// We bound by `retry_max_ms` (default 300000 = 5m) to prevent handlers from
+// hinting pathologically-long reconnection intervals that would strand
+// clients (defense-in-depth; the spec has no upper bound itself).
+const DEFAULT_RETRY_DEFAULT_MS = 3000;
+const DEFAULT_RETRY_MAX_MS = 300000;
+
+function isValidRetryMs(n: unknown, cap: number): n is number {
+  return (
+    typeof n === 'number' &&
+    Number.isFinite(n) &&
+    Number.isInteger(n) &&
+    n >= 1 &&
+    n <= cap
+  );
+}
+
+function isValidRetryCap(n: unknown): n is number {
+  return typeof n === 'number' && Number.isFinite(n) && Number.isInteger(n) && n >= 1;
+}
+
+function serializeSseRetryFrame(ms: number): string {
+  return `retry: ${ms}\n\n`;
+}
+
 function detectKind(res: Response): ServerTimingStreamKind {
   const locals = res.locals as Record<string, unknown>;
   const ws = locals.serverTimingStreamWebSocket as ServerTimingStreamSocket | undefined;
@@ -342,6 +403,14 @@ function buildAdapter(
   const resumeHistorySize = isValidResumeHistorySize(config.resume_history_size)
     ? config.resume_history_size
     : DEFAULT_RESUME_HISTORY_SIZE;
+  // §4.7.2.3 · Retry-hint config (default-OFF opt-in; SSE-only)
+  const retryEnabled = config.retry_enabled === true;
+  const retryMaxMs = isValidRetryCap(config.retry_max_ms)
+    ? config.retry_max_ms
+    : DEFAULT_RETRY_MAX_MS;
+  const retryDefaultMs = isValidRetryMs(config.retry_default_ms, retryMaxMs)
+    ? config.retry_default_ms
+    : DEFAULT_RETRY_DEFAULT_MS;
 
   let cachedKind: ServerTimingStreamKind | null = null;
   let count = 0;
@@ -351,6 +420,8 @@ function buildAdapter(
   // §4.7.2.2 · Bounded LIFO ring-buffer + last-emitted id cursor.
   const resumeHistory: ServerTimingResumeEntry[] = [];
   let lastEventId: string | null = null;
+  // §4.7.2.3 · Reconnect-time hint cursor (advisory; null before first set).
+  let reconnectMs: number | null = null;
 
   function resolveKind(): ServerTimingStreamKind {
     if (cachedKind === null) cachedKind = detectKind(res);
@@ -523,6 +594,20 @@ function buildAdapter(
         }
       }
     },
+    setReconnectMs(ms: number) {
+      if (closed) return;
+      if (!retryEnabled) return;
+      const kind = resolveKind();
+      if (kind !== 'sse') return;
+      if (res.writableEnded) return;
+      if (!isValidRetryMs(ms, retryMaxMs)) return;
+      try {
+        res.write(serializeSseRetryFrame(ms));
+        reconnectMs = ms;
+      } catch {
+        // Fail-OPEN silent — advisory-only, never propagate transport errors.
+      }
+    },
     get kind() {
       return resolveKind();
     },
@@ -534,6 +619,9 @@ function buildAdapter(
     },
     get lastEventId() {
       return lastEventId;
+    },
+    get reconnectMs() {
+      return reconnectMs;
     },
   };
   return adapter;
@@ -571,10 +659,14 @@ function buildNoopAdapter(): ServerTimingStreamAdapter {
     ) {
       /* no-op */
     },
+    setReconnectMs(_ms: number) {
+      /* no-op */
+    },
     kind: 'none',
     count: 0,
     heartbeatCount: 0,
     lastEventId: null,
+    reconnectMs: null,
   };
 }
 
@@ -621,6 +713,9 @@ export const __test__ = {
   isValidResumeHistorySize,
   sanitizeResumeHeaderName,
   getLastEventIdFromHeader,
+  isValidRetryMs,
+  isValidRetryCap,
+  serializeSseRetryFrame,
   detectKind,
   buildNoopAdapter,
   buildAdapter,

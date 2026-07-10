@@ -11,7 +11,10 @@
     "heartbeat_comment": "keep-alive",
     "resume_enabled": false,
     "resume_history_size": 100,
-    "resume_header_name": "Last-Event-ID"
+    "resume_header_name": "Last-Event-ID",
+    "retry_enabled": false,
+    "retry_default_ms": 3000,
+    "retry_max_ms": 300000
   },
   "description": "A-share stock backtesting backend",
   "main": "dist/index.js",
