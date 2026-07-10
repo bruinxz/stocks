@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Alert,
@@ -169,7 +169,15 @@ const PortfolioWorkspace: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // v0.5(x): AbortController + dual-guard defense-in-depth. Existing callPortfolioId
+  // snapshot gates setState; new signal.aborted gates both requests and setState.
+  const ctrlRef = useRef<AbortController | null>(null);
+
   const refresh = useCallback(async () => {
+    ctrlRef.current?.abort();
+    const ctrl = new AbortController();
+    ctrlRef.current = ctrl;
+    const signal = ctrl.signal;
     setLoading(true);
     setLoadError(null);
     // Batch L (2026-06-17): 切盘 race 保护 — snapshot 当前调用的 portfolio_id;
@@ -182,6 +190,7 @@ const PortfolioWorkspace: React.FC = () => {
         portfolioWorkspaceService.getTradeHistory(selectedPortfolioId),
         portfolioWorkspaceService.listJournals(),
       ]);
+      if (signal.aborted) return;
       if (callPortfolioId !== selectedPortfolioId) return;
       setPortfolioData(pf);
       setSnapshots(snaps);
@@ -192,25 +201,35 @@ const PortfolioWorkspace: React.FC = () => {
       portfolioWorkspaceService
         .getIndustryConcentrationSummary()
         .then(summary => {
+          if (signal.aborted) return;
           if (callPortfolioId !== selectedPortfolioId) return;
           setIndustryConc(summary);
         })
-        .catch(() => {
+        .catch((err: unknown) => {
+          const e = err as { code?: string; name?: string } | undefined;
+          if (e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError') return;
+          if (signal.aborted) return;
           if (callPortfolioId !== selectedPortfolioId) return;
           setIndustryConc(null);
         });
     } catch (err: unknown) {
+      const e = err as { code?: string; name?: string } | undefined;
+      if (e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError') return;
+      if (signal.aborted) return;
       if (callPortfolioId !== selectedPortfolioId) return;
       const messageStr = err instanceof Error ? err.message : String(err);
       setLoadError(messageStr);
     } finally {
-      if (callPortfolioId === selectedPortfolioId) setLoading(false);
+      if (!signal.aborted && callPortfolioId === selectedPortfolioId) setLoading(false);
     }
   }, [selectedPortfolioId]);
 
-  // selectedPortfolioId 变化时 refresh
+  // selectedPortfolioId 变化时 refresh; unmount / dep-change 时 abort 上一批 in-flight.
   useEffect(() => {
     void refresh();
+    return () => {
+      ctrlRef.current?.abort();
+    };
   }, [refresh]);
 
   // ---- 顶部 KPI 计算 ----
