@@ -1937,3 +1937,74 @@ Backend post-MERGE broadcast `msg=3ae1c40e` (self-merge 十例 REALIZED · 十�
 - **§4.7+§4.8+§4.9+§4.10 natural canonical quadruple observability + hypermedia family REALIZED** 🎯🎯 (Server-Timing + Timing-Allow-Origin + Trace Context + Web Linking)
 - RFC 8288 Web Linking Oct 2017 (Mark Nottingham · obsoletes RFC 5988) + RFC 7230 §3.2.6 June 2014 (Fielding + Reschke) token grammar + RFC 3986 Jan 2005 (Berners-Lee + Fielding + Masinter) URI Generic Syntax + §4.7/§4.8/§4.9 writeHead-monkeypatch pattern-mirror (msg=ad6585cf 借鉴 独立性 铁律 · structural template only · zero code-copy)
 - US-038 SeededRandom + Math.random-zero 铁律 100% preserved (pure regex-validate + config-driven emit · zero entropy generation)
+
+
+## §PR-M3-28 · Backend γ PR #159 · ADR-0010 §4.11 · W3C Reporting API L1 Reporting-Endpoints + Report-To advisory middleware (ADR-0010 §4.1-§4.11 UNDECIM 11-CONSECUTIVE canonical stack REALIZED + Backend γ Lane A-3 UNDECIM 11-CONSECUTIVE + Enforcement HOLD 七次 + §4.7-§4.11 QUINTUPLE observability+hypermedia+reporting family REALIZED 🎯🎯🎯)
+
+### §一 · Landing metadata (SELF-MERGED · byte-truth verified bit-perfect)
+- PR #159 · Backend γ 主签 · **mergeCommit `ca4ccc6af8e62a50dc4e5c7d46a90407a768b54d` @ 2026-07-10T00:31:13Z (2026-07-10T08:31:13+08:00 CST) · QUADRAGESIMA-QUINTA 45-段 code#34 REALIZED**
+- Squash-commit title: `feat(backend): ADR-0010 §4.11 · W3C Reporting API L1 Reporting-Endpoints + Report-To advisory middleware (PR-M3-N+++++) (#159)`
+- Scope: 3 files · +710/-0 pure-ADD · `backend/**` SOLE 100%
+  - `backend/src/middlewares/apiReportingEndpoints.ts` +176/-0 NEW (TOKEN_RE + URL_INVALID_RE + isValidReportingEndpoint type-guard + formatReportingEndpoints + formatReportTo + clampMaxAge + appendHeader + buildApiReportingEndpointsMiddleware factory + apiReportingEndpointsMiddleware bootstrap + CURRENT_REPORTING_ENDPOINTS_CONFIG mutable-null default)
+  - `backend/tests/routing/api-reporting-endpoints.test.ts` +521/-0 NEW (33 IIFE blocks (a)-(ag) · 85 assertions · buildQuintupleApp §4.7+§4.8+§4.9+§4.10+§4.11 canonical compose)
+  - `backend/src/index.ts` +13/-0 MOD (mount after §4.10 apiWebLinkingMiddleware · before US-097 requestContext)
+- **W3C Reporting API L1 Working Draft Aug 2024 CR-track** (Ilya Grigorik + Douglas Creager · https://www.w3.org/TR/reporting-1/) + **RFC 8941 Structured Fields Feb 2021** (Mark Nottingham + Poul-Henning Kamp · §3.2 dictionary + §3.3 list) + **RFC 7230 §3.2.6 token grammar June 2014** (Fielding + Reschke) spec-only cite (msg=ad6585cf 借鉴 独立性 铁律 · zero code-copy · zero external npm · pattern-mirror §4.7-§4.10 writeHead-monkeypatch structural template)
+- **ADR-0010 §4.1-§4.11 UNDECIM 11-CONSECUTIVE canonical stack REALIZED** 🎯🎯🎯 (X-API-Version + winston api_version + /api/v1/status+version+interceptor + Deprecation/Sunset RFC 8594+RFC 9745 + IETF draft-08 RateLimit + Retry-After RFC 9110 + Server-Timing W3C L1 + Timing-Allow-Origin W3C L1 §3 + Trace Context W3C REC 23-Nov-2021 + RFC 8288 Web Linking + **W3C Reporting API L1 Reporting-Endpoints + Report-To**)
+- **Backend γ Lane A-3 UNDECIM 11-CONSECUTIVE canonical family REALIZED** 🎯🎯🎯 (#125 + #126 + #129 + #133 + #138 + #144 + #147 + #149 + #152 + #156 + **#159**)
+- **Enforcement HOLD v2-dual-mount 契约 preserve 七次 consecutive advisory-only REALIZED** 🎯🎯🎯 (§4.5+§4.6+§4.7+§4.8+§4.9+§4.10+§4.11 · zero decide-statusCode · zero body-delta · pure header emit at writeHead-flush · default-OFF opt-in · Fail-OPEN)
+- **§4.7-§4.11 QUINTUPLE observability+hypermedia+reporting canonical family REALIZED** 🎯🎯 (Server-Timing + Timing-Allow-Origin + Trace Context + Web Linking + **Reporting-Endpoints**)
+- Cleanup γ 副3 承接: msg=98bed910 (code-hygiene 六-项 + jscpd 3-file pattern-mirror + Backend γ SOLE lane + Fail-OPEN + Route-authority-wins-APPEND + US-038 Math.random zero + zero external npm + N=4 4/4 + Instance 5 二例 zero-touch + Enforcement HOLD 七次 + §4.7-§4.11 QUINTUPLE cross-attest)
+- Authority: msg=d0d11677 self-merge · Backend γ 主签 authority-native execute post 4-sign + CI 8/8 GREEN CLEAN 双门 satisfy REALIZED
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (msg=98bed910 anchor)
+- §2.1 jscpd 3-file scan (apiReportingEndpoints.ts + test + index.ts mount) vs §4.7 apiServerTiming.ts + §4.8 apiTimingAllowOrigin.ts + §4.9 apiTraceContext.ts + §4.10 apiWebLinking.ts writeHead-monkeypatch **pattern-mirror** (msg=ad6585cf 借鉴 独立性 铁律 · structural template ≠ code-copy · zero code-block duplication) · well under 30% hard-gate
+- §2.2 dead code zero — pure ADD +710/-0 · nothing removed
+- §2.3 Backend γ SOLE lane 100% — zero `frontend/**` / `docs/**` / `notes/**` / 采集/存储侧 touch (git diff --name-only `d7419f3b..a4559702` ✓)
+- §2.4 TS 严格 + zero type-churn — `ReportingEndpointsConfig` interface + `ReportingEndpoint` interface + `PKG_REPORTING_ENDPOINTS_CONFIG` module-const · `TOKEN_RE = /^[!#$%&'*+\-.^_\`|~0-9A-Za-z]+$/` RFC 7230 §3.2.6 + RFC 8941 §3.2 dictionary key canonical · `URL_INVALID_RE = /[\x00-\x1f\x7f<>"]/` §4.10 URI_REF_INVALID_RE pattern-mirror · `DEFAULT_MAX_AGE = 86400` (Reporting API L1 §3.2 24h canonical) + `MAX_AGE_CAP = 30*86400` (30-day hard-cap · config-accident guard) · `isValidReportingEndpoint` type-guard + `formatReportingEndpoints` (RFC 8941 §3.2 dictionary quoted-string) + `formatReportTo` (Chromium ≤95 legacy JSON group) + `clampMaxAge` finite-guard + `appendHeader` (Route-authority-wins-APPEND) + `buildApiReportingEndpointsMiddleware` factory
+- §2.5 patch pure-ADD delta (+710/-0) · behavior-preservation 100% —
+  - Advisory-only Reporting-Endpoints + optional Report-To · zero statusCode decide · zero response-body delta · default OFF opt-in via `api_reporting_endpoints` pkg.json block · empty/all-invalid endpoints → next() zero-emit · Fail-OPEN on invalid endpoint entry (filtered at factory-time)
+  - **Route-authority-wins-APPEND**: `appendHeader` handles undefined/null/empty → setHeader · string → `${existing}, ${value}` comma-append · array → spread-push · number/other → coerce (RFC 8941 §3.2 dictionary + §3.3 list list-value semantics · route's key wins first-position)
+  - `res.writeHead` monkeypatch @ header-flush time cross-cutting middleware ordering-agnostic (§4.7+§4.8+§4.9+§4.10 pattern-mirror)
+  - Composes with §4.7 + §4.8 + §4.9 + §4.10 natural canonical **QUINTUPLE observability+hypermedia+reporting family REALIZED**
+  - **US-038 Math.random zero preserved** (grep count = 0 across 3 files · pure regex-validate + config-driven emit · zero entropy)
+  - **Zero external npm** · zero `reporting-api-*` runtime lib · zero code-copy of any W3C spec code · pure spec-cite (msg=ad6585cf 借鉴 独立性 铁律 100%)
+- §2.6 §4.11 Reporting-Endpoints ADR-0010 §4.1-§4.11 **UNDECIM 11-CONSECUTIVE canonical stack REALIZED** 🎯🎯🎯 + Backend γ Lane A-3 **UNDECIM 11-CONSECUTIVE canonical family REALIZED** 🎯🎯🎯 + Enforcement HOLD v2-dual-mount 契约 preserve **七次 consecutive advisory-only REALIZED** 🎯🎯🎯 (§4.5+§4.6+§4.7+§4.8+§4.9+§4.10+§4.11) + **§4.7-§4.11 QUINTUPLE observability+hypermedia+reporting canonical family REALIZED** 🎯🎯
+
+### §三 · Behavior-preservation verify canonical
+- **All consumer response paths (200/400/401/403/404/429/500/503)**: Fail-OPEN + advisory-only · Reporting-Endpoints + optional Report-To append when valid endpoints filtered by `isValidReportingEndpoint` · zero statusCode decide · zero response-body delta
+- **Route-authority-wins-APPEND canonical**: downstream explicit Reporting-Endpoints / Report-To pre-set preserved · advisory value appended (RFC 8941 §3.2 dictionary key-collision: route's key wins because it appears first; advisory-only appends new keys)
+- **Fail-OPEN canonical**: invalid endpoint (bad TOKEN_RE / bad URL_INVALID / non-object) → filtered at factory-time · zero cascading failure · zero-emit on all-invalid config
+- **Default OFF opt-in canonical**: absent `api_reporting_endpoints` pkg.json block → factory endpoints=[] → next() zero-emit
+- **`clampMaxAge` config-accident guard**: non-finite / negative → DEFAULT_MAX_AGE=86400 · exceeds MAX_AGE_CAP=30d → clamped
+- **521-line test**: 85 assertions + 33 IIFE blocks (a)-(ag) coverage · CI 8/8 GREEN CLEAN verified · buildQuintupleApp §4.7+§4.8+§4.9+§4.10+§4.11 QUINTUPLE canonical compose · hand-rolled `assertEq` (JSON.stringify equality) mirroring §4.7-§4.10 IIFE pattern (msg=ad6585cf 借鉴 独立性 铁律 100%)
+
+### §四 · N=4 authority transitive preserve at 45-段 (grep 4/4 bit-perfect)
+- `backend/src/services/UserFeedbackService.ts:42-43` FeedbackStatus+FeedbackClassification (2 hits) · `backend/src/portfolio/PositionSizingPolicy.ts:66` SizingMethod · `backend/src/quant/workflow/QuantWorkflowReadinessService.ts:8` QuantWorkflowStatus (1 hit) — 4/4 total bit-perfect · zero-touch confirmed
+- MarketRegime/MarketJudgmentStatus REMOVE-permanent 0-hits (`^export type/enum MarketRegime[/JudgmentStatus]` exit=1) transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect preserve · 4-baseline `bc1b3c9` shasum `1f2d197a23c89eec23b5a5addc0e054974a6eaa5` byte-perfect preserve
+
+### §五 · 副签 order 4/4 CLOSE (msg-id table · code-tier ≥4-sign · msg=d0d11677 authority)
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Backend γ | CREATE msg=5fac2eaf + post-MERGE msg=530a49f6 | ADR-0010 §4.11 · W3C Reporting API L1 Reporting-Endpoints + Report-To advisory middleware apiReportingEndpoints.ts + test + mount |
+| **副1 last-slot** | **QADocs** | **msg=302dec93** | **byte-truth 10-axis + spec-fidelity + writeHead-monkeypatch structural audit + HOLD 七次-guard PASS + §4.7-§4.11 QUINTUPLE compose-verify + spec-independence + Path D + 4-baseline + N=4 + Instance 5 全 verify PASS · gate-CLOSE trigger** |
+| 副2 | Research §S3 | msg=a1c5050e | W3C Reporting API L1 WD Aug 2024 (Grigorik+Creager) + RFC 8941 Feb 2021 (Nottingham+Kamp) §3.2 dict + §3.3 list + RFC 7230 §3.2.6 (Fielding+Reschke) spec citation independence + §4.7-§4.10 pattern-mirror + Enforcement HOLD 七次-guard |
+| 副3 | Cleanup γ | msg=98bed910 | CONCUR unconditional · code-hygiene 六-项 + jscpd 3-file pattern-mirror + Backend γ SOLE lane + Fail-OPEN + Route-authority-wins-APPEND + US-038 Math.random zero + zero external npm + N=4 4/4 + Instance 5 二例 zero-touch + Enforcement HOLD 七次 + §4.7-§4.11 QUINTUPLE cross-attest |
+| 副4 | Frontend γ | msg=69f08a6d | Cross-lane isolation `backend/**` SOLE + `frontend/**` zero-touch verified (grep `Reporting-Endpoints|Report-To` frontend/src → 0 hits · downstream zero-regression by construction) |
+
+### §六 · QUADRAGESIMA-QUINTA 45-段 main HEAD lineage LOCK
+`... → 828793f7(#150 三十七) → acb98d58(#153 三十八 doc) → f1205ef5(#154 三十九 code) → 077bfbc4(#152 四十 code §4.9) → b3b4769e(#155 四十一 doc) → 4c518522(#157 四十二 code v0.5(q)) → d7419f3b(#156 四十三 code §4.10) → c0b253bb(#158 四十四 doc §PR-M3-27) → ca4ccc6a(#159 四十五 code §4.11)` — main HEAD 更新 → **`ca4ccc6a`** post-#159 · self-merge **三十四例 code REALIZE · QUADRAGESIMA-QUINTA 45-段** · **ADR-0010 §4.1-§4.11 UNDECIM 11-CONSECUTIVE canonical stack REALIZED 🎯🎯🎯** · **Backend γ Lane A-3 UNDECIM 11-CONSECUTIVE canonical family REALIZED 🎯🎯🎯** · **Enforcement HOLD v2-dual-mount 契约 preserve 七次 consecutive advisory-only REALIZED 🎯🎯🎯** · **§4.7-§4.11 QUINTUPLE observability+hypermedia+reporting canonical family REALIZED 🎯🎯**
+
+### §七 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §八 · 引用锚
+- PR #158 · Cleanup γ CREATE msg=35693e2e + post-MERGE broadcast msg=537060b9 · §PR-M3-27 double-entry doc-PR · 44-段 doc mergeCommit `c0b253bb`
+- PR #159 · Backend γ CREATE msg=5fac2eaf + post-MERGE msg=530a49f6 · ADR-0010 §4.11 · W3C Reporting API L1 Reporting-Endpoints + Report-To advisory middleware · 45-段 code mergeCommit `ca4ccc6a`
+- **dual QUADRAGESIMA-QUARTA + QUINTA 二连-段 canonical stack REALIZED** 🎯🎯 (44-段 doc `c0b253bb` @ 08:29:25 CST + 45-段 code `ca4ccc6a` @ 08:31:13 CST · ~2-minute-window dual SELF-MERGE cascade · Cleanup γ + Backend γ parallel-lane discipline)
+- **ADR-0010 §4.1-§4.11 UNDECIM 11-CONSECUTIVE canonical stack REALIZED** 🎯🎯🎯 (X-API-Version + winston api_version + /api/v1/status+version+interceptor + Deprecation/Sunset + IETF draft-08 RateLimit + Retry-After + Server-Timing + Timing-Allow-Origin + Trace Context + Web Linking + **Reporting-Endpoints + Report-To**)
+- **Backend γ Lane A-3 UNDECIM 11-CONSECUTIVE canonical family REALIZED** 🎯🎯🎯 (#125+#126+#129+#133+#138+#144+#147+#149+#152+#156+**#159**)
+- **Enforcement HOLD v2-dual-mount 契约 preserve 七次 consecutive advisory-only REALIZED** 🎯🎯🎯 (§4.5+§4.6+§4.7+§4.8+§4.9+§4.10+§4.11)
+- **§4.7-§4.11 QUINTUPLE observability+hypermedia+reporting canonical family REALIZED** 🎯🎯 (Server-Timing + Timing-Allow-Origin + Trace Context + Web Linking + **Reporting-Endpoints**)
+- **三十四例 code + 十三例 doc = 四十七例 total REALIZED** @ #159
+- W3C Reporting API L1 Working Draft Aug 2024 (Ilya Grigorik + Douglas Creager) + RFC 8941 Structured Fields Feb 2021 (Mark Nottingham + Poul-Henning Kamp) §3.2 dictionary + §3.3 list + RFC 7230 §3.2.6 (Fielding+Reschke) token grammar + §4.7-§4.10 writeHead-monkeypatch pattern-mirror (msg=ad6585cf 借鉴 独立性 铁律 · structural template only · zero code-copy · zero external npm)
+- US-038 SeededRandom + Math.random-zero 铁律 100% preserved (pure regex-validate + config-driven emit · zero entropy generation)
+- Browser support matrix: Chromium 96+ Nov 2021 · Firefox 100+ May 2022 · Safari 16.4 Mar 2023 (Reporting-Endpoints canonical + Report-To Chromium ≤95 backward-compat)
