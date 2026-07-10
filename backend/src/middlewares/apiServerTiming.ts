@@ -2,6 +2,18 @@
  * apiServerTiming.ts — ADR-0010 §4.7 · W3C Server-Timing Level 1 (Candidate
  * Recommendation 25-May-2022) advisory-observability header.
  *
+ * §4.13 extension (ADR-0010 §4.7.1 · W3C Server-Timing L1 §2 dynamic
+ * per-request metrics · handler-facing API surface): exposes a
+ * `res.locals.serverTiming` accumulator with three canonical entry points —
+ * `measure(name, dur, desc?)` for direct metric recording, `measureAsync(name,
+ * promise, desc?)` for wall-clock instrumentation of an awaited promise, and
+ * `start(name, desc?)` returning a stop-fn for scope-scoped measurement.
+ * Dynamic metrics accumulate per-request and merge with static-metrics /
+ * measure_total at the same writeHead-flush time — preserving the §4.7
+ * canonical pattern discipline bit-perfect. All three entry points fail-OPEN
+ * silently on invalid token / dur / desc (never throw, never overwrite route
+ * authority).
+ *
  * Reads optional `api_server_timing` block from `backend/package.json`:
  *   {
  *     "api_server_timing": {
@@ -12,29 +24,34 @@
  *     }
  *   }
  *
- * 无 config → middleware zero-emit (default OFF). Empty static_metrics +
- * measure_total=false → also zero-emit. Advisory-only (§4.7 does NOT enforce
+ * 无 config → dynamic accumulator STILL exposed on `res.locals.serverTiming`
+ * so handlers may call it unconditionally; header only emits when either
+ * dynamic metrics were recorded, static metrics configured, or measure_total
+ * enabled. Existing Server-Timing set by the route handler is NEVER
+ * overwritten (route authority wins). Advisory-only (§4.7 does NOT enforce
  * any performance budget · pure request-response observability annotation).
  *
- * Header shape (Server-Timing L1 §2.2 canonical · §4.7 scope):
+ * Header shape (Server-Timing L1 §2.2 canonical · §4.7 / §4.7.1 scope):
  *   HTTP/1.1 200 OK
- *   Server-Timing: app;desc="raft-backend", total;dur=47.2
+ *   Server-Timing: app;desc="raft-backend", db;dur=12.5, cache;dur=3.1, total;dur=47.2
  *
  * Implementation: patches res.writeHead in-place (§4.6 pattern mirror ·
  * timing measurement is only meaningful at header-flush time; res.on('finish')
  * fires post-flush, too late to mutate headers). Uses process.hrtime.bigint()
  * ns-precision monotonic clock (immune to system-clock adjustments). Fail-OPEN
- * skip on invalid metric-name / invalid dur. Existing Server-Timing set by
- * route handler is NOT overwritten (route authority wins).
+ * skip on invalid metric-name / invalid dur.
  *
  * Orch v235 §五 A-3 dispatch matrix: §4.7 Server-Timing autonomous CREATE-AUTHORIZE NOW.
+ * Orch v263 §四 CREATE-AUTHORIZE msg=423d2179: §4.13 Option F ADOPTED — extend
+ * §4.7 with dynamic measure/measureAsync/start handler-facing API surface.
  *
  * Attribution: W3C Server-Timing Level 1 (Candidate Recommendation 25-May-2022 ·
  * Ilya Grigorik / Nic Jansma editors · public open-standard) · RFC 7230 §3.2.6
  * token grammar (June 2014 · IETF · Roy Fielding + Julian Reschke) · 无外部
  * lib 借鉴 (pure express + pkg.json read + process.hrtime.bigint() Node
- * built-in · §4.6 writeHead-monkeypatch pattern mirror per msg=ad6585cf 借鉴
- * 独立性 铁律).
+ * built-in · §4.6 writeHead-monkeypatch pattern mirror · §4.7 static-metric
+ * pattern-extend for dynamic API surface per msg=ad6585cf 借鉴 独立性 铁律 ·
+ * structural template ≠ code-copy · zero external npm dependency).
  */
 import type { Request, Response, NextFunction } from 'express';
 import pkg from '../../package.json';
@@ -48,6 +65,30 @@ export interface ServerTimingMetric {
 export interface ServerTimingConfig {
   static_metrics?: ServerTimingMetric[];
   measure_total?: boolean;
+}
+
+/**
+ * Dynamic per-request accumulator exposed to route handlers via
+ * `res.locals.serverTiming`. Three canonical entry points; all fail-OPEN on
+ * invalid input (never throw · never overwrite route-set Server-Timing).
+ */
+export interface ServerTimingAccumulator {
+  /** Record a metric directly. Invalid name silently drops the record. */
+  measure(name: string, dur?: number, desc?: string): void;
+  /**
+   * Instrument an awaited promise. Records elapsed wall-clock in ms upon
+   * resolution or rejection (before rethrowing). Uses process.hrtime.bigint
+   * for ns-precision monotonic clock.
+   */
+  measureAsync<T>(name: string, promise: Promise<T>, desc?: string): Promise<T>;
+  /**
+   * Open a scope-scoped measurement. Returns a stop-fn that records elapsed
+   * wall-clock in ms when invoked. Subsequent invocations of the stop-fn
+   * no-op (idempotent).
+   */
+  start(name: string, desc?: string): () => void;
+  /** Number of currently-recorded dynamic metrics (test/introspection). */
+  readonly size: number;
 }
 
 const PKG_SERVER_TIMING_CONFIG: ServerTimingConfig | null =
@@ -82,16 +123,63 @@ function serializeMetric(m: ServerTimingMetric): string | null {
   return parts.join(';');
 }
 
+function elapsedMs(startNs: bigint): number {
+  return Number(process.hrtime.bigint() - startNs) / 1e6;
+}
+
+function buildAccumulator(dynamicMetrics: ServerTimingMetric[]): ServerTimingAccumulator {
+  const acc: ServerTimingAccumulator = {
+    measure(name: string, dur?: number, desc?: string) {
+      if (!isValidMetricName(name)) return;
+      const metric: ServerTimingMetric = { name };
+      if (typeof desc === 'string' && desc.length > 0) metric.desc = desc;
+      if (dur !== undefined && isValidDur(dur)) metric.dur = dur;
+      dynamicMetrics.push(metric);
+    },
+    async measureAsync<T>(name: string, promise: Promise<T>, desc?: string): Promise<T> {
+      // Validate name up-front; if invalid, still await the promise (do not
+      // consume caller's control flow) and skip the record on both paths.
+      const valid = isValidMetricName(name);
+      const t0 = process.hrtime.bigint();
+      try {
+        const result = await promise;
+        if (valid) acc.measure(name, elapsedMs(t0), desc);
+        return result;
+      } catch (err) {
+        if (valid) acc.measure(name, elapsedMs(t0), desc);
+        throw err;
+      }
+    },
+    start(name: string, desc?: string) {
+      const valid = isValidMetricName(name);
+      const t0 = process.hrtime.bigint();
+      let stopped = false;
+      return () => {
+        if (stopped) return;
+        stopped = true;
+        if (!valid) return;
+        acc.measure(name, elapsedMs(t0), desc);
+      };
+    },
+    get size() {
+      return dynamicMetrics.length;
+    },
+  };
+  return acc;
+}
+
 export function buildApiServerTimingMiddleware(config: ServerTimingConfig | null) {
   return (_req: Request, res: Response, next: NextFunction) => {
-    if (!config) {
-      return next();
-    }
-    const staticMetrics = Array.isArray(config.static_metrics) ? config.static_metrics : [];
-    const measureTotal = config.measure_total === true;
-    if (staticMetrics.length === 0 && !measureTotal) {
-      return next();
-    }
+    const staticMetrics =
+      config && Array.isArray(config.static_metrics) ? config.static_metrics : [];
+    const measureTotal = config?.measure_total === true;
+    const dynamicMetrics: ServerTimingMetric[] = [];
+    const accumulator = buildAccumulator(dynamicMetrics);
+
+    // §4.13 canonical: accumulator ALWAYS exposed so handlers can call
+    // res.locals.serverTiming.measure(...) unconditionally without a
+    // null-guard, whether config is present or not.
+    (res.locals as Record<string, unknown>).serverTiming = accumulator;
 
     const startNs = process.hrtime.bigint();
     const origWriteHead = res.writeHead.bind(res);
@@ -105,10 +193,16 @@ export function buildApiServerTimingMiddleware(config: ServerTimingConfig | null
               parts.push(serialized);
             }
           }
+          for (const m of dynamicMetrics) {
+            const serialized = serializeMetric(m);
+            if (serialized !== null) {
+              parts.push(serialized);
+            }
+          }
           if (measureTotal) {
-            const elapsedMs = Number(process.hrtime.bigint() - startNs) / 1e6;
-            if (isValidDur(elapsedMs)) {
-              parts.push(`total;dur=${elapsedMs.toFixed(3)}`);
+            const total = elapsedMs(startNs);
+            if (isValidDur(total)) {
+              parts.push(`total;dur=${total.toFixed(3)}`);
             }
           }
           if (parts.length > 0) {
