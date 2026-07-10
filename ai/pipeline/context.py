@@ -24,7 +24,7 @@ class PipelineContext:
         items = [
             {
                 "recommendation": rec,
-                "rating_band": rec["score"]["band"],
+                "rating_band": self._score_rating(rec),
             }
             for rec in self.recommendations
         ]
@@ -51,3 +51,17 @@ class PipelineContext:
                 "generation_ms": 0,
             },
         }
+
+    @staticmethod
+    def _score_rating(recommendation: dict) -> str:
+        score = recommendation.get("score")
+        if not isinstance(score, dict) or "rating" not in score:
+            ticker = recommendation.get("ticker", "<unknown>")
+            raise RecommendationContractError(
+                f"recommendation {ticker}: score.rating is required for rating_band"
+            )
+        return score["rating"]
+
+
+class RecommendationContractError(ValueError):
+    """Raised when a recommendation cannot be serialized per contract."""
