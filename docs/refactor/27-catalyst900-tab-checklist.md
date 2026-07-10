@@ -45,8 +45,9 @@
 | **Conviction** | 置信度 | final = clamp(base + Σ adjustments[].delta, 0, 100) · HIGH≥75 / MED 50-74.9 / LOW<50 | Orch v303 LOCK 1+2 |
 | **Conviction.adjustments** | 调整项 | Adjustment[] · len∈[0,5] · delta∈[-20,+20] · Σ∈[-20,+20] · reason≤200 · kind_ref? · source_ref? | Strategy v0.2 §4.1 |
 | **RiskGate** | 风控闸 | 22-trigger (9 US + 3 A股 + 5 JP + 5 KR) · GREEN=通过 / YELLOW=warn(-5) / RED=block(-10) | Orch v303 LOCK 3 + v317 Ruling #8 |
-| **EntryPlan** | 入场计划 | price_band/stop/targets grid | Strategy v0.2 §6 |
-| **EntryPlan.size_hint** | 仓位建议 | `{tier: SizeHintTier, pct: number∈[0,5], disclaimer_key: 'size_hint_advisory'}` | Orch v303 LOCK 10 |
+| **EntryPlan** | 入场计划 | `entry: PriceBand` + `stop: Price` + `targets: Price[]` + `time_horizon` + `invalidation` + numeric `conviction_ref` + `score_ref` | Strategy v0.3 §6 |
+| **EntryPlan.size_hint** | 仓位建议 | `{tier: SizeHintTier, pct: number∈[0,5], disclaimer_key: 'size_hint_advisory', rationale}` | Orch v303 LOCK 9 + Strategy v0.3 §6.3 |
+| **PriceBand / Price** | 带币种价格 | `PriceBand {low, high, currency}` · `Price {value, currency}` · currency∈{USD,CNY,HKD,JPY,KRW} | Strategy v0.3 §6.1 |
 | **SizeHintTier** | 仓位档 | `'TIER_5'│'TIER_3'│'TIER_2'│'TIER_1'│'SKIP'` | DP 180 v0.2.1 tier correction |
 | **CatalystKind** | 催化类型 | 9-enum: earnings/upgrade_downgrade/ma_activity/sector_move/regulator/geo_macro/product/leadership/unclassified | Orch v303 LOCK 6 |
 | **rating_band** | 评级信封 | Score.band 的 envelope mirror · CandidateListEntry 级 | AI-γ v0.2 §4 |
@@ -103,7 +104,7 @@
 - [ ] **ScoreBreakdownCard**: scoring_id badge + snapshot_hash tooltip(前 8 位) + 6-dim progress-bar + total band 双粒度
 - [ ] **ConvictionBreakdownCard**: base + adjustments[] 逐条 delta 归因 + final = clamp(base+Σ, 0-100) progress-bar
 - [ ] **RiskGateDetailCard**: 从全局 22-trigger 词表按候选 native `market_scope` 取适用子集；US 催化只作 evidence attribution，不把 US-only trigger 施加到 A股候选
-- [ ] **EntryPlanCard**: price_band/stop/targets + SizeHint progress-bar 0-5% + **disclaimer 硬门**
+- [ ] **EntryPlanCard**: `entry` PriceBand + typed Price stop/targets + time_horizon/invalidation + numeric conviction_ref + score_ref + SizeHint progress-bar 0-5% + **disclaimer 硬门**
 - [ ] **AIRecommendationCard**: 4-硬门 ✅/❌ + dual-gate (RiskGate=GREEN + kind≠unclassified) + `[E<n>]` token
 - [ ] **DataSourceBadge**: free-source 标注
 
@@ -359,7 +360,9 @@
     - A股 3: ST_TAG (block) + PRICE_LIMIT_APPROACH (warn) + SUSPENDED (block)
     - JP 5: TSE_HALT (block) + EDINET_DELAY (warn) + CORPORATE_GOVERNANCE_ISSUE (warn) + TSE_TOKUBETSU_CHI (warn) + TSE_KANRI (block)
     - KR 5: KRX_HALT (block) + DART_LATE_FILING (warn) + INSIDER_TRADING_FLAG (block) + KRX_UNFAITHFUL (warn) + KRX_INVESTOR_ALERT (warn)
-- [ ] **SizeHint shape**: `{tier: SizeHintTier, pct, disclaimer_key}` — 与 DP 180 v0.2.1 + Orch v303 LOCK 10 对齐
+- [ ] **SizeHint shape**: `{tier: SizeHintTier, pct, disclaimer_key, rationale}` — 与 DP 180 v0.2.1 + Orch v303 LOCK 9 + Strategy v0.3 §6.3 对齐
+- [ ] **EntryPlan shape**: `entry: PriceBand` · typed `Price` stop/targets · numeric `conviction_ref` · `score_ref {scoring_id,snapshot_hash}` · no legacy `price_band`
+- [ ] **MarketScope/currency**: `cn_a→CNY` · `us→USD` · `jp→JPY` · `kr→KRW`; consumers use explicit `market_scope`, never infer only from profile, and never silently FX-convert dimension inputs
 - [ ] **CatalystKind shape**: 9-enum — 与 Orch v303 LOCK 6 对齐
 - [ ] **types.ts v0.2**: 7-item changeset — 与 γ-2 msg=e7e8a154 对齐
 

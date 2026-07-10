@@ -71,9 +71,9 @@ ordered union of the Sprint 2 base (#1-#104) and the 48 cases below
 | 130 | WeightsProfile union = 7 | us_preferred + multibagger + custom + japan_blue_chip + korea_semiconductor_chain + japan_multibagger + korea_multibagger |
 | 131 | Weight registry exact values | multibagger = 0.10/0.30/0.10/0.15/0.20/0.15; japan_multibagger = 0.10/0.25/0.10/0.15/0.25/0.15; korea_multibagger = 0.10/0.30/0.10/0.10/0.25/0.15 |
 | 132 | Registry sum + replay boundary | all six named registry profiles sum to 1.0 ± 1e-9; `custom` has no registry row and is excluded from the six-profile replay whitelist unless exact weights are persisted |
-| 133 | JP DimensionAdapter contract | `market=JP`; `available_at <= as_of`; local-currency inputs; J-GAAP/EDINET + TSE-peer provenance; missing fundamentals remain missing rather than zero |
-| 134 | KR DimensionAdapter contract | `market=KR`; `available_at <= as_of`; local-currency inputs; K-IFRS/DART + KRX-peer provenance; cross-shareholding/preferred-stock adjustments are identified; missingness is preserved |
-| 135 | Adapter boundary compatibility | profile/market conflict rejects; `normalizeTrend` and `normalizeRisk` cannot cross-wire; existing typed US TickerDataBundle callers bypass raw normalization byte-compatibly |
+| 133 | JP DimensionAdapter contract | `market_scope=jp`; `available_at <= as_of`; local-currency JPY inputs; J-GAAP/EDINET + TSE-peer provenance; missing fundamentals remain missing rather than zero |
+| 134 | KR DimensionAdapter contract | `market_scope=kr`; `available_at <= as_of`; local-currency KRW inputs; K-IFRS/DART + KRX-peer provenance; cross-shareholding/preferred-stock adjustments are identified; missingness is preserved |
+| 135 | Adapter boundary compatibility | explicit map `cn_a→CNY`, `us→USD`, `jp→JPY`, `kr→KRW`; reject profile-only market inference/conflicts and silent FX conversion; `normalizeTrend`/`normalizeRisk` cannot cross-wire; typed TickerDataBundle callers supply explicit market_scope |
 
 ---
 
@@ -95,8 +95,8 @@ ordered union of the Sprint 2 base (#1-#104) and the 48 cases below
 |---|------|--------|
 | 141 | DisclaimerPage route exists | `/catdesk/disclaimer` resolves |
 | 142 | Context-aware prohibited-claim lint | reject affirmative "必涨"/"保底收益"/"保证收益"/"guaranteed return"/"assured return"; accept negated/legal fixtures "不做绝对收益承诺"/"不构成任何承诺"/"不保证收益" |
-| 143 | size_hint_advisory disclaimer present | `disclaimer_key='size_hint_advisory'` renders visible text |
-| 144 | EntryPlan disclaimer canonical rendering | EntryPlan path uses `disclaimer_key='size_hint_advisory'` and `DisclaimerFooter` renders exact text `仅参考·非下单 binding · 不构成投资建议` |
+| 143 | EntryPlan canonical DTO | `entry: PriceBand`; `stop: Price`; `targets: Price[]`; numeric `conviction_ref`; `score_ref {scoring_id,snapshot_hash}`; legacy `price_band` rejected |
+| 144 | EntryPlan disclaimer canonical rendering | canonical DTO path `entry_plan.size_hint.disclaimer_key='size_hint_advisory'`; `DisclaimerFooter` renders exact text `仅参考·非下单 binding · 不构成投资建议` |
 
 ---
 
