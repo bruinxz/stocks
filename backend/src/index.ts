@@ -205,6 +205,17 @@ app.use(apiTimingAllowOriginMiddleware());
 import { apiTraceContextMiddleware } from './middlewares/apiTraceContext';
 app.use(apiTraceContextMiddleware());
 
+// ADR-0010 §4.10 · RFC 8288 Web Linking (Oct 2017 · Mark Nottingham · IETF · obsoletes RFC 5988)
+// hypermedia navigation advisory Link header. Reads optional `api_web_linking` block from
+// `backend/package.json`; missing block or empty static_links → zero-emit (default OFF).
+// When configured, emits `Link: <uri>; rel="rel"[; type="..." ...]` at writeHead-flush time
+// per RFC 8288 §3 #link-value canonical (comma-list). Composable with §4.4 Deprecation-tier
+// Link emission: append-safe when a Link header (route pre-set OR §4.4 Deprecation-tier
+// migration_link) already exists — RFC 8288 §3 #link-value list semantics preserve both.
+// Enforcement HOLD v2-dual-mount 契约 preserve (advisory · zero-decide-statusCode · zero-body-delta).
+import { apiWebLinkingMiddleware } from './middlewares/apiWebLinking';
+app.use(apiWebLinkingMiddleware());
+
 // US-097 [OPS-008] 日志统一字段 — 给每个 request 分配 / 透传 trace_id 并绑到 AsyncLocalStorage,
 // 任何此 request 链路内 logger.info/warn/error 自动携带 `trace_id=<x> module=http` 后缀.
 // 必须在 httpMetricsMiddleware 之前 (metric 埋点本身的 log 也带 trace_id) 但在 cors/helmet 之后
