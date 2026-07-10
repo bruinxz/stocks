@@ -17,11 +17,11 @@ const columns: TableColumnDef<BacktestSnapshotSlot>[] = [
     render: (_, row) => row.snapshot_day,
   },
   {
-    key: 'profile',
-    title: 'Profile',
+    key: 'strategy',
+    title: 'Strategy',
     ariaLabel: '策略配置',
     sortable: true,
-    render: (_, row) => row.profile,
+    render: (_, row) => row.strategy,
   },
   {
     key: 'net_value',
@@ -46,8 +46,7 @@ const columns: TableColumnDef<BacktestSnapshotSlot>[] = [
     ariaLabel: '最大回撤',
     align: 'right',
     sortable: true,
-    render: (_, row) =>
-      row.drawdown != null ? `${(row.drawdown * 100).toFixed(2)}%` : '--',
+    render: (_, row) => (row.drawdown != null ? `${(row.drawdown * 100).toFixed(2)}%` : '--'),
   },
   {
     key: 'sharpe_ratio_6m',
@@ -55,8 +54,7 @@ const columns: TableColumnDef<BacktestSnapshotSlot>[] = [
     ariaLabel: '夏普比率六个月',
     align: 'right',
     sortable: true,
-    render: (_, row) =>
-      row.sharpe_ratio_6m != null ? row.sharpe_ratio_6m.toFixed(2) : '--',
+    render: (_, row) => (row.sharpe_ratio_6m != null ? row.sharpe_ratio_6m.toFixed(2) : '--'),
   },
   {
     key: 'win_rate_6m',
@@ -64,8 +62,7 @@ const columns: TableColumnDef<BacktestSnapshotSlot>[] = [
     ariaLabel: '胜率六个月',
     align: 'right',
     sortable: true,
-    render: (_, row) =>
-      row.win_rate_6m != null ? `${(row.win_rate_6m * 100).toFixed(1)}%` : '--',
+    render: (_, row) => (row.win_rate_6m != null ? `${(row.win_rate_6m * 100).toFixed(1)}%` : '--'),
   },
 ];
 
@@ -75,9 +72,7 @@ export function SnapshotTable({ snapshots, selectedId, onSelect }: SnapshotTable
       rows={snapshots}
       columns={columns}
       rowKey="snapshot_id"
-      onRowClick={(row) =>
-        onSelect(row.snapshot_id === selectedId ? null : row.snapshot_id)
-      }
+      onRowClick={row => onSelect(row.snapshot_id === selectedId ? null : row.snapshot_id)}
       size="small"
       emptyText="暂无快照数据"
     />
