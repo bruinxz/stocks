@@ -77,7 +77,7 @@ ordered union of the Sprint 2 base (#1-#104) and the 48 cases below
 
 ---
 
-## §4 AI multi-market pipeline tests (AI-γ v0.2)
+## §4 AI multi-market pipeline tests (AI-γ v0.3)
 
 | # | Test | Assert |
 |---|------|--------|
@@ -95,7 +95,7 @@ ordered union of the Sprint 2 base (#1-#104) and the 48 cases below
 |---|------|--------|
 | 141 | DisclaimerPage route exists | `/catdesk/disclaimer` resolves |
 | 142 | Context-aware prohibited-claim lint | reject affirmative "必涨"/"保底收益"/"保证收益"/"guaranteed return"/"assured return"; accept negated/legal fixtures "不做绝对收益承诺"/"不构成任何承诺"/"不保证收益" |
-| 143 | EntryPlan canonical DTO | `entry: PriceBand`; `stop: Price`; `targets: Price[]`; numeric `conviction_ref`; `score_ref {scoring_id,snapshot_hash}`; legacy `price_band` rejected |
+| 143 | Recommendation DTO canonical contracts | require aggregate `recommendation.score.rating`; retain per-dimension `Dimension.band`; reject aggregate `recommendation.score.band`; retain EntryPlan `entry: PriceBand`, typed Price stop/targets, numeric `conviction_ref`, `score_ref`; reject legacy `price_band` |
 | 144 | EntryPlan disclaimer canonical rendering | canonical DTO path `entry_plan.size_hint.disclaimer_key='size_hint_advisory'`; `DisclaimerFooter` renders exact text `仅参考·非下单 binding · 不构成投资建议` |
 
 ---
@@ -159,5 +159,6 @@ is BLOCK even when the implementation exists.
 - #149 resolves to an actual App route-render test; a helper-only assertion does not pass.
 - #151 resolves to an executable identity/bootstrap test whose wiring into App is asserted.
 - #152 resolves to a seven-tab public-access executable route matrix.
+- Aggregate `score.band` is forbidden; use aggregate `score.rating` and keep `Dimension.band` only for per-dimension views.
 - Source grep and prose never substitute for executable evidence; a missing test is BLOCK.
 - This document is a test contract; executable tests land with the owning code lanes.
