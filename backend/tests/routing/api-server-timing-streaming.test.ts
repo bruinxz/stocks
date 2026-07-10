@@ -545,6 +545,247 @@ async function run(): Promise<void> {
     assertEq('(ax2) count 0 after fail-OPEN', r.body.count, 0);
   }
 
+  // -----------------------------------------------------------------------
+  // §4.7.2.1 · SSE keep-alive heartbeat sub-vertical (HTML5 §9.2.6
+  // comment-frame). Scenarios ay-bj cover the pure-emit primitive
+  // (serializeSseHeartbeat), the sanitize primitive, the interval
+  // validator, the sendHeartbeat + startHeartbeat handler surface, the
+  // heartbeatCount getter, the fail-OPEN 4-axis silent-drop, timer unref,
+  // idempotent stop-fn, and res.on('close') auto-cleanup.
+  // -----------------------------------------------------------------------
+
+  const {
+    serializeSseHeartbeat,
+    sanitizeHeartbeatComment,
+    isValidHeartbeatInterval,
+  } = __test__;
+
+  console.log('\n--- (ay) serializeSseHeartbeat produces HTML5 §9.2.6 comment-frame ---');
+  {
+    assertEq('(ay1) default keep-alive', serializeSseHeartbeat('keep-alive'), ': keep-alive\n\n');
+    assertEq('(ay2) empty comment yields ": \\n\\n"', serializeSseHeartbeat(''), ': \n\n');
+    assertEq('(ay3) trailing \\n\\n present', serializeSseHeartbeat('x').endsWith('\n\n'), true);
+    assertEq('(ay4) leading ": " present', serializeSseHeartbeat('x').startsWith(': '), true);
+    assertEq('(ay5) alphanumeric comment', serializeSseHeartbeat('hb1'), ': hb1\n\n');
+  }
+
+  console.log('\n--- (az) sanitizeHeartbeatComment strips CR/LF and rejects non-string ---');
+  {
+    assertEq('(az1) plain passthrough', sanitizeHeartbeatComment('keep-alive'), 'keep-alive');
+    assertEq('(az2) CR stripped', sanitizeHeartbeatComment('a\rb'), 'ab');
+    assertEq('(az3) LF stripped', sanitizeHeartbeatComment('a\nb'), 'ab');
+    assertEq('(az4) CRLF stripped', sanitizeHeartbeatComment('a\r\nb'), 'ab');
+    assertEq('(az5) whitespace-only defaults', sanitizeHeartbeatComment('   '), 'keep-alive');
+    assertEq('(az6) empty defaults', sanitizeHeartbeatComment(''), 'keep-alive');
+    assertEq('(az7) number rejected → default', sanitizeHeartbeatComment(42 as unknown), 'keep-alive');
+    assertEq('(az8) null rejected → default', sanitizeHeartbeatComment(null as unknown), 'keep-alive');
+    assertEq('(az9) undefined rejected → default', sanitizeHeartbeatComment(undefined as unknown), 'keep-alive');
+    assertEq('(az10) object rejected → default', sanitizeHeartbeatComment({} as unknown), 'keep-alive');
+  }
+
+  console.log('\n--- (ba) isValidHeartbeatInterval validator ---');
+  {
+    assertEq('(ba1) 30000 valid', isValidHeartbeatInterval(30000), true);
+    assertEq('(ba2) 1 valid', isValidHeartbeatInterval(1), true);
+    assertEq('(ba3) 0 rejected', isValidHeartbeatInterval(0), false);
+    assertEq('(ba4) negative rejected', isValidHeartbeatInterval(-1), false);
+    assertEq('(ba5) NaN rejected', isValidHeartbeatInterval(NaN), false);
+    assertEq('(ba6) Infinity rejected', isValidHeartbeatInterval(Infinity), false);
+    assertEq('(ba7) string rejected', isValidHeartbeatInterval('30000' as unknown), false);
+    assertEq('(ba8) null rejected', isValidHeartbeatInterval(null as unknown), false);
+    assertEq('(ba9) undefined rejected', isValidHeartbeatInterval(undefined as unknown), false);
+  }
+
+  console.log('\n--- (bb) heartbeat default-OFF · sendHeartbeat no-op when disabled ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = buildStreamApp({ enabled: true }, (adapter) => {
+      captured = adapter;
+    });
+    const r = await request(app).get('/sse');
+    captured.sendHeartbeat();
+    captured.sendHeartbeat();
+    assertEq('(bb1) status 200', r.status, 200);
+    assertEq('(bb2) heartbeatCount 0 (disabled default-OFF)', captured.heartbeatCount, 0);
+  }
+
+  console.log('\n--- (bc) heartbeat enabled · SSE sendHeartbeat writes comment-frame ---');
+  {
+    const chunks: string[] = [];
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({
+      enabled: true,
+      heartbeat_enabled: true,
+      heartbeat_comment: 'keep-alive',
+    }));
+    app.get('/sse-hb', (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      const origWrite = res.write.bind(res);
+      (res as unknown as { write: (chunk: unknown) => boolean }).write = (chunk: unknown) => {
+        chunks.push(String(chunk));
+        return origWrite(chunk as string);
+      };
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.sendHeartbeat();
+      captured.sendHeartbeat();
+      res.end();
+    });
+    const r = await request(app).get('/sse-hb');
+    assertEq('(bc1) status 200', r.status, 200);
+    assertEq('(bc2) heartbeatCount 2', captured.heartbeatCount, 2);
+    assertTrue('(bc3) at least one comment-frame captured', chunks.some((c) => c === ': keep-alive\n\n'));
+  }
+
+  console.log('\n--- (bd) heartbeat WS-kind no-op (comment-frame is SSE-only) ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({
+      enabled: true,
+      heartbeat_enabled: true,
+    }));
+    app.get('/ws-hb', (_req, res) => {
+      (res.locals as Record<string, unknown>).serverTimingStreamWebSocket = new FakeSocket();
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.sendHeartbeat();
+      captured.sendHeartbeat();
+      res.status(200).json({ kind: captured.kind, heartbeatCount: captured.heartbeatCount });
+    });
+    const r = await request(app).get('/ws-hb');
+    assertEq('(bd1) kind websocket', r.body.kind, 'websocket');
+    assertEq('(bd2) heartbeatCount 0 on WS (SSE-only)', r.body.heartbeatCount, 0);
+  }
+
+  console.log('\n--- (be) heartbeat none-kind no-op (JSON response path) ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({
+      enabled: true,
+      heartbeat_enabled: true,
+    }));
+    app.get('/none-hb', (_req, res) => {
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.sendHeartbeat();
+      res.status(200).json({ kind: captured.kind, heartbeatCount: captured.heartbeatCount });
+    });
+    const r = await request(app).get('/none-hb');
+    assertEq('(be1) kind none', r.body.kind, 'none');
+    assertEq('(be2) heartbeatCount 0 on none', r.body.heartbeatCount, 0);
+  }
+
+  console.log('\n--- (bf) heartbeat disabled explicit false · no-op ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = buildStreamApp({ enabled: true, heartbeat_enabled: false }, (adapter) => {
+      captured = adapter;
+      adapter.sendHeartbeat();
+    });
+    const r = await request(app).get('/sse');
+    assertEq('(bf1) status 200', r.status, 200);
+    assertEq('(bf2) heartbeatCount 0 disabled', captured.heartbeatCount, 0);
+  }
+
+  console.log('\n--- (bg) startHeartbeat returns idempotent stop-fn (disabled path) ---');
+  {
+    let stopA!: () => void;
+    let stopB!: () => void;
+    let captured!: ServerTimingStreamAdapter;
+    const app = buildStreamApp({ enabled: true }, (adapter) => {
+      captured = adapter;
+      stopA = adapter.startHeartbeat();
+      stopB = adapter.startHeartbeat();
+    });
+    await request(app).get('/sse');
+    assertEq('(bg1) startHeartbeat returns function A', typeof stopA, 'function');
+    assertEq('(bg2) startHeartbeat returns function B', typeof stopB, 'function');
+    stopA();
+    stopA();
+    stopB();
+    assertEq('(bg3) heartbeatCount 0 disabled path', captured.heartbeatCount, 0);
+  }
+
+  console.log('\n--- (bh) startHeartbeat enabled · sets interval · unref-safe · idempotent stop ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    let stop!: () => void;
+    let afterStop = 0;
+    let afterQuiet = 0;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({
+      enabled: true,
+      heartbeat_enabled: true,
+      heartbeat_interval_ms: 20,
+    }));
+    app.get('/sse-timer', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      stop = captured.startHeartbeat();
+      await delay(70);
+      stop();
+      afterStop = captured.heartbeatCount;
+      await delay(40);
+      afterQuiet = captured.heartbeatCount;
+      res.end();
+    });
+    await request(app).get('/sse-timer');
+    assertTrue('(bh1) at least 1 heartbeat fired', afterStop >= 1);
+    assertEq('(bh2) stop-fn halts timer', afterQuiet, afterStop);
+    stop();
+    assertTrue('(bh3) idempotent stop safe', true);
+  }
+
+  console.log('\n--- (bi) close() clears timer · sendHeartbeat post-close no-op ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    let beforeClose = 0;
+    let postClose1 = 0;
+    let postClose2 = 0;
+    let afterQuiet = 0;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({
+      enabled: true,
+      heartbeat_enabled: true,
+      heartbeat_interval_ms: 15,
+    }));
+    app.get('/sse-close', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.startHeartbeat();
+      await delay(40);
+      beforeClose = captured.heartbeatCount;
+      captured.close();
+      postClose1 = captured.heartbeatCount;
+      captured.sendHeartbeat();
+      postClose2 = captured.heartbeatCount;
+      await delay(40);
+      afterQuiet = captured.heartbeatCount;
+      res.end();
+    });
+    await request(app).get('/sse-close');
+    assertTrue('(bi1) beforeClose ≥1', beforeClose >= 1);
+    assertEq('(bi2) close snapshot equals beforeClose', postClose1, beforeClose);
+    assertEq('(bi3) sendHeartbeat post-close no-op', postClose2, beforeClose);
+    assertEq('(bi4) quiet post-close (timer cleared)', afterQuiet, beforeClose);
+  }
+
+  console.log('\n--- (bj) buildNoopAdapter heartbeat surface complete ---');
+  {
+    const noop = __test__.buildNoopAdapter();
+    assertEq('(bj1) noop.heartbeatCount 0', noop.heartbeatCount, 0);
+    assertEq('(bj2) noop.sendHeartbeat callable', typeof noop.sendHeartbeat, 'function');
+    assertEq('(bj3) noop.startHeartbeat returns fn', typeof noop.startHeartbeat(), 'function');
+    noop.sendHeartbeat();
+    const stop = noop.startHeartbeat();
+    stop();
+    stop();
+    assertEq('(bj4) noop.heartbeatCount stays 0', noop.heartbeatCount, 0);
+  }
+
   console.log('\n=================================');
   console.log(`PASS: ${passed}`);
   console.log(`FAIL: ${failed}`);

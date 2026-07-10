@@ -5,7 +5,10 @@
   "api_server_timing_streaming": {
     "enabled": false,
     "sse_event_name": "server-timing",
-    "ws_frame_type": "server-timing"
+    "ws_frame_type": "server-timing",
+    "heartbeat_enabled": false,
+    "heartbeat_interval_ms": 30000,
+    "heartbeat_comment": "keep-alive"
   },
   "description": "A-share stock backtesting backend",
   "main": "dist/index.js",
