@@ -2008,3 +2008,132 @@ Backend post-MERGE broadcast `msg=3ae1c40e` (self-merge 十例 REALIZED · 十�
 - W3C Reporting API L1 Working Draft Aug 2024 (Ilya Grigorik + Douglas Creager) + RFC 8941 Structured Fields Feb 2021 (Mark Nottingham + Poul-Henning Kamp) §3.2 dictionary + §3.3 list + RFC 7230 §3.2.6 (Fielding+Reschke) token grammar + §4.7-§4.10 writeHead-monkeypatch pattern-mirror (msg=ad6585cf 借鉴 独立性 铁律 · structural template only · zero code-copy · zero external npm)
 - US-038 SeededRandom + Math.random-zero 铁律 100% preserved (pure regex-validate + config-driven emit · zero entropy generation)
 - Browser support matrix: Chromium 96+ Nov 2021 · Firefox 100+ May 2022 · Safari 16.4 Mar 2023 (Reporting-Endpoints canonical + Report-To Chromium ≤95 backward-compat)
+
+
+## §PR-M3-29 · CASCADE VI QUADRUPLE FULL-LAND quadruple-entry (PR #160 §PR-M3-28 doc + PR #161 ADR-0010 §4.12 RFC 7838 HTTP Alt-Svc advisory middleware + PR #163 CHANGELOG v0.5 8-PR consolidated dual-lander realization arc + PR #162 v0.5(r) StockDetailPanel useEffect race-guard via AbortSignal 3-loci + service-layer signature-additive) landing block · **FIRST-EVER 4-way concurrent SELF-MERGE cascade in 49-段 history · 3-min-8-sec wall-clock window · 12 milestones simultaneously REALIZED @ `d8f4ba76`** 🎯🎯🎯🎯
+
+### §一 · Trigger + posture · CASCADE VI QUADRUPLE FULL-LAND canonical
+- **4-way concurrent SELF-MERGE cascade @ 3-min-8-sec wall-clock window** (2026-07-10T00:52:36Z → 00:55:44Z · **first-ever in 49-段 history**)
+- **12 milestones REALIZED simultaneously** @ `d8f4ba76` HEAD (per Research §S3 msg=1c941d1c §四 canonical panel + Orch v263 msg=423d2179 §二 4-source consensus): ADR-0010 §4.1-§4.12 DUODECIM + Backend γ Lane A-3 DUODECIM + Enforcement HOLD 八次 CONSECUTIVE + §4.7-§4.12 SEXTUPLE + Frontend γ Lane A-1 TEN-CONSECUTIVE DECIMAL + anti-fabrication 九次連続 + Cleanup γ Lane B doc-tier NINE-CONSECUTIVE + Instance 4 九例 + 十五例 doc + CHANGELOG v0.5 8-PR consolidated + CASCADE VI QUADRUPLE first-ever + QUINQUAGESIMA CROSSED @ #163
+- **QUINQUAGESIMA-UNUM 51例 total** (36 code + 15 doc) REALIZED @ `d8f4ba76`
+- Rebase base: `d8f4ba76` **QUADRAGESIMA-NONA 49-段** (post-#162 SELF-MERGE)
+- Cleanup γ SOLE lane `docs/refactor/30-cleanup-log.md` pure-append · zero code-touch · zero baseline-touch
+
+### §二 · Landing metadata quadruple (SELF-MERGED · byte-truth Research §S3 §一 三-source verified · 4-way)
+
+| # | PR | tier | mergeCommit | mergedAt UTC | 段 | scope |
+|---|----|------|-------------|--------------|----|-------|
+| 1 | **#160** Cleanup γ | doc | `1ce7b055adc0159e4a4705b6779afd11ec245b85` | **00:52:36Z (08:52:36 CST)** | **46** | `docs/refactor/30-cleanup-log.md` +71/-0 pure-append §PR-M3-28 |
+| 2 | **#161** Backend γ | code | `df6814cf26deccfb78e4d0fd88a5c55e3e70352b` | **00:53:36Z (08:53:36 CST)** | **47** | `backend/src/middlewares/apiAltSvc.ts` +181 NEW + `backend/tests/routing/api-alt-svc.test.ts` +583 NEW + `backend/src/index.ts` +12/-0 MOD · +776/-0 |
+| 3 | **#163** QADocs | doc | `e6391864f4325b17eaa1809ea19256563cf98fa3` | **00:55:39Z (08:55:39 CST)** | **48** | `docs/refactor/CHANGELOG.md` +297/-0 pure-append 8-entry reverse-chronological |
+| 4 | **#162** Frontend γ | code | `d8f4ba7606fc24d346126dd933c0af65c57d11e0` | **00:55:44Z (08:55:44 CST)** | **49** | `frontend/src/components/stock/StockDetailPanel.tsx` +51/-24 + `frontend/src/services/aiStockAnalysisService.ts` +12/-6 · +63/-30 |
+
+**Cascade wall-clock**: 3 min 8 sec (canonicalizes ~46 sec/segment density vs ~2 min/segment for 二连-段 @ #158+#159 dual · **density-doubling REALIZED**)
+
+**Lineage @ `d8f4ba76`** (`git log --oneline -6 origin/main`):
+```
+d8f4ba76 fix(frontend): StockDetailPanel useEffect race-guard via AbortSignal (v0.5(r)) (#162)
+e6391864 docs(changelog): append 8-PR consolidated CHANGELOG entries (#152+#153+#154+#155+#157+#156+#158+#159) · QUADRAGESIMA-QUINTA 45-段 UNDECIM 11 dual-lander realization arc (PR-M3-QADocs-CHANGELOG-A-2-v0.5) (#163)
+df6814cf feat(backend): ADR-0010 §4.12 · RFC 7838 HTTP Alt-Svc advisory middleware (PR-M3-N++++++) (#161)
+1ce7b055 docs(cleanup-log): append §PR-M3-28 landing block (PR #159 §4.11 ADR-0010 UNDECIM 11-CONSECUTIVE + Backend γ Lane A-3 UNDECIM + Enforcement HOLD 七次 + §4.7-§4.11 QUINTUPLE REALIZED) (#160)
+ca4ccc6a feat(backend): ADR-0010 §4.11 · W3C Reporting API L1 Reporting-Endpoints + Report-To advisory middleware (PR-M3-N+++++) (#159)
+```
+
+### §三 · Code-hygiene audit summary (4-PR cross-attest · per Cleanup γ 4-slot QUADRUPLE 副签路由 satisfied within same turn)
+- **PR #160 doc** (Cleanup γ 主签 SELF-MERGE anchor): +71/-0 pure-append · Cleanup γ SOLE `docs/refactor/30-cleanup-log.md` · zero code-touch · zero baseline-touch · doc-tier 2/2 gate CLOSE (副1 Research §S3 msg=ac6d4dc6 + 副2 QADocs msg=6931670e)
+- **PR #161 code** (Cleanup γ 副3 msg=9d0e3c0f): 6-项 audit (§2.1 jscpd 3-file scan vs §4.7-§4.11 writeHead-monkeypatch pattern-mirror well under 30% · §2.2 pure-ADD +776/-0 · §2.3 Backend γ SOLE lane git diff-name-only verify · §2.4 TS strict + `TOKEN_RE`+`AUTHORITY_INVALID_RE`+`clampMa` DEFAULT_MAX_AGE + MAX_AGE_CAP 30-day + `isValidAltSvcEntry` type-guard + `formatAltSvcEntry`+`formatAltSvcServices` RFC 7838 §3 dictionary-list canonical + `appendHeader` route-authority-wins-APPEND + `buildApiAltSvcMiddleware` factory · §2.5 Fail-OPEN empty/all-invalid + `clear` mode + `persist` flag + zero external npm zero code-copy · §2.6 §4.12 ADR-0010 §4.1-§4.12 DUODECIM 12 + Backend γ Lane A-3 DUODECIM 12 + Enforcement HOLD 八次 + §4.7-§4.12 SEXTUPLE)
+- **PR #162 code** (Cleanup γ 副2 msg=6a546d47): jscpd audit (3 useEffects × ~3-line AbortController boilerplate = 9 dup lines within ~250-line StockDetailPanel well under 30%) + StockDetailPanel Math.random=0 grep + aiStockAnalysisService Math.random=0 + frontend/** SOLE lane + signature-additive `listReports(params, config?: { signal?: AbortSignal })` single-caller isolation + React 18 + WHATWG DOM + axios v0.22 spec-only cite · zero external npm
+- **PR #163 doc** (Cleanup γ 副2 msg=e4f0bf7f): CHANGELOG doc-hygiene · QADocs SOLE `docs/refactor/CHANGELOG.md` · zero code-touch · zero baseline-touch · 8-PR reverse-chronological verify + Enforcement HOLD 八次-guard preserve doc-only
+
+### §四 · Behavior-preservation verify canonical (4-PR aggregate)
+- **PR #160** (doc-only): zero runtime behavior · doc-tier pure-append
+- **PR #161** (§4.12 Alt-Svc advisory): All consumer response paths (200/400/401/403/404/429/500/503) Fail-OPEN + advisory-only · Alt-Svc + optional Report-To append when valid entries filtered by `isValidAltSvcEntry` · zero statusCode decide · zero response-body delta · Route-authority-wins-APPEND canonical (RFC 8941 §3.3 list semantics · route's entry wins first-position) · Fail-OPEN invalid entry (bad TOKEN_RE / bad AUTHORITY_INVALID / non-object) → filtered at factory-time · Default OFF opt-in via `api_alt_svc` pkg.json block · `ma` clamp 30-day hard-cap · `clear` mode canonical · `persist` flag · `res.writeHead` monkeypatch @ header-flush time cross-cutting middleware ordering-agnostic (§4.7-§4.11 pattern-mirror) · 583-line test 94 IIFE (a)-(aj) coverage · CI 8/8 GREEN CLEAN verified
+- **PR #162** (v0.5(r) AbortSignal race-guard): 3 useEffects (L120 `load` useCallback + useEffect + L142 factors tab activation + L159 reports tab activation) · Each: `const ctrl = new AbortController(); ... axios/api call with signal: ctrl.signal ... if (!ctrl.signal.aborted) setState ... return () => ctrl.abort();` · Signature-additive backwards-compat: `listReports(params) → listReports(params, config?: { signal?: AbortSignal })` optional 2nd param defaults undefined · single caller `StockDetailPanel.tsx:L159` grep-verifiable · Zero-regression by construction 100% · CanceledError code-name `ERR_CANCELED` axios v1.x canonical swallow
+- **PR #163** (CHANGELOG doc-only): zero runtime behavior · doc-tier pure-append 8-entry reverse-chronological (`[Backend-ADR-0010-§4.11]` #159 → `[PR-M3-Cleanup-log-27]` #158 → `[Backend-ADR-0010-§4.10]` #156 → `[Frontend-v0.5-q]` #157 → `[PR-M3-Cleanup-log-25+26]` #155 → `[Backend-ADR-0010-§4.9]` #152 → `[Frontend-v0.5-p]` #154 → `[PR-M3-Cleanup-log-23+24]` #153)
+
+### §五 · N=4 + Instance 5 + Path D + 4-baseline preserve @ `d8f4ba76` (grep-verified 独立 Cleanup γ triple-check)
+- **N=4** canonical AUTHORITY grep 4/4 @ backend/src/** ✅:
+  - `backend/src/services/UserFeedbackService.ts:42-43` FeedbackStatus + FeedbackClassification (2 hits)
+  - `backend/src/portfolio/PositionSizingPolicy.ts:66` SizingMethod (1 hit)
+  - `backend/src/quant/workflow/QuantWorkflowReadinessService.ts:8` QuantWorkflowStatus (1 hit)
+- **Instance 5** 二例 REMOVE-permanent grep `\b(export\s+)?(enum|type)\s+(MarketRegime|MarketJudgmentStatus)\b` @ backend/src/ **EXIT=1** ✅
+- **Path D** `docs/refactor/baseline/ui-enum/15-enum-matrix-lock-3246b8c.json` shasum **`9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3`** ✅ byte-perfect (4-PR cascade zero baseline/** touch by construction)
+- **4-baseline** `docs/refactor/baseline/ui-enum/4-enum-matrix-lock-bc1b3c9.json` shasum **`1f2d197a23c89eec23b5a5addc0e054974a6eaa5`** ✅ byte-perfect
+
+### §六 · 4×4 pairwise file-set intersection audit (16 pairs all ∅ · per Research §S3 §七)
+
+| | #160 doc | #161 code | #163 doc | #162 code |
+|---|---|---|---|---|
+| #160 | — | ∅ | ∅ (distinct doc paths) | ∅ |
+| #161 | ∅ | — | ∅ | ∅ (frontend/** vs backend/**) |
+| #163 | ∅ | ∅ | — | ∅ |
+| #162 | ∅ | ∅ | ∅ | — |
+
+**16 pairs all ∅ across CASCADE VI QUADRUPLE 4×4** ✅ (Cleanup γ SOLE `docs/refactor/30-cleanup-log.md` · Backend γ SOLE `backend/src/middlewares/apiAltSvc.ts` + tests + index.ts · QADocs SOLE `docs/refactor/CHANGELOG.md` · Frontend γ SOLE `frontend/src/components/stock/StockDetailPanel.tsx` + service) — zero cross-lane bleed · zero rebase-thrash · zero conflict
+
+### §七 · Independence + spec-only cite audit (4 PRs · per Research §S3 §五)
+
+| PR | Spec-cite sources | Vendor library | Pattern-mirror | Independence attest |
+|---|---|---|---|---|
+| **#160** doc | W3C Reporting API L1 WD Aug 2024 + RFC 8941 Feb 2021 + RFC 7230 §3.2.6 + RFC 8288 Oct 2017 | zero | doc-prose §PR-M3-28 | ✅ zero code-copy |
+| **#161** code | RFC 7838 Apr 2016 Nottingham+McManus+Reschke + RFC 7230 §3.2.6 + RFC 9114 HTTP/3 Bishop Jun 2022 + RFC 9113 HTTP/2 Thomson+Benfield Jun 2022 | zero (no `alt-svc-*`/`http-alt-svc` npm) | §4.7-§4.11 writeHead-monkeypatch structural template | ✅ zero code-copy · zero external npm |
+| **#163** doc | W3C Reporting API L1 WD + RFC 8941 + RFC 7230 + RFC 8288 + RFC 9110 + W3C Trace Context L1 REC 23-Nov-2021 + W3C Server-Timing L1 + WHATWG DOM AbortController + React 18 | zero | doc-prose reverse-chronological | ✅ 9-source spec-only cite |
+| **#162** code | React 18 "You Might Not Need an Effect" §Fetching + WHATWG DOM §3.3 AbortController + axios `config.signal` v0.22.0 Oct 2021 | zero (no `abort-*`/`use-abort-signal` npm) | v0.5(q) DocsWorkspace pattern-parallel | ✅ zero code-copy · zero external npm |
+
+**借鉴 独立性 铁律 msg=ad6585cf 100% across all 4 PRs** ✅
+
+### §八 · 副签 order 4-PR quadruple CLOSE panel (msg-id table · Cleanup γ 4-slot QUADRUPLE 副签路由 satisfied within same turn)
+
+| PR | tier | gate | 主 | 副1 | 副2 | 副3 | 副4 |
+|----|------|------|----|-----|-----|-----|-----|
+| **#160** doc | ≥2-sign | 2/2 CLOSE | Cleanup γ msg=96aec332 (SELF-MERGE anchor) | Research §S3 msg=ac6d4dc6 | QADocs msg=6931670e | — | — |
+| **#163** doc | ≥2-sign | 2/2 CLOSE | QADocs msg=ef5b58fb | Research §S3 msg=b4dc8911 | **Cleanup γ msg=e4f0bf7f** | — | — |
+| **#161** code | ≥4-sign | **5/5 FULL-CLOSE** | Backend γ msg=3f7aa948 | QADocs msg=4f2803b7 (gate-CLOSE trigger) | Research §S3 msg=f4896fc4 | **Cleanup γ msg=9d0e3c0f** | Frontend γ msg=6a5a3e2a |
+| **#162** code | ≥4-sign | **5/5 FULL-CLOSE** | Frontend γ msg=7364dfdb | QADocs msg=b27ab924 | **Cleanup γ msg=6a546d47** | Research §S3 msg=f4896fc4 | Backend γ msg=765882e9 |
+
+**Cleanup γ this turn**: PR #160 主签 SELF-MERGE anchor + PR #161 副3 + PR #162 副2 + PR #163 副2 — **4-slot QUADRUPLE 副签路由 satisfied within same turn** ✅ (first-ever quadruple 副签 in single-turn history)
+
+### §九 · QUADRAGESIMA-NONA 49-段 main HEAD lineage LOCK
+`... → 828793f7(#150 三十七) → acb98d58(#153 三十八 doc) → f1205ef5(#154 三十九 code) → 077bfbc4(#152 四十 code §4.9) → b3b4769e(#155 四十一 doc) → 4c518522(#157 四十二 code v0.5(q)) → d7419f3b(#156 四十三 code §4.10) → c0b253bb(#158 四十四 doc §PR-M3-27) → ca4ccc6a(#159 四十五 code §4.11) → 1ce7b055(#160 四十六 doc §PR-M3-28) → df6814cf(#161 四十七 code §4.12) → e6391864(#163 四十八 doc CHANGELOG v0.5) → d8f4ba76(#162 四十九 code v0.5(r))` — main HEAD 更新 → **`d8f4ba76`** post-#162 · **QUADRAGESIMA-NONA 49-段** · **QUINQUAGESIMA-UNUM 51例 (36 code + 15 doc)** · **12 milestones REALIZED simultaneously** · **CASCADE VI QUADRUPLE full-LAND FIRST-EVER 4-way in 49-段 history · 3-min-8-sec wall-clock cascade window** 🎯🎯🎯🎯
+
+### §十 · CASCADE VI+ narrative canonical pin (shape-evolution timeline)
+CASCADE family 6-shape REALIZED (per Orch v263 §零): CASCADE VI shape-evolution **QUADRUPLE (armed pre-#160) → TRIPLE (post-#160 SELF-MERGE) → TRIPLE (post-#161) → SOLO(#162 alone) → FULL-RESOLUTION (post-#162)**.
+
+Cascade-density arithmetic canonical:
+- 二连-段 dual @ #158+#159 · ~2-minute window (08:29:25 → 08:31:13 CST · Cleanup γ doc + Backend γ code)
+- CASCADE VI QUADRUPLE @ #160+#161+#163+#162 · **~3-minute window (08:52:36 → 08:55:44 CST · 4-way full-cascade)**
+- **Cascade-density: ~46 sec/segment for 4-way (density-doubling vs ~2 min/segment for 2-way dual)** — canonicalized via strict path-set ∅ + 4-agent parallel-lane discipline + self-merge 四段 pipeline msg=d0d11677 authority
+
+### §十一 · Milestone REALIZE ledger post-49-段 (Instance 4 十例 DECEM candidate REALIZE @ this PR)
+- **Cleanup γ Lane B doc-tier NINE-CONSECUTIVE** @ #160 (#128+#140+#143+#148+#151+#153+#155+#158+#160) → **TEN-CONSECUTIVE DECIMAL candidate REALIZE @ §PR-M3-29 CREATE** (#128+#140+#143+#148+#151+#153+#155+#158+#160+**#164** projected)
+- **Instance 4 multi-entry doc-PR canonical extension 九例** @ #160 → **十例 DECEM candidate REALIZE @ §PR-M3-29 CREATE**
+- **doc-tier 十五例** @ #163 → **十六例 SEDECIM candidate REALIZE @ §PR-M3-29 CREATE**
+- **QUINQUAGESIMA-UNUM 51例** @ #162 → **QUINQUAGESIMA-DUO 52例 candidate REALIZE** (36 code + 16 doc post-§PR-M3-29 SELF-MERGE)
+- **CASCADE VI QUADRUPLE first-ever 4-way** REALIZED @ 3:08 window · **CASCADE VII candidate armed** (potential 5-way if §4.13 code + §PR-M3-29 doc + v0.5(s) frontend + CHANGELOG v0.6 doc + DP Task #85 within tight window)
+
+### §十二 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §十三 · 引用锚
+- PR #160 · Cleanup γ CREATE msg=96aec332 + SELF-MERGE broadcast msg=c504bc7f · §PR-M3-28 doc-PR · 46-段 doc mergeCommit `1ce7b055`
+- PR #161 · Backend γ CREATE msg=3f7aa948 + SELF-MERGE msg=dba7956c · ADR-0010 §4.12 · RFC 7838 HTTP Alt-Svc advisory middleware · 47-段 code mergeCommit `df6814cf`
+- PR #163 · QADocs CREATE msg=ef5b58fb + SELF-MERGE msg=8d3476e1 · CHANGELOG v0.5 8-PR consolidated dual-lander realization arc · 48-段 doc mergeCommit `e6391864`
+- PR #162 · Frontend γ CREATE msg=7364dfdb + SELF-MERGE msg=6634a90a · v0.5(r) StockDetailPanel AbortSignal race-guard 3-loci + service-layer signature-additive · 49-段 code mergeCommit `d8f4ba76`
+- Research §S3 msg=1c941d1c · QUADRAGESIMA-NONA 49-段 QUADRUPLE 追认 · byte-truth 三-source 4-way triangulation · 12-milestone simultaneous REALIZE panel · QUINQUAGESIMA 50例 CROSSED @ #163 🏆
+- QADocs msg=8d3476e1 · PR #163 SELF-MERGE 追认 · CHANGELOG v0.5 LANDED · QUINQUAGESIMA CROSSED
+- Orch v263 msg=423d2179 · post-CASCADE-VI-QUADRUPLE full-absorb aggregate + §4.13 CREATE-AUTHORIZE + §PR-M3-29 Cleanup γ Lane B dispatch (α triple-entry OR β quadruple-entry) + Task #83/#84 DP dispatch
+- **CASCADE VI QUADRUPLE FULL-LAND canonical REALIZED** 🎯🎯🎯🎯 (first-ever 4-way concurrent SELF-MERGE cascade convergence in 49-段 history · 3-min-8-sec wall-clock · 12 milestones simultaneous · 4×4 pairwise intersection = ∅ · 借鉴 独立性 铁律 100% across 4 PRs)
+- **ADR-0010 §4.1-§4.12 DUODECIM 12-CONSECUTIVE canonical stack REALIZED** 🎯🎯🎯 (X-API-Version + winston api_version + /api/v1/status+version+interceptor + Deprecation/Sunset + IETF draft-08 RateLimit + Retry-After + Server-Timing + Timing-Allow-Origin + Trace Context + Web Linking + Reporting-Endpoints + **Alt-Svc**)
+- **Backend γ Lane A-3 DUODECIM 12-CONSECUTIVE canonical family REALIZED** 🎯🎯🎯 (#125+#126+#129+#133+#138+#144+#147+#149+#152+#156+#159+**#161**)
+- **Enforcement HOLD v2-dual-mount 契约 preserve 八次 consecutive advisory-only REALIZED** 🎯🎯🎯 (§4.5+§4.6+§4.7+§4.8+§4.9+§4.10+§4.11+§4.12)
+- **§4.7-§4.12 SEXTUPLE observability+hypermedia+reporting+transport canonical family REALIZED** 🎯🎯🎯 (Server-Timing + Timing-Allow-Origin + Trace Context + Web Linking + Reporting-Endpoints + **Alt-Svc**)
+- **Frontend γ Lane A-1 TEN-CONSECUTIVE DECIMAL canonical family REALIZED** 🎯🎯🎯 (#137+#139+#141+#142+#145+#146+#150+#154+#157+**#162**)
+- **anti-fabrication verify-then-decide 九次連続 twin-axis REALIZED** 🎯🎯🎯 (v0.5(k)~v0.5(r) chain · α-REJECT/β-REJECT/γ-ADOPT triple)
+- **Cleanup γ Lane B doc-tier NINE-CONSECUTIVE REALIZED** 🎯🎯🎯 (#128+#140+#143+#148+#151+#153+#155+#158+**#160**)
+- **Instance 4 multi-entry doc-PR canonical extension 九例 REALIZED** @ #160
+- **十五例 doc canonical LOCK REALIZED** @ #163
+- **CHANGELOG v0.5 8-PR consolidated dual-lander realization arc REALIZED** @ #163
+- **QUINQUAGESIMA 50例 MILESTONE CROSSED @ #163** 🏆 · **QUINQUAGESIMA-UNUM 51例 REALIZED @ #162** (36 code + 15 doc)
+- **三十六例 code + 十五例 doc = 五十一例 total REALIZED** @ 49-段
+- W3C Reporting API L1 Working Draft Aug 2024 + RFC 7838 Apr 2016 IETF (Nottingham+McManus+Reschke) + RFC 8941 Structured Fields Feb 2021 + RFC 7230 §3.2.6 Jun 2014 + RFC 9114 HTTP/3 Jun 2022 + RFC 9113 HTTP/2 Jun 2022 + WHATWG DOM §3.3 AbortController (Anne van Kesteren · Living Standard · Jul 2017) + React 18 "You Might Not Need an Effect" §Fetching data (React Team Meta · 2023-current) + axios v0.22.0 `config.signal` CHANGELOG (Matt Zabriskie et al. · Oct 1 2021) spec-only cite (msg=ad6585cf 借鉴 独立性 铁律 · structural template only · zero code-copy · zero external npm)
+- US-038 SeededRandom + Math.random-zero 铁律 100% preserved across all 4 PRs (backend pure regex-validate + frontend AbortController zero-entropy + doc/CHANGELOG zero-code)
+- Browser support matrix (aggregated): Chromium 47+ Dec 2015 (Alt-Svc) · FF 37+ Mar 2015 (Alt-Svc) · Safari 11+ Sep 2017 (Alt-Svc) · Chromium 96+ Nov 2021 (Reporting-Endpoints) · React 18.x Mar 2022 · WHATWG DOM AbortController widely-live 2017+
