@@ -2,6 +2,11 @@
   "name": "stock-backend",
   "version": "1.0.0",
   "api_version": "1.0",
+  "api_server_timing_streaming": {
+    "enabled": false,
+    "sse_event_name": "server-timing",
+    "ws_frame_type": "server-timing"
+  },
   "description": "A-share stock backtesting backend",
   "main": "dist/index.js",
   "scripts": {
