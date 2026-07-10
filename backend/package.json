@@ -14,7 +14,9 @@
     "resume_header_name": "Last-Event-ID",
     "retry_enabled": false,
     "retry_default_ms": 3000,
-    "retry_max_ms": 300000
+    "retry_max_ms": 300000,
+    "error_frame_enabled": false,
+    "error_frame_default_reason": "stream_terminated"
   },
   "description": "A-share stock backtesting backend",
   "main": "dist/index.js",

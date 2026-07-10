@@ -47,10 +47,27 @@
  *              null before first successful set). WebSocket + none kinds
  *              are no-op (retry: is EventSource-native per HTML5 §9.2.5).
  *              All operations fail-OPEN.
+ *   §4.7.2.4 — SSE `onerror` semantics / error-frame (HTML5 §9.2.5 per
+ *              spec: EventSource `onerror` event fires when the connection
+ *              transitions to CLOSED or when a network-level fault occurs;
+ *              servers may emit a comment-frame `: error <reason>\n\n`
+ *              before ending the stream to hint the client's onerror
+ *              handler about the termination cause). Adds
+ *              `emitStreamError(reason: string, retriable?: boolean): void`
+ *              which validates `reason` as an RFC 7230 §3.2.6 token,
+ *              optionally emits a preceding `retry: <default_ms>\n\n`
+ *              control-frame when `retriable === true` (to hint the
+ *              client's reconnect timer), then emits the error comment-
+ *              frame + updates the internal cursor, and
+ *              `readonly errorReason: string | null` (last emitted reason,
+ *              or null before first successful emit). WebSocket + none
+ *              kinds are no-op (comment-frame is EventSource-native per
+ *              HTML5 §9.2.5-6). All operations fail-OPEN.
  *
  * SSE (HTML5 §9.2 Server-Sent Events canonical) frame format:
  *   id: <id>\n         (optional; when present, updates client cursor)
  *   retry: <ms>\n\n    (§4.7.2.3 standalone control-frame; sets reconnect timer)
+ *   : error <reason>\n\n  (§4.7.2.4 standalone comment-frame; hints onerror)
  *   event: server-timing\n
  *   data: {name;dur=X.YZ;desc="..."}\n
  *   \n
@@ -73,7 +90,9 @@
  *       "resume_header_name": "Last-Event-ID",
  *       "retry_enabled": false,
  *       "retry_default_ms": 3000,
- *       "retry_max_ms": 300000
+ *       "retry_max_ms": 300000,
+ *       "error_frame_enabled": false,
+ *       "error_frame_default_reason": "stream_terminated"
  *     }
  *   }
  *
@@ -121,6 +140,8 @@ export interface ServerTimingStreamingConfig {
   retry_enabled?: boolean;
   retry_default_ms?: number;
   retry_max_ms?: number;
+  error_frame_enabled?: boolean;
+  error_frame_default_reason?: string;
 }
 
 export type ServerTimingStreamKind = 'sse' | 'websocket' | 'none';
@@ -199,6 +220,11 @@ export interface ServerTimingStreamAdapter {
    */
   readonly reconnectMs: number | null;
   /**
+   * §4.7.2.4 · Last SSE error-frame reason successfully emitted
+   * (advisory; `null` before the first successful emitStreamError).
+   */
+  readonly errorReason: string | null;
+  /**
    * §4.7.2.2 · Replay cached frames strictly-after the given event id
    * (SSE `Last-Event-ID` reconnect cursor per HTML5 §9.2.5). Iterates
    * the bounded ring-buffer LIFO-ordered from oldest→newest and invokes
@@ -223,6 +249,22 @@ export interface ServerTimingStreamAdapter {
    * server-hinted client reconnection-timer control.
    */
   setReconnectMs(ms: number): void;
+  /**
+   * §4.7.2.4 · Emit an SSE error-frame hint per HTML5 §9.2.5-6. Serializes
+   * `: error <reason>\n\n` as a comment-frame (client-ignored per HTML5
+   * §9.2.6, but the reason line remains visible to logs/proxies + a
+   * subsequent connection-terminate triggers the client's onerror handler
+   * per HTML5 §9.2.5 CLOSED transition). Validates `reason` as an RFC
+   * 7230 §3.2.6 token (defensive against header-injection-shaped input).
+   * When `retriable === true`, emits a preceding `retry: <default_ms>\n\n`
+   * control-frame first (per §4.7.2.3 retry-hint semantics) so the client
+   * knows to reconnect after its onerror handler fires. Updates the
+   * internal `errorReason` cursor on success. No-op when kind !== 'sse',
+   * response already ended, error-frame disabled, or reason fails
+   * validation. Never throws. Handler-facing surface for
+   * server-hinted stream-terminate reason exposure.
+   */
+  emitStreamError(reason: string, retriable?: boolean): void;
 }
 
 /**
@@ -368,6 +410,28 @@ function serializeSseRetryFrame(ms: number): string {
   return `retry: ${ms}\n\n`;
 }
 
+// §4.7.2.4 · SSE error-frame hint (HTML5 §9.2.5-6).
+// Comment-frame format `: error <reason>\n\n` — colon-prefixed line = comment
+// per §9.2.6 (client-ignored) but the payload remains inspectable to logs,
+// proxies, and browser DevTools. The connection-terminate itself is what
+// triggers the client's onerror handler per §9.2.5 CLOSED transition; this
+// hint is advisory-only metadata for the terminate. Validates reason as
+// RFC 7230 §3.2.6 token to prevent CRLF-injection through the reason value.
+const DEFAULT_ERROR_FRAME_REASON = 'stream_terminated';
+
+function isValidErrorReason(s: unknown): s is string {
+  return typeof s === 'string' && s.length > 0 && TOKEN_RE.test(s);
+}
+
+function sanitizeErrorFrameDefaultReason(raw: unknown): string {
+  if (typeof raw !== 'string' || raw.length === 0) return DEFAULT_ERROR_FRAME_REASON;
+  return TOKEN_RE.test(raw) ? raw : DEFAULT_ERROR_FRAME_REASON;
+}
+
+function serializeSseErrorFrame(reason: string): string {
+  return `: error ${reason}\n\n`;
+}
+
 function detectKind(res: Response): ServerTimingStreamKind {
   const locals = res.locals as Record<string, unknown>;
   const ws = locals.serverTimingStreamWebSocket as ServerTimingStreamSocket | undefined;
@@ -411,6 +475,11 @@ function buildAdapter(
   const retryDefaultMs = isValidRetryMs(config.retry_default_ms, retryMaxMs)
     ? config.retry_default_ms
     : DEFAULT_RETRY_DEFAULT_MS;
+  // §4.7.2.4 · Error-frame config (default-OFF opt-in; SSE-only)
+  const errorFrameEnabled = config.error_frame_enabled === true;
+  const errorFrameDefaultReason = sanitizeErrorFrameDefaultReason(
+    config.error_frame_default_reason
+  );
 
   let cachedKind: ServerTimingStreamKind | null = null;
   let count = 0;
@@ -422,6 +491,8 @@ function buildAdapter(
   let lastEventId: string | null = null;
   // §4.7.2.3 · Reconnect-time hint cursor (advisory; null before first set).
   let reconnectMs: number | null = null;
+  // §4.7.2.4 · Error-frame reason cursor (advisory; null before first emit).
+  let errorReason: string | null = null;
 
   function resolveKind(): ServerTimingStreamKind {
     if (cachedKind === null) cachedKind = detectKind(res);
@@ -608,6 +679,29 @@ function buildAdapter(
         // Fail-OPEN silent — advisory-only, never propagate transport errors.
       }
     },
+    emitStreamError(reason: string, retriable?: boolean) {
+      if (closed) return;
+      if (!errorFrameEnabled) return;
+      const kind = resolveKind();
+      if (kind !== 'sse') return;
+      if (res.writableEnded) return;
+      if (!isValidErrorReason(reason)) return;
+      try {
+        // Retriable hint: emit a preceding `retry:` control-frame first so the
+        // client's onerror handler + reconnection timer are aligned. The
+        // retry emission itself is guarded by §4.7.2.3 semantics (positive-
+        // integer + bounds); a validation failure there does NOT block the
+        // error-frame emission below (advisory-only pairing).
+        if (retriable === true && isValidRetryMs(retryDefaultMs, retryMaxMs)) {
+          res.write(serializeSseRetryFrame(retryDefaultMs));
+          reconnectMs = retryDefaultMs;
+        }
+        res.write(serializeSseErrorFrame(reason));
+        errorReason = reason;
+      } catch {
+        // Fail-OPEN silent — advisory-only, never propagate transport errors.
+      }
+    },
     get kind() {
       return resolveKind();
     },
@@ -622,6 +716,9 @@ function buildAdapter(
     },
     get reconnectMs() {
       return reconnectMs;
+    },
+    get errorReason() {
+      return errorReason;
     },
   };
   return adapter;
@@ -662,11 +759,15 @@ function buildNoopAdapter(): ServerTimingStreamAdapter {
     setReconnectMs(_ms: number) {
       /* no-op */
     },
+    emitStreamError(_reason: string, _retriable?: boolean) {
+      /* no-op */
+    },
     kind: 'none',
     count: 0,
     heartbeatCount: 0,
     lastEventId: null,
     reconnectMs: null,
+    errorReason: null,
   };
 }
 
@@ -716,6 +817,9 @@ export const __test__ = {
   isValidRetryMs,
   isValidRetryCap,
   serializeSseRetryFrame,
+  isValidErrorReason,
+  sanitizeErrorFrameDefaultReason,
+  serializeSseErrorFrame,
   detectKind,
   buildNoopAdapter,
   buildAdapter,

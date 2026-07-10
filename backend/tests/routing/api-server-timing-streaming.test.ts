@@ -1294,6 +1294,255 @@ async function run(): Promise<void> {
     assertEq('(by4) noop kind stays none', noop.kind, 'none');
   }
 
+  console.log('\n--- (bz) §4.7.2.4 · error-frame validators + sanitizer ---');
+  assertEq('(bz1) isValidErrorReason plain token', __test__.isValidErrorReason('stream_terminated'), true);
+  assertEq('(bz2) isValidErrorReason tchar mix', __test__.isValidErrorReason("a!#$%&'*+-.^_`|~0-9A-Za-z"), true);
+  assertEq('(bz3) isValidErrorReason empty → false', __test__.isValidErrorReason(''), false);
+  assertEq('(bz4) isValidErrorReason space → false', __test__.isValidErrorReason('stream terminated'), false);
+  assertEq('(bz5) isValidErrorReason CRLF → false', __test__.isValidErrorReason('a\nb'), false);
+  assertEq('(bz6) isValidErrorReason semicolon → false', __test__.isValidErrorReason('a;b'), false);
+  assertEq('(bz7) isValidErrorReason unicode → false', __test__.isValidErrorReason('数据库'), false);
+  assertEq('(bz8) isValidErrorReason undefined → false', __test__.isValidErrorReason(undefined), false);
+  assertEq('(bz9) isValidErrorReason number → false', __test__.isValidErrorReason(500 as unknown), false);
+  assertEq('(bz10) isValidErrorReason null → false', __test__.isValidErrorReason(null), false);
+  assertEq('(bz11) sanitize default plain', __test__.sanitizeErrorFrameDefaultReason('client_gone'), 'client_gone');
+  assertEq('(bz12) sanitize default empty → fallback', __test__.sanitizeErrorFrameDefaultReason(''), 'stream_terminated');
+  assertEq('(bz13) sanitize default non-token → fallback', __test__.sanitizeErrorFrameDefaultReason('a b'), 'stream_terminated');
+  assertEq('(bz14) sanitize default undefined → fallback', __test__.sanitizeErrorFrameDefaultReason(undefined), 'stream_terminated');
+  assertEq('(bz15) sanitize default number → fallback', __test__.sanitizeErrorFrameDefaultReason(42 as unknown), 'stream_terminated');
+
+  console.log('\n--- (ca) §4.7.2.4 · serializeSseErrorFrame frame-shape ---');
+  assertEq('(ca1) serialize plain', __test__.serializeSseErrorFrame('stream_terminated'), ': error stream_terminated\n\n');
+  assertEq('(ca2) serialize tchar', __test__.serializeSseErrorFrame('upstream_5xx'), ': error upstream_5xx\n\n');
+  assertEq('(ca3) serialize single-char', __test__.serializeSseErrorFrame('x'), ': error x\n\n');
+
+  console.log('\n--- (cb) §4.7.2.4 · adapter.emitStreamError SSE success path ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const chunks: Buffer[] = [];
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, error_frame_enabled: true }));
+    app.get('/sse-err-ok', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      const origWrite = res.write.bind(res);
+      (res as unknown as { write: typeof origWrite }).write = ((chunk: unknown, ...rest: unknown[]) => {
+        if (typeof chunk === 'string') chunks.push(Buffer.from(chunk));
+        else if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+        return (origWrite as (...args: unknown[]) => boolean)(chunk, ...rest);
+      }) as typeof origWrite;
+      captured.emitStreamError('upstream_5xx');
+      captured.emitStreamError('client_gone');
+      res.end();
+    });
+    await request(app).get('/sse-err-ok');
+    const joined = Buffer.concat(chunks).toString('utf8');
+    assertEq('(cb1) sse error frame upstream_5xx emitted', joined.includes(': error upstream_5xx\n\n'), true);
+    assertEq('(cb2) sse error frame client_gone emitted', joined.includes(': error client_gone\n\n'), true);
+    assertEq('(cb3) errorReason cursor last-wins client_gone', captured.errorReason, 'client_gone');
+    assertEq('(cb4) reconnectMs stays null when retriable omitted', captured.reconnectMs, null);
+  }
+
+  console.log('\n--- (cc) §4.7.2.4 · emitStreamError retriable emits preceding retry frame ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const chunks: Buffer[] = [];
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({
+      enabled: true,
+      error_frame_enabled: true,
+      retry_default_ms: 4500,
+    }));
+    app.get('/sse-err-retriable', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      const origWrite = res.write.bind(res);
+      (res as unknown as { write: typeof origWrite }).write = ((chunk: unknown, ...rest: unknown[]) => {
+        if (typeof chunk === 'string') chunks.push(Buffer.from(chunk));
+        else if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+        return (origWrite as (...args: unknown[]) => boolean)(chunk, ...rest);
+      }) as typeof origWrite;
+      captured.emitStreamError('transient_fault', true);
+      res.end();
+    });
+    await request(app).get('/sse-err-retriable');
+    const joined = Buffer.concat(chunks).toString('utf8');
+    const retryIdx = joined.indexOf('retry: 4500\n\n');
+    const errIdx = joined.indexOf(': error transient_fault\n\n');
+    assertEq('(cc1) retry frame emitted', retryIdx >= 0, true);
+    assertEq('(cc2) error frame emitted', errIdx >= 0, true);
+    assertEq('(cc3) retry precedes error frame', retryIdx >= 0 && errIdx > retryIdx, true);
+    assertEq('(cc4) reconnectMs updated from retriable=true', captured.reconnectMs, 4500);
+    assertEq('(cc5) errorReason updated', captured.errorReason, 'transient_fault');
+  }
+
+  console.log('\n--- (cd) §4.7.2.4 · emitStreamError fail-OPEN 6-axis ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, error_frame_enabled: false }));
+    app.get('/sse-err-disabled', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emitStreamError('boom');
+      res.end();
+    });
+    await request(app).get('/sse-err-disabled');
+    assertEq('(cd1) error_frame_enabled=false → errorReason stays null', captured.errorReason, null);
+  }
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, error_frame_enabled: true }));
+    app.get('/json-err', async (_req, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emitStreamError('boom');
+      res.json({ ok: true });
+    });
+    await request(app).get('/json-err');
+    assertEq('(cd2) kind !== sse → errorReason stays null', captured.errorReason, null);
+  }
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, error_frame_enabled: true }));
+    app.get('/sse-err-invalid', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emitStreamError('');
+      captured.emitStreamError('has space');
+      captured.emitStreamError('a\nb');
+      captured.emitStreamError(42 as unknown as string);
+      captured.emitStreamError(undefined as unknown as string);
+      res.end();
+    });
+    await request(app).get('/sse-err-invalid');
+    assertEq('(cd3) invalid reason 5-way rejects → errorReason stays null', captured.errorReason, null);
+  }
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, error_frame_enabled: true }));
+    app.get('/sse-err-closed', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.close();
+      captured.emitStreamError('boom');
+      res.end();
+    });
+    await request(app).get('/sse-err-closed');
+    assertEq('(cd4) adapter.close() then emitStreamError → errorReason stays null', captured.errorReason, null);
+  }
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, error_frame_enabled: true }));
+    app.get('/sse-err-writable-ended', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      res.end();
+      captured.emitStreamError('post_end');
+    });
+    await request(app).get('/sse-err-writable-ended');
+    assertEq('(cd5) writableEnded → errorReason stays null', captured.errorReason, null);
+  }
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, error_frame_enabled: true }));
+    app.get('/sse-err-writethrow', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      const origWrite = res.write.bind(res);
+      let firstCall = true;
+      (res as unknown as { write: typeof origWrite }).write = ((chunk: unknown, ...rest: unknown[]) => {
+        if (firstCall) {
+          firstCall = false;
+          throw new Error('EPIPE');
+        }
+        return (origWrite as (...args: unknown[]) => boolean)(chunk, ...rest);
+      }) as typeof origWrite;
+      captured.emitStreamError('should_not_persist');
+      res.end();
+    });
+    await request(app).get('/sse-err-writethrow');
+    assertEq('(cd6) res.write throw → fail-OPEN, errorReason stays null', captured.errorReason, null);
+  }
+
+  console.log('\n--- (ce) §4.7.2.4 · retriable=true with invalid retry_default_ms skips retry but emits error ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const chunks: Buffer[] = [];
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({
+      enabled: true,
+      error_frame_enabled: true,
+      retry_default_ms: -5 as unknown as number,
+      retry_max_ms: 100,
+    }));
+    app.get('/sse-err-badretry', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      const origWrite = res.write.bind(res);
+      (res as unknown as { write: typeof origWrite }).write = ((chunk: unknown, ...rest: unknown[]) => {
+        if (typeof chunk === 'string') chunks.push(Buffer.from(chunk));
+        else if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+        return (origWrite as (...args: unknown[]) => boolean)(chunk, ...rest);
+      }) as typeof origWrite;
+      captured.emitStreamError('degraded', true);
+      res.end();
+    });
+    await request(app).get('/sse-err-badretry');
+    const joined = Buffer.concat(chunks).toString('utf8');
+    // retry_default_ms bad → falls back to 3000 (default constant). retry_max_ms 100 caps → 3000 > 100 → retry emit skipped.
+    assertEq('(ce1) retry frame skipped when default resolves > cap', joined.includes('retry: '), false);
+    assertEq('(ce2) error frame still emitted', joined.includes(': error degraded\n\n'), true);
+    assertEq('(ce3) errorReason updated even without retry', captured.errorReason, 'degraded');
+    assertEq('(ce4) reconnectMs stays null when retry emit skipped', captured.reconnectMs, null);
+  }
+
+  console.log('\n--- (cf) §4.7.2.4 · emitStreamError does not affect emit/count/lastEventId/heartbeatCount ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, error_frame_enabled: true }));
+    app.get('/sse-err-crossaxis', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emit('m', 1);
+      captured.emitStreamError('after_metric');
+      res.end();
+    });
+    await request(app).get('/sse-err-crossaxis');
+    assertEq('(cf1) error does not bump count', captured.count, 1);
+    assertEq('(cf2) error does not touch lastEventId', captured.lastEventId, null);
+    assertEq('(cf3) error does not touch heartbeatCount', captured.heartbeatCount, 0);
+    assertEq('(cf4) errorReason set', captured.errorReason, 'after_metric');
+  }
+
+  console.log('\n--- (cg) §4.7.2.4 · buildNoopAdapter error surface parity ---');
+  {
+    const noop = __test__.buildNoopAdapter();
+    assertEq('(cg1) noop.errorReason null', noop.errorReason, null);
+    assertEq('(cg2) noop.emitStreamError callable', typeof noop.emitStreamError, 'function');
+    noop.emitStreamError('boom');
+    noop.emitStreamError('boom', true);
+    assertEq('(cg3) noop.emitStreamError no-op keeps errorReason null', noop.errorReason, null);
+    assertEq('(cg4) noop.emitStreamError no-op keeps reconnectMs null', noop.reconnectMs, null);
+    assertEq('(cg5) noop kind stays none', noop.kind, 'none');
+  }
+
   console.log('\n=================================');
   console.log(`PASS: ${passed}`);
   console.log(`FAIL: ${failed}`);
