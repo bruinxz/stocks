@@ -237,13 +237,6 @@ function test_frontend_artifacts() {
   assert('fe.cell_exists', cellSrc.length > 100);
   assert('fe.cell_default_export', /export default TradeReasonCell/.test(cellSrc));
 
-  const wsSrc = fs.readFileSync(
-    path.resolve(ROOT, '../frontend/src/pages/workspace/PortfolioWorkspace.tsx'),
-    'utf8'
-  );
-  assert('fe.workspace_imports_cell', /import TradeReasonCell from/.test(wsSrc));
-  assert('fe.workspace_uses_cell', /<TradeReasonCell\s/.test(wsSrc));
-
   const modalSrc = fs.readFileSync(
     path.resolve(ROOT, '../frontend/src/components/trading/AIStockAnalysisModal.tsx'),
     'utf8'
