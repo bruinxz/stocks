@@ -117,25 +117,32 @@ const StockDetailPanel: React.FC<Props> = ({
   const [aiReports, setAiReports] = useState<any[]>([]);
   const [aiReportsLoading, setAiReportsLoading] = useState(false);
 
-  const load = useCallback(async () => {
-    if (!symbol) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const resp = await api.get(`/market/history/${symbol}`);
-      const data = resp.data?.data || {};
-      setStockInfo(data.stock || null);
-      setHistory(data.history || []);
-      setSummary(data.summary || null);
-    } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [symbol]);
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!symbol) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const resp = await api.get(`/market/history/${symbol}`, { signal });
+        if (signal?.aborted) return;
+        const data = resp.data?.data || {};
+        setStockInfo(data.stock || null);
+        setHistory(data.history || []);
+        setSummary(data.summary || null);
+      } catch (err: any) {
+        if (err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') return;
+        setError(err?.response?.data?.message || err?.message || String(err));
+      } finally {
+        if (!signal?.aborted) setLoading(false);
+      }
+    },
+    [symbol]
+  );
 
   useEffect(() => {
-    void load();
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
   }, [load]);
 
   // 因子 — 仅在 factors tab 激活且首次访问时加载
@@ -143,16 +150,25 @@ const StockDetailPanel: React.FC<Props> = ({
     if (activeTab !== 'factors') return;
     if (factors.length > 0 || factorsLoading) return;
     if (!displayCode || !/^\d{6}$/.test(displayCode)) return;
+    const controller = new AbortController();
+    const { signal } = controller;
     setFactorsLoading(true);
     api
-      .get(`/factors/stock/${displayCode}`)
+      .get(`/factors/stock/${displayCode}`, { signal })
       .then((r: any) => {
+        if (signal.aborted) return;
         const data = r.data?.data;
         setFactors(data?.factors || []);
         setFactorsTradeDate(data?.trade_date || null);
       })
-      .catch(() => setFactors([]))
-      .finally(() => setFactorsLoading(false));
+      .catch((err: any) => {
+        if (err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') return;
+        setFactors([]);
+      })
+      .finally(() => {
+        if (!signal.aborted) setFactorsLoading(false);
+      });
+    return () => controller.abort();
   }, [activeTab, displayCode, factors.length, factorsLoading]);
 
   // AI 解读历史 — 仅在 ai-history tab 激活且首次访问时加载
@@ -160,11 +176,22 @@ const StockDetailPanel: React.FC<Props> = ({
     if (activeTab !== 'ai-history') return;
     if (aiReports.length > 0 || aiReportsLoading) return;
     if (!displayCode) return;
+    const controller = new AbortController();
+    const { signal } = controller;
     setAiReportsLoading(true);
-    listReports({ stock_code: displayCode, limit: 20 })
-      .then(setAiReports)
-      .catch(() => setAiReports([]))
-      .finally(() => setAiReportsLoading(false));
+    listReports({ stock_code: displayCode, limit: 20 }, { signal })
+      .then(reports => {
+        if (signal.aborted) return;
+        setAiReports(reports);
+      })
+      .catch((err: any) => {
+        if (err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') return;
+        setAiReports([]);
+      })
+      .finally(() => {
+        if (!signal.aborted) setAiReportsLoading(false);
+      });
+    return () => controller.abort();
   }, [activeTab, displayCode, aiReports.length, aiReportsLoading]);
 
   // 切换 stock 时清空两个 tab 缓存
