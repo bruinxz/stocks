@@ -786,6 +786,310 @@ async function run(): Promise<void> {
     assertEq('(bj4) noop.heartbeatCount stays 0', noop.heartbeatCount, 0);
   }
 
+  console.log('\n--- (bk) §4.7.2.2 · resume-config validators + header-name sanitize ---');
+  {
+    const { isValidResumeHistorySize, sanitizeResumeHeaderName, getLastEventIdFromHeader } = __test__;
+    assertEq('(bk1) size 100', isValidResumeHistorySize(100), true);
+    assertEq('(bk2) size 1', isValidResumeHistorySize(1), true);
+    assertEq('(bk3) size 0 rejected', isValidResumeHistorySize(0), false);
+    assertEq('(bk4) size -1 rejected', isValidResumeHistorySize(-1), false);
+    assertEq('(bk5) size NaN rejected', isValidResumeHistorySize(NaN), false);
+    assertEq('(bk6) size 1.5 rejected', isValidResumeHistorySize(1.5), false);
+    assertEq('(bk7) size undef rejected', isValidResumeHistorySize(undefined), false);
+    assertEq('(bk8) name default when undef', sanitizeResumeHeaderName(undefined), 'Last-Event-ID');
+    assertEq('(bk9) name default when empty', sanitizeResumeHeaderName(''), 'Last-Event-ID');
+    assertEq('(bk10) name default when non-token', sanitizeResumeHeaderName('bad name'), 'Last-Event-ID');
+    assertEq('(bk11) name custom token accepted', sanitizeResumeHeaderName('X-Resume-Id'), 'X-Resume-Id');
+  }
+  {
+    const { getLastEventIdFromHeader } = __test__;
+    assertEq('(bk12) header lower-case lookup',
+      getLastEventIdFromHeader({ headers: { 'last-event-id': 'abc123' } }, 'Last-Event-ID'), 'abc123');
+    assertEq('(bk13) header exact-case fallback',
+      getLastEventIdFromHeader({ headers: { 'Last-Event-ID': 'abc123' } as unknown as Record<string, string> }, 'Last-Event-ID'), 'abc123');
+    assertEq('(bk14) missing → null',
+      getLastEventIdFromHeader({ headers: {} }, 'Last-Event-ID'), null);
+    assertEq('(bk15) empty-string → null',
+      getLastEventIdFromHeader({ headers: { 'last-event-id': '' } }, 'Last-Event-ID'), null);
+    assertEq('(bk16) non-token → null',
+      getLastEventIdFromHeader({ headers: { 'last-event-id': 'a b c' } }, 'Last-Event-ID'), null);
+    assertEq('(bk17) array first element',
+      getLastEventIdFromHeader({ headers: { 'last-event-id': ['xy1', 'xy2'] } }, 'Last-Event-ID'), 'xy1');
+    assertEq('(bk18) no headers obj → null',
+      getLastEventIdFromHeader({} as { headers?: Record<string, string> }, 'Last-Event-ID'), null);
+    assertEq('(bk19) custom header name',
+      getLastEventIdFromHeader({ headers: { 'x-resume-id': 'zz' } }, 'X-Resume-Id'), 'zz');
+  }
+
+  console.log('\n--- (bl) §4.7.2.2 · serializeSseFrame with id emits id-line first ---');
+  {
+    const f = serializeSseFrame('server-timing', 'db', 12.5, 'query', 'abc123');
+    assertEq('(bl1) id-line first', f, 'id: abc123\nevent: server-timing\ndata: db;desc="query";dur=12.5\n\n');
+    const f2 = serializeSseFrame('server-timing', 'db', undefined, undefined, 'id42');
+    assertEq('(bl2) id + name only', f2, 'id: id42\nevent: server-timing\ndata: db\n\n');
+    const f3 = serializeSseFrame('server-timing', 'db', 1, undefined, '');
+    assertEq('(bl3) empty id dropped', f3, 'event: server-timing\ndata: db;dur=1\n\n');
+    const f4 = serializeSseFrame('server-timing', 'db', 1, undefined, 'bad id');
+    assertEq('(bl4) non-token id dropped', f4, 'event: server-timing\ndata: db;dur=1\n\n');
+    const f5 = serializeSseFrame('server-timing', 'db', 1, undefined, undefined);
+    assertEq('(bl5) undefined id backwards-compat', f5, 'event: server-timing\ndata: db;dur=1\n\n');
+  }
+
+  console.log('\n--- (bm) §4.7.2.2 · adapter.emit(id) advances lastEventId + fills ring-buffer ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const chunks: string[] = [];
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({
+      enabled: true,
+      resume_enabled: true,
+      resume_history_size: 3,
+    }));
+    app.get('/sse-r', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      const origWrite = res.write.bind(res);
+      (res as unknown as { write: (c: unknown) => boolean }).write = (c: unknown) => {
+        chunks.push(typeof c === 'string' ? c : String(c));
+        return origWrite(c as string);
+      };
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emit('a', 1, undefined, 'id1');
+      captured.emit('b', 2, undefined, 'id2');
+      captured.emit('c', 3, undefined, 'id3');
+      captured.emit('d', 4, undefined, 'id4');
+      res.end();
+    });
+    await request(app).get('/sse-r');
+    assertEq('(bm1) lastEventId is id4', captured.lastEventId, 'id4');
+    assertEq('(bm2) count 4', captured.count, 4);
+    const withIdLines = chunks.filter((c) => c.startsWith('id: '));
+    assertEq('(bm3) 4 id-lines emitted', withIdLines.length, 4);
+  }
+
+  console.log('\n--- (bn) §4.7.2.2 · emit without id keeps lastEventId unchanged ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({
+      enabled: true,
+      resume_enabled: true,
+    }));
+    app.get('/sse-mixed', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emit('a', 1);
+      assertEq('(bn1) lastEventId null pre-id', captured.lastEventId, null);
+      captured.emit('b', 2, undefined, 'id1');
+      assertEq('(bn2) lastEventId id1', captured.lastEventId, 'id1');
+      captured.emit('c', 3);
+      assertEq('(bn3) lastEventId still id1 after no-id emit', captured.lastEventId, 'id1');
+      captured.emit('d', 4, undefined, 'bad id');
+      assertEq('(bn4) lastEventId still id1 after non-token id', captured.lastEventId, 'id1');
+      res.end();
+    });
+    await request(app).get('/sse-mixed');
+    assertEq('(bn5) count 4 (all emits landed)', captured.count, 4);
+  }
+
+  console.log('\n--- (bo) §4.7.2.2 · resumeFrom replays entries strictly-after cursor ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const replayed: string[] = [];
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({
+      enabled: true,
+      resume_enabled: true,
+      resume_history_size: 5,
+    }));
+    app.get('/sse-resume', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emit('a', 1, undefined, 'id1');
+      captured.emit('b', 2, undefined, 'id2');
+      captured.emit('c', 3, undefined, 'id3');
+      captured.resumeFrom('id1', (e) => replayed.push(`${e.id}:${e.name}:${e.dur}`));
+      res.end();
+    });
+    await request(app).get('/sse-resume');
+    assertEq('(bo1) replay strictly-after id1', replayed.join(','), 'id2:b:2,id3:c:3');
+  }
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const replayed: string[] = [];
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({
+      enabled: true,
+      resume_enabled: true,
+    }));
+    app.get('/sse-resume-all', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emit('a', 1, undefined, 'id1');
+      captured.emit('b', 2, undefined, 'id2');
+      captured.resumeFrom(null, (e) => replayed.push(e.id));
+      captured.resumeFrom(undefined, (e) => replayed.push(`u:${e.id}`));
+      captured.resumeFrom('', (e) => replayed.push(`e:${e.id}`));
+      captured.resumeFrom('not-in-cache', (e) => replayed.push(`x:${e.id}`));
+      res.end();
+    });
+    await request(app).get('/sse-resume-all');
+    assertEq('(bo2) null cursor → replay all',
+      replayed.join(','),
+      'id1,id2,u:id1,u:id2,e:id1,e:id2,x:id1,x:id2');
+  }
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const replayed: string[] = [];
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({
+      enabled: true,
+      resume_enabled: true,
+    }));
+    app.get('/sse-resume-last', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emit('a', 1, undefined, 'id1');
+      captured.emit('b', 2, undefined, 'id2');
+      captured.resumeFrom('id2', (e) => replayed.push(e.id));
+      res.end();
+    });
+    await request(app).get('/sse-resume-last');
+    assertEq('(bo3) cursor at newest → nothing to replay', replayed.length, 0);
+  }
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const replayed: string[] = [];
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({
+      enabled: true,
+      resume_enabled: true,
+    }));
+    app.get('/sse-resume-throw', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emit('a', 1, undefined, 'id1');
+      captured.emit('b', 2, undefined, 'id2');
+      captured.emit('c', 3, undefined, 'id3');
+      captured.resumeFrom(null, (e) => {
+        if (e.id === 'id2') throw new Error('boom');
+        replayed.push(e.id);
+      });
+      res.end();
+    });
+    await request(app).get('/sse-resume-throw');
+    assertEq('(bo4) per-entry throw fail-OPEN · other entries still replayed',
+      replayed.join(','), 'id1,id3');
+  }
+
+  console.log('\n--- (bp) §4.7.2.2 · ring-buffer bounded LIFO cap ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const replayed: string[] = [];
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({
+      enabled: true,
+      resume_enabled: true,
+      resume_history_size: 2,
+    }));
+    app.get('/sse-cap', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emit('a', 1, undefined, 'id1');
+      captured.emit('b', 2, undefined, 'id2');
+      captured.emit('c', 3, undefined, 'id3');
+      captured.emit('d', 4, undefined, 'id4');
+      captured.resumeFrom(null, (e) => replayed.push(e.id));
+      res.end();
+    });
+    await request(app).get('/sse-cap');
+    assertEq('(bp1) only newest 2 retained (LIFO cap)', replayed.join(','), 'id3,id4');
+    assertEq('(bp2) lastEventId is id4', captured.lastEventId, 'id4');
+  }
+
+  console.log('\n--- (bq) §4.7.2.2 · resumeFrom no-op when disabled / non-SSE / closed ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const replayed: string[] = [];
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, resume_enabled: false }));
+    app.get('/sse-off', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emit('a', 1, undefined, 'id1');
+      captured.resumeFrom(null, (e) => replayed.push(e.id));
+      res.end();
+    });
+    await request(app).get('/sse-off');
+    assertEq('(bq1) resume disabled → no replay', replayed.length, 0);
+  }
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const replayed: string[] = [];
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, resume_enabled: true }));
+    app.get('/none-r', (_req, res) => {
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.resumeFrom(null, (e) => replayed.push(e.id));
+      res.status(200).json({ ok: true });
+    });
+    await request(app).get('/none-r');
+    assertEq('(bq2) kind:none → no replay', replayed.length, 0);
+  }
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const replayed: string[] = [];
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, resume_enabled: true }));
+    app.get('/sse-closed', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emit('a', 1, undefined, 'id1');
+      captured.close();
+      captured.resumeFrom(null, (e) => replayed.push(e.id));
+      res.end();
+    });
+    await request(app).get('/sse-closed');
+    assertEq('(bq3) closed → no replay', replayed.length, 0);
+  }
+  {
+    let captured!: ServerTimingStreamAdapter;
+    let called = 0;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, resume_enabled: true }));
+    app.get('/sse-badcb', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emit('a', 1, undefined, 'id1');
+      captured.resumeFrom(null, undefined as unknown as (e: unknown) => void);
+      called = captured.count;
+      res.end();
+    });
+    await request(app).get('/sse-badcb');
+    assertEq('(bq4) non-fn replay callback → no throw', called, 1);
+  }
+
+  console.log('\n--- (br) §4.7.2.2 · buildNoopAdapter resume surface complete ---');
+  {
+    const noop = __test__.buildNoopAdapter();
+    assertEq('(br1) noop.lastEventId null', noop.lastEventId, null);
+    assertEq('(br2) noop.resumeFrom callable', typeof noop.resumeFrom, 'function');
+    let called = 0;
+    noop.emit('n', 1, undefined, 'id1');
+    noop.resumeFrom('id1', () => { called++; });
+    assertEq('(br3) noop.resumeFrom no-op zero-call', called, 0);
+    assertEq('(br4) noop.lastEventId stays null', noop.lastEventId, null);
+  }
+
   console.log('\n=================================');
   console.log(`PASS: ${passed}`);
   console.log(`FAIL: ${failed}`);

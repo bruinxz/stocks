@@ -2,9 +2,12 @@
  * apiServerTimingStreaming.ts — ADR-0010 §4.14 · §4.7.2 vertical-of-vertical
  * continuation of §4.7 static (Server-Timing header) + §4.7.1 dynamic
  * (measure/measureAsync/start handler-facing API) + ADR-0010 §4.7.2.1
- * SSE keep-alive heartbeat sub-vertical (SUB-tier L3.1 extension).
+ * SSE keep-alive heartbeat sub-vertical (SUB-tier L3.1 extension) +
+ * ADR-0010 §4.7.2.2 SSE Last-Event-ID resumption sub-vertical (SUB-tier
+ * L3.2 extension).
  *
- * Three-tier vertical stack + sub-tier §4.7 → §4.7.1 → §4.7.2 → §4.7.2.1:
+ * Five-tier vertical stack + sub-tier §4.7 → §4.7.1 → §4.7.2 → §4.7.2.1
+ * → §4.7.2.2:
  *   §4.7     — static Server-Timing header set at writeHead-flush (advisory).
  *   §4.7.1   — dynamic per-request accumulator merged at writeHead-flush.
  *   §4.7.2   — streaming per-metric frame-emit during an open SSE or
@@ -19,8 +22,22 @@
  *              `startHeartbeat(): () => void` handler surface plus
  *              `readonly heartbeatCount: number`. WebSocket + none kinds
  *              are no-op (heartbeat is SSE-specific per HTML5 §9.2.6).
+ *   §4.7.2.2 — SSE Last-Event-ID resumption (HTML5 §9.2.5 per spec:
+ *              browser EventSource auto-transmits `Last-Event-ID` header
+ *              on reconnect after disconnect; SSE `id:` field on each
+ *              frame updates the client's lastEventId cursor). Adds
+ *              optional `id?: string` param to `emit(name, dur?, desc?,
+ *              id?)`, `getLastEventIdFromHeader(req): string | null`
+ *              static helper for handler-side extraction, `resumeFrom(id,
+ *              replay): void` advisory-only hook that replays cached
+ *              frames strictly-after the given id, `readonly lastEventId:
+ *              string | null` (last emitted id), and a bounded LIFO
+ *              ring-buffer (default 100 frames). WebSocket + none kinds
+ *              are no-op (Last-Event-ID is EventSource-native per HTML5
+ *              §9.2.5). All operations fail-OPEN.
  *
  * SSE (HTML5 §9.2 Server-Sent Events canonical) frame format:
+ *   id: <id>\n         (optional; when present, updates client cursor)
  *   event: server-timing\n
  *   data: {name;dur=X.YZ;desc="..."}\n
  *   \n
@@ -37,7 +54,10 @@
  *       "ws_frame_type": "server-timing",
  *       "heartbeat_enabled": false,
  *       "heartbeat_interval_ms": 30000,
- *       "heartbeat_comment": "keep-alive"
+ *       "heartbeat_comment": "keep-alive",
+ *       "resume_enabled": false,
+ *       "resume_history_size": 100,
+ *       "resume_header_name": "Last-Event-ID"
  *     }
  *   }
  *
@@ -79,6 +99,9 @@ export interface ServerTimingStreamingConfig {
   heartbeat_enabled?: boolean;
   heartbeat_interval_ms?: number;
   heartbeat_comment?: string;
+  resume_enabled?: boolean;
+  resume_history_size?: number;
+  resume_header_name?: string;
 }
 
 export type ServerTimingStreamKind = 'sse' | 'websocket' | 'none';
@@ -100,8 +123,14 @@ export interface ServerTimingStreamSocket {
  * input (never throw · never overwrite route-set headers or body).
  */
 export interface ServerTimingStreamAdapter {
-  /** Emit a single metric frame. Invalid name silently drops the emit. */
-  emit(name: string, dur?: number, desc?: string): void;
+  /**
+   * Emit a single metric frame. Invalid name silently drops the emit.
+   * §4.7.2.2 · Optional `id` (RFC 7230 §3.2.6 token) attaches an SSE
+   * `id:` line to the frame so client cursor advances, and the frame is
+   * appended to the resume ring-buffer when resume is enabled. Non-token
+   * id silently drops the id (still emits the frame without id).
+   */
+  emit(name: string, dur?: number, desc?: string, id?: string): void;
   /**
    * Instrument an awaited promise. Emits elapsed wall-clock in ms upon
    * resolution or rejection (before rethrowing). Uses process.hrtime.bigint
@@ -140,6 +169,37 @@ export interface ServerTimingStreamAdapter {
   readonly count: number;
   /** Number of §4.7.2.1 heartbeat comment-frames successfully emitted. */
   readonly heartbeatCount: number;
+  /**
+   * §4.7.2.2 · Last SSE `id:` value successfully attached to an emitted
+   * frame (advisory; `null` before the first id-carrying emit).
+   */
+  readonly lastEventId: string | null;
+  /**
+   * §4.7.2.2 · Replay cached frames strictly-after the given event id
+   * (SSE `Last-Event-ID` reconnect cursor per HTML5 §9.2.5). Iterates
+   * the bounded ring-buffer LIFO-ordered from oldest→newest and invokes
+   * `replay(entry)` for each entry whose id lexically-compares strictly
+   * greater than `sinceId` (or every cached entry when `sinceId` is
+   * empty/null/undefined/missing-from-cache). No-op when kind !== 'sse',
+   * response already ended, resume disabled, or replay throws (per-entry
+   * fail-OPEN silent). Handler-facing surface: the callback may re-emit
+   * the entry via adapter.emit() or a custom re-serializer. Never throws.
+   */
+  resumeFrom(
+    sinceId: string | null | undefined,
+    replay: (entry: ServerTimingResumeEntry) => void
+  ): void;
+}
+
+/**
+ * §4.7.2.2 · Single ring-buffer entry surfaced to the resumeFrom(replay)
+ * callback. All fields intentionally read-only from the caller's view.
+ */
+export interface ServerTimingResumeEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly dur: number | undefined;
+  readonly desc: string | undefined;
 }
 
 const PKG_STREAMING_CONFIG: ServerTimingStreamingConfig | null =
@@ -170,6 +230,7 @@ function serializeSseFrame(
   name: string,
   dur: number | undefined,
   desc: string | undefined,
+  id?: string
 ): string {
   const parts: string[] = [name];
   if (typeof desc === 'string' && desc.length > 0) {
@@ -179,14 +240,15 @@ function serializeSseFrame(
   if (dur !== undefined && isValidDur(dur)) {
     parts.push(`dur=${dur}`);
   }
-  return `event: ${eventName}\ndata: ${parts.join(';')}\n\n`;
+  const idLine = typeof id === 'string' && id.length > 0 && TOKEN_RE.test(id) ? `id: ${id}\n` : '';
+  return `${idLine}event: ${eventName}\ndata: ${parts.join(';')}\n\n`;
 }
 
 function serializeWsFrame(
   frameType: string,
   name: string,
   dur: number | undefined,
-  desc: string | undefined,
+  desc: string | undefined
 ): string {
   const payload: Record<string, unknown> = { type: frameType, name };
   if (dur !== undefined && isValidDur(dur)) payload.dur = dur;
@@ -215,11 +277,39 @@ function isValidHeartbeatInterval(n: unknown): n is number {
   return typeof n === 'number' && Number.isFinite(n) && n > 0;
 }
 
+// §4.7.2.2 · Last-Event-ID resumption (HTML5 §9.2.5).
+// Ring-buffer bounded by `resume_history_size` (default 100, LIFO cap).
+// Header name defaults to canonical `Last-Event-ID` per HTML5 spec but is
+// configurable (some reverse-proxies rename headers). Header value must
+// itself satisfy the RFC 7230 §3.2.6 token grammar to prevent header-
+// injection attempts from smuggling through the resume path.
+const DEFAULT_RESUME_HISTORY_SIZE = 100;
+const DEFAULT_RESUME_HEADER_NAME = 'Last-Event-ID';
+
+function isValidResumeHistorySize(n: unknown): n is number {
+  return typeof n === 'number' && Number.isFinite(n) && n > 0 && Number.isInteger(n);
+}
+
+function sanitizeResumeHeaderName(raw: unknown): string {
+  if (typeof raw !== 'string' || raw.length === 0) return DEFAULT_RESUME_HEADER_NAME;
+  return TOKEN_RE.test(raw) ? raw : DEFAULT_RESUME_HEADER_NAME;
+}
+
+function getLastEventIdFromHeader(
+  req: { headers?: Record<string, string | string[] | undefined> },
+  headerName: string = DEFAULT_RESUME_HEADER_NAME
+): string | null {
+  if (!req || typeof req !== 'object' || !req.headers) return null;
+  const lower = headerName.toLowerCase();
+  const raw = req.headers[lower] ?? req.headers[headerName];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof value !== 'string' || value.length === 0) return null;
+  return TOKEN_RE.test(value) ? value : null;
+}
+
 function detectKind(res: Response): ServerTimingStreamKind {
   const locals = res.locals as Record<string, unknown>;
-  const ws = locals.serverTimingStreamWebSocket as
-    | ServerTimingStreamSocket
-    | undefined;
+  const ws = locals.serverTimingStreamWebSocket as ServerTimingStreamSocket | undefined;
   if (ws && typeof ws.send === 'function') return 'websocket';
   const ct = res.getHeader('Content-Type');
   const ctStr = Array.isArray(ct) ? ct[0] : ct;
@@ -231,7 +321,7 @@ function detectKind(res: Response): ServerTimingStreamKind {
 
 function buildAdapter(
   res: Response,
-  config: ServerTimingStreamingConfig,
+  config: ServerTimingStreamingConfig
 ): ServerTimingStreamAdapter {
   const sseEventName =
     typeof config.sse_event_name === 'string' && TOKEN_RE.test(config.sse_event_name)
@@ -247,12 +337,20 @@ function buildAdapter(
     ? config.heartbeat_interval_ms
     : DEFAULT_HEARTBEAT_INTERVAL_MS;
   const heartbeatComment = sanitizeHeartbeatComment(config.heartbeat_comment);
+  // §4.7.2.2 · Resume config (default-OFF opt-in; SSE-only)
+  const resumeEnabled = config.resume_enabled === true;
+  const resumeHistorySize = isValidResumeHistorySize(config.resume_history_size)
+    ? config.resume_history_size
+    : DEFAULT_RESUME_HISTORY_SIZE;
 
   let cachedKind: ServerTimingStreamKind | null = null;
   let count = 0;
   let heartbeatCount = 0;
   let closed = false;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  // §4.7.2.2 · Bounded LIFO ring-buffer + last-emitted id cursor.
+  const resumeHistory: ServerTimingResumeEntry[] = [];
+  let lastEventId: string | null = null;
 
   function resolveKind(): ServerTimingStreamKind {
     if (cachedKind === null) cachedKind = detectKind(res);
@@ -287,24 +385,41 @@ function buildAdapter(
     }
   }
 
-  function doEmit(name: string, dur: number | undefined, desc: string | undefined): void {
+  function doEmit(
+    name: string,
+    dur: number | undefined,
+    desc: string | undefined,
+    id?: string
+  ): void {
     if (closed) return;
     if (!isValidMetricName(name)) return;
     const kind = resolveKind();
     if (kind === 'none') return;
+    // §4.7.2.2 · Validate id — non-token id silently drops id but keeps
+    // emit (backwards-compat with pre-§4.7.2.2 handlers).
+    const effectiveId =
+      typeof id === 'string' && id.length > 0 && TOKEN_RE.test(id) ? id : undefined;
     try {
       if (kind === 'sse') {
-        const frame = serializeSseFrame(sseEventName, name, dur, desc);
+        const frame = serializeSseFrame(sseEventName, name, dur, desc, effectiveId);
         // Only write if the underlying socket is still writable.
         if (!res.writableEnded) {
           res.write(frame);
           count++;
+          if (effectiveId !== undefined) {
+            lastEventId = effectiveId;
+            if (resumeEnabled) {
+              resumeHistory.push({ id: effectiveId, name, dur, desc });
+              // Bounded LIFO cap — drop oldest when over capacity.
+              if (resumeHistory.length > resumeHistorySize) {
+                resumeHistory.splice(0, resumeHistory.length - resumeHistorySize);
+              }
+            }
+          }
         }
       } else if (kind === 'websocket') {
         const locals = res.locals as Record<string, unknown>;
-        const ws = locals.serverTimingStreamWebSocket as
-          | ServerTimingStreamSocket
-          | undefined;
+        const ws = locals.serverTimingStreamWebSocket as ServerTimingStreamSocket | undefined;
         if (!ws || typeof ws.send !== 'function') return;
         if (typeof ws.readyState === 'number' && ws.readyState !== WS_READY_OPEN) return;
         ws.send(serializeWsFrame(wsFrameType, name, dur, desc));
@@ -317,8 +432,8 @@ function buildAdapter(
   }
 
   const adapter: ServerTimingStreamAdapter = {
-    emit(name: string, dur?: number, desc?: string) {
-      doEmit(name, dur, desc);
+    emit(name: string, dur?: number, desc?: string, id?: string) {
+      doEmit(name, dur, desc, id);
     },
     async emitAsync<T>(name: string, promise: Promise<T>, desc?: string): Promise<T> {
       const valid = isValidMetricName(name);
@@ -373,6 +488,41 @@ function buildAdapter(
         clearHeartbeatTimer();
       };
     },
+    resumeFrom(
+      sinceId: string | null | undefined,
+      replay: (entry: ServerTimingResumeEntry) => void
+    ) {
+      if (closed) return;
+      if (!resumeEnabled) return;
+      if (typeof replay !== 'function') return;
+      const kind = resolveKind();
+      if (kind !== 'sse') return;
+      // Empty/null/undefined/non-token sinceId → replay every cached entry
+      // (per HTML5 §9.2.5 EventSource default: no Last-Event-ID header on
+      // first connect means client has no prior cursor).
+      const cursor =
+        typeof sinceId === 'string' && sinceId.length > 0 && TOKEN_RE.test(sinceId)
+          ? sinceId
+          : null;
+      // Locate the cursor in cache; entries strictly-after (LIFO order
+      // = insertion order = oldest→newest) get replayed.
+      let startIdx = 0;
+      if (cursor !== null) {
+        const foundIdx = resumeHistory.findIndex(e => e.id === cursor);
+        // cursor found → start after it; cursor not in cache → replay
+        // everything (client is further behind than our ring-buffer holds,
+        // so serve all we have — best-effort recovery per HTML5 §9.2.5).
+        startIdx = foundIdx >= 0 ? foundIdx + 1 : 0;
+      }
+      for (let i = startIdx; i < resumeHistory.length; i++) {
+        const entry = resumeHistory[i];
+        try {
+          replay(entry);
+        } catch {
+          // Per-entry fail-OPEN silent — advisory-only handler-side hook.
+        }
+      }
+    },
     get kind() {
       return resolveKind();
     },
@@ -382,6 +532,9 @@ function buildAdapter(
     get heartbeatCount() {
       return heartbeatCount;
     },
+    get lastEventId() {
+      return lastEventId;
+    },
   };
   return adapter;
 }
@@ -390,7 +543,7 @@ function buildAdapter(
 // unconditionally without a null-guard.
 function buildNoopAdapter(): ServerTimingStreamAdapter {
   return {
-    emit(_name: string, _dur?: number, _desc?: string) {
+    emit(_name: string, _dur?: number, _desc?: string, _id?: string) {
       /* no-op */
     },
     async emitAsync<T>(_name: string, promise: Promise<T>, _desc?: string): Promise<T> {
@@ -412,18 +565,27 @@ function buildNoopAdapter(): ServerTimingStreamAdapter {
         /* no-op */
       };
     },
+    resumeFrom(
+      _sinceId: string | null | undefined,
+      _replay: (entry: ServerTimingResumeEntry) => void
+    ) {
+      /* no-op */
+    },
     kind: 'none',
     count: 0,
     heartbeatCount: 0,
+    lastEventId: null,
   };
 }
 
 export function buildApiServerTimingStreamingMiddleware(
-  config: ServerTimingStreamingConfig | null,
+  config: ServerTimingStreamingConfig | null
 ) {
   const enabled = config?.enabled === true;
   return (_req: Request, res: Response, next: NextFunction) => {
-    const adapter = enabled ? buildAdapter(res, config as ServerTimingStreamingConfig) : buildNoopAdapter();
+    const adapter = enabled
+      ? buildAdapter(res, config as ServerTimingStreamingConfig)
+      : buildNoopAdapter();
     (res.locals as Record<string, unknown>).serverTimingStream = adapter;
     next();
   };
@@ -433,6 +595,18 @@ export const apiServerTimingStreamingMiddleware = () =>
   buildApiServerTimingStreamingMiddleware(PKG_STREAMING_CONFIG);
 
 export const CURRENT_STREAMING_CONFIG = PKG_STREAMING_CONFIG;
+
+// §4.7.2.2 · Public helper exported for handlers that want to read the
+// `Last-Event-ID` request header without hard-coding the field name.
+// Accepts any object with a `headers` map (Express Request, Node IncomingMessage).
+export function getLastEventIdHeader(
+  req: { headers?: Record<string, string | string[] | undefined> },
+  headerName?: string
+): string | null {
+  const config = PKG_STREAMING_CONFIG;
+  const effectiveName = headerName ?? sanitizeResumeHeaderName(config?.resume_header_name);
+  return getLastEventIdFromHeader(req, effectiveName);
+}
 
 // Test-facing helpers (exported for the sibling test file only; runtime code
 // should use the middleware factories above).
@@ -444,6 +618,9 @@ export const __test__ = {
   serializeSseHeartbeat,
   sanitizeHeartbeatComment,
   isValidHeartbeatInterval,
+  isValidResumeHistorySize,
+  sanitizeResumeHeaderName,
+  getLastEventIdFromHeader,
   detectKind,
   buildNoopAdapter,
   buildAdapter,
