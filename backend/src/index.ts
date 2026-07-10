@@ -229,6 +229,18 @@ app.use(apiWebLinkingMiddleware());
 import { apiReportingEndpointsMiddleware } from './middlewares/apiReportingEndpoints';
 app.use(apiReportingEndpointsMiddleware());
 
+// ADR-0010 §4.12 · RFC 7838 HTTP Alternative Services (Apr 2016 · Mark Nottingham +
+// Patrick McManus + Julian Reschke · IETF · https://www.rfc-editor.org/rfc/rfc7838)
+// alternate-transport advertisement advisory header. Reads optional `api_alt_svc` block
+// from `backend/package.json`; missing block or empty/all-invalid services → zero-emit
+// (default OFF). When configured, emits `Alt-Svc: <protocol_id>="<authority>"; ma=<seconds>[; persist=1]`
+// (comma-joined per RFC 7838 §3) at writeHead-flush time, or `Alt-Svc: clear` when
+// `clear: true`. Route-authority-wins-APPEND: if the route pre-sets Alt-Svc, our advisory
+// value is APPENDED as an additional comma-list entry per RFC 7838 §3 list semantics.
+// Enforcement HOLD v2-dual-mount 契约 preserve (advisory · zero-decide-statusCode · zero-body-delta).
+import { apiAltSvcMiddleware } from './middlewares/apiAltSvc';
+app.use(apiAltSvcMiddleware());
+
 // US-097 [OPS-008] 日志统一字段 — 给每个 request 分配 / 透传 trace_id 并绑到 AsyncLocalStorage,
 // 任何此 request 链路内 logger.info/warn/error 自动携带 `trace_id=<x> module=http` 后缀.
 // 必须在 httpMetricsMiddleware 之前 (metric 埋点本身的 log 也带 trace_id) 但在 cors/helmet 之后
