@@ -1,9 +1,9 @@
-# contracts/scoring.md v0.2 · Strategy γ workspace-draft · 6-维打分契约 + Conviction / RiskGate / EntryPlan · Orch v303 10-LOCK canonical folded
+# contracts/scoring.md v0.3 · Strategy γ · Multi-market scoring profiles + Conviction / RiskGate / EntryPlan
 
-> Per Orch v300 msg=6dc1b5f3 §八 24h 交付 + Orch v302 lane 收敛 + Orch v303 msg=f53c62a0 10 canonical LOCK
-> workspace-draft-only · zero PR CREATE until Sprint 1 末 Orch aggregate PR-CREATE-AUTHORIZE (doc-tier 2-sign per msg=d0d11677)
+> Sprint 3 D1 · Orch v319 PR CREATE-AUTHORIZE msg=fe4ed6f3 · Orch v317 Ruling #8 msg=457bb3ee
+> Strategy γ SOLE canonical · doc-tier 2-sign per msg=d0d11677 · reviewers AI-γ + Research
 > Reference: catalyst-900 live https://catalyst-900-qohfq.netlify.app/ + yespsam/a-share-us-catalyst (spec-only cite · zero code-copy msg=ad6585cf)
-> Predecessor: notes/scoring-v0.1-workspace-draft.md (msg=5a496f5e LAND)
+> Predecessor: v0.2 PR #197 `9710ae74` · implementation draft `notes/scoring-multimarket-profiles-v0.3.md` msg=64ce3db0
 
 ## §0 · v0.1 → v0.2 delta ledger
 
@@ -25,7 +25,18 @@
 | 14 | JP/KR profile | Sprint 3 待决 | Sprint 3 与 Research §S4 同批决 (japan_blue_chip / korea_semiconductor_chain 候选) | msg=11e16e41 |
 | 15 | **Refinement A** · SizeHintTier enum | T1_5/T2_3/T3_2/T4_1/SKIP | **TIER_5/TIER_3/TIER_2/TIER_1/SKIP** (downstream 收敛 · AI-γ + γ-2 + Backend γ) | msg=3f7bfd3e §二 |
 | 16 | **Refinement B** · disclaimer_key | SIZING_NOT_ORDER_V1 (v0.2 初稿) | **`"size_hint_advisory"`** 硬锁 | msg=3f7bfd3e §二 |
-| 17 | **Refinement C** · rating_band SoT | v0.2 初稿未显式双粒度 | **`Score.band`** = canonical SoT · **`CandidateListEntry.rating_band`** = `entry.score.band` 只读镜像 | msg=3f7bfd3e §二 |
+| 17 | **Refinement C** · rating_band SoT | v0.2 初稿未显式双粒度 | **`Score.rating`** = canonical SoT · **`CandidateListEntry.rating_band`** = `entry.score.rating` 只读镜像 | msg=3f7bfd3e §二 |
+
+### §0.1 · v0.2 → v0.3 Sprint 3 delta
+
+| # | 领域 | v0.2 | v0.3 canonical | 权威锚 |
+|---|---|---|---|---|
+| 1 | `WeightsProfile` | 5 values | **7 values** · add `japan_multibagger` + `korea_multibagger` | Orch v319 D1 |
+| 2 | generic `multibagger` | G0.35 / M0.10 | **G0.30 / M0.15** · Σ=1 unchanged | Strategy draft msg=64ce3db0 |
+| 3 | multi-market boundary | profile-only | `MarketScope = "US" \| "JP" \| "KR"` + pre-scoring `DimensionAdapter` | Strategy draft msg=64ce3db0 |
+| 4 | RiskGate vocabulary | 12 codes | **22 codes** · 5 JP + 5 KR appended | Orch v317 Ruling #8 msg=457bb3ee |
+| 5 | replay registry | implicit | **6 replayable profiles** · `custom` excluded until explicit weights are persisted | Research D3 / Orch v319 |
+| 6 | compatibility | v0.2 only | all additions are additive; existing US payloads and absent JP/KR signals remain valid | Sprint 3 D1 |
 
 ## §1 · Contract purpose (v0.1 §1 retain)
 
@@ -51,8 +62,10 @@ Score {
   trend:       Dimension
   risk:        Dimension
   weights:     Weights                 // §2.3 · profile-driven
-  weights_profile: "us_preferred" | "multibagger" | "custom" | "japan_blue_chip"? | "korea_semiconductor_chain"?
-                                       // NEW v0.2 · profile 显式记录 · JP/KR profile 候选 Sprint 3 决
+  weights_profile: "us_preferred" | "multibagger" | "custom"
+                 | "japan_blue_chip" | "korea_semiconductor_chain"
+                 | "japan_multibagger" | "korea_multibagger"
+                                       // v0.3 · 7-value canonical union
   total:       number ∈ [0, 100]       // 加权均值 · rounded 1 decimal
   rating:      "A" | "B" | "C" | "D" | "F"
                                        // NEW v0.2 · Score.total → Band 5-档 映射 (§2.2) · Conviction.level 独立 · DP §6 rating 字段承接
@@ -103,29 +116,48 @@ Weights {
 
 Research §S3 5-tier 命名 (Buy/Outperform/Neutral/Underperform/Avoid) 与阈值 (76/68/58) 仅作 spec-extract 上游对照 · v0.2 canonical 以 Strategy γ 首位。
 
-### §2.3 · Default weights v0.2 (Orch v303 LOCK 8)
+### §2.3 · Weight registry v0.3 (Orch v303 LOCK 8 + Sprint 3 D1)
 
-**us_preferred profile** (tab 2 美股优选 · default · switcher 可选):
-- quality 0.20 · growth 0.20 · valuation 0.15 · moat 0.20 · trend 0.15 · risk 0.10
+| profile | market | quality | growth | valuation | moat | trend | risk | Σ |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `us_preferred` | US | 0.20 | 0.20 | 0.15 | 0.20 | 0.15 | 0.10 | 1.00 |
+| `multibagger` | US/default | 0.10 | **0.30** | 0.10 | **0.15** | 0.20 | 0.15 | 1.00 |
+| `japan_blue_chip` | JP | 0.25 | 0.15 | 0.15 | 0.20 | 0.15 | 0.10 | 1.00 |
+| `korea_semiconductor_chain` | KR | 0.15 | 0.30 | 0.10 | 0.15 | 0.20 | 0.10 | 1.00 |
+| `japan_multibagger` | JP | 0.10 | 0.25 | 0.10 | 0.15 | 0.25 | 0.15 | 1.00 |
+| `korea_multibagger` | KR | 0.10 | 0.30 | 0.10 | 0.10 | 0.25 | 0.15 | 1.00 |
 
-**multibagger profile** (tab 4 高倍潜力 · **固定** · switcher 不允许 per LOCK 8):
-- quality 0.10 · growth 0.35 · valuation 0.10 · moat 0.10 · trend 0.20 · risk 0.15
+`custom` is the seventh `WeightsProfile` value but has no registry row: the caller must supply six explicit weights satisfying `Σ=1.0 ± 1e-9`. It is not replayable unless those exact weights are persisted in the snapshot.
 
-**日/韩 profile 候选 (Sprint 3 与 Research §S4 同批决 · v0.2 open · DP γ-2 msg=11e16e41 §5.2 建议)**:
-- `japan_blue_chip` (tab 3 · JP 覆盖率 89%)
-- `korea_semiconductor_chain` (tab 3 · KR 覆盖率 88%)
-- v0.2 保 open · v0.3 Sprint 3 敲定
+**v0.3 tuning rationale**:
+- Generic `multibagger`: Growth 0.35→0.30 and Moat 0.10→0.15 prevents low-moat momentum names from winning on growth alone while retaining the growth tilt.
+- `japan_multibagger`: Growth + Trend = 0.50, reflecting lower reported growth dispersion and requiring market confirmation.
+- `korea_multibagger`: Growth + Trend = 0.55, retaining a stronger growth tilt for KOSDAQ semiconductor, battery-material and platform cohorts.
+
+### §2.4 · Profile/market mapping and replay set (v0.3)
+
+| profile | `MarketScope` | replayable |
+|---|---|---|
+| `us_preferred` | `US` | yes |
+| `multibagger` | `US` | yes |
+| `custom` | `US` default | **no**, unless explicit weights are persisted |
+| `japan_blue_chip` | `JP` | yes |
+| `japan_multibagger` | `JP` | yes |
+| `korea_semiconductor_chain` | `KR` | yes |
+| `korea_multibagger` | `KR` | yes |
+
+The canonical replay whitelist therefore contains **six named registry profiles**, while `WeightsProfile` contains **seven values**. Consumers must not conflate the two counts.
 
 **tab 消费 profile 缺省**:
 - tab 1 A股早报: us_preferred (mapped US 侧 Score 派生)
 - tab 2 美股优选: us_preferred (default · switcher 允许 tab 2 单页切至 multibagger/custom)
-- tab 3 日韩市场: us_preferred (v0.2 default · Sprint 3 起 JP/KR profile 敲定后切换)
-- tab 4 高倍潜力: multibagger (**固定**)
+- tab 3 日韩市场: JP → `japan_blue_chip`; KR → `korea_semiconductor_chain`; multibagger variants are explicit opt-in
+- tab 4 高倍潜力: market-scoped multibagger profile (`multibagger` / `japan_multibagger` / `korea_multibagger`)
 - tab 5 回测证据: profile 参数 (`?profile=<slug>`) 支持全档回测
 - tab 6 每日日报: 报告体内 profile 显式标注
 - tab 7 报告历史: 快照持久化 profile
 
-**Query param canonical**: `GET /api/v1/scores?ticker=&profile=us_preferred|multibagger|custom&include=inputs` (Backend γ v0.2 mapping)
+**Query param canonical**: `GET /api/v1/scores?ticker=&profile=<WeightsProfile>&include=inputs`; Backend must reject `custom` unless explicit weights accompany the request and are persisted.
 
 ## §3 · Per-dimension input surface (v0.1 §3.1-§3.6 retain byte-identical) + §3.7 catalyst-relevance canonical
 
@@ -146,6 +178,40 @@ Gross margin absolute + sector-rank · ROIC – WACC spread (2y avg) · Market s
 
 ### §3.6 · Risk inputs (v0.1 retain · inverse-scored)
 Realized vol (30d/90d) · Max drawdown (12m) · Beta (30d rolling) · Balance sheet: net-debt/EBITDA + current ratio · Concentration (single-customer/geo revenue share) · Regulatory/litigation flag (binary penalty)
+
+### §3.6.1 · Multi-market normalization boundary (v0.3)
+
+```ts
+type MarketScope = "US" | "JP" | "KR"
+
+interface RawFinancialData {
+  ticker: string
+  market: MarketScope
+  as_of: string
+  available_at: string
+  raw: Record<string, unknown>
+}
+
+interface DimensionAdapter {
+  market: MarketScope
+  normalizeQuality(raw: RawFinancialData): QualityInputs
+  normalizeGrowth(raw: RawFinancialData): GrowthInputs
+  normalizeValuation(raw: RawFinancialData): ValuationInputs
+  normalizeMoat(raw: RawFinancialData): MoatInputs
+  normalizeTrend(raw: RawFinancialData): TrendInputs
+  normalizeRisk(raw: RawFinancialData): RiskInputs
+}
+```
+
+**Boundary rules**:
+1. The adapter runs at the ingestion/assembly boundary. `runScoringPipeline` remains market-agnostic and consumes the existing six typed `*Inputs`.
+2. `raw.market` must equal the selected profile's `MarketScope`; an explicit conflicting scope is a validation error, not an override.
+3. `available_at <= as_of` is mandatory. Later filings/prices are excluded before normalization.
+4. Dimension calculations remain in local currency (USD/JPY/KRW). FX (`usdjpy` / `usdkrw`) is presentation/EntryPlan metadata and must not alter dimension inputs.
+5. JP uses J-GAAP/EDINET semantics and TSE 33-sector peers; KR uses K-IFRS/DART semantics and KRX peers. Cross-shareholding/preferred-stock adjustments must be identified in `inputs` and `source_versions`.
+6. Missing required inputs remain missing and reduce evidence/coverage according to the dimension contract; adapters must not silently coerce unknown fundamentals to economic zero.
+7. Bundle assembly must map `normalizeTrend` → `trend_inputs` and `normalizeRisk` → `risk_inputs`. Cross-wiring is a hard contract failure.
+8. Existing typed US `TickerDataBundle` callers bypass raw normalization and remain byte-compatible with v0.2.
 
 ### §3.7 · Catalyst-relevance score (v0.2 canonical formula · NEW)
 
@@ -297,11 +363,11 @@ CHECK (conviction_final = ROUND(LEAST(GREATEST(
 
 **QADocs sum assertion (msg=8a1899a2 采纳)**: `Σ adjustments[].delta == final - base` · 契约层 canonical · 存储层 CHECK 断言。
 
-## §5 · RiskGate 12-trigger canonical (LOCK 3)
+## §5 · RiskGate 22-trigger canonical (LOCK 3 + Orch v317 Ruling #8)
 
 **Purpose**: 硬 gate · Entry Plan 生成前的 pre-check · 消费 near-real-time 信号 (news / earnings 邻近 / IV 冲击) · 与 Score.risk 维度正交。
 
-### §5.1 · RiskGate object shape (v0.2 · v0.1 §5 retain)
+### §5.1 · RiskGate object shape (v0.3 · additive)
 
 ```
 RiskGate {
@@ -313,7 +379,7 @@ RiskGate {
 }
 
 Trigger {
-  code:     string    // 12-canonical enum (§5.3)
+  code:     string    // 22-canonical enum (§5.3)
   severity: "info" | "warn" | "block"
   detail:   string    // ≤ 240 chars
 }
@@ -329,7 +395,7 @@ Trigger {
 
 **Conviction 联动**: YELLOW → Adjustment `{delta: -5}` · RED → Adjustment `{delta: -10}` · 单条 Adjustment 独立 · §4.2 table.
 
-### §5.3 · 12-trigger canonical (v0.2 · 9 US + 3 A股)
+### §5.3 · 22-trigger canonical (v0.3 · 9 US + 3 A股 + 5 JP + 5 KR)
 
 | # | code | severity | market | detail template |
 |---|---|---|---|---|
@@ -345,8 +411,31 @@ Trigger {
 | 10 | `ST_TAG` | **block** | A股 | 上交所/深交所 ST 或 *ST 标记 · 不入 Entry Plan |
 | 11 | `PRICE_LIMIT_APPROACH` | warn | A股 | 距日内涨/跌停幅度 ≤ 1% · 流动性受限风险 |
 | 12 | `SUSPENDED` | **block** | A股 | 交易所停牌 (临停/长停) · 与 HALT_ACTIVE (US) 平行编码 · 双码保留 |
+| 13 | `TSE_HALT` | **block** | JP | TSE trading halt active |
+| 14 | `EDINET_DELAY` | warn | JP | EDINET statutory filing delayed |
+| 15 | `CORPORATE_GOVERNANCE_ISSUE` | warn | JP | corporate-governance disclosure issue |
+| 16 | `TSE_TOKUBETSU_CHI` | warn | JP | TSE special-caution designation active |
+| 17 | `TSE_KANRI` | **block** | JP | TSE supervision post / delisting risk |
+| 18 | `KRX_HALT` | **block** | KR | KRX trading halt active |
+| 19 | `DART_LATE_FILING` | warn | KR | DART statutory filing delayed |
+| 20 | `INSIDER_TRADING_FLAG` | **block** | KR | insider-trading flag active |
+| 21 | `KRX_UNFAITHFUL` | warn | KR | KRX unfaithful-disclosure designation |
+| 22 | `KRX_INVESTOR_ALERT` | warn | KR | KRX investor-alert designation |
 
-**Extensibility**: v0.3 起可补 (港股 `HK_SHORT_SELL_HALT` 候选 · Research §S4 输入后决)。
+**Machine-countable assertion**:
+
+```text
+RISK_GATE_TRIGGER_CODES_V0_3=EARNINGS_T-2,EARNINGS_T-0,HALT_ACTIVE,MERGER_PENDING,LITIGATION_MATERIAL,IV_SHOCK,LIQUIDITY_LOW,RESTATEMENT_30D,DELISTING_NOTICE,ST_TAG,PRICE_LIMIT_APPROACH,SUSPENDED,TSE_HALT,EDINET_DELAY,CORPORATE_GOVERNANCE_ISSUE,TSE_TOKUBETSU_CHI,TSE_KANRI,KRX_HALT,DART_LATE_FILING,INSIDER_TRADING_FLAG,KRX_UNFAITHFUL,KRX_INVESTOR_ALERT
+RISK_GATE_TRIGGER_COUNT_V0_3=22
+```
+
+**Ruling #8 merge semantics**:
+- AI-γ contributed `TSE_HALT`, `EDINET_DELAY`, `CORPORATE_GOVERNANCE_ISSUE`, `KRX_HALT`, `DART_LATE_FILING`, `INSIDER_TRADING_FLAG`.
+- Strategy γ contributed `TSE_TOKUBETSU_CHI`, `TSE_KANRI`, `KRX_UNFAITHFUL`, `KRX_INVESTOR_ALERT`.
+- The overlapping Korean halt code is canonicalized as **`KRX_HALT`**; `KRX_TRADING_HALT` is invalid.
+- JP/KR signal fields are optional for existing US/A-share callers. Absence means "not observed/not applicable", not `true`; it must not create a trigger.
+
+**Extensibility**: Hong Kong `HK_SHORT_SELL_HALT` remains a future candidate and is not part of the 22-code v0.3 union.
 
 ## §6 · EntryPlan (v0.2 · time_horizon 5 semantic enum · LOCK 3 + Adjustment ref)
 
@@ -417,69 +506,69 @@ v0.1 tenor-based (`1w/1m/3m/6m/1y`) **弃用** · 语义 5-enum 取代 · 与 ca
 |---|---|---|
 | 1 · A股早报 | Conviction · RiskGate · EntryPlan (mapped A-share candidate) · `relevance_score` (§3.7) | γ-1 |
 | 2 · 美股优选 | Score (6-dim + rating) · Conviction · RiskGate · EntryPlan (detail-panel) · profile switcher | γ-1 |
-| 3 · 日韩市场 | Score (6-dim + rating · v0.2 us_preferred default · Sprint 3 JP/KR profile) | γ-2 |
-| 4 · 高倍潜力 | Score with `weights: multibagger` (**fixed**) · Conviction | γ-2 |
+| 3 · 日韩市场 | Score (6-dim + rating · JP/KR market profile + optional market multibagger variant) | γ-2 |
+| 4 · 高倍潜力 | Score with market-scoped multibagger profile · Conviction | γ-2 |
 | 5 · 回测证据 | Score history 6m PIT · Conviction history · `?profile=<slug>` | γ-3 |
 | 6 · 每日日报 | Conviction 变动 ≥5 pts · new EntryPlans · gate flips · AI-γ Recommendation entries[] | γ-3 |
 | 7 · 报告历史 | Score+Conviction+RiskGate+EntryPlan 快照 (persisted with `scoring_id + snapshot_hash`) | γ-3 |
 
-### §7.1 · AI-γ consumption (v0.2 new)
+### §7.1 · AI-γ consumption (v0.3)
 
-AI-γ `contracts/recommendation.md` v0.1 (msg=605c8b1e) 引用:
+AI-γ `contracts/recommendation.md` 引用:
 - `Recommendation.score_ref = { scoring_id, snapshot_hash }` · byte-identical §2.1 canonical
 - `Recommendation.conviction_ref = Conviction.final` at generation-time
 - `Recommendation.risk_gate_status = RiskGate.gate` (GREEN|YELLOW|RED)
 - `Recommendation.entry_plan_ref` (若 gate=GREEN 且 EntryPlan 已生成)
+- D2 v0.3 must reuse the exact 7-value profile union and 22-code RiskGate vocabulary; recommendation lane has no rename or weight-definition authority
 
-## §8 · Non-goals · v0.2 exclusions (v0.1 §8 retain)
+## §8 · Non-goals · v0.3 exclusions
 
 - Forward analyst estimates: excluded (PIT purity)
-- Alternative data: not in v0.2
-- Options-derived signals beyond `IV_SHOCK`: not in v0.2
+- Alternative data: not in v0.3
+- Options-derived signals beyond `IV_SHOCK`: not in v0.3
 - Cryptocurrency / commodities scoring: out of scope
 - Backtesting engine wiring: contract only · impl 归 Backend γ + DP γ-2
+- JP/KR raw collector implementation and schema migrations: outside Strategy lane
+- Currency conversion inside dimension scoring: prohibited; FX is presentation/EntryPlan metadata only
 
-## §9 · Open questions for v0.3+ (v0.1 §9 refine)
+## §9 · Open questions for v0.4+
 
-- **Q1 · v0.3 JP/KR weight profiles** (`japan_blue_chip` / `korea_semiconductor_chain`): Sprint 3 与 Research §S4 联动决 · DP γ-2 §5.2 建议为初始锚
-- **Q2 · Adjustment cap 收紧** to ±15 (v0.3 观察): 若 Sprint 2 数据显示 ±20 过宽 · 收紧至 ±15 保留讨论
-- **Q3 · RiskGate 港股扩展**: `HK_SHORT_SELL_HALT` 候选 (v0.3 Research §S4 输入决)
-- **Q4 · Conviction level 补 `VERY_HIGH ≥ 90`** (v0.3): 若 Sprint 2 观察到 90+ 区段行为差异显著
-- **Q5 · Currency FX display**: EntryPlan.entry 存 native · 追加 USD 值 for cross-book display (v0.3)
+- **Q1 · Adjustment cap 收紧** to ±15: 需回测证据，不在 v0.3 改
+- **Q2 · RiskGate 港股扩展**: `HK_SHORT_SELL_HALT` 候选
+- **Q3 · Conviction level 补 `VERY_HIGH ≥ 90`**: 需观察 90+ 区段行为差异
+- **Q4 · Currency FX display**: EntryPlan.entry 存 native · 可追加 USD 只读展示值
+- **Q5 · custom replay**: 定义 explicit-weight snapshot schema 后才进入 replay whitelist
 
-## §10 · Lane dependencies · v0.2 状态 (Sprint 1 末 aggregate PR CREATE-AUTHORIZE 待批)
+## §10 · Sprint 3 dependency handoff
 
-| lane | v0.2 契约 | ETA | 状态 |
+| lane | v0.3 handoff | work item | 状态 |
 |---|---|---|---|
-| **Strategy γ** | scoring v0.2 (本文) | ✅ 本次 LAND | in_review |
-| DP γ | catalyst-mapping v0.2 §6 完整 SQL | now+~12h | in_progress · msg=7b951307 draft 已就 |
-| DP γ-2 | notes/182 v0.2 (9-枚举 + 6-维 payload 明记 + JP/KR profile 补) | Sprint 1 末 +36h | in_progress · msg=11e16e41 |
-| Backend γ | API mapping v0.2 (11 delta) | now+~12h | in_progress · msg=eee7bc71 |
-| AI-γ | recommendation v0.1 (无 v0.2 · Orch v303 §五 保 v0.1) | ✅ msg=605c8b1e | LAND |
-| QADocs γ | 27-checklist v0.2 (48 触点 · 7 契约) | Research §S3 + 12h~36h | in_progress · msg=8a1899a2 |
-| Research §S3 | spec-extract v0.2 (5 段 demote) | Strategy γ v0.2 LAND + 12h | in_progress · msg=49658402 |
-| Cleanup γ | 28-workspace-reuse-audit v0.5 | ✅ msg=8675050e | LAND |
-| Frontend γ-1 | shell v0.1 (Sprint 1 shell 足够) + types.ts 阈值 v0.2 回滚 75/50 | Sprint 1 末 aggregate | LAND v0.1 · v0.2 types 待 |
-| Frontend γ-2 | primitive Props v0.1 + tab 3/4 shell | ✅ msg=0bbbcf4f | LAND |
-| Frontend γ-3 | tab 5-7 shell v0.1 | ✅ msg=4935ac45 | LAND |
+| **Strategy γ** | scoring v0.3 (本文) | task #177 | PR-authorized |
+| AI-γ | recommendation contract v0.3 consumes 7 profiles / 22 codes | task #179 | in progress |
+| Research §S3 | tab 3/4/5 spec extract validates profile/replay distinction | PR #213 | review |
+| DP γ-2 | raw JP/KR collectors populate adapter inputs and PIT metadata | task #169 / #180 | in progress |
+| Backend γ | route whitelist exposes six replayable named profiles | task #176 | in progress |
+| Frontend γ-2/γ-3 | tab 3/4 profile selection + tab 5 replay selector | task #178 / #181 | in progress |
+| QADocs γ | 152-case checklist includes 7-profile/6-replay and 22-code assertions | task #175 | in progress |
 
-## §11 · v0.2 → v0.3 upgrade path (Sprint 2+ · Sprint 3 主体)
+## §11 · v0.3 compatibility and validation gates
 
-- **§3.7.2 kind_auto_classifier GA**: 规则映射表落地 · `unclassified` 目标零占用
-- **§2.3 JP/KR profile 敲定**: japan_blue_chip / korea_semiconductor_chain 6-维权重 lock in
-- **§5.3 RiskGate 港股扩展**: HK_SHORT_SELL_HALT 等
-- **§4.2 Adjustment cap 观察 · 若收紧至 ±15**
-- **§6.1 EntryPlan currency dual display**: native + USD
+1. Every registry profile sums to `1.0 ± 1e-9`; the seven-value type and six-value replay whitelist are asserted separately.
+2. Generic `multibagger` tuning is a scored-output change and requires `source_versions.* = @v0.3.x`; old snapshots retain their recorded v0.2 weights.
+3. The ten new RiskGate codes are additive. US/A-share callers that omit JP/KR signals produce the same gate as v0.2.
+4. JP/KR adapter fixtures assert `available_at <= as_of`, local-currency scoring, missingness preservation and trend/risk non-cross-wiring.
+5. Replay persists profile slug, exact weights, `as_of`, `computed_at`, input `available_at`, `source_versions`, `scoring_id`, and `snapshot_hash`.
+6. A v0.2 `TickerDataBundle` with an existing profile remains accepted; no migration or `schema.prisma` change is part of D1.
 
-## §12 · Discipline (v0.1 §12 retain + v0.2 补)
+## §12 · Discipline
 
-- workspace-draft-only per Orch v300 §八 msg=6dc1b5f3 + v302 lane 契约 msg=a5297512 + v303 msg=f53c62a0
+- PR CREATE authorized by Orch v319 msg=fe4ed6f3 · task #177 claimed
 - Strategy γ SOLE `contracts/scoring.md` (Orch v302 lane 契约 · single-point canonical authority)
 - 借鉴独立性 msg=ad6585cf: catalyst-900 spec-observations only · **zero code-copy** · Research §S3 spec-extract 独立通读, 本契约 Strategy γ 自撰
 - 免费源 msg=4f6d2466 · schema.prisma untouched (DP γ 单一 aggregator entry)
 - PG SELECT-only msg=702b81be · SSH root 永久禁 msg=b091c74d · 凭证 zero literal `sk_agent_<redacted>`
 - US-038 SeededRandom Math.random=0 SHA-256 deterministic-derive (与 §2.1 snapshot_hash 铁律配合)
-- doc-tier ≥2 sign per msg=d0d11677 (Sprint 1 末 aggregate PR CREATE-AUTHORIZE 待 Orch 批)
+- doc-tier gate = self-sign + ≥1 non-owner ACCEPT per msg=d0d11677; requested reviewers are AI-γ and Research
 - 报告仅用: tab 编号 1-7 · 字段名 (Score/Conviction/RiskGate/EntryPlan) · Sprint N · lane 名 · 契约名 · tab % · gap · ETA · blocker (Orch v300 §五 纪律)
 - **弃用**: σ/CASCADE/tenner/DECUPLE/CENTUM/QUADRILOGY/TETRALOGY/DENARIUS/POST-DOUBLE-CENTURION 学术堆叠术语 (v300 §五 forbidden)
 - perpetual dispatch msg=eb4b0016/21867874/a8175861/210d262d LIVE · agents 不停
