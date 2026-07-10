@@ -94,6 +94,101 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # P0 regression guard: every producer piped through tee must preserve its
+      # exit status. This step parses this workflow, proves an unsafe mutation is
+      # rejected, and exercises both failing and passing producers with logs.
+      - name: CI tee exit-code regression guard
+        id: tee_exit_guard
+        run: |
+          set -o pipefail
+          ruby <<'RUBY'
+          require 'yaml'
+
+          workflow_path = '../.github/workflows/ci.yml'
+          workflow = YAML.safe_load(File.read(workflow_path), aliases: true)
+          unless workflow.is_a?(Hash) && workflow['jobs'].is_a?(Hash)
+            raise 'ci.yml did not parse into a workflow with jobs'
+          end
+
+          tee_word = %w[t e e].join
+          tee_pipeline_pattern = Regexp.new("\\|\\s*#{tee_word}(?:\\s|$)")
+          pipefail_pattern = /^\s*set\s+-o\s+pipefail(?:\s|$)/
+          pipe_status_pattern = /PIPESTATUS\s*\[\s*0\s*\]/
+
+          inspect_workflow = lambda do |document|
+            violations = []
+            pipeline_count = 0
+            document.fetch('jobs', {}).each do |job_name, job|
+              job.fetch('steps', []).each_with_index do |step, step_index|
+                next unless step['run'].is_a?(String)
+
+                lines = step['run'].lines.map(&:chomp)
+                tee_lines = lines.each_index.select { |index| tee_pipeline_pattern.match?(lines[index]) }
+                tee_lines.each_with_index do |tee_line, tee_index_position|
+                  pipeline_count += 1
+                  next_tee_line = tee_lines[tee_index_position + 1] || lines.length
+                  has_pipefail = lines[0...tee_line].any? do |line|
+                    pipefail_pattern.match?(line)
+                  end
+                  captures_producer_status = lines[(tee_line + 1)...next_tee_line].any? do |line|
+                    pipe_status_pattern.match?(line)
+                  end
+
+                  unless has_pipefail || captures_producer_status
+                    violations << "#{job_name}/#{step['name'] || "step-#{step_index + 1}"}: line #{tee_line + 1}"
+                  end
+                end
+              end
+            end
+            { pipeline_count: pipeline_count, violations: violations }
+          end
+
+          current = inspect_workflow.call(workflow)
+          unless current[:violations].empty?
+            raise "tee pipelines can mask producer failures:\n#{current[:violations].join("\n")}"
+          end
+
+          mutated = Marshal.load(Marshal.dump(workflow))
+          happy_step = mutated.fetch('jobs').fetch('backend-check').fetch('steps').find do |step|
+            step['name'] == 'Env validation (check-env, happy path)'
+          end
+          unless happy_step && happy_step['run'].is_a?(String)
+            raise 'mutation target step not found'
+          end
+          happy_step['run'] = happy_step['run'].sub(/^\s*set\s+-o\s+pipefail\s*\n/, '')
+          mutation_result = inspect_workflow.call(mutated)
+          unless mutation_result[:violations].any? do |violation|
+            violation.include?('Env validation (check-env, happy path)')
+          end
+            raise 'static guard failed to reject a deliberately unsafe mutation'
+          end
+
+          puts "ci.yml parsed; #{current[:pipeline_count]} tee pipeline(s) preserve producer status"
+          puts 'unsafe mutation rejected as expected'
+          RUBY
+
+          set +e
+          bash -c 'printf "%s\n" "controlled producer failure"; exit 23' 2>&1 \
+            | tee ../ci-pipefail-fail-probe.log
+          fail_rc=$?
+          set -e
+          if [ "$fail_rc" -ne 23 ]; then
+            echo "::error::failing producer exit was masked (expected 23, got $fail_rc)"
+            exit 1
+          fi
+          grep -Fq "controlled producer failure" ../ci-pipefail-fail-probe.log
+
+          set +e
+          bash -c 'printf "%s\n" "controlled producer success"' 2>&1 \
+            | tee ../ci-pipefail-pass-probe.log
+          pass_rc=$?
+          set -e
+          if [ "$pass_rc" -ne 0 ]; then
+            echo "::error::passing producer returned unexpected exit $pass_rc"
+            exit 1
+          fi
+          grep -Fq "controlled producer success" ../ci-pipefail-pass-probe.log
+
       # US-001 (OPS-001) env 校验脚本：CI 跑一遍 check-env，确保 EnvValidator
       # schema 与现有 .env / 部署文档同步。注入"production-grade 合法 env 子集"
       # （DB+Redis+JWT+TRADING_AGENTS_URL）让脚本能完整跑到 exit=0；未来任何
@@ -110,7 +205,9 @@ jobs:
           REDIS_HOST: ci-redis
           JWT_SECRET: ci-only-jwt-secret-32chars-min-do-not-deploy-aaaaaaaaaaaaaaaa
           TRADING_AGENTS_URL: http://trading-agents.internal:8000
-        run: npm run check-env 2>&1 | tee ../backend-envcheck.log
+        run: |
+          set -o pipefail
+          npm run check-env 2>&1 | tee ../backend-envcheck.log
         continue-on-error: false
 
       - name: Env validation (check-env, fail-fast on missing env)
@@ -131,7 +228,9 @@ jobs:
 
       - name: Typecheck (tsc --noEmit)
         id: typecheck
-        run: npx tsc --noEmit 2>&1 | tee ../backend-typecheck.log
+        run: |
+          set -o pipefail
+          npx tsc --noEmit 2>&1 | tee ../backend-typecheck.log
         continue-on-error: false
 
       # US-098 (OPS-009) OpenAPI 自动生成 drift guard：跑 `buildOpenApiSpec()` 与
@@ -140,7 +239,9 @@ jobs:
       # 并打印第一处差异位置 + 修复命令提示。不依赖 DB / 任何外部服务。
       - name: OpenAPI drift check (docs/openapi.json ↔ code)
         id: openapi_check
-        run: npm run docs:openapi:check 2>&1 | tee ../backend-openapi-check.log
+        run: |
+          set -o pipefail
+          npm run docs:openapi:check 2>&1 | tee ../backend-openapi-check.log
         continue-on-error: false
 
       # Phase 0 hardening: architecture drift guard. Existing cycles / layer
@@ -148,17 +249,23 @@ jobs:
       # mode fails only when a PR introduces new unbaselined debt.
       - name: Architecture drift check
         id: architecture_check
-        run: node ../scripts/ci/check_architecture.js --strict --baseline ../scripts/ci/architecture-baseline.json 2>&1 | tee ../backend-architecture-check.log
+        run: |
+          set -o pipefail
+          node ../scripts/ci/check_architecture.js --strict --baseline ../scripts/ci/architecture-baseline.json 2>&1 | tee ../backend-architecture-check.log
         continue-on-error: false
 
       - name: Lint (eslint)
         id: lint
-        run: npm run lint 2>&1 | tee ../backend-lint.log
+        run: |
+          set -o pipefail
+          npm run lint 2>&1 | tee ../backend-lint.log
         continue-on-error: false
 
       - name: Test
         id: test
-        run: npm test 2>&1 | tee ../backend-test.log
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee ../backend-test.log
         continue-on-error: false
 
       # 失败时上传日志 + 在 PR 上评论关键错误片段
@@ -170,6 +277,8 @@ jobs:
           path: |
             backend-envcheck.log
             backend-envcheck-fail.log
+            ci-pipefail-fail-probe.log
+            ci-pipefail-pass-probe.log
             backend-typecheck.log
             backend-openapi-check.log
             backend-architecture-check.log
@@ -230,12 +339,16 @@ jobs:
 
       - name: Typecheck (tsc --noEmit)
         id: typecheck
-        run: npx tsc --noEmit 2>&1 | tee ../frontend-typecheck.log
+        run: |
+          set -o pipefail
+          npx tsc --noEmit 2>&1 | tee ../frontend-typecheck.log
         continue-on-error: false
 
       - name: Lint (eslint)
         id: lint
-        run: npm run lint 2>&1 | tee ../frontend-lint.log
+        run: |
+          set -o pipefail
+          npm run lint 2>&1 | tee ../frontend-lint.log
         continue-on-error: false
 
       # US-131 (OPS-012) frontend test 加入 CI matrix。React-scripts 基于 jest，
@@ -246,7 +359,9 @@ jobs:
         id: test
         env:
           CI: 'true'
-        run: npm test -- --watchAll=false --passWithNoTests 2>&1 | tee ../frontend-test.log
+        run: |
+          set -o pipefail
+          npm test -- --watchAll=false --passWithNoTests 2>&1 | tee ../frontend-test.log
         continue-on-error: false
 
       # US-131 (OPS-012) frontend build：react-scripts build 校验生产包能编译。
@@ -262,7 +377,9 @@ jobs:
           CI: 'true'
           GENERATE_SOURCEMAP: 'false'
           DISABLE_ESLINT_PLUGIN: 'true'
-        run: npm run build 2>&1 | tee ../frontend-build.log
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee ../frontend-build.log
         continue-on-error: false
 
       - name: Upload logs on failure
@@ -326,6 +443,7 @@ jobs:
           # 这个值仅用于 `compose config` 解析，从不真正起容器。
           POSTGRES_PASSWORD: ci-only-not-a-real-password
         run: |
+          set -o pipefail
           docker compose -f docker-compose.yml config 2>&1 | tee ../docker-compose-config.log
           # docker compose config 退出码 0 = YAML / 占位符 / 服务声明全合法
           # 任何 typo / env 占位符未填 / volumes 引用错都会 != 0
