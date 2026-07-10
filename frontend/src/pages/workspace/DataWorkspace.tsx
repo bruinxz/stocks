@@ -1,8 +1,6 @@
-import React, { lazy, Suspense, useEffect, useMemo, useState } from 'react';
-import { Card, Empty, Statistic, Space, Tag, Spin, Tooltip, Typography, Segmented } from 'antd';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Card, Empty, Statistic, Space, Tag, Tooltip, Typography } from 'antd';
 import {
-  CloudSyncOutlined,
-  MonitorOutlined,
   DashboardOutlined,
   StockOutlined,
 } from '@ant-design/icons';
@@ -25,41 +23,24 @@ import {
   buildDataWorkspaceTabViewModel,
 } from './dataWorkspaceTabHelpers';
 
-// legacy 页面（仍在使用 + 数据真实），用 lazy 减少初始 bundle
-const DataUpdateStatus = lazy(() => import('../DataUpdateStatus'));
-const TaskScheduler = lazy(() => import('../TaskScheduler'));
-const SystemLogs = lazy(() => import('../SystemLogs'));
-const HealthMonitor = lazy(() => import('../HealthMonitor'));
-
 /**
  * 数据中心 (Data Workspace) shell.
  *
  * - 'health'     → US-079 数据健康度看板（DataHealthDashboard）
  * - 'stocks'     → 个股趋势浏览器（StockExplorer，左列表 + 右 K 线）
- * - 'sync'       → 行情同步状态（legacy DataUpdateStatus）
- * - 'tasks'      → 调度任务（legacy TaskScheduler）
- * - 'logs'       → 系统日志（legacy SystemLogs）
- * - 'monitoring' → 运行健康监控（HealthMonitor）
  *
  * US-060: 顶部 KPI / 副标题 / 状态 Tag 现在按 tab 切换 — 由
  * `dataWorkspaceTabHelpers.buildDataWorkspaceTabViewModel(activeKey, health)`
  * 派生, 每个 tab 都有 "真内容" 的上下文 KPI, 不再共用同一组固定 statistic.
  */
-/** 收敛后一级 tab key — 运维三视图折进 'ops'. */
-type DataTopTabKey = 'health' | 'stocks' | 'sync' | 'ops';
+type DataTopTabKey = 'health' | 'stocks';
 
 const DataWorkspace: React.FC = () => {
-  // 收敛 (2026-07-04): 原 6 个一级 tab 里 调度任务/系统日志/健康监控 3 个纯 admin
-  // 运维视图折进单个「运维」tab, 内部用二级 Segmented 切换, 一级 6 → 4.
   const tabs: WorkspaceTab[] = [
     { key: 'health', label: '数据健康', icon: <DashboardOutlined /> },
     { key: 'stocks', label: '个股趋势', icon: <StockOutlined /> },
-    { key: 'sync', label: '行情同步', icon: <CloudSyncOutlined /> },
-    { key: 'ops', label: '运维', icon: <MonitorOutlined /> },
   ];
   const [activeKey, setActiveKey] = useState<DataTopTabKey>('health');
-  // 「运维」二级子视图: 调度任务 / 系统日志 / 健康监控.
-  const [opsSubView, setOpsSubView] = useState<'tasks' | 'logs' | 'monitoring'>('tasks');
   const [healthData, setHealthData] = useState<DataHealthStatusResponse | null>(null);
 
   useEffect(() => {
@@ -83,9 +64,7 @@ const DataWorkspace: React.FC = () => {
       });
   }, []);
 
-  // US-060: tab-aware view model — 切 tab 时 kpiSlot 内容变, 不再永远显示 health 三件套.
-  // 「运维」tab 复用其二级子视图 (tasks/logs/monitoring) 的 view model, KPI 随子视图切.
-  const vmKey: DataWorkspaceTabKey = activeKey === 'ops' ? opsSubView : activeKey;
+  const vmKey: DataWorkspaceTabKey = activeKey;
   const vm: DataWorkspaceTabViewModel = useMemo(
     () => buildDataWorkspaceTabViewModel(vmKey, healthData),
     [vmKey, healthData]
@@ -117,12 +96,6 @@ const DataWorkspace: React.FC = () => {
   const headerActions = vm.tag ? (
     <Tag color={vm.tag.color === 'default' ? undefined : vm.tag.color}>{vm.tag.text}</Tag>
   ) : null;
-
-  const fallback = (
-    <div style={{ textAlign: 'center', padding: 48 }}>
-      <Spin tip="加载中..." />
-    </div>
-  );
 
   // US-060: 每个 tab 上方都加一行 "概览条" Card — 主副标题 + 当前 tab 的语义提示
   const overviewBar = (
@@ -165,41 +138,6 @@ const DataWorkspace: React.FC = () => {
             <StockExplorer />
           </>
         );
-      case 'sync':
-        return (
-          <>
-            {overviewBar}
-            <Suspense fallback={fallback}>
-              <DataUpdateStatus />
-            </Suspense>
-          </>
-        );
-      case 'ops':
-        return (
-          <>
-            {overviewBar}
-            <Segmented
-              className="ws-tab-segmented"
-              style={{ marginBottom: 12 }}
-              options={[
-                { label: '调度任务', value: 'tasks' },
-                { label: '系统日志', value: 'logs' },
-                { label: '健康监控', value: 'monitoring' },
-              ]}
-              value={opsSubView}
-              onChange={v => setOpsSubView(v as typeof opsSubView)}
-            />
-            <Suspense fallback={fallback}>
-              {opsSubView === 'tasks' ? (
-                <TaskScheduler />
-              ) : opsSubView === 'logs' ? (
-                <SystemLogs />
-              ) : (
-                <HealthMonitor />
-              )}
-            </Suspense>
-          </>
-        );
       default:
         return (
           <Card>
@@ -220,7 +158,7 @@ const DataWorkspace: React.FC = () => {
         <WorkspaceHero
           eyebrow="Data · 管理员视图"
           title="数据中心"
-          subtitle="数据健康 · 个股趋势 · 行情同步 · 运维(调度/日志/监控) — admin 级别全链路可观测性"
+          subtitle="数据健康 · 个股趋势 — admin 级别全链路可观测性"
           variant="admin"
           metrics={vm.kpis.slice(0, 3).map((k, idx) => ({
             label: k.title,
