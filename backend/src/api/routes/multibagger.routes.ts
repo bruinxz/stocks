@@ -15,9 +15,24 @@ const MARKETS = ['A', 'US', 'JP', 'KR'];
 router.get(
   '/candidates',
   authController.authenticate,
-  query('stage').optional().isString().withMessage('stage must be a comma-separated string'),
-  query('conclusion').optional().isString().withMessage('conclusion must be a comma-separated string'),
-  query('market').optional().isIn(MARKETS).withMessage(`market must be one of: ${MARKETS.join(', ')}`),
+  query('stage')
+    .optional()
+    .custom(value => {
+      const values = String(value).split(',');
+      return values.length > 0 && values.every(stage => STAGES.includes(stage));
+    })
+    .withMessage(`stage values must be one of: ${STAGES.join(', ')}`),
+  query('conclusion')
+    .optional()
+    .custom(value => {
+      const values = String(value).split(',');
+      return values.length > 0 && values.every(conclusion => CONCLUSIONS.includes(conclusion));
+    })
+    .withMessage(`conclusion values must be one of: ${CONCLUSIONS.join(', ')}`),
+  query('market')
+    .optional()
+    .isIn(MARKETS)
+    .withMessage(`market must be one of: ${MARKETS.join(', ')}`),
   validateRequest,
   controller.getCandidates
 );

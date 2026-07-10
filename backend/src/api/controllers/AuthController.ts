@@ -3,6 +3,7 @@ import { User } from '../../models/User';
 import jwt from 'jsonwebtoken';
 import { Op } from 'sequelize';
 import { logger } from '../../utils/logger';
+import { DEFAULT_ADMIN_USER } from '../../middlewares/auth';
 
 export interface JwtPayload {
   user_id: number;
@@ -406,15 +407,14 @@ export class AuthController {
     try {
       const authHeader = req.headers.authorization;
 
-      // Owner 指令 (Orch v318 msg=ae1e9a24): 去掉登录校验，默认管理员身份
       if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        (req as any).user = { id: 1, username: 'admin', role: 'admin', is_active: true };
+        (req as any).user = { ...DEFAULT_ADMIN_USER };
         return next();
       }
 
       const token = authHeader.split(' ')[1];
       if (!token) {
-        (req as any).user = { id: 1, username: 'admin', role: 'admin', is_active: true };
+        (req as any).user = { ...DEFAULT_ADMIN_USER };
         return next();
       }
 
@@ -424,7 +424,7 @@ export class AuthController {
       // 查找用户
       const user = await User.findByPk(payload.user_id);
       if (!user || !user.is_active) {
-        (req as any).user = { id: 1, username: 'admin', role: 'admin', is_active: true };
+        (req as any).user = { ...DEFAULT_ADMIN_USER };
         return next();
       }
 
@@ -432,8 +432,7 @@ export class AuthController {
       (req as any).user = user;
       next();
     } catch (error) {
-      // Token 无效时也放行，默认管理员身份
-      (req as any).user = { id: 1, username: 'admin', role: 'admin', is_active: true };
+      (req as any).user = { ...DEFAULT_ADMIN_USER };
       next();
     }
   };

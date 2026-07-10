@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { QueryTypes } from 'sequelize';
 import { logger } from '../../utils/logger';
 import { sequelize } from '../../config/database';
 
@@ -28,13 +29,14 @@ export class BacktestPitController {
         replacements.to = to;
       }
 
-      const [snapshots] = await sequelize.query(
+      const snapshots = await sequelize.query<any>(
         `SELECT bps.snapshot_id,
-                bps.strategy AS profile,
+                bps.strategy,
                 bps.snapshot_day,
                 bps.as_of_utc,
                 bps.is_survivorship_biased,
                 bps.is_delisted_at_as_of,
+                bps.source_versions,
                 bps.fact_hash,
                 (bps.metrics->>'net_value')::numeric AS net_value,
                 (bps.metrics->>'drawdown')::numeric AS drawdown,
@@ -45,19 +47,22 @@ export class BacktestPitController {
          WHERE ${whereClause}
          ORDER BY bps.snapshot_day DESC, bps.as_of_utc DESC
          LIMIT :limit`,
-        { replacements, type: 'SELECT' as any }
+        { replacements, type: QueryTypes.SELECT }
       );
 
-      const typedSnapshots = (snapshots as any[]).map((s: any) => ({
-        ...s,
-        net_value: s.net_value != null ? Number(s.net_value) : undefined,
-        drawdown: s.drawdown != null ? Number(s.drawdown) : undefined,
-        cumulative_return: s.cumulative_return != null ? Number(s.cumulative_return) : undefined,
-        sharpe_ratio_6m: s.sharpe_ratio_6m != null ? Number(s.sharpe_ratio_6m) : undefined,
-        win_rate_6m: s.win_rate_6m != null ? Number(s.win_rate_6m) : undefined,
-      }));
-
-      res.json({ strategy, snapshots: typedSnapshots });
+      res.json({
+        strategy,
+        snapshots: snapshots.map(snapshot => ({
+          ...snapshot,
+          net_value: snapshot.net_value == null ? null : Number(snapshot.net_value),
+          drawdown: snapshot.drawdown == null ? null : Number(snapshot.drawdown),
+          cumulative_return:
+            snapshot.cumulative_return == null ? null : Number(snapshot.cumulative_return),
+          sharpe_ratio_6m:
+            snapshot.sharpe_ratio_6m == null ? null : Number(snapshot.sharpe_ratio_6m),
+          win_rate_6m: snapshot.win_rate_6m == null ? null : Number(snapshot.win_rate_6m),
+        })),
+      });
     } catch (error: any) {
       logger.error(`[BacktestPitController.listSnapshots] ${error?.message || error}`);
       res.status(500).json({ error: 'Failed to fetch backtest snapshots' });
@@ -68,7 +73,7 @@ export class BacktestPitController {
     try {
       const { strategy, as_of } = req.params;
 
-      const [rows] = await sequelize.query(
+      const rows = await sequelize.query<any>(
         `SELECT bps.snapshot_id,
                 bps.strategy,
                 bps.snapshot_day,
@@ -81,18 +86,17 @@ export class BacktestPitController {
                 bps.fact_hash
          FROM backtest_pit_snapshot bps
          WHERE bps.strategy = :strategy
-           AND bps.snapshot_day = :as_of
-         ORDER BY bps.as_of_utc DESC
+           AND bps.as_of_utc = CAST(:as_of AS timestamptz)
          LIMIT 1`,
-        { replacements: { strategy, as_of }, type: 'SELECT' as any }
+        { replacements: { strategy, as_of }, type: QueryTypes.SELECT }
       );
 
-      if (!(rows as any[]).length) {
+      if (!rows.length) {
         res.status(404).json({ error: 'Backtest snapshot not found' });
         return;
       }
 
-      res.json((rows as any[])[0]);
+      res.json(rows[0]);
     } catch (error: any) {
       logger.error(`[BacktestPitController.getSnapshot] ${error?.message || error}`);
       res.status(500).json({ error: 'Failed to fetch backtest snapshot' });
@@ -103,23 +107,22 @@ export class BacktestPitController {
     try {
       const { strategy, as_of } = req.params;
 
-      const [rows] = await sequelize.query(
+      const rows = await sequelize.query<any>(
         `SELECT bps.holdings
          FROM backtest_pit_snapshot bps
          WHERE bps.strategy = :strategy
-           AND bps.snapshot_day = :as_of
-         ORDER BY bps.as_of_utc DESC
+           AND bps.as_of_utc = CAST(:as_of AS timestamptz)
          LIMIT 1`,
-        { replacements: { strategy, as_of }, type: 'SELECT' as any }
+        { replacements: { strategy, as_of }, type: QueryTypes.SELECT }
       );
 
-      if (!(rows as any[]).length) {
+      if (!rows.length) {
         res.status(404).json({ error: 'Backtest snapshot not found' });
         return;
       }
 
-      const holdings = (rows as any[])[0].holdings;
-      res.json({ holdings: typeof holdings === 'string' ? JSON.parse(holdings) : (holdings || []) });
+      const holdings = rows[0].holdings;
+      res.json({ holdings: typeof holdings === 'string' ? JSON.parse(holdings) : holdings || [] });
     } catch (error: any) {
       logger.error(`[BacktestPitController.getHoldings] ${error?.message || error}`);
       res.status(500).json({ error: 'Failed to fetch backtest holdings' });

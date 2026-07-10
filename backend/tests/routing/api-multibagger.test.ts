@@ -1,86 +1,216 @@
 import express from 'express';
 import request from 'supertest';
+import multibaggerRoutes from '../../src/api/routes/multibagger.routes';
 import { sequelize } from '../../src/config/database';
 
-const VALID_SYMBOL = 'AAPL';
+const SYMBOL = '600519.SH';
 
-function buildApp() {
+type QueryCall = {
+  sql: string;
+  replacements: Record<string, unknown>;
+};
+
+const CANDIDATE = {
+  symbol: SYMBOL,
+  name: 'Sample Candidate',
+  score: JSON.stringify({
+    scoring_id: '11111111-1111-4111-8111-111111111111',
+    snapshot_hash: 'c'.repeat(64),
+    ticker: SYMBOL,
+    as_of: '2026-07-10',
+    quality: { score: 80, band: 'B', evidence: [], inputs: {} },
+    growth: { score: 92, band: 'A', evidence: ['free-source evidence'], inputs: {} },
+    valuation: { score: 74, band: 'B', evidence: [], inputs: {} },
+    moat: { score: 88, band: 'A', evidence: [], inputs: {} },
+    trend: { score: 90, band: 'A', evidence: [], inputs: {} },
+    risk: { score: 70, band: 'B', evidence: [], inputs: {} },
+    weights: { quality: 0.1, growth: 0.3, valuation: 0.1, moat: 0.15, trend: 0.2, risk: 0.15 },
+    weights_profile: 'multibagger',
+    total: 88.5,
+    rating: 'A',
+    computed_at: '2026-07-10T06:00:00Z',
+    source_versions: {
+      quality_engine: 'quality@v0.3.0',
+      growth_engine: 'growth@v0.3.0',
+      valuation_engine: 'valuation@v0.3.0',
+      moat_engine: 'moat@v0.3.0',
+      trend_engine: 'trend@v0.3.0',
+      risk_engine: 'risk@v0.3.0',
+    },
+  }),
+  rating_band: 'A',
+  conviction: JSON.stringify({
+    ticker: SYMBOL,
+    as_of: '2026-07-10',
+    base: 80,
+    score_ref: {
+      scoring_id: '11111111-1111-4111-8111-111111111111',
+      snapshot_hash: 'c'.repeat(64),
+    },
+    adjustments: [],
+    final: 82,
+    level: 'HIGH',
+  }),
+  risk_gate: JSON.stringify({
+    ticker: SYMBOL,
+    evaluated_at: '2026-07-10T06:00:00Z',
+    gate: 'GREEN',
+    triggers: [],
+    ok_to_enter: true,
+  }),
+  entry_plan: JSON.stringify({
+    ticker: SYMBOL,
+    generated_at: '2026-07-10T06:00:00Z',
+    entry: { low: 100, high: 105, currency: 'CNY' },
+    stop: { value: 92, currency: 'CNY' },
+    targets: [{ value: 125, currency: 'CNY' }],
+    size_hint: { tier: 'TIER_3', pct: 3, disclaimer_key: 'size_hint_advisory' },
+    time_horizon: 'POSITION',
+    invalidation: 'break thesis',
+    conviction_ref: 82,
+    score_ref: {
+      scoring_id: '11111111-1111-4111-8111-111111111111',
+      snapshot_hash: 'c'.repeat(64),
+    },
+  }),
+  latest_catalyst: JSON.stringify({
+    kind: 'product',
+    title: 'Launch',
+    occurred_at: '2026-07-10T05:00:00Z',
+  }),
+  market: 'A',
+  stage: 'growth',
+  conclusion: 'MULTIBAGGER_5X',
+};
+
+function buildApp(): express.Express {
   const app = express();
   app.use(express.json());
-  const { MultibaggerController } = require('../../src/api/controllers/MultibaggerController');
-  const controller = new MultibaggerController();
-  app.get('/api/v1/multibagger/candidates', controller.getCandidates);
-  app.get('/api/v1/multibagger/:symbol/detail', controller.getDetail);
+  app.use('/api/v1/multibagger', multibaggerRoutes);
   return app;
 }
 
-(async () => {
-  let passed = 0;
-  let failed = 0;
-  function assert(condition: boolean, label: string) {
-    if (condition) { passed++; console.log(`  PASS: ${label}`); }
-    else { failed++; console.error(`  FAIL: ${label}`); }
+let passed = 0;
+let failed = 0;
+
+function assert(name: string, condition: boolean, detail = ''): void {
+  if (condition) {
+    passed += 1;
+    console.log(`  ok  ${name}${detail ? ` (${detail})` : ''}`);
+  } else {
+    failed += 1;
+    console.error(`  FAIL ${name}${detail ? ` (${detail})` : ''}`);
   }
-  console.log('=== api-multibagger.test.ts ===\n');
-  {
+}
+
+async function main(): Promise<void> {
+  const originalQuery = sequelize.query;
+  const calls: QueryCall[] = [];
+  let rows: any[] = [CANDIDATE];
+
+  (sequelize as any).query = async (sql: string, options: any) => {
+    calls.push({ sql, replacements: options?.replacements || {} });
+    return rows;
+  };
+
+  try {
     const app = buildApp();
 
-    console.log('[1] GET /api/v1/multibagger/candidates returns 200 or 500');
-    const res = await request(app).get('/api/v1/multibagger/candidates');
-    assert([200, 500].includes(res.status), 'status');
+    const list = await request(app).get(
+      '/api/v1/multibagger/candidates?stage=seed,growth&conclusion=MULTIBAGGER_5X&market=A'
+    );
+    assert('list returns deterministic 200', list.status === 200, `status=${list.status}`);
+    assert('list returns canonical Score object', list.body.rows?.[0]?.score?.total === 88.5);
+    assert('list mirrors canonical Score.rating', list.body.rows?.[0]?.rating_band === 'A');
+    assert(
+      'list returns canonical RiskGate object',
+      list.body.rows?.[0]?.risk_gate?.gate === 'GREEN'
+    );
+    assert('KPI counts returned rows', list.body.kpi.total_candidates === 1);
+    assert(
+      'KPI stage distribution is deterministic',
+      list.body.kpi.stage_distribution.growth === 1
+    );
+    assert(
+      'KPI conclusion coverage is deterministic',
+      list.body.kpi.conclusion_coverage.MULTIBAGGER_5X === 1
+    );
+    const listCall = calls.at(-1);
+    assert(
+      'valid filters reach parameterized SQL',
+      JSON.stringify(listCall?.replacements.stages) === JSON.stringify(['seed', 'growth']) &&
+        JSON.stringify(listCall?.replacements.conclusions) === JSON.stringify(['MULTIBAGGER_5X']) &&
+        listCall?.replacements.market === 'A'
+    );
+    assert(
+      'SQL only selects canonical object DTOs',
+      Boolean(listCall?.sql.includes("jsonb_typeof(mu.fundamental_snapshot->'score') = 'object'"))
+    );
 
-    console.log('[2] Response envelope');
-    if (res.status === 200) {
-      assert(res.body.kpi !== undefined, 'kpi');
-      assert(Array.isArray(res.body.rows), 'rows');
-    } else { assert(res.body.error !== undefined, 'error on 500'); }
+    const beforeInvalid = calls.length;
+    const invalidStage = await request(app).get(
+      '/api/v1/multibagger/candidates?stage=seed,unknown'
+    );
+    assert('mixed invalid stage list returns 400', invalidStage.status === 400);
+    const invalidConclusion = await request(app).get(
+      '/api/v1/multibagger/candidates?conclusion=MULTIBAGGER_5X,UNKNOWN'
+    );
+    assert('mixed invalid conclusion list returns 400', invalidConclusion.status === 400);
+    const invalidMarket = await request(app).get('/api/v1/multibagger/candidates?market=EU');
+    assert('invalid market returns 400', invalidMarket.status === 400);
+    assert('invalid filters never query DB', calls.length === beforeInvalid);
 
-    console.log('[3] KPI fields');
-    if (res.status === 200 && res.body.kpi) {
-      const kpi = res.body.kpi;
-      assert(typeof kpi.total_candidates === 'number', 'total_candidates');
-      assert(kpi.stage_distribution !== undefined, 'stage_distribution');
-      assert(kpi.conclusion_coverage !== undefined, 'conclusion_coverage');
-    } else { assert(true, 'skipped'); }
+    const detail = await request(app).get(`/api/v1/multibagger/${SYMBOL}/detail`);
+    assert('detail returns deterministic 200', detail.status === 200);
+    assert('detail returns normalized candidate', detail.body.symbol === SYMBOL);
+    const detailCall = calls.at(-1);
+    assert('detail uses symbol replacement', detailCall?.replacements.symbol === SYMBOL);
 
-    console.log('[4] Stage distribution keys');
-    if (res.status === 200 && res.body.kpi?.stage_distribution) {
-      const sd = res.body.kpi.stage_distribution;
-      assert('seed' in sd && 'early' in sd && 'growth' in sd && 'break_below' in sd && 'deep' in sd, 'all 5 stages');
-    } else { assert(true, 'skipped'); }
+    rows = [
+      {
+        ...CANDIDATE,
+        score: '88.5',
+        risk_gate: JSON.stringify('GREEN'),
+        entry_plan: JSON.stringify('legacy-entry-plan'),
+        conviction: JSON.stringify(82),
+        rating_band: 'C',
+      },
+    ];
+    const unavailable = await request(app).get('/api/v1/multibagger/candidates');
+    assert('legacy scalar Score returns explicit null', unavailable.body.rows?.[0]?.score === null);
+    assert(
+      'legacy scalar RiskGate returns explicit null',
+      unavailable.body.rows?.[0]?.risk_gate === null
+    );
+    assert(
+      'legacy scalar EntryPlan returns explicit null',
+      unavailable.body.rows?.[0]?.entry_plan === null
+    );
+    assert(
+      'legacy scalar Conviction returns explicit null',
+      unavailable.body.rows?.[0]?.conviction === null
+    );
+    assert(
+      'stored mirror rating_band remains fallback',
+      unavailable.body.rows?.[0]?.rating_band === 'C'
+    );
 
-    console.log('[5] stage filter');
-    const stageRes = await request(app).get('/api/v1/multibagger/candidates?stage=seed,early');
-    assert([200, 500].includes(stageRes.status), 'stage filter accepted');
-
-    console.log('[6] conclusion filter');
-    const conclusionRes = await request(app).get('/api/v1/multibagger/candidates?conclusion=MULTIBAGGER_2X');
-    assert([200, 500].includes(conclusionRes.status), 'conclusion filter accepted');
-
-    console.log('[7] market filter');
-    for (const mkt of ['A', 'US', 'JP', 'KR']) {
-      const mktRes = await request(app).get(`/api/v1/multibagger/candidates?market=${mkt}`);
-      assert([200, 500].includes(mktRes.status), `market=${mkt} accepted`);
-    }
-
-    console.log('[8] Detail endpoint');
-    const detailRes = await request(app).get(`/api/v1/multibagger/${VALID_SYMBOL}/detail`);
-    assert([200, 404, 500].includes(detailRes.status), 'detail responds');
-
-    console.log('[9] Detail 200 fields');
-    if (detailRes.status === 200) {
-      assert(detailRes.body.symbol !== undefined, 'symbol');
-      assert(detailRes.body.score !== undefined, 'score');
-      assert(detailRes.body.stage !== undefined, 'stage');
-      assert(detailRes.body.conclusion !== undefined, 'conclusion');
-      assert(detailRes.body.market !== undefined, 'market');
-    } else { assert(true, 'skipped'); }
-
-    console.log('[10] Detail 404');
-    const notFoundRes = await request(app).get('/api/v1/multibagger/NOSUCHSYMBOL999/detail');
-    assert([404, 500].includes(notFoundRes.status), 'not found or error');
+    rows = [];
+    const missing = await request(app).get('/api/v1/multibagger/NOSUCH/detail');
+    assert('missing detail returns 404', missing.status === 404, `status=${missing.status}`);
+    assert(
+      'missing detail returns stable error',
+      missing.body.error === 'Multibagger candidate not found'
+    );
+  } finally {
+    (sequelize as any).query = originalQuery;
   }
-  console.log(`\n--- Results: ${passed} passed, ${failed} failed ---`);
-  await sequelize.close().catch(() => {});
+
+  console.log(`\nResult: ${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
-})();
+}
+
+main().catch(error => {
+  console.error('unhandled test error:', error);
+  process.exit(1);
+});

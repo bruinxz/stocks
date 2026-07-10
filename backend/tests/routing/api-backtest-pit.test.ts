@@ -1,95 +1,198 @@
 import express from 'express';
 import request from 'supertest';
+import backtestPitRoutes from '../../src/api/routes/backtestPit.routes';
 import { sequelize } from '../../src/config/database';
 
-const VALID_STRATEGY = 'us_preferred';
-const VALID_DATE = '2026-07-10';
+const STRATEGY = 'us_preferred';
+const AS_OF = '2026-07-10T06:00:00Z';
+const ENCODED_AS_OF = encodeURIComponent(AS_OF);
 
-function buildApp() {
+type QueryCall = {
+  sql: string;
+  replacements: Record<string, unknown>;
+};
+
+const SNAPSHOT = {
+  snapshot_id: '11111111-1111-4111-8111-111111111111',
+  strategy: STRATEGY,
+  snapshot_day: '2026-07-10',
+  as_of_utc: AS_OF,
+  is_survivorship_biased: false,
+  is_delisted_at_as_of: false,
+  source_versions: { us_price: 'free-source-2026-07-10' },
+  metrics: {
+    net_value: 1.24,
+    drawdown: -0.08,
+    cumulative_return: 0.24,
+    sharpe_ratio_6m: 1.85,
+    win_rate_6m: 0.58,
+  },
+  holdings: [{ ticker: 'AAPL', weight: 0.15, return_since_entry: 0.12, is_stale: false }],
+  fact_hash: 'a'.repeat(64),
+};
+
+const LIST_SNAPSHOT = {
+  ...SNAPSHOT,
+  metrics: undefined,
+  holdings: undefined,
+  net_value: '1.24',
+  drawdown: '-0.08',
+  cumulative_return: '0.24',
+  sharpe_ratio_6m: '1.85',
+  win_rate_6m: '0.58',
+};
+
+function buildApp(): express.Express {
   const app = express();
   app.use(express.json());
-  const { BacktestPitController } = require('../../src/api/controllers/BacktestPitController');
-  const controller = new BacktestPitController();
-  app.get('/api/v1/backtest-pit/:strategy', controller.listSnapshots);
-  app.get('/api/v1/backtest-pit/:strategy/:as_of', controller.getSnapshot);
-  app.get('/api/v1/backtest-pit/:strategy/:as_of/holdings', controller.getHoldings);
+  app.use('/api/v1/backtest-pit', backtestPitRoutes);
   return app;
 }
 
-(async () => {
-  let passed = 0;
-  let failed = 0;
-  function assert(condition: boolean, label: string) {
-    if (condition) { passed++; console.log(`  PASS: ${label}`); }
-    else { failed++; console.error(`  FAIL: ${label}`); }
+let passed = 0;
+let failed = 0;
+
+function assert(name: string, condition: boolean, detail = ''): void {
+  if (condition) {
+    passed += 1;
+    console.log(`  ok  ${name}${detail ? ` (${detail})` : ''}`);
+  } else {
+    failed += 1;
+    console.error(`  FAIL ${name}${detail ? ` (${detail})` : ''}`);
   }
-  console.log('=== api-backtest-pit.test.ts ===\n');
-  {
-    const app = buildApp();
-    console.log('[1] GET /api/v1/backtest-pit/:strategy returns 200 or 500');
-    const res = await request(app).get(`/api/v1/backtest-pit/${VALID_STRATEGY}`);
-    assert([200, 500].includes(res.status), 'valid strategy accepted');
+}
 
-    console.log('[2] Response envelope');
-    if (res.status === 200) {
-      assert(res.body.strategy === VALID_STRATEGY, 'strategy');
-      assert(Array.isArray(res.body.snapshots), 'snapshots');
-    } else { assert(res.body.error !== undefined, 'error on 500'); }
+async function main(): Promise<void> {
+  const originalQuery = sequelize.query;
+  const calls: QueryCall[] = [];
+  let returnEmpty = false;
 
-    console.log('[3] Detail endpoint');
-    const detailRes = await request(app).get(`/api/v1/backtest-pit/${VALID_STRATEGY}/${VALID_DATE}`);
-    assert([200, 404, 500].includes(detailRes.status), 'detail responds');
-
-    console.log('[4] Detail 200 fields');
-    if (detailRes.status === 200) {
-      assert(detailRes.body.snapshot_id !== undefined, 'snapshot_id');
-      assert(detailRes.body.holdings !== undefined, 'holdings');
-      assert(detailRes.body.metrics !== undefined, 'metrics');
-      assert(detailRes.body.fact_hash !== undefined, 'fact_hash');
-    } else { assert(true, 'skipped'); }
-
-    console.log('[5] Detail 404');
-    if (detailRes.status === 404) { assert(detailRes.body.error === 'Backtest snapshot not found', '404 msg'); }
-    else { assert(true, 'skipped'); }
-
-    console.log('[6] from/to filter');
-    const filterRes = await request(app).get(`/api/v1/backtest-pit/${VALID_STRATEGY}?from=2026-01-01&to=2026-06-30`);
-    assert([200, 500].includes(filterRes.status), 'filter accepted');
-
-    console.log('[7] limit=5');
-    const limitRes = await request(app).get(`/api/v1/backtest-pit/${VALID_STRATEGY}?limit=5`);
-    assert([200, 500].includes(limitRes.status), 'limit accepted');
-
-    console.log('[8] All 6 strategies');
-    for (const strat of ['us_preferred', 'multibagger', 'japan_blue_chip', 'korea_semiconductor_chain', 'japan_multibagger', 'korea_multibagger']) {
-      const sRes = await request(app).get(`/api/v1/backtest-pit/${strat}`);
-      assert([200, 500].includes(sRes.status), `${strat} accepted`);
+  (sequelize as any).query = async (sql: string, options: any) => {
+    calls.push({ sql, replacements: options?.replacements || {} });
+    if (returnEmpty) return [];
+    if (sql.includes('SELECT bps.holdings')) {
+      return [{ holdings: JSON.stringify(SNAPSHOT.holdings) }];
     }
+    if (sql.includes("bps.metrics->>'net_value'")) {
+      return [LIST_SNAPSHOT];
+    }
+    return [SNAPSHOT];
+  };
 
-    console.log('[9] Holdings endpoint');
-    const holdingsRes = await request(app).get(`/api/v1/backtest-pit/${VALID_STRATEGY}/${VALID_DATE}/holdings`);
-    assert([200, 404, 500].includes(holdingsRes.status), 'holdings responds');
+  try {
+    const app = buildApp();
 
-    console.log('[10] Holdings 200 fields');
-    if (holdingsRes.status === 200) {
-      assert(Array.isArray(holdingsRes.body.holdings), 'holdings array');
-    } else { assert(true, 'skipped'); }
+    const list = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}?from=2026-01-01&to=2026-07-10&limit=5`
+    );
+    assert('list returns 200 without Authorization', list.status === 200, `status=${list.status}`);
+    assert('list envelope keeps strategy', list.body.strategy === STRATEGY);
+    assert(
+      'list row keeps canonical strategy field',
+      list.body.snapshots?.[0]?.strategy === STRATEGY
+    );
+    assert(
+      'list row does not introduce profile alias',
+      !('profile' in (list.body.snapshots?.[0] || {}))
+    );
+    assert('list exposes top-level net_value', list.body.snapshots?.[0]?.net_value === 1.24);
+    assert('list exposes top-level drawdown', list.body.snapshots?.[0]?.drawdown === -0.08);
+    assert(
+      'list exposes top-level cumulative_return',
+      list.body.snapshots?.[0]?.cumulative_return === 0.24
+    );
+    assert(
+      'list exposes top-level sharpe_ratio_6m',
+      list.body.snapshots?.[0]?.sharpe_ratio_6m === 1.85
+    );
+    assert('list exposes top-level win_rate_6m', list.body.snapshots?.[0]?.win_rate_6m === 0.58);
+    assert('list does not expose nested metrics', !('metrics' in (list.body.snapshots?.[0] || {})));
+    const listCall = calls.at(-1);
+    assert(
+      'list uses parameterized filters',
+      listCall?.replacements.strategy === STRATEGY &&
+        listCall?.replacements.from === '2026-01-01' &&
+        listCall?.replacements.to === '2026-07-10' &&
+        listCall?.replacements.limit === 5
+    );
 
-    console.log('[11] Holdings 404');
-    const holdingsNotFoundRes = await request(app).get('/api/v1/backtest-pit/us_preferred/2000-01-01/holdings');
-    assert([404, 500].includes(holdingsNotFoundRes.status), 'holdings not found or error');
+    const detail = await request(app).get(`/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}`);
+    assert('detail returns deterministic 200', detail.status === 200, `status=${detail.status}`);
+    assert('detail returns canonical snapshot', detail.body.snapshot_id === SNAPSHOT.snapshot_id);
+    assert('detail keeps nested metrics', detail.body.metrics?.net_value === 1.24);
+    const detailCall = calls.at(-1);
+    assert(
+      'detail matches exact as_of_utc',
+      Boolean(detailCall?.sql.includes('bps.as_of_utc = CAST(:as_of AS timestamptz)'))
+    );
+    assert('detail passes exact timestamp', detailCall?.replacements.as_of === AS_OF);
 
-    console.log('[12] listSnapshots metrics extraction');
-    if (resJP?.status === 200) { assert(true, 'skipped - use main res'); }
-    const metricsRes = await request(app).get(`/api/v1/backtest-pit/${VALID_STRATEGY}`);
-    if (metricsRes.status === 200 && metricsRes.body.snapshots?.length > 0) {
-      const snap = metricsRes.body.snapshots[0];
-      assert(snap.net_value === undefined || typeof snap.net_value === 'number', 'net_value numeric');
-      assert(snap.drawdown === undefined || typeof snap.drawdown === 'number', 'drawdown numeric');
-      assert(snap.cumulative_return === undefined || typeof snap.cumulative_return === 'number', 'cumulative_return numeric');
-    } else { assert(true, 'skipped'); }
+    const holdings = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings`
+    );
+    assert(
+      'holdings returns deterministic 200',
+      holdings.status === 200,
+      `status=${holdings.status}`
+    );
+    assert('holdings returns array', Array.isArray(holdings.body.holdings));
+    assert(
+      'holdings preserve four-field contract',
+      JSON.stringify(Object.keys(holdings.body.holdings[0]).sort()) ===
+        JSON.stringify(['is_stale', 'return_since_entry', 'ticker', 'weight'])
+    );
+    const holdingsCall = calls.at(-1);
+    assert(
+      'holdings matches exact as_of_utc',
+      Boolean(holdingsCall?.sql.includes('bps.as_of_utc = CAST(:as_of AS timestamptz)'))
+    );
+
+    const beforeInvalid = calls.length;
+    const invalidStrategy = await request(app).get('/api/v1/backtest-pit/not-a-strategy');
+    assert(
+      'invalid strategy returns 400',
+      invalidStrategy.status === 400,
+      `status=${invalidStrategy.status}`
+    );
+    assert('invalid strategy never queries DB', calls.length === beforeInvalid);
+
+    const invalidAsOf = await request(app).get(`/api/v1/backtest-pit/${STRATEGY}/not-a-timestamp`);
+    assert('invalid as_of returns 400', invalidAsOf.status === 400, `status=${invalidAsOf.status}`);
+    const dateOnlyAsOf = await request(app).get(`/api/v1/backtest-pit/${STRATEGY}/2026-07-10`);
+    assert(
+      'date-only as_of returns 400',
+      dateOnlyAsOf.status === 400,
+      `status=${dateOnlyAsOf.status}`
+    );
+    assert('invalid as_of never queries DB', calls.length === beforeInvalid);
+
+    returnEmpty = true;
+    const missingDetail = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}`
+    );
+    assert(
+      'missing snapshot returns 404',
+      missingDetail.status === 404,
+      `status=${missingDetail.status}`
+    );
+    assert(
+      'missing snapshot returns stable error',
+      missingDetail.body.error === 'Backtest snapshot not found'
+    );
+
+    const missingHoldings = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings`
+    );
+    assert('missing holdings snapshot returns 404', missingHoldings.status === 404);
+  } finally {
+    (sequelize as any).query = originalQuery;
   }
-  console.log(`\n--- Results: ${passed} passed, ${failed} failed ---`);
-  await sequelize.close().catch(() => {});
+
+  console.log(`\nResult: ${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
-})();
+}
+
+main().catch(error => {
+  console.error('unhandled test error:', error);
+  process.exit(1);
+});

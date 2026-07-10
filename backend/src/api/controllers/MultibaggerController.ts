@@ -1,10 +1,39 @@
 import { Request, Response } from 'express';
+import { QueryTypes } from 'sequelize';
 import { logger } from '../../utils/logger';
 import { sequelize } from '../../config/database';
 
-const VALID_STAGES = ['seed', 'early', 'growth', 'break_below', 'deep'];
-const VALID_CONCLUSIONS = ['MULTIBAGGER_2X', 'MULTIBAGGER_5X', 'MULTIBAGGER_10X', 'SKIP'];
 const VALID_MARKETS = ['A', 'US', 'JP', 'KR'];
+
+function parseJson(value: unknown): any {
+  return typeof value === 'string' ? JSON.parse(value) : value;
+}
+
+function objectOrNull(value: unknown): Record<string, unknown> | null {
+  const parsed = parseJson(value);
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+}
+
+function normalizeCandidate(row: any): any {
+  const score = objectOrNull(row.score);
+  const riskGate = objectOrNull(row.risk_gate);
+  const entryPlan = objectOrNull(row.entry_plan);
+  const conviction = objectOrNull(row.conviction);
+
+  return {
+    symbol: row.symbol,
+    name: row.name,
+    score,
+    rating_band: score?.rating || row.rating_band,
+    conviction,
+    risk_gate: riskGate,
+    entry_plan: entryPlan,
+    latest_catalyst: parseJson(row.latest_catalyst) ?? null,
+    market: row.market,
+    stage: row.stage,
+    conclusion: row.conclusion,
+  };
+}
 
 export class MultibaggerController {
   constructor() {
@@ -22,20 +51,16 @@ export class MultibaggerController {
       const replacements: Record<string, any> = {};
 
       if (stageParam) {
-        const stages = stageParam.split(',').filter(s => VALID_STAGES.includes(s));
-        if (stages.length > 0) {
-          whereClause += ` AND mu.filter_pass_bitmap IS NOT NULL`;
-          replacements.stages = stages;
-          whereClause += ` AND mu.fundamental_snapshot->>'stage' IN (:stages)`;
-        }
+        const stages = stageParam.split(',');
+        whereClause += ' AND mu.filter_pass_bitmap IS NOT NULL';
+        replacements.stages = stages;
+        whereClause += ` AND mu.fundamental_snapshot->>'stage' IN (:stages)`;
       }
 
       if (conclusionParam) {
-        const conclusions = conclusionParam.split(',').filter(c => VALID_CONCLUSIONS.includes(c));
-        if (conclusions.length > 0) {
-          replacements.conclusions = conclusions;
-          whereClause += ` AND mu.fundamental_snapshot->>'conclusion' IN (:conclusions)`;
-        }
+        const conclusions = conclusionParam.split(',');
+        replacements.conclusions = conclusions;
+        whereClause += ` AND mu.fundamental_snapshot->>'conclusion' IN (:conclusions)`;
       }
 
       if (marketParam && VALID_MARKETS.includes(marketParam)) {
@@ -49,20 +74,30 @@ export class MultibaggerController {
         END = :market`;
       }
 
-      const [rows] = await sequelize.query(
+      const rows = await sequelize.query<any>(
         `SELECT mu.ticker AS symbol,
                 COALESCE(mu.fundamental_snapshot->>'name', mu.ticker) AS name,
-                mu.fundamental_snapshot->>'scoring_id' AS scoring_id,
-                mu.fact_hash AS snapshot_hash,
-                COALESCE((mu.fundamental_snapshot->>'score')::numeric, 0) AS score,
-                COALESCE(mu.fundamental_snapshot->>'band', 'C') AS band,
-                COALESCE(mu.fundamental_snapshot->'dims', '[]'::jsonb) AS dims,
-                COALESCE(mu.fundamental_snapshot->'evidence', '[]'::jsonb) AS evidence,
-                mu.fundamental_snapshot->>'weights_profile' AS weights_profile,
+                CASE
+                  WHEN jsonb_typeof(mu.fundamental_snapshot->'score') = 'object'
+                  THEN mu.fundamental_snapshot->'score'
+                  ELSE NULL
+                END AS score,
                 COALESCE(mu.fundamental_snapshot->>'rating_band', 'C') AS rating_band,
-                mu.fundamental_snapshot->'conviction' AS conviction,
-                mu.fundamental_snapshot->'risk_gate' AS risk_gate,
-                mu.fundamental_snapshot->'entry_plan' AS entry_plan,
+                CASE
+                  WHEN jsonb_typeof(mu.fundamental_snapshot->'conviction') = 'object'
+                  THEN mu.fundamental_snapshot->'conviction'
+                  ELSE NULL
+                END AS conviction,
+                CASE
+                  WHEN jsonb_typeof(mu.fundamental_snapshot->'risk_gate') = 'object'
+                  THEN mu.fundamental_snapshot->'risk_gate'
+                  ELSE NULL
+                END AS risk_gate,
+                CASE
+                  WHEN jsonb_typeof(mu.fundamental_snapshot->'entry_plan') = 'object'
+                  THEN mu.fundamental_snapshot->'entry_plan'
+                  ELSE NULL
+                END AS entry_plan,
                 mu.fundamental_snapshot->'latest_catalyst' AS latest_catalyst,
                 CASE
                   WHEN mu.exchange IN ('sh', 'sz', 'bj') THEN 'A'
@@ -75,35 +110,32 @@ export class MultibaggerController {
                 COALESCE(mu.fundamental_snapshot->>'conclusion', 'SKIP') AS conclusion
          FROM multibagger_universe mu
          WHERE ${whereClause}
-         ORDER BY (mu.fundamental_snapshot->>'score')::numeric DESC NULLS LAST
+         ORDER BY CASE
+           WHEN jsonb_typeof(mu.fundamental_snapshot->'score') = 'object'
+             THEN COALESCE((mu.fundamental_snapshot->'score'->>'total')::numeric, 0)
+           WHEN jsonb_typeof(mu.fundamental_snapshot->'score') IN ('number', 'string')
+             THEN COALESCE((mu.fundamental_snapshot->>'score')::numeric, 0)
+           ELSE 0
+         END DESC
          LIMIT 200`,
-        { replacements, type: 'SELECT' as any }
+        { replacements, type: QueryTypes.SELECT }
       );
 
-      const typedRows = (rows as any[]).map((r: any) => ({
-        symbol: r.symbol,
-        name: r.name,
-        score: {
-          scoring_id: r.scoring_id || '',
-          snapshot_hash: r.snapshot_hash || '',
-          score: Number(r.score),
-          band: r.band,
-          dims: typeof r.dims === 'string' ? JSON.parse(r.dims) : (r.dims || []),
-          evidence: typeof r.evidence === 'string' ? JSON.parse(r.evidence) : (r.evidence || []),
-          weights_profile: r.weights_profile,
-        },
-        rating_band: r.rating_band,
-        conviction: typeof r.conviction === 'string' ? JSON.parse(r.conviction) : r.conviction,
-        risk_gate: typeof r.risk_gate === 'string' ? JSON.parse(r.risk_gate) : r.risk_gate,
-        entry_plan: typeof r.entry_plan === 'string' ? JSON.parse(r.entry_plan) : r.entry_plan,
-        latest_catalyst: typeof r.latest_catalyst === 'string' ? JSON.parse(r.latest_catalyst) : r.latest_catalyst,
-        market: r.market,
-        stage: r.stage,
-        conclusion: r.conclusion,
-      }));
+      const typedRows = rows.map(normalizeCandidate);
 
-      const stageDistribution: Record<string, number> = { seed: 0, early: 0, growth: 0, break_below: 0, deep: 0 };
-      const conclusionCoverage: Record<string, number> = { MULTIBAGGER_2X: 0, MULTIBAGGER_5X: 0, MULTIBAGGER_10X: 0, SKIP: 0 };
+      const stageDistribution: Record<string, number> = {
+        seed: 0,
+        early: 0,
+        growth: 0,
+        break_below: 0,
+        deep: 0,
+      };
+      const conclusionCoverage: Record<string, number> = {
+        MULTIBAGGER_2X: 0,
+        MULTIBAGGER_5X: 0,
+        MULTIBAGGER_10X: 0,
+        SKIP: 0,
+      };
 
       for (const row of typedRows) {
         if (row.stage in stageDistribution) stageDistribution[row.stage]++;
@@ -128,20 +160,30 @@ export class MultibaggerController {
     try {
       const { symbol } = req.params;
 
-      const [rows] = await sequelize.query(
+      const rows = await sequelize.query<any>(
         `SELECT mu.ticker AS symbol,
                 COALESCE(mu.fundamental_snapshot->>'name', mu.ticker) AS name,
-                mu.fundamental_snapshot->>'scoring_id' AS scoring_id,
-                mu.fact_hash AS snapshot_hash,
-                COALESCE((mu.fundamental_snapshot->>'score')::numeric, 0) AS score,
-                COALESCE(mu.fundamental_snapshot->>'band', 'C') AS band,
-                COALESCE(mu.fundamental_snapshot->'dims', '[]'::jsonb) AS dims,
-                COALESCE(mu.fundamental_snapshot->'evidence', '[]'::jsonb) AS evidence,
-                mu.fundamental_snapshot->>'weights_profile' AS weights_profile,
+                CASE
+                  WHEN jsonb_typeof(mu.fundamental_snapshot->'score') = 'object'
+                  THEN mu.fundamental_snapshot->'score'
+                  ELSE NULL
+                END AS score,
                 COALESCE(mu.fundamental_snapshot->>'rating_band', 'C') AS rating_band,
-                mu.fundamental_snapshot->'conviction' AS conviction,
-                mu.fundamental_snapshot->'risk_gate' AS risk_gate,
-                mu.fundamental_snapshot->'entry_plan' AS entry_plan,
+                CASE
+                  WHEN jsonb_typeof(mu.fundamental_snapshot->'conviction') = 'object'
+                  THEN mu.fundamental_snapshot->'conviction'
+                  ELSE NULL
+                END AS conviction,
+                CASE
+                  WHEN jsonb_typeof(mu.fundamental_snapshot->'risk_gate') = 'object'
+                  THEN mu.fundamental_snapshot->'risk_gate'
+                  ELSE NULL
+                END AS risk_gate,
+                CASE
+                  WHEN jsonb_typeof(mu.fundamental_snapshot->'entry_plan') = 'object'
+                  THEN mu.fundamental_snapshot->'entry_plan'
+                  ELSE NULL
+                END AS entry_plan,
                 mu.fundamental_snapshot->'latest_catalyst' AS latest_catalyst,
                 CASE
                   WHEN mu.exchange IN ('sh', 'sz', 'bj') THEN 'A'
@@ -156,36 +198,15 @@ export class MultibaggerController {
          WHERE mu.ticker = :symbol
          ORDER BY mu.as_of_utc DESC
          LIMIT 1`,
-        { replacements: { symbol }, type: 'SELECT' as any }
+        { replacements: { symbol }, type: QueryTypes.SELECT }
       );
 
-      if (!(rows as any[]).length) {
+      if (!rows.length) {
         res.status(404).json({ error: 'Multibagger candidate not found' });
         return;
       }
 
-      const r = (rows as any[])[0];
-      res.json({
-        symbol: r.symbol,
-        name: r.name,
-        score: {
-          scoring_id: r.scoring_id || '',
-          snapshot_hash: r.snapshot_hash || '',
-          score: Number(r.score),
-          band: r.band,
-          dims: typeof r.dims === 'string' ? JSON.parse(r.dims) : (r.dims || []),
-          evidence: typeof r.evidence === 'string' ? JSON.parse(r.evidence) : (r.evidence || []),
-          weights_profile: r.weights_profile,
-        },
-        rating_band: r.rating_band,
-        conviction: typeof r.conviction === 'string' ? JSON.parse(r.conviction) : r.conviction,
-        risk_gate: typeof r.risk_gate === 'string' ? JSON.parse(r.risk_gate) : r.risk_gate,
-        entry_plan: typeof r.entry_plan === 'string' ? JSON.parse(r.entry_plan) : r.entry_plan,
-        latest_catalyst: typeof r.latest_catalyst === 'string' ? JSON.parse(r.latest_catalyst) : r.latest_catalyst,
-        market: r.market,
-        stage: r.stage,
-        conclusion: r.conclusion,
-      });
+      res.json(normalizeCandidate(rows[0]));
     } catch (error: any) {
       logger.error(`[MultibaggerController.getDetail] ${error?.message || error}`);
       res.status(500).json({ error: 'Failed to fetch multibagger detail' });
