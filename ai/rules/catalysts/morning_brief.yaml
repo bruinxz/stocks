@@ -1,0 +1,88 @@
+rules:
+  - id: RULE_CATALYST_FRESH
+    version: "1.0.0"
+    description: "催化事件在 T-1 交易日内"
+    trigger_code: EVENT_FRESH
+    conditions:
+      - field: catalyst_event.event_date
+        op: gte
+        value: "$trading_day_minus_1"
+    strength: STRONG
+    evidence_kind: CATALYST_EVENT
+
+  - id: RULE_CONVICTION_HIGH
+    version: "1.0.0"
+    description: "Conviction level == HIGH"
+    trigger_code: CONVICTION_HIGH
+    conditions:
+      - field: conviction.level
+        op: eq
+        value: "HIGH"
+    strength: STRONG
+    evidence_kind: SCORE_INPUT
+
+  - id: RULE_SCORE_TOP
+    version: "1.0.0"
+    description: "Score.total >= profile threshold"
+    trigger_code: SCORE_TOTAL_TOP
+    conditions:
+      - field: score.total
+        op: gte
+        value: "$profile_threshold"
+    strength: MEDIUM
+    evidence_kind: SCORE_INPUT
+
+  - id: RULE_DIM_BAND_A
+    version: "1.0.0"
+    description: "任一维度 band == A"
+    trigger_code: DIM_BAND_A
+    conditions:
+      - field: score.dims[*].band
+        op: contains
+        value: "A"
+    strength: MEDIUM
+    evidence_kind: SCORE_INPUT
+
+  - id: RULE_RISK_CLEAN
+    version: "1.0.0"
+    description: "无 YELLOW/RED trigger"
+    trigger_code: RISK_GATE_CLEAN
+    conditions:
+      - field: risk_gate.gate
+        op: eq
+        value: "GREEN"
+    strength: WEAK
+    evidence_kind: SCORE_INPUT
+
+  - id: RULE_ENTRY_TIGHT
+    version: "1.0.0"
+    description: "止损距离 < 5%"
+    trigger_code: ENTRY_PLAN_TIGHT
+    conditions:
+      - field: entry_plan.stop_distance_pct
+        op: lt
+        value: 5.0
+    strength: WEAK
+    evidence_kind: SCORE_INPUT
+
+  - id: RULE_CATALYST_MATCHED
+    version: "1.0.0"
+    description: "匹配美股催化事件"
+    trigger_code: CATALYST_MATCHED
+    conditions:
+      - field: catalyst_relevance.relevance_score
+        op: gt
+        value: 0.3
+    strength: STRONG
+    evidence_kind: CATALYST_EVENT
+
+  - id: RULE_SECTOR_MOMENTUM
+    version: "1.0.0"
+    description: "行业动量确认 (T.dim score >= 70)"
+    trigger_code: SECTOR_MOMENTUM
+    conditions:
+      - field: "score.dims[T].score"
+        op: gte
+        value: 70
+    strength: MEDIUM
+    evidence_kind: SCORE_INPUT
