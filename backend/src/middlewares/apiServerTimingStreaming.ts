@@ -1,16 +1,24 @@
 /**
  * apiServerTimingStreaming.ts — ADR-0010 §4.14 · §4.7.2 vertical-of-vertical
  * continuation of §4.7 static (Server-Timing header) + §4.7.1 dynamic
- * (measure/measureAsync/start handler-facing API).
+ * (measure/measureAsync/start handler-facing API) + ADR-0010 §4.7.2.1
+ * SSE keep-alive heartbeat sub-vertical (SUB-tier L3.1 extension).
  *
- * Three-tier vertical stack §4.7 → §4.7.1 → §4.7.2:
- *   §4.7   — static Server-Timing header set at writeHead-flush (advisory).
- *   §4.7.1 — dynamic per-request accumulator merged at writeHead-flush.
- *   §4.7.2 — streaming per-metric frame-emit during an open SSE or WebSocket
- *            session AFTER headers have been flushed. Handler-facing surface
- *            `res.locals.serverTimingStream` exposes emit/emitAsync/start/close
- *            + readonly `kind` ('sse' | 'websocket' | 'none') + readonly
- *            `count` (number of frames emitted).
+ * Three-tier vertical stack + sub-tier §4.7 → §4.7.1 → §4.7.2 → §4.7.2.1:
+ *   §4.7     — static Server-Timing header set at writeHead-flush (advisory).
+ *   §4.7.1   — dynamic per-request accumulator merged at writeHead-flush.
+ *   §4.7.2   — streaming per-metric frame-emit during an open SSE or
+ *              WebSocket session AFTER headers have been flushed. Handler-
+ *              facing surface `res.locals.serverTimingStream` exposes
+ *              emit/emitAsync/start/close + readonly `kind` ('sse' |
+ *              'websocket' | 'none') + readonly `count`.
+ *   §4.7.2.1 — SSE keep-alive heartbeat comment-frame `: keep-alive\n\n`
+ *              (HTML5 §9.2.6 client-ignored per spec) emitted on a fixed
+ *              interval to defeat proxy idle-timeout (60s default) for
+ *              long-lived SSE streams. Adds `sendHeartbeat(): void` +
+ *              `startHeartbeat(): () => void` handler surface plus
+ *              `readonly heartbeatCount: number`. WebSocket + none kinds
+ *              are no-op (heartbeat is SSE-specific per HTML5 §9.2.6).
  *
  * SSE (HTML5 §9.2 Server-Sent Events canonical) frame format:
  *   event: server-timing\n
@@ -26,7 +34,10 @@
  *     "api_server_timing_streaming": {
  *       "enabled": true,
  *       "sse_event_name": "server-timing",
- *       "ws_frame_type": "server-timing"
+ *       "ws_frame_type": "server-timing",
+ *       "heartbeat_enabled": false,
+ *       "heartbeat_interval_ms": 30000,
+ *       "heartbeat_comment": "keep-alive"
  *     }
  *   }
  *
@@ -65,6 +76,9 @@ export interface ServerTimingStreamingConfig {
   enabled?: boolean;
   sse_event_name?: string;
   ws_frame_type?: string;
+  heartbeat_enabled?: boolean;
+  heartbeat_interval_ms?: number;
+  heartbeat_comment?: string;
 }
 
 export type ServerTimingStreamKind = 'sse' | 'websocket' | 'none';
@@ -103,10 +117,29 @@ export interface ServerTimingStreamAdapter {
   /** Idempotent flush + release. Handlers should still close their own
    *  stream lifecycle; this only releases adapter-internal state. */
   close(): void;
+  /**
+   * §4.7.2.1 · Send a single SSE keep-alive heartbeat comment-frame
+   * `: <comment>\n\n` (HTML5 §9.2.6 client-ignored per spec). No-op when
+   * kind !== 'sse', response already ended, or heartbeat disabled. Never
+   * throws. Handler-facing surface for one-shot heartbeat emission.
+   */
+  sendHeartbeat(): void;
+  /**
+   * §4.7.2.1 · Start a repeating SSE heartbeat on the configured interval
+   * (default 30000ms). Returns a stop-fn that clears the interval and is
+   * idempotent (subsequent calls no-op). No-op when kind !== 'sse',
+   * response already ended, or heartbeat disabled. The interval is
+   * automatically cleared on adapter.close() and on `res.on('close')`
+   * (native Node stream lifecycle). Multiple concurrent starts share the
+   * single adapter-owned interval (last stop-fn wins the clear).
+   */
+  startHeartbeat(): () => void;
   /** Detected stream kind at the time of the first emit (lazy). */
   readonly kind: ServerTimingStreamKind;
   /** Number of frames successfully emitted (test/introspection). */
   readonly count: number;
+  /** Number of §4.7.2.1 heartbeat comment-frames successfully emitted. */
+  readonly heartbeatCount: number;
 }
 
 const PKG_STREAMING_CONFIG: ServerTimingStreamingConfig | null =
@@ -161,6 +194,27 @@ function serializeWsFrame(
   return JSON.stringify(payload);
 }
 
+// §4.7.2.1 · SSE keep-alive heartbeat comment-frame (HTML5 §9.2.6).
+// Format: `: <comment>\n\n` — colon-prefixed line = comment per spec;
+// clients (EventSource) silently discard. Empty/multiline comments
+// sanitized to a single-line safe payload; ':' + '\n' + '\r' stripped.
+const DEFAULT_HEARTBEAT_COMMENT = 'keep-alive';
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 30000;
+
+function sanitizeHeartbeatComment(raw: unknown): string {
+  if (typeof raw !== 'string' || raw.length === 0) return DEFAULT_HEARTBEAT_COMMENT;
+  const stripped = raw.replace(/[\r\n]/g, '').trim();
+  return stripped.length > 0 ? stripped : DEFAULT_HEARTBEAT_COMMENT;
+}
+
+function serializeSseHeartbeat(comment: string): string {
+  return `: ${comment}\n\n`;
+}
+
+function isValidHeartbeatInterval(n: unknown): n is number {
+  return typeof n === 'number' && Number.isFinite(n) && n > 0;
+}
+
 function detectKind(res: Response): ServerTimingStreamKind {
   const locals = res.locals as Record<string, unknown>;
   const ws = locals.serverTimingStreamWebSocket as
@@ -187,14 +241,50 @@ function buildAdapter(
     typeof config.ws_frame_type === 'string' && TOKEN_RE.test(config.ws_frame_type)
       ? config.ws_frame_type
       : 'server-timing';
+  // §4.7.2.1 · Heartbeat config (default-OFF opt-in; SSE-only)
+  const heartbeatEnabled = config.heartbeat_enabled === true;
+  const heartbeatIntervalMs = isValidHeartbeatInterval(config.heartbeat_interval_ms)
+    ? config.heartbeat_interval_ms
+    : DEFAULT_HEARTBEAT_INTERVAL_MS;
+  const heartbeatComment = sanitizeHeartbeatComment(config.heartbeat_comment);
 
   let cachedKind: ServerTimingStreamKind | null = null;
   let count = 0;
+  let heartbeatCount = 0;
   let closed = false;
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   function resolveKind(): ServerTimingStreamKind {
     if (cachedKind === null) cachedKind = detectKind(res);
     return cachedKind;
+  }
+
+  function clearHeartbeatTimer(): void {
+    if (heartbeatTimer !== null) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  }
+
+  // §4.7.2.1 · Auto-cleanup on native res 'close' event (Node stream lifecycle).
+  // Idempotent: adapter.close() may also fire this path.
+  res.on('close', () => {
+    closed = true;
+    clearHeartbeatTimer();
+  });
+
+  function doHeartbeat(): void {
+    if (closed) return;
+    if (!heartbeatEnabled) return;
+    const kind = resolveKind();
+    if (kind !== 'sse') return;
+    if (res.writableEnded) return;
+    try {
+      res.write(serializeSseHeartbeat(heartbeatComment));
+      heartbeatCount++;
+    } catch {
+      // Fail-OPEN silent — advisory-only.
+    }
   }
 
   function doEmit(name: string, dur: number | undefined, desc: string | undefined): void {
@@ -255,12 +345,42 @@ function buildAdapter(
     },
     close() {
       closed = true;
+      clearHeartbeatTimer();
+    },
+    sendHeartbeat() {
+      doHeartbeat();
+    },
+    startHeartbeat() {
+      let stopped = false;
+      if (closed || !heartbeatEnabled) {
+        return () => {
+          stopped = true;
+        };
+      }
+      // Idempotent: reuse an already-running adapter-owned interval.
+      if (heartbeatTimer === null) {
+        heartbeatTimer = setInterval(() => {
+          doHeartbeat();
+        }, heartbeatIntervalMs);
+        // Node timers hold the event loop open; do not block process exit.
+        if (typeof (heartbeatTimer as { unref?: () => void }).unref === 'function') {
+          (heartbeatTimer as { unref: () => void }).unref();
+        }
+      }
+      return () => {
+        if (stopped) return;
+        stopped = true;
+        clearHeartbeatTimer();
+      };
     },
     get kind() {
       return resolveKind();
     },
     get count() {
       return count;
+    },
+    get heartbeatCount() {
+      return heartbeatCount;
     },
   };
   return adapter;
@@ -284,8 +404,17 @@ function buildNoopAdapter(): ServerTimingStreamAdapter {
     close() {
       /* no-op */
     },
+    sendHeartbeat() {
+      /* no-op */
+    },
+    startHeartbeat() {
+      return () => {
+        /* no-op */
+      };
+    },
     kind: 'none',
     count: 0,
+    heartbeatCount: 0,
   };
 }
 
@@ -312,6 +441,9 @@ export const __test__ = {
   isValidDur,
   serializeSseFrame,
   serializeWsFrame,
+  serializeSseHeartbeat,
+  sanitizeHeartbeatComment,
+  isValidHeartbeatInterval,
   detectKind,
   buildNoopAdapter,
   buildAdapter,
