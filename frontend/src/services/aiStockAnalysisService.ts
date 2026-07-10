@@ -122,15 +122,21 @@ export async function getReportById(reportId: string): Promise<AnalyzeSingleStoc
 
 /**
  * 列表查询（按 stock_code 过滤、时间倒序）。
+ *
+ * `config.signal` 支持 AbortController — 组件在 useEffect cleanup 时可取消未完成的请求，
+ * 避免快速切换 stock 时旧请求 late-arriver 覆盖新状态。axios `config.signal` 原生支持自 v0.22.0（2021-10）。
  */
-export async function listReports(params: {
-  stock_code?: string;
-  limit?: number;
-  offset?: number;
-}): Promise<AnalyzeSingleStockResult[]> {
+export async function listReports(
+  params: {
+    stock_code?: string;
+    limit?: number;
+    offset?: number;
+  },
+  config?: { signal?: AbortSignal }
+): Promise<AnalyzeSingleStockResult[]> {
   const response = await api.get<{ success: boolean; data: AnalyzeSingleStockResult[] }>(
     '/ai/analyze-stock/reports',
-    { params }
+    { params, signal: config?.signal }
   );
   return response.data?.data || [];
 }
