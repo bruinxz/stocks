@@ -422,6 +422,15 @@ app.use('/api/v1/screener', screenerRoutes);
 app.get('/api/v1/status', statusHandler);
 app.get('/api/v1/version', versionHandler);
 
+import morningBriefRoutes from './api/routes/morningBrief.routes';
+import catalystRoutes from './api/routes/catalyst.routes';
+import usSelectRoutes from './api/routes/usSelect.routes';
+import backtestPitRoutes from './api/routes/backtestPit.routes';
+app.use('/api/v1/morning-brief', morningBriefRoutes);
+app.use('/api/v1/catalyst', catalystRoutes);
+app.use('/api/v1/us-select', usSelectRoutes);
+app.use('/api/v1/backtest-pit', backtestPitRoutes);
+
 // US-070 OpenAPI / Swagger UI —— 仅 development 模式暴露 /api-docs（不需鉴权方便联调）
 // production 默认禁用避免泄露内部 endpoint 列表；通过 ENABLE_SWAGGER_UI=true 可强制开启
 import { buildOpenApiSpec, shouldExposeSwaggerUI } from './config/swagger';
