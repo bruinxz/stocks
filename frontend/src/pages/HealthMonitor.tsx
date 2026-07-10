@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Card,
   Row,
@@ -64,16 +64,18 @@ const HealthMonitor: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setError(null);
     try {
       // /health/detail 是无认证、不在 /api 前缀下的。axios baseURL 设的是 /api，
       // 用相对 url 会拼成 /api/health/detail (404 HTML)。手动算根 url。
       const apiBase = (api.defaults.baseURL || '').replace(/\/api\/?$/, '');
-      const detailResp = await fetch(`${apiBase}/health/detail`);
+      const detailResp = await fetch(`${apiBase}/health/detail`, { signal });
+      if (signal?.aborted) return;
       if (!detailResp.ok) throw new Error(`/health/detail HTTP ${detailResp.status}`);
       const detailText = await detailResp.text();
+      if (signal?.aborted) return;
       let detail: HealthDetail;
       try {
         detail = JSON.parse(detailText);
@@ -83,20 +85,49 @@ const HealthMonitor: React.FC = () => {
       setHealth(detail);
 
       // 数据源健康
-      const dh = await api.get('/data/health-status');
+      const dh = await api.get('/data/health-status', { signal });
+      if (signal?.aborted) return;
       const arr = (dh.data?.data?.cards || dh.data?.data?.records || dh.data?.data || []) as any[];
       setDataHealth(arr);
     } catch (err: any) {
+      // fetch 原生 AbortError (DOMException name='AbortError') + axios CanceledError (code='ERR_CANCELED')
+      // 静默吞掉：late-arriver 已由外层 controller.abort() 主动淘汰。
+      if (err?.name === 'AbortError' || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') return;
+      if (signal?.aborted) return;
       setError(err?.message || String(err));
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, []);
 
+  // 每次 setInterval tick / 手动 refresh 用独立的 AbortController，保证只提交本次结果，
+  // 旧的 in-flight 请求被 abort，避免 late-arriver 覆盖新状态。
+  const tickControllerRef = useRef<AbortController | null>(null);
+
   useEffect(() => {
-    void load();
-    const tm = setInterval(() => void load(), 60_000); // 每 60 秒自动刷新
-    return () => clearInterval(tm);
+    const mountController = new AbortController();
+    tickControllerRef.current = mountController;
+    void load(mountController.signal);
+
+    const tm = setInterval(() => {
+      if (tickControllerRef.current) tickControllerRef.current.abort();
+      const c = new AbortController();
+      tickControllerRef.current = c;
+      void load(c.signal);
+    }, 60_000); // 每 60 秒自动刷新
+
+    return () => {
+      clearInterval(tm);
+      if (tickControllerRef.current) tickControllerRef.current.abort();
+      tickControllerRef.current = null;
+    };
+  }, [load]);
+
+  const handleManualRefresh = useCallback(() => {
+    if (tickControllerRef.current) tickControllerRef.current.abort();
+    const c = new AbortController();
+    tickControllerRef.current = c;
+    void load(c.signal);
   }, [load]);
 
   return (
@@ -110,7 +141,7 @@ const HealthMonitor: React.FC = () => {
           </Space>
         }
         extra={
-          <Button icon={<ReloadOutlined />} onClick={() => void load()} loading={loading}>
+          <Button icon={<ReloadOutlined />} onClick={handleManualRefresh} loading={loading}>
             刷新
           </Button>
         }
