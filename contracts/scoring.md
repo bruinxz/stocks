@@ -33,10 +33,10 @@
 |---|---|---|---|---|
 | 1 | `WeightsProfile` | 5 values | **7 values** · add `japan_multibagger` + `korea_multibagger` | Orch v319 D1 |
 | 2 | generic `multibagger` | G0.35 / M0.10 | **G0.30 / M0.15** · Σ=1 unchanged | Strategy draft msg=64ce3db0 |
-| 3 | multi-market boundary | profile-only | `MarketScope = "US" \| "JP" \| "KR"` + pre-scoring `DimensionAdapter` | Strategy draft msg=64ce3db0 |
+| 3 | multi-market boundary | profile-only | `MarketScope = "cn_a" \| "us" \| "jp" \| "kr"` + pre-scoring `DimensionAdapter` | Orch PR #215 review + D2 wire truth |
 | 4 | RiskGate vocabulary | 12 codes | **22 codes** · 5 JP + 5 KR appended | Orch v317 Ruling #8 msg=457bb3ee |
 | 5 | replay registry | implicit | **6 replayable profiles** · `custom` excluded until explicit weights are persisted | Research D3 / Orch v319 |
-| 6 | compatibility | v0.2 only | all additions are additive; existing US payloads and absent JP/KR signals remain valid | Sprint 3 D1 |
+| 6 | compatibility | v0.2 only | trigger/profile enum extensions are additive; v0.3 snapshots require explicit `market_scope`; generic multibagger tuning changes outputs, so replay is version- and weight-pinned | Sprint 3 D1 |
 
 ## §1 · Contract purpose (v0.1 §1 retain)
 
@@ -55,6 +55,7 @@ Score {
                                        // NEW v0.2 · 确定性重放主键 · US-038 SeededRandom Math.random=0 铁律配合
   ticker:      string
   as_of:       date (ISO 8601, PIT date · no look-ahead)
+  market_scope: "cn_a" | "us" | "jp" | "kr"
   quality:     Dimension
   growth:      Dimension
   valuation:   Dimension
@@ -118,14 +119,14 @@ Research §S3 5-tier 命名 (Buy/Outperform/Neutral/Underperform/Avoid) 与阈�
 
 ### §2.3 · Weight registry v0.3 (Orch v303 LOCK 8 + Sprint 3 D1)
 
-| profile | market | quality | growth | valuation | moat | trend | risk | Σ |
+| profile | allowed market_scope | quality | growth | valuation | moat | trend | risk | Σ |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
-| `us_preferred` | US | 0.20 | 0.20 | 0.15 | 0.20 | 0.15 | 0.10 | 1.00 |
-| `multibagger` | US/default | 0.10 | **0.30** | 0.10 | **0.15** | 0.20 | 0.15 | 1.00 |
-| `japan_blue_chip` | JP | 0.25 | 0.15 | 0.15 | 0.20 | 0.15 | 0.10 | 1.00 |
-| `korea_semiconductor_chain` | KR | 0.15 | 0.30 | 0.10 | 0.15 | 0.20 | 0.10 | 1.00 |
-| `japan_multibagger` | JP | 0.10 | 0.25 | 0.10 | 0.15 | 0.25 | 0.15 | 1.00 |
-| `korea_multibagger` | KR | 0.10 | 0.30 | 0.10 | 0.10 | 0.25 | 0.15 | 1.00 |
+| `us_preferred` | `us` or `cn_a` | 0.20 | 0.20 | 0.15 | 0.20 | 0.15 | 0.10 | 1.00 |
+| `multibagger` | `us` or `cn_a` | 0.10 | **0.30** | 0.10 | **0.15** | 0.20 | 0.15 | 1.00 |
+| `japan_blue_chip` | `jp` | 0.25 | 0.15 | 0.15 | 0.20 | 0.15 | 0.10 | 1.00 |
+| `korea_semiconductor_chain` | `kr` | 0.15 | 0.30 | 0.10 | 0.15 | 0.20 | 0.10 | 1.00 |
+| `japan_multibagger` | `jp` | 0.10 | 0.25 | 0.10 | 0.15 | 0.25 | 0.15 | 1.00 |
+| `korea_multibagger` | `kr` | 0.10 | 0.30 | 0.10 | 0.10 | 0.25 | 0.15 | 1.00 |
 
 `custom` is the seventh `WeightsProfile` value but has no registry row: the caller must supply six explicit weights satisfying `Σ=1.0 ± 1e-9`. It is not replayable unless those exact weights are persisted in the snapshot.
 
@@ -136,28 +137,35 @@ Research §S3 5-tier 命名 (Buy/Outperform/Neutral/Underperform/Avoid) 与阈�
 
 ### §2.4 · Profile/market mapping and replay set (v0.3)
 
-| profile | `MarketScope` | replayable |
+| profile | allowed `MarketScope` | replayable |
 |---|---|---|
-| `us_preferred` | `US` | yes |
-| `multibagger` | `US` | yes |
-| `custom` | `US` default | **no**, unless explicit weights are persisted |
-| `japan_blue_chip` | `JP` | yes |
-| `japan_multibagger` | `JP` | yes |
-| `korea_semiconductor_chain` | `KR` | yes |
-| `korea_multibagger` | `KR` | yes |
+| `us_preferred` | `us` or `cn_a` | yes |
+| `multibagger` | `us` or `cn_a` | yes |
+| `custom` | `us` or `cn_a` | **no**, unless explicit weights are persisted |
+| `japan_blue_chip` | `jp` | yes |
+| `japan_multibagger` | `jp` | yes |
+| `korea_semiconductor_chain` | `kr` | yes |
+| `korea_multibagger` | `kr` | yes |
 
 The canonical replay whitelist therefore contains **six named registry profiles**, while `WeightsProfile` contains **seven values**. Consumers must not conflate the two counts.
 
+**MarketScope wire canonical**:
+- `MarketScope = "cn_a" | "us" | "jp" | "kr"` is shared by scoring, recommendation and Backend DTOs.
+- `us_preferred` and `multibagger` are valid for both `us` and `cn_a`; callers must provide `market_scope`. Profile name alone never defaults A-share to US.
+- Frontend-local display enums map only at the boundary: `A → cn_a`, `US → us`, `JP → jp`, `KR → kr`.
+- JP/KR route query labels `market=JP|KR` map to `jp|kr` before Score assembly.
+- The legacy aggregate-storage draft spells A-share as `cn`; persistence maps wire `cn_a → cn` and reads `cn → cn_a` until a separate schema migration. `global` has no Score-level equivalent and is invalid here.
+
 **tab 消费 profile 缺省**:
-- tab 1 A股早报: us_preferred (mapped US 侧 Score 派生)
-- tab 2 美股优选: us_preferred (default · switcher 允许 tab 2 单页切至 multibagger/custom)
+- tab 1 A股早报: `us_preferred` + `market_scope=cn_a` (US catalyst is evidence, not the scored security's market)
+- tab 2 美股优选: `us_preferred` + `market_scope=us` (default · switcher 允许 tab 2 单页切至 multibagger/custom)
 - tab 3 日韩市场: JP → `japan_blue_chip`; KR → `korea_semiconductor_chain`; multibagger variants are explicit opt-in
 - tab 4 高倍潜力: market-scoped multibagger profile (`multibagger` / `japan_multibagger` / `korea_multibagger`)
-- tab 5 回测证据: profile 参数 (`?profile=<slug>`) 支持全档回测
+- tab 5 回测证据: `strategy` path parameter supports all six replayable named profiles
 - tab 6 每日日报: 报告体内 profile 显式标注
 - tab 7 报告历史: 快照持久化 profile
 
-**Query param canonical**: `GET /api/v1/scores?ticker=&profile=<WeightsProfile>&include=inputs`; Backend must reject `custom` unless explicit weights accompany the request and are persisted.
+**Query param canonical**: `GET /api/v1/scores?ticker=&profile=<WeightsProfile>&market_scope=cn_a|us|jp|kr&include=inputs`; Backend must reject an invalid profile/scope pair and reject `custom` unless explicit weights accompany the request and are persisted.
 
 ## §3 · Per-dimension input surface (v0.1 §3.1-§3.6 retain byte-identical) + §3.7 catalyst-relevance canonical
 
@@ -182,18 +190,18 @@ Realized vol (30d/90d) · Max drawdown (12m) · Beta (30d rolling) · Balance sh
 ### §3.6.1 · Multi-market normalization boundary (v0.3)
 
 ```ts
-type MarketScope = "US" | "JP" | "KR"
+type MarketScope = "cn_a" | "us" | "jp" | "kr"
 
 interface RawFinancialData {
   ticker: string
-  market: MarketScope
+  market_scope: MarketScope
   as_of: string
   available_at: string
   raw: Record<string, unknown>
 }
 
 interface DimensionAdapter {
-  market: MarketScope
+  market_scope: MarketScope
   normalizeQuality(raw: RawFinancialData): QualityInputs
   normalizeGrowth(raw: RawFinancialData): GrowthInputs
   normalizeValuation(raw: RawFinancialData): ValuationInputs
@@ -205,13 +213,13 @@ interface DimensionAdapter {
 
 **Boundary rules**:
 1. The adapter runs at the ingestion/assembly boundary. `runScoringPipeline` remains market-agnostic and consumes the existing six typed `*Inputs`.
-2. `raw.market` must equal the selected profile's `MarketScope`; an explicit conflicting scope is a validation error, not an override.
+2. `raw.market_scope` must be allowed by the selected profile's §2.4 mapping; an explicit conflicting scope is a validation error, not an override.
 3. `available_at <= as_of` is mandatory. Later filings/prices are excluded before normalization.
 4. Dimension calculations remain in local currency (USD/JPY/KRW). FX (`usdjpy` / `usdkrw`) is presentation/EntryPlan metadata and must not alter dimension inputs.
 5. JP uses J-GAAP/EDINET semantics and TSE 33-sector peers; KR uses K-IFRS/DART semantics and KRX peers. Cross-shareholding/preferred-stock adjustments must be identified in `inputs` and `source_versions`.
 6. Missing required inputs remain missing and reduce evidence/coverage according to the dimension contract; adapters must not silently coerce unknown fundamentals to economic zero.
 7. Bundle assembly must map `normalizeTrend` → `trend_inputs` and `normalizeRisk` → `risk_inputs`. Cross-wiring is a hard contract failure.
-8. Existing typed US `TickerDataBundle` callers bypass raw normalization and remain byte-compatible with v0.2.
+8. Existing typed `TickerDataBundle` callers bypass raw normalization after supplying explicit `market_scope`; their six typed dimension inputs remain unchanged, while v0.3 profile weights/version pins govern newly computed output.
 
 ### §3.7 · Catalyst-relevance score (v0.2 canonical formula · NEW)
 
@@ -508,9 +516,11 @@ v0.1 tenor-based (`1w/1m/3m/6m/1y`) **弃用** · 语义 5-enum 取代 · 与 ca
 | 2 · 美股优选 | Score (6-dim + rating) · Conviction · RiskGate · EntryPlan (detail-panel) · profile switcher | γ-1 |
 | 3 · 日韩市场 | Score (6-dim + rating · JP/KR market profile + optional market multibagger variant) | γ-2 |
 | 4 · 高倍潜力 | Score with market-scoped multibagger profile · Conviction | γ-2 |
-| 5 · 回测证据 | Score history 6m PIT · Conviction history · `?profile=<slug>` | γ-3 |
+| 5 · 回测证据 | `GET /api/v1/backtest-pit/:strategy/:as_of` + range/holdings variants · `strategy` is the profile slug | γ-3 |
 | 6 · 每日日报 | Conviction 变动 ≥5 pts · new EntryPlans · gate flips · AI-γ Recommendation entries[] | γ-3 |
 | 7 · 报告历史 | Score+Conviction+RiskGate+EntryPlan 快照 (persisted with `scoring_id + snapshot_hash`) | γ-3 |
+
+For tab 5, `:as_of` is the percent-encoded ISO PIT timestamp matched against `as_of_utc`; it is not a display-day or `snapshot_day` key. The API, storage and replay field is `strategy`. Frontend may label the selector "Profile", but must not emit a `profile` wire field for this namespace.
 
 ### §7.1 · AI-γ consumption (v0.3)
 
@@ -558,7 +568,9 @@ AI-γ `contracts/recommendation.md` 引用:
 3. The ten new RiskGate codes are additive. US/A-share callers that omit JP/KR signals produce the same gate as v0.2.
 4. JP/KR adapter fixtures assert `available_at <= as_of`, local-currency scoring, missingness preservation and trend/risk non-cross-wiring.
 5. Replay persists profile slug, exact weights, `as_of`, `computed_at`, input `available_at`, `source_versions`, `scoring_id`, and `snapshot_hash`.
-6. A v0.2 `TickerDataBundle` with an existing profile remains accepted; no migration or `schema.prisma` change is part of D1.
+6. Replay also persists `market_scope`; generic profiles never infer `us` when the scored security is A-share.
+7. A v0.2 typed bundle can be migrated by supplying explicit `market_scope`; v0.2 snapshots retain recorded weights and engine versions. Recomputing generic `multibagger` under v0.3 is intentionally output-changing.
+8. No migration or `schema.prisma` change is part of D1.
 
 ## §12 · Discipline
 
