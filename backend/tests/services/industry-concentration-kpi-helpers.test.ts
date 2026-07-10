@@ -241,34 +241,6 @@ assert(
 
 // ---- [9] META-GUARD fs+regex ----------------------------------------------
 {
-  const workspacePath = join(__dirname, '../../../frontend/src/pages/workspace/PortfolioWorkspace.tsx');
-  const src = readFileSync(workspacePath, 'utf8');
-  assert(
-    '[9.1] PortfolioWorkspace.tsx import buildIndustryConcentrationKpiViewModel',
-    /import\s*\{[^}]*buildIndustryConcentrationKpiViewModel[^}]*\}\s*from\s*['"]\.\/industryConcentrationKpiHelpers['"]/.test(src),
-  );
-  assert(
-    '[9.2] PortfolioWorkspace.tsx 调用 buildIndustryConcentrationKpiViewModel',
-    /buildIndustryConcentrationKpiViewModel\(summary\)/.test(src),
-  );
-  assert(
-    '[9.3] 不再 inline 写 summary.max_industry_pct ?? 0 (走 helper view model)',
-    !/summary\.max_industry_pct\s*\?\?\s*0/.test(src),
-  );
-  assert(
-    '[9.4] 不再 inline 写 rawPct > INDUSTRY_KPI_WARN_PCT (走 helper)',
-    !/rawPct\s*>\s*INDUSTRY_KPI_WARN_PCT/.test(src),
-  );
-  assert(
-    '[9.5] 仍含 IndustryConcentrationKpi 组件 (component 留在原处)',
-    /const IndustryConcentrationKpi[:\s]/.test(src),
-  );
-  assert(
-    '[9.6] 顶 KPI strip 仍渲染 IndustryConcentrationKpi',
-    /<IndustryConcentrationKpi\s+summary=\{industryConc\}\s*\/>/.test(src),
-  );
-}
-{
   const helperPath = join(
     __dirname,
     '../../../frontend/src/pages/workspace/industryConcentrationKpiHelpers.ts',

@@ -49,7 +49,6 @@ const EasyQuantWorkspace = lazy(() => import('./pages/workspace/EasyQuantWorkspa
 const FactorWorkspace = lazy(() => import('./pages/workspace/FactorWorkspace'));
 const LabWorkspace = lazy(() => import('./pages/workspace/LabWorkspace'));
 const LabStrategyDetail = lazy(() => import('./pages/workspace/LabStrategyDetail'));
-const PortfolioWorkspace = lazy(() => import('./pages/workspace/PortfolioWorkspace'));
 // AI 分析一级入口 (2026-07-04) — 用户原话: "我希望导航栏有个 Tab 可以直接触发 AI 分析".
 // 独立落地页: 搜股 → 复用 AIStockAnalysisModal 多维度解读.
 const AIAnalysisWorkspace = lazy(() => import('./pages/workspace/AIAnalysisWorkspace'));
@@ -485,14 +484,6 @@ const AppContent: React.FC = () => {
                   element={
                     <ProtectedRoute>
                       <LabStrategyDetail />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/workspace/portfolio"
-                  element={
-                    <ProtectedRoute>
-                      <PortfolioWorkspace />
                     </ProtectedRoute>
                   }
                 />
