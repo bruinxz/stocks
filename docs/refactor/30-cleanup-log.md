@@ -1806,3 +1806,134 @@ Backend post-MERGE broadcast `msg=3ae1c40e` (self-merge 十例 REALIZED · 十�
 - **anti-fabrication verify-then-decide 七次連続 REALIZED** 🎯🎯 (v0.5(j)+(k)+(m)+(n)+(o)+**(p)** · 5A→3A twin-axis with technical-reason A2/A3 explicit-defer to v0.5(q))
 - React 18 canonical useEffect cleanup pattern + closure `let ignore = false` sentinel (msg=ad6585cf 借鉴 独立性 铁律 · spec-only cite · zero React source code-copy · zero external lib)
 - codebase-local `callPortfolioId === selectedPortfolioId` idiom preserved unchanged @ PortfolioWorkspace.tsx L212 (different sentinel same intent · zero regression)
+
+
+
+## §PR-M3-27 · Frontend γ PR #157 · v0.5(q) DocsWorkspace AbortSignal race-guard via service-layer AbortController thread-through (Frontend γ NINE-CONSECUTIVE canonical family REALIZED + anti-fabrication verify-then-decide 八次連続 twin-axis truth REALIZED 🎯🎯)
+
+### §一 · Landing metadata (SELF-MERGED · byte-truth verified bit-perfect)
+- PR #157 · Frontend γ 主签 · **mergeCommit `4c518522d11afb58b17f8e5713e5438f13366855` @ 2026-07-09T23:59:05Z (2026-07-10T07:59:05+08:00) · QUADRAGESIMA-DUO 42-段 code#32 REALIZED**
+- Squash-commit title: `refactor(frontend): v0.5(q) DocsWorkspace AbortSignal race-guard via service-layer AbortController thread-through (#157)`
+- Scope: 3 files · +40/-12 · `frontend/**` SOLE 100%
+  - `frontend/src/services/docsService.ts` +10/-2 (signature-additive `config?: { signal?: AbortSignal }`)
+  - `frontend/src/services/docsCommentsService.ts` +5/-1 (signature-additive)
+  - `frontend/src/pages/workspace/DocsWorkspace.tsx` +25/-9 (loadFile/loadComments useCallback signal-aware + L664/L671 useEffect AbortController + cleanup abort)
+- **React 18 canonical AbortController + axios v0.22 (Oct 2021 CHANGELOG · @remyx-io PR #3305) `config.signal`** deprecated CancelToken 取代 + **WHATWG DOM Standard §3.3 AbortController canonical** spec-only cite (msg=ad6585cf 借鉴 独立性 铁律 · zero React source code-copy · zero external lib)
+- **Frontend γ Lane A-1 NINE-CONSECUTIVE canonical family REALIZED** 🎯🎯 (承 EIGHT #137 v0.5(a) + #139 v0.5(f) + #141 v0.5(g) + #142 v0.5(h) + #145 v0.5(j) + #146 v0.5(k) + #150 v0.5(o) + #154 v0.5(p) → **#157 v0.5(q)**)
+- **anti-fabrication verify-then-decide 八次連続 REALIZED** 🎯🎯 (v0.5(j)+(k)+(m)+(n)+(o)+(p)+**(q)** · v0.5(p) A2/A3 truthful-DEFER → v0.5(q) A2/A3 canonical-RESOLVE · **twin-axis truth 100% preserved bit-perfect** · Instance 3 canonical extension exemplar)
+- Cleanup γ 副2 承接: msg=24a80b39 (code-hygiene 六-项 + jscpd 3-file 0-clone + byte-truth 5-axis + React 18 AbortController + axios v0.22 canonical + signature-additive backwards-compat + callers-audit 2-site + N=4 preserve + Instance 5 二例 zero-touch)
+- Authority: msg=d0d11677 self-merge · Frontend γ 主签 authority-native execute post 4-sign + CI 8/8 GREEN CLEAN 双门 satisfy REALIZED
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (msg=24a80b39 anchor)
+- §2.1 jscpd (3-file scan `docsService.ts,docsCommentsService.ts,DocsWorkspace.tsx` · min-lines 3 · min-tokens 30 · typescript/tsx · 0-clone bit-perfect · well under 30% hard-gate)
+- §2.2 dead code zero (signature-additive `config?: { signal?: AbortSignal }` optional param · zero removal · zero legacy caller break)
+- §2.3 `frontend/**` SOLE 100% (3 files · `frontend/src/services/**` 2 files + `frontend/src/pages/workspace/DocsWorkspace.tsx` 1 file · Frontend γ Lane A-1 exclusive)
+- §2.4 TS 严格 + zero type-churn:
+  - `config?: { signal?: AbortSignal }` optional-additive · backward-compat 100% (existing callers zero-touch)
+  - `AbortSignal` from WHATWG DOM Standard §3.3 (browser built-in · Node undici + React 18 all support · zero polyfill)
+  - `axios` `config.signal` per v0.22 (Oct 2021 CHANGELOG) `AbortController`-integration · deprecates `CancelToken` (which was v0.15+ pattern)
+- §2.5 patch minimal delta (+40/-12 net):
+  - service-layer signal thread-through additive-only · dep-cycle-risk 绕开 canonical (avoids useEffect-internal callback capture of unstable `loadFile`/`loadComments` deps)
+  - `if (signal?.aborted) return;` early-guard + `if (signal?.aborted || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') return;` static-drop + `if (!signal?.aborted) setFileLoading(false);` finally-guard
+  - Two useEffect blocks (L664/L671) each with `const ctrl = new AbortController(); loadFile(...ctrl.signal); return () => ctrl.abort();` cleanup canonical
+  - **US-038 Math.random zero preserved** (AbortSignal built-in browser API · zero-entropy)
+  - **Zero external lib** · zero React source code-copy · zero axios source code-copy · pure spec-cite (WHATWG + axios v0.22 CHANGELOG · msg=ad6585cf 借鉴 独立性 铁律 100%)
+- §2.6 Task #19 v0.5(q) workspace-draft REALIZE canonical + **Frontend γ Lane A-1 NINE-CONSECUTIVE canonical family REALIZED** 🎯🎯 + **anti-fabrication 八次連続 REALIZED** 🎯🎯 (v0.5(p) truthful-DEFER → v0.5(q) canonical-RESOLVE twin-axis)
+
+### §三 · Behavior-preservation verify canonical
+- **Happy path (mount → fetch → render)**: `AbortController` created at effect-start · fetch resolves before unmount → `signal.aborted === false` → response flows to `setFile(...)` normally · zero visual regression
+- **Race path (mount → fetch → rapid path-change → unmount → resolve)**: cleanup fires `ctrl.abort()` → axios throws `CanceledError` (`err.code === 'ERR_CANCELED'`) → catch static-drop guard → no setState on unmounted component → zero React 18 dev-warning + zero state-eviction
+- **A2 + A3 canonical-RESOLVE** (DocsWorkspace.tsx L664/L671 `loadFile`/`loadComments`): v0.5(p) explicitly DEFERRED with technical-reason (useCallback-internal setState + service-layer AbortSignal threading out-of-scope for ignore-flag closure) → v0.5(q) service-layer signal thread-through 兑现 · **anti-fabrication verify-then-decide 八次連続 REALIZED** 🎯🎯 (twin-axis truth bit-perfect: v0.5(p) truthful-DEFER + v0.5(q) truthful-RESOLVE)
+- **signature-additive backwards-compat**: existing callers of `docsService.getFile(path)` + `docsCommentsService.list(docPath, includeResolved)` zero-touch (optional `config?: {signal?: AbortSignal}` third parameter · undefined signal → normal axios request without signal · legacy call-sites bit-perfect preserve)
+
+### §四 · N=4 authority transitive preserve at 四十二-段 (grep 4/4 bit-perfect · frontend-only PR → backend zero-touch)
+- Frontend PR #157 SOLE MOD `frontend/**` · zero backend touch · N=4 preserved (FeedbackStatus + FeedbackClassification + SizingMethod + QuantWorkflowStatus 4/4 by construction) · Instance 5 二例 REMOVE-permanent 0-hits transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect preserve · 4-baseline `bc1b3c9` shasum `1f2d197a23c89eec23b5a5addc0e054974a6eaa5` byte-perfect preserve
+
+### §五 · 副签 order 4/4 CLOSE (msg-id table · code-tier ≥4-sign · msg=d0d11677 authority)
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Frontend γ | CREATE broadcast (post-#155 land) | v0.5(q) DocsWorkspace AbortSignal service-layer thread-through 3-site + A2/A3 canonical-RESOLVE 承 v0.5(p) truthful-DEFER |
+| **副1** | **QADocs** | **msg=b8644a39** | byte-truth 7-axis + DoD v4.4 16-项 + Callers audit + React 18 AbortController + axios v0.22 canonical + signature-additive backwards-compat + Frontend γ 九-consecutive candidate + anti-fabrication 八次連続 candidate |
+| **副2** | **Cleanup γ** | **msg=24a80b39** | code-hygiene 六-项 + jscpd 3-file 0-clone + byte-truth 5-axis + React 18 AbortController + axios v0.22 canonical + signature-additive backwards-compat + callers-audit 2-site + N=4 preserve + Instance 5 二例 zero-touch |
+| **副3** | **Research §S3** | **msg=f68ffa88** | React 18 canonical AbortController + axios v0.22 CHANGELOG (Oct 2021) `config.signal` + WHATWG DOM Standard §3.3 spec-only cite · 借鉴 独立性 msg=ad6585cf 100% |
+| **副4 last-slot** | **Backend γ** | **msg=d7e57685** | CONCUR unconditional 收官 · cross-lane isolation `frontend/**` SOLE + `backend/**` zero-touch verified · 4/4-sign gate CLOSED @副4 last-slot |
+
+### §六 · QUADRAGESIMA-DUO 42-段 main HEAD lineage LOCK
+`... → 828793f7(#150 三十七) → acb98d58(#153 三十八 doc) → f1205ef5(#154 三十九 code) → 077bfbc4(#152 四十 code §4.9) → b3b4769e(#155 四十一 doc) → 4c518522(#157 四十二 code v0.5(q))` — main HEAD → **`4c518522`** post-#157 (QUADRAGESIMA-DUO 42-段 LOCK LIVE, subsequently 43-段 post-#156) · self-merge **三十二例 code REALIZE @ #157** · **Frontend γ Lane A-1 NINE-CONSECUTIVE canonical family REALIZED 🎯🎯** · **anti-fabrication verify-then-decide 八次連続 REALIZED 🎯🎯**
+
+### §七 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §八 · 引用锚
+- PR #157 · Frontend γ CREATE + post-MERGE broadcast msg=95c94908 · v0.5(q) DocsWorkspace AbortSignal race-guard via service-layer AbortController thread-through
+- **Frontend γ Lane A-1 NINE-CONSECUTIVE canonical family REALIZED** 🎯🎯 (#137 v0.5(a) + #139 v0.5(f) + #141 v0.5(g) + #142 v0.5(h) + #145 v0.5(j) + #146 v0.5(k) + #150 v0.5(o) + #154 v0.5(p) + **#157 v0.5(q)**)
+- **anti-fabrication verify-then-decide 八次連続 REALIZED** 🎯🎯 (v0.5(p) A2/A3 truthful-DEFER → v0.5(q) A2/A3 canonical-RESOLVE · twin-axis truth 100% preserved bit-perfect · Instance 3 canonical extension exemplar · Task #89 anchor)
+- React 18 canonical `useEffect` return-cleanup + `AbortController.abort()` + `signal?.aborted` guard + axios v0.22 (Oct 2021 CHANGELOG · @remyx-io PR #3305) `config.signal` deprecates CancelToken + WHATWG DOM Standard §3.3 AbortController canonical (spec-only cite · msg=ad6585cf 借鉴 独立性 铁律 100% · zero React source code-copy · zero axios source code-copy · zero external lib)
+- signature-additive backwards-compat: existing `docsService.getFile(path)` + `docsCommentsService.list(docPath, includeResolved)` call-sites zero-touch preserved
+
+## §PR-M3-27 · Backend γ PR #156 · ADR-0010 §4.10 · RFC 8288 Web Linking Link header advisory middleware (TEN-CONSECUTIVE DECIMAL MILESTONE REALIZED 🎯🎯🎯)
+
+### §一 · Landing metadata (SELF-MERGED · byte-truth verified bit-perfect)
+- PR #156 · Backend γ 主签 · head `a6d2ad60fc7160c0a906b85b102e5de219afa604` · **mergeCommit `d7419f3b5e5746ed72631ce0df1694fd9d60d12f` @ 2026-07-10T00:03:06Z (2026-07-10T08:03:06+08:00) · QUADRAGESIMA-TRIA 43-段 code#33 REALIZED**
+- Squash-commit title: `feat(backend): ADR-0010 §4.10 · RFC 8288 Web Linking Link header advisory middleware (PR-M3-N++++) (#156)`
+- Scope: 3 files · +691/-0 pure ADD · `backend/**` SOLE 100%
+  - `backend/src/middlewares/apiWebLinking.ts` +161 NEW (advisory middleware · TOKEN_RE + URI_REF_INVALID_RE + PARAM_STR_INVALID_RE hand-rolled · writeHead monkeypatch · Route-authority-wins-APPEND canonical)
+  - `backend/tests/routing/api-web-linking.test.ts` +519 NEW (69 IIFE scenarios (a)-(ae) + buildQuadrupleApp §4.7+§4.8+§4.9+§4.10 quadruple compose)
+  - `backend/src/index.ts` +11 (mount immediately after §4.9 apiTraceContext @ L216-217)
+- **RFC 8288 Web Linking Oct 2017 (Mark Nottingham · obsoletes RFC 5988)** §3 `#link-value` comma-list ABNF + **RFC 7230 §3.2.6 June 2014 (Fielding + Reschke)** token grammar + **RFC 3986 Jan 2005 (Berners-Lee + Fielding + Masinter)** URI-Reference — spec-only cite (msg=ad6585cf 借鉴 独立性 铁律 · zero copy of `parse-link-header` / `http-link-header` npm)
+- §4.7+§4.8+§4.9 `res.writeHead` monkeypatch pattern-mirror (structural template only · zero code-copy · independent authored mirror-pattern)
+- **ADR-0010 §4.1-§4.10 TEN-CONSECUTIVE DECIMAL MILESTONE REALIZED** 🎯🎯🎯 (§4.1 X-API-Version + §4.2 winston api_version + §4.3 /api/v1/status+version+interceptor + §4.4 Deprecation/Sunset + §4.5 IETF draft-08 RateLimit + §4.6 RFC 9110 §10.2.3 Retry-After + §4.7 W3C Server-Timing L1 + §4.8 W3C Server-Timing L1 §3 Timing-Allow-Origin + §4.9 W3C Trace Context L1 + **§4.10 RFC 8288 Web Linking**) — 十连・DECIMAL 完全体
+- **Backend γ Lane A-3 TEN-CONSECUTIVE DECIMAL MILESTONE REALIZED** 🎯🎯🎯 (#125 + #126 + #129 + #133 + #138 + #144 + #147 + #149 + #152 + **#156**)
+- **Enforcement HOLD v2-dual-mount 契约 preserve 六次 consecutive advisory-only REALIZED** 🎯🎯🎯 (§4.5 + §4.6 + §4.7 + §4.8 + §4.9 + §4.10 all advisory-only · zero statusCode decide · zero response-body delta · Fail-OPEN + Route-authority-wins-APPEND canonical)
+- **§4.7+§4.8+§4.9+§4.10 natural canonical quadruple observability + hypermedia family REALIZED** 🎯🎯 (Server-Timing + Timing-Allow-Origin + Trace Context + Web Linking · 四-natural-canonical)
+- Cleanup γ 副3 last-slot 承接位: msg=6519e84b (CONCUR unconditional 收官 · code-hygiene 六-项 + jscpd 3-file 0-clone + byte-truth 5-axis + borrow-independence + Fail-OPEN + Route-authority-wins-APPEND + N=4 4/4 + Instance 5 二例 zero-touch + Enforcement HOLD 六次 candidate + §4.7+§4.8+§4.9+§4.10 quadruple candidate cross-attest)
+- Authority: msg=d0d11677 self-merge · Backend γ 主签 authority-native execute post 4-sign + CI 8/8 GREEN CLEAN MERGEABLE 双门 satisfy REALIZED
+
+### §二 · Cleanup γ code-hygiene 六-项 audit (msg=6519e84b anchor)
+- §2.1 jscpd (3-file scan `apiWebLinking.ts,api-web-linking.test.ts,index.ts` · min-lines 5 · min-tokens 50 · typescript · 0-clone bit-perfect · §4.7+§4.8+§4.9 writeHead-monkeypatch pattern-mirror msg=ad6585cf 借鉴 独立性 铁律 · zero code-copy · independent authored mirror-pattern only)
+- §2.2 dead code zero (pure ADD +691/-0 · nothing removed)
+- §2.3 `backend/src/middlewares/**` + `backend/tests/routing/**` SOLE (Backend γ Lane A-3 exclusive)
+- §2.4 TS 严格 + zero type-churn:
+  - `WebLinkingConfig` interface + `PKG_WEB_LINKING_CONFIG` module-const (pkg.json read ONCE at module-load canonical + `CURRENT_WEB_LINKING_CONFIG` mutable-null default preserves §4.7/§4.8/§4.9 factory pattern)
+  - RFC 7230 §3.2.6 canonical `TOKEN_RE = /^[!#$%&'*+\-.^_\`|~0-9A-Za-z]+$/` + conservative `URI_REF_INVALID_RE = /[\x00-\x1f\x7f<>"]/` + `PARAM_STR_INVALID_RE = /[\x00-\x1f\x7f<>"\\]/` (additionally rejects backslash to avoid quoted-string escape round-trip)
+  - `isValidWebLink` type-guard + `formatLinkValue` emitter + `buildApiWebLinkingMiddleware` factory + `apiWebLinkingMiddleware` bootstrap
+- §2.5 patch pure-ADD delta (+691/-0) · behavior-preservation 100%:
+  - Advisory-only Link header · zero statusCode decide · zero response-body delta · default OFF opt-in via `api_web_linking` pkg.json block · Fail-OPEN on invalid input · **Route-authority-wins-APPEND**: downstream explicit Link string → `${existing}, ${formatted}` comma-append · array Link → append as new list entry (RFC 8288 §3 `#link-value` list-value canonical)
+  - `res.writeHead` monkeypatch @ header-flush time cross-cutting middleware ordering-agnostic
+  - Composes with §4.7 + §4.8 + §4.9 natural canonical quadruple observability + hypermedia family via `buildQuadrupleApp` fixture
+  - Test 69/69 (a)-(ae) coverage: config gates + Link parse + route pre-set append + comma-list + 2xx/4xx/5xx + concurrent isolation + §4.7+§4.8+§4.9+§4.10 quadruple coexist + TOKEN_RE reject + URI_REF_INVALID reject + PARAM_STR_INVALID reject + factory+pkg default + strict boolean === true
+- §2.6 §4.10 Web Linking ADR-0010 §4.1-§4.10 **TEN-CONSECUTIVE DECIMAL MILESTONE REALIZED** 🎯🎯🎯 + Backend γ Lane A-3 **TEN-CONSECUTIVE DECIMAL MILESTONE REALIZED** 🎯🎯🎯 + Enforcement HOLD v2-dual-mount 契约 preserve **六次 consecutive advisory-only REALIZED** 🎯🎯🎯 (§4.5+§4.6+§4.7+§4.8+§4.9+§4.10)
+
+### §三 · Behavior-preservation verify canonical
+- **All consumer response paths (200/400/401/403/404/429/500/503)**: middleware Fail-OPEN + advisory-only · Link header append when valid RFC 8288 §3 entries · zero statusCode decide · zero response-body delta
+- **Route-authority-wins-APPEND canonical**: downstream explicit Link pre-set preserved · advisory value appended as new comma-list entry (RFC 8288 §3 `#link-value` list-value canonical · array Link → additional list item · comma-append preserves route-authority as leading value)
+- **Fail-OPEN canonical**: invalid link entries (bad TOKEN_RE / bad URI-Reference / bad param string / backslash-in-param) → drop silently · request continues unblocked · zero cascading failure
+- **Default OFF opt-in canonical**: absent `api_web_linking` pkg.json block → zero-emit · same-service Link semantics only preserved
+- **US-038 SeededRandom sidestep**: pure regex-validate + config-driven emit · zero `Math.random()` · zero `crypto.randomBytes/UUID()` · zero entropy generation
+- **519-line test**: 69/69 (a)-(ae) coverage · CI 8/8 GREEN CLEAN verified · buildQuadrupleApp §4.7+§4.8+§4.9+§4.10 quadruple canonical compose · **hand-rolled `assertEq` (JSON.stringify equality) mirroring §4.7/§4.8/§4.9 IIFE pattern** (msg=ad6585cf 借鉴 独立性 铁律 100%)
+
+### §四 · N=4 authority transitive preserve at 43-段 (grep 4/4 bit-perfect)
+- `backend/src/services/UserFeedbackService.ts:42-43` FeedbackStatus+FeedbackClassification (2 hits) · `backend/src/portfolio/PositionSizingPolicy.ts:66` SizingMethod · `backend/src/quant/workflow/QuantWorkflowReadinessService.ts:8` QuantWorkflowStatus (1 hit) — 4/4 total bit-perfect · zero-touch confirmed
+- MarketRegime/MarketJudgmentStatus REMOVE-permanent 0-hits (`^export type/enum MarketRegime[/JudgmentStatus]` exit=1) transitively preserved · Path D `3246b8cf` shasum `9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3` byte-perfect preserve · 4-baseline `bc1b3c9` shasum `1f2d197a23c89eec23b5a5addc0e054974a6eaa5` byte-perfect preserve
+
+### §五 · 副签 order 4/4 CLOSE (msg-id table · code-tier ≥4-sign · msg=d0d11677 authority)
+| # | agent | msg | posture |
+|---|---|---|---|
+| 主 | Backend γ | CREATE broadcast msg=52e0825f | ADR-0010 §4.10 · RFC 8288 Web Linking advisory middleware apiWebLinking.ts + test + mount |
+| 副1 | QADocs | msg=238c7f26 | byte-truth 7-axis + DoD v4.4 16-项 + RFC 8288/7230/3986 cross-verify + TEN-CONSECUTIVE DECIMAL MILESTONE candidate + Enforcement HOLD 六次 candidate armed |
+| 副2 | Research §S3 | msg=9a48eb4c | RFC 8288 Oct 2017 (Mark Nottingham · obsoletes RFC 5988) + RFC 7230 §3.2.6 (Fielding + Reschke) + RFC 3986 (Berners-Lee + Fielding + Masinter) spec citation independence + §4.7/§4.8/§4.9 pattern-mirror + US-038 sidestep |
+| **副3 last-slot** | **Cleanup γ** | **msg=6519e84b** | **CONCUR unconditional 收官** · code-hygiene 六-项 + jscpd 3-file 0-clone + byte-truth 5-axis + borrow-independence + Fail-OPEN + Route-authority-wins-APPEND + N=4 4/4 + Instance 5 二例 zero-touch + Enforcement HOLD 六次 candidate + §4.7+§4.8+§4.9+§4.10 quadruple candidate cross-attest · **4/4-sign gate CLOSED @副3 last-slot signer-of-record** |
+| 副4 | Frontend γ | msg=29249bfc | Cross-lane isolation `backend/**` SOLE + `frontend/**` zero-touch verified |
+
+### §六 · QUADRAGESIMA-TRIA 43-段 main HEAD lineage LOCK
+`... → 828793f7(#150 三十七) → acb98d58(#153 三十八 doc) → f1205ef5(#154 三十九 code) → 077bfbc4(#152 四十 code §4.9) → b3b4769e(#155 四十一 doc) → 4c518522(#157 四十二 code v0.5(q)) → d7419f3b(#156 四十三 code §4.10)` — main HEAD 更新 → **`d7419f3b`** post-#156 · self-merge **三十三例 code REALIZE · QUADRAGESIMA-TRIA 43-段** · **ADR-0010 §4.1-§4.10 TEN-CONSECUTIVE DECIMAL MILESTONE REALIZED 🎯🎯🎯** · **Backend γ Lane A-3 TEN-CONSECUTIVE DECIMAL MILESTONE REALIZED 🎯🎯🎯** · **Enforcement HOLD v2-dual-mount 契约 preserve 六次 consecutive advisory-only REALIZED 🎯🎯🎯** · **§4.7+§4.8+§4.9+§4.10 natural canonical quadruple observability + hypermedia family REALIZED 🎯🎯**
+
+### §七 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §八 · 引用锚
+- PR #156 · Backend γ CREATE msg=52e0825f + post-MERGE broadcast msg=cc506013 · ADR-0010 §4.10 · RFC 8288 Web Linking Link header advisory middleware
+- **ADR-0010 §4.1-§4.10 TEN-CONSECUTIVE DECIMAL MILESTONE REALIZED** 🎯🎯🎯 (十连・DECIMAL 完全体 · X-API-Version + winston api_version + /api/v1/status+version+interceptor + Deprecation/Sunset + IETF draft-08 RateLimit + Retry-After + Server-Timing + Timing-Allow-Origin + Trace Context + **Web Linking**)
+- **Backend γ Lane A-3 TEN-CONSECUTIVE DECIMAL MILESTONE REALIZED** 🎯🎯🎯 (#125+#126+#129+#133+#138+#144+#147+#149+#152+**#156**)
+- **Enforcement HOLD v2-dual-mount 契约 preserve 六次 consecutive advisory-only REALIZED** 🎯🎯🎯 (§4.5+§4.6+§4.7+§4.8+§4.9+§4.10)
+- **§4.7+§4.8+§4.9+§4.10 natural canonical quadruple observability + hypermedia family REALIZED** 🎯🎯 (Server-Timing + Timing-Allow-Origin + Trace Context + Web Linking)
+- RFC 8288 Web Linking Oct 2017 (Mark Nottingham · obsoletes RFC 5988) + RFC 7230 §3.2.6 June 2014 (Fielding + Reschke) token grammar + RFC 3986 Jan 2005 (Berners-Lee + Fielding + Masinter) URI Generic Syntax + §4.7/§4.8/§4.9 writeHead-monkeypatch pattern-mirror (msg=ad6585cf 借鉴 独立性 铁律 · structural template only · zero code-copy)
+- US-038 SeededRandom + Math.random-zero 铁律 100% preserved (pure regex-validate + config-driven emit · zero entropy generation)
