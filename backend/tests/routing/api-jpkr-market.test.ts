@@ -139,9 +139,21 @@ async function main(): Promise<void> {
       'KPI SQL does not average company financial FX',
       !kpiCall.sql.includes('fx_rate_to_usd')
     );
+    assert('KPI SQL contains no rejected fx_days CTE', !kpiCall.sql.includes('fx_days'));
+    assert('KPI SQL contains no rejected fx_summary CTE', !kpiCall.sql.includes('fx_summary'));
+    assert('KPI SQL pins USDJPY to null', kpiCall.sql.includes('NULL::jsonb AS usdjpy'));
+    assert('KPI SQL pins USDKRW to null', kpiCall.sql.includes('NULL::jsonb AS usdkrw'));
     assert('row SQL uses frozen ticker names', listCall.sql.includes('k.ticker_name_local'));
     assert('row SQL maps disclosure table', listCall.sql.includes('jpkr_disclosure_event'));
     assert('row SQL derives prior-close change', listCall.sql.includes('previous_rows'));
+    assert(
+      'row SQL preserves exchange+ticker candidates',
+      listCall.sql.includes('DISTINCT ON (k.exchange, k.ticker)')
+    );
+    assert(
+      'row SQL rejects ticker-only candidate collapse',
+      !listCall.sql.includes('DISTINCT ON (k.ticker)')
+    );
     assert('row SQL avoids nonexistent kline change_pct', !listCall.sql.includes('k.change_pct'));
     assert('row SQL avoids financial-as-disclosure fields', !listCall.sql.includes('d.title'));
     assert(
