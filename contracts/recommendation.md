@@ -12,7 +12,7 @@
 
 ## §1 · SemVer
 
-Contract version: `0.3.0`
+Contract version: `0.3.1`
 
 Compatibility matrix (v0.3 anchor):
 - `scoring.md`: `>=0.3.0, <0.4.0`
@@ -46,7 +46,7 @@ type Recommendation = {
 
   // AI-γ additive block
   trigger_signals:     TriggerSignal[];           // length >= 1
-  weights:             WeightAttribution;         // normalized to 1.0
+  weights:             WeightAttribution;         // signed L1 attribution or zero-mass state (§2.8)
   explanation:         Explanation;               // §2.6
   evidence_refs:       EvidenceRef[];             // length >= 1
 
@@ -195,10 +195,15 @@ type TriggerCode =
 ### 2.8 WeightAttribution
 
 ```typescript
-type WeightAttribution = {
-  contributions:   Contribution[];
-  normalized:      true;                // v0.2 hard-locked
-};
+type WeightAttribution =
+  | {
+      contributions: [Contribution, ...Contribution[]];
+      normalized:    true;
+    }
+  | {
+      contributions: [];
+      normalized:    false;
+    };
 
 type Contribution = {
   source_kind:     "trigger" | "score_dim" | "catalyst_relevance";
@@ -207,11 +212,28 @@ type Contribution = {
   note?:           string;
 };
 
-// Invariant: sum(contributions.weight) == 1.0 ± 1e-6
-// Optional invariant: sum(|weight|) <= 1.5  (for hedged displays)
+// normalized=true invariant: sum(abs(contributions.weight)) == 1.0 ± 1e-6
+// signed_net = sum(contributions.weight) is informational and lies in [-1, 1]
 ```
 
-v0.2 normalization canonical: `weight_i = delta_i / (|Σ delta| + base_weight)` where `base_weight` is the profile-specific base contribution. This ensures contributions sum to 1.0 even with negative (hedging) weights.
+v0.3.1 signed-L1 normalization canonical:
+
+1. Assembly derives a signed `raw_contribution_i` for every attribution source.
+2. `denominator = Σ abs(raw_contribution_i)`.
+3. Every raw contribution and the accumulated denominator MUST be finite
+   numbers; booleans, non-finite raw values, and denominator overflow fail
+   closed before normalization.
+4. When `denominator > 0`, `weight_i = raw_contribution_i / denominator`,
+   `normalized=true`, and contributions MUST be non-empty.
+5. When `denominator == 0`, the sole canonical representation is
+   `contributions=[]` with `normalized=false`; zero-weight placeholder rows are
+   forbidden.
+6. `signed_net = Σ weight_i` is informational. It may be negative, zero, or
+   positive and MUST NOT be validated as equal to 1.
+
+This preserves the direction of negative evidence while making total
+attribution magnitude deterministic. The former signed-sum formula was
+mathematically contradictory for mixed-sign contributions and is superseded.
 
 ### 2.9 EvidenceRef
 
@@ -328,7 +350,7 @@ type RecommendationList = {
   output_fingerprint: string;           // SHA-256 of JCS-canonicalized items (§5)
   disclaimer:        Disclaimer;
   meta: {
-    contract_version:  "0.3.0";         // recommendation schema pin
+    contract_version:  "0.3.1";         // recommendation schema pin
     profile_version:   string;          // SemVer of the AI profile/rule bundle
     input_fingerprint: string;          // SHA-256 of RFC 8785 JCS-canonicalized pipeline input
     strategy_version:  string;          // SemVer
@@ -409,7 +431,10 @@ Pipeline MUST enforce (fail closed):
 1. `items[*].recommendation.risk_gate.ok_to_enter == true`
 2. `items[*].recommendation.trigger_signals.length >= 1`
 3. `items[*].recommendation.evidence_refs.length >= 1`
-4. `abs(sum(items[*].recommendation.weights.contributions.weight) - 1.0) <= 1e-6`
+4. WeightAttribution MUST satisfy exactly one state:
+   - `normalized=true`: contributions are non-empty and `abs(Σ abs(weight) - 1.0) <= 1e-6`
+   - `normalized=false`: contributions are exactly `[]`
+   Signed `Σ weight` is informational only and MUST NOT be required to equal 1.
 5. `items[*].recommendation.explanation.body` 内所有 `[E<n>]` 标记 MUST 对应存在的 `evidence_refs[i].id`
 6. `items[*].recommendation.evidence_refs[*].source_uri` MUST match §3 canonical scheme
 7. `disclaimer.hash` MUST equal SHA-256 of canonical `disclaimer.full_text`
@@ -451,6 +476,15 @@ Backend γ daily-report `entries[i]` = `Recommendation` byte-align 直穿 (Backe
 
 ## §10 · Changelog
 
+### v0.3.0 → v0.3.1 · P0 corrective hotfix
+
+| # | delta | section | canonical anchor |
+|---|---|---|---|
+| 1 | Replace contradictory signed-sum normalization with signed L1 `weight_i=raw_i/Σ\|raw\|` | §2.8 | task #197 · Orch msg=7ee79dd3 |
+| 2 | Canonical zero-mass state = `contributions=[]`, `normalized=false` | §2.8, §8 | task #197 |
+| 3 | Validator invariant #4 checks L1 magnitude; signed net is informational | §8 | task #197 |
+| 4 | Boolean/non-finite raw values and non-finite accumulated denominator fail closed | §2.8 | Strategy review task #201 |
+
 ### v0.2 → v0.3
 
 | # | delta | section | canonical anchor |
@@ -469,7 +503,7 @@ Backend γ daily-report `entries[i]` = `Recommendation` byte-align 直穿 (Backe
 |---|---|---|---|
 | 1 | ScoreRef + scoring_id UUIDv4 + snapshot_hash + Band + dims[] 6-dim | §2.2 | Strategy v0.2 §2.1 |
 | 2 | Conviction → Adjustment[] evaluation-order-free (弃 reasons[]+adjust) | §2.3 | Strategy v0.2 §4.1 |
-| 3 | WeightAttribution normalization `delta/(|Σ delta|+base_weight)` | §2.8 | AI-γ v0.2 |
+| 3 | WeightAttribution normalization `delta/(|Σ delta|+base_weight)` (superseded by signed L1 in v0.3.1) | §2.8 | AI-γ v0.2 |
 | 4 | CatalystRelevance.kind 8→9 enum (+unclassified) + §8 hardgate | §2.10, §8 | Strategy v0.2 §3.7.2 |
 | 5 | RiskTrigger 9→12 codes (+ST_TAG/PRICE_LIMIT_APPROACH/SUSPENDED) | §2.4 | Strategy v0.2 §5.3 |
 | 6 | URI scheme +JP/KR examples + catalyst-event variant | §3 | DP γ-2 notes/182 |

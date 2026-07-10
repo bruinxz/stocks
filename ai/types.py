@@ -111,7 +111,7 @@ class Contribution:
 @dataclass
 class WeightAttribution:
     contributions: list[Contribution] = field(default_factory=list)
-    normalized: bool = True
+    normalized: bool = False
 
 
 @dataclass
