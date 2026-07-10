@@ -63,10 +63,35 @@
  *              or null before first successful emit). WebSocket + none
  *              kinds are no-op (comment-frame is EventSource-native per
  *              HTML5 §9.2.5-6). All operations fail-OPEN.
+ *   §4.7.2.5 — SSE reconnection-jitter L3.5 SUB-tier (HTML5 §9.2.5 per
+ *              spec: the EventSource client's reconnection timer is
+ *              seeded by the last `retry:` field value; implementations
+ *              are encouraged to add jitter to the timer to defend
+ *              against thundering-herd reconnects when many clients
+ *              simultaneously disconnect from the same origin). This
+ *              tier moves the jitter production server-side so the emit
+ *              is deterministic and reproducible per-request (rather
+ *              than relying on browser-implementation-specific jitter).
+ *              Adds `emitStreamRetryHint(baseMs: number, jitterMs?:
+ *              number): void` which serializes a `retry: <base ± jitter>
+ *              \n\n` control-frame with a deterministic, hash-derived
+ *              jitter offset in `[-cap, +cap]` and updates the internal
+ *              cursor, and `readonly retryJitterMs: number | null`
+ *              (last emitted jitter offset in ms, or null before first
+ *              successful emit). The jitter derivation uses
+ *              `crypto.createHash('sha256')` seeded by
+ *              `Date.now() + baseMs + monotonic-counter` — Math.random
+ *              is banned per US-038. Composes with §4.7.2.3 (upstream
+ *              `retry:` primary) and §4.7.2.4 (retriable-combo) so the
+ *              retriable-error frame may pull the jittered value when
+ *              `retry_jitter_enabled === true`. WebSocket + none kinds
+ *              are no-op (retry: is EventSource-native per HTML5
+ *              §9.2.5). All operations fail-OPEN.
  *
  * SSE (HTML5 §9.2 Server-Sent Events canonical) frame format:
  *   id: <id>\n         (optional; when present, updates client cursor)
  *   retry: <ms>\n\n    (§4.7.2.3 standalone control-frame; sets reconnect timer)
+ *   retry: <ms>\n\n    (§4.7.2.5 jittered control-frame; base ± hash-derived offset)
  *   : error <reason>\n\n  (§4.7.2.4 standalone comment-frame; hints onerror)
  *   event: server-timing\n
  *   data: {name;dur=X.YZ;desc="..."}\n
@@ -92,7 +117,9 @@
  *       "retry_default_ms": 3000,
  *       "retry_max_ms": 300000,
  *       "error_frame_enabled": false,
- *       "error_frame_default_reason": "stream_terminated"
+ *       "error_frame_default_reason": "stream_terminated",
+ *       "retry_jitter_enabled": false,
+ *       "retry_jitter_max_ms": 500
  *     }
  *   }
  *
@@ -125,6 +152,7 @@
  * external npm dependency beyond already-listed `ws`).
  */
 import type { Request, Response, NextFunction } from 'express';
+import { createHash } from 'crypto';
 import pkg from '../../package.json';
 
 export interface ServerTimingStreamingConfig {
@@ -142,6 +170,8 @@ export interface ServerTimingStreamingConfig {
   retry_max_ms?: number;
   error_frame_enabled?: boolean;
   error_frame_default_reason?: string;
+  retry_jitter_enabled?: boolean;
+  retry_jitter_max_ms?: number;
 }
 
 export type ServerTimingStreamKind = 'sse' | 'websocket' | 'none';
@@ -225,6 +255,14 @@ export interface ServerTimingStreamAdapter {
    */
   readonly errorReason: string | null;
   /**
+   * §4.7.2.5 · Last SSE reconnection-jitter offset (in ms) applied by a
+   * successful `emitStreamRetryHint` call. Positive or negative integer
+   * within `[-retry_jitter_max_ms, +retry_jitter_max_ms]`. `null` before
+   * the first successful emit or when the jitter branch was inactive
+   * (e.g. `jitterMs === 0`).
+   */
+  readonly retryJitterMs: number | null;
+  /**
    * §4.7.2.2 · Replay cached frames strictly-after the given event id
    * (SSE `Last-Event-ID` reconnect cursor per HTML5 §9.2.5). Iterates
    * the bounded ring-buffer LIFO-ordered from oldest→newest and invokes
@@ -265,6 +303,26 @@ export interface ServerTimingStreamAdapter {
    * server-hinted stream-terminate reason exposure.
    */
   emitStreamError(reason: string, retriable?: boolean): void;
+  /**
+   * §4.7.2.5 · Emit an SSE `retry: <base ± jitter>\n\n` control-frame
+   * with a deterministic, hash-derived jitter offset. `baseMs` is
+   * validated as a positive integer within `[1, retry_max_ms]` (same
+   * bounds as §4.7.2.3 `setReconnectMs`). `jitterMs` (optional) is
+   * clamped to `[0, retry_jitter_max_ms]`; when omitted, the
+   * configured `retry_jitter_max_ms` cap is used. When `jitterMs > 0`,
+   * a deterministic offset in `[-jitterMs, +jitterMs]` is derived via
+   * `crypto.createHash('sha256')` seeded by
+   * `Date.now() + baseMs + monotonic-counter` (Math.random is banned
+   * per US-038) and applied to `baseMs`. The final emitted value is
+   * additionally clamped to `[1, retry_max_ms]` so downstream
+   * §4.7.2.3 bounds are preserved. Updates the internal
+   * `reconnectMs` cursor to the emitted value and `retryJitterMs`
+   * cursor to the applied offset. No-op when kind !== 'sse', response
+   * already ended, jitter disabled, or bounds fail validation. Never
+   * throws. Handler-facing surface for thundering-herd-defense
+   * reconnection scheduling.
+   */
+  emitStreamRetryHint(baseMs: number, jitterMs?: number): void;
 }
 
 /**
@@ -432,6 +490,50 @@ function serializeSseErrorFrame(reason: string): string {
   return `: error ${reason}\n\n`;
 }
 
+// §4.7.2.5 · SSE reconnection-jitter L3.5 SUB-tier (HTML5 §9.2.5).
+// Deterministic hash-derived jitter offset in `[-cap, +cap]` seeded by
+// `Date.now() + baseMs + monotonic-counter`. Math.random is banned per
+// US-038 constraint; SHA-256 first-byte modulo yields a bounded value that
+// is reproducible per-request-per-tick and diversifies across many
+// concurrent handler invocations via the monotonic counter. The counter is
+// module-scoped so consecutive emissions within the same tick derive
+// distinct offsets. Sign parity (+/-) is derived from a separate byte to
+// keep the offset centered around zero rather than skewed positive.
+const DEFAULT_RETRY_JITTER_MAX_MS = 500;
+let RETRY_JITTER_MONOTONIC_COUNTER = 0;
+
+function isValidJitterCap(n: unknown): n is number {
+  return (
+    typeof n === 'number' &&
+    Number.isFinite(n) &&
+    Number.isInteger(n) &&
+    n >= 0
+  );
+}
+
+function isValidJitterMs(n: unknown, cap: number): n is number {
+  return (
+    typeof n === 'number' &&
+    Number.isFinite(n) &&
+    Number.isInteger(n) &&
+    n >= 0 &&
+    n <= cap
+  );
+}
+
+function computeJitteredRetry(
+  baseMs: number,
+  jitterCapMs: number,
+  seed: string
+): { emittedMs: number; jitterOffset: number } {
+  if (jitterCapMs <= 0) return { emittedMs: baseMs, jitterOffset: 0 };
+  const digest = createHash('sha256').update(seed).digest();
+  const magnitude = digest[0] % (jitterCapMs + 1);
+  const sign = (digest[1] & 1) === 1 ? -1 : 1;
+  const offset = sign * magnitude;
+  return { emittedMs: baseMs + offset, jitterOffset: offset };
+}
+
 function detectKind(res: Response): ServerTimingStreamKind {
   const locals = res.locals as Record<string, unknown>;
   const ws = locals.serverTimingStreamWebSocket as ServerTimingStreamSocket | undefined;
@@ -480,6 +582,11 @@ function buildAdapter(
   const errorFrameDefaultReason = sanitizeErrorFrameDefaultReason(
     config.error_frame_default_reason
   );
+  // §4.7.2.5 · Retry-jitter config (default-OFF opt-in; SSE-only)
+  const retryJitterEnabled = config.retry_jitter_enabled === true;
+  const retryJitterMaxMs = isValidJitterCap(config.retry_jitter_max_ms)
+    ? config.retry_jitter_max_ms
+    : DEFAULT_RETRY_JITTER_MAX_MS;
 
   let cachedKind: ServerTimingStreamKind | null = null;
   let count = 0;
@@ -493,6 +600,9 @@ function buildAdapter(
   let reconnectMs: number | null = null;
   // §4.7.2.4 · Error-frame reason cursor (advisory; null before first emit).
   let errorReason: string | null = null;
+  // §4.7.2.5 · Jitter offset cursor (advisory; null before first successful
+  // emitStreamRetryHint or when the jitter branch was inactive).
+  let retryJitterMs: number | null = null;
 
   function resolveKind(): ServerTimingStreamKind {
     if (cachedKind === null) cachedKind = detectKind(res);
@@ -702,6 +812,42 @@ function buildAdapter(
         // Fail-OPEN silent — advisory-only, never propagate transport errors.
       }
     },
+    emitStreamRetryHint(baseMs: number, jitterMs?: number) {
+      if (closed) return;
+      if (!retryJitterEnabled) return;
+      const kind = resolveKind();
+      if (kind !== 'sse') return;
+      if (res.writableEnded) return;
+      if (!isValidRetryMs(baseMs, retryMaxMs)) return;
+      // Resolve effective jitter cap: explicit jitterMs when valid, else
+      // the configured retry_jitter_max_ms.
+      const effectiveJitter =
+        jitterMs === undefined
+          ? retryJitterMaxMs
+          : isValidJitterMs(jitterMs, retryJitterMaxMs)
+            ? jitterMs
+            : -1;
+      if (effectiveJitter < 0) return;
+      try {
+        RETRY_JITTER_MONOTONIC_COUNTER += 1;
+        const seed = `${Date.now()}:${baseMs}:${RETRY_JITTER_MONOTONIC_COUNTER}`;
+        const { emittedMs: rawEmitted, jitterOffset } = computeJitteredRetry(
+          baseMs,
+          effectiveJitter,
+          seed
+        );
+        // Clamp final value to §4.7.2.3 bounds so downstream client parsers
+        // (and our own isValidRetryMs invariant) stay satisfied even when
+        // baseMs + jitter would underflow to 0 or exceed the cap.
+        const clamped =
+          rawEmitted < 1 ? 1 : rawEmitted > retryMaxMs ? retryMaxMs : rawEmitted;
+        res.write(serializeSseRetryFrame(clamped));
+        reconnectMs = clamped;
+        retryJitterMs = effectiveJitter === 0 ? 0 : jitterOffset;
+      } catch {
+        // Fail-OPEN silent — advisory-only, never propagate transport errors.
+      }
+    },
     get kind() {
       return resolveKind();
     },
@@ -719,6 +865,9 @@ function buildAdapter(
     },
     get errorReason() {
       return errorReason;
+    },
+    get retryJitterMs() {
+      return retryJitterMs;
     },
   };
   return adapter;
@@ -762,12 +911,16 @@ function buildNoopAdapter(): ServerTimingStreamAdapter {
     emitStreamError(_reason: string, _retriable?: boolean) {
       /* no-op */
     },
+    emitStreamRetryHint(_baseMs: number, _jitterMs?: number) {
+      /* no-op */
+    },
     kind: 'none',
     count: 0,
     heartbeatCount: 0,
     lastEventId: null,
     reconnectMs: null,
     errorReason: null,
+    retryJitterMs: null,
   };
 }
 
@@ -820,6 +973,9 @@ export const __test__ = {
   isValidErrorReason,
   sanitizeErrorFrameDefaultReason,
   serializeSseErrorFrame,
+  isValidJitterCap,
+  isValidJitterMs,
+  computeJitteredRetry,
   detectKind,
   buildNoopAdapter,
   buildAdapter,

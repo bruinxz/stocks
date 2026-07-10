@@ -1543,6 +1543,333 @@ async function run(): Promise<void> {
     assertEq('(cg5) noop kind stays none', noop.kind, 'none');
   }
 
+  console.log('\n--- (ch) §4.7.2.5 · retry-jitter validators + computeJitteredRetry ---');
+  assertEq('(ch1) isValidJitterCap 500 → true', __test__.isValidJitterCap(500), true);
+  assertEq('(ch2) isValidJitterCap 0 → true', __test__.isValidJitterCap(0), true);
+  assertEq('(ch3) isValidJitterCap -1 → false', __test__.isValidJitterCap(-1), false);
+  assertEq('(ch4) isValidJitterCap 1.5 → false', __test__.isValidJitterCap(1.5), false);
+  assertEq('(ch5) isValidJitterCap NaN → false', __test__.isValidJitterCap(NaN), false);
+  assertEq('(ch6) isValidJitterCap "500" → false', __test__.isValidJitterCap('500'), false);
+  assertEq('(ch7) isValidJitterMs 100 cap 500 → true', __test__.isValidJitterMs(100, 500), true);
+  assertEq('(ch8) isValidJitterMs 0 cap 500 → true', __test__.isValidJitterMs(0, 500), true);
+  assertEq('(ch9) isValidJitterMs 500 cap 500 → true', __test__.isValidJitterMs(500, 500), true);
+  assertEq('(ch10) isValidJitterMs 501 cap 500 → false', __test__.isValidJitterMs(501, 500), false);
+  assertEq('(ch11) isValidJitterMs -1 cap 500 → false', __test__.isValidJitterMs(-1, 500), false);
+  assertEq('(ch12) isValidJitterMs 1.5 cap 500 → false', __test__.isValidJitterMs(1.5, 500), false);
+  {
+    // Deterministic hash-derived seed → same input, same output (US-038: no Math.random).
+    const seed = 'reproducible:3000:1';
+    const a = __test__.computeJitteredRetry(3000, 500, seed);
+    const b = __test__.computeJitteredRetry(3000, 500, seed);
+    assertEq('(ch13) computeJitteredRetry deterministic emittedMs', a.emittedMs, b.emittedMs);
+    assertEq('(ch14) computeJitteredRetry deterministic offset', a.jitterOffset, b.jitterOffset);
+    assertEq('(ch15) offset within [-cap,+cap]', Math.abs(a.jitterOffset) <= 500, true);
+    assertEq('(ch16) offset is integer', Number.isInteger(a.jitterOffset), true);
+  }
+  {
+    // Cap 0 → zero jitter branch inactive; emitted equals base.
+    const zero = __test__.computeJitteredRetry(3000, 0, 'seed');
+    assertEq('(ch17) cap=0 emittedMs=base', zero.emittedMs, 3000);
+    assertEq('(ch18) cap=0 offset=0', zero.jitterOffset, 0);
+  }
+  {
+    // Distinct seeds should be able to produce distinct offsets (probabilistic
+    // across many seeds — assert bounds only, not equality).
+    const s1 = __test__.computeJitteredRetry(3000, 500, 'seed:1');
+    const s2 = __test__.computeJitteredRetry(3000, 500, 'seed:99999');
+    assertEq('(ch19) s1 offset within bounds', Math.abs(s1.jitterOffset) <= 500, true);
+    assertEq('(ch20) s2 offset within bounds', Math.abs(s2.jitterOffset) <= 500, true);
+  }
+
+  console.log('\n--- (ci) §4.7.2.5 · adapter.emitStreamRetryHint SSE success path ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const chunks: Buffer[] = [];
+    const app = express();
+    app.use(
+      buildApiServerTimingStreamingMiddleware({
+        enabled: true,
+        retry_jitter_enabled: true,
+        retry_jitter_max_ms: 500,
+        retry_max_ms: 300000,
+      })
+    );
+    app.get('/sse-jitter-ok', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      const origWrite = res.write.bind(res);
+      (res as unknown as { write: typeof origWrite }).write = ((chunk: unknown, ...rest: unknown[]) => {
+        if (typeof chunk === 'string') chunks.push(Buffer.from(chunk));
+        else if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+        return (origWrite as (...args: unknown[]) => boolean)(chunk, ...rest);
+      }) as typeof origWrite;
+      captured.emitStreamRetryHint(3000, 100);
+      res.end();
+    });
+    await request(app).get('/sse-jitter-ok');
+    const joined = Buffer.concat(chunks).toString('utf8');
+    assertEq('(ci1) sse emitted a retry: frame', /^retry: \d+\n\n$/m.test(joined), true);
+    assertEq('(ci2) reconnectMs cursor is integer', Number.isInteger(captured.reconnectMs), true);
+    assertEq(
+      '(ci3) reconnectMs within [base-jitter, base+jitter]',
+      captured.reconnectMs !== null && captured.reconnectMs >= 2900 && captured.reconnectMs <= 3100,
+      true
+    );
+    assertEq(
+      '(ci4) retryJitterMs cursor within [-100, +100]',
+      captured.retryJitterMs !== null && Math.abs(captured.retryJitterMs) <= 100,
+      true
+    );
+    assertEq('(ci5) retryJitterMs is integer', Number.isInteger(captured.retryJitterMs), true);
+  }
+
+  console.log('\n--- (cj) §4.7.2.5 · emitStreamRetryHint fail-OPEN 6-axis ---');
+  {
+    // axis 1 · retry_jitter_enabled=false → cursors stay null
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, retry_jitter_enabled: false }));
+    app.get('/sse-jitter-disabled', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emitStreamRetryHint(3000, 100);
+      res.end();
+    });
+    await request(app).get('/sse-jitter-disabled');
+    assertEq('(cj1) disabled → reconnectMs null', captured.reconnectMs, null);
+    assertEq('(cj1b) disabled → retryJitterMs null', captured.retryJitterMs, null);
+  }
+  {
+    // axis 2 · kind !== sse
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, retry_jitter_enabled: true }));
+    app.get('/json-jitter', async (_req, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emitStreamRetryHint(3000, 100);
+      res.json({ ok: true });
+    });
+    await request(app).get('/json-jitter');
+    assertEq('(cj2) kind !== sse → retryJitterMs null', captured.retryJitterMs, null);
+  }
+  {
+    // axis 3 · invalid baseMs (0, negative, non-integer, NaN, string)
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(
+      buildApiServerTimingStreamingMiddleware({
+        enabled: true,
+        retry_jitter_enabled: true,
+        retry_max_ms: 300000,
+      })
+    );
+    app.get('/sse-jitter-invalid', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emitStreamRetryHint(0, 100);
+      captured.emitStreamRetryHint(-5, 100);
+      captured.emitStreamRetryHint(1.5, 100);
+      captured.emitStreamRetryHint(NaN, 100);
+      captured.emitStreamRetryHint('3000' as unknown as number, 100);
+      captured.emitStreamRetryHint(300001, 100);
+      res.end();
+    });
+    await request(app).get('/sse-jitter-invalid');
+    assertEq('(cj3) all invalid baseMs → retryJitterMs stays null', captured.retryJitterMs, null);
+    assertEq('(cj3b) all invalid baseMs → reconnectMs stays null', captured.reconnectMs, null);
+  }
+  {
+    // axis 4 · invalid jitterMs (negative, > cap, non-integer)
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(
+      buildApiServerTimingStreamingMiddleware({
+        enabled: true,
+        retry_jitter_enabled: true,
+        retry_jitter_max_ms: 500,
+      })
+    );
+    app.get('/sse-jitter-badoffset', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emitStreamRetryHint(3000, -1);
+      captured.emitStreamRetryHint(3000, 501);
+      captured.emitStreamRetryHint(3000, 1.5);
+      res.end();
+    });
+    await request(app).get('/sse-jitter-badoffset');
+    assertEq('(cj4) invalid jitterMs → retryJitterMs stays null', captured.retryJitterMs, null);
+  }
+  {
+    // axis 5 · adapter.close() before emit → no-op
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, retry_jitter_enabled: true }));
+    app.get('/sse-jitter-closed', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.close();
+      captured.emitStreamRetryHint(3000, 100);
+      res.end();
+    });
+    await request(app).get('/sse-jitter-closed');
+    assertEq('(cj5) close() then emitStreamRetryHint → retryJitterMs null', captured.retryJitterMs, null);
+  }
+  {
+    // axis 6 · writableEnded → no-op
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, retry_jitter_enabled: true }));
+    app.get('/sse-jitter-writableended', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      res.end();
+      captured.emitStreamRetryHint(3000, 100);
+    });
+    await request(app).get('/sse-jitter-writableended');
+    assertEq('(cj6) writableEnded → retryJitterMs stays null', captured.retryJitterMs, null);
+  }
+
+  console.log('\n--- (ck) §4.7.2.5 · emitStreamRetryHint clamp to §4.7.2.3 bounds ---');
+  {
+    // baseMs=1 + jitter → still ≥ 1 after clamp (never underflow to 0)
+    let captured!: ServerTimingStreamAdapter;
+    const chunks: Buffer[] = [];
+    const app = express();
+    app.use(
+      buildApiServerTimingStreamingMiddleware({
+        enabled: true,
+        retry_jitter_enabled: true,
+        retry_jitter_max_ms: 500,
+        retry_max_ms: 300000,
+      })
+    );
+    app.get('/sse-jitter-clamp-low', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      const origWrite = res.write.bind(res);
+      (res as unknown as { write: typeof origWrite }).write = ((chunk: unknown, ...rest: unknown[]) => {
+        if (typeof chunk === 'string') chunks.push(Buffer.from(chunk));
+        else if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+        return (origWrite as (...args: unknown[]) => boolean)(chunk, ...rest);
+      }) as typeof origWrite;
+      captured.emitStreamRetryHint(1, 500);
+      res.end();
+    });
+    await request(app).get('/sse-jitter-clamp-low');
+    assertEq(
+      '(ck1) baseMs=1 + jitter → clamped reconnectMs ≥ 1',
+      captured.reconnectMs !== null && captured.reconnectMs >= 1,
+      true
+    );
+    assertEq(
+      '(ck2) emitted frame value ≥ 1',
+      /^retry: [1-9]\d*\n\n$/m.test(Buffer.concat(chunks).toString('utf8')),
+      true
+    );
+  }
+  {
+    // baseMs at cap + jitter → clamped to retry_max_ms
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(
+      buildApiServerTimingStreamingMiddleware({
+        enabled: true,
+        retry_jitter_enabled: true,
+        retry_jitter_max_ms: 500,
+        retry_max_ms: 300000,
+      })
+    );
+    app.get('/sse-jitter-clamp-high', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emitStreamRetryHint(300000, 500);
+      res.end();
+    });
+    await request(app).get('/sse-jitter-clamp-high');
+    assertEq(
+      '(ck3) baseMs=cap + jitter → reconnectMs ≤ retry_max_ms',
+      captured.reconnectMs !== null && captured.reconnectMs <= 300000,
+      true
+    );
+  }
+
+  console.log('\n--- (cl) §4.7.2.5 · omitted jitterMs falls back to configured cap ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(
+      buildApiServerTimingStreamingMiddleware({
+        enabled: true,
+        retry_jitter_enabled: true,
+        retry_jitter_max_ms: 200,
+      })
+    );
+    app.get('/sse-jitter-default-cap', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emitStreamRetryHint(3000);
+      res.end();
+    });
+    await request(app).get('/sse-jitter-default-cap');
+    assertEq(
+      '(cl1) omitted jitterMs → retryJitterMs within configured cap 200',
+      captured.retryJitterMs !== null && Math.abs(captured.retryJitterMs) <= 200,
+      true
+    );
+  }
+
+  console.log('\n--- (cm) §4.7.2.5 · noop parity + composition with error/heartbeat/emit ---');
+  {
+    const noop = __test__.buildNoopAdapter();
+    assertEq('(cm1) noop.retryJitterMs null', noop.retryJitterMs, null);
+    assertEq(
+      '(cm2) noop.emitStreamRetryHint callable',
+      typeof noop.emitStreamRetryHint,
+      'function'
+    );
+    noop.emitStreamRetryHint(3000, 100);
+    noop.emitStreamRetryHint(3000);
+    assertEq('(cm3) noop.emitStreamRetryHint no-op keeps retryJitterMs null', noop.retryJitterMs, null);
+    assertEq('(cm4) noop.emitStreamRetryHint no-op keeps reconnectMs null', noop.reconnectMs, null);
+  }
+  {
+    // Jitter emission must NOT touch count/lastEventId/heartbeatCount/errorReason cursors.
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(
+      buildApiServerTimingStreamingMiddleware({
+        enabled: true,
+        retry_jitter_enabled: true,
+        resume_enabled: true,
+      })
+    );
+    app.get('/sse-jitter-purity', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.emit('probe', 12.34, undefined, 'idA');
+      captured.emitStreamRetryHint(3000, 50);
+      res.end();
+    });
+    await request(app).get('/sse-jitter-purity');
+    assertEq('(cm5) jitter does not touch count', captured.count, 1);
+    assertEq('(cm6) jitter does not touch lastEventId', captured.lastEventId, 'idA');
+    assertEq('(cm7) jitter does not touch heartbeatCount', captured.heartbeatCount, 0);
+    assertEq('(cm8) jitter does not touch errorReason', captured.errorReason, null);
+  }
+
   console.log('\n=================================');
   console.log(`PASS: ${passed}`);
   console.log(`FAIL: ${failed}`);
