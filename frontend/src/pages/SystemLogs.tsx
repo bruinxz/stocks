@@ -46,52 +46,65 @@ const SystemLogs: React.FC = () => {
       currentLevel: string,
       currentKeyword: string,
       currentType: 'combined' | 'error',
-      showLoading = true
+      showLoading = true,
+      signal?: AbortSignal
     ) => {
       if (showLoading) setLoading(true);
       try {
-        const response = await logService.getLogs({
-          page: currentPage,
-          limit: 100,
-          level: currentLevel || undefined,
-          keyword: currentKeyword || undefined,
-          type: currentType,
-        });
+        const response = await logService.getLogs(
+          {
+            page: currentPage,
+            limit: 100,
+            level: currentLevel || undefined,
+            keyword: currentKeyword || undefined,
+            type: currentType,
+          },
+          { signal }
+        );
+        if (signal?.aborted) return;
         if (response.success) {
           setLogs(response.data.logs);
           setTotalPages(response.data.pagination.totalPages);
         }
-      } catch (error) {
+      } catch (error: any) {
+        if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') return;
         console.error('Failed to fetch logs', error);
       } finally {
-        if (showLoading) setLoading(false);
+        if (showLoading && !signal?.aborted) setLoading(false);
       }
     },
     []
   );
 
-  const fetchStats = useCallback(async () => {
+  const fetchStats = useCallback(async (signal?: AbortSignal) => {
     try {
-      const response = await logService.getLogStats();
+      const response = await logService.getLogStats({ signal });
+      if (signal?.aborted) return;
       if (response.success) {
         setStats(response.data);
       }
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') return;
       console.error('Failed to fetch stats', error);
     }
   }, []);
 
   useEffect(() => {
-    fetchLogs(page, level, searchKeyword, logType);
-    fetchStats();
+    const controller = new AbortController();
+    fetchLogs(page, level, searchKeyword, logType, true, controller.signal);
+    fetchStats(controller.signal);
+    return () => controller.abort();
   }, [page, level, searchKeyword, logType, fetchLogs, fetchStats]);
 
-  // Auto refresh logic
+  // Auto refresh logic — per-tick AbortController so each 3s poll only commits its own result
   useEffect(() => {
+    let tickController: AbortController | null = null;
     if (autoRefresh) {
       timerRef.current = setInterval(() => {
+        if (tickController) tickController.abort();
+        tickController = new AbortController();
         setPage(1);
-        fetchLogs(1, level, searchKeyword, logType, false);
+        fetchLogs(1, level, searchKeyword, logType, false, tickController.signal);
       }, 3000);
     } else if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -99,6 +112,7 @@ const SystemLogs: React.FC = () => {
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
+      if (tickController) tickController.abort();
     };
   }, [autoRefresh, level, searchKeyword, logType, fetchLogs]);
 
