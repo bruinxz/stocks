@@ -1,0 +1,25 @@
+backend/package.json
+  s_67f01ec1952b4c::t_8d82364214e137 11-14
+backend/src/middlewares/apiServerTimingStreaming.ts
+  s_67f01ec1952b4c::t_e67c694ffd462f 5-7,9-10,25-37,40,57-60,102-104,126-133,172-202,233,243-244,251,280-309,312,324,340-344,351-353,388-393,398-401,404,409-418,422,435-436,491-525,535-537,546,568-573,577,582,586-588,599-610,621-623
+backend/tests/routing/api-server-timing-streaming.test.ts
+  s_67f01ec1952b4c::t_2245e7ce82afac 789-1092
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "08a72b8febc596c587cab2dd5054dd5df7e7ac18",
+  "prompts": {},
+  "sessions": {
+    "s_67f01ec1952b4c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a0a06444-df91-4224-bd03-5f576f1c8ff7",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
