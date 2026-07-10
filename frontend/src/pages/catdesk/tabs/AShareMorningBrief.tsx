@@ -1,64 +1,133 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useAbortableRequest } from '@/shared/hooks/useAbortableRequest';
+import { LoadingState } from '../shared/LoadingState';
+import { EmptyState } from '../shared/EmptyState';
+import { ErrorState } from '../shared/ErrorState';
+import { DisclaimerFooter } from '../shared/DisclaimerFooter';
 import { MorningBriefTable } from './morning/MorningBriefTable';
 import { MorningFilterBar } from './morning/MorningFilterBar';
 import { MorningKpiSlots } from './morning/MorningKpiSlots';
-import { DisclaimerFooter } from '../shared/DisclaimerFooter';
-import { EmptyState } from '../shared/EmptyState';
+import { buildMorningSections } from './morning/detail/buildMorningSections';
+import { DetailSidebar, type DetailSection } from '@/shared/components/DetailSidebar';
+import type { CandidateListEntry, CatalystKind } from '../types';
+import { CONVICTION_MED_MIN } from '../types';
 
 interface MorningFilters {
   sector: string | null;
-  catalystKind: string | null;
-  convictionMin: 'all' | 'med' | 'high';
+  catalystKind: CatalystKind | null;
+  convictionMinMed: boolean;
 }
 
-const CONVICTION_THRESHOLDS = { all: 0, med: 50, high: 75 } as const;
+interface MorningBriefResponse {
+  kpi: { activity: number; overnight_sentiment: number; futures: number; breakout_prob: number };
+  candidates: CandidateListEntry[];
+  disclaimer_version: string;
+}
+
+const DEFAULT_FILTERS: MorningFilters = {
+  sector: null,
+  catalystKind: null,
+  convictionMinMed: false,
+};
+
+function todayISO(): string {
+  const d = new Date();
+  return d.toISOString().slice(0, 10);
+}
+
+function extractSectors(rows: CandidateListEntry[]): string[] {
+  const set = new Set<string>();
+  rows.forEach((r) => {
+    const cat = r.latest_catalyst as { kind: CatalystKind; title: string; occurred_at: string; sector?: string } | undefined;
+    if (cat?.sector) set.add(cat.sector);
+  });
+  return Array.from(set).sort();
+}
 
 export default function AShareMorningBrief() {
-  const [filters, setFilters] = useState<MorningFilters>({
-    sector: null,
-    catalystKind: null,
-    convictionMin: 'all',
-  });
+  const [sp] = useSearchParams();
+  const dateParam = sp.get('date') ?? todayISO();
+  const [filters, setFilters] = useState<MorningFilters>(DEFAULT_FILTERS);
+  const [selectedRow, setSelectedRow] = useState<CandidateListEntry | null>(null);
 
-  const data: never[] = [];
-  const loading = false;
+  const { data, loading, error } = useAbortableRequest<MorningBriefResponse>(
+    (signal) =>
+      fetch(`/api/v1/morning-brief/${encodeURIComponent(dateParam)}`, { signal })
+        .then((r) => { if (!r.ok) throw new Error(`morning-brief ${r.status}`); return r.json(); }),
+    [dateParam],
+  );
 
   const filtered = useMemo(() => {
-    let rows = data;
+    if (!data?.candidates) return [];
+    let rows = data.candidates;
     if (filters.sector) {
-      rows = rows.filter((r: any) => r.sector === filters.sector);
+      const sec = filters.sector;
+      rows = rows.filter((r) => {
+        const cat = r.latest_catalyst as { sector?: string } | undefined;
+        return cat?.sector === sec;
+      });
     }
     if (filters.catalystKind) {
-      rows = rows.filter((r: any) => r.catalystKind === filters.catalystKind);
+      rows = rows.filter((r) => r.latest_catalyst?.kind === filters.catalystKind);
     }
-    const minConv = CONVICTION_THRESHOLDS[filters.convictionMin];
-    if (minConv > 0) {
-      rows = rows.filter((r: any) => r.conviction >= minConv);
+    if (filters.convictionMinMed) {
+      rows = rows.filter((r) => (r.conviction?.final ?? 0) >= CONVICTION_MED_MIN);
     }
     return rows;
-  }, [data, filters]);
+  }, [data?.candidates, filters]);
 
-  const handleRowClick = useCallback((_symbol: string) => {
-    // DetailSidebar selection — wired in Sprint 3
+  const sectors = useMemo(() => extractSectors(data?.candidates ?? []), [data?.candidates]);
+
+  const handleRowSelect = useCallback((row: CandidateListEntry) => {
+    setSelectedRow((prev) => (prev?.symbol === row.symbol ? null : row));
   }, []);
+
+  const detailSections = useMemo(
+    () => (selectedRow ? buildMorningSections(selectedRow) : []),
+    [selectedRow],
+  );
+
+  if (loading) return <LoadingState />;
+  if (error) return <ErrorState message={typeof error === 'string' ? error : '数据加载失败'} />;
+  if (!data?.candidates?.length) return <EmptyState title="今日暂无 A 股早报数据" variant="simple" />;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
-      <MorningKpiSlots total={filtered.length} />
+      <MorningKpiSlots
+        total={filtered.length}
+        highConviction={filtered.filter((r) => (r.conviction?.final ?? 0) >= 75).length}
+        avgScore={
+          filtered.length > 0
+            ? filtered.reduce((s, r) => s + (r.score?.score ?? 0), 0) / filtered.length
+            : 0
+        }
+        updatedAt={dateParam}
+      />
       <MorningFilterBar
         sector={filters.sector}
         catalystKind={filters.catalystKind}
-        convictionMin={filters.convictionMin}
+        convictionMin={filters.convictionMinMed ? 'med' : 'all'}
         onSectorChange={(v) => setFilters((f) => ({ ...f, sector: v }))}
-        onCatalystKindChange={(v) => setFilters((f) => ({ ...f, catalystKind: v }))}
-        onConvictionChange={(v) => setFilters((f) => ({ ...f, convictionMin: v }))}
+        onCatalystKindChange={(v) => setFilters((f) => ({ ...f, catalystKind: v as CatalystKind | null }))}
+        onConvictionChange={(v) => setFilters((f) => ({ ...f, convictionMinMed: v === 'med' || v === 'high' }))}
+        sectors={sectors}
       />
-      {filtered.length === 0 && !loading ? (
-        <EmptyState title="A 股早报 · 数据接入中" variant="simple" />
-      ) : (
-        <MorningBriefTable data={filtered} loading={loading} onRowClick={handleRowClick} />
-      )}
+      <MorningBriefTable
+        data={filtered}
+        loading={false}
+        onRowClick={(r) => handleRowSelect(r)}
+        selectedSymbol={selectedRow?.symbol ?? null}
+      />
       <DisclaimerFooter disclaimerKey="size_hint_advisory" />
+      <DetailSidebar
+        open={selectedRow !== null}
+        onClose={() => setSelectedRow(null)}
+        title={selectedRow?.name ?? ''}
+        subtitle={selectedRow?.symbol}
+        ariaLabel="候选详情"
+        sections={detailSections}
+      />
     </div>
   );
 }
