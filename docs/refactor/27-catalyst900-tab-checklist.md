@@ -1,6 +1,9 @@
-# 27 · catalyst-900 · 7-tab 对照表 v0.2
+# 27 · catalyst-900 · 7-tab 对照表 v0.3
 
 **Author lane**: QADocs γ · doc-tier 2-sign per Orch v300 §六
+**Dispatch**: Orch v319 · Sprint 3 D4 · task #175
+**Scope**: Sprint 2 11/11 merged baseline + Sprint 3 Tab 3/4/5 endpoint contracts + RiskGate 22-trigger + login-removal release gate
+**Verification suite**: `docs/refactor/quality/sprint3-test-framework.md` (152 cases · #1-#152)
 **Reference**: catalyst-900-qohfq.netlify.app (live) + github.com/yespsam/a-share-us-catalyst (源码) · **借鉴 独立性 zero code-copy** per msg=ad6585cf
 **v0.2 upstream**: 10/10 全量 LAND — Strategy v0.2 + DP 180 v0.2.1 + DP-2 182 + Cleanup v0.5 + Research §S3 v0.2 + DP 183 + γ-2 types.ts v0.2 + γ-1 shell v0.2 + Backend γ API v0.2 + AI-γ v0.2
 
@@ -24,6 +27,14 @@
 - [ ] **错误态**: 内联错误卡片 `role="alert" aria-live="polite"` · 具体错因 · 重试按钮 · 不用 alert
 - [ ] **详情侧栏空**: 选中前提示 "选择一行查看详情" · `role="status"` 图标居中
 
+### Login removal 发布门 (Orch v318 + v319 · cases #149-#152)
+- [ ] #149 Frontend C1 提供实际 App route-render 测试，证明 `/login` 解析到 `/catdesk` 且不渲染登录表单；只测 helper 返回值不足
+- [ ] #150 Backend C4 `backend/tests/routing/auth-default-admin.test.ts` 证明 missing/invalid Authorization 通过 `AuthController.authenticate` 与 standalone middleware 均注入 canonical admin 并到达 protected handler
+- [ ] #151 应用启动即建立 default admin identity，无登录流程；Frontend C1 提供 executable test
+- [ ] #152 Frontend C1 提供 7-tab public-access executable route matrix，逐 tab 证明可解析且不跳转 `/login`
+- [ ] Frontend route/interceptor + Backend middleware + QADocs #149-#152 同批落地或按依赖安全顺序落地
+- [ ] source grep、实现说明或文档引用均不能替代 executable evidence；任何一项缺失即 BLOCK
+
 ### 全局字段字典 (v0.2 · 与 Strategy γ scoring v0.2 + AI-γ v0.2 对齐)
 
 | 字段 | 语义 | 数据形态 | 契约锚 |
@@ -33,9 +44,10 @@
 | **6-dim** | 六维打分 | 质量/成长/估值/护城河/趋势/风险 · 各 0-100 | Strategy v0.2 §3.1-§3.6 |
 | **Conviction** | 置信度 | final = clamp(base + Σ adjustments[].delta, 0, 100) · HIGH≥75 / MED 50-74.9 / LOW<50 | Orch v303 LOCK 1+2 |
 | **Conviction.adjustments** | 调整项 | Adjustment[] · len∈[0,5] · delta∈[-20,+20] · Σ∈[-20,+20] · reason≤200 · kind_ref? · source_ref? | Strategy v0.2 §4.1 |
-| **RiskGate** | 风控闸 | 12-trigger (9 US + 3 A股) · GREEN=通过 / YELLOW=warn(-5) / RED=block(-10) | Orch v303 LOCK 3 |
-| **EntryPlan** | 入场计划 | price_band/stop/targets grid | Strategy v0.2 §6 |
-| **EntryPlan.size_hint** | 仓位建议 | `{tier: SizeHintTier, pct: number∈[0,5], disclaimer_key: 'size_hint_advisory'}` | Orch v303 LOCK 10 |
+| **RiskGate** | 风控闸 | 22-trigger (9 US + 3 A股 + 5 JP + 5 KR) · GREEN=通过 / YELLOW=warn(-5) / RED=block(-10) | Orch v303 LOCK 3 + v317 Ruling #8 |
+| **EntryPlan** | 入场计划 | `entry: PriceBand` + `stop: Price` + `targets: Price[]` + `time_horizon` + `invalidation` + numeric `conviction_ref` + `score_ref` | Strategy v0.3 §6 |
+| **EntryPlan.size_hint** | 仓位建议 | `{tier: SizeHintTier, pct: number∈[0,5], disclaimer_key: 'size_hint_advisory', rationale}` | Orch v303 LOCK 9 + Strategy v0.3 §6.3 |
+| **PriceBand / Price** | 带币种价格 | `PriceBand {low, high, currency}` · `Price {value, currency}` · currency∈{USD,CNY,HKD,JPY,KRW} | Strategy v0.3 §6.1 |
 | **SizeHintTier** | 仓位档 | `'TIER_5'│'TIER_3'│'TIER_2'│'TIER_1'│'SKIP'` | DP 180 v0.2.1 tier correction |
 | **CatalystKind** | 催化类型 | 9-enum: earnings/upgrade_downgrade/ma_activity/sector_move/regulator/geo_macro/product/leadership/unclassified | Orch v303 LOCK 6 |
 | **rating_band** | 评级信封 | Score.band 的 envelope mirror · CandidateListEntry 级 | AI-γ v0.2 §4 |
@@ -48,9 +60,10 @@
 - [ ] AbortSignal dual-guard: `controller.signal.aborted` 二次 guard (F-07 + F-13)
 
 ### 全局免责声明验收 (Owner msg=53b96525)
-- [ ] EntryPlan 区域: "仅供参考，非投资建议或下单指令"
-- [ ] SizeHint 区域: size_hint_advisory short「仓位比例仅供参考，非下单 binding」(AI-γ v0.2 §7)
-- [ ] 禁用词汇: "必涨" / "保底" / "承诺" / "guaranteed" / "assured" 不得出现
+- [ ] EntryPlan/SizeHint 的 `disclaimer_key` 固定为 `size_hint_advisory`
+- [ ] `DisclaimerFooter` 对 `size_hint_advisory` 精确渲染「仅参考·非下单 binding · 不构成投资建议」
+- [ ] context-aware claim lint 拒绝未否定的绝对收益/确定性表述，如 "必涨" / "保底收益" / "保证收益" / "guaranteed return" / "assured return"
+- [ ] 合法否定/法律声明允许出现，如 "不做绝对收益承诺" / "不构成任何承诺" / "不保证收益"；不得以 raw keyword grep 拒绝
 - [ ] 允许词汇: "有望" / "参考" / "可能" / "potential" / "estimated" 允许
 
 ---
@@ -90,8 +103,8 @@
 ### 详情侧栏 (per γ-1 buildMorningSections 6 卡片 + γ-2 embedded cards)
 - [ ] **ScoreBreakdownCard**: scoring_id badge + snapshot_hash tooltip(前 8 位) + 6-dim progress-bar + total band 双粒度
 - [ ] **ConvictionBreakdownCard**: base + adjustments[] 逐条 delta 归因 + final = clamp(base+Σ, 0-100) progress-bar
-- [ ] **RiskGateDetailCard**: 12-trigger 逐条 code + severity + message (RiskGateChip 3-色 + trigger hover tooltip)
-- [ ] **EntryPlanCard**: price_band/stop/targets + SizeHint progress-bar 0-5% + **disclaimer 硬门**
+- [ ] **RiskGateDetailCard**: 从全局 22-trigger 词表按候选 native `market_scope` 取适用子集；US 催化只作 evidence attribution，不把 US-only trigger 施加到 A股候选
+- [ ] **EntryPlanCard**: `entry` PriceBand + typed Price stop/targets + time_horizon/invalidation + numeric conviction_ref + score_ref + SizeHint progress-bar 0-5% + **disclaimer 硬门**
 - [ ] **AIRecommendationCard**: 4-硬门 ✅/❌ + dual-gate (RiskGate=GREEN + kind≠unclassified) + `[E<n>]` token
 - [ ] **DataSourceBadge**: free-source 标注
 
@@ -118,9 +131,9 @@
 - [ ] 中位数 Score
 - [ ] 数据锚时
 
-### Backend API (per Backend γ v0.2)
-- [ ] `GET /api/v1/us-preferred` — 美股优选列表 (P0)
-- [ ] `GET /api/v1/us-preferred/:ticker` — 个股详情 (P1)
+### Backend API (per Backend γ v0.2 + Orch v311 Ruling #2 LOCK #13)
+- [ ] `GET /api/v1/us-select/:date` — 美股优选列表 (P0) · CANONICAL per LOCK #13
+- [ ] `GET /api/v1/us-select/:date/summary` — 汇总 KPI (P0)
 
 ### 表格字段
 - [ ] 序号 · Ticker · 中文名 · Sector
@@ -135,11 +148,12 @@
 - [ ] Conviction (all / HIGH / MED / LOW)
 - [ ] RiskGate (all / GREEN only)
 - [ ] 单维阈值 (每维可单独筛)
+- [ ] WeightsProfile switcher (tab 2 可切换 · tab 4 固定 multibagger · tab 1/3/5 使用各自 default)
 
 ### 详情侧栏
 - [ ] ScoreBreakdownCard (6-dim 含每维得分依据)
 - [ ] ConvictionBreakdownCard (adjustments[] 归因)
-- [ ] RiskGateDetailCard (12-trigger)
+- [ ] RiskGateDetailCard (全局 22-trigger 词表中适用于 US 的 9-trigger 子集)
 - [ ] EntryPlanCard (含 SizeHint + disclaimer)
 - [ ] 同 Sector 同 Score 段对比
 - [ ] 历史 Score 时序 (30/90/180 天)
@@ -156,12 +170,12 @@
 
 ### KPI 条
 - [ ] 日股优选数 · 韩股优选数
-- [ ] JPY/USD · KRW/USD 汇率 (per DP γ-2 fx_rate_fetcher BOJ + BOK)
+- [ ] `usdjpy` · `usdkrw` nullable FX KPI；非 null 时 shape 固定 `{rate, change_pct}` (per final LOCK + DP γ-2)
 - [ ] 当日开/收市状态 (时区提示)
 
-### Backend API (per Backend γ v0.2)
-- [ ] `GET /api/v1/jpkr` — 日韩优选列表 (P1)
-- [ ] `GET /api/v1/jpkr/:market/:ticker` — 个股详情 (P2)
+### Backend API (per Backend γ v0.2 + Orch v316 Ruling #4 LOCK #14)
+- [ ] `GET /api/v1/jpkr-market/:date?market=JP|KR` — 日韩优选列表 (P1) · CANONICAL per LOCK #14
+- [ ] `GET /api/v1/jpkr-market/:symbol/detail?date=` — 个股详情 (P2) · CANONICAL per LOCK #14
 
 ### 数据采集器 (per DP γ-2 msg=2aaf823e + Research msg=b8e8a342)
 - [ ] EDINET XBRL v2 → JP 财报 (金融庁 免费) · 2 req/s
@@ -174,6 +188,7 @@
 - [ ] 序号 · 市场 (JP/KR) · Ticker · 名称
 - [ ] Sector · Score + Band · Conviction · RiskGate
 - [ ] 汇率敏感度 (0-100) · 涨跌幅 (当日/月/年)
+- [ ] `score` 与 `risk_gate` 键必须存在且允许 `null`；`risk_triggers` 键必须存在且为数组
 
 ### 过滤 chip
 - [ ] 市场 (JP / KR / both) · Sector · Score 阈值 · 汇率敏感度
@@ -196,9 +211,9 @@
 ### KPI 条
 - [ ] 池内标的数 · 平均市值 · 高 Conviction 数量 · 数据锚时
 
-### Backend API (per Backend γ v0.2)
-- [ ] `GET /api/v1/multibagger` — 高倍候选列表 (P1)
-- [ ] `GET /api/v1/multibagger/:ticker` — 个股详情 (P2)
+### Backend API (per Backend γ v0.2 + Orch v316 Ruling #5 LOCK #15)
+- [ ] `GET /api/v1/multibagger/candidates?stage=&conclusion=&market=` — 高倍候选列表 (P1) · CANONICAL per LOCK #15
+- [ ] `GET /api/v1/multibagger/:symbol/detail` — 个股详情 (P2) · CANONICAL per LOCK #15
 
 ### 表格字段
 - [ ] 序号 · Ticker · 名称 · 市场
@@ -226,24 +241,26 @@
 ### 完成定义
 6-month PIT (point-in-time) 回测结果 · 策略/tab/单标的三维度 · 证明 IA 各 tab 输出可信
 
-### Backend API (per Backend γ v0.2 · tab 5 三方 lock Orch v303 LOCK 11)
-- [ ] `GET /api/v1/backtest-pit/:strategy` — 快照列表 · `?from=&to=&limit=N` (P0)
-- [ ] `GET /api/v1/backtest-pit/:strategy/:as_of` — 单快照详情 + timeline (P0)
-- [ ] `GET /api/v1/backtest-pit/:strategy/:as_of/holdings` — 持仓明细 (P0)
+### Backend API (per Backend γ v0.2 · Orch v303 LOCK #11 + v316 LOCK #16)
+- [ ] `GET /api/v1/backtest-pit/:strategy` — 快照列表 · `?from=&to=&limit=N` (P0) · LOCK #11 `:strategy` 不可改
+- [ ] `GET /api/v1/backtest-pit/:strategy/:as_of` — 单快照详情 + timeline (P0) · `:as_of` 为 URL-encoded ISO PIT timestamp，按 `as_of_utc` 匹配
+- [ ] `GET /api/v1/backtest-pit/:strategy/:as_of/holdings` — 持仓明细 (P0) · Sprint 3 NEW · LOCK #16 · 同一 encoded `as_of_utc`
+- [ ] `GET /api/v1/backtest-pit/:strategy` response shape MOD — metrics 提升至 top-level (Sprint 3 LOCK #11 MOD)
 
 ### KPI 条 (per γ-3 msg=f3ffa58e MetricsCards)
 - [ ] 胜率 (win_rate_6m)
 - [ ] 最大回撤 (max drawdown)
-- [ ] 夏普 (sharpe_6m)
+- [ ] 夏普 (sharpe_ratio_6m)
 
 ### 表格字段 (per γ-3 SnapshotTable 7 列)
-- [ ] snapshot_day · profile · net_value · drawdown · cumulative_return · sharpe_6m · win_rate_6m · sortable
+- [ ] snapshot_day · strategy · net_value · drawdown · cumulative_return · sharpe_ratio_6m · win_rate_6m · sortable
+- [ ] UI 可把 `strategy` 显示为 Profile，但 wire/storage field 不得改名为 `profile`
 
 ### 持仓表 (per γ-3 HoldingsTable 4 列 · 三方 lock)
 - [ ] ticker · weight · return_since_entry · is_stale (stale tag)
 
 ### 过滤 chip
-- [ ] Profile selector · 日期范围 · Benchmark
+- [ ] Strategy selector (UI label 可写 Profile) · 日期范围 · Benchmark
 
 ### 详情侧栏 (per γ-3 BacktestSidebarSections 3 section)
 - [ ] PIT 元数据: as_of_utc + is_survivorship_biased warning badge + is_delisted_at_as_of stale tag (PitBadge)
@@ -252,6 +269,7 @@
 
 ### PIT 安全
 - [ ] as_of_utc 时间锚不可篡改
+- [ ] `:as_of` URL 参数必须 `encodeURIComponent`；服务端按完整 `as_of_utc` 查找，不得降级为 `snapshot_day`
 - [ ] 幸存者偏差 warning badge
 - [ ] 已退市 stale tag
 
@@ -265,7 +283,9 @@
 ### 完成定义
 当日综合日报 · Markdown 渲染 · 涵盖 7-tab 关键信号 · 一屏读完
 
-### Backend API (per Backend γ v0.2 · tab 6 single-entry Orch v303)
+### Backend API (per Backend γ v0.2 · tab 6 REST polling Orch v303 LOCK #7)
+- [ ] `POST /api/v1/daily-report/generate` — 异步生成 · 返回 `job_id: UUIDv4`
+- [ ] `GET /api/v1/daily-report/status?job_id=` — REST 轮询 · 不启用 SSE
 - [ ] `GET /api/v1/daily-report/:date` — 当日日报 (P0 · single entry)
 - [ ] `GET /api/v1/daily-report/latest` — 最新日报 (P0)
 
@@ -328,15 +348,21 @@
 ### 嵌入卡片层 (per γ-2 5 embedded cards)
 - [ ] **ScoreBreakdownCard**: 所有含 Score 的 tab 使用同一卡片 · 6-dim + scoring_id + snapshot_hash
 - [ ] **EntryPlanCard**: 所有含 EntryPlan 的 tab 使用同一卡片 · SizeHint + **disclaimer 硬门**
-- [ ] **RiskGateDetailCard**: 12-trigger · 所有 tab 统一
+- [ ] **RiskGateDetailCard**: 22-trigger 总词表 · 按 market_scope 展示适用子集 · 所有 tab 统一
 - [ ] **ConvictionBreakdownCard**: Adjustment[] 归因 · 所有 tab 统一
 - [ ] **DataSourceBadge**: free-source 标注 · 所有 tab 统一
 
 ### 数据契约层
 - [ ] **Score shape**: scoring_id (UUIDv4) + snapshot_hash (SHA-256 JCS) + band 双粒度 — 与 Strategy v0.2 §2.1 对齐
 - [ ] **Conviction shape**: Adjustment[] Option A — 与 Strategy v0.2 §4 + Orch v303 LOCK 1 对齐
-- [ ] **RiskGate shape**: 12-trigger (9 US + 3 A股) — 与 Strategy v0.2 §5.3 + Orch v303 LOCK 3 对齐
-- [ ] **SizeHint shape**: `{tier: SizeHintTier, pct, disclaimer_key}` — 与 DP 180 v0.2.1 + Orch v303 LOCK 10 对齐
+- [ ] **RiskGate shape**: 22-trigger (9 US + 3 A股 + 5 JP + 5 KR) — 与 Strategy v0.2 §5.3 + Orch v303 LOCK 3 + Orch v317 Ruling #8 对齐
+    - US 9: EARNINGS_T-2 (warn) + EARNINGS_T-0 (block) + HALT_ACTIVE (block) + MERGER_PENDING (warn) + LITIGATION_MATERIAL (warn) + IV_SHOCK (warn) + LIQUIDITY_LOW (warn) + RESTATEMENT_30D (block) + DELISTING_NOTICE (block)
+    - A股 3: ST_TAG (block) + PRICE_LIMIT_APPROACH (warn) + SUSPENDED (block)
+    - JP 5: TSE_HALT (block) + EDINET_DELAY (warn) + CORPORATE_GOVERNANCE_ISSUE (warn) + TSE_TOKUBETSU_CHI (warn) + TSE_KANRI (block)
+    - KR 5: KRX_HALT (block) + DART_LATE_FILING (warn) + INSIDER_TRADING_FLAG (block) + KRX_UNFAITHFUL (warn) + KRX_INVESTOR_ALERT (warn)
+- [ ] **SizeHint shape**: `{tier: SizeHintTier, pct, disclaimer_key, rationale}` — 与 DP 180 v0.2.1 + Orch v303 LOCK 9 + Strategy v0.3 §6.3 对齐
+- [ ] **EntryPlan shape**: `entry: PriceBand` · typed `Price` stop/targets · numeric `conviction_ref` · `score_ref {scoring_id,snapshot_hash}` · no legacy `price_band`
+- [ ] **MarketScope/currency**: `cn_a→CNY` · `us→USD` · `jp→JPY` · `kr→KRW`; consumers use explicit `market_scope`, never infer only from profile, and never silently FX-convert dimension inputs
 - [ ] **CatalystKind shape**: 9-enum — 与 Orch v303 LOCK 6 对齐
 - [ ] **types.ts v0.2**: 7-item changeset — 与 γ-2 msg=e7e8a154 对齐
 
@@ -358,7 +384,30 @@
 
 ---
 
-## 依赖 & 阻塞 (v0.2 · 全部 LAND)
+## Canonical LOCK coverage (v303 + v311 + v316)
+
+| LOCK | Canonical invariant | Checklist anchor |
+|------|---------------------|------------------|
+| #1 | Conviction `adjustments[]` shape | 全局字段字典 + ConvictionBreakdownCard |
+| #2 | HIGH/MED/LOW thresholds | 全局字段字典 + Tab 1/2 filter |
+| #3 | RiskGate base semantics | 全局字段字典 + 跨-tab 数据契约层 |
+| #4 | catalyst_kind adjustment tiers | Tab 1 catalystKind + Conviction adjustment attribution |
+| #5 | Score Band A/B/C/D/F | 全局字段字典 + Tab 1/2 ScoreCell |
+| #6 | CatalystKind 9-enum | 全局字段字典 + Tab 1 filter |
+| #7 | Tab 6 REST polling | `POST /daily-report/generate` + `GET /daily-report/status`; SSE disabled |
+| #8 | Weight profile switcher | Tab 2 可切 · Tab 4 固定 · Tab 1/3/5 default |
+| #9 | SizeHint progress-bar | EntryPlan.size_hint + EntryPlanCard 0-5% |
+| #10 | DetailSidebar sections slot | 全局两栏布局 + 跨-tab shared primitive |
+| #11 | Backtest single namespace | Tab 5 `backtest-pit/:strategy` route family + wire field `strategy` |
+| #12 | morning-brief route family | Tab 1 backend API |
+| #13 | us-select route family | Tab 2 backend API |
+| #14 | jpkr-market route family | Tab 3 backend API |
+| #15 | multibagger route family | Tab 4 backend API |
+| #16 | backtest holdings contract | Tab 5 backend API + holdings table |
+
+---
+
+## 依赖与状态 (v0.3)
 
 | 依赖源 | 版本 | msg | 状态 |
 |--------|------|-----|------|
@@ -373,15 +422,21 @@
 | Backend γ API mapping | v0.2 | 9c0d7b34 | ✅ LAND |
 | AI-γ recommendation | v0.2 | 33836149 | ✅ LAND |
 | Orch v303 10 canonical LOCK | — | f53c62a0 | ✅ LOCKED |
+| Orch v311 LOCK #11-#13 | — | — | ✅ LOCKED |
+| Orch v316 LOCK #14-#16 | — | — | ✅ LOCKED |
+| Orch v317 RiskGate 22-trigger | — | — | ✅ LOCKED |
+| Cleanup PR-A2 / PR-A3 | merged | PR #211 / #212 | ✅ LAND |
+
+实时 PR/task 进度以 GitHub 与 task board 为准，不写入 canonical checklist。发布判定只依据本表稳定权威输入以及 `sprint3-test-framework.md` 的 executable evidence。
 
 ---
 
 ## 版本演进计划
 
 - **v0.1** (LANDED Sprint 1 · 24h) — 7-tab 骨架 · 布局/字段/chip/侧栏/空态 checklist
-- **v0.2** (本 draft · Sprint 1 末) — 10/10 upstream fold-in · Strategy scoring + Conviction + RiskGate + SizeHint + CatalystKind 全 shape v0.2 · Backend API endpoint mapping · AI-γ 14 硬门 · DP DDL 6-table · γ-2 shared primitive 4+5 · γ-1 tab 1 组件映射 · γ-3 tab 5 组件映射 · Sprint 2 test framework 测试用例引用
-- **v0.3** (Sprint 2 末) — Tab 1 端到端跑通后校准 · 新增可点击/可看具体元素 checklist
-- **v0.4** (Sprint 3 末) — Tab 3/4/5 上线后校准
+- **v0.2** (LANDED · Sprint 1 末) — 10/10 upstream fold-in · Strategy scoring + Conviction + RiskGate + SizeHint + CatalystKind 全 shape v0.2 · Backend API endpoint mapping · AI-γ 14 硬门 · DP DDL 6-table · γ-2 shared primitive 4+5 · γ-1 tab 1 组件映射 · γ-3 tab 5 组件映射 · Sprint 2 test framework 测试用例引用
+- **v0.3** (本版 · Sprint 3 合同阶段) — Tab 3/4/5 LOCK #14-#16 · RiskGate 22-trigger · login-removal 152-case 门禁
+- **v0.4** (Sprint 3 上线后) — 按 C1-C4 实现与真实响应 shape 校准可点击/可看元素
 - **v0.5** (Sprint 4 末) — 全 tab MVP · 部署 + 免责声明验收 checklist
 
 ---
@@ -397,4 +452,4 @@
 - v303 10 canonical LOCK re-litigate 永久禁
 - perpetual-dispatch LIVE · agents 不停 · Orch v300~v306 100% 兑现
 
-**Orch v307 PR-CREATE-AUTHORIZE REALIZED · QADocs γ SOLE owner D5**
+**Orch v319 PR-CREATE-AUTHORIZE · QADocs γ owner D4 · task #175**
