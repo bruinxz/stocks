@@ -1,13 +1,15 @@
-export type BacktestStrategy =
-  | 'us_preferred'
-  | 'multibagger'
-  | 'japan_blue_chip'
-  | 'korea_semiconductor_chain'
-  | 'japan_multibagger'
-  | 'korea_multibagger';
+export const BACKTEST_STRATEGIES = [
+  'us_preferred',
+  'multibagger',
+  'japan_blue_chip',
+  'korea_semiconductor_chain',
+  'japan_multibagger',
+  'korea_multibagger',
+] as const;
+
+export type BacktestStrategy = (typeof BACKTEST_STRATEGIES)[number];
 
 export interface BacktestSnapshotSlot {
-  [key: string]: unknown;
   snapshot_id: string;
   snapshot_day: string;
   strategy: BacktestStrategy;
@@ -45,6 +47,11 @@ export interface RawBacktestSnapshot {
   is_delisted_at_as_of?: unknown;
   fact_hash?: unknown;
   source_versions?: unknown;
+  net_value?: unknown;
+  drawdown?: unknown;
+  cumulative_return?: unknown;
+  sharpe_ratio_6m?: unknown;
+  win_rate_6m?: unknown;
   metrics?: unknown;
 }
 
