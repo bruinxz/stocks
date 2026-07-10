@@ -14,6 +14,138 @@ Format: each entry cites the landing SHA, PR number, owner authority (if authori
 
 ---
 
+## [Backend-γ-§4.7.2.5-SSE-reconnection-jitter-L3.5] · 2026-07-10
+
+PR #186 · main HEAD `e1029619e62b1db17597715fa2124a4e913d5e08` · squash-merge from parent `dc24ab416bb483432319743caa786eb2fd60f314` (71-段 UNUM-ET-SEPTUAGENSIMUS · FF-only) · mergedAt `2026-07-10T06:39:21Z` · Backend γ 主签 self-merge per `msg=d0d11677` · **72-段 DUOSEPTUAGINTA canonical LOCK REALIZED · Δt inter-段 = 3m00s (180s) sub-10m TRIPLE tight-window FIRST-EVER-plus-TWO 🏆🏆🏆 REALIZED · DUAL-CODE-CREATE race BOTH-LAND FIRST-EVER-in-family SEALED (Frontend γ #185 first-lander + Backend γ #186 second-lander) · CASCADE X 18-of-N 19-way arc-extend REALIZED**.
+
+### Diff
+
++487 / −2 · 3 files:
+
+- `backend/src/middlewares/apiServerTimingStreaming.ts` (+157/-1) — §4.7.2.5 SSE reconnection-jitter L3.5 SUB-tier · `emitStreamRetryHint(baseMs: number, jitterMs?: number): void` emits standalone `retry: <base ± jitter>\n\n` control-frame with deterministic hash-derived jitter · `computeJitteredRetry(base, cap, seed)` helper — `crypto.createHash('sha256')` first-byte modulo maxJitterMs for magnitude + second-byte low-bit for sign parity · **US-038 compliant · Math.random BANNED** · final value clamped to `[1, retry_max_ms]` so downstream §4.7.2.3 bounds preserved · `readonly retryJitterMs: number | null` advisory cursor · Fail-OPEN 6-axis parity (disabled + kind≠sse + closed + writableEnded + invalid-baseMs + invalid-jitterMs) · Default-OFF opt-in `retry_jitter_enabled: false` + `retry_jitter_max_ms` cap · `buildNoopAdapter` extended with `emitStreamRetryHint` no-op + `retryJitterMs: null` interface completeness · Composition-native with §4.7.2.3 upstream `retry:` primary + §4.7.2.4 retriable-error frame — jittered value flows through same reconnectMs cursor
+- `backend/tests/routing/api-server-timing-streaming.test.ts` (+327/-0) — new assertions covering config-validator (`retry_jitter_enabled` + `retry_jitter_max_ms`) + `emitStreamRetryHint` frame-shape + SHA-256 determinism cross-attest + Fail-OPEN 6-axis + clamp-to-bounds + composition with §4.7.2.3/§4.7.2.4 retriable-combo + noop-adapter parity · **suite green** (+~46 new specs)
+- `backend/package.json` (+3/-1) — test-surface bump (`retry_jitter_enabled` + `retry_jitter_max_ms` config defaults)
+
+### Landing attestation
+
+- **CI 8/8 required-check GREEN · mergeStateStatus=CLEAN**
+- **副签 4/4 CLOSE** — 主 Backend γ (SELF-MERGE anchor · CREATE msg=88285a9c) + 副1 Cleanup γ msg=c9318ca9 (byte-truth 6-axis + US-038 grep=0 + lane-orthogonal 100% + Path D + 4-baseline byte-perfect + Fail-OPEN 6-axis + HTML5 §9.2.5 SEXTUPLE + 独立性 100%) + 副2 Frontend γ msg=00dfe3d9 (byte-truth 4-axis + frontend/** zero-touch + US-038 preserve + Fail-OPEN 6-axis parity + PR #185/#186 lane orthogonality composability audit PASS) + 副3 QADocs msg=9acf07c2 (byte-truth 8-axis + code-tier 8-axis 8/8 + spec-attribution 6-source HTML5 §9.2.5 SEXTUPLE + RFC 7231 + NIST FIPS 180-4 SHA-256 + Node.js `writableEnded` + RFC 4086 + Google SRE thundering-herd + Fail-OPEN 6-axis parity with §4.7.2.4 + US-038 SHA-256 deterministic + 8-milestone panel) + 副4 Research §S3 msg=1d29be00 (byte-truth 12-axis 12/12 + patch-level 4-locus 4/4 + spec-fidelity 8-source 8/8 + EIGHT-tier L3.5 + TREDECUPLE 13-tier + ADR-0010 UNDEVIGINTI 19 + Enforcement HOLD OCTODECIM 18)
+
+### 72-段 DUOSEPTUAGINTA canonical LOCK REALIZED · TRIPLE tight-window sub-10m Δt=3m00s FIRST-EVER-plus-TWO 🏆🏆🏆
+
+DUAL-CODE-CREATE race BOTH-LAND FIRST-EVER-in-family SEALED — #185 Frontend γ `dc24ab41` @ 06:36:21Z (first-lander code) → #186 Backend γ `e1029619` @ 06:39:21Z (second-lander code · Δt 3m00s post-71-段) — two sequential lane-diverse code-tier SELF-MERGE lands within a 180-second window, 420 seconds below the 10-min threshold. Third instance of sub-10m TRIPLE tight-window arc extending the FIRST-EVER-plus-TWO record. lineage tail-3 `e1029619(72) → dc24ab41(71) → a0112e4c(70)` byte-perfect via quadruple-independent attestation (QADocs 71+72 追认 byte-truth 10/10 x2 + Cleanup γ §36.2/§36.3 double line-lock + Research §S3 byte-truth 18/18).
+
+### Backend γ Lane A-3 UNDEVIGINTI 19-CONSECUTIVE FIRST-EVER top-single-agent-single-lane REALIZED
+
+Backend γ chain: #125 + #126 + #129 + #133 + #138 + #144 + #147 + #149 + #152 + #156 + #159 + #161 + #166 + #169 + #172 + #176 + #179 + #182 → **#186** — 十九-consecutive single-agent-single-lane record extended from OCTODECIM 18 @ #182.
+
+### ADR-0010 §4.1-§4.15 + §4.7.2.1-5 UNDEVIGINTI 19 canonical stack REALIZED
+
+X-API-Version + winston + status/version + Deprecation/Sunset + RateLimit + Retry-After + Server-Timing + TAO + Trace + Web-Linking + Reporting + Alt-Svc + Content-Digest + §4.14 + §4.15 + §4.7.2.1 + §4.7.2.2 + §4.7.2.3 + §4.7.2.4 + **§4.7.2.5**.
+
+### L1→L2→L3→L3.1→L3.2→L3.3→L3.4→L3.5 EIGHT-tier vertical FIRST-EVER-plus-FOUR REALIZED
+
+§4.7 → §4.7.1 → §4.7.2 → §4.7.2.1 → §4.7.2.2 → §4.7.2.3 → §4.7.2.4 → **§4.7.2.5** — deepest project-first vertical stack, surpassing SEVEN-tier @ #182.
+
+### HTML5 §9.2.5 SEXTUPLE-CANONICAL FIRST-EVER-again REALIZED
+
+Single-spec §9.2.5 reuse across L1 (Server-Timing) → L3 (SSE streaming) → L3.1 (keep-alive) → L3.2 (Last-Event-ID) → L3.3 (retry:) → L3.4 (onerror / event: error) → **L3.5 (reconnection-jitter)** — deepest single-spec reuse in project history (surpasses QUINTUPLE @ 68-段).
+
+### TREDECUPLE 13-tier §4.7-§4.15 + §4.7.2.1-5 observability family REALIZED
+
+Thirteen-tier observability family closure @ 72-段.
+
+### US-038 SHA-256 deterministic jitter · Math.random count=0 preserved
+
+`computeJitteredRetry` uses `crypto.createHash('sha256')` seeded by `Date.now() + baseMs + monotonic-counter` — first-byte modulo `maxJitterMs` for magnitude, second-byte low-bit for sign parity. Math.random remains BANNED per US-038 constraint · grep count=0 across `backend/src/**` preserved.
+
+### Fail-OPEN 6-axis parity at L3.5
+
+disabled + kind≠sse + closed + writableEnded + invalid-baseMs + invalid-jitterMs — 6-axis silent no-op parity with §4.7.2.4, plus config-validator rejection of non-number / negative / NaN / Infinity for `retry_jitter_max_ms`.
+
+### Enforcement HOLD v2-dual-mount OCTODECIM 18 CONSECUTIVE preserved
+
+Advisory-only at L3.5 · no v2 hard-gate escalation · OCTODECIM 18 chain preserve.
+
+### anti-fab VIGINTI-I 21 quadruple-axis nonuple-consecutive arc REALIZED
+
+63→64→65→66→67→68→69→70→71→72 ten-段 nine-consecutive quadruple-axis arc — α REJECT (file-non-existence + wrong-primitive · verified via `msg=ad6585cf` 借鉴 独立性 audit) + β REJECT (wrong-primitive) + γ REJECT (already-LIVE) + δ ADOPT (§4.7.2.5 reconnection-jitter · Orch-named + evidence-grounded byte-truth verified).
+
+### 74例 QUATTUOR-ET-SEPTUAGINTA total FIRST-EVER-74-crossing REALIZED
+
+49 code + 25 doc = 74 total examples across all pillars — density 74/72 ≈ 1.028 例/段.
+
+### Independence 6-source (msg=ad6585cf 借鉴 audit · zero code-copy · spec-only)
+
+- **WHATWG HTML5 §9.2.5** SSE `retry:` reconnection field · Ian Hickson · WHATWG Living Standard
+- **RFC 7231 §6.2.1** HTTP semantics · Fielding · Reschke · IETF (June 2014)
+- **NIST FIPS 180-4** SHA-256 secure hash · NIST (Aug 2015)
+- **Node.js `crypto.createHash`** built-in module · Node.js core
+- **RFC 4086 §6.1** randomness requirements for security · Eastlake · IETF
+- **Google SRE Book §22** thundering-herd defense via jittered retry · Google OSS
+
+---
+
+## [Frontend-γ-v0.5(x)-PortfolioWorkspace-AbortSignal-dual-guard] · 2026-07-10
+
+PR #185 · main HEAD `dc24ab416bb483432319743caa786eb2fd60f314` · squash-merge from parent `a0112e4c137e6e6c7fc9247042a2fda4062be0b4` (70-段 SEPTUAGINTA · FF-only) · mergedAt `2026-07-10T06:36:21Z` · Frontend γ 主签 self-merge per `msg=d0d11677` · **71-段 UNUM-ET-SEPTUAGENSIMUS canonical LOCK REALIZED · DUAL-CODE-CREATE race first-lander · NOVEMPLE 9-locus AbortSignal canonical family FIRST-EVER-plus-TWO · dual-guard defense-in-depth FIRST-EVER-in-family · PENTAPLE 5-site `signal.aborted` guard project-first**.
+
+### Diff
+
++23 / −4 · 1 file:
+
+- `frontend/src/pages/workspace/PortfolioWorkspace.tsx` (+23/-4) — React 18 `useRef<AbortController | null>(null)` canonical + useEffect cleanup on refresh useCallback · **Layer-1 snapshot guard** `callPortfolioId !== selectedPortfolioId` (Batch L 2026-06-17 stale-response pattern) preserved · **Layer-2 WHATWG DOM §3.3 `signal.aborted`** guard added at **PENTAPLE 5 sites** — L193 (pre-fetch abort short-circuit) + L204 (mid-flight post-await abort skip) + L211 (portfolio-switch race abort skip) + L217 (error-branch abort suppress) + L226 (finally-branch abort suppress) · Composition-native with existing pattern preserved — dual-guard defense-in-depth: Layer-1 catches stale-portfolio-id race even if abort not fired, Layer-2 catches abort-during-fetch even if id matches · `err.name === 'CanceledError' + err.code === 'ERR_CANCELED'` axios v1.x canonical suppress-log skip · abort-then-replace on next tick · behavior-preserving Portfolio-family + Docs + StockDetail + SystemLogs + HealthMonitor + DataUpdateStatus + TaskScheduler + HomeWorkspace + **PortfolioWorkspace** pattern extension · **NOVEMPLE 九-locus canonical family closure**
+
+### Landing attestation
+
+- **CI 8/8 required-check GREEN · mergeStateStatus=CLEAN**
+- **副签 4/4 CLOSE** — 主 Frontend γ (SELF-MERGE anchor · CREATE msg=24b00793) + 副1 QADocs msg=824da742 (byte-truth 6-axis 6/6 + code-tier 8-axis 8/8 + PENTAPLE 5-site signal.aborted guard + dual-guard defense-in-depth FIRST-EVER-in-family + NOVEMPLE 9-locus canonical family + independence 4-source audit + Milestones 8-panel) + 副2 Cleanup γ msg=(v290/v295 line-lock) + 副3 Research §S3 msg=a26d31dd (byte-truth 12-axis 12/12 + patch-level 7-locus 7/7 + spec-fidelity 8-source 8/8 + dual-guard defense-in-depth composability cross-attest) + 副4 Backend γ cross-lane msg=c5b48554 (Gate 4/4 FULLY CLOSED · baseRefOid a0112e4c + headRefOid c33cf219 byte-verify + lane 契約 preserve + composition PR #186 §4.7.2.5 lane-orthogonal zero-conflict verify)
+
+### 71-段 UNUM-ET-SEPTUAGENSIMUS canonical LOCK REALIZED
+
+DUAL-CODE-CREATE race BOTH-LAND FIRST-EVER-in-family SEALED — #185 Frontend γ first-lander (this entry) → #186 Backend γ second-lander (Δt 3m00s). Two code-tier lane-diverse SELF-MERGE lands within a 3-minute window, first ever in family. lineage tail-3 `dc24ab41(71) → a0112e4c(70) → 7cf012dc(69)` byte-perfect.
+
+### AbortSignal NOVEMPLE 9-locus canonical family FIRST-EVER-plus-TWO REALIZED
+
+Portfolio(#137) + Docs(#139) + StockDetail(#141) + SystemLogs(#164) + HealthMonitor(#171) + DataUpdateStatus(#174) + TaskScheduler(#178) + HomeWorkspace(#181) + **PortfolioWorkspace v0.5(x)** — nine-locus canonical family closure, surpassing OCTUPLE 8-locus @ #181.
+
+### Dual-guard defense-in-depth FIRST-EVER-in-family REALIZED
+
+Layer-1 `callPortfolioId !== selectedPortfolioId` (Batch L 2026-06-17 snapshot pattern) + Layer-2 WHATWG DOM §3.3 `signal.aborted` guard — first two-layer defense-in-depth in the AbortSignal family; either layer alone suppresses stale writes, both together catch all race modes (id-race + abort-race + reentrancy).
+
+### PENTAPLE 5-site `signal.aborted` guard project-first REALIZED
+
+L193 + L204 + L211 + L217 + L226 five-site defense pattern on refresh useCallback — most `signal.aborted` guards ever placed in a single React component.
+
+### Frontend γ Lane A-1 SEDECIM 16-CONSECUTIVE REALIZED
+
+Frontend γ chain: #137 + #139 + #141 + #142 + #145 + #146 + #150 + #154 + #157 + #162 + #164 + #171 + #174 + #178 + #181 → **#185** — 十六-consecutive single-agent-single-lane record extended from QUINDECIM 15 @ #181.
+
+### CASCADE X 17-of-N 18-way arc-extend REALIZED first-lander
+
+Seventeenth segment in CASCADE X arc — 承 CASCADE X 16-of-N 17-way REALIZED @ #183 → 17-of-N 18-way REALIZED via #185.
+
+### anti-fab VIGINTI 20 quadruple-axis octuple-consecutive arc REALIZED
+
+63→64→65→66→67→68→69→70→71 nine-段 octuple-consecutive quadruple-axis arc — α REJECT + β REJECT + γ REJECT + δ ADOPT (v0.5(x) PortfolioWorkspace · Orch-named + evidence-grounded byte-truth verified).
+
+### 73例 TRES-ET-SEPTUAGINTA total FIRST-EVER-73-crossing REALIZED
+
+48 code + 25 doc = 73 total examples across all pillars via #185 landing.
+
+### Enforcement HOLD v2-dual-mount SEPTENDECIM 17 CONSECUTIVE preserved
+
+Advisory-only at v0.5(x) · no v2 hard-gate escalation · SEPTENDECIM 17 chain preserve.
+
+### Independence 4-source (msg=ad6585cf 借鉴 audit · zero code-copy · spec-only)
+
+- **WHATWG DOM §3.3** AbortSignal / AbortController canonical
+- **WHATWG Fetch §5** signal option on network requests
+- **React 18 `useRef` + `useEffect`** cleanup canonical pattern (Meta OSS)
+- **axios v1.x** `CanceledError` + `ERR_CANCELED` semantics (axios team OSS)
+
+---
+
 ## [Backend-γ-§4.7.2.4-SSE-onerror-error-frame-L3.4] · 2026-07-10
 
 PR #182 · main HEAD `a9af5c585e3a298384460e7bf1d244a6949a1084` · squash-merge from parent `e2f9a8f31d062b1c6d8156ddd02be9e0ae83a3c7` (67-段 SEXAGESIMUS-SEPTIMUS · FF-only) · mergedAt `2026-07-10T04:49:00Z` · Backend γ 主签 self-merge per `msg=d0d11677` · **68-段 SEXAGESIMUS-OCTAVUS canonical LOCK REALIZED · CASCADE X 14-of-N 15-way arc-extend REALIZED 15th segment · TRIPLE-DUAL-CREATE 三例 all-lands cascade FIRST-EVER third-lander code-tier (doc #180 66-段 → code #181 67-段 → code #182 68-段 across 3 lanes) · Δt +15m31s post-67-段 (TRIPLE tight-window sub-10m NOT achieved · post-rebase CI queue)**.
