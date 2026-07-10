@@ -29,7 +29,9 @@ export default function USStockPicks() {
 
   const dateParam = todayISO();
   const { data, loading, error } = useAbortableRequest<USSelectResponse>(
-    `/api/v1/us-select/${dateParam}`,
+    (signal) =>
+      fetch(`/api/v1/us-select/${encodeURIComponent(dateParam)}`, { signal })
+        .then((r) => { if (!r.ok) throw new Error(`us-select ${r.status}`); return r.json(); }),
     [dateParam],
   );
 

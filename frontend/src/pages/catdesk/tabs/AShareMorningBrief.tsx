@@ -52,7 +52,9 @@ export default function AShareMorningBrief() {
   const [selectedRow, setSelectedRow] = useState<CandidateListEntry | null>(null);
 
   const { data, loading, error } = useAbortableRequest<MorningBriefResponse>(
-    `/api/v1/morning-brief/${dateParam}`,
+    (signal) =>
+      fetch(`/api/v1/morning-brief/${encodeURIComponent(dateParam)}`, { signal })
+        .then((r) => { if (!r.ok) throw new Error(`morning-brief ${r.status}`); return r.json(); }),
     [dateParam],
   );
 
