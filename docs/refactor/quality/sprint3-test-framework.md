@@ -51,8 +51,8 @@ ordered union of the Sprint 2 base (#1-#104) and the 48 cases below
 
 | # | Test | Assert |
 |---|------|--------|
-| 120 | RiskGate trigger count US = 9 | existing 9 US triggers unchanged |
-| 121 | RiskGate trigger count A股 = 3 | existing 3 A股 triggers unchanged |
+| 120 | RiskGate US trigger exact set = 9 | EARNINGS_T-2, EARNINGS_T-0, HALT_ACTIVE, MERGER_PENDING, LITIGATION_MATERIAL, IV_SHOCK, LIQUIDITY_LOW, RESTATEMENT_30D, DELISTING_NOTICE |
+| 121 | RiskGate A股 trigger exact set = 3 | ST_TAG, PRICE_LIMIT_APPROACH, SUSPENDED |
 | 122 | RiskGate JP trigger codes = 5 | exact set: TSE_HALT, EDINET_DELAY, CORPORATE_GOVERNANCE_ISSUE, TSE_TOKUBETSU_CHI, TSE_KANRI |
 | 123 | RiskGate KR trigger codes = 5 | exact set: KRX_HALT, DART_LATE_FILING, INSIDER_TRADING_FLAG, KRX_UNFAITHFUL, KRX_INVESTOR_ALERT |
 | 124 | RiskGate total trigger count = 22 | 9 US + 3 A股 + 5 JP + 5 KR |

@@ -354,6 +354,8 @@
 - [ ] **Score shape**: scoring_id (UUIDv4) + snapshot_hash (SHA-256 JCS) + band 双粒度 — 与 Strategy v0.2 §2.1 对齐
 - [ ] **Conviction shape**: Adjustment[] Option A — 与 Strategy v0.2 §4 + Orch v303 LOCK 1 对齐
 - [ ] **RiskGate shape**: 22-trigger (9 US + 3 A股 + 5 JP + 5 KR) — 与 Strategy v0.2 §5.3 + Orch v303 LOCK 3 + Orch v317 Ruling #8 对齐
+    - US 9: EARNINGS_T-2 (warn) + EARNINGS_T-0 (block) + HALT_ACTIVE (block) + MERGER_PENDING (warn) + LITIGATION_MATERIAL (warn) + IV_SHOCK (warn) + LIQUIDITY_LOW (warn) + RESTATEMENT_30D (block) + DELISTING_NOTICE (block)
+    - A股 3: ST_TAG (block) + PRICE_LIMIT_APPROACH (warn) + SUSPENDED (block)
     - JP 5: TSE_HALT (block) + EDINET_DELAY (warn) + CORPORATE_GOVERNANCE_ISSUE (warn) + TSE_TOKUBETSU_CHI (warn) + TSE_KANRI (block)
     - KR 5: KRX_HALT (block) + DART_LATE_FILING (warn) + INSIDER_TRADING_FLAG (block) + KRX_UNFAITHFUL (warn) + KRX_INVESTOR_ALERT (warn)
 - [ ] **SizeHint shape**: `{tier: SizeHintTier, pct, disclaimer_key}` — 与 DP 180 v0.2.1 + Orch v303 LOCK 10 对齐
