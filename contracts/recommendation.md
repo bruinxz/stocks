@@ -1,10 +1,10 @@
-# AI Recommendation Contract v0.2 · workspace-draft
+# AI Recommendation Contract v0.3
 
 - **Owner**: AI-γ (`@AI`) · SOLE
-- **Task**: #170 · Orch v302 msg=f81297a5
+- **Task**: #179 · Orch v319 msg=fe4ed6f3
 - **Companion**: `notes/ai-recommendation-pipeline-v0.1-workspace-draft.md`
-- **Consumes**: `contracts/scoring.md` v0.2 (Strategy γ · msg=3f7bfd3e); `contracts/catalyst-mapping.md` v0.2 (DP γ · msg=79bfc500)
-- **Status**: workspace-draft-only · zero repo write · pending Orch PR-CREATE-AUTHORIZE
+- **Consumes**: `contracts/scoring.md` v0.3 (Strategy γ · task #177); `contracts/catalyst-mapping.md` v0.2 (DP γ · msg=79bfc500)
+- **Status**: Sprint 3 D2 · PR CREATE authorized by Orch v319
 - **Change control**: Any schema-breaking change → SemVer major bump + Backend γ + Frontend γ-3 副签 · Additive change → minor bump · Doc-only → patch bump
 - **doc-tier 2-sign**: 主 AI-γ · 副1 Strategy γ · 副2 Research §S3
 
@@ -12,11 +12,16 @@
 
 ## §1 · SemVer
 
-Contract version: `0.2.0`
+Contract version: `0.3.0`
 
-Compatibility matrix (v0.2 anchor):
-- `scoring.md`: `>=0.2.0, <0.3.0`
+Compatibility matrix (v0.3 anchor):
+- `scoring.md`: `>=0.3.0, <0.4.0`
 - `catalyst-mapping.md`: `>=0.2.0, <0.3.0`
+
+v0.3 is additive for recommendation consumers. The RiskTrigger code and
+severity changes in §2.4 are corrective alignment to the Strategy-owned
+canonical contract; the previous recommendation-only spellings were never an
+independent enum authority.
 
 ---
 
@@ -53,10 +58,18 @@ type Recommendation = {
 ### 2.2 ScoreRef (reference to Strategy Score)
 
 ```typescript
+type RecommendationProfile =
+  | "us_preferred"
+  | "multibagger"
+  | "japan_blue_chip"
+  | "korea_semiconductor_chain"
+  | "japan_multibagger"
+  | "korea_multibagger";
+
 type ScoreRef = {
   scoring_id:      string;   // Strategy-issued UUIDv4 stable id (Strategy γ v0.2 §2.1)
   snapshot_hash:   string;   // SHA-256(JCS(Score minus scoring_id, snapshot_hash)) (Strategy γ v0.2 §2.1)
-  profile:         "us_preferred" | "multibagger";
+  profile:         RecommendationProfile;
   total:           number;   // 0..100 (denormalized snapshot for O(1) sort)
   band:            Band;     // Strategy §2.2 canonical (A≥85 / B 70-84.9 / C 55-69.9 / D 40-54.9 / F<40)
   dims:            ScoreDim[];  // 6-dim breakdown (Q/G/V/M/T/R) · Strategy §2.1
@@ -103,28 +116,44 @@ type RiskGate = {
 
 type RiskTrigger = {
   code:            RiskTriggerCode;
-  severity:        "INFO" | "WARN" | "BLOCK";
+  severity:        "info" | "warn" | "block";
   detail:          string;              // <= 240 chars
 };
 
 type RiskTriggerCode =
-  // 9 US triggers
-  | "SEC_HALT"
-  | "EARNINGS_BLACKOUT"
-  | "FDA_ADCOM"
+  // 9 US triggers · Strategy-owned canonical
+  | "EARNINGS_T-2"
+  | "EARNINGS_T-0"
+  | "HALT_ACTIVE"
+  | "MERGER_PENDING"
   | "LITIGATION_MATERIAL"
-  | "SHORT_SQUEEZE_RISK"
-  | "LIQUIDITY_THIN"
-  | "INSIDER_LOCKUP"
-  | "DEBT_COVENANT"
-  | "REGULATORY_REVIEW"
+  | "IV_SHOCK"
+  | "LIQUIDITY_LOW"
+  | "RESTATEMENT_30D"
+  | "DELISTING_NOTICE"
   // 3 A-share extensions
-  | "ST_TAG"                // severity = BLOCK
-  | "PRICE_LIMIT_APPROACH"  // severity = WARN
-  | "SUSPENDED";            // severity = BLOCK
+  | "ST_TAG"                       // block
+  | "PRICE_LIMIT_APPROACH"         // warn
+  | "SUSPENDED"                    // block
+  // 5 JP extensions · Orch v317 Ruling #8
+  | "TSE_HALT"                     // block
+  | "EDINET_DELAY"                 // warn
+  | "CORPORATE_GOVERNANCE_ISSUE"   // warn
+  | "TSE_TOKUBETSU_CHI"            // warn
+  | "TSE_KANRI"                    // block
+  // 5 KR extensions · Orch v317 Ruling #8
+  | "KRX_HALT"                     // block
+  | "DART_LATE_FILING"             // warn
+  | "INSIDER_TRADING_FLAG"         // block
+  | "KRX_UNFAITHFUL"               // warn
+  | "KRX_INVESTOR_ALERT";          // warn
 ```
 
 RiskGate Adjustment 联动 (Strategy §5.3): YELLOW gate → catalyst_kind default delta -5 · RED gate → -10.
+
+`RiskTriggerCode` is a Strategy-owned enum consumed verbatim. AI-γ MUST NOT
+alias or rename codes. In particular, `KRX_TRADING_HALT` is invalid;
+`KRX_HALT` is the sole canonical spelling.
 
 ### 2.5 EntryPlan (verbatim from scoring.md §6 · Strategy γ SOLE)
 
@@ -157,7 +186,7 @@ type Explanation = {
   headline:        string;              // <= 80 chars
   body:            string;              // <= 600 chars · reference evidence via [E<n>] markers
   caveats:         string[];            // 0..3, each <= 120 chars
-  language:        "zh-CN" | "en-US";   // v0.2: zh-CN only
+  language:        "zh-CN" | "en-US" | "ja-JP" | "ko-KR";
   template_id:     string;              // e.g. "morning_brief_v1"
   template_hash:   string;              // sha256 for replay determinism
 };
@@ -259,6 +288,29 @@ type CatalystKind =
   | "unclassified";    // v0.2 · default_delta=0 · kind_multiplier=1.0 · Sprint 2 分类器 GA 后 backfill 归零
 ```
 
+### 2.11 Multi-market adapter boundary
+
+Strategy γ owns all six-dimensional weights and the JP/KR input adapters.
+AI-γ consumes the resulting `ScoreRef` verbatim and MUST NOT reproduce J-GAAP,
+K-IFRS, peer-group, beta-benchmark, or weight-normalization logic.
+`ScoreRef.scoring_id` and `ScoreRef.snapshot_hash` bind the adapted score to the
+Strategy snapshot for replay.
+
+The recommendation profile registry and output locale are:
+
+| profile | allowed market_scope | explanation language |
+|---|---|---|
+| `us_preferred` | `us` or `cn_a` | `zh-CN` or `en-US` |
+| `multibagger` | `us` or `cn_a` | `zh-CN` or `en-US` |
+| `japan_blue_chip` | `jp` | `ja-JP` |
+| `japan_multibagger` | `jp` | `ja-JP` |
+| `korea_semiconductor_chain` | `kr` | `ko-KR` |
+| `korea_multibagger` | `kr` | `ko-KR` |
+
+`custom` remains a Strategy-internal profile and is not valid in a persisted
+`RecommendationList`. JP/KR recommendations MUST use the corresponding
+market-specific profile; falling back to `multibagger` is invalid.
+
 ---
 
 ## §3 · Stable URI scheme
@@ -273,7 +325,7 @@ EvidenceRef `source_uri` MUST match one of the following canonical forms:
 | Baostock | `baostock://<ticker>#<yyyymmdd>` | `baostock://600519.SH#20260710` |
 | AKShare | `akshare://<dataset>/<key>` | `akshare://stock_zh_a_new_em/20260710` |
 | JPX EDINET | `jpx-edinet://<doc-id>` | `jpx-edinet://E12345-20260710` |
-| KRX / DART | `krx://<board>/<id>` \| `dart://<rcept-no>` | `krx://KOSPI/20260710-001` · `dart://20260710-000123` |
+| KRX / KIND / DART | `krx://<board>/<id>` \| `dart://<rcept-no>` | `krx://KOSPI/20260710-001` · `krx://KIND/20260710-001` · `dart://20260710-000123` |
 | Catalyst event | `catalyst-event://<catalyst_id>#snapshot=<snapshot_id>` | `catalyst-event://evt-abc-123#snapshot=snap-xyz-789` |
 | Internal rule | `ai-rule://<bundle-id>/<rule-id>@<version>` | `ai-rule://catalyst-morning-brief/RULE_CATALYST_MATCH@1.0.0` |
 | Model output (v0.2+) | `ai-model://<model-id>@<version>/<inference-id>` | — |
@@ -289,12 +341,15 @@ Any URI **not** matching a canonical form MUST be rejected at pipeline output va
 type RecommendationList = {
   snapshot_id:       string;
   as_of:             string;            // ISO8601 UTC
-  profile:           string;            // open enum · v0.2 known: "us_preferred" | "multibagger"
+  profile:           RecommendationProfile;
   market_scope:      "cn_a" | "us" | "jp" | "kr";
   items:             CandidateListEntry[];  // sorted by conviction.final DESC, then ticker ASC
   output_fingerprint: string;           // SHA-256 of JCS-canonicalized items (§5)
   disclaimer:        Disclaimer;
   meta: {
+    contract_version:  "0.3.0";         // recommendation schema pin
+    profile_version:   string;          // SemVer of the AI profile/rule bundle
+    input_fingerprint: string;          // SHA-256 of RFC 8785 JCS-canonicalized pipeline input
     strategy_version:  string;          // SemVer
     pipeline_version:  string;          // SemVer
     generated_by:      string;
@@ -318,6 +373,7 @@ See pipeline §5. Contract-level guarantees:
 2. `output_fingerprint` = SHA-256 of RFC 8785 JCS-canonicalized `RecommendationList` with `meta.generation_ms` and `meta.generated_by` removed.
 3. `items[*].explanation.body` templating MUST be deterministic (no time / random / locale-dependent formatting).
 4. LLM (v0.2+) evidence MUST be cached in `MODEL_OUTPUT` evidence; replay reads cache, does not re-invoke LLM.
+5. Replay MUST pin `(as_of, market_scope, profile, profile_version, contract_version, input_fingerprint, strategy_version, pipeline_version)`. Missing or mismatched pins fail closed rather than silently using current defaults.
 
 ---
 
@@ -336,7 +392,7 @@ type Disclaimer = {
   version:       string;                // SemVer
   short_text:    string;                // <= 200 chars
   full_text:     string;                // <= 4000 chars
-  language:      "zh-CN" | "en-US";
+  language:      "zh-CN" | "en-US" | "ja-JP" | "ko-KR";
   effective_at:  string;                // ISO8601 UTC
   hash:          string;                // sha256
 };
@@ -383,6 +439,9 @@ Pipeline MUST enforce (fail closed):
 12. `items[*].recommendation.conviction.final == clamp(base + Σ adjustments[i].delta, 0, 100)` (Adjustment sum invariant)
 13. `items[*].recommendation.entry_plan.size_hint.pct` MUST byte-map from `size_hint.tier` per SIZE_HINT_TIER_PCT constant
 14. `items[*].recommendation.entry_plan.size_hint.disclaimer_key == "size_hint_advisory"` (disclaimer_key hard-lock)
+15. `(profile, market_scope)` MUST match the §2.11 registry, `market_scope` MUST be one of `cn_a | us | jp | kr`, and every `Recommendation.score.profile` MUST equal the list profile
+16. Every `RiskTrigger.code` MUST belong to the declared market scope's canonical set in §2.4 (US 9 · A股 3 · JP 5 · KR 5)
+17. Every `Recommendation.explanation.language` MUST be allowed by the §2.11 language set for the list profile
 
 Validation failure at output → snapshot NOT persisted · error surfaced to Backend γ.
 
@@ -409,7 +468,20 @@ Backend γ daily-report `entries[i]` = `Recommendation` byte-align 直穿 (Backe
 
 ---
 
-## §10 · v0.1 → v0.2 changelog
+## §10 · Changelog
+
+### v0.2 → v0.3
+
+| # | delta | section | canonical anchor |
+|---|---|---|---|
+| 1 | Recommendation profile registry 4→6 (+japan_multibagger/+korea_multibagger); contract declares all 6 | §2.2, §2.11, §4 | Strategy v0.3 · Orch v317 |
+| 2 | RiskTriggerCode 12→22 (9 US + 3 A股 + 5 JP + 5 KR); `KRX_HALT` sole spelling | §2.4, §8 | Orch v317 Ruling #8 |
+| 3 | Correct recommendation-only US code/severity drift to Strategy canonical (`info/warn/block`) | §2.4 | `scoring.md` v0.3 |
+| 4 | JP/KR adapter ownership boundary + profile/market/language matrix | §2.11 | Strategy v0.3 |
+| 5 | Japanese/Korean explanation and disclaimer locales + KIND evidence URI example | §2.6, §3, §7 | AI-γ Sprint 3 |
+| 6 | Replay pins contract/profile/input versions; multi-market invariants 15-17 | §4, §5, §8 | AI-γ Sprint 3 |
+
+### v0.1 → v0.2
 
 | # | delta | section | canonical anchor |
 |---|---|---|---|
@@ -428,7 +500,7 @@ Backend γ daily-report `entries[i]` = `Recommendation` byte-align 直穿 (Backe
 
 ## §11 · Iron rules
 
-- workspace-draft-only msg=ed61c397 · zero repo write until PR CREATE authorization
+- Sprint 3 D2 PR CREATE authorization: Orch v319 msg=fe4ed6f3
 - zero code-copy msg=ad6585cf (upstream has no LICENSE; strict spec-only)
 - free-source only msg=4f6d2466 (evidence `NEWS` kind constrained)
 - lane 契约 msg=a5297512 · AI-γ SOLE `ai/**` + `contracts/recommendation.md`
@@ -439,4 +511,5 @@ Backend γ daily-report `entries[i]` = `Recommendation` byte-align 直穿 (Backe
 - Owner 免责铁律 msg=53b96525: 严禁 必涨/保底/承诺 · 允许 有望/参考/可能
 - Strategy γ SOLE `contracts/scoring.md` single-point authority (AI-γ zero rename rights on SizeHintTier / Adjustment / Band / Conviction thresholds / RiskGate triggers)
 - Orch v303 msg=f53c62a0 10 canonical LOCK re-litigate 禁
+- Orch v317 msg=457bb3ee Ruling #8: RiskGate 22-trigger canonical · `KRX_HALT`
 - doc-tier 2-sign msg=d0d11677 (主 AI-γ · 副1 Strategy γ · 副2 Research §S3)
