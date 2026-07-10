@@ -426,10 +426,14 @@ import morningBriefRoutes from './api/routes/morningBrief.routes';
 import catalystRoutes from './api/routes/catalyst.routes';
 import usSelectRoutes from './api/routes/usSelect.routes';
 import backtestPitRoutes from './api/routes/backtestPit.routes';
+import jpkrMarketRoutes from './api/routes/jpkrMarket.routes';
+import multibaggerRoutes from './api/routes/multibagger.routes';
 app.use('/api/v1/morning-brief', morningBriefRoutes);
 app.use('/api/v1/catalyst', catalystRoutes);
 app.use('/api/v1/us-select', usSelectRoutes);
 app.use('/api/v1/backtest-pit', backtestPitRoutes);
+app.use('/api/v1/jpkr-market', jpkrMarketRoutes);
+app.use('/api/v1/multibagger', multibaggerRoutes);
 
 // US-070 OpenAPI / Swagger UI —— 仅 development 模式暴露 /api-docs（不需鉴权方便联调）
 // production 默认禁用避免泄露内部 endpoint 列表；通过 ENABLE_SWAGGER_UI=true 可强制开启

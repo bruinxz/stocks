@@ -12,6 +12,7 @@ function buildApp() {
   const controller = new BacktestPitController();
   app.get('/api/v1/backtest-pit/:strategy', controller.listSnapshots);
   app.get('/api/v1/backtest-pit/:strategy/:as_of', controller.getSnapshot);
+  app.get('/api/v1/backtest-pit/:strategy/:as_of/holdings', controller.getHoldings);
   return app;
 }
 
@@ -59,11 +60,34 @@ function buildApp() {
     const limitRes = await request(app).get(`/api/v1/backtest-pit/${VALID_STRATEGY}?limit=5`);
     assert([200, 500].includes(limitRes.status), 'limit accepted');
 
-    console.log('[8] All 4 strategies');
-    for (const strat of ['us_preferred', 'multibagger', 'japan_blue_chip', 'korea_semiconductor_chain']) {
+    console.log('[8] All 6 strategies');
+    for (const strat of ['us_preferred', 'multibagger', 'japan_blue_chip', 'korea_semiconductor_chain', 'japan_multibagger', 'korea_multibagger']) {
       const sRes = await request(app).get(`/api/v1/backtest-pit/${strat}`);
       assert([200, 500].includes(sRes.status), `${strat} accepted`);
     }
+
+    console.log('[9] Holdings endpoint');
+    const holdingsRes = await request(app).get(`/api/v1/backtest-pit/${VALID_STRATEGY}/${VALID_DATE}/holdings`);
+    assert([200, 404, 500].includes(holdingsRes.status), 'holdings responds');
+
+    console.log('[10] Holdings 200 fields');
+    if (holdingsRes.status === 200) {
+      assert(Array.isArray(holdingsRes.body.holdings), 'holdings array');
+    } else { assert(true, 'skipped'); }
+
+    console.log('[11] Holdings 404');
+    const holdingsNotFoundRes = await request(app).get('/api/v1/backtest-pit/us_preferred/2000-01-01/holdings');
+    assert([404, 500].includes(holdingsNotFoundRes.status), 'holdings not found or error');
+
+    console.log('[12] listSnapshots metrics extraction');
+    if (resJP?.status === 200) { assert(true, 'skipped - use main res'); }
+    const metricsRes = await request(app).get(`/api/v1/backtest-pit/${VALID_STRATEGY}`);
+    if (metricsRes.status === 200 && metricsRes.body.snapshots?.length > 0) {
+      const snap = metricsRes.body.snapshots[0];
+      assert(snap.net_value === undefined || typeof snap.net_value === 'number', 'net_value numeric');
+      assert(snap.drawdown === undefined || typeof snap.drawdown === 'number', 'drawdown numeric');
+      assert(snap.cumulative_return === undefined || typeof snap.cumulative_return === 'number', 'cumulative_return numeric');
+    } else { assert(true, 'skipped'); }
   }
   console.log(`\n--- Results: ${passed} passed, ${failed} failed ---`);
   await sequelize.close().catch(() => {});

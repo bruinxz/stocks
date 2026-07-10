@@ -8,7 +8,7 @@ const router = Router();
 const controller = new BacktestPitController();
 const authController = new AuthController();
 
-const STRATEGIES = ['us_preferred', 'multibagger', 'japan_blue_chip', 'korea_semiconductor_chain'];
+const STRATEGIES = ['us_preferred', 'multibagger', 'japan_blue_chip', 'korea_semiconductor_chain', 'japan_multibagger', 'korea_multibagger'];
 
 router.get(
   '/:strategy',
@@ -30,6 +30,16 @@ router.get(
   param('as_of').isISO8601({ strict: true }).withMessage('as_of must be YYYY-MM-DD'),
   validateRequest,
   controller.getSnapshot
+);
+
+router.get(
+  '/:strategy/:as_of/holdings',
+  authController.authenticate,
+  param('strategy').isIn(STRATEGIES)
+    .withMessage(`strategy must be one of: ${STRATEGIES.join(', ')}`),
+  param('as_of').isISO8601({ strict: true }).withMessage('as_of must be YYYY-MM-DD'),
+  validateRequest,
+  controller.getHoldings
 );
 
 export default router;
