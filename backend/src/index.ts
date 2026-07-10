@@ -216,6 +216,19 @@ app.use(apiTraceContextMiddleware());
 import { apiWebLinkingMiddleware } from './middlewares/apiWebLinking';
 app.use(apiWebLinkingMiddleware());
 
+// ADR-0010 §4.11 · W3C Reporting API L1 (Working Draft · Ilya Grigorik + Douglas Creager ·
+// https://www.w3.org/TR/reporting-1/) browser error-reporting endpoint declaration advisory
+// header. Reads optional `api_reporting_endpoints` block from `backend/package.json`;
+// missing block or empty/all-invalid endpoints → zero-emit (default OFF). When configured,
+// emits `Reporting-Endpoints: <name>="<url>", ...` at writeHead-flush time per RFC 8941
+// §3.2 dictionary canonical, plus optional legacy `Report-To` JSON group for Chromium ≤95.
+// Route-authority-wins-APPEND: if the route pre-sets either header, our advisory value
+// is APPENDED as an additional list entry (RFC 8941 §3.2 dictionary + §3.3 list list-value
+// semantics preserve both). Enforcement HOLD v2-dual-mount 契约 preserve (advisory ·
+// zero-decide-statusCode · zero-body-delta).
+import { apiReportingEndpointsMiddleware } from './middlewares/apiReportingEndpoints';
+app.use(apiReportingEndpointsMiddleware());
+
 // US-097 [OPS-008] 日志统一字段 — 给每个 request 分配 / 透传 trace_id 并绑到 AsyncLocalStorage,
 // 任何此 request 链路内 logger.info/warn/error 自动携带 `trace_id=<x> module=http` 后缀.
 // 必须在 httpMetricsMiddleware 之前 (metric 埋点本身的 log 也带 trace_id) 但在 cors/helmet 之后
