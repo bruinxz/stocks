@@ -1090,6 +1090,210 @@ async function run(): Promise<void> {
     assertEq('(br4) noop.lastEventId stays null', noop.lastEventId, null);
   }
 
+  console.log('\n--- (bs) §4.7.2.3 · retry config validators ---');
+  assertEq('(bs1) isValidRetryMs 3000 cap 300000', __test__.isValidRetryMs(3000, 300000), true);
+  assertEq('(bs2) isValidRetryMs 1 cap 1', __test__.isValidRetryMs(1, 1), true);
+  assertEq('(bs3) isValidRetryMs 300000 cap 300000', __test__.isValidRetryMs(300000, 300000), true);
+  assertEq('(bs4) isValidRetryMs 0 → false', __test__.isValidRetryMs(0, 300000), false);
+  assertEq('(bs5) isValidRetryMs -1 → false', __test__.isValidRetryMs(-1, 300000), false);
+  assertEq('(bs6) isValidRetryMs > cap → false', __test__.isValidRetryMs(300001, 300000), false);
+  assertEq('(bs7) isValidRetryMs 1.5 → false', __test__.isValidRetryMs(1.5, 300000), false);
+  assertEq('(bs8) isValidRetryMs NaN → false', __test__.isValidRetryMs(NaN, 300000), false);
+  assertEq('(bs9) isValidRetryMs Infinity → false', __test__.isValidRetryMs(Infinity, 300000), false);
+  assertEq('(bs10) isValidRetryMs string → false', __test__.isValidRetryMs('3000', 300000), false);
+  assertEq('(bs11) isValidRetryMs null → false', __test__.isValidRetryMs(null, 300000), false);
+  assertEq('(bs12) isValidRetryMs undefined → false', __test__.isValidRetryMs(undefined, 300000), false);
+  assertEq('(bs13) isValidRetryCap 300000 → true', __test__.isValidRetryCap(300000), true);
+  assertEq('(bs14) isValidRetryCap 1 → true', __test__.isValidRetryCap(1), true);
+  assertEq('(bs15) isValidRetryCap 0 → false', __test__.isValidRetryCap(0), false);
+  assertEq('(bs16) isValidRetryCap -1 → false', __test__.isValidRetryCap(-1), false);
+  assertEq('(bs17) isValidRetryCap 1.5 → false', __test__.isValidRetryCap(1.5), false);
+  assertEq('(bs18) isValidRetryCap NaN → false', __test__.isValidRetryCap(NaN), false);
+  assertEq('(bs19) isValidRetryCap "1" → false', __test__.isValidRetryCap('1'), false);
+  assertEq('(bs20) isValidRetryCap null → false', __test__.isValidRetryCap(null), false);
+
+  console.log('\n--- (bt) §4.7.2.3 · serializeSseRetryFrame frame-shape ---');
+  assertEq('(bt1) serialize 3000', __test__.serializeSseRetryFrame(3000), 'retry: 3000\n\n');
+  assertEq('(bt2) serialize 1', __test__.serializeSseRetryFrame(1), 'retry: 1\n\n');
+  assertEq('(bt3) serialize 300000', __test__.serializeSseRetryFrame(300000), 'retry: 300000\n\n');
+
+  console.log('\n--- (bu) §4.7.2.3 · adapter.setReconnectMs SSE success path ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const chunks: Buffer[] = [];
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, retry_enabled: true }));
+    app.get('/sse-retry-ok', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      const origWrite = res.write.bind(res);
+      (res as unknown as { write: typeof origWrite }).write = ((chunk: unknown, ...rest: unknown[]) => {
+        if (typeof chunk === 'string') chunks.push(Buffer.from(chunk));
+        else if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+        return (origWrite as (...args: unknown[]) => boolean)(chunk, ...rest);
+      }) as typeof origWrite;
+      captured.setReconnectMs(5000);
+      captured.setReconnectMs(2500);
+      res.end();
+    });
+    await request(app).get('/sse-retry-ok');
+    const joined = Buffer.concat(chunks).toString('utf8');
+    assertEq('(bu1) sse retry frame 5000 emitted', joined.includes('retry: 5000\n\n'), true);
+    assertEq('(bu2) sse retry frame 2500 emitted', joined.includes('retry: 2500\n\n'), true);
+    assertEq('(bu3) reconnectMs cursor last-wins 2500', captured.reconnectMs, 2500);
+  }
+
+  console.log('\n--- (bv) §4.7.2.3 · setReconnectMs fail-OPEN 6-axis ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, retry_enabled: false }));
+    app.get('/sse-retry-disabled', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.setReconnectMs(3000);
+      res.end();
+    });
+    await request(app).get('/sse-retry-disabled');
+    assertEq('(bv1) retry_enabled=false → reconnectMs stays null', captured.reconnectMs, null);
+  }
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, retry_enabled: true }));
+    app.get('/json-retry', async (_req, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.setReconnectMs(3000);
+      res.json({ ok: true });
+    });
+    await request(app).get('/json-retry');
+    assertEq('(bv2) kind !== sse → reconnectMs stays null', captured.reconnectMs, null);
+  }
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, retry_enabled: true }));
+    app.get('/sse-retry-zero', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.setReconnectMs(0);
+      captured.setReconnectMs(-1);
+      captured.setReconnectMs(1.5);
+      captured.setReconnectMs(NaN);
+      captured.setReconnectMs('3000' as unknown as number);
+      res.end();
+    });
+    await request(app).get('/sse-retry-zero');
+    assertEq('(bv3) invalid ms 5-way rejects → reconnectMs stays null', captured.reconnectMs, null);
+  }
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, retry_enabled: true }));
+    app.get('/sse-retry-closed', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.close();
+      captured.setReconnectMs(3000);
+      res.end();
+    });
+    await request(app).get('/sse-retry-closed');
+    assertEq('(bv4) adapter.close() then setReconnectMs → reconnectMs stays null', captured.reconnectMs, null);
+  }
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, retry_enabled: true, retry_max_ms: 10000 }));
+    app.get('/sse-retry-cap', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.setReconnectMs(10001);
+      res.end();
+    });
+    await request(app).get('/sse-retry-cap');
+    assertEq('(bv5) ms > retry_max_ms cap → reconnectMs stays null', captured.reconnectMs, null);
+  }
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, retry_enabled: true, retry_max_ms: -1 as unknown as number }));
+    app.get('/sse-retry-badcap', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.setReconnectMs(299999);
+      res.end();
+    });
+    await request(app).get('/sse-retry-badcap');
+    assertEq('(bv6) invalid retry_max_ms falls back to default 300000 → 299999 accepted', captured.reconnectMs, 299999);
+  }
+
+  console.log('\n--- (bw) §4.7.2.3 · setReconnectMs cap boundary + config default resolution ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, retry_enabled: true, retry_max_ms: 5000 }));
+    app.get('/sse-retry-boundary', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.setReconnectMs(5000);
+      res.end();
+    });
+    await request(app).get('/sse-retry-boundary');
+    assertEq('(bw1) ms === cap 5000 accepted (inclusive upper bound)', captured.reconnectMs, 5000);
+  }
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, retry_enabled: true }));
+    app.get('/sse-retry-lower', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.setReconnectMs(1);
+      res.end();
+    });
+    await request(app).get('/sse-retry-lower');
+    assertEq('(bw2) ms === 1 accepted (inclusive lower bound)', captured.reconnectMs, 1);
+  }
+
+  console.log('\n--- (bx) §4.7.2.3 · retry frame does not affect emit/count/lastEventId ---');
+  {
+    let captured!: ServerTimingStreamAdapter;
+    const app = express();
+    app.use(buildApiServerTimingStreamingMiddleware({ enabled: true, retry_enabled: true }));
+    app.get('/sse-retry-crossaxis', async (_req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.status(200);
+      captured = (res.locals as Record<string, unknown>).serverTimingStream as ServerTimingStreamAdapter;
+      captured.setReconnectMs(3000);
+      captured.emit('m', 1);
+      res.end();
+    });
+    await request(app).get('/sse-retry-crossaxis');
+    assertEq('(bx1) retry does not bump count', captured.count, 1);
+    assertEq('(bx2) retry does not touch lastEventId', captured.lastEventId, null);
+    assertEq('(bx3) reconnectMs 3000 set', captured.reconnectMs, 3000);
+  }
+
+  console.log('\n--- (by) §4.7.2.3 · buildNoopAdapter retry surface parity ---');
+  {
+    const noop = __test__.buildNoopAdapter();
+    assertEq('(by1) noop.reconnectMs null', noop.reconnectMs, null);
+    assertEq('(by2) noop.setReconnectMs callable', typeof noop.setReconnectMs, 'function');
+    noop.setReconnectMs(3000);
+    assertEq('(by3) noop.setReconnectMs no-op keeps reconnectMs null', noop.reconnectMs, null);
+    assertEq('(by4) noop kind stays none', noop.kind, 'none');
+  }
+
   console.log('\n=================================');
   console.log(`PASS: ${passed}`);
   console.log(`FAIL: ${failed}`);
