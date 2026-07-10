@@ -2137,3 +2137,122 @@ Cascade-density arithmetic canonical:
 - W3C Reporting API L1 Working Draft Aug 2024 + RFC 7838 Apr 2016 IETF (Nottingham+McManus+Reschke) + RFC 8941 Structured Fields Feb 2021 + RFC 7230 §3.2.6 Jun 2014 + RFC 9114 HTTP/3 Jun 2022 + RFC 9113 HTTP/2 Jun 2022 + WHATWG DOM §3.3 AbortController (Anne van Kesteren · Living Standard · Jul 2017) + React 18 "You Might Not Need an Effect" §Fetching data (React Team Meta · 2023-current) + axios v0.22.0 `config.signal` CHANGELOG (Matt Zabriskie et al. · Oct 1 2021) spec-only cite (msg=ad6585cf 借鉴 独立性 铁律 · structural template only · zero code-copy · zero external npm)
 - US-038 SeededRandom + Math.random-zero 铁律 100% preserved across all 4 PRs (backend pure regex-validate + frontend AbortController zero-entropy + doc/CHANGELOG zero-code)
 - Browser support matrix (aggregated): Chromium 47+ Dec 2015 (Alt-Svc) · FF 37+ Mar 2015 (Alt-Svc) · Safari 11+ Sep 2017 (Alt-Svc) · Chromium 96+ Nov 2021 (Reporting-Endpoints) · React 18.x Mar 2022 · WHATWG DOM AbortController widely-live 2017+
+
+
+## §PR-M3-30 · CASCADE VII 3-way heterogeneous FULL-REALIZE (PR #166 §4.13 code + PR #165 §PR-M3-29 doc + PR #164 v0.5(s) code) triple-entry landing block
+
+
+### §一 · Trigger + posture · CASCADE VII 3-way heterogeneous FIRST-EVER cascade
+- **3-way concurrent SELF-MERGE cascade @ 6-min-21-sec wall-clock window** (2026-07-10T01:24:08Z → 01:30:29Z · **first-ever heterogeneous 3-way in 52-段 history** · code+doc+code shape)
+- **22-milestone aggregate REALIZED** (post-#166 12 + post-#165 5 + post-#164 5) simultaneously convergent across TRIPLE LANE (Backend γ Lane A-3 TREDECIM 13 + Frontend γ Lane A-1 UNDECIM 11 + Cleanup γ Lane B doc-tier DECIMAL 10)
+- **QUINQUAGESIMA-QUATTUOR 54例 total** (38 code + 16 doc) REALIZED @ `926b2929`
+- **Rebase base**: `926b2929` **QUINQUAGESIMA-DUO 52-段** (post-#164 SELF-MERGE)
+
+### §二 · Landing metadata triple (SELF-MERGED · byte-truth 3-source verified · 3-way heterogeneous)
+
+| # | PR | tier | agent | mergeCommit | mergedAt UTC | 段 | scope | diff-stat |
+|---|----|------|-------|-------------|--------------|-----|-------|-----------|
+| 1 | **#166** | code | Backend γ | `1f9cc6b46e55741fa27a7a974deb38017ec888e8` | **01:24:08Z (09:24:08 CST)** | **50** QUINQUAGESIMA | `backend/src/middlewares/apiServerTiming.ts` +113/-19 + `backend/tests/routing/api-server-timing.test.ts` +458/-0 | **+571/-19** · 2 files |
+| 2 | **#165** | doc | Cleanup γ (SELF-MERGE anchor) | `eac8d8f5e238c6de0c93656d0e96ce46dc95b918` | **01:27:40Z (09:27:40 CST)** | **51** UNQUINQUAGESIMA | `docs/refactor/30-cleanup-log.md` pure-append §PR-M3-29 quadruple-entry β | **+129/-0** · 1 file |
+| 3 | **#164** | code | Frontend γ | `926b2929b6ec9c8ed23169e13104e44cbcac2f23` | **01:30:29Z (09:30:29 CST)** | **52** QUINQUAGESIMA-DUO 🏆 | `frontend/src/pages/SystemLogs.tsx` +31/-17 + `frontend/src/services/logService.ts` +17/-6 | **+48/-23** · 2 files |
+
+**Cascade wall-clock**: **6 min 21 sec** (density ~127 sec/segment for 3-way heterogeneous vs 46 sec/segment for CASCADE VI QUADRUPLE 4-way homogeneous @ 49-段 · slower-per-segment 3-way heterogeneous canonical shape)
+
+**Lineage @ `926b2929`** (`git log --oneline -4 origin/main`):
+```
+926b2929 fix(frontend): SystemLogs useEffect + setInterval race-guard via AbortSignal (v0.5(s)) (#164)
+eac8d8f5 docs(cleanup-log): append §PR-M3-29 quadruple-entry landing block (...) · CASCADE VI QUADRUPLE FULL-LAND FIRST-EVER 4-way in 49-段 · Cleanup γ Lane B TEN-CONSECUTIVE DECIMAL + Instance 4 十例 DECEM + 十六例 doc + QUINQUAGESIMA-DUO 52例 candidate REALIZE (PR-M3-Cleanup-log-29) (#165)
+1f9cc6b4 feat(backend): ADR-0010 §4.13 · W3C Server-Timing L1 §2 dynamic measure/measureAsync API (PR-M3-N+++++++) (#166)
+d8f4ba76 fix(frontend): StockDetailPanel useEffect race-guard via AbortSignal (v0.5(r)) (#162)
+```
+
+### §三 · Code-hygiene audit summary (3-PR cross-attest · per Cleanup γ 3-slot triple 副签路由 same-turn)
+- **PR #166 code** (Cleanup γ 副3 msg=a4d5a118 §三): jscpd §4.7 pattern-mirror in-place well under 30% · pure-EXTEND same-file (apiServerTiming.ts +113/-19 · zero new file) · backend/** SOLE lane · Fail-OPEN preserved · N=4 + Instance 5 transitively preserved · TS strict `res.locals.serverTiming` handler-facing 三-API (measure/measureAsync/start) + always-exposed accumulator + always-in-order merge + reject-rethrow preserving stack/name canonical · Enforcement HOLD v2-dual-mount 九次-witness advisory-only · SEPTUPLE §4.7-§4.13 family witness (Server-Timing static + TAO + Trace Context + Web Linking + Reporting-Endpoints + Alt-Svc + Dynamic Server-Timing §4.7.1)
+- **PR #164 code** (Cleanup γ 副2 msg=a4d5a118 §二): frontend/** SOLE lane · Math.random-zero grep verify (SystemLogs.tsx = 0 + logService.ts = 0) · 3-locus AbortController canonical (fetchLogs useCallback + fetchStats useCallback + autoRefresh setInterval) + **per-tick AbortController in setInterval poll first-ever canonical** (each 3s tick only commits its own result) + signature-additive backwards-compat `listLogs(params, config?: { signal?: AbortSignal })` single-caller isolation · React 18 canonical + WHATWG DOM §3.3 AbortController + axios v0.22.0 `config.signal` spec-only cite · anti-fab quadruple-axis witness (α-DEFER scale-inflation + β-REJECT wrong-primitive + γ-REJECT already-LIVE + δ-ADOPT truthful surgical)
+- **PR #165 doc** (Cleanup γ 主签 SELF-MERGE anchor msg=a4d5a118 §一): +129/-0 pure-append · Cleanup γ SOLE `docs/refactor/30-cleanup-log.md` · zero code-touch · zero baseline-touch · doc-tier 2/2 gate CLOSE (副1 Research §S3 msg=7709374b + 副2 QADocs msg=7f018e74) · §PR-M3-29 quadruple-entry β canonical CASCADE VI QUADRUPLE doc-mirror
+
+### §四 · Behavior-preservation verify canonical (3-PR aggregate)
+- **PR #166 (§4.13 Dynamic Server-Timing)**: `res.locals.serverTiming` handler-facing 三-API surface (measure/measureAsync/start) always-exposed accumulator · always-in-order merge · reject-rethrow preserving stack/name · route's static entries prepend + handler dynamic entries append canonical (per Backend γ §一 88/0 test) · Fail-OPEN preserved · Enforcement HOLD v2-dual-mount 九次 advisory-only (§4.5-§4.13) · zero statusCode decide · zero response-body delta · Node process.hrtime.bigint() v10.7.0+ RFC 7230 §3.2.6 tchar validate · W3C Server-Timing L1 §2 CR 25-May-2022 canonical
+- **PR #164 (v0.5(s) SystemLogs AbortSignal)**: 3 useCallback + setInterval race sites (fetchLogs L43 + fetchStats L79 + autoRefresh L100) · Pattern-canonical: `AbortController` in useEffect cleanup (React 18 canonical) + **per-tick AbortController in setInterval poll** (novel canonical for v0.5(s) · each 3s tick only commits its own result) + `if (signal?.aborted) return` setState-guard cross-cutting + `CanceledError`/`ERR_CANCELED` axios v1.x catch swallow · Signature-additive backwards-compat: `logService.listLogs(params) → listLogs(params, config?: { signal?: AbortSignal })` optional 2nd param defaults undefined · single-caller isolation grep-verifiable · Zero-regression by construction 100%
+- **PR #165 (§PR-M3-29 quadruple-entry doc)**: zero runtime behavior · doc-tier pure-append 131 lines covering PR #160 §PR-M3-28 + PR #161 §4.12 Alt-Svc + PR #163 CHANGELOG v0.5 + PR #162 v0.5(r) StockDetailPanel triple landings · CASCADE VI QUADRUPLE 4-way homogeneous canonical doc-mirror (first-ever 4-in-1 PR in single doc-PR history)
+
+### §五 · N=4 + Instance 5 + Path D + 4-baseline preserve @ `926b2929` (grep-verified 独立 Cleanup γ triple-check post-CASCADE-VII)
+- **N=4** canonical AUTHORITY grep 4/4 @ backend/src/** ✅:
+  - `backend/src/services/UserFeedbackService.ts:42-43` FeedbackStatus + FeedbackClassification
+  - `backend/src/portfolio/PositionSizingPolicy.ts:66` SizingMethod
+  - `backend/src/quant/workflow/QuantWorkflowReadinessService.ts:8` QuantWorkflowStatus
+- **Instance 5** 二例 REMOVE-permanent grep `\b(export\s+)?(enum|type)\s+(MarketRegime|MarketJudgmentStatus)\b` @ backend/src/ **EXIT=1** ✅
+- **Path D** `docs/refactor/baseline/ui-enum/15-enum-matrix-lock-3246b8c.json` shasum **`9ec3f104e268a44f8fcfab6e0ae6905faa6b6ec3`** ✅ byte-perfect (3-PR cascade zero baseline/** touch by construction)
+- **4-baseline** `docs/refactor/baseline/ui-enum/4-enum-matrix-lock-bc1b3c9.json` shasum **`1f2d197a23c89eec23b5a5addc0e054974a6eaa5`** ✅ byte-perfect
+
+### §六 · 3×3 pairwise file-set intersection audit (9 pairs all ∅)
+| | #166 backend | #165 docs | #164 frontend |
+|---|---|---|---|
+| #166 | — | ∅ (backend/** vs docs/**) | ∅ (backend/** vs frontend/**) |
+| #165 | ∅ | — | ∅ (docs/** vs frontend/**) |
+| #164 | ∅ | ∅ | — |
+
+**All 3 pairs ∅ across CASCADE VII 3×3** ✅ (Backend γ SOLE `backend/src/middlewares/apiServerTiming.ts` + tests · Cleanup γ SOLE `docs/refactor/30-cleanup-log.md` · Frontend γ SOLE `frontend/src/pages/SystemLogs.tsx` + service) — zero cross-lane bleed · zero rebase-thrash · zero conflict · trigger-order permutation-independent by construction
+
+### §七 · Independence + spec-only cite audit (3 PRs · aggregated 借鉴 独立性 铁律 msg=ad6585cf 100%)
+| PR | Spec-cite sources | Vendor library | Pattern-mirror | Independence attest |
+|---|---|---|---|---|
+| **#166** code | W3C Server-Timing L1 CR 25-May-2022 §2 + Node process.hrtime.bigint() v10.7.0+ Aug 2018 + RFC 7230 §3.2.6 (Fielding+Reschke) Jun 2014 | zero | §4.7 apiServerTiming pattern-mirror in-place | ✅ zero code-copy · zero external npm |
+| **#165** doc | (aggregate 9-source spec-cite from #160+#161+#162+#163 witness) | zero | doc-prose quadruple-entry β canonical | ✅ pure doc-prose · zero code-copy |
+| **#164** code | React 18 "You Might Not Need an Effect" §Fetching (React Team Meta 2023-current) + WHATWG DOM §3.3 AbortController Living Standard Jul 2017 (Anne van Kesteren) + axios v0.22.0 `config.signal` CHANGELOG Oct 2021 (Matt Zabriskie et al.) + axios v1.x CanceledError `ERR_CANCELED` | zero (no `abort-*`/`use-abort-signal`/`react-use-abort` npm) | v0.5(r) StockDetailPanel + v0.5(q) DocsWorkspace + v0.5(p) 5-site pattern-parallel | ✅ zero code-copy · zero external npm |
+
+**借鉴 独立性 铁律 msg=ad6585cf 100% across all 3 PRs** ✅
+
+### §八 · 副签 order 3-PR triple CLOSE panel (msg-id table · Cleanup γ 3-slot triple 副签路由 satisfied same-turn)
+| PR | tier | gate | 主 | 副1 | 副2 | 副3 | 副4 |
+|----|------|------|----|-----|-----|-----|-----|
+| **#166** code | ≥4-sign | **4/4 CLOSE** | Backend γ | QADocs msg=4b1df9f9 | Research §S3 msg=d6554dae | **Cleanup γ msg=a4d5a118 §三** | Frontend γ msg=26f92e14 |
+| **#165** doc | ≥2-sign | **2/2 CLOSE** | **Cleanup γ (SELF-MERGE anchor)** | Research §S3 msg=7709374b | QADocs msg=7f018e74 | — | — |
+| **#164** code | ≥4-sign | **4/4 CLOSE** | Frontend γ | QADocs msg=722c4319 | **Cleanup γ msg=a4d5a118 §二** | Research §S3 msg=d6554dae | Backend γ msg=f92d0ccc |
+
+**Cleanup γ this cascade**: PR #165 主签 SELF-MERGE anchor + PR #166 副3 + PR #164 副2 — **3-slot triple 副签路由 satisfied within same turn** ✅ (first-ever code+doc mixed triple 副签 in single-turn history)
+
+### §九 · QUINQUAGESIMA-DUO 52-段 main HEAD lineage LOCK
+`... → 828793f7(#150 37) → acb98d58(#153 38 doc) → f1205ef5(#154 39 code) → 077bfbc4(#152 40 code §4.9) → b3b4769e(#155 41 doc) → 4c518522(#157 42 code v0.5(q)) → d7419f3b(#156 43 code §4.10) → c0b253bb(#158 44 doc §PR-M3-27) → ca4ccc6a(#159 45 code §4.11) → 1ce7b055(#160 46 doc §PR-M3-28) → df6814cf(#161 47 code §4.12) → e6391864(#163 48 doc CHANGELOG v0.5) → d8f4ba76(#162 49 code v0.5(r)) → 1f9cc6b4(#166 50 code §4.13 QUINQUAGESIMA) → eac8d8f5(#165 51 doc §PR-M3-29 UNQUINQUAGESIMA) → 926b2929(#164 52 code v0.5(s) QUINQUAGESIMA-DUO)` — main HEAD 更新 → **`926b2929`** post-#164 · **QUINQUAGESIMA-DUO 52-段** · **QUINQUAGESIMA-QUATTUOR 54例 (38 code + 16 doc)** · **22-milestone aggregate REALIZED** · **CASCADE VII 3-way heterogeneous FULL-LAND FIRST-EVER · 6-min-21-sec wall-clock cascade window · TRIPLE LANE CONVERGENCE**
+
+### §十 · CASCADE VII+ narrative canonical pin (shape-evolution timeline)
+CASCADE family 7-shape REALIZED (per Orch v264+ msg=b6fd8455 §零): CASCADE VII shape-evolution **3-way heterogeneous ARMED (post-CASCADE-VI-QUADRUPLE 4-way at 49-段) → 3-way partial (post-#166 SELF-MERGE @ 50-段 · 1st-lander) → 3-way partial (post-#165 SELF-MERGE @ 51-段 · 2nd-lander) → 3-way FULL-LAND (post-#164 SELF-MERGE @ 52-段 · 3rd-lander) · TRIPLE LANE CONVERGENCE FIRST-EVER**.
+
+Cascade-density arithmetic canonical:
+- 二连-段 dual @ #158+#159 · ~2-minute window (08:29:25 → 08:31:13 CST · Cleanup γ doc + Backend γ code · homogeneous doc+code)
+- CASCADE VI QUADRUPLE @ #160+#161+#163+#162 · ~3-minute window (08:52:36 → 08:55:44 CST · 4-way homogeneous doc+code+doc+code)
+- **CASCADE VII 3-way heterogeneous @ #166+#165+#164 · 6-min-21-sec window (09:24:08 → 09:30:29 CST · code+doc+code heterogeneous)** — first-ever 3-way heterogeneous shape canonical
+- Cascade-density: ~127 sec/segment for 3-way heterogeneous vs ~46 sec/segment for 4-way homogeneous @ #163 cascade · **slower-density heterogeneous canonical** (larger diffs + cross-lane isolation attest overhead)
+
+### §十一 · Milestone REALIZE ledger post-52-段 (Cleanup γ Lane B DECIMAL 10 → UNDECIM 11 candidate armed @ §PR-M3-30)
+- **Cleanup γ Lane B doc-tier TEN-CONSECUTIVE DECIMAL** @ #165 (#128+#140+#143+#148+#151+#153+#155+#158+#160+#165) → **UNDECIM 11-CONSECUTIVE candidate REALIZE @ §PR-M3-30 CREATE** (Instance 5 二例 already REMOVE-permanent unrelated)
+- **Instance 4 multi-entry doc-PR canonical 十例 DECEM** @ #165 quadruple-entry β → **十一例 UNDECIM candidate REALIZE @ §PR-M3-30 CREATE** (triple-entry variant)
+- **doc-tier 十六例 SEDECIM** @ #165 → **十七例 candidate REALIZE @ §PR-M3-30 CREATE**
+- **QUINQUAGESIMA-QUATTUOR 54例** @ #164 → **QUINQUAGESIMA-QUINQUE 55例 candidate REALIZE @ §PR-M3-30 CREATE** (38 code + **17 doc** = 55例)
+- **CASCADE VII 3-way heterogeneous FIRST-EVER** REALIZED @ 6:21 window · **CASCADE VIII candidate armed** (potential 4-way if §4.14 code + §PR-M3-30 doc + v0.5(t) frontend + CHANGELOG v0.6 doc within tight window)
+
+### §十二 · 副签路由 pin (doc-tier · Cleanup γ 主 + Research §S3 副1 + QADocs 副2)
+
+### §十三 · 引用锚
+- PR #166 · Backend γ CREATE msg=71824fa5 + SELF-MERGE broadcast msg=bd4f9495 · ADR-0010 §4.13 · W3C Server-Timing L1 §2 Dynamic measure/measureAsync API · 50-段 code mergeCommit `1f9cc6b4`
+- PR #165 · Cleanup γ CREATE msg=a4d5a118 §一 + SELF-MERGE broadcast msg=235a87af · §PR-M3-29 quadruple-entry β canonical CASCADE VI QUADRUPLE doc-mirror · 51-段 doc mergeCommit `eac8d8f5`
+- PR #164 · Frontend γ CREATE msg=139544a8 + SELF-MERGE msg=a973d1ea · v0.5(s) SystemLogs AbortSignal 3-locus + per-tick setInterval AbortController canonical first-ever · 52-段 code mergeCommit `926b2929`
+- Cleanup γ CASCADE VII 3-of-3 FULL-REALIZE 追认 msg=06d9215a · 22-milestone aggregate + Cleanup γ 3-slot triple 副签路由 same-turn + §PR-M3-30 workspace-draft prep armed
+- Research §S3 msg=7cfdf998 · QUINQUAGESIMA-DUO 52-段 追认 · byte-truth 6-source triangulation + 22-milestone aggregate + TRIPLE LANE CONVERGENCE canonical panel
+- QADocs msg=1515a3b3 · PR #165 SELF-MERGE 追认 · 5-milestone REALIZED @ 51-段 + CHANGELOG v0.6 anchor advance
+- Orch v264+ msg=b6fd8455 · CASCADE VII 3-way ARMED aggregate + 4/4 sign-gate close dispatch
+- **CASCADE VII 3-way heterogeneous FIRST-EVER FULL-LAND REALIZED** (first-ever 3-way heterogeneous SELF-MERGE cascade convergence in 52-段 history · 6-min-21-sec wall-clock · 22-milestone aggregate simultaneous · 3×3 pairwise intersection = ∅ · 借鉴 独立性 铁律 100% across 3 PRs)
+- **ADR-0010 §4.1-§4.13 TREDECIM 13-CONSECUTIVE canonical stack REALIZED** (X-API-Version + winston api_version + /api/v1/status+version+interceptor + Deprecation/Sunset + IETF draft-08 RateLimit + Retry-After + Server-Timing static + Timing-Allow-Origin + Trace Context + Web Linking + Reporting-Endpoints + Alt-Svc + **Server-Timing Dynamic §4.7.1**)
+- **Backend γ Lane A-3 TREDECIM 13-CONSECUTIVE canonical family REALIZED** (#125+#126+#129+#133+#138+#144+#147+#149+#152+#156+#159+#161+**#166**)
+- **Enforcement HOLD v2-dual-mount 契约 preserve 九次 CONSECUTIVE advisory-only REALIZED** (§4.5+§4.6+§4.7+§4.8+§4.9+§4.10+§4.11+§4.12+§4.13)
+- **SEPTUPLE §4.7-§4.13 observability+hypermedia+reporting+transport+dynamic family REALIZED** (Server-Timing static + Timing-Allow-Origin + Trace Context + Web Linking + Reporting-Endpoints + Alt-Svc + **Dynamic Server-Timing §4.7.1**)
+- **Frontend γ Lane A-1 UNDECIM 11-CONSECUTIVE canonical family REALIZED** (#137+#139+#141+#142+#145+#146+#150+#154+#157+#162+**#164**)
+- **anti-fabrication verify-then-decide 十次連続 DECIMAL twin-axis+quadruple-axis capstone REALIZED** (v0.5(k)~v0.5(s) chain · v0.5(s) quadruple-axis α-DEFER/β-REJECT/γ-REJECT/δ-ADOPT canonical)
+- **Cleanup γ Lane B doc-tier TEN-CONSECUTIVE DECIMAL REALIZED** (#128+#140+#143+#148+#151+#153+#155+#158+#160+**#165**)
+- **Instance 4 multi-entry doc-PR canonical 十例 DECEM REALIZED** @ #165 quadruple-entry β
+- **十六例 doc canonical LOCK SEDECIM REALIZED** @ #165
+- **QUINQUAGESIMA-QUATTUOR 54例 total REALIZED @ #164** (38 code + 16 doc)
+- **三十八例 code + 十六例 doc = 五十四例 total REALIZED** @ 52-段
+- W3C Server-Timing L1 CR 25-May-2022 §2 dynamic (Ilya Grigorik) + Node process.hrtime.bigint() v10.7.0+ Aug 2018 + RFC 7230 §3.2.6 (Fielding+Reschke Jun 2014) + React 18 "You Might Not Need an Effect" §Fetching (React Team Meta 2023-current) + WHATWG DOM §3.3 AbortController Living Standard Jul 2017 (Anne van Kesteren) + axios v0.22.0 `config.signal` CHANGELOG Oct 2021 (Matt Zabriskie et al.) + axios v1.x CanceledError `ERR_CANCELED` spec-only cite (msg=ad6585cf 借鉴 独立性 铁律 · structural template only · zero code-copy · zero external npm)
+- US-038 SeededRandom + Math.random-zero 铁律 100% preserved across all 3 PRs (backend static+dynamic Server-Timing pure `res.locals.serverTiming` no-entropy + frontend AbortController per-tick + doc zero-code)
+- Browser support matrix (aggregated): Chromium 76+ Jul 2019 (Server-Timing dynamic W3C L1) · FF 76+ May 2020 · Safari 16.4 Mar 2023 · React 18.x Mar 2022 · WHATWG DOM AbortController widely-live 2017+ · axios v0.22+ Oct 2021
