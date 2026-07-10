@@ -21,6 +21,7 @@ export interface Score {
   snapshot_hash: string;
   ticker: string;
   as_of: string;
+  market_scope: MarketScope;
   quality: Dimension;
   growth: Dimension;
   valuation: Dimension;
@@ -35,12 +36,20 @@ export interface Score {
   source_versions: SourceVersions;
 }
 
-export type WeightsProfile =
-  | "us_preferred"
-  | "multibagger"
-  | "custom"
-  | "japan_blue_chip"
-  | "korea_semiconductor_chain";
+export const MARKET_SCOPES_V0_3 = ["cn_a", "us", "jp", "kr"] as const;
+export type MarketScope = (typeof MARKET_SCOPES_V0_3)[number];
+
+export const WEIGHTS_PROFILES_V0_3 = [
+  "us_preferred",
+  "multibagger",
+  "custom",
+  "japan_blue_chip",
+  "korea_semiconductor_chain",
+  "japan_multibagger",
+  "korea_multibagger",
+] as const;
+
+export type WeightsProfile = (typeof WEIGHTS_PROFILES_V0_3)[number];
 
 export interface SourceVersions {
   quality_engine: string;
@@ -101,7 +110,59 @@ export type RiskGateTriggerCode =
   | "DELISTING_NOTICE"
   | "ST_TAG"
   | "PRICE_LIMIT_APPROACH"
-  | "SUSPENDED";
+  | "SUSPENDED"
+  | "TSE_HALT"
+  | "EDINET_DELAY"
+  | "CORPORATE_GOVERNANCE_ISSUE"
+  | "TSE_TOKUBETSU_CHI"
+  | "TSE_KANRI"
+  | "KRX_HALT"
+  | "DART_LATE_FILING"
+  | "INSIDER_TRADING_FLAG"
+  | "KRX_UNFAITHFUL"
+  | "KRX_INVESTOR_ALERT";
+
+export const RISK_GATE_TRIGGER_CODES_V0_3 = [
+  "EARNINGS_T-2",
+  "EARNINGS_T-0",
+  "HALT_ACTIVE",
+  "MERGER_PENDING",
+  "LITIGATION_MATERIAL",
+  "IV_SHOCK",
+  "LIQUIDITY_LOW",
+  "RESTATEMENT_30D",
+  "DELISTING_NOTICE",
+  "ST_TAG",
+  "PRICE_LIMIT_APPROACH",
+  "SUSPENDED",
+  "TSE_HALT",
+  "EDINET_DELAY",
+  "CORPORATE_GOVERNANCE_ISSUE",
+  "TSE_TOKUBETSU_CHI",
+  "TSE_KANRI",
+  "KRX_HALT",
+  "DART_LATE_FILING",
+  "INSIDER_TRADING_FLAG",
+  "KRX_UNFAITHFUL",
+  "KRX_INVESTOR_ALERT",
+] as const satisfies readonly RiskGateTriggerCode[];
+
+export const RISK_GATE_TRIGGER_COUNT_V0_3 = 22;
+
+if (MARKET_SCOPES_V0_3.length !== 4 || new Set(MARKET_SCOPES_V0_3).size !== 4) {
+  throw new Error("Score v0.3 must contain four unique market scopes");
+}
+
+if (WEIGHTS_PROFILES_V0_3.length !== 7 || new Set(WEIGHTS_PROFILES_V0_3).size !== 7) {
+  throw new Error("Score v0.3 must contain seven unique weight profiles");
+}
+
+if (
+  RISK_GATE_TRIGGER_CODES_V0_3.length !== RISK_GATE_TRIGGER_COUNT_V0_3 ||
+  new Set(RISK_GATE_TRIGGER_CODES_V0_3).size !== RISK_GATE_TRIGGER_COUNT_V0_3
+) {
+  throw new Error("RiskGate v0.3 must contain 22 unique trigger codes");
+}
 
 export interface Trigger {
   code: RiskGateTriggerCode;
@@ -160,6 +221,7 @@ export interface EntryPlan {
 export interface TickerDataBundle {
   ticker: string;
   as_of: string;
+  market_scope: MarketScope;
   quality_inputs: QualityInputs;
   growth_inputs: GrowthInputs;
   valuation_inputs: ValuationInputs;
