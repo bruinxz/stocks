@@ -69,11 +69,11 @@ ordered union of the Sprint 2 base (#1-#104) and the 48 cases below
 | # | Test | Assert |
 |---|------|--------|
 | 130 | WeightsProfile union = 7 | us_preferred + multibagger + custom + japan_blue_chip + korea_semiconductor_chain + japan_multibagger + korea_multibagger |
-| 131 | japan_multibagger weights | exact Q/G/V/M/T/R = 0.10/0.25/0.10/0.15/0.25/0.15 and sum = 1.0 |
-| 132 | korea_multibagger weights | exact Q/G/V/M/T/R = 0.10/0.30/0.10/0.10/0.25/0.15 and sum = 1.0 |
-| 133 | JP adapter J-GAAP normalization | `jp.ts` normalizes 経常利益 ROIC basis |
-| 134 | KR adapter K-IFRS normalization | `kr.ts` normalizes chaebol cross-guarantee IC |
-| 135 | US adapter + generic multibagger tune | `us.ts` is identity pass-through; multibagger Q/G/V/M/T/R = 0.10/0.30/0.10/0.15/0.20/0.15 |
+| 131 | Weight registry exact values | multibagger = 0.10/0.30/0.10/0.15/0.20/0.15; japan_multibagger = 0.10/0.25/0.10/0.15/0.25/0.15; korea_multibagger = 0.10/0.30/0.10/0.10/0.25/0.15 |
+| 132 | Registry sum + replay boundary | all six named registry profiles sum to 1.0 ± 1e-9; `custom` has no registry row and is excluded from the six-profile replay whitelist unless exact weights are persisted |
+| 133 | JP DimensionAdapter contract | `market=JP`; `available_at <= as_of`; local-currency inputs; J-GAAP/EDINET + TSE-peer provenance; missing fundamentals remain missing rather than zero |
+| 134 | KR DimensionAdapter contract | `market=KR`; `available_at <= as_of`; local-currency inputs; K-IFRS/DART + KRX-peer provenance; cross-shareholding/preferred-stock adjustments are identified; missingness is preserved |
+| 135 | Adapter boundary compatibility | profile/market conflict rejects; `normalizeTrend` and `normalizeRisk` cannot cross-wire; existing typed US TickerDataBundle callers bypass raw normalization byte-compatibly |
 
 ---
 
@@ -94,9 +94,9 @@ ordered union of the Sprint 2 base (#1-#104) and the 48 cases below
 | # | Test | Assert |
 |---|------|--------|
 | 141 | DisclaimerPage route exists | `/catdesk/disclaimer` resolves |
-| 142 | 禁用词汇 grep = 0 | "必涨", "保底", "承诺", "guaranteed", "assured" have zero hits in `frontend/**` |
+| 142 | Context-aware prohibited-claim lint | reject affirmative "必涨"/"保底收益"/"保证收益"/"guaranteed return"/"assured return"; accept negated/legal fixtures "不做绝对收益承诺"/"不构成任何承诺"/"不保证收益" |
 | 143 | size_hint_advisory disclaimer present | `disclaimer_key='size_hint_advisory'` renders visible text |
-| 144 | EntryPlan disclaimer present | "仅供参考，非投资建议" or equivalent renders |
+| 144 | EntryPlan disclaimer canonical rendering | EntryPlan path uses `disclaimer_key='size_hint_advisory'` and `DisclaimerFooter` renders exact text `仅参考·非下单 binding · 不构成投资建议` |
 
 ---
 
@@ -105,7 +105,7 @@ ordered union of the Sprint 2 base (#1-#104) and the 48 cases below
 | # | Test | Assert |
 |---|------|--------|
 | 145 | Post PR-A2: HomeWorkspace.tsx deleted | `fs.existsSync()` → false |
-| 146 | Post PR-A2: App.tsx route removed | no `/home` route in `App.tsx` |
+| 146 | Post PR-A2: `/home` compatibility redirect | navigating `/home` resolves to `/catdesk`; `HomeWorkspace` is neither imported nor rendered |
 | 147 | Post PR-A3: PortfolioWorkspace.tsx deleted | `fs.existsSync()` → false |
 | 148 | Post PR-A3: backend path assertions updated | no ENOENT from stale `path.resolve()` targets in backend tests |
 
@@ -119,10 +119,10 @@ dependency-safe order.
 
 | # | Test | Assert | Required executable evidence |
 |---|------|--------|------------------------------|
-| 149 | Login page/component removed or bypassed | no `/login` route renders a login form | Frontend C1 router/interceptor test or equivalent executable route test |
+| 149 | Login page/component removed or bypassed | actual App route rendering resolves `/login` to `/catdesk` and renders no login form | Frontend C1 App route-render test; helper-return-only coverage is insufficient |
 | 150 | Missing/invalid Authorization default-admin behavior | both auth entry points inject canonical admin and reach the protected handler for missing and invalid headers | Backend C4 `backend/tests/routing/auth-default-admin.test.ts` with four cases |
 | 151 | Default admin identity | app initializes admin role without login flow | Frontend C1 executable identity/bootstrap test |
-| 152 | All 7 tabs accessible without login | each tab resolves without redirect to `/login` | Frontend C1 executable route matrix covering all seven tabs |
+| 152 | All 7 tabs accessible without login | each tab resolves without redirect to `/login` | Frontend C1 public-access executable route matrix covering all seven tabs |
 
 Source grep, prose, implementation-only references and screenshots do not satisfy
 cases #149-#152. If C1 or C4 lacks the required executable test, the release gate
@@ -156,6 +156,8 @@ is BLOCK even when the implementation exists.
 - RiskGate exact-set tests enforce 9 US + 3 A股 + 5 JP + 5 KR = 22.
 - Login-removal cases #149-#152 have executable evidence before the release gate is declared green.
 - #150 proves both missing and invalid Authorization behavior through Backend C4 tests.
-- #149/#151/#152 resolve to Frontend C1 router/interceptor tests or equivalent executable route tests.
+- #149 resolves to an actual App route-render test; a helper-only assertion does not pass.
+- #151 resolves to an executable identity/bootstrap test whose wiring into App is asserted.
+- #152 resolves to a seven-tab public-access executable route matrix.
 - Source grep and prose never substitute for executable evidence; a missing test is BLOCK.
 - This document is a test contract; executable tests land with the owning code lanes.

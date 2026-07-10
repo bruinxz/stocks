@@ -28,10 +28,10 @@
 - [ ] **详情侧栏空**: 选中前提示 "选择一行查看详情" · `role="status"` 图标居中
 
 ### Login removal 发布门 (Orch v318 + v319 · cases #149-#152)
-- [ ] #149 `/login` 不再渲染登录表单；Frontend C1 提供 router/interceptor 或等价 executable route test
+- [ ] #149 Frontend C1 提供实际 App route-render 测试，证明 `/login` 解析到 `/catdesk` 且不渲染登录表单；只测 helper 返回值不足
 - [ ] #150 Backend C4 `backend/tests/routing/auth-default-admin.test.ts` 证明 missing/invalid Authorization 通过 `AuthController.authenticate` 与 standalone middleware 均注入 canonical admin 并到达 protected handler
 - [ ] #151 应用启动即建立 default admin identity，无登录流程；Frontend C1 提供 executable test
-- [ ] #152 7 个 tab 全部可访问且不跳转 `/login`；Frontend C1 提供 executable route test
+- [ ] #152 Frontend C1 提供 7-tab public-access executable route matrix，逐 tab 证明可解析且不跳转 `/login`
 - [ ] Frontend route/interceptor + Backend middleware + QADocs #149-#152 同批落地或按依赖安全顺序落地
 - [ ] source grep、实现说明或文档引用均不能替代 executable evidence；任何一项缺失即 BLOCK
 
@@ -59,9 +59,10 @@
 - [ ] AbortSignal dual-guard: `controller.signal.aborted` 二次 guard (F-07 + F-13)
 
 ### 全局免责声明验收 (Owner msg=53b96525)
-- [ ] EntryPlan 区域: "仅供参考，非投资建议或下单指令"
-- [ ] SizeHint 区域: size_hint_advisory short「仓位比例仅供参考，非下单 binding」(AI-γ v0.2 §7)
-- [ ] 禁用词汇: "必涨" / "保底" / "承诺" / "guaranteed" / "assured" 不得出现
+- [ ] EntryPlan/SizeHint 的 `disclaimer_key` 固定为 `size_hint_advisory`
+- [ ] `DisclaimerFooter` 对 `size_hint_advisory` 精确渲染「仅参考·非下单 binding · 不构成投资建议」
+- [ ] context-aware claim lint 拒绝未否定的绝对收益/确定性表述，如 "必涨" / "保底收益" / "保证收益" / "guaranteed return" / "assured return"
+- [ ] 合法否定/法律声明允许出现，如 "不做绝对收益承诺" / "不构成任何承诺" / "不保证收益"；不得以 raw keyword grep 拒绝
 - [ ] 允许词汇: "有望" / "参考" / "可能" / "potential" / "estimated" 允许
 
 ---
