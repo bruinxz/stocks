@@ -406,7 +406,7 @@ The canonical vocabulary has 22 trigger codes:
 
 | Scope | Count | Codes |
 |---|---:|---|
-| US | 9 | `SEC_HALT`, `EARNINGS_BLACKOUT`, `FDA_ADCOM`, `LITIGATION_MATERIAL`, `SHORT_SQUEEZE_RISK`, `LIQUIDITY_THIN`, `INSIDER_LOCKUP`, `DEBT_COVENANT`, `REGULATORY_REVIEW` |
+| US | 9 | `EARNINGS_T-2`, `EARNINGS_T-0`, `HALT_ACTIVE`, `MERGER_PENDING`, `LITIGATION_MATERIAL`, `IV_SHOCK`, `LIQUIDITY_LOW`, `RESTATEMENT_30D`, `DELISTING_NOTICE` |
 | A-share | 3 | `ST_TAG`, `PRICE_LIMIT_APPROACH`, `SUSPENDED` |
 | JP | 5 | `TSE_HALT`, `EDINET_DELAY`, `CORPORATE_GOVERNANCE_ISSUE`, `TSE_TOKUBETSU_CHI`, `TSE_KANRI` |
 | KR | 5 | `KRX_HALT`, `DART_LATE_FILING`, `INSIDER_TRADING_FLAG`, `KRX_UNFAITHFUL`, `KRX_INVESTOR_ALERT` |
@@ -512,7 +512,8 @@ Implementation status belongs in tasks and PRs, not this canonical document.
 
 ## 7. Review Checklist
 
-- [ ] Exactly 22 RiskGate codes are listed as 9 + 3 + 5 + 5.
+- [ ] Exactly 22 RiskGate codes are listed in canonical order as the existing
+  Strategy baseline 12 (US9 + A-share3), followed by JP5 and KR5.
 - [ ] `WeightsProfile` has seven values; replay has six and excludes `custom`.
 - [ ] Generic multibagger weights equal 0.10/0.30/0.10/0.15/0.20/0.15.
 - [ ] JP/KR multibagger weights match Strategy v0.3 and each sum to 1.00.
