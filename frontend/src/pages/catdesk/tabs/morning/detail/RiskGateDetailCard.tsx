@@ -1,0 +1,88 @@
+import React, { useState } from 'react';
+import { Tag } from 'antd';
+import { DownOutlined, RightOutlined } from '@ant-design/icons';
+
+type Severity = 'critical' | 'high' | 'medium' | 'low';
+
+interface RiskTrigger {
+  id: string;
+  label: string;
+  severity: Severity;
+  detail?: string;
+}
+
+interface RiskGateDetailCardProps {
+  triggers?: RiskTrigger[];
+}
+
+const SEVERITY_COLORS: Record<Severity, string> = {
+  critical: 'red',
+  high: 'orange',
+  medium: 'gold',
+  low: 'blue',
+};
+
+const DEFAULT_TRIGGERS: RiskTrigger[] = Array.from({ length: 12 }, (_, i) => ({
+  id: `risk-${i}`,
+  label: `风险触发器 ${i + 1}`,
+  severity: (['critical', 'high', 'medium', 'low'] as Severity[])[i % 4],
+  detail: `风险详情描述 ${i + 1}`,
+}));
+
+const cardStyle: React.CSSProperties = {
+  background: 'var(--cd-bg-surface)',
+  border: '1px solid var(--cd-border)',
+  borderRadius: 'var(--cd-radius-md)',
+  padding: 16,
+};
+
+const titleStyle: React.CSSProperties = {
+  fontSize: 13,
+  fontWeight: 600,
+  color: 'var(--cd-text-primary)',
+  marginBottom: 12,
+};
+
+const rowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  padding: '4px 0',
+  fontSize: 12,
+  cursor: 'pointer',
+};
+
+const detailStyle: React.CSSProperties = {
+  padding: '4px 0 8px 20px',
+  fontSize: 11,
+  color: 'var(--cd-text-secondary)',
+};
+
+export function RiskGateDetailCard({ triggers = DEFAULT_TRIGGERS }: RiskGateDetailCardProps) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const toggle = (id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  return (
+    <div style={cardStyle}>
+      <div style={titleStyle}>风控门控详情</div>
+      {triggers.map((t) => (
+        <div key={t.id}>
+          <div style={rowStyle} onClick={() => toggle(t.id)}>
+            {expanded.has(t.id) ? <DownOutlined style={{ fontSize: 10 }} /> : <RightOutlined style={{ fontSize: 10 }} />}
+            <span style={{ color: 'var(--cd-text-primary)', flex: 1 }}>{t.label}</span>
+            <Tag color={SEVERITY_COLORS[t.severity]}>{t.severity}</Tag>
+          </div>
+          {expanded.has(t.id) && t.detail && <div style={detailStyle}>{t.detail}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
