@@ -35,6 +35,10 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   # --------------------------------------------------------------------------
   # 路径过滤：探测哪些目录发生变更，让下游 job 决定是否跑
@@ -82,6 +86,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Keep the pinned diagnostic-baseline SHA available for ancestry checks.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -93,6 +100,11 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Diagnostic baseline comparator regression guard
+        run: |
+          cd ..
+          node scripts/ci/diagnostic-baseline.test.js
 
       # P0 regression guard: every producer piped through tee must preserve its
       # exit status. This step parses this workflow, proves an unsafe mutation is
@@ -336,8 +348,40 @@ jobs:
         id: lint
         run: |
           set -o pipefail
-          npm run lint 2>&1 | tee ../backend-lint.log
+          set +e
+          npx eslint src --ext .ts --format json \
+            --no-ignore --no-eslintrc --config .eslintrc.js \
+            > ../backend-lint.json 2> ../backend-lint.stderr
+          lint_rc=$?
+          set -e
+          eslint_version=$(npx eslint --version)
+          eslint_version=${eslint_version#v}
+          if [ -s ../backend-lint.stderr ]; then
+            cat ../backend-lint.stderr | tee ../backend-lint.log
+          fi
+          node ../scripts/ci/diagnostic-baseline.js compare \
+            --baseline ../docs/refactor/baseline/ci/backend-eslint-da801a52.json \
+            --input ../backend-lint.json \
+            --tool-version "$eslint_version" \
+            --producer-exit "$lint_rc" \
+            --repo-root .. \
+            --workdir backend \
+            --summary ../backend-lint-baseline-summary.json 2>&1 \
+            | tee ../backend-lint-baseline.log
         continue-on-error: false
+
+      - name: Upload backend lint baseline evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-lint-baseline-${{ github.run_attempt }}
+          path: |
+            backend-lint.json
+            backend-lint.stderr
+            backend-lint.log
+            backend-lint-baseline.log
+            backend-lint-baseline-summary.json
+          retention-days: 7
 
       - name: Test
         id: test
@@ -360,18 +404,23 @@ jobs:
             backend-typecheck.log
             backend-openapi-check.log
             backend-architecture-check.log
+            backend-lint.json
             backend-lint.log
+            backend-lint.stderr
+            backend-lint-baseline.log
+            backend-lint-baseline-summary.json
             backend-test.log
           retention-days: 7
 
       - name: Comment on PR with errors
         if: failure() && github.event_name == 'pull_request'
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const path = require('path');
-            const logs = ['envcheck', 'envcheck-fail', 'typecheck', 'openapi-check', 'architecture-check', 'lint', 'test'];
+            const logs = ['envcheck', 'envcheck-fail', 'typecheck', 'openapi-check', 'architecture-check', 'lint', 'lint-baseline', 'test'];
             const sections = [];
             for (const name of logs) {
               const filePath = path.join(process.env.GITHUB_WORKSPACE, `backend-${name}.log`);
@@ -404,6 +453,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Keep the pinned diagnostic-baseline SHA available for ancestry checks.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -419,8 +471,34 @@ jobs:
         id: typecheck
         run: |
           set -o pipefail
-          npx tsc --noEmit 2>&1 | tee ../frontend-typecheck.log
+          set +e
+          npx tsc --noEmit --pretty false > ../frontend-typecheck.log 2>&1
+          tsc_rc=$?
+          set -e
+          tsc_version=$(npx tsc --version)
+          tsc_version=${tsc_version#Version }
+          cat ../frontend-typecheck.log
+          node ../scripts/ci/diagnostic-baseline.js compare \
+            --baseline ../docs/refactor/baseline/ci/frontend-tsc-da801a52.json \
+            --input ../frontend-typecheck.log \
+            --tool-version "$tsc_version" \
+            --producer-exit "$tsc_rc" \
+            --repo-root .. \
+            --workdir frontend \
+            --summary ../frontend-typecheck-baseline-summary.json 2>&1 \
+            | tee ../frontend-typecheck-baseline.log
         continue-on-error: false
+
+      - name: Upload frontend typecheck baseline evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-typecheck-baseline-${{ github.run_attempt }}
+          path: |
+            frontend-typecheck.log
+            frontend-typecheck-baseline.log
+            frontend-typecheck-baseline-summary.json
+          retention-days: 7
 
       - name: Lint (eslint)
         id: lint
@@ -467,6 +545,8 @@ jobs:
           name: frontend-logs
           path: |
             frontend-typecheck.log
+            frontend-typecheck-baseline.log
+            frontend-typecheck-baseline-summary.json
             frontend-lint.log
             frontend-test.log
             frontend-build.log
@@ -474,12 +554,13 @@ jobs:
 
       - name: Comment on PR with errors
         if: failure() && github.event_name == 'pull_request'
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const path = require('path');
-            const logs = ['typecheck', 'lint', 'test', 'build'];
+            const logs = ['typecheck', 'typecheck-baseline', 'lint', 'test', 'build'];
             const sections = [];
             for (const name of logs) {
               const filePath = path.join(process.env.GITHUB_WORKSPACE, `frontend-${name}.log`);
@@ -538,6 +619,7 @@ jobs:
 
       - name: Comment on PR with errors
         if: failure() && github.event_name == 'pull_request'
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |

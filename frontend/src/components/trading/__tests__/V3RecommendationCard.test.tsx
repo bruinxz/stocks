@@ -13,12 +13,13 @@ import {
   playbookVerdictColor,
 } from '../V3RecommendationCard';
 import type { V3DimensionItem } from '../../../services/v3RecommendationService';
+import { describe, expect, test } from '@jest/globals';
 
 describe('V3RecommendationCard / dimensionScoreColor', () => {
   test('≥80 红强', () => {
-    expect(dimensionScoreColor(80)).toBe('#cf1322');
-    expect(dimensionScoreColor(95)).toBe('#cf1322');
-    expect(dimensionScoreColor(100)).toBe('#cf1322');
+    expect(dimensionScoreColor(80)).toBe('#dc2626');
+    expect(dimensionScoreColor(95)).toBe('#dc2626');
+    expect(dimensionScoreColor(100)).toBe('#dc2626');
   });
 
   test('60-79 橙中', () => {
@@ -34,8 +35,8 @@ describe('V3RecommendationCard / dimensionScoreColor', () => {
   });
 
   test('<40 绿弱', () => {
-    expect(dimensionScoreColor(0)).toBe('#52c41a');
-    expect(dimensionScoreColor(39)).toBe('#52c41a');
+    expect(dimensionScoreColor(0)).toBe('#16a34a');
+    expect(dimensionScoreColor(39)).toBe('#16a34a');
   });
 
   test('null / NaN / undefined 兜底灰', () => {
@@ -150,10 +151,10 @@ describe('V3RecommendationCard / orderDimensions', () => {
 
 describe('V3RecommendationCard / playbookVerdictColor (CA-2)', () => {
   test('buy 红 / hold 橙 / observe 蓝 / avoid 绿', () => {
-    expect(playbookVerdictColor('buy')).toBe('#cf1322');
+    expect(playbookVerdictColor('buy')).toBe('#dc2626');
     expect(playbookVerdictColor('hold')).toBe('#fa8c16');
     expect(playbookVerdictColor('observe')).toBe('#1890ff');
-    expect(playbookVerdictColor('avoid')).toBe('#52c41a');
+    expect(playbookVerdictColor('avoid')).toBe('#16a34a');
   });
 
   test('未知 verdict 兜底灰', () => {

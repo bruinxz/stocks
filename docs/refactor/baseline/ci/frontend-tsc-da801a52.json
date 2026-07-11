@@ -1,0 +1,307 @@
+{
+  "version": 1,
+  "kind": "tsc",
+  "baseline_sha": "da801a52c6f5bc3e862e144f770113130e87e766",
+  "tool": {
+    "name": "typescript",
+    "version": "4.9.5",
+    "allowed_producer_exits": [
+      0,
+      2
+    ]
+  },
+  "fingerprint_model": {
+    "fields": [
+      "kind",
+      "repo_relative_path",
+      "severity",
+      "rule_or_code",
+      "normalized_message"
+    ],
+    "multiplicity": "exact count per fingerprint; removals allowed; new fingerprints or count increases fail"
+  },
+  "config_files": [
+    {
+      "path": "frontend/tsconfig.json",
+      "sha256": "ed4fb66d1001923b3ed99c173b596e68ea12ace5a625b850365fd270dc3ba2a8"
+    },
+    {
+      "path": "frontend/package.json",
+      "sha256": "1e25247be5b060feac3a36d7b3a75e62b092265474357586c5c03dce21fad28a"
+    },
+    {
+      "path": "frontend/package-lock.json",
+      "sha256": "5e4d882d143f921737b9e6c306ce0163a1a3a32bdd3d401a85681bf5c8301d0d"
+    }
+  ],
+  "diagnostics": [
+    {
+      "fingerprint": "65e831dc1310d5f3e8c414c78d06923368818df74b289891f776be7687e94c51",
+      "path": "frontend/src/components/charts/__tests__/Sparkline20d.test.tsx",
+      "severity": "error",
+      "code": "TS2304",
+      "message": "Cannot find name 'expect'.",
+      "locations": [
+        {
+          "line": 12,
+          "column": 5
+        },
+        {
+          "line": 13,
+          "column": 5
+        },
+        {
+          "line": 14,
+          "column": 5
+        },
+        {
+          "line": 23,
+          "column": 5
+        },
+        {
+          "line": 32,
+          "column": 5
+        }
+      ],
+      "count": 14
+    },
+    {
+      "fingerprint": "6b054e7fe6f4ef2704a7dc76853f8a13ff8b013812482236565e4d56623d54b6",
+      "path": "frontend/src/components/charts/__tests__/Sparkline20d.test.tsx",
+      "severity": "error",
+      "code": "TS2582",
+      "message": "Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.",
+      "locations": [
+        {
+          "line": 10,
+          "column": 1
+        },
+        {
+          "line": 64,
+          "column": 1
+        }
+      ],
+      "count": 2
+    },
+    {
+      "fingerprint": "0f90b25c851652ad9f3ba9b80e9290c8a16633b749dee8cabb274bfed4457df6",
+      "path": "frontend/src/components/charts/__tests__/Sparkline20d.test.tsx",
+      "severity": "error",
+      "code": "TS2582",
+      "message": "Cannot find name 'test'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.",
+      "locations": [
+        {
+          "line": 11,
+          "column": 3
+        },
+        {
+          "line": 17,
+          "column": 3
+        },
+        {
+          "line": 26,
+          "column": 3
+        },
+        {
+          "line": 39,
+          "column": 3
+        },
+        {
+          "line": 50,
+          "column": 3
+        }
+      ],
+      "count": 11
+    },
+    {
+      "fingerprint": "cc298bb41ad2e3e1867d56abc69d56d751e4dcd0b59ae51ab9d7da65b20ecbba",
+      "path": "frontend/src/components/trading/__tests__/V3RecommendationCard.test.tsx",
+      "severity": "error",
+      "code": "TS2304",
+      "message": "Cannot find name 'expect'.",
+      "locations": [
+        {
+          "line": 19,
+          "column": 5
+        },
+        {
+          "line": 20,
+          "column": 5
+        },
+        {
+          "line": 21,
+          "column": 5
+        },
+        {
+          "line": 25,
+          "column": 5
+        },
+        {
+          "line": 26,
+          "column": 5
+        }
+      ],
+      "count": 44
+    },
+    {
+      "fingerprint": "2c7036ff30fba4d97881387bb5ee6d50b85e9de64c2ad9d063a4700e4a324c9a",
+      "path": "frontend/src/components/trading/__tests__/V3RecommendationCard.test.tsx",
+      "severity": "error",
+      "code": "TS2582",
+      "message": "Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.",
+      "locations": [
+        {
+          "line": 17,
+          "column": 1
+        },
+        {
+          "line": 49,
+          "column": 1
+        },
+        {
+          "line": 83,
+          "column": 1
+        },
+        {
+          "line": 151,
+          "column": 1
+        }
+      ],
+      "count": 4
+    },
+    {
+      "fingerprint": "0fe3aa0d9322d2319698b6c0b8f4cd07a1c07b991f83f03624ed5c23593068ff",
+      "path": "frontend/src/components/trading/__tests__/V3RecommendationCard.test.tsx",
+      "severity": "error",
+      "code": "TS2582",
+      "message": "Cannot find name 'test'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.",
+      "locations": [
+        {
+          "line": 18,
+          "column": 3
+        },
+        {
+          "line": 24,
+          "column": 3
+        },
+        {
+          "line": 30,
+          "column": 3
+        },
+        {
+          "line": 36,
+          "column": 3
+        },
+        {
+          "line": 41,
+          "column": 3
+        }
+      ],
+      "count": 18
+    },
+    {
+      "fingerprint": "bd7583e592ae3212345bdd4a9caccd1bcffbd6a71b5785301b701fd74ccd9b01",
+      "path": "frontend/src/pages/catdesk/tabs/backtest/SnapshotTable.tsx",
+      "severity": "error",
+      "code": "TS2344",
+      "message": "Type 'BacktestSnapshotSlot' does not satisfy the constraint 'Record<string, unknown>'.",
+      "locations": [
+        {
+          "line": 74,
+          "column": 18
+        }
+      ],
+      "count": 1
+    },
+    {
+      "fingerprint": "06de9244779adea6b0c671cebfd825a736379fda337f71542c9449b3b27c23d3",
+      "path": "frontend/src/services/__tests__/httpClient.test.ts",
+      "severity": "error",
+      "code": "TS2304",
+      "message": "Cannot find name 'expect'.",
+      "locations": [
+        {
+          "line": 34,
+          "column": 5
+        },
+        {
+          "line": 38,
+          "column": 5
+        },
+        {
+          "line": 42,
+          "column": 5
+        },
+        {
+          "line": 46,
+          "column": 5
+        },
+        {
+          "line": 47,
+          "column": 5
+        }
+      ],
+      "count": 80
+    },
+    {
+      "fingerprint": "6c69ecd7c93e9d30db44d9904d08cdca05e674ad2938d539ce484bd3d5bdd395",
+      "path": "frontend/src/services/__tests__/httpClient.test.ts",
+      "severity": "error",
+      "code": "TS2582",
+      "message": "Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.",
+      "locations": [
+        {
+          "line": 32,
+          "column": 1
+        },
+        {
+          "line": 54,
+          "column": 1
+        },
+        {
+          "line": 76,
+          "column": 1
+        },
+        {
+          "line": 160,
+          "column": 1
+        },
+        {
+          "line": 221,
+          "column": 1
+        }
+      ],
+      "count": 5
+    },
+    {
+      "fingerprint": "60914a494a5451357c946936d130a8c98e1ec640a81ff4ed8a7cae61c61976f3",
+      "path": "frontend/src/services/__tests__/httpClient.test.ts",
+      "severity": "error",
+      "code": "TS2582",
+      "message": "Cannot find name 'test'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha`.",
+      "locations": [
+        {
+          "line": 33,
+          "column": 3
+        },
+        {
+          "line": 37,
+          "column": 3
+        },
+        {
+          "line": 41,
+          "column": 3
+        },
+        {
+          "line": 45,
+          "column": 3
+        },
+        {
+          "line": 55,
+          "column": 3
+        }
+      ],
+      "count": 37
+    }
+  ]
+}
