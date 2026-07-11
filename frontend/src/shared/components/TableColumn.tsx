@@ -76,7 +76,7 @@ export function RiskGateChip(r: RiskGate, ariaLabel: string): JSX.Element {
   );
 }
 
-export function TableColumn<Row extends Record<string, unknown>>({
+export function TableColumn<Row extends object>({
   rows,
   columns,
   rowKey,
