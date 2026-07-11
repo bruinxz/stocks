@@ -332,12 +332,108 @@ expectThrow(
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'diagnostic-baseline-'));
 try {
+  function initGitRepo(repoDir) {
+    fs.mkdirSync(repoDir, { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: repoDir });
+    execFileSync('git', ['config', 'user.email', 'ci@example.invalid'], { cwd: repoDir });
+    execFileSync('git', ['config', 'user.name', 'CI Test'], { cwd: repoDir });
+  }
+
+  function writeRepoFile(repoDir, relPath, contents) {
+    const absPath = path.join(repoDir, relPath);
+    fs.mkdirSync(path.dirname(absPath), { recursive: true });
+    fs.writeFileSync(absPath, contents);
+  }
+
+  function commitAll(repoDir, message) {
+    execFileSync('git', ['add', '.'], { cwd: repoDir });
+    execFileSync('git', ['commit', '-q', '-m', message], { cwd: repoDir });
+    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoDir, encoding: 'utf8' }).trim();
+  }
+
+  function configFilesInRepo(repoDir) {
+    return [
+      'backend/.eslintrc.js',
+      'backend/tsconfig.json',
+      'backend/package.json',
+      'backend/package-lock.json',
+    ].map((configPath) => ({
+      path: configPath,
+      sha256: crypto
+        .createHash('sha256')
+        .update(fs.readFileSync(path.join(repoDir, configPath)))
+        .digest('hex'),
+    }));
+  }
+
+  const driftRepo = path.join(tempDir, 'config-drift-repo');
+  initGitRepo(driftRepo);
+  for (const configPath of [
+    'backend/.eslintrc.js',
+    'backend/tsconfig.json',
+    'backend/package.json',
+    'backend/package-lock.json',
+  ]) {
+    writeRepoFile(driftRepo, configPath, `old:${configPath}\n`);
+  }
+  const driftAnchor = commitAll(driftRepo, 'anchor');
+  writeRepoFile(driftRepo, 'backend/.eslintrc.js', 'new eslint config\n');
+  commitAll(driftRepo, 'child config drift');
+  const driftBaseline = baselineFor([warningDiagnostic], {
+    baseline_sha: driftAnchor,
+    config_files: configFilesInRepo(driftRepo),
+  });
+  expectThrow(
+    'baseline config hashes cannot be replaced with child hashes',
+    () =>
+      compareDiagnostics({
+        baseline: driftBaseline,
+        current: groupDiagnostics('eslint', [warningDiagnostic]),
+        repoRoot: driftRepo,
+        toolVersion: '8.57.1',
+        producerExit: 0,
+      }),
+    'baseline config hash mismatch at baseline_sha',
+  );
+
+  const missingAnchorRepo = path.join(tempDir, 'missing-anchor-config-repo');
+  initGitRepo(missingAnchorRepo);
+  for (const configPath of [
+    'backend/.eslintrc.js',
+    'backend/tsconfig.json',
+    'backend/package.json',
+  ]) {
+    writeRepoFile(missingAnchorRepo, configPath, `stable:${configPath}\n`);
+  }
+  const missingAnchor = commitAll(missingAnchorRepo, 'anchor without lockfile');
+  writeRepoFile(missingAnchorRepo, 'backend/package-lock.json', 'added later\n');
+  commitAll(missingAnchorRepo, 'child adds lockfile');
+  const missingAnchorBaseline = baselineFor([warningDiagnostic], {
+    baseline_sha: missingAnchor,
+    config_files: configFilesInRepo(missingAnchorRepo),
+  });
+  expectThrow(
+    'canonical config missing at anchor',
+    () =>
+      compareDiagnostics({
+        baseline: missingAnchorBaseline,
+        current: groupDiagnostics('eslint', [warningDiagnostic]),
+        repoRoot: missingAnchorRepo,
+        toolVersion: '8.57.1',
+        producerExit: 0,
+      }),
+    'config file missing at baseline_sha',
+  );
+
   const eslintInput = path.join(tempDir, 'eslint.json');
   fs.writeFileSync(
     eslintInput,
     JSON.stringify([
       {
         filePath: path.join(process.cwd(), 'backend/src/foo.ts'),
+        errorCount: 1,
+        warningCount: 0,
+        fatalErrorCount: 0,
         messages: [
           {
             severity: 2,
@@ -361,6 +457,9 @@ try {
     JSON.stringify([
       {
         filePath: path.join(process.cwd(), 'backend/src/foo.test.ts'),
+        errorCount: 1,
+        warningCount: 0,
+        fatalErrorCount: 1,
         messages: [
           {
             severity: 2,
@@ -377,6 +476,9 @@ try {
     JSON.stringify([
       {
         filePath: path.join(process.cwd(), 'backend/src/foo.test.ts'),
+        errorCount: 1,
+        warningCount: 0,
+        fatalErrorCount: 1,
         messages: [
           {
             severity: 2,
@@ -392,6 +494,64 @@ try {
     parseEslintJson(eslintTokenVariantInput, process.cwd(), '.')[0].fingerprint,
     'ESLint tsconfigRootDir diagnostics are stable across local and CI path rendering',
   );
+
+  for (const [name, result] of [
+    [
+      'hidden ESLint error count',
+      {
+        filePath: path.join(process.cwd(), 'backend/src/hidden.ts'),
+        errorCount: 1,
+        warningCount: 0,
+        fatalErrorCount: 0,
+        messages: [],
+      },
+    ],
+    [
+      'missing ESLint count fields',
+      {
+        filePath: path.join(process.cwd(), 'backend/src/missing.ts'),
+        messages: [],
+      },
+    ],
+    [
+      'negative ESLint count',
+      {
+        filePath: path.join(process.cwd(), 'backend/src/negative.ts'),
+        errorCount: -1,
+        warningCount: 0,
+        fatalErrorCount: 0,
+        messages: [],
+      },
+    ],
+    [
+      'invalid ESLint severity',
+      {
+        filePath: path.join(process.cwd(), 'backend/src/severity.ts'),
+        errorCount: 0,
+        warningCount: 0,
+        fatalErrorCount: 0,
+        messages: [{ severity: 0, message: 'hidden' }],
+      },
+    ],
+    [
+      'invalid ESLint fatal type',
+      {
+        filePath: path.join(process.cwd(), 'backend/src/fatal.ts'),
+        errorCount: 1,
+        warningCount: 0,
+        fatalErrorCount: 0,
+        messages: [{ severity: 2, fatal: 'yes', message: 'bad fatal' }],
+      },
+    ],
+  ]) {
+    const invalidEslintInput = path.join(tempDir, `${name.replace(/\s+/g, '-')}.json`);
+    fs.writeFileSync(invalidEslintInput, JSON.stringify([result]));
+    expectThrow(
+      name,
+      () => parseEslintJson(invalidEslintInput, process.cwd(), '.'),
+      'ESLint',
+    );
+  }
 
   const tscInput = path.join(tempDir, 'tsc.log');
   fs.writeFileSync(
@@ -453,6 +613,9 @@ try {
     JSON.stringify([
       {
         filePath: path.join(process.cwd(), 'backend/src/foo.ts'),
+        errorCount: 1,
+        warningCount: 0,
+        fatalErrorCount: 0,
         messages: [
           {
             severity: 2,
@@ -465,6 +628,9 @@ try {
       },
       {
         filePath: path.join(process.cwd(), 'backend/src/bar.ts'),
+        errorCount: 1,
+        warningCount: 0,
+        fatalErrorCount: 0,
         messages: [
           {
             severity: 2,

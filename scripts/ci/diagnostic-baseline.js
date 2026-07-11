@@ -34,6 +34,20 @@ function fileHash(filePath) {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
+function gitBlobHash(repoRoot, revision, filePath) {
+  let contents;
+  try {
+    contents = execFileSync('git', ['show', `${revision}:${filePath}`], {
+      cwd: repoRoot,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 50 * 1024 * 1024,
+    });
+  } catch {
+    throw new Error(`config file missing at baseline_sha: ${filePath}`);
+  }
+  return crypto.createHash('sha256').update(contents).digest('hex');
+}
+
 function normalizeMessage(message) {
   return String(message)
     .replace(/\x1b\[[0-9;]*m/g, '')
@@ -110,8 +124,45 @@ function parseEslintJson(inputPath, repoRoot, workdir) {
 
   const diagnostics = [];
   for (const result of parsed) {
+    if (!result || typeof result !== 'object' || typeof result.filePath !== 'string') {
+      throw new Error('invalid ESLint result entry');
+    }
+    if (!Array.isArray(result.messages)) {
+      throw new Error(`ESLint result messages must be an array: ${result.filePath}`);
+    }
+    for (const countField of ['errorCount', 'warningCount', 'fatalErrorCount']) {
+      if (!Number.isInteger(result[countField]) || result[countField] < 0) {
+        throw new Error(`ESLint result ${countField} must be a non-negative integer: ${result.filePath}`);
+      }
+    }
+    let computedErrors = 0;
+    let computedWarnings = 0;
+    let computedFatals = 0;
+    for (const message of result.messages) {
+      if (!message || typeof message !== 'object' || ![1, 2].includes(message.severity)) {
+        throw new Error(`ESLint message severity must be 1 or 2: ${result.filePath}`);
+      }
+      if (message.fatal !== undefined && typeof message.fatal !== 'boolean') {
+        throw new Error(`ESLint message fatal must be boolean when present: ${result.filePath}`);
+      }
+      if (message.fatal === true && message.severity !== 2) {
+        throw new Error(`ESLint fatal message must have severity 2: ${result.filePath}`);
+      }
+      if (message.severity === 2) computedErrors += 1;
+      else computedWarnings += 1;
+      if (message.fatal === true) computedFatals += 1;
+    }
+    if (
+      result.errorCount !== computedErrors ||
+      result.warningCount !== computedWarnings ||
+      result.fatalErrorCount !== computedFatals
+    ) {
+      throw new Error(
+        `ESLint result count mismatch: ${result.filePath} declared errors=${result.errorCount}, warnings=${result.warningCount}, fatals=${result.fatalErrorCount}; messages errors=${computedErrors}, warnings=${computedWarnings}, fatals=${computedFatals}`,
+      );
+    }
     const rel = repoRelative(result.filePath, repoRoot, workdir);
-    for (const message of result.messages || []) {
+    for (const message of result.messages) {
       const severity = message.severity === 2 ? 'error' : 'warning';
       const code = message.ruleId || (message.fatal ? 'fatal' : 'unknown');
       diagnostics.push({
@@ -347,6 +398,10 @@ function compareDiagnostics({ baseline, current, repoRoot, toolVersion, producer
   }
   ensureBaselineIsAncestor(repoRoot, baseline.baseline_sha);
   for (const configFile of baseline.config_files) {
+    const anchorHash = gitBlobHash(repoRoot, baseline.baseline_sha, configFile.path);
+    if (anchorHash !== configFile.sha256) {
+      throw new Error(`baseline config hash mismatch at baseline_sha for ${configFile.path}`);
+    }
     const currentHash = fileHash(path.resolve(repoRoot, configFile.path));
     if (currentHash !== configFile.sha256) {
       throw new Error(`config hash mismatch for ${configFile.path}`);
@@ -488,6 +543,7 @@ module.exports = {
   canonicalToolName,
   compareDiagnostics,
   groupDiagnostics,
+  gitBlobHash,
   makeFingerprint,
   normalizeMessage,
   normalizeDiagnosticMessage,
