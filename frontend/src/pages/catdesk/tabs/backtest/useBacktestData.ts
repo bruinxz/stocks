@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
-import { useAbortableRequest } from '@/shared/hooks/useAbortableRequest';
+import { useAbortableRequest } from 'shared/hooks/useAbortableRequest';
 import type { BacktestSnapshotSlot, BacktestHolding } from './types';
 
 type Profile = 'us_preferred' | 'multibagger';

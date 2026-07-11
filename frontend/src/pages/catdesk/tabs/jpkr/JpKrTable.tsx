@@ -1,7 +1,7 @@
 import React from 'react';
 import { Tag, Tooltip } from 'antd';
-import { TableColumn } from '@/shared/components/TableColumn';
-import type { TableColumnDef } from '@/shared/components/TableColumn';
+import { TableColumn } from 'shared/components/TableColumn';
+import type { TableColumnDef } from 'shared/components/TableColumn';
 import type { JpKrMarketRow } from './types';
 
 function formatChangePct(pct: number): React.ReactNode {

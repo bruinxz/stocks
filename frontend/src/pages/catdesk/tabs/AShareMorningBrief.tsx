@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useAbortableRequest } from '@/shared/hooks/useAbortableRequest';
+import { useAbortableRequest } from 'shared/hooks/useAbortableRequest';
 import { LoadingState } from '../shared/LoadingState';
 import { EmptyState } from '../shared/EmptyState';
 import { ErrorState } from '../shared/ErrorState';
@@ -9,8 +9,8 @@ import { MorningBriefTable } from './morning/MorningBriefTable';
 import { MorningFilterBar } from './morning/MorningFilterBar';
 import { MorningKpiSlots } from './morning/MorningKpiSlots';
 import { buildMorningSections } from './morning/detail/buildMorningSections';
-import { DetailSidebar, type DetailSection } from '@/shared/components/DetailSidebar';
-import type { CandidateListEntry, CatalystKind } from '../types';
+import { DetailSidebar } from 'shared/components/DetailSidebar';
+import type { CandidateListEntry, CatalystKind } from './c1Types';
 import { CONVICTION_MED_MIN } from '../types';
 
 interface MorningFilters {
@@ -38,8 +38,9 @@ function todayISO(): string {
 
 function extractSectors(rows: CandidateListEntry[]): string[] {
   const set = new Set<string>();
-  rows.forEach((r) => {
-    const cat = r.latest_catalyst as { kind: CatalystKind; title: string; occurred_at: string; sector?: string } | undefined;
+  rows.forEach(r => {
+    const cat = r.latest_catalyst as
+      { kind: CatalystKind; title: string; occurred_at: string; sector?: string } | undefined;
     if (cat?.sector) set.add(cat.sector);
   });
   return Array.from(set).sort();
@@ -52,10 +53,12 @@ export default function AShareMorningBrief() {
   const [selectedRow, setSelectedRow] = useState<CandidateListEntry | null>(null);
 
   const { data, loading, error } = useAbortableRequest<MorningBriefResponse>(
-    (signal) =>
-      fetch(`/api/v1/morning-brief/${encodeURIComponent(dateParam)}`, { signal })
-        .then((r) => { if (!r.ok) throw new Error(`morning-brief ${r.status}`); return r.json(); }),
-    [dateParam],
+    signal =>
+      fetch(`/api/v1/morning-brief/${encodeURIComponent(dateParam)}`, { signal }).then(r => {
+        if (!r.ok) throw new Error(`morning-brief ${r.status}`);
+        return r.json();
+      }),
+    [dateParam]
   );
 
   const filtered = useMemo(() => {
@@ -63,16 +66,16 @@ export default function AShareMorningBrief() {
     let rows = data.candidates;
     if (filters.sector) {
       const sec = filters.sector;
-      rows = rows.filter((r) => {
+      rows = rows.filter(r => {
         const cat = r.latest_catalyst as { sector?: string } | undefined;
         return cat?.sector === sec;
       });
     }
     if (filters.catalystKind) {
-      rows = rows.filter((r) => r.latest_catalyst?.kind === filters.catalystKind);
+      rows = rows.filter(r => r.latest_catalyst?.kind === filters.catalystKind);
     }
     if (filters.convictionMinMed) {
-      rows = rows.filter((r) => (r.conviction?.final ?? 0) >= CONVICTION_MED_MIN);
+      rows = rows.filter(r => (r.conviction?.final ?? 0) >= CONVICTION_MED_MIN);
     }
     return rows;
   }, [data?.candidates, filters]);
@@ -80,26 +83,27 @@ export default function AShareMorningBrief() {
   const sectors = useMemo(() => extractSectors(data?.candidates ?? []), [data?.candidates]);
 
   const handleRowSelect = useCallback((row: CandidateListEntry) => {
-    setSelectedRow((prev) => (prev?.symbol === row.symbol ? null : row));
+    setSelectedRow(prev => (prev?.symbol === row.symbol ? null : row));
   }, []);
 
   const detailSections = useMemo(
     () => (selectedRow ? buildMorningSections(selectedRow) : []),
-    [selectedRow],
+    [selectedRow]
   );
 
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={typeof error === 'string' ? error : '数据加载失败'} />;
-  if (!data?.candidates?.length) return <EmptyState title="今日暂无 A 股早报数据" variant="simple" />;
+  if (!data?.candidates?.length)
+    return <EmptyState title="今日暂无 A 股早报数据" variant="simple" />;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
       <MorningKpiSlots
         total={filtered.length}
-        highConviction={filtered.filter((r) => (r.conviction?.final ?? 0) >= 75).length}
+        highConviction={filtered.filter(r => (r.conviction?.final ?? 0) >= 75).length}
         avgScore={
           filtered.length > 0
-            ? filtered.reduce((s, r) => s + (r.score?.score ?? 0), 0) / filtered.length
+            ? filtered.reduce((s, r) => s + (r.score?.total ?? 0), 0) / filtered.length
             : 0
         }
         updatedAt={dateParam}
@@ -108,15 +112,19 @@ export default function AShareMorningBrief() {
         sector={filters.sector}
         catalystKind={filters.catalystKind}
         convictionMin={filters.convictionMinMed ? 'med' : 'all'}
-        onSectorChange={(v) => setFilters((f) => ({ ...f, sector: v }))}
-        onCatalystKindChange={(v) => setFilters((f) => ({ ...f, catalystKind: v as CatalystKind | null }))}
-        onConvictionChange={(v) => setFilters((f) => ({ ...f, convictionMinMed: v === 'med' || v === 'high' }))}
+        onSectorChange={v => setFilters(f => ({ ...f, sector: v }))}
+        onCatalystKindChange={v =>
+          setFilters(f => ({ ...f, catalystKind: v as CatalystKind | null }))
+        }
+        onConvictionChange={v =>
+          setFilters(f => ({ ...f, convictionMinMed: v === 'med' || v === 'high' }))
+        }
         sectors={sectors}
       />
       <MorningBriefTable
         data={filtered}
         loading={false}
-        onRowClick={(r) => handleRowSelect(r)}
+        onRowClick={r => handleRowSelect(r)}
         selectedSymbol={selectedRow?.symbol ?? null}
       />
       <DisclaimerFooter disclaimerKey="size_hint_advisory" />

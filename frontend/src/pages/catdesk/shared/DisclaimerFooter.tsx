@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 
 const DISCLAIMER_MAP: Record<string, string> = {
   size_hint_advisory: '仅参考·非下单 binding · 不构成投资建议',
@@ -14,6 +15,7 @@ export function DisclaimerFooter({ disclaimerKey = 'size_hint_advisory' }: Discl
 
   return (
     <footer
+      data-disclaimer-key={disclaimerKey}
       style={{
         padding: '8px 16px',
         textAlign: 'center',
@@ -22,7 +24,10 @@ export function DisclaimerFooter({ disclaimerKey = 'size_hint_advisory' }: Discl
         borderTop: '1px solid var(--cd-border)',
       }}
     >
-      {text}
+      {text}{' '}
+      <Link to="/catdesk/disclaimer" style={{ color: 'var(--cd-accent)', fontSize: 11 }}>
+        查看完整免责声明
+      </Link>
     </footer>
   );
 }

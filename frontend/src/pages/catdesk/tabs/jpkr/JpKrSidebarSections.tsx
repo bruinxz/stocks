@@ -1,6 +1,6 @@
 import React from 'react';
-import { DataSourceBadge } from '@/shared/components/DetailSidebar';
-import type { DetailSection } from '@/shared/components/DetailSidebar';
+import { DataSourceBadge } from 'shared/components/DetailSidebar';
+import type { DetailSection } from 'shared/components/DetailSidebar';
 import type { JpKrMarketRow } from './types';
 import { FxSensitivityCard } from './FxSensitivityCard';
 import { DisclosureTimeline } from './DisclosureTimeline';

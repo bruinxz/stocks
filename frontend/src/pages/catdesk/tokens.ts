@@ -1,6 +1,7 @@
 export const CATDESK_TOKENS = {
   bgBase: '#0e0e10',
   bgSurface: '#17171a',
+  bgSelected: '#1c2a3d',
   border: '#2a2a2f',
   textPrimary: '#e6e6e6',
   textSecondary: '#9a9a9f',
@@ -19,6 +20,7 @@ export const CATDESK_TOKENS = {
 export const CSS_VARS: Record<string, string> = {
   '--cd-bg-base': CATDESK_TOKENS.bgBase,
   '--cd-bg-surface': CATDESK_TOKENS.bgSurface,
+  '--cd-bg-selected': CATDESK_TOKENS.bgSelected,
   '--cd-border': CATDESK_TOKENS.border,
   '--cd-text-primary': CATDESK_TOKENS.textPrimary,
   '--cd-text-secondary': CATDESK_TOKENS.textSecondary,

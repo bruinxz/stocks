@@ -5,32 +5,48 @@ import {
   EntryPlanCard,
   RiskGateDetailCard,
   ConvictionBreakdownCard,
-  DataSourceBadge,
-} from '@/shared/components/DetailSidebar';
-import type { DetailSection } from '@/shared/components/DetailSidebar';
-import type { ScoreDim } from '@/shared/types/catdesk';
+} from 'shared/components/DetailSidebar';
+import type { DetailSection } from 'shared/components/DetailSidebar';
+import type { Dimension, Score, Weights } from 'shared/scoring/types';
 import type { MultibaggerRow } from './types';
 
 const { Text } = Typography;
 
 const STAGE_LABEL: Record<string, string> = {
-  seed: '种子期', early: '早期', growth: '成长期',
-  break_below: '破发', deep: '深度价值',
+  seed: '种子期',
+  early: '早期',
+  growth: '成长期',
+  break_below: '破发',
+  deep: '深度价值',
 };
 
 const CONCLUSION_LABEL: Record<string, string> = {
-  MULTIBAGGER_2X: '2 倍潜力', MULTIBAGGER_5X: '5 倍潜力',
-  MULTIBAGGER_10X: '10 倍潜力', SKIP: '跳过',
+  MULTIBAGGER_2X: '2 倍潜力',
+  MULTIBAGGER_5X: '5 倍潜力',
+  MULTIBAGGER_10X: '10 倍潜力',
+  SKIP: '跳过',
 };
 
-function buildScoreDimMap(
-  dims: ScoreDim[],
-): Record<string, { score: number; band: string }> {
-  const result: Record<string, { score: number; band: string }> = {};
-  for (const d of dims) {
-    result[d.key] = { score: d.score, band: d.band };
-  }
-  return result;
+const SCORE_DIMENSIONS = [
+  'quality',
+  'growth',
+  'valuation',
+  'moat',
+  'trend',
+  'risk',
+] as const satisfies readonly (keyof Weights)[];
+
+function buildNamedDimensionMap(score: Score): Record<string, { score: number; band: string }> {
+  return Object.fromEntries(
+    SCORE_DIMENSIONS.map(key => {
+      const dimension: Dimension = score[key];
+      return [key, { score: dimension.score, band: dimension.band }];
+    })
+  );
+}
+
+function buildServerWeights(weights: Weights): Record<string, number> {
+  return Object.fromEntries(SCORE_DIMENSIONS.map(key => [key, weights[key]]));
 }
 
 export function buildMultibaggerSections(row: MultibaggerRow): DetailSection[] {
@@ -75,13 +91,13 @@ export function buildMultibaggerSections(row: MultibaggerRow): DetailSection[] {
   if (row.score) {
     sections.push({
       key: 'score_breakdown',
-      title: '评分拆解 (multibagger)',
+      title: `评分拆解 · ${row.score.weights_profile ?? 'multibagger'}`,
       ariaLabel: `${row.symbol} 6 维评分拆解`,
       content: (
         <ScoreBreakdownCard
-          scores={buildScoreDimMap(row.score.dims)}
+          scores={buildNamedDimensionMap(row.score)}
           ariaLabel={`${row.symbol} multibagger profile 评分`}
-          weights={{ quality: 0.10, growth: 0.35, valuation: 0.10, moat: 0.10, trend: 0.20, risk: 0.15 }}
+          weights={buildServerWeights(row.score.weights)}
         />
       ),
     });
@@ -107,13 +123,10 @@ export function buildMultibaggerSections(row: MultibaggerRow): DetailSection[] {
       title: '风险门禁',
       ariaLabel: `${row.symbol} 风险门禁详情`,
       content: (
-        <RiskGateDetailCard
-          gate={row.risk_gate}
-          ariaLabel={`${row.symbol} 12 trigger 详情`}
-        />
+        <RiskGateDetailCard gate={row.risk_gate} ariaLabel={`${row.symbol} 22 trigger 详情`} />
       ),
       collapsible: true,
-      defaultCollapsed: row.risk_gate.status === 'GREEN',
+      defaultCollapsed: row.risk_gate.gate === 'GREEN',
     });
   }
 
@@ -122,12 +135,7 @@ export function buildMultibaggerSections(row: MultibaggerRow): DetailSection[] {
       key: 'entry_plan',
       title: '入场计划',
       ariaLabel: `${row.symbol} 入场计划`,
-      content: (
-        <EntryPlanCard
-          plan={row.entry_plan}
-          ariaLabel={`${row.symbol} 价格区间与仓位`}
-        />
-      ),
+      content: <EntryPlanCard plan={row.entry_plan} ariaLabel={`${row.symbol} 价格区间与仓位`} />,
     });
   }
 

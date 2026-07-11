@@ -1,12 +1,6 @@
 import React from 'react';
 import { Collapse, Drawer, Progress, Skeleton, Tag, Tooltip, Typography } from 'antd';
-import type {
-  Band,
-  Conviction,
-  EntryPlan,
-  RiskGate,
-  Score,
-} from '../types/catdesk';
+import type { Band, Conviction, EntryPlan, RiskGate } from '../types/catdesk';
 
 const { Text } = Typography;
 
@@ -51,7 +45,11 @@ export function DetailSidebar({
       return <Skeleton active paragraph={{ rows: 8 }} />;
     }
     if (errorText) {
-      return <div role="alert" aria-live="polite">{errorText}</div>;
+      return (
+        <div role="alert" aria-live="polite">
+          {errorText}
+        </div>
+      );
     }
     if (sections.length === 0) {
       return (
@@ -61,17 +59,13 @@ export function DetailSidebar({
       );
     }
 
-    const collapsibleSections = sections.filter((s) => s.collapsible);
-    const fixedSections = sections.filter((s) => !s.collapsible);
+    const collapsibleSections = sections.filter(s => s.collapsible);
+    const fixedSections = sections.filter(s => !s.collapsible);
 
     return (
       <>
-        {fixedSections.map((section) => (
-          <div
-            key={section.key}
-            aria-label={section.ariaLabel}
-            style={{ marginBottom: 16 }}
-          >
+        {fixedSections.map(section => (
+          <div key={section.key} aria-label={section.ariaLabel} style={{ marginBottom: 16 }}>
             <Text strong style={{ display: 'block', marginBottom: 8 }}>
               {section.title}
             </Text>
@@ -80,16 +74,12 @@ export function DetailSidebar({
         ))}
         {collapsibleSections.length > 0 && (
           <Collapse
-            defaultActiveKey={collapsibleSections
-              .filter((s) => !s.defaultCollapsed)
-              .map((s) => s.key)}
+            defaultActiveKey={collapsibleSections.filter(s => !s.defaultCollapsed).map(s => s.key)}
             ghost
-            items={collapsibleSections.map((section) => ({
+            items={collapsibleSections.map(section => ({
               key: section.key,
               label: section.title,
-              children: (
-                <div aria-label={section.ariaLabel}>{section.content}</div>
-              ),
+              children: <div aria-label={section.ariaLabel}>{section.content}</div>,
             }))}
           />
         )}
@@ -146,11 +136,7 @@ type ScoreBreakdownCardProps = {
   weights?: Record<string, number>;
 };
 
-export function ScoreBreakdownCard({
-  scores,
-  ariaLabel,
-  weights,
-}: ScoreBreakdownCardProps) {
+export function ScoreBreakdownCard({ scores, ariaLabel, weights }: ScoreBreakdownCardProps) {
   return (
     <div aria-label={ariaLabel}>
       {Object.entries(scores).map(([dim, val]) => (
@@ -198,16 +184,18 @@ export function EntryPlanCard({ plan, ariaLabel }: EntryPlanCardProps) {
         <div>
           <Text type="secondary">价格区间</Text>
           <div>
-            {plan.price_band.low} – {plan.price_band.high} {plan.price_band.currency}
+            {plan.entry.low} – {plan.entry.high} {plan.entry.currency}
           </div>
         </div>
         <div>
           <Text type="secondary">止损</Text>
-          <div>{plan.stop} {plan.price_band.currency}</div>
+          <div>
+            {plan.stop.value} {plan.stop.currency}
+          </div>
         </div>
         <div>
           <Text type="secondary">目标价</Text>
-          <div>{plan.targets.map((t) => t.toString()).join(' / ')}</div>
+          <div>{plan.targets.map(target => `${target.value} ${target.currency}`).join(' / ')}</div>
         </div>
         <div>
           <Text type="secondary">时间维度</Text>
@@ -255,9 +243,9 @@ type RiskGateDetailCardProps = {
 
 export function RiskGateDetailCard({ gate, ariaLabel }: RiskGateDetailCardProps) {
   const severityColor: Record<string, string> = {
-    high: '#cf1322',
-    medium: '#faad14',
-    low: '#389e0d',
+    block: '#cf1322',
+    warn: '#faad14',
+    info: '#389e0d',
   };
 
   return (
@@ -265,15 +253,9 @@ export function RiskGateDetailCard({ gate, ariaLabel }: RiskGateDetailCardProps)
       <div style={{ marginBottom: 8 }}>
         <Text strong>状态: </Text>
         <Tag
-          color={
-            gate.status === 'GREEN'
-              ? '#389e0d'
-              : gate.status === 'YELLOW'
-                ? '#faad14'
-                : '#cf1322'
-          }
+          color={gate.gate === 'GREEN' ? '#389e0d' : gate.gate === 'YELLOW' ? '#faad14' : '#cf1322'}
         >
-          {gate.status}
+          {gate.gate}
         </Tag>
         <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
           {new Date(gate.evaluated_at).toLocaleString()}
@@ -292,9 +274,7 @@ export function RiskGateDetailCard({ gate, ariaLabel }: RiskGateDetailCardProps)
           >
             <Tag color={severityColor[t.severity]}>{t.code}</Tag>
             <Tag>{t.severity}</Tag>
-            <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>
-              {t.detail}
-            </div>
+            <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>{t.detail}</div>
           </div>
         ))
       )}
@@ -307,10 +287,7 @@ type ConvictionBreakdownCardProps = {
   ariaLabel: string;
 };
 
-export function ConvictionBreakdownCard({
-  c,
-  ariaLabel,
-}: ConvictionBreakdownCardProps) {
+export function ConvictionBreakdownCard({ c, ariaLabel }: ConvictionBreakdownCardProps) {
   const adjSum = c.adjustments.reduce((s, a) => s + a.delta, 0);
 
   return (
@@ -340,9 +317,7 @@ export function ConvictionBreakdownCard({
             {adj.delta}
           </span>
           <Text style={{ marginLeft: 8 }}>{adj.reason}</Text>
-          {adj.kind_ref && (
-            <Tag style={{ marginLeft: 4 }}>{adj.kind_ref}</Tag>
-          )}
+          {adj.kind_ref && <Tag style={{ marginLeft: 4 }}>{adj.kind_ref}</Tag>}
         </div>
       ))}
     </div>
@@ -357,7 +332,7 @@ type DataSourceBadgeProps = {
 export function DataSourceBadge({ sources, ariaLabel }: DataSourceBadgeProps) {
   return (
     <div aria-label={ariaLabel}>
-      {sources.map((src) => (
+      {sources.map(src => (
         <Tag key={src} color="blue" style={{ marginBottom: 4 }}>
           {src}
         </Tag>

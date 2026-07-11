@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { FilterChip } from '@/shared/components/FilterChip';
-import { DetailSidebar } from '@/shared/components/DetailSidebar';
+import { FilterChip } from 'shared/components/FilterChip';
+import { DetailSidebar } from 'shared/components/DetailSidebar';
 import { LoadingState } from '../../shared/LoadingState';
 import { EmptyState } from '../../shared/EmptyState';
 import { ErrorState } from '../../shared/ErrorState';

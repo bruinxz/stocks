@@ -77,6 +77,7 @@ export async function runScoringPipeline(
   const scoreWithoutIds = {
     ticker: bundle.ticker,
     as_of: bundle.as_of,
+    market_scope: bundle.market_scope,
     quality,
     growth,
     valuation,

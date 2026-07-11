@@ -1,14 +1,15 @@
-import type { DetailSection } from '@/shared/components/DetailSidebar';
-import type { CandidateListEntry } from '../../../types';
+import type { DetailSection } from 'shared/components/DetailSidebar';
+import { scoreBandDimensions, type CandidateListEntry } from '../../c1Types';
 import { RelevanceBreakdownCard } from './RelevanceBreakdownCard';
 import { AIRecommendationCard } from './AIRecommendationCard';
 import { ScoreBreakdownCard } from './ScoreBreakdownCard';
 import { RiskGateDetailCard } from './RiskGateDetailCard';
 import { ConvictionBreakdownCard } from './ConvictionBreakdownCard';
 import { DataSourceBadge } from './DataSourceBadge';
+import { EntryPlanDetails } from './EntryPlanDetails';
 
 export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
-  return [
+  const sections: DetailSection[] = [
     {
       key: 'relevance',
       title: '相关性分解',
@@ -29,8 +30,8 @@ export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
         <ScoreBreakdownCard
           scoringId={row.score?.scoring_id}
           snapshotHash={row.score?.snapshot_hash}
-          dimensions={row.score?.dims?.map((d) => ({ label: d.key, band: d.band }))}
-          totalBand={row.score?.band}
+          dimensions={scoreBandDimensions(row.score)}
+          totalBand={row.score?.rating}
         />
       ),
     },
@@ -40,10 +41,10 @@ export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
       ariaLabel: 'Risk gate details',
       content: (
         <RiskGateDetailCard
-          triggers={row.risk_gate?.triggers.map((t) => ({
+          triggers={row.risk_gate?.triggers.map(t => ({
             id: t.code,
             label: t.code,
-            severity: t.severity === 'high' ? 'high' : t.severity === 'medium' ? 'medium' : 'low',
+            severity: t.severity,
             detail: t.detail,
           }))}
         />
@@ -57,7 +58,7 @@ export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
       content: (
         <ConvictionBreakdownCard
           base={row.conviction?.base}
-          adjustments={row.conviction?.adjustments?.map((a) => ({ label: a.reason, delta: a.delta }))}
+          adjustments={row.conviction?.adjustments?.map(a => ({ label: a.reason, delta: a.delta }))}
           final={row.conviction?.final}
         />
       ),
@@ -69,4 +70,16 @@ export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
       content: <DataSourceBadge />,
     },
   ];
+
+  if (row.entry_plan) {
+    const ep = row.entry_plan;
+    sections.push({
+      key: 'entry',
+      title: '入场计划',
+      ariaLabel: 'Entry plan',
+      content: <EntryPlanDetails plan={ep} />,
+    });
+  }
+
+  return sections;
 }

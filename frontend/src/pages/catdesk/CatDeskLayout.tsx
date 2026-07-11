@@ -1,6 +1,6 @@
 import React, { Suspense, useState } from 'react';
 import { ConfigProvider } from 'antd';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { CSS_VARS, CATDESK_TOKENS } from './tokens';
 import { useTabState, type TabKey } from './useTabState';
 import { KpiBar } from './shared/KpiBar';
@@ -56,9 +56,11 @@ const mainStyle: React.CSSProperties = {
 export default function CatDeskLayout() {
   const { activeTab, setTab } = useTabState();
   const [selectedRow, setSelectedRow] = useState<string | null>(null);
+  const location = useLocation();
 
   const ActiveTab = TAB_COMPONENTS[activeTab];
   const outletContext: CatDeskOutletContext = { selectedRow, setSelectedRow };
+  const isNestedPage = location.pathname !== '/catdesk' && location.pathname !== '/catdesk/';
 
   return (
     <ConfigProvider theme={{ token: { colorPrimary: CATDESK_TOKENS.accent } }}>
@@ -68,8 +70,7 @@ export default function CatDeskLayout() {
           <TabNav activeTab={activeTab} onTabChange={setTab} />
           <main style={mainStyle}>
             <Suspense fallback={<LoadingState />}>
-              <ActiveTab />
-              <Outlet context={outletContext} />
+              {isNestedPage ? <Outlet context={outletContext} /> : <ActiveTab />}
             </Suspense>
           </main>
         </div>

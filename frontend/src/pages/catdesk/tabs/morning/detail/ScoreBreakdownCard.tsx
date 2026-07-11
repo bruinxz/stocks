@@ -23,15 +23,6 @@ const BAND_COLORS: Record<Band, string> = {
   F: '#ef4444',
 };
 
-const DEFAULT_DIMS: Dimension[] = [
-  { label: '基本面', band: 'B' },
-  { label: '技术面', band: 'A' },
-  { label: '资金面', band: 'C' },
-  { label: '情绪面', band: 'B' },
-  { label: '催化面', band: 'A' },
-  { label: '风控面', band: 'D' },
-];
-
 const cardStyle: React.CSSProperties = {
   background: 'var(--cd-bg-surface)',
   border: '1px solid var(--cd-border)',
@@ -80,20 +71,31 @@ const bandBadge = (band: Band, label: string) => (
 export function ScoreBreakdownCard({
   scoringId = '--',
   snapshotHash = '--',
-  dimensions = DEFAULT_DIMS,
-  totalBand = 'B',
+  dimensions = [],
+  totalBand,
 }: ScoreBreakdownCardProps) {
+  if (dimensions.length === 0 || !totalBand) {
+    return (
+      <div style={cardStyle}>
+        <div style={titleStyle}>评分分解</div>
+        <div style={{ color: 'var(--cd-text-secondary)', fontSize: 12 }}>暂无评分快照</div>
+      </div>
+    );
+  }
+
   return (
     <div style={cardStyle}>
       <div style={titleRow}>
         <span style={titleStyle}>评分分解</span>
         <Badge count={scoringId} style={{ backgroundColor: 'var(--cd-accent)', fontSize: 10 }} />
         <Tooltip title={`snapshot: ${snapshotHash}`}>
-          <span style={{ fontSize: 10, color: 'var(--cd-text-secondary)', cursor: 'help' }}>#{snapshotHash.slice(0, 8)}</span>
+          <span style={{ fontSize: 10, color: 'var(--cd-text-secondary)', cursor: 'help' }}>
+            #{snapshotHash.slice(0, 8)}
+          </span>
         </Tooltip>
       </div>
       <div style={gridStyle}>
-        {dimensions.map((d) => bandBadge(d.band, d.label))}
+        {dimensions.map(d => bandBadge(d.band, d.label))}
         {bandBadge(totalBand, '综合')}
       </div>
     </div>

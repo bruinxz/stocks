@@ -1,4 +1,4 @@
-import { useAbortableRequest } from '@/shared/hooks/useAbortableRequest';
+import { useAbortableRequest } from 'shared/hooks/useAbortableRequest';
 import type { JpKrMarket, JpKrMarketResponse, JpKrMarketRow } from './types';
 
 async function fetchJpKrMarket(
