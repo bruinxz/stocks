@@ -24,7 +24,8 @@ const KPI_SQL = `
       FROM jpkr_daily_kline k
       WHERE k.ticker = symbols.ticker
         AND k.trading_day <= CAST(:date AS date)
-      ORDER BY k.trading_day DESC, k.ingested_at DESC
+        AND k.available_at_utc <= CAST(:cutoff AS timestamptz)
+      ORDER BY k.trading_day DESC, k.available_at_utc DESC, k.source_version DESC
       LIMIT 1
     ) latest_quote ON TRUE
     LEFT JOIN LATERAL (
@@ -32,9 +33,25 @@ const KPI_SQL = `
       FROM jpkr_daily_kline k
       WHERE k.ticker = symbols.ticker
         AND k.trading_day < latest_quote.trading_day
-      ORDER BY k.trading_day DESC, k.ingested_at DESC
+        AND k.available_at_utc <= CAST(:cutoff AS timestamptz)
+      ORDER BY k.trading_day DESC, k.available_at_utc DESC, k.source_version DESC
       LIMIT 1
     ) previous_quote ON TRUE
+  ),
+  latest_fx AS (
+    SELECT DISTINCT ON (fx.pair)
+           fx.pair,
+           fx.local_per_usd,
+           fx.change_pct,
+           fx.observation_day
+    FROM jpkr_fx_observation fx
+    WHERE fx.observation_day <= CAST(:date AS date)
+      AND fx.available_at_utc <= CAST(:cutoff AS timestamptz)
+    ORDER BY
+      fx.pair,
+      fx.observation_day DESC,
+      fx.available_at_utc DESC,
+      fx.source_version DESC
   )
   SELECT
     (SELECT CASE WHEN close IS NULL THEN NULL ELSE jsonb_build_object(
@@ -52,8 +69,16 @@ const KPI_SQL = `
        'change_pct', change_pct,
        'as_of', trading_day
      ) END FROM index_quotes WHERE response_key = 'kospi') AS kospi,
-    NULL::jsonb AS usdjpy,
-    NULL::jsonb AS usdkrw
+    (SELECT jsonb_build_object(
+       'rate', local_per_usd,
+       'change_pct', change_pct,
+       'as_of', observation_day
+     ) FROM latest_fx WHERE pair = 'USDJPY') AS usdjpy,
+    (SELECT jsonb_build_object(
+       'rate', local_per_usd,
+       'change_pct', change_pct,
+       'as_of', observation_day
+     ) FROM latest_fx WHERE pair = 'USDKRW') AS usdkrw
 `;
 
 const MARKET_ROWS_SQL = `
@@ -69,13 +94,14 @@ const MARKET_ROWS_SQL = `
            k.source_kind
     FROM jpkr_daily_kline k
     WHERE k.trading_day = CAST(:date AS date)
+      AND k.available_at_utc <= CAST(:cutoff AS timestamptz)
       AND (:symbol IS NULL OR k.ticker = :symbol)
       AND (
         :market IS NULL
         OR (:market = 'JP' AND k.exchange IN ('tse', 'ose'))
         OR (:market = 'KR' AND k.exchange IN ('krx', 'kosdaq'))
       )
-    ORDER BY k.exchange, k.ticker, k.ingested_at DESC
+    ORDER BY k.exchange, k.ticker, k.available_at_utc DESC, k.source_version DESC
   ),
   previous_rows AS (
     SELECT DISTINCT ON (k.exchange, k.ticker)
@@ -87,19 +113,29 @@ const MARKET_ROWS_SQL = `
       ON current_row.ticker = k.ticker
      AND current_row.exchange = k.exchange
     WHERE k.trading_day < CAST(:date AS date)
-    ORDER BY k.exchange, k.ticker, k.trading_day DESC, k.ingested_at DESC
+      AND k.available_at_utc <= CAST(:cutoff AS timestamptz)
+    ORDER BY
+      k.exchange,
+      k.ticker,
+      k.trading_day DESC,
+      k.available_at_utc DESC,
+      k.source_version DESC
   ),
   latest_financial AS (
-    SELECT DISTINCT ON (f.market, f.ticker)
-           f.market,
+    SELECT DISTINCT ON (f.market_scope, f.ticker)
+           f.market_scope,
            f.ticker,
            f.dim_moat,
            f.dim_trend,
            f.dim_risk,
            f.source_kind
     FROM jpkr_financial_snapshot f
-    WHERE f.as_of_utc < CAST(:date AS date) + INTERVAL '1 day'
-    ORDER BY f.market, f.ticker, f.as_of_utc DESC
+    WHERE f.available_at_utc <= CAST(:cutoff AS timestamptz)
+    ORDER BY
+      f.market_scope,
+      f.ticker,
+      f.available_at_utc DESC,
+      f.source_version DESC
   )
   SELECT current_row.ticker AS symbol,
          current_row.ticker_name_local AS name_local,
@@ -135,10 +171,11 @@ const MARKET_ROWS_SQL = `
            )
            FROM jpkr_disclosure_event disclosure
            WHERE disclosure.ticker = current_row.ticker
-             AND disclosure.market = CASE
+             AND disclosure.market_scope = CASE
                WHEN current_row.exchange IN ('tse', 'ose') THEN 'jp'
                ELSE 'kr'
              END
+             AND disclosure.available_at_utc <= CAST(:cutoff AS timestamptz)
              AND disclosure.event_time_utc >= CAST(:date AS date)
              AND disclosure.event_time_utc < CAST(:date AS date) + INTERVAL '1 day'
          ), '[]'::jsonb) AS disclosure_events,
@@ -161,7 +198,7 @@ const MARKET_ROWS_SQL = `
    AND previous_row.exchange = current_row.exchange
   LEFT JOIN latest_financial financial
     ON financial.ticker = current_row.ticker
-   AND financial.market = CASE
+   AND financial.market_scope = CASE
      WHEN current_row.exchange IN ('tse', 'ose') THEN 'jp'
      ELSE 'kr'
    END
@@ -186,6 +223,7 @@ function normalizeKpiSnapshot(value: unknown): any | null {
     return {
       rate: numberOrZero(snapshot.rate),
       change_pct: numberOrZero(snapshot.change_pct),
+      as_of: snapshot.as_of,
     };
   }
 
@@ -194,6 +232,10 @@ function normalizeKpiSnapshot(value: unknown): any | null {
     change_pct: numberOrZero(snapshot.change_pct),
     as_of: snapshot.as_of,
   };
+}
+
+function cutoffForDate(date: string): string {
+  return `${date}T23:59:59.999Z`;
 }
 
 function normalizeRow(row: any): any {
@@ -225,9 +267,10 @@ export class JpKrMarketController {
     try {
       const { date } = req.params;
       const market = String(req.query.market).toUpperCase();
+      const cutoff = cutoffForDate(date);
 
       const kpiRows = await sequelize.query<any>(KPI_SQL, {
-        replacements: { date },
+        replacements: { date, cutoff },
         type: QueryTypes.SELECT,
       });
       const kpiRow = kpiRows[0] || {};
@@ -240,7 +283,7 @@ export class JpKrMarketController {
       };
 
       const rows = await sequelize.query<any>(MARKET_ROWS_SQL, {
-        replacements: { date, market, symbol: null, limit: 200 },
+        replacements: { date, cutoff, market, symbol: null, limit: 200 },
         type: QueryTypes.SELECT,
       });
 
@@ -255,8 +298,9 @@ export class JpKrMarketController {
     try {
       const { symbol } = req.params;
       const date = String(req.query.date);
+      const cutoff = cutoffForDate(date);
       const rows = await sequelize.query<any>(MARKET_ROWS_SQL, {
-        replacements: { date, market: null, symbol, limit: 2 },
+        replacements: { date, cutoff, market: null, symbol, limit: 2 },
         type: QueryTypes.SELECT,
       });
 

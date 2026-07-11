@@ -143,8 +143,14 @@ async function main(): Promise<void> {
         listCall?.replacements.market === 'A'
     );
     assert(
-      'SQL only selects canonical object DTOs',
-      Boolean(listCall?.sql.includes("jsonb_typeof(mu.fundamental_snapshot->'score') = 'object'"))
+      'SQL consumes canonical candidate snapshot SOT',
+      Boolean(
+        listCall?.sql.includes('FROM multibagger_candidate_snapshot snapshot') &&
+          listCall?.sql.includes('candidate.score') &&
+          listCall?.sql.includes('candidate.risk_gate') &&
+          listCall?.sql.includes('candidate.entry_plan') &&
+          !listCall?.sql.includes("fundamental_snapshot->'score'")
+      )
     );
 
     const beforeInvalid = calls.length;
@@ -207,6 +213,13 @@ async function main(): Promise<void> {
     assert('detail returns normalized candidate', detail.body.symbol === SYMBOL);
     const detailCall = calls.at(-1);
     assert('detail uses symbol replacement', detailCall?.replacements.symbol === SYMBOL);
+    assert(
+      'detail uses canonical candidate snapshot SOT and ambiguity guard',
+      Boolean(
+        detailCall?.sql.includes('FROM multibagger_candidate_snapshot snapshot') &&
+          detailCall?.sql.includes('LIMIT 2')
+      )
+    );
 
     rows = [
       {
@@ -243,6 +256,14 @@ async function main(): Promise<void> {
     assert(
       'missing detail returns stable error',
       missing.body.error === 'Multibagger candidate not found'
+    );
+
+    rows = [CANDIDATE, { ...CANDIDATE, market: 'US' }];
+    const ambiguous = await request(app).get(`/api/v1/multibagger/${SYMBOL}/detail`);
+    assert('ambiguous detail returns 409', ambiguous.status === 409);
+    assert(
+      'ambiguous detail returns stable error',
+      ambiguous.body.error === 'Multibagger candidate is ambiguous'
     );
   } finally {
     (sequelize as any).query = originalQuery;

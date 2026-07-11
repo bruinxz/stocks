@@ -3,31 +3,38 @@ import { QueryTypes } from 'sequelize';
 import { logger } from '../../utils/logger';
 import { sequelize } from '../../config/database';
 
-function isValidHoldingRow(value: unknown): boolean {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const row = value as Record<string, unknown>;
-  return (
-    typeof row.ticker === 'string' &&
-    row.ticker.trim().length > 0 &&
-    typeof row.weight === 'number' &&
-    Number.isFinite(row.weight) &&
-    typeof row.return_since_entry === 'number' &&
-    Number.isFinite(row.return_since_entry) &&
-    typeof row.is_stale === 'boolean'
-  );
-}
-
-function parseHoldingsPayload(value: unknown): { ok: true; holdings: any[] } | { ok: false } {
-  if (value == null) return { ok: true, holdings: [] };
-
-  try {
-    const holdings = typeof value === 'string' ? JSON.parse(value) : value;
-    return Array.isArray(holdings) && holdings.every(isValidHoldingRow)
-      ? { ok: true, holdings }
-      : { ok: false };
-  } catch (_error) {
-    return { ok: false };
+function normalizeHoldingRows(rows: unknown[]): { ok: true; holdings: any[] } | { ok: false } {
+  const holdings: any[] = [];
+  for (const value of rows) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return { ok: false };
+    const row = value as Record<string, unknown>;
+    if (
+      (typeof row.weight !== 'number' && typeof row.weight !== 'string') ||
+      (typeof row.return_since_entry !== 'number' && typeof row.return_since_entry !== 'string') ||
+      (typeof row.weight === 'string' && row.weight.trim() === '') ||
+      (typeof row.return_since_entry === 'string' && row.return_since_entry.trim() === '')
+    ) {
+      return { ok: false };
+    }
+    const weight = Number(row.weight);
+    const returnSinceEntry = Number(row.return_since_entry);
+    if (
+      typeof row.ticker !== 'string' ||
+      row.ticker.trim().length === 0 ||
+      !Number.isFinite(weight) ||
+      !Number.isFinite(returnSinceEntry) ||
+      typeof row.is_stale !== 'boolean'
+    ) {
+      return { ok: false };
+    }
+    holdings.push({
+      ticker: row.ticker,
+      weight,
+      return_since_entry: returnSinceEntry,
+      is_stale: row.is_stale,
+    });
   }
+  return { ok: true, holdings };
 }
 
 export class BacktestPitController {
@@ -40,12 +47,17 @@ export class BacktestPitController {
   async listSnapshots(req: Request, res: Response): Promise<void> {
     try {
       const { strategy } = req.params;
+      const marketScope = String(req.query.market_scope);
       const limit = Number(req.query.limit) || 30;
       const from = req.query.from as string | undefined;
       const to = req.query.to as string | undefined;
 
-      let whereClause = 'bps.strategy = :strategy';
-      const replacements: Record<string, any> = { strategy, limit };
+      let whereClause = 'bps.strategy = :strategy AND bps.market_scope = :market_scope';
+      const replacements: Record<string, any> = {
+        strategy,
+        market_scope: marketScope,
+        limit,
+      };
 
       if (from) {
         whereClause += ' AND bps.snapshot_day >= :from';
@@ -59,6 +71,7 @@ export class BacktestPitController {
       const snapshots = await sequelize.query<any>(
         `SELECT bps.snapshot_id,
                 bps.strategy,
+                bps.market_scope,
                 bps.snapshot_day,
                 bps.as_of_utc,
                 bps.is_survivorship_biased,
@@ -79,6 +92,7 @@ export class BacktestPitController {
 
       res.json({
         strategy,
+        market_scope: marketScope,
         snapshots: snapshots.map(snapshot => ({
           ...snapshot,
           net_value: snapshot.net_value == null ? null : Number(snapshot.net_value),
@@ -99,6 +113,7 @@ export class BacktestPitController {
   async getSnapshot(req: Request, res: Response): Promise<void> {
     try {
       const { strategy, as_of } = req.params;
+      const marketScope = String(req.query.market_scope);
 
       // PostgreSQL timestamptz equality compares instants, so equivalent offsets
       // match the same row. The schema key also includes snapshot_day; LIMIT 2
@@ -106,19 +121,23 @@ export class BacktestPitController {
       const rows = await sequelize.query<any>(
         `SELECT bps.snapshot_id,
                 bps.strategy,
+                bps.market_scope,
                 bps.snapshot_day,
                 bps.as_of_utc,
                 bps.is_survivorship_biased,
                 bps.is_delisted_at_as_of,
                 bps.source_versions,
                 bps.metrics,
-                bps.holdings,
                 bps.fact_hash
          FROM backtest_pit_snapshot bps
          WHERE bps.strategy = :strategy
+           AND bps.market_scope = :market_scope
            AND bps.as_of_utc = CAST(:as_of AS timestamptz)
          LIMIT 2`,
-        { replacements: { strategy, as_of }, type: QueryTypes.SELECT }
+        {
+          replacements: { strategy, market_scope: marketScope, as_of },
+          type: QueryTypes.SELECT,
+        }
       );
 
       if (!rows.length) {
@@ -131,7 +150,33 @@ export class BacktestPitController {
         return;
       }
 
-      res.json(rows[0]);
+      const snapshot = rows[0];
+      const holdingRows = await sequelize.query<any>(
+        `SELECT bph.ticker,
+                bph.weight,
+                bph.return_since_entry,
+                bph.is_stale
+         FROM backtest_pit_holding bph
+         WHERE bph.snapshot_id = :snapshot_id
+           AND bph.market_scope = :market_scope
+           AND bph.snapshot_as_of_utc = CAST(:as_of AS timestamptz)
+         ORDER BY bph.position_order ASC`,
+        {
+          replacements: {
+            snapshot_id: snapshot.snapshot_id,
+            market_scope: marketScope,
+            as_of,
+          },
+          type: QueryTypes.SELECT,
+        }
+      );
+      const normalized = normalizeHoldingRows(holdingRows);
+      if (!normalized.ok) {
+        res.status(500).json({ error: 'Invalid backtest holdings payload' });
+        return;
+      }
+
+      res.json({ ...snapshot, holdings: normalized.holdings });
     } catch (error: any) {
       logger.error(`[BacktestPitController.getSnapshot] ${error?.message || error}`);
       res.status(500).json({ error: 'Failed to fetch backtest snapshot' });
@@ -141,15 +186,20 @@ export class BacktestPitController {
   async getHoldings(req: Request, res: Response): Promise<void> {
     try {
       const { strategy, as_of } = req.params;
+      const marketScope = String(req.query.market_scope);
 
       // Keep the same exact-instant and duplicate-detection semantics as detail.
       const rows = await sequelize.query<any>(
-        `SELECT bps.holdings
+        `SELECT bps.snapshot_id
          FROM backtest_pit_snapshot bps
          WHERE bps.strategy = :strategy
+           AND bps.market_scope = :market_scope
            AND bps.as_of_utc = CAST(:as_of AS timestamptz)
          LIMIT 2`,
-        { replacements: { strategy, as_of }, type: QueryTypes.SELECT }
+        {
+          replacements: { strategy, market_scope: marketScope, as_of },
+          type: QueryTypes.SELECT,
+        }
       );
 
       if (!rows.length) {
@@ -162,14 +212,32 @@ export class BacktestPitController {
         return;
       }
 
-      const holdings = rows[0].holdings;
-      const parsed = parseHoldingsPayload(holdings);
-      if (!parsed.ok) {
+      const holdingRows = await sequelize.query<any>(
+        `SELECT bph.ticker,
+                bph.weight,
+                bph.return_since_entry,
+                bph.is_stale
+         FROM backtest_pit_holding bph
+         WHERE bph.snapshot_id = :snapshot_id
+           AND bph.market_scope = :market_scope
+           AND bph.snapshot_as_of_utc = CAST(:as_of AS timestamptz)
+         ORDER BY bph.position_order ASC`,
+        {
+          replacements: {
+            snapshot_id: rows[0].snapshot_id,
+            market_scope: marketScope,
+            as_of,
+          },
+          type: QueryTypes.SELECT,
+        }
+      );
+      const normalized = normalizeHoldingRows(holdingRows);
+      if (!normalized.ok) {
         res.status(500).json({ error: 'Invalid backtest holdings payload' });
         return;
       }
 
-      res.json({ holdings: parsed.holdings });
+      res.json({ holdings: normalized.holdings });
     } catch (error: any) {
       logger.error(`[BacktestPitController.getHoldings] ${error?.message || error}`);
       res.status(500).json({ error: 'Failed to fetch backtest holdings' });

@@ -75,8 +75,8 @@ const KPI_ROW = {
   nikkei225: JSON.stringify({ value: '41000.5', change_pct: '0.8', as_of: DATE }),
   topix: JSON.stringify({ value: '2900.25', change_pct: '0.4', as_of: DATE }),
   kospi: null,
-  usdjpy: null,
-  usdkrw: null,
+  usdjpy: JSON.stringify({ rate: '150.25', change_pct: '0.2', as_of: DATE }),
+  usdkrw: JSON.stringify({ rate: '1380.50', change_pct: '-0.1', as_of: DATE }),
 };
 
 function buildApp(): express.Express {
@@ -124,14 +124,8 @@ async function main(): Promise<void> {
       'risk_triggers mirrors RiskGate triggers',
       JSON.stringify(list.body.rows?.[0]?.risk_triggers) === JSON.stringify(RISK_GATE.triggers)
     );
-    assert(
-      'USDJPY snapshot is explicit null until dedicated FX fact exists',
-      list.body.kpi.usdjpy === null
-    );
-    assert(
-      'USDKRW snapshot is explicit null until dedicated FX fact exists',
-      list.body.kpi.usdkrw === null
-    );
+    assert('USDJPY consumes dedicated FX fact', list.body.kpi.usdjpy?.rate === 150.25);
+    assert('USDKRW consumes dedicated FX fact', list.body.kpi.usdkrw?.rate === 1380.5);
 
     const kpiCall = calls[0];
     const listCall = calls[1];
@@ -141,8 +135,11 @@ async function main(): Promise<void> {
     );
     assert('KPI SQL contains no rejected fx_days CTE', !kpiCall.sql.includes('fx_days'));
     assert('KPI SQL contains no rejected fx_summary CTE', !kpiCall.sql.includes('fx_summary'));
-    assert('KPI SQL pins USDJPY to null', kpiCall.sql.includes('NULL::jsonb AS usdjpy'));
-    assert('KPI SQL pins USDKRW to null', kpiCall.sql.includes('NULL::jsonb AS usdkrw'));
+    assert('KPI SQL consumes dedicated FX table', kpiCall.sql.includes('jpkr_fx_observation'));
+    assert(
+      'KPI SQL applies availability cutoff',
+      kpiCall.sql.includes('fx.available_at_utc <= CAST(:cutoff AS timestamptz)')
+    );
     assert('row SQL uses frozen ticker names', listCall.sql.includes('k.ticker_name_local'));
     assert('row SQL maps disclosure table', listCall.sql.includes('jpkr_disclosure_event'));
     assert('row SQL derives prior-close change', listCall.sql.includes('previous_rows'));
@@ -157,11 +154,24 @@ async function main(): Promise<void> {
     assert('row SQL avoids nonexistent kline change_pct', !listCall.sql.includes('k.change_pct'));
     assert('row SQL avoids financial-as-disclosure fields', !listCall.sql.includes('d.title'));
     assert(
+      'financial PIT uses market_scope and availability authority',
+      listCall.sql.includes('DISTINCT ON (f.market_scope, f.ticker)') &&
+        listCall.sql.includes('f.available_at_utc <= CAST(:cutoff AS timestamptz)') &&
+        listCall.sql.includes('f.source_version DESC') &&
+        !listCall.sql.includes('f.as_of_utc')
+    );
+    assert(
+      'disclosure SQL uses canonical market_scope',
+      listCall.sql.includes('disclosure.market_scope') &&
+        !listCall.sql.includes('disclosure.market =')
+    );
+    assert(
       'list uses canonical replacements',
       listCall.replacements.date === DATE &&
         listCall.replacements.market === 'JP' &&
         listCall.replacements.symbol === null &&
-        listCall.replacements.limit === 200
+        listCall.replacements.limit === 200 &&
+        listCall.replacements.cutoff === `${DATE}T23:59:59.999Z`
     );
 
     const detail = await request(app)
@@ -189,9 +199,11 @@ async function main(): Promise<void> {
       'unavailable risk_triggers is empty array',
       unavailable.body.rows?.[0]?.risk_triggers?.length === 0
     );
+    kpiFixture = [{ ...KPI_ROW, usdjpy: null, usdkrw: null }];
+    const unavailableFx = await request(app).get(`/api/v1/jpkr-market/${DATE}?market=JP`);
     assert(
       'unavailable FX snapshots are explicit null',
-      unavailable.body.kpi.usdjpy === null && unavailable.body.kpi.usdkrw === null
+      unavailableFx.body.kpi.usdjpy === null && unavailableFx.body.kpi.usdkrw === null
     );
 
     const beforeInvalid = calls.length;

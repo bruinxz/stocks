@@ -64,9 +64,8 @@ export class MultibaggerController {
           res.status(400).json({ error: 'Invalid stage filter' });
           return;
         }
-        whereClause += ' AND mu.filter_pass_bitmap IS NOT NULL';
         replacements.stages = stages;
-        whereClause += ` AND mu.fundamental_snapshot->>'stage' IN (:stages)`;
+        whereClause += ` AND candidate.stage IN (:stages)`;
       }
 
       if (conclusionParam) {
@@ -76,63 +75,69 @@ export class MultibaggerController {
           return;
         }
         replacements.conclusions = conclusions;
-        whereClause += ` AND mu.fundamental_snapshot->>'conclusion' IN (:conclusions)`;
+        whereClause += ` AND candidate.conclusion IN (:conclusions)`;
       }
 
       if (marketParam && VALID_MARKETS.includes(marketParam)) {
         replacements.market = marketParam;
         whereClause += ` AND CASE
-          WHEN mu.exchange IN ('sh', 'sz', 'bj') THEN 'A'
-          WHEN mu.exchange IN ('nyse', 'nasdaq') THEN 'US'
-          WHEN mu.exchange IN ('tse', 'ose') THEN 'JP'
-          WHEN mu.exchange IN ('krx', 'kosdaq') THEN 'KR'
-          ELSE 'US'
+          WHEN candidate.market_scope = 'cn_a' THEN 'A'
+          WHEN candidate.market_scope = 'us' THEN 'US'
+          WHEN candidate.market_scope = 'jp' THEN 'JP'
+          WHEN candidate.market_scope = 'kr' THEN 'KR'
         END = :market`;
       }
 
       const rows = await sequelize.query<any>(
-        `SELECT mu.ticker AS symbol,
-                COALESCE(mu.fundamental_snapshot->>'name', mu.ticker) AS name,
+        `WITH latest_candidates AS (
+           SELECT DISTINCT ON (
+                    snapshot.market_scope,
+                    snapshot.exchange,
+                    snapshot.ticker
+                  )
+                  snapshot.*
+           FROM multibagger_candidate_snapshot snapshot
+           ORDER BY
+             snapshot.market_scope,
+             snapshot.exchange,
+             snapshot.ticker,
+             snapshot.as_of_utc DESC,
+             snapshot.available_at_utc DESC,
+             snapshot.created_at DESC,
+             snapshot.strategy_version DESC
+         )
+         SELECT candidate.ticker AS symbol,
+                COALESCE(source_fact.name, candidate.ticker) AS name,
+                candidate.score,
+                candidate.rating AS rating_band,
+                candidate.conviction,
+                candidate.risk_gate,
+                candidate.entry_plan,
+                candidate.latest_catalyst,
                 CASE
-                  WHEN jsonb_typeof(mu.fundamental_snapshot->'score') = 'object'
-                  THEN mu.fundamental_snapshot->'score'
-                  ELSE NULL
-                END AS score,
-                COALESCE(mu.fundamental_snapshot->>'rating_band', 'C') AS rating_band,
-                CASE
-                  WHEN jsonb_typeof(mu.fundamental_snapshot->'conviction') = 'object'
-                  THEN mu.fundamental_snapshot->'conviction'
-                  ELSE NULL
-                END AS conviction,
-                CASE
-                  WHEN jsonb_typeof(mu.fundamental_snapshot->'risk_gate') = 'object'
-                  THEN mu.fundamental_snapshot->'risk_gate'
-                  ELSE NULL
-                END AS risk_gate,
-                CASE
-                  WHEN jsonb_typeof(mu.fundamental_snapshot->'entry_plan') = 'object'
-                  THEN mu.fundamental_snapshot->'entry_plan'
-                  ELSE NULL
-                END AS entry_plan,
-                mu.fundamental_snapshot->'latest_catalyst' AS latest_catalyst,
-                CASE
-                  WHEN mu.exchange IN ('sh', 'sz', 'bj') THEN 'A'
-                  WHEN mu.exchange IN ('nyse', 'nasdaq') THEN 'US'
-                  WHEN mu.exchange IN ('tse', 'ose') THEN 'JP'
-                  WHEN mu.exchange IN ('krx', 'kosdaq') THEN 'KR'
-                  ELSE 'US'
+                  WHEN candidate.market_scope = 'cn_a' THEN 'A'
+                  WHEN candidate.market_scope = 'us' THEN 'US'
+                  WHEN candidate.market_scope = 'jp' THEN 'JP'
+                  WHEN candidate.market_scope = 'kr' THEN 'KR'
                 END AS market,
-                COALESCE(mu.fundamental_snapshot->>'stage', 'seed') AS stage,
-                COALESCE(mu.fundamental_snapshot->>'conclusion', 'SKIP') AS conclusion
-         FROM multibagger_universe mu
+                candidate.stage,
+                candidate.conclusion
+         FROM latest_candidates candidate
+         LEFT JOIN LATERAL (
+           SELECT source.fundamental_snapshot->>'name' AS name
+           FROM multibagger_universe source
+           WHERE source.market_scope = candidate.market_scope
+             AND source.exchange = candidate.exchange
+             AND source.ticker = candidate.ticker
+             AND source.available_at_utc <= candidate.as_of_utc
+           ORDER BY
+             source.available_at_utc DESC,
+             source.source_version DESC,
+             source.created_at DESC
+           LIMIT 1
+         ) source_fact ON TRUE
          WHERE ${whereClause}
-         ORDER BY CASE
-           WHEN jsonb_typeof(mu.fundamental_snapshot->'score') = 'object'
-             THEN COALESCE((mu.fundamental_snapshot->'score'->>'total')::numeric, 0)
-           WHEN jsonb_typeof(mu.fundamental_snapshot->'score') IN ('number', 'string')
-             THEN COALESCE((mu.fundamental_snapshot->>'score')::numeric, 0)
-           ELSE 0
-         END DESC
+         ORDER BY COALESCE((candidate.score->>'total')::numeric, 0) DESC
          LIMIT 200`,
         { replacements, type: QueryTypes.SELECT }
       );
@@ -177,48 +182,65 @@ export class MultibaggerController {
       const { symbol } = req.params;
 
       const rows = await sequelize.query<any>(
-        `SELECT mu.ticker AS symbol,
-                COALESCE(mu.fundamental_snapshot->>'name', mu.ticker) AS name,
+        `WITH latest_candidates AS (
+           SELECT DISTINCT ON (
+                    snapshot.market_scope,
+                    snapshot.exchange,
+                    snapshot.ticker
+                  )
+                  snapshot.*
+           FROM multibagger_candidate_snapshot snapshot
+           WHERE snapshot.ticker = :symbol
+           ORDER BY
+             snapshot.market_scope,
+             snapshot.exchange,
+             snapshot.ticker,
+             snapshot.as_of_utc DESC,
+             snapshot.available_at_utc DESC,
+             snapshot.created_at DESC,
+             snapshot.strategy_version DESC
+         )
+         SELECT candidate.ticker AS symbol,
+                COALESCE(source_fact.name, candidate.ticker) AS name,
+                candidate.score,
+                candidate.rating AS rating_band,
+                candidate.conviction,
+                candidate.risk_gate,
+                candidate.entry_plan,
+                candidate.latest_catalyst,
                 CASE
-                  WHEN jsonb_typeof(mu.fundamental_snapshot->'score') = 'object'
-                  THEN mu.fundamental_snapshot->'score'
-                  ELSE NULL
-                END AS score,
-                COALESCE(mu.fundamental_snapshot->>'rating_band', 'C') AS rating_band,
-                CASE
-                  WHEN jsonb_typeof(mu.fundamental_snapshot->'conviction') = 'object'
-                  THEN mu.fundamental_snapshot->'conviction'
-                  ELSE NULL
-                END AS conviction,
-                CASE
-                  WHEN jsonb_typeof(mu.fundamental_snapshot->'risk_gate') = 'object'
-                  THEN mu.fundamental_snapshot->'risk_gate'
-                  ELSE NULL
-                END AS risk_gate,
-                CASE
-                  WHEN jsonb_typeof(mu.fundamental_snapshot->'entry_plan') = 'object'
-                  THEN mu.fundamental_snapshot->'entry_plan'
-                  ELSE NULL
-                END AS entry_plan,
-                mu.fundamental_snapshot->'latest_catalyst' AS latest_catalyst,
-                CASE
-                  WHEN mu.exchange IN ('sh', 'sz', 'bj') THEN 'A'
-                  WHEN mu.exchange IN ('nyse', 'nasdaq') THEN 'US'
-                  WHEN mu.exchange IN ('tse', 'ose') THEN 'JP'
-                  WHEN mu.exchange IN ('krx', 'kosdaq') THEN 'KR'
-                  ELSE 'US'
+                  WHEN candidate.market_scope = 'cn_a' THEN 'A'
+                  WHEN candidate.market_scope = 'us' THEN 'US'
+                  WHEN candidate.market_scope = 'jp' THEN 'JP'
+                  WHEN candidate.market_scope = 'kr' THEN 'KR'
                 END AS market,
-                COALESCE(mu.fundamental_snapshot->>'stage', 'seed') AS stage,
-                COALESCE(mu.fundamental_snapshot->>'conclusion', 'SKIP') AS conclusion
-         FROM multibagger_universe mu
-         WHERE mu.ticker = :symbol
-         ORDER BY mu.as_of_utc DESC
-         LIMIT 1`,
+                candidate.stage,
+                candidate.conclusion
+         FROM latest_candidates candidate
+         LEFT JOIN LATERAL (
+           SELECT source.fundamental_snapshot->>'name' AS name
+           FROM multibagger_universe source
+           WHERE source.market_scope = candidate.market_scope
+             AND source.exchange = candidate.exchange
+             AND source.ticker = candidate.ticker
+             AND source.available_at_utc <= candidate.as_of_utc
+           ORDER BY
+             source.available_at_utc DESC,
+             source.source_version DESC,
+             source.created_at DESC
+           LIMIT 1
+         ) source_fact ON TRUE
+         LIMIT 2`,
         { replacements: { symbol }, type: QueryTypes.SELECT }
       );
 
       if (!rows.length) {
         res.status(404).json({ error: 'Multibagger candidate not found' });
+        return;
+      }
+
+      if (rows.length > 1) {
+        res.status(409).json({ error: 'Multibagger candidate is ambiguous' });
         return;
       }
 
