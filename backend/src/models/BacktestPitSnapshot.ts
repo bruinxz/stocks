@@ -38,7 +38,6 @@ export class BacktestPitSnapshot extends Model {
   declare strategy:
     | 'us_preferred'
     | 'multibagger'
-    | 'custom'
     | 'japan_blue_chip'
     | 'japan_multibagger'
     | 'korea_semiconductor_chain'
