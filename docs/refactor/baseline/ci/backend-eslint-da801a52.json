@@ -4,7 +4,11 @@
   "baseline_sha": "da801a52c6f5bc3e862e144f770113130e87e766",
   "tool": {
     "name": "eslint",
-    "version": "8.57.1"
+    "version": "8.57.1",
+    "allowed_producer_exits": [
+      0,
+      1
+    ]
   },
   "fingerprint_model": {
     "fields": [
@@ -1654,11 +1658,11 @@
       "count": 1
     },
     {
-      "fingerprint": "6fe4b8f4a2047b485737617ea13bce90dd8f198f5ef8f082bfc525d6d460622f",
+      "fingerprint": "60996c593f5733bc198e9840883b21f5d0647cee351afcbf3bf7b5ce66d6dbec",
       "path": "backend/src/live-trading/middlewares/liveTradingRateLimit.test.ts",
       "severity": "error",
       "code": "fatal",
-      "message": "Parsing error: ESLint was configured to run on `<tsconfigRootDir>/src/live-trading/middlewares/liveTradingRateLimit.test.ts` using `parserOptions.project`: <repo>/backend/tsconfig.json However, that TSConfig does not include this file. Either: - Change ESLint's list of included files to not include this file - Change that TSConfig to include this file - Create a new TSConfig that includes this file and include it in your parserOptions.project See the typescript-eslint docs for more info: https://typescript-eslint.io/linting/troubleshooting#i-get-errors-telling-me-eslint-was-configured-to-run--however-that-tsconfig-does-not--none-of-those-tsconfigs-include-this-file",
+      "message": "Parsing error: ESLint was configured to run on `<tsconfigRootDir>/src/live-trading/middlewares/liveTradingRateLimit.test.ts` using `parserOptions.project`: <tsconfigRootDir>/tsconfig.json However, that TSConfig does not include this file. Either: - Change ESLint's list of included files to not include this file - Change that TSConfig to include this file - Create a new TSConfig that includes this file and include it in your parserOptions.project See the typescript-eslint docs for more info: https://typescript-eslint.io/linting/troubleshooting#i-get-errors-telling-me-eslint-was-configured-to-run--however-that-tsconfig-does-not--none-of-those-tsconfigs-include-this-file",
       "locations": [
         {
           "line": 0,
@@ -1682,11 +1686,11 @@
       "count": 1
     },
     {
-      "fingerprint": "1b8580c336b8ec626fa591b6c0de96e74c72f6cdd642176564f7d357dfecbbb7",
+      "fingerprint": "e2051e1097df2d348017a046c0b2b58ec96c96e871d2c9b51cea32d55cb3828c",
       "path": "backend/src/live-trading/services/LiveAuditAlertService.test.ts",
       "severity": "error",
       "code": "fatal",
-      "message": "Parsing error: ESLint was configured to run on `<tsconfigRootDir>/src/live-trading/services/LiveAuditAlertService.test.ts` using `parserOptions.project`: <repo>/backend/tsconfig.json However, that TSConfig does not include this file. Either: - Change ESLint's list of included files to not include this file - Change that TSConfig to include this file - Create a new TSConfig that includes this file and include it in your parserOptions.project See the typescript-eslint docs for more info: https://typescript-eslint.io/linting/troubleshooting#i-get-errors-telling-me-eslint-was-configured-to-run--however-that-tsconfig-does-not--none-of-those-tsconfigs-include-this-file",
+      "message": "Parsing error: ESLint was configured to run on `<tsconfigRootDir>/src/live-trading/services/LiveAuditAlertService.test.ts` using `parserOptions.project`: <tsconfigRootDir>/tsconfig.json However, that TSConfig does not include this file. Either: - Change ESLint's list of included files to not include this file - Change that TSConfig to include this file - Create a new TSConfig that includes this file and include it in your parserOptions.project See the typescript-eslint docs for more info: https://typescript-eslint.io/linting/troubleshooting#i-get-errors-telling-me-eslint-was-configured-to-run--however-that-tsconfig-does-not--none-of-those-tsconfigs-include-this-file",
       "locations": [
         {
           "line": 0,
@@ -7622,11 +7626,11 @@
       "count": 1
     },
     {
-      "fingerprint": "e65df2a5d8cf00529baedc17ce1c66201919467c63b353f0a40bb760a88dfe67",
+      "fingerprint": "3a5c033507db661062845663598f15224ee6e1a796d31927531dae89ada246e8",
       "path": "backend/src/utils/productionPreflight.test.ts",
       "severity": "error",
       "code": "fatal",
-      "message": "Parsing error: ESLint was configured to run on `<tsconfigRootDir>/src/utils/productionPreflight.test.ts` using `parserOptions.project`: <repo>/backend/tsconfig.json However, that TSConfig does not include this file. Either: - Change ESLint's list of included files to not include this file - Change that TSConfig to include this file - Create a new TSConfig that includes this file and include it in your parserOptions.project See the typescript-eslint docs for more info: https://typescript-eslint.io/linting/troubleshooting#i-get-errors-telling-me-eslint-was-configured-to-run--however-that-tsconfig-does-not--none-of-those-tsconfigs-include-this-file",
+      "message": "Parsing error: ESLint was configured to run on `<tsconfigRootDir>/src/utils/productionPreflight.test.ts` using `parserOptions.project`: <tsconfigRootDir>/tsconfig.json However, that TSConfig does not include this file. Either: - Change ESLint's list of included files to not include this file - Change that TSConfig to include this file - Create a new TSConfig that includes this file and include it in your parserOptions.project See the typescript-eslint docs for more info: https://typescript-eslint.io/linting/troubleshooting#i-get-errors-telling-me-eslint-was-configured-to-run--however-that-tsconfig-does-not--none-of-those-tsconfigs-include-this-file",
       "locations": [
         {
           "line": 0,

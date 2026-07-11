@@ -4,7 +4,11 @@
   "baseline_sha": "da801a52c6f5bc3e862e144f770113130e87e766",
   "tool": {
     "name": "typescript",
-    "version": "4.9.5"
+    "version": "4.9.5",
+    "allowed_producer_exits": [
+      0,
+      2
+    ]
   },
   "fingerprint_model": {
     "fields": [

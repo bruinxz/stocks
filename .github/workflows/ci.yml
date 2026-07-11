@@ -364,7 +364,8 @@ jobs:
             --producer-exit "$lint_rc" \
             --repo-root .. \
             --workdir backend \
-            --summary ../backend-lint-baseline-summary.json 2>&1 | tee -a ../backend-lint.log
+            --summary ../backend-lint-baseline-summary.json 2>&1 \
+            | tee ../backend-lint-baseline.log
         continue-on-error: false
 
       - name: Upload backend lint baseline evidence
@@ -376,6 +377,7 @@ jobs:
             backend-lint.json
             backend-lint.stderr
             backend-lint.log
+            backend-lint-baseline.log
             backend-lint-baseline-summary.json
           retention-days: 7
 
@@ -403,6 +405,7 @@ jobs:
             backend-lint.json
             backend-lint.log
             backend-lint.stderr
+            backend-lint-baseline.log
             backend-lint-baseline-summary.json
             backend-test.log
           retention-days: 7
@@ -415,7 +418,7 @@ jobs:
           script: |
             const fs = require('fs');
             const path = require('path');
-            const logs = ['envcheck', 'envcheck-fail', 'typecheck', 'openapi-check', 'architecture-check', 'lint', 'test'];
+            const logs = ['envcheck', 'envcheck-fail', 'typecheck', 'openapi-check', 'architecture-check', 'lint', 'lint-baseline', 'test'];
             const sections = [];
             for (const name of logs) {
               const filePath = path.join(process.env.GITHUB_WORKSPACE, `backend-${name}.log`);
@@ -480,7 +483,8 @@ jobs:
             --producer-exit "$tsc_rc" \
             --repo-root .. \
             --workdir frontend \
-            --summary ../frontend-typecheck-baseline-summary.json 2>&1 | tee -a ../frontend-typecheck.log
+            --summary ../frontend-typecheck-baseline-summary.json 2>&1 \
+            | tee ../frontend-typecheck-baseline.log
         continue-on-error: false
 
       - name: Upload frontend typecheck baseline evidence
@@ -490,6 +494,7 @@ jobs:
           name: frontend-typecheck-baseline-${{ github.run_attempt }}
           path: |
             frontend-typecheck.log
+            frontend-typecheck-baseline.log
             frontend-typecheck-baseline-summary.json
           retention-days: 7
 
@@ -538,6 +543,7 @@ jobs:
           name: frontend-logs
           path: |
             frontend-typecheck.log
+            frontend-typecheck-baseline.log
             frontend-typecheck-baseline-summary.json
             frontend-lint.log
             frontend-test.log
@@ -552,7 +558,7 @@ jobs:
           script: |
             const fs = require('fs');
             const path = require('path');
-            const logs = ['typecheck', 'lint', 'test', 'build'];
+            const logs = ['typecheck', 'typecheck-baseline', 'lint', 'test', 'build'];
             const sections = [];
             for (const name of logs) {
               const filePath = path.join(process.env.GITHUB_WORKSPACE, `frontend-${name}.log`);

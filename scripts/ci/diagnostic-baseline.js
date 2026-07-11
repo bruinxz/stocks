@@ -47,10 +47,9 @@ function escapeRegExp(value) {
 
 function normalizeDiagnosticMessage(message, repoRoot) {
   const normalizedRoot = path.resolve(repoRoot).split(path.sep).join('/');
-  return normalizeMessage(message).replace(
-    new RegExp(escapeRegExp(normalizedRoot), 'gi'),
-    '<repo>',
-  );
+  return normalizeMessage(message)
+    .replace(new RegExp(escapeRegExp(normalizedRoot), 'gi'), '<repo>')
+    .replace(/<repo>\/backend\/tsconfig\.json/gi, '<tsconfigRootDir>/tsconfig.json');
 }
 
 function repoRelative(filePath, repoRoot, workdir) {
@@ -176,6 +175,13 @@ function validateBaselineShape(baseline) {
   if (!baseline.tool || typeof baseline.tool.version !== 'string') {
     throw new Error('baseline.tool.version is required');
   }
+  if (
+    !Array.isArray(baseline.tool.allowed_producer_exits) ||
+    baseline.tool.allowed_producer_exits.length === 0 ||
+    baseline.tool.allowed_producer_exits.some((code) => !Number.isInteger(code))
+  ) {
+    throw new Error('baseline.tool.allowed_producer_exits must be a non-empty integer array');
+  }
   if (!Array.isArray(baseline.config_files)) throw new Error('baseline.config_files must be an array');
   if (!Array.isArray(baseline.diagnostics)) throw new Error('baseline.diagnostics must be an array');
 
@@ -227,6 +233,15 @@ function ensureBaselineIsAncestor(repoRoot, baselineSha) {
 
 function compareDiagnostics({ baseline, current, repoRoot, toolVersion, producerExit }) {
   validateBaselineShape(baseline);
+  if (producerExit !== 0 && current.length === 0) {
+    throw new Error(`producer exited ${producerExit} but no parseable diagnostics were found`);
+  }
+  const allowedProducerExits = baseline.tool.allowed_producer_exits;
+  if (!allowedProducerExits.includes(producerExit)) {
+    throw new Error(
+      `${baseline.kind} producer exited ${producerExit}; allowed exits are ${allowedProducerExits.join(', ')}`,
+    );
+  }
   if (baseline.tool.version !== toolVersion) {
     throw new Error(`tool version mismatch: baseline=${baseline.tool.version} current=${toolVersion}`);
   }
@@ -255,10 +270,6 @@ function compareDiagnostics({ baseline, current, repoRoot, toolVersion, producer
   }
   for (const diagnostic of baseline.diagnostics) {
     if (!currentMap.has(diagnostic.fingerprint)) removed.push(diagnostic);
-  }
-
-  if (producerExit !== 0 && current.length === 0) {
-    throw new Error(`producer exited ${producerExit} but no parseable diagnostics were found`);
   }
 
   return {
@@ -293,6 +304,7 @@ function makeBaseline(args) {
     tool: {
       name: kind === 'eslint' ? 'eslint' : 'typescript',
       version: args['tool-version'],
+      allowed_producer_exits: kind === 'eslint' ? [0, 1] : [0, 2],
     },
     fingerprint_model: {
       fields: ['kind', 'repo_relative_path', 'severity', 'rule_or_code', 'normalized_message'],

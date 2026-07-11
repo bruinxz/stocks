@@ -3,6 +3,7 @@
 These files pin debt that already existed at `da801a52c6f5bc3e862e144f770113130e87e766`,
 immediately after CI began preserving producer exit codes. The gate permits a diagnostic
 to disappear or decrease, but fails closed when a fingerprint is added, its count grows,
+the producer exits outside the baseline's explicit `allowed_producer_exits` policy,
 the producer fails without parseable diagnostics, the baseline SHA is not an ancestor,
 or a pinned tool/config file changes.
 

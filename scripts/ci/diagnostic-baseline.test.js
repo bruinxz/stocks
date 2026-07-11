@@ -27,7 +27,7 @@ function baselineFor(diagnostics, overrides = {}) {
     version: 1,
     kind: 'eslint',
     baseline_sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-    tool: { name: 'eslint', version: '8.57.1' },
+    tool: { name: 'eslint', version: '8.57.1', allowed_producer_exits: [0, 1] },
     fingerprint_model: {
       fields: ['kind', 'repo_relative_path', 'severity', 'rule_or_code', 'normalized_message'],
       multiplicity: 'exact count per fingerprint',
@@ -109,6 +109,14 @@ expectThrow(
   'tool version mismatch',
 );
 
+const missingProducerPolicy = baselineFor([baseDiagnostic], { baseline_sha: headSha });
+delete missingProducerPolicy.tool.allowed_producer_exits;
+expectThrow(
+  'missing producer exit policy',
+  () => validateBaselineShape(missingProducerPolicy),
+  'allowed_producer_exits',
+);
+
 const wrongConfig = baselineFor([baseDiagnostic], {
   baseline_sha: headSha,
   config_files: [
@@ -141,6 +149,45 @@ expectThrow(
   'no parseable diagnostics',
 );
 
+expectThrow(
+  'ESLint producer crash with parseable diagnostics',
+  () =>
+    compareDiagnostics({
+      baseline,
+      current: groupDiagnostics('eslint', [baseDiagnostic]),
+      repoRoot: process.cwd(),
+      toolVersion: '8.57.1',
+      producerExit: 2,
+    }),
+  'allowed exits are 0, 1',
+);
+
+const tscDiagnostic = {
+  path: 'frontend/src/foo.ts',
+  severity: 'error',
+  code: 'TS2344',
+  message: 'Type mismatch',
+  locations: [{ line: 2, column: 3 }],
+};
+const tscBaseline = {
+  ...baselineFor([], { baseline_sha: headSha }),
+  kind: 'tsc',
+  tool: { name: 'typescript', version: '4.9.5', allowed_producer_exits: [0, 2] },
+  diagnostics: groupDiagnostics('tsc', [tscDiagnostic]),
+};
+expectThrow(
+  'TypeScript producer crash with parseable diagnostics',
+  () =>
+    compareDiagnostics({
+      baseline: tscBaseline,
+      current: groupDiagnostics('tsc', [tscDiagnostic]),
+      repoRoot: process.cwd(),
+      toolVersion: '4.9.5',
+      producerExit: 1,
+    }),
+  'allowed exits are 0, 2',
+);
+
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'diagnostic-baseline-'));
 try {
   const eslintInput = path.join(tempDir, 'eslint.json');
@@ -165,6 +212,44 @@ try {
   assert.equal(parsedEslint.length, 1, 'ESLint JSON parser groups one diagnostic');
   assert.equal(parsedEslint[0].path, 'backend/src/foo.ts');
   assert.equal(parsedEslint[0].message, 'Delete blank line');
+
+  const eslintRootVariantInput = path.join(tempDir, 'eslint-root-variant.json');
+  fs.writeFileSync(
+    eslintRootVariantInput,
+    JSON.stringify([
+      {
+        filePath: path.join(process.cwd(), 'backend/src/foo.test.ts'),
+        messages: [
+          {
+            severity: 2,
+            fatal: true,
+            message: `parser project ${path.join(process.cwd(), 'backend/tsconfig.json')}`,
+          },
+        ],
+      },
+    ]),
+  );
+  const eslintTokenVariantInput = path.join(tempDir, 'eslint-token-variant.json');
+  fs.writeFileSync(
+    eslintTokenVariantInput,
+    JSON.stringify([
+      {
+        filePath: path.join(process.cwd(), 'backend/src/foo.test.ts'),
+        messages: [
+          {
+            severity: 2,
+            fatal: true,
+            message: 'parser project <tsconfigRootDir>/tsconfig.json',
+          },
+        ],
+      },
+    ]),
+  );
+  assert.equal(
+    parseEslintJson(eslintRootVariantInput, process.cwd(), '.')[0].fingerprint,
+    parseEslintJson(eslintTokenVariantInput, process.cwd(), '.')[0].fingerprint,
+    'ESLint tsconfigRootDir diagnostics are stable across local and CI path rendering',
+  );
 
   const tscInput = path.join(tempDir, 'tsc.log');
   fs.writeFileSync(
