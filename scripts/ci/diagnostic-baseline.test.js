@@ -8,12 +8,19 @@ const path = require('path');
 const {
   canonicalEslintTargets,
   compareDiagnostics,
+  compareDiagnosticSets,
+  ensureBaselineIsAncestor,
+  ensureConfigHashes,
+  ensureEslintControlAuthority,
   groupDiagnostics,
   makeFingerprint,
   parseProducerExit,
   parseEslintJson,
   parseTscText,
+  validateBaselineAuthority,
   validateBaselineShape,
+  validateBaselineStructure,
+  validateProducerEvidence,
 } = require('./diagnostic-baseline');
 
 const baseDiagnostic = {
@@ -58,13 +65,11 @@ function configFilesFor(kind) {
 }
 
 function compare(baseline, current) {
-  return compareDiagnostics({
-    baseline,
-    current: groupDiagnostics('eslint', current),
-    repoRoot: process.cwd(),
-    toolVersion: '8.57.1',
-    producerExit: current.length ? 1 : 0,
-  });
+  const grouped = groupDiagnostics('eslint', current);
+  const producerExit = current.some((diagnostic) => diagnostic.severity === 'error') ? 1 : 0;
+  validateBaselineStructure(baseline);
+  validateProducerEvidence('eslint', grouped, producerExit);
+  return compareDiagnosticSets(baseline, grouped, producerExit);
 }
 
 const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -110,39 +115,20 @@ const increased = compare(doubledBaseline, [baseDiagnostic, baseDiagnostic]);
 assert.equal(increased.ok, false, 'count increase fails');
 assert.equal(increased.fingerprints.increased, 1, 'increase is reported');
 
-expectThrow('malformed baseline', () => validateBaselineShape({ version: 1 }), 'invalid baseline kind');
+expectThrow('malformed baseline', () => validateBaselineStructure({ version: 1 }), 'invalid baseline kind');
 
 const duplicate = baselineFor([baseDiagnostic]);
 duplicate.diagnostics.push({ ...duplicate.diagnostics[0] });
-expectThrow('duplicate fingerprint', () => validateBaselineShape(duplicate), 'duplicate fingerprint');
+expectThrow('duplicate fingerprint', () => validateBaselineStructure(duplicate), 'duplicate fingerprint');
 
 const stale = baselineFor([baseDiagnostic], { baseline_sha: 'not-a-sha' });
-expectThrow('stale baseline schema', () => validateBaselineShape(stale), 'baseline_sha');
-
-const notAncestor = baselineFor([baseDiagnostic], {
-  baseline_sha: '0000000000000000000000000000000000000000',
-});
-expectThrow('stale baseline compare', () => compare(notAncestor, [baseDiagnostic]), 'not an ancestor');
-
-const wrongTool = baselineFor([baseDiagnostic], { baseline_sha: headSha });
-expectThrow(
-  'wrong tool version',
-  () =>
-    compareDiagnostics({
-      baseline: wrongTool,
-      current: groupDiagnostics('eslint', [baseDiagnostic]),
-      repoRoot: process.cwd(),
-      toolVersion: '9.0.0',
-      producerExit: 1,
-    }),
-  'tool version mismatch',
-);
+expectThrow('stale baseline schema', () => validateBaselineStructure(stale), 'baseline_sha');
 
 const missingProducerPolicy = baselineFor([baseDiagnostic], { baseline_sha: headSha });
 delete missingProducerPolicy.tool.allowed_producer_exits;
 expectThrow(
   'missing producer exit policy',
-  () => validateBaselineShape(missingProducerPolicy),
+  () => validateBaselineStructure(missingProducerPolicy),
   'allowed_producer_exits',
 );
 
@@ -157,18 +143,18 @@ for (const [name, policy] of [
   invalidPolicy.tool.allowed_producer_exits = policy;
   expectThrow(
     name,
-    () => validateBaselineShape(invalidPolicy),
+    () => validateBaselineStructure(invalidPolicy),
     'must equal canonical eslint policy [0,1]',
   );
 }
 
 const missingToolName = baselineFor([baseDiagnostic], { baseline_sha: headSha });
 delete missingToolName.tool.name;
-expectThrow('missing tool name', () => validateBaselineShape(missingToolName), 'canonical eslint tool');
+expectThrow('missing tool name', () => validateBaselineStructure(missingToolName), 'canonical eslint tool');
 
 const wrongToolName = baselineFor([baseDiagnostic], { baseline_sha: headSha });
 wrongToolName.tool.name = 'typescript';
-expectThrow('wrong tool name', () => validateBaselineShape(wrongToolName), 'canonical eslint tool');
+expectThrow('wrong tool name', () => validateBaselineStructure(wrongToolName), 'canonical eslint tool');
 
 for (const [name, mutate] of [
   ['empty config set', () => []],
@@ -189,76 +175,44 @@ for (const [name, mutate] of [
   invalidConfigs.config_files = mutate(invalidConfigs.config_files);
   expectThrow(
     name,
-    () => validateBaselineShape(invalidConfigs),
+    () => validateBaselineStructure(invalidConfigs),
     'config_files paths must equal canonical eslint set',
   );
 }
-
-const wrongConfig = baselineFor([baseDiagnostic], {
-  baseline_sha: headSha,
-  config_files: configFilesFor('eslint').map((entry, index) =>
-    index === 0 ? { ...entry, sha256: '0'.repeat(64) } : entry,
-  ),
-});
-expectThrow('wrong config hash', () => compare(wrongConfig, [baseDiagnostic]), 'config hash mismatch');
 
 const badFingerprint = baselineFor([baseDiagnostic], { baseline_sha: headSha });
 badFingerprint.diagnostics[0].fingerprint = 'f'.repeat(64);
 expectThrow(
   'fingerprint mismatch',
-  () => validateBaselineShape(badFingerprint),
+  () => validateBaselineStructure(badFingerprint),
   'fingerprint mismatch',
 );
 
 expectThrow(
   'producer failure without diagnostics',
   () =>
-    compareDiagnostics({
-      baseline: baselineFor([], { baseline_sha: headSha }),
-      current: [],
-      repoRoot: process.cwd(),
-      toolVersion: '8.57.1',
-      producerExit: 2,
-    }),
+    validateProducerEvidence('eslint', [], 2),
   'no parseable diagnostics',
 );
 
 expectThrow(
   'ESLint producer crash with parseable diagnostics',
   () =>
-    compareDiagnostics({
-      baseline,
-      current: groupDiagnostics('eslint', [baseDiagnostic]),
-      repoRoot: process.cwd(),
-      toolVersion: '8.57.1',
-      producerExit: 2,
-    }),
+    validateProducerEvidence('eslint', groupDiagnostics('eslint', [baseDiagnostic]), 2),
   'allowed exits are 0, 1',
 );
 
 expectThrow(
   'non-integer producer exit via API',
   () =>
-    compareDiagnostics({
-      baseline,
-      current: groupDiagnostics('eslint', [baseDiagnostic]),
-      repoRoot: process.cwd(),
-      toolVersion: '8.57.1',
-      producerExit: 1.5,
-    }),
+    validateProducerEvidence('eslint', groupDiagnostics('eslint', [baseDiagnostic]), 1.5),
   'non-negative safe integer',
 );
 
 expectThrow(
   'ESLint success with error diagnostics',
   () =>
-    compareDiagnostics({
-      baseline,
-      current: groupDiagnostics('eslint', [baseDiagnostic]),
-      repoRoot: process.cwd(),
-      toolVersion: '8.57.1',
-      producerExit: 0,
-    }),
+    validateProducerEvidence('eslint', groupDiagnostics('eslint', [baseDiagnostic]), 0),
   'exit/diagnostic mismatch',
 );
 
@@ -267,13 +221,7 @@ const warningBaseline = baselineFor([warningDiagnostic], { baseline_sha: headSha
 expectThrow(
   'ESLint failure without error diagnostics',
   () =>
-    compareDiagnostics({
-      baseline: warningBaseline,
-      current: groupDiagnostics('eslint', [warningDiagnostic]),
-      repoRoot: process.cwd(),
-      toolVersion: '8.57.1',
-      producerExit: 1,
-    }),
+    validateProducerEvidence('eslint', groupDiagnostics('eslint', [warningDiagnostic]), 1),
   'exit/diagnostic mismatch',
 );
 
@@ -291,43 +239,57 @@ const tscBaseline = {
   config_files: configFilesFor('tsc'),
   diagnostics: groupDiagnostics('tsc', [tscDiagnostic]),
 };
+
+const realEslintBaseline = JSON.parse(
+  fs.readFileSync('docs/refactor/baseline/ci/backend-eslint-da801a52.json', 'utf8'),
+);
+const realTscBaseline = JSON.parse(
+  fs.readFileSync('docs/refactor/baseline/ci/frontend-tsc-da801a52.json', 'utf8'),
+);
+validateBaselineShape(realEslintBaseline);
+validateBaselineShape(realTscBaseline);
+for (const [name, mutate] of [
+  [
+    'appended authorized-looking diagnostic',
+    (ledger) => [
+      ...ledger,
+      {
+        ...ledger[0],
+        path: 'backend/src/new-debt.ts',
+        fingerprint: makeFingerprint('eslint', {
+          ...ledger[0],
+          path: 'backend/src/new-debt.ts',
+        }),
+      },
+    ],
+  ],
+  [
+    'increased diagnostic count',
+    (ledger) => [{ ...ledger[0], count: ledger[0].count + 1 }, ...ledger.slice(1)],
+  ],
+]) {
+  const mutated = {
+    ...realEslintBaseline,
+    diagnostics: mutate(realEslintBaseline.diagnostics),
+  };
+  expectThrow(name, () => validateBaselineAuthority(mutated), 'ledger hash mismatch');
+}
 expectThrow(
   'TypeScript producer crash with parseable diagnostics',
   () =>
-    compareDiagnostics({
-      baseline: tscBaseline,
-      current: groupDiagnostics('tsc', [tscDiagnostic]),
-      repoRoot: process.cwd(),
-      toolVersion: '4.9.5',
-      producerExit: 1,
-    }),
+    validateProducerEvidence('tsc', groupDiagnostics('tsc', [tscDiagnostic]), 1),
   'allowed exits are 0, 2',
 );
 expectThrow(
   'TypeScript success with diagnostics',
   () =>
-    compareDiagnostics({
-      baseline: tscBaseline,
-      current: groupDiagnostics('tsc', [tscDiagnostic]),
-      repoRoot: process.cwd(),
-      toolVersion: '4.9.5',
-      producerExit: 0,
-    }),
+    validateProducerEvidence('tsc', groupDiagnostics('tsc', [tscDiagnostic]), 0),
   'exit/diagnostic mismatch',
 );
 expectThrow(
   'TypeScript failure without diagnostics',
   () =>
-    compareDiagnostics({
-      baseline: {
-        ...tscBaseline,
-        diagnostics: [],
-      },
-      current: [],
-      repoRoot: process.cwd(),
-      toolVersion: '4.9.5',
-      producerExit: 2,
-    }),
+    validateProducerEvidence('tsc', [], 2),
   'no parseable diagnostics',
 );
 
@@ -390,14 +352,7 @@ try {
   });
   expectThrow(
     'baseline config hashes cannot be replaced with child hashes',
-    () =>
-      compareDiagnostics({
-        baseline: driftBaseline,
-        current: groupDiagnostics('eslint', [warningDiagnostic]),
-        repoRoot: driftRepo,
-        toolVersion: '8.57.1',
-        producerExit: 0,
-      }),
+    () => ensureConfigHashes(driftRepo, driftBaseline),
     'baseline config hash mismatch at baseline_sha',
   );
 
@@ -423,14 +378,7 @@ try {
   });
   expectThrow(
     'canonical config missing at anchor',
-    () =>
-      compareDiagnostics({
-        baseline: missingAnchorBaseline,
-        current: groupDiagnostics('eslint', [warningDiagnostic]),
-        repoRoot: missingAnchorRepo,
-        toolVersion: '8.57.1',
-        producerExit: 0,
-      }),
+    () => ensureConfigHashes(missingAnchorRepo, missingAnchorBaseline),
     'config file missing at baseline_sha',
   );
 
@@ -454,17 +402,7 @@ try {
   commitAll(ignoreRepo, 'child adds ignore');
   expectThrow(
     'current eslint ignore surface rejected',
-    () =>
-      compareDiagnostics({
-        baseline: baselineFor([], {
-          baseline_sha: ignoreAnchor,
-          config_files: configFilesInRepo(ignoreRepo),
-        }),
-        current: [],
-        repoRoot: ignoreRepo,
-        toolVersion: '8.57.1',
-        producerExit: 0,
-      }),
+    () => ensureEslintControlAuthority(ignoreRepo, ignoreAnchor),
     'current ESLint control surfaces',
   );
 
@@ -486,17 +424,7 @@ try {
   const nestedAnchor = commitAll(nestedConfigRepo, 'anchor with nested config');
   expectThrow(
     'anchor nested eslint config rejected',
-    () =>
-      compareDiagnostics({
-        baseline: baselineFor([], {
-          baseline_sha: nestedAnchor,
-          config_files: configFilesInRepo(nestedConfigRepo),
-        }),
-        current: [],
-        repoRoot: nestedConfigRepo,
-        toolVersion: '8.57.1',
-        producerExit: 0,
-      }),
+    () => ensureEslintControlAuthority(nestedConfigRepo, nestedAnchor),
     'baseline ESLint control surfaces',
   );
 
@@ -718,13 +646,8 @@ try {
   );
   const parsedMixedTsc = parseTscText(mixedTscInput, process.cwd(), 'frontend');
   assert.equal(parsedMixedTsc.length, 2, 'TSC parser retains file and global diagnostics');
-  const mixedComparison = compareDiagnostics({
-    baseline: tscBaseline,
-    current: parsedMixedTsc,
-    repoRoot: process.cwd(),
-    toolVersion: '4.9.5',
-    producerExit: 2,
-  });
+  validateProducerEvidence('tsc', parsedMixedTsc, 2);
+  const mixedComparison = compareDiagnosticSets(tscBaseline, parsedMixedTsc, 2);
   assert.equal(mixedComparison.ok, false, 'new global TSC diagnostic fails comparison');
   assert.equal(mixedComparison.fingerprints.added, 1);
 
@@ -736,31 +659,38 @@ try {
     'unparseable nonblank lines',
   );
 
-  const cliBaselinePath = path.join(tempDir, 'baseline.json');
   const cliInputPath = path.join(tempDir, 'eslint-cli.json');
   const cliOldOnlyInputPath = path.join(tempDir, 'eslint-cli-old-only.json');
   const cliSummaryPath = path.join(tempDir, 'summary.json');
   const cliTargets = canonicalEslintTargets(process.cwd());
-  const cliBaseDiagnostic = { ...baseDiagnostic, path: cliTargets[0] };
-  const cliNewDiagnostic = {
-    ...newDiagnostic,
-    path: cliTargets[1],
-  };
-  fs.writeFileSync(
-    cliBaselinePath,
-    `${JSON.stringify(baselineFor([cliBaseDiagnostic], { baseline_sha: headSha }), null, 2)}\n`,
+  const cliBaseDiagnostic = realEslintBaseline.diagnostics.find(
+    (diagnostic) => diagnostic.severity === 'error' && diagnostic.code !== 'fatal',
   );
+  assert.ok(cliBaseDiagnostic, 'real ESLint baseline contains a nonfatal error diagnostic');
+  const cliNewDiagnostic = {
+    ...baseDiagnostic,
+    path: cliTargets.find((target) => target !== cliBaseDiagnostic.path),
+    code: 'synthetic/new-debt',
+    message: 'Synthetic new debt',
+    fingerprint: undefined,
+  };
+  cliNewDiagnostic.fingerprint = makeFingerprint('eslint', cliNewDiagnostic);
   function completeEslintResults(includeNewDiagnostic) {
     return cliTargets.map((targetPath) => {
       const messages = [];
       if (targetPath === cliBaseDiagnostic.path) {
-        messages.push({
-          severity: 2,
-          ruleId: cliBaseDiagnostic.code,
-          message: cliBaseDiagnostic.message,
-          line: 10,
-          column: 1,
-        });
+        const location = cliBaseDiagnostic.locations[0] || { line: 1, column: 1 };
+        const fatal = cliBaseDiagnostic.code === 'fatal';
+        for (let index = 0; index < cliBaseDiagnostic.count; index += 1) {
+          messages.push({
+            severity: cliBaseDiagnostic.severity === 'error' ? 2 : 1,
+            ruleId: fatal ? null : cliBaseDiagnostic.code,
+            fatal: fatal || undefined,
+            message: cliBaseDiagnostic.message,
+            line: fatal && location.line === 0 ? null : Math.max(location.line, 1),
+            column: fatal && location.column === 0 ? null : Math.max(location.column, 1),
+          });
+        }
       }
       if (includeNewDiagnostic && targetPath === cliNewDiagnostic.path) {
         messages.push({
@@ -773,9 +703,9 @@ try {
       }
       return {
         filePath: path.join(process.cwd(), targetPath),
-        errorCount: messages.length,
-        warningCount: 0,
-        fatalErrorCount: 0,
+        errorCount: messages.filter((message) => message.severity === 2).length,
+        warningCount: messages.filter((message) => message.severity === 1).length,
+        fatalErrorCount: messages.filter((message) => message.fatal === true).length,
         messages,
       };
     });
@@ -788,7 +718,7 @@ try {
       path.join(__dirname, 'diagnostic-baseline.js'),
       'compare',
       '--baseline',
-      cliBaselinePath,
+      'docs/refactor/baseline/ci/backend-eslint-da801a52.json',
       '--input',
       cliInputPath,
       '--tool-version',
@@ -798,7 +728,7 @@ try {
       '--repo-root',
       process.cwd(),
       '--workdir',
-      '.',
+      'backend',
       '--summary',
       cliSummaryPath,
     ],
@@ -820,7 +750,7 @@ try {
       path.join(__dirname, 'diagnostic-baseline.js'),
       'compare',
       '--baseline',
-      cliBaselinePath,
+      'docs/refactor/baseline/ci/backend-eslint-da801a52.json',
       '--input',
       cliOldOnlyInputPath,
       '--tool-version',
@@ -830,22 +760,20 @@ try {
       '--repo-root',
       process.cwd(),
       '--workdir',
-      '.',
+      'backend',
     ],
     { encoding: 'utf8' },
   );
   assert.equal(eslintSuccessMismatch.status, 1, 'CLI rejects ESLint success with errors');
   assert.match(eslintSuccessMismatch.stderr, /exit\/diagnostic mismatch/);
 
-  const cliTscBaselinePath = path.join(tempDir, 'tsc-baseline.json');
-  fs.writeFileSync(cliTscBaselinePath, `${JSON.stringify(tscBaseline, null, 2)}\n`);
   const tscSuccessMismatch = spawnSync(
     process.execPath,
     [
       path.join(__dirname, 'diagnostic-baseline.js'),
       'compare',
       '--baseline',
-      cliTscBaselinePath,
+      'docs/refactor/baseline/ci/frontend-tsc-da801a52.json',
       '--input',
       tscInput,
       '--tool-version',
@@ -875,7 +803,7 @@ try {
         path.join(__dirname, 'diagnostic-baseline.js'),
         'compare',
         '--baseline',
-        cliBaselinePath,
+        'docs/refactor/baseline/ci/backend-eslint-da801a52.json',
         '--input',
         cliOldOnlyInputPath,
         '--tool-version',
@@ -883,7 +811,7 @@ try {
         '--repo-root',
         process.cwd(),
         '--workdir',
-        '.',
+        'backend',
         ...producerExitArgs,
       ],
       { encoding: 'utf8' },

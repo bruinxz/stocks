@@ -346,6 +346,32 @@ function canonicalConfigPaths(kind) {
   throw new Error(`unsupported kind: ${kind}`);
 }
 
+function canonicalBaselineAuthority(kind) {
+  if (kind === 'eslint') {
+    return {
+      baseline_sha: 'da801a52c6f5bc3e862e144f770113130e87e766',
+      tool_version: '8.57.1',
+      ledger_sha256: 'f3dbfa8376b580b85af4363714a9119f4dd7170794cc0f9d8061aaf5ee577a6f',
+    };
+  }
+  if (kind === 'tsc') {
+    return {
+      baseline_sha: 'da801a52c6f5bc3e862e144f770113130e87e766',
+      tool_version: '4.9.5',
+      ledger_sha256: '8e48da662ee773078505790c405af54cd83c21bae3ecd3f2091236896adc6140',
+    };
+  }
+  throw new Error(`unsupported kind: ${kind}`);
+}
+
+function diagnosticLedgerHash(diagnostics) {
+  const canonical = diagnostics
+    .map((diagnostic) => `${diagnostic.fingerprint}\0${diagnostic.count}`)
+    .sort()
+    .join('\n');
+  return sha256Text(canonical);
+}
+
 function currentEslintControlFiles(repoRoot) {
   const found = [];
   function walk(dir) {
@@ -413,7 +439,7 @@ function ensureEslintControlAuthority(repoRoot, baselineSha) {
   }
 }
 
-function validateBaselineShape(baseline) {
+function validateBaselineStructure(baseline) {
   if (!baseline || typeof baseline !== 'object') throw new Error('baseline must be an object');
   if (baseline.version !== 1) throw new Error('baseline version must be 1');
   if (!['eslint', 'tsc'].includes(baseline.kind)) throw new Error('invalid baseline kind');
@@ -493,6 +519,31 @@ function validateBaselineShape(baseline) {
   }
 }
 
+function validateBaselineAuthority(baseline) {
+  const authority = canonicalBaselineAuthority(baseline.kind);
+  if (baseline.baseline_sha !== authority.baseline_sha) {
+    throw new Error(
+      `baseline_sha must equal canonical ${baseline.kind} anchor ${authority.baseline_sha}`,
+    );
+  }
+  if (baseline.tool.version !== authority.tool_version) {
+    throw new Error(
+      `baseline.tool.version must equal canonical ${baseline.kind} version ${authority.tool_version}`,
+    );
+  }
+  const actualLedgerHash = diagnosticLedgerHash(baseline.diagnostics);
+  if (actualLedgerHash !== authority.ledger_sha256) {
+    throw new Error(
+      `baseline diagnostic ledger hash mismatch: expected=${authority.ledger_sha256} actual=${actualLedgerHash}`,
+    );
+  }
+}
+
+function validateBaselineShape(baseline) {
+  validateBaselineStructure(baseline);
+  validateBaselineAuthority(baseline);
+}
+
 function ensureBaselineIsAncestor(repoRoot, baselineSha) {
   try {
     execFileSync('git', ['merge-base', '--is-ancestor', baselineSha, 'HEAD'], {
@@ -504,21 +555,20 @@ function ensureBaselineIsAncestor(repoRoot, baselineSha) {
   }
 }
 
-function compareDiagnostics({ baseline, current, repoRoot, toolVersion, producerExit }) {
-  validateBaselineShape(baseline);
+function validateProducerEvidence(kind, current, producerExit) {
   if (!Number.isSafeInteger(producerExit) || producerExit < 0) {
     throw new Error('producerExit must be a non-negative safe integer');
   }
   if (producerExit !== 0 && current.length === 0) {
     throw new Error(`producer exited ${producerExit} but no parseable diagnostics were found`);
   }
-  const allowedProducerExits = baseline.tool.allowed_producer_exits;
+  const allowedProducerExits = canonicalProducerExits(kind);
   if (!allowedProducerExits.includes(producerExit)) {
     throw new Error(
-      `${baseline.kind} producer exited ${producerExit}; allowed exits are ${allowedProducerExits.join(', ')}`,
+      `${kind} producer exited ${producerExit}; allowed exits are ${allowedProducerExits.join(', ')}`,
     );
   }
-  if (baseline.kind === 'eslint') {
+  if (kind === 'eslint') {
     const errorCount = current
       .filter((diagnostic) => diagnostic.severity === 'error')
       .reduce((sum, diagnostic) => sum + diagnostic.count, 0);
@@ -532,24 +582,9 @@ function compareDiagnostics({ baseline, current, repoRoot, toolVersion, producer
       `tsc producer exit/diagnostic mismatch: exit=${producerExit}, diagnostic_fingerprints=${current.length}`,
     );
   }
-  if (baseline.tool.version !== toolVersion) {
-    throw new Error(`tool version mismatch: baseline=${baseline.tool.version} current=${toolVersion}`);
-  }
-  ensureBaselineIsAncestor(repoRoot, baseline.baseline_sha);
-  if (baseline.kind === 'eslint') {
-    ensureEslintControlAuthority(repoRoot, baseline.baseline_sha);
-  }
-  for (const configFile of baseline.config_files) {
-    const anchorHash = gitBlobHash(repoRoot, baseline.baseline_sha, configFile.path);
-    if (anchorHash !== configFile.sha256) {
-      throw new Error(`baseline config hash mismatch at baseline_sha for ${configFile.path}`);
-    }
-    const currentHash = fileHash(path.resolve(repoRoot, configFile.path));
-    if (currentHash !== configFile.sha256) {
-      throw new Error(`config hash mismatch for ${configFile.path}`);
-    }
-  }
+}
 
+function compareDiagnosticSets(baseline, current, producerExit) {
   const baselineMap = new Map(baseline.diagnostics.map((d) => [d.fingerprint, d]));
   const currentMap = new Map(current.map((d) => [d.fingerprint, d]));
   const added = [];
@@ -588,6 +623,33 @@ function compareDiagnostics({ baseline, current, repoRoot, toolVersion, producer
     removed,
     decreased,
   };
+}
+
+function ensureConfigHashes(repoRoot, baseline) {
+  for (const configFile of baseline.config_files) {
+    const anchorHash = gitBlobHash(repoRoot, baseline.baseline_sha, configFile.path);
+    if (anchorHash !== configFile.sha256) {
+      throw new Error(`baseline config hash mismatch at baseline_sha for ${configFile.path}`);
+    }
+    const currentHash = fileHash(path.resolve(repoRoot, configFile.path));
+    if (currentHash !== configFile.sha256) {
+      throw new Error(`config hash mismatch for ${configFile.path}`);
+    }
+  }
+}
+
+function compareDiagnostics({ baseline, current, repoRoot, toolVersion, producerExit }) {
+  validateBaselineShape(baseline);
+  validateProducerEvidence(baseline.kind, current, producerExit);
+  if (baseline.tool.version !== toolVersion) {
+    throw new Error(`tool version mismatch: baseline=${baseline.tool.version} current=${toolVersion}`);
+  }
+  ensureBaselineIsAncestor(repoRoot, baseline.baseline_sha);
+  if (baseline.kind === 'eslint') {
+    ensureEslintControlAuthority(repoRoot, baseline.baseline_sha);
+  }
+  ensureConfigHashes(repoRoot, baseline);
+  return compareDiagnosticSets(baseline, current, producerExit);
 }
 
 function makeBaseline(args) {
@@ -681,12 +743,17 @@ if (require.main === module) {
 
 module.exports = {
   canonicalConfigPaths,
+  canonicalBaselineAuthority,
   canonicalEslintTargets,
   canonicalProducerExits,
   canonicalToolName,
   compareDiagnostics,
+  compareDiagnosticSets,
   groupDiagnostics,
+  diagnosticLedgerHash,
   ensureEslintControlAuthority,
+  ensureConfigHashes,
+  ensureBaselineIsAncestor,
   gitBlobHash,
   makeFingerprint,
   normalizeMessage,
@@ -695,4 +762,7 @@ module.exports = {
   parseTscText,
   parseEslintJson,
   validateBaselineShape,
+  validateBaselineAuthority,
+  validateBaselineStructure,
+  validateProducerEvidence,
 };
