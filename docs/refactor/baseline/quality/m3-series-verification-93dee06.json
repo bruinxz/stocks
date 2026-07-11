@@ -55,6 +55,20 @@
       "merge_attribution": "owner authority-native (msg=d0d11677 self-merge criterion 大幅-super-SATISFY 6/6 副签 UNCONDITIONAL GREEN + CI 8/8 GREEN)"
     }
   ],
+  "entries": [
+    {"pr": "#115", "sha": "3246b8cf"},
+    {"pr": "#116", "sha": "036294a7"},
+    {"pr": "#117", "sha": "7003e0d3"},
+    {"pr": "#118", "sha": "feafa6e4"},
+    {"pr": "#119", "sha": "93dee066"}
+  ],
+  "burndown_history": [
+    "3246b8cf",
+    "036294a7",
+    "7003e0d3",
+    "feafa6e4",
+    "93dee066"
+  ],
   "副签_6方_embodiment_msg_id_table": {
     "note": "msg-id links to Slock chat message where each 主签 emitted UNCONDITIONAL GREEN LOCK for the corresponding PR · verify via `raft message read` on the target channel `#stocks`",
     "PR_115": {
