@@ -14,7 +14,7 @@ DROP INDEX IF EXISTS ix_multibagger_candidate_filters;
 DROP INDEX IF EXISTS ix_multibagger_candidate_as_of;
 DROP TABLE IF EXISTS multibagger_candidate_snapshot;
 
-DROP INDEX IF EXISTS ix_multibagger_text_hit_parent;
+DROP INDEX IF EXISTS ix_multibagger_text_hit_source;
 DROP INDEX IF EXISTS ix_multibagger_text_hit_ticker;
 DROP TABLE IF EXISTS multibagger_text_hit;
 

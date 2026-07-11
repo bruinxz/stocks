@@ -101,14 +101,6 @@ export class MultibaggerUniverse extends Model {
   @Column({ type: DataType.DECIMAL(18, 4), allowNull: true, field: 'market_cap_cny_100m' })
   declare marketCapCny100m: string | null;
 
-  @Column({
-    type: DataType.BOOLEAN,
-    allowNull: false,
-    defaultValue: false,
-    field: 'is_publishable_candidate',
-  })
-  declare isPublishableCandidate: boolean;
-
   @Column({ type: DataType.STRING(64), allowNull: false, field: 'fact_hash' })
   declare factHash: string;
 

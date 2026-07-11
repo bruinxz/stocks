@@ -8,7 +8,7 @@ import { Column, DataType, Model, Table } from 'sequelize-typescript';
     {
       name: 'uq_multibagger_candidate_snapshot',
       unique: true,
-      fields: ['market_scope', 'ticker', 'as_of_utc'],
+      fields: ['market_scope', 'exchange', 'ticker', 'as_of_utc', 'strategy_version'],
     },
     {
       name: 'ix_multibagger_candidate_as_of',

@@ -39,7 +39,7 @@ export class JpkrFinancialSnapshot extends Model {
   declare ticker: string;
 
   @Column({ type: DataType.INTEGER, allowNull: false, field: 'fiscal_year' })
-  declare fiscalYear: number;
+  declare readonly fiscalYear: number;
 
   @Column({ type: DataType.INTEGER, allowNull: true, field: 'fiscal_quarter' })
   declare fiscalQuarter: number | null;
@@ -50,8 +50,8 @@ export class JpkrFinancialSnapshot extends Model {
   @Column({ type: DataType.DATEONLY, allowNull: false, field: 'fiscal_period_end' })
   declare fiscalPeriodEnd: string;
 
-  @Column({ type: DataType.STRING(8), allowNull: false, field: 'fiscal_period_kind' })
-  declare fiscalPeriodKind: 'Q1' | 'Q2' | 'Q3' | 'Q4' | 'H1' | 'H2' | 'FY' | 'TTM';
+  @Column({ type: DataType.STRING(16), allowNull: false, field: 'fiscal_period_kind' })
+  declare fiscalPeriodKind: 'Q1' | 'Q3' | 'SEMIANNUAL' | 'ANNUAL';
 
   @Column({ type: DataType.TEXT, allowNull: false, field: 'currency' })
   declare currency: string;
@@ -90,11 +90,14 @@ export class JpkrFinancialSnapshot extends Model {
   @Column({ type: DataType.JSONB, allowNull: false, defaultValue: [], field: 'segment_facts' })
   declare segmentFacts: unknown[];
 
-  @Column({ type: DataType.TEXT, allowNull: false, field: 'taxonomy_version' })
-  declare taxonomyVersion: string;
+  @Column({ type: DataType.TEXT, allowNull: true, field: 'taxonomy_version' })
+  declare taxonomyVersion: string | null;
 
-  @Column({ type: DataType.TEXT, allowNull: false, field: 'parse_version' })
-  declare parseVersion: string;
+  @Column({ type: DataType.TEXT, allowNull: false, field: 'parser_version' })
+  declare parserVersion: string;
+
+  @Column({ type: DataType.TEXT, allowNull: true, field: 'account_mapping_version' })
+  declare accountMappingVersion: string | null;
 
   @Column({
     type: DataType.JSONB,
@@ -140,7 +143,7 @@ export class JpkrFinancialSnapshot extends Model {
   declare derivationVersion: string | null;
 
   @Column({ type: DataType.STRING(64), allowNull: false, field: 'source_kind' })
-  declare sourceKind: string;
+  declare sourceKind: 'jpx-edinet' | 'dart';
 
   @Column({ type: DataType.TEXT, allowNull: false, field: 'source_document_id' })
   declare sourceDocumentId: string;

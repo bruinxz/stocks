@@ -30,6 +30,10 @@ CREATE TABLE jpkr_security_master (
     (market_scope = 'jp' AND exchange IN ('tse', 'ose'))
     OR (market_scope = 'kr' AND exchange IN ('krx', 'kosdaq'))
   ),
+  CONSTRAINT ck_jpkr_security_market_currency CHECK (
+    (market_scope = 'jp' AND currency = 'JPY')
+    OR (market_scope = 'kr' AND currency = 'KRW')
+  ),
   CONSTRAINT ck_jpkr_security_lifecycle CHECK (
     delisting_day IS NULL OR listing_day IS NULL OR delisting_day >= listing_day
   ),
@@ -79,6 +83,10 @@ CREATE TABLE jpkr_daily_kline (
   CONSTRAINT ck_jpkr_kline_market_exchange CHECK (
     (market_scope = 'jp' AND exchange IN ('tse', 'ose'))
     OR (market_scope = 'kr' AND exchange IN ('krx', 'kosdaq'))
+  ),
+  CONSTRAINT ck_jpkr_kline_market_currency CHECK (
+    (market_scope = 'jp' AND currency = 'JPY')
+    OR (market_scope = 'kr' AND currency = 'KRW')
   ),
   CONSTRAINT ck_jpkr_kline_ohlc CHECK (
     high >= low AND high >= open AND high >= close AND low <= open AND low <= close
@@ -131,8 +139,9 @@ CREATE TABLE jpkr_financial_snapshot (
   fiscal_period_start DATE,
   fiscal_period_end DATE NOT NULL,
   fiscal_period_kind TEXT NOT NULL
-    CHECK (fiscal_period_kind IN ('Q1', 'Q2', 'Q3', 'Q4', 'H1', 'H2', 'FY', 'TTM')),
-  fiscal_year INTEGER NOT NULL CHECK (fiscal_year BETWEEN 1900 AND 2200),
+    CHECK (fiscal_period_kind IN ('Q1', 'Q3', 'SEMIANNUAL', 'ANNUAL')),
+  fiscal_year INTEGER GENERATED ALWAYS AS
+    (EXTRACT(YEAR FROM fiscal_period_end)::INTEGER) STORED,
   fiscal_quarter INTEGER CHECK (fiscal_quarter IS NULL OR fiscal_quarter BETWEEN 1 AND 4),
   currency TEXT NOT NULL,
   is_consolidated BOOLEAN,
@@ -146,8 +155,9 @@ CREATE TABLE jpkr_financial_snapshot (
   research_and_development NUMERIC(28, 4),
   segment_facts JSONB NOT NULL DEFAULT '[]'::jsonb
     CHECK (jsonb_typeof(segment_facts) = 'array'),
-  taxonomy_version TEXT NOT NULL,
-  parse_version TEXT NOT NULL,
+  taxonomy_version TEXT,
+  parser_version TEXT NOT NULL,
+  account_mapping_version TEXT,
   concept_provenance JSONB NOT NULL DEFAULT '{}'::jsonb
     CHECK (jsonb_typeof(concept_provenance) = 'object'),
   parse_warnings JSONB NOT NULL DEFAULT '[]'::jsonb
@@ -163,7 +173,7 @@ CREATE TABLE jpkr_financial_snapshot (
   coverage_pct NUMERIC(5, 2)
     CHECK (coverage_pct IS NULL OR coverage_pct BETWEEN 0 AND 100),
   derivation_version TEXT,
-  source_kind TEXT NOT NULL,
+  source_kind TEXT NOT NULL CHECK (source_kind IN ('jpx-edinet', 'dart')),
   source_document_id TEXT NOT NULL,
   source_version TEXT NOT NULL,
   effective_at_utc TIMESTAMPTZ NOT NULL,
@@ -172,6 +182,25 @@ CREATE TABLE jpkr_financial_snapshot (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT ck_jpkr_financial_period CHECK (
     fiscal_period_start IS NULL OR fiscal_period_start <= fiscal_period_end
+  ),
+  CONSTRAINT ck_jpkr_financial_market_currency CHECK (
+    (market_scope = 'jp' AND currency = 'JPY')
+    OR (market_scope = 'kr' AND currency = 'KRW')
+  ),
+  CONSTRAINT ck_jpkr_financial_period_quarter CHECK (
+    (fiscal_period_kind = 'Q1' AND fiscal_quarter = 1)
+    OR (fiscal_period_kind = 'Q3' AND fiscal_quarter = 3)
+    OR (fiscal_period_kind IN ('SEMIANNUAL', 'ANNUAL') AND fiscal_quarter IS NULL)
+  ),
+  CONSTRAINT ck_jpkr_financial_source_lineage CHECK (
+    (source_kind = 'jpx-edinet'
+      AND market_scope = 'jp'
+      AND taxonomy_version IS NOT NULL
+      AND account_mapping_version IS NULL)
+    OR
+    (source_kind = 'dart'
+      AND market_scope = 'kr'
+      AND account_mapping_version IS NOT NULL)
   ),
   CONSTRAINT ck_jpkr_financial_derivation_version CHECK (
     (
@@ -201,7 +230,6 @@ CREATE TABLE jpkr_fx_observation (
   direction TEXT NOT NULL
     CHECK (direction = 'LOCAL_PER_USD_WITH_RECIPROCAL'),
   observation_day DATE NOT NULL,
-  effective_at_utc TIMESTAMPTZ NOT NULL,
   available_at_utc TIMESTAMPTZ NOT NULL,
   source_kind TEXT NOT NULL CHECK (source_kind IN ('BOJ', 'BOK')),
   source_document_id TEXT NOT NULL,
@@ -209,10 +237,36 @@ CREATE TABLE jpkr_fx_observation (
   local_per_usd NUMERIC(24, 10) NOT NULL CHECK (local_per_usd > 0),
   usd_per_local NUMERIC(24, 14) NOT NULL CHECK (usd_per_local > 0),
   change_pct NUMERIC(18, 8),
+  previous_observation_day DATE,
+  previous_source_kind TEXT CHECK (
+    previous_source_kind IS NULL OR previous_source_kind IN ('BOJ', 'BOK')
+  ),
+  previous_source_version TEXT,
+  previous_fact_hash TEXT CHECK (
+    previous_fact_hash IS NULL OR previous_fact_hash ~ '^[0-9a-f]{64}$'
+  ),
   fact_hash TEXT NOT NULL CHECK (fact_hash ~ '^[0-9a-f]{64}$'),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT ck_jpkr_fx_pair_source CHECK (
+    (pair = 'USDJPY' AND source_kind = 'BOJ')
+    OR (pair = 'USDKRW' AND source_kind = 'BOK')
+  ),
   CONSTRAINT ck_jpkr_fx_reciprocal CHECK (
     ABS((local_per_usd * usd_per_local) - 1) <= 0.00000001
+  ),
+  CONSTRAINT ck_jpkr_fx_change_lineage CHECK (
+    (change_pct IS NULL
+      AND previous_observation_day IS NULL
+      AND previous_source_kind IS NULL
+      AND previous_source_version IS NULL
+      AND previous_fact_hash IS NULL)
+    OR
+    (change_pct IS NOT NULL
+      AND previous_observation_day IS NOT NULL
+      AND previous_observation_day < observation_day
+      AND previous_source_kind = source_kind
+      AND previous_source_version IS NOT NULL
+      AND previous_fact_hash IS NOT NULL)
   ),
   CONSTRAINT uq_jpkr_fx_identity
     UNIQUE (pair, direction, observation_day, source_kind, source_version)
@@ -248,18 +302,27 @@ CREATE TABLE multibagger_universe (
     CHECK (jsonb_typeof(fundamental_snapshot) = 'object'),
   filter_pass_bitmap INTEGER NOT NULL DEFAULT 0 CHECK (filter_pass_bitmap >= 0),
   market_cap_cny_100m NUMERIC(18, 4),
-  is_publishable_candidate BOOLEAN NOT NULL DEFAULT FALSE,
   fact_hash TEXT NOT NULL CHECK (fact_hash ~ '^[0-9a-f]{64}$'),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT ck_multibagger_aggregate_identity CHECK (
     (record_kind = 'FRENCH_AGGREGATE'
       AND exchange = 'ACADEMIC_REFERENCE'
-      AND ticker LIKE '__AGGREGATE__:%'
-      AND is_publishable_candidate = FALSE)
+      AND ticker LIKE '__AGGREGATE__:%')
     OR
     (record_kind <> 'FRENCH_AGGREGATE'
       AND exchange <> 'ACADEMIC_REFERENCE'
       AND ticker NOT LIKE '__AGGREGATE__:%')
+  ),
+  CONSTRAINT ck_multibagger_market_exchange CHECK (
+    (record_kind = 'FRENCH_AGGREGATE'
+      AND market_scope = 'us'
+      AND exchange = 'ACADEMIC_REFERENCE')
+    OR (record_kind <> 'FRENCH_AGGREGATE' AND (
+      (market_scope = 'cn_a' AND exchange IN ('sh', 'sz', 'bj'))
+      OR (market_scope = 'us' AND exchange IN ('nyse', 'nasdaq'))
+      OR (market_scope = 'jp' AND exchange IN ('tse', 'ose'))
+      OR (market_scope = 'kr' AND exchange IN ('krx', 'kosdaq'))
+    ))
   ),
   CONSTRAINT ck_multibagger_source_fact_only CHECK (
     NOT (
@@ -295,23 +358,23 @@ CREATE INDEX ix_multibagger_source_kind
 
 CREATE TABLE multibagger_text_hit (
   multibagger_text_hit_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  multibagger_universe_id UUID NOT NULL
-    REFERENCES multibagger_universe(multibagger_universe_id) ON DELETE CASCADE,
   market_scope TEXT NOT NULL CHECK (market_scope IN ('cn_a', 'us', 'jp', 'kr')),
   ticker TEXT NOT NULL,
+  source_kind TEXT NOT NULL,
   source_document_id TEXT NOT NULL,
-  source_version TEXT NOT NULL,
   document_fact_hash TEXT NOT NULL CHECK (document_fact_hash ~ '^[0-9a-f]{64}$'),
   taxonomy_version TEXT NOT NULL,
   term_id TEXT NOT NULL,
-  hit_kind TEXT NOT NULL,
+  hit_kind TEXT NOT NULL CHECK (
+    hit_kind IN ('OPTIONALITY', 'POSITIVE', 'NEGATIVE', 'EARLY_NEWS')
+  ),
+  language TEXT NOT NULL CHECK (language IN ('en', 'zh', 'ja', 'ko')),
   field TEXT NOT NULL CHECK (field IN ('TITLE', 'BODY')),
   start_offset INTEGER NOT NULL CHECK (start_offset >= 0),
   end_offset INTEGER NOT NULL CHECK (end_offset > start_offset),
-  evidence_ref TEXT NOT NULL,
+  context_hash TEXT NOT NULL CHECK (context_hash ~ '^[0-9a-f]{64}$'),
   effective_at_utc TIMESTAMPTZ NOT NULL,
   available_at_utc TIMESTAMPTZ NOT NULL,
-  fact_hash TEXT NOT NULL CHECK (fact_hash ~ '^[0-9a-f]{64}$'),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_multibagger_text_hit_identity UNIQUE (
     document_fact_hash,
@@ -325,8 +388,8 @@ CREATE TABLE multibagger_text_hit (
 
 CREATE INDEX ix_multibagger_text_hit_ticker
   ON multibagger_text_hit (market_scope, ticker, available_at_utc DESC);
-CREATE INDEX ix_multibagger_text_hit_parent
-  ON multibagger_text_hit (multibagger_universe_id);
+CREATE INDEX ix_multibagger_text_hit_source
+  ON multibagger_text_hit (source_kind, source_document_id, available_at_utc DESC);
 
 CREATE TABLE multibagger_candidate_snapshot (
   multibagger_candidate_snapshot_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -346,25 +409,46 @@ CREATE TABLE multibagger_candidate_snapshot (
   entry_plan JSONB CHECK (entry_plan IS NULL OR jsonb_typeof(entry_plan) = 'object'),
   latest_catalyst JSONB,
   source_fact_hashes JSONB NOT NULL CHECK (
-    jsonb_typeof(source_fact_hashes) = 'array'
-    AND source_fact_hashes <> '[]'::jsonb
-    AND NOT jsonb_path_exists(source_fact_hashes, '$[*] ? (@ == null)')
-    AND NOT jsonb_path_exists(source_fact_hashes, '$[*] ? (@.type() != "string")')
+    CASE jsonb_typeof(source_fact_hashes)
+      WHEN 'array' THEN
+        jsonb_array_length(source_fact_hashes) > 0
+        AND COALESCE(
+          NOT jsonb_path_exists(
+            source_fact_hashes,
+            'strict $[*] ? (@.type() != "string" || !(@ like_regex "^[0-9a-f]{64}$"))',
+            '{}'::jsonb,
+            TRUE
+          ),
+          FALSE
+        )
+      ELSE FALSE
+    END
   ),
   strategy_version TEXT NOT NULL,
   fact_hash TEXT NOT NULL CHECK (fact_hash ~ '^[0-9a-f]{64}$'),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT ck_multibagger_candidate_pit CHECK (available_at_utc <= as_of_utc),
-  CONSTRAINT ck_multibagger_candidate_rating CHECK (
-    (score IS NULL AND rating IS NULL)
-    OR (
-      score IS NOT NULL
-      AND rating IS NOT NULL
-      AND score ? 'rating'
-      AND score->>'rating' = rating
-    )
+  CONSTRAINT ck_multibagger_candidate_market_exchange CHECK (
+    (market_scope = 'cn_a' AND exchange IN ('sh', 'sz', 'bj'))
+    OR (market_scope = 'us' AND exchange IN ('nyse', 'nasdaq'))
+    OR (market_scope = 'jp' AND exchange IN ('tse', 'ose'))
+    OR (market_scope = 'kr' AND exchange IN ('krx', 'kosdaq'))
   ),
-  CONSTRAINT uq_multibagger_candidate_snapshot UNIQUE (market_scope, ticker, as_of_utc)
+  CONSTRAINT ck_multibagger_candidate_rating CHECK (
+    CASE
+      WHEN score IS NULL THEN rating IS NULL
+      WHEN jsonb_typeof(score) <> 'object' THEN FALSE
+      ELSE COALESCE(
+        rating IN ('A', 'B', 'C', 'D', 'F')
+        AND jsonb_typeof(score->'rating') = 'string'
+        AND score->>'rating' = rating
+        AND NOT (score ? 'band'),
+        FALSE
+      )
+    END
+  ),
+  CONSTRAINT uq_multibagger_candidate_snapshot
+    UNIQUE (market_scope, exchange, ticker, as_of_utc, strategy_version)
 );
 
 CREATE INDEX ix_multibagger_candidate_as_of
@@ -374,17 +458,34 @@ CREATE INDEX ix_multibagger_candidate_filters
 
 CREATE TABLE backtest_pit_snapshot (
   snapshot_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  strategy TEXT NOT NULL,
+  strategy TEXT NOT NULL CHECK (strategy IN (
+    'us_preferred',
+    'multibagger',
+    'japan_blue_chip',
+    'japan_multibagger',
+    'korea_semiconductor_chain',
+    'korea_multibagger'
+  )),
   as_of_utc TIMESTAMPTZ NOT NULL,
   snapshot_day DATE NOT NULL,
   published_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   is_survivorship_biased BOOLEAN NOT NULL,
   is_delisted_at_as_of BOOLEAN NOT NULL DEFAULT FALSE,
   source_versions JSONB NOT NULL CHECK (
-    jsonb_typeof(source_versions) = 'object'
-    AND source_versions <> '{}'::jsonb
-    AND NOT jsonb_path_exists(source_versions, '$.* ? (@ == null)')
-    AND NOT jsonb_path_exists(source_versions, '$.* ? (@.type() != "string")')
+    CASE jsonb_typeof(source_versions)
+      WHEN 'object' THEN
+        source_versions <> '{}'::jsonb
+        AND COALESCE(
+          NOT jsonb_path_exists(
+            source_versions,
+            'strict $.* ? (@.type() != "string" || @ == "")',
+            '{}'::jsonb,
+            TRUE
+          ),
+          FALSE
+        )
+      ELSE FALSE
+    END
   ),
   lineage_closure JSONB NOT NULL DEFAULT '{}'::jsonb
     CHECK (jsonb_typeof(lineage_closure) = 'object'),

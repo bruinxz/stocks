@@ -132,7 +132,8 @@ const expectedColumns: Record<(typeof tables)[number][0], string[]> = {
     'research_and_development',
     'segment_facts',
     'taxonomy_version',
-    'parse_version',
+    'parser_version',
+    'account_mapping_version',
     'concept_provenance',
     'parse_warnings',
     'source_payload',
@@ -157,7 +158,6 @@ const expectedColumns: Record<(typeof tables)[number][0], string[]> = {
     'pair',
     'direction',
     'observation_day',
-    'effective_at_utc',
     'available_at_utc',
     'source_kind',
     'source_document_id',
@@ -165,6 +165,10 @@ const expectedColumns: Record<(typeof tables)[number][0], string[]> = {
     'local_per_usd',
     'usd_per_local',
     'change_pct',
+    'previous_observation_day',
+    'previous_source_kind',
+    'previous_source_version',
+    'previous_fact_hash',
     'fact_hash',
     'created_at',
   ],
@@ -187,28 +191,26 @@ const expectedColumns: Record<(typeof tables)[number][0], string[]> = {
     'fundamental_snapshot',
     'filter_pass_bitmap',
     'market_cap_cny_100m',
-    'is_publishable_candidate',
     'fact_hash',
     'created_at',
   ],
   multibagger_text_hit: [
     'multibagger_text_hit_id',
-    'multibagger_universe_id',
     'market_scope',
     'ticker',
+    'source_kind',
     'source_document_id',
-    'source_version',
     'document_fact_hash',
     'taxonomy_version',
     'term_id',
     'hit_kind',
+    'language',
     'field',
     'start_offset',
     'end_offset',
-    'evidence_ref',
+    'context_hash',
     'effective_at_utc',
     'available_at_utc',
-    'fact_hash',
     'created_at',
   ],
   multibagger_candidate_snapshot: [
@@ -332,7 +334,8 @@ const frozenColumns = [
   'source_version',
   'corporate_action_version',
   'taxonomy_version',
-  'parse_version',
+  'parser_version',
+  'account_mapping_version',
   'record_kind',
   'document_fact_hash',
   'snapshot_as_of_utc',
@@ -354,6 +357,13 @@ assert(
   ),
 );
 assert(
+  '[financial] accepted provider mapping',
+  /fiscal_period_kind IN \('Q1', 'Q3', 'SEMIANNUAL', 'ANNUAL'\)/.test(up) &&
+    /INTEGER GENERATED ALWAYS AS[\s\S]*?EXTRACT\(YEAR FROM fiscal_period_end\)/.test(up) &&
+    /source_kind = 'jpx-edinet'[\s\S]*?taxonomy_version IS NOT NULL/.test(up) &&
+    /source_kind = 'dart'[\s\S]*?account_mapping_version IS NOT NULL/.test(up),
+);
+assert(
   '[kline] adjusted close pins corporate action version',
   /adjusted_close IS NULL OR corporate_action_version IS NOT NULL/.test(up),
 );
@@ -362,6 +372,22 @@ assert(
   /CREATE TABLE jpkr_fx_observation/.test(up) &&
     /LOCAL_PER_USD_WITH_RECIPROCAL/.test(up) &&
     /ABS\(\(local_per_usd \* usd_per_local\) - 1\)/.test(up),
+);
+assert(
+  '[fx] observation day and previous lineage',
+  /ck_jpkr_fx_change_lineage/.test(up) &&
+    /previous_observation_day < observation_day/.test(up) &&
+    !/jpkr_fx_observation[\s\S]*?effective_at_utc/.test(
+      up.slice(
+        up.indexOf('CREATE TABLE jpkr_fx_observation'),
+        up.indexOf('CREATE TABLE multibagger_universe'),
+      ),
+    ),
+);
+assert(
+  '[fx] exact pair/provider mapping',
+  /pair = 'USDJPY' AND source_kind = 'BOJ'/.test(up) &&
+    /pair = 'USDKRW' AND source_kind = 'BOK'/.test(up),
 );
 assert(
   '[fx] no company/kline fallback column',
@@ -374,15 +400,23 @@ assert(
   ),
 );
 assert(
-  '[multibagger] French aggregate isolation',
-  /exchange = 'ACADEMIC_REFERENCE'[\s\S]*?ticker LIKE '__AGGREGATE__:%'[\s\S]*?is_publishable_candidate = FALSE/.test(
+  '[multibagger] candidate replay identity',
+  /UNIQUE \(\s*market_scope,\s*exchange,\s*ticker,\s*as_of_utc,\s*strategy_version\s*\)/.test(
     up,
   ),
+);
+assert(
+  '[multibagger] French aggregate isolation',
+  /exchange = 'ACADEMIC_REFERENCE'[\s\S]*?ticker LIKE '__AGGREGATE__:%'/.test(up),
 );
 assert(
   '[multibagger] source facts reject Strategy projection keys',
   /ck_multibagger_source_fact_only/.test(up) &&
     /'score', 'rating', 'rating_band', 'conviction', 'risk_gate'/.test(up),
+);
+assert(
+  '[multibagger] source fact has no candidate publication SOT',
+  !/\bis_publishable_candidate\b/.test(up),
 );
 assert(
   '[text hit] six-field identity',
@@ -391,8 +425,25 @@ assert(
   ),
 );
 assert(
+  '[text hit] lossless scanner fields',
+  /hit_kind IN \('OPTIONALITY', 'POSITIVE', 'NEGATIVE', 'EARLY_NEWS'\)/.test(up) &&
+    /language IN \('en', 'zh', 'ja', 'ko'\)/.test(up) &&
+    /\bcontext_hash\b/.test(up),
+);
+assert(
   '[PIT] exact strategy/as-of unique',
   /UNIQUE\s*\(\s*strategy,\s*as_of_utc\s*\)/.test(up),
+);
+assert(
+  '[PIT] exact six replay strategies',
+  /'us_preferred'[\s\S]*?'multibagger'[\s\S]*?'japan_blue_chip'[\s\S]*?'japan_multibagger'[\s\S]*?'korea_semiconductor_chain'[\s\S]*?'korea_multibagger'/.test(
+    up,
+  ),
+);
+assert(
+  '[market] JP/KR currency mapping',
+  /market_scope = 'jp' AND currency = 'JPY'/.test(up) &&
+    /market_scope = 'kr' AND currency = 'KRW'/.test(up),
 );
 assert(
   '[PIT] normalized holdings only',
@@ -411,7 +462,7 @@ assert(
 assert(
   '[PIT] non-empty source closure',
   /source_versions <> '\{\}'::jsonb/.test(up) &&
-    /jsonb_path_exists\(source_versions, '\$\.\* \? \(@ == null\)'\)/.test(up),
+    /'strict \$\.\* \? \(@\.type\(\) != "string" \|\| @ == ""\)'/.test(up),
 );
 assert(
   '[PIT] unbiased requires evidence',

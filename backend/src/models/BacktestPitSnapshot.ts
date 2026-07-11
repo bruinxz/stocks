@@ -30,7 +30,13 @@ export class BacktestPitSnapshot extends Model {
   declare snapshotId: string;
 
   @Column({ type: DataType.TEXT, allowNull: false, field: 'strategy' })
-  declare strategy: string;
+  declare strategy:
+    | 'us_preferred'
+    | 'multibagger'
+    | 'japan_blue_chip'
+    | 'japan_multibagger'
+    | 'korea_semiconductor_chain'
+    | 'korea_multibagger';
 
   @Column({ type: DataType.DATE, allowNull: false, field: 'as_of_utc' })
   declare asOfUtc: Date;

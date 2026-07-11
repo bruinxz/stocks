@@ -35,9 +35,6 @@ export class JpkrFxObservation extends Model {
   @Column({ type: DataType.DATEONLY, allowNull: false, field: 'observation_day' })
   declare observationDay: string;
 
-  @Column({ type: DataType.DATE, allowNull: false, field: 'effective_at_utc' })
-  declare effectiveAtUtc: Date;
-
   @Column({ type: DataType.DATE, allowNull: false, field: 'available_at_utc' })
   declare availableAtUtc: Date;
 
@@ -49,6 +46,18 @@ export class JpkrFxObservation extends Model {
 
   @Column({ type: DataType.DECIMAL(18, 8), allowNull: true, field: 'change_pct' })
   declare changePct: string | null;
+
+  @Column({ type: DataType.DATEONLY, allowNull: true, field: 'previous_observation_day' })
+  declare previousObservationDay: string | null;
+
+  @Column({ type: DataType.STRING(32), allowNull: true, field: 'previous_source_kind' })
+  declare previousSourceKind: 'BOJ' | 'BOK' | null;
+
+  @Column({ type: DataType.TEXT, allowNull: true, field: 'previous_source_version' })
+  declare previousSourceVersion: string | null;
+
+  @Column({ type: DataType.STRING(64), allowNull: true, field: 'previous_fact_hash' })
+  declare previousFactHash: string | null;
 
   @Column({ type: DataType.STRING(32), allowNull: false, field: 'source_kind' })
   declare sourceKind: 'BOJ' | 'BOK';
