@@ -100,3 +100,4 @@ export * from './MultibaggerTextHit';
 export * from './MultibaggerCandidateSnapshot';
 export * from './BacktestPitSnapshot';
 export * from './BacktestPitHolding';
+export * from './Sprint3MigrationOwnedModels';

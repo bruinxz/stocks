@@ -112,6 +112,7 @@ import { MultibaggerTextHit } from '../models/MultibaggerTextHit';
 import { MultibaggerCandidateSnapshot } from '../models/MultibaggerCandidateSnapshot';
 import { BacktestPitSnapshot } from '../models/BacktestPitSnapshot';
 import { BacktestPitHolding } from '../models/BacktestPitHolding';
+import '../models/Sprint3MigrationOwnedModels';
 import dotenv from 'dotenv';
 
 dotenv.config();

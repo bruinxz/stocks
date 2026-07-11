@@ -10,10 +10,12 @@ DOWN="$ROOT/scripts/migrations/2026-07-11-sprint3-market-storage-phase1-rollback
 PGHOST="${PGHOST:-/tmp}"
 DB="stocks_sprint3_phase1_${USER:-agent}_$$"
 COLLISION_DB="${DB}_collision"
+TAMPER_DB="${DB}_tamper"
 
 cleanup() {
   dropdb -h "$PGHOST" --if-exists "$DB" >/dev/null 2>&1 || true
   dropdb -h "$PGHOST" --if-exists "$COLLISION_DB" >/dev/null 2>&1 || true
+  dropdb -h "$PGHOST" --if-exists "$TAMPER_DB" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -521,8 +523,9 @@ DB_PORT="${PGPORT:-5432}" \
 DB_NAME="$DB" \
 DB_USER="${PGUSER:-${USER:-agent}}" \
 DB_PASSWORD="${PGPASSWORD:-}" \
+SPRINT3_ORM_PG=1 \
   npx ts-node --transpile-only \
-  "$ROOT/tests/models/sprint3-market-storage-phase1.orm.ts"
+  "$ROOT/tests/models/sprint3-market-storage-phase1.orm.test.ts"
 
 test "$(psql -h "$PGHOST" -d "$DB" -Atc \
   "SELECT count(*) FROM multibagger_universe
@@ -545,7 +548,12 @@ test "$(psql -h "$PGHOST" -d "$DB" -Atc \
 psql -h "$PGHOST" -d "$DB" -v ON_ERROR_STOP=1 -f "$DOWN" >/dev/null
 test "$(psql -h "$PGHOST" -d "$DB" -Atc \
   "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")" = "0"
-psql -h "$PGHOST" -d "$DB" -v ON_ERROR_STOP=1 -f "$DOWN" >/dev/null
+if psql -h "$PGHOST" -d "$DB" -v ON_ERROR_STOP=1 -f "$DOWN" >/dev/null 2>&1; then
+  echo 'expected second rollback to fail closed with no owned tables' >&2
+  exit 1
+fi
+test "$(psql -h "$PGHOST" -d "$DB" -Atc \
+  "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")" = "0"
 
 # A partial pre-existing canonical name must abort and preserve the partial table.
 createdb -h "$PGHOST" "$COLLISION_DB"
@@ -562,5 +570,36 @@ test "$(psql -h "$PGHOST" -d "$COLLISION_DB" -Atc \
    WHERE table_schema = 'public'
      AND table_name = 'jpkr_security_master'
      AND column_name = 'stub'")" = "1"
+
+if psql -h "$PGHOST" -d "$COLLISION_DB" -v ON_ERROR_STOP=1 \
+  -f "$DOWN" >/dev/null 2>&1; then
+  echo 'expected rollback ownership mismatch to fail closed' >&2
+  exit 1
+fi
+test "$(psql -h "$PGHOST" -d "$COLLISION_DB" -Atc \
+  "SELECT count(*) FROM information_schema.columns
+   WHERE table_schema = 'public'
+     AND table_name = 'jpkr_security_master'
+     AND column_name = 'stub'")" = "1"
+
+createdb -h "$PGHOST" "$TAMPER_DB"
+psql -h "$PGHOST" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 -f "$UP" >/dev/null
+test "$(psql -h "$PGHOST" -d "$TAMPER_DB" -Atc \
+  "SELECT count(*)
+   FROM pg_class c
+   JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = current_schema()
+     AND c.relkind = 'r'
+     AND obj_description(c.oid, 'pg_class') =
+       'migration:2026-07-11-sprint3-market-storage-phase1'")" = "10"
+psql -h "$PGHOST" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 \
+  -c "COMMENT ON TABLE jpkr_security_master IS 'tampered-owner';" >/dev/null
+if psql -h "$PGHOST" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 \
+  -f "$DOWN" >/dev/null 2>&1; then
+  echo 'expected tampered ownership rollback to fail closed' >&2
+  exit 1
+fi
+test "$(psql -h "$PGHOST" -d "$TAMPER_DB" -Atc \
+  "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")" = "10"
 
 echo 'sprint3-market-storage-phase1.pg: PASS (10 tables, constraints, rollback, collision)'

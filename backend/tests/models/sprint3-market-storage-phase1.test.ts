@@ -18,7 +18,7 @@ const downPath = join(
   ROOT,
   'scripts/migrations/2026-07-11-sprint3-market-storage-phase1-rollback.sql',
 );
-const ormPath = join(ROOT, 'tests/models/sprint3-market-storage-phase1.orm.ts');
+const ormPath = join(ROOT, 'tests/models/sprint3-market-storage-phase1.orm.test.ts');
 const databasePath = join(ROOT, 'src/config/database.ts');
 const indexPath = join(ROOT, 'src/models/index.ts');
 
@@ -290,6 +290,11 @@ assert('[files] real ORM proof exists', existsSync(ormPath));
 assert('[migration] forward transaction', /\bBEGIN;[\s\S]*\bCOMMIT;/.test(up));
 assert('[migration] rollback transaction', /\bBEGIN;[\s\S]*\bCOMMIT;/.test(down));
 assert(
+  '[migration] ownership marker and rollback fingerprint',
+  /migration:2026-07-11-sprint3-market-storage-phase1/.test(up) &&
+    /rollback ownership mismatch/.test(down),
+);
+assert(
   '[migration] canonical CREATE fails closed',
   !/CREATE (?:TABLE|INDEX) IF NOT EXISTS/i.test(up),
 );
@@ -378,6 +383,14 @@ assert(
     ) &&
     /fiscalYear !== 2025/.test(readFileSync(ormPath, 'utf8')) &&
     /fiscalYear:\s*1999/.test(readFileSync(ormPath, 'utf8')),
+);
+assert(
+  '[models] migration-owned tables opt out of destructive alter sync',
+  /import\s+['"]\.\.\/models\/Sprint3MigrationOwnedModels['"]/.test(database) &&
+    /Object\.defineProperty\(model,\s*'sync'/.test(
+      readFileSync(join(ROOT, 'src/models/Sprint3MigrationOwnedModels.ts'), 'utf8'),
+    ) &&
+    /alter sync preserved FK\/defaults/.test(readFileSync(ormPath, 'utf8')),
 );
 assert(
   '[kline] adjusted close pins corporate action version',

@@ -554,4 +554,25 @@ CREATE INDEX ix_pit_holding_snapshot
 CREATE INDEX ix_pit_holding_ticker
   ON backtest_pit_holding (market_scope, ticker, available_at_utc DESC);
 
+COMMENT ON TABLE jpkr_security_master IS
+  'migration:2026-07-11-sprint3-market-storage-phase1';
+COMMENT ON TABLE jpkr_daily_kline IS
+  'migration:2026-07-11-sprint3-market-storage-phase1';
+COMMENT ON TABLE jpkr_disclosure_event IS
+  'migration:2026-07-11-sprint3-market-storage-phase1';
+COMMENT ON TABLE jpkr_financial_snapshot IS
+  'migration:2026-07-11-sprint3-market-storage-phase1';
+COMMENT ON TABLE jpkr_fx_observation IS
+  'migration:2026-07-11-sprint3-market-storage-phase1';
+COMMENT ON TABLE multibagger_universe IS
+  'migration:2026-07-11-sprint3-market-storage-phase1';
+COMMENT ON TABLE multibagger_text_hit IS
+  'migration:2026-07-11-sprint3-market-storage-phase1';
+COMMENT ON TABLE multibagger_candidate_snapshot IS
+  'migration:2026-07-11-sprint3-market-storage-phase1';
+COMMENT ON TABLE backtest_pit_snapshot IS
+  'migration:2026-07-11-sprint3-market-storage-phase1';
+COMMENT ON TABLE backtest_pit_holding IS
+  'migration:2026-07-11-sprint3-market-storage-phase1';
+
 COMMIT;
