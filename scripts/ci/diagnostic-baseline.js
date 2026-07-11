@@ -157,6 +157,17 @@ function normalizeArray(value) {
   return Array.isArray(value) ? value : [value];
 }
 
+function parseProducerExit(value) {
+  if (typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value)) {
+    throw new Error('--producer-exit is required and must be a non-negative integer');
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error('--producer-exit is outside the safe integer range');
+  }
+  return parsed;
+}
+
 function buildConfigFiles(paths, repoRoot) {
   return paths.map((relPath) => {
     const abs = path.resolve(repoRoot, relPath);
@@ -248,6 +259,9 @@ function ensureBaselineIsAncestor(repoRoot, baselineSha) {
 
 function compareDiagnostics({ baseline, current, repoRoot, toolVersion, producerExit }) {
   validateBaselineShape(baseline);
+  if (!Number.isSafeInteger(producerExit) || producerExit < 0) {
+    throw new Error('producerExit must be a non-negative safe integer');
+  }
   if (producerExit !== 0 && current.length === 0) {
     throw new Error(`producer exited ${producerExit} but no parseable diagnostics were found`);
   }
@@ -346,7 +360,7 @@ function commandCompare(args) {
     current,
     repoRoot,
     toolVersion: args['tool-version'],
-    producerExit: Number(args['producer-exit'] || 0),
+    producerExit: parseProducerExit(args['producer-exit']),
   });
   if (args.summary) fs.writeFileSync(args.summary, `${JSON.stringify(result, null, 2)}\n`);
   console.log(
@@ -403,6 +417,7 @@ module.exports = {
   makeFingerprint,
   normalizeMessage,
   normalizeDiagnosticMessage,
+  parseProducerExit,
   parseTscText,
   parseEslintJson,
   validateBaselineShape,

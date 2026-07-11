@@ -8,6 +8,7 @@ const {
   compareDiagnostics,
   groupDiagnostics,
   makeFingerprint,
+  parseProducerExit,
   parseEslintJson,
   parseTscText,
   validateBaselineShape,
@@ -59,6 +60,16 @@ function expectThrow(name, fn, fragment) {
   }
   assert.ok(thrown, `${name}: expected throw`);
   if (fragment) assert.ok(thrown.message.includes(fragment), `${name}: ${thrown.message}`);
+}
+
+assert.equal(parseProducerExit('0'), 0);
+assert.equal(parseProducerExit('2'), 2);
+for (const invalidExit of [undefined, '', 'abc', '1.0', '-1', ' 1', '01']) {
+  expectThrow(
+    `invalid producer exit ${String(invalidExit)}`,
+    () => parseProducerExit(invalidExit),
+    'required and must be a non-negative integer',
+  );
 }
 
 const baseline = baselineFor([baseDiagnostic], { baseline_sha: headSha });
@@ -176,6 +187,19 @@ expectThrow(
       producerExit: 2,
     }),
   'allowed exits are 0, 1',
+);
+
+expectThrow(
+  'non-integer producer exit via API',
+  () =>
+    compareDiagnostics({
+      baseline,
+      current: groupDiagnostics('eslint', [baseDiagnostic]),
+      repoRoot: process.cwd(),
+      toolVersion: '8.57.1',
+      producerExit: 1.5,
+    }),
+  'non-negative safe integer',
 );
 
 const tscDiagnostic = {
@@ -350,6 +374,36 @@ try {
   const cliSummary = JSON.parse(fs.readFileSync(cliSummaryPath, 'utf8'));
   assert.equal(cliSummary.ok, false, 'CLI emits a machine-readable failure summary');
   assert.equal(cliSummary.fingerprints.added, 1);
+
+  for (const [name, producerExitArgs] of [
+    ['omitted', []],
+    ['valueless', ['--producer-exit']],
+    ['malformed', ['--producer-exit', 'abc']],
+    ['fractional', ['--producer-exit', '1.5']],
+    ['NaN', ['--producer-exit', 'NaN']],
+  ]) {
+    const invalidCli = spawnSync(
+      process.execPath,
+      [
+        path.join(__dirname, 'diagnostic-baseline.js'),
+        'compare',
+        '--baseline',
+        cliBaselinePath,
+        '--input',
+        eslintInput,
+        '--tool-version',
+        '8.57.1',
+        '--repo-root',
+        process.cwd(),
+        '--workdir',
+        '.',
+        ...producerExitArgs,
+      ],
+      { encoding: 'utf8' },
+    );
+    assert.equal(invalidCli.status, 1, `CLI rejects ${name} producer-exit evidence`);
+    assert.match(invalidCli.stderr, /--producer-exit is required/);
+  }
 } finally {
   fs.rmSync(tempDir, { recursive: true, force: true });
 }
