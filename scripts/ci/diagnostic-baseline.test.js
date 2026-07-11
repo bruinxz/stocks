@@ -375,7 +375,11 @@ try {
     'backend/package.json',
     'backend/package-lock.json',
   ]) {
-    writeRepoFile(driftRepo, configPath, `old:${configPath}\n`);
+    writeRepoFile(
+      driftRepo,
+      configPath,
+      configPath.endsWith('package.json') ? '{}\n' : `old:${configPath}\n`,
+    );
   }
   const driftAnchor = commitAll(driftRepo, 'anchor');
   writeRepoFile(driftRepo, 'backend/.eslintrc.js', 'new eslint config\n');
@@ -404,7 +408,11 @@ try {
     'backend/tsconfig.json',
     'backend/package.json',
   ]) {
-    writeRepoFile(missingAnchorRepo, configPath, `stable:${configPath}\n`);
+    writeRepoFile(
+      missingAnchorRepo,
+      configPath,
+      configPath.endsWith('package.json') ? '{}\n' : `stable:${configPath}\n`,
+    );
   }
   const missingAnchor = commitAll(missingAnchorRepo, 'anchor without lockfile');
   writeRepoFile(missingAnchorRepo, 'backend/package-lock.json', 'added later\n');
@@ -424,6 +432,72 @@ try {
         producerExit: 0,
       }),
     'config file missing at baseline_sha',
+  );
+
+  const ignoreRepo = path.join(tempDir, 'eslint-ignore-repo');
+  initGitRepo(ignoreRepo);
+  for (const configPath of [
+    'backend/.eslintrc.js',
+    'backend/tsconfig.json',
+    'backend/package.json',
+    'backend/package-lock.json',
+  ]) {
+    writeRepoFile(
+      ignoreRepo,
+      configPath,
+      configPath.endsWith('package.json') ? '{}\n' : `stable:${configPath}\n`,
+    );
+  }
+  writeRepoFile(ignoreRepo, 'backend/src/covered.ts', 'export const covered = true;\n');
+  const ignoreAnchor = commitAll(ignoreRepo, 'anchor');
+  writeRepoFile(ignoreRepo, 'backend/.eslintignore', 'src/covered.ts\n');
+  commitAll(ignoreRepo, 'child adds ignore');
+  expectThrow(
+    'current eslint ignore surface rejected',
+    () =>
+      compareDiagnostics({
+        baseline: baselineFor([], {
+          baseline_sha: ignoreAnchor,
+          config_files: configFilesInRepo(ignoreRepo),
+        }),
+        current: [],
+        repoRoot: ignoreRepo,
+        toolVersion: '8.57.1',
+        producerExit: 0,
+      }),
+    'current ESLint control surfaces',
+  );
+
+  const nestedConfigRepo = path.join(tempDir, 'eslint-nested-config-repo');
+  initGitRepo(nestedConfigRepo);
+  for (const configPath of [
+    'backend/.eslintrc.js',
+    'backend/tsconfig.json',
+    'backend/package.json',
+    'backend/package-lock.json',
+  ]) {
+    writeRepoFile(
+      nestedConfigRepo,
+      configPath,
+      configPath.endsWith('package.json') ? '{}\n' : `stable:${configPath}\n`,
+    );
+  }
+  writeRepoFile(nestedConfigRepo, 'backend/src/.eslintrc.json', '{}\n');
+  const nestedAnchor = commitAll(nestedConfigRepo, 'anchor with nested config');
+  expectThrow(
+    'anchor nested eslint config rejected',
+    () =>
+      compareDiagnostics({
+        baseline: baselineFor([], {
+          baseline_sha: nestedAnchor,
+          config_files: configFilesInRepo(nestedConfigRepo),
+        }),
+        current: [],
+        repoRoot: nestedConfigRepo,
+        toolVersion: '8.57.1',
+        producerExit: 0,
+      }),
+    'baseline ESLint control surfaces',
   );
 
   const eslintInput = path.join(tempDir, 'eslint.json');

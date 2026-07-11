@@ -346,6 +346,73 @@ function canonicalConfigPaths(kind) {
   throw new Error(`unsupported kind: ${kind}`);
 }
 
+function currentEslintControlFiles(repoRoot) {
+  const found = [];
+  function walk(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (['node_modules', 'dist', 'coverage', '.git'].includes(entry.name)) continue;
+      const absolute = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(absolute);
+        continue;
+      }
+      const rel = path.relative(repoRoot, absolute).split(path.sep).join('/');
+      if (entry.name === '.eslintignore' || /^\.eslintrc(?:\.|$)/.test(entry.name)) {
+        found.push(rel);
+      }
+      if (entry.name === 'package.json') {
+        const parsed = JSON.parse(fs.readFileSync(absolute, 'utf8'));
+        if (Object.prototype.hasOwnProperty.call(parsed, 'eslintConfig')) {
+          found.push(`${rel}#eslintConfig`);
+        }
+      }
+    }
+  }
+  walk(path.join(repoRoot, 'backend'));
+  return found.sort();
+}
+
+function anchorEslintControlFiles(repoRoot, baselineSha) {
+  const paths = execFileSync('git', ['ls-tree', '-r', '--name-only', baselineSha, '--', 'backend'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  })
+    .split(/\r?\n/)
+    .filter(Boolean);
+  const found = paths.filter((filePath) => {
+    const name = path.posix.basename(filePath);
+    return name === '.eslintignore' || /^\.eslintrc(?:\.|$)/.test(name);
+  });
+  for (const filePath of paths.filter((candidate) => path.posix.basename(candidate) === 'package.json')) {
+    const contents = execFileSync('git', ['show', `${baselineSha}:${filePath}`], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    });
+    const parsed = JSON.parse(contents);
+    if (Object.prototype.hasOwnProperty.call(parsed, 'eslintConfig')) {
+      found.push(`${filePath}#eslintConfig`);
+    }
+  }
+  return found.sort();
+}
+
+function ensureEslintControlAuthority(repoRoot, baselineSha) {
+  const expected = ['backend/.eslintrc.js'];
+  for (const [label, actual] of [
+    ['baseline', anchorEslintControlFiles(repoRoot, baselineSha)],
+    ['current', currentEslintControlFiles(repoRoot)],
+  ]) {
+    if (
+      actual.length !== expected.length ||
+      actual.some((controlPath, index) => controlPath !== expected[index])
+    ) {
+      throw new Error(
+        `${label} ESLint control surfaces must equal ${JSON.stringify(expected)}; found ${JSON.stringify(actual)}`,
+      );
+    }
+  }
+}
+
 function validateBaselineShape(baseline) {
   if (!baseline || typeof baseline !== 'object') throw new Error('baseline must be an object');
   if (baseline.version !== 1) throw new Error('baseline version must be 1');
@@ -469,6 +536,9 @@ function compareDiagnostics({ baseline, current, repoRoot, toolVersion, producer
     throw new Error(`tool version mismatch: baseline=${baseline.tool.version} current=${toolVersion}`);
   }
   ensureBaselineIsAncestor(repoRoot, baseline.baseline_sha);
+  if (baseline.kind === 'eslint') {
+    ensureEslintControlAuthority(repoRoot, baseline.baseline_sha);
+  }
   for (const configFile of baseline.config_files) {
     const anchorHash = gitBlobHash(repoRoot, baseline.baseline_sha, configFile.path);
     if (anchorHash !== configFile.sha256) {
@@ -616,6 +686,7 @@ module.exports = {
   canonicalToolName,
   compareDiagnostics,
   groupDiagnostics,
+  ensureEslintControlAuthority,
   gitBlobHash,
   makeFingerprint,
   normalizeMessage,

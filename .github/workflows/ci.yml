@@ -349,7 +349,9 @@ jobs:
         run: |
           set -o pipefail
           set +e
-          npx eslint src --ext .ts --format json > ../backend-lint.json 2> ../backend-lint.stderr
+          npx eslint src --ext .ts --format json \
+            --no-ignore --no-eslintrc --config .eslintrc.js \
+            > ../backend-lint.json 2> ../backend-lint.stderr
           lint_rc=$?
           set -e
           eslint_version=$(npx eslint --version)
