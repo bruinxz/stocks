@@ -1,69 +1,80 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useAbortableRequest } from 'shared/hooks/useAbortableRequest';
-import type { BacktestSnapshotSlot, BacktestHolding } from './types';
-
-type Profile = 'us_preferred' | 'multibagger';
+import type {
+  BacktestHolding,
+  BacktestMarketScope,
+  BacktestSnapshotSlot,
+  BacktestStrategy,
+} from './types';
+import { parseHoldingsResponse, parseSnapshotListResponse } from './backtestAdapters';
+import { buildBacktestHoldingsUrl, buildBacktestListUrl } from './backtestUrls';
 
 interface UseBacktestDataOptions {
-  profile: Profile;
+  strategy: BacktestStrategy;
+  marketScope: BacktestMarketScope;
   from?: string;
   to?: string;
   limit?: number;
 }
 
-export function useBacktestData({ profile, from, to, limit = 60 }: UseBacktestDataOptions) {
+export function useBacktestData({
+  strategy,
+  marketScope,
+  from,
+  to,
+  limit = 60,
+}: UseBacktestDataOptions) {
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | null>(null);
 
   const snapshotListUrl = useMemo(() => {
-    const params = new URLSearchParams();
-    if (from) params.set('from', from);
-    if (to) params.set('to', to);
-    params.set('limit', String(limit));
-    return `/api/v1/backtest-pit/${profile}?${params}`;
-  }, [profile, from, to, limit]);
+    return buildBacktestListUrl(strategy, { marketScope, from, to, limit });
+  }, [strategy, marketScope, from, to, limit]);
 
   const {
     data: snapshotsRaw,
     loading: snapshotsLoading,
     error: snapshotsError,
     refetch: refetchSnapshots,
-  } = useAbortableRequest<{ snapshots: BacktestSnapshotSlot[] }>(
-    (signal) =>
-      fetch(snapshotListUrl, { signal }).then((r) => {
-        if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-        return r.json();
-      }),
-    [snapshotListUrl],
+  } = useAbortableRequest<BacktestSnapshotSlot[]>(
+    async signal => {
+      const response = await fetch(snapshotListUrl, { signal });
+      if (!response.ok) {
+        throw new Error(`${response.status} ${response.statusText}`);
+      }
+      return parseSnapshotListResponse(await response.json(), strategy, marketScope);
+    },
+    [snapshotListUrl, strategy, marketScope]
   );
 
-  const snapshots = snapshotsRaw?.snapshots ?? [];
+  const snapshots = useMemo(() => snapshotsRaw ?? [], [snapshotsRaw]);
 
   const selectedSnapshot = useMemo(
-    () => snapshots.find((s) => s.snapshot_id === selectedSnapshotId) ?? null,
-    [snapshots, selectedSnapshotId],
+    () => snapshots.find(snapshot => snapshot.snapshot_id === selectedSnapshotId) ?? null,
+    [snapshots, selectedSnapshotId]
   );
 
   const holdingsUrl = useMemo(() => {
     if (!selectedSnapshot) return null;
-    return `/api/v1/backtest-pit/${profile}/${selectedSnapshot.as_of_utc}/holdings`;
-  }, [profile, selectedSnapshot]);
+    return buildBacktestHoldingsUrl(strategy, selectedSnapshot);
+  }, [strategy, selectedSnapshot]);
 
   const {
     data: holdingsRaw,
     loading: holdingsLoading,
     error: holdingsError,
-  } = useAbortableRequest<{ holdings: BacktestHolding[] }>(
-    (signal) => {
-      if (!holdingsUrl) return Promise.resolve({ holdings: [] });
-      return fetch(holdingsUrl, { signal }).then((r) => {
-        if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-        return r.json();
-      });
+  } = useAbortableRequest<BacktestHolding[] | null>(
+    async signal => {
+      if (!holdingsUrl) return null;
+      const response = await fetch(holdingsUrl, { signal });
+      if (!response.ok) {
+        throw new Error(`${response.status} ${response.statusText}`);
+      }
+      return parseHoldingsResponse(await response.json());
     },
-    [holdingsUrl],
+    [holdingsUrl]
   );
 
-  const holdings = holdingsRaw?.holdings ?? [];
+  const holdings = holdingsRaw ?? [];
 
   const selectSnapshot = useCallback((id: string | null) => {
     setSelectedSnapshotId(id);
@@ -75,7 +86,8 @@ export function useBacktestData({ profile, from, to, limit = 60 }: UseBacktestDa
     holdings,
     loading: snapshotsLoading,
     holdingsLoading,
-    error: snapshotsError ?? holdingsError ?? null,
+    error: snapshotsError,
+    holdingsError,
     selectSnapshot,
     refetchSnapshots,
   };

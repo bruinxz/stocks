@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { Select, DatePicker } from 'antd';
+import './backtest.css';
 import { LoadingState } from '../../shared/LoadingState';
 import { EmptyState } from '../../shared/EmptyState';
 import { ErrorState } from '../../shared/ErrorState';
@@ -9,20 +10,37 @@ import { useBacktestData } from './useBacktestData';
 import { SnapshotTable } from './SnapshotTable';
 import { MetricsCards } from './MetricsCards';
 import { BacktestChart } from './BacktestChart';
+import { PitTimeline } from './PitTimeline';
 import { PitBadge } from './PitBadge';
 import { buildBacktestSidebarSections } from './BacktestSidebarSections';
+import {
+  BACKTEST_STRATEGY_MARKET_SCOPES,
+  coerceBacktestMarketScope,
+  type BacktestMarketScope,
+  type BacktestStrategy,
+} from './types';
 
 const { RangePicker } = DatePicker;
 
-type Profile = 'us_preferred' | 'multibagger';
-
-const PROFILE_OPTIONS = [
-  { value: 'us_preferred' as const, label: '美股优选' },
-  { value: 'multibagger' as const, label: '高倍潜力' },
+const STRATEGY_OPTIONS: { value: BacktestStrategy; label: string }[] = [
+  { value: 'us_preferred', label: '美股优选' },
+  { value: 'multibagger', label: '高倍潜力' },
+  { value: 'japan_blue_chip', label: '日本蓝筹' },
+  { value: 'korea_semiconductor_chain', label: '韩国半导体链' },
+  { value: 'japan_multibagger', label: '日本高倍潜力' },
+  { value: 'korea_multibagger', label: '韩国高倍潜力' },
 ];
 
+const MARKET_SCOPE_LABEL: Record<BacktestMarketScope, string> = {
+  cn_a: '中国 A 股',
+  us: '美国市场',
+  jp: '日本市场',
+  kr: '韩国市场',
+};
+
 export function BacktestEvidence() {
-  const [profile, setProfile] = useState<Profile>('us_preferred');
+  const [strategy, setStrategy] = useState<BacktestStrategy>('us_preferred');
+  const [marketScope, setMarketScope] = useState<BacktestMarketScope>('us');
   const [dateRange, setDateRange] = useState<[string, string] | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -32,11 +50,12 @@ export function BacktestEvidence() {
     holdings,
     loading,
     holdingsLoading,
+    holdingsError,
     error,
     selectSnapshot,
-    refetchSnapshots,
   } = useBacktestData({
-    profile,
+    strategy,
+    marketScope,
     from: dateRange?.[0],
     to: dateRange?.[1],
   });
@@ -65,52 +84,121 @@ export function BacktestEvidence() {
       selectSnapshot(id);
       setSidebarOpen(id != null);
     },
-    [selectSnapshot],
+    [selectSnapshot]
   );
 
-  if (loading) return <LoadingState />;
-  if (error) return <ErrorState message={error.message} />;
-  if (!snapshots.length) {
-    return (
-      <EmptyState title="暂无回测快照 · 请等待 6-month PIT 数据入库或切换 profile" />
-    );
-  }
+  const handleStrategyChange = useCallback(
+    (nextStrategy: BacktestStrategy) => {
+      selectSnapshot(null);
+      setSidebarOpen(false);
+      setStrategy(nextStrategy);
+      setMarketScope(currentScope => coerceBacktestMarketScope(nextStrategy, currentScope));
+    },
+    [selectSnapshot]
+  );
+
+  const marketScopeOptions = useMemo(
+    () =>
+      BACKTEST_STRATEGY_MARKET_SCOPES[strategy].map(scope => ({
+        value: scope,
+        label: MARKET_SCOPE_LABEL[scope],
+      })),
+    [strategy]
+  );
+
+  const handleMarketScopeChange = useCallback(
+    (nextMarketScope: BacktestMarketScope) => {
+      selectSnapshot(null);
+      setSidebarOpen(false);
+      setMarketScope(nextMarketScope);
+    },
+    [selectSnapshot]
+  );
 
   const sidebarSections = selectedSnapshot
-    ? buildBacktestSidebarSections(selectedSnapshot, holdings, holdingsLoading)
+    ? buildBacktestSidebarSections(selectedSnapshot, holdings, holdingsLoading, holdingsError)
     : [];
+
+  const handleDateRangeChange = useCallback(
+    (nextRange: [string, string] | null) => {
+      selectSnapshot(null);
+      setSidebarOpen(false);
+      setDateRange(nextRange);
+    },
+    [selectSnapshot]
+  );
+
+  let content: React.ReactNode;
+  if (loading) {
+    content = <LoadingState />;
+  } else if (error) {
+    content = <ErrorState message={error.message} />;
+  } else if (!snapshots.length) {
+    content = <EmptyState title="暂无回测快照 · 请等待 PIT 数据入库或切换策略" />;
+  } else {
+    content = (
+      <>
+        <MetricsCards kpiSlots={kpiSlots} />
+
+        <div className="backtest-split">
+          <div className="backtest-left">
+            <BacktestChart snapshots={snapshots} />
+            <PitTimeline
+              snapshots={snapshots}
+              selectedId={selectedSnapshot?.snapshot_id ?? null}
+              onSelect={handleSnapshotSelect}
+            />
+          </div>
+          <div className="backtest-right">
+            <div className="backtest-table-heading">
+              <span>SNAPSHOT REGISTER</span>
+              <strong>快照登记簿</strong>
+            </div>
+            <SnapshotTable
+              snapshots={snapshots}
+              selectedId={selectedSnapshot?.snapshot_id ?? null}
+              onSelect={handleSnapshotSelect}
+            />
+          </div>
+        </div>
+      </>
+    );
+  }
 
   return (
     <div className="backtest-evidence">
       <div className="backtest-toolbar">
-        <Select
-          value={profile}
-          onChange={setProfile}
-          options={PROFILE_OPTIONS}
-          style={{ width: 140 }}
-        />
-        <RangePicker
-          onChange={(_, dateStrings) =>
-            setDateRange(dateStrings[0] ? [dateStrings[0], dateStrings[1]] : null)
-          }
-        />
-        {selectedSnapshot && <PitBadge snapshot={selectedSnapshot} />}
-      </div>
-
-      <MetricsCards kpiSlots={kpiSlots} />
-
-      <div className="backtest-split">
-        <div className="backtest-left">
-          <BacktestChart snapshots={snapshots} />
+        <div className="backtest-toolbar__intro">
+          <span>POINT-IN-TIME / 6M</span>
+          <h2>回测证据台</h2>
+          <p>每一笔指标都锚定到当时可见数据，拒绝事后信息污染。</p>
         </div>
-        <div className="backtest-right">
-          <SnapshotTable
-            snapshots={snapshots}
-            selectedId={selectedSnapshot?.snapshot_id ?? null}
-            onSelect={handleSnapshotSelect}
+        <div className="backtest-toolbar__controls">
+          <Select
+            aria-label="选择回测策略"
+            value={strategy}
+            onChange={handleStrategyChange}
+            options={STRATEGY_OPTIONS}
+            style={{ width: 180 }}
           />
+          <Select
+            aria-label="选择回测市场"
+            value={marketScope}
+            onChange={handleMarketScopeChange}
+            options={marketScopeOptions}
+            style={{ width: 140 }}
+          />
+          <RangePicker
+            aria-label="选择快照日期范围"
+            onChange={(_, dateStrings) =>
+              handleDateRangeChange(dateStrings[0] ? [dateStrings[0], dateStrings[1]] : null)
+            }
+          />
+          {selectedSnapshot && <PitBadge snapshot={selectedSnapshot} />}
         </div>
       </div>
+
+      {content}
 
       <DetailSidebar
         open={sidebarOpen}

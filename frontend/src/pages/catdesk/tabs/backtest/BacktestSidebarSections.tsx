@@ -8,6 +8,7 @@ export function buildBacktestSidebarSections(
   snapshot: BacktestSnapshotSlot,
   holdings: BacktestHolding[],
   holdingsLoading: boolean,
+  holdingsError: Error | null
 ): DetailSection[] {
   return [
     {
@@ -16,19 +17,33 @@ export function buildBacktestSidebarSections(
       ariaLabel: 'PIT 元数据信息',
       content: (
         <div>
-          <p><strong>快照日</strong>: {snapshot.snapshot_day}</p>
-          <p><strong>冻结时间</strong>: {snapshot.as_of_utc}</p>
-          <p><strong>Profile</strong>: {snapshot.profile}</p>
-          <p><strong>Fact Hash</strong>: <code>{snapshot.fact_hash}</code></p>
+          <p>
+            <strong>快照日</strong>: {snapshot.snapshot_day}
+          </p>
+          <p>
+            <strong>冻结时间</strong>: {snapshot.as_of_utc}
+          </p>
+          <p>
+            <strong>Strategy</strong>: {snapshot.strategy}
+          </p>
+          <p>
+            <strong>Market Scope</strong>: {snapshot.market_scope}
+          </p>
+          <p>
+            <strong>Fact Hash</strong>: <code>{snapshot.fact_hash || '--'}</code>
+          </p>
           <p>
             <strong>幸存者偏差</strong>:{' '}
-            {snapshot.is_survivorship_biased
-              ? <Tag color="red">是</Tag>
-              : <Tag color="green">否</Tag>
-            }
+            {snapshot.is_survivorship_biased ? (
+              <Tag color="red">是</Tag>
+            ) : (
+              <Tag color="green">否</Tag>
+            )}
           </p>
           {snapshot.is_delisted_at_as_of && (
-            <p><Tag color="orange">标的在 as_of 时刻已退市</Tag></p>
+            <p>
+              <Tag color="orange">标的在 as_of 时刻已退市</Tag>
+            </p>
           )}
         </div>
       ),
@@ -39,11 +54,26 @@ export function buildBacktestSidebarSections(
       ariaLabel: '回测指标明细',
       content: (
         <div>
-          <p><strong>累计净值</strong>: {snapshot.net_value?.toFixed(4) ?? '--'}</p>
-          <p><strong>累计收益</strong>: {snapshot.cumulative_return != null ? `${(snapshot.cumulative_return * 100).toFixed(2)}%` : '--'}</p>
-          <p><strong>最大回撤</strong>: {snapshot.drawdown != null ? `${(snapshot.drawdown * 100).toFixed(2)}%` : '--'}</p>
-          <p><strong>夏普比率(6M)</strong>: {snapshot.sharpe_ratio_6m?.toFixed(2) ?? '--'}</p>
-          <p><strong>胜率(6M)</strong>: {snapshot.win_rate_6m != null ? `${(snapshot.win_rate_6m * 100).toFixed(1)}%` : '--'}</p>
+          <p>
+            <strong>累计净值</strong>: {snapshot.net_value?.toFixed(4) ?? '--'}
+          </p>
+          <p>
+            <strong>累计收益</strong>:{' '}
+            {snapshot.cumulative_return != null
+              ? `${(snapshot.cumulative_return * 100).toFixed(2)}%`
+              : '--'}
+          </p>
+          <p>
+            <strong>最大回撤</strong>:{' '}
+            {snapshot.drawdown != null ? `${(snapshot.drawdown * 100).toFixed(2)}%` : '--'}
+          </p>
+          <p>
+            <strong>夏普比率(6M)</strong>: {snapshot.sharpe_ratio_6m?.toFixed(2) ?? '--'}
+          </p>
+          <p>
+            <strong>胜率(6M)</strong>:{' '}
+            {snapshot.win_rate_6m != null ? `${(snapshot.win_rate_6m * 100).toFixed(1)}%` : '--'}
+          </p>
         </div>
       ),
     },
@@ -51,7 +81,11 @@ export function buildBacktestSidebarSections(
       key: 'holdings',
       title: `持仓明细 (${holdings.length})`,
       ariaLabel: '回测持仓明细列表',
-      content: <HoldingsTable holdings={holdings} loading={holdingsLoading} />,
+      content: holdingsError ? (
+        <div role="alert">持仓明细加载失败：{holdingsError.message}</div>
+      ) : (
+        <HoldingsTable holdings={holdings} loading={holdingsLoading} />
+      ),
     },
   ];
 }
