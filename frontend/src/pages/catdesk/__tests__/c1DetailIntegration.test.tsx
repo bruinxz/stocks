@@ -27,6 +27,7 @@ const candidate: CandidateListEntry = {
     ...scoreRef,
     ticker: 'NVDA',
     as_of: '2026-07-10',
+    market_scope: 'us',
     quality: dimension(90, 'A'),
     growth: dimension(86, 'A'),
     valuation: dimension(76, 'B'),
@@ -102,6 +103,8 @@ describe('C1 detail integration', () => {
   });
 
   test('US candidate exposes score, conviction, risk, and entry sections', () => {
+    expect(candidate.score?.market_scope).toBe('us');
+
     const sections = buildUSSections(candidate);
     expect(sections.map(section => section.key)).toEqual(['score', 'conviction', 'risk', 'entry']);
 
