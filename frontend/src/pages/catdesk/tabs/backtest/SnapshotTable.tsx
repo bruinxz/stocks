@@ -24,6 +24,13 @@ const columns: TableColumnDef<BacktestSnapshotSlot>[] = [
     render: (_, row) => row.strategy,
   },
   {
+    key: 'market_scope',
+    title: '市场',
+    ariaLabel: '市场范围',
+    sortable: true,
+    render: (_, row) => row.market_scope,
+  },
+  {
     key: 'net_value',
     title: '累计净值',
     ariaLabel: '累计净值',

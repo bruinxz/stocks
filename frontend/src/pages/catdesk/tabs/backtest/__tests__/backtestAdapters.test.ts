@@ -1,3 +1,4 @@
+import { describe, expect, test } from '@jest/globals';
 import {
   BacktestContractError,
   parseHoldingsResponse,
@@ -9,6 +10,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
     snapshot_id: 'pit-1',
     snapshot_day: '2026-07-10',
     strategy: 'us_preferred',
+    market_scope: 'us',
     as_of_utc: '2026-07-10T23:59:59Z',
     is_survivorship_biased: false,
     is_delisted_at_as_of: false,
@@ -23,6 +25,7 @@ describe('backtest snapshot adapter', () => {
     const [mapped] = parseSnapshotListResponse(
       {
         strategy: 'us_preferred',
+        market_scope: 'us',
         snapshots: [
           snapshot({
             net_value: 1.24,
@@ -33,11 +36,13 @@ describe('backtest snapshot adapter', () => {
           }),
         ],
       },
-      'us_preferred'
+      'us_preferred',
+      'us'
     );
 
     expect(mapped).toMatchObject({
       strategy: 'us_preferred',
+      market_scope: 'us',
       net_value: 1.24,
       drawdown: -0.08,
       cumulative_return: 0.24,
@@ -50,6 +55,7 @@ describe('backtest snapshot adapter', () => {
     const [mapped] = parseSnapshotListResponse(
       {
         strategy: 'us_preferred',
+        market_scope: 'us',
         snapshots: [
           snapshot({
             net_value: 1.5,
@@ -63,7 +69,8 @@ describe('backtest snapshot adapter', () => {
           }),
         ],
       },
-      'us_preferred'
+      'us_preferred',
+      'us'
     );
 
     expect(mapped.net_value).toBe(1.5);
@@ -76,9 +83,11 @@ describe('backtest snapshot adapter', () => {
       parseSnapshotListResponse(
         {
           strategy: 'unknown',
+          market_scope: 'us',
           snapshots: [],
         },
-        'us_preferred'
+        'us_preferred',
+        'us'
       )
     ).toThrow(BacktestContractError);
 
@@ -86,11 +95,95 @@ describe('backtest snapshot adapter', () => {
       parseSnapshotListResponse(
         {
           strategy: 'us_preferred',
+          market_scope: 'us',
           snapshots: [snapshot({ strategy: 'multibagger' })],
         },
-        'us_preferred'
+        'us_preferred',
+        'us'
       )
     ).toThrow(/does not match request/);
+  });
+
+  test('rejects profile aliases and market_scope mismatches in envelope or rows', () => {
+    expect(() =>
+      parseSnapshotListResponse(
+        {
+          profile: 'us_preferred',
+          strategy: 'us_preferred',
+          market_scope: 'us',
+          snapshots: [],
+        },
+        'us_preferred',
+        'us'
+      )
+    ).toThrow(/forbidden legacy alias/);
+
+    expect(() =>
+      parseSnapshotListResponse(
+        {
+          strategy: 'us_preferred',
+          market_scope: 'cn_a',
+          snapshots: [],
+        },
+        'us_preferred',
+        'us'
+      )
+    ).toThrow(/does not match request/);
+
+    expect(() =>
+      parseSnapshotListResponse(
+        {
+          strategy: 'us_preferred',
+          market_scope: 'us',
+          snapshots: [snapshot({ profile: 'us_preferred' })],
+        },
+        'us_preferred',
+        'us'
+      )
+    ).toThrow(/forbidden legacy alias/);
+
+    expect(() =>
+      parseSnapshotListResponse(
+        {
+          strategy: 'us_preferred',
+          market_scope: 'us',
+          snapshots: [snapshot({ market_scope: 'cn_a' })],
+        },
+        'us_preferred',
+        'us'
+      )
+    ).toThrow(/does not match request/);
+  });
+
+  test('accepts compatible fixed JP/KR scopes and rejects incompatible pairs', () => {
+    expect(
+      parseSnapshotListResponse(
+        {
+          strategy: 'japan_multibagger',
+          market_scope: 'jp',
+          snapshots: [
+            snapshot({
+              strategy: 'japan_multibagger',
+              market_scope: 'jp',
+            }),
+          ],
+        },
+        'japan_multibagger',
+        'jp'
+      )[0]
+    ).toMatchObject({ strategy: 'japan_multibagger', market_scope: 'jp' });
+
+    expect(() =>
+      parseSnapshotListResponse(
+        {
+          strategy: 'korea_multibagger',
+          market_scope: 'jp',
+          snapshots: [],
+        },
+        'korea_multibagger',
+        'jp'
+      )
+    ).toThrow(/incompatible/);
   });
 });
 

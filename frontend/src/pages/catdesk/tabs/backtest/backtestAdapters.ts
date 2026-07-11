@@ -1,12 +1,16 @@
 import {
+  BACKTEST_MARKET_SCOPES,
   BACKTEST_STRATEGIES,
   type BacktestHolding,
+  type BacktestMarketScope,
   type BacktestSnapshotSlot,
   type BacktestStrategy,
   type RawBacktestSnapshot,
+  isBacktestStrategyScopeCompatible,
 } from './types';
 
 const STRATEGY_SET = new Set<string>(BACKTEST_STRATEGIES);
+const MARKET_SCOPE_SET = new Set<string>(BACKTEST_MARKET_SCOPES);
 const METRIC_KEYS = [
   'net_value',
   'drawdown',
@@ -76,6 +80,31 @@ function parseStrategy(value: unknown, label: string): BacktestStrategy {
   return value as BacktestStrategy;
 }
 
+function parseMarketScope(value: unknown, label: string): BacktestMarketScope {
+  if (typeof value !== 'string' || !MARKET_SCOPE_SET.has(value)) {
+    throw new BacktestContractError(`${label} is not an authorized market_scope`);
+  }
+  return value as BacktestMarketScope;
+}
+
+function rejectProfileAlias(value: UnknownRecord, label: string): void {
+  if ('profile' in value) {
+    throw new BacktestContractError(`${label}.profile is a forbidden legacy alias`);
+  }
+}
+
+function assertCompatibleScope(
+  strategy: BacktestStrategy,
+  marketScope: BacktestMarketScope,
+  label: string
+): void {
+  if (!isBacktestStrategyScopeCompatible(strategy, marketScope)) {
+    throw new BacktestContractError(
+      `${label} strategy "${strategy}" is incompatible with market_scope "${marketScope}"`
+    );
+  }
+}
+
 function metricValue(
   raw: RawBacktestSnapshot,
   nestedMetrics: UnknownRecord,
@@ -90,13 +119,26 @@ function metricValue(
 function parseSnapshot(
   value: unknown,
   requestedStrategy: BacktestStrategy,
+  requestedMarketScope: BacktestMarketScope,
   index: number
 ): BacktestSnapshotSlot {
-  const raw = asRecord(value, `snapshots[${index}]`) as RawBacktestSnapshot;
+  const rawRecord = asRecord(value, `snapshots[${index}]`);
+  rejectProfileAlias(rawRecord, `snapshots[${index}]`);
+  const raw = rawRecord as RawBacktestSnapshot;
   const strategy = parseStrategy(raw.strategy, `snapshots[${index}].strategy`);
   if (strategy !== requestedStrategy) {
     throw new BacktestContractError(
       `snapshots[${index}].strategy "${strategy}" does not match request "${requestedStrategy}"`
+    );
+  }
+  const marketScope = parseMarketScope(
+    raw.market_scope,
+    `snapshots[${index}].market_scope`
+  );
+  assertCompatibleScope(strategy, marketScope, `snapshots[${index}]`);
+  if (marketScope !== requestedMarketScope) {
+    throw new BacktestContractError(
+      `snapshots[${index}].market_scope "${marketScope}" does not match request "${requestedMarketScope}"`
     );
   }
 
@@ -105,6 +147,7 @@ function parseSnapshot(
     snapshot_id: requiredString(raw.snapshot_id, `snapshots[${index}].snapshot_id`),
     snapshot_day: requiredString(raw.snapshot_day, `snapshots[${index}].snapshot_day`),
     strategy,
+    market_scope: marketScope,
     as_of_utc: requiredString(raw.as_of_utc, `snapshots[${index}].as_of_utc`),
     is_survivorship_biased: requiredBoolean(
       raw.is_survivorship_biased,
@@ -127,20 +170,29 @@ function parseSnapshot(
 
 export function parseSnapshotListResponse(
   value: unknown,
-  requestedStrategy: BacktestStrategy
+  requestedStrategy: BacktestStrategy,
+  requestedMarketScope: BacktestMarketScope
 ): BacktestSnapshotSlot[] {
   const envelope = asRecord(value, 'response');
+  rejectProfileAlias(envelope, 'response');
   const envelopeStrategy = parseStrategy(envelope.strategy, 'response.strategy');
   if (envelopeStrategy !== requestedStrategy) {
     throw new BacktestContractError(
       `response.strategy "${envelopeStrategy}" does not match request "${requestedStrategy}"`
     );
   }
+  const envelopeMarketScope = parseMarketScope(envelope.market_scope, 'response.market_scope');
+  assertCompatibleScope(envelopeStrategy, envelopeMarketScope, 'response');
+  if (envelopeMarketScope !== requestedMarketScope) {
+    throw new BacktestContractError(
+      `response.market_scope "${envelopeMarketScope}" does not match request "${requestedMarketScope}"`
+    );
+  }
   if (!Array.isArray(envelope.snapshots)) {
     throw new BacktestContractError('response.snapshots must be an array');
   }
   return envelope.snapshots.map((snapshot, index) =>
-    parseSnapshot(snapshot, requestedStrategy, index)
+    parseSnapshot(snapshot, requestedStrategy, requestedMarketScope, index)
   );
 }
 

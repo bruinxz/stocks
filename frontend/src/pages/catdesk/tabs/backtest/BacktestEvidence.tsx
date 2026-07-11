@@ -13,7 +13,12 @@ import { BacktestChart } from './BacktestChart';
 import { PitTimeline } from './PitTimeline';
 import { PitBadge } from './PitBadge';
 import { buildBacktestSidebarSections } from './BacktestSidebarSections';
-import type { BacktestStrategy } from './types';
+import {
+  BACKTEST_STRATEGY_MARKET_SCOPES,
+  coerceBacktestMarketScope,
+  type BacktestMarketScope,
+  type BacktestStrategy,
+} from './types';
 
 const { RangePicker } = DatePicker;
 
@@ -26,8 +31,16 @@ const STRATEGY_OPTIONS: { value: BacktestStrategy; label: string }[] = [
   { value: 'korea_multibagger', label: '韩国高倍潜力' },
 ];
 
+const MARKET_SCOPE_LABEL: Record<BacktestMarketScope, string> = {
+  cn_a: '中国 A 股',
+  us: '美国市场',
+  jp: '日本市场',
+  kr: '韩国市场',
+};
+
 export function BacktestEvidence() {
   const [strategy, setStrategy] = useState<BacktestStrategy>('us_preferred');
+  const [marketScope, setMarketScope] = useState<BacktestMarketScope>('us');
   const [dateRange, setDateRange] = useState<[string, string] | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -42,6 +55,7 @@ export function BacktestEvidence() {
     selectSnapshot,
   } = useBacktestData({
     strategy,
+    marketScope,
     from: dateRange?.[0],
     to: dateRange?.[1],
   });
@@ -78,6 +92,25 @@ export function BacktestEvidence() {
       selectSnapshot(null);
       setSidebarOpen(false);
       setStrategy(nextStrategy);
+      setMarketScope(currentScope => coerceBacktestMarketScope(nextStrategy, currentScope));
+    },
+    [selectSnapshot]
+  );
+
+  const marketScopeOptions = useMemo(
+    () =>
+      BACKTEST_STRATEGY_MARKET_SCOPES[strategy].map(scope => ({
+        value: scope,
+        label: MARKET_SCOPE_LABEL[scope],
+      })),
+    [strategy]
+  );
+
+  const handleMarketScopeChange = useCallback(
+    (nextMarketScope: BacktestMarketScope) => {
+      selectSnapshot(null);
+      setSidebarOpen(false);
+      setMarketScope(nextMarketScope);
     },
     [selectSnapshot]
   );
@@ -147,6 +180,13 @@ export function BacktestEvidence() {
             onChange={handleStrategyChange}
             options={STRATEGY_OPTIONS}
             style={{ width: 180 }}
+          />
+          <Select
+            aria-label="选择回测市场"
+            value={marketScope}
+            onChange={handleMarketScopeChange}
+            options={marketScopeOptions}
+            style={{ width: 140 }}
           />
           <RangePicker
             aria-label="选择快照日期范围"

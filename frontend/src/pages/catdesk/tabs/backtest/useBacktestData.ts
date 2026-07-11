@@ -1,22 +1,34 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useAbortableRequest } from 'shared/hooks/useAbortableRequest';
-import type { BacktestHolding, BacktestSnapshotSlot, BacktestStrategy } from './types';
+import type {
+  BacktestHolding,
+  BacktestMarketScope,
+  BacktestSnapshotSlot,
+  BacktestStrategy,
+} from './types';
 import { parseHoldingsResponse, parseSnapshotListResponse } from './backtestAdapters';
 import { buildBacktestHoldingsUrl, buildBacktestListUrl } from './backtestUrls';
 
 interface UseBacktestDataOptions {
   strategy: BacktestStrategy;
+  marketScope: BacktestMarketScope;
   from?: string;
   to?: string;
   limit?: number;
 }
 
-export function useBacktestData({ strategy, from, to, limit = 60 }: UseBacktestDataOptions) {
+export function useBacktestData({
+  strategy,
+  marketScope,
+  from,
+  to,
+  limit = 60,
+}: UseBacktestDataOptions) {
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | null>(null);
 
   const snapshotListUrl = useMemo(() => {
-    return buildBacktestListUrl(strategy, { from, to, limit });
-  }, [strategy, from, to, limit]);
+    return buildBacktestListUrl(strategy, { marketScope, from, to, limit });
+  }, [strategy, marketScope, from, to, limit]);
 
   const {
     data: snapshotsRaw,
@@ -29,9 +41,9 @@ export function useBacktestData({ strategy, from, to, limit = 60 }: UseBacktestD
       if (!response.ok) {
         throw new Error(`${response.status} ${response.statusText}`);
       }
-      return parseSnapshotListResponse(await response.json(), strategy);
+      return parseSnapshotListResponse(await response.json(), strategy, marketScope);
     },
-    [snapshotListUrl, strategy]
+    [snapshotListUrl, strategy, marketScope]
   );
 
   const snapshots = useMemo(() => snapshotsRaw ?? [], [snapshotsRaw]);

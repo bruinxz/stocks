@@ -27,6 +27,9 @@ export function buildBacktestSidebarSections(
             <strong>Strategy</strong>: {snapshot.strategy}
           </p>
           <p>
+            <strong>Market Scope</strong>: {snapshot.market_scope}
+          </p>
+          <p>
             <strong>Fact Hash</strong>: <code>{snapshot.fact_hash || '--'}</code>
           </p>
           <p>
