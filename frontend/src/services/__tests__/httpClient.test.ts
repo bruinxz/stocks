@@ -6,6 +6,7 @@
  */
 
 import type { AxiosResponse } from 'axios';
+import { describe, expect, test } from '@jest/globals';
 import {
   API_VERSION_HEADER,
   ApiVersionMismatchError,

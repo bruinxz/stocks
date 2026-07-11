@@ -5,6 +5,7 @@
  * 这两个 helper 是 Sparkline 颜色决策 + 数据清洗的核心, 错了 polyline 会断 / 串色.
  */
 
+import { describe, expect, test } from '@jest/globals';
 import { sanitizeSparklineData, pickSparklineColor, Sparkline20dPoint } from '../Sparkline20d';
 
 describe('Sparkline20d / sanitizeSparklineData', () => {
@@ -68,7 +69,7 @@ describe('Sparkline20d / pickSparklineColor', () => {
         { date: 'd1', close: 100 },
         { date: 'd2', close: 110 },
       ])
-    ).toBe('#cf1322');
+    ).toBe('#dc2626');
   });
 
   test('下跌 (末 < 首) 返绿', () => {
@@ -77,7 +78,7 @@ describe('Sparkline20d / pickSparklineColor', () => {
         { date: 'd1', close: 110 },
         { date: 'd2', close: 100 },
       ])
-    ).toBe('#52c41a');
+    ).toBe('#16a34a');
   });
 
   test('平 (末 = 首) 返蓝', () => {

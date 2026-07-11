@@ -206,10 +206,7 @@ export interface HealthPayloadShape {
   [k: string]: unknown;
 }
 
-export function verifySupportedApiVersions(
-  payload: unknown,
-  url: string = '/health'
-): void {
+export function verifySupportedApiVersions(payload: unknown, url = '/health'): void {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new ApiVersionMismatchError({
       url,
