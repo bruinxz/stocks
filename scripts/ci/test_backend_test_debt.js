@@ -463,6 +463,14 @@ assert.equal(childExitDrift.ok, false, 'child exit drift fails');
 assert.equal(childExitDrift.diagnostic_drift.length, 1);
 assert.match(childExitDrift.diagnostic_drift[0].current_diagnostic, /child_exit=2/);
 
+const syntheticAnchorPaths = exactRun.executed_tests.map((entry) => entry.path);
+const syntheticInventoryAuthority = {
+  repoRoot,
+  authorizedEntriesSha256: entriesDigest(baseline.entries),
+  authorizedTestCount: baseline.test_inventory.count,
+  authorizedTestPathsSha256: baseline.test_inventory.paths_sha256,
+  anchorTestPaths: syntheticAnchorPaths,
+};
 const omittedExecutionRun = clone(exactRun);
 omittedExecutionRun.executed_tests = omittedExecutionRun.executed_tests.filter(
   (entry) => entry.path !== 'backend/tests/services/beta.test.ts',
@@ -478,8 +486,10 @@ expectThrow(
       authorizedEntriesSha256: entriesDigest(baseline.entries),
       authorizedTestCount: baseline.test_inventory.count,
       authorizedTestPathsSha256: baseline.test_inventory.paths_sha256,
+      trackedTestPaths: omittedExecutionRun.executed_tests.map((entry) => entry.path),
+      anchorTestPaths: syntheticAnchorPaths,
     }),
-  'current test inventory',
+  'anchor test path missing|inventory',
 );
 const replacedExecutionRun = clone(exactRun);
 replacedExecutionRun.executed_tests[0].path =
@@ -492,26 +502,76 @@ expectThrow(
       authorizedEntriesSha256: entriesDigest(baseline.entries),
       authorizedTestCount: baseline.test_inventory.count,
       authorizedTestPathsSha256: baseline.test_inventory.paths_sha256,
+      trackedTestPaths: replacedExecutionRun.executed_tests.map((entry) => entry.path),
+      anchorTestPaths: syntheticAnchorPaths,
     }),
-  'current test inventory',
+  'anchor test path missing|inventory',
 );
-const extraExecutionRun = clone(exactRun);
-extraExecutionRun.executed_tests.push({
+const newPassingExecutionRun = clone(exactRun);
+newPassingExecutionRun.executed_tests.push({
   path: 'backend/tests/services/extra.test.ts',
   status: 'OK',
   child_exit: 0,
 });
-expectThrow(
-  'extra test path fails inventory authority',
-  () =>
-    compareRunToBaseline(extraExecutionRun, baseline, {
-      repoRoot,
-      authorizedEntriesSha256: entriesDigest(baseline.entries),
-      authorizedTestCount: baseline.test_inventory.count,
-      authorizedTestPathsSha256: baseline.test_inventory.paths_sha256,
-    }),
-  'current test inventory',
+const evolvedPassing = compareRunToBaseline(newPassingExecutionRun, baseline, {
+  ...syntheticInventoryAuthority,
+  trackedTestPaths: newPassingExecutionRun.executed_tests.map((entry) => entry.path),
+});
+assert.equal(
+  evolvedPassing.ok,
+  true,
+  'new tracked+executed explicit OK test is allowed',
 );
+
+const newUnexecutedRun = clone(exactRun);
+expectThrow(
+  'new tracked but unexecuted test fails',
+  () =>
+    compareRunToBaseline(newUnexecutedRun, baseline, {
+      ...syntheticInventoryAuthority,
+      trackedTestPaths: [
+        ...syntheticAnchorPaths,
+        'backend/tests/services/extra.test.ts',
+      ],
+    }),
+  'executed test inventory must exactly equal',
+);
+
+const newFailingRun = clone(exactRun);
+const newFailingPath = 'backend/tests/services/extra.test.ts';
+const newFailingDiagnostic = 'Error: new tracked failure';
+newFailingRun.executed_tests.push({
+  path: newFailingPath,
+  status: 'FAIL',
+  child_exit: 1,
+});
+newFailingRun.failures.push({
+  path: newFailingPath,
+  child_exit: 1,
+  diagnostic: newFailingDiagnostic,
+  fingerprint: fingerprintFor(newFailingPath, newFailingDiagnostic, 1),
+});
+expectThrow(
+  'new tracked failing test rejects',
+  () =>
+    compareRunToBaseline(newFailingRun, baseline, {
+      ...syntheticInventoryAuthority,
+      trackedTestPaths: newFailingRun.executed_tests.map((entry) => entry.path),
+    }),
+  'current-only test must pass explicitly',
+);
+
+const extraUntrackedRun = clone(newPassingExecutionRun);
+expectThrow(
+  'extra untracked execution rejects',
+  () =>
+    compareRunToBaseline(extraUntrackedRun, baseline, {
+      ...syntheticInventoryAuthority,
+      trackedTestPaths: syntheticAnchorPaths,
+    }),
+  'executed test inventory must exactly equal',
+);
+
 const duplicateExecutionRun = clone(exactRun);
 duplicateExecutionRun.executed_tests[1].path =
   duplicateExecutionRun.executed_tests[0].path;
@@ -523,8 +583,10 @@ expectThrow(
       authorizedEntriesSha256: entriesDigest(baseline.entries),
       authorizedTestCount: baseline.test_inventory.count,
       authorizedTestPathsSha256: baseline.test_inventory.paths_sha256,
+      trackedTestPaths: duplicateExecutionRun.executed_tests.map((entry) => entry.path),
+      anchorTestPaths: syntheticAnchorPaths,
     }),
-  'current test inventory',
+  'inventory',
 );
 assert.equal(
   testPathsDigest(removalRun.executed_tests.map((entry) => entry.path)),

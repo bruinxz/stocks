@@ -427,19 +427,35 @@ function discoverTrackedTestPaths(repoRoot) {
   return paths;
 }
 
+function discoverAnchorTestPaths(repoRoot) {
+  const output = gitOutput(repoRoot, [
+    'ls-tree',
+    '-r',
+    '--name-only',
+    ANCHOR_SHA,
+    '--',
+    'backend/tests',
+  ]);
+  const paths = output
+    .split('\n')
+    .filter((testPath) => testPath.endsWith('.test.ts'))
+    .sort();
+  if (paths.length === 0) fail('anchor backend test discovery returned no files');
+  return paths;
+}
+
 function validateTestInventory(
   executedTests,
   trackedTestPaths,
+  anchorTestPaths,
   authorizedCount = AUTHORIZED_TEST_COUNT,
   authorizedPathsSha256 = AUTHORIZED_TEST_PATHS_SHA256,
 ) {
   if (!Array.isArray(executedTests)) fail('executed test inventory is required');
   if (!Array.isArray(trackedTestPaths)) fail('tracked test inventory is required');
+  if (!Array.isArray(anchorTestPaths)) fail('anchor test inventory is required');
   const executedPaths = executedTests.map((entry) => entry.path);
-  for (const [label, paths] of [
-    ['current', executedPaths],
-    ['tracked', trackedTestPaths],
-  ]) {
+  for (const [label, paths] of [['anchor', anchorTestPaths]]) {
     if (
       paths.length !== authorizedCount ||
       new Set(paths).size !== authorizedCount ||
@@ -447,6 +463,40 @@ function validateTestInventory(
       testPathsDigest(paths) !== authorizedPathsSha256
     ) {
       fail(`${label} test inventory does not match canonical path authority`);
+    }
+  }
+  for (const [label, paths] of [
+    ['current', executedPaths],
+    ['tracked', trackedTestPaths],
+  ]) {
+    if (
+      paths.length < authorizedCount ||
+      new Set(paths).size !== paths.length ||
+      paths.some((testPath) => !validTestPath(testPath))
+    ) {
+      fail(`${label} test inventory is invalid`);
+    }
+  }
+  const executedSet = new Set(executedPaths);
+  const trackedSet = new Set(trackedTestPaths);
+  if (
+    executedSet.size !== trackedSet.size ||
+    [...executedSet].some((testPath) => !trackedSet.has(testPath))
+  ) {
+    fail('current executed test inventory must exactly equal current tracked tests');
+  }
+  for (const anchorPath of anchorTestPaths) {
+    if (!executedSet.has(anchorPath) || !trackedSet.has(anchorPath)) {
+      fail(`anchor test path missing from current inventory: ${anchorPath}`);
+    }
+  }
+  const anchorSet = new Set(anchorTestPaths);
+  for (const execution of executedTests) {
+    if (
+      !anchorSet.has(execution.path) &&
+      (execution.status !== 'OK' || execution.child_exit !== 0)
+    ) {
+      fail(`current-only test must pass explicitly: ${execution.path}`);
     }
   }
   return executedPaths;
@@ -692,9 +742,15 @@ function compareRunToBaseline(parsedRun, baseline, options = {}) {
     (usingSyntheticAuthority
       ? parsedRun.executed_tests.map((entry) => entry.path)
       : discoverTrackedTestPaths(repoRoot));
+  const anchorTestPaths =
+    options.anchorTestPaths ||
+    (usingSyntheticAuthority
+      ? parsedRun.executed_tests.map((entry) => entry.path)
+      : discoverAnchorTestPaths(repoRoot));
   validateTestInventory(
     parsedRun.executed_tests,
     trackedTestPaths,
+    anchorTestPaths,
     options.authorizedTestCount || AUTHORIZED_TEST_COUNT,
     options.authorizedTestPathsSha256 || AUTHORIZED_TEST_PATHS_SHA256,
   );
@@ -891,6 +947,7 @@ module.exports = {
   compareRunToBaseline,
   entriesDigest,
   discoverTrackedTestPaths,
+  discoverAnchorTestPaths,
   fingerprintFor,
   firstSemanticDiagnostic,
   gitBlobSha256,
