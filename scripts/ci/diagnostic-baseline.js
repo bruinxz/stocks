@@ -271,6 +271,20 @@ function compareDiagnostics({ baseline, current, repoRoot, toolVersion, producer
       `${baseline.kind} producer exited ${producerExit}; allowed exits are ${allowedProducerExits.join(', ')}`,
     );
   }
+  if (baseline.kind === 'eslint') {
+    const errorCount = current
+      .filter((diagnostic) => diagnostic.severity === 'error')
+      .reduce((sum, diagnostic) => sum + diagnostic.count, 0);
+    if ((producerExit === 1) !== (errorCount > 0)) {
+      throw new Error(
+        `eslint producer exit/diagnostic mismatch: exit=${producerExit}, error_count=${errorCount}`,
+      );
+    }
+  } else if ((producerExit === 2) !== (current.length > 0)) {
+    throw new Error(
+      `tsc producer exit/diagnostic mismatch: exit=${producerExit}, diagnostic_fingerprints=${current.length}`,
+    );
+  }
   if (baseline.tool.version !== toolVersion) {
     throw new Error(`tool version mismatch: baseline=${baseline.tool.version} current=${toolVersion}`);
   }

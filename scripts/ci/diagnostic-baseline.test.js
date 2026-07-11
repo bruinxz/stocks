@@ -202,6 +202,34 @@ expectThrow(
   'non-negative safe integer',
 );
 
+expectThrow(
+  'ESLint success with error diagnostics',
+  () =>
+    compareDiagnostics({
+      baseline,
+      current: groupDiagnostics('eslint', [baseDiagnostic]),
+      repoRoot: process.cwd(),
+      toolVersion: '8.57.1',
+      producerExit: 0,
+    }),
+  'exit/diagnostic mismatch',
+);
+
+const warningDiagnostic = { ...baseDiagnostic, severity: 'warning' };
+const warningBaseline = baselineFor([warningDiagnostic], { baseline_sha: headSha });
+expectThrow(
+  'ESLint failure without error diagnostics',
+  () =>
+    compareDiagnostics({
+      baseline: warningBaseline,
+      current: groupDiagnostics('eslint', [warningDiagnostic]),
+      repoRoot: process.cwd(),
+      toolVersion: '8.57.1',
+      producerExit: 1,
+    }),
+  'exit/diagnostic mismatch',
+);
+
 const tscDiagnostic = {
   path: 'frontend/src/foo.ts',
   severity: 'error',
@@ -226,6 +254,33 @@ expectThrow(
       producerExit: 1,
     }),
   'allowed exits are 0, 2',
+);
+expectThrow(
+  'TypeScript success with diagnostics',
+  () =>
+    compareDiagnostics({
+      baseline: tscBaseline,
+      current: groupDiagnostics('tsc', [tscDiagnostic]),
+      repoRoot: process.cwd(),
+      toolVersion: '4.9.5',
+      producerExit: 0,
+    }),
+  'exit/diagnostic mismatch',
+);
+expectThrow(
+  'TypeScript failure without diagnostics',
+  () =>
+    compareDiagnostics({
+      baseline: {
+        ...tscBaseline,
+        diagnostics: [],
+      },
+      current: [],
+      repoRoot: process.cwd(),
+      toolVersion: '4.9.5',
+      producerExit: 2,
+    }),
+  'no parseable diagnostics',
 );
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'diagnostic-baseline-'));
@@ -374,6 +429,54 @@ try {
   const cliSummary = JSON.parse(fs.readFileSync(cliSummaryPath, 'utf8'));
   assert.equal(cliSummary.ok, false, 'CLI emits a machine-readable failure summary');
   assert.equal(cliSummary.fingerprints.added, 1);
+
+  const eslintSuccessMismatch = spawnSync(
+    process.execPath,
+    [
+      path.join(__dirname, 'diagnostic-baseline.js'),
+      'compare',
+      '--baseline',
+      cliBaselinePath,
+      '--input',
+      eslintInput,
+      '--tool-version',
+      '8.57.1',
+      '--producer-exit',
+      '0',
+      '--repo-root',
+      process.cwd(),
+      '--workdir',
+      '.',
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(eslintSuccessMismatch.status, 1, 'CLI rejects ESLint success with errors');
+  assert.match(eslintSuccessMismatch.stderr, /exit\/diagnostic mismatch/);
+
+  const cliTscBaselinePath = path.join(tempDir, 'tsc-baseline.json');
+  fs.writeFileSync(cliTscBaselinePath, `${JSON.stringify(tscBaseline, null, 2)}\n`);
+  const tscSuccessMismatch = spawnSync(
+    process.execPath,
+    [
+      path.join(__dirname, 'diagnostic-baseline.js'),
+      'compare',
+      '--baseline',
+      cliTscBaselinePath,
+      '--input',
+      tscInput,
+      '--tool-version',
+      '4.9.5',
+      '--producer-exit',
+      '0',
+      '--repo-root',
+      process.cwd(),
+      '--workdir',
+      'frontend',
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(tscSuccessMismatch.status, 1, 'CLI rejects TypeScript success with diagnostics');
+  assert.match(tscSuccessMismatch.stderr, /exit\/diagnostic mismatch/);
 
   for (const [name, producerExitArgs] of [
     ['omitted', []],
