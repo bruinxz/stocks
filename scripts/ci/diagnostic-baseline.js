@@ -165,6 +165,12 @@ function buildConfigFiles(paths, repoRoot) {
   });
 }
 
+function canonicalProducerExits(kind) {
+  if (kind === 'eslint') return [0, 1];
+  if (kind === 'tsc') return [0, 2];
+  throw new Error(`unsupported kind: ${kind}`);
+}
+
 function validateBaselineShape(baseline) {
   if (!baseline || typeof baseline !== 'object') throw new Error('baseline must be an object');
   if (baseline.version !== 1) throw new Error('baseline version must be 1');
@@ -181,6 +187,15 @@ function validateBaselineShape(baseline) {
     baseline.tool.allowed_producer_exits.some((code) => !Number.isInteger(code))
   ) {
     throw new Error('baseline.tool.allowed_producer_exits must be a non-empty integer array');
+  }
+  const canonicalExits = canonicalProducerExits(baseline.kind);
+  if (
+    baseline.tool.allowed_producer_exits.length !== canonicalExits.length ||
+    baseline.tool.allowed_producer_exits.some((code, index) => code !== canonicalExits[index])
+  ) {
+    throw new Error(
+      `baseline.tool.allowed_producer_exits must equal canonical ${baseline.kind} policy ${JSON.stringify(canonicalExits)}`,
+    );
   }
   if (!Array.isArray(baseline.config_files)) throw new Error('baseline.config_files must be an array');
   if (!Array.isArray(baseline.diagnostics)) throw new Error('baseline.diagnostics must be an array');
@@ -304,7 +319,7 @@ function makeBaseline(args) {
     tool: {
       name: kind === 'eslint' ? 'eslint' : 'typescript',
       version: args['tool-version'],
-      allowed_producer_exits: kind === 'eslint' ? [0, 1] : [0, 2],
+      allowed_producer_exits: canonicalProducerExits(kind),
     },
     fingerprint_model: {
       fields: ['kind', 'repo_relative_path', 'severity', 'rule_or_code', 'normalized_message'],
@@ -382,6 +397,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  canonicalProducerExits,
   compareDiagnostics,
   groupDiagnostics,
   makeFingerprint,

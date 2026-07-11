@@ -117,6 +117,22 @@ expectThrow(
   'allowed_producer_exits',
 );
 
+for (const [name, policy] of [
+  ['extra producer exit', [0, 1, 2]],
+  ['wrong producer exit', [0, 2]],
+  ['negative producer exit', [-1, 0]],
+  ['duplicate producer exit', [0, 0]],
+  ['reordered producer exits', [1, 0]],
+]) {
+  const invalidPolicy = baselineFor([baseDiagnostic], { baseline_sha: headSha });
+  invalidPolicy.tool.allowed_producer_exits = policy;
+  expectThrow(
+    name,
+    () => validateBaselineShape(invalidPolicy),
+    'must equal canonical eslint policy [0,1]',
+  );
+}
+
 const wrongConfig = baselineFor([baseDiagnostic], {
   baseline_sha: headSha,
   config_files: [
