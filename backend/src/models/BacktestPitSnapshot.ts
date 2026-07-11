@@ -1,5 +1,4 @@
-import { Column, DataType, HasMany, Model, Table } from 'sequelize-typescript';
-import { BacktestPitHolding } from './BacktestPitHolding';
+import { Column, DataType, Model, Table } from 'sequelize-typescript';
 
 @Table({
   tableName: 'backtest_pit_snapshot',
@@ -82,7 +81,4 @@ export class BacktestPitSnapshot extends Model {
     field: 'created_at',
   })
   declare createdAt: Date;
-
-  @HasMany(() => BacktestPitHolding)
-  declare holdings: BacktestPitHolding[];
 }
