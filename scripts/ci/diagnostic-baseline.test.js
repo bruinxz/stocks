@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
+  canonicalEslintTargets,
   compareDiagnostics,
   groupDiagnostics,
   makeFingerprint,
@@ -446,7 +447,7 @@ try {
       },
     ]),
   );
-  const parsedEslint = parseEslintJson(eslintInput, process.cwd(), '.');
+  const parsedEslint = parseEslintJson(eslintInput, process.cwd(), '.', ['backend/src/foo.ts']);
   assert.equal(parsedEslint.length, 1, 'ESLint JSON parser groups one diagnostic');
   assert.equal(parsedEslint[0].path, 'backend/src/foo.ts');
   assert.equal(parsedEslint[0].message, 'Delete blank line');
@@ -464,6 +465,9 @@ try {
           {
             severity: 2,
             fatal: true,
+            ruleId: null,
+            line: null,
+            column: null,
             message: `parser project ${path.join(process.cwd(), 'backend/tsconfig.json')}`,
           },
         ],
@@ -483,6 +487,9 @@ try {
           {
             severity: 2,
             fatal: true,
+            ruleId: null,
+            line: null,
+            column: null,
             message: 'parser project <tsconfigRootDir>/tsconfig.json',
           },
         ],
@@ -490,8 +497,12 @@ try {
     ]),
   );
   assert.equal(
-    parseEslintJson(eslintRootVariantInput, process.cwd(), '.')[0].fingerprint,
-    parseEslintJson(eslintTokenVariantInput, process.cwd(), '.')[0].fingerprint,
+    parseEslintJson(eslintRootVariantInput, process.cwd(), '.', [
+      'backend/src/foo.test.ts',
+    ])[0].fingerprint,
+    parseEslintJson(eslintTokenVariantInput, process.cwd(), '.', [
+      'backend/src/foo.test.ts',
+    ])[0].fingerprint,
     'ESLint tsconfigRootDir diagnostics are stable across local and CI path rendering',
   );
 
@@ -548,8 +559,58 @@ try {
     fs.writeFileSync(invalidEslintInput, JSON.stringify([result]));
     expectThrow(
       name,
-      () => parseEslintJson(invalidEslintInput, process.cwd(), '.'),
+      () =>
+        parseEslintJson(invalidEslintInput, process.cwd(), '.', [
+          repoRelativeForTest(result.filePath),
+        ]),
       'ESLint',
+    );
+  }
+
+  function repoRelativeForTest(filePath) {
+    return path.relative(process.cwd(), filePath).split(path.sep).join('/');
+  }
+
+  const coverageResults = [
+    {
+      filePath: path.join(process.cwd(), 'backend/src/covered-a.ts'),
+      errorCount: 0,
+      warningCount: 0,
+      fatalErrorCount: 0,
+      messages: [],
+    },
+    {
+      filePath: path.join(process.cwd(), 'backend/src/covered-b.ts'),
+      errorCount: 0,
+      warningCount: 0,
+      fatalErrorCount: 0,
+      messages: [],
+    },
+  ];
+  const coverageInput = path.join(tempDir, 'eslint-coverage.json');
+  fs.writeFileSync(coverageInput, JSON.stringify(coverageResults));
+  const coverageTargets = ['backend/src/covered-a.ts', 'backend/src/covered-b.ts'];
+  assert.deepEqual(
+    parseEslintJson(coverageInput, process.cwd(), '.', coverageTargets),
+    [],
+    'complete zero-diagnostic ESLint target set is accepted',
+  );
+  for (const [name, results, targets] of [
+    ['partial ESLint result set', coverageResults.slice(0, 1), coverageTargets],
+    ['omitted zero-diagnostic ESLint target', coverageResults.slice(0, 1), coverageTargets],
+    ['duplicate ESLint result path', [coverageResults[0], coverageResults[0]], [coverageTargets[0]]],
+    [
+      'extra ESLint result path',
+      [...coverageResults, { ...coverageResults[0], filePath: path.join(process.cwd(), 'outside.ts') }],
+      coverageTargets,
+    ],
+  ]) {
+    const invalidCoverageInput = path.join(tempDir, `${name.replace(/\s+/g, '-')}.json`);
+    fs.writeFileSync(invalidCoverageInput, JSON.stringify(results));
+    expectThrow(
+      name,
+      () => parseEslintJson(invalidCoverageInput, process.cwd(), '.', targets),
+      name.includes('duplicate') ? 'duplicate ESLint result paths' : 'target set mismatch',
     );
   }
 
@@ -603,46 +664,50 @@ try {
 
   const cliBaselinePath = path.join(tempDir, 'baseline.json');
   const cliInputPath = path.join(tempDir, 'eslint-cli.json');
+  const cliOldOnlyInputPath = path.join(tempDir, 'eslint-cli-old-only.json');
   const cliSummaryPath = path.join(tempDir, 'summary.json');
+  const cliTargets = canonicalEslintTargets(process.cwd());
+  const cliBaseDiagnostic = { ...baseDiagnostic, path: cliTargets[0] };
+  const cliNewDiagnostic = {
+    ...newDiagnostic,
+    path: cliTargets[1],
+  };
   fs.writeFileSync(
     cliBaselinePath,
-    `${JSON.stringify(baselineFor([baseDiagnostic], { baseline_sha: headSha }), null, 2)}\n`,
+    `${JSON.stringify(baselineFor([cliBaseDiagnostic], { baseline_sha: headSha }), null, 2)}\n`,
   );
-  fs.writeFileSync(
-    cliInputPath,
-    JSON.stringify([
-      {
-        filePath: path.join(process.cwd(), 'backend/src/foo.ts'),
-        errorCount: 1,
+  function completeEslintResults(includeNewDiagnostic) {
+    return cliTargets.map((targetPath) => {
+      const messages = [];
+      if (targetPath === cliBaseDiagnostic.path) {
+        messages.push({
+          severity: 2,
+          ruleId: cliBaseDiagnostic.code,
+          message: cliBaseDiagnostic.message,
+          line: 10,
+          column: 1,
+        });
+      }
+      if (includeNewDiagnostic && targetPath === cliNewDiagnostic.path) {
+        messages.push({
+          severity: 2,
+          ruleId: cliNewDiagnostic.code,
+          message: cliNewDiagnostic.message,
+          line: 20,
+          column: 2,
+        });
+      }
+      return {
+        filePath: path.join(process.cwd(), targetPath),
+        errorCount: messages.length,
         warningCount: 0,
         fatalErrorCount: 0,
-        messages: [
-          {
-            severity: 2,
-            ruleId: 'prettier/prettier',
-            message: 'Delete blank line',
-            line: 10,
-            column: 1,
-          },
-        ],
-      },
-      {
-        filePath: path.join(process.cwd(), 'backend/src/bar.ts'),
-        errorCount: 1,
-        warningCount: 0,
-        fatalErrorCount: 0,
-        messages: [
-          {
-            severity: 2,
-            ruleId: '@typescript-eslint/no-explicit-any',
-            message: 'Unexpected any',
-            line: 20,
-            column: 2,
-          },
-        ],
-      },
-    ]),
-  );
+        messages,
+      };
+    });
+  }
+  fs.writeFileSync(cliInputPath, JSON.stringify(completeEslintResults(true)));
+  fs.writeFileSync(cliOldOnlyInputPath, JSON.stringify(completeEslintResults(false)));
   const cliResult = spawnSync(
     process.execPath,
     [
@@ -667,7 +732,10 @@ try {
   );
   assert.equal(cliResult.status, 1, 'CLI exits 1 for a new diagnostic');
   assert.match(cliResult.stdout, /diagnostic-baseline FAIL/);
-  assert.match(cliResult.stderr, /ADDED backend\/src\/bar\.ts:20:2/);
+  assert.match(
+    cliResult.stderr,
+    new RegExp(`ADDED ${cliNewDiagnostic.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:20:2`),
+  );
   const cliSummary = JSON.parse(fs.readFileSync(cliSummaryPath, 'utf8'));
   assert.equal(cliSummary.ok, false, 'CLI emits a machine-readable failure summary');
   assert.equal(cliSummary.fingerprints.added, 1);
@@ -680,7 +748,7 @@ try {
       '--baseline',
       cliBaselinePath,
       '--input',
-      eslintInput,
+      cliOldOnlyInputPath,
       '--tool-version',
       '8.57.1',
       '--producer-exit',
@@ -735,7 +803,7 @@ try {
         '--baseline',
         cliBaselinePath,
         '--input',
-        eslintInput,
+        cliOldOnlyInputPath,
         '--tool-version',
         '8.57.1',
         '--repo-root',

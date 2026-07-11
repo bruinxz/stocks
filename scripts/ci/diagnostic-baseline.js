@@ -73,6 +73,23 @@ function repoRelative(filePath, repoRoot, workdir) {
   return path.relative(repoRoot, absolute).split(path.sep).join('/');
 }
 
+function canonicalEslintTargets(repoRoot) {
+  const output = execFileSync(
+    'git',
+    ['ls-files', '--', 'backend/src/*.ts', 'backend/src/**/*.ts'],
+    { cwd: repoRoot, encoding: 'utf8' },
+  );
+  const targets = output
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((filePath) => filePath.split(path.sep).join('/'))
+    .sort();
+  if (targets.length === 0) {
+    throw new Error('canonical ESLint target set is empty');
+  }
+  return targets;
+}
+
 function makeFingerprint(kind, diagnostic) {
   return sha256Text(
     [
@@ -113,7 +130,12 @@ function groupDiagnostics(kind, diagnostics) {
     );
 }
 
-function parseEslintJson(inputPath, repoRoot, workdir) {
+function parseEslintJson(
+  inputPath,
+  repoRoot,
+  workdir,
+  expectedTargets = canonicalEslintTargets(repoRoot),
+) {
   let parsed;
   try {
     parsed = JSON.parse(fs.readFileSync(inputPath, 'utf8'));
@@ -123,6 +145,7 @@ function parseEslintJson(inputPath, repoRoot, workdir) {
   if (!Array.isArray(parsed)) throw new Error('ESLint JSON root must be an array');
 
   const diagnostics = [];
+  const resultPaths = [];
   for (const result of parsed) {
     if (!result || typeof result !== 'object' || typeof result.filePath !== 'string') {
       throw new Error('invalid ESLint result entry');
@@ -148,6 +171,37 @@ function parseEslintJson(inputPath, repoRoot, workdir) {
       if (message.fatal === true && message.severity !== 2) {
         throw new Error(`ESLint fatal message must have severity 2: ${result.filePath}`);
       }
+      if (typeof message.message !== 'string' || message.message.trim() === '') {
+        throw new Error(`ESLint message must be a nonempty string: ${result.filePath}`);
+      }
+      if (message.fatal === true) {
+        if (message.ruleId !== null) {
+          throw new Error(`ESLint fatal message ruleId must be null: ${result.filePath}`);
+        }
+        const nullLocation = message.line == null && message.column == null;
+        const positiveLocation =
+          Number.isSafeInteger(message.line) &&
+          message.line >= 1 &&
+          Number.isSafeInteger(message.column) &&
+          message.column >= 1;
+        if (!nullLocation && !positiveLocation) {
+          throw new Error(
+            `ESLint fatal message line/column must both be null or positive safe integers: ${result.filePath}`,
+          );
+        }
+      } else {
+        if (typeof message.ruleId !== 'string' || message.ruleId.trim() === '') {
+          throw new Error(`ESLint rule message ruleId must be a nonempty string: ${result.filePath}`);
+        }
+        for (const locationField of ['line', 'column']) {
+          const locationValue = message[locationField];
+          if (!Number.isSafeInteger(locationValue) || locationValue < 1) {
+            throw new Error(
+              `ESLint rule message ${locationField} must be a positive safe integer: ${result.filePath}`,
+            );
+          }
+        }
+      }
       if (message.severity === 2) computedErrors += 1;
       else computedWarnings += 1;
       if (message.fatal === true) computedFatals += 1;
@@ -162,6 +216,7 @@ function parseEslintJson(inputPath, repoRoot, workdir) {
       );
     }
     const rel = repoRelative(result.filePath, repoRoot, workdir);
+    resultPaths.push(rel);
     for (const message of result.messages) {
       const severity = message.severity === 2 ? 'error' : 'warning';
       const code = message.ruleId || (message.fatal ? 'fatal' : 'unknown');
@@ -170,9 +225,26 @@ function parseEslintJson(inputPath, repoRoot, workdir) {
         severity,
         code,
         message: normalizeDiagnosticMessage(message.message, repoRoot),
-        locations: [{ line: message.line || 0, column: message.column || 0 }],
+        locations: [{ line: message.line ?? 0, column: message.column ?? 0 }],
       });
     }
+  }
+  const canonicalTargets = expectedTargets.slice().sort();
+  const sortedResultPaths = resultPaths.slice().sort();
+  const duplicateResultPaths = sortedResultPaths.filter(
+    (filePath, index) => index > 0 && filePath === sortedResultPaths[index - 1],
+  );
+  if (duplicateResultPaths.length > 0) {
+    throw new Error(`duplicate ESLint result paths: ${[...new Set(duplicateResultPaths)].join(', ')}`);
+  }
+  const expectedSet = new Set(canonicalTargets);
+  const resultSet = new Set(sortedResultPaths);
+  const missing = canonicalTargets.filter((filePath) => !resultSet.has(filePath));
+  const extra = sortedResultPaths.filter((filePath) => !expectedSet.has(filePath));
+  if (missing.length > 0 || extra.length > 0) {
+    throw new Error(
+      `ESLint result target set mismatch: missing=${missing.slice(0, 10).join(',') || 'none'} extra=${extra.slice(0, 10).join(',') || 'none'}`,
+    );
   }
   return groupDiagnostics('eslint', diagnostics);
 }
@@ -539,6 +611,7 @@ if (require.main === module) {
 
 module.exports = {
   canonicalConfigPaths,
+  canonicalEslintTargets,
   canonicalProducerExits,
   canonicalToolName,
   compareDiagnostics,
