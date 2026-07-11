@@ -461,11 +461,13 @@ CREATE TABLE backtest_pit_snapshot (
   strategy TEXT NOT NULL CHECK (strategy IN (
     'us_preferred',
     'multibagger',
+    'custom',
     'japan_blue_chip',
     'japan_multibagger',
     'korea_semiconductor_chain',
     'korea_multibagger'
   )),
+  market_scope TEXT NOT NULL CHECK (market_scope IN ('cn_a', 'us', 'jp', 'kr')),
   as_of_utc TIMESTAMPTZ NOT NULL,
   snapshot_day DATE NOT NULL,
   published_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -493,6 +495,14 @@ CREATE TABLE backtest_pit_snapshot (
   fact_hash TEXT NOT NULL CHECK (fact_hash ~ '^[0-9a-f]{64}$'),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT ck_backtest_pit_publication CHECK (published_at_utc >= as_of_utc),
+  CONSTRAINT ck_backtest_pit_profile_scope CHECK (
+    (strategy IN ('us_preferred', 'multibagger', 'custom')
+      AND market_scope IN ('cn_a', 'us'))
+    OR (strategy IN ('japan_blue_chip', 'japan_multibagger')
+      AND market_scope = 'jp')
+    OR (strategy IN ('korea_semiconductor_chain', 'korea_multibagger')
+      AND market_scope = 'kr')
+  ),
   CONSTRAINT ck_backtest_pit_survivorship_evidence CHECK (
     is_survivorship_biased
     OR COALESCE(
@@ -501,14 +511,15 @@ CREATE TABLE backtest_pit_snapshot (
       FALSE
     )
   ),
-  CONSTRAINT uq_backtest_pit_exact_as_of UNIQUE (strategy, as_of_utc),
-  CONSTRAINT uq_backtest_pit_snapshot_as_of UNIQUE (snapshot_id, as_of_utc)
+  CONSTRAINT uq_backtest_pit_exact_as_of UNIQUE (strategy, market_scope, as_of_utc),
+  CONSTRAINT uq_backtest_pit_snapshot_as_of
+    UNIQUE (snapshot_id, market_scope, as_of_utc)
 );
 
 CREATE INDEX ix_pit_strategy_as_of
-  ON backtest_pit_snapshot (strategy, as_of_utc DESC);
+  ON backtest_pit_snapshot (strategy, market_scope, as_of_utc DESC);
 CREATE INDEX ix_pit_snapshot_day
-  ON backtest_pit_snapshot (strategy, snapshot_day DESC);
+  ON backtest_pit_snapshot (strategy, market_scope, snapshot_day DESC);
 
 CREATE TABLE backtest_pit_holding (
   backtest_pit_holding_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -528,8 +539,9 @@ CREATE TABLE backtest_pit_holding (
   fact_hash TEXT NOT NULL CHECK (fact_hash ~ '^[0-9a-f]{64}$'),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT fk_backtest_pit_holding_snapshot_as_of
-    FOREIGN KEY (snapshot_id, snapshot_as_of_utc)
-    REFERENCES backtest_pit_snapshot(snapshot_id, as_of_utc) ON DELETE CASCADE,
+    FOREIGN KEY (snapshot_id, market_scope, snapshot_as_of_utc)
+    REFERENCES backtest_pit_snapshot(snapshot_id, market_scope, as_of_utc)
+    ON DELETE CASCADE,
   CONSTRAINT ck_backtest_pit_holding_availability CHECK (
     available_at_utc <= snapshot_as_of_utc
   ),

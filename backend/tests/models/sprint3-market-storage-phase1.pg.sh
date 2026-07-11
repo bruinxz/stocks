@@ -26,10 +26,11 @@ test "$table_count" = "10"
 
 psql -h "$PGHOST" -d "$DB" -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
 INSERT INTO backtest_pit_snapshot (
-  strategy, as_of_utc, snapshot_day, published_at_utc,
+  strategy, market_scope, as_of_utc, snapshot_day, published_at_utc,
   is_survivorship_biased, source_versions, lineage_closure, metrics, fact_hash
 ) VALUES (
-  'multibagger', '2026-07-10T06:30:00Z', '2026-07-10', '2026-07-10T06:31:00Z',
+  'multibagger', 'us', '2026-07-10T06:30:00Z', '2026-07-10',
+  '2026-07-10T06:31:00Z',
   FALSE, '{"prices":"v1"}',
   '{"survivorship_evidence":{"universe":"fixture-v1"}}',
   '{}', repeat('a', 64)
@@ -39,9 +40,9 @@ INSERT INTO backtest_pit_holding (
   snapshot_id, snapshot_as_of_utc, position_order, market_scope, ticker,
   weight, return_since_entry, source_kind, source_document_id, source_version,
   available_at_utc, fact_hash
-) SELECT snapshot_id, as_of_utc, 0, 'us', 'AAPL', 0.5, 0.1,
+) SELECT snapshot_id, as_of_utc, 0, market_scope, 'AAPL', 0.5, 0.1,
          'fixture', 'holding-1', 'v1', as_of_utc, repeat('b', 64)
-  FROM backtest_pit_snapshot WHERE strategy = 'multibagger';
+  FROM backtest_pit_snapshot WHERE strategy = 'multibagger' AND market_scope = 'us';
 
 -- Baostock lifecycle and daily rows do not collide because record_kind is in
 -- the append-only identity.
@@ -84,7 +85,7 @@ DO $$
 DECLARE snapshot_uuid uuid;
 BEGIN
   SELECT snapshot_id INTO snapshot_uuid
-  FROM backtest_pit_snapshot WHERE strategy = 'multibagger';
+  FROM backtest_pit_snapshot WHERE strategy = 'multibagger' AND market_scope = 'us';
 
   BEGIN
     INSERT INTO backtest_pit_holding (
@@ -105,6 +106,56 @@ BEGIN
       weight, return_since_entry, source_kind, source_document_id, source_version,
       available_at_utc, fact_hash
     ) VALUES (
+      snapshot_uuid, '2026-07-10T06:30:00Z', 1, 'cn_a', '600000', 0.5, 0.1,
+      'fixture', 'cross-scope', 'v1', '2026-07-10T06:30:00Z', repeat('3', 64)
+    );
+    RAISE EXCEPTION 'expected cross-scope holding FK violation';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+
+  BEGIN
+    INSERT INTO backtest_pit_snapshot (
+      strategy, market_scope, as_of_utc, snapshot_day, is_survivorship_biased,
+      source_versions, lineage_closure, metrics, fact_hash
+    ) VALUES (
+      'japan_blue_chip', 'us', '2026-07-10T06:35:00Z', '2026-07-10', TRUE,
+      '{"prices":"v1"}', '{}', '{}', repeat('4', 64)
+    );
+    RAISE EXCEPTION 'expected JP profile/scope check violation';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  BEGIN
+    INSERT INTO backtest_pit_snapshot (
+      strategy, market_scope, as_of_utc, snapshot_day, is_survivorship_biased,
+      source_versions, lineage_closure, metrics, fact_hash
+    ) VALUES (
+      'korea_multibagger', 'jp', '2026-07-10T06:36:00Z', '2026-07-10', TRUE,
+      '{"prices":"v1"}', '{}', '{}', repeat('5', 64)
+    );
+    RAISE EXCEPTION 'expected KR profile/scope check violation';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  INSERT INTO backtest_pit_snapshot (
+    strategy, market_scope, as_of_utc, snapshot_day, is_survivorship_biased,
+    source_versions, lineage_closure, metrics, fact_hash
+  ) VALUES
+    (
+      'us_preferred', 'us', '2026-07-10T06:40:00Z', '2026-07-10', TRUE,
+      '{"prices":"v1"}', '{}', '{}', repeat('6', 64)
+    ),
+    (
+      'us_preferred', 'cn_a', '2026-07-10T06:40:00Z', '2026-07-10', TRUE,
+      '{"prices":"v1"}', '{}', '{}', repeat('7', 64)
+    );
+
+  BEGIN
+    INSERT INTO backtest_pit_holding (
+      snapshot_id, snapshot_as_of_utc, position_order, market_scope, ticker,
+      weight, return_since_entry, source_kind, source_document_id, source_version,
+      available_at_utc, fact_hash
+    ) VALUES (
       snapshot_uuid, '2026-07-10T06:30:00Z', 1, 'us',
       '__AGGREGATE__:FRENCH_MONTHLY', 0.5, 0.1,
       'fixture', 'aggregate', 'v1', '2026-07-10T06:30:00Z', repeat('3', 64)
@@ -115,10 +166,10 @@ BEGIN
 
   BEGIN
     INSERT INTO backtest_pit_snapshot (
-      strategy, as_of_utc, snapshot_day, is_survivorship_biased,
+      strategy, market_scope, as_of_utc, snapshot_day, is_survivorship_biased,
       source_versions, lineage_closure, metrics, fact_hash
     ) VALUES (
-      'us_preferred', '2026-07-10T06:31:00Z', '2026-07-10', TRUE,
+      'us_preferred', 'us', '2026-07-10T06:31:00Z', '2026-07-10', TRUE,
       '{}', '{}', '{}', repeat('4', 64)
     );
     RAISE EXCEPTION 'expected empty source_versions check violation';
@@ -127,10 +178,10 @@ BEGIN
 
   BEGIN
     INSERT INTO backtest_pit_snapshot (
-      strategy, as_of_utc, snapshot_day, is_survivorship_biased,
+      strategy, market_scope, as_of_utc, snapshot_day, is_survivorship_biased,
       source_versions, lineage_closure, metrics, fact_hash
     ) VALUES (
-      'us_preferred', '2026-07-10T06:32:00Z', '2026-07-10', FALSE,
+      'us_preferred', 'us', '2026-07-10T06:32:00Z', '2026-07-10', FALSE,
       '{"prices":"v1"}', '{}', '{}', repeat('5', 64)
     );
     RAISE EXCEPTION 'expected survivorship evidence check violation';
@@ -223,10 +274,10 @@ BEGIN
 
   BEGIN
     INSERT INTO backtest_pit_snapshot (
-      strategy, as_of_utc, snapshot_day, is_survivorship_biased,
+      strategy, market_scope, as_of_utc, snapshot_day, is_survivorship_biased,
       source_versions, lineage_closure, metrics, fact_hash
     ) VALUES (
-      'not-a-profile', '2026-07-10T06:33:00Z', '2026-07-10', TRUE,
+      'not-a-profile', 'us', '2026-07-10T06:33:00Z', '2026-07-10', TRUE,
       '{"prices":"v1"}', '{}', '{}', repeat('c', 64)
     );
     RAISE EXCEPTION 'expected replay strategy check violation';
@@ -353,10 +404,10 @@ BEGIN
 
   BEGIN
     INSERT INTO backtest_pit_snapshot (
-      strategy, as_of_utc, snapshot_day, is_survivorship_biased,
+      strategy, market_scope, as_of_utc, snapshot_day, is_survivorship_biased,
       source_versions, lineage_closure, metrics, fact_hash
     ) VALUES (
-      'us_preferred', '2026-07-10T06:34:00Z', '2026-07-10', TRUE,
+      'us_preferred', 'us', '2026-07-10T06:34:00Z', '2026-07-10', TRUE,
       '{"prices":[]}', '{}', '{}', repeat('5', 64)
     );
     RAISE EXCEPTION 'expected nested source-version check violation';
@@ -425,10 +476,10 @@ BEGIN
     fixture_number := fixture_number + 1;
     BEGIN
       INSERT INTO backtest_pit_snapshot (
-        strategy, as_of_utc, snapshot_day, is_survivorship_biased,
+        strategy, market_scope, as_of_utc, snapshot_day, is_survivorship_biased,
         source_versions, lineage_closure, metrics, fact_hash
       ) VALUES (
-        'us_preferred',
+        'us_preferred', 'us',
         '2026-07-10T07:00:00Z'::timestamptz + fixture_number * INTERVAL '1 second',
         '2026-07-10', TRUE, invalid_value, '{}', '{}', repeat('b', 64)
       );
@@ -456,14 +507,22 @@ BEGIN
     );
 
   INSERT INTO backtest_pit_snapshot (
-    strategy, as_of_utc, snapshot_day, is_survivorship_biased,
+    strategy, market_scope, as_of_utc, snapshot_day, is_survivorship_biased,
     source_versions, lineage_closure, metrics, fact_hash
   ) VALUES (
-    'japan_blue_chip', '2026-07-10T08:00:00Z', '2026-07-10', TRUE,
+    'japan_blue_chip', 'jp', '2026-07-10T08:00:00Z', '2026-07-10', TRUE,
     '{"prices":"v1","fundamentals":"v2"}', '{}', '{}', repeat('e', 64)
   );
 END $$;
 SQL
+
+DB_HOST="$PGHOST" \
+DB_PORT="${PGPORT:-5432}" \
+DB_NAME="$DB" \
+DB_USER="${PGUSER:-${USER:-agent}}" \
+DB_PASSWORD="${PGPASSWORD:-}" \
+  npx ts-node --transpile-only \
+  "$ROOT/tests/models/sprint3-market-storage-phase1.orm.ts"
 
 test "$(psql -h "$PGHOST" -d "$DB" -Atc \
   "SELECT count(*) FROM multibagger_universe
@@ -478,6 +537,10 @@ test "$(psql -h "$PGHOST" -d "$DB" -Atc \
 test "$(psql -h "$PGHOST" -d "$DB" -Atc \
   "SELECT count(*) FROM backtest_pit_snapshot
    WHERE strategy = 'japan_blue_chip'")" = "1"
+test "$(psql -h "$PGHOST" -d "$DB" -Atc \
+  "SELECT count(*) FROM backtest_pit_snapshot
+   WHERE strategy = 'us_preferred'
+     AND as_of_utc = '2026-07-10T06:40:00Z'")" = "2"
 
 psql -h "$PGHOST" -d "$DB" -v ON_ERROR_STOP=1 -f "$DOWN" >/dev/null
 test "$(psql -h "$PGHOST" -d "$DB" -Atc \

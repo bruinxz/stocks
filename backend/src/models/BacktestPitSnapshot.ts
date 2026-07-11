@@ -8,15 +8,21 @@ import { Column, DataType, Model, Table } from 'sequelize-typescript';
     {
       name: 'uq_backtest_pit_exact_as_of',
       unique: true,
-      fields: ['strategy', 'as_of_utc'],
+      fields: ['strategy', 'market_scope', 'as_of_utc'],
     },
     {
       name: 'uq_backtest_pit_snapshot_as_of',
       unique: true,
-      fields: ['snapshot_id', 'as_of_utc'],
+      fields: ['snapshot_id', 'market_scope', 'as_of_utc'],
     },
-    { name: 'ix_pit_strategy_as_of', fields: ['strategy', 'as_of_utc'] },
-    { name: 'ix_pit_snapshot_day', fields: ['strategy', 'snapshot_day'] },
+    {
+      name: 'ix_pit_strategy_as_of',
+      fields: ['strategy', 'market_scope', 'as_of_utc'],
+    },
+    {
+      name: 'ix_pit_snapshot_day',
+      fields: ['strategy', 'market_scope', 'snapshot_day'],
+    },
   ],
 })
 export class BacktestPitSnapshot extends Model {
@@ -32,10 +38,14 @@ export class BacktestPitSnapshot extends Model {
   declare strategy:
     | 'us_preferred'
     | 'multibagger'
+    | 'custom'
     | 'japan_blue_chip'
     | 'japan_multibagger'
     | 'korea_semiconductor_chain'
     | 'korea_multibagger';
+
+  @Column({ type: DataType.TEXT, allowNull: false, field: 'market_scope' })
+  declare marketScope: 'cn_a' | 'us' | 'jp' | 'kr';
 
   @Column({ type: DataType.DATE, allowNull: false, field: 'as_of_utc' })
   declare asOfUtc: Date;

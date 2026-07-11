@@ -38,8 +38,10 @@ export class JpkrFinancialSnapshot extends Model {
   @Column({ type: DataType.STRING(32), allowNull: false, field: 'ticker' })
   declare ticker: string;
 
-  @Column({ type: DataType.INTEGER, allowNull: false, field: 'fiscal_year' })
-  declare readonly fiscalYear: number;
+  // Database-generated from fiscal_period_end. allowNull=true disables
+  // Sequelize's insert-side not-null validation; PostgreSQL always returns it.
+  @Column({ type: DataType.INTEGER, allowNull: true, field: 'fiscal_year' })
+  declare readonly fiscalYear?: number;
 
   @Column({ type: DataType.INTEGER, allowNull: true, field: 'fiscal_quarter' })
   declare fiscalQuarter: number | null;

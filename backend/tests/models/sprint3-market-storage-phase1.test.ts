@@ -18,6 +18,7 @@ const downPath = join(
   ROOT,
   'scripts/migrations/2026-07-11-sprint3-market-storage-phase1-rollback.sql',
 );
+const ormPath = join(ROOT, 'tests/models/sprint3-market-storage-phase1.orm.ts');
 const databasePath = join(ROOT, 'src/config/database.ts');
 const indexPath = join(ROOT, 'src/models/index.ts');
 
@@ -236,6 +237,7 @@ const expectedColumns: Record<(typeof tables)[number][0], string[]> = {
   backtest_pit_snapshot: [
     'snapshot_id',
     'strategy',
+    'market_scope',
     'as_of_utc',
     'snapshot_day',
     'published_at_utc',
@@ -284,6 +286,7 @@ function escapeRegex(value: string): string {
 
 assert('[files] forward exists', existsSync(upPath));
 assert('[files] rollback exists', existsSync(downPath));
+assert('[files] real ORM proof exists', existsSync(ormPath));
 assert('[migration] forward transaction', /\bBEGIN;[\s\S]*\bCOMMIT;/.test(up));
 assert('[migration] rollback transaction', /\bBEGIN;[\s\S]*\bCOMMIT;/.test(down));
 assert(
@@ -364,6 +367,19 @@ assert(
     /source_kind = 'dart'[\s\S]*?account_mapping_version IS NOT NULL/.test(up),
 );
 assert(
+  '[financial] generated year avoids insert-side not-null validation',
+  /field:\s*'fiscal_year'/.test(
+    readFileSync(join(ROOT, 'src/models/JpkrFinancialSnapshot.ts'), 'utf8'),
+  ) &&
+    /allowNull:\s*true/.test(
+      readFileSync(join(ROOT, 'src/models/JpkrFinancialSnapshot.ts'), 'utf8').match(
+        /@Column\(\{[^}]*field:\s*'fiscal_year'[^}]*\}\)/,
+      )?.[0] || '',
+    ) &&
+    /fiscalYear !== 2025/.test(readFileSync(ormPath, 'utf8')) &&
+    /fiscalYear:\s*1999/.test(readFileSync(ormPath, 'utf8')),
+);
+assert(
   '[kline] adjusted close pins corporate action version',
   /adjusted_close IS NULL OR corporate_action_version IS NOT NULL/.test(up),
 );
@@ -432,11 +448,23 @@ assert(
 );
 assert(
   '[PIT] exact strategy/as-of unique',
-  /UNIQUE\s*\(\s*strategy,\s*as_of_utc\s*\)/.test(up),
+  /UNIQUE\s*\(\s*strategy,\s*market_scope,\s*as_of_utc\s*\)/.test(up),
 );
 assert(
-  '[PIT] exact six replay strategies',
-  /'us_preferred'[\s\S]*?'multibagger'[\s\S]*?'japan_blue_chip'[\s\S]*?'japan_multibagger'[\s\S]*?'korea_semiconductor_chain'[\s\S]*?'korea_multibagger'/.test(
+  '[PIT] profile/scope replay compatibility',
+  /strategy IN \('us_preferred', 'multibagger', 'custom'\)[\s\S]*?market_scope IN \('cn_a', 'us'\)/.test(
+    up,
+  ) &&
+    /strategy IN \('japan_blue_chip', 'japan_multibagger'\)[\s\S]*?market_scope = 'jp'/.test(
+      up,
+    ) &&
+    /strategy IN \('korea_semiconductor_chain', 'korea_multibagger'\)[\s\S]*?market_scope = 'kr'/.test(
+      up,
+    ),
+);
+assert(
+  '[PIT] holding FK pins market scope',
+  /FOREIGN KEY \(snapshot_id, market_scope, snapshot_as_of_utc\)[\s\S]*?REFERENCES backtest_pit_snapshot\(snapshot_id, market_scope, as_of_utc\)/.test(
     up,
   ),
 );
