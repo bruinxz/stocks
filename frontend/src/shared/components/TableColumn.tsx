@@ -49,8 +49,8 @@ const RISK_COLOR: Record<string, string> = {
 export function ScoreCell(score: Score, ariaLabel: string): JSX.Element {
   return (
     <span aria-label={ariaLabel}>
-      <Tag color={BAND_COLOR[score.band]}>{score.band}</Tag>
-      <span style={{ fontSize: 12 }}>{score.score}</span>
+      <Tag color={BAND_COLOR[score.rating]}>{score.rating}</Tag>
+      <span style={{ fontSize: 12 }}>{score.total}</span>
     </span>
   );
 }
@@ -65,11 +65,9 @@ export function ConvictionPill(c: Conviction, ariaLabel: string): JSX.Element {
 
 export function RiskGateChip(r: RiskGate, ariaLabel: string): JSX.Element {
   return (
-    <Tooltip
-      title={r.triggers.map((t) => `${t.code} (${t.severity})`).join(', ') || 'No triggers'}
-    >
-      <Tag color={RISK_COLOR[r.status]} aria-label={ariaLabel}>
-        {r.status}
+    <Tooltip title={r.triggers.map(t => `${t.code} (${t.severity})`).join(', ') || 'No triggers'}>
+      <Tag color={RISK_COLOR[r.gate]} aria-label={ariaLabel}>
+        {r.gate}
         {r.triggers.length > 0 && ` (${r.triggers.length})`}
       </Tag>
     </Tooltip>
@@ -92,7 +90,7 @@ export function TableColumn<Row extends object>({
     return <div role="alert">{errorText}</div>;
   }
 
-  const antdColumns: ColumnsType<Row> = columns.map((col) => ({
+  const antdColumns: ColumnsType<Row> = columns.map(col => ({
     key: col.key,
     title: col.title,
     dataIndex: col.key,
@@ -118,7 +116,7 @@ export function TableColumn<Row extends object>({
       pagination={false}
       onRow={
         onRowClick
-          ? (record) => ({
+          ? record => ({
               onClick: () => onRowClick(record),
               style: { cursor: 'pointer' },
               role: 'button',
