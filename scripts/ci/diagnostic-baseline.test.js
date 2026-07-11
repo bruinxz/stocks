@@ -267,6 +267,18 @@ for (const [name, mutate] of [
     'increased diagnostic count',
     (ledger) => [{ ...ledger[0], count: ledger[0].count + 1 }, ...ledger.slice(1)],
   ],
+  ['deleted diagnostic entry', (ledger) => ledger.slice(1)],
+  [
+    'rewritten diagnostic entry',
+    (ledger) => {
+      const rewritten = {
+        ...ledger[0],
+        message: `${ledger[0].message} rewritten`,
+      };
+      rewritten.fingerprint = makeFingerprint('eslint', rewritten);
+      return [rewritten, ...ledger.slice(1)];
+    },
+  ],
 ]) {
   const mutated = {
     ...realEslintBaseline,
@@ -274,6 +286,19 @@ for (const [name, mutate] of [
   };
   expectThrow(name, () => validateBaselineAuthority(mutated), 'ledger hash mismatch');
 }
+
+expectThrow(
+  'runtime tool version mismatch',
+  () =>
+    compareDiagnostics({
+      baseline: realEslintBaseline,
+      current: realEslintBaseline.diagnostics,
+      repoRoot: process.cwd(),
+      toolVersion: '9.0.0',
+      producerExit: 1,
+    }),
+  'tool version mismatch',
+);
 expectThrow(
   'TypeScript producer crash with parseable diagnostics',
   () =>
