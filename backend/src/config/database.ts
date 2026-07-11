@@ -102,6 +102,17 @@ import { IndustrySentimentIndex } from '../models/IndustrySentimentIndex';
 import { ThemeFermentationPhase } from '../models/ThemeFermentationPhase';
 // 2026-07-08 — 交易日历 (§D4.G2 契约 · PR #96 DDL landed @ 6299a3d4)
 import { TradingCalendar } from '../models/TradingCalendar';
+import { JpkrSecurityMaster } from '../models/JpkrSecurityMaster';
+import { JpkrDailyKline } from '../models/JpkrDailyKline';
+import { JpkrDisclosureEvent } from '../models/JpkrDisclosureEvent';
+import { JpkrFinancialSnapshot } from '../models/JpkrFinancialSnapshot';
+import { JpkrFxObservation } from '../models/JpkrFxObservation';
+import { MultibaggerUniverse } from '../models/MultibaggerUniverse';
+import { MultibaggerTextHit } from '../models/MultibaggerTextHit';
+import { MultibaggerCandidateSnapshot } from '../models/MultibaggerCandidateSnapshot';
+import { BacktestPitSnapshot } from '../models/BacktestPitSnapshot';
+import { BacktestPitHolding } from '../models/BacktestPitHolding';
+import '../models/Sprint3MigrationOwnedModels';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -225,6 +236,17 @@ const sequelize = new Sequelize({
     ThemeFermentationPhase,
     // 2026-07-08 — 交易日历 (§D4.G2 契约 · PR #96 DDL landed @ 6299a3d4)
     TradingCalendar,
+    // Sprint 3 Phase 1 — JP/KR, multibagger, and normalized PIT storage.
+    JpkrSecurityMaster,
+    JpkrDailyKline,
+    JpkrDisclosureEvent,
+    JpkrFinancialSnapshot,
+    JpkrFxObservation,
+    MultibaggerUniverse,
+    MultibaggerTextHit,
+    MultibaggerCandidateSnapshot,
+    BacktestPitSnapshot,
+    BacktestPitHolding,
   ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {
