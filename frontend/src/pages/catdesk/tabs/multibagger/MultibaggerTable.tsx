@@ -3,7 +3,6 @@ import { Progress, Tag, Tooltip } from 'antd';
 import { TableColumn } from 'shared/components/TableColumn';
 import { ScoreCell, ConvictionPill, RiskGateChip } from 'shared/components/TableColumn';
 import type { TableColumnDef } from 'shared/components/TableColumn';
-import { SIZE_HINT_TIER_PCT } from 'shared/types/catdesk';
 import type { MultibaggerRow } from './types';
 
 const STAGE_LABEL: Record<string, string> = {

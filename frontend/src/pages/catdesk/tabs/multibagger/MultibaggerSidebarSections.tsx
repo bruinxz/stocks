@@ -5,7 +5,6 @@ import {
   EntryPlanCard,
   RiskGateDetailCard,
   ConvictionBreakdownCard,
-  DataSourceBadge,
 } from 'shared/components/DetailSidebar';
 import type { DetailSection } from 'shared/components/DetailSidebar';
 import type { Dimension, Score, Weights } from 'shared/scoring/types';
@@ -37,7 +36,7 @@ const SCORE_DIMENSIONS = [
   'risk',
 ] as const satisfies readonly (keyof Weights)[];
 
-function buildScoreDimMap(score: Score): Record<string, { score: number; band: string }> {
+function buildNamedDimensionMap(score: Score): Record<string, { score: number; band: string }> {
   return Object.fromEntries(
     SCORE_DIMENSIONS.map(key => {
       const dimension: Dimension = score[key];
@@ -96,7 +95,7 @@ export function buildMultibaggerSections(row: MultibaggerRow): DetailSection[] {
       ariaLabel: `${row.symbol} 6 维评分拆解`,
       content: (
         <ScoreBreakdownCard
-          scores={buildScoreDimMap(row.score)}
+          scores={buildNamedDimensionMap(row.score)}
           ariaLabel={`${row.symbol} multibagger profile 评分`}
           weights={buildServerWeights(row.score.weights)}
         />

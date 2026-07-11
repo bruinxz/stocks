@@ -1,6 +1,6 @@
 import React from 'react';
 import { Collapse, Drawer, Progress, Skeleton, Tag, Tooltip, Typography } from 'antd';
-import type { Band, Conviction, EntryPlan, RiskGate, Score } from '../types/catdesk';
+import type { Band, Conviction, EntryPlan, RiskGate } from '../types/catdesk';
 
 const { Text } = Typography;
 
