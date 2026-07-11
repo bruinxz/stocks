@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from ai.types import BAND_RATING_SEQUENCE, BAND_RATINGS
+
 
 @dataclass
 class PipelineContext:
@@ -55,12 +57,14 @@ class PipelineContext:
     @staticmethod
     def _score_rating(recommendation: dict) -> str:
         score = recommendation.get("score")
-        if not isinstance(score, dict) or "rating" not in score:
+        rating = score.get("rating") if isinstance(score, dict) else None
+        if not isinstance(rating, str) or rating not in BAND_RATINGS:
             ticker = recommendation.get("ticker", "<unknown>")
+            allowed = "|".join(BAND_RATING_SEQUENCE)
             raise RecommendationContractError(
-                f"recommendation {ticker}: score.rating is required for rating_band"
+                f"recommendation {ticker}: score.rating must be one of {allowed}"
             )
-        return score["rating"]
+        return rating
 
 
 class RecommendationContractError(ValueError):

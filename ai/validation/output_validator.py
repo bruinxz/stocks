@@ -2,6 +2,8 @@ import hashlib
 import math
 import re
 
+from ai.types import BAND_RATING_SEQUENCE, BAND_RATINGS
+
 
 class OutputValidator:
     """Enforce output invariants per contracts/recommendation.md §8."""
@@ -42,8 +44,20 @@ class OutputValidator:
             if cr and cr["kind"] == "unclassified":
                 errors.append(f"{prefix}: catalyst_relevance.kind must not be unclassified")
 
-            score_rating = rec["score"].get("rating")
-            if entry["rating_band"] != score_rating:
+            score = rec.get("score")
+            score_rating = score.get("rating") if isinstance(score, dict) else None
+            rating_band = entry.get("rating_band")
+            allowed_bands = "|".join(BAND_RATING_SEQUENCE)
+
+            if not isinstance(score_rating, str) or score_rating not in BAND_RATINGS:
+                errors.append(
+                    f"{prefix}: score.rating must be one of {allowed_bands}"
+                )
+            if not isinstance(rating_band, str) or rating_band not in BAND_RATINGS:
+                errors.append(
+                    f"{prefix}: rating_band must be one of {allowed_bands}"
+                )
+            if rating_band != score_rating:
                 errors.append(f"{prefix}: rating_band != score.rating")
 
             conv = rec["conviction"]
