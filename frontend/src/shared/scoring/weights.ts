@@ -11,9 +11,9 @@ const WEIGHT_REGISTRY: Record<string, Weights> = {
   },
   multibagger: {
     quality: 0.10,
-    growth: 0.35,
+    growth: 0.30,
     valuation: 0.10,
-    moat: 0.10,
+    moat: 0.15,
     trend: 0.20,
     risk: 0.15,
   },
@@ -32,6 +32,22 @@ const WEIGHT_REGISTRY: Record<string, Weights> = {
     moat: 0.15,
     trend: 0.20,
     risk: 0.10,
+  },
+  japan_multibagger: {
+    quality: 0.10,
+    growth: 0.25,
+    valuation: 0.10,
+    moat: 0.15,
+    trend: 0.25,
+    risk: 0.15,
+  },
+  korea_multibagger: {
+    quality: 0.10,
+    growth: 0.30,
+    valuation: 0.10,
+    moat: 0.10,
+    trend: 0.25,
+    risk: 0.15,
   },
 };
 
