@@ -7,29 +7,45 @@ import { SIZE_HINT_TIER_PCT } from 'shared/types/catdesk';
 import type { MultibaggerRow } from './types';
 
 const STAGE_LABEL: Record<string, string> = {
-  seed: '种子', early: '早期', growth: '成长',
-  break_below: '破发', deep: '深度',
+  seed: '种子',
+  early: '早期',
+  growth: '成长',
+  break_below: '破发',
+  deep: '深度',
 };
 
 const STAGE_COLOR: Record<string, string> = {
-  seed: 'default', early: 'blue', growth: 'green',
-  break_below: 'orange', deep: 'red',
+  seed: 'default',
+  early: 'blue',
+  growth: 'green',
+  break_below: 'orange',
+  deep: 'red',
 };
 
 const CONCLUSION_LABEL: Record<string, string> = {
-  MULTIBAGGER_2X: '2X', MULTIBAGGER_5X: '5X',
-  MULTIBAGGER_10X: '10X', SKIP: 'SKIP',
+  MULTIBAGGER_2X: '2X',
+  MULTIBAGGER_5X: '5X',
+  MULTIBAGGER_10X: '10X',
+  SKIP: 'SKIP',
 };
 
 const CONCLUSION_COLOR: Record<string, string> = {
-  MULTIBAGGER_2X: 'blue', MULTIBAGGER_5X: 'green',
-  MULTIBAGGER_10X: 'gold', SKIP: 'default',
+  MULTIBAGGER_2X: 'blue',
+  MULTIBAGGER_5X: 'green',
+  MULTIBAGGER_10X: 'gold',
+  SKIP: 'default',
 };
 
 const CATALYST_LABEL: Record<string, string> = {
-  earnings: '财报', upgrade_downgrade: '评级', ma_activity: '并购',
-  sector_move: '板块', regulator: '监管', geo_macro: '宏观',
-  product: '产品', leadership: '管理层', unclassified: '未分类',
+  earnings: '财报',
+  upgrade_downgrade: '评级',
+  ma_activity: '并购',
+  sector_move: '板块',
+  regulator: '监管',
+  geo_macro: '宏观',
+  product: '产品',
+  leadership: '管理层',
+  unclassified: '未分类',
 };
 
 const DISCLAIMER_TEXT = '仅供参考，非投资建议或下单指令';
@@ -64,9 +80,7 @@ function getColumns(): TableColumnDef<MultibaggerRow>[] {
       ariaLabel: '候选阶段',
       width: 70,
       sortable: true,
-      render: (_, row) => (
-        <Tag color={STAGE_COLOR[row.stage]}>{STAGE_LABEL[row.stage]}</Tag>
-      ),
+      render: (_, row) => <Tag color={STAGE_COLOR[row.stage]}>{STAGE_LABEL[row.stage]}</Tag>,
     },
     {
       key: 'conclusion',
@@ -75,9 +89,7 @@ function getColumns(): TableColumnDef<MultibaggerRow>[] {
       width: 70,
       sortable: true,
       render: (_, row) => (
-        <Tag color={CONCLUSION_COLOR[row.conclusion]}>
-          {CONCLUSION_LABEL[row.conclusion]}
-        </Tag>
+        <Tag color={CONCLUSION_COLOR[row.conclusion]}>{CONCLUSION_LABEL[row.conclusion]}</Tag>
       ),
     },
     {
@@ -87,11 +99,14 @@ function getColumns(): TableColumnDef<MultibaggerRow>[] {
       width: 90,
       align: 'center',
       sortable: true,
-      render: (_, row) => (
-        <Tooltip title={`scoring_id: ${row.score.scoring_id.slice(0, 8)}…`}>
-          {ScoreCell(row.score, `${row.symbol} 评分`)}
-        </Tooltip>
-      ),
+      render: (_, row) =>
+        row.score ? (
+          <Tooltip title={`scoring_id: ${row.score.scoring_id.slice(0, 8)}…`}>
+            {ScoreCell(row.score, `${row.symbol} 评分`)}
+          </Tooltip>
+        ) : (
+          <span style={{ color: 'var(--cd-text-secondary)' }}>—</span>
+        ),
     },
     {
       key: 'rating_band',
@@ -101,11 +116,13 @@ function getColumns(): TableColumnDef<MultibaggerRow>[] {
       align: 'center',
       render: (_, row) => {
         const colorMap: Record<string, string> = {
-          A: '#389e0d', B: '#52c41a', C: '#faad14', D: '#fa8c16', F: '#cf1322',
+          A: '#389e0d',
+          B: '#52c41a',
+          C: '#faad14',
+          D: '#fa8c16',
+          F: '#cf1322',
         };
-        return (
-          <Tag color={colorMap[row.rating_band]}>{row.rating_band}</Tag>
-        );
+        return <Tag color={colorMap[row.rating_band]}>{row.rating_band}</Tag>;
       },
     },
     {
@@ -146,7 +163,8 @@ function getColumns(): TableColumnDef<MultibaggerRow>[] {
         if (!row.entry_plan) return <span style={{ color: '#999' }}>—</span>;
         const { tier, pct } = row.entry_plan.size_hint;
         const tierLabel = tier === 'SKIP' ? 'SKIP' : `${pct}%`;
-        const tierColor = tier === 'SKIP' ? '#999' : pct >= 5 ? '#389e0d' : pct >= 3 ? '#52c41a' : '#faad14';
+        const tierColor =
+          tier === 'SKIP' ? '#999' : pct >= 5 ? '#389e0d' : pct >= 3 ? '#52c41a' : '#faad14';
         return (
           <Tooltip title={DISCLAIMER_TEXT}>
             <div>
