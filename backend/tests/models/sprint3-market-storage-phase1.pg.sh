@@ -11,11 +11,13 @@ PGHOST="${PGHOST:-/tmp}"
 DB="stocks_sprint3_phase1_${USER:-agent}_$$"
 COLLISION_DB="${DB}_collision"
 TAMPER_DB="${DB}_tamper"
+FOREIGN_INDEX_DB="${DB}_foreign_index"
 
 cleanup() {
   dropdb -h "$PGHOST" --if-exists "$DB" >/dev/null 2>&1 || true
   dropdb -h "$PGHOST" --if-exists "$COLLISION_DB" >/dev/null 2>&1 || true
   dropdb -h "$PGHOST" --if-exists "$TAMPER_DB" >/dev/null 2>&1 || true
+  dropdb -h "$PGHOST" --if-exists "$FOREIGN_INDEX_DB" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -601,5 +603,37 @@ if psql -h "$PGHOST" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 \
 fi
 test "$(psql -h "$PGHOST" -d "$TAMPER_DB" -Atc \
   "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")" = "10"
+
+createdb -h "$PGHOST" "$FOREIGN_INDEX_DB"
+psql -h "$PGHOST" -d "$FOREIGN_INDEX_DB" -v ON_ERROR_STOP=1 -f "$UP" >/dev/null
+psql -h "$PGHOST" -d "$FOREIGN_INDEX_DB" -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
+DROP INDEX ix_jpkr_security_active;
+CREATE TABLE foreign_table (id INTEGER);
+CREATE INDEX ix_jpkr_security_active ON foreign_table (id);
+SQL
+psql -h "$PGHOST" -d "$FOREIGN_INDEX_DB" -v ON_ERROR_STOP=1 -f "$DOWN" >/dev/null
+test "$(psql -h "$PGHOST" -d "$FOREIGN_INDEX_DB" -Atc \
+  "SELECT count(*) FROM pg_tables
+   WHERE schemaname = 'public'
+     AND tablename IN (
+       'jpkr_security_master',
+       'jpkr_daily_kline',
+       'jpkr_disclosure_event',
+       'jpkr_financial_snapshot',
+       'jpkr_fx_observation',
+       'multibagger_universe',
+       'multibagger_text_hit',
+       'multibagger_candidate_snapshot',
+       'backtest_pit_snapshot',
+       'backtest_pit_holding'
+     )")" = "0"
+test "$(psql -h "$PGHOST" -d "$FOREIGN_INDEX_DB" -Atc \
+  "SELECT count(*) FROM pg_tables
+   WHERE schemaname = 'public' AND tablename = 'foreign_table'")" = "1"
+test "$(psql -h "$PGHOST" -d "$FOREIGN_INDEX_DB" -Atc \
+  "SELECT count(*) FROM pg_indexes
+   WHERE schemaname = 'public'
+     AND tablename = 'foreign_table'
+     AND indexname = 'ix_jpkr_security_active'")" = "1"
 
 echo 'sprint3-market-storage-phase1.pg: PASS (10 tables, constraints, rollback, collision)'

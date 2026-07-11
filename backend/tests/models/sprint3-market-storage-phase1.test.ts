@@ -295,6 +295,10 @@ assert(
     /rollback ownership mismatch/.test(down),
 );
 assert(
+  '[migration] rollback never drops indexes by global name',
+  !/DROP\s+INDEX/i.test(down),
+);
+assert(
   '[migration] canonical CREATE fails closed',
   !/CREATE (?:TABLE|INDEX) IF NOT EXISTS/i.test(up),
 );
