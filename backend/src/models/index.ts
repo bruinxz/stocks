@@ -89,3 +89,14 @@ export * from './IndustrySentimentIndex';
 export * from './ThemeFermentationPhase';
 // 2026-07-08 交易日历 (§D4.G2 契约 · PR #96 DDL landed @ 6299a3d4)
 export * from './TradingCalendar';
+// Sprint 3 Phase 1 — JP/KR, multibagger, and normalized PIT storage.
+export * from './JpkrSecurityMaster';
+export * from './JpkrDailyKline';
+export * from './JpkrDisclosureEvent';
+export * from './JpkrFinancialSnapshot';
+export * from './JpkrFxObservation';
+export * from './MultibaggerUniverse';
+export * from './MultibaggerTextHit';
+export * from './MultibaggerCandidateSnapshot';
+export * from './BacktestPitSnapshot';
+export * from './BacktestPitHolding';
