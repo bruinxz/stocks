@@ -1,0 +1,23 @@
+docs/refactor/baseline/ci/backend-eslint-da801a52.json
+  s_39bfbb0f32c83f::t_111ffd21fcf4ee 1-7653
+docs/refactor/baseline/ci/frontend-tsc-da801a52.json
+  s_39bfbb0f32c83f::t_833e563e4cdc3a 1-303
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "52d253f6f0dff6a4ad259425214b118bfe9cec1d",
+  "prompts": {},
+  "sessions": {
+    "s_39bfbb0f32c83f": {
+      "agent_id": {
+        "tool": "trae",
+        "id": "6a214830fc857d036640d5be",
+        "model": "gpt-5.5__max"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
