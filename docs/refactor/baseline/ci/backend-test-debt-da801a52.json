@@ -1,0 +1,390 @@
+{
+  "version": 1,
+  "kind": "backend-test-debt",
+  "anchor_sha": "da801a52c6f5bc3e862e144f770113130e87e766",
+  "capture_sha": "da801a52c6f5bc3e862e144f770113130e87e766",
+  "tool": {
+    "name": "backend-test-debt",
+    "version": "1",
+    "command": "cd backend && npm test -- --quiet"
+  },
+  "runtime": {
+    "node_major": 20
+  },
+  "fingerprint_model": {
+    "fields": [
+      "repo_relative_test_path",
+      "child_exit",
+      "normalized_first_semantic_diagnostic"
+    ],
+    "rule": "exact path, child exit, and diagnostic; removals pass; additions or drift fail"
+  },
+  "config_files": [
+    {
+      "path": "backend/src/scripts/run-tests.ts",
+      "sha256": "1b60fd3cc9de8c194de3e7ad8f50b34f91b1cee087fb05723f2c5fdffe12a7af"
+    },
+    {
+      "path": "backend/package.json",
+      "sha256": "5f7c95cf7b3bf4f744f80cab00e43ee4012ea720a3233c9e01bac9088addb117"
+    },
+    {
+      "path": "backend/package-lock.json",
+      "sha256": "f5ab17f4794624408910288d9b0d7238ea23bd22bcc151084e623811abd59a0a"
+    }
+  ],
+  "entries": [
+    {
+      "path": "backend/tests/factors/EarningsSurpriseFactor.test.ts",
+      "child_exit": 1,
+      "diagnostic": "registry 含 earnings_surprise + 至少 17 个因子 (实际 16) (analyst_consensus, dragon_tiger, earnings_surprise, fund_consensus, gradual_breakout, growth, industry_momentum, liquidity, low_vol, momentum, momentum_reversal, money_flow, northbound, quality, quality_high, value)",
+      "fingerprint": "d64a4bef952b4f66d26d954bdc3b4fb05444ebd30ef7a5200fec1a79a8dd06e8"
+    },
+    {
+      "path": "backend/tests/factors/EastMoneyQAFactor.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/quant/factors/library/EastMoneyQAFactor'",
+      "fingerprint": "b809c5d3ccdf5b73faf472bc4ce94bbae2b5acf30740df8b92ab21b70690f628"
+    },
+    {
+      "path": "backend/tests/factors/GradualBreakoutFactor.test.ts",
+      "child_exit": 1,
+      "diagnostic": "factor \"east_money_qa\" 存在",
+      "fingerprint": "6aed533ff37ec232b13bf409d2cdae0b5886795c01576526a690d0fb28e75c01"
+    },
+    {
+      "path": "backend/tests/factors/historicalMarketCap.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/quant/factors/library/_historicalMarketCap'",
+      "fingerprint": "be3b7ca7fef9378b1e0c03506870c29937b22bd1b0ab687f6dd7ce97d6728158"
+    },
+    {
+      "path": "backend/tests/factors/InsiderTradeFactor.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/quant/factors/library/InsiderTradeFactor'",
+      "fingerprint": "9f457c5181115b6a1efe51aac53c04c0e2ec253d2895bf82fab9d3eff61393c8"
+    },
+    {
+      "path": "backend/tests/factors/MarginFlowFactor.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/quant/factors/library/MarginFlowFactor'",
+      "fingerprint": "eaa971cd55a1bf44092ad1c7c871007a1ddaf0f241b2280c5c0e16c08c9dcab7"
+    },
+    {
+      "path": "backend/tests/factors/ShareholderConcentrationFactor.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/quant/factors/library/ShareholderConcentrationFactor'",
+      "fingerprint": "a39e3a6b4be79211f0a9382fcad30c0d16431b792d3a90d57daf2ac594911ac2"
+    },
+    {
+      "path": "backend/tests/portfolio/paper-trading-facade-sizing-cap.test.ts",
+      "child_exit": 1,
+      "diagnostic": "用户授权场景: 建议 10000 自动 capped 到 5000",
+      "fingerprint": "93edc66a1408e1349d83b873473601a2cc406dc0728017c30ab02c3556f0be40"
+    },
+    {
+      "path": "backend/tests/portfolio/PaperTradingPortfolioCrudService.test.ts",
+      "child_exit": 1,
+      "diagnostic": "PortfolioCrudError: strategy_keys 包含未注册的策略 \"multi_factor_alpha\". 已知 (前 5): etf_factor_rotation…",
+      "fingerprint": "af0063f09b9bdc73787012d83bbf724731788bbb1a0e135f721760665d3d92b8"
+    },
+    {
+      "path": "backend/tests/quant/composite_backtest_all_strategies.test.ts",
+      "child_exit": 1,
+      "diagnostic": "strategyRegistry 至少注册了 12 个组合级策略 (US-016 验收): 期望 ≥ 12 个组合级策略, 实际 1: etf_factor_rotation",
+      "fingerprint": "017d616e5904b24aec6618e331b04230bf76d17b3cfb5cab1faad217b423fa74"
+    },
+    {
+      "path": "backend/tests/quant/factors/moneyFlowFactor.historicalMcap.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../../src/quant/factors/library/_historicalMarketCap'",
+      "fingerprint": "5759bed067313c526f1a097ec2dd0fbb96c6c7c8cac5a6fdf5c033d3e33c804e"
+    },
+    {
+      "path": "backend/tests/quant/quant_open_watchdog_archived_zero.test.ts",
+      "child_exit": 1,
+      "diagnostic": "BL-1 修后: 扫描达标 (166) + 归档=0 → warning (合理空仓)",
+      "fingerprint": "df1623e6bce16c43c55088db9e55bada7eecec09d3ba1863477caddba81ab712"
+    },
+    {
+      "path": "backend/tests/risk/black-swan-history.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '..<repo>/frontend/src/pages/workspace/blackSwanHistoryHelpers'",
+      "fingerprint": "deede32bde5a4f66cc6a85bfe28729da596d7e9cbfabad0e30e274aec16c1602"
+    },
+    {
+      "path": "backend/tests/risk/position-limit-guard.test.ts",
+      "child_exit": 1,
+      "diagnostic": "DEFAULT_POSITION_LIMITS.max_single_stock_pct == 0.1 detail=actual=0.15 expected=0.1",
+      "fingerprint": "a5670ae8eed2e45b6725ae6a852b7c7a9fbf5dbf439133e74e79223b6a1d87a8"
+    },
+    {
+      "path": "backend/tests/risk/restricted-share-watchdog.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/portfolio/risk/RestrictedShareWatchdog'",
+      "fingerprint": "9e0a305434bca18d4ac0aa9153184f356438d3ad3e155427dc60385b726f76f2"
+    },
+    {
+      "path": "backend/tests/risk/risk-parameters-center-tab.test.ts",
+      "child_exit": 1,
+      "diagnostic": "frontend/src/pages/workspace/SettingsWorkspace.RiskParametersCenterTab.tsx 必须存在",
+      "fingerprint": "37263530cb90cbb3ef4d8aaef7869caf0722170da389c3b3c1af4c026657c1e0"
+    },
+    {
+      "path": "backend/tests/risk/sizing-limit-consistency.test.ts",
+      "child_exit": 1,
+      "diagnostic": "all-default → warn (DEFAULT 12 vs 10) (actual=\"info\" expected=\"warn\")",
+      "fingerprint": "019cc7972e3152772535355c6a7ba87250efb09d3200aaebd667a0cd9b478865"
+    },
+    {
+      "path": "backend/tests/risk/todo-suggestions-helpers.test.ts",
+      "child_exit": 1,
+      "diagnostic": "tab 文件必须存在",
+      "fingerprint": "02093cfacc67eb55ce397732bed5d98297271fe7569f722e3d69b3394cfcf950"
+    },
+    {
+      "path": "backend/tests/scripts/sync-kol-opinions.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '..<repo>/scripts/sync-kol-opinions'",
+      "fingerprint": "c8fa009557850964cd9e2af04b3acc90be183db06160d665b3013251aceb0d46"
+    },
+    {
+      "path": "backend/tests/services/afternoon-kick-detector.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/services/AfternoonKickDetector'",
+      "fingerprint": "d1b21b8486442fd1013c332cff949b58755ce48d105b9820c9937bce482840a8"
+    },
+    {
+      "path": "backend/tests/services/ai-stock-analysis-modal-v2-helpers.test.ts",
+      "child_exit": 1,
+      "diagnostic": "70 强利多 红",
+      "fingerprint": "26934b523ac1c91e25197d32d145c85badeb206c41671c65b8e1a7320372f60a"
+    },
+    {
+      "path": "backend/tests/services/alert-item-action-helpers.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: ENOENT: no such file or directory, open '<repo>/frontend/src/pages/workspace/TodayWorkspace.tsx'",
+      "fingerprint": "bc72cbe9f22357ddeedd427acb923a92e308494e745e019b6a272d8f66c3d43d"
+    },
+    {
+      "path": "backend/tests/services/alerts-bell-helpers.test.ts",
+      "child_exit": 1,
+      "diagnostic": "[1.8] ALERTS_BELL_TARGET_PATH 落 /workspace/today",
+      "fingerprint": "edfbf3126e7ff61e1329da1ac5dd24603f99f421dad20c2f43461278ab3d41d1"
+    },
+    {
+      "path": "backend/tests/services/alerts-panel-helpers.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: ENOENT: no such file or directory, open '<repo>/frontend/src/pages/workspace/TodayWorkspace.tsx'",
+      "fingerprint": "a0b461745827d0fd181a5c39a8c40ad9d7ab84ac48e8d67c59d8611b48627879"
+    },
+    {
+      "path": "backend/tests/services/alerts-realtime-client.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module 'react'",
+      "fingerprint": "fc689591ecbf9a4b184f2f3ca3679eea0bd9c5a2846cdb3a7b1efd683b57e3c1"
+    },
+    {
+      "path": "backend/tests/services/analysis-engine-weight-helpers.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '..<repo>/frontend/src/pages/workspace/analysisEngineWeightHelpers'",
+      "fingerprint": "c3219da9a2b120d8344e5a2f011607542414b0611d0bb256b060706f6a21f50e"
+    },
+    {
+      "path": "backend/tests/services/auction-snapshot-sync-service.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/services/AuctionSnapshotSyncService'",
+      "fingerprint": "b7b9e452736bd3f0376c6767ee32112b9d7f873f4e64bc113f705cabba5f98d3"
+    },
+    {
+      "path": "backend/tests/services/call-auction-anomaly-service.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/services/CallAuctionAnomalyService'",
+      "fingerprint": "3562f7284df5a314715c98a16bed50bccda15d3b5ee1d59eaf4049275ec895ea"
+    },
+    {
+      "path": "backend/tests/services/daily-trading-digest-service.test.ts",
+      "child_exit": 1,
+      "diagnostic": "mfa label",
+      "fingerprint": "a21235e38fa437312c3c5682fb4c3d55bde5530689480c6848760aaac5c26253"
+    },
+    {
+      "path": "backend/tests/services/data-workspace-tab-helpers.test.ts",
+      "child_exit": 1,
+      "diagnostic": "[7.2] DataWorkspace.tsx 调用 buildDataWorkspaceTabViewModel",
+      "fingerprint": "54ab9781bf6d9c1c3d338b5f6f9957c905e43ec1cf53488a8baf598648232825"
+    },
+    {
+      "path": "backend/tests/services/etf-flow-sync-service.test.ts",
+      "child_exit": 2,
+      "diagnostic": "industry=半导体 count=1 detail=actual=0 expected=1",
+      "fingerprint": "948a123090027e4e98bf518f3bebe260c24d0d37def40470a218a14e843463ee"
+    },
+    {
+      "path": "backend/tests/services/factor-pick-reason.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '..<repo>/frontend/src/pages/workspace/factorPickReasonHelpers'",
+      "fingerprint": "46ebf989954558dfcdfe9a73d2d27f66381dbfac291e323b9f26c1ff37597dcf"
+    },
+    {
+      "path": "backend/tests/services/industry-concentration-kpi-helpers.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module 'axios'",
+      "fingerprint": "1508fe5a668ef6bb4b1d08f71804723603c66bd65438c7f8f0e2fec35491d0c0"
+    },
+    {
+      "path": "backend/tests/services/industry-flow-intraday-service.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/services/IndustryFlowIntradayService'",
+      "fingerprint": "75ce20e46c6af3c97fac519a76f59396434561ce959e7578b13f96879089d087"
+    },
+    {
+      "path": "backend/tests/services/industry-sentiment-aggregator-service.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/services/IndustrySentimentAggregator'",
+      "fingerprint": "5229bb7d2415376303a061e446a27b1f818c2c4318b0b5e79914c0654d0c10d1"
+    },
+    {
+      "path": "backend/tests/services/intraday-kline-sync-service.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/services/IntradayKlineSyncService'",
+      "fingerprint": "e9a73d21ea4c96cefd3fa2e41559569626e07173eff4fdca53d6569adea9a803"
+    },
+    {
+      "path": "backend/tests/services/intraday-momentum-detector.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/services/IntradayMomentumDetector'",
+      "fingerprint": "04cceba776e883845b78543fa0517d7509ff1a8a9bb49f93605fa6c3c51e435d"
+    },
+    {
+      "path": "backend/tests/services/intraday-opportunity-pusher.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/services/IntradayOpportunityPusher'",
+      "fingerprint": "4eaee27d140ae0ccf021ef83d578195dea398da0cb89df3c7fe44deeed0f60be"
+    },
+    {
+      "path": "backend/tests/services/intraday-opportunity-watcher.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/services/IntradayOpportunityWatcher'",
+      "fingerprint": "3308f81eeab04b78bddfc9cbb52beb763cf2f46d6ad6987133f95b0d2ec34e3a"
+    },
+    {
+      "path": "backend/tests/services/intraday-price-volume-anomaly-detector.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/services/IntradayPriceVolumeAnomalyDetector'",
+      "fingerprint": "d30cd685745f195b6fde74cb77619df389be709a27f7d4937005a008e7b5148f"
+    },
+    {
+      "path": "backend/tests/services/intraday-reversal-detector-service.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/services/IntradayReversalDetector'",
+      "fingerprint": "7f3acbd899d9bcd1e4d9b55a17c3d1ad0ad2ae17c36bbf3957c291fe0e97eb4e"
+    },
+    {
+      "path": "backend/tests/services/intraday-universe-service-board-coverage.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/services/IntradayUniverseService'",
+      "fingerprint": "f15f9678171a4d67bfa79c67f82bfd718a26fde6b405b7c1a80a46f7aa1ee466"
+    },
+    {
+      "path": "backend/tests/services/intraday-universe-service.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/services/IntradayUniverseService'",
+      "fingerprint": "55c845a45b4ed01a879b496282d41873c928a54e1f68de8a7007849af9dc917b"
+    },
+    {
+      "path": "backend/tests/services/kol/concept-linkage-analyzer.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../../src/services/kol/ConceptLinkageAnalyzer'",
+      "fingerprint": "383b5ad9bb6da744cbcfc1a282201fb3a8c659babaa763ea29cfec677100e58c"
+    },
+    {
+      "path": "backend/tests/services/kol/kol-author-tracking-service.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../../src/services/kol/KOLAuthorTrackingService'",
+      "fingerprint": "e727abc93c15f5b109da58debeb0d14f32789c76ebc09246095b15f59107fa11"
+    },
+    {
+      "path": "backend/tests/services/lab-workflow-readiness-ui.test.ts",
+      "child_exit": 1,
+      "diagnostic": "file exists: frontend/src/pages/workspace/LabWorkspace.WorkflowReadinessTab.tsx",
+      "fingerprint": "5c46448813468bd2127dcc45d90595cc8350dd96c063377d13aaa2302807b4e8"
+    },
+    {
+      "path": "backend/tests/services/last-hour-momentum-detector.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/services/LastHourMomentumDetector'",
+      "fingerprint": "5cb366449bacb9a938fc6c92647cd40edb4f9d9d86aaf786c54802e7a509fb6b"
+    },
+    {
+      "path": "backend/tests/services/limit-up-board-detector.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/services/LimitUpBoardDetector'",
+      "fingerprint": "bdf04a4a8e142d44897b0b5804b8ea0149ebf63edc0b03e105cb77b8ec464800"
+    },
+    {
+      "path": "backend/tests/services/opening-rush-detector.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/services/OpeningRushDetector'",
+      "fingerprint": "86b74dfecba6894e6e857122105140b7626cb49748d0c6ab37831bb4e358b066"
+    },
+    {
+      "path": "backend/tests/services/overfit-metrics-helpers.test.ts",
+      "child_exit": 1,
+      "diagnostic": "[10.2] tabs 数组含 key=overfit_metrics",
+      "fingerprint": "7786a380bd486d29d95fe769324b0eca4a241989b226cadf3e59b85c565c39d1"
+    },
+    {
+      "path": "backend/tests/services/overnight-signal-sync-service.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/services/OvernightSignalSyncService'",
+      "fingerprint": "be87f51524c8dfe2a219d218b31ab6aa1788428c04ffc58c0cc881d8b3716810"
+    },
+    {
+      "path": "backend/tests/services/policy-news-helpers.test.ts",
+      "child_exit": 1,
+      "diagnostic": "[7.13] FactorWorkspace.tsx tabs 数组含 etf + policy key",
+      "fingerprint": "80416036f2ff304b88ef713ee218820a80a8da41da7c8aa297035c6221c7a70f"
+    },
+    {
+      "path": "backend/tests/services/quarterly-retrain.test.ts",
+      "child_exit": 1,
+      "diagnostic": "[10.2] tabs 数组含 key=quarterly_retrain",
+      "fingerprint": "31ee606646d298f356bc9db400725985671ea02dc2a27cb2eea2ec627be93358"
+    },
+    {
+      "path": "backend/tests/services/research-trust-policy-service.test.ts",
+      "child_exit": 1,
+      "diagnostic": "QuantDataService filters factor_date with buildPointInTimeFactorWhere",
+      "fingerprint": "218ced132649fffce93db6e0133cf17b74d54f80efe56e3647a3497326de4739"
+    },
+    {
+      "path": "backend/tests/services/sprint-24-integration.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/quant/strategies/MinerviniTrendTemplateStrategy'",
+      "fingerprint": "b3c11f94ba884d83cf6a7a638c27ba04b9f2eeab07367936bde8fa4ebac8c654"
+    },
+    {
+      "path": "backend/tests/services/sprint-25-endpoints.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '../../src/api/controllers/AdvancedQuantController'",
+      "fingerprint": "da0ae468a351bd838df6f37b451f3b10d878e4253748095d959bda9d16abfd86"
+    },
+    {
+      "path": "backend/tests/services/strategy-kill-switch-helpers.test.ts",
+      "child_exit": 1,
+      "diagnostic": "Error: Cannot find module '..<repo>/frontend/src/pages/workspace/strategyKillSwitchHelpers'",
+      "fingerprint": "1cd9c20b4f238b62e77943cb558ae2f6aeb52a938e307748f380ca7102dfdc22"
+    },
+    {
+      "path": "backend/tests/services/v3-recommendation-fanin.test.ts",
+      "child_exit": 1,
+      "diagnostic": "enum OPENING_RUSH_DETECTOR (expected=\"opening_rush_detector\" actual=undefined)",
+      "fingerprint": "5854cecb1697ad576e00fef0933a14df6dbe7fb64567f99b24fcfe59840c75ad"
+    }
+  ],
+  "test_inventory": {
+    "count": 282,
+    "paths_sha256": "a18d8658d65c32cc70c14face587f883a84e6e91089bc416908c45b54e93931f"
+  }
+}
