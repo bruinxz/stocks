@@ -134,6 +134,8 @@ class EvidenceRef:
     short_text: Optional[str] = None
 
 
+BAND_RATING_SEQUENCE = ("A", "B", "C", "D", "F")
+BAND_RATINGS = frozenset(BAND_RATING_SEQUENCE)
 BAND_THRESHOLDS = {"A": 85, "B": 70, "C": 55, "D": 40}
 
 CATALYST_KINDS = frozenset({

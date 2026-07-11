@@ -2,6 +2,7 @@ import unittest
 from types import SimpleNamespace
 
 from ai.pipeline.context import PipelineContext, RecommendationContractError
+from ai.types import BAND_RATING_SEQUENCE
 from ai.validation.output_validator import OutputValidator
 
 
@@ -94,6 +95,45 @@ class PipelineContextRatingBandTests(unittest.TestCase):
         self.assertEqual(recommendation_list["items"][0]["rating_band"], "A")
         self.assertEqual(self.validator.validate(recommendation_list), [])
 
+    def test_all_canonical_ratings_pass_context_and_validator(self):
+        for rating in BAND_RATING_SEQUENCE:
+            with self.subTest(rating=rating):
+                recommendation = _recommendation(
+                    weights={
+                        "contributions": [
+                            {
+                                "source_kind": "trigger",
+                                "source_ref": "RULE_MATCHED",
+                                "weight": 1.0,
+                            }
+                        ],
+                        "normalized": True,
+                    },
+                    score={
+                        "scoring_id": f"score-{rating}",
+                        "snapshot_hash": f"hash-{rating}",
+                        "profile": "us_preferred",
+                        "market_scope": "us",
+                        "total": 80.0,
+                        "rating": rating,
+                        "dims": [],
+                    },
+                    ticker=f"TICKER-{rating}",
+                )
+
+                recommendation_list = (
+                    _context_with(recommendation).build_recommendation_list()
+                )
+
+                self.assertEqual(
+                    recommendation_list["items"][0]["rating_band"],
+                    rating,
+                )
+                self.assertEqual(
+                    self.validator.validate(recommendation_list),
+                    [],
+                )
+
     def test_rating_only_score_with_zero_mass_attribution_passes(self):
         recommendation = _recommendation(
             weights={"contributions": [], "normalized": False},
@@ -131,9 +171,79 @@ class PipelineContextRatingBandTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             RecommendationContractError,
-            "LEGACY: score.rating is required",
+            r"LEGACY: score\.rating must be one of A\|B\|C\|D\|F",
         ):
             _context_with(recommendation).build_recommendation_list()
+
+    def test_invalid_score_ratings_fail_with_contract_error(self):
+        invalid_ratings = [None, "Z", 85, True, ["A"]]
+
+        for rating in invalid_ratings:
+            with self.subTest(rating=rating):
+                recommendation = _recommendation(
+                    weights={"contributions": [], "normalized": False},
+                    score={
+                        "scoring_id": "score-invalid",
+                        "snapshot_hash": "hash-invalid",
+                        "profile": "us_preferred",
+                        "market_scope": "us",
+                        "total": 80.0,
+                        "rating": rating,
+                        "dims": [],
+                    },
+                    ticker="INVALID",
+                )
+
+                with self.assertRaisesRegex(
+                    RecommendationContractError,
+                    r"INVALID: score\.rating must be one of A\|B\|C\|D\|F",
+                ):
+                    _context_with(recommendation).build_recommendation_list()
+
+    def test_validator_rejects_invalid_and_mismatched_bands(self):
+        invalid_cases = [
+            (None, "A", "score.rating must be one of"),
+            ("Z", "Z", "score.rating must be one of"),
+            (85, "A", "score.rating must be one of"),
+            ("A", None, "rating_band must be one of"),
+            ("A", "Z", "rating_band must be one of"),
+            ("A", 85, "rating_band must be one of"),
+            ("A", "B", "rating_band != score.rating"),
+        ]
+
+        for score_rating, rating_band, expected_error in invalid_cases:
+            with self.subTest(
+                score_rating=score_rating,
+                rating_band=rating_band,
+            ):
+                recommendation = _recommendation(
+                    weights={"contributions": [], "normalized": False},
+                    score={
+                        "scoring_id": "score-invalid",
+                        "snapshot_hash": "hash-invalid",
+                        "profile": "us_preferred",
+                        "market_scope": "us",
+                        "total": 80.0,
+                        "rating": score_rating,
+                        "dims": [],
+                    },
+                )
+                recommendation_list = {
+                    "items": [
+                        {
+                            "recommendation": recommendation,
+                            "rating_band": rating_band,
+                        }
+                    ],
+                    "disclaimer": None,
+                }
+
+                errors = self.validator.validate(recommendation_list)
+
+                self.assertTrue(
+                    any(expected_error in error for error in errors),
+                    errors,
+                )
 
 
 if __name__ == "__main__":
