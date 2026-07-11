@@ -42,3 +42,17 @@ node scripts/ci/diagnostic-baseline.js generate \
   --config frontend/package-lock.json \
   --output docs/refactor/baseline/ci/frontend-tsc-da801a52.json
 ```
+
+## Backend test debt
+
+`backend-test-debt-da801a52.json` is generated from an isolated
+`da801a52` checkout using Node 20 and a fresh `npm ci`. It pins each failing
+test's repo-relative path, child exit, and normalized first semantic
+diagnostic. The independently repaired baseline-schema lint failure remains in
+the raw anchor log only and is deliberately absent from durable entries.
+
+CI preserves the backend runner's real exit/log, compares the current run
+against this ledger, and permits removals only. New paths, child-exit changes,
+or diagnostic drift fail. The runner is known to rewrite three tracked
+fixtures, so CI records their runtime diff, restores their original bytes, and
+requires the worktree to be clean before the comparator can pass.

@@ -387,8 +387,72 @@ jobs:
         id: test
         run: |
           set -o pipefail
-          npm test 2>&1 | tee ../backend-test.log
+          fixtures=(
+            data/hmm/TEST_SYMBOL.json
+            data/metalabel-checkpoints/test_v1.json
+            data/thompson-posteriors.json
+          )
+          fixture_backup=$(mktemp -d)
+          restore_fixtures() {
+            for fixture in "${fixtures[@]}"; do
+              if [ -f "$fixture_backup/$fixture" ]; then
+                cp "$fixture_backup/$fixture" "$fixture"
+              fi
+            done
+            rm -rf "$fixture_backup"
+          }
+          trap restore_fixtures EXIT
+          for fixture in "${fixtures[@]}"; do
+            mkdir -p "$fixture_backup/$(dirname "$fixture")"
+            cp "$fixture" "$fixture_backup/$fixture"
+          done
+          shasum -a 256 "${fixtures[@]}" > ../backend-test-fixtures-before.sha256
+
+          set +e
+          npm test -- --quiet 2>&1 | tee ../backend-test.log
+          test_rc=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$test_rc" > ../backend-test.exit
+
+          shasum -a 256 "${fixtures[@]}" > ../backend-test-fixtures-after.sha256
+          git diff --binary -- "${fixtures[@]}" > ../backend-test-fixtures-runtime.diff
+          git status --short -- "${fixtures[@]}" > ../backend-test-fixtures-runtime.status
+          restore_fixtures
+          trap - EXIT
+          shasum -a 256 "${fixtures[@]}" > ../backend-test-fixtures-restored.sha256
+          cmp ../backend-test-fixtures-before.sha256 ../backend-test-fixtures-restored.sha256
+          git diff --exit-code -- "${fixtures[@]}"
+
+          if [ "$test_rc" -ne 1 ]; then
+            echo "::error::backend test producer must exit 1 while the debt ledger is active (got $test_rc)"
+            exit 1
+          fi
+
+          node ../scripts/ci/backend_test_debt.js compare \
+            --log ../backend-test.log \
+            --producer-exit "$test_rc" \
+            --baseline ../docs/refactor/baseline/ci/backend-test-debt-da801a52.json \
+            --output ../backend-test-debt-current.json 2>&1 \
+            | tee ../backend-test-debt-comparator.log
+          git diff --exit-code
         continue-on-error: false
+
+      - name: Upload backend test debt evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-debt-${{ github.run_attempt }}
+          path: |
+            backend-test.log
+            backend-test.exit
+            backend-test-debt-current.json
+            backend-test-debt-comparator.log
+            backend-test-fixtures-before.sha256
+            backend-test-fixtures-after.sha256
+            backend-test-fixtures-restored.sha256
+            backend-test-fixtures-runtime.diff
+            backend-test-fixtures-runtime.status
+          retention-days: 7
 
       # 失败时上传日志 + 在 PR 上评论关键错误片段
       - name: Upload logs on failure
@@ -410,6 +474,14 @@ jobs:
             backend-lint-baseline.log
             backend-lint-baseline-summary.json
             backend-test.log
+            backend-test.exit
+            backend-test-debt-current.json
+            backend-test-debt-comparator.log
+            backend-test-fixtures-before.sha256
+            backend-test-fixtures-after.sha256
+            backend-test-fixtures-restored.sha256
+            backend-test-fixtures-runtime.diff
+            backend-test-fixtures-runtime.status
           retention-days: 7
 
       - name: Comment on PR with errors
@@ -420,7 +492,7 @@ jobs:
           script: |
             const fs = require('fs');
             const path = require('path');
-            const logs = ['envcheck', 'envcheck-fail', 'typecheck', 'openapi-check', 'architecture-check', 'lint', 'lint-baseline', 'test'];
+            const logs = ['envcheck', 'envcheck-fail', 'typecheck', 'openapi-check', 'architecture-check', 'lint', 'lint-baseline', 'test', 'test-debt-comparator'];
             const sections = [];
             for (const name of logs) {
               const filePath = path.join(process.env.GITHUB_WORKSPACE, `backend-${name}.log`);
