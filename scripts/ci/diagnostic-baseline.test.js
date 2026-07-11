@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 const assert = require('assert/strict');
 const { execFileSync, spawnSync } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -33,10 +34,26 @@ function baselineFor(diagnostics, overrides = {}) {
       fields: ['kind', 'repo_relative_path', 'severity', 'rule_or_code', 'normalized_message'],
       multiplicity: 'exact count per fingerprint',
     },
-    config_files: [],
+    config_files: configFilesFor('eslint'),
     diagnostics: grouped,
     ...overrides,
   };
+}
+
+function configFilesFor(kind) {
+  const paths =
+    kind === 'eslint'
+      ? [
+          'backend/.eslintrc.js',
+          'backend/tsconfig.json',
+          'backend/package.json',
+          'backend/package-lock.json',
+        ]
+      : ['frontend/tsconfig.json', 'frontend/package.json', 'frontend/package-lock.json'];
+  return paths.map((configPath) => ({
+    path: configPath,
+    sha256: crypto.createHash('sha256').update(fs.readFileSync(configPath)).digest('hex'),
+  }));
 }
 
 function compare(baseline, current) {
@@ -144,14 +161,43 @@ for (const [name, policy] of [
   );
 }
 
+const missingToolName = baselineFor([baseDiagnostic], { baseline_sha: headSha });
+delete missingToolName.tool.name;
+expectThrow('missing tool name', () => validateBaselineShape(missingToolName), 'canonical eslint tool');
+
+const wrongToolName = baselineFor([baseDiagnostic], { baseline_sha: headSha });
+wrongToolName.tool.name = 'typescript';
+expectThrow('wrong tool name', () => validateBaselineShape(wrongToolName), 'canonical eslint tool');
+
+for (const [name, mutate] of [
+  ['empty config set', () => []],
+  ['missing config path', (paths) => paths.slice(0, -1)],
+  [
+    'extra config path',
+    (paths) => [...paths, { path: 'backend/extra.json', sha256: '0'.repeat(64) }],
+  ],
+  [
+    'replaced config path',
+    (paths) => [
+      ...paths.slice(0, -1),
+      { path: 'backend/replaced.json', sha256: '0'.repeat(64) },
+    ],
+  ],
+]) {
+  const invalidConfigs = baselineFor([baseDiagnostic], { baseline_sha: headSha });
+  invalidConfigs.config_files = mutate(invalidConfigs.config_files);
+  expectThrow(
+    name,
+    () => validateBaselineShape(invalidConfigs),
+    'config_files paths must equal canonical eslint set',
+  );
+}
+
 const wrongConfig = baselineFor([baseDiagnostic], {
   baseline_sha: headSha,
-  config_files: [
-    {
-      path: 'scripts/ci/diagnostic-baseline.test.js',
-      sha256: '0'.repeat(64),
-    },
-  ],
+  config_files: configFilesFor('eslint').map((entry, index) =>
+    index === 0 ? { ...entry, sha256: '0'.repeat(64) } : entry,
+  ),
 });
 expectThrow('wrong config hash', () => compare(wrongConfig, [baseDiagnostic]), 'config hash mismatch');
 
@@ -241,6 +287,7 @@ const tscBaseline = {
   ...baselineFor([], { baseline_sha: headSha }),
   kind: 'tsc',
   tool: { name: 'typescript', version: '4.9.5', allowed_producer_exits: [0, 2] },
+  config_files: configFilesFor('tsc'),
   diagnostics: groupDiagnostics('tsc', [tscDiagnostic]),
 };
 expectThrow(
@@ -357,12 +404,41 @@ try {
   assert.equal(parsedTsc[0].code, 'TS2344');
   assert.equal(parsedTsc[0].message, 'Type mismatch');
 
+  const globalTscInput = path.join(tempDir, 'global-tsc.log');
+  fs.writeFileSync(globalTscInput, 'error TS5058: The specified path does not exist\n');
+  const parsedGlobalTsc = parseTscText(globalTscInput, process.cwd(), 'frontend');
+  assert.equal(parsedGlobalTsc.length, 1, 'TSC parser accepts global diagnostics');
+  assert.equal(parsedGlobalTsc[0].path, '<global>');
+  assert.equal(parsedGlobalTsc[0].code, 'TS5058');
+  assert.equal(parsedGlobalTsc[0].message, 'The specified path does not exist');
+
+  const mixedTscInput = path.join(tempDir, 'mixed-tsc.log');
+  fs.writeFileSync(
+    mixedTscInput,
+    [
+      'src/foo.ts(2,3): error TS2344: Type mismatch',
+      'error TS5058: The specified path does not exist',
+      '',
+    ].join('\n'),
+  );
+  const parsedMixedTsc = parseTscText(mixedTscInput, process.cwd(), 'frontend');
+  assert.equal(parsedMixedTsc.length, 2, 'TSC parser retains file and global diagnostics');
+  const mixedComparison = compareDiagnostics({
+    baseline: tscBaseline,
+    current: parsedMixedTsc,
+    repoRoot: process.cwd(),
+    toolVersion: '4.9.5',
+    producerExit: 2,
+  });
+  assert.equal(mixedComparison.ok, false, 'new global TSC diagnostic fails comparison');
+  assert.equal(mixedComparison.fingerprints.added, 1);
+
   const malformedTscInput = path.join(tempDir, 'malformed-tsc.log');
   fs.writeFileSync(malformedTscInput, 'unexpected compiler failure\n');
   expectThrow(
     'unparseable tsc output',
     () => parseTscText(malformedTscInput, process.cwd(), 'frontend'),
-    'no parseable diagnostics',
+    'unparseable nonblank lines',
   );
 
   const cliBaselinePath = path.join(tempDir, 'baseline.json');

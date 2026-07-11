@@ -129,19 +129,39 @@ function parseEslintJson(inputPath, repoRoot, workdir) {
 function parseTscText(inputPath, repoRoot, workdir) {
   const text = fs.readFileSync(inputPath, 'utf8').replace(/\x1b\[[0-9;]*m/g, '');
   const diagnostics = [];
-  const pattern = /^(.+?)\((\d+),(\d+)\): error (TS\d+): (.*)$/gm;
-  let match;
-  while ((match = pattern.exec(text)) !== null) {
-    diagnostics.push({
-      path: repoRelative(match[1], repoRoot, workdir),
-      severity: 'error',
-      code: match[4],
-      message: normalizeDiagnosticMessage(match[5], repoRoot),
-      locations: [{ line: Number(match[2]), column: Number(match[3]) }],
-    });
+  const unconsumed = [];
+  const filePattern = /^(.+?)\((\d+),(\d+)\): error (TS\d+): (.*)$/;
+  const globalPattern = /^error (TS\d+): (.*)$/;
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const fileMatch = filePattern.exec(line);
+    if (fileMatch) {
+      diagnostics.push({
+        path: repoRelative(fileMatch[1], repoRoot, workdir),
+        severity: 'error',
+        code: fileMatch[4],
+        message: normalizeDiagnosticMessage(fileMatch[5], repoRoot),
+        locations: [{ line: Number(fileMatch[2]), column: Number(fileMatch[3]) }],
+      });
+      continue;
+    }
+    const globalMatch = globalPattern.exec(line);
+    if (globalMatch) {
+      diagnostics.push({
+        path: '<global>',
+        severity: 'error',
+        code: globalMatch[1],
+        message: normalizeDiagnosticMessage(globalMatch[2], repoRoot),
+        locations: [{ line: 0, column: 0 }],
+      });
+      continue;
+    }
+    unconsumed.push(normalizeDiagnosticMessage(line, repoRoot));
   }
-  if (text.trim() && diagnostics.length === 0) {
-    throw new Error(`TypeScript output contained text but no parseable diagnostics: ${inputPath}`);
+  if (unconsumed.length > 0) {
+    throw new Error(
+      `TypeScript output contained unparseable nonblank lines: ${unconsumed.slice(0, 5).join(' | ')}`,
+    );
   }
   return groupDiagnostics('tsc', diagnostics);
 }
@@ -182,6 +202,27 @@ function canonicalProducerExits(kind) {
   throw new Error(`unsupported kind: ${kind}`);
 }
 
+function canonicalToolName(kind) {
+  if (kind === 'eslint') return 'eslint';
+  if (kind === 'tsc') return 'typescript';
+  throw new Error(`unsupported kind: ${kind}`);
+}
+
+function canonicalConfigPaths(kind) {
+  if (kind === 'eslint') {
+    return [
+      'backend/.eslintrc.js',
+      'backend/tsconfig.json',
+      'backend/package.json',
+      'backend/package-lock.json',
+    ];
+  }
+  if (kind === 'tsc') {
+    return ['frontend/tsconfig.json', 'frontend/package.json', 'frontend/package-lock.json'];
+  }
+  throw new Error(`unsupported kind: ${kind}`);
+}
+
 function validateBaselineShape(baseline) {
   if (!baseline || typeof baseline !== 'object') throw new Error('baseline must be an object');
   if (baseline.version !== 1) throw new Error('baseline version must be 1');
@@ -191,6 +232,12 @@ function validateBaselineShape(baseline) {
   }
   if (!baseline.tool || typeof baseline.tool.version !== 'string') {
     throw new Error('baseline.tool.version is required');
+  }
+  const expectedToolName = canonicalToolName(baseline.kind);
+  if (baseline.tool.name !== expectedToolName) {
+    throw new Error(
+      `baseline.tool.name must equal canonical ${baseline.kind} tool ${expectedToolName}`,
+    );
   }
   if (
     !Array.isArray(baseline.tool.allowed_producer_exits) ||
@@ -225,6 +272,16 @@ function validateBaselineShape(baseline) {
       throw new Error(`duplicate config file ${configFile.path}`);
     }
     seenConfigs.add(configFile.path);
+  }
+  const expectedConfigPaths = canonicalConfigPaths(baseline.kind).slice().sort();
+  const actualConfigPaths = [...seenConfigs].sort();
+  if (
+    actualConfigPaths.length !== expectedConfigPaths.length ||
+    actualConfigPaths.some((configPath, index) => configPath !== expectedConfigPaths[index])
+  ) {
+    throw new Error(
+      `baseline.config_files paths must equal canonical ${baseline.kind} set ${JSON.stringify(canonicalConfigPaths(baseline.kind))}`,
+    );
   }
 
   const seen = new Set();
@@ -345,7 +402,7 @@ function makeBaseline(args) {
     kind,
     baseline_sha: args['baseline-sha'],
     tool: {
-      name: kind === 'eslint' ? 'eslint' : 'typescript',
+      name: canonicalToolName(kind),
       version: args['tool-version'],
       allowed_producer_exits: canonicalProducerExits(kind),
     },
@@ -360,6 +417,7 @@ function makeBaseline(args) {
 
 function commandGenerate(args) {
   const baseline = makeBaseline(args);
+  validateBaselineShape(baseline);
   const json = `${JSON.stringify(baseline, null, 2)}\n`;
   if (args.output) fs.writeFileSync(args.output, json);
   else process.stdout.write(json);
@@ -425,7 +483,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  canonicalConfigPaths,
   canonicalProducerExits,
+  canonicalToolName,
   compareDiagnostics,
   groupDiagnostics,
   makeFingerprint,
