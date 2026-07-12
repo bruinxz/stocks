@@ -168,10 +168,18 @@ class ReplayService:
 
     def _load_inputs(self, pins: ReplayPins) -> ReplayInputs:
         slices = ReplayInputs(
-            signals=self._signal_source.load_signals(pins),
-            universe=self._universe_source.load_universe(pins),
-            scores=self._score_source.load_scores(pins),
-            evidence=self._evidence_cache.load_evidence(pins),
+            signals=self._load_source(
+                "signals", self._signal_source.load_signals, pins
+            ),
+            universe=self._load_source(
+                "universe", self._universe_source.load_universe, pins
+            ),
+            scores=self._load_source(
+                "scores", self._score_source.load_scores, pins
+            ),
+            evidence=self._load_source(
+                "evidence", self._evidence_cache.load_evidence, pins
+            ),
         )
         for expected_kind, source_slice in zip(
             SOURCE_KINDS, slices.ordered()
@@ -185,6 +193,15 @@ class ReplayService:
                 "source content hashes do not match replay input_fingerprint"
             )
         return slices
+
+    @staticmethod
+    def _load_source(kind: str, loader, pins: ReplayPins) -> SourceSlice:
+        try:
+            return loader(pins)
+        except ReplayServiceError:
+            raise
+        except Exception as error:
+            raise ReplaySourceError(f"{kind} source unavailable") from error
 
     def _retain_failure(
         self, running: ReplayJob, code: str, detail: str
@@ -262,11 +279,16 @@ class ReplayService:
         if not isinstance(source_slice.records, tuple):
             raise ReplaySourceError(f"{expected_kind} records must be a tuple")
         try:
-            jcs_canonicalize(source_slice.records)
+            records_jcs = jcs_canonicalize(source_slice.records)
         except (TypeError, ValueError) as error:
             raise ReplaySourceError(
                 f"{expected_kind} records must be JSON/JCS serializable"
             ) from error
+        records_hash = hashlib.sha256(records_jcs.encode("utf-8")).hexdigest()
+        if records_hash != source_slice.content_hash:
+            raise ReplaySourceError(
+                f"{expected_kind} content_hash does not match records"
+            )
 
     @classmethod
     def _validate_result(cls, result: ReplayResult) -> None:
@@ -290,6 +312,12 @@ class ReplayService:
     def _validate_job(cls, job: ReplayJob) -> None:
         if not isinstance(job, ReplayJob):
             raise ReplayConflictError("job store returned wrong type")
+        try:
+            job_id = uuid.UUID(job.job_id)
+        except (AttributeError, TypeError, ValueError) as error:
+            raise ReplayConflictError("job store returned invalid job_id") from error
+        if job_id.version != 4 or str(job_id) != job.job_id:
+            raise ReplayConflictError("job store returned invalid job_id")
         if job.status not in {"queued", "running", "completed", "failed"}:
             raise ReplayConflictError("job store returned invalid status")
         cls._validate_pins(job.pins)
@@ -305,6 +333,8 @@ class ReplayService:
             cls._validate_utc_seconds(
                 getattr(job, field), field, error_type=ReplayConflictError
             )
+        if job.updated_at < job.created_at:
+            raise ReplayConflictError("job updated_at precedes created_at")
         if job.status == "completed":
             if job.error_code is not None or job.error_detail is not None:
                 raise ReplayConflictError("completed job cannot retain an error")

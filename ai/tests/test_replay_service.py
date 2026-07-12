@@ -84,8 +84,16 @@ class PipelineStub:
         return self.result
 
 
+def _records(kind):
+    return ({"kind": kind},)
+
+
 def _content_hash(kind):
-    return hashlib.sha256(kind.encode("utf-8")).hexdigest()
+    from ai.snapshot.fingerprint import jcs_canonicalize
+
+    return hashlib.sha256(
+        jcs_canonicalize(_records(kind)).encode("utf-8")
+    ).hexdigest()
 
 
 SOURCE_HASHES = tuple(
@@ -119,7 +127,7 @@ def _source_slice(kind, pins, **overrides):
         "market_scope": pins.market_scope,
         "source_version": f"{kind}@1",
         "content_hash": _content_hash(kind),
-        "records": ({"kind": kind},),
+        "records": _records(kind),
     }
     values.update(overrides)
     return SourceSlice(**values)
@@ -209,7 +217,35 @@ class ReplayServiceTests(unittest.TestCase):
         )
         failed2 = service2.run(queued2.job_id)
         self.assertEqual(failed2.error_code, "REPLAY_SOURCE_INVALID")
-        self.assertIn("input_fingerprint", failed2.error_detail)
+        self.assertIn("content_hash", failed2.error_detail)
+
+    def test_source_records_are_authenticated_by_content_hash(self):
+        pins = _pins()
+        service, sources = _service(pins=pins)
+        sources["scores"].source_slice = replace(
+            sources["scores"].source_slice,
+            records=({"kind": "scores", "mutated": True},),
+        )
+
+        failed = service.run(service.submit(pins).job_id)
+
+        self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
+        self.assertIn("content_hash", failed.error_detail)
+
+    def test_source_exceptions_are_redacted_and_classified(self):
+        class FailingSource:
+            def load_signals(self, _pins):
+                raise RuntimeError("credential=secret")
+
+        pins = _pins()
+        service, _ = _service(pins=pins)
+        service._signal_source = FailingSource()
+
+        failed = service.run(service.submit(pins).job_id)
+
+        self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
+        self.assertEqual(failed.error_detail, "signals source unavailable")
+        self.assertNotIn("secret", failed.error_detail)
 
     def test_invalid_profiles_scopes_versions_hashes_and_dates_are_rejected(self):
         invalid = [
@@ -243,10 +279,21 @@ class ReplayServiceTests(unittest.TestCase):
                 self.assertEqual(service.submit(pins).status, "queued")
 
     def test_empty_source_slices_are_allowed(self):
-        pins = _pins()
+        from ai.snapshot.fingerprint import jcs_canonicalize
+
+        empty_hash = hashlib.sha256(
+            jcs_canonicalize(()).encode("utf-8")
+        ).hexdigest()
+        pins = _pins(
+            input_fingerprint=compute_input_fingerprint([empty_hash] * 4)
+        )
         service, sources = _service(pins=pins)
         for source in sources.values():
-            source.source_slice = replace(source.source_slice, records=())
+            source.source_slice = replace(
+                source.source_slice,
+                records=(),
+                content_hash=empty_hash,
+            )
 
         completed = service.run(service.submit(pins).job_id)
 
@@ -265,6 +312,13 @@ class ReplayServiceTests(unittest.TestCase):
             queued, idempotency_key="0" * 64
         )
         with self.assertRaisesRegex(ReplayConflictError, "idempotency"):
+            service.get(queued.job_id)
+
+        store.jobs[queued.job_id] = replace(
+            queued,
+            updated_at="2026-07-12T01:02:02Z",
+        )
+        with self.assertRaisesRegex(ReplayConflictError, "precedes"):
             service.get(queued.job_id)
 
     def test_missing_or_non_uuid_jobs_return_controlled_not_found(self):
