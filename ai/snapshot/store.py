@@ -29,15 +29,17 @@ class SnapshotRow:
 
 @dataclass(frozen=True)
 class SnapshotItemRow:
+    item_id: str
     snapshot_id: str
     ticker: str
     sort_rank: int
-    recommendation_json: str
+    recommendation_json: dict
+    recommendation_jcs: str
+    recommendation_hash: str
     rating_band: str
     conviction_final: float
-    risk_gate_ok: bool
+    risk_gate: str
     size_hint_tier: str
-    size_hint_pct: float
 
 
 class SnapshotTransaction(Protocol):

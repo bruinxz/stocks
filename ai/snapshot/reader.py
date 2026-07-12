@@ -117,6 +117,9 @@ class SnapshotReader:
             raise SnapshotCorruptError("snapshot output fingerprint mismatch")
         if envelope.get("as_of") != snapshot.as_of:
             raise SnapshotCorruptError("snapshot envelope as_of mismatch")
+        envelope_items = envelope.get("items")
+        if not isinstance(envelope_items, list):
+            raise SnapshotCorruptError("snapshot envelope items missing")
 
         meta = envelope.get("meta")
         if not isinstance(meta, dict):
@@ -159,15 +162,17 @@ class SnapshotReader:
         for item in ordered_items:
             if item.snapshot_id != snapshot.snapshot_id:
                 raise SnapshotCorruptError("item snapshot identity mismatch")
-            try:
-                recommendation = json.loads(item.recommendation_json)
-            except (TypeError, json.JSONDecodeError) as error:
-                raise SnapshotCorruptError("invalid recommendation JSON") from error
+            recommendation = item.recommendation_json
             if (
                 not isinstance(recommendation, dict)
-                or jcs_canonicalize(recommendation) != item.recommendation_json
+                or jcs_canonicalize(recommendation) != item.recommendation_jcs
             ):
                 raise SnapshotCorruptError("recommendation is not canonical JCS")
+            recommendation_hash = hashlib.sha256(
+                item.recommendation_jcs.encode("utf-8")
+            ).hexdigest()
+            if recommendation_hash != item.recommendation_hash:
+                raise SnapshotCorruptError("recommendation hash mismatch")
             if recommendation.get("ticker") != item.ticker:
                 raise SnapshotCorruptError("recommendation ticker mismatch")
             if item.ticker in tickers:
@@ -181,15 +186,10 @@ class SnapshotReader:
                 "final"
             ) != item.conviction_final:
                 raise SnapshotCorruptError("recommendation conviction mismatch")
-            if recommendation.get("risk_gate", {}).get(
-                "ok_to_enter"
-            ) is not item.risk_gate_ok:
+            if recommendation.get("risk_gate", {}).get("gate") != item.risk_gate:
                 raise SnapshotCorruptError("recommendation risk gate mismatch")
             size_hint = recommendation.get("entry_plan", {}).get("size_hint", {})
-            if (
-                size_hint.get("tier") != item.size_hint_tier
-                or size_hint.get("pct") != item.size_hint_pct
-            ):
+            if size_hint.get("tier") != item.size_hint_tier:
                 raise SnapshotCorruptError("recommendation size hint mismatch")
             hydrated_items.append(
                 {
@@ -198,6 +198,8 @@ class SnapshotReader:
                 }
             )
 
+        if jcs_canonicalize(envelope_items) != jcs_canonicalize(hydrated_items):
+            raise SnapshotCorruptError("snapshot envelope/item row mismatch")
         envelope["items"] = hydrated_items
         try:
             computed_output_fingerprint = compute_output_fingerprint(

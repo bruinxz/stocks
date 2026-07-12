@@ -28,7 +28,9 @@ from ai.snapshot.writer import (
 
 SHA_A = "a" * 64
 SHA_B = "b" * 64
-SNAPSHOT_ID = "12345678-1234-5678-1234-567812345678"
+SNAPSHOT_ID = "12345678-1234-4234-8234-567812345678"
+OLDER_SNAPSHOT_ID = "22345678-1234-4234-8234-567812345678"
+NEXT_SNAPSHOT_ID = "32345678-1234-4234-8234-567812345678"
 
 
 class MemorySnapshotStore:
@@ -147,7 +149,7 @@ def _recommendation(ctx, ticker="AAPL", conviction=88.0):
             "rating": "A",
         },
         "conviction": {"final": conviction},
-        "risk_gate": {"ok_to_enter": True},
+        "risk_gate": {"gate": "GREEN", "ok_to_enter": True},
         "entry_plan": {
             "size_hint": {
                 "tier": "TIER_3",
@@ -330,11 +332,11 @@ class SnapshotReaderTests(unittest.TestCase):
         self.assertEqual(hydrated, self.payload)
         self.assertEqual(
             jcs_canonicalize(hydrated["items"][0]["recommendation"]),
-            self.store.items[self.ctx.snapshot_id][0].recommendation_json,
+            self.store.items[self.ctx.snapshot_id][0].recommendation_jcs,
         )
 
     def test_latest_and_by_date_are_deterministic(self):
-        older_ctx = _context(snapshot_id="older-snapshot")
+        older_ctx = _context(snapshot_id=OLDER_SNAPSHOT_ID)
         older_ctx.as_of = "2026-07-12T00:00:00Z"
         older_payload = _recommendation_list(older_ctx, tickers=("TSLA",))
         SnapshotWriter(self.store).write(older_ctx, older_payload)
@@ -347,11 +349,11 @@ class SnapshotReaderTests(unittest.TestCase):
         self.assertEqual(latest["snapshot_id"], self.ctx.snapshot_id)
         self.assertEqual(
             [snapshot["snapshot_id"] for snapshot in history],
-            [self.ctx.snapshot_id, "older-snapshot"],
+            [self.ctx.snapshot_id, OLDER_SNAPSHOT_ID],
         )
 
     def test_diff_is_sorted_and_reports_changed_tickers(self):
-        next_ctx = _context(snapshot_id="next-snapshot")
+        next_ctx = _context(snapshot_id=NEXT_SNAPSHOT_ID)
         next_ctx.as_of = "2026-07-12T02:00:00Z"
         next_payload = _recommendation_list(
             next_ctx, tickers=("AAPL", "NVDA")
@@ -390,11 +392,17 @@ class SnapshotReaderTests(unittest.TestCase):
         self.store.items[self.ctx.snapshot_id][0] = SnapshotItemRow(
             **{
                 **item.__dict__,
-                "recommendation_json": jcs_canonicalize(recommendation),
+                "recommendation_json": recommendation,
+                "recommendation_jcs": jcs_canonicalize(recommendation),
+                "recommendation_hash": hashlib.sha256(
+                    jcs_canonicalize(recommendation).encode("utf-8")
+                ).hexdigest(),
             }
         )
 
-        with self.assertRaisesRegex(SnapshotCorruptError, "item fingerprint"):
+        with self.assertRaisesRegex(
+            SnapshotCorruptError, "envelope/item row|item fingerprint"
+        ):
             self.reader.read_snapshot(self.ctx.snapshot_id)
 
     def test_invalid_read_profile_scope_fails_closed(self):

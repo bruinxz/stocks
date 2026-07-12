@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import re
+import uuid
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
@@ -28,6 +29,10 @@ PROFILE_MARKET_SCOPES = {
     "korea_semiconductor_chain": frozenset({"kr"}),
     "korea_multibagger": frozenset({"kr"}),
 }
+RISK_GATES = frozenset({"GREEN", "YELLOW", "RED"})
+SIZE_HINT_TIERS = frozenset(
+    {"TIER_5", "TIER_3", "TIER_2", "TIER_1", "SKIP"}
+)
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _TRADING_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -104,7 +109,7 @@ class SnapshotWriter:
         disclaimer = recommendation_list["disclaimer"]
 
         envelope = dict(recommendation_list)
-        entries = envelope.pop("items")
+        entries = recommendation_list["items"]
         try:
             envelope_json = jcs_canonicalize(envelope)
         except (TypeError, ValueError) as error:
@@ -177,16 +182,21 @@ class SnapshotWriter:
                 f"{recommendation.get('ticker', '<unknown>')}: "
                 "recommendation must be JCS serializable"
             ) from error
+        recommendation_hash = hashlib.sha256(
+            recommendation_json.encode("utf-8")
+        ).hexdigest()
         return SnapshotItemRow(
+            item_id=str(uuid.uuid5(uuid.UUID(snapshot_id), recommendation_hash)),
             snapshot_id=snapshot_id,
             ticker=recommendation["ticker"],
             sort_rank=sort_rank,
-            recommendation_json=recommendation_json,
+            recommendation_json=recommendation,
+            recommendation_jcs=recommendation_json,
+            recommendation_hash=recommendation_hash,
             rating_band=entry["rating_band"],
             conviction_final=float(recommendation["conviction"]["final"]),
-            risk_gate_ok=recommendation["risk_gate"]["ok_to_enter"],
+            risk_gate=recommendation["risk_gate"]["gate"],
             size_hint_tier=size_hint["tier"],
-            size_hint_pct=float(size_hint["pct"]),
         )
 
     @classmethod
@@ -223,6 +233,7 @@ class SnapshotWriter:
             raise SnapshotContractError("context/list profile or market_scope mismatch")
         if recommendation_list["snapshot_id"] != ctx.snapshot_id:
             raise SnapshotContractError("context/list snapshot_id mismatch")
+        cls._require_uuidv4(recommendation_list["snapshot_id"], "snapshot_id")
         if recommendation_list["as_of"] != ctx.as_of:
             raise SnapshotContractError("context/list as_of mismatch")
         if not _TRADING_DAY_RE.fullmatch(ctx.config.trading_day):
@@ -377,15 +388,20 @@ class SnapshotWriter:
             conviction.get("final")
         ):
             raise SnapshotContractError(f"{ticker}: conviction.final is required")
-        if not isinstance(risk_gate, dict) or risk_gate.get("ok_to_enter") is not True:
+        if (
+            not isinstance(risk_gate, dict)
+            or risk_gate.get("ok_to_enter") is not True
+            or risk_gate.get("gate") != "GREEN"
+        ):
             raise SnapshotContractError(f"{ticker}: risk gate must allow entry")
         if not isinstance(entry_plan, dict) or not isinstance(
             entry_plan.get("size_hint"), dict
         ):
             raise SnapshotContractError(f"{ticker}: entry_plan.size_hint is required")
         size_hint = entry_plan["size_hint"]
-        if not isinstance(size_hint.get("tier"), str) or not cls._is_finite_number(
-            size_hint.get("pct")
+        if (
+            size_hint.get("tier") not in SIZE_HINT_TIERS
+            or not cls._is_finite_number(size_hint.get("pct"))
         ):
             raise SnapshotContractError(f"{ticker}: invalid size hint")
 
@@ -393,6 +409,15 @@ class SnapshotWriter:
     def _require_sha256(value, field: str) -> None:
         if not isinstance(value, str) or not _SHA256_RE.fullmatch(value):
             raise SnapshotContractError(f"{field} must be lowercase SHA-256")
+
+    @staticmethod
+    def _require_uuidv4(value, field: str) -> None:
+        try:
+            parsed = uuid.UUID(value)
+        except (AttributeError, TypeError, ValueError) as error:
+            raise SnapshotContractError(f"{field} must be UUIDv4") from error
+        if parsed.version != 4 or str(parsed) != value:
+            raise SnapshotContractError(f"{field} must be canonical UUIDv4")
 
     @staticmethod
     def _is_finite_number(value) -> bool:
@@ -426,12 +451,12 @@ class SnapshotWriter:
             return (
                 item.ticker,
                 item.sort_rank,
-                item.recommendation_json,
+                item.recommendation_jcs,
+                item.recommendation_hash,
                 item.rating_band,
                 item.conviction_final,
-                item.risk_gate_ok,
+                item.risk_gate,
                 item.size_hint_tier,
-                item.size_hint_pct,
             )
 
         return tuple(map(item_payload, existing_items)) == tuple(
