@@ -1,4 +1,5 @@
 import type { DailyReportDocument, RecommendationEntry, RecommendationSnapshot } from './types';
+import { jcsCanonicalize, sha256Text } from './contractSchema';
 
 const SNAPSHOT_ID = '11111111-1111-4111-8111-111111111111';
 const RECOMMENDATION_ID = '22222222-2222-4222-8222-222222222222';
@@ -124,26 +125,30 @@ export function recommendationFixture(
 }
 
 export function snapshotFixture(overrides: Record<string, unknown> = {}): RecommendationSnapshot {
-  return {
+  const items = (overrides.items as RecommendationSnapshot['items'] | undefined) ?? [
+    {
+      recommendation: recommendationFixture(),
+      rating_band: 'A',
+    },
+  ];
+  const disclaimer = {
+    version: '1.0.0',
+    short_text: '仅供参考',
+    full_text: '投资有风险，本内容仅供参考。',
+    language: 'zh-CN' as const,
+    effective_at: '2026-07-01T00:00:00Z',
+    hash: '',
+    ...(overrides.disclaimer as Partial<RecommendationSnapshot['disclaimer']> | undefined),
+  };
+  disclaimer.hash = sha256Text(disclaimer.full_text);
+  const snapshot = {
     snapshot_id: SNAPSHOT_ID,
     as_of: '2026-07-10T06:00:00Z',
     profile: 'us_preferred',
     market_scope: 'us',
-    items: [
-      {
-        recommendation: recommendationFixture(),
-        rating_band: 'A',
-      },
-    ],
-    output_fingerprint: HASH_A,
-    disclaimer: {
-      version: '1.0.0',
-      short_text: '仅供参考',
-      full_text: '投资有风险，本内容仅供参考。',
-      language: 'zh-CN',
-      effective_at: '2026-07-01T00:00:00Z',
-      hash: HASH_B,
-    },
+    items,
+    output_fingerprint: sha256Text(jcsCanonicalize(items)),
+    disclaimer,
     meta: {
       contract_version: '0.3.1',
       profile_version: '3.1.0',
@@ -153,8 +158,11 @@ export function snapshotFixture(overrides: Record<string, unknown> = {}): Recomm
       generated_by: 'fixture',
       generation_ms: 12,
     },
-    ...overrides,
-  } as RecommendationSnapshot;
+    ...Object.fromEntries(
+      Object.entries(overrides).filter(([key]) => key !== 'items' && key !== 'disclaimer')
+    ),
+  };
+  return snapshot as RecommendationSnapshot;
 }
 
 export function reportFixture(): DailyReportDocument {

@@ -1,6 +1,17 @@
 import { describe, expect, test } from '@jest/globals';
 import { parseRecommendationSnapshot, RecommendationContractError } from '../recommendationAdapter';
 import { snapshotFixture } from '../testFixtures';
+import { jcsCanonicalize, sha256Text } from '../contractSchema';
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function reseal(snapshot: ReturnType<typeof snapshotFixture>) {
+  snapshot.output_fingerprint = sha256Text(jcsCanonicalize(snapshot.items));
+  snapshot.disclaimer.hash = sha256Text(snapshot.disclaimer.full_text);
+  return snapshot;
+}
 
 describe('Recommendation v0.3.1 frontend adapter', () => {
   test.each([
@@ -255,7 +266,7 @@ describe('Recommendation v0.3.1 frontend adapter', () => {
           },
         ],
       })
-    ).toThrow(/six rows/);
+    ).toThrow(/length 6/);
     expect(() =>
       parseRecommendationSnapshot({
         ...base,
@@ -456,7 +467,7 @@ describe('Recommendation v0.3.1 frontend adapter', () => {
           },
         ],
       })
-    ).toThrow(/too long/);
+    ).toThrow(/length 1..240/);
     expect(() =>
       parseRecommendationSnapshot({
         ...base,
@@ -499,5 +510,86 @@ describe('Recommendation v0.3.1 frontend adapter', () => {
     const parsed = parseRecommendationSnapshot(snapshotFixture({ items: [] }));
     expect(parsed.items).toEqual([]);
     expect(parsed.disclaimer.full_text).toContain('投资有风险');
+  });
+
+  test('round-trips the full canonical fixture without projection loss', () => {
+    const raw = snapshotFixture();
+    expect(parseRecommendationSnapshot(raw)).toEqual(raw);
+  });
+
+  test.each([
+    [
+      'missing recommendation key',
+      (snapshot: ReturnType<typeof snapshotFixture>) => {
+        delete (snapshot.items[0].recommendation as unknown as Record<string, unknown>).ticker;
+      },
+    ],
+    [
+      'unknown nested key',
+      (snapshot: ReturnType<typeof snapshotFixture>) => {
+        (snapshot.items[0].recommendation.score as unknown as Record<string, unknown>).shadow =
+          true;
+      },
+    ],
+    [
+      'non-string adjustment source_ref',
+      (snapshot: ReturnType<typeof snapshotFixture>) => {
+        (
+          snapshot.items[0].recommendation.conviction.adjustments[0] as unknown as Record<
+            string,
+            unknown
+          >
+        ).source_ref = 9;
+      },
+    ],
+    [
+      'invalid adjustment kind_ref',
+      (snapshot: ReturnType<typeof snapshotFixture>) => {
+        (
+          snapshot.items[0].recommendation.conviction.adjustments[0] as unknown as Record<
+            string,
+            unknown
+          >
+        ).kind_ref = 'forged_kind';
+      },
+    ],
+    [
+      'non-string contribution note',
+      (snapshot: ReturnType<typeof snapshotFixture>) => {
+        (
+          snapshot.items[0].recommendation.weights.contributions[0] as unknown as Record<
+            string,
+            unknown
+          >
+        ).note = false;
+      },
+    ],
+    [
+      'score dim out of range',
+      (snapshot: ReturnType<typeof snapshotFixture>) => {
+        snapshot.items[0].recommendation.score.dims[0].score = 101;
+      },
+    ],
+    [
+      'malformed nested timestamp',
+      (snapshot: ReturnType<typeof snapshotFixture>) => {
+        snapshot.items[0].recommendation.risk_gate.evaluated_at = '2026-07-10';
+      },
+    ],
+  ])('schema fuzz rejects %s', (_name, mutate) => {
+    const snapshot = clone(snapshotFixture());
+    mutate(snapshot);
+    reseal(snapshot);
+    expect(() => parseRecommendationSnapshot(snapshot)).toThrow(RecommendationContractError);
+  });
+
+  test('rejects disclaimer and output fingerprint authenticity mismatches', () => {
+    const badDisclaimer = clone(snapshotFixture());
+    badDisclaimer.disclaimer.full_text = 'forged legal text';
+    expect(() => parseRecommendationSnapshot(badDisclaimer)).toThrow(/disclaimer.hash/);
+
+    const badOutput = clone(snapshotFixture());
+    badOutput.items[0].recommendation.explanation.headline = 'forged but valid headline';
+    expect(() => parseRecommendationSnapshot(badOutput)).toThrow(/output_fingerprint/);
   });
 });

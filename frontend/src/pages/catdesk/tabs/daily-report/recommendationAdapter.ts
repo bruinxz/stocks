@@ -22,10 +22,25 @@ import {
   type ScoreRef,
   type TriggerSeverity,
 } from 'shared/scoring/types';
+import {
+  ContractSchemaError,
+  assertExactObject,
+  jcsCanonicalize,
+  sha256Text,
+  strictArray,
+  strictBoolean,
+  strictIso8601,
+  strictNumber,
+  strictOptionalString,
+  strictSemVer,
+  strictSha256,
+  strictString,
+  strictStringArray,
+  strictUuidV4,
+  type ExactObject,
+} from './contractSchema';
 
-type UnknownRecord = Record<string, unknown>;
-const SHA256 = /^[a-f0-9]{64}$/;
-const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+type UnknownRecord = ExactObject;
 const LOCALES = new Set<RecommendationLocale>(['zh-CN', 'en-US', 'ja-JP', 'ko-KR']);
 const BANDS = new Set<RatingBand>(['A', 'B', 'C', 'D', 'F']);
 const PROFILE_LOCALES: Record<RecommendationProfile, readonly RecommendationLocale[]> = {
@@ -125,6 +140,17 @@ const CATALYST_KINDS = new Set<RecommendationCatalystRelevance['kind']>([
   'product',
   'leadership',
 ]);
+const ADJUSTMENT_KINDS = new Set([
+  'earnings',
+  'upgrade_downgrade',
+  'product',
+  'regulator',
+  'geo_macro',
+  'ma_activity',
+  'sector_move',
+  'leadership',
+  'unclassified',
+]);
 
 export class RecommendationContractError extends Error {
   constructor(message: string) {
@@ -133,67 +159,69 @@ export class RecommendationContractError extends Error {
   }
 }
 
-function record(value: unknown, label: string): UnknownRecord {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new RecommendationContractError(`${label} must be an object`);
-  }
-  return value as UnknownRecord;
-}
-
 function string(value: unknown, label: string): string {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new RecommendationContractError(`${label} must be a non-empty string`);
+  try {
+    return strictString(value, label);
+  } catch (error) {
+    if (error instanceof ContractSchemaError) throw new RecommendationContractError(error.message);
+    throw error;
   }
-  return value;
 }
 
 function uuid(value: unknown, label: string): string {
-  const parsed = string(value, label);
-  if (!UUID_V4.test(parsed)) throw new RecommendationContractError(`${label} must be UUIDv4`);
-  return parsed;
+  try {
+    return strictUuidV4(value, label);
+  } catch (error) {
+    if (error instanceof ContractSchemaError) throw new RecommendationContractError(error.message);
+    throw error;
+  }
 }
 
 function hash(value: unknown, label: string): string {
-  const parsed = string(value, label);
-  if (!SHA256.test(parsed)) {
-    throw new RecommendationContractError(`${label} must be a lowercase SHA-256`);
+  try {
+    return strictSha256(value, label);
+  } catch (error) {
+    if (error instanceof ContractSchemaError) throw new RecommendationContractError(error.message);
+    throw error;
   }
-  return parsed;
 }
 
 function number(value: unknown, label: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new RecommendationContractError(`${label} must be finite`);
+  try {
+    return strictNumber(value, label);
+  } catch (error) {
+    if (error instanceof ContractSchemaError) throw new RecommendationContractError(error.message);
+    throw error;
   }
-  return value;
 }
 
 function boolean(value: unknown, label: string): boolean {
-  if (typeof value !== 'boolean') {
-    throw new RecommendationContractError(`${label} must be boolean`);
+  try {
+    return strictBoolean(value, label);
+  } catch (error) {
+    if (error instanceof ContractSchemaError) throw new RecommendationContractError(error.message);
+    throw error;
   }
-  return value;
 }
 
-function stringArray(value: unknown, label: string): string[] {
-  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) {
-    throw new RecommendationContractError(`${label} must be a string array`);
-  }
-  return value as string[];
-}
-
-function rejectUnknownKeys(value: UnknownRecord, allowed: readonly string[], label: string): void {
-  const unknown = Object.keys(value).filter(key => !allowed.includes(key));
-  if (unknown.length) {
-    throw new RecommendationContractError(
-      `${label} contains unknown fields: ${unknown.join(', ')}`
-    );
+function exact(
+  value: unknown,
+  requiredKeys: readonly string[],
+  optionalKeys: readonly string[],
+  label: string
+): UnknownRecord {
+  try {
+    return assertExactObject(value, requiredKeys, optionalKeys, label);
+  } catch (error) {
+    if (error instanceof ContractSchemaError) {
+      throw new RecommendationContractError(error.message);
+    }
+    throw error;
   }
 }
 
 function parseScoreRef(value: unknown, label: string): ScoreRef {
-  const ref = record(value, label);
-  rejectUnknownKeys(ref, ['scoring_id', 'snapshot_hash'], label);
+  const ref = exact(value, ['scoring_id', 'snapshot_hash'], [], label);
   return {
     scoring_id: uuid(ref.scoring_id, `${label}.scoring_id`),
     snapshot_hash: hash(ref.snapshot_hash, `${label}.snapshot_hash`),
@@ -211,10 +239,10 @@ function parseConviction(
   index: number
 ): Conviction {
   const label = `items[${index}].recommendation.conviction`;
-  const raw = record(value, label);
-  rejectUnknownKeys(
-    raw,
+  const raw = exact(
+    value,
     ['ticker', 'as_of', 'base', 'score_ref', 'adjustments', 'final', 'level'],
+    [],
     label
   );
   if (string(raw.ticker, `${label}.ticker`) !== ticker) {
@@ -229,31 +257,40 @@ function parseConviction(
   if (!sameScoreRef(reference, scoreRef)) {
     throw new RecommendationContractError(`items[${index}] conviction score_ref mismatch`);
   }
-  if (!Array.isArray(raw.adjustments) || raw.adjustments.length > 5) {
-    throw new RecommendationContractError(`items[${index}] conviction adjustments are invalid`);
-  }
-  const adjustments = raw.adjustments.map((value, adjustmentIndex) => {
-    const adjustment = record(value, `${label}.adjustments[${adjustmentIndex}]`);
-    rejectUnknownKeys(
-      adjustment,
-      ['delta', 'reason', 'kind_ref', 'source_ref'],
-      `${label}.adjustments[${adjustmentIndex}]`
-    );
-    const delta = number(adjustment.delta, `${label}.adjustments[${adjustmentIndex}].delta`);
-    if (delta < -20 || delta > 20) {
-      throw new RecommendationContractError(`items[${index}] adjustment delta is invalid`);
+  const adjustments = strictArray(raw.adjustments, `${label}.adjustments`, { max: 5 }).map(
+    (value, adjustmentIndex) => {
+      const adjustmentLabel = `${label}.adjustments[${adjustmentIndex}]`;
+      const adjustment = exact(
+        value,
+        ['delta', 'reason'],
+        ['kind_ref', 'source_ref'],
+        adjustmentLabel
+      );
+      const delta = strictNumber(adjustment.delta, `${adjustmentLabel}.delta`, {
+        min: -20,
+        max: 20,
+      });
+      const reason = strictString(adjustment.reason, `${adjustmentLabel}.reason`, { max: 200 });
+      const kindRef = strictOptionalString(adjustment.kind_ref, `${adjustmentLabel}.kind_ref`);
+      if (kindRef && !ADJUSTMENT_KINDS.has(kindRef)) {
+        throw new RecommendationContractError(`items[${index}] adjustment kind_ref is invalid`);
+      }
+      return {
+        delta,
+        reason,
+        ...(kindRef ? { kind_ref: kindRef as Conviction['adjustments'][number]['kind_ref'] } : {}),
+        ...(adjustment.source_ref !== undefined
+          ? {
+              source_ref: strictOptionalString(
+                adjustment.source_ref,
+                `${adjustmentLabel}.source_ref`,
+                { max: 240 }
+              ),
+            }
+          : {}),
+      };
     }
-    const reason = string(adjustment.reason, `${label}.adjustments[${adjustmentIndex}].reason`);
-    return {
-      delta,
-      reason,
-      kind_ref:
-        typeof adjustment.kind_ref === 'string'
-          ? (adjustment.kind_ref as Conviction['adjustments'][number]['kind_ref'])
-          : undefined,
-      source_ref: typeof adjustment.source_ref === 'string' ? adjustment.source_ref : undefined,
-    };
-  });
+  );
   const deltaSum = adjustments.reduce((sum, adjustment) => sum + adjustment.delta, 0);
   if (deltaSum < -20 || deltaSum > 20 || final !== Math.max(0, Math.min(100, base + deltaSum))) {
     throw new RecommendationContractError(`items[${index}] conviction final mismatch`);
@@ -265,7 +302,7 @@ function parseConviction(
   }
   return {
     ticker,
-    as_of: string(raw.as_of, `${label}.as_of`),
+    as_of: strictIso8601(raw.as_of, `${label}.as_of`),
     base,
     score_ref: reference,
     adjustments,
@@ -287,26 +324,23 @@ function parseRiskGate(
   index: number
 ): RiskGate {
   const label = `items[${index}].recommendation.risk_gate`;
-  const raw = record(value, label);
-  rejectUnknownKeys(raw, ['ticker', 'evaluated_at', 'gate', 'triggers', 'ok_to_enter'], label);
+  const raw = exact(
+    value,
+    ['ticker', 'evaluated_at', 'gate', 'triggers', 'ok_to_enter'],
+    [],
+    label
+  );
   if (string(raw.ticker, `${label}.ticker`) !== ticker) {
     throw new RecommendationContractError(`items[${index}] risk ticker mismatch`);
   }
-  if (!Array.isArray(raw.triggers)) {
-    throw new RecommendationContractError(`items[${index}] risk triggers must be an array`);
-  }
-  const triggers = raw.triggers.map((value, triggerIndex) => {
-    const trigger = record(value, `${label}.triggers[${triggerIndex}]`);
-    rejectUnknownKeys(
-      trigger,
-      ['code', 'severity', 'detail'],
-      `${label}.triggers[${triggerIndex}]`
-    );
-    const code = string(trigger.code, `${label}.triggers[${triggerIndex}].code`);
+  const triggers = strictArray(raw.triggers, `${label}.triggers`).map((value, triggerIndex) => {
+    const triggerLabel = `${label}.triggers[${triggerIndex}]`;
+    const trigger = exact(value, ['code', 'severity', 'detail'], [], triggerLabel);
+    const code = strictString(trigger.code, `${triggerLabel}.code`);
     if (!TRIGGER_CODES.has(code)) {
       throw new RecommendationContractError(`items[${index}] risk trigger code is invalid`);
     }
-    const severity = string(trigger.severity, `${label}.triggers[${triggerIndex}].severity`);
+    const severity = strictString(trigger.severity, `${triggerLabel}.severity`);
     if (!TRIGGER_SEVERITIES.has(severity as TriggerSeverity)) {
       throw new RecommendationContractError(`items[${index}] risk trigger severity is invalid`);
     }
@@ -320,7 +354,7 @@ function parseRiskGate(
     return {
       code: code as RiskGateTriggerCode,
       severity: severity as TriggerSeverity,
-      detail: string(trigger.detail, `${label}.triggers[${triggerIndex}].detail`),
+      detail: strictString(trigger.detail, `${triggerLabel}.detail`, { max: 240 }),
     };
   });
   const gate = string(raw.gate, `${label}.gate`) as GateStatus;
@@ -337,7 +371,7 @@ function parseRiskGate(
   }
   return {
     ticker,
-    evaluated_at: string(raw.evaluated_at, `${label}.evaluated_at`),
+    evaluated_at: strictIso8601(raw.evaluated_at, `${label}.evaluated_at`),
     gate,
     triggers,
     ok_to_enter: okToEnter,
@@ -350,8 +384,7 @@ function parseCatalystRelevance(
 ): RecommendationCatalystRelevance | undefined {
   if (value == null) return undefined;
   const label = `items[${index}].recommendation.catalyst_relevance`;
-  const raw = record(value, label);
-  rejectUnknownKeys(raw, ['catalyst_id', 'kind', 'relevance_score', 'components'], label);
+  const raw = exact(value, ['catalyst_id', 'kind', 'relevance_score', 'components'], [], label);
   const kind = string(raw.kind, `${label}.kind`);
   if (
     kind === 'unclassified' ||
@@ -359,11 +392,10 @@ function parseCatalystRelevance(
   ) {
     throw new RecommendationContractError(`items[${index}] catalyst kind is invalid`);
   }
-  const relevanceScore = number(raw.relevance_score, `${label}.relevance_score`);
-  if (relevanceScore < 0 || relevanceScore > 1) {
-    throw new RecommendationContractError(`items[${index}] catalyst relevance is out of range`);
-  }
-  const components = record(raw.components, `${label}.components`);
+  const relevanceScore = strictNumber(raw.relevance_score, `${label}.relevance_score`, {
+    min: 0,
+    max: 1,
+  });
   const componentKeys = [
     'sector_map',
     'revenue_exposure',
@@ -371,13 +403,13 @@ function parseCatalystRelevance(
     'supply_chain',
     'historical_beta',
   ] as const;
-  rejectUnknownKeys(components, componentKeys, `${label}.components`);
+  const components = exact(raw.components, componentKeys, [], `${label}.components`);
   const parsedComponents = Object.fromEntries(
     componentKeys.map(key => {
-      const component = number(components[key], `${label}.components.${key}`);
-      if (component < 0 || component > 1) {
-        throw new RecommendationContractError(`items[${index}] catalyst component is out of range`);
-      }
+      const component = strictNumber(components[key], `${label}.components.${key}`, {
+        min: 0,
+        max: 1,
+      });
       return [key, component];
     })
   ) as unknown as RecommendationCatalystRelevance['components'];
@@ -396,42 +428,35 @@ function parseWeights(
   index: number
 ): RecommendationWeights {
   const label = `items[${index}].recommendation.weights`;
-  const raw = record(value, label);
-  rejectUnknownKeys(raw, ['contributions', 'normalized'], label);
-  if (!Array.isArray(raw.contributions) || typeof raw.normalized !== 'boolean') {
-    throw new RecommendationContractError(`items[${index}] weights shape is invalid`);
-  }
-  if (raw.contributions.length === 0) {
-    if (raw.normalized !== false) {
+  const raw = exact(value, ['contributions', 'normalized'], [], label);
+  const rawContributions = strictArray(raw.contributions, `${label}.contributions`);
+  const normalized = strictBoolean(raw.normalized, `${label}.normalized`);
+  if (rawContributions.length === 0) {
+    if (normalized !== false) {
       throw new RecommendationContractError(`items[${index}] zero weights must be unnormalized`);
     }
     return { contributions: [], normalized: false };
   }
-  if (raw.normalized !== true) {
+  if (normalized !== true) {
     throw new RecommendationContractError(`items[${index}] nonempty weights must be normalized`);
   }
-  const contributions = raw.contributions.map((value, contributionIndex) => {
-    const source = record(value, `${label}.contributions[${contributionIndex}]`);
-    rejectUnknownKeys(
-      source,
-      ['source_kind', 'source_ref', 'weight', 'note'],
-      `${label}.contributions[${contributionIndex}]`
+  const contributions = rawContributions.map((value, contributionIndex) => {
+    const contributionLabel = `${label}.contributions[${contributionIndex}]`;
+    const source = exact(
+      value,
+      ['source_kind', 'source_ref', 'weight'],
+      ['note'],
+      contributionLabel
     );
-    const sourceKind = string(
-      source.source_kind,
-      `${label}.contributions[${contributionIndex}].source_kind`
-    );
+    const sourceKind = strictString(source.source_kind, `${contributionLabel}.source_kind`);
     if (!['trigger', 'score_dim', 'catalyst_relevance'].includes(sourceKind)) {
       throw new RecommendationContractError(`items[${index}] weight source_kind is invalid`);
     }
-    const weight = number(source.weight, `${label}.contributions[${contributionIndex}].weight`);
-    if (weight < -1 || weight > 1) {
-      throw new RecommendationContractError(`items[${index}] contribution weight is invalid`);
-    }
-    const sourceRef = string(
-      source.source_ref,
-      `${label}.contributions[${contributionIndex}].source_ref`
-    );
+    const weight = strictNumber(source.weight, `${contributionLabel}.weight`, {
+      min: -1,
+      max: 1,
+    });
+    const sourceRef = strictString(source.source_ref, `${contributionLabel}.source_ref`);
     const refValid =
       (sourceKind === 'trigger' && triggerCodes.has(sourceRef)) ||
       (sourceKind === 'score_dim' && (DIM_KEYS as readonly string[]).includes(sourceRef)) ||
@@ -443,7 +468,9 @@ function parseWeights(
       source_kind: sourceKind as RecommendationWeights['contributions'][number]['source_kind'],
       source_ref: sourceRef,
       weight,
-      note: typeof source.note === 'string' ? source.note : undefined,
+      ...(source.note !== undefined
+        ? { note: strictOptionalString(source.note, `${contributionLabel}.note`, { max: 240 }) }
+        : {}),
     };
   });
   const l1 = contributions.reduce((sum, contribution) => sum + Math.abs(contribution.weight), 0);
@@ -459,25 +486,18 @@ function parseTriggerSignals(
   index: number
 ): RecommendationTriggerSignal[] {
   const label = `items[${index}].recommendation.trigger_signals`;
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new RecommendationContractError(`items[${index}].trigger_signals is empty`);
-  }
-  return value.map((rawValue, signalIndex) => {
-    const signal = record(rawValue, `${label}[${signalIndex}]`);
-    rejectUnknownKeys(
-      signal,
-      ['code', 'strength', 'detail', 'source_ref'],
-      `${label}[${signalIndex}]`
-    );
-    const code = string(signal.code, `${label}[${signalIndex}].code`);
+  return strictArray(value, label, { min: 1 }).map((rawValue, signalIndex) => {
+    const signalLabel = `${label}[${signalIndex}]`;
+    const signal = exact(rawValue, ['code', 'strength', 'detail'], ['source_ref'], signalLabel);
+    const code = strictString(signal.code, `${signalLabel}.code`);
     if (!SIGNAL_CODES.has(code as RecommendationTriggerSignal['code'])) {
       throw new RecommendationContractError(`items[${index}] trigger signal code is invalid`);
     }
-    const strength = string(signal.strength, `${label}[${signalIndex}].strength`);
+    const strength = strictString(signal.strength, `${signalLabel}.strength`);
     if (!SIGNAL_STRENGTHS.has(strength as RecommendationTriggerSignal['strength'])) {
       throw new RecommendationContractError(`items[${index}] trigger signal strength is invalid`);
     }
-    const sourceRef = typeof signal.source_ref === 'string' ? signal.source_ref : undefined;
+    const sourceRef = strictOptionalString(signal.source_ref, `${signalLabel}.source_ref`);
     if (sourceRef && !evidenceIds.has(sourceRef)) {
       throw new RecommendationContractError(`items[${index}] trigger source_ref is unknown`);
     }
@@ -485,13 +505,9 @@ function parseTriggerSignals(
       code: code as RecommendationTriggerSignal['code'],
       strength: strength as RecommendationTriggerSignal['strength'],
       detail: (() => {
-        const detail = string(signal.detail, `${label}[${signalIndex}].detail`);
-        if (detail.length > 240) {
-          throw new RecommendationContractError(`items[${index}] trigger detail is too long`);
-        }
-        return detail;
+        return strictString(signal.detail, `${signalLabel}.detail`, { max: 240 });
       })(),
-      source_ref: sourceRef,
+      ...(sourceRef ? { source_ref: sourceRef } : {}),
     };
   });
 }
@@ -510,9 +526,8 @@ function parseEntryPlan(
   index: number
 ): EntryPlan {
   const label = `items[${index}].recommendation.entry_plan`;
-  const raw = record(value, label);
-  rejectUnknownKeys(
-    raw,
+  const raw = exact(
+    value,
     [
       'ticker',
       'generated_at',
@@ -525,6 +540,7 @@ function parseEntryPlan(
       'conviction_ref',
       'score_ref',
     ],
+    [],
     label
   );
   if (string(raw.ticker, `${label}.ticker`) !== ticker) {
@@ -534,8 +550,7 @@ function parseEntryPlan(
   if (!sameScoreRef(reference, scoreRef)) {
     throw new RecommendationContractError(`items[${index}] entry score_ref mismatch`);
   }
-  const entry = record(raw.entry, `${label}.entry`);
-  rejectUnknownKeys(entry, ['low', 'high', 'currency'], `${label}.entry`);
+  const entry = exact(raw.entry, ['low', 'high', 'currency'], [], `${label}.entry`);
   const entryLow = number(entry.low, `${label}.entry.low`);
   const entryHigh = number(entry.high, `${label}.entry.high`);
   const entryCurrency = parseCurrency(entry.currency, `${label}.entry.currency`) as
@@ -544,8 +559,7 @@ function parseEntryPlan(
     throw new RecommendationContractError(`items[${index}] entry price band is invalid`);
   }
   const parsePrice = (source: unknown, priceLabel: string) => {
-    const price = record(source, priceLabel);
-    rejectUnknownKeys(price, ['value', 'currency'], priceLabel);
+    const price = exact(source, ['value', 'currency'], [], priceLabel);
     const currency = parseCurrency(price.currency, `${priceLabel}.currency`);
     if (currency !== entryCurrency) {
       throw new RecommendationContractError(`items[${index}] price currency mismatch`);
@@ -553,14 +567,15 @@ function parseEntryPlan(
     return { value: number(price.value, `${priceLabel}.value`), currency };
   };
   const stop = parsePrice(raw.stop, `${label}.stop`);
-  if (!Array.isArray(raw.targets) || raw.targets.length === 0) {
-    throw new RecommendationContractError(`items[${index}] targets are required`);
-  }
-  const targets = raw.targets.map((target, targetIndex) =>
-    parsePrice(target, `${label}.targets[${targetIndex}]`)
+  const targets = strictArray(raw.targets, `${label}.targets`, { min: 1, max: 3 }).map(
+    (target, targetIndex) => parsePrice(target, `${label}.targets[${targetIndex}]`)
   );
-  const sizeHint = record(raw.size_hint, `${label}.size_hint`);
-  rejectUnknownKeys(sizeHint, ['tier', 'pct', 'disclaimer_key', 'rationale'], `${label}.size_hint`);
+  const sizeHint = exact(
+    raw.size_hint,
+    ['tier', 'pct', 'disclaimer_key', 'rationale'],
+    [],
+    `${label}.size_hint`
+  );
   const tier = string(sizeHint.tier, `${label}.size_hint.tier`);
   if (!(tier in SIZE_HINT_PCT)) {
     throw new RecommendationContractError(`items[${index}] size_hint tier is invalid`);
@@ -582,7 +597,7 @@ function parseEntryPlan(
   }
   return {
     ticker,
-    generated_at: string(raw.generated_at, `${label}.generated_at`),
+    generated_at: strictIso8601(raw.generated_at, `${label}.generated_at`),
     entry: { low: entryLow, high: entryHigh, currency: entryCurrency },
     stop,
     targets,
@@ -590,10 +605,10 @@ function parseEntryPlan(
       tier: tier as EntryPlan['size_hint']['tier'],
       pct,
       disclaimer_key: 'size_hint_advisory',
-      rationale: string(sizeHint.rationale, `${label}.size_hint.rationale`),
+      rationale: strictString(sizeHint.rationale, `${label}.size_hint.rationale`, { max: 200 }),
     },
     time_horizon: horizon as EntryPlan['time_horizon'],
-    invalidation: string(raw.invalidation, `${label}.invalidation`),
+    invalidation: strictString(raw.invalidation, `${label}.invalidation`, { max: 240 }),
     conviction_ref: convictionRef,
     score_ref: reference,
   };
@@ -641,12 +656,39 @@ function parseRecommendation(
   disclaimerVersion: string,
   index: number
 ): RecommendationEntry {
-  const item = record(value, `items[${index}].recommendation`);
+  const recommendationLabel = `items[${index}].recommendation`;
+  const item = exact(
+    value,
+    [
+      'id',
+      'snapshot_id',
+      'ticker',
+      'as_of',
+      'score',
+      'conviction',
+      'risk_gate',
+      'entry_plan',
+      'trigger_signals',
+      'weights',
+      'explanation',
+      'evidence_refs',
+      'model_version',
+      'disclaimer_version',
+    ],
+    ['catalyst_relevance'],
+    recommendationLabel
+  );
   if (uuid(item.snapshot_id, `items[${index}].recommendation.snapshot_id`) !== snapshotId) {
     throw new RecommendationContractError(`items[${index}] snapshot_id mismatch`);
   }
 
-  const score = record(item.score, `items[${index}].recommendation.score`);
+  const scoreLabel = `items[${index}].recommendation.score`;
+  const score = exact(
+    item.score,
+    ['scoring_id', 'snapshot_hash', 'profile', 'market_scope', 'total', 'rating', 'dims'],
+    [],
+    scoreLabel
+  );
   if (score.profile !== profile || score.market_scope !== marketScope) {
     throw new RecommendationContractError(`items[${index}] score scope mismatch`);
   }
@@ -656,19 +698,24 @@ function parseRecommendation(
     score.snapshot_hash,
     `items[${index}].recommendation.score.snapshot_hash`
   );
-  if (!Array.isArray(score.dims) || score.dims.length !== DIM_KEYS.length) {
+  const scoreDims = strictArray(score.dims, `${scoreLabel}.dims`, {
+    min: DIM_KEYS.length,
+    max: DIM_KEYS.length,
+  });
+  if (scoreDims.length !== DIM_KEYS.length) {
     throw new RecommendationContractError(`items[${index}] score dims must contain six rows`);
   }
-  const dims = score.dims.map((value, dimIndex) => {
-    const dim = record(value, `items[${index}].score.dims[${dimIndex}]`);
+  const dims = scoreDims.map((value, dimIndex) => {
+    const dimLabel = `${scoreLabel}.dims[${dimIndex}]`;
+    const dim = exact(value, ['key', 'score', 'band', 'weight'], [], dimLabel);
     if (dim.key !== DIM_KEYS[dimIndex]) {
       throw new RecommendationContractError(`items[${index}] score dims order is invalid`);
     }
     return {
       key: DIM_KEYS[dimIndex],
-      score: number(dim.score, `items[${index}].score.dims[${dimIndex}].score`),
-      band: parseBand(dim.band, `items[${index}].score.dims[${dimIndex}].band`),
-      weight: number(dim.weight, `items[${index}].score.dims[${dimIndex}].weight`),
+      score: strictNumber(dim.score, `${dimLabel}.score`, { min: 0, max: 100 }),
+      band: parseBand(dim.band, `${dimLabel}.band`),
+      weight: strictNumber(dim.weight, `${dimLabel}.weight`, { min: 0, max: 1 }),
     };
   });
   const weightSum = dims.reduce((sum, dim) => sum + dim.weight, 0);
@@ -680,7 +727,13 @@ function parseRecommendation(
   const conviction = parseConviction(item.conviction, scoreRef, ticker, index);
   const riskGate = parseRiskGate(item.risk_gate, ticker, marketScope, index);
   const entryPlan = parseEntryPlan(item.entry_plan, scoreRef, ticker, conviction.final, index);
-  const explanation = record(item.explanation, `items[${index}].recommendation.explanation`);
+  const explanationLabel = `items[${index}].recommendation.explanation`;
+  const explanation = exact(
+    item.explanation,
+    ['headline', 'body', 'caveats', 'language', 'template_id', 'template_hash'],
+    [],
+    explanationLabel
+  );
   const explanationLanguage = parseLocale(
     explanation.language,
     `items[${index}].explanation.language`
@@ -688,12 +741,17 @@ function parseRecommendation(
   if (!PROFILE_LOCALES[profile].includes(explanationLanguage)) {
     throw new RecommendationContractError(`items[${index}] explanation locale is incompatible`);
   }
-  const evidence = item.evidence_refs;
-  if (!Array.isArray(evidence) || evidence.length === 0) {
-    throw new RecommendationContractError(`items[${index}].recommendation.evidence_refs is empty`);
-  }
+  const evidence = strictArray(item.evidence_refs, `${recommendationLabel}.evidence_refs`, {
+    min: 1,
+  });
   const evidenceRefs = evidence.map((source, evidenceIndex) => {
-    const ref = record(source, `items[${index}].evidence_refs[${evidenceIndex}]`);
+    const evidenceLabel = `${recommendationLabel}.evidence_refs[${evidenceIndex}]`;
+    const ref = exact(
+      source,
+      ['id', 'kind', 'source_uri', 'as_of', 'hash'],
+      ['short_text'],
+      evidenceLabel
+    );
     const kind = string(ref.kind, `items[${index}].evidence_refs[${evidenceIndex}].kind`);
     if (!EVIDENCE_KINDS.has(kind)) {
       throw new RecommendationContractError(`items[${index}] evidence kind is invalid`);
@@ -705,17 +763,16 @@ function parseRecommendation(
     if (!EVIDENCE_SCHEMES.some(scheme => sourceUri.startsWith(scheme))) {
       throw new RecommendationContractError(`items[${index}] evidence URI is not canonical`);
     }
-    const shortText = typeof ref.short_text === 'string' ? ref.short_text : undefined;
-    if (shortText && shortText.length > 200) {
-      throw new RecommendationContractError(`items[${index}] evidence short_text is too long`);
-    }
+    const shortText = strictOptionalString(ref.short_text, `${evidenceLabel}.short_text`, {
+      max: 200,
+    });
     return {
       id: string(ref.id, `items[${index}].evidence_refs[${evidenceIndex}].id`),
       kind: kind as RecommendationEntry['evidence_refs'][number]['kind'],
       source_uri: sourceUri,
-      as_of: string(ref.as_of, `items[${index}].evidence_refs[${evidenceIndex}].as_of`),
+      as_of: strictIso8601(ref.as_of, `${evidenceLabel}.as_of`),
       hash: hash(ref.hash, `items[${index}].evidence_refs[${evidenceIndex}].hash`),
-      short_text: shortText,
+      ...(shortText ? { short_text: shortText } : {}),
     };
   });
   if (string(item.disclaimer_version, `items[${index}].disclaimer_version`) !== disclaimerVersion) {
@@ -736,23 +793,15 @@ function parseRecommendation(
       throw new RecommendationContractError(`items[${index}] evidence token ${token} is unknown`);
     }
   }
-  const scoreTotal = number(score.total, `items[${index}].recommendation.score.total`);
-  if (scoreTotal < 0 || scoreTotal > 100) {
-    throw new RecommendationContractError(`items[${index}] score total is out of range`);
-  }
+  const scoreTotal = strictNumber(score.total, `${scoreLabel}.total`, { min: 0, max: 100 });
 
-  const headline = string(explanation.headline, `items[${index}].explanation.headline`);
-  const body = string(explanation.body, `items[${index}].explanation.body`);
-  const caveats = stringArray(explanation.caveats, `items[${index}].explanation.caveats`);
-  if (
-    headline.length > 80 ||
-    body.length > 600 ||
-    caveats.length > 3 ||
-    caveats.some(caveat => caveat.length > 120)
-  ) {
-    throw new RecommendationContractError(`items[${index}] explanation length is invalid`);
-  }
-  const templateId = string(explanation.template_id, `items[${index}].explanation.template_id`);
+  const headline = strictString(explanation.headline, `${explanationLabel}.headline`, { max: 80 });
+  const body = strictString(explanation.body, `${explanationLabel}.body`, { max: 600 });
+  const caveats = strictStringArray(explanation.caveats, `${explanationLabel}.caveats`, {
+    max: 3,
+    itemMax: 120,
+  });
+  const templateId = strictString(explanation.template_id, `${explanationLabel}.template_id`);
   const templateHash = hash(explanation.template_hash, `items[${index}].explanation.template_hash`);
 
   return {
@@ -760,7 +809,7 @@ function parseRecommendation(
     id: uuid(item.id, `items[${index}].recommendation.id`),
     snapshot_id: snapshotId,
     ticker,
-    as_of: string(item.as_of, `items[${index}].recommendation.as_of`),
+    as_of: strictIso8601(item.as_of, `${recommendationLabel}.as_of`),
     score: {
       scoring_id: scoringId,
       snapshot_hash: snapshotHash,
@@ -785,15 +834,14 @@ function parseRecommendation(
       template_hash: templateHash,
     },
     evidence_refs: evidenceRefs,
-    model_version: string(item.model_version, `items[${index}].model_version`),
+    model_version: strictSemVer(item.model_version, `${recommendationLabel}.model_version`),
     disclaimer_version: disclaimerVersion,
   };
 }
 
-export function parseRecommendationSnapshot(value: unknown): RecommendationSnapshot {
-  const envelope = record(value, 'snapshot');
-  rejectUnknownKeys(
-    envelope,
+function parseRecommendationSnapshotUnsafe(value: unknown): RecommendationSnapshot {
+  const envelope = exact(
+    value,
     [
       'snapshot_id',
       'as_of',
@@ -804,6 +852,7 @@ export function parseRecommendationSnapshot(value: unknown): RecommendationSnaps
       'disclaimer',
       'meta',
     ],
+    [],
     'snapshot'
   );
   if ('custom' === envelope.profile || 'profile_alias' in envelope) {
@@ -815,20 +864,19 @@ export function parseRecommendationSnapshot(value: unknown): RecommendationSnaps
   if (!RECOMMENDATION_PROFILE_SCOPES[profile].includes(marketScope)) {
     throw new RecommendationContractError('profile/market_scope is incompatible');
   }
-  const disclaimer = record(envelope.disclaimer, 'disclaimer');
-  rejectUnknownKeys(
-    disclaimer,
+  const disclaimer = exact(
+    envelope.disclaimer,
     ['version', 'short_text', 'full_text', 'language', 'effective_at', 'hash'],
+    [],
     'disclaimer'
   );
-  const disclaimerVersion = string(disclaimer.version, 'disclaimer.version');
+  const disclaimerVersion = strictSemVer(disclaimer.version, 'disclaimer.version');
   const disclaimerLanguage = parseLocale(disclaimer.language, 'disclaimer.language');
   if (!PROFILE_LOCALES[profile].includes(disclaimerLanguage)) {
     throw new RecommendationContractError('disclaimer language is incompatible with profile');
   }
-  const meta = record(envelope.meta, 'meta');
-  rejectUnknownKeys(
-    meta,
+  const meta = exact(
+    envelope.meta,
     [
       'contract_version',
       'profile_version',
@@ -838,43 +886,50 @@ export function parseRecommendationSnapshot(value: unknown): RecommendationSnaps
       'generated_by',
       'generation_ms',
     ],
+    [],
     'meta'
   );
   if (meta.contract_version !== '0.3.1') {
     throw new RecommendationContractError('meta.contract_version must equal 0.3.1');
   }
-  const itemsRaw = envelope.items;
-  if (!Array.isArray(itemsRaw)) throw new RecommendationContractError('items must be an array');
+  const itemsRaw = strictArray(envelope.items, 'items');
+  const fullDisclaimerText = strictString(disclaimer.full_text, 'disclaimer.full_text', {
+    max: 4000,
+  });
+  const disclaimerHash = strictSha256(disclaimer.hash, 'disclaimer.hash');
+  if (sha256Text(fullDisclaimerText) !== disclaimerHash) {
+    throw new RecommendationContractError('disclaimer.hash does not match full_text');
+  }
+  const outputFingerprint = strictSha256(envelope.output_fingerprint, 'output_fingerprint');
 
   const parsed: RecommendationSnapshot = {
     snapshot_id: snapshotId,
-    as_of: string(envelope.as_of, 'as_of'),
+    as_of: strictIso8601(envelope.as_of, 'as_of'),
     profile,
     market_scope: marketScope,
-    output_fingerprint: hash(envelope.output_fingerprint, 'output_fingerprint'),
+    output_fingerprint: outputFingerprint,
     disclaimer: {
       version: disclaimerVersion,
-      short_text: string(disclaimer.short_text, 'disclaimer.short_text'),
-      full_text: string(disclaimer.full_text, 'disclaimer.full_text'),
+      short_text: strictString(disclaimer.short_text, 'disclaimer.short_text', { max: 200 }),
+      full_text: fullDisclaimerText,
       language: disclaimerLanguage,
-      effective_at: string(disclaimer.effective_at, 'disclaimer.effective_at'),
-      hash: hash(disclaimer.hash, 'disclaimer.hash'),
+      effective_at: strictIso8601(disclaimer.effective_at, 'disclaimer.effective_at'),
+      hash: disclaimerHash,
     },
     meta: {
       contract_version: '0.3.1',
-      profile_version: string(meta.profile_version, 'meta.profile_version'),
-      input_fingerprint: hash(meta.input_fingerprint, 'meta.input_fingerprint'),
-      strategy_version: string(meta.strategy_version, 'meta.strategy_version'),
-      pipeline_version: string(meta.pipeline_version, 'meta.pipeline_version'),
-      generated_by: string(meta.generated_by, 'meta.generated_by'),
-      generation_ms: number(meta.generation_ms, 'meta.generation_ms'),
+      profile_version: strictSemVer(meta.profile_version, 'meta.profile_version'),
+      input_fingerprint: strictSha256(meta.input_fingerprint, 'meta.input_fingerprint'),
+      strategy_version: strictSemVer(meta.strategy_version, 'meta.strategy_version'),
+      pipeline_version: strictSemVer(meta.pipeline_version, 'meta.pipeline_version'),
+      generated_by: strictString(meta.generated_by, 'meta.generated_by'),
+      generation_ms: strictNumber(meta.generation_ms, 'meta.generation_ms', { min: 0 }),
     },
     items: [],
   };
 
   parsed.items = itemsRaw.map((rawItem, index) => {
-    const item = record(rawItem, `items[${index}]`);
-    rejectUnknownKeys(item, ['recommendation', 'rating_band'], `items[${index}]`);
+    const item = exact(rawItem, ['recommendation', 'rating_band'], [], `items[${index}]`);
     const recommendation = parseRecommendation(
       item.recommendation,
       snapshotId,
@@ -889,6 +944,32 @@ export function parseRecommendationSnapshot(value: unknown): RecommendationSnaps
     }
     return { recommendation, rating_band: ratingBand };
   });
+  const expectedOutputFingerprint = sha256Text(jcsCanonicalize(itemsRaw));
+  if (outputFingerprint !== expectedOutputFingerprint) {
+    throw new RecommendationContractError('output_fingerprint does not match ordered items');
+  }
+  for (let index = 1; index < parsed.items.length; index += 1) {
+    const previous = parsed.items[index - 1].recommendation;
+    const current = parsed.items[index].recommendation;
+    const correctlyOrdered =
+      previous.conviction.final > current.conviction.final ||
+      (previous.conviction.final === current.conviction.final &&
+        previous.ticker.localeCompare(current.ticker) <= 0);
+    if (!correctlyOrdered) {
+      throw new RecommendationContractError('items are not in canonical conviction/ticker order');
+    }
+  }
 
   return parsed;
+}
+
+export function parseRecommendationSnapshot(value: unknown): RecommendationSnapshot {
+  try {
+    return parseRecommendationSnapshotUnsafe(value);
+  } catch (error) {
+    if (error instanceof ContractSchemaError) {
+      throw new RecommendationContractError(error.message);
+    }
+    throw error;
+  }
 }
