@@ -1,25 +1,222 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from typing import Optional, Sequence
+
+from ai.snapshot.fingerprint import compute_output_fingerprint, jcs_canonicalize
+from ai.snapshot.store import SnapshotItemRow, SnapshotRow, SnapshotStore
+from ai.snapshot.writer import PROFILE_MARKET_SCOPES
+
+
+class SnapshotReadError(RuntimeError):
+    pass
+
+
+class SnapshotNotFoundError(SnapshotReadError):
+    pass
+
+
+class SnapshotCorruptError(SnapshotReadError):
+    pass
+
+
 class SnapshotReader:
-    """Read snapshot for replay or historical browse."""
+    """Read and integrity-check recommendation snapshots through an injected port."""
+
+    def __init__(self, store: SnapshotStore):
+        self._store = store
 
     def read_snapshot(self, snapshot_id: str) -> dict:
-        pass
+        snapshot = self._store.get_snapshot(snapshot_id)
+        if snapshot is None:
+            raise SnapshotNotFoundError(f"snapshot not found: {snapshot_id}")
+        return self._hydrate(snapshot, self._store.get_items(snapshot_id))
 
-    def read_by_date(self, trading_day: str, profile: str, market_scope: str) -> list[dict]:
-        pass
+    def read_latest(self, profile: str, market_scope: str) -> Optional[dict]:
+        self._validate_profile_scope(profile, market_scope)
+        snapshots = self._store.list_snapshots(
+            profile=profile, market_scope=market_scope
+        )
+        if not snapshots:
+            return None
+        latest = max(snapshots, key=lambda row: (row.as_of, row.snapshot_id))
+        return self._hydrate(latest, self._store.get_items(latest.snapshot_id))
+
+    def read_by_date(
+        self, trading_day: str, profile: str, market_scope: str
+    ) -> list[dict]:
+        self._validate_profile_scope(profile, market_scope)
+        snapshots = self._store.list_snapshots(
+            profile=profile,
+            market_scope=market_scope,
+            trading_day=trading_day,
+        )
+        ordered = sorted(
+            snapshots, key=lambda row: (row.as_of, row.snapshot_id), reverse=True
+        )
+        return [
+            self._hydrate(row, self._store.get_items(row.snapshot_id))
+            for row in ordered
+        ]
 
     def diff(self, snapshot_id_a: str, snapshot_id_b: str) -> dict:
         snap_a = self.read_snapshot(snapshot_id_a)
         snap_b = self.read_snapshot(snapshot_id_b)
 
-        if not snap_a or not snap_b:
-            return {"error": "snapshot not found"}
-
-        tickers_a = {e["recommendation"]["ticker"] for e in snap_a["items"]}
-        tickers_b = {e["recommendation"]["ticker"] for e in snap_b["items"]}
+        items_a = {
+            entry["recommendation"]["ticker"]: jcs_canonicalize(
+                entry["recommendation"]
+            )
+            for entry in snap_a["items"]
+        }
+        items_b = {
+            entry["recommendation"]["ticker"]: jcs_canonicalize(
+                entry["recommendation"]
+            )
+            for entry in snap_b["items"]
+        }
+        tickers_a = set(items_a)
+        tickers_b = set(items_b)
+        common = tickers_a & tickers_b
 
         return {
-            "added": list(tickers_b - tickers_a),
-            "removed": list(tickers_a - tickers_b),
-            "common": list(tickers_a & tickers_b),
-            "fingerprint_match": snap_a["output_fingerprint"] == snap_b["output_fingerprint"],
+            "snapshot_id_a": snapshot_id_a,
+            "snapshot_id_b": snapshot_id_b,
+            "added": sorted(tickers_b - tickers_a),
+            "removed": sorted(tickers_a - tickers_b),
+            "changed": sorted(
+                ticker for ticker in common if items_a[ticker] != items_b[ticker]
+            ),
+            "common": sorted(common),
+            "fingerprint_match": (
+                snap_a["output_fingerprint"] == snap_b["output_fingerprint"]
+            ),
         }
+
+    @classmethod
+    def _hydrate(
+        cls, snapshot: SnapshotRow, items: Sequence[SnapshotItemRow]
+    ) -> dict:
+        try:
+            envelope = json.loads(snapshot.envelope_json)
+        except (TypeError, json.JSONDecodeError) as error:
+            raise SnapshotCorruptError("invalid snapshot envelope JSON") from error
+        if (
+            not isinstance(envelope, dict)
+            or jcs_canonicalize(envelope) != snapshot.envelope_json
+        ):
+            raise SnapshotCorruptError("snapshot envelope is not canonical JCS")
+        if envelope.get("snapshot_id") != snapshot.snapshot_id:
+            raise SnapshotCorruptError("snapshot envelope identity mismatch")
+        if envelope.get("profile") != snapshot.profile or envelope.get(
+            "market_scope"
+        ) != snapshot.market_scope:
+            raise SnapshotCorruptError("snapshot envelope profile/scope mismatch")
+        if envelope.get("output_fingerprint") != snapshot.output_fingerprint:
+            raise SnapshotCorruptError("snapshot output fingerprint mismatch")
+        if envelope.get("as_of") != snapshot.as_of:
+            raise SnapshotCorruptError("snapshot envelope as_of mismatch")
+
+        meta = envelope.get("meta")
+        if not isinstance(meta, dict):
+            raise SnapshotCorruptError("snapshot envelope meta missing")
+        row_meta = {
+            "contract_version": snapshot.contract_version,
+            "profile_version": snapshot.profile_version,
+            "pipeline_version": snapshot.pipeline_version,
+            "strategy_version": snapshot.strategy_version,
+            "input_fingerprint": snapshot.input_fingerprint,
+        }
+        if any(meta.get(key) != value for key, value in row_meta.items()):
+            raise SnapshotCorruptError("snapshot envelope meta mismatch")
+
+        disclaimer = envelope.get("disclaimer")
+        if not isinstance(disclaimer, dict):
+            raise SnapshotCorruptError("snapshot disclaimer missing")
+        full_text = disclaimer.get("full_text")
+        if not isinstance(full_text, str):
+            raise SnapshotCorruptError("snapshot disclaimer full_text missing")
+        computed_disclaimer_hash = hashlib.sha256(
+            full_text.encode("utf-8")
+        ).hexdigest()
+        if (
+            disclaimer.get("hash") != snapshot.disclaimer_hash
+            or computed_disclaimer_hash != snapshot.disclaimer_hash
+        ):
+            raise SnapshotCorruptError("snapshot disclaimer hash mismatch")
+
+        if len(items) != snapshot.item_count:
+            raise SnapshotCorruptError("snapshot item count mismatch")
+        ordered_items = sorted(items, key=lambda item: item.sort_rank)
+        if [item.sort_rank for item in ordered_items] != list(
+            range(snapshot.item_count)
+        ):
+            raise SnapshotCorruptError("snapshot item ranks must be contiguous")
+
+        hydrated_items = []
+        tickers: set[str] = set()
+        for item in ordered_items:
+            if item.snapshot_id != snapshot.snapshot_id:
+                raise SnapshotCorruptError("item snapshot identity mismatch")
+            try:
+                recommendation = json.loads(item.recommendation_json)
+            except (TypeError, json.JSONDecodeError) as error:
+                raise SnapshotCorruptError("invalid recommendation JSON") from error
+            if (
+                not isinstance(recommendation, dict)
+                or jcs_canonicalize(recommendation) != item.recommendation_json
+            ):
+                raise SnapshotCorruptError("recommendation is not canonical JCS")
+            if recommendation.get("ticker") != item.ticker:
+                raise SnapshotCorruptError("recommendation ticker mismatch")
+            if item.ticker in tickers:
+                raise SnapshotCorruptError("duplicate recommendation ticker")
+            tickers.add(item.ticker)
+            if recommendation.get("snapshot_id") != snapshot.snapshot_id:
+                raise SnapshotCorruptError("recommendation snapshot_id mismatch")
+            if recommendation.get("score", {}).get("rating") != item.rating_band:
+                raise SnapshotCorruptError("recommendation rating mirror mismatch")
+            if recommendation.get("conviction", {}).get(
+                "final"
+            ) != item.conviction_final:
+                raise SnapshotCorruptError("recommendation conviction mismatch")
+            if recommendation.get("risk_gate", {}).get(
+                "ok_to_enter"
+            ) is not item.risk_gate_ok:
+                raise SnapshotCorruptError("recommendation risk gate mismatch")
+            size_hint = recommendation.get("entry_plan", {}).get("size_hint", {})
+            if (
+                size_hint.get("tier") != item.size_hint_tier
+                or size_hint.get("pct") != item.size_hint_pct
+            ):
+                raise SnapshotCorruptError("recommendation size hint mismatch")
+            hydrated_items.append(
+                {
+                    "recommendation": recommendation,
+                    "rating_band": item.rating_band,
+                }
+            )
+
+        envelope["items"] = hydrated_items
+        try:
+            computed_output_fingerprint = compute_output_fingerprint(
+                hydrated_items
+            )
+        except (TypeError, ValueError) as error:
+            raise SnapshotCorruptError(
+                "snapshot items are not JCS serializable"
+            ) from error
+        if computed_output_fingerprint != snapshot.output_fingerprint:
+            raise SnapshotCorruptError("snapshot item fingerprint mismatch")
+        return envelope
+
+    @staticmethod
+    def _validate_profile_scope(profile: str, market_scope: str) -> None:
+        if (
+            profile not in PROFILE_MARKET_SCOPES
+            or market_scope not in PROFILE_MARKET_SCOPES[profile]
+        ):
+            raise SnapshotReadError(
+                f"incompatible profile/market_scope: {profile}/{market_scope}"
+            )
