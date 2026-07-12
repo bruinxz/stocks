@@ -37,6 +37,38 @@ PROFILE_ORDER = tuple(PROFILE_SCOPE)
 MARKET_ORDER = ("cn_a", "us", "jp", "kr")
 BANDS = ("A", "B", "C", "D", "F")
 LANGUAGES = ("zh-CN", "en-US", "ja-JP", "ko-KR")
+SCORE_DIM_KEYS = ("Q", "G", "V", "M", "T", "R")
+TRIGGER_SIGNAL_CODES = frozenset(
+    (
+        "CATALYST_MATCHED",
+        "CONVICTION_HIGH",
+        "SCORE_TOTAL_TOP",
+        "DIM_BAND_A",
+        "RISK_GATE_CLEAN",
+        "ENTRY_PLAN_TIGHT",
+        "EVENT_FRESH",
+        "SECTOR_MOMENTUM",
+        "RULE_MATCHED",
+        "MODEL_INFERENCE",
+    )
+)
+CATALYST_KINDS = frozenset(
+    (
+        "earnings",
+        "upgrade_downgrade",
+        "product",
+        "regulator",
+        "geo_macro",
+        "ma_activity",
+        "sector_move",
+        "leadership",
+        "unclassified",
+    )
+)
+TIME_HORIZONS = frozenset(
+    ("INTRADAY", "SWING", "POSITION", "CORE_HOLD", "LONG_TERM")
+)
+CURRENCIES = frozenset(("USD", "CNY", "HKD", "JPY", "KRW"))
 PROFILE_LANGUAGES = {
     "us_preferred": frozenset(("zh-CN", "en-US")),
     "multibagger": frozenset(("zh-CN", "en-US")),
@@ -97,6 +129,59 @@ DISCLAIMER_KEYS = frozenset(
     ("version", "short_text", "full_text", "language", "effective_at", "hash")
 )
 ITEM_KEYS = frozenset(("recommendation", "rating_band"))
+SCORE_KEYS = frozenset(
+    (
+        "scoring_id",
+        "snapshot_hash",
+        "profile",
+        "market_scope",
+        "total",
+        "rating",
+        "dims",
+    )
+)
+SCORE_DIM_KEYS_SET = frozenset(("key", "score", "band", "weight"))
+CONVICTION_KEYS = frozenset(
+    ("ticker", "as_of", "base", "score_ref", "adjustments", "final", "level")
+)
+SCORE_REF_KEYS = frozenset(("scoring_id", "snapshot_hash"))
+ADJUSTMENT_REQUIRED_KEYS = frozenset(("delta", "reason"))
+ADJUSTMENT_ALLOWED_KEYS = ADJUSTMENT_REQUIRED_KEYS | frozenset(
+    ("kind_ref", "source_ref")
+)
+RISK_GATE_KEYS = frozenset(
+    ("ticker", "evaluated_at", "gate", "triggers", "ok_to_enter")
+)
+RISK_TRIGGER_KEYS = frozenset(("code", "severity", "detail"))
+ENTRY_PLAN_KEYS = frozenset(
+    (
+        "ticker",
+        "generated_at",
+        "entry",
+        "stop",
+        "targets",
+        "size_hint",
+        "time_horizon",
+        "invalidation",
+        "conviction_ref",
+        "score_ref",
+    )
+)
+PRICE_BAND_KEYS = frozenset(("low", "high", "currency"))
+PRICE_KEYS = frozenset(("value", "currency"))
+SIZE_HINT_KEYS = frozenset(
+    ("tier", "pct", "disclaimer_key", "rationale")
+)
+TRIGGER_SIGNAL_REQUIRED_KEYS = frozenset(("code", "strength", "detail"))
+TRIGGER_SIGNAL_ALLOWED_KEYS = TRIGGER_SIGNAL_REQUIRED_KEYS | frozenset(
+    ("source_ref",)
+)
+WEIGHT_ATTRIBUTION_KEYS = frozenset(("contributions", "normalized"))
+CONTRIBUTION_REQUIRED_KEYS = frozenset(("source_kind", "source_ref", "weight"))
+CONTRIBUTION_ALLOWED_KEYS = CONTRIBUTION_REQUIRED_KEYS | frozenset(("note",))
+EXPLANATION_KEYS = frozenset(
+    ("headline", "body", "caveats", "language", "template_id", "template_hash")
+)
 RECOMMENDATION_KEYS = frozenset(
     (
         "id",
@@ -207,6 +292,210 @@ def _require_number(value: Any, path: str) -> float:
     return float(value)
 
 
+def _require_bounded_number(
+    value: Any, path: str, lower: float, upper: float
+) -> float:
+    number = _require_number(value, path)
+    if number < lower or number > upper:
+        _fail(path, "must be in [{}, {}]".format(lower, upper))
+    return number
+
+
+def _validate_score_ref(
+    raw: Any, path: str, scoring_id: str, snapshot_hash: str
+) -> None:
+    score_ref = _require_mapping(raw, path)
+    _require_exact_keys(score_ref, SCORE_REF_KEYS, path)
+    if (
+        score_ref["scoring_id"] != scoring_id
+        or score_ref["snapshot_hash"] != snapshot_hash
+    ):
+        _fail(path, "does not match score identity")
+
+
+def _validate_score(
+    raw: Any, path: str, profile: str, market_scope: str
+) -> Tuple[str, str, str]:
+    score = _require_mapping(raw, path)
+    _require_exact_keys(score, SCORE_KEYS, path)
+    scoring_id = _require_uuid4(score["scoring_id"], path + ".scoring_id")
+    snapshot_hash = _require_hash(
+        score["snapshot_hash"], path + ".snapshot_hash"
+    )
+    if score["profile"] != profile:
+        _fail(path + ".profile", "does not match envelope")
+    if score["market_scope"] != market_scope:
+        _fail(path + ".market_scope", "does not match envelope")
+    total = _require_bounded_number(score["total"], path + ".total", 0, 100)
+    rating = score["rating"]
+    if rating not in BANDS:
+        _fail(path + ".rating", "must be A|B|C|D|F")
+    dims = score["dims"]
+    if not isinstance(dims, list) or len(dims) != 6:
+        _fail(path + ".dims", "must contain exactly six dimensions")
+    total_weight = 0.0
+    for index, (raw_dim, expected_key) in enumerate(zip(dims, SCORE_DIM_KEYS)):
+        dim_path = "{}.dims[{}]".format(path, index)
+        dim = _require_mapping(raw_dim, dim_path)
+        _require_exact_keys(dim, SCORE_DIM_KEYS_SET, dim_path)
+        if dim["key"] != expected_key:
+            _fail(dim_path + ".key", "must follow Q/G/V/M/T/R order")
+        _require_bounded_number(dim["score"], dim_path + ".score", 0, 100)
+        if dim["band"] not in BANDS:
+            _fail(dim_path + ".band", "must be A|B|C|D|F")
+        total_weight += _require_bounded_number(
+            dim["weight"], dim_path + ".weight", 0, 1
+        )
+    if abs(total_weight - 1.0) > 1e-9:
+        _fail(path + ".dims", "weights must sum to 1.0")
+    return scoring_id, snapshot_hash, rating
+
+
+def _validate_conviction(
+    raw: Any,
+    path: str,
+    ticker: str,
+    as_of: str,
+    scoring_id: str,
+    snapshot_hash: str,
+) -> Tuple[float, str]:
+    conviction = _require_mapping(raw, path)
+    _require_exact_keys(conviction, CONVICTION_KEYS, path)
+    if conviction["ticker"] != ticker:
+        _fail(path + ".ticker", "does not match recommendation")
+    if conviction["as_of"] != as_of:
+        _fail(path + ".as_of", "does not match recommendation")
+    base = _require_bounded_number(conviction["base"], path + ".base", 0, 100)
+    _validate_score_ref(
+        conviction["score_ref"],
+        path + ".score_ref",
+        scoring_id,
+        snapshot_hash,
+    )
+    adjustments = conviction["adjustments"]
+    if not isinstance(adjustments, list) or len(adjustments) > 5:
+        _fail(path + ".adjustments", "must be an array with at most 5 entries")
+    delta_sum = 0.0
+    for index, raw_adjustment in enumerate(adjustments):
+        adjustment_path = "{}.adjustments[{}]".format(path, index)
+        adjustment = _require_mapping(raw_adjustment, adjustment_path)
+        actual = frozenset(adjustment)
+        if not ADJUSTMENT_REQUIRED_KEYS.issubset(actual) or not actual.issubset(
+            ADJUSTMENT_ALLOWED_KEYS
+        ):
+            _fail(adjustment_path, "has missing or unknown keys")
+        delta_sum += _require_bounded_number(
+            adjustment["delta"], adjustment_path + ".delta", -20, 20
+        )
+        reason = _require_nonempty_string(
+            adjustment["reason"], adjustment_path + ".reason"
+        )
+        if len(reason) > 200:
+            _fail(adjustment_path + ".reason", "must contain at most 200 characters")
+        if "kind_ref" in adjustment and adjustment["kind_ref"] not in CATALYST_KINDS:
+            _fail(adjustment_path + ".kind_ref", "is invalid")
+        if "source_ref" in adjustment:
+            _require_nonempty_string(
+                adjustment["source_ref"], adjustment_path + ".source_ref"
+            )
+    if abs(delta_sum) > 20:
+        _fail(path + ".adjustments", "delta sum must be in [-20, 20]")
+    final = _require_bounded_number(
+        conviction["final"], path + ".final", 0, 100
+    )
+    expected_final = max(0.0, min(100.0, base + delta_sum))
+    if abs(final - expected_final) > 0.01:
+        _fail(path + ".final", "does not equal clamped base + adjustments")
+    if conviction["level"] not in ("HIGH", "MED", "LOW"):
+        _fail(path + ".level", "must be HIGH|MED|LOW")
+    expected_level = "HIGH" if final >= 75 else "MED" if final >= 50 else "LOW"
+    if conviction["level"] != expected_level:
+        _fail(path + ".level", "does not match conviction.final")
+    return final, conviction["level"]
+
+
+def _validate_price(raw: Any, path: str) -> None:
+    price = _require_mapping(raw, path)
+    _require_exact_keys(price, PRICE_KEYS, path)
+    _require_number(price["value"], path + ".value")
+    if price["currency"] not in CURRENCIES:
+        _fail(path + ".currency", "is invalid")
+
+
+def _validate_entry_plan(
+    raw: Any,
+    path: str,
+    ticker: str,
+    conviction_final: float,
+    scoring_id: str,
+    snapshot_hash: str,
+) -> None:
+    entry_plan = _require_mapping(raw, path)
+    _require_exact_keys(entry_plan, ENTRY_PLAN_KEYS, path)
+    if entry_plan["ticker"] != ticker:
+        _fail(path + ".ticker", "does not match recommendation")
+    _parse_utc_seconds(entry_plan["generated_at"], path + ".generated_at")
+    entry = _require_mapping(entry_plan["entry"], path + ".entry")
+    _require_exact_keys(entry, PRICE_BAND_KEYS, path + ".entry")
+    low = _require_number(entry["low"], path + ".entry.low")
+    high = _require_number(entry["high"], path + ".entry.high")
+    if low > high:
+        _fail(path + ".entry", "low must be <= high")
+    if entry["currency"] not in CURRENCIES:
+        _fail(path + ".entry.currency", "is invalid")
+    _validate_price(entry_plan["stop"], path + ".stop")
+    targets = entry_plan["targets"]
+    if not isinstance(targets, list) or not 1 <= len(targets) <= 3:
+        _fail(path + ".targets", "must contain 1..3 prices")
+    for index, target in enumerate(targets):
+        _validate_price(target, "{}.targets[{}]".format(path, index))
+    size_hint = _require_mapping(entry_plan["size_hint"], path + ".size_hint")
+    _require_exact_keys(size_hint, SIZE_HINT_KEYS, path + ".size_hint")
+    if size_hint["tier"] not in SIZE_HINT_TIER_PCT:
+        _fail(path + ".size_hint.tier", "is invalid")
+    if size_hint["pct"] != SIZE_HINT_TIER_PCT[size_hint["tier"]]:
+        _fail(path + ".size_hint.pct", "does not match tier")
+    if size_hint["disclaimer_key"] != "size_hint_advisory":
+        _fail(path + ".size_hint.disclaimer_key", "must be size_hint_advisory")
+    _require_nonempty_string(size_hint["rationale"], path + ".size_hint.rationale")
+    if entry_plan["time_horizon"] not in TIME_HORIZONS:
+        _fail(path + ".time_horizon", "is invalid")
+    _require_nonempty_string(entry_plan["invalidation"], path + ".invalidation")
+    conviction_ref = _require_bounded_number(
+        entry_plan["conviction_ref"], path + ".conviction_ref", 0, 100
+    )
+    if abs(conviction_ref - conviction_final) > 0.01:
+        _fail(path + ".conviction_ref", "does not match conviction.final")
+    _validate_score_ref(
+        entry_plan["score_ref"],
+        path + ".score_ref",
+        scoring_id,
+        snapshot_hash,
+    )
+
+
+def _validate_trigger_signals(raw: Any, path: str) -> None:
+    if not isinstance(raw, list) or not raw:
+        _fail(path, "must be a non-empty array")
+    for index, raw_signal in enumerate(raw):
+        signal_path = "{}[{}]".format(path, index)
+        signal = _require_mapping(raw_signal, signal_path)
+        actual = frozenset(signal)
+        if not TRIGGER_SIGNAL_REQUIRED_KEYS.issubset(actual) or not actual.issubset(
+            TRIGGER_SIGNAL_ALLOWED_KEYS
+        ):
+            _fail(signal_path, "has missing or unknown keys")
+        if signal["code"] not in TRIGGER_SIGNAL_CODES:
+            _fail(signal_path + ".code", "is invalid")
+        if signal["strength"] not in ("STRONG", "MEDIUM", "WEAK"):
+            _fail(signal_path + ".strength", "is invalid")
+        _require_nonempty_string(signal["detail"], signal_path + ".detail")
+        if len(signal["detail"]) > 240:
+            _fail(signal_path + ".detail", "must contain at most 240 characters")
+        if "source_ref" in signal:
+            _require_nonempty_string(signal["source_ref"], signal_path + ".source_ref")
+
+
 def _validate_profile_scope(profile: Any, market_scope: Any, path: str) -> None:
     if profile not in PROFILE_SCOPE:
         _fail(path + ".profile", "must be one of the six persisted profiles")
@@ -308,51 +597,20 @@ def _validate_recommendation(
     if obj["as_of"] != as_of:
         _fail(entry_path + ".recommendation.as_of", "does not match envelope")
 
-    score = _require_mapping(obj["score"], entry_path + ".recommendation.score")
-    scoring_id = _require_uuid4(
-        score.get("scoring_id"),
-        entry_path + ".recommendation.score.scoring_id",
+    scoring_id, snapshot_hash, rating = _validate_score(
+        obj["score"],
+        entry_path + ".recommendation.score",
+        profile,
+        market_scope,
     )
-    snapshot_hash = _require_hash(
-        score.get("snapshot_hash"),
-        entry_path + ".recommendation.score.snapshot_hash",
+    final, _level = _validate_conviction(
+        obj["conviction"],
+        entry_path + ".recommendation.conviction",
+        ticker,
+        as_of,
+        scoring_id,
+        snapshot_hash,
     )
-    if score.get("profile") != profile:
-        _fail(entry_path + ".recommendation.score.profile", "does not match envelope")
-    if score.get("market_scope") != market_scope:
-        _fail(
-            entry_path + ".recommendation.score.market_scope",
-            "does not match envelope",
-        )
-    rating = score.get("rating")
-    if rating not in BANDS:
-        _fail(entry_path + ".recommendation.score.rating", "must be A|B|C|D|F")
-
-    conviction = _require_mapping(
-        obj["conviction"], entry_path + ".recommendation.conviction"
-    )
-    conviction_ref = _require_mapping(
-        conviction.get("score_ref"),
-        entry_path + ".recommendation.conviction.score_ref",
-    )
-    if (
-        conviction_ref.get("scoring_id") != scoring_id
-        or conviction_ref.get("snapshot_hash") != snapshot_hash
-    ):
-        _fail(
-            entry_path + ".recommendation.conviction.score_ref",
-            "does not match score identity",
-        )
-    final = _require_number(
-        conviction.get("final"), entry_path + ".recommendation.conviction.final"
-    )
-    if final < 0 or final > 100:
-        _fail(entry_path + ".recommendation.conviction.final", "must be 0..100")
-    if conviction.get("level") not in ("HIGH", "MED", "LOW"):
-        _fail(
-            entry_path + ".recommendation.conviction.level",
-            "must be HIGH|MED|LOW",
-        )
 
     risk_gate = _require_mapping(
         obj["risk_gate"], entry_path + ".recommendation.risk_gate"
@@ -404,50 +662,47 @@ def _validate_recommendation(
             "does not match derived gate",
         )
 
-    entry_plan = _require_mapping(
-        obj["entry_plan"], entry_path + ".recommendation.entry_plan"
+    _validate_entry_plan(
+        obj["entry_plan"],
+        entry_path + ".recommendation.entry_plan",
+        ticker,
+        final,
+        scoring_id,
+        snapshot_hash,
     )
-    size_hint = _require_mapping(
-        entry_plan.get("size_hint"),
-        entry_path + ".recommendation.entry_plan.size_hint",
+    _validate_trigger_signals(
+        obj["trigger_signals"],
+        entry_path + ".recommendation.trigger_signals",
     )
-    if size_hint.get("tier") not in SIZE_HINT_TIER_PCT:
-        _fail(
-            entry_path + ".recommendation.entry_plan.size_hint.tier",
-            "is invalid",
-        )
-    if size_hint.get("pct") != SIZE_HINT_TIER_PCT[size_hint["tier"]]:
-        _fail(
-            entry_path + ".recommendation.entry_plan.size_hint.pct",
-            "does not match tier",
-        )
-    if size_hint.get("disclaimer_key") != "size_hint_advisory":
-        _fail(
-            entry_path + ".recommendation.entry_plan.size_hint.disclaimer_key",
-            "must be size_hint_advisory",
-        )
-    entry_score_ref = _require_mapping(
-        entry_plan.get("score_ref"),
-        entry_path + ".recommendation.entry_plan.score_ref",
+    weights = _require_mapping(
+        obj["weights"], entry_path + ".recommendation.weights"
     )
-    if (
-        entry_score_ref.get("scoring_id") != scoring_id
-        or entry_score_ref.get("snapshot_hash") != snapshot_hash
-    ):
+    _require_exact_keys(
+        weights, WEIGHT_ATTRIBUTION_KEYS, entry_path + ".recommendation.weights"
+    )
+    contributions = weights["contributions"]
+    if not isinstance(contributions, list):
         _fail(
-            entry_path + ".recommendation.entry_plan.score_ref",
-            "does not match score identity",
+            entry_path + ".recommendation.weights.contributions",
+            "must be an array",
         )
-
-    trigger_signals = obj["trigger_signals"]
-    if not isinstance(trigger_signals, list) or not trigger_signals:
-        _fail(
-            entry_path + ".recommendation.trigger_signals",
-            "must be a non-empty array",
+    for index, raw_contribution in enumerate(contributions):
+        contribution_path = "{}.recommendation.weights.contributions[{}]".format(
+            entry_path, index
         )
-    _require_mapping(obj["weights"], entry_path + ".recommendation.weights")
+        contribution = _require_mapping(raw_contribution, contribution_path)
+        actual = frozenset(contribution)
+        if not CONTRIBUTION_REQUIRED_KEYS.issubset(actual) or not actual.issubset(
+            CONTRIBUTION_ALLOWED_KEYS
+        ):
+            _fail(contribution_path, "has missing or unknown keys")
     explanation = _require_mapping(
         obj["explanation"], entry_path + ".recommendation.explanation"
+    )
+    _require_exact_keys(
+        explanation,
+        EXPLANATION_KEYS,
+        entry_path + ".recommendation.explanation",
     )
     headline = _require_nonempty_string(
         explanation.get("headline"),
@@ -457,11 +712,39 @@ def _validate_recommendation(
         explanation.get("body"),
         entry_path + ".recommendation.explanation.body",
     )
+    caveats = explanation["caveats"]
+    if not isinstance(caveats, list) or len(caveats) > 3:
+        _fail(
+            entry_path + ".recommendation.explanation.caveats",
+            "must be an array with at most 3 entries",
+        )
+    for index, caveat in enumerate(caveats):
+        text = _require_nonempty_string(
+            caveat,
+            "{}.recommendation.explanation.caveats[{}]".format(
+                entry_path, index
+            ),
+        )
+        if len(text) > 120:
+            _fail(
+                "{}.recommendation.explanation.caveats[{}]".format(
+                    entry_path, index
+                ),
+                "must contain at most 120 characters",
+            )
     if explanation.get("language") not in PROFILE_LANGUAGES[profile]:
         _fail(
             entry_path + ".recommendation.explanation.language",
             "is incompatible with profile",
         )
+    _require_nonempty_string(
+        explanation["template_id"],
+        entry_path + ".recommendation.explanation.template_id",
+    )
+    _require_hash(
+        explanation["template_hash"],
+        entry_path + ".recommendation.explanation.template_hash",
+    )
     evidence_ids = _validate_evidence_refs(
         obj["evidence_refs"], entry_path + ".recommendation.evidence_refs"
     )

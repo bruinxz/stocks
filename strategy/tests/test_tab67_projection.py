@@ -55,11 +55,11 @@ class Tab67ProjectionTests(unittest.TestCase):
         self.assertIn(self.source["meta"]["input_fingerprint"], first["markdown"])
         self.assertEqual(
             hashlib.sha256(first["markdown"].encode("utf-8")).hexdigest(),
-            "f9cee969ff72ef780e9a2aa894710b7f46ac40bc84301f1e1d2239170e339d87",
+            "667f98158d6172ee15e0620bdb175035892f4463825e2e0dc73c5c485d87bdc0",
         )
         self.assertEqual(
             canonical_sha(first),
-            "d279ec29b72bf5c5241a99f9d7bc5b2dd15de55095f3fc0cb314c48c4e49851a",
+            "68cb234f9d1f6f016b2eb56ae568b2724ec9d7b5e38cc3a6644e42b3cf0a7b44",
         )
 
     def test_empty_list_is_a_valid_report(self):
@@ -90,6 +90,7 @@ class Tab67ProjectionTests(unittest.TestCase):
         prior["as_of"] = "2026-07-11T09:30:00Z"
         prior["items"][0]["recommendation"]["snapshot_id"] = prior["snapshot_id"]
         prior["items"][0]["recommendation"]["as_of"] = prior["as_of"]
+        prior["items"][0]["recommendation"]["conviction"]["as_of"] = prior["as_of"]
         reseal(prior)
 
         history = project_report_history([prior, self.source])
@@ -109,7 +110,7 @@ class Tab67ProjectionTests(unittest.TestCase):
         self.assertEqual(searched["entries"][0]["trading_day"], "2026-07-12")
         self.assertEqual(
             canonical_sha(project_report_history([self.source])),
-            "e155c9620cf2ed92d489e0ee862139ab2ed03aa14f35cbb7a431f5363e142071",
+            "0477f9e296bca12d85baaddc8a26e2c38085914a2f3d5484f0d1415dc3785216",
         )
 
     def test_history_profile_order_is_canonical_for_same_day(self):
@@ -313,6 +314,57 @@ class Tab67ProjectionTests(unittest.TestCase):
         }
         reseal(wrong_gate)
         for source in (wrong_severity, wrong_market, wrong_gate):
+            with self.subTest(source=source):
+                with self.assertRaises(ProjectionContractError):
+                    project_daily_report(source)
+
+    def test_nested_strategy_shapes_fail_closed(self):
+        mutations = []
+
+        score_extra = copy.deepcopy(self.source)
+        score_extra["items"][0]["recommendation"]["score"]["legacy"] = True
+        reseal(score_extra)
+        mutations.append(score_extra)
+
+        score_missing_total = copy.deepcopy(self.source)
+        del score_missing_total["items"][0]["recommendation"]["score"]["total"]
+        reseal(score_missing_total)
+        mutations.append(score_missing_total)
+
+        garbage_dims = copy.deepcopy(self.source)
+        garbage_dims["items"][0]["recommendation"]["score"]["dims"] = [
+            {"garbage": True}
+        ]
+        reseal(garbage_dims)
+        mutations.append(garbage_dims)
+
+        missing_entry = copy.deepcopy(self.source)
+        del missing_entry["items"][0]["recommendation"]["entry_plan"]["entry"]
+        reseal(missing_entry)
+        mutations.append(missing_entry)
+
+        garbage_signal = copy.deepcopy(self.source)
+        garbage_signal["items"][0]["recommendation"]["trigger_signals"] = [
+            {"garbage": True}
+        ]
+        reseal(garbage_signal)
+        mutations.append(garbage_signal)
+
+        conviction_extra = copy.deepcopy(self.source)
+        conviction_extra["items"][0]["recommendation"]["conviction"][
+            "legacy"
+        ] = True
+        reseal(conviction_extra)
+        mutations.append(conviction_extra)
+
+        malformed_dim = copy.deepcopy(self.source)
+        malformed_dim["items"][0]["recommendation"]["score"]["dims"][0][
+            "key"
+        ] = "R"
+        reseal(malformed_dim)
+        mutations.append(malformed_dim)
+
+        for source in mutations:
             with self.subTest(source=source):
                 with self.assertRaises(ProjectionContractError):
                     project_daily_report(source)

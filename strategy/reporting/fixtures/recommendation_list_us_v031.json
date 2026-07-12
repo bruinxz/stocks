@@ -17,7 +17,44 @@
           "market_scope": "us",
           "total": 88,
           "rating": "A",
-          "dims": []
+          "dims": [
+            {
+              "key": "Q",
+              "score": 90,
+              "band": "A",
+              "weight": 0.2
+            },
+            {
+              "key": "G",
+              "score": 88,
+              "band": "A",
+              "weight": 0.2
+            },
+            {
+              "key": "V",
+              "score": 80,
+              "band": "B",
+              "weight": 0.15
+            },
+            {
+              "key": "M",
+              "score": 92,
+              "band": "A",
+              "weight": 0.2
+            },
+            {
+              "key": "T",
+              "score": 86,
+              "band": "A",
+              "weight": 0.15
+            },
+            {
+              "key": "R",
+              "score": 84,
+              "band": "B",
+              "weight": 0.1
+            }
+          ]
         },
         "conviction": {
           "ticker": "AAPL",
@@ -112,7 +149,7 @@
       "rating_band": "A"
     }
   ],
-  "output_fingerprint": "52787b88c185a7fd9df545aea4d9d797dbd4d7978c7f0683b3a1f4e6786443ea",
+  "output_fingerprint": "f9907f909410e67a041b20c050e221053cb3ac138d0719f4759ed20b03fd5a99",
   "disclaimer": {
     "version": "1.0.0",
     "short_text": "Research reference only.",
