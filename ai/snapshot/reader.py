@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from typing import Optional, Sequence
 
 from ai.snapshot.fingerprint import compute_output_fingerprint, jcs_canonicalize
@@ -40,7 +41,9 @@ class SnapshotReader:
         )
         if not snapshots:
             return None
-        latest = max(snapshots, key=lambda row: (row.as_of, row.snapshot_id))
+        latest = max(
+            snapshots, key=lambda row: (row.as_of_utc, row.snapshot_id)
+        )
         return self._hydrate(latest, self._store.get_items(latest.snapshot_id))
 
     def read_by_date(
@@ -53,7 +56,9 @@ class SnapshotReader:
             trading_day=trading_day,
         )
         ordered = sorted(
-            snapshots, key=lambda row: (row.as_of, row.snapshot_id), reverse=True
+            snapshots,
+            key=lambda row: (row.as_of_utc, row.snapshot_id),
+            reverse=True,
         )
         return [
             self._hydrate(row, self._store.get_items(row.snapshot_id))
@@ -112,7 +117,7 @@ class SnapshotReader:
             raise SnapshotCorruptError("snapshot envelope profile/scope mismatch")
         if envelope.get("output_fingerprint") != snapshot.output_fingerprint:
             raise SnapshotCorruptError("snapshot output fingerprint mismatch")
-        if envelope.get("as_of") != snapshot.as_of:
+        if envelope.get("as_of") != snapshot.as_of_utc:
             raise SnapshotCorruptError("snapshot envelope as_of mismatch")
         envelope_items = envelope.get("items")
         if not isinstance(envelope_items, list):
@@ -156,9 +161,21 @@ class SnapshotReader:
 
         hydrated_items = []
         tickers: set[str] = set()
+        item_ids: set[str] = set()
         for item in ordered_items:
             if item.snapshot_id != snapshot.snapshot_id:
                 raise SnapshotCorruptError("item snapshot identity mismatch")
+            try:
+                parsed_item_id = uuid.UUID(item.item_id)
+            except (AttributeError, TypeError, ValueError) as error:
+                raise SnapshotCorruptError("item_id is not UUIDv4") from error
+            if (
+                parsed_item_id.version != 4
+                or str(parsed_item_id) != item.item_id
+                or item.item_id in item_ids
+            ):
+                raise SnapshotCorruptError("item_id is not unique canonical UUIDv4")
+            item_ids.add(item.item_id)
             recommendation = item.recommendation_json
             if (
                 not isinstance(recommendation, dict)
@@ -172,6 +189,8 @@ class SnapshotReader:
                 raise SnapshotCorruptError("recommendation hash mismatch")
             if recommendation.get("ticker") != item.ticker:
                 raise SnapshotCorruptError("recommendation ticker mismatch")
+            if recommendation.get("id") != item.item_id:
+                raise SnapshotCorruptError("recommendation item identity mismatch")
             if item.ticker in tickers:
                 raise SnapshotCorruptError("duplicate recommendation ticker")
             tickers.add(item.ticker)

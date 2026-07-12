@@ -8,7 +8,7 @@ from typing import Any, Optional, Protocol, Sequence
 @dataclass(frozen=True)
 class SnapshotRow:
     snapshot_id: str
-    as_of: str
+    as_of_utc: str
     trading_day: str
     profile: str
     market_scope: str

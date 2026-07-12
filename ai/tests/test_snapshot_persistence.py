@@ -31,6 +31,12 @@ SHA_B = "b" * 64
 SNAPSHOT_ID = "12345678-1234-4234-8234-567812345678"
 OLDER_SNAPSHOT_ID = "22345678-1234-4234-8234-567812345678"
 NEXT_SNAPSHOT_ID = "32345678-1234-4234-8234-567812345678"
+RECOMMENDATION_IDS = {
+    "AAPL": "42345678-1234-4234-8234-567812345678",
+    "MSFT": "52345678-1234-4234-8234-567812345678",
+    "TSLA": "62345678-1234-4234-8234-567812345678",
+    "NVDA": "72345678-1234-4234-8234-567812345678",
+}
 
 
 class MemorySnapshotStore:
@@ -139,7 +145,7 @@ def _context(
 
 def _recommendation(ctx, ticker="AAPL", conviction=88.0):
     return {
-        "id": f"rec-{ticker}",
+        "id": RECOMMENDATION_IDS[ticker],
         "snapshot_id": ctx.snapshot_id,
         "ticker": ticker,
         "as_of": ctx.as_of,

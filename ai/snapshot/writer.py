@@ -144,7 +144,7 @@ class SnapshotWriter:
 
         snapshot = SnapshotRow(
             snapshot_id=recommendation_list["snapshot_id"],
-            as_of=recommendation_list["as_of"],
+            as_of_utc=recommendation_list["as_of"],
             trading_day=ctx.config.trading_day,
             profile=recommendation_list["profile"],
             market_scope=recommendation_list["market_scope"],
@@ -186,7 +186,7 @@ class SnapshotWriter:
             recommendation_json.encode("utf-8")
         ).hexdigest()
         return SnapshotItemRow(
-            item_id=str(uuid.uuid5(uuid.UUID(snapshot_id), recommendation_hash)),
+            item_id=recommendation["id"],
             snapshot_id=snapshot_id,
             ticker=recommendation["ticker"],
             sort_rank=sort_rank,
@@ -243,6 +243,7 @@ class SnapshotWriter:
         if not isinstance(items, list):
             raise SnapshotContractError("items must be an array")
         tickers: set[str] = set()
+        recommendation_ids: set[str] = set()
         for entry in items:
             cls._validate_item(
                 entry,
@@ -250,6 +251,7 @@ class SnapshotWriter:
                 profile=profile,
                 market_scope=market_scope,
                 tickers=tickers,
+                recommendation_ids=recommendation_ids,
             )
 
         meta = recommendation_list["meta"]
@@ -358,6 +360,7 @@ class SnapshotWriter:
         profile: str,
         market_scope: str,
         tickers: set[str],
+        recommendation_ids: set[str],
     ) -> None:
         if not isinstance(entry, dict) or not isinstance(
             entry.get("recommendation"), dict
@@ -370,6 +373,13 @@ class SnapshotWriter:
         if ticker in tickers:
             raise SnapshotContractError(f"duplicate ticker: {ticker}")
         tickers.add(ticker)
+        recommendation_id = recommendation.get("id")
+        cls._require_uuidv4(recommendation_id, f"{ticker}: recommendation.id")
+        if recommendation_id in recommendation_ids:
+            raise SnapshotContractError(
+                f"duplicate recommendation id: {recommendation_id}"
+            )
+        recommendation_ids.add(recommendation_id)
         if recommendation.get("snapshot_id") != snapshot_id:
             raise SnapshotContractError(f"{ticker}: snapshot_id mismatch")
 
