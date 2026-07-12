@@ -1,11 +1,47 @@
 import type {
+  RatingCounts,
   DailyReportDocument,
   RecommendationMarketScope,
   RecommendationProfile,
   RecommendationSnapshot,
 } from '../daily-report/types';
 
+export interface B5HistoryEntryWire {
+  report_id: string;
+  trading_day: string;
+  profile: RecommendationProfile;
+  market_scope: RecommendationMarketScope;
+  source_snapshot_id: string;
+  source_as_of: string;
+  source_output_fingerprint: string;
+  source_fingerprint_preimage_jcs: string;
+  input_fingerprint: string;
+  contract_version: '0.3.1';
+  profile_version: string;
+  strategy_version: string;
+  pipeline_version: string;
+  disclaimer_version: string;
+  item_count: number;
+  high_conviction_count: number;
+  rating_counts: RatingCounts;
+  content_preview: string;
+}
+
+export interface B5ReportHistoryWire {
+  projection_version: string;
+  filters: {
+    query: string;
+    profile: RecommendationProfile | null;
+    market_scope: RecommendationMarketScope | null;
+    from_day: string | null;
+    to_day: string | null;
+  };
+  entries: B5HistoryEntryWire[];
+  total: number;
+}
+
 export interface ReportHistoryEntry {
+  wire: B5HistoryEntryWire;
   report_id: string;
   trading_day: string;
   profile: RecommendationProfile;
@@ -20,10 +56,12 @@ export interface ReportHistoryEntry {
 }
 
 export interface ReportHistoryPage {
+  wire: B5ReportHistoryWire;
   entries: ReportHistoryEntry[];
   total: number;
   page: number;
   page_size: number;
+  query: ReportHistoryQuery;
 }
 
 export interface ReportHistoryQuery {

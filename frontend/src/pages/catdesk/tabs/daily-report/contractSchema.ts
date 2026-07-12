@@ -127,9 +127,25 @@ export function strictIso8601(value: unknown, path: string): string {
   return parsed;
 }
 
+export function strictDay(value: unknown, path: string): string {
+  const parsed = strictString(value, path, { min: 10, max: 10 });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(parsed)) {
+    throw new ContractSchemaError(`${path} must be YYYY-MM-DD`);
+  }
+  const timestamp = Date.parse(`${parsed}T00:00:00Z`);
+  if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString().slice(0, 10) !== parsed) {
+    throw new ContractSchemaError(`${path} must be a valid calendar day`);
+  }
+  return parsed;
+}
+
 export function strictSemVer(value: unknown, path: string): string {
   const parsed = strictString(value, path);
-  if (!/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/.test(parsed)) {
+  if (
+    !/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(
+      parsed
+    )
+  ) {
     throw new ContractSchemaError(`${path} must be SemVer`);
   }
   return parsed;

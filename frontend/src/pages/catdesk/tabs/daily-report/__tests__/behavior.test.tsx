@@ -36,8 +36,40 @@ jest.mock('../../../shared/EmptyState', () => ({
 
 const report = reportFixture();
 const page: ReportHistoryPage = {
+  wire: {
+    projection_version: '0.1.0',
+    filters: {
+      query: '',
+      profile: null,
+      market_scope: null,
+      from_day: null,
+      to_day: null,
+    },
+    entries: [],
+    total: 1,
+  },
   entries: [
     {
+      wire: {
+        report_id: report.report_id,
+        trading_day: report.trading_day,
+        profile: report.snapshot.profile,
+        market_scope: report.snapshot.market_scope,
+        source_snapshot_id: report.snapshot.snapshot_id,
+        source_as_of: report.snapshot.as_of,
+        source_output_fingerprint: report.snapshot.output_fingerprint,
+        source_fingerprint_preimage_jcs: '{}',
+        input_fingerprint: report.snapshot.meta.input_fingerprint,
+        contract_version: '0.3.1',
+        profile_version: report.snapshot.meta.profile_version,
+        strategy_version: report.snapshot.meta.strategy_version,
+        pipeline_version: report.snapshot.meta.pipeline_version,
+        disclaimer_version: report.snapshot.disclaimer.version,
+        item_count: 1,
+        high_conviction_count: 1,
+        rating_counts: { A: 1, B: 0, C: 0, D: 0, F: 0 },
+        content_preview: '证据优先',
+      },
       report_id: report.report_id,
       trading_day: report.trading_day,
       profile: report.snapshot.profile,
@@ -54,6 +86,7 @@ const page: ReportHistoryPage = {
   total: 1,
   page: 1,
   page_size: 20,
+  query: { page: 1, page_size: 20 },
 };
 
 describe('Tab 6/7 contract-first behavior', () => {

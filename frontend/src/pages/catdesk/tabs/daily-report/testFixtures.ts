@@ -1,5 +1,6 @@
 import type { DailyReportDocument, RecommendationEntry, RecommendationSnapshot } from './types';
 import { jcsCanonicalize, sha256Text } from './contractSchema';
+import type { B5DailyReportWire } from './types';
 
 const SNAPSHOT_ID = '11111111-1111-4111-8111-111111111111';
 const RECOMMENDATION_ID = '22222222-2222-4222-8222-222222222222';
@@ -20,27 +21,27 @@ export function recommendationFixture(
       snapshot_hash: HASH_A,
       profile: 'us_preferred',
       market_scope: 'us',
-      total: 91,
+      total: 87.75,
       rating: 'A',
       dims: [
-        { key: 'Q', score: 92, band: 'A', weight: 0.2 },
-        { key: 'G', score: 90, band: 'A', weight: 0.2 },
+        { key: 'Q', score: 90, band: 'A', weight: 0.2 },
+        { key: 'G', score: 88, band: 'A', weight: 0.2 },
         { key: 'V', score: 85, band: 'A', weight: 0.15 },
-        { key: 'M', score: 94, band: 'A', weight: 0.2 },
+        { key: 'M', score: 90, band: 'A', weight: 0.2 },
         { key: 'T', score: 88, band: 'A', weight: 0.15 },
-        { key: 'R', score: 80, band: 'B', weight: 0.1 },
+        { key: 'R', score: 82, band: 'B', weight: 0.1 },
       ],
     },
     conviction: {
       ticker: 'AAPL',
       as_of: '2026-07-10T06:00:00Z',
-      base: 83,
+      base: 87.75,
       score_ref: {
         scoring_id: '33333333-3333-4333-8333-333333333333',
         snapshot_hash: HASH_A,
       },
-      adjustments: [{ delta: 5, reason: 'fresh public catalyst' }],
-      final: 88,
+      adjustments: [],
+      final: 87.75,
       level: 'HIGH',
     },
     risk_gate: {
@@ -57,14 +58,14 @@ export function recommendationFixture(
       stop: { value: 189, currency: 'USD' },
       targets: [{ value: 220, currency: 'USD' }],
       size_hint: {
-        tier: 'TIER_3',
-        pct: 3,
+        tier: 'TIER_5',
+        pct: 5,
         disclaimer_key: 'size_hint_advisory',
         rationale: 'high conviction with clean gate',
       },
       time_horizon: 'SWING',
       invalidation: 'breaks below support',
-      conviction_ref: 88,
+      conviction_ref: 87.75,
       score_ref: {
         scoring_id: '33333333-3333-4333-8333-333333333333',
         snapshot_hash: HASH_A,
@@ -109,7 +110,7 @@ export function recommendationFixture(
     catalyst_relevance: {
       catalyst_id: 'catalyst-1',
       kind: 'product',
-      relevance_score: 0.8,
+      relevance_score: 0.785,
       components: {
         sector_map: 1,
         revenue_exposure: 0.8,
@@ -166,11 +167,51 @@ export function snapshotFixture(overrides: Record<string, unknown> = {}): Recomm
 }
 
 export function reportFixture(): DailyReportDocument {
-  return {
+  const snapshot = snapshotFixture();
+  const wire: B5DailyReportWire = {
+    projection_version: '0.1.0',
     report_id: 'report-2026-07-10-us',
     trading_day: '2026-07-10',
+    profile: snapshot.profile,
+    market_scope: snapshot.market_scope,
+    source_snapshot_id: snapshot.snapshot_id,
+    source_as_of: snapshot.as_of,
+    source_output_fingerprint: snapshot.output_fingerprint,
+    source_fingerprint_preimage_jcs: jcsCanonicalize(snapshot.items),
+    disclaimer: snapshot.disclaimer,
+    meta: snapshot.meta,
+    summary: {
+      item_count: 1,
+      high_conviction_count: 1,
+      rating_counts: { A: 1, B: 0, C: 0, D: 0, F: 0 },
+    },
+    entries: snapshot.items,
+    sections: [
+      {
+        kind: 'summary',
+        section_id: 'summary',
+        title: '摘要',
+        item_count: 1,
+        high_conviction_count: 1,
+        rating_counts: { A: 1, B: 0, C: 0, D: 0, F: 0 },
+      },
+      {
+        kind: 'recommendation',
+        section_id: 'recommendation-aapl',
+        title: 'AAPL',
+        ticker: 'AAPL',
+        rating_band: 'A',
+        evidence_ids: ['E1'],
+      },
+    ],
+    markdown: '## 今日结论\n\n证据优先，风险先行。',
+  };
+  return {
+    wire,
+    report_id: wire.report_id,
+    trading_day: wire.trading_day,
     source_snapshot_ids: [SNAPSHOT_ID],
-    snapshot: snapshotFixture(),
+    snapshot,
     title: '2026-07-10 每日研究报告',
     markdown: '## 今日结论\n\n证据优先，风险先行。',
     sections: [

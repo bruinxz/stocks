@@ -518,6 +518,100 @@ describe('Recommendation v0.3.1 frontend adapter', () => {
   });
 
   test.each([
+    [85, 'A'],
+    [70, 'B'],
+    [55, 'C'],
+    [40, 'D'],
+    [39.999, 'F'],
+  ] as const)('enforces aggregate and dim band boundary %s → %s', (score, band) => {
+    const snapshot = clone(snapshotFixture());
+    const recommendation = snapshot.items[0].recommendation;
+    recommendation.score.total = score;
+    recommendation.score.rating = band;
+    recommendation.score.dims = recommendation.score.dims.map((dim, index) => ({
+      ...dim,
+      score,
+      band,
+      weight: index === 0 ? 1 : 0,
+    }));
+    snapshot.items[0].rating_band = band;
+    recommendation.conviction.base = score;
+    recommendation.conviction.final = score;
+    recommendation.conviction.adjustments = [];
+    recommendation.conviction.level = score >= 75 ? 'HIGH' : score >= 50 ? 'MED' : 'LOW';
+    recommendation.entry_plan.conviction_ref = score;
+    const sizing =
+      score >= 85
+        ? (['TIER_5', 5] as const)
+        : score >= 70
+          ? (['TIER_3', 3] as const)
+          : score >= 55
+            ? (['TIER_2', 2] as const)
+            : score >= 40
+              ? (['TIER_1', 1] as const)
+              : (['SKIP', 0] as const);
+    recommendation.entry_plan.size_hint.tier = sizing[0];
+    recommendation.entry_plan.size_hint.pct = sizing[1];
+    reseal(snapshot);
+    const parsed = parseRecommendationSnapshot(snapshot);
+    expect(parsed.items[0].recommendation.score.rating).toBe(band);
+  });
+
+  test('rejects aggregate/dim band, weighted total and conviction-size contradictions', () => {
+    const aggregate = clone(snapshotFixture());
+    aggregate.items[0].recommendation.score.rating = 'F';
+    aggregate.items[0].rating_band = 'F';
+    reseal(aggregate);
+    expect(() => parseRecommendationSnapshot(aggregate)).toThrow(/aggregate rating/);
+
+    const dimension = clone(snapshotFixture());
+    dimension.items[0].recommendation.score.dims[0].band = 'F';
+    reseal(dimension);
+    expect(() => parseRecommendationSnapshot(dimension)).toThrow(/dim band/);
+
+    const weighted = clone(snapshotFixture());
+    weighted.items[0].recommendation.score.total = 90;
+    weighted.items[0].recommendation.conviction.base = 90;
+    weighted.items[0].recommendation.conviction.final = 90;
+    weighted.items[0].recommendation.entry_plan.conviction_ref = 90;
+    reseal(weighted);
+    expect(() => parseRecommendationSnapshot(weighted)).toThrow(/weighted score/);
+
+    const sizing = clone(snapshotFixture());
+    sizing.items[0].recommendation.entry_plan.size_hint.tier = 'TIER_3';
+    sizing.items[0].recommendation.entry_plan.size_hint.pct = 3;
+    reseal(sizing);
+    expect(() => parseRecommendationSnapshot(sizing)).toThrow(/conviction mapping/);
+  });
+
+  test('rejects conviction-base, duplicate ticker, evidence-PIT and catalyst-sum mismatches', () => {
+    const baseMismatch = clone(snapshotFixture());
+    baseMismatch.items[0].recommendation.conviction.base = 87;
+    baseMismatch.items[0].recommendation.conviction.final = 87;
+    reseal(baseMismatch);
+    expect(() => parseRecommendationSnapshot(baseMismatch)).toThrow(/conviction base/);
+
+    const duplicate = clone(snapshotFixture());
+    const second = clone(duplicate.items[0]);
+    second.recommendation.id = '55555555-5555-4555-8555-555555555555';
+    duplicate.items.push(second);
+    reseal(duplicate);
+    expect(() => parseRecommendationSnapshot(duplicate)).toThrow(/duplicate tickers/);
+
+    const futureEvidence = clone(snapshotFixture());
+    futureEvidence.items[0].recommendation.evidence_refs[0].as_of = '2026-07-10T07:00:00Z';
+    reseal(futureEvidence);
+    expect(() => parseRecommendationSnapshot(futureEvidence)).toThrow(/after recommendation/);
+
+    const catalyst = clone(snapshotFixture());
+    if (catalyst.items[0].recommendation.catalyst_relevance) {
+      catalyst.items[0].recommendation.catalyst_relevance.relevance_score = 0.1;
+    }
+    reseal(catalyst);
+    expect(() => parseRecommendationSnapshot(catalyst)).toThrow(/relevance sum/);
+  });
+
+  test.each([
     [
       'missing recommendation key',
       (snapshot: ReturnType<typeof snapshotFixture>) => {
@@ -534,23 +628,21 @@ describe('Recommendation v0.3.1 frontend adapter', () => {
     [
       'non-string adjustment source_ref',
       (snapshot: ReturnType<typeof snapshotFixture>) => {
-        (
-          snapshot.items[0].recommendation.conviction.adjustments[0] as unknown as Record<
-            string,
-            unknown
-          >
-        ).source_ref = 9;
+        snapshot.items[0].recommendation.conviction.adjustments = [
+          { delta: 0, reason: 'neutral', source_ref: 9 as unknown as string },
+        ];
       },
     ],
     [
       'invalid adjustment kind_ref',
       (snapshot: ReturnType<typeof snapshotFixture>) => {
-        (
-          snapshot.items[0].recommendation.conviction.adjustments[0] as unknown as Record<
-            string,
-            unknown
-          >
-        ).kind_ref = 'forged_kind';
+        snapshot.items[0].recommendation.conviction.adjustments = [
+          {
+            delta: 0,
+            reason: 'neutral',
+            kind_ref: 'forged_kind' as unknown as 'earnings',
+          },
+        ];
       },
     ],
     [

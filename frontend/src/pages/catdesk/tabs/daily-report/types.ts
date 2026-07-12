@@ -176,7 +176,56 @@ export interface DailyReportSection {
   markdown: string;
 }
 
+export interface RatingCounts {
+  A: number;
+  B: number;
+  C: number;
+  D: number;
+  F: number;
+}
+
+export type B5ReportSection =
+  | {
+      kind: 'summary';
+      section_id: 'summary';
+      title: string;
+      item_count: number;
+      high_conviction_count: number;
+      rating_counts: RatingCounts;
+    }
+  | {
+      kind: 'recommendation';
+      section_id: string;
+      title: string;
+      ticker: string;
+      rating_band: RatingBand;
+      evidence_ids: string[];
+    };
+
+export interface B5DailyReportWire {
+  projection_version: string;
+  report_id: string;
+  trading_day: string;
+  profile: RecommendationProfile;
+  market_scope: RecommendationMarketScope;
+  source_snapshot_id: string;
+  source_as_of: string;
+  source_output_fingerprint: string;
+  source_fingerprint_preimage_jcs: string;
+  disclaimer: RecommendationDisclaimer;
+  meta: RecommendationMeta;
+  summary: {
+    item_count: number;
+    high_conviction_count: number;
+    rating_counts: RatingCounts;
+  };
+  entries: RecommendationItem[];
+  sections: B5ReportSection[];
+  markdown: string;
+}
+
 export interface DailyReportDocument {
+  wire: B5DailyReportWire;
   report_id: string;
   trading_day: string;
   source_snapshot_ids: string[];

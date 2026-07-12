@@ -236,6 +236,8 @@ function parseConviction(
   value: unknown,
   scoreRef: ScoreRef,
   ticker: string,
+  recommendationAsOf: string,
+  scoreTotal: number,
   index: number
 ): Conviction {
   const label = `items[${index}].recommendation.conviction`;
@@ -248,7 +250,14 @@ function parseConviction(
   if (string(raw.ticker, `${label}.ticker`) !== ticker) {
     throw new RecommendationContractError(`items[${index}] conviction ticker mismatch`);
   }
+  const convictionAsOf = strictIso8601(raw.as_of, `${label}.as_of`);
+  if (convictionAsOf !== recommendationAsOf) {
+    throw new RecommendationContractError(`items[${index}] conviction as_of mismatch`);
+  }
   const base = number(raw.base, `${label}.base`);
+  if (Math.abs(base - scoreTotal) > 1e-6) {
+    throw new RecommendationContractError(`items[${index}] conviction base mismatch`);
+  }
   const final = number(raw.final, `${label}.final`);
   if (base < 0 || base > 100 || final < 0 || final > 100) {
     throw new RecommendationContractError(`items[${index}] conviction is out of range`);
@@ -302,7 +311,7 @@ function parseConviction(
   }
   return {
     ticker,
-    as_of: strictIso8601(raw.as_of, `${label}.as_of`),
+    as_of: convictionAsOf,
     base,
     score_ref: reference,
     adjustments,
@@ -413,6 +422,15 @@ function parseCatalystRelevance(
       return [key, component];
     })
   ) as unknown as RecommendationCatalystRelevance['components'];
+  const expectedRelevance =
+    parsedComponents.sector_map * 0.35 +
+    parsedComponents.revenue_exposure * 0.25 +
+    parsedComponents.adr_parity * 0.2 +
+    parsedComponents.supply_chain * 0.15 +
+    parsedComponents.historical_beta * 0.05;
+  if (Math.abs(relevanceScore - expectedRelevance) > 1e-6) {
+    throw new RecommendationContractError(`items[${index}] catalyst relevance sum mismatch`);
+  }
   return {
     catalyst_id: string(raw.catalyst_id, `${label}.catalyst_id`),
     kind: kind as RecommendationCatalystRelevance['kind'],
@@ -648,6 +666,25 @@ function parseBand(value: unknown, label: string): RatingBand {
   return value as RatingBand;
 }
 
+export function bandFor(value: number): RatingBand {
+  if (value >= 85) return 'A';
+  if (value >= 70) return 'B';
+  if (value >= 55) return 'C';
+  if (value >= 40) return 'D';
+  return 'F';
+}
+
+function sizeHintFor(conviction: number): {
+  tier: EntryPlan['size_hint']['tier'];
+  pct: number;
+} {
+  if (conviction >= 85) return { tier: 'TIER_5', pct: 5 };
+  if (conviction >= 70) return { tier: 'TIER_3', pct: 3 };
+  if (conviction >= 55) return { tier: 'TIER_2', pct: 2 };
+  if (conviction >= 40) return { tier: 'TIER_1', pct: 1 };
+  return { tier: 'SKIP', pct: 0 };
+}
+
 function parseRecommendation(
   value: unknown,
   snapshotId: string,
@@ -713,7 +750,14 @@ function parseRecommendation(
     }
     return {
       key: DIM_KEYS[dimIndex],
-      score: strictNumber(dim.score, `${dimLabel}.score`, { min: 0, max: 100 }),
+      score: (() => {
+        const dimScore = strictNumber(dim.score, `${dimLabel}.score`, { min: 0, max: 100 });
+        const dimBand = parseBand(dim.band, `${dimLabel}.band`);
+        if (dimBand !== bandFor(dimScore)) {
+          throw new RecommendationContractError(`items[${index}] score dim band mismatch`);
+        }
+        return dimScore;
+      })(),
       band: parseBand(dim.band, `${dimLabel}.band`),
       weight: strictNumber(dim.weight, `${dimLabel}.weight`, { min: 0, max: 1 }),
     };
@@ -724,7 +768,19 @@ function parseRecommendation(
   }
   const scoreRef = { scoring_id: scoringId, snapshot_hash: snapshotHash };
   const ticker = string(item.ticker, `items[${index}].recommendation.ticker`);
-  const conviction = parseConviction(item.conviction, scoreRef, ticker, index);
+  if (!/^[A-Z0-9][A-Z0-9.-]*$/.test(ticker)) {
+    throw new RecommendationContractError(`items[${index}] ticker is not normalized`);
+  }
+  const recommendationAsOf = strictIso8601(item.as_of, `${recommendationLabel}.as_of`);
+  const scoreTotal = strictNumber(score.total, `${scoreLabel}.total`, { min: 0, max: 100 });
+  const conviction = parseConviction(
+    item.conviction,
+    scoreRef,
+    ticker,
+    recommendationAsOf,
+    scoreTotal,
+    index
+  );
   const riskGate = parseRiskGate(item.risk_gate, ticker, marketScope, index);
   const entryPlan = parseEntryPlan(item.entry_plan, scoreRef, ticker, conviction.final, index);
   const explanationLabel = `items[${index}].recommendation.explanation`;
@@ -766,11 +822,15 @@ function parseRecommendation(
     const shortText = strictOptionalString(ref.short_text, `${evidenceLabel}.short_text`, {
       max: 200,
     });
+    const evidenceAsOf = strictIso8601(ref.as_of, `${evidenceLabel}.as_of`);
+    if (Date.parse(evidenceAsOf) > Date.parse(recommendationAsOf)) {
+      throw new RecommendationContractError(`items[${index}] evidence is after recommendation`);
+    }
     return {
       id: string(ref.id, `items[${index}].evidence_refs[${evidenceIndex}].id`),
       kind: kind as RecommendationEntry['evidence_refs'][number]['kind'],
       source_uri: sourceUri,
-      as_of: strictIso8601(ref.as_of, `${evidenceLabel}.as_of`),
+      as_of: evidenceAsOf,
       hash: hash(ref.hash, `items[${index}].evidence_refs[${evidenceIndex}].hash`),
       ...(shortText ? { short_text: shortText } : {}),
     };
@@ -793,7 +853,20 @@ function parseRecommendation(
       throw new RecommendationContractError(`items[${index}] evidence token ${token} is unknown`);
     }
   }
-  const scoreTotal = strictNumber(score.total, `${scoreLabel}.total`, { min: 0, max: 100 });
+  if (rating !== bandFor(scoreTotal)) {
+    throw new RecommendationContractError(`items[${index}] aggregate rating mismatch`);
+  }
+  const weightedTotal = dims.reduce((sum, dim) => sum + dim.score * dim.weight, 0);
+  if (Math.abs(scoreTotal - weightedTotal) > 1e-6) {
+    throw new RecommendationContractError(`items[${index}] weighted score total mismatch`);
+  }
+  const expectedSizeHint = sizeHintFor(conviction.final);
+  if (
+    entryPlan.size_hint.tier !== expectedSizeHint.tier ||
+    entryPlan.size_hint.pct !== expectedSizeHint.pct
+  ) {
+    throw new RecommendationContractError(`items[${index}] size_hint conviction mapping mismatch`);
+  }
 
   const headline = strictString(explanation.headline, `${explanationLabel}.headline`, { max: 80 });
   const body = strictString(explanation.body, `${explanationLabel}.body`, { max: 600 });
@@ -809,7 +882,7 @@ function parseRecommendation(
     id: uuid(item.id, `items[${index}].recommendation.id`),
     snapshot_id: snapshotId,
     ticker,
-    as_of: strictIso8601(item.as_of, `${recommendationLabel}.as_of`),
+    as_of: recommendationAsOf,
     score: {
       scoring_id: scoringId,
       snapshot_hash: snapshotHash,
@@ -944,6 +1017,13 @@ function parseRecommendationSnapshotUnsafe(value: unknown): RecommendationSnapsh
     }
     return { recommendation, rating_band: ratingBand };
   });
+  const seenTickers = new Set<string>();
+  for (const item of parsed.items) {
+    if (seenTickers.has(item.recommendation.ticker)) {
+      throw new RecommendationContractError('items contain duplicate tickers');
+    }
+    seenTickers.add(item.recommendation.ticker);
+  }
   const expectedOutputFingerprint = sha256Text(jcsCanonicalize(itemsRaw));
   if (outputFingerprint !== expectedOutputFingerprint) {
     throw new RecommendationContractError('output_fingerprint does not match ordered items');
