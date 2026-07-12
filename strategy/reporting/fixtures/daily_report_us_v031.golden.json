@@ -1,0 +1,66 @@
+{
+  "projection_version": "0.1.0",
+  "report_id": "daily-report:2026-07-12:us_preferred:us",
+  "trading_day": "2026-07-12",
+  "profile": "us_preferred",
+  "market_scope": "us",
+  "source_snapshot_id": "11111111-1111-4111-8111-111111111111",
+  "source_as_of": "2026-07-12T09:30:00Z",
+  "source_output_fingerprint": "52787b88c185a7fd9df545aea4d9d797dbd4d7978c7f0683b3a1f4e6786443ea",
+  "disclaimer": {
+    "version": "1.0.0",
+    "short_text": "Research reference only.",
+    "full_text": "Research only. Markets involve risk.",
+    "language": "en-US",
+    "effective_at": "2026-07-01T00:00:00Z",
+    "hash": "59488269aaf5e551a06ade38f66faa52bc4aed320b5ecd689a02d3956cfd8009"
+  },
+  "meta": {
+    "contract_version": "0.3.1",
+    "profile_version": "1.2.0",
+    "input_fingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "strategy_version": "0.3.0",
+    "pipeline_version": "1.0.0",
+    "generated_by": "ai-gamma",
+    "generation_ms": 42
+  },
+  "summary": {
+    "item_count": 1,
+    "high_conviction_count": 1,
+    "rating_counts": {
+      "A": 1,
+      "B": 0,
+      "C": 0,
+      "D": 0,
+      "F": 0
+    }
+  },
+  "entries": [],
+  "sections": [
+    {
+      "kind": "summary",
+      "section_id": "summary",
+      "title": "摘要",
+      "item_count": 1,
+      "high_conviction_count": 1,
+      "rating_counts": {
+        "A": 1,
+        "B": 0,
+        "C": 0,
+        "D": 0,
+        "F": 0
+      }
+    },
+    {
+      "kind": "recommendation",
+      "section_id": "recommendation-aapl",
+      "title": "AAPL",
+      "ticker": "AAPL",
+      "rating_band": "A",
+      "evidence_ids": [
+        "E1"
+      ]
+    }
+  ],
+  "markdown": ""
+}
