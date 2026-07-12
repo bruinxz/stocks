@@ -30,6 +30,7 @@ CREATE TABLE ai_recommendation_snapshot (
   disclaimer_hash TEXT NOT NULL CHECK (disclaimer_hash ~ '^[0-9a-f]{64}$'),
   input_fingerprint TEXT NOT NULL CHECK (input_fingerprint ~ '^[0-9a-f]{64}$'),
   output_fingerprint TEXT NOT NULL CHECK (output_fingerprint ~ '^[0-9a-f]{64}$'),
+  fingerprint_preimage_jcs TEXT NOT NULL,
   idempotency_key TEXT NOT NULL CHECK (idempotency_key ~ '^[0-9a-f]{64}$'),
   item_count INTEGER NOT NULL CHECK (item_count >= 0),
   envelope_json JSONB NOT NULL,
@@ -65,6 +66,10 @@ CREATE TABLE ai_recommendation_snapshot (
       )
       ELSE FALSE
     END
+  ),
+  CONSTRAINT ck_ai_recommendation_snapshot_fingerprint_hash CHECK (
+    output_fingerprint =
+      ENCODE(SHA256(CONVERT_TO(fingerprint_preimage_jcs, 'UTF8')), 'hex')
   ),
   CONSTRAINT uq_ai_recommendation_snapshot_replay UNIQUE (
     profile,
@@ -111,6 +116,7 @@ CREATE TABLE ai_recommendation_item (
         recommendation_json->>'snapshot_id' = snapshot_id::TEXT
         AND recommendation_json->>'id' ~
           '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        AND recommendation_json->>'id' = item_id::TEXT
         AND recommendation_json->>'ticker' = ticker
         AND recommendation_jcs::JSONB = recommendation_json
         AND jsonb_typeof(recommendation_json->'score') = 'object'
@@ -136,9 +142,117 @@ CREATE TABLE ai_recommendation_item (
 CREATE INDEX ix_ai_recommendation_item_snapshot_rank
   ON ai_recommendation_item (snapshot_id, sort_rank);
 
+CREATE FUNCTION validate_ai_recommendation_snapshot_v031()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $validation$
+DECLARE
+  target_snapshot_id UUID := COALESCE(NEW.snapshot_id, OLD.snapshot_id);
+  snapshot_row ai_recommendation_snapshot%ROWTYPE;
+  actual_count INTEGER;
+  actual_items JSONB;
+  minimum_rank INTEGER;
+  maximum_rank INTEGER;
+  semantic_envelope JSONB;
+BEGIN
+  SELECT *
+    INTO snapshot_row
+  FROM ai_recommendation_snapshot
+  WHERE snapshot_id = target_snapshot_id;
+
+  IF NOT FOUND THEN
+    RETURN NULL;
+  END IF;
+
+  SELECT COUNT(*)::INTEGER,
+         COALESCE(
+           JSONB_AGG(
+             JSONB_BUILD_OBJECT(
+               'recommendation', recommendation_json,
+               'rating_band', rating_band
+             )
+             ORDER BY sort_rank
+           ),
+           '[]'::JSONB
+         ),
+         MIN(sort_rank),
+         MAX(sort_rank)
+    INTO actual_count, actual_items, minimum_rank, maximum_rank
+  FROM ai_recommendation_item
+  WHERE snapshot_id = target_snapshot_id;
+
+  IF snapshot_row.item_count <> actual_count THEN
+    RAISE EXCEPTION
+      'Recommendation item_count mismatch for snapshot %: expected %, got %',
+      target_snapshot_id, snapshot_row.item_count, actual_count;
+  END IF;
+
+  IF snapshot_row.envelope_json->'items' IS DISTINCT FROM actual_items THEN
+    RAISE EXCEPTION
+      'Recommendation envelope/items mismatch for snapshot %',
+      target_snapshot_id;
+  END IF;
+
+  semantic_envelope :=
+    (snapshot_row.envelope_json - 'output_fingerprint' - 'snapshot_id')
+    || JSONB_BUILD_OBJECT(
+      'meta',
+      (snapshot_row.envelope_json->'meta') - 'generated_by' - 'generation_ms'
+    )
+    || JSONB_BUILD_OBJECT(
+      'items',
+      COALESCE(
+        (
+          SELECT JSONB_AGG(
+            JSONB_BUILD_OBJECT(
+              'recommendation',
+              (entry->'recommendation') - 'id' - 'snapshot_id',
+              'rating_band',
+              entry->'rating_band'
+            )
+            ORDER BY ordinality
+          )
+          FROM JSONB_ARRAY_ELEMENTS(actual_items)
+            WITH ORDINALITY AS ordered(entry, ordinality)
+        ),
+        '[]'::JSONB
+      )
+    );
+
+  IF snapshot_row.fingerprint_preimage_jcs::JSONB IS DISTINCT FROM semantic_envelope THEN
+    RAISE EXCEPTION
+      'Recommendation fingerprint preimage/envelope mismatch for snapshot %',
+      target_snapshot_id;
+  END IF;
+
+  IF actual_count > 0
+     AND (minimum_rank <> 0 OR maximum_rank <> actual_count - 1) THEN
+    RAISE EXCEPTION
+      'Recommendation sort_rank sequence mismatch for snapshot %: min %, max %, count %',
+      target_snapshot_id, minimum_rank, maximum_rank, actual_count;
+  END IF;
+
+  RETURN NULL;
+END;
+$validation$;
+
+CREATE CONSTRAINT TRIGGER ck_ai_recommendation_snapshot_items_deferred
+AFTER INSERT OR UPDATE ON ai_recommendation_snapshot
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW
+EXECUTE FUNCTION validate_ai_recommendation_snapshot_v031();
+
+CREATE CONSTRAINT TRIGGER ck_ai_recommendation_item_snapshot_deferred
+AFTER INSERT OR UPDATE OR DELETE ON ai_recommendation_item
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW
+EXECUTE FUNCTION validate_ai_recommendation_snapshot_v031();
+
 COMMENT ON TABLE ai_recommendation_snapshot IS
   'migration:2026-07-12-ai-recommendation-sot-v031';
 COMMENT ON TABLE ai_recommendation_item IS
+  'migration:2026-07-12-ai-recommendation-sot-v031';
+COMMENT ON FUNCTION validate_ai_recommendation_snapshot_v031() IS
   'migration:2026-07-12-ai-recommendation-sot-v031';
 
 COMMIT;

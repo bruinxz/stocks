@@ -12,6 +12,7 @@ DECLARE
   ];
   existing_count INTEGER;
   matching_count INTEGER;
+  function_oid OID;
 BEGIN
   SELECT COUNT(*),
          COUNT(*) FILTER (
@@ -30,10 +31,17 @@ BEGIN
       'Recommendation SOT rollback ownership mismatch: existing=%, matching=%, expected=%',
       existing_count, matching_count, cardinality(owned_tables);
   END IF;
+
+  function_oid := TO_REGPROCEDURE('validate_ai_recommendation_snapshot_v031()');
+  IF function_oid IS NULL
+     OR obj_description(function_oid, 'pg_proc') IS DISTINCT FROM expected_marker THEN
+    RAISE EXCEPTION 'Recommendation SOT rollback function ownership mismatch';
+  END IF;
 END;
 $ownership$;
 
 DROP TABLE ai_recommendation_item;
 DROP TABLE ai_recommendation_snapshot;
+DROP FUNCTION validate_ai_recommendation_snapshot_v031();
 
 COMMIT;

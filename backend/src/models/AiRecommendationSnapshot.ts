@@ -82,6 +82,9 @@ export class AiRecommendationSnapshot extends Model {
   @Column({ type: DataType.STRING(64), allowNull: false, field: 'output_fingerprint' })
   declare outputFingerprint: string;
 
+  @Column({ type: DataType.TEXT, allowNull: false, field: 'fingerprint_preimage_jcs' })
+  declare fingerprintPreimageJcs: string;
+
   @Column({ type: DataType.STRING(64), allowNull: false, field: 'idempotency_key' })
   declare idempotencyKey: string;
 

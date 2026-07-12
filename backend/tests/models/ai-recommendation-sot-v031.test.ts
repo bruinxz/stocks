@@ -41,7 +41,10 @@ assert(
   /CREATE TABLE ai_recommendation_snapshot\b/.test(up) &&
     /CREATE TABLE ai_recommendation_item\b/.test(up)
 );
-assert('[sql] no suffixed table fork', !/ai_recommendation_(?:snapshot|item)_v031/.test(up));
+assert(
+  '[sql] no suffixed table fork',
+  !/CREATE TABLE ai_recommendation_(?:snapshot|item)_v031\b/.test(up)
+);
 assert(
   '[sql] exact six persisted profiles',
   /'us_preferred'[\s\S]*?'multibagger'[\s\S]*?'japan_blue_chip'[\s\S]*?'japan_multibagger'[\s\S]*?'korea_semiconductor_chain'[\s\S]*?'korea_multibagger'/.test(
@@ -60,6 +63,12 @@ assert(
     /input_fingerprint TEXT NOT NULL/.test(up) &&
     /strategy_version TEXT NOT NULL/.test(up) &&
     /pipeline_version TEXT NOT NULL/.test(up)
+);
+assert(
+  '[sql] semantic fingerprint preimage bytes',
+  /fingerprint_preimage_jcs TEXT NOT NULL/.test(up) &&
+    /ck_ai_recommendation_snapshot_fingerprint_hash/.test(up) &&
+    /fingerprint_preimage_jcs::JSONB IS DISTINCT FROM semantic_envelope/.test(up)
 );
 assert(
   '[sql] complete envelope and disclaimer',
@@ -96,9 +105,20 @@ assert(
     /UNIQUE \(idempotency_key\)/.test(up)
 );
 assert(
+  '[sql] deferred cross-SOT binding',
+  /CREATE FUNCTION validate_ai_recommendation_snapshot_v031/.test(up) &&
+    /CREATE CONSTRAINT TRIGGER ck_ai_recommendation_snapshot_items_deferred/.test(up) &&
+    /CREATE CONSTRAINT TRIGGER ck_ai_recommendation_item_snapshot_deferred/.test(up) &&
+    /DEFERRABLE INITIALLY DEFERRED/.test(up) &&
+    /envelope_json->'items' IS DISTINCT FROM actual_items/.test(up) &&
+    /minimum_rank <> 0 OR maximum_rank <> actual_count - 1/.test(up) &&
+    /recommendation_json->>'id' = item_id::TEXT/.test(up)
+);
+assert(
   '[sql] ownership safe rollback',
   /migration:2026-07-12-ai-recommendation-sot-v031/.test(up) &&
     /rollback ownership mismatch/.test(down) &&
+    /function ownership mismatch/.test(down) &&
     !/DROP\s+INDEX/i.test(down)
 );
 assert('[model] snapshot table', /tableName:\s*'ai_recommendation_snapshot'/.test(snapshotModel));

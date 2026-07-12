@@ -1,5 +1,7 @@
 import { createHash } from 'crypto';
 import { deepStrictEqual } from 'assert';
+import { execFileSync } from 'child_process';
+import { join } from 'path';
 import { Sequelize } from 'sequelize-typescript';
 import { AiRecommendationItem } from '../../src/models/AiRecommendationItem';
 import { AiRecommendationSnapshot } from '../../src/models/AiRecommendationSnapshot';
@@ -10,7 +12,7 @@ const ITEM_ID = '99999999-9999-4999-8999-999999999999';
 
 function recommendation(): Record<string, unknown> {
   return {
-    id: '33333333-3333-4333-8333-333333333333',
+    id: ITEM_ID,
     snapshot_id: SNAPSHOT_ID,
     ticker: 'AAPL',
     as_of: '2026-07-10T06:30:00Z',
@@ -67,6 +69,27 @@ function canonicalFixture(value: Record<string, unknown>): string {
 
 function digest(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function reviewedSemanticPreimage(env: Record<string, unknown>): string {
+  const repoRoot = join(__dirname, '../../..');
+  return execFileSync(
+    'python3',
+    [
+      '-c',
+      [
+        'import json,sys',
+        'from ai.snapshot.fingerprint import canonicalize_output_fingerprint_preimage',
+        'print(canonicalize_output_fingerprint_preimage(json.load(sys.stdin)), end="")',
+      ].join(';'),
+    ],
+    {
+      cwd: repoRoot,
+      env: { ...process.env, PYTHONPATH: repoRoot },
+      input: JSON.stringify(env),
+      encoding: 'utf8',
+    }
+  );
 }
 
 function envelope(
@@ -157,8 +180,10 @@ async function pgProof(): Promise<void> {
     const rec = recommendation();
     const jcs = canonicalFixture(rec);
     const recHash = digest(jcs);
-    const outputFingerprint = '0'.repeat(64);
-    const env = envelope(rec, outputFingerprint);
+    const env = envelope(rec, '0'.repeat(64));
+    const fingerprintPreimageJcs = reviewedSemanticPreimage(env);
+    const outputFingerprint = digest(fingerprintPreimageJcs);
+    env.output_fingerprint = outputFingerprint;
 
     await sequelize.transaction(async transaction => {
       await AiRecommendationSnapshot.create(
@@ -178,6 +203,7 @@ async function pgProof(): Promise<void> {
           disclaimerHash: 'c'.repeat(64),
           inputFingerprint: 'd'.repeat(64),
           outputFingerprint,
+          fingerprintPreimageJcs,
           idempotencyKey: '2'.repeat(64),
           itemCount: 1,
           envelopeJson: env,
@@ -218,6 +244,15 @@ async function pgProof(): Promise<void> {
       ticker: 'MSFT',
     };
     const invalidJcs = canonicalFixture(invalidRec);
+    const invalidEnv = {
+      ...env,
+      snapshot_id: '55555555-5555-4555-8555-555555555555',
+      items: [{ recommendation: invalidRec, rating_band: 'A' }],
+      output_fingerprint: '0'.repeat(64),
+    };
+    const invalidFingerprintPreimageJcs = reviewedSemanticPreimage(invalidEnv);
+    const invalidOutputFingerprint = digest(invalidFingerprintPreimageJcs);
+    invalidEnv.output_fingerprint = invalidOutputFingerprint;
     try {
       await sequelize.transaction(async transaction => {
         await AiRecommendationSnapshot.create(
@@ -236,14 +271,11 @@ async function pgProof(): Promise<void> {
             templateHash: 'b'.repeat(64),
             disclaimerHash: 'c'.repeat(64),
             inputFingerprint: 'd'.repeat(64),
-            outputFingerprint: '7'.repeat(64),
+            outputFingerprint: invalidOutputFingerprint,
+            fingerprintPreimageJcs: invalidFingerprintPreimageJcs,
             idempotencyKey: '8'.repeat(64),
             itemCount: 1,
-            envelopeJson: {
-              ...env,
-              snapshot_id: '55555555-5555-4555-8555-555555555555',
-              output_fingerprint: '7'.repeat(64),
-            },
+            envelopeJson: invalidEnv,
           },
           { transaction }
         );
@@ -276,7 +308,7 @@ async function pgProof(): Promise<void> {
     try {
       await AiRecommendationSnapshot.create({
         snapshotId: '77777777-7777-4777-8777-777777777777',
-        asOfUtc: new Date('2026-07-10T06:30:00Z'),
+        asOfUtc: new Date('2026-07-10T06:32:00Z'),
         tradingDay: '2026-07-10',
         profile: 'us_preferred',
         marketScope: 'us',
@@ -289,13 +321,14 @@ async function pgProof(): Promise<void> {
         templateHash: 'b'.repeat(64),
         disclaimerHash: 'c'.repeat(64),
         inputFingerprint: 'd'.repeat(64),
-        outputFingerprint: '3'.repeat(64),
+        outputFingerprint,
+        fingerprintPreimageJcs,
         idempotencyKey: '2'.repeat(64),
         itemCount: 1,
         envelopeJson: {
           ...env,
           snapshot_id: '77777777-7777-4777-8777-777777777777',
-          output_fingerprint: '3'.repeat(64),
+          as_of: '2026-07-10T06:32:00Z',
         },
       });
     } catch (error: any) {
@@ -304,6 +337,117 @@ async function pgProof(): Promise<void> {
         error?.original?.constraint === 'uq_ai_recommendation_snapshot_idempotency';
     }
     if (!idempotencyRejected) throw new Error('duplicate idempotency key was accepted');
+
+    let envelopeMismatchRejected = false;
+    try {
+      await sequelize.transaction(async transaction => {
+        await snapshot.update(
+          {
+            envelopeJson: {
+              ...env,
+              items: [{ recommendation: rec, rating_band: 'B' }],
+            },
+          },
+          { transaction }
+        );
+      });
+    } catch (error: any) {
+      envelopeMismatchRejected = String(error?.message || error).includes(
+        'Recommendation envelope/items mismatch'
+      );
+    }
+    if (!envelopeMismatchRejected) throw new Error('envelope/item mismatch was accepted');
+
+    let itemIdMismatchRejected = false;
+    try {
+      await sequelize.transaction(async transaction => {
+        const wrongIdRec = {
+          ...rec,
+          id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          ticker: 'MSFT',
+        };
+        const wrongIdJcs = canonicalFixture(wrongIdRec);
+        await AiRecommendationItem.create(
+          {
+            itemId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+            snapshotId: SNAPSHOT_ID,
+            ticker: 'MSFT',
+            sortRank: 1,
+            recommendationJson: wrongIdRec,
+            recommendationJcs: wrongIdJcs,
+            recommendationHash: digest(wrongIdJcs),
+            ratingBand: 'A',
+            convictionFinal: '90.0',
+            riskGateStatus: 'GREEN',
+            sizeHintTier: 'TIER_5',
+          },
+          { transaction }
+        );
+      });
+    } catch (error: any) {
+      itemIdMismatchRejected = error?.original?.code === '23514';
+    }
+    if (!itemIdMismatchRejected) throw new Error('recommendation/item id mismatch was accepted');
+
+    let rankGapRejected = false;
+    try {
+      await sequelize.transaction(async transaction => {
+        const rankRec = {
+          ...rec,
+          id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          ticker: 'MSFT',
+        };
+        const rankJcs = canonicalFixture(rankRec);
+        const rankEnv = {
+          ...env,
+          items: [
+            { recommendation: rec, rating_band: 'A' },
+            { recommendation: rankRec, rating_band: 'A' },
+          ],
+        };
+        const rankFingerprintPreimageJcs = reviewedSemanticPreimage(rankEnv);
+        rankEnv.output_fingerprint = digest(rankFingerprintPreimageJcs);
+        await AiRecommendationItem.create(
+          {
+            itemId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+            snapshotId: SNAPSHOT_ID,
+            ticker: 'MSFT',
+            sortRank: 2,
+            recommendationJson: rankRec,
+            recommendationJcs: rankJcs,
+            recommendationHash: digest(rankJcs),
+            ratingBand: 'A',
+            convictionFinal: '90.0',
+            riskGateStatus: 'GREEN',
+            sizeHintTier: 'TIER_5',
+          },
+          { transaction }
+        );
+        await snapshot.update(
+          {
+            itemCount: 2,
+            envelopeJson: rankEnv,
+            outputFingerprint: rankEnv.output_fingerprint,
+            fingerprintPreimageJcs: rankFingerprintPreimageJcs,
+          },
+          { transaction }
+        );
+      });
+    } catch (error: any) {
+      rankGapRejected = String(error?.message || error).includes('sort_rank sequence mismatch');
+    }
+    if (!rankGapRejected) throw new Error('non-contiguous rank sequence was accepted');
+
+    let jcsHashRejected = false;
+    try {
+      await AiRecommendationItem.update(
+        { recommendationHash: '0'.repeat(64) },
+        { where: { itemId: ITEM_ID } }
+      );
+    } catch (error: any) {
+      jcsHashRejected = error?.original?.code === '23514';
+    }
+    if (!jcsHashRejected) throw new Error('JCS/hash mismatch was accepted');
 
     await snapshot.destroy();
     if (await AiRecommendationItem.findByPk(ITEM_ID)) throw new Error('item cascade delete failed');
