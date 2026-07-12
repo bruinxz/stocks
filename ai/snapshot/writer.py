@@ -160,7 +160,7 @@ class SnapshotWriter:
             output_fingerprint=recommendation_list["output_fingerprint"],
             idempotency_key=idempotency_key,
             item_count=len(entries),
-            envelope_json=envelope_json,
+            envelope_json=json.loads(envelope_json),
         )
 
         item_rows = tuple(
@@ -464,13 +464,12 @@ class SnapshotWriter:
         )
 
     @staticmethod
-    def _semantic_envelope_json(envelope_json: str) -> str:
-        try:
-            envelope = json.loads(envelope_json)
-        except (TypeError, json.JSONDecodeError) as error:
+    def _semantic_envelope_json(envelope_json: dict) -> str:
+        if not isinstance(envelope_json, dict):
             raise SnapshotIdempotencyConflictError(
                 "stored snapshot envelope is invalid"
-            ) from error
+            )
+        envelope = envelope_json
         meta = envelope.get("meta")
         if not isinstance(meta, dict):
             raise SnapshotIdempotencyConflictError(

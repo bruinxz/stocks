@@ -98,15 +98,12 @@ class SnapshotReader:
     def _hydrate(
         cls, snapshot: SnapshotRow, items: Sequence[SnapshotItemRow]
     ) -> dict:
+        if not isinstance(snapshot.envelope_json, dict):
+            raise SnapshotCorruptError("invalid snapshot envelope JSON")
         try:
-            envelope = json.loads(snapshot.envelope_json)
-        except (TypeError, json.JSONDecodeError) as error:
+            envelope = json.loads(jcs_canonicalize(snapshot.envelope_json))
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
             raise SnapshotCorruptError("invalid snapshot envelope JSON") from error
-        if (
-            not isinstance(envelope, dict)
-            or jcs_canonicalize(envelope) != snapshot.envelope_json
-        ):
-            raise SnapshotCorruptError("snapshot envelope is not canonical JCS")
         if envelope.get("snapshot_id") != snapshot.snapshot_id:
             raise SnapshotCorruptError("snapshot envelope identity mismatch")
         if envelope.get("profile") != snapshot.profile or envelope.get(

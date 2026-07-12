@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from typing import Optional, Protocol, Sequence
+from typing import Any, Optional, Protocol, Sequence
 
 
 @dataclass(frozen=True)
@@ -24,7 +24,7 @@ class SnapshotRow:
     output_fingerprint: str
     idempotency_key: str
     item_count: int
-    envelope_json: str
+    envelope_json: dict[str, Any]
 
 
 @dataclass(frozen=True)
