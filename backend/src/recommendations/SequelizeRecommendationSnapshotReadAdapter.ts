@@ -49,6 +49,27 @@ function sha256Text(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function canonicalizeJson(value: unknown): string {
+  if (value === null) return 'null';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new RecommendationSnapshotContractError('JCS values must be finite');
+    }
+    return JSON.stringify(value);
+  }
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalizeJson).join(',')}]`;
+  if (typeof value === 'object' && value) {
+    const record = value as UnknownRecord;
+    return `{${Object.keys(record)
+      .sort()
+      .map(key => `${JSON.stringify(key)}:${canonicalizeJson(record[key])}`)
+      .join(',')}}`;
+  }
+  throw new RecommendationSnapshotContractError('JCS values must be JSON serializable');
+}
+
 function timestampString(value: unknown, label: string): string {
   if (value instanceof Date && Number.isFinite(value.getTime())) return value.toISOString();
   return requiredString(value, label);
@@ -102,7 +123,10 @@ function normalizeSummary(row: UnknownRecord): RecommendationSnapshotSummary {
   };
 }
 
-function normalizeDetail(row: UnknownRecord): RecommendationSnapshotDetail {
+function normalizeDetail(
+  row: UnknownRecord,
+  itemRows: UnknownRecord[]
+): RecommendationSnapshotDetail {
   const envelope = asObject(row.envelope_json, 'envelope_json');
   const summary = normalizeSummary(row);
   if (
@@ -117,6 +141,14 @@ function normalizeDetail(row: UnknownRecord): RecommendationSnapshotDetail {
   if (!Array.isArray(envelope.items) || envelope.items.length !== summary.item_count) {
     throw new RecommendationSnapshotContractError('envelope_json item count does not match header');
   }
+  const contractVersion = requiredString(row.contract_version, 'contract_version');
+  const profileVersion = requiredString(row.profile_version, 'profile_version');
+  const inputFingerprint = sha256(row.input_fingerprint, 'input_fingerprint');
+  const headerDisclaimerHash = sha256(row.disclaimer_hash, 'disclaimer_hash');
+  const fingerprintPreimageJcs = requiredString(
+    row.fingerprint_preimage_jcs,
+    'fingerprint_preimage_jcs'
+  );
   const disclaimer = asObject(envelope.disclaimer, 'disclaimer');
   const meta = asObject(envelope.meta, 'meta');
   const language = requiredString(disclaimer.language, 'disclaimer.language');
@@ -125,6 +157,11 @@ function normalizeDetail(row: UnknownRecord): RecommendationSnapshotDetail {
   }
   const disclaimerFullText = requiredString(disclaimer.full_text, 'disclaimer.full_text');
   const disclaimerHash = sha256(disclaimer.hash, 'disclaimer.hash');
+  if (disclaimerHash !== headerDisclaimerHash) {
+    throw new RecommendationSnapshotContractError(
+      'envelope disclaimer.hash does not match snapshot header'
+    );
+  }
   if (sha256Text(disclaimerFullText) !== disclaimerHash) {
     throw new RecommendationSnapshotContractError('disclaimer.hash does not match full_text');
   }
@@ -144,6 +181,73 @@ function normalizeDetail(row: UnknownRecord): RecommendationSnapshotDetail {
       rating_band: ratingBand as RecommendationSnapshotDetail['items'][number]['rating_band'],
     };
   });
+  if (contractVersion !== '0.3.1' || meta.contract_version !== contractVersion) {
+    throw new RecommendationSnapshotContractError(
+      'meta.contract_version does not match snapshot header'
+    );
+  }
+  if (meta.profile_version !== profileVersion) {
+    throw new RecommendationSnapshotContractError(
+      'meta.profile_version does not match snapshot header'
+    );
+  }
+  if (meta.input_fingerprint !== inputFingerprint) {
+    throw new RecommendationSnapshotContractError(
+      'meta.input_fingerprint does not match snapshot header'
+    );
+  }
+  if (itemRows.length !== summary.item_count) {
+    throw new RecommendationSnapshotContractError(
+      'physical item count does not match snapshot header'
+    );
+  }
+  itemRows.forEach((itemRow, index) => {
+    if (nonNegativeInteger(itemRow.sort_rank, `item_rows[${index}].sort_rank`) !== index) {
+      throw new RecommendationSnapshotContractError('physical item ranks must be contiguous');
+    }
+    const itemId = requiredString(itemRow.item_id, `item_rows[${index}].item_id`);
+    const ticker = requiredString(itemRow.ticker, `item_rows[${index}].ticker`);
+    const recommendationJcs = requiredString(
+      itemRow.recommendation_jcs,
+      `item_rows[${index}].recommendation_jcs`
+    );
+    const recommendationHash = sha256(
+      itemRow.recommendation_hash,
+      `item_rows[${index}].recommendation_hash`
+    );
+    if (sha256Text(recommendationJcs) !== recommendationHash) {
+      throw new RecommendationSnapshotContractError(
+        `item_rows[${index}].recommendation_hash does not authenticate JCS`
+      );
+    }
+    const recommendation = asObject(
+      itemRow.recommendation_json,
+      `item_rows[${index}].recommendation_json`
+    );
+    const parsedJcs = asObject(recommendationJcs, `item_rows[${index}].recommendation_jcs`);
+    if (canonicalizeJson(recommendation) !== canonicalizeJson(parsedJcs)) {
+      throw new RecommendationSnapshotContractError(
+        `item_rows[${index}] JCS/JSON semantic mismatch`
+      );
+    }
+    if (recommendation.id !== itemId || recommendation.ticker !== ticker) {
+      throw new RecommendationSnapshotContractError(
+        `item_rows[${index}] identity does not match recommendation`
+      );
+    }
+    const ratingBand = requiredString(itemRow.rating_band, `item_rows[${index}].rating_band`);
+    const expectedEnvelopeItem = { recommendation, rating_band: ratingBand };
+    if (canonicalizeJson(items[index]) !== canonicalizeJson(expectedEnvelopeItem)) {
+      throw new RecommendationSnapshotContractError(
+        `item_rows[${index}] does not match envelope item`
+      );
+    }
+  });
+  if (sha256Text(fingerprintPreimageJcs) !== summary.output_fingerprint) {
+    throw new RecommendationSnapshotContractError(
+      'output_fingerprint does not authenticate fingerprint preimage JCS'
+    );
+  }
 
   return {
     snapshot_id: summary.snapshot_id,
@@ -167,8 +271,8 @@ function normalizeDetail(row: UnknownRecord): RecommendationSnapshotDetail {
         }
         return '0.3.1' as const;
       })(),
-      profile_version: requiredString(meta.profile_version, 'meta.profile_version'),
-      input_fingerprint: sha256(meta.input_fingerprint, 'meta.input_fingerprint'),
+      profile_version: profileVersion,
+      input_fingerprint: inputFingerprint,
       strategy_version: requiredString(meta.strategy_version, 'meta.strategy_version'),
       pipeline_version: requiredString(meta.pipeline_version, 'meta.pipeline_version'),
       generated_by: requiredString(meta.generated_by, 'meta.generated_by'),
@@ -183,7 +287,7 @@ function tickerSet(rows: UnknownRecord[]): Map<string, string> {
   for (const row of rows) {
     result.set(
       requiredString(row.ticker, 'ticker'),
-      requiredString(row.recommendation_hash, 'recommendation_hash')
+      sha256(row.recommendation_hash, 'recommendation_hash')
     );
   }
   return result;
@@ -199,6 +303,11 @@ export class SequelizeRecommendationSnapshotReadAdapter implements Recommendatio
               as_of_utc,
               profile,
               market_scope,
+              contract_version,
+              profile_version,
+              input_fingerprint,
+              disclaimer_hash,
+              fingerprint_preimage_jcs,
               output_fingerprint,
               item_count,
               envelope_json,
@@ -229,7 +338,7 @@ export class SequelizeRecommendationSnapshotReadAdapter implements Recommendatio
         );
       }
     }
-    return rows[0] ? normalizeDetail(rows[0]) : null;
+    return rows[0] ? this.hydrateDetail(rows[0]) : null;
   }
 
   async byDate(query: RecommendationSnapshotDateQuery): Promise<RecommendationSnapshotPage> {
@@ -255,6 +364,11 @@ export class SequelizeRecommendationSnapshotReadAdapter implements Recommendatio
               as_of_utc,
               profile,
               market_scope,
+              contract_version,
+              profile_version,
+              input_fingerprint,
+              disclaimer_hash,
+              fingerprint_preimage_jcs,
               output_fingerprint,
               item_count,
               created_at
@@ -301,17 +415,15 @@ export class SequelizeRecommendationSnapshotReadAdapter implements Recommendatio
         'Recommendation snapshot identity is ambiguous'
       );
     }
-    return rows.length ? normalizeDetail(rows[0]) : null;
+    return rows[0] ? this.hydrateDetail(rows[0]) : null;
   }
 
   async diff(
     baseSnapshotId: string,
     targetSnapshotId: string
   ): Promise<RecommendationSnapshotDiff> {
-    const [base, target] = await Promise.all([
-      this.detail(baseSnapshotId),
-      this.detail(targetSnapshotId),
-    ]);
+    const base = await this.detail(baseSnapshotId);
+    const target = await this.detail(targetSnapshotId);
     if (!base || !target) {
       throw new RecommendationSnapshotContractError('Both snapshots are required for diff');
     }
@@ -355,5 +467,26 @@ export class SequelizeRecommendationSnapshotReadAdapter implements Recommendatio
       changed,
       unchanged,
     };
+  }
+
+  private async hydrateDetail(row: UnknownRecord): Promise<RecommendationSnapshotDetail> {
+    const snapshotId = requiredString(row.snapshot_id, 'snapshot_id');
+    const itemRows = await this.sequelize.query<UnknownRecord>(
+      `SELECT item_id,
+              ticker,
+              sort_rank,
+              recommendation_json,
+              recommendation_jcs,
+              recommendation_hash,
+              rating_band
+       FROM ai_recommendation_item
+       WHERE snapshot_id = CAST(:snapshot_id AS uuid)
+       ORDER BY sort_rank ASC`,
+      {
+        replacements: { snapshot_id: snapshotId },
+        type: QueryTypes.SELECT,
+      }
+    );
+    return normalizeDetail(row, itemRows);
   }
 }

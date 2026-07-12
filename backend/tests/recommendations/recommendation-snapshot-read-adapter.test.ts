@@ -8,6 +8,18 @@ import { SequelizeRecommendationSnapshotReadAdapter } from '../../src/recommenda
 
 const SNAPSHOT_A = '11111111-1111-4111-8111-111111111111';
 const SNAPSHOT_B = '22222222-2222-4222-8222-222222222222';
+const ITEM_ID = '33333333-3333-4333-8333-333333333333';
+const RECOMMENDATION_JCS = `{"id":"${ITEM_ID}","ticker":"AAPL"}`;
+const RECOMMENDATION_HASH = '35a3a1c252c08c60ea4843cc8d0f8c692c36f1494b4562ebe0a18a74477174f6';
+const FINGERPRINT_PREIMAGE_JCS =
+  '{"as_of":"2026-07-10T06:00:00Z","disclaimer":{"effective_at":"2026-07-01T00:00:00Z",' +
+  '"full_text":"투자에는 위험이 있습니다.","hash":"d7dca10cd3ea237004ea9319ad31c44c0c4b980d372aeb239a3ed88d4e4b1ff0",' +
+  '"language":"ko-KR","short_text":"仅供参考","version":"1.0.0"},"items":[{"rating_band":"A",' +
+  '"recommendation":{"ticker":"AAPL"}}],"market_scope":"us","meta":{"contract_version":"0.3.1",' +
+  '"input_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",' +
+  '"pipeline_version":"3.1.0","profile_version":"3.1.0","strategy_version":"3.1.0"},' +
+  '"profile":"us_preferred"}';
+const OUTPUT_FINGERPRINT = 'e0e991998068bc2cd036f1dfbe4f09c7bf7aac0d55624e73ed8c8bdb1cfbda38';
 const DISCLAIMER_TEXT = '투자에는 위험이 있습니다.';
 const DISCLAIMER_HASH = createHash('sha256').update(DISCLAIMER_TEXT).digest('hex');
 
@@ -16,7 +28,7 @@ const ENVELOPE = {
   as_of: '2026-07-10T06:00:00Z',
   profile: 'us_preferred',
   market_scope: 'us',
-  output_fingerprint: 'b'.repeat(64),
+  output_fingerprint: OUTPUT_FINGERPRINT,
   disclaimer: {
     version: '1.0.0',
     short_text: '仅供参考',
@@ -34,7 +46,7 @@ const ENVELOPE = {
     generated_by: 'fixture',
     generation_ms: 12,
   },
-  items: [{ recommendation: { ticker: 'AAPL' }, rating_band: 'A' }],
+  items: [{ recommendation: { id: ITEM_ID, ticker: 'AAPL' }, rating_band: 'A' }],
 };
 
 function header(overrides: Record<string, unknown> = {}) {
@@ -45,10 +57,27 @@ function header(overrides: Record<string, unknown> = {}) {
     profile: 'us_preferred',
     market_scope: 'us',
     input_fingerprint: 'a'.repeat(64),
-    output_fingerprint: 'b'.repeat(64),
+    contract_version: '0.3.1',
+    profile_version: '3.1.0',
+    disclaimer_hash: DISCLAIMER_HASH,
+    fingerprint_preimage_jcs: FINGERPRINT_PREIMAGE_JCS,
+    output_fingerprint: OUTPUT_FINGERPRINT,
     item_count: '1',
     envelope_json: ENVELOPE,
     created_at: '2026-07-10T06:00:01Z',
+    ...overrides,
+  };
+}
+
+function itemRow(overrides: Record<string, unknown> = {}) {
+  return {
+    item_id: ITEM_ID,
+    ticker: 'AAPL',
+    sort_rank: 0,
+    recommendation_json: { id: ITEM_ID, ticker: 'AAPL' },
+    recommendation_jcs: RECOMMENDATION_JCS,
+    recommendation_hash: RECOMMENDATION_HASH,
+    rating_band: 'A',
     ...overrides,
   };
 }
@@ -77,17 +106,17 @@ async function main(): Promise<void> {
   } as unknown as Sequelize;
   const adapter = new SequelizeRecommendationSnapshotReadAdapter(sequelize);
 
-  queue = [[header()]];
+  queue = [[header()], [itemRow()]];
   const latest = await adapter.latest({ profile: 'us_preferred', market_scope: 'us' });
   assert('latest hydrates full envelope', latest?.items[0]?.rating_band === 'A');
   assert(
     'latest uses canonical header table',
-    calls.at(-1)?.sql.includes('ai_recommendation_snapshot')
+    calls.at(-2)?.sql.includes('ai_recommendation_snapshot')
   );
   assert(
     'latest parameterizes explicit scope',
-    calls.at(-1)?.replacements.profile === 'us_preferred' &&
-      calls.at(-1)?.replacements.market_scope === 'us'
+    calls.at(-2)?.replacements.profile === 'us_preferred' &&
+      calls.at(-2)?.replacements.market_scope === 'us'
   );
 
   queue = [[{ total: '1' }], [header()]];
@@ -101,7 +130,7 @@ async function main(): Promise<void> {
   assert('by-date normalizes count', page.total === 1);
   assert('by-date computes offset', calls.at(-1)?.replacements.offset === 10);
 
-  queue = [[header({ envelope_json: { ...ENVELOPE, market_scope: 'cn_a' } })]];
+  queue = [[header({ envelope_json: { ...ENVELOPE, market_scope: 'cn_a' } })], [itemRow()]];
   let malformedRejected = false;
   try {
     await adapter.detail(SNAPSHOT_A);
@@ -123,6 +152,15 @@ async function main(): Promise<void> {
       'invalid input_fingerprint',
       { ...ENVELOPE, meta: { ...ENVELOPE.meta, input_fingerprint: 'NOT-A-HASH' } },
     ],
+    ['header contract_version drift', ENVELOPE],
+    ['header profile_version drift', ENVELOPE],
+    ['header input_fingerprint drift', ENVELOPE],
+    ['header disclaimer_hash drift', ENVELOPE],
+    [
+      'mutually tampered output fingerprint',
+      { ...ENVELOPE, items: [{ recommendation: { ticker: 'MSFT' }, rating_band: 'A' }] },
+    ],
+    ['fingerprint preimage hash mismatch', ENVELOPE],
     ['invalid output fingerprint', ENVELOPE],
     [
       'invalid disclaimer hash',
@@ -134,11 +172,26 @@ async function main(): Promise<void> {
     ],
   ];
   for (const [name, envelope] of invalidEnvelopes) {
-    const row =
-      name === 'invalid output fingerprint'
-        ? header({ output_fingerprint: 'BAD', envelope_json: envelope })
-        : header({ envelope_json: envelope });
-    queue = [[row]];
+    let row = header({ envelope_json: envelope });
+    if (name === 'fingerprint preimage hash mismatch') {
+      row = header({ fingerprint_preimage_jcs: '["tampered"]', envelope_json: envelope });
+    } else if (name === 'invalid output fingerprint') {
+      row = header({ output_fingerprint: 'BAD', envelope_json: envelope });
+    } else if (name === 'header contract_version drift') {
+      row = header({ contract_version: '0.3.0', envelope_json: envelope });
+    } else if (name === 'header profile_version drift') {
+      row = header({ profile_version: 'other', envelope_json: envelope });
+    } else if (name === 'header input_fingerprint drift') {
+      row = header({ input_fingerprint: 'd'.repeat(64), envelope_json: envelope });
+    } else if (name === 'header disclaimer_hash drift') {
+      row = header({ disclaimer_hash: 'd'.repeat(64), envelope_json: envelope });
+    } else if (name === 'mutually tampered output fingerprint') {
+      row = header({
+        output_fingerprint: 'd'.repeat(64),
+        envelope_json: { ...envelope, output_fingerprint: 'd'.repeat(64) },
+      });
+    }
+    queue = [[row], [itemRow()]];
     let rejected = false;
     try {
       await adapter.detail(SNAPSHOT_A);
@@ -150,17 +203,18 @@ async function main(): Promise<void> {
 
   queue = [
     [header()],
+    [itemRow()],
     [
       header({
         snapshot_id: SNAPSHOT_B,
         envelope_json: {
           ...ENVELOPE,
           snapshot_id: SNAPSHOT_B,
-          output_fingerprint: 'd'.repeat(64),
+          output_fingerprint: OUTPUT_FINGERPRINT,
         },
-        output_fingerprint: 'd'.repeat(64),
       }),
     ],
+    [itemRow()],
     [
       { snapshot_id: SNAPSHOT_A, ticker: 'AAPL', recommendation_hash: '1'.repeat(64) },
       { snapshot_id: SNAPSHOT_A, ticker: 'NVDA', recommendation_hash: '2'.repeat(64) },
@@ -176,6 +230,7 @@ async function main(): Promise<void> {
 
   queue = [
     [header()],
+    [itemRow()],
     [
       header({
         snapshot_id: SNAPSHOT_B,
@@ -187,6 +242,7 @@ async function main(): Promise<void> {
         },
       }),
     ],
+    [itemRow()],
   ];
   let scopeConflict = false;
   try {
@@ -195,6 +251,44 @@ async function main(): Promise<void> {
     scopeConflict = error instanceof RecommendationSnapshotConflictError;
   }
   assert('diff rejects profile/scope mismatch before item query', scopeConflict);
+
+  const invalidItemRows: Array<[string, Record<string, unknown>]> = [
+    ['invalid item hash shape', itemRow({ recommendation_hash: 'BAD' })],
+    ['item hash mismatch', itemRow({ recommendation_hash: 'd'.repeat(64) })],
+    ['item id mismatch', itemRow({ item_id: SNAPSHOT_B })],
+    ['item rank gap', itemRow({ sort_rank: 1 })],
+    ['item JSON/JCS mismatch', itemRow({ recommendation_json: { id: ITEM_ID, ticker: 'MSFT' } })],
+    ['item envelope mismatch', itemRow({ ticker: 'MSFT' })],
+  ];
+  for (const [name, invalidItem] of invalidItemRows) {
+    queue = [[header()], [invalidItem]];
+    let rejected = false;
+    try {
+      await adapter.detail(SNAPSHOT_A);
+    } catch (error) {
+      rejected = error instanceof RecommendationSnapshotContractError;
+    }
+    assert(`${name} fails closed`, rejected);
+  }
+
+  queue = [
+    [header()],
+    [itemRow({ recommendation_hash: 'BAD' })],
+    [
+      header({
+        snapshot_id: SNAPSHOT_B,
+        envelope_json: { ...ENVELOPE, snapshot_id: SNAPSHOT_B },
+      }),
+    ],
+    [itemRow()],
+  ];
+  let corruptDiffRejected = false;
+  try {
+    await adapter.diff(SNAPSHOT_A, SNAPSHOT_B);
+  } catch (error) {
+    corruptDiffRejected = error instanceof RecommendationSnapshotContractError;
+  }
+  assert('diff rejects corrupt physical item proof', corruptDiffRejected);
 
   console.log(`\nResult: ${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
