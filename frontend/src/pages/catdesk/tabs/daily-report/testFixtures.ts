@@ -77,7 +77,16 @@ export function recommendationFixture(
         source_ref: 'E1',
       },
     ],
-    weights: { contributions: [], normalized: false },
+    weights: {
+      contributions: [
+        {
+          source_kind: 'trigger',
+          source_ref: 'CATALYST_MATCHED',
+          weight: 1,
+        },
+      ],
+      normalized: true,
+    },
     explanation: {
       headline: '新品周期进入验证窗',
       body: '需求与供给信号同时改善 [E1]',
@@ -96,6 +105,18 @@ export function recommendationFixture(
         short_text: '公开披露',
       },
     ],
+    catalyst_relevance: {
+      catalyst_id: 'catalyst-1',
+      kind: 'product',
+      relevance_score: 0.8,
+      components: {
+        sector_map: 1,
+        revenue_exposure: 0.8,
+        adr_parity: 0.5,
+        supply_chain: 0.7,
+        historical_beta: 0.6,
+      },
+    },
     model_version: '3.1.0',
     disclaimer_version: '1.0.0',
     ...overrides,

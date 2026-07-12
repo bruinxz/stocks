@@ -396,6 +396,105 @@ describe('Recommendation v0.3.1 frontend adapter', () => {
     ).toThrow(/source_ref/);
   });
 
+  test('rejects weight source domains, length limits and invalid catalyst relevance', () => {
+    const base = snapshotFixture();
+    expect(() =>
+      parseRecommendationSnapshot({
+        ...base,
+        items: [
+          {
+            ...base.items[0],
+            recommendation: {
+              ...base.items[0].recommendation,
+              weights: {
+                normalized: true,
+                contributions: [
+                  {
+                    source_kind: 'score_dim',
+                    source_ref: 'X',
+                    weight: 1,
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      })
+    ).toThrow(/source_ref/);
+    expect(() =>
+      parseRecommendationSnapshot({
+        ...base,
+        items: [
+          {
+            ...base.items[0],
+            recommendation: {
+              ...base.items[0].recommendation,
+              explanation: {
+                ...base.items[0].recommendation.explanation,
+                headline: 'x'.repeat(81),
+              },
+            },
+          },
+        ],
+      })
+    ).toThrow(/length/);
+    expect(() =>
+      parseRecommendationSnapshot({
+        ...base,
+        items: [
+          {
+            ...base.items[0],
+            recommendation: {
+              ...base.items[0].recommendation,
+              trigger_signals: [
+                {
+                  ...base.items[0].recommendation.trigger_signals[0],
+                  detail: 'x'.repeat(241),
+                },
+              ],
+            },
+          },
+        ],
+      })
+    ).toThrow(/too long/);
+    expect(() =>
+      parseRecommendationSnapshot({
+        ...base,
+        items: [
+          {
+            ...base.items[0],
+            recommendation: {
+              ...base.items[0].recommendation,
+              evidence_refs: [
+                {
+                  ...base.items[0].recommendation.evidence_refs[0],
+                  short_text: 'x'.repeat(201),
+                },
+              ],
+            },
+          },
+        ],
+      })
+    ).toThrow(/short_text/);
+    expect(() =>
+      parseRecommendationSnapshot({
+        ...base,
+        items: [
+          {
+            ...base.items[0],
+            recommendation: {
+              ...base.items[0].recommendation,
+              catalyst_relevance: {
+                ...base.items[0].recommendation.catalyst_relevance,
+                kind: 'unclassified',
+              },
+            },
+          },
+        ],
+      })
+    ).toThrow(/catalyst kind/);
+  });
+
   test('allows an empty item list while retaining envelope and disclaimer', () => {
     const parsed = parseRecommendationSnapshot(snapshotFixture({ items: [] }));
     expect(parsed.items).toEqual([]);

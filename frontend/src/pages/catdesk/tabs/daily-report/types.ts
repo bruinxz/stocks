@@ -95,6 +95,27 @@ export interface RecommendationContribution {
   note?: string;
 }
 
+export interface RecommendationCatalystRelevance {
+  catalyst_id: string;
+  kind:
+    | 'earnings'
+    | 'upgrade_downgrade'
+    | 'ma_activity'
+    | 'sector_move'
+    | 'regulator'
+    | 'geo_macro'
+    | 'product'
+    | 'leadership';
+  relevance_score: number;
+  components: {
+    sector_map: number;
+    revenue_exposure: number;
+    adr_parity: number;
+    supply_chain: number;
+    historical_beta: number;
+  };
+}
+
 export type RecommendationWeights =
   | { contributions: RecommendationContribution[]; normalized: true }
   | { contributions: []; normalized: false };
@@ -116,6 +137,7 @@ export interface RecommendationEntry {
   conviction: Conviction;
   risk_gate: RiskGate;
   entry_plan: EntryPlan;
+  catalyst_relevance?: RecommendationCatalystRelevance;
   trigger_signals: RecommendationTriggerSignal[];
   weights: RecommendationWeights;
   explanation: {

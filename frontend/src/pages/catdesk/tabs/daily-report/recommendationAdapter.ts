@@ -10,6 +10,7 @@ import {
   type RecommendationSnapshot,
   type RecommendationTriggerSignal,
   type RecommendationWeights,
+  type RecommendationCatalystRelevance,
 } from './types';
 import {
   RISK_GATE_TRIGGER_CODES_V0_3,
@@ -113,6 +114,16 @@ const SIGNAL_STRENGTHS = new Set<RecommendationTriggerSignal['strength']>([
   'STRONG',
   'MEDIUM',
   'WEAK',
+]);
+const CATALYST_KINDS = new Set<RecommendationCatalystRelevance['kind']>([
+  'earnings',
+  'upgrade_downgrade',
+  'ma_activity',
+  'sector_move',
+  'regulator',
+  'geo_macro',
+  'product',
+  'leadership',
 ]);
 
 export class RecommendationContractError extends Error {
@@ -333,7 +344,57 @@ function parseRiskGate(
   };
 }
 
-function parseWeights(value: unknown, index: number): RecommendationWeights {
+function parseCatalystRelevance(
+  value: unknown,
+  index: number
+): RecommendationCatalystRelevance | undefined {
+  if (value == null) return undefined;
+  const label = `items[${index}].recommendation.catalyst_relevance`;
+  const raw = record(value, label);
+  rejectUnknownKeys(raw, ['catalyst_id', 'kind', 'relevance_score', 'components'], label);
+  const kind = string(raw.kind, `${label}.kind`);
+  if (
+    kind === 'unclassified' ||
+    !CATALYST_KINDS.has(kind as RecommendationCatalystRelevance['kind'])
+  ) {
+    throw new RecommendationContractError(`items[${index}] catalyst kind is invalid`);
+  }
+  const relevanceScore = number(raw.relevance_score, `${label}.relevance_score`);
+  if (relevanceScore < 0 || relevanceScore > 1) {
+    throw new RecommendationContractError(`items[${index}] catalyst relevance is out of range`);
+  }
+  const components = record(raw.components, `${label}.components`);
+  const componentKeys = [
+    'sector_map',
+    'revenue_exposure',
+    'adr_parity',
+    'supply_chain',
+    'historical_beta',
+  ] as const;
+  rejectUnknownKeys(components, componentKeys, `${label}.components`);
+  const parsedComponents = Object.fromEntries(
+    componentKeys.map(key => {
+      const component = number(components[key], `${label}.components.${key}`);
+      if (component < 0 || component > 1) {
+        throw new RecommendationContractError(`items[${index}] catalyst component is out of range`);
+      }
+      return [key, component];
+    })
+  ) as unknown as RecommendationCatalystRelevance['components'];
+  return {
+    catalyst_id: string(raw.catalyst_id, `${label}.catalyst_id`),
+    kind: kind as RecommendationCatalystRelevance['kind'],
+    relevance_score: relevanceScore,
+    components: parsedComponents,
+  };
+}
+
+function parseWeights(
+  value: unknown,
+  triggerCodes: ReadonlySet<string>,
+  catalystId: string | undefined,
+  index: number
+): RecommendationWeights {
   const label = `items[${index}].recommendation.weights`;
   const raw = record(value, label);
   rejectUnknownKeys(raw, ['contributions', 'normalized'], label);
@@ -367,12 +428,20 @@ function parseWeights(value: unknown, index: number): RecommendationWeights {
     if (weight < -1 || weight > 1) {
       throw new RecommendationContractError(`items[${index}] contribution weight is invalid`);
     }
+    const sourceRef = string(
+      source.source_ref,
+      `${label}.contributions[${contributionIndex}].source_ref`
+    );
+    const refValid =
+      (sourceKind === 'trigger' && triggerCodes.has(sourceRef)) ||
+      (sourceKind === 'score_dim' && (DIM_KEYS as readonly string[]).includes(sourceRef)) ||
+      (sourceKind === 'catalyst_relevance' && catalystId != null && sourceRef === catalystId);
+    if (!refValid) {
+      throw new RecommendationContractError(`items[${index}] weight source_ref is invalid`);
+    }
     return {
       source_kind: sourceKind as RecommendationWeights['contributions'][number]['source_kind'],
-      source_ref: string(
-        source.source_ref,
-        `${label}.contributions[${contributionIndex}].source_ref`
-      ),
+      source_ref: sourceRef,
       weight,
       note: typeof source.note === 'string' ? source.note : undefined,
     };
@@ -415,7 +484,13 @@ function parseTriggerSignals(
     return {
       code: code as RecommendationTriggerSignal['code'],
       strength: strength as RecommendationTriggerSignal['strength'],
-      detail: string(signal.detail, `${label}[${signalIndex}].detail`),
+      detail: (() => {
+        const detail = string(signal.detail, `${label}[${signalIndex}].detail`);
+        if (detail.length > 240) {
+          throw new RecommendationContractError(`items[${index}] trigger detail is too long`);
+        }
+        return detail;
+      })(),
       source_ref: sourceRef,
     };
   });
@@ -630,13 +705,17 @@ function parseRecommendation(
     if (!EVIDENCE_SCHEMES.some(scheme => sourceUri.startsWith(scheme))) {
       throw new RecommendationContractError(`items[${index}] evidence URI is not canonical`);
     }
+    const shortText = typeof ref.short_text === 'string' ? ref.short_text : undefined;
+    if (shortText && shortText.length > 200) {
+      throw new RecommendationContractError(`items[${index}] evidence short_text is too long`);
+    }
     return {
       id: string(ref.id, `items[${index}].evidence_refs[${evidenceIndex}].id`),
       kind: kind as RecommendationEntry['evidence_refs'][number]['kind'],
       source_uri: sourceUri,
       as_of: string(ref.as_of, `items[${index}].evidence_refs[${evidenceIndex}].as_of`),
       hash: hash(ref.hash, `items[${index}].evidence_refs[${evidenceIndex}].hash`),
-      short_text: typeof ref.short_text === 'string' ? ref.short_text : undefined,
+      short_text: shortText,
     };
   });
   if (string(item.disclaimer_version, `items[${index}].disclaimer_version`) !== disclaimerVersion) {
@@ -644,7 +723,13 @@ function parseRecommendation(
   }
   const evidenceIds = new Set(evidenceRefs.map(ref => ref.id));
   const triggerSignals = parseTriggerSignals(item.trigger_signals, evidenceIds, index);
-  const weights = parseWeights(item.weights, index);
+  const catalystRelevance = parseCatalystRelevance(item.catalyst_relevance, index);
+  const weights = parseWeights(
+    item.weights,
+    new Set(triggerSignals.map(signal => signal.code)),
+    catalystRelevance?.catalyst_id,
+    index
+  );
   const tokens = string(explanation.body, `items[${index}].explanation.body`).match(/\[(E\d+)\]/g);
   for (const token of tokens ?? []) {
     if (!evidenceIds.has(token.slice(1, -1))) {
@@ -656,6 +741,17 @@ function parseRecommendation(
     throw new RecommendationContractError(`items[${index}] score total is out of range`);
   }
 
+  const headline = string(explanation.headline, `items[${index}].explanation.headline`);
+  const body = string(explanation.body, `items[${index}].explanation.body`);
+  const caveats = stringArray(explanation.caveats, `items[${index}].explanation.caveats`);
+  if (
+    headline.length > 80 ||
+    body.length > 600 ||
+    caveats.length > 3 ||
+    caveats.some(caveat => caveat.length > 120)
+  ) {
+    throw new RecommendationContractError(`items[${index}] explanation length is invalid`);
+  }
   const templateId = string(explanation.template_id, `items[${index}].explanation.template_id`);
   const templateHash = hash(explanation.template_hash, `items[${index}].explanation.template_hash`);
 
@@ -677,12 +773,13 @@ function parseRecommendation(
     conviction,
     risk_gate: riskGate,
     entry_plan: entryPlan,
+    catalyst_relevance: catalystRelevance,
     trigger_signals: triggerSignals,
     weights,
     explanation: {
-      headline: string(explanation.headline, `items[${index}].explanation.headline`),
-      body: string(explanation.body, `items[${index}].explanation.body`),
-      caveats: stringArray(explanation.caveats, `items[${index}].explanation.caveats`),
+      headline,
+      body,
+      caveats,
       language: explanationLanguage,
       template_id: templateId,
       template_hash: templateHash,
