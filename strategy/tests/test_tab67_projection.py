@@ -37,13 +37,37 @@ class Tab67ProjectionTests(unittest.TestCase):
     def setUp(self):
         self.source = load_fixture("recommendation_list_us_v031.json")
 
-    def test_daily_report_matches_golden_except_byte_aligned_entries(self):
+    def test_daily_report_matches_complete_wire_golden(self):
         report = project_daily_report(self.source)
         golden = load_fixture("daily_report_us_v031.golden.json")
-        golden["entries"] = copy.deepcopy(self.source["items"])
-        golden["markdown"] = report["markdown"]
         self.assertEqual(report, golden)
         self.assertEqual(report["entries"], self.source["items"])
+        self.assertEqual(
+            report["summary"]["item_count"], len(report["entries"])
+        )
+        recommendation_sections = [
+            section
+            for section in report["sections"]
+            if section["kind"] == "recommendation"
+        ]
+        self.assertEqual(len(recommendation_sections), len(report["entries"]))
+        self.assertTrue(report["markdown"])
+        self.assertIn(report["disclaimer"]["full_text"], report["markdown"])
+        self.assertIn(report["source_snapshot_id"], report["markdown"])
+        self.assertIn(
+            report["source_output_fingerprint"], report["markdown"]
+        )
+
+    def test_history_matches_complete_wire_golden(self):
+        history = project_report_history([self.source])
+        golden = load_fixture("report_history_us_v031.golden.json")
+        self.assertEqual(history, golden)
+        self.assertEqual(history["total"], len(history["entries"]))
+        self.assertEqual(history["entries"][0]["source_snapshot_id"], self.source["snapshot_id"])
+        self.assertEqual(
+            history["entries"][0]["source_fingerprint_preimage_jcs"],
+            project_daily_report(self.source)["source_fingerprint_preimage_jcs"],
+        )
 
     def test_markdown_is_deterministic_and_contains_evidence_disclaimer_pins(self):
         first = project_daily_report(self.source)
@@ -55,11 +79,11 @@ class Tab67ProjectionTests(unittest.TestCase):
         self.assertIn(self.source["meta"]["input_fingerprint"], first["markdown"])
         self.assertEqual(
             hashlib.sha256(first["markdown"].encode("utf-8")).hexdigest(),
-            "326d49061f71342c240044658dc06c457f28c6c56c93221d2ff209aa21b4af3b",
+            "050acc13a6082686b5a8bff01eac261fd327f0055d00a8a4a17866b10bb3fb0e",
         )
         self.assertEqual(
             canonical_sha(first),
-            "345687404d41fd1c733ff64428e61935a03354e18281a3c95a6adcca2df6e6a1",
+            "95b144a4db0b6ee1e606c15bfb15dc784c9185ebfd980cbcf4180d73d3325ee6",
         )
 
     def test_empty_list_is_a_valid_report(self):
@@ -110,7 +134,7 @@ class Tab67ProjectionTests(unittest.TestCase):
         self.assertEqual(searched["entries"][0]["trading_day"], "2026-07-12")
         self.assertEqual(
             canonical_sha(project_report_history([self.source])),
-            "7c841cabc90d04218bce75c3d8de625a48f315a6d983cb38f567207ff339213d",
+            "4f6144ef1bcffcebaf53115a25800baa0264825fe214824de1b02677fa144aed",
         )
 
     def test_history_profile_order_is_canonical_for_same_day(self):
@@ -244,6 +268,13 @@ class Tab67ProjectionTests(unittest.TestCase):
         ] = "javascript:alert(1)"
         reseal(noncanonical_uri)
         mutations.append(noncanonical_uri)
+
+        unknown_evidence_kind = copy.deepcopy(self.source)
+        unknown_evidence_kind["items"][0]["recommendation"]["evidence_refs"][0][
+            "kind"
+        ] = "SEC_DISCLOSURE"
+        reseal(unknown_evidence_kind)
+        mutations.append(unknown_evidence_kind)
 
         stale_trigger = copy.deepcopy(self.source)
         stale_trigger["items"][0]["recommendation"]["risk_gate"] = {

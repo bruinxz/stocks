@@ -72,6 +72,17 @@ TIME_HORIZONS = frozenset(
     ("INTRADAY", "SWING", "POSITION", "CORE_HOLD", "LONG_TERM")
 )
 CURRENCIES = frozenset(("USD", "CNY", "HKD", "JPY", "KRW"))
+EVIDENCE_KINDS = frozenset(
+    (
+        "CATALYST_EVENT",
+        "SCORE_INPUT",
+        "PRICE_TICK",
+        "DISCLOSURE",
+        "RULE",
+        "MODEL_OUTPUT",
+        "NEWS",
+    )
+)
 PROFILE_LANGUAGES = {
     "us_preferred": frozenset(("zh-CN", "en-US")),
     "multibagger": frozenset(("zh-CN", "en-US")),
@@ -562,7 +573,8 @@ def _validate_evidence_refs(value: Any, path: str) -> frozenset:
         if evidence_id in ids:
             _fail(item_path + ".id", "must be unique")
         ids.add(evidence_id)
-        _require_nonempty_string(item["kind"], item_path + ".kind")
+        if item["kind"] not in EVIDENCE_KINDS:
+            _fail(item_path + ".kind", "must be a canonical EvidenceKind")
         source_uri = _require_nonempty_string(
             item["source_uri"], item_path + ".source_uri"
         )

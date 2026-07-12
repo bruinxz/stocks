@@ -136,7 +136,7 @@
         "evidence_refs": [
           {
             "id": "E1",
-            "kind": "SEC_DISCLOSURE",
+            "kind": "DISCLOSURE",
             "source_uri": "sec-edgar://0000320193-26-000001#item-8-01",
             "as_of": "2026-07-12T09:00:00Z",
             "hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
@@ -149,7 +149,7 @@
       "rating_band": "A"
     }
   ],
-  "output_fingerprint": "0c488c66dd20f92e735bb097ad5f508ac25d5e536bc5c05c152bd072bfed706c",
+  "output_fingerprint": "c6b756495e25049aaa04ec76f73dddfdc234ea273894f1db88a2a93425855c87",
   "disclaimer": {
     "version": "1.0.0",
     "short_text": "Research reference only.",
