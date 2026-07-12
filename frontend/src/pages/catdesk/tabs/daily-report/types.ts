@@ -83,21 +83,9 @@ export interface RecommendationEntry {
     rating: RatingBand;
     dims: RecommendationScoreDim[];
   };
-  conviction: {
-    final: number;
-    level: 'HIGH' | 'MED' | 'LOW';
-  };
-  risk_gate: {
-    gate: 'GREEN' | 'YELLOW' | 'RED';
-    ok_to_enter: boolean;
-  };
-  entry_plan: {
-    size_hint: {
-      tier: 'TIER_5' | 'TIER_3' | 'TIER_2' | 'TIER_1' | 'SKIP';
-      pct: number;
-      disclaimer_key: 'size_hint_advisory';
-    };
-  };
+  conviction: Conviction;
+  risk_gate: RiskGate;
+  entry_plan: EntryPlan;
   trigger_signals: unknown[];
   weights: Record<string, unknown>;
   explanation: {
@@ -163,3 +151,4 @@ export type DailyReportViewState =
       report: DailyReportDocument;
       generation: GenerationJob;
     };
+import type { Conviction, EntryPlan, RiskGate } from 'shared/scoring/types';

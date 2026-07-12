@@ -9,6 +9,16 @@ import {
   type RecommendationProfile,
   type RecommendationSnapshot,
 } from './types';
+import {
+  RISK_GATE_TRIGGER_CODES_V0_3,
+  type Conviction,
+  type EntryPlan,
+  type GateStatus,
+  type RiskGate,
+  type RiskGateTriggerCode,
+  type ScoreRef,
+  type TriggerSeverity,
+} from 'shared/scoring/types';
 
 type UnknownRecord = Record<string, unknown>;
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -54,6 +64,37 @@ const EVIDENCE_SCHEMES = [
   'news://',
 ] as const;
 const DIM_KEYS = ['Q', 'G', 'V', 'M', 'T', 'R'] as const;
+const TRIGGER_CODES = new Set<string>(RISK_GATE_TRIGGER_CODES_V0_3);
+const TRIGGER_SEVERITIES = new Set<TriggerSeverity>(['info', 'warn', 'block']);
+const TRIGGER_RULES: Record<
+  RiskGateTriggerCode,
+  { severity: TriggerSeverity; scopes: readonly RecommendationMarketScope[] }
+> = {
+  'EARNINGS_T-2': { severity: 'warn', scopes: ['us'] },
+  'EARNINGS_T-0': { severity: 'block', scopes: ['us'] },
+  HALT_ACTIVE: { severity: 'block', scopes: ['us'] },
+  MERGER_PENDING: { severity: 'warn', scopes: ['us'] },
+  LITIGATION_MATERIAL: { severity: 'warn', scopes: ['us'] },
+  IV_SHOCK: { severity: 'warn', scopes: ['us'] },
+  LIQUIDITY_LOW: { severity: 'warn', scopes: ['us'] },
+  RESTATEMENT_30D: { severity: 'block', scopes: ['us'] },
+  DELISTING_NOTICE: { severity: 'block', scopes: ['us'] },
+  ST_TAG: { severity: 'block', scopes: ['cn_a'] },
+  PRICE_LIMIT_APPROACH: { severity: 'warn', scopes: ['cn_a'] },
+  SUSPENDED: { severity: 'block', scopes: ['cn_a'] },
+  TSE_HALT: { severity: 'block', scopes: ['jp'] },
+  EDINET_DELAY: { severity: 'warn', scopes: ['jp'] },
+  CORPORATE_GOVERNANCE_ISSUE: { severity: 'warn', scopes: ['jp'] },
+  TSE_TOKUBETSU_CHI: { severity: 'warn', scopes: ['jp'] },
+  TSE_KANRI: { severity: 'block', scopes: ['jp'] },
+  KRX_HALT: { severity: 'block', scopes: ['kr'] },
+  DART_LATE_FILING: { severity: 'warn', scopes: ['kr'] },
+  INSIDER_TRADING_FLAG: { severity: 'block', scopes: ['kr'] },
+  KRX_UNFAITHFUL: { severity: 'warn', scopes: ['kr'] },
+  KRX_INVESTOR_ALERT: { severity: 'warn', scopes: ['kr'] },
+};
+const CURRENCIES = new Set(['USD', 'CNY', 'HKD', 'JPY', 'KRW']);
+const HORIZONS = new Set(['INTRADAY', 'SWING', 'POSITION', 'CORE_HOLD', 'LONG_TERM']);
 
 export class RecommendationContractError extends Error {
   constructor(message: string) {
@@ -118,6 +159,259 @@ function rejectUnknownKeys(value: UnknownRecord, allowed: readonly string[], lab
       `${label} contains unknown fields: ${unknown.join(', ')}`
     );
   }
+}
+
+function parseScoreRef(value: unknown, label: string): ScoreRef {
+  const ref = record(value, label);
+  rejectUnknownKeys(ref, ['scoring_id', 'snapshot_hash'], label);
+  return {
+    scoring_id: uuid(ref.scoring_id, `${label}.scoring_id`),
+    snapshot_hash: hash(ref.snapshot_hash, `${label}.snapshot_hash`),
+  };
+}
+
+function sameScoreRef(left: ScoreRef, right: ScoreRef): boolean {
+  return left.scoring_id === right.scoring_id && left.snapshot_hash === right.snapshot_hash;
+}
+
+function parseConviction(
+  value: unknown,
+  scoreRef: ScoreRef,
+  ticker: string,
+  index: number
+): Conviction {
+  const label = `items[${index}].recommendation.conviction`;
+  const raw = record(value, label);
+  rejectUnknownKeys(
+    raw,
+    ['ticker', 'as_of', 'base', 'score_ref', 'adjustments', 'final', 'level'],
+    label
+  );
+  if (string(raw.ticker, `${label}.ticker`) !== ticker) {
+    throw new RecommendationContractError(`items[${index}] conviction ticker mismatch`);
+  }
+  const base = number(raw.base, `${label}.base`);
+  const final = number(raw.final, `${label}.final`);
+  if (base < 0 || base > 100 || final < 0 || final > 100) {
+    throw new RecommendationContractError(`items[${index}] conviction is out of range`);
+  }
+  const reference = parseScoreRef(raw.score_ref, `${label}.score_ref`);
+  if (!sameScoreRef(reference, scoreRef)) {
+    throw new RecommendationContractError(`items[${index}] conviction score_ref mismatch`);
+  }
+  if (!Array.isArray(raw.adjustments) || raw.adjustments.length > 5) {
+    throw new RecommendationContractError(`items[${index}] conviction adjustments are invalid`);
+  }
+  const adjustments = raw.adjustments.map((value, adjustmentIndex) => {
+    const adjustment = record(value, `${label}.adjustments[${adjustmentIndex}]`);
+    rejectUnknownKeys(
+      adjustment,
+      ['delta', 'reason', 'kind_ref', 'source_ref'],
+      `${label}.adjustments[${adjustmentIndex}]`
+    );
+    const delta = number(adjustment.delta, `${label}.adjustments[${adjustmentIndex}].delta`);
+    if (delta < -20 || delta > 20) {
+      throw new RecommendationContractError(`items[${index}] adjustment delta is invalid`);
+    }
+    const reason = string(adjustment.reason, `${label}.adjustments[${adjustmentIndex}].reason`);
+    return {
+      delta,
+      reason,
+      kind_ref:
+        typeof adjustment.kind_ref === 'string'
+          ? (adjustment.kind_ref as Conviction['adjustments'][number]['kind_ref'])
+          : undefined,
+      source_ref: typeof adjustment.source_ref === 'string' ? adjustment.source_ref : undefined,
+    };
+  });
+  const deltaSum = adjustments.reduce((sum, adjustment) => sum + adjustment.delta, 0);
+  if (deltaSum < -20 || deltaSum > 20 || final !== Math.max(0, Math.min(100, base + deltaSum))) {
+    throw new RecommendationContractError(`items[${index}] conviction final mismatch`);
+  }
+  const level = string(raw.level, `${label}.level`);
+  const expectedLevel = final >= 75 ? 'HIGH' : final >= 50 ? 'MED' : 'LOW';
+  if (level !== expectedLevel) {
+    throw new RecommendationContractError(`items[${index}] conviction level mismatch`);
+  }
+  return {
+    ticker,
+    as_of: string(raw.as_of, `${label}.as_of`),
+    base,
+    score_ref: reference,
+    adjustments,
+    final,
+    level: expectedLevel,
+  };
+}
+
+function deriveGate(triggers: RiskGate['triggers']): GateStatus {
+  if (triggers.some(trigger => trigger.severity === 'block')) return 'RED';
+  if (triggers.some(trigger => trigger.severity === 'warn')) return 'YELLOW';
+  return 'GREEN';
+}
+
+function parseRiskGate(
+  value: unknown,
+  ticker: string,
+  marketScope: RecommendationMarketScope,
+  index: number
+): RiskGate {
+  const label = `items[${index}].recommendation.risk_gate`;
+  const raw = record(value, label);
+  rejectUnknownKeys(raw, ['ticker', 'evaluated_at', 'gate', 'triggers', 'ok_to_enter'], label);
+  if (string(raw.ticker, `${label}.ticker`) !== ticker) {
+    throw new RecommendationContractError(`items[${index}] risk ticker mismatch`);
+  }
+  if (!Array.isArray(raw.triggers)) {
+    throw new RecommendationContractError(`items[${index}] risk triggers must be an array`);
+  }
+  const triggers = raw.triggers.map((value, triggerIndex) => {
+    const trigger = record(value, `${label}.triggers[${triggerIndex}]`);
+    rejectUnknownKeys(
+      trigger,
+      ['code', 'severity', 'detail'],
+      `${label}.triggers[${triggerIndex}]`
+    );
+    const code = string(trigger.code, `${label}.triggers[${triggerIndex}].code`);
+    if (!TRIGGER_CODES.has(code)) {
+      throw new RecommendationContractError(`items[${index}] risk trigger code is invalid`);
+    }
+    const severity = string(trigger.severity, `${label}.triggers[${triggerIndex}].severity`);
+    if (!TRIGGER_SEVERITIES.has(severity as TriggerSeverity)) {
+      throw new RecommendationContractError(`items[${index}] risk trigger severity is invalid`);
+    }
+    const rule = TRIGGER_RULES[code as RiskGateTriggerCode];
+    if (severity !== rule.severity) {
+      throw new RecommendationContractError(`items[${index}] risk trigger severity mismatch`);
+    }
+    if (!rule.scopes.includes(marketScope)) {
+      throw new RecommendationContractError(`items[${index}] risk trigger market mismatch`);
+    }
+    return {
+      code: code as RiskGateTriggerCode,
+      severity: severity as TriggerSeverity,
+      detail: string(trigger.detail, `${label}.triggers[${triggerIndex}].detail`),
+    };
+  });
+  const gate = string(raw.gate, `${label}.gate`) as GateStatus;
+  const expectedGate = deriveGate(triggers);
+  if (gate !== expectedGate) {
+    throw new RecommendationContractError(`items[${index}] risk gate derivation mismatch`);
+  }
+  const okToEnter = boolean(raw.ok_to_enter, `${label}.ok_to_enter`);
+  if (okToEnter !== (gate === 'GREEN')) {
+    throw new RecommendationContractError(`items[${index}] risk ok_to_enter mismatch`);
+  }
+  return {
+    ticker,
+    evaluated_at: string(raw.evaluated_at, `${label}.evaluated_at`),
+    gate,
+    triggers,
+    ok_to_enter: okToEnter,
+  };
+}
+
+function parseCurrency(value: unknown, label: string): string {
+  const currency = string(value, label);
+  if (!CURRENCIES.has(currency)) throw new RecommendationContractError(`${label} is invalid`);
+  return currency;
+}
+
+function parseEntryPlan(
+  value: unknown,
+  scoreRef: ScoreRef,
+  ticker: string,
+  convictionFinal: number,
+  index: number
+): EntryPlan {
+  const label = `items[${index}].recommendation.entry_plan`;
+  const raw = record(value, label);
+  rejectUnknownKeys(
+    raw,
+    [
+      'ticker',
+      'generated_at',
+      'entry',
+      'stop',
+      'targets',
+      'size_hint',
+      'time_horizon',
+      'invalidation',
+      'conviction_ref',
+      'score_ref',
+    ],
+    label
+  );
+  if (string(raw.ticker, `${label}.ticker`) !== ticker) {
+    throw new RecommendationContractError(`items[${index}] entry ticker mismatch`);
+  }
+  const reference = parseScoreRef(raw.score_ref, `${label}.score_ref`);
+  if (!sameScoreRef(reference, scoreRef)) {
+    throw new RecommendationContractError(`items[${index}] entry score_ref mismatch`);
+  }
+  const entry = record(raw.entry, `${label}.entry`);
+  rejectUnknownKeys(entry, ['low', 'high', 'currency'], `${label}.entry`);
+  const entryLow = number(entry.low, `${label}.entry.low`);
+  const entryHigh = number(entry.high, `${label}.entry.high`);
+  const entryCurrency = parseCurrency(entry.currency, `${label}.entry.currency`) as
+    'USD' | 'CNY' | 'HKD' | 'JPY' | 'KRW';
+  if (entryLow > entryHigh) {
+    throw new RecommendationContractError(`items[${index}] entry price band is invalid`);
+  }
+  const parsePrice = (source: unknown, priceLabel: string) => {
+    const price = record(source, priceLabel);
+    rejectUnknownKeys(price, ['value', 'currency'], priceLabel);
+    const currency = parseCurrency(price.currency, `${priceLabel}.currency`);
+    if (currency !== entryCurrency) {
+      throw new RecommendationContractError(`items[${index}] price currency mismatch`);
+    }
+    return { value: number(price.value, `${priceLabel}.value`), currency };
+  };
+  const stop = parsePrice(raw.stop, `${label}.stop`);
+  if (!Array.isArray(raw.targets) || raw.targets.length === 0) {
+    throw new RecommendationContractError(`items[${index}] targets are required`);
+  }
+  const targets = raw.targets.map((target, targetIndex) =>
+    parsePrice(target, `${label}.targets[${targetIndex}]`)
+  );
+  const sizeHint = record(raw.size_hint, `${label}.size_hint`);
+  rejectUnknownKeys(sizeHint, ['tier', 'pct', 'disclaimer_key', 'rationale'], `${label}.size_hint`);
+  const tier = string(sizeHint.tier, `${label}.size_hint.tier`);
+  if (!(tier in SIZE_HINT_PCT)) {
+    throw new RecommendationContractError(`items[${index}] size_hint tier is invalid`);
+  }
+  const pct = number(sizeHint.pct, `${label}.size_hint.pct`);
+  if (pct !== SIZE_HINT_PCT[tier as keyof typeof SIZE_HINT_PCT]) {
+    throw new RecommendationContractError(`items[${index}] size_hint pct mismatch`);
+  }
+  if (sizeHint.disclaimer_key !== 'size_hint_advisory') {
+    throw new RecommendationContractError(`items[${index}] size_hint disclaimer key is invalid`);
+  }
+  const horizon = string(raw.time_horizon, `${label}.time_horizon`);
+  if (!HORIZONS.has(horizon)) {
+    throw new RecommendationContractError(`items[${index}] time_horizon is invalid`);
+  }
+  const convictionRef = number(raw.conviction_ref, `${label}.conviction_ref`);
+  if (convictionRef !== convictionFinal) {
+    throw new RecommendationContractError(`items[${index}] conviction_ref mismatch`);
+  }
+  return {
+    ticker,
+    generated_at: string(raw.generated_at, `${label}.generated_at`),
+    entry: { low: entryLow, high: entryHigh, currency: entryCurrency },
+    stop,
+    targets,
+    size_hint: {
+      tier: tier as EntryPlan['size_hint']['tier'],
+      pct,
+      disclaimer_key: 'size_hint_advisory',
+      rationale: string(sizeHint.rationale, `${label}.size_hint.rationale`),
+    },
+    time_horizon: horizon as EntryPlan['time_horizon'],
+    invalidation: string(raw.invalidation, `${label}.invalidation`),
+    conviction_ref: convictionRef,
+    score_ref: reference,
+  };
 }
 
 function parseProfile(value: unknown): RecommendationProfile {
@@ -196,38 +490,11 @@ function parseRecommendation(
   if (Math.abs(weightSum - 1) > 1e-6) {
     throw new RecommendationContractError(`items[${index}] score dim weights must sum to 1`);
   }
-  const conviction = record(item.conviction, `items[${index}].recommendation.conviction`);
-  const convictionLevel = string(
-    conviction.level,
-    `items[${index}].recommendation.conviction.level`
-  );
-  if (!['HIGH', 'MED', 'LOW'].includes(convictionLevel)) {
-    throw new RecommendationContractError(`items[${index}] conviction level is invalid`);
-  }
-  const riskGate = record(item.risk_gate, `items[${index}].recommendation.risk_gate`);
-  const gate = string(riskGate.gate, `items[${index}].recommendation.risk_gate.gate`);
-  if (!['GREEN', 'YELLOW', 'RED'].includes(gate)) {
-    throw new RecommendationContractError(`items[${index}] risk gate is invalid`);
-  }
-  if (!boolean(riskGate.ok_to_enter, `items[${index}].risk_gate.ok_to_enter`)) {
-    throw new RecommendationContractError(`items[${index}] risk gate blocks entry`);
-  }
-  const entryPlan = record(item.entry_plan, `items[${index}].recommendation.entry_plan`);
-  const sizeHint = record(
-    entryPlan.size_hint,
-    `items[${index}].recommendation.entry_plan.size_hint`
-  );
-  const sizeTier = string(sizeHint.tier, `items[${index}].size_hint.tier`);
-  if (!(sizeTier in SIZE_HINT_PCT)) {
-    throw new RecommendationContractError(`items[${index}] size_hint tier is invalid`);
-  }
-  const sizePct = number(sizeHint.pct, `items[${index}].size_hint.pct`);
-  if (sizePct !== SIZE_HINT_PCT[sizeTier as keyof typeof SIZE_HINT_PCT]) {
-    throw new RecommendationContractError(`items[${index}] size_hint pct mismatch`);
-  }
-  if (sizeHint.disclaimer_key !== 'size_hint_advisory') {
-    throw new RecommendationContractError(`items[${index}] size_hint disclaimer key is invalid`);
-  }
+  const scoreRef = { scoring_id: scoringId, snapshot_hash: snapshotHash };
+  const ticker = string(item.ticker, `items[${index}].recommendation.ticker`);
+  const conviction = parseConviction(item.conviction, scoreRef, ticker, index);
+  const riskGate = parseRiskGate(item.risk_gate, ticker, marketScope, index);
+  const entryPlan = parseEntryPlan(item.entry_plan, scoreRef, ticker, conviction.final, index);
   const explanation = record(item.explanation, `items[${index}].recommendation.explanation`);
   const explanationLanguage = parseLocale(
     explanation.language,
@@ -284,7 +551,7 @@ function parseRecommendation(
     ...item,
     id: uuid(item.id, `items[${index}].recommendation.id`),
     snapshot_id: snapshotId,
-    ticker: string(item.ticker, `items[${index}].recommendation.ticker`),
+    ticker,
     as_of: string(item.as_of, `items[${index}].recommendation.as_of`),
     score: {
       scoring_id: scoringId,
@@ -295,21 +562,9 @@ function parseRecommendation(
       rating,
       dims,
     },
-    conviction: {
-      final: number(conviction.final, `items[${index}].recommendation.conviction.final`),
-      level: convictionLevel as 'HIGH' | 'MED' | 'LOW',
-    },
-    risk_gate: {
-      gate: gate as 'GREEN' | 'YELLOW' | 'RED',
-      ok_to_enter: true,
-    },
-    entry_plan: {
-      size_hint: {
-        tier: sizeTier as 'TIER_5' | 'TIER_3' | 'TIER_2' | 'TIER_1' | 'SKIP',
-        pct: sizePct,
-        disclaimer_key: 'size_hint_advisory',
-      },
-    },
+    conviction,
+    risk_gate: riskGate,
+    entry_plan: entryPlan,
     trigger_signals: item.trigger_signals,
     weights: record(item.weights, `items[${index}].recommendation.weights`),
     explanation: {

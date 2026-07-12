@@ -101,7 +101,7 @@ describe('Recommendation v0.3.1 frontend adapter', () => {
           },
         ],
       })
-    ).toThrow(/blocks entry/);
+    ).toThrow(/unknown fields|ticker|gate/);
     expect(() =>
       parseRecommendationSnapshot({
         ...base,
@@ -111,10 +111,11 @@ describe('Recommendation v0.3.1 frontend adapter', () => {
             recommendation: {
               ...base.items[0].recommendation,
               entry_plan: {
+                ...base.items[0].recommendation.entry_plan,
                 size_hint: {
+                  ...base.items[0].recommendation.entry_plan.size_hint,
                   tier: 'TIER_3',
                   pct: 5,
-                  disclaimer_key: 'size_hint_advisory',
                 },
               },
             },
@@ -122,6 +123,118 @@ describe('Recommendation v0.3.1 frontend adapter', () => {
         ],
       })
     ).toThrow(/pct mismatch/);
+  });
+
+  test('rejects shortened nested DTOs, adjustment math, gate derivation, and ref mismatches', () => {
+    const base = snapshotFixture();
+    expect(() =>
+      parseRecommendationSnapshot({
+        ...base,
+        items: [
+          {
+            ...base.items[0],
+            recommendation: {
+              ...base.items[0].recommendation,
+              conviction: { final: 88, level: 'HIGH' },
+            },
+          },
+        ],
+      })
+    ).toThrow(/unknown fields|ticker/);
+    expect(() =>
+      parseRecommendationSnapshot({
+        ...base,
+        items: [
+          {
+            ...base.items[0],
+            recommendation: {
+              ...base.items[0].recommendation,
+              conviction: {
+                ...base.items[0].recommendation.conviction,
+                final: 99,
+              },
+            },
+          },
+        ],
+      })
+    ).toThrow(/final mismatch/);
+    expect(() =>
+      parseRecommendationSnapshot({
+        ...base,
+        items: [
+          {
+            ...base.items[0],
+            recommendation: {
+              ...base.items[0].recommendation,
+              risk_gate: {
+                ...base.items[0].recommendation.risk_gate,
+                gate: 'YELLOW',
+                ok_to_enter: true,
+                triggers: [{ code: 'LIQUIDITY_LOW', severity: 'warn', detail: 'thin liquidity' }],
+              },
+            },
+          },
+        ],
+      })
+    ).toThrow(/ok_to_enter/);
+    expect(() =>
+      parseRecommendationSnapshot({
+        ...base,
+        items: [
+          {
+            ...base.items[0],
+            recommendation: {
+              ...base.items[0].recommendation,
+              entry_plan: {
+                ...base.items[0].recommendation.entry_plan,
+                score_ref: {
+                  ...base.items[0].recommendation.entry_plan.score_ref,
+                  snapshot_hash: 'f'.repeat(64),
+                },
+              },
+            },
+          },
+        ],
+      })
+    ).toThrow(/score_ref mismatch/);
+    expect(() =>
+      parseRecommendationSnapshot({
+        ...base,
+        items: [
+          {
+            ...base.items[0],
+            recommendation: {
+              ...base.items[0].recommendation,
+              risk_gate: {
+                ...base.items[0].recommendation.risk_gate,
+                gate: 'RED',
+                ok_to_enter: false,
+                triggers: [{ code: 'LIQUIDITY_LOW', severity: 'block', detail: 'bad severity' }],
+              },
+            },
+          },
+        ],
+      })
+    ).toThrow(/severity mismatch/);
+    expect(() =>
+      parseRecommendationSnapshot({
+        ...base,
+        items: [
+          {
+            ...base.items[0],
+            recommendation: {
+              ...base.items[0].recommendation,
+              risk_gate: {
+                ...base.items[0].recommendation.risk_gate,
+                gate: 'RED',
+                ok_to_enter: false,
+                triggers: [{ code: 'TSE_HALT', severity: 'block', detail: 'wrong market' }],
+              },
+            },
+          },
+        ],
+      })
+    ).toThrow(/market mismatch/);
   });
 
   test('rejects malformed score dims and noncanonical evidence URIs', () => {
