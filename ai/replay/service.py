@@ -4,6 +4,7 @@ import datetime as _datetime
 import hashlib
 import re
 import uuid
+from collections.abc import Mapping
 from typing import Callable, Optional
 
 from ai.replay.ports import (
@@ -198,8 +199,6 @@ class ReplayService:
     def _load_source(kind: str, loader, pins: ReplayPins) -> SourceSlice:
         try:
             return loader(pins)
-        except ReplayServiceError:
-            raise
         except Exception as error:
             raise ReplaySourceError(f"{kind} source unavailable") from error
 
@@ -278,6 +277,10 @@ class ReplayService:
         )
         if not isinstance(source_slice.records, tuple):
             raise ReplaySourceError(f"{expected_kind} records must be a tuple")
+        if any(not isinstance(record, Mapping) for record in source_slice.records):
+            raise ReplaySourceError(
+                f"{expected_kind} records must contain JSON objects"
+            )
         try:
             records_jcs = jcs_canonicalize(source_slice.records)
         except (TypeError, ValueError) as error:

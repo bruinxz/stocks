@@ -247,6 +247,18 @@ class ReplayServiceTests(unittest.TestCase):
         self.assertEqual(failed.error_detail, "signals source unavailable")
         self.assertNotIn("secret", failed.error_detail)
 
+        class FailingDomainSource:
+            def load_signals(self, _pins):
+                from ai.replay.service import ReplaySourceError
+
+                raise ReplaySourceError("credential=domain-secret")
+
+        service2, _ = _service(pins=pins)
+        service2._signal_source = FailingDomainSource()
+        failed2 = service2.run(service2.submit(pins).job_id)
+        self.assertEqual(failed2.error_detail, "signals source unavailable")
+        self.assertNotIn("secret", failed2.error_detail)
+
     def test_invalid_profiles_scopes_versions_hashes_and_dates_are_rejected(self):
         invalid = [
             _pins(profile="custom"),
@@ -340,6 +352,20 @@ class ReplayServiceTests(unittest.TestCase):
 
         self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
         self.assertIn("JSON/JCS", failed.error_detail)
+
+    def test_scalar_source_records_fail_closed(self):
+        pins = _pins()
+        service, sources = _service(pins=pins)
+        sources["universe"].source_slice = replace(
+            sources["universe"].source_slice,
+            records=(1,),
+            content_hash=hashlib.sha256(b"[1]").hexdigest(),
+        )
+
+        failed = service.run(service.submit(pins).job_id)
+
+        self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
+        self.assertIn("JSON objects", failed.error_detail)
 
 
 if __name__ == "__main__":
