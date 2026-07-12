@@ -8,6 +8,8 @@ import {
   type RecommendationMarketScope,
   type RecommendationProfile,
   type RecommendationSnapshot,
+  type RecommendationTriggerSignal,
+  type RecommendationWeights,
 } from './types';
 import {
   RISK_GATE_TRIGGER_CODES_V0_3,
@@ -95,6 +97,23 @@ const TRIGGER_RULES: Record<
 };
 const CURRENCIES = new Set(['USD', 'CNY', 'HKD', 'JPY', 'KRW']);
 const HORIZONS = new Set(['INTRADAY', 'SWING', 'POSITION', 'CORE_HOLD', 'LONG_TERM']);
+const SIGNAL_CODES = new Set<RecommendationTriggerSignal['code']>([
+  'CATALYST_MATCHED',
+  'CONVICTION_HIGH',
+  'SCORE_TOTAL_TOP',
+  'DIM_BAND_A',
+  'RISK_GATE_CLEAN',
+  'ENTRY_PLAN_TIGHT',
+  'EVENT_FRESH',
+  'SECTOR_MOMENTUM',
+  'RULE_MATCHED',
+  'MODEL_INFERENCE',
+]);
+const SIGNAL_STRENGTHS = new Set<RecommendationTriggerSignal['strength']>([
+  'STRONG',
+  'MEDIUM',
+  'WEAK',
+]);
 
 export class RecommendationContractError extends Error {
   constructor(message: string) {
@@ -302,6 +321,9 @@ function parseRiskGate(
   if (okToEnter !== (gate === 'GREEN')) {
     throw new RecommendationContractError(`items[${index}] risk ok_to_enter mismatch`);
   }
+  if (gate !== 'GREEN' || !okToEnter) {
+    throw new RecommendationContractError(`items[${index}] persisted risk gate must be GREEN`);
+  }
   return {
     ticker,
     evaluated_at: string(raw.evaluated_at, `${label}.evaluated_at`),
@@ -309,6 +331,94 @@ function parseRiskGate(
     triggers,
     ok_to_enter: okToEnter,
   };
+}
+
+function parseWeights(value: unknown, index: number): RecommendationWeights {
+  const label = `items[${index}].recommendation.weights`;
+  const raw = record(value, label);
+  rejectUnknownKeys(raw, ['contributions', 'normalized'], label);
+  if (!Array.isArray(raw.contributions) || typeof raw.normalized !== 'boolean') {
+    throw new RecommendationContractError(`items[${index}] weights shape is invalid`);
+  }
+  if (raw.contributions.length === 0) {
+    if (raw.normalized !== false) {
+      throw new RecommendationContractError(`items[${index}] zero weights must be unnormalized`);
+    }
+    return { contributions: [], normalized: false };
+  }
+  if (raw.normalized !== true) {
+    throw new RecommendationContractError(`items[${index}] nonempty weights must be normalized`);
+  }
+  const contributions = raw.contributions.map((value, contributionIndex) => {
+    const source = record(value, `${label}.contributions[${contributionIndex}]`);
+    rejectUnknownKeys(
+      source,
+      ['source_kind', 'source_ref', 'weight', 'note'],
+      `${label}.contributions[${contributionIndex}]`
+    );
+    const sourceKind = string(
+      source.source_kind,
+      `${label}.contributions[${contributionIndex}].source_kind`
+    );
+    if (!['trigger', 'score_dim', 'catalyst_relevance'].includes(sourceKind)) {
+      throw new RecommendationContractError(`items[${index}] weight source_kind is invalid`);
+    }
+    const weight = number(source.weight, `${label}.contributions[${contributionIndex}].weight`);
+    if (weight < -1 || weight > 1) {
+      throw new RecommendationContractError(`items[${index}] contribution weight is invalid`);
+    }
+    return {
+      source_kind: sourceKind as RecommendationWeights['contributions'][number]['source_kind'],
+      source_ref: string(
+        source.source_ref,
+        `${label}.contributions[${contributionIndex}].source_ref`
+      ),
+      weight,
+      note: typeof source.note === 'string' ? source.note : undefined,
+    };
+  });
+  const l1 = contributions.reduce((sum, contribution) => sum + Math.abs(contribution.weight), 0);
+  if (Math.abs(l1 - 1) > 1e-6) {
+    throw new RecommendationContractError(`items[${index}] contribution L1 must equal 1`);
+  }
+  return { contributions, normalized: true };
+}
+
+function parseTriggerSignals(
+  value: unknown,
+  evidenceIds: ReadonlySet<string>,
+  index: number
+): RecommendationTriggerSignal[] {
+  const label = `items[${index}].recommendation.trigger_signals`;
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new RecommendationContractError(`items[${index}].trigger_signals is empty`);
+  }
+  return value.map((rawValue, signalIndex) => {
+    const signal = record(rawValue, `${label}[${signalIndex}]`);
+    rejectUnknownKeys(
+      signal,
+      ['code', 'strength', 'detail', 'source_ref'],
+      `${label}[${signalIndex}]`
+    );
+    const code = string(signal.code, `${label}[${signalIndex}].code`);
+    if (!SIGNAL_CODES.has(code as RecommendationTriggerSignal['code'])) {
+      throw new RecommendationContractError(`items[${index}] trigger signal code is invalid`);
+    }
+    const strength = string(signal.strength, `${label}[${signalIndex}].strength`);
+    if (!SIGNAL_STRENGTHS.has(strength as RecommendationTriggerSignal['strength'])) {
+      throw new RecommendationContractError(`items[${index}] trigger signal strength is invalid`);
+    }
+    const sourceRef = typeof signal.source_ref === 'string' ? signal.source_ref : undefined;
+    if (sourceRef && !evidenceIds.has(sourceRef)) {
+      throw new RecommendationContractError(`items[${index}] trigger source_ref is unknown`);
+    }
+    return {
+      code: code as RecommendationTriggerSignal['code'],
+      strength: strength as RecommendationTriggerSignal['strength'],
+      detail: string(signal.detail, `${label}[${signalIndex}].detail`),
+      source_ref: sourceRef,
+    };
+  });
 }
 
 function parseCurrency(value: unknown, label: string): string {
@@ -529,13 +639,12 @@ function parseRecommendation(
       short_text: typeof ref.short_text === 'string' ? ref.short_text : undefined,
     };
   });
-  if (!Array.isArray(item.trigger_signals) || item.trigger_signals.length === 0) {
-    throw new RecommendationContractError(`items[${index}].trigger_signals is empty`);
-  }
   if (string(item.disclaimer_version, `items[${index}].disclaimer_version`) !== disclaimerVersion) {
     throw new RecommendationContractError(`items[${index}] disclaimer_version mismatch`);
   }
   const evidenceIds = new Set(evidenceRefs.map(ref => ref.id));
+  const triggerSignals = parseTriggerSignals(item.trigger_signals, evidenceIds, index);
+  const weights = parseWeights(item.weights, index);
   const tokens = string(explanation.body, `items[${index}].explanation.body`).match(/\[(E\d+)\]/g);
   for (const token of tokens ?? []) {
     if (!evidenceIds.has(token.slice(1, -1))) {
@@ -546,6 +655,9 @@ function parseRecommendation(
   if (scoreTotal < 0 || scoreTotal > 100) {
     throw new RecommendationContractError(`items[${index}] score total is out of range`);
   }
+
+  const templateId = string(explanation.template_id, `items[${index}].explanation.template_id`);
+  const templateHash = hash(explanation.template_hash, `items[${index}].explanation.template_hash`);
 
   return {
     ...item,
@@ -565,13 +677,15 @@ function parseRecommendation(
     conviction,
     risk_gate: riskGate,
     entry_plan: entryPlan,
-    trigger_signals: item.trigger_signals,
-    weights: record(item.weights, `items[${index}].recommendation.weights`),
+    trigger_signals: triggerSignals,
+    weights,
     explanation: {
       headline: string(explanation.headline, `items[${index}].explanation.headline`),
       body: string(explanation.body, `items[${index}].explanation.body`),
       caveats: stringArray(explanation.caveats, `items[${index}].explanation.caveats`),
       language: explanationLanguage,
+      template_id: templateId,
+      template_hash: templateHash,
     },
     evidence_refs: evidenceRefs,
     model_version: string(item.model_version, `items[${index}].model_version`),

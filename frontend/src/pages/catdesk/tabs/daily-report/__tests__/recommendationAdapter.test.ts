@@ -277,6 +277,125 @@ describe('Recommendation v0.3.1 frontend adapter', () => {
     ).toThrow(/canonical/);
   });
 
+  test('rejects non-green persisted gates, incomplete explanations, bad weights and signals', () => {
+    const base = snapshotFixture();
+    expect(() =>
+      parseRecommendationSnapshot({
+        ...base,
+        items: [
+          {
+            ...base.items[0],
+            recommendation: {
+              ...base.items[0].recommendation,
+              risk_gate: {
+                ...base.items[0].recommendation.risk_gate,
+                gate: 'YELLOW',
+                ok_to_enter: false,
+                triggers: [{ code: 'LIQUIDITY_LOW', severity: 'warn', detail: 'thin liquidity' }],
+              },
+            },
+          },
+        ],
+      })
+    ).toThrow(/must be GREEN/);
+    expect(() =>
+      parseRecommendationSnapshot({
+        ...base,
+        items: [
+          {
+            ...base.items[0],
+            recommendation: {
+              ...base.items[0].recommendation,
+              explanation: {
+                ...base.items[0].recommendation.explanation,
+                template_hash: undefined,
+              },
+            },
+          },
+        ],
+      })
+    ).toThrow(/template_hash/);
+    expect(() =>
+      parseRecommendationSnapshot({
+        ...base,
+        items: [
+          {
+            ...base.items[0],
+            recommendation: {
+              ...base.items[0].recommendation,
+              weights: {
+                normalized: true,
+                contributions: [
+                  {
+                    source_kind: 'trigger',
+                    source_ref: 'CATALYST_MATCHED',
+                    weight: 0.5,
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      })
+    ).toThrow(/L1/);
+    expect(() =>
+      parseRecommendationSnapshot({
+        ...base,
+        items: [
+          {
+            ...base.items[0],
+            recommendation: {
+              ...base.items[0].recommendation,
+              weights: { normalized: true, contributions: [] },
+            },
+          },
+        ],
+      })
+    ).toThrow(/zero weights/);
+    expect(() =>
+      parseRecommendationSnapshot({
+        ...base,
+        items: [
+          {
+            ...base.items[0],
+            recommendation: {
+              ...base.items[0].recommendation,
+              trigger_signals: [
+                {
+                  code: 'UNKNOWN_SIGNAL',
+                  strength: 'STRONG',
+                  detail: 'invalid code',
+                  source_ref: 'E1',
+                },
+              ],
+            },
+          },
+        ],
+      })
+    ).toThrow(/signal code/);
+    expect(() =>
+      parseRecommendationSnapshot({
+        ...base,
+        items: [
+          {
+            ...base.items[0],
+            recommendation: {
+              ...base.items[0].recommendation,
+              trigger_signals: [
+                {
+                  code: 'CATALYST_MATCHED',
+                  strength: 'STRONG',
+                  detail: 'missing evidence',
+                  source_ref: 'E9',
+                },
+              ],
+            },
+          },
+        ],
+      })
+    ).toThrow(/source_ref/);
+  });
+
   test('allows an empty item list while retaining envelope and disclaimer', () => {
     const parsed = parseRecommendationSnapshot(snapshotFixture({ items: [] }));
     expect(parsed.items).toEqual([]);

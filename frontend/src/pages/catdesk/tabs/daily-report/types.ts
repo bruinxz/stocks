@@ -69,6 +69,36 @@ export interface RecommendationScoreDim {
   weight: number;
 }
 
+export type TriggerSignalCode =
+  | 'CATALYST_MATCHED'
+  | 'CONVICTION_HIGH'
+  | 'SCORE_TOTAL_TOP'
+  | 'DIM_BAND_A'
+  | 'RISK_GATE_CLEAN'
+  | 'ENTRY_PLAN_TIGHT'
+  | 'EVENT_FRESH'
+  | 'SECTOR_MOMENTUM'
+  | 'RULE_MATCHED'
+  | 'MODEL_INFERENCE';
+
+export interface RecommendationTriggerSignal {
+  code: TriggerSignalCode;
+  strength: 'STRONG' | 'MEDIUM' | 'WEAK';
+  detail: string;
+  source_ref?: string;
+}
+
+export interface RecommendationContribution {
+  source_kind: 'trigger' | 'score_dim' | 'catalyst_relevance';
+  source_ref: string;
+  weight: number;
+  note?: string;
+}
+
+export type RecommendationWeights =
+  | { contributions: RecommendationContribution[]; normalized: true }
+  | { contributions: []; normalized: false };
+
 export interface RecommendationEntry {
   id: string;
   snapshot_id: string;
@@ -86,13 +116,15 @@ export interface RecommendationEntry {
   conviction: Conviction;
   risk_gate: RiskGate;
   entry_plan: EntryPlan;
-  trigger_signals: unknown[];
-  weights: Record<string, unknown>;
+  trigger_signals: RecommendationTriggerSignal[];
+  weights: RecommendationWeights;
   explanation: {
     headline: string;
     body: string;
     caveats: string[];
     language: RecommendationLocale;
+    template_id: string;
+    template_hash: string;
   };
   evidence_refs: RecommendationEvidenceRef[];
   model_version: string;

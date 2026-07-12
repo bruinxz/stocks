@@ -69,13 +69,22 @@ export function recommendationFixture(
         snapshot_hash: HASH_A,
       },
     },
-    trigger_signals: [{ code: 'CATALYST_MATCHED' }],
+    trigger_signals: [
+      {
+        code: 'CATALYST_MATCHED',
+        strength: 'STRONG',
+        detail: 'public catalyst matched',
+        source_ref: 'E1',
+      },
+    ],
     weights: { contributions: [], normalized: false },
     explanation: {
       headline: '新品周期进入验证窗',
       body: '需求与供给信号同时改善 [E1]',
       caveats: ['财报窗口前波动可能放大'],
       language: 'zh-CN',
+      template_id: 'morning_brief_v1',
+      template_hash: HASH_C,
     },
     evidence_refs: [
       {
