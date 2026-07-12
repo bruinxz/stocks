@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Any
 import uuid
 import time
 
@@ -25,6 +26,10 @@ class PipelineConfig:
     rule_bundle_hash: str
     template_hash: str
     disclaimer_hash: str
+    contract_version: str
+    profile_version: str
+    disclaimer: dict[str, Any]
+    input_hashes: tuple[str, ...]
 
 
 class PipelineRunner:
@@ -49,6 +54,7 @@ class PipelineRunner:
             snapshot_id=str(uuid.uuid4()),
             as_of=as_of,
             config=self._config,
+            input_hashes=list(self._config.input_hashes),
         )
 
         start_ms = time.monotonic()

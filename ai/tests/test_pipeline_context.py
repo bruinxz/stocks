@@ -1,4 +1,5 @@
 import unittest
+import hashlib
 from types import SimpleNamespace
 
 from ai.pipeline.context import PipelineContext, RecommendationContractError
@@ -7,18 +8,41 @@ from ai.validation.output_validator import OutputValidator
 
 
 def _config():
+    full_text = "Research only. No investment promise."
     return SimpleNamespace(
         profile="us_preferred",
         market_scope="us",
         strategy_version="strategy@v0.3.1",
         pipeline_version="pipeline@v0.3.1",
+        contract_version="0.3.1",
+        profile_version="profile@v0.3.1",
+        disclaimer_hash=hashlib.sha256(full_text.encode("utf-8")).hexdigest(),
+        disclaimer={
+            "version": "none",
+            "short_text": "Research only.",
+            "full_text": full_text,
+            "language": "en-US",
+            "effective_at": "2026-07-01T00:00:00Z",
+            "hash": hashlib.sha256(full_text.encode("utf-8")).hexdigest(),
+        },
     )
 
 
 def _recommendation(weights, score=None, ticker="AAPL"):
+    ids = {
+        "AAPL": "22345678-1234-4234-8234-567812345678",
+        "MSFT": "32345678-1234-4234-8234-567812345678",
+        "LEGACY": "42345678-1234-4234-8234-567812345678",
+        "INVALID": "52345678-1234-4234-8234-567812345678",
+        "TICKER-A": "62345678-1234-4234-8234-567812345678",
+        "TICKER-B": "72345678-1234-4234-8234-567812345678",
+        "TICKER-C": "82345678-1234-4234-8234-567812345678",
+        "TICKER-D": "92345678-1234-4234-8234-567812345678",
+        "TICKER-F": "a2345678-1234-4234-8234-567812345678",
+    }
     return {
-        "id": f"rec-{ticker}",
-        "snapshot_id": "snapshot-1",
+        "id": ids[ticker],
+        "snapshot_id": "12345678-1234-4234-8234-567812345678",
         "ticker": ticker,
         "as_of": "2026-07-11T00:00:00Z",
         "score": score or {
@@ -64,11 +88,12 @@ def _recommendation(weights, score=None, ticker="AAPL"):
 
 def _context_with(recommendation):
     ctx = PipelineContext(
-        snapshot_id="12345678-1234-5678-1234-567812345678",
+        snapshot_id="12345678-1234-4234-8234-567812345678",
         as_of="2026-07-11T00:00:00Z",
         config=_config(),
     )
     ctx.recommendations.append(recommendation)
+    ctx.input_hashes.extend(["a" * 64, "b" * 64])
     return ctx
 
 
@@ -244,6 +269,30 @@ class PipelineContextRatingBandTests(unittest.TestCase):
                     any(expected_error in error for error in errors),
                     errors,
                 )
+
+    def test_missing_pins_disclaimer_and_inputs_fail_closed(self):
+        recommendation = _recommendation(
+            weights={"contributions": [], "normalized": False}
+        )
+        cases = (
+            "contract_version",
+            "profile_version",
+            "disclaimer",
+            "disclaimer_hash",
+            "disclaimer_hash_mismatch",
+            "inputs",
+        )
+        for case in cases:
+            with self.subTest(case=case):
+                ctx = _context_with(recommendation)
+                if case == "inputs":
+                    ctx.input_hashes = []
+                elif case == "disclaimer_hash_mismatch":
+                    ctx.config.disclaimer_hash = "0" * 64
+                else:
+                    delattr(ctx.config, case)
+                with self.assertRaises(RecommendationContractError):
+                    ctx.build_recommendation_list()
 
 
 if __name__ == "__main__":
