@@ -347,7 +347,7 @@ type RecommendationList = {
   profile:           RecommendationProfile;
   market_scope:      "cn_a" | "us" | "jp" | "kr";
   items:             CandidateListEntry[];  // sorted by conviction.final DESC, then ticker ASC
-  output_fingerprint: string;           // SHA-256 of JCS-canonicalized items (§5)
+  output_fingerprint: string;           // semantic-envelope fingerprint (§5)
   disclaimer:        Disclaimer;
   meta: {
     contract_version:  "0.3.1";         // recommendation schema pin
@@ -372,11 +372,28 @@ type CandidateListEntry = {
 
 See pipeline §5. Contract-level guarantees:
 
-1. Given identical `(input_fingerprint, pipeline_version, model_version, strategy_version, rule_bundle_hash, template_hash, disclaimer_hash)`, the pipeline MUST produce identical `output_fingerprint`.
-2. `output_fingerprint` = SHA-256 of RFC 8785 JCS-canonicalized `RecommendationList` with `meta.generation_ms` and `meta.generated_by` removed.
-3. `items[*].explanation.body` templating MUST be deterministic (no time / random / locale-dependent formatting).
-4. LLM (v0.2+) evidence MUST be cached in `MODEL_OUTPUT` evidence; replay reads cache, does not re-invoke LLM.
-5. Replay MUST pin `(as_of, market_scope, profile, profile_version, contract_version, input_fingerprint, strategy_version, pipeline_version)`. Missing or mismatched pins fail closed rather than silently using current defaults.
+1. An identical `semantic_envelope` as defined in §5.2 MUST produce an
+   identical `output_fingerprint`; mutation of any participating field MUST
+   change it.
+2. `output_fingerprint = SHA-256(UTF8(RFC8785-JCS(semantic_envelope)))`.
+   `semantic_envelope` is a deep copy of the complete `RecommendationList`
+   with **only** these volatile identity/telemetry fields removed:
+   top-level `output_fingerprint`; top-level `snapshot_id`;
+   `meta.generated_by`; `meta.generation_ms`; and every
+   `items[*].recommendation.{id,snapshot_id}`. Everything else participates,
+   including `as_of`, profile/scope, the complete ordered
+   `CandidateListEntry[]`, disclaimer, and all nonvolatile meta pins.
+   Implementations MUST preserve the existing §6 item order and MUST NOT
+   re-sort or project entry/Recommendation fields. UUIDv4 values remain
+   separately authenticated storage identities. All numbers MUST be finite
+   I-JSON / IEEE-754 values; negative zero canonicalizes to `0`.
+3. `input_fingerprint = SHA-256(UTF8(RFC8785-JCS(manifest)))`, where
+   `manifest` is a lexicographically sorted, non-empty array of unique
+   lowercase 64-hex source fact hashes. Input order is irrelevant; duplicate,
+   empty, non-string, boolean, or malformed hashes fail closed.
+4. `items[*].explanation.body` templating MUST be deterministic (no time / random / locale-dependent formatting).
+5. LLM (v0.2+) evidence MUST be cached in `MODEL_OUTPUT` evidence; replay reads cache, does not re-invoke LLM.
+6. Replay MUST pin `(as_of, market_scope, profile, profile_version, contract_version, input_fingerprint, strategy_version, pipeline_version)`. Missing or mismatched pins fail closed rather than silently using current defaults.
 
 ---
 
