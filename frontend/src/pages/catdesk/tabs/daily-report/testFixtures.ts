@@ -1,5 +1,6 @@
 import type { DailyReportDocument, RecommendationEntry, RecommendationSnapshot } from './types';
-import { jcsCanonicalize, sha256Text } from './contractSchema';
+import { sha256Text } from './contractSchema';
+import { canonicalizeRecommendationFingerprintPreimage } from './recommendationAdapter';
 import type { B5DailyReportWire } from './types';
 
 const SNAPSHOT_ID = '11111111-1111-4111-8111-111111111111';
@@ -148,7 +149,7 @@ export function snapshotFixture(overrides: Record<string, unknown> = {}): Recomm
     profile: 'us_preferred',
     market_scope: 'us',
     items,
-    output_fingerprint: sha256Text(jcsCanonicalize(items)),
+    output_fingerprint: '',
     disclaimer,
     meta: {
       contract_version: '0.3.1',
@@ -162,8 +163,12 @@ export function snapshotFixture(overrides: Record<string, unknown> = {}): Recomm
     ...Object.fromEntries(
       Object.entries(overrides).filter(([key]) => key !== 'items' && key !== 'disclaimer')
     ),
-  };
-  return snapshot as RecommendationSnapshot;
+  } as unknown as RecommendationSnapshot;
+  snapshot.output_fingerprint = sha256Text(canonicalizeRecommendationFingerprintPreimage(snapshot));
+  if (typeof overrides.output_fingerprint === 'string') {
+    snapshot.output_fingerprint = overrides.output_fingerprint;
+  }
+  return snapshot;
 }
 
 export function reportFixture(): DailyReportDocument {
@@ -177,7 +182,7 @@ export function reportFixture(): DailyReportDocument {
     source_snapshot_id: snapshot.snapshot_id,
     source_as_of: snapshot.as_of,
     source_output_fingerprint: snapshot.output_fingerprint,
-    source_fingerprint_preimage_jcs: jcsCanonicalize(snapshot.items),
+    source_fingerprint_preimage_jcs: canonicalizeRecommendationFingerprintPreimage(snapshot),
     disclaimer: snapshot.disclaimer,
     meta: snapshot.meta,
     summary: {

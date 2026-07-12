@@ -11,7 +11,11 @@ import {
   strictString,
   strictStringArray,
 } from './contractSchema';
-import { parseRecommendationSnapshot, RecommendationContractError } from './recommendationAdapter';
+import {
+  canonicalizeRecommendationFingerprintPreimage,
+  parseRecommendationSnapshot,
+  RecommendationContractError,
+} from './recommendationAdapter';
 import {
   RECOMMENDATION_MARKET_SCOPES,
   RECOMMENDATION_PROFILES,
@@ -174,6 +178,19 @@ export function parseB5DailyReport(value: unknown): DailyReportDocument {
   }
   if (sha256Text(preimage) !== sourceFingerprint) {
     throw new RecommendationContractError('daily_report preimage hash mismatch');
+  }
+  const reconstructedEnvelope = {
+    snapshot_id: sourceSnapshotId,
+    as_of: sourceAsOf,
+    profile: parsedProfile,
+    market_scope: parsedScope,
+    items: entries,
+    output_fingerprint: sourceFingerprint,
+    disclaimer: raw.disclaimer,
+    meta: raw.meta,
+  };
+  if (canonicalizeRecommendationFingerprintPreimage(reconstructedEnvelope) !== preimage) {
+    throw new RecommendationContractError('daily_report preimage does not match source envelope');
   }
   const summaryRaw = assertExactObject(
     raw.summary,

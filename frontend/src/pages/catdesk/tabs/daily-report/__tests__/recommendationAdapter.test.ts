@@ -1,14 +1,16 @@
 import { describe, expect, test } from '@jest/globals';
 import { parseRecommendationSnapshot, RecommendationContractError } from '../recommendationAdapter';
 import { snapshotFixture } from '../testFixtures';
-import { jcsCanonicalize, sha256Text } from '../contractSchema';
+import { sha256Text } from '../contractSchema';
+import { canonicalizeRecommendationFingerprintPreimage } from '../recommendationAdapter';
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function reseal(snapshot: ReturnType<typeof snapshotFixture>) {
-  snapshot.output_fingerprint = sha256Text(jcsCanonicalize(snapshot.items));
+  snapshot.output_fingerprint = '';
+  snapshot.output_fingerprint = sha256Text(canonicalizeRecommendationFingerprintPreimage(snapshot));
   snapshot.disclaimer.hash = sha256Text(snapshot.disclaimer.full_text);
   return snapshot;
 }

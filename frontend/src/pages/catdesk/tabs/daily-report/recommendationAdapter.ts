@@ -1024,7 +1024,8 @@ function parseRecommendationSnapshotUnsafe(value: unknown): RecommendationSnapsh
     }
     seenTickers.add(item.recommendation.ticker);
   }
-  const expectedOutputFingerprint = sha256Text(jcsCanonicalize(itemsRaw));
+  const semanticPreimage = canonicalizeRecommendationFingerprintPreimage(envelope);
+  const expectedOutputFingerprint = sha256Text(semanticPreimage);
   if (outputFingerprint !== expectedOutputFingerprint) {
     throw new RecommendationContractError('output_fingerprint does not match ordered items');
   }
@@ -1052,4 +1053,57 @@ export function parseRecommendationSnapshot(value: unknown): RecommendationSnaps
     }
     throw error;
   }
+}
+
+export function canonicalizeRecommendationFingerprintPreimage(value: unknown): string {
+  const envelope = exact(
+    value,
+    [
+      'snapshot_id',
+      'as_of',
+      'profile',
+      'market_scope',
+      'items',
+      'output_fingerprint',
+      'disclaimer',
+      'meta',
+    ],
+    [],
+    'snapshot'
+  );
+  uuid(envelope.snapshot_id, 'snapshot.snapshot_id');
+  const semantic = JSON.parse(JSON.stringify(envelope)) as UnknownRecord;
+  delete semantic.snapshot_id;
+  delete semantic.output_fingerprint;
+  const meta = exact(
+    semantic.meta,
+    [
+      'contract_version',
+      'profile_version',
+      'input_fingerprint',
+      'strategy_version',
+      'pipeline_version',
+      'generated_by',
+      'generation_ms',
+    ],
+    [],
+    'snapshot.meta'
+  );
+  delete meta.generated_by;
+  delete meta.generation_ms;
+  strictArray(semantic.items, 'snapshot.items').forEach((rawItem, index) => {
+    const item = exact(rawItem, ['recommendation', 'rating_band'], [], `snapshot.items[${index}]`);
+    const recommendation = item.recommendation as UnknownRecord;
+    uuid(recommendation.id, `snapshot.items[${index}].recommendation.id`);
+    const recommendationSnapshotId = uuid(
+      recommendation.snapshot_id,
+      `snapshot.items[${index}].recommendation.snapshot_id`
+    );
+    if (recommendationSnapshotId !== envelope.snapshot_id) {
+      throw new RecommendationContractError(`snapshot.items[${index}] snapshot_id mismatch`);
+    }
+    delete recommendation.id;
+    delete recommendation.snapshot_id;
+  });
+  return jcsCanonicalize(semantic);
 }
