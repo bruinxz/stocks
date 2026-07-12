@@ -1,4 +1,5 @@
 import { Sequelize } from 'sequelize';
+import { createHash } from 'crypto';
 import {
   RecommendationSnapshotConflictError,
   RecommendationSnapshotContractError,
@@ -7,6 +8,8 @@ import { SequelizeRecommendationSnapshotReadAdapter } from '../../src/recommenda
 
 const SNAPSHOT_A = '11111111-1111-4111-8111-111111111111';
 const SNAPSHOT_B = '22222222-2222-4222-8222-222222222222';
+const DISCLAIMER_TEXT = '투자에는 위험이 있습니다.';
+const DISCLAIMER_HASH = createHash('sha256').update(DISCLAIMER_TEXT).digest('hex');
 
 const ENVELOPE = {
   snapshot_id: SNAPSHOT_A,
@@ -17,12 +20,15 @@ const ENVELOPE = {
   disclaimer: {
     version: '1.0.0',
     short_text: '仅供参考',
-    full_text: '投资有风险，本内容仅供参考。',
-    language: 'zh-CN',
+    full_text: DISCLAIMER_TEXT,
+    language: 'ko-KR',
     effective_at: '2026-07-01T00:00:00Z',
-    hash: 'c'.repeat(64),
+    hash: DISCLAIMER_HASH,
   },
   meta: {
+    contract_version: '0.3.1',
+    profile_version: '3.1.0',
+    input_fingerprint: 'a'.repeat(64),
     strategy_version: '3.1.0',
     pipeline_version: '3.1.0',
     generated_by: 'fixture',
@@ -103,6 +109,44 @@ async function main(): Promise<void> {
     malformedRejected = error instanceof RecommendationSnapshotContractError;
   }
   assert('detail rejects envelope/header mismatch', malformedRejected);
+
+  const invalidEnvelopes: Array<[string, Record<string, unknown>]> = [
+    [
+      'missing contract_version',
+      { ...ENVELOPE, meta: { ...ENVELOPE.meta, contract_version: undefined } },
+    ],
+    [
+      'missing profile_version',
+      { ...ENVELOPE, meta: { ...ENVELOPE.meta, profile_version: undefined } },
+    ],
+    [
+      'invalid input_fingerprint',
+      { ...ENVELOPE, meta: { ...ENVELOPE.meta, input_fingerprint: 'NOT-A-HASH' } },
+    ],
+    ['invalid output fingerprint', ENVELOPE],
+    [
+      'invalid disclaimer hash',
+      { ...ENVELOPE, disclaimer: { ...ENVELOPE.disclaimer, hash: 'd'.repeat(64) } },
+    ],
+    [
+      'invalid disclaimer locale',
+      { ...ENVELOPE, disclaimer: { ...ENVELOPE.disclaimer, language: 'fr-FR' } },
+    ],
+  ];
+  for (const [name, envelope] of invalidEnvelopes) {
+    const row =
+      name === 'invalid output fingerprint'
+        ? header({ output_fingerprint: 'BAD', envelope_json: envelope })
+        : header({ envelope_json: envelope });
+    queue = [[row]];
+    let rejected = false;
+    try {
+      await adapter.detail(SNAPSHOT_A);
+    } catch (error) {
+      rejected = error instanceof RecommendationSnapshotContractError;
+    }
+    assert(`${name} fails closed`, rejected);
+  }
 
   queue = [
     [header()],

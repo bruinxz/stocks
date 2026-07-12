@@ -29,12 +29,15 @@ export interface RecommendationDisclaimer {
   version: string;
   short_text: string;
   full_text: string;
-  language: 'zh-CN' | 'en-US';
+  language: 'zh-CN' | 'en-US' | 'ja-JP' | 'ko-KR';
   effective_at: string;
   hash: string;
 }
 
 export interface RecommendationSnapshotMeta {
+  contract_version: '0.3.1';
+  profile_version: string;
+  input_fingerprint: string;
   strategy_version: string;
   pipeline_version: string;
   generated_by: string;

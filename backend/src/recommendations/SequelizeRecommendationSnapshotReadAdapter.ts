@@ -1,4 +1,5 @@
 import { QueryTypes, Sequelize } from 'sequelize';
+import { createHash } from 'crypto';
 import {
   RECOMMENDATION_MARKET_SCOPES,
   RECOMMENDATION_PROFILES,
@@ -34,6 +35,18 @@ function requiredString(value: unknown, label: string): string {
     throw new RecommendationSnapshotContractError(`${label} must be a non-empty string`);
   }
   return value;
+}
+
+function sha256(value: unknown, label: string): string {
+  const digest = requiredString(value, label);
+  if (!/^[0-9a-f]{64}$/.test(digest)) {
+    throw new RecommendationSnapshotContractError(`${label} must be lowercase SHA-256`);
+  }
+  return digest;
+}
+
+function sha256Text(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
 }
 
 function timestampString(value: unknown, label: string): string {
@@ -83,7 +96,7 @@ function normalizeSummary(row: UnknownRecord): RecommendationSnapshotSummary {
     as_of: timestampString(row.as_of_utc, 'as_of_utc'),
     profile: profile as RecommendationSnapshotSummary['profile'],
     market_scope: marketScope as RecommendationSnapshotSummary['market_scope'],
-    output_fingerprint: requiredString(row.output_fingerprint, 'output_fingerprint'),
+    output_fingerprint: sha256(row.output_fingerprint, 'output_fingerprint'),
     item_count: nonNegativeInteger(row.item_count, 'item_count'),
     created_at: timestampString(row.created_at, 'created_at'),
   };
@@ -107,8 +120,13 @@ function normalizeDetail(row: UnknownRecord): RecommendationSnapshotDetail {
   const disclaimer = asObject(envelope.disclaimer, 'disclaimer');
   const meta = asObject(envelope.meta, 'meta');
   const language = requiredString(disclaimer.language, 'disclaimer.language');
-  if (language !== 'zh-CN' && language !== 'en-US') {
+  if (!['zh-CN', 'en-US', 'ja-JP', 'ko-KR'].includes(language)) {
     throw new RecommendationSnapshotContractError('disclaimer.language is not authorized');
+  }
+  const disclaimerFullText = requiredString(disclaimer.full_text, 'disclaimer.full_text');
+  const disclaimerHash = sha256(disclaimer.hash, 'disclaimer.hash');
+  if (sha256Text(disclaimerFullText) !== disclaimerHash) {
+    throw new RecommendationSnapshotContractError('disclaimer.hash does not match full_text');
   }
   const generationMs = Number(meta.generation_ms);
   if (!Number.isFinite(generationMs) || generationMs < 0) {
@@ -136,12 +154,21 @@ function normalizeDetail(row: UnknownRecord): RecommendationSnapshotDetail {
     disclaimer: {
       version: requiredString(disclaimer.version, 'disclaimer.version'),
       short_text: requiredString(disclaimer.short_text, 'disclaimer.short_text'),
-      full_text: requiredString(disclaimer.full_text, 'disclaimer.full_text'),
-      language,
+      full_text: disclaimerFullText,
+      language: language as RecommendationSnapshotDetail['disclaimer']['language'],
       effective_at: requiredString(disclaimer.effective_at, 'disclaimer.effective_at'),
-      hash: requiredString(disclaimer.hash, 'disclaimer.hash'),
+      hash: disclaimerHash,
     },
     meta: {
+      contract_version: (() => {
+        const value = requiredString(meta.contract_version, 'meta.contract_version');
+        if (value !== '0.3.1') {
+          throw new RecommendationSnapshotContractError('meta.contract_version must equal 0.3.1');
+        }
+        return '0.3.1' as const;
+      })(),
+      profile_version: requiredString(meta.profile_version, 'meta.profile_version'),
+      input_fingerprint: sha256(meta.input_fingerprint, 'meta.input_fingerprint'),
       strategy_version: requiredString(meta.strategy_version, 'meta.strategy_version'),
       pipeline_version: requiredString(meta.pipeline_version, 'meta.pipeline_version'),
       generated_by: requiredString(meta.generated_by, 'meta.generated_by'),

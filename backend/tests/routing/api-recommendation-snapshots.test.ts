@@ -11,9 +11,12 @@ import {
   type RecommendationSnapshotDiff,
   type RecommendationSnapshotPage,
 } from '../../src/recommendations/RecommendationSnapshotReadPort';
+import { createHash } from 'crypto';
 
 const SNAPSHOT_ID = '11111111-1111-4111-8111-111111111111';
 const TARGET_ID = '22222222-2222-4222-8222-222222222222';
+const DISCLAIMER_TEXT = '投資にはリスクがあります。';
+const DISCLAIMER_HASH = createHash('sha256').update(DISCLAIMER_TEXT).digest('hex');
 
 const DETAIL: RecommendationSnapshotDetail = {
   snapshot_id: SNAPSHOT_ID,
@@ -25,12 +28,15 @@ const DETAIL: RecommendationSnapshotDetail = {
   disclaimer: {
     version: '1.0.0',
     short_text: '仅供参考',
-    full_text: '投资有风险，本内容仅供参考。',
-    language: 'zh-CN',
+    full_text: DISCLAIMER_TEXT,
+    language: 'ja-JP',
     effective_at: '2026-07-01T00:00:00Z',
-    hash: 'c'.repeat(64),
+    hash: DISCLAIMER_HASH,
   },
   meta: {
+    contract_version: '0.3.1',
+    profile_version: '3.1.0',
+    input_fingerprint: 'a'.repeat(64),
     strategy_version: '3.1.0',
     pipeline_version: '3.1.0',
     generated_by: 'fixture',
@@ -128,7 +134,14 @@ async function main(): Promise<void> {
     '/api/v1/ai/recommendations/latest?profile=us_preferred&market_scope=us'
   );
   assert('latest returns 200', latest.status === 200);
-  assert('latest preserves full disclaimer', latest.body.disclaimer?.hash === 'c'.repeat(64));
+  assert('latest preserves full disclaimer', latest.body.disclaimer?.hash === DISCLAIMER_HASH);
+  assert('latest preserves JP locale', latest.body.disclaimer?.language === 'ja-JP');
+  assert('latest preserves contract pin', latest.body.meta?.contract_version === '0.3.1');
+  assert('latest preserves profile pin', latest.body.meta?.profile_version === '3.1.0');
+  assert(
+    'latest preserves input fingerprint',
+    latest.body.meta?.input_fingerprint === 'a'.repeat(64)
+  );
   assert('latest preserves full meta', latest.body.meta?.pipeline_version === '3.1.0');
   assert('latest preserves recommendation item', latest.body.items?.[0]?.rating_band === 'A');
   assert(
