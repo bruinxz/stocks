@@ -29,7 +29,7 @@ def canonical_sha(value):
 
 
 def reseal(source):
-    source["output_fingerprint"] = compute_output_fingerprint(source["items"])
+    source["output_fingerprint"] = compute_output_fingerprint(source)
     return source
 
 
@@ -55,11 +55,11 @@ class Tab67ProjectionTests(unittest.TestCase):
         self.assertIn(self.source["meta"]["input_fingerprint"], first["markdown"])
         self.assertEqual(
             hashlib.sha256(first["markdown"].encode("utf-8")).hexdigest(),
-            "667f98158d6172ee15e0620bdb175035892f4463825e2e0dc73c5c485d87bdc0",
+            "326d49061f71342c240044658dc06c457f28c6c56c93221d2ff209aa21b4af3b",
         )
         self.assertEqual(
             canonical_sha(first),
-            "68cb234f9d1f6f016b2eb56ae568b2724ec9d7b5e38cc3a6644e42b3cf0a7b44",
+            "345687404d41fd1c733ff64428e61935a03354e18281a3c95a6adcca2df6e6a1",
         )
 
     def test_empty_list_is_a_valid_report(self):
@@ -110,7 +110,7 @@ class Tab67ProjectionTests(unittest.TestCase):
         self.assertEqual(searched["entries"][0]["trading_day"], "2026-07-12")
         self.assertEqual(
             canonical_sha(project_report_history([self.source])),
-            "0477f9e296bca12d85baaddc8a26e2c38085914a2f3d5484f0d1415dc3785216",
+            "7c841cabc90d04218bce75c3d8de625a48f315a6d983cb38f567207ff339213d",
         )
 
     def test_history_profile_order_is_canonical_for_same_day(self):

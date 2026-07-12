@@ -13,7 +13,10 @@ import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from uuid import UUID
 
-from ai.snapshot.fingerprint import compute_output_fingerprint
+from ai.snapshot.fingerprint import (
+    canonicalize_output_fingerprint_preimage,
+    compute_output_fingerprint,
+)
 from ai.types import (
     CANONICAL_URI_PREFIXES,
     RISK_TRIGGER_CODES,
@@ -817,7 +820,7 @@ def validate_recommendation_list(envelope: Any) -> Mapping[str, Any]:
         if previous is not None and order_key < previous:
             _fail(path, "violates conviction DESC, ticker ASC ordering")
         previous = order_key
-    expected_fingerprint = compute_output_fingerprint(items)
+    expected_fingerprint = compute_output_fingerprint(dict(obj))
     if obj["output_fingerprint"] != expected_fingerprint:
         _fail(
             "recommendation_list.output_fingerprint",
@@ -978,6 +981,9 @@ def project_daily_report(envelope: Any) -> DailyReportDto:
         "source_snapshot_id": source["snapshot_id"],
         "source_as_of": source["as_of"],
         "source_output_fingerprint": source["output_fingerprint"],
+        "source_fingerprint_preimage_jcs": (
+            canonicalize_output_fingerprint_preimage(dict(source))
+        ),
         "disclaimer": deepcopy(source["disclaimer"]),
         "meta": deepcopy(source["meta"]),
         "summary": summary,
@@ -1087,6 +1093,9 @@ def project_report_history(
             "source_as_of": report["source_as_of"],
             "source_output_fingerprint": report[
                 "source_output_fingerprint"
+            ],
+            "source_fingerprint_preimage_jcs": report[
+                "source_fingerprint_preimage_jcs"
             ],
             "input_fingerprint": report["meta"]["input_fingerprint"],
             "contract_version": report["meta"]["contract_version"],

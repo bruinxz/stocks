@@ -62,6 +62,7 @@ class DailyReportDto(TypedDict):
     source_snapshot_id: str
     source_as_of: str
     source_output_fingerprint: str
+    source_fingerprint_preimage_jcs: str
     disclaimer: DisclaimerDto
     meta: ReportMetaDto
     summary: ReportSummaryDto
@@ -86,6 +87,7 @@ class HistoryEntryDto(TypedDict):
     source_snapshot_id: str
     source_as_of: str
     source_output_fingerprint: str
+    source_fingerprint_preimage_jcs: str
     input_fingerprint: str
     contract_version: str
     profile_version: str
