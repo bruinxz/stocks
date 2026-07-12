@@ -7,7 +7,7 @@ import { DailyReport } from '../../DailyReport';
 import { ReportHistory } from '../../ReportHistory';
 import { tokenizeEvidence } from '../evidenceTokens';
 import { nextGenerationState, parseGenerationJob, pollDelay } from '../generationMachine';
-import { reportFixture } from './fixtures';
+import { reportFixture } from '../testFixtures';
 import type { ReportHistoryPage, ReportHistoryViewState } from '../../report-history/types';
 
 jest.mock('react-markdown', () => ({

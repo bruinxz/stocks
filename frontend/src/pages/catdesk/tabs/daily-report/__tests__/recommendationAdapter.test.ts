@@ -1,6 +1,6 @@
 import { describe, expect, test } from '@jest/globals';
 import { parseRecommendationSnapshot, RecommendationContractError } from '../recommendationAdapter';
-import { snapshotFixture } from './fixtures';
+import { snapshotFixture } from '../testFixtures';
 
 describe('Recommendation v0.3.1 frontend adapter', () => {
   test.each([
