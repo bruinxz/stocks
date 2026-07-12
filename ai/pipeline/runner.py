@@ -46,7 +46,9 @@ class PipelineRunner:
             AssemblyStage(),
             PublishStage(),
         ]
-        self._snapshot_writer = snapshot_writer or SnapshotWriter()
+        self._snapshot_writer = (
+            snapshot_writer if snapshot_writer is not None else SnapshotWriter()
+        )
         self._validator = OutputValidator()
 
     def run(self, as_of: str) -> dict:

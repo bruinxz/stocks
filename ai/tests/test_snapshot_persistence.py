@@ -218,6 +218,21 @@ class SnapshotWriterTests(unittest.TestCase):
         self.assertEqual(len(store.snapshots), 1)
         self.assertEqual(len(store.items[ctx.snapshot_id]), 2)
 
+    def test_idempotent_retry_ignores_only_generation_telemetry(self):
+        ctx = _context()
+        payload = _recommendation_list(ctx)
+        store = MemorySnapshotStore()
+        writer = SnapshotWriter(store)
+        writer.write(ctx, payload)
+
+        retry = copy.deepcopy(payload)
+        retry["meta"]["generation_ms"] = 999
+        retry["meta"]["generated_by"] = "retry-worker"
+        result = writer.write(ctx, retry)
+
+        self.assertFalse(result.created)
+        self.assertEqual(len(store.snapshots), 1)
+
     def test_item_failure_rolls_back_snapshot_and_items(self):
         ctx = _context()
         store = MemorySnapshotStore()
@@ -269,6 +284,19 @@ class SnapshotWriterTests(unittest.TestCase):
         bad_disclaimer = _recommendation_list(_context())
         bad_disclaimer["disclaimer"]["full_text"] += " mutated"
         invalid_cases.append(bad_disclaimer)
+
+        disclaimer_version_mismatch = _recommendation_list(_context())
+        disclaimer_version_mismatch["items"][0]["recommendation"][
+            "disclaimer_version"
+        ] = "0.0.0"
+        disclaimer_version_mismatch["output_fingerprint"] = (
+            compute_output_fingerprint(disclaimer_version_mismatch["items"])
+        )
+        invalid_cases.append(disclaimer_version_mismatch)
+
+        boolean_generation_ms = _recommendation_list(_context())
+        boolean_generation_ms["meta"]["generation_ms"] = True
+        invalid_cases.append(boolean_generation_ms)
 
         non_finite = _recommendation_list(_context())
         non_finite["items"][0]["recommendation"]["conviction"]["final"] = math.nan

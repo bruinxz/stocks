@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 from dataclasses import dataclass
@@ -267,6 +268,13 @@ class SnapshotWriter:
         ):
             if not isinstance(meta[field], str) or not meta[field]:
                 raise SnapshotContractError(f"meta.{field} must be non-empty")
+        generation_ms = meta["generation_ms"]
+        if (
+            isinstance(generation_ms, bool)
+            or not isinstance(generation_ms, int)
+            or generation_ms < 0
+        ):
+            raise SnapshotContractError("meta.generation_ms must be a non-negative int")
         if meta["strategy_version"] != ctx.config.strategy_version:
             raise SnapshotContractError("strategy_version context/list mismatch")
         if meta["pipeline_version"] != ctx.config.pipeline_version:
@@ -310,6 +318,14 @@ class SnapshotWriter:
             )
         if disclaimer["hash"] != ctx.config.disclaimer_hash:
             raise SnapshotContractError("disclaimer hash context/list mismatch")
+        disclaimer_version = disclaimer["version"]
+        for entry in items:
+            recommendation = entry["recommendation"]
+            if recommendation.get("disclaimer_version") != disclaimer_version:
+                ticker = recommendation.get("ticker", "<unknown>")
+                raise SnapshotContractError(
+                    f"{ticker}: disclaimer_version does not match list disclaimer"
+                )
 
         for field in (
             "model_version",
@@ -396,12 +412,12 @@ class SnapshotWriter:
         comparable_existing = (
             existing.output_fingerprint,
             existing.item_count,
-            existing.envelope_json,
+            SnapshotWriter._semantic_envelope_json(existing.envelope_json),
         )
         comparable_proposed = (
             proposed.output_fingerprint,
             proposed.item_count,
-            proposed.envelope_json,
+            SnapshotWriter._semantic_envelope_json(proposed.envelope_json),
         )
         if comparable_existing != comparable_proposed:
             return False
@@ -421,3 +437,28 @@ class SnapshotWriter:
         return tuple(map(item_payload, existing_items)) == tuple(
             map(item_payload, proposed_items)
         )
+
+    @staticmethod
+    def _semantic_envelope_json(envelope_json: str) -> str:
+        try:
+            envelope = json.loads(envelope_json)
+        except (TypeError, json.JSONDecodeError) as error:
+            raise SnapshotIdempotencyConflictError(
+                "stored snapshot envelope is invalid"
+            ) from error
+        meta = envelope.get("meta")
+        if not isinstance(meta, dict):
+            raise SnapshotIdempotencyConflictError(
+                "stored snapshot envelope meta is invalid"
+            )
+        semantic_meta = dict(meta)
+        semantic_meta.pop("generation_ms", None)
+        semantic_meta.pop("generated_by", None)
+        semantic_envelope = dict(envelope)
+        semantic_envelope["meta"] = semantic_meta
+        try:
+            return jcs_canonicalize(semantic_envelope)
+        except (TypeError, ValueError) as error:
+            raise SnapshotIdempotencyConflictError(
+                "stored snapshot envelope is not canonicalizable"
+            ) from error
