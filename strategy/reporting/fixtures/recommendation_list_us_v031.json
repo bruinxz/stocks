@@ -15,7 +15,7 @@
           "snapshot_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "profile": "us_preferred",
           "market_scope": "us",
-          "total": 88,
+          "total": 87.3,
           "rating": "A",
           "dims": [
             {
@@ -59,13 +59,13 @@
         "conviction": {
           "ticker": "AAPL",
           "as_of": "2026-07-12T09:30:00Z",
-          "base": 90,
+          "base": 87.3,
           "score_ref": {
             "scoring_id": "33333333-3333-4333-8333-333333333333",
             "snapshot_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
           },
           "adjustments": [],
-          "final": 90,
+          "final": 87.3,
           "level": "HIGH"
         },
         "risk_gate": {
@@ -94,14 +94,14 @@
             }
           ],
           "size_hint": {
-            "tier": "TIER_3",
-            "pct": 3,
+            "tier": "TIER_5",
+            "pct": 5,
             "disclaimer_key": "size_hint_advisory",
             "rationale": "High conviction with a clean risk gate."
           },
           "time_horizon": "POSITION",
           "invalidation": "Close below 188 USD",
-          "conviction_ref": 90,
+          "conviction_ref": 87.3,
           "score_ref": {
             "scoring_id": "33333333-3333-4333-8333-333333333333",
             "snapshot_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -149,7 +149,7 @@
       "rating_band": "A"
     }
   ],
-  "output_fingerprint": "c6b756495e25049aaa04ec76f73dddfdc234ea273894f1db88a2a93425855c87",
+  "output_fingerprint": "e96e32e319afbea9bd822950996564b6be3a790c61883106358f727708bbdf19",
   "disclaimer": {
     "version": "1.0.0",
     "short_text": "Research reference only.",

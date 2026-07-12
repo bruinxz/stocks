@@ -315,6 +315,20 @@ def _require_bounded_number(
     return number
 
 
+def _band_for_score(score: float) -> str:
+    return (
+        "A"
+        if score >= 85
+        else "B"
+        if score >= 70
+        else "C"
+        if score >= 55
+        else "D"
+        if score >= 40
+        else "F"
+    )
+
+
 def _validate_score_ref(
     raw: Any, path: str, scoring_id: str, snapshot_hash: str
 ) -> None:
@@ -344,24 +358,35 @@ def _validate_score(
     rating = score["rating"]
     if rating not in BANDS:
         _fail(path + ".rating", "must be A|B|C|D|F")
+    if rating != _band_for_score(total):
+        _fail(path + ".rating", "does not match score.total")
     dims = score["dims"]
     if not isinstance(dims, list) or len(dims) != 6:
         _fail(path + ".dims", "must contain exactly six dimensions")
     total_weight = 0.0
+    weighted_total = 0.0
     for index, (raw_dim, expected_key) in enumerate(zip(dims, SCORE_DIM_KEYS)):
         dim_path = "{}.dims[{}]".format(path, index)
         dim = _require_mapping(raw_dim, dim_path)
         _require_exact_keys(dim, SCORE_DIM_KEYS_SET, dim_path)
         if dim["key"] != expected_key:
             _fail(dim_path + ".key", "must follow Q/G/V/M/T/R order")
-        _require_bounded_number(dim["score"], dim_path + ".score", 0, 100)
+        dim_score = _require_bounded_number(
+            dim["score"], dim_path + ".score", 0, 100
+        )
         if dim["band"] not in BANDS:
             _fail(dim_path + ".band", "must be A|B|C|D|F")
-        total_weight += _require_bounded_number(
+        if dim["band"] != _band_for_score(dim_score):
+            _fail(dim_path + ".band", "does not match dimension score")
+        dim_weight = _require_bounded_number(
             dim["weight"], dim_path + ".weight", 0, 1
         )
+        total_weight += dim_weight
+        weighted_total += dim_score * dim_weight
     if abs(total_weight - 1.0) > 1e-9:
         _fail(path + ".dims", "weights must sum to 1.0")
+    if abs(total - round(weighted_total, 1)) > 1e-9:
+        _fail(path + ".total", "does not equal weighted six-dimension total")
     return scoring_id, snapshot_hash, rating
 
 
@@ -372,6 +397,7 @@ def _validate_conviction(
     as_of: str,
     scoring_id: str,
     snapshot_hash: str,
+    score_total: float,
 ) -> Tuple[float, str]:
     conviction = _require_mapping(raw, path)
     _require_exact_keys(conviction, CONVICTION_KEYS, path)
@@ -380,6 +406,8 @@ def _validate_conviction(
     if conviction["as_of"] != as_of:
         _fail(path + ".as_of", "does not match recommendation")
     base = _require_bounded_number(conviction["base"], path + ".base", 0, 100)
+    if abs(base - score_total) > 1e-9:
+        _fail(path + ".base", "must equal score.total")
     _validate_score_ref(
         conviction["score_ref"],
         path + ".score_ref",
@@ -469,6 +497,19 @@ def _validate_entry_plan(
         _fail(path + ".size_hint.tier", "is invalid")
     if size_hint["pct"] != SIZE_HINT_TIER_PCT[size_hint["tier"]]:
         _fail(path + ".size_hint.pct", "does not match tier")
+    expected_tier = (
+        "TIER_5"
+        if conviction_final >= 85
+        else "TIER_3"
+        if conviction_final >= 70
+        else "TIER_2"
+        if conviction_final >= 55
+        else "TIER_1"
+        if conviction_final >= 40
+        else "SKIP"
+    )
+    if size_hint["tier"] != expected_tier:
+        _fail(path + ".size_hint.tier", "does not match conviction.final")
     if size_hint["disclaimer_key"] != "size_hint_advisory":
         _fail(path + ".size_hint.disclaimer_key", "must be size_hint_advisory")
     _require_nonempty_string(size_hint["rationale"], path + ".size_hint.rationale")
@@ -625,6 +666,10 @@ def _validate_recommendation(
         as_of,
         scoring_id,
         snapshot_hash,
+        _require_number(
+            obj["score"]["total"],
+            entry_path + ".recommendation.score.total",
+        ),
     )
 
     risk_gate = _require_mapping(

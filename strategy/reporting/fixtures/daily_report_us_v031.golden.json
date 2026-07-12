@@ -6,8 +6,8 @@
   "market_scope": "us",
   "source_snapshot_id": "11111111-1111-4111-8111-111111111111",
   "source_as_of": "2026-07-12T09:30:00Z",
-  "source_output_fingerprint": "c6b756495e25049aaa04ec76f73dddfdc234ea273894f1db88a2a93425855c87",
-  "source_fingerprint_preimage_jcs": "{\"as_of\":\"2026-07-12T09:30:00Z\",\"disclaimer\":{\"effective_at\":\"2026-07-01T00:00:00Z\",\"full_text\":\"Research only. Markets involve risk.\",\"hash\":\"59488269aaf5e551a06ade38f66faa52bc4aed320b5ecd689a02d3956cfd8009\",\"language\":\"en-US\",\"short_text\":\"Research reference only.\",\"version\":\"1.0.0\"},\"items\":[{\"rating_band\":\"A\",\"recommendation\":{\"as_of\":\"2026-07-12T09:30:00Z\",\"conviction\":{\"adjustments\":[],\"as_of\":\"2026-07-12T09:30:00Z\",\"base\":90,\"final\":90,\"level\":\"HIGH\",\"score_ref\":{\"scoring_id\":\"33333333-3333-4333-8333-333333333333\",\"snapshot_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"ticker\":\"AAPL\"},\"disclaimer_version\":\"1.0.0\",\"entry_plan\":{\"conviction_ref\":90,\"entry\":{\"currency\":\"USD\",\"high\":200,\"low\":195},\"generated_at\":\"2026-07-12T09:30:00Z\",\"invalidation\":\"Close below 188 USD\",\"score_ref\":{\"scoring_id\":\"33333333-3333-4333-8333-333333333333\",\"snapshot_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"size_hint\":{\"disclaimer_key\":\"size_hint_advisory\",\"pct\":3,\"rationale\":\"High conviction with a clean risk gate.\",\"tier\":\"TIER_3\"},\"stop\":{\"currency\":\"USD\",\"value\":188},\"targets\":[{\"currency\":\"USD\",\"value\":220}],\"ticker\":\"AAPL\",\"time_horizon\":\"POSITION\"},\"evidence_refs\":[{\"as_of\":\"2026-07-12T09:00:00Z\",\"hash\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"id\":\"E1\",\"kind\":\"DISCLOSURE\",\"short_text\":\"Current public filing\",\"source_uri\":\"sec-edgar://0000320193-26-000001#item-8-01\"}],\"explanation\":{\"body\":\"The recommendation is supported by current public evidence [E1].\",\"caveats\":[],\"headline\":\"Quality and conviction remain aligned\",\"language\":\"en-US\",\"template_hash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"template_id\":\"daily_report_v1\"},\"model_version\":\"1.0.0\",\"risk_gate\":{\"evaluated_at\":\"2026-07-12T09:29:59Z\",\"gate\":\"GREEN\",\"ok_to_enter\":true,\"ticker\":\"AAPL\",\"triggers\":[]},\"score\":{\"dims\":[{\"band\":\"A\",\"key\":\"Q\",\"score\":90,\"weight\":0.2},{\"band\":\"A\",\"key\":\"G\",\"score\":88,\"weight\":0.2},{\"band\":\"B\",\"key\":\"V\",\"score\":80,\"weight\":0.15},{\"band\":\"A\",\"key\":\"M\",\"score\":92,\"weight\":0.2},{\"band\":\"A\",\"key\":\"T\",\"score\":86,\"weight\":0.15},{\"band\":\"B\",\"key\":\"R\",\"score\":84,\"weight\":0.1}],\"market_scope\":\"us\",\"profile\":\"us_preferred\",\"rating\":\"A\",\"scoring_id\":\"33333333-3333-4333-8333-333333333333\",\"snapshot_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"total\":88},\"ticker\":\"AAPL\",\"trigger_signals\":[{\"code\":\"CONVICTION_HIGH\",\"detail\":\"Conviction remains above the high threshold.\",\"source_ref\":\"E1\",\"strength\":\"STRONG\"}],\"weights\":{\"contributions\":[{\"source_kind\":\"score_dim\",\"source_ref\":\"Q\",\"weight\":1}],\"normalized\":true}}}],\"market_scope\":\"us\",\"meta\":{\"contract_version\":\"0.3.1\",\"input_fingerprint\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"pipeline_version\":\"1.0.0\",\"profile_version\":\"1.2.0\",\"strategy_version\":\"0.3.0\"},\"profile\":\"us_preferred\"}",
+  "source_output_fingerprint": "e96e32e319afbea9bd822950996564b6be3a790c61883106358f727708bbdf19",
+  "source_fingerprint_preimage_jcs": "{\"as_of\":\"2026-07-12T09:30:00Z\",\"disclaimer\":{\"effective_at\":\"2026-07-01T00:00:00Z\",\"full_text\":\"Research only. Markets involve risk.\",\"hash\":\"59488269aaf5e551a06ade38f66faa52bc4aed320b5ecd689a02d3956cfd8009\",\"language\":\"en-US\",\"short_text\":\"Research reference only.\",\"version\":\"1.0.0\"},\"items\":[{\"rating_band\":\"A\",\"recommendation\":{\"as_of\":\"2026-07-12T09:30:00Z\",\"conviction\":{\"adjustments\":[],\"as_of\":\"2026-07-12T09:30:00Z\",\"base\":87.3,\"final\":87.3,\"level\":\"HIGH\",\"score_ref\":{\"scoring_id\":\"33333333-3333-4333-8333-333333333333\",\"snapshot_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"ticker\":\"AAPL\"},\"disclaimer_version\":\"1.0.0\",\"entry_plan\":{\"conviction_ref\":87.3,\"entry\":{\"currency\":\"USD\",\"high\":200,\"low\":195},\"generated_at\":\"2026-07-12T09:30:00Z\",\"invalidation\":\"Close below 188 USD\",\"score_ref\":{\"scoring_id\":\"33333333-3333-4333-8333-333333333333\",\"snapshot_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"size_hint\":{\"disclaimer_key\":\"size_hint_advisory\",\"pct\":5,\"rationale\":\"High conviction with a clean risk gate.\",\"tier\":\"TIER_5\"},\"stop\":{\"currency\":\"USD\",\"value\":188},\"targets\":[{\"currency\":\"USD\",\"value\":220}],\"ticker\":\"AAPL\",\"time_horizon\":\"POSITION\"},\"evidence_refs\":[{\"as_of\":\"2026-07-12T09:00:00Z\",\"hash\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"id\":\"E1\",\"kind\":\"DISCLOSURE\",\"short_text\":\"Current public filing\",\"source_uri\":\"sec-edgar://0000320193-26-000001#item-8-01\"}],\"explanation\":{\"body\":\"The recommendation is supported by current public evidence [E1].\",\"caveats\":[],\"headline\":\"Quality and conviction remain aligned\",\"language\":\"en-US\",\"template_hash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"template_id\":\"daily_report_v1\"},\"model_version\":\"1.0.0\",\"risk_gate\":{\"evaluated_at\":\"2026-07-12T09:29:59Z\",\"gate\":\"GREEN\",\"ok_to_enter\":true,\"ticker\":\"AAPL\",\"triggers\":[]},\"score\":{\"dims\":[{\"band\":\"A\",\"key\":\"Q\",\"score\":90,\"weight\":0.2},{\"band\":\"A\",\"key\":\"G\",\"score\":88,\"weight\":0.2},{\"band\":\"B\",\"key\":\"V\",\"score\":80,\"weight\":0.15},{\"band\":\"A\",\"key\":\"M\",\"score\":92,\"weight\":0.2},{\"band\":\"A\",\"key\":\"T\",\"score\":86,\"weight\":0.15},{\"band\":\"B\",\"key\":\"R\",\"score\":84,\"weight\":0.1}],\"market_scope\":\"us\",\"profile\":\"us_preferred\",\"rating\":\"A\",\"scoring_id\":\"33333333-3333-4333-8333-333333333333\",\"snapshot_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"total\":87.3},\"ticker\":\"AAPL\",\"trigger_signals\":[{\"code\":\"CONVICTION_HIGH\",\"detail\":\"Conviction remains above the high threshold.\",\"source_ref\":\"E1\",\"strength\":\"STRONG\"}],\"weights\":{\"contributions\":[{\"source_kind\":\"score_dim\",\"source_ref\":\"Q\",\"weight\":1}],\"normalized\":true}}}],\"market_scope\":\"us\",\"meta\":{\"contract_version\":\"0.3.1\",\"input_fingerprint\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"pipeline_version\":\"1.0.0\",\"profile_version\":\"1.2.0\",\"strategy_version\":\"0.3.0\"},\"profile\":\"us_preferred\"}",
   "disclaimer": {
     "version": "1.0.0",
     "short_text": "Research reference only.",
@@ -48,7 +48,7 @@
           "snapshot_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "profile": "us_preferred",
           "market_scope": "us",
-          "total": 88,
+          "total": 87.3,
           "rating": "A",
           "dims": [
             {
@@ -92,13 +92,13 @@
         "conviction": {
           "ticker": "AAPL",
           "as_of": "2026-07-12T09:30:00Z",
-          "base": 90,
+          "base": 87.3,
           "score_ref": {
             "scoring_id": "33333333-3333-4333-8333-333333333333",
             "snapshot_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
           },
           "adjustments": [],
-          "final": 90,
+          "final": 87.3,
           "level": "HIGH"
         },
         "risk_gate": {
@@ -127,14 +127,14 @@
             }
           ],
           "size_hint": {
-            "tier": "TIER_3",
-            "pct": 3,
+            "tier": "TIER_5",
+            "pct": 5,
             "disclaimer_key": "size_hint_advisory",
             "rationale": "High conviction with a clean risk gate."
           },
           "time_horizon": "POSITION",
           "invalidation": "Close below 188 USD",
-          "conviction_ref": 90,
+          "conviction_ref": 87.3,
           "score_ref": {
             "scoring_id": "33333333-3333-4333-8333-333333333333",
             "snapshot_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -208,5 +208,5 @@
       ]
     }
   ],
-  "markdown": "# AI 荐股日报 · 2026-07-12\n\n- Profile: `us_preferred`\n- Market scope: `us`\n- Source snapshot: `11111111-1111-4111-8111-111111111111`\n- Source as-of: `2026-07-12T09:30:00Z`\n- Output fingerprint: `c6b756495e25049aaa04ec76f73dddfdc234ea273894f1db88a2a93425855c87`\n- Input fingerprint: `eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee`\n\n## 摘要\n\n- 推荐数: 1\n- 高信念推荐数: 1\n- 评级分布: A=1 · B=0 · C=0 · D=0 · F=0\n\n## 1. AAPL · A\n\n**Quality and conviction remain aligned**\n\nThe recommendation is supported by current public evidence [E1].\n\n- Conviction: 90 (HIGH)\n- Risk gate: GREEN\n- Size hint: TIER_3 / 3%\n- Evidence:\n  - [E1](sec-edgar://0000320193-26-000001#item-8-01) · Current public filing\n\n## 免责声明\n\nResearch only. Markets involve risk.\n\n_Disclaimer version: 1.0.0 · hash: 59488269aaf5e551a06ade38f66faa52bc4aed320b5ecd689a02d3956cfd8009_\n"
+  "markdown": "# AI 荐股日报 · 2026-07-12\n\n- Profile: `us_preferred`\n- Market scope: `us`\n- Source snapshot: `11111111-1111-4111-8111-111111111111`\n- Source as-of: `2026-07-12T09:30:00Z`\n- Output fingerprint: `e96e32e319afbea9bd822950996564b6be3a790c61883106358f727708bbdf19`\n- Input fingerprint: `eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee`\n\n## 摘要\n\n- 推荐数: 1\n- 高信念推荐数: 1\n- 评级分布: A=1 · B=0 · C=0 · D=0 · F=0\n\n## 1. AAPL · A\n\n**Quality and conviction remain aligned**\n\nThe recommendation is supported by current public evidence [E1].\n\n- Conviction: 87.3 (HIGH)\n- Risk gate: GREEN\n- Size hint: TIER_5 / 5%\n- Evidence:\n  - [E1](sec-edgar://0000320193-26-000001#item-8-01) · Current public filing\n\n## 免责声明\n\nResearch only. Markets involve risk.\n\n_Disclaimer version: 1.0.0 · hash: 59488269aaf5e551a06ade38f66faa52bc4aed320b5ecd689a02d3956cfd8009_\n"
 }

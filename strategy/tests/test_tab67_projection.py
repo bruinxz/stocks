@@ -79,11 +79,11 @@ class Tab67ProjectionTests(unittest.TestCase):
         self.assertIn(self.source["meta"]["input_fingerprint"], first["markdown"])
         self.assertEqual(
             hashlib.sha256(first["markdown"].encode("utf-8")).hexdigest(),
-            "050acc13a6082686b5a8bff01eac261fd327f0055d00a8a4a17866b10bb3fb0e",
+            "80cb1fc3d0d36883bb7ffd64c001acaaf136b0906eecc83842781301d9f6217b",
         )
         self.assertEqual(
             canonical_sha(first),
-            "95b144a4db0b6ee1e606c15bfb15dc784c9185ebfd980cbcf4180d73d3325ee6",
+            "1575b0dabc36a4a53d9a89c5267c870b35806d24db8f9a00044cef54923ff4dd",
         )
 
     def test_empty_list_is_a_valid_report(self):
@@ -134,7 +134,7 @@ class Tab67ProjectionTests(unittest.TestCase):
         self.assertEqual(searched["entries"][0]["trading_day"], "2026-07-12")
         self.assertEqual(
             canonical_sha(project_report_history([self.source])),
-            "4f6144ef1bcffcebaf53115a25800baa0264825fe214824de1b02677fa144aed",
+            "4b1d1e0c5cfcd63a1631a2f7d9991597aa96f1acfceae6f326230be5b228c3d6",
         )
 
     def test_history_profile_order_is_canonical_for_same_day(self):
@@ -244,7 +244,7 @@ class Tab67ProjectionTests(unittest.TestCase):
         size_pct_mismatch = copy.deepcopy(self.source)
         size_pct_mismatch["items"][0]["recommendation"]["entry_plan"][
             "size_hint"
-        ]["pct"] = 5
+        ]["pct"] = 3
         reseal(size_pct_mismatch)
         mutations.append(size_pct_mismatch)
 
@@ -394,6 +394,77 @@ class Tab67ProjectionTests(unittest.TestCase):
         ] = "R"
         reseal(malformed_dim)
         mutations.append(malformed_dim)
+
+        for source in mutations:
+            with self.subTest(source=source):
+                with self.assertRaises(ProjectionContractError):
+                    project_daily_report(source)
+
+    def test_score_conviction_and_size_relations_fail_closed(self):
+        mutations = []
+
+        weighted_total = copy.deepcopy(self.source)
+        weighted_total["items"][0]["recommendation"]["score"]["total"] = 88
+        weighted_total["items"][0]["recommendation"]["conviction"]["base"] = 88
+        weighted_total["items"][0]["recommendation"]["conviction"]["final"] = 88
+        weighted_total["items"][0]["recommendation"]["entry_plan"][
+            "conviction_ref"
+        ] = 88
+        reseal(weighted_total)
+        mutations.append(weighted_total)
+
+        base_mismatch = copy.deepcopy(self.source)
+        base_mismatch["items"][0]["recommendation"]["conviction"]["base"] = 90
+        base_mismatch["items"][0]["recommendation"]["conviction"]["final"] = 90
+        base_mismatch["items"][0]["recommendation"]["entry_plan"][
+            "conviction_ref"
+        ] = 90
+        reseal(base_mismatch)
+        mutations.append(base_mismatch)
+
+        tier_mismatch = copy.deepcopy(self.source)
+        tier_mismatch["items"][0]["recommendation"]["entry_plan"]["size_hint"][
+            "tier"
+        ] = "TIER_3"
+        tier_mismatch["items"][0]["recommendation"]["entry_plan"]["size_hint"][
+            "pct"
+        ] = 3
+        reseal(tier_mismatch)
+        mutations.append(tier_mismatch)
+
+        boundary_cases = (
+            (85.0, "TIER_3", 3),
+            (70.0, "TIER_2", 2),
+            (55.0, "TIER_1", 1),
+            (40.0, "SKIP", 0),
+        )
+        for final, tier, pct in boundary_cases:
+            source = copy.deepcopy(self.source)
+            score = source["items"][0]["recommendation"]["score"]
+            for dim in score["dims"]:
+                dim["score"] = final
+                dim["band"] = (
+                    "A"
+                    if final >= 85
+                    else "B"
+                    if final >= 70
+                    else "C"
+                    if final >= 55
+                    else "D"
+                )
+            score["total"] = final
+            score["rating"] = score["dims"][0]["band"]
+            source["items"][0]["rating_band"] = score["rating"]
+            conviction = source["items"][0]["recommendation"]["conviction"]
+            conviction["base"] = final
+            conviction["final"] = final
+            conviction["level"] = "HIGH" if final >= 75 else "MED" if final >= 50 else "LOW"
+            plan = source["items"][0]["recommendation"]["entry_plan"]
+            plan["conviction_ref"] = final
+            plan["size_hint"]["tier"] = tier
+            plan["size_hint"]["pct"] = pct
+            reseal(source)
+            mutations.append(source)
 
         for source in mutations:
             with self.subTest(source=source):
