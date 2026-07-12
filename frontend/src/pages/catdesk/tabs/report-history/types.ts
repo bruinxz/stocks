@@ -1,19 +1,61 @@
-export interface ReportHistoryEntrySlot {
-  date: string;
-  profile: 'us_preferred' | 'multibagger';
-  status: 'ready' | 'failed';
+import type {
+  DailyReportDocument,
+  RecommendationMarketScope,
+  RecommendationProfile,
+  RecommendationSnapshot,
+} from '../daily-report/types';
+
+export interface ReportHistoryEntry {
+  report_id: string;
+  trading_day: string;
+  profile: RecommendationProfile;
+  market_scope: RecommendationMarketScope;
+  snapshot_id: string;
+  output_fingerprint: string;
   entry_count: number;
+  high_conviction_count: number;
+  top_rating: 'A' | 'B' | 'C' | 'D' | 'F' | null;
   generated_at: string;
-  generation_duration_ms?: number;
-  snapshot_id?: string;
-  content_preview?: string;
+  content_preview: string;
 }
 
 export interface ReportHistoryPage {
-  entries: ReportHistoryEntrySlot[];
+  entries: ReportHistoryEntry[];
   total: number;
   page: number;
   page_size: number;
-  sort_by: 'date' | 'profile' | 'status' | 'entry_count' | 'generation_duration_ms';
-  sort_dir: 'asc' | 'desc';
 }
+
+export interface ReportHistoryQuery {
+  date?: string;
+  profile?: RecommendationProfile;
+  market_scope?: RecommendationMarketScope;
+  search?: string;
+  page: number;
+  page_size: number;
+}
+
+export interface SnapshotDiff {
+  base_snapshot_id: string;
+  target_snapshot_id: string;
+  profile: RecommendationProfile;
+  market_scope: RecommendationMarketScope;
+  fingerprint_match: boolean;
+  added: string[];
+  removed: string[];
+  changed: string[];
+  unchanged: string[];
+}
+
+export type ReportHistoryViewState =
+  | { kind: 'loading' }
+  | { kind: 'error'; message: string }
+  | { kind: 'empty'; query: ReportHistoryQuery }
+  | {
+      kind: 'ready';
+      page: ReportHistoryPage;
+      query: ReportHistoryQuery;
+      selected_report?: DailyReportDocument;
+      selected_snapshot?: RecommendationSnapshot;
+      comparison?: SnapshotDiff;
+    };
