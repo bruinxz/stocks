@@ -1,0 +1,125 @@
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
+
+const ROOT = join(__dirname, '../..');
+const UP_PATH = join(ROOT, 'scripts/migrations/2026-07-12-ai-recommendation-sot-v031.sql');
+const DOWN_PATH = join(
+  ROOT,
+  'scripts/migrations/2026-07-12-ai-recommendation-sot-v031-rollback.sql'
+);
+const SNAPSHOT_MODEL = join(ROOT, 'src/models/AiRecommendationSnapshot.ts');
+const ITEM_MODEL = join(ROOT, 'src/models/AiRecommendationItem.ts');
+const DATABASE = join(ROOT, 'src/config/database.ts');
+const INDEX = join(ROOT, 'src/models/index.ts');
+
+const up = readFileSync(UP_PATH, 'utf8');
+const down = readFileSync(DOWN_PATH, 'utf8');
+const snapshotModel = readFileSync(SNAPSHOT_MODEL, 'utf8');
+const itemModel = readFileSync(ITEM_MODEL, 'utf8');
+const database = readFileSync(DATABASE, 'utf8');
+const index = readFileSync(INDEX, 'utf8');
+
+let passed = 0;
+let failed = 0;
+
+function assert(name: string, condition: boolean): void {
+  if (condition) passed += 1;
+  else {
+    failed += 1;
+    console.error(`FAIL ${name}`);
+  }
+}
+
+assert('[files] forward exists', existsSync(UP_PATH));
+assert('[files] rollback exists', existsSync(DOWN_PATH));
+assert('[files] snapshot model exists', existsSync(SNAPSHOT_MODEL));
+assert('[files] item model exists', existsSync(ITEM_MODEL));
+assert('[sql] forward transaction', /BEGIN;[\s\S]*COMMIT;/.test(up));
+assert('[sql] rollback transaction', /BEGIN;[\s\S]*COMMIT;/.test(down));
+assert(
+  '[sql] exact canonical tables',
+  /CREATE TABLE ai_recommendation_snapshot\b/.test(up) &&
+    /CREATE TABLE ai_recommendation_item\b/.test(up)
+);
+assert('[sql] no suffixed table fork', !/ai_recommendation_(?:snapshot|item)_v031/.test(up));
+assert(
+  '[sql] exact six persisted profiles',
+  /'us_preferred'[\s\S]*?'multibagger'[\s\S]*?'japan_blue_chip'[\s\S]*?'japan_multibagger'[\s\S]*?'korea_semiconductor_chain'[\s\S]*?'korea_multibagger'/.test(
+    up
+  ) && !/\bcustom\b/.test(up)
+);
+assert(
+  '[sql] exact four scopes and compatibility',
+  /market_scope IN \('cn_a', 'us', 'jp', 'kr'\)/.test(up) &&
+    /ck_ai_recommendation_snapshot_profile_scope/.test(up)
+);
+assert(
+  '[sql] contract and replay pins',
+  /contract_version = '0.3.1'/.test(up) &&
+    /profile_version TEXT NOT NULL/.test(up) &&
+    /input_fingerprint TEXT NOT NULL/.test(up) &&
+    /strategy_version TEXT NOT NULL/.test(up) &&
+    /pipeline_version TEXT NOT NULL/.test(up)
+);
+assert(
+  '[sql] complete envelope and disclaimer',
+  /envelope_json JSONB NOT NULL/.test(up) &&
+    /jsonb_typeof\(envelope_json->'items'\) = 'array'/.test(up) &&
+    /jsonb_typeof\(envelope_json->'disclaimer'\) = 'object'/.test(up) &&
+    /jsonb_typeof\(envelope_json->'meta'\) = 'object'/.test(up)
+);
+assert(
+  '[sql] item exact JSON and JCS/hash',
+  /recommendation_json JSONB NOT NULL/.test(up) &&
+    /recommendation_jcs TEXT NOT NULL/.test(up) &&
+    /recommendation_hash TEXT NOT NULL CHECK/.test(up) &&
+    /recommendation_jcs::JSONB = recommendation_json/.test(up) &&
+    /ENCODE\(SHA256\(CONVERT_TO\(recommendation_jcs, 'UTF8'\)\), 'hex'\)/.test(up)
+);
+assert(
+  '[sql] UUIDv4 and envelope as-of pins',
+  /SUBSTRING\(snapshot_id::TEXT FROM 15 FOR 1\) = '4'/.test(up) &&
+    /SUBSTRING\(item_id::TEXT FROM 20 FOR 1\) IN \('8', '9', 'a', 'b'\)/.test(up) &&
+    /\(envelope_json->>'as_of'\)::TIMESTAMPTZ = as_of_utc/.test(up)
+);
+assert(
+  '[sql] item projections use current contract',
+  /rating_band IN \('A', 'B', 'C', 'D', 'F'\)/.test(up) &&
+    /risk_gate_status IN \('GREEN', 'YELLOW', 'RED'\)/.test(up) &&
+    /size_hint_tier IN \('TIER_5', 'TIER_3', 'TIER_2', 'TIER_1', 'SKIP'\)/.test(up)
+);
+assert(
+  '[sql] atomic FK cascade and identities',
+  /REFERENCES ai_recommendation_snapshot\(snapshot_id\) ON DELETE CASCADE/.test(up) &&
+    /UNIQUE \(snapshot_id, ticker\)/.test(up) &&
+    /UNIQUE \(snapshot_id, sort_rank\)/.test(up) &&
+    /UNIQUE \(idempotency_key\)/.test(up)
+);
+assert(
+  '[sql] ownership safe rollback',
+  /migration:2026-07-12-ai-recommendation-sot-v031/.test(up) &&
+    /rollback ownership mismatch/.test(down) &&
+    !/DROP\s+INDEX/i.test(down)
+);
+assert('[model] snapshot table', /tableName:\s*'ai_recommendation_snapshot'/.test(snapshotModel));
+assert('[model] item table', /tableName:\s*'ai_recommendation_item'/.test(itemModel));
+assert('[model] string-safe conviction', /declare convictionFinal:\s*string/.test(itemModel));
+assert(
+  '[model] FK/cascade association',
+  /@ForeignKey\(\(\) => AiRecommendationSnapshot\)/.test(itemModel) &&
+    /@BelongsTo\(\(\) => AiRecommendationSnapshot\)/.test(itemModel)
+);
+assert(
+  '[registration] database',
+  /import \{ AiRecommendationSnapshot \}/.test(database) &&
+    /import \{ AiRecommendationItem \}/.test(database) &&
+    /\bAiRecommendationSnapshot,\s*\n\s*AiRecommendationItem,/.test(database)
+);
+assert(
+  '[registration] barrel',
+  /export \* from '\.\/AiRecommendationSnapshot'/.test(index) &&
+    /export \* from '\.\/AiRecommendationItem'/.test(index)
+);
+
+console.log(`ai-recommendation-sot-v031: ${passed} ok / ${failed} failed`);
+process.exit(failed === 0 ? 0 : 1);

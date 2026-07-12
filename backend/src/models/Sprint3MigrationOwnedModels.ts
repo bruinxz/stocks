@@ -8,6 +8,8 @@ import { JpkrSecurityMaster } from './JpkrSecurityMaster';
 import { MultibaggerCandidateSnapshot } from './MultibaggerCandidateSnapshot';
 import { MultibaggerTextHit } from './MultibaggerTextHit';
 import { MultibaggerUniverse } from './MultibaggerUniverse';
+import { AiRecommendationSnapshot } from './AiRecommendationSnapshot';
+import { AiRecommendationItem } from './AiRecommendationItem';
 
 /**
  * Canonical Sprint 3 tables are owned exclusively by the paired SQL migration.
@@ -28,6 +30,8 @@ export const SPRINT3_MIGRATION_OWNED_MODELS = [
   MultibaggerCandidateSnapshot,
   BacktestPitSnapshot,
   BacktestPitHolding,
+  AiRecommendationSnapshot,
+  AiRecommendationItem,
 ] as const;
 
 for (const model of SPRINT3_MIGRATION_OWNED_MODELS) {

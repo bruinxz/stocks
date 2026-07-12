@@ -112,6 +112,8 @@ import { MultibaggerTextHit } from '../models/MultibaggerTextHit';
 import { MultibaggerCandidateSnapshot } from '../models/MultibaggerCandidateSnapshot';
 import { BacktestPitSnapshot } from '../models/BacktestPitSnapshot';
 import { BacktestPitHolding } from '../models/BacktestPitHolding';
+import { AiRecommendationSnapshot } from '../models/AiRecommendationSnapshot';
+import { AiRecommendationItem } from '../models/AiRecommendationItem';
 import '../models/Sprint3MigrationOwnedModels';
 import dotenv from 'dotenv';
 
@@ -247,6 +249,8 @@ const sequelize = new Sequelize({
     MultibaggerCandidateSnapshot,
     BacktestPitSnapshot,
     BacktestPitHolding,
+    AiRecommendationSnapshot,
+    AiRecommendationItem,
   ],
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {

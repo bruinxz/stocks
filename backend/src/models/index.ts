@@ -101,3 +101,5 @@ export * from './MultibaggerCandidateSnapshot';
 export * from './BacktestPitSnapshot';
 export * from './BacktestPitHolding';
 export * from './Sprint3MigrationOwnedModels';
+export * from './AiRecommendationSnapshot';
+export * from './AiRecommendationItem';
