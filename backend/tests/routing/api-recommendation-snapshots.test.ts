@@ -87,6 +87,10 @@ function buildPort(calls: PortCall[]): RecommendationSnapshotReadPort {
       };
       return page;
     },
+    async history(query) {
+      calls.push({ operation: 'history', args: [query] });
+      return [DETAIL];
+    },
     async detail(snapshotId) {
       calls.push({ operation: 'detail', args: [snapshotId] });
       return DETAIL;

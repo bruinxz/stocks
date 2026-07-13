@@ -168,6 +168,37 @@ async function main(): Promise<void> {
   assert('by-date normalizes count', page.total === 1);
   assert('by-date computes offset', calls.at(-1)?.replacements.offset === 10);
 
+  queue = [[header()], [itemRow()]];
+  const history = await adapter.history({
+    profile: 'us_preferred',
+    market_scope: 'us',
+    from_day: '2026-07-01',
+    to_day: '2026-07-12',
+    limit: 30,
+  });
+  const historySql = calls.at(-2);
+  assert('history hydrates exact B3 envelope', history[0]?.snapshot_id === SNAPSHOT_A);
+  assert('history query is bounded', historySql?.replacements.limit === 30);
+  assert(
+    'history parameterizes exact filters',
+    historySql?.replacements.profile === 'us_preferred' &&
+      historySql?.replacements.market_scope === 'us' &&
+      historySql?.replacements.from_day === '2026-07-01' &&
+      historySql?.replacements.to_day === '2026-07-12'
+  );
+  assert(
+    'history ordering is deterministic',
+    historySql?.sql.includes('ORDER BY trading_day DESC') &&
+      historySql?.sql.includes('profile ASC') &&
+      historySql?.sql.includes('market_scope ASC') &&
+      historySql?.sql.includes('as_of_utc DESC') &&
+      historySql?.sql.includes('snapshot_id DESC')
+  );
+  assert(
+    'history hydrates through canonical item table',
+    calls.at(-1)?.sql.includes('ai_recommendation_item')
+  );
+
   queue = [[header({ envelope_json: { ...ENVELOPE, market_scope: 'cn_a' } })], [itemRow()]];
   let malformedRejected = false;
   try {

@@ -102,9 +102,18 @@ export interface RecommendationSnapshotDateQuery extends RecommendationSnapshotS
   page_size: number;
 }
 
+export interface RecommendationSnapshotHistoryQuery {
+  profile?: RecommendationProfile;
+  market_scope?: RecommendationMarketScope;
+  from_day?: string;
+  to_day?: string;
+  limit: number;
+}
+
 export interface RecommendationSnapshotReadPort {
   latest(scope: RecommendationSnapshotScope): Promise<RecommendationSnapshotDetail | null>;
   byDate(query: RecommendationSnapshotDateQuery): Promise<RecommendationSnapshotPage>;
+  history(query: RecommendationSnapshotHistoryQuery): Promise<RecommendationSnapshotDetail[]>;
   detail(snapshotId: string): Promise<RecommendationSnapshotDetail | null>;
   diff(baseSnapshotId: string, targetSnapshotId: string): Promise<RecommendationSnapshotDiff>;
 }
@@ -149,6 +158,9 @@ export const unavailableRecommendationSnapshotReadPort: RecommendationSnapshotRe
     throw new RecommendationSnapshotStoreUnavailableError();
   },
   async byDate() {
+    throw new RecommendationSnapshotStoreUnavailableError();
+  },
+  async history() {
     throw new RecommendationSnapshotStoreUnavailableError();
   },
   async detail() {
