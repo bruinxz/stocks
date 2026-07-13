@@ -19,8 +19,18 @@ jest.mock('remark-gfm', () => ({
   default: () => undefined,
 }));
 jest.mock('antd', () => ({
-  Button: ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) => (
-    <button onClick={onClick}>{children}</button>
+  Button: ({
+    children,
+    onClick,
+    disabled,
+  }: {
+    children: React.ReactNode;
+    onClick?: () => void;
+    disabled?: boolean;
+  }) => (
+    <button onClick={onClick} disabled={disabled}>
+      {children}
+    </button>
   ),
   Tag: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
 }));
@@ -192,6 +202,7 @@ describe('Tab 6/7 contract-first behavior', () => {
       root.render(
         <DailyReport
           state={{ kind: 'empty', profile: 'us_preferred', market_scope: 'us' }}
+          generateAvailable
           onGenerate={onGenerate}
         />
       );
