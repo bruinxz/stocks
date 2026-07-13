@@ -1,0 +1,40 @@
+{
+  "plan_sha256": "2e3e6f54f51b8a4ec0dc273a99782632a568b2d1b0e38ecab34e463c64cd430e",
+  "calendar_start": "2026-01-10",
+  "calendar_end": "2026-07-10",
+  "profiles": [
+    "us_preferred",
+    "multibagger",
+    "japan_blue_chip",
+    "japan_multibagger",
+    "korea_semiconductor_chain",
+    "korea_multibagger"
+  ],
+  "market_scopes": ["cn_a", "us", "jp", "kr"],
+  "legal_pairs": [
+    ["us_preferred", "cn_a"],
+    ["us_preferred", "us"],
+    ["multibagger", "cn_a"],
+    ["multibagger", "us"],
+    ["japan_blue_chip", "jp"],
+    ["japan_multibagger", "jp"],
+    ["korea_semiconductor_chain", "kr"],
+    ["korea_multibagger", "kr"]
+  ],
+  "expected": {
+    "sessions_per_scope": 128,
+    "checkpoints_per_pair": 27,
+    "holdings_per_checkpoint": 3,
+    "snapshots": 216,
+    "holdings": 648,
+    "list_requests": 8,
+    "detail_requests": 216,
+    "holdings_requests": 216,
+    "total_requests": 440
+  },
+  "request_routes": {
+    "list": "/api/v1/backtest/pit/snapshots?strategy={profile}&market_scope={scope}",
+    "detail": "/api/v1/backtest/pit/snapshots/{profile}/{as_of}?market_scope={scope}",
+    "holdings": "/api/v1/backtest/pit/snapshots/{snapshot_id}/holdings?market_scope={scope}"
+  }
+}
