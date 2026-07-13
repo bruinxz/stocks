@@ -11,7 +11,10 @@ from ai.snapshot.fingerprint import (
     jcs_canonicalize,
 )
 from ai.snapshot.store import SnapshotItemRow, SnapshotRow, SnapshotStore
-from ai.snapshot.writer import PROFILE_MARKET_SCOPES
+from ai.snapshot.store import (
+    PROFILE_MARKET_SCOPES,
+    snapshot_row_integrity_errors,
+)
 
 
 class SnapshotReadError(RuntimeError):
@@ -107,6 +110,12 @@ class SnapshotReader:
     def _hydrate(
         cls, snapshot: SnapshotRow, items: Sequence[SnapshotItemRow]
     ) -> dict:
+        integrity_errors = snapshot_row_integrity_errors(snapshot)
+        if integrity_errors:
+            raise SnapshotCorruptError(
+                "snapshot scalar integrity mismatch: "
+                + ", ".join(integrity_errors)
+            )
         if not isinstance(snapshot.envelope_json, dict):
             raise SnapshotCorruptError("invalid snapshot envelope JSON")
         try:
@@ -224,7 +233,10 @@ class SnapshotReader:
                 "final"
             ) != item.conviction_final:
                 raise SnapshotCorruptError("recommendation conviction mismatch")
-            if recommendation.get("risk_gate", {}).get("gate") != item.risk_gate:
+            if (
+                recommendation.get("risk_gate", {}).get("gate")
+                != item.risk_gate_status
+            ):
                 raise SnapshotCorruptError("recommendation risk gate mismatch")
             size_hint = recommendation.get("entry_plan", {}).get("size_hint", {})
             if size_hint.get("tier") != item.size_hint_tier:

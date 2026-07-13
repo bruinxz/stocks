@@ -5,6 +5,7 @@ import hashlib
 import math
 import unittest
 from contextlib import contextmanager
+from dataclasses import replace
 from types import SimpleNamespace
 
 from ai.snapshot.fingerprint import (
@@ -273,6 +274,46 @@ class SnapshotWriterTests(unittest.TestCase):
         with self.assertRaises(SnapshotIdempotencyConflictError):
             writer.write(ctx, payload)
 
+    def test_retry_rejects_every_persisted_scalar_corruption(self):
+        ctx = _context()
+        payload = _recommendation_list(ctx)
+        mutations = {
+            "snapshot_id": "82345678-1234-4234-8234-567812345678",
+            "as_of_utc": "1999-01-01T00:00:00Z",
+            "trading_day": "1999-01-01",
+            "profile": "multibagger",
+            "market_scope": "cn_a",
+            "contract_version": "0.3.0",
+            "profile_version": "current",
+            "pipeline_version": "01.0.0",
+            "model_version": "corrupt",
+            "strategy_version": "١.0.0",
+            "rule_bundle_hash": "1" * 64,
+            "template_hash": "2" * 64,
+            "disclaimer_hash": "3" * 64,
+            "input_fingerprint": "4" * 64,
+            "output_fingerprint": "5" * 64,
+            "fingerprint_preimage_jcs": "{}",
+            "idempotency_key": "6" * 64,
+            "item_count": 99,
+        }
+        for field, value in mutations.items():
+            with self.subTest(field=field):
+                store = MemorySnapshotStore()
+                writer = SnapshotWriter(store)
+                writer.write(ctx, payload)
+                row = store.snapshots[ctx.snapshot_id]
+                corrupted = replace(row, **{field: value})
+                store.snapshots.pop(ctx.snapshot_id)
+                store.snapshots[corrupted.snapshot_id] = corrupted
+                store.idempotency[row.idempotency_key] = corrupted.snapshot_id
+                if corrupted.snapshot_id != ctx.snapshot_id:
+                    store.items[corrupted.snapshot_id] = store.items.pop(
+                        ctx.snapshot_id
+                    )
+                with self.assertRaises(SnapshotIdempotencyConflictError):
+                    writer.write(ctx, payload)
+
     def test_missing_pins_and_invalid_profile_scope_fail_before_transaction(self):
         invalid_cases = []
 
@@ -388,6 +429,36 @@ class SnapshotReaderTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(SnapshotCorruptError, "item count"):
             self.reader.read_snapshot(self.ctx.snapshot_id)
+
+    def test_reader_rejects_every_persisted_scalar_corruption(self):
+        mutations = {
+            "as_of_utc": "1999-01-01T00:00:00Z",
+            "trading_day": "1999-01-01",
+            "profile": "multibagger",
+            "market_scope": "cn_a",
+            "contract_version": "0.3.0",
+            "profile_version": "current",
+            "pipeline_version": "01.0.0",
+            "model_version": "corrupt",
+            "strategy_version": "١.0.0",
+            "rule_bundle_hash": "1" * 64,
+            "template_hash": "2" * 64,
+            "disclaimer_hash": "3" * 64,
+            "input_fingerprint": "4" * 64,
+            "output_fingerprint": "5" * 64,
+            "fingerprint_preimage_jcs": "{}",
+            "idempotency_key": "6" * 64,
+            "item_count": 99,
+        }
+        original = self.store.snapshots[self.ctx.snapshot_id]
+        for field, value in mutations.items():
+            with self.subTest(field=field):
+                self.store.snapshots[self.ctx.snapshot_id] = replace(
+                    original, **{field: value}
+                )
+                with self.assertRaises(SnapshotCorruptError):
+                    self.reader.read_snapshot(self.ctx.snapshot_id)
+                self.store.snapshots[self.ctx.snapshot_id] = original
 
     def test_recomputed_item_fingerprint_detects_projection_consistent_tamper(self):
         item = self.store.items[self.ctx.snapshot_id][0]

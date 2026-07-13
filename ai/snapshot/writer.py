@@ -15,21 +15,17 @@ from ai.snapshot.fingerprint import (
     jcs_canonicalize,
 )
 from ai.snapshot.store import (
+    PROFILE_MARKET_SCOPES,
     SnapshotItemRow,
     SnapshotRow,
     SnapshotStore,
+    compute_snapshot_idempotency_key,
+    snapshot_row_integrity_errors,
+    snapshot_scalar_mismatches,
 )
 
 
 CONTRACT_VERSION = "0.3.1"
-PROFILE_MARKET_SCOPES = {
-    "us_preferred": frozenset({"us", "cn_a"}),
-    "multibagger": frozenset({"us", "cn_a"}),
-    "japan_blue_chip": frozenset({"jp"}),
-    "japan_multibagger": frozenset({"jp"}),
-    "korea_semiconductor_chain": frozenset({"kr"}),
-    "korea_multibagger": frozenset({"kr"}),
-}
 RISK_GATES = frozenset({"GREEN", "YELLOW", "RED"})
 SIZE_HINT_TIERS = frozenset(
     {"TIER_5", "TIER_3", "TIER_2", "TIER_1", "SKIP"}
@@ -80,6 +76,17 @@ class SnapshotWriter:
                 snapshot.idempotency_key
             )
             if existing is not None:
+                integrity_errors = snapshot_row_integrity_errors(existing)
+                scalar_mismatches = snapshot_scalar_mismatches(
+                    snapshot, existing
+                )
+                if integrity_errors or scalar_mismatches:
+                    details = ", ".join(
+                        (*integrity_errors, *scalar_mismatches)
+                    )
+                    raise SnapshotIdempotencyConflictError(
+                        f"persisted snapshot scalar mismatch: {details}"
+                    )
                 existing_items = transaction.get_items(existing.snapshot_id)
                 if not self._same_payload(existing, existing_items, snapshot, items):
                     raise SnapshotIdempotencyConflictError(
@@ -126,32 +133,7 @@ class SnapshotWriter:
                 "output fingerprint preimage must be valid strict JCS"
             ) from error
 
-        idempotency_material = {
-            "as_of": recommendation_list["as_of"],
-            "trading_day": ctx.config.trading_day,
-            "profile": recommendation_list["profile"],
-            "market_scope": recommendation_list["market_scope"],
-            "contract_version": meta["contract_version"],
-            "profile_version": meta["profile_version"],
-            "pipeline_version": meta["pipeline_version"],
-            "model_version": ctx.config.model_version,
-            "strategy_version": meta["strategy_version"],
-            "rule_bundle_hash": ctx.config.rule_bundle_hash,
-            "template_hash": ctx.config.template_hash,
-            "disclaimer_hash": disclaimer["hash"],
-            "input_fingerprint": input_fingerprint,
-        }
-        try:
-            idempotency_json = jcs_canonicalize(idempotency_material)
-        except (TypeError, ValueError) as error:
-            raise SnapshotContractError(
-                "idempotency pins must be JCS serializable"
-            ) from error
-        idempotency_key = hashlib.sha256(
-            idempotency_json.encode("utf-8")
-        ).hexdigest()
-
-        snapshot = SnapshotRow(
+        snapshot_without_key = SnapshotRow(
             snapshot_id=recommendation_list["snapshot_id"],
             as_of_utc=recommendation_list["as_of"],
             trading_day=ctx.config.trading_day,
@@ -168,10 +150,24 @@ class SnapshotWriter:
             input_fingerprint=input_fingerprint,
             output_fingerprint=recommendation_list["output_fingerprint"],
             fingerprint_preimage_jcs=fingerprint_preimage_jcs,
-            idempotency_key=idempotency_key,
+            idempotency_key="0" * 64,
             item_count=len(entries),
             envelope_json=json.loads(envelope_json),
         )
+        snapshot = SnapshotRow(
+            **{
+                **snapshot_without_key.__dict__,
+                "idempotency_key": compute_snapshot_idempotency_key(
+                    snapshot_without_key
+                ),
+            }
+        )
+        integrity_errors = snapshot_row_integrity_errors(snapshot)
+        if integrity_errors:
+            raise SnapshotContractError(
+                "snapshot scalar integrity failed: "
+                + ", ".join(integrity_errors)
+            )
 
         item_rows = tuple(
             self._build_item_row(snapshot.snapshot_id, rank, entry)
@@ -205,7 +201,7 @@ class SnapshotWriter:
             recommendation_hash=recommendation_hash,
             rating_band=entry["rating_band"],
             conviction_final=float(recommendation["conviction"]["final"]),
-            risk_gate=recommendation["risk_gate"]["gate"],
+            risk_gate_status=recommendation["risk_gate"]["gate"],
             size_hint_tier=size_hint["tier"],
         )
 
@@ -479,7 +475,7 @@ class SnapshotWriter:
                 item.recommendation_hash,
                 item.rating_band,
                 item.conviction_final,
-                item.risk_gate,
+                item.risk_gate_status,
                 item.size_hint_tier,
             )
 
