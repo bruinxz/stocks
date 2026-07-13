@@ -30,6 +30,45 @@ function assert(name: string, condition: boolean): void {
   }
 }
 
+const semverColumns = [
+  'profile_version',
+  'pipeline_version',
+  'model_version',
+  'strategy_version',
+] as const;
+const validSemvers = ['0.0.0', '1.2.3-alpha-beta.1+build-meta-7'];
+const invalidSemvers = [
+  '１.2.3',
+  '1.2.3-α',
+  'current',
+  'v1.2.3',
+  '01.2.3',
+  '1.2.3-01',
+  '1.2.3-',
+  '1.2.3+',
+  '1.2.3-alpha..1',
+  '1.2.3+build..1',
+];
+
+function sqlSemverPattern(column: (typeof semverColumns)[number]): string | undefined {
+  return up.match(
+    new RegExp(
+      `${column}\\s+TEXT\\s+NOT\\s+NULL\\s+CHECK\\s*\\(` +
+        `\\s*${column}\\s+COLLATE\\s+"C"\\s*~\\s*'([^']+)'`
+    )
+  )?.[1];
+}
+
+function modelColumnHasValidator(column: (typeof semverColumns)[number]): boolean {
+  const fieldIndex = snapshotModel.indexOf(`field: '${column}'`);
+  if (fieldIndex < 0) return false;
+  const decoratorStart = snapshotModel.lastIndexOf('@Column({', fieldIndex);
+  const decoratorEnd = snapshotModel.indexOf('})', fieldIndex);
+  if (decoratorStart < 0 || decoratorEnd < 0) return false;
+  const decorator = snapshotModel.slice(decoratorStart, decoratorEnd + 2);
+  return /validate:\s*\{\s*is:\s*STRICT_SEMVER_PATTERN\s*\}/.test(decorator);
+}
+
 assert('[files] forward exists', existsSync(UP_PATH));
 assert('[files] rollback exists', existsSync(DOWN_PATH));
 assert('[files] snapshot model exists', existsSync(SNAPSHOT_MODEL));
@@ -65,6 +104,18 @@ assert(
     /pipeline_version TEXT NOT NULL/.test(up)
 );
 assert(
+  '[sql] four strict ASCII SemVer checks',
+  semverColumns.every(column => {
+    const source = sqlSemverPattern(column);
+    if (!source || /\\d|\[\[:digit:\]\]/.test(source)) return false;
+    const pattern = new RegExp(source);
+    return (
+      validSemvers.every(value => pattern.test(value)) &&
+      invalidSemvers.every(value => !pattern.test(value))
+    );
+  })
+);
+assert(
   '[sql] semantic fingerprint preimage bytes',
   /fingerprint_preimage_jcs TEXT NOT NULL/.test(up) &&
     /ck_ai_recommendation_snapshot_fingerprint_hash/.test(up) &&
@@ -94,7 +145,9 @@ assert(
 assert(
   '[sql] item projections use current contract',
   /rating_band IN \('A', 'B', 'C', 'D', 'F'\)/.test(up) &&
-    /risk_gate_status IN \('GREEN', 'YELLOW', 'RED'\)/.test(up) &&
+    /risk_gate_status TEXT NOT NULL CHECK \(risk_gate_status = 'GREEN'\)/.test(up) &&
+    /recommendation_json->'risk_gate'->>'gate' = 'GREEN'/.test(up) &&
+    /\(recommendation_json->'risk_gate'->>'ok_to_enter'\)::BOOLEAN = TRUE/.test(up) &&
     /size_hint_tier IN \('TIER_5', 'TIER_3', 'TIER_2', 'TIER_1', 'SKIP'\)/.test(up)
 );
 assert(
@@ -124,6 +177,16 @@ assert(
 assert('[model] snapshot table', /tableName:\s*'ai_recommendation_snapshot'/.test(snapshotModel));
 assert('[model] item table', /tableName:\s*'ai_recommendation_item'/.test(itemModel));
 assert('[model] string-safe conviction', /declare convictionFinal:\s*string/.test(itemModel));
+assert(
+  '[model] four strict ASCII SemVer validators',
+  /const STRICT_SEMVER_PATTERN\s*=/.test(snapshotModel) &&
+    semverColumns.every(modelColumnHasValidator)
+);
+assert(
+  '[model] GREEN-only risk validator and type',
+  /field:\s*'risk_gate_status'[\s\S]{0,160}validate:\s*\{[\s\S]{0,100}'GREEN'/.test(itemModel) &&
+    /declare riskGateStatus:\s*'GREEN'/.test(itemModel)
+);
 assert(
   '[model] FK/cascade association',
   /@ForeignKey\(\(\) => AiRecommendationSnapshot\)/.test(itemModel) &&

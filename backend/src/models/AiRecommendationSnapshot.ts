@@ -1,5 +1,8 @@
 import { Column, DataType, Model, Table } from 'sequelize-typescript';
 
+export const STRICT_SEMVER_PATTERN =
+  /^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)([.](0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?([+][0-9A-Za-z-]+([.][0-9A-Za-z-]+)*)?$/;
+
 @Table({
   tableName: 'ai_recommendation_snapshot',
   timestamps: false,
@@ -55,16 +58,36 @@ export class AiRecommendationSnapshot extends Model {
   @Column({ type: DataType.TEXT, allowNull: false, field: 'contract_version' })
   declare contractVersion: '0.3.1';
 
-  @Column({ type: DataType.TEXT, allowNull: false, field: 'profile_version' })
+  @Column({
+    type: DataType.TEXT,
+    allowNull: false,
+    field: 'profile_version',
+    validate: { is: STRICT_SEMVER_PATTERN },
+  })
   declare profileVersion: string;
 
-  @Column({ type: DataType.TEXT, allowNull: false, field: 'pipeline_version' })
+  @Column({
+    type: DataType.TEXT,
+    allowNull: false,
+    field: 'pipeline_version',
+    validate: { is: STRICT_SEMVER_PATTERN },
+  })
   declare pipelineVersion: string;
 
-  @Column({ type: DataType.TEXT, allowNull: false, field: 'model_version' })
+  @Column({
+    type: DataType.TEXT,
+    allowNull: false,
+    field: 'model_version',
+    validate: { is: STRICT_SEMVER_PATTERN },
+  })
   declare modelVersion: string;
 
-  @Column({ type: DataType.TEXT, allowNull: false, field: 'strategy_version' })
+  @Column({
+    type: DataType.TEXT,
+    allowNull: false,
+    field: 'strategy_version',
+    validate: { is: STRICT_SEMVER_PATTERN },
+  })
   declare strategyVersion: string;
 
   @Column({ type: DataType.STRING(64), allowNull: false, field: 'rule_bundle_hash' })

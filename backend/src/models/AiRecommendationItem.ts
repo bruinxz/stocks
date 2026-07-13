@@ -61,8 +61,13 @@ export class AiRecommendationItem extends Model {
   @Column({ type: DataType.DECIMAL(5, 1), allowNull: false, field: 'conviction_final' })
   declare convictionFinal: string;
 
-  @Column({ type: DataType.TEXT, allowNull: false, field: 'risk_gate_status' })
-  declare riskGateStatus: 'GREEN' | 'YELLOW' | 'RED';
+  @Column({
+    type: DataType.TEXT,
+    allowNull: false,
+    field: 'risk_gate_status',
+    validate: { isIn: [['GREEN']] },
+  })
+  declare riskGateStatus: 'GREEN';
 
   @Column({ type: DataType.TEXT, allowNull: false, field: 'size_hint_tier' })
   declare sizeHintTier: 'TIER_5' | 'TIER_3' | 'TIER_2' | 'TIER_1' | 'SKIP';

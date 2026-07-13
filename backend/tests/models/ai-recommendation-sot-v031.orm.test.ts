@@ -9,6 +9,29 @@ import { SPRINT3_MIGRATION_OWNED_MODELS } from '../../src/models/Sprint3Migratio
 
 const SNAPSHOT_ID = '88888888-8888-4888-8888-888888888888';
 const ITEM_ID = '99999999-9999-4999-8999-999999999999';
+const PROFILE_VERSION = '1.2.3-alpha-beta.1+build-meta-7';
+const PIPELINE_VERSION = '2.0.0-rc.1+pipeline-build-5';
+const MODEL_VERSION = '3.4.5-model-alpha+model-build';
+const STRATEGY_VERSION = '4.5.6-strategy-2+strategy-build-9';
+
+const VERSION_FIELDS = [
+  ['profileVersion', 'profile_version'],
+  ['pipelineVersion', 'pipeline_version'],
+  ['modelVersion', 'model_version'],
+  ['strategyVersion', 'strategy_version'],
+] as const;
+const INVALID_SEMVERS = [
+  ['Unicode digit', '１.2.3'],
+  ['Unicode prerelease', '1.2.3-α'],
+  ['moving alias', 'current'],
+  ['v prefix', 'v1.2.3'],
+  ['core leading zero', '01.2.3'],
+  ['numeric prerelease leading zero', '1.2.3-01'],
+  ['empty prerelease', '1.2.3-'],
+  ['empty build', '1.2.3+'],
+  ['empty prerelease identifier', '1.2.3-alpha..1'],
+  ['empty build identifier', '1.2.3+build..1'],
+] as const;
 
 function recommendation(): Record<string, unknown> {
   return {
@@ -47,7 +70,7 @@ function recommendation(): Record<string, unknown> {
         hash: '6'.repeat(64),
       },
     ],
-    model_version: 'model-v1',
+    model_version: MODEL_VERSION,
     disclaimer_version: '1.0.0',
   };
 }
@@ -94,11 +117,13 @@ function reviewedSemanticPreimage(env: Record<string, unknown>): string {
 
 function envelope(
   rec: Record<string, unknown>,
-  outputFingerprint: string
+  outputFingerprint: string,
+  snapshotId = SNAPSHOT_ID,
+  asOf = '2026-07-10T06:30:00Z'
 ): Record<string, unknown> {
   return {
-    snapshot_id: SNAPSHOT_ID,
-    as_of: '2026-07-10T06:30:00Z',
+    snapshot_id: snapshotId,
+    as_of: asOf,
     profile: 'us_preferred',
     market_scope: 'us',
     items: [{ recommendation: rec, rating_band: 'A' }],
@@ -113,14 +138,107 @@ function envelope(
     },
     meta: {
       contract_version: '0.3.1',
-      profile_version: 'profile-v1',
+      profile_version: PROFILE_VERSION,
       input_fingerprint: 'd'.repeat(64),
-      strategy_version: 'strategy-v1',
-      pipeline_version: 'pipeline-v1',
+      strategy_version: STRATEGY_VERSION,
+      pipeline_version: PIPELINE_VERSION,
       generated_by: 'fixture',
       generation_ms: 1,
     },
   };
+}
+
+function snapshotAttributes(
+  env: Record<string, unknown>,
+  outputFingerprint: string,
+  fingerprintPreimageJcs: string
+): Record<string, unknown> {
+  return {
+    snapshotId: String(env.snapshot_id),
+    asOfUtc: new Date(String(env.as_of)),
+    tradingDay: '2026-07-10',
+    profile: 'us_preferred',
+    marketScope: 'us',
+    contractVersion: '0.3.1',
+    profileVersion: PROFILE_VERSION,
+    pipelineVersion: PIPELINE_VERSION,
+    modelVersion: MODEL_VERSION,
+    strategyVersion: STRATEGY_VERSION,
+    ruleBundleHash: 'a'.repeat(64),
+    templateHash: 'b'.repeat(64),
+    disclaimerHash: 'c'.repeat(64),
+    inputFingerprint: 'd'.repeat(64),
+    outputFingerprint,
+    fingerprintPreimageJcs,
+    idempotencyKey: '2'.repeat(64),
+    itemCount: (env.items as unknown[]).length,
+    envelopeJson: env,
+  };
+}
+
+function itemAttributes(rec: Record<string, unknown>): Record<string, unknown> {
+  const jcs = canonicalFixture(rec);
+  return {
+    itemId: String(rec.id),
+    snapshotId: String(rec.snapshot_id),
+    ticker: String(rec.ticker),
+    sortRank: 0,
+    recommendationJson: rec,
+    recommendationJcs: jcs,
+    recommendationHash: digest(jcs),
+    ratingBand: 'A',
+    convictionFinal: '90.0',
+    riskGateStatus: (rec.risk_gate as Record<string, unknown>).gate,
+    sizeHintTier: 'TIER_5',
+  };
+}
+
+async function modelValidationProof(): Promise<void> {
+  const rec = recommendation();
+  const env = envelope(rec, '0'.repeat(64));
+  const fingerprintPreimageJcs = reviewedSemanticPreimage(env);
+  const outputFingerprint = digest(fingerprintPreimageJcs);
+  env.output_fingerprint = outputFingerprint;
+  const validSnapshot = snapshotAttributes(env, outputFingerprint, fingerprintPreimageJcs);
+
+  await AiRecommendationSnapshot.build(validSnapshot).validate();
+  for (const [field] of VERSION_FIELDS) {
+    for (const [caseName, invalidVersion] of INVALID_SEMVERS) {
+      let rejected = false;
+      try {
+        await AiRecommendationSnapshot.build({
+          ...validSnapshot,
+          [field]: invalidVersion,
+        }).validate();
+      } catch (error: any) {
+        rejected =
+          error?.name === 'SequelizeValidationError' &&
+          error?.errors?.some((entry: any) => entry.path === field);
+      }
+      if (!rejected) throw new Error(`${field} accepted invalid SemVer (${caseName})`);
+    }
+  }
+
+  await AiRecommendationItem.build(itemAttributes(rec)).validate();
+  for (const riskGateStatus of ['YELLOW', 'RED'] as const) {
+    const gatedRec = {
+      ...rec,
+      risk_gate: {
+        gate: riskGateStatus,
+        ok_to_enter: true,
+        triggers: [{ code: `FIXTURE_${riskGateStatus}` }],
+      },
+    };
+    let rejected = false;
+    try {
+      await AiRecommendationItem.build(itemAttributes(gatedRec)).validate();
+    } catch (error: any) {
+      rejected =
+        error?.name === 'SequelizeValidationError' &&
+        error?.errors?.some((entry: any) => entry.path === 'riskGateStatus');
+    }
+    if (!rejected) throw new Error(`model accepted coherent ${riskGateStatus} recommendation`);
+  }
 }
 
 function options() {
@@ -142,12 +260,16 @@ async function manifestProof(): Promise<void> {
     logging: false,
     models: SPRINT3_MIGRATION_OWNED_MODELS as any,
   });
-  for (const model of [AiRecommendationSnapshot, AiRecommendationItem]) {
-    const synced = await model.sync({ alter: true });
-    if (synced !== model) throw new Error(`migration-owned sync guard failed for ${model.name}`);
+  try {
+    for (const model of [AiRecommendationSnapshot, AiRecommendationItem]) {
+      const synced = await model.sync({ alter: true });
+      if (synced !== model) throw new Error(`migration-owned sync guard failed for ${model.name}`);
+    }
+    await modelValidationProof();
+  } finally {
+    await sequelize.close();
   }
-  await sequelize.close();
-  console.log('ai-recommendation-sot-v031.orm: PASS (manifest guard)');
+  console.log('ai-recommendation-sot-v031.orm: PASS (manifest/SemVer/GREEN-only guards)');
 }
 
 async function pgProof(): Promise<void> {
@@ -194,10 +316,10 @@ async function pgProof(): Promise<void> {
           profile: 'us_preferred',
           marketScope: 'us',
           contractVersion: '0.3.1',
-          profileVersion: 'profile-v1',
-          pipelineVersion: 'pipeline-v1',
-          modelVersion: 'model-v1',
-          strategyVersion: 'strategy-v1',
+          profileVersion: PROFILE_VERSION,
+          pipelineVersion: PIPELINE_VERSION,
+          modelVersion: MODEL_VERSION,
+          strategyVersion: STRATEGY_VERSION,
           ruleBundleHash: 'a'.repeat(64),
           templateHash: 'b'.repeat(64),
           disclaimerHash: 'c'.repeat(64),
@@ -236,72 +358,194 @@ async function pgProof(): Promise<void> {
     if (!snapshot) throw new Error('RecommendationList snapshot missing after write');
     deepStrictEqual(snapshot.envelopeJson, env, 'RecommendationList envelope round-trip mismatch');
 
-    let atomicRollback = false;
-    const invalidRec = {
-      ...rec,
-      id: '66666666-6666-4666-8666-666666666666',
-      snapshot_id: '55555555-5555-4555-8555-555555555555',
-      ticker: 'MSFT',
-    };
-    const invalidJcs = canonicalFixture(invalidRec);
-    const invalidEnv = {
-      ...env,
-      snapshot_id: '55555555-5555-4555-8555-555555555555',
-      items: [{ recommendation: invalidRec, rating_band: 'A' }],
-      output_fingerprint: '0'.repeat(64),
-    };
-    const invalidFingerprintPreimageJcs = reviewedSemanticPreimage(invalidEnv);
-    const invalidOutputFingerprint = digest(invalidFingerprintPreimageJcs);
-    invalidEnv.output_fingerprint = invalidOutputFingerprint;
-    try {
-      await sequelize.transaction(async transaction => {
-        await AiRecommendationSnapshot.create(
+    await modelValidationProof();
+
+    let invalidVersionSequence = 16;
+    for (const [field, column] of VERSION_FIELDS) {
+      for (const [caseName, invalidVersion] of INVALID_SEMVERS) {
+        const suffix = (invalidVersionSequence++).toString(16).padStart(12, '0');
+        const invalidSnapshotId = `00000000-0000-4000-8000-${suffix}`;
+        const invalidAsOf = new Date(
+          Date.parse('2026-07-10T07:00:00Z') + invalidVersionSequence * 1000
+        ).toISOString();
+        const invalidEnv = envelope(
           {
-            snapshotId: '55555555-5555-4555-8555-555555555555',
-            asOfUtc: new Date('2026-07-10T06:31:00Z'),
-            tradingDay: '2026-07-10',
-            profile: 'us_preferred',
-            marketScope: 'us',
-            contractVersion: '0.3.1',
-            profileVersion: 'profile-v1',
-            pipelineVersion: 'pipeline-v1',
-            modelVersion: 'model-v1',
-            strategyVersion: 'strategy-v1',
-            ruleBundleHash: 'a'.repeat(64),
-            templateHash: 'b'.repeat(64),
-            disclaimerHash: 'c'.repeat(64),
-            inputFingerprint: 'd'.repeat(64),
-            outputFingerprint: invalidOutputFingerprint,
-            fingerprintPreimageJcs: invalidFingerprintPreimageJcs,
-            idempotencyKey: '8'.repeat(64),
-            itemCount: 1,
-            envelopeJson: invalidEnv,
+            ...rec,
+            id: `10000000-0000-4000-8000-${suffix}`,
+            snapshot_id: invalidSnapshotId,
+            model_version: column === 'model_version' ? invalidVersion : MODEL_VERSION,
           },
-          { transaction }
+          '0'.repeat(64),
+          invalidSnapshotId,
+          invalidAsOf
         );
-        await AiRecommendationItem.create(
-          {
-            itemId: '66666666-6666-4666-8666-666666666666',
-            snapshotId: '55555555-5555-4555-8555-555555555555',
-            ticker: 'MSFT',
-            sortRank: 0,
-            recommendationJson: invalidRec,
-            recommendationJcs: invalidJcs,
-            recommendationHash: digest(invalidJcs),
-            ratingBand: 'A',
-            convictionFinal: '90.0',
-            riskGateStatus: 'RED',
-            sizeHintTier: 'TIER_5',
-          },
-          { transaction }
-        );
-      });
-    } catch (error: any) {
-      atomicRollback = error?.original?.code === '23514';
+        (invalidEnv.meta as Record<string, unknown>)[column] = invalidVersion;
+        const invalidFingerprintPreimageJcs = reviewedSemanticPreimage(invalidEnv);
+        const invalidOutputFingerprint = digest(invalidFingerprintPreimageJcs);
+        invalidEnv.output_fingerprint = invalidOutputFingerprint;
+        let rejected = false;
+        try {
+          await AiRecommendationSnapshot.create(
+            {
+              ...snapshotAttributes(
+                invalidEnv,
+                invalidOutputFingerprint,
+                invalidFingerprintPreimageJcs
+              ),
+              [field]: invalidVersion,
+              idempotencyKey: suffix.padStart(64, '0'),
+            },
+            { validate: false }
+          );
+        } catch (error: any) {
+          rejected =
+            error?.original?.code === '23514' &&
+            String(error?.original?.constraint || '').includes(column);
+        }
+        if (!rejected) throw new Error(`${column} PG check accepted invalid SemVer (${caseName})`);
+      }
     }
-    if (!atomicRollback) throw new Error('invalid child did not roll back atomic write');
-    if (await AiRecommendationSnapshot.findByPk('55555555-5555-4555-8555-555555555555')) {
-      throw new Error('partial snapshot remained after item failure');
+
+    for (const [index, riskGateStatus] of (['YELLOW', 'RED'] as const).entries()) {
+      const invalidSnapshotId =
+        index === 0
+          ? '55555555-5555-4555-8555-555555555555'
+          : 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+      const invalidItemId =
+        index === 0
+          ? '66666666-6666-4666-8666-666666666666'
+          : 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+      const invalidRec = {
+        ...rec,
+        id: invalidItemId,
+        snapshot_id: invalidSnapshotId,
+        ticker: index === 0 ? 'MSFT' : 'GOOG',
+        risk_gate: {
+          gate: riskGateStatus,
+          ok_to_enter: true,
+          triggers: [{ code: `FIXTURE_${riskGateStatus}` }],
+        },
+      };
+      const invalidJcs = canonicalFixture(invalidRec);
+      const invalidEnv = envelope(
+        invalidRec,
+        '0'.repeat(64),
+        invalidSnapshotId,
+        `2026-07-10T06:3${index + 1}:00Z`
+      );
+      const invalidFingerprintPreimageJcs = reviewedSemanticPreimage(invalidEnv);
+      const invalidOutputFingerprint = digest(invalidFingerprintPreimageJcs);
+      invalidEnv.output_fingerprint = invalidOutputFingerprint;
+      let atomicRollback = false;
+      try {
+        await sequelize.transaction(async transaction => {
+          await AiRecommendationSnapshot.create(
+            {
+              ...snapshotAttributes(
+                invalidEnv,
+                invalidOutputFingerprint,
+                invalidFingerprintPreimageJcs
+              ),
+              idempotencyKey: String(index + 8).repeat(64),
+            },
+            { transaction }
+          );
+          await AiRecommendationItem.create(
+            {
+              ...itemAttributes(invalidRec),
+              recommendationJcs: invalidJcs,
+              recommendationHash: digest(invalidJcs),
+            },
+            { transaction, validate: false }
+          );
+        });
+      } catch (error: any) {
+        atomicRollback =
+          error?.original?.code === '23514' &&
+          error?.original?.constraint === 'ai_recommendation_item_risk_gate_status_check';
+      }
+      if (!atomicRollback) {
+        throw new Error(`coherent ${riskGateStatus} child did not roll back atomic write`);
+      }
+      if (await AiRecommendationSnapshot.findByPk(invalidSnapshotId)) {
+        throw new Error(`partial snapshot remained after ${riskGateStatus} item failure`);
+      }
+    }
+
+    const invalidPayloadCases = [
+      {
+        name: 'non-GREEN payload gate',
+        snapshotId: '12121212-1212-4121-8121-121212121212',
+        itemId: '13131313-1313-4131-8131-131313131313',
+        ticker: 'NVDA',
+        gate: 'YELLOW',
+        okToEnter: true,
+        idempotencyKey: 'a'.repeat(64),
+        asOf: '2026-07-10T06:40:00Z',
+      },
+      {
+        name: 'false payload ok_to_enter',
+        snapshotId: '14141414-1414-4141-8141-141414141414',
+        itemId: '15151515-1515-4151-8151-151515151515',
+        ticker: 'TSLA',
+        gate: 'GREEN',
+        okToEnter: false,
+        idempotencyKey: 'b'.repeat(64),
+        asOf: '2026-07-10T06:41:00Z',
+      },
+    ] as const;
+    for (const invalidCase of invalidPayloadCases) {
+      const invalidRec = {
+        ...rec,
+        id: invalidCase.itemId,
+        snapshot_id: invalidCase.snapshotId,
+        ticker: invalidCase.ticker,
+        risk_gate: {
+          gate: invalidCase.gate,
+          ok_to_enter: invalidCase.okToEnter,
+          triggers: [{ code: 'FIXTURE_PAYLOAD_GATE' }],
+        },
+      };
+      const invalidEnv = envelope(
+        invalidRec,
+        '0'.repeat(64),
+        invalidCase.snapshotId,
+        invalidCase.asOf
+      );
+      const invalidFingerprintPreimageJcs = reviewedSemanticPreimage(invalidEnv);
+      const invalidOutputFingerprint = digest(invalidFingerprintPreimageJcs);
+      invalidEnv.output_fingerprint = invalidOutputFingerprint;
+      let rejected = false;
+      try {
+        await sequelize.transaction(async transaction => {
+          await AiRecommendationSnapshot.create(
+            {
+              ...snapshotAttributes(
+                invalidEnv,
+                invalidOutputFingerprint,
+                invalidFingerprintPreimageJcs
+              ),
+              idempotencyKey: invalidCase.idempotencyKey,
+            },
+            { transaction }
+          );
+          await AiRecommendationItem.create(
+            {
+              ...itemAttributes(invalidRec),
+              riskGateStatus: 'GREEN',
+            },
+            { transaction, validate: false }
+          );
+        });
+      } catch (error: any) {
+        rejected =
+          error?.original?.code === '23514' &&
+          error?.original?.constraint === 'ck_ai_recommendation_item_payload';
+      }
+      if (!rejected) throw new Error(`${invalidCase.name} was accepted`);
+      if (await AiRecommendationSnapshot.findByPk(invalidCase.snapshotId)) {
+        throw new Error(`partial snapshot remained after ${invalidCase.name}`);
+      }
     }
 
     let idempotencyRejected = false;
@@ -313,10 +557,10 @@ async function pgProof(): Promise<void> {
         profile: 'us_preferred',
         marketScope: 'us',
         contractVersion: '0.3.1',
-        profileVersion: 'profile-v1',
-        pipelineVersion: 'pipeline-v1',
-        modelVersion: 'model-v1',
-        strategyVersion: 'strategy-v1',
+        profileVersion: PROFILE_VERSION,
+        pipelineVersion: PIPELINE_VERSION,
+        modelVersion: MODEL_VERSION,
+        strategyVersion: STRATEGY_VERSION,
         ruleBundleHash: 'a'.repeat(64),
         templateHash: 'b'.repeat(64),
         disclaimerHash: 'c'.repeat(64),
@@ -451,7 +695,10 @@ async function pgProof(): Promise<void> {
 
     await snapshot.destroy();
     if (await AiRecommendationItem.findByPk(ITEM_ID)) throw new Error('item cascade delete failed');
-    console.log('ai-recommendation-sot-v031.orm: PASS (atomic/JCS/idempotency/alter-sync)');
+    console.log(
+      'ai-recommendation-sot-v031.orm: PASS ' +
+        '(SemVer/GREEN-only/atomic/JCS/idempotency/alter-sync)'
+    );
   } finally {
     await sequelize.close();
   }

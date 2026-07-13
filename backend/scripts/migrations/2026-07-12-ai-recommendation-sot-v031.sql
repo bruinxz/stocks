@@ -21,10 +21,22 @@ CREATE TABLE ai_recommendation_snapshot (
   )),
   market_scope TEXT NOT NULL CHECK (market_scope IN ('cn_a', 'us', 'jp', 'kr')),
   contract_version TEXT NOT NULL CHECK (contract_version = '0.3.1'),
-  profile_version TEXT NOT NULL,
-  pipeline_version TEXT NOT NULL,
-  model_version TEXT NOT NULL,
-  strategy_version TEXT NOT NULL,
+  profile_version TEXT NOT NULL CHECK (
+    profile_version COLLATE "C" ~
+      '^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)([.](0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?([+][0-9A-Za-z-]+([.][0-9A-Za-z-]+)*)?$'
+  ),
+  pipeline_version TEXT NOT NULL CHECK (
+    pipeline_version COLLATE "C" ~
+      '^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)([.](0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?([+][0-9A-Za-z-]+([.][0-9A-Za-z-]+)*)?$'
+  ),
+  model_version TEXT NOT NULL CHECK (
+    model_version COLLATE "C" ~
+      '^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)([.](0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?([+][0-9A-Za-z-]+([.][0-9A-Za-z-]+)*)?$'
+  ),
+  strategy_version TEXT NOT NULL CHECK (
+    strategy_version COLLATE "C" ~
+      '^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)([.](0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?([+][0-9A-Za-z-]+([.][0-9A-Za-z-]+)*)?$'
+  ),
   rule_bundle_hash TEXT NOT NULL CHECK (rule_bundle_hash ~ '^[0-9a-f]{64}$'),
   template_hash TEXT NOT NULL CHECK (template_hash ~ '^[0-9a-f]{64}$'),
   disclaimer_hash TEXT NOT NULL CHECK (disclaimer_hash ~ '^[0-9a-f]{64}$'),
@@ -101,7 +113,7 @@ CREATE TABLE ai_recommendation_item (
   rating_band TEXT NOT NULL CHECK (rating_band IN ('A', 'B', 'C', 'D', 'F')),
   conviction_final NUMERIC(5, 1) NOT NULL
     CHECK (conviction_final >= 0 AND conviction_final <= 100),
-  risk_gate_status TEXT NOT NULL CHECK (risk_gate_status IN ('GREEN', 'YELLOW', 'RED')),
+  risk_gate_status TEXT NOT NULL CHECK (risk_gate_status = 'GREEN'),
   size_hint_tier TEXT NOT NULL CHECK (
     size_hint_tier IN ('TIER_5', 'TIER_3', 'TIER_2', 'TIER_1', 'SKIP')
   ),
@@ -125,6 +137,7 @@ CREATE TABLE ai_recommendation_item (
         AND jsonb_typeof(recommendation_json->'conviction') = 'object'
         AND (recommendation_json->'conviction'->>'final')::NUMERIC = conviction_final
         AND jsonb_typeof(recommendation_json->'risk_gate') = 'object'
+        AND recommendation_json->'risk_gate'->>'gate' = 'GREEN'
         AND recommendation_json->'risk_gate'->>'gate' = risk_gate_status
         AND (recommendation_json->'risk_gate'->>'ok_to_enter')::BOOLEAN = TRUE
         AND jsonb_typeof(recommendation_json->'entry_plan') = 'object'
