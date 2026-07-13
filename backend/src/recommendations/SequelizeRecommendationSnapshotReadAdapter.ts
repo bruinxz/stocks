@@ -16,6 +16,7 @@ import {
 } from './RecommendationSnapshotReadPort';
 
 type UnknownRecord = Record<string, unknown>;
+const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function asObject(value: unknown, label: string): UnknownRecord {
   let parsed: unknown;
@@ -35,6 +36,14 @@ function requiredString(value: unknown, label: string): string {
     throw new RecommendationSnapshotContractError(`${label} must be a non-empty string`);
   }
   return value;
+}
+
+function uuidV4(value: unknown, label: string): string {
+  const uuid = requiredString(value, label);
+  if (!UUID_V4_RE.test(uuid)) {
+    throw new RecommendationSnapshotContractError(`${label} must be a UUIDv4`);
+  }
+  return uuid;
 }
 
 function sha256(value: unknown, label: string): string {
@@ -99,9 +108,20 @@ function semanticFingerprintPreimage(envelope: UnknownRecord): string {
   if (!Array.isArray(semantic.items)) {
     throw new RecommendationSnapshotContractError('items must be an array');
   }
-  for (const value of semantic.items) {
+  const topSnapshotId = uuidV4(envelope.snapshot_id, 'snapshot_id');
+  for (const [index, value] of semantic.items.entries()) {
     const item = asObject(value, 'item');
     const recommendation = asObject(item.recommendation, 'recommendation');
+    uuidV4(recommendation.id, `items[${index}].recommendation.id`);
+    const recommendationSnapshotId = uuidV4(
+      recommendation.snapshot_id,
+      `items[${index}].recommendation.snapshot_id`
+    );
+    if (recommendationSnapshotId !== topSnapshotId) {
+      throw new RecommendationSnapshotContractError(
+        `items[${index}].recommendation.snapshot_id does not match snapshot`
+      );
+    }
     delete recommendation.id;
     delete recommendation.snapshot_id;
   }
@@ -171,7 +191,7 @@ function normalizeSummary(row: UnknownRecord): RecommendationSnapshotSummary {
     throw new RecommendationSnapshotContractError('profile/market_scope is incompatible');
   }
   return {
-    snapshot_id: requiredString(row.snapshot_id, 'snapshot_id'),
+    snapshot_id: uuidV4(row.snapshot_id, 'snapshot_id'),
     trading_day: dateString(row.trading_day, 'trading_day'),
     as_of: timestampString(row.as_of_utc, 'as_of_utc'),
     profile: profile as RecommendationSnapshotSummary['profile'],
@@ -284,7 +304,12 @@ function normalizeDetail(
       `item_rows[${index}].recommendation_json`
     );
     const parsedJcs = asObject(recommendationJcs, `item_rows[${index}].recommendation_jcs`);
-    if (canonicalizeJson(recommendation) !== canonicalizeJson(parsedJcs)) {
+    if (canonicalizeJsonWithKeySort(parsedJcs) !== recommendationJcs) {
+      throw new RecommendationSnapshotContractError(
+        `item_rows[${index}].recommendation_jcs is not canonical`
+      );
+    }
+    if (canonicalizeJsonWithKeySort(recommendation) !== canonicalizeJsonWithKeySort(parsedJcs)) {
       throw new RecommendationSnapshotContractError(
         `item_rows[${index}] JCS/JSON semantic mismatch`
       );
@@ -292,6 +317,11 @@ function normalizeDetail(
     if (recommendation.id !== itemId || recommendation.ticker !== ticker) {
       throw new RecommendationSnapshotContractError(
         `item_rows[${index}] identity does not match recommendation`
+      );
+    }
+    if (recommendation.snapshot_id !== summary.snapshot_id) {
+      throw new RecommendationSnapshotContractError(
+        `item_rows[${index}].snapshot_id does not match snapshot header`
       );
     }
     const ratingBand = requiredString(itemRow.rating_band, `item_rows[${index}].rating_band`);

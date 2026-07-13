@@ -9,8 +9,9 @@ import { SequelizeRecommendationSnapshotReadAdapter } from '../../src/recommenda
 const SNAPSHOT_A = '11111111-1111-4111-8111-111111111111';
 const SNAPSHOT_B = '22222222-2222-4222-8222-222222222222';
 const ITEM_ID = '33333333-3333-4333-8333-333333333333';
-const RECOMMENDATION_JCS = `{"id":"${ITEM_ID}","ticker":"AAPL"}`;
-const RECOMMENDATION_HASH = '35a3a1c252c08c60ea4843cc8d0f8c692c36f1494b4562ebe0a18a74477174f6';
+const TARGET_ITEM_ID = '44444444-4444-4444-8444-444444444444';
+const RECOMMENDATION_JCS = `{"id":"${ITEM_ID}","snapshot_id":"${SNAPSHOT_A}",` + '"ticker":"AAPL"}';
+const RECOMMENDATION_HASH = 'bdcc639c0dfa42a70b9db429ce64d46c59c5958dcd1a177915dfb8a765964a70';
 const FINGERPRINT_PREIMAGE_JCS =
   '{"as_of":"2026-07-10T06:00:00Z","disclaimer":{"effective_at":"2026-07-01T00:00:00Z",' +
   '"full_text":"투자에는 위험이 있습니다.","hash":"d7dca10cd3ea237004ea9319ad31c44c0c4b980d372aeb239a3ed88d4e4b1ff0",' +
@@ -56,7 +57,12 @@ const ENVELOPE = {
     generated_by: 'fixture',
     generation_ms: 12,
   },
-  items: [{ recommendation: { id: ITEM_ID, ticker: 'AAPL' }, rating_band: 'A' }],
+  items: [
+    {
+      recommendation: { id: ITEM_ID, snapshot_id: SNAPSHOT_A, ticker: 'AAPL' },
+      rating_band: 'A',
+    },
+  ],
 };
 
 function header(overrides: Record<string, unknown> = {}) {
@@ -80,16 +86,38 @@ function header(overrides: Record<string, unknown> = {}) {
 }
 
 function itemRow(overrides: Record<string, unknown> = {}) {
-  return {
+  const row = {
     item_id: ITEM_ID,
     ticker: 'AAPL',
     sort_rank: 0,
-    recommendation_json: { id: ITEM_ID, ticker: 'AAPL' },
+    recommendation_json: { id: ITEM_ID, snapshot_id: SNAPSHOT_A, ticker: 'AAPL' },
     recommendation_jcs: RECOMMENDATION_JCS,
     recommendation_hash: RECOMMENDATION_HASH,
     rating_band: 'A',
     ...overrides,
   };
+  if ('recommendation_jcs' in overrides && !('recommendation_hash' in overrides)) {
+    row.recommendation_hash = createHash('sha256')
+      .update(String(row.recommendation_jcs))
+      .digest('hex');
+  }
+  return row;
+}
+
+function targetItemRow(overrides: Record<string, unknown> = {}) {
+  const recommendationJcs =
+    `{"id":"${TARGET_ITEM_ID}","snapshot_id":"${SNAPSHOT_B}",` + '"ticker":"AAPL"}';
+  return itemRow({
+    item_id: TARGET_ITEM_ID,
+    recommendation_json: {
+      id: TARGET_ITEM_ID,
+      snapshot_id: SNAPSHOT_B,
+      ticker: 'AAPL',
+    },
+    recommendation_jcs: recommendationJcs,
+    recommendation_hash: '984bddfbab44d4844da1974039d68ca6b01bad20e97642450f00fd3435eaabaa',
+    ...overrides,
+  });
 }
 
 let passed = 0;
@@ -221,10 +249,20 @@ async function main(): Promise<void> {
           ...ENVELOPE,
           snapshot_id: SNAPSHOT_B,
           output_fingerprint: OUTPUT_FINGERPRINT,
+          items: [
+            {
+              recommendation: {
+                id: TARGET_ITEM_ID,
+                snapshot_id: SNAPSHOT_B,
+                ticker: 'AAPL',
+              },
+              rating_band: 'A',
+            },
+          ],
         },
       }),
     ],
-    [itemRow()],
+    [targetItemRow()],
     [
       { snapshot_id: SNAPSHOT_A, ticker: 'AAPL', recommendation_hash: '1'.repeat(64) },
       { snapshot_id: SNAPSHOT_A, ticker: 'NVDA', recommendation_hash: '2'.repeat(64) },
@@ -252,10 +290,20 @@ async function main(): Promise<void> {
           snapshot_id: SNAPSHOT_B,
           profile: 'multibagger',
           output_fingerprint: MULTIBAGGER_OUTPUT_FINGERPRINT,
+          items: [
+            {
+              recommendation: {
+                id: TARGET_ITEM_ID,
+                snapshot_id: SNAPSHOT_B,
+                ticker: 'AAPL',
+              },
+              rating_band: 'A',
+            },
+          ],
         },
       }),
     ],
-    [itemRow()],
+    [targetItemRow()],
   ];
   let scopeConflict = false;
   try {
@@ -269,8 +317,54 @@ async function main(): Promise<void> {
     ['invalid item hash shape', itemRow({ recommendation_hash: 'BAD' })],
     ['item hash mismatch', itemRow({ recommendation_hash: 'd'.repeat(64) })],
     ['item id mismatch', itemRow({ item_id: SNAPSHOT_B })],
+    [
+      'missing recommendation id',
+      itemRow({
+        recommendation_json: { snapshot_id: SNAPSHOT_A, ticker: 'AAPL' },
+        recommendation_jcs: `{"snapshot_id":"${SNAPSHOT_A}","ticker":"AAPL"}`,
+      }),
+    ],
+    [
+      'invalid recommendation id',
+      itemRow({
+        recommendation_json: { id: 'bad', snapshot_id: SNAPSHOT_A, ticker: 'AAPL' },
+        recommendation_jcs: `{"id":"bad","snapshot_id":"${SNAPSHOT_A}","ticker":"AAPL"}`,
+      }),
+    ],
+    [
+      'missing recommendation snapshot_id',
+      itemRow({
+        recommendation_json: { id: ITEM_ID, ticker: 'AAPL' },
+        recommendation_jcs: `{"id":"${ITEM_ID}","ticker":"AAPL"}`,
+      }),
+    ],
+    [
+      'invalid recommendation snapshot_id',
+      itemRow({
+        recommendation_json: { id: ITEM_ID, snapshot_id: 'bad', ticker: 'AAPL' },
+        recommendation_jcs: `{"id":"${ITEM_ID}","snapshot_id":"bad","ticker":"AAPL"}`,
+      }),
+    ],
+    [
+      'mismatched recommendation snapshot_id',
+      itemRow({
+        recommendation_json: { id: ITEM_ID, snapshot_id: SNAPSHOT_B, ticker: 'AAPL' },
+        recommendation_jcs: `{"id":"${ITEM_ID}","snapshot_id":"${SNAPSHOT_B}","ticker":"AAPL"}`,
+      }),
+    ],
     ['item rank gap', itemRow({ sort_rank: 1 })],
-    ['item JSON/JCS mismatch', itemRow({ recommendation_json: { id: ITEM_ID, ticker: 'MSFT' } })],
+    [
+      'item JSON/JCS mismatch',
+      itemRow({
+        recommendation_json: { id: ITEM_ID, snapshot_id: SNAPSHOT_A, ticker: 'MSFT' },
+      }),
+    ],
+    [
+      'noncanonical recommendation JCS',
+      itemRow({
+        recommendation_jcs: `{"ticker":"AAPL","snapshot_id":"${SNAPSHOT_A}","id":"${ITEM_ID}"}`,
+      }),
+    ],
     ['item envelope mismatch', itemRow({ ticker: 'MSFT' })],
   ];
   for (const [name, invalidItem] of invalidItemRows) {
@@ -302,6 +396,36 @@ async function main(): Promise<void> {
     corruptDiffRejected = error instanceof RecommendationSnapshotContractError;
   }
   assert('diff rejects corrupt physical item proof', corruptDiffRejected);
+
+  const forgedRecommendation = {
+    id: ITEM_ID,
+    snapshot_id: SNAPSHOT_B,
+    ticker: 'AAPL',
+  };
+  const forgedJcs = `{"id":"${ITEM_ID}","snapshot_id":"${SNAPSHOT_B}",` + '"ticker":"AAPL"}';
+  queue = [
+    [
+      header({
+        envelope_json: {
+          ...ENVELOPE,
+          items: [{ recommendation: forgedRecommendation, rating_band: 'A' }],
+        },
+      }),
+    ],
+    [
+      itemRow({
+        recommendation_json: forgedRecommendation,
+        recommendation_jcs: forgedJcs,
+      }),
+    ],
+  ];
+  let forgedIdentityRejected = false;
+  try {
+    await adapter.detail(SNAPSHOT_A);
+  } catch (error) {
+    forgedIdentityRejected = error instanceof RecommendationSnapshotContractError;
+  }
+  assert('mutually forged child snapshot identity fails closed', forgedIdentityRejected);
 
   console.log(`\nResult: ${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);
