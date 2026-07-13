@@ -84,6 +84,33 @@ describe('B5 canonical projection → B6 view adapter', () => {
         source_fingerprint_preimage_jcs: '{ "not": "canonical" }',
       })
     ).toThrow(/canonical JCS/);
+    expect(() =>
+      parseB5DailyReport({
+        ...report.wire,
+        summary: {
+          ...report.wire.summary,
+          rating_counts: { A: 0, B: 1, C: 0, D: 0, F: 0 },
+        },
+      })
+    ).toThrow(/summary mismatch/);
+    expect(() =>
+      parseB5DailyReport({
+        ...report.wire,
+        sections: report.wire.sections.map(section =>
+          section.kind === 'summary'
+            ? { ...section, high_conviction_count: section.high_conviction_count - 1 }
+            : section
+        ),
+      })
+    ).toThrow(/sections mismatch/);
+    expect(() =>
+      parseB5DailyReport({
+        ...report.wire,
+        sections: report.wire.sections.map(section =>
+          section.kind === 'recommendation' ? { ...section, evidence_ids: ['E9'] } : section
+        ),
+      })
+    ).toThrow(/sections mismatch/);
   });
 
   test('rejects history total/filter/entry shape mismatches', () => {
@@ -109,5 +136,62 @@ describe('B5 canonical projection → B6 view adapter', () => {
         total: 0,
       })
     ).toThrow(/missing required/);
+    const report = reportFixture();
+    const entry = {
+      report_id: report.wire.report_id,
+      trading_day: report.wire.trading_day,
+      profile: report.wire.profile,
+      market_scope: report.wire.market_scope,
+      source_snapshot_id: report.wire.source_snapshot_id,
+      source_as_of: report.wire.source_as_of,
+      source_output_fingerprint: report.wire.source_output_fingerprint,
+      source_fingerprint_preimage_jcs: report.wire.source_fingerprint_preimage_jcs,
+      input_fingerprint: report.wire.meta.input_fingerprint,
+      contract_version: '0.3.1',
+      profile_version: report.wire.meta.profile_version,
+      strategy_version: report.wire.meta.strategy_version,
+      pipeline_version: report.wire.meta.pipeline_version,
+      disclaimer_version: report.wire.disclaimer.version,
+      item_count: report.wire.summary.item_count,
+      high_conviction_count: report.wire.summary.high_conviction_count,
+      rating_counts: report.wire.summary.rating_counts,
+      content_preview: report.wire.markdown.slice(0, 200),
+    };
+    const history = {
+      projection_version: '0.1.0',
+      filters: {
+        query: '',
+        profile: null,
+        market_scope: null,
+        from_day: null,
+        to_day: null,
+      },
+      entries: [entry],
+      total: 1,
+    };
+    expect(() =>
+      parseB5ReportHistory({
+        ...history,
+        entries: [{ ...entry, source_fingerprint_preimage_jcs: '{"forged":true}' }],
+      })
+    ).toThrow(/canonical JCS|hash mismatch/);
+    expect(() =>
+      parseB5ReportHistory({
+        ...history,
+        filters: { ...history.filters, profile: 'japan_blue_chip', market_scope: 'us' },
+      })
+    ).toThrow(/incompatible/);
+    expect(() =>
+      parseB5ReportHistory({
+        ...history,
+        filters: { ...history.filters, from_day: '2026-07-11', to_day: '2026-07-10' },
+      })
+    ).toThrow(/date range/);
+    expect(() =>
+      parseB5ReportHistory({
+        ...history,
+        filters: { ...history.filters, profile: 'japan_blue_chip', market_scope: 'jp' },
+      })
+    ).toThrow(/does not satisfy filters/);
   });
 });
