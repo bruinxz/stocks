@@ -30,6 +30,17 @@ REQUEST_KEYS = {
     ),
 }
 HISTORY_REQUIRED_KEYS = frozenset(("protocol_version", "op", "envelopes"))
+PUBLIC_ERROR_MESSAGES = {
+    "INPUT_TOO_LARGE": "input too large",
+    "INVALID_JSON": "invalid JSON input",
+    "INVALID_PROTOCOL": "invalid projection protocol",
+    "INVALID_OPERATION": "unsupported projection op",
+    "INVALID_REQUEST": "invalid projection request",
+    "CONTRACT_ERROR": "projection contract rejected input",
+    "OUTPUT_TOO_LARGE": "projection output too large",
+    "INVALID_OUTPUT": "projection output is invalid",
+    "INTERNAL_ERROR": "projection failed",
+}
 
 
 class ProjectionCliError(ValueError):
@@ -94,18 +105,51 @@ def dispatch(request: Any) -> Dict[str, Any]:
 
 
 def _write_json(stream, value: Mapping[str, Any]) -> None:
-    encoded = (
-        json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        )
-        + "\n"
-    ).encode("utf-8")
+    encoded = _encode_json(value, ensure_ascii=False)
     if len(encoded) > MAX_OUTPUT_BYTES:
         raise ProjectionCliError("OUTPUT_TOO_LARGE", "projection output too large")
+    stream.buffer.write(encoded)
+    stream.flush()
+
+
+def _encode_json(value: Mapping[str, Any], *, ensure_ascii: bool) -> bytes:
+    try:
+        return (
+            json.dumps(
+                value,
+                ensure_ascii=ensure_ascii,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("ascii" if ensure_ascii else "utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError) as error:
+        raise ProjectionCliError(
+            "INVALID_OUTPUT", "projection output is not valid JSON"
+        ) from error
+
+
+def _write_error(stream, value: Mapping[str, Any]) -> None:
+    """Always emit bounded ASCII JSON; never serialize attacker text directly."""
+
+    try:
+        error = value.get("error") if isinstance(value, Mapping) else None
+        code = error.get("code") if isinstance(error, Mapping) else None
+        if code not in PUBLIC_ERROR_MESSAGES:
+            code = "INTERNAL_ERROR"
+        safe = _error(code, PUBLIC_ERROR_MESSAGES[code])
+        encoded = _encode_json(safe, ensure_ascii=True)
+        if len(encoded) > 4096:
+            encoded = _encode_json(
+                _error("INTERNAL_ERROR", "projection failed"),
+                ensure_ascii=True,
+            )
+    except ProjectionCliError:
+        encoded = (
+            '{"error":{"code":"INTERNAL_ERROR","message":"projection failed"},'
+            '"ok":false,"protocol_version":"1.0.0"}\n'
+        ).encode("ascii")
     stream.buffer.write(encoded)
     stream.flush()
 
@@ -135,10 +179,29 @@ def _error(code: str, message: str) -> Dict[str, Any]:
     }
 
 
+def _validate_unicode_tree(value: Any, path: str = "$") -> None:
+    """Reject lone UTF-16 surrogates recursively in keys and values."""
+
+    if isinstance(value, str):
+        if any(0xD800 <= ord(character) <= 0xDFFF for character in value):
+            raise ProjectionCliError(
+                "INVALID_JSON", "input contains an unpaired Unicode surrogate"
+            )
+        return
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            _validate_unicode_tree(key, path + ".<key>")
+            _validate_unicode_tree(item, path + "." + str(key))
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_unicode_tree(item, "{}[{}]".format(path, index))
+
+
 def main() -> int:
     raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
     if len(raw) > MAX_INPUT_BYTES:
-        _write_json(
+        _write_error(
             sys.stderr,
             _error("INPUT_TOO_LARGE", "input too large"),
         )
@@ -149,29 +212,30 @@ def main() -> int:
             parse_constant=_reject_constant,
             object_pairs_hook=_unique_object,
         )
+        _validate_unicode_tree(request)
         response = dispatch(request)
         _write_json(sys.stdout, response)
         return 0
     except (UnicodeDecodeError, json.JSONDecodeError):
-        _write_json(
+        _write_error(
             sys.stderr,
             _error("INVALID_JSON", "invalid JSON input"),
         )
         return 2
     except ProjectionContractError as error:
-        _write_json(
+        _write_error(
             sys.stderr,
-            _error("CONTRACT_ERROR", str(error)[:1000]),
+            _error("CONTRACT_ERROR", "projection contract rejected input"),
         )
         return 3
     except ProjectionCliError as error:
-        _write_json(
+        _write_error(
             sys.stderr,
             _error(error.code, str(error)[:1000]),
         )
         return 2
     except Exception:
-        _write_json(
+        _write_error(
             sys.stderr,
             _error("INTERNAL_ERROR", "projection failed"),
         )

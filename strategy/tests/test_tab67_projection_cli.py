@@ -8,7 +8,9 @@ from unittest.mock import patch
 from strategy.reporting.cli import (
     PROTOCOL_VERSION,
     ProjectionCliError,
+    _error,
     _write_json,
+    _write_error,
     dispatch,
 )
 
@@ -199,6 +201,62 @@ class ProjectionCliTests(unittest.TestCase):
         with patch("strategy.reporting.cli.MAX_OUTPUT_BYTES", 1):
             with self.assertRaisesRegex(ProjectionCliError, "output too large"):
                 _write_json(Buffer(), {"ok": True})
+
+    def test_lone_surrogates_are_controlled_without_traceback_or_marker(self):
+        marker = "SECRET_MARKER"
+        raws = (
+            '{"protocol_version":"1.0.0","op":"daily","envelope":{"market_scope":"\\ud800'
+            + marker
+            + '"}}',
+            '{"protocol_version":"1.0.0","op":"history","envelopes":[{"nested":["\\udc00'
+            + marker
+            + '"]}]}',
+            '{"protocol_version":"1.0.0","op":"daily","envelope":{"\\ud800'
+            + marker
+            + '":"x"}}',
+        )
+        for raw in raws:
+            with self.subTest(raw=raw):
+                result = run_cli(raw=raw)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, b"")
+                body = json.loads(result.stderr)
+                self.assertEqual(body["error"]["code"], "INVALID_JSON")
+                self.assertNotIn(marker.encode(), result.stderr)
+                self.assertNotIn(b"Traceback", result.stderr)
+                self.assertNotIn(str(ROOT).encode(), result.stderr)
+
+    def test_valid_surrogate_pair_is_not_rejected_as_invalid_json(self):
+        raw = (
+            '{"protocol_version":"1.0.0","op":"daily",'
+            '"envelope":{"market_scope":"\\ud83d\\ude00"}}'
+        )
+        result = run_cli(raw=raw)
+        self.assertEqual(result.returncode, 3)
+        body = json.loads(result.stderr)
+        self.assertEqual(body["error"]["code"], "CONTRACT_ERROR")
+        self.assertNotIn(b"Traceback", result.stderr)
+
+    def test_error_writer_is_ascii_bounded_and_surrogate_safe(self):
+        class Buffer:
+            def __init__(self):
+                self.buffer = self
+                self.value = b""
+
+            def write(self, value):
+                self.value += value
+
+            def flush(self):
+                pass
+
+        buffer = Buffer()
+        _write_error(
+            buffer,
+            _error("INTERNAL_ERROR", "\ud800SECRET_MARKER"),
+        )
+        self.assertEqual(json.loads(buffer.value)["error"]["code"], "INTERNAL_ERROR")
+        self.assertNotIn(b"SECRET_MARKER", buffer.value)
+        self.assertLessEqual(len(buffer.value), 4096)
 
 
 if __name__ == "__main__":
