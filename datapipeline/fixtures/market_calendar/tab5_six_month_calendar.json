@@ -1,0 +1,42 @@
+{
+  "fixture_version": "1.0.0",
+  "fixture_kind": "synthetic-market-scoped-v1",
+  "mode": "local-disposable-e2e-only",
+  "production_seed_allowed": false,
+  "window": {
+    "calendar_start": "2026-01-10",
+    "calendar_end": "2026-07-10",
+    "inclusive_calendar_days": 182
+  },
+  "market_scopes": ["cn_a", "us", "jp", "kr"],
+  "base_rule": "Monday-Friday within inclusive window",
+  "closures": {
+    "cn_a": ["2026-02-16", "2026-05-01"],
+    "us": ["2026-02-16", "2026-05-25"],
+    "jp": ["2026-02-11", "2026-05-04"],
+    "kr": ["2026-03-02", "2026-05-05"]
+  },
+  "session_close_utc": {
+    "cn_a": [
+      {"from": "2026-01-10", "time": "07:00:00Z"}
+    ],
+    "us": [
+      {
+        "from": "2026-01-10",
+        "through": "2026-03-08",
+        "time": "21:00:00Z"
+      },
+      {"from": "2026-03-09", "time": "20:00:00Z"}
+    ],
+    "jp": [
+      {"from": "2026-01-10", "time": "06:30:00Z"}
+    ],
+    "kr": [
+      {"from": "2026-01-10", "time": "06:30:00Z"}
+    ]
+  },
+  "expected_open_sessions_per_scope": 128,
+  "checkpoint_rule": "first open session plus final open session of every ISO week, deduplicated",
+  "expected_checkpoints_per_scope": 27,
+  "disclaimer": "Synthetic deterministic test calendars; never represent official exchange calendars and never seed production."
+}
