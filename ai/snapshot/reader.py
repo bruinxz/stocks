@@ -5,7 +5,11 @@ import json
 import uuid
 from typing import Optional, Sequence
 
-from ai.snapshot.fingerprint import compute_output_fingerprint, jcs_canonicalize
+from ai.snapshot.fingerprint import (
+    canonicalize_output_fingerprint_preimage,
+    compute_output_fingerprint,
+    jcs_canonicalize,
+)
 from ai.snapshot.store import SnapshotItemRow, SnapshotRow, SnapshotStore
 from ai.snapshot.writer import PROFILE_MARKET_SCOPES
 
@@ -119,6 +123,24 @@ class SnapshotReader:
             raise SnapshotCorruptError("snapshot output fingerprint mismatch")
         if envelope.get("as_of") != snapshot.as_of_utc:
             raise SnapshotCorruptError("snapshot envelope as_of mismatch")
+        try:
+            fingerprint_preimage_jcs = (
+                canonicalize_output_fingerprint_preimage(envelope)
+            )
+        except (TypeError, ValueError) as error:
+            raise SnapshotCorruptError(
+                "snapshot fingerprint preimage invalid"
+            ) from error
+        if fingerprint_preimage_jcs != snapshot.fingerprint_preimage_jcs:
+            raise SnapshotCorruptError(
+                "snapshot fingerprint preimage mismatch"
+            )
+        if hashlib.sha256(
+            fingerprint_preimage_jcs.encode("utf-8")
+        ).hexdigest() != snapshot.output_fingerprint:
+            raise SnapshotCorruptError(
+                "snapshot fingerprint preimage hash mismatch"
+            )
         envelope_items = envelope.get("items")
         if not isinstance(envelope_items, list):
             raise SnapshotCorruptError("snapshot envelope items missing")
@@ -218,9 +240,7 @@ class SnapshotReader:
             raise SnapshotCorruptError("snapshot envelope/item row mismatch")
         envelope["items"] = hydrated_items
         try:
-            computed_output_fingerprint = compute_output_fingerprint(
-                hydrated_items
-            )
+            computed_output_fingerprint = compute_output_fingerprint(envelope)
         except (TypeError, ValueError) as error:
             raise SnapshotCorruptError(
                 "snapshot items are not JCS serializable"

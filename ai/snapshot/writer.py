@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Optional, Sequence
 
 from ai.snapshot.fingerprint import (
+    canonicalize_output_fingerprint_preimage,
     compute_input_fingerprint,
     compute_output_fingerprint,
     jcs_canonicalize,
@@ -116,6 +117,14 @@ class SnapshotWriter:
             raise SnapshotContractError(
                 "recommendation envelope must be JCS serializable"
             ) from error
+        try:
+            fingerprint_preimage_jcs = (
+                canonicalize_output_fingerprint_preimage(recommendation_list)
+            )
+        except (TypeError, ValueError) as error:
+            raise SnapshotContractError(
+                "output fingerprint preimage must be valid strict JCS"
+            ) from error
 
         idempotency_material = {
             "as_of": recommendation_list["as_of"],
@@ -158,6 +167,7 @@ class SnapshotWriter:
             disclaimer_hash=disclaimer["hash"],
             input_fingerprint=input_fingerprint,
             output_fingerprint=recommendation_list["output_fingerprint"],
+            fingerprint_preimage_jcs=fingerprint_preimage_jcs,
             idempotency_key=idempotency_key,
             item_count=len(entries),
             envelope_json=json.loads(envelope_json),
@@ -300,7 +310,9 @@ class SnapshotWriter:
             recommendation_list["output_fingerprint"], "output_fingerprint"
         )
         try:
-            expected_output_fingerprint = compute_output_fingerprint(items)
+            expected_output_fingerprint = compute_output_fingerprint(
+                recommendation_list
+            )
         except (TypeError, ValueError) as error:
             raise SnapshotContractError(
                 "items must be JCS serializable with finite numbers"
@@ -446,11 +458,13 @@ class SnapshotWriter:
     ) -> bool:
         comparable_existing = (
             existing.output_fingerprint,
+            existing.fingerprint_preimage_jcs,
             existing.item_count,
             SnapshotWriter._semantic_envelope_json(existing.envelope_json),
         )
         comparable_proposed = (
             proposed.output_fingerprint,
+            proposed.fingerprint_preimage_jcs,
             proposed.item_count,
             SnapshotWriter._semantic_envelope_json(proposed.envelope_json),
         )
@@ -479,19 +493,8 @@ class SnapshotWriter:
             raise SnapshotIdempotencyConflictError(
                 "stored snapshot envelope is invalid"
             )
-        envelope = envelope_json
-        meta = envelope.get("meta")
-        if not isinstance(meta, dict):
-            raise SnapshotIdempotencyConflictError(
-                "stored snapshot envelope meta is invalid"
-            )
-        semantic_meta = dict(meta)
-        semantic_meta.pop("generation_ms", None)
-        semantic_meta.pop("generated_by", None)
-        semantic_envelope = dict(envelope)
-        semantic_envelope["meta"] = semantic_meta
         try:
-            return jcs_canonicalize(semantic_envelope)
+            return canonicalize_output_fingerprint_preimage(envelope_json)
         except (TypeError, ValueError) as error:
             raise SnapshotIdempotencyConflictError(
                 "stored snapshot envelope is not canonicalizable"

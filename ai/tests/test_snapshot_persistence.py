@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 
 from ai.snapshot.fingerprint import (
+    canonicalize_output_fingerprint_preimage,
     compute_input_fingerprint,
     compute_output_fingerprint,
     jcs_canonicalize,
@@ -139,7 +140,7 @@ def _context(
         snapshot_id=snapshot_id,
         as_of="2026-07-12T01:02:03Z",
         config=config,
-        input_hashes=["source-b", "source-a"],
+        input_hashes=["b" * 64, "a" * 64],
     )
 
 
@@ -179,13 +180,12 @@ def _recommendation_list(ctx, tickers=("AAPL", "MSFT")):
         }
         for index, ticker in enumerate(tickers)
     ]
-    return {
+    result = {
         "snapshot_id": ctx.snapshot_id,
         "as_of": ctx.as_of,
         "profile": ctx.config.profile,
         "market_scope": ctx.config.market_scope,
         "items": items,
-        "output_fingerprint": compute_output_fingerprint(items),
         "disclaimer": {
             "version": "3.1.0",
             "short_text": "Research only.",
@@ -204,6 +204,8 @@ def _recommendation_list(ctx, tickers=("AAPL", "MSFT")):
             "generation_ms": 123,
         },
     }
+    result["output_fingerprint"] = compute_output_fingerprint(result)
+    return result
 
 
 class SnapshotWriterTests(unittest.TestCase):
@@ -298,7 +300,7 @@ class SnapshotWriterTests(unittest.TestCase):
             "disclaimer_version"
         ] = "0.0.0"
         disclaimer_version_mismatch["output_fingerprint"] = (
-            compute_output_fingerprint(disclaimer_version_mismatch["items"])
+            compute_output_fingerprint(disclaimer_version_mismatch)
         )
         invalid_cases.append(disclaimer_version_mismatch)
 
@@ -365,9 +367,7 @@ class SnapshotReaderTests(unittest.TestCase):
             next_ctx, tickers=("AAPL", "NVDA")
         )
         next_payload["items"][0]["recommendation"]["conviction"]["final"] = 70.0
-        next_payload["output_fingerprint"] = compute_output_fingerprint(
-            next_payload["items"]
-        )
+        next_payload["output_fingerprint"] = compute_output_fingerprint(next_payload)
         SnapshotWriter(self.store).write(next_ctx, next_payload)
 
         diff = self.reader.diff(self.ctx.snapshot_id, next_ctx.snapshot_id)

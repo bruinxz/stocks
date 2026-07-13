@@ -22,6 +22,7 @@ class SnapshotRow:
     disclaimer_hash: str
     input_fingerprint: str
     output_fingerprint: str
+    fingerprint_preimage_jcs: str
     idempotency_key: str
     item_count: int
     envelope_json: dict[str, Any]
