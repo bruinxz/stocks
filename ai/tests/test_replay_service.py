@@ -228,7 +228,7 @@ class ReplayServiceTests(unittest.TestCase):
         failed = service.run(queued.job_id)
         self.assertEqual(failed.status, "failed")
         self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
-        self.assertIn("market_scope", failed.error_detail)
+        self.assertEqual(failed.error_detail, "replay source invalid")
 
         service2, sources2 = _service(pins=pins)
         queued2 = service2.submit(pins)
@@ -238,7 +238,7 @@ class ReplayServiceTests(unittest.TestCase):
         )
         failed2 = service2.run(queued2.job_id)
         self.assertEqual(failed2.error_code, "REPLAY_SOURCE_INVALID")
-        self.assertIn("content_hash", failed2.error_detail)
+        self.assertEqual(failed2.error_detail, "replay source invalid")
 
     def test_source_records_are_authenticated_by_content_hash(self):
         pins = _pins()
@@ -251,7 +251,7 @@ class ReplayServiceTests(unittest.TestCase):
         failed = service.run(service.submit(pins).job_id)
 
         self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
-        self.assertIn("content_hash", failed.error_detail)
+        self.assertEqual(failed.error_detail, "replay source invalid")
 
     def test_source_exceptions_are_redacted_and_classified(self):
         class FailingSource:
@@ -265,7 +265,7 @@ class ReplayServiceTests(unittest.TestCase):
         failed = service.run(service.submit(pins).job_id)
 
         self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
-        self.assertEqual(failed.error_detail, "signals source unavailable")
+        self.assertEqual(failed.error_detail, "replay source invalid")
         self.assertNotIn("secret", failed.error_detail)
 
         class FailingDomainSource:
@@ -277,7 +277,7 @@ class ReplayServiceTests(unittest.TestCase):
         service2, _ = _service(pins=pins)
         service2._signal_source = FailingDomainSource()
         failed2 = service2.run(service2.submit(pins).job_id)
-        self.assertEqual(failed2.error_detail, "signals source unavailable")
+        self.assertEqual(failed2.error_detail, "replay source invalid")
         self.assertNotIn("secret", failed2.error_detail)
 
     def test_invalid_profiles_scopes_versions_hashes_and_dates_are_rejected(self):
@@ -321,16 +321,17 @@ class ReplayServiceTests(unittest.TestCase):
         empty_hash = hashlib.sha256(
             jcs_canonicalize(()).encode("utf-8")
         ).hexdigest()
+        hashes = list(SOURCE_HASHES)
+        hashes[1] = empty_hash
         pins = _pins(
-            input_fingerprint=compute_input_fingerprint([empty_hash] * 4)
+            input_fingerprint=compute_input_fingerprint(hashes)
         )
         service, sources = _service(pins=pins)
-        for source in sources.values():
-            source.source_slice = replace(
-                source.source_slice,
-                records=(),
-                content_hash=empty_hash,
-            )
+        sources["universe"].source_slice = replace(
+            sources["universe"].source_slice,
+            records=(),
+            content_hash=empty_hash,
+        )
 
         completed = service.run(service.submit(pins).job_id)
 
@@ -404,7 +405,7 @@ class ReplayServiceTests(unittest.TestCase):
         failed = service.run(service.submit(pins).job_id)
 
         self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
-        self.assertIn("JSON/JCS", failed.error_detail)
+        self.assertEqual(failed.error_detail, "replay source invalid")
 
     def test_scalar_source_records_fail_closed(self):
         pins = _pins()
@@ -418,7 +419,7 @@ class ReplayServiceTests(unittest.TestCase):
         failed = service.run(service.submit(pins).job_id)
 
         self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
-        self.assertIn("JSON objects", failed.error_detail)
+        self.assertEqual(failed.error_detail, "replay source invalid")
 
 
 if __name__ == "__main__":
