@@ -53,6 +53,17 @@ class MemoryJobStore:
         return updated
 
 
+class StaleTransitionStore(MemoryJobStore):
+    def __init__(self, stale_expected_status):
+        super().__init__()
+        self.stale_expected_status = stale_expected_status
+
+    def transition(self, job_id, expected_status, updated):
+        if expected_status == self.stale_expected_status:
+            return self.jobs[job_id]
+        return super().transition(job_id, expected_status, updated)
+
+
 class SourceStub:
     def __init__(self, source_slice):
         self.source_slice = source_slice
@@ -195,6 +206,16 @@ class ReplayServiceTests(unittest.TestCase):
         self.assertNotIn("secret", failed.error_detail)
         self.assertEqual(service.run(queued.job_id), failed)
 
+        pipeline2 = PipelineStub(
+            error=__import__(
+                "ai.replay.service", fromlist=["ReplayPipelineError"]
+            ).ReplayPipelineError("credential=domain-secret")
+        )
+        service2, _ = _service(pipeline=pipeline2)
+        failed2 = service2.run(service2.submit(_pins()).job_id)
+        self.assertEqual(failed2.error_detail, "replay pipeline failed")
+        self.assertNotIn("secret", failed2.error_detail)
+
     def test_source_pin_and_input_fingerprint_mismatches_fail_closed(self):
         pins = _pins()
         service, sources = _service(pins=pins)
@@ -268,6 +289,10 @@ class ReplayServiceTests(unittest.TestCase):
             _pins(input_fingerprint="not-a-hash"),
             _pins(trading_day="2026-02-30"),
             _pins(as_of="2026-07-12T01:02:03+00:00"),
+            _pins(profile_version="1.0.0-."),
+            _pins(profile_version="1.0.0-a..b"),
+            _pins(profile_version="1.0.0-01"),
+            _pins(profile_version="01.0.0"),
         ]
         for pins in invalid:
             with self.subTest(pins=pins):
@@ -332,6 +357,34 @@ class ReplayServiceTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ReplayConflictError, "precedes"):
             service.get(queued.job_id)
+
+    def test_stale_queued_transition_fails_before_pipeline_effects(self):
+        store = StaleTransitionStore("queued")
+        pipeline = PipelineStub()
+        service, sources = _service(store=store, pipeline=pipeline)
+        queued = service.submit(_pins())
+
+        with self.assertRaisesRegex(ReplayConflictError, "exact requested"):
+            service.run(queued.job_id)
+
+        self.assertEqual(pipeline.calls, [])
+        self.assertEqual(
+            {kind: source.calls for kind, source in sources.items()},
+            {kind: 0 for kind in sources},
+        )
+        self.assertEqual(store.jobs[queued.job_id].status, "queued")
+
+    def test_stale_terminal_transition_fails_after_pipeline_effects(self):
+        store = StaleTransitionStore("running")
+        pipeline = PipelineStub()
+        service, _ = _service(store=store, pipeline=pipeline)
+        queued = service.submit(_pins())
+
+        with self.assertRaisesRegex(ReplayConflictError, "exact requested"):
+            service.run(queued.job_id)
+
+        self.assertEqual(len(pipeline.calls), 1)
+        self.assertEqual(store.jobs[queued.job_id].status, "running")
 
     def test_missing_or_non_uuid_jobs_return_controlled_not_found(self):
         service, _ = _service()

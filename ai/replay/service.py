@@ -36,10 +36,7 @@ PROFILE_MARKET_SCOPES = {
 }
 SOURCE_KINDS = ("signals", "universe", "scores", "evidence")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-_SEMVER_RE = re.compile(
-    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
-    r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
-)
+_SEMVER_IDENTIFIER_RE = re.compile(r"^[0-9A-Za-z-]+$")
 
 
 class ReplayServiceError(RuntimeError):
@@ -131,28 +128,32 @@ class ReplayService:
                 f"replay job cannot run from status {job.status}"
             )
 
-        running = job.running(self._now())
-        running = self._job_store.transition(job_id, "queued", running)
-        self._validate_job(running)
+        running = self._transition_exact(
+            job_id, "queued", job.running(self._now())
+        )
 
         try:
             inputs = self._load_inputs(running.pins)
             result = self._pipeline.run(running.pins, inputs)
             self._validate_result(result)
-            completed = running.completed(result, self._now())
-            completed = self._job_store.transition(
-                job_id, "running", completed
-            )
-            self._validate_job(completed)
-            return completed
         except ReplayServiceError as error:
-            return self._retain_failure(running, error.code, str(error))
+            return self._retain_failure(
+                running,
+                error.code,
+                self._public_error_detail(error.code),
+            )
         except Exception:
             return self._retain_failure(
                 running,
                 ReplayPipelineError.code,
-                "replay pipeline failed",
+                self._public_error_detail(ReplayPipelineError.code),
             )
+
+        return self._transition_exact(
+            job_id,
+            "running",
+            running.completed(result, self._now()),
+        )
 
     def get(self, job_id: str) -> ReplayJob:
         try:
@@ -205,12 +206,27 @@ class ReplayService:
     def _retain_failure(
         self, running: ReplayJob, code: str, detail: str
     ) -> ReplayJob:
-        failed = running.failed(code, detail[:240], self._now())
-        failed = self._job_store.transition(
-            running.job_id, "running", failed
+        return self._transition_exact(
+            running.job_id,
+            "running",
+            running.failed(code, detail[:240], self._now()),
         )
-        self._validate_job(failed)
-        return failed
+
+    def _transition_exact(
+        self,
+        job_id: str,
+        expected_status: str,
+        requested: ReplayJob,
+    ) -> ReplayJob:
+        returned = self._job_store.transition(
+            job_id, expected_status, requested
+        )
+        if returned != requested:
+            raise ReplayConflictError(
+                "job store transition did not persist the exact requested state"
+            )
+        self._validate_job(returned)
+        return returned
 
     def _now(self) -> str:
         now = self._clock()
@@ -243,7 +259,7 @@ class ReplayService:
             "pipeline_version",
         ):
             value = getattr(pins, field)
-            if not isinstance(value, str) or not _SEMVER_RE.fullmatch(value):
+            if not cls._is_strict_semver(value):
                 raise ReplayPinsError(f"{field} must be SemVer")
         cls._require_sha256(pins.input_fingerprint, "input_fingerprint")
 
@@ -386,6 +402,56 @@ class ReplayService:
         return hashlib.sha256(
             jcs_canonicalize(material).encode("utf-8")
         ).hexdigest()
+
+    @staticmethod
+    def _public_error_detail(code: str) -> str:
+        return {
+            ReplaySourceError.code: "replay source invalid",
+            ReplayPipelineError.code: "replay pipeline failed",
+            ReplayPinsError.code: "replay pins invalid",
+        }.get(code, "replay failed")
+
+    @staticmethod
+    def _is_strict_semver(value: object) -> bool:
+        if not isinstance(value, str):
+            return False
+        if value.count("+") > 1:
+            return False
+        without_build, separator, build = value.partition("+")
+        if separator:
+            build_identifiers = build.split(".")
+            if any(
+                not identifier
+                or not _SEMVER_IDENTIFIER_RE.fullmatch(identifier)
+                for identifier in build_identifiers
+            ):
+                return False
+        if without_build.count("-") > 1:
+            return False
+        core, separator, prerelease = without_build.partition("-")
+        core_identifiers = core.split(".")
+        if len(core_identifiers) != 3:
+            return False
+        for identifier in core_identifiers:
+            if (
+                not identifier.isdigit()
+                or (len(identifier) > 1 and identifier.startswith("0"))
+            ):
+                return False
+        if separator:
+            prerelease_identifiers = prerelease.split(".")
+            for identifier in prerelease_identifiers:
+                if (
+                    not identifier
+                    or not _SEMVER_IDENTIFIER_RE.fullmatch(identifier)
+                    or (
+                        identifier.isdigit()
+                        and len(identifier) > 1
+                        and identifier.startswith("0")
+                    )
+                ):
+                    return False
+        return True
 
     @staticmethod
     def _validate_utc_seconds(
