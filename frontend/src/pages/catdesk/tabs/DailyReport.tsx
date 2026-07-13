@@ -13,6 +13,8 @@ export interface DailyReportProps {
   state?: DailyReportViewState;
   onGenerate?: () => void;
   onRetry?: () => void;
+  generateAvailable?: boolean;
+  generateUnavailableReason?: string;
 }
 
 const DEFAULT_STATE: DailyReportViewState = {
@@ -21,7 +23,13 @@ const DEFAULT_STATE: DailyReportViewState = {
   market_scope: 'us',
 };
 
-export function DailyReport({ state = DEFAULT_STATE, onGenerate, onRetry }: DailyReportProps) {
+export function DailyReport({
+  state = DEFAULT_STATE,
+  onGenerate,
+  onRetry,
+  generateAvailable = false,
+  generateUnavailableReason = '回放生成待运行时接入',
+}: DailyReportProps) {
   if (state.kind === 'loading') return <LoadingState />;
   if (state.kind === 'error') {
     return (
@@ -46,8 +54,8 @@ export function DailyReport({ state = DEFAULT_STATE, onGenerate, onRetry }: Dail
           </div>
         </div>
         <EmptyState title="当前范围暂无已归档日报" />
-        <Button type="primary" onClick={onGenerate}>
-          生成日报
+        <Button type="primary" disabled={!generateAvailable} onClick={onGenerate}>
+          {generateAvailable ? '生成日报' : generateUnavailableReason}
         </Button>
       </section>
     );

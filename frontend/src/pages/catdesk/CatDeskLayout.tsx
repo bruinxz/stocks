@@ -6,23 +6,28 @@ import { useTabState, type TabKey } from './useTabState';
 import { KpiBar } from './shared/KpiBar';
 import { TabNav } from './shared/TabNav';
 import { LoadingState } from './shared/LoadingState';
+import { createTab67HttpApi, type Tab67Api } from './tabs/daily-report/tab67Api';
 
 const AShareMorningBrief = React.lazy(() => import('./tabs/AShareMorningBrief'));
 const USStockPicks = React.lazy(() => import('./tabs/USStockPicks'));
 const JPKRMarket = React.lazy(() => import('./tabs/JPKRMarket'));
 const HighMultipotential = React.lazy(() => import('./tabs/HighMultipotential'));
 const BacktestEvidence = React.lazy(() => import('./tabs/BacktestEvidence'));
-const DailyReport = React.lazy(() => import('./tabs/DailyReport'));
-const ReportHistory = React.lazy(() => import('./tabs/ReportHistory'));
+const DailyReportContainer = React.lazy(() => import('./tabs/daily-report/DailyReportContainer'));
+const ReportHistoryContainer = React.lazy(
+  () => import('./tabs/report-history/ReportHistoryContainer')
+);
+const DEFAULT_TAB67_API = createTab67HttpApi();
 
-const TAB_COMPONENTS: Record<TabKey, React.LazyExoticComponent<React.ComponentType>> = {
+const TAB_COMPONENTS: Record<
+  Exclude<TabKey, 'daily' | 'history'>,
+  React.LazyExoticComponent<React.ComponentType>
+> = {
   morning: AShareMorningBrief,
   us: USStockPicks,
   jpkr: JPKRMarket,
   multi: HighMultipotential,
   backtest: BacktestEvidence,
-  daily: DailyReport,
-  history: ReportHistory,
 };
 
 export interface CatDeskOutletContext {
@@ -53,12 +58,20 @@ const mainStyle: React.CSSProperties = {
   padding: 16,
 };
 
-export default function CatDeskLayout() {
+export interface CatDeskLayoutProps {
+  tab67Api?: Tab67Api;
+  dailyTradingDay?: string;
+}
+
+export default function CatDeskLayout({
+  tab67Api = DEFAULT_TAB67_API,
+  dailyTradingDay,
+}: CatDeskLayoutProps) {
   const { activeTab, setTab } = useTabState();
   const [selectedRow, setSelectedRow] = useState<string | null>(null);
   const location = useLocation();
 
-  const ActiveTab = TAB_COMPONENTS[activeTab];
+  const ActiveTab = TAB_COMPONENTS[activeTab as Exclude<TabKey, 'daily' | 'history'>];
   const outletContext: CatDeskOutletContext = { selectedRow, setSelectedRow };
   const isNestedPage = location.pathname !== '/catdesk' && location.pathname !== '/catdesk/';
 
@@ -70,7 +83,15 @@ export default function CatDeskLayout() {
           <TabNav activeTab={activeTab} onTabChange={setTab} />
           <main style={mainStyle}>
             <Suspense fallback={<LoadingState />}>
-              {isNestedPage ? <Outlet context={outletContext} /> : <ActiveTab />}
+              {isNestedPage ? (
+                <Outlet context={outletContext} />
+              ) : activeTab === 'daily' ? (
+                <DailyReportContainer api={tab67Api} tradingDay={dailyTradingDay} />
+              ) : activeTab === 'history' ? (
+                <ReportHistoryContainer api={tab67Api} />
+              ) : (
+                <ActiveTab />
+              )}
             </Suspense>
           </main>
         </div>
