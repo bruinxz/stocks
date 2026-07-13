@@ -31,6 +31,13 @@ class EvidenceCache(Protocol):
         ...
 
 
+class ReplayInputSource(Protocol):
+    """Atomically load one immutable four-slice capture for one replay."""
+
+    def load_inputs(self, pins: ReplayPins) -> ReplayInputs:
+        ...
+
+
 class RecommendationReplayPipeline(Protocol):
     def run(self, pins: ReplayPins, inputs: ReplayInputs) -> ReplayResult:
         ...
@@ -48,4 +55,14 @@ class ReplayJobStore(Protocol):
     def transition(
         self, job_id: str, expected_status: str, updated: ReplayJob
     ) -> ReplayJob:
+        ...
+
+
+class ReplayWorkerPort(Protocol):
+    def run_job(self, job_id: str) -> ReplayJob:
+        ...
+
+    def run_batch(
+        self, job_ids: tuple[str, ...], *, limit: int
+    ) -> tuple[ReplayJob, ...]:
         ...
