@@ -341,6 +341,23 @@ class SnapshotWriterTests(unittest.TestCase):
                 with self.assertRaises(SnapshotIdempotencyConflictError):
                     writer.write(ctx, payload)
 
+    def test_retry_rejects_child_id_only_envelope_corruption(self):
+        ctx = _context()
+        payload = _recommendation_list(ctx)
+        store = MemorySnapshotStore()
+        writer = SnapshotWriter(store)
+        writer.write(ctx, payload)
+        row = store.snapshots[ctx.snapshot_id]
+        envelope = copy.deepcopy(row.envelope_json)
+        envelope["items"][0]["recommendation"]["id"] = (
+            "82345678-1234-4234-8234-567812345678"
+        )
+        store.snapshots[ctx.snapshot_id] = replace(
+            row, envelope_json=envelope
+        )
+        with self.assertRaises(SnapshotIdempotencyConflictError):
+            writer.write(ctx, payload)
+
     def test_missing_pins_and_invalid_profile_scope_fail_before_transaction(self):
         invalid_cases = []
 

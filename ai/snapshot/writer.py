@@ -77,8 +77,11 @@ class SnapshotWriter:
                 snapshot.idempotency_key
             )
             if existing is not None:
+                existing_items = transaction.get_items(existing.snapshot_id)
                 integrity_errors = snapshot_row_integrity_errors(existing)
-                envelope_errors = snapshot_envelope_mirror_errors(existing)
+                envelope_errors = snapshot_envelope_mirror_errors(
+                    existing, existing_items
+                )
                 scalar_mismatches = snapshot_scalar_mismatches(
                     snapshot, existing
                 )
@@ -93,7 +96,6 @@ class SnapshotWriter:
                     raise SnapshotIdempotencyConflictError(
                         f"persisted snapshot scalar mismatch: {details}"
                     )
-                existing_items = transaction.get_items(existing.snapshot_id)
                 if not self._same_payload(existing, existing_items, snapshot, items):
                     raise SnapshotIdempotencyConflictError(
                         "identical replay pins produced different snapshot payload"
@@ -169,17 +171,16 @@ class SnapshotWriter:
             }
         )
         integrity_errors = snapshot_row_integrity_errors(snapshot)
-        envelope_errors = snapshot_envelope_mirror_errors(snapshot)
+        item_rows = tuple(
+            self._build_item_row(snapshot.snapshot_id, rank, entry)
+            for rank, entry in enumerate(entries)
+        )
+        envelope_errors = snapshot_envelope_mirror_errors(snapshot, item_rows)
         if integrity_errors or envelope_errors:
             raise SnapshotContractError(
                 "snapshot scalar integrity failed: "
                 + ", ".join((*integrity_errors, *envelope_errors))
             )
-
-        item_rows = tuple(
-            self._build_item_row(snapshot.snapshot_id, rank, entry)
-            for rank, entry in enumerate(entries)
-        )
         return snapshot, item_rows
 
     @staticmethod

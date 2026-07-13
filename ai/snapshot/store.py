@@ -173,6 +173,7 @@ def snapshot_row_integrity_errors(snapshot: SnapshotRow) -> tuple[str, ...]:
 
 def snapshot_envelope_mirror_errors(
     snapshot: SnapshotRow,
+    item_rows: Optional[Sequence[SnapshotItemRow]] = None,
 ) -> tuple[str, ...]:
     envelope = snapshot.envelope_json
     if not isinstance(envelope, dict):
@@ -194,6 +195,35 @@ def snapshot_envelope_mirror_errors(
         errors.append("envelope.items")
     elif len(items) != snapshot.item_count:
         errors.append("envelope.items/item_count")
+    if item_rows is not None:
+        ordered_rows = sorted(item_rows, key=lambda item: item.sort_rank)
+        if [item.sort_rank for item in ordered_rows] != list(
+            range(snapshot.item_count)
+        ):
+            errors.append("item_rows.sort_rank")
+        if not isinstance(items, list) or len(items) != len(ordered_rows):
+            errors.append("envelope.items/item_rows")
+        else:
+            for index, (entry, row) in enumerate(zip(items, ordered_rows)):
+                recommendation = (
+                    entry.get("recommendation")
+                    if isinstance(entry, dict)
+                    else None
+                )
+                if not isinstance(recommendation, dict):
+                    errors.append(
+                        f"envelope.items[{index}].recommendation"
+                    )
+                    continue
+                if recommendation.get("id") != row.item_id:
+                    errors.append(f"envelope.items[{index}].id/item_id")
+                if (
+                    recommendation.get("snapshot_id") != row.snapshot_id
+                    or row.snapshot_id != snapshot.snapshot_id
+                ):
+                    errors.append(
+                        f"envelope.items[{index}].snapshot_id/item_row"
+                    )
 
     meta = envelope.get("meta")
     meta_mirrors = {

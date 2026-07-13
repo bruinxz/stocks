@@ -112,7 +112,7 @@ class SnapshotReader:
         cls, snapshot: SnapshotRow, items: Sequence[SnapshotItemRow]
     ) -> dict:
         integrity_errors = snapshot_row_integrity_errors(snapshot)
-        envelope_errors = snapshot_envelope_mirror_errors(snapshot)
+        envelope_errors = snapshot_envelope_mirror_errors(snapshot, items)
         if integrity_errors or envelope_errors:
             raise SnapshotCorruptError(
                 "snapshot scalar integrity mismatch: "
