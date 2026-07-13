@@ -36,7 +36,43 @@ PROFILE_MARKET_SCOPES = {
 }
 SOURCE_KINDS = ("signals", "universe", "scores", "evidence")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-_SEMVER_IDENTIFIER_RE = re.compile(r"^[0-9A-Za-z-]+$")
+_SEMVER_RE = re.compile(
+    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
+_SAFE_SOURCE_DETAIL_PATTERNS = (
+    re.compile(
+        r"^(signals|universe|scores|evidence) source kind mismatch$"
+    ),
+    re.compile(
+        r"^(signals|universe|scores|evidence) source "
+        r"(trading_day|as_of|profile|market_scope) pin mismatch$"
+    ),
+    re.compile(
+        r"^(signals|universe|scores|evidence) source_version is required$"
+    ),
+    re.compile(
+        r"^(signals|universe|scores|evidence)\.content_hash "
+        r"must be lowercase SHA-256$"
+    ),
+    re.compile(
+        r"^(signals|universe|scores|evidence) records must be "
+        r"(a tuple|JSON/JCS serializable)$"
+    ),
+    re.compile(
+        r"^(signals|universe|scores|evidence) "
+        r"records must contain JSON objects$"
+    ),
+    re.compile(
+        r"^(signals|universe|scores|evidence) "
+        r"content_hash does not match records$"
+    ),
+    re.compile(
+        r"^source content hashes do not match replay input_fingerprint$"
+    ),
+)
 
 
 class ReplayServiceError(RuntimeError):
@@ -110,6 +146,10 @@ class ReplayService:
             updated_at=now,
         )
         job, created = self._job_store.create_or_get(proposed)
+        if created and job != proposed:
+            raise ReplayConflictError(
+                "job store created a substituted replay job"
+            )
         if not created and (
             job.idempotency_key != idempotency_key or job.pins != pins
         ):
@@ -140,13 +180,13 @@ class ReplayService:
             return self._retain_failure(
                 running,
                 error.code,
-                self._public_error_detail(error.code),
+                self._public_error_detail(error),
             )
         except Exception:
             return self._retain_failure(
                 running,
                 ReplayPipelineError.code,
-                self._public_error_detail(ReplayPipelineError.code),
+                "replay pipeline failed",
             )
 
         return self._transition_exact(
@@ -259,7 +299,7 @@ class ReplayService:
             "pipeline_version",
         ):
             value = getattr(pins, field)
-            if not cls._is_strict_semver(value):
+            if not isinstance(value, str) or not _SEMVER_RE.fullmatch(value):
                 raise ReplayPinsError(f"{field} must be SemVer")
         cls._require_sha256(pins.input_fingerprint, "input_fingerprint")
 
@@ -404,54 +444,18 @@ class ReplayService:
         ).hexdigest()
 
     @staticmethod
-    def _public_error_detail(code: str) -> str:
+    def _public_error_detail(error: ReplayServiceError) -> str:
+        detail = str(error)
+        if isinstance(error, ReplaySourceError) and any(
+            pattern.fullmatch(detail)
+            for pattern in _SAFE_SOURCE_DETAIL_PATTERNS
+        ):
+            return detail[:240]
         return {
             ReplaySourceError.code: "replay source invalid",
             ReplayPipelineError.code: "replay pipeline failed",
             ReplayPinsError.code: "replay pins invalid",
-        }.get(code, "replay failed")
-
-    @staticmethod
-    def _is_strict_semver(value: object) -> bool:
-        if not isinstance(value, str):
-            return False
-        if value.count("+") > 1:
-            return False
-        without_build, separator, build = value.partition("+")
-        if separator:
-            build_identifiers = build.split(".")
-            if any(
-                not identifier
-                or not _SEMVER_IDENTIFIER_RE.fullmatch(identifier)
-                for identifier in build_identifiers
-            ):
-                return False
-        if without_build.count("-") > 1:
-            return False
-        core, separator, prerelease = without_build.partition("-")
-        core_identifiers = core.split(".")
-        if len(core_identifiers) != 3:
-            return False
-        for identifier in core_identifiers:
-            if (
-                not identifier.isdigit()
-                or (len(identifier) > 1 and identifier.startswith("0"))
-            ):
-                return False
-        if separator:
-            prerelease_identifiers = prerelease.split(".")
-            for identifier in prerelease_identifiers:
-                if (
-                    not identifier
-                    or not _SEMVER_IDENTIFIER_RE.fullmatch(identifier)
-                    or (
-                        identifier.isdigit()
-                        and len(identifier) > 1
-                        and identifier.startswith("0")
-                    )
-                ):
-                    return False
-        return True
+        }.get(error.code, "replay failed")
 
     @staticmethod
     def _validate_utc_seconds(

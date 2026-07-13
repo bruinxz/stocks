@@ -64,6 +64,17 @@ class StaleTransitionStore(MemoryJobStore):
         return super().transition(job_id, expected_status, updated)
 
 
+class SubstitutingCreateStore(MemoryJobStore):
+    def create_or_get(self, job):
+        substituted = replace(
+            job,
+            job_id="42345678-1234-4234-8234-567812345678",
+        )
+        self.jobs[substituted.job_id] = substituted
+        self.idempotency[job.idempotency_key] = substituted.job_id
+        return substituted, True
+
+
 class SourceStub:
     def __init__(self, source_slice):
         self.source_slice = source_slice
@@ -228,7 +239,7 @@ class ReplayServiceTests(unittest.TestCase):
         failed = service.run(queued.job_id)
         self.assertEqual(failed.status, "failed")
         self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
-        self.assertEqual(failed.error_detail, "replay source invalid")
+        self.assertIn("market_scope", failed.error_detail)
 
         service2, sources2 = _service(pins=pins)
         queued2 = service2.submit(pins)
@@ -238,7 +249,7 @@ class ReplayServiceTests(unittest.TestCase):
         )
         failed2 = service2.run(queued2.job_id)
         self.assertEqual(failed2.error_code, "REPLAY_SOURCE_INVALID")
-        self.assertEqual(failed2.error_detail, "replay source invalid")
+        self.assertIn("content_hash", failed2.error_detail)
 
     def test_source_records_are_authenticated_by_content_hash(self):
         pins = _pins()
@@ -251,7 +262,7 @@ class ReplayServiceTests(unittest.TestCase):
         failed = service.run(service.submit(pins).job_id)
 
         self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
-        self.assertEqual(failed.error_detail, "replay source invalid")
+        self.assertIn("content_hash", failed.error_detail)
 
     def test_source_exceptions_are_redacted_and_classified(self):
         class FailingSource:
@@ -293,12 +304,28 @@ class ReplayServiceTests(unittest.TestCase):
             _pins(profile_version="1.0.0-a..b"),
             _pins(profile_version="1.0.0-01"),
             _pins(profile_version="01.0.0"),
+            _pins(profile_version="١.0.0"),
+            _pins(profile_version="１.0.0"),
+            _pins(profile_version="१.0.0"),
         ]
         for pins in invalid:
             with self.subTest(pins=pins):
                 service, _ = _service(pins=pins)
                 with self.assertRaises(ReplayPinsError):
                     service.submit(pins)
+
+        valid = [
+            "1.0.0",
+            "1.0.0-alpha-beta",
+            "1.0.0-alpha.1",
+            "1.0.0+build-1",
+            "1.0.0-alpha-beta+build.1",
+        ]
+        for version in valid:
+            with self.subTest(version=version):
+                pins = _pins(profile_version=version)
+                service, _ = _service(pins=pins)
+                self.assertEqual(service.submit(pins).status, "queued")
 
     def test_all_six_profile_scope_pairs_submit(self):
         pairs = (
@@ -359,6 +386,11 @@ class ReplayServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ReplayConflictError, "precedes"):
             service.get(queued.job_id)
 
+    def test_created_job_must_equal_exact_proposal(self):
+        service, _ = _service(store=SubstitutingCreateStore())
+        with self.assertRaisesRegex(ReplayConflictError, "substituted"):
+            service.submit(_pins())
+
     def test_stale_queued_transition_fails_before_pipeline_effects(self):
         store = StaleTransitionStore("queued")
         pipeline = PipelineStub()
@@ -405,7 +437,7 @@ class ReplayServiceTests(unittest.TestCase):
         failed = service.run(service.submit(pins).job_id)
 
         self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
-        self.assertEqual(failed.error_detail, "replay source invalid")
+        self.assertIn("JSON/JCS", failed.error_detail)
 
     def test_scalar_source_records_fail_closed(self):
         pins = _pins()
@@ -419,7 +451,7 @@ class ReplayServiceTests(unittest.TestCase):
         failed = service.run(service.submit(pins).job_id)
 
         self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
-        self.assertEqual(failed.error_detail, "replay source invalid")
+        self.assertIn("JSON objects", failed.error_detail)
 
 
 if __name__ == "__main__":
