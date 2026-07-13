@@ -1,0 +1,29 @@
+{
+  "fixture_mode": "synthetic-keyed-unverified",
+  "production_seed_allowed": false,
+  "source_kind": "BOK",
+  "gap_code": "PRIVATE_KEY_REQUIRED",
+  "rows": [
+    {
+      "TIME": "20260708",
+      "DATA_VALUE": "1526.6",
+      "ITEM_CODE1": "0000001",
+      "ITEM_NAME1": "Won per United States Dollar(Basic Exchange Rate)",
+      "UNIT_NAME": "Won"
+    },
+    {
+      "TIME": "20260709",
+      "DATA_VALUE": "1509.9",
+      "ITEM_CODE1": "0000001",
+      "ITEM_NAME1": "Won per United States Dollar(Basic Exchange Rate)",
+      "UNIT_NAME": "Won"
+    },
+    {
+      "TIME": "20260710",
+      "DATA_VALUE": "1504.2",
+      "ITEM_CODE1": "0000001",
+      "ITEM_NAME1": "Won per United States Dollar(Basic Exchange Rate)",
+      "UNIT_NAME": "Won"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "fixture_mode": "historical-metadata-only",
+  "production_seed_allowed": false,
+  "source_kind": "kind",
+  "source_document_day": "2026-07-10",
+  "captured_response_sha256": "50641c95b52a102a0dd2d37442ee0272712416709a789f5c67bf1ec5f5e2c423",
+  "declared_live_row_count": 100,
+  "note": "Earlier 100-row capture metadata only; not consumed as current live evidence."
+}

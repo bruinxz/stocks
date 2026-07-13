@@ -1,0 +1,34 @@
+{
+  "capture_instance": "22222222-2222-4222-8222-222222222222",
+  "capture_schema_version": "1.0.0",
+  "captured_at_utc": "2026-07-10T07:00:00Z",
+  "captured_response_sha256": "8ce8ae580ca168159bc311c32cb9f5ba6bb775ca7b34ce64fd0fcbbbeb28b85d",
+  "declared_live_row_count": 1,
+  "fixture_mode": false,
+  "payload": {
+    "rows": [
+      {
+        "ticker": "1301",
+        "ticker_name_local": "KYOKUYO",
+        "ticker_name_en": "KYOKUYO",
+        "trading_day": "2026-07-10",
+        "available_at_utc": "2026-07-10T07:00:00Z",
+        "open": "4500",
+        "high": "4530",
+        "low": "4490",
+        "close": "4505",
+        "vwap": "4506.6033",
+        "volume": "36800",
+        "turnover": "165842992"
+      }
+    ],
+    "source_document_id": "jpx-daily-statistics:2026-07-10",
+    "source_page_url": "https://www.jpx.co.jp/english/markets/statistics-equities/daily/index.html"
+  },
+  "payload_sha256": "f639052f43532239e5e344e2319633f46faefbfeb9c5f0cc9b445ab9a89777b9",
+  "production_seed_allowed": false,
+  "source_kind": "jpx-daily-statistics-pdf",
+  "source_url": "https://www.jpx.co.jp/english/markets/statistics-equities/daily/vk0khi000001vg1y-att/stq_20260710.pdf",
+  "terms_url": "https://www.jpx.co.jp/english/term-of-use/index.html",
+  "wrapper_sha256": "3537a309150aa175c4a82fb8d27b35296aa6fe420779d63a512bbfafcea0da69"
+}
