@@ -175,6 +175,121 @@ async function main(): Promise<void> {
   );
   assert('error code/exit code mismatch fails closed', mismatchedExit !== null);
 
+  const invalidResponses: Array<[string, string, number]> = [
+    [
+      'duplicate top-level stdout keys',
+      '{"protocol_version":"1.0.0","ok":true,"ok":true,"result":{}}',
+      0,
+    ],
+    [
+      'duplicate nested stdout keys',
+      '{"protocol_version":"1.0.0","ok":true,"result":{"ticker":"A","ticker":"B"}}',
+      0,
+    ],
+    [
+      'duplicate top-level stderr keys',
+      '{"protocol_version":"1.0.0","ok":false,"ok":false,"error":{"code":"INVALID_JSON","message":"invalid JSON input"}}',
+      2,
+    ],
+    [
+      'duplicate nested stderr keys',
+      '{"protocol_version":"1.0.0","ok":false,"error":{"code":"INVALID_JSON","code":"INVALID_JSON","message":"invalid JSON input"}}',
+      2,
+    ],
+    [
+      'unknown stderr error code',
+      '{"protocol_version":"1.0.0","ok":false,"error":{"code":"FUTURE_ERROR","message":"x"}}',
+      2,
+    ],
+    [
+      'lone surrogate stdout key',
+      '{"protocol_version":"1.0.0","ok":true,"result":{"\\ud800MARKER":"x"}}',
+      0,
+    ],
+    [
+      'lone surrogate stdout value',
+      '{"protocol_version":"1.0.0","ok":true,"result":{"value":"\\udc00MARKER"}}',
+      0,
+    ],
+    [
+      'lone surrogate stderr key',
+      '{"protocol_version":"1.0.0","ok":false,"error":{"code":"INVALID_JSON","message":"invalid JSON input","\\ud800MARKER":"x"}}',
+      2,
+    ],
+    [
+      'lone surrogate stderr code',
+      '{"protocol_version":"1.0.0","ok":false,"error":{"code":"INVALID_\\ud800JSON","message":"invalid JSON input"}}',
+      2,
+    ],
+    [
+      'lone surrogate stderr message',
+      '{"protocol_version":"1.0.0","ok":false,"error":{"code":"INVALID_JSON","message":"\\udc00MARKER"}}',
+      2,
+    ],
+    [
+      'terminal high surrogate stdout key',
+      '{"protocol_version":"1.0.0","ok":true,"result":{"\\ud800":"x"}}',
+      0,
+    ],
+    [
+      'terminal high surrogate stdout value',
+      '{"protocol_version":"1.0.0","ok":true,"result":{"value":"\\ud800"}}',
+      0,
+    ],
+    [
+      'terminal low surrogate stdout value',
+      '{"protocol_version":"1.0.0","ok":true,"result":{"value":"\\udc00"}}',
+      0,
+    ],
+    [
+      'terminal high surrogate stderr code',
+      '{"protocol_version":"1.0.0","ok":false,"error":{"code":"INVALID_\\ud800","message":"invalid JSON input"}}',
+      2,
+    ],
+    [
+      'terminal high surrogate stderr message',
+      '{"protocol_version":"1.0.0","ok":false,"error":{"code":"INVALID_JSON","message":"\\ud800"}}',
+      2,
+    ],
+    [
+      'terminal low surrogate stderr message',
+      '{"protocol_version":"1.0.0","ok":false,"error":{"code":"INVALID_JSON","message":"\\udc00"}}',
+      2,
+    ],
+  ];
+  for (const [name, response, exitCode] of invalidResponses) {
+    const stream = exitCode === 0 ? 'stdout' : 'stderr';
+    const rejection = await rejectsAs(
+      () =>
+        client(
+          `process.stdin.resume(); process.stdin.on('end', () => {
+            process.${stream}.write(${JSON.stringify(response)});
+            process.exitCode = ${exitCode};
+          });`
+        ).projectDaily({}),
+      ProjectionCliProtocolError
+    );
+    assert(`${name} fails closed`, rejection !== null);
+  }
+
+  const validPair = await client(
+    `process.stdin.resume(); process.stdin.on('end', () => {
+      process.stdout.write('{"protocol_version":"1.0.0","ok":true,"result":{"emoji":"\\\\ud83d\\\\ude00"}}');
+    });`
+  ).projectDaily({});
+  assert('valid surrogate pair passes', validPair.emoji === '😀');
+  const protoKey = await client(
+    `process.stdin.resume(); process.stdin.on('end', () => {
+      process.stdout.write('{"protocol_version":"1.0.0","ok":true,"result":{"__proto__":{"polluted":true}}}');
+    });`
+  ).projectDaily({});
+  assert(
+    '__proto__ remains an own JSON key without prototype mutation',
+    Object.prototype.hasOwnProperty.call(protoKey, '__proto__') &&
+      (protoKey.__proto__ as Record<string, unknown>).polluted === true &&
+      !('polluted' in {})
+  );
+
   const timeout = await rejectsAs(
     () =>
       client('process.stdin.resume(); setInterval(() => {}, 1000);', {
