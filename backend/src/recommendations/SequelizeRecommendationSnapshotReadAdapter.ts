@@ -70,6 +70,65 @@ function canonicalizeJson(value: unknown): string {
   throw new RecommendationSnapshotContractError('JCS values must be JSON serializable');
 }
 
+function utf16SortKey(value: string): number[] {
+  const result: number[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    result.push(value.charCodeAt(index));
+  }
+  return result;
+}
+
+function compareUtf16(left: string, right: string): number {
+  const leftKey = utf16SortKey(left);
+  const rightKey = utf16SortKey(right);
+  const length = Math.min(leftKey.length, rightKey.length);
+  for (let index = 0; index < length; index += 1) {
+    const delta = leftKey[index] - rightKey[index];
+    if (delta !== 0) return delta;
+  }
+  return leftKey.length - rightKey.length;
+}
+
+function semanticFingerprintPreimage(envelope: UnknownRecord): string {
+  const semantic = JSON.parse(JSON.stringify(envelope)) as UnknownRecord;
+  delete semantic.output_fingerprint;
+  delete semantic.snapshot_id;
+  const meta = asObject(semantic.meta, 'meta');
+  delete meta.generated_by;
+  delete meta.generation_ms;
+  if (!Array.isArray(semantic.items)) {
+    throw new RecommendationSnapshotContractError('items must be an array');
+  }
+  for (const value of semantic.items) {
+    const item = asObject(value, 'item');
+    const recommendation = asObject(item.recommendation, 'recommendation');
+    delete recommendation.id;
+    delete recommendation.snapshot_id;
+  }
+  return canonicalizeJsonWithKeySort(semantic);
+}
+
+function canonicalizeJsonWithKeySort(value: unknown): string {
+  if (value === null) return 'null';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new RecommendationSnapshotContractError('JCS values must be finite');
+    }
+    return JSON.stringify(value);
+  }
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalizeJsonWithKeySort).join(',')}]`;
+  if (typeof value === 'object' && value) {
+    const record = value as UnknownRecord;
+    return `{${Object.keys(record)
+      .sort(compareUtf16)
+      .map(key => `${JSON.stringify(key)}:${canonicalizeJsonWithKeySort(record[key])}`)
+      .join(',')}}`;
+  }
+  throw new RecommendationSnapshotContractError('JCS values must be JSON serializable');
+}
+
 function timestampString(value: unknown, label: string): string {
   if (value instanceof Date && Number.isFinite(value.getTime())) return value.toISOString();
   return requiredString(value, label);
@@ -248,6 +307,11 @@ function normalizeDetail(
       'output_fingerprint does not authenticate fingerprint preimage JCS'
     );
   }
+  if (semanticFingerprintPreimage(envelope) !== fingerprintPreimageJcs) {
+    throw new RecommendationSnapshotContractError(
+      'fingerprint preimage JCS does not match semantic envelope'
+    );
+  }
 
   return {
     snapshot_id: summary.snapshot_id,
@@ -255,6 +319,7 @@ function normalizeDetail(
     profile: summary.profile,
     market_scope: summary.market_scope,
     output_fingerprint: summary.output_fingerprint,
+    fingerprint_preimage_jcs: fingerprintPreimageJcs,
     disclaimer: {
       version: requiredString(disclaimer.version, 'disclaimer.version'),
       short_text: requiredString(disclaimer.short_text, 'disclaimer.short_text'),
@@ -398,6 +463,11 @@ export class SequelizeRecommendationSnapshotReadAdapter implements Recommendatio
               as_of_utc,
               profile,
               market_scope,
+              contract_version,
+              profile_version,
+              input_fingerprint,
+              disclaimer_hash,
+              fingerprint_preimage_jcs,
               output_fingerprint,
               item_count,
               envelope_json,

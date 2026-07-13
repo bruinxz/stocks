@@ -20,6 +20,16 @@ const FINGERPRINT_PREIMAGE_JCS =
   '"pipeline_version":"3.1.0","profile_version":"3.1.0","strategy_version":"3.1.0"},' +
   '"profile":"us_preferred"}';
 const OUTPUT_FINGERPRINT = 'e0e991998068bc2cd036f1dfbe4f09c7bf7aac0d55624e73ed8c8bdb1cfbda38';
+const MULTIBAGGER_PREIMAGE_JCS =
+  '{"as_of":"2026-07-10T06:00:00Z","disclaimer":{"effective_at":"2026-07-01T00:00:00Z",' +
+  '"full_text":"투자에는 위험이 있습니다.","hash":"d7dca10cd3ea237004ea9319ad31c44c0c4b980d372aeb239a3ed88d4e4b1ff0",' +
+  '"language":"ko-KR","short_text":"仅供参考","version":"1.0.0"},"items":[{"rating_band":"A",' +
+  '"recommendation":{"ticker":"AAPL"}}],"market_scope":"us","meta":{"contract_version":"0.3.1",' +
+  '"input_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",' +
+  '"pipeline_version":"3.1.0","profile_version":"3.1.0","strategy_version":"3.1.0"},' +
+  '"profile":"multibagger"}';
+const MULTIBAGGER_OUTPUT_FINGERPRINT =
+  'eae26b94df931b648f37246ae0eede0dc76a8e16bb0943c8fee6c74f1704774f';
 const DISCLAIMER_TEXT = '투자에는 위험이 있습니다.';
 const DISCLAIMER_HASH = createHash('sha256').update(DISCLAIMER_TEXT).digest('hex');
 
@@ -235,10 +245,13 @@ async function main(): Promise<void> {
       header({
         snapshot_id: SNAPSHOT_B,
         profile: 'multibagger',
+        output_fingerprint: MULTIBAGGER_OUTPUT_FINGERPRINT,
+        fingerprint_preimage_jcs: MULTIBAGGER_PREIMAGE_JCS,
         envelope_json: {
           ...ENVELOPE,
           snapshot_id: SNAPSHOT_B,
           profile: 'multibagger',
+          output_fingerprint: MULTIBAGGER_OUTPUT_FINGERPRINT,
         },
       }),
     ],

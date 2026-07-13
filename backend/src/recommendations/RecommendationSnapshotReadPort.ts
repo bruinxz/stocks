@@ -66,6 +66,7 @@ export interface RecommendationSnapshotDetail {
   profile: RecommendationProfile;
   market_scope: RecommendationMarketScope;
   output_fingerprint: string;
+  fingerprint_preimage_jcs: string;
   disclaimer: RecommendationDisclaimer;
   meta: RecommendationSnapshotMeta;
   items: RecommendationSnapshotItem[];

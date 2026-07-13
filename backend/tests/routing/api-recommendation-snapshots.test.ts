@@ -25,6 +25,7 @@ const DETAIL: RecommendationSnapshotDetail = {
   profile: 'us_preferred',
   market_scope: 'us',
   output_fingerprint: 'b'.repeat(64),
+  fingerprint_preimage_jcs: '{"fixture":true}',
   disclaimer: {
     version: '1.0.0',
     short_text: '仅供参考',
@@ -63,6 +64,7 @@ const SUMMARY = {
   profile: 'us_preferred' as const,
   market_scope: 'us' as const,
   output_fingerprint: 'b'.repeat(64),
+  fingerprint_preimage_jcs: '{"fixture":true}',
   item_count: 1,
   created_at: '2026-07-10T06:00:01Z',
 };
