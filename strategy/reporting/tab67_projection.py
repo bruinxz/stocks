@@ -9,6 +9,7 @@ envelopes and preserve every list item byte-for-byte at the Python value level.
 from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
+import math
 import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from uuid import UUID
@@ -303,7 +304,10 @@ def _parse_utc_seconds(value: Any, path: str) -> datetime:
 def _require_number(value: Any, path: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         _fail(path, "must be a number")
-    return float(value)
+    number = float(value)
+    if not math.isfinite(number):
+        _fail(path, "must be finite")
+    return number
 
 
 def _require_bounded_number(
@@ -549,6 +553,15 @@ def _validate_trigger_signals(raw: Any, path: str) -> None:
             _fail(signal_path + ".detail", "must contain at most 240 characters")
         if "source_ref" in signal:
             _require_nonempty_string(signal["source_ref"], signal_path + ".source_ref")
+
+
+# Public cross-module validation API. The underscored implementations remain
+# private details of the projection module; consumers import only these names.
+parse_utc_seconds = _parse_utc_seconds
+require_finite_number = _require_number
+validate_score_snapshot = _validate_score
+validate_conviction = _validate_conviction
+validate_entry_plan = _validate_entry_plan
 
 
 def _validate_profile_scope(profile: Any, market_scope: Any, path: str) -> None:

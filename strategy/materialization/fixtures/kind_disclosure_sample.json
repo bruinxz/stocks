@@ -1,0 +1,23 @@
+{
+  "fixture_mode": "self-use-non-commercial-test-only",
+  "production_seed_allowed": false,
+  "derived_test_objects": "synthetic-text-hit-and-strategy-decision-only",
+  "source_kind": "kind",
+  "source_document_day": "2026-07-10",
+  "source_url": "https://kind.krx.co.kr/disclosure/todaydisclosure.do",
+  "terms_url": "https://kind.krx.co.kr/",
+  "captured_sha256": "50641c95b52a102a0dd2d37442ee0272712416709a789f5c67bf1ec5f5e2c423",
+  "live_row_count": 100,
+  "rows": [
+    {
+      "time_local": "20:01",
+      "market": "유가증권",
+      "short_code": "08166",
+      "company_name_local": "미스토홀딩스",
+      "receipt_no": "20260710001011",
+      "headline_local": "공매도 과열종목 지정(공매도 거래 금지 적용)",
+      "submitter": "유가증권시장본부"
+    }
+  ],
+  "fixture_content_sha256": "7181c54c169a1bfbabe32080117a5761143313e3876679a9678e1c84e2a19288"
+}

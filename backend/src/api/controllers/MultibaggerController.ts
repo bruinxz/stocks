@@ -40,6 +40,8 @@ function normalizeCandidate(row: any): any {
     market: row.market,
     stage: row.stage,
     conclusion: row.conclusion,
+    classification_policy_version: row.classification_policy_version,
+    classification_reason_codes: parseJson(row.classification_reason_codes),
   };
 }
 
@@ -121,7 +123,9 @@ export class MultibaggerController {
                   WHEN candidate.market_scope = 'kr' THEN 'KR'
                 END AS market,
                 candidate.stage,
-                candidate.conclusion
+                candidate.conclusion,
+                candidate.classification_policy_version,
+                candidate.classification_reason_codes
          FROM latest_candidates candidate
          LEFT JOIN LATERAL (
            SELECT source.fundamental_snapshot->>'name' AS name
@@ -215,7 +219,9 @@ export class MultibaggerController {
                   WHEN candidate.market_scope = 'kr' THEN 'KR'
                 END AS market,
                 candidate.stage,
-                candidate.conclusion
+                candidate.conclusion,
+                candidate.classification_policy_version,
+                candidate.classification_reason_codes
          FROM latest_candidates candidate
          LEFT JOIN LATERAL (
            SELECT source.fundamental_snapshot->>'name' AS name
