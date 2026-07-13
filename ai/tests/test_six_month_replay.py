@@ -17,6 +17,9 @@ from ai.replay.six_month.engine import (
     ReplayInputError,
     ReplayPairError,
     SixMonthReplayEngine,
+    authenticate_snapshot_candidate,
+    canonical_holding_candidate_hash,
+    canonical_snapshot_candidate_hash,
 )
 from ai.replay.six_month.types import (
     CalendarSession,
@@ -127,6 +130,7 @@ class CalendarPort:
                 market_scope=scope,
                 window_start="2026-01-10",
                 window_end="2026-07-10",
+                source_version="1.0.0",
                 fixture_hash=_hash(payload),
                 synthetic=True,
                 disclaimer=SYNTHETIC_DISCLAIMER,
@@ -414,6 +418,229 @@ class SixMonthReplayTests(unittest.TestCase):
             ),
         )
 
+    def test_holding_source_identity_and_exact_lineage_are_authenticated(self):
+        snapshot = _engine().run("us_preferred", "us").snapshots[0]
+        holding = snapshot.holdings[0]
+        for field in (
+            "source_kind",
+            "source_document_id",
+            "source_version",
+            "available_at_utc",
+        ):
+            mutated = replace(
+                holding, **{field: getattr(holding, field) + "-changed"}
+            )
+            with self.subTest(field=field):
+                self.assertNotEqual(
+                    canonical_holding_candidate_hash(mutated),
+                    holding.fact_hash,
+                )
+                resealed_holding = replace(
+                    mutated,
+                    fact_hash=canonical_holding_candidate_hash(mutated),
+                )
+                resealed_snapshot = replace(
+                    snapshot,
+                    holdings=(resealed_holding,) + snapshot.holdings[1:],
+                    fact_hash="",
+                )
+                resealed_snapshot = replace(
+                    resealed_snapshot,
+                    fact_hash=canonical_snapshot_candidate_hash(
+                        resealed_snapshot
+                    ),
+                )
+                with self.assertRaisesRegex(
+                    ReplayInputError, "holding price source identity mismatch"
+                ):
+                    authenticate_snapshot_candidate(resealed_snapshot)
+        missing = dict(holding.lineage)
+        missing.pop("price_fact_hash")
+        unknown = {**holding.lineage, "unknown": "a" * 64}
+        for lineage in (missing, unknown):
+            with self.subTest(lineage=lineage):
+                with self.assertRaisesRegex(ReplayInputError, "keys must be exact"):
+                    canonical_holding_candidate_hash(
+                        replace(holding, lineage=lineage)
+                    )
+
+    def test_snapshot_source_versions_are_exact_bound_and_authenticated(self):
+        snapshot = _engine().run("us_preferred", "us").snapshots[0]
+        self.assertEqual(
+            set(snapshot.source_versions),
+            {
+                "calendar",
+                "cost_model",
+                "membership",
+                "prices",
+                "scores",
+                "survivorship",
+            },
+        )
+        self.assertEqual(
+            snapshot.source_versions,
+            snapshot.lineage_closure["source_versions"],
+        )
+        for key in snapshot.source_versions:
+            values = dict(snapshot.source_versions)
+            values[key] += "-changed"
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(
+                    ReplayInputError,
+                    "must equal lineage|source version closure mismatch",
+                ):
+                    authenticate_snapshot_candidate(
+                        replace(snapshot, source_versions=values)
+                    )
+
+        missing = dict(snapshot.source_versions)
+        missing.pop("membership")
+        unknown = {**snapshot.source_versions, "unknown": "1.0.0"}
+        for values in (missing, unknown):
+            with self.subTest(values=values):
+                with self.assertRaisesRegex(ReplayInputError, "keys must be exact"):
+                    canonical_snapshot_candidate_hash(
+                        replace(snapshot, source_versions=values)
+                    )
+
+        resealed_versions = dict(snapshot.source_versions)
+        resealed_versions["prices"] += "-changed"
+        resealed_lineage = dict(snapshot.lineage_closure)
+        resealed_lineage["source_versions"] = resealed_versions
+        resealed = replace(
+            snapshot,
+            source_versions=resealed_versions,
+            lineage_closure=resealed_lineage,
+            fact_hash="",
+        )
+        resealed = replace(
+            resealed,
+            fact_hash=canonical_snapshot_candidate_hash(resealed),
+        )
+        with self.assertRaisesRegex(
+            ReplayInputError, "prices source version closure mismatch"
+        ):
+            authenticate_snapshot_candidate(resealed)
+
+    def test_resealed_source_closure_relation_attacks_fail_closed(self):
+        snapshot = _engine().run("us_preferred", "us").snapshots[0]
+        closure = {
+            key: [dict(identity) for identity in identities]
+            for key, identities in snapshot.lineage_closure[
+                "source_identity_closure"
+            ].items()
+        }
+        price_hash = snapshot.holdings[0].lineage["price_fact_hash"]
+        price_identity = next(
+            identity
+            for identity in closure["prices"]
+            if identity["fact_hash"] == price_hash
+        )
+        price_identity["source_document_id"] += "-changed"
+        changed_lineage = dict(snapshot.lineage_closure)
+        changed_lineage["source_identity_closure"] = closure
+        changed = replace(snapshot, lineage_closure=changed_lineage, fact_hash="")
+        changed = replace(
+            changed,
+            fact_hash=canonical_snapshot_candidate_hash(changed),
+        )
+        with self.assertRaisesRegex(
+            ReplayInputError, "holding price source identity mismatch"
+        ):
+            authenticate_snapshot_candidate(changed)
+
+        closure = {
+            key: [dict(identity) for identity in identities]
+            for key, identities in snapshot.lineage_closure[
+                "source_identity_closure"
+            ].items()
+        }
+        closure["prices"].append(dict(closure["prices"][0]))
+        changed_lineage = dict(snapshot.lineage_closure)
+        changed_lineage["source_identity_closure"] = closure
+        changed = replace(snapshot, lineage_closure=changed_lineage, fact_hash="")
+        changed = replace(
+            changed,
+            fact_hash=canonical_snapshot_candidate_hash(changed),
+        )
+        with self.assertRaisesRegex(
+            ReplayInputError, "fact hashes must be unique"
+        ):
+            authenticate_snapshot_candidate(changed)
+
+        closure = {
+            key: [dict(identity) for identity in identities]
+            for key, identities in snapshot.lineage_closure[
+                "source_identity_closure"
+            ].items()
+        }
+        closure["scores"].pop()
+        changed_lineage = dict(snapshot.lineage_closure)
+        changed_lineage["source_identity_closure"] = closure
+        changed = replace(snapshot, lineage_closure=changed_lineage, fact_hash="")
+        changed = replace(
+            changed,
+            fact_hash=canonical_snapshot_candidate_hash(changed),
+        )
+        with self.assertRaisesRegex(
+            ReplayInputError, "source closure count mismatch"
+        ):
+            authenticate_snapshot_candidate(changed)
+
+        first = snapshot.holdings[0]
+        second = snapshot.holdings[1]
+        switched_lineage = dict(first.lineage)
+        switched_lineage["price_fact_hash"] = second.lineage["price_fact_hash"]
+        switched = replace(
+            first,
+            lineage=switched_lineage,
+            source_kind=second.source_kind,
+            source_document_id=second.source_document_id,
+            source_version=second.source_version,
+            available_at_utc=second.available_at_utc,
+            fact_hash="",
+        )
+        switched = replace(
+            switched,
+            fact_hash=canonical_holding_candidate_hash(switched),
+        )
+        changed = replace(
+            snapshot,
+            holdings=(switched,) + snapshot.holdings[1:],
+            fact_hash="",
+        )
+        changed = replace(
+            changed,
+            fact_hash=canonical_snapshot_candidate_hash(changed),
+        )
+        with self.assertRaisesRegex(
+            ReplayInputError, "holding ticker source relation mismatch"
+        ):
+            authenticate_snapshot_candidate(changed)
+
+        for key, mirror in (
+            ("calendar", "calendar_source_version"),
+            ("cost_model", "cost_model_version"),
+        ):
+            versions = dict(snapshot.source_versions)
+            versions[key] += "-changed"
+            lineage = dict(snapshot.lineage_closure)
+            lineage_versions = dict(lineage["source_versions"])
+            lineage_versions[key] = versions[key]
+            lineage["source_versions"] = lineage_versions
+            lineage[mirror] = versions[key]
+            changed = replace(
+                snapshot,
+                source_versions=versions,
+                lineage_closure=lineage,
+                fact_hash="",
+            )
+            with self.subTest(authority=key):
+                with self.assertRaisesRegex(
+                    ReplayInputError, "is not authoritative"
+                ):
+                    canonical_snapshot_candidate_hash(changed)
+
     def test_illegal_pairs_and_custom_fail_before_source_reads(self):
         for profile in (
             "us_preferred",
@@ -565,7 +792,7 @@ class SixMonthReplayTests(unittest.TestCase):
         self.assertEqual(final.metrics.win_rate_6m, 1.0)
         self.assertEqual(
             final.fact_hash,
-            "59b71fdc3b790e1f51010ea1941baf81ce4ba7c7a2c4c684d5b8b66f2be24b06",
+            "09420f7734e9b2d255c6f2f346ed471f3f22add01319545e4f1bd2ae218a5c3e",
         )
 
     def test_near_flat_closed_trade_loses_after_round_trip_costs(self):

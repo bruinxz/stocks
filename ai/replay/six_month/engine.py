@@ -4,7 +4,7 @@ import datetime as dt
 import hashlib
 import math
 import statistics
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Iterable, Mapping, Optional
 
 from ai.replay.six_month.ports import (
@@ -40,6 +40,8 @@ EXPECTED_SESSIONS = 128
 EXPECTED_CHECKPOINTS = 27
 HOLDINGS_PER_CHECKPOINT = 3
 METRIC_CONTRACT_VERSION = "1.0.0"
+CALENDAR_SOURCE_VERSION = "1.0.0"
+COST_MODEL_VERSION = "synthetic-cost-v1"
 SYNTHETIC_DISCLAIMER = (
     "Synthetic deterministic test calendars; never represent official "
     "exchange calendars and never seed production."
@@ -57,6 +59,32 @@ LEGAL_PAIRS = tuple(
     for profile, scopes in PROFILE_MARKET_SCOPES.items()
     for scope in sorted(scopes)
 )
+HOLDING_LINEAGE_KEYS = frozenset(
+    ("membership_fact_hash", "price_fact_hash", "score_fact_hash")
+)
+SNAPSHOT_SOURCE_VERSION_KEYS = frozenset(
+    ("calendar", "cost_model", "membership", "prices", "scores", "survivorship")
+)
+SOURCE_IDENTITY_CLOSURE_KEYS = frozenset(
+    ("membership", "prices", "scores", "survivorship")
+)
+SOURCE_IDENTITY_EXPECTED_COUNTS = {
+    "membership": 4,
+    "prices": 4,
+    "scores": 4,
+    "survivorship": 1,
+}
+SOURCE_IDENTITY_KEYS = frozenset(
+    (
+        "available_at_utc",
+        "effective_at_utc",
+        "fact_hash",
+        "source_document_id",
+        "source_kind",
+        "source_version",
+    )
+)
+HEX = frozenset("0123456789abcdef")
 
 
 class SixMonthReplayError(RuntimeError):
@@ -69,6 +97,311 @@ class ReplayPairError(SixMonthReplayError):
 
 class ReplayInputError(SixMonthReplayError):
     pass
+
+
+def _require_exact_string_map(
+    value: object, expected: frozenset[str], field: str
+) -> Mapping[str, str]:
+    if not isinstance(value, Mapping) or set(value) != expected:
+        raise ReplayInputError(f"{field} keys must be exact")
+    if any(
+        not isinstance(item, str) or not item or item.isspace()
+        for item in value.values()
+    ):
+        raise ReplayInputError(f"{field} values must be non-empty strings")
+    return value
+
+
+def _source_identity(fact: SourceFact) -> Mapping[str, str]:
+    return {
+        "available_at_utc": fact.available_at_utc,
+        "effective_at_utc": fact.effective_at_utc,
+        "fact_hash": fact.fact_hash,
+        "source_document_id": fact.source_document_id,
+        "source_kind": fact.source_kind,
+        "source_version": fact.source_version,
+    }
+
+
+def _require_sha256(value: object, field: str) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in HEX for character in value)
+    ):
+        raise ReplayInputError(f"{field} must be lowercase SHA-256")
+    return value
+
+
+def _require_source_identities(
+    value: object, field: str
+) -> tuple[Mapping[str, str], ...]:
+    if not isinstance(value, (list, tuple)) or not value:
+        raise ReplayInputError(f"{field} must be a non-empty array")
+    result = []
+    hashes = []
+    for index, identity in enumerate(value):
+        checked = _require_exact_string_map(
+            identity, SOURCE_IDENTITY_KEYS, f"{field}[{index}]"
+        )
+        SixMonthReplayEngine._parse_utc(checked["effective_at_utc"])
+        SixMonthReplayEngine._parse_utc(checked["available_at_utc"])
+        if (
+            SixMonthReplayEngine._parse_utc(checked["effective_at_utc"])
+            > SixMonthReplayEngine._parse_utc(checked["available_at_utc"])
+        ):
+            raise ReplayInputError(f"{field} source time order is invalid")
+        hashes.append(_require_sha256(checked["fact_hash"], f"{field} fact_hash"))
+        result.append(checked)
+    if len(set(hashes)) != len(hashes):
+        raise ReplayInputError(f"{field} fact hashes must be unique")
+    if hashes != sorted(hashes):
+        raise ReplayInputError(f"{field} identities must be fact-hash ordered")
+    return tuple(result)
+
+
+def _holding_payload(holding: HoldingCandidate) -> Mapping[str, object]:
+    lineage = _require_exact_string_map(
+        holding.lineage, HOLDING_LINEAGE_KEYS, "holding lineage"
+    )
+    for key, value in lineage.items():
+        _require_sha256(value, f"holding lineage {key}")
+    for value in (
+        holding.source_kind,
+        holding.source_document_id,
+        holding.source_version,
+        holding.available_at_utc,
+    ):
+        if not isinstance(value, str) or not value or value.isspace():
+            raise ReplayInputError("holding source identity/version is required")
+    return {
+        "available_at_utc": holding.available_at_utc,
+        "current_price": holding.current_price,
+        "entry_price": holding.entry_price,
+        "is_delisted_at_as_of": holding.is_delisted_at_as_of,
+        "is_stale": holding.is_stale,
+        "lineage": dict(lineage),
+        "market_scope": holding.market_scope,
+        "position_order": holding.position_order,
+        "return_since_entry": holding.return_since_entry,
+        "snapshot_as_of_utc": holding.snapshot_as_of_utc,
+        "source_document_id": holding.source_document_id,
+        "source_kind": holding.source_kind,
+        "source_version": holding.source_version,
+        "ticker": holding.ticker,
+        "weight": holding.weight,
+    }
+
+
+def canonical_holding_candidate_hash(holding: HoldingCandidate) -> str:
+    return SixMonthReplayEngine._hash(_holding_payload(holding))
+
+
+def _snapshot_payload(snapshot: SnapshotCandidate) -> Mapping[str, object]:
+    source_versions = _require_exact_string_map(
+        snapshot.source_versions,
+        SNAPSHOT_SOURCE_VERSION_KEYS,
+        "snapshot source_versions",
+    )
+    lineage_versions = _require_exact_string_map(
+        snapshot.lineage_closure.get("source_versions"),
+        SNAPSHOT_SOURCE_VERSION_KEYS,
+        "lineage source_versions",
+    )
+    if dict(source_versions) != dict(lineage_versions):
+        raise ReplayInputError(
+            "snapshot source_versions must equal lineage source_versions"
+        )
+    if source_versions["cost_model"] != snapshot.lineage_closure.get(
+        "cost_model_version"
+    ):
+        raise ReplayInputError("cost model source version mismatch")
+    if source_versions["calendar"] != snapshot.lineage_closure.get(
+        "calendar_source_version"
+    ):
+        raise ReplayInputError("calendar source version mismatch")
+    if source_versions["calendar"] != CALENDAR_SOURCE_VERSION:
+        raise ReplayInputError("calendar source version is not authoritative")
+    if source_versions["cost_model"] != COST_MODEL_VERSION:
+        raise ReplayInputError("cost model source version is not authoritative")
+    survivorship = snapshot.lineage_closure.get("survivorship_evidence")
+    if (
+        not isinstance(survivorship, Mapping)
+        or source_versions["survivorship"] != survivorship.get("source_version")
+    ):
+        raise ReplayInputError("survivorship source version mismatch")
+    return {
+        "as_of_utc": snapshot.as_of_utc,
+        "holding_hashes": [holding.fact_hash for holding in snapshot.holdings],
+        "is_delisted_at_as_of": snapshot.is_delisted_at_as_of,
+        "is_survivorship_biased": snapshot.is_survivorship_biased,
+        "lineage_closure": dict(snapshot.lineage_closure),
+        "market_scope": snapshot.market_scope,
+        "metrics": asdict(snapshot.metrics),
+        "snapshot_day": snapshot.snapshot_day,
+        "source_versions": dict(source_versions),
+        "strategy": snapshot.strategy,
+    }
+
+
+def _validate_snapshot_source_closure(snapshot: SnapshotCandidate) -> None:
+    source_versions = _require_exact_string_map(
+        snapshot.source_versions,
+        SNAPSHOT_SOURCE_VERSION_KEYS,
+        "snapshot source_versions",
+    )
+    closure = snapshot.lineage_closure.get("source_identity_closure")
+    if not isinstance(closure, Mapping) or set(closure) != SOURCE_IDENTITY_CLOSURE_KEYS:
+        raise ReplayInputError("source identity closure keys must be exact")
+    identities = {
+        key: _require_source_identities(
+            closure[key], f"source identity closure {key}"
+        )
+        for key in sorted(SOURCE_IDENTITY_CLOSURE_KEYS)
+    }
+    for key, expected_count in SOURCE_IDENTITY_EXPECTED_COUNTS.items():
+        if len(identities[key]) != expected_count:
+            raise ReplayInputError(f"{key} source closure count mismatch")
+    all_hashes = [
+        identity["fact_hash"]
+        for key in sorted(identities)
+        for identity in identities[key]
+    ]
+    if len(set(all_hashes)) != len(all_hashes):
+        raise ReplayInputError("source closure fact hashes must be globally unique")
+    as_of = SixMonthReplayEngine._parse_utc(snapshot.as_of_utc)
+    if any(
+        SixMonthReplayEngine._parse_utc(identity["available_at_utc"]) > as_of
+        for key in identities
+        for identity in identities[key]
+    ):
+        raise ReplayInputError("source identity exceeds snapshot PIT cutoff")
+    for key in SOURCE_IDENTITY_CLOSURE_KEYS:
+        versions = {identity["source_version"] for identity in identities[key]}
+        if versions != {source_versions[key]}:
+            raise ReplayInputError(f"{key} source version closure mismatch")
+
+    membership_hashes = [
+        identity["fact_hash"] for identity in identities["membership"]
+    ]
+    price_hashes = [identity["fact_hash"] for identity in identities["prices"]]
+    score_hashes = [identity["fact_hash"] for identity in identities["scores"]]
+    survivorship_hashes = [
+        identity["fact_hash"] for identity in identities["survivorship"]
+    ]
+    ticker_sources = snapshot.lineage_closure.get("ticker_source_fact_hashes")
+    if (
+        not isinstance(ticker_sources, Mapping)
+        or len(ticker_sources) != 4
+        or any(
+            not isinstance(ticker, str) or not ticker or ticker.isspace()
+            for ticker in ticker_sources
+        )
+    ):
+        raise ReplayInputError("ticker source fact map is invalid")
+    ticker_sources = {
+        ticker: _require_exact_string_map(
+            value, HOLDING_LINEAGE_KEYS, f"ticker source facts {ticker}"
+        )
+        for ticker, value in ticker_sources.items()
+    }
+    for ticker, value in ticker_sources.items():
+        for key, fact_hash in value.items():
+            _require_sha256(fact_hash, f"ticker source facts {ticker}.{key}")
+    if SixMonthReplayEngine._hash(sorted(ticker_sources)) != (
+        snapshot.lineage_closure.get("universe_hash")
+    ):
+        raise ReplayInputError("ticker source map and universe hash mismatch")
+    if {
+        value["membership_fact_hash"] for value in ticker_sources.values()
+    } != set(membership_hashes):
+        raise ReplayInputError("ticker membership closure mismatch")
+    if {
+        value["price_fact_hash"] for value in ticker_sources.values()
+    } != set(price_hashes):
+        raise ReplayInputError("ticker price closure mismatch")
+    if {
+        value["score_fact_hash"] for value in ticker_sources.values()
+    } != set(score_hashes):
+        raise ReplayInputError("ticker score closure mismatch")
+    if membership_hashes != snapshot.lineage_closure.get(
+        "membership_fact_hashes"
+    ):
+        raise ReplayInputError("membership fact hash mirror mismatch")
+    if SixMonthReplayEngine._hash(membership_hashes) != snapshot.lineage_closure.get(
+        "membership_hash"
+    ):
+        raise ReplayInputError("membership aggregate hash mismatch")
+    if price_hashes != snapshot.lineage_closure.get("price_fact_hashes"):
+        raise ReplayInputError("price fact hash mirror mismatch")
+    if score_hashes != snapshot.lineage_closure.get("score_fact_hashes"):
+        raise ReplayInputError("score fact hash mirror mismatch")
+    survivorship = snapshot.lineage_closure.get("survivorship_evidence")
+    if (
+        not isinstance(survivorship, Mapping)
+        or survivorship_hashes != survivorship.get("fact_hashes")
+    ):
+        raise ReplayInputError("survivorship fact hash mirror mismatch")
+
+    membership_by_hash = {
+        identity["fact_hash"]: identity for identity in identities["membership"]
+    }
+    price_by_hash = {
+        identity["fact_hash"]: identity for identity in identities["prices"]
+    }
+    score_by_hash = {
+        identity["fact_hash"]: identity for identity in identities["scores"]
+    }
+    held_membership_hashes = set()
+    held_price_hashes = set()
+    held_score_hashes = set()
+    for holding in snapshot.holdings:
+        lineage = _require_exact_string_map(
+            holding.lineage, HOLDING_LINEAGE_KEYS, "holding lineage"
+        )
+        if holding.ticker not in ticker_sources or dict(lineage) != dict(
+            ticker_sources[holding.ticker]
+        ):
+            raise ReplayInputError("holding ticker source relation mismatch")
+        membership_hash = lineage["membership_fact_hash"]
+        price_hash = lineage["price_fact_hash"]
+        score_hash = lineage["score_fact_hash"]
+        if membership_hash not in membership_by_hash:
+            raise ReplayInputError("holding membership fact is outside closure")
+        if price_hash not in price_by_hash:
+            raise ReplayInputError("holding price fact is outside closure")
+        if score_hash not in score_by_hash:
+            raise ReplayInputError("holding score fact is outside closure")
+        price_identity = price_by_hash[price_hash]
+        if (
+            holding.source_kind != price_identity["source_kind"]
+            or holding.source_document_id != price_identity["source_document_id"]
+            or holding.source_version != price_identity["source_version"]
+            or holding.available_at_utc != price_identity["available_at_utc"]
+        ):
+            raise ReplayInputError("holding price source identity mismatch")
+        held_membership_hashes.add(membership_hash)
+        held_price_hashes.add(price_hash)
+        held_score_hashes.add(score_hash)
+    if (
+        held_membership_hashes - set(membership_hashes)
+        or held_price_hashes - set(price_hashes)
+        or held_score_hashes - set(score_hashes)
+    ):
+        raise ReplayInputError("holding source closure mismatch")
+
+
+def canonical_snapshot_candidate_hash(snapshot: SnapshotCandidate) -> str:
+    return SixMonthReplayEngine._hash(_snapshot_payload(snapshot))
+
+
+def authenticate_snapshot_candidate(snapshot: SnapshotCandidate) -> None:
+    _validate_snapshot_source_closure(snapshot)
+    for holding in snapshot.holdings:
+        if holding.fact_hash != canonical_holding_candidate_hash(holding):
+            raise ReplayInputError("holding fact_hash is not authentic")
+    if snapshot.fact_hash != canonical_snapshot_candidate_hash(snapshot):
+        raise ReplayInputError("snapshot fact_hash is not authentic")
 
 
 class SixMonthReplayEngine:
@@ -335,89 +668,113 @@ class SixMonthReplayEngine:
         for position_order, ticker in enumerate(ordered_tickers):
             price = prices[ticker]
             member = membership[ticker]
-            holding_payload = {
-                "ticker": ticker,
-                "position_order": position_order,
-                "market_scope": market_scope,
-                "snapshot_as_of_utc": session.close_utc,
-                "weight": current_weights[ticker],
-                "entry_price": entry_prices[ticker],
-                "current_price": price.adjusted_close,
-                "return_since_entry": (
-                    price.adjusted_close / entry_prices[ticker] - 1.0
-                ),
-                "is_stale": price.is_stale,
-                "is_delisted_at_as_of": member.is_delisted_at_as_of,
-                "available_at_utc": price.fact.available_at_utc,
-                "price_fact_hash": price.fact.fact_hash,
+            holding_lineage = {
                 "membership_fact_hash": member.fact.fact_hash,
+                "price_fact_hash": price.fact.fact_hash,
                 "score_fact_hash": scores[ticker].fact.fact_hash,
             }
+            holding = HoldingCandidate(
+                ticker=ticker,
+                position_order=position_order,
+                market_scope=market_scope,
+                snapshot_as_of_utc=session.close_utc,
+                weight=current_weights[ticker],
+                entry_price=entry_prices[ticker],
+                current_price=price.adjusted_close,
+                return_since_entry=(
+                    price.adjusted_close / entry_prices[ticker] - 1.0
+                ),
+                is_stale=price.is_stale,
+                is_delisted_at_as_of=member.is_delisted_at_as_of,
+                source_kind=price.fact.source_kind,
+                source_document_id=price.fact.source_document_id,
+                source_version=price.fact.source_version,
+                available_at_utc=price.fact.available_at_utc,
+                lineage=holding_lineage,
+                fact_hash="",
+            )
             holdings.append(
-                HoldingCandidate(
-                    ticker=ticker,
-                    position_order=position_order,
-                    market_scope=market_scope,
-                    snapshot_as_of_utc=session.close_utc,
-                    weight=current_weights[ticker],
-                    entry_price=entry_prices[ticker],
-                    current_price=price.adjusted_close,
-                    return_since_entry=holding_payload[
-                        "return_since_entry"
-                    ],
-                    is_stale=price.is_stale,
-                    is_delisted_at_as_of=member.is_delisted_at_as_of,
-                    source_kind=price.fact.source_kind,
-                    source_document_id=price.fact.source_document_id,
-                    source_version=price.fact.source_version,
-                    available_at_utc=price.fact.available_at_utc,
-                    lineage={
-                        "membership_fact_hash": member.fact.fact_hash,
-                        "price_fact_hash": price.fact.fact_hash,
-                        "score_fact_hash": scores[ticker].fact.fact_hash,
-                    },
-                    fact_hash=self._hash(holding_payload),
+                replace(
+                    holding,
+                    fact_hash=canonical_holding_candidate_hash(holding),
                 )
             )
         if abs(sum(holding.weight for holding in holdings) - 1.0) > 1e-9:
             raise ReplayInputError("holding weights must sum to one")
+        source_versions = {
+            "calendar": calendar.source_version,
+            "cost_model": self._cost_model.version,
+            "membership": membership[ordered_tickers[0]].fact.source_version,
+            "prices": prices[ordered_tickers[0]].fact.source_version,
+            "scores": scores[ordered_tickers[0]].fact.source_version,
+            "survivorship": survivorship[0].source_version,
+        }
+        _require_exact_string_map(
+            source_versions,
+            SNAPSHOT_SOURCE_VERSION_KEYS,
+            "snapshot source_versions",
+        )
+        membership_identities = sorted(
+            (
+                _source_identity(membership[ticker].fact)
+                for ticker in membership
+            ),
+            key=lambda identity: identity["fact_hash"],
+        )
+        price_identities = sorted(
+            (_source_identity(prices[ticker].fact) for ticker in prices),
+            key=lambda identity: identity["fact_hash"],
+        )
+        score_identities = sorted(
+            (_source_identity(scores[ticker].fact) for ticker in scores),
+            key=lambda identity: identity["fact_hash"],
+        )
+        survivorship_identities = sorted(
+            (_source_identity(fact) for fact in survivorship),
+            key=lambda identity: identity["fact_hash"],
+        )
         lineage = {
             "calendar_fixture_hash": calendar.fixture_hash,
+            "calendar_source_version": calendar.source_version,
             "universe_hash": self._hash(sorted(membership)),
             "membership_hash": self._hash(
-                [
-                    membership[ticker].fact.fact_hash
-                    for ticker in sorted(membership)
-                ]
+                [identity["fact_hash"] for identity in membership_identities]
             ),
+            "membership_fact_hashes": [
+                identity["fact_hash"] for identity in membership_identities
+            ],
             "price_fact_hashes": [
-                prices[ticker].fact.fact_hash for ticker in sorted(prices)
+                identity["fact_hash"] for identity in price_identities
             ],
             "score_fact_hashes": [
-                scores[ticker].fact.fact_hash for ticker in sorted(scores)
+                identity["fact_hash"] for identity in score_identities
             ],
             "strategy_version": scores[ordered_tickers[0]].strategy_version,
             "cost_model_version": self._cost_model.version,
+            "source_versions": source_versions,
+            "source_identity_closure": {
+                "membership": membership_identities,
+                "prices": price_identities,
+                "scores": score_identities,
+                "survivorship": survivorship_identities,
+            },
+            "ticker_source_fact_hashes": {
+                ticker: {
+                    "membership_fact_hash": membership[ticker].fact.fact_hash,
+                    "price_fact_hash": prices[ticker].fact.fact_hash,
+                    "score_fact_hash": scores[ticker].fact.fact_hash,
+                }
+                for ticker in sorted(membership)
+            },
             "survivorship_evidence": {
-                "fact_hashes": [fact.fact_hash for fact in survivorship],
+                "fact_hashes": [
+                    identity["fact_hash"] for identity in survivorship_identities
+                ],
                 "retains_delisted": True,
                 "source_version": survivorship[0].source_version,
             },
         }
-        header_payload = {
-            "strategy": profile,
-            "market_scope": market_scope,
-            "snapshot_day": session.trade_date,
-            "as_of_utc": session.close_utc,
-            "metrics": asdict(metrics),
-            "lineage_closure": lineage,
-            "is_survivorship_biased": False,
-            "is_delisted_at_as_of": any(
-                holding.is_delisted_at_as_of for holding in holdings
-            ),
-            "holding_hashes": [holding.fact_hash for holding in holdings],
-        }
-        return SnapshotCandidate(
+        snapshot = SnapshotCandidate(
             strategy=profile,
             market_scope=market_scope,
             snapshot_day=session.trade_date,
@@ -429,16 +786,15 @@ class SixMonthReplayEngine:
             is_delisted_at_as_of=any(
                 holding.is_delisted_at_as_of for holding in holdings
             ),
-            source_versions={
-                "calendar": "1.0.0",
-                "cost_model": self._cost_model.version,
-                "membership": membership[ordered_tickers[0]].fact.source_version,
-                "prices": prices[ordered_tickers[0]].fact.source_version,
-                "scores": scores[ordered_tickers[0]].fact.source_version,
-                "survivorship": survivorship[0].source_version,
-            },
-            fact_hash=self._hash(header_payload),
+            source_versions=source_versions,
+            fact_hash="",
         )
+        snapshot = replace(
+            snapshot,
+            fact_hash=canonical_snapshot_candidate_hash(snapshot),
+        )
+        authenticate_snapshot_candidate(snapshot)
+        return snapshot
 
     @staticmethod
     def _select_holdings(
@@ -668,6 +1024,7 @@ class SixMonthReplayEngine:
             calendar.market_scope != scope
             or calendar.window_start != WINDOW_START
             or calendar.window_end != WINDOW_END
+            or calendar.source_version != CALENDAR_SOURCE_VERSION
             or calendar.synthetic is not True
             or calendar.disclaimer != SYNTHETIC_DISCLAIMER
             or not isinstance(calendar.fixture_hash, str)
@@ -712,8 +1069,7 @@ class SixMonthReplayEngine:
             or cost.slippage_bps_per_side != 5
             or cost.risk_free_annual != 0.0
             or cost.annualization_sessions != 252
-            or not isinstance(cost.version, str)
-            or not cost.version
+            or cost.version != COST_MODEL_VERSION
         ):
             raise ReplayInputError("cost model does not match frozen plan")
 

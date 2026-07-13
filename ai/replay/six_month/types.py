@@ -39,6 +39,7 @@ class MarketCalendar:
     market_scope: MarketScope
     window_start: str
     window_end: str
+    source_version: str
     fixture_hash: str
     synthetic: bool
     disclaimer: str
