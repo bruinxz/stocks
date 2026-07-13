@@ -35,7 +35,7 @@ class PipelineConfig:
 class PipelineRunner:
     """7-stage pipeline: A→B→C→D→E→F→G(snapshot)→H(publish)."""
 
-    def __init__(self, config: PipelineConfig):
+    def __init__(self, config: PipelineConfig, snapshot_writer=None):
         self._config = config
         self._stages = [
             SignalIntakeStage(),
@@ -46,7 +46,9 @@ class PipelineRunner:
             AssemblyStage(),
             PublishStage(),
         ]
-        self._snapshot_writer = SnapshotWriter()
+        self._snapshot_writer = (
+            snapshot_writer if snapshot_writer is not None else SnapshotWriter()
+        )
         self._validator = OutputValidator()
 
     def run(self, as_of: str) -> dict:
