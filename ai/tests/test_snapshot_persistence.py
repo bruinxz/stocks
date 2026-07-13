@@ -314,6 +314,33 @@ class SnapshotWriterTests(unittest.TestCase):
                 with self.assertRaises(SnapshotIdempotencyConflictError):
                     writer.write(ctx, payload)
 
+    def test_retry_rejects_envelope_identity_and_output_mirror_corruption(self):
+        ctx = _context()
+        payload = _recommendation_list(ctx)
+        mutations = {
+            "output_fingerprint": "f" * 64,
+            "snapshot_id": "82345678-1234-4234-8234-567812345678",
+        }
+        for field, value in mutations.items():
+            with self.subTest(field=field):
+                store = MemorySnapshotStore()
+                writer = SnapshotWriter(store)
+                writer.write(ctx, payload)
+                row = store.snapshots[ctx.snapshot_id]
+                envelope = copy.deepcopy(row.envelope_json)
+                envelope[field] = value
+                if field == "snapshot_id":
+                    for entry in envelope["items"]:
+                        entry["recommendation"]["snapshot_id"] = value
+                        entry["recommendation"]["id"] = (
+                            "82345678-1234-4234-8234-567812345678"
+                        )
+                store.snapshots[ctx.snapshot_id] = replace(
+                    row, envelope_json=envelope
+                )
+                with self.assertRaises(SnapshotIdempotencyConflictError):
+                    writer.write(ctx, payload)
+
     def test_missing_pins_and_invalid_profile_scope_fail_before_transaction(self):
         invalid_cases = []
 
@@ -427,7 +454,9 @@ class SnapshotReaderTests(unittest.TestCase):
         self.store.snapshots[self.ctx.snapshot_id] = SnapshotRow(
             **{**row.__dict__, "item_count": 99}
         )
-        with self.assertRaisesRegex(SnapshotCorruptError, "item count"):
+        with self.assertRaisesRegex(
+            SnapshotCorruptError, "item.count|item_count"
+        ):
             self.reader.read_snapshot(self.ctx.snapshot_id)
 
     def test_reader_rejects_every_persisted_scalar_corruption(self):
@@ -455,6 +484,26 @@ class SnapshotReaderTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.store.snapshots[self.ctx.snapshot_id] = replace(
                     original, **{field: value}
+                )
+                with self.assertRaises(SnapshotCorruptError):
+                    self.reader.read_snapshot(self.ctx.snapshot_id)
+                self.store.snapshots[self.ctx.snapshot_id] = original
+
+    def test_reader_rejects_envelope_mirror_corruption(self):
+        original = self.store.snapshots[self.ctx.snapshot_id]
+        mutations = {
+            "output_fingerprint": "f" * 64,
+            "snapshot_id": "82345678-1234-4234-8234-567812345678",
+            "as_of": "1999-01-01T00:00:00Z",
+            "profile": "multibagger",
+            "market_scope": "cn_a",
+        }
+        for field, value in mutations.items():
+            with self.subTest(field=field):
+                envelope = copy.deepcopy(original.envelope_json)
+                envelope[field] = value
+                self.store.snapshots[self.ctx.snapshot_id] = replace(
+                    original, envelope_json=envelope
                 )
                 with self.assertRaises(SnapshotCorruptError):
                     self.reader.read_snapshot(self.ctx.snapshot_id)

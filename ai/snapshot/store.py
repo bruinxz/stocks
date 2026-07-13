@@ -171,6 +171,54 @@ def snapshot_row_integrity_errors(snapshot: SnapshotRow) -> tuple[str, ...]:
     return tuple(errors)
 
 
+def snapshot_envelope_mirror_errors(
+    snapshot: SnapshotRow,
+) -> tuple[str, ...]:
+    envelope = snapshot.envelope_json
+    if not isinstance(envelope, dict):
+        return ("envelope_json",)
+    errors = []
+    mirrors = {
+        "snapshot_id": snapshot.snapshot_id,
+        "as_of": snapshot.as_of_utc,
+        "profile": snapshot.profile,
+        "market_scope": snapshot.market_scope,
+        "output_fingerprint": snapshot.output_fingerprint,
+    }
+    for field, expected in mirrors.items():
+        if envelope.get(field) != expected:
+            errors.append(f"envelope.{field}")
+
+    items = envelope.get("items")
+    if not isinstance(items, list):
+        errors.append("envelope.items")
+    elif len(items) != snapshot.item_count:
+        errors.append("envelope.items/item_count")
+
+    meta = envelope.get("meta")
+    meta_mirrors = {
+        "contract_version": snapshot.contract_version,
+        "profile_version": snapshot.profile_version,
+        "pipeline_version": snapshot.pipeline_version,
+        "strategy_version": snapshot.strategy_version,
+        "input_fingerprint": snapshot.input_fingerprint,
+    }
+    if not isinstance(meta, dict):
+        errors.append("envelope.meta")
+    else:
+        for field, expected in meta_mirrors.items():
+            if meta.get(field) != expected:
+                errors.append(f"envelope.meta.{field}")
+
+    disclaimer = envelope.get("disclaimer")
+    if not isinstance(disclaimer, dict):
+        errors.append("envelope.disclaimer")
+    elif disclaimer.get("hash") != snapshot.disclaimer_hash:
+        errors.append("envelope.disclaimer.hash")
+
+    return tuple(errors)
+
+
 class SnapshotTransaction(Protocol):
     def find_snapshot_by_idempotency_key(
         self, idempotency_key: str

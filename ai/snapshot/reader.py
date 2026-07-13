@@ -13,6 +13,7 @@ from ai.snapshot.fingerprint import (
 from ai.snapshot.store import SnapshotItemRow, SnapshotRow, SnapshotStore
 from ai.snapshot.store import (
     PROFILE_MARKET_SCOPES,
+    snapshot_envelope_mirror_errors,
     snapshot_row_integrity_errors,
 )
 
@@ -111,10 +112,11 @@ class SnapshotReader:
         cls, snapshot: SnapshotRow, items: Sequence[SnapshotItemRow]
     ) -> dict:
         integrity_errors = snapshot_row_integrity_errors(snapshot)
-        if integrity_errors:
+        envelope_errors = snapshot_envelope_mirror_errors(snapshot)
+        if integrity_errors or envelope_errors:
             raise SnapshotCorruptError(
                 "snapshot scalar integrity mismatch: "
-                + ", ".join(integrity_errors)
+                + ", ".join((*integrity_errors, *envelope_errors))
             )
         if not isinstance(snapshot.envelope_json, dict):
             raise SnapshotCorruptError("invalid snapshot envelope JSON")

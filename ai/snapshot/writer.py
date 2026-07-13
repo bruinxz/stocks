@@ -20,6 +20,7 @@ from ai.snapshot.store import (
     SnapshotRow,
     SnapshotStore,
     compute_snapshot_idempotency_key,
+    snapshot_envelope_mirror_errors,
     snapshot_row_integrity_errors,
     snapshot_scalar_mismatches,
 )
@@ -77,12 +78,17 @@ class SnapshotWriter:
             )
             if existing is not None:
                 integrity_errors = snapshot_row_integrity_errors(existing)
+                envelope_errors = snapshot_envelope_mirror_errors(existing)
                 scalar_mismatches = snapshot_scalar_mismatches(
                     snapshot, existing
                 )
-                if integrity_errors or scalar_mismatches:
+                if integrity_errors or envelope_errors or scalar_mismatches:
                     details = ", ".join(
-                        (*integrity_errors, *scalar_mismatches)
+                        (
+                            *integrity_errors,
+                            *envelope_errors,
+                            *scalar_mismatches,
+                        )
                     )
                     raise SnapshotIdempotencyConflictError(
                         f"persisted snapshot scalar mismatch: {details}"
@@ -163,10 +169,11 @@ class SnapshotWriter:
             }
         )
         integrity_errors = snapshot_row_integrity_errors(snapshot)
-        if integrity_errors:
+        envelope_errors = snapshot_envelope_mirror_errors(snapshot)
+        if integrity_errors or envelope_errors:
             raise SnapshotContractError(
                 "snapshot scalar integrity failed: "
-                + ", ".join(integrity_errors)
+                + ", ".join((*integrity_errors, *envelope_errors))
             )
 
         item_rows = tuple(
