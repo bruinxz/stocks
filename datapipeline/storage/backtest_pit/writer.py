@@ -40,8 +40,17 @@ _REQUIRED_METRICS = frozenset(
         "annualization_sessions",
     )
 )
-_SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$")
+_SEMVER = re.compile(
+    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
 _WEIGHT_TOLERANCE = Decimal("0.000000001")
+_WINDOW_START = "2026-01-10"
+_WINDOW_END = "2026-07-10"
+_CHECKPOINT_COUNT = 27
+_MAX_SESSIONS = 128
 
 INSERT_SNAPSHOT_SQL = """
 INSERT INTO backtest_pit_snapshot (
@@ -253,6 +262,32 @@ def _validate(
     version = snapshot.metrics["metric_contract_version"]
     if not isinstance(version, str) or _SEMVER.fullmatch(version) is None:
         raise ValueError("metric_contract_version must be strict SemVer")
+    exact_pins = {
+        "window_start": _WINDOW_START,
+        "window_end": _WINDOW_END,
+        "checkpoint_count": _CHECKPOINT_COUNT,
+        "initial_nav": 1.0,
+        "commission_bps_per_side": 5,
+        "slippage_bps_per_side": 5,
+        "annualization_sessions": 252,
+    }
+    for field, expected in exact_pins.items():
+        if snapshot.metrics[field] != expected:
+            raise ValueError(f"{field} must equal frozen replay pin {expected}")
+    evaluated = snapshot.metrics["evaluated_session_count"]
+    checkpoint_index = snapshot.metrics["checkpoint_index"]
+    if (
+        isinstance(evaluated, bool)
+        or not isinstance(evaluated, int)
+        or not 1 <= evaluated <= _MAX_SESSIONS
+    ):
+        raise ValueError("evaluated_session_count must be an integer in [1,128]")
+    if (
+        isinstance(checkpoint_index, bool)
+        or not isinstance(checkpoint_index, int)
+        or not 0 <= checkpoint_index < _CHECKPOINT_COUNT
+    ):
+        raise ValueError("checkpoint_index must be an integer in [0,26]")
     for field in (
         "net_value",
         "drawdown",

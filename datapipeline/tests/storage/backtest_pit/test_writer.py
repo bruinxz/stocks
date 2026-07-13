@@ -247,6 +247,17 @@ class PitWriterTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(PitIdempotencyConflict, "header differs"):
             await writer.write_or_verify(changed_snapshot, tuple(changed_children))
 
+    async def test_stored_delisted_lineage_tamper_conflicts(self) -> None:
+        pool = FakePool()
+        writer = PitSnapshotWriter(pool)
+        header, children = snapshot()
+        await writer.write_or_verify(header, children)
+        pool.connection.holdings[header.snapshot_id][0]["lineage"][
+            "is_delisted_at_as_of"
+        ] = True
+        with self.assertRaisesRegex(PitIdempotencyConflict, "holding differs"):
+            await writer.write_or_verify(header, children)
+
     async def test_injected_child_failure_rolls_back_header_and_children(self) -> None:
         pool = FakePool(fail_holding=1)
         header, children = snapshot()
@@ -316,6 +327,58 @@ class PitWriterTest(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     await PitSnapshotWriter(FakePool()).write_or_verify(
                         bad_header, tuple(bad_children)
+                    )
+
+    async def test_strict_semver_matrix(self) -> None:
+        header, children = snapshot()
+        for value in ("01.0.0", "1.01.0", "1.0.01", "１.0.0", "1.0"):
+            with self.subTest(value=value):
+                bad_metrics = dict(header.metrics)
+                bad_metrics["metric_contract_version"] = value
+                bad_header = copy.copy(header)
+                object.__setattr__(bad_header, "metrics", bad_metrics)
+                with self.assertRaisesRegex(ValueError, "strict SemVer"):
+                    await PitSnapshotWriter(FakePool()).write_or_verify(
+                        bad_header, children
+                    )
+        for value in ("1.0.0", "1.0.0-alpha.1", "1.0.0+build.2"):
+            with self.subTest(value=value):
+                good_metrics = dict(header.metrics)
+                good_metrics["metric_contract_version"] = value
+                good_header = copy.copy(header)
+                object.__setattr__(good_header, "metrics", good_metrics)
+                object.__setattr__(
+                    good_header,
+                    "fact_hash",
+                    canonical_snapshot_hash(good_header, children),
+                )
+                result = await PitSnapshotWriter(FakePool()).write_or_verify(
+                    good_header, children
+                )
+                self.assertTrue(result.inserted)
+
+    async def test_frozen_metric_pin_matrix(self) -> None:
+        header, children = snapshot()
+        mutations = {
+            "window_start": "2026-01-11",
+            "window_end": "2026-07-09",
+            "evaluated_session_count": 129,
+            "checkpoint_index": 27,
+            "checkpoint_count": 26,
+            "initial_nav": 2.0,
+            "commission_bps_per_side": 6,
+            "slippage_bps_per_side": 6,
+            "annualization_sessions": 365,
+        }
+        for field, value in mutations.items():
+            with self.subTest(field=field):
+                bad_metrics = dict(header.metrics)
+                bad_metrics[field] = value
+                bad_header = copy.copy(header)
+                object.__setattr__(bad_header, "metrics", bad_metrics)
+                with self.assertRaisesRegex(ValueError, field):
+                    await PitSnapshotWriter(FakePool()).write_or_verify(
+                        bad_header, children
                     )
 
 

@@ -51,7 +51,7 @@ trap cleanup EXIT
 
 createdb "${PG_ARGS[@]}" "$DB"
 psql "${PG_ARGS[@]}" -d "$DB" -v ON_ERROR_STOP=1 -f "$UP" >/dev/null
-PYTHONPATH="$ROOT" \
+PYTHONPATH="${T5B_ROOT:+$T5B_ROOT:}$ROOT" \
 PGHOST="$PGHOST" PGPORT="$PGPORT" PGUSER="$PGUSER" PGDATABASE="$DB" \
   /usr/bin/python3 \
   "$ROOT/datapipeline/tests/storage/backtest_pit/test_writer.pg.py"

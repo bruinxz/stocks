@@ -3,21 +3,30 @@
 import asyncio
 from contextlib import asynccontextmanager
 import os
+from pathlib import Path
 import re
 
 import psycopg
 from psycopg.rows import dict_row
 
+# Before T5-B is merged, its immutable worktree may own the top-level
+# datapipeline package. Extend that package with this T5-C storage lane.
+import datapipeline.storage
+
+_T5C_STORAGE = str(Path(__file__).resolve().parents[3] / "storage")
+if _T5C_STORAGE not in datapipeline.storage.__path__:
+    datapipeline.storage.__path__.append(_T5C_STORAGE)
+
 from datapipeline.storage.backtest_pit import PitIdempotencyConflict, PitSnapshotWriter
-from datapipeline.tests.storage.backtest_pit.test_six_month_fixture import (
-    LEGAL_PAIRS,
-    fixture_snapshot,
-)
+from datapipeline.storage.backtest_pit import convert_snapshot_candidate
 
 
 class AsyncPsycopgConnection:
-    def __init__(self, connection: psycopg.AsyncConnection) -> None:
+    def __init__(
+        self, connection: psycopg.AsyncConnection, fail_holding: int = None
+    ) -> None:
         self.connection = connection
+        self.fail_holding = fail_holding
 
     def transaction(self):
         return self.connection.transaction()
@@ -42,6 +51,12 @@ class AsyncPsycopgConnection:
             return next(iter(row.values())) if isinstance(row, dict) else row[0]
 
     async def fetchrow(self, query: str, *args: object):
+        if (
+            self.fail_holding is not None
+            and "INSERT INTO backtest_pit_holding" in query
+            and args[3] == self.fail_holding
+        ):
+            raise RuntimeError("injected holding failure")
         query, args = self._query(query, args)
         async with self.connection.cursor(row_factory=dict_row) as cursor:
             await cursor.execute(query, args)
@@ -57,8 +72,10 @@ class AsyncPsycopgConnection:
 
 
 class AsyncPsycopgPool:
-    def __init__(self, connection: psycopg.AsyncConnection) -> None:
-        self.connection = AsyncPsycopgConnection(connection)
+    def __init__(
+        self, connection: psycopg.AsyncConnection, fail_holding: int = None
+    ) -> None:
+        self.connection = AsyncPsycopgConnection(connection, fail_holding)
 
     @asynccontextmanager
     async def acquire(self):
@@ -66,6 +83,8 @@ class AsyncPsycopgPool:
 
 
 async def main() -> None:
+    from ai.tests.test_six_month_replay import _engine, _landed_calendar
+
     connection = await psycopg.AsyncConnection.connect(
         host=os.environ["PGHOST"],
         port=int(os.environ["PGPORT"]),
@@ -75,12 +94,32 @@ async def main() -> None:
         row_factory=dict_row,
     )
     try:
-        writer = PitSnapshotWriter(AsyncPsycopgPool(connection))
+        batch = _engine(calendar=_landed_calendar()).run_all()
+        assert (
+            batch.daily_evaluations,
+            batch.snapshot_count,
+            batch.holding_count,
+        ) == (1024, 216, 648)
         fixtures = [
-            fixture_snapshot(strategy, scope, index)
-            for strategy, scope in LEGAL_PAIRS
-            for index in range(27)
+            convert_snapshot_candidate(candidate)
+            for run in batch.runs
+            for candidate in run.snapshots
         ]
+        first, first_holdings = fixtures[0]
+        failure_writer = PitSnapshotWriter(AsyncPsycopgPool(connection, fail_holding=1))
+        try:
+            await failure_writer.write_or_verify(first, first_holdings)
+        except RuntimeError as error:
+            assert str(error) == "injected holding failure"
+        else:
+            raise AssertionError("injected child failure did not propagate")
+        async with connection.cursor() as cursor:
+            await cursor.execute("SELECT count(*) FROM backtest_pit_snapshot")
+            assert next(iter((await cursor.fetchone()).values())) == 0
+            await cursor.execute("SELECT count(*) FROM backtest_pit_holding")
+            assert next(iter((await cursor.fetchone()).values())) == 0
+
+        writer = PitSnapshotWriter(AsyncPsycopgPool(connection))
         inserted = [
             await writer.write_or_verify(snapshot, holdings)
             for snapshot, holdings in fixtures
@@ -101,7 +140,6 @@ async def main() -> None:
             )
             assert readback == expected
 
-        first, first_holdings = fixtures[0]
         changed_metrics = dict(first.metrics)
         changed_metrics["net_value"] += 0.1
         changed_metrics["cumulative_return"] = changed_metrics["net_value"] - 1.0
@@ -135,7 +173,8 @@ async def main() -> None:
             assert next(iter((await cursor.fetchone()).values())) == 8
         print(
             "backtest-pit-writer.pg: PASS "
-            "(216 snapshots, 648 holdings, rerun/readback/conflict)"
+            "(actual T5-B 1024 evaluations, 216 snapshots, 648 holdings, "
+            "rerun/readback/conflict/rollback)"
         )
     finally:
         await connection.close()

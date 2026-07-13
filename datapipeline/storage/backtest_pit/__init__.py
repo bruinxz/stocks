@@ -9,6 +9,11 @@ from .writer import (
     canonical_holding_hash,
     canonical_snapshot_hash,
 )
+from .candidate_adapter import (
+    convert_snapshot_candidate,
+    deterministic_holding_id,
+    deterministic_snapshot_id,
+)
 
 __all__ = [
     "PitHoldingFact",
@@ -18,4 +23,7 @@ __all__ = [
     "PitSnapshotWriter",
     "canonical_holding_hash",
     "canonical_snapshot_hash",
+    "convert_snapshot_candidate",
+    "deterministic_holding_id",
+    "deterministic_snapshot_id",
 ]
