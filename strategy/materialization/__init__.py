@@ -16,6 +16,7 @@ from strategy.materialization.multibagger_candidate import (
     materialize_candidate,
     write_or_verify_candidate,
 )
+from strategy.materialization.postgres_candidate_store import PostgresCandidateStore
 
 __all__ = [
     "CandidateIdempotencyConflict",
@@ -32,4 +33,5 @@ __all__ = [
     "UniverseFact",
     "materialize_candidate",
     "write_or_verify_candidate",
+    "PostgresCandidateStore",
 ]

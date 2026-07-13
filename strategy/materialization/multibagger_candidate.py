@@ -157,6 +157,17 @@ def _require_uuid4(value: Any, field: str) -> str:
     return value
 
 
+def _require_sorted_unique_strings(value: Any, field: str) -> Tuple[str, ...]:
+    if not isinstance(value, (list, tuple)) or not value:
+        _fail("{} must be a non-empty array".format(field))
+    values = tuple(value)
+    for item in values:
+        _require_string(item, field + " item")
+    if tuple(sorted(set(values))) != values:
+        _fail("{} must be sorted and unique".format(field))
+    return values
+
+
 def _band(score: float) -> str:
     return (
         "A"
@@ -356,14 +367,15 @@ def candidate_from_row(row: Mapping[str, Any]) -> CandidateSnapshot:
         policy_version=_require_string(
             row["classification_policy_version"], "classification_policy_version"
         ),
-        reason_codes=tuple(row["classification_reason_codes"]),
+        reason_codes=_require_sorted_unique_strings(
+            row["classification_reason_codes"], "classification_reason_codes"
+        ),
     )
-    if (
-        not classification.reason_codes
-        or tuple(sorted(set(classification.reason_codes)))
-        != classification.reason_codes
-    ):
-        _fail("classification_reason_codes must be sorted and unique")
+    source_fact_hashes = _require_sorted_unique_strings(
+        row["source_fact_hashes"], "source_fact_hashes"
+    )
+    for fact_hash in source_fact_hashes:
+        _require_hash(fact_hash, "source_fact_hashes item")
     candidate = CandidateSnapshot(
         market_scope=row["market_scope"],
         exchange=row["exchange"],
@@ -378,7 +390,7 @@ def candidate_from_row(row: Mapping[str, Any]) -> CandidateSnapshot:
         risk_gate=dict(row["risk_gate"]),
         entry_plan=None if row["entry_plan"] is None else dict(row["entry_plan"]),
         latest_catalyst=row["latest_catalyst"],
-        source_fact_hashes=tuple(row["source_fact_hashes"]),
+        source_fact_hashes=source_fact_hashes,
         strategy_version=row["strategy_version"],
         classification_policy_version=classification.policy_version,
         classification_reason_codes=classification.reason_codes,
