@@ -11,6 +11,7 @@ import {
   RecommendationSnapshotSummary,
   RecommendationSnapshotDetail,
   type RecommendationSnapshotDateQuery,
+  type RecommendationSnapshotHistoryQuery,
   type RecommendationSnapshotScope,
   isRecommendationScopeCompatible,
 } from './RecommendationSnapshotReadPort';
@@ -484,6 +485,59 @@ export class SequelizeRecommendationSnapshotReadAdapter implements Recommendatio
       page: query.page,
       page_size: query.page_size,
     };
+  }
+
+  async history(
+    query: RecommendationSnapshotHistoryQuery
+  ): Promise<RecommendationSnapshotDetail[]> {
+    const predicates: string[] = [];
+    const replacements: Record<string, unknown> = { limit: query.limit };
+    if (query.profile !== undefined) {
+      predicates.push('profile = :profile');
+      replacements.profile = query.profile;
+    }
+    if (query.market_scope !== undefined) {
+      predicates.push('market_scope = :market_scope');
+      replacements.market_scope = query.market_scope;
+    }
+    if (query.from_day !== undefined) {
+      predicates.push('trading_day >= CAST(:from_day AS date)');
+      replacements.from_day = query.from_day;
+    }
+    if (query.to_day !== undefined) {
+      predicates.push('trading_day <= CAST(:to_day AS date)');
+      replacements.to_day = query.to_day;
+    }
+    const where = predicates.length ? `WHERE ${predicates.join(' AND ')}` : '';
+    const rows = await this.sequelize.query<UnknownRecord>(
+      `SELECT snapshot_id,
+              trading_day,
+              as_of_utc,
+              profile,
+              market_scope,
+              contract_version,
+              profile_version,
+              input_fingerprint,
+              disclaimer_hash,
+              fingerprint_preimage_jcs,
+              output_fingerprint,
+              item_count,
+              envelope_json,
+              created_at
+       FROM ai_recommendation_snapshot
+       ${where}
+       ORDER BY trading_day DESC,
+                profile ASC,
+                market_scope ASC,
+                as_of_utc DESC,
+                snapshot_id DESC
+       LIMIT :limit`,
+      {
+        replacements,
+        type: QueryTypes.SELECT,
+      }
+    );
+    return Promise.all(rows.map(row => this.hydrateDetail(row)));
   }
 
   async detail(snapshotId: string): Promise<RecommendationSnapshotDetail | null> {
