@@ -20,6 +20,7 @@ from ai.replay.six_month.engine import (
 )
 from ai.replay.six_month.types import (
     CalendarSession,
+    CostModel,
     MarketCalendar,
     MembershipRecord,
     PriceRecord,
@@ -325,12 +326,29 @@ class SixMonthReplayTests(unittest.TestCase):
                     snapshot.metrics.net_value - 1.0,
                     delta=1e-10,
                 )
-                self.assertLessEqual(snapshot.metrics.max_drawdown, 0.0)
-                self.assertGreaterEqual(snapshot.metrics.max_drawdown, -1.0)
+                self.assertEqual(
+                    snapshot.metrics.metric_contract_version, "1.0.0"
+                )
+                self.assertLessEqual(snapshot.metrics.drawdown, 0.0)
+                self.assertGreaterEqual(snapshot.metrics.drawdown, -1.0)
                 self.assertFalse(snapshot.is_survivorship_biased)
                 self.assertTrue(snapshot.source_versions)
+                evidence = snapshot.lineage_closure[
+                    "survivorship_evidence"
+                ]
+                self.assertEqual(
+                    set(evidence),
+                    {"fact_hashes", "retains_delisted", "source_version"},
+                )
+                self.assertTrue(evidence["retains_delisted"])
+                self.assertTrue(evidence["source_version"])
+                self.assertTrue(evidence["fact_hashes"])
                 self.assertTrue(
-                    snapshot.lineage_closure["survivorship_evidence"]
+                    all(
+                        len(fact_hash) == 64
+                        and set(fact_hash) <= set("0123456789abcdef")
+                        for fact_hash in evidence["fact_hashes"]
+                    )
                 )
                 self.assertTrue(
                     snapshot.lineage_closure["membership_hash"]
@@ -507,7 +525,7 @@ class SixMonthReplayTests(unittest.TestCase):
             delta=1e-12,
         )
         self.assertAlmostEqual(
-            run.snapshots[0].metrics.max_drawdown,
+            run.snapshots[0].metrics.drawdown,
             -0.001,
             delta=1e-12,
         )
@@ -535,7 +553,7 @@ class SixMonthReplayTests(unittest.TestCase):
             delta=1e-12,
         )
         self.assertAlmostEqual(
-            final.metrics.max_drawdown,
+            final.metrics.drawdown,
             -0.0010000000000000009,
             delta=1e-12,
         )
@@ -547,8 +565,24 @@ class SixMonthReplayTests(unittest.TestCase):
         self.assertEqual(final.metrics.win_rate_6m, 1.0)
         self.assertEqual(
             final.fact_hash,
-            "699b49c1057db0fb688921c739b03bd7ffd3102d7aed1982555f6eeea092b3a9",
+            "59b71fdc3b790e1f51010ea1941baf81ce4ba7c7a2c4c684d5b8b66f2be24b06",
         )
+
+    def test_near_flat_closed_trade_loses_after_round_trip_costs(self):
+        gross_return = 0.0015
+        exit_only_return = gross_return - 0.001
+        round_trip_return = SixMonthReplayEngine._closed_position_return(
+            entry_price=100.0,
+            exit_price=100.0 * (1.0 + gross_return),
+            cost_model=CostModel(),
+        )
+
+        self.assertGreater(exit_only_return, 0.0)
+        self.assertAlmostEqual(round_trip_return, -0.0005, delta=1e-12)
+        self.assertLess(round_trip_return, 0.0)
+        profitable_closed_positions = int(round_trip_return > 0.0)
+        win_rate = profitable_closed_positions / 1
+        self.assertEqual(win_rate, 0.0)
 
 
 if __name__ == "__main__":

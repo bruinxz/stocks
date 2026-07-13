@@ -39,7 +39,7 @@ WINDOW_END = "2026-07-10"
 EXPECTED_SESSIONS = 128
 EXPECTED_CHECKPOINTS = 27
 HOLDINGS_PER_CHECKPOINT = 3
-METRIC_CONTRACT_VERSION = "tab5-pit-metrics-v1"
+METRIC_CONTRACT_VERSION = "1.0.0"
 SYNTHETIC_DISCLAIMER = (
     "Synthetic deterministic test calendars; never represent official "
     "exchange calendars and never seed production."
@@ -128,7 +128,7 @@ class SixMonthReplayEngine:
 
         nav = self._cost_model.initial_nav
         running_peak = nav
-        max_drawdown = 0.0
+        drawdown = 0.0
         daily_returns: list[float] = []
         current_weights: dict[str, float] = {}
         entry_prices: dict[str, float] = {}
@@ -211,15 +211,12 @@ class SixMonthReplayEngine:
                 removed = set(current_weights) - set(target_weights)
                 for ticker in removed:
                     closed_positions += 1
-                    exit_return = (
-                        prices_by_ticker[ticker].adjusted_close
-                        / entry_prices[ticker]
-                        - 1.0
-                        - (
-                            self._cost_model.commission_bps_per_side
-                            + self._cost_model.slippage_bps_per_side
-                        )
-                        / 10_000.0
+                    exit_return = self._closed_position_return(
+                        entry_price=entry_prices[ticker],
+                        exit_price=prices_by_ticker[
+                            ticker
+                        ].adjusted_close,
+                        cost_model=self._cost_model,
                     )
                     if exit_return > 0:
                         profitable_closed_positions += 1
@@ -236,7 +233,7 @@ class SixMonthReplayEngine:
                 raise ReplayInputError("daily net return must be finite")
             daily_returns.append(daily_net_return)
             running_peak = max(running_peak, nav)
-            max_drawdown = min(max_drawdown, nav / running_peak - 1.0)
+            drawdown = min(drawdown, nav / running_peak - 1.0)
             previous_prices = {
                 ticker: record.adjusted_close
                 for ticker, record in prices_by_ticker.items()
@@ -252,7 +249,7 @@ class SixMonthReplayEngine:
                     checkpoint_count=len(checkpoints),
                     session_count=session_index + 1,
                     nav=nav,
-                    max_drawdown=max_drawdown,
+                    drawdown=drawdown,
                     daily_returns=daily_returns,
                     closed_positions=closed_positions,
                     profitable_closed_positions=profitable_closed_positions,
@@ -289,7 +286,7 @@ class SixMonthReplayEngine:
         checkpoint_count: int,
         session_count: int,
         nav: float,
-        max_drawdown: float,
+        drawdown: float,
         daily_returns: list[float],
         closed_positions: int,
         profitable_closed_positions: int,
@@ -321,7 +318,7 @@ class SixMonthReplayEngine:
             annualization_sessions=self._cost_model.annualization_sessions,
             net_value=nav,
             cumulative_return=nav / self._cost_model.initial_nav - 1.0,
-            max_drawdown=max_drawdown,
+            drawdown=drawdown,
             sharpe_ratio_6m=sharpe,
             win_rate_6m=win_rate,
         )
@@ -401,9 +398,11 @@ class SixMonthReplayEngine:
             ],
             "strategy_version": scores[ordered_tickers[0]].strategy_version,
             "cost_model_version": self._cost_model.version,
-            "survivorship_evidence": [
-                fact.fact_hash for fact in survivorship
-            ],
+            "survivorship_evidence": {
+                "fact_hashes": [fact.fact_hash for fact in survivorship],
+                "retains_delisted": True,
+                "source_version": survivorship[0].source_version,
+            },
         }
         header_payload = {
             "strategy": profile,
@@ -467,6 +466,18 @@ class SixMonthReplayEngine:
         if deviation == 0:
             return None
         return math.sqrt(252) * statistics.mean(returns) / deviation
+
+    @staticmethod
+    def _closed_position_return(
+        *, entry_price: float, exit_price: float, cost_model: CostModel
+    ) -> float:
+        """Return net of both entry and exit commission plus slippage."""
+
+        round_trip_cost_rate = 2 * (
+            cost_model.commission_bps_per_side
+            + cost_model.slippage_bps_per_side
+        ) / 10_000.0
+        return exit_price / entry_price - 1.0 - round_trip_cost_rate
 
     @classmethod
     def _membership_map(

@@ -100,7 +100,7 @@ class ReplayMetrics:
     annualization_sessions: int
     net_value: float
     cumulative_return: float
-    max_drawdown: float
+    drawdown: float
     sharpe_ratio_6m: Optional[float]
     win_rate_6m: Optional[float]
 
