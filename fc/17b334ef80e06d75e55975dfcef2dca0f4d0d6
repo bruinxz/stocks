@@ -1,0 +1,35 @@
+ai/pipeline/replay_adapter.py
+  s_6ca1020a327476::t_b706aa26ce46de 20-23,35,200,233,243,292,350,425,463,553,557,561,567-585
+ai/replay/fingerprint.py
+  s_6ca1020a327476::t_b6ce8d10d532e9 1-46
+ai/replay/runtime.py
+  s_6ca1020a327476::t_6bb9d17f070409 21,23,280
+ai/replay/service.py
+  s_6ca1020a327476::t_b28702e763e966 18,26,245
+ai/tests/test_postgres_typed_source_repository.py
+  s_6ca1020a327476::t_557b34cf802576 17-18,37,45,371-379,560
+ai/tests/test_replay_cli.py
+  s_6ca1020a327476::t_3eecdba49ea3d9 35,38-45,75,79-86
+ai/tests/test_replay_runtime.py
+  s_6ca1020a327476::t_e41bda378326d6 803,815-819,822,836-856
+ai/tests/test_replay_service.py
+  s_6ca1020a327476::t_9d279cbbb1dfa9 15,129,133-136,156-164,358,365-374
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "fc17b334ef80e06d75e55975dfcef2dca0f4d0d6",
+  "prompts": {},
+  "sessions": {
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
