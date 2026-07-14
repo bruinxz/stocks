@@ -268,18 +268,83 @@ class MaterializerTests(unittest.TestCase):
             write_or_verify_candidate(store, changed)
 
     def test_no_lookahead_identity_hash_and_profile_fail_closed(self):
+        future_score = score()
+        future_score["computed_at"] = "2099-01-01T00:00:00Z"
+        score_body = dict(future_score)
+        score_body.pop("snapshot_hash")
+        score_body.pop("scoring_id")
+        future_score["snapshot_hash"] = sha(score_body)
+        future_decision = decision(score=future_score)
+        future_ref = {
+            "scoring_id": future_score["scoring_id"],
+            "snapshot_hash": future_score["snapshot_hash"],
+        }
+        future_conviction = dict(future_decision.conviction)
+        future_conviction["score_ref"] = future_ref
+        future_entry = dict(future_decision.entry_plan)
+        future_entry["score_ref"] = future_ref
+        future_risk = dict(decision().risk_gate)
+        future_risk["evaluated_at"] = "2099-01-01T00:00:00Z"
+        generated_future = dict(decision().entry_plan)
+        generated_future["generated_at"] = "2099-01-01T00:00:00Z"
         cases = (
             request(sources=(universe_fact(available_at_utc=NOW + timedelta(seconds=1)),)),
+            request(sources=(universe_fact(effective_at_utc=NOW + timedelta(seconds=1)),)),
             request(sources=(universe_fact(ticker="9999"),)),
             request(sources=(universe_fact(fact_hash="f" * 64),)),
             request(text_hits=(text_hit(available_at_utc=NOW + timedelta(seconds=1)),)),
+            request(text_hits=(text_hit(effective_at_utc=NOW + timedelta(seconds=1)),)),
             request(text_hits=(text_hit(start_offset=True),)),
             request(decision=decision(score={**score(), "weights_profile": "multibagger"})),
+            request(
+                decision=decision(
+                    score=future_score,
+                    conviction=future_conviction,
+                    entry_plan=future_entry,
+                )
+            ),
+            request(decision=decision(risk_gate=future_risk)),
+            request(decision=decision(entry_plan=generated_future)),
         )
         for value in cases:
             with self.subTest(value=value):
                 with self.assertRaises(CandidateMaterializationError):
                     materialize_candidate(value, Policy())
+
+    def test_candidate_availability_includes_strategy_decision_time(self):
+        strategy_time = NOW - timedelta(hours=1)
+        score_value = score()
+        score_value["computed_at"] = strategy_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        score_body = dict(score_value)
+        score_body.pop("snapshot_hash")
+        score_body.pop("scoring_id")
+        score_value["snapshot_hash"] = sha(score_body)
+        ref = {
+            "scoring_id": score_value["scoring_id"],
+            "snapshot_hash": score_value["snapshot_hash"],
+        }
+        conviction = dict(decision().conviction)
+        conviction["score_ref"] = ref
+        risk_gate = dict(decision().risk_gate)
+        risk_gate["evaluated_at"] = strategy_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        entry_plan = dict(decision().entry_plan)
+        entry_plan["score_ref"] = ref
+        entry_plan["generated_at"] = strategy_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        candidate = materialize_candidate(
+            request(
+                decision=decision(
+                    score=score_value,
+                    conviction=conviction,
+                    risk_gate=risk_gate,
+                    entry_plan=entry_plan,
+                )
+            ),
+            Policy(),
+        )
+        self.assertEqual(
+            candidate.available_at_utc,
+            strategy_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
 
     def test_policy_and_strategy_authority_fail_closed(self):
         no_entry = decision(entry_plan=None)

@@ -434,7 +434,12 @@ def _validate_universe_fact(fact: UniverseFact, request: MaterializationInput) -
         _fail("universe fact identity mismatch")
     for field in ("effective_at_utc", "available_at_utc", "as_of_utc"):
         _require_utc(getattr(fact, field), field)
-    if fact.available_at_utc > request.as_of_utc or fact.as_of_utc > request.as_of_utc:
+    if not (
+        fact.effective_at_utc
+        <= fact.available_at_utc
+        <= fact.as_of_utc
+        <= request.as_of_utc
+    ):
         _fail("universe fact is not PIT-visible")
     if isinstance(fact.filter_pass_bitmap, bool) or not isinstance(
         fact.filter_pass_bitmap, int
@@ -462,7 +467,11 @@ def _validate_text_hit(hit: TextHitFact, request: MaterializationInput) -> None:
         _fail("text hit offsets are invalid")
     _require_utc(hit.effective_at_utc, "text hit effective_at_utc")
     _require_utc(hit.available_at_utc, "text hit available_at_utc")
-    if hit.available_at_utc > request.as_of_utc:
+    if not (
+        hit.effective_at_utc
+        <= hit.available_at_utc
+        <= request.as_of_utc
+    ):
         _fail("text hit is not PIT-visible")
     _require_hash(hit.document_fact_hash, "document_fact_hash")
     _require_hash(hit.context_hash, "context_hash")
@@ -475,11 +484,13 @@ def _validate_text_hit(hit: TextHitFact, request: MaterializationInput) -> None:
         _require_string(value, field)
 
 
-def _score_projection(score: Mapping[str, Any]) -> Tuple[Mapping[str, Any], float]:
+def _score_projection(
+    score: Mapping[str, Any],
+) -> Tuple[Mapping[str, Any], float, datetime]:
     _require_exact_keys(score, SCORE_KEYS, "score")
     _require_string(score["ticker"], "score.ticker")
     _require_string(score["as_of"], "score.as_of")
-    parse_utc_seconds(score["computed_at"], "score.computed_at")
+    computed_at = parse_utc_seconds(score["computed_at"], "score.computed_at")
     _require_exact_keys(score["weights"], frozenset(SCORE_DIMENSIONS), "score.weights")
     _require_exact_keys(score["source_versions"], SOURCE_VERSION_KEYS, "score.source_versions")
     for key, value in score["source_versions"].items():
@@ -527,10 +538,12 @@ def _score_projection(score: Mapping[str, Any]) -> Tuple[Mapping[str, Any], floa
     snapshot_body.pop("snapshot_hash")
     if score["snapshot_hash"] != _canonical_hash(snapshot_body):
         _fail("score.snapshot_hash mismatch")
-    return projection, float(score["total"])
+    return projection, float(score["total"]), computed_at
 
 
-def _validate_decision(request: MaterializationInput) -> str:
+def _validate_decision(
+    request: MaterializationInput,
+) -> Tuple[str, datetime]:
     decision = request.decision
     _require_string(decision.strategy_version, "strategy_version")
     score = decision.score
@@ -543,7 +556,9 @@ def _validate_decision(request: MaterializationInput) -> str:
         _utc_text(request.as_of_utc),
     ):
         _fail("score as_of mismatch")
-    projection, total = _score_projection(score)
+    projection, total, computed_at = _score_projection(score)
+    if computed_at > request.as_of_utc:
+        _fail("score.computed_at exceeds materialization as_of")
     conviction = decision.conviction
     try:
         final, _ = validate_conviction(
@@ -562,7 +577,11 @@ def _validate_decision(request: MaterializationInput) -> str:
     _require_exact_keys(risk_gate, RISK_GATE_KEYS, "risk_gate")
     if risk_gate["ticker"] != request.ticker or not isinstance(risk_gate["triggers"], list):
         _fail("risk_gate identity invalid")
-    parse_utc_seconds(risk_gate["evaluated_at"], "risk_gate.evaluated_at")
+    evaluated_at = parse_utc_seconds(
+        risk_gate["evaluated_at"], "risk_gate.evaluated_at"
+    )
+    if evaluated_at > request.as_of_utc:
+        _fail("risk_gate.evaluated_at exceeds materialization as_of")
     severities = []
     for trigger in risk_gate["triggers"]:
         _require_exact_keys(trigger, RISK_TRIGGER_KEYS, "risk trigger")
@@ -580,6 +599,7 @@ def _validate_decision(request: MaterializationInput) -> str:
     if risk_gate["gate"] != expected_gate or risk_gate["ok_to_enter"] != (expected_gate == "GREEN"):
         _fail("risk gate derivation mismatch")
 
+    decision_available_at = max(computed_at, evaluated_at)
     if decision.entry_plan is not None:
         try:
             validate_entry_plan(
@@ -592,7 +612,13 @@ def _validate_decision(request: MaterializationInput) -> str:
             )
         except ValueError as error:
             raise CandidateMaterializationError(str(error)) from error
-    return projection["rating"]
+        generated_at = parse_utc_seconds(
+            decision.entry_plan["generated_at"], "entry_plan.generated_at"
+        )
+        if generated_at > request.as_of_utc:
+            _fail("entry_plan.generated_at exceeds materialization as_of")
+        decision_available_at = max(decision_available_at, generated_at)
+    return projection["rating"], decision_available_at
 
 
 def _candidate_body(
@@ -649,7 +675,7 @@ def materialize_candidate(
         _validate_universe_fact(source, request)
     for hit in request.text_hits:
         _validate_text_hit(hit, request)
-    rating = _validate_decision(request)
+    rating, decision_available_at = _validate_decision(request)
     classification = policy.classify(request.sources, request.text_hits, request.decision)
     reason_codes = tuple(sorted(set(classification.reason_codes)))
     if (
@@ -703,6 +729,7 @@ def materialize_candidate(
     available = max(
         [source.available_at_utc for source in request.sources]
         + [hit.available_at_utc for hit in request.text_hits]
+        + [decision_available_at]
     )
     body = _candidate_body(request, classification, source_hashes, rating, available)
     fact_hash = _canonical_hash(body)
