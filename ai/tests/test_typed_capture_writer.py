@@ -175,6 +175,20 @@ class _Connector:
 
 
 class TypedCaptureTests(unittest.TestCase):
+    def test_score_only_and_fully_empty_captures_have_valid_fingerprints(self):
+        score_only = prepare_typed_capture(_request(filings=(), text_hits=()))
+        fully_empty = prepare_typed_capture(
+            _request(filings=(), text_hits=(), scores=())
+        )
+
+        self.assertRegex(score_only.pins.input_fingerprint, r"^[0-9a-f]{64}$")
+        self.assertRegex(fully_empty.pins.input_fingerprint, r"^[0-9a-f]{64}$")
+        self.assertNotEqual(
+            score_only.pins.input_fingerprint,
+            fully_empty.pins.input_fingerprint,
+        )
+        self.assertEqual(fully_empty.available_at_utc, fully_empty.pins.as_of)
+
     def test_derives_pins_availability_and_canonical_order(self):
         first = _score_json()
         second = copy.deepcopy(first)

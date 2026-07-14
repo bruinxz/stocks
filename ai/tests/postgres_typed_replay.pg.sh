@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SNAPSHOT_MIGRATION="$ROOT/backend/scripts/migrations/2026-07-12-ai-recommendation-sot-v031.sql"
-SOURCE_FIXTURE="$ROOT/ai/tests/fixtures/typed_replay_source_capture.sql"
+SOURCE_MIGRATION="$ROOT/backend/scripts/migrations/2026-07-14-ai-replay-typed-source-capture.sql"
 
 fail() {
   echo "postgres-typed-replay.pg: $*" >&2
@@ -51,7 +51,7 @@ createdb "${PG_ARGS[@]}" "$DB"
 psql "${PG_ARGS[@]}" -d "$DB" -v ON_ERROR_STOP=1 \
   -f "$SNAPSHOT_MIGRATION" >/dev/null
 psql "${PG_ARGS[@]}" -d "$DB" -v ON_ERROR_STOP=1 \
-  -f "$SOURCE_FIXTURE" >/dev/null
+  -f "$SOURCE_MIGRATION" >/dev/null
 
 DATABASE_URL="$(
   TYPED_REPLAY_DB="$DB" python3 - <<'PY'

@@ -35,9 +35,7 @@ def replay_input_manifest_hashes(inputs: ReplayInputs) -> tuple[str, ...]:
             "kind": expected_kind,
         }
         manifest_hashes.append(
-            hashlib.sha256(
-                jcs_canonicalize(material).encode("utf-8")
-            ).hexdigest()
+            hashlib.sha256(jcs_canonicalize(material).encode("utf-8")).hexdigest()
         )
     return tuple(manifest_hashes)
 

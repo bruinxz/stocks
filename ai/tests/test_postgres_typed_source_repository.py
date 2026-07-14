@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
@@ -28,6 +29,7 @@ from ai.replay.postgres_repository import (
     typed_source_capture_hash,
     typed_text_context_hash,
 )
+from ai.replay.postgres_capture_writer import PostgresTypedCaptureWriter
 from ai.replay.typed_capture import (
     TypedCaptureRequest,
     filing_envelope_from_json,
@@ -327,6 +329,36 @@ def _capture_row(*, pins=None, mutate=None):
     return pins, row
 
 
+def _capture_request():
+    pins = _base_pins()
+    return TypedCaptureRequest(
+        trading_day=pins.trading_day,
+        as_of=pins.as_of,
+        profile=pins.profile,
+        market_scope=pins.market_scope,
+        profile_version=pins.profile_version,
+        contract_version=pins.contract_version,
+        strategy_version=pins.strategy_version,
+        pipeline_version=pins.pipeline_version,
+        source_versions={
+            "signals": "signals-v1",
+            "universe": "universe-v1",
+            "scores": "scores-v1",
+            "evidence": "evidence-v1",
+        },
+        filings=(
+            filing_envelope_from_json(
+                {
+                    "disclosure": _disclosure_json(),
+                    "financials": [_financial_json()],
+                }
+            ),
+        ),
+        text_hits=(text_hit_envelope_from_json(_text_hit_json()),),
+        scores=(typed_score_record_from_json(_score_json()),),
+    )
+
+
 def _disclaimer(language, full_text):
     return {
         "version": "1.0.0",
@@ -597,8 +629,17 @@ class PostgresTypedSourceRepositoryIntegrationTests(unittest.TestCase):
             )
 
     def test_real_pipeline_persists_and_reads_final_snapshot(self):
-        pins, row = _capture_row()
-        self._insert(row)
+        writer = PostgresTypedCaptureWriter.from_env(
+            uuid4_factory=lambda: uuid.UUID(
+                "12345678-1234-4234-8234-567812345678"
+            )
+        )
+        receipt = writer.write(_capture_request())
+        repeated = writer.write(_capture_request())
+        self.assertTrue(receipt.created)
+        self.assertFalse(repeated.created)
+        self.assertEqual(repeated.capture_id, receipt.capture_id)
+        pins = receipt.pins
         repository = PostgresTypedSourceRepository.from_env()
         snapshot_store = PostgresSnapshotStore.from_env()
         adapter = PipelineReplayAdapter(
@@ -633,10 +674,10 @@ class PostgresTypedSourceRepositoryIntegrationTests(unittest.TestCase):
         self.assertTrue(items[0].recommendation_json["evidence_refs"])
 
         repeat_inputs = TypedReplaySources(repository).load_inputs(pins)
-        repeated = adapter.run(pins, repeat_inputs)
-        self.assertEqual(repeated.snapshot_id, completed.snapshot_id)
+        repeated_result = adapter.run(pins, repeat_inputs)
+        self.assertEqual(repeated_result.snapshot_id, completed.snapshot_id)
         self.assertEqual(
-            repeated.output_fingerprint,
+            repeated_result.output_fingerprint,
             completed.output_fingerprint,
         )
         import psycopg
@@ -649,6 +690,30 @@ class PostgresTypedSourceRepositoryIntegrationTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM ai_recommendation_item"
             ).fetchone()[0]
         self.assertEqual((snapshot_count, item_count), (1, 1))
+
+    def test_concurrent_capture_writes_converge_to_one_row(self):
+        identities = (
+            uuid.UUID("12345678-1234-4234-8234-567812345678"),
+            uuid.UUID("22345678-1234-4234-8234-567812345678"),
+        )
+
+        def write(identity):
+            return PostgresTypedCaptureWriter.from_env(
+                uuid4_factory=lambda: identity
+            ).write(_capture_request())
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            receipts = tuple(executor.map(write, identities))
+
+        self.assertEqual(sorted(item.created for item in receipts), [False, True])
+        self.assertEqual(len({item.capture_id for item in receipts}), 1)
+        import psycopg
+
+        with psycopg.connect(os.environ["DATABASE_URL"]) as connection:
+            row_count = connection.execute(
+                "SELECT COUNT(*) FROM ai_replay_typed_source_capture"
+            ).fetchone()[0]
+        self.assertEqual(row_count, 1)
 
     def test_future_score_fails_before_snapshot_effects(self):
         pins, row = _capture_row()
