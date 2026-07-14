@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 import unittest
 
@@ -59,15 +60,20 @@ class Context:
 class Connection:
     def __init__(self):
         self.rows = {}
+        self.lock_keys = []
+        self.selected_identities = []
 
     def transaction(self):
         return Context(self)
 
-    async def fetchval(self, *_):
+    async def fetchval(self, _sql, lock_key):
+        self.lock_keys.append(lock_key)
+        await asyncio.sleep(0)
         return None
 
     async def fetchrow(self, sql, *params):
         if sql.lstrip().startswith("SELECT"):
+            self.selected_identities.append(tuple(params))
             value = self.rows.get(tuple(params))
             return None if value is None else {"hit_fact_hash": value}
         if sql.lstrip().startswith("INSERT"):
@@ -80,8 +86,8 @@ class Connection:
 
 
 class Pool:
-    def __init__(self):
-        self.connection = Connection()
+    def __init__(self, connection=None):
+        self.connection = connection or Connection()
 
     def acquire(self):
         return Context(self.connection)
@@ -112,6 +118,40 @@ class TextHitWriterTests(unittest.IsolatedAsyncioTestCase):
             await writer.write_batch(
                 (item,), as_of_utc=NOW - timedelta(hours=3)
             )
+
+    async def test_reversed_concurrent_batches_use_one_advisory_lock_order(self):
+        alpha = envelope(term_id="alpha")
+        omega = envelope(term_id="omega")
+        forward_pool = Pool()
+        reversed_pool = Pool()
+
+        forward, reversed_result = await asyncio.wait_for(
+            asyncio.gather(
+                TextHitWriter(forward_pool).write_batch(
+                    (alpha, omega), as_of_utc=NOW
+                ),
+                TextHitWriter(reversed_pool).write_batch(
+                    (omega, alpha), as_of_utc=NOW
+                ),
+            ),
+            timeout=1,
+        )
+
+        expected_identities = [
+            build_text_hit_storage_row(item).identity for item in (alpha, omega)
+        ]
+        self.assertEqual(forward.inserted, 2)
+        self.assertEqual(reversed_result.inserted, 2)
+        self.assertEqual(
+            forward_pool.connection.selected_identities, expected_identities
+        )
+        self.assertEqual(
+            reversed_pool.connection.selected_identities, expected_identities
+        )
+        self.assertEqual(
+            forward_pool.connection.lock_keys,
+            reversed_pool.connection.lock_keys,
+        )
 
 
 if __name__ == "__main__":

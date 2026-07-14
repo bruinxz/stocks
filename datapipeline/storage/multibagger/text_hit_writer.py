@@ -222,10 +222,17 @@ class TextHitWriter:
                 )
             rows_by_identity[row.identity] = row
 
+        # Acquire transaction-scoped advisory locks in one deterministic order.
+        # Otherwise two callers submitting the same identities in reverse batch
+        # order can each hold one lock while waiting forever for the other.
+        rows = tuple(
+            sorted(rows_by_identity.values(), key=lambda candidate: candidate.identity)
+        )
+
         inserted = 0
         async with self._db_pool.acquire() as connection:
             async with connection.transaction():
-                for row in rows_by_identity.values():
+                for row in rows:
                     await connection.fetchval(LOCK_SQL, _advisory_key(row.identity))
                     existing = await connection.fetchrow(SELECT_SQL, *row.identity)
                     if existing is not None:
