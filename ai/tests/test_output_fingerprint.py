@@ -305,7 +305,7 @@ class OutputFingerprintTests(unittest.TestCase):
                     }
                 ],
                 "weights": {"contributions": [], "normalized": False},
-                "explanation": {"body": "[E1]"},
+                "explanation": {"body": "[E1]", "language": "en-US"},
                 "entry_plan": {
                     "size_hint": {
                         "tier": "TIER_3",

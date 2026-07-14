@@ -74,7 +74,7 @@ def _recommendation(weights, score=None, ticker="AAPL"):
         },
         "trigger_signals": [{"code": "RULE_MATCHED"}],
         "weights": weights,
-        "explanation": {"body": "[E1]"},
+        "explanation": {"body": "[E1]", "language": "en-US"},
         "evidence_refs": [
             {
                 "id": "E1",

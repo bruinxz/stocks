@@ -2,7 +2,11 @@ import hashlib
 import math
 import re
 
-from ai.types import BAND_RATING_SEQUENCE, BAND_RATINGS
+from ai.types import (
+    BAND_RATING_SEQUENCE,
+    BAND_RATINGS,
+    PROFILE_ALLOWED_OUTPUT_LANGUAGES,
+)
 
 
 class OutputValidator:
@@ -12,10 +16,30 @@ class OutputValidator:
         errors = []
         items = recommendation_list.get("items", [])
         disclaimer = recommendation_list.get("disclaimer")
+        profile = recommendation_list.get("profile")
+        allowed_languages = PROFILE_ALLOWED_OUTPUT_LANGUAGES.get(profile)
+        if allowed_languages is None:
+            errors.append("profile has no authorized output language")
+
+        if (
+            disclaimer is not None
+            and allowed_languages is not None
+            and disclaimer.get("language") not in allowed_languages
+        ):
+            errors.append(f"disclaimer.language is not allowed for {profile}")
 
         for i, entry in enumerate(items):
             rec = entry["recommendation"]
             prefix = f"items[{i}]"
+
+            explanation_language = rec.get("explanation", {}).get("language")
+            if (
+                allowed_languages is not None
+                and explanation_language not in allowed_languages
+            ):
+                errors.append(
+                    f"{prefix}: explanation.language is not allowed for {profile}"
+                )
 
             if not rec["risk_gate"]["ok_to_enter"]:
                 errors.append(f"{prefix}: risk_gate.ok_to_enter must be true")

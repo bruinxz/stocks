@@ -179,3 +179,21 @@ CANONICAL_URI_PREFIXES = (
     "akshare://", "jpx-edinet://", "krx://", "dart://",
     "catalyst-event://", "ai-rule://", "ai-model://", "news://",
 )
+
+PROFILE_DEFAULT_OUTPUT_LANGUAGE = {
+    "us_preferred": "zh-CN",
+    "multibagger": "zh-CN",
+    "japan_blue_chip": "ja-JP",
+    "japan_multibagger": "ja-JP",
+    "korea_semiconductor_chain": "ko-KR",
+    "korea_multibagger": "ko-KR",
+}
+
+PROFILE_ALLOWED_OUTPUT_LANGUAGES = {
+    "us_preferred": frozenset(("zh-CN", "en-US")),
+    "multibagger": frozenset(("zh-CN", "en-US")),
+    "japan_blue_chip": frozenset(("ja-JP",)),
+    "japan_multibagger": frozenset(("ja-JP",)),
+    "korea_semiconductor_chain": frozenset(("ko-KR",)),
+    "korea_multibagger": frozenset(("ko-KR",)),
+}

@@ -19,6 +19,7 @@ def _raw(*values):
 
 def _recommendation_list(attribution):
     return {
+        "profile": "us_preferred",
         "items": [
             {
                 "recommendation": {
@@ -31,7 +32,7 @@ def _recommendation_list(attribution):
                         }
                     ],
                     "weights": attribution,
-                    "explanation": {"body": "[E1]"},
+                    "explanation": {"body": "[E1]", "language": "en-US"},
                     "score": {"rating": "A"},
                     "conviction": {
                         "base": 80.0,
