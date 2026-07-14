@@ -2,6 +2,7 @@
 
 from ai.replay.service import ReplayService
 from ai.replay.file_store import AtomicFileReplayJobStore
+from ai.replay.postgres_repository import PostgresTypedSourceRepository
 from ai.replay.runtime import (
     ReplayWorker,
     TypedReplaySources,
@@ -27,6 +28,7 @@ __all__ = [
     "ReplayService",
     "SourceSlice",
     "AtomicFileReplayJobStore",
+    "PostgresTypedSourceRepository",
     "TypedReplaySources",
     "TypedScoreRecord",
     "TypedSourceSnapshot",

@@ -1,6 +1,5 @@
 class SignalIntakeStage:
-    """Stage A: read catalyst events + market data from DP tables (read-only)."""
+    """Stage A: consume the adapter-authenticated signal capture."""
 
     def execute(self, ctx):
-        ctx.signals = []
         return ctx

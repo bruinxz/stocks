@@ -49,7 +49,13 @@ class RuleEngine:
             target = cond["value"]
             op = cond["op"]
 
-            if field_val is None:
+            # Runtime placeholders require an explicit resolved context.  A
+            # replay must not compare typed values with unresolved "$..."
+            # strings or invent a current default; that rule simply cannot
+            # match in this context.
+            if field_val is None or (
+                isinstance(target, str) and target.startswith("$")
+            ):
                 return False
 
             if op == "eq" and field_val != target:

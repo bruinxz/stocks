@@ -1,6 +1,5 @@
 class UniverseStage:
-    """Stage B: select candidate universe based on profile + market_scope."""
+    """Stage B: consume the adapter-authenticated candidate universe."""
 
     def execute(self, ctx):
-        ctx.universe = []
         return ctx

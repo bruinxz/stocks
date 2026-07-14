@@ -1,6 +1,5 @@
 class FeatureAssemblyStage:
-    """Stage C: fetch Strategy scores for universe (read-only from scoring contract)."""
+    """Stage C: consume adapter-authenticated Strategy score projections."""
 
     def execute(self, ctx):
-        ctx.scores = {}
         return ctx

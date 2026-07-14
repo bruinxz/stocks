@@ -1,3 +1,5 @@
+import copy
+import hashlib
 import math
 import uuid as _uuid
 
@@ -33,7 +35,7 @@ class AssemblyStage:
                 "explanation": explanation,
                 "evidence_refs": evidence,
                 "model_version": ctx.config.model_version,
-                "disclaimer_version": ctx.config.disclaimer_hash[:8],
+                "disclaimer_version": ctx.config.disclaimer["version"],
             }
             ctx.recommendations.append(rec)
 
@@ -100,16 +102,34 @@ class AssemblyStage:
         return {"contributions": contributions, "normalized": True}
 
     def _collect_evidence(self, candidate, ctx):
-        evidence = []
-        idx = 1
-        for t in candidate["triggers"]:
-            if t.get("source_ref"):
-                evidence.append({
-                    "id": f"E{idx}",
-                    "kind": "RULE",
-                    "source_uri": f"ai-rule://{ctx.config.model_version}/{t['code']}@{ctx.config.pipeline_version}",
-                    "as_of": ctx.as_of,
-                    "hash": "",
-                })
-                idx += 1
+        ticker = candidate["ticker"]
+        evidence = [
+            {"id": f"E{index}", **copy.deepcopy(ref)}
+            for index, ref in enumerate(
+                ctx.evidence_refs.get(ticker, ()), start=1
+            )
+        ]
+
+        # Explanation markers are emitted for the first three triggers.  If a
+        # ticker has fewer physical evidence records than markers, preserve the
+        # source evidence and append an authenticated rule trace.  This is a
+        # deterministic pipeline trace, not a synthetic market fact.
+        required = min(3, len(candidate["triggers"]))
+        for trigger in candidate["triggers"][len(evidence) : required]:
+            rule_material = (
+                f"{ctx.config.rule_bundle_hash}:{trigger['code']}:"
+                f"{ctx.config.pipeline_version}"
+            )
+            evidence.append({
+                "id": f"E{len(evidence) + 1}",
+                "kind": "RULE",
+                "source_uri": (
+                    f"ai-rule://{ctx.config.model_version}/"
+                    f"{trigger['code']}@{ctx.config.pipeline_version}"
+                ),
+                "as_of": ctx.as_of,
+                "hash": hashlib.sha256(
+                    rule_material.encode("utf-8")
+                ).hexdigest(),
+            })
         return evidence
