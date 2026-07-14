@@ -111,6 +111,7 @@ class ReplayService:
         evidence_cache: EvidenceCache,
         pipeline: RecommendationReplayPipeline,
         job_store: ReplayJobStore,
+        input_source=None,
         uuid_factory: Callable[[], uuid.UUID] = uuid.uuid4,
         clock: Callable[[], str] = lambda: (
             _datetime.datetime.now(_datetime.timezone.utc)
@@ -125,6 +126,7 @@ class ReplayService:
         self._evidence_cache = evidence_cache
         self._pipeline = pipeline
         self._job_store = job_store
+        self._input_source = input_source
         self._uuid_factory = uuid_factory
         self._clock = clock
 
@@ -209,20 +211,32 @@ class ReplayService:
         return job
 
     def _load_inputs(self, pins: ReplayPins) -> ReplayInputs:
-        slices = ReplayInputs(
-            signals=self._load_source(
-                "signals", self._signal_source.load_signals, pins
-            ),
-            universe=self._load_source(
-                "universe", self._universe_source.load_universe, pins
-            ),
-            scores=self._load_source(
-                "scores", self._score_source.load_scores, pins
-            ),
-            evidence=self._load_source(
-                "evidence", self._evidence_cache.load_evidence, pins
-            ),
-        )
+        if self._input_source is not None:
+            try:
+                slices = self._input_source.load_inputs(pins)
+            except Exception as error:
+                raise ReplaySourceError(
+                    "atomic replay input source unavailable"
+                ) from error
+            if not isinstance(slices, ReplayInputs):
+                raise ReplaySourceError(
+                    "atomic replay input source returned wrong type"
+                )
+        else:
+            slices = ReplayInputs(
+                signals=self._load_source(
+                    "signals", self._signal_source.load_signals, pins
+                ),
+                universe=self._load_source(
+                    "universe", self._universe_source.load_universe, pins
+                ),
+                scores=self._load_source(
+                    "scores", self._score_source.load_scores, pins
+                ),
+                evidence=self._load_source(
+                    "evidence", self._evidence_cache.load_evidence, pins
+                ),
+            )
         for expected_kind, source_slice in zip(
             SOURCE_KINDS, slices.ordered()
         ):
