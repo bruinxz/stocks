@@ -165,7 +165,7 @@ export function JpKrTable({ rows, loading, error, onRowClick }: JpKrTableProps) 
       errorText={
         error ? (
           <div role="alert" aria-live="polite">
-            数据源暂时不可用 (JPX/KRX/DART 之一失联)
+            日韩市场数据刷新失败，请检查数据源或返回契约
           </div>
         ) : undefined
       }
