@@ -118,6 +118,10 @@ async def main() -> None:
             assert next(iter((await cursor.fetchone()).values())) == 0
             await cursor.execute("SELECT count(*) FROM backtest_pit_holding")
             assert next(iter((await cursor.fetchone()).values())) == 0
+        # The verification SELECTs above open an implicit psycopg transaction.
+        # Close it before subsequent writer transactions so they are real
+        # top-level commits, not savepoints rolled back when this process exits.
+        await connection.commit()
 
         writer = PitSnapshotWriter(AsyncPsycopgPool(connection))
         inserted = [
