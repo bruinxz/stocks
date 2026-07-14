@@ -1,0 +1,21 @@
+strategy/materialization/multibagger_candidate.py
+  s_7cff93b99a2e15::t_9f7ad4338d26c2 751-764
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9fd906ee2b9bd8e752e749cb8a239ff4a965d592",
+  "prompts": {},
+  "sessions": {
+    "s_7cff93b99a2e15": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5fa7-208d-7ba3-86b5-d77e96eb2735",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
