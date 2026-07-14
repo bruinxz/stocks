@@ -1,0 +1,139 @@
+ai/pipeline/replay_adapter.py
+  s_419dd40d76f6cf::t_298fe8da93ea7e 9,25,27,34-39,46,70,74-79,81,86-87,104,189,234-235,237-245,247-258,263,314,334-337,383,404-409,423-424,438,446,487,501-505,511-512,541-542,551-552
+ai/replay/__init__.py
+  s_6ca1020a327476::t_95a3314e6f60ef 12,27,46,49
+ai/replay/fingerprint.py
+  s_6ca1020a327476::t_fb7af6e0bc66fa 27,29-36,38
+ai/replay/postgres_capture_writer.py
+  s_6ca1020a327476::t_e7b9b4529aae87 110-112,129-132,135-136,168,170-175,177-184,186-188,190-203,205-218,221-229,254-258
+ai/replay/postgres_repository.py
+  s_6ca1020a327476::t_fc93a213686695 78-82,98-101,104-105,126,128-147,150-158,175-179
+ai/replay/runtime.py
+  s_31d426be3d5b7c::t_9cecf9370915ff 21-27,29-38,137-144,148,201-202,221,275-279,281,326,333,337-349,359-360,362-385,398-399,426-427,431,557-558,569-570
+ai/replay/service.py
+  s_419dd40d76f6cf::t_f275c6b3415e86 5,26,29,224,243-251,253-260,307,341-342,352,379-400,539
+ai/replay/typed_capture.py
+  s_31d426be3d5b7c::t_b119a8fa40fd86 16,25,29,41-47,85,169,184,249-252,271-274,279,298,360-364,375-386,388-389,396-397,427-430,438-477,481-486,502-505,525-528,534-557,563-564,575-578,588,604,614-620,645,648-650,657,660-662
+ai/replay/types.py
+  s_6ca1020a327476::t_be5b2402c2cd03 6-7
+ai/tests/test_postgres_typed_source_repository.py
+  s_419dd40d76f6cf::t_3a41a4f1f52914 12,27,37-38,53,60-68,75-84,122,125-126,130-131,139-140,144,146-147,153-158,227,247,257,260-265,353,394,458-473,555-617,648-706,711-712,721-730,736-737,742,775-905,916-919,925-928
+ai/tests/test_replay_runtime.py
+  s_31d426be3d5b7c::t_960991872d6cee 25,30,40-48,58-67,90,93-96,127-131,153-157,168,171-175,316-323,359-361,444-504,660-662,667
+ai/tests/test_replay_service.py
+  s_419dd40d76f6cf::t_385129b85f4d3b 30-39,195-249,326-358,400-406
+ai/tests/test_typed_capture_writer.py
+  s_31d426be3d5b7c::t_0d7dfdaf517384 5,8,28,38-42,49-58,83,154,157,171-172,181,184,193,298-374,440,473-516
+backend/scripts/migrations/2026-07-14-ai-replay-typed-source-capture-rollback.sql
+  s_6ca1020a327476::t_e1f306e382f585 9-10,32,35-45,58-65
+backend/scripts/migrations/2026-07-14-ai-replay-typed-source-capture.sql
+  s_078b38d1d60a41::t_fceabfad12cf9f 2-3,53,55,57,59,64-78,115-116
+backend/scripts/migrations/2026-07-14-multibagger-source-version-integrity-rollback.sql
+  s_010b3e8991aba9::t_f74a429ff367e1 1-155
+backend/scripts/migrations/2026-07-14-multibagger-source-version-integrity.sql
+  s_db4c4bf0eedce9::t_dbac4e090dad55 1-154
+backend/scripts/migrations/2026-07-14-multibagger-text-hit-provenance.sql
+  s_6ca1020a327476::t_e3a7f6aceb9e86 26
+backend/tests/e2e/tab4-multibagger-live.pg.sh
+  s_db4c4bf0eedce9::t_e17a9f90c6faaf 9-10,49-54,81-122,135-137
+backend/tests/models/ai-replay-typed-source-capture.pg.sh
+  s_6ca1020a327476::t_1b99734848794c 98-100,123-161,279-300,303,345-350,384-401,405-452,460-476
+backend/tests/models/ai-replay-typed-source-capture.test.ts
+  s_6ca1020a327476::t_51aa76634028ae 131,139-141,145,148-153,162,165-166,185-190
+backend/tests/models/multibagger-source-version-integrity.pg.sh
+  s_010b3e8991aba9::t_bca04ddf2e0252 1-305
+backend/tests/models/multibagger-source-version-integrity.test.ts
+  s_010b3e8991aba9::t_20541a94eb9d6b 1-159
+backend/tests/models/multibagger-text-hit-provenance.test.ts
+  s_6ca1020a327476::t_7609306a4d6bb1 31-32
+datapipeline/contracts/__init__.py
+  s_419dd40d76f6cf::t_b22079c2d5c788 3-8,39-40
+datapipeline/contracts/jpkr_official_records.py
+  s_419dd40d76f6cf::t_c1b065e8620b6b 9-13,31-32,36-40,100,170
+datapipeline/contracts/market_records.py
+  s_419dd40d76f6cf::t_686fcf6388c411 8,23-37,74-78,105-106,119-124,135
+datapipeline/contracts/source_envelopes.py
+  s_419dd40d76f6cf::t_b181c4b92b3cac 11-16,48-54,197,287,359
+datapipeline/storage/jpkr/__init__.py
+  s_6ca1020a327476::t_cbb88d639d6666 13,22-23
+datapipeline/storage/jpkr/financial_fact.py
+  s_6ca1020a327476::t_ea8341477ed63c 1-65
+datapipeline/storage/multibagger/__init__.py
+  s_6ca1020a327476::t_1745d568af9475 15,17,23,36,38,44
+datapipeline/storage/multibagger/source_writer.py
+  s_419dd40d76f6cf::t_519b9787f323cb 9,12-16,88,90-98,105-147,151-155,160,202-205,207-208,210,212,214-217,221,223,274,276-316,318-327,329-330,332,340,342,344-353,362,364,366-374,381-382,388,393-396,401-402,460,464,471,485-491,493,499,511,519,531,542
+datapipeline/tests/contracts/test_jpkr_official_records.py
+  s_419dd40d76f6cf::t_90fbd967ceb7e0 1-91
+datapipeline/tests/contracts/test_market_records.py
+  s_419dd40d76f6cf::t_d5ed4039d91a47 5-23,63-70,113-133
+datapipeline/tests/contracts/test_source_envelopes.py
+  s_419dd40d76f6cf::t_d9c93d0d937608 1,6-8,21-58,219-222,225-257,313-314
+datapipeline/tests/storage/multibagger/test_source_writer.py
+  s_6ca1020a327476::t_e0d9a3f065d6d9 18-34,77,79,82-83,121,124,128,132-150,233-248,277-318,423-437
+strategy/materialization/multibagger_candidate.py
+  s_6ca1020a327476::t_26ecd4921a9be9 14,20-23,154,198-214,344-449,498,500-548,550-551,559-568,574-618,620-622,627-632,634,666-667,724-725,759-760,841-845,935,950-955
+strategy/materialization/postgres_candidate_store.py
+  s_6ca1020a327476::t_279b7b088c9277 104-110
+strategy/tests/test_multibagger_candidate_materializer.py
+  s_6ca1020a327476::t_2a54db01428580 12,16,144-148,161,596,614-713,856-931
+strategy/tests/test_postgres_candidate_store.py
+  s_6ca1020a327476::t_ef210513a9b793 2,7,15,77-132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "17a1af7be4a8d4cb77a789ae641c3fc66b00eb9b",
+  "prompts": {},
+  "sessions": {
+    "s_010b3e8991aba9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f60c7-39d6-7f80-9959-0df34fbbc9e3",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_078b38d1d60a41": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6044-e3db-7481-9c52-eb8ca145309c",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_31d426be3d5b7c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f60e6-6369-7203-a87e-0c7d2002e545",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_419dd40d76f6cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f60ba-1fa0-75f0-aee8-b58bfa0f1743",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_db4c4bf0eedce9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f608b-007a-7101-9a9a-e38ebe0779ea",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
