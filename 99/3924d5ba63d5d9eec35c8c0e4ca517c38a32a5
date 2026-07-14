@@ -1,0 +1,21 @@
+ai/pipeline/runner.py
+  s_6d9a8be7ce53a5::t_9973df66af4ef0 14,38-56,67,85-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "993924d5ba63d5d9eec35c8c0e4ca517c38a32a5",
+  "prompts": {},
+  "sessions": {
+    "s_6d9a8be7ce53a5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f55-8fdb-7033-b11e-ac1cd0164c04",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
