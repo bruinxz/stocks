@@ -191,6 +191,7 @@ class TextHitEnvelopeTest(unittest.TestCase):
             "published_at_utc": UTC_NOW,
             "available_at_utc": UTC_NOW,
             "source_kind": "official-disclosure",
+            "source_version": "capture-v1",
             "source_url": None,
             "document_fact_hash": "c" * 64,
         }

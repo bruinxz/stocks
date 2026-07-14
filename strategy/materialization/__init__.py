@@ -17,6 +17,10 @@ from strategy.materialization.multibagger_candidate import (
     write_or_verify_candidate,
 )
 from strategy.materialization.postgres_candidate_store import PostgresCandidateStore
+from strategy.materialization.postgres_repository import (
+    MaterializationSourceError,
+    PostgresMaterializationRepository,
+)
 
 __all__ = [
     "CandidateIdempotencyConflict",
@@ -34,4 +38,6 @@ __all__ = [
     "materialize_candidate",
     "write_or_verify_candidate",
     "PostgresCandidateStore",
+    "MaterializationSourceError",
+    "PostgresMaterializationRepository",
 ]

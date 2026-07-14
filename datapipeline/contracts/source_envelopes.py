@@ -332,6 +332,7 @@ class ScanDocument:
     published_at_utc: datetime
     available_at_utc: datetime
     source_kind: str
+    source_version: str
     source_url: str | None
     document_fact_hash: str
 
@@ -345,6 +346,7 @@ class ScanDocument:
         _require_non_empty(self.document_id, "document_id")
         _require_non_empty(self.ticker, "ticker")
         _require_non_empty(self.source_kind, "source_kind")
+        _require_non_empty(self.source_version, "source_version")
         if not self.title and not self.body:
             raise ValueError("scan document requires title or body text")
         _require_sha256(self.document_fact_hash, "document_fact_hash")

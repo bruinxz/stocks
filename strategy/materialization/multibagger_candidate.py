@@ -16,6 +16,10 @@ from uuid import UUID
 
 from ai.snapshot.fingerprint import jcs_canonicalize
 from ai.types import RISK_TRIGGER_CODES
+from datapipeline.storage.multibagger import (
+    canonical_multibagger_storage_fact_hash,
+    canonical_text_hit_fact_hash,
+)
 from strategy.reporting import (
     parse_utc_seconds,
     require_finite_number,
@@ -79,7 +83,14 @@ RISK_GATE_KEYS = frozenset(
     ("ticker", "evaluated_at", "gate", "triggers", "ok_to_enter")
 )
 CATALYST_KEYS = frozenset(
-    ("kind", "title", "occurred_at", "source_ref", "fact_hash")
+    (
+        "kind",
+        "title",
+        "occurred_at",
+        "available_at_utc",
+        "source_ref",
+        "fact_hash",
+    )
 )
 HEX = frozenset("0123456789abcdef")
 
@@ -224,6 +235,7 @@ class TextHitFact:
     start_offset: int
     end_offset: int
     context_hash: str
+    hit_fact_hash: str
     effective_at_utc: datetime
     available_at_utc: datetime
 
@@ -242,6 +254,7 @@ class LatestCatalyst:
     kind: str
     title: str
     occurred_at: datetime
+    available_at_utc: datetime
     source_ref: str
     fact_hash: str
 
@@ -404,28 +417,6 @@ def candidate_from_row(row: Mapping[str, Any]) -> CandidateSnapshot:
     return candidate
 
 
-def _universe_body(fact: UniverseFact) -> Mapping[str, Any]:
-    return {
-        "as_of_utc": _utc_text(fact.as_of_utc),
-        "available_at_utc": _utc_text(fact.available_at_utc),
-        "effective_at_utc": _utc_text(fact.effective_at_utc),
-        "evidence_refs": list(fact.evidence_refs),
-        "exchange": fact.exchange,
-        "features": dict(fact.features),
-        "filter_pass_bitmap": fact.filter_pass_bitmap,
-        "fundamental_snapshot": dict(fact.fundamental_snapshot),
-        "market_cap_cny_100m": fact.market_cap_cny_100m,
-        "market_scope": fact.market_scope,
-        "provider_market_label": fact.provider_market_label,
-        "record_kind": fact.record_kind,
-        "source_document_id": fact.source_document_id,
-        "source_version": fact.source_version,
-        "text_hit_kinds": list(fact.text_hit_kinds),
-        "ticker": fact.ticker,
-        "universe_source_kind": fact.universe_source_kind,
-    }
-
-
 def _validate_universe_fact(fact: UniverseFact, request: MaterializationInput) -> None:
     if (
         fact.market_scope != request.market_scope
@@ -446,30 +437,27 @@ def _validate_universe_fact(fact: UniverseFact, request: MaterializationInput) -
         fact.filter_pass_bitmap, int
     ) or fact.filter_pass_bitmap < 0:
         _fail("filter_pass_bitmap is invalid")
-    jcs_canonicalize(_universe_body(fact))
-    expected_hash = _canonical_hash(_universe_body(fact))
+    expected_hash = canonical_multibagger_storage_fact_hash(
+        market_scope=fact.market_scope,
+        exchange=fact.exchange,
+        ticker=fact.ticker,
+        record_kind=fact.record_kind,
+        universe_source_kind=fact.universe_source_kind,
+        source_document_id=fact.source_document_id,
+        source_version=fact.source_version,
+        effective_at_utc=fact.effective_at_utc,
+        available_at_utc=fact.available_at_utc,
+        as_of_utc=fact.as_of_utc,
+        provider_market_label=fact.provider_market_label,
+        features=dict(fact.features),
+        evidence_refs=list(fact.evidence_refs),
+        text_hit_kinds=list(fact.text_hit_kinds),
+        fundamental_snapshot=dict(fact.fundamental_snapshot),
+        filter_pass_bitmap=fact.filter_pass_bitmap,
+        market_cap_cny_100m=fact.market_cap_cny_100m,
+    )
     if _require_hash(fact.fact_hash, "universe fact_hash") != expected_hash:
         _fail("universe fact_hash mismatch")
-
-
-def _text_hit_body(hit: TextHitFact) -> Mapping[str, Any]:
-    return {
-        "available_at_utc": _utc_text(hit.available_at_utc),
-        "document_fact_hash": hit.document_fact_hash,
-        "effective_at_utc": _utc_text(hit.effective_at_utc),
-        "end_offset": hit.end_offset,
-        "field": hit.field,
-        "hit_kind": hit.hit_kind,
-        "language": hit.language,
-        "market_scope": hit.market_scope,
-        "source_document_id": hit.source_document_id,
-        "source_kind": hit.source_kind,
-        "source_version": hit.source_version,
-        "start_offset": hit.start_offset,
-        "taxonomy_version": hit.taxonomy_version,
-        "term_id": hit.term_id,
-        "ticker": hit.ticker,
-    }
 
 
 def _validate_text_hit(hit: TextHitFact, request: MaterializationInput) -> None:
@@ -496,6 +484,7 @@ def _validate_text_hit(hit: TextHitFact, request: MaterializationInput) -> None:
         _fail("text hit is not PIT-visible")
     _require_hash(hit.document_fact_hash, "document_fact_hash")
     _require_hash(hit.context_hash, "context_hash")
+    _require_hash(hit.hit_fact_hash, "hit_fact_hash")
     for value, field in (
         (hit.source_kind, "text hit source_kind"),
         (hit.source_document_id, "text hit source_document_id"),
@@ -504,8 +493,26 @@ def _validate_text_hit(hit: TextHitFact, request: MaterializationInput) -> None:
         (hit.term_id, "term_id"),
     ):
         _require_string(value, field)
-    if _canonical_hash(_text_hit_body(hit)) != hit.context_hash:
-        _fail("text hit context_hash mismatch")
+    expected_hit_hash = canonical_text_hit_fact_hash(
+        market_scope=hit.market_scope,
+        ticker=hit.ticker,
+        source_kind=hit.source_kind,
+        source_document_id=hit.source_document_id,
+        source_version=hit.source_version,
+        document_fact_hash=hit.document_fact_hash,
+        taxonomy_version=hit.taxonomy_version,
+        term_id=hit.term_id,
+        hit_kind=hit.hit_kind,
+        language=hit.language,
+        field=hit.field,
+        start_offset=hit.start_offset,
+        end_offset=hit.end_offset,
+        context_hash=hit.context_hash,
+        effective_at_utc=hit.effective_at_utc,
+        available_at_utc=hit.available_at_utc,
+    )
+    if expected_hit_hash != hit.hit_fact_hash:
+        _fail("text hit fact_hash mismatch")
 
 
 def _score_projection(
@@ -668,6 +675,9 @@ def _candidate_body(
                 "kind": request.latest_catalyst.kind,
                 "title": request.latest_catalyst.title,
                 "occurred_at": _utc_text(request.latest_catalyst.occurred_at),
+                "available_at_utc": _utc_text(
+                    request.latest_catalyst.available_at_utc
+                ),
                 "source_ref": request.latest_catalyst.source_ref,
                 "fact_hash": request.latest_catalyst.fact_hash,
             }
@@ -727,7 +737,14 @@ def materialize_candidate(
             _fail("latest catalyst kind is invalid")
         _require_string(catalyst.title, "latest catalyst title")
         _require_utc(catalyst.occurred_at, "latest catalyst occurred_at")
-        if catalyst.occurred_at > request.as_of_utc:
+        _require_utc(
+            catalyst.available_at_utc, "latest catalyst available_at_utc"
+        )
+        if not (
+            catalyst.occurred_at
+            <= catalyst.available_at_utc
+            <= request.as_of_utc
+        ):
             _fail("latest catalyst is not PIT-visible")
         _require_string(catalyst.source_ref, "latest catalyst source_ref")
         _require_hash(catalyst.fact_hash, "latest catalyst fact_hash")
@@ -736,6 +753,7 @@ def materialize_candidate(
                 "kind": catalyst.kind,
                 "title": catalyst.title,
                 "occurred_at": _utc_text(catalyst.occurred_at),
+                "available_at_utc": _utc_text(catalyst.available_at_utc),
                 "source_ref": catalyst.source_ref,
             }
         )
@@ -746,6 +764,12 @@ def materialize_candidate(
             {source.fact_hash for source in request.sources}
             | {hit.document_fact_hash for hit in request.text_hits}
             | {hit.context_hash for hit in request.text_hits}
+            | {hit.hit_fact_hash for hit in request.text_hits}
+            | (
+                {request.latest_catalyst.fact_hash}
+                if request.latest_catalyst is not None
+                else set()
+            )
         )
     )
     if not source_hashes:
@@ -753,6 +777,11 @@ def materialize_candidate(
     available = max(
         [source.available_at_utc for source in request.sources]
         + [hit.available_at_utc for hit in request.text_hits]
+        + (
+            [request.latest_catalyst.available_at_utc]
+            if request.latest_catalyst is not None
+            else []
+        )
         + [decision_available_at]
     )
     body = _candidate_body(request, classification, source_hashes, rating, available)

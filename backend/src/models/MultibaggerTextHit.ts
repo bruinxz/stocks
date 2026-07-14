@@ -48,6 +48,9 @@ export class MultibaggerTextHit extends Model {
   @Column({ type: DataType.TEXT, allowNull: false, field: 'source_document_id' })
   declare sourceDocumentId: string;
 
+  @Column({ type: DataType.TEXT, allowNull: false, field: 'source_version' })
+  declare source_version: string;
+
   @Column({ type: DataType.STRING(64), allowNull: false, field: 'document_fact_hash' })
   declare documentFactHash: string;
 
@@ -74,6 +77,9 @@ export class MultibaggerTextHit extends Model {
 
   @Column({ type: DataType.STRING(64), allowNull: false, field: 'context_hash' })
   declare contextHash: string;
+
+  @Column({ type: DataType.STRING(64), allowNull: false, field: 'hit_fact_hash' })
+  declare hit_fact_hash: string;
 
   @Column({ type: DataType.DATE, allowNull: false, field: 'effective_at_utc' })
   declare effectiveAtUtc: Date;

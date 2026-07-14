@@ -68,6 +68,16 @@ assert(
     CONTROLLER.includes('classification_policy_version: row.classification_policy_version') &&
     CONTROLLER.includes('classification_reason_codes: parseJson(row.classification_reason_codes)')
 );
+assert(
+  'list and detail API expose physical proof pins',
+  (CONTROLLER.match(/candidate\.fact_hash/g) || []).length === 2 &&
+    (CONTROLLER.match(/candidate\.source_fact_hashes/g) || []).length === 2 &&
+    (CONTROLLER.match(/candidate\.strategy_version/g) || []).length === 2 &&
+    CONTROLLER.includes('fact_hash: row.fact_hash') &&
+    CONTROLLER.includes('source_fact_hashes: parseJson(row.source_fact_hashes)') &&
+    CONTROLLER.includes('as_of_utc: row.as_of_utc') &&
+    CONTROLLER.includes('available_at_utc: row.available_at_utc')
+);
 
 console.log(`\nResult: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

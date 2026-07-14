@@ -38,8 +38,15 @@ function normalizeCandidate(row: any): any {
     entry_plan: entryPlan,
     latest_catalyst: parseJson(row.latest_catalyst) ?? null,
     market: row.market,
+    market_scope: row.market_scope,
+    exchange: row.exchange,
     stage: row.stage,
     conclusion: row.conclusion,
+    fact_hash: row.fact_hash,
+    source_fact_hashes: parseJson(row.source_fact_hashes),
+    as_of_utc: row.as_of_utc,
+    available_at_utc: row.available_at_utc,
+    strategy_version: row.strategy_version,
     classification_policy_version: row.classification_policy_version,
     classification_reason_codes: parseJson(row.classification_reason_codes),
   };
@@ -122,8 +129,21 @@ export class MultibaggerController {
                   WHEN candidate.market_scope = 'jp' THEN 'JP'
                   WHEN candidate.market_scope = 'kr' THEN 'KR'
                 END AS market,
+                candidate.market_scope,
+                candidate.exchange,
                 candidate.stage,
                 candidate.conclusion,
+                candidate.fact_hash,
+                candidate.source_fact_hashes,
+                to_char(
+                  candidate.as_of_utc AT TIME ZONE 'UTC',
+                  'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                ) AS as_of_utc,
+                to_char(
+                  candidate.available_at_utc AT TIME ZONE 'UTC',
+                  'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                ) AS available_at_utc,
+                candidate.strategy_version,
                 candidate.classification_policy_version,
                 candidate.classification_reason_codes
          FROM latest_candidates candidate
@@ -218,8 +238,21 @@ export class MultibaggerController {
                   WHEN candidate.market_scope = 'jp' THEN 'JP'
                   WHEN candidate.market_scope = 'kr' THEN 'KR'
                 END AS market,
+                candidate.market_scope,
+                candidate.exchange,
                 candidate.stage,
                 candidate.conclusion,
+                candidate.fact_hash,
+                candidate.source_fact_hashes,
+                to_char(
+                  candidate.as_of_utc AT TIME ZONE 'UTC',
+                  'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                ) AS as_of_utc,
+                to_char(
+                  candidate.available_at_utc AT TIME ZONE 'UTC',
+                  'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                ) AS available_at_utc,
+                candidate.strategy_version,
                 candidate.classification_policy_version,
                 candidate.classification_reason_codes
          FROM latest_candidates candidate

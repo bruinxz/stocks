@@ -88,6 +88,61 @@ export function buildMultibaggerSections(row: MultibaggerRow): DetailSection[] {
     ),
   });
 
+  sections.push({
+    key: 'candidate_provenance',
+    title: '证据与版本',
+    ariaLabel: `${row.symbol} 候选证据与版本`,
+    content: (
+      <div>
+        <p>
+          <Text strong>Identity: </Text>
+          <Text code>
+            {row.market_scope}/{row.exchange}/{row.symbol}
+          </Text>
+        </p>
+        <p>
+          <Text strong>As of: </Text>
+          <Text code>{row.as_of_utc}</Text>
+        </p>
+        <p>
+          <Text strong>Available at: </Text>
+          <Text code>{row.available_at_utc}</Text>
+        </p>
+        <p>
+          <Text strong>Strategy: </Text>
+          <Text code>{row.strategy_version}</Text>
+        </p>
+        <p>
+          <Text strong>Classification: </Text>
+          <Text code>{row.classification_policy_version}</Text>
+        </p>
+        <p>
+          <Text strong>Reason codes: </Text>
+          {row.classification_reason_codes.map(code => (
+            <Tag key={code}>{code}</Tag>
+          ))}
+        </p>
+        <p>
+          <Text strong>Fact hash: </Text>
+          <Text code copyable>
+            {row.fact_hash}
+          </Text>
+        </p>
+        <div>
+          <Text strong>Source fact hashes:</Text>
+          {row.source_fact_hashes.map(hash => (
+            <div key={hash}>
+              <Text code copyable>
+                {hash}
+              </Text>
+            </div>
+          ))}
+        </div>
+      </div>
+    ),
+    collapsible: true,
+  });
+
   if (row.score) {
     sections.push({
       key: 'score_breakdown',
@@ -150,8 +205,19 @@ export function buildMultibaggerSections(row: MultibaggerRow): DetailSection[] {
           <Text>{row.latest_catalyst.title}</Text>
           <br />
           <Text type="secondary" style={{ fontSize: 12 }}>
-            {new Date(row.latest_catalyst.occurred_at).toLocaleDateString()}
+            发生 {new Date(row.latest_catalyst.occurred_at).toLocaleString()} · 可用{' '}
+            {new Date(row.latest_catalyst.available_at_utc).toLocaleString()}
           </Text>
+          <p>
+            <Text strong>来源: </Text>
+            <Text>{row.latest_catalyst.source_ref}</Text>
+          </p>
+          <p>
+            <Text strong>催化 fact: </Text>
+            <Text code copyable>
+              {row.latest_catalyst.fact_hash}
+            </Text>
+          </p>
         </div>
       ),
     });

@@ -1,12 +1,24 @@
 import copy
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import unittest
 
 from ai.snapshot.fingerprint import jcs_canonicalize
+from datapipeline.storage.multibagger import (
+    build_storage_row,
+    build_text_hit_storage_row,
+    canonical_multibagger_fact_hash,
+    canonical_multibagger_storage_fact_hash,
+    canonical_text_hit_fact_hash,
+)
 from datapipeline.contracts import (
     CaptureProvenanceError,
+    MultibaggerSourceRecord,
+    ScanDocument,
+    TextHit,
+    TextHitEnvelope,
     build_capture_wrapper,
     capture_source_version,
     validate_capture_wrapper,
@@ -47,78 +59,118 @@ def universe_fact(**overrides):
     captured = validate_capture_wrapper(
         wrapper, expected_source_kind="jpx-listed-company-monthly"
     )["rows"][0]
-    values = {
-        "market_scope": "jp",
-        "provider_market_label": "JP",
-        "exchange": "tse",
-        "ticker": captured["local_code"],
-        "record_kind": "LIFECYCLE",
-        "universe_source_kind": "jpx-listed-company-monthly",
-        "source_document_id": "jpx-listed-company:20260630:1301",
-        "source_version": capture_source_version(wrapper),
-        "effective_at_utc": datetime.strptime(
+    record = MultibaggerSourceRecord(
+        market="JP",
+        market_scope="jp",
+        exchange="tse",
+        ticker=captured["local_code"],
+        record_kind="LIFECYCLE",
+        source_kind="jpx-listed-company-monthly",
+        source_document_id="jpx-listed-company:20260630:1301",
+        source_version=capture_source_version(wrapper),
+        effective_at_utc=datetime.strptime(
             captured["effective_day"], "%Y%m%d"
         ).replace(tzinfo=timezone.utc),
-        "available_at_utc": datetime.fromisoformat(
+        available_at_utc=datetime.fromisoformat(
             wrapper["captured_at_utc"].replace("Z", "+00:00")
         ),
-        "as_of_utc": NOW,
-        "features": {
+        as_of_utc=NOW,
+        features={
             "section": captured["section"],
             "sector_33_code": captured["sector_33_code"],
             "size_code": captured["size_code"],
         },
-        "evidence_refs": ("jpx-listed-company:20260630:1301",),
-        "text_hit_kinds": (),
-        "fundamental_snapshot": {"name": captured["name_local"]},
-        "filter_pass_bitmap": 3,
-        "market_cap_cny_100m": None,
-        "fact_hash": "0" * 64,
+        evidence_refs=("jpx-listed-company:20260630:1301",),
+        fact_hash="0" * 64,
+    )
+    record = replace(record, fact_hash=canonical_multibagger_fact_hash(record))
+    storage = build_storage_row(record)
+    body = storage.canonical_body
+    values = {
+        **body,
+        "evidence_refs": tuple(body["evidence_refs"]),
+        "text_hit_kinds": tuple(body["text_hit_kinds"]),
+        "features": dict(body["features"]),
+        "fundamental_snapshot": dict(body["fundamental_snapshot"]),
+        "effective_at_utc": record.effective_at_utc,
+        "available_at_utc": record.available_at_utc,
+        "as_of_utc": record.as_of_utc,
+        "fact_hash": record.fact_hash,
     }
     has_hash_override = "fact_hash" in overrides
     values.update(overrides)
     draft = UniverseFact(**values)
-    from strategy.materialization.multibagger_candidate import _universe_body
-
     if not has_hash_override:
-        object.__setattr__(draft, "fact_hash", sha(_universe_body(draft)))
+        hash_values = dict(values)
+        hash_values.pop("fact_hash")
+        hash_values["features"] = dict(draft.features)
+        hash_values["evidence_refs"] = list(draft.evidence_refs)
+        hash_values["text_hit_kinds"] = list(draft.text_hit_kinds)
+        hash_values["fundamental_snapshot"] = dict(draft.fundamental_snapshot)
+        object.__setattr__(
+            draft,
+            "fact_hash",
+            canonical_multibagger_storage_fact_hash(**hash_values),
+        )
     return draft
 
 
 def text_hit(**overrides):
     wrapper_name = overrides.pop("wrapper_name", "jpx_security_sample.json")
     wrapper = fixture(wrapper_name)
+    effective_at = (
+        datetime(2026, 7, 10, 11, 1, 0, tzinfo=timezone.utc)
+        if wrapper["source_kind"] == "kind"
+        else datetime(2026, 6, 30, 0, 0, 0, tzinfo=timezone.utc)
+    )
+    available_at = datetime.fromisoformat(
+        wrapper["captured_at_utc"].replace("Z", "+00:00")
+    )
+    document = ScanDocument(
+        document_id="jpx-listed-company:20260630:1301",
+        ticker="1301",
+        market="JP",
+        market_scope="jp",
+        language="ja",
+        title="captured source title with capacity expansion",
+        body="captured source body with capacity expansion evidence",
+        published_at_utc=effective_at,
+        available_at_utc=available_at,
+        source_kind="jpx-listed-company-monthly",
+        source_version=capture_source_version(wrapper),
+        source_url=None,
+        document_fact_hash="d" * 64,
+    )
+    envelope = TextHitEnvelope(
+        document,
+        TextHit(
+            term_id="capacity_expansion",
+            hit_kind="OPTIONALITY",
+            document_id=document.document_id,
+            ticker=document.ticker,
+            language=document.language,
+            field="BODY",
+            start_offset=10,
+            end_offset=20,
+            context_hash="e" * 64,
+            taxonomy_version="optional-terms@1.0.0",
+        ),
+    )
+    storage = build_text_hit_storage_row(envelope)
     values = {
-        "market_scope": "jp",
-        "ticker": "1301",
-        "source_kind": "jpx-listed-company-monthly",
-        "source_document_id": "jpx-listed-company:20260630:1301",
-        "source_version": capture_source_version(wrapper),
-        "document_fact_hash": "d" * 64,
-        "taxonomy_version": "optional-terms@1.0.0",
-        "term_id": "capacity_expansion",
-        "hit_kind": "OPTIONALITY",
-        "language": "ja",
-        "field": "BODY",
-        "start_offset": 10,
-        "end_offset": 20,
-        "context_hash": "0" * 64,
-        "effective_at_utc": (
-            datetime(2026, 7, 10, 11, 1, 0, tzinfo=timezone.utc)
-            if wrapper["source_kind"] == "kind"
-            else datetime(2026, 6, 30, 0, 0, 0, tzinfo=timezone.utc)
-        ),
-        "available_at_utc": datetime.fromisoformat(
-            wrapper["captured_at_utc"].replace("Z", "+00:00")
-        ),
+        **storage.__dict__,
     }
-    has_hash_override = "context_hash" in overrides
+    has_hash_override = "hit_fact_hash" in overrides
     values.update(overrides)
     draft = TextHitFact(**values)
-    from strategy.materialization.multibagger_candidate import _text_hit_body
-
     if not has_hash_override:
-        object.__setattr__(draft, "context_hash", sha(_text_hit_body(draft)))
+        hash_values = dict(values)
+        hash_values.pop("hit_fact_hash")
+        object.__setattr__(
+            draft,
+            "hit_fact_hash",
+            canonical_text_hit_fact_hash(**hash_values),
+        )
     return draft
 
 
@@ -243,6 +295,9 @@ def request(**overrides):
         "kind": "product",
         "title": "captured fixture",
         "occurred_at": (NOW - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "available_at_utc": (NOW - timedelta(minutes=30)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
         "source_ref": "fixture:jpx-security:1301",
     }
     values = {
@@ -257,6 +312,7 @@ def request(**overrides):
             kind=catalyst_body["kind"],
             title=catalyst_body["title"],
             occurred_at=NOW - timedelta(hours=1),
+            available_at_utc=NOW - timedelta(minutes=30),
             source_ref=catalyst_body["source_ref"],
             fact_hash=sha(catalyst_body),
         ),
@@ -357,7 +413,7 @@ class MaterializerTests(unittest.TestCase):
         changed_source = universe_fact(source_version="1.0.0:changed")
         self.assertNotEqual(changed_source.fact_hash, baseline_fact.fact_hash)
         changed_hit = text_hit(source_version="1.0.0:changed")
-        self.assertNotEqual(changed_hit.context_hash, baseline_hit.context_hash)
+        self.assertNotEqual(changed_hit.hit_fact_hash, baseline_hit.hit_fact_hash)
         changed_candidate = materialize_candidate(
             request(sources=(changed_source,), text_hits=(changed_hit,)),
             Policy(),
@@ -375,7 +431,8 @@ class MaterializerTests(unittest.TestCase):
         self.assertEqual(first.stage, "early")
         self.assertEqual(first.conclusion, "MULTIBAGGER_2X")
         self.assertEqual(first.source_fact_hashes, tuple(sorted(first.source_fact_hashes)))
-        self.assertEqual(len(first.source_fact_hashes), 3)
+        self.assertEqual(len(first.source_fact_hashes), 5)
+        self.assertIn(request().latest_catalyst.fact_hash, first.source_fact_hashes)
         self.assertEqual(len(first.fact_hash), 64)
         self.assertEqual(candidate_from_row(candidate_to_row(first)), first)
 
@@ -406,6 +463,7 @@ class MaterializerTests(unittest.TestCase):
         self.assertIn(jpx.fact_hash, candidate.source_fact_hashes)
         self.assertIn(kind.document_fact_hash, candidate.source_fact_hashes)
         self.assertIn(kind.context_hash, candidate.source_fact_hashes)
+        self.assertIn(kind.hit_fact_hash, candidate.source_fact_hashes)
         self.assertEqual(jpx.source_version, capture_source_version(jpx_wrapper))
         self.assertEqual(kind.source_version, capture_source_version(kind_wrapper))
 
@@ -438,6 +496,22 @@ class MaterializerTests(unittest.TestCase):
         future_risk["evaluated_at"] = "2099-01-01T00:00:00Z"
         generated_future = dict(decision().entry_plan)
         generated_future["generated_at"] = "2099-01-01T00:00:00Z"
+        catalyst = request().latest_catalyst
+        future_catalyst_body = {
+            "kind": catalyst.kind,
+            "title": catalyst.title,
+            "occurred_at": catalyst.occurred_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "available_at_utc": "2099-01-01T00:00:00Z",
+            "source_ref": catalyst.source_ref,
+        }
+        future_catalyst = LatestCatalyst(
+            kind=catalyst.kind,
+            title=catalyst.title,
+            occurred_at=catalyst.occurred_at,
+            available_at_utc=datetime(2099, 1, 1, tzinfo=timezone.utc),
+            source_ref=catalyst.source_ref,
+            fact_hash=sha(future_catalyst_body),
+        )
         cases = (
             request(sources=(universe_fact(available_at_utc=NOW + timedelta(seconds=1)),)),
             request(sources=(universe_fact(effective_at_utc=NOW + timedelta(seconds=1)),)),
@@ -446,6 +520,7 @@ class MaterializerTests(unittest.TestCase):
             request(text_hits=(text_hit(available_at_utc=NOW + timedelta(seconds=1)),)),
             request(text_hits=(text_hit(effective_at_utc=NOW + timedelta(seconds=1)),)),
             request(text_hits=(text_hit(start_offset=True),)),
+            request(latest_catalyst=future_catalyst),
             request(decision=decision(score={**score(), "weights_profile": "multibagger"})),
             request(
                 decision=decision(
@@ -463,7 +538,7 @@ class MaterializerTests(unittest.TestCase):
                     materialize_candidate(value, Policy())
 
     def test_candidate_availability_includes_strategy_decision_time(self):
-        strategy_time = NOW - timedelta(hours=1)
+        strategy_time = NOW - timedelta(minutes=15)
         score_value = score()
         score_value["computed_at"] = strategy_time.strftime("%Y-%m-%dT%H:%M:%SZ")
         score_body = dict(score_value)
@@ -562,6 +637,7 @@ class MaterializerTests(unittest.TestCase):
                         kind="unclassified",
                         title=catalyst.title,
                         occurred_at=catalyst.occurred_at,
+                        available_at_utc=catalyst.available_at_utc,
                         source_ref=catalyst.source_ref,
                         fact_hash=catalyst.fact_hash,
                     )
@@ -575,6 +651,7 @@ class MaterializerTests(unittest.TestCase):
                         kind=catalyst.kind,
                         title=catalyst.title,
                         occurred_at=catalyst.occurred_at,
+                        available_at_utc=catalyst.available_at_utc,
                         source_ref=catalyst.source_ref,
                         fact_hash="f" * 64,
                     )
