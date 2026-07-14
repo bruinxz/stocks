@@ -1,0 +1,31 @@
+backend/tests/e2e/tab5-six-month-live-http.test.ts
+  s_6ca1020a327476::t_73b569cc2074c5 1-193
+backend/tests/e2e/tab5-six-month-live.pg.sh
+  s_6ca1020a327476::t_b8e7858404baa4 1-62
+backend/tests/e2e/tab5-six-month-request-matrix.fixture.json
+  s_6ca1020a327476::t_7d017e4412274a 36-38
+backend/tests/e2e/tab5-six-month-request-matrix.test.ts
+  s_6ca1020a327476::t_fe9dc2c2da9d7d 108-112
+datapipeline/tests/storage/backtest_pit/test_writer.pg.py
+  s_6ca1020a327476::t_15443a161bac25 121-124
+frontend/src/pages/catdesk/tabs/backtest/__tests__/tab5SixMonthLiveE2E.test.tsx
+  s_6ca1020a327476::t_55b23fed3bbb71 1-163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "18dc740fb1bed94917432456b17c1766b570bc39",
+  "prompts": {},
+  "sessions": {
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
