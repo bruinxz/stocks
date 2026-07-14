@@ -1,0 +1,29 @@
+ai/explanation/template_engine.py
+  s_6ca1020a327476::t_3e77b315e705dc 3-34,41-43,47,57,63,71,73-74,81-87,92,100,102,109,114
+ai/tests/test_output_fingerprint.py
+  s_6ca1020a327476::t_544251c4bf7aa1 308
+ai/tests/test_pipeline_context.py
+  s_6ca1020a327476::t_281578206ec538 77
+ai/tests/test_weight_attribution.py
+  s_6ca1020a327476::t_0df0eb06690a29 22,35
+ai/types.py
+  s_6ca1020a327476::t_f60a9f95a5907e 182-199
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "8de68ab9552f756c0524cfd91d2e2d175b4f025d",
+  "prompts": {},
+  "sessions": {
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
