@@ -169,9 +169,18 @@ def _validate_market_identity(record: MultibaggerSourceRecord) -> None:
         raise ValueError("reserved aggregate identity cannot enter ticker facts")
 
 
-def _canonical_body(
+def multibagger_storage_fact_body(
     *,
-    record: MultibaggerSourceRecord,
+    market_scope: str,
+    exchange: str,
+    ticker: str,
+    record_kind: str,
+    universe_source_kind: str,
+    source_document_id: str,
+    source_version: str,
+    effective_at_utc: datetime,
+    available_at_utc: datetime,
+    as_of_utc: datetime,
     provider_market_label: str,
     features: object,
     evidence_refs: object,
@@ -181,24 +190,29 @@ def _canonical_body(
     market_cap_cny_100m: Optional[str],
 ) -> Mapping[str, object]:
     return {
-        "as_of_utc": _datetime_text(record.as_of_utc, "as_of_utc"),
-        "available_at_utc": _datetime_text(record.available_at_utc, "available_at_utc"),
-        "effective_at_utc": _datetime_text(record.effective_at_utc, "effective_at_utc"),
+        "as_of_utc": _datetime_text(as_of_utc, "as_of_utc"),
+        "available_at_utc": _datetime_text(available_at_utc, "available_at_utc"),
+        "effective_at_utc": _datetime_text(effective_at_utc, "effective_at_utc"),
         "evidence_refs": evidence_refs,
-        "exchange": record.exchange,
+        "exchange": exchange,
         "features": features,
         "filter_pass_bitmap": filter_pass_bitmap,
         "fundamental_snapshot": fundamental_snapshot,
         "market_cap_cny_100m": market_cap_cny_100m,
-        "market_scope": record.market_scope,
+        "market_scope": market_scope,
         "provider_market_label": provider_market_label,
-        "record_kind": record.record_kind,
-        "source_document_id": record.source_document_id,
-        "source_version": record.source_version,
+        "record_kind": record_kind,
+        "source_document_id": source_document_id,
+        "source_version": source_version,
         "text_hit_kinds": text_hit_kinds,
-        "ticker": record.ticker,
-        "universe_source_kind": record.source_kind,
+        "ticker": ticker,
+        "universe_source_kind": universe_source_kind,
     }
+
+
+def canonical_multibagger_storage_fact_hash(**values: object) -> str:
+    body = multibagger_storage_fact_body(**values)  # type: ignore[arg-type]
+    return hashlib.sha256(canonicalize_json(body).encode("utf-8")).hexdigest()
 
 
 def _storage_row(record: MultibaggerSourceRecord) -> _StorageRow:
@@ -232,8 +246,17 @@ def _storage_row(record: MultibaggerSourceRecord) -> _StorageRow:
     if market_cap is not None and record.market_scope != "cn_a":
         raise ValueError("market_cap_cny_100m is valid only for market_scope=cn_a")
     provider_label = record.market
-    body = _canonical_body(
-        record=record,
+    body = multibagger_storage_fact_body(
+        market_scope=record.market_scope,
+        exchange=record.exchange,
+        ticker=record.ticker,
+        record_kind=record.record_kind,
+        universe_source_kind=record.source_kind,
+        source_document_id=record.source_document_id,
+        source_version=record.source_version,
+        effective_at_utc=record.effective_at_utc,
+        available_at_utc=record.available_at_utc,
+        as_of_utc=record.as_of_utc,
         provider_market_label=provider_label,
         features=features,
         evidence_refs=evidence_refs,

@@ -74,6 +74,12 @@ export class MultibaggerCandidateSnapshot extends Model {
   @Column({ type: DataType.TEXT, allowNull: false, field: 'strategy_version' })
   declare strategyVersion: string;
 
+  @Column({ type: DataType.TEXT, allowNull: false, field: 'classification_policy_version' })
+  declare classification_policy_version: string;
+
+  @Column({ type: DataType.JSONB, allowNull: false, field: 'classification_reason_codes' })
+  declare classification_reason_codes: string[];
+
   @Column({ type: DataType.STRING(64), allowNull: false, field: 'fact_hash' })
   declare factHash: string;
 

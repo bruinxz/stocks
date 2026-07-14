@@ -18,6 +18,7 @@ const CANDIDATE = {
     snapshot_hash: 'c'.repeat(64),
     ticker: SYMBOL,
     as_of: '2026-07-10',
+    market_scope: 'cn_a',
     quality: { score: 80, band: 'B', evidence: [], inputs: {} },
     growth: { score: 92, band: 'A', evidence: ['free-source evidence'], inputs: {} },
     valuation: { score: 74, band: 'B', evidence: [], inputs: {} },
@@ -77,10 +78,22 @@ const CANDIDATE = {
     kind: 'product',
     title: 'Launch',
     occurred_at: '2026-07-10T05:00:00Z',
+    available_at_utc: '2026-07-10T05:30:00Z',
+    source_ref: 'official:launch',
+    fact_hash: 'c'.repeat(64),
   }),
   market: 'A',
+  market_scope: 'cn_a',
+  exchange: 'sh',
   stage: 'growth',
   conclusion: 'MULTIBAGGER_5X',
+  fact_hash: 'f'.repeat(64),
+  source_fact_hashes: JSON.stringify(['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64)]),
+  as_of_utc: '2026-07-10T08:00:00Z',
+  available_at_utc: '2026-07-10T07:00:00Z',
+  strategy_version: 'japan-multibagger@1.0.0',
+  classification_policy_version: 'multibagger-policy@1.0.0',
+  classification_reason_codes: JSON.stringify(['GROWTH_EVIDENCE']),
 };
 
 function buildApp(): express.Express {
@@ -135,6 +148,34 @@ async function main(): Promise<void> {
       'KPI conclusion coverage is deterministic',
       list.body.kpi.conclusion_coverage.MULTIBAGGER_5X === 1
     );
+    assert(
+      'list exposes authenticated candidate fact hash',
+      list.body.rows[0].fact_hash === 'f'.repeat(64)
+    );
+    assert(
+      'list exposes ordered source fact hashes',
+      JSON.stringify(list.body.rows[0].source_fact_hashes) ===
+        JSON.stringify(['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64)])
+    );
+    assert('list exposes PIT as_of pin', list.body.rows[0].as_of_utc === CANDIDATE.as_of_utc);
+    assert(
+      'list exposes PIT availability pin',
+      list.body.rows[0].available_at_utc === CANDIDATE.available_at_utc
+    );
+    assert(
+      'list exposes physical identity pins',
+      list.body.rows[0].market_scope === 'cn_a' && list.body.rows[0].exchange === 'sh'
+    );
+    assert(
+      'list preserves catalyst source proof pins',
+      list.body.rows[0].latest_catalyst.source_ref === 'official:launch' &&
+        list.body.rows[0].latest_catalyst.fact_hash === 'c'.repeat(64)
+    );
+    assert(
+      'list exposes strategy and classification versions',
+      list.body.rows[0].strategy_version === CANDIDATE.strategy_version &&
+        list.body.rows[0].classification_policy_version === CANDIDATE.classification_policy_version
+    );
     const listCall = calls.at(-1);
     assert(
       'valid filters reach parameterized SQL',
@@ -149,6 +190,8 @@ async function main(): Promise<void> {
           listCall?.sql.includes('candidate.score') &&
           listCall?.sql.includes('candidate.risk_gate') &&
           listCall?.sql.includes('candidate.entry_plan') &&
+          listCall?.sql.includes('candidate.fact_hash') &&
+          listCall?.sql.includes('candidate.source_fact_hashes') &&
           !listCall?.sql.includes("fundamental_snapshot->'score'")
       )
     );
@@ -211,6 +254,7 @@ async function main(): Promise<void> {
     const detail = await request(app).get(`/api/v1/multibagger/${SYMBOL}/detail`);
     assert('detail returns deterministic 200', detail.status === 200);
     assert('detail returns normalized candidate', detail.body.symbol === SYMBOL);
+    assert('detail returns the same proof pins', detail.body.fact_hash === CANDIDATE.fact_hash);
     const detailCall = calls.at(-1);
     assert('detail uses symbol replacement', detailCall?.replacements.symbol === SYMBOL);
     assert(

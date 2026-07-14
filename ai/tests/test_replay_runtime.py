@@ -120,6 +120,7 @@ def _text_hit(*, available=NOW, market_scope="jp"):
         published_at_utc=available,
         available_at_utc=available,
         source_kind="official-disclosure",
+        source_version="capture-v1",
         source_url=None,
         document_fact_hash="c" * 64,
     )
