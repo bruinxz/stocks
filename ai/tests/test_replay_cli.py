@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,7 @@ from ai.replay.cli import (
     ReplayCliRuntime,
     ReplayRuntimeConfigurationError,
     ReplayRuntimeUnavailableError,
+    ReplayWorkerProtocolError,
     PUBLIC_ERROR_MESSAGES,
     _error,
     _write_error,
@@ -27,6 +29,7 @@ from ai.replay.cli import (
     build_runtime_from_environment,
     build_submit_status_runtime,
     dispatch,
+    main,
 )
 from ai.replay.file_store import AtomicFileReplayJobStore
 from ai.replay.runtime import ReplayWorker
@@ -119,6 +122,17 @@ class Pipeline:
         return ReplayResult(SNAPSHOT_ID, "f" * 64)
 
 
+class ReturningWorker:
+    def __init__(self, job):
+        self.job = job
+
+    def run_job(self, _job_id):
+        return self.job
+
+    def run_batch(self, _job_ids, *, limit):
+        raise AssertionError("run_batch is outside the CLI protocol")
+
+
 def _runtime(path, *, pipeline=None):
     store = AtomicFileReplayJobStore(path)
     sources = {kind: Source(kind) for kind in KINDS}
@@ -146,6 +160,14 @@ class Buffer:
 
     def write(self, value):
         self.value += value
+
+    def flush(self):
+        pass
+
+
+class BinaryStream:
+    def __init__(self, value=b""):
+        self.buffer = io.BytesIO(value)
 
     def flush(self):
         pass
@@ -196,7 +218,6 @@ class ReplayCliTests(unittest.TestCase):
             {
                 "job_id": str(JOB_ID),
                 "status": "completed",
-                "snapshot_id": SNAPSHOT_ID,
             },
         )
 
@@ -217,7 +238,6 @@ class ReplayCliTests(unittest.TestCase):
             {
                 "job_id": str(JOB_ID),
                 "status": "failed",
-                "error": "replay failed",
             },
         )
         self.assertNotIn("SECRET_TOKEN", json.dumps(failed))
@@ -238,6 +258,74 @@ class ReplayCliTests(unittest.TestCase):
             finally:
                 runtime.close()
         self.assertEqual(status["result"]["job"]["status"], "queued")
+
+    def test_run_one_rejects_non_terminal_worker_and_durable_states(self):
+        with _temporary_directory() as directory:
+            runtime = _runtime(Path(directory) / JOB_STORE_FILENAME)
+            try:
+                dispatch(_submit_request(), runtime=runtime)
+                queued = runtime.status(str(JOB_ID))
+
+                runtime._worker = ReturningWorker(queued)
+                with self.assertRaises(ReplayWorkerProtocolError):
+                    dispatch(_job_request("run_one"), runtime=runtime)
+                self.assertEqual(runtime.status(str(JOB_ID)).status, "queued")
+
+                runtime._worker = ReturningWorker({"status": "completed"})
+                with self.assertRaises(ReplayWorkerProtocolError):
+                    dispatch(_job_request("run_one"), runtime=runtime)
+                self.assertEqual(runtime.status(str(JOB_ID)).status, "queued")
+
+                runtime._worker = ReturningWorker(queued.running(NOW))
+                with self.assertRaises(ReplayWorkerProtocolError):
+                    dispatch(_job_request("run_one"), runtime=runtime)
+                self.assertEqual(runtime.status(str(JOB_ID)).status, "queued")
+
+                unpersisted_terminal = queued.completed(
+                    ReplayResult(SNAPSHOT_ID, "f" * 64), NOW
+                )
+                runtime._worker = ReturningWorker(unpersisted_terminal)
+                with self.assertRaises(ReplayWorkerProtocolError):
+                    dispatch(_job_request("run_one"), runtime=runtime)
+                self.assertEqual(runtime.status(str(JOB_ID)).status, "queued")
+
+                running = runtime._service._job_store.transition(
+                    str(JOB_ID), "queued", queued.running(NOW)
+                )
+                runtime._worker = ReturningWorker(
+                    running.completed(ReplayResult(SNAPSHOT_ID, "f" * 64), NOW)
+                )
+                with self.assertRaises(ReplayWorkerProtocolError):
+                    dispatch(_job_request("run_one"), runtime=runtime)
+                self.assertEqual(runtime.status(str(JOB_ID)).status, "running")
+            finally:
+                runtime.close()
+
+    def test_non_terminal_worker_is_generic_protocol_failure_not_success(self):
+        with _temporary_directory() as directory:
+            path = Path(directory) / JOB_STORE_FILENAME
+            runtime = _runtime(path)
+            dispatch(_submit_request(), runtime=runtime)
+            runtime._worker = ReturningWorker(runtime.status(str(JOB_ID)))
+            stdin = BinaryStream(json.dumps(_job_request("run_one")).encode("utf-8"))
+            stdout = BinaryStream()
+            stderr = BinaryStream()
+            with patch("ai.replay.cli.sys.stdin", stdin):
+                with patch("ai.replay.cli.sys.stdout", stdout):
+                    with patch("ai.replay.cli.sys.stderr", stderr):
+                        exit_code = main(runtime_factory=lambda: runtime)
+
+            self.assertEqual(exit_code, 4)
+            self.assertEqual(stdout.buffer.getvalue(), b"")
+            self.assertEqual(
+                json.loads(stderr.buffer.getvalue()), _error("INTERNAL_ERROR")
+            )
+
+            recovered = _runtime(path)
+            try:
+                self.assertEqual(recovered.status(str(JOB_ID)).status, "queued")
+            finally:
+                recovered.close()
 
     def test_exact_request_keys_types_protocol_operation_and_uuid(self):
         def must_not_build():
@@ -303,7 +391,7 @@ class ReplayCliTests(unittest.TestCase):
             finally:
                 runtime.close()
 
-    def test_runtime_directory_must_be_explicit_absolute_owner_only(self):
+    def test_runtime_directory_matches_atomic_store_owner_and_mode_boundary(self):
         with _temporary_directory() as directory:
             secure = Path(directory) / "secure"
             secure.mkdir(mode=0o700)
@@ -311,10 +399,22 @@ class ReplayCliTests(unittest.TestCase):
             runtime.close()
             self.assertTrue((secure / JOB_STORE_FILENAME).is_file())
 
-            unsafe = Path(directory) / "unsafe"
-            unsafe.mkdir(mode=0o755)
-            with self.assertRaises(ReplayRuntimeConfigurationError):
-                build_runtime_from_environment({RUNTIME_DIR_ENV: str(unsafe)})
+            for mode in (0o750, 0o755):
+                allowed = Path(directory) / ("allowed-" + oct(mode))
+                allowed.mkdir(mode=mode)
+                os.chmod(allowed, mode)
+                runtime = build_runtime_from_environment(
+                    {RUNTIME_DIR_ENV: str(allowed)}
+                )
+                runtime.close()
+                self.assertTrue((allowed / JOB_STORE_FILENAME).is_file())
+
+            for mode in (0o770, 0o777):
+                unsafe = Path(directory) / ("unsafe-" + oct(mode))
+                unsafe.mkdir(mode=mode)
+                os.chmod(unsafe, mode)
+                with self.assertRaises(ReplayRuntimeConfigurationError):
+                    build_runtime_from_environment({RUNTIME_DIR_ENV: str(unsafe)})
             with self.assertRaises(ReplayRuntimeConfigurationError):
                 build_runtime_from_environment({})
             with self.assertRaises(ReplayRuntimeConfigurationError):

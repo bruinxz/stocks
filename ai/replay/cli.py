@@ -106,6 +106,10 @@ class ReplayRuntimeConfigurationError(RuntimeError):
     pass
 
 
+class ReplayWorkerProtocolError(RuntimeError):
+    pass
+
+
 class _UnavailableSource:
     """Constructor-only placeholder; execution is blocked before this port."""
 
@@ -154,11 +158,18 @@ class ReplayCliRuntime:
                 "concrete replay worker is not configured"
             )
         returned = self._worker.run_job(job_id)
-        ReplayService._validate_job(returned)
+        try:
+            ReplayService._validate_job(returned)
+        except ReplayServiceError as error:
+            raise ReplayWorkerProtocolError(
+                "replay worker returned invalid state"
+            ) from error
+        if returned.status not in {"completed", "failed"}:
+            raise ReplayWorkerProtocolError("replay worker returned non-terminal state")
         persisted = self._service.get(job_id)
-        if returned != persisted:
-            raise ReplayConflictError(
-                "replay worker did not return the persisted job state"
+        if persisted.status not in {"completed", "failed"} or returned != persisted:
+            raise ReplayWorkerProtocolError(
+                "replay worker result does not match durable terminal state"
             )
         return persisted
 
@@ -202,7 +213,7 @@ def build_submit_status_runtime(
 def build_runtime_from_environment(
     environ: Optional[Mapping[str, str]] = None,
 ) -> ReplayCliRuntime:
-    """Open only an explicitly provisioned, owner-only runtime directory."""
+    """Open only an explicitly provisioned, owner-controlled runtime dir."""
 
     values = os.environ if environ is None else environ
     raw = values.get(RUNTIME_DIR_ENV)
@@ -230,10 +241,10 @@ def _validate_runtime_directory(runtime_dir: Path) -> None:
         stat.S_ISLNK(metadata.st_mode)
         or not stat.S_ISDIR(metadata.st_mode)
         or metadata.st_uid != os.geteuid()
-        or stat.S_IMODE(metadata.st_mode) != 0o700
+        or stat.S_IMODE(metadata.st_mode) & 0o022
     ):
         raise ReplayRuntimeConfigurationError(
-            "replay runtime directory must be an owner-only directory"
+            "replay runtime directory ownership or mode is unsafe"
         )
 
 
@@ -290,15 +301,10 @@ def dispatch(
 
 def _job_payload(job: ReplayJob) -> dict[str, Any]:
     ReplayService._validate_job(job)
-    payload: dict[str, Any] = {
+    return {
         "job_id": job.job_id,
         "status": job.status,
     }
-    if job.status == "completed":
-        payload["snapshot_id"] = job.snapshot_id
-    elif job.status == "failed":
-        payload["error"] = "replay failed"
-    return payload
 
 
 def _is_uuid_v4(value: Any) -> bool:
@@ -400,7 +406,10 @@ def _exit_code(code: str) -> int:
     return ERROR_EXIT_CODES.get(code, ERROR_EXIT_CODES["INTERNAL_ERROR"])
 
 
-def main() -> int:
+def main(
+    *,
+    runtime_factory: Callable[[], ReplayCliRuntime] = build_runtime_from_environment,
+) -> int:
     raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
     if len(raw) > MAX_INPUT_BYTES:
         _write_error(sys.stderr, "INPUT_TOO_LARGE")
@@ -412,7 +421,7 @@ def main() -> int:
             object_pairs_hook=_unique_object,
         )
         _validate_json_tree(request)
-        response = dispatch(request)
+        response = dispatch(request, runtime_factory=runtime_factory)
         _write_success(sys.stdout, response)
         return 0
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -427,6 +436,8 @@ def main() -> int:
         code = "REPLAY_CONFLICT"
     except ReplayRuntimeUnavailableError:
         code = "REPLAY_RUNTIME_UNAVAILABLE"
+    except ReplayWorkerProtocolError:
+        code = "INTERNAL_ERROR"
     except (
         ReplayRuntimeConfigurationError,
         ReplayJobStoreConfigurationError,

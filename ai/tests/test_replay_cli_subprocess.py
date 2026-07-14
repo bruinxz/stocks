@@ -245,7 +245,8 @@ class ReplayCliSubprocessTests(unittest.TestCase):
 
         with _temporary_directory() as directory:
             unsafe = Path(directory) / secret
-            unsafe.mkdir(mode=0o755)
+            unsafe.mkdir(mode=0o777)
+            os.chmod(unsafe, 0o777)
             rejected = run_cli(request=_submit_request(), runtime_dir=unsafe)
         self.assertEqual(rejected.returncode, 4)
         self.assertEqual(rejected.stdout, b"")
