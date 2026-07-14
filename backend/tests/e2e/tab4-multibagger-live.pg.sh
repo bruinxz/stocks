@@ -72,6 +72,7 @@ TAB4_DATABASE_URL="postgresql://${PGUSER}@/${DB}?host=${PGHOST}&port=${PGPORT}" 
 
 DB_HOST="$PGHOST" DB_PORT="$PGPORT" DB_USER="$PGUSER" DB_PASSWORD="" \
 DB_NAME="$DB" NODE_ENV=test SKIP_DEFAULT_USER_INIT=true \
+TAB4_LIVE_HTTP_TEST=1 \
 TAB4_RESPONSE_ARTIFACT="$(basename "$ARTIFACT")" \
   "$ROOT/backend/node_modules/.bin/ts-node" --transpile-only \
   "$ROOT/backend/tests/e2e/tab4-multibagger-live-http.test.ts"

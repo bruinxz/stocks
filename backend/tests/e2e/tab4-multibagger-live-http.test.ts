@@ -12,6 +12,11 @@ const artifactPath = path.resolve(
 );
 
 async function main(): Promise<void> {
+  if (process.env.TAB4_LIVE_HTTP_TEST !== '1') {
+    console.log('tab4-multibagger-live-http: SKIP (explicit disposable-PG harness only)');
+    return;
+  }
+
   const app = express();
   app.use(express.json());
   app.use('/api/v1/multibagger', multibaggerRoutes);
