@@ -1,0 +1,23 @@
+backend/scripts/migrations/2026-07-14-ai-replay-typed-source-capture-rollback.sql
+  s_f5fc07d6d4e018::t_e4968d417caded 1-57
+backend/scripts/migrations/2026-07-14-ai-replay-typed-source-capture.sql
+  s_f5fc07d6d4e018::t_f1fdb77d46344f 1-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9251f2612e65e97f3450cd7fee24a2d219be5490",
+  "prompts": {},
+  "sessions": {
+    "s_f5fc07d6d4e018": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5fcc-a631-7440-a47a-8fec31249ca5",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
