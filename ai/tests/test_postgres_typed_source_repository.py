@@ -188,6 +188,7 @@ def _text_hit_json():
         "published_at_utc": "2026-07-10T06:00:00Z",
         "available_at_utc": NOW_TEXT,
         "source_kind": "official-disclosure",
+        "source_version": "capture-v1",
         "source_url": None,
         "document_fact_hash": "0" * 64,
     }

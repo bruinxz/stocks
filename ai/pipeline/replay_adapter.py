@@ -495,7 +495,7 @@ def _text_hit_signal(envelope) -> dict[str, Any]:
         "market_scope": envelope.document.market_scope,
         "source_kind": envelope.document.source_kind,
         "source_document_id": envelope.document.document_id,
-        "source_version": envelope.hit.taxonomy_version,
+        "source_version": envelope.document.source_version,
         "available_at_utc": _utc_text(envelope.document.available_at_utc),
         "fact_hash": envelope.document.document_fact_hash,
         "term_id": envelope.hit.term_id,
