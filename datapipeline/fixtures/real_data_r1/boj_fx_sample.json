@@ -1,0 +1,30 @@
+{
+  "capture_instance": "44444444-4444-4444-8444-444444444444",
+  "capture_schema_version": "1.0.0",
+  "captured_at_utc": "2026-07-13T06:00:00Z",
+  "captured_response_sha256": "481c129cdda9f1b169699128030ebc2699241c9d51fb8067b8086aaca9002bbb",
+  "declared_live_row_count": 10413,
+  "fixture_mode": false,
+  "payload": {
+    "rows": [
+      {
+        "observation_day": "2026-07-07",
+        "local_per_usd": "161.97"
+      },
+      {
+        "observation_day": "2026-07-08",
+        "local_per_usd": "162.22"
+      },
+      {
+        "observation_day": "2026-07-09",
+        "local_per_usd": "162.35"
+      }
+    ]
+  },
+  "payload_sha256": "269d92306afb6f0f19daa561947f1dd966c3e565e6465c2778062d27366ef988",
+  "production_seed_allowed": false,
+  "source_kind": "BOJ",
+  "source_url": "https://www.stat-search.boj.or.jp/ssi/mtshtml/csv/fm08_d_1_en.csv",
+  "terms_url": "https://www.boj.or.jp/en/copyright.htm",
+  "wrapper_sha256": "1952ff2f66d1b81b816ed1b243f92b7d91748111c8476158d806325e6bc8ab22"
+}

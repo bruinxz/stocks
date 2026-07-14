@@ -13,6 +13,7 @@ from .market_records import JsonValue, MarketScope
 JpKrMarketScope = Literal["jp", "kr"]
 JpKrExchange = Literal["tse", "ose", "krx", "kosdaq"]
 FilingSourceKind = Literal["jpx-edinet", "dart"]
+DisclosureSourceKind = Literal["jpx-edinet", "dart", "kind"]
 FiscalPeriodKind = Literal["Q1", "Q3", "SEMIANNUAL", "ANNUAL"]
 TextLanguage = Literal["en", "zh", "ja", "ko"]
 TextHitKind = Literal["OPTIONALITY", "POSITIVE", "NEGATIVE", "EARLY_NEWS"]
@@ -27,6 +28,7 @@ _MARKET_SCOPE = {
 _JP_EXCHANGES = frozenset(("tse", "ose"))
 _KR_EXCHANGES = frozenset(("krx", "kosdaq"))
 _FILING_SOURCES = frozenset(("jpx-edinet", "dart"))
+_DISCLOSURE_SOURCES = frozenset(("jpx-edinet", "dart", "kind"))
 _FISCAL_PERIODS = frozenset(("Q1", "Q3", "SEMIANNUAL", "ANNUAL"))
 _TEXT_LANGUAGES = frozenset(("en", "zh", "ja", "ko"))
 _TEXT_HIT_KINDS = frozenset(("OPTIONALITY", "POSITIVE", "NEGATIVE", "EARLY_NEWS"))
@@ -252,7 +254,7 @@ class JpKrDisclosureRecord:
     event_body_url: str | None
     event_time_utc: datetime
     available_at_utc: datetime
-    source_kind: FilingSourceKind
+    source_kind: DisclosureSourceKind
     source_document_id: str
     source_version: str
     fact_hash: str
@@ -261,7 +263,13 @@ class JpKrDisclosureRecord:
 
     def __post_init__(self) -> None:
         _require_market_exchange(self.market_scope, self.exchange)
-        _require_source_mapping(self.source_kind, self.market_scope)
+        if self.source_kind not in _DISCLOSURE_SOURCES:
+            raise ValueError("disclosure source_kind is not supported")
+        if self.source_kind == "kind":
+            if self.market_scope != "kr":
+                raise ValueError("KIND disclosures must use market_scope=kr")
+        else:
+            _require_source_mapping(self.source_kind, self.market_scope)
         _require_non_empty(self.ticker, "ticker")
         _require_non_empty(self.disclosure_kind, "disclosure_kind")
         _require_non_empty(self.event_headline_local, "event_headline_local")
