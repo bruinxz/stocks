@@ -1,0 +1,25 @@
+ai/pipeline/replay_adapter.py
+  s_6ca1020a327476::t_636f00bc591309 498
+ai/replay/runtime.py
+  s_6ca1020a327476::t_d1846657c2b6ac 505
+ai/tests/test_postgres_typed_source_repository.py
+  s_6ca1020a327476::t_fbcde0b7d7238b 191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "681f131580a15e0dd4a81ae27cb1beae45679993",
+  "prompts": {},
+  "sessions": {
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
