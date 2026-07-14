@@ -748,28 +748,26 @@ def materialize_candidate(
             _fail("latest catalyst is not PIT-visible")
         _require_string(catalyst.source_ref, "latest catalyst source_ref")
         _require_hash(catalyst.fact_hash, "latest catalyst fact_hash")
-        expected = _canonical_hash(
-            {
-                "kind": catalyst.kind,
-                "title": catalyst.title,
-                "occurred_at": _utc_text(catalyst.occurred_at),
-                "available_at_utc": _utc_text(catalyst.available_at_utc),
-                "source_ref": catalyst.source_ref,
-            }
-        )
-        if catalyst.fact_hash != expected:
-            _fail("latest catalyst fact_hash mismatch")
+        # A catalyst is a Strategy-owned projection over an immutable source
+        # fact, not a new DataPipeline fact.  Pin the projection to a source
+        # document that this materialization actually loaded and authenticated.
+        # Text-hit document hashes are preferred; universe facts provide the
+        # bounded fallback for documents without a lexical hit.
+        authenticated_source_pins = {
+            (hit.source_document_id, hit.document_fact_hash)
+            for hit in request.text_hits
+        } | {
+            (source.source_document_id, source.fact_hash)
+            for source in request.sources
+        }
+        if (catalyst.source_ref, catalyst.fact_hash) not in authenticated_source_pins:
+            _fail("latest catalyst does not pin an authenticated source fact")
     source_hashes = tuple(
         sorted(
             {source.fact_hash for source in request.sources}
             | {hit.document_fact_hash for hit in request.text_hits}
             | {hit.context_hash for hit in request.text_hits}
             | {hit.hit_fact_hash for hit in request.text_hits}
-            | (
-                {request.latest_catalyst.fact_hash}
-                if request.latest_catalyst is not None
-                else set()
-            )
         )
     )
     if not source_hashes:

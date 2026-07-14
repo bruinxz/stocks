@@ -291,6 +291,8 @@ class Store:
 
 
 def request(**overrides):
+    source = universe_fact()
+    hit = text_hit()
     catalyst_body = {
         "kind": "product",
         "title": "captured fixture",
@@ -298,15 +300,15 @@ def request(**overrides):
         "available_at_utc": (NOW - timedelta(minutes=30)).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         ),
-        "source_ref": "fixture:jpx-security:1301",
+        "source_ref": hit.source_document_id,
     }
     values = {
         "market_scope": "jp",
         "exchange": "tse",
         "ticker": "1301",
         "as_of_utc": NOW,
-        "sources": (universe_fact(),),
-        "text_hits": (text_hit(),),
+        "sources": (source,),
+        "text_hits": (hit,),
         "decision": decision(),
         "latest_catalyst": LatestCatalyst(
             kind=catalyst_body["kind"],
@@ -314,7 +316,7 @@ def request(**overrides):
             occurred_at=NOW - timedelta(hours=1),
             available_at_utc=NOW - timedelta(minutes=30),
             source_ref=catalyst_body["source_ref"],
-            fact_hash=sha(catalyst_body),
+            fact_hash=hit.document_fact_hash,
         ),
     }
     values.update(overrides)
@@ -431,10 +433,72 @@ class MaterializerTests(unittest.TestCase):
         self.assertEqual(first.stage, "early")
         self.assertEqual(first.conclusion, "MULTIBAGGER_2X")
         self.assertEqual(first.source_fact_hashes, tuple(sorted(first.source_fact_hashes)))
-        self.assertEqual(len(first.source_fact_hashes), 5)
+        self.assertEqual(len(first.source_fact_hashes), 4)
         self.assertIn(request().latest_catalyst.fact_hash, first.source_fact_hashes)
         self.assertEqual(len(first.fact_hash), 64)
         self.assertEqual(candidate_from_row(candidate_to_row(first)), first)
+
+    def test_catalyst_must_pin_an_authenticated_loaded_source_fact(self):
+        baseline_request = request()
+        catalyst = baseline_request.latest_catalyst
+        self.assertIsNotNone(catalyst)
+
+        arbitrary_ref = "unloaded:document:1301"
+        resealed_projection_hash = sha(
+            {
+                "kind": catalyst.kind,
+                "title": catalyst.title,
+                "occurred_at": catalyst.occurred_at.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                ),
+                "available_at_utc": catalyst.available_at_utc.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                ),
+                "source_ref": arbitrary_ref,
+            }
+        )
+        invalid_catalysts = (
+            replace(
+                catalyst,
+                source_ref=arbitrary_ref,
+                fact_hash=resealed_projection_hash,
+            ),
+            replace(catalyst, fact_hash="f" * 64),
+        )
+        for invalid in invalid_catalysts:
+            with self.subTest(catalyst=invalid):
+                with self.assertRaisesRegex(
+                    CandidateMaterializationError,
+                    "does not pin an authenticated source fact",
+                ):
+                    materialize_candidate(
+                        request(latest_catalyst=invalid),
+                        Policy(),
+                    )
+
+        changed_projection = replace(catalyst, title="changed projection title")
+        changed_candidate = materialize_candidate(
+            request(latest_catalyst=changed_projection),
+            Policy(),
+        )
+        baseline_candidate = materialize_candidate(baseline_request, Policy())
+        self.assertNotEqual(changed_candidate.fact_hash, baseline_candidate.fact_hash)
+
+        source = universe_fact()
+        universe_pinned = replace(
+            catalyst,
+            source_ref=source.source_document_id,
+            fact_hash=source.fact_hash,
+        )
+        without_text_hit = materialize_candidate(
+            request(
+                sources=(source,),
+                text_hits=(),
+                latest_catalyst=universe_pinned,
+            ),
+            Policy(),
+        )
+        self.assertIn(source.fact_hash, without_text_hit.source_fact_hashes)
 
     def test_captured_jpx_and_kind_wrappers_close_source_hashes(self):
         jpx_wrapper = fixture("jpx_security_sample.json")
@@ -457,8 +521,18 @@ class MaterializerTests(unittest.TestCase):
             ),
             wrapper_name="kind_disclosure_sample.json",
         )
+        catalyst = replace(
+            request().latest_catalyst,
+            source_ref=kind.source_document_id,
+            fact_hash=kind.document_fact_hash,
+        )
         candidate = materialize_candidate(
-            request(sources=(jpx,), text_hits=(kind,)), Policy()
+            request(
+                sources=(jpx,),
+                text_hits=(kind,),
+                latest_catalyst=catalyst,
+            ),
+            Policy(),
         )
         self.assertIn(jpx.fact_hash, candidate.source_fact_hashes)
         self.assertIn(kind.document_fact_hash, candidate.source_fact_hashes)
@@ -497,20 +571,13 @@ class MaterializerTests(unittest.TestCase):
         generated_future = dict(decision().entry_plan)
         generated_future["generated_at"] = "2099-01-01T00:00:00Z"
         catalyst = request().latest_catalyst
-        future_catalyst_body = {
-            "kind": catalyst.kind,
-            "title": catalyst.title,
-            "occurred_at": catalyst.occurred_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "available_at_utc": "2099-01-01T00:00:00Z",
-            "source_ref": catalyst.source_ref,
-        }
         future_catalyst = LatestCatalyst(
             kind=catalyst.kind,
             title=catalyst.title,
             occurred_at=catalyst.occurred_at,
             available_at_utc=datetime(2099, 1, 1, tzinfo=timezone.utc),
             source_ref=catalyst.source_ref,
-            fact_hash=sha(future_catalyst_body),
+            fact_hash=catalyst.fact_hash,
         )
         cases = (
             request(sources=(universe_fact(available_at_utc=NOW + timedelta(seconds=1)),)),

@@ -1,11 +1,13 @@
 from dataclasses import asdict
 from io import BytesIO, StringIO
+import hashlib
 import json
 import os
 import pwd
 import unittest
 from unittest.mock import patch
 
+from ai.snapshot.fingerprint import jcs_canonicalize
 from strategy.materialization import candidate_from_row
 from strategy.materialization import cli
 from strategy.tests.test_multibagger_candidate_materializer import request
@@ -104,6 +106,29 @@ class MaterializationCliTests(unittest.TestCase):
         self.assertEqual(stderr, "")
         candidate = candidate_from_row(json.loads(stdout))
         self.assertEqual(candidate.ticker, "1301")
+        self.assertEqual(len(repository.calls), 1)
+
+    def test_unloaded_catalyst_source_ref_cannot_be_resealed_by_cli(self):
+        materialization = request()
+        repository = Repository(materialization)
+        value = payload()
+        catalyst = value["latest_catalyst"]
+        catalyst["source_ref"] = "unloaded:document:1301"
+        projection = dict(catalyst)
+        projection.pop("fact_hash")
+        catalyst["fact_hash"] = hashlib.sha256(
+            jcs_canonicalize(projection).encode("utf-8")
+        ).hexdigest()
+
+        code, stdout, stderr = invoke(
+            json.dumps(value).encode("utf-8"),
+            [],
+            {"TAB4_DATABASE_URL": "postgresql://user:password@localhost/test"},
+            repository,
+        )
+
+        self.assertEqual((code, stdout), (2, ""))
+        self.assertEqual(stderr, "multibagger materialization failed\n")
         self.assertEqual(len(repository.calls), 1)
 
     def test_disposable_write_requires_all_guards_and_is_idempotent_entrypoint(self):
