@@ -1,0 +1,27 @@
+ai/replay/fingerprint.py
+  s_6ca1020a327476::t_6ea4ede27503a8 38
+ai/tests/postgres_typed_replay.pg.sh
+  s_6ca1020a327476::t_1f6b71c04f6f6c 6,54
+ai/tests/test_postgres_typed_source_repository.py
+  s_6ca1020a327476::t_4d6588dfe39c9e 4,32,332-361,632-642,677-678,680,694-717
+ai/tests/test_typed_capture_writer.py
+  s_6ca1020a327476::t_17f68deef497b6 178-191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2c92250ce0e493e14cda69e3505741bd521648f5",
+  "prompts": {},
+  "sessions": {
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
