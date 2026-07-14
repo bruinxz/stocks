@@ -107,8 +107,9 @@ def _default_connector(database_url: str):
             application_name="stocks-ai-typed-capture-writer",
             passfile="",
         )
-    except Exception as error:
-        raise TypedCaptureWriteError("unable to connect using DATABASE_URL") from error
+    except Exception:
+        pass
+    raise TypedCaptureWriteError("unable to connect using DATABASE_URL")
 
 
 Connector = Callable[[str], Any]
@@ -125,11 +126,14 @@ class PostgresTypedCaptureWriter:
         uuid4_factory: Callable[[], uuid.UUID] = uuid.uuid4,
     ) -> None:
         try:
-            self._database_url = validate_database_url(database_url)
-        except ValueError as error:
+            validated_database_url = validate_database_url(database_url)
+        except ValueError:
+            validated_database_url = None
+        if validated_database_url is None:
             raise TypedCaptureWriterConfigurationError(
                 "DATABASE_URL is invalid for typed capture writes"
-            ) from error
+            )
+        self._database_url = validated_database_url
         if not callable(uuid4_factory):
             raise TypedCaptureWriterConfigurationError("uuid4_factory must be callable")
         self._connector = connector or _default_connector
@@ -161,51 +165,68 @@ class PostgresTypedCaptureWriter:
         capture_id = self._new_capture_id()
         proposed_row = prepared.row(capture_id)
         connection = self._connect()
+        primary_failure = False
         try:
-            with connection.transaction():
-                with connection.cursor() as cursor:
-                    cursor.execute(
-                        LOCK_CAPTURE,
-                        (_advisory_key(prepared.pins),),
-                    )
-                    existing = _select_one(cursor, prepared.pins)
-                    if existing is not None:
-                        hydrated = _verify_existing(existing, prepared)
-                        return _receipt(
+            try:
+                with connection.transaction():
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            LOCK_CAPTURE,
+                            (_advisory_key(prepared.pins),),
+                        )
+                        existing = _select_one(cursor, prepared.pins)
+                        if existing is not None:
+                            hydrated = _verify_existing(existing, prepared)
+                            return _receipt(
+                                hydrated.capture_id,
+                                hydrated.prepared,
+                                created=False,
+                            )
+
+                        cursor.execute(
+                            INSERT_CAPTURE,
+                            _insert_parameters(proposed_row),
+                        )
+                        readback = _select_one(cursor, prepared.pins)
+                        if readback is None:
+                            raise TypedCaptureWriteError(
+                                "typed capture insert disappeared during readback"
+                            )
+                        hydrated = _verify_existing(readback, prepared)
+                        if hydrated.capture_id != capture_id:
+                            raise TypedCaptureWriteError(
+                                "typed capture readback substituted capture_id"
+                            )
+                        receipt = _receipt(
                             hydrated.capture_id,
                             hydrated.prepared,
-                            created=False,
+                            created=True,
                         )
-
-                    cursor.execute(
-                        INSERT_CAPTURE,
-                        _insert_parameters(proposed_row),
-                    )
-                    readback = _select_one(cursor, prepared.pins)
-                    if readback is None:
-                        raise TypedCaptureWriteError(
-                            "typed capture insert disappeared during readback"
-                        )
-                    hydrated = _verify_existing(readback, prepared)
-                    if hydrated.capture_id != capture_id:
-                        raise TypedCaptureWriteError(
-                            "typed capture readback substituted capture_id"
-                        )
-                    receipt = _receipt(
-                        hydrated.capture_id,
-                        hydrated.prepared,
-                        created=True,
-                    )
-        except (ReplaySourceError, TypedCaptureConflictError):
+            except (ReplaySourceError, TypedCaptureConflictError):
+                raise
+            except TypedCaptureWriteError:
+                raise
+            except Exception:
+                persistence_failed = True
+            else:
+                persistence_failed = False
+            if persistence_failed:
+                raise TypedCaptureWriteError(
+                    "unable to persist typed source capture"
+                )
+        except BaseException:
+            primary_failure = True
             raise
-        except TypedCaptureWriteError:
-            raise
-        except Exception as error:
-            raise TypedCaptureWriteError(
-                "unable to persist typed source capture"
-            ) from error
         finally:
-            connection.close()
+            close_failed = False
+            try:
+                connection.close()
+            except Exception:
+                close_failed = True
+            if close_failed and not primary_failure:
+                raise TypedCaptureWriteError(
+                    "unable to close typed source capture connection"
+                )
         return receipt
 
     def _new_capture_id(self) -> str:
@@ -230,10 +251,11 @@ class PostgresTypedCaptureWriter:
             TypedCaptureWriteError,
         ):
             raise
-        except Exception as error:
-            raise TypedCaptureWriteError(
-                "unable to connect using DATABASE_URL"
-            ) from error
+        except Exception:
+            pass
+        raise TypedCaptureWriteError(
+            "unable to connect using DATABASE_URL"
+        )
 
 
 def _select_one(cursor: Any, pins: ReplayPins):

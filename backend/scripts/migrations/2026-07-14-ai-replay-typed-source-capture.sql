@@ -1,5 +1,6 @@
 -- Immutable, lossless typed-source boundary used by deterministic AI replay.
--- The payload hash is produced by the canonical Python replay implementation;
+-- Text hits retain their DataPipeline-owned physical hit_fact_hash. The
+-- payload hash is produced by the canonical Python replay implementation;
 -- PostgreSQL owns structural, pin, PIT, identity, and append-only enforcement.
 
 BEGIN;
@@ -49,18 +50,32 @@ CREATE TABLE ai_replay_typed_source_capture (
         AND source_versions - 'signals' - 'universe' - 'scores' - 'evidence'
           = '{}'::JSONB
         AND jsonb_typeof(source_versions->'signals') = 'string'
-        AND LENGTH(BTRIM(source_versions->>'signals')) > 0
+        AND source_versions->>'signals' COLLATE "C" ~ '^[!-~]+$'
         AND jsonb_typeof(source_versions->'universe') = 'string'
-        AND LENGTH(BTRIM(source_versions->>'universe')) > 0
+        AND source_versions->>'universe' COLLATE "C" ~ '^[!-~]+$'
         AND jsonb_typeof(source_versions->'scores') = 'string'
-        AND LENGTH(BTRIM(source_versions->>'scores')) > 0
+        AND source_versions->>'scores' COLLATE "C" ~ '^[!-~]+$'
         AND jsonb_typeof(source_versions->'evidence') = 'string'
-        AND LENGTH(BTRIM(source_versions->>'evidence')) > 0
+        AND source_versions->>'evidence' COLLATE "C" ~ '^[!-~]+$'
       ELSE FALSE
     END
   ),
   filings_json JSONB NOT NULL CHECK (jsonb_typeof(filings_json) = 'array'),
-  text_hits_json JSONB NOT NULL CHECK (jsonb_typeof(text_hits_json) = 'array'),
+  text_hits_json JSONB NOT NULL CHECK (
+    jsonb_typeof(text_hits_json) = 'array'
+    AND jsonb_array_length(
+      jsonb_path_query_array(
+        text_hits_json,
+        'strict $[*] ? (
+          @.type() == "object"
+          && @.document.type() == "object"
+          && @.hit.type() == "object"
+          && @.hit_fact_hash.type() == "string"
+          && @.hit_fact_hash like_regex "^[0-9a-f]{64}$"
+        )'
+      )
+    ) = jsonb_array_length(text_hits_json)
+  ),
   scores_json JSONB NOT NULL CHECK (jsonb_typeof(scores_json) = 'array'),
   capture_hash TEXT NOT NULL CHECK (capture_hash ~ '^[0-9a-f]{64}$'),
   created_at TIMESTAMPTZ NOT NULL DEFAULT DATE_TRUNC('second', CURRENT_TIMESTAMP),
@@ -97,8 +112,8 @@ END;
 $append_only$;
 
 CREATE TRIGGER tr_ai_replay_typed_source_capture_append_only
-BEFORE UPDATE OR DELETE ON ai_replay_typed_source_capture
-FOR EACH ROW
+BEFORE UPDATE OR DELETE OR TRUNCATE ON ai_replay_typed_source_capture
+FOR EACH STATEMENT
 EXECUTE FUNCTION reject_ai_replay_typed_source_capture_mutation();
 
 COMMENT ON TABLE ai_replay_typed_source_capture IS

@@ -1,17 +1,30 @@
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import unittest
 
 from datapipeline.contracts import ScanDocument, TextHit, TextHitEnvelope
 from datapipeline.storage.multibagger import (
     build_text_hit_storage_row,
+    canonical_scan_document_fact_hash,
     canonical_text_hit_fact_hash,
+    canonical_text_context_hash,
     TextHitIdempotencyConflict,
     TextHitWriter,
 )
 
 
 NOW = datetime(2026, 7, 14, 0, 0, 0, tzinfo=timezone.utc)
+
+
+class ForgedHash(str):
+    def __eq__(self, _other):
+        return True
+
+    def __ne__(self, _other):
+        return False
+
+    __hash__ = str.__hash__
 
 
 def envelope(**hit_overrides) -> TextHitEnvelope:
@@ -28,7 +41,11 @@ def envelope(**hit_overrides) -> TextHitEnvelope:
         source_kind="jpx-listed-company-monthly",
         source_version="capture-v1",
         source_url=None,
-        document_fact_hash="c" * 64,
+        document_fact_hash="0" * 64,
+    )
+    document = replace(
+        document,
+        document_fact_hash=canonical_scan_document_fact_hash(document),
     )
     values = {
         "term_id": "capacity-expansion",
@@ -39,7 +56,7 @@ def envelope(**hit_overrides) -> TextHitEnvelope:
         "field": "TITLE",
         "start_offset": 0,
         "end_offset": 8,
-        "context_hash": "d" * 64,
+        "context_hash": canonical_text_context_hash(document.title[:8]),
         "taxonomy_version": "taxonomy-v1",
     }
     values.update(hit_overrides)
@@ -94,13 +111,55 @@ class Pool:
 
 
 class TextHitWriterTests(unittest.IsolatedAsyncioTestCase):
+    def test_forged_hash_subclasses_fail_before_storage_projection(self):
+        item = envelope()
+        object.__setattr__(
+            item.document,
+            "document_fact_hash",
+            ForgedHash("f" * 64),
+        )
+        with self.assertRaisesRegex(ValueError, "document fact hash"):
+            build_text_hit_storage_row(item)
+
+        item = envelope()
+        object.__setattr__(item.hit, "context_hash", ForgedHash("f" * 64))
+        with self.assertRaisesRegex(ValueError, "context hash"):
+            build_text_hit_storage_row(item)
+
     def test_storage_row_uses_one_datapipeline_hash_preimage(self):
         row = build_text_hit_storage_row(envelope())
         values = dict(row.__dict__)
         expected = values.pop("hit_fact_hash")
         self.assertEqual(canonical_text_hit_fact_hash(**values), expected)
         self.assertEqual(row.source_version, "capture-v1")
-        self.assertEqual(row.context_hash, "d" * 64)
+        self.assertEqual(
+            row.context_hash,
+            canonical_text_context_hash("capacity"),
+        )
+
+    def test_fact_hash_preserves_canonical_microsecond_availability(self):
+        available = NOW.replace(microsecond=123456)
+        item = envelope()
+        document = replace(
+            item.document,
+            available_at_utc=available,
+            document_fact_hash="0" * 64,
+        )
+        document = replace(
+            document,
+            document_fact_hash=canonical_scan_document_fact_hash(document),
+        )
+        item = TextHitEnvelope(document, item.hit)
+
+        row = build_text_hit_storage_row(item)
+        body = dict(row.__dict__)
+        expected = body.pop("hit_fact_hash")
+
+        self.assertEqual(canonical_text_hit_fact_hash(**body), expected)
+        self.assertEqual(
+            expected,
+            "2f165fd09f53d456cda9655277773a23d24a8d5269b87daf92ff10963a8609ab",
+        )
 
     async def test_insert_replay_conflict_and_pit_gate(self):
         pool = Pool()
@@ -112,7 +171,11 @@ class TextHitWriterTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(TextHitIdempotencyConflict):
             await writer.write_batch(
-                (item, envelope(context_hash="e" * 64)), as_of_utc=NOW
+                (
+                    item,
+                    envelope(hit_kind="NEGATIVE"),
+                ),
+                as_of_utc=NOW,
             )
         with self.assertRaisesRegex(ValueError, "requested as_of"):
             await writer.write_batch(

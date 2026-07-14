@@ -8,7 +8,12 @@ from decimal import Decimal
 import math
 from typing import Literal, Mapping, Sequence
 
-from .market_records import JsonValue, MarketScope
+from .market_records import (
+    JsonValue,
+    MarketScope,
+    is_canonical_sha256,
+    is_canonical_source_version,
+)
 
 JpKrMarketScope = Literal["jp", "kr"]
 JpKrExchange = Literal["tse", "ose", "krx", "kosdaq"]
@@ -40,8 +45,13 @@ def _require_non_empty(value: str, field: str) -> None:
         raise ValueError(f"{field} is required")
 
 
-def _require_sha256(value: str, field: str) -> None:
-    if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+def _require_source_version(value: object) -> None:
+    if not is_canonical_source_version(value):
+        raise ValueError("source_version must be a printable ASCII token")
+
+
+def _require_sha256(value: object, field: str) -> None:
+    if not is_canonical_sha256(value):
         raise ValueError(f"{field} must be lowercase SHA-256 hex")
 
 
@@ -184,7 +194,7 @@ class JpKrFinancialRecord:
         _require_non_empty(self.ticker, "ticker")
         _require_non_empty(self.parser_version, "parser_version")
         _require_non_empty(self.source_document_id, "source_document_id")
-        _require_non_empty(self.source_version, "source_version")
+        _require_source_version(self.source_version)
         _require_sha256(self.fact_hash, "fact_hash")
         _require_utc(self.effective_at_utc, "effective_at_utc")
         _require_utc(self.available_at_utc, "available_at_utc")
@@ -274,7 +284,7 @@ class JpKrDisclosureRecord:
         _require_non_empty(self.disclosure_kind, "disclosure_kind")
         _require_non_empty(self.event_headline_local, "event_headline_local")
         _require_non_empty(self.source_document_id, "source_document_id")
-        _require_non_empty(self.source_version, "source_version")
+        _require_source_version(self.source_version)
         _require_sha256(self.fact_hash, "fact_hash")
         _require_utc(self.event_time_utc, "event_time_utc")
         _require_utc(self.available_at_utc, "available_at_utc")
@@ -346,7 +356,7 @@ class ScanDocument:
         _require_non_empty(self.document_id, "document_id")
         _require_non_empty(self.ticker, "ticker")
         _require_non_empty(self.source_kind, "source_kind")
-        _require_non_empty(self.source_version, "source_version")
+        _require_source_version(self.source_version)
         if not self.title and not self.body:
             raise ValueError("scan document requires title or body text")
         _require_sha256(self.document_fact_hash, "document_fact_hash")

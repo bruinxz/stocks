@@ -128,7 +128,7 @@ assert(
     /available_at_utc <= as_of_utc/.test(up)
 );
 assert(
-  '[sql] source_versions has exact four non-empty string keys',
+  '[sql] source_versions has exact four printable ASCII token keys',
   /source_versions \?& ARRAY\['signals', 'universe', 'scores', 'evidence'\]/.test(up) &&
   /source_versions - 'signals' - 'universe' - 'scores' - 'evidence'[\s\S]*= '\{\}'::JSONB/.test(
       up
@@ -136,14 +136,21 @@ assert(
     ['signals', 'universe', 'scores', 'evidence'].every(
       key =>
         up.includes(`jsonb_typeof(source_versions->'${key}') = 'string'`) &&
-        up.includes(`LENGTH(BTRIM(source_versions->>'${key}')) > 0`)
+        up.includes(
+          `source_versions->>'${key}' COLLATE "C" ~ '^[!-~]+$'`
+        )
     )
 );
 assert(
-  '[sql] typed payload slices remain JSON arrays',
+  '[sql] typed payload slices remain arrays and text hits retain physical pins',
   /jsonb_typeof\(filings_json\) = 'array'/.test(up) &&
     /jsonb_typeof\(text_hits_json\) = 'array'/.test(up) &&
-    /jsonb_typeof\(scores_json\) = 'array'/.test(up)
+    /jsonb_typeof\(scores_json\) = 'array'/.test(up) &&
+    /jsonb_path_query_array\(\s*text_hits_json,\s*'strict \$\[\*\]/.test(up) &&
+    /@\.document\.type\(\) == "object"/.test(up) &&
+    /@\.hit\.type\(\) == "object"/.test(up) &&
+    /@\.hit_fact_hash\.type\(\) == "string"/.test(up) &&
+    /@\.hit_fact_hash like_regex "\^\[0-9a-f\]\{64\}\$"/.test(up)
 );
 assert(
   '[sql] natural identity is the exact replay pin tuple',
@@ -152,11 +159,11 @@ assert(
   )
 );
 assert(
-  '[sql] row mutation is rejected before update or delete',
+  '[sql] update delete and truncate are rejected before mutation',
   /CREATE FUNCTION reject_ai_replay_typed_source_capture_mutation\(\)/.test(up) &&
     /ERRCODE = '55000'/.test(up) &&
-    /BEFORE UPDATE OR DELETE ON ai_replay_typed_source_capture/.test(up) &&
-    /FOR EACH ROW[\s\S]*EXECUTE FUNCTION reject_ai_replay_typed_source_capture_mutation\(\)/.test(
+    /BEFORE UPDATE OR DELETE OR TRUNCATE ON ai_replay_typed_source_capture/.test(up) &&
+    /FOR EACH STATEMENT[\s\S]*EXECUTE FUNCTION reject_ai_replay_typed_source_capture_mutation\(\)/.test(
       up
     )
 );
@@ -175,6 +182,12 @@ assert(
     /obj_description\(table_oid, 'pg_class'\)/.test(down) &&
     /obj_description\(function_oid, 'pg_proc'\)/.test(down) &&
     /obj_description\(trigger_oid, 'pg_trigger'\)/.test(down) &&
+    /p\.prorettype = 'trigger'::regtype/.test(down) &&
+    /l\.lanname = 'plpgsql'/.test(down) &&
+    /regexp_replace\(p\.prosrc, '\[\[:space:\]\]\+'/.test(down) &&
+    /expected_function_body/.test(down) &&
+    /t\.tgtype = 58/.test(down) &&
+    /t\.tgenabled = 'O'/.test(down) &&
     /DROP TABLE ai_replay_typed_source_capture;/.test(down) &&
     /DROP FUNCTION reject_ai_replay_typed_source_capture_mutation\(\);/.test(down) &&
     !/DROP (?:TABLE|FUNCTION) IF EXISTS/.test(down)

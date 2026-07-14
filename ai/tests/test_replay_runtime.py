@@ -22,11 +22,12 @@ from ai.replay.runtime import (
     TypedReplaySources,
     TypedScoreRecord,
     TypedSourceSnapshot,
+    TypedTextHitRecord,
     build_typed_replay_runtime,
     typed_score_fact_hash,
     validate_source_score_features,
 )
-from ai.replay.service import ReplayConflictError, ReplayService
+from ai.replay.service import ReplayConflictError, ReplayService, ReplaySourceError
 from ai.replay.types import ReplayJob, ReplayPins, ReplayResult
 from datapipeline.contracts import (
     JpKrDisclosureRecord,
@@ -36,6 +37,15 @@ from datapipeline.contracts import (
     TextHit,
     TextHitEnvelope,
 )
+from datapipeline.collectors.jpkr_deep.official_fixture_parser import (
+    canonical_disclosure_fact_hash,
+)
+from datapipeline.storage.jpkr import canonical_financial_fact_hash
+from datapipeline.storage.multibagger import (
+    build_text_hit_storage_row,
+    canonical_scan_document_fact_hash,
+    canonical_text_context_hash,
+)
 
 
 NOW = datetime(2026, 7, 10, 6, 30, tzinfo=timezone.utc)
@@ -43,6 +53,16 @@ NOW_TEXT = "2026-07-10T06:30:00Z"
 JOB_ID = uuid.UUID("12345678-1234-4234-8234-567812345678")
 SNAPSHOT_ID = "22345678-1234-4234-8234-567812345678"
 TEST_TMP_ROOT = Path(__file__).resolve().parents[2]
+
+
+class ForgedHash(str):
+    def __eq__(self, _other: object) -> bool:
+        return True
+
+    def __ne__(self, _other: object) -> bool:
+        return False
+
+    __hash__ = str.__hash__
 
 
 def _temporary_directory():
@@ -67,8 +87,12 @@ def _filing(*, available=NOW, market_scope="jp"):
         source_kind=source_kind,
         source_document_id=document_id,
         source_version="filing-v1",
-        fact_hash="a" * 64,
+        fact_hash="0" * 64,
         source_payload={},
+    )
+    disclosure = replace(
+        disclosure,
+        fact_hash=canonical_disclosure_fact_hash(disclosure),
     )
     financial = JpKrFinancialRecord(
         market_scope=market_scope,
@@ -100,7 +124,11 @@ def _filing(*, available=NOW, market_scope="jp"):
         source_version="financial-v1",
         effective_at_utc=available,
         available_at_utc=available,
-        fact_hash="b" * 64,
+        fact_hash="0" * 64,
+    )
+    financial = replace(
+        financial,
+        fact_hash=canonical_financial_fact_hash(financial),
     )
     return JpKrFilingEnvelope(disclosure, (financial,))
 
@@ -122,7 +150,11 @@ def _text_hit(*, available=NOW, market_scope="jp"):
         source_kind="official-disclosure",
         source_version="capture-v1",
         source_url=None,
-        document_fact_hash="c" * 64,
+        document_fact_hash="0" * 64,
+    )
+    document = replace(
+        document,
+        document_fact_hash=canonical_scan_document_fact_hash(document),
     )
     hit = TextHit(
         term_id="capacity",
@@ -133,10 +165,14 @@ def _text_hit(*, available=NOW, market_scope="jp"):
         field="TITLE",
         start_offset=0,
         end_offset=8,
-        context_hash="d" * 64,
+        context_hash=canonical_text_context_hash(document.title[:8]),
         taxonomy_version="text-taxonomy-v1",
     )
-    return TextHitEnvelope(document, hit)
+    envelope = TextHitEnvelope(document, hit)
+    return TypedTextHitRecord(
+        envelope=envelope,
+        hit_fact_hash=build_text_hit_storage_row(envelope).hit_fact_hash,
+    )
 
 
 def _features(profile="japan_blue_chip", market_scope="jp"):
@@ -277,6 +313,14 @@ class ReplayRuntimeTests(unittest.TestCase):
             {"ticker": "7203", "market_scope": "jp"},
         ))
         self.assertEqual(first[2].records[0]["fact_hash"], _score().fact_hash)
+        text_signal = next(
+            item for item in first[0].records if item["kind"] == "text_hit"
+        )
+        self.assertEqual(text_signal["fact_hash"], _text_hit().hit_fact_hash)
+        self.assertEqual(
+            text_signal["document_fact_hash"],
+            _text_hit().envelope.document.document_fact_hash,
+        )
         self.assertEqual(sources.input_fingerprint(pins), pins.input_fingerprint)
         self.assertTrue(first[3].records)
         self.assertEqual(repository.calls - calls_after_pin_derivation, 3)
@@ -312,6 +356,9 @@ class ReplayRuntimeTests(unittest.TestCase):
             _snapshot(hits=(_text_hit(market_scope="kr"),)),
             _snapshot(scores=(replace(_score(), fact_hash="0" * 64),)),
             _snapshot(scores=(replace(_score(), available_at_utc=future),)),
+            _snapshot(
+                hits=(replace(_text_hit(), hit_fact_hash="0" * 64),)
+            ),
         ]
         for snapshot in cases:
             with self.subTest(snapshot=snapshot):
@@ -393,6 +440,67 @@ class ReplayRuntimeTests(unittest.TestCase):
             with self.subTest(snapshot=snapshot):
                 with self.assertRaises(Exception):
                     sources.load_signals(pins)
+
+    def test_typed_sources_reject_comparison_overriding_fact_hash_subclass(self):
+        score = _score()
+        wrong_hash = "f" * 64 if score.fact_hash != "f" * 64 else "e" * 64
+        forged = replace(score, fact_hash=ForgedHash(wrong_hash))
+        sources = TypedReplaySources(
+            Repository(_snapshot(scores=(forged,)))
+        )
+        pins = ReplayPins(
+            trading_day="2026-07-10",
+            as_of=NOW_TEXT,
+            profile="japan_blue_chip",
+            market_scope="jp",
+            profile_version="1.0.0",
+            contract_version="0.3.1",
+            input_fingerprint="0" * 64,
+            strategy_version="1.0.0",
+            pipeline_version="1.0.0",
+        )
+
+        with self.assertRaisesRegex(ReplaySourceError, "fact_hash"):
+            sources.load_inputs(pins)
+
+    def test_financial_physical_identity_conflict_fails_closed(self):
+        first = _filing()
+        disclosure = replace(
+            first.disclosure,
+            source_version="filing-v2",
+            fact_hash="0" * 64,
+        )
+        disclosure = replace(
+            disclosure,
+            fact_hash=canonical_disclosure_fact_hash(disclosure),
+        )
+        financial = replace(
+            first.financials[0],
+            revenue=Decimal("2000"),
+            fact_hash="0" * 64,
+        )
+        financial = replace(
+            financial,
+            fact_hash=canonical_financial_fact_hash(financial),
+        )
+        second = JpKrFilingEnvelope(disclosure, (financial,))
+        sources = TypedReplaySources(
+            Repository(_snapshot(filings=(first, second)))
+        )
+        pins = ReplayPins(
+            trading_day="2026-07-10",
+            as_of=NOW_TEXT,
+            profile="japan_blue_chip",
+            market_scope="jp",
+            profile_version="1.0.0",
+            contract_version="0.3.1",
+            input_fingerprint="0" * 64,
+            strategy_version="1.0.0",
+            pipeline_version="1.0.0",
+        )
+
+        with self.assertRaisesRegex(Exception, "financial fact identity"):
+            sources.load_signals(pins)
 
     def test_score_contract_fails_closed_before_pipeline(self):
         mutations = [
@@ -549,11 +657,14 @@ class ReplayRuntimeTests(unittest.TestCase):
             job = _job(pins)
             store.create_or_get(job)
             original = path.read_text()
+            corrupt_key = (
+                "f" if job.idempotency_key[0] != "f" else "e"
+            ) + job.idempotency_key[1:]
             for mutation in (
                 original.replace(job.job_id, SNAPSHOT_ID, 1),
                 original.replace(
                     f'"{job.idempotency_key}":"{job.job_id}"',
-                    f'"{"0" + job.idempotency_key[1:]}":"{job.job_id}"',
+                    f'"{corrupt_key}":"{job.job_id}"',
                     1,
                 ),
                 original.replace(

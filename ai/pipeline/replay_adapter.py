@@ -6,6 +6,7 @@ import copy
 from collections.abc import Mapping
 from dataclasses import dataclass
 import hashlib
+import json
 import re
 from typing import Any
 from urllib.parse import quote
@@ -21,25 +22,30 @@ from ai.replay.fingerprint import (
     compute_replay_input_fingerprint,
     replay_input_manifest_hashes,
 )
-from ai.replay.postgres_repository import (
+from ai.replay.typed_capture import (
     filing_envelope_from_json,
-    text_hit_envelope_from_json,
+    typed_text_hit_record_from_json,
 )
 from ai.replay.service import (
     ReplayPipelineError,
     ReplayService,
     ReplaySourceError,
 )
-from ai.replay.types import ReplayInputs, ReplayPins, ReplayResult
+from ai.replay.types import (
+    ReplayInputs,
+    ReplayPins,
+    ReplayResult,
+    is_canonical_source_version,
+)
 from ai.rules.engine import RuleEngine
 from ai.snapshot.fingerprint import jcs_canonicalize
 from ai.snapshot.postgres_store import PostgresSnapshotStore
 from ai.snapshot.reader import SnapshotReader
 from ai.snapshot.writer import SnapshotWriter
 from ai.types import PROFILE_DEFAULT_OUTPUT_LANGUAGE
+from datapipeline.contracts import is_canonical_sha256
 
 
-_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _SEMVER_RE = re.compile(
     r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
     r"(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
@@ -61,20 +67,24 @@ class ReplayPipelinePolicy:
             self.model_version
         ):
             raise ReplayPipelineError("model_version must be SemVer")
-        if not isinstance(self.template_hash, str) or not _SHA256_RE.fullmatch(
-            self.template_hash
-        ):
+        if not is_canonical_sha256(self.template_hash):
             raise ReplayPipelineError("template_hash must be lowercase SHA-256")
         if not isinstance(self.disclaimers, Mapping):
             raise ReplayPipelineError("disclaimers must be an object")
+        try:
+            disclaimers = json.loads(jcs_canonicalize(dict(self.disclaimers)))
+        except (TypeError, ValueError) as error:
+            raise ReplayPipelineError("disclaimers must be strict JSON") from error
+        if type(disclaimers) is not dict:
+            raise ReplayPipelineError("disclaimers must be an object")
         required_languages = set(PROFILE_DEFAULT_OUTPUT_LANGUAGE.values())
-        if set(self.disclaimers) != required_languages:
+        if set(disclaimers) != required_languages:
             raise ReplayPipelineError("disclaimer locale keys are not exact")
         language = PROFILE_DEFAULT_OUTPUT_LANGUAGE.get(profile)
         if language is None:
             raise ReplayPipelineError("profile has no default output language")
-        disclaimer = self.disclaimers.get(language)
-        if not isinstance(disclaimer, Mapping):
+        disclaimer = disclaimers.get(language)
+        if type(disclaimer) is not dict:
             raise ReplayPipelineError("disclaimer must be an object")
         required = {
             "version",
@@ -91,8 +101,7 @@ class ReplayPipelinePolicy:
         if (
             not isinstance(full_text, str)
             or not full_text
-            or not isinstance(digest, str)
-            or not _SHA256_RE.fullmatch(digest)
+            or not is_canonical_sha256(digest)
             or hashlib.sha256(full_text.encode("utf-8")).hexdigest() != digest
         ):
             raise ReplayPipelineError("disclaimer hash is not authentic")
@@ -177,7 +186,7 @@ class PipelineReplayAdapter:
         # opening the snapshot store.  Direct callers cannot bypass the same
         # guards normally applied by ReplayService.
         ReplayService._validate_pins(pins)
-        self._validate_inputs(pins, inputs)
+        inputs = self._validate_inputs(pins, inputs)
         source_inputs = self._map_inputs(pins, inputs)
         disclaimer = self._policy.validated_disclaimer(pins.profile)
         rule_bundle_hash = RuleEngine(
@@ -222,19 +231,36 @@ class PipelineReplayAdapter:
         )
 
     @staticmethod
-    def _validate_inputs(pins: ReplayPins, inputs: ReplayInputs) -> None:
-        if not isinstance(inputs, ReplayInputs):
+    def _validate_inputs(pins: ReplayPins, inputs: ReplayInputs) -> ReplayInputs:
+        if type(inputs) is not ReplayInputs:
             raise ReplaySourceError("pipeline replay inputs have wrong type")
-        for expected, source in zip(
-            ("signals", "universe", "scores", "evidence"),
-            inputs.ordered(),
-        ):
+        ordered = (
+            inputs.signals,
+            inputs.universe,
+            inputs.scores,
+            inputs.evidence,
+        )
+        if len(ordered) != 4:
+            raise ReplaySourceError("pipeline replay input count mismatch")
+        validated = tuple(
             ReplayService._validate_source_slice(expected, pins, source)
-        computed = compute_replay_input_fingerprint(inputs)
+            for expected, source in zip(
+                ("signals", "universe", "scores", "evidence"),
+                ordered,
+            )
+        )
+        canonical_inputs = ReplayInputs(
+            signals=validated[0],
+            universe=validated[1],
+            scores=validated[2],
+            evidence=validated[3],
+        )
+        computed = compute_replay_input_fingerprint(canonical_inputs)
         if computed != pins.input_fingerprint:
             raise ReplaySourceError(
                 "source content hashes do not match replay input_fingerprint"
             )
+        return canonical_inputs
 
     @staticmethod
     def _map_inputs(
@@ -285,8 +311,7 @@ class PipelineReplayAdapter:
                 or record["profile"] != pins.profile
                 or record["market_scope"] != pins.market_scope
                 or record["as_of"] != pins.as_of
-                or not isinstance(record["source_version"], str)
-                or not record["source_version"]
+                or not is_canonical_source_version(record["source_version"])
             ):
                 raise ReplaySourceError("score record replay pins mismatch")
             available_at = _parse_source_utc(record["available_at_utc"])
@@ -306,7 +331,10 @@ class PipelineReplayAdapter:
                 source_version=record["source_version"],
                 features=features,
             )
-            if record["fact_hash"] != expected_hash:
+            if (
+                not is_canonical_sha256(record["fact_hash"])
+                or record["fact_hash"] != expected_hash
+            ):
                 raise ReplaySourceError("score record fact_hash is not authentic")
             scores[ticker] = features
             evidence_refs.setdefault(ticker, []).append(
@@ -352,6 +380,7 @@ def _validate_evidence_records(pins, records):
     expected_signals = []
     tickers = set()
     identities = set()
+    financial_identities = set()
     for record in records:
         if set(record) != {"kind", "identity", "envelope"}:
             raise ReplaySourceError("evidence record keys are not exact")
@@ -372,6 +401,12 @@ def _validate_evidence_records(pins, records):
             identity = tuple(disclosure.identity)
             if record.get("identity") != list(identity):
                 raise ReplaySourceError("filing evidence identity mismatch")
+            for financial in envelope.financials:
+                if financial.identity in financial_identities:
+                    raise ReplaySourceError(
+                        "financial evidence identity is duplicated"
+                    )
+                financial_identities.add(financial.identity)
             ticker = disclosure.ticker
             expected_signals.append(_filing_signal(envelope))
             evidence = {
@@ -385,7 +420,8 @@ def _validate_evidence_records(pins, records):
                 "short_text": disclosure.event_headline_local[:200],
             }
         elif record.get("kind") == "text_hit":
-            envelope = text_hit_envelope_from_json(envelope_json)
+            typed_hit = typed_text_hit_record_from_json(envelope_json)
+            envelope = typed_hit.envelope
             document = envelope.document
             if document.market_scope != pins.market_scope:
                 raise ReplaySourceError("text-hit evidence market_scope mismatch")
@@ -399,7 +435,7 @@ def _validate_evidence_records(pins, records):
             if record.get("identity") != list(identity):
                 raise ReplaySourceError("text-hit evidence identity mismatch")
             ticker = document.ticker
-            expected_signals.append(_text_hit_signal(envelope))
+            expected_signals.append(_text_hit_signal(typed_hit))
             evidence = {
                 "kind": "NEWS",
                 "source_uri": (
@@ -407,7 +443,7 @@ def _validate_evidence_records(pins, records):
                     f"{_uri_part(document.document_id)}"
                 ),
                 "as_of": _utc_text(document.available_at_utc),
-                "hash": document.document_fact_hash,
+                "hash": typed_hit.hit_fact_hash,
                 "short_text": (document.title or envelope.hit.term_id)[:200],
             }
         else:
@@ -448,6 +484,7 @@ def _validate_signal_records(pins, signals, expected_signals) -> None:
                 "source_version",
                 "available_at_utc",
                 "fact_hash",
+                "document_fact_hash",
                 "term_id",
                 "hit_kind",
                 "field",
@@ -461,14 +498,18 @@ def _validate_signal_records(pins, signals, expected_signals) -> None:
         if not required or set(record) != required:
             raise ReplaySourceError("signal record keys/kind are invalid")
         available_at = _parse_source_utc(record["available_at_utc"])
+        hash_fields = (
+            ("fact_hash", "document_fact_hash", "context_hash")
+            if kind == "text_hit"
+            else ("fact_hash",)
+        )
         if (
             record.get("market_scope") != pins.market_scope
             or available_at > cutoff
             or not isinstance(record.get("ticker"), str)
             or not record["ticker"]
-            or not isinstance(record.get("source_version"), str)
-            or not record["source_version"]
-            or not _SHA256_RE.fullmatch(record.get("fact_hash") or "")
+            or not is_canonical_source_version(record.get("source_version"))
+            or any(not is_canonical_sha256(record.get(field)) for field in hash_fields)
         ):
             raise ReplaySourceError("signal record identity/PIT is invalid")
     actual = sorted(jcs_canonicalize(dict(item)) for item in signals)
@@ -497,7 +538,8 @@ def _filing_signal(envelope) -> dict[str, Any]:
     }
 
 
-def _text_hit_signal(envelope) -> dict[str, Any]:
+def _text_hit_signal(record) -> dict[str, Any]:
+    envelope = record.envelope
     return {
         "kind": "text_hit",
         "ticker": envelope.document.ticker,
@@ -506,7 +548,8 @@ def _text_hit_signal(envelope) -> dict[str, Any]:
         "source_document_id": envelope.document.document_id,
         "source_version": envelope.document.source_version,
         "available_at_utc": _utc_text(envelope.document.available_at_utc),
-        "fact_hash": envelope.document.document_fact_hash,
+        "fact_hash": record.hit_fact_hash,
+        "document_fact_hash": envelope.document.document_fact_hash,
         "term_id": envelope.hit.term_id,
         "hit_kind": envelope.hit.hit_kind,
         "field": envelope.hit.field,

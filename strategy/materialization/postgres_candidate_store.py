@@ -102,6 +102,13 @@ class PostgresCandidateStore:
 
     def write_or_verify(self, candidate: CandidateSnapshot) -> CandidateSnapshot:
         row = candidate_to_row(candidate)
+        authenticated = candidate_from_row(row)
+        if authenticated != candidate:
+            raise CandidateIdempotencyConflict(
+                "candidate does not match its authenticated physical row"
+            )
+        candidate = authenticated
+        row = candidate_to_row(candidate)
         identity = candidate.identity
         connection = self._connect()
         try:

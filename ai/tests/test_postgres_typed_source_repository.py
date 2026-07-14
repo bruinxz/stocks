@@ -9,6 +9,7 @@ import hashlib
 import os
 from pathlib import Path
 import tempfile
+import traceback
 import unittest
 import uuid
 
@@ -23,11 +24,8 @@ from ai.replay.postgres_repository import (
     SELECT_CAPTURE,
     PostgresTypedSourceRepository,
     TypedSourceRepositoryConfigurationError,
+    TypedSourceRepositoryReadError,
     _snapshot_from_capture,
-    typed_financial_fact_hash,
-    typed_scan_document_fact_hash,
-    typed_source_capture_hash,
-    typed_text_context_hash,
 )
 from ai.replay.postgres_capture_writer import PostgresTypedCaptureWriter
 from ai.replay.typed_capture import (
@@ -36,6 +34,8 @@ from ai.replay.typed_capture import (
     prepare_typed_capture,
     text_hit_envelope_from_json,
     typed_score_record_from_json,
+    typed_source_capture_hash,
+    typed_text_hit_record_from_json,
 )
 from ai.replay.runtime import (
     TypedReplaySources,
@@ -50,17 +50,36 @@ from ai.replay.service import (
     ReplayPinsError,
     ReplaySourceError,
 )
-from ai.replay.types import ReplayInputs, ReplayPins
+from ai.replay.types import ReplayInputs, ReplayPins, SourceSlice
 from ai.snapshot.fingerprint import jcs_canonicalize
 from ai.snapshot.postgres_store import PostgresSnapshotStore
 from datapipeline.collectors.jpkr_deep.official_fixture_parser import (
     canonical_disclosure_fact_hash,
 )
 from datapipeline.contracts import JpKrDisclosureRecord
+from datapipeline.collectors.jpkr_deep.official_fixture_parser import (
+    canonical_disclosure_fact_hash,
+)
+from datapipeline.storage.jpkr import canonical_financial_fact_hash
+from datapipeline.storage.multibagger import (
+    build_text_hit_storage_row,
+    canonical_scan_document_fact_hash,
+    canonical_text_context_hash,
+)
 
 
 NOW = datetime(2026, 7, 10, 6, 30, tzinfo=timezone.utc)
 NOW_TEXT = "2026-07-10T06:30:00Z"
+
+
+class ForgedHash(str):
+    def __eq__(self, _other: object) -> bool:
+        return True
+
+    def __ne__(self, _other: object) -> bool:
+        return False
+
+    __hash__ = str.__hash__
 
 
 class _Repository:
@@ -100,12 +119,16 @@ class _Cursor:
 
 
 class _Connection:
-    def __init__(self, rows, calls):
+    def __init__(self, rows, calls, *, transaction_error=None, close_error=None):
         self.rows = rows
         self.calls = calls
+        self.transaction_error = transaction_error
+        self.close_error = close_error
         self.closed = False
 
     def transaction(self):
+        if self.transaction_error is not None:
+            raise self.transaction_error
         return nullcontext()
 
     def cursor(self):
@@ -113,17 +136,26 @@ class _Connection:
 
     def close(self):
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class _Connector:
-    def __init__(self, rows):
+    def __init__(self, rows, *, transaction_error=None, close_error=None):
         self.rows = rows
+        self.transaction_error = transaction_error
+        self.close_error = close_error
         self.calls = []
         self.connections = []
 
     def __call__(self, database_url):
         self.calls.append(database_url)
-        connection = _Connection(self.rows, [])
+        connection = _Connection(
+            self.rows,
+            [],
+            transaction_error=self.transaction_error,
+            close_error=self.close_error,
+        )
         self.connections.append(connection)
         return connection
 
@@ -192,7 +224,7 @@ def _financial_json():
         "fact_hash": "0" * 64,
         "provider_market_label": "JP",
     }
-    values["fact_hash"] = typed_financial_fact_hash(values)
+    values["fact_hash"] = canonical_financial_fact_hash(values)
     return values
 
 
@@ -212,7 +244,7 @@ def _text_hit_json():
         "source_url": None,
         "document_fact_hash": "0" * 64,
     }
-    document["document_fact_hash"] = typed_scan_document_fact_hash(document)
+    document["document_fact_hash"] = canonical_scan_document_fact_hash(document)
     hit = {
         "term_id": "capacity",
         "hit_kind": "EARLY_NEWS",
@@ -222,10 +254,15 @@ def _text_hit_json():
         "field": "TITLE",
         "start_offset": 0,
         "end_offset": 8,
-        "context_hash": typed_text_context_hash("capacity"),
+        "context_hash": canonical_text_context_hash("capacity"),
         "taxonomy_version": "taxonomy-v1",
     }
-    return {"document": document, "hit": hit}
+    envelope = text_hit_envelope_from_json({"document": document, "hit": hit})
+    return {
+        "document": document,
+        "hit": hit,
+        "hit_fact_hash": build_text_hit_storage_row(envelope).hit_fact_hash,
+    }
 
 
 def _features(profile="japan_blue_chip", market_scope="jp"):
@@ -313,7 +350,7 @@ def _capture_row(*, pins=None, mutate=None):
             pipeline_version=pins.pipeline_version,
             source_versions=source_versions,
             filings=tuple(filing_envelope_from_json(item) for item in filings),
-            text_hits=tuple(text_hit_envelope_from_json(item) for item in text_hits),
+            text_hits=tuple(typed_text_hit_record_from_json(item) for item in text_hits),
             scores=tuple(typed_score_record_from_json(item) for item in scores),
         )
     )
@@ -354,7 +391,7 @@ def _capture_request():
                 }
             ),
         ),
-        text_hits=(text_hit_envelope_from_json(_text_hit_json()),),
+        text_hits=(typed_text_hit_record_from_json(_text_hit_json()),),
         scores=(typed_score_record_from_json(_score_json()),),
     )
 
@@ -416,6 +453,22 @@ class PostgresTypedSourceRepositoryTests(unittest.TestCase):
                 model_version="1.0.0",
                 template_hash="a" * 64,
                 disclaimers=invalid,
+            ).validated_disclaimer("japan_blue_chip")
+
+    def test_pipeline_policy_rejects_hash_str_subclasses(self):
+        disclaimers = _disclaimers()
+        disclaimers["ja-JP"]["hash"] = ForgedHash("f" * 64)
+        with self.assertRaisesRegex(ReplayPipelineError, "hash"):
+            ReplayPipelinePolicy(
+                model_version="1.0.0",
+                template_hash="a" * 64,
+                disclaimers=disclaimers,
+            ).validated_disclaimer("japan_blue_chip")
+        with self.assertRaisesRegex(ReplayPipelineError, "template_hash"):
+            ReplayPipelinePolicy(
+                model_version="1.0.0",
+                template_hash=ForgedHash("a" * 64),
+                disclaimers=_disclaimers(),
             ).validated_disclaimer("japan_blue_chip")
 
     def test_one_exact_query_loads_all_typed_sources(self):
@@ -499,6 +552,69 @@ class PostgresTypedSourceRepositoryTests(unittest.TestCase):
                 }
             )
 
+    def test_close_errors_are_redacted_without_masking_primary_failure(self):
+        pins, row = _capture_row()
+        secret = "postgresql://secret:password@production/internal"
+        repository = PostgresTypedSourceRepository(
+            "postgresql://stocks@/test?host=/tmp",
+            connector=_Connector([row], close_error=RuntimeError(secret)),
+        )
+
+        with self.assertRaises(TypedSourceRepositoryReadError) as captured:
+            repository.load(pins)
+        self.assertEqual(
+            str(captured.exception),
+            "unable to close typed replay source connection",
+        )
+        self.assertNotIn(secret, str(captured.exception))
+        self.assertIsNone(captured.exception.__cause__)
+        self.assertIsNone(captured.exception.__context__)
+        self.assertNotIn(
+            secret,
+            "".join(
+                traceback.format_exception(
+                    type(captured.exception),
+                    captured.exception,
+                    captured.exception.__traceback__,
+                )
+            ),
+        )
+
+        primary_error = ReplaySourceError("primary replay source failure")
+        repository = PostgresTypedSourceRepository(
+            "postgresql://stocks@/test?host=/tmp",
+            connector=_Connector(
+                [],
+                transaction_error=primary_error,
+                close_error=RuntimeError(secret),
+            ),
+        )
+        with self.assertRaises(ReplaySourceError) as primary:
+            repository.load(pins)
+        self.assertIs(primary.exception, primary_error)
+
+        repository = PostgresTypedSourceRepository(
+            "postgresql://stocks@/test?host=/tmp",
+            connector=_Connector(
+                [],
+                transaction_error=RuntimeError(secret),
+            ),
+        )
+        with self.assertRaises(TypedSourceRepositoryReadError) as transaction:
+            repository.load(pins)
+        self.assertIsNone(transaction.exception.__cause__)
+        self.assertIsNone(transaction.exception.__context__)
+        self.assertNotIn(
+            secret,
+            "".join(
+                traceback.format_exception(
+                    type(transaction.exception),
+                    transaction.exception,
+                    transaction.exception.__traceback__,
+                )
+            ),
+        )
+
     def test_adapter_maps_all_four_slices_without_snapshot_side_effects(self):
         pins, row = _capture_row()
         snapshot = _snapshot_from_capture(row, pins)
@@ -529,12 +645,71 @@ class PostgresTypedSourceRepositoryTests(unittest.TestCase):
             adapter.run(invalid, inputs)
         self.assertEqual(snapshot_connector.calls, [])
 
+        class TruncatedReplayInputs(ReplayInputs):
+            def ordered(self):
+                return (self.signals,)
+
+        substituted = TruncatedReplayInputs(
+            signals=inputs.signals,
+            universe=inputs.universe,
+            scores=inputs.scores,
+            evidence=inputs.evidence,
+        )
+        with self.assertRaisesRegex(ReplaySourceError, "wrong type"):
+            adapter._validate_inputs(pins, substituted)
+        self.assertEqual(snapshot_connector.calls, [])
+
+        class SwitchingSlice(SourceSlice):
+            pass
+
+        switching_signals = SwitchingSlice(**inputs.signals.__dict__)
+        switching = ReplayInputs(
+            signals=switching_signals,
+            universe=inputs.universe,
+            scores=inputs.scores,
+            evidence=inputs.evidence,
+        )
+        with self.assertRaisesRegex(ReplaySourceError, "wrong type"):
+            adapter._validate_inputs(pins, switching)
+        self.assertEqual(snapshot_connector.calls, [])
+
+        class SwitchingDict(dict):
+            def __init__(self, honest, alternate):
+                super().__init__(honest)
+                self.alternate = alternate
+                self.reads = 0
+
+            def __getitem__(self, key):
+                source = self if self.reads < len(self) else self.alternate
+                self.reads += 1
+                if source is self:
+                    return super().__getitem__(key)
+                return source[key]
+
+        honest_universe = dict(inputs.universe.records[0])
+        dynamic_record = SwitchingDict(
+            honest_universe,
+            {**honest_universe, "ticker": "substituted"},
+        )
+        dynamic_inputs = ReplayInputs(
+            signals=inputs.signals,
+            universe=replace(inputs.universe, records=(dynamic_record,)),
+            scores=inputs.scores,
+            evidence=inputs.evidence,
+        )
+
+        canonical_inputs = adapter._validate_inputs(pins, dynamic_inputs)
+
+        self.assertEqual(canonical_inputs.universe.records, (honest_universe,))
+        self.assertEqual(dynamic_record["ticker"], "substituted")
+        self.assertIs(type(canonical_inputs.universe.records[0]), dict)
+
     def test_future_evidence_with_resealed_slices_fails_before_store(self):
         pins, row = _capture_row()
         snapshot = _snapshot_from_capture(row, pins)
         inputs = TypedReplaySources(_Repository(snapshot)).load_inputs(pins)
-        evidence_records = copy.deepcopy(inputs.evidence.records)
-        signal_records = copy.deepcopy(inputs.signals.records)
+        evidence_records = list(copy.deepcopy(inputs.evidence.records))
+        signal_records = list(copy.deepcopy(inputs.signals.records))
         future = NOW + timedelta(seconds=1)
         future_text = future.strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -543,18 +718,28 @@ class PostgresTypedSourceRepositoryTests(unittest.TestCase):
         )
         document = evidence_record["envelope"]["document"]
         document["available_at_utc"] = future_text
-        document["document_fact_hash"] = typed_scan_document_fact_hash(document)
+        document["document_fact_hash"] = canonical_scan_document_fact_hash(document)
+        envelope = text_hit_envelope_from_json(
+            {
+                "document": document,
+                "hit": evidence_record["envelope"]["hit"],
+            }
+        )
+        evidence_record["envelope"]["hit_fact_hash"] = (
+            build_text_hit_storage_row(envelope).hit_fact_hash
+        )
         evidence_record["identity"][0] = document["document_fact_hash"]
         signal_record = next(
             item for item in signal_records if item["kind"] == "text_hit"
         )
         signal_record["available_at_utc"] = future_text
-        signal_record["fact_hash"] = document["document_fact_hash"]
+        signal_record["fact_hash"] = evidence_record["envelope"]["hit_fact_hash"]
+        signal_record["document_fact_hash"] = document["document_fact_hash"]
 
         def reseal(source, records):
             return replace(
                 source,
-                records=records,
+                records=tuple(records),
                 content_hash=hashlib.sha256(
                     jcs_canonicalize(records).encode("utf-8")
                 ).hexdigest(),
@@ -587,6 +772,137 @@ class PostgresTypedSourceRepositoryTests(unittest.TestCase):
             adapter.run(pins, modified)
         self.assertEqual(connector.calls, [])
 
+    def test_untrimmed_score_source_version_fails_after_full_reseal(self):
+        pins, row = _capture_row()
+        snapshot = _snapshot_from_capture(row, pins)
+        inputs = TypedReplaySources(_Repository(snapshot)).load_inputs(pins)
+        score_records = copy.deepcopy(inputs.scores.records)
+        score = score_records[0]
+        score["source_version"] = " score-v1 "
+        score["fact_hash"] = typed_score_fact_hash(
+            ticker=score["ticker"],
+            profile=score["profile"],
+            market_scope=score["market_scope"],
+            as_of=score["as_of"],
+            available_at_utc=datetime.fromisoformat(
+                score["available_at_utc"].replace("Z", "+00:00")
+            ),
+            source_version=score["source_version"],
+            features=score["features"],
+        )
+        scores = replace(
+            inputs.scores,
+            records=score_records,
+            content_hash=hashlib.sha256(
+                jcs_canonicalize(score_records).encode("utf-8")
+            ).hexdigest(),
+        )
+        modified = ReplayInputs(
+            signals=inputs.signals,
+            universe=inputs.universe,
+            scores=scores,
+            evidence=inputs.evidence,
+        )
+        pins = replace(
+            pins,
+            input_fingerprint=compute_replay_input_fingerprint(modified),
+        )
+        connector = _Connector([])
+        adapter = PipelineReplayAdapter(
+            snapshot_store=PostgresSnapshotStore(
+                "postgresql://stocks@/test?host=/tmp",
+                connector=connector,
+            ),
+            policy=ReplayPipelinePolicy(
+                model_version="1.0.0",
+                template_hash="a" * 64,
+                disclaimers=_disclaimers(),
+            ),
+        )
+
+        validated = adapter._validate_inputs(pins, modified)
+        with self.assertRaisesRegex(ReplaySourceError, "score record replay pins"):
+            adapter._map_inputs(pins, validated)
+        self.assertEqual(connector.calls, [])
+
+    def test_adapter_rejects_duplicate_financial_physical_identity(self):
+        pins, row = _capture_row()
+        snapshot = _snapshot_from_capture(row, pins)
+        inputs = TypedReplaySources(_Repository(snapshot)).load_inputs(pins)
+        evidence_records = list(copy.deepcopy(inputs.evidence.records))
+        original_evidence = next(
+            item for item in evidence_records if item["kind"] == "filing"
+        )
+        changed_evidence = copy.deepcopy(original_evidence)
+        disclosure_json = changed_evidence["envelope"]["disclosure"]
+        disclosure_json["source_version"] = "filing-v2"
+        draft = JpKrDisclosureRecord(
+            **{
+                **disclosure_json,
+                "event_time_utc": datetime.fromisoformat(
+                    disclosure_json["event_time_utc"].replace("Z", "+00:00")
+                ),
+                "available_at_utc": datetime.fromisoformat(
+                    disclosure_json["available_at_utc"].replace("Z", "+00:00")
+                ),
+                "fact_hash": "0" * 64,
+            }
+        )
+        disclosure_json["fact_hash"] = canonical_disclosure_fact_hash(draft)
+        financial_json = changed_evidence["envelope"]["financials"][0]
+        financial_json["revenue"] = "2000"
+        financial_json["fact_hash"] = canonical_financial_fact_hash(financial_json)
+        changed_envelope = filing_envelope_from_json(changed_evidence["envelope"])
+        changed_evidence["identity"] = list(changed_envelope.disclosure.identity)
+        evidence_records.append(changed_evidence)
+        evidence_records.sort(key=lambda item: jcs_canonicalize(item))
+
+        signal_records = list(copy.deepcopy(inputs.signals.records))
+        changed_signal = copy.deepcopy(
+            next(item for item in signal_records if item["kind"] == "filing")
+        )
+        changed_signal["source_version"] = disclosure_json["source_version"]
+        changed_signal["fact_hash"] = disclosure_json["fact_hash"]
+        signal_records.append(changed_signal)
+        signal_records.sort(key=lambda item: jcs_canonicalize(item))
+
+        def reseal(source, records):
+            return replace(
+                source,
+                records=tuple(records),
+                content_hash=hashlib.sha256(
+                    jcs_canonicalize(records).encode("utf-8")
+                ).hexdigest(),
+            )
+
+        modified = ReplayInputs(
+            signals=reseal(inputs.signals, signal_records),
+            universe=inputs.universe,
+            scores=inputs.scores,
+            evidence=reseal(inputs.evidence, evidence_records),
+        )
+        pins = replace(
+            pins,
+            input_fingerprint=compute_replay_input_fingerprint(modified),
+        )
+        connector = _Connector([])
+        adapter = PipelineReplayAdapter(
+            snapshot_store=PostgresSnapshotStore(
+                "postgresql://stocks@/test?host=/tmp",
+                connector=connector,
+            ),
+            policy=ReplayPipelinePolicy(
+                model_version="1.0.0",
+                template_hash="a" * 64,
+                disclaimers=_disclaimers(),
+            ),
+        )
+
+        validated = adapter._validate_inputs(pins, modified)
+        with self.assertRaisesRegex(ReplaySourceError, "financial evidence identity"):
+            adapter._map_inputs(pins, validated)
+        self.assertEqual(connector.calls, [])
+
 
 @unittest.skipUnless(
     os.environ.get("TYPED_REPLAY_PG_INTEGRATION") == "1",
@@ -598,9 +914,17 @@ class PostgresTypedSourceRepositoryIntegrationTests(unittest.TestCase):
 
         with psycopg.connect(os.environ["DATABASE_URL"]) as connection:
             connection.execute(
+                "ALTER TABLE ai_replay_typed_source_capture DISABLE TRIGGER "
+                "tr_ai_replay_typed_source_capture_append_only"
+            )
+            connection.execute(
                 "TRUNCATE ai_recommendation_item, "
                 "ai_recommendation_snapshot, "
                 "ai_replay_typed_source_capture CASCADE"
+            )
+            connection.execute(
+                "ALTER TABLE ai_replay_typed_source_capture ENABLE TRIGGER "
+                "tr_ai_replay_typed_source_capture_append_only"
             )
 
     @staticmethod

@@ -10,6 +10,7 @@ from .official_writer import (
     OfficialFactConflict,
     OfficialWriteResult,
 )
+from .financial_fact import canonical_financial_fact_hash, financial_fact_body
 
 __all__ = [
     "FxIdempotencyConflict",
@@ -18,4 +19,6 @@ __all__ = [
     "JpKrOfficialWriter",
     "OfficialFactConflict",
     "OfficialWriteResult",
+    "canonical_financial_fact_hash",
+    "financial_fact_body",
 ]

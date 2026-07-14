@@ -24,10 +24,18 @@ def replay_input_manifest_hashes(inputs: ReplayInputs) -> tuple[str, ...]:
     frozen content-hash formula.
     """
 
-    if not isinstance(inputs, ReplayInputs):
+    if type(inputs) is not ReplayInputs:
         raise JCSCanonicalizationError("replay inputs have wrong type")
+    sources = (
+        inputs.signals,
+        inputs.universe,
+        inputs.scores,
+        inputs.evidence,
+    )
+    if len(sources) != len(REPLAY_SOURCE_KINDS):
+        raise JCSCanonicalizationError("replay source count mismatch")
     manifest_hashes = []
-    for expected_kind, source in zip(REPLAY_SOURCE_KINDS, inputs.ordered()):
+    for expected_kind, source in zip(REPLAY_SOURCE_KINDS, sources):
         if source.kind != expected_kind:
             raise JCSCanonicalizationError("replay source kind/order mismatch")
         material = {

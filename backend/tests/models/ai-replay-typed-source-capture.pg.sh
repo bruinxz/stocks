@@ -95,7 +95,9 @@ INSERT INTO ai_replay_typed_source_capture (
   '1.2.3-alpha.1+capture', '0.3.1', repeat('a', 64), '2.0.0',
   '3.4.5+build.7', '2026-07-10T06:29:59.500000Z',
   '{"signals":"signals-v1","universe":"universe-v1","scores":"scores-v1","evidence":"evidence-v1"}',
-  '[]', '[]', '[]', repeat('b', 64)
+  '[]',
+  '[{"document":{},"hit":{},"hit_fact_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]',
+  '[]', repeat('b', 64)
 );
 
 DO $tests$
@@ -115,6 +117,45 @@ BEGIN
       base.source_versions, base.filings_json, base.text_hits_json,
       base.scores_json, base.capture_hash, base.created_at;
     RAISE EXCEPTION 'expected UUIDv4 rejection';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  BEGIN
+    INSERT INTO ai_replay_typed_source_capture
+    SELECT '32345678-2234-4234-8234-567812345678', base.trading_day,
+      base.as_of_utc + INTERVAL '17 minutes', base.profile, base.market_scope,
+      base.profile_version, base.contract_version, base.input_fingerprint,
+      base.strategy_version, base.pipeline_version, base.available_at_utc,
+      base.source_versions, base.filings_json,
+      '[[{"document":{},"hit":{},"hit_fact_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]]'::JSONB,
+      base.scores_json, base.capture_hash, base.created_at;
+    RAISE EXCEPTION 'expected nested text-hit array rejection';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  BEGIN
+    INSERT INTO ai_replay_typed_source_capture
+    SELECT 'f2345678-1234-4234-8234-567812345678', base.trading_day,
+      base.as_of_utc + INTERVAL '14 minutes', base.profile, base.market_scope,
+      base.profile_version, base.contract_version, base.input_fingerprint,
+      base.strategy_version, base.pipeline_version, base.available_at_utc,
+      base.source_versions, base.filings_json,
+      '[{"document":{},"hit":{}}]'::JSONB, base.scores_json,
+      base.capture_hash, base.created_at;
+    RAISE EXCEPTION 'expected missing text-hit physical pin rejection';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  BEGIN
+    INSERT INTO ai_replay_typed_source_capture
+    SELECT '12345678-2234-4234-8234-567812345678', base.trading_day,
+      base.as_of_utc + INTERVAL '15 minutes', base.profile, base.market_scope,
+      base.profile_version, base.contract_version, base.input_fingerprint,
+      base.strategy_version, base.pipeline_version, base.available_at_utc,
+      base.source_versions, base.filings_json,
+      '[{"document":{},"hit":{},"hit_fact_hash":"ABC"}]'::JSONB,
+      base.scores_json, base.capture_hash, base.created_at;
+    RAISE EXCEPTION 'expected invalid text-hit physical pin rejection';
   EXCEPTION WHEN check_violation THEN NULL;
   END;
 
@@ -235,10 +276,31 @@ BEGIN
       base.as_of_utc + INTERVAL '12 minutes', base.profile, base.market_scope,
       base.profile_version, base.contract_version, base.input_fingerprint,
       base.strategy_version, base.pipeline_version, base.available_at_utc,
-      jsonb_set(base.source_versions, '{signals}', '"   "'::JSONB),
+      jsonb_set(
+        base.source_versions,
+        '{signals}',
+        to_jsonb(E'\tsignals-v1\t'::TEXT)
+      ),
       base.filings_json, base.text_hits_json, base.scores_json,
       base.capture_hash, base.created_at;
-    RAISE EXCEPTION 'expected blank source version rejection';
+    RAISE EXCEPTION 'expected tab-wrapped source version rejection';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  BEGIN
+    INSERT INTO ai_replay_typed_source_capture
+    SELECT '22345678-2234-4234-8234-567812345678', base.trading_day,
+      base.as_of_utc + INTERVAL '16 minutes', base.profile, base.market_scope,
+      base.profile_version, base.contract_version, base.input_fingerprint,
+      base.strategy_version, base.pipeline_version, base.available_at_utc,
+      jsonb_set(
+        base.source_versions,
+        '{signals}',
+        to_jsonb(U&'\00A0signals-v1\00A0'::TEXT)
+      ),
+      base.filings_json, base.text_hits_json, base.scores_json,
+      base.capture_hash, base.created_at;
+    RAISE EXCEPTION 'expected NBSP-wrapped source version rejection';
   EXCEPTION WHEN check_violation THEN NULL;
   END;
 
@@ -280,6 +342,12 @@ BEGIN
   EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
   END;
 
+  BEGIN
+    TRUNCATE ai_replay_typed_source_capture;
+    RAISE EXCEPTION 'expected append-only truncate rejection';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+
   IF (SELECT COUNT(*) FROM ai_replay_typed_source_capture) <> 1 THEN
     RAISE EXCEPTION 'rejected writes changed capture rows';
   END IF;
@@ -313,15 +381,98 @@ test "$(psql "${PG_ARGS[@]}" -d "$COLLISION_DB" -Atc \
     WHERE table_schema='public'
       AND table_name='ai_replay_typed_source_capture'
       AND column_name='stub'")" = "1"
+psql "${PG_ARGS[@]}" -d "$COLLISION_DB" -v ON_ERROR_STOP=1 \
+  -c 'DROP TABLE ai_replay_typed_source_capture;' >/dev/null
+psql "${PG_ARGS[@]}" -d "$COLLISION_DB" -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+CREATE FUNCTION reject_ai_replay_typed_source_capture_mutation()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
+SQL
+if psql "${PG_ARGS[@]}" -d "$COLLISION_DB" -v ON_ERROR_STOP=1 \
+  -f "$UP" >/dev/null 2>&1; then
+  fail "expected foreign-function forward collision to fail closed"
+fi
+test "$(psql "${PG_ARGS[@]}" -d "$COLLISION_DB" -Atc \
+  "SELECT COUNT(*) FROM pg_tables
+    WHERE schemaname='public'
+      AND tablename='ai_replay_typed_source_capture'")" = "0"
+test "$(psql "${PG_ARGS[@]}" -d "$COLLISION_DB" -Atc \
+  "SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+    WHERE n.nspname='public'
+      AND p.proname='reject_ai_replay_typed_source_capture_mutation'")" = "1"
 
 createdb "${PG_ARGS[@]}" "$TAMPER_DB"
 psql "${PG_ARGS[@]}" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 -f "$UP" >/dev/null
+psql "${PG_ARGS[@]}" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 \
+  -c "COMMENT ON TABLE ai_replay_typed_source_capture IS 'foreign:table';" >/dev/null
+if psql "${PG_ARGS[@]}" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 \
+  -f "$DOWN" >/dev/null 2>&1; then
+  fail "expected tampered-table rollback to fail closed"
+fi
+psql "${PG_ARGS[@]}" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 \
+  -c "COMMENT ON TABLE ai_replay_typed_source_capture IS '$MARKER';" >/dev/null
+psql "${PG_ARGS[@]}" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 \
+  -c "COMMENT ON FUNCTION reject_ai_replay_typed_source_capture_mutation()
+      IS 'foreign:function';" >/dev/null
+if psql "${PG_ARGS[@]}" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 \
+  -f "$DOWN" >/dev/null 2>&1; then
+  fail "expected tampered-function rollback to fail closed"
+fi
+psql "${PG_ARGS[@]}" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 \
+  -c "COMMENT ON FUNCTION reject_ai_replay_typed_source_capture_mutation()
+      IS '$MARKER';" >/dev/null
+psql "${PG_ARGS[@]}" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+CREATE OR REPLACE FUNCTION reject_ai_replay_typed_source_capture_mutation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN NULL;
+END;
+$$;
+SQL
+if psql "${PG_ARGS[@]}" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 \
+  -f "$DOWN" >/dev/null 2>&1; then
+  fail "expected tampered-function shape rollback to fail closed"
+fi
+test "$(psql "${PG_ARGS[@]}" -d "$TAMPER_DB" -Atc \
+  "SELECT COUNT(*) FROM pg_tables
+    WHERE schemaname='public'
+      AND tablename='ai_replay_typed_source_capture'")" = "1"
+psql "${PG_ARGS[@]}" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+CREATE OR REPLACE FUNCTION reject_ai_replay_typed_source_capture_mutation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION USING
+    ERRCODE = '55000',
+    MESSAGE = 'ai_replay_typed_source_capture is append-only';
+END;
+$$;
+SQL
 psql "${PG_ARGS[@]}" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 \
   -c "COMMENT ON TRIGGER tr_ai_replay_typed_source_capture_append_only
       ON ai_replay_typed_source_capture IS 'foreign:trigger';" >/dev/null
 if psql "${PG_ARGS[@]}" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 \
   -f "$DOWN" >/dev/null 2>&1; then
   fail "expected tampered-trigger rollback to fail closed"
+fi
+test "$(psql "${PG_ARGS[@]}" -d "$TAMPER_DB" -Atc \
+  "SELECT COUNT(*) FROM pg_tables
+    WHERE schemaname='public'
+      AND tablename='ai_replay_typed_source_capture'")" = "1"
+psql "${PG_ARGS[@]}" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 \
+  -c "COMMENT ON TRIGGER tr_ai_replay_typed_source_capture_append_only
+      ON ai_replay_typed_source_capture IS '$MARKER';" >/dev/null
+psql "${PG_ARGS[@]}" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+CREATE OR REPLACE TRIGGER tr_ai_replay_typed_source_capture_append_only
+BEFORE DELETE ON ai_replay_typed_source_capture
+FOR EACH STATEMENT
+EXECUTE FUNCTION reject_ai_replay_typed_source_capture_mutation();
+SQL
+if psql "${PG_ARGS[@]}" -d "$TAMPER_DB" -v ON_ERROR_STOP=1 \
+  -f "$DOWN" >/dev/null 2>&1; then
+  fail "expected tampered-trigger shape rollback to fail closed"
 fi
 test "$(psql "${PG_ARGS[@]}" -d "$TAMPER_DB" -Atc \
   "SELECT COUNT(*) FROM pg_tables

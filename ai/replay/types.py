@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any, Literal, Mapping, Optional
 
+from datapipeline.contracts.market_records import is_canonical_source_version
+
 
 ReplayStatus = Literal["queued", "running", "completed", "failed"]
 SourceKind = Literal["signals", "universe", "scores", "evidence"]

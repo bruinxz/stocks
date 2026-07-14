@@ -27,6 +27,16 @@ SNAPSHOT_ID = "22345678-1234-4234-8234-567812345678"
 NOW = "2026-07-12T01:02:03Z"
 
 
+class ForgedHash(str):
+    def __eq__(self, _other: object) -> bool:
+        return True
+
+    def __ne__(self, _other: object) -> bool:
+        return False
+
+    __hash__ = str.__hash__
+
+
 class MemoryJobStore:
     def __init__(self):
         self.jobs = {}
@@ -182,6 +192,61 @@ def _service(*, pins=None, pipeline=None, store=None, clock=None):
 
 
 class ReplayServiceTests(unittest.TestCase):
+    def test_replay_inputs_subclass_cannot_truncate_named_slices(self):
+        class TruncatedReplayInputs(ReplayInputs):
+            def ordered(self):
+                return (self.signals,)
+
+        class AtomicSource:
+            def __init__(self, inputs):
+                self.inputs = inputs
+
+            def load_inputs(self, _pins):
+                return self.inputs
+
+        pins = _pins()
+        exact = _inputs(pins)
+        truncated = TruncatedReplayInputs(
+            signals=exact.signals,
+            universe=exact.universe,
+            scores=exact.scores,
+            evidence=exact.evidence,
+        )
+
+        with self.assertRaises(Exception):
+            compute_replay_input_fingerprint(truncated)
+
+        pipeline = PipelineStub()
+        service, _ = _service(pins=pins, pipeline=pipeline)
+        service._input_source = AtomicSource(truncated)
+        failed = service.run(service.submit(pins).job_id)
+        self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
+        self.assertEqual(pipeline.calls, [])
+
+    def test_source_slice_subclass_cannot_switch_records_after_validation(self):
+        class SwitchingSlice(SourceSlice):
+            def __getattribute__(self, name):
+                if name == "records":
+                    reads = object.__getattribute__(self, "__dict__").get(
+                        "_reads", 0
+                    )
+                    object.__setattr__(self, "_reads", reads + 1)
+                    if reads >= 3:
+                        return ({"kind": "scores", "substituted": True},)
+                return super().__getattribute__(name)
+
+        pins = _pins()
+        original = _source_slice("scores", pins)
+        switching = SwitchingSlice(**original.__dict__)
+        pipeline = PipelineStub()
+        service, sources = _service(pins=pins, pipeline=pipeline)
+        sources["scores"].source_slice = switching
+
+        failed = service.run(service.submit(pins).job_id)
+
+        self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
+        self.assertEqual(pipeline.calls, [])
+
     def test_submit_run_and_terminal_readback(self):
         pins = _pins()
         pipeline = PipelineStub()
@@ -258,6 +323,39 @@ class ReplayServiceTests(unittest.TestCase):
         self.assertEqual(failed2.error_code, "REPLAY_SOURCE_INVALID")
         self.assertIn("content_hash", failed2.error_detail)
 
+    def test_source_version_str_subclass_cannot_forge_ascii_policy(self):
+        class ForgedSourceVersion(str):
+            def isascii(self):
+                return True
+
+            def __iter__(self):
+                return iter("scores@1")
+
+        pins = _pins()
+        service, sources = _service(pins=pins)
+        sources["scores"].source_slice = replace(
+            sources["scores"].source_slice,
+            source_version=ForgedSourceVersion("版本@1"),
+        )
+
+        failed = service.run(service.submit(pins).job_id)
+
+        self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
+        self.assertIn("source_version", failed.error_detail)
+
+    def test_content_hash_str_subclass_cannot_override_comparison(self):
+        pins = _pins()
+        service, sources = _service(pins=pins)
+        sources["scores"].source_slice = replace(
+            sources["scores"].source_slice,
+            content_hash=ForgedHash("f" * 64),
+        )
+
+        failed = service.run(service.submit(pins).job_id)
+
+        self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
+        self.assertIn("content_hash", failed.error_detail)
+
     def test_source_records_are_authenticated_by_content_hash(self):
         pins = _pins()
         service, sources = _service(pins=pins)
@@ -299,6 +397,13 @@ class ReplayServiceTests(unittest.TestCase):
         self.assertNotIn("secret", failed2.error_detail)
 
     def test_invalid_profiles_scopes_versions_hashes_and_dates_are_rejected(self):
+        class ReplayPinsSubclass(ReplayPins):
+            pass
+
+        valid_pins = _pins()
+        with self.assertRaises(ReplayPinsError):
+            _service()[0].submit(ReplayPinsSubclass(**valid_pins.__dict__))
+
         invalid = [
             _pins(profile="custom"),
             _pins(profile="japan_blue_chip", market_scope="us"),

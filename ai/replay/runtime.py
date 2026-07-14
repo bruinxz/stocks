@@ -14,18 +14,31 @@ from decimal import Decimal
 import hashlib
 import math
 from collections.abc import Mapping
-import re
 from typing import Any, Protocol
 
 from ai.replay.service import ReplayService, ReplaySourceError
 from ai.replay.fingerprint import compute_replay_input_fingerprint
-from ai.replay.types import ReplayInputs, ReplayJob, ReplayPins, SourceSlice
+from ai.replay.types import (
+    ReplayInputs,
+    ReplayJob,
+    ReplayPins,
+    SourceSlice,
+    is_canonical_source_version,
+)
 from ai.snapshot.fingerprint import jcs_canonicalize
-from datapipeline.contracts import JpKrFilingEnvelope, TextHitEnvelope
+from datapipeline.contracts import (
+    JpKrFilingEnvelope,
+    TextHitEnvelope,
+    is_canonical_sha256,
+)
+from datapipeline.collectors.jpkr_deep.official_fixture_parser import (
+    canonical_disclosure_fact_hash,
+)
+from datapipeline.storage.jpkr import canonical_financial_fact_hash
+from datapipeline.storage.multibagger import build_text_hit_storage_row
 
 
 SOURCE_VERSION_KEYS = ("signals", "universe", "scores", "evidence")
-_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _BANDS = frozenset({"A", "B", "C", "D", "F"})
 _CONVICTION_LEVELS = frozenset({"HIGH", "MED", "LOW"})
 _RISK_GATES = frozenset({"GREEN", "YELLOW", "RED"})
@@ -122,9 +135,17 @@ class TypedScoreRecord:
 
 
 @dataclass(frozen=True)
+class TypedTextHitRecord:
+    """One TextHit envelope pinned to its DataPipeline physical fact hash."""
+
+    envelope: TextHitEnvelope
+    hit_fact_hash: str
+
+
+@dataclass(frozen=True)
 class TypedSourceSnapshot:
     filings: tuple[JpKrFilingEnvelope, ...]
-    text_hits: tuple[TextHitEnvelope, ...]
+    text_hits: tuple[TypedTextHitRecord, ...]
     scores: tuple[TypedScoreRecord, ...]
     source_versions: Mapping[str, str]
 
@@ -177,8 +198,8 @@ class TypedReplaySources:
                         for envelope in snapshot.filings
                     ),
                     *(
-                        _text_hit_signal(envelope)
-                        for envelope in snapshot.text_hits
+                        _text_hit_signal(record)
+                        for record in snapshot.text_hits
                     ),
                 ),
                 key=_record_sort_key,
@@ -197,7 +218,7 @@ class TypedReplaySources:
             envelope.disclosure.ticker for envelope in snapshot.filings
         }
         tickers.update(
-            envelope.document.ticker for envelope in snapshot.text_hits
+            record.envelope.document.ticker for record in snapshot.text_hits
         )
         tickers.update(record.ticker for record in snapshot.scores)
         records = tuple(
@@ -251,10 +272,13 @@ class TypedReplaySources:
                     *(
                         {
                             "kind": "text_hit",
-                            "identity": list(envelope.identity),
-                            "envelope": _json_value(asdict(envelope)),
+                            "identity": list(record.envelope.identity),
+                            "envelope": {
+                                **_json_value(asdict(record.envelope)),
+                                "hit_fact_hash": record.hit_fact_hash,
+                            },
                         }
-                        for envelope in snapshot.text_hits
+                        for record in snapshot.text_hits
                     ),
                 ),
                 key=_record_sort_key,
@@ -299,16 +323,30 @@ class TypedReplaySources:
                 "typed source versions must contain exact source kinds"
             )
         if any(
-            not isinstance(value, str) or not value
+            not is_canonical_source_version(value)
             for value in snapshot.source_versions.values()
         ):
             raise ReplaySourceError(
                 "typed source versions must be non-empty strings"
             )
         filing_identities = []
+        financial_identities = []
         for envelope in snapshot.filings:
             if not isinstance(envelope, JpKrFilingEnvelope):
                 raise ReplaySourceError("filing envelope returned wrong type")
+            if (
+                not is_canonical_sha256(envelope.disclosure.fact_hash)
+                or envelope.disclosure.fact_hash
+                != canonical_disclosure_fact_hash(envelope.disclosure)
+            ):
+                raise ReplaySourceError("disclosure fact_hash is not authentic")
+            for financial in envelope.financials:
+                if (
+                    not is_canonical_sha256(financial.fact_hash)
+                    or financial.fact_hash != canonical_financial_fact_hash(financial)
+                ):
+                    raise ReplaySourceError("financial fact_hash is not authentic")
+                financial_identities.append(financial.identity)
             filing_identities.append(
                 (
                     envelope.disclosure.source_kind,
@@ -318,11 +356,33 @@ class TypedReplaySources:
             )
         if len(filing_identities) != len(set(filing_identities)):
             raise ReplaySourceError("filing envelope identity is duplicated")
+        if len(financial_identities) != len(set(financial_identities)):
+            raise ReplaySourceError("financial fact identity is duplicated")
         text_identities = []
-        for envelope in snapshot.text_hits:
-            if not isinstance(envelope, TextHitEnvelope):
-                raise ReplaySourceError("text hit envelope returned wrong type")
-            text_identities.append(envelope.identity)
+        for record in snapshot.text_hits:
+            if type(record) is not TypedTextHitRecord or not isinstance(
+                record.envelope, TextHitEnvelope
+            ):
+                raise ReplaySourceError("typed text hit returned wrong type")
+            if (
+                not is_canonical_sha256(
+                    record.envelope.document.document_fact_hash
+                )
+                or not is_canonical_sha256(record.envelope.hit.context_hash)
+            ):
+                raise ReplaySourceError("typed text hit fact_hash is not authentic")
+            try:
+                expected_hash = build_text_hit_storage_row(
+                    record.envelope
+                ).hit_fact_hash
+            except (TypeError, ValueError) as error:
+                raise ReplaySourceError("typed text hit fact is invalid") from error
+            if (
+                not is_canonical_sha256(record.hit_fact_hash)
+                or record.hit_fact_hash != expected_hash
+            ):
+                raise ReplaySourceError("typed text hit fact_hash is not authentic")
+            text_identities.append(record.envelope.identity)
         if len(text_identities) != len(set(text_identities)):
             raise ReplaySourceError("text hit identity is duplicated")
         cutoff = _parse_utc(pins.as_of)
@@ -335,7 +395,8 @@ class TypedReplaySources:
                 raise ReplaySourceError(
                     "filing violates replay PIT cutoff"
                 ) from error
-        for envelope in snapshot.text_hits:
+        for record in snapshot.text_hits:
+            envelope = record.envelope
             if envelope.document.market_scope != pins.market_scope:
                 raise ReplaySourceError("text hit market_scope pin mismatch")
             try:
@@ -362,13 +423,12 @@ class TypedReplaySources:
             if score.ticker in tickers:
                 raise ReplaySourceError("typed score ticker is duplicated")
             tickers.add(score.ticker)
+            if not is_canonical_sha256(score.fact_hash):
+                raise ReplaySourceError("typed score fact_hash is not authentic")
             if (
                 not isinstance(score.ticker, str)
                 or not score.ticker
-                or not isinstance(score.source_version, str)
-                or not score.source_version
-                or not isinstance(score.fact_hash, str)
-                or not _SHA256_RE.fullmatch(score.fact_hash)
+                or not is_canonical_source_version(score.source_version)
                 or score.profile != pins.profile
                 or score.market_scope != pins.market_scope
                 or score.as_of != pins.as_of
@@ -494,7 +554,8 @@ def _filing_signal(envelope: JpKrFilingEnvelope) -> dict[str, Any]:
     }
 
 
-def _text_hit_signal(envelope: TextHitEnvelope) -> dict[str, Any]:
+def _text_hit_signal(record: TypedTextHitRecord) -> dict[str, Any]:
+    envelope = record.envelope
     return {
         "kind": "text_hit",
         "ticker": envelope.document.ticker,
@@ -505,7 +566,8 @@ def _text_hit_signal(envelope: TextHitEnvelope) -> dict[str, Any]:
         "available_at_utc": _json_value(
             envelope.document.available_at_utc
         ),
-        "fact_hash": envelope.document.document_fact_hash,
+        "fact_hash": record.hit_fact_hash,
+        "document_fact_hash": envelope.document.document_fact_hash,
         "term_id": envelope.hit.term_id,
         "hit_kind": envelope.hit.hit_kind,
         "field": envelope.hit.field,

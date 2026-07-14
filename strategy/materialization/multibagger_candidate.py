@@ -11,11 +11,16 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 import hashlib
+import json
 from typing import Any, Mapping, Optional, Protocol, Sequence, Tuple
 from uuid import UUID
 
 from ai.snapshot.fingerprint import jcs_canonicalize
 from ai.types import RISK_TRIGGER_CODES
+from datapipeline.contracts import (
+    is_canonical_sha256,
+    is_canonical_source_version,
+)
 from datapipeline.storage.multibagger import (
     canonical_multibagger_storage_fact_hash,
     canonical_text_hit_fact_hash,
@@ -92,9 +97,6 @@ CATALYST_KEYS = frozenset(
         "fact_hash",
     )
 )
-HEX = frozenset("0123456789abcdef")
-
-
 class CandidateMaterializationError(ValueError):
     pass
 
@@ -149,11 +151,7 @@ def _utc_text(value: datetime) -> str:
 
 
 def _require_hash(value: Any, field: str) -> str:
-    if (
-        not isinstance(value, str)
-        or len(value) != 64
-        or any(character not in HEX for character in value)
-    ):
+    if not is_canonical_sha256(value):
         _fail("{} must be lowercase SHA-256".format(field))
     return value
 
@@ -195,6 +193,23 @@ def _band(score: float) -> str:
 
 def _canonical_hash(value: object) -> str:
     return hashlib.sha256(jcs_canonicalize(value).encode("utf-8")).hexdigest()
+
+
+def _canonical_json_object(value: object, field: str) -> Mapping[str, Any]:
+    """Collapse an arbitrary Mapping into one stable, plain JSON object."""
+
+    if not isinstance(value, Mapping):
+        _fail("{} must be a JSON object".format(field))
+    try:
+        canonical = jcs_canonicalize(dict(value))
+        snapshot = json.loads(canonical)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise CandidateMaterializationError(
+            "{} must be a canonical JSON object".format(field)
+        ) from error
+    if type(snapshot) is not dict:
+        _fail("{} must be a JSON object".format(field))
+    return snapshot
 
 
 @dataclass(frozen=True)
@@ -326,6 +341,112 @@ class CandidateSnapshot:
         )
 
 
+def _freeze_materialization_input(
+    request: MaterializationInput,
+) -> MaterializationInput:
+    """Detach validation and policy execution from caller-owned containers."""
+
+    if type(request) is not MaterializationInput:
+        _fail("materialization input has invalid type")
+
+    sources = []
+    for source in tuple(request.sources):
+        if type(source) is not UniverseFact:
+            _fail("universe fact has invalid type")
+        sources.append(
+            UniverseFact(
+                market_scope=source.market_scope,
+                provider_market_label=source.provider_market_label,
+                exchange=source.exchange,
+                ticker=source.ticker,
+                record_kind=source.record_kind,
+                universe_source_kind=source.universe_source_kind,
+                source_document_id=source.source_document_id,
+                source_version=source.source_version,
+                effective_at_utc=source.effective_at_utc,
+                available_at_utc=source.available_at_utc,
+                as_of_utc=source.as_of_utc,
+                features=_canonical_json_object(
+                    source.features, "universe fact features"
+                ),
+                evidence_refs=tuple(source.evidence_refs),
+                text_hit_kinds=tuple(source.text_hit_kinds),
+                fundamental_snapshot=_canonical_json_object(
+                    source.fundamental_snapshot,
+                    "universe fact fundamental_snapshot",
+                ),
+                filter_pass_bitmap=source.filter_pass_bitmap,
+                market_cap_cny_100m=source.market_cap_cny_100m,
+                fact_hash=source.fact_hash,
+            )
+        )
+
+    text_hits = []
+    for hit in tuple(request.text_hits):
+        if type(hit) is not TextHitFact:
+            _fail("text hit has invalid type")
+        text_hits.append(
+            TextHitFact(
+                market_scope=hit.market_scope,
+                ticker=hit.ticker,
+                source_kind=hit.source_kind,
+                source_document_id=hit.source_document_id,
+                source_version=hit.source_version,
+                document_fact_hash=hit.document_fact_hash,
+                taxonomy_version=hit.taxonomy_version,
+                term_id=hit.term_id,
+                hit_kind=hit.hit_kind,
+                language=hit.language,
+                field=hit.field,
+                start_offset=hit.start_offset,
+                end_offset=hit.end_offset,
+                context_hash=hit.context_hash,
+                hit_fact_hash=hit.hit_fact_hash,
+                effective_at_utc=hit.effective_at_utc,
+                available_at_utc=hit.available_at_utc,
+            )
+        )
+
+    decision = request.decision
+    if type(decision) is not StrategyDecision:
+        _fail("strategy decision has invalid type")
+    frozen_decision = StrategyDecision(
+        score=_canonical_json_object(decision.score, "score"),
+        conviction=_canonical_json_object(decision.conviction, "conviction"),
+        risk_gate=_canonical_json_object(decision.risk_gate, "risk_gate"),
+        entry_plan=(
+            None
+            if decision.entry_plan is None
+            else _canonical_json_object(decision.entry_plan, "entry_plan")
+        ),
+        strategy_version=decision.strategy_version,
+    )
+
+    catalyst = request.latest_catalyst
+    if catalyst is not None:
+        if type(catalyst) is not LatestCatalyst:
+            _fail("latest catalyst has invalid type")
+        catalyst = LatestCatalyst(
+            kind=catalyst.kind,
+            title=catalyst.title,
+            occurred_at=catalyst.occurred_at,
+            available_at_utc=catalyst.available_at_utc,
+            source_ref=catalyst.source_ref,
+            fact_hash=catalyst.fact_hash,
+        )
+
+    return MaterializationInput(
+        market_scope=request.market_scope,
+        exchange=request.exchange,
+        ticker=request.ticker,
+        as_of_utc=request.as_of_utc,
+        sources=tuple(sources),
+        text_hits=tuple(text_hits),
+        decision=frozen_decision,
+        latest_catalyst=catalyst,
+    )
+
+
 CANDIDATE_ROW_KEYS = frozenset(
     (
         "market_scope",
@@ -374,10 +495,60 @@ def candidate_to_row(candidate: CandidateSnapshot) -> Mapping[str, Any]:
 
 
 def candidate_from_row(row: Mapping[str, Any]) -> CandidateSnapshot:
+    row = _canonical_json_object(row, "candidate row")
     _require_exact_keys(row, CANDIDATE_ROW_KEYS, "candidate row")
+    market_scope = _require_string(row["market_scope"], "market_scope")
+    exchange = _require_string(row["exchange"], "exchange")
+    ticker = _require_string(row["ticker"], "ticker")
+    if (
+        market_scope not in MARKET_EXCHANGES
+        or exchange not in MARKET_EXCHANGES[market_scope]
+    ):
+        _fail("candidate market_scope and exchange mismatch")
+    if ticker.startswith("__AGGREGATE__:"):
+        _fail("candidate ticker is invalid")
+    try:
+        candidate_as_of = parse_utc_seconds(row["as_of_utc"], "as_of_utc")
+        candidate_available_at = parse_utc_seconds(
+            row["available_at_utc"], "available_at_utc"
+        )
+    except ValueError as error:
+        raise CandidateMaterializationError(str(error)) from error
+    if candidate_available_at > candidate_as_of:
+        _fail("candidate availability exceeds as_of")
+
+    score = _canonical_json_object(row["score"], "score")
+    conviction = _canonical_json_object(row["conviction"], "conviction")
+    risk_gate = _canonical_json_object(row["risk_gate"], "risk_gate")
+    entry_plan = (
+        None
+        if row["entry_plan"] is None
+        else _canonical_json_object(row["entry_plan"], "entry_plan")
+    )
+    strategy_version = _require_string(row["strategy_version"], "strategy_version")
+    decision = StrategyDecision(
+        score=score,
+        conviction=conviction,
+        risk_gate=risk_gate,
+        entry_plan=entry_plan,
+        strategy_version=strategy_version,
+    )
+    decision_request = MaterializationInput(
+        market_scope=market_scope,
+        exchange=exchange,
+        ticker=ticker,
+        as_of_utc=candidate_as_of,
+        sources=(),
+        text_hits=(),
+        decision=decision,
+    )
+    rating, decision_available_at = _validate_decision(decision_request)
+    if row["rating"] != rating:
+        _fail("candidate rating does not match score")
+
     classification = ClassificationDecision(
-        stage=row["stage"],
-        conclusion=row["conclusion"],
+        stage=_require_string(row["stage"], "stage"),
+        conclusion=_require_string(row["conclusion"], "conclusion"),
         policy_version=_require_string(
             row["classification_policy_version"], "classification_policy_version"
         ),
@@ -385,27 +556,82 @@ def candidate_from_row(row: Mapping[str, Any]) -> CandidateSnapshot:
             row["classification_reason_codes"], "classification_reason_codes"
         ),
     )
+    if (
+        classification.stage not in STAGES
+        or classification.conclusion not in CONCLUSIONS
+    ):
+        _fail("candidate classification is invalid")
+    if (
+        risk_gate["ok_to_enter"] is not True or entry_plan is None
+    ) and classification.conclusion != "SKIP":
+        _fail("closed gate or missing EntryPlan requires SKIP")
+
     source_fact_hashes = _require_sorted_unique_strings(
         row["source_fact_hashes"], "source_fact_hashes"
     )
     for fact_hash in source_fact_hashes:
         _require_hash(fact_hash, "source_fact_hashes item")
+
+    latest_catalyst = row["latest_catalyst"]
+    required_availability = decision_available_at
+    if latest_catalyst is not None:
+        latest_catalyst = _canonical_json_object(
+            latest_catalyst, "latest_catalyst"
+        )
+        _require_exact_keys(latest_catalyst, CATALYST_KEYS, "latest_catalyst")
+        catalyst_kind = _require_string(
+            latest_catalyst["kind"], "latest catalyst kind"
+        )
+        if catalyst_kind not in CATALYST_KINDS or catalyst_kind == "unclassified":
+            _fail("latest catalyst kind is invalid")
+        _require_string(latest_catalyst["title"], "latest catalyst title")
+        _require_string(
+            latest_catalyst["source_ref"], "latest catalyst source_ref"
+        )
+        catalyst_hash = _require_hash(
+            latest_catalyst["fact_hash"], "latest catalyst fact_hash"
+        )
+        try:
+            catalyst_occurred_at = parse_utc_seconds(
+                latest_catalyst["occurred_at"],
+                "latest_catalyst.occurred_at",
+            )
+            catalyst_available_at = parse_utc_seconds(
+                latest_catalyst["available_at_utc"],
+                "latest_catalyst.available_at_utc",
+            )
+        except ValueError as error:
+            raise CandidateMaterializationError(str(error)) from error
+        if not (
+            catalyst_occurred_at
+            <= catalyst_available_at
+            <= candidate_as_of
+        ):
+            _fail("latest catalyst is not PIT-visible")
+        if catalyst_hash not in source_fact_hashes:
+            _fail("latest catalyst is outside the authenticated source closure")
+        required_availability = max(
+            required_availability, catalyst_available_at
+        )
+    if candidate_available_at < required_availability:
+        _fail("candidate availability precedes Strategy evidence")
+
     candidate = CandidateSnapshot(
-        market_scope=row["market_scope"],
-        exchange=row["exchange"],
-        ticker=row["ticker"],
+        market_scope=market_scope,
+        exchange=exchange,
+        ticker=ticker,
         as_of_utc=row["as_of_utc"],
         available_at_utc=row["available_at_utc"],
         stage=classification.stage,
         conclusion=classification.conclusion,
-        score=dict(row["score"]),
-        rating=row["rating"],
-        conviction=dict(row["conviction"]),
-        risk_gate=dict(row["risk_gate"]),
-        entry_plan=None if row["entry_plan"] is None else dict(row["entry_plan"]),
-        latest_catalyst=row["latest_catalyst"],
+        score=dict(score),
+        rating=rating,
+        conviction=dict(conviction),
+        risk_gate=dict(risk_gate),
+        entry_plan=None if entry_plan is None else dict(entry_plan),
+        latest_catalyst=latest_catalyst,
         source_fact_hashes=source_fact_hashes,
-        strategy_version=row["strategy_version"],
+        strategy_version=strategy_version,
         classification_policy_version=classification.policy_version,
         classification_reason_codes=classification.reason_codes,
         fact_hash=row["fact_hash"],
@@ -437,6 +663,8 @@ def _validate_universe_fact(fact: UniverseFact, request: MaterializationInput) -
         fact.filter_pass_bitmap, int
     ) or fact.filter_pass_bitmap < 0:
         _fail("filter_pass_bitmap is invalid")
+    if not is_canonical_source_version(fact.source_version):
+        _fail("universe fact source_version is invalid")
     expected_hash = canonical_multibagger_storage_fact_hash(
         market_scope=fact.market_scope,
         exchange=fact.exchange,
@@ -493,6 +721,8 @@ def _validate_text_hit(hit: TextHitFact, request: MaterializationInput) -> None:
         (hit.term_id, "term_id"),
     ):
         _require_string(value, field)
+    if not is_canonical_source_version(hit.source_version):
+        _fail("text hit source_version is invalid")
     expected_hit_hash = canonical_text_hit_fact_hash(
         market_scope=hit.market_scope,
         ticker=hit.ticker,
@@ -526,6 +756,8 @@ def _score_projection(
     _require_exact_keys(score["source_versions"], SOURCE_VERSION_KEYS, "score.source_versions")
     for key, value in score["source_versions"].items():
         _require_string(value, "score.source_versions." + key)
+        if not is_canonical_source_version(value):
+            _fail("score.source_versions." + key + " is invalid")
     dims = []
     for key, name in zip(("Q", "G", "V", "M", "T", "R"), SCORE_DIMENSIONS):
         dimension = score[name]
@@ -606,7 +838,11 @@ def _validate_decision(
 
     risk_gate = decision.risk_gate
     _require_exact_keys(risk_gate, RISK_GATE_KEYS, "risk_gate")
-    if risk_gate["ticker"] != request.ticker or not isinstance(risk_gate["triggers"], list):
+    if (
+        risk_gate["ticker"] != request.ticker
+        or not isinstance(risk_gate["triggers"], list)
+        or type(risk_gate["ok_to_enter"]) is not bool
+    ):
         _fail("risk_gate identity invalid")
     evaluated_at = parse_utc_seconds(
         risk_gate["evaluated_at"], "risk_gate.evaluated_at"
@@ -696,6 +932,7 @@ def _candidate_body(
 def materialize_candidate(
     request: MaterializationInput, policy: ClassificationPolicy
 ) -> CandidateSnapshot:
+    request = _freeze_materialization_input(request)
     if request.market_scope not in MARKET_EXCHANGES:
         _fail("market_scope is invalid")
     if request.exchange not in MARKET_EXCHANGES[request.market_scope]:
@@ -710,7 +947,12 @@ def materialize_candidate(
     for hit in request.text_hits:
         _validate_text_hit(hit, request)
     rating, decision_available_at = _validate_decision(request)
-    classification = policy.classify(request.sources, request.text_hits, request.decision)
+    policy_input = _freeze_materialization_input(request)
+    classification = policy.classify(
+        policy_input.sources,
+        policy_input.text_hits,
+        policy_input.decision,
+    )
     reason_codes = tuple(sorted(set(classification.reason_codes)))
     if (
         classification.stage not in STAGES

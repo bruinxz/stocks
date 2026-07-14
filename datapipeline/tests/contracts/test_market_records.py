@@ -2,7 +2,25 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import unittest
 
-from datapipeline.contracts.market_records import FxObservation, MultibaggerSourceRecord
+from datapipeline.contracts.market_records import (
+    FxObservation,
+    MultibaggerSourceRecord,
+    is_canonical_sha256,
+)
+
+
+class ForgedHash(str):
+    def __eq__(self, _other: object) -> bool:
+        return True
+
+    def __ne__(self, _other: object) -> bool:
+        return False
+
+    __hash__ = str.__hash__
+
+
+class ForgedSourceVersion(str):
+    pass
 
 
 class MultibaggerSourceRecordTest(unittest.TestCase):
@@ -42,8 +60,14 @@ class MultibaggerSourceRecordTest(unittest.TestCase):
             self.make_record(available_at_utc=now + timedelta(seconds=1), as_of_utc=now)
 
     def test_invalid_hash_fails_closed(self) -> None:
-        with self.assertRaisesRegex(ValueError, "SHA-256"):
-            self.make_record(fact_hash="A" * 64)
+        for value in ("A" * 64, ForgedHash("a" * 64)):
+            with self.subTest(value=value, type=type(value)):
+                with self.assertRaisesRegex(ValueError, "SHA-256"):
+                    self.make_record(fact_hash=value)
+
+    def test_public_sha256_sot_requires_exact_base_string(self) -> None:
+        self.assertTrue(is_canonical_sha256("a" * 64))
+        self.assertFalse(is_canonical_sha256(ForgedHash("a" * 64)))
 
 
 class FxObservationTest(unittest.TestCase):
@@ -85,6 +109,27 @@ class FxObservationTest(unittest.TestCase):
             previous_fact_hash="b" * 64,
         )
         self.assertEqual(observation.previous_observation_day, date(2026, 7, 9))
+
+    def test_source_versions_and_hashes_use_exact_public_contracts(self) -> None:
+        for value in (
+            "版本-v1",
+            " source-v1 ",
+            ForgedSourceVersion("source-v1"),
+        ):
+            with self.subTest(field="source_version", value=value):
+                with self.assertRaisesRegex(ValueError, "source_version"):
+                    self.make_observation(source_version=value)
+            with self.subTest(field="previous_source_version", value=value):
+                with self.assertRaisesRegex(ValueError, "previous_source_version"):
+                    self.make_observation(
+                        change_pct=Decimal("1.0"),
+                        previous_observation_day=date(2026, 7, 9),
+                        previous_source_kind="BOJ",
+                        previous_source_version=value,
+                        previous_fact_hash="b" * 64,
+                    )
+        with self.assertRaisesRegex(ValueError, "SHA-256"):
+            self.make_observation(fact_hash=ForgedHash("a" * 64))
 
 
 if __name__ == "__main__":

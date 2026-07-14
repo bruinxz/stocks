@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, fields, replace
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
+import json
 from typing import Any
 from uuid import UUID
 
@@ -21,10 +22,11 @@ from ai.replay.runtime import (
     TypedReplaySources,
     TypedScoreRecord,
     TypedSourceSnapshot,
+    TypedTextHitRecord,
     typed_score_fact_hash,
 )
 from ai.replay.service import ReplayService, ReplaySourceError
-from ai.replay.types import ReplayPins
+from ai.replay.types import ReplayPins, is_canonical_source_version
 from ai.snapshot.fingerprint import jcs_canonicalize
 from datapipeline.collectors.jpkr_deep.official_fixture_parser import (
     canonical_disclosure_fact_hash,
@@ -36,6 +38,13 @@ from datapipeline.contracts import (
     ScanDocument,
     TextHit,
     TextHitEnvelope,
+    is_canonical_sha256,
+)
+from datapipeline.storage.jpkr import canonical_financial_fact_hash
+from datapipeline.storage.multibagger import (
+    build_text_hit_storage_row,
+    canonical_scan_document_fact_hash,
+    canonical_text_context_hash,
 )
 
 
@@ -73,7 +82,7 @@ class TypedCaptureRequest:
     pipeline_version: str
     source_versions: Mapping[str, str]
     filings: tuple[JpKrFilingEnvelope, ...]
-    text_hits: tuple[TextHitEnvelope, ...]
+    text_hits: tuple[TypedTextHitRecord, ...]
     scores: tuple[TypedScoreRecord, ...]
 
 
@@ -157,7 +166,7 @@ def prepare_typed_capture(request: TypedCaptureRequest) -> PreparedTypedCapture:
     )
     text_hits_json = tuple(
         sorted(
-            (text_hit_envelope_to_json(item) for item in request.text_hits),
+            (typed_text_hit_record_to_json(item) for item in request.text_hits),
             key=_text_hit_sort_key,
         )
     )
@@ -172,7 +181,7 @@ def prepare_typed_capture(request: TypedCaptureRequest) -> PreparedTypedCapture:
     # hash, strict JSON values, and immutable typed-contract relations.
     snapshot = TypedSourceSnapshot(
         filings=tuple(filing_envelope_from_json(item) for item in filings_json),
-        text_hits=tuple(text_hit_envelope_from_json(item) for item in text_hits_json),
+        text_hits=tuple(typed_text_hit_record_from_json(item) for item in text_hits_json),
         scores=tuple(typed_score_record_from_json(item) for item in scores_json),
         source_versions=source_versions,
     )
@@ -237,6 +246,10 @@ def hydrate_typed_capture(
         "strategy_version",
         "pipeline_version",
     ):
+        if field == "input_fingerprint" and not is_canonical_sha256(row[field]):
+            raise ReplaySourceError(
+                "typed source capture input_fingerprint mismatch"
+            )
         if row[field] != getattr(pins, field):
             raise ReplaySourceError(f"typed source capture {field} mismatch")
 
@@ -255,12 +268,15 @@ def hydrate_typed_capture(
         text_hits=text_hits_json,
         scores=scores_json,
     )
-    if row["capture_hash"] != expected_capture_hash:
+    if (
+        not is_canonical_sha256(row["capture_hash"])
+        or row["capture_hash"] != expected_capture_hash
+    ):
         raise ReplaySourceError("typed source capture hash is not authentic")
 
     snapshot = TypedSourceSnapshot(
         filings=tuple(filing_envelope_from_json(item) for item in filings_json),
-        text_hits=tuple(text_hit_envelope_from_json(item) for item in text_hits_json),
+        text_hits=tuple(typed_text_hit_record_from_json(item) for item in text_hits_json),
         scores=tuple(typed_score_record_from_json(item) for item in scores_json),
         source_versions=source_versions,
     )
@@ -279,7 +295,7 @@ def hydrate_typed_capture(
     )
     canonical_text_hits = tuple(
         sorted(
-            (text_hit_envelope_to_json(item) for item in snapshot.text_hits),
+            (typed_text_hit_record_to_json(item) for item in snapshot.text_hits),
             key=_text_hit_sort_key,
         )
     )
@@ -341,6 +357,11 @@ def typed_source_capture_hash(
 def filing_envelope_to_json(envelope: JpKrFilingEnvelope) -> dict[str, Any]:
     if not isinstance(envelope, JpKrFilingEnvelope):
         raise ReplaySourceError("filing envelope has invalid type")
+    if not is_canonical_sha256(envelope.disclosure.fact_hash) or any(
+        not is_canonical_sha256(financial.fact_hash)
+        for financial in envelope.financials
+    ):
+        raise ReplaySourceError("filing fact_hash has invalid type")
     payload = _json_value(asdict(envelope))
     assert isinstance(payload, dict)
     financials = payload["financials"]
@@ -351,44 +372,33 @@ def filing_envelope_to_json(envelope: JpKrFilingEnvelope) -> dict[str, Any]:
     return payload
 
 
-def text_hit_envelope_to_json(envelope: TextHitEnvelope) -> dict[str, Any]:
-    if not isinstance(envelope, TextHitEnvelope):
-        raise ReplaySourceError("text hit envelope has invalid type")
-    payload = _json_value(asdict(envelope))
+def typed_text_hit_record_to_json(record: TypedTextHitRecord) -> dict[str, Any]:
+    if type(record) is not TypedTextHitRecord or not isinstance(
+        record.envelope, TextHitEnvelope
+    ):
+        raise ReplaySourceError("typed text hit has invalid type")
+    if (
+        not is_canonical_sha256(record.hit_fact_hash)
+        or not is_canonical_sha256(record.envelope.document.document_fact_hash)
+        or not is_canonical_sha256(record.envelope.hit.context_hash)
+    ):
+        raise ReplaySourceError("typed text hit fact_hash has invalid type")
+    payload = _json_value(asdict(record.envelope))
     assert isinstance(payload, dict)
-    text_hit_envelope_from_json(payload)
+    payload["hit_fact_hash"] = record.hit_fact_hash
+    typed_text_hit_record_from_json(payload)
     return payload
 
 
 def typed_score_record_to_json(score: TypedScoreRecord) -> dict[str, Any]:
     if not isinstance(score, TypedScoreRecord):
         raise ReplaySourceError("typed score has invalid type")
+    if not is_canonical_sha256(score.fact_hash):
+        raise ReplaySourceError("typed score fact_hash has invalid type")
     payload = _json_value(asdict(score))
     assert isinstance(payload, dict)
     typed_score_record_from_json(payload)
     return payload
-
-
-def typed_financial_fact_hash(payload: Mapping[str, Any]) -> str:
-    """Hash the exact financial payload, excluding only its hash field."""
-
-    _require_exact_keys(payload, _field_names(JpKrFinancialRecord), "financial")
-    return _sha256({key: payload[key] for key in payload if key != "fact_hash"})
-
-
-def typed_scan_document_fact_hash(payload: Mapping[str, Any]) -> str:
-    """Hash an authorized scan document without its hash field."""
-
-    _require_exact_keys(payload, _field_names(ScanDocument), "scan document")
-    return _sha256(
-        {key: payload[key] for key in payload if key != "document_fact_hash"}
-    )
-
-
-def typed_text_context_hash(text: str) -> str:
-    if not isinstance(text, str) or not text:
-        raise ReplaySourceError("text hit context must be non-empty")
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def filing_envelope_from_json(value: object) -> JpKrFilingEnvelope:
@@ -414,61 +424,66 @@ def filing_envelope_from_json(value: object) -> JpKrFilingEnvelope:
         )
     except (TypeError, ValueError) as error:
         raise ReplaySourceError("disclosure contract is invalid") from error
-    if disclosure.fact_hash != canonical_disclosure_fact_hash(disclosure):
+    if (
+        not is_canonical_sha256(disclosure.fact_hash)
+        or disclosure.fact_hash != canonical_disclosure_fact_hash(disclosure)
+    ):
         raise ReplaySourceError("disclosure fact_hash is not authentic")
 
     financials = []
     for raw in _json_array(envelope["financials"], "financials"):
         payload = _json_object(raw, "financial")
         _require_exact_keys(payload, _field_names(JpKrFinancialRecord), "financial")
-        if payload["fact_hash"] != typed_financial_fact_hash(payload):
-            raise ReplaySourceError("financial fact_hash is not authentic")
         try:
-            financials.append(
-                JpKrFinancialRecord(
-                    **{
-                        **payload,
-                        "fiscal_period_start": _parse_date_json(
-                            payload["fiscal_period_start"],
-                            "fiscal_period_start",
-                            optional=True,
-                        ),
-                        "fiscal_period_end": _parse_date_json(
-                            payload["fiscal_period_end"], "fiscal_period_end"
-                        ),
-                        "revenue": _decimal(payload["revenue"], "revenue"),
-                        "eps": _decimal(payload["eps"], "eps"),
-                        "net_income": _decimal(payload["net_income"], "net_income"),
-                        "total_assets": _decimal(
-                            payload["total_assets"], "total_assets"
-                        ),
-                        "total_equity": _decimal(
-                            payload["total_equity"], "total_equity"
-                        ),
-                        "total_liabilities": _decimal(
-                            payload["total_liabilities"], "total_liabilities"
-                        ),
-                        "operating_cash_flow": _decimal(
-                            payload["operating_cash_flow"],
-                            "operating_cash_flow",
-                        ),
-                        "research_and_development": _decimal(
-                            payload["research_and_development"],
-                            "research_and_development",
-                        ),
-                        "segment_facts": tuple(payload["segment_facts"]),
-                        "parse_warnings": tuple(payload["parse_warnings"]),
-                        "effective_at_utc": _parse_utc_json(
-                            payload["effective_at_utc"], "effective_at_utc"
-                        ),
-                        "available_at_utc": _parse_utc_json(
-                            payload["available_at_utc"], "available_at_utc"
-                        ),
-                    }
-                )
+            financial = JpKrFinancialRecord(
+                **{
+                    **payload,
+                    "fiscal_period_start": _parse_date_json(
+                        payload["fiscal_period_start"],
+                        "fiscal_period_start",
+                        optional=True,
+                    ),
+                    "fiscal_period_end": _parse_date_json(
+                        payload["fiscal_period_end"], "fiscal_period_end"
+                    ),
+                    "revenue": _decimal(payload["revenue"], "revenue"),
+                    "eps": _decimal(payload["eps"], "eps"),
+                    "net_income": _decimal(payload["net_income"], "net_income"),
+                    "total_assets": _decimal(
+                        payload["total_assets"], "total_assets"
+                    ),
+                    "total_equity": _decimal(
+                        payload["total_equity"], "total_equity"
+                    ),
+                    "total_liabilities": _decimal(
+                        payload["total_liabilities"], "total_liabilities"
+                    ),
+                    "operating_cash_flow": _decimal(
+                        payload["operating_cash_flow"],
+                        "operating_cash_flow",
+                    ),
+                    "research_and_development": _decimal(
+                        payload["research_and_development"],
+                        "research_and_development",
+                    ),
+                    "segment_facts": tuple(payload["segment_facts"]),
+                    "parse_warnings": tuple(payload["parse_warnings"]),
+                    "effective_at_utc": _parse_utc_json(
+                        payload["effective_at_utc"], "effective_at_utc"
+                    ),
+                    "available_at_utc": _parse_utc_json(
+                        payload["available_at_utc"], "available_at_utc"
+                    ),
+                }
             )
         except (TypeError, ValueError) as error:
             raise ReplaySourceError("financial contract is invalid") from error
+        if (
+            not is_canonical_sha256(financial.fact_hash)
+            or financial.fact_hash != canonical_financial_fact_hash(financial)
+        ):
+            raise ReplaySourceError("financial fact_hash is not authentic")
+        financials.append(financial)
     try:
         return JpKrFilingEnvelope(disclosure, tuple(financials))
     except ValueError as error:
@@ -484,8 +499,10 @@ def text_hit_envelope_from_json(value: object) -> TextHitEnvelope:
     hit_json = _json_object(envelope["hit"], "text hit")
     _require_exact_keys(document_json, _field_names(ScanDocument), "scan document")
     _require_exact_keys(hit_json, _field_names(TextHit), "text hit")
-    if document_json["document_fact_hash"] != typed_scan_document_fact_hash(
-        document_json
+    if (
+        not is_canonical_sha256(document_json["document_fact_hash"])
+        or document_json["document_fact_hash"]
+        != canonical_scan_document_fact_hash(document_json)
     ):
         raise ReplaySourceError("scan document fact_hash is not authentic")
     try:
@@ -505,11 +522,37 @@ def text_hit_envelope_from_json(value: object) -> TextHitEnvelope:
     except (TypeError, ValueError) as error:
         raise ReplaySourceError("text hit envelope contract is invalid") from error
     selected = document.title if hit.field == "TITLE" else document.body
-    if hit.context_hash != typed_text_context_hash(
-        selected[hit.start_offset : hit.end_offset]
+    if (
+        not is_canonical_sha256(hit.context_hash)
+        or hit.context_hash
+        != canonical_text_context_hash(selected[hit.start_offset : hit.end_offset])
     ):
         raise ReplaySourceError("text hit context_hash is not authentic")
     return result
+
+
+def typed_text_hit_record_from_json(value: object) -> TypedTextHitRecord:
+    """Validate one TextHit against its DataPipeline physical fact pin."""
+
+    payload = _json_object(value, "typed text hit")
+    _require_exact_keys(
+        payload,
+        {"document", "hit", "hit_fact_hash"},
+        "typed text hit",
+    )
+    envelope = text_hit_envelope_from_json(
+        {"document": payload["document"], "hit": payload["hit"]}
+    )
+    try:
+        expected = build_text_hit_storage_row(envelope).hit_fact_hash
+    except (TypeError, ValueError) as error:
+        raise ReplaySourceError("typed text hit fact is invalid") from error
+    if (
+        not is_canonical_sha256(payload["hit_fact_hash"])
+        or payload["hit_fact_hash"] != expected
+    ):
+        raise ReplaySourceError("typed text hit fact_hash is not authentic")
+    return TypedTextHitRecord(envelope=envelope, hit_fact_hash=expected)
 
 
 def typed_score_record_from_json(value: object) -> TypedScoreRecord:
@@ -517,6 +560,8 @@ def typed_score_record_from_json(value: object) -> TypedScoreRecord:
 
     payload = _json_object(value, "typed score")
     _require_exact_keys(payload, _field_names(TypedScoreRecord), "typed score")
+    if not is_canonical_source_version(payload["source_version"]):
+        raise ReplaySourceError("typed score source_version is invalid")
     available_at = _parse_utc_json(payload["available_at_utc"], "available_at_utc")
     expected = typed_score_fact_hash(
         ticker=payload["ticker"],
@@ -527,7 +572,10 @@ def typed_score_record_from_json(value: object) -> TypedScoreRecord:
         source_version=payload["source_version"],
         features=payload["features"],
     )
-    if payload["fact_hash"] != expected:
+    if (
+        not is_canonical_sha256(payload["fact_hash"])
+        or payload["fact_hash"] != expected
+    ):
         raise ReplaySourceError("typed score fact_hash is not authentic")
     try:
         return TypedScoreRecord(**{**payload, "available_at_utc": available_at})
@@ -537,7 +585,7 @@ def typed_score_record_from_json(value: object) -> TypedScoreRecord:
 
 def _canonical_source_versions(value: Mapping[str, Any]) -> dict[str, str]:
     if set(value) != set(SOURCE_VERSION_KEYS) or any(
-        not isinstance(item, str) or not item or item.isspace()
+        not is_canonical_source_version(item)
         for item in value.values()
     ):
         raise ReplaySourceError("typed source capture versions are invalid")
@@ -553,7 +601,7 @@ def _capture_available_at(snapshot: TypedSourceSnapshot, as_of: str) -> str:
             for item in snapshot.filings
             for financial in item.financials
         ),
-        *(item.document.available_at_utc for item in snapshot.text_hits),
+        *(item.envelope.document.available_at_utc for item in snapshot.text_hits),
         *(item.available_at_utc for item in snapshot.scores),
     ]
     available = max(values, default=cutoff)
@@ -563,6 +611,13 @@ def _capture_available_at(snapshot: TypedSourceSnapshot, as_of: str) -> str:
 
 
 def _validate_duplicate_facts(snapshot: TypedSourceSnapshot) -> None:
+    financial_identities = [
+        financial.identity
+        for filing in snapshot.filings
+        for financial in filing.financials
+    ]
+    if len(financial_identities) != len(set(financial_identities)):
+        raise ReplaySourceError("financial fact identity is duplicated")
     financial_hashes = [
         financial.fact_hash
         for filing in snapshot.filings
@@ -587,20 +642,24 @@ def _json_object(value: object, field: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ReplaySourceError(f"{field} must be a JSON object")
     try:
-        jcs_canonicalize(value)
+        snapshot = json.loads(jcs_canonicalize(value))
     except (TypeError, ValueError) as error:
         raise ReplaySourceError(f"{field} is not strict JSON") from error
-    return value
+    if type(snapshot) is not dict:
+        raise ReplaySourceError(f"{field} must be a JSON object")
+    return snapshot
 
 
 def _json_array(value: object, field: str) -> list[dict[str, Any]]:
     if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
         raise ReplaySourceError(f"{field} must be an array of JSON objects")
     try:
-        jcs_canonicalize(value)
+        snapshot = json.loads(jcs_canonicalize(value))
     except (TypeError, ValueError) as error:
         raise ReplaySourceError(f"{field} is not strict JSON") from error
-    return value
+    if type(snapshot) is not list or any(type(item) is not dict for item in snapshot):
+        raise ReplaySourceError(f"{field} must be an array of JSON objects")
+    return snapshot
 
 
 def _parse_utc_json(value: object, field: str) -> datetime:

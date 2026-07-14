@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import copy
 from contextlib import AbstractContextManager
+from dataclasses import replace
 from datetime import date, datetime, timezone
 import json
+import traceback
 import unittest
 import uuid
 
@@ -21,9 +23,9 @@ from ai.replay.typed_capture import (
     TypedCaptureRequest,
     filing_envelope_from_json,
     prepare_typed_capture,
-    text_hit_envelope_from_json,
     typed_score_record_from_json,
     typed_score_record_to_json,
+    typed_text_hit_record_from_json,
 )
 from ai.replay.runtime import typed_score_fact_hash
 from ai.tests.test_postgres_typed_source_repository import (
@@ -33,10 +35,25 @@ from ai.tests.test_postgres_typed_source_repository import (
     _score_json,
     _text_hit_json,
 )
+from datapipeline.collectors.jpkr_deep.official_fixture_parser import (
+    canonical_disclosure_fact_hash,
+)
+from datapipeline.contracts import JpKrDisclosureRecord
+from datapipeline.storage.jpkr import canonical_financial_fact_hash
 
 
 CAPTURE_ID = uuid.UUID("12345678-1234-4234-8234-567812345678")
 SECOND_CAPTURE_ID = uuid.UUID("22345678-1234-4234-8234-567812345678")
+
+
+class ForgedHash(str):
+    def __eq__(self, _other: object) -> bool:
+        return True
+
+    def __ne__(self, _other: object) -> bool:
+        return False
+
+    __hash__ = str.__hash__
 
 
 def _request(**overrides):
@@ -63,7 +80,7 @@ def _request(**overrides):
                 }
             ),
         ),
-        "text_hits": (text_hit_envelope_from_json(_text_hit_json()),),
+        "text_hits": (typed_text_hit_record_from_json(_text_hit_json()),),
         "scores": (typed_score_record_from_json(_score_json()),),
     }
     values.update(overrides)
@@ -134,9 +151,10 @@ class _Cursor(AbstractContextManager):
 
 
 class _Connection:
-    def __init__(self, database, *, tamper_readback=False):
+    def __init__(self, database, *, tamper_readback=False, close_error=None):
         self.database = database
         self.tamper_readback = tamper_readback
+        self.close_error = close_error
         self.calls = []
         self.closed = False
         self.commits = 0
@@ -150,6 +168,8 @@ class _Connection:
 
     def close(self):
         self.closed = True
+        if self.close_error is not None:
+            raise self.close_error
 
 
 class _Database:
@@ -158,9 +178,10 @@ class _Database:
 
 
 class _Connector:
-    def __init__(self, database=None, *, tamper_readback=False):
+    def __init__(self, database=None, *, tamper_readback=False, close_error=None):
         self.database = database or _Database()
         self.tamper_readback = tamper_readback
+        self.close_error = close_error
         self.calls = []
         self.connections = []
 
@@ -169,6 +190,7 @@ class _Connector:
         connection = _Connection(
             self.database,
             tamper_readback=self.tamper_readback,
+            close_error=self.close_error,
         )
         self.connections.append(connection)
         return connection
@@ -273,6 +295,83 @@ class TypedCaptureTests(unittest.TestCase):
                     prepare_typed_capture(request)
                 self.assertIsInstance(captured.exception, ReplayServiceError)
 
+    def test_typed_score_source_version_must_be_trimmed(self):
+        raw = _score_json()
+        raw["source_version"] = " score-v1 "
+
+        with self.assertRaisesRegex(ReplaySourceError, "source_version"):
+            typed_score_record_from_json(raw)
+
+    def test_source_version_str_subclass_cannot_forge_ascii_policy(self):
+        class ForgedSourceVersion(str):
+            def isascii(self):
+                return True
+
+            def __iter__(self):
+                return iter("score-v1")
+
+        forged = ForgedSourceVersion("版本-v1")
+        raw = _score_json()
+        raw["source_version"] = forged
+        with self.assertRaisesRegex(ReplaySourceError, "source_version"):
+            typed_score_record_from_json(raw)
+
+        source_versions = dict(_request().source_versions)
+        source_versions["scores"] = forged
+        with self.assertRaisesRegex(ReplaySourceError, "source capture versions"):
+            prepare_typed_capture(_request(source_versions=source_versions))
+
+    def test_prepare_rejects_comparison_overriding_fact_hash_subclass(self):
+        request = _request()
+        score = request.scores[0]
+        wrong_hash = "f" * 64 if score.fact_hash != "f" * 64 else "e" * 64
+        forged = replace(score, fact_hash=ForgedHash(wrong_hash))
+
+        with self.assertRaisesRegex(ReplaySourceError, "fact_hash"):
+            prepare_typed_capture(_request(scores=(forged,)))
+
+    def test_text_hit_requires_datapipeline_physical_fact_pin(self):
+        raw = _text_hit_json()
+        raw["hit"]["hit_kind"] = "NEGATIVE"
+
+        with self.assertRaisesRegex(ReplaySourceError, "fact_hash"):
+            typed_text_hit_record_from_json(raw)
+
+    def test_duplicate_financial_physical_identity_is_rejected(self):
+        first = filing_envelope_from_json(
+            {
+                "disclosure": _disclosure_json(),
+                "financials": [_financial_json()],
+            }
+        )
+        disclosure_json = _disclosure_json()
+        disclosure_json["source_version"] = "filing-v2"
+        draft = JpKrDisclosureRecord(
+            **{
+                **disclosure_json,
+                "event_time_utc": datetime.fromisoformat(
+                    disclosure_json["event_time_utc"].replace("Z", "+00:00")
+                ),
+                "available_at_utc": datetime.fromisoformat(
+                    disclosure_json["available_at_utc"].replace("Z", "+00:00")
+                ),
+                "fact_hash": "0" * 64,
+            }
+        )
+        disclosure_json["fact_hash"] = canonical_disclosure_fact_hash(draft)
+        financial_json = _financial_json()
+        financial_json["revenue"] = "2000"
+        financial_json["fact_hash"] = canonical_financial_fact_hash(financial_json)
+        second = filing_envelope_from_json(
+            {
+                "disclosure": disclosure_json,
+                "financials": [financial_json],
+            }
+        )
+
+        with self.assertRaisesRegex(ReplaySourceError, "identity is duplicated"):
+            prepare_typed_capture(_request(filings=(first, second)))
+
 
 class PostgresTypedCaptureWriterTests(unittest.TestCase):
     def _writer(self, connector, identity=CAPTURE_ID):
@@ -338,7 +437,7 @@ class PostgresTypedCaptureWriterTests(unittest.TestCase):
             writer.write(
                 _request(
                     source_versions={
-                        "signals": "   ",
+                        "signals": " signals-v1 ",
                         "universe": "universe-v1",
                         "scores": "scores-v1",
                         "evidence": "evidence-v1",
@@ -371,6 +470,50 @@ class PostgresTypedCaptureWriterTests(unittest.TestCase):
         with self.assertRaises(TypedCaptureWriteError) as captured:
             writer.write(_request())
         self.assertNotIn(secret, str(captured.exception))
+        self.assertIsNone(captured.exception.__cause__)
+        self.assertIsNone(captured.exception.__context__)
+        self.assertNotIn(
+            secret,
+            "".join(
+                traceback.format_exception(
+                    type(captured.exception),
+                    captured.exception,
+                    captured.exception.__traceback__,
+                )
+            ),
+        )
+
+    def test_close_errors_are_redacted_without_masking_primary_failure(self):
+        secret = "postgresql://secret:password@production/internal"
+        connector = _Connector(close_error=RuntimeError(secret))
+
+        with self.assertRaises(TypedCaptureWriteError) as captured:
+            self._writer(connector).write(_request())
+        self.assertEqual(
+            str(captured.exception),
+            "unable to close typed source capture connection",
+        )
+        self.assertNotIn(secret, str(captured.exception))
+        self.assertIsNone(captured.exception.__cause__)
+        self.assertIsNone(captured.exception.__context__)
+        self.assertNotIn(
+            secret,
+            "".join(
+                traceback.format_exception(
+                    type(captured.exception),
+                    captured.exception,
+                    captured.exception.__traceback__,
+                )
+            ),
+        )
+
+        conflict_connector = _Connector(
+            tamper_readback=True,
+            close_error=RuntimeError(secret),
+        )
+        with self.assertRaises(TypedCaptureConflictError) as primary:
+            self._writer(conflict_connector).write(_request())
+        self.assertNotIn(secret, str(primary.exception))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,11 @@
 """Frozen cross-source record protocols for the DataPipeline layer."""
 
-from .market_records import FxObservation, MultibaggerSourceRecord
+from .market_records import (
+    FxObservation,
+    MultibaggerSourceRecord,
+    is_canonical_sha256,
+    is_canonical_source_version,
+)
 from .jpkr_official_records import JpKrDailyKlineRecord, JpKrSecurityRecord
 from .capture_provenance import (
     CAPTURE_SCHEMA_VERSION,
@@ -31,6 +36,8 @@ __all__ = [
     "ScanDocument",
     "TextHit",
     "TextHitEnvelope",
+    "is_canonical_sha256",
+    "is_canonical_source_version",
     "build_capture_wrapper",
     "capture_source_version",
     "validate_capture_wrapper",

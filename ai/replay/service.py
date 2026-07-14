@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as _datetime
 import hashlib
+import json
 import re
 import uuid
 from collections.abc import Mapping
@@ -22,8 +23,10 @@ from ai.replay.types import (
     ReplayPins,
     ReplayResult,
     SourceSlice,
+    is_canonical_source_version,
 )
 from ai.snapshot.fingerprint import jcs_canonicalize
+from datapipeline.contracts import is_canonical_sha256
 
 
 CONTRACT_VERSION = "0.3.1"
@@ -36,7 +39,6 @@ PROFILE_MARKET_SCOPES = {
     "korea_multibagger": frozenset({"kr"}),
 }
 SOURCE_KINDS = ("signals", "universe", "scores", "evidence")
-_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _SEMVER_RE = re.compile(
     r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
     r"(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
@@ -219,7 +221,7 @@ class ReplayService:
                 raise ReplaySourceError(
                     "atomic replay input source unavailable"
                 ) from error
-            if not isinstance(slices, ReplayInputs):
+            if type(slices) is not ReplayInputs:
                 raise ReplaySourceError(
                     "atomic replay input source returned wrong type"
                 )
@@ -238,10 +240,24 @@ class ReplayService:
                     "evidence", self._evidence_cache.load_evidence, pins
                 ),
             )
-        for expected_kind, source_slice in zip(
-            SOURCE_KINDS, slices.ordered()
-        ):
+        ordered = (
+            slices.signals,
+            slices.universe,
+            slices.scores,
+            slices.evidence,
+        )
+        if len(ordered) != len(SOURCE_KINDS):
+            raise ReplaySourceError("atomic replay input source count mismatch")
+        validated = tuple(
             self._validate_source_slice(expected_kind, pins, source_slice)
+            for expected_kind, source_slice in zip(SOURCE_KINDS, ordered)
+        )
+        slices = ReplayInputs(
+            signals=validated[0],
+            universe=validated[1],
+            scores=validated[2],
+            evidence=validated[3],
+        )
         computed = compute_replay_input_fingerprint(slices)
         if computed != pins.input_fingerprint:
             raise ReplaySourceError(
@@ -288,7 +304,7 @@ class ReplayService:
 
     @classmethod
     def _validate_pins(cls, pins: ReplayPins) -> None:
-        if not isinstance(pins, ReplayPins):
+        if type(pins) is not ReplayPins:
             raise ReplayPinsError("pins must be ReplayPins")
         try:
             _datetime.date.fromisoformat(pins.trading_day)
@@ -322,8 +338,8 @@ class ReplayService:
         expected_kind: str,
         pins: ReplayPins,
         source_slice: SourceSlice,
-    ) -> None:
-        if not isinstance(source_slice, SourceSlice):
+    ) -> SourceSlice:
+        if type(source_slice) is not SourceSlice:
             raise ReplaySourceError(f"{expected_kind} source returned wrong type")
         if source_slice.kind != expected_kind:
             raise ReplaySourceError(f"{expected_kind} source kind mismatch")
@@ -333,8 +349,7 @@ class ReplayService:
                     f"{expected_kind} source {field} pin mismatch"
                 )
         if (
-            not isinstance(source_slice.source_version, str)
-            or not source_slice.source_version
+            not is_canonical_source_version(source_slice.source_version)
         ):
             raise ReplaySourceError(
                 f"{expected_kind} source_version is required"
@@ -361,6 +376,28 @@ class ReplayService:
             raise ReplaySourceError(
                 f"{expected_kind} content_hash does not match records"
             )
+        try:
+            canonical_records = json.loads(records_jcs)
+        except (TypeError, ValueError) as error:
+            raise ReplaySourceError(
+                f"{expected_kind} records must be JSON/JCS serializable"
+            ) from error
+        if not isinstance(canonical_records, list) or any(
+            type(record) is not dict for record in canonical_records
+        ):
+            raise ReplaySourceError(
+                f"{expected_kind} records must contain JSON objects"
+            )
+        return SourceSlice(
+            kind=source_slice.kind,
+            trading_day=source_slice.trading_day,
+            as_of=source_slice.as_of,
+            profile=source_slice.profile,
+            market_scope=source_slice.market_scope,
+            source_version=source_slice.source_version,
+            content_hash=source_slice.content_hash,
+            records=tuple(canonical_records),
+        )
 
     @classmethod
     def _validate_result(cls, result: ReplayResult) -> None:
@@ -499,5 +536,5 @@ class ReplayService:
         *,
         error_type: type[ReplayServiceError] = ReplayPinsError,
     ) -> None:
-        if not isinstance(value, str) or not _SHA256_RE.fullmatch(value):
+        if not is_canonical_sha256(value):
             raise error_type(f"{field} must be lowercase SHA-256")

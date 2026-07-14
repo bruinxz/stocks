@@ -9,6 +9,7 @@ from ai.replay.runtime import (
     TypedReplaySources,
     TypedScoreRecord,
     TypedSourceSnapshot,
+    TypedTextHitRecord,
     build_typed_replay_runtime,
     validate_source_score_features,
 )
@@ -23,6 +24,7 @@ from ai.replay.typed_capture import (
     TypedCaptureReceipt,
     TypedCaptureRequest,
     prepare_typed_capture,
+    typed_text_hit_record_from_json,
 )
 
 __all__ = [
@@ -41,7 +43,9 @@ __all__ = [
     "TypedReplaySources",
     "TypedScoreRecord",
     "TypedSourceSnapshot",
+    "TypedTextHitRecord",
     "build_typed_replay_runtime",
     "prepare_typed_capture",
+    "typed_text_hit_record_from_json",
     "validate_source_score_features",
 ]

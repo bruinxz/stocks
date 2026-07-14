@@ -10,14 +10,7 @@ from ai.replay.service import ReplayService, ReplaySourceError
 from ai.replay.runtime import TypedSourceSnapshot
 from ai.replay.typed_capture import (
     CAPTURE_COLUMNS,
-    filing_envelope_from_json,
     hydrate_typed_capture,
-    text_hit_envelope_from_json,
-    typed_financial_fact_hash,
-    typed_scan_document_fact_hash,
-    typed_score_record_from_json,
-    typed_source_capture_hash,
-    typed_text_context_hash,
 )
 from ai.replay.types import ReplayPins
 from ai.snapshot.postgres_store import validate_database_url
@@ -82,10 +75,11 @@ def _default_connector(database_url: str):
             application_name="stocks-ai-typed-replay-source",
             passfile="",
         )
-    except Exception as error:
-        raise TypedSourceRepositoryReadError(
-            "unable to connect using DATABASE_URL"
-        ) from error
+    except Exception:
+        pass
+    raise TypedSourceRepositoryReadError(
+        "unable to connect using DATABASE_URL"
+    )
 
 
 Connector = Callable[[str], Any]
@@ -101,11 +95,14 @@ class PostgresTypedSourceRepository:
         connector: Optional[Connector] = None,
     ) -> None:
         try:
-            self._database_url = validate_database_url(database_url)
-        except ValueError as error:
+            validated_database_url = validate_database_url(database_url)
+        except ValueError:
+            validated_database_url = None
+        if validated_database_url is None:
             raise TypedSourceRepositoryConfigurationError(
                 "DATABASE_URL is invalid for typed replay sources"
-            ) from error
+            )
+        self._database_url = validated_database_url
         self._connector = connector or _default_connector
 
     @classmethod
@@ -126,22 +123,39 @@ class PostgresTypedSourceRepository:
         # Invalid/custom profile-scope pairs must fail before any connection.
         ReplayService._validate_pins(pins)
         connection = self._connect()
+        primary_failure = False
         try:
-            with connection.transaction():
-                with connection.cursor() as cursor:
-                    cursor.execute(
-                        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
-                    )
-                    cursor.execute(SELECT_CAPTURE, _pin_parameters(pins))
-                    rows = cursor.fetchall()
-        except ReplaySourceError:
+            try:
+                with connection.transaction():
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+                        )
+                        cursor.execute(SELECT_CAPTURE, _pin_parameters(pins))
+                        rows = cursor.fetchall()
+            except ReplaySourceError:
+                raise
+            except Exception:
+                read_failed = True
+            else:
+                read_failed = False
+            if read_failed:
+                raise TypedSourceRepositoryReadError(
+                    "unable to load typed replay source capture"
+                )
+        except BaseException:
+            primary_failure = True
             raise
-        except Exception as error:
-            raise TypedSourceRepositoryReadError(
-                "unable to load typed replay source capture"
-            ) from error
         finally:
-            connection.close()
+            close_failed = False
+            try:
+                connection.close()
+            except Exception:
+                close_failed = True
+            if close_failed and not primary_failure:
+                raise TypedSourceRepositoryReadError(
+                    "unable to close typed replay source connection"
+                )
 
         if len(rows) != 1:
             if not rows:
@@ -158,10 +172,11 @@ class PostgresTypedSourceRepository:
             TypedSourceRepositoryReadError,
         ):
             raise
-        except Exception as error:
-            raise TypedSourceRepositoryReadError(
-                "unable to connect using DATABASE_URL"
-            ) from error
+        except Exception:
+            pass
+        raise TypedSourceRepositoryReadError(
+            "unable to connect using DATABASE_URL"
+        )
 
 
 def _pin_parameters(pins: ReplayPins) -> tuple[str, ...]:
