@@ -1,0 +1,23 @@
+backend/tests/e2e/tab4-multibagger-live-http.test.ts
+  s_9e37254e3f0d99::t_e3fe35f32b47c2 15-19
+backend/tests/e2e/tab4-multibagger-live.pg.sh
+  s_9e37254e3f0d99::t_4718908bc51169 75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5b898482a3932467e5613ba9bf777eb1727461e0",
+  "prompts": {},
+  "sessions": {
+    "s_9e37254e3f0d99": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f90-69f7-78e2-ad4d-90163d20fbb3",
+        "model": "unknown"
+      },
+      "human_author": "liyiming.709 <liyiming.709@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
