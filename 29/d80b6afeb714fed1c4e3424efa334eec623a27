@@ -1,0 +1,21 @@
+ai/pipeline/replay_adapter.py
+  s_6ca1020a327476::t_3ecf34fb599d2f 38,56,58,67-76,86,88-89,104,106-108,181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "29d80b6afeb714fed1c4e3424efa334eec623a27",
+  "prompts": {},
+  "sessions": {
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
