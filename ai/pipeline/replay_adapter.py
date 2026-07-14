@@ -35,6 +35,7 @@ from ai.snapshot.fingerprint import (
 from ai.snapshot.postgres_store import PostgresSnapshotStore
 from ai.snapshot.reader import SnapshotReader
 from ai.snapshot.writer import SnapshotWriter
+from ai.types import PROFILE_DEFAULT_OUTPUT_LANGUAGE
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -52,9 +53,9 @@ class ReplayPipelinePolicy:
 
     model_version: str
     template_hash: str
-    disclaimer: Mapping[str, Any]
+    disclaimers: Mapping[str, Mapping[str, Any]]
 
-    def validated_disclaimer(self) -> dict[str, Any]:
+    def validated_disclaimer(self, profile: str) -> dict[str, Any]:
         if not isinstance(self.model_version, str) or not _SEMVER_RE.fullmatch(
             self.model_version
         ):
@@ -63,7 +64,16 @@ class ReplayPipelinePolicy:
             self.template_hash
         ):
             raise ReplayPipelineError("template_hash must be lowercase SHA-256")
-        if not isinstance(self.disclaimer, Mapping):
+        if not isinstance(self.disclaimers, Mapping):
+            raise ReplayPipelineError("disclaimers must be an object")
+        required_languages = set(PROFILE_DEFAULT_OUTPUT_LANGUAGE.values())
+        if set(self.disclaimers) != required_languages:
+            raise ReplayPipelineError("disclaimer locale keys are not exact")
+        language = PROFILE_DEFAULT_OUTPUT_LANGUAGE.get(profile)
+        if language is None:
+            raise ReplayPipelineError("profile has no default output language")
+        disclaimer = self.disclaimers.get(language)
+        if not isinstance(disclaimer, Mapping):
             raise ReplayPipelineError("disclaimer must be an object")
         required = {
             "version",
@@ -73,10 +83,10 @@ class ReplayPipelinePolicy:
             "effective_at",
             "hash",
         }
-        if set(self.disclaimer) != required:
+        if set(disclaimer) != required:
             raise ReplayPipelineError("disclaimer keys are not exact")
-        full_text = self.disclaimer.get("full_text")
-        digest = self.disclaimer.get("hash")
+        full_text = disclaimer.get("full_text")
+        digest = disclaimer.get("hash")
         if (
             not isinstance(full_text, str)
             or not full_text
@@ -91,11 +101,11 @@ class ReplayPipelinePolicy:
             "language",
             "effective_at",
         ):
-            if not isinstance(self.disclaimer.get(field), str) or not self.disclaimer[
-                field
-            ]:
+            if not isinstance(disclaimer.get(field), str) or not disclaimer[field]:
                 raise ReplayPipelineError(f"disclaimer.{field} is required")
-        return copy.deepcopy(dict(self.disclaimer))
+        if disclaimer["language"] != language:
+            raise ReplayPipelineError("disclaimer language does not match locale key")
+        return copy.deepcopy(dict(disclaimer))
 
 
 class _PersistedSnapshotVerifier:
@@ -168,7 +178,7 @@ class PipelineReplayAdapter:
         ReplayService._validate_pins(pins)
         self._validate_inputs(pins, inputs)
         source_inputs = self._map_inputs(pins, inputs)
-        disclaimer = self._policy.validated_disclaimer()
+        disclaimer = self._policy.validated_disclaimer(pins.profile)
         rule_bundle_hash = RuleEngine(
             self._policy.model_version
         ).bundle_hash

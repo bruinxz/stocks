@@ -11,7 +11,10 @@ import tempfile
 import unittest
 import uuid
 
-from ai.pipeline.replay_adapter import PipelineReplayAdapter, ReplayPipelinePolicy
+from ai.pipeline.replay_adapter import (
+    PipelineReplayAdapter,
+    ReplayPipelinePolicy,
+)
 from ai.replay.postgres_repository import (
     CAPTURE_COLUMNS,
     SELECT_CAPTURE,
@@ -29,7 +32,12 @@ from ai.replay.runtime import (
     typed_score_fact_hash,
 )
 from ai.replay.file_store import AtomicFileReplayJobStore
-from ai.replay.service import PROFILE_MARKET_SCOPES, ReplayPinsError, ReplaySourceError
+from ai.replay.service import (
+    PROFILE_MARKET_SCOPES,
+    ReplayPipelineError,
+    ReplayPinsError,
+    ReplaySourceError,
+)
 from ai.replay.types import ReplayInputs, ReplayPins
 from ai.snapshot.fingerprint import compute_input_fingerprint, jcs_canonicalize
 from ai.snapshot.postgres_store import PostgresSnapshotStore
@@ -337,19 +345,56 @@ def _capture_row(*, pins=None, mutate=None):
     return pins, row
 
 
-def _disclaimer():
-    full_text = "research only"
+def _disclaimer(language, full_text):
     return {
         "version": "1.0.0",
-        "short_text": "research only",
+        "short_text": full_text,
         "full_text": full_text,
-        "language": "zh-CN",
+        "language": language,
         "effective_at": "2026-01-01T00:00:00Z",
         "hash": hashlib.sha256(full_text.encode()).hexdigest(),
     }
 
 
+def _disclaimers():
+    return {
+        "zh-CN": _disclaimer("zh-CN", "仅供研究参考"),
+        "ja-JP": _disclaimer("ja-JP", "調査目的のみ"),
+        "ko-KR": _disclaimer("ko-KR", "연구 목적으로만 제공됩니다"),
+    }
+
+
 class PostgresTypedSourceRepositoryTests(unittest.TestCase):
+    def test_pipeline_policy_selects_profile_default_disclaimer_locale(self):
+        policy = ReplayPipelinePolicy(
+            model_version="1.0.0",
+            template_hash="a" * 64,
+            disclaimers=_disclaimers(),
+        )
+        expected = {
+            "us_preferred": "zh-CN",
+            "multibagger": "zh-CN",
+            "japan_blue_chip": "ja-JP",
+            "japan_multibagger": "ja-JP",
+            "korea_semiconductor_chain": "ko-KR",
+            "korea_multibagger": "ko-KR",
+        }
+        for profile, language in expected.items():
+            with self.subTest(profile=profile):
+                self.assertEqual(
+                    policy.validated_disclaimer(profile)["language"],
+                    language,
+                )
+
+        invalid = _disclaimers()
+        invalid["ja-JP"]["language"] = "zh-CN"
+        with self.assertRaisesRegex(ReplayPipelineError, "locale key"):
+            ReplayPipelinePolicy(
+                model_version="1.0.0",
+                template_hash="a" * 64,
+                disclaimers=invalid,
+            ).validated_disclaimer("japan_blue_chip")
+
     def test_one_exact_query_loads_all_typed_sources(self):
         pins, row = _capture_row()
         connector = _Connector([row])
@@ -453,7 +498,7 @@ class PostgresTypedSourceRepositoryTests(unittest.TestCase):
             policy=ReplayPipelinePolicy(
                 model_version="1.0.0",
                 template_hash="a" * 64,
-                disclaimer=_disclaimer(),
+                disclaimers=_disclaimers(),
             ),
         )
         invalid = replace(pins, profile="custom")
@@ -513,7 +558,7 @@ class PostgresTypedSourceRepositoryTests(unittest.TestCase):
             policy=ReplayPipelinePolicy(
                 model_version="1.0.0",
                 template_hash="a" * 64,
-                disclaimer=_disclaimer(),
+                disclaimers=_disclaimers(),
             ),
         )
 
@@ -572,7 +617,7 @@ class PostgresTypedSourceRepositoryIntegrationTests(unittest.TestCase):
             policy=ReplayPipelinePolicy(
                 model_version="1.0.0",
                 template_hash="a" * 64,
-                disclaimer=_disclaimer(),
+                disclaimers=_disclaimers(),
             ),
         )
         counted_repository = _CountingRepository(repository)
@@ -654,7 +699,7 @@ class PostgresTypedSourceRepositoryIntegrationTests(unittest.TestCase):
             policy=ReplayPipelinePolicy(
                 model_version="1.0.0",
                 template_hash="a" * 64,
-                disclaimer=_disclaimer(),
+                disclaimers=_disclaimers(),
             ),
         )
         test_root = Path(__file__).resolve().parents[2]
