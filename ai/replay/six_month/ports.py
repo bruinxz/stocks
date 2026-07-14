@@ -66,6 +66,9 @@ class SyntheticFixtureCalendarAdapter:
         sessions = self._port.sessions(
             market_scope, start="2026-01-10", end="2026-07-10"
         )
+        source_versions = {session.fixture_version for session in sessions}
+        if len(source_versions) != 1:
+            raise ValueError("calendar sessions must share one fixture version")
         checkpoint_days = {
             session.trade_date
             for session in self._port.checkpoints(market_scope)
@@ -74,6 +77,7 @@ class SyntheticFixtureCalendarAdapter:
             market_scope=market_scope,
             window_start="2026-01-10",
             window_end="2026-07-10",
+            source_version=next(iter(source_versions)),
             fixture_hash=self._port.fixture_hash(market_scope),
             synthetic=True,
             disclaimer=(
