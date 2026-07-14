@@ -105,7 +105,11 @@ function buildMatrix(): MatrixRow[] {
         scope,
         checkpoint,
         snapshotId: snapshot_id,
-        url: render(fixture.request_routes.holdings, { snapshot_id, scope }),
+        url: render(fixture.request_routes.holdings, {
+          profile,
+          scope,
+          as_of,
+        }),
       });
     }
   });

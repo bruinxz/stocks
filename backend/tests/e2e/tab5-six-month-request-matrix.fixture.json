@@ -33,8 +33,8 @@
     "total_requests": 440
   },
   "request_routes": {
-    "list": "/api/v1/backtest/pit/snapshots?strategy={profile}&market_scope={scope}",
-    "detail": "/api/v1/backtest/pit/snapshots/{profile}/{as_of}?market_scope={scope}",
-    "holdings": "/api/v1/backtest/pit/snapshots/{snapshot_id}/holdings?market_scope={scope}"
+    "list": "/api/v1/backtest-pit/{profile}?market_scope={scope}&from=2026-01-10&to=2026-07-10&limit=27",
+    "detail": "/api/v1/backtest-pit/{profile}/{as_of}?market_scope={scope}",
+    "holdings": "/api/v1/backtest-pit/{profile}/{as_of}/holdings?market_scope={scope}"
   }
 }
