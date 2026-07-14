@@ -1,0 +1,23 @@
+ai/replay/cli.py
+  s_366849d3ebdf27::t_02dfb72f6e88b5 3-6,20,27-31,35,41-45,54-67,242,252-391
+ai/tests/test_replay_cli_subprocess.py
+  s_366849d3ebdf27::t_359805d0fb788a 3,15-16,19,22,68-102,112-113,117-119,124,132-151,324-362
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "c284ab1e23f09ff58048629c63fc91f021fc4d15",
+  "prompts": {},
+  "sessions": {
+    "s_366849d3ebdf27": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f600c-cb7d-7622-a0a3-80df4123f97d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
