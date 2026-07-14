@@ -14,6 +14,8 @@ import uuid
 from ai.pipeline.replay_adapter import (
     PipelineReplayAdapter,
     ReplayPipelinePolicy,
+    _parse_replay_utc_seconds,
+    _parse_source_utc,
 )
 from ai.replay.postgres_repository import (
     CAPTURE_COLUMNS,
@@ -32,6 +34,7 @@ from ai.replay.runtime import (
     typed_score_fact_hash,
 )
 from ai.replay.file_store import AtomicFileReplayJobStore
+from ai.replay.fingerprint import compute_replay_input_fingerprint
 from ai.replay.service import (
     PROFILE_MARKET_SCOPES,
     ReplayPipelineError,
@@ -39,7 +42,7 @@ from ai.replay.service import (
     ReplaySourceError,
 )
 from ai.replay.types import ReplayInputs, ReplayPins
-from ai.snapshot.fingerprint import compute_input_fingerprint, jcs_canonicalize
+from ai.snapshot.fingerprint import jcs_canonicalize
 from ai.snapshot.postgres_store import PostgresSnapshotStore
 from datapipeline.collectors.jpkr_deep.official_fixture_parser import (
     canonical_disclosure_fact_hash,
@@ -365,6 +368,15 @@ def _disclaimers():
 
 
 class PostgresTypedSourceRepositoryTests(unittest.TestCase):
+    def test_source_availability_accepts_canonical_utc_microseconds(self):
+        parsed = _parse_source_utc("2026-07-10T06:29:59.500000Z")
+        self.assertEqual(parsed.microsecond, 500000)
+
+        with self.assertRaisesRegex(ReplaySourceError, "canonical UTC"):
+            _parse_source_utc("2026-07-10T06:29:59.5Z")
+        with self.assertRaisesRegex(ReplaySourceError, "UTC seconds"):
+            _parse_replay_utc_seconds("2026-07-10T06:29:59.500000Z")
+
     def test_pipeline_policy_selects_profile_default_disclaimer_locale(self):
         policy = ReplayPipelinePolicy(
             model_version="1.0.0",
@@ -545,9 +557,7 @@ class PostgresTypedSourceRepositoryTests(unittest.TestCase):
         )
         pins = replace(
             pins,
-            input_fingerprint=compute_input_fingerprint(
-                [source.content_hash for source in modified.ordered()]
-            ),
+            input_fingerprint=compute_replay_input_fingerprint(modified),
         )
         connector = _Connector([])
         adapter = PipelineReplayAdapter(

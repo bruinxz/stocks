@@ -18,8 +18,9 @@ import re
 from typing import Any, Protocol
 
 from ai.replay.service import ReplayService, ReplaySourceError
+from ai.replay.fingerprint import compute_replay_input_fingerprint
 from ai.replay.types import ReplayInputs, ReplayJob, ReplayPins, SourceSlice
-from ai.snapshot.fingerprint import compute_input_fingerprint, jcs_canonicalize
+from ai.snapshot.fingerprint import jcs_canonicalize
 from datapipeline.contracts import JpKrFilingEnvelope, TextHitEnvelope
 
 
@@ -276,9 +277,7 @@ class TypedReplaySources:
         )
 
     def input_fingerprint(self, pins: ReplayPins) -> str:
-        return compute_input_fingerprint(
-            [source.content_hash for source in self.source_slices(pins)]
-        )
+        return compute_replay_input_fingerprint(self.load_inputs(pins))
 
     def _load_capture(self, pins: ReplayPins) -> TypedSourceSnapshot:
         snapshot = copy.deepcopy(self._repository.load(pins))

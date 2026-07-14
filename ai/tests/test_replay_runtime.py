@@ -800,7 +800,7 @@ class ReplayRuntimeTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     worker.run_batch(job_ids, limit=limit)
 
-    def test_all_six_profiles_construct_typed_slices(self):
+    def test_all_six_profiles_replay_score_only_captures(self):
         pairs = (
             ("us_preferred", "us"),
             ("multibagger", "cn_a"),
@@ -812,15 +812,14 @@ class ReplayRuntimeTests(unittest.TestCase):
         for profile, scope in pairs:
             with self.subTest(profile=profile, scope=scope):
                 record = _score(profile=profile, market_scope=scope)
-                sources = TypedReplaySources(
-                    Repository(
-                        _snapshot(
-                            filings=(),
-                            hits=(),
-                            scores=(record,),
-                        )
+                repository = Repository(
+                    _snapshot(
+                        filings=(),
+                        hits=(),
+                        scores=(record,),
                     )
                 )
+                sources = TypedReplaySources(repository)
                 base = ReplayPins(
                     trading_day="2026-07-10",
                     as_of=NOW_TEXT,
@@ -834,6 +833,27 @@ class ReplayRuntimeTests(unittest.TestCase):
                 )
                 slices = sources.source_slices(base)
                 self.assertEqual(slices[1].records[0]["ticker"], record.ticker)
+                self.assertEqual(
+                    slices[0].content_hash,
+                    slices[3].content_hash,
+                    "empty named slices legitimately share their records hash",
+                )
+                pins = replace(
+                    base,
+                    input_fingerprint=sources.input_fingerprint(base),
+                )
+                with _temporary_directory() as directory:
+                    service, worker, _ = build_typed_replay_runtime(
+                        repository=repository,
+                        pipeline=Pipeline(),
+                        job_store=AtomicFileReplayJobStore(
+                            Path(directory) / "jobs.json"
+                        ),
+                        uuid_factory=lambda: JOB_ID,
+                        clock=lambda: NOW_TEXT,
+                    )
+                    completed = worker.run_job(service.submit(pins).job_id)
+                self.assertEqual(completed.status, "completed")
 
 
 if __name__ == "__main__":

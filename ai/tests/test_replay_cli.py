@@ -32,10 +32,17 @@ from ai.replay.cli import (
     main,
 )
 from ai.replay.file_store import AtomicFileReplayJobStore
+from ai.replay.fingerprint import compute_replay_input_fingerprint
 from ai.replay.runtime import ReplayWorker
 from ai.replay.service import ReplayPinsError, ReplayService
-from ai.replay.types import ReplayJob, ReplayPins, ReplayResult, SourceSlice
-from ai.snapshot.fingerprint import compute_input_fingerprint, jcs_canonicalize
+from ai.replay.types import (
+    ReplayInputs,
+    ReplayJob,
+    ReplayPins,
+    ReplayResult,
+    SourceSlice,
+)
+from ai.snapshot.fingerprint import jcs_canonicalize
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -65,10 +72,18 @@ def _pins(**overrides):
         "market_scope": "us",
         "profile_version": "1.0.0",
         "contract_version": "0.3.1",
-        "input_fingerprint": compute_input_fingerprint([_hash(kind) for kind in KINDS]),
+        "input_fingerprint": "0" * 64,
         "strategy_version": "1.0.0",
         "pipeline_version": "1.0.0",
     }
+    provisional = ReplayPins(**values)
+    inputs = ReplayInputs(
+        signals=Source("signals").load(provisional),
+        universe=Source("universe").load(provisional),
+        scores=Source("scores").load(provisional),
+        evidence=Source("evidence").load(provisional),
+    )
+    values["input_fingerprint"] = compute_replay_input_fingerprint(inputs)
     values.update(overrides)
     return ReplayPins(**values)
 

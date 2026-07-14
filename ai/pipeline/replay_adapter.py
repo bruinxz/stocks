@@ -17,6 +17,10 @@ from ai.pipeline.runner import (
     PipelineSourceInputs,
 )
 from ai.replay.runtime import typed_score_fact_hash, validate_source_score_features
+from ai.replay.fingerprint import (
+    compute_replay_input_fingerprint,
+    replay_input_manifest_hashes,
+)
 from ai.replay.postgres_repository import (
     filing_envelope_from_json,
     text_hit_envelope_from_json,
@@ -28,10 +32,7 @@ from ai.replay.service import (
 )
 from ai.replay.types import ReplayInputs, ReplayPins, ReplayResult
 from ai.rules.engine import RuleEngine
-from ai.snapshot.fingerprint import (
-    compute_input_fingerprint,
-    jcs_canonicalize,
-)
+from ai.snapshot.fingerprint import jcs_canonicalize
 from ai.snapshot.postgres_store import PostgresSnapshotStore
 from ai.snapshot.reader import SnapshotReader
 from ai.snapshot.writer import SnapshotWriter
@@ -196,7 +197,7 @@ class PipelineReplayAdapter:
             profile_version=pins.profile_version,
             disclaimer=disclaimer,
             input_hashes=tuple(
-                source.content_hash for source in inputs.ordered()
+                replay_input_manifest_hashes(inputs)
             ),
         )
         verifier = _PersistedSnapshotVerifier(self._snapshot_store, pins)
@@ -229,9 +230,7 @@ class PipelineReplayAdapter:
             inputs.ordered(),
         ):
             ReplayService._validate_source_slice(expected, pins, source)
-        computed = compute_input_fingerprint(
-            [source.content_hash for source in inputs.ordered()]
-        )
+        computed = compute_replay_input_fingerprint(inputs)
         if computed != pins.input_fingerprint:
             raise ReplaySourceError(
                 "source content hashes do not match replay input_fingerprint"
@@ -241,7 +240,7 @@ class PipelineReplayAdapter:
     def _map_inputs(
         pins: ReplayPins, inputs: ReplayInputs
     ) -> PipelineSourceInputs:
-        cutoff = _parse_utc_datetime(pins.as_of)
+        cutoff = _parse_replay_utc_seconds(pins.as_of)
         evidence_refs, expected_signals, evidence_tickers = (
             _validate_evidence_records(pins, inputs.evidence.records)
         )
@@ -290,7 +289,7 @@ class PipelineReplayAdapter:
                 or not record["source_version"]
             ):
                 raise ReplaySourceError("score record replay pins mismatch")
-            available_at = _parse_utc_datetime(record["available_at_utc"])
+            available_at = _parse_source_utc(record["available_at_utc"])
             if available_at > cutoff:
                 raise ReplaySourceError("score record violates replay PIT cutoff")
             features = validate_source_score_features(
@@ -348,7 +347,7 @@ class PipelineReplayAdapter:
 
 
 def _validate_evidence_records(pins, records):
-    cutoff = _parse_utc_datetime(pins.as_of)
+    cutoff = _parse_replay_utc_seconds(pins.as_of)
     refs: dict[str, list[dict[str, Any]]] = {}
     expected_signals = []
     tickers = set()
@@ -423,7 +422,7 @@ def _validate_evidence_records(pins, records):
 
 
 def _validate_signal_records(pins, signals, expected_signals) -> None:
-    cutoff = _parse_utc_datetime(pins.as_of)
+    cutoff = _parse_replay_utc_seconds(pins.as_of)
     for record in signals:
         kind = record.get("kind")
         required = (
@@ -461,7 +460,7 @@ def _validate_signal_records(pins, signals, expected_signals) -> None:
         )
         if not required or set(record) != required:
             raise ReplaySourceError("signal record keys/kind are invalid")
-        available_at = _parse_utc_datetime(record["available_at_utc"])
+        available_at = _parse_source_utc(record["available_at_utc"])
         if (
             record.get("market_scope") != pins.market_scope
             or available_at > cutoff
@@ -551,19 +550,37 @@ def _utc_text(value) -> str:
     return value.isoformat().replace("+00:00", "Z")
 
 
-def _parse_utc_datetime(value: object):
+def _parse_replay_utc_seconds(value: object):
     from datetime import datetime, timezone
 
     if not isinstance(value, str) or not value.endswith("Z"):
-        raise ReplaySourceError("source available_at must be UTC seconds")
+        raise ReplaySourceError("replay as_of must be UTC seconds")
     try:
         parsed = datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
     except ValueError as error:
-        raise ReplaySourceError("source available_at must be UTC seconds") from error
+        raise ReplaySourceError("replay as_of must be UTC seconds") from error
     if (
         parsed.tzinfo != timezone.utc
         or parsed.microsecond != 0
         or value != parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
     ):
-        raise ReplaySourceError("source available_at must be UTC seconds")
+        raise ReplaySourceError("replay as_of must be UTC seconds")
+    return parsed
+
+
+def _parse_source_utc(value: object):
+    from datetime import datetime, timezone
+
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise ReplaySourceError("source available_at must be canonical UTC")
+    try:
+        parsed = datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
+    except ValueError as error:
+        raise ReplaySourceError("source available_at must be canonical UTC") from error
+    if parsed.tzinfo != timezone.utc:
+        raise ReplaySourceError("source available_at must be canonical UTC")
+    timespec = "microseconds" if parsed.microsecond else "seconds"
+    canonical = parsed.isoformat(timespec=timespec).replace("+00:00", "Z")
+    if value != canonical:
+        raise ReplaySourceError("source available_at must be canonical UTC")
     return parsed

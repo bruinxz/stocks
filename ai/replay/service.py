@@ -15,6 +15,7 @@ from ai.replay.ports import (
     StrategyScoreSource,
     UniverseSource,
 )
+from ai.replay.fingerprint import compute_replay_input_fingerprint
 from ai.replay.types import (
     ReplayInputs,
     ReplayJob,
@@ -22,7 +23,7 @@ from ai.replay.types import (
     ReplayResult,
     SourceSlice,
 )
-from ai.snapshot.fingerprint import compute_input_fingerprint, jcs_canonicalize
+from ai.snapshot.fingerprint import jcs_canonicalize
 
 
 CONTRACT_VERSION = "0.3.1"
@@ -241,9 +242,7 @@ class ReplayService:
             SOURCE_KINDS, slices.ordered()
         ):
             self._validate_source_slice(expected_kind, pins, source_slice)
-        computed = compute_input_fingerprint(
-            [source_slice.content_hash for source_slice in slices.ordered()]
-        )
+        computed = compute_replay_input_fingerprint(slices)
         if computed != pins.input_fingerprint:
             raise ReplaySourceError(
                 "source content hashes do not match replay input_fingerprint"

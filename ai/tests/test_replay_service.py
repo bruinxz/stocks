@@ -12,6 +12,7 @@ from ai.replay.service import (
     ReplayPinsError,
     ReplayService,
 )
+from ai.replay.fingerprint import compute_replay_input_fingerprint
 from ai.replay.types import (
     ReplayInputs,
     ReplayJob,
@@ -19,7 +20,6 @@ from ai.replay.types import (
     ReplayResult,
     SourceSlice,
 )
-from ai.snapshot.fingerprint import compute_input_fingerprint
 
 
 JOB_ID = uuid.UUID("12345678-1234-4234-8234-567812345678")
@@ -118,12 +118,6 @@ def _content_hash(kind):
     ).hexdigest()
 
 
-SOURCE_HASHES = tuple(
-    _content_hash(kind)
-    for kind in ("signals", "universe", "scores", "evidence")
-)
-
-
 def _pins(**overrides):
     values = {
         "trading_day": "2026-07-12",
@@ -132,10 +126,14 @@ def _pins(**overrides):
         "market_scope": "us",
         "profile_version": "3.1.0",
         "contract_version": "0.3.1",
-        "input_fingerprint": compute_input_fingerprint(list(SOURCE_HASHES)),
+        "input_fingerprint": "0" * 64,
         "strategy_version": "3.1.0",
         "pipeline_version": "3.1.0",
     }
+    provisional = ReplayPins(**values)
+    values["input_fingerprint"] = compute_replay_input_fingerprint(
+        _inputs(provisional)
+    )
     values.update(overrides)
     return ReplayPins(**values)
 
@@ -153,6 +151,15 @@ def _source_slice(kind, pins, **overrides):
     }
     values.update(overrides)
     return SourceSlice(**values)
+
+
+def _inputs(pins):
+    return ReplayInputs(
+        signals=_source_slice("signals", pins),
+        universe=_source_slice("universe", pins),
+        scores=_source_slice("scores", pins),
+        evidence=_source_slice("evidence", pins),
+    )
 
 
 def _service(*, pins=None, pipeline=None, store=None, clock=None):
@@ -348,16 +355,22 @@ class ReplayServiceTests(unittest.TestCase):
         empty_hash = hashlib.sha256(
             jcs_canonicalize(()).encode("utf-8")
         ).hexdigest()
-        hashes = list(SOURCE_HASHES)
-        hashes[1] = empty_hash
-        pins = _pins(
-            input_fingerprint=compute_input_fingerprint(hashes)
-        )
+        pins = _pins()
         service, sources = _service(pins=pins)
         sources["universe"].source_slice = replace(
             sources["universe"].source_slice,
             records=(),
             content_hash=empty_hash,
+        )
+        inputs = ReplayInputs(
+            signals=sources["signals"].source_slice,
+            universe=sources["universe"].source_slice,
+            scores=sources["scores"].source_slice,
+            evidence=sources["evidence"].source_slice,
+        )
+        pins = replace(
+            pins,
+            input_fingerprint=compute_replay_input_fingerprint(inputs),
         )
 
         completed = service.run(service.submit(pins).job_id)
