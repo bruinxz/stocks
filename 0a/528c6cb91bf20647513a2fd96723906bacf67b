@@ -1,0 +1,39 @@
+frontend/src/pages/catdesk/tabs/jpkr/DisclosureTimeline.tsx
+  s_6d9a8be7ce53a5::t_820262b76cebc2 7-12,30,32,36-37,52-54
+frontend/src/pages/catdesk/tabs/jpkr/JpKrKpiStrip.tsx
+  s_6d9a8be7ce53a5::t_e6628b4b34bef8 1-79
+frontend/src/pages/catdesk/tabs/jpkr/JpKrMarket.tsx
+  s_6d9a8be7ce53a5::t_4bbce2b57a84f5 12-13,36-40,46,53,75-76,84,88-90,122
+frontend/src/pages/catdesk/tabs/jpkr/JpKrTable.tsx
+  s_6d9a8be7ce53a5::t_550f289f33a636 168
+frontend/src/pages/catdesk/tabs/jpkr/__tests__/container.test.tsx
+  s_6d9a8be7ce53a5::t_afeb785d7d2c94 1-192
+frontend/src/pages/catdesk/tabs/jpkr/__tests__/jpkrAdapters.test.ts
+  s_6d9a8be7ce53a5::t_ebf74e02057fc0 1-170
+frontend/src/pages/catdesk/tabs/jpkr/jpkr.css
+  s_6d9a8be7ce53a5::t_0671353ec6e147 1-135
+frontend/src/pages/catdesk/tabs/jpkr/jpkrAdapters.ts
+  s_6d9a8be7ce53a5::t_102371d12b73e0 1-342
+frontend/src/pages/catdesk/tabs/jpkr/types.ts
+  s_6d9a8be7ce53a5::t_794fa0334a2b8c 4-12,18,39-55
+frontend/src/pages/catdesk/tabs/jpkr/useJpKrData.ts
+  s_6d9a8be7ce53a5::t_210bad726a495a 3,8,11-12,15-16,22,26,29-30,34,39,43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "0a528c6cb91bf20647513a2fd96723906bacf67b",
+  "prompts": {},
+  "sessions": {
+    "s_6d9a8be7ce53a5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f55-8fdb-7033-b11e-ac1cd0164c04",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}

@@ -1,0 +1,21 @@
+frontend/src/pages/catdesk/tabs/backtest/__tests__/tab5SixMonthLiveE2E.test.tsx
+  s_6ca1020a327476::t_dcf9e6430e0a25 1-164
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "96222e4d7a1ff3028dc2c52e33c16d97135001cd",
+  "prompts": {},
+  "sessions": {
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
