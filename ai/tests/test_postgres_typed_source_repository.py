@@ -28,6 +28,13 @@ from ai.replay.postgres_repository import (
     typed_source_capture_hash,
     typed_text_context_hash,
 )
+from ai.replay.typed_capture import (
+    TypedCaptureRequest,
+    filing_envelope_from_json,
+    prepare_typed_capture,
+    text_hit_envelope_from_json,
+    typed_score_record_from_json,
+)
 from ai.replay.runtime import (
     TypedReplaySources,
     build_typed_replay_runtime,
@@ -226,9 +233,7 @@ def _features(profile="japan_blue_chip", market_scope="jp"):
             "market_scope": market_scope,
             "rating": "A",
             "total": 90.0,
-            "dims": [
-                {"key": "Q", "score": 90.0, "band": "A", "weight": 1.0}
-            ],
+            "dims": [{"key": "Q", "score": 90.0, "band": "A", "weight": 1.0}],
         },
         "conviction": {
             "base": 80.0,
@@ -291,58 +296,32 @@ def _capture_row(*, pins=None, mutate=None):
         "scores": "scores-v1",
         "evidence": "evidence-v1",
     }
-    filings = [
-        {"disclosure": _disclosure_json(), "financials": [_financial_json()]}
-    ]
+    filings = [{"disclosure": _disclosure_json(), "financials": [_financial_json()]}]
     text_hits = [_text_hit_json()]
     scores = [_score_json(pins.profile, pins.market_scope)]
-    provisional = {
-        "capture_id": "12345678-1234-4234-8234-567812345678",
-        "trading_day": date.fromisoformat(pins.trading_day),
-        "as_of_utc": NOW,
-        "profile": pins.profile,
-        "market_scope": pins.market_scope,
-        "profile_version": pins.profile_version,
-        "contract_version": pins.contract_version,
-        "input_fingerprint": pins.input_fingerprint,
-        "strategy_version": pins.strategy_version,
-        "pipeline_version": pins.pipeline_version,
-        "available_at_utc": NOW,
-        "source_versions": source_versions,
-        "filings_json": filings,
-        "text_hits_json": text_hits,
-        "scores_json": scores,
-        "capture_hash": "0" * 64,
-    }
-    snapshot = _snapshot_from_capture(
-        {
-            **provisional,
-            "capture_hash": typed_source_capture_hash(
-                pins=pins,
-                available_at_utc=NOW_TEXT,
-                source_versions=source_versions,
-                filings=filings,
-                text_hits=text_hits,
-                scores=scores,
-            ),
-        },
-        pins,
-    )
-    sources = TypedReplaySources(_Repository(snapshot))
-    fingerprint = sources.input_fingerprint(pins)
-    pins = replace(pins, input_fingerprint=fingerprint)
-    row = {
-        **provisional,
-        "input_fingerprint": fingerprint,
-        "capture_hash": typed_source_capture_hash(
-            pins=pins,
-            available_at_utc=NOW_TEXT,
+    prepared = prepare_typed_capture(
+        TypedCaptureRequest(
+            trading_day=pins.trading_day,
+            as_of=pins.as_of,
+            profile=pins.profile,
+            market_scope=pins.market_scope,
+            profile_version=pins.profile_version,
+            contract_version=pins.contract_version,
+            strategy_version=pins.strategy_version,
+            pipeline_version=pins.pipeline_version,
             source_versions=source_versions,
-            filings=filings,
-            text_hits=text_hits,
-            scores=scores,
-        ),
-    }
+            filings=tuple(filing_envelope_from_json(item) for item in filings),
+            text_hits=tuple(text_hit_envelope_from_json(item) for item in text_hits),
+            scores=tuple(typed_score_record_from_json(item) for item in scores),
+        )
+    )
+    pins = prepared.pins
+    row = prepared.row("12345678-1234-4234-8234-567812345678")
+    row["trading_day"] = date.fromisoformat(pins.trading_day)
+    row["as_of_utc"] = datetime.fromisoformat(pins.as_of.replace("Z", "+00:00"))
+    row["available_at_utc"] = datetime.fromisoformat(
+        prepared.available_at_utc.replace("Z", "+00:00")
+    )
     if mutate is not None:
         mutate(row)
     return pins, row
@@ -636,12 +615,8 @@ class PostgresTypedSourceRepositoryIntegrationTests(unittest.TestCase):
             service, worker, _ = build_typed_replay_runtime(
                 repository=counted_repository,
                 pipeline=adapter,
-                job_store=AtomicFileReplayJobStore(
-                    Path(directory) / "jobs.json"
-                ),
-                uuid_factory=lambda: uuid.UUID(
-                    "12345678-1234-4234-8234-567812345678"
-                ),
+                job_store=AtomicFileReplayJobStore(Path(directory) / "jobs.json"),
+                uuid_factory=lambda: uuid.UUID("12345678-1234-4234-8234-567812345678"),
                 clock=lambda: NOW_TEXT,
             )
             completed = worker.run_job(service.submit(pins).job_id)
@@ -650,9 +625,7 @@ class PostgresTypedSourceRepositoryIntegrationTests(unittest.TestCase):
         self.assertEqual(counted_repository.calls, 1)
         persisted = snapshot_store.get_snapshot(completed.snapshot_id)
         self.assertIsNotNone(persisted)
-        self.assertEqual(
-            persisted.output_fingerprint, completed.output_fingerprint
-        )
+        self.assertEqual(persisted.output_fingerprint, completed.output_fingerprint)
         self.assertEqual(persisted.input_fingerprint, pins.input_fingerprint)
         self.assertEqual(persisted.item_count, 1)
         items = snapshot_store.get_items(completed.snapshot_id)
@@ -717,12 +690,8 @@ class PostgresTypedSourceRepositoryIntegrationTests(unittest.TestCase):
             service, worker, _ = build_typed_replay_runtime(
                 repository=PostgresTypedSourceRepository.from_env(),
                 pipeline=adapter,
-                job_store=AtomicFileReplayJobStore(
-                    Path(directory) / "jobs.json"
-                ),
-                uuid_factory=lambda: uuid.UUID(
-                    "22345678-1234-4234-8234-567812345678"
-                ),
+                job_store=AtomicFileReplayJobStore(Path(directory) / "jobs.json"),
+                uuid_factory=lambda: uuid.UUID("22345678-1234-4234-8234-567812345678"),
                 clock=lambda: NOW_TEXT,
             )
             failed = worker.run_job(service.submit(pins).job_id)

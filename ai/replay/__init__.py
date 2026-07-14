@@ -3,6 +3,7 @@
 from ai.replay.service import ReplayService
 from ai.replay.file_store import AtomicFileReplayJobStore
 from ai.replay.postgres_repository import PostgresTypedSourceRepository
+from ai.replay.postgres_capture_writer import PostgresTypedCaptureWriter
 from ai.replay.runtime import (
     ReplayWorker,
     TypedReplaySources,
@@ -18,6 +19,11 @@ from ai.replay.types import (
     ReplayResult,
     SourceSlice,
 )
+from ai.replay.typed_capture import (
+    TypedCaptureReceipt,
+    TypedCaptureRequest,
+    prepare_typed_capture,
+)
 
 __all__ = [
     "ReplayInputs",
@@ -29,9 +35,13 @@ __all__ = [
     "SourceSlice",
     "AtomicFileReplayJobStore",
     "PostgresTypedSourceRepository",
+    "PostgresTypedCaptureWriter",
+    "TypedCaptureReceipt",
+    "TypedCaptureRequest",
     "TypedReplaySources",
     "TypedScoreRecord",
     "TypedSourceSnapshot",
     "build_typed_replay_runtime",
+    "prepare_typed_capture",
     "validate_source_score_features",
 ]
