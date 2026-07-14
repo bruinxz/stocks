@@ -11,7 +11,7 @@ from ai.pipeline.stages.rule_model import RuleModelStage
 from ai.pipeline.stages.gating import GatingStage
 from ai.pipeline.stages.assembly import AssemblyStage
 from ai.pipeline.stages.publish import PublishStage
-from ai.snapshot.writer import SnapshotWriter
+from ai.snapshot.writer import SnapshotStoreNotConfiguredError, SnapshotWriter
 from ai.validation.output_validator import OutputValidator
 
 
@@ -35,7 +35,25 @@ class PipelineConfig:
 class PipelineRunner:
     """7-stage pipeline: A→B→C→D→E→F→G(snapshot)→H(publish)."""
 
-    def __init__(self, config: PipelineConfig, snapshot_writer=None):
+    def __init__(
+        self,
+        config: PipelineConfig,
+        snapshot_writer=None,
+        snapshot_store_factory=None,
+    ):
+        if snapshot_writer is not None and snapshot_store_factory is not None:
+            raise ValueError(
+                "snapshot_writer and snapshot_store_factory are mutually exclusive"
+            )
+        if snapshot_writer is None:
+            if snapshot_store_factory is None:
+                raise SnapshotStoreNotConfiguredError(
+                    "PipelineRunner requires an injected snapshot writer or "
+                    "snapshot store factory"
+                )
+            snapshot_store = snapshot_store_factory()
+            snapshot_writer = SnapshotWriter(snapshot_store)
+
         self._config = config
         self._stages = [
             SignalIntakeStage(),
@@ -46,9 +64,7 @@ class PipelineRunner:
             AssemblyStage(),
             PublishStage(),
         ]
-        self._snapshot_writer = (
-            snapshot_writer if snapshot_writer is not None else SnapshotWriter()
-        )
+        self._snapshot_writer = snapshot_writer
         self._validator = OutputValidator()
 
     def run(self, as_of: str) -> dict:
@@ -66,6 +82,9 @@ class PipelineRunner:
 
         recommendation_list = ctx.build_recommendation_list()
 
+        generation_ms = int((time.monotonic() - start_ms) * 1000)
+        recommendation_list["meta"]["generation_ms"] = generation_ms
+
         validation_errors = self._validator.validate(recommendation_list)
         if validation_errors:
             raise PipelineValidationError(validation_errors)
@@ -73,9 +92,6 @@ class PipelineRunner:
         self._snapshot_writer.write(ctx, recommendation_list)
 
         self._stages[-1].execute(ctx)
-
-        generation_ms = int((time.monotonic() - start_ms) * 1000)
-        recommendation_list["meta"]["generation_ms"] = generation_ms
 
         return recommendation_list
 
