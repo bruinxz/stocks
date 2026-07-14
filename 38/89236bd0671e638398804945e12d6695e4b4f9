@@ -1,0 +1,71 @@
+ai/tests/test_replay_runtime.py
+  s_6ca1020a327476::t_c81a2f54c821a7 123
+backend/scripts/migrations/2026-07-14-multibagger-text-hit-provenance-rollback.sql
+  s_6ca1020a327476::t_e991e3f6535ebe 1-23
+backend/scripts/migrations/2026-07-14-multibagger-text-hit-provenance.sql
+  s_6ca1020a327476::t_0527044399cac1 1-35
+backend/src/api/controllers/MultibaggerController.ts
+  s_6ca1020a327476::t_84253bc89d2a19 41-42,45-49,132-133,136-146,241-242,245-255
+backend/src/models/MultibaggerCandidateSnapshot.ts
+  s_6ca1020a327476::t_7fe13721da702d 78,81
+backend/src/models/MultibaggerTextHit.ts
+  s_6ca1020a327476::t_c2ea09b15309a1 51-53,81-83
+backend/tests/e2e/tab4-multibagger-live.pg.sh
+  s_6ca1020a327476::t_636642a9ac0df9 1-84
+backend/tests/models/multibagger-classification-provenance.test.ts
+  s_6ca1020a327476::t_bd7d6b78767c15 71-80
+backend/tests/models/multibagger-text-hit-provenance.test.ts
+  s_6ca1020a327476::t_95286688d3ad6a 1-58
+backend/tests/routing/api-multibagger.test.ts
+  s_6ca1020a327476::t_0ecfe35ded8548 21,81-83,86-87,90-96,151-178,193-194,257
+datapipeline/contracts/source_envelopes.py
+  s_6ca1020a327476::t_b7da8f5ef9cb86 335,349
+datapipeline/storage/multibagger/__init__.py
+  s_6ca1020a327476::t_1a6cf92bb7f6a2 9-10,13-21,29-30,32-38
+datapipeline/storage/multibagger/source_writer.py
+  s_6ca1020a327476::t_b205f54547197d 172,174-183,193-195,197,202,204-206,208-209,213-217,249-259
+datapipeline/tests/contracts/test_source_envelopes.py
+  s_6ca1020a327476::t_f23c070ee5f7f6 194
+datapipeline/tests/storage/multibagger/test_text_hit_writer.py
+  s_6ca1020a327476::t_0eb5f60283eab1 1-118
+frontend/src/pages/catdesk/tabs/multibagger/MultibaggerSidebarSections.tsx
+  s_6ca1020a327476::t_230542849b3407 91-145,208-209,211-220
+frontend/src/pages/catdesk/tabs/multibagger/__tests__/multibaggerAdapters.test.ts
+  s_6ca1020a327476::t_c6e30fb72d2049 1-189
+frontend/src/pages/catdesk/tabs/multibagger/__tests__/tab4MultibaggerLiveE2E.test.tsx
+  s_6ca1020a327476::t_9ea093868132db 1-93
+frontend/src/pages/catdesk/tabs/multibagger/multibaggerAdapters.ts
+  s_6ca1020a327476::t_01d8435e8be5c9 1-675
+frontend/src/pages/catdesk/tabs/multibagger/types.ts
+  s_6ca1020a327476::t_97d3466b84c14a 16-20,26-27,30-41
+frontend/src/pages/catdesk/tabs/multibagger/useMultibaggerData.ts
+  s_6ca1020a327476::t_365aa01caf54bf 9,15,24,27-28,30,36,39-40,46,50
+strategy/materialization/__init__.py
+  s_6ca1020a327476::t_3481c01027acd8 20-23,41-42
+strategy/materialization/cli.py
+  s_6ca1020a327476::t_ba25f9f842ac9e 1-261
+strategy/materialization/multibagger_candidate.py
+  s_6ca1020a327476::t_f07ab85158db92 19-22,86-93,238,257,440-458,487,496-515,678-680,740-747,756,767-772,780-784
+strategy/materialization/postgres_repository.py
+  s_6ca1020a327476::t_9fe5b2e1ecac08 1-227
+strategy/tests/test_materialization_cli.py
+  s_6ca1020a327476::t_6840e50f91d255 1-172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3889236bd0671e638398804945e12d6695e4b4f9",
+  "prompts": {},
+  "sessions": {
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "liyiming.709 <liyiming.709@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
