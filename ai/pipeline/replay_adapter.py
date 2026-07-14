@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 import hashlib
 import json
 import re
@@ -52,6 +53,9 @@ _SEMVER_RE = re.compile(
     r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
+_UTC_SECONDS_RE = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+)
 
 
 @dataclass(frozen=True)
@@ -96,23 +100,39 @@ class ReplayPipelinePolicy:
         }
         if set(disclaimer) != required:
             raise ReplayPipelineError("disclaimer keys are not exact")
+        version = disclaimer.get("version")
+        short_text = disclaimer.get("short_text")
         full_text = disclaimer.get("full_text")
+        effective_at = disclaimer.get("effective_at")
         digest = disclaimer.get("hash")
         if (
-            not isinstance(full_text, str)
+            not isinstance(version, str)
+            or not _SEMVER_RE.fullmatch(version)
+            or not isinstance(short_text, str)
+            or not short_text
+            or len(short_text) > 200
+            or not isinstance(full_text, str)
             or not full_text
+            or len(full_text) > 4000
             or not is_canonical_sha256(digest)
             or hashlib.sha256(full_text.encode("utf-8")).hexdigest() != digest
         ):
-            raise ReplayPipelineError("disclaimer hash is not authentic")
-        for field in (
-            "version",
-            "short_text",
-            "language",
-            "effective_at",
+            raise ReplayPipelineError("disclaimer content is invalid")
+        if (
+            not isinstance(effective_at, str)
+            or not _UTC_SECONDS_RE.fullmatch(effective_at)
         ):
-            if not isinstance(disclaimer.get(field), str) or not disclaimer[field]:
-                raise ReplayPipelineError(f"disclaimer.{field} is required")
+            raise ReplayPipelineError(
+                "disclaimer.effective_at must be ISO8601 UTC seconds"
+            )
+        try:
+            datetime.strptime(effective_at, "%Y-%m-%dT%H:%M:%SZ")
+        except ValueError as error:
+            raise ReplayPipelineError(
+                "disclaimer.effective_at must be ISO8601 UTC seconds"
+            ) from error
+        if not isinstance(disclaimer.get("language"), str):
+            raise ReplayPipelineError("disclaimer.language is required")
         if disclaimer["language"] != language:
             raise ReplayPipelineError("disclaimer language does not match locale key")
         return copy.deepcopy(dict(disclaimer))

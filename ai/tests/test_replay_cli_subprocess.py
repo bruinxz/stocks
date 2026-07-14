@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,10 +12,14 @@ import unittest
 import uuid
 
 from ai.replay.cli import (
+    DATABASE_URL_ENV,
+    DISCLAIMERS_JSON_ENV,
     JOB_STORE_FILENAME,
     MAX_INPUT_BYTES,
+    MODEL_VERSION_ENV,
     PROTOCOL_VERSION,
     RUNTIME_DIR_ENV,
+    TEMPLATE_HASH_ENV,
 )
 from ai.replay.service import ReplayService
 from ai.replay.types import ReplayPins
@@ -60,7 +65,41 @@ def _job_request(op, job_id):
     }
 
 
-def _environment(runtime_dir=None):
+def _disclaimer(language, text):
+    return {
+        "version": "1.0.0",
+        "short_text": text,
+        "full_text": text,
+        "language": language,
+        "effective_at": "2026-01-01T00:00:00Z",
+        "hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    }
+
+
+def _execution_environment(**overrides):
+    values = {
+        DATABASE_URL_ENV: "postgresql://stocks@/test?host=/tmp",
+        MODEL_VERSION_ENV: "1.0.0",
+        TEMPLATE_HASH_ENV: "a" * 64,
+        DISCLAIMERS_JSON_ENV: json.dumps(
+            {
+                "zh-CN": _disclaimer("zh-CN", "仅供研究参考"),
+                "ja-JP": _disclaimer("ja-JP", "調査目的のみ"),
+                "ko-KR": _disclaimer(
+                    "ko-KR", "연구 목적으로만 제공됩니다"
+                ),
+            },
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+    }
+    values.update(overrides)
+    return values
+
+
+def _environment(runtime_dir=None, execution_environment=None):
     environment = {
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
         "PYTHONPATH": str(ROOT),
@@ -70,15 +109,19 @@ def _environment(runtime_dir=None):
     }
     if runtime_dir is not None:
         environment[RUNTIME_DIR_ENV] = str(runtime_dir)
+    if execution_environment is not None:
+        environment.update(execution_environment)
     return environment
 
 
-def run_cli(*, request=None, raw=None, runtime_dir=None):
+def run_cli(
+    *, request=None, raw=None, runtime_dir=None, execution_environment=None
+):
     payload = raw if raw is not None else json.dumps(request)
     return subprocess.run(
         [sys.executable, "-m", MODULE],
         cwd=ROOT,
-        env=_environment(runtime_dir),
+        env=_environment(runtime_dir, execution_environment),
         input=payload.encode("utf-8"),
         capture_output=True,
         check=False,
@@ -86,6 +129,26 @@ def run_cli(*, request=None, raw=None, runtime_dir=None):
 
 
 class ReplayCliSubprocessTests(unittest.TestCase):
+    def test_complete_execution_config_keeps_submit_status_cross_process(self):
+        execution = _execution_environment()
+        with _temporary_directory() as directory:
+            submitted = run_cli(
+                request=_submit_request(),
+                runtime_dir=directory,
+                execution_environment=execution,
+            )
+            self.assertEqual(submitted.returncode, 0, submitted.stderr)
+            job_id = json.loads(submitted.stdout)["result"]["job"]["job_id"]
+            status = run_cli(
+                request=_job_request("status", job_id),
+                runtime_dir=directory,
+                execution_environment=execution,
+            )
+
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertEqual(status.stdout, submitted.stdout)
+        self.assertEqual(status.stderr, b"")
+
     def test_submit_status_and_idempotency_survive_independent_processes(self):
         with _temporary_directory() as directory:
             runtime_dir = Path(directory)
@@ -257,6 +320,45 @@ class ReplayCliSubprocessTests(unittest.TestCase):
         self.assertNotIn(secret.encode(), rejected.stderr)
         self.assertNotIn(b"Traceback", rejected.stderr)
         self.assertNotIn(str(ROOT).encode(), rejected.stderr)
+
+    def test_invalid_execution_configuration_is_bounded_and_secret_free(self):
+        marker = "SECRET_EXECUTION_MARKER"
+        invalid = (
+            {
+                DATABASE_URL_ENV: (
+                    "postgresql://stocks:" + marker + "@localhost/test"
+                )
+            },
+            _execution_environment(
+                **{
+                    DISCLAIMERS_JSON_ENV: (
+                        '{"zh-CN":{"full_text":"'
+                        + marker
+                        + '","full_text":"duplicate"}}'
+                    )
+                }
+            ),
+            _execution_environment(
+                **{DISCLAIMERS_JSON_ENV: '{"zh-CN":"\\ud800' + marker + '"}'}
+            ),
+        )
+        with _temporary_directory() as directory:
+            for index, execution in enumerate(invalid):
+                with self.subTest(index=index):
+                    result = run_cli(
+                        request=_submit_request(),
+                        runtime_dir=directory,
+                        execution_environment=execution,
+                    )
+                    self.assertEqual(result.returncode, 4)
+                    self.assertEqual(result.stdout, b"")
+                    self.assertEqual(
+                        json.loads(result.stderr)["error"]["code"],
+                        "REPLAY_STORE_UNAVAILABLE",
+                    )
+                    self.assertNotIn(marker.encode(), result.stderr)
+                    self.assertNotIn(b"Traceback", result.stderr)
+                    self.assertNotIn(str(ROOT).encode(), result.stderr)
 
     def test_subprocess_idempotency_key_matches_service_authority(self):
         pins = _pins()

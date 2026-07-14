@@ -1,9 +1,9 @@
 """Strict single-request JSON CLI for durable recommendation replay jobs.
 
-``submit`` and ``status`` use the production ``ReplayService`` contract and
-the atomic file job store.  The execution worker is an explicit dependency:
-until the PostgreSQL typed-source repository and pipeline adapter are wired,
-``run_one`` fails closed without changing a queued job.
+``submit`` and ``status`` always use the atomic file job store.  ``run_one``
+is enabled only when one complete, strictly validated PostgreSQL execution
+configuration is present; with no execution configuration it fails closed
+without changing a queued job.
 """
 
 from __future__ import annotations
@@ -17,20 +17,32 @@ import sys
 from typing import Any, Callable, Mapping, Optional
 import uuid
 
+from ai.pipeline import PipelineReplayAdapter, ReplayPipelinePolicy
 from ai.replay.file_store import (
     AtomicFileReplayJobStore,
     ReplayJobStoreConfigurationError,
     ReplayJobStoreCorruptError,
 )
 from ai.replay.ports import ReplayWorkerPort
+from ai.replay.postgres_repository import (
+    PostgresTypedSourceRepository,
+    TypedSourceRepositoryConfigurationError,
+)
+from ai.replay.runtime import build_typed_replay_runtime
 from ai.replay.service import (
     ReplayConflictError,
     ReplayJobNotFoundError,
+    ReplayPipelineError,
     ReplayPinsError,
     ReplayService,
     ReplayServiceError,
 )
 from ai.replay.types import ReplayJob, ReplayPins
+from ai.snapshot.postgres_store import (
+    PostgresSnapshotStore,
+    SnapshotStoreConfigurationError,
+)
+from ai.types import PROFILE_DEFAULT_OUTPUT_LANGUAGE
 
 
 PROTOCOL_VERSION = "1.0.0"
@@ -39,6 +51,20 @@ MAX_OUTPUT_BYTES = 64 * 1024
 MAX_ERROR_BYTES = 4096
 RUNTIME_DIR_ENV = "STOCKS_REPLAY_RUNTIME_DIR"
 JOB_STORE_FILENAME = "replay_jobs.json"
+DATABASE_URL_ENV = "DATABASE_URL"
+MODEL_VERSION_ENV = "STOCKS_REPLAY_MODEL_VERSION"
+TEMPLATE_HASH_ENV = "STOCKS_REPLAY_TEMPLATE_HASH"
+DISCLAIMERS_JSON_ENV = "STOCKS_REPLAY_DISCLAIMERS_JSON"
+EXECUTION_ENV_KEYS = frozenset(
+    (
+        DATABASE_URL_ENV,
+        MODEL_VERSION_ENV,
+        TEMPLATE_HASH_ENV,
+        DISCLAIMERS_JSON_ENV,
+    )
+)
+DISCLAIMER_LOCALE_KEYS = frozenset(PROFILE_DEFAULT_OUTPUT_LANGUAGE.values())
+MAX_DISCLAIMERS_BYTES = 64 * 1024
 
 PIN_KEYS = frozenset(
     (
@@ -213,7 +239,7 @@ def build_submit_status_runtime(
 def build_runtime_from_environment(
     environ: Optional[Mapping[str, str]] = None,
 ) -> ReplayCliRuntime:
-    """Open only an explicitly provisioned, owner-controlled runtime dir."""
+    """Build the durable subset or a fully configured concrete worker."""
 
     values = os.environ if environ is None else environ
     raw = values.get(RUNTIME_DIR_ENV)
@@ -223,7 +249,146 @@ def build_runtime_from_environment(
         )
     runtime_dir = Path(raw)
     _validate_runtime_directory(runtime_dir)
-    return build_submit_status_runtime(runtime_dir)
+    execution = _build_execution_components(values)
+    if execution is None:
+        return build_submit_status_runtime(runtime_dir)
+
+    repository, pipeline = execution
+    store = AtomicFileReplayJobStore(runtime_dir / JOB_STORE_FILENAME)
+    try:
+        service, worker, _ = build_typed_replay_runtime(
+            repository=repository,
+            pipeline=pipeline,
+            job_store=store,
+        )
+        return ReplayCliRuntime(
+            service=service,
+            worker=worker,
+            close=store.close,
+        )
+    except Exception:
+        store.close()
+        raise
+
+
+def _build_execution_components(values: Mapping[str, str]):
+    present = frozenset(key for key in EXECUTION_ENV_KEYS if key in values)
+    if not present:
+        return None
+    if present != EXECUTION_ENV_KEYS:
+        raise ReplayRuntimeConfigurationError(
+            "replay execution configuration must be complete"
+        )
+
+    raw_values = {key: values.get(key) for key in EXECUTION_ENV_KEYS}
+    if any(
+        not isinstance(value, str) or not value
+        for value in raw_values.values()
+    ):
+        raise ReplayRuntimeConfigurationError(
+            "replay execution configuration is invalid"
+        )
+
+    disclaimers = _parse_disclaimers_json(
+        raw_values[DISCLAIMERS_JSON_ENV]
+    )
+    if (
+        not isinstance(disclaimers, dict)
+        or frozenset(disclaimers) != DISCLAIMER_LOCALE_KEYS
+    ):
+        raise ReplayRuntimeConfigurationError(
+            "replay disclaimer locale keys are invalid"
+        )
+    policy = ReplayPipelinePolicy(
+        model_version=raw_values[MODEL_VERSION_ENV],
+        template_hash=raw_values[TEMPLATE_HASH_ENV],
+        disclaimers=disclaimers,
+    )
+    try:
+        # Validate every configured locale at startup, not just the locale of
+        # the first job that happens to run in this process.
+        for profile in sorted(PROFILE_DEFAULT_OUTPUT_LANGUAGE):
+            policy.validated_disclaimer(profile)
+        repository = PostgresTypedSourceRepository.from_env(values)
+        snapshot_store = PostgresSnapshotStore.from_env(values)
+    except (
+        ReplayPipelineError,
+        TypedSourceRepositoryConfigurationError,
+        SnapshotStoreConfigurationError,
+    ) as error:
+        raise ReplayRuntimeConfigurationError(
+            "replay execution configuration is invalid"
+        ) from error
+    return repository, PipelineReplayAdapter(
+        snapshot_store=snapshot_store,
+        policy=policy,
+    )
+
+
+def _parse_disclaimers_json(raw: str) -> dict[str, Any]:
+    try:
+        encoded = raw.encode("utf-8")
+        if len(encoded) > MAX_DISCLAIMERS_BYTES:
+            raise ReplayRuntimeConfigurationError(
+                "replay disclaimers configuration is too large"
+            )
+        parsed = json.loads(
+            raw,
+            parse_constant=_reject_execution_constant,
+            object_pairs_hook=_unique_execution_object,
+        )
+        _validate_execution_json_tree(parsed)
+    except ReplayRuntimeConfigurationError:
+        raise
+    except (UnicodeError, json.JSONDecodeError, RecursionError) as error:
+        raise ReplayRuntimeConfigurationError(
+            "replay disclaimers configuration is invalid"
+        ) from error
+    if not isinstance(parsed, dict):
+        raise ReplayRuntimeConfigurationError(
+            "replay disclaimers configuration must be an object"
+        )
+    return parsed
+
+
+def _reject_execution_constant(_value: str):
+    raise ReplayRuntimeConfigurationError(
+        "replay disclaimers configuration contains a non-finite number"
+    )
+
+
+def _unique_execution_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ReplayRuntimeConfigurationError(
+                "replay disclaimers configuration contains duplicate keys"
+            )
+        value[key] = item
+    return value
+
+
+def _validate_execution_json_tree(value: Any) -> None:
+    if isinstance(value, str):
+        if any(0xD800 <= ord(character) <= 0xDFFF for character in value):
+            raise ReplayRuntimeConfigurationError(
+                "replay disclaimers configuration contains a lone surrogate"
+            )
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ReplayRuntimeConfigurationError(
+                "replay disclaimers configuration contains a non-finite number"
+            )
+        return
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            _validate_execution_json_tree(key)
+            _validate_execution_json_tree(item)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _validate_execution_json_tree(item)
 
 
 def _validate_runtime_directory(runtime_dir: Path) -> None:

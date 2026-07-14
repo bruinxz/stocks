@@ -3,11 +3,14 @@ from __future__ import annotations
 import copy
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import date, datetime, timedelta, timezone
 import hashlib
+import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import traceback
 import unittest
@@ -18,6 +21,15 @@ from ai.pipeline.replay_adapter import (
     ReplayPipelinePolicy,
     _parse_replay_utc_seconds,
     _parse_source_utc,
+)
+from ai.replay.cli import (
+    DATABASE_URL_ENV,
+    DISCLAIMERS_JSON_ENV,
+    JOB_STORE_FILENAME,
+    MODEL_VERSION_ENV,
+    PROTOCOL_VERSION,
+    RUNTIME_DIR_ENV,
+    TEMPLATE_HASH_ENV,
 )
 from ai.replay.postgres_repository import (
     CAPTURE_COLUMNS,
@@ -57,9 +69,6 @@ from datapipeline.collectors.jpkr_deep.official_fixture_parser import (
     canonical_disclosure_fact_hash,
 )
 from datapipeline.contracts import JpKrDisclosureRecord
-from datapipeline.collectors.jpkr_deep.official_fixture_parser import (
-    canonical_disclosure_fact_hash,
-)
 from datapipeline.storage.jpkr import canonical_financial_fact_hash
 from datapipeline.storage.multibagger import (
     build_text_hit_storage_row,
@@ -70,6 +79,7 @@ from datapipeline.storage.multibagger import (
 
 NOW = datetime(2026, 7, 10, 6, 30, tzinfo=timezone.utc)
 NOW_TEXT = "2026-07-10T06:30:00Z"
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class ForgedHash(str):
@@ -455,10 +465,39 @@ class PostgresTypedSourceRepositoryTests(unittest.TestCase):
                 disclaimers=invalid,
             ).validated_disclaimer("japan_blue_chip")
 
+        invalid_disclaimers = []
+        invalid = _disclaimers()
+        invalid["ja-JP"]["version"] = "not-semver"
+        invalid_disclaimers.append(invalid)
+        invalid = _disclaimers()
+        invalid["ja-JP"]["short_text"] = "短" * 201
+        invalid_disclaimers.append(invalid)
+        invalid = _disclaimers()
+        invalid["ja-JP"]["full_text"] = "長" * 4001
+        invalid["ja-JP"]["hash"] = hashlib.sha256(
+            invalid["ja-JP"]["full_text"].encode("utf-8")
+        ).hexdigest()
+        invalid_disclaimers.append(invalid)
+        invalid = _disclaimers()
+        invalid["ja-JP"]["effective_at"] = "not-a-time"
+        invalid_disclaimers.append(invalid)
+        invalid = _disclaimers()
+        invalid["ja-JP"]["effective_at"] = "2026-02-30T00:00:00Z"
+        invalid_disclaimers.append(invalid)
+
+        for disclaimers in invalid_disclaimers:
+            with self.subTest(disclaimer=disclaimers["ja-JP"]):
+                with self.assertRaises(ReplayPipelineError):
+                    ReplayPipelinePolicy(
+                        model_version="1.0.0",
+                        template_hash="a" * 64,
+                        disclaimers=disclaimers,
+                    ).validated_disclaimer("japan_blue_chip")
+
     def test_pipeline_policy_rejects_hash_str_subclasses(self):
         disclaimers = _disclaimers()
         disclaimers["ja-JP"]["hash"] = ForgedHash("f" * 64)
-        with self.assertRaisesRegex(ReplayPipelineError, "hash"):
+        with self.assertRaisesRegex(ReplayPipelineError, "content"):
             ReplayPipelinePolicy(
                 model_version="1.0.0",
                 template_hash="a" * 64,
@@ -1014,6 +1053,113 @@ class PostgresTypedSourceRepositoryIntegrationTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM ai_recommendation_item"
             ).fetchone()[0]
         self.assertEqual((snapshot_count, item_count), (1, 1))
+
+    def test_cli_run_one_is_cross_process_durable_and_idempotent(self):
+        receipt = PostgresTypedCaptureWriter.from_env().write(
+            _capture_request()
+        )
+        request = {
+            "protocol_version": PROTOCOL_VERSION,
+            "op": "submit",
+            "pins": asdict(receipt.pins),
+        }
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "PYTHONPATH": str(ROOT),
+                "PYTHONDONTWRITEBYTECODE": "1",
+                DATABASE_URL_ENV: os.environ[DATABASE_URL_ENV],
+                MODEL_VERSION_ENV: "1.0.0",
+                TEMPLATE_HASH_ENV: "a" * 64,
+                DISCLAIMERS_JSON_ENV: json.dumps(
+                    _disclaimers(),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            }
+        )
+
+        def invoke(payload, runtime_dir):
+            selected = dict(environment)
+            selected[RUNTIME_DIR_ENV] = str(runtime_dir)
+            return subprocess.run(
+                [sys.executable, "-m", "ai.replay.cli"],
+                cwd=ROOT,
+                env=selected,
+                input=json.dumps(
+                    payload,
+                    allow_nan=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8"),
+                capture_output=True,
+                check=False,
+            )
+
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            runtime_dir = Path(directory)
+            submitted = invoke(request, runtime_dir)
+            self.assertEqual(submitted.returncode, 0, submitted.stderr)
+            self.assertEqual(submitted.stderr, b"")
+            submitted_body = json.loads(submitted.stdout)
+            job = submitted_body["result"]["job"]
+            self.assertEqual(job["status"], "queued")
+            job_request = {
+                "protocol_version": PROTOCOL_VERSION,
+                "op": "run_one",
+                "job_id": job["job_id"],
+            }
+
+            completed = invoke(job_request, runtime_dir)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(completed.stderr, b"")
+            completed_body = json.loads(completed.stdout)
+            self.assertEqual(
+                completed_body["result"]["job"],
+                {"job_id": job["job_id"], "status": "completed"},
+            )
+
+            status = invoke(
+                {
+                    **job_request,
+                    "op": "status",
+                },
+                runtime_dir,
+            )
+            repeated = invoke(job_request, runtime_dir)
+            resubmitted = invoke(request, runtime_dir)
+            for result in (status, repeated, resubmitted):
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stderr, b"")
+                self.assertEqual(json.loads(result.stdout), completed_body)
+
+            state = json.loads(
+                (runtime_dir / JOB_STORE_FILENAME).read_text(
+                    encoding="utf-8"
+                )
+            )
+            durable = state["jobs"][job["job_id"]]
+            self.assertEqual(durable["status"], "completed")
+            snapshot_id = durable["snapshot_id"]
+            self.assertIsInstance(snapshot_id, str)
+
+        snapshot_store = PostgresSnapshotStore.from_env()
+        persisted = snapshot_store.get_snapshot(snapshot_id)
+        self.assertIsNotNone(persisted)
+        self.assertEqual(persisted.input_fingerprint, receipt.pins.input_fingerprint)
+        self.assertEqual(persisted.item_count, 1)
+
+        import psycopg
+
+        with psycopg.connect(os.environ[DATABASE_URL_ENV]) as connection:
+            counts = connection.execute(
+                "SELECT "
+                "(SELECT COUNT(*) FROM ai_recommendation_snapshot), "
+                "(SELECT COUNT(*) FROM ai_recommendation_item)"
+            ).fetchone()
+        self.assertEqual(counts, (1, 1))
 
     def test_concurrent_capture_writes_converge_to_one_row(self):
         identities = (
