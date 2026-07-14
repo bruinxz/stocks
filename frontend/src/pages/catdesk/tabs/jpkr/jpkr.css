@@ -1,0 +1,135 @@
+.jpkr-market {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100%;
+}
+
+.jpkr-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(132px, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--cd-border);
+  border-radius: var(--cd-radius-md);
+  background: var(--cd-bg-surface);
+}
+
+.jpkr-kpi-card {
+  position: relative;
+  min-width: 0;
+  padding: 12px 14px 10px;
+  border-left: 1px solid var(--cd-border);
+}
+
+.jpkr-kpi-card:first-child {
+  border-left: 0;
+}
+
+.jpkr-kpi-card::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: var(--cd-accent);
+  content: '';
+  opacity: 0.7;
+}
+
+.jpkr-kpi-card--unavailable::after {
+  background: var(--cd-text-secondary);
+  opacity: 0.28;
+}
+
+.jpkr-kpi-card__heading,
+.jpkr-kpi-card__quote {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.jpkr-kpi-card__heading {
+  margin-bottom: 6px;
+  color: var(--cd-text-secondary);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.jpkr-kpi-card__heading small {
+  overflow: hidden;
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jpkr-kpi-card strong {
+  overflow: hidden;
+  font-family: var(--cd-font-mono);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jpkr-kpi-card__quote span {
+  font-family: var(--cd-font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.jpkr-kpi-card__quote span[data-delta='up'] {
+  color: var(--cd-up);
+}
+
+.jpkr-kpi-card__quote span[data-delta='down'] {
+  color: var(--cd-down);
+}
+
+.jpkr-kpi-card__as-of {
+  display: block;
+  margin-top: 5px;
+  color: var(--cd-text-secondary);
+  font-size: 10px;
+}
+
+.jpkr-kpi-card--unavailable strong {
+  color: var(--cd-text-secondary);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+
+@media (max-width: 1080px) {
+  .jpkr-kpi-strip {
+    grid-template-columns: repeat(3, minmax(148px, 1fr));
+  }
+
+  .jpkr-kpi-card:nth-child(4) {
+    border-left: 0;
+    border-top: 1px solid var(--cd-border);
+  }
+
+  .jpkr-kpi-card:nth-child(5) {
+    border-top: 1px solid var(--cd-border);
+  }
+}
+
+@media (max-width: 640px) {
+  .jpkr-kpi-strip {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .jpkr-kpi-card:nth-child(odd) {
+    border-left: 0;
+  }
+
+  .jpkr-kpi-card:nth-child(4) {
+    border-left: 1px solid var(--cd-border);
+  }
+
+  .jpkr-kpi-card:nth-child(n + 3) {
+    border-top: 1px solid var(--cd-border);
+  }
+}

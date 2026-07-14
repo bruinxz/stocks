@@ -1,14 +1,21 @@
 export type JpKrMarket = 'JP' | 'KR';
 
 export type JpKrSector =
-  | 'semiconductor' | 'automotive' | 'battery' | 'ai_robotics'
-  | 'pharma' | 'steel' | 'shipbuilding' | 'consumer' | 'other';
+  | 'semiconductor'
+  | 'automotive'
+  | 'battery'
+  | 'ai_robotics'
+  | 'pharma'
+  | 'steel'
+  | 'shipbuilding'
+  | 'consumer'
+  | 'other';
 
 export type JpKrDisclosureEvent = {
   title: string;
   doc_type: string;
   filed_at: string;
-  source: 'EDINET' | 'DART';
+  source: 'jpx-edinet' | 'dart' | 'kind';
   doc_url?: string;
 };
 
@@ -29,9 +36,23 @@ export type JpKrMarketRow = {
 };
 
 export type JpKrKpi = {
-  nikkei225?: { value: number; change_pct: number; as_of: string };
-  topix?: { value: number; change_pct: number; as_of: string };
-  kospi?: { value: number; change_pct: number; as_of: string };
+  nikkei225: JpKrIndexKpiSnapshot | null;
+  topix: JpKrIndexKpiSnapshot | null;
+  kospi: JpKrIndexKpiSnapshot | null;
+  usdjpy: JpKrFxKpiSnapshot | null;
+  usdkrw: JpKrFxKpiSnapshot | null;
+};
+
+export type JpKrIndexKpiSnapshot = {
+  value: number;
+  change_pct: number;
+  as_of: string;
+};
+
+export type JpKrFxKpiSnapshot = {
+  rate: number;
+  change_pct: number;
+  as_of: string;
 };
 
 export type JpKrMarketResponse = {

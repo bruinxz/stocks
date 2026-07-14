@@ -1,45 +1,45 @@
 import { useAbortableRequest } from 'shared/hooks/useAbortableRequest';
 import type { JpKrMarket, JpKrMarketResponse, JpKrMarketRow } from './types';
+import { parseJpKrDetailResponse, parseJpKrMarketResponse } from './jpkrAdapters';
 
 async function fetchJpKrMarket(
   signal: AbortSignal,
   date: string,
-  market: JpKrMarket,
+  market: JpKrMarket
 ): Promise<JpKrMarketResponse> {
   const res = await fetch(
-    `/api/v1/jpkr-market/${encodeURIComponent(date)}?market=${market}`,
-    { signal },
+    `/api/v1/jpkr-market/${encodeURIComponent(date)}?market=${encodeURIComponent(market)}`,
+    { signal }
   );
   if (!res.ok) throw new Error(`jpkr-market ${res.status}`);
-  return res.json();
+  const payload: unknown = await res.json();
+  return parseJpKrMarketResponse(payload, date, market);
 }
 
 async function fetchJpKrDetail(
   signal: AbortSignal,
   symbol: string,
-  date: string,
+  date: string
 ): Promise<JpKrMarketRow> {
   const res = await fetch(
     `/api/v1/jpkr-market/${encodeURIComponent(symbol)}/detail?date=${encodeURIComponent(date)}`,
-    { signal },
+    { signal }
   );
   if (!res.ok) throw new Error(`jpkr-detail ${res.status}`);
-  return res.json();
+  const payload: unknown = await res.json();
+  return parseJpKrDetailResponse(payload, symbol);
 }
 
 export function useJpKrMarketData(date: string, market: JpKrMarket) {
-  return useAbortableRequest(
-    (signal) => fetchJpKrMarket(signal, date, market),
-    [date, market],
-  );
+  return useAbortableRequest(signal => fetchJpKrMarket(signal, date, market), [date, market]);
 }
 
 export function useJpKrDetail(symbol: string | null, date: string) {
   return useAbortableRequest(
-    (signal) => {
+    signal => {
       if (!symbol) return Promise.resolve(null);
       return fetchJpKrDetail(signal, symbol, date);
     },
-    [symbol, date],
+    [symbol, date]
   );
 }

@@ -9,6 +9,8 @@ import type { JpKrMarket as JpKrMarketType, JpKrMarketRow, JpKrSector } from './
 import { useJpKrMarketData, useJpKrDetail } from './useJpKrData';
 import { JpKrTable } from './JpKrTable';
 import { buildJpKrSections } from './JpKrSidebarSections';
+import { JpKrKpiStrip } from './JpKrKpiStrip';
+import './jpkr.css';
 
 const MARKET_OPTIONS = [
   { value: 'JP' as const, label: '日本', ariaLabel: '日本市场' },
@@ -31,20 +33,24 @@ function getTodayDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-export default function JpKrMarket() {
+export type JpKrMarketProps = {
+  tradingDay?: string;
+};
+
+export default function JpKrMarket({ tradingDay }: JpKrMarketProps = {}) {
   const [market, setMarket] = useState<JpKrMarketType>('JP');
   const [sectorFilter, setSectorFilter] = useState<JpKrSector[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const date = getTodayDate();
+  const date = tradingDay ?? getTodayDate();
   const { data, loading, error } = useJpKrMarketData(date, market);
   const { data: detailData } = useJpKrDetail(selectedSymbol, date);
 
   const filteredRows = useMemo(() => {
     if (!data?.rows) return [];
     if (sectorFilter.length === 0) return data.rows;
-    return data.rows.filter((r) => sectorFilter.includes(r.sector));
+    return data.rows.filter(r => sectorFilter.includes(r.sector));
   }, [data?.rows, sectorFilter]);
 
   const handleMarketChange = useCallback((next: JpKrMarketType[]) => {
@@ -66,8 +72,8 @@ export default function JpKrMarket() {
   }, []);
 
   const selectedRow = useMemo(
-    () => detailData ?? data?.rows.find((r) => r.symbol === selectedSymbol) ?? null,
-    [detailData, data?.rows, selectedSymbol],
+    () => detailData ?? data?.rows.find(r => r.symbol === selectedSymbol) ?? null,
+    [detailData, data?.rows, selectedSymbol]
   );
 
   if (loading && !data) {
@@ -75,11 +81,13 @@ export default function JpKrMarket() {
   }
 
   if (error && !data) {
-    return <ErrorState message="数据源暂时不可用 (JPX/KRX/DART 之一失联)" />;
+    return <ErrorState message="日韩市场数据暂时不可用，请检查数据源或返回契约" />;
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
+    <div className="jpkr-market">
+      {data && <JpKrKpiStrip kpi={data.kpi} />}
+
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
         <FilterChip<JpKrMarketType>
           options={MARKET_OPTIONS}
@@ -111,11 +119,7 @@ export default function JpKrMarket() {
       <DetailSidebar
         open={sidebarOpen}
         onClose={handleSidebarClose}
-        title={
-          selectedRow
-            ? `${selectedRow.symbol} · ${selectedRow.name_local}`
-            : ''
-        }
+        title={selectedRow ? `${selectedRow.symbol} · ${selectedRow.name_local}` : ''}
         subtitle={selectedRow?.name_en}
         ariaLabel={`${selectedSymbol ?? ''} 详情侧栏`}
         sections={selectedRow ? buildJpKrSections(selectedRow) : []}

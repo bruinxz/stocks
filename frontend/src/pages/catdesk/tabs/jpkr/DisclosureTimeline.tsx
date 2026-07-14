@@ -4,6 +4,12 @@ import type { JpKrDisclosureEvent } from './types';
 
 const { Text, Link } = Typography;
 
+const SOURCE_LABEL: Record<JpKrDisclosureEvent['source'], string> = {
+  'jpx-edinet': 'EDINET',
+  dart: 'DART',
+  kind: 'KIND',
+};
+
 type DisclosureTimelineProps = {
   events: JpKrDisclosureEvent[];
   ariaLabel: string;
@@ -21,14 +27,14 @@ export function DisclosureTimeline({ events, ariaLabel }: DisclosureTimelineProp
   return (
     <div aria-label={ariaLabel}>
       <Timeline
-        items={events.map((evt) => ({
+        items={events.map(evt => ({
           key: `${evt.filed_at}-${evt.title}`,
-          color: evt.source === 'EDINET' ? 'blue' : 'green',
+          color: evt.source === 'jpx-edinet' ? 'blue' : 'green',
           children: (
             <div>
               <div>
-                <Tag color={evt.source === 'EDINET' ? 'blue' : 'green'}>
-                  {evt.source}
+                <Tag color={evt.source === 'jpx-edinet' ? 'blue' : 'green'}>
+                  {SOURCE_LABEL[evt.source]}
                 </Tag>
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   {new Date(evt.filed_at).toLocaleDateString()}
@@ -43,7 +49,9 @@ export function DisclosureTimeline({ events, ariaLabel }: DisclosureTimelineProp
                   <Text>{evt.title}</Text>
                 )}
               </div>
-              <Text type="secondary" style={{ fontSize: 12 }}>{evt.doc_type}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {evt.doc_type}
+              </Text>
             </div>
           ),
         }))}
