@@ -1,0 +1,31 @@
+ai/replay/__init__.py
+  s_cf82345316b5e9::t_11d8e49ec1c4bc 6,22-26,38-40,45
+ai/replay/postgres_capture_writer.py
+  s_cf82345316b5e9::t_1c46182c9bf4fb 1-310
+ai/replay/postgres_repository.py
+  s_cf82345316b5e9::t_7f7ced193c973b 1,5,10-21,126,150,185,187
+ai/replay/typed_capture.py
+  s_cf82345316b5e9::t_f6c7565f81edf0 1-741
+ai/tests/test_postgres_typed_source_repository.py
+  s_cf82345316b5e9::t_18e448cdcdc1c4 26-32,225,288,291-300,302-313,563-564,573,638-639
+ai/tests/test_typed_capture_writer.py
+  s_cf82345316b5e9::t_63d83c59770188 1-363
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9e8717203569b0cc5cd7f91d639c17ef75245f44",
+  "prompts": {},
+  "sessions": {
+    "s_cf82345316b5e9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5fcc-fae8-7653-b6f9-2e813531c821",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
