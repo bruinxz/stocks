@@ -99,6 +99,10 @@ PUBLIC_ERROR_MESSAGES = {
     "INVALID_OUTPUT": "invalid replay response",
     "INTERNAL_ERROR": "replay failed",
 }
+FAILED_JOB_PUBLIC_MESSAGES = {
+    ReplayPipelineError.code: "replay pipeline failed",
+    "REPLAY_SOURCE_INVALID": "replay source invalid",
+}
 ERROR_EXIT_CODES = {
     "INPUT_TOO_LARGE": 2,
     "INVALID_JSON": 2,
@@ -466,10 +470,18 @@ def dispatch(
 
 def _job_payload(job: ReplayJob) -> dict[str, Any]:
     ReplayService._validate_job(job)
-    return {
+    payload = {
         "job_id": job.job_id,
         "status": job.status,
     }
+    if job.status == "completed":
+        payload["snapshot_id"] = job.snapshot_id
+    elif job.status == "failed":
+        payload["error"] = FAILED_JOB_PUBLIC_MESSAGES.get(
+            job.error_code,
+            "replay failed",
+        )
+    return payload
 
 
 def _is_uuid_v4(value: Any) -> bool:

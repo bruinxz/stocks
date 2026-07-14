@@ -279,6 +279,7 @@ class ReplayCliTests(unittest.TestCase):
             {
                 "job_id": str(JOB_ID),
                 "status": "completed",
+                "snapshot_id": SNAPSHOT_ID,
             },
         )
 
@@ -299,6 +300,7 @@ class ReplayCliTests(unittest.TestCase):
             {
                 "job_id": str(JOB_ID),
                 "status": "failed",
+                "error": "replay pipeline failed",
             },
         )
         self.assertNotIn("SECRET_TOKEN", json.dumps(failed))

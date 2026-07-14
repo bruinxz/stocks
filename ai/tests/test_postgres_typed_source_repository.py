@@ -1116,10 +1116,14 @@ class PostgresTypedSourceRepositoryIntegrationTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertEqual(completed.stderr, b"")
             completed_body = json.loads(completed.stdout)
+            completed_job = completed_body["result"]["job"]
             self.assertEqual(
-                completed_body["result"]["job"],
-                {"job_id": job["job_id"], "status": "completed"},
+                set(completed_job),
+                {"job_id", "status", "snapshot_id"},
             )
+            self.assertEqual(completed_job["job_id"], job["job_id"])
+            self.assertEqual(completed_job["status"], "completed")
+            self.assertIsInstance(completed_job["snapshot_id"], str)
 
             status = invoke(
                 {
@@ -1144,6 +1148,7 @@ class PostgresTypedSourceRepositoryIntegrationTests(unittest.TestCase):
             self.assertEqual(durable["status"], "completed")
             snapshot_id = durable["snapshot_id"]
             self.assertIsInstance(snapshot_id, str)
+            self.assertEqual(completed_job["snapshot_id"], snapshot_id)
 
         snapshot_store = PostgresSnapshotStore.from_env()
         persisted = snapshot_store.get_snapshot(snapshot_id)

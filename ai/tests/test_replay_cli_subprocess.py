@@ -20,9 +20,10 @@ from ai.replay.cli import (
     PROTOCOL_VERSION,
     RUNTIME_DIR_ENV,
     TEMPLATE_HASH_ENV,
+    build_submit_status_runtime,
 )
 from ai.replay.service import ReplayService
-from ai.replay.types import ReplayPins
+from ai.replay.types import ReplayPins, ReplayResult
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -178,6 +179,76 @@ class ReplayCliSubprocessTests(unittest.TestCase):
             self.assertEqual(len(state["jobs"]), 1)
             self.assertEqual(len(state["keys"]), 1)
             self.assertEqual(stat.S_IMODE(state_path.stat().st_mode), 0o600)
+
+    def test_status_projects_exact_safe_terminal_unions_across_processes(self):
+        now = "2026-07-14T06:00:00Z"
+        job_id = uuid.UUID("12345678-1234-4234-8234-567812345678")
+        snapshot_id = "22345678-1234-4234-8234-567812345678"
+        cases = (
+            (
+                "completed",
+                {
+                    "job_id": str(job_id),
+                    "status": "completed",
+                    "snapshot_id": snapshot_id,
+                },
+            ),
+            (
+                "failed",
+                {
+                    "job_id": str(job_id),
+                    "status": "failed",
+                    "error": "replay pipeline failed",
+                },
+            ),
+        )
+        for terminal_status, expected in cases:
+            with self.subTest(status=terminal_status):
+                with _temporary_directory() as directory:
+                    runtime = build_submit_status_runtime(
+                        Path(directory),
+                        uuid_factory=lambda: job_id,
+                        clock=lambda: now,
+                    )
+                    try:
+                        queued = runtime.submit(ReplayPins(**_pins()))
+                        running = runtime._service._job_store.transition(
+                            queued.job_id,
+                            "queued",
+                            queued.running(now),
+                        )
+                        if terminal_status == "completed":
+                            terminal = running.completed(
+                                ReplayResult(snapshot_id, "f" * 64),
+                                now,
+                            )
+                        else:
+                            terminal = running.failed(
+                                "REPLAY_PIPELINE_FAILED",
+                                "SECRET_TOKEN=/private/path",
+                                now,
+                            )
+                        runtime._service._job_store.transition(
+                            queued.job_id,
+                            "running",
+                            terminal,
+                        )
+                    finally:
+                        runtime.close()
+
+                    recovered = run_cli(
+                        request=_job_request("status", str(job_id)),
+                        runtime_dir=directory,
+                    )
+
+                self.assertEqual(recovered.returncode, 0, recovered.stderr)
+                self.assertEqual(recovered.stderr, b"")
+                self.assertEqual(
+                    json.loads(recovered.stdout)["result"]["job"],
+                    expected,
+                )
+                self.assertNotIn(b"SECRET_TOKEN", recovered.stdout)
+                self.assertNotIn(b"/private/path", recovered.stdout)
 
     def test_run_one_fails_closed_and_preserves_queued_state(self):
         with _temporary_directory() as directory:
