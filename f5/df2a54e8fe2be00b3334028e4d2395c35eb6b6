@@ -1,0 +1,41 @@
+ai/pipeline/context.py
+  s_c0f0ca63803b53::t_dfa0b108ceeb74 27
+ai/pipeline/replay_adapter.py
+  s_c0f0ca63803b53::t_f56adc2e54d5ba 12,20-23,31-34,36-37,101-102,104-143,192-193,196-207,234-237,242,253-254,279-280,283-284,296,317-323,333-336,340-450,452-487,489-516,536-541
+ai/pipeline/runner.py
+  s_c0f0ca63803b53::t_51e74993faf397 5,53,64,90,97,104,116,134-143
+ai/pipeline/stages/assembly.py
+  s_c0f0ca63803b53::t_5e19971f42da4d 18,25,27
+ai/replay/postgres_repository.py
+  s_6ca1020a327476::t_3387904edda585 319-323,332-334,415-417,451-453
+ai/tests/test_pipeline_runner_persistence_order.py
+  s_c0f0ca63803b53::t_4dd72ca03684d7 258-292
+ai/tests/test_postgres_typed_source_repository.py
+  s_c0f0ca63803b53::t_34dd239a260803 33-34,463-522,606-623
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f5df2a54e8fe2be00b3334028e4d2395c35eb6b6",
+  "prompts": {},
+  "sessions": {
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_c0f0ca63803b53": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f58-b820-7e72-869c-283e6b06b818",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}

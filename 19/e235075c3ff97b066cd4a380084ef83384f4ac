@@ -1,0 +1,53 @@
+ai/pipeline/__init__.py
+  s_c0f0ca63803b53::t_7c431637f70c08 1-8
+ai/pipeline/replay_adapter.py
+  s_6ca1020a327476::t_de42ef1d5f3ed0 1-382
+ai/pipeline/runner.py
+  s_c0f0ca63803b53::t_8181185091c5c0 1-4,38-54,90-98,103-111
+ai/pipeline/stages/assembly.py
+  s_6ca1020a327476::t_2d20831131edc9 1-2,38,105-134
+ai/pipeline/stages/feature_assembly.py
+  s_6ca1020a327476::t_3cd45b44d9967c 2
+ai/pipeline/stages/signal_intake.py
+  s_6ca1020a327476::t_4666a74c1dca5b 2
+ai/pipeline/stages/universe.py
+  s_6ca1020a327476::t_142a0c63fdeb74 2
+ai/replay/__init__.py
+  s_c0f0ca63803b53::t_b80c79ce4af6cc 5,31
+ai/replay/postgres_repository.py
+  s_c0f0ca63803b53::t_c48bef57a5ec42 1-562
+ai/rules/engine.py
+  s_c0f0ca63803b53::t_9f999de2e2e358 52-58
+ai/tests/fixtures/typed_replay_source_capture.sql
+  s_c0f0ca63803b53::t_364df765fa56e1 1-29
+ai/tests/postgres_typed_replay.pg.sh
+  s_c0f0ca63803b53::t_aa20c932b9149a 1-73
+ai/tests/test_postgres_typed_source_repository.py
+  s_c0f0ca63803b53::t_ea34d97e39bdf9 1-607
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "19e235075c3ff97b066cd4a380084ef83384f4ac",
+  "prompts": {},
+  "sessions": {
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_c0f0ca63803b53": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f58-b820-7e72-869c-283e6b06b818",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
