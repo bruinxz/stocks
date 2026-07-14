@@ -255,6 +255,41 @@ class PipelineRunnerPersistenceOrderTests(unittest.TestCase):
         self.assertEqual(writer.payload_reference, writer.payload_at_write)
         self.assertEqual(publisher.calls, 0)
 
+    def test_post_persist_verification_failure_prevents_publish(self):
+        writer = _RecordingWriter()
+        verifier_calls = []
+
+        def verifier(ctx, envelope, write_result):
+            verifier_calls.append((ctx.snapshot_id, envelope, write_result))
+            raise RuntimeError("injected persisted readback failure")
+
+        runner = PipelineRunner(
+            _config(),
+            snapshot_writer=writer,
+            post_persist_verifier=verifier,
+        )
+        publisher = _RecordingPublishStage()
+        runner._stages = [*[_NoopStage() for _ in range(6)], publisher]
+        runner._validator = _RecordingValidator()
+
+        with patch.object(
+            PipelineContext,
+            "build_recommendation_list",
+            return_value=_envelope(),
+        ), patch(
+            "ai.pipeline.runner.time.monotonic",
+            new=_Clock(),
+        ), self.assertRaisesRegex(
+            RuntimeError,
+            "persisted readback failure",
+        ):
+            runner.run("2026-07-12T01:02:03Z")
+
+        self.assertEqual(writer.calls, 1)
+        self.assertEqual(len(verifier_calls), 1)
+        self.assertIs(verifier_calls[0][1], writer.payload_reference)
+        self.assertEqual(publisher.calls, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

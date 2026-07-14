@@ -30,7 +30,8 @@ from ai.replay.runtime import (
 )
 from ai.replay.file_store import AtomicFileReplayJobStore
 from ai.replay.service import PROFILE_MARKET_SCOPES, ReplayPinsError, ReplaySourceError
-from ai.replay.types import ReplayPins
+from ai.replay.types import ReplayInputs, ReplayPins
+from ai.snapshot.fingerprint import compute_input_fingerprint, jcs_canonicalize
 from ai.snapshot.postgres_store import PostgresSnapshotStore
 from datapipeline.collectors.jpkr_deep.official_fixture_parser import (
     canonical_disclosure_fact_hash,
@@ -459,6 +460,66 @@ class PostgresTypedSourceRepositoryTests(unittest.TestCase):
             adapter.run(invalid, inputs)
         self.assertEqual(snapshot_connector.calls, [])
 
+    def test_future_evidence_with_resealed_slices_fails_before_store(self):
+        pins, row = _capture_row()
+        snapshot = _snapshot_from_capture(row, pins)
+        inputs = TypedReplaySources(_Repository(snapshot)).load_inputs(pins)
+        evidence_records = copy.deepcopy(inputs.evidence.records)
+        signal_records = copy.deepcopy(inputs.signals.records)
+        future = NOW + timedelta(seconds=1)
+        future_text = future.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        evidence_record = next(
+            item for item in evidence_records if item["kind"] == "text_hit"
+        )
+        document = evidence_record["envelope"]["document"]
+        document["available_at_utc"] = future_text
+        document["document_fact_hash"] = typed_scan_document_fact_hash(document)
+        evidence_record["identity"][0] = document["document_fact_hash"]
+        signal_record = next(
+            item for item in signal_records if item["kind"] == "text_hit"
+        )
+        signal_record["available_at_utc"] = future_text
+        signal_record["fact_hash"] = document["document_fact_hash"]
+
+        def reseal(source, records):
+            return replace(
+                source,
+                records=records,
+                content_hash=hashlib.sha256(
+                    jcs_canonicalize(records).encode("utf-8")
+                ).hexdigest(),
+            )
+
+        modified = ReplayInputs(
+            signals=reseal(inputs.signals, signal_records),
+            universe=inputs.universe,
+            scores=inputs.scores,
+            evidence=reseal(inputs.evidence, evidence_records),
+        )
+        pins = replace(
+            pins,
+            input_fingerprint=compute_input_fingerprint(
+                [source.content_hash for source in modified.ordered()]
+            ),
+        )
+        connector = _Connector([])
+        adapter = PipelineReplayAdapter(
+            snapshot_store=PostgresSnapshotStore(
+                "postgresql://stocks@/test?host=/tmp",
+                connector=connector,
+            ),
+            policy=ReplayPipelinePolicy(
+                model_version="1.0.0",
+                template_hash="a" * 64,
+                disclaimer=_disclaimer(),
+            ),
+        )
+
+        with self.assertRaisesRegex(ReplaySourceError, "PIT cutoff"):
+            adapter.run(pins, modified)
+        self.assertEqual(connector.calls, [])
+
 
 @unittest.skipUnless(
     os.environ.get("TYPED_REPLAY_PG_INTEGRATION") == "1",
@@ -541,6 +602,24 @@ class PostgresTypedSourceRepositoryIntegrationTests(unittest.TestCase):
         items = snapshot_store.get_items(completed.snapshot_id)
         self.assertEqual([item.ticker for item in items], ["7203"])
         self.assertTrue(items[0].recommendation_json["evidence_refs"])
+
+        repeat_inputs = TypedReplaySources(repository).load_inputs(pins)
+        repeated = adapter.run(pins, repeat_inputs)
+        self.assertEqual(repeated.snapshot_id, completed.snapshot_id)
+        self.assertEqual(
+            repeated.output_fingerprint,
+            completed.output_fingerprint,
+        )
+        import psycopg
+
+        with psycopg.connect(os.environ["DATABASE_URL"]) as connection:
+            snapshot_count = connection.execute(
+                "SELECT COUNT(*) FROM ai_recommendation_snapshot"
+            ).fetchone()[0]
+            item_count = connection.execute(
+                "SELECT COUNT(*) FROM ai_recommendation_item"
+            ).fetchone()[0]
+        self.assertEqual((snapshot_count, item_count), (1, 1))
 
     def test_future_score_fails_before_snapshot_effects(self):
         pins, row = _capture_row()

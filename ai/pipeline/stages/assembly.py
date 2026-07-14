@@ -15,15 +15,16 @@ class AssemblyStage:
         for candidate in ctx.gated_candidates:
             features = candidate["features"]
             triggers = candidate["triggers"]
+            ticker = candidate["ticker"]
 
             weights = self._compute_weights(triggers, features)
             explanation = tmpl.render(candidate["ticker"], features, triggers)
             evidence = self._collect_evidence(candidate, ctx)
 
             rec = {
-                "id": str(_uuid.uuid4()),
+                "id": ctx.recommendation_ids.get(ticker) or str(_uuid.uuid4()),
                 "snapshot_id": ctx.snapshot_id,
-                "ticker": candidate["ticker"],
+                "ticker": ticker,
                 "as_of": ctx.as_of,
                 "score": features["score"],
                 "conviction": features["conviction"],

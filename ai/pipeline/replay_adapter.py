@@ -9,6 +9,7 @@ import hashlib
 import re
 from typing import Any
 from urllib.parse import quote
+import uuid
 
 from ai.pipeline.runner import (
     PipelineConfig,
@@ -16,6 +17,10 @@ from ai.pipeline.runner import (
     PipelineSourceInputs,
 )
 from ai.replay.runtime import typed_score_fact_hash, validate_source_score_features
+from ai.replay.postgres_repository import (
+    filing_envelope_from_json,
+    text_hit_envelope_from_json,
+)
 from ai.replay.service import (
     ReplayPipelineError,
     ReplayService,
@@ -23,9 +28,13 @@ from ai.replay.service import (
 )
 from ai.replay.types import ReplayInputs, ReplayPins, ReplayResult
 from ai.rules.engine import RuleEngine
-from ai.snapshot.fingerprint import compute_input_fingerprint
+from ai.snapshot.fingerprint import (
+    compute_input_fingerprint,
+    jcs_canonicalize,
+)
 from ai.snapshot.postgres_store import PostgresSnapshotStore
-from ai.snapshot.writer import SnapshotWriteResult, SnapshotWriter
+from ai.snapshot.reader import SnapshotReader
+from ai.snapshot.writer import SnapshotWriter
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -89,14 +98,49 @@ class ReplayPipelinePolicy:
         return copy.deepcopy(dict(self.disclaimer))
 
 
-class _CapturingSnapshotWriter:
-    def __init__(self, writer: SnapshotWriter) -> None:
-        self._writer = writer
-        self.result: SnapshotWriteResult | None = None
+class _PersistedSnapshotVerifier:
+    """Read back and authenticate persistence before PipelineRunner publishes."""
 
-    def write(self, ctx, recommendation_list: dict) -> SnapshotWriteResult:
-        self.result = self._writer.write(ctx, recommendation_list)
-        return self.result
+    def __init__(self, store: PostgresSnapshotStore, pins: ReplayPins) -> None:
+        self._store = store
+        self._pins = pins
+        self.persisted = None
+        self.verified_envelope = None
+
+    def __call__(self, _ctx, attempted: dict, write_result):
+        if write_result is None:
+            raise ReplayPipelineError("pipeline did not persist a snapshot")
+        persisted = self._store.get_snapshot(write_result.snapshot_id)
+        if persisted is None:
+            raise ReplayPipelineError("persisted snapshot cannot be read back")
+        items = self._store.get_items(persisted.snapshot_id)
+        try:
+            verified_envelope = SnapshotReader._hydrate(persisted, items)
+        except Exception as error:
+            raise ReplayPipelineError(
+                "persisted snapshot integrity is invalid"
+            ) from error
+        if (
+            persisted.output_fingerprint
+            != attempted.get("output_fingerprint")
+            or persisted.input_fingerprint != self._pins.input_fingerprint
+            or persisted.profile != self._pins.profile
+            or persisted.market_scope != self._pins.market_scope
+            or persisted.as_of_utc != self._pins.as_of
+            or persisted.trading_day != self._pins.trading_day
+            or persisted.profile_version != self._pins.profile_version
+            or persisted.contract_version != self._pins.contract_version
+            or persisted.strategy_version != self._pins.strategy_version
+            or persisted.pipeline_version != self._pins.pipeline_version
+        ):
+            raise ReplayPipelineError(
+                "persisted snapshot does not match replay pins"
+            )
+        self.persisted = persisted
+        self.verified_envelope = verified_envelope
+        # An idempotent retry must publish/return the exact existing envelope,
+        # not a newly attempted envelope with different telemetry.
+        return copy.deepcopy(verified_envelope)
 
 
 class PipelineReplayAdapter:
@@ -145,26 +189,22 @@ class PipelineReplayAdapter:
                 source.content_hash for source in inputs.ordered()
             ),
         )
-        writer = _CapturingSnapshotWriter(
-            SnapshotWriter(self._snapshot_store)
-        )
+        verifier = _PersistedSnapshotVerifier(self._snapshot_store, pins)
+        replay_key = ReplayService._idempotency_key(pins)
         envelope = PipelineRunner(
             config,
-            snapshot_writer=writer,
-        ).run(pins.as_of, source_inputs=source_inputs)
-        if writer.result is None:
-            raise ReplayPipelineError("pipeline did not persist a snapshot")
-        persisted = self._snapshot_store.get_snapshot(writer.result.snapshot_id)
-        if persisted is None:
-            raise ReplayPipelineError("persisted snapshot cannot be read back")
-        if (
-            persisted.output_fingerprint != envelope.get("output_fingerprint")
-            or persisted.input_fingerprint != pins.input_fingerprint
-            or persisted.profile != pins.profile
-            or persisted.market_scope != pins.market_scope
-            or persisted.as_of_utc != pins.as_of
-        ):
-            raise ReplayPipelineError("persisted snapshot does not match replay pins")
+            snapshot_writer=SnapshotWriter(self._snapshot_store),
+            post_persist_verifier=verifier,
+        ).run(
+            pins.as_of,
+            source_inputs=source_inputs,
+            snapshot_id=_stable_uuid4("snapshot", replay_key),
+        )
+        persisted = verifier.persisted
+        if persisted is None or envelope != verifier.verified_envelope:
+            raise ReplayPipelineError(
+                "pipeline did not return the verified persisted snapshot"
+            )
         return ReplayResult(
             snapshot_id=persisted.snapshot_id,
             output_fingerprint=persisted.output_fingerprint,
@@ -191,10 +231,15 @@ class PipelineReplayAdapter:
     def _map_inputs(
         pins: ReplayPins, inputs: ReplayInputs
     ) -> PipelineSourceInputs:
+        cutoff = _parse_utc_datetime(pins.as_of)
+        evidence_refs, expected_signals, evidence_tickers = (
+            _validate_evidence_records(pins, inputs.evidence.records)
+        )
         signals = tuple(
             copy.deepcopy(dict(record))
             for record in inputs.signals.records
         )
+        _validate_signal_records(pins, signals, expected_signals)
         universe = []
         for record in inputs.universe.records:
             if (
@@ -205,11 +250,10 @@ class PipelineReplayAdapter:
             ):
                 raise ReplaySourceError("universe record is invalid")
             universe.append(record["ticker"])
-        if len(universe) != len(set(universe)):
-            raise ReplaySourceError("universe ticker is duplicated")
+        if universe != sorted(set(universe)):
+            raise ReplaySourceError("universe ticker identity/order is invalid")
 
         scores: dict[str, dict[str, Any]] = {}
-        evidence_refs: dict[str, list[dict[str, Any]]] = {}
         for record in inputs.scores.records:
             required = {
                 "ticker",
@@ -232,10 +276,12 @@ class PipelineReplayAdapter:
                 or record["profile"] != pins.profile
                 or record["market_scope"] != pins.market_scope
                 or record["as_of"] != pins.as_of
+                or not isinstance(record["source_version"], str)
+                or not record["source_version"]
             ):
                 raise ReplaySourceError("score record replay pins mismatch")
-            available_at = _parse_utc(record["available_at_utc"])
-            if available_at > pins.as_of:
+            available_at = _parse_utc_datetime(record["available_at_utc"])
+            if available_at > cutoff:
                 raise ReplaySourceError("score record violates replay PIT cutoff")
             features = validate_source_score_features(
                 record["features"],
@@ -247,9 +293,7 @@ class PipelineReplayAdapter:
                 profile=pins.profile,
                 market_scope=pins.market_scope,
                 as_of=pins.as_of,
-                available_at_utc=_parse_utc_datetime(
-                    record["available_at_utc"]
-                ),
+                available_at_utc=available_at,
                 source_version=record["source_version"],
                 features=features,
             )
@@ -270,11 +314,13 @@ class PipelineReplayAdapter:
                 }
             )
 
-        for record in inputs.evidence.records:
-            ticker, evidence = _evidence_ref(record)
-            if ticker not in universe:
-                raise ReplaySourceError("evidence ticker is outside universe")
-            evidence_refs.setdefault(ticker, []).append(evidence)
+        expected_universe = set(scores) | evidence_tickers
+        if set(universe) != expected_universe:
+            raise ReplaySourceError(
+                "universe does not match authenticated source identities"
+            )
+
+        replay_key = ReplayService._idempotency_key(pins)
 
         return PipelineSourceInputs(
             signals=signals,
@@ -284,62 +330,190 @@ class PipelineReplayAdapter:
                 ticker: tuple(refs)
                 for ticker, refs in evidence_refs.items()
             },
+            recommendation_ids={
+                ticker: _stable_uuid4("recommendation", replay_key, ticker)
+                for ticker in universe
+            },
         )
 
 
-def _evidence_ref(record: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
-    if set(record) != {"kind", "identity", "envelope"}:
-        raise ReplaySourceError("evidence record keys are not exact")
-    envelope = record.get("envelope")
-    if not isinstance(envelope, Mapping):
-        raise ReplaySourceError("evidence envelope must be an object")
-    if record.get("kind") == "filing":
-        disclosure = envelope.get("disclosure")
-        if not isinstance(disclosure, Mapping):
-            raise ReplaySourceError("filing evidence is invalid")
-        ticker = disclosure.get("ticker")
-        source_kind = disclosure.get("source_kind")
-        document_id = disclosure.get("source_document_id")
-        available_at = disclosure.get("available_at_utc")
-        fact_hash = disclosure.get("fact_hash")
-        headline = disclosure.get("event_headline_local")
-        uri = _disclosure_uri(source_kind, document_id)
-        kind = "DISCLOSURE"
-        short_text = headline
-    elif record.get("kind") == "text_hit":
-        document = envelope.get("document")
-        hit = envelope.get("hit")
-        if not isinstance(document, Mapping) or not isinstance(hit, Mapping):
-            raise ReplaySourceError("text-hit evidence is invalid")
-        ticker = document.get("ticker")
-        source_kind = document.get("source_kind")
-        document_id = document.get("document_id")
-        available_at = document.get("available_at_utc")
-        fact_hash = document.get("document_fact_hash")
-        short_text = document.get("title") or hit.get("term_id")
-        uri = (
-            f"news://{_uri_part(source_kind)}/{_uri_part(document_id)}"
+def _validate_evidence_records(pins, records):
+    cutoff = _parse_utc_datetime(pins.as_of)
+    refs: dict[str, list[dict[str, Any]]] = {}
+    expected_signals = []
+    tickers = set()
+    identities = set()
+    for record in records:
+        if set(record) != {"kind", "identity", "envelope"}:
+            raise ReplaySourceError("evidence record keys are not exact")
+        envelope_json = record.get("envelope")
+        if not isinstance(envelope_json, Mapping):
+            raise ReplaySourceError("evidence envelope must be an object")
+        if record.get("kind") == "filing":
+            envelope = filing_envelope_from_json(envelope_json)
+            disclosure = envelope.disclosure
+            if disclosure.market_scope != pins.market_scope:
+                raise ReplaySourceError("filing evidence market_scope mismatch")
+            try:
+                envelope.require_available_by(cutoff)
+            except ValueError as error:
+                raise ReplaySourceError(
+                    "filing evidence violates replay PIT cutoff"
+                ) from error
+            identity = tuple(disclosure.identity)
+            if record.get("identity") != list(identity):
+                raise ReplaySourceError("filing evidence identity mismatch")
+            ticker = disclosure.ticker
+            expected_signals.append(_filing_signal(envelope))
+            evidence = {
+                "kind": "DISCLOSURE",
+                "source_uri": _disclosure_uri(
+                    disclosure.source_kind,
+                    disclosure.source_document_id,
+                ),
+                "as_of": _utc_text(disclosure.available_at_utc),
+                "hash": disclosure.fact_hash,
+                "short_text": disclosure.event_headline_local[:200],
+            }
+        elif record.get("kind") == "text_hit":
+            envelope = text_hit_envelope_from_json(envelope_json)
+            document = envelope.document
+            if document.market_scope != pins.market_scope:
+                raise ReplaySourceError("text-hit evidence market_scope mismatch")
+            try:
+                envelope.require_available_by(cutoff)
+            except ValueError as error:
+                raise ReplaySourceError(
+                    "text-hit evidence violates replay PIT cutoff"
+                ) from error
+            identity = tuple(envelope.identity)
+            if record.get("identity") != list(identity):
+                raise ReplaySourceError("text-hit evidence identity mismatch")
+            ticker = document.ticker
+            expected_signals.append(_text_hit_signal(envelope))
+            evidence = {
+                "kind": "NEWS",
+                "source_uri": (
+                    f"news://{_uri_part(document.source_kind)}/"
+                    f"{_uri_part(document.document_id)}"
+                ),
+                "as_of": _utc_text(document.available_at_utc),
+                "hash": document.document_fact_hash,
+                "short_text": (document.title or envelope.hit.term_id)[:200],
+            }
+        else:
+            raise ReplaySourceError("evidence kind is unsupported")
+        typed_identity = (record["kind"], *identity)
+        if typed_identity in identities:
+            raise ReplaySourceError("evidence identity is duplicated")
+        identities.add(typed_identity)
+        tickers.add(ticker)
+        refs.setdefault(ticker, []).append(evidence)
+    return refs, tuple(expected_signals), tickers
+
+
+def _validate_signal_records(pins, signals, expected_signals) -> None:
+    cutoff = _parse_utc_datetime(pins.as_of)
+    for record in signals:
+        kind = record.get("kind")
+        required = (
+            {
+                "kind",
+                "ticker",
+                "market_scope",
+                "source_kind",
+                "source_document_id",
+                "source_version",
+                "available_at_utc",
+                "fact_hash",
+                "disclosure_kind",
+                "headline",
+            }
+            if kind == "filing"
+            else {
+                "kind",
+                "ticker",
+                "market_scope",
+                "source_kind",
+                "source_document_id",
+                "source_version",
+                "available_at_utc",
+                "fact_hash",
+                "term_id",
+                "hit_kind",
+                "field",
+                "start_offset",
+                "end_offset",
+                "context_hash",
+            }
+            if kind == "text_hit"
+            else set()
         )
-        kind = "NEWS"
-    else:
-        raise ReplaySourceError("evidence kind is unsupported")
-    if (
-        not isinstance(ticker, str)
-        or not ticker
-        or not isinstance(available_at, str)
-        or not _SHA256_RE.fullmatch(fact_hash or "")
-    ):
-        raise ReplaySourceError("evidence identity is invalid")
-    _parse_utc(available_at)
-    evidence = {
-        "kind": kind,
-        "source_uri": uri,
-        "as_of": available_at,
-        "hash": fact_hash,
+        if not required or set(record) != required:
+            raise ReplaySourceError("signal record keys/kind are invalid")
+        available_at = _parse_utc_datetime(record["available_at_utc"])
+        if (
+            record.get("market_scope") != pins.market_scope
+            or available_at > cutoff
+            or not isinstance(record.get("ticker"), str)
+            or not record["ticker"]
+            or not isinstance(record.get("source_version"), str)
+            or not record["source_version"]
+            or not _SHA256_RE.fullmatch(record.get("fact_hash") or "")
+        ):
+            raise ReplaySourceError("signal record identity/PIT is invalid")
+    actual = sorted(jcs_canonicalize(dict(item)) for item in signals)
+    expected = sorted(
+        jcs_canonicalize(dict(item)) for item in expected_signals
+    )
+    if actual != expected:
+        raise ReplaySourceError(
+            "signals do not match authenticated evidence facts"
+        )
+
+
+def _filing_signal(envelope) -> dict[str, Any]:
+    disclosure = envelope.disclosure
+    return {
+        "kind": "filing",
+        "ticker": disclosure.ticker,
+        "market_scope": disclosure.market_scope,
+        "source_kind": disclosure.source_kind,
+        "source_document_id": disclosure.source_document_id,
+        "source_version": disclosure.source_version,
+        "available_at_utc": _utc_text(disclosure.available_at_utc),
+        "fact_hash": disclosure.fact_hash,
+        "disclosure_kind": disclosure.disclosure_kind,
+        "headline": disclosure.event_headline_local,
     }
-    if isinstance(short_text, str) and short_text:
-        evidence["short_text"] = short_text[:200]
-    return ticker, evidence
+
+
+def _text_hit_signal(envelope) -> dict[str, Any]:
+    return {
+        "kind": "text_hit",
+        "ticker": envelope.document.ticker,
+        "market_scope": envelope.document.market_scope,
+        "source_kind": envelope.document.source_kind,
+        "source_document_id": envelope.document.document_id,
+        "source_version": envelope.hit.taxonomy_version,
+        "available_at_utc": _utc_text(envelope.document.available_at_utc),
+        "fact_hash": envelope.document.document_fact_hash,
+        "term_id": envelope.hit.term_id,
+        "hit_kind": envelope.hit.hit_kind,
+        "field": envelope.hit.field,
+        "start_offset": envelope.hit.start_offset,
+        "end_offset": envelope.hit.end_offset,
+        "context_hash": envelope.hit.context_hash,
+    }
+
+
+def _stable_uuid4(*material: str) -> str:
+    digest = bytearray(
+        hashlib.sha256(jcs_canonicalize(list(material)).encode("utf-8")).digest()[:16]
+    )
+    digest[6] = (digest[6] & 0x0F) | 0x40
+    digest[8] = (digest[8] & 0x3F) | 0x80
+    return str(uuid.UUID(bytes=bytes(digest)))
 
 
 def _disclosure_uri(source_kind: object, document_id: object) -> str:
@@ -359,9 +533,12 @@ def _uri_part(value: object) -> str:
     return quote(value, safe=".-_")
 
 
-def _parse_utc(value: object) -> str:
-    parsed = _parse_utc_datetime(value)
-    return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
+def _utc_text(value) -> str:
+    from datetime import timezone
+
+    if value.tzinfo is None or value.utcoffset() != timezone.utc.utcoffset(value):
+        raise ReplaySourceError("source available_at must be UTC")
+    return value.isoformat().replace("+00:00", "Z")
 
 
 def _parse_utc_datetime(value: object):

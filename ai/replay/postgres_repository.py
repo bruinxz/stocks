@@ -316,9 +316,11 @@ def _snapshot_from_capture(
     if row["capture_hash"] != expected_capture_hash:
         raise ReplaySourceError("typed source capture hash is not authentic")
 
-    filings = tuple(_filing_from_json(item) for item in filings_json)
-    text_hits = tuple(_text_hit_from_json(item) for item in text_hits_json)
-    scores = tuple(_score_from_json(item) for item in scores_json)
+    filings = tuple(filing_envelope_from_json(item) for item in filings_json)
+    text_hits = tuple(
+        text_hit_envelope_from_json(item) for item in text_hits_json
+    )
+    scores = tuple(typed_score_record_from_json(item) for item in scores_json)
     return TypedSourceSnapshot(
         filings=filings,
         text_hits=text_hits,
@@ -327,7 +329,9 @@ def _snapshot_from_capture(
     )
 
 
-def _filing_from_json(value: object) -> JpKrFilingEnvelope:
+def filing_envelope_from_json(value: object) -> JpKrFilingEnvelope:
+    """Validate and reconstruct one lossless typed filing envelope."""
+
     envelope = _json_object(value, "filing")
     _require_exact_keys(envelope, {"disclosure", "financials"}, "filing")
     disclosure_json = _json_object(envelope["disclosure"], "disclosure")
@@ -408,7 +412,9 @@ def _filing_from_json(value: object) -> JpKrFilingEnvelope:
     return JpKrFilingEnvelope(disclosure, tuple(financials))
 
 
-def _text_hit_from_json(value: object) -> TextHitEnvelope:
+def text_hit_envelope_from_json(value: object) -> TextHitEnvelope:
+    """Validate document/content hashes and reconstruct one text hit."""
+
     envelope = _json_object(value, "text hit envelope")
     _require_exact_keys(
         envelope, {"document", "hit"}, "text hit envelope"
@@ -442,7 +448,9 @@ def _text_hit_from_json(value: object) -> TextHitEnvelope:
     return TextHitEnvelope(document, hit)
 
 
-def _score_from_json(value: object) -> TypedScoreRecord:
+def typed_score_record_from_json(value: object) -> TypedScoreRecord:
+    """Validate and reconstruct one authenticated Strategy score record."""
+
     payload = _json_object(value, "typed score")
     _require_exact_keys(payload, _field_names(TypedScoreRecord), "typed score")
     available_at = _parse_utc_json(
