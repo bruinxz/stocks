@@ -93,7 +93,7 @@ INSERT INTO ai_replay_typed_source_capture (
   '12345678-1234-4234-8234-567812345678',
   '2026-07-10', '2026-07-10T06:30:00Z', 'japan_blue_chip', 'jp',
   '1.2.3-alpha.1+capture', '0.3.1', repeat('a', 64), '2.0.0',
-  '3.4.5+build.7', '2026-07-10T06:30:00Z',
+  '3.4.5+build.7', '2026-07-10T06:29:59.500000Z',
   '{"signals":"signals-v1","universe":"universe-v1","scores":"scores-v1","evidence":"evidence-v1"}',
   '[]', '[]', '[]', repeat('b', 64)
 );
@@ -235,10 +235,10 @@ BEGIN
       base.as_of_utc + INTERVAL '12 minutes', base.profile, base.market_scope,
       base.profile_version, base.contract_version, base.input_fingerprint,
       base.strategy_version, base.pipeline_version, base.available_at_utc,
-      jsonb_set(base.source_versions, '{signals}', '""'::JSONB),
+      jsonb_set(base.source_versions, '{signals}', '"   "'::JSONB),
       base.filings_json, base.text_hits_json, base.scores_json,
       base.capture_hash, base.created_at;
-    RAISE EXCEPTION 'expected empty source version rejection';
+    RAISE EXCEPTION 'expected blank source version rejection';
   EXCEPTION WHEN check_violation THEN NULL;
   END;
 

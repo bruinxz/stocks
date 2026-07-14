@@ -40,8 +40,7 @@ CREATE TABLE ai_replay_typed_source_capture (
       '^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)([.](0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?([+][0-9A-Za-z-]+([.][0-9A-Za-z-]+)*)?$'
   ),
   available_at_utc TIMESTAMPTZ NOT NULL CHECK (
-    DATE_TRUNC('second', available_at_utc) = available_at_utc
-    AND available_at_utc <= as_of_utc
+    available_at_utc <= as_of_utc
   ),
   source_versions JSONB NOT NULL CHECK (
     CASE jsonb_typeof(source_versions)
@@ -50,13 +49,13 @@ CREATE TABLE ai_replay_typed_source_capture (
         AND source_versions - 'signals' - 'universe' - 'scores' - 'evidence'
           = '{}'::JSONB
         AND jsonb_typeof(source_versions->'signals') = 'string'
-        AND LENGTH(source_versions->>'signals') > 0
+        AND LENGTH(BTRIM(source_versions->>'signals')) > 0
         AND jsonb_typeof(source_versions->'universe') = 'string'
-        AND LENGTH(source_versions->>'universe') > 0
+        AND LENGTH(BTRIM(source_versions->>'universe')) > 0
         AND jsonb_typeof(source_versions->'scores') = 'string'
-        AND LENGTH(source_versions->>'scores') > 0
+        AND LENGTH(BTRIM(source_versions->>'scores')) > 0
         AND jsonb_typeof(source_versions->'evidence') = 'string'
-        AND LENGTH(source_versions->>'evidence') > 0
+        AND LENGTH(BTRIM(source_versions->>'evidence')) > 0
       ELSE FALSE
     END
   ),

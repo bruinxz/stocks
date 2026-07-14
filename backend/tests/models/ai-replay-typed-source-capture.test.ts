@@ -122,9 +122,9 @@ assert(
     /capture_hash ~ '\^\[0-9a-f\]\{64\}\$'/.test(up)
 );
 assert(
-  '[sql] replay cutoff is whole-second PIT',
+  '[sql] replay as_of is whole-second while source availability preserves microseconds',
   /DATE_TRUNC\('second', as_of_utc\) = as_of_utc/.test(up) &&
-    /DATE_TRUNC\('second', available_at_utc\) = available_at_utc/.test(up) &&
+    !/DATE_TRUNC\('second', available_at_utc\) = available_at_utc/.test(up) &&
     /available_at_utc <= as_of_utc/.test(up)
 );
 assert(
@@ -136,7 +136,7 @@ assert(
     ['signals', 'universe', 'scores', 'evidence'].every(
       key =>
         up.includes(`jsonb_typeof(source_versions->'${key}') = 'string'`) &&
-        up.includes(`LENGTH(source_versions->>'${key}') > 0`)
+        up.includes(`LENGTH(BTRIM(source_versions->>'${key}')) > 0`)
     )
 );
 assert(
