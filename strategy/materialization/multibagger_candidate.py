@@ -214,6 +214,7 @@ class TextHitFact:
     ticker: str
     source_kind: str
     source_document_id: str
+    source_version: str
     document_fact_hash: str
     taxonomy_version: str
     term_id: str
@@ -451,6 +452,26 @@ def _validate_universe_fact(fact: UniverseFact, request: MaterializationInput) -
         _fail("universe fact_hash mismatch")
 
 
+def _text_hit_body(hit: TextHitFact) -> Mapping[str, Any]:
+    return {
+        "available_at_utc": _utc_text(hit.available_at_utc),
+        "document_fact_hash": hit.document_fact_hash,
+        "effective_at_utc": _utc_text(hit.effective_at_utc),
+        "end_offset": hit.end_offset,
+        "field": hit.field,
+        "hit_kind": hit.hit_kind,
+        "language": hit.language,
+        "market_scope": hit.market_scope,
+        "source_document_id": hit.source_document_id,
+        "source_kind": hit.source_kind,
+        "source_version": hit.source_version,
+        "start_offset": hit.start_offset,
+        "taxonomy_version": hit.taxonomy_version,
+        "term_id": hit.term_id,
+        "ticker": hit.ticker,
+    }
+
+
 def _validate_text_hit(hit: TextHitFact, request: MaterializationInput) -> None:
     if hit.market_scope != request.market_scope or hit.ticker != request.ticker:
         _fail("text hit identity mismatch")
@@ -478,10 +499,13 @@ def _validate_text_hit(hit: TextHitFact, request: MaterializationInput) -> None:
     for value, field in (
         (hit.source_kind, "text hit source_kind"),
         (hit.source_document_id, "text hit source_document_id"),
+        (hit.source_version, "text hit source_version"),
         (hit.taxonomy_version, "taxonomy_version"),
         (hit.term_id, "term_id"),
     ):
         _require_string(value, field)
+    if _canonical_hash(_text_hit_body(hit)) != hit.context_hash:
+        _fail("text hit context_hash mismatch")
 
 
 def _score_projection(

@@ -5,6 +5,12 @@ from pathlib import Path
 import unittest
 
 from ai.snapshot.fingerprint import jcs_canonicalize
+from datapipeline.contracts import (
+    CaptureProvenanceError,
+    build_capture_wrapper,
+    capture_source_version,
+    validate_capture_wrapper,
+)
 from strategy.materialization.multibagger_candidate import (
     CandidateIdempotencyConflict,
     CandidateMaterializationError,
@@ -21,7 +27,7 @@ from strategy.materialization.multibagger_candidate import (
 )
 
 
-NOW = datetime(2026, 7, 10, 8, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 14, 0, 0, 0, tzinfo=timezone.utc)
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "materialization" / "fixtures"
 
@@ -37,7 +43,10 @@ def sha(value):
 
 
 def universe_fact(**overrides):
-    captured = fixture("jpx_security_sample.json")["rows"][0]
+    wrapper = fixture("jpx_security_sample.json")
+    captured = validate_capture_wrapper(
+        wrapper, expected_source_kind="jpx-listed-company-monthly"
+    )["rows"][0]
     values = {
         "market_scope": "jp",
         "provider_market_label": "JP",
@@ -46,9 +55,13 @@ def universe_fact(**overrides):
         "record_kind": "LIFECYCLE",
         "universe_source_kind": "jpx-listed-company-monthly",
         "source_document_id": "jpx-listed-company:20260630:1301",
-        "source_version": "20260630:v1",
-        "effective_at_utc": NOW - timedelta(days=10),
-        "available_at_utc": NOW - timedelta(days=9),
+        "source_version": capture_source_version(wrapper),
+        "effective_at_utc": datetime.strptime(
+            captured["effective_day"], "%Y%m%d"
+        ).replace(tzinfo=timezone.utc),
+        "available_at_utc": datetime.fromisoformat(
+            wrapper["captured_at_utc"].replace("Z", "+00:00")
+        ),
         "as_of_utc": NOW,
         "features": {
             "section": captured["section"],
@@ -73,11 +86,14 @@ def universe_fact(**overrides):
 
 
 def text_hit(**overrides):
+    wrapper_name = overrides.pop("wrapper_name", "jpx_security_sample.json")
+    wrapper = fixture(wrapper_name)
     values = {
         "market_scope": "jp",
         "ticker": "1301",
         "source_kind": "jpx-listed-company-monthly",
         "source_document_id": "jpx-listed-company:20260630:1301",
+        "source_version": capture_source_version(wrapper),
         "document_fact_hash": "d" * 64,
         "taxonomy_version": "optional-terms@1.0.0",
         "term_id": "capacity_expansion",
@@ -86,12 +102,24 @@ def text_hit(**overrides):
         "field": "BODY",
         "start_offset": 10,
         "end_offset": 20,
-        "context_hash": "e" * 64,
-        "effective_at_utc": NOW - timedelta(days=10),
-        "available_at_utc": NOW - timedelta(days=9),
+        "context_hash": "0" * 64,
+        "effective_at_utc": (
+            datetime(2026, 7, 10, 11, 1, 0, tzinfo=timezone.utc)
+            if wrapper["source_kind"] == "kind"
+            else datetime(2026, 6, 30, 0, 0, 0, tzinfo=timezone.utc)
+        ),
+        "available_at_utc": datetime.fromisoformat(
+            wrapper["captured_at_utc"].replace("Z", "+00:00")
+        ),
     }
+    has_hash_override = "context_hash" in overrides
     values.update(overrides)
-    return TextHitFact(**values)
+    draft = TextHitFact(**values)
+    from strategy.materialization.multibagger_candidate import _text_hit_body
+
+    if not has_hash_override:
+        object.__setattr__(draft, "context_hash", sha(_text_hit_body(draft)))
+    return draft
 
 
 def score():
@@ -239,12 +267,105 @@ def request(**overrides):
 
 class MaterializerTests(unittest.TestCase):
     def test_captured_fixture_provenance_is_non_production(self):
-        for name in ("jpx_security_sample.json", "kind_disclosure_sample.json"):
+        fixtures = {
+            "jpx_security_sample.json": "jpx-listed-company-monthly",
+            "kind_disclosure_sample.json": "kind",
+        }
+        for name, source_kind in fixtures.items():
             value = fixture(name)
-            self.assertEqual(value["fixture_mode"], "self-use-non-commercial-test-only")
+            payload = validate_capture_wrapper(
+                value, expected_source_kind=source_kind
+            )
+            self.assertFalse(value["fixture_mode"])
             self.assertFalse(value["production_seed_allowed"])
-            self.assertEqual(len(value["rows"]), 1)
-            self.assertEqual(value["fixture_content_sha256"], sha(value["rows"]))
+            self.assertEqual(len(payload["rows"]), 3)
+            self.assertTrue(capture_source_version(value).startswith("1.0.0:"))
+
+    def test_capture_wrapper_every_field_and_source_hash_closure_fail_closed(self):
+        wrapper = fixture("jpx_security_sample.json")
+        mutations = {
+            "capture_instance": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "capture_schema_version": "9.9.9",
+            "captured_at_utc": "1999-01-01T00:00:00Z",
+            "captured_response_sha256": "f" * 64,
+            "declared_live_row_count": 999,
+            "fixture_mode": True,
+            "payload_sha256": "f" * 64,
+            "production_seed_allowed": True,
+            "source_kind": "kind",
+            "source_url": "https://example.invalid/source",
+            "terms_url": "https://example.invalid/terms",
+            "wrapper_sha256": "f" * 64,
+        }
+        baseline_fact = universe_fact()
+        baseline_hit = text_hit()
+        baseline_candidate = materialize_candidate(request(), Policy())
+        for field, value in mutations.items():
+            tampered = copy.deepcopy(wrapper)
+            tampered[field] = value
+            with self.subTest(field=field):
+                with self.assertRaises(CaptureProvenanceError):
+                    validate_capture_wrapper(
+                        tampered,
+                        expected_source_kind="jpx-listed-company-monthly",
+                    )
+        tampered = copy.deepcopy(wrapper)
+        tampered["payload"]["rows"][0]["name_local"] = "tampered"
+        with self.assertRaises(CaptureProvenanceError):
+            validate_capture_wrapper(
+                tampered, expected_source_kind="jpx-listed-company-monthly"
+            )
+
+        valid_rebuilds = []
+        for field, value in (
+            ("capture_instance", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            ("captured_at_utc", "2026-07-02T04:20:57Z"),
+            ("captured_response_sha256", "f" * 64),
+            ("declared_live_row_count", 4438),
+        ):
+            arguments = {
+                "source_kind": wrapper["source_kind"],
+                "source_url": wrapper["source_url"],
+                "terms_url": wrapper["terms_url"],
+                "capture_instance": wrapper["capture_instance"],
+                "captured_at_utc": wrapper["captured_at_utc"],
+                "captured_response_sha256": wrapper["captured_response_sha256"],
+                "declared_live_row_count": wrapper["declared_live_row_count"],
+                "payload": wrapper["payload"],
+            }
+            arguments[field] = value
+            valid_rebuilds.append(build_capture_wrapper(**arguments))
+        changed_payload = copy.deepcopy(wrapper["payload"])
+        changed_payload["rows"][0]["name_local"] = "changed-but-valid"
+        valid_rebuilds.append(
+            build_capture_wrapper(
+                source_kind=wrapper["source_kind"],
+                source_url=wrapper["source_url"],
+                terms_url=wrapper["terms_url"],
+                capture_instance=wrapper["capture_instance"],
+                captured_at_utc=wrapper["captured_at_utc"],
+                captured_response_sha256=wrapper["captured_response_sha256"],
+                declared_live_row_count=wrapper["declared_live_row_count"],
+                payload=changed_payload,
+            )
+        )
+        for rebuilt in valid_rebuilds:
+            self.assertNotEqual(
+                capture_source_version(rebuilt),
+                capture_source_version(wrapper),
+            )
+        changed_source = universe_fact(source_version="1.0.0:changed")
+        self.assertNotEqual(changed_source.fact_hash, baseline_fact.fact_hash)
+        changed_hit = text_hit(source_version="1.0.0:changed")
+        self.assertNotEqual(changed_hit.context_hash, baseline_hit.context_hash)
+        changed_candidate = materialize_candidate(
+            request(sources=(changed_source,), text_hits=(changed_hit,)),
+            Policy(),
+        )
+        self.assertNotEqual(
+            changed_candidate.fact_hash,
+            baseline_candidate.fact_hash,
+        )
 
     def test_materialization_is_deterministic_and_source_closed(self):
         first = materialize_candidate(request(), Policy())
@@ -257,6 +378,36 @@ class MaterializerTests(unittest.TestCase):
         self.assertEqual(len(first.source_fact_hashes), 3)
         self.assertEqual(len(first.fact_hash), 64)
         self.assertEqual(candidate_from_row(candidate_to_row(first)), first)
+
+    def test_captured_jpx_and_kind_wrappers_close_source_hashes(self):
+        jpx_wrapper = fixture("jpx_security_sample.json")
+        kind_wrapper = fixture("kind_disclosure_sample.json")
+        kind_payload = validate_capture_wrapper(
+            kind_wrapper, expected_source_kind="kind"
+        )
+        jpx = universe_fact()
+        kind = text_hit(
+            source_kind="kind",
+            source_document_id=kind_payload["rows"][0]["receipt_no"],
+            source_version=capture_source_version(kind_wrapper),
+            document_fact_hash=sha(
+                {
+                    "capture_instance": kind_wrapper["capture_instance"],
+                    "payload_sha256": kind_wrapper["payload_sha256"],
+                    "receipt_no": kind_payload["rows"][0]["receipt_no"],
+                    "wrapper_sha256": kind_wrapper["wrapper_sha256"],
+                }
+            ),
+            wrapper_name="kind_disclosure_sample.json",
+        )
+        candidate = materialize_candidate(
+            request(sources=(jpx,), text_hits=(kind,)), Policy()
+        )
+        self.assertIn(jpx.fact_hash, candidate.source_fact_hashes)
+        self.assertIn(kind.document_fact_hash, candidate.source_fact_hashes)
+        self.assertIn(kind.context_hash, candidate.source_fact_hashes)
+        self.assertEqual(jpx.source_version, capture_source_version(jpx_wrapper))
+        self.assertEqual(kind.source_version, capture_source_version(kind_wrapper))
 
     def test_store_insert_replay_and_conflict(self):
         store = Store()

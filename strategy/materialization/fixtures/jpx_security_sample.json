@@ -1,23 +1,48 @@
 {
-  "fixture_mode": "self-use-non-commercial-test-only",
+  "capture_instance": "11111111-1111-4111-8111-111111111111",
+  "capture_schema_version": "1.0.0",
+  "captured_at_utc": "2026-07-02T04:20:56Z",
+  "captured_response_sha256": "d99706334b3a9ca56b13805dac08d53ae1c2cd7df2ae77e7a9fad767cac51460",
+  "declared_live_row_count": 4437,
+  "fixture_mode": false,
+  "payload": {
+    "rows": [
+      {
+        "effective_day": "20260630",
+        "local_code": "1301",
+        "name_local": "極洋",
+        "section": "プライム（内国株式）",
+        "sector_33_code": "50",
+        "sector_33_name": "水産・農林業",
+        "size_code": "6",
+        "size_name": "TOPIX Small 1"
+      },
+      {
+        "effective_day": "20260630",
+        "local_code": "130A",
+        "name_local": "Ｖｅｒｉｔａｓ　Ｉｎ　Ｓｉｌｉｃｏ",
+        "section": "グロース（内国株式）",
+        "sector_33_code": "3250",
+        "sector_33_name": "医薬品",
+        "size_code": "-",
+        "size_name": "-"
+      },
+      {
+        "effective_day": "20260630",
+        "local_code": "1332",
+        "name_local": "ニッスイ",
+        "section": "プライム（内国株式）",
+        "sector_33_code": "50",
+        "sector_33_name": "水産・農林業",
+        "size_code": "4",
+        "size_name": "TOPIX Mid400"
+      }
+    ]
+  },
+  "payload_sha256": "062c5d102d4646a22eee7b1fdf3e9244c11eaa57d90aca58f75b441c34094aaa",
   "production_seed_allowed": false,
-  "derived_test_objects": "synthetic-text-hit-and-strategy-decision-only",
   "source_kind": "jpx-listed-company-monthly",
   "source_url": "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls",
   "terms_url": "https://www.jpx.co.jp/english/term-of-use/index.html",
-  "captured_sha256": "d99706334b3a9ca56b13805dac08d53ae1c2cd7df2ae77e7a9fad767cac51460",
-  "live_row_count": 4437,
-  "rows": [
-    {
-      "effective_day": "20260630",
-      "local_code": "1301",
-      "name_local": "極洋",
-      "section": "プライム（内国株式）",
-      "sector_33_code": "50",
-      "sector_33_name": "水産・農林業",
-      "size_code": "6",
-      "size_name": "TOPIX Small 1"
-    }
-  ],
-  "fixture_content_sha256": "3c95359662d78b02267abf216fa3615d60df90c742184c1ec02c208c16310b28"
+  "wrapper_sha256": "216737425b5b4852462e504fe6f35d7385b2d74d5c316690db90352f0c2b3bb5"
 }

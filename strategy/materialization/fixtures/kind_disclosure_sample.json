@@ -1,23 +1,46 @@
 {
-  "fixture_mode": "self-use-non-commercial-test-only",
+  "capture_instance": "c7d1cdd9-823e-4833-a74c-9f0004a192ca",
+  "capture_schema_version": "1.0.0",
+  "captured_at_utc": "2026-07-13T22:38:43Z",
+  "captured_response_sha256": "febf702c330901b3dad3b72dc998b1e028e9b6560c88f58d0575b688a133de82",
+  "declared_live_row_count": 86,
+  "fixture_mode": false,
+  "payload": {
+    "rows": [
+      {
+        "time_local": "20:01",
+        "market": "유가증권",
+        "short_code": "08166",
+        "company_name_local": "미스토홀딩스",
+        "receipt_no": "20260710001011",
+        "headline_local": "공매도 과열종목 지정(공매도 거래 금지 적용)",
+        "submitter": "유가증권시장본부"
+      },
+      {
+        "time_local": "20:01",
+        "market": "유가증권",
+        "short_code": "03020",
+        "company_name_local": "케이티",
+        "receipt_no": "20260710001010",
+        "headline_local": "공매도 과열종목 지정(공매도 거래 금지 적용)",
+        "submitter": "유가증권시장본부"
+      },
+      {
+        "time_local": "20:01",
+        "market": "코스닥",
+        "short_code": "01870",
+        "company_name_local": "졸스",
+        "receipt_no": "20260710000802",
+        "headline_local": "[투자주의]소수계좌 거래집중 종목",
+        "submitter": "시장감시위원회"
+      }
+    ],
+    "source_document_day": "2026-07-10"
+  },
+  "payload_sha256": "6e37beb3201315315f5d8d0c6c31fd40076c2f32135c569ee9734e7543f0d3f2",
   "production_seed_allowed": false,
-  "derived_test_objects": "synthetic-text-hit-and-strategy-decision-only",
   "source_kind": "kind",
-  "source_document_day": "2026-07-10",
   "source_url": "https://kind.krx.co.kr/disclosure/todaydisclosure.do",
   "terms_url": "https://kind.krx.co.kr/",
-  "captured_sha256": "50641c95b52a102a0dd2d37442ee0272712416709a789f5c67bf1ec5f5e2c423",
-  "live_row_count": 100,
-  "rows": [
-    {
-      "time_local": "20:01",
-      "market": "유가증권",
-      "short_code": "08166",
-      "company_name_local": "미스토홀딩스",
-      "receipt_no": "20260710001011",
-      "headline_local": "공매도 과열종목 지정(공매도 거래 금지 적용)",
-      "submitter": "유가증권시장본부"
-    }
-  ],
-  "fixture_content_sha256": "7181c54c169a1bfbabe32080117a5761143313e3876679a9678e1c84e2a19288"
+  "wrapper_sha256": "1acff925133d269adf03870cf13012cb45a2b52a7fe7cc2b60a76e886b68976f"
 }
