@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
+import jwt from 'jsonwebtoken';
 import request from 'supertest';
 import multibaggerRoutes from '../../src/api/routes/multibagger.routes';
 import { sequelize } from '../../src/config/database';
+import { User } from '../../src/models/User';
 
 const artifactPath = path.resolve(
   __dirname,
@@ -17,6 +19,28 @@ async function main(): Promise<void> {
     return;
   }
 
+  const jwtSecret = process.env.JWT_SECRET;
+  assert.ok(jwtSecret, 'JWT_SECRET is required by the disposable-PG harness');
+  const originalFindByPk = User.findByPk;
+  const activeUser = {
+    id: 7004,
+    username: 'tab4-live-http',
+    email: 'tab4-live-http@example.com',
+    role: 'analyst',
+    is_active: true,
+  } as User;
+  let userLookups = 0;
+  (User as any).findByPk = async (id: number) => {
+    userLookups += 1;
+    return id === activeUser.id ? activeUser : null;
+  };
+  const authorization = `Bearer ${jwt.sign(
+    { user_id: activeUser.id, username: activeUser.username, role: activeUser.role },
+    jwtSecret,
+    { expiresIn: '5m' }
+  )}`;
+  const authorizedGet = (url: string) => request(app).get(url).set('Authorization', authorization);
+
   const app = express();
   app.use(express.json());
   app.use('/api/v1/multibagger', multibaggerRoutes);
@@ -27,7 +51,28 @@ async function main(): Promise<void> {
   );
   assert.equal(count[0].count, '1');
 
-  const list = await request(app).get(
+  const originalQuery = sequelize.query.bind(sequelize);
+  let unauthorizedDatabaseCalls = 0;
+  (sequelize as any).query = async (...args: any[]) => {
+    unauthorizedDatabaseCalls += 1;
+    return originalQuery(...args);
+  };
+  const lookupsBeforeUnauthorized = userLookups;
+  const missingAuthorization = await request(app).get('/api/v1/multibagger/candidates');
+  const invalidAuthorization = await request(app)
+    .get('/api/v1/multibagger/candidates')
+    .set('Authorization', 'Bearer invalid.jwt.token');
+  assert.equal(missingAuthorization.status, 401, missingAuthorization.text);
+  assert.equal(invalidAuthorization.status, 401, invalidAuthorization.text);
+  assert.equal(unauthorizedDatabaseCalls, 0, 'unauthorized requests must not invoke handlers');
+  assert.equal(
+    userLookups,
+    lookupsBeforeUnauthorized,
+    'invalid credentials must not look up users'
+  );
+  (sequelize as any).query = originalQuery;
+
+  const list = await authorizedGet(
     '/api/v1/multibagger/candidates?stage=growth&conclusion=MULTIBAGGER_5X&market=JP'
   );
   assert.equal(list.status, 200, list.text);
@@ -44,7 +89,9 @@ async function main(): Promise<void> {
   assert.ok(row.source_fact_hashes.length >= 2);
   assert.ok(row.source_fact_hashes.every((hash: unknown) => /^[0-9a-f]{64}$/.test(String(hash))));
   assert.ok(row.source_fact_hashes.includes(row.latest_catalyst.fact_hash));
-  assert.ok(Date.parse(row.latest_catalyst.occurred_at) <= Date.parse(row.latest_catalyst.available_at_utc));
+  assert.ok(
+    Date.parse(row.latest_catalyst.occurred_at) <= Date.parse(row.latest_catalyst.available_at_utc)
+  );
   assert.ok(Date.parse(row.latest_catalyst.available_at_utc) <= Date.parse(row.as_of_utc));
   assert.ok(Date.parse(row.available_at_utc) <= Date.parse(row.as_of_utc));
   assert.equal(row.strategy_version, 'japan-multibagger@1.0.0');
@@ -71,17 +118,16 @@ async function main(): Promise<void> {
     assert.deepEqual(row[field], physical[0][field], `API proof pin mismatch: ${field}`);
   }
 
-  const detail = await request(app).get('/api/v1/multibagger/1301/detail');
+  const detail = await authorizedGet('/api/v1/multibagger/1301/detail');
   assert.equal(detail.status, 200, detail.text);
   assert.deepEqual(detail.body, row);
 
-  const originalQuery = sequelize.query.bind(sequelize);
   let invalidDatabaseCalls = 0;
   (sequelize as any).query = async (...args: any[]) => {
     invalidDatabaseCalls += 1;
     return originalQuery(...args);
   };
-  const invalid = await request(app).get('/api/v1/multibagger/candidates?market=EU');
+  const invalid = await authorizedGet('/api/v1/multibagger/candidates?market=EU');
   assert.equal(invalid.status, 400);
   assert.equal(invalidDatabaseCalls, 0);
   (sequelize as any).query = originalQuery;
@@ -99,6 +145,7 @@ async function main(): Promise<void> {
     )
   );
   console.log('tab4-multibagger-live-http: PASS (list/detail/proof pins/invalid guard)');
+  (User as any).findByPk = originalFindByPk;
   await sequelize.close();
 }
 

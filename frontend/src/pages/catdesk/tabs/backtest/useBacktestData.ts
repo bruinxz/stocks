@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useAbortableRequest } from 'shared/hooks/useAbortableRequest';
+import { authenticatedFetch } from 'services/api';
 import type {
   BacktestHolding,
   BacktestMarketScope,
@@ -37,7 +38,7 @@ export function useBacktestData({
     refetch: refetchSnapshots,
   } = useAbortableRequest<BacktestSnapshotSlot[]>(
     async signal => {
-      const response = await fetch(snapshotListUrl, { signal });
+      const response = await authenticatedFetch(snapshotListUrl, { signal });
       if (!response.ok) {
         throw new Error(`${response.status} ${response.statusText}`);
       }
@@ -65,7 +66,7 @@ export function useBacktestData({
   } = useAbortableRequest<BacktestHolding[] | null>(
     async signal => {
       if (!holdingsUrl) return null;
-      const response = await fetch(holdingsUrl, { signal });
+      const response = await authenticatedFetch(holdingsUrl, { signal });
       if (!response.ok) {
         throw new Error(`${response.status} ${response.statusText}`);
       }

@@ -122,6 +122,7 @@ test "$(psql "${PG_ARGS[@]}" -d "$DB" -Atc \
 
 DB_HOST="$PGHOST" DB_PORT="$PGPORT" DB_USER="$PGUSER" DB_PASSWORD="" \
 DB_NAME="$DB" NODE_ENV=test SKIP_DEFAULT_USER_INIT=true \
+JWT_SECRET=tab4-multibagger-live-http-jwt-secret \
 TAB4_LIVE_HTTP_TEST=1 \
 TAB4_RESPONSE_ARTIFACT="$(basename "$ARTIFACT")" \
   "$ROOT/backend/node_modules/.bin/ts-node" --transpile-only \
