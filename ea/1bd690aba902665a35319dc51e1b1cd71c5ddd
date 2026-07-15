@@ -1,0 +1,69 @@
+backend/tests/e2e/tab4-multibagger-live-http.test.ts
+  s_6ca1020a327476::t_77120b5bafc800 5,9,22-43,54-75,92-94,121,130,148
+backend/tests/e2e/tab4-multibagger-live.pg.sh
+  s_b1a34b5bdfaec7::t_cde691f28cd6a8 125
+backend/tests/e2e/tab5-six-month-live-http.test.ts
+  s_6ca1020a327476::t_b32469d61d99f0 5,9,40-45,72-92,101-121,130,155,163,191,196-197,233
+backend/tests/e2e/tab5-six-month-live.pg.sh
+  s_0ea7ce1b0cc346::t_2f3b59415e79ce 30-31,49,54
+backend/tests/routing/api-backtest-pit.test.ts
+  s_b03ce96353032a::t_f4f9f53350e587 2,5-25,73-76,121-133,136,169-170,190-191,206-207,217-218,256-257,266-267,277-278,291-292,298-299,310-311,320-321,327-328,334-335,342-343,347-348,355,363,365-366,370,374-375,379-380,391-392,405-406
+backend/tests/routing/api-multibagger.test.ts
+  s_b03ce96353032a::t_3a501bea5c36ba 2,5-25,127-130,157-167,235-236,240-241,245,291,315,335,343
+frontend/src/pages/catdesk/tabs/backtest/useBacktestData.ts
+  s_ddb6fdebeb4f09::t_f91026ce0545f2 3,41,69
+frontend/src/pages/catdesk/tabs/multibagger/__tests__/tab4MultibaggerLiveE2E.test.tsx
+  s_6ca1020a327476::t_c548f9ff04d737 6,17,82-86
+frontend/src/pages/catdesk/tabs/multibagger/useMultibaggerData.ts
+  s_ddb6fdebeb4f09::t_ad1c604b11d674 2,23,29-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ea1bd690aba902665a35319dc51e1b1cd71c5ddd",
+  "prompts": {},
+  "sessions": {
+    "s_0ea7ce1b0cc346": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f66bd-4aa9-7422-9f9a-dc30b2769918",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_b03ce96353032a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f615f-8dfe-76b3-bd6d-2712157b075f",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_b1a34b5bdfaec7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6179-9e97-7e61-acdc-b121754ff24c",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_ddb6fdebeb4f09": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6179-d3f6-7800-980f-31883bb92ae9",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
