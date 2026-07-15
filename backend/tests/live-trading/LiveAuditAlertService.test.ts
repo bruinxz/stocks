@@ -1,7 +1,7 @@
 /**
  * LiveAuditAlertService 单测。
  *
- *   cd backend && npx ts-node --transpile-only src/live-trading/services/LiveAuditAlertService.test.ts
+ *   cd backend && npx ts-node --transpile-only tests/live-trading/LiveAuditAlertService.test.ts
  */
 
 import axios from 'axios';
@@ -9,7 +9,7 @@ import axios from 'axios';
 import {
   sendLiveAuditAlert,
   __resetAuditAlertForTests,
-} from './LiveAuditAlertService';
+} from '../../src/live-trading/services/LiveAuditAlertService';
 
 let failed = 0;
 const ORIGINAL_ENV = { ...process.env };

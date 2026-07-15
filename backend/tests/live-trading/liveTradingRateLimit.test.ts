@@ -1,14 +1,14 @@
 /**
  * liveTradingRateLimit 单测。
  *
- *   cd backend && npx ts-node --transpile-only src/live-trading/middlewares/liveTradingRateLimit.test.ts
+ *   cd backend && npx ts-node --transpile-only tests/live-trading/liveTradingRateLimit.test.ts
  */
 
 import {
   liveTradingRateLimit,
   __resetRateLimiterForTests,
-} from './liveTradingRateLimit';
-import { AuthenticatedRequest } from '../../middlewares/auth';
+} from '../../src/live-trading/middlewares/liveTradingRateLimit';
+import { AuthenticatedRequest } from '../../src/middlewares/auth';
 
 let failed = 0;
 
@@ -97,10 +97,7 @@ async function test_exceed_returns_429() {
     '429 body 含 retry_after_seconds',
     typeof blocked[0].bodyJson?.retry_after_seconds === 'number'
   );
-  assert(
-    '429 含 Retry-After header',
-    Number(blocked[0]._headers['Retry-After']) >= 1
-  );
+  assert('429 含 Retry-After header', Number(blocked[0]._headers['Retry-After']) >= 1);
 }
 
 async function test_different_users_isolated() {
