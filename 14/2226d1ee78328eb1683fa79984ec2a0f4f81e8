@@ -1,0 +1,47 @@
+SECURITY.md
+  s_6ca1020a327476::t_a8078f72064459 3,5,7,9-12,16-20,22,24-28,32,34-38,40
+backend/.env.example.production
+  s_6ca1020a327476::t_f5fc185885a5ea 15,43
+backend/src/middlewares/internalAuth.ts
+  s_6ca1020a327476::t_61b73ff7188f6e 3-6,8-13,28,30-35,48-64
+backend/src/security/leakedSecretFingerprints.ts
+  s_6ca1020a327476::t_6a7c61604d0e8c 1-27
+backend/src/utils/productionPreflight.ts
+  s_6ca1020a327476::t_c446d6cbe18218 10-14,53-58,71,74-75,310-313,319-320,342,401-404,407,409-411
+backend/tests/routing/internal-auth-fingerprint.test.ts
+  s_6ca1020a327476::t_387241c128b535 1-103
+backend/tests/utils/productionPreflight.test.ts
+  s_6ca1020a327476::t_3f1fe045c1c917 5,8,57,93-98,100,110-113,119,132-135,138,143-144,146-147,158-161,171-174,184-187,197,231-234,305,317,338
+docs/live_trading_launch_checklist.md
+  s_6ca1020a327476::t_d8793e9b47526d 14,114
+docs/refactor/baseline/security/gitleaks-post-merge-47e8dd1.json
+  s_6ca1020a327476::t_dd872c74a50e81 2-1033
+docs/refactor/baseline/security/gitleaks-pre.json
+  s_6ca1020a327476::t_582a2c222d47b7 2-253
+ralph/archive/2026-06-19-zen-khorana-13679b/progress.txt
+  s_6ca1020a327476::t_af1e84e287db18 226
+scripts/ci/check_weak_secrets.js
+  s_6ca1020a327476::t_2ba32a377d4204 1-140
+scripts/ci/check_weak_secrets.sh
+  s_6ca1020a327476::t_17bb329f252569 2,4-5,7-9,11-13,16
+scripts/tests/verify_internal_history_api.js
+  s_6ca1020a327476::t_41f4faa15458f9 7,14-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "142226d1ee78328eb1683fa79984ec2a0f4f81e8",
+  "prompts": {},
+  "sessions": {
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
