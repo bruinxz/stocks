@@ -1,0 +1,37 @@
+frontend/src/App.tsx
+  s_070dedc42b7970::t_19caf17e198183 40,50,72-83,255-258,365-374,380-381
+frontend/src/auth/__tests__/authBypassPolicy.test.tsx
+  s_6ca1020a327476::t_35d3175b2e2c26 2-4,7,9,13,17,20-24,27-33,35-76,78-82,85-88,96,100-102
+frontend/src/auth/authBypassPolicy.tsx
+  s_6ca1020a327476::t_3c02e13145f60a 2,4,17-19,28,32-33,38-40
+frontend/src/services/__tests__/authService.test.ts
+  s_070dedc42b7970::t_6ea4d9a011078c 1-38
+frontend/src/services/authService.ts
+  s_070dedc42b7970::t_606b3705bcab02 2,71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "95cf15706203880267e576a2238c2fdc433026e9",
+  "prompts": {},
+  "sessions": {
+    "s_070dedc42b7970": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f66d6-7c3d-7c71-8178-4699608122d4",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
