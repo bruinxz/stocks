@@ -1,0 +1,111 @@
+backend/src/api/controllers/DataController.ts
+  s_186c505eb579e0::t_5a566acfcbc3d6 419
+backend/src/api/controllers/DocumentCommentsController.ts
+  s_186c505eb579e0::t_4ac5432f2da858 98-99,303
+backend/src/api/controllers/QuantController.ts
+  s_186c505eb579e0::t_9abc1eb21e73bc 625-628
+backend/src/api/controllers/RiskController.ts
+  s_186c505eb579e0::t_b36c741eb8a92a 14-17
+backend/src/api/routes/docs.routes.ts
+  s_186c505eb579e0::t_9e554199701d92 31-36
+backend/src/constants/themeKeywordDict.ts
+  s_186c505eb579e0::t_8117776a249620 17-39,41-51
+backend/src/data/sources/CombinedDataSource.ts
+  s_186c505eb579e0::t_72316d63e19047 461
+backend/src/data/sources/NorthboundDataClient.ts
+  s_186c505eb579e0::t_3c36cd6c1dd2ed 90-92
+backend/src/middlewares/apiAltSvc.ts
+  s_186c505eb579e0::t_ea859ddd22df3f 154-155,178
+backend/src/middlewares/apiRateLimit.ts
+  s_186c505eb579e0::t_bc57a13a5260c1 70
+backend/src/middlewares/apiRetryAfter.ts
+  s_186c505eb579e0::t_1efe0d1b3b58b0 57-60,79
+backend/src/middlewares/apiWebLinking.ts
+  s_186c505eb579e0::t_e6da132419e4a3 123-127,160
+backend/src/middlewares/uploadFeedback.ts
+  s_186c505eb579e0::t_46f1d4512b8d04 89
+backend/src/models/DocumentComment.ts
+  s_186c505eb579e0::t_b9268435452c72 38,62-63
+backend/src/models/IndustrySentimentIndex.ts
+  s_186c505eb579e0::t_8b35dc7d70a62d 33
+backend/src/models/RiskAlert.ts
+  s_186c505eb579e0::t_f35885976c7fae 180-182,189-191
+backend/src/portfolio/internal/crossPortfolioDedup.ts
+  s_186c505eb579e0::t_64797c4836dd00 71-74,78-80,103-105
+backend/src/quant/backtest/internal/QuantBacktestService.ts
+  s_186c505eb579e0::t_ae329fb9d66577 488,499-505
+backend/src/quant/engine/StrategyRegistry.ts
+  s_186c505eb579e0::t_e87fcf5489ac9e 49-51
+backend/src/quant/etf/ETFConstituentExpander.ts
+  s_186c505eb579e0::t_765caddddb5188 134-139,145-150
+backend/src/quant/etf/ETFRankingService.ts
+  s_186c505eb579e0::t_39e7daf64b2698 59
+backend/src/quant/factors/library/AnalystConsensusFactor.ts
+  s_186c505eb579e0::t_750268b3723949 173-174
+backend/src/quant/factors/library/LiquidityFactor.ts
+  s_186c505eb579e0::t_1da1c5f3ef2c23 184
+backend/src/quant/health/internal/QuantDataFreshnessService.ts
+  s_186c505eb579e0::t_bd0742f0d6d806 13-16
+backend/src/quant/performance/internal/QuantPerformanceDashboardService.ts
+  s_186c505eb579e0::t_f65b6338a5f18e 24-27,38-45
+backend/src/quant/strategies/ETFRotationStrategy.ts
+  s_186c505eb579e0::t_c08ec4d82ae617 26-36,148
+backend/src/quant/workflow/QuantWorkflowReadinessService.ts
+  s_186c505eb579e0::t_b87b81d718debc 340-344,885-886
+backend/src/scripts/backfill-missing-bars.ts
+  s_186c505eb579e0::t_be6c1c2041b313 64-65,125-127
+backend/src/scripts/sync-derived-factors.ts
+  s_186c505eb579e0::t_91738a3e8dcaf4 82
+backend/src/scripts/sync-rss-news.ts
+  s_186c505eb579e0::t_ec14811b801380 46-48,52-54,64-68
+backend/src/services/CriticalAnnouncementPushService.ts
+  s_186c505eb579e0::t_f65667158a3a67 197,290-292,354-361,368-375,389-396,415-420,428-430,433-437,447-450,460-463,473-476,484-489,538-544,549-556
+backend/src/services/DailyHealthReportService.ts
+  s_186c505eb579e0::t_15cfb7f1ba2bfe 173,198,289-291,415,448,551-552,625,657-658,780-787,805
+backend/src/services/EnhancedTradingJournalService.ts
+  s_186c505eb579e0::t_919d62d808c757 504-505,507,511,594-596,599-601
+backend/src/services/RealtimeAlertDispatcher.ts
+  s_186c505eb579e0::t_2aec8a7b23ec33 217-221,462-465,544-547,841-843
+backend/src/services/SystemAdminAlertPusher.ts
+  s_186c505eb579e0::t_6682bf1fa9574b 208,323,391-393,404-406,412-414,434-436
+backend/src/services/TaskAutomationHealthService.ts
+  s_186c505eb579e0::t_91a67b52f49ab6 903,1017,1022
+backend/src/services/TodayCommandCenterService.ts
+  s_186c505eb579e0::t_1add833b515cd0 19-23
+backend/src/services/analysis-engine/scenarioPlaybookBuilder.ts
+  s_186c505eb579e0::t_31938d1dafab45 187,189-193,205-207,243-245,248-249
+backend/src/services/analysis-engine/v3CardHelpers.ts
+  s_186c505eb579e0::t_00db0d34ec3e30 229-231,241
+backend/src/services/analysis-engine/v3DetailBuilder.ts
+  s_186c505eb579e0::t_3fa0625b1c76ab 264,267-269
+backend/src/services/etf/ETFRotationService.ts
+  s_186c505eb579e0::t_7e3cdb451491b7 27
+backend/src/services/event-intelligence/EventIntelligenceLayer.ts
+  s_186c505eb579e0::t_8a4b5f8deda600 253-256,286-289,362-365,406-408
+backend/src/services/news/RssNewsIngestService.ts
+  s_186c505eb579e0::t_e99d2124938017 128-130,143-144,171-172,225-226,270-277,289-291
+backend/src/services/theme/ThemeEventFanoutService.ts
+  s_186c505eb579e0::t_efdbaf3fdc749e 178-180,216-218,247,327-328
+backend/src/services/webhookFailOpen.ts
+  s_186c505eb579e0::t_e31f3c3144469c 462-464
+backend/src/utils/developmentSchemaRepair.ts
+  s_186c505eb579e0::t_3bc07ba76bd2f6 131-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "10ef637b9d96c0d0d13edf08234da5c514449d0f",
+  "prompts": {},
+  "sessions": {
+    "s_186c505eb579e0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6199-27d8-71d1-9690-4bab5194e1de",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
