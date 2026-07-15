@@ -16,7 +16,7 @@
  *   [4] classifyOverallTag / classifySyncTag / classifyLogsTag 优先级
  *   [5] buildDataWorkspaceTabViewModel 6 个 tab AC 主验收 (每个 tab 都有真内容)
  *   [6] view model 边界 (null/undefined healthResponse / 未知 tabKey)
- *   [7] META-GUARD fs+regex 守 DataWorkspace.tsx 接通 helper, 不再用旧固定 KPI
+ *   [7] META-GUARD fs+regex 守 DataWorkspace.tsx 接通 helper，并仅渲染当前 2 个 tab
  */
 
 import { readFileSync } from 'fs';
@@ -389,8 +389,8 @@ assert('[3.8] sumRecordCount([])=0', sumRecordCount([]) === 0);
     )
   );
   assert(
-    '[7.2] DataWorkspace.tsx 调用 buildDataWorkspaceTabViewModel',
-    /buildDataWorkspaceTabViewModel\(activeKey,\s*healthData\)/.test(src)
+    '[7.2] DataWorkspace.tsx 用实际 vmKey 调 buildDataWorkspaceTabViewModel',
+    /buildDataWorkspaceTabViewModel\(vmKey,\s*healthData\)/.test(src)
   );
   assert(
     '[7.3] DataWorkspace.tsx 用 vm.kpis.map (KPI strip 走 view model)',
@@ -409,13 +409,13 @@ assert('[3.8] sumRecordCount([])=0', sumRecordCount([]) === 0);
     !/title="数据源"\s+value=\{kpi\.total\}/.test(src)
   );
   assert(
-    '[7.7] DataWorkspace.tsx 仍渲染 6 个 tab key (覆盖 6 tab 真内容)',
+    '[7.7] DataWorkspace.tsx 仅渲染 cleanup 后保留的 health/stocks 两个 tab',
     /key:\s*'health'/.test(src) &&
       /key:\s*'stocks'/.test(src) &&
-      /key:\s*'sync'/.test(src) &&
-      /key:\s*'tasks'/.test(src) &&
-      /key:\s*'logs'/.test(src) &&
-      /key:\s*'monitoring'/.test(src)
+      !/key:\s*'sync'/.test(src) &&
+      !/key:\s*'tasks'/.test(src) &&
+      !/key:\s*'logs'/.test(src) &&
+      !/key:\s*'monitoring'/.test(src)
   );
   assert(
     '[7.8] DataWorkspace.tsx 渲染 overviewBar (data-testid=data-workspace-overview-)',

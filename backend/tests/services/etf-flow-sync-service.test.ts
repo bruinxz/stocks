@@ -675,6 +675,8 @@ async function testSyncRangeOneDayFailsButOthersOk() {
 // service.listFlow() e2e
 // ===========================================================================
 
+const LIST_FLOW_FIXTURE_END = '2026-06-08';
+
 async function testListFlowIndustryFilter() {
   resetStore();
   installModelStubs();
@@ -701,12 +703,12 @@ async function testListFlowIndustryFilter() {
 
   const client = makeFakeClient({ calls: [] });
   const service = new ETFFlowSyncService(client);
-  const semi = await service.listFlow({ industry: '半导体' });
+  const semi = await service.listFlow({ industry: '半导体', end: LIST_FLOW_FIXTURE_END });
   // 半导体 industry has multiple ETFs in whitelist; only seeded 159995 has data → expect 1
   assertEqual('industry=半导体 count=1', semi.length, 1);
-  assertEqual('industry=半导体 row.etf_code=159995', semi[0]!.etf_code, '159995');
+  assertEqual('industry=半导体 row.etf_code=159995', semi[0]?.etf_code, '159995');
   // DECIMAL fields are real numbers
-  assertEqual('net_inflow is number', typeof semi[0]!.net_inflow, 'number');
+  assertEqual('net_inflow is number', typeof semi[0]?.net_inflow, 'number');
 }
 
 async function testListFlowIndustryUnknown() {
@@ -722,7 +724,7 @@ async function testListFlowIndustryUnknown() {
   });
   const client = makeFakeClient({ calls: [] });
   const service = new ETFFlowSyncService(client);
-  const out = await service.listFlow({ industry: '不存在' });
+  const out = await service.listFlow({ industry: '不存在', end: LIST_FLOW_FIXTURE_END });
   assertEqual('unknown industry → empty', out.length, 0);
 }
 
@@ -748,9 +750,9 @@ async function testListFlowEtfCodeFilter() {
 
   const client = makeFakeClient({ calls: [] });
   const service = new ETFFlowSyncService(client);
-  const out = await service.listFlow({ etf_code: '159995' });
+  const out = await service.listFlow({ etf_code: '159995', end: LIST_FLOW_FIXTURE_END });
   assertEqual('etf_code filter count=1', out.length, 1);
-  assertEqual('etf_code=159995', out[0]!.etf_code, '159995');
+  assertEqual('etf_code=159995', out[0]?.etf_code, '159995');
 }
 
 async function testListFlowDaysClamp() {
@@ -789,13 +791,13 @@ async function testListFlowDecimalConversion() {
   });
   const client = makeFakeClient({ calls: [] });
   const service = new ETFFlowSyncService(client);
-  const out = await service.listFlow({ industry: '半导体' });
+  const out = await service.listFlow({ industry: '半导体', end: LIST_FLOW_FIXTURE_END });
   assertEqual('count=1', out.length, 1);
-  const row = out[0]!;
-  assertEqual('nav coerced to 1.5', row.nav, 1.5);
-  assertEqual('share_count coerced to 1000000', row.share_count, 1_000_000);
-  assertEqual('aum coerced to 1500000', row.aum, 1_500_000);
-  assertEqual('net_inflow coerced to 100000', row.net_inflow, 100_000);
+  const row = out[0];
+  assertEqual('nav coerced to 1.5', row?.nav, 1.5);
+  assertEqual('share_count coerced to 1000000', row?.share_count, 1_000_000);
+  assertEqual('aum coerced to 1500000', row?.aum, 1_500_000);
+  assertEqual('net_inflow coerced to 100000', row?.net_inflow, 100_000);
 }
 
 async function testListFlowNullableFieldsNotZeroed() {
@@ -815,9 +817,9 @@ async function testListFlowNullableFieldsNotZeroed() {
   });
   const client = makeFakeClient({ calls: [] });
   const service = new ETFFlowSyncService(client);
-  const out = await service.listFlow({ industry: '半导体' });
+  const out = await service.listFlow({ industry: '半导体', end: LIST_FLOW_FIXTURE_END });
   assertEqual('count=1', out.length, 1);
-  assertEqual('net_inflow stays null', out[0]!.net_inflow, null);
+  assertEqual('net_inflow stays null', out[0]?.net_inflow, null);
 }
 
 // ===========================================================================

@@ -1,13 +1,10 @@
 /**
- * US-068 [FE-029] — SettingsWorkspace.TodoSuggestionsTab + todoSuggestionsHelpers 单测.
+ * US-068 [FE-029] — todoSuggestionsHelpers 纯函数单测.
  *
  * 不依赖 jest / DB / React 渲染. node 直接跑:
  *   cd backend && npx ts-node --transpile-only tests/risk/todo-suggestions-helpers.test.ts
  *
- * 范式与 [US-066 risk-parameters-center-tab.test.ts] 同款 — 跨 monorepo import frontend
- * pure helper + fs+regex META-GUARD 守 tab.tsx 与 SettingsWorkspace.tsx 5 处接入.
- *
- * 8 个测试模块:
+ * 7 个测试模块:
  *   [1] 常量 frozen + sanity (category/priority 顺序 / 颜色 / label 完整)
  *   [2] truncateText 边界 (恰好 N / N+1 / 超长 / 空 / null)
  *   [3] normalizeAlertLevelToPriority (HIGH/CRITICAL/MEDIUM/LOW/warning/unknown/null)
@@ -15,12 +12,9 @@
  *   [5] buildDeviationTodos (null/issues+chain 全拍平/dedup/level 映射)
  *   [6] buildImprovementTodos (null/can_apply→high/observe→low/next_actions→medium/empty next_actions)
  *   [7] buildTodoSuggestionsViewModel 主入口 (聚合 + 排序 + summary + has_critical)
- *   [8] META-GUARD fs+regex — tab.tsx 必含 import + Promise.allSettled + helper 用法 +
- *       SettingsWorkspace.tsx 已注册 tab + headerActions + render
+ *
+ * Settings TodoSuggestionsTab 已由 918be596 明确删除；这里不再断言旧 UI 接线。
  */
-
-import * as fs from 'fs';
-import * as path from 'path';
 
 let pass = 0;
 let fail = 0;
@@ -33,20 +27,6 @@ function assert(cond: boolean, msg: string): void {
     console.error(`✗ ${msg}`);
   }
 }
-
-// 跨 monorepo 路径 — 与 [[risk-parameters-center-tab.test.ts]] 同款 path.resolve 模板
-const HELPER_PATH = path.resolve(
-  __dirname,
-  '../../../frontend/src/pages/workspace/todoSuggestionsHelpers.ts'
-);
-const TAB_PATH = path.resolve(
-  __dirname,
-  '../../../frontend/src/pages/workspace/SettingsWorkspace.TodoSuggestionsTab.tsx'
-);
-const SETTINGS_WS_PATH = path.resolve(
-  __dirname,
-  '../../../frontend/src/pages/workspace/SettingsWorkspace.tsx'
-);
 
 // import 真 helper (pure function, 不带 React/antd 依赖)
 import {
@@ -439,75 +419,6 @@ console.log('[7] buildTodoSuggestionsViewModel');
   });
   assert(noCrit.has_critical === false, '无 critical → has_critical=false');
 }
-
-// ---------------------------------------------------------------------------
-// [8] META-GUARD fs+regex — tab.tsx + SettingsWorkspace.tsx
-// ---------------------------------------------------------------------------
-console.log('[8] META-GUARD fs+regex');
-{
-  assert(fs.existsSync(HELPER_PATH), 'helper 文件必须存在');
-  assert(fs.existsSync(TAB_PATH), 'tab 文件必须存在');
-
-  const tabSrc = fs.readFileSync(TAB_PATH, 'utf-8');
-  const wsSrc = fs.readFileSync(SETTINGS_WS_PATH, 'utf-8');
-
-  // tab.tsx 必含 helper import + 主入口调用
-  assert(
-    /import\s*\{[\s\S]*buildTodoSuggestionsViewModel[\s\S]*\}\s*from\s*['"]\.\/todoSuggestionsHelpers['"]/.test(
-      tabSrc
-    ),
-    'tab.tsx 必须 import buildTodoSuggestionsViewModel'
-  );
-  assert(
-    /buildTodoSuggestionsViewModel\s*\(/.test(tabSrc),
-    'tab.tsx 必须调 buildTodoSuggestionsViewModel'
-  );
-  // fail-OPEN 并行拉两路 — Promise.allSettled 双 endpoint
-  assert(/Promise\.allSettled/.test(tabSrc), 'tab.tsx 必须用 Promise.allSettled (fail-OPEN)');
-  assert(/\/risk-alerts/.test(tabSrc), 'tab.tsx 必须接 /risk-alerts endpoint');
-  assert(
-    /\/tasks\/automation-health/.test(tabSrc),
-    'tab.tsx 必须接 /tasks/automation-health endpoint'
-  );
-  // 双 error state — 一路失败不阻塞另一路
-  assert(
-    /alertsError/.test(tabSrc) && /healthError/.test(tabSrc),
-    'tab.tsx 必须有 alertsError 与 healthError 双 state (fail-OPEN)'
-  );
-  // 默认 export
-  assert(
-    /export\s+default\s+TodoSuggestionsTab/.test(tabSrc),
-    'tab.tsx 必须 default export TodoSuggestionsTab'
-  );
-
-  // SettingsWorkspace.tsx — 5 处接入清单 (与 [[US-066 lesson]] 同款)
-  assert(
-    /import\s+TodoSuggestionsTab\s+from\s+['"]\.\/SettingsWorkspace\.TodoSuggestionsTab['"]/.test(
-      wsSrc
-    ),
-    'SettingsWorkspace.tsx 必须 import TodoSuggestionsTab'
-  );
-  assert(/BulbOutlined/.test(wsSrc), 'SettingsWorkspace.tsx 必须 import BulbOutlined (tab icon)');
-  assert(
-    /key:\s*['"]todo-suggestions['"]/.test(wsSrc),
-    'SettingsWorkspace.tsx tabs array 必须含 key: todo-suggestions'
-  );
-  assert(
-    /label:\s*['"]待办建议['"]/.test(wsSrc),
-    'SettingsWorkspace.tsx tabs array 必须含 label: 待办建议'
-  );
-  // headerActions 分支
-  assert(
-    /activeKey\s*===\s*['"]todo-suggestions['"][\s\S]{0,150}Tag/.test(wsSrc),
-    'SettingsWorkspace.tsx headerActions 必须挂 todo-suggestions 分支 (漏会显示占位 Tag 误导)'
-  );
-  // conditional render 分支
-  assert(
-    /activeKey\s*===\s*['"]todo-suggestions['"][\s\S]{0,80}<TodoSuggestionsTab\s*\/>/.test(wsSrc),
-    'SettingsWorkspace.tsx conditional render 必须挂 todo-suggestions → <TodoSuggestionsTab />'
-  );
-}
-
 // ---------------------------------------------------------------------------
 // 汇总
 // ---------------------------------------------------------------------------

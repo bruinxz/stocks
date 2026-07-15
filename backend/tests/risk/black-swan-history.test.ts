@@ -1,26 +1,20 @@
 /**
- * US-133 [PR-018] — 黑天鹅事件历史 (controller + helpers + tab + SettingsWorkspace) 单测.
+ * US-133 [PR-018] — 黑天鹅事件历史 backend controller/service contract 单测.
  *
  * 不依赖 jest / DB / React 渲染. node 直接跑:
  *   cd backend && npx ts-node --transpile-only tests/risk/black-swan-history.test.ts
- *
- * 范式 = [[improvement-suggestion-apply.test.ts]] (镜像 + META-GUARD) +
- *        [[todo-suggestions-helpers.test.ts]] (跨 monorepo helper import + tab fs regex).
  *
  * BlackSwanEventController 顶层 require BlackSwanEvent / BlackSwanPostmortemReport 拽起
  * sequelize, 单测进程 (无 PG) 不可直接 instantiate (与 [US-018/065/094/126] 同源 DB-less 不可测).
  * 对策: import 只测 pure helper (parseEventId / safe*); controller 主流程用 mirror 复刻.
  *
- * 覆盖 (8 模块):
+ * 覆盖:
  *   T1 — controller 纯函数 safeInt / safeIsoDate / safe* / parseEventId 边界
  *   T2 — controller listEvents 主流程镜像 (filter where / pagination / fail-OPEN)
  *   T3 — controller getEvent 主流程镜像 (200 / 400 / 404 / postmortem null / 500)
- *   T4 — frontend helper truncateText / *Label / *Color / severityRank 行为
- *   T5 — frontend helper sortBlackSwanEventsBySeverity 3 段稳定排序
- *   T6 — frontend helper summarizeBlackSwanEvents 永远返 4 档 + unknown 兜底
- *   T7 — frontend helper computePostmortemSectionStatus 4 段完成度
- *   T8 — META-GUARD fs+regex 守 controller + routes + index.ts + tab.tsx +
- *        SettingsWorkspace.tsx + service.ts 源码形态
+ *   T4 — META-GUARD fs+regex 守 controller + routes + index.ts + frontend service.
+ *
+ * 旧 Settings 黑天鹅 Tab 与其 helper 已由 918be596 明确删除，不在此测试复活。
  */
 
 import * as fs from 'fs';
@@ -34,29 +28,6 @@ import {
   safeScope,
   safeStatus,
 } from '../../src/api/controllers/BlackSwanEventController';
-import {
-  BLACK_SWAN_DEFAULT_PAGE_LIMIT,
-  BLACK_SWAN_MAX_PAGE_LIMIT,
-  BLACK_SWAN_SEVERITY_ORDER,
-  BLACK_SWAN_EVENT_TYPES,
-  BLACK_SWAN_SCOPE_LABEL,
-  BLACK_SWAN_STATUS_LABEL,
-  BLACK_SWAN_SEVERITY_COLOR,
-  BLACK_SWAN_SEVERITY_LABEL,
-  truncateText,
-  eventTypeLabel,
-  scopeLabel,
-  statusLabel,
-  severityLabel,
-  severityColor,
-  scopeColor,
-  statusColor,
-  severityRank,
-  sortBlackSwanEventsBySeverity,
-  summarizeBlackSwanEvents,
-  computePostmortemSectionStatus,
-} from '../../../frontend/src/pages/workspace/blackSwanHistoryHelpers';
-
 let pass = 0;
 let fail = 0;
 const failures: string[] = [];
@@ -69,16 +40,16 @@ function assert(cond: boolean, msg: string): void {
   }
 }
 
-// 跨 monorepo 路径
+// 跨 monorepo 路径（frontend service 仍是活跃 API client）。
 const ROOT = path.resolve(__dirname, '../..');
 const FE_ROOT = path.resolve(ROOT, '../frontend');
 const CTRL_PATH = path.resolve(ROOT, 'src/api/controllers/BlackSwanEventController.ts');
 const ROUTES_PATH = path.resolve(ROOT, 'src/api/routes/blackSwan.routes.ts');
 const INDEX_PATH = path.resolve(ROOT, 'src/index.ts');
-const TAB_PATH = path.resolve(FE_ROOT, 'src/pages/workspace/SettingsWorkspace.BlackSwanHistoryTab.tsx');
-const SETTINGS_WS_PATH = path.resolve(FE_ROOT, 'src/pages/workspace/SettingsWorkspace.tsx');
-const HELPER_PATH = path.resolve(FE_ROOT, 'src/pages/workspace/blackSwanHistoryHelpers.ts');
 const SERVICE_PATH = path.resolve(FE_ROOT, 'src/services/blackSwanService.ts');
+// Mirror BlackSwanEventController PAGE_LIMIT_DEFAULT / PAGE_LIMIT_MAX.
+const BLACK_SWAN_DEFAULT_PAGE_LIMIT = 30;
+const BLACK_SWAN_MAX_PAGE_LIMIT = 200;
 
 // ---------------------------------------------------------------------------
 // T1 — controller 纯函数边界
@@ -453,304 +424,9 @@ console.log('T3 — getEvent 镜像');
 }
 
 // ---------------------------------------------------------------------------
-// T4 — frontend helper 显示归一化
+// T4 — META-GUARD fs+regex 守仍活跃源码形态
 // ---------------------------------------------------------------------------
-console.log('T4 — frontend helper truncateText / *Label / *Color');
-{
-  // truncateText 边界 (N / N+1 / 远超 / 空)
-  assert(truncateText('hello', 5) === 'hello', 'truncate N 不截');
-  assert(truncateText('hellow', 5) === 'hell…', 'truncate N+1 截到 N (4+…=5)');
-  assert(truncateText('helloworld', 5) === 'hell…', 'truncate 远超 截到 N');
-  assert(truncateText(null, 5) === '', 'truncate null → ""');
-  assert(truncateText(undefined, 5) === '', 'truncate undefined → ""');
-  assert(truncateText('', 5) === '', 'truncate "" → ""');
-  assert(truncateText('a', 5) === 'a', 'truncate 远小于 N 不截');
-
-  // eventTypeLabel
-  assert(eventTypeLabel('ST') === 'ST 标记', 'eventTypeLabel ST');
-  assert(eventTypeLabel('UNKNOWN_FUTURE') === 'UNKNOWN_FUTURE', 'eventTypeLabel 未知 → 原值兜底');
-  assert(eventTypeLabel(null) === '—', 'eventTypeLabel null → —');
-  assert(eventTypeLabel('') === '—', 'eventTypeLabel "" → —');
-
-  // scopeLabel
-  assert(scopeLabel('symbol') === '单股', 'scopeLabel symbol → 单股');
-  assert(scopeLabel('market') === '全市场', 'scopeLabel market → 全市场');
-  assert(scopeLabel(null) === '—', 'scopeLabel null → —');
-  assert(scopeLabel('unknown') === 'unknown', 'scopeLabel 未知 → 原值');
-
-  // statusLabel
-  assert(statusLabel('open') === '进行中', 'statusLabel open');
-  assert(statusLabel('resolved') === '已解决', 'statusLabel resolved');
-  assert(statusLabel(null) === '—', 'statusLabel null');
-
-  // severityLabel
-  assert(severityLabel('critical') === '极端', 'severityLabel critical');
-  assert(severityLabel('high') === '高', 'severityLabel high');
-  assert(severityLabel(null) === '—', 'severityLabel null');
-
-  // severityColor — 未知不抛 走 default
-  assert(severityColor('critical') === 'red', 'severityColor critical → red');
-  assert(severityColor('high') === 'volcano', 'severityColor high → volcano');
-  assert(severityColor('unknown') === 'default', 'severityColor 未知 → default 不抛');
-  assert(severityColor(null) === 'default', 'severityColor null → default');
-
-  // scopeColor / statusColor 同款兜底
-  assert(scopeColor('market') === 'purple', 'scopeColor market');
-  assert(scopeColor('unknown') === 'default', 'scopeColor 未知 → default');
-  assert(statusColor('open') === 'red', 'statusColor open → red');
-  assert(statusColor('unknown') === 'default', 'statusColor 未知 → default');
-
-  // severityRank
-  assert(severityRank('critical') === 0, 'severityRank critical = 0 (最严重)');
-  assert(severityRank('high') === 1, 'severityRank high = 1');
-  assert(severityRank('medium') === 2, 'severityRank medium = 2');
-  assert(severityRank('low') === 3, 'severityRank low = 3');
-  assert(severityRank('unknown') === 999, 'severityRank 未知 = 999 (落最后)');
-  assert(severityRank(null) === 999, 'severityRank null = 999');
-
-  // sanity 常量
-  assert(BLACK_SWAN_DEFAULT_PAGE_LIMIT < BLACK_SWAN_MAX_PAGE_LIMIT, 'default < max page limit');
-  assert(BLACK_SWAN_SEVERITY_ORDER[0] === 'critical', 'severity 顺序首 critical');
-  assert(BLACK_SWAN_SEVERITY_ORDER[3] === 'low', 'severity 顺序末 low');
-  assert(BLACK_SWAN_EVENT_TYPES.includes('ST'), 'event_types 含 ST');
-  assert(BLACK_SWAN_EVENT_TYPES.includes('MARKET_REGIME'), 'event_types 含 MARKET_REGIME');
-  // frozen
-  try {
-    (BLACK_SWAN_SEVERITY_LABEL as any).critical = 'X';
-    assert(BLACK_SWAN_SEVERITY_LABEL.critical === '极端', 'frozen — 写入无效');
-  } catch {
-    assert(true, 'frozen — 写入抛 (strict mode)');
-  }
-  try {
-    (BLACK_SWAN_SCOPE_LABEL as any).market = 'X';
-    assert(BLACK_SWAN_SCOPE_LABEL.market === '全市场', 'scope label frozen');
-  } catch {
-    assert(true, 'scope label frozen (strict)');
-  }
-  try {
-    (BLACK_SWAN_STATUS_LABEL as any).open = 'X';
-    assert(BLACK_SWAN_STATUS_LABEL.open === '进行中', 'status label frozen');
-  } catch {
-    assert(true, 'status label frozen (strict)');
-  }
-  try {
-    (BLACK_SWAN_SEVERITY_COLOR as any).critical = 'X';
-    assert(BLACK_SWAN_SEVERITY_COLOR.critical === 'red', 'severity color frozen');
-  } catch {
-    assert(true, 'severity color frozen (strict)');
-  }
-}
-
-// ---------------------------------------------------------------------------
-// T5 — sortBlackSwanEventsBySeverity 3 段稳定
-// ---------------------------------------------------------------------------
-console.log('T5 — sortBlackSwanEventsBySeverity 3 段稳定');
-{
-  const rows: any[] = [
-    {
-      id: 3,
-      severity: 'low',
-      detected_at: '2026-06-19T08:00:00Z',
-      event_type: 'ST',
-      scope: 'symbol',
-      status: 'open',
-      symbol: 'A',
-      signature: 's3',
-      title: 'A',
-      description: '',
-      detail: {},
-      scope_detail: {},
-      source: 'detector_cron',
-      resolved_at: null,
-      resolved_reason: null,
-      metadata: {},
-      created_at: '',
-      updated_at: '',
-    },
-    {
-      id: 1,
-      severity: 'critical',
-      detected_at: '2026-06-19T05:00:00Z',
-      event_type: 'ST',
-      scope: 'symbol',
-      status: 'open',
-      symbol: 'B',
-      signature: 's1',
-      title: 'B',
-      description: '',
-      detail: {},
-      scope_detail: {},
-      source: 'detector_cron',
-      resolved_at: null,
-      resolved_reason: null,
-      metadata: {},
-      created_at: '',
-      updated_at: '',
-    },
-    {
-      id: 2,
-      severity: 'critical',
-      detected_at: '2026-06-19T07:00:00Z',
-      event_type: 'ST',
-      scope: 'symbol',
-      status: 'open',
-      symbol: 'C',
-      signature: 's2',
-      title: 'C',
-      description: '',
-      detail: {},
-      scope_detail: {},
-      source: 'detector_cron',
-      resolved_at: null,
-      resolved_reason: null,
-      metadata: {},
-      created_at: '',
-      updated_at: '',
-    },
-    {
-      id: 5,
-      severity: 'high',
-      detected_at: '2026-06-19T09:00:00Z',
-      event_type: 'ST',
-      scope: 'symbol',
-      status: 'open',
-      symbol: 'D',
-      signature: 's5',
-      title: 'D',
-      description: '',
-      detail: {},
-      scope_detail: {},
-      source: 'detector_cron',
-      resolved_at: null,
-      resolved_reason: null,
-      metadata: {},
-      created_at: '',
-      updated_at: '',
-    },
-  ];
-  const sorted = sortBlackSwanEventsBySeverity(rows);
-  assert(sorted[0].id === 2, '[T5] critical 内 detected_at DESC: id=2 (07:00) 先于 id=1 (05:00)');
-  assert(sorted[1].id === 1, '[T5] 第二条 id=1');
-  assert(sorted[2].id === 5, '[T5] high 第三');
-  assert(sorted[3].id === 3, '[T5] low 最后');
-  // 原数组不变
-  assert(rows[0].id === 3, '[T5] 原数组未变更 (sort 拷贝)');
-
-  // 同 severity 同 ts 时按 id 升序 (兜底稳定)
-  const sameTs: any[] = [
-    { id: 5, severity: 'critical', detected_at: '2026-06-19T10:00:00Z' },
-    { id: 2, severity: 'critical', detected_at: '2026-06-19T10:00:00Z' },
-    { id: 8, severity: 'critical', detected_at: '2026-06-19T10:00:00Z' },
-  ];
-  const sortedSame = sortBlackSwanEventsBySeverity(sameTs);
-  assert(sortedSame[0].id === 2, '[T5 兜底] 同 severity+ts → id ASC');
-  assert(sortedSame[1].id === 5, '[T5 兜底] 第二 id=5');
-  assert(sortedSame[2].id === 8, '[T5 兜底] 第三 id=8');
-}
-
-// ---------------------------------------------------------------------------
-// T6 — summarizeBlackSwanEvents 永远 4 档 + unknown
-// ---------------------------------------------------------------------------
-console.log('T6 — summarizeBlackSwanEvents');
-{
-  const empty = summarizeBlackSwanEvents([]);
-  assert(empty.total === 0, '[T6 empty] total=0');
-  assert(empty.critical === 0, '[T6 empty] critical=0');
-  assert(empty.high === 0, '[T6 empty] high=0');
-  assert(empty.medium === 0, '[T6 empty] medium=0');
-  assert(empty.low === 0, '[T6 empty] low=0');
-  assert(empty.unknown === 0, '[T6 empty] unknown=0');
-
-  const mixed = summarizeBlackSwanEvents([
-    { severity: 'critical' } as any,
-    { severity: 'critical' } as any,
-    { severity: 'high' } as any,
-    { severity: 'medium' } as any,
-    { severity: 'low' } as any,
-    { severity: 'low' } as any,
-    { severity: 'low' } as any,
-    { severity: 'weird-future-enum' } as any,
-  ]);
-  assert(mixed.total === 8, '[T6 mixed] total=8');
-  assert(mixed.critical === 2, '[T6 mixed] critical=2');
-  assert(mixed.high === 1, '[T6 mixed] high=1');
-  assert(mixed.medium === 1, '[T6 mixed] medium=1');
-  assert(mixed.low === 3, '[T6 mixed] low=3');
-  assert(mixed.unknown === 1, '[T6 mixed] unknown=1 (未来 enum 走 unknown 不丢)');
-
-  // null severity 也归 unknown
-  const nullCase = summarizeBlackSwanEvents([{ severity: null } as any, { severity: '' } as any]);
-  assert(nullCase.unknown === 2, '[T6 null] null/空 严重度 → unknown');
-
-  // null array 防御
-  const nullArr = summarizeBlackSwanEvents(null as any);
-  assert(nullArr.total === 0, '[T6 null] null array → total=0 不抛');
-}
-
-// ---------------------------------------------------------------------------
-// T7 — computePostmortemSectionStatus 4 段完成度
-// ---------------------------------------------------------------------------
-console.log('T7 — computePostmortemSectionStatus');
-{
-  // null postmortem → 全 false
-  const none = computePostmortemSectionStatus(null);
-  assert(none.filled === 0, '[T7 null] filled=0');
-  assert(none.total === 4, '[T7 null] total=4');
-  assert(none.event_summary === false, '[T7 null] event_summary=false');
-
-  // undefined 同款
-  const u = computePostmortemSectionStatus(undefined);
-  assert(u.filled === 0, '[T7 undef] filled=0');
-
-  // 4 段全 {} 空对象 → 全 false (PR-012 jsdoc 默认 '{}'::jsonb 即未填)
-  const empty = computePostmortemSectionStatus({
-    event_summary: {},
-    counterfactual_baselines: {},
-    event_timeline: {},
-    improvement_suggestions: {},
-  });
-  assert(empty.filled === 0, '[T7 empty {}] 4 段全 {} → filled=0');
-
-  // 1 段已填 → filled=1
-  const one = computePostmortemSectionStatus({
-    event_summary: { event_type: 'ST', severity: 'high' },
-    counterfactual_baselines: {},
-    event_timeline: {},
-    improvement_suggestions: {},
-  });
-  assert(one.filled === 1, '[T7 one] filled=1');
-  assert(one.event_summary === true, '[T7 one] event_summary=true');
-  assert(one.counterfactual_baselines === false, '[T7 one] counterfactual=false');
-
-  // 4 段全填 → filled=4
-  const full = computePostmortemSectionStatus({
-    event_summary: { x: 1 },
-    counterfactual_baselines: { baselines: [] },
-    event_timeline: { timeline: [] },
-    improvement_suggestions: { suggestions: [] },
-  });
-  assert(full.filled === 4, '[T7 full] filled=4');
-  assert(full.event_summary === true, '[T7 full] all 4');
-  assert(full.counterfactual_baselines === true, '[T7 full]');
-  assert(full.event_timeline === true, '[T7 full]');
-  assert(full.improvement_suggestions === true, '[T7 full]');
-
-  // null 段 vs {} 段 同效 (都 false)
-  const mixedNull = computePostmortemSectionStatus({
-    event_summary: null as any,
-    counterfactual_baselines: { foo: 'bar' },
-    event_timeline: undefined as any,
-    improvement_suggestions: null as any,
-  });
-  assert(mixedNull.filled === 1, '[T7 mixed null] 1 段填');
-  assert(mixedNull.event_summary === false, '[T7 mixed null] null 段 false');
-  assert(mixedNull.event_timeline === false, '[T7 mixed null] undef 段 false');
-}
-
-// ---------------------------------------------------------------------------
-// T8 — META-GUARD fs+regex 守源码形态
-// ---------------------------------------------------------------------------
-console.log('T8 — META-GUARD: controller + routes + index.ts + tab + SettingsWorkspace + helper + service');
+console.log('T4 — META-GUARD: controller + routes + index.ts + frontend service');
 {
   // ---- backend controller ----
   const ctrlSrc = fs.readFileSync(CTRL_PATH, 'utf-8');
@@ -840,85 +516,7 @@ console.log('T8 — META-GUARD: controller + routes + index.ts + tab + SettingsW
     'service detail 用 /black-swan/events/${id}'
   );
 
-  // ---- frontend helper ----
-  const helperSrc = fs.readFileSync(HELPER_PATH, 'utf-8');
-  assert(/export const BLACK_SWAN_SEVERITY_ORDER/.test(helperSrc), 'helper export severity order');
-  assert(/export const BLACK_SWAN_EVENT_TYPES/.test(helperSrc), 'helper export event types');
-  assert(
-    /export function computePostmortemSectionStatus/.test(helperSrc),
-    'helper export computePostmortemSectionStatus'
-  );
-  assert(/Object\.freeze\(/.test(helperSrc), 'helper 用 Object.freeze 守常量');
-  assert(/export function severityColor/.test(helperSrc), 'helper export severityColor');
-  assert(/export function severityRank/.test(helperSrc), 'helper export severityRank');
-  assert(
-    /export function sortBlackSwanEventsBySeverity/.test(helperSrc),
-    'helper export sortBlackSwanEventsBySeverity'
-  );
-  assert(
-    /export function summarizeBlackSwanEvents/.test(helperSrc),
-    'helper export summarizeBlackSwanEvents'
-  );
-
-  // ---- frontend tab ----
-  const tabSrc = fs.readFileSync(TAB_PATH, 'utf-8');
-  assert(/listBlackSwanEvents/.test(tabSrc), 'tab 调 listBlackSwanEvents');
-  assert(/getBlackSwanEvent/.test(tabSrc), 'tab 调 getBlackSwanEvent');
-  assert(/computePostmortemSectionStatus/.test(tabSrc), 'tab 调 computePostmortemSectionStatus');
-  assert(/severityColor/.test(tabSrc), 'tab 用 severityColor');
-  assert(/scopeLabel/.test(tabSrc), 'tab 用 scopeLabel');
-  assert(/Drawer/.test(tabSrc), 'tab 有 Drawer (详情)');
-  assert(/Tabs/.test(tabSrc), 'tab 详情用 Tabs 展示 4 段 postmortem');
-  assert(
-    /data-testid=['"]black-swan-event-list['"]/.test(tabSrc),
-    'tab 含 data-testid black-swan-event-list'
-  );
-  assert(
-    /data-testid=['"]black-swan-event-detail-drawer['"]/.test(tabSrc),
-    'tab 含 data-testid black-swan-event-detail-drawer'
-  );
-  assert(
-    /data-testid=['"]black-swan-filters['"]/.test(tabSrc),
-    'tab 含 data-testid black-swan-filters'
-  );
-  // 4 段 tab key 都得 render
-  assert(/event_summary/.test(tabSrc), 'tab 渲染 event_summary 段');
-  assert(/counterfactual_baselines/.test(tabSrc), 'tab 渲染 counterfactual_baselines 段');
-  assert(/event_timeline/.test(tabSrc), 'tab 渲染 event_timeline 段');
-  assert(/improvement_suggestions/.test(tabSrc), 'tab 渲染 improvement_suggestions 段');
-  assert(/export default BlackSwanHistoryTab/.test(tabSrc), 'tab default export');
-
-  // ---- SettingsWorkspace.tsx 接入 ----
-  const wsSrc = fs.readFileSync(SETTINGS_WS_PATH, 'utf-8');
-  assert(
-    /import\s+BlackSwanHistoryTab\s+from\s+['"]\.\/SettingsWorkspace\.BlackSwanHistoryTab['"]/.test(
-      wsSrc
-    ),
-    'SettingsWorkspace import BlackSwanHistoryTab'
-  );
-  assert(
-    /AlertOutlined/.test(wsSrc),
-    'SettingsWorkspace 含 AlertOutlined icon import'
-  );
-  assert(
-    /key:\s*['"]black-swan['"]/.test(wsSrc),
-    "SettingsWorkspace tabs[] 含 key='black-swan'"
-  );
-  assert(
-    /activeKey\s*===\s*['"]black-swan['"]/.test(wsSrc),
-    'SettingsWorkspace 含 activeKey === black-swan 分支'
-  );
-  assert(
-    /<BlackSwanHistoryTab\s*\/>/.test(wsSrc),
-    'SettingsWorkspace render <BlackSwanHistoryTab />'
-  );
-  // headerActions 分支 (US-133 PR-018 tag)
-  assert(
-    /US-133.*PR-018/.test(wsSrc),
-    'SettingsWorkspace headerActions 含 US-133 PR-018 tag'
-  );
 }
-
 // ---------------------------------------------------------------------------
 // 汇总
 // ---------------------------------------------------------------------------

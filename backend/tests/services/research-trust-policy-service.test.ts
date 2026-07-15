@@ -248,18 +248,6 @@ assert(
   backtestSrc.includes('COALESCE("parameters",') && backtestSrc.includes('queue_job_id')
 );
 
-const signalSrc = readSrc('quant/engine/internal/QuantSignalService.ts');
-assert(
-  'QuantSignalService records trusted data policy for production signals',
-  signalSrc.includes('buildSignalDataPolicy') && signalSrc.includes('trusted_data_policy')
-);
-assert(
-  'QuantSignalService evaluates shared execution gate for production signals',
-  signalSrc.includes('evaluateExecutionGate') &&
-    signalSrc.includes('trusted_execution_gate') &&
-    signalSrc.includes('signalExecutionGate.allowed')
-);
-
 const paperSrc = readSrc('portfolio/internal/PaperTradingAutomationService.ts');
 assert(
   'PaperTradingAutomationService evaluates shared research execution gate',

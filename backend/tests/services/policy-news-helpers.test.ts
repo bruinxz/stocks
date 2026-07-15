@@ -394,20 +394,19 @@ assert(
     /from\s+['"]\.\/FactorWorkspace\.PolicyNewsTab['"]/.test(workspaceSrc)
 );
 assert(
-  '[7.13] FactorWorkspace.tsx tabs 数组含 etf + policy key',
-  /key:\s*['"]etf['"]/.test(workspaceSrc) && /key:\s*['"]policy['"]/.test(workspaceSrc)
+  '[7.13] FactorWorkspace.tsx tabs 数组含统一 insight 入口',
+  /key:\s*['"]insight['"]/.test(workspaceSrc)
 );
 assert(
-  '[7.14] FactorWorkspace.tsx 在 activeKey 分支渲染两个 tab',
-  /activeKey\s*===\s*['"]etf['"]/.test(workspaceSrc) &&
-    /activeKey\s*===\s*['"]policy['"]/.test(workspaceSrc) &&
+  '[7.14] FactorWorkspace.tsx 在 insight 分支渲染 ETF 与政策区块',
+  /activeKey\s*===\s*['"]insight['"]/.test(workspaceSrc) &&
     /<ETFFlowTab\s*\/>/.test(workspaceSrc) &&
     /<PolicyNewsTab\s*\/>/.test(workspaceSrc)
 );
 // 反向: 现有 macro / block 仍存在 (没误删)
 assert(
-  '[7.15] 既有 macro/block tab 未被误删',
-  /<MacroEnvTab\s*\/>/.test(workspaceSrc) && /<BlockTradesTab\s*\/>/.test(workspaceSrc)
+  '[7.15] insight 仍同时展示行业决策与宏观环境',
+  /<IndustryBoardTab/.test(workspaceSrc) && /<MacroEnvTab\s*\/>/.test(workspaceSrc)
 );
 
 // ---- 报告 --------------------------------------------------------------------

@@ -1,12 +1,12 @@
 /**
- * V3RecommendationController fan-in 单测 (PR-O3 2026-06-30).
+ * V3RecommendationController Signal-First fan-in 单测.
  *
  * 覆盖:
- *   - V3_FANIN_SOURCE_TYPES 含 4 个新 detector source (META-GUARD)
+ *   - V3_FANIN_SOURCE_TYPES 精确收敛到 ETF 核心 + 题材卫星 + 历史兼容源
  *   - CANDIDATE_SOURCE_TYPES 与 funnel 口径一致
  *   - normalizeTimingTagFromMetadata 5 timing 值
  *   - parseTimingFilter 解析 comma-list + 'all' + 单值
- *   - AISignalSourceType enum 含 5 个新 source
+ *   - AISignalSourceType 不再复活已删除的 4 个 intraday detector source
  */
 
 import {
@@ -38,36 +38,25 @@ function equal<T>(label: string, actual: T, expected: T): void {
 }
 
 (async () => {
-  equal(
-    'enum OPENING_RUSH_DETECTOR',
-    AISignalSourceType.OPENING_RUSH_DETECTOR,
-    'opening_rush_detector'
-  );
-  equal(
-    'enum INTRADAY_PRICE_VOLUME_ANOMALY',
-    AISignalSourceType.INTRADAY_PRICE_VOLUME_ANOMALY,
-    'intraday_price_volume_anomaly'
-  );
-  equal('enum LAST_HOUR_MOMENTUM', AISignalSourceType.LAST_HOUR_MOMENTUM, 'last_hour_momentum');
-  equal('enum LIMIT_UP_BOARD', AISignalSourceType.LIMIT_UP_BOARD, 'limit_up_board');
+  equal('enum ETF_FACTOR_ROTATION', AISignalSourceType.ETF_FACTOR_ROTATION, 'etf_factor_rotation');
+  equal('enum THEME_EVENT', AISignalSourceType.THEME_EVENT, 'theme_event');
   equal('enum THEME_FERMENTATION', AISignalSourceType.THEME_FERMENTATION, 'theme_fermentation');
+  equal('enum CASH_MANAGEMENT', AISignalSourceType.CASH_MANAGEMENT, 'cash_management');
+
+  for (const removed of [
+    'OPENING_RUSH_DETECTOR',
+    'INTRADAY_PRICE_VOLUME_ANOMALY',
+    'LAST_HOUR_MOMENTUM',
+    'LIMIT_UP_BOARD',
+  ]) {
+    equal(`removed enum ${removed}`, (AISignalSourceType as any)[removed], undefined);
+  }
 
   check(
-    'fan_in contains opening_rush_detector',
-    V3_FANIN_SOURCE_TYPES.includes(AISignalSourceType.OPENING_RUSH_DETECTOR)
+    'fan_in contains etf_factor_rotation',
+    V3_FANIN_SOURCE_TYPES.includes(AISignalSourceType.ETF_FACTOR_ROTATION)
   );
-  check(
-    'fan_in contains intraday_price_volume_anomaly',
-    V3_FANIN_SOURCE_TYPES.includes(AISignalSourceType.INTRADAY_PRICE_VOLUME_ANOMALY)
-  );
-  check(
-    'fan_in contains last_hour_momentum',
-    V3_FANIN_SOURCE_TYPES.includes(AISignalSourceType.LAST_HOUR_MOMENTUM)
-  );
-  check(
-    'fan_in contains limit_up_board',
-    V3_FANIN_SOURCE_TYPES.includes(AISignalSourceType.LIMIT_UP_BOARD)
-  );
+  check('fan_in contains theme_event', V3_FANIN_SOURCE_TYPES.includes(AISignalSourceType.THEME_EVENT));
   check(
     'fan_in contains theme_fermentation',
     V3_FANIN_SOURCE_TYPES.includes(AISignalSourceType.THEME_FERMENTATION)
@@ -84,23 +73,33 @@ function equal<T>(label: string, actual: T, expected: T): void {
     'fan_in does NOT contain daily_screener',
     !V3_FANIN_SOURCE_TYPES.includes(AISignalSourceType.DAILY_SCREENER)
   );
+  check(
+    'fan_in does NOT contain cash_management',
+    !V3_FANIN_SOURCE_TYPES.includes(AISignalSourceType.CASH_MANAGEMENT)
+  );
+  equal('fan_in exact source count', V3_FANIN_SOURCE_TYPES.length, 5);
 
   check(
-    'candidate contains opening_rush_detector',
-    CANDIDATE_SOURCE_TYPES.includes(AISignalSourceType.OPENING_RUSH_DETECTOR)
+    'candidate contains etf_factor_rotation',
+    CANDIDATE_SOURCE_TYPES.includes(AISignalSourceType.ETF_FACTOR_ROTATION)
   );
   check(
-    'candidate contains intraday_price_volume_anomaly',
-    CANDIDATE_SOURCE_TYPES.includes(AISignalSourceType.INTRADAY_PRICE_VOLUME_ANOMALY)
+    'candidate contains theme_event',
+    CANDIDATE_SOURCE_TYPES.includes(AISignalSourceType.THEME_EVENT)
   );
   check(
-    'candidate contains last_hour_momentum',
-    CANDIDATE_SOURCE_TYPES.includes(AISignalSourceType.LAST_HOUR_MOMENTUM)
+    'candidate contains theme_fermentation',
+    CANDIDATE_SOURCE_TYPES.includes(AISignalSourceType.THEME_FERMENTATION)
   );
   check(
     'candidate contains tradingagents',
     CANDIDATE_SOURCE_TYPES.includes(AISignalSourceType.TRADING_AGENTS)
   );
+  check(
+    'candidate does NOT contain daily_screener',
+    !CANDIDATE_SOURCE_TYPES.includes(AISignalSourceType.DAILY_SCREENER)
+  );
+  equal('candidate exact source count', CANDIDATE_SOURCE_TYPES.length, 6);
 
   equal('TIMING_TAG_VALUES length=5', TIMING_TAG_VALUES.length, 5);
   check('TIMING includes opening_rush', TIMING_TAG_VALUES.includes('opening_rush'));
@@ -172,10 +171,10 @@ function equal<T>(label: string, actual: T, expected: T): void {
 
   // 同股 4 条 → 留 1 条 (最高 conf)
   const dup4 = [
-    fakeRow('sh.600113', 70, 'intraday_price_volume_anomaly', 1),
-    fakeRow('sh.600113', 85, 'intraday_price_volume_anomaly', 2),
-    fakeRow('sh.600113', 60, 'intraday_price_volume_anomaly', 3),
-    fakeRow('sh.600113', 80, 'intraday_price_volume_anomaly', 4),
+    fakeRow('sh.600113', 70, 'theme_event', 1),
+    fakeRow('sh.600113', 85, 'theme_event', 2),
+    fakeRow('sh.600113', 60, 'theme_event', 3),
+    fakeRow('sh.600113', 80, 'theme_event', 4),
   ];
   const dedup1 = dedupBySymbol(dup4);
   equal('B3 dedup 4→1', dedup1.length, 1);
@@ -184,9 +183,9 @@ function equal<T>(label: string, actual: T, expected: T): void {
   // 多股各 N 条 → 每股 1 条 (最高)
   const dup5 = [
     fakeRow('sh.600519', 90, 'analysis_engine', 1),
-    fakeRow('sh.600519', 85, 'intraday_price_volume_anomaly', 2),
+    fakeRow('sh.600519', 85, 'theme_event', 2),
     fakeRow('sz.000001', 80, 'analysis_engine', 3),
-    fakeRow('sz.000001', 75, 'intraday_price_volume_anomaly', 4),
+    fakeRow('sz.000001', 75, 'theme_event', 4),
     fakeRow('sh.600036', 70, 'analysis_engine', 5),
   ];
   const dedup2 = dedupBySymbol(dup5);
@@ -194,9 +193,9 @@ function equal<T>(label: string, actual: T, expected: T): void {
   equal('B3 dedup top 是 600519 (90)', dedup2[0].symbol, 'sh.600519');
   equal('B3 dedup 排序降序 → 600036 末尾', dedup2[2].symbol, 'sh.600036');
 
-  // 同分 tie-break: analysis_engine 优先于 intraday_price_volume_anomaly (字典序 a < i)
+  // 同分 tie-break: analysis_engine 优先于 theme_event (字典序 a < t)
   const tieDup = [
-    fakeRow('sh.600113', 80, 'intraday_price_volume_anomaly', 1),
+    fakeRow('sh.600113', 80, 'theme_event', 1),
     fakeRow('sh.600113', 80, 'analysis_engine', 2),
   ];
   const tieDedup = dedupBySymbol(tieDup);

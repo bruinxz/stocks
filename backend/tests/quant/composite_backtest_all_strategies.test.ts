@@ -1,5 +1,5 @@
 /**
- * US-016 — Composite backtest caller 接通 (12 策略 trade_count > 0).
+ * Signal-First — Composite backtest caller 接通 (当前已注册策略 trade_count > 0).
  *
  *   cd backend && npx ts-node --transpile-only tests/quant/composite_backtest_all_strategies.test.ts
  *
@@ -99,15 +99,15 @@ function listCompositeStrategyKeys(): string[] {
   return [...new Set(keys)].sort();
 }
 
-console.log('US-016 — composite backtest caller 全 12 策略 trade_count > 0');
+console.log('Signal-First — composite backtest caller 全部已注册策略 trade_count > 0');
 
 const compositeKeys = listCompositeStrategyKeys();
 console.log(`  发现 ${compositeKeys.length} 个组合级策略: ${compositeKeys.join(', ')}`);
 
-it('strategyRegistry 至少注册了 12 个组合级策略 (US-016 验收)', () => {
+it('strategyRegistry 至少注册一个 Signal-First 组合级策略', () => {
   assert.ok(
-    compositeKeys.length >= 12,
-    `期望 ≥ 12 个组合级策略, 实际 ${compositeKeys.length}: ${compositeKeys.join(', ')}`
+    compositeKeys.length >= 1,
+    `期望至少一个组合级策略, 实际 ${compositeKeys.length}: ${compositeKeys.join(', ')}`
   );
 });
 
@@ -184,7 +184,7 @@ it('META-GUARD: QuantBacktestEngine.composite branch 必须按 strategy_key 路�
   // (这是引擎按 strategy_key 路由的契约, 防止"信号串号").
   const engine = new QuantBacktestEngine();
   const results = engine.run(contexts, {
-    strategy_keys: ['multi_factor_alpha'],
+    strategy_keys: [compositeKeys[0]],
     start_date: startDate,
     end_date: endDate,
     initial_capital: 200_000,

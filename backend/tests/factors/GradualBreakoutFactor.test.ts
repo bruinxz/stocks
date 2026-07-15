@@ -22,7 +22,7 @@
  *     - 数据卫生：bars 不足 / 全无效 volume / effective_days < min
  *     - 中间停牌（volume=0）参与跳过
  *     - 自定义 recentDays / baselineDays
- *   - Factor metadata + 已注册 + 既有 15 因子未破坏 + 新总数 16
+ *   - Factor metadata + 已注册 + Signal-First 主线 16 因子完整
  *   - compute() 空 universe 安全路径
  *   - 端到端：构造 91 个 bar，验证 score 算法正确性
  */
@@ -640,13 +640,13 @@ assert(
   factorRegistry.get('gradual_breakout') === gradualBreakoutFactor
 );
 
-console.log('\n## 既有 15 个因子未被破坏 + 新总数 16');
+console.log('\n## Signal-First 主线 16 因子完整');
 {
   const expectedFactors = [
     'analyst_consensus',
     'dragon_tiger',
     'earnings_surprise',
-    'east_money_qa',
+    'fund_consensus',
     'gradual_breakout',
     'growth',
     'liquidity',
@@ -657,7 +657,7 @@ console.log('\n## 既有 15 个因子未被破坏 + 新总数 16');
     'northbound',
     'quality',
     'quality_high',
-    'shareholder_concentration',
+    'industry_momentum',
     'value',
   ];
   for (const f of expectedFactors) {

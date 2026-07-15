@@ -16,19 +16,18 @@
  *   [4] formatBadgeText: 0 → '' / 数字 / 100+ 截断
  *   [5] buildBellTooltip: 3 档文案
  *   [6] clampPollInterval: 兜底 + clamp 上下界
- *   [7] buildAlertsBellHref: 落到 today + risk_center
+ *   [7] buildAlertsBellHref: 落到当前有效的 CatDesk 主入口
  *   [8] META-GUARD fs+regex 守:
  *       - alertsBellHelpers.ts 所有 export
  *       - AlertsBell.tsx: import helper + listRiskAlerts + setInterval + navigate
  *       - App.tsx: import AlertsBell + 在 Header 里渲染
- *       - TodayWorkspace.tsx: 接受 ?tab= query 并落到 risk_center
+ *       - App.tsx: 确实挂载 CatDesk route
  */
 
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
   ALERTS_BELL_TARGET_PATH,
-  ALERTS_BELL_TARGET_TAB_KEY,
   buildAlertsBellHref,
   buildBellTooltip,
   classifyAlertsBellSeverity,
@@ -65,12 +64,8 @@ assert('[1.5] DEFAULT_POLL >= 30s (防 DDoS)', DEFAULT_POLL_INTERVAL_MS >= 30_00
 assert('[1.6] DEFAULT_POLL <= 5min (用户感知)', DEFAULT_POLL_INTERVAL_MS <= 300_000);
 assert('[1.7] MAX_BADGE_COUNT == 99 (antd 默认)', MAX_BADGE_COUNT === 99);
 assert(
-  '[1.8] ALERTS_BELL_TARGET_PATH 落 /workspace/today',
-  ALERTS_BELL_TARGET_PATH === '/workspace/today'
-);
-assert(
-  '[1.9] ALERTS_BELL_TARGET_TAB_KEY 是 risk_center (与 TodayWorkspace 一致)',
-  ALERTS_BELL_TARGET_TAB_KEY === 'risk_center'
+  '[1.8] ALERTS_BELL_TARGET_PATH 落当前 /catdesk 主入口',
+  ALERTS_BELL_TARGET_PATH === '/catdesk'
 );
 
 // ============================================================
@@ -190,16 +185,9 @@ assert('[6.9] -1000 → MIN', clampPollInterval(-1000) === MIN_POLL_INTERVAL_MS)
 // ============================================================
 {
   const href = buildAlertsBellHref();
-  assert('[7.1] href 含 today path', href.includes(ALERTS_BELL_TARGET_PATH));
-  assert('[7.2] href 含 ?tab= query', href.includes('?tab='));
-  assert(
-    '[7.3] href 含 risk_center key',
-    href.includes(ALERTS_BELL_TARGET_TAB_KEY)
-  );
-  assert(
-    '[7.4] href 等于 path?tab=key',
-    href === `${ALERTS_BELL_TARGET_PATH}?tab=${ALERTS_BELL_TARGET_TAB_KEY}`
-  );
+  assert('[7.1] href 等于当前 CatDesk path', href === ALERTS_BELL_TARGET_PATH);
+  assert('[7.2] href 不再携带已删除的 risk_center tab', !href.includes('risk_center'));
+  assert('[7.3] href 不依赖 query 重定向', !href.includes('?'));
 }
 
 // ============================================================
@@ -210,31 +198,26 @@ assert('[6.9] -1000 → MIN', clampPollInterval(-1000) === MIN_POLL_INTERVAL_MS)
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const helpers = require('../../../frontend/src/pages/workspace/alertsBellHelpers');
   const userHref: string = helpers.buildAlertsBellHrefForUser();
-  assert('[7b.1] user href 落 portfolio', userHref.includes('/workspace/portfolio'));
-  assert('[7b.2] user href 落 alerts tab', userHref.endsWith('?tab=alerts'));
+  assert('[7b.1] user href 落当前 CatDesk', userHref === '/catdesk');
   assert(
-    '[7b.3] admin → 风控中心 href',
+    '[7b.2] admin → 当前主入口',
     helpers.buildAlertsBellHrefForRole(true) === buildAlertsBellHref()
   );
   assert(
-    '[7b.4] 非 admin → 普通用户 href',
+    '[7b.3] 非 admin → 同一当前主入口',
     helpers.buildAlertsBellHrefForRole(false) === userHref
   );
   assert(
-    '[7b.5] undefined → 默认普通用户 (保守不暴露 admin 入口)',
+    '[7b.4] undefined → 当前主入口',
     helpers.buildAlertsBellHrefForRole(undefined) === userHref
   );
   assert(
-    '[7b.6] null → 默认普通用户',
+    '[7b.5] null → 当前主入口',
     helpers.buildAlertsBellHrefForRole(null) === userHref
   );
   assert(
-    '[7b.7] USER_TARGET_PATH 常量正确',
-    helpers.ALERTS_BELL_USER_TARGET_PATH === '/workspace/portfolio'
-  );
-  assert(
-    '[7b.8] USER_TARGET_TAB_KEY 常量正确',
-    helpers.ALERTS_BELL_USER_TARGET_TAB_KEY === 'alerts'
+    '[7b.6] USER_TARGET_PATH 与当前主入口一致',
+    helpers.ALERTS_BELL_USER_TARGET_PATH === '/catdesk'
   );
 }
 
@@ -257,7 +240,7 @@ function readFile(rel: string): string {
     'export const MIN_POLL_INTERVAL_MS',
     'export const MAX_POLL_INTERVAL_MS',
     'export const ALERTS_BELL_TARGET_PATH',
-    'export const ALERTS_BELL_TARGET_TAB_KEY',
+    'export const ALERTS_BELL_USER_TARGET_PATH',
     'export type AlertsBellSeverity',
     'export function normalizeUnreadCount',
     'export function classifyAlertsBellSeverity',
@@ -265,6 +248,8 @@ function readFile(rel: string): string {
     'export function buildBellTooltip',
     'export function clampPollInterval',
     'export function buildAlertsBellHref',
+    'export function buildAlertsBellHrefForUser',
+    'export function buildAlertsBellHrefForRole',
   ]) {
     assert(`[8.1] helper exports ${name}`, helperSrc.includes(name));
   }
@@ -341,24 +326,16 @@ function readFile(rel: string): string {
   );
 }
 
-// 8.4 — TodayWorkspace.tsx 接受 ?tab= query + 落到 risk_center
+// 8.4 — App.tsx 挂载 helper 输出的 CatDesk route
 {
-  const wsSrc = readFile('pages/workspace/TodayWorkspace.tsx');
+  const appSrc = readFile('App.tsx');
   assert(
-    '[8.4a] TodayWorkspace import useLocation',
-    /useLocation/.test(wsSrc)
+    '[8.4a] App import catDeskRoute',
+    /import\s*\{\s*catDeskRoute\s*\}\s*from\s*['"][^'"]*catdesk\/router['"]/.test(appSrc)
   );
   assert(
-    '[8.4b] TodayWorkspace 用 URLSearchParams 解 ?tab=',
-    wsSrc.includes('URLSearchParams') && wsSrc.includes("params.get('tab')")
-  );
-  assert(
-    '[8.4c] TodayWorkspace setActiveKey 应用 query',
-    /setActiveKey\(tab\)/.test(wsSrc)
-  );
-  assert(
-    '[8.4d] TodayWorkspace tabs 含 risk_center',
-    /key:\s*'risk_center'/.test(wsSrc)
+    '[8.4b] App 对 /catdesk 使用 catDeskRoute',
+    appSrc.includes("location.pathname === '/catdesk'") && appSrc.includes('{catDeskRoute}')
   );
 }
 
