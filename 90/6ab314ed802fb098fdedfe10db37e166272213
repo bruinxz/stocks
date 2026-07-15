@@ -1,0 +1,21 @@
+scripts/tests/requirements-release-linux-x86_64.txt
+  s_0ea7ce1b0cc346::t_ba064c51ad0c2b 1-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "906ab314ed802fb098fdedfe10db37e166272213",
+  "prompts": {},
+  "sessions": {
+    "s_0ea7ce1b0cc346": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f66bd-4aa9-7422-9f9a-dc30b2769918",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
