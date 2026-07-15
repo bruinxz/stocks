@@ -1,0 +1,45 @@
+ai/pipeline/context.py
+  s_186c505eb579e0::t_0ce6c7564e1313 27
+ai/pipeline/replay_adapter.py
+  s_186c505eb579e0::t_2a6353a6222dfb 312,361-365,396
+ai/pipeline/runner.py
+  s_186c505eb579e0::t_3c347cda75431c 53,117
+ai/pipeline/stages/feature_assembly.py
+  s_186c505eb579e0::t_6db5bd5951dfbf 1-19,21-27,30-43,45-154
+ai/replay/runtime.py
+  s_8b0057a0fcac63::t_c88a1e4a39885f 45-49,78-86,89,91-92,703-709,713,728-737,745,842,847-849,852-909,928-935
+ai/rules/catalysts/morning_brief.yaml
+  s_186c505eb579e0::t_74b03c9b376228 62
+ai/tests/test_pipeline_feature_assembly.py
+  s_8b0057a0fcac63::t_e81a0212b9f5f2 1-160
+ai/tests/test_postgres_typed_source_repository.py
+  s_8b0057a0fcac63::t_e4b33365f53bbf 279-284,291-297,300,302,307-312,314-315,317,319-320,687-696
+ai/tests/test_replay_runtime.py
+  s_8b0057a0fcac63::t_14f62ef31f61d4 179-184,191-197,200,202,211-216,218-219,221,223-224
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2ee49ed26fbd5a8d6aaf918bab03778a76fda78d",
+  "prompts": {},
+  "sessions": {
+    "s_186c505eb579e0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6199-27d8-71d1-9690-4bab5194e1de",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_8b0057a0fcac63": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f61a0-2260-71b2-b71f-f14f0fc18271",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
