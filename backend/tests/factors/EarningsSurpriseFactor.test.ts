@@ -441,14 +441,31 @@ assert("既有 'quality_high' 仍注册", factorRegistry.has('quality_high'));
 assert("既有 'value' 仍注册", factorRegistry.has('value'));
 assert("既有 'liquidity' 仍注册", factorRegistry.has('liquidity'));
 
-// Sprint 38: 不硬编码 registry 总数 — 改为断言"至少含 earnings_surprise + 不少于
-// 17 个" (该 test 写于注册 18 个 factor 那个 sprint, 之后陆续加因子总数会涨,
-// 但 earnings_surprise 必须仍在).
+// Signal-First 主线只保留这 16 个可执行因子。已退休因子不得为了满足旧数量
+// 门槛重新注册；同时逐项锁住当前权威集合，避免静默漏注册。
 {
   const names = factorRegistry.listNames();
+  const expected = [
+    'analyst_consensus',
+    'dragon_tiger',
+    'earnings_surprise',
+    'fund_consensus',
+    'gradual_breakout',
+    'growth',
+    'industry_momentum',
+    'liquidity',
+    'low_vol',
+    'momentum',
+    'momentum_reversal',
+    'money_flow',
+    'northbound',
+    'quality',
+    'quality_high',
+    'value',
+  ];
   assert(
-    `registry 含 earnings_surprise + 至少 17 个因子 (实际 ${names.length})`,
-    names.length >= 17 && names.includes('earnings_surprise'),
+    `registry 与 Signal-First 16 因子集合一致 (实际 ${names.length})`,
+    JSON.stringify([...names].sort()) === JSON.stringify(expected),
     names.join(', ')
   );
 }
