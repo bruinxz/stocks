@@ -1,4 +1,4 @@
-"""Transactional writers for bounded JP/KR security, kline and disclosure facts."""
+"""Transactional writers for bounded JP/KR official source facts."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Iterable, Sequence, Tuple
 from datapipeline.contracts import (
     JpKrDailyKlineRecord,
     JpKrDisclosureRecord,
+    JpKrFinancialRecord,
     JpKrSecurityRecord,
 )
 from datapipeline.collectors.jpkr_deep.official_fixture_parser import (
@@ -16,6 +17,7 @@ from datapipeline.collectors.jpkr_deep.official_fixture_parser import (
     canonical_security_fact_hash,
 )
 from datapipeline.storage.multibagger.canonical_json import canonicalize_json
+from datapipeline.storage.jpkr.financial_fact import canonical_financial_fact_hash
 
 SECURITY_INSERT_SQL = """
 INSERT INTO jpkr_security_master (
@@ -73,6 +75,32 @@ RETURNING jpkr_disclosure_event_id
 DISCLOSURE_HASH_SQL = """
 SELECT fact_hash FROM jpkr_disclosure_event
 WHERE source_kind=$1 AND source_document_id=$2 AND source_version=$3
+"""
+
+FINANCIAL_INSERT_SQL = """
+INSERT INTO jpkr_financial_snapshot (
+  market_scope, provider_market_label, ticker,
+  fiscal_period_start, fiscal_period_end, fiscal_period_kind,
+  fiscal_quarter, currency, is_consolidated, revenue, eps,
+  net_income, total_assets, total_equity, total_liabilities,
+  operating_cash_flow, research_and_development, segment_facts,
+  taxonomy_version, parser_version, account_mapping_version,
+  concept_provenance, parse_warnings, source_payload,
+  source_kind, source_document_id, source_version,
+  effective_at_utc, available_at_utc, fact_hash
+) VALUES (
+  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+  $16,$17,$18::jsonb,$19,$20,$21,$22::jsonb,$23::jsonb,$24::jsonb,
+  $25,$26,$27,$28,$29,$30
+)
+ON CONFLICT (market_scope, ticker, source_document_id, source_version)
+DO NOTHING
+RETURNING jpkr_financial_snapshot_id
+"""
+FINANCIAL_HASH_SQL = """
+SELECT fact_hash FROM jpkr_financial_snapshot
+WHERE market_scope=$1 AND ticker=$2
+  AND source_document_id=$3 AND source_version=$4
 """
 
 
@@ -259,6 +287,69 @@ class JpKrOfficialWriter:
                 row.source_version,
                 row.fact_hash,
                 canonicalize_json(row.source_payload),
+            ),
+        )
+
+    async def write_financials(
+        self, records: Sequence[JpKrFinancialRecord]
+    ) -> OfficialWriteResult:
+        for record in records:
+            if not isinstance(
+                record, JpKrFinancialRecord
+            ) or record.fact_hash != canonical_financial_fact_hash(record):
+                raise ValueError("financial fact hash is not canonical")
+        rows, deduplicated = _deduplicate(
+            records,
+            lambda row: (
+                row.market_scope,
+                row.ticker,
+                row.source_document_id,
+                row.source_version,
+            ),
+        )
+        return await self._write(
+            rows,
+            len(records),
+            deduplicated,
+            FINANCIAL_HASH_SQL,
+            FINANCIAL_INSERT_SQL,
+            lambda row: (
+                row.market_scope,
+                row.ticker,
+                row.source_document_id,
+                row.source_version,
+            ),
+            lambda row: (
+                row.market_scope,
+                row.provider_market_label,
+                row.ticker,
+                row.fiscal_period_start,
+                row.fiscal_period_end,
+                row.fiscal_period_kind,
+                row.fiscal_quarter,
+                row.currency,
+                row.is_consolidated,
+                row.revenue,
+                row.eps,
+                row.net_income,
+                row.total_assets,
+                row.total_equity,
+                row.total_liabilities,
+                row.operating_cash_flow,
+                row.research_and_development,
+                canonicalize_json(list(row.segment_facts)),
+                row.taxonomy_version,
+                row.parser_version,
+                row.account_mapping_version,
+                canonicalize_json(row.concept_provenance),
+                canonicalize_json(list(row.parse_warnings)),
+                canonicalize_json(row.source_payload),
+                row.source_kind,
+                row.source_document_id,
+                row.source_version,
+                row.effective_at_utc,
+                row.available_at_utc,
+                row.fact_hash,
             ),
         )
 

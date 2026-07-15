@@ -122,12 +122,19 @@ function getColumns(): TableColumnDef<JpKrMarketRow>[] {
     {
       key: 'score_hint',
       title: '评分',
-      ariaLabel: '综合评分（Sprint 3 开放）',
+      ariaLabel: 'Strategy 综合评分',
       width: 80,
       align: 'center',
-      render: () => (
-        <span style={{ color: '#999' }}>—</span>
-      ),
+      render: (_, row) =>
+        row.recommendation?.score ? (
+          <Tooltip title={`snapshot ${row.recommendation.provenance?.snapshot_id ?? '—'}`}>
+            <Tag color={row.recommendation.risk_gate?.gate === 'GREEN' ? 'green' : 'orange'}>
+              {row.recommendation.score.total.toFixed(1)} · {row.recommendation.rating_band}
+            </Tag>
+          </Tooltip>
+        ) : (
+          <span style={{ color: '#999' }}>未生成</span>
+        ),
     },
     {
       key: 'halt_status',

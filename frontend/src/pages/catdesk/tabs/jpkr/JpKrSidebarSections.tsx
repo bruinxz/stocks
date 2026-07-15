@@ -4,8 +4,23 @@ import type { DetailSection } from 'shared/components/DetailSidebar';
 import type { JpKrMarketRow } from './types';
 import { FxSensitivityCard } from './FxSensitivityCard';
 import { DisclosureTimeline } from './DisclosureTimeline';
+import { buildUSSections } from '../us/detail/buildUSSections';
 
 export function buildJpKrSections(row: JpKrMarketRow): DetailSection[] {
+  const recommendationSections = row.recommendation
+    ? buildUSSections(row.recommendation).filter(section => section.key !== 'data_sources')
+    : [
+        {
+          key: 'recommendation_unavailable',
+          title: 'Strategy 推荐',
+          ariaLabel: `${row.symbol} Strategy 推荐不可用`,
+          content: (
+            <div style={{ color: 'var(--cd-text-secondary)' }}>
+              当前交易日尚未生成该标的的推荐快照；不展示占位评分或入场计划。
+            </div>
+          ),
+        },
+      ];
   const sections: DetailSection[] = [
     {
       key: 'fx_sensitivity',
@@ -33,37 +48,19 @@ export function buildJpKrSections(row: JpKrMarketRow): DetailSection[] {
       collapsible: true,
       defaultCollapsed: row.disclosure_events.length > 5,
     },
-    {
-      key: 'score_breakdown',
-      title: '评分拆解',
-      ariaLabel: `${row.symbol} 6 维评分拆解`,
-      content: (
-        <div style={{ color: '#999' }}>
-          Sprint 3 起消费 Strategy 6 维评分
-        </div>
-      ),
-      collapsible: true,
-      defaultCollapsed: true,
-    },
-    {
-      key: 'entry_plan',
-      title: '入场计划',
-      ariaLabel: `${row.symbol} 入场计划`,
-      content: (
-        <div style={{ color: '#999' }}>
-          Sprint 3 起消费 EntryPlan
-        </div>
-      ),
-      collapsible: true,
-      defaultCollapsed: true,
-    },
+    ...recommendationSections,
     {
       key: 'data_sources',
       title: '数据来源',
       ariaLabel: `${row.symbol} 数据来源`,
       content: (
         <DataSourceBadge
-          sources={row.data_sources}
+          sources={Array.from(
+            new Set([
+              ...row.data_sources,
+              ...(row.recommendation?.data_sources ?? []),
+            ])
+          )}
           ariaLabel={`${row.symbol} 免费数据源标签`}
         />
       ),

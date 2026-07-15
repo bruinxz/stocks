@@ -72,7 +72,14 @@ export default function JpKrMarket({ tradingDay }: JpKrMarketProps = {}) {
   }, []);
 
   const selectedRow = useMemo(
-    () => detailData ?? data?.rows.find(r => r.symbol === selectedSymbol) ?? null,
+    () => {
+      const listed = data?.rows.find(r => r.symbol === selectedSymbol);
+      if (!detailData) return listed ?? null;
+      return {
+        ...detailData,
+        ...(listed?.recommendation ? { recommendation: listed.recommendation } : {}),
+      };
+    },
     [detailData, data?.rows, selectedSymbol]
   );
 
@@ -87,6 +94,22 @@ export default function JpKrMarket({ tradingDay }: JpKrMarketProps = {}) {
   return (
     <div className="jpkr-market">
       {data && <JpKrKpiStrip kpi={data.kpi} />}
+
+      {data?.recommendation_status?.kind !== 'ready' && (
+        <div
+          role="status"
+          style={{
+            border: '1px solid var(--cd-border)',
+            borderRadius: 8,
+            padding: '8px 12px',
+            color: 'var(--cd-text-secondary)',
+          }}
+        >
+          {data?.recommendation_status?.kind === 'unavailable'
+            ? 'Strategy 推荐服务当前不可用；行情、披露与汇率数据仍可查看。'
+            : '当前交易日尚未生成该市场的 Strategy 推荐快照。'}
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
         <FilterChip<JpKrMarketType>
