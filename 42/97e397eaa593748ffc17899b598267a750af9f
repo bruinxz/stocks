@@ -1,0 +1,83 @@
+backend/src/api/controllers/JpKrMarketController.ts
+  s_186c505eb579e0::t_932bc2f76b3269 91,97,105-110,121
+backend/tests/e2e/tab3-jpkr-live-http.test.ts
+  s_66be13389b5e34::t_d8c788a09784bb 1-574
+backend/tests/e2e/tab3-jpkr-live.pg.sh
+  s_0ea7ce1b0cc346::t_e415ed9f8ca723 1-560
+backend/tests/routing/api-jpkr-market.test.ts
+  s_b03ce96353032a::t_fbd77158562780 2,5-25,110-113,141-151,211-212,227,235,242,244,246,251,262
+datapipeline/storage/jpkr/official_writer.py
+  s_66be13389b5e34::t_f0f004c7316573 1,11,20,80-105,293-355
+frontend/src/pages/catdesk/tabs/jpkr/JpKrMarket.tsx
+  s_6ca1020a327476::t_8569a4a55cd3da 75-82,98-113
+frontend/src/pages/catdesk/tabs/jpkr/JpKrSidebarSections.tsx
+  s_6ca1020a327476::t_9b9addd3222572 7,10-23,51,58-63
+frontend/src/pages/catdesk/tabs/jpkr/JpKrTable.tsx
+  s_6ca1020a327476::t_392dddbc8daa87 125,128-137
+frontend/src/pages/catdesk/tabs/jpkr/__tests__/container.test.tsx
+  s_6ca1020a327476::t_b6b791fe40f889 5-6,29-42,46-54,96-144,146-158,177,183,188,197-212,221-247,252-257,267
+frontend/src/pages/catdesk/tabs/jpkr/__tests__/tab3JpKrLiveE2E.test.tsx
+  s_6a818f4a04346d::t_3282349e432a51 1-413
+frontend/src/pages/catdesk/tabs/jpkr/types.ts
+  s_6ca1020a327476::t_9312b93e14818f 36-41,68
+frontend/src/pages/catdesk/tabs/jpkr/useJpKrData.ts
+  s_6ca1020a327476::t_231d312d5e0362 2,5-43,50-61,63-70,78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4297e397eaa593748ffc17899b598267a750af9f",
+  "prompts": {},
+  "sessions": {
+    "s_0ea7ce1b0cc346": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f66bd-4aa9-7422-9f9a-dc30b2769918",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_186c505eb579e0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6199-27d8-71d1-9690-4bab5194e1de",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_66be13389b5e34": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f619f-6bce-7833-8fbd-fd76831f9fb7",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_6a818f4a04346d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f623a-12c4-7e50-8ad7-d48935cd95b0",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_b03ce96353032a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f615f-8dfe-76b3-bd6d-2712157b075f",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
