@@ -1,0 +1,33 @@
+backend/src/quant/factors/library/MoneyFlowFactor.ts
+  s_6ca1020a327476::t_90dd2c544bea80 26
+backend/src/quant/factors/library/_historicalMarketCap.ts
+  s_66be13389b5e34::t_15dd56f1aa4913 1-172
+backend/tests/quant/factors/moneyFlowFactor.historicalMcap.test.ts
+  s_6ca1020a327476::t_440d9558e9a1bb 16-17,56-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "edb9b75cdfae7d43935c309bd1f6258166c643e1",
+  "prompts": {},
+  "sessions": {
+    "s_66be13389b5e34": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f619f-6bce-7833-8fbd-fd76831f9fb7",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
