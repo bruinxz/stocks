@@ -1,0 +1,87 @@
+backend/src/api/controllers/DocsController.ts
+  s_186c505eb579e0::t_17c49a615d7665 85-87,141-143
+backend/src/api/controllers/PaperTradingController.ts
+  s_186c505eb579e0::t_672cb0058c30ad 959-961,990-993
+backend/src/api/controllers/V3RecommendationController.ts
+  s_186c505eb579e0::t_984b440a896c84 153-155,170-172,1122,1198-1200,1210-1223,1277-1279,1300-1301
+backend/src/backtest/engine/Portfolio.ts
+  s_186c505eb579e0::t_9f86e2d1c4ba3f 193,195
+backend/src/backtest/satellite/slot-weight-scheme.ts
+  s_186c505eb579e0::t_7a0b74afbde31e 73,105
+backend/src/data/services/NorthboundSyncService.ts
+  s_186c505eb579e0::t_816090026539d1 187-193,277,309-311,337-342
+backend/src/data/services/TradingCalendarSyncService.ts
+  s_186c505eb579e0::t_b6667504a57844 100,148,209-210,254,264
+backend/src/live-trading/services/LiveTradingService.ts
+  s_186c505eb579e0::t_5c7e17dbf88930 1827-1829
+backend/src/middlewares/apiDeprecation.ts
+  s_186c505eb579e0::t_58c3f1bd28d8bb 47,55
+backend/src/middlewares/apiReportingEndpoints.ts
+  s_186c505eb579e0::t_43d01fdf52d4e4 71,106,109,117,128,142
+backend/src/middlewares/apiVersion.ts
+  s_186c505eb579e0::t_7b1a4773620adc 35
+backend/src/middlewares/requestContext.ts
+  s_186c505eb579e0::t_7260baa123f642 59
+backend/src/models/RecommendationTradeOutcome.ts
+  s_186c505eb579e0::t_0e30d0148f62d8 284-287,355
+backend/src/portfolio/internal/PaperTradingAutomationService.ts
+  s_186c505eb579e0::t_c391529dfe4889 1982-1988,3966-3967,6834-6836
+backend/src/quant/engine/internal/QuantDataService.ts
+  s_66be13389b5e34::t_d69e818c38cf8a 6-8,11,155-180
+backend/src/quant/engine/internal/QuantStrategyFeedbackService.ts
+  s_186c505eb579e0::t_3359c6faff5df9 588-601,604-609,611-627
+backend/src/quant/engine/internal/QuantStrategyParamVersionService.ts
+  s_186c505eb579e0::t_bf061b25ca215c 24-27,33-36,2622
+backend/src/quant/engine/internal/QuantStrategyService.ts
+  s_186c505eb579e0::t_84f0679e669472 11-30
+backend/src/quant/etf/ETFFactorService.ts
+  s_186c505eb579e0::t_b24f279a2ec729 33-37,90-93,100-102,108-111,148,183-189,245-246,300-303,315-318,342-343,382-384,459-463,470-473,496-500,577-580
+backend/src/scripts/risk-drill-2026-06-23.ts
+  s_186c505eb579e0::t_f7ca9a623fc7d9 52,59,117,129,202-205,218-220,287-290,308-311,315,349,428-430,487-491,504-507,561-562,580,587-589,595-597,621-627
+backend/src/scripts/run-factor-backtest.ts
+  s_186c505eb579e0::t_58dbdd3635784e 71-74,132-141,153-154,250-259,294-296,301-303,305-307,309-316,332-336,349-353
+backend/src/services/BullishEventDetectorService.ts
+  s_186c505eb579e0::t_2a43fce0aa8d09 194,198,200,238-285,290-301,305-326,500-502,545-547,578,596-598,731-739,807,872-874,920-922,1121,1158-1164,1170-1172
+backend/src/services/DataFreshnessCheckService.ts
+  s_186c505eb579e0::t_c746f43e6b0824 24-28,219,287-288,396,497-499,574,610-611
+backend/src/services/RecommendationTradeOutcomeService.ts
+  s_186c505eb579e0::t_eda60e96db1c7c 1684
+backend/src/services/ThemeFermentationDetector.ts
+  s_186c505eb579e0::t_edd0bda461f43f 159-161,247-248,327-331,420-423,429-430,440-442,554,564-566,590-592
+backend/src/services/TodaySignalsService.ts
+  s_186c505eb579e0::t_8e577c44cedea6 352-354,357-359
+backend/src/services/calibration/ConfidenceCalibrationService.ts
+  s_186c505eb579e0::t_f3b44bf27c37c1 75,203,221,275
+backend/src/services/exit/AutoExitService.ts
+  s_186c505eb579e0::t_0c4eff6a6127c2 121-124,177,256,423,451
+backend/src/services/research/ResearchExperimentService.ts
+  s_186c505eb579e0::t_f943d9a4e5e1a5 18-24,27-31,37-41,340,592-605,858-865,987-989
+backend/src/services/research/ResearchTrustPolicyService.ts
+  s_186c505eb579e0::t_e8704a88b5360e 4-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "1f606ea041d1711bff5966899350d38b06d0a048",
+  "prompts": {},
+  "sessions": {
+    "s_186c505eb579e0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6199-27d8-71d1-9690-4bab5194e1de",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_66be13389b5e34": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f619f-6bce-7833-8fbd-fd76831f9fb7",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
