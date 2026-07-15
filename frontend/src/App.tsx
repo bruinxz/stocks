@@ -37,8 +37,8 @@ import CriticalAlertModal from './components/layout/CriticalAlertModal';
 import { catDeskRoute } from './pages/catdesk/router';
 import {
   ProtectedRoute,
+  resolveAuthRedirect,
   resolveEffectiveViewer,
-  resolveLoginBypass,
 } from './auth/authBypassPolicy';
 
 // Phase 4 (2026-06-27) 清理: 删除 33 个 legacy pages (~ 4.1 万行)
@@ -47,6 +47,7 @@ import {
 // 用于 LabStrategyDetail 的 /legacy/backtest/:id deep link.
 const BacktestResults = lazy(() => import('./components/backtest/BacktestResults'));
 const StockDetail = lazy(() => import('./pages/StockDetail'));
+const Login = lazy(() => import('./pages/Login'));
 
 // Unified workspace shells (US-001/US-002 + Easy mode).
 const EasyQuantWorkspace = lazy(() => import('./pages/workspace/EasyQuantWorkspace'));
@@ -67,6 +68,18 @@ const DocsWorkspace = lazy(() => import('./pages/workspace/DocsWorkspace'));
 import type { MenuProps } from 'antd';
 
 const { Header, Content, Sider } = Layout;
+
+export async function settleAppLogout(request: () => Promise<void>): Promise<void> {
+  try {
+    await request();
+  } catch (error) {
+    console.error('Logout failed', error);
+  } finally {
+    // The application boundary owns the final privacy guarantee even if the
+    // request implementation is mocked or regresses before its own cleanup.
+    clearUserScopedStorage();
+  }
+}
 
 /**
  * Phase 11 — Route-level page transition.
@@ -239,9 +252,10 @@ const AppContent: React.FC = () => {
     : undefined;
 
   const handleLogout = () => {
-    clearUserScopedStorage();
-    dispatch(logout());
-    navigate('/catdesk');
+    void settleAppLogout(() => authService.logout()).then(() => {
+      dispatch(logout());
+      navigate('/login', { replace: true });
+    });
   };
 
   // Phase 7 (2026-06-28) — 主菜单"统一一套".
@@ -348,17 +362,23 @@ const AppContent: React.FC = () => {
     ],
   };
 
-  const loginBypassDestination = resolveLoginBypass(location.pathname);
-  if (loginBypassDestination) {
-    return <Navigate to={loginBypassDestination} replace />;
+  const authRedirect = resolveAuthRedirect(location.pathname, token);
+  if (authRedirect) {
+    return <Navigate to={authRedirect} replace state={{ from: location }} />;
+  }
+  if (location.pathname === '/login') {
+    return (
+      <Suspense fallback={routeFallback}>
+        <Login />
+      </Suspense>
+    );
   }
   if (location.pathname === '/home') {
     return <Navigate to="/catdesk" replace />;
   }
 
-  // catalyst-900 is a dedicated single-page workspace and does not inherit the
-  // legacy application shell. Keep its nested disclaimer route inside the same
-  // visual system while allowing direct, unauthenticated entry.
+  // catalyst-900 is a dedicated authenticated single-page workspace and does
+  // not inherit the legacy application shell.
   if (location.pathname === '/catdesk' || location.pathname.startsWith('/catdesk/')) {
     return (
       <Suspense fallback={routeFallback}>
@@ -424,7 +444,6 @@ const AppContent: React.FC = () => {
             <strong>{currentPageTitle}</strong>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            {/* Anonymous sessions run as the local default administrator. */}
             <GlobalPortfolioSelector />
             <AlertsBell />
             <CriticalAlertModal />

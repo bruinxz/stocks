@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
+import { Navigate, useLocation } from 'react-router-dom';
 
-export const LOGIN_BYPASS_DESTINATION = '/catdesk';
+export const LOGIN_PATH = '/login';
 
 interface ViewerLike {
   nickname?: string | null;
@@ -13,8 +14,9 @@ interface EffectiveViewer {
   role: string;
 }
 
-export function resolveLoginBypass(pathname: string): string | null {
-  return pathname === '/login' ? LOGIN_BYPASS_DESTINATION : null;
+export function resolveAuthRedirect(pathname: string, token: string | null): string | null {
+  if (pathname === LOGIN_PATH) return token ? '/catdesk' : null;
+  return token ? null : LOGIN_PATH;
 }
 
 export function resolveEffectiveViewer(
@@ -23,15 +25,17 @@ export function resolveEffectiveViewer(
   storedUsername: string | null
 ): EffectiveViewer {
   if (!token) {
-    return { displayUsername: 'Admin', role: 'admin' };
+    return { displayUsername: '访客', role: 'guest' };
   }
 
   return {
-    displayUsername: user?.nickname || user?.username || storedUsername || 'Admin',
-    role: user?.role || 'admin',
+    displayUsername: user?.nickname || user?.username || storedUsername || '用户',
+    role: user?.role || 'user',
   };
 }
 
 export function ProtectedRoute({ children }: { children: ReactElement }) {
-  return children;
+  const location = useLocation();
+  const token = localStorage.getItem('token');
+  return token ? children : <Navigate to={LOGIN_PATH} replace state={{ from: location }} />;
 }

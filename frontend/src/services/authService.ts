@@ -1,4 +1,5 @@
 import api from './api';
+import { clearUserScopedStorage } from '../utils/sessionCleanup';
 
 export interface LoginRequest {
   username: string;
@@ -67,9 +68,7 @@ export const authService = {
     } catch (error) {
       console.error('Logout API failed', error);
     } finally {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      localStorage.removeItem('username');
+      clearUserScopedStorage();
     }
   },
 
