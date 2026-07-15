@@ -7,6 +7,11 @@
  * 触发时机：在 src/index.ts initializeApp() 最前面调用一次。
  */
 
+import {
+  KNOWN_LEAKED_SECRET_FINGERPRINTS,
+  secretFingerprint,
+} from '../security/leakedSecretFingerprints';
+
 /* eslint-disable no-console */
 
 interface RuleResult {
@@ -27,13 +32,6 @@ const PLACEHOLDER_PATTERNS = [
   /placeholder/i,
 ];
 
-const KNOWN_LEAKED_SECRETS = new Set([
-  'your-secret-key-change-in-production',
-  'your-refresh-secret-key-change-in-production',
-  'your_jwt_secret_key_here',
-  'tr_agent_k8s_x9a1!b2c3d4e5f6g7h8i9j0',
-]);
-
 const WEAK_PASSWORDS = new Set(['666', '123456', 'password', 'admin']);
 
 function requireEnv(
@@ -52,7 +50,12 @@ function requireEnv(
   }
 }
 
-function requireSecret(ctx: RuleCtx, key: string, minLength: number): void {
+function requireSecret(
+  ctx: RuleCtx,
+  key: string,
+  minLength: number,
+  leakedFingerprints: ReadonlySet<string> = KNOWN_LEAKED_SECRET_FINGERPRINTS
+): void {
   const raw = String(ctx.env[key] || '').trim();
   if (!raw) {
     ctx.results.push({ key, level: 'error', message: `${key} 未设置` });
@@ -65,15 +68,11 @@ function requireSecret(ctx: RuleCtx, key: string, minLength: number): void {
       message: `${key} 长度 ${raw.length} < 最低 ${minLength}`,
     });
   }
-  if (KNOWN_LEAKED_SECRETS.has(raw)) {
-    // INTERNAL_API_KEY 历史泄露值降级为 warning（启动不阻断）；
-    // 其余敏感 secret（JWT/JWT_REFRESH 等）仍为 error 硬阻断。
-    // 原因：/api/internal/* 反向接口过去 14 天无访问，硬阻断会在维护周期内意外宕机。
-    const level: 'error' | 'warn' = key === 'INTERNAL_API_KEY' ? 'warn' : 'error';
+  if (leakedFingerprints.has(secretFingerprint(raw))) {
     ctx.results.push({
       key,
-      level,
-      message: `${key} 是已泄露的旧默认值${level === 'warn' ? '，请尽快轮换' : '，必须立即轮换'}`,
+      level: 'error',
+      message: `${key} 命中历史泄漏指纹，必须立即轮换`,
     });
   }
   if (PLACEHOLDER_PATTERNS.some(re => re.test(raw))) {
@@ -308,14 +307,17 @@ function checkBrokerGateway(ctx: RuleCtx): void {
  * production 强制校验入口；非 production 直接返回。
  * 返回 true 表示通过，false 表示有 error 级失败（调用方决定是否 exit）。
  */
-export function runProductionPreflight(env: NodeJS.ProcessEnv = process.env): boolean {
+function runProductionPreflightWithFingerprints(
+  env: NodeJS.ProcessEnv,
+  leakedFingerprints: ReadonlySet<string>
+): boolean {
   if (env.NODE_ENV !== 'production') return true;
 
   const ctx: RuleCtx = { results: [], env };
 
   // 鉴权
-  requireSecret(ctx, 'JWT_SECRET', 32);
-  requireSecret(ctx, 'JWT_REFRESH_SECRET', 32);
+  requireSecret(ctx, 'JWT_SECRET', 32, leakedFingerprints);
+  requireSecret(ctx, 'JWT_REFRESH_SECRET', 32, leakedFingerprints);
 
   // 数据库
   requireEnv(ctx, 'DB_HOST');
@@ -337,7 +339,7 @@ export function runProductionPreflight(env: NodeJS.ProcessEnv = process.env): bo
   );
 
   // 内部 API key
-  requireSecret(ctx, 'INTERNAL_API_KEY', 16);
+  requireSecret(ctx, 'INTERNAL_API_KEY', 16, leakedFingerprints);
 
   // DB 半启动开关：production 不能开
   if (String(env.LIVE_TRADING_ALLOW_DB_OFFLINE || '').toLowerCase() === 'true') {
@@ -396,8 +398,15 @@ export function runProductionPreflight(env: NodeJS.ProcessEnv = process.env): bo
   return true;
 }
 
+export function runProductionPreflight(env: NodeJS.ProcessEnv = process.env): boolean {
+  return runProductionPreflightWithFingerprints(env, KNOWN_LEAKED_SECRET_FINGERPRINTS);
+}
+
 export const __TESTING__ = {
   PLACEHOLDER_PATTERNS,
-  KNOWN_LEAKED_SECRETS,
+  KNOWN_LEAKED_SECRET_FINGERPRINTS,
   WEAK_PASSWORDS,
+  secretFingerprint,
+  requireSecret,
+  runProductionPreflightWithFingerprints,
 };

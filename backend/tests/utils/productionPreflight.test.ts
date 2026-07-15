@@ -2,14 +2,10 @@
  * productionPreflight 单测。
  * 不依赖 jest；node 直接跑。
  *
- *   cd backend && npm run build
- *   node dist/utils/productionPreflight.test.js
- *
- * 也可以从源码直接跑：
- *   npx ts-node src/utils/productionPreflight.test.ts
+ *   cd backend && npx ts-node --transpile-only tests/utils/productionPreflight.test.ts
  */
 
-import { runProductionPreflight } from './productionPreflight';
+import { __TESTING__, runProductionPreflight } from '../../src/utils/productionPreflight';
 
 let failed = 0;
 const ORIGINAL_ENV = { ...process.env };
@@ -58,7 +54,7 @@ function strongEnv(): Record<string, string> {
     ALLOWED_ORIGINS: 'https://app.example.com',
     LIVE_ADMIN_BOOTSTRAP_PASSWORD: 'a-strong-admin-bootstrap-pwd',
     INTERNAL_API_KEY: 'long-enough-api-key-not-leaked',
-    LIVE_TRADING_ENABLED: 'false',  // 默认关；只验最小集合
+    LIVE_TRADING_ENABLED: 'false', // 默认关；只验最小集合
   };
 }
 
@@ -94,11 +90,14 @@ function test_missing_jwt_secret_fails() {
 function test_known_leaked_secret_rejected() {
   reset();
   const env = strongEnv();
-  env.JWT_SECRET = 'your-secret-key-change-in-production';
-  process.env = env as any;
-  const { result, errors } = capture(() => runProductionPreflight());
+  const syntheticLeakedSecret = 'synthetic-leaked-secret-value-for-fingerprint-check';
+  env.JWT_SECRET = syntheticLeakedSecret;
+  const fingerprints = new Set([__TESTING__.secretFingerprint(syntheticLeakedSecret)]);
+  const { result, errors } = capture(() =>
+    __TESTING__.runProductionPreflightWithFingerprints(env, fingerprints)
+  );
   assert('已泄露 secret 被拒', result === false);
-  assert('错误信息包含 已泄露', errors.some(e => /已泄露/.test(e)));
+  assert('错误信息包含历史泄漏指纹', errors.some(e => /历史泄漏指纹/.test(e)));
 }
 
 function test_placeholder_pattern_rejected() {
@@ -108,13 +107,16 @@ function test_placeholder_pattern_rejected() {
   process.env = env as any;
   const { result, errors } = capture(() => runProductionPreflight());
   assert('占位符模式被拒', result === false);
-  assert('错误信息含占位符', errors.some(e => /占位符/.test(e)));
+  assert(
+    '错误信息含占位符',
+    errors.some(e => /占位符/.test(e))
+  );
 }
 
 function test_weak_password_rejected() {
   reset();
   const env = strongEnv();
-  env.JWT_SECRET = '666';  // 实际会先撞最低长度 32 → 仍能拒
+  env.JWT_SECRET = '666'; // 实际会先撞最低长度 32 → 仍能拒
   process.env = env as any;
   const { result } = capture(() => runProductionPreflight());
   assert('弱密码（短）被拒', result === false);
@@ -127,19 +129,22 @@ function test_short_secret_rejected() {
   process.env = env as any;
   const { result, errors } = capture(() => runProductionPreflight());
   assert('< 32 字符被拒', result === false);
-  assert('错误信息含长度', errors.some(e => /长度/.test(e)));
+  assert(
+    '错误信息含长度',
+    errors.some(e => /长度/.test(e))
+  );
 }
 
-function test_allowed_origins_required() {
+function test_allowed_origins_missing_warns() {
   reset();
   const env = strongEnv();
   delete env.ALLOWED_ORIGINS;
   process.env = env as any;
-  const { result, errors } = capture(() => runProductionPreflight());
-  assert('ALLOWED_ORIGINS 缺失即失败', result === false);
+  const { result, logs } = capture(() => runProductionPreflight());
+  assert('ALLOWED_ORIGINS 缺失时按现行默认策略放行', result === true);
   assert(
-    '错误信息提示 localhost 回退',
-    errors.some(e => e.includes('ALLOWED_ORIGINS') && /localhost/.test(e))
+    '日志明确提示 ALLOWED_ORIGINS 使用默认策略',
+    logs.some(e => e.includes('ALLOWED_ORIGINS') && /默认策略/.test(e))
   );
 }
 
@@ -150,7 +155,10 @@ function test_allowed_origins_invalid_format() {
   process.env = env as any;
   const { result, errors } = capture(() => runProductionPreflight());
   assert('非法 origin 被拒', result === false);
-  assert('错误信息含 非法 origin', errors.some(e => /非法 origin/.test(e)));
+  assert(
+    '错误信息含 非法 origin',
+    errors.some(e => /非法 origin/.test(e))
+  );
 }
 
 function test_cors_relax_in_production_rejected() {
@@ -160,7 +168,10 @@ function test_cors_relax_in_production_rejected() {
   process.env = env as any;
   const { result, errors } = capture(() => runProductionPreflight());
   assert('production CORS_RELAX 被拒', result === false);
-  assert('错误信息含 CORS', errors.some(e => /CORS_RELAX|CORS 全反射/.test(e)));
+  assert(
+    '错误信息含 CORS',
+    errors.some(e => /CORS_RELAX|CORS 全反射/.test(e))
+  );
 }
 
 function test_db_offline_in_production_rejected() {
@@ -170,7 +181,10 @@ function test_db_offline_in_production_rejected() {
   process.env = env as any;
   const { result, errors } = capture(() => runProductionPreflight());
   assert('DB 半启动被拒', result === false);
-  assert('错误信息含 半启动', errors.some(e => /半启动/.test(e)));
+  assert(
+    '错误信息含 半启动',
+    errors.some(e => /半启动/.test(e))
+  );
 }
 
 function test_execution_requires_trading_enabled() {
@@ -180,11 +194,7 @@ function test_execution_requires_trading_enabled() {
   env.LIVE_ORDER_EXECUTION_ENABLED = 'true';
   process.env = env as any;
   const { result, errors } = capture(() => runProductionPreflight());
-  assert(
-    'execution=true 但 trading=false 被拒',
-    result === false,
-    errors.join('|').slice(0, 200)
-  );
+  assert('execution=true 但 trading=false 被拒', result === false, errors.join('|').slice(0, 200));
   assert(
     '错误信息说要 trading=true',
     errors.some(e => /LIVE_ORDER_EXECUTION_ENABLED/.test(e) && /LIVE_TRADING_ENABLED/.test(e))
@@ -218,7 +228,10 @@ function test_bridge_secrets_must_be_json_with_long_secret() {
   process.env = env as any;
   const { result, errors } = capture(() => runProductionPreflight());
   assert('BRIDGE_SECRETS secret 太短被拒', result === false);
-  assert('错误信息含 长度', errors.some(e => /长度/.test(e)));
+  assert(
+    '错误信息含 长度',
+    errors.some(e => /长度/.test(e))
+  );
 }
 
 function test_legacy_single_var_rejected() {
@@ -289,11 +302,7 @@ function test_full_passing_execution_env() {
   env.LIVE_RISK_DAILY_LOSS_KILL_PCT = '1';
   process.env = env as any;
   const { result, errors } = capture(() => runProductionPreflight());
-  assert(
-    '完整 production execution env 通过',
-    result === true,
-    errors.join('|').slice(0, 300)
-  );
+  assert('完整 production execution env 通过', result === true, errors.join('|').slice(0, 300));
 }
 
 function test_high_risk_threshold_warns_but_passes() {
@@ -305,7 +314,7 @@ function test_high_risk_threshold_warns_but_passes() {
   env.LIVE_BRIDGE_SECRETS = '{"k": "' + 'x'.repeat(40) + '"}';
   env.LIVE_MARKET_DATA_PROVIDER = 'licensed_configured';
   env.LIVE_LICENSED_QUOTE_URL_TEMPLATE = 'https://q.example.com/{symbol}';
-  env.LIVE_RISK_MAX_SINGLE_ORDER_PCT = '5';  // 灰度建议 1，超过只 warn 不 fail
+  env.LIVE_RISK_MAX_SINGLE_ORDER_PCT = '5'; // 灰度建议 1，超过只 warn 不 fail
   env.LIVE_RISK_MAX_DAILY_ORDER_COUNT = '20';
   process.env = env as any;
   const { result, logs } = capture(() => runProductionPreflight());
@@ -326,7 +335,7 @@ const tests = [
   test_placeholder_pattern_rejected,
   test_weak_password_rejected,
   test_short_secret_rejected,
-  test_allowed_origins_required,
+  test_allowed_origins_missing_warns,
   test_allowed_origins_invalid_format,
   test_cors_relax_in_production_rejected,
   test_db_offline_in_production_rejected,
