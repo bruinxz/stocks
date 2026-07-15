@@ -1,0 +1,23 @@
+backend/src/recommendations/SequelizeRecommendationSnapshotReadAdapter.ts
+  s_6ca1020a327476::t_eeaf37bcd0083f 154-156
+backend/tests/recommendations/recommendation-snapshot-read-adapter.test.ts
+  s_6ca1020a327476::t_485c79a22adbc6 160-174
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e63026a4a63b38aa21bcb10e395290a8a29dbed9",
+  "prompts": {},
+  "sessions": {
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
