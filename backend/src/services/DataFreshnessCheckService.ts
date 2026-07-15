@@ -21,7 +21,11 @@
  */
 
 import { logger } from '../utils/logger';
-import { isAShareTradeDay, countTradingDaysBetween, getShanghaiDate } from '../utils/tradingCalendar';
+import {
+  isAShareTradeDay,
+  countTradingDaysBetween,
+  getShanghaiDate,
+} from '../utils/tradingCalendar';
 
 // ---------------------------------------------------------------------------
 // 类型
@@ -212,7 +216,7 @@ export async function checkRealtimeQuote(
 export async function checkDailyBar(
   ds: DataFreshnessCheckDataSource,
   now: Date,
-  lagMaxDays: number = 1
+  lagMaxDays = 1
 ): Promise<FreshnessCheckItem> {
   if (!isTradingDay(now)) {
     return {
@@ -280,8 +284,8 @@ export async function checkDailyBar(
 export async function checkFactorStdZero(
   ds: DataFreshnessCheckDataSource,
   now: Date,
-  threshold: number = 2,
-  lookbackDays: number = 7
+  threshold = 2,
+  lookbackDays = 7
 ): Promise<FreshnessCheckItem> {
   const tradeDate = shanghaiYmd(new Date(now.getTime() - lookbackDays * 24 * 60 * 60 * 1000));
   let zeroFactors: string[] = [];
@@ -389,7 +393,7 @@ export async function checkScheduledTasksFailed(
 export async function checkMarketSentimentFresh(
   ds: DataFreshnessCheckDataSource,
   now: Date,
-  lagMaxDays: number = 2
+  lagMaxDays = 2
 ): Promise<FreshnessCheckItem> {
   let maxDate: string | null = null;
   try {
@@ -490,7 +494,9 @@ export async function runDataFreshnessCheck(
  */
 export function buildFreshnessReportMarkdown(report: FreshnessCheckReport): string {
   const lines: string[] = [];
-  lines.push(`**汇总**: fail=${report.fail_count}, warn=${report.warn_count}, ok=${report.ok_count}`);
+  lines.push(
+    `**汇总**: fail=${report.fail_count}, warn=${report.warn_count}, ok=${report.ok_count}`
+  );
   lines.push(`**日期**: ${report.trade_date} (${report.is_trading_day ? '工作日' : '休市'})`);
   lines.push('');
   for (const it of report.items) {
@@ -565,9 +571,7 @@ class DefaultDataFreshnessCheckDataSource implements DataFreshnessCheckDataSourc
        HAVING STDDEV(z_score) = 0 OR STDDEV(z_score) IS NULL`,
       { replacements: { since: trade_date_lower } }
     );
-    return Array.isArray(rows)
-      ? rows.map((r: any) => String(r.factor_name)).filter(Boolean)
-      : [];
+    return Array.isArray(rows) ? rows.map((r: any) => String(r.factor_name)).filter(Boolean) : [];
   }
 
   async listFailedScheduledTasks() {
@@ -603,4 +607,5 @@ class DefaultDataFreshnessCheckDataSource implements DataFreshnessCheckDataSourc
   }
 }
 
-export const PRODUCTION_DATA_FRESHNESS_CHECK_DATA_SOURCE = new DefaultDataFreshnessCheckDataSource();
+export const PRODUCTION_DATA_FRESHNESS_CHECK_DATA_SOURCE =
+  new DefaultDataFreshnessCheckDataSource();

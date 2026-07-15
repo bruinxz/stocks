@@ -1681,7 +1681,7 @@ export class RecommendationTradeOutcomeService {
       });
     }
     // 批5: BudgetPolicyVersionSnapshotService 已下线 — version intelligence 不再可用.
-    let budgetPolicyVersionIntelligence: any = null;
+    const budgetPolicyVersionIntelligence: any = null;
     let rollbackPlan = asPlainObject(budgetPolicyVersionIntelligence?.rollback_plan);
     rollbackPlan = this.applyBudgetPolicyRollbackAuditBlock(
       rollbackPlan,

@@ -15,16 +15,30 @@ import sequelize from '../../config/database';
 // ⚠️ DEPRECATED STUB — 以下"模型"是 批8 (2026-07-03 物理删表 D7) 已删除的 Sequelize
 // model 的占位替身,仅为让依赖它们的历史代码路径继续编译。方法恒返回空/惰性对象,
 // 即该数据维度已永久下线、优雅降级为"无数据"。请勿基于此新增业务逻辑。
-export type QuantResearchArtifactStatus = 'pending' | 'pass' | 'watch' | 'reject' | 'insufficient' | string;
+export type QuantResearchArtifactStatus =
+  | 'pending'
+  | 'pass'
+  | 'watch'
+  | 'reject'
+  | 'insufficient'
+  | string;
 const QuantResearchArtifact = {
   destroy: async (_?: any): Promise<any> => 0,
-  create: async (_?: any, _opts?: any): Promise<any> => ({ id: null, toJSON: () => ({}), update: async () => {} }),
+  create: async (_?: any, _opts?: any): Promise<any> => ({
+    id: null,
+    toJSON: () => ({}),
+    update: async () => undefined,
+  }),
   findAll: async (_?: any): Promise<any[]> => [],
   findOne: async (_?: any): Promise<any> => null,
   findByPk: async (_?: any, _opts?: any): Promise<any> => null,
 };
 const QuantResearchExperiment = {
-  create: async (_?: any, _opts?: any): Promise<any> => ({ id: null, toJSON: () => ({}), update: async () => {} }),
+  create: async (_?: any, _opts?: any): Promise<any> => ({
+    id: null,
+    toJSON: () => ({}),
+    update: async () => undefined,
+  }),
   findByPk: async (_?: any, _opts?: any): Promise<any> => null,
   findOne: async (_?: any): Promise<any> => null,
   findAll: async (_?: any): Promise<any[]> => [],
@@ -323,9 +337,7 @@ function artifactByType(artifacts: any[], artifact_type: string) {
   return artifacts.find(item => item.artifact_type === artifact_type) || null;
 }
 
-function credibilityToArtifactStatus(
-  credibility: CredibilitySummary
-): QuantResearchArtifactStatus {
+function credibilityToArtifactStatus(credibility: CredibilitySummary): QuantResearchArtifactStatus {
   if (credibility.verdict === 'pass' || credibility.verdict === 'watch') {
     return credibility.verdict;
   }
@@ -577,17 +589,20 @@ export class ResearchExperimentService {
       },
       transaction: options.transaction,
     });
-    return QuantResearchArtifact.create({
-      experiment_id,
-      task_id,
-      artifact_type,
-      source_type: draft.source_type || null,
-      source_id: draft.source_id || null,
-      status: draft.status,
-      title: draft.title || artifact_type,
-      summary: draft.summary,
-      payload_json: draft.payload_json || {},
-    } as any, { transaction: options.transaction });
+    return QuantResearchArtifact.create(
+      {
+        experiment_id,
+        task_id,
+        artifact_type,
+        source_type: draft.source_type || null,
+        source_id: draft.source_id || null,
+        status: draft.status,
+        title: draft.title || artifact_type,
+        summary: draft.summary,
+        payload_json: draft.payload_json || {},
+      } as any,
+      { transaction: options.transaction }
+    );
   }
 
   private async ensureTrustedRerunTask(
@@ -840,9 +855,14 @@ export class ResearchExperimentService {
         { transaction }
       );
       if (originalTask) {
-        await this.refreshCredibilitySummary(lockedExperiment, source_task_id, originalTask.status, {
-          transaction,
-        });
+        await this.refreshCredibilitySummary(
+          lockedExperiment,
+          source_task_id,
+          originalTask.status,
+          {
+            transaction,
+          }
+        );
       }
     });
   }
@@ -964,7 +984,9 @@ export class ResearchExperimentService {
       ]) {
         await this.replaceArtifact(lockedExperiment.id, task.id, draft, { transaction });
       }
-      return this.refreshCredibilitySummary(lockedExperiment, task.id, task.status, { transaction });
+      return this.refreshCredibilitySummary(lockedExperiment, task.id, task.status, {
+        transaction,
+      });
     });
   }
 

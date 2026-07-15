@@ -184,7 +184,13 @@ export class NorthboundSyncService {
   }> {
     const intervalMs = options.intervalMs ?? 200;
     const codes = [
-      ...new Set(symbols.map(s => String(s || '').replace(/[^0-9]/g, '').slice(-6))),
+      ...new Set(
+        symbols.map(s =>
+          String(s || '')
+            .replace(/[^0-9]/g, '')
+            .slice(-6)
+        )
+      ),
     ].filter(c => /^\d{6}$/.test(c));
     let succeeded = 0;
     let failed = 0;
@@ -268,9 +274,7 @@ export class NorthboundSyncService {
    * @param thresholdDays 视为"陈旧"的天数 (默认 7, 即"超过一周没新数据就告警")
    * @returns 当前 latest_date + age_days + 是否触发告警
    */
-  async checkAndAlertStaleness(
-    thresholdDays = 7
-  ): Promise<{
+  async checkAndAlertStaleness(thresholdDays = 7): Promise<{
     latest_date: string | null;
     age_days: number;
     is_stale: boolean;
@@ -302,8 +306,9 @@ export class NorthboundSyncService {
       // user_id=0 表示"系统全局告警" (与既有 system-level alert 同款约定).
       let alertWritten = false;
       try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { riskAlertService, RISK_ALERT_SEVERITY } = require('../../services/RiskAlertService');
+        const { riskAlertService, RISK_ALERT_SEVERITY } = await import(
+          '../../services/RiskAlertService'
+        );
         await riskAlertService.write({
           user_id: 0,
           symbol: 'NORTHBOUND',
@@ -329,7 +334,12 @@ export class NorthboundSyncService {
         `[Northbound staleness] 数据陈旧 ${ageDays} 天 (latest=${latestIso}), threshold=${thresholdDays}, alert_written=${alertWritten}`
       );
 
-      return { latest_date: latestIso, age_days: ageDays, is_stale: true, alert_written: alertWritten };
+      return {
+        latest_date: latestIso,
+        age_days: ageDays,
+        is_stale: true,
+        alert_written: alertWritten,
+      };
     } catch (err: any) {
       logger.warn(`[Northbound staleness] check failed: ${err?.message || err}`);
       return { latest_date: null, age_days: -1, is_stale: false, alert_written: false };

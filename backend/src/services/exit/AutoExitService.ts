@@ -118,7 +118,10 @@ export function decideExit(
       reason: 'time_exit_21d',
       should_exit: true,
       buffered: false,
-      detail: { holding_trading_days: holdingTradingDays, threshold: SATELLITE_TIME_EXIT_TRADING_DAYS },
+      detail: {
+        holding_trading_days: holdingTradingDays,
+        threshold: SATELLITE_TIME_EXIT_TRADING_DAYS,
+      },
     };
   }
   // 4) -7% 主动止损带缓冲
@@ -171,9 +174,7 @@ export class AutoExitService {
 
     for (const pos of positions) {
       const pnlPct = computePnlPct(pos.entry_price, pos.current_price);
-      const holdingDays = pos.entry_date
-        ? countTradingDaysBetween(pos.entry_date, tradeDate)
-        : 0;
+      const holdingDays = pos.entry_date ? countTradingDaysBetween(pos.entry_date, tradeDate) : 0;
       const themeStillActive = pos.industry ? activeThemes.has(pos.industry) : false;
       const decision = decideExit(pnlPct, holdingDays, themeStillActive, pos.intraday_rebound_pct);
 
@@ -252,7 +253,7 @@ export class AutoExitService {
     if (!outcomes.length) return [];
 
     // portfolio -> user 映射
-    const pfIds = Array.from(new Set(outcomes.map((o) => o.portfolio_id).filter(Boolean)));
+    const pfIds = Array.from(new Set(outcomes.map(o => o.portfolio_id).filter(Boolean)));
     const pfWhere: any = { id: { [Op.in]: pfIds } };
     if (userId) pfWhere.user_id = userId;
     const portfolios = await PaperTradingPortfolio.findAll({ where: pfWhere });
@@ -419,10 +420,7 @@ export class AutoExitService {
     return false;
   }
 
-  async mergeRiskOverrides(
-    pf: PaperTradingPortfolio,
-    patch: Record<string, any>
-  ): Promise<void> {
+  async mergeRiskOverrides(pf: PaperTradingPortfolio, patch: Record<string, any>): Promise<void> {
     const merged = { ...(pf.risk_profile_overrides || {}), ...patch };
     pf.risk_profile_overrides = merged;
     await pf.save();
@@ -450,7 +448,7 @@ export class AutoExitService {
 
   /** 'YYYY-MM' -> 当月最后一天 'YYYY-MM-DD' */
   monthEnd(month: string): string {
-    const [y, m] = month.split('-').map((x) => parseInt(x, 10));
+    const [y, m] = month.split('-').map(x => parseInt(x, 10));
     const last = new Date(y, m, 0).getDate();
     return `${month}-${String(last).padStart(2, '0')}`;
   }

@@ -21,13 +21,19 @@ const QuantSignal = {
   count: async (_opts?: any): Promise<number> => 0,
 };
 const QuantStrategyParamValidation = {
-  findOrCreate: async (_opts: any): Promise<[any, boolean]> => [{ update: async () => {}, toJSON: () => ({}) }, false],
+  findOrCreate: async (_opts: any): Promise<[any, boolean]> => [
+    { update: async () => undefined, toJSON: () => ({}) },
+    false,
+  ],
   findAll: async (_opts?: any): Promise<any[]> => [],
 };
 const QuantStrategyParamVersion = {
   findAll: async (_opts?: any): Promise<any[]> => [],
   findOne: async (_opts?: any): Promise<any> => null,
-  findOrCreate: async (_opts: any): Promise<[any, boolean]> => [{ update: async () => {}, toJSON: () => ({}) }, false],
+  findOrCreate: async (_opts: any): Promise<[any, boolean]> => [
+    { update: async () => undefined, toJSON: () => ({}) },
+    false,
+  ],
 };
 const QuantStrategyModel = {
   findAll: async (_opts?: any): Promise<any[]> => [],
@@ -2613,10 +2619,7 @@ export class QuantStrategyParamVersionService {
     return '未进入生产扫描候选状态。';
   }
 
-  private explainWhyNotSelected(
-    candidate: any,
-    selected: any
-  ) {
+  private explainWhyNotSelected(candidate: any, selected: any) {
     if (!selected) return '无已选版本。';
     const candidatePriority = this.versionPriority(candidate);
     const selectedPriority = this.versionPriority(selected);

@@ -70,7 +70,7 @@ export interface SatelliteSlotWeights4 {
  * 权重和 = 0.30 + 0.25 + 0.15 + 0.15 + 0.15 = 1.000
  */
 export const SATELLITE_5_SLOT_MAIN_WEIGHTS: Readonly<SatelliteSlotWeights5> = Object.freeze({
-  us_driver: 0.30,
+  us_driver: 0.3,
   history_response: 0.25,
   quality_proxy: 0.15,
   intraday_momentum: 0.15,
@@ -102,7 +102,7 @@ export const SATELLITE_4_SLOT_FALLBACK_WEIGHTS: Readonly<SatelliteSlotWeights4> 
 /**
  * §Q7.2 主态 us_driver slot 权重占比（定值 0.30 · 用于 4-slot 归一化除数 1 - 0.30 = 0.70）
  */
-export const US_DRIVER_MAIN_WEIGHT = 0.30;
+export const US_DRIVER_MAIN_WEIGHT = 0.3;
 
 /**
  * §Q7.2 归一化除数（1 - us_driver 主态权重）

@@ -156,9 +156,9 @@ export interface ThemeFermentationDataSource {
   /** 拉指定日期 industry_sentiment_indices 全表 (一行 = 一行业) */
   listSentimentByDate(tradeDate: string): Promise<IndustrySentimentSnapshot[]>;
   /** 拉昨日 (上一交易日) theme_fermentation_phases — 用于 phase_changed_from + recession 判定 */
-  listPreviousPhases(beforeTradeDate: string): Promise<
-    Array<{ industry: string; phase: FermentationPhase; lim_up_count: number }>
-  >;
+  listPreviousPhases(
+    beforeTradeDate: string
+  ): Promise<Array<{ industry: string; phase: FermentationPhase; lim_up_count: number }>>;
   /** upsert 一行 theme_fermentation_phases */
   upsertPhase(rec: ThemeFermentationRecord): Promise<void>;
 }
@@ -244,7 +244,8 @@ export function classifyPhase(
   const seal = safeNum(today.seal_rate);
   const fail = safeNum(today.lim_up_failure_rate);
   const comp = safeNum(today.composite_score);
-  const yLimUp = yesterday && yesterday.lim_up_count !== null ? safeNum(yesterday.lim_up_count) : null;
+  const yLimUp =
+    yesterday && yesterday.lim_up_count !== null ? safeNum(yesterday.lim_up_count) : null;
   const yPhase = yesterday && yesterday.phase ? yesterday.phase : null;
 
   const inputs = {
@@ -323,7 +324,11 @@ export function detectMainlineSwitch(
   const events: MainlineSwitchEvent[] = [];
 
   // 1. 找退潮的老主线 = 昨日 outbreak/climax, 今日 recession 或 germinate
-  const oldMainlines: Array<{ industry: string; yPhase: FermentationPhase; tPhase: FermentationPhase }> = [];
+  const oldMainlines: Array<{
+    industry: string;
+    yPhase: FermentationPhase;
+    tPhase: FermentationPhase;
+  }> = [];
   for (const [industry, yPhase] of yesterdayPhases) {
     if (yPhase !== 'outbreak' && yPhase !== 'climax') continue;
     const tPhase = todayClassifications.get(industry);
@@ -412,13 +417,17 @@ class DefaultThemeFermentationDataSource implements ThemeFermentationDataSource 
         raw: true,
       });
       return (rows || []).map((r: any) => ({
-        trade_date: typeof r.trade_date === 'string' ? r.trade_date : new Date(r.trade_date).toISOString().slice(0, 10),
+        trade_date:
+          typeof r.trade_date === 'string'
+            ? r.trade_date
+            : new Date(r.trade_date).toISOString().slice(0, 10),
         industry: String(r.industry || ''),
         lim_up_count: safeNum(r.lim_up_count),
         consecutive_max: safeNum(r.consecutive_max),
         seal_rate: safeNum(r.seal_rate),
         lim_up_failure_rate: safeNum(r.lim_up_failure_rate),
-        industry_momentum_30d: r.industry_momentum_30d == null ? null : safeNum(r.industry_momentum_30d),
+        industry_momentum_30d:
+          r.industry_momentum_30d == null ? null : safeNum(r.industry_momentum_30d),
         composite_score: safeNum(r.composite_score),
         top_codes: Array.isArray(r.top_codes) ? r.top_codes.map((x: any) => String(x)) : [],
       }));
@@ -428,9 +437,9 @@ class DefaultThemeFermentationDataSource implements ThemeFermentationDataSource 
     }
   }
 
-  async listPreviousPhases(beforeTradeDate: string): Promise<
-    Array<{ industry: string; phase: FermentationPhase; lim_up_count: number }>
-  > {
+  async listPreviousPhases(
+    beforeTradeDate: string
+  ): Promise<Array<{ industry: string; phase: FermentationPhase; lim_up_count: number }>> {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const sequelizeModule = require('../config/database');
@@ -542,7 +551,7 @@ export class ThemeFermentationDetector {
     result.industries_scanned = todaySent.length;
 
     // Step 2: 拉昨日 phase (用于 phase_changed_from + recession 判定)
-    let yPhases = new Map<string, { phase: FermentationPhase; lim_up_count: number }>();
+    const yPhases = new Map<string, { phase: FermentationPhase; lim_up_count: number }>();
     try {
       const prevRows = await this.ds.listPreviousPhases(tradeDate);
       for (const r of prevRows || []) {
@@ -552,7 +561,9 @@ export class ThemeFermentationDetector {
       // fail-open: 昨日数据缺失不阻塞主流程
       result.errors.push({ where: 'listPreviousPhases', reason: e?.message || String(e) });
       logger.warn(
-        `[ThemeFermentationDetector] listPreviousPhases failed; degrading to no-history classify: ${e?.message || e}`
+        `[ThemeFermentationDetector] listPreviousPhases failed; degrading to no-history classify: ${
+          e?.message || e
+        }`
       );
     }
 
@@ -576,7 +587,9 @@ export class ThemeFermentationDetector {
     } catch (e: any) {
       result.errors.push({ where: 'detectMainlineSwitch', reason: e?.message || String(e) });
       logger.warn(
-        `[ThemeFermentationDetector] detectMainlineSwitch failed; continuing without switch events: ${e?.message || e}`
+        `[ThemeFermentationDetector] detectMainlineSwitch failed; continuing without switch events: ${
+          e?.message || e
+        }`
       );
     }
     result.mainline_switch_events = switchEvents;

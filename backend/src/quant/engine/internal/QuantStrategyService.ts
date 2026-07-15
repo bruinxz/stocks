@@ -8,7 +8,26 @@ import { strategyRegistry } from '../../engine/StrategyRegistry';
 // model 的占位替身,仅为让依赖它们的历史代码路径继续编译。方法恒返回空/惰性对象,
 // 即该数据维度已永久下线、优雅降级为"无数据"。请勿基于此新增业务逻辑。
 const QuantStrategyModel = {
-  findOrCreate: async (_opts: any) => [{ update: async () => {}, enabled: true, default_params: {}, execution_policy: {}, environment_policy: {}, lifecycle_policy: {}, edge_hypothesis: {}, strategy_key: '', name: '', description: '', category: '', risk_level: 'medium', tags: [], toJSON: () => ({}) }, false] as [any, boolean],
+  findOrCreate: async (_opts: any) =>
+    [
+      {
+        update: async () => undefined,
+        enabled: true,
+        default_params: {},
+        execution_policy: {},
+        environment_policy: {},
+        lifecycle_policy: {},
+        edge_hypothesis: {},
+        strategy_key: '',
+        name: '',
+        description: '',
+        category: '',
+        risk_level: 'medium',
+        tags: [],
+        toJSON: () => ({}),
+      },
+      false,
+    ] as [any, boolean],
   findAll: async (_opts?: any): Promise<any[]> => [],
   findOne: async (_opts?: any): Promise<any> => null,
 };

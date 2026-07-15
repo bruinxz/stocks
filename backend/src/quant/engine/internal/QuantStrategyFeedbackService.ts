@@ -585,19 +585,46 @@ export class QuantStrategyFeedbackService {
   async refreshWeights(_options: Record<string, any> = {}) {
     return {
       snapshot_date: new Date().toISOString().slice(0, 10),
-      scanned_outcomes: 0, strategy_count: 0, snapshots: [], weights: [],
-      summary: { increase: 0, reduce: 0, observe: 0, high_confidence_count: 0,
-        conclusion: '策略权重表已迁移。', top_boosted: [], top_reduced: [], next_actions: [] },
+      scanned_outcomes: 0,
+      strategy_count: 0,
+      snapshots: [],
+      weights: [],
+      summary: {
+        increase: 0,
+        reduce: 0,
+        observe: 0,
+        high_confidence_count: 0,
+        conclusion: '策略权重表已迁移。',
+        top_boosted: [],
+        top_reduced: [],
+        next_actions: [],
+      },
     };
   }
-  async listWeights(): Promise<any[]> { return []; }
-  async getAllocationPolicy(_options: { capital?: number; max_weight_pct?: number; min_weight_pct?: number; } = {}) {
+  async listWeights(): Promise<any[]> {
+    return [];
+  }
+  async getAllocationPolicy(
+    _options: { capital?: number; max_weight_pct?: number; min_weight_pct?: number } = {}
+  ) {
     return {
-      generated_at: new Date().toISOString(), capital: _options.capital ?? 200000,
-      allocation_count: 0, allocations: [],
-      summary: { total_allocation_pct: 0, paused_count: 0, reduced_count: 0, boosted_count: 0, high_confidence_count: 0,
-        conclusion: '策略权重表已迁移。', top_boosted: [], top_reduced: [], next_actions: [] },
-      next_actions: [], rule: 'n/a',
+      generated_at: new Date().toISOString(),
+      capital: _options.capital ?? 200000,
+      allocation_count: 0,
+      allocations: [],
+      summary: {
+        total_allocation_pct: 0,
+        paused_count: 0,
+        reduced_count: 0,
+        boosted_count: 0,
+        high_confidence_count: 0,
+        conclusion: '策略权重表已迁移。',
+        top_boosted: [],
+        top_reduced: [],
+        next_actions: [],
+      },
+      next_actions: [],
+      rule: 'n/a',
     };
   }
 }

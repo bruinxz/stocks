@@ -281,13 +281,10 @@ export class RecommendationTradeOutcome extends Model {
       const md: any = instance.metadata || {};
       if (md.dqs && md.wizard_compliance) return;
 
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { autoApplyDqsToClosedTrade } = require('../services/governor/trader-mind-deep');
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const {
-        checkTradeCompliance,
-        emitWizardAlert,
-      } = require('../services/TradeComplianceChecker');
+      const { autoApplyDqsToClosedTrade } = await import('../services/governor/trader-mind-deep');
+      const { checkTradeCompliance, emitWizardAlert } = await import(
+        '../services/TradeComplianceChecker'
+      );
 
       // === 1. DQS 自动评分 ===
       const dqsResult = autoApplyDqsToClosedTrade({
@@ -355,8 +352,7 @@ export class RecommendationTradeOutcome extends Model {
         // 到 1 仅在 portfolio 也查不到的边界场景 (db corruption / outcome 旧数据).
         let resolvedUserId = 1;
         try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const { PaperTradingPortfolio } = require('./PaperTradingPortfolio');
+          const { PaperTradingPortfolio } = await import('./PaperTradingPortfolio');
           const port = await PaperTradingPortfolio.findByPk(instance.portfolio_id, {
             attributes: ['user_id'],
           });

@@ -68,8 +68,7 @@ export interface ReportingEndpointsConfig {
 }
 
 const PKG_REPORTING_ENDPOINTS_CONFIG: ReportingEndpointsConfig | null =
-  (pkg as { api_reporting_endpoints?: ReportingEndpointsConfig })
-    .api_reporting_endpoints ?? null;
+  (pkg as { api_reporting_endpoints?: ReportingEndpointsConfig }).api_reporting_endpoints ?? null;
 
 // RFC 7230 §3.2.6 token grammar. Reporting-Endpoints dictionary keys per
 // RFC 8941 §3.2 use the same token character set (lcalpha / DIGIT / "_"
@@ -104,13 +103,10 @@ function quoteString(s: string): string {
 }
 
 export function formatReportingEndpoints(endpoints: ReportingEndpoint[]): string {
-  return endpoints.map((e) => `${e.name}=${quoteString(e.url)}`).join(', ');
+  return endpoints.map(e => `${e.name}=${quoteString(e.url)}`).join(', ');
 }
 
-export function formatReportTo(
-  endpoints: ReportingEndpoint[],
-  maxAge: number,
-): string {
+export function formatReportTo(endpoints: ReportingEndpoint[], maxAge: number): string {
   // Report-To legacy is a JSON structured-field-list-of-groups per the
   // older Reporting API Editor's Draft (Chromium ≤95 canonical). One
   // logical group named "default" with all endpoints; downstream UAs
@@ -118,7 +114,7 @@ export function formatReportTo(
   const group = {
     group: 'default',
     max_age: maxAge,
-    endpoints: endpoints.map((e) => ({ url: e.url })),
+    endpoints: endpoints.map(e => ({ url: e.url })),
   };
   return JSON.stringify(group);
 }
@@ -129,11 +125,7 @@ function clampMaxAge(v: unknown): number {
   return Math.floor(v);
 }
 
-function appendHeader(
-  res: Response,
-  name: string,
-  value: string,
-): void {
+function appendHeader(res: Response, name: string, value: string): void {
   const existing = res.getHeader(name);
   if (existing === undefined || existing === null || existing === '') {
     res.setHeader(name, value);
@@ -147,9 +139,7 @@ function appendHeader(
   }
 }
 
-export function buildApiReportingEndpointsMiddleware(
-  config: ReportingEndpointsConfig | null,
-) {
+export function buildApiReportingEndpointsMiddleware(config: ReportingEndpointsConfig | null) {
   const endpoints = (config?.endpoints ?? []).filter(isValidReportingEndpoint);
   const legacyReportTo = config?.legacy_report_to === true;
   const maxAge = clampMaxAge(config?.max_age);
