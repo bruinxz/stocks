@@ -16,7 +16,11 @@ import { paperTradingTuningApplyService } from '../portfolio/internal/PaperTradi
 const quantSignalService = {
   generateSignals: async (_opts?: any): Promise<any> => ({ signals: [], generated: 0 }),
   listSignals: async (_opts?: any): Promise<any[]> => [],
-  getRankingDashboard: async (_opts?: any): Promise<any> => ({ entries: [], quant_rankings: [], summary: {} }),
+  getRankingDashboard: async (_opts?: any): Promise<any> => ({
+    entries: [],
+    quant_rankings: [],
+    summary: {},
+  }),
 };
 
 type CommandAction = 'buy' | 'watch' | 'hold' | 'sell' | 'avoid';

@@ -170,9 +170,7 @@ export function isLiveOrderStatusFailed(status: string): boolean {
 }
 
 /** 把 status breakdown 算 success_rate */
-export function summarizeLiveOrders(
-  by_status: Record<string, number>
-): LiveOrderSummary {
+export function summarizeLiveOrders(by_status: Record<string, number>): LiveOrderSummary {
   const safeStatus: Record<string, number> = {};
   let total = 0;
   let succeeded = 0;
@@ -197,10 +195,7 @@ export function summarizeLiveOrders(
 }
 
 /** 把 rejection rows 排序 + 截断 */
-export function topRejections(
-  rows: RejectionReasonRow[],
-  limit: number
-): RejectionReasonRow[] {
+export function topRejections(rows: RejectionReasonRow[], limit: number): RejectionReasonRow[] {
   const safe = (rows || [])
     .filter(r => r && typeof r.reason === 'string' && r.reason.length > 0)
     .map(r => ({ reason: String(r.reason), count: Number(r.count) || 0 }));
@@ -291,9 +286,9 @@ export function buildHealthReportMarkdown(report: DailyHealthReport): string {
   lines.push('');
   lines.push('**📈 模拟盘**');
   lines.push(
-    `  - BUY ${pt.buy_count} | SELL ${pt.sell_count} | 总实现盈亏 ${
-      pt.total_realized_pnl.toFixed(2)
-    } 元 | 平均 ${pt.avg_realized_pnl != null ? pt.avg_realized_pnl.toFixed(2) + ' 元' : 'N/A'}`
+    `  - BUY ${pt.buy_count} | SELL ${pt.sell_count} | 总实现盈亏 ${pt.total_realized_pnl.toFixed(
+      2
+    )} 元 | 平均 ${pt.avg_realized_pnl != null ? pt.avg_realized_pnl.toFixed(2) + ' 元' : 'N/A'}`
   );
 
   // (4) cron 失败
@@ -417,8 +412,7 @@ export async function generateDailyHealthReport(
     avg_realized_pnl: Number.isFinite(paperTradingRaw.avg_realized_pnl as number)
       ? Math.round(Number(paperTradingRaw.avg_realized_pnl) * 100) / 100
       : null,
-    total_realized_pnl:
-      Math.round(Number(paperTradingRaw.total_realized_pnl || 0) * 100) / 100,
+    total_realized_pnl: Math.round(Number(paperTradingRaw.total_realized_pnl || 0) * 100) / 100,
   };
 
   let cron_failures: CronFailureRow[] = [];
@@ -451,8 +445,7 @@ export async function generateDailyHealthReport(
 
   let factor_std_zero: FactorStdZeroRow[] = [];
   try {
-    factor_std_zero =
-      (await ds.getFactorStdZero(shanghaiYmdMinusDays(now, 7))) || [];
+    factor_std_zero = (await ds.getFactorStdZero(shanghaiYmdMinusDays(now, 7))) || [];
   } catch (err: any) {
     errors.factor_std_zero = err?.message || String(err);
   }
@@ -555,7 +548,8 @@ class DefaultDailyHealthReportDataSource implements DailyHealthReportDataSource 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { PaperTradingTrade } = require('../models/PaperTradingTrade');
     const sequelize = PaperTradingTrade.sequelize;
-    if (!sequelize) return { buy_count: 0, sell_count: 0, avg_realized_pnl: null, total_realized_pnl: 0 };
+    if (!sequelize)
+      return { buy_count: 0, sell_count: 0, avg_realized_pnl: null, total_realized_pnl: 0 };
     const [rows]: any = await sequelize.query(
       `SELECT direction, COUNT(*) AS cnt,
               SUM(COALESCE(realized_pnl,0)) AS sum_pnl,
@@ -628,9 +622,7 @@ class DefaultDailyHealthReportDataSource implements DailyHealthReportDataSource 
       name: String(r.name || ''),
       consecutive_failure_count: Number(r.consecutive_failure_count || 0),
       last_run_at:
-        r.last_run_at instanceof Date
-          ? r.last_run_at.toISOString()
-          : String(r.last_run_at || ''),
+        r.last_run_at instanceof Date ? r.last_run_at.toISOString() : String(r.last_run_at || ''),
       last_error: r.last_error ? String(r.last_error).slice(0, 200) : null,
     }));
   }
@@ -662,7 +654,8 @@ class DefaultDailyHealthReportDataSource implements DailyHealthReportDataSource 
       name: r.name ? String(r.name) : null,
       level: String(r.level || ''),
       rule_id: r.rule_id ? String(r.rule_id) : null,
-      created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || ''),
+      created_at:
+        r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || ''),
       message: r.message ? String(r.message).slice(0, 200) : null,
     }));
   }
@@ -784,7 +777,14 @@ export async function generateAndPushDailyHealthReport(
       paper_trading: { buy_count: 0, sell_count: 0, avg_realized_pnl: null, total_realized_pnl: 0 },
       cron_failures: [],
       risk_alerts_high: [],
-      ai_engine: { total: 0, completed: 0, partial: 0, failed: 0, avg_latency_ms: null, fallback_rate: 0 },
+      ai_engine: {
+        total: 0,
+        completed: 0,
+        partial: 0,
+        failed: 0,
+        avg_latency_ms: null,
+        fallback_rate: 0,
+      },
       factor_std_zero: [],
       errors: { generate: err?.message || String(err) },
     };
@@ -802,8 +802,7 @@ export async function generateAndPushDailyHealthReport(
   let pushError: string | undefined;
   try {
     /* eslint-disable @typescript-eslint/no-var-requires */
-    const pusher =
-      options.pusher || require('./SystemAdminAlertPusher').pushSystemAdminAlert;
+    const pusher = options.pusher || require('./SystemAdminAlertPusher').pushSystemAdminAlert;
     /* eslint-enable @typescript-eslint/no-var-requires */
     pushResult = await pusher({
       dedup_key: `daily-health:${report.trade_date}`,

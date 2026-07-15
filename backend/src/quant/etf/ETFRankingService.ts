@@ -56,9 +56,7 @@ export class ETFRankingService {
     const held = new Set(currentHoldings);
 
     // 只有 data_complete 的参与排名; incomplete 的 total_score = -Infinity 自然垫底
-    const ranked = scores
-      .slice()
-      .sort((a, b) => b.total_score - a.total_score);
+    const ranked = scores.slice().sort((a, b) => b.total_score - a.total_score);
     const eligible = ranked.filter(s => !s.data_incomplete && Number.isFinite(s.total_score));
 
     const top4 = new Set(eligible.slice(0, BUY_BAND).map(s => s.etf_code));

@@ -11,7 +11,10 @@ import { sizingAuditService } from '../../services/SizingAuditService';
 import { reconciliationAlertService } from '../../live-trading/services/ReconciliationAlertService';
 import { logger } from '../../utils/logger';
 
-const blackSwanWatchdog = { getConfig: async (_userId?: any): Promise<any> => ({}), updateConfig: async (_userId?: any, _cfg?: any): Promise<any> => ({}) };
+const blackSwanWatchdog = {
+  getConfig: async (_userId?: any): Promise<any> => ({}),
+  updateConfig: async (_userId?: any, _cfg?: any): Promise<any> => ({}),
+};
 
 /**
  * RiskController — US-047 (position limits) + US-048 (trailing stop)
@@ -463,7 +466,6 @@ export class RiskController {
       res.status(500).json({ success: false, message: error.message });
     }
   }
-
 }
 
 export const riskController = new RiskController();

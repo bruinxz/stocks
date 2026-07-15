@@ -214,7 +214,11 @@ const dispatcherFeishuMarks = new Map<number, DispatcherFeishuMark>();
  * Mark 一条 alert 的 dispatcher feishu 即将发送的 webhook URL. SystemAdminAlertPusher
  * 调 isDispatcherFeishuPendingForAlert 时若 URL 相同 + ts 在 10s 内 → 视为重复, 跳过.
  */
-export function markDispatcherFeishuForAlert(alertId: number, url: string, nowMs: number = Date.now()): void {
+export function markDispatcherFeishuForAlert(
+  alertId: number,
+  url: string,
+  nowMs: number = Date.now()
+): void {
   if (!Number.isFinite(alertId) || alertId <= 0) return;
   if (!url) return;
   dispatcherFeishuMarks.set(alertId, { url, ts: nowMs });
@@ -455,10 +459,10 @@ export function buildRiskAlertFeishuCard(payload: RealtimeAlertCardPayload): {
     level === 'CRITICAL'
       ? 'red'
       : level === 'HIGH'
-        ? 'red'
-        : level === 'MEDIUM'
-          ? 'orange'
-          : 'grey';
+      ? 'red'
+      : level === 'MEDIUM'
+      ? 'orange'
+      : 'grey';
   const elements: any[] = [];
   // Section 1: header line — symbol + name
   elements.push({
@@ -537,10 +541,10 @@ export function buildRiskAlertEmail(payload: RealtimeAlertCardPayload): EmailPay
     level === 'CRITICAL'
       ? '#9c0011'
       : level === 'HIGH'
-        ? '#cf1322'
-        : level === 'MEDIUM'
-          ? '#fa8c16'
-          : '#999999';
+      ? '#cf1322'
+      : level === 'MEDIUM'
+      ? '#fa8c16'
+      : '#999999';
   const html = `
 <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; padding: 16px; color: #333">
   <h2 style="color: ${levelColor}; margin: 0 0 12px">🚨 ${level || ''} 风控告警</h2>
@@ -834,7 +838,9 @@ export class RealtimeAlertDispatcher {
     if (!REALTIME_ALERT_TRIGGER_LEVELS.includes(normalizedLevel)) {
       return {
         ...baseResult,
-        skip_reason: `level=${input.level} 不在 ${REALTIME_ALERT_TRIGGER_LEVELS.join('/')}, 跳过实时推送`,
+        skip_reason: `level=${input.level} 不在 ${REALTIME_ALERT_TRIGGER_LEVELS.join(
+          '/'
+        )}, 跳过实时推送`,
       };
     }
 

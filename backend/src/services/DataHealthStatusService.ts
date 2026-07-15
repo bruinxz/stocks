@@ -12,7 +12,6 @@ import { MarketSentimentIndex } from '../models/MarketSentimentIndex';
 import { DailyBar } from '../models/DailyBar';
 import { logger } from '../utils/logger';
 
-
 /**
  * US-079 数据健康度看板
  *
@@ -293,7 +292,6 @@ function getSourceDefinitions(): SourceDefinition[] {
       }),
     },
 
-
     {
       key: 'market_sentiment',
       display_name: '市场情绪量化指数',
@@ -367,7 +365,6 @@ function getSourceDefinitions(): SourceDefinition[] {
         record_count: await countAll(AnnouncementSummary),
       }),
     },
-
   ];
 }
 

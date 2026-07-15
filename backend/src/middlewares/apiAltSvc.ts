@@ -151,8 +151,8 @@ export function buildApiAltSvcMiddleware(config: AltSvcConfig | null) {
   const emitValue: string | null = isClear
     ? 'clear'
     : services.length > 0
-      ? formatAltSvcServices(services)
-      : null;
+    ? formatAltSvcServices(services)
+    : null;
   return (_req: Request, res: Response, next: NextFunction) => {
     if (emitValue === null) {
       return next();
@@ -175,7 +175,6 @@ export function buildApiAltSvcMiddleware(config: AltSvcConfig | null) {
   };
 }
 
-export const apiAltSvcMiddleware = () =>
-  buildApiAltSvcMiddleware(PKG_ALT_SVC_CONFIG);
+export const apiAltSvcMiddleware = () => buildApiAltSvcMiddleware(PKG_ALT_SVC_CONFIG);
 
 export const CURRENT_ALT_SVC_CONFIG = PKG_ALT_SVC_CONFIG;

@@ -68,14 +68,16 @@ export async function shouldSkipForUserDedup(
   dataSource: CrossPortfolioDedupDataSource,
   threshold: number = CROSS_PORTFOLIO_DEDUP_THRESHOLD.value
 ): Promise<ShouldSkipForUserDedupResult> {
-  const finalThreshold = Number.isFinite(threshold) && threshold > 0
-    ? Math.floor(threshold)
-    : CROSS_PORTFOLIO_DEDUP_THRESHOLD.value;
+  const finalThreshold =
+    Number.isFinite(threshold) && threshold > 0
+      ? Math.floor(threshold)
+      : CROSS_PORTFOLIO_DEDUP_THRESHOLD.value;
 
   try {
     const rows = await dataSource.loadOpenPositionsByUser(user_id);
-    const otherCount = rows.filter(r => r.symbol === symbol && r.portfolio_id !== current_portfolio_id)
-      .length;
+    const otherCount = rows.filter(
+      r => r.symbol === symbol && r.portfolio_id !== current_portfolio_id
+    ).length;
 
     if (otherCount >= finalThreshold) {
       return {
@@ -98,7 +100,9 @@ export async function shouldSkipForUserDedup(
       already_held_in_count: 0,
       threshold: finalThreshold,
       reason: '',
-      error: `crossPortfolioDedup loadOpenPositionsByUser failed (fail-open): ${err?.message || err}`,
+      error: `crossPortfolioDedup loadOpenPositionsByUser failed (fail-open): ${
+        err?.message || err
+      }`,
     };
   }
 }

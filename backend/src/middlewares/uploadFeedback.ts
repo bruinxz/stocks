@@ -86,9 +86,7 @@ export function uploadFeedbackImages(field: string) {
             .json({ message: `单张图片不能超过 ${FEEDBACK_MAX_FILE_BYTES / 1024 / 1024} MB` });
         }
         if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') {
-          return res
-            .status(400)
-            .json({ message: `最多上传 ${FEEDBACK_MAX_FILE_COUNT} 张图片` });
+          return res.status(400).json({ message: `最多上传 ${FEEDBACK_MAX_FILE_COUNT} 张图片` });
         }
         return res.status(400).json({ message: `图片上传失败: ${err.message}` });
       }

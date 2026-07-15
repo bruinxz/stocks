@@ -131,13 +131,23 @@ export class ETFConstituentExpander {
     if (indexCode) {
       const idx = await this.dataSource.loadIndexComponents(indexCode, asOfDate);
       if (idx) {
-        return { etf_code: etfCode, weights: idx.weights, source: 'index_components', as_of: idx.as_of };
+        return {
+          etf_code: etfCode,
+          weights: idx.weights,
+          source: 'index_components',
+          as_of: idx.as_of,
+        };
       }
     }
     // Fallback: fund_top_holdings 前十大重仓
     const top = await this.dataSource.loadTopHoldings(etfCode, asOfDate);
     if (top) {
-      return { etf_code: etfCode, weights: top.weights, source: 'fund_top_holdings', as_of: top.as_of };
+      return {
+        etf_code: etfCode,
+        weights: top.weights,
+        source: 'fund_top_holdings',
+        as_of: top.as_of,
+      };
     }
     // 两条都空 → data_incomplete
     return { etf_code: etfCode, weights: new Map(), source: 'none' };

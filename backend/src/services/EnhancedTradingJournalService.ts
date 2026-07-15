@@ -501,15 +501,14 @@ export function buildAIPrompt(input: JournalGenerationInput): string {
   }
   lines.push('');
 
-  lines.push(
-    '请基于上述数据写一篇约 400-700 字、5 段 ## 子标题的复盘日记，重点：'
-  );
+  lines.push('请基于上述数据写一篇约 400-700 字、5 段 ## 子标题的复盘日记，重点：');
   lines.push('1. 今日战报：盈亏概况与市场环境关联；');
-  lines.push('2. 操作复盘：每笔买卖逻辑是否成立，是否存在追高/止损迟滞等失误，用 OK 或 WARN 明确标注；');
+  lines.push(
+    '2. 操作复盘：每笔买卖逻辑是否成立，是否存在追高/止损迟滞等失误，用 OK 或 WARN 明确标注；'
+  );
   lines.push('3. 明日策略：给出 2-5 只候选标的（从明日候选名单中选，无则说无），附简要理由；');
   lines.push('4. 市场观察：简洁背景；');
-  lines.push('5. 风险提醒：指向今日仓位的具体风险点。只输出 markdown，不要代码块前缀。'
-  );
+  lines.push('5. 风险提醒：指向今日仓位的具体风险点。只输出 markdown，不要代码块前缀。');
   return lines.join('\n');
 }
 
@@ -592,10 +591,14 @@ export function buildHeuristicMarkdown(input: JournalGenerationInput): JournalGe
       operationLines.push(`⚠️ 今日出现 ${lossSells.length} 笔亏损平仓：`);
       for (const t of lossSells) {
         const lossAmt = safeMoney(Math.abs(t.realized_pnl as number));
-        operationLines.push(`- ${t.symbol} ${t.name} 亏损 ${lossAmt} 元 — 需复盘是否存在追高买入或止损迟滞。`);
+        operationLines.push(
+          `- ${t.symbol} ${t.name} 亏损 ${lossAmt} 元 — 需复盘是否存在追高买入或止损迟滞。`
+        );
       }
       if (lossSells.length >= 2) {
-        operationLines.push('建议：多笔亏损可能反映仓位管理或行情判断存在系统性偏差，注意控制下次单笔仓位。');
+        operationLines.push(
+          '建议：多笔亏损可能反映仓位管理或行情判断存在系统性偏差，注意控制下次单笔仓位。'
+        );
       }
     } else if (input.trades_buy.length > 0 && input.trades_sell.length === 0) {
       // 只有买入无卖出，当日 PnL 来自浮亏/浮盈

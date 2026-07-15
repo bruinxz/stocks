@@ -87,7 +87,9 @@ export class NorthboundDataClient {
       return Array.isArray(rows) ? rows : [];
     } catch (error) {
       logger.warn(
-        `Northbound individual window ${symbol} [${startDate},${endDate}] failed: ${(error as Error).message}`
+        `Northbound individual window ${symbol} [${startDate},${endDate}] failed: ${
+          (error as Error).message
+        }`
       );
       return [];
     }

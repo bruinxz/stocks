@@ -250,7 +250,10 @@ export const PRODUCTION_EVENT_INTELLIGENCE_DATA_SOURCE: EventIntelligenceDataSou
       lookbackStart.setDate(lookbackStart.getDate() - 30);
       const row = await EarningsForecast.findOne({
         // Bug AY-2 fix: 表列名是 stock_code (6 位无后缀), 不是 symbol.
-        where: { stock_code: stripSymbolSuffix(symbol), announce_date: { [Op.gte]: lookbackStart } },
+        where: {
+          stock_code: stripSymbolSuffix(symbol),
+          announce_date: { [Op.gte]: lookbackStart },
+        },
         order: [['announce_date', 'DESC']],
         attributes: ['profit_change_high', 'profit_change_low', 'report_period'],
         raw: true,
@@ -280,7 +283,10 @@ export const PRODUCTION_EVENT_INTELLIGENCE_DATA_SOURCE: EventIntelligenceDataSou
       start.setDate(start.getDate() - 7); // 7 自然日覆盖 5 交易日
       const rows = await NorthboundHolding.findAll({
         // Bug AY-2 fix: 表列名是 stock_code (6 位无后缀), 不是 symbol.
-        where: { stock_code: stripSymbolSuffix(symbol), trade_date: { [Op.between]: [start, end] } },
+        where: {
+          stock_code: stripSymbolSuffix(symbol),
+          trade_date: { [Op.between]: [start, end] },
+        },
         order: [['trade_date', 'ASC']],
         attributes: ['trade_date', 'hold_ratio'],
         raw: true,
@@ -353,7 +359,10 @@ export const PRODUCTION_EVENT_INTELLIGENCE_DATA_SOURCE: EventIntelligenceDataSou
         // Bug AY-2 fix: 表列名是 stock_code (6 位无后缀), 不是 symbol.
         // 该表无独立 'id' 列 (PK = announce_date + stock_code + report_period 复合主键),
         // 仅查 announce_date 字段做 EXISTS 判定 (足够触发 findOne 真行 → !! 转 boolean).
-        where: { stock_code: stripSymbolSuffix(symbol), announce_date: { [Op.between]: [start, end] } },
+        where: {
+          stock_code: stripSymbolSuffix(symbol),
+          announce_date: { [Op.between]: [start, end] },
+        },
         attributes: ['announce_date'],
         raw: true,
       });
@@ -394,7 +403,9 @@ export const PRODUCTION_EVENT_INTELLIGENCE_DATA_SOURCE: EventIntelligenceDataSou
       } catch (barError: any) {
         // fail-open: bar lookup 失败时仍按 ST 字符串结果返回
         logger.warn(
-          `EventIntelligence isHardBlocked bar fallback (${symbol}): ${barError?.message || barError}`
+          `EventIntelligence isHardBlocked bar fallback (${symbol}): ${
+            barError?.message || barError
+          }`
         );
       }
       return { st, suspended };

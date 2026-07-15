@@ -23,7 +23,6 @@ import {
 
 const defaultCombinedDataSourceRng = new SeededRandom();
 
-
 // 使用AKShare的接口定义（兼容其他数据源）
 export type StockBasicInfo = AKShareStockBasicInfo;
 export type DailyBar = AKShareDailyBar;
@@ -459,9 +458,7 @@ export class CombinedDataSource {
     // Batch AR (2026-06-21): 已知退市股直接短路, 避免 6 票 × 4 source × 多 cron
     // 每天刷数千行 error.log. 调用者拿到空数组 (与无数据日同语义).
     if (isKnownDelisted(normalizedCode)) {
-      logger.warn(
-        `Skipping history k fetch for ${normalizedCode}: in known-delisted blacklist`
-      );
+      logger.warn(`Skipping history k fetch for ${normalizedCode}: in known-delisted blacklist`);
       return [];
     }
     const eastMoneyCode = toEastMoneyFormat(normalizedCode);

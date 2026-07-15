@@ -261,14 +261,12 @@ export function buildTechnicalSummary(ctx: TechnicalSummaryContext): string {
   }
 
   // 成交额
-  if (
-    typeof ctx.amount_yi === 'number' &&
-    Number.isFinite(ctx.amount_yi) &&
-    ctx.amount_yi >= 0
-  ) {
+  if (typeof ctx.amount_yi === 'number' && Number.isFinite(ctx.amount_yi) && ctx.amount_yi >= 0) {
     const adesc = amountDesc(ctx.amount_yi);
     const aVal = round1(ctx.amount_yi);
-    parts.push(`成交额 ${aVal !== null ? aVal.toFixed(1) : '—'} 亿${adesc ? ' (' + adesc + ')' : ''}`);
+    parts.push(
+      `成交额 ${aVal !== null ? aVal.toFixed(1) : '—'} 亿${adesc ? ' (' + adesc + ')' : ''}`
+    );
   }
 
   // 市值

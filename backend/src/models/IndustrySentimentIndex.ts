@@ -30,10 +30,7 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
   tableName: 'industry_sentiment_indices',
   timestamps: true,
   underscored: true,
-  indexes: [
-    { fields: ['trade_date', 'composite_score'] },
-    { fields: ['industry', 'trade_date'] },
-  ],
+  indexes: [{ fields: ['trade_date', 'composite_score'] }, { fields: ['industry', 'trade_date'] }],
 })
 export class IndustrySentimentIndex extends Model {
   @Column({

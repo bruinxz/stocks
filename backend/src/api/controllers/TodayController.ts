@@ -114,7 +114,6 @@ class TodayController {
       });
     }
   }
-
 }
 
 export const todayController = new TodayController();

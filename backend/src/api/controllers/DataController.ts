@@ -416,11 +416,7 @@ export class DataController {
         { n7d: 0, n24h: 0, latest: null }
       );
       const blackSwanStatus: StatusKey =
-        blackSwanEventRow.n7d === 0
-          ? 'gray'
-          : blackSwanEventRow.n24h > 0
-          ? 'yellow'
-          : 'green';
+        blackSwanEventRow.n7d === 0 ? 'gray' : blackSwanEventRow.n24h > 0 ? 'yellow' : 'green';
 
       // ---- L8: 新增 daily_attribution / ai_diary / improvement_suggestions / black_swan_postmortem ----
       const attrRow = await safeQ<any>(

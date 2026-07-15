@@ -125,7 +125,9 @@ function pick(xml: string, tag: string): string {
   let v = m[1].trim();
   const cdata = /^<!\[CDATA\[([\s\S]*?)\]\]>$/.exec(v);
   if (cdata) v = cdata[1].trim();
-  return decodeEntities(v).replace(/<[^>]+>/g, '').trim();
+  return decodeEntities(v)
+    .replace(/<[^>]+>/g, '')
+    .trim();
 }
 
 /** 极简 RSS2.0 / Atom 解析: 抓 <item> 或 <entry> 块。 */
@@ -138,7 +140,8 @@ export function parseRss(xml: string): RssItem[] {
     const title = pick(block, 'title');
     if (!title) continue;
     const link = pick(block, 'link') || undefined;
-    const pubDate = pick(block, 'pubDate') || pick(block, 'published') || pick(block, 'updated') || undefined;
+    const pubDate =
+      pick(block, 'pubDate') || pick(block, 'published') || pick(block, 'updated') || undefined;
     const description = pick(block, 'description') || pick(block, 'summary') || undefined;
     items.push({ title, link, pubDate, description });
   }
@@ -165,7 +168,8 @@ export function parseSinaRoll(body: string): RssItem[] {
     const link = typeof d?.url === 'string' ? d.url : undefined;
     // ctime 为秒级 unix 时间戳字符串
     const ctime = Number(d?.ctime);
-    const pubDate = Number.isFinite(ctime) && ctime > 0 ? new Date(ctime * 1000).toISOString() : undefined;
+    const pubDate =
+      Number.isFinite(ctime) && ctime > 0 ? new Date(ctime * 1000).toISOString() : undefined;
     const description =
       (typeof d?.intro === 'string' && d.intro.trim()) ||
       (typeof d?.summary === 'string' && d.summary.trim()) ||
@@ -218,7 +222,8 @@ export class RssNewsIngestService {
       responseType: 'text',
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; QuantXNewsBot/1.0; +compliance-rss-only)',
-        Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml; q=0.9, */*; q=0.8',
+        Accept:
+          'application/rss+xml, application/atom+xml, application/xml, text/xml; q=0.9, */*; q=0.8',
       },
       // 4xx/5xx 抛错走 catch
     });
@@ -262,7 +267,14 @@ export class RssNewsIngestService {
 
     const results: IngestFeedResult[] = [];
     for (const feed of feeds) {
-      const r: IngestFeedResult = { source: feed.source, name: feed.name, fetched: 0, created: 0, updated: 0, matched_theme: 0 };
+      const r: IngestFeedResult = {
+        source: feed.source,
+        name: feed.name,
+        fetched: 0,
+        created: 0,
+        updated: 0,
+        matched_theme: 0,
+      };
       try {
         const items = await this.fetchFeed(feed, timeoutMs);
         r.fetched = items.length;
@@ -274,7 +286,9 @@ export class RssNewsIngestService {
             if (kind === 'created') r.created += 1;
             else r.updated += 1;
           } catch (e: any) {
-            logger.warn(`[RSS] 落库失败 (${feed.name}) title="${it.title.slice(0, 40)}": ${e?.message || e}`);
+            logger.warn(
+              `[RSS] 落库失败 (${feed.name}) title="${it.title.slice(0, 40)}": ${e?.message || e}`
+            );
           }
         }
       } catch (e: any) {

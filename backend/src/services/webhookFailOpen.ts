@@ -459,7 +459,9 @@ export async function retryPendingFallbacks(
           body_markdown:
             `**触发原因**: WEBHOOK_FALLBACK_RETRY cron 本次跑出 ${summary.dead_count} 条 dead row\n` +
             `**含义**: 这些消息重试到 max_attempts 仍失败, 已**永久丢弃**\n` +
-            `**dead row IDs**: ${deadIds}${summary.dead_count > 10 ? ` ...+${summary.dead_count - 10}` : ''}\n` +
+            `**dead row IDs**: ${deadIds}${
+              summary.dead_count > 10 ? ` ...+${summary.dead_count - 10}` : ''
+            }\n` +
             `**dedup**: 1h 内本元告警只推 1 次 (SystemAdminAlertPusher 默认窗口)\n` +
             `**排查方向**: webhook URL 配置 / 飞书 rate limit / payload schema`,
           triggered_at: now.toISOString(),

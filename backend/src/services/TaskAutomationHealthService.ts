@@ -900,9 +900,7 @@ export class TaskAutomationHealthService {
     tasks: any[] = [],
     snapshots: any[] = []
   ) {
-    const sourceTask =
-      tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE') ||
-      null;
+    const sourceTask = tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE') || null;
     // 批5: FieldGateAdjustmentAttributionService 已下线 — 返回中性 null (归因能力停用).
     void sourceTask;
     return null;
@@ -1016,16 +1014,12 @@ export class TaskAutomationHealthService {
   }
 
   private resolveRiskThresholdStabilityConfig(tasks: any[]) {
-    const sourceTask =
-      tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE') ||
-      null;
+    const sourceTask = tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE') || null;
     return riskThresholdStabilityService.buildConfigFromParameters(sourceTask?.parameters);
   }
 
   private resolveRiskThresholdFieldGateConfig(tasks: any[]) {
-    const sourceTask =
-      tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE') ||
-      null;
+    const sourceTask = tasks.find(task => task.type === 'QUANT_DAILY_PIPELINE') || null;
     const params =
       sourceTask?.parameters && typeof sourceTask.parameters === 'object'
         ? sourceTask.parameters

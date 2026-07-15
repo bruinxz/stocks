@@ -226,7 +226,9 @@ export function buildHighlightTags(
         if (safeNumber(d.score, -1e9) <= SCORE_TAG_THRESHOLDS.technical.threshold) return false;
         const evs = d.evidence ?? [];
         return evs.some(ev =>
-          TECHNICAL_BREAKOUT_KEYWORDS.some(kw => typeof ev?.label === 'string' && ev.label.includes(kw))
+          TECHNICAL_BREAKOUT_KEYWORDS.some(
+            kw => typeof ev?.label === 'string' && ev.label.includes(kw)
+          )
         );
       },
     },
@@ -236,8 +238,7 @@ export function buildHighlightTags(
     },
     {
       key: 'industry_regime',
-      checker: d =>
-        safeNumber(d.score, -1e9) > SCORE_TAG_THRESHOLDS.industry_regime.threshold,
+      checker: d => safeNumber(d.score, -1e9) > SCORE_TAG_THRESHOLDS.industry_regime.threshold,
     },
   ];
 

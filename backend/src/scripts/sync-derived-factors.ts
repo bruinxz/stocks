@@ -79,9 +79,7 @@ program
         skip_if_coverage_rate_gte:
           opts.skipIfCoverageGte !== undefined ? Number(opts.skipIfCoverageGte) : undefined,
         skip_if_real_provider_rate_gte:
-          opts.skipIfRealProviderGte !== undefined
-            ? Number(opts.skipIfRealProviderGte)
-            : undefined,
+          opts.skipIfRealProviderGte !== undefined ? Number(opts.skipIfRealProviderGte) : undefined,
       });
 
       if ((result as any).skipped) {

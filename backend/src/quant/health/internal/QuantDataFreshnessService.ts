@@ -10,7 +10,10 @@ import { stockFactorService } from '../../../data/services/StockFactorService';
 // 请勿在此基础上新增业务逻辑;新功能应改接真实数据源或整段移除调用方。
 const QuantSignal = { findOne: async (_?: any) => null, count: async (_?: any) => 0 };
 const QuantFusionAudit = { findOne: async (_?: any) => null, count: async (_?: any) => 0 };
-const QuantStrategyParamValidation = { findOne: async (_?: any) => null, count: async (_?: any) => 0 };
+const QuantStrategyParamValidation = {
+  findOne: async (_?: any) => null,
+  count: async (_?: any) => 0,
+};
 
 function toNumber(value: any, fallback = 0): number {
   const parsed = Number(value);

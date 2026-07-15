@@ -175,7 +175,9 @@ export class ThemeEventFanoutService {
       }
       return launchDate;
     } catch (e: any) {
-      logger.warn(`[ThemeEventFanout] resolveLaunchDate failed industry=${industry}: ${e?.message || e}`);
+      logger.warn(
+        `[ThemeEventFanout] resolveLaunchDate failed industry=${industry}: ${e?.message || e}`
+      );
       return tradeDate;
     }
   }
@@ -211,7 +213,9 @@ export class ThemeEventFanoutService {
         raw: true,
       });
     } catch (e: any) {
-      logger.warn(`[ThemeEventFanout] load phases failed trade_date=${tradeDate}: ${e?.message || e}`);
+      logger.warn(
+        `[ThemeEventFanout] load phases failed trade_date=${tradeDate}: ${e?.message || e}`
+      );
       return result;
     }
     result.phases_scanned = phaseRows.length;
@@ -240,8 +244,7 @@ export class ThemeEventFanoutService {
       result.themes_actionable += 1;
       const themeId = buildThemeId(industry, await this.resolveLaunchDate(industry, tradeDate));
       const isMainline = row.is_mainline === true;
-      const compositeHeat =
-        row.composite_heat == null ? null : Number(row.composite_heat);
+      const compositeHeat = row.composite_heat == null ? null : Number(row.composite_heat);
       for (const symbol of topCodes.slice(0, maxCodes)) {
         candidates.push({
           industry,
@@ -321,7 +324,8 @@ export class ThemeEventFanoutService {
       take_profit_pct: isBuy ? SATELLITE_TAKE_PROFIT_PCT : undefined,
       // §2.2 进场方式: 题材股先观察 15 分钟再买 (个股开盘易被爆炒)
       entry_price_strategy: isBuy ? 'observe_15min' : undefined,
-      rationale: `题材[${c.industry}] ${c.phase} 阶段${isBuy ? '启动/爆发 → 买入' : '高潮 → 减仓'}` +
+      rationale:
+        `题材[${c.industry}] ${c.phase} 阶段${isBuy ? '启动/爆发 → 买入' : '高潮 → 减仓'}` +
         (c.is_mainline ? ' (主线)' : ''),
       detail: JSON.stringify({
         industry: c.industry,

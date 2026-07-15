@@ -205,13 +205,7 @@ export function buildSystemAdminAlertCard(input: SystemAdminAlertInput): {
 } {
   const lvl = String(input.level || '').toUpperCase();
   const headerTemplate =
-    lvl === 'CRITICAL'
-      ? 'red'
-      : lvl === 'HIGH'
-        ? 'red'
-        : lvl === 'WARN'
-          ? 'orange'
-          : 'blue';
+    lvl === 'CRITICAL' ? 'red' : lvl === 'HIGH' ? 'red' : lvl === 'WARN' ? 'orange' : 'blue';
   const triggeredAt = input.triggered_at || new Date().toISOString();
   const trace = input.trace_id ? `\ntrace_id: ${input.trace_id}` : '';
   const elements: any[] = [
@@ -326,8 +320,7 @@ export async function pushSystemAdminAlert(
     result.feishu = {
       attempted: false,
       success: false,
-      message:
-        'dispatcher 已对 alert_id 推送同 URL, skip duplicate card (Phase 10 fan-out 去重)',
+      message: 'dispatcher 已对 alert_id 推送同 URL, skip duplicate card (Phase 10 fan-out 去重)',
     };
   } else {
     result.feishu.attempted = true;
@@ -395,7 +388,9 @@ export async function pushSystemAdminAlert(
     )}${input.trace_id ? ` &middot; trace_id: ${escapeHtml(input.trace_id)}` : ''}</p>
 ${
   input.deeplink
-    ? `<p style="margin:16px 0 0"><a href="${escapeHtml(input.deeplink)}" style="background:#1677ff;color:#fff;padding:8px 16px;text-decoration:none;border-radius:4px;display:inline-block">查看详情 →</a></p>`
+    ? `<p style="margin:16px 0 0"><a href="${escapeHtml(
+        input.deeplink
+      )}" style="background:#1677ff;color:#fff;padding:8px 16px;text-decoration:none;border-radius:4px;display:inline-block">查看详情 →</a></p>`
     : ''
 }
 </div>`;
@@ -406,13 +401,17 @@ ${
         else {
           result.email.failed_count += 1;
           logger.warn(
-            `[SystemAdminAlert] admin email to ${addr} failed (dedup_key=${input.dedup_key}): ${r?.message || 'unknown'}`
+            `[SystemAdminAlert] admin email to ${addr} failed (dedup_key=${input.dedup_key}): ${
+              r?.message || 'unknown'
+            }`
           );
         }
       } catch (err: any) {
         result.email.failed_count += 1;
         logger.warn(
-          `[SystemAdminAlert] admin email to ${addr} threw (dedup_key=${input.dedup_key}): ${err?.message || err}`
+          `[SystemAdminAlert] admin email to ${addr} threw (dedup_key=${input.dedup_key}): ${
+            err?.message || err
+          }`
         );
       }
     }
@@ -432,7 +431,9 @@ ${
 export function pushSystemAdminAlertFireAndForget(input: SystemAdminAlertInput): void {
   pushSystemAdminAlert(input).catch(err => {
     logger.warn(
-      `[SystemAdminAlert] fireAndForget unexpected throw (dedup_key=${input.dedup_key}): ${err?.message || err}`
+      `[SystemAdminAlert] fireAndForget unexpected throw (dedup_key=${input.dedup_key}): ${
+        err?.message || err
+      }`
     );
   });
 }

@@ -120,9 +120,11 @@ export function formatLinkValue(link: WebLink): string {
   if (link.title) parts.push(`title=${quoteString(link.title)}`);
   // hreflang per RFC 5646 language tag — token-shape.
   if (link.hreflang) {
-    parts.push(TOKEN_RE.test(link.hreflang)
-      ? `hreflang=${link.hreflang}`
-      : `hreflang=${quoteString(link.hreflang)}`);
+    parts.push(
+      TOKEN_RE.test(link.hreflang)
+        ? `hreflang=${link.hreflang}`
+        : `hreflang=${quoteString(link.hreflang)}`
+    );
   }
   if (link.anchor) parts.push(`anchor=${quoteString(link.anchor)}`);
   if (link.media) parts.push(`media=${quoteString(link.media)}`);
@@ -155,7 +157,6 @@ export function buildApiWebLinkingMiddleware(config: WebLinkingConfig | null) {
   };
 }
 
-export const apiWebLinkingMiddleware = () =>
-  buildApiWebLinkingMiddleware(PKG_WEB_LINKING_CONFIG);
+export const apiWebLinkingMiddleware = () => buildApiWebLinkingMiddleware(PKG_WEB_LINKING_CONFIG);
 
 export const CURRENT_WEB_LINKING_CONFIG = PKG_WEB_LINKING_CONFIG;

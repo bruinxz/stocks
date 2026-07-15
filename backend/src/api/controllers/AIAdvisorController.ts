@@ -529,7 +529,6 @@ export class AIAdvisorController {
     }
   }
 
-
   // ---------------------------------------------------------------------------
   //  US-061 — AI 大模型技术面 K 线解读
   // ---------------------------------------------------------------------------
@@ -588,7 +587,6 @@ export class AIAdvisorController {
       return res.status(500).json({ success: false, message: error.message });
     }
   }
-
 
   /**
    * GET /api/ai/market-brief/today

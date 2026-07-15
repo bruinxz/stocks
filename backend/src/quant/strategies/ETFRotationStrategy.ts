@@ -23,8 +23,17 @@ import {
   QuantStrategyRuntimeOptions,
 } from '../types/QuantTypes';
 import { QuantStrategy } from './QuantStrategy';
-import { ETFFactorService, etfFactorService, ETFFactorScore, ETFFactorWeights } from '../etf/ETFFactorService';
-import { ETFRankingService, etfRankingService, ETFRebalanceDecision } from '../etf/ETFRankingService';
+import {
+  ETFFactorService,
+  etfFactorService,
+  ETFFactorScore,
+  ETFFactorWeights,
+} from '../etf/ETFFactorService';
+import {
+  ETFRankingService,
+  etfRankingService,
+  ETFRebalanceDecision,
+} from '../etf/ETFRankingService';
 import { ETF_PROFILES } from '../../constants/etfIndustry';
 
 export interface ETFRotationSignal {
@@ -136,9 +145,7 @@ export class ETFRotationStrategy extends QuantStrategy {
     tradeDate: string,
     options: ETFRotationGenerateOptions = {}
   ): Promise<ETFRotationSignal[]> {
-    const universe = options.universe?.length
-      ? options.universe
-      : ETF_PROFILES.map(p => p.code);
+    const universe = options.universe?.length ? options.universe : ETF_PROFILES.map(p => p.code);
     const scores = await this.factorService.score(universe, tradeDate, options.weights);
     const ranking = this.rankingService.rank(scores, options.currentHoldings ?? []);
 

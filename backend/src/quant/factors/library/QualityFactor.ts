@@ -26,7 +26,6 @@ import { factorRegistry } from '../FactorRegistry';
 import { stripSuffix, isFiniteNumber, lookbackStartDate } from './_helpers';
 import { StockFundamentalFactor } from '../../../models/StockFundamentalFactor';
 
-
 const FIVE_YEARS_DAYS = 365 * 5;
 
 export const qualityFactor: Factor = {

@@ -128,7 +128,11 @@ const COMPATIBILITY_COLUMNS: ColumnDefinition[] = [
   { table: 'ai_investment_signals', column: 'entry_price_strategy', definition: 'VARCHAR(20)' },
   { table: 'ai_investment_signals', column: 'stop_loss_pct', definition: 'DECIMAL(6, 2)' },
   { table: 'ai_investment_signals', column: 'take_profit_pct', definition: 'DECIMAL(6, 2)' },
-  { table: 'ai_investment_signals', column: 'cooldown_until', definition: 'TIMESTAMP WITH TIME ZONE' },
+  {
+    table: 'ai_investment_signals',
+    column: 'cooldown_until',
+    definition: 'TIMESTAMP WITH TIME ZONE',
+  },
   { table: 'ai_investment_signals', column: 'gate_pass', definition: 'BOOLEAN' },
   { table: 'ai_investment_signals', column: 'gate_reason', definition: 'TEXT' },
   { table: 'recommendation_trade_outcomes', column: 'loop_run_id', definition: 'VARCHAR(80)' },
