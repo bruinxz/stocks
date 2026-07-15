@@ -1,0 +1,25 @@
+frontend/src/components/layout/AlertsBell.tsx
+  s_186c505eb579e0::t_8264f6b0eb89a5 16,85
+frontend/src/pages/workspace/alertItemActionHelpers.ts
+  s_186c505eb579e0::t_32357c3a91dea2 33,321-322,324,361,383-387,401,403,411,419,427
+frontend/src/pages/workspace/alertsBellHelpers.ts
+  s_186c505eb579e0::t_0190b0601d60f8 5-6,127,132,135-136,140,144-145,147,155,159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "452f37e526259ea71fa517176510dd2b41d0bd00",
+  "prompts": {},
+  "sessions": {
+    "s_186c505eb579e0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6199-27d8-71d1-9690-4bab5194e1de",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
