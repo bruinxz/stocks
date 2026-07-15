@@ -1,0 +1,23 @@
+backend/tests/live-trading/LiveAuditAlertService.test.ts
+  s_186c505eb579e0::t_0a290bbbb5ac76 4,12
+backend/tests/live-trading/liveTradingRateLimit.test.ts
+  s_186c505eb579e0::t_9d2cd7bedc552b 4,10-11,100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d9bbeaae00ad4970c88a9a223a973c9849b7b786",
+  "prompts": {},
+  "sessions": {
+    "s_186c505eb579e0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6199-27d8-71d1-9690-4bab5194e1de",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
