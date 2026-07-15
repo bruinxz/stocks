@@ -151,7 +151,9 @@ function canonicalizeJsonWithKeySort(value: unknown): string {
 }
 
 function timestampString(value: unknown, label: string): string {
-  if (value instanceof Date && Number.isFinite(value.getTime())) return value.toISOString();
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    return value.toISOString().replace(/\.000Z$/, 'Z');
+  }
   return requiredString(value, label);
 }
 
