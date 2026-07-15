@@ -1,0 +1,23 @@
+backend/src/models/ScheduledTask.ts
+  s_186c505eb579e0::t_eb810ee267d10a 62
+backend/src/models/TaskExecutionLog.ts
+  s_186c505eb579e0::t_ef124c17744eb7 31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e76ccae24bf1de7e8b69bde2b8a4c10a3e38d49b",
+  "prompts": {},
+  "sessions": {
+    "s_186c505eb579e0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6199-27d8-71d1-9690-4bab5194e1de",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
