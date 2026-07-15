@@ -1,0 +1,37 @@
+backend/src/portfolio/PaperTradingFacade.ts
+  s_186c505eb579e0::t_dbedb3cdb9b7b4 816-822,825-831,847-853,1473,1500-1502,1553-1555,1822
+backend/src/portfolio/sizing/SignalDrivenSizing.ts
+  s_186c505eb579e0::t_803a56d537c3fa 164-165
+backend/tests/portfolio/paper-trading-facade-sizing-cap.test.ts
+  s_6ca1020a327476::t_6c5ea2c48fd778 7,11,197,199-200,206-207,280
+backend/tests/risk/position-limit-guard.test.ts
+  s_6ca1020a327476::t_d90ff4e4792bbd 136,138,141,143,537-540,558,562,571,578,586,592,606,613
+backend/tests/risk/sizing-limit-consistency.test.ts
+  s_6ca1020a327476::t_69673da979a359 176,182,202,204,206,299-300
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "114b6258c67616446184c8fb7b46ea2f8e80deb4",
+  "prompts": {},
+  "sessions": {
+    "s_186c505eb579e0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6199-27d8-71d1-9690-4bab5194e1de",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
