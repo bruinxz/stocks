@@ -1,0 +1,21 @@
+.gitignore
+  s_0ea7ce1b0cc346::t_efcc9b2cc0ac9a 9-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ec537a504fae84bb8ce58a7ac23dd202c1925553",
+  "prompts": {},
+  "sessions": {
+    "s_0ea7ce1b0cc346": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f66bd-4aa9-7422-9f9a-dc30b2769918",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
