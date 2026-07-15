@@ -1,0 +1,61 @@
+frontend/src/pages/catdesk/tabs/daily-report/DailyReportContainer.tsx
+  s_1cfcbffeec373c::t_4640eae97ef85c 23-24
+frontend/src/pages/catdesk/tabs/daily-report/__tests__/behavior.test.tsx
+  s_6ca1020a327476::t_5ae2a097ce15ab 13-14,178-188,190,194-199,201-203,205-212,218-251
+frontend/src/pages/catdesk/tabs/daily-report/__tests__/container.test.tsx
+  s_070dedc42b7970::t_d269be0796bcfb 8-10,48,59,62-69,77-87,89-95
+frontend/src/pages/catdesk/tabs/daily-report/__tests__/runtime.test.tsx
+  s_070dedc42b7970::t_300515ef6aaafe 17,22-26,29-38,41-42,44-46,53-54,69-86,92-94,96,98,133-436
+frontend/src/pages/catdesk/tabs/daily-report/__tests__/tab67Api.test.ts
+  s_070dedc42b7970::t_e91be1d4cf2df7 2,6,9,69-70,114,129-132,143-201
+frontend/src/pages/catdesk/tabs/daily-report/generationMachine.ts
+  s_1cfcbffeec373c::t_458422ee470e0f 1,10-24,29-30,32,35-76,88-101
+frontend/src/pages/catdesk/tabs/daily-report/tab67Api.ts
+  s_1cfcbffeec373c::t_5b0a6fed53b132 9,61,214,288
+frontend/src/pages/catdesk/tabs/daily-report/types.ts
+  s_715b878d1621c3::t_4d886b0680c599 238-239,241-246,249-273
+frontend/src/pages/catdesk/tabs/daily-report/useDailyReportRuntime.ts
+  s_070dedc42b7970::t_b767348b07d89c 24-56,77-79,84-87,113-114,124,126-129,139,144-150,152,158-195,203-208,210
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7c86d7ab2c53f11b68a2602212886287b2a3c84c",
+  "prompts": {},
+  "sessions": {
+    "s_070dedc42b7970": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f66d6-7c3d-7c71-8178-4699608122d4",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_1cfcbffeec373c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6151-8bf0-7b71-bb2b-977c9b9b4a3a",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_715b878d1621c3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6134-dedf-7e42-8378-84f8b727a5f7",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
