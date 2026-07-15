@@ -59,7 +59,7 @@ export class ScheduledTask extends Model {
     type: DataType.STRING(50),
     allowNull: true,
     field: 'last_run_status',
-    comment: 'SUCCESS, FAILED, RUNNING',
+    comment: 'SUCCESS, FAILED, RUNNING, SKIPPED',
   })
   declare last_run_status: string;
 

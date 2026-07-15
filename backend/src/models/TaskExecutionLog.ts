@@ -28,7 +28,7 @@ export class TaskExecutionLog extends Model {
     type: DataType.STRING(50),
     allowNull: false,
   })
-  declare status: string; // PENDING, IN_PROGRESS, COMPLETED, FAILED
+  declare status: string; // PENDING, IN_PROGRESS, COMPLETED, FAILED, SKIPPED
 
   @Column({
     type: DataType.INTEGER,
