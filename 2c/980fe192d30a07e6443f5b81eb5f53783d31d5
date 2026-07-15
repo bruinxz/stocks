@@ -1,0 +1,91 @@
+backend/src/api/controllers/RecommendationSnapshotController.ts
+  s_8b0057a0fcac63::t_b6057b0f0ae489 31-43
+backend/tests/e2e/tab12-recommendation-live-http.test.ts
+  s_8b0057a0fcac63::t_2e981d944e80b6 1-461
+backend/tests/e2e/tab12-recommendation-live.pg.sh
+  s_0ea7ce1b0cc346::t_4cc01820bc1103 1-323
+backend/tests/routing/api-recommendation-snapshots.test.ts
+  s_8b0057a0fcac63::t_fbcf6607a03ab3 2,4,17-36,143-146,164-176,190-195,202-203,221,223-226,229-230,237-238,242-243,247-248,252-253,257,274-275,282,297,300-302,308,314-316,322-325
+frontend/src/pages/catdesk/__tests__/c1DetailIntegration.test.tsx
+  s_6ca1020a327476::t_7f32d742302ad3 109-115,122-126
+frontend/src/pages/catdesk/shared/UnavailableState.tsx
+  s_66be13389b5e34::t_9832e9f4ace324 1-14
+frontend/src/pages/catdesk/tabs/AShareMorningBrief.tsx
+  s_66be13389b5e34::t_ce1ff78d070f21 6,15-18,36-37,47-53,55,88-92,94,106
+frontend/src/pages/catdesk/tabs/USStockPicks.tsx
+  s_66be13389b5e34::t_98ad9d3c541b30 6,14-17,28-34,36,66-70,72,78
+frontend/src/pages/catdesk/tabs/__tests__/recommendationCandidates.test.ts
+  s_66be13389b5e34::t_45143e1203b305 1-94
+frontend/src/pages/catdesk/tabs/__tests__/recommendationContainers.test.tsx
+  s_66be13389b5e34::t_3efd7247441183 1-181
+frontend/src/pages/catdesk/tabs/c1Types.ts
+  s_186c505eb579e0::t_2857453d048bdb 6,8-10,12-20,24-61,65,70-76,94
+frontend/src/pages/catdesk/tabs/morning/__tests__/tab1AShareMorningBriefLiveE2E.test.tsx
+  s_8b0057a0fcac63::t_5a430cc592b918 1-262
+frontend/src/pages/catdesk/tabs/morning/detail/AIRecommendationCard.tsx
+  s_6ca1020a327476::t_eed017c8e3976b 39,43-47
+frontend/src/pages/catdesk/tabs/morning/detail/DataSourceBadge.tsx
+  s_6ca1020a327476::t_cd945e38b9e27d 22,27-31
+frontend/src/pages/catdesk/tabs/morning/detail/RelevanceBreakdownCard.tsx
+  s_6ca1020a327476::t_85f3cf6a5c44f6 41,45-49
+frontend/src/pages/catdesk/tabs/morning/detail/RiskGateDetailCard.tsx
+  s_6ca1020a327476::t_0c8bdf3de67289 16-17,55-59,74-84
+frontend/src/pages/catdesk/tabs/morning/detail/buildMorningSections.tsx
+  s_6ca1020a327476::t_85aaea73321da3 12-51,57,63,84-85,112,116-173
+frontend/src/pages/catdesk/tabs/recommendationCandidates.ts
+  s_66be13389b5e34::t_c514cccaf355e3 1-217
+frontend/src/pages/catdesk/tabs/us/__tests__/tab2USStockPicksLiveE2E.test.tsx
+  s_8b0057a0fcac63::t_c8fec2aab94d91 1-261
+frontend/src/pages/catdesk/tabs/us/detail/buildUSSections.tsx
+  s_6ca1020a327476::t_4c6b70acee090a 7,48-49,73-137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2c980fe192d30a07e6443f5b81eb5f53783d31d5",
+  "prompts": {},
+  "sessions": {
+    "s_0ea7ce1b0cc346": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f66bd-4aa9-7422-9f9a-dc30b2769918",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_186c505eb579e0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6199-27d8-71d1-9690-4bab5194e1de",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_66be13389b5e34": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f619f-6bce-7833-8fbd-fd76831f9fb7",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_8b0057a0fcac63": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f61a0-2260-71b2-b71f-f14f0fc18271",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
