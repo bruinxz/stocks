@@ -1,0 +1,67 @@
+AGENTS.md
+  s_6ca1020a327476::t_299ee94248925f 108
+ai/tradingagents-app/AGENTS.md
+  s_6ca1020a327476::t_6ec8c72555b69f 90
+ai/tradingagents-app/tradingagents/db/config.py
+  s_6ca1020a327476::t_88aceb95521ea9 15-27
+copy_compose.exp
+  s_6ca1020a327476::t_73530adaf5d55a 5
+copy_env.exp
+  s_6ca1020a327476::t_38d89a579fa5d3 5
+copy_frontend.exp
+  s_6ca1020a327476::t_a18368ef9df81e 5
+copy_script.exp
+  s_6ca1020a327476::t_de27aba6cd4779 5
+copy_sql.exp
+  s_6ca1020a327476::t_a6fa0872dd4559 5
+docs/operations/README.md
+  s_6ca1020a327476::t_9ec74dc92e3f2f 23,32,37
+docs/refactor/30-cleanup-log.md
+  s_6ca1020a327476::t_5b83944d76b109 15,31
+docs/refactor/adr/0001-layering-and-collab.md
+  s_6ca1020a327476::t_0085d29dc13fc9 292,429
+frontend/copy_frontend.exp
+  s_6ca1020a327476::t_f299e9587906cf 5
+frontend/copy_server.exp
+  s_6ca1020a327476::t_ba883568d58aab 5
+run_sync.exp
+  s_6ca1020a327476::t_208cbc13796de5 5
+scripts/deployment/deploy-docs.sh
+  s_6ca1020a327476::t_189a53349399dd 19
+scripts/deployment/deploy_config.js
+  s_6ca1020a327476::t_ebac02debce0af 61,91
+scripts/deployment/deploy_release_package.js
+  s_6ca1020a327476::t_6b2db2b1fc345d 32
+scripts/deployment/deploy_remote_build.sh
+  s_6ca1020a327476::t_2a555b305790f7 7-8,16-17,57
+scripts/deployment/post_deploy_smoke.js
+  s_6ca1020a327476::t_f2622ae786fab8 20
+scripts/deployment/run_pushplus_deploy.sh
+  s_6ca1020a327476::t_26f82cd4a982bb 12
+scripts/deployment/run_remote.sh
+  s_6ca1020a327476::t_34220181cac0a7 6
+scripts/deployment/start_remote.sh
+  s_6ca1020a327476::t_41452dfcca390d 5
+scripts/ops/backup-pull.sh
+  s_6ca1020a327476::t_9bf9d04325ead0 28
+sync_files.sh
+  s_6ca1020a327476::t_af6c2789ff46f3 2-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9f8f42f860dab61f84a313b1acc946f9d1b44e58",
+  "prompts": {},
+  "sessions": {
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
