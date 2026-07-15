@@ -2,7 +2,7 @@
 set timeout -1
 set password [lindex $argv 0]
 
-spawn scp -o StrictHostKeyChecking=no -P 14126 server.js root@103.242.3.87:/opt/stocks/frontend/
+spawn scp -o StrictHostKeyChecking=no -P 14126 server.js root@<legacy-prod-host>:/opt/stocks/frontend/
 expect {
     "*yes/no*" { send "yes\r"; exp_continue }
     "*assword:*" { send "$password\r"; exp_continue }

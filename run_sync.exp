@@ -2,7 +2,7 @@
 set timeout -1
 set password [lindex $argv 0]
 
-spawn ssh -o StrictHostKeyChecking=no -p 14126 root@103.242.3.87 "cat << 'INNER_EOF' > /opt/stocks/backend/src/scripts/sync_db.ts
+spawn ssh -o StrictHostKeyChecking=no -p 14126 root@<legacy-prod-host> "cat << 'INNER_EOF' > /opt/stocks/backend/src/scripts/sync_db.ts
 import { sequelize } from '../config/database';
 import '../models';
 

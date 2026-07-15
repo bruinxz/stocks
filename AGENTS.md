@@ -105,7 +105,7 @@
     *   后端: `3000` (使用 `npm run dev` 启动)
 
 ### 6.2 关键路径与环境配置
-*   **前端环境变量**: [frontend/.env.development.local](frontend/.env.development.local) 必须配置 `REACT_APP_API_BASE_URL=http://localhost:3000/api`，否则会请求到远端的 `103.242.3.87:3000`。
+*   **前端环境变量**: [frontend/.env.development.local](frontend/.env.development.local) 必须配置 `REACT_APP_API_BASE_URL=http://localhost:3000/api`，否则会请求到远端的 `<legacy-prod-host>:3000`。
 *   **后端环境变量**: [backend/.env](backend/.env) 包含 PG 数据库连接信息 (`postgres:postgres`)、Redis 端口 (`6379`)，以及 JWT_SECRET。
 
 ### 6.3 核心机制排查与修复记录

@@ -58,7 +58,7 @@ function getDeployConfig(options = {}) {
   const frontendBaseUrl = pick(
     process.env.DEPLOY_FRONTEND_BASE_URL,
     backendEnv.FRONTEND_BASE_URL,
-    'http://103.242.3.87:3001'
+    'http://<legacy-prod-host>:3001'
   );
   return {
     paths: {
@@ -88,7 +88,7 @@ function getDeployConfig(options = {}) {
       REACT_APP_PUSHPLUS_QRCODE_URL: pick(process.env.LEGACY_PUSHPLUS_QRCODE_URL, ''),
     },
     ssh: {
-      host: pick(process.env.DEPLOY_HOST, process.env.SSH_HOST, '103.242.3.87'),
+      host: pick(process.env.DEPLOY_HOST, process.env.SSH_HOST, '<legacy-prod-host>'),
       port: Number(pick(process.env.DEPLOY_PORT, process.env.SSH_PORT, 14126)),
       username: pick(process.env.DEPLOY_USER, process.env.SSH_USER, 'deploy'),
       password: pick(process.env.DEPLOY_PASSWORD, process.env.SSH_PASSWORD, ''),

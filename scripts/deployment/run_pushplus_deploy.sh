@@ -9,7 +9,7 @@ fi
 
 set -e
 
-SSH_HOST="103.242.3.87"
+SSH_HOST="<legacy-prod-host>"
 SSH_PORT="14126"
 SSH_USER="${DEPLOY_USER:-${SSH_USER:-deploy}}"
 SSH_PASS="${DEPLOY_PASSWORD:-${SSH_PASSWORD:-}}"

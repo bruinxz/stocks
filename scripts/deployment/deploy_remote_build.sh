@@ -4,8 +4,8 @@
 # Unlike the legacy local-build flow (deploy_release_package.js), this script
 # does NOT compile anything locally. It only:
 #   1. Confirms the target branch is pushed to GitHub
-#   2. SSH'es to deploy@103.242.3.87 to clone+build+release+activate remotely
-#   3. SSH'es to ops@103.242.3.87 to restart systemd + run health gate
+#   2. SSH'es to deploy@<legacy-prod-host> to clone+build+release+activate remotely
+#   3. SSH'es to ops@<legacy-prod-host> to restart systemd + run health gate
 #
 # Usage:
 #   bash scripts/deployment/deploy_remote_build.sh main [branch]
@@ -13,8 +13,8 @@
 #     branch: git branch/tag/sha (default: current local branch)
 #
 # Required env:
-#   DEPLOY_PASSWORD  password for deploy@103.242.3.87:14126
-#   OPS_PASSWORD     password for ops@103.242.3.87:14126
+#   DEPLOY_PASSWORD  password for deploy@<legacy-prod-host>:14126
+#   OPS_PASSWORD     password for ops@<legacy-prod-host>:14126
 #
 # Optional env:
 #   SKIP_HEALTH_GATE=true   skip the post-deploy health gate
@@ -54,7 +54,7 @@ OPS_PASSWORD="${OPS_PASSWORD:-}"
 [[ -z "$DEPLOY_PASSWORD" ]] && { echo "DEPLOY_PASSWORD required" >&2; exit 1; }
 [[ -z "$OPS_PASSWORD" ]] && { echo "OPS_PASSWORD required" >&2; exit 1; }
 
-SSH_HOST="103.242.3.87"
+SSH_HOST="<legacy-prod-host>"
 SSH_PORT="14126"
 GIT_REPO_URL="${GIT_REPO_URL:-https://github.com/bruinxz/stocks.git}"
 

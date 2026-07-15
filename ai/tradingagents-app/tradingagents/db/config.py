@@ -12,8 +12,19 @@ POSTGRES_DB = os.getenv("POSTGRES_DB", "stock_backtest")
 
 # Safely construct the DATABASE_URL
 _password = quote_plus(POSTGRES_PASSWORD)
-DATABASE_URL = f"postgresql://{POSTGRES_USER}:{_password}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
-print("Using DATABASE_URL:", f"postgresql://{POSTGRES_USER}:***@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}")
+DATABASE_URL = (
+    "postgresql://"
+    + POSTGRES_USER
+    + ":"
+    + _password
+    + "@"
+    + POSTGRES_HOST
+    + ":"
+    + POSTGRES_PORT
+    + "/"
+    + POSTGRES_DB
+)
+print("Using PostgreSQL endpoint:", f"{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}")
 
 REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT = os.getenv("REDIS_PORT", "6379")

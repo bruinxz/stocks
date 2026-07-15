@@ -29,7 +29,7 @@ const {
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 const deployConfig = getDeployConfig();
-const sshHost = deployConfig.ssh.host || '103.242.3.87';
+const sshHost = deployConfig.ssh.host || '<legacy-prod-host>';
 const sshPort = Number(deployConfig.ssh.port || 14126);
 const deployUser = process.env.DEPLOY_USER || deployConfig.ssh.username || 'deploy';
 const deployPassword =
