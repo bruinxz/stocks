@@ -39,7 +39,6 @@ class RuleEngine:
                     "code": rule["trigger_code"],
                     "strength": rule["strength"],
                     "detail": f"{rule['description']} [{ticker}]"[:240],
-                    "source_ref": None,
                 })
         return triggered
 

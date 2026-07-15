@@ -309,6 +309,7 @@ class PipelineReplayAdapter:
             raise ReplaySourceError("universe ticker identity/order is invalid")
 
         scores: dict[str, dict[str, Any]] = {}
+        score_provenance: dict[str, dict[str, str]] = {}
         for record in inputs.scores.records:
             required = {
                 "ticker",
@@ -357,6 +358,11 @@ class PipelineReplayAdapter:
             ):
                 raise ReplaySourceError("score record fact_hash is not authentic")
             scores[ticker] = features
+            score_provenance[ticker] = {
+                "fact_hash": record["fact_hash"],
+                "source_version": record["source_version"],
+                "available_at_utc": record["available_at_utc"],
+            }
             evidence_refs.setdefault(ticker, []).append(
                 {
                     "kind": "SCORE_INPUT",
@@ -387,6 +393,7 @@ class PipelineReplayAdapter:
                 ticker: tuple(refs)
                 for ticker, refs in evidence_refs.items()
             },
+            score_provenance=score_provenance,
             recommendation_ids={
                 ticker: _stable_uuid4("recommendation", replay_key, ticker)
                 for ticker in universe

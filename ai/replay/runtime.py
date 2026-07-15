@@ -42,6 +42,11 @@ SOURCE_VERSION_KEYS = ("signals", "universe", "scores", "evidence")
 _BANDS = frozenset({"A", "B", "C", "D", "F"})
 _CONVICTION_LEVELS = frozenset({"HIGH", "MED", "LOW"})
 _RISK_GATES = frozenset({"GREEN", "YELLOW", "RED"})
+_SCORE_DIMENSION_ORDER = ("Q", "G", "V", "M", "T", "R")
+_CURRENCIES = frozenset({"USD", "CNY", "HKD", "JPY", "KRW"})
+_TIME_HORIZONS = frozenset(
+    {"INTRADAY", "SWING", "POSITION", "CORE_HOLD", "LONG_TERM"}
+)
 _SIZE_TIERS = {
     "TIER_5": 5.0,
     "TIER_3": 3.0,
@@ -70,11 +75,21 @@ SOURCE_RISK_TRIGGER_KEYS = frozenset(
     {"code", "severity", "detail"}
 )
 SOURCE_ENTRY_PLAN_KEYS = frozenset(
-    {"size_hint", "stop_distance_pct"}
+    {
+        "entry",
+        "stop",
+        "targets",
+        "size_hint",
+        "time_horizon",
+        "invalidation",
+        "stop_distance_pct",
+    }
 )
 SOURCE_SIZE_HINT_KEYS = frozenset(
-    {"tier", "pct", "disclaimer_key"}
+    {"tier", "pct", "disclaimer_key", "rationale"}
 )
+SOURCE_PRICE_BAND_KEYS = frozenset({"low", "high", "currency"})
+SOURCE_PRICE_KEYS = frozenset({"value", "currency"})
 _CATALYST_KINDS = frozenset(
     {
         "earnings",
@@ -685,13 +700,17 @@ def validate_source_score_features(
     if score["rating"] != _rating_for(float(score["total"])):
         raise ReplaySourceError("typed score rating relation mismatch")
     dimensions = score.get("dims")
-    if not isinstance(dimensions, list):
-        raise ReplaySourceError("typed score dimensions must be an array")
-    for dimension in dimensions:
+    if not isinstance(dimensions, list) or len(dimensions) != 6:
+        raise ReplaySourceError(
+            "typed score dimensions must contain Q/G/V/M/T/R"
+        )
+    total_weight = 0.0
+    weighted_total = 0.0
+    for dimension, expected_key in zip(dimensions, _SCORE_DIMENSION_ORDER):
         if (
             not isinstance(dimension, Mapping)
             or not isinstance(dimension.get("key"), str)
-            or not dimension.get("key")
+            or dimension.get("key") != expected_key
             or dimension.get("band") not in _BANDS
             or not _finite_range(dimension.get("score"), 0.0, 100.0)
             or not _finite_range(dimension.get("weight"), 0.0, 1.0)
@@ -706,6 +725,16 @@ def validate_source_score_features(
             raise ReplaySourceError(
                 "typed score dimension band relation mismatch"
             )
+        total_weight += float(dimension["weight"])
+        weighted_total += float(dimension["score"]) * float(
+            dimension["weight"]
+        )
+    if abs(total_weight - 1.0) > 1e-9:
+        raise ReplaySourceError("typed score dimension weights must sum to 1")
+    if abs(float(score["total"]) - round(weighted_total, 1)) > 1e-9:
+        raise ReplaySourceError(
+            "typed score total must match the weighted dimensions"
+        )
 
     base = conviction.get("base")
     final = conviction.get("final")
@@ -713,6 +742,7 @@ def validate_source_score_features(
     if (
         not _finite_range(base, 0.0, 100.0)
         or not _finite_range(final, 0.0, 100.0)
+        or abs(float(base) - float(score["total"])) > 1e-9
         or conviction.get("level") not in _CONVICTION_LEVELS
         or not isinstance(adjustments, list)
     ):
@@ -809,12 +839,74 @@ def validate_source_score_features(
         "features.entry_plan.size_hint",
     )
     tier = size_hint.get("tier")
+    rationale = size_hint.get("rationale")
     if (
         tier not in _SIZE_TIERS
         or size_hint.get("pct") != _SIZE_TIERS[tier]
         or size_hint.get("disclaimer_key") != "size_hint_advisory"
+        or not isinstance(rationale, str)
+        or not rationale
+        or len(rationale) > 240
     ):
         raise ReplaySourceError("typed entry plan size_hint mismatch")
+    expected_tier = (
+        "TIER_5"
+        if float(final) >= 85
+        else "TIER_3"
+        if float(final) >= 70
+        else "TIER_2"
+        if float(final) >= 55
+        else "TIER_1"
+        if float(final) >= 40
+        else "SKIP"
+    )
+    if tier != expected_tier:
+        raise ReplaySourceError(
+            "typed entry plan size_hint does not match conviction"
+        )
+
+    entry = entry_plan.get("entry")
+    stop = entry_plan.get("stop")
+    targets = entry_plan.get("targets")
+    if not isinstance(entry, Mapping):
+        raise ReplaySourceError("typed entry plan entry is required")
+    if not isinstance(stop, Mapping):
+        raise ReplaySourceError("typed entry plan stop is required")
+    _require_exact_keys(entry, SOURCE_PRICE_BAND_KEYS, "features.entry_plan.entry")
+    _require_exact_keys(stop, SOURCE_PRICE_KEYS, "features.entry_plan.stop")
+    if (
+        not _finite_number(entry.get("low"))
+        or not _finite_number(entry.get("high"))
+        or float(entry["low"]) > float(entry["high"])
+        or entry.get("currency") not in _CURRENCIES
+        or not _finite_number(stop.get("value"))
+        or stop.get("currency") not in _CURRENCIES
+    ):
+        raise ReplaySourceError("typed entry plan price band/stop is invalid")
+    if not isinstance(targets, list) or not 1 <= len(targets) <= 3:
+        raise ReplaySourceError("typed entry plan targets must contain 1..3 prices")
+    for target in targets:
+        if not isinstance(target, Mapping):
+            raise ReplaySourceError("typed entry plan target is invalid")
+        _require_exact_keys(
+            target,
+            SOURCE_PRICE_KEYS,
+            "features.entry_plan.targets[]",
+        )
+        if (
+            not _finite_number(target.get("value"))
+            or target.get("currency") not in _CURRENCIES
+        ):
+            raise ReplaySourceError("typed entry plan target is invalid")
+    if entry_plan.get("time_horizon") not in _TIME_HORIZONS:
+        raise ReplaySourceError("typed entry plan time_horizon is invalid")
+    invalidation = entry_plan.get("invalidation")
+    if (
+        not isinstance(invalidation, str)
+        or not invalidation
+        or len(invalidation) > 500
+    ):
+        raise ReplaySourceError("typed entry plan invalidation is invalid")
     if not _finite_range(
         entry_plan.get("stop_distance_pct"), 0.0, 100.0
     ):
@@ -830,6 +922,14 @@ def _finite_range(value: object, minimum: float, maximum: float) -> bool:
         and isinstance(value, (int, float))
         and math.isfinite(value)
         and minimum <= float(value) <= maximum
+    )
+
+
+def _finite_number(value: object) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
     )
 
 

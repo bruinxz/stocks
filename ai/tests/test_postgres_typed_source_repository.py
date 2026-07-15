@@ -276,27 +276,48 @@ def _text_hit_json():
 
 
 def _features(profile="japan_blue_chip", market_scope="jp"):
+    currency = {
+        "cn_a": "CNY",
+        "us": "USD",
+        "jp": "JPY",
+        "kr": "KRW",
+    }[market_scope]
     return {
         "score": {
             "profile": profile,
             "market_scope": market_scope,
             "rating": "A",
             "total": 90.0,
-            "dims": [{"key": "Q", "score": 90.0, "band": "A", "weight": 1.0}],
+            "dims": [
+                {"key": key, "score": 90.0, "band": "A", "weight": weight}
+                for key, weight in zip(
+                    ("Q", "G", "V", "M", "T", "R"),
+                    (0.2, 0.2, 0.15, 0.2, 0.15, 0.1),
+                )
+            ],
         },
         "conviction": {
-            "base": 80.0,
+            "base": 90.0,
             "adjustments": [],
-            "final": 80.0,
+            "final": 90.0,
             "level": "HIGH",
         },
         "risk_gate": {"gate": "GREEN", "ok_to_enter": True, "triggers": []},
         "entry_plan": {
+            "entry": {"low": 100.0, "high": 102.0, "currency": currency},
+            "stop": {"value": 96.0, "currency": currency},
+            "targets": [
+                {"value": 115.0, "currency": currency},
+                {"value": 130.0, "currency": currency},
+            ],
             "size_hint": {
-                "tier": "TIER_3",
-                "pct": 3.0,
+                "tier": "TIER_5",
+                "pct": 5.0,
                 "disclaimer_key": "size_hint_advisory",
+                "rationale": "High conviction with an authenticated plan.",
             },
+            "time_horizon": "POSITION",
+            "invalidation": "Close below the authenticated stop price.",
             "stop_distance_pct": 4.0,
         },
     }
@@ -663,6 +684,16 @@ class PostgresTypedSourceRepositoryTests(unittest.TestCase):
         self.assertTrue(mapped.signals)
         self.assertEqual(mapped.universe, ("7203",))
         self.assertEqual(set(mapped.scores), {"7203"})
+        self.assertEqual(
+            mapped.score_provenance,
+            {
+                "7203": {
+                    "fact_hash": inputs.scores.records[0]["fact_hash"],
+                    "source_version": "score-v1",
+                    "available_at_utc": NOW_TEXT,
+                }
+            },
+        )
         kinds = {ref["kind"] for ref in mapped.evidence_refs["7203"]}
         self.assertEqual(kinds, {"SCORE_INPUT", "DISCLOSURE", "NEWS"})
 

@@ -176,18 +176,30 @@ def _text_hit(*, available=NOW, market_scope="jp"):
 
 
 def _features(profile="japan_blue_chip", market_scope="jp"):
+    currency = {
+        "cn_a": "CNY",
+        "us": "USD",
+        "jp": "JPY",
+        "kr": "KRW",
+    }[market_scope]
     return {
         "score": {
             "rating": "A",
             "total": 90.0,
             "profile": profile,
             "market_scope": market_scope,
-            "dims": [{"key": "Q", "score": 90.0, "band": "A", "weight": 1.0}],
+            "dims": [
+                {"key": key, "score": 90.0, "band": "A", "weight": weight}
+                for key, weight in zip(
+                    ("Q", "G", "V", "M", "T", "R"),
+                    (0.2, 0.2, 0.15, 0.2, 0.15, 0.1),
+                )
+            ],
         },
         "conviction": {
-            "base": 80.0,
+            "base": 90.0,
             "adjustments": [],
-            "final": 80.0,
+            "final": 90.0,
             "level": "HIGH",
         },
         "risk_gate": {
@@ -196,11 +208,20 @@ def _features(profile="japan_blue_chip", market_scope="jp"):
             "triggers": [],
         },
         "entry_plan": {
+            "entry": {"low": 100.0, "high": 102.0, "currency": currency},
+            "stop": {"value": 96.0, "currency": currency},
+            "targets": [
+                {"value": 115.0, "currency": currency},
+                {"value": 130.0, "currency": currency},
+            ],
             "size_hint": {
-                "tier": "TIER_3",
-                "pct": 3.0,
+                "tier": "TIER_5",
+                "pct": 5.0,
                 "disclaimer_key": "size_hint_advisory",
+                "rationale": "High conviction with an authenticated plan.",
             },
+            "time_horizon": "POSITION",
+            "invalidation": "Close below the authenticated stop price.",
             "stop_distance_pct": 4.0,
         },
     }

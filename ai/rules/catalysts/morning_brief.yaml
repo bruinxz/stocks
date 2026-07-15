@@ -59,7 +59,7 @@ rules:
     description: "止损距离 < 5%"
     trigger_code: ENTRY_PLAN_TIGHT
     conditions:
-      - field: entry_plan.stop_distance_pct
+      - field: entry_plan_metrics.stop_distance_pct
         op: lt
         value: 5.0
     strength: WEAK

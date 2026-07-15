@@ -50,6 +50,7 @@ class PipelineSourceInputs:
     evidence_refs: dict[str, tuple[dict[str, Any], ...]] = field(
         default_factory=dict
     )
+    score_provenance: dict[str, dict[str, Any]] = field(default_factory=dict)
     recommendation_ids: dict[str, str] = field(default_factory=dict)
 
 
@@ -113,6 +114,7 @@ class PipelineRunner:
                     for ticker, refs in source_inputs.evidence_refs.items()
                 }
             ),
+            score_provenance=copy.deepcopy(source_inputs.score_provenance),
             recommendation_ids=dict(source_inputs.recommendation_ids),
             input_hashes=list(self._config.input_hashes),
         )
