@@ -10,6 +10,8 @@ import { nextGenerationState, parseGenerationJob, pollDelay } from '../generatio
 import { reportFixture } from '../testFixtures';
 import type { ReportHistoryPage, ReportHistoryViewState } from '../../report-history/types';
 
+const JOB_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
 jest.mock('react-markdown', () => ({
   __esModule: true,
   default: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -173,20 +175,78 @@ describe('Tab 6/7 contract-first behavior', () => {
   });
 
   test('enforces generate/poll state progression, terminal states and backoff cap', () => {
-    const queued = parseGenerationJob({ job_id: 'job-1', status: 'queued' });
-    const running = parseGenerationJob({ job_id: 'job-1', status: 'running' });
+    const queued = parseGenerationJob({ job_id: JOB_ID, status: 'queued' });
+    const queuedWithRetry = parseGenerationJob({
+      job_id: JOB_ID,
+      status: 'queued',
+      retry_after_ms: 1,
+    });
+    const running = parseGenerationJob({
+      job_id: JOB_ID,
+      status: 'running',
+      retry_after_ms: 10_000,
+    });
     const completed = parseGenerationJob({
-      job_id: 'job-1',
+      job_id: JOB_ID,
       status: 'completed',
       snapshot_id: report.snapshot.snapshot_id,
     });
+    const failed = parseGenerationJob({
+      job_id: JOB_ID,
+      status: 'failed',
+      error: 'replay failed',
+    });
+    expect(nextGenerationState(queued, queuedWithRetry)).toEqual(queuedWithRetry);
     expect(nextGenerationState(queued, running)).toEqual(running);
+    expect(nextGenerationState(queued, completed)).toEqual(completed);
+    expect(nextGenerationState(queued, failed)).toEqual(failed);
+    expect(nextGenerationState(running, running)).toEqual(running);
     expect(nextGenerationState(running, completed)).toEqual(completed);
-    expect(() => nextGenerationState(completed, running)).toThrow(/backwards|Terminal/);
-    expect(() => parseGenerationJob({ job_id: 'job-2', status: 'completed' })).toThrow(
+    expect(nextGenerationState(running, failed)).toEqual(failed);
+    expect(() => nextGenerationState(running, queued)).toThrow(/transition/);
+    expect(() => nextGenerationState(completed, completed)).toThrow(/Terminal/);
+    expect(() => nextGenerationState(failed, failed)).toThrow(/Terminal/);
+    expect(() =>
+      nextGenerationState({ job_id: 'idle', status: 'idle' }, { job_id: 'idle', status: 'idle' })
+    ).toThrow(/idle/);
+    expect(() => parseGenerationJob({ job_id: JOB_ID, status: 'completed' })).toThrow(
       /snapshot_id/
     );
     expect([0, 1, 2, 3, 50].map(pollDelay)).toEqual([1000, 2000, 5000, 10000, 10000]);
+  });
+
+  test('rejects non-canonical generation job wire shapes', () => {
+    const invalidJobs = [
+      { job_id: JOB_ID, status: 'idle' },
+      { job_id: JOB_ID, status: 'queued', unknown: true },
+      { job_id: JOB_ID, status: 'queued', snapshot_id: report.snapshot.snapshot_id },
+      { job_id: JOB_ID, status: 'running', error: 'not terminal' },
+      { job_id: JOB_ID, status: 'completed', snapshot_id: 'not-a-uuid' },
+      {
+        job_id: JOB_ID,
+        status: 'completed',
+        snapshot_id: report.snapshot.snapshot_id,
+        retry_after_ms: 1000,
+      },
+      { job_id: JOB_ID, status: 'failed', error: '' },
+      { job_id: JOB_ID, status: 'failed', error: '   ' },
+      {
+        job_id: JOB_ID,
+        status: 'failed',
+        error: 'failed',
+        snapshot_id: report.snapshot.snapshot_id,
+      },
+      { job_id: 'NOT-A-UUID', status: 'queued' },
+      { job_id: JOB_ID.toUpperCase(), status: 'queued' },
+    ];
+    invalidJobs.forEach(job => expect(() => parseGenerationJob(job)).toThrow());
+
+    [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 10_001, '1000', null].forEach(
+      retry_after_ms =>
+        expect(() =>
+          parseGenerationJob({ job_id: JOB_ID, status: 'queued', retry_after_ms })
+        ).toThrow(/retry_after_ms/)
+    );
   });
 
   test('dispatches mocked generate, history detail, compare, and retry actions', async () => {

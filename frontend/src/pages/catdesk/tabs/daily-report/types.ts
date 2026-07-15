@@ -235,15 +235,41 @@ export interface DailyReportDocument {
   sections: DailyReportSection[];
 }
 
-export type GenerationStatus = 'idle' | 'queued' | 'running' | 'completed' | 'failed';
+export type RemoteGenerationStatus = 'queued' | 'running' | 'completed' | 'failed';
+export type GenerationStatus = 'idle' | RemoteGenerationStatus;
 
-export interface GenerationJob {
-  job_id: string;
-  status: GenerationStatus;
-  snapshot_id?: string;
-  error?: string;
-  retry_after_ms?: number;
+export interface IdleGenerationJob {
+  job_id: 'idle';
+  status: 'idle';
+  snapshot_id?: never;
+  error?: never;
+  retry_after_ms?: never;
 }
+
+export type RemoteGenerationJob =
+  | {
+      job_id: string;
+      status: 'queued' | 'running';
+      snapshot_id?: never;
+      error?: never;
+      retry_after_ms?: number;
+    }
+  | {
+      job_id: string;
+      status: 'completed';
+      snapshot_id: string;
+      error?: never;
+      retry_after_ms?: never;
+    }
+  | {
+      job_id: string;
+      status: 'failed';
+      snapshot_id?: never;
+      error: string;
+      retry_after_ms?: never;
+    };
+
+export type GenerationJob = IdleGenerationJob | RemoteGenerationJob;
 
 export type DailyReportViewState =
   | { kind: 'loading' }

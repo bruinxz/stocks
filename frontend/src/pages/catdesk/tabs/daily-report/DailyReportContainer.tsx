@@ -20,8 +20,8 @@ export function DailyReportContainer({
   return (
     <DailyReport
       state={runtime.state}
-      generateAvailable={false}
-      generateUnavailableReason="回放生成待运行时接入"
+      generateAvailable
+      onGenerate={() => void runtime.generate()}
       onRetry={runtime.retry}
     />
   );
