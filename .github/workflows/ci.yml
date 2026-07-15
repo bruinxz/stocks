@@ -423,30 +423,22 @@ jobs:
           cmp ../backend-test-fixtures-before.sha256 ../backend-test-fixtures-restored.sha256
           git diff --exit-code -- "${fixtures[@]}"
 
-          if [ "$test_rc" -ne 1 ]; then
-            echo "::error::backend test producer must exit 1 while the debt ledger is active (got $test_rc)"
+          if [ "$test_rc" -ne 0 ]; then
+            echo "::error::backend test suite failed (exit=$test_rc)"
             exit 1
           fi
 
-          node ../scripts/ci/backend_test_debt.js compare \
-            --log ../backend-test.log \
-            --producer-exit "$test_rc" \
-            --baseline ../docs/refactor/baseline/ci/backend-test-debt-da801a52.json \
-            --output ../backend-test-debt-current.json 2>&1 \
-            | tee ../backend-test-debt-comparator.log
           git diff --exit-code
         continue-on-error: false
 
-      - name: Upload backend test debt evidence
+      - name: Upload backend test evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: backend-test-debt-${{ github.run_attempt }}
+          name: backend-test-${{ github.run_attempt }}
           path: |
             backend-test.log
             backend-test.exit
-            backend-test-debt-current.json
-            backend-test-debt-comparator.log
             backend-test-fixtures-before.sha256
             backend-test-fixtures-after.sha256
             backend-test-fixtures-restored.sha256
