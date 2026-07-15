@@ -1,0 +1,69 @@
+backend/tests/factors/GradualBreakoutFactor.test.ts
+  s_6ca1020a327476::t_104d84168333da 25,643,649,660
+backend/tests/portfolio/PaperTradingPortfolioCrudService.test.ts
+  s_6ca1020a327476::t_5927d3e6dd0144 110-111,113,116,125,204-205
+backend/tests/quant/composite_backtest_all_strategies.test.ts
+  s_6ca1020a327476::t_4b88a96f449b7c 2,102,107,109-110,187
+backend/tests/risk/black-swan-history.test.ts
+  s_66be13389b5e34::t_91f1421b89c8cf 2,11,15-17,43,50-52,427,429
+backend/tests/risk/todo-suggestions-helpers.test.ts
+  s_66be13389b5e34::t_fe83d027f649c0 2,7,15-16
+backend/tests/services/ai-stock-analysis-modal-v2-helpers.test.ts
+  s_186c505eb579e0::t_8515daf377ae66 132,136,141,143,216,218
+backend/tests/services/alert-item-action-helpers.test.ts
+  s_186c505eb579e0::t_c97bc64ce1287d 25,354-355,361,366,371,469,471,473-474,477-478,481-482
+backend/tests/services/alerts-bell-helpers.test.ts
+  s_186c505eb579e0::t_d3effbd977e8fe 19,24,67-68,188-190,201,203,207,211,215,219-220,243,251-252,329,331,333-334,337-338
+backend/tests/services/alerts-panel-helpers.test.ts
+  s_186c505eb579e0::t_b7478531f23d4f 23
+backend/tests/services/daily-trading-digest-service.test.ts
+  s_186c505eb579e0::t_4a011587f758ad 15,19,347-352,356-362,365,369-370,532-535,538-539,541-543,547-548,554,627,647,726-727,891
+backend/tests/services/data-workspace-tab-helpers.test.ts
+  s_186c505eb579e0::t_4f5fe6befcb6fb 19,392-393,412,415-418
+backend/tests/services/etf-flow-sync-service.test.ts
+  s_186c505eb579e0::t_9d015d13ab20b6 678-679,706,709,711,727,753,755,794,796-800,820,822
+backend/tests/services/overfit-metrics-helpers.test.ts
+  s_6ca1020a327476::t_e42dbddc81f213 511-512,515-516
+backend/tests/services/policy-news-helpers.test.ts
+  s_6ca1020a327476::t_ca58c4d77b1309 397-398,401-402,408-409
+backend/tests/services/quarterly-retrain.test.ts
+  s_6ca1020a327476::t_da14fbbbe147f1 396-397,400-401
+backend/tests/services/sprint-24-integration.test.ts
+  s_186c505eb579e0::t_a9c6256cacacd8 2,4-7,64,67-68,98,101-102,163-165
+backend/tests/services/v3-recommendation-fanin.test.ts
+  s_186c505eb579e0::t_c6b0caf2ff1468 2,5,9,41-42,44-53,56-57,59,76-80,83-84,87-88,91-92,98-102,174-177,186,188,196,198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9f38b0892bf40ac5c9a1d4070cc0b96d6289d1f1",
+  "prompts": {},
+  "sessions": {
+    "s_186c505eb579e0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6199-27d8-71d1-9690-4bab5194e1de",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_66be13389b5e34": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f619f-6bce-7833-8fbd-fd76831f9fb7",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
