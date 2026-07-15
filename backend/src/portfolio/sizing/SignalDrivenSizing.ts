@@ -161,7 +161,8 @@ export function computeMinTradeAmount(
   const floor = Number(min_trade_amount);
   if (!Number.isFinite(pct) || !Number.isFinite(total) || total <= 0) return 0;
   const raw = (total * pct) / 100;
-  const minimum = Number.isFinite(floor) && floor > 0 ? floor : CONFIDENCE_DRIVEN_DEFAULT_MIN_TRADE_AMOUNT;
+  const minimum =
+    Number.isFinite(floor) && floor > 0 ? floor : CONFIDENCE_DRIVEN_DEFAULT_MIN_TRADE_AMOUNT;
   return Math.max(raw, minimum);
 }
 

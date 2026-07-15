@@ -173,13 +173,13 @@ function testCompareSingleStockThresholds() {
     `diff=${subTol.diff_fraction}`
   );
 
-  // -- limit NaN 防御兜底用 DEFAULT 0.10 --
+  // -- limit NaN 防御兜底用 PR-M4 DEFAULT 0.15 --
   const limitNaN = compareSingleStockThresholds(
     makeSizing(10),
     { ...DEFAULT_POSITION_LIMITS, max_single_stock_pct: NaN } as PositionLimitsConfig
   );
   expectClose(
-    'limit NaN → fallback 0.10',
+    'limit NaN → fallback 0.15',
     limitNaN.limit_pct_fraction,
     DEFAULT_POSITION_LIMITS.max_single_stock_pct
   );
@@ -199,11 +199,11 @@ function testCompareRawInputs() {
   expectEqual('raw critical drift', rep.severity, 'critical');
   expectClose('raw sizing=0.25', rep.sizing_pct_fraction, 0.25);
   expectClose('raw limit=0.10', rep.limit_pct_fraction, 0.1);
-  // 全 undefined → 默认 12% vs 10% → warn (差 2pp)
+  // 全 undefined → 默认 sizing 12% <= limit 15%，无冲突。
   const defaults = compareRawInputs(undefined, undefined);
-  expectEqual('all-default → warn (DEFAULT 12 vs 10)', defaults.severity, 'warn');
+  expectEqual('all-default → info (DEFAULT 12 <= 15)', defaults.severity, 'info');
   expectClose('all-default sizing=0.12', defaults.sizing_pct_fraction, 0.12);
-  expectClose('all-default limit=0.10', defaults.limit_pct_fraction, 0.1);
+  expectClose('all-default limit=0.15', defaults.limit_pct_fraction, 0.15);
 }
 
 // ============================================================
@@ -296,8 +296,8 @@ async function testRunDriftAudit() {
     (results[2].error || '').includes('not found'),
     `err="${results[2].error}"`
   );
-  // user 4: 默认 sizing 12 vs limit 0.1 → 差 2pp → warn
-  expectEqual('user 4 warn (default 12% vs 10%)', results[3].report?.severity, 'warn');
+  // user 4 使用本测试显式注入的 limit 10%：sizing 12% 高 2pp，仍为 warn。
+  expectEqual('user 4 warn (sizing 12% vs injected limit 10%)', results[3].report?.severity, 'warn');
 }
 
 // ============================================================

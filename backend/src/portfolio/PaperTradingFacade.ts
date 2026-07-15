@@ -813,10 +813,22 @@ export function evaluateIndustryConcentrationCap(input: {
     proposed_cost: proposed,
   };
   if (total <= 0) {
-    return { ok: true, industry_value: industryVal, industry_value_after: after, cap_amount: cap, detail };
+    return {
+      ok: true,
+      industry_value: industryVal,
+      industry_value_after: after,
+      cap_amount: cap,
+      detail,
+    };
   }
   if (industry === '__UNKNOWN__') {
-    return { ok: true, industry_value: industryVal, industry_value_after: after, cap_amount: cap, detail };
+    return {
+      ok: true,
+      industry_value: industryVal,
+      industry_value_after: after,
+      cap_amount: cap,
+      detail,
+    };
   }
   if (after > cap) {
     return {
@@ -832,7 +844,13 @@ export function evaluateIndustryConcentrationCap(input: {
       detail,
     };
   }
-  return { ok: true, industry_value: industryVal, industry_value_after: after, cap_amount: cap, detail };
+  return {
+    ok: true,
+    industry_value: industryVal,
+    industry_value_after: after,
+    cap_amount: cap,
+    detail,
+  };
 }
 
 export class PaperTradingFacade {
@@ -1452,8 +1470,7 @@ export class PaperTradingFacade {
           (s, p) => s + (Number(p.market_value) || 0),
           0
         );
-        const currentTotalValue =
-          (Number(portfolio.current_cash) || 0) + currentMarketValue;
+        const currentTotalValue = (Number(portfolio.current_cash) || 0) + currentMarketValue;
 
         // 2) 单仓 5% 上限 — soft cap, 超额自动降 quantity.
         sizingCapDecision = evaluateSinglePositionCap({
@@ -1480,7 +1497,9 @@ export class PaperTradingFacade {
           }
           logger.warn(
             `[facade.placeOrder][PR-M4 sizing_cap] user=${user_id} ${symbol} ` +
-              `建议买入 ${quantity} 股 (¥${cost.toFixed(0)}) 超 5% 上限 (¥${capAmount.toFixed(0)}) ` +
+              `建议买入 ${quantity} 股 (¥${cost.toFixed(0)}) 超 5% 上限 (¥${capAmount.toFixed(
+                0
+              )}) ` +
               `→ 自动降到 ${newQuantity} 股`
           );
           quantity = newQuantity;
@@ -1531,7 +1550,9 @@ export class PaperTradingFacade {
           logger.warn(
             `[facade.placeOrder][PR-M4 industry_cap] user=${user_id} ${symbol} ` +
               `板块 ${industryCapDecision.detail.industry} 已占 ¥${industryValue.toFixed(0)}, ` +
-              `本单 ¥${cost.toFixed(0)} 加后超 25% cap ¥${industryCapDecision.cap_amount.toFixed(0)} — 拒单`
+              `本单 ¥${cost.toFixed(0)} 加后超 25% cap ¥${industryCapDecision.cap_amount.toFixed(
+                0
+              )} — 拒单`
           );
           const err: any = new Error(industryCapDecision.message);
           err.statusCode = 400;
@@ -1798,7 +1819,7 @@ export class PaperTradingFacade {
     // fire-and-forget — 失败不阻塞 SELL trade 已落库.
     try {
       // 找该 portfolio 对应 symbol 还 open 的 outcome.signal_id, 触发刷新
-      const { RecommendationTradeOutcome } = require('../models/RecommendationTradeOutcome');
+      const { RecommendationTradeOutcome } = await import('../models/RecommendationTradeOutcome');
       const openOutcomes = await RecommendationTradeOutcome.findAll({
         where: { portfolio_id: portfolio.id, symbol, trade_status: 'open' },
         attributes: ['signal_id'],
