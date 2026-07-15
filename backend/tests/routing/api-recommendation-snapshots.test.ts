@@ -1,6 +1,7 @@
 import express from 'express';
+import jwt from 'jsonwebtoken';
 import request from 'supertest';
-import { buildRecommendationSnapshotRoutes } from '../../src/api/routes/recommendationSnapshot.routes';
+import { User } from '../../src/models/User';
 import {
   RecommendationSnapshotConflictError,
   RecommendationSnapshotContractError,
@@ -12,6 +13,26 @@ import {
   type RecommendationSnapshotPage,
 } from '../../src/recommendations/RecommendationSnapshotReadPort';
 import { createHash } from 'crypto';
+
+const JWT_SECRET = 'api-recommendation-snapshots-test-secret';
+const AUTH_USER = {
+  id: 9001,
+  username: 'routing-test-user',
+  email: 'routing-test@example.com',
+  role: 'admin',
+  is_active: true,
+} as User;
+
+process.env.JWT_SECRET = JWT_SECRET;
+(User as any).findByPk = async (userId: number) => (userId === AUTH_USER.id ? AUTH_USER : null);
+
+const AUTHORIZATION = `Bearer ${jwt.sign(
+  { user_id: AUTH_USER.id, username: AUTH_USER.username, role: AUTH_USER.role },
+  JWT_SECRET,
+  { expiresIn: '5m' }
+)}`;
+const { buildRecommendationSnapshotRoutes } =
+  require('../../src/api/routes/recommendationSnapshot.routes') as typeof import('../../src/api/routes/recommendationSnapshot.routes');
 
 const SNAPSHOT_ID = '11111111-1111-4111-8111-111111111111';
 const TARGET_ID = '22222222-2222-4222-8222-222222222222';
@@ -119,6 +140,10 @@ function buildApp(port: RecommendationSnapshotReadPort): express.Express {
   return app;
 }
 
+function authorizedGet(app: express.Express, path: string) {
+  return request(app).get(path).set('Authorization', AUTHORIZATION);
+}
+
 let passed = 0;
 let failed = 0;
 
@@ -136,7 +161,19 @@ async function main(): Promise<void> {
   const calls: PortCall[] = [];
   const app = buildApp(buildPort(calls));
 
-  const latest = await request(app).get(
+  const callsBeforeAuth = calls.length;
+  const missingAuthorization = await request(app).get(
+    '/api/v1/ai/recommendations/latest?profile=us_preferred&market_scope=us'
+  );
+  assert('missing Authorization returns 401', missingAuthorization.status === 401);
+  const invalidAuthorization = await request(app)
+    .get('/api/v1/ai/recommendations/latest?profile=us_preferred&market_scope=us')
+    .set('Authorization', 'Bearer invalid.jwt.token');
+  assert('invalid Authorization returns 401', invalidAuthorization.status === 401);
+  assert('unauthorized requests do not call port', calls.length === callsBeforeAuth);
+
+  const latest = await authorizedGet(
+    app,
     '/api/v1/ai/recommendations/latest?profile=us_preferred&market_scope=us'
   );
   assert('latest returns 200', latest.status === 200);
@@ -151,12 +188,19 @@ async function main(): Promise<void> {
   assert('latest preserves full meta', latest.body.meta?.pipeline_version === '3.1.0');
   assert('latest preserves recommendation item', latest.body.items?.[0]?.rating_band === 'A');
   assert(
+    'latest is the exact public envelope without server audit fields',
+    !Object.prototype.hasOwnProperty.call(latest.body, 'fingerprint_preimage_jcs') &&
+      Object.keys(latest.body).sort().join(',') ===
+        'as_of,disclaimer,items,market_scope,meta,output_fingerprint,profile,snapshot_id'
+  );
+  assert(
     'latest passes explicit scope',
     JSON.stringify(calls.at(-1)?.args[0]) ===
       JSON.stringify({ profile: 'us_preferred', market_scope: 'us' })
   );
 
-  const byDate = await request(app).get(
+  const byDate = await authorizedGet(
+    app,
     '/api/v1/ai/recommendations/by-date/2026-07-10' +
       '?profile=multibagger&market_scope=cn_a&page=2&page_size=10'
   );
@@ -174,34 +218,43 @@ async function main(): Promise<void> {
       })
   );
 
-  const detail = await request(app).get(`/api/v1/ai/recommendations/${SNAPSHOT_ID}`);
+  const detail = await authorizedGet(app, `/api/v1/ai/recommendations/${SNAPSHOT_ID}`);
   assert('detail returns 200', detail.status === 200);
+  assert(
+    'detail retains physical fingerprint audit preimage',
+    detail.body.fingerprint_preimage_jcs === DETAIL.fingerprint_preimage_jcs
+  );
   assert('detail uses snapshot id', calls.at(-1)?.args[0] === SNAPSHOT_ID);
 
-  const diff = await request(app).get(
+  const diff = await authorizedGet(
+    app,
     `/api/v1/ai/recommendations/${SNAPSHOT_ID}/diff/${TARGET_ID}`
   );
   assert('diff returns 200', diff.status === 200);
   assert('diff returns deterministic arrays', JSON.stringify(diff.body.changed) === '["AAPL"]');
 
   const beforeInvalid = calls.length;
-  const missingScope = await request(app).get(
+  const missingScope = await authorizedGet(
+    app,
     '/api/v1/ai/recommendations/latest?profile=us_preferred'
   );
   assert('missing scope returns 400', missingScope.status === 400);
-  const invalidProfile = await request(app).get(
+  const invalidProfile = await authorizedGet(
+    app,
     '/api/v1/ai/recommendations/latest?profile=custom&market_scope=us'
   );
   assert('custom returns 400', invalidProfile.status === 400);
-  const incompatibleScope = await request(app).get(
+  const incompatibleScope = await authorizedGet(
+    app,
     '/api/v1/ai/recommendations/latest?profile=japan_blue_chip&market_scope=us'
   );
   assert('incompatible profile/scope returns 400', incompatibleScope.status === 400);
-  const invalidDate = await request(app).get(
+  const invalidDate = await authorizedGet(
+    app,
     '/api/v1/ai/recommendations/by-date/not-a-date' + '?profile=us_preferred&market_scope=us'
   );
   assert('invalid date returns 400', invalidDate.status === 400);
-  const invalidDiff = await request(app).get(`/api/v1/ai/recommendations/bad/diff/${TARGET_ID}`);
+  const invalidDiff = await authorizedGet(app, `/api/v1/ai/recommendations/bad/diff/${TARGET_ID}`);
   assert('invalid diff id returns 400', invalidDiff.status === 400);
   assert('invalid requests do not call port', calls.length === beforeInvalid);
 
@@ -218,14 +271,15 @@ async function main(): Promise<void> {
   assert(
     'null latest returns 404',
     (
-      await request(missingApp).get(
+      await authorizedGet(
+        missingApp,
         '/api/v1/ai/recommendations/latest?profile=us_preferred&market_scope=us'
       )
     ).status === 404
   );
   assert(
     'not-found error returns 404',
-    (await request(missingApp).get(`/api/v1/ai/recommendations/${SNAPSHOT_ID}`)).status === 404
+    (await authorizedGet(missingApp, `/api/v1/ai/recommendations/${SNAPSHOT_ID}`)).status === 404
   );
 
   const errorPort = (
@@ -240,32 +294,35 @@ async function main(): Promise<void> {
   assert(
     'conflict returns 409',
     (
-      await request(
+      await authorizedGet(
         buildApp(
           errorPort(new RecommendationSnapshotConflictError('Snapshot diff scope mismatch'), 'diff')
-        )
-      ).get(`/api/v1/ai/recommendations/${SNAPSHOT_ID}/diff/${TARGET_ID}`)
+        ),
+        `/api/v1/ai/recommendations/${SNAPSHOT_ID}/diff/${TARGET_ID}`
+      )
     ).status === 409
   );
   assert(
     'contract error returns 422',
     (
-      await request(
+      await authorizedGet(
         buildApp(
           errorPort(
             new RecommendationSnapshotContractError('Persisted snapshot is malformed'),
             'detail'
           )
-        )
-      ).get(`/api/v1/ai/recommendations/${SNAPSHOT_ID}`)
+        ),
+        `/api/v1/ai/recommendations/${SNAPSHOT_ID}`
+      )
     ).status === 422
   );
   assert(
     'unavailable store returns 503',
     (
-      await request(
-        buildApp(errorPort(new RecommendationSnapshotStoreUnavailableError(), 'latest'))
-      ).get('/api/v1/ai/recommendations/latest?profile=us_preferred&market_scope=us')
+      await authorizedGet(
+        buildApp(errorPort(new RecommendationSnapshotStoreUnavailableError(), 'latest')),
+        '/api/v1/ai/recommendations/latest?profile=us_preferred&market_scope=us'
+      )
     ).status === 503
   );
 

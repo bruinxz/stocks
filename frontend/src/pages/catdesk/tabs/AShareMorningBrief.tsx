@@ -1,9 +1,9 @@
 import { useState, useMemo, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { useAbortableRequest } from 'shared/hooks/useAbortableRequest';
 import { LoadingState } from '../shared/LoadingState';
 import { EmptyState } from '../shared/EmptyState';
 import { ErrorState } from '../shared/ErrorState';
+import { UnavailableState } from '../shared/UnavailableState';
 import { DisclaimerFooter } from '../shared/DisclaimerFooter';
 import { MorningBriefTable } from './morning/MorningBriefTable';
 import { MorningFilterBar } from './morning/MorningFilterBar';
@@ -12,17 +12,15 @@ import { buildMorningSections } from './morning/detail/buildMorningSections';
 import { DetailSidebar } from 'shared/components/DetailSidebar';
 import type { CandidateListEntry, CatalystKind } from './c1Types';
 import { CONVICTION_MED_MIN } from '../types';
+import {
+  loadRecommendationCandidateFeed,
+  type RecommendationCandidateLoadResult,
+} from './recommendationCandidates';
 
 interface MorningFilters {
   sector: string | null;
   catalystKind: CatalystKind | null;
   convictionMinMed: boolean;
-}
-
-interface MorningBriefResponse {
-  kpi: { activity: number; overnight_sentiment: number; futures: number; breakout_prob: number };
-  candidates: CandidateListEntry[];
-  disclaimer_version: string;
 }
 
 const DEFAULT_FILTERS: MorningFilters = {
@@ -31,35 +29,30 @@ const DEFAULT_FILTERS: MorningFilters = {
   convictionMinMed: false,
 };
 
-function todayISO(): string {
-  const d = new Date();
-  return d.toISOString().slice(0, 10);
-}
-
 function extractSectors(rows: CandidateListEntry[]): string[] {
   const set = new Set<string>();
   rows.forEach(r => {
     const cat = r.latest_catalyst as
-      { kind: CatalystKind; title: string; occurred_at: string; sector?: string } | undefined;
+      | { kind: CatalystKind; title: string; occurred_at: string; sector?: string }
+      | undefined;
     if (cat?.sector) set.add(cat.sector);
   });
   return Array.from(set).sort();
 }
 
 export default function AShareMorningBrief() {
-  const [sp] = useSearchParams();
-  const dateParam = sp.get('date') ?? todayISO();
   const [filters, setFilters] = useState<MorningFilters>(DEFAULT_FILTERS);
   const [selectedRow, setSelectedRow] = useState<CandidateListEntry | null>(null);
 
-  const { data, loading, error } = useAbortableRequest<MorningBriefResponse>(
-    signal =>
-      fetch(`/api/v1/morning-brief/${encodeURIComponent(dateParam)}`, { signal }).then(r => {
-        if (!r.ok) throw new Error(`morning-brief ${r.status}`);
-        return r.json();
-      }),
-    [dateParam]
+  const {
+    data: loadResult,
+    loading,
+    error,
+  } = useAbortableRequest<RecommendationCandidateLoadResult>(
+    signal => loadRecommendationCandidateFeed(signal, 'us_preferred', 'cn_a'),
+    []
   );
+  const data = loadResult?.kind === 'ready' ? loadResult.feed : null;
 
   const filtered = useMemo(() => {
     if (!data?.candidates) return [];
@@ -92,9 +85,13 @@ export default function AShareMorningBrief() {
   );
 
   if (loading) return <LoadingState />;
-  if (error) return <ErrorState message={typeof error === 'string' ? error : '数据加载失败'} />;
+  if (error) return <ErrorState message="数据加载失败" />;
+  if (loadResult?.kind === 'not_generated')
+    return <EmptyState title="当前尚未生成 A 股推荐快照" variant="simple" />;
+  if (loadResult?.kind === 'unavailable')
+    return <UnavailableState message="推荐服务当前不可用，请稍后重试" />;
   if (!data?.candidates?.length)
-    return <EmptyState title="今日暂无 A 股早报数据" variant="simple" />;
+    return <EmptyState title="当前尚未生成 A 股推荐快照" variant="simple" />;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
@@ -106,7 +103,7 @@ export default function AShareMorningBrief() {
             ? filtered.reduce((s, r) => s + (r.score?.total ?? 0), 0) / filtered.length
             : 0
         }
-        updatedAt={dateParam}
+        updatedAt={data.kpi.updated_at}
       />
       <MorningFilterBar
         sector={filters.sector}

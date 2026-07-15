@@ -13,6 +13,8 @@ interface RiskTrigger {
 
 interface RiskGateDetailCardProps {
   triggers?: RiskTrigger[];
+  gate?: 'GREEN' | 'YELLOW' | 'RED';
+  okToEnter?: boolean;
 }
 
 const SEVERITY_COLORS: Record<Severity, string> = {
@@ -50,7 +52,11 @@ const detailStyle: React.CSSProperties = {
   color: 'var(--cd-text-secondary)',
 };
 
-export function RiskGateDetailCard({ triggers = [] }: RiskGateDetailCardProps) {
+export function RiskGateDetailCard({
+  triggers = [],
+  gate,
+  okToEnter,
+}: RiskGateDetailCardProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const toggle = (id: string) => {
@@ -65,6 +71,17 @@ export function RiskGateDetailCard({ triggers = [] }: RiskGateDetailCardProps) {
   return (
     <div style={cardStyle}>
       <div style={titleStyle}>风控门控详情</div>
+      {gate ? (
+        <div style={{ ...rowStyle, cursor: 'default', marginBottom: 8 }}>
+          <span style={{ color: 'var(--cd-text-secondary)' }}>门禁结论</span>
+          <Tag color={gate === 'GREEN' ? 'green' : gate === 'YELLOW' ? 'gold' : 'red'}>
+            {gate} · {okToEnter ? '可入场' : '不可入场'}
+          </Tag>
+        </div>
+      ) : null}
+      {triggers.length === 0 ? (
+        <div style={{ color: 'var(--cd-text-secondary)', fontSize: 12 }}>无风险触发项</div>
+      ) : null}
       {triggers.map(t => (
         <div key={t.id}>
           <div style={rowStyle} onClick={() => toggle(t.id)}>
