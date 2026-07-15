@@ -1,0 +1,49 @@
+backend/scripts/migrations/2026-07-15-retire-restricted-share-watchdog.sql
+  s_66be13389b5e34::t_36b9fa20c6027d 1-4
+backend/src/constants/cronRegistry.ts
+  s_66be13389b5e34::t_564139ef4a6fa8 241,399-401,422-423
+backend/src/quant/health/internal/QuantOpenWatchdogService.ts
+  s_186c505eb579e0::t_5d7e17e1ecbf01 28-32,130-150,169
+backend/src/services/SchedulerService.ts
+  s_186c505eb579e0::t_c1c391f725bfa2 2,62,71-86,90,512-516,902-924,934,1097,1106,1120,1173-1175,2470-2472,2493-2495,2580-2582,2620-2623,3737,3794-3796,3821,4100,4656-4658,5065,5072,5096-5098,5130-5133,5189-5192,5284,5287,5336-5337,5491-5493,5578-5579,6626
+backend/src/services/scheduler/retiredScheduledTask.ts
+  s_186c505eb579e0::t_141bd648d39208 1-99
+backend/tests/quant/quant_open_watchdog_archived_zero.test.ts
+  s_6ca1020a327476::t_625365b2e2ef54 68-69
+backend/tests/services/scheduler-restricted-share-retirement.test.ts
+  s_186c505eb579e0::t_1d6327a26d0b9f 1-182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7a1934b3a1787bd9126d7a1cc14c6abac9486a2f",
+  "prompts": {},
+  "sessions": {
+    "s_186c505eb579e0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6199-27d8-71d1-9690-4bab5194e1de",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_66be13389b5e34": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f619f-6bce-7833-8fbd-fd76831f9fb7",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
