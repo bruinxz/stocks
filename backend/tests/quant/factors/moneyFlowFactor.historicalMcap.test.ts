@@ -13,6 +13,8 @@
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 let failed = 0;
 let passed = 0;
@@ -50,6 +52,23 @@ function restore() {
 
 async function main() {
   console.log('loadHistoricalCirculatingMarketCap (audit M-8)');
+
+  await it('MoneyFlowFactor 使用共享历史市值 loader，不再走永久空 Map stub', () => {
+    const source = readFileSync(
+      resolve(__dirname, '../../../src/quant/factors/library/MoneyFlowFactor.ts'),
+      'utf8'
+    );
+    assert.match(
+      source,
+      /import\s+\{\s*loadHistoricalCirculatingMarketCap\s*\}\s+from\s+['"]\.\/_historicalMarketCap['"]/,
+      'MoneyFlowFactor must import the PIT-aware shared loader'
+    );
+    assert.doesNotMatch(
+      source,
+      /loadHistoricalCirculatingMarketCap\s*=.*new Map/,
+      'MoneyFlowFactor must not silently replace the loader with an empty stub'
+    );
+  });
 
   await it('happy: 用 valuation factor 取 as_of 当时市值, 不用最新 snapshot', async () => {
     // 模拟: 600519 在 2020-01 的市值 5000 亿, 但 Stock 表最新 snapshot 25000 亿
