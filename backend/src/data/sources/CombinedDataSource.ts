@@ -35,26 +35,6 @@ export type QueryParams = {
   adjustflag?: '1' | '2' | '3';
 };
 
-// Batch AR (2026-06-21): 已知退市股黑名单 — 上游所有 K 线源都返 socket hang up,
-// 每天每只票每个 cron 会刷一次 error.log * 4 source = 24 行/次, 累计数千行.
-// 这些代码已 100% 确认退市 (审计 2026-06-21 前 30 天 SinaFinance 全 404 / EastMoney
-// secid 失效). 后续如有新增退市票, prefer Stock.is_listed=false + delisting_date
-// 数据库扫描 (TODO BAS); 当前先用静态名单兜底快速止血.
-const KNOWN_DELISTED_SYMBOLS = new Set<string>([
-  'sh.600089',
-  'sh.600121',
-  'sh.600064',
-  'sh.600157',
-  'sh.600350',
-  'sh.600280',
-  'sh.600256',
-  'sh.600163',
-]);
-
-function isKnownDelisted(normalizedCode: string): boolean {
-  return KNOWN_DELISTED_SYMBOLS.has(normalizedCode.toLowerCase());
-}
-
 export class CombinedDataSource {
   private eastMoneyClient: EastMoneyClient;
   private akshareClient: AKShareClient;
@@ -455,12 +435,6 @@ export class CombinedDataSource {
     preferred_provider = 'auto'
   ): Promise<DailyBar[]> {
     const normalizedCode = normalizeSymbol(code);
-    // Batch AR (2026-06-21): 已知退市股直接短路, 避免 6 票 × 4 source × 多 cron
-    // 每天刷数千行 error.log. 调用者拿到空数组 (与无数据日同语义).
-    if (isKnownDelisted(normalizedCode)) {
-      logger.warn(`Skipping history k fetch for ${normalizedCode}: in known-delisted blacklist`);
-      return [];
-    }
     const eastMoneyCode = toEastMoneyFormat(normalizedCode);
     const strictProviderOnly = preferred_provider.endsWith('_only');
 

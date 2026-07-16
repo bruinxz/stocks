@@ -117,8 +117,29 @@ async def _persist_official(
         fx = parse_boj_capture_fixture(
             json.loads(boj_file.read_text(encoding="utf-8")), as_of_utc=as_of
         )
+        latest_fx_rows = await pool.fetch(
+            "SELECT pair, MAX(observation_day) AS latest_day "
+            "FROM jpkr_fx_observation WHERE source_kind IN ('BOJ', 'BOK') "
+            "GROUP BY pair"
+        )
+        latest_fx_days = {
+            str(row["pair"]): row["latest_day"] for row in latest_fx_rows
+        }
+        # Captures intentionally overlap recent days. FxObservationWriter verifies
+        # predecessor lineage before idempotency, so replaying the capture's first
+        # lineage-free row against an existing history is invalid. Only send rows
+        # newer than the persisted watermark; the first new row then cites the
+        # authoritative predecessor already stored in PostgreSQL.
+        pending_fx = tuple(
+            observation
+            for observation in fx
+            if latest_fx_days.get(observation.pair) is None
+            or observation.observation_day > latest_fx_days[observation.pair]
+        )
         kline_result = await JpKrOfficialWriter(pool).write_klines(klines)
-        fx_result = await FxObservationWriter(pool).write_batch(fx, as_of_utc=as_of)
+        fx_result = await FxObservationWriter(pool).write_batch(
+            pending_fx, as_of_utc=as_of
+        )
         return {
             "ok": True,
             "jp_kline": kline_result.__dict__,

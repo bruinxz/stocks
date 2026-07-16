@@ -31,9 +31,8 @@ from datapipeline.storage.backtest_pit.writer import (
 )
 
 
-WINDOW_START = date(2026, 1, 10)
-WINDOW_END = date(2026, 7, 10)
 CHECKPOINT_COUNT = 27
+DEFAULT_WINDOW_DAYS = 183
 WEIGHTS = (Decimal("0.3333333333"), Decimal("0.3333333333"), Decimal("0.3333333334"))
 
 SESSIONS_SQL = """
@@ -182,13 +181,30 @@ def _quantized(value: float) -> Decimal:
     return Decimal(str(value)).quantize(Decimal("0.0000000001"), rounding=ROUND_HALF_EVEN)
 
 
-def _read_inputs(database_url: str):
+def _read_inputs(
+    database_url: str,
+    requested_start: date | None,
+    requested_end: date | None,
+):
     import psycopg
     from psycopg.rows import dict_row
 
     with psycopg.connect(database_url, row_factory=dict_row) as connection:
         with connection.cursor() as cursor:
-            cursor.execute(SESSIONS_SQL, (WINDOW_START, WINDOW_END))
+            window_end = requested_end
+            if window_end is None:
+                cursor.execute(
+                    "SELECT MAX(time)::date AS trading_day "
+                    "FROM daily_bars WHERE is_trading_day = TRUE"
+                )
+                latest = cursor.fetchone()
+                window_end = latest["trading_day"] if latest else None
+            if window_end is None:
+                raise RuntimeError("daily_bars does not contain a trading day")
+            window_start = requested_start or (window_end - timedelta(days=DEFAULT_WINDOW_DAYS))
+            if window_start >= window_end:
+                raise RuntimeError("window start must be earlier than window end")
+            cursor.execute(SESSIONS_SQL, (window_start, window_end))
             sessions = [row["trading_day"] for row in cursor.fetchall()]
             checkpoints = _checkpoints(sessions)
             selections = []
@@ -201,10 +217,10 @@ def _read_inputs(database_url: str):
                 if len(rows) != 3:
                     raise RuntimeError(f"checkpoint {checkpoint} has fewer than 3 holdings")
                 selections.append(rows)
-    return sessions, checkpoints, selections
+    return window_start, window_end, sessions, checkpoints, selections
 
 
-def _build_facts(sessions, checkpoints, selections):
+def _build_facts(sessions, checkpoints, selections, window_start: date, window_end: date):
     snapshots = []
     nav = 1.0
     peak_nav = 1.0
@@ -300,8 +316,8 @@ def _build_facts(sessions, checkpoints, selections):
             "sharpe_ratio_6m": sharpe,
             "win_rate_6m": sum(value > 0 for value in interval_returns) / len(interval_returns),
             "metric_contract_version": "1.0.0",
-            "window_start": WINDOW_START.isoformat(),
-            "window_end": WINDOW_END.isoformat(),
+            "window_start": window_start.isoformat(),
+            "window_end": window_end.isoformat(),
             "evaluated_session_count": session_index[checkpoint],
             "checkpoint_index": checkpoint_index,
             "checkpoint_count": CHECKPOINT_COUNT,
@@ -330,7 +346,7 @@ def _build_facts(sessions, checkpoints, selections):
             is_survivorship_biased=False,
             is_delisted_at_as_of=False,
             source_versions={
-                "calendar": "production-daily-bars-calendar@2026-07-10",
+                "calendar": f"production-daily-bars-calendar@{window_end.isoformat()}",
                 "membership": "stock-master-listing-history@1.0.0",
                 "prices": "daily-bars-pit@1.0.0",
                 "ranking": "momentum-liquidity-risk@1.0.0",
@@ -362,24 +378,56 @@ async def _write(values, facts):
         max_size=2,
     )
     manifests = []
+    deleted = 0
     try:
-        writer = PitSnapshotWriter(pool)
+        writer = PitSnapshotWriter(pool, validation_profile="rolling_production")
+        # Validate every immutable fact before replacing the previous production
+        # window. Frozen fixture rows use a different calendar source and are never
+        # touched by this live maintenance script.
+        for snapshot, holdings in facts:
+            writer.validate(snapshot, holdings)
+        async with pool.acquire() as connection:
+            deleted = await connection.fetchval(
+                """
+                WITH deleted AS (
+                  DELETE FROM backtest_pit_snapshot
+                   WHERE strategy = 'us_preferred'
+                     AND market_scope = 'cn_a'
+                     AND source_versions->>'calendar'
+                         LIKE 'production-daily-bars-calendar@%'
+                  RETURNING 1
+                )
+                SELECT COUNT(*) FROM deleted
+                """
+            )
         for snapshot, holdings in facts:
             manifests.append(await writer.write_or_verify(snapshot, holdings))
     finally:
         await pool.close()
-    return manifests
+    return manifests, int(deleted or 0)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-file", type=Path, required=True)
+    parser.add_argument("--window-start", type=date.fromisoformat)
+    parser.add_argument("--window-end", type=date.fromisoformat)
     args = parser.parse_args()
     values = _load_env(args.env_file)
     database_url = _database_url(values)
-    sessions, checkpoints, selections = _read_inputs(database_url)
-    facts = _build_facts(sessions, checkpoints, selections)
-    manifests = asyncio.run(_write(values, facts))
+    window_start, window_end, sessions, checkpoints, selections = _read_inputs(
+        database_url,
+        args.window_start,
+        args.window_end,
+    )
+    facts = _build_facts(
+        sessions,
+        checkpoints,
+        selections,
+        window_start,
+        window_end,
+    )
+    manifests, deleted = asyncio.run(_write(values, facts))
     print(
         json.dumps(
             {
@@ -389,6 +437,9 @@ def main() -> int:
                 "snapshot_count": len(manifests),
                 "holding_count": len(manifests) * 3,
                 "inserted": sum(manifest.inserted for manifest in manifests),
+                "replaced_snapshot_count": deleted,
+                "window_start": window_start.isoformat(),
+                "window_end": window_end.isoformat(),
                 "first_day": checkpoints[0].isoformat(),
                 "last_day": checkpoints[-1].isoformat(),
             },
