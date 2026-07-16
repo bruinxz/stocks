@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { Op, QueryTypes } from 'sequelize';
 import { Stock } from '../../models/Stock';
 import { DailyBar } from '../../models/DailyBar';
+import { sequelize } from '../../config/database';
 import { logger } from '../../utils/logger';
 
 export class StockController {
@@ -45,7 +46,7 @@ export class StockController {
       });
 
       const quoteRows = rows.length
-        ? await Stock.sequelize!.query<{
+        ? await sequelize.query<{
             stock_id: number;
             quote_date: string;
             close: string | number;
