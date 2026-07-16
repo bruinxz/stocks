@@ -52,6 +52,7 @@ PGDATABASE="$DB" "$PYTHON_BIN" \
 DB_HOST="$PGHOST" DB_PORT="$PGPORT" DB_USER="$PGUSER" DB_PASSWORD="" \
 DB_NAME="$DB" NODE_ENV=test SKIP_DEFAULT_USER_INIT=true \
 JWT_SECRET=tab5-six-month-live-http-jwt-secret \
+JWT_REFRESH_SECRET=tab5-six-month-live-http-refresh-secret \
 T5D_LIVE_HTTP_TEST=1 \
 T5D_RESPONSE_ARTIFACT="$(basename "$ARTIFACT")" \
   "$ROOT/backend/node_modules/.bin/ts-node" --transpile-only \
