@@ -533,6 +533,8 @@ def build_typed_replay_runtime(
     pipeline,
     job_store,
     uuid_factory=None,
+    lease_token_factory=None,
+    lease_seconds: int = 150,
     clock=None,
 ) -> tuple[ReplayService, ReplayWorker, TypedReplaySources]:
     sources = TypedReplaySources(repository)
@@ -547,6 +549,9 @@ def build_typed_replay_runtime(
     }
     if uuid_factory is not None:
         kwargs["uuid_factory"] = uuid_factory
+    if lease_token_factory is not None:
+        kwargs["lease_token_factory"] = lease_token_factory
+    kwargs["lease_seconds"] = lease_seconds
     if clock is not None:
         kwargs["clock"] = clock
     service = ReplayService(**kwargs)

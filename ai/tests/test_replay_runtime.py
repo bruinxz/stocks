@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import stat
 import tempfile
 import unittest
 import uuid
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -304,6 +305,14 @@ def _job(pins, *, job_id=str(JOB_ID)):
         status="queued",
         created_at=NOW_TEXT,
         updated_at=NOW_TEXT,
+    )
+
+
+def _claimed(job, *, token="c" * 64):
+    return job.claimed(
+        NOW_TEXT,
+        lease_token=token,
+        lease_expires_at="2026-07-10T06:32:30Z",
     )
 
 
@@ -654,8 +663,8 @@ class ReplayRuntimeTests(unittest.TestCase):
 
             first, created = store.create_or_get(job)
             second, created_again = store.create_or_get(job)
-            running = job.running(NOW_TEXT)
-            transitioned = store.transition(job.job_id, "queued", running)
+            running = _claimed(job)
+            transitioned = store.transition(job.job_id, job, running)
 
             self.assertTrue(created)
             self.assertFalse(created_again)
@@ -663,11 +672,89 @@ class ReplayRuntimeTests(unittest.TestCase):
             self.assertEqual(transitioned, running)
             self.assertEqual(AtomicFileReplayJobStore(path).get(job.job_id), running)
             with self.assertRaises(ReplayConflictError):
-                store.transition(job.job_id, "queued", running)
+                store.transition(job.job_id, job, running)
 
             path.write_text('{"version":1,"jobs":[],"keys":{}}')
             with self.assertRaises(ReplayJobStoreCorruptError):
                 store.get(job.job_id)
+
+    def test_legacy_running_job_is_atomically_migrated_for_recovery(self):
+        with _temporary_directory() as directory:
+            path = Path(directory) / "jobs.json"
+            pins = _pins(TypedReplaySources(Repository(_snapshot())))
+            job = _job(pins)
+            legacy_record = asdict(job)
+            for field in ("attempt", "lease_token", "lease_expires_at"):
+                legacy_record.pop(field)
+            legacy_record["status"] = "running"
+            path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "jobs": {job.job_id: legacy_record},
+                        "keys": {job.idempotency_key: job.job_id},
+                    }
+                )
+            )
+            path.chmod(0o600)
+
+            store = AtomicFileReplayJobStore(path)
+            migrated = store.get(job.job_id)
+
+            self.assertEqual(migrated.status, "queued")
+            self.assertEqual(migrated.attempt, 1)
+            self.assertIsNone(migrated.lease_token)
+            self.assertEqual(json.loads(path.read_text())["version"], 2)
+
+    def test_stale_attempt_cannot_commit_after_new_lease_claim(self):
+        with _temporary_directory() as directory:
+            path = Path(directory) / "jobs.json"
+            store = AtomicFileReplayJobStore(path)
+            pins = _pins(TypedReplaySources(Repository(_snapshot())))
+            queued = _job(pins)
+            store.create_or_get(queued)
+            first_attempt = _claimed(queued, token="c" * 64)
+            store.transition(queued.job_id, queued, first_attempt)
+            second_attempt = first_attempt.claimed(
+                "2026-07-10T06:32:31Z",
+                lease_token="d" * 64,
+                lease_expires_at="2026-07-10T06:35:01Z",
+            )
+            store.transition(queued.job_id, first_attempt, second_attempt)
+
+            stale_terminal = first_attempt.completed(
+                ReplayResult(SNAPSHOT_ID, "f" * 64),
+                "2026-07-10T06:31:00Z",
+            )
+            with self.assertRaises(ReplayConflictError):
+                store.transition(queued.job_id, first_attempt, stale_terminal)
+            self.assertEqual(store.get(queued.job_id), second_attempt)
+
+    def test_store_enforces_lease_time_boundaries_without_service_help(self):
+        with _temporary_directory() as directory:
+            path = Path(directory) / "jobs.json"
+            store = AtomicFileReplayJobStore(path)
+            pins = _pins(TypedReplaySources(Repository(_snapshot())))
+            queued = _job(pins)
+            store.create_or_get(queued)
+            running = _claimed(queued, token="c" * 64)
+            store.transition(queued.job_id, queued, running)
+
+            early_reclaim = running.claimed(
+                "2026-07-10T06:31:00Z",
+                lease_token="d" * 64,
+                lease_expires_at="2026-07-10T06:33:30Z",
+            )
+            with self.assertRaises(ReplayConflictError):
+                store.transition(queued.job_id, running, early_reclaim)
+
+            late_terminal = running.completed(
+                ReplayResult(SNAPSHOT_ID, "f" * 64),
+                running.lease_expires_at,
+            )
+            with self.assertRaises(ReplayConflictError):
+                store.transition(queued.job_id, running, late_terminal)
+            self.assertEqual(store.get(queued.job_id), running)
 
     def test_store_rejects_corrupt_identity_and_key_indexes(self):
         with _temporary_directory() as directory:
@@ -712,8 +799,8 @@ class ReplayRuntimeTests(unittest.TestCase):
                 path = root / f"corrupt-{index}.json"
                 path.write_text(content)
                 os.chmod(path, 0o600)
-                store = AtomicFileReplayJobStore(path)
                 with self.assertRaises(ReplayJobStoreCorruptError):
+                    store = AtomicFileReplayJobStore(path)
                     store.get(str(JOB_ID))
 
             permissive = root / "permissive.json"
@@ -868,12 +955,12 @@ class ReplayRuntimeTests(unittest.TestCase):
             store.create_or_get(valid)
             persisted = path.read_text()
             invalid_transition = replace(
-                valid.running(NOW_TEXT),
+                _claimed(valid),
                 pins=replace(pins, profile="custom"),
             )
             with self.assertRaises(ReplayConflictError):
                 store.transition(
-                    valid.job_id, "queued", invalid_transition
+                    valid.job_id, valid, invalid_transition
                 )
             self.assertEqual(path.read_text(), persisted)
 

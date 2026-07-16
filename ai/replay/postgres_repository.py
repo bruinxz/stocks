@@ -7,6 +7,7 @@ import os
 from typing import Any, Optional
 
 from ai.replay.service import ReplayService, ReplaySourceError
+from ai.replay.errors import ReplayInfrastructureError
 from ai.replay.runtime import TypedSourceSnapshot
 from ai.replay.typed_capture import (
     CAPTURE_COLUMNS,
@@ -47,15 +48,15 @@ _FORBIDDEN_LIBPQ_ENV = (
 )
 
 
-class TypedSourceRepositoryConfigurationError(ValueError):
+class TypedSourceRepositoryConfigurationError(ValueError, ReplayInfrastructureError):
     """The repository connection boundary is missing or ambiguous."""
 
 
-class TypedSourceRepositoryDependencyError(RuntimeError):
+class TypedSourceRepositoryDependencyError(ReplayInfrastructureError):
     """The required psycopg3 runtime is unavailable."""
 
 
-class TypedSourceRepositoryReadError(RuntimeError):
+class TypedSourceRepositoryReadError(ReplayInfrastructureError):
     """The capture could not be read without leaking connection details."""
 
 

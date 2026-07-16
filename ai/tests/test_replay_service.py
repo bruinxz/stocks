@@ -10,9 +10,11 @@ from ai.replay.service import (
     ReplayConflictError,
     ReplayJobNotFoundError,
     ReplayPinsError,
+    ReplayRetryableInterruptionError,
     ReplayService,
 )
 from ai.replay.fingerprint import compute_replay_input_fingerprint
+from ai.replay.errors import ReplayInfrastructureError
 from ai.replay.types import (
     ReplayInputs,
     ReplayJob,
@@ -53,9 +55,9 @@ class MemoryJobStore:
     def get(self, job_id):
         return self.jobs.get(job_id)
 
-    def transition(self, job_id, expected_status, updated):
+    def transition(self, job_id, expected, updated):
         current = self.jobs.get(job_id)
-        if current is None or current.status != expected_status:
+        if current is None or current != expected:
             raise ReplayConflictError("compare-and-swap transition failed")
         if updated.job_id != job_id:
             raise ReplayConflictError("transition changed job identity")
@@ -68,10 +70,10 @@ class StaleTransitionStore(MemoryJobStore):
         super().__init__()
         self.stale_expected_status = stale_expected_status
 
-    def transition(self, job_id, expected_status, updated):
-        if expected_status == self.stale_expected_status:
+    def transition(self, job_id, expected, updated):
+        if expected.status == self.stale_expected_status:
             return self.jobs[job_id]
-        return super().transition(job_id, expected_status, updated)
+        return super().transition(job_id, expected, updated)
 
 
 class SubstitutingCreateStore(MemoryJobStore):
@@ -172,12 +174,18 @@ def _inputs(pins):
     )
 
 
-def _service(*, pins=None, pipeline=None, store=None, clock=None):
+def _service(*, pins=None, pipeline=None, store=None, clock=None, lease_seconds=150):
     pins = pins or _pins()
     sources = {
         kind: SourceStub(_source_slice(kind, pins))
         for kind in ("signals", "universe", "scores", "evidence")
     }
+    token_counter = {"value": 0}
+
+    def next_lease_token():
+        token_counter["value"] += 1
+        return format(token_counter["value"], "064x")
+
     service = ReplayService(
         signal_source=sources["signals"],
         universe_source=sources["universe"],
@@ -186,6 +194,8 @@ def _service(*, pins=None, pipeline=None, store=None, clock=None):
         pipeline=pipeline or PipelineStub(),
         job_store=store or MemoryJobStore(),
         uuid_factory=lambda: JOB_ID,
+        lease_token_factory=next_lease_token,
+        lease_seconds=lease_seconds,
         clock=clock or (lambda: NOW),
     )
     return service, sources
@@ -487,8 +497,12 @@ class ReplayServiceTests(unittest.TestCase):
         service, _ = _service(store=store)
         queued = service.submit(_pins())
 
-        store.jobs[queued.job_id] = replace(queued, status="running")
-        with self.assertRaisesRegex(ReplayConflictError, "cannot run"):
+        store.jobs[queued.job_id] = queued.claimed(
+            NOW,
+            lease_token="c" * 64,
+            lease_expires_at="2026-07-12T01:03:03Z",
+        )
+        with self.assertRaisesRegex(ReplayConflictError, "already leased"):
             service.run(queued.job_id)
 
         store.jobs[queued.job_id] = replace(
@@ -535,6 +549,71 @@ class ReplayServiceTests(unittest.TestCase):
             service.run(queued.job_id)
 
         self.assertEqual(len(pipeline.calls), 1)
+        self.assertEqual(store.jobs[queued.job_id].status, "running")
+
+    def test_expired_running_lease_is_reclaimed_with_new_attempt(self):
+        clock = {"now": NOW}
+        store = MemoryJobStore()
+        service, _ = _service(
+            store=store,
+            clock=lambda: clock["now"],
+            lease_seconds=10,
+        )
+        queued = service.submit(_pins())
+        store.jobs[queued.job_id] = queued.claimed(
+            NOW,
+            lease_token="c" * 64,
+            lease_expires_at="2026-07-12T01:02:04Z",
+        )
+        clock["now"] = "2026-07-12T01:02:05Z"
+
+        completed = service.run(queued.job_id)
+
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(completed.attempt, 2)
+        self.assertIsNone(completed.lease_token)
+
+    def test_retryable_worker_interruption_leaves_lease_for_recovery(self):
+        clock = {"now": NOW}
+        store = MemoryJobStore()
+        interrupted = PipelineStub(
+            error=ReplayRetryableInterruptionError("SECRET=/private/path")
+        )
+        service, _ = _service(
+            store=store,
+            pipeline=interrupted,
+            clock=lambda: clock["now"],
+            lease_seconds=10,
+        )
+        queued = service.submit(_pins())
+
+        with self.assertRaises(ReplayRetryableInterruptionError):
+            service.run(queued.job_id)
+        stranded = store.jobs[queued.job_id]
+        self.assertEqual(stranded.status, "running")
+        self.assertEqual(stranded.attempt, 1)
+
+        clock["now"] = "2026-07-12T01:02:14Z"
+        service._pipeline = PipelineStub()
+        recovered = service.run(queued.job_id)
+        self.assertEqual(recovered.status, "completed")
+        self.assertEqual(recovered.attempt, 2)
+
+    def test_infrastructure_failure_is_not_terminalized(self):
+        clock = {"now": NOW}
+        store = MemoryJobStore()
+        service, _ = _service(
+            store=store,
+            pipeline=PipelineStub(
+                error=ReplayInfrastructureError("SECRET=/private/path")
+            ),
+            clock=lambda: clock["now"],
+            lease_seconds=10,
+        )
+        queued = service.submit(_pins())
+
+        with self.assertRaises(ReplayRetryableInterruptionError):
+            service.run(queued.job_id)
         self.assertEqual(store.jobs[queued.job_id].status, "running")
 
     def test_missing_or_non_uuid_jobs_return_controlled_not_found(self):

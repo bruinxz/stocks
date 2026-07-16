@@ -4,6 +4,7 @@ import datetime as _datetime
 import hashlib
 import json
 import re
+import secrets
 import uuid
 from collections.abc import Mapping
 from typing import Callable, Optional
@@ -17,6 +18,10 @@ from ai.replay.ports import (
     UniverseSource,
 )
 from ai.replay.fingerprint import compute_replay_input_fingerprint
+from ai.replay.errors import (
+    ReplayInfrastructureError,
+    ReplayRetryableInterruptionError,
+)
 from ai.replay.types import (
     ReplayInputs,
     ReplayJob,
@@ -116,6 +121,8 @@ class ReplayService:
         job_store: ReplayJobStore,
         input_source=None,
         uuid_factory: Callable[[], uuid.UUID] = uuid.uuid4,
+        lease_token_factory: Callable[[], str] = lambda: secrets.token_hex(32),
+        lease_seconds: int = 150,
         clock: Callable[[], str] = lambda: (
             _datetime.datetime.now(_datetime.timezone.utc)
             .replace(microsecond=0)
@@ -131,6 +138,14 @@ class ReplayService:
         self._job_store = job_store
         self._input_source = input_source
         self._uuid_factory = uuid_factory
+        self._lease_token_factory = lease_token_factory
+        if (
+            isinstance(lease_seconds, bool)
+            or not isinstance(lease_seconds, int)
+            or not 1 <= lease_seconds <= 3_600
+        ):
+            raise ReplayPinsError("lease_seconds must be an integer in [1,3600]")
+        self._lease_seconds = lease_seconds
         self._clock = clock
 
     def submit(self, pins: ReplayPins) -> ReplayJob:
@@ -168,19 +183,40 @@ class ReplayService:
         job = self.get(job_id)
         if job.status in {"completed", "failed"}:
             return job
-        if job.status != "queued":
+        now = self._now()
+        if job.status == "running" and not self._lease_expired(job, now):
             raise ReplayConflictError(
-                f"replay job cannot run from status {job.status}"
+                "replay job is already leased"
             )
+        if job.status not in {"queued", "running"}:
+            raise ReplayConflictError("replay job cannot be claimed")
 
+        lease_token = self._lease_token_factory()
+        self._require_sha256(
+            lease_token,
+            "lease_token",
+            error_type=ReplayConflictError,
+        )
+        lease_expires_at = self._add_seconds(now, self._lease_seconds)
         running = self._transition_exact(
-            job_id, "queued", job.running(self._now())
+            job,
+            job.claimed(
+                now,
+                lease_token=lease_token,
+                lease_expires_at=lease_expires_at,
+            ),
         )
 
         try:
             inputs = self._load_inputs(running.pins)
             result = self._pipeline.run(running.pins, inputs)
             self._validate_result(result)
+        except ReplayRetryableInterruptionError:
+            raise
+        except ReplayInfrastructureError as error:
+            raise ReplayRetryableInterruptionError(
+                "replay infrastructure is temporarily unavailable"
+            ) from error
         except ReplayServiceError as error:
             return self._retain_failure(
                 running,
@@ -194,10 +230,11 @@ class ReplayService:
                 "replay pipeline failed",
             )
 
+        completed_at = self._now()
+        self._require_live_lease(running, completed_at)
         return self._transition_exact(
-            job_id,
-            "running",
-            running.completed(result, self._now()),
+            running,
+            running.completed(result, completed_at),
         )
 
     def get(self, job_id: str) -> ReplayJob:
@@ -217,6 +254,10 @@ class ReplayService:
         if self._input_source is not None:
             try:
                 slices = self._input_source.load_inputs(pins)
+            except ReplayInfrastructureError as error:
+                raise ReplayRetryableInterruptionError(
+                    "atomic replay input source is temporarily unavailable"
+                ) from error
             except Exception as error:
                 raise ReplaySourceError(
                     "atomic replay input source unavailable"
@@ -269,26 +310,30 @@ class ReplayService:
     def _load_source(kind: str, loader, pins: ReplayPins) -> SourceSlice:
         try:
             return loader(pins)
+        except ReplayInfrastructureError as error:
+            raise ReplayRetryableInterruptionError(
+                f"{kind} source is temporarily unavailable"
+            ) from error
         except Exception as error:
             raise ReplaySourceError(f"{kind} source unavailable") from error
 
     def _retain_failure(
         self, running: ReplayJob, code: str, detail: str
     ) -> ReplayJob:
+        failed_at = self._now()
+        self._require_live_lease(running, failed_at)
         return self._transition_exact(
-            running.job_id,
-            "running",
-            running.failed(code, detail[:240], self._now()),
+            running,
+            running.failed(code, detail[:240], failed_at),
         )
 
     def _transition_exact(
         self,
-        job_id: str,
-        expected_status: str,
+        expected: ReplayJob,
         requested: ReplayJob,
     ) -> ReplayJob:
         returned = self._job_store.transition(
-            job_id, expected_status, requested
+            expected.job_id, expected, requested
         )
         if returned != requested:
             raise ReplayConflictError(
@@ -296,6 +341,26 @@ class ReplayService:
             )
         self._validate_job(returned)
         return returned
+
+    @classmethod
+    def _lease_expired(cls, job: ReplayJob, now: str) -> bool:
+        if job.status != "running" or job.lease_expires_at is None:
+            raise ReplayConflictError("running replay job has no lease")
+        return job.lease_expires_at <= now
+
+    @classmethod
+    def _require_live_lease(cls, job: ReplayJob, now: str) -> None:
+        if cls._lease_expired(job, now):
+            raise ReplayConflictError("replay job lease expired")
+
+    @staticmethod
+    def _add_seconds(value: str, seconds: int) -> str:
+        parsed = _datetime.datetime.fromisoformat(
+            value.removesuffix("Z") + "+00:00"
+        )
+        return (parsed + _datetime.timedelta(seconds=seconds)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
 
     def _now(self) -> str:
         now = self._clock()
@@ -444,7 +509,32 @@ class ReplayService:
             )
         if job.updated_at < job.created_at:
             raise ReplayConflictError("job updated_at precedes created_at")
+        if (
+            isinstance(job.attempt, bool)
+            or not isinstance(job.attempt, int)
+            or not 0 <= job.attempt <= 1_000_000
+        ):
+            raise ReplayConflictError("job store returned invalid attempt")
+        if job.status == "running":
+            if job.attempt < 1:
+                raise ReplayConflictError("running job has invalid attempt")
+            cls._require_sha256(
+                job.lease_token,
+                "lease_token",
+                error_type=ReplayConflictError,
+            )
+            cls._validate_utc_seconds(
+                job.lease_expires_at,
+                "lease_expires_at",
+                error_type=ReplayConflictError,
+            )
+            if job.lease_expires_at <= job.updated_at:
+                raise ReplayConflictError("running job lease is not in the future")
+        elif job.lease_token is not None or job.lease_expires_at is not None:
+            raise ReplayConflictError("non-running job cannot retain a lease")
         if job.status == "completed":
+            if job.attempt < 1:
+                raise ReplayConflictError("completed job has invalid attempt")
             if job.error_code is not None or job.error_detail is not None:
                 raise ReplayConflictError("completed job cannot retain an error")
             cls._validate_result(
@@ -455,7 +545,8 @@ class ReplayService:
             )
         elif job.status == "failed":
             if (
-                not isinstance(job.error_code, str)
+                job.attempt < 1
+                or not isinstance(job.error_code, str)
                 or not job.error_code
                 or not isinstance(job.error_detail, str)
                 or not job.error_detail

@@ -15,11 +15,13 @@ from ai.replay.cli import (
     DATABASE_URL_ENV,
     DISCLAIMERS_JSON_ENV,
     JOB_STORE_FILENAME,
+    LEASE_SECONDS_ENV,
     MAX_INPUT_BYTES,
     MODEL_VERSION_ENV,
     PROTOCOL_VERSION,
     RUNTIME_DIR_ENV,
     TEMPLATE_HASH_ENV,
+    WORKER_DEADLINE_SECONDS_ENV,
     build_submit_status_runtime,
 )
 from ai.replay.service import ReplayService
@@ -180,6 +182,35 @@ class ReplayCliSubprocessTests(unittest.TestCase):
             self.assertEqual(len(state["keys"]), 1)
             self.assertEqual(stat.S_IMODE(state_path.stat().st_mode), 0o600)
 
+    def test_independent_process_migrates_legacy_running_job_to_recoverable_queue(self):
+        with _temporary_directory() as directory:
+            runtime_dir = Path(directory)
+            submitted = run_cli(request=_submit_request(), runtime_dir=runtime_dir)
+            body = json.loads(submitted.stdout)
+            job_id = body["result"]["job"]["job_id"]
+            state_path = runtime_dir / JOB_STORE_FILENAME
+            legacy = json.loads(state_path.read_text(encoding="utf-8"))
+            legacy["version"] = 1
+            record = legacy["jobs"][job_id]
+            record["status"] = "running"
+            for field in ("attempt", "lease_token", "lease_expires_at"):
+                record.pop(field)
+            state_path.write_text(json.dumps(legacy), encoding="utf-8")
+
+            recovered = run_cli(
+                request=_job_request("status", job_id),
+                runtime_dir=runtime_dir,
+            )
+            migrated = json.loads(state_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(recovered.returncode, 0, recovered.stderr)
+        self.assertEqual(
+            json.loads(recovered.stdout)["result"]["job"]["status"],
+            "queued",
+        )
+        self.assertEqual(migrated["version"], 2)
+        self.assertEqual(migrated["jobs"][job_id]["attempt"], 1)
+
     def test_status_projects_exact_safe_terminal_unions_across_processes(self):
         now = "2026-07-14T06:00:00Z"
         job_id = uuid.UUID("12345678-1234-4234-8234-567812345678")
@@ -212,10 +243,15 @@ class ReplayCliSubprocessTests(unittest.TestCase):
                     )
                     try:
                         queued = runtime.submit(ReplayPins(**_pins()))
+                        claimed = queued.claimed(
+                            now,
+                            lease_token="b" * 64,
+                            lease_expires_at="2026-07-14T06:02:30Z",
+                        )
                         running = runtime._service._job_store.transition(
                             queued.job_id,
-                            "queued",
-                            queued.running(now),
+                            queued,
+                            claimed,
                         )
                         if terminal_status == "completed":
                             terminal = running.completed(
@@ -230,7 +266,7 @@ class ReplayCliSubprocessTests(unittest.TestCase):
                             )
                         runtime._service._job_store.transition(
                             queued.job_id,
-                            "running",
+                            running,
                             terminal,
                         )
                     finally:
@@ -430,6 +466,29 @@ class ReplayCliSubprocessTests(unittest.TestCase):
                     self.assertNotIn(marker.encode(), result.stderr)
                     self.assertNotIn(b"Traceback", result.stderr)
                     self.assertNotIn(str(ROOT).encode(), result.stderr)
+
+    def test_production_and_out_of_range_timing_fail_closed_without_details(self):
+        cases = (
+            {"NODE_ENV": "production"},
+            {WORKER_DEADLINE_SECONDS_ENV: "901", LEASE_SECONDS_ENV: "1000"},
+            {WORKER_DEADLINE_SECONDS_ENV: "120", LEASE_SECONDS_ENV: "124"},
+        )
+        with _temporary_directory() as directory:
+            for timing in cases:
+                with self.subTest(timing=timing):
+                    result = run_cli(
+                        request=_submit_request(),
+                        runtime_dir=directory,
+                        execution_environment=timing,
+                    )
+                    self.assertEqual(result.returncode, 4)
+                    self.assertEqual(result.stdout, b"")
+                    self.assertEqual(
+                        json.loads(result.stderr)["error"]["code"],
+                        "REPLAY_STORE_UNAVAILABLE",
+                    )
+                    self.assertNotIn(b"timing", result.stderr)
+                    self.assertNotIn(b"Traceback", result.stderr)
 
     def test_subprocess_idempotency_key_matches_service_authority(self):
         pins = _pins()

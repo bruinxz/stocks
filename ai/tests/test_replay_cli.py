@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import io
 import json
@@ -339,7 +340,12 @@ class ReplayCliTests(unittest.TestCase):
                     dispatch(_job_request("run_one"), runtime=runtime)
                 self.assertEqual(runtime.status(str(JOB_ID)).status, "queued")
 
-                runtime._worker = ReturningWorker(queued.running(NOW))
+                claimed = queued.claimed(
+                    NOW,
+                    lease_token="b" * 64,
+                    lease_expires_at="2026-07-14T06:02:30Z",
+                )
+                runtime._worker = ReturningWorker(claimed)
                 with self.assertRaises(ReplayWorkerProtocolError):
                     dispatch(_job_request("run_one"), runtime=runtime)
                 self.assertEqual(runtime.status(str(JOB_ID)).status, "queued")
@@ -353,7 +359,7 @@ class ReplayCliTests(unittest.TestCase):
                 self.assertEqual(runtime.status(str(JOB_ID)).status, "queued")
 
                 running = runtime._service._job_store.transition(
-                    str(JOB_ID), "queued", queued.running(NOW)
+                    str(JOB_ID), queued, claimed
                 )
                 runtime._worker = ReturningWorker(
                     running.completed(ReplayResult(SNAPSHOT_ID, "f" * 64), NOW)
@@ -363,6 +369,26 @@ class ReplayCliTests(unittest.TestCase):
                 self.assertEqual(runtime.status(str(JOB_ID)).status, "running")
             finally:
                 runtime.close()
+
+    def test_run_one_always_enters_a_finite_worker_deadline(self):
+        observed = []
+
+        @contextmanager
+        def deadline(seconds):
+            observed.append(seconds)
+            yield
+
+        with _temporary_directory() as directory:
+            runtime = _runtime(Path(directory) / JOB_STORE_FILENAME)
+            try:
+                dispatch(_submit_request(), runtime=runtime)
+                runtime._worker = ReturningWorker(runtime.status(str(JOB_ID)))
+                with patch("ai.replay.cli._worker_deadline", deadline):
+                    with self.assertRaises(ReplayWorkerProtocolError):
+                        dispatch(_job_request("run_one"), runtime=runtime)
+            finally:
+                runtime.close()
+        self.assertEqual(observed, [120])
 
     def test_non_terminal_worker_is_generic_protocol_failure_not_success(self):
         with _temporary_directory() as directory:
