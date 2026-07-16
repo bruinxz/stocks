@@ -17,9 +17,19 @@ process.env.JWT_SECRET = JWT_SECRET;
 (User as any).findByPk = async (userId: number) => (userId === AUTH_USER.id ? AUTH_USER : null);
 
 const AUTHORIZATION = `Bearer ${jwt.sign(
-  { user_id: AUTH_USER.id, username: AUTH_USER.username, role: AUTH_USER.role },
+  {
+    user_id: AUTH_USER.id,
+    username: AUTH_USER.username,
+    role: AUTH_USER.role,
+    type: 'access',
+  },
   JWT_SECRET,
-  { expiresIn: '5m' }
+  {
+    algorithm: 'HS256',
+    issuer: 'stocks-backend',
+    audience: 'stocks-api',
+    expiresIn: '5m',
+  }
 )}`;
 const multibaggerRoutes = require('../../src/api/routes/multibagger.routes')
   .default as typeof import('../../src/api/routes/multibagger.routes').default;

@@ -1,27 +1,29 @@
 /**
- * Owner login-removal regression guard.
+ * Access-token authentication fail-closed regression guard.
  *
- * Exercises both authentication entry points used by backend routes and proves
- * that missing or invalid credentials reach the protected handler as admin.
+ * The historical filename is retained so existing test runners keep finding
+ * it. There is intentionally no default-admin behavior left to preserve.
  */
 import express, { Request, Response } from 'express';
-import request from 'supertest';
+import request, { Response as SupertestResponse } from 'supertest';
 import jwt from 'jsonwebtoken';
 import { AuthController } from '../../src/api/controllers/AuthController';
-import { authenticate as authenticateMiddleware } from '../../src/middlewares/auth';
+import {
+  AUTH_ACCESS_TOKEN_AUDIENCE,
+  AUTH_JWT_ISSUER,
+  AUTH_REFRESH_TOKEN_AUDIENCE,
+  authenticate as authenticateMiddleware,
+} from '../../src/middlewares/auth';
 import { User } from '../../src/models/User';
 
-type CanonicalAdmin = {
-  id: number;
-  username: string;
-  role: string;
-};
+const JWT_SECRET = 'auth-fail-closed-regression-test-secret';
+const JWT_REFRESH_SECRET = 'auth-fail-closed-refresh-regression-secret';
+const INFRASTRUCTURE_ERROR = 'sensitive-database-error-must-not-leak';
 
-const EXPECTED_ADMIN: CanonicalAdmin = {
-  id: 1,
-  username: 'admin',
-  role: 'admin',
-};
+const ENTRY_POINTS = [
+  { label: 'AuthController', path: '/controller-protected' },
+  { label: 'middleware', path: '/middleware-protected' },
+] as const;
 
 function buildApp(): express.Express {
   const app = express();
@@ -48,79 +50,206 @@ function assert(name: string, condition: boolean, detail = ''): void {
   }
 }
 
-function isCanonicalAdmin(value: unknown): boolean {
-  return JSON.stringify(value) === JSON.stringify(EXPECTED_ADMIN);
+async function send(
+  app: express.Express,
+  path: string,
+  authorization?: string
+): Promise<SupertestResponse> {
+  let pending = request(app).get(path);
+  if (authorization !== undefined) {
+    pending = pending.set('Authorization', authorization);
+  }
+  return pending;
+}
+
+function assertStopped(
+  label: string,
+  response: SupertestResponse,
+  expectedStatus: 401 | 503,
+  forbiddenValues: string[] = []
+): void {
+  const serializedBody = JSON.stringify(response.body);
+  assert(
+    `${label} returns ${expectedStatus} without calling next`,
+    response.status === expectedStatus && response.body.reached !== true,
+    `status=${response.status}, body=${serializedBody}`
+  );
+  assert(
+    `${label} returns a generic error body`,
+    forbiddenValues.every(value => value.length === 0 || !serializedBody.includes(value)),
+    `body=${serializedBody}`
+  );
+}
+
+function signAccessToken(
+  payload: Record<string, unknown> = {
+    user_id: 7,
+    username: 'valid-user',
+    role: 'analyst',
+  },
+  expiresIn: number | '1h' = '1h'
+): string {
+  return jwt.sign({ ...payload, type: 'access' }, JWT_SECRET, {
+    algorithm: 'HS256',
+    issuer: AUTH_JWT_ISSUER,
+    audience: AUTH_ACCESS_TOKEN_AUDIENCE,
+    expiresIn,
+  });
 }
 
 async function main(): Promise<void> {
   const previousJwtSecret = process.env.JWT_SECRET;
-  process.env.JWT_SECRET = 'auth-default-admin-regression-test-secret';
+  const previousJwtRefreshSecret = process.env.JWT_REFRESH_SECRET;
+  const originalFindByPk = User.findByPk;
+  const validToken = signAccessToken();
 
   try {
-    const app = buildApp();
-    const cases = [
-      { label: 'AuthController missing Authorization', path: '/controller-protected' },
-      {
-        label: 'AuthController invalid token',
-        path: '/controller-protected',
-        authorization: 'Bearer invalid.jwt.token',
-      },
-      { label: 'middleware missing Authorization', path: '/middleware-protected' },
-      {
-        label: 'middleware invalid token',
-        path: '/middleware-protected',
-        authorization: 'Bearer invalid.jwt.token',
-      },
-    ];
-
-    for (const testCase of cases) {
-      let pending = request(app).get(testCase.path);
-      if (testCase.authorization) {
-        pending = pending.set('Authorization', testCase.authorization);
-      }
-      const response = await pending;
-
-      assert(
-        `${testCase.label} reaches protected handler`,
-        response.status === 200 && response.body.reached === true
+    process.env.JWT_REFRESH_SECRET = JWT_REFRESH_SECRET;
+    // Missing configuration is an infrastructure failure, not an anonymous
+    // administrator session. Build and exercise both entry points while the
+    // environment is absent because the standalone middleware reads it per request.
+    delete process.env.JWT_SECRET;
+    (User as any).findByPk = async () => {
+      throw new Error(INFRASTRUCTURE_ERROR);
+    };
+    const missingSecretApp = buildApp();
+    for (const entryPoint of ENTRY_POINTS) {
+      const missingCredentialResponse = await send(missingSecretApp, entryPoint.path);
+      assertStopped(
+        `${entryPoint.label} missing Authorization while JWT_SECRET is absent`,
+        missingCredentialResponse,
+        401,
+        [INFRASTRUCTURE_ERROR]
       );
-      assert(
-        `${testCase.label} injects canonical admin`,
-        isCanonicalAdmin(response.body.user),
-        `got=${JSON.stringify(response.body.user)}`
-      );
+      const response = await send(missingSecretApp, entryPoint.path, `Bearer ${validToken}`);
+      assertStopped(`${entryPoint.label} missing JWT_SECRET`, response, 503, [
+        validToken,
+        INFRASTRUCTURE_ERROR,
+      ]);
     }
 
-    const originalFindByPk = User.findByPk;
-    const validToken = jwt.sign(
+    process.env.JWT_SECRET = JWT_SECRET;
+    const app = buildApp();
+    const expiredToken = signAccessToken(undefined, -1);
+    const incompleteIdentityToken = signAccessToken({ user_id: 7 });
+    const legacyToken = jwt.sign(
       { user_id: 7, username: 'valid-user', role: 'analyst' },
-      process.env.JWT_SECRET as string
+      JWT_SECRET
     );
-    const sequelizeUser = {
+    const refreshToken = jwt.sign(
+      {
+        user_id: 7,
+        username: 'valid-user',
+        role: 'analyst',
+        type: 'refresh',
+        family_id: '12345678-1234-4234-8234-567812345678',
+      },
+      JWT_REFRESH_SECRET,
+      {
+        algorithm: 'HS256',
+        issuer: AUTH_JWT_ISSUER,
+        audience: AUTH_REFRESH_TOKEN_AUDIENCE,
+        jwtid: '87654321-4321-4321-8321-876543218765',
+        expiresIn: '1h',
+      }
+    );
+
+    // Credential parsing and signature/expiry failures must not touch the DB.
+    (User as any).findByPk = async () => {
+      throw new Error(INFRASTRUCTURE_ERROR);
+    };
+    const credentialCases = [
+      { label: 'missing Authorization' },
+      { label: 'malformed scheme', authorization: 'Basic credentials' },
+      { label: 'malformed Bearer', authorization: 'Bearer token with-spaces' },
+      { label: 'invalid token', authorization: 'Bearer invalid.jwt.token' },
+      { label: 'expired token', authorization: `Bearer ${expiredToken}` },
+      { label: 'legacy token without type/aud/iss', authorization: `Bearer ${legacyToken}` },
+      { label: 'refresh token at access endpoint', authorization: `Bearer ${refreshToken}` },
+      {
+        label: 'token missing identity claims',
+        authorization: `Bearer ${incompleteIdentityToken}`,
+      },
+    ];
+    for (const entryPoint of ENTRY_POINTS) {
+      for (const testCase of credentialCases) {
+        const response = await send(app, entryPoint.path, testCase.authorization);
+        const credential = (testCase.authorization || '').replace(/^[^ ]+ /, '');
+        assertStopped(`${entryPoint.label} ${testCase.label}`, response, 401, [
+          credential,
+          INFRASTRUCTURE_ERROR,
+        ]);
+      }
+    }
+
+    // A correctly signed token still fails closed when its subject is absent.
+    (User as any).findByPk = async () => null;
+    for (const entryPoint of ENTRY_POINTS) {
+      const response = await send(app, entryPoint.path, `Bearer ${validToken}`);
+      assertStopped(`${entryPoint.label} unknown user`, response, 401, [validToken]);
+    }
+
+    const inactiveUser = {
       id: 7,
       username: 'valid-user',
+      email: 'valid-user@example.com',
+      role: 'analyst',
+      is_active: false,
+    };
+    (User as any).findByPk = async () => inactiveUser;
+    for (const entryPoint of ENTRY_POINTS) {
+      const response = await send(app, entryPoint.path, `Bearer ${validToken}`);
+      assertStopped(`${entryPoint.label} inactive user`, response, 401, [validToken]);
+    }
+
+    // Database availability is distinct from bad credentials and must not leak
+    // the exception detail or token into the response.
+    (User as any).findByPk = async () => {
+      throw new Error(INFRASTRUCTURE_ERROR);
+    };
+    for (const entryPoint of ENTRY_POINTS) {
+      const response = await send(app, entryPoint.path, `Bearer ${validToken}`);
+      assertStopped(`${entryPoint.label} user lookup failure`, response, 503, [
+        validToken,
+        INFRASTRUCTURE_ERROR,
+      ]);
+    }
+
+    const activeUser = {
+      id: 7,
+      username: 'valid-user',
+      email: 'valid-user@example.com',
       role: 'analyst',
       is_active: true,
     };
-    (User as any).findByPk = async (id: number) => (id === 7 ? sequelizeUser : null);
-    try {
-      const validResponse = await request(app)
-        .get('/controller-protected')
-        .set('Authorization', `Bearer ${validToken}`);
-      assert('AuthController valid token reaches protected handler', validResponse.status === 200);
+    (User as any).findByPk = async (id: number) => (id === activeUser.id ? activeUser : null);
+    for (const entryPoint of ENTRY_POINTS) {
+      const response = await send(app, entryPoint.path, `Bearer ${validToken}`);
       assert(
-        'AuthController valid token preserves Sequelize user object',
-        JSON.stringify(validResponse.body.user) === JSON.stringify(sequelizeUser),
-        `got=${JSON.stringify(validResponse.body.user)}`
+        `${entryPoint.label} valid Bearer reaches protected handler`,
+        response.status === 200 && response.body.reached === true,
+        `status=${response.status}, body=${JSON.stringify(response.body)}`
       );
-    } finally {
-      (User as any).findByPk = originalFindByPk;
+      assert(
+        `${entryPoint.label} valid Bearer preserves database identity`,
+        response.body.user?.id === activeUser.id &&
+          response.body.user?.username === activeUser.username &&
+          response.body.user?.email === activeUser.email &&
+          response.body.user?.role === activeUser.role,
+        `user=${JSON.stringify(response.body.user)}`
+      );
     }
   } finally {
+    (User as any).findByPk = originalFindByPk;
     if (previousJwtSecret === undefined) {
       delete process.env.JWT_SECRET;
     } else {
       process.env.JWT_SECRET = previousJwtSecret;
+    }
+    if (previousJwtRefreshSecret === undefined) {
+      delete process.env.JWT_REFRESH_SECRET;
+    } else {
+      process.env.JWT_REFRESH_SECRET = previousJwtRefreshSecret;
     }
   }
 

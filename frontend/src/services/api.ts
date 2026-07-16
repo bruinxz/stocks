@@ -37,6 +37,39 @@ function abortError(): Error {
   return error;
 }
 
+function refreshCredentialWasRejected(error: unknown): boolean {
+  const status = (error as { response?: { status?: unknown } })?.response?.status;
+  return status === 400 || status === 401;
+}
+
+async function withCrossTabRefreshLock(
+  staleAccessToken: string | null,
+  signal: AbortSignal,
+  refresh: () => Promise<string>
+): Promise<string> {
+  const locks =
+    typeof navigator !== 'undefined'
+      ? (navigator as Navigator & {
+          locks?: {
+            request: (
+              name: string,
+              options: { mode: 'exclusive'; signal: AbortSignal },
+              callback: () => Promise<string>
+            ) => Promise<string>;
+          };
+        }).locks
+      : undefined;
+  const run = async (): Promise<string> => {
+    const sharedToken = localStorage.getItem('token');
+    if (staleAccessToken && sharedToken && sharedToken !== staleAccessToken) {
+      return sharedToken;
+    }
+    return refresh();
+  };
+  if (!locks?.request) return run();
+  return locks.request('stocks-access-token-refresh', { mode: 'exclusive', signal }, run);
+}
+
 function waitForRefresh(flight: Promise<string>, signal?: AbortSignal): Promise<string> {
   if (!signal) return flight;
   if (signal.aborted) return Promise.reject(abortError());
@@ -58,7 +91,7 @@ function waitForRefresh(flight: Promise<string>, signal?: AbortSignal): Promise<
   });
 }
 
-function startRefreshFlight(): RefreshFlight {
+function startRefreshFlight(staleAccessToken: string | null): RefreshFlight {
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const timedOut = new Promise<never>((_resolve, reject) => {
@@ -67,28 +100,28 @@ function startRefreshFlight(): RefreshFlight {
       reject(new Error('Access token refresh timed out'));
     }, AUTH_REFRESH_TIMEOUT_MS);
   });
-  const request = axios.post(
-    `${API_BASE_URL}/auth/refresh`,
-    {},
-    {
-      withCredentials: true,
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      timeout: AUTH_REFRESH_TIMEOUT_MS,
+  const request = withCrossTabRefreshLock(staleAccessToken, controller.signal, async () => {
+    const response = await axios.post(
+      `${API_BASE_URL}/auth/refresh`,
+      {},
+      {
+        withCredentials: true,
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        timeout: AUTH_REFRESH_TIMEOUT_MS,
+      }
+    );
+    const token = response.data?.data?.accessToken;
+    if (typeof token !== 'string' || token.length === 0) {
+      throw new Error('Refresh response did not include an access token');
     }
-  );
+    localStorage.setItem('token', token);
+    return token;
+  });
   let flightPromise: Promise<string>;
   flightPromise = Promise.race([request, timedOut])
-    .then(response => {
-      const token = response.data?.data?.accessToken;
-      if (typeof token !== 'string' || token.length === 0) {
-        throw new Error('Refresh response did not include an access token');
-      }
-      localStorage.setItem('token', token);
-      return token;
-    })
     .catch(error => {
-      clearUserScopedStorage();
+      if (refreshCredentialWasRejected(error)) clearUserScopedStorage();
       throw error;
     })
     .finally(() => {
@@ -98,9 +131,12 @@ function startRefreshFlight(): RefreshFlight {
   return { promise: flightPromise };
 }
 
-export function refreshAccessToken(signal?: AbortSignal): Promise<string> {
+export function refreshAccessToken(
+  signal?: AbortSignal,
+  staleAccessToken: string | null = localStorage.getItem('token')
+): Promise<string> {
   if (signal?.aborted) return Promise.reject(abortError());
-  if (!refreshFlight) refreshFlight = startRefreshFlight();
+  if (!refreshFlight) refreshFlight = startRefreshFlight(staleAccessToken);
   return waitForRefresh(refreshFlight.promise, signal);
 }
 
@@ -131,13 +167,16 @@ export async function authenticatedFetch(
   const response = await request(headers);
   if (response.status !== 401 || isAuthBootstrapRequest(path)) return response;
   try {
-    const refreshed = await refreshAccessToken(init.signal ?? undefined);
+    const refreshed = await refreshAccessToken(init.signal ?? undefined, token);
     headers.set('Authorization', `Bearer ${refreshed}`);
     return await request(headers);
   } catch (error) {
     if (init.signal?.aborted) throw error;
-    redirectToLogin();
-    return response;
+    if (refreshCredentialWasRejected(error)) {
+      redirectToLogin();
+      return response;
+    }
+    throw error;
   }
 }
 
@@ -183,7 +222,11 @@ api.interceptors.response.use(
     original._auth_refresh_retry = true;
     try {
       const requestSignal = original.signal as AbortSignal | undefined;
-      const token = await refreshAccessToken(requestSignal);
+      const authorization = String(
+        (original.headers as Record<string, unknown> | undefined)?.Authorization || ''
+      );
+      const staleToken = /^Bearer\s+(.+)$/i.exec(authorization)?.[1] || null;
+      const token = await refreshAccessToken(requestSignal, staleToken);
       original.headers = original.headers || {};
       original.headers.Authorization = `Bearer ${token}`;
       return api(original);
@@ -191,7 +234,7 @@ api.interceptors.response.use(
       if ((original.signal as AbortSignal | undefined)?.aborted) {
         return Promise.reject(refreshError);
       }
-      redirectToLogin();
+      if (refreshCredentialWasRejected(refreshError)) redirectToLogin();
       return Promise.reject(error);
     }
   }

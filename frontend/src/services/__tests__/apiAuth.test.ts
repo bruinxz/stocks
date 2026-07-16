@@ -26,7 +26,7 @@ describe('access-token refresh single-flight', () => {
     expect(second).toBe(first);
     expect(post).toHaveBeenCalledTimes(1);
 
-    rejectRequest?.(new Error('refresh denied'));
+    rejectRequest?.(Object.assign(new Error('refresh denied'), { response: { status: 401 } }));
     const settled = await Promise.allSettled([first, second]);
     expect(settled.map(result => result.status)).toEqual(['rejected', 'rejected']);
     expect(localStorage.getItem('token')).toBeNull();
@@ -70,7 +70,37 @@ describe('access-token refresh single-flight', () => {
     jest.advanceTimersByTime(AUTH_REFRESH_TIMEOUT_MS);
 
     await expect(refresh).rejects.toBeInstanceOf(Error);
-    expect(localStorage.getItem('token')).toBeNull();
+    expect(localStorage.getItem('token')).toBe('expired-token');
+  });
+
+  test('reuses an access token refreshed by another tab while holding the browser lock', async () => {
+    localStorage.setItem('token', 'expired-token');
+    const post = jest.spyOn(axios, 'post');
+    const originalLocks = (navigator as Navigator & { locks?: unknown }).locks;
+    Object.defineProperty(navigator, 'locks', {
+      configurable: true,
+      value: {
+        request: async (
+          _name: string,
+          _options: unknown,
+          callback: () => Promise<string>
+        ) => {
+          localStorage.setItem('token', 'other-tab-token');
+          return callback();
+        },
+      },
+    });
+    try {
+      await expect(refreshAccessToken(undefined, 'expired-token')).resolves.toBe(
+        'other-tab-token'
+      );
+      expect(post).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(navigator, 'locks', {
+        configurable: true,
+        value: originalLocks,
+      });
+    }
   });
 
   test('an aborted caller settles without cancelling another waiter on the shared flight', async () => {

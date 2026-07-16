@@ -10,9 +10,10 @@
  * 鉴权:
  *   - Browser WebSocket API 不能自定义 Authorization header, 所以 token 走 query:
  *     ws://host/ws/alerts?token=<JWT>
- *   - verifyAlertsToken(token, secret) 跑 jwt.verify, 返 user_id (decoded.user_id
- *     或 decoded.user.id, 与既有 middlewares/auth.ts 兼容);
- *   - secret 来源同 middlewares/auth.ts: process.env.JWT_SECRET, 缺失返 null
+ *   - verifyAlertsToken(token, secret) 复用 HTTP access-token 的严格
+ *     type/aud/iss/algorithm/expiry 契约；旧 token shape 不再兼容;
+ *   - secret 来源同 middlewares/auth.ts: process.env.JWT_SECRET，且 access /
+ *     refresh secret 必须均存在并相互独立；配置无效返 null
  *     (拒所有连接, 关闭 code 1008 'policy violation').
  *
  * 生命周期:
@@ -20,9 +21,9 @@
  *   - 客户端 close / 服务端检测到 stale (ping/pong) → broadcaster.unregister
  *   - 单 user 超 MAX_CLIENTS_PER_USER → 直接 close 1013 (try again later)
  *
- * 错误兜底 (fail-OPEN):
+ * 错误兜底 (fail-CLOSED):
  *   - JWT_SECRET 缺失 → 整个 WS server 拒所有连接, 但不 throw 不阻塞 HTTP server
- *   - jwt.verify throw / 无 token → close 1008 关闭
+ *   - access-token strict verify 失败 / 无 token → close 1008 关闭
  *   - 鉴权后任何 send/recv 异常 → 自动 unregister + close, 不阻塞主流程
  *
  * 单测策略:
@@ -34,10 +35,15 @@
  */
 
 import { IncomingMessage } from 'http';
-import jwt from 'jsonwebtoken';
 
 import { logger } from '../utils/logger';
 import { randHex4 } from '../utils/randomHex';
+import { User } from '../models/User';
+import {
+  authJwtSecretsAreUsable,
+  resolveRefreshTokenSecret,
+  verifyAccessToken,
+} from '../middlewares/auth';
 import {
   alertsBroadcaster,
   AlertsBroadcaster,
@@ -67,7 +73,7 @@ export const ALERTS_WS_CLOSE = Object.freeze({
 // ---------------------------------------------------------------------------
 
 /**
- * 从 ?token=... 提取 JWT. 缺失 / 空串 → null. 不做格式校验, 由 jwt.verify 处理.
+ * 从 ?token=... 提取 JWT. 缺失 / 空串 → null. 不做格式校验, 由严格 access verifier 处理.
  */
 export function extractTokenFromQuery(url: string | undefined): string | null {
   if (!url || typeof url !== 'string') return null;
@@ -84,49 +90,44 @@ export function extractTokenFromQuery(url: string | undefined): string | null {
 }
 
 /**
- * 解析 jwt → user_id. 与 middlewares/auth.ts 同款 fallback 顺序:
- *   - decoded.user_id (顶层)
- *   - decoded.user.id (嵌套)
- *   - decoded.id (顶层 id)
- * 任何 throw / 无 user_id 返 null. secret 缺失也返 null.
+ * 解析严格 access JWT → user_id. 任何签名、算法、type、aud、iss、expiry
+ * 或 identity claim 不符合 HTTP auth 契约时均返回 null。
  */
 export function verifyAlertsToken(
   token: string | null,
   secret: string | null | undefined
-): { user_id: number; username?: string } | null {
+): { user_id: number; username?: string; expires_at_ms: number } | null {
   if (!token || !secret) return null;
+  const decoded = verifyAccessToken(token, secret);
+  if (!decoded) return null;
+  return {
+    user_id: decoded.user_id,
+    username: decoded.username,
+    expires_at_ms: Number(decoded.exp) * 1_000,
+  };
+}
+
+/** Resolve current account state at the connection boundary; failures deny access. */
+export async function resolveActiveAlertsUser(user_id: number): Promise<boolean> {
   try {
-    const decoded = jwt.verify(token, secret) as any;
-    if (!decoded || typeof decoded !== 'object') return null;
-    const candidate =
-      (typeof decoded.user_id === 'number' && decoded.user_id) ||
-      (decoded.user && typeof decoded.user.id === 'number' && decoded.user.id) ||
-      (typeof decoded.id === 'number' && decoded.id) ||
-      null;
-    if (!candidate || candidate <= 0) return null;
-    const username =
-      (typeof decoded.username === 'string' && decoded.username) ||
-      (decoded.user && typeof decoded.user.username === 'string' && decoded.user.username) ||
-      undefined;
-    return { user_id: candidate, username };
-  } catch (err: any) {
-    // 不 log debug-级 spam, 只在 error 级别记 (DEBUG=ws-alerts 时可展开)
-    return null;
+    const user = await User.findByPk(user_id, { attributes: ['id', 'is_active'] });
+    return Boolean(user?.is_active);
+  } catch {
+    logger.error('[alertsWebSocketServer] active-user lookup failed');
+    return false;
   }
 }
 
 /**
- * 取当前进程 JWT secret. 单一事实源, 与 middlewares/auth.ts 行为一致.
- * production 缺失返 null (拒所有 WS 连接, 同 HTTP 中间件); dev 允许 LIVE_DEV_JWT_SECRET 兜底.
+ * 取当前进程 JWT secret. 单一事实源, 与 middlewares/auth.ts 行为一致。
+ * access/refresh 任一缺失或二者相同都 fail-closed；access secret 不再使用
+ * 独立的 WebSocket-only fallback。
  */
 export function loadJwtSecretFromEnv(env: NodeJS.ProcessEnv = process.env): string | null {
   const primary = env.JWT_SECRET;
-  if (typeof primary === 'string' && primary.length > 0) return primary;
-  if (env.NODE_ENV !== 'production') {
-    const dev = env.LIVE_DEV_JWT_SECRET;
-    if (typeof dev === 'string' && dev.length > 0) return dev;
-  }
-  return null;
+  if (typeof primary !== 'string') return null;
+  const refresh = resolveRefreshTokenSecret(env);
+  return authJwtSecretsAreUsable(primary, refresh) ? primary : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +143,10 @@ export interface AttachAlertsWsOptions {
   loadSecret?: () => string | null;
   /** override ping interval ms; 默认 ALERTS_WS_PING_INTERVAL_MS */
   pingIntervalMs?: number;
+  /** override current-account lookup; defaults to fail-closed Sequelize lookup */
+  resolveActiveUser?: (user_id: number) => Promise<boolean>;
+  /** deterministic clock seam for expiry tests */
+  now?: () => number;
 }
 
 export interface AttachAlertsWsResult {
@@ -181,21 +186,27 @@ export function attachAlertsWebSocketServer(
   const broadcaster = options.broadcaster || alertsBroadcaster;
   const loadSecret = options.loadSecret || loadJwtSecretFromEnv;
   const pingMs = options.pingIntervalMs || ALERTS_WS_PING_INTERVAL_MS;
+  const resolveActiveUser = options.resolveActiveUser || resolveActiveAlertsUser;
+  const now = options.now || Date.now;
 
   // noServer 模式 — 自己处理 upgrade 事件, 让其它 WS endpoint (未来扩展) 不冲突
   const wss = new WebSocketServer({ noServer: true });
 
-  httpServer.on('upgrade', (req: IncomingMessage, socket: any, head: Buffer) => {
+  httpServer.on('upgrade', async (req: IncomingMessage, socket: any, head: Buffer) => {
     try {
       const url = req.url || '';
-      // 严格 startsWith 防 /ws/alerts2 类绕过
-      if (!url.startsWith(path)) {
+      if (new URL(url, 'http://_/').pathname !== path) {
         return; // 让其他 listener 处理 / 默认 404
       }
       const token = extractTokenFromQuery(url);
       const secret = loadSecret();
       const verified = verifyAlertsToken(token, secret);
-      if (!verified) {
+      if (
+        !verified ||
+        verified.expires_at_ms <= now() ||
+        !(await resolveActiveUser(verified.user_id))
+      ) {
+        if (socket.destroyed) return;
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;
@@ -221,57 +232,88 @@ export function attachAlertsWebSocketServer(
     }
   });
 
-  wss.on('connection', (ws: any, _req: IncomingMessage, verified: { user_id: number }) => {
-    let alive = true;
-    const clientId = `ws-${verified.user_id}-${Date.now()}-${randHex4()}`;
-
-    const client: AlertsBroadcastClient = {
-      client_id: clientId,
-      isOpen: () => ws.readyState === 1 /* OPEN */ && alive,
-      send: (payload: AlertsBroadcastPayload) => {
-        ws.send(JSON.stringify(payload));
-      },
-    };
-
-    const ok = broadcaster.register(verified.user_id, client);
-    if (!ok) {
-      try {
-        ws.close(ALERTS_WS_CLOSE.TRY_AGAIN_LATER, 'too many clients');
-      } catch {
-        /* ignore */
-      }
-      return;
-    }
-
-    // 立刻发一条 'connected' 让前端确认 ws 双向可用 — 不是告警, 不消费 unread_count
-    try {
-      ws.send(JSON.stringify({ type: 'connected', user_id: verified.user_id, ts: Date.now() }));
-    } catch {
-      /* ignore */
-    }
-
-    ws.on('pong', () => {
-      alive = true;
-    });
-
-    ws.on('close', () => {
-      alive = false;
-      broadcaster.unregister(verified.user_id, client);
-    });
-
-    ws.on('error', (err: any) => {
-      logger.warn(
-        `[alertsWebSocketServer] client error user=${verified.user_id}: ${err?.message || err}`
+  wss.on(
+    'connection',
+    (
+      ws: any,
+      _req: IncomingMessage,
+      verified: { user_id: number; expires_at_ms: number }
+    ) => {
+      let alive = true;
+      const clientId = `ws-${verified.user_id}-${now()}-${randHex4()}`;
+      const expiryDelay = Math.max(
+        0,
+        Math.min(verified.expires_at_ms - now(), 2_147_483_647)
       );
-      alive = false;
-      broadcaster.unregister(verified.user_id, client);
+      const expiryTimer = setTimeout(() => {
+        alive = false;
+        try {
+          ws.close(ALERTS_WS_CLOSE.POLICY_VIOLATION, 'access token expired');
+        } catch {
+          try {
+            ws.terminate();
+          } catch {
+            // ignore an already-closed socket
+          }
+        }
+      }, expiryDelay);
+      expiryTimer.unref?.();
+
+      const client: AlertsBroadcastClient = {
+        client_id: clientId,
+        isOpen: () => ws.readyState === 1 /* OPEN */ && alive,
+        send: (payload: AlertsBroadcastPayload) => {
+          ws.send(JSON.stringify(payload));
+        },
+        close: (reason: string) => {
+          alive = false;
+          ws.close(ALERTS_WS_CLOSE.POLICY_VIOLATION, reason);
+        },
+      };
+
+      const ok = broadcaster.register(verified.user_id, client);
+      if (!ok) {
+        clearTimeout(expiryTimer);
+        try {
+          ws.close(ALERTS_WS_CLOSE.TRY_AGAIN_LATER, 'too many clients');
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+
+      // 立刻发一条 'connected' 让前端确认 ws 双向可用 — 不是告警, 不消费 unread_count
       try {
-        ws.terminate();
+        ws.send(JSON.stringify({ type: 'connected', user_id: verified.user_id, ts: now() }));
       } catch {
         /* ignore */
       }
-    });
-  });
+
+      ws.on('pong', () => {
+        alive = true;
+      });
+
+      ws.on('close', () => {
+        alive = false;
+        clearTimeout(expiryTimer);
+        broadcaster.unregister(verified.user_id, client);
+      });
+
+      ws.on('error', (err: any) => {
+        logger.warn(
+          `[alertsWebSocketServer] client error user=${verified.user_id}: ${err?.message || err}`
+        );
+        alive = false;
+        clearTimeout(expiryTimer);
+        broadcaster.unregister(verified.user_id, client);
+        try {
+          ws.terminate();
+        } catch {
+          /* ignore */
+        }
+      });
+    }
+  );
 
   // 心跳: 每 pingMs 给每个 client 发 ping; alive 在 pong 时被设回 true.
   // 没回 pong 的 client 下个 tick 视为 dead → terminate. 与 ws 官方 example 同款模式.

@@ -325,9 +325,19 @@ async function main(): Promise<void> {
     const authUser = await User.findByPk(AUTH_USER_ID);
     assert.ok(authUser?.is_active, 'disposable-PG auth user must be active');
     const authorization = `Bearer ${jwt.sign(
-      { user_id: authUser.id, username: authUser.username, role: authUser.role },
+      {
+        user_id: authUser.id,
+        username: authUser.username,
+        role: authUser.role,
+        type: 'access',
+      },
       jwtSecret,
-      { expiresIn: '10m' }
+      {
+        algorithm: 'HS256',
+        issuer: 'stocks-backend',
+        audience: 'stocks-api',
+        expiresIn: '10m',
+      }
     )}`;
     const latestCalls = { latest: 0 };
     const app = buildApp(sequelize, supervisor(), latestCalls);

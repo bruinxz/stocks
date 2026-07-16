@@ -32,9 +32,15 @@ const token =
           user_id: Number(process.env.ADMIN_USER_ID || 1),
           username: process.env.ADMIN_USERNAME || 'admin',
           role: 'admin',
+          type: 'access',
         },
         process.env.JWT_SECRET,
-        { expiresIn: '10m' }
+        {
+          algorithm: 'HS256',
+          issuer: 'stocks-backend',
+          audience: 'stocks-api',
+          expiresIn: '10m',
+        }
       )
     : '');
 

@@ -34,6 +34,7 @@
     "format": "prettier --write src/**/*.ts",
     "check-env": "ts-node --transpile-only src/scripts/check-env.ts",
     "check-l8-activation": "ts-node --transpile-only src/scripts/check-l8-activation.ts",
+    "migrate:auth-refresh-sessions": "node dist/scripts/apply-auth-refresh-session-migration.js",
     "docs:openapi": "ts-node --transpile-only src/scripts/generate-openapi.ts",
     "docs:openapi:check": "ts-node --transpile-only src/scripts/check-openapi-drift.ts",
     "db:migrate": "sequelize-cli db:migrate",

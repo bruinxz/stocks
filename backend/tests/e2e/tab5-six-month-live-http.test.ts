@@ -85,9 +85,19 @@ async function main(): Promise<void> {
     return id === activeUser.id ? activeUser : null;
   };
   authorization = `Bearer ${jwt.sign(
-    { user_id: activeUser.id, username: activeUser.username, role: activeUser.role },
+    {
+      user_id: activeUser.id,
+      username: activeUser.username,
+      role: activeUser.role,
+      type: 'access',
+    },
     jwtSecret,
-    { expiresIn: '5m' }
+    {
+      algorithm: 'HS256',
+      issuer: 'stocks-backend',
+      audience: 'stocks-api',
+      expiresIn: '5m',
+    }
   )}`;
 
   const before = await sequelize.query<{ snapshots: string; holdings: string }>(

@@ -3,6 +3,7 @@ export { DailyBar } from './DailyBar';
 export { BacktestResult } from './BacktestResult';
 export { Trade } from './Trade';
 export { User } from './User';
+export { AuthRefreshSession } from './AuthRefreshSession';
 export { FavoriteStock } from './FavoriteStock';
 export { BacktestStatus } from './BacktestResult';
 export { TradeDirection } from './Trade';

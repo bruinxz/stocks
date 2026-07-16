@@ -26,6 +26,11 @@ import {
   loadJwtSecretFromEnv,
   verifyAlertsToken,
 } from '../../src/realtime/alertsWebSocketServer';
+import {
+  AUTH_ACCESS_TOKEN_AUDIENCE,
+  AUTH_JWT_ISSUER,
+  AUTH_REFRESH_TOKEN_AUDIENCE,
+} from '../../src/middlewares/auth';
 
 let failed = 0;
 let passed = 0;
@@ -92,7 +97,17 @@ assert(
 // ============================================================
 {
   const secret = 'unit-test-secret';
-  const goodToken = jwt.sign({ user_id: 42, username: 'alice' }, secret);
+  const refreshSecret = 'unit-test-refresh-secret';
+  const goodToken = jwt.sign(
+    { user_id: 42, username: 'alice', role: 'analyst', type: 'access' },
+    secret,
+    {
+      algorithm: 'HS256',
+      issuer: AUTH_JWT_ISSUER,
+      audience: AUTH_ACCESS_TOKEN_AUDIENCE,
+      expiresIn: '1h',
+    }
+  );
   const v = verifyAlertsToken(goodToken, secret);
   assert('[3.1] valid token → {user_id, username}', !!v && v.user_id === 42 && v.username === 'alice');
 
@@ -106,18 +121,18 @@ assert(
     verifyAlertsToken(null, null) === null
   );
 
-  // 嵌套 user.id 兼容
+  // 旧 identity shapes / 缺 token class pins 均拒绝。
   const nestedToken = jwt.sign({ user: { id: 7, username: 'bob' } }, secret);
   const nv = verifyAlertsToken(nestedToken, secret);
   assert(
-    '[3.6] decoded.user.id 兼容',
-    !!nv && nv.user_id === 7 && nv.username === 'bob'
+    '[3.6] decoded.user.id legacy shape → null',
+    nv === null
   );
 
-  // 顶层 id (e.g. AuthController 旧 token shape)
+  // 顶层 id (AuthController 旧 token shape)
   const idToken = jwt.sign({ id: 99 }, secret);
   const idv = verifyAlertsToken(idToken, secret);
-  assert('[3.7] decoded.id 兼容', !!idv && idv.user_id === 99);
+  assert('[3.7] decoded.id legacy shape → null', idv === null);
 
   // 0 / 负 / NaN → null
   const zeroToken = jwt.sign({ user_id: 0 }, secret);
@@ -137,10 +152,41 @@ assert(
   );
 
   // 过期 token
-  const expiredToken = jwt.sign({ user_id: 1 }, secret, { expiresIn: '-1h' });
+  const expiredToken = jwt.sign(
+    { user_id: 1, username: 'expired', role: 'analyst', type: 'access' },
+    secret,
+    {
+      algorithm: 'HS256',
+      issuer: AUTH_JWT_ISSUER,
+      audience: AUTH_ACCESS_TOKEN_AUDIENCE,
+      expiresIn: '-1h',
+    }
+  );
   assert(
     '[3.12] 过期 token → null',
     verifyAlertsToken(expiredToken, secret) === null
+  );
+
+  const refreshToken = jwt.sign(
+    {
+      user_id: 42,
+      username: 'alice',
+      role: 'analyst',
+      type: 'refresh',
+      family_id: '12345678-1234-4234-8234-567812345678',
+    },
+    refreshSecret,
+    {
+      algorithm: 'HS256',
+      issuer: AUTH_JWT_ISSUER,
+      audience: AUTH_REFRESH_TOKEN_AUDIENCE,
+      jwtid: '22345678-1234-4234-8234-567812345678',
+      expiresIn: '1h',
+    }
+  );
+  assert(
+    '[3.13] refresh token 不能用于 WebSocket access auth',
+    verifyAlertsToken(refreshToken, refreshSecret) === null
   );
 }
 
@@ -149,7 +195,11 @@ assert(
 // ============================================================
 {
   // 显式 env 注入, 不影响真实 process.env
-  const e1: NodeJS.ProcessEnv = { JWT_SECRET: 'main-s', NODE_ENV: 'production' };
+  const e1: NodeJS.ProcessEnv = {
+    JWT_SECRET: 'main-s',
+    JWT_REFRESH_SECRET: 'refresh-s',
+    NODE_ENV: 'production',
+  };
   assert('[4.1] JWT_SECRET 配置 → 返该值', loadJwtSecretFromEnv(e1) === 'main-s');
 
   const e2: NodeJS.ProcessEnv = {
@@ -158,8 +208,8 @@ assert(
     NODE_ENV: 'development',
   };
   assert(
-    '[4.2] JWT_SECRET 空 + dev mode → fallback LIVE_DEV_JWT_SECRET',
-    loadJwtSecretFromEnv(e2) === 'dev-s'
+    '[4.2] JWT_SECRET 空 + dev mode 不使用 WebSocket-only fallback',
+    loadJwtSecretFromEnv(e2) === null
   );
 
   const e3: NodeJS.ProcessEnv = {
@@ -180,6 +230,13 @@ assert(
     '[4.5] 全缺 (development) → null (不静默退 fallback 字符串)',
     loadJwtSecretFromEnv(e5) === null
   );
+
+  const e6: NodeJS.ProcessEnv = {
+    NODE_ENV: 'production',
+    JWT_SECRET: 'shared-s',
+    JWT_REFRESH_SECRET: 'shared-s',
+  };
+  assert('[4.6] access/refresh secret 相同 → null', loadJwtSecretFromEnv(e6) === null);
 }
 
 // ============================================================

@@ -1,6 +1,7 @@
 import express from 'express';
+import jwt from 'jsonwebtoken';
 import request from 'supertest';
-import { buildDailyReportProjectionRoutes } from '../../src/api/routes/dailyReportProjection.routes';
+import { User } from '../../src/models/User';
 import { DailyReportProjectionPort } from '../../src/projections/DailyReportProjectionService';
 import {
   RecommendationSnapshotConflictError,
@@ -15,6 +16,36 @@ import {
   ProjectionCliTimeoutError,
   ProjectionCliUnavailableError,
 } from '../../src/projections/ProjectionCliClient';
+
+const JWT_SECRET = 'api-daily-report-projection-test-secret';
+const AUTH_USER = {
+  id: 9002,
+  username: 'routing-test-user',
+  email: 'routing-test@example.com',
+  role: 'admin',
+  is_active: true,
+} as User;
+
+process.env.JWT_SECRET = JWT_SECRET;
+(User as any).findByPk = async (userId: number) => (userId === AUTH_USER.id ? AUTH_USER : null);
+
+const AUTHORIZATION = `Bearer ${jwt.sign(
+  {
+    user_id: AUTH_USER.id,
+    username: AUTH_USER.username,
+    role: AUTH_USER.role,
+    type: 'access',
+  },
+  JWT_SECRET,
+  {
+    algorithm: 'HS256',
+    issuer: 'stocks-backend',
+    audience: 'stocks-api',
+    expiresIn: '5m',
+  }
+)}`;
+const { buildDailyReportProjectionRoutes } =
+  require('../../src/api/routes/dailyReportProjection.routes') as typeof import('../../src/api/routes/dailyReportProjection.routes');
 
 type Call = { operation: string; value: unknown };
 
@@ -59,6 +90,10 @@ function app(projections: DailyReportProjectionPort): express.Express {
   return instance;
 }
 
+function authorizedGet(app: express.Express, path: string) {
+  return request(app).get(path).set('Authorization', AUTHORIZATION);
+}
+
 let passed = 0;
 let failed = 0;
 
@@ -76,7 +111,19 @@ async function main(): Promise<void> {
   const calls: Call[] = [];
   const instance = app(port(calls));
 
-  const latest = await request(instance).get(
+  const callsBeforeAuth = calls.length;
+  const missingAuthorization = await request(instance).get(
+    '/api/v1/daily-report/latest?profile=us_preferred&market_scope=us'
+  );
+  assert('missing Authorization returns 401', missingAuthorization.status === 401);
+  const invalidAuthorization = await request(instance)
+    .get('/api/v1/daily-report/latest?profile=us_preferred&market_scope=us')
+    .set('Authorization', 'Bearer invalid.jwt.token');
+  assert('invalid Authorization returns 401', invalidAuthorization.status === 401);
+  assert('unauthorized requests do not call service', calls.length === callsBeforeAuth);
+
+  const latest = await authorizedGet(
+    instance,
     '/api/v1/daily-report/latest?profile=us_preferred&market_scope=us'
   );
   assert('latest returns projected report', latest.status === 200);
@@ -87,7 +134,8 @@ async function main(): Promise<void> {
       JSON.stringify({ profile: 'us_preferred', market_scope: 'us' })
   );
 
-  const byDate = await request(instance).get(
+  const byDate = await authorizedGet(
+    instance,
     '/api/v1/daily-report/2026-07-12?profile=multibagger&market_scope=cn_a'
   );
   assert('by-date returns projected report', byDate.status === 200);
@@ -101,7 +149,8 @@ async function main(): Promise<void> {
       })
   );
 
-  const history = await request(instance).get(
+  const history = await authorizedGet(
+    instance,
     '/api/v1/daily-report/history' +
       '?query=AAPL&profile=us_preferred&market_scope=us' +
       '&from_day=2026-07-01&to_day=2026-07-12'
@@ -121,12 +170,12 @@ async function main(): Promise<void> {
 
   const callsBeforeInvalid = calls.length;
   const invalidRequests = await Promise.all([
-    request(instance).get('/api/v1/daily-report/latest?profile=us_preferred'),
-    request(instance).get('/api/v1/daily-report/latest?profile=japan_blue_chip&market_scope=us'),
-    request(instance).get('/api/v1/daily-report/not-a-day?profile=us_preferred&market_scope=us'),
-    request(instance).get('/api/v1/daily-report/history?profile=custom&market_scope=us'),
-    request(instance).get('/api/v1/daily-report/history?from_day=2026-07-12&to_day=2026-07-01'),
-    request(instance).get(`/api/v1/daily-report/history?query=${'x'.repeat(201)}`),
+    authorizedGet(instance, '/api/v1/daily-report/latest?profile=us_preferred'),
+    authorizedGet(instance, '/api/v1/daily-report/latest?profile=japan_blue_chip&market_scope=us'),
+    authorizedGet(instance, '/api/v1/daily-report/not-a-day?profile=us_preferred&market_scope=us'),
+    authorizedGet(instance, '/api/v1/daily-report/history?profile=custom&market_scope=us'),
+    authorizedGet(instance, '/api/v1/daily-report/history?from_day=2026-07-12&to_day=2026-07-01'),
+    authorizedGet(instance, `/api/v1/daily-report/history?query=${'x'.repeat(201)}`),
   ]);
   assert(
     'invalid queries all return 400',
@@ -140,7 +189,8 @@ async function main(): Promise<void> {
   assert(
     'missing latest returns 404',
     (
-      await request(app(emptyPort)).get(
+      await authorizedGet(
+        app(emptyPort),
         '/api/v1/daily-report/latest?profile=us_preferred&market_scope=us'
       )
     ).status === 404
@@ -148,7 +198,8 @@ async function main(): Promise<void> {
   assert(
     'missing day returns 404',
     (
-      await request(app(emptyPort)).get(
+      await authorizedGet(
+        app(emptyPort),
         '/api/v1/daily-report/2026-07-12?profile=us_preferred&market_scope=us'
       )
     ).status === 404
@@ -203,7 +254,7 @@ async function main(): Promise<void> {
     ],
   ];
   for (const [name, error, expectedStatus, expectedPublicText] of errors) {
-    const response = await request(app(errorPort(error))).get(latestPath);
+    const response = await authorizedGet(app(errorPort(error)), latestPath);
     assert(`${name} maps bounded status`, response.status === expectedStatus);
     assert(
       `${name} returns bounded public message`,

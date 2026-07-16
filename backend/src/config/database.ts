@@ -4,6 +4,7 @@ import { DailyBar } from '../models/DailyBar';
 import { BacktestResult } from '../models/BacktestResult';
 import { Trade } from '../models/Trade';
 import { User } from '../models/User';
+import { AuthRefreshSession } from '../models/AuthRefreshSession';
 import { FavoriteStock } from '../models/FavoriteStock';
 import { DataUpdateLog } from '../models/DataUpdateLog';
 import { ScheduledTask } from '../models/ScheduledTask';
@@ -141,6 +142,7 @@ const sequelize = new Sequelize({
     BacktestResult,
     Trade,
     User,
+    AuthRefreshSession,
     FavoriteStock,
     DataUpdateLog,
     ScheduledTask,

@@ -1,51 +1,87 @@
 import { Request, Response, NextFunction } from 'express';
+import { createHash, randomUUID, timingSafeEqual } from 'crypto';
 import { User } from '../../models/User';
+import {
+  AuthRefreshSession,
+  AuthRefreshSessionRevocationReason,
+} from '../../models/AuthRefreshSession';
 import jwt from 'jsonwebtoken';
-import { Op } from 'sequelize';
+import { Op, Transaction } from 'sequelize';
+import { sequelize } from '../../config/database';
 import { logger } from '../../utils/logger';
-import { DEFAULT_ADMIN_USER } from '../../middlewares/auth';
+import { alertsBroadcaster } from '../../realtime/alertsBroadcaster';
+import {
+  AUTH_ACCESS_TOKEN_AUDIENCE,
+  AUTH_JWT_ISSUER,
+  AUTH_REFRESH_TOKEN_AUDIENCE,
+  AuthJwtPayload,
+  authJwtSecretsAreUsable,
+  resolveRefreshTokenSecret,
+  verifyAccessToken,
+} from '../../middlewares/auth';
 
-export interface JwtPayload {
-  user_id: number;
-  username: string;
-  role: string;
+export interface JwtPayload extends AuthJwtPayload {
+  family_id?: string;
 }
+
+interface PreparedRefreshToken {
+  token: string;
+  token_hash: string;
+  jti: string;
+  family_id: string;
+  expires_at: Date;
+}
+
+type RefreshRotationOutcome =
+  | { kind: 'rotated'; access_token: string; refresh_token: string }
+  | { kind: 'invalid' }
+  | { kind: 'reused'; user_id: number };
+
+type VerifiedRefreshTokenPayload = JwtPayload & {
+  type: 'refresh';
+  family_id: string;
+  jti: string;
+  iat: number;
+  exp: number;
+};
 
 export class AuthController {
   private static defaultUsersInitPromise: Promise<void> | null = null;
   private readonly jwtSecret: string;
   private readonly refreshTokenSecret: string;
-  // Batch AU (2026-06-22): "登录态保持 3 天" 修复
-  //   旧 accessTokenExpiry='15m' 太短 + refresh cookie Secure 在 HTTP prod 丢弃导致 axios refresh 链断 → 用户感知"频繁要登录"
-  //   现在: access 1h (兜底, 大部分时间走 refresh) + refresh 3d (cookie 真寿命) + Secure 仅在真 HTTPS 启用
+  private readonly tokenConfigurationReady: boolean;
+  private readonly cookieSecure: boolean;
   private readonly accessTokenExpiry = '1h';
   private readonly refreshTokenExpiry = '3d';
-
-  /**
-   * Batch AU: 决定 cookie 是否设 Secure 标志.
-   * 旧实现: NODE_ENV=production 强制 Secure → prod 实际跑在 http://103.242.3.87:3001/ (无 HTTPS) →
-   *         浏览器拒收 Secure cookie → refreshToken 永远发不出 → axios refresh 链断 → 用户掉线频繁.
-   * 新实现: 显式 env `ENABLE_SECURE_COOKIE=true` 才启用 Secure (上 HTTPS 时由 ops 配); 默认 false 让 HTTP prod 也能维持登录.
-   */
-  private readonly cookieSecure: boolean = process.env.ENABLE_SECURE_COOKIE === 'true';
+  private readonly refreshCookieMaxAgeMs = 3 * 24 * 60 * 60 * 1000;
 
   constructor() {
-    // P0 review：生产环境绝不允许 JWT_SECRET / JWT_REFRESH_SECRET 使用硬编码兜底。
-    // 否则任何人都能拿到 fallback secret 自签 admin token。
     const isProd = process.env.NODE_ENV === 'production';
-    const fallbackAccess = isProd
-      ? ''
-      : process.env.LIVE_DEV_JWT_SECRET || 'dev-only-access-secret';
-    const fallbackRefresh = isProd
-      ? ''
-      : process.env.LIVE_DEV_JWT_REFRESH_SECRET || 'dev-only-refresh-secret';
-    this.jwtSecret = process.env.JWT_SECRET || fallbackAccess;
-    this.refreshTokenSecret = process.env.JWT_REFRESH_SECRET || fallbackRefresh;
-    if (!this.jwtSecret || !this.refreshTokenSecret) {
-      // 生产环境硬阻断启动后续行为：让 sign/verify 全部失败，避免任何人用兜底 secret 拿 admin token。
+    this.jwtSecret = process.env.JWT_SECRET || '';
+    this.refreshTokenSecret = resolveRefreshTokenSecret();
+    this.tokenConfigurationReady = authJwtSecretsAreUsable(
+      this.jwtSecret,
+      this.refreshTokenSecret
+    );
+
+    // Secure is a production invariant. Only non-production environments may
+    // explicitly opt out for local HTTP development and route tests.
+    this.cookieSecure = isProd || process.env.ENABLE_SECURE_COOKIE !== 'false';
+
+    if (!this.jwtSecret) {
+      logger.error('[AuthController] JWT_SECRET is not configured; access tokens are unavailable.');
+    }
+    if (!this.refreshTokenSecret) {
       logger.error(
-        '[AuthController] JWT_SECRET / JWT_REFRESH_SECRET 未在生产环境配置；所有 token 签发与校验将失败。'
+        '[AuthController] JWT_REFRESH_SECRET is not configured; refresh tokens are unavailable.'
       );
+    }
+    if (
+      this.jwtSecret &&
+      this.refreshTokenSecret &&
+      this.jwtSecret === this.refreshTokenSecret
+    ) {
+      logger.error('[AuthController] access and refresh token secrets must be distinct.');
     }
 
     // 绑定方法以确保正确的this上下文
@@ -114,80 +150,89 @@ export class AuthController {
           );
         }
       }
-    } catch (err) {
-      logger.error('Failed to init default users:', err);
+    } catch (error) {
+      AuthController.logInfrastructureFailure('default-user-init', error);
     }
   }
 
   /**
    * 用户注册
    */
-  async register(req: Request, res: Response, next: NextFunction) {
+  async register(req: Request, res: Response, _next: NextFunction) {
+    if (!this.tokenConfigurationReady) return this.serviceUnavailable(res);
+
     try {
       const { username, email, password } = req.body;
+      const result: {
+        kind: 'exists' | 'created';
+        user?: User;
+        access_token?: string;
+        refresh_token?: string;
+      } = await sequelize.transaction(async transaction => {
+        const existingUser = await User.findOne({
+          where: {
+            [Op.or]: [{ username }, { email }],
+          },
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        });
 
-      // 检查用户是否已存在
-      const existingUser = await User.findOne({
-        where: {
-          [Op.or]: [{ username }, { email }],
-        },
+        if (existingUser) return { kind: 'exists' };
+
+        const user = await User.create(
+          {
+            username,
+            email,
+            password_hash: password,
+            role: 'user',
+            is_active: true,
+          },
+          { transaction }
+        );
+        const preparedRefreshToken = this.prepareRefreshToken(user, randomUUID());
+        await this.persistRefreshSession(user, preparedRefreshToken, transaction);
+
+        return {
+          kind: 'created',
+          user,
+          access_token: this.generateAccessToken(user),
+          refresh_token: preparedRefreshToken.token,
+        };
       });
 
-      if (existingUser) {
+      if (result.kind === 'exists') {
         return res.status(400).json({
           success: false,
           message: '用户名或邮箱已存在',
         });
       }
 
-      // 创建用户
-      const user = await User.create({
-        username,
-        email,
-        password_hash: password, // 将在beforeCreate钩子中哈希
-        role: 'user',
-        is_active: true,
-      });
-
-      // 生成访问令牌和刷新令牌
-      console.log('User object:', user);
-      console.log('User id:', user?.id);
-      const accessToken = this.generateAccessToken(user);
-      const refreshToken = this.generateRefreshToken(user);
-
-      // 设置HttpOnly cookie
-      res.cookie('refreshToken', refreshToken, {
-        httpOnly: true,
-        secure: this.cookieSecure, // production 强制 HTTPS Secure cookie；dev/HTTP 下保留宽松行为
-        sameSite: 'strict',
-        path: '/',
-        maxAge: 3 * 24 * 60 * 60 * 1000, // 3 days (Batch AU 与 refreshTokenExpiry 对齐)
-      });
+      this.setRefreshCookie(res, result.refresh_token as string);
 
       res.status(201).json({
         success: true,
         message: '用户注册成功',
         data: {
-          user: user.toJSON(),
+          user: (result.user as User).toJSON(),
           tokens: {
-            accessToken,
+            accessToken: result.access_token,
           },
         },
       });
     } catch (error) {
-      logger.error('注册失败:', error);
-      next(error);
+      AuthController.logInfrastructureFailure('register', error);
+      return this.serviceUnavailable(res);
     }
   }
 
   /**
    * 用户登录
    */
-  async login(req: Request, res: Response, next: NextFunction) {
+  async login(req: Request, res: Response, _next: NextFunction) {
+    if (!this.tokenConfigurationReady) return this.serviceUnavailable(res);
+
     try {
       const { username, password } = req.body;
-
-      // 查找用户
       const user = await User.findOne({
         where: { username, is_active: true },
       });
@@ -199,7 +244,6 @@ export class AuthController {
         });
       }
 
-      // 验证密码
       const isValidPassword = await user.validatePassword(password);
       if (!isValidPassword) {
         return res.status(401).json({
@@ -208,123 +252,233 @@ export class AuthController {
         });
       }
 
-      // 生成令牌
-      const accessToken = this.generateAccessToken(user);
-      const refreshToken = this.generateRefreshToken(user);
+      const issued = await sequelize.transaction(async transaction => {
+        const currentUser = await User.findByPk(user.id, {
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        });
+        if (!currentUser || !currentUser.is_active) return null;
+        if (!(await currentUser.validatePassword(password))) return null;
 
-      // 设置HttpOnly cookie
-      res.cookie('refreshToken', refreshToken, {
-        httpOnly: true,
-        secure: this.cookieSecure, // production 强制 HTTPS Secure cookie；dev/HTTP 下保留宽松行为
-        sameSite: 'strict',
-        path: '/',
-        maxAge: 3 * 24 * 60 * 60 * 1000, // 3 days (Batch AU 与 refreshTokenExpiry 对齐)
+        const preparedRefreshToken = this.prepareRefreshToken(currentUser, randomUUID());
+        await this.persistRefreshSession(currentUser, preparedRefreshToken, transaction);
+        return {
+          user: currentUser,
+          access_token: this.generateAccessToken(currentUser),
+          refresh_token: preparedRefreshToken.token,
+        };
       });
+
+      if (!issued) {
+        return res.status(401).json({
+          success: false,
+          message: '用户名或密码错误',
+        });
+      }
+
+      this.setRefreshCookie(res, issued.refresh_token);
 
       res.json({
         success: true,
         message: '登录成功',
         data: {
-          user: user.toJSON(),
+          user: issued.user.toJSON(),
           tokens: {
-            accessToken,
+            accessToken: issued.access_token,
           },
         },
       });
     } catch (error) {
-      logger.error('登录失败:', error);
-      next(error);
+      AuthController.logInfrastructureFailure('login', error);
+      return this.serviceUnavailable(res);
     }
   }
 
   /**
    * 刷新访问令牌
    */
-  async refreshToken(req: Request, res: Response, next: NextFunction) {
-    try {
-      // 优先从cookie中获取，也可作为向后兼容从body获取
-      const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
-
-      if (!refreshToken) {
-        return res.status(400).json({
-          success: false,
-          message: '刷新令牌不能为空',
-        });
-      }
-
-      // 验证刷新令牌
-      let payload: JwtPayload;
-      try {
-        payload = jwt.verify(refreshToken, this.refreshTokenSecret) as JwtPayload;
-      } catch (error) {
-        return res.status(401).json({
-          success: false,
-          message: '无效的刷新令牌',
-        });
-      }
-
-      // 查找用户
-      const user = await User.findByPk(payload.user_id);
-      if (!user || !user.is_active) {
-        return res.status(401).json({
-          success: false,
-          message: '用户不存在或已被禁用',
-        });
-      }
-
-      // 令牌轮转机制：生成新的访问令牌和刷新令牌
-      const newAccessToken = this.generateAccessToken(user);
-      const newRefreshToken = this.generateRefreshToken(user);
-
-      // 设置新的HttpOnly cookie
-      res.cookie('refreshToken', newRefreshToken, {
-        httpOnly: true,
-        secure: this.cookieSecure, // production 强制 HTTPS Secure cookie
-        sameSite: 'strict',
-        path: '/',
-        maxAge: 3 * 24 * 60 * 60 * 1000, // 3 days (Batch AU 与 refreshTokenExpiry 对齐)
+  async refreshToken(req: Request, res: Response, _next: NextFunction) {
+    const refreshToken = req.cookies?.refreshToken;
+    if (typeof refreshToken !== 'string' || !refreshToken.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: '刷新令牌不能为空',
       });
+    }
+    if (!this.tokenConfigurationReady) {
+      return this.serviceUnavailable(res);
+    }
 
-      res.json({
+    const payload = this.verifyRefreshToken(refreshToken);
+    if (!payload) {
+      this.clearRefreshCookie(res);
+      return this.invalidRefreshToken(res);
+    }
+
+    try {
+      const presentedHash = this.hashRefreshToken(refreshToken);
+      const outcome = await sequelize.transaction<RefreshRotationOutcome>(
+        { isolationLevel: Transaction.ISOLATION_LEVELS.READ_COMMITTED },
+        async transaction => {
+          const session = await AuthRefreshSession.findOne({
+            where: { jti: payload.jti },
+            transaction,
+            lock: transaction.LOCK.UPDATE,
+          });
+
+          if (!session) {
+            await this.revokeFamily(
+              payload.family_id,
+              'reuse_detected',
+              transaction
+            );
+            return { kind: 'reused', user_id: payload.user_id };
+          }
+
+          if (
+            session.user_id !== payload.user_id ||
+            session.family_id !== payload.family_id ||
+            !this.hashesMatch(session.token_hash, presentedHash) ||
+            new Date(session.expires_at).getTime() !== payload.exp * 1000
+          ) {
+            await this.revokeFamily(session.family_id, 'reuse_detected', transaction);
+            if (session.family_id !== payload.family_id) {
+              await this.revokeFamily(payload.family_id, 'reuse_detected', transaction);
+            }
+            return { kind: 'reused', user_id: payload.user_id };
+          }
+
+          if (session.revoked_at) {
+            await this.revokeFamily(session.family_id, 'reuse_detected', transaction);
+            return { kind: 'reused', user_id: payload.user_id };
+          }
+
+          const now = new Date();
+          if (new Date(session.expires_at).getTime() <= now.getTime()) {
+            await session.update(
+              { revoked_at: now, revocation_reason: 'expired' },
+              { transaction }
+            );
+            return { kind: 'invalid' };
+          }
+
+          const user = await User.findByPk(payload.user_id, {
+            transaction,
+            lock: transaction.LOCK.UPDATE,
+          });
+          if (!user || !user.is_active) {
+            await this.revokeFamily(session.family_id, 'user_inactive', transaction);
+            return { kind: 'invalid' };
+          }
+
+          const preparedRefreshToken = this.prepareRefreshToken(
+            user,
+            session.family_id,
+            payload.exp
+          );
+          await session.update(
+            {
+              revoked_at: now,
+              replaced_by_jti: preparedRefreshToken.jti,
+              revocation_reason: 'rotated',
+            },
+            { transaction }
+          );
+          await this.persistRefreshSession(user, preparedRefreshToken, transaction);
+
+          return {
+            kind: 'rotated',
+            access_token: this.generateAccessToken(user),
+            refresh_token: preparedRefreshToken.token,
+          };
+        }
+      );
+
+      if (outcome.kind !== 'rotated') {
+        if (outcome.kind === 'reused') {
+          alertsBroadcaster.disconnectUser(outcome.user_id, 'refresh token reuse detected');
+        }
+        this.clearRefreshCookie(res);
+        return this.invalidRefreshToken(res);
+      }
+
+      this.setRefreshCookie(res, outcome.refresh_token);
+
+      return res.json({
         success: true,
         message: '令牌刷新成功',
         data: {
-          accessToken: newAccessToken,
+          accessToken: outcome.access_token,
         },
       });
     } catch (error) {
-      logger.error('刷新令牌失败:', error);
-      next(error);
+      AuthController.logInfrastructureFailure('refresh', error);
+      return this.serviceUnavailable(res);
     }
   }
 
   /**
    * 用户登出
    */
-  async logout(req: Request, res: Response, next: NextFunction) {
+  async logout(req: Request, res: Response, _next: NextFunction) {
+    const refreshToken = req.cookies?.refreshToken;
+
+    if (typeof refreshToken !== 'string' || !refreshToken.trim()) {
+      this.clearRefreshCookie(res);
+      return res.json({ success: true, message: '登出成功' });
+    }
+    if (!this.tokenConfigurationReady) return this.serviceUnavailable(res);
+
+    const payload = this.verifyRefreshToken(refreshToken);
+    if (!payload) {
+      this.clearRefreshCookie(res);
+      return res.json({ success: true, message: '登出成功' });
+    }
+
     try {
-      // 清除HttpOnly cookie中的refreshToken
-      res.clearCookie('refreshToken', {
-        httpOnly: true,
-        secure: this.cookieSecure, // 与 setCookie 时保持一致；prod=true / dev=false
-        sameSite: 'strict',
-        path: '/',
+      const presentedHash = this.hashRefreshToken(refreshToken);
+      await sequelize.transaction(async transaction => {
+        const session = await AuthRefreshSession.findOne({
+          where: { jti: payload.jti },
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        });
+        if (
+          session &&
+          session.user_id === payload.user_id &&
+          session.family_id === payload.family_id &&
+          this.hashesMatch(session.token_hash, presentedHash)
+        ) {
+          await this.revokeFamily(session.family_id, 'logout', transaction);
+          return;
+        }
+
+        // The JWT signature still authenticates the claimed family even when
+        // its exact jti row was lost or corrupted. Preserve logout semantics
+        // by revoking that family; if the colliding row names another family,
+        // fail closed for both instead of silently leaving either one active.
+        await this.revokeFamily(payload.family_id, 'logout', transaction);
+        if (session && session.family_id !== payload.family_id) {
+          await this.revokeFamily(session.family_id, 'logout', transaction);
+        }
       });
 
-      res.json({
+      alertsBroadcaster.disconnectUser(payload.user_id, 'logged out');
+      this.clearRefreshCookie(res);
+      return res.json({
         success: true,
         message: '登出成功',
       });
     } catch (error) {
-      logger.error('登出失败:', error);
-      next(error);
+      AuthController.logInfrastructureFailure('logout', error);
+      return this.serviceUnavailable(res);
     }
   }
 
   /**
    * 获取用户资料
    */
-  async getProfile(req: Request, res: Response, next: NextFunction) {
+  async getProfile(req: Request, res: Response, _next: NextFunction) {
     try {
       const user = (req as any).user;
       res.json({
@@ -334,15 +488,15 @@ export class AuthController {
         },
       });
     } catch (error) {
-      logger.error('获取用户资料失败:', error);
-      next(error);
+      AuthController.logInfrastructureFailure('profile-read', error);
+      return this.serviceUnavailable(res);
     }
   }
 
   /**
    * 更新用户资料
    */
-  async updateProfile(req: Request, res: Response, next: NextFunction) {
+  async updateProfile(req: Request, res: Response, _next: NextFunction) {
     try {
       const user = (req as any).user as User;
       const { nickname, phone, avatar_url } = req.body;
@@ -361,15 +515,15 @@ export class AuthController {
         },
       });
     } catch (error) {
-      logger.error('更新用户资料失败:', error);
-      next(error);
+      AuthController.logInfrastructureFailure('profile-update', error);
+      return this.serviceUnavailable(res);
     }
   }
 
   /**
    * 上传头像
    */
-  async uploadAvatar(req: Request, res: Response, next: NextFunction) {
+  async uploadAvatar(req: Request, res: Response, _next: NextFunction) {
     try {
       const user = (req as any).user as User;
       const file = (req as any).file;
@@ -395,8 +549,8 @@ export class AuthController {
         },
       });
     } catch (error) {
-      logger.error('上传头像失败:', error);
-      next(error);
+      AuthController.logInfrastructureFailure('avatar-update', error);
+      return this.serviceUnavailable(res);
     }
   }
 
@@ -404,37 +558,47 @@ export class AuthController {
    * 认证中间件
    */
   authenticate = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const authHeader = req.headers.authorization;
+    const unavailable = () =>
+      res.status(503).json({
+        success: false,
+        error: '认证服务暂不可用',
+      });
+    const unauthorized = () =>
+      res.status(401).json({
+        success: false,
+        error: '未认证',
+      });
 
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        (req as any).user = { ...DEFAULT_ADMIN_USER };
-        return next();
-      }
-
-      const token = authHeader.split(' ')[1];
-      if (!token) {
-        (req as any).user = { ...DEFAULT_ADMIN_USER };
-        return next();
-      }
-
-      // 验证令牌
-      const payload = jwt.verify(token, this.jwtSecret) as JwtPayload;
-
-      // 查找用户
-      const user = await User.findByPk(payload.user_id);
-      if (!user || !user.is_active) {
-        (req as any).user = { ...DEFAULT_ADMIN_USER };
-        return next();
-      }
-
-      // 将用户信息附加到请求对象
-      (req as any).user = user;
-      next();
-    } catch (error) {
-      (req as any).user = { ...DEFAULT_ADMIN_USER };
-      next();
+    const authHeader = req.headers.authorization;
+    const bearerMatch =
+      typeof authHeader === 'string' ? /^Bearer ([^\s]+)$/i.exec(authHeader) : null;
+    if (!bearerMatch) {
+      return unauthorized();
     }
+
+    if (!this.tokenConfigurationReady) {
+      logger.error('[AuthController] access-token authentication unavailable: invalid configuration');
+      return unavailable();
+    }
+
+    const payload = verifyAccessToken(bearerMatch[1], this.jwtSecret);
+    if (!payload) return unauthorized();
+
+    let user: User | null;
+    try {
+      user = await User.findByPk(payload.user_id);
+    } catch (error) {
+      AuthController.logInfrastructureFailure('access-user-lookup', error);
+      return unavailable();
+    }
+
+    if (!user || !user.is_active) {
+      return unauthorized();
+    }
+
+    // Downstream profile/update handlers require the Sequelize user instance.
+    (req as any).user = user;
+    return next();
   };
 
   /**
@@ -445,23 +609,197 @@ export class AuthController {
       user_id: user.id,
       username: user.username,
       role: user.role,
+      type: 'access',
     };
     return jwt.sign(payload, this.jwtSecret, {
+      algorithm: 'HS256',
       expiresIn: this.accessTokenExpiry,
+      issuer: AUTH_JWT_ISSUER,
+      audience: AUTH_ACCESS_TOKEN_AUDIENCE,
     });
   };
 
-  /**
-   * 生成刷新令牌
-   */
-  private generateRefreshToken = (user: User): string => {
+  private prepareRefreshToken(
+    user: User,
+    family_id: string,
+    family_expires_at_seconds?: number
+  ): PreparedRefreshToken {
+    const jti = randomUUID();
     const payload: JwtPayload = {
       user_id: user.id,
       username: user.username,
       role: user.role,
+      type: 'refresh',
+      family_id,
     };
-    return jwt.sign(payload, this.refreshTokenSecret, {
-      expiresIn: this.refreshTokenExpiry,
+    const token =
+      family_expires_at_seconds === undefined
+        ? jwt.sign(payload, this.refreshTokenSecret, {
+            algorithm: 'HS256',
+            expiresIn: this.refreshTokenExpiry,
+            issuer: AUTH_JWT_ISSUER,
+            audience: AUTH_REFRESH_TOKEN_AUDIENCE,
+            jwtid: jti,
+          })
+        : jwt.sign(
+            { ...payload, exp: family_expires_at_seconds },
+            this.refreshTokenSecret,
+            {
+              algorithm: 'HS256',
+              issuer: AUTH_JWT_ISSUER,
+              audience: AUTH_REFRESH_TOKEN_AUDIENCE,
+              jwtid: jti,
+            }
+          );
+    const decoded = jwt.decode(token);
+    if (
+      typeof decoded === 'string' ||
+      !decoded ||
+      typeof decoded.exp !== 'number' ||
+      !Number.isSafeInteger(decoded.exp)
+    ) {
+      throw new Error('AuthTokenSigningError');
+    }
+
+    return {
+      token,
+      token_hash: this.hashRefreshToken(token),
+      jti,
+      family_id,
+      expires_at: new Date(decoded.exp * 1000),
+    };
+  }
+
+  private verifyRefreshToken(token: string): VerifiedRefreshTokenPayload | null {
+    try {
+      const decoded = jwt.verify(token, this.refreshTokenSecret, {
+        algorithms: ['HS256'],
+        issuer: AUTH_JWT_ISSUER,
+        audience: AUTH_REFRESH_TOKEN_AUDIENCE,
+      });
+      if (
+        typeof decoded === 'string' ||
+        decoded.type !== 'refresh' ||
+        decoded.iss !== AUTH_JWT_ISSUER ||
+        decoded.aud !== AUTH_REFRESH_TOKEN_AUDIENCE ||
+        !Number.isSafeInteger(decoded.user_id) ||
+        decoded.user_id <= 0 ||
+        typeof decoded.username !== 'string' ||
+        decoded.username.length === 0 ||
+        typeof decoded.role !== 'string' ||
+        decoded.role.length === 0 ||
+        typeof decoded.iat !== 'number' ||
+        !Number.isSafeInteger(decoded.iat) ||
+        typeof decoded.exp !== 'number' ||
+        !Number.isSafeInteger(decoded.exp) ||
+        decoded.exp <= decoded.iat ||
+        !this.isCanonicalUuidV4(decoded.jti) ||
+        !this.isCanonicalUuidV4(decoded.family_id)
+      ) {
+        return null;
+      }
+      return decoded as VerifiedRefreshTokenPayload;
+    } catch {
+      return null;
+    }
+  }
+
+  private async persistRefreshSession(
+    user: User,
+    prepared: PreparedRefreshToken,
+    transaction: Transaction
+  ): Promise<void> {
+    await AuthRefreshSession.create(
+      {
+        session_id: randomUUID(),
+        user_id: user.id,
+        jti: prepared.jti,
+        family_id: prepared.family_id,
+        token_hash: prepared.token_hash,
+        expires_at: prepared.expires_at,
+        revoked_at: null,
+        replaced_by_jti: null,
+        revocation_reason: null,
+      },
+      { transaction }
+    );
+  }
+
+  private async revokeFamily(
+    family_id: string,
+    reason: AuthRefreshSessionRevocationReason,
+    transaction: Transaction
+  ): Promise<void> {
+    await AuthRefreshSession.update(
+      {
+        revoked_at: new Date(),
+        revocation_reason: reason,
+      },
+      {
+        where: { family_id, revoked_at: null },
+        transaction,
+      }
+    );
+  }
+
+  private setRefreshCookie(res: Response, token: string): void {
+    res.cookie('refreshToken', token, {
+      httpOnly: true,
+      secure: this.cookieSecure,
+      sameSite: 'strict',
+      path: '/',
+      maxAge: this.refreshCookieMaxAgeMs,
     });
-  };
+  }
+
+  private clearRefreshCookie(res: Response): void {
+    res.clearCookie('refreshToken', {
+      httpOnly: true,
+      secure: this.cookieSecure,
+      sameSite: 'strict',
+      path: '/',
+    });
+  }
+
+  private hashRefreshToken(token: string): string {
+    return createHash('sha256').update(token, 'utf8').digest('hex');
+  }
+
+  private hashesMatch(storedHash: string, presentedHash: string): boolean {
+    if (!/^[0-9a-f]{64}$/.test(storedHash) || !/^[0-9a-f]{64}$/.test(presentedHash)) {
+      return false;
+    }
+    return timingSafeEqual(Buffer.from(storedHash, 'hex'), Buffer.from(presentedHash, 'hex'));
+  }
+
+  private isCanonicalUuidV4(value: unknown): value is string {
+    return (
+      typeof value === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+        value
+      )
+    );
+  }
+
+  private serviceUnavailable(res: Response) {
+    return res.status(503).json({
+      success: false,
+      message: '认证服务暂不可用',
+    });
+  }
+
+  private invalidRefreshToken(res: Response) {
+    return res.status(401).json({
+      success: false,
+      message: '无效的刷新令牌',
+    });
+  }
+
+  private static logInfrastructureFailure(operation: string, error: unknown): void {
+    const rawName = error instanceof Error ? error.name : 'UnknownAuthError';
+    const safeName = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(rawName)
+      ? rawName
+      : 'UnknownAuthError';
+    logger.error(`[AuthController] ${operation} failed (${safeName})`);
+  }
 }

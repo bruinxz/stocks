@@ -216,6 +216,7 @@ const AppContent: React.FC = () => {
   const [openKeys, setOpenKeys] = useState<string[]>([]);
 
   useEffect(() => {
+    void authService.retryPendingLogout();
     // Fetch profile on initial load if token exists but user state is missing
     const fetchProfile = async () => {
       if (token && !user) {
