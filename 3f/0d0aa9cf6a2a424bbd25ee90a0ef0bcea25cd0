@@ -1,0 +1,33 @@
+backend/src/data/sources/AKShareClient.ts
+  s_26d7f43d00eb19::t_5895411d305d73 184-187
+backend/src/scripts/backfill-missing-bars.ts
+  s_26d7f43d00eb19::t_2f957fbdf9eb05 29,55,71,151-156
+datapipeline/storage/backtest_pit/writer.py
+  s_26d7f43d00eb19::t_830f9d4dfac621 11,54,239-241,278-297,392-397,399-405,411
+datapipeline/tests/storage/backtest_pit/test_writer.py
+  s_26d7f43d00eb19::t_5b40a8ee04f9f5 210-236
+scripts/ops/populate_live_backtest_pit.py
+  s_26d7f43d00eb19::t_89cc8240031e92 35,184-188,194-207,220,223,319-320,349,381,383-402,407,413-414,418-430,440-442
+scripts/ops/populate_live_recommendations.py
+  s_26d7f43d00eb19::t_a200ece3f4f25f 4-6,218-243,621,739,855,972-975,977,984-992,1005
+scripts/ops/sync_global_markets_daily.py
+  s_26d7f43d00eb19::t_96da2bf4afa6d0 120-138,140-142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3f0d0aa9cf6a2a424bbd25ee90a0ef0bcea25cd0",
+  "prompts": {},
+  "sessions": {
+    "s_26d7f43d00eb19": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f68e6-5066-71f1-99c3-8e7f1950f283",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
