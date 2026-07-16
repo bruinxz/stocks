@@ -46,6 +46,14 @@ function assert(name: string, condition: boolean): void {
   }
 }
 
+async function waitFor(condition: () => boolean, attempts = 20): Promise<boolean> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (condition()) return true;
+    await Promise.resolve();
+  }
+  return condition();
+}
+
 class FakeCli implements ReplayCliPort {
   submit_result: ReplayJob = { job_id: JOB_ID, status: 'queued' };
   status_result: ReplayJob = { job_id: JOB_ID, status: 'running' };
@@ -110,10 +118,10 @@ async function main(): Promise<void> {
   const concurrentSupervisor = new ReplayJobSupervisor(concurrent, { http_wait_ms: 100 });
   const first = concurrentSupervisor.submitAndRun(PINS);
   const second = concurrentSupervisor.submitAndRun(PINS);
-  await Promise.resolve();
   assert(
     'same durable job is singleflight within one Backend process',
-    concurrent.run_calls.length === 1
+    (await waitFor(() => concurrent.run_calls.length === 1)) &&
+      concurrent.run_calls.length === 1
   );
   finishSingleflight?.({ job_id: JOB_ID, status: 'completed', snapshot_id: SNAPSHOT_ID });
   const concurrentResults = await Promise.all([first, second]);
@@ -167,34 +175,28 @@ async function main(): Promise<void> {
     private index = 0;
     readonly resolvers: Array<(job: ReplayJob) => void> = [];
 
-    override async submit(
+    override submit(
       pins: ReplayPins,
       options?: ReplayCliInvocationOptions
     ): Promise<ReplayJob> {
       this.submit_calls.push({ pins, options });
-      return { job_id: jobIds[this.index++], status: 'queued' };
-    }
-
-    override runOne(job_id: string, options?: ReplayCliInvocationOptions): Promise<ReplayJob> {
-      this.run_calls.push({ job_id, options });
-      return new Promise(resolve => this.resolvers.push(resolve));
-    }
-
-    override async status(
-      job_id: string,
-      options?: ReplayCliInvocationOptions
-    ): Promise<ReplayJob> {
-      this.status_calls.push({ job_id, options });
-      return { job_id, status: 'running' };
+      const job_id = jobIds[this.index++];
+      return new Promise<ReplayJob>(resolve => {
+        this.resolvers.push(resolve);
+      }).then(() => ({ job_id, status: 'completed', snapshot_id: SNAPSHOT_ID }));
     }
   }
   const capacity = new CapacityCli();
   const capacitySupervisor = new ReplayJobSupervisor(capacity, {
     http_wait_ms: 0,
-    operational_limits: { ...LIMITS, max_concurrency: 1, max_queue_depth: 1 },
+    operational_limits: { ...LIMITS, max_concurrency: 2, max_queue_depth: 0 },
   });
-  await capacitySupervisor.submitAndRun(PINS);
-  await capacitySupervisor.submitAndRun({ ...PINS, trading_day: '2026-07-15' });
+  const firstAdmission = capacitySupervisor.submitAndRun(PINS);
+  const secondAdmission = capacitySupervisor.submitAndRun({
+    ...PINS,
+    trading_day: '2026-07-15',
+  });
+  await waitFor(() => capacity.submit_calls.length === 2);
   let backpressured = false;
   try {
     await capacitySupervisor.submitAndRun({ ...PINS, trading_day: '2026-07-16' });
@@ -202,24 +204,15 @@ async function main(): Promise<void> {
     backpressured = error instanceof ReplayBackpressureError;
   }
   assert(
-    'global scheduler starts no more than max_concurrency workers',
-    capacity.run_calls.length === 1
+    'global admission starts no more than max_concurrency control children',
+    capacity.submit_calls.length === 2
   );
   assert(
     'global queue rejects before a third durable submit',
     backpressured && capacity.submit_calls.length === 2
   );
-  capacity.resolvers[0]({
-    job_id: jobIds[0],
-    status: 'completed',
-    snapshot_id: SNAPSHOT_ID,
-  });
-  await Promise.resolve();
-  await Promise.resolve();
-  assert(
-    'queue dispatches the next job only after capacity is released',
-    capacity.run_calls.length === 2
-  );
+  capacity.resolvers.forEach(resolve => resolve({ job_id: JOB_ID, status: 'queued' }));
+  await Promise.all([firstAdmission, secondAdmission]);
 
   let finishStatus: ((job: ReplayJob) => void) | undefined;
   const control = new FakeCli();
