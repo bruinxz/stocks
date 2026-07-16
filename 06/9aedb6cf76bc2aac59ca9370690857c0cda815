@@ -1,0 +1,39 @@
+backend/src/api/controllers/AuthController.ts
+  s_26d7f43d00eb19::t_a7a54992085c0f 62,76,323,569-571,635-640,765,785
+backend/src/middlewares/internalAuth.ts
+  s_26d7f43d00eb19::t_16fe370b0f5a32 54
+backend/src/realtime/alertsWebSocketServer.ts
+  s_26d7f43d00eb19::t_13c21f7aaeb6b8 237,240
+backend/src/replay/ReplayJobSupervisor.ts
+  s_26d7f43d00eb19::t_c3495587a24a2d 182
+backend/src/replay/ReplayOperationalLimits.ts
+  s_26d7f43d00eb19::t_98a64387ab9ceb 174
+docs/openapi.json
+  s_26d7f43d00eb19::t_2f3512d314827a 3903-3921,3972,4052-4070,10094-10095,10099-10123,10137-10139,10175,10189-10196,10207-10209,10219-10220,10226-10228,10231-10233,10244-10245,10249-10251
+frontend/src/__tests__/appPublicRoutes.test.tsx
+  s_26d7f43d00eb19::t_f87db34c9bd3f4 175-176
+frontend/src/pages/catdesk/tabs/daily-report/useDailyReportRuntime.ts
+  s_26d7f43d00eb19::t_d490233ede95b6 44,49
+frontend/src/services/__tests__/apiAuth.test.ts
+  s_26d7f43d00eb19::t_f865598a5da58c 48
+frontend/src/services/api.ts
+  s_26d7f43d00eb19::t_542f42472e3ce3 121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "069aedb6cf76bc2aac59ca9370690857c0cda815",
+  "prompts": {},
+  "sessions": {
+    "s_26d7f43d00eb19": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f68e6-5066-71f1-99c3-8e7f1950f283",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
