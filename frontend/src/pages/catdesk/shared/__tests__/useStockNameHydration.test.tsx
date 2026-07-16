@@ -1,20 +1,13 @@
 import React, { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  jest as jestGlobals,
-  test,
-} from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, jest as mockJest, test } from '@jest/globals';
 import type { MockedFunction } from 'jest-mock';
 import api from 'services/api';
 import { useStockNameHydration } from '../useStockNameHydration';
 
-jestGlobals.mock('services/api', () => ({
+mockJest.mock('services/api', () => ({
   __esModule: true,
-  default: { get: require('@jest/globals').jest.fn() },
+  default: { get: mockJest.fn() },
 }));
 
 const apiGet = api.get as MockedFunction<typeof api.get>;
@@ -63,7 +56,7 @@ describe('useStockNameHydration', () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
-    jestGlobals.clearAllMocks();
+    mockJest.clearAllMocks();
   });
 
   test('切换催化筛选时不会重启名称补全循环', async () => {
