@@ -1,0 +1,23 @@
+backend/src/auth/AuthRefreshSessionSchema.ts
+  s_26d7f43d00eb19::t_f5b7588ac3081d 52
+backend/tests/models/auth-refresh-session.test.ts
+  s_26d7f43d00eb19::t_cf6744d4db97a1 25-28,67-70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e5ad05839d326d7c0f9a5bec25e69050b2a610d2",
+  "prompts": {},
+  "sessions": {
+    "s_26d7f43d00eb19": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f68e6-5066-71f1-99c3-8e7f1950f283",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
