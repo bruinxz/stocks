@@ -1,0 +1,21 @@
+scripts/tests/bootstrap-release-tools-linux.sh
+  s_26d7f43d00eb19::t_3bf087efe6f6fc 103-106,109-115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b568e29803c152ba9a12bc0d917e9447e4a92283",
+  "prompts": {},
+  "sessions": {
+    "s_26d7f43d00eb19": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f68e6-5066-71f1-99c3-8e7f1950f283",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
