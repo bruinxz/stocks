@@ -188,8 +188,10 @@ class MaterializationCliTests(unittest.TestCase):
         environment = {"TAB4_CANDIDATE_DISPOSABLE_WRITE": "1"}
         with (
             patch.dict(os.environ, environment, clear=True),
-            patch.object(cli.Path, "is_dir", return_value=True),
-            patch.object(cli.Path, "is_socket", return_value=True) as is_socket,
+            patch.object(cli.Path, "is_dir", autospec=True, return_value=True),
+            patch.object(
+                cli.Path, "is_socket", autospec=True, return_value=True
+            ) as is_socket,
         ):
             cli._require_disposable(database_url)
 
