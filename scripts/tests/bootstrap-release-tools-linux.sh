@@ -100,10 +100,19 @@ test "$($PYTHON_EXECUTABLE -c 'import platform, sys; print(platform.python_imple
   exit 2
 }
 if test ! -x "$PYTHON_VENV/bin/python"; then
-  "$PYTHON_EXECUTABLE" -m venv "$PYTHON_VENV"
+  if ! "$PYTHON_EXECUTABLE" -m venv "$PYTHON_VENV"; then
+    rm -rf "$PYTHON_VENV"
+    "$PYTHON_EXECUTABLE" -m venv --without-pip "$PYTHON_VENV"
+  fi
 fi
 test "$($PYTHON_VENV/bin/python -c 'import platform, sys; print(platform.python_implementation() + " " + ".".join(map(str, sys.version_info[:2])))')" = "CPython 3.11"
-"$PYTHON_VENV/bin/python" -m pip install \
+"$PYTHON_EXECUTABLE" -m pip --version >/dev/null 2>&1 || {
+  echo "bootstrap-release-tools: the selected CPython must provide pip" >&2
+  exit 2
+}
+# Debian may ship python3-pip while omitting ensurepip/python3-venv. pip's
+# explicit --python target installs only into the isolated venv.
+"$PYTHON_EXECUTABLE" -m pip --python "$PYTHON_VENV/bin/python" install \
   --disable-pip-version-check \
   --require-hashes \
   --only-binary=:all: \
