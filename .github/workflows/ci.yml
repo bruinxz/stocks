@@ -94,12 +94,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # 按 backend/package-lock.json hash 缓存 ~/.npm
+          # Backend tests include cross-monorepo contracts that import frontend
+          # source, so both lockfiles define this job's dependency closure.
           cache: 'npm'
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
 
-      - name: Install dependencies
+      - name: Install backend dependencies
         run: npm ci
+
+      - name: Install frontend dependencies for cross-monorepo tests
+        run: npm ci --prefix ../frontend
 
       - name: Diagnostic baseline comparator regression guard
         run: |
