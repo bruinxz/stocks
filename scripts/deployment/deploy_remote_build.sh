@@ -271,7 +271,7 @@ CURRENT='$CURRENT'
 cd "\$CURRENT/backend"
 test -f .env
 APPLY_AUTH_REFRESH_SESSION_MIGRATION=1 NODE_ENV=production \
-  npm run --silent migrate:auth-refresh-sessions
+  node dist/scripts/apply-auth-refresh-session-migration.js
 EOF
 
 # ---------------------------------------------------------------------------

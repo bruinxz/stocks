@@ -30,7 +30,6 @@ const deployScript = fs.readFileSync(
   path.join(ROOT, '../scripts/deployment/deploy_remote_build.sh'),
   'utf8'
 );
-const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 
 let passed = 0;
 let failed = 0;
@@ -88,14 +87,15 @@ assert(
 );
 assert(
   'deployment applies auth migration before restart',
-  deployScript.indexOf('migrate:auth-refresh-sessions') > 0 &&
-    deployScript.indexOf('migrate:auth-refresh-sessions') <
+  deployScript.indexOf('node dist/scripts/apply-auth-refresh-session-migration.js') > 0 &&
+    deployScript.indexOf('node dist/scripts/apply-auth-refresh-session-migration.js') <
       deployScript.indexOf('systemctl restart')
 );
 assert(
   'migration command runs compiled guarded entrypoint',
-  packageJson.scripts?.['migrate:auth-refresh-sessions'] ===
-    'node dist/scripts/apply-auth-refresh-session-migration.js'
+  /APPLY_AUTH_REFRESH_SESSION_MIGRATION=1 NODE_ENV=production[\s\\]*node dist\/scripts\/apply-auth-refresh-session-migration\.js/.test(
+    deployScript
+  )
 );
 
 assert(
