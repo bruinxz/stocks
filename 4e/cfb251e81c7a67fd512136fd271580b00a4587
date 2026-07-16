@@ -1,0 +1,69 @@
+ai/replay/cli.py
+  s_13bfca31ab6114::t_ae2b63a45f4f63 11,16,39,58,72-78,150-153,185,190-198,215-216,242-244,249,263-265,270-274,293,296-300,309,314,322-414,753-754
+ai/replay/errors.py
+  s_0ea7ce1b0cc346::t_8b4b59c2ec852f 1-9
+ai/replay/file_store.py
+  s_26d7f43d00eb19::t_62b2d768f5908c 35-36,57-65,90,99,112,184,191-193,228-229,395-399,418-489
+ai/replay/ports.py
+  s_070dedc42b7970::t_2e1064b7cd1fd7 56,58
+ai/replay/postgres_repository.py
+  s_0ea7ce1b0cc346::t_8157b0df4d8b10 10,51,55,59
+ai/replay/runtime.py
+  s_13bfca31ab6114::t_ddede67a119512 536-537,552-554
+ai/replay/service.py
+  s_0ea7ce1b0cc346::t_cb8c2757f9a73c 7,21-24,124-125,141-148,186-187,189,191-192,194-200,202-207,214-219,233-234,236-237,257-260,313-316,323-324,326-327,332,336,345-364,512-534,536-537,548-549
+ai/replay/types.py
+  s_13bfca31ab6114::t_c943d7b5489eae 67-77,82-84,98-99,111-112
+ai/snapshot/postgres_store.py
+  s_0ea7ce1b0cc346::t_4ee8f88f33c437 19-20,122,126,130,134-137,357-366,378-382,403-407,411-416,478-483,514-519
+ai/tests/test_replay_cli.py
+  s_13bfca31ab6114::t_e8335008af19e6 3,343-348,362,373-392
+ai/tests/test_replay_cli_subprocess.py
+  s_0ea7ce1b0cc346::t_d7a1359e679f1d 18,24,185-213,246-250,253-254,269,470-492
+ai/tests/test_replay_runtime.py
+  s_26d7f43d00eb19::t_a4bd6e022c88ca 4,10,311-318,666-667,675,681-758,803,958,963
+ai/tests/test_replay_service.py
+  s_0ea7ce1b0cc346::t_2bfb9e296ecfd6 13,17,58,60,73-74,76,177,183-188,197-198,500-505,554-618
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4ecfb251e81c7a67fd512136fd271580b00a4587",
+  "prompts": {},
+  "sessions": {
+    "s_070dedc42b7970": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f66d6-7c3d-7c71-8178-4699608122d4",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_0ea7ce1b0cc346": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f66bd-4aa9-7422-9f9a-dc30b2769918",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_13bfca31ab6114": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f66d2-a1b7-7773-ae11-d958df4574bf",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_26d7f43d00eb19": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f68e6-5066-71f1-99c3-8e7f1950f283",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
