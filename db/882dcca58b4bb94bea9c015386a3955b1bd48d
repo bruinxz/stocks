@@ -1,0 +1,21 @@
+backend/tests/routing/auth-refresh-session.test.ts
+  s_26d7f43d00eb19::t_6d8ac0cdb79bd5 18,160,168,252,267,284,313,329,345
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "db882dcca58b4bb94bea9c015386a3955b1bd48d",
+  "prompts": {},
+  "sessions": {
+    "s_26d7f43d00eb19": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f68e6-5066-71f1-99c3-8e7f1950f283",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
