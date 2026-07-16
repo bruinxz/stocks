@@ -429,10 +429,16 @@ import backtestPitRoutes from './api/routes/backtestPit.routes';
 import jpkrMarketRoutes from './api/routes/jpkrMarket.routes';
 import multibaggerRoutes from './api/routes/multibagger.routes';
 import { buildDailyReportProjectionRoutes } from './api/routes/dailyReportProjection.routes';
+import { buildRecommendationReplayRoutes } from './api/routes/recommendationReplay.routes';
 import { buildRecommendationSnapshotRoutes } from './api/routes/recommendationSnapshot.routes';
 import { SequelizeRecommendationSnapshotReadAdapter } from './recommendations/SequelizeRecommendationSnapshotReadAdapter';
 import { DailyReportProjectionService } from './projections/DailyReportProjectionService';
 import { ProjectionCliClient } from './projections/ProjectionCliClient';
+import { ReplayCliClient } from './replay/ReplayCliClient';
+import { ReplayJobSupervisor } from './replay/ReplayJobSupervisor';
+import { SequelizeReplayPinsReadAdapter } from './replay/ReplayPinsReadPort';
+import { logger } from './utils/logger';
+import { assertAuthRefreshSessionSchema } from './auth/AuthRefreshSessionSchema';
 app.use('/api/v1/morning-brief', morningBriefRoutes);
 app.use('/api/v1/catalyst', catalystRoutes);
 app.use('/api/v1/us-select', usSelectRoutes);
@@ -440,6 +446,21 @@ app.use('/api/v1/backtest-pit', backtestPitRoutes);
 app.use('/api/v1/jpkr-market', jpkrMarketRoutes);
 app.use('/api/v1/multibagger', multibaggerRoutes);
 const recommendationSnapshotReadAdapter = new SequelizeRecommendationSnapshotReadAdapter(sequelize);
+const replayJobSupervisor = new ReplayJobSupervisor(new ReplayCliClient(), {
+  http_wait_ms: Number(process.env.STOCKS_REPLAY_HTTP_WAIT_MS),
+  control_timeout_ms: Number(process.env.STOCKS_REPLAY_CONTROL_TIMEOUT_MS),
+  on_background_error: error => {
+    const errorType = error instanceof Error ? error.name : 'UnknownReplayError';
+    logger.error(`[ReplayJobSupervisor] background run_one failed (${errorType})`);
+  },
+});
+app.use(
+  '/api/v1/ai/recommendations',
+  buildRecommendationReplayRoutes(
+    new SequelizeReplayPinsReadAdapter(sequelize),
+    replayJobSupervisor
+  )
+);
 app.use(
   '/api/v1/ai/recommendations',
   buildRecommendationSnapshotRoutes(recommendationSnapshotReadAdapter)
@@ -1128,6 +1149,9 @@ async function initializeApp() {
       }
     }
 
+    if (isProduction) {
+      await assertAuthRefreshSessionSchema(sequelize);
+    }
     await AuthController.ensureDefaultUsersInitialized();
 
     // 生产环境不执行 sequelize.sync，但默认任务仍需要随版本演进做幂等补齐。

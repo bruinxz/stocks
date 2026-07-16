@@ -410,6 +410,364 @@
           }
         }
       },
+      "ReplaySubmitRequest": {
+        "description": "精确包含 trading_day/profile/market_scope 三个字段。服务端据此解析已持久化的完整 replay pins；客户端不得提交版本或 hash。",
+        "oneOf": [
+          {
+            "title": "A股或美股 profile",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "trading_day",
+              "profile",
+              "market_scope"
+            ],
+            "properties": {
+              "trading_day": {
+                "type": "string",
+                "format": "date",
+                "example": "2026-07-14"
+              },
+              "profile": {
+                "type": "string",
+                "enum": [
+                  "us_preferred",
+                  "multibagger"
+                ]
+              },
+              "market_scope": {
+                "type": "string",
+                "enum": [
+                  "cn_a",
+                  "us"
+                ]
+              }
+            }
+          },
+          {
+            "title": "日本市场 profile",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "trading_day",
+              "profile",
+              "market_scope"
+            ],
+            "properties": {
+              "trading_day": {
+                "type": "string",
+                "format": "date",
+                "example": "2026-07-14"
+              },
+              "profile": {
+                "type": "string",
+                "enum": [
+                  "japan_blue_chip",
+                  "japan_multibagger"
+                ]
+              },
+              "market_scope": {
+                "type": "string",
+                "enum": [
+                  "jp"
+                ]
+              }
+            }
+          },
+          {
+            "title": "韩国市场 profile",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "trading_day",
+              "profile",
+              "market_scope"
+            ],
+            "properties": {
+              "trading_day": {
+                "type": "string",
+                "format": "date",
+                "example": "2026-07-14"
+              },
+              "profile": {
+                "type": "string",
+                "enum": [
+                  "korea_semiconductor_chain",
+                  "korea_multibagger"
+                ]
+              },
+              "market_scope": {
+                "type": "string",
+                "enum": [
+                  "kr"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ReplayQueuedJob": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued"
+            ]
+          }
+        }
+      },
+      "ReplayRunningJob": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running"
+            ]
+          }
+        }
+      },
+      "ReplayCompletedJob": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "job_id",
+          "status",
+          "snapshot_id"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed"
+            ]
+          },
+          "snapshot_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          }
+        }
+      },
+      "ReplayFailedJob": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "job_id",
+          "status",
+          "error"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "failed"
+            ]
+          },
+          "error": {
+            "type": "string",
+            "enum": [
+              "replay pipeline failed",
+              "replay source invalid",
+              "replay failed"
+            ]
+          }
+        }
+      },
+      "ReplayPendingJob": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReplayQueuedJob"
+          },
+          {
+            "$ref": "#/components/schemas/ReplayRunningJob"
+          }
+        ]
+      },
+      "ReplayTerminalJob": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReplayCompletedJob"
+          },
+          {
+            "$ref": "#/components/schemas/ReplayFailedJob"
+          }
+        ]
+      },
+      "ReplayJob": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReplayQueuedJob"
+          },
+          {
+            "$ref": "#/components/schemas/ReplayRunningJob"
+          },
+          {
+            "$ref": "#/components/schemas/ReplayCompletedJob"
+          },
+          {
+            "$ref": "#/components/schemas/ReplayFailedJob"
+          }
+        ]
+      },
+      "ReplayErrorResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "稳定、无内部路径或异常详情的公开错误信息"
+          }
+        }
+      },
+      "ReplayUnauthorizedResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "success",
+          "error"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "error": {
+            "type": "string",
+            "enum": [
+              "未认证"
+            ]
+          }
+        }
+      },
+      "ReplayAuthUnavailableResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "success",
+          "error"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "error": {
+            "type": "string",
+            "enum": [
+              "认证服务暂不可用"
+            ]
+          }
+        }
+      },
+      "ReplayValidationErrorResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "success",
+          "message",
+          "errors"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "message": {
+            "type": "string",
+            "enum": [
+              "请求参数验证失败"
+            ]
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "msg"
+              ],
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "value": {},
+                "msg": {
+                  "type": "string"
+                },
+                "param": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "location": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ReplayBadRequestResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReplayErrorResponse"
+          },
+          {
+            "$ref": "#/components/schemas/ReplayValidationErrorResponse"
+          }
+        ]
+      },
+      "ReplayUnavailableResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReplayErrorResponse"
+          },
+          {
+            "$ref": "#/components/schemas/ReplayAuthUnavailableResponse"
+          }
+        ]
+      },
       "Journal": {
         "type": "object",
         "properties": {
@@ -3434,6 +3792,283 @@
           },
           "401": {
             "description": "未授权"
+          }
+        }
+      }
+    },
+    "/api/v1/ai/recommendations/replay": {
+      "post": {
+        "tags": [
+          "AI 分析"
+        ],
+        "operationId": "submitRecommendationReplay",
+        "summary": "提交并短暂等待推荐重放任务",
+        "description": "使用交易日、profile 与 market_scope 解析唯一的已持久化 typed-source capture，\n再向 durable replay runtime 幂等提交任务。HTTP 连接仅短暂等待；任务仍在排队或\n运行时返回 202，终态 completed/failed 返回 200。完整版本、时间与 hash pins\n由服务端解析，客户端不得在请求体中提交或覆盖。\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplaySubmitRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "重放任务已到达 completed 或 failed 终态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayTerminalJob"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "重放任务已持久化，当前为 queued 或 running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayPendingJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求体字段不精确、日期/profile/scope 非法或 profile 与 scope 不兼容",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayBadRequestResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bearer token 缺失、无效、用户不存在或已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayUnauthorizedResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "对应 typed-source capture 或 replay job 不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "typed-source capture 不唯一或 replay job 冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "replay CLI 请求超过输入上限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "服务端解析出的完整 replay pins 不满足严格契约",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "未分类的内部处理失败",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "replay CLI 返回超限、畸形或未识别的拒绝响应",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "鉴权、capture store、replay runtime 或 replay store 暂不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayUnavailableResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "replay CLI 控制操作超时",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ai/recommendations/status": {
+      "get": {
+        "tags": [
+          "AI 分析"
+        ],
+        "operationId": "getRecommendationReplayStatus",
+        "summary": "查询 durable 推荐重放任务状态",
+        "description": "按 canonical lowercase UUIDv4 查询持久化任务。该接口可跨 Backend/CLI 进程重启\n恢复 queued、running、completed 或 failed 状态；不会启动新的 replay job。\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "job_id",
+            "required": true,
+            "description": "canonical lowercase UUIDv4 replay job id",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "当前持久化 job 状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "query 字段不精确或 job_id 不是 canonical lowercase UUIDv4",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayBadRequestResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bearer token 缺失、无效、用户不存在或已停用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayUnauthorizedResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "replay job 不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "replay job 状态冲突",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "replay CLI 状态请求超过输入上限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "未分类的内部处理失败",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "replay CLI 返回超限、畸形或未识别的拒绝响应",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "鉴权、replay runtime 或 replay store 暂不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayUnavailableResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "replay CLI 状态查询超时",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayErrorResponse"
+                }
+              }
+            }
           }
         }
       }

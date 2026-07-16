@@ -53,9 +53,12 @@ import {
   SMTP_REQUIRED_GROUP,
   WECHAT_REQUIRED_GROUP,
   ALIYUN_SMS_REQUIRED_GROUP,
+  REPLAY_REQUIRED_GROUP,
+  REPLAY_OPERATIONAL_REQUIRED_GROUP,
   EnvValidationResult,
 } from '../../src/config/EnvValidator';
 import Joi from 'joi';
+import { secretFingerprint } from '../../src/security/leakedSecretFingerprints';
 
 let passed = 0;
 let failed = 0;
@@ -74,6 +77,23 @@ function assertEqual<T>(name: string, actual: T, expected: T): void {
   assert(name, ok, `actual=${JSON.stringify(actual)} expected=${JSON.stringify(expected)}`);
 }
 
+function replayDisclaimer(language: string, fullText: string) {
+  return {
+    version: '1.0.0',
+    short_text: fullText,
+    full_text: fullText,
+    language,
+    effective_at: '2026-01-01T00:00:00Z',
+    hash: secretFingerprint(fullText),
+  };
+}
+
+const VALID_REPLAY_DISCLAIMERS = JSON.stringify({
+  'zh-CN': replayDisclaimer('zh-CN', '仅供研究参考'),
+  'ja-JP': replayDisclaimer('ja-JP', '調査目的のみ'),
+  'ko-KR': replayDisclaimer('ko-KR', '연구 목적 전용'),
+});
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -91,7 +111,21 @@ function makeValidEnv(overrides: Record<string, string | undefined> = {}): NodeJ
     REDIS_HOST: 'localhost',
     REDIS_PORT: '6379',
     JWT_SECRET: 'a-real-secret-key-not-a-placeholder',
+    JWT_REFRESH_SECRET: 'a-real-refresh-secret-not-placeholder',
+    ENABLE_SECURE_COOKIE: 'true',
     TRADING_AGENTS_URL: 'http://127.0.0.1:8000',
+    STOCKS_REPLAY_RUNTIME_DIR: '/var/lib/stocks/replay-test',
+    DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/stock_backtest',
+    STOCKS_REPLAY_MODEL_VERSION: '1.0.0',
+    STOCKS_REPLAY_TEMPLATE_HASH: 'b'.repeat(64),
+    STOCKS_REPLAY_DISCLAIMERS_JSON: VALID_REPLAY_DISCLAIMERS,
+    STOCKS_REPLAY_WORKER_DEADLINE_SECONDS: '120',
+    STOCKS_REPLAY_LEASE_SECONDS: '150',
+    STOCKS_REPLAY_MAX_CONCURRENCY: '2',
+    STOCKS_REPLAY_MAX_QUEUE_DEPTH: '32',
+    STOCKS_REPLAY_SUBMIT_RATE_PER_MINUTE: '10',
+    STOCKS_REPLAY_STATUS_RATE_PER_MINUTE: '120',
+    STOCKS_REPLAY_RATE_MAX_USERS: '10000',
   };
   const merged: Record<string, string | undefined> = { ...base };
   for (const k of Object.keys(overrides)) {
@@ -114,13 +148,26 @@ assert('FEISHU_REQUIRED_GROUP frozen', Object.isFrozen(FEISHU_REQUIRED_GROUP));
 assert('SMTP_REQUIRED_GROUP frozen', Object.isFrozen(SMTP_REQUIRED_GROUP));
 assert('WECHAT_REQUIRED_GROUP frozen', Object.isFrozen(WECHAT_REQUIRED_GROUP));
 assert('ALIYUN_SMS_REQUIRED_GROUP frozen', Object.isFrozen(ALIYUN_SMS_REQUIRED_GROUP));
-assert('PLACEHOLDER_VALUES 含已知占位符', PLACEHOLDER_VALUES.includes('your_jwt_secret_key_here'));
+assert('REPLAY_REQUIRED_GROUP frozen', Object.isFrozen(REPLAY_REQUIRED_GROUP));
+assert(
+  'REPLAY_OPERATIONAL_REQUIRED_GROUP frozen',
+  Object.isFrozen(REPLAY_OPERATIONAL_REQUIRED_GROUP)
+);
+assert('PLACEHOLDER_VALUES 含 change-me', PLACEHOLDER_VALUES.includes('change-me'));
 assert('PLACEHOLDER_VALUES 含 TODO', PLACEHOLDER_VALUES.includes('TODO'));
 
 console.log('\n[2] isPlaceholderValue 纯函数...');
-assertEqual('占位符', isPlaceholderValue('your_jwt_secret_key_here'), true);
-assertEqual('占位符大小写不敏感', isPlaceholderValue('YOUR_JWT_SECRET_KEY_HERE'), true);
-assertEqual('占位符 trim', isPlaceholderValue('  your_jwt_secret_key_here  '), true);
+const syntheticLeakedPlaceholder = 'synthetic-leaked-placeholder-for-fingerprint-test';
+const syntheticPlaceholderFingerprints = new Set([
+  secretFingerprint(syntheticLeakedPlaceholder),
+]);
+assertEqual(
+  '泄漏指纹按精确值识别',
+  isPlaceholderValue(syntheticLeakedPlaceholder, syntheticPlaceholderFingerprints),
+  true
+);
+assertEqual('占位符大小写不敏感', isPlaceholderValue('todo'), true);
+assertEqual('占位符 trim', isPlaceholderValue('  change-me  '), true);
 assertEqual('真实值', isPlaceholderValue('real-secret-123'), false);
 assertEqual('空串非占位符', isPlaceholderValue(''), false);
 assertEqual('undefined 非占位符', isPlaceholderValue(undefined), false);
@@ -130,11 +177,7 @@ assertEqual('TODO 占位符', isPlaceholderValue('TODO'), true);
 assertEqual('change-me 占位符', isPlaceholderValue('change-me'), true);
 
 console.log('\n[3] detectPartialChannelGroup...');
-assertEqual(
-  '全空',
-  detectPartialChannelGroup({}, SMTP_REQUIRED_GROUP),
-  []
-);
+assertEqual('全空', detectPartialChannelGroup({}, SMTP_REQUIRED_GROUP), []);
 assertEqual(
   '全填',
   detectPartialChannelGroup(
@@ -143,17 +186,13 @@ assertEqual(
   ),
   []
 );
-assertEqual(
-  '只填 HOST',
-  detectPartialChannelGroup({ SMTP_HOST: 'h' }, SMTP_REQUIRED_GROUP),
-  ['SMTP_USER', 'SMTP_PASS']
-);
+assertEqual('只填 HOST', detectPartialChannelGroup({ SMTP_HOST: 'h' }, SMTP_REQUIRED_GROUP), [
+  'SMTP_USER',
+  'SMTP_PASS',
+]);
 assertEqual(
   '填 HOST + USER 缺 PASS',
-  detectPartialChannelGroup(
-    { SMTP_HOST: 'h', SMTP_USER: 'u' },
-    SMTP_REQUIRED_GROUP
-  ),
+  detectPartialChannelGroup({ SMTP_HOST: 'h', SMTP_USER: 'u' }, SMTP_REQUIRED_GROUP),
   ['SMTP_PASS']
 );
 assertEqual(
@@ -163,10 +202,7 @@ assertEqual(
 );
 assertEqual(
   '部分空字符串部分有值',
-  detectPartialChannelGroup(
-    { SMTP_HOST: 'h', SMTP_USER: '', SMTP_PASS: 'p' },
-    SMTP_REQUIRED_GROUP
-  ),
+  detectPartialChannelGroup({ SMTP_HOST: 'h', SMTP_USER: '', SMTP_PASS: 'p' }, SMTP_REQUIRED_GROUP),
   ['SMTP_USER']
 );
 
@@ -178,13 +214,12 @@ assertEqual('required 1 个', mappedReq.length, 1);
 assertEqual('required category', mappedReq[0].category, 'required');
 assertEqual('required field', mappedReq[0].field, 'X');
 
-const formatErr = Joi.object({ N: Joi.number().integer().required() })
-  .validate({ N: 'abc' }).error!;
+const formatErr = Joi.object({ N: Joi.number().integer().required() }).validate({ N: 'abc' })
+  .error!;
 const mappedFmt = mapJoiErrorsToValidationErrors(formatErr);
 assertEqual('invalid_format category', mappedFmt[0].category, 'invalid_format');
 
-const uriErr = Joi.object({ U: Joi.string().uri().required() })
-  .validate({ U: 'not-a-url' }).error!;
+const uriErr = Joi.object({ U: Joi.string().uri().required() }).validate({ U: 'not-a-url' }).error!;
 const mappedUri = mapJoiErrorsToValidationErrors(uriErr);
 assertEqual('uri 是 invalid_format', mappedUri[0].category, 'invalid_format');
 
@@ -211,9 +246,7 @@ assert('error report 含 category', formatErrorReport(errResult).includes('[requ
 const warnResult: EnvValidationResult = {
   ok: true,
   errors: [],
-  warnings: [
-    { field: 'JWT_SECRET', message: 'placeholder', category: 'placeholder_value' },
-  ],
+  warnings: [{ field: 'JWT_SECRET', message: 'placeholder', category: 'placeholder_value' }],
   validated: {},
   node_env: 'development',
 };
@@ -231,25 +264,129 @@ assert('validated 含 DB_HOST', r6.validated.DB_HOST === 'localhost');
 console.log('\n[7] validateEnv 缺必填...');
 const r7 = validateEnv(makeValidEnv({ DB_HOST: undefined }));
 assertEqual('缺 DB_HOST → ok=false', r7.ok, false);
-assert('errors 含 DB_HOST', r7.errors.some(e => e.field === 'DB_HOST'));
-assert('DB_HOST is required', r7.errors.some(e => e.field === 'DB_HOST' && e.category === 'required'));
+assert(
+  'errors 含 DB_HOST',
+  r7.errors.some(e => e.field === 'DB_HOST')
+);
+assert(
+  'DB_HOST is required',
+  r7.errors.some(e => e.field === 'DB_HOST' && e.category === 'required')
+);
 
 const r7b = validateEnv(makeValidEnv({ JWT_SECRET: undefined }));
 assertEqual('缺 JWT_SECRET → ok=false', r7b.ok, false);
-assert('errors 含 JWT_SECRET', r7b.errors.some(e => e.field === 'JWT_SECRET'));
+assert(
+  'errors 含 JWT_SECRET',
+  r7b.errors.some(e => e.field === 'JWT_SECRET')
+);
+
+const r7bRefresh = validateEnv(
+  makeValidEnv({
+    NODE_ENV: 'production',
+    JWT_SECRET: 'a'.repeat(40),
+    JWT_REFRESH_SECRET: undefined,
+  })
+);
+assertEqual('production 缺 JWT_REFRESH_SECRET → ok=false', r7bRefresh.ok, false);
+assert(
+  'errors 含 JWT_REFRESH_SECRET',
+  r7bRefresh.errors.some(e => e.field === 'JWT_REFRESH_SECRET')
+);
 
 const r7c = validateEnv(makeValidEnv({ TRADING_AGENTS_URL: undefined }));
 assertEqual('缺 TRADING_AGENTS_URL → ok=false', r7c.ok, false);
-assert('errors 含 TRADING_AGENTS_URL', r7c.errors.some(e => e.field === 'TRADING_AGENTS_URL'));
+assert(
+  'errors 含 TRADING_AGENTS_URL',
+  r7c.errors.some(e => e.field === 'TRADING_AGENTS_URL')
+);
 
 const r7d = validateEnv(makeValidEnv({ REDIS_HOST: undefined }));
 assertEqual('缺 REDIS_HOST → ok=false', r7d.ok, false);
+
+const r7e = validateEnv(makeValidEnv({ STOCKS_REPLAY_MODEL_VERSION: undefined }));
+assertEqual('durable replay 部分配置 → ok=false', r7e.ok, false);
+assert(
+  'replay errors 含缺失版本',
+  r7e.errors.some(e => e.field.includes('STOCKS_REPLAY_MODEL_VERSION'))
+);
+
+const replayEmpty = Object.fromEntries(REPLAY_REQUIRED_GROUP.map(field => [field, undefined]));
+const r7f = validateEnv(
+  makeValidEnv({
+    NODE_ENV: 'production',
+    JWT_SECRET: 'p'.repeat(40),
+    ...replayEmpty,
+  })
+);
+assertEqual('production durable replay 全空 → ok=false', r7f.ok, false);
+assert(
+  'production replay missing is production_required',
+  r7f.errors.some(e => e.category === 'production_required' && e.message.includes('replay'))
+);
+
+const r7g = validateEnv(makeValidEnv({ STOCKS_REPLAY_DISCLAIMERS_JSON: 'not-json' }));
+assertEqual('replay disclaimer 非 JSON → ok=false', r7g.ok, false);
+const invalidReplayDisclaimers = JSON.parse(VALID_REPLAY_DISCLAIMERS);
+invalidReplayDisclaimers['ja-JP'].language = 'zh-CN';
+const r7g2 = validateEnv(
+  makeValidEnv({ STOCKS_REPLAY_DISCLAIMERS_JSON: JSON.stringify(invalidReplayDisclaimers) })
+);
+assertEqual('replay disclaimer locale 内容不匹配 → ok=false', r7g2.ok, false);
+const badHashReplayDisclaimers = JSON.parse(VALID_REPLAY_DISCLAIMERS);
+badHashReplayDisclaimers['ko-KR'].hash = '0'.repeat(64);
+const r7g3 = validateEnv(
+  makeValidEnv({ STOCKS_REPLAY_DISCLAIMERS_JSON: JSON.stringify(badHashReplayDisclaimers) })
+);
+assertEqual('replay disclaimer 正文 hash 不匹配 → ok=false', r7g3.ok, false);
+
+const r7h = validateEnv(
+  makeValidEnv({
+    NODE_ENV: 'production',
+    JWT_SECRET: 'p'.repeat(40),
+    STOCKS_REPLAY_MAX_CONCURRENCY: undefined,
+  })
+);
+assertEqual('production 缺 replay 运行上限 → ok=false', r7h.ok, false);
+assert(
+  'production replay 运行上限必须显式配置',
+  r7h.errors.some(
+    e =>
+      e.category === 'production_required' && e.field.includes('STOCKS_REPLAY_MAX_CONCURRENCY')
+  )
+);
+
+const r7i = validateEnv(
+  makeValidEnv({
+    STOCKS_REPLAY_WORKER_DEADLINE_SECONDS: '120',
+    STOCKS_REPLAY_LEASE_SECONDS: '124',
+  })
+);
+assertEqual('replay lease 缺少 5 秒恢复余量 → ok=false', r7i.ok, false);
+
+const r7j = validateEnv(
+  makeValidEnv({
+    STOCKS_REPLAY_WORKER_DEADLINE_SECONDS: '120',
+    STOCKS_REPLAY_LEASE_SECONDS: '125',
+  })
+);
+assertEqual('replay lease 恰有 5 秒恢复余量 → ok=true', r7j.ok, true);
+
+const replayOperationalEmpty = Object.fromEntries(
+  REPLAY_OPERATIONAL_REQUIRED_GROUP.map(field => [field, undefined])
+);
+const r7k = validateEnv(makeValidEnv(replayOperationalEmpty));
+assertEqual('development 可使用 replay 运行上限默认值', r7k.ok, true);
+assertEqual('默认 worker deadline', r7k.validated.STOCKS_REPLAY_WORKER_DEADLINE_SECONDS, 120);
+assertEqual('默认 lease', r7k.validated.STOCKS_REPLAY_LEASE_SECONDS, 150);
+
+const r7l = validateEnv(makeValidEnv({ STOCKS_REPLAY_MAX_CONCURRENCY: '17' }));
+assertEqual('replay concurrency 超过安全上限 → ok=false', r7l.ok, false);
 
 console.log('\n[8] 占位符值: production = error, development = warning...');
 const r8prod = validateEnv(
   makeValidEnv({
     NODE_ENV: 'production',
-    JWT_SECRET: 'your_jwt_secret_key_here',
+    JWT_SECRET: 'change-me',
   })
 );
 // production 模式 + 占位符 + 长度不够 32 → 至少 1 个 error
@@ -258,17 +395,25 @@ assert(
   'production 占位符触发 production_required',
   r8prod.errors.some(e => e.field === 'JWT_SECRET' && e.category === 'production_required')
 );
+assert(
+  'production 占位符错误不回显原值',
+  !JSON.stringify(r8prod.errors).includes('change-me')
+);
 
 const r8dev = validateEnv(
   makeValidEnv({
     NODE_ENV: 'development',
-    JWT_SECRET: 'your_jwt_secret_key_here',
+    JWT_SECRET: 'change-me',
   })
 );
 assertEqual('development 占位符 ok=true', r8dev.ok, true);
 assert(
   'development 占位符 → warning',
   r8dev.warnings.some(w => w.field === 'JWT_SECRET' && w.category === 'placeholder_value')
+);
+assert(
+  'development 占位符告警不回显原值',
+  !JSON.stringify(r8dev.warnings).includes('change-me')
 );
 
 console.log('\n[9] JWT_SECRET 短于 32 production → error...');
@@ -281,11 +426,46 @@ const r9prod = validateEnv(
 assertEqual('production 短 JWT_SECRET → ok=false', r9prod.ok, false);
 assert(
   'JWT_SECRET 短 production_required error',
-  r9prod.errors.some(e => e.field === 'JWT_SECRET' && e.category === 'production_required' && e.message.includes('32'))
+  r9prod.errors.some(
+    e =>
+      e.field === 'JWT_SECRET' && e.category === 'production_required' && e.message.includes('32')
+  )
 );
 // development 容忍
 const r9dev = validateEnv(makeValidEnv({ NODE_ENV: 'development', JWT_SECRET: 'short-key-123' }));
 assertEqual('development 短 JWT_SECRET ok', r9dev.ok, true);
+
+console.log('\n[9b] JWT secret 分域 + production Secure cookie...');
+const sharedJwtSecret = 'two-token-classes-must-not-share-this-secret';
+const r9bShared = validateEnv(
+  makeValidEnv({
+    JWT_SECRET: sharedJwtSecret,
+    JWT_REFRESH_SECRET: sharedJwtSecret,
+  })
+);
+assertEqual('access/refresh secret 相同 → ok=false', r9bShared.ok, false);
+assert(
+  'secret 相同触发 invalid_format',
+  r9bShared.errors.some(
+    e => e.field.includes('JWT_SECRET') && e.field.includes('JWT_REFRESH_SECRET')
+  )
+);
+
+const r9bProdCookie = validateEnv(
+  makeValidEnv({ NODE_ENV: 'production', ENABLE_SECURE_COOKIE: 'false' })
+);
+assertEqual('production Secure cookie=false → ok=false', r9bProdCookie.ok, false);
+assert(
+  'production Secure cookie error',
+  r9bProdCookie.errors.some(
+    e => e.field === 'ENABLE_SECURE_COOKIE' && e.category === 'production_required'
+  )
+);
+
+const r9bDevCookie = validateEnv(
+  makeValidEnv({ NODE_ENV: 'development', ENABLE_SECURE_COOKIE: 'false' })
+);
+assertEqual('development 可显式 Secure cookie=false', r9bDevCookie.ok, true);
 
 console.log('\n[10] SMTP 部分填写...');
 const r10 = validateEnv(
@@ -362,7 +542,10 @@ assert(
 console.log('\n[16] PORT 非法范围...');
 const r16 = validateEnv(makeValidEnv({ PORT: '99999' }));
 assertEqual('PORT 99999 → ok=false', r16.ok, false);
-assert('errors 含 PORT invalid_format', r16.errors.some(e => e.field === 'PORT' && e.category === 'invalid_format'));
+assert(
+  'errors 含 PORT invalid_format',
+  r16.errors.some(e => e.field === 'PORT' && e.category === 'invalid_format')
+);
 
 const r16b = validateEnv(makeValidEnv({ PORT: '0' }));
 assertEqual('PORT 0 → ok=false', r16b.ok, false);
@@ -373,7 +556,10 @@ assertEqual('PORT -1 → ok=false', r16c.ok, false);
 console.log('\n[17] DB_PORT 非数字...');
 const r17 = validateEnv(makeValidEnv({ DB_PORT: 'abc' }));
 assertEqual('DB_PORT abc → ok=false', r17.ok, false);
-assert('errors 含 DB_PORT', r17.errors.some(e => e.field === 'DB_PORT'));
+assert(
+  'errors 含 DB_PORT',
+  r17.errors.some(e => e.field === 'DB_PORT')
+);
 
 console.log('\n[18] TRADING_AGENTS_URL 非 URL...');
 const r18 = validateEnv(makeValidEnv({ TRADING_AGENTS_URL: 'not-a-url' }));
@@ -384,7 +570,9 @@ assert(
 );
 
 console.log('\n[19] 默认值注入...');
-const r19 = validateEnv(makeValidEnv({ PORT: undefined, DB_PORT: undefined, REDIS_PORT: undefined }));
+const r19 = validateEnv(
+  makeValidEnv({ PORT: undefined, DB_PORT: undefined, REDIS_PORT: undefined })
+);
 assertEqual('PORT 默认 3000', r19.validated.PORT, 3000);
 assertEqual('DB_PORT 默认 5432', r19.validated.DB_PORT, 5432);
 assertEqual('REDIS_PORT 默认 6379', r19.validated.REDIS_PORT, 6379);
@@ -401,7 +589,11 @@ console.log('\n[21] shouldExitOnFailure...');
 assertEqual(
   'ok=true → false',
   shouldExitOnFailure({
-    ok: true, errors: [], warnings: [], validated: {}, node_env: 'production',
+    ok: true,
+    errors: [],
+    warnings: [],
+    validated: {},
+    node_env: 'production',
   }),
   false
 );
@@ -470,10 +662,7 @@ const r25 = validateEnv(
   })
 );
 assertEqual('SMTP 三件套齐 ok=true', r25.ok, true);
-assert(
-  '不再有 SMTP 部分配置 error',
-  !r25.errors.some(e => e.field.includes('SMTP_'))
-);
+assert('不再有 SMTP 部分配置 error', !r25.errors.some(e => e.field.includes('SMTP_')));
 
 console.log('\n[26] 多 channel 同时部分填写 → 多 errors...');
 const r26 = validateEnv(
@@ -501,7 +690,10 @@ assertEqual('NODE_ENV PRODUCTION → ok=false', r28b.ok, false);
 console.log('\n[29] DB_USER 空字符串 → required error...');
 const r29 = validateEnv(makeValidEnv({ DB_USER: '' }));
 assertEqual('DB_USER 空 → ok=false', r29.ok, false);
-assert('errors 含 DB_USER', r29.errors.some(e => e.field === 'DB_USER'));
+assert(
+  'errors 含 DB_USER',
+  r29.errors.some(e => e.field === 'DB_USER')
+);
 
 console.log('\n[30] customSchema 选项...');
 const customSchema = Joi.object({ ONLY_THIS: Joi.string().required() }).unknown(true);
@@ -509,7 +701,10 @@ const r30 = validateEnv({ ONLY_THIS: 'value' }, { customSchema });
 assertEqual('customSchema 简化', r30.ok, true);
 const r30b = validateEnv({}, { customSchema });
 assertEqual('customSchema 缺必填 ok=false', r30b.ok, false);
-assert('errors 含 ONLY_THIS', r30b.errors.some(e => e.field === 'ONLY_THIS'));
+assert(
+  'errors 含 ONLY_THIS',
+  r30b.errors.some(e => e.field === 'ONLY_THIS')
+);
 
 // ===========================================================================
 console.log('\n--------------------------------------------------------------');

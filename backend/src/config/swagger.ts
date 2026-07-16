@@ -198,6 +198,194 @@ const COMMON_COMPONENTS = {
         percentile: { type: 'number' },
       },
     },
+    ReplaySubmitRequest: {
+      description:
+        '精确包含 trading_day/profile/market_scope 三个字段。服务端据此解析已持久化的完整 replay pins；客户端不得提交版本或 hash。',
+      oneOf: [
+        {
+          title: 'A股或美股 profile',
+          type: 'object',
+          additionalProperties: false,
+          required: ['trading_day', 'profile', 'market_scope'],
+          properties: {
+            trading_day: { type: 'string', format: 'date', example: '2026-07-14' },
+            profile: { type: 'string', enum: ['us_preferred', 'multibagger'] },
+            market_scope: { type: 'string', enum: ['cn_a', 'us'] },
+          },
+        },
+        {
+          title: '日本市场 profile',
+          type: 'object',
+          additionalProperties: false,
+          required: ['trading_day', 'profile', 'market_scope'],
+          properties: {
+            trading_day: { type: 'string', format: 'date', example: '2026-07-14' },
+            profile: {
+              type: 'string',
+              enum: ['japan_blue_chip', 'japan_multibagger'],
+            },
+            market_scope: { type: 'string', enum: ['jp'] },
+          },
+        },
+        {
+          title: '韩国市场 profile',
+          type: 'object',
+          additionalProperties: false,
+          required: ['trading_day', 'profile', 'market_scope'],
+          properties: {
+            trading_day: { type: 'string', format: 'date', example: '2026-07-14' },
+            profile: {
+              type: 'string',
+              enum: ['korea_semiconductor_chain', 'korea_multibagger'],
+            },
+            market_scope: { type: 'string', enum: ['kr'] },
+          },
+        },
+      ],
+    },
+    ReplayQueuedJob: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['job_id', 'status'],
+      properties: {
+        job_id: {
+          type: 'string',
+          format: 'uuid',
+          pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+        },
+        status: { type: 'string', enum: ['queued'] },
+      },
+    },
+    ReplayRunningJob: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['job_id', 'status'],
+      properties: {
+        job_id: {
+          type: 'string',
+          format: 'uuid',
+          pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+        },
+        status: { type: 'string', enum: ['running'] },
+      },
+    },
+    ReplayCompletedJob: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['job_id', 'status', 'snapshot_id'],
+      properties: {
+        job_id: {
+          type: 'string',
+          format: 'uuid',
+          pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+        },
+        status: { type: 'string', enum: ['completed'] },
+        snapshot_id: {
+          type: 'string',
+          format: 'uuid',
+          pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+        },
+      },
+    },
+    ReplayFailedJob: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['job_id', 'status', 'error'],
+      properties: {
+        job_id: {
+          type: 'string',
+          format: 'uuid',
+          pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+        },
+        status: { type: 'string', enum: ['failed'] },
+        error: {
+          type: 'string',
+          enum: ['replay pipeline failed', 'replay source invalid', 'replay failed'],
+        },
+      },
+    },
+    ReplayPendingJob: {
+      oneOf: [
+        { $ref: '#/components/schemas/ReplayQueuedJob' },
+        { $ref: '#/components/schemas/ReplayRunningJob' },
+      ],
+    },
+    ReplayTerminalJob: {
+      oneOf: [
+        { $ref: '#/components/schemas/ReplayCompletedJob' },
+        { $ref: '#/components/schemas/ReplayFailedJob' },
+      ],
+    },
+    ReplayJob: {
+      oneOf: [
+        { $ref: '#/components/schemas/ReplayQueuedJob' },
+        { $ref: '#/components/schemas/ReplayRunningJob' },
+        { $ref: '#/components/schemas/ReplayCompletedJob' },
+        { $ref: '#/components/schemas/ReplayFailedJob' },
+      ],
+    },
+    ReplayErrorResponse: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['error'],
+      properties: {
+        error: { type: 'string', description: '稳定、无内部路径或异常详情的公开错误信息' },
+      },
+    },
+    ReplayUnauthorizedResponse: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['success', 'error'],
+      properties: {
+        success: { type: 'boolean', enum: [false] },
+        error: { type: 'string', enum: ['未认证'] },
+      },
+    },
+    ReplayAuthUnavailableResponse: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['success', 'error'],
+      properties: {
+        success: { type: 'boolean', enum: [false] },
+        error: { type: 'string', enum: ['认证服务暂不可用'] },
+      },
+    },
+    ReplayValidationErrorResponse: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['success', 'message', 'errors'],
+      properties: {
+        success: { type: 'boolean', enum: [false] },
+        message: { type: 'string', enum: ['请求参数验证失败'] },
+        errors: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['msg'],
+            properties: {
+              type: { type: 'string' },
+              value: {},
+              msg: { type: 'string' },
+              param: { type: 'string' },
+              path: { type: 'string' },
+              location: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+    ReplayBadRequestResponse: {
+      oneOf: [
+        { $ref: '#/components/schemas/ReplayErrorResponse' },
+        { $ref: '#/components/schemas/ReplayValidationErrorResponse' },
+      ],
+    },
+    ReplayUnavailableResponse: {
+      oneOf: [
+        { $ref: '#/components/schemas/ReplayErrorResponse' },
+        { $ref: '#/components/schemas/ReplayAuthUnavailableResponse' },
+      ],
+    },
     Journal: {
       type: 'object',
       properties: {
