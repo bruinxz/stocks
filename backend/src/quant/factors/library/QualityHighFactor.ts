@@ -78,7 +78,6 @@ import { FinancialReport } from '../../../models/FinancialReport';
 import { StockFundamentalFactor } from '../../../models/StockFundamentalFactor';
 import { stripSuffix, isFiniteNumber, lookbackStartDate } from './_helpers';
 
-
 /**
  * 毛利率滑动窗口所需的最少有效观测数 (BD-3 relax 2026-06-23).
  *

@@ -6,6 +6,7 @@ import {
 } from './recommendationAdapter';
 import { jcsCanonicalize, sha256Text } from './contractSchema';
 import { parseGenerationJob } from './generationMachine';
+import { authenticatedFetch } from 'services/api';
 import {
   RECOMMENDATION_PROFILE_SCOPES,
   type DailyReportDocument,
@@ -57,7 +58,7 @@ export class Tab67ApiError extends Error {
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 
 function assertScope(profile: RecommendationProfile, marketScope: RecommendationMarketScope): void {
@@ -210,7 +211,7 @@ function parseSnapshotDetail(value: unknown): RecommendationSnapshot {
   return parseRecommendationSnapshot(envelope);
 }
 
-export function createTab67HttpApi(fetcher: FetchLike = fetch): Tab67Api {
+export function createTab67HttpApi(fetcher: FetchLike = authenticatedFetch): Tab67Api {
   const get = async (url: string, signal: AbortSignal) =>
     responseJson(await fetcher(url, { method: 'GET', signal }));
 
@@ -284,7 +285,7 @@ export function createTab67HttpApi(fetcher: FetchLike = fetch): Tab67Api {
     },
 
     async replayStatus(jobId, signal) {
-      if (!jobId) throw new RecommendationContractError('job_id is required');
+      assertUuid(jobId, 'job_id');
       const params = new URLSearchParams({ job_id: jobId });
       return parseGenerationJob(
         await get(`/api/v1/ai/recommendations/status?${params.toString()}`, signal)

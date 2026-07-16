@@ -30,6 +30,7 @@
  */
 
 import type { EnrichedAlert, DerivedAlertCategory } from './alertsPanelHelpers';
+import { ALERTS_BELL_TARGET_PATH } from './alertsBellHelpers';
 
 // ---------------------------------------------------------------------------
 // 类型 + 常量
@@ -317,11 +318,10 @@ export function filterOutSnoozedAlerts(
  * 单 alert "一键执行" 的动作类型 — 与 derived_category 一一对应.
  *
  * 决策表 (与 [[deriveAlertCategoryFromMessage]] category 同源):
- *   - position   → 'open_position_review' : 跳 /workspace/portfolio 让用户复核仓位
- *   - market     → 'open_risk_center'     : 跳 /workspace/today?tab=risk_center
+ *   - position   → 'open_position_review' : PortfolioWorkspace 已删，回当前 CatDesk 主入口
+ *   - market     → 'open_risk_center'     : 独立风控页已删，回当前 CatDesk 主入口
  *   - individual → 'open_stock_detail'    : 跳 /stock/{symbol}
- *   - data       → 'open_data_center'     : 跳 /workspace/today?tab=risk_center
- *                                          (没专 data center 路由, 复用风控中心)
+ *   - data       → 'open_data_center'     : 跳仍有效的 /workspace/data
  */
 export type AlertActionType =
   | 'open_stock_detail'
@@ -358,7 +358,7 @@ export const ALERT_ACTION_LABEL: Readonly<Record<DerivedAlertCategory, string>> 
 /**
  * symbol "看起来是合法 A 股代码" 的判定 — 用于 individual 分类时是否真能跳
  * /stock/{symbol}. 兜底: 不像合法代码 (如 'SYSTEM:...' / 空 / 带特殊字符)
- * 时降级为 risk_center.
+ * 时降级为 CatDesk 主入口.
  *
  * 与 isValidSymbol (frontend/utils) 风格一致 — 6 位数字 / 600xxx 等 A 股
  * 通配, 也认 60xxxx.SH / 0xxxxx.SZ 后缀格式.
@@ -380,13 +380,11 @@ export function looksLikeAShareSymbol(symbol: string | null | undefined): boolea
  *
  * 决策表 (短路链):
  *   (1) category=='individual' AND symbol 合法 → 跳 /stock/{symbol}
- *   (2) category=='individual' AND symbol 不合法 → 降级 'market' 走 risk_center
- *   (3) category=='position' → /workspace/portfolio
- *   (4) category=='market'   → /workspace/today?tab=risk_center
- *   (5) category=='data'     → /workspace/today?tab=risk_center (data center 待 US 落)
- *   (6) 未知 category (理论上不会触发) → 兜底 risk_center
- *
- * 与 [[buildAlertsBellHref]] (US-070) 输出 '/workspace/today?tab=risk_center' 同款 href.
+ *   (2) category=='individual' AND symbol 不合法 → 降级到 CatDesk
+ *   (3) category=='position' → /catdesk（独立 PortfolioWorkspace 已删）
+ *   (4) category=='market'   → /catdesk（独立风控页已删）
+ *   (5) category=='data'     → /workspace/data
+ *   (6) 未知 category (理论上不会触发) → 兜底 /catdesk
  */
 export function buildAlertActionDescriptor(alert: EnrichedAlert): AlertActionDescriptor {
   const cat: DerivedAlertCategory = alert.derived_category;
@@ -400,9 +398,9 @@ export function buildAlertActionDescriptor(alert: EnrichedAlert): AlertActionDes
         markReadOnAction: false,
       };
     }
-    // 降级为 risk_center
+    // 无法打开个股详情时降级到当前主入口。
     return {
-      href: '/workspace/today?tab=risk_center',
+      href: ALERTS_BELL_TARGET_PATH,
       label: ALERT_ACTION_LABEL.market,
       actionType: 'open_risk_center',
       markReadOnAction: true,
@@ -410,7 +408,7 @@ export function buildAlertActionDescriptor(alert: EnrichedAlert): AlertActionDes
   }
   if (cat === 'position') {
     return {
-      href: '/workspace/portfolio',
+      href: ALERTS_BELL_TARGET_PATH,
       label: ALERT_ACTION_LABEL.position,
       actionType: 'open_position_review',
       markReadOnAction: true,
@@ -418,7 +416,7 @@ export function buildAlertActionDescriptor(alert: EnrichedAlert): AlertActionDes
   }
   if (cat === 'data') {
     return {
-      href: '/workspace/today?tab=risk_center',
+      href: '/workspace/data',
       label: ALERT_ACTION_LABEL.data,
       actionType: 'open_data_center',
       markReadOnAction: true,
@@ -426,7 +424,7 @@ export function buildAlertActionDescriptor(alert: EnrichedAlert): AlertActionDes
   }
   // market or unknown fallback
   return {
-    href: '/workspace/today?tab=risk_center',
+    href: ALERTS_BELL_TARGET_PATH,
     label: ALERT_ACTION_LABEL.market,
     actionType: 'open_risk_center',
     markReadOnAction: true,

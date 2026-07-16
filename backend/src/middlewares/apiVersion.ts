@@ -32,5 +32,5 @@ export function apiVersionMiddleware() {
 
 export const CURRENT_API_VERSION = API_VERSION;
 export const SUPPORTED_API_VERSIONS: readonly number[] = Object.freeze(
-  deriveSupportedMajors(API_VERSION),
+  deriveSupportedMajors(API_VERSION)
 );

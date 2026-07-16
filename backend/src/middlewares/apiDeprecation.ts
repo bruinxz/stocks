@@ -44,7 +44,7 @@ export function buildApiDeprecationMiddleware(config: DeprecationConfig | null) 
     }
     if (typeof migration_link === 'string' && migration_link.length > 0) {
       const rels = ['deprecation', 'sunset']
-        .map((rel) => `<${migration_link}>; rel="${rel}"`)
+        .map(rel => `<${migration_link}>; rel="${rel}"`)
         .join(', ');
       res.setHeader('Link', rels);
     }
@@ -52,7 +52,6 @@ export function buildApiDeprecationMiddleware(config: DeprecationConfig | null) 
   };
 }
 
-export const apiDeprecationMiddleware = () =>
-  buildApiDeprecationMiddleware(PKG_DEPRECATION_CONFIG);
+export const apiDeprecationMiddleware = () => buildApiDeprecationMiddleware(PKG_DEPRECATION_CONFIG);
 
 export const CURRENT_DEPRECATION_CONFIG = PKG_DEPRECATION_CONFIG;

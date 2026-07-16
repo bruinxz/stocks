@@ -133,14 +133,14 @@ async function testConstants() {
     20
   );
   assertEqual(
-    'DEFAULT_POSITION_LIMITS.max_single_stock_pct == 0.1',
+    'DEFAULT_POSITION_LIMITS.max_single_stock_pct == 0.15',
     DEFAULT_POSITION_LIMITS.max_single_stock_pct,
-    0.1
+    0.15
   );
   assertEqual(
-    'DEFAULT_POSITION_LIMITS.max_single_industry_pct == 0.3',
+    'DEFAULT_POSITION_LIMITS.max_single_industry_pct == 0.25',
     DEFAULT_POSITION_LIMITS.max_single_industry_pct,
-    0.3
+    0.25
   );
   // 防御性：默认对象应不可 mutate
   let mutationThrew = false;
@@ -534,10 +534,10 @@ async function testGuardCountViolation() {
   });
   assertEqual('guard count: ok==false', result.ok, false);
   assertEqual('guard count: violation rule == max_positions', result.violation?.rule, 'max_positions');
-  assertEqual('guard count: writeAlert called once', state.writeAlertCalls.length, 1);
-  assert(
-    'guard count: alert symbol == NEW.SH',
-    state.writeAlertCalls[0].symbol === 'NEW.SH'
+  assertEqual(
+    'guard count: max_positions is a business-state rejection and writes no HIGH alert',
+    state.writeAlertCalls.length,
+    0
   );
   // 加仓到已持有的股票（即便满 20 只）应放行
   const result2 = await guard.checkBuyOrder({
@@ -555,11 +555,11 @@ async function testGuardSingleStockViolation() {
     industryFor: { 'A.SH': '白酒' },
   });
   const guard = new PositionLimitGuard(makeFakeSource(state));
-  // 15% > 10% → violation
+  // 15.001% > PR-M4 default 15% → violation
   const result = await guard.checkBuyOrder({
     user_id: 1,
     symbol: 'A.SH',
-    proposed_value: 15000,
+    proposed_value: 15001,
   });
   assertEqual('guard single-stock: ok==false', result.ok, false);
   assertEqual(
@@ -568,14 +568,14 @@ async function testGuardSingleStockViolation() {
     'max_single_stock_pct'
   );
   assertEqual('guard single-stock: alert written', state.writeAlertCalls.length, 1);
-  // 5% < 10% → ok
+  // 5% < 15% → ok
   state.writeAlertCalls.length = 0;
   const result2 = await guard.checkBuyOrder({
     user_id: 1,
     symbol: 'A.SH',
     proposed_value: 5000,
   });
-  assertEqual('guard single-stock: 5% < 10% → ok', result2.ok, true);
+  assertEqual('guard single-stock: 5% < 15% → ok', result2.ok, true);
   assertEqual('guard single-stock: no alert when ok', state.writeAlertCalls.length, 0);
 }
 
@@ -583,13 +583,13 @@ async function testGuardIndustryViolation() {
   const state = emptyState({
     portfolio: { total_value: 100000 },
     positions: [
-      { symbol: 'X.SH', market_value: 20000, industry: '白酒' },
+      { symbol: 'X.SH', market_value: 15000, industry: '白酒' },
       { symbol: 'Y.SH', market_value: 5000, industry: '白酒' },
     ],
     industryFor: { 'A.SH': '白酒' },
   });
   const guard = new PositionLimitGuard(makeFakeSource(state));
-  // 25000 (existing 白酒) + 8000 (new) = 33000 / 100000 = 33% > 30% → violation
+  // 20000 (existing 白酒) + 8000 (new) = 28% > PR-M4 default 25% → violation
   const result = await guard.checkBuyOrder({
     user_id: 1,
     symbol: 'A.SH',
@@ -603,14 +603,14 @@ async function testGuardIndustryViolation() {
   );
   assertEqual('guard industry: alert written', state.writeAlertCalls.length, 1);
 
-  // 25000 + 4000 = 29000 / 100000 = 29% < 30% → ok
+  // 20000 + 4000 = 24% < 25% → ok
   state.writeAlertCalls.length = 0;
   const result2 = await guard.checkBuyOrder({
     user_id: 1,
     symbol: 'A.SH',
     proposed_value: 4000,
   });
-  assertEqual('guard industry: 29% < 30% → ok', result2.ok, true);
+  assertEqual('guard industry: 24% < 25% → ok', result2.ok, true);
 }
 
 async function testGuardUnknownIndustrySkipped() {

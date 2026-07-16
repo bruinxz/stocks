@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import stat
 import tempfile
 import unittest
 import uuid
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -22,11 +23,12 @@ from ai.replay.runtime import (
     TypedReplaySources,
     TypedScoreRecord,
     TypedSourceSnapshot,
+    TypedTextHitRecord,
     build_typed_replay_runtime,
     typed_score_fact_hash,
     validate_source_score_features,
 )
-from ai.replay.service import ReplayConflictError, ReplayService
+from ai.replay.service import ReplayConflictError, ReplayService, ReplaySourceError
 from ai.replay.types import ReplayJob, ReplayPins, ReplayResult
 from datapipeline.contracts import (
     JpKrDisclosureRecord,
@@ -36,6 +38,15 @@ from datapipeline.contracts import (
     TextHit,
     TextHitEnvelope,
 )
+from datapipeline.collectors.jpkr_deep.official_fixture_parser import (
+    canonical_disclosure_fact_hash,
+)
+from datapipeline.storage.jpkr import canonical_financial_fact_hash
+from datapipeline.storage.multibagger import (
+    build_text_hit_storage_row,
+    canonical_scan_document_fact_hash,
+    canonical_text_context_hash,
+)
 
 
 NOW = datetime(2026, 7, 10, 6, 30, tzinfo=timezone.utc)
@@ -43,6 +54,16 @@ NOW_TEXT = "2026-07-10T06:30:00Z"
 JOB_ID = uuid.UUID("12345678-1234-4234-8234-567812345678")
 SNAPSHOT_ID = "22345678-1234-4234-8234-567812345678"
 TEST_TMP_ROOT = Path(__file__).resolve().parents[2]
+
+
+class ForgedHash(str):
+    def __eq__(self, _other: object) -> bool:
+        return True
+
+    def __ne__(self, _other: object) -> bool:
+        return False
+
+    __hash__ = str.__hash__
 
 
 def _temporary_directory():
@@ -67,8 +88,12 @@ def _filing(*, available=NOW, market_scope="jp"):
         source_kind=source_kind,
         source_document_id=document_id,
         source_version="filing-v1",
-        fact_hash="a" * 64,
+        fact_hash="0" * 64,
         source_payload={},
+    )
+    disclosure = replace(
+        disclosure,
+        fact_hash=canonical_disclosure_fact_hash(disclosure),
     )
     financial = JpKrFinancialRecord(
         market_scope=market_scope,
@@ -100,7 +125,11 @@ def _filing(*, available=NOW, market_scope="jp"):
         source_version="financial-v1",
         effective_at_utc=available,
         available_at_utc=available,
-        fact_hash="b" * 64,
+        fact_hash="0" * 64,
+    )
+    financial = replace(
+        financial,
+        fact_hash=canonical_financial_fact_hash(financial),
     )
     return JpKrFilingEnvelope(disclosure, (financial,))
 
@@ -122,7 +151,11 @@ def _text_hit(*, available=NOW, market_scope="jp"):
         source_kind="official-disclosure",
         source_version="capture-v1",
         source_url=None,
-        document_fact_hash="c" * 64,
+        document_fact_hash="0" * 64,
+    )
+    document = replace(
+        document,
+        document_fact_hash=canonical_scan_document_fact_hash(document),
     )
     hit = TextHit(
         term_id="capacity",
@@ -133,25 +166,41 @@ def _text_hit(*, available=NOW, market_scope="jp"):
         field="TITLE",
         start_offset=0,
         end_offset=8,
-        context_hash="d" * 64,
+        context_hash=canonical_text_context_hash(document.title[:8]),
         taxonomy_version="text-taxonomy-v1",
     )
-    return TextHitEnvelope(document, hit)
+    envelope = TextHitEnvelope(document, hit)
+    return TypedTextHitRecord(
+        envelope=envelope,
+        hit_fact_hash=build_text_hit_storage_row(envelope).hit_fact_hash,
+    )
 
 
 def _features(profile="japan_blue_chip", market_scope="jp"):
+    currency = {
+        "cn_a": "CNY",
+        "us": "USD",
+        "jp": "JPY",
+        "kr": "KRW",
+    }[market_scope]
     return {
         "score": {
             "rating": "A",
             "total": 90.0,
             "profile": profile,
             "market_scope": market_scope,
-            "dims": [{"key": "Q", "score": 90.0, "band": "A", "weight": 1.0}],
+            "dims": [
+                {"key": key, "score": 90.0, "band": "A", "weight": weight}
+                for key, weight in zip(
+                    ("Q", "G", "V", "M", "T", "R"),
+                    (0.2, 0.2, 0.15, 0.2, 0.15, 0.1),
+                )
+            ],
         },
         "conviction": {
-            "base": 80.0,
+            "base": 90.0,
             "adjustments": [],
-            "final": 80.0,
+            "final": 90.0,
             "level": "HIGH",
         },
         "risk_gate": {
@@ -160,11 +209,20 @@ def _features(profile="japan_blue_chip", market_scope="jp"):
             "triggers": [],
         },
         "entry_plan": {
+            "entry": {"low": 100.0, "high": 102.0, "currency": currency},
+            "stop": {"value": 96.0, "currency": currency},
+            "targets": [
+                {"value": 115.0, "currency": currency},
+                {"value": 130.0, "currency": currency},
+            ],
             "size_hint": {
-                "tier": "TIER_3",
-                "pct": 3.0,
+                "tier": "TIER_5",
+                "pct": 5.0,
                 "disclaimer_key": "size_hint_advisory",
+                "rationale": "High conviction with an authenticated plan.",
             },
+            "time_horizon": "POSITION",
+            "invalidation": "Close below the authenticated stop price.",
             "stop_distance_pct": 4.0,
         },
     }
@@ -250,6 +308,14 @@ def _job(pins, *, job_id=str(JOB_ID)):
     )
 
 
+def _claimed(job, *, token="c" * 64):
+    return job.claimed(
+        NOW_TEXT,
+        lease_token=token,
+        lease_expires_at="2026-07-10T06:32:30Z",
+    )
+
+
 class Pipeline:
     def __init__(self):
         self.calls = []
@@ -277,6 +343,14 @@ class ReplayRuntimeTests(unittest.TestCase):
             {"ticker": "7203", "market_scope": "jp"},
         ))
         self.assertEqual(first[2].records[0]["fact_hash"], _score().fact_hash)
+        text_signal = next(
+            item for item in first[0].records if item["kind"] == "text_hit"
+        )
+        self.assertEqual(text_signal["fact_hash"], _text_hit().hit_fact_hash)
+        self.assertEqual(
+            text_signal["document_fact_hash"],
+            _text_hit().envelope.document.document_fact_hash,
+        )
         self.assertEqual(sources.input_fingerprint(pins), pins.input_fingerprint)
         self.assertTrue(first[3].records)
         self.assertEqual(repository.calls - calls_after_pin_derivation, 3)
@@ -312,6 +386,9 @@ class ReplayRuntimeTests(unittest.TestCase):
             _snapshot(hits=(_text_hit(market_scope="kr"),)),
             _snapshot(scores=(replace(_score(), fact_hash="0" * 64),)),
             _snapshot(scores=(replace(_score(), available_at_utc=future),)),
+            _snapshot(
+                hits=(replace(_text_hit(), hit_fact_hash="0" * 64),)
+            ),
         ]
         for snapshot in cases:
             with self.subTest(snapshot=snapshot):
@@ -393,6 +470,67 @@ class ReplayRuntimeTests(unittest.TestCase):
             with self.subTest(snapshot=snapshot):
                 with self.assertRaises(Exception):
                     sources.load_signals(pins)
+
+    def test_typed_sources_reject_comparison_overriding_fact_hash_subclass(self):
+        score = _score()
+        wrong_hash = "f" * 64 if score.fact_hash != "f" * 64 else "e" * 64
+        forged = replace(score, fact_hash=ForgedHash(wrong_hash))
+        sources = TypedReplaySources(
+            Repository(_snapshot(scores=(forged,)))
+        )
+        pins = ReplayPins(
+            trading_day="2026-07-10",
+            as_of=NOW_TEXT,
+            profile="japan_blue_chip",
+            market_scope="jp",
+            profile_version="1.0.0",
+            contract_version="0.3.1",
+            input_fingerprint="0" * 64,
+            strategy_version="1.0.0",
+            pipeline_version="1.0.0",
+        )
+
+        with self.assertRaisesRegex(ReplaySourceError, "fact_hash"):
+            sources.load_inputs(pins)
+
+    def test_financial_physical_identity_conflict_fails_closed(self):
+        first = _filing()
+        disclosure = replace(
+            first.disclosure,
+            source_version="filing-v2",
+            fact_hash="0" * 64,
+        )
+        disclosure = replace(
+            disclosure,
+            fact_hash=canonical_disclosure_fact_hash(disclosure),
+        )
+        financial = replace(
+            first.financials[0],
+            revenue=Decimal("2000"),
+            fact_hash="0" * 64,
+        )
+        financial = replace(
+            financial,
+            fact_hash=canonical_financial_fact_hash(financial),
+        )
+        second = JpKrFilingEnvelope(disclosure, (financial,))
+        sources = TypedReplaySources(
+            Repository(_snapshot(filings=(first, second)))
+        )
+        pins = ReplayPins(
+            trading_day="2026-07-10",
+            as_of=NOW_TEXT,
+            profile="japan_blue_chip",
+            market_scope="jp",
+            profile_version="1.0.0",
+            contract_version="0.3.1",
+            input_fingerprint="0" * 64,
+            strategy_version="1.0.0",
+            pipeline_version="1.0.0",
+        )
+
+        with self.assertRaisesRegex(Exception, "financial fact identity"):
+            sources.load_signals(pins)
 
     def test_score_contract_fails_closed_before_pipeline(self):
         mutations = [
@@ -525,8 +663,8 @@ class ReplayRuntimeTests(unittest.TestCase):
 
             first, created = store.create_or_get(job)
             second, created_again = store.create_or_get(job)
-            running = job.running(NOW_TEXT)
-            transitioned = store.transition(job.job_id, "queued", running)
+            running = _claimed(job)
+            transitioned = store.transition(job.job_id, job, running)
 
             self.assertTrue(created)
             self.assertFalse(created_again)
@@ -534,11 +672,89 @@ class ReplayRuntimeTests(unittest.TestCase):
             self.assertEqual(transitioned, running)
             self.assertEqual(AtomicFileReplayJobStore(path).get(job.job_id), running)
             with self.assertRaises(ReplayConflictError):
-                store.transition(job.job_id, "queued", running)
+                store.transition(job.job_id, job, running)
 
             path.write_text('{"version":1,"jobs":[],"keys":{}}')
             with self.assertRaises(ReplayJobStoreCorruptError):
                 store.get(job.job_id)
+
+    def test_legacy_running_job_is_atomically_migrated_for_recovery(self):
+        with _temporary_directory() as directory:
+            path = Path(directory) / "jobs.json"
+            pins = _pins(TypedReplaySources(Repository(_snapshot())))
+            job = _job(pins)
+            legacy_record = asdict(job)
+            for field in ("attempt", "lease_token", "lease_expires_at"):
+                legacy_record.pop(field)
+            legacy_record["status"] = "running"
+            path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "jobs": {job.job_id: legacy_record},
+                        "keys": {job.idempotency_key: job.job_id},
+                    }
+                )
+            )
+            path.chmod(0o600)
+
+            store = AtomicFileReplayJobStore(path)
+            migrated = store.get(job.job_id)
+
+            self.assertEqual(migrated.status, "queued")
+            self.assertEqual(migrated.attempt, 1)
+            self.assertIsNone(migrated.lease_token)
+            self.assertEqual(json.loads(path.read_text())["version"], 2)
+
+    def test_stale_attempt_cannot_commit_after_new_lease_claim(self):
+        with _temporary_directory() as directory:
+            path = Path(directory) / "jobs.json"
+            store = AtomicFileReplayJobStore(path)
+            pins = _pins(TypedReplaySources(Repository(_snapshot())))
+            queued = _job(pins)
+            store.create_or_get(queued)
+            first_attempt = _claimed(queued, token="c" * 64)
+            store.transition(queued.job_id, queued, first_attempt)
+            second_attempt = first_attempt.claimed(
+                "2026-07-10T06:32:31Z",
+                lease_token="d" * 64,
+                lease_expires_at="2026-07-10T06:35:01Z",
+            )
+            store.transition(queued.job_id, first_attempt, second_attempt)
+
+            stale_terminal = first_attempt.completed(
+                ReplayResult(SNAPSHOT_ID, "f" * 64),
+                "2026-07-10T06:31:00Z",
+            )
+            with self.assertRaises(ReplayConflictError):
+                store.transition(queued.job_id, first_attempt, stale_terminal)
+            self.assertEqual(store.get(queued.job_id), second_attempt)
+
+    def test_store_enforces_lease_time_boundaries_without_service_help(self):
+        with _temporary_directory() as directory:
+            path = Path(directory) / "jobs.json"
+            store = AtomicFileReplayJobStore(path)
+            pins = _pins(TypedReplaySources(Repository(_snapshot())))
+            queued = _job(pins)
+            store.create_or_get(queued)
+            running = _claimed(queued, token="c" * 64)
+            store.transition(queued.job_id, queued, running)
+
+            early_reclaim = running.claimed(
+                "2026-07-10T06:31:00Z",
+                lease_token="d" * 64,
+                lease_expires_at="2026-07-10T06:33:30Z",
+            )
+            with self.assertRaises(ReplayConflictError):
+                store.transition(queued.job_id, running, early_reclaim)
+
+            late_terminal = running.completed(
+                ReplayResult(SNAPSHOT_ID, "f" * 64),
+                running.lease_expires_at,
+            )
+            with self.assertRaises(ReplayConflictError):
+                store.transition(queued.job_id, running, late_terminal)
+            self.assertEqual(store.get(queued.job_id), running)
 
     def test_store_rejects_corrupt_identity_and_key_indexes(self):
         with _temporary_directory() as directory:
@@ -549,11 +765,14 @@ class ReplayRuntimeTests(unittest.TestCase):
             job = _job(pins)
             store.create_or_get(job)
             original = path.read_text()
+            corrupt_key = (
+                "f" if job.idempotency_key[0] != "f" else "e"
+            ) + job.idempotency_key[1:]
             for mutation in (
                 original.replace(job.job_id, SNAPSHOT_ID, 1),
                 original.replace(
                     f'"{job.idempotency_key}":"{job.job_id}"',
-                    f'"{"0" + job.idempotency_key[1:]}":"{job.job_id}"',
+                    f'"{corrupt_key}":"{job.job_id}"',
                     1,
                 ),
                 original.replace(
@@ -580,8 +799,8 @@ class ReplayRuntimeTests(unittest.TestCase):
                 path = root / f"corrupt-{index}.json"
                 path.write_text(content)
                 os.chmod(path, 0o600)
-                store = AtomicFileReplayJobStore(path)
                 with self.assertRaises(ReplayJobStoreCorruptError):
+                    store = AtomicFileReplayJobStore(path)
                     store.get(str(JOB_ID))
 
             permissive = root / "permissive.json"
@@ -736,12 +955,12 @@ class ReplayRuntimeTests(unittest.TestCase):
             store.create_or_get(valid)
             persisted = path.read_text()
             invalid_transition = replace(
-                valid.running(NOW_TEXT),
+                _claimed(valid),
                 pins=replace(pins, profile="custom"),
             )
             with self.assertRaises(ReplayConflictError):
                 store.transition(
-                    valid.job_id, "queued", invalid_transition
+                    valid.job_id, valid, invalid_transition
                 )
             self.assertEqual(path.read_text(), persisted)
 
@@ -800,7 +1019,7 @@ class ReplayRuntimeTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     worker.run_batch(job_ids, limit=limit)
 
-    def test_all_six_profiles_construct_typed_slices(self):
+    def test_all_six_profiles_replay_score_only_captures(self):
         pairs = (
             ("us_preferred", "us"),
             ("multibagger", "cn_a"),
@@ -812,15 +1031,14 @@ class ReplayRuntimeTests(unittest.TestCase):
         for profile, scope in pairs:
             with self.subTest(profile=profile, scope=scope):
                 record = _score(profile=profile, market_scope=scope)
-                sources = TypedReplaySources(
-                    Repository(
-                        _snapshot(
-                            filings=(),
-                            hits=(),
-                            scores=(record,),
-                        )
+                repository = Repository(
+                    _snapshot(
+                        filings=(),
+                        hits=(),
+                        scores=(record,),
                     )
                 )
+                sources = TypedReplaySources(repository)
                 base = ReplayPins(
                     trading_day="2026-07-10",
                     as_of=NOW_TEXT,
@@ -834,6 +1052,27 @@ class ReplayRuntimeTests(unittest.TestCase):
                 )
                 slices = sources.source_slices(base)
                 self.assertEqual(slices[1].records[0]["ticker"], record.ticker)
+                self.assertEqual(
+                    slices[0].content_hash,
+                    slices[3].content_hash,
+                    "empty named slices legitimately share their records hash",
+                )
+                pins = replace(
+                    base,
+                    input_fingerprint=sources.input_fingerprint(base),
+                )
+                with _temporary_directory() as directory:
+                    service, worker, _ = build_typed_replay_runtime(
+                        repository=repository,
+                        pipeline=Pipeline(),
+                        job_store=AtomicFileReplayJobStore(
+                            Path(directory) / "jobs.json"
+                        ),
+                        uuid_factory=lambda: JOB_ID,
+                        clock=lambda: NOW_TEXT,
+                    )
+                    completed = worker.run_job(service.submit(pins).job_id)
+                self.assertEqual(completed.status, "completed")
 
 
 if __name__ == "__main__":

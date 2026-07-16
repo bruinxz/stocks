@@ -337,7 +337,11 @@ export function evaluateQuantWorkflowReadiness(
       current_stage,
       status,
       status_label:
-        status === 'ready' ? '阶段 3 可进入纸面晋级观察' : status === 'degraded' ? '阶段 3 需人工复核' : '阶段 3 未达标',
+        status === 'ready'
+          ? '阶段 3 可进入纸面晋级观察'
+          : status === 'degraded'
+          ? '阶段 3 需人工复核'
+          : '阶段 3 未达标',
       can_start_backtest: stage1.status !== 'blocked',
       can_start_paper_trading: stage1.status !== 'blocked' && stage2.status !== 'blocked',
       can_promote_paper_to_canary: stage3.status === 'ready',
@@ -878,7 +882,8 @@ function buildConclusion(
   stage3: QuantWorkflowStage
 ): string {
   if (stage1.status === 'blocked') return '先补齐数据与简单策略预设，暂不建议启动新回测。';
-  if (stage2.status === 'blocked') return '可以做探索性回测，但研究可信度不足，暂不建议进入纸面交易。';
+  if (stage2.status === 'blocked')
+    return '可以做探索性回测，但研究可信度不足，暂不建议进入纸面交易。';
   if (stage3.status === 'ready') return '阶段 1-3 门禁通过，可进入小仓 canary/影子观察。';
   if (stage3.status === 'degraded') return '纸面交易已有基础样本，但仍需人工复核后再扩大观察。';
   return '纸面交易样本或一致性不足，继续收集样本并保持风控拦截。';

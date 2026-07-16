@@ -24,6 +24,8 @@ class PipelineContext:
     recommendations: list = field(default_factory=list)
 
     evidence_refs: dict = field(default_factory=dict)
+    score_provenance: dict = field(default_factory=dict)
+    recommendation_ids: dict = field(default_factory=dict)
     input_hashes: list = field(default_factory=list)
 
     def build_recommendation_list(self) -> dict:

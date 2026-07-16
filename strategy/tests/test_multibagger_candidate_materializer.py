@@ -9,9 +9,11 @@ from ai.snapshot.fingerprint import jcs_canonicalize
 from datapipeline.storage.multibagger import (
     build_storage_row,
     build_text_hit_storage_row,
+    canonical_scan_document_fact_hash,
     canonical_multibagger_fact_hash,
     canonical_multibagger_storage_fact_hash,
     canonical_text_hit_fact_hash,
+    canonical_text_context_hash,
 )
 from datapipeline.contracts import (
     CaptureProvenanceError,
@@ -139,7 +141,11 @@ def text_hit(**overrides):
         source_kind="jpx-listed-company-monthly",
         source_version=capture_source_version(wrapper),
         source_url=None,
-        document_fact_hash="d" * 64,
+        document_fact_hash="0" * 64,
+    )
+    document = replace(
+        document,
+        document_fact_hash=canonical_scan_document_fact_hash(document),
     )
     envelope = TextHitEnvelope(
         document,
@@ -152,7 +158,7 @@ def text_hit(**overrides):
             field="BODY",
             start_offset=10,
             end_offset=20,
-            context_hash="e" * 64,
+            context_hash=canonical_text_context_hash(document.body[10:20]),
             taxonomy_version="optional-terms@1.0.0",
         ),
     )
@@ -587,6 +593,7 @@ class MaterializerTests(unittest.TestCase):
             request(text_hits=(text_hit(available_at_utc=NOW + timedelta(seconds=1)),)),
             request(text_hits=(text_hit(effective_at_utc=NOW + timedelta(seconds=1)),)),
             request(text_hits=(text_hit(start_offset=True),)),
+            request(text_hits=(text_hit(source_version="\tbad\t"),)),
             request(latest_catalyst=future_catalyst),
             request(decision=decision(score={**score(), "weights_profile": "multibagger"})),
             request(
@@ -603,6 +610,106 @@ class MaterializerTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaises(CandidateMaterializationError):
                     materialize_candidate(value, Policy())
+
+    def test_universe_source_version_must_be_printable_ascii(self):
+        for invalid_version in ("\tbad\t", " bad "):
+            with self.subTest(source_version=invalid_version):
+                with self.assertRaises(CandidateMaterializationError):
+                    materialize_candidate(
+                        request(
+                            sources=(
+                                universe_fact(source_version=invalid_version),
+                            )
+                        ),
+                        Policy(),
+                    )
+
+        class UnicodeStr(str):
+            def isascii(self):
+                return True
+
+            def __iter__(self):
+                return iter("valid")
+
+        with self.assertRaises(CandidateMaterializationError):
+            materialize_candidate(
+                request(
+                    sources=(
+                        universe_fact(source_version=UnicodeStr("版本@1.0.0")),
+                    )
+                ),
+                Policy(),
+            )
+
+    def test_score_source_versions_must_be_printable_ascii(self):
+        for invalid_version in ("质量@1.0.0", " bad "):
+            with self.subTest(source_version=invalid_version):
+                score_value = score()
+                score_value["source_versions"]["quality_engine"] = invalid_version
+                score_body = dict(score_value)
+                score_body.pop("snapshot_hash")
+                score_body.pop("scoring_id")
+                score_value["snapshot_hash"] = sha(score_body)
+                score_ref = {
+                    "scoring_id": score_value["scoring_id"],
+                    "snapshot_hash": score_value["snapshot_hash"],
+                }
+                invalid_decision = decision(score=score_value)
+                conviction = dict(invalid_decision.conviction)
+                conviction["score_ref"] = score_ref
+                entry_plan = dict(invalid_decision.entry_plan)
+                entry_plan["score_ref"] = score_ref
+                invalid_decision = replace(
+                    invalid_decision,
+                    conviction=conviction,
+                    entry_plan=entry_plan,
+                )
+
+                with self.assertRaises(CandidateMaterializationError):
+                    materialize_candidate(
+                        request(decision=invalid_decision),
+                        Policy(),
+                    )
+
+    def test_score_mapping_is_frozen_before_source_version_validation(self):
+        class SwitchingVersions(dict):
+            def __init__(self, actual, validation_view):
+                super().__init__(actual)
+                self.validation_view = validation_view
+
+            def items(self):
+                return self.validation_view.items()
+
+        score_value = score()
+        valid_versions = dict(score_value["source_versions"])
+        invalid_versions = {
+            **valid_versions,
+            "quality_engine": "版本@1.0.0",
+        }
+        score_value["source_versions"] = SwitchingVersions(
+            invalid_versions,
+            valid_versions,
+        )
+        score_body = dict(score_value)
+        score_body.pop("snapshot_hash")
+        score_body.pop("scoring_id")
+        score_value["snapshot_hash"] = sha(score_body)
+        score_ref = {
+            "scoring_id": score_value["scoring_id"],
+            "snapshot_hash": score_value["snapshot_hash"],
+        }
+        invalid_decision = decision(score=score_value)
+        invalid_decision = replace(
+            invalid_decision,
+            conviction={**invalid_decision.conviction, "score_ref": score_ref},
+            entry_plan={**invalid_decision.entry_plan, "score_ref": score_ref},
+        )
+
+        with self.assertRaises(CandidateMaterializationError):
+            materialize_candidate(
+                request(decision=invalid_decision),
+                Policy(),
+            )
 
     def test_candidate_availability_includes_strategy_decision_time(self):
         strategy_time = NOW - timedelta(minutes=15)
@@ -745,6 +852,82 @@ class MaterializerTests(unittest.TestCase):
             CandidateMaterializationError, "sorted and unique"
         ):
             candidate_from_row(unsorted)
+
+    def test_physical_row_revalidates_resealed_score_source_versions(self):
+        candidate = materialize_candidate(request(), Policy())
+        row = copy.deepcopy(candidate_to_row(candidate))
+        row["score"]["source_versions"]["quality_engine"] = "版本@1.0.0"
+        score_body = dict(row["score"])
+        score_body.pop("snapshot_hash")
+        score_body.pop("scoring_id")
+        row["score"]["snapshot_hash"] = sha(score_body)
+        score_ref = {
+            "scoring_id": row["score"]["scoring_id"],
+            "snapshot_hash": row["score"]["snapshot_hash"],
+        }
+        row["conviction"]["score_ref"] = score_ref
+        row["entry_plan"]["score_ref"] = score_ref
+        outer_body = dict(row)
+        outer_body.pop("fact_hash")
+        row["fact_hash"] = sha(outer_body)
+
+        with self.assertRaises(CandidateMaterializationError):
+            candidate_from_row(row)
+
+    def test_physical_row_revalidates_all_semantics_after_reseal(self):
+        candidate = materialize_candidate(request(), Policy())
+        mutations = {
+            "stage": lambda row: row.__setitem__("stage", "INVALID"),
+            "conclusion": lambda row: row.__setitem__("conclusion", "BUY"),
+            "exchange": lambda row: row.__setitem__("exchange", "nasdaq"),
+            "future_availability": lambda row: row.__setitem__(
+                "available_at_utc", "2099-01-01T00:00:00Z"
+            ),
+            "risk_gate": lambda row: row.__setitem__(
+                "risk_gate",
+                {
+                    **row["risk_gate"],
+                    "gate": "RED",
+                    "ok_to_enter": False,
+                },
+            ),
+            "conviction": lambda row: row["conviction"].__setitem__(
+                "final", 1
+            ),
+            "entry_plan": lambda row: row["entry_plan"].__setitem__(
+                "generated_at", "2099-01-01T00:00:00Z"
+            ),
+            "latest_catalyst": lambda row: row["latest_catalyst"].__setitem__(
+                "available_at_utc", "2099-01-01T00:00:00Z"
+            ),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                row = copy.deepcopy(candidate_to_row(candidate))
+                mutate(row)
+                body = dict(row)
+                body.pop("fact_hash")
+                row["fact_hash"] = sha(body)
+                with self.assertRaises(CandidateMaterializationError):
+                    candidate_from_row(row)
+
+    def test_hash_str_subclass_cannot_forge_source_authentication(self):
+        class ForgedHash(str):
+            def __eq__(self, _other):
+                return True
+
+            def __ne__(self, _other):
+                return False
+
+        source = universe_fact()
+        object.__setattr__(source, "fact_hash", ForgedHash("f" * 64))
+        with self.assertRaises(CandidateMaterializationError):
+            materialize_candidate(request(sources=(source,)), Policy())
+
+        hit = text_hit()
+        object.__setattr__(hit, "hit_fact_hash", ForgedHash("f" * 64))
+        with self.assertRaises(CandidateMaterializationError):
+            materialize_candidate(request(text_hits=(hit,)), Policy())
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ function runPostDeploySmoke(options = {}) {
     options.baseUrl ||
     process.env.DEPLOY_SMOKE_BASE_URL ||
     process.env.SMOKE_BASE_URL ||
-    'http://103.242.3.87:3000';
+    'http://<legacy-prod-host>:3000';
   const timeoutMs =
     options.timeoutMs || process.env.DEPLOY_SMOKE_TIMEOUT_MS || process.env.SMOKE_TIMEOUT_MS || '20000';
   const deploymentId = options.deploymentId || process.env.DEPLOYMENT_ID || `deploy_${Date.now()}`;

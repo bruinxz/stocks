@@ -4,15 +4,22 @@
  * Verify TradingAgents internal history endpoints.
  *
  * Usage:
- *   INTERNAL_API_BASE_URL=http://127.0.0.1:3000 \
+ *   INTERNAL_API_BASE_URL=https://internal-api.example.invalid \
  *   INTERNAL_API_KEY=... \
  *   node scripts/tests/verify_internal_history_api.js sh.600000 sz.000001
  */
 
 const assert = require('assert');
 
-const baseUrl = process.env.INTERNAL_API_BASE_URL || 'http://127.0.0.1:3000';
-const apiKey = process.env.INTERNAL_API_KEY || 'tr_agent_k8s_x9a1!b2c3d4e5f6g7h8i9j0';
+const baseUrl = process.env.INTERNAL_API_BASE_URL;
+const apiKey = process.env.INTERNAL_API_KEY;
+
+if (!baseUrl) {
+  throw new Error('INTERNAL_API_BASE_URL is required; no production endpoint default is allowed');
+}
+if (!apiKey) {
+  throw new Error('INTERNAL_API_KEY is required; no credential fallback is allowed');
+}
 const symbols = process.argv.slice(2);
 const targetSymbols = symbols.length > 0 ? symbols : ['sh.600000'];
 

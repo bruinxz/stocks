@@ -956,13 +956,9 @@ export class PaperTradingController {
     try {
       const user = (req as any).user;
       if (!user?.id) return res.status(401).json({ success: false, message: '未登录' });
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { User } = require('../../models/User');
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const {
-        normalizePortfolioConstructionConfig,
-        DEFAULT_PORTFOLIO_CONSTRUCTION_CONFIG,
-      } = require('../../portfolio/internal/PortfolioConstructionAdapter');
+      const { User } = await import('../../models/User');
+      const { normalizePortfolioConstructionConfig, DEFAULT_PORTFOLIO_CONSTRUCTION_CONFIG } =
+        await import('../../portfolio/internal/PortfolioConstructionAdapter');
       const userRow = await User.findByPk(user.id);
       if (!userRow) return res.status(404).json({ success: false, message: 'user 不存在' });
       const raw = (userRow.risk_config || {})['portfolio_construction'];
@@ -991,12 +987,10 @@ export class PaperTradingController {
     try {
       const user = (req as any).user;
       if (!user?.id) return res.status(401).json({ success: false, message: '未登录' });
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { User } = require('../../models/User');
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const {
-        normalizePortfolioConstructionConfig,
-      } = require('../../portfolio/internal/PortfolioConstructionAdapter');
+      const { User } = await import('../../models/User');
+      const { normalizePortfolioConstructionConfig } = await import(
+        '../../portfolio/internal/PortfolioConstructionAdapter'
+      );
       const userRow = await User.findByPk(user.id);
       if (!userRow) return res.status(404).json({ success: false, message: 'user 不存在' });
       const normalized = normalizePortfolioConstructionConfig(req.body || {});

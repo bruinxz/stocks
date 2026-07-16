@@ -28,7 +28,19 @@ export class RecommendationSnapshotController {
         res.status(404).json({ error: 'Recommendation snapshot not found' });
         return;
       }
-      res.json(snapshot);
+      // `fingerprint_preimage_jcs` is a server-side physical audit field.
+      // Latest feeds are consumed as the exact public RecommendationList
+      // envelope, while the authenticated detail route retains the preimage.
+      res.json({
+        snapshot_id: snapshot.snapshot_id,
+        as_of: snapshot.as_of,
+        profile: snapshot.profile,
+        market_scope: snapshot.market_scope,
+        items: snapshot.items,
+        output_fingerprint: snapshot.output_fingerprint,
+        disclaimer: snapshot.disclaimer,
+        meta: snapshot.meta,
+      });
     } catch (error: unknown) {
       this.handleError(res, error, 'latest');
     }

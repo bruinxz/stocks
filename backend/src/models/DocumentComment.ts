@@ -35,7 +35,7 @@ import { User } from './User';
   tableName: 'document_comments',
   timestamps: true,
   underscored: true,
-  paranoid: true,  // 软删除 (deleted_at)
+  paranoid: true, // 软删除 (deleted_at)
   indexes: [
     { fields: ['doc_path', 'status', 'created_at'], name: 'idx_doc_comments_path_status' },
     { fields: ['doc_path', 'anchor_key'], name: 'idx_doc_comments_anchor' },
@@ -59,7 +59,8 @@ export class DocumentComment extends Model {
     type: DataType.ENUM('heading', 'line', 'paragraph', 'doc'),
     allowNull: false,
     field: 'anchor_type',
-    comment: '锚定类型: heading (推荐, 稳定) / line (简单但不稳) / paragraph (paragraph hash) / doc (整文档级)',
+    comment:
+      '锚定类型: heading (推荐, 稳定) / line (简单但不稳) / paragraph (paragraph hash) / doc (整文档级)',
   })
   declare anchor_type: 'heading' | 'line' | 'paragraph' | 'doc';
 

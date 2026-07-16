@@ -20,9 +20,7 @@
  *   [7] summarizeAlertsByCategory: 永远 4 类 / level 分桶 / 顺序固定
  *   [8] summarizeAlertsByLevel: 永远 3 档 / 顺序固定
  *   [9] emptyAlertsPanelFilterState / hasActiveFilter: 空 / level / category / search
- *  [10] META-GUARD fs+regex 守:
- *       - alertsPanelHelpers.ts 所有 export
- *       - TodayWorkspace.tsx: import helper + 在 AlertsPanel 调
+ *  [10] META-GUARD fs+regex 守 alertsPanelHelpers.ts 所有 export
  */
 
 import { readFileSync } from 'fs';
@@ -518,58 +516,6 @@ function readFile(rel: string): string {
   ]) {
     assert(`[10.1] helper exports ${name}`, helperSrc.includes(name));
   }
-}
-
-// 10.2 — TodayWorkspace.tsx 接入 helper
-{
-  const wsSrc = readFile('pages/workspace/TodayWorkspace.tsx');
-  assert(
-    '[10.2a] TodayWorkspace import alertsPanelHelpers',
-    wsSrc.includes("from './alertsPanelHelpers'") ||
-      wsSrc.includes('alertsPanelHelpers')
-  );
-  for (const sym of [
-    'enrichAlerts',
-    'filterAlerts',
-    'sortAlertsBySeverityThenTime',
-    'summarizeAlertsByCategory',
-    'emptyAlertsPanelFilterState',
-    'hasActiveFilter',
-    'DERIVED_CATEGORY_LABEL',
-    'DERIVED_CATEGORY_TAG_COLOR',
-  ]) {
-    assert(`[10.2b] TodayWorkspace import 含 ${sym}`, wsSrc.includes(sym));
-  }
-  assert(
-    '[10.2c] AlertsPanel 渲染含 data-testid="alerts-panel"',
-    wsSrc.includes('data-testid="alerts-panel"')
-  );
-  assert(
-    '[10.2d] AlertsPanel 渲染含 data-testid="alerts-panel-filters"',
-    wsSrc.includes('data-testid="alerts-panel-filters"')
-  );
-  assert(
-    '[10.2e] AlertsPanel 渲染含 data-testid="alerts-panel-category-kpi"',
-    wsSrc.includes('data-testid="alerts-panel-category-kpi"')
-  );
-  assert(
-    '[10.2f] AlertsPanel 渲染含 data-testid="alerts-panel-reset-filter"',
-    wsSrc.includes('data-testid="alerts-panel-reset-filter"')
-  );
-  assert(
-    '[10.2g] AlertsPanel 渲染含 data-testid="alerts-panel-filter-level"',
-    wsSrc.includes('data-testid="alerts-panel-filter-level"')
-  );
-  assert(
-    '[10.2h] AlertsPanel 渲染含 data-testid="alerts-panel-filter-category"',
-    wsSrc.includes('data-testid="alerts-panel-filter-category"')
-  );
-  assert(
-    '[10.2i] AlertsPanel 渲染含 data-testid="alerts-panel-filter-search"',
-    wsSrc.includes('data-testid="alerts-panel-filter-search"')
-  );
-  // 提及 US-071 让未来 grep / 跨 sprint 追溯能找到
-  assert('[10.2j] AlertsPanel 段提到 US-071', wsSrc.includes('US-071'));
 }
 
 // ============================================================

@@ -15,6 +15,23 @@ from datapipeline.storage.multibagger import (
 NOW = datetime(2026, 7, 10, 8, tzinfo=timezone.utc)
 
 
+class ForgedSourceVersion(str):
+    def isascii(self) -> bool:
+        return True
+
+    def __iter__(self):
+        return iter("forged-v1")
+
+
+class ForgedHash(str):
+    def __ne__(self, other: object) -> bool:
+        return False
+
+
+class RecordSubclass(MultibaggerSourceRecord):
+    pass
+
+
 def record(**overrides: object) -> MultibaggerSourceRecord:
     values = {
         "market": "CN",
@@ -57,10 +74,13 @@ class FakeTransaction:
 
 
 class FakeAcquire:
-    def __init__(self, connection: "FakeConnection") -> None:
+    def __init__(self, connection: "FakeConnection", on_enter=None) -> None:
         self.connection = connection
+        self.on_enter = on_enter
 
     async def __aenter__(self) -> "FakeConnection":
+        if self.on_enter is not None:
+            self.on_enter()
         return self.connection
 
     async def __aexit__(self, exc_type, exc, traceback) -> None:
@@ -98,16 +118,36 @@ class FakeConnection:
 
 
 class FakePool:
-    def __init__(self) -> None:
+    def __init__(self, on_acquire=None) -> None:
         self.connection = FakeConnection()
         self.acquire_count = 0
+        self.on_acquire = on_acquire
 
     def acquire(self) -> FakeAcquire:
         self.acquire_count += 1
-        return FakeAcquire(self.connection)
+        return FakeAcquire(self.connection, self.on_acquire)
 
 
 class CanonicalSourceFactTest(unittest.TestCase):
+    def test_record_type_must_be_exact(self) -> None:
+        item = record()
+        subclass = RecordSubclass(**item.__dict__)
+        for operation in (canonical_multibagger_fact_hash, build_storage_row):
+            with self.subTest(operation=operation.__name__):
+                with self.assertRaisesRegex(TypeError, "MultibaggerSourceRecord"):
+                    operation(subclass)
+
+    def test_source_version_constructor_rejects_noncanonical_values(self) -> None:
+        for value in (
+            "版本-v1",
+            " baostock-v1 ",
+            "\tbaostock-v1\t",
+            ForgedSourceVersion("版本-v1"),
+        ):
+            with self.subTest(value=value, type=type(value)):
+                with self.assertRaisesRegex(ValueError, "printable ASCII"):
+                    record(source_version=value)
+
     def test_jcs_key_order_number_and_hash_vectors(self) -> None:
         self.assertEqual(canonicalize_json({"b": 2, "a": 1}), '{"a":1,"b":2}')
         self.assertEqual(canonicalize_json(-0.0), "0")
@@ -190,6 +230,22 @@ class CanonicalSourceFactTest(unittest.TestCase):
             "f9b668b2be1d30bbcd723580c15cec732316b3faa61c63b619b3018e26374988",
         )
 
+    def test_prepared_nested_features_are_detached_from_caller(self) -> None:
+        features = {"nested": {"labels": ["before"]}}
+        prepared = build_storage_row(record(features=features))
+
+        features["nested"]["labels"][0] = "attacker"
+        features["nested"]["labels"].append("later")
+
+        self.assertEqual(
+            prepared.features_json,
+            '{"nested":{"labels":["before"]}}',
+        )
+        self.assertEqual(
+            prepared.canonical_body["features"],
+            {"nested": {"labels": ["before"]}},
+        )
+
     def test_pit_hash_evidence_and_numeric_authority(self) -> None:
         with self.assertRaisesRegex(ValueError, "available_at_utc"):
             build_storage_row(record(as_of_utc=NOW - timedelta(hours=2)))
@@ -218,6 +274,48 @@ class CanonicalSourceFactTest(unittest.TestCase):
 
 
 class MultibaggerSourceWriterTest(unittest.IsolatedAsyncioTestCase):
+    async def test_acquire_mutation_cannot_switch_prepared_source_identity(self) -> None:
+        item = record()
+        original_version = item.source_version
+        original_hash = item.fact_hash
+
+        def mutate_source() -> None:
+            object.__setattr__(item, "source_version", "attacker-v2")
+
+        pool = FakePool(on_acquire=mutate_source)
+        result = await MultibaggerSourceWriter(pool).write_batch((item,))
+
+        self.assertEqual(result.inserted, 1)
+        self.assertEqual(item.source_version, "attacker-v2")
+        self.assertEqual(pool.connection.inserted_args[0][7], original_version)
+        self.assertEqual(pool.connection.inserted_args[0][17], original_hash)
+
+    async def test_nested_feature_mutation_after_prepare_does_not_change_insert(self) -> None:
+        features = {"nested": {"labels": ["before"]}}
+        item = record(features=features)
+
+        def mutate_features() -> None:
+            features["nested"]["labels"][0] = "attacker"
+            features["nested"]["labels"].append("later")
+
+        pool = FakePool(on_acquire=mutate_features)
+        await MultibaggerSourceWriter(pool).write_batch((item,))
+
+        self.assertEqual(
+            pool.connection.inserted_args[0][11],
+            '{"nested":{"labels":["before"]}}',
+        )
+
+    async def test_forged_hash_is_rejected_before_database_roundtrip(self) -> None:
+        pool = FakePool()
+        item = record()
+        object.__setattr__(item, "fact_hash", ForgedHash("0" * 64))
+
+        with self.assertRaisesRegex(ValueError, "SHA-256"):
+            await MultibaggerSourceWriter(pool).write_batch((item,))
+
+        self.assertEqual(pool.acquire_count, 0)
+
     async def test_insert_then_replay_is_noop(self) -> None:
         pool = FakePool()
         writer = MultibaggerSourceWriter(pool)
@@ -321,6 +419,21 @@ class MultibaggerSourceWriterTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "canonical storage source fact"):
             await MultibaggerSourceWriter(pool).write_batch((item,))
         self.assertEqual(pool.acquire_count, 0)
+
+    async def test_noncanonical_source_version_has_no_database_roundtrip(self) -> None:
+        for value in (
+            "版本-v1",
+            " baostock-v1 ",
+            "\tbaostock-v1\t",
+            ForgedSourceVersion("版本-v1"),
+        ):
+            with self.subTest(value=value, type=type(value)):
+                pool = FakePool()
+                item = record()
+                object.__setattr__(item, "source_version", value)
+                with self.assertRaisesRegex(ValueError, "printable ASCII"):
+                    await MultibaggerSourceWriter(pool).write_batch((item,))
+                self.assertEqual(pool.acquire_count, 0)
 
     async def test_empty_batch_has_no_database_roundtrip(self) -> None:
         pool = FakePool()

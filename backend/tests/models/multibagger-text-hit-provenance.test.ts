@@ -28,7 +28,8 @@ const checks: Array<[string, boolean]> = [
   [
     'forward adds source version and authenticated hit hash',
     /ADD COLUMN source_version TEXT NOT NULL/.test(up) &&
-      /ADD COLUMN hit_fact_hash TEXT NOT NULL/.test(up),
+      /ADD COLUMN hit_fact_hash TEXT NOT NULL/.test(up) &&
+      /source_version COLLATE "C" ~ '\^\[!-~\]\+\$'/.test(up),
   ],
   [
     'rollback removes only the owned columns and constraints',

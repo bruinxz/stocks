@@ -11,14 +11,6 @@ interface RelevanceBreakdownCardProps {
   components?: RelevanceComponent[];
 }
 
-const DEFAULT_COMPONENTS: RelevanceComponent[] = [
-  { label: 'sector_map', value: 35, color: '#3b82f6' },
-  { label: 'revenue_exposure', value: 25, color: '#22c55e' },
-  { label: 'adr_parity', value: 20, color: '#f59e0b' },
-  { label: 'supply_chain', value: 15, color: '#8b5cf6' },
-  { label: 'historical_beta', value: 5, color: '#ec4899' },
-];
-
 const cardStyle: React.CSSProperties = {
   background: 'var(--cd-bg-surface)',
   border: '1px solid var(--cd-border)',
@@ -46,10 +38,15 @@ const labelStyle: React.CSSProperties = {
   color: 'var(--cd-text-secondary)',
 };
 
-export function RelevanceBreakdownCard({ components = DEFAULT_COMPONENTS }: RelevanceBreakdownCardProps) {
+export function RelevanceBreakdownCard({ components = [] }: RelevanceBreakdownCardProps) {
   return (
     <div style={cardStyle}>
       <div style={titleStyle}>相关性分解</div>
+      {components.length === 0 && (
+        <div style={{ color: 'var(--cd-text-secondary)', fontSize: 12 }}>
+          当前快照未提供 catalyst_relevance
+        </div>
+      )}
       {components.map((c) => (
         <div key={c.label} style={rowStyle}>
           <span style={labelStyle}>{c.label}</span>

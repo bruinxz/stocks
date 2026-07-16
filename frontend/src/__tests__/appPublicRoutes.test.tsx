@@ -2,9 +2,14 @@ import { act } from 'react';
 import { Provider } from 'react-redux';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
-import App from '../App';
+import App, { settleAppLogout } from '../App';
 import store from '../store/store';
+import { loginSuccess, logout } from '../store/authSlice';
 import { TAB_KEYS, type TabKey } from '../pages/catdesk/useTabState';
+import {
+  USER_SCOPED_LOCAL_STORAGE_KEYS,
+  USER_SCOPED_SESSION_STORAGE_KEYS,
+} from '../utils/sessionCleanup';
 
 jest.mock('../services/portfolioWorkspaceService', () => ({
   listPortfolios: async () => [],
@@ -24,6 +29,10 @@ jest.mock('../components/layout/AlertsBell', () => ({
 jest.mock('../components/layout/CriticalAlertModal', () => ({
   __esModule: true,
   default: () => null,
+}));
+jest.mock('../pages/Login', () => ({
+  __esModule: true,
+  default: () => <div data-testid="login-page">登录系统</div>,
 }));
 
 jest.mock('../pages/catdesk/tabs/AShareMorningBrief', () => ({
@@ -70,7 +79,7 @@ async function flushRouteEffects() {
   await Promise.resolve();
 }
 
-describe('public App routing', () => {
+describe('authenticated App routing', () => {
   let container: HTMLDivElement;
   let root: Root;
   let warnSpy: { mockRestore: () => void };
@@ -91,6 +100,8 @@ describe('public App routing', () => {
 
   beforeEach(() => {
     window.localStorage.clear();
+    window.sessionStorage.clear();
+    store.dispatch(logout());
     warnSpy = jest
       .spyOn(console, 'warn')
       .mockImplementation((message: unknown, ...args: unknown[]) => {
@@ -105,6 +116,8 @@ describe('public App routing', () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     warnSpy.mockRestore();
+    window.localStorage.clear();
+    window.sessionStorage.clear();
     container.remove();
   });
 
@@ -120,23 +133,60 @@ describe('public App routing', () => {
     });
   }
 
-  test.each(['/login', '/home'])(
-    '%s redirects through the real App router to /catdesk',
+  test('/login remains reachable without credentials', async () => {
+    await renderAt('/login');
+    expect(window.location.pathname).toBe('/login');
+    expect(container.textContent).toContain('登录系统');
+  });
+
+  test.each(['/home', '/catdesk', '/workspace/lab'])(
+    '%s redirects anonymous viewers to /login',
     async (path: string) => {
       await renderAt(path);
-
-      expect(window.location.pathname).toBe('/catdesk');
-      expect(container.textContent).toContain('A股早报');
+      expect(window.location.pathname).toBe('/login');
+      expect(container.textContent).toContain('登录系统');
       expect(window.localStorage.getItem('token')).toBeNull();
     }
   );
 
-  test.each(TAB_KEYS)('tab %s is publicly reachable without a token', async (tab: TabKey) => {
+  test.each(TAB_KEYS)('tab %s is reachable with an authenticated identity', async (tab: TabKey) => {
+    const token = 'app-routing-token';
+    window.localStorage.setItem('token', token);
+    store.dispatch(
+      loginSuccess({
+        token,
+        user: { id: 7, username: 'owner', email: 'owner@example.com', role: 'admin' },
+      })
+    );
     await renderAt(`/catdesk?tab=${tab}`);
 
     expect(window.location.pathname).toBe('/catdesk');
     expect(window.location.pathname).not.toBe('/login');
     expect(container.textContent).toContain(TAB_LABEL[tab]);
-    expect(window.localStorage.getItem('token')).toBeNull();
+    expect(window.localStorage.getItem('token')).toBe(token);
   });
+
+  test.each(['success', 'failure'] as const)(
+    'the App logout boundary clears user-scoped storage after request %s',
+    async outcome => {
+      for (const key of USER_SCOPED_LOCAL_STORAGE_KEYS) localStorage.setItem(key, 'private');
+      for (const key of USER_SCOPED_SESSION_STORAGE_KEYS) sessionStorage.setItem(key, 'private');
+      const errorLog = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+      const request = jest.fn<Promise<void>, []>();
+      if (outcome === 'success') request.mockResolvedValueOnce(undefined);
+      else request.mockRejectedValueOnce(new Error('logout failed'));
+
+      await expect(settleAppLogout(request)).resolves.toBeUndefined();
+
+      expect(request).toHaveBeenCalledTimes(1);
+      for (const key of USER_SCOPED_LOCAL_STORAGE_KEYS) {
+        expect(localStorage.getItem(key)).toBeNull();
+      }
+      for (const key of USER_SCOPED_SESSION_STORAGE_KEYS) {
+        expect(sessionStorage.getItem(key)).toBeNull();
+      }
+      expect(errorLog).toHaveBeenCalledTimes(outcome === 'failure' ? 1 : 0);
+      errorLog.mockRestore();
+    }
+  );
 });

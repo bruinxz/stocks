@@ -1,5 +1,8 @@
-from dataclasses import dataclass
-from typing import Any
+from __future__ import annotations
+
+import copy
+from dataclasses import dataclass, field
+from typing import Any, Callable
 import uuid
 import time
 
@@ -32,6 +35,25 @@ class PipelineConfig:
     input_hashes: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class PipelineSourceInputs:
+    """Authenticated A/B/C-stage inputs supplied by a replay adapter.
+
+    The ordinary runner still defaults to empty collections.  Production
+    replay must pass one fully validated bundle so the three input stages do
+    not perform independent reads and accidentally assemble a mixed snapshot.
+    """
+
+    signals: tuple[dict[str, Any], ...] = ()
+    universe: tuple[str, ...] = ()
+    scores: dict[str, dict[str, Any]] = field(default_factory=dict)
+    evidence_refs: dict[str, tuple[dict[str, Any], ...]] = field(
+        default_factory=dict
+    )
+    score_provenance: dict[str, dict[str, Any]] = field(default_factory=dict)
+    recommendation_ids: dict[str, str] = field(default_factory=dict)
+
+
 class PipelineRunner:
     """7-stage pipeline: A→B→C→D→E→F→G(snapshot)→H(publish)."""
 
@@ -40,6 +62,7 @@ class PipelineRunner:
         config: PipelineConfig,
         snapshot_writer=None,
         snapshot_store_factory=None,
+        post_persist_verifier: Callable | None = None,
     ):
         if snapshot_writer is not None and snapshot_store_factory is not None:
             raise ValueError(
@@ -65,13 +88,34 @@ class PipelineRunner:
             PublishStage(),
         ]
         self._snapshot_writer = snapshot_writer
+        self._post_persist_verifier = post_persist_verifier
         self._validator = OutputValidator()
 
-    def run(self, as_of: str) -> dict:
+    def run(
+        self,
+        as_of: str,
+        source_inputs: PipelineSourceInputs | None = None,
+        snapshot_id: str | None = None,
+    ) -> dict:
+        if source_inputs is None:
+            source_inputs = PipelineSourceInputs()
+        if not isinstance(source_inputs, PipelineSourceInputs):
+            raise TypeError("source_inputs must be PipelineSourceInputs")
         ctx = PipelineContext(
-            snapshot_id=str(uuid.uuid4()),
+            snapshot_id=snapshot_id or str(uuid.uuid4()),
             as_of=as_of,
             config=self._config,
+            signals=copy.deepcopy(list(source_inputs.signals)),
+            universe=list(source_inputs.universe),
+            scores=copy.deepcopy(dict(source_inputs.scores)),
+            evidence_refs=copy.deepcopy(
+                {
+                    ticker: list(refs)
+                    for ticker, refs in source_inputs.evidence_refs.items()
+                }
+            ),
+            score_provenance=copy.deepcopy(source_inputs.score_provenance),
+            recommendation_ids=dict(source_inputs.recommendation_ids),
             input_hashes=list(self._config.input_hashes),
         )
 
@@ -89,7 +133,16 @@ class PipelineRunner:
         if validation_errors:
             raise PipelineValidationError(validation_errors)
 
-        self._snapshot_writer.write(ctx, recommendation_list)
+        write_result = self._snapshot_writer.write(ctx, recommendation_list)
+
+        if self._post_persist_verifier is not None:
+            verified_envelope = self._post_persist_verifier(
+                ctx,
+                recommendation_list,
+                write_result,
+            )
+            if verified_envelope is not None:
+                recommendation_list = verified_envelope
 
         self._stages[-1].execute(ctx)
 

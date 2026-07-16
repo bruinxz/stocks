@@ -4,8 +4,8 @@
 # Unlike the legacy local-build flow (deploy_release_package.js), this script
 # does NOT compile anything locally. It only:
 #   1. Confirms the target branch is pushed to GitHub
-#   2. SSH'es to deploy@103.242.3.87 to clone+build+release+activate remotely
-#   3. SSH'es to ops@103.242.3.87 to restart systemd + run health gate
+#   2. SSH'es to deploy@<legacy-prod-host> to clone+build+release+activate remotely
+#   3. SSH'es to ops@<legacy-prod-host> to restart systemd + run health gate
 #
 # Usage:
 #   bash scripts/deployment/deploy_remote_build.sh main [branch]
@@ -13,8 +13,8 @@
 #     branch: git branch/tag/sha (default: current local branch)
 #
 # Required env:
-#   DEPLOY_PASSWORD  password for deploy@103.242.3.87:14126
-#   OPS_PASSWORD     password for ops@103.242.3.87:14126
+#   DEPLOY_PASSWORD  password for deploy@<legacy-prod-host>:14126
+#   OPS_PASSWORD     password for ops@<legacy-prod-host>:14126
 #
 # Optional env:
 #   SKIP_HEALTH_GATE=true   skip the post-deploy health gate
@@ -54,7 +54,7 @@ OPS_PASSWORD="${OPS_PASSWORD:-}"
 [[ -z "$DEPLOY_PASSWORD" ]] && { echo "DEPLOY_PASSWORD required" >&2; exit 1; }
 [[ -z "$OPS_PASSWORD" ]] && { echo "OPS_PASSWORD required" >&2; exit 1; }
 
-SSH_HOST="103.242.3.87"
+SSH_HOST="<legacy-prod-host>"
 SSH_PORT="14126"
 GIT_REPO_URL="${GIT_REPO_URL:-https://github.com/bruinxz/stocks.git}"
 
@@ -96,7 +96,7 @@ ssh_ops() {
 
 # Confirm branch reachable on remote git (deploy account)
 echo ""
-echo "▶ [1/8] Confirm branch '$BRANCH' is reachable on GitHub from server..."
+echo "▶ [1/9] Confirm branch '$BRANCH' is reachable on GitHub from server..."
 ssh_deploy "git ls-remote --heads '$GIT_REPO_URL' '$BRANCH' | grep -q '$BRANCH'" \
   || { echo "ERROR: branch '$BRANCH' not found on remote $GIT_REPO_URL" >&2; exit 1; }
 echo "  ✓ branch reachable"
@@ -106,7 +106,7 @@ echo "  ✓ branch reachable"
 # ---------------------------------------------------------------------------
 if [[ "$TARGET" == "main" && "${SKIP_DB_BACKUP:-false}" != "true" ]]; then
   echo ""
-  echo "▶ [2/8] Backing up production DB before main deploy..."
+  echo "▶ [2/9] Backing up production DB before main deploy..."
   ssh_ops "bash -c '
     set -e
     BACKUP_DIR=/var/backups/stocks
@@ -125,14 +125,14 @@ if [[ "$TARGET" == "main" && "${SKIP_DB_BACKUP:-false}" != "true" ]]; then
   echo "  ✓ DB backed up"
 else
   echo ""
-  echo "▶ [2/8] Skipping DB backup (target=$TARGET or SKIP_DB_BACKUP=true)"
+  echo "▶ [2/9] Skipping DB backup (target=$TARGET or SKIP_DB_BACKUP=true)"
 fi
 
 # ---------------------------------------------------------------------------
 # Remote clone + build + release
 # ---------------------------------------------------------------------------
 echo ""
-echo "▶ [3/8] Remote clone + checkout..."
+echo "▶ [3/9] Remote clone + checkout..."
 ssh_deploy "bash -s" <<EOF
 set -euo pipefail
 WORK='$WORK'
@@ -153,7 +153,7 @@ echo "  HEAD: \$(git rev-parse --short HEAD) \$(git log -1 --pretty='%s' | head 
 EOF
 
 echo ""
-echo "▶ [4/8] Remote install + build..."
+echo "▶ [4/9] Remote install + build..."
 ssh_deploy "bash -s" <<EOF
 set -euo pipefail
 WORK='$WORK'
@@ -190,7 +190,7 @@ fi
 EOF
 
 echo ""
-echo "▶ [5/8] Create release dir + activate symlink..."
+echo "▶ [5/9] Create release dir + activate symlink..."
 ssh_deploy "bash -s" <<EOF
 set -euo pipefail
 WORK='$WORK'
@@ -261,10 +261,24 @@ done
 EOF
 
 # ---------------------------------------------------------------------------
+# Required auth migration (idempotent marker/shape probe; before restart)
+# ---------------------------------------------------------------------------
+echo ""
+echo "▶ [6/9] Apply and verify auth refresh-session migration..."
+ssh_deploy "bash -s" <<EOF
+set -euo pipefail
+CURRENT='$CURRENT'
+cd "\$CURRENT/backend"
+test -f .env
+APPLY_AUTH_REFRESH_SESSION_MIGRATION=1 NODE_ENV=production \
+  node dist/scripts/apply-auth-refresh-session-migration.js
+EOF
+
+# ---------------------------------------------------------------------------
 # Restart systemd
 # ---------------------------------------------------------------------------
 echo ""
-echo "▶ [6/8] Restart $SERVICE (sudo via ops)..."
+echo "▶ [7/9] Restart $SERVICE (sudo via ops)..."
 ssh_ops "echo '$OPS_PASSWORD' | sudo -S systemctl restart $SERVICE" 2>&1 | tail -5
 sleep 3
 ssh_ops "echo '$OPS_PASSWORD' | sudo -S systemctl is-active $SERVICE" || \
@@ -277,7 +291,7 @@ ssh_ops "echo '$OPS_PASSWORD' | sudo -S systemctl is-active $SERVICE" || \
 # ---------------------------------------------------------------------------
 if [[ "${SYNC_SCHEMA:-false}" == "true" ]]; then
   echo ""
-  echo "▶ [7/8] Sync Sequelize schema (creating any missing tables)..."
+  echo "▶ [8/9] Sync Sequelize schema (creating any missing tables)..."
   ssh_deploy "bash -s" <<EOF
 set -euo pipefail
 CURRENT='$CURRENT'
@@ -311,7 +325,7 @@ STOCKS_BACKEND_CWD=\$CURRENT/backend \\
 EOF
 else
   echo ""
-  echo "▶ [7/8] Skipping schema sync (set SYNC_SCHEMA=true to enable)"
+  echo "▶ [8/9] Skipping schema sync (set SYNC_SCHEMA=true to enable)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -319,7 +333,7 @@ fi
 # ---------------------------------------------------------------------------
 if [[ "${SKIP_HEALTH_GATE:-false}" != "true" ]]; then
   echo ""
-  echo "▶ [8/8] Run health gate..."
+  echo "▶ [9/9] Run health gate..."
   ssh_deploy "
     if [ -f $CURRENT/scripts/deployment/release_health_gate.js ]; then
       cd $CURRENT && node scripts/deployment/release_health_gate.js 2>&1 | tail -30
@@ -333,7 +347,7 @@ if [[ "${SKIP_HEALTH_GATE:-false}" != "true" ]]; then
   "
 else
   echo ""
-  echo "▶ [8/8] Skipped health gate (SKIP_HEALTH_GATE=true)"
+  echo "▶ [9/9] Skipped health gate (SKIP_HEALTH_GATE=true)"
 fi
 
 echo ""

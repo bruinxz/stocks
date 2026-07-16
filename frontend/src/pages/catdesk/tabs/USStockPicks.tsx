@@ -3,6 +3,7 @@ import { useAbortableRequest } from 'shared/hooks/useAbortableRequest';
 import { LoadingState } from '../shared/LoadingState';
 import { EmptyState } from '../shared/EmptyState';
 import { ErrorState } from '../shared/ErrorState';
+import { UnavailableState } from '../shared/UnavailableState';
 import { DisclaimerFooter } from '../shared/DisclaimerFooter';
 import { USTable } from './us/USTable';
 import { USFilterBar } from './us/USFilterBar';
@@ -10,35 +11,29 @@ import { USKpiSlots } from './us/USKpiSlots';
 import { buildUSSections } from './us/detail/buildUSSections';
 import { DetailSidebar } from 'shared/components/DetailSidebar';
 import type { CandidateListEntry } from './c1Types';
-
-interface USSelectResponse {
-  kpi: { total: number; strong_buy: number; avg_score: number; updated_at: string };
-  candidates: CandidateListEntry[];
-}
+import {
+  loadRecommendationCandidateFeed,
+  type RecommendationCandidateLoadResult,
+} from './recommendationCandidates';
 
 interface USFilters {
   sector: string | null;
   ratingMin: string | null;
 }
 
-function todayISO(): string {
-  const d = new Date();
-  return d.toISOString().slice(0, 10);
-}
-
 export default function USStockPicks() {
   const [filters, setFilters] = useState<USFilters>({ sector: null, ratingMin: null });
   const [selectedRow, setSelectedRow] = useState<CandidateListEntry | null>(null);
 
-  const dateParam = todayISO();
-  const { data, loading, error } = useAbortableRequest<USSelectResponse>(
-    signal =>
-      fetch(`/api/v1/us-select/${encodeURIComponent(dateParam)}`, { signal }).then(r => {
-        if (!r.ok) throw new Error(`us-select ${r.status}`);
-        return r.json();
-      }),
-    [dateParam]
+  const {
+    data: loadResult,
+    loading,
+    error,
+  } = useAbortableRequest<RecommendationCandidateLoadResult>(
+    signal => loadRecommendationCandidateFeed(signal, 'us_preferred', 'us'),
+    []
   );
+  const data = loadResult?.kind === 'ready' ? loadResult.feed : null;
 
   const filtered = useMemo(() => {
     if (!data?.candidates) return [];
@@ -68,15 +63,19 @@ export default function USStockPicks() {
   );
 
   if (loading) return <LoadingState />;
-  if (error) return <ErrorState message={typeof error === 'string' ? error : '数据加载失败'} />;
+  if (error) return <ErrorState message="数据加载失败" />;
+  if (loadResult?.kind === 'not_generated')
+    return <EmptyState title="当前尚未生成美股推荐快照" variant="simple" />;
+  if (loadResult?.kind === 'unavailable')
+    return <UnavailableState message="推荐服务当前不可用，请稍后重试" />;
   if (!data?.candidates?.length)
-    return <EmptyState title="美股优选 · 数据接入中" variant="simple" />;
+    return <EmptyState title="当前尚未生成美股推荐快照" variant="simple" />;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
       <USKpiSlots
         total={filtered.length}
-        strongBuy={data.kpi.strong_buy}
+        strongBuy={data.kpi.high_conviction}
         avgScore={data.kpi.avg_score}
         updatedAt={data.kpi.updated_at}
       />

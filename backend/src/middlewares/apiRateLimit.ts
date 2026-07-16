@@ -67,7 +67,6 @@ export function buildApiRateLimitMiddleware(config: RateLimitConfig | null) {
   };
 }
 
-export const apiRateLimitMiddleware = () =>
-  buildApiRateLimitMiddleware(PKG_RATE_LIMIT_CONFIG);
+export const apiRateLimitMiddleware = () => buildApiRateLimitMiddleware(PKG_RATE_LIMIT_CONFIG);
 
 export const CURRENT_RATE_LIMIT_CONFIG = PKG_RATE_LIMIT_CONFIG;

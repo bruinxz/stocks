@@ -28,7 +28,12 @@ router.get(
   requireRole('admin'),
   commentsController.stats
 );
-router.post('/comments', authController.authenticate, requireRole('admin'), commentsController.create);
+router.post(
+  '/comments',
+  authController.authenticate,
+  requireRole('admin'),
+  commentsController.create
+);
 router.patch(
   '/comments/:id',
   authController.authenticate,

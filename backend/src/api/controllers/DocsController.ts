@@ -82,9 +82,9 @@ export class DocsController {
 
     const entries = fs.readdirSync(dirPath);
     const children = entries
-      .filter((e) => !e.startsWith('.') && e !== 'node_modules')  // 忽略隐藏和 node_modules
-      .map((e) => this.buildTree(path.join(dirPath, e), depth + 1))
-      .filter((n) => n !== null)
+      .filter(e => !e.startsWith('.') && e !== 'node_modules') // 忽略隐藏和 node_modules
+      .map(e => this.buildTree(path.join(dirPath, e), depth + 1))
+      .filter(n => n !== null)
       .sort((a, b) => {
         // 目录在前, 文件在后; 各自按名字排序
         if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
@@ -138,7 +138,9 @@ export class DocsController {
       }
 
       if (stats.size > DocsController.MAX_FILE_SIZE) {
-        res.status(413).json({ success: false, message: `文件过大 (>${DocsController.MAX_FILE_SIZE} bytes)` });
+        res
+          .status(413)
+          .json({ success: false, message: `文件过大 (>${DocsController.MAX_FILE_SIZE} bytes)` });
         return;
       }
 

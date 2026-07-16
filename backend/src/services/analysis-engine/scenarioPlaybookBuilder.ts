@@ -184,11 +184,13 @@ export function classifyOpenPrice(prev_close: number, next_open: number): Scenar
  *                / 缺 support 时降级 "低位观察 · 不破可低吸博弈"
  *   low_hard:    "明显弱势, 观望为宜" + ["高位破位, 避免抄底"] + " · 不急于抄底"
  */
-export function buildScenarioPlaybook(
-  ctx: ScenarioPlaybookContext
-): ScenarioPlaybookItem[] | null {
+export function buildScenarioPlaybook(ctx: ScenarioPlaybookContext): ScenarioPlaybookItem[] | null {
   if (!ctx) return null;
-  if (typeof ctx.prev_close !== 'number' || !Number.isFinite(ctx.prev_close) || ctx.prev_close <= 0) {
+  if (
+    typeof ctx.prev_close !== 'number' ||
+    !Number.isFinite(ctx.prev_close) ||
+    ctx.prev_close <= 0
+  ) {
     return null;
   }
   const action = String(ctx.action ?? '').toLowerCase();
@@ -200,7 +202,9 @@ export function buildScenarioPlaybook(
   const hasVolWeak = containsAny(evidenceText, VOLUME_WEAK_KEYWORDS);
   const hasRiskHighPos = containsAny(riskText, RISK_HIGH_POSITION_KEYWORDS);
   const capitalAccel =
-    typeof ctx.capital_score === 'number' && Number.isFinite(ctx.capital_score) && ctx.capital_score > 60;
+    typeof ctx.capital_score === 'number' &&
+    Number.isFinite(ctx.capital_score) &&
+    ctx.capital_score > 60;
   const isPositiveAction = POSITIVE_ACTIONS.includes(action);
 
   // ----- high_strong: 估算开盘价 = prev_close * 1.02 (阈值下沿), 止损下方 -2% -----
@@ -236,11 +240,13 @@ export function buildScenarioPlaybook(
   let lmAction: string;
   let lmStopRounded: number | null = null;
   const supportLevel =
-    typeof ctx.support_level === 'number' && Number.isFinite(ctx.support_level) && ctx.support_level > 0
+    typeof ctx.support_level === 'number' &&
+    Number.isFinite(ctx.support_level) &&
+    ctx.support_level > 0
       ? ctx.support_level
       : typeof ctx.entry_low === 'number' && Number.isFinite(ctx.entry_low) && ctx.entry_low > 0
-        ? ctx.entry_low
-        : null;
+      ? ctx.entry_low
+      : null;
   if (supportLevel !== null) {
     lmAction = `关注 ¥${round2(supportLevel)!.toFixed(2)} 支撑 · 不破可低吸博弈`;
     lmStopRounded = round2(supportLevel * 0.99);

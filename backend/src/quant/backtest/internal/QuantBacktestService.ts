@@ -485,10 +485,7 @@ export class QuantBacktestService {
     return { task: await this.getBacktest(task.id), queue_job_id: job.id };
   }
 
-  private persistQueueJobIdAfterResponse(
-    task: QuantBacktestTask,
-    queue_job_id: string | number
-  ) {
+  private persistQueueJobIdAfterResponse(task: QuantBacktestTask, queue_job_id: string | number) {
     setImmediate(() => {
       QuantBacktestTask.update(
         {
@@ -499,14 +496,13 @@ export class QuantBacktestService {
           ) as any,
         } as any,
         { where: { id: task.id } }
-      )
-        .catch((error: any) => {
-          logger.warn(
-            `[quant-backtest] queue job id persistence failed for task ${task.id}: ${
-              error?.message || error
-            }`
-          );
-        });
+      ).catch((error: any) => {
+        logger.warn(
+          `[quant-backtest] queue job id persistence failed for task ${task.id}: ${
+            error?.message || error
+          }`
+        );
+      });
     });
   }
 

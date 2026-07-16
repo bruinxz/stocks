@@ -1824,11 +1824,9 @@ export class LiveTradingService {
       // assertOrderExecutionAllowed 之后、submitApprovedDraft 之前；high 直接 throw
       // + 写 ORDER_BLOCKED_BY_COMPLIANCE audit; medium 允许且 audit
       // ORDER_COMPLIANCE_WARN; low 仅 log。
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const {
-        checkPreTradeCompliance,
-        emitPreTradeComplianceAlert,
-      } = require('../../services/TradeComplianceChecker');
+      const { checkPreTradeCompliance, emitPreTradeComplianceAlert } = await import(
+        '../../services/TradeComplianceChecker'
+      );
       try {
         const sideUpper =
           String((draft as any).side || 'BUY').toUpperCase() === 'SELL' ? 'SELL' : 'BUY';

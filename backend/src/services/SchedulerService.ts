@@ -1,4 +1,5 @@
 import cron, { ScheduledTask as CronScheduledTask } from 'node-cron';
+import path from 'path';
 import { ScheduledTask } from '../models/ScheduledTask';
 import {
   buildCronRegistryDump,
@@ -58,6 +59,7 @@ import { Op } from 'sequelize';
 // 在 success / failed / skipped 三个出口收尾时调用. 不感知 task.id / task.name (避免
 // label cardinality 爆炸); 只按 CRON_REGISTRY 的 task_type 维度统计.
 import { recordSchedulerTaskRun } from '../metrics/PrometheusRegistry';
+import { skipRetiredScheduledTask } from './scheduler/retiredScheduledTask';
 
 // ⚠️ DEPRECATED STUB — 以下"服务"是 批3/批8 精简量化 pipeline 时已删除的 service
 // 的占位替身,仅为让依赖它们的历史调度路径继续编译。所有方法恒返回空结果 (no-op),
@@ -66,14 +68,26 @@ const quantStrategyParamVersionService = {
   getDashboard: async (_?: any): Promise<any> => ({ versions: [], count: 0 }),
   getActiveParamsForScan: async (_?: any): Promise<any> => ({}),
   refreshVersionsFromExperiments: async (_?: any): Promise<any> => ({ created: 0, updated: 0 }),
-  createPendingValidationsFromSignals: async (_?: any): Promise<any> => ({ created: 0, updated: 0, scanned: 0 }),
-  refreshValidationReturns: async (_?: any): Promise<any> => ({ updated: 0, completed: 0, no_data: 0, refreshed: 0 }),
-  evaluateAndApplyLifecycle: async (_?: any): Promise<any> => ({ promoted: 0, degraded: 0, applied: 0 }),
+  createPendingValidationsFromSignals: async (_?: any): Promise<any> => ({
+    created: 0,
+    updated: 0,
+    scanned: 0,
+  }),
+  refreshValidationReturns: async (_?: any): Promise<any> => ({
+    updated: 0,
+    completed: 0,
+    no_data: 0,
+    refreshed: 0,
+  }),
+  evaluateAndApplyLifecycle: async (_?: any): Promise<any> => ({
+    promoted: 0,
+    degraded: 0,
+    applied: 0,
+  }),
   upsertGridSearchCandidates: async (_?: any): Promise<any> => ({ upserted: 0 }),
 };
-const restrictedShareWatchdog = { run: async (_?: any): Promise<any> => ({ alerts: [] }), evaluateAfterOpen: async (_?: any): Promise<any> => ({ alerts: [] }) };
 const QuantSignal = { findAll: async (_?: any): Promise<any[]> => [] };
-const StrategyTcaMultiplier = { upsert: async (_?: any): Promise<any> => {} };
+const StrategyTcaMultiplier = { upsert: async (_?: any): Promise<any> => undefined };
 
 type TaskRunStatus = 'SUCCESS' | 'FAILED' | 'RUNNING';
 type TaskExecutionLogLike = TaskExecutionLog | null;
@@ -495,7 +509,11 @@ class SchedulerService {
             nextRunStr = moment(parsed).tz(tz).format('YYYY-MM-DD HH:mm:ss z');
           } else {
             const next = cronJob?.getNextRun?.();
-            if (next instanceof Date && !Number.isNaN(next.getTime()) && !isImplausibleNextRun(next)) {
+            if (
+              next instanceof Date &&
+              !Number.isNaN(next.getTime()) &&
+              !isImplausibleNextRun(next)
+            ) {
               nextRunStr = moment(next).tz(tz).format('YYYY-MM-DD HH:mm:ss z');
             }
           }
@@ -881,6 +899,29 @@ class SchedulerService {
     const executionLog = await this.createExecutionLog(task, timestamp, isManual);
 
     try {
+      if (task.type === 'PAPER_TRADING_RESTRICTED_SHARE_CHECK') {
+        // RestrictedShareWatchdog was removed with its model/table. A persisted
+        // legacy row must retire itself before calendar guards can report a false
+        // SUCCESS, and before any removed implementation can be invoked.
+        return await skipRetiredScheduledTask({
+          task,
+          execution_log: executionLog,
+          reason: 'RestrictedShareWatchdog and its persistence model have been retired',
+          metric_started_at_ms: _metricStart,
+          record_metric: recordSchedulerTaskRun,
+          deactivate_in_memory: () => {
+            const scheduled = this.activeTasks.get(task.id);
+            try {
+              scheduled?.stop();
+              (scheduled as any)?.destroy?.();
+            } finally {
+              this.activeTasks.delete(task.id);
+            }
+          },
+          warn: message => logger.warn(message),
+        });
+      }
+
       const parameters = task.parameters || {};
       const portfolioParams = this.resolvePortfolioParams(parameters);
       const today = this.getChinaDate();
@@ -890,7 +931,7 @@ class SchedulerService {
       // (isManual=true 用户手动触发时不跳过, 允许补跑)
       const requireTradingDay = (parameters as any).require_trading_day !== false;
       if (!isManual && requireTradingDay) {
-        const { isAShareTradeDay, explainNonTradeDay } = require('../utils/tradingCalendar');
+        const { isAShareTradeDay, explainNonTradeDay } = await import('../utils/tradingCalendar');
         // Batch O (2026-06-17, C-S7 fix): isWeekdayCron 正则扩展支持等价写法.
         // 旧只匹配 `* * 1-5$` 字面, ops 改成 `* * 1,2,3,4,5` / `* * MON-FRI` / `0,15,30,45 9-15 * * 1-5`
         // 都会绕过节假日 guard 在春节继续跑空请求. 新逻辑:
@@ -1053,11 +1094,7 @@ class SchedulerService {
             .map((symbol: any) => String(symbol || '').trim())
             .filter(Boolean);
           universe = 'manual';
-          batchSize = this.toPositiveInt(
-            parameters.batch_size || parameters.batchSize,
-            300,
-            500
-          );
+          batchSize = this.toPositiveInt(parameters.batch_size || parameters.batchSize, 300, 500);
         } else {
           // 老路径: universe='market'|'favorites', limit 默认 5000 全 A 股扫.
           const limit = this.toPositiveInt(
@@ -1066,11 +1103,7 @@ class SchedulerService {
             5000
           );
           universe = parameters.universe === 'favorites' ? 'favorites' : 'market';
-          batchSize = this.toPositiveInt(
-            parameters.batch_size || parameters.batchSize,
-            300,
-            500
-          );
+          batchSize = this.toPositiveInt(parameters.batch_size || parameters.batchSize, 300, 500);
           const stocks = await quantDataService.getStocks({
             universe: universe as 'market' | 'favorites',
             user_id: parameters.user_id,
@@ -1084,10 +1117,7 @@ class SchedulerService {
         // parameters.skip_extra_universe=true 时跳过 (例如 ops 手工只刷指定标的).
         // CE-A (2026-06-25): universe_source='intraday' 时同样跳过 — 内部已覆盖
         // 持仓 + 自选 + 涨跌幅榜 + 涨停 + 成交额, 不重复 enrich (避免破坏 max=500 约束).
-        if (
-          !rawSymbols?.length &&
-          parameters.skip_extra_universe !== true
-        ) {
+        if (!rawSymbols?.length && parameters.skip_extra_universe !== true) {
           try {
             // eslint-disable-next-line @typescript-eslint/no-var-requires
             const { PaperTradingPosition } = require('../models/PaperTradingPosition');
@@ -1140,7 +1170,9 @@ class SchedulerService {
             }
             targetSymbols = Array.from(extra);
           } catch (e) {
-            logger.warn(`[realtime-quote-sync] extra universe enrich failed: ${(e as Error).message}`);
+            logger.warn(
+              `[realtime-quote-sync] extra universe enrich failed: ${(e as Error).message}`
+            );
           }
         }
 
@@ -2311,38 +2343,6 @@ class SchedulerService {
           `早盘体检完成。扫描 ${result.scanned_users} / 体检 ${result.checked_users}` +
             (dryRun ? '（dry-run，未持久化）' : '')
         );
-      } else if (task.type === 'PAPER_TRADING_RESTRICTED_SHARE_CHECK') {
-        // Batch J (2026-06-17): US-089 RestrictedShareWatchdog cron 接入
-        // (之前完全没注册). 推荐 cron: 0 9 * * 1-5 (开盘前提前预警).
-        const targetUserId = parameters.user_id || parameters.userId;
-        const dryRun = parameters.dry_run !== undefined ? Boolean(parameters.dry_run) : false;
-        const result = await restrictedShareWatchdog.evaluateAfterOpen({
-          user_id: targetUserId ? Number(targetUserId) : undefined,
-          dry_run: dryRun,
-        });
-        const failedCount = (result.per_user || []).filter((u: any) => u.error).length;
-        await this.safeUpdateExecutionLog(executionLog, {
-          total_items: result.scanned_users,
-          completed_items: result.triggered_users,
-          failed_items: failedCount,
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          error_message: null,
-          result_summary: {
-            scenario: 'paper_trading_restricted_share_check',
-            scanned_users: result.scanned_users,
-            triggered_users: result.triggered_users,
-            dry_run: dryRun,
-            window_start: result.window_start,
-            window_end: result.window_end,
-            trigger_count: result.triggers.length,
-          },
-        });
-        logger.info(
-          `限售解禁前瞻预警完成。扫描 ${result.scanned_users}, ` +
-            `触发 ${result.triggered_users}, ${result.triggers.length} 个 trigger ` +
-            (dryRun ? '（dry-run）' : '')
-        );
       } else if (task.type === 'PAPER_TRADING_INDUSTRY_CONCENTRATION_CHECK') {
         // Batch J (2026-06-17): IndustryConcentrationGuard.evaluateAfterClose cron 接入
         // (之前完全没注册, 行业集中度告警从来没自动跑过). 推荐 cron: 35 15 * * 1-5 (收盘后).
@@ -2467,7 +2467,9 @@ class SchedulerService {
                 raw: true,
               });
               for (const r of positions) {
-                const digits = String(r.symbol || '').replace(/[^0-9]/g, '').slice(-6);
+                const digits = String(r.symbol || '')
+                  .replace(/[^0-9]/g, '')
+                  .slice(-6);
                 if (/^\d{6}$/.test(digits)) set.add(digits);
               }
             } catch (e) {
@@ -2488,7 +2490,9 @@ class SchedulerService {
                 raw: true,
               });
               for (const s of top as any[]) {
-                const digits = String(s.symbol || '').replace(/[^0-9]/g, '').slice(-6);
+                const digits = String(s.symbol || '')
+                  .replace(/[^0-9]/g, '')
+                  .slice(-6);
                 if (/^\d{6}$/.test(digits)) set.add(digits);
               }
             } catch (e) {
@@ -2573,9 +2577,9 @@ class SchedulerService {
       } else if (task.type === 'EQUITY_CURVE_GOVERNOR_DAILY_EVAL') {
         // Sprint 3: 资金曲线 Governor 每日评估 — 对所有 portfolio 评估 5 档健康度。
         // 默认 persist=true，写入 EquityCurveGovernorState，触发档位切换告警。
-        const {
-          equityCurveGovernorService,
-        } = require('../services/governor/EquityCurveGovernorService');
+        const { equityCurveGovernorService } = await import(
+          '../services/governor/EquityCurveGovernorService'
+        );
         const result = await equityCurveGovernorService.evaluateAll({
           persist: parameters.persist !== false,
           as_of_date: parameters.as_of_date || parameters.asOfDate,
@@ -2613,14 +2617,12 @@ class SchedulerService {
       } else if (task.type === 'RESEARCH_INTEGRITY_BATCH_AUDIT') {
         // Sprint 1A: ResearchIntegrity 周批量审计 — 扫描近 N 天完成的 QuantBacktestResult，
         // 对每个跑 audit (DSR / PBO / OOS decay)，FAIL 的 strategy 推到 ops 关注列表。
-        const {
-          researchIntegrityService,
-        } = require('../services/research/ResearchIntegrityService');
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { QuantBacktestResult } = require('../models/QuantBacktestResult');
+        const { researchIntegrityService } = await import(
+          '../services/research/ResearchIntegrityService'
+        );
+        const { QuantBacktestResult } = await import('../models/QuantBacktestResult');
         const sinceDays = this.toPositiveInt(parameters.since_days || parameters.sinceDays, 7, 90);
         const cutoff = new Date(Date.now() - sinceDays * 24 * 3600 * 1000);
-        const { Op } = require('sequelize');
         const results = await QuantBacktestResult.findAll({
           where: { created_at: { [Op.gte]: cutoff } },
           order: [['created_at', 'DESC']],
@@ -3732,12 +3734,9 @@ class SchedulerService {
         }
       } else if (task.type === 'EXTRA_DIMS_SYNC') {
         // 新维度同步 — 走 child_process 调用 sync:extra-dims CLI 复用既有逻辑
-        const dims: string[] = Array.isArray(parameters.dims)
-          ? parameters.dims
-          : ['macro', 'qvix'];
+        const dims: string[] = Array.isArray(parameters.dims) ? parameters.dims : ['macro', 'qvix'];
         const results: Record<string, string> = {};
         // BJ-6: spawnSync replaced by runScriptAsync, no longer need require
-        const path = require('path');
         const scriptPath = path.resolve(__dirname, '..', 'scripts', 'sync-extra-dims.ts');
         for (const dim of dims) {
           const args = [
@@ -3775,7 +3774,6 @@ class SchedulerService {
         // → Core 腿空仓。默认 provider=eastmoney (纯 HTTP, 无需 Python/token)。
         // cron 必须早于 FACTOR_SCORE_COMPUTE (17:30), 排在 17:00。
         // 走 compiled .js (与 FACTOR_SCORE_COMPUTE 同款 prod 约定; ts-node 是 dev dep)。
-        const path = require('path');
         const compiledScript = path.resolve(__dirname, '..', 'scripts', 'sync-derived-factors.js');
         const provider: string =
           typeof parameters.provider === 'string' ? parameters.provider : 'eastmoney';
@@ -3793,7 +3791,9 @@ class SchedulerService {
         const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
         const ok = r.code === 0;
         if (ok) {
-          logger.info(`[DERIVED_FACTOR_SYNC] done in ${elapsed}s provider=${provider} limit=${limit}`);
+          logger.info(
+            `[DERIVED_FACTOR_SYNC] done in ${elapsed}s provider=${provider} limit=${limit}`
+          );
         } else {
           logger.warn(
             `[DERIVED_FACTOR_SYNC] failed code=${r.code} after ${elapsed}s: ${(
@@ -3818,13 +3818,7 @@ class SchedulerService {
         // ETFConstituentExpander 把 ETF 展开成成份股做因子横截面。走 AKShare
         // (index_stock_cons_sina), 依赖 Python; 成份仅季度调样, 故周度跑足够。
         // 默认同步 etfIndexMap 覆盖的 6 个高置信映射指数。
-        const path = require('path');
-        const compiledScript = path.resolve(
-          __dirname,
-          '..',
-          'scripts',
-          'sync-index-components.js'
-        );
+        const compiledScript = path.resolve(__dirname, '..', 'scripts', 'sync-index-components.js');
         const indexes: string[] = Array.isArray(parameters.indexes)
           ? parameters.indexes
           : ['000300', '000905', '000016', '000688', '399673', '000015'];
@@ -3875,7 +3869,6 @@ class SchedulerService {
         // Batch AH review pt.2 (2026-06-18): 之前用 ts-node 跑 .ts 源在 prod
         // 报 'Cannot find module ./compute-factors.ts' — prod dist 模式 ts-node
         // 是 dev dep 且 .ts 源不复制. 改用 /usr/bin/node 直接跑 dist/scripts/compute-factors.js.
-        const path = require('path');
         // __dirname in prod = dist/services, 上一级 = dist, scripts/compute-factors.js 就在 dist 内
         const compiledScript = path.resolve(__dirname, '..', 'scripts', 'compute-factors.js');
         const date: string =
@@ -4104,7 +4097,7 @@ class SchedulerService {
           // 若表不存在 (DB migration 未跑), 仅 warn 不阻塞.
           try {
             /* eslint-disable @typescript-eslint/no-var-requires */
-                /* eslint-enable @typescript-eslint/no-var-requires */
+            /* eslint-enable @typescript-eslint/no-var-requires */
             for (const s of tcaResult.per_strategy) {
               await StrategyTcaMultiplier.upsert({
                 strategy_key: s.strategy_key,
@@ -4228,7 +4221,6 @@ class SchedulerService {
       } else if (task.type === 'FACTOR_IC_COMPUTE') {
         // Phase 3: 每日因子 IC 计算 — 走 child_process 调用 compute-factor-ic CLI
         // 默认跑过去 90 天 + 默认 forwardDays=[1,5,10,20,60]，覆盖 5 个时间窗口的衰减分析
-        const path = require('path');
         const scriptPath = path.resolve(__dirname, '..', 'scripts', 'compute-factor-ic.ts');
         const lookbackDays: number = this.toPositiveInt(parameters.lookback_days, 90, 365);
         const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
@@ -4283,7 +4275,6 @@ class SchedulerService {
         });
       } else if (task.type === 'DRAGON_TIGER_SYNC') {
         // 龙虎榜独立 cron — 收盘后 16:30 拉今日（如有上榜）
-        const path = require('path');
         const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
         const start = parameters.start || today;
         const end = parameters.end || today;
@@ -4319,10 +4310,6 @@ class SchedulerService {
       } else if (task.type === 'PAPER_TRADING_DAILY_SNAPSHOT') {
         // 收盘后给所有 paper_trading_portfolio 生成日 snapshot
         // 让"昨日盈亏 / 当月收益 / 最大回撤" 能正常显示历史
-        const {
-          paperTradingAutomationService,
-        } = require('../portfolio/internal/PaperTradingAutomationService');
-        const { PaperTradingPortfolio } = require('../models/PaperTradingPortfolio');
         const portfolios = await PaperTradingPortfolio.findAll({
           where: { is_active: true },
           attributes: ['id', 'user_id'],
@@ -4666,10 +4653,9 @@ class SchedulerService {
         // RiskAlert HIGH/MEDIUM → RealtimeAlertDispatcher 飞书推送。
         // 推荐 cron: '31 10,14,15 * * 1-5' (盘中 3 次) + '1 16 * * 1-5' (收盘后).
         // dry_run=true 仅评估不写 RiskAlert; window='intraday'|'eod' 仅 message 标签。
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const {
-          reconciliationAlertService,
-        } = require('../live-trading/services/ReconciliationAlertService');
+        const { reconciliationAlertService } = await import(
+          '../live-trading/services/ReconciliationAlertService'
+        );
         const win = (parameters.window === 'eod' ? 'eod' : 'intraday') as 'intraday' | 'eod';
         const dryRun = parameters.dry_run === true;
         const targetUserId = parameters.user_id || parameters.userId;
@@ -5076,17 +5062,14 @@ class SchedulerService {
         // BF-4 (2026-06-23): 工作日 21:00 7 段健康指标 → Lark OPS 群 + admin 邮箱
         // fail-OPEN: generateAndPushDailyHealthReport per-section + push 都 try/catch, 整体不抛.
         /* eslint-disable @typescript-eslint/no-var-requires */
-        const {
-          generateAndPushDailyHealthReport,
-        } = require('./DailyHealthReportService');
+        const { generateAndPushDailyHealthReport } = require('./DailyHealthReportService');
         /* eslint-enable @typescript-eslint/no-var-requires */
         const dryRun = parameters?.dry_run === true;
         const out = await generateAndPushDailyHealthReport({ dry_run: dryRun });
         const r = out.report;
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: 7,
-          completed_items:
-            7 - Object.keys(r.errors || {}).length,
+          completed_items: 7 - Object.keys(r.errors || {}).length,
           failed_items: Object.keys(r.errors || {}).length,
           status: 'COMPLETED',
           completed_at: new Date(),
@@ -5110,9 +5093,9 @@ class SchedulerService {
           },
         });
         logger.info(
-          `[DAILY_HEALTH_REPORT] date=${r.trade_date} live=${r.live_order.total}/${
-            (r.live_order.success_rate * 100).toFixed(1)
-          }% paper=${r.paper_trading.buy_count}/${r.paper_trading.sell_count} ` +
+          `[DAILY_HEALTH_REPORT] date=${r.trade_date} live=${r.live_order.total}/${(
+            r.live_order.success_rate * 100
+          ).toFixed(1)}% paper=${r.paper_trading.buy_count}/${r.paper_trading.sell_count} ` +
             `cron_fail=${r.cron_failures.length} alerts=${r.risk_alerts_high.length} ` +
             `ai=${r.ai_engine.total}/${(r.ai_engine.fallback_rate * 100).toFixed(1)}%fb ` +
             `std0=${r.factor_std_zero.length} push=${out.push_attempted}`
@@ -5144,13 +5127,10 @@ class SchedulerService {
             stderr += d.toString();
             if (stderr.length > 16 * 1024) stderr = stderr.slice(-16 * 1024); // 16KB tail
           });
-          const timer = setTimeout(
-            () => {
-              child.kill('SIGTERM');
-              resolve({ code: -1, stderr: stderr + '\n[BJ-5] killed by timeout 4h' });
-            },
-            4 * 60 * 60_000
-          );
+          const timer = setTimeout(() => {
+            child.kill('SIGTERM');
+            resolve({ code: -1, stderr: stderr + '\n[BJ-5] killed by timeout 4h' });
+          }, 4 * 60 * 60_000);
           child.on('exit', (code: number | null) => {
             clearTimeout(timer);
             resolve({ code, stderr });
@@ -5206,13 +5186,10 @@ class SchedulerService {
             stderr += d.toString();
             if (stderr.length > 16 * 1024) stderr = stderr.slice(-16 * 1024);
           });
-          const timer = setTimeout(
-            () => {
-              child.kill('SIGTERM');
-              resolve({ code: -1, stderr: stderr + '\n[BJ-5] killed by timeout 5h' });
-            },
-            5 * 60 * 60_000
-          );
+          const timer = setTimeout(() => {
+            child.kill('SIGTERM');
+            resolve({ code: -1, stderr: stderr + '\n[BJ-5] killed by timeout 5h' });
+          }, 5 * 60 * 60_000);
           child.on('exit', (code: number | null) => {
             clearTimeout(timer);
             resolve({ code, stderr });
@@ -5304,15 +5281,10 @@ class SchedulerService {
         // CriticalAnnouncementPushService 推 OPS 飞书群. 周末也跑.
         // fail-OPEN: spawn 失败仅写 failed_items=1 + warn 不抛, 与 ANALYST_FORECAST_SYNC /
         // SHAREHOLDER_COUNT_SYNC 同款 async runScriptAsync 防 event loop 阻塞.
-        const pathANN = require('path');
+        const pathANN = path;
         // prod = dist/scripts/sync-announcements.js; ts-node dev 仍需走 .ts.
         // 与 FACTOR_SCORE_COMPUTE / ANALYST_FORECAST_SYNC 同款"prod 优先 .js"约定.
-        const compiledANN = pathANN.resolve(
-          __dirname,
-          '..',
-          'scripts',
-          'sync-announcements.js'
-        );
+        const compiledANN = pathANN.resolve(__dirname, '..', 'scripts', 'sync-announcements.js');
         const argsANN: string[] = [compiledANN];
         // parameters override; 默认全市场启发式
         if (parameters.symbol) argsANN.push(`--symbol=${parameters.symbol}`);
@@ -5361,13 +5333,8 @@ class SchedulerService {
         // 热门概念代理) 聚合落表, 给 NewsAnalyzer + BullishEventDetector 消费.
         // 周末也跑 — 研报 / 媒体 周末仍有内容.
         // fail-OPEN: spawn 失败仅 failed_items=1 + warn, runScriptAsync 防阻塞.
-        const pathKOL = require('path');
-        const compiledKOL = pathKOL.resolve(
-          __dirname,
-          '..',
-          'scripts',
-          'sync-kol-opinions.js'
-        );
+        const pathKOL = path;
+        const compiledKOL = pathKOL.resolve(__dirname, '..', 'scripts', 'sync-kol-opinions.js');
         const argsKOL: string[] = [compiledKOL];
         // 模式: favorites 默认 (parameters 可 override 为 --all / --stocks=...)
         if (parameters.stock) {
@@ -5521,7 +5488,9 @@ class SchedulerService {
           },
         });
         logger.info(
-          `[ETF_FACTOR_ROTATION_REBALANCE] ${r.rebalance_id} holdings=[${r.current_holdings.join(',')}] ` +
+          `[ETF_FACTOR_ROTATION_REBALANCE] ${r.rebalance_id} holdings=[${r.current_holdings.join(
+            ','
+          )}] ` +
             `created=${r.created} updated=${r.updated} skipped=${r.skipped_data_incomplete} ` +
             `confidence=${r.confidence.toFixed(3)}`
         );
@@ -5606,7 +5575,8 @@ class SchedulerService {
         /* eslint-enable @typescript-eslint/no-var-requires */
         const r = await rssNewsIngestService.run({
           dryRun: parameters.dry_run === true,
-          retentionDays: typeof parameters.retention_days === 'number' ? parameters.retention_days : undefined,
+          retentionDays:
+            typeof parameters.retention_days === 'number' ? parameters.retention_days : undefined,
           timeoutMs: typeof parameters.timeout_ms === 'number' ? parameters.timeout_ms : undefined,
         });
         await this.safeUpdateExecutionLog(executionLog, {
@@ -6574,13 +6544,6 @@ class SchedulerService {
         parameters: { dry_run: false },
       },
       {
-        name: '限售解禁前瞻预警 (US-089 + Batch J)',
-        type: 'PAPER_TRADING_RESTRICTED_SHARE_CHECK',
-        cron_expression: '0 9 * * 1-5',
-        is_active: true,
-        parameters: { dry_run: false },
-      },
-      {
         name: '行业集中度评估 (US-052 + Batch J)',
         type: 'PAPER_TRADING_INDUSTRY_CONCENTRATION_CHECK',
         cron_expression: '35 15 * * 1-5',
@@ -6660,7 +6623,7 @@ class SchedulerService {
         is_active: true,
         parameters: { dry_run: false },
       },
-            // PR-O5 (2026-06-30): THEME_FERMENTATION_DETECT 题材发酵 5 阶段 detector (卫星保留).
+      // PR-O5 (2026-06-30): THEME_FERMENTATION_DETECT 题材发酵 5 阶段 detector (卫星保留).
       // 消费 PR-M3 industry_sentiment_indices (16:00 写完) + 昨日 phase, 给每个板块打
       // germinate/launch/outbreak/climax/recession 标签 + 检测主线切换. 工作日 16:30 跑.
       {

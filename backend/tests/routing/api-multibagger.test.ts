@@ -1,7 +1,38 @@
 import express from 'express';
+import jwt from 'jsonwebtoken';
 import request from 'supertest';
-import multibaggerRoutes from '../../src/api/routes/multibagger.routes';
 import { sequelize } from '../../src/config/database';
+import { User } from '../../src/models/User';
+
+const JWT_SECRET = 'api-multibagger-test-secret';
+const AUTH_USER = {
+  id: 9005,
+  username: 'routing-test-user',
+  email: 'routing-test@example.com',
+  role: 'admin',
+  is_active: true,
+} as User;
+
+process.env.JWT_SECRET = JWT_SECRET;
+(User as any).findByPk = async (userId: number) => (userId === AUTH_USER.id ? AUTH_USER : null);
+
+const AUTHORIZATION = `Bearer ${jwt.sign(
+  {
+    user_id: AUTH_USER.id,
+    username: AUTH_USER.username,
+    role: AUTH_USER.role,
+    type: 'access',
+  },
+  JWT_SECRET,
+  {
+    algorithm: 'HS256',
+    issuer: 'stocks-backend',
+    audience: 'stocks-api',
+    expiresIn: '5m',
+  }
+)}`;
+const multibaggerRoutes = require('../../src/api/routes/multibagger.routes')
+  .default as typeof import('../../src/api/routes/multibagger.routes').default;
 
 const SYMBOL = '600519.SH';
 
@@ -103,6 +134,10 @@ function buildApp(): express.Express {
   return app;
 }
 
+function authorizedGet(app: express.Express, path: string) {
+  return request(app).get(path).set('Authorization', AUTHORIZATION);
+}
+
 let passed = 0;
 let failed = 0;
 
@@ -129,7 +164,17 @@ async function main(): Promise<void> {
   try {
     const app = buildApp();
 
-    const list = await request(app).get(
+    const callsBeforeAuth = calls.length;
+    const missingAuthorization = await request(app).get('/api/v1/multibagger/candidates');
+    assert('missing Authorization returns 401', missingAuthorization.status === 401);
+    const invalidAuthorization = await request(app)
+      .get('/api/v1/multibagger/candidates')
+      .set('Authorization', 'Bearer invalid.jwt.token');
+    assert('invalid Authorization returns 401', invalidAuthorization.status === 401);
+    assert('unauthorized requests never query DB', calls.length === callsBeforeAuth);
+
+    const list = await authorizedGet(
+      app,
       '/api/v1/multibagger/candidates?stage=seed,growth&conclusion=MULTIBAGGER_5X&market=A'
     );
     assert('list returns deterministic 200', list.status === 200, `status=${list.status}`);
@@ -197,15 +242,17 @@ async function main(): Promise<void> {
     );
 
     const beforeInvalid = calls.length;
-    const invalidStage = await request(app).get(
+    const invalidStage = await authorizedGet(
+      app,
       '/api/v1/multibagger/candidates?stage=seed,unknown'
     );
     assert('mixed invalid stage list returns 400', invalidStage.status === 400);
-    const invalidConclusion = await request(app).get(
+    const invalidConclusion = await authorizedGet(
+      app,
       '/api/v1/multibagger/candidates?conclusion=MULTIBAGGER_5X,UNKNOWN'
     );
     assert('mixed invalid conclusion list returns 400', invalidConclusion.status === 400);
-    const invalidMarket = await request(app).get('/api/v1/multibagger/candidates?market=EU');
+    const invalidMarket = await authorizedGet(app, '/api/v1/multibagger/candidates?market=EU');
     assert('invalid market returns 400', invalidMarket.status === 400);
     assert('invalid filters never query DB', calls.length === beforeInvalid);
 
@@ -251,7 +298,7 @@ async function main(): Promise<void> {
       directBody?.error === 'Invalid conclusion filter'
     );
 
-    const detail = await request(app).get(`/api/v1/multibagger/${SYMBOL}/detail`);
+    const detail = await authorizedGet(app, `/api/v1/multibagger/${SYMBOL}/detail`);
     assert('detail returns deterministic 200', detail.status === 200);
     assert('detail returns normalized candidate', detail.body.symbol === SYMBOL);
     assert('detail returns the same proof pins', detail.body.fact_hash === CANDIDATE.fact_hash);
@@ -275,7 +322,7 @@ async function main(): Promise<void> {
         rating_band: 'C',
       },
     ];
-    const unavailable = await request(app).get('/api/v1/multibagger/candidates');
+    const unavailable = await authorizedGet(app, '/api/v1/multibagger/candidates');
     assert('legacy scalar Score returns explicit null', unavailable.body.rows?.[0]?.score === null);
     assert(
       'legacy scalar RiskGate returns explicit null',
@@ -295,7 +342,7 @@ async function main(): Promise<void> {
     );
 
     rows = [];
-    const missing = await request(app).get('/api/v1/multibagger/NOSUCH/detail');
+    const missing = await authorizedGet(app, '/api/v1/multibagger/NOSUCH/detail');
     assert('missing detail returns 404', missing.status === 404, `status=${missing.status}`);
     assert(
       'missing detail returns stable error',
@@ -303,7 +350,7 @@ async function main(): Promise<void> {
     );
 
     rows = [CANDIDATE, { ...CANDIDATE, market: 'US' }];
-    const ambiguous = await request(app).get(`/api/v1/multibagger/${SYMBOL}/detail`);
+    const ambiguous = await authorizedGet(app, `/api/v1/multibagger/${SYMBOL}/detail`);
     assert('ambiguous detail returns 409', ambiguous.status === 409);
     assert(
       'ambiguous detail returns stable error',

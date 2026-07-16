@@ -5,8 +5,6 @@ interface DataSourceBadgeProps {
   sources?: string[];
 }
 
-const DEFAULT_SOURCES = ['Alpha Vantage', 'Baostock', 'Yahoo'];
-
 const cardStyle: React.CSSProperties = {
   background: 'var(--cd-bg-surface)',
   border: '1px solid var(--cd-border)',
@@ -21,11 +19,16 @@ const titleStyle: React.CSSProperties = {
   marginBottom: 12,
 };
 
-export function DataSourceBadge({ sources = DEFAULT_SOURCES }: DataSourceBadgeProps) {
+export function DataSourceBadge({ sources = [] }: DataSourceBadgeProps) {
   return (
     <div style={cardStyle}>
       <div style={titleStyle}>数据来源</div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {sources.length === 0 && (
+          <span style={{ color: 'var(--cd-text-secondary)', fontSize: 12 }}>
+            当前快照未提供来源引用
+          </span>
+        )}
         {sources.map((s) => (
           <Tag key={s} color="default">{s}</Tag>
         ))}

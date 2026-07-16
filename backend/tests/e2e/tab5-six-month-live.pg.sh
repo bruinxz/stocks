@@ -27,6 +27,8 @@ test -S "$PGHOST/.s.PGSQL.$PGPORT" || fail "local PostgreSQL socket missing"
 CURRENT_USER="$(id -un)"
 PGUSER="${PGUSER:-$CURRENT_USER}"
 test "$PGUSER" = "$CURRENT_USER" || fail "PGUSER must equal OS user"
+PYTHON_BIN="${TAB5_PYTHON_BIN:-python3}"
+command -v "$PYTHON_BIN" >/dev/null 2>&1 || fail "Python interpreter is unavailable"
 
 SUFFIX="$(openssl rand -hex 12)"
 case "$SUFFIX" in *[!0-9a-f]*|"") fail "random suffix invalid" ;; esac
@@ -44,11 +46,13 @@ createdb "${PG_ARGS[@]}" "$DB"
 psql "${PG_ARGS[@]}" -d "$DB" -v ON_ERROR_STOP=1 -f "$UP" >/dev/null
 
 PYTHONPATH="$ROOT" PGHOST="$PGHOST" PGPORT="$PGPORT" PGUSER="$PGUSER" \
-PGDATABASE="$DB" /usr/bin/python3 \
+PGDATABASE="$DB" "$PYTHON_BIN" \
   "$ROOT/datapipeline/tests/storage/backtest_pit/test_writer.pg.py"
 
 DB_HOST="$PGHOST" DB_PORT="$PGPORT" DB_USER="$PGUSER" DB_PASSWORD="" \
 DB_NAME="$DB" NODE_ENV=test SKIP_DEFAULT_USER_INIT=true \
+JWT_SECRET=tab5-six-month-live-http-jwt-secret \
+JWT_REFRESH_SECRET=tab5-six-month-live-http-refresh-secret \
 T5D_LIVE_HTTP_TEST=1 \
 T5D_RESPONSE_ARTIFACT="$(basename "$ARTIFACT")" \
   "$ROOT/backend/node_modules/.bin/ts-node" --transpile-only \

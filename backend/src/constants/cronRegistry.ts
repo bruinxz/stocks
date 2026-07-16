@@ -238,8 +238,7 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     category: 'data_sync',
     owner: 'data',
     recommendedCron: '0 17 * * 1-5',
-    description:
-      '派生因子(估值/质量/资金流)落库 — 东方财富免费源, ETF 因子轮动(Core 70%)命脉数据',
+    description: '派生因子(估值/质量/资金流)落库 — 东方财富免费源, ETF 因子轮动(Core 70%)命脉数据',
   },
   {
     type: 'INDEX_COMPONENT_SYNC',
@@ -397,7 +396,9 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     type: 'PAPER_TRADING_RESTRICTED_SHARE_CHECK',
     category: 'risk_control',
     owner: 'risk',
-    description: '限售股解禁巡检',
+    retired: true,
+    description:
+      '[已下线] 限售股解禁巡检 — RestrictedShareWatchdog 与其持久化模型已移除，仅保留存量任务墓碑',
   },
   {
     type: 'PAPER_TRADING_INDUSTRY_CONCENTRATION_CHECK',
@@ -418,7 +419,8 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     category: 'risk_control',
     owner: 'quant',
     retired: true,
-    description: '[已下线] 策略熔断检查 — 批5 移除 service (熔断改由 EquityCurveGovernor), 保留空跑分支防存量任务报错',
+    description:
+      '[已下线] 策略熔断检查 — 批5 移除 service (熔断改由 EquityCurveGovernor), 保留空跑分支防存量任务报错',
   },
 
   // ===== L5 实盘相关 =====

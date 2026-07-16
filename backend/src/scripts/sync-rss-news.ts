@@ -43,11 +43,15 @@ async function main() {
   console.log('============ RSS 财经新闻同步 (§6.1) ============');
   console.log(`模式: ${result.dry_run ? 'dry-run (不写库)' : '写库'}`);
   for (const f of result.feeds) {
-    const tag = f.error ? `❌ ${f.error}` : `抓${f.fetched} 新增${f.created} 更新${f.updated} 命中题材${f.matched_theme}`;
+    const tag = f.error
+      ? `❌ ${f.error}`
+      : `抓${f.fetched} 新增${f.created} 更新${f.updated} 命中题材${f.matched_theme}`;
     console.log(`  [${f.source}] ${f.name}: ${tag}`);
   }
   console.log('------------------------------------------------');
-  console.log(`合计: 抓 ${result.total_fetched} · 新增 ${result.total_created} · 更新 ${result.total_updated} · 命中题材 ${result.total_matched_theme} · 清理 ${result.purged}`);
+  console.log(
+    `合计: 抓 ${result.total_fetched} · 新增 ${result.total_created} · 更新 ${result.total_updated} · 命中题材 ${result.total_matched_theme} · 清理 ${result.purged}`
+  );
   console.log('================================================');
   console.log('');
 
@@ -57,6 +61,10 @@ async function main() {
 
 main().catch(async err => {
   logger.error(`sync-rss-news 致命错误: ${err?.stack || err}`);
-  try { await sequelize.close(); } catch { /* noop */ }
+  try {
+    await sequelize.close();
+  } catch {
+    /* noop */
+  }
   process.exit(2);
 });

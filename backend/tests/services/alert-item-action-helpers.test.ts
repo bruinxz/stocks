@@ -22,9 +22,7 @@
  *   [8] buildAlertActionDescriptor: 4 category × symbol 合法/非法 决策表
  *   [9] looksLikeAShareSymbol: 6 位 / .SH/.SZ/.BJ / 非法前缀 / 空
  *  [10] formatSnoozeRemaining: 4 档时间格式化
- *  [11] META-GUARD fs+regex 守:
- *       - alertItemActionHelpers.ts 所有 export
- *       - TodayWorkspace.tsx: import helper + 在 AlertsPanel 调
+ *  [11] META-GUARD fs+regex 守 helper exports + descriptor 目标均为当前 App 有效路由
  */
 
 import { readFileSync } from 'fs';
@@ -353,30 +351,24 @@ function mkAlert(
 {
   const d = buildAlertActionDescriptor(mkAlert('individual', 'SYSTEM:disk_full'));
   assert(
-    '[8.3] individual+SYSTEM: → 降级 risk_center',
-    d.href.includes('risk_center') && d.actionType === 'open_risk_center'
+    '[8.3] individual+SYSTEM: → 降级 CatDesk',
+    d.href === '/catdesk' && d.actionType === 'open_risk_center'
   );
   assert('[8.3b] 降级 markRead=true', d.markReadOnAction === true);
 }
 {
   const d = buildAlertActionDescriptor(mkAlert('position', '600000'));
-  assert('[8.4] position → /workspace/portfolio', d.href === '/workspace/portfolio');
+  assert('[8.4] position → /catdesk（PortfolioWorkspace 已删）', d.href === '/catdesk');
   assert('[8.4b] actionType=open_position_review', d.actionType === 'open_position_review');
 }
 {
   const d = buildAlertActionDescriptor(mkAlert('market', '600000'));
-  assert(
-    '[8.5] market → workspace/today?tab=risk_center',
-    d.href === '/workspace/today?tab=risk_center'
-  );
+  assert('[8.5] market → /catdesk', d.href === '/catdesk');
   assert('[8.5b] actionType=open_risk_center', d.actionType === 'open_risk_center');
 }
 {
   const d = buildAlertActionDescriptor(mkAlert('data', '600000'));
-  assert(
-    '[8.6] data → workspace/today?tab=risk_center (复用)',
-    d.href === '/workspace/today?tab=risk_center'
-  );
+  assert('[8.6] data → /workspace/data', d.href === '/workspace/data');
   assert('[8.6b] actionType=open_data_center', d.actionType === 'open_data_center');
 }
 
@@ -474,54 +466,20 @@ function readFile(rel: string): string {
   }
 }
 
-// 11.2 — TodayWorkspace.tsx 接入 helper
+// 11.2 — descriptor 目标均有当前 App 路由（不依赖 wildcard / legacy redirect）
 {
-  const wsSrc = readFile('pages/workspace/TodayWorkspace.tsx');
+  const appSrc = readFile('App.tsx');
   assert(
-    '[11.2a] TodayWorkspace import alertItemActionHelpers',
-    wsSrc.includes("from './alertItemActionHelpers'") ||
-      wsSrc.includes('alertItemActionHelpers')
-  );
-  for (const sym of [
-    'readSnoozeMap',
-    'writeSnoozeMap',
-    'addSnooze',
-    'removeSnooze',
-    'pruneExpiredSnoozes',
-    'filterOutSnoozedAlerts',
-    'buildAlertActionDescriptor',
-    'SNOOZE_DURATION_LABEL',
-    'SNOOZE_DURATION_ORDER',
-    'formatSnoozeRemaining',
-  ]) {
-    assert(`[11.2b] TodayWorkspace 引用 ${sym}`, wsSrc.includes(sym));
-  }
-  assert(
-    '[11.2c] AlertsPanel item action data-testid 模板存在',
-    wsSrc.includes('`alerts-panel-item-action-${item.id}`') ||
-      wsSrc.includes('alerts-panel-item-action-')
+    '[11.2a] App 挂载 CatDesk route',
+    appSrc.includes("from './pages/catdesk/router'") && appSrc.includes('{catDeskRoute}')
   );
   assert(
-    '[11.2d] AlertsPanel item snooze data-testid 模板存在',
-    wsSrc.includes('alerts-panel-item-snooze-')
+    '[11.2b] App 挂载 /workspace/data',
+    /path=["']\/workspace\/data["']/.test(appSrc)
   );
   assert(
-    '[11.2e] AlertsPanel snoozed-list 卡片 data-testid 存在',
-    wsSrc.includes('alerts-panel-snoozed-list')
-  );
-  assert(
-    '[11.2f] AlertsPanel unsnooze 按钮 data-testid 模板存在',
-    wsSrc.includes('alerts-panel-unsnooze-')
-  );
-  assert(
-    '[11.2g] AlertsPanel snoozed-count Tag data-testid 存在',
-    wsSrc.includes('alerts-panel-snoozed-count')
-  );
-  // 提及 US-072 让未来 grep / 跨 sprint 追溯能找到
-  assert('[11.2h] AlertsPanel 段提到 US-072', wsSrc.includes('US-072'));
-  assert(
-    '[11.2i] AlertsPanel 调 markSingleRiskAlertRead (一键执行可自动 mark-read)',
-    wsSrc.includes('markSingleRiskAlertRead')
+    '[11.2c] App 挂载 /stock/:symbol',
+    /path=["']\/stock\/:symbol["']/.test(appSrc)
   );
 }
 

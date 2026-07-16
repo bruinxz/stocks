@@ -179,6 +179,14 @@ assert('[3.7] Infinity → false', !isValidUserId(Infinity));
   // 清空后 countClients=0
   bc.resetForTests();
   assert('[4.12] resetForTests → 全 0', bc.countTotalClients() === 0);
+
+  const closedReasons: string[] = [];
+  const revokedClient = makeFakeClient({ id: 'revoked' });
+  revokedClient.close = reason => closedReasons.push(reason);
+  bc.register(7, revokedClient);
+  assert('[4.13] disconnectUser closes one client', bc.disconnectUser(7, 'logout') === 1);
+  assert('[4.14] disconnectUser passes reason', closedReasons[0] === 'logout');
+  assert('[4.15] disconnectUser clears registry', bc.countClients(7) === 0);
 }
 
 // ============================================================

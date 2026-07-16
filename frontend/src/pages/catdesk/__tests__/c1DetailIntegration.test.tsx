@@ -106,13 +106,24 @@ describe('C1 detail integration', () => {
     expect(candidate.score?.market_scope).toBe('us');
 
     const sections = buildUSSections(candidate);
-    expect(sections.map(section => section.key)).toEqual(['score', 'conviction', 'risk', 'entry']);
+    expect(sections.map(section => section.key)).toEqual([
+      'score',
+      'conviction',
+      'risk',
+      'entry',
+      'data_sources',
+    ]);
 
     const entry = sections.find(section => section.key === 'entry');
     const markup = renderToStaticMarkup(<>{entry?.content}</>);
     expect(markup).toContain('150.00');
     expect(markup).toContain('TIER_3');
     expect(markup).toContain('跌破关键支撑');
+
+    const risk = sections.find(section => section.key === 'risk');
+    const riskMarkup = renderToStaticMarkup(<>{risk?.content}</>);
+    expect(riskMarkup).toContain('GREEN');
+    expect(riskMarkup).toContain('可入场');
   });
 
   test('morning candidate consumes the same entry plan contract', () => {

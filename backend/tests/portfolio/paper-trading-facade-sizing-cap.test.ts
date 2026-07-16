@@ -4,11 +4,11 @@
  *   cd backend && npx ts-node --transpile-only tests/portfolio/paper-trading-facade-sizing-cap.test.ts
  *
  * 覆盖:
- *   1) PR_M4_SINGLE_POSITION_CAP_PCT === 5 + PR_M4_INDUSTRY_CONCENTRATION_CAP_PCT === 25
+ *   1) PR_M4_SINGLE_POSITION_CAP_PCT === 15 + PR_M4_INDUSTRY_CONCENTRATION_CAP_PCT === 25
  *      (常量护栏 — 用户授权这两个数值, 漏改会被立刻发现)
  *   2) evaluateSinglePositionCap:
  *      - 不超 → ok + 不 cap
- *      - 超 → ok + capped=true + effective_cost = 5%×total
+ *      - 超 → ok + capped=true + effective_cost = 15%×total
  *      - total_value <= 0 → 不 cap (空账户走资金不足分支)
  *      - 自定义 cap_pct 覆盖
  *   3) evaluateIndustryConcentrationCap:
@@ -194,17 +194,17 @@ function test_industry_cap_whitespace_industry() {
 // ---------------------------------------------------------------------------
 // [4] real-world 用户授权场景
 // ---------------------------------------------------------------------------
-function test_user_scenario_capped_to_5pct() {
+function test_user_scenario_respects_15pct_cap() {
   console.log('\n[4] 真实场景 (用户授权对应)');
-  // 用户授权: "建议 1 万但 capped 5000 类似". 账户 10 万, 5%=5000
-  // 用户传 10000 → effective 5000
+  // PR-M4 2026-07 已明确把单票默认上限从 5% 上调到 15%。
+  // 账户 10 万、建议 1 万仍低于 1.5 万上限，不应被截断。
   const r = evaluateSinglePositionCap({
     proposed_cost: 10000,
     total_value: 100000,
   });
   assert(
-    '用户授权场景: 建议 10000 自动 capped 到 5000',
-    r.capped && r.effective_cost === 5000
+    'PR-M4 场景: 建议 10000 低于 15% 上限，不截断',
+    !r.capped && r.effective_cost === 10000
   );
 }
 
@@ -277,7 +277,7 @@ test_industry_cap_boundary_just_over();
 test_industry_cap_unknown_industry();
 test_industry_cap_zero_total();
 test_industry_cap_whitespace_industry();
-test_user_scenario_capped_to_5pct();
+  test_user_scenario_respects_15pct_cap();
 test_user_scenario_industry_44pct_rejected();
 test_meta_facade_wires_in_caps();
 

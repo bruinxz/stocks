@@ -1,5 +1,7 @@
 """Contract-first replay orchestration for the Tab 6/7 pipeline."""
 
+from typing import Any
+
 from ai.replay.service import ReplayService
 from ai.replay.file_store import AtomicFileReplayJobStore
 from ai.replay.runtime import (
@@ -7,6 +9,7 @@ from ai.replay.runtime import (
     TypedReplaySources,
     TypedScoreRecord,
     TypedSourceSnapshot,
+    TypedTextHitRecord,
     build_typed_replay_runtime,
     validate_source_score_features,
 )
@@ -16,6 +19,12 @@ from ai.replay.types import (
     ReplayPins,
     ReplayResult,
     SourceSlice,
+)
+from ai.replay.typed_capture import (
+    TypedCaptureReceipt,
+    TypedCaptureRequest,
+    prepare_typed_capture,
+    typed_text_hit_record_from_json,
 )
 
 __all__ = [
@@ -27,9 +36,29 @@ __all__ = [
     "ReplayService",
     "SourceSlice",
     "AtomicFileReplayJobStore",
+    "PostgresTypedSourceRepository",
+    "PostgresTypedCaptureWriter",
+    "TypedCaptureReceipt",
+    "TypedCaptureRequest",
     "TypedReplaySources",
     "TypedScoreRecord",
     "TypedSourceSnapshot",
+    "TypedTextHitRecord",
     "build_typed_replay_runtime",
+    "prepare_typed_capture",
+    "typed_text_hit_record_from_json",
     "validate_source_score_features",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Load PostgreSQL adapters without coupling package initialization."""
+    if name == "PostgresTypedSourceRepository":
+        from ai.replay.postgres_repository import PostgresTypedSourceRepository
+
+        return PostgresTypedSourceRepository
+    if name == "PostgresTypedCaptureWriter":
+        from ai.replay.postgres_capture_writer import PostgresTypedCaptureWriter
+
+        return PostgresTypedCaptureWriter
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -129,18 +129,18 @@ console.log('[2] scoreToBarValue / scoreToColor / confidenceToColor 边界');
   assert(scoreToBarValue(Infinity) === 50, 'Infinity → 50');
 
   // scoreToColor: 阈值 ±50, ±20
-  assert(scoreToColor(70) === '#f5222d', '70 强利多 红');
+  assert(scoreToColor(70) === '#dc2626', '70 强利多 红');
   assert(scoreToColor(30) === '#fa541c', '30 弱利多 橙红');
   assert(scoreToColor(0) === '#1890ff', '0 中性 蓝');
   assert(scoreToColor(-30) === '#73d13d', '-30 弱利空 浅绿');
-  assert(scoreToColor(-70) === '#52c41a', '-70 强利空 深绿');
+  assert(scoreToColor(-70) === '#16a34a', '-70 强利空 深绿');
   assert(scoreToColor(null) === '#bfbfbf', 'null 灰');
   assert(scoreToColor(NaN) === '#bfbfbf', 'NaN 灰');
 
   // confidenceToColor
-  assert(confidenceToColor(0.1) === '#f5222d', '0.1 红');
+  assert(confidenceToColor(0.1) === '#dc2626', '0.1 红');
   assert(confidenceToColor(0.4) === '#fa8c16', '0.4 橙');
-  assert(confidenceToColor(0.8) === '#52c41a', '0.8 绿');
+  assert(confidenceToColor(0.8) === '#16a34a', '0.8 绿');
   assert(confidenceToColor(null) === '#bfbfbf', 'null 灰');
 }
 
@@ -213,9 +213,9 @@ console.log('[4] buildAnalyzerDimensionViewModelV2');
   assert(vm !== null && vm.key === 'fundamental', 'happy key');
   assert(vm!.label === '基本面', 'label 自动填');
   assert(vm!.score === 70 && vm!.bar_value === 85, 'score=70 → bar 85');
-  assert(vm!.color === '#f5222d', '70 强利多 红');
+  assert(vm!.color === '#dc2626', '70 强利多 红');
   assert(vm!.confidence === 0.8, 'confidence');
-  assert(vm!.confidence_color === '#52c41a', '0.8 绿');
+  assert(vm!.confidence_color === '#16a34a', '0.8 绿');
   assert(!vm!.failed, 'happy 不 failed');
   // evidence 按 weight desc, 截前 5
   assert(vm!.evidence.length === 3, 'evidence 全保留 (<5)');

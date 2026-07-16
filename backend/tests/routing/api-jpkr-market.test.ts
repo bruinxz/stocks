@@ -1,7 +1,38 @@
 import express from 'express';
+import jwt from 'jsonwebtoken';
 import request from 'supertest';
-import jpkrMarketRoutes from '../../src/api/routes/jpkrMarket.routes';
 import { sequelize } from '../../src/config/database';
+import { User } from '../../src/models/User';
+
+const JWT_SECRET = 'api-jpkr-market-test-secret';
+const AUTH_USER = {
+  id: 9004,
+  username: 'routing-test-user',
+  email: 'routing-test@example.com',
+  role: 'admin',
+  is_active: true,
+} as User;
+
+process.env.JWT_SECRET = JWT_SECRET;
+(User as any).findByPk = async (userId: number) => (userId === AUTH_USER.id ? AUTH_USER : null);
+
+const AUTHORIZATION = `Bearer ${jwt.sign(
+  {
+    user_id: AUTH_USER.id,
+    username: AUTH_USER.username,
+    role: AUTH_USER.role,
+    type: 'access',
+  },
+  JWT_SECRET,
+  {
+    algorithm: 'HS256',
+    issuer: 'stocks-backend',
+    audience: 'stocks-api',
+    expiresIn: '5m',
+  }
+)}`;
+const jpkrMarketRoutes = require('../../src/api/routes/jpkrMarket.routes')
+  .default as typeof import('../../src/api/routes/jpkrMarket.routes').default;
 
 const DATE = '2026-07-10';
 const SYMBOL = '7203';
@@ -86,6 +117,10 @@ function buildApp(): express.Express {
   return app;
 }
 
+function authorizedGet(app: express.Express, path: string) {
+  return request(app).get(path).set('Authorization', AUTHORIZATION);
+}
+
 let passed = 0;
 let failed = 0;
 
@@ -113,8 +148,17 @@ async function main(): Promise<void> {
   try {
     const app = buildApp();
 
-    const list = await request(app).get(`/api/v1/jpkr-market/${DATE}?market=JP`);
-    assert('list returns 200 without Authorization', list.status === 200, `status=${list.status}`);
+    const callsBeforeAuth = calls.length;
+    const missingAuthorization = await request(app).get(`/api/v1/jpkr-market/${DATE}?market=JP`);
+    assert('missing Authorization returns 401', missingAuthorization.status === 401);
+    const invalidAuthorization = await request(app)
+      .get(`/api/v1/jpkr-market/${SYMBOL}/detail?date=${DATE}`)
+      .set('Authorization', 'Bearer invalid.jwt.token');
+    assert('invalid Authorization returns 401', invalidAuthorization.status === 401);
+    assert('unauthorized requests never query DB', calls.length === callsBeforeAuth);
+
+    const list = await authorizedGet(app, `/api/v1/jpkr-market/${DATE}?market=JP`);
+    assert('list returns 200 with Authorization', list.status === 200, `status=${list.status}`);
     assert('list has deterministic row', list.body.rows?.[0]?.symbol === SYMBOL);
     assert('numeric row fields are normalized', list.body.rows?.[0]?.close === 3125.5);
     assert('canonical Score passes through', list.body.rows?.[0]?.score?.total === 84);
@@ -174,10 +218,8 @@ async function main(): Promise<void> {
         listCall.replacements.cutoff === `${DATE}T23:59:59.999Z`
     );
 
-    const detail = await request(app)
-      .get(`/api/v1/jpkr-market/${SYMBOL}/detail?date=${DATE}`)
-      .set('Authorization', 'Bearer invalid.jwt.token');
-    assert('detail returns 200 with invalid token default-admin path', detail.status === 200);
+    const detail = await authorizedGet(app, `/api/v1/jpkr-market/${SYMBOL}/detail?date=${DATE}`);
+    assert('detail returns 200 with Authorization', detail.status === 200);
     assert('detail returns same locked row shape', Array.isArray(detail.body.risk_triggers));
     const detailCall = calls.at(-1);
     assert(
@@ -192,7 +234,7 @@ async function main(): Promise<void> {
         risk_gate: null,
       },
     ];
-    const unavailable = await request(app).get(`/api/v1/jpkr-market/${DATE}?market=JP`);
+    const unavailable = await authorizedGet(app, `/api/v1/jpkr-market/${DATE}?market=JP`);
     assert('unavailable Score is explicit null', unavailable.body.rows?.[0]?.score === null);
     assert('unavailable RiskGate is explicit null', unavailable.body.rows?.[0]?.risk_gate === null);
     assert(
@@ -200,23 +242,23 @@ async function main(): Promise<void> {
       unavailable.body.rows?.[0]?.risk_triggers?.length === 0
     );
     kpiFixture = [{ ...KPI_ROW, usdjpy: null, usdkrw: null }];
-    const unavailableFx = await request(app).get(`/api/v1/jpkr-market/${DATE}?market=JP`);
+    const unavailableFx = await authorizedGet(app, `/api/v1/jpkr-market/${DATE}?market=JP`);
     assert(
       'unavailable FX snapshots are explicit null',
       unavailableFx.body.kpi.usdjpy === null && unavailableFx.body.kpi.usdkrw === null
     );
 
     const beforeInvalid = calls.length;
-    const lowerMarket = await request(app).get(`/api/v1/jpkr-market/${DATE}?market=jp`);
+    const lowerMarket = await authorizedGet(app, `/api/v1/jpkr-market/${DATE}?market=jp`);
     assert('lowercase market is rejected with 400', lowerMarket.status === 400);
-    const missingMarket = await request(app).get(`/api/v1/jpkr-market/${DATE}`);
+    const missingMarket = await authorizedGet(app, `/api/v1/jpkr-market/${DATE}`);
     assert('missing market is rejected with 400', missingMarket.status === 400);
-    const invalidDate = await request(app).get('/api/v1/jpkr-market/not-a-date?market=JP');
+    const invalidDate = await authorizedGet(app, '/api/v1/jpkr-market/not-a-date?market=JP');
     assert('invalid date is rejected with 400', invalidDate.status === 400);
     assert('invalid requests never query DB', calls.length === beforeInvalid);
 
     rowFixture = [];
-    const missing = await request(app).get(`/api/v1/jpkr-market/NOSUCH/detail?date=${DATE}`);
+    const missing = await authorizedGet(app, `/api/v1/jpkr-market/NOSUCH/detail?date=${DATE}`);
     assert('missing detail returns 404', missing.status === 404, `status=${missing.status}`);
     assert(
       'missing detail returns stable error',
@@ -227,7 +269,7 @@ async function main(): Promise<void> {
       MARKET_ROW,
       { ...MARKET_ROW, market: 'KR', currency: 'KRW', data_sources: ['krx-marketdata'] },
     ];
-    const ambiguous = await request(app).get(`/api/v1/jpkr-market/${SYMBOL}/detail?date=${DATE}`);
+    const ambiguous = await authorizedGet(app, `/api/v1/jpkr-market/${SYMBOL}/detail?date=${DATE}`);
     assert('ambiguous detail returns 409', ambiguous.status === 409, `status=${ambiguous.status}`);
     assert(
       'ambiguous detail stable error',

@@ -56,7 +56,7 @@ export function requestContextMiddleware() {
     // 子作用域仍带同一个 API 契约版本.
     runWithLoggingContext(
       { trace_id: traceId, module: 'http', api_version: CURRENT_API_VERSION },
-      () => next(),
+      () => next()
     );
   };
 }

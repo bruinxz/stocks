@@ -60,6 +60,8 @@ export interface AlertsBroadcastClient {
   isOpen(): boolean;
   /** 发送 payload — 序列化为 JSON 由 sender 自己负责. throw 时 broadcaster 自动 unregister. */
   send(payload: AlertsBroadcastPayload): void;
+  /** Auth/session revocation requests a policy close for this connection. */
+  close?(reason: string): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +187,23 @@ export class AlertsBroadcaster {
       n += set.size;
     });
     return n;
+  }
+
+  /** Close and forget every live connection for a revoked or disabled user. */
+  disconnectUser(user_id: number, reason = 'authorization revoked'): number {
+    const set = this.userClients.get(user_id);
+    if (!set) return 0;
+    this.userClients.delete(user_id);
+    let closed = 0;
+    for (const client of set) {
+      try {
+        client.close?.(reason);
+      } catch {
+        // The registry is already cleared; a broken socket cannot stay authorized.
+      }
+      closed += 1;
+    }
+    return closed;
   }
 
   /**

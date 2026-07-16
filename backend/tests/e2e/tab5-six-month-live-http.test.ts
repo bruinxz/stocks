@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
+import jwt from 'jsonwebtoken';
 import request from 'supertest';
 import backtestPitRoutes from '../../src/api/routes/backtestPit.routes';
 import { sequelize } from '../../src/config/database';
+import { User } from '../../src/models/User';
 
 type Pair = readonly [string, string];
 
@@ -35,6 +37,12 @@ const artifactPath = path.resolve(
 const app = express();
 app.use('/api/v1/backtest-pit', backtestPitRoutes);
 
+let authorization = '';
+
+function authorizedGet(url: string) {
+  return request(app).get(url).set('Authorization', authorization);
+}
+
 function listUrl(strategy: string, scope: string): string {
   return (
     `/api/v1/backtest-pit/${encodeURIComponent(strategy)}` +
@@ -61,6 +69,37 @@ async function main(): Promise<void> {
     console.log('tab5-six-month-live-http: SKIP (explicit disposable-PG harness only)');
     return;
   }
+  const jwtSecret = process.env.JWT_SECRET;
+  assert.ok(jwtSecret, 'JWT_SECRET is required by the disposable-PG harness');
+  const originalFindByPk = User.findByPk;
+  const activeUser = {
+    id: 7005,
+    username: 'tab5-live-http',
+    email: 'tab5-live-http@example.com',
+    role: 'analyst',
+    is_active: true,
+  } as User;
+  let userLookups = 0;
+  (User as any).findByPk = async (id: number) => {
+    userLookups += 1;
+    return id === activeUser.id ? activeUser : null;
+  };
+  authorization = `Bearer ${jwt.sign(
+    {
+      user_id: activeUser.id,
+      username: activeUser.username,
+      role: activeUser.role,
+      type: 'access',
+    },
+    jwtSecret,
+    {
+      algorithm: 'HS256',
+      issuer: 'stocks-backend',
+      audience: 'stocks-api',
+      expiresIn: '5m',
+    }
+  )}`;
+
   const before = await sequelize.query<{ snapshots: string; holdings: string }>(
     `SELECT
        (SELECT count(*)::text FROM backtest_pit_snapshot) AS snapshots,
@@ -68,6 +107,27 @@ async function main(): Promise<void> {
     { type: 'SELECT' as any }
   );
   assert.deepEqual(before[0], { snapshots: '216', holdings: '648' });
+
+  const originalQuery = sequelize.query.bind(sequelize);
+  let unauthorizedDatabaseCalls = 0;
+  (sequelize as any).query = async (...args: any[]) => {
+    unauthorizedDatabaseCalls += 1;
+    return originalQuery(...args);
+  };
+  const lookupsBeforeUnauthorized = userLookups;
+  const missingAuthorization = await request(app).get(listUrl('us_preferred', 'us'));
+  const invalidAuthorization = await request(app)
+    .get(listUrl('us_preferred', 'us'))
+    .set('Authorization', 'Bearer invalid.jwt.token');
+  assert.equal(missingAuthorization.status, 401, missingAuthorization.text);
+  assert.equal(invalidAuthorization.status, 401, invalidAuthorization.text);
+  assert.equal(unauthorizedDatabaseCalls, 0, 'unauthorized requests must not invoke handlers');
+  assert.equal(
+    userLookups,
+    lookupsBeforeUnauthorized,
+    'invalid credentials must not look up users'
+  );
+  (sequelize as any).query = originalQuery;
 
   const lists: Record<string, unknown> = {};
   const details: Record<string, unknown> = {};
@@ -77,7 +137,7 @@ async function main(): Promise<void> {
   let sawDelisted = false;
 
   for (const [strategy, scope] of PAIRS) {
-    const listResponse = await request(app).get(listUrl(strategy, scope));
+    const listResponse = await authorizedGet(listUrl(strategy, scope));
     requestCount += 1;
     assert.equal(listResponse.status, 200, listResponse.text);
     assert.equal(listResponse.body.strategy, strategy);
@@ -102,7 +162,7 @@ async function main(): Promise<void> {
       assert.ok(snapshot.drawdown <= 0 && snapshot.drawdown >= -1);
       sawDelisted ||= snapshot.is_delisted_at_as_of === true;
 
-      const detailResponse = await request(app).get(detailUrl(strategy, scope, snapshot.as_of_utc));
+      const detailResponse = await authorizedGet(detailUrl(strategy, scope, snapshot.as_of_utc));
       requestCount += 1;
       assert.equal(detailResponse.status, 200, detailResponse.text);
       assert.equal(detailResponse.body.snapshot_id, snapshot.snapshot_id);
@@ -110,7 +170,7 @@ async function main(): Promise<void> {
       assert.equal(detailResponse.body.metrics.metric_contract_version, '1.0.0');
       details[snapshot.snapshot_id] = detailResponse.body;
 
-      const holdingsResponse = await request(app).get(
+      const holdingsResponse = await authorizedGet(
         holdingsUrl(strategy, scope, snapshot.as_of_utc)
       );
       requestCount += 1;
@@ -129,7 +189,6 @@ async function main(): Promise<void> {
   assert.ok(sawStale, 'at least one stale holding must be visible');
   assert.ok(sawDelisted, 'at least one delisted snapshot must be visible');
 
-  const originalQuery = sequelize.query.bind(sequelize);
   let invalidDbReads = 0;
   (sequelize as any).query = async (...args: any[]) => {
     invalidDbReads += 1;
@@ -139,13 +198,13 @@ async function main(): Promise<void> {
   for (const strategy of ALL_STRATEGIES) {
     for (const scope of SCOPES) {
       if (!legal.has(`${strategy}/${scope}`)) {
-        invalidResponses.push(await request(app).get(listUrl(strategy, scope)));
+        invalidResponses.push(await authorizedGet(listUrl(strategy, scope)));
       }
     }
   }
   invalidResponses.push(
-    await request(app).get('/api/v1/backtest-pit/custom?market_scope=cn_a'),
-    await request(app).get('/api/v1/backtest-pit/us_preferred/not-a-timestamp?market_scope=us')
+    await authorizedGet('/api/v1/backtest-pit/custom?market_scope=cn_a'),
+    await authorizedGet('/api/v1/backtest-pit/us_preferred/not-a-timestamp?market_scope=us')
   );
   assert.equal(invalidResponses.length, 18);
   assert.ok(invalidResponses.every(response => response.status === 400));
@@ -181,6 +240,7 @@ async function main(): Promise<void> {
     `tab5-six-month-live-http: PASS ` +
       `(440 HTTP, 216 details, 216 holdings, stale=${sawStale}, delisted=${sawDelisted})`
   );
+  (User as any).findByPk = originalFindByPk;
   await sequelize.close();
 }
 

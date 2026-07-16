@@ -97,7 +97,7 @@ export async function retryWithBackoff<T>(
     } catch (err) {
       lastErr = err instanceof Error ? err : new Error(String(err));
       if (i < delaysMs.length) {
-        await new Promise((r) => setTimeout(r, delaysMs[i]));
+        await new Promise(r => setTimeout(r, delaysMs[i]));
       }
     }
   }
@@ -145,7 +145,7 @@ export class TradingCalendarSyncService {
       tradingDaysList = await retryWithBackoff(
         () => this.client.queryTradeDates(startDate, endDate),
         this.backoffDelaysMs,
-        (attemptIdx) => {
+        attemptIdx => {
           baostockAttempts = attemptIdx;
         }
       );
@@ -206,8 +206,8 @@ export class TradingCalendarSyncService {
       upserted += 1;
     }
 
-    const tradingCount = rows.filter((r) => r.is_open).length;
-    const halfCount = rows.filter((r) => r.is_half).length;
+    const tradingCount = rows.filter(r => r.is_open).length;
+    const halfCount = rows.filter(r => r.is_half).length;
 
     logger.info(
       `TradingCalendar: upserted ${upserted} rows (trading=${tradingCount} half=${halfCount} total=${rows.length} source=${source} baostock_attempts=${baostockAttempts} fallback=${fallbackUsed})`
@@ -251,7 +251,7 @@ export function buildCalendarRows(
   allDates: string[],
   tradingSet: Set<string>,
   halfDaySet: Set<string>,
-  source: string = 'baostock'
+  source = 'baostock'
 ): Array<{
   trade_date: string;
   is_open: boolean;
@@ -261,7 +261,7 @@ export function buildCalendarRows(
   source: string;
 }> {
   const n = allDates.length;
-  const isOpen: boolean[] = allDates.map((d) => tradingSet.has(d));
+  const isOpen: boolean[] = allDates.map(d => tradingSet.has(d));
   const prevArr: (string | null)[] = new Array(n).fill(null);
   const nextArr: (string | null)[] = new Array(n).fill(null);
 

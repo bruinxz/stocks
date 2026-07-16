@@ -68,7 +68,10 @@ function monthEnds(start: string, end: string): string[] {
     if (last.getTime() > e.getTime()) break;
     if (last.getTime() >= s.getTime()) out.push(last.toISOString().slice(0, 10));
     m += 1;
-    if (m > 11) { m = 0; y += 1; }
+    if (m > 11) {
+      m = 0;
+      y += 1;
+    }
   }
   return out;
 }
@@ -126,10 +129,16 @@ async function loadIntervalReturns(
 }
 
 /** 单一 symbol (基准指数) 的区间收益. */
-async function loadBenchmarkReturn(symbol: string, from: string, to: string): Promise<number | null> {
-  const stock = (await Stock.findOne({ attributes: ['id'], where: { symbol }, raw: true })) as unknown as
-    | { id: number }
-    | null;
+async function loadBenchmarkReturn(
+  symbol: string,
+  from: string,
+  to: string
+): Promise<number | null> {
+  const stock = (await Stock.findOne({
+    attributes: ['id'],
+    where: { symbol },
+    raw: true,
+  })) as unknown as { id: number } | null;
   if (!stock) return null;
   const bars = (await DailyBar.findAll({
     attributes: ['time', 'close', 'adj_close'],
@@ -141,7 +150,8 @@ async function loadBenchmarkReturn(symbol: string, from: string, to: string): Pr
     raw: true,
   })) as unknown as Array<{ close: any; adj_close: any }>;
   if (bars.length < 2) return null;
-  const px = (b: { close: any; adj_close: any }) => (b.adj_close != null ? Number(b.adj_close) : Number(b.close));
+  const px = (b: { close: any; adj_close: any }) =>
+    b.adj_close != null ? Number(b.adj_close) : Number(b.close);
   const first = px(bars[0]);
   const last = px(bars[bars.length - 1]);
   return first > 0 ? last / first - 1 : null;
@@ -237,7 +247,16 @@ async function main() {
       signals = await strategy.generateSignals(asOf, {});
     } catch (err: any) {
       logger.warn(`[${asOf}] generateSignals 失败, 该月空仓: ${err?.message || err}`);
-      monthly.push({ from: asOf, to: next, portfolio_ret: rfMonthly, benchmark_ret: 0, excess: 0, n_holdings: 0, invested_weight: 0, data_incomplete: true });
+      monthly.push({
+        from: asOf,
+        to: next,
+        portfolio_ret: rfMonthly,
+        benchmark_ret: 0,
+        excess: 0,
+        n_holdings: 0,
+        invested_weight: 0,
+        data_incomplete: true,
+      });
       continue;
     }
     const targets = signals.filter(s => s.target_weight > 0 && !s.data_incomplete);
@@ -272,17 +291,29 @@ async function main() {
   const dataMonths = monthly.filter(m => !m.data_incomplete).length;
 
   if (opts.json) {
-    process.stdout.write(JSON.stringify({ params: opts, summary, data_months: dataMonths, monthly }, null, 2) + '\n');
+    process.stdout.write(
+      JSON.stringify({ params: opts, summary, data_months: dataMonths, monthly }, null, 2) + '\n'
+    );
   } else {
     const pct = (x: number) => `${(x * 100).toFixed(2)}%`;
     console.log('');
     console.log('============ ETF 因子轮动历史回测 (§7.4 主线核心) ============');
-    console.log(`区间:        ${opts.start} → ${opts.end}   (${summary.months} 个持有月, 其中 ${dataMonths} 月有 ETF 数据)`);
+    console.log(
+      `区间:        ${opts.start} → ${opts.end}   (${summary.months} 个持有月, 其中 ${dataMonths} 月有 ETF 数据)`
+    );
     console.log(`基准:        ${opts.benchmark}    现金年化: ${pct(opts.rf)}`);
-    console.log(`ETF universe: ${ETF_PROFILES.length} 只白名单 (top4 买 / top6 卖, 单只≤15%, 核心≤70%)`);
+    console.log(
+      `ETF universe: ${ETF_PROFILES.length} 只白名单 (top4 买 / top6 卖, 单只≤15%, 核心≤70%)`
+    );
     console.log('------------------------------------------------------------');
-    console.log(`组合总收益:   ${pct(summary.total_return)}     (净值 ${summary.nav_portfolio.toFixed(4)})`);
-    console.log(`基准总收益:   ${pct(summary.total_return_benchmark)}     (净值 ${summary.nav_benchmark.toFixed(4)})`);
+    console.log(
+      `组合总收益:   ${pct(summary.total_return)}     (净值 ${summary.nav_portfolio.toFixed(4)})`
+    );
+    console.log(
+      `基准总收益:   ${pct(
+        summary.total_return_benchmark
+      )}     (净值 ${summary.nav_benchmark.toFixed(4)})`
+    );
     console.log(`组合 CAGR:    ${pct(summary.cagr)}     基准 CAGR: ${pct(summary.cagr_benchmark)}`);
     console.log(`超额 CAGR:    ${pct(summary.excess_cagr)}`);
     console.log(`最大回撤:     ${pct(summary.max_drawdown)}`);
@@ -298,7 +329,11 @@ async function main() {
     const show = monthly.length <= 24 ? monthly : [...monthly.slice(0, 12), ...monthly.slice(-6)];
     for (const m of show) {
       console.log(
-        `  ${m.from}→${m.to}  组合 ${pct(m.portfolio_ret).padStart(8)}  基准 ${pct(m.benchmark_ret).padStart(8)}  超额 ${pct(m.excess).padStart(8)}  持仓 ${m.n_holdings} (投${pct(m.invested_weight)})${m.data_incomplete ? '  [无数据]' : ''}`
+        `  ${m.from}→${m.to}  组合 ${pct(m.portfolio_ret).padStart(8)}  基准 ${pct(
+          m.benchmark_ret
+        ).padStart(8)}  超额 ${pct(m.excess).padStart(8)}  持仓 ${m.n_holdings} (投${pct(
+          m.invested_weight
+        )})${m.data_incomplete ? '  [无数据]' : ''}`
       );
     }
     console.log('============================================================');
@@ -311,6 +346,10 @@ async function main() {
 
 main().catch(async err => {
   logger.error(`run-factor-backtest 致命错误: ${err?.stack || err}`);
-  try { await sequelize.close(); } catch { /* noop */ }
+  try {
+    await sequelize.close();
+  } catch {
+    /* noop */
+  }
   process.exit(2);
 });

@@ -191,22 +191,13 @@ export interface BullishDataSource {
   /** 已组 universe 后查 stock_code → name (用于显示, 也用于 news title 模糊匹配) */
   resolveStockNames(bareCodes: string[]): Promise<Map<string, string>>;
   /** 近 N 日 priority='critical' 公告, 过滤到 universe 内 */
-  listCriticalAnnouncements(
-    bareCodes: string[],
-    sinceDays: number
-  ): Promise<AnnouncementRow[]>;
+  listCriticalAnnouncements(bareCodes: string[], sinceDays: number): Promise<AnnouncementRow[]>;
   /** 近 24h 全部市场新闻 (前端再按 name 模糊匹配过滤; 不让 SQL 做 LIKE %name% 防慢查询) */
   listRecentNews(sinceHours: number): Promise<NewsRow[]>;
   /** 取每个股票近 8 个交易日的 stock_sentiments (今日 + 近 7 日 baseline) */
-  listSentimentsByCodes(
-    bareCodes: string[],
-    lookbackDays: number
-  ): Promise<SentimentDailyRow[]>;
+  listSentimentsByCodes(bareCodes: string[], lookbackDays: number): Promise<SentimentDailyRow[]>;
   /** 取近 N 日 KOL 观点 (filter 到 universe) */
-  listRecentKolOpinions(
-    bareCodes: string[],
-    sinceDays: number
-  ): Promise<KolOpinionRow[]>;
+  listRecentKolOpinions(bareCodes: string[], sinceDays: number): Promise<KolOpinionRow[]>;
   /** 近 24h 已写过的 (stock, detector) dedup key 集合 */
   loadRecentDedupKeys(sinceHours: number): Promise<Set<string>>;
   /** 写一条 RiskAlert (per user). 失败仅 warn, 不抛. 返 alert_id list */
@@ -244,24 +235,95 @@ export interface BullishDataSource {
 
 /** 关键词字典 — 启发式 sentiment 打分. 与 KOLOpinion east_money_news 同款范式. */
 export const POSITIVE_NEWS_KEYWORDS: readonly string[] = Object.freeze([
-  '中标', '中标公告', '签订', '签约', '合作', '战略合作', '获批', '突破', '创新高',
-  '业绩超预期', '业绩预增', '预增', '大涨', '涨停', '收获', '获奖', '荣获',
-  '巨额', '订单', '量产', '投产', '增长', '增利', '盈利', '扭亏', '回购',
-  '增持', '利好', '受益', '利润大增', '净利润', '高速增长', '新签', '突破性',
-  '签下', '中标项目', '夺得', '获得', '研发成功', '量产交付', '战略入股',
-  '增资', '签约金额', '订单金额', '合作框架协议', '收购完成', '业绩快报', '同比增长',
+  '中标',
+  '中标公告',
+  '签订',
+  '签约',
+  '合作',
+  '战略合作',
+  '获批',
+  '突破',
+  '创新高',
+  '业绩超预期',
+  '业绩预增',
+  '预增',
+  '大涨',
+  '涨停',
+  '收获',
+  '获奖',
+  '荣获',
+  '巨额',
+  '订单',
+  '量产',
+  '投产',
+  '增长',
+  '增利',
+  '盈利',
+  '扭亏',
+  '回购',
+  '增持',
+  '利好',
+  '受益',
+  '利润大增',
+  '净利润',
+  '高速增长',
+  '新签',
+  '突破性',
+  '签下',
+  '中标项目',
+  '夺得',
+  '获得',
+  '研发成功',
+  '量产交付',
+  '战略入股',
+  '增资',
+  '签约金额',
+  '订单金额',
+  '合作框架协议',
+  '收购完成',
+  '业绩快报',
+  '同比增长',
 ]);
 
 /** 强多关键词加权 (+1.0); 中性次级 (+0.5); 同时含负面词 → 0. */
 export const STRONG_POSITIVE_KEYWORDS: readonly string[] = Object.freeze([
-  '业绩预增', '业绩超预期', '净利润大增', '中标', '签约', '获批', '突破',
-  '量产', '回购', '增持', '战略合作', '利润大增',
+  '业绩预增',
+  '业绩超预期',
+  '净利润大增',
+  '中标',
+  '签约',
+  '获批',
+  '突破',
+  '量产',
+  '回购',
+  '增持',
+  '战略合作',
+  '利润大增',
 ]);
 
 export const NEGATIVE_NEWS_KEYWORDS: readonly string[] = Object.freeze([
-  '亏损', '减持', '处罚', '立案', '调查', '违规', '退市', 'ST', '*ST', '暴跌',
-  '跌停', '风险提示', '终止', '失败', '诉讼', '被起诉', '被立案',
-  '业绩预亏', '业绩预减', '预亏', '商誉减值', '资产减值',
+  '亏损',
+  '减持',
+  '处罚',
+  '立案',
+  '调查',
+  '违规',
+  '退市',
+  'ST',
+  '*ST',
+  '暴跌',
+  '跌停',
+  '风险提示',
+  '终止',
+  '失败',
+  '诉讼',
+  '被起诉',
+  '被立案',
+  '业绩预亏',
+  '业绩预减',
+  '预亏',
+  '商誉减值',
+  '资产减值',
 ]);
 
 /**
@@ -435,7 +497,9 @@ function formatPublishTime(d: Date | string | null | undefined): string {
   try {
     const dt = typeof d === 'string' ? new Date(d) : d;
     if (Number.isNaN(dt.getTime())) return '';
-    return `${dt.getMonth() + 1}/${dt.getDate()} ${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+    return `${dt.getMonth() + 1}/${dt.getDate()} ${String(dt.getHours()).padStart(2, '0')}:${String(
+      dt.getMinutes()
+    ).padStart(2, '0')}`;
   } catch {
     return '';
   }
@@ -478,7 +542,9 @@ export function detectAttentionSpikeHits(
       stock_name: String(name),
       detector: 'attention_spike',
       detector_label: BULLISH_DETECTOR_LABELS.attention_spike,
-      reason: `${today.trade_date} 关注度 ${todayCount} (近7日均 ${m.toFixed(0)} + 3σ ${threshold.toFixed(0)}); 倍数 ${ratio.toFixed(2)}x`,
+      reason: `${today.trade_date} 关注度 ${todayCount} (近7日均 ${m.toFixed(
+        0
+      )} + 3σ ${threshold.toFixed(0)}); 倍数 ${ratio.toFixed(2)}x`,
       score: Math.min(95, Math.round(50 + ratio * 8)),
       source_payload: {
         trade_date: today.trade_date,
@@ -509,9 +575,7 @@ export function detectKolConsensusHits(
     if (arr.length < 3) continue;
     const distinctKols = new Set(arr.map(r => String(r.kol_name || '').trim()).filter(Boolean));
     if (distinctKols.size < 3) continue;
-    const scores = arr
-      .map(r => Number(r.sentiment_score))
-      .filter(v => Number.isFinite(v));
+    const scores = arr.map(r => Number(r.sentiment_score)).filter(v => Number.isFinite(v));
     if (scores.length === 0) continue;
     const avg = mean(scores);
     if (!(avg >= 0.3)) continue;
@@ -529,7 +593,9 @@ export function detectKolConsensusHits(
       stock_name: String(name),
       detector: 'kol_consensus',
       detector_label: BULLISH_DETECTOR_LABELS.kol_consensus,
-      reason: `近 3 日 ${distinctKols.size} 位 KOL 看多 (avg sentiment ${avg.toFixed(2)}; sources: ${sourceSummary})`,
+      reason: `近 3 日 ${distinctKols.size} 位 KOL 看多 (avg sentiment ${avg.toFixed(
+        2
+      )}; sources: ${sourceSummary})`,
       score: Math.min(95, Math.round(50 + avg * 50 + distinctKols.size * 3)),
       source_payload: {
         distinct_kols: distinctKols.size,
@@ -662,8 +728,15 @@ class DefaultBullishDataSource implements BullishDataSource {
       const cutoffDate = cutoff.toISOString().slice(0, 10);
       const rows: any[] = await AnnouncementSummary.findAll({
         attributes: [
-          'announce_date', 'stock_code', 'stock_name', 'original_title',
-          'summary', 'sentiment', 'priority', 'event_type', 'url',
+          'announce_date',
+          'stock_code',
+          'stock_name',
+          'original_title',
+          'summary',
+          'sentiment',
+          'priority',
+          'event_type',
+          'url',
         ],
         where: {
           priority: 'critical',
@@ -731,10 +804,7 @@ class DefaultBullishDataSource implements BullishDataSource {
     }
   }
 
-  async listRecentKolOpinions(
-    bareCodes: string[],
-    sinceDays: number
-  ): Promise<KolOpinionRow[]> {
+  async listRecentKolOpinions(bareCodes: string[], sinceDays: number): Promise<KolOpinionRow[]> {
     if (!bareCodes || bareCodes.length === 0) return [];
     try {
       // KOLOpinion table deleted
@@ -799,7 +869,9 @@ class DefaultBullishDataSource implements BullishDataSource {
         } catch (e: any) {
           failed += 1;
           logger.warn(
-            `[BullishEventDetector] write RiskAlert user=${uid} symbol=${input.symbol} failed: ${e?.message || e}`
+            `[BullishEventDetector] write RiskAlert user=${uid} symbol=${input.symbol} failed: ${
+              e?.message || e
+            }`
           );
         }
       }
@@ -845,8 +917,9 @@ class DefaultBullishDataSource implements BullishDataSource {
     score: number;
   }): Promise<{ signal_id: number | null }> {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { AIInvestmentSignal, AISignalSourceType, AISignalDecision } = require('../models/AIInvestmentSignal');
+      const { AIInvestmentSignal, AISignalSourceType, AISignalDecision } = await import(
+        '../models/AIInvestmentSignal'
+      );
       const source_type = AISignalSourceType.QUANT_RECOMMENDATION;
       const source_id = `bullish_${input.detector}_${input.symbol}_${input.signal_date}`;
       const score = Math.max(0, Math.min(100, Math.round(Number(input.score) || 70)));
@@ -1045,10 +1118,7 @@ export class BullishEventDetectorService {
       }
       // Resolve prefixed symbol for RiskAlert.symbol (与既有 risk_alerts 行格式对齐)
       const prefixedSymbol = this.resolvePrefixed(hit.stock_code, universe);
-      const message = appendDedupTag(
-        `【利好提示 - ${hit.detector_label}】${hit.reason}`,
-        dedupKey
-      );
+      const message = appendDedupTag(`【利好提示 - ${hit.detector_label}】${hit.reason}`, dedupKey);
       // (a) RiskAlert per active user
       if (activeUsers.length > 0) {
         try {
@@ -1085,16 +1155,21 @@ export class BullishEventDetectorService {
         // 真实场景: critical_announcement / kol_consensus 起 80; positive_news /
         // attention_spike 起 70. 用 detector 分级反映置信度而不写死.
         const baseScore =
-          hit.detector === 'critical_announcement' ? 82 :
-          hit.detector === 'kol_consensus' ? 78 :
-          hit.detector === 'attention_spike' ? 72 :
-          70;
+          hit.detector === 'critical_announcement'
+            ? 82
+            : hit.detector === 'kol_consensus'
+            ? 78
+            : hit.detector === 'attention_spike'
+            ? 72
+            : 70;
         const todayShanghai = (() => {
           // signal_date 用 Asia/Shanghai 今日 (与 v3 controller parseDate 对齐)
           try {
             return new Intl.DateTimeFormat('en-CA', {
               timeZone: 'Asia/Shanghai',
-              year: 'numeric', month: '2-digit', day: '2-digit',
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit',
             }).format(now);
           } catch {
             return new Date().toISOString().slice(0, 10);

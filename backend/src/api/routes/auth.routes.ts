@@ -26,8 +26,25 @@ const authController = new AuthController();
  *               email: { type: string, format: email }
  *               password: { type: string, minLength: 6 }
  *     responses:
- *       200: { description: 注册成功, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
+ *       201:
+ *         description: 注册成功；refresh token 仅通过 HttpOnly cookie 返回
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 message: { type: string }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user: { $ref: '#/components/schemas/User' }
+ *                     tokens:
+ *                       type: object
+ *                       properties:
+ *                         accessToken: { type: string }
  *       400: { description: 参数错误, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+ *       503: { description: token 配置或 session store 不可用 }
  */
 router.post(
   '/register',
@@ -59,7 +76,7 @@ router.post(
  *               password: { type: string }
  *     responses:
  *       200:
- *         description: 登录成功，返回 JWT
+ *         description: 登录成功；access token 在响应体，refresh token 仅在 HttpOnly cookie
  *         content:
  *           application/json:
  *             schema:
@@ -69,9 +86,13 @@ router.post(
  *                 data:
  *                   type: object
  *                   properties:
- *                     token: { type: string }
  *                     user: { $ref: '#/components/schemas/User' }
+ *                     tokens:
+ *                       type: object
+ *                       properties:
+ *                         accessToken: { type: string }
  *       401: { description: 用户名或密码错误 }
+ *       503: { description: token 配置或 session store 不可用 }
  */
 router.post(
   '/login',
@@ -85,11 +106,14 @@ router.post(
  * /api/auth/refresh:
  *   post:
  *     tags: [认证 Auth]
- *     summary: 刷新访问令牌
+ *     summary: 原子轮转 refresh session 并刷新访问令牌
+ *     description: refresh token 仅从 HttpOnly cookie 读取；成功后替换 cookie
  *     security: []
  *     responses:
  *       200: { description: 新 token 返回 }
+ *       400: { description: refresh token 缺失 }
  *       401: { description: refresh token 无效或过期 }
+ *       503: { description: session store 暂不可用，cookie 保留以便重试 }
  */
 router.post('/refresh', authController.refreshToken);
 
@@ -99,11 +123,13 @@ router.post('/refresh', authController.refreshToken);
  *   post:
  *     tags: [认证 Auth]
  *     summary: 用户登出
- *     security: [{ bearerAuth: [] }]
+ *     description: 使用 HttpOnly refresh cookie 撤销服务端会话；access token 过期时仍可登出
+ *     security: []
  *     responses:
  *       200: { description: 登出成功 }
+ *       503: { description: 会话存储暂不可用，未确认服务端撤销 }
  */
-router.post('/logout', authController.authenticate, authController.logout);
+router.post('/logout', authController.logout);
 
 /**
  * @openapi

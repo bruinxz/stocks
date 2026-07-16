@@ -391,6 +391,12 @@ See pipeline §5. Contract-level guarantees:
    `manifest` is a lexicographically sorted, non-empty array of unique
    lowercase 64-hex source fact hashes. Input order is irrelevant; duplicate,
    empty, non-string, boolean, or malformed hashes fail closed.
+   For the fixed four-slice replay boundary, `SourceSlice.content_hash` remains
+   `SHA-256(UTF8(RFC8785-JCS(records)))`. Each input manifest element is then
+   `SHA-256(UTF8(RFC8785-JCS({"content_hash": content_hash, "kind": kind})))`
+   for exactly `signals`, `universe`, `scores`, and `evidence`. Binding the
+   slice name preserves empty records without treating two legitimate empty
+   slices as a duplicated source fact.
 4. `items[*].explanation.body` templating MUST be deterministic (no time / random / locale-dependent formatting).
 5. LLM (v0.2+) evidence MUST be cached in `MODEL_OUTPUT` evidence; replay reads cache, does not re-invoke LLM.
 6. Replay MUST pin `(as_of, market_scope, profile, profile_version, contract_version, input_fingerprint, strategy_version, pipeline_version)`. Missing or mismatched pins fail closed rather than silently using current defaults.

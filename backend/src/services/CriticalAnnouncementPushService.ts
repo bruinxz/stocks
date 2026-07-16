@@ -194,9 +194,7 @@ export const DEFAULT_CRITICAL_ANN_DATA_SOURCE: CriticalAnnouncementPushDataSourc
       const seen = new Set<number>();
       for (const r of rows) {
         const uid = Number(
-          (r as any)['portfolio.user_id'] ??
-            (r as any).portfolio?.user_id ??
-            (r as any).user_id
+          (r as any)['portfolio.user_id'] ?? (r as any).portfolio?.user_id ?? (r as any).user_id
         );
         if (Number.isInteger(uid) && uid > 0) seen.add(uid);
       }
@@ -289,7 +287,9 @@ export function buildUserAlertMessage(record: AnnouncementNLPRecord): string {
 export function buildUserAlertDedupKey(record: AnnouncementNLPRecord): string {
   const date = String(record.announce_date || '').trim();
   const code = String(record.stock_code || '').trim();
-  const titleHash = String(record.original_title || '').trim().slice(0, 32);
+  const titleHash = String(record.original_title || '')
+    .trim()
+    .slice(0, 32);
   return `announcement_critical:${code}:${date}:${titleHash}`;
 }
 
@@ -351,16 +351,28 @@ export class CriticalAnnouncementPushService {
     try {
       if (scanned === 0) {
         return {
-          scanned: 0, matched: 0, attempted: 0, succeeded: 0, failed: 0,
-          user_alerts: 0, skipped_reason: 'no_records', items: [],
+          scanned: 0,
+          matched: 0,
+          attempted: 0,
+          succeeded: 0,
+          failed: 0,
+          user_alerts: 0,
+          skipped_reason: 'no_records',
+          items: [],
         };
       }
 
       const candidates = records.filter(shouldPushRecord);
       if (candidates.length === 0) {
         return {
-          scanned, matched: 0, attempted: 0, succeeded: 0, failed: 0,
-          user_alerts: 0, skipped_reason: 'no_critical', items: [],
+          scanned,
+          matched: 0,
+          attempted: 0,
+          succeeded: 0,
+          failed: 0,
+          user_alerts: 0,
+          skipped_reason: 'no_critical',
+          items: [],
         };
       }
 
@@ -374,8 +386,14 @@ export class CriticalAnnouncementPushService {
           `[CriticalAnnouncementPush] OPS_ALERT_FEISHU_WEBHOOK 未配置, skip ${candidates.length} critical 公告 OPS push (user_alerts 仍写=${userAlerts}).`
         );
         return {
-          scanned, matched: candidates.length, attempted: 0, succeeded: 0, failed: 0,
-          user_alerts: userAlerts, skipped_reason: 'no_webhook', items: [],
+          scanned,
+          matched: candidates.length,
+          attempted: 0,
+          succeeded: 0,
+          failed: 0,
+          user_alerts: userAlerts,
+          skipped_reason: 'no_webhook',
+          items: [],
         };
       }
 
@@ -394,8 +412,12 @@ export class CriticalAnnouncementPushService {
         const text = buildCriticalAnnouncementText(rec);
         if (options.dry_run === true) {
           items.push({
-            stock_code: rec.stock_code, original_title: rec.original_title,
-            attempted: false, success: false, skipped: true, skip_reason: 'dry_run',
+            stock_code: rec.stock_code,
+            original_title: rec.original_title,
+            attempted: false,
+            success: false,
+            skipped: true,
+            skip_reason: 'dry_run',
           });
           continue;
         }
@@ -403,11 +425,16 @@ export class CriticalAnnouncementPushService {
         // inbox (writeUserInboxAlerts 上方已执行) 仍写, 不阻塞 UI / RiskAlert.
         if (isEmergencyConfGated(rec)) {
           logger.warn(
-            `[PR-L emergency] skip OPS push for ${rec.stock_code} "${String(rec.original_title || '').slice(0, 30)}" — conf>=${EMERGENCY_CONF_GATE_THRESHOLD} 反向 (见 PR-K 30 天回测)`
+            `[PR-L emergency] skip OPS push for ${rec.stock_code} "${String(
+              rec.original_title || ''
+            ).slice(0, 30)}" — conf>=${EMERGENCY_CONF_GATE_THRESHOLD} 反向 (见 PR-K 30 天回测)`
           );
           items.push({
-            stock_code: rec.stock_code, original_title: rec.original_title,
-            attempted: false, success: false, skipped: true,
+            stock_code: rec.stock_code,
+            original_title: rec.original_title,
+            attempted: false,
+            success: false,
+            skipped: true,
             skip_reason: EMERGENCY_CONF_GATE_SKIP_REASON,
           });
           continue;
@@ -417,8 +444,10 @@ export class CriticalAnnouncementPushService {
           if (r.success) {
             succeeded += 1;
             items.push({
-              stock_code: rec.stock_code, original_title: rec.original_title,
-              attempted: true, success: true,
+              stock_code: rec.stock_code,
+              original_title: rec.original_title,
+              attempted: true,
+              success: true,
             });
           } else {
             failed += 1;
@@ -428,8 +457,10 @@ export class CriticalAnnouncementPushService {
               } "${rec.original_title.slice(0, 30)}": ${r.message || 'unknown'}`
             );
             items.push({
-              stock_code: rec.stock_code, original_title: rec.original_title,
-              attempted: true, success: false,
+              stock_code: rec.stock_code,
+              original_title: rec.original_title,
+              attempted: true,
+              success: false,
               error: r.message || 'feishu post failed',
             });
           }
@@ -439,8 +470,10 @@ export class CriticalAnnouncementPushService {
             `[CriticalAnnouncementPush] poster threw for ${rec.stock_code}: ${err?.message || err}`
           );
           items.push({
-            stock_code: rec.stock_code, original_title: rec.original_title,
-            attempted: true, success: false,
+            stock_code: rec.stock_code,
+            original_title: rec.original_title,
+            attempted: true,
+            success: false,
             error: err?.message || String(err),
           });
         }
@@ -448,8 +481,12 @@ export class CriticalAnnouncementPushService {
 
       for (const rec of truncatedTail) {
         items.push({
-          stock_code: rec.stock_code, original_title: rec.original_title,
-          attempted: false, success: false, skipped: true, skip_reason: 'truncated_batch',
+          stock_code: rec.stock_code,
+          original_title: rec.original_title,
+          attempted: false,
+          success: false,
+          skipped: true,
+          skip_reason: 'truncated_batch',
         });
       }
 
@@ -498,14 +535,25 @@ export class CriticalAnnouncementPushService {
       }
 
       return {
-        scanned, matched: candidates.length, attempted: toPush.length,
-        succeeded, failed, user_alerts: userAlerts, items,
+        scanned,
+        matched: candidates.length,
+        attempted: toPush.length,
+        succeeded,
+        failed,
+        user_alerts: userAlerts,
+        items,
       };
     } catch (err: any) {
       logger.error(`[CriticalAnnouncementPush] top-level failure: ${err?.message || err}`);
       return {
-        scanned, matched: 0, attempted: 0, succeeded: 0, failed: 0,
-        user_alerts: 0, skipped_reason: 'top_level_error', items: [],
+        scanned,
+        matched: 0,
+        attempted: 0,
+        succeeded: 0,
+        failed: 0,
+        user_alerts: 0,
+        skipped_reason: 'top_level_error',
+        items: [],
         error: err?.message || String(err),
       };
     }

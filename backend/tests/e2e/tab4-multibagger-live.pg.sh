@@ -6,6 +6,8 @@ PHASE1="$ROOT/backend/scripts/migrations/2026-07-11-sprint3-market-storage-phase
 PROVENANCE="$ROOT/backend/scripts/migrations/2026-07-14-multibagger-classification-provenance.sql"
 TEXT_HIT_PROVENANCE="$ROOT/backend/scripts/migrations/2026-07-14-multibagger-text-hit-provenance.sql"
 TEXT_HIT_ROLLBACK="$ROOT/backend/scripts/migrations/2026-07-14-multibagger-text-hit-provenance-rollback.sql"
+SOURCE_VERSION_INTEGRITY="$ROOT/backend/scripts/migrations/2026-07-14-multibagger-source-version-integrity.sql"
+SOURCE_VERSION_INTEGRITY_ROLLBACK="$ROOT/backend/scripts/migrations/2026-07-14-multibagger-source-version-integrity-rollback.sql"
 
 fail() {
   echo "tab4-multibagger-live.pg: $*" >&2
@@ -44,6 +46,12 @@ trap cleanup EXIT
 createdb "${PG_ARGS[@]}" "$DB"
 psql "${PG_ARGS[@]}" -d "$DB" -v ON_ERROR_STOP=1 -f "$PHASE1" >/dev/null
 psql "${PG_ARGS[@]}" -d "$DB" -v ON_ERROR_STOP=1 -f "$PROVENANCE" >/dev/null
+psql "${PG_ARGS[@]}" -d "$DB" -v ON_ERROR_STOP=1 \
+  -f "$SOURCE_VERSION_INTEGRITY" >/dev/null
+psql "${PG_ARGS[@]}" -d "$DB" -v ON_ERROR_STOP=1 \
+  -f "$SOURCE_VERSION_INTEGRITY_ROLLBACK" >/dev/null
+psql "${PG_ARGS[@]}" -d "$DB" -v ON_ERROR_STOP=1 \
+  -f "$SOURCE_VERSION_INTEGRITY" >/dev/null
 
 psql "${PG_ARGS[@]}" -d "$DB" -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
 INSERT INTO multibagger_text_hit (
@@ -70,8 +78,52 @@ psql "${PG_ARGS[@]}" -d "$DB" -v ON_ERROR_STOP=1 -f "$TEXT_HIT_PROVENANCE" >/dev
 TAB4_DATABASE_URL="postgresql://${PGUSER}@/${DB}?host=${PGHOST}&port=${PGPORT}" \
   PYTHONPATH="$ROOT" python3 -m strategy.tests.tab4_live_seed
 
+# A syntactically resealed candidate cannot smuggle a non-canonical source
+# version directly through SQL after bypassing the Strategy materializer.
+if psql "${PG_ARGS[@]}" -d "$DB" -v ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL'
+INSERT INTO multibagger_candidate_snapshot (
+  market_scope, exchange, ticker, as_of_utc, available_at_utc, stage,
+  conclusion, score, rating, conviction, risk_gate, entry_plan,
+  latest_catalyst, source_fact_hashes, strategy_version,
+  classification_policy_version, classification_reason_codes, fact_hash
+)
+SELECT
+  market_scope,
+  exchange,
+  ticker || '-RESEALED',
+  as_of_utc,
+  available_at_utc,
+  stage,
+  conclusion,
+  jsonb_set(
+    score,
+    '{source_versions,quality_engine}',
+    to_jsonb(' invalid '::TEXT),
+    FALSE
+  ),
+  rating,
+  conviction,
+  risk_gate,
+  entry_plan,
+  latest_catalyst,
+  source_fact_hashes,
+  strategy_version,
+  classification_policy_version,
+  classification_reason_codes,
+  repeat('f', 64)
+FROM multibagger_candidate_snapshot
+LIMIT 1;
+SQL
+then
+  fail "resealed invalid candidate bypassed source-version integrity"
+fi
+test "$(psql "${PG_ARGS[@]}" -d "$DB" -Atc \
+  'SELECT COUNT(*) FROM multibagger_candidate_snapshot')" = "1"
+
 DB_HOST="$PGHOST" DB_PORT="$PGPORT" DB_USER="$PGUSER" DB_PASSWORD="" \
 DB_NAME="$DB" NODE_ENV=test SKIP_DEFAULT_USER_INIT=true \
+JWT_SECRET=tab4-multibagger-live-http-jwt-secret \
+JWT_REFRESH_SECRET=tab4-multibagger-live-http-refresh-secret \
 TAB4_LIVE_HTTP_TEST=1 \
 TAB4_RESPONSE_ARTIFACT="$(basename "$ARTIFACT")" \
   "$ROOT/backend/node_modules/.bin/ts-node" --transpile-only \
@@ -81,5 +133,8 @@ test -s "$ARTIFACT" || fail "HTTP response artifact missing"
 cd "$ROOT/frontend"
 TAB4_RESPONSE_ARTIFACT="$ARTIFACT" CI=true npm test -- --watchAll=false --runInBand \
   src/pages/catdesk/tabs/multibagger/__tests__/tab4MultibaggerLiveE2E.test.tsx
+
+psql "${PG_ARGS[@]}" -d "$DB" -v ON_ERROR_STOP=1 \
+  -f "$SOURCE_VERSION_INTEGRITY_ROLLBACK" >/dev/null
 
 echo "tab4-multibagger-live.pg: PASS"

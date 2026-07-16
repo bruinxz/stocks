@@ -157,6 +157,21 @@ async function main(): Promise<void> {
       calls.at(-2)?.replacements.market_scope === 'us'
   );
 
+  queue = [
+    [
+      header({
+        as_of_utc: new Date('2026-07-10T06:00:00.000Z'),
+        created_at: new Date('2026-07-10T06:00:01.000Z'),
+      }),
+    ],
+    [itemRow()],
+  ];
+  const pgDateDetail = await adapter.detail(SNAPSHOT_A);
+  assert(
+    'PostgreSQL Date timestamps normalize to the envelope UTC-seconds contract',
+    pgDateDetail?.as_of === ENVELOPE.as_of
+  );
+
   queue = [[{ total: '1' }], [header()]];
   const page = await adapter.byDate({
     trading_day: '2026-07-10',

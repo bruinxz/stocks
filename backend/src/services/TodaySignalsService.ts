@@ -349,11 +349,14 @@ export class TodaySignalsService {
       const quantity = rawQty >= 100 ? Math.floor(rawQty / 100) * 100 : 100;
 
       try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { buildTradeReasonFromSignal, summarizeTradeReason } = require('../portfolio/internal/tradeReasonBuilder');
+        const { buildTradeReasonFromSignal, summarizeTradeReason } = await import(
+          '../portfolio/internal/tradeReasonBuilder'
+        );
         const reason = buildTradeReasonFromSignal({
           strategy_key: 'etf_factor_rotation',
-          reasons: [`ETF 因子轮动: 目标权重 ${(c.target_weight * 100).toFixed(1)}% 买入 ${c.symbol}`],
+          reasons: [
+            `ETF 因子轮动: 目标权重 ${(c.target_weight * 100).toFixed(1)}% 买入 ${c.symbol}`,
+          ],
         });
         const result = await paperTradingFacade.placeOrder({
           user_id: options.user_id,

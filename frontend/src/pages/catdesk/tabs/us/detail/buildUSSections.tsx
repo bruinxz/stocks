@@ -4,6 +4,7 @@ import { ScoreBreakdownCard } from '../../morning/detail/ScoreBreakdownCard';
 import { RiskGateDetailCard } from '../../morning/detail/RiskGateDetailCard';
 import { ConvictionBreakdownCard } from '../../morning/detail/ConvictionBreakdownCard';
 import { EntryPlanDetails } from '../../morning/detail/EntryPlanDetails';
+import { DataSourceBadge } from '../../morning/detail/DataSourceBadge';
 
 export function buildUSSections(row: CandidateListEntry): DetailSection[] {
   const sections: DetailSection[] = [];
@@ -44,6 +45,8 @@ export function buildUSSections(row: CandidateListEntry): DetailSection[] {
       ariaLabel: 'Risk gate details',
       content: (
         <RiskGateDetailCard
+          gate={row.risk_gate.gate}
+          okToEnter={row.risk_gate.ok_to_enter}
           triggers={row.risk_gate.triggers.map(t => ({
             id: t.code,
             label: t.code,
@@ -63,6 +66,71 @@ export function buildUSSections(row: CandidateListEntry): DetailSection[] {
       title: '入场方案',
       ariaLabel: 'Entry plan',
       content: <EntryPlanDetails plan={ep} />,
+      collapsible: true,
+    });
+  }
+
+  if (row.explanation) {
+    sections.push({
+      key: 'explanation',
+      title: '推荐解释',
+      ariaLabel: 'Recommendation explanation',
+      content: (
+        <div style={{ display: 'grid', gap: 8 }}>
+          <strong>{row.explanation.headline}</strong>
+          <span>{row.explanation.body}</span>
+          {row.explanation.caveats.map(caveat => (
+            <span key={caveat} style={{ color: 'var(--cd-text-secondary)' }}>
+              风险：{caveat}
+            </span>
+          ))}
+        </div>
+      ),
+    });
+  }
+
+  if (row.evidence_refs?.length) {
+    sections.push({
+      key: 'evidence',
+      title: '证据引用',
+      ariaLabel: 'Recommendation evidence references',
+      content: (
+        <div style={{ display: 'grid', gap: 8 }}>
+          {row.evidence_refs.map(evidence => (
+            <div key={evidence.id} style={{ fontSize: 12 }}>
+              <strong>{evidence.id}</strong> · {evidence.kind} · {evidence.as_of}
+              <br />
+              <span style={{ color: 'var(--cd-text-secondary)' }}>{evidence.source_uri}</span>
+              {evidence.short_text ? <div>{evidence.short_text}</div> : null}
+            </div>
+          ))}
+        </div>
+      ),
+      collapsible: true,
+    });
+  }
+
+  sections.push({
+    key: 'data_sources',
+    title: '数据来源',
+    ariaLabel: 'Recommendation data sources',
+    content: <DataSourceBadge sources={row.data_sources ?? []} />,
+  });
+
+  if (row.provenance) {
+    sections.push({
+      key: 'provenance',
+      title: '快照溯源',
+      ariaLabel: 'Recommendation snapshot provenance',
+      content: (
+        <div style={{ display: 'grid', gap: 4, fontFamily: 'monospace', fontSize: 11 }}>
+          <span>snapshot_id: {row.provenance.snapshot_id}</span>
+          <span>as_of: {row.provenance.as_of}</span>
+          <span>input: {row.provenance.input_fingerprint}</span>
+          <span>output: {row.provenance.output_fingerprint}</span>
+          <span>pipeline: {row.provenance.pipeline_version}</span>
+        </div>
+      ),
       collapsible: true,
     });
   }

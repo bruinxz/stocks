@@ -12,12 +12,15 @@ from .source_writer import (
 from .canonical_json import canonicalize_json
 from .text_hit_writer import (
     build_text_hit_storage_row,
+    canonical_scan_document_fact_hash,
     canonical_text_hit_fact_hash,
+    canonical_text_context_hash,
     TextHitIdempotencyConflict,
     TextHitStorageRow,
     TextHitWriter,
     TextHitWriteResult,
     text_hit_fact_body,
+    scan_document_fact_body,
 )
 
 __all__ = [
@@ -30,10 +33,13 @@ __all__ = [
     "multibagger_storage_fact_body",
     "canonicalize_json",
     "build_text_hit_storage_row",
+    "canonical_scan_document_fact_hash",
     "canonical_text_hit_fact_hash",
+    "canonical_text_context_hash",
     "TextHitIdempotencyConflict",
     "TextHitStorageRow",
     "TextHitWriter",
     "TextHitWriteResult",
     "text_hit_fact_body",
+    "scan_document_fact_body",
 ]

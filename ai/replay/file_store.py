@@ -32,7 +32,8 @@ class ReplayJobStoreCorruptError(RuntimeError):
 
 
 class AtomicFileReplayJobStore:
-    VERSION = 1
+    VERSION = 2
+    LEGACY_VERSION = 1
 
     def __init__(self, path: str | Path):
         self._path = Path(path)
@@ -53,12 +54,15 @@ class AtomicFileReplayJobStore:
         try:
             self._validate_existing_file(self._name, "replay job store")
             self._validate_existing_file(self._lock_name, "replay job lock")
-            if not self._exists(self._name):
-                with self._locked():
-                    if not self._exists(self._name):
-                        self._write(
-                            {"version": self.VERSION, "jobs": {}, "keys": {}}
-                        )
+            with self._locked():
+                if not self._exists(self._name):
+                    self._write(
+                        {"version": self.VERSION, "jobs": {}, "keys": {}}
+                    )
+                else:
+                    # _read performs the one supported v1 -> v2 migration
+                    # under the same inter-process lock and atomic write path.
+                    self._read()
         except Exception:
             self.close()
             raise
@@ -83,7 +87,7 @@ class AtomicFileReplayJobStore:
             return self._decode(raw) if raw is not None else None
 
     def transition(
-        self, job_id: str, expected_status: str, updated: ReplayJob
+        self, job_id: str, expected: ReplayJob, updated: ReplayJob
     ) -> ReplayJob:
         self._validate_proposed(updated)
         with self._locked():
@@ -92,7 +96,7 @@ class AtomicFileReplayJobStore:
             if raw is None:
                 raise ReplayConflictError("replay job does not exist")
             current = self._decode(raw)
-            if current.status != expected_status:
+            if current != expected:
                 raise ReplayConflictError(
                     "compare-and-swap transition failed"
                 )
@@ -105,6 +109,7 @@ class AtomicFileReplayJobStore:
                 raise ReplayConflictError(
                     "transition changed immutable replay job fields"
                 )
+            self._validate_transition(current, updated)
             state["jobs"][job_id] = self._encode(updated)
             self._write(state)
             return updated
@@ -176,13 +181,16 @@ class AtomicFileReplayJobStore:
             not isinstance(raw, dict)
             or set(raw) != {"version", "jobs", "keys"}
             or isinstance(raw.get("version"), bool)
-            or raw.get("version") != self.VERSION
+            or raw.get("version") not in {self.LEGACY_VERSION, self.VERSION}
             or not isinstance(raw.get("jobs"), dict)
             or not isinstance(raw.get("keys"), dict)
         ):
             raise ReplayJobStoreCorruptError(
                 "replay job store has invalid structure"
             )
+        migrated = raw["version"] == self.LEGACY_VERSION
+        if migrated:
+            raw = self._migrate_legacy_state(raw)
         for key, job_id in raw["keys"].items():
             if (
                 not isinstance(key, str)
@@ -217,6 +225,8 @@ class AtomicFileReplayJobStore:
                 raise ReplayJobStoreCorruptError(
                     "replay job idempotency index does not match record"
                 )
+        if migrated:
+            self._write(raw)
         return raw
 
     @staticmethod
@@ -382,7 +392,11 @@ class AtomicFileReplayJobStore:
 
     @staticmethod
     def _decode(raw: object) -> ReplayJob:
-        if not isinstance(raw, dict) or not isinstance(raw.get("pins"), dict):
+        if (
+            not isinstance(raw, dict)
+            or set(raw) != set(ReplayJob.__dataclass_fields__)
+            or not isinstance(raw.get("pins"), dict)
+        ):
             raise ReplayJobStoreCorruptError(
                 "replay job record is corrupt"
             )
@@ -400,6 +414,78 @@ class AtomicFileReplayJobStore:
             raise ReplayJobStoreCorruptError(
                 "replay job record is corrupt"
             ) from error
+
+    @classmethod
+    def _migrate_legacy_state(cls, raw: dict) -> dict:
+        legacy_fields = {
+            "job_id",
+            "idempotency_key",
+            "pins",
+            "status",
+            "created_at",
+            "updated_at",
+            "snapshot_id",
+            "output_fingerprint",
+            "error_code",
+            "error_detail",
+        }
+        migrated_jobs = {}
+        for job_id, record in raw["jobs"].items():
+            if not isinstance(record, dict) or set(record) != legacy_fields:
+                raise ReplayJobStoreCorruptError(
+                    "legacy replay job record is corrupt"
+                )
+            status = record.get("status")
+            migrated = dict(record)
+            if status == "running":
+                # A v1 running state had no authenticated owner and could be
+                # permanently stranded.  It becomes queued with one consumed
+                # attempt; the first v2 worker must acquire a fresh lease.
+                migrated["status"] = "queued"
+                migrated["attempt"] = 1
+            elif status in {"completed", "failed"}:
+                migrated["attempt"] = 1
+            else:
+                migrated["attempt"] = 0
+            migrated["lease_token"] = None
+            migrated["lease_expires_at"] = None
+            migrated_jobs[job_id] = migrated
+        migrated_state = {
+            "version": cls.VERSION,
+            "jobs": migrated_jobs,
+            "keys": dict(raw["keys"]),
+        }
+        # Validate every migrated record before the atomic replacement.
+        for record in migrated_jobs.values():
+            cls._decode(record)
+        return migrated_state
+
+    @staticmethod
+    def _validate_transition(current: ReplayJob, updated: ReplayJob) -> None:
+        if updated.updated_at < current.updated_at:
+            raise ReplayConflictError("transition moved updated_at backwards")
+        if current.status == "queued":
+            valid = (
+                updated.status == "running"
+                and updated.attempt == current.attempt + 1
+            )
+        elif current.status == "running":
+            valid = (
+                updated.status == "running"
+                and updated.attempt == current.attempt + 1
+                and updated.lease_token != current.lease_token
+                and current.lease_expires_at is not None
+                and updated.updated_at >= current.lease_expires_at
+            ) or (
+                updated.status in {"completed", "failed"}
+                and updated.attempt == current.attempt
+                and current.lease_expires_at is not None
+                and updated.updated_at < current.lease_expires_at
+            )
+        else:
+            valid = False
+        if not valid:
+            raise ReplayConflictError("illegal replay job transition")
 
     @staticmethod
     def _validate_proposed(job: ReplayJob) -> None:

@@ -1,8 +1,10 @@
 import copy
+from dataclasses import replace
 import unittest
 
 from strategy.materialization import (
     CandidateIdempotencyConflict,
+    CandidateMaterializationError,
     PostgresCandidateStore,
     candidate_to_row,
 )
@@ -10,7 +12,7 @@ from ai.snapshot.postgres_store import (
     SnapshotStoreConfigurationError,
     SnapshotStoreConnectionError,
 )
-from strategy.tests.test_multibagger_candidate_materializer import Policy, request
+from strategy.tests.test_multibagger_candidate_materializer import Policy, request, sha
 from strategy.materialization import materialize_candidate
 
 
@@ -72,6 +74,62 @@ class Connection:
 
 
 class CandidateStoreTests(unittest.TestCase):
+    def test_invalid_resealed_candidate_semantics_fail_before_connect(self):
+        candidate = materialize_candidate(request(), Policy())
+        row = copy.deepcopy(candidate_to_row(candidate))
+        row["stage"] = "INVALID"
+        body = dict(row)
+        body.pop("fact_hash")
+        row["fact_hash"] = sha(body)
+        invalid = replace(
+            candidate,
+            stage=row["stage"],
+            fact_hash=row["fact_hash"],
+        )
+        connector_calls = []
+        store = PostgresCandidateStore(
+            "postgresql://user:password@localhost/test",
+            connector=lambda url: connector_calls.append(url),
+        )
+
+        with self.assertRaises(CandidateMaterializationError):
+            store.write_or_verify(invalid)
+        self.assertEqual(connector_calls, [])
+
+    def test_invalid_resealed_score_is_rejected_before_connect(self):
+        candidate = materialize_candidate(request(), Policy())
+        row = copy.deepcopy(candidate_to_row(candidate))
+        row["score"]["source_versions"]["quality_engine"] = "版本@1.0.0"
+        score_body = dict(row["score"])
+        score_body.pop("snapshot_hash")
+        score_body.pop("scoring_id")
+        row["score"]["snapshot_hash"] = sha(score_body)
+        score_ref = {
+            "scoring_id": row["score"]["scoring_id"],
+            "snapshot_hash": row["score"]["snapshot_hash"],
+        }
+        row["conviction"]["score_ref"] = score_ref
+        row["entry_plan"]["score_ref"] = score_ref
+        body = dict(row)
+        body.pop("fact_hash")
+        row["fact_hash"] = sha(body)
+        invalid = replace(
+            candidate,
+            score=row["score"],
+            conviction=row["conviction"],
+            entry_plan=row["entry_plan"],
+            fact_hash=row["fact_hash"],
+        )
+        connector_calls = []
+        store = PostgresCandidateStore(
+            "postgresql://user:password@localhost/test",
+            connector=lambda url: connector_calls.append(url),
+        )
+
+        with self.assertRaises(CandidateMaterializationError):
+            store.write_or_verify(invalid)
+        self.assertEqual(connector_calls, [])
+
     def test_insert_readback_replay_and_conflict(self):
         candidate = materialize_candidate(request(), Policy())
         connection = Connection(candidate)

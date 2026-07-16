@@ -289,7 +289,7 @@ V0：Value **0.40** / Quality **0.30** / LowVol **0.30** / Momentum **0.0**（sh
 **不发手机 push（C-7），飞书允许**；产品文案禁绝对收益承诺。
 
 ### 10.10 所有远端配置走 env
-`TRADING_AGENTS_URL` 等；**禁硬编码 IP** 如 `103.242.3.87`。
+`TRADING_AGENTS_URL` 等；**禁硬编码 IP** 如 `<legacy-prod-host>`。
 
 ---
 
@@ -426,7 +426,7 @@ V0：Value **0.40** / Quality **0.30** / LowVol **0.30** / Momentum **0.0**（sh
 - 默认账号 `deploy`；`ops` 逐命令审批；`root` 除 li-yiming 本人外禁用
 - PG 只读 SELECT；每 SQL 需 #stocks 报批（目标 + 表 + 语句 + 预期量）
 - 3 档命令白名单：🟢 只读放行 / 🟡 需批 / 🔴 禁用（`rm/mv/chmod/systemctl stop|disable|restart/kill -9/pkill/docker rm|prune|restart/crontab/SQL 写/passwd/usermod/任何 sudo 写`）
-- 远端配置一律走 env；禁硬编码 IP（如 `103.242.3.87`）
+- 远端配置一律走 env；禁硬编码 IP（如 `<legacy-prod-host>`）
 
 ---
 

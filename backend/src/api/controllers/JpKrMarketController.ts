@@ -88,12 +88,13 @@ const MARKET_ROWS_SQL = `
            k.ticker_name_local,
            k.ticker_name_en,
            k.exchange,
+           k.trading_day,
            k.close,
            k.currency,
            k.is_halted,
            k.source_kind
     FROM jpkr_daily_kline k
-    WHERE k.trading_day = CAST(:date AS date)
+    WHERE k.trading_day <= CAST(:date AS date)
       AND k.available_at_utc <= CAST(:cutoff AS timestamptz)
       AND (:symbol IS NULL OR k.ticker = :symbol)
       AND (
@@ -101,7 +102,12 @@ const MARKET_ROWS_SQL = `
         OR (:market = 'JP' AND k.exchange IN ('tse', 'ose'))
         OR (:market = 'KR' AND k.exchange IN ('krx', 'kosdaq'))
       )
-    ORDER BY k.exchange, k.ticker, k.available_at_utc DESC, k.source_version DESC
+    ORDER BY
+      k.exchange,
+      k.ticker,
+      k.trading_day DESC,
+      k.available_at_utc DESC,
+      k.source_version DESC
   ),
   previous_rows AS (
     SELECT DISTINCT ON (k.exchange, k.ticker)
@@ -112,7 +118,7 @@ const MARKET_ROWS_SQL = `
     JOIN current_rows current_row
       ON current_row.ticker = k.ticker
      AND current_row.exchange = k.exchange
-    WHERE k.trading_day < CAST(:date AS date)
+    WHERE k.trading_day < current_row.trading_day
       AND k.available_at_utc <= CAST(:cutoff AS timestamptz)
     ORDER BY
       k.exchange,

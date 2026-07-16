@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timedelta
 import hashlib
 from typing import Iterable, Mapping, Sequence, Tuple
 
-from datapipeline.contracts.source_envelopes import TextHitEnvelope
+from datapipeline.contracts.market_records import (
+    is_canonical_sha256,
+    is_canonical_source_version,
+)
+from datapipeline.contracts.source_envelopes import ScanDocument, TextHitEnvelope
 
 from .canonical_json import canonicalize_json
 
@@ -41,6 +45,8 @@ WHERE document_fact_hash = $1
 """
 
 LOCK_SQL = "SELECT pg_advisory_xact_lock($1)"
+
+_SCAN_DOCUMENT_FIELDS = frozenset(field.name for field in fields(ScanDocument))
 
 
 class TextHitIdempotencyConflict(RuntimeError):
@@ -111,9 +117,53 @@ class TextHitStorageRow:
 def _utc_text(value: datetime, field: str) -> str:
     if value.tzinfo is None or value.utcoffset() != timedelta(0):
         raise ValueError(f"{field} must be timezone-aware UTC")
-    if value.microsecond:
-        raise ValueError(f"{field} must use whole UTC seconds")
-    return value.isoformat().replace("+00:00", "Z")
+    timespec = "microseconds" if value.microsecond else "seconds"
+    return value.isoformat(timespec=timespec).replace("+00:00", "Z")
+
+
+def _document_json_value(value: object) -> object:
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    if isinstance(value, datetime):
+        return _utc_text(value, "scan document datetime")
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("scan document keys must be strings")
+        return {key: _document_json_value(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_document_json_value(item) for item in value]
+    raise ValueError(f"unsupported scan document value: {type(value).__name__}")
+
+
+def scan_document_fact_body(
+    value: ScanDocument | Mapping[str, object],
+) -> Mapping[str, object]:
+    if isinstance(value, ScanDocument):
+        payload = _document_json_value(asdict(value))
+    elif isinstance(value, Mapping):
+        payload = _document_json_value(dict(value))
+    else:
+        raise TypeError("scan document must be a record or JSON object")
+    if not isinstance(payload, dict) or set(payload) != _SCAN_DOCUMENT_FIELDS:
+        raise ValueError("scan document keys are not exact")
+    return {
+        key: payload[key]
+        for key in payload
+        if key != "document_fact_hash"
+    }
+
+
+def canonical_scan_document_fact_hash(
+    value: ScanDocument | Mapping[str, object],
+) -> str:
+    body = scan_document_fact_body(value)
+    return hashlib.sha256(canonicalize_json(body).encode("utf-8")).hexdigest()
+
+
+def canonical_text_context_hash(text: str) -> str:
+    if not isinstance(text, str) or not text:
+        raise ValueError("text hit context must be non-empty")
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def text_hit_fact_body(
@@ -163,10 +213,24 @@ def canonical_text_hit_fact_hash(**values: object) -> str:
 
 
 def build_text_hit_storage_row(envelope: TextHitEnvelope) -> TextHitStorageRow:
-    if not isinstance(envelope, TextHitEnvelope):
+    if type(envelope) is not TextHitEnvelope:
         raise TypeError("writer accepts TextHitEnvelope only")
     document = envelope.document
     hit = envelope.hit
+    if not is_canonical_source_version(document.source_version):
+        raise ValueError("scan document source_version is not canonical")
+    if (
+        not is_canonical_sha256(document.document_fact_hash)
+        or document.document_fact_hash != canonical_scan_document_fact_hash(document)
+    ):
+        raise ValueError("scan document fact hash is not canonical")
+    selected = document.title if hit.field == "TITLE" else document.body
+    if (
+        not is_canonical_sha256(hit.context_hash)
+        or hit.context_hash
+        != canonical_text_context_hash(selected[hit.start_offset : hit.end_offset])
+    ):
+        raise ValueError("text hit context hash is not canonical")
     values = {
         "market_scope": document.market_scope,
         "ticker": document.ticker,

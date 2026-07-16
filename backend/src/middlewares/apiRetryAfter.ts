@@ -54,7 +54,10 @@ export function buildApiRetryAfterMiddleware(config: RetryAfterConfig | null) {
     (res as unknown as { writeHead: (...args: unknown[]) => Response }).writeHead =
       function patchedWriteHead(this: Response, ...args: unknown[]): Response {
         const status = args[0];
-        if (typeof status === 'number' && Object.prototype.hasOwnProperty.call(map, String(status))) {
+        if (
+          typeof status === 'number' &&
+          Object.prototype.hasOwnProperty.call(map, String(status))
+        ) {
           const seconds = map[String(status)];
           if (
             typeof seconds === 'number' &&
@@ -73,7 +76,6 @@ export function buildApiRetryAfterMiddleware(config: RetryAfterConfig | null) {
   };
 }
 
-export const apiRetryAfterMiddleware = () =>
-  buildApiRetryAfterMiddleware(PKG_RETRY_AFTER_CONFIG);
+export const apiRetryAfterMiddleware = () => buildApiRetryAfterMiddleware(PKG_RETRY_AFTER_CONFIG);
 
 export const CURRENT_RETRY_AFTER_CONFIG = PKG_RETRY_AFTER_CONFIG;

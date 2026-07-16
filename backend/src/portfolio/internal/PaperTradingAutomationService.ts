@@ -1979,9 +1979,13 @@ class PaperTradingAutomationService {
         const regimeForGate = environmentPolicy.market_regime || 'range';
 
         // §5.1 confidence = Wilson 下界 (按 source_type + regime 分层, 与 EVDecisionService 同源)
-        const calib = await confidenceCalibrationService.calibrate(sourceTypeForGate, regimeForGate, {
-          portfolioId: portfolio.id,
-        });
+        const calib = await confidenceCalibrationService.calibrate(
+          sourceTypeForGate,
+          regimeForGate,
+          {
+            portfolioId: portfolio.id,
+          }
+        );
         const calibDetail = {
           confidence: calib.confidence,
           win_rate_raw: calib.win_rate_raw,
@@ -3959,8 +3963,8 @@ class PaperTradingAutomationService {
         // 规则 5: 技术破位（跌破 MA20 + 放量确认）
         if (!exitReason && holdingDays >= 10) {
           try {
-            const { DailyBar: DBar } = require('../../models/DailyBar');
-            const { Stock: StockModel } = require('../../models/Stock');
+            const { DailyBar: DBar } = await import('../../models/DailyBar');
+            const { Stock: StockModel } = await import('../../models/Stock');
             const stockRow = await StockModel.findOne({ where: { symbol }, raw: true });
             if (stockRow) {
               const recentBars: any[] = await DBar.findAll({
@@ -6827,11 +6831,9 @@ class PaperTradingAutomationService {
     // 子规则提到下单前评估 + 3 个 pre-trade 独有规则（次日追高 / 频繁交易 / 信号
     // 陈旧）。high 拒单 + 写 MEDIUM RiskAlert; medium 放行但写 LOW; low 仅 log。
     // 不阻塞硬风控（checkPreBuyGuards 已在前），仅"再多一道软合规"。
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const {
-      checkPreTradeCompliance,
-      emitPreTradeComplianceAlert,
-    } = require('../../services/TradeComplianceChecker');
+    const { checkPreTradeCompliance, emitPreTradeComplianceAlert } = await import(
+      '../../services/TradeComplianceChecker'
+    );
     try {
       const sigMeta = asPlainObject((params.signal as any)?.metadata);
       const signalTsMs = (() => {

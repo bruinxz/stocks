@@ -94,12 +94,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # 按 backend/package-lock.json hash 缓存 ~/.npm
+          # Backend tests include cross-monorepo contracts that import frontend
+          # source, so both lockfiles define this job's dependency closure.
           cache: 'npm'
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
 
-      - name: Install dependencies
+      - name: Install backend dependencies
         run: npm ci
+
+      - name: Install frontend dependencies for cross-monorepo tests
+        run: npm ci --prefix ../frontend
 
       - name: Diagnostic baseline comparator regression guard
         run: |
@@ -281,7 +287,7 @@ jobs:
 
       # US-001 (OPS-001) env 校验脚本：CI 跑一遍 check-env，确保 EnvValidator
       # schema 与现有 .env / 部署文档同步。注入"production-grade 合法 env 子集"
-      # （DB+Redis+JWT+TRADING_AGENTS_URL）让脚本能完整跑到 exit=0；未来任何
+      # （DB+Redis+双 JWT+TradingAgents+durable replay）让脚本能完整跑到 exit=0；未来任何
       # 新增 required 字段忘了同步 .env.example 时，CI 立刻 fail。
       # 另跑一次 missing-env 子步骤验证 fail-fast 路径（exit=1），双向保证。
       - name: Env validation (check-env, happy path)
@@ -294,7 +300,21 @@ jobs:
           DB_PASSWORD: ci_password
           REDIS_HOST: ci-redis
           JWT_SECRET: ci-only-jwt-secret-32chars-min-do-not-deploy-aaaaaaaaaaaaaaaa
+          JWT_REFRESH_SECRET: ci-only-refresh-secret-32chars-min-do-not-deploy-bbbbbbbbbbbbbbbb
+          ENABLE_SECURE_COOKIE: 'true'
           TRADING_AGENTS_URL: http://trading-agents.internal:8000
+          STOCKS_REPLAY_RUNTIME_DIR: /tmp/stocks-ci-replay
+          DATABASE_URL: postgresql://ci_user@ci-postgres:5432/ci_stocks
+          STOCKS_REPLAY_MODEL_VERSION: 1.0.0-ci.1
+          STOCKS_REPLAY_TEMPLATE_HASH: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          STOCKS_REPLAY_DISCLAIMERS_JSON: '{"zh-CN":{"version":"1.0.0","short_text":"仅供研究参考","full_text":"仅供研究参考，不构成投资建议。","language":"zh-CN","effective_at":"2026-01-01T00:00:00Z","hash":"5410d3e9ca5ba3064f28b679bcc32c32ac97d94a2a436bf330b57c3d54432e77"},"ja-JP":{"version":"1.0.0","short_text":"調査目的のみ","full_text":"調査目的のみであり、投資助言ではありません。","language":"ja-JP","effective_at":"2026-01-01T00:00:00Z","hash":"bde57024ab9081069382bfdef7e3d379f834772ca05f44fd5faaa5193fca8fd1"},"ko-KR":{"version":"1.0.0","short_text":"연구 목적 전용","full_text":"연구 목적으로만 제공되며 투자 조언이 아닙니다.","language":"ko-KR","effective_at":"2026-01-01T00:00:00Z","hash":"bea0e686c3467d02057f50456bf6c13f3170f8d18a69d90751ffe0960920c2c2"}}'
+          STOCKS_REPLAY_WORKER_DEADLINE_SECONDS: '120'
+          STOCKS_REPLAY_LEASE_SECONDS: '150'
+          STOCKS_REPLAY_MAX_CONCURRENCY: '2'
+          STOCKS_REPLAY_MAX_QUEUE_DEPTH: '32'
+          STOCKS_REPLAY_SUBMIT_RATE_PER_MINUTE: '10'
+          STOCKS_REPLAY_STATUS_RATE_PER_MINUTE: '120'
+          STOCKS_REPLAY_RATE_MAX_USERS: '10000'
         run: |
           set -o pipefail
           npm run check-env 2>&1 | tee ../backend-envcheck.log
@@ -423,30 +443,22 @@ jobs:
           cmp ../backend-test-fixtures-before.sha256 ../backend-test-fixtures-restored.sha256
           git diff --exit-code -- "${fixtures[@]}"
 
-          if [ "$test_rc" -ne 1 ]; then
-            echo "::error::backend test producer must exit 1 while the debt ledger is active (got $test_rc)"
+          if [ "$test_rc" -ne 0 ]; then
+            echo "::error::backend test suite failed (exit=$test_rc)"
             exit 1
           fi
 
-          node ../scripts/ci/backend_test_debt.js compare \
-            --log ../backend-test.log \
-            --producer-exit "$test_rc" \
-            --baseline ../docs/refactor/baseline/ci/backend-test-debt-da801a52.json \
-            --output ../backend-test-debt-current.json 2>&1 \
-            | tee ../backend-test-debt-comparator.log
           git diff --exit-code
         continue-on-error: false
 
-      - name: Upload backend test debt evidence
+      - name: Upload backend test evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: backend-test-debt-${{ github.run_attempt }}
+          name: backend-test-${{ github.run_attempt }}
           path: |
             backend-test.log
             backend-test.exit
-            backend-test-debt-current.json
-            backend-test-debt-comparator.log
             backend-test-fixtures-before.sha256
             backend-test-fixtures-after.sha256
             backend-test-fixtures-restored.sha256

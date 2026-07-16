@@ -1,18 +1,12 @@
 /**
- * Sprint 24 Integration Smoke Test
+ * Pattern-library + TradeCompliance smoke test (retained from Sprint 24).
  *
- * 验证 3 个 "工具已造但没插电" 的真接入 + 8 layer barrel re-export:
- *
- *   A1. Pattern multiplier 接入 4 strategies (Minervini/VCP/Turtle/Donchian)
- *   A2. RecommendationTradeOutcome.@AfterUpdate hook (DQS auto)
- *   A3. TradeComplianceChecker — Wizard 5 rules → RiskAlert
- *   B.  8 layer barrels — export 路径等价于直接 import 原模块
+ * 旧 Minervini/VCP/Turtle/Donchian strategies 已由 7fa8bc9f 明确删除，
+ * L1-L8 barrel 空壳已由 66ad4efc 明确删除。本测试只保留仍活跃的纯函数契约：
+ *   A. pattern-library regime / multiplier helpers
+ *   B. TradeComplianceChecker Wizard rules
  */
 
-import { MinerviniTrendTemplateStrategy } from '../../src/quant/strategies/MinerviniTrendTemplateStrategy';
-import { VolatilityContractionBreakoutStrategy } from '../../src/quant/strategies/VolatilityContractionBreakoutStrategy';
-import { TurtleBreakoutStrategy } from '../../src/quant/strategies/TurtleBreakoutStrategy';
-import { DonchianTrendStrategy } from '../../src/quant/strategies/DonchianTrendStrategy';
 import { checkTradeCompliance } from '../../src/services/TradeComplianceChecker';
 import {
   inferLocalRegime,
@@ -20,11 +14,6 @@ import {
   turtleEntryWithPatternFilter,
   donchianBreakoutWithPatternAdjustment,
 } from '../../src/services/research/pattern-library';
-
-// Layer barrel imports — 验证 re-export 等价性
-import { inferLocalRegime as L2_inferLocalRegime } from '../../src/layers/L2_signal';
-import { checkTradeCompliance as L8_checkTradeCompliance } from '../../src/layers/L8_reflection';
-import { computeReasonTriplet } from '../../src/layers/L7_governor';
 
 let passed = 0;
 let failed = 0;
@@ -41,18 +30,6 @@ function assert(name: string, cond: boolean, detail = '') {
 // ============================================================
 // Test helpers — 生成 mock QuantBar 序列
 // ============================================================
-
-function makeBars(closes: number[], baseVolume = 1_000_000) {
-  return closes.map((close, i) => ({
-    date: `2026-01-${String((i % 28) + 1).padStart(2, '0')}`,
-    open: close * 0.995,
-    high: close * 1.01,
-    low: close * 0.99,
-    close,
-    volume: baseVolume + (i * 100),
-    turnover: close * (baseVolume + i * 100),
-  }));
-}
 
 function makeStrongUptrend(length = 260, start = 50) {
   // 真实强势股: 持续上涨, 但带极小噪声 (确保 vol_annual < 20%)
@@ -83,79 +60,12 @@ function makeVolatile(length = 260, base = 50) {
   }
   return closes;
 }
-
 // ============================================================
-// A1: Pattern multiplier 接入 4 strategies
-// ============================================================
-
-function testA1_PatternInjectionStrategies() {
-  console.log('\n## A1: Pattern multiplier 接入 4 strategies');
-
-  const strongUp = makeStrongUptrend();
-  const sideways = makeSideways();
-  const volatile = makeVolatile();
-
-  // --- Minervini ---
-  const minervini = new MinerviniTrendTemplateStrategy();
-  const m1 = minervini.evaluate({
-    stock_id: 1, symbol: 'sh.600519', name: 'TEST',
-    bars: makeBars(strongUp), latest_price: strongUp[strongUp.length - 1],
-  });
-  assert('Minervini 强势股有 local_regime', typeof m1.factors.local_regime === 'string', `regime=${m1.factors.local_regime}`);
-  assert('Minervini 有 pattern_multiplier', typeof m1.factors.pattern_multiplier === 'number', `mul=${m1.factors.pattern_multiplier}`);
-  assert('Minervini multiplier ∈ [0.5, 1.5]', m1.factors.pattern_multiplier >= 0.5 && m1.factors.pattern_multiplier <= 1.5);
-  assert('Minervini score finite + clamp', Number.isFinite(m1.score) && m1.score >= 0 && m1.score <= 100);
-
-  // --- VCP ---
-  const vcp = new VolatilityContractionBreakoutStrategy();
-  const v1 = vcp.evaluate({
-    stock_id: 2, symbol: 'sz.000001', name: 'VCPTEST',
-    bars: makeBars(strongUp), latest_price: strongUp[strongUp.length - 1],
-  });
-  assert('VCP 有 local_regime', typeof v1.factors.local_regime === 'string');
-  assert('VCP 有 pattern_multiplier', typeof v1.factors.pattern_multiplier === 'number');
-  assert('VCP multiplier ∈ [0.5, 1.5]', v1.factors.pattern_multiplier >= 0.5 && v1.factors.pattern_multiplier <= 1.5);
-
-  // --- Turtle ---
-  const turtle = new TurtleBreakoutStrategy();
-  const t1 = turtle.evaluate({
-    stock_id: 3, symbol: 'sh.600036', name: 'TURTLE',
-    bars: makeBars(strongUp), latest_price: strongUp[strongUp.length - 1],
-  });
-  assert('Turtle 有 local_regime', typeof t1.factors.local_regime === 'string');
-  assert('Turtle 有 turtle_pattern_multiplier', typeof t1.factors.turtle_pattern_multiplier === 'number');
-  assert('Turtle 有 turtle_entry_pass bool', typeof t1.factors.turtle_entry_pass === 'boolean');
-
-  // --- Donchian ---
-  const donchian = new DonchianTrendStrategy();
-  const d1 = donchian.evaluate({
-    stock_id: 4, symbol: 'sh.601398', name: 'DONCHIAN',
-    bars: makeBars(strongUp), latest_price: strongUp[strongUp.length - 1],
-  });
-  assert('Donchian 有 local_regime', typeof d1.factors.local_regime === 'string');
-  assert('Donchian 有 donchian_pattern_multiplier', typeof d1.factors.donchian_pattern_multiplier === 'number');
-  assert('Donchian 有 donchian_buy_signal bool', typeof d1.factors.donchian_buy_signal === 'boolean');
-
-  // --- 不同 regime 下 multiplier 应不同 ---
-  const m_volatile = minervini.evaluate({
-    stock_id: 5, symbol: 'TEST', name: 'TEST',
-    bars: makeBars(volatile), latest_price: volatile[volatile.length - 1],
-  });
-  const m_sideways = minervini.evaluate({
-    stock_id: 5, symbol: 'TEST', name: 'TEST',
-    bars: makeBars(sideways), latest_price: sideways[sideways.length - 1],
-  });
-  assert('不同 regime 推断不同结果', m_volatile.factors.local_regime !== m_sideways.factors.local_regime
-    || m_volatile.factors.local_regime === m_sideways.factors.local_regime, // 至少其中一种成立 (无空指针)
-    `volatile→${m_volatile.factors.local_regime}, sideways→${m_sideways.factors.local_regime}`);
-}
-
-// ============================================================
-// A2: inferLocalRegime + pattern multiplier 纯函数
+// A: inferLocalRegime + pattern multiplier 纯函数
 // ============================================================
 
-function testA2_PatternHelpers() {
-  console.log('\n## A2: inferLocalRegime + pattern helpers');
+function testPatternHelpers() {
+  console.log('\n## A: inferLocalRegime + pattern helpers');
 
   const up = makeStrongUptrend();
   const flat = makeSideways();
@@ -185,11 +95,11 @@ function testA2_PatternHelpers() {
 }
 
 // ============================================================
-// A3: TradeComplianceChecker — Wizard 5 rules
+// B: TradeComplianceChecker — Wizard 5 rules
 // ============================================================
 
-function testA3_TradeCompliance() {
-  console.log('\n## A3: TradeComplianceChecker — Wizard rules');
+function testTradeCompliance() {
+  console.log('\n## B: TradeComplianceChecker — Wizard rules');
 
   // 完美交易: 小 size + 高 conviction + 短 hold + 顺势 + RR good + worst case 分析过
   const perfectTrade = {
@@ -245,53 +155,14 @@ function testA3_TradeCompliance() {
     : true);
   assert('summary_message 有内容', badResult.summary_message.length > 0);
 }
-
-// ============================================================
-// B. 8 layer barrels — re-export 等价性
-// ============================================================
-
-function testB_LayerBarrels() {
-  console.log('\n## B: 8 layer barrels — re-export 等价');
-
-  // L2 inferLocalRegime 等价于直接 import
-  const closes = makeStrongUptrend();
-  const r1 = inferLocalRegime(closes);
-  const r2 = L2_inferLocalRegime(closes);
-  assert('L2 barrel inferLocalRegime 等价', r1 === r2, `direct=${r1}, barrel=${r2}`);
-
-  // L8 checkTradeCompliance 等价
-  const trade = {
-    realized_pnl_pct: 0.05, position_size_pct: 0.05, conviction_level: 5,
-    max_drawdown_during_hold_pct: 0.02, closed_pre_weekend: false, held_over_weekend: false,
-    realized_vol_during_hold: 0.2, stop_loss_distance_pct: 0.05, market_trend: 'up' as const,
-    trade_direction: 'BUY' as const, expected_target_pct: 0.1, expected_stop_pct: 0.05,
-    worst_case_analyzed_pre_trade: true, current_pe: 15, historical_avg_pe: 15, has_specific_catalyst: true,
-  };
-  const c1 = checkTradeCompliance(trade);
-  const c2 = L8_checkTradeCompliance(trade);
-  assert('L8 barrel checkTradeCompliance 等价', c1.rule_compliance_grade === c2.rule_compliance_grade);
-
-  // L7 computeReasonTriplet 可调用
-  const tripletInput = {
-    entry_date: '2026-01-01', exit_date: '2026-01-10',
-    entry_price: 100, exit_price: 108, total_pnl_pct: 8, holding_days: 9,
-    thesis_recorded_pre_trade: true, data_support_count: 3, stop_loss_honored: true,
-    conviction_level: 6, position_size_pct: 0.05,
-  };
-  const triplet = computeReasonTriplet(tripletInput);
-  assert('L7 computeReasonTriplet 可调用', typeof triplet.composite_dqs === 'number', `dqs=${triplet.composite_dqs}`);
-}
-
 // ============================================================
 // Main
 // ============================================================
 
 async function main() {
-  console.log('=== Sprint 24 Integration Smoke Test ===');
-  testA1_PatternInjectionStrategies();
-  testA2_PatternHelpers();
-  testA3_TradeCompliance();
-  testB_LayerBarrels();
+  console.log('=== Pattern + TradeCompliance Smoke Test ===');
+  testPatternHelpers();
+  testTradeCompliance();
   console.log(`\n========================================`);
   console.log(`Sprint 24: ${passed} pass / ${failed} fail`);
   console.log(`========================================`);

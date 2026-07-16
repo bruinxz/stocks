@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
+import re
 from typing import List, Literal, Mapping, Union
 
 JsonScalar = Union[str, int, float, bool, None]
@@ -18,6 +19,21 @@ MultibaggerRecordKind = Literal[
     "FRENCH_AGGREGATE",
     "TEXT_HIT",
 ]
+
+_SOURCE_VERSION_RE = re.compile(r"^[!-~]+$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def is_canonical_source_version(value: object) -> bool:
+    """Return whether value is an exact non-empty printable-ASCII token."""
+
+    return type(value) is str and _SOURCE_VERSION_RE.fullmatch(value) is not None
+
+
+def is_canonical_sha256(value: object) -> bool:
+    """Return whether value is an exact lowercase SHA-256 hex digest."""
+
+    return type(value) is str and _SHA256_RE.fullmatch(value) is not None
 
 
 @dataclass(frozen=True)
@@ -55,9 +71,11 @@ class MultibaggerSourceRecord:
             raise ValueError("market and market_scope must use the canonical mapping")
         if self.available_at_utc > self.as_of_utc:
             raise ValueError("available_at_utc must not exceed as_of_utc")
-        if not self.source_document_id or not self.source_version:
-            raise ValueError("source document identity and version are required")
-        if len(self.fact_hash) != 64 or any(char not in "0123456789abcdef" for char in self.fact_hash):
+        if not self.source_document_id:
+            raise ValueError("source document identity is required")
+        if not is_canonical_source_version(self.source_version):
+            raise ValueError("source_version must be a printable ASCII token")
+        if not is_canonical_sha256(self.fact_hash):
             raise ValueError("fact_hash must be lowercase SHA-256 hex")
 
 
@@ -84,6 +102,8 @@ class FxObservation:
         expected_source = {"USDJPY": "BOJ", "USDKRW": "BOK"}[self.pair]
         if self.source_kind != expected_source:
             raise ValueError("pair and source_kind must use the frozen provider mapping")
+        if not is_canonical_source_version(self.source_version):
+            raise ValueError("source_version must be a printable ASCII token")
         if self.local_per_usd <= 0 or self.usd_per_local <= 0:
             raise ValueError("FX rates must be positive")
         if abs((self.local_per_usd * self.usd_per_local) - Decimal(1)) > Decimal(
@@ -96,6 +116,12 @@ class FxObservation:
             self.previous_source_version,
             self.previous_fact_hash,
         )
+        if self.previous_source_version is not None and not is_canonical_source_version(
+            self.previous_source_version
+        ):
+            raise ValueError(
+                "previous_source_version must be a printable ASCII token"
+            )
         if self.change_pct is None:
             if any(value is not None for value in previous):
                 raise ValueError("previous lineage requires change_pct")
@@ -106,8 +132,5 @@ class FxObservation:
         ):
             raise ValueError("change_pct requires complete earlier-observation lineage")
         for digest in (self.fact_hash, self.previous_fact_hash):
-            if digest is not None and (
-                len(digest) != 64
-                or any(char not in "0123456789abcdef" for char in digest)
-            ):
+            if digest is not None and not is_canonical_sha256(digest):
                 raise ValueError("fact hashes must be lowercase SHA-256 hex")

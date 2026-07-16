@@ -16,6 +16,8 @@ import os
 from typing import Any, Optional
 from urllib.parse import parse_qsl, unquote, urlsplit
 
+from ai.replay.errors import ReplayInfrastructureError
+
 from ai.snapshot.fingerprint import jcs_canonicalize
 from ai.snapshot.store import (
     SnapshotItemRow,
@@ -117,16 +119,20 @@ _SSL_MODES = frozenset(
 )
 
 
-class SnapshotStoreConfigurationError(ValueError):
+class SnapshotStoreConfigurationError(ValueError, ReplayInfrastructureError):
     """DATABASE_URL is missing, ambiguous, or unsafe."""
 
 
-class SnapshotStoreDependencyError(RuntimeError):
+class SnapshotStoreDependencyError(ReplayInfrastructureError):
     """The production psycopg3 dependency is unavailable."""
 
 
-class SnapshotStoreConnectionError(RuntimeError):
+class SnapshotStoreConnectionError(ReplayInfrastructureError):
     """The configured database cannot be opened without leaking its URL."""
+
+
+class SnapshotStoreOperationError(ReplayInfrastructureError):
+    """A PostgreSQL read/write operation failed without exposing its detail."""
 
 
 def _contains_control(value: str) -> bool:
@@ -348,13 +354,16 @@ class _PostgresSnapshotTransaction:
     def find_snapshot_by_idempotency_key(
         self, idempotency_key: str
     ) -> Optional[SnapshotRow]:
-        with self._connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT pg_advisory_xact_lock(%s)",
-                (_advisory_key(idempotency_key),),
-            )
-            cursor.execute(_SELECT_SNAPSHOT_BY_IDEMPOTENCY, (idempotency_key,))
-            row = cursor.fetchone()
+        try:
+            with self._connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT pg_advisory_xact_lock(%s)",
+                    (_advisory_key(idempotency_key),),
+                )
+                cursor.execute(_SELECT_SNAPSHOT_BY_IDEMPOTENCY, (idempotency_key,))
+                row = cursor.fetchone()
+        except Exception:
+            raise SnapshotStoreOperationError("snapshot lookup failed") from None
         return _snapshot_from_row(row) if row is not None else None
 
     def get_items(self, snapshot_id: str) -> Sequence[SnapshotItemRow]:
@@ -366,8 +375,11 @@ class _PostgresSnapshotTransaction:
             for field in SNAPSHOT_COLUMNS
             if field != "envelope_json"
         ) + (jcs_canonicalize(snapshot.envelope_json),)
-        with self._connection.cursor() as cursor:
-            cursor.execute(_INSERT_SNAPSHOT, values)
+        try:
+            with self._connection.cursor() as cursor:
+                cursor.execute(_INSERT_SNAPSHOT, values)
+        except Exception:
+            raise SnapshotStoreOperationError("snapshot insert failed") from None
 
     def insert_items(self, items: Sequence[SnapshotItemRow]) -> None:
         values = [
@@ -388,14 +400,20 @@ class _PostgresSnapshotTransaction:
         ]
         if not values:
             return
-        with self._connection.cursor() as cursor:
-            cursor.executemany(_INSERT_ITEM, values)
+        try:
+            with self._connection.cursor() as cursor:
+                cursor.executemany(_INSERT_ITEM, values)
+        except Exception:
+            raise SnapshotStoreOperationError("snapshot item insert failed") from None
 
 
 def _read_items(connection: Any, snapshot_id: str) -> tuple[SnapshotItemRow, ...]:
-    with connection.cursor() as cursor:
-        cursor.execute(_SELECT_ITEMS, (snapshot_id,))
-        rows = cursor.fetchall()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(_SELECT_ITEMS, (snapshot_id,))
+            rows = cursor.fetchall()
+    except Exception:
+        raise SnapshotStoreOperationError("snapshot item lookup failed") from None
     return tuple(_item_from_row(row) for row in rows)
 
 
@@ -457,9 +475,12 @@ class PostgresSnapshotStore:
     def get_snapshot(self, snapshot_id: str) -> Optional[SnapshotRow]:
         connection = self._connect()
         try:
-            with connection.cursor() as cursor:
-                cursor.execute(_SELECT_SNAPSHOT_BY_ID, (snapshot_id,))
-                row = cursor.fetchone()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(_SELECT_SNAPSHOT_BY_ID, (snapshot_id,))
+                    row = cursor.fetchone()
+            except Exception:
+                raise SnapshotStoreOperationError("snapshot lookup failed") from None
             return _snapshot_from_row(row) if row is not None else None
         finally:
             connection.close()
@@ -490,9 +511,12 @@ WHERE profile = %s AND market_scope = %s
         query += " ORDER BY as_of_utc DESC, snapshot_id DESC"
         connection = self._connect()
         try:
-            with connection.cursor() as cursor:
-                cursor.execute(query, parameters)
-                rows = cursor.fetchall()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(query, parameters)
+                    rows = cursor.fetchall()
+            except Exception:
+                raise SnapshotStoreOperationError("snapshot list failed") from None
             return tuple(_snapshot_from_row(row) for row in rows)
         finally:
             connection.close()

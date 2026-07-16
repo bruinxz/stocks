@@ -2,7 +2,8 @@
  * US-070 [FE-031] AlertsBell 顶 nav bar — 纯函数 helper.
  *
  * 让用户在任何 workspace 都能在右上角 Header 一眼看到风控告警未读数,
- * 点击 Bell 跳到 `/workspace/today` 并落到 "风控中心" tab. 与 backend
+ * 点击 Bell 跳到当前主入口 `/catdesk`. 独立 Today / Home / Portfolio 风控页已在
+ * catalyst-900 cleanup 中删除，不能再生成依赖重定向或 wildcard 的伪深链。与 backend
  * `/api/risk-alerts/list` 的 `unread_count` 字段对齐 — 本组件只显示数字,
  * 不展示告警内容 (内容详情仍属 RiskAlertCenterPanel / 未来 US-071
  * AlertsPanel 的职责).
@@ -123,30 +124,27 @@ export function clampPollInterval(input: unknown): number {
 }
 
 /**
- * 点击 Bell 后的目标路径 — 风控中心 sub-tab.
+ * 点击 Bell 后的目标路径 — catalyst-900 当前主入口.
  *
  * 抽成常量 + helper 让单测能守"点击落点不会被未来 refactor 改错地方".
  * 与 [[strategyKillSwitchHelpers]] 同款"路径单一事实源"思想.
  */
-export const ALERTS_BELL_TARGET_PATH = '/home';
-export const ALERTS_BELL_TARGET_TAB_KEY = 'risk_center';
+export const ALERTS_BELL_TARGET_PATH = '/catdesk';
 
 /**
- * 完整目标 URL — caller 用 navigate(buildAlertsBellHref()) 即可.
+ * 完整目标 URL — caller 用 navigate(buildAlertsBellHref()) 即可。当前没有告警专属 tab，
+ * 因此不附加会被 CatDesk 忽略的 legacy `?tab=risk_center`。
  *
  */
 export function buildAlertsBellHref(): string {
-  return `${ALERTS_BELL_TARGET_PATH}?tab=${ALERTS_BELL_TARGET_TAB_KEY}`;
+  return ALERTS_BELL_TARGET_PATH;
 }
 
 /**
- * 普通用户的目标路径 — PortfolioWorkspace "我的提醒" tab.
- *
- *
- * 抽 const 让单测能守 "未来 refactor 改路径不会偷偷把普通用户带到 admin 页".
+ * 普通用户目标路径。PortfolioWorkspace 已删除，角色间统一回到当前主入口。
+ * 保留独立常量 / helper 是为了兼容既有调用方，但不再制造不存在的角色专属页面。
  */
-export const ALERTS_BELL_USER_TARGET_PATH = '/workspace/portfolio';
-export const ALERTS_BELL_USER_TARGET_TAB_KEY = 'alerts';
+export const ALERTS_BELL_USER_TARGET_PATH = ALERTS_BELL_TARGET_PATH;
 
 /**
  * 普通用户的完整目标 URL.
@@ -154,13 +152,11 @@ export const ALERTS_BELL_USER_TARGET_TAB_KEY = 'alerts';
  * Caller 用 navigate(buildAlertsBellHrefForUser()) 即可.
  */
 export function buildAlertsBellHrefForUser(): string {
-  return `${ALERTS_BELL_USER_TARGET_PATH}?tab=${ALERTS_BELL_USER_TARGET_TAB_KEY}`;
+  return ALERTS_BELL_USER_TARGET_PATH;
 }
 
 /**
- * 按角色取目标 URL — admin → 风控中心 (含全部规则), 其它 → 我的提醒 (按持仓过滤).
- *
- * isAdmin 缺省 / undefined / null → 普通用户 (默认更保守, 避免把普通用户误带到 admin 页).
+ * 按角色取目标 URL。参数保留 API 兼容；当前两个角色都落到 `/catdesk`。
  */
 export function buildAlertsBellHrefForRole(isAdmin: boolean | null | undefined): string {
   return isAdmin === true ? buildAlertsBellHref() : buildAlertsBellHrefForUser();

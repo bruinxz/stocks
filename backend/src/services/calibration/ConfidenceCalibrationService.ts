@@ -72,8 +72,7 @@ export function wilsonLowerBound(k: number, n: number, z: number = WILSON_Z): nu
   const pHat = k / n;
   const denom = 1 + (z * z) / n;
   const center = (pHat + (z * z) / (2 * n)) / denom;
-  const margin =
-    (z * Math.sqrt((pHat * (1 - pHat)) / n + (z * z) / (4 * n * n))) / denom;
+  const margin = (z * Math.sqrt((pHat * (1 - pHat)) / n + (z * z) / (4 * n * n))) / denom;
   return Math.max(0, center - margin);
 }
 
@@ -201,7 +200,7 @@ export class ConfidenceCalibrationService {
    */
   async calibrate(
     sourceType: string,
-    regime: string = '__all__',
+    regime = '__all__',
     options: CalibrationOptions = {}
   ): Promise<CalibrationMetrics> {
     const lookbackDays = options.lookbackDays ?? DEFAULT_LOOKBACK_DAYS;
@@ -219,8 +218,7 @@ export class ConfidenceCalibrationService {
       );
     }
 
-    const filtered =
-      regime === '__all__' ? outcomes : outcomes.filter(o => o.regime === regime);
+    const filtered = regime === '__all__' ? outcomes : outcomes.filter(o => o.regime === regime);
     return this.computeMetrics(sourceType, regime, filtered, start, end);
   }
 
@@ -274,9 +272,7 @@ export class ConfidenceCalibrationService {
     const winRateRaw = n > 0 ? k / n : 0;
     const confidence = wilsonLowerBound(k, n);
     const avgWin = wins.length ? wins.reduce((s, o) => s + o.pnl_pct, 0) / wins.length : 0;
-    const avgLoss = losses.length
-      ? -losses.reduce((s, o) => s + o.pnl_pct, 0) / losses.length
-      : 0;
+    const avgLoss = losses.length ? -losses.reduce((s, o) => s + o.pnl_pct, 0) / losses.length : 0;
     const sumWin = wins.reduce((s, o) => s + o.pnl_pct, 0);
     const sumLoss = -losses.reduce((s, o) => s + o.pnl_pct, 0);
     const profitFactor = sumLoss > 1e-9 ? sumWin / sumLoss : sumWin > 0 ? Infinity : 0;

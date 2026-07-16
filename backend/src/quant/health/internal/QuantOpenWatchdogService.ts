@@ -6,12 +6,6 @@ import { AIInvestmentSignal, AISignalSourceType } from '../../../models/AIInvest
 import { PaperTradingTrade } from '../../../models/PaperTradingTrade';
 import { realtimeQuoteService } from '../../../data/services/RealtimeQuoteService';
 
-// ⚠️ DEPRECATED STUB — 以下"模型"是 批8 (2026-07-03 物理删表 D7) 已删除的 Sequelize
-// model 的占位替身,仅为让依赖它们的历史代码路径继续编译。所有方法恒返回空
-// (findAll→[] / findOne→null / count→0),即该数据维度已永久下线、优雅降级为"无数据"。
-// 请勿在此基础上新增业务逻辑;新功能应改接真实数据源或整段移除调用方。
-const QuantSignal = { count: async (_?: any): Promise<number> => 0 };
-
 type WatchdogStatus = 'healthy' | 'warning' | 'critical';
 
 type WatchdogIssue = {
@@ -29,6 +23,11 @@ function toPositiveInt(value: any, fallback: number, max?: number): number {
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   const normalized = Math.floor(parsed);
   return max ? Math.min(normalized, max) : normalized;
+}
+
+function toNonNegativeInt(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
 }
 
 function worstStatus(issues: WatchdogIssue[]): WatchdogStatus {
@@ -128,20 +127,27 @@ class QuantOpenWatchdogService {
       });
     }
 
-    const [quantSignalCount, archivedSignalCount, paperTradeCount, quotePersistence] =
-      await Promise.all([
-        QuantSignal.count({ where: { trade_date: tradeDate } }),
-        AIInvestmentSignal.count({
-          where: {
-            source_type: AISignalSourceType.QUANT_RECOMMENDATION,
-            signal_date: tradeDate,
-          },
-        }),
-        PaperTradingTrade.count({
-          where: { created_at: { [Op.between]: [dayStart, dayEnd] } },
-        }).catch(() => 0),
-        realtimeQuoteService.getPersistenceSummary({ trade_date: tradeDate }),
-      ]);
+    // QuantSignal was physically retired by the Signal-First migration. The
+    // durable task log is now the source for whether a scan processed work;
+    // a permanent zero stub made every successful run look critical.
+    const quantSignalCount = latestLog
+      ? Math.max(
+          toNonNegativeInt(latestLog.total_items),
+          toNonNegativeInt(latestLog.completed_items)
+        )
+      : 0;
+    const [archivedSignalCount, paperTradeCount, quotePersistence] = await Promise.all([
+      AIInvestmentSignal.count({
+        where: {
+          source_type: AISignalSourceType.QUANT_RECOMMENDATION,
+          signal_date: tradeDate,
+        },
+      }),
+      PaperTradingTrade.count({
+        where: { created_at: { [Op.between]: [dayStart, dayEnd] } },
+      }).catch(() => 0),
+      realtimeQuoteService.getPersistenceSummary({ trade_date: tradeDate }),
+    ]);
 
     if (quantSignalCount < minQuantSignals) {
       issues.push({
@@ -160,8 +166,7 @@ class QuantOpenWatchdogService {
       // 修后: 当 quant_signal_count 达标 (扫描已成功) 但 archived=0, 仅 warning
       // 不 throw; 只有扫描和归档都不足才 critical (真链路异常).
       const scanWorked = quantSignalCount >= minQuantSignals;
-      const isCritical =
-        latestLog?.status === 'COMPLETED' && hasMarketOpenedForDate && !scanWorked;
+      const isCritical = latestLog?.status === 'COMPLETED' && hasMarketOpenedForDate && !scanWorked;
       issues.push({
         level: isCritical ? 'critical' : 'warning',
         code: 'no_archived_signals',

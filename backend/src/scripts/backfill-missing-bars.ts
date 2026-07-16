@@ -61,7 +61,8 @@ program
       }
 
       const today = moment().tz('Asia/Shanghai').format('YYYY-MM-DD');
-      const since = opts.since || moment().tz('Asia/Shanghai').subtract(30, 'days').format('YYYY-MM-DD');
+      const since =
+        opts.since || moment().tz('Asia/Shanghai').subtract(30, 'days').format('YYYY-MM-DD');
       const until = opts.until || today;
       const concurrency = Math.min(Math.max(parseInt(opts.concurrency, 10) || 3, 1), 10);
       const intervalMs = Math.max(parseInt(opts.intervalMs, 10) || 300, 100);
@@ -121,7 +122,9 @@ program
       }
 
       if (dryRun) {
-        console.log(`[backfill] DRY-RUN: 将回填 ${symbols.length} 只 stock, 区间 ${since} → ${until}`);
+        console.log(
+          `[backfill] DRY-RUN: 将回填 ${symbols.length} 只 stock, 区间 ${since} → ${until}`
+        );
         symbols.slice(0, 50).forEach(s => console.log(`  - ${s}`));
         if (symbols.length > 50) console.log(`  ... 还有 ${symbols.length - 50} 只`);
         process.exit(0);

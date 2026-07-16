@@ -150,7 +150,9 @@ const RECOMMENDATION_SOURCES = new Set<string>([
   String(AISignalSourceType.THEME_FERMENTATION),
 ]);
 
-export function deriveSignalKind(sourceType: string | null | undefined): 'recommendation' | 'watch' {
+export function deriveSignalKind(
+  sourceType: string | null | undefined
+): 'recommendation' | 'watch' {
   if (!sourceType) return 'recommendation';
   return RECOMMENDATION_SOURCES.has(String(sourceType)) ? 'recommendation' : 'watch';
 }
@@ -165,7 +167,9 @@ export function deriveCoreSatellite(
   sourceType: string | null | undefined,
   metadata?: Record<string, unknown> | null
 ): 'core' | 'satellite' | 'cash' {
-  const bucket = String(metadata?.core_satellite_bucket ?? '').trim().toLowerCase();
+  const bucket = String(metadata?.core_satellite_bucket ?? '')
+    .trim()
+    .toLowerCase();
   if (bucket === 'core' || bucket === 'satellite' || bucket === 'cash') return bucket;
   const src = String(sourceType ?? '');
   if (src === String(AISignalSourceType.ETF_FACTOR_ROTATION)) return 'core';
@@ -1115,7 +1119,7 @@ class V3RecommendationController {
     // 让前端 / paper trading 按修正后 conf 排序, 反向之后高 conf 反而是真高质量.
     // 长远方案: 重写因子 / 校准 conf — PR-M4+ 计划.
     // fail-open: adjuster 内部 throw 仅 warn, 返 raw conf 不动 — 保守不"乱反".
-    let confAdjustment: any = {
+    const confAdjustment: any = {
       confidence_score_raw: signal.confidence_score ?? null,
       confidence_score_adjusted: signal.confidence_score ?? null,
       adjustment_reason: 'no_data' as const,
@@ -1191,7 +1195,9 @@ class V3RecommendationController {
       signal_date: signal.signal_date,
       // PR-W (2026-06-30) — 信号创建时间 + 信号分类 (推荐 vs 观察) 透传.
       created_at: signal.created_at
-        ? (signal.created_at instanceof Date ? signal.created_at.toISOString() : String(signal.created_at))
+        ? signal.created_at instanceof Date
+          ? signal.created_at.toISOString()
+          : String(signal.created_at)
         : null,
       signal_kind: deriveSignalKind(signal.source_type),
       // 批7j/§7.1 — 核心-卫星桶: 前端据此把核心 ETF 与卫星题材分区展示.
@@ -1201,15 +1207,20 @@ class V3RecommendationController {
       // PR-O2 (2026-06-29) — 涨停板战法 pattern badge. 仅 source_type='limit_up_board' 写入,
       // 其它 source 默认 null. 前端 /home 推荐卡见到 limit_up_pattern 非空就额外加一个
       // "🚀 一字板" / "📈 二板加速" 等 badge.
-      limit_up_pattern: typeof metadata?.pattern === 'string' && metadata?.source === 'limit_up_board_detector'
-        ? String(metadata.pattern)
-        : null,
-      limit_up_pattern_label: typeof metadata?.pattern_label === 'string' && metadata?.source === 'limit_up_board_detector'
-        ? String(metadata.pattern_label)
-        : null,
-      limit_up_continuous_days: Number.isFinite(Number(metadata?.continuous_days)) && metadata?.source === 'limit_up_board_detector'
-        ? Number(metadata.continuous_days)
-        : null,
+      limit_up_pattern:
+        typeof metadata?.pattern === 'string' && metadata?.source === 'limit_up_board_detector'
+          ? String(metadata.pattern)
+          : null,
+      limit_up_pattern_label:
+        typeof metadata?.pattern_label === 'string' &&
+        metadata?.source === 'limit_up_board_detector'
+          ? String(metadata.pattern_label)
+          : null,
+      limit_up_continuous_days:
+        Number.isFinite(Number(metadata?.continuous_days)) &&
+        metadata?.source === 'limit_up_board_detector'
+          ? Number(metadata.continuous_days)
+          : null,
       // PR-O5 (2026-06-30) — 题材发酵 5 阶段透传 (字段缺失 → 前端 badge 自动隐藏).
       theme_phase: themePhase,
       theme_phase_label: themePhaseLabel,
@@ -1263,9 +1274,9 @@ class V3RecommendationController {
       signal_date: signal.signal_date,
       // PR-W (2026-06-30) — minimal view 也透传 created_at + signal_kind.
       created_at: (signal as any).created_at
-        ? ((signal as any).created_at instanceof Date
-            ? (signal as any).created_at.toISOString()
-            : String((signal as any).created_at))
+        ? (signal as any).created_at instanceof Date
+          ? (signal as any).created_at.toISOString()
+          : String((signal as any).created_at)
         : null,
       signal_kind: deriveSignalKind((signal as any).source_type),
       core_satellite: deriveCoreSatellite((signal as any).source_type, (signal as any).metadata),
@@ -1286,7 +1297,8 @@ class V3RecommendationController {
       })(),
       limit_up_continuous_days: (() => {
         const m = (signal as any).metadata;
-        return Number.isFinite(Number(m?.continuous_days)) && m?.source === 'limit_up_board_detector'
+        return Number.isFinite(Number(m?.continuous_days)) &&
+          m?.source === 'limit_up_board_detector'
           ? Number(m.continuous_days)
           : null;
       })(),

@@ -49,12 +49,14 @@
  *   1 = 任一 scenario FAILED (说明风控在该场景下不真生效, 有 regression)
  */
 
+import { Op } from 'sequelize';
 import { sequelize } from '../config/database';
 import '../models';
 import { logger } from '../utils/logger';
 import { User } from '../models/User';
 import { RiskAlert } from '../models/RiskAlert';
 import { PaperTradingPortfolio } from '../models/PaperTradingPortfolio';
+import { PaperTradingPosition } from '../models/PaperTradingPosition';
 import {
   drawdownCircuitBreaker,
   RiskGuardUnavailableError,
@@ -112,22 +114,19 @@ async function scenarioA_drawdownBlockBuy(userId: number): Promise<ScenarioResul
     };
   }
   const originalRiskConfig = JSON.parse(JSON.stringify(user.risk_config || {}));
-  const originalPausedUntil =
-    (user.risk_config as any)?.drawdown_breaker?.paused_until ?? null;
+  const originalPausedUntil = (user.risk_config as any)?.drawdown_breaker?.paused_until ?? null;
 
   // 测试 symbol: 用一个 user 当前没持仓的 symbol, 触发 is_new_holding=true 路径
   const testSymbol = 'sh.600000';
   // 选个真持仓的 symbol 验证加仓放行 (existing position 允许 BUY 即使在 pause 期)
   let existingSymbol: string | null = null;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { PaperTradingPosition } = require('../models/PaperTradingPosition');
     const portfolio = await PaperTradingPortfolio.findOne({
       where: { user_id: userId, is_active: true },
     });
     if (portfolio) {
       const pos = await PaperTradingPosition.findOne({
-        where: { portfolio_id: portfolio.id, quantity: { [require('sequelize').Op.gt]: 0 } },
+        where: { portfolio_id: portfolio.id, quantity: { [Op.gt]: 0 } },
       });
       existingSymbol = pos?.symbol ?? null;
     }
@@ -200,7 +199,10 @@ async function scenarioA_drawdownBlockBuy(userId: number): Promise<ScenarioResul
     return {
       scenario,
       passed: true,
-      detail: `new-position ${testSymbol} 被 DRAWDOWN_BREAKER_PAUSED 拦截 ✓ (${blockedReason.slice(0, 80)}...); ${addOnDetail}`,
+      detail: `new-position ${testSymbol} 被 DRAWDOWN_BREAKER_PAUSED 拦截 ✓ (${blockedReason.slice(
+        0,
+        80
+      )}...); ${addOnDetail}`,
       duration_ms: Date.now() - t0,
     };
   } finally {
@@ -213,7 +215,9 @@ async function scenarioA_drawdownBlockBuy(userId: number): Promise<ScenarioResul
         await u.save();
       }
       logger.info(
-        `[risk-drill.scenarioA] restored paused_until ${originalPausedUntil ?? 'null'} for user ${userId}`
+        `[risk-drill.scenarioA] restored paused_until ${
+          originalPausedUntil ?? 'null'
+        } for user ${userId}`
       );
     } catch (e: any) {
       logger.error(`[risk-drill.scenarioA] restore failed: ${e?.message || e}`);
@@ -280,7 +284,10 @@ async function scenarioB_failClosed(userId: number): Promise<ScenarioResult> {
     return {
       scenario,
       passed: false,
-      detail: `BUG: crashing DataSource 没 throw RiskGuardUnavailableError (fail-CLOSED 失效) — errMsg=${errMsg.slice(0, 120)}`,
+      detail: `BUG: crashing DataSource 没 throw RiskGuardUnavailableError (fail-CLOSED 失效) — errMsg=${errMsg.slice(
+        0,
+        120
+      )}`,
       duration_ms: Date.now() - t0,
     };
   }
@@ -298,16 +305,14 @@ async function scenarioB_failClosed(userId: number): Promise<ScenarioResult> {
   // 写 HIGH RiskAlert 并返 ok=false code=RISK_GUARD_UNAVAILABLE
   const orig = drawdownCircuitBreaker.checkBuyAllowed.bind(drawdownCircuitBreaker);
   (drawdownCircuitBreaker as any).checkBuyAllowed = async () => {
-    throw new RiskGuardUnavailableError(
-      'drill simulated guard outage',
-      'drawdown_breaker',
-      { drill: true, scenario: 'B' }
-    );
+    throw new RiskGuardUnavailableError('drill simulated guard outage', 'drawdown_breaker', {
+      drill: true,
+      scenario: 'B',
+    });
   };
 
   // 抓 RiskAlert 是否被写 — 取测试前 max id, 然后查测试后是否有新行
-  const beforeMaxAlertId =
-    ((await RiskAlert.max('id')) as number | null) ?? 0;
+  const beforeMaxAlertId = ((await RiskAlert.max('id')) as number | null) ?? 0;
   let callerResult: any;
   try {
     callerResult = await checkAllPreTradeGates({
@@ -341,7 +346,7 @@ async function scenarioB_failClosed(userId: number): Promise<ScenarioResult> {
   // 验证 RiskAlert HIGH 写入 (cleanup 用 id 区间)
   const writtenAlerts = await RiskAlert.findAll({
     where: {
-      id: { [require('sequelize').Op.gt]: beforeMaxAlertId },
+      id: { [Op.gt]: beforeMaxAlertId },
       symbol: 'SYSTEM:RISK_GUARD_UNAVAILABLE',
     },
   });
@@ -420,7 +425,9 @@ async function scenarioC_killSwitchEnv(): Promise<ScenarioResult> {
       return {
         scenario,
         passed: false,
-        detail: `BUG: blockers 数组没含 'LIVE_TRADING_KILL_SWITCH', 当前: ${JSON.stringify(blockers)}`,
+        detail: `BUG: blockers 数组没含 'LIVE_TRADING_KILL_SWITCH', 当前: ${JSON.stringify(
+          blockers
+        )}`,
         duration_ms: Date.now() - t0,
       };
     }
@@ -477,7 +484,11 @@ async function scenarioD_killSwitchDb(): Promise<ScenarioResult> {
     // 验证 LiveTradingSafetyService 把 DB kill switch 也叠进 global_kill_switch
     // (env 关掉, 单独看 DB OR 部分)
     const original: Record<string, string | undefined> = {};
-    for (const k of ['LIVE_TRADING_ENABLED', 'LIVE_ORDER_EXECUTION_ENABLED', 'LIVE_TRADING_KILL_SWITCH']) {
+    for (const k of [
+      'LIVE_TRADING_ENABLED',
+      'LIVE_ORDER_EXECUTION_ENABLED',
+      'LIVE_TRADING_KILL_SWITCH',
+    ]) {
       original[k] = process.env[k];
     }
     process.env.LIVE_TRADING_ENABLED = 'true';
@@ -490,7 +501,10 @@ async function scenarioD_killSwitchDb(): Promise<ScenarioResult> {
         { broker_key: 'qmt_bridge', trading_supported: true },
         { active: true, reason_code: 'smoke_test', reason_detail: reasonDetail }
       );
-      statusOk = status.db_kill_switch === true && status.global_kill_switch === true && status.can_submit_orders === false;
+      statusOk =
+        status.db_kill_switch === true &&
+        status.global_kill_switch === true &&
+        status.can_submit_orders === false;
     } finally {
       for (const [k, v] of Object.entries(original)) {
         if (v === undefined) delete process.env[k];
@@ -544,7 +558,8 @@ interface RunOptions {
 async function runDrill(opts: RunOptions): Promise<ScenarioResult[]> {
   const results: ScenarioResult[] = [];
   const want = (s: string) => !opts.only || opts.only.includes(s);
-  if (want('A')) results.push(await withTimeout('A', () => scenarioA_drawdownBlockBuy(opts.userId)));
+  if (want('A'))
+    results.push(await withTimeout('A', () => scenarioA_drawdownBlockBuy(opts.userId)));
   if (want('B')) results.push(await withTimeout('B', () => scenarioB_failClosed(opts.userId)));
   if (want('C')) results.push(await withTimeout('C', () => scenarioC_killSwitchEnv()));
   if (want('D')) results.push(await withTimeout('D', () => scenarioD_killSwitchDb()));
@@ -562,24 +577,24 @@ function parseArgs(argv: string[]): RunOptions {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  logger.info(
-    `[risk-drill] starting 2026-06-23 user=${args.userId} only=${args.only || 'ALL'}`
-  );
+  logger.info(`[risk-drill] starting 2026-06-23 user=${args.userId} only=${args.only || 'ALL'}`);
   let allPassed = true;
   const results = await runDrill(args);
   for (const r of results) {
     const tag = r.passed ? 'PASS' : 'FAIL';
     // eslint-disable-next-line no-console
     console.log(
-      `[risk-drill] ${tag} ${r.scenario} (${r.duration_ms}ms): ${r.detail}${r.error ? ' err=' + r.error : ''}`
+      `[risk-drill] ${tag} ${r.scenario} (${r.duration_ms}ms): ${r.detail}${
+        r.error ? ' err=' + r.error : ''
+      }`
     );
     if (!r.passed) allPassed = false;
   }
   // eslint-disable-next-line no-console
   console.log(
-    `[risk-drill] DONE total=${results.length} passed=${results.filter(r => r.passed).length} failed=${
-      results.filter(r => !r.passed).length
-    }`
+    `[risk-drill] DONE total=${results.length} passed=${
+      results.filter(r => r.passed).length
+    } failed=${results.filter(r => !r.passed).length}`
   );
   // 关 sequelize 让进程退出干净
   try {
@@ -603,4 +618,10 @@ if (require.main === module) {
   });
 }
 
-export { runDrill, scenarioA_drawdownBlockBuy, scenarioB_failClosed, scenarioC_killSwitchEnv, scenarioD_killSwitchDb };
+export {
+  runDrill,
+  scenarioA_drawdownBlockBuy,
+  scenarioB_failClosed,
+  scenarioC_killSwitchEnv,
+  scenarioD_killSwitchDb,
+};

@@ -181,10 +181,7 @@ export const liquidityFactor: Factor = {
       // 没 mcap 就只能用 turnover_rate 真值, fallback 失效
     }
 
-    const barsByStockId = new Map<
-      number,
-      Array<{ time: Date | string; turnover_rate: any }>
-    >();
+    const barsByStockId = new Map<number, Array<{ time: Date | string; turnover_rate: any }>>();
     for (const b of bars) {
       const arr = barsByStockId.get(b.stock_id) ?? [];
       let effectiveRate = Number(b.turnover_rate);

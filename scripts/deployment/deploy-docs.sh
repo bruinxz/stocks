@@ -16,7 +16,7 @@
 set -euo pipefail
 
 BRANCH="${1:-main}"
-SSH_HOST="${SSH_HOST:-103.242.3.87}"
+SSH_HOST="${SSH_HOST:-<legacy-prod-host>}"
 SSH_PORT="${SSH_PORT:-14126}"
 SSH_USER="${SSH_USER:-deploy}"
 REMOTE_ROOT="${REMOTE_ROOT:-/opt/stocks/current}"

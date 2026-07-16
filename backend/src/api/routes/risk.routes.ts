@@ -448,5 +448,4 @@ router.put('/sizing-policy', authController.authenticate, riskController.updateS
  */
 router.get('/sizing-audit', authController.authenticate, riskController.getSizingAudit);
 
-
 export default router;

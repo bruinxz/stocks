@@ -23,8 +23,7 @@ import { factorRegistry } from '../FactorRegistry';
 import { stripSuffix, isFiniteNumber } from './_helpers';
 import { tradingDayLookbackStartDate } from './_tradingDayWindow';
 import { StockMoneyFlowFactor } from '../../../models/StockMoneyFlowFactor';
-
-const loadHistoricalCirculatingMarketCap = async (_symbols: string[], _asOf: string): Promise<Map<string, number>> => new Map();
+import { loadHistoricalCirculatingMarketCap } from './_historicalMarketCap';
 
 /** 业务窗口: 近 10 个交易日 (audit M-9: 从 14 自然日改成精确 10 交易日) */
 const WINDOW_TRADING_DAYS = 10;

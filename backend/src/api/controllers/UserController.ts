@@ -1,6 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import { User } from '../../models/User';
+import { AuthRefreshSession } from '../../models/AuthRefreshSession';
+import { sequelize } from '../../config/database';
 import { logger } from '../../utils/logger';
+import { alertsBroadcaster } from '../../realtime/alertsBroadcaster';
 
 export class UserController {
   /**
@@ -94,30 +97,43 @@ export class UserController {
       const { id } = req.params;
       const { email, role, is_active } = req.body;
 
-      const user = await User.findByPk(id);
-      if (!user) {
+      const result = await sequelize.transaction(async transaction => {
+        const user = await User.findByPk(id, {
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        });
+        if (!user) return { kind: 'missing' as const };
+
+        if (email && email !== user.email) {
+          const existingEmail = await User.findOne({ where: { email }, transaction });
+          if (existingEmail) return { kind: 'email_conflict' as const };
+          user.email = email;
+        }
+
+        if (role) user.role = role;
+        if (is_active !== undefined) user.is_active = is_active;
+
+        await user.save({ transaction });
+        if (is_active === false) {
+          await AuthRefreshSession.update(
+            { revoked_at: new Date(), revocation_reason: 'user_inactive' },
+            { where: { user_id: user.id, revoked_at: null }, transaction }
+          );
+        }
+        return { kind: 'updated' as const, user };
+      });
+
+      if (result.kind === 'missing') {
         return res.status(404).json({ success: false, message: '用户不存在' });
       }
-
-      // 如果更新了邮箱，检查是否和其他人冲突
-      if (email && email !== user.email) {
-        const existingEmail = await User.findOne({ where: { email } });
-        if (existingEmail) {
-          return res.status(400).json({ success: false, message: '该邮箱已被其他账号使用' });
-        }
-        user.email = email;
+      if (result.kind === 'email_conflict') {
+        return res.status(400).json({ success: false, message: '该邮箱已被其他账号使用' });
+      }
+      if (is_active === false) {
+        alertsBroadcaster.disconnectUser(result.user.id, 'account disabled');
       }
 
-      if (role) {
-        user.role = role;
-      }
-      if (is_active !== undefined) {
-        user.is_active = is_active;
-      }
-
-      await user.save();
-
-      const json = user.toJSON() as any;
+      const json = result.user.toJSON() as any;
       json.password = '******';
 
       res.json({
@@ -149,14 +165,27 @@ export class UserController {
         return res.status(400).json({ success: false, message: '新密码不能为空且至少6位' });
       }
 
-      const user = await User.findByPk(id);
-      if (!user) {
+      const result = await sequelize.transaction(async transaction => {
+        const user = await User.findByPk(id, {
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        });
+        if (!user) return null;
+
+        user.password_hash = newPassword;
+        await user.save({ transaction });
+        await AuthRefreshSession.update(
+          { revoked_at: new Date(), revocation_reason: 'password_changed' },
+          { where: { user_id: user.id, revoked_at: null }, transaction }
+        );
+        return user;
+      });
+
+      if (!result) {
         return res.status(404).json({ success: false, message: '用户不存在' });
       }
 
-      // 修改 password_hash 字段会触发 Sequelize 的 @BeforeUpdate 钩子，自动进行 bcrypt hash
-      user.password_hash = newPassword;
-      await user.save();
+      alertsBroadcaster.disconnectUser(result.id, 'password changed');
 
       res.json({
         success: true,

@@ -53,8 +53,9 @@ class ReplayJobStore(Protocol):
         ...
 
     def transition(
-        self, job_id: str, expected_status: str, updated: ReplayJob
+        self, job_id: str, expected: ReplayJob, updated: ReplayJob
     ) -> ReplayJob:
+        """Compare-and-swap the exact durable state, including lease/attempt."""
         ...
 
 

@@ -87,4 +87,4 @@ TradingAgents 是一个受专业量化交易公司启发的**多智能体大语�
 ### 5.4 模块独立性
 - 所有的外部 API 调用必须封装在 `dataflows/` 中，Agent 仅通过 `agent_utils.py` 暴露的纯函数进行交互。
 - 配置项统一在 `tradingagents/default_config.py` 中管理（如 LLM 提供商、数据源选择），**避免在 Agent 代码中硬编码**。
-- **内部高频数据接口**：对于拉取全市场数据或批量股票历史数据，已接入 `bruinxz/stocks` 项目提供的高性能本地 API（接口地址代码在：`/Users/bytedance/go/src/github.com/bruinxz/stocks/backend/src/api/controllers`，目前默认服务地址 `http://103.242.3.87:3000`）。通过 `tradingagents/dataflows/internal_api.py` 中封装的 `InternalStockAPI` 类进行调用，支持 `GET /api/internal/stocks` 获取股票池和 `POST /api/internal/data/batch-history` 进行批量获取，极大地减少了全市场扫描时的网络 I/O。使用时需在 `.env` 中配置 `INTERNAL_API_KEY`。
+- **内部高频数据接口**：对于拉取全市场数据或批量股票历史数据，已接入 `bruinxz/stocks` 项目提供的高性能本地 API（接口地址代码在：`/Users/bytedance/go/src/github.com/bruinxz/stocks/backend/src/api/controllers`，目前默认服务地址 `http://<legacy-prod-host>:3000`）。通过 `tradingagents/dataflows/internal_api.py` 中封装的 `InternalStockAPI` 类进行调用，支持 `GET /api/internal/stocks` 获取股票池和 `POST /api/internal/data/batch-history` 进行批量获取，极大地减少了全市场扫描时的网络 I/O。使用时需在 `.env` 中配置 `INTERNAL_API_KEY`。

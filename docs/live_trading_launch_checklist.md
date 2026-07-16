@@ -11,7 +11,7 @@
 | # | 阻断项 | 严重度 | 处置 |
 | - | - | - | - |
 | B1 | **QmtAdapter 当前是完整 stub**：`place_order` 直接返回 `error: "QMT adapter stub: place_order disabled"`，`query_asset` 返回固定 mock，`connect()` 永远 true | P0 阻断 | 灰度真下单等同于**根本下不了单**。必须先用 xtquant 接好 5 个方法：`connect / is_logged_in / query_asset / query_positions / query_today_orders / query_today_trades / place_order / cancel_order`。完成前只能跑阶段一（只读）。 |
-| B2 | `backend/.env` 里 `JWT_SECRET = your-secret-key-change-in-production`、`JWT_REFRESH_SECRET = your-refresh-secret-key-change-in-production` 字面量 | P0 阻断 | 上线前把 main 环境 `.env` 改成 32+ 位随机串；上一轮已让 `AuthController` 在 `NODE_ENV=production` 拒绝兜底，但运行环境 `.env` 仍是字面量就等于把后门带上线。 |
+| B2 | production `JWT_SECRET` / `JWT_REFRESH_SECRET` 仍为占位符或历史泄漏值 | P0 阻断 | 上线前改为 32+ 位随机值；生产预检会按泄漏指纹和占位符规则 fail-closed。 |
 | B3 | `release_health_gate.js` smoke 用 `lym` / `666` 登录；同一份默认密码 = 任何人都能登 admin → 任何人都能用上一轮 review 收紧的 `kill-switch/trigger`、所有 `/api/live-trading/*` 接口 | P0 阻断 | 把 `lym`、`xz`、`xz`（init 时建的 admin）密码全部改成强密码；smoke 用专用 `SMOKE_PASSWORD` 环境变量传入，绝不复用 admin。 |
 | B4 | `LIVE_BRIDGE_SECRETS` 必须在 server 侧配齐 bridge_key → secret 的映射，否则 bridgeAuthMiddleware 直接 401 | P0 阻断 | 用运维下发，不进 git。secret 建议 64 位随机。 |
 | B5 | `(account_id, broker_order_id) partial unique` 是上一轮新加的 runtime schema，**production DB 上是否真的能创建成功** | P0 阻断 | 上线前先在 PG 上跑 [§3 §3.2 dry-run SQL]，确认无脏数据再让 server 自己 ensureLiveTradingRuntimeSchema 建索引。 |
@@ -111,7 +111,7 @@
 ### 1.6 账号与权限
 - [ ] 默认 admin 用户密码（`lym / xz`）已重置为强密码，文档化收口在 1Password / Vault
 - [ ] 真实交易用户角色 = `user`，**不是 admin**（用户不应能 trigger kill switch）
-- [ ] `INTERNAL_API_KEY` 已轮换（不是默认 `tr_agent_k8s_x9a1!b2c3d4e5f6g7h8i9j0`）
+- [ ] `INTERNAL_API_KEY` 已轮换，并通过 secret store 下发；不得使用任何历史默认值
 - [ ] `RELEASE_SMOKE_PASSWORD` 通过环境变量传，不再依赖 `'666'` 默认值
 
 ### 1.7 可观测性 & 告警

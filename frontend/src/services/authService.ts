@@ -1,4 +1,5 @@
 import api from './api';
+import { clearUserScopedStorage } from '../utils/sessionCleanup';
 
 export interface LoginRequest {
   username: string;
@@ -32,8 +33,28 @@ export interface AuthResponse {
   message?: string;
 }
 
+export const AUTH_LOGOUT_PENDING_KEY = 'auth_logout_pending_v1';
+
+async function retryPendingLogoutRequest(): Promise<boolean> {
+  if (localStorage.getItem(AUTH_LOGOUT_PENDING_KEY) !== '1') return true;
+  try {
+    await api.post('/auth/logout');
+    localStorage.removeItem(AUTH_LOGOUT_PENDING_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function requirePendingLogoutResolved(): Promise<void> {
+  if (!(await retryPendingLogoutRequest())) {
+    throw new Error('Previous logout could not be confirmed');
+  }
+}
+
 export const authService = {
   async login(credentials: LoginRequest): Promise<AuthResponse> {
+    await requirePendingLogoutResolved();
     const response = await api.post<AuthResponse>('/auth/login', credentials);
     const data = response.data.data;
     if (response.data.success && data) {
@@ -48,6 +69,7 @@ export const authService = {
   },
 
   async register(userData: RegisterRequest): Promise<AuthResponse> {
+    await requirePendingLogoutResolved();
     const response = await api.post<AuthResponse>('/auth/register', userData);
     const data = response.data.data;
     if (response.data.success && data) {
@@ -64,13 +86,18 @@ export const authService = {
   async logout(): Promise<void> {
     try {
       await api.post('/auth/logout');
+      localStorage.removeItem(AUTH_LOGOUT_PENDING_KEY);
     } catch (error) {
       console.error('Logout API failed', error);
+      localStorage.setItem(AUTH_LOGOUT_PENDING_KEY, '1');
+      throw error;
     } finally {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      localStorage.removeItem('username');
+      clearUserScopedStorage();
     }
+  },
+
+  async retryPendingLogout(): Promise<boolean> {
+    return retryPendingLogoutRequest();
   },
 
   async getCurrentUser() {

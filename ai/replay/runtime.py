@@ -14,20 +14,39 @@ from decimal import Decimal
 import hashlib
 import math
 from collections.abc import Mapping
-import re
 from typing import Any, Protocol
 
 from ai.replay.service import ReplayService, ReplaySourceError
-from ai.replay.types import ReplayInputs, ReplayJob, ReplayPins, SourceSlice
-from ai.snapshot.fingerprint import compute_input_fingerprint, jcs_canonicalize
-from datapipeline.contracts import JpKrFilingEnvelope, TextHitEnvelope
+from ai.replay.fingerprint import compute_replay_input_fingerprint
+from ai.replay.types import (
+    ReplayInputs,
+    ReplayJob,
+    ReplayPins,
+    SourceSlice,
+    is_canonical_source_version,
+)
+from ai.snapshot.fingerprint import jcs_canonicalize
+from datapipeline.contracts import (
+    JpKrFilingEnvelope,
+    TextHitEnvelope,
+    is_canonical_sha256,
+)
+from datapipeline.collectors.jpkr_deep.official_fixture_parser import (
+    canonical_disclosure_fact_hash,
+)
+from datapipeline.storage.jpkr import canonical_financial_fact_hash
+from datapipeline.storage.multibagger import build_text_hit_storage_row
 
 
 SOURCE_VERSION_KEYS = ("signals", "universe", "scores", "evidence")
-_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _BANDS = frozenset({"A", "B", "C", "D", "F"})
 _CONVICTION_LEVELS = frozenset({"HIGH", "MED", "LOW"})
 _RISK_GATES = frozenset({"GREEN", "YELLOW", "RED"})
+_SCORE_DIMENSION_ORDER = ("Q", "G", "V", "M", "T", "R")
+_CURRENCIES = frozenset({"USD", "CNY", "HKD", "JPY", "KRW"})
+_TIME_HORIZONS = frozenset(
+    {"INTRADAY", "SWING", "POSITION", "CORE_HOLD", "LONG_TERM"}
+)
 _SIZE_TIERS = {
     "TIER_5": 5.0,
     "TIER_3": 3.0,
@@ -56,11 +75,21 @@ SOURCE_RISK_TRIGGER_KEYS = frozenset(
     {"code", "severity", "detail"}
 )
 SOURCE_ENTRY_PLAN_KEYS = frozenset(
-    {"size_hint", "stop_distance_pct"}
+    {
+        "entry",
+        "stop",
+        "targets",
+        "size_hint",
+        "time_horizon",
+        "invalidation",
+        "stop_distance_pct",
+    }
 )
 SOURCE_SIZE_HINT_KEYS = frozenset(
-    {"tier", "pct", "disclaimer_key"}
+    {"tier", "pct", "disclaimer_key", "rationale"}
 )
+SOURCE_PRICE_BAND_KEYS = frozenset({"low", "high", "currency"})
+SOURCE_PRICE_KEYS = frozenset({"value", "currency"})
 _CATALYST_KINDS = frozenset(
     {
         "earnings",
@@ -121,9 +150,17 @@ class TypedScoreRecord:
 
 
 @dataclass(frozen=True)
+class TypedTextHitRecord:
+    """One TextHit envelope pinned to its DataPipeline physical fact hash."""
+
+    envelope: TextHitEnvelope
+    hit_fact_hash: str
+
+
+@dataclass(frozen=True)
 class TypedSourceSnapshot:
     filings: tuple[JpKrFilingEnvelope, ...]
-    text_hits: tuple[TextHitEnvelope, ...]
+    text_hits: tuple[TypedTextHitRecord, ...]
     scores: tuple[TypedScoreRecord, ...]
     source_versions: Mapping[str, str]
 
@@ -176,8 +213,8 @@ class TypedReplaySources:
                         for envelope in snapshot.filings
                     ),
                     *(
-                        _text_hit_signal(envelope)
-                        for envelope in snapshot.text_hits
+                        _text_hit_signal(record)
+                        for record in snapshot.text_hits
                     ),
                 ),
                 key=_record_sort_key,
@@ -196,7 +233,7 @@ class TypedReplaySources:
             envelope.disclosure.ticker for envelope in snapshot.filings
         }
         tickers.update(
-            envelope.document.ticker for envelope in snapshot.text_hits
+            record.envelope.document.ticker for record in snapshot.text_hits
         )
         tickers.update(record.ticker for record in snapshot.scores)
         records = tuple(
@@ -250,10 +287,13 @@ class TypedReplaySources:
                     *(
                         {
                             "kind": "text_hit",
-                            "identity": list(envelope.identity),
-                            "envelope": _json_value(asdict(envelope)),
+                            "identity": list(record.envelope.identity),
+                            "envelope": {
+                                **_json_value(asdict(record.envelope)),
+                                "hit_fact_hash": record.hit_fact_hash,
+                            },
                         }
-                        for envelope in snapshot.text_hits
+                        for record in snapshot.text_hits
                     ),
                 ),
                 key=_record_sort_key,
@@ -276,9 +316,7 @@ class TypedReplaySources:
         )
 
     def input_fingerprint(self, pins: ReplayPins) -> str:
-        return compute_input_fingerprint(
-            [source.content_hash for source in self.source_slices(pins)]
-        )
+        return compute_replay_input_fingerprint(self.load_inputs(pins))
 
     def _load_capture(self, pins: ReplayPins) -> TypedSourceSnapshot:
         snapshot = copy.deepcopy(self._repository.load(pins))
@@ -300,16 +338,30 @@ class TypedReplaySources:
                 "typed source versions must contain exact source kinds"
             )
         if any(
-            not isinstance(value, str) or not value
+            not is_canonical_source_version(value)
             for value in snapshot.source_versions.values()
         ):
             raise ReplaySourceError(
                 "typed source versions must be non-empty strings"
             )
         filing_identities = []
+        financial_identities = []
         for envelope in snapshot.filings:
             if not isinstance(envelope, JpKrFilingEnvelope):
                 raise ReplaySourceError("filing envelope returned wrong type")
+            if (
+                not is_canonical_sha256(envelope.disclosure.fact_hash)
+                or envelope.disclosure.fact_hash
+                != canonical_disclosure_fact_hash(envelope.disclosure)
+            ):
+                raise ReplaySourceError("disclosure fact_hash is not authentic")
+            for financial in envelope.financials:
+                if (
+                    not is_canonical_sha256(financial.fact_hash)
+                    or financial.fact_hash != canonical_financial_fact_hash(financial)
+                ):
+                    raise ReplaySourceError("financial fact_hash is not authentic")
+                financial_identities.append(financial.identity)
             filing_identities.append(
                 (
                     envelope.disclosure.source_kind,
@@ -319,11 +371,33 @@ class TypedReplaySources:
             )
         if len(filing_identities) != len(set(filing_identities)):
             raise ReplaySourceError("filing envelope identity is duplicated")
+        if len(financial_identities) != len(set(financial_identities)):
+            raise ReplaySourceError("financial fact identity is duplicated")
         text_identities = []
-        for envelope in snapshot.text_hits:
-            if not isinstance(envelope, TextHitEnvelope):
-                raise ReplaySourceError("text hit envelope returned wrong type")
-            text_identities.append(envelope.identity)
+        for record in snapshot.text_hits:
+            if type(record) is not TypedTextHitRecord or not isinstance(
+                record.envelope, TextHitEnvelope
+            ):
+                raise ReplaySourceError("typed text hit returned wrong type")
+            if (
+                not is_canonical_sha256(
+                    record.envelope.document.document_fact_hash
+                )
+                or not is_canonical_sha256(record.envelope.hit.context_hash)
+            ):
+                raise ReplaySourceError("typed text hit fact_hash is not authentic")
+            try:
+                expected_hash = build_text_hit_storage_row(
+                    record.envelope
+                ).hit_fact_hash
+            except (TypeError, ValueError) as error:
+                raise ReplaySourceError("typed text hit fact is invalid") from error
+            if (
+                not is_canonical_sha256(record.hit_fact_hash)
+                or record.hit_fact_hash != expected_hash
+            ):
+                raise ReplaySourceError("typed text hit fact_hash is not authentic")
+            text_identities.append(record.envelope.identity)
         if len(text_identities) != len(set(text_identities)):
             raise ReplaySourceError("text hit identity is duplicated")
         cutoff = _parse_utc(pins.as_of)
@@ -336,7 +410,8 @@ class TypedReplaySources:
                 raise ReplaySourceError(
                     "filing violates replay PIT cutoff"
                 ) from error
-        for envelope in snapshot.text_hits:
+        for record in snapshot.text_hits:
+            envelope = record.envelope
             if envelope.document.market_scope != pins.market_scope:
                 raise ReplaySourceError("text hit market_scope pin mismatch")
             try:
@@ -363,13 +438,12 @@ class TypedReplaySources:
             if score.ticker in tickers:
                 raise ReplaySourceError("typed score ticker is duplicated")
             tickers.add(score.ticker)
+            if not is_canonical_sha256(score.fact_hash):
+                raise ReplaySourceError("typed score fact_hash is not authentic")
             if (
                 not isinstance(score.ticker, str)
                 or not score.ticker
-                or not isinstance(score.source_version, str)
-                or not score.source_version
-                or not isinstance(score.fact_hash, str)
-                or not _SHA256_RE.fullmatch(score.fact_hash)
+                or not is_canonical_source_version(score.source_version)
                 or score.profile != pins.profile
                 or score.market_scope != pins.market_scope
                 or score.as_of != pins.as_of
@@ -459,6 +533,8 @@ def build_typed_replay_runtime(
     pipeline,
     job_store,
     uuid_factory=None,
+    lease_token_factory=None,
+    lease_seconds: int = 150,
     clock=None,
 ) -> tuple[ReplayService, ReplayWorker, TypedReplaySources]:
     sources = TypedReplaySources(repository)
@@ -473,6 +549,9 @@ def build_typed_replay_runtime(
     }
     if uuid_factory is not None:
         kwargs["uuid_factory"] = uuid_factory
+    if lease_token_factory is not None:
+        kwargs["lease_token_factory"] = lease_token_factory
+    kwargs["lease_seconds"] = lease_seconds
     if clock is not None:
         kwargs["clock"] = clock
     service = ReplayService(**kwargs)
@@ -495,18 +574,20 @@ def _filing_signal(envelope: JpKrFilingEnvelope) -> dict[str, Any]:
     }
 
 
-def _text_hit_signal(envelope: TextHitEnvelope) -> dict[str, Any]:
+def _text_hit_signal(record: TypedTextHitRecord) -> dict[str, Any]:
+    envelope = record.envelope
     return {
         "kind": "text_hit",
         "ticker": envelope.document.ticker,
         "market_scope": envelope.document.market_scope,
         "source_kind": envelope.document.source_kind,
         "source_document_id": envelope.document.document_id,
-        "source_version": envelope.hit.taxonomy_version,
+        "source_version": envelope.document.source_version,
         "available_at_utc": _json_value(
             envelope.document.available_at_utc
         ),
-        "fact_hash": envelope.document.document_fact_hash,
+        "fact_hash": record.hit_fact_hash,
+        "document_fact_hash": envelope.document.document_fact_hash,
         "term_id": envelope.hit.term_id,
         "hit_kind": envelope.hit.hit_kind,
         "field": envelope.hit.field,
@@ -624,13 +705,17 @@ def validate_source_score_features(
     if score["rating"] != _rating_for(float(score["total"])):
         raise ReplaySourceError("typed score rating relation mismatch")
     dimensions = score.get("dims")
-    if not isinstance(dimensions, list):
-        raise ReplaySourceError("typed score dimensions must be an array")
-    for dimension in dimensions:
+    if not isinstance(dimensions, list) or len(dimensions) != 6:
+        raise ReplaySourceError(
+            "typed score dimensions must contain Q/G/V/M/T/R"
+        )
+    total_weight = 0.0
+    weighted_total = 0.0
+    for dimension, expected_key in zip(dimensions, _SCORE_DIMENSION_ORDER):
         if (
             not isinstance(dimension, Mapping)
             or not isinstance(dimension.get("key"), str)
-            or not dimension.get("key")
+            or dimension.get("key") != expected_key
             or dimension.get("band") not in _BANDS
             or not _finite_range(dimension.get("score"), 0.0, 100.0)
             or not _finite_range(dimension.get("weight"), 0.0, 1.0)
@@ -645,6 +730,16 @@ def validate_source_score_features(
             raise ReplaySourceError(
                 "typed score dimension band relation mismatch"
             )
+        total_weight += float(dimension["weight"])
+        weighted_total += float(dimension["score"]) * float(
+            dimension["weight"]
+        )
+    if abs(total_weight - 1.0) > 1e-9:
+        raise ReplaySourceError("typed score dimension weights must sum to 1")
+    if abs(float(score["total"]) - round(weighted_total, 1)) > 1e-9:
+        raise ReplaySourceError(
+            "typed score total must match the weighted dimensions"
+        )
 
     base = conviction.get("base")
     final = conviction.get("final")
@@ -652,6 +747,7 @@ def validate_source_score_features(
     if (
         not _finite_range(base, 0.0, 100.0)
         or not _finite_range(final, 0.0, 100.0)
+        or abs(float(base) - float(score["total"])) > 1e-9
         or conviction.get("level") not in _CONVICTION_LEVELS
         or not isinstance(adjustments, list)
     ):
@@ -748,12 +844,74 @@ def validate_source_score_features(
         "features.entry_plan.size_hint",
     )
     tier = size_hint.get("tier")
+    rationale = size_hint.get("rationale")
     if (
         tier not in _SIZE_TIERS
         or size_hint.get("pct") != _SIZE_TIERS[tier]
         or size_hint.get("disclaimer_key") != "size_hint_advisory"
+        or not isinstance(rationale, str)
+        or not rationale
+        or len(rationale) > 240
     ):
         raise ReplaySourceError("typed entry plan size_hint mismatch")
+    expected_tier = (
+        "TIER_5"
+        if float(final) >= 85
+        else "TIER_3"
+        if float(final) >= 70
+        else "TIER_2"
+        if float(final) >= 55
+        else "TIER_1"
+        if float(final) >= 40
+        else "SKIP"
+    )
+    if tier != expected_tier:
+        raise ReplaySourceError(
+            "typed entry plan size_hint does not match conviction"
+        )
+
+    entry = entry_plan.get("entry")
+    stop = entry_plan.get("stop")
+    targets = entry_plan.get("targets")
+    if not isinstance(entry, Mapping):
+        raise ReplaySourceError("typed entry plan entry is required")
+    if not isinstance(stop, Mapping):
+        raise ReplaySourceError("typed entry plan stop is required")
+    _require_exact_keys(entry, SOURCE_PRICE_BAND_KEYS, "features.entry_plan.entry")
+    _require_exact_keys(stop, SOURCE_PRICE_KEYS, "features.entry_plan.stop")
+    if (
+        not _finite_number(entry.get("low"))
+        or not _finite_number(entry.get("high"))
+        or float(entry["low"]) > float(entry["high"])
+        or entry.get("currency") not in _CURRENCIES
+        or not _finite_number(stop.get("value"))
+        or stop.get("currency") not in _CURRENCIES
+    ):
+        raise ReplaySourceError("typed entry plan price band/stop is invalid")
+    if not isinstance(targets, list) or not 1 <= len(targets) <= 3:
+        raise ReplaySourceError("typed entry plan targets must contain 1..3 prices")
+    for target in targets:
+        if not isinstance(target, Mapping):
+            raise ReplaySourceError("typed entry plan target is invalid")
+        _require_exact_keys(
+            target,
+            SOURCE_PRICE_KEYS,
+            "features.entry_plan.targets[]",
+        )
+        if (
+            not _finite_number(target.get("value"))
+            or target.get("currency") not in _CURRENCIES
+        ):
+            raise ReplaySourceError("typed entry plan target is invalid")
+    if entry_plan.get("time_horizon") not in _TIME_HORIZONS:
+        raise ReplaySourceError("typed entry plan time_horizon is invalid")
+    invalidation = entry_plan.get("invalidation")
+    if (
+        not isinstance(invalidation, str)
+        or not invalidation
+        or len(invalidation) > 500
+    ):
+        raise ReplaySourceError("typed entry plan invalidation is invalid")
     if not _finite_range(
         entry_plan.get("stop_distance_pct"), 0.0, 100.0
     ):
@@ -769,6 +927,14 @@ def _finite_range(value: object, minimum: float, maximum: float) -> bool:
         and isinstance(value, (int, float))
         and math.isfinite(value)
         and minimum <= float(value) <= maximum
+    )
+
+
+def _finite_number(value: object) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
     )
 
 

@@ -393,12 +393,12 @@ function assert(name: string, cond: boolean, detail = ''): void {
     /import\s+QuarterlyRetrainTab\s+from\s+['"]\.\/LabWorkspace\.QuarterlyRetrainTab['"]/.test(src)
   );
   assert(
-    '[10.2] tabs 数组含 key=quarterly_retrain',
-    /\{\s*key:\s*['"]quarterly_retrain['"]/.test(src)
+    '[10.2] tabs 数组含统一 evaluation 入口',
+    /\{\s*key:\s*['"]evaluation['"]/.test(src)
   );
   assert(
-    '[10.3] activeKey 分支 quarterly_retrain',
-    /activeKey\s*===\s*['"]quarterly_retrain['"]/.test(src)
+    '[10.3] evaluation 内含 quarterly 子视图',
+    /setEvalSubView\(['"]quarterly['"]\)/.test(src)
   );
   assert(
     '[10.4] body 渲染 QuarterlyRetrainTab',

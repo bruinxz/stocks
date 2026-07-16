@@ -30,8 +30,11 @@ import { StockFundamentalFactor } from '../../models/StockFundamentalFactor';
 import { zscore } from '../factors/normalization';
 import { stripSuffix, inferStockSymbol, lookbackStartDate } from '../factors/library/_helpers';
 import { Stock } from '../../models/Stock';
-import { ETFConstituentExpander, etfConstituentExpander, ETFConstituents } from './ETFConstituentExpander';
-
+import {
+  ETFConstituentExpander,
+  etfConstituentExpander,
+  ETFConstituents,
+} from './ETFConstituentExpander';
 
 /** 因子权重 V0 (§4.1 表, Momentum shadow 不入实盘). 可覆盖做敏感性网格. */
 export interface ETFFactorWeights {
@@ -84,20 +87,28 @@ interface StockLevelRaw {
 
 export interface ETFFactorDataSource {
   /** 加载全 universe 成分股集合的估值 (pe_ttm/pb, 最新 <= date). key=纯6位 */
-  loadValuation(codes: string[], asOfDate: string): Promise<Map<string, { pe: number; pb: number }>>;
+  loadValuation(
+    codes: string[],
+    asOfDate: string
+  ): Promise<Map<string, { pe: number; pb: number }>>;
   /** 加载成分股股息率 (yield_pct, 最新 <= date). key=纯6位 */
   loadDividendYield(codes: string[], asOfDate: string): Promise<Map<string, number>>;
   /** 加载成分股最新 roe + 5 年 roe 均值 + 5 年净利润 stddev. key=纯6位 */
   loadQuality(
     codes: string[],
     asOfDate: string
-  ): Promise<Map<string, { roe: number | null; roe5yAvg: number | null; netProfitStd5y: number | null }>>;
+  ): Promise<
+    Map<string, { roe: number | null; roe5yAvg: number | null; netProfitStd5y: number | null }>
+  >;
   /** 加载 ETF 自身的日 close 序列 (近 ~90 交易日, LowVol/Momentum 用). key=ETF6位 */
   loadEtfCloses(etfCodes: string[], asOfDate: string): Promise<Map<string, number[]>>;
 }
 
 export class DefaultETFFactorDataSource implements ETFFactorDataSource {
-  async loadValuation(codes: string[], asOfDate: string): Promise<Map<string, { pe: number; pb: number }>> {
+  async loadValuation(
+    codes: string[],
+    asOfDate: string
+  ): Promise<Map<string, { pe: number; pb: number }>> {
     const out = new Map<string, { pe: number; pb: number }>();
     if (!codes.length) return out;
     const start = lookbackStartDate(asOfDate, 120);
@@ -134,9 +145,7 @@ export class DefaultETFFactorDataSource implements ETFFactorDataSource {
       const prev = latest.get(code);
       const rank = sourceRank(r.source);
       const better =
-        !prev ||
-        r.factor_date > prev.date ||
-        (r.factor_date === prev.date && rank > prev.rank);
+        !prev || r.factor_date > prev.date || (r.factor_date === prev.date && rank > prev.rank);
       if (better) {
         latest.set(code, { pe: Number(r.pe_ttm), pb: Number(r.pb), date: r.factor_date, rank });
       }
@@ -171,8 +180,13 @@ export class DefaultETFFactorDataSource implements ETFFactorDataSource {
   async loadQuality(
     codes: string[],
     asOfDate: string
-  ): Promise<Map<string, { roe: number | null; roe5yAvg: number | null; netProfitStd5y: number | null }>> {
-    const out = new Map<string, { roe: number | null; roe5yAvg: number | null; netProfitStd5y: number | null }>();
+  ): Promise<
+    Map<string, { roe: number | null; roe5yAvg: number | null; netProfitStd5y: number | null }>
+  > {
+    const out = new Map<
+      string,
+      { roe: number | null; roe5yAvg: number | null; netProfitStd5y: number | null }
+    >();
     if (!codes.length) return out;
     const universe = new Set(codes);
 
@@ -228,7 +242,8 @@ export class DefaultETFFactorDataSource implements ETFFactorDataSource {
       for (const v of arr) acc += (v - m) * (v - m);
       return Math.sqrt(acc / (arr.length - 1));
     };
-    const avg = (arr: number[]): number | null => (arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : null);
+    const avg = (arr: number[]): number | null =>
+      arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : null;
 
     for (const code of codes) {
       const roe = latestRoe.get(code)?.roe ?? null;
@@ -282,7 +297,10 @@ export class DefaultETFFactorDataSource implements ETFFactorDataSource {
       const code = codeByStockId.get(id);
       if (!code) continue;
       arr.sort((a, b) => a.t - b.t);
-      out.set(code, arr.map(x => x.c));
+      out.set(
+        code,
+        arr.map(x => x.c)
+      );
     }
     return out;
   }
@@ -294,7 +312,10 @@ export class ETFFactorService {
   private readonly ds: ETFFactorDataSource;
   private readonly expander: ETFConstituentExpander;
 
-  constructor(ds: ETFFactorDataSource = PRODUCTION_DATA_SOURCE, expander: ETFConstituentExpander = etfConstituentExpander) {
+  constructor(
+    ds: ETFFactorDataSource = PRODUCTION_DATA_SOURCE,
+    expander: ETFConstituentExpander = etfConstituentExpander
+  ) {
     this.ds = ds;
     this.expander = expander;
   }
@@ -318,7 +339,8 @@ export class ETFFactorService {
 
     // 2) 收集全 universe 成分股集合
     const allConstituents = new Set<string>();
-    for (const c of expanded.values()) for (const code of c.weights.keys()) allConstituents.add(code);
+    for (const c of expanded.values())
+      for (const code of c.weights.keys()) allConstituents.add(code);
     const constituentList = Array.from(allConstituents);
 
     // 3) 拉成分股层数据 + ETF 层 close
@@ -357,7 +379,9 @@ export class ETFFactorService {
       }
       if (lowvol === null) {
         incomplete = true;
-        reasons.push(`LowVol 交易日不足 (需 ${VOL_60D + 1} 条, 缺失 >${MAX_MISSING_TRADING_DAYS} 天)`);
+        reasons.push(
+          `LowVol 交易日不足 (需 ${VOL_60D + 1} 条, 缺失 >${MAX_MISSING_TRADING_DAYS} 天)`
+        );
       }
       return {
         code,
@@ -432,14 +456,21 @@ export class ETFFactorService {
       if (zInvPb.has(code)) parts.push(zInvPb.get(code)!);
       if (zInvPe.has(code)) parts.push(zInvPe.get(code)!);
       if (zDy.has(code)) parts.push(zDy.get(code)!);
-      if (parts.length) out.set(code, parts.reduce((s, v) => s + v, 0));
+      if (parts.length)
+        out.set(
+          code,
+          parts.reduce((s, v) => s + v, 0)
+        );
     }
     return out;
   }
 
   private computeStockQualityRaw(
     codes: string[],
-    quality: Map<string, { roe: number | null; roe5yAvg: number | null; netProfitStd5y: number | null }>
+    quality: Map<
+      string,
+      { roe: number | null; roe5yAvg: number | null; netProfitStd5y: number | null }
+    >
   ): Map<string, number> {
     // z(roe) + z(-stddev_5y_net_profit) + z(roe_5y_avg)
     const roe: Array<{ code: string; v: number }> = [];
@@ -462,7 +493,11 @@ export class ETFFactorService {
       if (zRoe.has(code)) parts.push(zRoe.get(code)!);
       if (zNegStd.has(code)) parts.push(zNegStd.get(code)!);
       if (zRoeAvg.has(code)) parts.push(zRoeAvg.get(code)!);
-      if (parts.length) out.set(code, parts.reduce((s, v) => s + v, 0));
+      if (parts.length)
+        out.set(
+          code,
+          parts.reduce((s, v) => s + v, 0)
+        );
     }
     return out;
   }
@@ -539,7 +574,10 @@ export class ETFFactorService {
     return out;
   }
 
-  private zByCode<T extends { code: string }>(items: T[], pick: (x: T) => number | null): Map<string, number> {
+  private zByCode<T extends { code: string }>(
+    items: T[],
+    pick: (x: T) => number | null
+  ): Map<string, number> {
     const filtered = items.filter(x => {
       const v = pick(x);
       return v !== null && Number.isFinite(v);

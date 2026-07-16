@@ -1,6 +1,10 @@
+from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import unittest
+
+from datapipeline.contracts import is_canonical_sha256, is_canonical_source_version
+from datapipeline.storage.jpkr import canonical_financial_fact_hash
 
 from datapipeline.contracts.source_envelopes import (
     JpKrDisclosureRecord,
@@ -12,6 +16,44 @@ from datapipeline.contracts.source_envelopes import (
 )
 
 UTC_NOW = datetime(2026, 7, 10, tzinfo=timezone.utc)
+
+
+class ForgedSourceVersion(str):
+    def isascii(self) -> bool:
+        return True
+
+    def __iter__(self):
+        return iter("forged-v1")
+
+
+class ForgedHash(str):
+    def __eq__(self, _other: object) -> bool:
+        return True
+
+    def __ne__(self, _other: object) -> bool:
+        return False
+
+    __hash__ = str.__hash__
+
+
+class SourceVersionPolicyTest(unittest.TestCase):
+    def test_public_sot_requires_exact_printable_ascii(self) -> None:
+        for value in ("!", "~", "api-v2:parser-v1"):
+            with self.subTest(value=value):
+                self.assertTrue(is_canonical_source_version(value))
+        for value in (
+            "",
+            " capture-v1 ",
+            "\tcapture-v1\t",
+            "版本-v1",
+            ForgedSourceVersion("版本-v1"),
+        ):
+            with self.subTest(value=value, type=type(value)):
+                self.assertFalse(is_canonical_source_version(value))
+
+    def test_public_sha256_sot_rejects_str_subclasses(self) -> None:
+        self.assertTrue(is_canonical_sha256("a" * 64))
+        self.assertFalse(is_canonical_sha256(ForgedHash("a" * 64)))
 
 
 class FilingEnvelopeTest(unittest.TestCase):
@@ -174,8 +216,45 @@ class FilingEnvelopeTest(unittest.TestCase):
             self.disclosure(event_time_utc=datetime(2026, 7, 10))
         with self.assertRaisesRegex(ValueError, "lowercase SHA-256"):
             self.financial(fact_hash="A" * 64)
+        with self.assertRaisesRegex(ValueError, "lowercase SHA-256"):
+            self.financial(fact_hash=ForgedHash("a" * 64))
+        with self.assertRaisesRegex(ValueError, "lowercase SHA-256"):
+            self.disclosure(fact_hash=ForgedHash("b" * 64))
         with self.assertRaisesRegex(ValueError, "source_kind"):
             self.financial(source_kind="EDINET")
+        with self.assertRaisesRegex(ValueError, "printable ASCII"):
+            self.financial(source_version=" financial-v1 ")
+        with self.assertRaisesRegex(ValueError, "printable ASCII"):
+            self.disclosure(source_version=" disclosure-v1 ")
+
+    def test_source_version_rejects_unicode_controls_and_str_subclasses(self) -> None:
+        invalid_versions = (
+            "版本-v1",
+            " financial-v1 ",
+            "\tfinancial-v1\t",
+            ForgedSourceVersion("版本-v1"),
+        )
+        for value in invalid_versions:
+            with self.subTest(value=value, type=type(value)):
+                with self.assertRaisesRegex(ValueError, "printable ASCII"):
+                    self.financial(source_version=value)
+                with self.assertRaisesRegex(ValueError, "printable ASCII"):
+                    self.disclosure(source_version=value)
+
+    def test_financial_fact_hash_has_one_datapipeline_authority(self) -> None:
+        record = self.financial()
+        original = canonical_financial_fact_hash(record)
+        changed = canonical_financial_fact_hash(
+            self.financial(revenue=Decimal("1001"))
+        )
+
+        self.assertRegex(original, r"^[0-9a-f]{64}$")
+        self.assertEqual(canonical_financial_fact_hash(asdict(record)), original)
+        self.assertEqual(
+            original,
+            "f41a97dfb2ab16254aa97a5d73a60aaf059c0715312e37480f4a3f688018fd40",
+        )
+        self.assertNotEqual(original, changed)
 
 
 class TextHitEnvelopeTest(unittest.TestCase):
@@ -231,6 +310,8 @@ class TextHitEnvelopeTest(unittest.TestCase):
             self.document(language="fr")
         with self.assertRaisesRegex(ValueError, "must not precede"):
             self.document(available_at_utc=UTC_NOW - timedelta(seconds=1))
+        with self.assertRaisesRegex(ValueError, "printable ASCII"):
+            self.document(source_version=" capture-v1 ")
         with self.assertRaisesRegex(ValueError, "requested as_of"):
             self.document().require_available_by(UTC_NOW - timedelta(seconds=1))
 

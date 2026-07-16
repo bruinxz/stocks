@@ -24,7 +24,6 @@ import { factorRegistry } from '../FactorRegistry';
 import { stripSuffix, isFiniteNumber, lookbackStartDate } from './_helpers';
 import { StockValuationFactor } from '../../../models/StockValuationFactor';
 
-
 export const valueFactor: Factor = {
   name: 'value',
   description: 'PE-TTM 倒数 + PB 倒数 合成的价值因子（越大越便宜）',

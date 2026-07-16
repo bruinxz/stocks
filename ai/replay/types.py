@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any, Literal, Mapping, Optional
 
+from datapipeline.contracts.market_records import is_canonical_source_version
+
 
 ReplayStatus = Literal["queued", "running", "completed", "failed"]
 SourceKind = Literal["signals", "universe", "scores", "evidence"]
@@ -62,12 +64,24 @@ class ReplayJob:
     output_fingerprint: Optional[str] = None
     error_code: Optional[str] = None
     error_detail: Optional[str] = None
+    attempt: int = 0
+    lease_token: Optional[str] = None
+    lease_expires_at: Optional[str] = None
 
-    def running(self, now: str) -> "ReplayJob":
+    def claimed(
+        self,
+        now: str,
+        *,
+        lease_token: str,
+        lease_expires_at: str,
+    ) -> "ReplayJob":
         return replace(
             self,
             status="running",
             updated_at=now,
+            attempt=self.attempt + 1,
+            lease_token=lease_token,
+            lease_expires_at=lease_expires_at,
             error_code=None,
             error_detail=None,
         )
@@ -81,6 +95,8 @@ class ReplayJob:
             output_fingerprint=result.output_fingerprint,
             error_code=None,
             error_detail=None,
+            lease_token=None,
+            lease_expires_at=None,
         )
 
     def failed(self, code: str, detail: str, now: str) -> "ReplayJob":
@@ -92,4 +108,6 @@ class ReplayJob:
             output_fingerprint=None,
             error_code=code,
             error_detail=detail,
+            lease_token=None,
+            lease_expires_at=None,
         )

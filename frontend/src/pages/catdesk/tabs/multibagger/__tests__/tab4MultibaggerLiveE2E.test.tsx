@@ -3,6 +3,7 @@ import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeAll, describe, expect, jest, test } from '@jest/globals';
+import { API_DOMAIN_URL } from 'services/api';
 import HighMultipotential from '../HighMultipotential';
 import { parseMultibaggerDetail, parseMultibaggerResponse } from '../multibaggerAdapters';
 
@@ -13,9 +14,7 @@ type Artifact = {
 };
 
 const artifactPath = process.env.TAB4_RESPONSE_ARTIFACT;
-const live = artifactPath
-  ? (JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Artifact)
-  : null;
+const live = artifactPath ? (JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Artifact) : null;
 const describeLive = live ? describe : describe.skip;
 
 beforeAll(() => {
@@ -80,8 +79,11 @@ describeLive('Tab4 live disposable-PG E2E', () => {
       await flush();
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      `/api/v1/multibagger/${encodeURIComponent(parsedDetail.symbol)}/detail`,
-      expect.objectContaining({ signal: expect.any(AbortSignal) })
+      `${API_DOMAIN_URL}/api/v1/multibagger/${encodeURIComponent(parsedDetail.symbol)}/detail`,
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+        credentials: 'include',
+      })
     );
     expect(document.body.textContent).toContain(parsedDetail.classification_policy_version);
     expect(document.body.textContent).toContain(parsedDetail.fact_hash);

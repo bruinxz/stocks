@@ -31,7 +31,16 @@
  *     已经 `dotenv.config()`）。
  */
 
+import { createHash } from 'crypto';
 import Joi from 'joi';
+import {
+  KNOWN_LEAKED_SECRET_FINGERPRINTS,
+  secretFingerprint,
+} from '../security/leakedSecretFingerprints';
+import {
+  REPLAY_OPERATIONAL_ENV_NAMES,
+  REPLAY_OPERATIONAL_LIMIT_BOUNDS,
+} from '../replay/ReplayOperationalLimits';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -65,15 +74,89 @@ export interface EnvValidationResult {
 
 /** 已知占位符值 —— 出现在 production 时升级为 error；development 时只 warn */
 export const PLACEHOLDER_VALUES: readonly string[] = Object.freeze([
-  'your_jwt_secret_key_here',
-  'your-secret-key-change-in-production',
-  'your_feishu_app_id',
-  'your_feishu_app_secret',
-  'your_tushare_token_here',
   'change-me',
-  'replace-me',
+  'change_me',
+  'placeholder',
   'TODO',
+  'REPLACE_ME',
 ]);
+
+/** Tab6/7 replay 缺任一项都不能安全运行真实 durable worker。 */
+export const REPLAY_REQUIRED_GROUP: readonly string[] = Object.freeze([
+  'STOCKS_REPLAY_RUNTIME_DIR',
+  'DATABASE_URL',
+  'STOCKS_REPLAY_MODEL_VERSION',
+  'STOCKS_REPLAY_TEMPLATE_HASH',
+  'STOCKS_REPLAY_DISCLAIMERS_JSON',
+]);
+
+/** Production must pin every worker-capacity and recovery limit explicitly. */
+export const REPLAY_OPERATIONAL_REQUIRED_GROUP: readonly string[] = Object.freeze(
+  Object.values(REPLAY_OPERATIONAL_ENV_NAMES)
+);
+
+const REPLAY_DISCLAIMER_LOCALES = Object.freeze(['zh-CN', 'ja-JP', 'ko-KR'] as const);
+const REPLAY_DISCLAIMER_FIELDS = Object.freeze([
+  'version',
+  'short_text',
+  'full_text',
+  'language',
+  'effective_at',
+  'hash',
+] as const);
+const REPLAY_SEMVER =
+  /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const REPLAY_UTC_SECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+const REPLAY_SHA256 = /^[0-9a-f]{64}$/;
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const sortedExpected = [...expected].sort();
+  return (
+    actual.length === sortedExpected.length &&
+    actual.every((key, index) => key === sortedExpected[index])
+  );
+}
+
+function isReplayDisclaimerConfiguration(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const disclaimers = value as Record<string, unknown>;
+  if (!hasExactKeys(disclaimers, REPLAY_DISCLAIMER_LOCALES)) return false;
+  return REPLAY_DISCLAIMER_LOCALES.every(locale => {
+    const raw = disclaimers[locale];
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+    const disclaimer = raw as Record<string, unknown>;
+    if (!hasExactKeys(disclaimer, REPLAY_DISCLAIMER_FIELDS)) return false;
+    const version = disclaimer.version;
+    const shortText = disclaimer.short_text;
+    const fullText = disclaimer.full_text;
+    const effectiveAt = disclaimer.effective_at;
+    const digest = disclaimer.hash;
+    if (
+      typeof version !== 'string' ||
+      !REPLAY_SEMVER.test(version) ||
+      typeof shortText !== 'string' ||
+      shortText.length === 0 ||
+      Array.from(shortText).length > 200 ||
+      typeof fullText !== 'string' ||
+      fullText.length === 0 ||
+      Array.from(fullText).length > 4000 ||
+      disclaimer.language !== locale ||
+      typeof effectiveAt !== 'string' ||
+      !REPLAY_UTC_SECONDS.test(effectiveAt) ||
+      typeof digest !== 'string' ||
+      !REPLAY_SHA256.test(digest) ||
+      createHash('sha256').update(fullText, 'utf8').digest('hex') !== digest
+    ) {
+      return false;
+    }
+    const parsed = new Date(effectiveAt);
+    return (
+      Number.isFinite(parsed.getTime()) &&
+      parsed.toISOString() === effectiveAt.replace('Z', '.000Z')
+    );
+  });
+}
 
 /** Feishu channel 任一关键 env 提供时即视为"开启"，缺其它字段升级 error */
 export const FEISHU_REQUIRED_GROUP: readonly string[] = Object.freeze([
@@ -108,7 +191,7 @@ export const ALIYUN_SMS_REQUIRED_GROUP: readonly string[] = Object.freeze([
  * 必填 schema：任何 env 下都必填。
  * - DB_HOST / DB_PORT / DB_NAME / DB_USER / DB_PASSWORD —— Postgres 连接四件套
  * - REDIS_HOST / REDIS_PORT —— Bull 队列 + redisLock 依赖
- * - JWT_SECRET —— auth 中间件，缺失退回不安全 fallback
+ * - JWT_SECRET —— access-token auth trust boundary，缺失时 fail-closed
  * - TRADING_AGENTS_URL —— AI 投研 / 公告 NLP / KOL 等 6+ feature 共用
  */
 function buildBaseSchema(): Joi.ObjectSchema {
@@ -133,10 +216,72 @@ function buildBaseSchema(): Joi.ObjectSchema {
 
     // ----------- 必填: JWT -----------
     JWT_SECRET: Joi.string().min(8).required(),
+    JWT_REFRESH_SECRET: Joi.string().min(8).optional(),
     JWT_EXPIRES_IN: Joi.string().default('7d'),
+    ENABLE_SECURE_COOKIE: Joi.string().valid('true', 'false').optional(),
 
     // ----------- 必填: TradingAgents -----------
     TRADING_AGENTS_URL: Joi.string().uri().required(),
+
+    // ----------- production 必填: Tab6/7 durable replay -----------
+    STOCKS_REPLAY_RUNTIME_DIR: Joi.string().pattern(/^\//).allow('').optional(),
+    DATABASE_URL: Joi.string()
+      .uri({ scheme: ['postgres', 'postgresql'] })
+      .allow('')
+      .optional(),
+    STOCKS_REPLAY_MODEL_VERSION: Joi.string()
+      .pattern(
+        /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
+      )
+      .allow('')
+      .optional(),
+    STOCKS_REPLAY_TEMPLATE_HASH: Joi.string()
+      .pattern(/^[0-9a-f]{64}$/)
+      .allow('')
+      .optional(),
+    STOCKS_REPLAY_DISCLAIMERS_JSON: Joi.string()
+      .max(64 * 1024)
+      .allow('')
+      .optional(),
+    STOCKS_REPLAY_PYTHON: Joi.string().default('python3'),
+    STOCKS_REPLAY_CLI_TIMEOUT_MS: Joi.number().integer().min(0).max(3_600_000).default(10000),
+    STOCKS_REPLAY_HTTP_WAIT_MS: Joi.number().integer().min(0).max(10000).default(1000),
+    STOCKS_REPLAY_CONTROL_TIMEOUT_MS: Joi.number().integer().min(1).max(30000).default(5000),
+    STOCKS_REPLAY_WORKER_DEADLINE_SECONDS: Joi.number()
+      .integer()
+      .min(REPLAY_OPERATIONAL_LIMIT_BOUNDS.worker_deadline_seconds.minimum)
+      .max(REPLAY_OPERATIONAL_LIMIT_BOUNDS.worker_deadline_seconds.maximum)
+      .default(REPLAY_OPERATIONAL_LIMIT_BOUNDS.worker_deadline_seconds.fallback),
+    STOCKS_REPLAY_LEASE_SECONDS: Joi.number()
+      .integer()
+      .min(REPLAY_OPERATIONAL_LIMIT_BOUNDS.lease_seconds.minimum)
+      .max(REPLAY_OPERATIONAL_LIMIT_BOUNDS.lease_seconds.maximum)
+      .default(REPLAY_OPERATIONAL_LIMIT_BOUNDS.lease_seconds.fallback),
+    STOCKS_REPLAY_MAX_CONCURRENCY: Joi.number()
+      .integer()
+      .min(REPLAY_OPERATIONAL_LIMIT_BOUNDS.max_concurrency.minimum)
+      .max(REPLAY_OPERATIONAL_LIMIT_BOUNDS.max_concurrency.maximum)
+      .default(REPLAY_OPERATIONAL_LIMIT_BOUNDS.max_concurrency.fallback),
+    STOCKS_REPLAY_MAX_QUEUE_DEPTH: Joi.number()
+      .integer()
+      .min(REPLAY_OPERATIONAL_LIMIT_BOUNDS.max_queue_depth.minimum)
+      .max(REPLAY_OPERATIONAL_LIMIT_BOUNDS.max_queue_depth.maximum)
+      .default(REPLAY_OPERATIONAL_LIMIT_BOUNDS.max_queue_depth.fallback),
+    STOCKS_REPLAY_SUBMIT_RATE_PER_MINUTE: Joi.number()
+      .integer()
+      .min(REPLAY_OPERATIONAL_LIMIT_BOUNDS.submit_rate_per_minute.minimum)
+      .max(REPLAY_OPERATIONAL_LIMIT_BOUNDS.submit_rate_per_minute.maximum)
+      .default(REPLAY_OPERATIONAL_LIMIT_BOUNDS.submit_rate_per_minute.fallback),
+    STOCKS_REPLAY_STATUS_RATE_PER_MINUTE: Joi.number()
+      .integer()
+      .min(REPLAY_OPERATIONAL_LIMIT_BOUNDS.status_rate_per_minute.minimum)
+      .max(REPLAY_OPERATIONAL_LIMIT_BOUNDS.status_rate_per_minute.maximum)
+      .default(REPLAY_OPERATIONAL_LIMIT_BOUNDS.status_rate_per_minute.fallback),
+    STOCKS_REPLAY_RATE_MAX_USERS: Joi.number()
+      .integer()
+      .min(REPLAY_OPERATIONAL_LIMIT_BOUNDS.rate_max_users.minimum)
+      .max(REPLAY_OPERATIONAL_LIMIT_BOUNDS.rate_max_users.maximum)
+      .default(REPLAY_OPERATIONAL_LIMIT_BOUNDS.rate_max_users.fallback),
 
     // ----------- 可选: Feishu Bot -----------
     FEISHU_APP_ID: Joi.string().allow('').optional(),
@@ -213,10 +358,14 @@ function buildBaseSchema(): Joi.ObjectSchema {
  * 是否占位符值（development 时 warn / production 时 error）。
  * 空字符串和 undefined 不算占位符（缺失 vs 留默认是不同语义）。
  */
-export function isPlaceholderValue(value: unknown): boolean {
+export function isPlaceholderValue(
+  value: unknown,
+  leakedFingerprints: ReadonlySet<string> = KNOWN_LEAKED_SECRET_FINGERPRINTS
+): boolean {
   if (typeof value !== 'string') return false;
   const trimmed = value.trim();
   if (!trimmed) return false;
+  if (leakedFingerprints.has(secretFingerprint(trimmed))) return true;
   for (const placeholder of PLACEHOLDER_VALUES) {
     if (trimmed === placeholder) return true;
     if (trimmed.toLowerCase() === placeholder.toLowerCase()) return true;
@@ -325,20 +474,27 @@ export function validateEnv(
   errors.push(...mapJoiErrorsToValidationErrors(error));
 
   // 2. 占位符值校验（production = error，development = warning）
-  const PLACEHOLDER_FIELDS = ['JWT_SECRET', 'FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'TUSHARE_TOKEN'];
+  const PLACEHOLDER_FIELDS = [
+    'JWT_SECRET',
+    'JWT_REFRESH_SECRET',
+    'FEISHU_APP_ID',
+    'FEISHU_APP_SECRET',
+    'TUSHARE_TOKEN',
+    'STOCKS_REPLAY_TEMPLATE_HASH',
+  ];
   for (const field of PLACEHOLDER_FIELDS) {
     const v = env[field];
     if (isPlaceholderValue(v)) {
       if (nodeEnv === 'production') {
         errors.push({
           field,
-          message: `${field} 仍为占位符值 "${v}"，production 必须改为真实密钥`,
+          message: `${field} 命中占位符或已泄漏值，production 必须改为新的随机密钥`,
           category: 'production_required',
         });
       } else {
         warnings.push({
           field,
-          message: `${field} 是占位符值 "${v}"，production 部署前必须替换`,
+          message: `${field} 命中占位符或已泄漏值，production 部署前必须替换`,
           category: 'placeholder_value',
         });
       }
@@ -366,7 +522,70 @@ export function validateEnv(
     }
   }
 
-  // 4. 可选 channel 全空时只 warn（production 才 warn，development 不啰嗦）
+  // 4. Replay 是 Tab6 Generate 的产品链：部分配置在任何环境都失败；
+  // production 中全空也失败，避免 UI 看似可用但每次都返回 503。
+  const missingReplay = detectPartialChannelGroup(env, REPLAY_REQUIRED_GROUP);
+  if (missingReplay.length) {
+    errors.push({
+      field: missingReplay.join(', '),
+      message: `durable replay 部分配置，缺少 ${missingReplay.join(', ')}`,
+      category: 'required',
+    });
+  }
+  const replayAllEmpty = REPLAY_REQUIRED_GROUP.every(field => {
+    const configured = env[field];
+    return !configured || !configured.trim();
+  });
+  if (nodeEnv === 'production' && replayAllEmpty) {
+    errors.push({
+      field: REPLAY_REQUIRED_GROUP.join(', '),
+      message: 'production 必须配置完整 durable replay runtime',
+      category: 'production_required',
+    });
+  }
+  if (nodeEnv === 'production') {
+    const missingOperationalLimits = REPLAY_OPERATIONAL_REQUIRED_GROUP.filter(field => {
+      const configured = env[field];
+      return configured === undefined || configured.trim() === '';
+    });
+    if (missingOperationalLimits.length) {
+      errors.push({
+        field: missingOperationalLimits.join(', '),
+        message: `production 必须显式配置 replay 运行上限，缺少 ${missingOperationalLimits.join(
+          ', '
+        )}`,
+        category: 'production_required',
+      });
+    }
+  }
+  const workerDeadlineSeconds = Number(value?.STOCKS_REPLAY_WORKER_DEADLINE_SECONDS);
+  const leaseSeconds = Number(value?.STOCKS_REPLAY_LEASE_SECONDS);
+  if (
+    Number.isInteger(workerDeadlineSeconds) &&
+    Number.isInteger(leaseSeconds) &&
+    leaseSeconds < workerDeadlineSeconds + 5
+  ) {
+    errors.push({
+      field: 'STOCKS_REPLAY_WORKER_DEADLINE_SECONDS, STOCKS_REPLAY_LEASE_SECONDS',
+      message: 'STOCKS_REPLAY_LEASE_SECONDS 必须至少比 worker deadline 多 5 秒',
+      category: 'invalid_format',
+    });
+  }
+  const disclaimersJson = env.STOCKS_REPLAY_DISCLAIMERS_JSON;
+  if (disclaimersJson && disclaimersJson.trim()) {
+    try {
+      const parsed = JSON.parse(disclaimersJson);
+      if (!isReplayDisclaimerConfiguration(parsed)) throw new Error();
+    } catch {
+      errors.push({
+        field: 'STOCKS_REPLAY_DISCLAIMERS_JSON',
+        message: 'STOCKS_REPLAY_DISCLAIMERS_JSON 不满足严格 locale/disclaimer 契约',
+        category: 'invalid_format',
+      });
+    }
+  }
+
+  // 5. 可选 channel 全空时只 warn（production 才 warn，development 不啰嗦）
   if (nodeEnv === 'production') {
     for (const group of channelGroups) {
       const allEmpty = group.fields.every(field => {
@@ -383,12 +602,53 @@ export function validateEnv(
     }
   }
 
-  // 5. production 模式下 JWT_SECRET 应足够长
+  // 6. Access and refresh JWTs are separate trust domains. Sharing one
+  // secret would let either token class cross the signing-key boundary.
+  let effectiveRefreshSecret = env.JWT_REFRESH_SECRET || '';
+  if (!effectiveRefreshSecret && nodeEnv !== 'production') {
+    effectiveRefreshSecret = env.LIVE_DEV_JWT_REFRESH_SECRET || 'dev-only-refresh-secret';
+  }
+  if (
+    typeof env.JWT_SECRET === 'string' &&
+    typeof effectiveRefreshSecret === 'string' &&
+    env.JWT_SECRET.length > 0 &&
+    env.JWT_SECRET === effectiveRefreshSecret
+  ) {
+    errors.push({
+      field: 'JWT_SECRET, JWT_REFRESH_SECRET',
+      message: 'JWT_SECRET 与 JWT_REFRESH_SECRET 必须使用不同的密钥',
+      category: 'invalid_format',
+    });
+  }
+
+  // 7. production 模式下 JWT secret 应足够长，refresh cookie 必须 Secure。
   if (nodeEnv === 'production' && typeof env.JWT_SECRET === 'string') {
     if (env.JWT_SECRET.length < 32) {
       errors.push({
         field: 'JWT_SECRET',
         message: 'production 模式下 JWT_SECRET 长度必须 >= 32 字符（建议 64 字符随机串）',
+        category: 'production_required',
+      });
+    }
+  }
+  if (nodeEnv === 'production') {
+    if (!env.JWT_REFRESH_SECRET) {
+      errors.push({
+        field: 'JWT_REFRESH_SECRET',
+        message: 'production 模式必须配置 JWT_REFRESH_SECRET',
+        category: 'production_required',
+      });
+    } else if (env.JWT_REFRESH_SECRET.length < 32) {
+      errors.push({
+        field: 'JWT_REFRESH_SECRET',
+        message: 'production 模式下 JWT_REFRESH_SECRET 长度必须 >= 32 字符',
+        category: 'production_required',
+      });
+    }
+    if (env.ENABLE_SECURE_COOKIE !== 'true') {
+      errors.push({
+        field: 'ENABLE_SECURE_COOKIE',
+        message: 'production 模式必须显式设置 ENABLE_SECURE_COOKIE=true',
         category: 'production_required',
       });
     }

@@ -1,7 +1,38 @@
 import express from 'express';
+import jwt from 'jsonwebtoken';
 import request from 'supertest';
-import backtestPitRoutes from '../../src/api/routes/backtestPit.routes';
 import { sequelize } from '../../src/config/database';
+import { User } from '../../src/models/User';
+
+const JWT_SECRET = 'api-backtest-pit-test-secret';
+const AUTH_USER = {
+  id: 9003,
+  username: 'routing-test-user',
+  email: 'routing-test@example.com',
+  role: 'admin',
+  is_active: true,
+} as User;
+
+process.env.JWT_SECRET = JWT_SECRET;
+(User as any).findByPk = async (userId: number) => (userId === AUTH_USER.id ? AUTH_USER : null);
+
+const AUTHORIZATION = `Bearer ${jwt.sign(
+  {
+    user_id: AUTH_USER.id,
+    username: AUTH_USER.username,
+    role: AUTH_USER.role,
+    type: 'access',
+  },
+  JWT_SECRET,
+  {
+    algorithm: 'HS256',
+    issuer: 'stocks-backend',
+    audience: 'stocks-api',
+    expiresIn: '5m',
+  }
+)}`;
+const backtestPitRoutes = require('../../src/api/routes/backtestPit.routes')
+  .default as typeof import('../../src/api/routes/backtestPit.routes').default;
 
 const STRATEGY = 'us_preferred';
 const MARKET_SCOPE = 'us';
@@ -49,6 +80,10 @@ function buildApp(): express.Express {
   return app;
 }
 
+function authorizedGet(app: express.Express, path: string) {
+  return request(app).get(path).set('Authorization', AUTHORIZATION);
+}
+
 let passed = 0;
 let failed = 0;
 
@@ -93,10 +128,22 @@ async function main(): Promise<void> {
   try {
     const app = buildApp();
 
-    const list = await request(app).get(
+    const callsBeforeAuth = calls.length;
+    const missingAuthorization = await request(app).get(
+      `/api/v1/backtest-pit/${STRATEGY}?market_scope=${MARKET_SCOPE}`
+    );
+    assert('missing Authorization returns 401', missingAuthorization.status === 401);
+    const invalidAuthorization = await request(app)
+      .get(`/api/v1/backtest-pit/${STRATEGY}?market_scope=${MARKET_SCOPE}`)
+      .set('Authorization', 'Bearer invalid.jwt.token');
+    assert('invalid Authorization returns 401', invalidAuthorization.status === 401);
+    assert('unauthorized requests never query DB', calls.length === callsBeforeAuth);
+
+    const list = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}?market_scope=${MARKET_SCOPE}&from=2026-01-01&to=2026-07-10&limit=5`
     );
-    assert('list returns 200 without Authorization', list.status === 200, `status=${list.status}`);
+    assert('list returns 200 with Authorization', list.status === 200, `status=${list.status}`);
     assert('list envelope keeps strategy', list.body.strategy === STRATEGY);
     assert('list envelope keeps market_scope', list.body.market_scope === MARKET_SCOPE);
     assert(
@@ -129,7 +176,8 @@ async function main(): Promise<void> {
         listCall?.replacements.limit === 5
     );
 
-    const detail = await request(app).get(
+    const detail = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}?market_scope=${MARKET_SCOPE}`
     );
     assert('detail returns deterministic 200', detail.status === 200, `status=${detail.status}`);
@@ -149,7 +197,8 @@ async function main(): Promise<void> {
     assert('detail never selects removed bps.holdings', !detailCall?.sql.includes('bps.holdings'));
 
     const equivalentAsOf = '2026-07-10T14:00:00+08:00';
-    const equivalentDetail = await request(app).get(
+    const equivalentDetail = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/${encodeURIComponent(equivalentAsOf)}` +
         `?market_scope=${MARKET_SCOPE}`
     );
@@ -164,7 +213,8 @@ async function main(): Promise<void> {
     );
 
     const nonEquivalentAsOf = '2026-07-10T06:00:01Z';
-    const nonEquivalentDetail = await request(app).get(
+    const nonEquivalentDetail = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/${encodeURIComponent(nonEquivalentAsOf)}` +
         `?market_scope=${MARKET_SCOPE}`
     );
@@ -174,7 +224,8 @@ async function main(): Promise<void> {
       `status=${nonEquivalentDetail.status}`
     );
 
-    const holdings = await request(app).get(
+    const holdings = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings?market_scope=${MARKET_SCOPE}`
     );
     assert(
@@ -212,7 +263,8 @@ async function main(): Promise<void> {
     );
 
     holdingRows = [];
-    const emptyHoldings = await request(app).get(
+    const emptyHoldings = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings?market_scope=${MARKET_SCOPE}`
     );
     assert(
@@ -221,7 +273,8 @@ async function main(): Promise<void> {
     );
 
     holdingRows = [{ ticker: 'NVDA' }];
-    const objectHoldings = await request(app).get(
+    const objectHoldings = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings?market_scope=${MARKET_SCOPE}`
     );
     assert('object holdings returns stable 500', objectHoldings.status === 500);
@@ -231,7 +284,8 @@ async function main(): Promise<void> {
     );
 
     holdingRows = [{ ticker: 'NVDA', return_since_entry: '0.12', is_stale: false }];
-    const missingWeightHoldings = await request(app).get(
+    const missingWeightHoldings = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings?market_scope=${MARKET_SCOPE}`
     );
     assert('missing weight holdings returns stable 500', missingWeightHoldings.status === 500);
@@ -244,13 +298,15 @@ async function main(): Promise<void> {
         is_stale: false,
       },
     ];
-    const nonFiniteWeightHoldings = await request(app).get(
+    const nonFiniteWeightHoldings = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings?market_scope=${MARKET_SCOPE}`
     );
     assert('non-finite weight holdings returns stable 500', nonFiniteWeightHoldings.status === 500);
 
     holdingRows = [{ ticker: 'NVDA', weight: '0.15', is_stale: false }];
-    const missingReturnHoldings = await request(app).get(
+    const missingReturnHoldings = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings?market_scope=${MARKET_SCOPE}`
     );
     assert(
@@ -261,7 +317,8 @@ async function main(): Promise<void> {
     holdingRows = [
       { ticker: 'NVDA', weight: 0.15, return_since_entry: Number.NaN, is_stale: false },
     ];
-    const nonFiniteReturnHoldings = await request(app).get(
+    const nonFiniteReturnHoldings = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings?market_scope=${MARKET_SCOPE}`
     );
     assert(
@@ -270,37 +327,42 @@ async function main(): Promise<void> {
     );
 
     holdingRows = [{ ticker: 'NVDA', weight: 0.15, return_since_entry: 0.12, is_stale: 'false' }];
-    const badStaleHoldings = await request(app).get(
+    const badStaleHoldings = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings?market_scope=${MARKET_SCOPE}`
     );
     assert('non-boolean is_stale holdings returns stable 500', badStaleHoldings.status === 500);
 
     holdingRows = [{ ticker: '', weight: '0.15', return_since_entry: '0.12', is_stale: false }];
-    const emptyTickerHoldings = await request(app).get(
+    const emptyTickerHoldings = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings?market_scope=${MARKET_SCOPE}`
     );
     assert('empty ticker holdings returns stable 500', emptyTickerHoldings.status === 500);
 
     holdingRows = [{ ticker: 123, weight: '0.15', return_since_entry: '0.12', is_stale: false }];
-    const nonStringTickerHoldings = await request(app).get(
+    const nonStringTickerHoldings = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings?market_scope=${MARKET_SCOPE}`
     );
     assert('non-string ticker holdings returns stable 500', nonStringTickerHoldings.status === 500);
 
     duplicateRows = true;
     holdingRows = [{ ticker: 'AAPL', weight: '0.15', return_since_entry: '0.12', is_stale: false }];
-    const ambiguousDetail = await request(app).get(
+    const ambiguousDetail = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}?market_scope=${MARKET_SCOPE}`
     );
     assert('duplicate PIT snapshots return 409', ambiguousDetail.status === 409);
-    const ambiguousHoldings = await request(app).get(
+    const ambiguousHoldings = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings?market_scope=${MARKET_SCOPE}`
     );
     assert('duplicate PIT holdings return 409', ambiguousHoldings.status === 409);
     duplicateRows = false;
 
     const beforeInvalid = calls.length;
-    const invalidStrategy = await request(app).get('/api/v1/backtest-pit/not-a-strategy');
+    const invalidStrategy = await authorizedGet(app, '/api/v1/backtest-pit/not-a-strategy');
     assert(
       'invalid strategy returns 400',
       invalidStrategy.status === 400,
@@ -308,21 +370,24 @@ async function main(): Promise<void> {
     );
     assert('invalid strategy never queries DB', calls.length === beforeInvalid);
 
-    const missingScope = await request(app).get(`/api/v1/backtest-pit/${STRATEGY}`);
+    const missingScope = await authorizedGet(app, `/api/v1/backtest-pit/${STRATEGY}`);
     assert('missing market_scope returns 400', missingScope.status === 400);
-    const incompatibleScope = await request(app).get(
+    const incompatibleScope = await authorizedGet(
+      app,
       '/api/v1/backtest-pit/japan_blue_chip?market_scope=us'
     );
     assert('incompatible market_scope returns 400', incompatibleScope.status === 400);
-    const customScope = await request(app).get('/api/v1/backtest-pit/custom?market_scope=cn_a');
+    const customScope = await authorizedGet(app, '/api/v1/backtest-pit/custom?market_scope=cn_a');
     assert('custom PIT replay is rejected until exact weights persist', customScope.status === 400);
 
     const beforeInvalidTimestamp = calls.length;
-    const invalidAsOf = await request(app).get(
+    const invalidAsOf = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/not-a-timestamp?market_scope=${MARKET_SCOPE}`
     );
     assert('invalid as_of returns 400', invalidAsOf.status === 400, `status=${invalidAsOf.status}`);
-    const dateOnlyAsOf = await request(app).get(
+    const dateOnlyAsOf = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/2026-07-10?market_scope=${MARKET_SCOPE}`
     );
     assert(
@@ -333,7 +398,8 @@ async function main(): Promise<void> {
     assert('invalid as_of never queries DB', calls.length === beforeInvalidTimestamp);
 
     returnEmpty = true;
-    const missingDetail = await request(app).get(
+    const missingDetail = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}?market_scope=${MARKET_SCOPE}`
     );
     assert(
@@ -346,7 +412,8 @@ async function main(): Promise<void> {
       missingDetail.body.error === 'Backtest snapshot not found'
     );
 
-    const missingHoldings = await request(app).get(
+    const missingHoldings = await authorizedGet(
+      app,
       `/api/v1/backtest-pit/${STRATEGY}/${ENCODED_AS_OF}/holdings?market_scope=${MARKET_SCOPE}`
     );
     assert('missing holdings snapshot returns 404', missingHoldings.status === 404);

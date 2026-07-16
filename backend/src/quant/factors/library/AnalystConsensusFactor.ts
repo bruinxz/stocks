@@ -170,7 +170,8 @@ export function aggregateRevisions(perYearRevisions: PerYearRevision[]): number 
 
 export const analystConsensusFactor: Factor = {
   name: 'analyst_consensus',
-  description: '近 30 日 vs 150 日前 forecast_eps_y1 一致预期上调比例（卖方研报上修方向, BD-4 窗口 90→180d）',
+  description:
+    '近 30 日 vs 150 日前 forecast_eps_y1 一致预期上调比例（卖方研报上修方向, BD-4 窗口 90→180d）',
   category: 'sentiment',
 
   async compute(ctx) {

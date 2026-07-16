@@ -107,13 +107,13 @@ function test_normalizeStrategyKeys(): void {
   assert('[4] null → []', JSON.stringify(normalizeStrategyKeys(null)) === '[]');
   assert('[4] [] → []', JSON.stringify(normalizeStrategyKeys([])) === '[]');
   // 真实的策略 key (从 StrategyRegistry 拉)
-  const valid = normalizeStrategyKeys(['multi_factor_alpha', 'dragon_head_momentum']);
-  assert('[4] 2 个有效 key OK', valid.length === 2 && valid[0] === 'multi_factor_alpha');
+  const valid = normalizeStrategyKeys(['etf_factor_rotation']);
+  assert('[4] Signal-First 主线 key 有效', valid.length === 1 && valid[0] === 'etf_factor_rotation');
   // 去重
-  const dedup = normalizeStrategyKeys(['multi_factor_alpha', 'multi_factor_alpha']);
+  const dedup = normalizeStrategyKeys(['etf_factor_rotation', 'etf_factor_rotation']);
   assert('[4] 同 key 去重', dedup.length === 1);
   // 空值过滤
-  const trimmed = normalizeStrategyKeys(['multi_factor_alpha', '', '  ', null]);
+  const trimmed = normalizeStrategyKeys(['etf_factor_rotation', '', '  ', null]);
   assert('[4] 空 / null / 空格过滤', trimmed.length === 1);
   // 未知 key 抛
   assertThrows(
@@ -122,7 +122,7 @@ function test_normalizeStrategyKeys(): void {
     'INVALID_STRATEGY_KEYS'
   );
   // 非数组抛错
-  assertThrows('[4] string 抛错', () => normalizeStrategyKeys('multi_factor_alpha'), 'INVALID_STRATEGY_KEYS');
+  assertThrows('[4] string 抛错', () => normalizeStrategyKeys('etf_factor_rotation'), 'INVALID_STRATEGY_KEYS');
   assertThrows('[4] object 抛错', () => normalizeStrategyKeys({}), 'INVALID_STRATEGY_KEYS');
 }
 
@@ -201,7 +201,8 @@ function test_errorClass(): void {
 // ---------- [10] listAvailableStrategies / Factors ----------
 function test_listAvailable(): void {
   const strategies = paperTradingPortfolioCrudService.listAvailableStrategies();
-  assert('[10] strategies 至少 20 个', strategies.length >= 20);
+  assert('[10] Signal-First 主线仅暴露 ETF 因子轮动', strategies.length === 1);
+  assert('[10] strategy key = etf_factor_rotation', strategies[0].key === 'etf_factor_rotation');
   // AT-2-FIX (2026-06-22 二轮 review): contract 改 strategy_key → key, description → brief
   assert('[10] strategy 含 key', strategies[0].key.length > 0);
   assert('[10] strategy 含 name', strategies[0].name.length > 0);

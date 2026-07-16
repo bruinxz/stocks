@@ -1137,7 +1137,6 @@ export class AIInvestmentSignalService {
     return { created, updated, total: screeners.length };
   }
 
-
   async archiveTradingAgentsResult(params: {
     task_id?: string;
     symbol: string;

@@ -349,7 +349,6 @@ export class DefaultPositionLimitDataSource implements PositionLimitDataSource {
     // 而不只是"600519 仓位限制告警 - single_industry_cap"
     let stockName = '';
     try {
-      const { Stock } = require('../../models/Stock');
       const stock = await Stock.findOne({
         where: { symbol: input.symbol },
         attributes: ['name'],

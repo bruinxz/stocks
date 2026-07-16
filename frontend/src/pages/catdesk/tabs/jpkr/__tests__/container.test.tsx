@@ -2,6 +2,8 @@ import React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals';
+import { API_DOMAIN_URL } from 'services/api';
+import { snapshotFixture } from '../../daily-report/testFixtures';
 import JpKrMarket from '../JpKrMarket';
 
 jest.mock('shared/components/FilterChip', () => ({
@@ -24,11 +26,32 @@ jest.mock('../../../shared/DisclaimerFooter', () => ({
   DisclaimerFooter: () => null,
 }));
 jest.mock('../JpKrTable', () => ({
-  JpKrTable: ({ rows, error }: { rows: Array<{ symbol: string }>; error: Error | null }) =>
+  JpKrTable: ({
+    rows,
+    error,
+  }: {
+    rows: Array<{
+      symbol: string;
+      recommendation?: {
+        score: { total: number };
+        risk_gate: { gate: string };
+        entry_plan: { entry: { low: number; high: number } };
+      };
+    }>;
+    error: Error | null;
+  }) =>
     error ? (
       <div role="alert">table error</div>
     ) : (
-      <div>{rows.map(row => row.symbol).join(',')}</div>
+      <div>
+        {rows
+          .map(row =>
+            row.recommendation
+              ? `${row.symbol}:${row.recommendation.score.total}:${row.recommendation.risk_gate.gate}:${row.recommendation.entry_plan.entry.low}-${row.recommendation.entry_plan.entry.high}`
+              : row.symbol
+          )
+          .join(',')}
+      </div>
     ),
 }));
 
@@ -70,12 +93,69 @@ function payload(rows: unknown[] = [marketRow()]) {
   };
 }
 
-function installFetch(body: unknown): ReturnType<typeof jest.fn> {
-  const fetchMock = jest.fn(async () => ({
-    ok: true,
-    status: 200,
+function jpRecommendationSnapshot() {
+  const base = snapshotFixture();
+  const recommendation = base.items[0].recommendation;
+  return snapshotFixture({
+    profile: 'japan_blue_chip',
+    market_scope: 'jp',
+    disclaimer: {
+      ...base.disclaimer,
+      short_text: '参考情報です',
+      full_text: '投資判断はご自身の責任で行ってください。',
+      language: 'ja-JP',
+    },
+    items: [
+      {
+        recommendation: {
+          ...recommendation,
+          ticker: '7203',
+          score: {
+            ...recommendation.score,
+            profile: 'japan_blue_chip',
+            market_scope: 'jp',
+          },
+          conviction: { ...recommendation.conviction, ticker: '7203' },
+          risk_gate: { ...recommendation.risk_gate, ticker: '7203' },
+          entry_plan: {
+            ...recommendation.entry_plan,
+            ticker: '7203',
+            entry: { low: 3000, high: 3150, currency: 'JPY' },
+            stop: { value: 2850, currency: 'JPY' },
+            targets: [{ value: 3500, currency: 'JPY' }],
+          },
+          explanation: { ...recommendation.explanation, language: 'ja-JP' },
+          evidence_refs: [
+            {
+              ...recommendation.evidence_refs[0],
+              source_uri: 'jpx-edinet://E00001/2026-07-10/annual-report',
+            },
+          ],
+        },
+        rating_band: 'A',
+      },
+    ],
+  });
+}
+
+function response(status: number, body?: unknown): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
     json: async () => body,
-  }));
+  } as Response;
+}
+
+function installFetch(
+  marketBody: unknown,
+  recommendation: { status: number; body?: unknown } = { status: 404 }
+) {
+  const fetchMock = jest.fn(
+    async (input: RequestInfo | URL, _init?: RequestInit) =>
+      String(input).includes('/api/v1/ai/recommendations/latest?')
+        ? response(recommendation.status, recommendation.body)
+        : response(200, marketBody)
+  );
   globalThis.fetch = fetchMock as unknown as typeof fetch;
   return fetchMock;
 }
@@ -94,16 +174,18 @@ describe('JpKrMarket real container', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
+    localStorage.setItem('token', 'jpkr-access-token');
   });
 
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+    localStorage.removeItem('token');
     globalThis.fetch = originalFetch;
     jest.restoreAllMocks();
   });
 
-  test('loads through the strict HTTP adapter and renders five honest KPI slots', async () => {
+  test('loads both authenticated endpoints and keeps a missing snapshot explicit', async () => {
     const fetchMock = installFetch(payload());
 
     await act(async () => {
@@ -112,8 +194,22 @@ describe('JpKrMarket real container', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      `/api/v1/jpkr-market/${DATE}?market=JP`,
-      expect.objectContaining({ signal: expect.any(AbortSignal) })
+      `${API_DOMAIN_URL}/api/v1/jpkr-market/${DATE}?market=JP`,
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+        credentials: 'include',
+        headers: expect.any(Headers),
+      })
+    );
+    const [, requestInit] = fetchMock.mock.calls[0];
+    expect(new Headers(requestInit?.headers).get('Authorization')).toBe('Bearer jpkr-access-token');
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${API_DOMAIN_URL}/api/v1/ai/recommendations/latest?profile=japan_blue_chip&market_scope=jp`,
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+        credentials: 'include',
+        headers: expect.any(Headers),
+      })
     );
     expect(container.textContent).toContain('41,000.50');
     expect(container.textContent).toContain('150.25');
@@ -122,15 +218,43 @@ describe('JpKrMarket real container', () => {
     expect(container.querySelectorAll('[data-state="unavailable"]')).toHaveLength(2);
     expect(container.textContent?.match(/Unavailable/g)).toHaveLength(2);
     expect(container.textContent).toContain('7203');
+    expect(container.textContent).toContain('尚未生成该市场');
+  });
+
+  test('merges a strict v0.3.1 snapshot into score, risk and entry-plan UI data', async () => {
+    installFetch(payload(), { status: 200, body: jpRecommendationSnapshot() });
+
+    await act(async () => {
+      root.render(<JpKrMarket tradingDay={DATE} />);
+      await settle();
+    });
+
+    expect(container.textContent).toContain('7203:87.75:GREEN:3000-3150');
+    expect(container.textContent).not.toContain('尚未生成该市场');
+    expect(container.textContent).not.toContain('推荐服务当前不可用');
+  });
+
+  test('keeps market data visible when recommendation storage is unavailable', async () => {
+    installFetch(payload(), { status: 503 });
+
+    await act(async () => {
+      root.render(<JpKrMarket tradingDay={DATE} />);
+      await settle();
+    });
+
+    expect(container.textContent).toContain('41,000.50');
+    expect(container.textContent).toContain('7203');
+    expect(container.textContent).toContain('推荐服务当前不可用');
   });
 
   test('keeps the loading state visible until the HTTP response settles', async () => {
     let resolveFetch: ((response: unknown) => void) | undefined;
-    globalThis.fetch = jest.fn(
-      () =>
-        new Promise(resolve => {
-          resolveFetch = resolve;
-        })
+    globalThis.fetch = jest.fn((input: RequestInfo | URL) =>
+      String(input).includes('/api/v1/ai/recommendations/latest?')
+        ? Promise.resolve(response(404))
+        : new Promise(resolve => {
+            resolveFetch = resolve;
+          })
     ) as unknown as typeof fetch;
 
     await act(async () => {
@@ -140,11 +264,7 @@ describe('JpKrMarket real container', () => {
     expect(container.querySelector('[aria-busy="true"]')?.textContent).toBe('loading');
 
     await act(async () => {
-      resolveFetch?.({
-        ok: true,
-        status: 200,
-        json: async () => payload(),
-      });
+      resolveFetch?.(response(200, payload()));
       await settle();
     });
     expect(container.querySelector('[aria-busy="true"]')).toBeNull();

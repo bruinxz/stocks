@@ -23,7 +23,7 @@ ALTER TABLE multibagger_text_hit
   ADD COLUMN source_version TEXT NOT NULL,
   ADD COLUMN hit_fact_hash TEXT NOT NULL,
   ADD CONSTRAINT ck_multibagger_text_hit_source_version CHECK (
-    source_version <> '' AND source_version = BTRIM(source_version)
+    source_version COLLATE "C" ~ '^[!-~]+$'
   ),
   ADD CONSTRAINT ck_multibagger_text_hit_fact_hash CHECK (
     hit_fact_hash ~ '^[0-9a-f]{64}$'

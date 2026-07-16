@@ -24,10 +24,7 @@ import { PaperTradingPosition } from '../../models/PaperTradingPosition';
 import { PaperTradingPortfolio } from '../../models/PaperTradingPortfolio';
 import { logger } from '../../utils/logger';
 import { ETF_PROFILES } from '../../constants/etfIndustry';
-import {
-  ETFRotationStrategy,
-  ETFRotationSignal,
-} from '../../quant/strategies/ETFRotationStrategy';
+import { ETFRotationStrategy, ETFRotationSignal } from '../../quant/strategies/ETFRotationStrategy';
 import {
   ConfidenceCalibrationService,
   confidenceCalibrationService,

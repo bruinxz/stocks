@@ -65,15 +65,12 @@ function setMocks(opts: MockOpts) {
         status: opts.latest_log_status,
         started_at: new Date('2026-06-25T01:35:00.000Z'),
         completed_at: new Date('2026-06-25T01:41:35.000Z'),
-        total_items: 0,
-        completed_items: 0,
+        total_items: opts.quant_signal_count,
+        completed_items: opts.quant_signal_count,
         failed_items: 0,
         error_message: null,
       }),
     },
-  });
-  mockRegistry.set(path.join(SRC_ROOT, 'models/QuantSignal.ts'), {
-    QuantSignal: { count: async () => opts.quant_signal_count },
   });
   mockRegistry.set(path.join(SRC_ROOT, 'models/AIInvestmentSignal.ts'), {
     AIInvestmentSignal: { count: async () => opts.archived_signal_count },

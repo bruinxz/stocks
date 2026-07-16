@@ -46,8 +46,9 @@ export class StrategyRegistry {
    */
   async resolveFromDb(strategy_keys?: string[]): Promise<QuantStrategy[]> {
     // QuantStrategyModel table deleted - fall back to in-memory registry
-    const records: Array<{ strategy_key: string; enabled: boolean }> =
-      [...this.strategies.values()].map(s => ({ strategy_key: s.definition.strategy_key, enabled: s.definition.enabled }));
+    const records: Array<{ strategy_key: string; enabled: boolean }> = [
+      ...this.strategies.values(),
+    ].map(s => ({ strategy_key: s.definition.strategy_key, enabled: s.definition.enabled }));
     const enabledKeys = new Set(records.filter(r => r.enabled === true).map(r => r.strategy_key));
     if (!strategy_keys?.length) {
       return [...this.strategies.values()].filter(s => enabledKeys.has(s.definition.strategy_key));

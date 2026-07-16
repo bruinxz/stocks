@@ -508,12 +508,12 @@ function assert(name: string, cond: boolean, detail = ''): void {
     /import\s+OverfitMetricsTab\s+from\s+['"]\.\/LabWorkspace\.OverfitMetricsTab['"]/.test(src)
   );
   assert(
-    '[10.2] tabs 数组含 key=overfit_metrics',
-    /\{\s*key:\s*['"]overfit_metrics['"]/.test(src)
+    '[10.2] tabs 数组含统一 evaluation 入口',
+    /\{\s*key:\s*['"]evaluation['"]/.test(src)
   );
   assert(
-    '[10.3] activeKey 分支 overfit_metrics',
-    /activeKey\s*===\s*['"]overfit_metrics['"]/.test(src)
+    '[10.3] evaluation 内含 overfit 子视图分支',
+    /evalSubView\s*===\s*['"]overfit['"]/.test(src)
   );
   assert('[10.4] body 渲染 OverfitMetricsTab', /<OverfitMetricsTab\s*\/>/.test(src));
 }

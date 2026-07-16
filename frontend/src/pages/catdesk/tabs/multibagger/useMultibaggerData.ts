@@ -1,4 +1,5 @@
 import { useAbortableRequest } from 'shared/hooks/useAbortableRequest';
+import { authenticatedFetch } from 'services/api';
 import type {
   MultibaggerStage,
   MultibaggerConclusion,
@@ -19,13 +20,15 @@ async function fetchCandidates(
   if (conclusions.length > 0) params.set('conclusion', conclusions.join(','));
   if (market) params.set('market', market);
 
-  const res = await fetch(`/api/v1/multibagger/candidates?${params}`, { signal });
+  const res = await authenticatedFetch(`/api/v1/multibagger/candidates?${params}`, { signal });
   if (!res.ok) throw new Error(`multibagger ${res.status}`);
   return parseMultibaggerResponse(await res.json());
 }
 
 async function fetchDetail(signal: AbortSignal, symbol: string): Promise<MultibaggerRow> {
-  const res = await fetch(`/api/v1/multibagger/${encodeURIComponent(symbol)}/detail`, { signal });
+  const res = await authenticatedFetch(`/api/v1/multibagger/${encodeURIComponent(symbol)}/detail`, {
+    signal,
+  });
   if (!res.ok) throw new Error(`multibagger-detail ${res.status}`);
   return parseMultibaggerDetail(await res.json());
 }

@@ -33,6 +33,12 @@ export type JpKrMarketRow = {
   fx_beta: number;
   is_halted: boolean;
   data_sources: string[];
+  recommendation?: import('../c1Types').CandidateListEntry;
+};
+
+export type JpKrRecommendationStatus = {
+  kind: 'ready' | 'not_generated' | 'unavailable';
+  profile: 'japan_blue_chip' | 'korea_semiconductor_chain';
 };
 
 export type JpKrKpi = {
@@ -59,4 +65,5 @@ export type JpKrMarketResponse = {
   kpi: JpKrKpi;
   rows: JpKrMarketRow[];
   date: string;
+  recommendation_status?: JpKrRecommendationStatus;
 };

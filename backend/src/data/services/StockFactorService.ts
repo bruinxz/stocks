@@ -12,7 +12,6 @@ import { StockMoneyFlowFactor } from '../../models/StockMoneyFlowFactor';
 import { StockFundamentalFactor } from '../../models/StockFundamentalFactor';
 import sequelize from '../../config/database';
 
-
 type FactorScope = 'favorites' | 'market' | 'custom';
 type FactorProviderName = 'auto' | 'local_derived' | 'tushare' | 'eastmoney' | 'baostock';
 

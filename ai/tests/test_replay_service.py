@@ -10,8 +10,11 @@ from ai.replay.service import (
     ReplayConflictError,
     ReplayJobNotFoundError,
     ReplayPinsError,
+    ReplayRetryableInterruptionError,
     ReplayService,
 )
+from ai.replay.fingerprint import compute_replay_input_fingerprint
+from ai.replay.errors import ReplayInfrastructureError
 from ai.replay.types import (
     ReplayInputs,
     ReplayJob,
@@ -19,12 +22,21 @@ from ai.replay.types import (
     ReplayResult,
     SourceSlice,
 )
-from ai.snapshot.fingerprint import compute_input_fingerprint
 
 
 JOB_ID = uuid.UUID("12345678-1234-4234-8234-567812345678")
 SNAPSHOT_ID = "22345678-1234-4234-8234-567812345678"
 NOW = "2026-07-12T01:02:03Z"
+
+
+class ForgedHash(str):
+    def __eq__(self, _other: object) -> bool:
+        return True
+
+    def __ne__(self, _other: object) -> bool:
+        return False
+
+    __hash__ = str.__hash__
 
 
 class MemoryJobStore:
@@ -43,9 +55,9 @@ class MemoryJobStore:
     def get(self, job_id):
         return self.jobs.get(job_id)
 
-    def transition(self, job_id, expected_status, updated):
+    def transition(self, job_id, expected, updated):
         current = self.jobs.get(job_id)
-        if current is None or current.status != expected_status:
+        if current is None or current != expected:
             raise ReplayConflictError("compare-and-swap transition failed")
         if updated.job_id != job_id:
             raise ReplayConflictError("transition changed job identity")
@@ -58,10 +70,10 @@ class StaleTransitionStore(MemoryJobStore):
         super().__init__()
         self.stale_expected_status = stale_expected_status
 
-    def transition(self, job_id, expected_status, updated):
-        if expected_status == self.stale_expected_status:
+    def transition(self, job_id, expected, updated):
+        if expected.status == self.stale_expected_status:
             return self.jobs[job_id]
-        return super().transition(job_id, expected_status, updated)
+        return super().transition(job_id, expected, updated)
 
 
 class SubstitutingCreateStore(MemoryJobStore):
@@ -118,12 +130,6 @@ def _content_hash(kind):
     ).hexdigest()
 
 
-SOURCE_HASHES = tuple(
-    _content_hash(kind)
-    for kind in ("signals", "universe", "scores", "evidence")
-)
-
-
 def _pins(**overrides):
     values = {
         "trading_day": "2026-07-12",
@@ -132,10 +138,14 @@ def _pins(**overrides):
         "market_scope": "us",
         "profile_version": "3.1.0",
         "contract_version": "0.3.1",
-        "input_fingerprint": compute_input_fingerprint(list(SOURCE_HASHES)),
+        "input_fingerprint": "0" * 64,
         "strategy_version": "3.1.0",
         "pipeline_version": "3.1.0",
     }
+    provisional = ReplayPins(**values)
+    values["input_fingerprint"] = compute_replay_input_fingerprint(
+        _inputs(provisional)
+    )
     values.update(overrides)
     return ReplayPins(**values)
 
@@ -155,12 +165,27 @@ def _source_slice(kind, pins, **overrides):
     return SourceSlice(**values)
 
 
-def _service(*, pins=None, pipeline=None, store=None, clock=None):
+def _inputs(pins):
+    return ReplayInputs(
+        signals=_source_slice("signals", pins),
+        universe=_source_slice("universe", pins),
+        scores=_source_slice("scores", pins),
+        evidence=_source_slice("evidence", pins),
+    )
+
+
+def _service(*, pins=None, pipeline=None, store=None, clock=None, lease_seconds=150):
     pins = pins or _pins()
     sources = {
         kind: SourceStub(_source_slice(kind, pins))
         for kind in ("signals", "universe", "scores", "evidence")
     }
+    token_counter = {"value": 0}
+
+    def next_lease_token():
+        token_counter["value"] += 1
+        return format(token_counter["value"], "064x")
+
     service = ReplayService(
         signal_source=sources["signals"],
         universe_source=sources["universe"],
@@ -169,12 +194,69 @@ def _service(*, pins=None, pipeline=None, store=None, clock=None):
         pipeline=pipeline or PipelineStub(),
         job_store=store or MemoryJobStore(),
         uuid_factory=lambda: JOB_ID,
+        lease_token_factory=next_lease_token,
+        lease_seconds=lease_seconds,
         clock=clock or (lambda: NOW),
     )
     return service, sources
 
 
 class ReplayServiceTests(unittest.TestCase):
+    def test_replay_inputs_subclass_cannot_truncate_named_slices(self):
+        class TruncatedReplayInputs(ReplayInputs):
+            def ordered(self):
+                return (self.signals,)
+
+        class AtomicSource:
+            def __init__(self, inputs):
+                self.inputs = inputs
+
+            def load_inputs(self, _pins):
+                return self.inputs
+
+        pins = _pins()
+        exact = _inputs(pins)
+        truncated = TruncatedReplayInputs(
+            signals=exact.signals,
+            universe=exact.universe,
+            scores=exact.scores,
+            evidence=exact.evidence,
+        )
+
+        with self.assertRaises(Exception):
+            compute_replay_input_fingerprint(truncated)
+
+        pipeline = PipelineStub()
+        service, _ = _service(pins=pins, pipeline=pipeline)
+        service._input_source = AtomicSource(truncated)
+        failed = service.run(service.submit(pins).job_id)
+        self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
+        self.assertEqual(pipeline.calls, [])
+
+    def test_source_slice_subclass_cannot_switch_records_after_validation(self):
+        class SwitchingSlice(SourceSlice):
+            def __getattribute__(self, name):
+                if name == "records":
+                    reads = object.__getattribute__(self, "__dict__").get(
+                        "_reads", 0
+                    )
+                    object.__setattr__(self, "_reads", reads + 1)
+                    if reads >= 3:
+                        return ({"kind": "scores", "substituted": True},)
+                return super().__getattribute__(name)
+
+        pins = _pins()
+        original = _source_slice("scores", pins)
+        switching = SwitchingSlice(**original.__dict__)
+        pipeline = PipelineStub()
+        service, sources = _service(pins=pins, pipeline=pipeline)
+        sources["scores"].source_slice = switching
+
+        failed = service.run(service.submit(pins).job_id)
+
+        self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
+        self.assertEqual(pipeline.calls, [])
+
     def test_submit_run_and_terminal_readback(self):
         pins = _pins()
         pipeline = PipelineStub()
@@ -251,6 +333,39 @@ class ReplayServiceTests(unittest.TestCase):
         self.assertEqual(failed2.error_code, "REPLAY_SOURCE_INVALID")
         self.assertIn("content_hash", failed2.error_detail)
 
+    def test_source_version_str_subclass_cannot_forge_ascii_policy(self):
+        class ForgedSourceVersion(str):
+            def isascii(self):
+                return True
+
+            def __iter__(self):
+                return iter("scores@1")
+
+        pins = _pins()
+        service, sources = _service(pins=pins)
+        sources["scores"].source_slice = replace(
+            sources["scores"].source_slice,
+            source_version=ForgedSourceVersion("版本@1"),
+        )
+
+        failed = service.run(service.submit(pins).job_id)
+
+        self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
+        self.assertIn("source_version", failed.error_detail)
+
+    def test_content_hash_str_subclass_cannot_override_comparison(self):
+        pins = _pins()
+        service, sources = _service(pins=pins)
+        sources["scores"].source_slice = replace(
+            sources["scores"].source_slice,
+            content_hash=ForgedHash("f" * 64),
+        )
+
+        failed = service.run(service.submit(pins).job_id)
+
+        self.assertEqual(failed.error_code, "REPLAY_SOURCE_INVALID")
+        self.assertIn("content_hash", failed.error_detail)
+
     def test_source_records_are_authenticated_by_content_hash(self):
         pins = _pins()
         service, sources = _service(pins=pins)
@@ -292,6 +407,13 @@ class ReplayServiceTests(unittest.TestCase):
         self.assertNotIn("secret", failed2.error_detail)
 
     def test_invalid_profiles_scopes_versions_hashes_and_dates_are_rejected(self):
+        class ReplayPinsSubclass(ReplayPins):
+            pass
+
+        valid_pins = _pins()
+        with self.assertRaises(ReplayPinsError):
+            _service()[0].submit(ReplayPinsSubclass(**valid_pins.__dict__))
+
         invalid = [
             _pins(profile="custom"),
             _pins(profile="japan_blue_chip", market_scope="us"),
@@ -348,16 +470,22 @@ class ReplayServiceTests(unittest.TestCase):
         empty_hash = hashlib.sha256(
             jcs_canonicalize(()).encode("utf-8")
         ).hexdigest()
-        hashes = list(SOURCE_HASHES)
-        hashes[1] = empty_hash
-        pins = _pins(
-            input_fingerprint=compute_input_fingerprint(hashes)
-        )
+        pins = _pins()
         service, sources = _service(pins=pins)
         sources["universe"].source_slice = replace(
             sources["universe"].source_slice,
             records=(),
             content_hash=empty_hash,
+        )
+        inputs = ReplayInputs(
+            signals=sources["signals"].source_slice,
+            universe=sources["universe"].source_slice,
+            scores=sources["scores"].source_slice,
+            evidence=sources["evidence"].source_slice,
+        )
+        pins = replace(
+            pins,
+            input_fingerprint=compute_replay_input_fingerprint(inputs),
         )
 
         completed = service.run(service.submit(pins).job_id)
@@ -369,8 +497,12 @@ class ReplayServiceTests(unittest.TestCase):
         service, _ = _service(store=store)
         queued = service.submit(_pins())
 
-        store.jobs[queued.job_id] = replace(queued, status="running")
-        with self.assertRaisesRegex(ReplayConflictError, "cannot run"):
+        store.jobs[queued.job_id] = queued.claimed(
+            NOW,
+            lease_token="c" * 64,
+            lease_expires_at="2026-07-12T01:03:03Z",
+        )
+        with self.assertRaisesRegex(ReplayConflictError, "already leased"):
             service.run(queued.job_id)
 
         store.jobs[queued.job_id] = replace(
@@ -417,6 +549,71 @@ class ReplayServiceTests(unittest.TestCase):
             service.run(queued.job_id)
 
         self.assertEqual(len(pipeline.calls), 1)
+        self.assertEqual(store.jobs[queued.job_id].status, "running")
+
+    def test_expired_running_lease_is_reclaimed_with_new_attempt(self):
+        clock = {"now": NOW}
+        store = MemoryJobStore()
+        service, _ = _service(
+            store=store,
+            clock=lambda: clock["now"],
+            lease_seconds=10,
+        )
+        queued = service.submit(_pins())
+        store.jobs[queued.job_id] = queued.claimed(
+            NOW,
+            lease_token="c" * 64,
+            lease_expires_at="2026-07-12T01:02:04Z",
+        )
+        clock["now"] = "2026-07-12T01:02:05Z"
+
+        completed = service.run(queued.job_id)
+
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(completed.attempt, 2)
+        self.assertIsNone(completed.lease_token)
+
+    def test_retryable_worker_interruption_leaves_lease_for_recovery(self):
+        clock = {"now": NOW}
+        store = MemoryJobStore()
+        interrupted = PipelineStub(
+            error=ReplayRetryableInterruptionError("SECRET=/private/path")
+        )
+        service, _ = _service(
+            store=store,
+            pipeline=interrupted,
+            clock=lambda: clock["now"],
+            lease_seconds=10,
+        )
+        queued = service.submit(_pins())
+
+        with self.assertRaises(ReplayRetryableInterruptionError):
+            service.run(queued.job_id)
+        stranded = store.jobs[queued.job_id]
+        self.assertEqual(stranded.status, "running")
+        self.assertEqual(stranded.attempt, 1)
+
+        clock["now"] = "2026-07-12T01:02:14Z"
+        service._pipeline = PipelineStub()
+        recovered = service.run(queued.job_id)
+        self.assertEqual(recovered.status, "completed")
+        self.assertEqual(recovered.attempt, 2)
+
+    def test_infrastructure_failure_is_not_terminalized(self):
+        clock = {"now": NOW}
+        store = MemoryJobStore()
+        service, _ = _service(
+            store=store,
+            pipeline=PipelineStub(
+                error=ReplayInfrastructureError("SECRET=/private/path")
+            ),
+            clock=lambda: clock["now"],
+            lease_seconds=10,
+        )
+        queued = service.submit(_pins())
+
+        with self.assertRaises(ReplayRetryableInterruptionError):
+            service.run(queued.job_id)
         self.assertEqual(store.jobs[queued.job_id].status, "running")
 
     def test_missing_or_non_uuid_jobs_return_controlled_not_found(self):

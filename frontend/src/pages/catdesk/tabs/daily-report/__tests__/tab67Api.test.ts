@@ -1,9 +1,12 @@
 import { describe, expect, jest, test } from '@jest/globals';
+import axios from 'axios';
 import { createTab67HttpApi } from '../tab67Api';
 import { reportFixture } from '../testFixtures';
 import { canonicalizeRecommendationFingerprintPreimage } from '../recommendationAdapter';
+import { API_DOMAIN_URL } from 'services/api';
 
 const signal = new AbortController().signal;
+const JOB_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const response = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
@@ -63,8 +66,8 @@ describe('Tab 6/7 HTTP client', () => {
       if (url.includes('/daily-report/latest')) return response(report.wire);
       if (url.includes('/daily-report/history')) return response(history);
       if (url.includes('/diff/')) return response(diff);
-      if (url.endsWith('/replay')) return response({ job_id: 'job-1', status: 'queued' });
-      if (url.includes('/status?')) return response({ job_id: 'job-1', status: 'running' });
+      if (url.endsWith('/replay')) return response({ job_id: JOB_ID, status: 'queued' });
+      if (url.includes('/status?')) return response({ job_id: JOB_ID, status: 'running' });
       if (url.includes('/ai/recommendations/')) {
         return response({
           ...report.snapshot,
@@ -108,7 +111,7 @@ describe('Tab 6/7 HTTP client', () => {
         signal
       )
     ).resolves.toMatchObject({ status: 'queued' });
-    await expect(api.replayStatus('job-1', signal)).resolves.toMatchObject({
+    await expect(api.replayStatus(JOB_ID, signal)).resolves.toMatchObject({
       status: 'running',
     });
 
@@ -123,6 +126,10 @@ describe('Tab 6/7 HTTP client', () => {
     expect(urls).toContain(
       `/api/v1/ai/recommendations/${diff.base_snapshot_id}/diff/${diff.target_snapshot_id}`
     );
+    const dailyCall = fetcher.mock.calls.find(call =>
+      String(call[0]).includes(`/daily-report/${report.trading_day}?`)
+    );
+    expect(dailyCall?.[1]?.signal).toBe(signal);
   });
 
   test('rejects bad scopes and surfaces typed HTTP errors', async () => {
@@ -132,5 +139,64 @@ describe('Tab 6/7 HTTP client', () => {
     await expect(api.latest('us_preferred', 'us', signal)).rejects.toEqual(
       expect.objectContaining({ status: 404, message: 'not found' })
     );
+  });
+
+  test('default transport uses API base, Bearer token and credentials', async () => {
+    const originalFetch = globalThis.fetch;
+    const fetcher = jest.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      response({ job_id: JOB_ID, status: 'queued' }, 202)
+    );
+    Object.assign(globalThis, { fetch: fetcher });
+    localStorage.setItem('token', 'tab67-access-token');
+    try {
+      const api = createTab67HttpApi();
+      await expect(
+        api.submitReplay(
+          { trading_day: '2026-07-14', profile: 'us_preferred', market_scope: 'us' },
+          signal
+        )
+      ).resolves.toEqual({ job_id: JOB_ID, status: 'queued' });
+      const [url, init] = fetcher.mock.calls[0];
+      const headers = new Headers(init?.headers);
+      expect(String(url)).toBe(`${API_DOMAIN_URL}/api/v1/ai/recommendations/replay`);
+      expect(headers.get('Authorization')).toBe('Bearer tab67-access-token');
+      expect(init?.credentials).toBe('include');
+    } finally {
+      localStorage.removeItem('token');
+      Object.assign(globalThis, { fetch: originalFetch });
+    }
+  });
+
+  test('default transport refreshes one expired Bearer and retries', async () => {
+    const originalFetch = globalThis.fetch;
+    let attempts = 0;
+    const fetcher = jest.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      attempts += 1;
+      return attempts === 1
+        ? response({ error: '未认证' }, 401)
+        : response({ job_id: JOB_ID, status: 'queued' }, 202);
+    });
+    const refresh = jest.spyOn(axios, 'post').mockResolvedValue({
+      data: { success: true, data: { accessToken: 'refreshed-tab67-token' } },
+    });
+    Object.assign(globalThis, { fetch: fetcher });
+    localStorage.setItem('token', 'expired-tab67-token');
+    try {
+      const api = createTab67HttpApi();
+      await expect(
+        api.submitReplay(
+          { trading_day: '2026-07-14', profile: 'us_preferred', market_scope: 'us' },
+          signal
+        )
+      ).resolves.toEqual({ job_id: JOB_ID, status: 'queued' });
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      const retryHeaders = new Headers(fetcher.mock.calls[1][1]?.headers);
+      expect(retryHeaders.get('Authorization')).toBe('Bearer refreshed-tab67-token');
+    } finally {
+      refresh.mockRestore();
+      localStorage.removeItem('token');
+      Object.assign(globalThis, { fetch: originalFetch });
+    }
   });
 });

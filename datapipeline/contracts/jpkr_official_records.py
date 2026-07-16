@@ -6,7 +6,11 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Literal, Mapping
 
-from .market_records import JsonValue
+from .market_records import (
+    JsonValue,
+    is_canonical_sha256,
+    is_canonical_source_version,
+)
 
 JpKrMarketScope = Literal["jp", "kr"]
 JpKrExchange = Literal["tse", "ose", "krx", "kosdaq"]
@@ -24,9 +28,14 @@ def _require_utc(value: datetime, field: str) -> None:
         raise ValueError(f"{field} must use UTC")
 
 
-def _require_hash(value: str, field: str) -> None:
-    if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+def _require_hash(value: object, field: str) -> None:
+    if not is_canonical_sha256(value):
         raise ValueError(f"{field} must be lowercase SHA-256")
+
+
+def _require_source_version(value: object) -> None:
+    if not is_canonical_source_version(value):
+        raise ValueError("source_version must be a printable ASCII token")
 
 
 def _require_json(value: object, field: str) -> None:
@@ -86,9 +95,9 @@ class JpKrSecurityRecord:
             "ticker_name_local",
             "source_kind",
             "source_document_id",
-            "source_version",
         ):
             _require_text(getattr(self, field), field)
+        _require_source_version(self.source_version)
         if (
             self.listing_day is not None
             and self.delisting_day is not None
@@ -151,7 +160,6 @@ class JpKrDailyKlineRecord:
             "ticker_name_local",
             "source_kind",
             "source_document_id",
-            "source_version",
             "open",
             "high",
             "low",
@@ -159,6 +167,7 @@ class JpKrDailyKlineRecord:
             "volume",
         ):
             _require_text(getattr(self, field), field)
+        _require_source_version(self.source_version)
         _require_utc(self.effective_at_utc, "effective_at_utc")
         _require_utc(self.available_at_utc, "available_at_utc")
         if self.effective_at_utc.date() != self.trading_day:

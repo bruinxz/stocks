@@ -190,9 +190,9 @@ export class Portfolio {
     // 计算当日收益率
     const dailyReturn =
       this.equity_curve.length >= 2
-        ? (this.equity_curve[this.equity_curve.length - 1].value /
+        ? this.equity_curve[this.equity_curve.length - 1].value /
             this.equity_curve[this.equity_curve.length - 2].value -
-            1)
+          1
         : 0;
 
     return {

@@ -95,14 +95,8 @@ export class DocumentCommentsController {
       }
       const userId = user.id;
 
-      const {
-        doc_path,
-        anchor_type,
-        anchor_key,
-        anchor_snippet,
-        content,
-        parent_id,
-      } = req.body || {};
+      const { doc_path, anchor_type, anchor_key, anchor_snippet, content, parent_id } =
+        req.body || {};
 
       if (!doc_path || !anchor_type || !anchor_key || !content) {
         res.status(400).json({
@@ -306,7 +300,7 @@ export class DocumentCommentsController {
           'status',
           [DocumentComment.sequelize!.fn('COUNT', DocumentComment.sequelize!.col('id')), 'count'],
         ],
-        where: { parent_id: null },  // 只统计根评论 (thread 数)
+        where: { parent_id: null }, // 只统计根评论 (thread 数)
         group: ['doc_path', 'status'],
         raw: true,
       });

@@ -13,7 +13,7 @@
  *   - 未读 ≥ CRITICAL_UNREAD_THRESHOLD → 红色 Badge + 数字 (status='error').
  *   - 未读 ≥ 100 → 显示 "99+".
  *   - hover → Tooltip 文案见 buildBellTooltip() + mode 后缀 (ws/polling).
- *   - click → navigate(buildAlertsBellHrefForRole) 落到风控中心. *
+ *   - click → navigate(buildAlertsBellHrefForRole) 落到当前 CatDesk 主入口.
  * 错误兜底 (fail-OPEN):
  *   - useAlertsRealtime 内部全 try/catch — 任何 fetch 失败保留上一次 unread count
  *     (不清零, 防"网络抖动一秒红 Badge 跳没了" 假阴性). 与 backend
@@ -82,7 +82,7 @@ const AlertsBell: React.FC<AlertsBellProps> = ({ enableWebSocket = true }) => {
           ? ' (拉取失败)'
           : '';
   const tooltipText = errored
-    ? '拉取告警失败 — 网络异常, 已保留上次未读数; 点击仍可跳转风控中心'
+    ? '拉取告警失败 — 网络异常, 已保留上次未读数; 点击仍可返回主页'
     : `${buildBellTooltip(unreadCount)}${modeSuffix}`;
 
   // antd Badge: color='red' 让 critical Badge 显红 (与项目主题 colorError 同色);

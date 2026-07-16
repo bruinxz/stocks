@@ -12,11 +12,11 @@
  *     - normalizeNotificationConfig（缺失 / 部分字段 / 非法 boolean / 非法 string / 嵌套 null）
  *     - shouldSendForUser（4 路径：未启用 / digest 关 / 缺 URL / 通过；env fallback）
  *     - pickTopTrades（空 / 反向过滤 / 按 amount 降序 / tie-break stable / cap）
- *     - pickTopCandidates（多策略分桶 / 缺 strategy 跳过 / cap per strategy / score 降序 + tie-break / NaN score 在末位）
+ *     - pickTopCandidates（ETF 轮动候选 / 缺 strategy 跳过 / cap / score 降序 + tie-break / NaN score 在末位）
  *     - computePnLSummary（prev 缺失 fallback initial_capital / pct 计算 / prev<=0 时 null）
  *     - buildPnLLine（正/负/0 / pct null / sign 前缀）
  *     - formatTradeLine（BUY / SELL with realized_pnl）
- *     - formatCandidateLine（3 strategy label / score 缺失 / reason 截断）
+ *     - formatCandidateLine（ETF 轮动 label / score 缺失 / reason 截断）
  *     - formatMoney（千分位 / 小数 / 负数 / 0 / NaN）
  *     - formatPercent（正/负/0/NaN）
  *     - buildDigestId（YYYYMMDD 拆分 / rand4 padding）
@@ -344,38 +344,30 @@ function testPickTopCandidates(): void {
   assertEqual('empty', pickTopCandidates([], 5), []);
 
   const cands: DigestCandidateRow[] = [
-    { strategy: 'multi_factor', symbol: 'MFA-1', score: 90 },
-    { strategy: 'multi_factor', symbol: 'MFA-2', score: 80 },
-    { strategy: 'multi_factor', symbol: 'MFA-3', score: 70 },
-    { strategy: 'dragon_head', symbol: 'DH-1', score: 50 },
-    { strategy: 'dragon_head', symbol: 'DH-2', score: 60 },
-    { strategy: 'earnings_surprise', symbol: 'ES-1', score: NaN },
-    { strategy: 'earnings_surprise', symbol: 'ES-2', score: 30 },
-    { strategy: 'earnings_surprise', symbol: 'ES-3' },
-    { strategy: 'multi_factor', symbol: 'MFA-tie', score: 90 },
+    { strategy: 'etf_rotation', symbol: 'ETF-1', score: 90 },
+    { strategy: 'etf_rotation', symbol: 'ETF-2', score: 80 },
+    { strategy: 'etf_rotation', symbol: 'ETF-3', score: 70 },
+    { strategy: 'etf_rotation', symbol: 'ETF-B-NaN', score: NaN },
+    { strategy: 'etf_rotation', symbol: 'ETF-A-NoScore' },
+    { strategy: 'etf_rotation', symbol: 'ETF-tie', score: 90 },
   ];
 
   const all = pickTopCandidates(cands, 10);
-  const mfaSymbols = all.filter(c => c.strategy === 'multi_factor').map(c => c.symbol);
-  assertEqual('MFA tie-break MFA-1 before MFA-tie', mfaSymbols.slice(0, 2), ['MFA-1', 'MFA-tie']);
-
-  const dhSymbols = all.filter(c => c.strategy === 'dragon_head').map(c => c.symbol);
-  assertEqual('DH desc by score', dhSymbols, ['DH-2', 'DH-1']);
-
-  const esSymbols = all.filter(c => c.strategy === 'earnings_surprise').map(c => c.symbol);
-  assertEqual('ES finite score first', esSymbols[0], 'ES-2');
-  assertEqual('ES NaN tie-break by symbol', esSymbols.slice(1), ['ES-1', 'ES-3']);
+  const etfSymbols = all.map(c => c.symbol);
+  assertEqual('ETF tie-break ETF-1 before ETF-tie', etfSymbols.slice(0, 2), ['ETF-1', 'ETF-tie']);
+  assertEqual('ETF finite scores descend', etfSymbols.slice(2, 4), ['ETF-2', 'ETF-3']);
+  assertEqual('ETF missing/NaN scores sort last by symbol', etfSymbols.slice(4), [
+    'ETF-A-NoScore',
+    'ETF-B-NaN',
+  ]);
 
   const limited = pickTopCandidates(cands, 1);
-  const limMfa = limited.filter(c => c.strategy === 'multi_factor');
-  const limDh = limited.filter(c => c.strategy === 'dragon_head');
-  const limEs = limited.filter(c => c.strategy === 'earnings_surprise');
-  assertEqual('cap 1 per strategy', [limMfa.length, limDh.length, limEs.length], [1, 1, 1]);
+  assertEqual('cap 1 for ETF rotation', limited.map(c => c.symbol), ['ETF-1']);
 
   const badCands: DigestCandidateRow[] = [
     { strategy: '' as any, symbol: 'X', score: 1 },
-    { strategy: 'multi_factor', symbol: '', score: 1 },
-    { strategy: 'multi_factor', symbol: 'GOOD', score: 1 },
+    { strategy: 'etf_rotation', symbol: '', score: 1 },
+    { strategy: 'etf_rotation', symbol: 'GOOD', score: 1 },
   ];
   const filtered = pickTopCandidates(badCands, 5);
   assertEqual('filtered invalid rows', filtered.length, 1);
@@ -537,33 +529,29 @@ function testFormatTradeLine(): void {
 // ---------------------------------------------------------------------------
 
 function testFormatCandidateLine(): void {
-  const mfa = formatCandidateLine({
-    strategy: 'multi_factor',
-    symbol: '600519',
-    name: '贵州茅台',
+  const etf = formatCandidateLine({
+    strategy: 'etf_rotation',
+    symbol: '159995',
+    name: '芯片ETF华夏',
     score: 91.2,
   });
-  assert('mfa label', mfa.includes('[多因子]'));
-  assert('mfa score', mfa.includes('分 91.2'));
+  assert('ETF rotation label', etf.includes('[ETF轮动]'));
+  assert('ETF rotation score', etf.includes('分 91.2'));
 
-  const dh = formatCandidateLine({
-    strategy: 'dragon_head',
-    symbol: '300750',
+  const noScore = formatCandidateLine({
+    strategy: 'etf_rotation',
+    symbol: '512290',
     score: null,
     reason: '高质量低波',
   });
-  assert('dh label', dh.includes('[龙头]'));
-  assert('dh no score', !dh.includes('分'));
-  assert('dh reason', dh.includes('— 高质量低波'));
-
-  const es = formatCandidateLine({ strategy: 'earnings_surprise', symbol: '002594' });
-  assert('es label', es.includes('[业绩]'));
+  assert('ETF rotation no score', !noScore.includes('分'));
+  assert('ETF rotation reason', noScore.includes('— 高质量低波'));
 
   const u = formatCandidateLine({ strategy: 'unknown' as any, symbol: 'X' });
   assert('unknown label', u.includes('[unknown]'));
 
   const long = formatCandidateLine({
-    strategy: 'multi_factor',
+    strategy: 'etf_rotation',
     symbol: 'X',
     reason: '一'.repeat(100),
   });
@@ -636,7 +624,7 @@ function testBuildDigestCard(): void {
     trades_today_buy_count: 1,
     trades_today_sell_count: 0,
     candidates_tomorrow: [
-      { strategy: 'multi_factor', symbol: '600519', name: '贵州茅台', score: 91.2 },
+      { strategy: 'etf_rotation', symbol: '159995', name: '芯片ETF华夏', score: 91.2 },
     ],
   };
   const card = buildDigestCard(payload);
@@ -656,7 +644,7 @@ function testBuildDigestCard(): void {
   assert('SELL count 0 笔', allMd.includes('今日新增卖出 0 笔'));
   assert('SELL empty placeholder', allMd.includes('暂无新增卖出'));
   assert('candidates section', allMd.includes('明日候选'));
-  assert('candidate row', allMd.includes('600519') && allMd.includes('贵州茅台'));
+  assert('candidate row', allMd.includes('159995') && allMd.includes('芯片ETF华夏'));
   assert('footer note', allMd.includes('lym') && allMd.includes('2026-06-08'));
 
   const lossCard = buildDigestCard({
@@ -735,8 +723,8 @@ async function testSendDigestsHappyPath(): Promise<void> {
     },
     snapshots: { 100: [{ date: '2026-06-07', total_value: 205000 }] },
     candidates: [
-      { strategy: 'multi_factor', symbol: '600519', name: '贵州茅台', score: 91.2 },
-      { strategy: 'dragon_head', symbol: '300750', name: '宁德时代', score: 88.5 },
+      { strategy: 'etf_rotation', symbol: '159995', name: '芯片ETF华夏', score: 91.2 },
+      { strategy: 'etf_rotation', symbol: '512290', name: '生物医药ETF国联', score: 88.5 },
     ],
     sendResult: { success: true, data: { code: 0 } },
   });
@@ -900,7 +888,7 @@ async function testSendDigestsPerStrategyLimitPropagates(): Promise<void> {
     users: [{ user_id: 42, username: 'lym', config: makeBaseConfig() }],
     portfolios: { 42: makePortfolioPair({ user_id: 42, portfolio_id: 100 }) },
     candidates: Array.from({ length: 8 }, (_, i) => ({
-      strategy: 'multi_factor' as const,
+      strategy: 'etf_rotation' as const,
       symbol: `S${i.toString().padStart(2, '0')}`,
       score: 100 - i,
     })),
