@@ -1,0 +1,57 @@
+backend/src/api/controllers/MultibaggerController.ts
+  s_26d7f43d00eb19::t_b678bf637b2a75 151-154,263-266
+datapipeline/contracts/capture_provenance.py
+  s_26d7f43d00eb19::t_722f026590a3e2 15-18,138-146
+datapipeline/storage/backtest_pit/writer.py
+  s_26d7f43d00eb19::t_9ae54dfda5ac62 426-427,473-476
+datapipeline/storage/jpkr/fx_writer.py
+  s_26d7f43d00eb19::t_8a92c5ede6b939 223-230
+datapipeline/storage/jpkr/official_writer.py
+  s_26d7f43d00eb19::t_f8b980ea4223a3 6,112-119,234-238,240-241,243-246
+datapipeline/storage/multibagger/source_writer.py
+  s_26d7f43d00eb19::t_c347bc2d5e1bc4 79-87,511,525
+frontend/src/pages/catdesk/CatDeskLayout.tsx
+  s_26d7f43d00eb19::t_1635ee89976752 9,77-86,104,139-140,142
+frontend/src/pages/catdesk/catdesk.css
+  s_26d7f43d00eb19::t_96d2fbe448c818 130-133,135,137-140,143,145-158,161-169,171-179,182-268,271-272,274-275,277-308,311-317,319-351,353-360,363-371,373-434,558-572,574-575,577,579-581,584-586,588-589,591-592,686-687,693,707,709-710,712-728,730-740,888,890-891,940-942,989-990,1065-1072
+frontend/src/pages/catdesk/shared/CowMascot.tsx
+  s_26d7f43d00eb19::t_b0fecbe8c24315 1-51
+frontend/src/pages/catdesk/shared/EmptyState.tsx
+  s_26d7f43d00eb19::t_a7da8c82c0d172 2,17
+frontend/src/pages/catdesk/shared/LoadingState.tsx
+  s_26d7f43d00eb19::t_ce40ea7398aed1 2,6
+frontend/src/pages/catdesk/shared/TabNav.tsx
+  s_26d7f43d00eb19::t_b358713a0da773 12,33,65
+frontend/src/pages/catdesk/tabs/backtest/BacktestEvidence.tsx
+  s_26d7f43d00eb19::t_73fc393befa22f 43
+scripts/ops/capture_live_jpx_klines.py
+  s_26d7f43d00eb19::t_3410c7f223f276 1-159
+scripts/ops/populate_live_backtest_pit.py
+  s_26d7f43d00eb19::t_da542bb6bfd342 1-402
+scripts/ops/populate_live_jpkr_sources.py
+  s_26d7f43d00eb19::t_417563ee6f9ab2 1-111
+scripts/ops/populate_live_multibagger.py
+  s_26d7f43d00eb19::t_56a4ca728e2fff 1-583
+scripts/ops/populate_live_recommendations.py
+  s_26d7f43d00eb19::t_db5525f5d59cb8 1-977
+scripts/ops/populate_live_typed_captures.py
+  s_26d7f43d00eb19::t_012a2096e91dcf 1-213
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d91180028988108285edcc5aaa406adb9ef1dbea",
+  "prompts": {},
+  "sessions": {
+    "s_26d7f43d00eb19": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f68e6-5066-71f1-99c3-8e7f1950f283",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
