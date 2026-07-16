@@ -26,8 +26,8 @@ export function parseHistoryQuery(search: string): ReportHistoryQuery {
   }
   return {
     date: params.get('date') || undefined,
-    profile: parsedProfile,
-    market_scope: parsedScope,
+    profile: parsedProfile ?? 'us_preferred',
+    market_scope: parsedScope ?? 'cn_a',
     search: params.get('search') || undefined,
     page: Math.max(1, Number(params.get('page')) || 1),
     page_size: Math.min(100, Math.max(1, Number(params.get('page_size')) || 20)),

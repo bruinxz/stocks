@@ -845,18 +845,38 @@ export class DataSyncService {
   /**
    * 安全解析日期字符串，如果无效则返回null
    */
-  private safeParseDate(dateString: string | null | undefined): Date | null {
-    if (
-      !dateString ||
-      dateString.trim() === '' ||
-      dateString.toLowerCase() === 'null' ||
-      dateString === 'Invalid date'
-    ) {
+  private safeParseDate(dateValue: unknown): Date | null {
+    if (dateValue === null || dateValue === undefined) {
       return null;
     }
 
     try {
-      const date = new Date(dateString);
+      if (dateValue instanceof Date) {
+        return Number.isNaN(dateValue.getTime()) ? null : new Date(dateValue.getTime());
+      }
+      if (typeof dateValue === 'number' && Number.isFinite(dateValue)) {
+        const compact = String(Math.trunc(dateValue));
+        if (/^\d{8}$/.test(compact)) {
+          const date = new Date(
+            `${compact.slice(0, 4)}-${compact.slice(4, 6)}-${compact.slice(6, 8)}T00:00:00+08:00`
+          );
+          return Number.isNaN(date.getTime()) ? null : date;
+        }
+        const date = new Date(dateValue);
+        return Number.isNaN(date.getTime()) ? null : date;
+      }
+      const dateString = String(dateValue).trim();
+      if (
+        dateString === '' ||
+        dateString.toLowerCase() === 'null' ||
+        dateString === 'Invalid date'
+      ) {
+        return null;
+      }
+      const compact = /^\d{8}$/.test(dateString)
+        ? `${dateString.slice(0, 4)}-${dateString.slice(4, 6)}-${dateString.slice(6, 8)}`
+        : dateString;
+      const date = new Date(compact);
       // 检查是否为有效日期
       if (isNaN(date.getTime())) {
         return null;

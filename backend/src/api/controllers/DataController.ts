@@ -14,6 +14,7 @@ import { getAllETFIndustries } from '../../constants/etfIndustry';
 import { isValidSeatType, SeatType } from '../../constants/famousSeats';
 import { logger } from '../../utils/logger';
 import { sequelize } from '../../config/database';
+import { pageFreshnessService } from '../../services/PageFreshnessService';
 
 /**
  * US-079 数据健康度看板控制器（US-088 扩展龙虎榜查询端点 / US-092 扩展 ETF 资金流查询端点）
@@ -31,6 +32,7 @@ import { sequelize } from '../../config/database';
 export class DataController {
   constructor() {
     this.getHealthStatus = this.getHealthStatus.bind(this);
+    this.getPageFreshness = this.getPageFreshness.bind(this);
     this.getSystemTopology = this.getSystemTopology.bind(this);
     this.getQualityDeepCheck = this.getQualityDeepCheck.bind(this);
     this.triggerSync = this.triggerSync.bind(this);
@@ -53,6 +55,17 @@ export class DataController {
         success: false,
         error: error?.message ?? '获取数据源健康状态失败',
       });
+    }
+  }
+
+  /** GET /api/data/page-freshness — CatDesk 各页真实数据水位。 */
+  async getPageFreshness(_req: Request, res: Response) {
+    try {
+      const data = await pageFreshnessService.getPageFreshness();
+      return res.json({ success: true, data });
+    } catch (error: any) {
+      logger.error(`DataController.getPageFreshness failed: ${error?.message ?? error}`);
+      return res.status(500).json({ success: false, error: '获取页面数据时间失败' });
     }
   }
 

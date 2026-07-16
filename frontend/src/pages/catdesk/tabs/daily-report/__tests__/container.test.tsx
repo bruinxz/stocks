@@ -42,6 +42,9 @@ jest.mock('../../../shared/ErrorState', () => ({
 jest.mock('../../../shared/EmptyState', () => ({
   EmptyState: ({ title }: { title: string }) => <div>{title}</div>,
 }));
+jest.mock('../GlobalCatalystSummary', () => ({
+  GlobalCatalystSummary: () => <div>global catalyst summary</div>,
+}));
 
 function apiFixture(): Mocked<Tab67Api> {
   return {
@@ -82,7 +85,7 @@ describe('DailyReportContainer runtime capability', () => {
       await Promise.resolve();
     });
     expect(api.submitReplay).toHaveBeenCalledWith(
-      { trading_day: '2026-07-10', profile: 'us_preferred', market_scope: 'us' },
+      { trading_day: '2026-07-10', profile: 'us_preferred', market_scope: 'cn_a' },
       expect.any(AbortSignal)
     );
     expect(api.replayStatus).not.toHaveBeenCalled();
@@ -90,7 +93,7 @@ describe('DailyReportContainer runtime capability', () => {
     expect(api.daily).toHaveBeenCalledWith(
       '2026-07-10',
       'us_preferred',
-      'us',
+      'cn_a',
       expect.any(AbortSignal)
     );
     await act(async () => root.unmount());

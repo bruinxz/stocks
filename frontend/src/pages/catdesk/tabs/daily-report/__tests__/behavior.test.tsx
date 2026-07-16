@@ -135,7 +135,7 @@ describe('Tab 6/7 contract-first behavior', () => {
         }}
       />
     );
-    expect(daily).toContain('推荐快照 · 版本 0.3.1');
+    expect(daily).toContain('A 股深度主报告 · 推荐快照 0.3.1');
     expect(daily).toContain('href="sec-edgar://');
     expect(daily).toContain('投资有风险');
     expect(daily).toContain('高确信度');
@@ -280,8 +280,8 @@ describe('Tab 6/7 contract-first behavior', () => {
       );
     });
     const historyButtons = Array.from(container.querySelectorAll('button')) as HTMLButtonElement[];
-    historyButtons[0].click();
-    historyButtons[1].click();
+    historyButtons.find(button => button.textContent === '查看')?.click();
+    historyButtons.find(button => button.textContent === '对比前次')?.click();
     expect(onSelect).toHaveBeenCalledWith(report.report_id);
     expect(onCompare).toHaveBeenCalledWith(report.snapshot.snapshot_id);
 

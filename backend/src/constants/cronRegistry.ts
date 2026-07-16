@@ -79,22 +79,23 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     owner: 'data',
     description: '历史 K 线回补',
   },
-  // 实时行情快照刷新 — 支持 2 种 cron 模式:
-  //   (A) 老 universe='market' / limit=5000: 20min 间隔, '5,25 9,10,13,14 * * 1-5'
-  //       覆盖全 A 股 5500 票, AI 引擎下游需要.
-  //   (B) CE-A 新 universe_source='intraday' / limit=500: 2min 间隔
-  //       '*/2 9-11,13-14 * * 1-5'. 走 IntradayUniverseService 选 ≤500 票活跃
-  //       universe (持仓 + 涨跌幅榜 + 涨停 + 成交额), batch_size=100. 给实时机会
-  //       推送 / 异动告警类下游用. ops 在 prod 手动 INSERT 新 ScheduledTask 行启用,
-  //       不在 ensureDefaultTasks 里默认 active=true (避免代码层强加新 cron).
+  // 实时行情快照刷新：每 5 分钟触发一次，handler 内再用 A 股连续竞价时段
+  // (09:30-11:30, 13:00-15:00) 做精确 guard，避免集合竞价和午休空转。
   {
     type: 'REALTIME_QUOTE_SYNC',
     category: 'data_sync',
     owner: 'data',
     intraday: true,
-    recommendedCron: '*/2 9-11,13-14 * * 1-5',
+    recommendedCron: '*/5 9-11,13-14 * * 1-5',
+    description: 'A 股连续竞价期间每 5 分钟刷新行情；处理器会跳过集合竞价与午休窗口',
+  },
+  {
+    type: 'GLOBAL_MARKET_DAILY_SYNC',
+    category: 'data_sync',
+    owner: 'data',
+    recommendedCron: '0 9 * * 1-5',
     description:
-      '盘中实时行情快照刷新 (TradingAgents prompt 数据源). 2 模式: market 全量 (20min) / intraday 活跃 ≤500 (2min, CE-A)',
+      '工作日 09:00 刷新 A 股日报快照、JP/KR 市场水位与美股/日本催化摘要，海外市场仅作 A 股侧面催化',
   },
   {
     type: 'BENCHMARK_INDEX_SYNC',

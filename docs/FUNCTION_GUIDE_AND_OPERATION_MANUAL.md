@@ -8,7 +8,7 @@
 ## 目录
 
 1. [产品定位](#1-产品定位)
-2. [登录与导航](#2-登录与导航)
+2. [自动会话与导航](#2-自动会话与导航)
 3. [首页（/home）](#3-首页home)
 4. [今日 Workspace（/workspace/today）](#4-今日-workspaceworkspacetoday)
 5. [因子 Workspace（/workspace/factors）](#5-因子-workspaceworkspacefactors)
@@ -34,12 +34,13 @@ QuantX 是面向 A 股的 **Signal-First + Core-Satellite** 量化辅助系统�
 
 ---
 
-## 2. 登录与导航
+## 2. 自动会话与导航
 
 | 项 | 值 |
 |---|---|
-| 登录页 | `/login` |
-| 默认账号 | `lym / 666`（admin）、`xz / 666` |
+| 默认入口 | `/catdesk` |
+| 会话方式 | 打开页面后自动建立默认管理员浏览会话，无需手工登录 |
+| 鉴权 | 前端仍携带后端签发的 Bearer Token，不使用匿名后门 |
 | 主入口 | `/home` → 侧边栏展开各 Workspace |
 | 简易模式 | `/workspace/easy` — 教学用暖纸色极简视图 |
 

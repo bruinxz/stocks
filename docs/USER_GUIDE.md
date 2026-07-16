@@ -1,6 +1,6 @@
-# 用户手册：跑通 ETF 因子轮动 + 题材卫星（QuantX A 股 Signal-First 平台）
+# 用户手册：牛牛研究台（A 股主线 + 海外催化）
 
-> 面向新用户的端到端指南。读完能：启动系统 → 同步 A 股/ETF 数据 → 看懂核心 ETF 因子轮动 → 理解卫星题材机会 → 读持仓复盘 → 用战略镜子做月度自省。
+> 面向新用户的端到端指南。当前默认入口是 `/catdesk`：先看 A 股行情与早报，再看回测证据和 A 股日报；美股、日韩只作为 A 股板块的侧面催化。
 >
 > **本平台已收敛为 Signal-First + 核心-卫星主线**（决策依据见 `docs/SIGNAL_FIRST_PLAN.md`）：
 >
@@ -14,7 +14,7 @@
 
 ## 目录
 
-1. [启动与登录](#1-启动与登录)
+1. [启动与打开研究台](#1-启动与打开研究台)
 2. [数据同步](#2-数据同步)
 3. [看懂核心：ETF 因子轮动](#3-看懂核心etf-因子轮动)
 4. [理解卫星：题材/事件机会](#4-理解卫星题材事件机会)
@@ -25,7 +25,7 @@
 
 ---
 
-## 1. 启动与登录
+## 1. 启动与打开研究台
 
 ### 1.1 环境准备
 
@@ -61,21 +61,21 @@ cp .env.example .env
 PORT=3001 npm start
 ```
 
-浏览器打开 <http://localhost:3001>，首次点「注册账号」填邮箱 + 密码，自动创建账户 + 默认模拟盘（100 万初始资金）。
+浏览器打开 <http://localhost:3001/catdesk>。系统会自动建立默认管理员浏览会话，不要求先注册或手工登录；若自动会话建立失败，页面会明确提示后端连接问题。
 
-### 1.4 主界面：工作区
+### 1.4 主界面：CatDesk
 
-登录后主视图展示**核心 ETF 因子轮动排名表**（今日 ETF 排名、目标权重、买/卖/持有动作、四因子 z 分）与**卫星题材机会**两块。
+| Tab | 先看什么 |
+|---|---|
+| A 股市场 | 股票、指数、ETF 的行情与历史走势 |
+| A 股早报 | 今日催化、确信度、风险门禁 |
+| 美股优选 / 日韩市场 | 只看能映射到 A 股的科技、汽车、制造与风险偏好趋势 |
+| 高倍潜力 | 长周期候选，不等同于短线买入建议 |
+| 回测证据 | 收益、回撤、持仓与 PIT 证据 |
+| 每日日报 | A 股详细主报告，海外只保留三块趋势摘要 |
+| 报告历史 | 默认只列 A 股报告，可切换海外大势档案 |
 
-| 工作区 | 用途 |
-|--------|------|
-| 主视图（今日） | 核心 ETF 因子轮动排名 + 卫星题材机会 + 组合快照 |
-| 选股因子 | ETF 四因子打分、ETF 调仓清单、行业/宏观/政策辅助 tab |
-| 持仓与复盘 | 持仓表、平仓、单笔归因、复盘 |
-| 数据中心 | 数据源健康看板、手动同步触发 |
-| 账号设置 | 风控阈值、推送通道 |
-
-> 核心 ETF 出现在主视图因子轮动排名表；卫星题材出现在「题材机会」推荐卡片。后端 `core_satellite` 桶字段（core / satellite / cash）保证前端可靠分区。
+每个 Tab 标题下都有“本页数据时间”。如果显示“有延迟”或“待同步”，先处理数据问题，不要把旧数据当成今日判断。
 
 ---
 
@@ -86,31 +86,30 @@ PORT=3001 npm start
 ```bash
 cd backend
 
-# 基础档案（一次性）
-npm run sync:stock-basic
+# 股票档案与日 K
+npm run data:sync-stocks
+npm run data:sync-history
 
-# 行情主力（含 ETF 日 K）
-npm run sync:daily-bars -- --start=2021-01-01 --end=<today>
-npm run sync:financial-report -- --year=2024 --year=2025 --year=2026
-
-# ETF 因子所需
-npm run sync:index-components     # 指数成分股 + 权重
-npm run sync:fund-top-holdings    # 基金前十持仓（fallback）
+# 日常增量与关键维度
+npm run data:daily-update
+npm run sync:index-components
+npm run sync:financial-report
+npm run sync:announcements
 ```
 
-后端 SchedulerService（cron）自动注册每日盘后同步任务，无需每天手动跑。
+后端 SchedulerService 会自动注册盘中 5 分钟行情、09:00 海外催化与盘后增量任务，无需每天手动跑。
 
 ### 2.2 UI 内同步
 
-**数据中心 → 数据源健康看板**：核心 ETF 轮动强依赖 `daily_bars`、`index_components` / `fund_top_holdings`、`financial_reports`，这几个务必绿灯。
+**数据中心 → 数据源健康看板**：先确认 `daily_bars`、实时行情、因子、公告与推荐快照对齐最近交易日。CatDesk 页面头部的水位是最终阅读入口。
 
-### 2.3 计算 ETF 因子
-
-因子计算随月度 cron 自动触发（每月末 22:00）。手动跑：
+### 2.3 只读完整性检查
 
 ```bash
-npm run compute:etf-factors -- --date=<month_end>
+EXPECTED_DATA_DATE=2026-07-16 node scripts/tests/quant_data_freshness_check.js
 ```
+
+该命令不会触发同步或交易。详细口径见 `docs/DATA_FRESHNESS_AND_SCHEDULING.md`。
 
 ---
 
@@ -246,7 +245,7 @@ bash scripts/compass/generate-draft.sh --force
 ## 8. 常见问题（FAQ）
 
 **Q1：ETF 排名表是空的？**  
-A：先跑数据同步：`npm run sync:stock-basic && npm run sync:daily-bars && npm run sync:index-components && npm run compute:etf-factors`。确认 DB 里 `etf_factor_scores` 表有当月数据。
+A：先执行 `npm run data:sync-stocks && npm run data:sync-history && npm run sync:index-components`，再检查 `factor_scores` 的最新 `trade_date` 是否与最近 A 股交易日一致。
 
 **Q2：为什么没有个股选股列表？**  
 A：旧的 13+ 策略个股主线已整体删除。个股建议只来自卫星 detector；若卫星无满足 EV gate 的信号，列表为空是正常状态，代表当前无值得冒险的机会。
@@ -255,7 +254,7 @@ A：旧的 13+ 策略个股主线已整体删除。个股建议只来自卫星 d
 A：有。权重 0 只是当前 V0 校准结果，避免 A 股动量反转陷阱。Shadow 模式持续采集数据，若未来统计显著性改变，可提权至 0.10~0.15。不要手动改权重，须通过 `SIGNAL_FIRST_PLAN.md` §4.1 版本迭代流程记录。
 
 **Q4：某 ETF 显示 `data_incomplete`？**  
-A：该 ETF 成分股数据不足（<30 只有效数据），当月自动剔除出排名池。检查 `npm run sync:fund-top-holdings` 是否正常跑完。
+A：该 ETF 成分股或因子覆盖不足时会自动剔除。检查 `index_components`、`daily_bars` 与 `factor_scores` 的最新日期和覆盖数，不要用空值生成排名。
 
 **Q5：卫星信号很少，正常吗？**  
 A：正常。EV gate 是有意设计的高门槛过滤器——宁可错过，不可乱入。少即是多；如果每天都有大量信号，反而说明 Wilson 置信度校准可能出了问题。
@@ -286,4 +285,3 @@ A：修改 `backend/src/jobs/` 下对应 job 文件的 cron 表达式，并同�
 | `docs/DEVELOPER_GUIDE.md` | 开发者指南（新增因子、接口约定） |
 | `docs/PROJECT_COMPASS.md` | 战略镜子模板（§8 六大问固定结构） |
 | `docs/compass/YYYY-MM.md` | 每月镜子草稿（脚本自动生成，人工补写后提交） |
-

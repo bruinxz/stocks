@@ -159,6 +159,21 @@ set -euo pipefail
 WORK='$WORK'
 cd "\$WORK"
 
+# The 09:00 global-market job parses JPX's official PDF. Install its small
+# dependency into the shared backend interpreter so it survives release
+# rotation and is available to the stocks_app service user.
+GLOBAL_MARKET_REQUIREMENTS="\$WORK/scripts/ops/requirements-global-markets.txt"
+PYTHON_RUNTIME=\$(grep '^PYTHON_PATH=' '$SHARED/backend.env' 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"')
+if [ -f "\$GLOBAL_MARKET_REQUIREMENTS" ]; then
+  if [ -z "\$PYTHON_RUNTIME" ] || [ ! -x "\$PYTHON_RUNTIME" ]; then
+    echo "ERROR: configured PYTHON_PATH is required for global-market dependencies" >&2
+    exit 1
+  fi
+  echo "▶ pip install (global-market runtime)..."
+  "\$PYTHON_RUNTIME" -m pip install --disable-pip-version-check --no-input \
+    -r "\$GLOBAL_MARKET_REQUIREMENTS" 2>&1 | tail -10
+fi
+
 # Reuse old node_modules if exists (huge time saver)
 OLD_BACKEND_NM='$CURRENT/backend/node_modules'
 OLD_FRONTEND_NM='$CURRENT/frontend/node_modules'

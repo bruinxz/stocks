@@ -682,7 +682,7 @@
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   overflow: hidden;
 }
 .catdesk-workspace::before {
@@ -823,6 +823,74 @@
   border-top: 1.5px solid var(--cd-ink);
   background: #fffdf4;
   transform: skew(29deg);
+}
+
+.catdesk-freshness {
+  position: relative;
+  z-index: 3;
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin: 0 34px 12px;
+  padding: 7px 12px;
+  border: 1px solid rgba(48, 38, 33, 0.14);
+  border-radius: 14px 5px 14px 14px;
+  background: rgba(255, 253, 247, 0.82);
+  box-shadow: 3px 4px 0 rgba(48, 38, 33, 0.045);
+}
+.catdesk-freshness__mark {
+  width: 10px;
+  height: 10px;
+  border: 2px solid #fffdf7;
+  border-radius: 50%;
+  background: var(--cd-mint);
+  box-shadow: 0 0 0 2px rgba(62, 140, 121, 0.2);
+}
+.catdesk-freshness > div {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.catdesk-freshness small {
+  flex: 0 0 auto;
+  color: var(--cd-coral);
+  font: 800 8px var(--cd-font-mono);
+  letter-spacing: 0.12em;
+}
+.catdesk-freshness strong {
+  overflow: hidden;
+  color: #54463f;
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.catdesk-freshness em {
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: #256a5c;
+  background: #e7f5ef;
+  font: 800 9px var(--cd-font-mono);
+  font-style: normal;
+}
+.catdesk-freshness--delayed .catdesk-freshness__mark {
+  background: #d99d36;
+  box-shadow: 0 0 0 2px rgba(217, 157, 54, 0.2);
+}
+.catdesk-freshness--delayed em {
+  color: #815b1e;
+  background: #fff2cf;
+}
+.catdesk-freshness--missing .catdesk-freshness__mark {
+  background: var(--cd-coral);
+  box-shadow: 0 0 0 2px rgba(218, 103, 89, 0.18);
+}
+.catdesk-freshness--missing em {
+  color: #843e37;
+  background: #ffebe6;
 }
 
 .catdesk-ribbon {
@@ -1175,6 +1243,9 @@
     min-height: 112px;
     padding: 18px 22px 14px;
   }
+  .catdesk-freshness {
+    margin-inline: 22px;
+  }
   .catdesk-title-group h1 {
     font-size: 30px;
   }
@@ -1224,6 +1295,13 @@
   }
   .catdesk-cow-bubble {
     display: none;
+  }
+  .catdesk-freshness {
+    margin: 0 12px 10px;
+  }
+  .catdesk-freshness > div {
+    display: grid;
+    gap: 1px;
   }
   .catdesk-ribbon {
     justify-content: flex-start;

@@ -250,3 +250,104 @@
     flex-direction: column;
   }
 }
+.global-catalyst {
+  margin-bottom: 18px;
+  padding: 18px;
+  border: 1px solid rgba(48, 38, 33, 0.14);
+  border-radius: 22px 7px 22px 22px;
+  background:
+    radial-gradient(circle at 92% 8%, rgba(188, 232, 219, 0.48), transparent 28%),
+    linear-gradient(135deg, rgba(255, 244, 229, 0.94), rgba(255, 253, 247, 0.88));
+  box-shadow: 6px 8px 0 rgba(48, 38, 33, 0.055);
+}
+.global-catalyst > header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 14px;
+}
+.global-catalyst h2 {
+  margin: 4px 0 0;
+  color: var(--cd-ink);
+  font:
+    750 21px 'Iowan Old Style',
+    'Noto Serif SC',
+    serif;
+}
+.global-catalyst > header p {
+  max-width: 360px;
+  margin: 0;
+  color: var(--cd-text-secondary);
+  font-size: 11px;
+  text-align: right;
+}
+.global-catalyst__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.global-catalyst article {
+  min-height: 142px;
+  display: flex;
+  flex-direction: column;
+  padding: 14px;
+  border: 1px solid rgba(48, 38, 33, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 253, 247, 0.88);
+}
+.global-catalyst article[data-tone='positive'] {
+  border-top: 4px solid var(--cd-mint);
+}
+.global-catalyst article[data-tone='neutral'] {
+  border-top: 4px solid var(--cd-lilac);
+}
+.global-catalyst article[data-tone='cautious'] {
+  border-top: 4px solid var(--cd-coral);
+}
+.global-catalyst article > span {
+  color: var(--cd-coral);
+  font: 800 9px var(--cd-font-mono);
+  letter-spacing: 0.12em;
+}
+.global-catalyst article strong {
+  margin: 8px 0 6px;
+  color: var(--cd-ink);
+  font-size: 15px;
+}
+.global-catalyst article p {
+  margin: 0;
+  color: var(--cd-text-secondary);
+  font-size: 11px;
+  line-height: 1.65;
+}
+.global-catalyst article time {
+  margin-top: auto;
+  padding-top: 8px;
+  color: #8b776b;
+  font: 700 9px var(--cd-font-mono);
+}
+.global-catalyst__loading {
+  grid-column: 1 / -1;
+  padding: 20px;
+  color: var(--cd-text-secondary);
+  text-align: center;
+}
+.report-scope-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+@media (max-width: 760px) {
+  .global-catalyst > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .global-catalyst > header p {
+    text-align: left;
+  }
+  .global-catalyst__grid {
+    grid-template-columns: 1fr;
+  }
+}

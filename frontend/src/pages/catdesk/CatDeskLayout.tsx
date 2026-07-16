@@ -8,6 +8,7 @@ import { TabNav } from './shared/TabNav';
 import { LoadingState } from './shared/LoadingState';
 import { CowMascot, type CowMood } from './shared/CowMascot';
 import { createTab67HttpApi, type Tab67Api } from './tabs/daily-report/tab67Api';
+import { PageFreshnessStamp } from './shared/PageFreshnessStamp';
 
 const AShareMorningBrief = React.lazy(() => import('./tabs/AShareMorningBrief'));
 const AShareMarket = React.lazy(() => import('./tabs/a-share-market/AShareMarket'));
@@ -151,6 +152,7 @@ export default function CatDeskLayout({
               </div>
             </div>
           </header>
+          <PageFreshnessStamp activeTab={activeTab} />
           <div className="catdesk-ribbon" aria-hidden="true">
             <span>催化</span>
             <i /> <span>确信</span>
