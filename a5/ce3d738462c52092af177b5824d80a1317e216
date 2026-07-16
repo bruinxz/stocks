@@ -1,0 +1,23 @@
+datapipeline/storage/multibagger/text_hit_writer.py
+  s_7cff93b99a2e15::t_27c95f002a4ac8 225-231,235
+datapipeline/tests/storage/multibagger/test_text_hit_writer.py
+  s_7cff93b99a2e15::t_f3ab2af6dc43d0 1,63-64,69-71,76,89-90,122-155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "a5ce3d738462c52092af177b5824d80a1317e216",
+  "prompts": {},
+  "sessions": {
+    "s_7cff93b99a2e15": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5fa7-208d-7ba3-86b5-d77e96eb2735",
+        "model": "unknown"
+      },
+      "human_author": "liyiming.709 <liyiming.709@bytedance.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
