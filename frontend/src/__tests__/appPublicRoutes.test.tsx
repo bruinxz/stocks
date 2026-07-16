@@ -183,7 +183,7 @@ describe('authenticated App routing', () => {
     expect(window.location.pathname).toBe('/catdesk');
     expect(container.textContent).toContain('A股市场');
     expect(container.textContent).not.toContain('登录系统');
-    expect(window.localStorage.getItem('token')).toBe(accessToken);
+    expect(defaultLoginSpy).toHaveBeenCalledTimes(1);
   });
 
   test.each(TAB_KEYS)('tab %s is reachable with an authenticated identity', async (tab: TabKey) => {
