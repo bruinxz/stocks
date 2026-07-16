@@ -216,8 +216,11 @@ def _request(value: Mapping[str, Any], repository: PostgresMaterializationReposi
 def _require_disposable(database_url: str) -> None:
     parsed = urlsplit(database_url)
     database = unquote(parsed.path.removeprefix("/"))
-    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    query = dict(pairs)
     host = unquote(query.get("host", ""))
+    port_text = query.get("port", "5432")
+    port = int(port_text) if port_text.isascii() and port_text.isdigit() else 0
     username = unquote(parsed.username or "")
     current_username = pwd.getpwuid(os.getuid()).pw_name
     expected_database = re.compile(
@@ -229,10 +232,12 @@ def _require_disposable(database_url: str) -> None:
         or username != current_username
         or parsed.password is not None
         or parsed.hostname is not None
-        or query.get("port", "5432") != "5432"
+        or len(pairs) != len(query)
+        or port < 1
+        or port > 65535
         or not host.startswith("/")
         or not Path(host).is_dir()
-        or not Path(host, ".s.PGSQL.5432").is_socket()
+        or not Path(host, f".s.PGSQL.{port}").is_socket()
     ):
         raise CliInputError("writes require an explicit disposable local database")
 

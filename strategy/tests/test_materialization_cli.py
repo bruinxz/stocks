@@ -144,9 +144,13 @@ class MaterializationCliTests(unittest.TestCase):
             ),
             "TAB4_CANDIDATE_DISPOSABLE_WRITE": "1",
         }
-        code, stdout, stderr = invoke(
-            raw, ["--write-disposable"], environment, repository, store
-        )
+        with (
+            patch.object(cli.Path, "is_dir", return_value=True),
+            patch.object(cli.Path, "is_socket", return_value=True),
+        ):
+            code, stdout, stderr = invoke(
+                raw, ["--write-disposable"], environment, repository, store
+            )
 
         self.assertEqual(code, 0)
         self.assertEqual(stderr, "")
@@ -174,6 +178,25 @@ class MaterializationCliTests(unittest.TestCase):
         )
         self.assertEqual((code, stdout), (2, ""))
         self.assertEqual(stderr, "multibagger materialization failed\n")
+
+    def test_disposable_write_guard_accepts_a_non_default_unix_socket_port(self):
+        username = pwd.getpwuid(os.getuid()).pw_name
+        database_url = (
+            f"postgresql://{username}@/stocks_tab4_{os.getuid()}_"
+            "0123456789abcdef01234567?host=/private/socket&port=55432"
+        )
+        environment = {"TAB4_CANDIDATE_DISPOSABLE_WRITE": "1"}
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch.object(cli.Path, "is_dir", return_value=True),
+            patch.object(cli.Path, "is_socket", return_value=True) as is_socket,
+        ):
+            cli._require_disposable(database_url)
+
+        self.assertEqual(
+            is_socket.call_args.args[0],
+            cli.Path("/private/socket/.s.PGSQL.55432"),
+        )
 
     def test_strict_json_and_generic_errors_do_not_leak(self):
         repository = Repository(request())
