@@ -1,0 +1,27 @@
+backend/tests/e2e/release-all-live.pg.sh
+  s_0ea7ce1b0cc346::t_4490a619abd354 1-152
+backend/tests/e2e/tab4-multibagger-live.pg.sh
+  s_0ea7ce1b0cc346::t_ad36758da97b8a 126
+backend/tests/e2e/tab5-six-month-live.pg.sh
+  s_0ea7ce1b0cc346::t_13eef61222c105 55
+scripts/tests/bootstrap-release-tools-linux.sh
+  s_0ea7ce1b0cc346::t_facc0de696973d 1-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "c578cfe26e1e71f861d8ede6e53cbf7860183b2b",
+  "prompts": {},
+  "sessions": {
+    "s_0ea7ce1b0cc346": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f66bd-4aa9-7422-9f9a-dc30b2769918",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
