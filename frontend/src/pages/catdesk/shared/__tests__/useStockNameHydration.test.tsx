@@ -1,15 +1,23 @@
 import React, { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, test } from '@jest/globals';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  jest as jestGlobals,
+  test,
+} from '@jest/globals';
+import type { MockedFunction } from 'jest-mock';
 import api from 'services/api';
 import { useStockNameHydration } from '../useStockNameHydration';
 
-jest.mock('services/api', () => ({
+jestGlobals.mock('services/api', () => ({
   __esModule: true,
-  default: { get: jest.fn() },
+  default: { get: require('@jest/globals').jest.fn() },
 }));
 
-const apiGet = api.get as jest.MockedFunction<typeof api.get>;
+const apiGet = api.get as MockedFunction<typeof api.get>;
 const ROWS = [{ symbol: '000777', name: '000777' }];
 
 function Harness() {
@@ -55,7 +63,7 @@ describe('useStockNameHydration', () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
-    jest.clearAllMocks();
+    jestGlobals.clearAllMocks();
   });
 
   test('切换催化筛选时不会重启名称补全循环', async () => {

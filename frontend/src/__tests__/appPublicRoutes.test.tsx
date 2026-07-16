@@ -2,6 +2,7 @@ import { act } from 'react';
 import { Provider } from 'react-redux';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
+import type { SpyInstance } from 'jest-mock';
 import App, { settleAppLogout } from '../App';
 import store from '../store/store';
 import { loginSuccess, logout } from '../store/authSlice';
@@ -89,7 +90,10 @@ describe('authenticated App routing', () => {
   let container: HTMLDivElement;
   let root: Root;
   let warnSpy: { mockRestore: () => void };
-  let defaultLoginSpy: jest.SpiedFunction<typeof authService.defaultLogin>;
+  let defaultLoginSpy: SpyInstance<
+    ReturnType<typeof authService.defaultLogin>,
+    Parameters<typeof authService.defaultLogin>
+  >;
 
   beforeAll(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
