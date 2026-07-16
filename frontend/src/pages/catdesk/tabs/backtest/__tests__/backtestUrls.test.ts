@@ -43,9 +43,7 @@ describe('backtest PIT URLs', () => {
         selectedSnapshot.market_scope,
         selectedSnapshot.as_of_utc
       )
-    ).toBe(
-      '/api/v1/backtest-pit/us_preferred/2026-07-10T23%3A59%3A59Z?market_scope=us'
-    );
+    ).toBe('/api/v1/backtest-pit/us_preferred/2026-07-10T23%3A59%3A59Z?market_scope=us');
     expect(buildBacktestHoldingsUrl('us_preferred', selectedSnapshot)).toBe(
       '/api/v1/backtest-pit/us_preferred/2026-07-10T23%3A59%3A59Z/holdings?market_scope=us'
     );

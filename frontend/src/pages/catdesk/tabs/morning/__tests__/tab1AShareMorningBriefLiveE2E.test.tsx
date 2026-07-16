@@ -217,23 +217,17 @@ describeLive('Tab1 AShareMorningBrief live disposable-PG container', () => {
       });
 
       await eventually(() => {
-        const score = document.body.querySelector('[aria-label="Score breakdown"]');
-        const conviction = document.body.querySelector('[aria-label="Conviction breakdown"]');
-        const riskGate = document.body.querySelector('[aria-label="Risk gate details"]');
-        const entryPlan = document.body.querySelector('[aria-label="Entry plan"]');
-        const evidence = document.body.querySelector(
-          '[aria-label="Recommendation evidence references"]'
-        );
-        const provenance = document.body.querySelector(
-          '[aria-label="Recommendation snapshot provenance"]'
-        );
+        const score = document.body.querySelector('[aria-label="评分分解"]');
+        const conviction = document.body.querySelector('[aria-label="确信度分解"]');
+        const riskGate = document.body.querySelector('[aria-label="风险门禁详情"]');
+        const entryPlan = document.body.querySelector('[aria-label="入场方案"]');
+        const evidence = document.body.querySelector('[aria-label="推荐证据引用"]');
+        const provenance = document.body.querySelector('[aria-label="推荐快照溯源"]');
 
         expect(score?.textContent).toContain(expected.score.scoring_id);
         expect(score?.textContent).toContain(`综合: ${expected.score.rating}`);
         expect(conviction?.textContent).toContain(`${expected.conviction.final}%`);
-        expect(riskGate?.textContent).toContain(
-          `${expected.risk_gate.gate} · 可入场`
-        );
+        expect(riskGate?.textContent).toContain(`${expected.risk_gate.gate} · 可入场`);
         if (expected.risk_gate.trigger_code) {
           expect(riskGate?.textContent).toContain(expected.risk_gate.trigger_code);
         }

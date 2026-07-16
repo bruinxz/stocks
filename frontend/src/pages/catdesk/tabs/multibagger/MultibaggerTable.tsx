@@ -4,6 +4,7 @@ import { TableColumn } from 'shared/components/TableColumn';
 import { ScoreCell, ConvictionPill, RiskGateChip } from 'shared/components/TableColumn';
 import type { TableColumnDef } from 'shared/components/TableColumn';
 import type { MultibaggerRow } from './types';
+import { MARKET_SCOPE_LABELS, RATING_LABELS } from '../../shared/uiLabels';
 
 const STAGE_LABEL: Record<string, string> = {
   seed: '种子',
@@ -21,11 +22,19 @@ const STAGE_COLOR: Record<string, string> = {
   deep: 'red',
 };
 
+const STAGE_RANK: Record<string, number> = {
+  seed: 1,
+  early: 2,
+  growth: 3,
+  break_below: 4,
+  deep: 5,
+};
+
 const CONCLUSION_LABEL: Record<string, string> = {
-  MULTIBAGGER_2X: '2X',
-  MULTIBAGGER_5X: '5X',
-  MULTIBAGGER_10X: '10X',
-  SKIP: 'SKIP',
+  MULTIBAGGER_2X: '2倍',
+  MULTIBAGGER_5X: '5倍',
+  MULTIBAGGER_10X: '10倍',
+  SKIP: '暂不关注',
 };
 
 const CONCLUSION_COLOR: Record<string, string> = {
@@ -33,6 +42,13 @@ const CONCLUSION_COLOR: Record<string, string> = {
   MULTIBAGGER_5X: 'green',
   MULTIBAGGER_10X: 'gold',
   SKIP: 'default',
+};
+
+const CONCLUSION_RANK: Record<string, number> = {
+  SKIP: 0,
+  MULTIBAGGER_2X: 2,
+  MULTIBAGGER_5X: 5,
+  MULTIBAGGER_10X: 10,
 };
 
 const CATALYST_LABEL: Record<string, string> = {
@@ -56,7 +72,7 @@ function getColumns(): TableColumnDef<MultibaggerRow>[] {
       title: '代码',
       ariaLabel: '股票代码',
       width: 80,
-      sortable: true,
+      sortable: (a, b) => a.symbol.localeCompare(b.symbol, 'zh-CN', { numeric: true }),
       render: (_, row) => <span>{row.symbol}</span>,
     },
     {
@@ -64,6 +80,7 @@ function getColumns(): TableColumnDef<MultibaggerRow>[] {
       title: '名称',
       ariaLabel: '公司名称',
       width: 120,
+      sortable: (a, b) => a.name.localeCompare(b.name, 'zh-CN'),
       render: (_, row) => <span>{row.name}</span>,
     },
     {
@@ -71,14 +88,14 @@ function getColumns(): TableColumnDef<MultibaggerRow>[] {
       title: '市场',
       ariaLabel: '上市市场',
       width: 60,
-      render: (_, row) => <Tag>{row.market}</Tag>,
+      render: (_, row) => <Tag>{MARKET_SCOPE_LABELS[row.market] ?? row.market}</Tag>,
     },
     {
       key: 'stage',
       title: '阶段',
       ariaLabel: '候选阶段',
       width: 70,
-      sortable: true,
+      sortable: (a, b) => (STAGE_RANK[a.stage] ?? 99) - (STAGE_RANK[b.stage] ?? 99),
       render: (_, row) => <Tag color={STAGE_COLOR[row.stage]}>{STAGE_LABEL[row.stage]}</Tag>,
     },
     {
@@ -86,7 +103,8 @@ function getColumns(): TableColumnDef<MultibaggerRow>[] {
       title: '分结论',
       ariaLabel: '倍数分结论',
       width: 70,
-      sortable: true,
+      sortable: (a, b) =>
+        (CONCLUSION_RANK[a.conclusion] ?? -1) - (CONCLUSION_RANK[b.conclusion] ?? -1),
       render: (_, row) => (
         <Tag color={CONCLUSION_COLOR[row.conclusion]}>{CONCLUSION_LABEL[row.conclusion]}</Tag>
       ),
@@ -97,7 +115,7 @@ function getColumns(): TableColumnDef<MultibaggerRow>[] {
       ariaLabel: '综合评分及等级',
       width: 90,
       align: 'center',
-      sortable: true,
+      sortable: (a, b) => (a.score?.total ?? -Infinity) - (b.score?.total ?? -Infinity),
       render: (_, row) =>
         row.score ? (
           <Tooltip title={`scoring_id: ${row.score.scoring_id.slice(0, 8)}…`}>
@@ -109,10 +127,11 @@ function getColumns(): TableColumnDef<MultibaggerRow>[] {
     },
     {
       key: 'rating_band',
-      title: 'Rating',
-      ariaLabel: 'Rating Band 等级',
+      title: '评级',
+      ariaLabel: '评级等级',
       width: 70,
       align: 'center',
+      sortable: (a, b) => a.rating_band.localeCompare(b.rating_band),
       render: (_, row) => {
         const colorMap: Record<string, string> = {
           A: '#389e0d',
@@ -121,7 +140,11 @@ function getColumns(): TableColumnDef<MultibaggerRow>[] {
           D: '#fa8c16',
           F: '#cf1322',
         };
-        return <Tag color={colorMap[row.rating_band]}>{row.rating_band}</Tag>;
+        return (
+          <Tag color={colorMap[row.rating_band]}>
+            {RATING_LABELS[row.rating_band] ?? row.rating_band}
+          </Tag>
+        );
       },
     },
     {
@@ -130,12 +153,13 @@ function getColumns(): TableColumnDef<MultibaggerRow>[] {
       ariaLabel: '置信度',
       width: 80,
       align: 'center',
+      sortable: (a, b) => (a.conviction?.final ?? -Infinity) - (b.conviction?.final ?? -Infinity),
       render: (_, row) => {
         if (!row.conviction) return <span style={{ color: '#999' }}>—</span>;
         const adjSum = row.conviction.adjustments.reduce((s, a) => s + a.delta, 0);
         return (
           <Tooltip
-            title={`base=${row.conviction.base} Σadj=${adjSum > 0 ? '+' : ''}${adjSum} final=${row.conviction.final}`}
+            title={`基础分 ${row.conviction.base}，调整 ${adjSum > 0 ? '+' : ''}${adjSum}，最终 ${row.conviction.final}`}
           >
             {ConvictionPill(row.conviction, `${row.symbol} 置信度`)}
           </Tooltip>
@@ -148,6 +172,7 @@ function getColumns(): TableColumnDef<MultibaggerRow>[] {
       ariaLabel: '风险门禁状态',
       width: 80,
       align: 'center',
+      sortable: (a, b) => (a.risk_gate?.gate ?? '').localeCompare(b.risk_gate?.gate ?? ''),
       render: (_, row) => {
         if (!row.risk_gate) return <span style={{ color: '#999' }}>—</span>;
         return RiskGateChip(row.risk_gate, `${row.symbol} 风险门禁`);
@@ -158,10 +183,12 @@ function getColumns(): TableColumnDef<MultibaggerRow>[] {
       title: '建议仓位',
       ariaLabel: '建议仓位比例',
       width: 130,
+      sortable: (a, b) =>
+        (a.entry_plan?.size_hint.pct ?? -Infinity) - (b.entry_plan?.size_hint.pct ?? -Infinity),
       render: (_, row) => {
         if (!row.entry_plan) return <span style={{ color: '#999' }}>—</span>;
         const { tier, pct } = row.entry_plan.size_hint;
-        const tierLabel = tier === 'SKIP' ? 'SKIP' : `${pct}%`;
+        const tierLabel = tier === 'SKIP' ? '暂不参与' : `${pct}%`;
         const tierColor =
           tier === 'SKIP' ? '#999' : pct >= 5 ? '#389e0d' : pct >= 3 ? '#52c41a' : '#faad14';
         return (

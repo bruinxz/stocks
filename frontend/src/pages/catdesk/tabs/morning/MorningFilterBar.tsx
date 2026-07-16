@@ -1,8 +1,16 @@
 import type { CatalystKind } from '../../types';
+import { CATALYST_LABELS } from '../../shared/uiLabels';
 
 const CATALYST_KINDS: CatalystKind[] = [
-  'earnings', 'upgrade_downgrade', 'ma_activity', 'sector_move',
-  'regulator', 'geo_macro', 'product', 'leadership', 'unclassified',
+  'earnings',
+  'upgrade_downgrade',
+  'ma_activity',
+  'sector_move',
+  'regulator',
+  'geo_macro',
+  'product',
+  'leadership',
+  'unclassified',
 ];
 
 const CONVICTION_LEVELS = ['all', 'med', 'high'] as const;
@@ -30,9 +38,10 @@ const chipBase: React.CSSProperties = {
 
 const chipActive: React.CSSProperties = {
   ...chipBase,
-  background: 'var(--cd-accent)',
-  borderColor: 'var(--cd-accent)',
-  color: '#fff',
+  background: '#ffe0d5',
+  borderColor: '#c96a61',
+  color: '#713630',
+  fontWeight: 700,
 };
 
 const groupStyle: React.CSSProperties = {
@@ -58,28 +67,67 @@ const labelStyle: React.CSSProperties = {
 };
 
 export function MorningFilterBar(props: MorningFilterBarProps) {
-  const { sector, catalystKind, convictionMin, onSectorChange, onCatalystKindChange, onConvictionChange, sectors } = props;
+  const {
+    sector,
+    catalystKind,
+    convictionMin,
+    onSectorChange,
+    onCatalystKindChange,
+    onConvictionChange,
+    sectors,
+  } = props;
 
   return (
     <div style={barStyle}>
       <div style={groupStyle}>
         <span style={labelStyle}>板块</span>
-        <button type="button" style={sector === null ? chipActive : chipBase} onClick={() => onSectorChange(null)}>全部</button>
-        {sectors.map((s) => (
-          <button key={s} type="button" style={sector === s ? chipActive : chipBase} onClick={() => onSectorChange(s)}>{s}</button>
+        <button
+          type="button"
+          style={sector === null ? chipActive : chipBase}
+          onClick={() => onSectorChange(null)}
+        >
+          全部
+        </button>
+        {sectors.map(s => (
+          <button
+            key={s}
+            type="button"
+            style={sector === s ? chipActive : chipBase}
+            onClick={() => onSectorChange(s)}
+          >
+            {s}
+          </button>
         ))}
       </div>
       <div style={groupStyle}>
         <span style={labelStyle}>催化</span>
-        <button type="button" style={catalystKind === null ? chipActive : chipBase} onClick={() => onCatalystKindChange(null)}>全部</button>
-        {CATALYST_KINDS.map((k) => (
-          <button key={k} type="button" style={catalystKind === k ? chipActive : chipBase} onClick={() => onCatalystKindChange(k)}>{k}</button>
+        <button
+          type="button"
+          style={catalystKind === null ? chipActive : chipBase}
+          onClick={() => onCatalystKindChange(null)}
+        >
+          全部
+        </button>
+        {CATALYST_KINDS.map(k => (
+          <button
+            key={k}
+            type="button"
+            style={catalystKind === k ? chipActive : chipBase}
+            onClick={() => onCatalystKindChange(k)}
+          >
+            {CATALYST_LABELS[k] ?? k}
+          </button>
         ))}
       </div>
       <div style={groupStyle}>
         <span style={labelStyle}>确信</span>
-        {CONVICTION_LEVELS.map((lv) => (
-          <button key={lv} type="button" style={convictionMin === lv ? chipActive : chipBase} onClick={() => onConvictionChange(lv)}>
+        {CONVICTION_LEVELS.map(lv => (
+          <button
+            key={lv}
+            type="button"
+            style={convictionMin === lv ? chipActive : chipBase}
+            onClick={() => onConvictionChange(lv)}
+          >
             {lv === 'all' ? '全部' : lv === 'med' ? '>=50' : '>=75'}
           </button>
         ))}

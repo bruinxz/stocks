@@ -2,7 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 
 const DISCLAIMER_MAP: Record<string, string> = {
-  size_hint_advisory: '仅参考·非下单 binding · 不构成投资建议',
+  size_hint_advisory: '仅供参考 · 不是下单指令 · 不构成投资建议',
 };
 
 interface DisclaimerFooterProps {

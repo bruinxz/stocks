@@ -69,19 +69,19 @@ export default function DisclaimerPage() {
         </Paragraph>
         <ul style={{ paddingLeft: 24, color: 'var(--cd-text-secondary)', lineHeight: 2 }}>
           <li>
-            <Text code>TIER_5</Text> — 参考仓位 ≤ 5%（最高确信度）
+            <Text code>最高档</Text> — 参考仓位 ≤ 5%（最高确信度）
           </li>
           <li>
-            <Text code>TIER_3</Text> — 参考仓位 ≤ 3%
+            <Text code>较高档</Text> — 参考仓位 ≤ 3%
           </li>
           <li>
-            <Text code>TIER_2</Text> — 参考仓位 ≤ 2%
+            <Text code>中档</Text> — 参考仓位 ≤ 2%
           </li>
           <li>
-            <Text code>TIER_1</Text> — 参考仓位 ≤ 1%（最低确信度）
+            <Text code>观察档</Text> — 参考仓位 ≤ 1%（最低确信度）
           </li>
           <li>
-            <Text code>SKIP</Text> — 不建议参与
+            <Text code>暂不参与</Text> — 不建议参与
           </li>
         </ul>
         <Paragraph style={{ color: 'var(--cd-text-secondary)' }}>

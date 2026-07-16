@@ -1,7 +1,5 @@
 interface USFilterBarProps {
-  sector: string | null;
   ratingMin: string | null;
-  onSectorChange: (v: string | null) => void;
   onRatingChange: (v: string | null) => void;
 }
 
@@ -24,17 +22,18 @@ const chipBase: React.CSSProperties = {
 
 const chipActive: React.CSSProperties = {
   ...chipBase,
-  background: 'var(--cd-accent)',
-  borderColor: 'var(--cd-accent)',
-  color: '#fff',
+  background: '#ffe0d5',
+  borderColor: '#c96a61',
+  color: '#713630',
+  fontWeight: 700,
 };
 
-export function USFilterBar({ sector, ratingMin, onSectorChange, onRatingChange }: USFilterBarProps) {
+export function USFilterBar({ ratingMin, onRatingChange }: USFilterBarProps) {
   return (
     <div style={{ display: 'flex', gap: 24, padding: '8px 0', flexWrap: 'wrap' }}>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-        <span style={{ fontSize: 12, color: 'var(--cd-text-secondary)', minWidth: 48 }}>Rating</span>
-        {RATING_OPTIONS.map((o) => (
+        <span style={{ fontSize: 12, color: 'var(--cd-text-secondary)', minWidth: 48 }}>评级</span>
+        {RATING_OPTIONS.map(o => (
           <button
             key={o.label}
             type="button"

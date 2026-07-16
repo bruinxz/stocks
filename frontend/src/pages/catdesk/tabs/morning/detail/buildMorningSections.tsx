@@ -12,16 +12,16 @@ export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
   const relevance = row.catalyst_relevance?.components;
   const relevanceComponents = relevance
     ? [
-        { label: 'sector_map', value: relevance.sector_map * 100, color: '#3b82f6' },
+        { label: '板块匹配', value: relevance.sector_map * 100, color: '#3b82f6' },
         {
-          label: 'revenue_exposure',
+          label: '营收敞口',
           value: relevance.revenue_exposure * 100,
           color: '#22c55e',
         },
-        { label: 'adr_parity', value: relevance.adr_parity * 100, color: '#f59e0b' },
-        { label: 'supply_chain', value: relevance.supply_chain * 100, color: '#8b5cf6' },
+        { label: '存托凭证平价', value: relevance.adr_parity * 100, color: '#f59e0b' },
+        { label: '供应链', value: relevance.supply_chain * 100, color: '#8b5cf6' },
         {
-          label: 'historical_beta',
+          label: '历史贝塔',
           value: relevance.historical_beta * 100,
           color: '#ec4899',
         },
@@ -29,19 +29,19 @@ export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
     : [];
   const recommendationGates = [
     {
-      label: `trigger_signals = ${row.trigger_signals?.length ?? 0}`,
+      label: `触发信号：${row.trigger_signals?.length ?? 0}`,
       passed: (row.trigger_signals?.length ?? 0) > 0,
     },
-    { label: 'weights 已归一化', passed: row.weights?.normalized === true },
-    { label: 'explanation 可追溯', passed: Boolean(row.explanation?.body) },
+    { label: '权重已归一化', passed: row.weights?.normalized === true },
+    { label: '推荐解释可追溯', passed: Boolean(row.explanation?.body) },
     {
-      label: `evidence_refs = ${row.evidence_refs?.length ?? 0}`,
+      label: `证据引用：${row.evidence_refs?.length ?? 0}`,
       passed: (row.evidence_refs?.length ?? 0) > 0,
     },
   ];
   const dualGate = row.risk_gate
     ? {
-        label: `RiskGate ${row.risk_gate.gate}`,
+        label: `风险门禁 ${row.risk_gate.gate}`,
         status: (row.risk_gate.gate === 'GREEN'
           ? 'pass'
           : row.risk_gate.gate === 'YELLOW'
@@ -53,19 +53,19 @@ export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
     {
       key: 'relevance',
       title: '相关性分解',
-      ariaLabel: 'Relevance breakdown',
+      ariaLabel: '相关性分解',
       content: <RelevanceBreakdownCard components={relevanceComponents} />,
     },
     {
       key: 'ai',
-      title: 'AI 推荐门控',
-      ariaLabel: 'AI recommendation gates',
+      title: '智能推荐门控',
+      ariaLabel: '智能推荐门控',
       content: <AIRecommendationCard gates={recommendationGates} dualGate={dualGate} />,
     },
     {
       key: 'score',
       title: '评分分解',
-      ariaLabel: 'Score breakdown',
+      ariaLabel: '评分分解',
       content: (
         <ScoreBreakdownCard
           scoringId={row.score?.scoring_id}
@@ -78,7 +78,7 @@ export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
     {
       key: 'risk',
       title: '风控门控',
-      ariaLabel: 'Risk gate details',
+      ariaLabel: '风险门禁详情',
       content: (
         <RiskGateDetailCard
           gate={row.risk_gate?.gate}
@@ -96,7 +96,7 @@ export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
     {
       key: 'conviction',
       title: '确信度分解',
-      ariaLabel: 'Conviction breakdown',
+      ariaLabel: '确信度分解',
       content: (
         <ConvictionBreakdownCard
           base={row.conviction?.base}
@@ -108,7 +108,7 @@ export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
     {
       key: 'datasource',
       title: '数据来源',
-      ariaLabel: 'Data source badges',
+      ariaLabel: '数据来源',
       content: <DataSourceBadge sources={row.data_sources ?? []} />,
     },
   ];
@@ -117,7 +117,7 @@ export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
     sections.splice(2, 0, {
       key: 'explanation',
       title: '推荐解释',
-      ariaLabel: 'Recommendation explanation',
+      ariaLabel: '推荐解释',
       content: (
         <div style={{ display: 'grid', gap: 8 }}>
           <strong>{row.explanation.headline}</strong>
@@ -136,7 +136,7 @@ export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
     sections.push({
       key: 'evidence',
       title: '证据引用',
-      ariaLabel: 'Recommendation evidence references',
+      ariaLabel: '推荐证据引用',
       content: (
         <div style={{ display: 'grid', gap: 8 }}>
           {row.evidence_refs.map(evidence => (
@@ -157,14 +157,14 @@ export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
     sections.push({
       key: 'provenance',
       title: '快照溯源',
-      ariaLabel: 'Recommendation snapshot provenance',
+      ariaLabel: '推荐快照溯源',
       content: (
         <div style={{ display: 'grid', gap: 4, fontFamily: 'monospace', fontSize: 11 }}>
-          <span>snapshot_id: {row.provenance.snapshot_id}</span>
-          <span>as_of: {row.provenance.as_of}</span>
-          <span>input: {row.provenance.input_fingerprint}</span>
-          <span>output: {row.provenance.output_fingerprint}</span>
-          <span>pipeline: {row.provenance.pipeline_version}</span>
+          <span>快照编号：{row.provenance.snapshot_id}</span>
+          <span>数据时点：{row.provenance.as_of}</span>
+          <span>输入指纹：{row.provenance.input_fingerprint}</span>
+          <span>输出指纹：{row.provenance.output_fingerprint}</span>
+          <span>处理流程：{row.provenance.pipeline_version}</span>
         </div>
       ),
       collapsible: true,
@@ -176,7 +176,7 @@ export function buildMorningSections(row: CandidateListEntry): DetailSection[] {
     sections.push({
       key: 'entry',
       title: '入场计划',
-      ariaLabel: 'Entry plan',
+      ariaLabel: '入场方案',
       content: <EntryPlanDetails plan={ep} />,
     });
   }

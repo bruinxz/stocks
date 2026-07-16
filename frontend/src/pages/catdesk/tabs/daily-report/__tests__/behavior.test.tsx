@@ -135,7 +135,7 @@ describe('Tab 6/7 contract-first behavior', () => {
         }}
       />
     );
-    expect(daily).toContain('RECOMMENDATION SNAPSHOT / V0.3.1');
+    expect(daily).toContain('推荐快照 · 版本 0.3.1');
     expect(daily).toContain('href="sec-edgar://');
     expect(daily).toContain('投资有风险');
     expect(daily).toContain('高确信度');
@@ -159,7 +159,7 @@ describe('Tab 6/7 contract-first behavior', () => {
       },
     };
     const history = renderToStaticMarkup(<ReportHistory state={historyState} />);
-    expect(history).toContain('SNAPSHOT REGISTER');
+    expect(history).toContain('历史档案 · 快照登记簿');
     expect(history).toContain('新增');
     expect(history).toContain('AAPL');
   });

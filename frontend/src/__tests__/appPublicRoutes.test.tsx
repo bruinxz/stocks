@@ -5,6 +5,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '
 import App, { settleAppLogout } from '../App';
 import store from '../store/store';
 import { loginSuccess, logout } from '../store/authSlice';
+import { authService } from '../services/authService';
 import { TAB_KEYS, type TabKey } from '../pages/catdesk/useTabState';
 import {
   USER_SCOPED_LOCAL_STORAGE_KEYS,
@@ -39,6 +40,10 @@ jest.mock('../pages/catdesk/tabs/AShareMorningBrief', () => ({
   __esModule: true,
   default: () => <div data-testid="tab-morning">A股早报</div>,
 }));
+jest.mock('../pages/catdesk/tabs/a-share-market/AShareMarket', () => ({
+  __esModule: true,
+  default: () => <div data-testid="tab-market">A股市场</div>,
+}));
 jest.mock('../pages/catdesk/tabs/USStockPicks', () => ({
   __esModule: true,
   default: () => <div data-testid="tab-us">美股优选</div>,
@@ -65,6 +70,7 @@ jest.mock('../pages/catdesk/tabs/ReportHistory', () => ({
 }));
 
 const TAB_LABEL: Record<TabKey, string> = {
+  market: 'A股市场',
   morning: 'A股早报',
   us: '美股优选',
   jpkr: '日韩市场',
@@ -83,6 +89,7 @@ describe('authenticated App routing', () => {
   let container: HTMLDivElement;
   let root: Root;
   let warnSpy: { mockRestore: () => void };
+  let defaultLoginSpy: jest.SpiedFunction<typeof authService.defaultLogin>;
 
   beforeAll(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -102,6 +109,9 @@ describe('authenticated App routing', () => {
     window.localStorage.clear();
     window.sessionStorage.clear();
     store.dispatch(logout());
+    defaultLoginSpy = jest
+      .spyOn(authService, 'defaultLogin')
+      .mockRejectedValue(new Error('default login disabled'));
     warnSpy = jest
       .spyOn(console, 'warn')
       .mockImplementation((message: unknown, ...args: unknown[]) => {
@@ -116,6 +126,7 @@ describe('authenticated App routing', () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     warnSpy.mockRestore();
+    defaultLoginSpy.mockRestore();
     window.localStorage.clear();
     window.sessionStorage.clear();
     container.remove();
@@ -148,6 +159,28 @@ describe('authenticated App routing', () => {
       expect(window.localStorage.getItem('token')).toBeNull();
     }
   );
+
+  test('enabled default administrator session enters CatDesk without a login form', async () => {
+    const accessToken = ['default-admin', 'access-token'].join('-');
+    defaultLoginSpy.mockReset().mockImplementation(async () => {
+      window.localStorage.setItem('token', accessToken);
+      window.localStorage.setItem('username', 'stocks');
+      return {
+        success: true,
+        data: {
+          user: { id: 9, username: 'stocks', email: 'stocks@example.com', role: 'admin' },
+          tokens: { accessToken },
+        },
+      };
+    });
+
+    await renderAt('/catdesk');
+
+    expect(window.location.pathname).toBe('/catdesk');
+    expect(container.textContent).toContain('A股市场');
+    expect(container.textContent).not.toContain('登录系统');
+    expect(window.localStorage.getItem('token')).toBe(accessToken);
+  });
 
   test.each(TAB_KEYS)('tab %s is reachable with an authenticated identity', async (tab: TabKey) => {
     const token = 'app-routing-token';

@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import { Stock } from '../../models/Stock';
 import { DailyBar } from '../../models/DailyBar';
 import { logger } from '../../utils/logger';
@@ -44,10 +44,85 @@ export class StockController {
         order: [['symbol', 'ASC']],
       });
 
+      const quoteRows = rows.length
+        ? await Stock.sequelize!.query<{
+            stock_id: number;
+            quote_date: string;
+            close: string | number;
+            change_percent: string | number | null;
+            turnover_rate: string | number | null;
+            pe: string | number | null;
+            pb: string | number | null;
+            market_cap: string | number | null;
+            quote_updated_at: string;
+          }>(
+            `
+              WITH ranked AS (
+                SELECT
+                  bar.stock_id,
+                  bar.time::date AS quote_date,
+                  bar.close,
+                  bar.change_percent,
+                  bar.turnover_rate,
+                  bar.pe,
+                  bar.pb,
+                  bar.market_cap,
+                  bar.updated_at AS quote_updated_at,
+                  LAG(bar.close) OVER (
+                    PARTITION BY bar.stock_id ORDER BY bar.time
+                  ) AS previous_close,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY bar.stock_id ORDER BY bar.time DESC
+                  ) AS recency
+                FROM daily_bars bar
+                WHERE bar.stock_id IN (:stock_ids)
+                  AND bar.is_trading_day = TRUE
+              )
+              SELECT
+                stock_id,
+                quote_date::text,
+                close,
+                COALESCE(
+                  change_percent,
+                  ROUND(((close / NULLIF(previous_close, 0)) - 1) * 100, 4)
+                ) AS change_percent,
+                turnover_rate,
+                pe,
+                pb,
+                market_cap,
+                quote_updated_at
+              FROM ranked
+              WHERE recency = 1
+            `,
+            {
+              replacements: { stock_ids: rows.map(row => row.id) },
+              type: QueryTypes.SELECT,
+            }
+          )
+        : [];
+      const quoteByStockId = new Map(quoteRows.map(quote => [Number(quote.stock_id), quote]));
+      const stocks = rows.map(row => {
+        const stock = row.toJSON() as Record<string, unknown>;
+        const quote = quoteByStockId.get(row.id);
+        if (!quote) return stock;
+        return {
+          ...stock,
+          price: quote.close,
+          change_percent: quote.change_percent,
+          turnover_rate: quote.turnover_rate ?? stock.turnover_rate,
+          pe_dynamic: quote.pe ?? stock.pe_dynamic,
+          pb: quote.pb ?? stock.pb,
+          total_market_cap: quote.market_cap ?? stock.total_market_cap,
+          quote_date: quote.quote_date,
+          quote_updated_at: quote.quote_updated_at,
+          quote_source: 'daily_bars',
+        };
+      });
+
       res.json({
         success: true,
         data: {
-          stocks: rows,
+          stocks,
           pagination: {
             total: count,
             page: pageNum,

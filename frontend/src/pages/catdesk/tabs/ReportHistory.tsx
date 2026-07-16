@@ -7,6 +7,7 @@ import { ReportDocument } from './daily-report/ReportDocument';
 import { TabKpiStrip } from './daily-report/TabKpiStrip';
 import { buildReportHistoryKpi } from './report-history/slots';
 import type { ReportHistoryViewState } from './report-history/types';
+import { MARKET_SCOPE_LABELS, PROFILE_LABELS } from '../shared/uiLabels';
 import './daily-report/report.css';
 
 export interface ReportHistoryProps {
@@ -27,7 +28,14 @@ export function ReportHistory({
   onCompare,
   onRetry,
 }: ReportHistoryProps) {
-  if (state.kind === 'loading') return <LoadingState />;
+  if (state.kind === 'loading')
+    return (
+      <LoadingState
+        title="正在检索历史档案"
+        description="对齐每次判断的快照、指纹和变化记录…"
+        mood="sleepy"
+      />
+    );
   if (state.kind === 'error') {
     return (
       <div className="report-state-shell">
@@ -42,7 +50,7 @@ export function ReportHistory({
         <TabKpiStrip slots={buildReportHistoryKpi()} />
         <div className="report-toolbar">
           <div>
-            <span className="report-eyebrow">ARCHIVE / NO MATCH</span>
+            <span className="report-eyebrow">历史档案 · 没有匹配结果</span>
             <h2>报告历史</h2>
           </div>
         </div>
@@ -56,10 +64,10 @@ export function ReportHistory({
       <TabKpiStrip slots={buildReportHistoryKpi(state.page)} />
       <div className="report-toolbar">
         <div>
-          <span className="report-eyebrow">ARCHIVE / SNAPSHOT REGISTER</span>
+          <span className="report-eyebrow">历史档案 · 快照登记簿</span>
           <h2>报告历史</h2>
         </div>
-        <Tag>{state.page.total} reports</Tag>
+        <Tag>{state.page.total} 份报告</Tag>
       </div>
 
       <div className="history-register">
@@ -79,7 +87,8 @@ export function ReportHistory({
               <tr key={entry.report_id}>
                 <td>{entry.trading_day}</td>
                 <td>
-                  {entry.profile} / {entry.market_scope}
+                  {PROFILE_LABELS[entry.profile] ?? entry.profile} /{' '}
+                  {MARKET_SCOPE_LABELS[entry.market_scope] ?? entry.market_scope}
                 </td>
                 <td>{entry.entry_count}</td>
                 <td>{entry.high_conviction_count}</td>
@@ -102,7 +111,7 @@ export function ReportHistory({
 
       {state.comparison && (
         <aside className="comparison-strip" aria-label="快照对比结果">
-          <strong>DIFF</strong>
+          <strong>差异对比</strong>
           <span>新增 {state.comparison.added.length}</span>
           <span>移除 {state.comparison.removed.length}</span>
           <span>变化 {state.comparison.changed.length}</span>

@@ -44,7 +44,11 @@ function deltaText(d: number): string {
   return d > 0 ? `+${d}` : String(d);
 }
 
-export function ConvictionBreakdownCard({ base = 50, adjustments = [], final: finalVal }: ConvictionBreakdownCardProps) {
+export function ConvictionBreakdownCard({
+  base = 50,
+  adjustments = [],
+  final: finalVal,
+}: ConvictionBreakdownCardProps) {
   const computed = finalVal ?? adjustments.reduce((acc, a) => acc + a.delta, base);
 
   return (
@@ -54,7 +58,7 @@ export function ConvictionBreakdownCard({ base = 50, adjustments = [], final: fi
         <span style={{ color: 'var(--cd-text-secondary)' }}>基础分</span>
         <span style={{ fontFamily: 'var(--cd-font-mono)', fontWeight: 600 }}>{base}</span>
       </div>
-      {adjustments.map((a) => (
+      {adjustments.map(a => (
         <div key={a.label} style={rowStyle}>
           <span style={{ color: 'var(--cd-text-secondary)' }}>{a.label}</span>
           <Tag color={deltaColor(a.delta)}>{deltaText(a.delta)}</Tag>
@@ -67,7 +71,13 @@ export function ConvictionBreakdownCard({ base = 50, adjustments = [], final: fi
         </div>
         <Progress
           percent={computed}
-          strokeColor={computed >= 75 ? 'var(--cd-up)' : computed >= 50 ? 'var(--cd-accent)' : 'var(--cd-text-secondary)'}
+          strokeColor={
+            computed >= 75
+              ? 'var(--cd-up)'
+              : computed >= 50
+                ? 'var(--cd-accent)'
+                : 'var(--cd-text-secondary)'
+          }
           trailColor="var(--cd-border)"
           showInfo={false}
         />

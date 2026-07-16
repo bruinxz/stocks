@@ -12,6 +12,10 @@ from datapipeline.storage.multibagger.canonical_json import canonicalize_json
 
 CAPTURE_SCHEMA_VERSION = "1.0.0"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_JPX_DAILY_SOURCE_RE = re.compile(
+    r"^https://www[.]jpx[.]co[.]jp/english/markets/statistics-equities/"
+    r"daily/[a-z0-9]+-att/stq_[0-9]{8}[.]pdf$"
+)
 _ALLOWED_SOURCES = {
     "BOJ": (
         "https://www.stat-search.boj.or.jp/ssi/mtshtml/csv/fm08_d_1_en.csv",
@@ -131,14 +135,15 @@ def validate_capture_wrapper(
     if wrapper["source_kind"] != expected_source_kind:
         raise CaptureProvenanceError("capture source_kind mismatch")
     allowed = _ALLOWED_SOURCES.get(expected_source_kind)
-    if (
-        allowed is None
-        or (
-            wrapper["source_url"],
-            wrapper["terms_url"],
-        )
-        != allowed
-    ):
+    source_pair = (wrapper["source_url"], wrapper["terms_url"])
+    rotating_jpx_daily_source = (
+        expected_source_kind == "jpx-daily-statistics-pdf"
+        and isinstance(wrapper["source_url"], str)
+        and _JPX_DAILY_SOURCE_RE.fullmatch(wrapper["source_url"]) is not None
+        and wrapper["terms_url"]
+        == "https://www.jpx.co.jp/english/term-of-use/index.html"
+    )
+    if allowed is None or (source_pair != allowed and not rotating_jpx_daily_source):
         raise CaptureProvenanceError("capture source/terms URL is not allowlisted")
     _canonical_uuid4(wrapper["capture_instance"])
     _canonical_utc(wrapper["captured_at_utc"])

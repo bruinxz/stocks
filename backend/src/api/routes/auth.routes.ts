@@ -103,6 +103,21 @@ router.post(
 
 /**
  * @openapi
+ * /api/auth/default-login:
+ *   post:
+ *     tags: [认证 Auth]
+ *     summary: 部署显式启用时签发默认管理员会话
+ *     description: 仅用于 owner-approved kiosk 部署；默认关闭，密码只保存在服务端环境变量中
+ *     security: []
+ *     responses:
+ *       200: { description: 默认管理员登录成功 }
+ *       404: { description: 当前部署未启用默认管理员登录 }
+ *       503: { description: 默认管理员配置或账号不可用 }
+ */
+router.post('/default-login', authController.defaultAdminLogin);
+
+/**
+ * @openapi
  * /api/auth/refresh:
  *   post:
  *     tags: [认证 Auth]

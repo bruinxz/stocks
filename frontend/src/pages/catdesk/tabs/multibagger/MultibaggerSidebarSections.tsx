@@ -60,8 +60,8 @@ export function buildMultibaggerSections(row: MultibaggerRow): DetailSection[] {
       content: (
         <Alert
           type="error"
-          message="SIZE_HINT = SKIP"
-          description="该标的不满足仓位分配条件 (评分不足或风险门禁非 GREEN)"
+          message="参考仓位：暂不参与"
+          description="该标的不满足仓位分配条件（评分不足或风险门禁未通过）"
           showIcon
         />
       ),
@@ -95,41 +95,41 @@ export function buildMultibaggerSections(row: MultibaggerRow): DetailSection[] {
     content: (
       <div>
         <p>
-          <Text strong>Identity: </Text>
+          <Text strong>身份标识：</Text>
           <Text code>
             {row.market_scope}/{row.exchange}/{row.symbol}
           </Text>
         </p>
         <p>
-          <Text strong>As of: </Text>
+          <Text strong>数据时点：</Text>
           <Text code>{row.as_of_utc}</Text>
         </p>
         <p>
-          <Text strong>Available at: </Text>
+          <Text strong>可用时间：</Text>
           <Text code>{row.available_at_utc}</Text>
         </p>
         <p>
-          <Text strong>Strategy: </Text>
+          <Text strong>策略：</Text>
           <Text code>{row.strategy_version}</Text>
         </p>
         <p>
-          <Text strong>Classification: </Text>
+          <Text strong>分类：</Text>
           <Text code>{row.classification_policy_version}</Text>
         </p>
         <p>
-          <Text strong>Reason codes: </Text>
+          <Text strong>原因代码：</Text>
           {row.classification_reason_codes.map(code => (
             <Tag key={code}>{code}</Tag>
           ))}
         </p>
         <p>
-          <Text strong>Fact hash: </Text>
+          <Text strong>事实指纹：</Text>
           <Text code copyable>
             {row.fact_hash}
           </Text>
         </p>
         <div>
-          <Text strong>Source fact hashes:</Text>
+          <Text strong>来源事实指纹：</Text>
           {row.source_fact_hashes.map(hash => (
             <div key={hash}>
               <Text code copyable>

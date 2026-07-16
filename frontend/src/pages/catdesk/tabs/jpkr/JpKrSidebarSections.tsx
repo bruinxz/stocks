@@ -12,8 +12,8 @@ export function buildJpKrSections(row: JpKrMarketRow): DetailSection[] {
     : [
         {
           key: 'recommendation_unavailable',
-          title: 'Strategy 推荐',
-          ariaLabel: `${row.symbol} Strategy 推荐不可用`,
+          title: '策略推荐',
+          ariaLabel: `${row.symbol} 策略推荐不可用`,
           content: (
             <div style={{ color: 'var(--cd-text-secondary)' }}>
               当前交易日尚未生成该标的的推荐快照；不展示占位评分或入场计划。
@@ -31,7 +31,7 @@ export function buildJpKrSections(row: JpKrMarketRow): DetailSection[] {
           fxBeta={row.fx_beta}
           currency={row.currency}
           revenueByRegion={row.revenue_by_region}
-          ariaLabel={`${row.symbol} 汇率 beta 详情`}
+          ariaLabel={`${row.symbol} 汇率敏感度详情`}
         />
       ),
     },
@@ -56,10 +56,7 @@ export function buildJpKrSections(row: JpKrMarketRow): DetailSection[] {
       content: (
         <DataSourceBadge
           sources={Array.from(
-            new Set([
-              ...row.data_sources,
-              ...(row.recommendation?.data_sources ?? []),
-            ])
+            new Set([...row.data_sources, ...(row.recommendation?.data_sources ?? [])])
           )}
           ariaLabel={`${row.symbol} 免费数据源标签`}
         />

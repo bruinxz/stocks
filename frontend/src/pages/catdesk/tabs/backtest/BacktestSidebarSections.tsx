@@ -3,6 +3,7 @@ import type { DetailSection } from 'shared/components/DetailSidebar';
 import type { BacktestSnapshotSlot, BacktestHolding } from './types';
 import { HoldingsTable } from './HoldingsTable';
 import { Tag } from 'antd';
+import { MARKET_SCOPE_LABELS, PROFILE_LABELS } from '../../shared/uiLabels';
 
 export function buildBacktestSidebarSections(
   snapshot: BacktestSnapshotSlot,
@@ -13,8 +14,8 @@ export function buildBacktestSidebarSections(
   return [
     {
       key: 'pit-metadata',
-      title: 'PIT 元数据',
-      ariaLabel: 'PIT 元数据信息',
+      title: '历史时点元数据',
+      ariaLabel: '历史时点元数据信息',
       content: (
         <div>
           <p>
@@ -24,13 +25,14 @@ export function buildBacktestSidebarSections(
             <strong>冻结时间</strong>: {snapshot.as_of_utc}
           </p>
           <p>
-            <strong>Strategy</strong>: {snapshot.strategy}
+            <strong>策略</strong>：{PROFILE_LABELS[snapshot.strategy] ?? snapshot.strategy}
           </p>
           <p>
-            <strong>Market Scope</strong>: {snapshot.market_scope}
+            <strong>市场范围</strong>：
+            {MARKET_SCOPE_LABELS[snapshot.market_scope] ?? snapshot.market_scope}
           </p>
           <p>
-            <strong>Fact Hash</strong>: <code>{snapshot.fact_hash || '--'}</code>
+            <strong>事实指纹</strong>：<code>{snapshot.fact_hash || '--'}</code>
           </p>
           <p>
             <strong>幸存者偏差</strong>:{' '}
@@ -68,10 +70,10 @@ export function buildBacktestSidebarSections(
             {snapshot.drawdown != null ? `${(snapshot.drawdown * 100).toFixed(2)}%` : '--'}
           </p>
           <p>
-            <strong>夏普比率(6M)</strong>: {snapshot.sharpe_ratio_6m?.toFixed(2) ?? '--'}
+            <strong>夏普比率（6个月）</strong>：{snapshot.sharpe_ratio_6m?.toFixed(2) ?? '--'}
           </p>
           <p>
-            <strong>胜率(6M)</strong>:{' '}
+            <strong>胜率（6个月）</strong>：{' '}
             {snapshot.win_rate_6m != null ? `${(snapshot.win_rate_6m * 100).toFixed(1)}%` : '--'}
           </p>
         </div>

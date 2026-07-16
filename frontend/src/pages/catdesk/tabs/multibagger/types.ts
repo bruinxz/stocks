@@ -14,10 +14,7 @@ import type {
 export type MultibaggerStage = 'seed' | 'early' | 'growth' | 'break_below' | 'deep';
 
 export type MultibaggerConclusion =
-  | 'MULTIBAGGER_2X'
-  | 'MULTIBAGGER_5X'
-  | 'MULTIBAGGER_10X'
-  | 'SKIP';
+  'MULTIBAGGER_2X' | 'MULTIBAGGER_5X' | 'MULTIBAGGER_10X' | 'SKIP';
 
 export type MultibaggerMarket = 'A' | 'US' | 'JP' | 'KR';
 

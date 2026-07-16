@@ -12,7 +12,7 @@ export function buildUSSections(row: CandidateListEntry): DetailSection[] {
   sections.push({
     key: 'score',
     title: '评分分解',
-    ariaLabel: 'Score breakdown',
+    ariaLabel: '评分分解',
     content: (
       <ScoreBreakdownCard
         scoringId={row.score?.scoring_id}
@@ -27,7 +27,7 @@ export function buildUSSections(row: CandidateListEntry): DetailSection[] {
     sections.push({
       key: 'conviction',
       title: '确信度分解',
-      ariaLabel: 'Conviction breakdown',
+      ariaLabel: '确信度分解',
       content: (
         <ConvictionBreakdownCard
           base={row.conviction.base}
@@ -42,7 +42,7 @@ export function buildUSSections(row: CandidateListEntry): DetailSection[] {
     sections.push({
       key: 'risk',
       title: '风控门控',
-      ariaLabel: 'Risk gate details',
+      ariaLabel: '风险门禁详情',
       content: (
         <RiskGateDetailCard
           gate={row.risk_gate.gate}
@@ -64,7 +64,7 @@ export function buildUSSections(row: CandidateListEntry): DetailSection[] {
     sections.push({
       key: 'entry',
       title: '入场方案',
-      ariaLabel: 'Entry plan',
+      ariaLabel: '入场方案',
       content: <EntryPlanDetails plan={ep} />,
       collapsible: true,
     });
@@ -74,7 +74,7 @@ export function buildUSSections(row: CandidateListEntry): DetailSection[] {
     sections.push({
       key: 'explanation',
       title: '推荐解释',
-      ariaLabel: 'Recommendation explanation',
+      ariaLabel: '推荐解释',
       content: (
         <div style={{ display: 'grid', gap: 8 }}>
           <strong>{row.explanation.headline}</strong>
@@ -93,7 +93,7 @@ export function buildUSSections(row: CandidateListEntry): DetailSection[] {
     sections.push({
       key: 'evidence',
       title: '证据引用',
-      ariaLabel: 'Recommendation evidence references',
+      ariaLabel: '推荐证据引用',
       content: (
         <div style={{ display: 'grid', gap: 8 }}>
           {row.evidence_refs.map(evidence => (
@@ -113,7 +113,7 @@ export function buildUSSections(row: CandidateListEntry): DetailSection[] {
   sections.push({
     key: 'data_sources',
     title: '数据来源',
-    ariaLabel: 'Recommendation data sources',
+    ariaLabel: '推荐数据来源',
     content: <DataSourceBadge sources={row.data_sources ?? []} />,
   });
 
@@ -121,14 +121,14 @@ export function buildUSSections(row: CandidateListEntry): DetailSection[] {
     sections.push({
       key: 'provenance',
       title: '快照溯源',
-      ariaLabel: 'Recommendation snapshot provenance',
+      ariaLabel: '推荐快照溯源',
       content: (
         <div style={{ display: 'grid', gap: 4, fontFamily: 'monospace', fontSize: 11 }}>
-          <span>snapshot_id: {row.provenance.snapshot_id}</span>
-          <span>as_of: {row.provenance.as_of}</span>
-          <span>input: {row.provenance.input_fingerprint}</span>
-          <span>output: {row.provenance.output_fingerprint}</span>
-          <span>pipeline: {row.provenance.pipeline_version}</span>
+          <span>快照编号：{row.provenance.snapshot_id}</span>
+          <span>数据时点：{row.provenance.as_of}</span>
+          <span>输入指纹：{row.provenance.input_fingerprint}</span>
+          <span>输出指纹：{row.provenance.output_fingerprint}</span>
+          <span>处理流程：{row.provenance.pipeline_version}</span>
         </div>
       ),
       collapsible: true,

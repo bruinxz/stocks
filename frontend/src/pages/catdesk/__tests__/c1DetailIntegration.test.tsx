@@ -122,7 +122,7 @@ describe('C1 detail integration', () => {
 
     const risk = sections.find(section => section.key === 'risk');
     const riskMarkup = renderToStaticMarkup(<>{risk?.content}</>);
-    expect(riskMarkup).toContain('GREEN');
+    expect(riskMarkup).toContain('风险通过');
     expect(riskMarkup).toContain('可入场');
   });
 

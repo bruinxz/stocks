@@ -214,17 +214,40 @@ const AppContent: React.FC = () => {
   const token = localStorage.getItem('token');
   const { user } = useSelector((state: RootState) => state.auth);
   const [openKeys, setOpenKeys] = useState<string[]>([]);
+  const [authBootstrapping, setAuthBootstrapping] = useState(!token);
 
   useEffect(() => {
-    void authService.retryPendingLogout();
-    // Fetch profile on initial load if token exists but user state is missing
-    const fetchProfile = async () => {
-      if (token && !user) {
+    let cancelled = false;
+    const bootstrapAuth = async () => {
+      if (!token) {
+        setAuthBootstrapping(true);
+        try {
+          const response = await authService.defaultLogin();
+          if (!cancelled && response.success && response.data?.tokens?.accessToken) {
+            dispatch(
+              loginSuccess({
+                user: response.data.user,
+                token: response.data.tokens.accessToken,
+              })
+            );
+          }
+        } catch {
+          // Fail closed: deployments without explicit kiosk configuration retain
+          // the ordinary login page.
+        } finally {
+          if (!cancelled) setAuthBootstrapping(false);
+        }
+        return;
+      }
+
+      setAuthBootstrapping(false);
+      // Fetch profile on initial load if token exists but user state is missing.
+      if (!user) {
         try {
           const res = await authService.getCurrentUser();
-          if (res && res.success) {
+          if (!cancelled && res && res.success) {
             dispatch(loginSuccess({ user: res.data.user, token }));
-          } else {
+          } else if (!cancelled) {
             // Batch U (2026-06-17): profile fetch 失败时同样走中央化清扫.
             dispatch(logout());
             clearUserScopedStorage();
@@ -236,12 +259,17 @@ const AppContent: React.FC = () => {
           // useEffect 又看到 token → 又调 fetchProfile → 又失败... 死循环表现为
           // "登录页一直闪动一直刷新".
           console.error('Failed to fetch user profile on load', error);
-          dispatch(logout());
-          clearUserScopedStorage();
+          if (!cancelled) {
+            dispatch(logout());
+            clearUserScopedStorage();
+          }
         }
       }
     };
-    fetchProfile();
+    void bootstrapAuth();
+    return () => {
+      cancelled = true;
+    };
   }, [token, user, dispatch]);
 
   const effectiveViewer = resolveEffectiveViewer(user, token, localStorage.getItem('username'));
@@ -362,6 +390,10 @@ const AppContent: React.FC = () => {
       },
     ],
   };
+
+  if (!token && authBootstrapping) {
+    return routeFallback;
+  }
 
   const authRedirect = resolveAuthRedirect(location.pathname, token);
   if (authRedirect) {
