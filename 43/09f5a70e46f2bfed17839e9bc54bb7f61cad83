@@ -1,0 +1,23 @@
+frontend/src/pages/catdesk/shared/__tests__/useStockNameHydration.test.tsx
+  s_26d7f43d00eb19::t_c36576124fdb2c 1-84
+frontend/src/pages/catdesk/shared/useStockNameHydration.ts
+  s_26d7f43d00eb19::t_5c8a6e10b71300 11,36,82-85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4309f5a70e46f2bfed17839e9bc54bb7f61cad83",
+  "prompts": {},
+  "sessions": {
+    "s_26d7f43d00eb19": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f68e6-5066-71f1-99c3-8e7f1950f283",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
