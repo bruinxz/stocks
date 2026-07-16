@@ -171,11 +171,7 @@ export class PerUserReplayRateLimiter {
       return { allowed: true, retry_after_seconds: 0 };
     }
 
-    if (
-      !existing &&
-      this.windows.size >= this.maxUsers &&
-      now >= this.nextCleanupAtMs
-    ) {
+    if (!existing && this.windows.size >= this.maxUsers && now >= this.nextCleanupAtMs) {
       this.removeExpired(now);
     }
     if (!existing && this.windows.size >= this.maxUsers) {

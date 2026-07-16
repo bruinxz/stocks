@@ -3900,6 +3900,25 @@
               }
             }
           },
+          "429": {
+            "description": "当前认证用户的 replay submit 速率超过严格上限",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 60
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayErrorResponse"
+                }
+              }
+            }
+          },
           "500": {
             "description": "未分类的内部处理失败",
             "content": {
@@ -3950,7 +3969,7 @@
         ],
         "operationId": "getRecommendationReplayStatus",
         "summary": "查询 durable 推荐重放任务状态",
-        "description": "按 canonical lowercase UUIDv4 查询持久化任务。该接口可跨 Backend/CLI 进程重启\n恢复 queued、running、completed 或 failed 状态；不会启动新的 replay job。\n",
+        "description": "按 canonical lowercase UUIDv4 查询持久化任务。该接口可跨 Backend/CLI 进程重启\n恢复 queued、running、completed 或 failed 状态；不会创建新的 replay job，但对\n非终态任务会在全局容量允许时调度 lease-aware run_one，以恢复中断的 worker。\n",
         "security": [
           {
             "bearerAuth": []
@@ -4022,6 +4041,25 @@
           },
           "413": {
             "description": "replay CLI 状态请求超过输入上限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "当前认证用户的 replay status 速率超过严格上限",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 60
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -10053,12 +10091,36 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "注册成功",
+          "201": {
+            "description": "注册成功；refresh token 仅通过 HttpOnly cookie 返回",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse"
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "user": {
+                          "$ref": "#/components/schemas/User"
+                        },
+                        "tokens": {
+                          "type": "object",
+                          "properties": {
+                            "accessToken": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -10072,6 +10134,9 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "token 配置或 session store 不可用"
           }
         }
       }
@@ -10107,7 +10172,7 @@
         },
         "responses": {
           "200": {
-            "description": "登录成功，返回 JWT",
+            "description": "登录成功；access token 在响应体，refresh token 仅在 HttpOnly cookie",
             "content": {
               "application/json": {
                 "schema": {
@@ -10119,11 +10184,16 @@
                     "data": {
                       "type": "object",
                       "properties": {
-                        "token": {
-                          "type": "string"
-                        },
                         "user": {
                           "$ref": "#/components/schemas/User"
+                        },
+                        "tokens": {
+                          "type": "object",
+                          "properties": {
+                            "accessToken": {
+                              "type": "string"
+                            }
+                          }
                         }
                       }
                     }
@@ -10134,6 +10204,9 @@
           },
           "401": {
             "description": "用户名或密码错误"
+          },
+          "503": {
+            "description": "token 配置或 session store 不可用"
           }
         }
       }
@@ -10143,14 +10216,21 @@
         "tags": [
           "认证 Auth"
         ],
-        "summary": "刷新访问令牌",
+        "summary": "原子轮转 refresh session 并刷新访问令牌",
+        "description": "refresh token 仅从 HttpOnly cookie 读取；成功后替换 cookie",
         "security": [],
         "responses": {
           "200": {
             "description": "新 token 返回"
           },
+          "400": {
+            "description": "refresh token 缺失"
+          },
           "401": {
             "description": "refresh token 无效或过期"
+          },
+          "503": {
+            "description": "session store 暂不可用，cookie 保留以便重试"
           }
         }
       }
@@ -10161,14 +10241,14 @@
           "认证 Auth"
         ],
         "summary": "用户登出",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
+        "description": "使用 HttpOnly refresh cookie 撤销服务端会话；access token 过期时仍可登出",
+        "security": [],
         "responses": {
           "200": {
             "description": "登出成功"
+          },
+          "503": {
+            "description": "会话存储暂不可用，未确认服务端撤销"
           }
         }
       }

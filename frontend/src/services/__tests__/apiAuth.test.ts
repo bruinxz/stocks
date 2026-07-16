@@ -45,7 +45,7 @@ describe('access-token refresh single-flight', () => {
     jest.useFakeTimers();
     const post = jest.spyOn(axios, 'post').mockImplementation((_url, _body, config) => {
       return new Promise((_resolve, reject) => {
-        config?.signal?.addEventListener(
+        config?.signal?.addEventListener?.(
           'abort',
           () => {
             const error = new Error('transport aborted');

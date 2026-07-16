@@ -179,9 +179,7 @@ export class ReplayJobSupervisor {
 
   private pump(): void {
     while (this.childSlotsInUse() < this.maxConcurrency && this.queued.size > 0) {
-      const next = this.queued.entries().next().value as
-        | [string, QueuedExecution]
-        | undefined;
+      const next = this.queued.entries().next().value as [string, QueuedExecution] | undefined;
       if (!next) return;
       const [job_id, queued] = next;
       this.queued.delete(job_id);

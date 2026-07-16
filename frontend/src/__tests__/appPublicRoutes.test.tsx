@@ -172,8 +172,8 @@ describe('authenticated App routing', () => {
       for (const key of USER_SCOPED_LOCAL_STORAGE_KEYS) localStorage.setItem(key, 'private');
       for (const key of USER_SCOPED_SESSION_STORAGE_KEYS) sessionStorage.setItem(key, 'private');
       const errorLog = jest.spyOn(console, 'error').mockImplementation(() => undefined);
-      const request = jest.fn<() => Promise<void>>();
-      if (outcome === 'success') request.mockResolvedValueOnce();
+      const request = jest.fn<Promise<void>, []>();
+      if (outcome === 'success') request.mockResolvedValueOnce(undefined);
       else request.mockRejectedValueOnce(new Error('logout failed'));
 
       await expect(settleAppLogout(request)).resolves.toBeUndefined();

@@ -234,17 +234,10 @@ export function attachAlertsWebSocketServer(
 
   wss.on(
     'connection',
-    (
-      ws: any,
-      _req: IncomingMessage,
-      verified: { user_id: number; expires_at_ms: number }
-    ) => {
+    (ws: any, _req: IncomingMessage, verified: { user_id: number; expires_at_ms: number }) => {
       let alive = true;
       const clientId = `ws-${verified.user_id}-${now()}-${randHex4()}`;
-      const expiryDelay = Math.max(
-        0,
-        Math.min(verified.expires_at_ms - now(), 2_147_483_647)
-      );
+      const expiryDelay = Math.max(0, Math.min(verified.expires_at_ms - now(), 2_147_483_647));
       const expiryTimer = setTimeout(() => {
         alive = false;
         try {

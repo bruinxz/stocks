@@ -118,8 +118,7 @@ function startRefreshFlight(staleAccessToken: string | null): RefreshFlight {
     localStorage.setItem('token', token);
     return token;
   });
-  let flightPromise: Promise<string>;
-  flightPromise = Promise.race([request, timedOut])
+  const flightPromise = Promise.race([request, timedOut])
     .catch(error => {
       if (refreshCredentialWasRejected(error)) clearUserScopedStorage();
       throw error;

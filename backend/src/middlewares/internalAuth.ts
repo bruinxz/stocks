@@ -51,12 +51,7 @@ function authenticateInternalApiWithFingerprints(
  * 简单的 API Key 认证中间件，专门用于内部系统之间的数据同步（如 TradingAgents）
  */
 export const authenticateInternalApi = (req: Request, res: Response, next: NextFunction): void => {
-  authenticateInternalApiWithFingerprints(
-    req,
-    res,
-    next,
-    KNOWN_LEAKED_SECRET_FINGERPRINTS
-  );
+  authenticateInternalApiWithFingerprints(req, res, next, KNOWN_LEAKED_SECRET_FINGERPRINTS);
 };
 
 export const __TESTING__ = {

@@ -59,10 +59,7 @@ export class AuthController {
     const isProd = process.env.NODE_ENV === 'production';
     this.jwtSecret = process.env.JWT_SECRET || '';
     this.refreshTokenSecret = resolveRefreshTokenSecret();
-    this.tokenConfigurationReady = authJwtSecretsAreUsable(
-      this.jwtSecret,
-      this.refreshTokenSecret
-    );
+    this.tokenConfigurationReady = authJwtSecretsAreUsable(this.jwtSecret, this.refreshTokenSecret);
 
     // Secure is a production invariant. Only non-production environments may
     // explicitly opt out for local HTTP development and route tests.
@@ -76,11 +73,7 @@ export class AuthController {
         '[AuthController] JWT_REFRESH_SECRET is not configured; refresh tokens are unavailable.'
       );
     }
-    if (
-      this.jwtSecret &&
-      this.refreshTokenSecret &&
-      this.jwtSecret === this.refreshTokenSecret
-    ) {
+    if (this.jwtSecret && this.refreshTokenSecret && this.jwtSecret === this.refreshTokenSecret) {
       logger.error('[AuthController] access and refresh token secrets must be distinct.');
     }
 
@@ -327,11 +320,7 @@ export class AuthController {
           });
 
           if (!session) {
-            await this.revokeFamily(
-              payload.family_id,
-              'reuse_detected',
-              transaction
-            );
+            await this.revokeFamily(payload.family_id, 'reuse_detected', transaction);
             return { kind: 'reused', user_id: payload.user_id };
           }
 
@@ -577,7 +566,9 @@ export class AuthController {
     }
 
     if (!this.tokenConfigurationReady) {
-      logger.error('[AuthController] access-token authentication unavailable: invalid configuration');
+      logger.error(
+        '[AuthController] access-token authentication unavailable: invalid configuration'
+      );
       return unavailable();
     }
 
@@ -641,16 +632,12 @@ export class AuthController {
             audience: AUTH_REFRESH_TOKEN_AUDIENCE,
             jwtid: jti,
           })
-        : jwt.sign(
-            { ...payload, exp: family_expires_at_seconds },
-            this.refreshTokenSecret,
-            {
-              algorithm: 'HS256',
-              issuer: AUTH_JWT_ISSUER,
-              audience: AUTH_REFRESH_TOKEN_AUDIENCE,
-              jwtid: jti,
-            }
-          );
+        : jwt.sign({ ...payload, exp: family_expires_at_seconds }, this.refreshTokenSecret, {
+            algorithm: 'HS256',
+            issuer: AUTH_JWT_ISSUER,
+            audience: AUTH_REFRESH_TOKEN_AUDIENCE,
+            jwtid: jti,
+          });
     const decoded = jwt.decode(token);
     if (
       typeof decoded === 'string' ||
@@ -775,9 +762,7 @@ export class AuthController {
   private isCanonicalUuidV4(value: unknown): value is string {
     return (
       typeof value === 'string' &&
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
-        value
-      )
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)
     );
   }
 
@@ -797,9 +782,7 @@ export class AuthController {
 
   private static logInfrastructureFailure(operation: string, error: unknown): void {
     const rawName = error instanceof Error ? error.name : 'UnknownAuthError';
-    const safeName = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(rawName)
-      ? rawName
-      : 'UnknownAuthError';
+    const safeName = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(rawName) ? rawName : 'UnknownAuthError';
     logger.error(`[AuthController] ${operation} failed (${safeName})`);
   }
 }

@@ -34,7 +34,6 @@ function abortAwareDelay(
     }
 
     let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     const finish = (elapsed: boolean) => {
       if (settled) return;
       settled = true;
@@ -42,12 +41,12 @@ function abortAwareDelay(
       resolve(elapsed);
     };
     const onAbort = () => {
-      if (timer !== undefined) clearTimer(timer);
+      clearTimer(timer);
       finish(false);
     };
 
     signal.addEventListener('abort', onAbort, { once: true });
-    timer = setTimer(() => finish(true), delayMs);
+    const timer = setTimer(() => finish(true), delayMs);
     // Test schedulers are allowed to invoke the callback synchronously. Do not
     // leave their returned handle armed after the promise has already settled.
     if (settled) clearTimer(timer);
