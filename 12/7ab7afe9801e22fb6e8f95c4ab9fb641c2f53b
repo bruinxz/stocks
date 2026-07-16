@@ -1,0 +1,211 @@
+backend/.env.example
+  s_26d7f43d00eb19::t_ad5169c47383a5 63-68
+backend/.env.example.production
+  s_26d7f43d00eb19::t_232074a27b18f8 68-73
+backend/src/api/controllers/AuthController.ts
+  s_26d7f43d00eb19::t_964a4d5311e678 83,291-325
+backend/src/api/routes/auth.routes.ts
+  s_26d7f43d00eb19::t_d20ad2c6cb3367 104-118
+backend/tests/routing/auth-refresh-session.test.ts
+  s_26d7f43d00eb19::t_7dd8e5aad1bac3 16-17,76-78,85,140-156,247,303-306
+  s_26d7f43d00eb19::t_6d8ac0cdb79bd5 18,160,168,252,267,284,313,329,345
+frontend/src/App.tsx
+  s_26d7f43d00eb19::t_153d62c8bde861 217,220-245,248,250,262-265,269-272,394-397
+frontend/src/__tests__/appPublicRoutes.test.tsx
+  s_26d7f43d00eb19::t_4b2b67e0240b46 8,92,112-114,129,163,165-179,181-184
+  s_26d7f43d00eb19::t_ebfe03b899e687 43-46,73,180
+frontend/src/pages/catdesk/CatDeskLayout.tsx
+  s_26d7f43d00eb19::t_127887faf78bbe 5,41,47,49-52,54-57,59-62,64-67,69-72,74-77,79-81,111,113-117,120-146,149,151-154,158,160-161,182
+  s_26d7f43d00eb19::t_1635ee89976752 9,84,86-94,112,147-148,150
+  s_26d7f43d00eb19::t_25f2fd75a6098a 13,28,42-46,48,53,58,63,68,73,78,85,155-157,159
+  s_26d7f43d00eb19::t_bedd6d54c22763 162-170
+frontend/src/pages/catdesk/catdesk.css
+  s_26d7f43d00eb19::t_8475e53e5f9bfb 1-129,134,136,153,159-160,177,188,211,253,256,261,322,325,326,329-330,333,336,369-370,378,437,446-447,457,520-642,658,661,663,667-668,672,675,678-770,773-777,779-791,793,796,814,826-869,904-946,958-1017,1019,1022-1069,1073-1103,1128-1142,1145-1149,1151-1197,1199-1218,1227-1235,1240-1256
+  s_26d7f43d00eb19::t_96d2fbe448c818 130-133,135,137-140,143,145-158,161-169,179-187,190-195,197-227,267-289,292-295,297-312,324-328,331-332,334-335,337-368,371-377,404-436,438-445,448-456,458-519,643-657,659-660,662,664-666,669-671,673-674,676-677,771-772,778,792,794-795,797-813,815-825,1018,1020-1021,1070-1072,1143-1144,1219-1226
+  s_26d7f43d00eb19::t_35803e1859d3b3 870-903,947-957,1104-1127,1150,1198,1236-1239
+  s_26d7f43d00eb19::t_f2cf9218a1b203 170-177,196,228-266,290-291,296,313-323,379-403
+frontend/src/pages/catdesk/shared/EmptyState.tsx
+  s_26d7f43d00eb19::t_71bc0af95e3116 11-16,18,20-26
+  s_26d7f43d00eb19::t_a7da8c82c0d172 2,17
+  s_26d7f43d00eb19::t_ee5de010659d10 19
+frontend/src/pages/catdesk/shared/LoadingState.tsx
+  s_26d7f43d00eb19::t_239a9b9a9193b4 16,20-22
+  s_26d7f43d00eb19::t_52ceb124c83e02 2-14,17-19
+frontend/src/pages/catdesk/shared/TabNav.tsx
+  s_26d7f43d00eb19::t_499bf20a749dcc 2-8,10-11,20,22-28,33-34,36-37,39-40,42-66,68-69
+  s_26d7f43d00eb19::t_b358713a0da773 13,35,67
+  s_26d7f43d00eb19::t_26f1e04d9bc566 9,21,38,41
+frontend/src/pages/catdesk/tokens.ts
+  s_26d7f43d00eb19::t_364c0d83287835 2-12,14,16,36-42
+frontend/src/services/__tests__/authService.test.ts
+  s_26d7f43d00eb19::t_9a7c2fee8ac5db 115-117,119-123,125-132,134-136
+frontend/src/services/authService.ts
+  s_26d7f43d00eb19::t_2d72a19e06ae8f 37-51,71-83,87,93
+backend/src/api/controllers/MultibaggerController.ts
+  s_26d7f43d00eb19::t_b678bf637b2a75 151-154,263-266
+datapipeline/contracts/capture_provenance.py
+  s_26d7f43d00eb19::t_722f026590a3e2 15-18,138-146
+datapipeline/storage/backtest_pit/writer.py
+  s_26d7f43d00eb19::t_9ae54dfda5ac62 426-427,473-476
+datapipeline/storage/jpkr/fx_writer.py
+  s_26d7f43d00eb19::t_8a92c5ede6b939 223-230
+datapipeline/storage/jpkr/official_writer.py
+  s_26d7f43d00eb19::t_f8b980ea4223a3 6,112-119,234-238,240-241,243-246
+datapipeline/storage/multibagger/source_writer.py
+  s_26d7f43d00eb19::t_c347bc2d5e1bc4 79-87,511,525
+frontend/src/pages/catdesk/shared/CowMascot.tsx
+  s_26d7f43d00eb19::t_b0fecbe8c24315 1-25,30-44,46-51,53-56
+  s_26d7f43d00eb19::t_89249535800cee 52
+  s_26d7f43d00eb19::t_136921bc8efbbd 26-29,45
+frontend/src/pages/catdesk/tabs/backtest/BacktestEvidence.tsx
+  s_26d7f43d00eb19::t_73fc393befa22f 44
+  s_26d7f43d00eb19::t_0824d4e8cfcfd0 2-3,47,65-74,76-77,92,154-155,163,165,172,176,190,215-223,233
+  s_26d7f43d00eb19::t_0aeb95d31270e3 145-151
+scripts/ops/capture_live_jpx_klines.py
+  s_26d7f43d00eb19::t_3410c7f223f276 1-159
+scripts/ops/populate_live_backtest_pit.py
+  s_26d7f43d00eb19::t_da542bb6bfd342 1-402
+scripts/ops/populate_live_jpkr_sources.py
+  s_26d7f43d00eb19::t_417563ee6f9ab2 1-111
+scripts/ops/populate_live_multibagger.py
+  s_26d7f43d00eb19::t_56a4ca728e2fff 1-583
+scripts/ops/populate_live_recommendations.py
+  s_26d7f43d00eb19::t_db5525f5d59cb8 1-977
+scripts/ops/populate_live_typed_captures.py
+  s_26d7f43d00eb19::t_012a2096e91dcf 1-213
+frontend/src/pages/catdesk/shared/DataListToolbar.tsx
+  s_26d7f43d00eb19::t_ba7d3cadc5a748 1-35
+frontend/src/pages/catdesk/shared/DisclaimerFooter.tsx
+  s_26d7f43d00eb19::t_1cc60ee39dbf64 5
+frontend/src/pages/catdesk/shared/KpiBar.tsx
+  s_26d7f43d00eb19::t_17be8ceabe3d2f 66,74
+frontend/src/pages/catdesk/shared/useStockNameHydration.ts
+  s_26d7f43d00eb19::t_8d0d639d2771ef 1-10,12-35,37-81,86-98
+  s_26d7f43d00eb19::t_5c8a6e10b71300 11,36,82-85
+frontend/src/pages/catdesk/tabs/AShareMorningBrief.tsx
+  s_26d7f43d00eb19::t_d9163cb102a1bb 14-15,38,47,58,61-69,84,86,138-144
+  s_26d7f43d00eb19::t_fceb2bafd90bb4 97-104
+frontend/src/pages/catdesk/tabs/DisclaimerPage.tsx
+  s_26d7f43d00eb19::t_b22a1392d8c4a4 72,75,78,81,84
+frontend/src/pages/catdesk/tabs/USStockPicks.tsx
+  s_26d7f43d00eb19::t_ec490ad9b2d85e 14,25,27,42-48,56,95-101
+  s_26d7f43d00eb19::t_1c08ad293413ea 67-74
+frontend/src/pages/catdesk/tabs/a-share-market/AShareMarket.tsx
+  s_26d7f43d00eb19::t_46984bd6cad2c0 1-20,24-56,58-61,73-189,191-197,199-209,211-217,219-226,228-236,239-245,247-253,256-265,269-407,409-441,445-494
+  s_26d7f43d00eb19::t_5d6e81cb031654 21-23,57,62-72,190,198,210,218,227,237-238,246,254-255,266-268,408,442-444
+frontend/src/pages/catdesk/tabs/a-share-market/a-share-market.css
+  s_26d7f43d00eb19::t_c8fea9a5e4da24 1-107,119-256
+  s_26d7f43d00eb19::t_1ad150b63d719a 108-118
+frontend/src/pages/catdesk/tabs/backtest/BacktestChart.tsx
+  s_26d7f43d00eb19::t_902c73a34e6f1f 30
+frontend/src/pages/catdesk/tabs/backtest/HoldingsTable.tsx
+  s_26d7f43d00eb19::t_9f0035b4b945d8 18,25,35
+frontend/src/pages/catdesk/tabs/backtest/MetricsCards.tsx
+  s_26d7f43d00eb19::t_e08dd0d1a16549 14,17
+frontend/src/pages/catdesk/tabs/backtest/PitTimeline.tsx
+  s_26d7f43d00eb19::t_626800a552b255 20,23,28
+frontend/src/pages/catdesk/tabs/backtest/SnapshotTable.tsx
+  s_26d7f43d00eb19::t_b7d1b886d5f67e 4,22,25-35,42,71,79
+frontend/src/pages/catdesk/tabs/backtest/__tests__/backtestUrls.test.ts
+  s_26d7f43d00eb19::t_42eefd92d4e4ce 46
+frontend/src/pages/catdesk/tabs/backtest/backtest.css
+  s_26d7f43d00eb19::t_add54e12c7d172 21-24
+  s_26d7f43d00eb19::t_ccd7334f97423d 2-6,18-20,44-45,83,107,144-145,195,249,281-282,287-288,300,302,306-308,361,368
+frontend/src/pages/catdesk/tabs/backtest/backtestAdapters.ts
+  s_26d7f43d00eb19::t_37a6c7cedf42e4 134
+frontend/src/pages/catdesk/tabs/backtest/backtestUrls.ts
+  s_26d7f43d00eb19::t_2577857ccb9327 15
+frontend/src/pages/catdesk/tabs/daily-report/__tests__/runtime.test.tsx
+  s_26d7f43d00eb19::t_b6878ba14c2059 29
+frontend/src/pages/catdesk/tabs/jpkr/JpKrKpiStrip.tsx
+  s_26d7f43d00eb19::t_6ef96dee43bed5 12-16,42,48
+frontend/src/pages/catdesk/tabs/jpkr/JpKrMarket.tsx
+  s_26d7f43d00eb19::t_e02abbdf40753d 14,51,59-72,92-99,130-131,152-159
+  s_26d7f43d00eb19::t_acb0dde6be9355 34-39,102-108,161-167
+frontend/src/pages/catdesk/tabs/jpkr/JpKrSidebarSections.tsx
+  s_26d7f43d00eb19::t_abeb881bd5e081 15-16,34,59
+frontend/src/pages/catdesk/tabs/jpkr/JpKrTable.tsx
+  s_26d7f43d00eb19::t_54b8a96087e0f0 7-9,13-18,33-35,59-61,73,110,112-114,122,131-132,140,148,164
+  s_26d7f43d00eb19::t_cfab0e93bb24b8 28,45,57,70,125,143-145
+frontend/src/pages/catdesk/tabs/jpkr/__tests__/container.test.tsx
+  s_26d7f43d00eb19::t_860b477fad5f26 153-156,215,218,285
+  s_26d7f43d00eb19::t_7632d00f4ebc9b 288
+frontend/src/pages/catdesk/tabs/morning/MorningBriefTable.tsx
+  s_26d7f43d00eb19::t_4254fa872e9226 4,51,69-71,126-131
+frontend/src/pages/catdesk/tabs/morning/MorningFilterBar.tsx
+  s_26d7f43d00eb19::t_9b7eba6e1b3aa0 2,5-13,41-44,70-78,84-99,104-119,124-130
+frontend/src/pages/catdesk/tabs/morning/MorningKpiSlots.tsx
+  s_26d7f43d00eb19::t_ea8f3a51c44ca2 10-15
+frontend/src/pages/catdesk/tabs/morning/detail/AIRecommendationCard.tsx
+  s_26d7f43d00eb19::t_152b2cbc5cbe83 42,48,55-57
+frontend/src/pages/catdesk/tabs/morning/detail/ConvictionBreakdownCard.tsx
+  s_26d7f43d00eb19::t_bdba3c3b7b111e 47-51,61,74-80
+frontend/src/pages/catdesk/tabs/morning/detail/DataSourceBadge.tsx
+  s_26d7f43d00eb19::t_13ca3b76aab217 32-35
+frontend/src/pages/catdesk/tabs/morning/detail/RelevanceBreakdownCard.tsx
+  s_26d7f43d00eb19::t_fc4d0dcde9e8ba 50,59
+frontend/src/pages/catdesk/tabs/morning/detail/buildMorningSections.tsx
+  s_26d7f43d00eb19::t_adddc4e41f8c9b 15,17,21-22,24,32,35-36,38,44,56,61-62,68,81,99,111,120,139,160,163-167,179
+frontend/src/pages/catdesk/tabs/multibagger/HighMultipotential.tsx
+  s_26d7f43d00eb19::t_b5bc8b3a45a8f1 8-13,17-18,28-37,50-53,58,63-75,79,100-104,147-155,159,173
+  s_26d7f43d00eb19::t_e3f3b1156ff8ec 108-114
+frontend/src/pages/catdesk/tabs/multibagger/MultibaggerTable.tsx
+  s_26d7f43d00eb19::t_ec462ad7a7b8f3 7,34-37,91,130-131,143-147,162,191
+  s_26d7f43d00eb19::t_6bbbdeed2883d2 25-32,47-53,75,83,98,106-107,118,134,156,175,186-187
+frontend/src/pages/catdesk/tabs/multibagger/multibaggerAdapters.ts
+  s_26d7f43d00eb19::t_f356406651fb66 515,533
+frontend/src/pages/catdesk/tabs/multibagger/types.ts
+  s_26d7f43d00eb19::t_ef54ea979a66d0 17
+frontend/src/pages/catdesk/tabs/us/USFilterBar.tsx
+  s_26d7f43d00eb19::t_f5debe163db9c5 25-28,31,35-36
+frontend/src/pages/catdesk/tabs/us/USKpiSlots.tsx
+  s_26d7f43d00eb19::t_109b01ab3f2b61 12-15
+frontend/src/pages/catdesk/tabs/us/USTable.tsx
+  s_26d7f43d00eb19::t_d6f712bd2ad15f 4,24,30,32,43,49,53,56-59,62,73,82,93-100,108,130-135
+frontend/src/pages/catdesk/tabs/us/detail/buildUSSections.tsx
+  s_26d7f43d00eb19::t_0d55407917b0dd 15,30,45,67,77,96,116,124,127-131
+frontend/src/pages/catdesk/useTabState.ts
+  s_26d7f43d00eb19::t_1407f12ae2a4d9 5,17,22,28
+frontend/src/shared/components/FilterChip.tsx
+  s_26d7f43d00eb19::t_8de2ba49a83c17 39,47,52,59
+frontend/src/pages/catdesk/shared/__tests__/useStockNameHydration.test.tsx
+  s_26d7f43d00eb19::t_c36576124fdb2c 1-84
+backend/src/api/controllers/JpKrMarketController.ts
+  s_26d7f43d00eb19::t_993053a431becd 145-157,170-183,237-242
+backend/src/api/controllers/StockController.ts
+  s_26d7f43d00eb19::t_eb9f00e9628366 2,47-121,125
+frontend/src/pages/catdesk/tabs/DailyReport.tsx
+  s_26d7f43d00eb19::t_addd1b3e184dd3 34-41
+frontend/src/pages/catdesk/tabs/ReportHistory.tsx
+  s_26d7f43d00eb19::t_785806aae49ed8 31-38
+frontend/src/pages/catdesk/tabs/backtest/DrawdownBar.tsx
+  s_26d7f43d00eb19::t_18796d196e1860 23,29,36,41-42,44,48,50,55
+frontend/src/pages/catdesk/tabs/backtest/EquityCurve.tsx
+  s_26d7f43d00eb19::t_595d5f1763e25d 20-21,23,33-34,37,43,51,58,60,71,74
+frontend/src/pages/catdesk/tabs/daily-report/report.css
+  s_26d7f43d00eb19::t_6fb721233d0613 2-6,24,67-68,83,85,98,137,144,184,186,194,223
+frontend/src/shared/components/TableColumn.tsx
+  s_26d7f43d00eb19::t_ccd25d56dc9d8b 17,55-65,117-126
+frontend/src/shared/components/__tests__/TableColumn.test.tsx
+  s_26d7f43d00eb19::t_c03b1b7a065b1f 1-79
+scripts/ops/populate_live_kr_market.py
+  s_26d7f43d00eb19::t_1c10bda7fa5393 1-223
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "127ab7afe9801e22fb6e8f95c4ab9fb641c2f53b",
+  "prompts": {},
+  "sessions": {
+    "s_26d7f43d00eb19": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f68e6-5066-71f1-99c3-8e7f1950f283",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
