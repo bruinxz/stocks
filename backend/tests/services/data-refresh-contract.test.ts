@@ -24,6 +24,26 @@ const dataSync = fs.readFileSync(
   path.join(root, 'backend/src/data/services/DataSyncService.ts'),
   'utf8'
 );
+const akshareClient = fs.readFileSync(
+  path.join(root, 'backend/src/data/sources/AKShareClient.ts'),
+  'utf8'
+);
+const combinedDataSource = fs.readFileSync(
+  path.join(root, 'backend/src/data/sources/CombinedDataSource.ts'),
+  'utf8'
+);
+const backfill = fs.readFileSync(
+  path.join(root, 'backend/src/scripts/backfill-missing-bars.ts'),
+  'utf8'
+);
+const pitWriter = fs.readFileSync(
+  path.join(root, 'datapipeline/storage/backtest_pit/writer.py'),
+  'utf8'
+);
+const liveRecommendations = fs.readFileSync(
+  path.join(root, 'scripts/ops/populate_live_recommendations.py'),
+  'utf8'
+);
 
 assert.match(
   scheduler,
@@ -71,5 +91,35 @@ assert.match(
   /safeParseDate\(dateValue: unknown\)[\s\S]{0,900}String\(dateValue\)\.trim\(\)/,
   'stock dates must normalize numeric and Date inputs before string operations'
 );
+assert.match(
+  akshareClient,
+  /AKSHARE_HISTORY_TIMEOUT_MS[\s\S]{0,80}30000/,
+  'AKShare history calls must have a bounded production timeout'
+);
+assert.doesNotMatch(
+  combinedDataSource,
+  /KNOWN_DELISTED_SYMBOLS/,
+  'active symbols must not be suppressed by a static delisting blacklist'
+);
+assert.match(
+  backfill,
+  /\.option\('--provider <name>'/,
+  'targeted history repair must expose provider selection'
+);
+assert.match(
+  backfill,
+  /syncStockHistory\([\s\S]{0,180}provider/,
+  'targeted history repair must forward provider selection'
+);
+assert.match(
+  pitWriter,
+  /validation_profile == "rolling_production"[\s\S]{0,900}production-daily-bars-calendar@/,
+  'PIT storage must validate rolling production windows separately from frozen fixtures'
+);
+assert.match(
+  liveRecommendations,
+  /"snapshot-v4"[\s\S]{0,180}as_of[\s\S]{0,1000}_prune_superseded_snapshots/,
+  'daily recommendation reruns must use unique identities and prune only after success'
+);
 
-console.log('data refresh contract: 10 assertions passed');
+console.log('data refresh contract: 16 assertions passed');

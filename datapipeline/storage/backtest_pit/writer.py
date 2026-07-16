@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import re
-from typing import Mapping, Optional, Sequence, Tuple
+from typing import Literal, Mapping, Optional, Sequence, Tuple
 from uuid import UUID
 
 from .canonical_json import canonicalize_json
@@ -51,6 +51,7 @@ _WINDOW_START = "2026-01-10"
 _WINDOW_END = "2026-07-10"
 _CHECKPOINT_COUNT = 27
 _MAX_SESSIONS = 128
+ValidationProfile = Literal["frozen_fixture", "rolling_production"]
 
 INSERT_SNAPSHOT_SQL = """
 INSERT INTO backtest_pit_snapshot (
@@ -235,7 +236,9 @@ def canonical_snapshot_hash(
 
 
 def _validate(
-    snapshot: PitSnapshotFact, holdings: Sequence[PitHoldingFact]
+    snapshot: PitSnapshotFact,
+    holdings: Sequence[PitHoldingFact],
+    validation_profile: ValidationProfile = "frozen_fixture",
 ) -> Tuple[Tuple[PitHoldingFact, ...], str, str, str]:
     _uuid(snapshot.snapshot_id, "snapshot_id")
     allowed_scopes = _PROFILE_SCOPES.get(snapshot.strategy)
@@ -263,8 +266,6 @@ def _validate(
     if not isinstance(version, str) or _SEMVER.fullmatch(version) is None:
         raise ValueError("metric_contract_version must be strict SemVer")
     exact_pins = {
-        "window_start": _WINDOW_START,
-        "window_end": _WINDOW_END,
         "checkpoint_count": _CHECKPOINT_COUNT,
         "initial_nav": 1.0,
         "commission_bps_per_side": 5,
@@ -274,6 +275,26 @@ def _validate(
     for field, expected in exact_pins.items():
         if snapshot.metrics[field] != expected:
             raise ValueError(f"{field} must equal frozen replay pin {expected}")
+    if validation_profile == "frozen_fixture":
+        window_pins = {"window_start": _WINDOW_START, "window_end": _WINDOW_END}
+        for field, expected in window_pins.items():
+            if snapshot.metrics[field] != expected:
+                raise ValueError(f"{field} must equal frozen replay pin {expected}")
+    elif validation_profile == "rolling_production":
+        try:
+            window_start = date.fromisoformat(snapshot.metrics["window_start"])
+            window_end = date.fromisoformat(snapshot.metrics["window_end"])
+        except (TypeError, ValueError) as error:
+            raise ValueError("rolling production window bounds must be ISO dates") from error
+        if window_end - window_start != timedelta(days=183):
+            raise ValueError("rolling production window must span exactly 183 calendar days")
+        if not window_start <= snapshot.snapshot_day <= window_end:
+            raise ValueError("snapshot_day must fall inside the rolling production window")
+        expected_calendar = f"production-daily-bars-calendar@{window_end.isoformat()}"
+        if snapshot.source_versions.get("calendar") != expected_calendar:
+            raise ValueError("rolling production calendar version must match window_end")
+    else:
+        raise ValueError(f"unsupported validation profile: {validation_profile}")
     evaluated = snapshot.metrics["evaluated_session_count"]
     checkpoint_index = snapshot.metrics["checkpoint_index"]
     if (
@@ -368,14 +389,26 @@ def _validate(
 class PitSnapshotWriter:
     """Write or verify one immutable snapshot and complete ordered child set."""
 
-    def __init__(self, db_pool: object) -> None:
+    def __init__(
+        self,
+        db_pool: object,
+        *,
+        validation_profile: ValidationProfile = "frozen_fixture",
+    ) -> None:
         self._db_pool = db_pool
+        self._validation_profile = validation_profile
+
+    def validate(
+        self, snapshot: PitSnapshotFact, holdings: Sequence[PitHoldingFact]
+    ) -> None:
+        """Validate a fact set without mutating storage."""
+        _validate(snapshot, holdings, self._validation_profile)
 
     async def write_or_verify(
         self, snapshot: PitSnapshotFact, holdings: Sequence[PitHoldingFact]
     ) -> PitSnapshotManifest:
         ordered, sources_json, lineage_json, metrics_json = _validate(
-            snapshot, holdings
+            snapshot, holdings, self._validation_profile
         )
         async with self._db_pool.acquire() as connection:
             async with connection.transaction():

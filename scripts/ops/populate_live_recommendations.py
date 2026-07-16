@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Build production recommendation snapshots from authenticated live facts.
 
-This operational entry point intentionally supports only the A-share source
-path that already exists in the production database.  It never falls back to
-fixtures and writes exclusively through the canonical recommendation snapshot
-adapter.
+The command supports A-share, Nasdaq, and JPX daily source paths. It never
+falls back to fixtures and writes exclusively through the canonical
+recommendation snapshot adapter.
 """
 
 from __future__ import annotations
@@ -214,6 +213,32 @@ def _database_url(values: dict[str, str]) -> str:
         + quote(values["DB_NAME"], safe="")
         + "?sslmode=disable"
     )
+
+
+def _prune_superseded_snapshots(
+    database_url: str,
+    *,
+    profile: str,
+    market_scope: str,
+    trading_day: str,
+    keep_snapshot_id: str,
+) -> int:
+    """Keep one canonical daily report after a successful replacement write."""
+    import psycopg
+
+    with psycopg.connect(database_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                DELETE FROM ai_recommendation_snapshot
+                 WHERE profile = %s
+                   AND market_scope = %s
+                   AND trading_day = %s::date
+                   AND snapshot_id <> %s::uuid
+                """,
+                (profile, market_scope, trading_day, keep_snapshot_id),
+            )
+            return int(cursor.rowcount or 0)
 
 
 def _uuid4_from_material(*values: str) -> str:
@@ -593,7 +618,7 @@ def _source_bundle(rows: list[dict], as_of: str) -> tuple[PipelineSourceInputs, 
             "available_at_utc": as_of,
         }
         recommendation_ids[ticker] = _uuid4_from_material(
-            "recommendation-v3", "us_preferred", "cn_a", fact_hash
+            "recommendation-v4", "us_preferred", "cn_a", as_of, fact_hash
         )
 
     return (
@@ -711,7 +736,7 @@ def _us_source_bundle(rows: list[dict], as_of: str) -> tuple[PipelineSourceInput
             "available_at_utc": as_of,
         }
         recommendation_ids[ticker] = _uuid4_from_material(
-            "recommendation-v3", "us_preferred", "us", fact_hash
+            "recommendation-v4", "us_preferred", "us", as_of, fact_hash
         )
 
     return (
@@ -827,7 +852,7 @@ def _jp_source_bundle(rows: list[dict], as_of: str) -> tuple[PipelineSourceInput
             "available_at_utc": as_of,
         }
         recommendation_ids[ticker] = _uuid4_from_material(
-            "recommendation-v3", "japan_blue_chip", "jp", fact_hash
+            "recommendation-v4", "japan_blue_chip", "jp", as_of, fact_hash
         )
 
     return (
@@ -944,14 +969,27 @@ def main() -> int:
     )
     store = _MemoryStore() if args.dry_run else PostgresSnapshotStore(database_url)
     writer = SnapshotWriter(store)
+    # A rerun may intentionally publish a replacement from the same daily facts
+    # at a newer as-of instant. Including as_of prevents a primary-key collision
+    # with the previous daily snapshot; the successful write is followed by a
+    # narrow same-profile/scope/day cleanup below.
     snapshot_id = _uuid4_from_material(
-        "snapshot-v3", profile, args.market_scope, trading_day, *input_hashes
+        "snapshot-v4", profile, args.market_scope, trading_day, as_of, *input_hashes
     )
     result = PipelineRunner(config, snapshot_writer=writer).run(
         as_of,
         source_inputs=source_inputs,
         snapshot_id=snapshot_id,
     )
+    superseded_snapshot_count = 0
+    if not args.dry_run:
+        superseded_snapshot_count = _prune_superseded_snapshots(
+            database_url,
+            profile=profile,
+            market_scope=args.market_scope,
+            trading_day=trading_day,
+            keep_snapshot_id=result["snapshot_id"],
+        )
     print(
         json.dumps(
             {
@@ -964,6 +1002,7 @@ def main() -> int:
                     item["recommendation"]["ticker"] for item in result["items"]
                 ],
                 "output_fingerprint": result["output_fingerprint"],
+                "superseded_snapshot_count": superseded_snapshot_count,
                 "dry_run": args.dry_run,
             },
             ensure_ascii=False,

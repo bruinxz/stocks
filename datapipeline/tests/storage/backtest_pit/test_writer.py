@@ -207,6 +207,33 @@ class FakePool:
 
 
 class PitWriterTest(unittest.IsolatedAsyncioTestCase):
+    async def test_rolling_production_profile_accepts_dynamic_window(self) -> None:
+        metric_values = metrics()
+        metric_values["window_start"] = "2026-01-14"
+        metric_values["window_end"] = "2026-07-16"
+        item, holdings = snapshot(metric_values=metric_values)
+        item = copy.copy(item)
+        object.__setattr__(
+            item,
+            "source_versions",
+            {"calendar": "production-daily-bars-calendar@2026-07-16", "prices": "v1"},
+        )
+        object.__setattr__(item, "fact_hash", canonical_snapshot_hash(item, holdings))
+        writer = PitSnapshotWriter(
+            FakePool(), validation_profile="rolling_production"
+        )
+
+        manifest = await writer.write_or_verify(item, holdings)
+
+        self.assertTrue(manifest.inserted)
+
+    async def test_frozen_profile_still_rejects_dynamic_window(self) -> None:
+        metric_values = metrics()
+        metric_values["window_end"] = "2026-07-16"
+        item, holdings = snapshot(metric_values=metric_values)
+        with self.assertRaisesRegex(ValueError, "window_end must equal frozen replay pin"):
+            PitSnapshotWriter(FakePool()).validate(item, holdings)
+
     async def test_insert_replay_and_readback(self) -> None:
         pool = FakePool()
         writer = PitSnapshotWriter(pool)

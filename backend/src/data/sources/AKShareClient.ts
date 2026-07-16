@@ -181,7 +181,10 @@ export class AKShareClient {
         code,
         start_date,
         end_date,
-        adjustflag
+        adjustflag,
+        {
+          timeoutMs: Number(process.env.AKSHARE_HISTORY_TIMEOUT_MS || 30000),
+        }
       );
       logger.info(`Fetched ${bars.length} daily bars for ${code} from AKShare`);
       return bars;

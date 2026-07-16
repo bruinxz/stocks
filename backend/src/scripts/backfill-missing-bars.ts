@@ -26,6 +26,7 @@
  *   --until=YYYY-MM-DD    回填终点日期 (默认 today)
  *   --concurrency=<N>     并发同步股数 (默认 3, 上限 10)
  *   --interval-ms=<N>     每股间最小间隔 ms (默认 300, 让 akshare 不挂)
+ *   --provider=<name>     历史行情源 (默认 auto; 系统补洞推荐 tencent_only)
  *   --dry-run             仅列出会被补的 symbol 不实际调 akshare
  *
  * 退出码:
@@ -51,6 +52,7 @@ program
   .option('--until <date>', '终点日期 YYYY-MM-DD, 默认 today')
   .option('--concurrency <n>', '并发同步股数 (默认 3)', '3')
   .option('--interval-ms <n>', '每股间最小间隔 ms (默认 300)', '300')
+  .option('--provider <name>', '历史行情源 (默认 auto)', 'auto')
   .option('--dry-run', 'dry-run 仅列出 symbol 不调 akshare')
   .action(async opts => {
     let exitCode = 0;
@@ -66,6 +68,7 @@ program
       const until = opts.until || today;
       const concurrency = Math.min(Math.max(parseInt(opts.concurrency, 10) || 3, 1), 10);
       const intervalMs = Math.max(parseInt(opts.intervalMs, 10) || 300, 100);
+      const provider = String(opts.provider || 'auto').trim() || 'auto';
       const dryRun = Boolean(opts.dryRun);
 
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -145,7 +148,12 @@ program
         const results = await Promise.all(
           batch.map(async symbol => {
             try {
-              const inserted = await dataSyncService.syncStockHistory(symbol, since, until);
+              const inserted = await dataSyncService.syncStockHistory(
+                symbol,
+                since,
+                until,
+                provider
+              );
               return { symbol, inserted, error: null };
             } catch (err: any) {
               return { symbol, inserted: -1, error: err?.message || String(err) };
