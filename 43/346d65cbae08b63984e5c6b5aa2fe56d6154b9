@@ -1,0 +1,49 @@
+backend/.env.example
+  s_26d7f43d00eb19::t_ad5169c47383a5 63-68
+backend/.env.example.production
+  s_26d7f43d00eb19::t_232074a27b18f8 68-73
+backend/src/api/controllers/AuthController.ts
+  s_26d7f43d00eb19::t_964a4d5311e678 83,291-325
+backend/src/api/routes/auth.routes.ts
+  s_26d7f43d00eb19::t_d20ad2c6cb3367 104-118
+backend/tests/routing/auth-refresh-session.test.ts
+  s_26d7f43d00eb19::t_7dd8e5aad1bac3 15-17,75-77,84,139-155,246,302-305
+frontend/src/App.tsx
+  s_26d7f43d00eb19::t_153d62c8bde861 217,220-245,248,250,262-265,269-272,394-397
+frontend/src/__tests__/appPublicRoutes.test.tsx
+  s_26d7f43d00eb19::t_4b2b67e0240b46 8,87,107-109,124,158-179
+frontend/src/pages/catdesk/CatDeskLayout.tsx
+  s_26d7f43d00eb19::t_127887faf78bbe 5,38-73,92-97,100-143,156
+frontend/src/pages/catdesk/catdesk.css
+  s_26d7f43d00eb19::t_8475e53e5f9bfb 1-908
+frontend/src/pages/catdesk/shared/EmptyState.tsx
+  s_26d7f43d00eb19::t_71bc0af95e3116 10-29
+frontend/src/pages/catdesk/shared/LoadingState.tsx
+  s_26d7f43d00eb19::t_239a9b9a9193b4 4-13
+frontend/src/pages/catdesk/shared/TabNav.tsx
+  s_26d7f43d00eb19::t_499bf20a749dcc 2-10,18-25,30-72
+frontend/src/pages/catdesk/tokens.ts
+  s_26d7f43d00eb19::t_364c0d83287835 2-12,14,16,36-42
+frontend/src/services/__tests__/authService.test.ts
+  s_26d7f43d00eb19::t_9a7c2fee8ac5db 115-135
+frontend/src/services/authService.ts
+  s_26d7f43d00eb19::t_2d72a19e06ae8f 37-51,71-83,87,93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "43346d65cbae08b63984e5c6b5aa2fe56d6154b9",
+  "prompts": {},
+  "sessions": {
+    "s_26d7f43d00eb19": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f68e6-5066-71f1-99c3-8e7f1950f283",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
