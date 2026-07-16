@@ -1,0 +1,113 @@
+backend/.env.example
+  s_0ea7ce1b0cc346::t_e835f4db268533 31,33-34,40-62
+backend/.env.example.production
+  s_0ea7ce1b0cc346::t_7580cec7e4a312 18,36-56
+backend/src/api/controllers/RecommendationReplayController.ts
+  s_13bfca31ab6114::t_041c63edc4b652 1-121
+backend/src/api/routes/recommendationReplay.routes.ts
+  s_13bfca31ab6114::t_2e0b42d46bf548 1-315
+backend/src/config/swagger.ts
+  s_66be13389b5e34::t_e11190a41fec49 201-388
+backend/src/index.ts
+  s_0ea7ce1b0cc346::t_e316dc4f60664e 432,437-441,449-463,1152-1154
+backend/src/replay/ReplayCliClient.ts
+  s_0ea7ce1b0cc346::t_8da6fdf1826a28 1-630
+backend/src/replay/ReplayContract.ts
+  s_6ca1020a327476::t_335b37751002eb 1-128
+backend/src/replay/ReplayJobSupervisor.ts
+  s_26d7f43d00eb19::t_7e5373859b5228 1-217
+backend/src/replay/ReplayOperationalLimits.ts
+  s_0ea7ce1b0cc346::t_f839992ba99112 1-203
+backend/src/replay/ReplayPinsReadPort.ts
+  s_6ca1020a327476::t_f2958d0d0d12d1 1-91
+backend/tests/e2e/recommendation-replay-live-http.test.ts
+  s_886af1e45e2d07::t_2a36b2a7ec5c90 1-199
+backend/tests/e2e/recommendation-replay-live.pg.sh
+  s_0ea7ce1b0cc346::t_108d3eb92d82ee 1-112
+backend/tests/e2e/tab67-total-live-http.test.ts
+  s_886af1e45e2d07::t_8f09e1bf2835b7 1-422
+backend/tests/e2e/tab67-total-live.pg.sh
+  s_8b0057a0fcac63::t_1df9b98af27541 1-362
+backend/tests/replay/replay-cli-client.test.ts
+  s_13bfca31ab6114::t_638d50d1b23e9b 1-545
+backend/tests/replay/replay-job-supervisor.test.ts
+  s_26d7f43d00eb19::t_063d9293aa7d36 1-286
+backend/tests/replay/replay-operational-limits.test.ts
+  s_13bfca31ab6114::t_d177cd4a52faf0 1-87
+backend/tests/replay/replay-pins-read-port.test.ts
+  s_6ca1020a327476::t_4df72239464b9f 1-132
+backend/tests/routing/api-recommendation-replay-openapi.test.ts
+  s_13bfca31ab6114::t_e7dd75d41e71a6 1-186
+backend/tests/routing/api-recommendation-replay.test.ts
+  s_886af1e45e2d07::t_1bb752554f848f 1-349
+docs/openapi.json
+  s_66be13389b5e34::t_cbddb6c9498233 413-770,3799-4075
+frontend/src/pages/catdesk/tabs/daily-report/__tests__/tab67TotalLiveE2E.test.tsx
+  s_8b0057a0fcac63::t_0fde19e3e418c7 1-308
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2414823ceebdbca48bc86de8ec7d3d757abc0e10",
+  "prompts": {},
+  "sessions": {
+    "s_0ea7ce1b0cc346": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f66bd-4aa9-7422-9f9a-dc30b2769918",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_13bfca31ab6114": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f66d2-a1b7-7773-ae11-d958df4574bf",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_26d7f43d00eb19": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f68e6-5066-71f1-99c3-8e7f1950f283",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_66be13389b5e34": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f619f-6bce-7833-8fbd-fd76831f9fb7",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_6ca1020a327476": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f5f3d-2839-7383-8bde-324f47bbbe9d",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_886af1e45e2d07": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f66fc-d706-77e0-becc-2c497dcbcf25",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_8b0057a0fcac63": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f61a0-2260-71b2-b71f-f14f0fc18271",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
