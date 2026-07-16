@@ -1,0 +1,29 @@
+backend/tests/e2e/disposablePostgres.ts
+  s_26d7f43d00eb19::t_db93c916802e05 1-27
+backend/tests/e2e/recommendation-replay-live-http.test.ts
+  s_26d7f43d00eb19::t_5c0a5afee1cd33 5,14,96
+backend/tests/e2e/tab12-recommendation-live-http.test.ts
+  s_26d7f43d00eb19::t_8efbf65db96072 9,23,323
+backend/tests/e2e/tab3-jpkr-live-http.test.ts
+  s_26d7f43d00eb19::t_3619836d6989d8 9,25,259
+backend/tests/e2e/tab67-total-live-http.test.ts
+  s_26d7f43d00eb19::t_c78a4fe3e01780 8,21,170
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "406bc76dd74cc52b17ab8e1ae6ec3bebbc7a4372",
+  "prompts": {},
+  "sessions": {
+    "s_26d7f43d00eb19": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f68e6-5066-71f1-99c3-8e7f1950f283",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
