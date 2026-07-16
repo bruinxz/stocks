@@ -1,0 +1,103 @@
+backend/package.json
+  s_0ea7ce1b0cc346::t_cc5710fda4b741 37
+backend/scripts/migrations/2026-07-16-auth-refresh-sessions-rollback.sql
+  s_43cc36beb4097c::t_c1a42bd1595dfb 1-95
+backend/scripts/migrations/2026-07-16-auth-refresh-sessions.sql
+  s_0ea7ce1b0cc346::t_c078c391d2b20a 1-78
+backend/src/api/controllers/UserController.ts
+  s_0ea7ce1b0cc346::t_abcc99d7737105 3-4,6,100-111,113-121,123-124,126-127,129-133,136,168-184,188
+backend/src/api/routes/auth.routes.ts
+  s_0ea7ce1b0cc346::t_0a272135d91613 29-45,47,79,90-93,95,109-110,114,116,126-127,130,132
+backend/src/auth/AuthRefreshSessionSchema.ts
+  s_0ea7ce1b0cc346::t_0573533ffd6d02 1-88
+backend/src/config/database.ts
+  s_43cc36beb4097c::t_007dfc65ee74e1 7,145
+backend/src/middlewares/auth.ts
+  s_43cc36beb4097c::t_88076df60b9f6c 2-3,5-57,69-71,73-88,90-93,95-98,101-102,104-108,111-112,114-121
+backend/src/models/AuthRefreshSession.ts
+  s_0ea7ce1b0cc346::t_175b43e0a19124 1-115
+backend/src/models/index.ts
+  s_43cc36beb4097c::t_1a2ff183bed3a6 6
+backend/src/realtime/alertsBroadcaster.ts
+  s_0ea7ce1b0cc346::t_b5e950a8d8eaa7 63-64,192-208
+backend/src/realtime/alertsWebSocketServer.ts
+  s_0ea7ce1b0cc346::t_22ab0e30f99f0b 13-16,24,26,41-46,76,93-94,99,101-111,113-117,122-124,128-130,146-149,189-190,195,198,204-209,235-260,262-283,285,287,292-294,296-300,302-316
+backend/src/scripts/apply-auth-refresh-session-migration.ts
+  s_0ea7ce1b0cc346::t_fabc81732e79b5 1-39
+backend/tests/e2e/tab12-recommendation-live-http.test.ts
+  s_886af1e45e2d07::t_570083105fc422 328-333,335-340
+backend/tests/e2e/tab3-jpkr-live-http.test.ts
+  s_886af1e45e2d07::t_82f9cb2b27f9fa 269-274,276-281
+backend/tests/e2e/tab4-multibagger-live-http.test.ts
+  s_886af1e45e2d07::t_c8996092a5f602 38-43,45-50
+backend/tests/e2e/tab5-six-month-live-http.test.ts
+  s_886af1e45e2d07::t_f92d81a4ecc652 88-93,95-100
+backend/tests/models/auth-refresh-session.pg.sh
+  s_0ea7ce1b0cc346::t_e3c1b75c2d2b06 1-226
+backend/tests/models/auth-refresh-session.test.ts
+  s_0ea7ce1b0cc346::t_f6f905ccf9be77 1-104
+backend/tests/realtime/alerts-broadcaster.test.ts
+  s_0ea7ce1b0cc346::t_6b6ef273eca99c 182-189
+backend/tests/realtime/alerts-websocket-active-user.test.ts
+  s_0ea7ce1b0cc346::t_d01d3b1f5463f4 1-64
+backend/tests/realtime/alerts-websocket-server.test.ts
+  s_43cc36beb4097c::t_b908a485aa245e 29-33,100-110,124,128-129,132,135,155-164,169-190,198-202,211-212,233-239
+backend/tests/routing/api-backtest-pit.test.ts
+  s_886af1e45e2d07::t_747dc88f1a5dd9 20-25,27-32
+backend/tests/routing/api-daily-report-projection.test.ts
+  s_886af1e45e2d07::t_c2bfa4a4f953ff 2,4,20-49,93-96,114-126,137-138,152-153,173-178,192-193,201-202,257
+backend/tests/routing/api-jpkr-market.test.ts
+  s_886af1e45e2d07::t_a26d326dc88118 20-25,27-32
+backend/tests/routing/api-multibagger.test.ts
+  s_886af1e45e2d07::t_b10a74d07fb1f9 20-25,27-32
+backend/tests/routing/api-recommendation-snapshots.test.ts
+  s_886af1e45e2d07::t_9e0a20d63207a2 30-35,37-42
+backend/tests/routing/auth-default-admin.test.ts
+  s_43cc36beb4097c::t_56d589f6b4d909 2,4-5,8,11-16,19-21,23-26,53-97,102-104,107-131,133-139,141-145,147,149-171,174-181,183,185-189,192-218,221,225-227,229-239,243,249-253
+backend/tests/routing/user-auth-session-revocation.test.ts
+  s_0ea7ce1b0cc346::t_b9d99fdcc6a70c 1-116
+frontend/src/App.tsx
+  s_0ea7ce1b0cc346::t_dc999f2a7e69af 219
+frontend/src/services/__tests__/apiAuth.test.ts
+  s_0ea7ce1b0cc346::t_e023321472bf65 29,73-103
+frontend/src/services/api.ts
+  s_0ea7ce1b0cc346::t_aad684e65b79eb 40-72,94,103-116,118-120,124,134-137,139,170,175-179,225-229,237
+scripts/deployment/deploy_remote_build.sh
+  s_0ea7ce1b0cc346::t_89729bb41a0b77 99,109,128,135,156,193,263-276,281,294,328,336,350
+scripts/tests/verify_recommendation_performance_api.js
+  s_0ea7ce1b0cc346::t_e17a5ea5131699 35,38-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f7733ac9599888e8c6a737b99ac778b4cff44b4c",
+  "prompts": {},
+  "sessions": {
+    "s_0ea7ce1b0cc346": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f66bd-4aa9-7422-9f9a-dc30b2769918",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_43cc36beb4097c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f66d6-20f9-7d80-ad88-8cc4ca44ce4f",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_886af1e45e2d07": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f66fc-d706-77e0-becc-2c497dcbcf25",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
