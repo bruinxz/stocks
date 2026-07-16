@@ -11,6 +11,9 @@ export function ReportHistoryContainer({ api }: { api: Tab67Api }) {
       onSelect={reportId => void runtime.select(reportId)}
       onCompare={snapshotId => void runtime.compare(snapshotId)}
       onRetry={runtime.retry}
+      onScopeChange={(profile, market_scope) =>
+        runtime.setQuery({ profile, market_scope, page: 1 })
+      }
     />
   );
 }

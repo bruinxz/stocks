@@ -10,6 +10,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -47,28 +48,47 @@ def _parse_pdf(raw: bytes, trading_day: str) -> tuple[list[dict], int]:
         pdf = Path(directory) / "source.pdf"
         text = Path(directory) / "source.txt"
         pdf.write_bytes(raw)
-        subprocess.run(
-            ["pdftotext", "-layout", str(pdf), str(text)],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        lines = text.read_text(encoding="utf-8").splitlines()
+        if shutil.which("pdftotext"):
+            subprocess.run(
+                ["pdftotext", "-layout", str(pdf), str(text)],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            lines = text.read_text(encoding="utf-8").splitlines()
+        else:
+            try:
+                from pypdf import PdfReader
+            except ImportError as error:
+                raise RuntimeError(
+                    "JPX PDF parsing requires pdftotext or pypdf; "
+                    "install scripts/ops/requirements-global-markets.txt"
+                ) from error
+            lines = [
+                line
+                for page in PdfReader(pdf).pages
+                for line in (page.extract_text(extraction_mode="layout") or "").splitlines()
+            ]
 
     output: list[dict] = []
     live_rows = 0
     for line in lines:
         parts = re.split(r"\s{2,}", line.strip())
-        if len(parts) != 15 or not re.fullmatch(r"\d{4}", parts[0]):
+        if len(parts) not in (15, 16) or not re.fullmatch(r"\d{4}", parts[0]):
             continue
         try:
-            unit_and_name = parts[1].split(maxsplit=1)
+            if len(parts) == 16:
+                unit_and_name = parts[1:3]
+                market_fields = parts[3:]
+            else:
+                unit_and_name = parts[1].split(maxsplit=1)
+                market_fields = parts[2:]
             if len(unit_and_name) != 2 or not unit_and_name[0].isdigit():
                 continue
-            morning = list(map(_decimal, parts[2:6]))
-            afternoon = list(map(_decimal, parts[6:10]))
-            volume_thousand = _decimal(parts[13])
-            turnover_thousand = _decimal(parts[14])
+            morning = list(map(_decimal, market_fields[0:4]))
+            afternoon = list(map(_decimal, market_fields[4:8]))
+            volume_thousand = _decimal(market_fields[11])
+            turnover_thousand = _decimal(market_fields[12])
         except Exception:
             continue
         live_rows += 1

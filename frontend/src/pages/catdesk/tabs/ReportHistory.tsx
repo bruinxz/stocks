@@ -7,6 +7,7 @@ import { ReportDocument } from './daily-report/ReportDocument';
 import { TabKpiStrip } from './daily-report/TabKpiStrip';
 import { buildReportHistoryKpi } from './report-history/slots';
 import type { ReportHistoryViewState } from './report-history/types';
+import type { RecommendationMarketScope, RecommendationProfile } from './daily-report/types';
 import { MARKET_SCOPE_LABELS, PROFILE_LABELS } from '../shared/uiLabels';
 import './daily-report/report.css';
 
@@ -15,7 +16,19 @@ export interface ReportHistoryProps {
   onSelect?: (reportId: string) => void;
   onCompare?: (snapshotId: string) => void;
   onRetry?: () => void;
+  onScopeChange?: (profile: RecommendationProfile, marketScope: RecommendationMarketScope) => void;
 }
+
+const HISTORY_SCOPES: Array<{
+  label: string;
+  profile: RecommendationProfile;
+  scope: RecommendationMarketScope;
+}> = [
+  { label: 'A 股主报告', profile: 'us_preferred', scope: 'cn_a' },
+  { label: '美股大势', profile: 'us_preferred', scope: 'us' },
+  { label: '日本大势', profile: 'japan_blue_chip', scope: 'jp' },
+  { label: '韩国大势', profile: 'korea_semiconductor_chain', scope: 'kr' },
+];
 
 const DEFAULT_STATE: ReportHistoryViewState = {
   kind: 'empty',
@@ -27,6 +40,7 @@ export function ReportHistory({
   onSelect,
   onCompare,
   onRetry,
+  onScopeChange,
 }: ReportHistoryProps) {
   if (state.kind === 'loading')
     return (
@@ -68,6 +82,19 @@ export function ReportHistory({
           <h2>报告历史</h2>
         </div>
         <Tag>{state.page.total} 份报告</Tag>
+      </div>
+
+      <div className="report-scope-switch" aria-label="报告市场范围">
+        {HISTORY_SCOPES.map(({ label, profile, scope }) => (
+          <Button
+            key={scope}
+            size="small"
+            type={state.query.market_scope === scope ? 'primary' : 'default'}
+            onClick={() => onScopeChange?.(profile, scope)}
+          >
+            {label}
+          </Button>
+        ))}
       </div>
 
       <div className="history-register">

@@ -1,14 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * Read-only DB freshness check for quant automation.
+ * Read-only, cross-page production data-watermark audit.
  *
- * It verifies that the most important closed-loop data tables have recent rows:
- * - realtime_quotes: intraday/latest quote snapshots
- * - quant_signals: daily quant scoring output
- * - quant_fusion_audits: Agent-fused second-pass scoring output
- *
- * No data sync, Agent job, scheduler job or trade action is triggered.
+ * The reference date is the newest A-share daily bar, or EXPECTED_DATA_DATE when
+ * explicitly supplied. No sync, scheduler or trading action is triggered.
  */
 
 const path = require('path');
@@ -19,58 +15,117 @@ const backendDir = path.join(repoRoot, 'backend');
 const backendNodeModules = path.join(backendDir, 'node_modules');
 if (fs.existsSync(backendNodeModules)) {
   require('module').Module._initPaths();
-  process.env.NODE_PATH = [process.env.NODE_PATH, backendNodeModules].filter(Boolean).join(path.delimiter);
+  process.env.NODE_PATH = [process.env.NODE_PATH, backendNodeModules]
+    .filter(Boolean)
+    .join(path.delimiter);
   require('module').Module._initPaths();
 }
 
 try {
   require('dotenv').config({ path: path.join(backendDir, '.env') });
 } catch (_) {
-  // dotenv is optional for syntax-only checks.
+  // dotenv is optional when the service environment is already exported.
 }
 
 const { Client } = require('pg');
-
-const quoteMaxAgeMinutes = Math.max(Number(process.env.FRESHNESS_QUOTE_MAX_AGE_MINUTES || 60), 1);
-const signalMaxAgeDays = Math.max(Number(process.env.FRESHNESS_SIGNAL_MAX_AGE_DAYS || 5), 1);
-const fusionMaxAgeDays = Math.max(Number(process.env.FRESHNESS_FUSION_MAX_AGE_DAYS || 10), 1);
 const jsonOut = process.env.FRESHNESS_JSON_OUT || '';
 const strictFusion = String(process.env.FRESHNESS_STRICT_FUSION || '').toLowerCase() === 'true';
 
 function toIso(value) {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-function ageMinutes(value) {
+function toShanghaiDate(value) {
   if (!value) return null;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return null;
-  return Math.max(0, Math.round((Date.now() - date.getTime()) / 60000));
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
 }
 
-function ageDaysFromDateOnly(value) {
-  if (!value) return null;
-  const date = new Date(`${String(value).slice(0, 10)}T00:00:00+08:00`);
-  if (Number.isNaN(date.getTime())) return null;
-  return Math.max(0, Math.floor((Date.now() - date.getTime()) / 86400000));
-}
-
-function statusForAge(age, maxAge, missingStatus = 'missing') {
-  if (age === null || age === undefined) return missingStatus;
-  return age <= maxAge ? 'pass' : 'warn';
+function lagDays(latest, reference) {
+  if (!latest || !reference) return null;
+  const from = new Date(`${latest}T00:00:00+08:00`).getTime();
+  const to = new Date(`${reference}T00:00:00+08:00`).getTime();
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+  return Math.max(0, Math.round((to - from) / 86_400_000));
 }
 
 async function tableExists(client, tableName) {
   const result = await client.query(
     `select exists (
-      select 1 from information_schema.tables
-      where table_schema = 'public' and table_name = $1
-    ) as exists`,
+       select 1 from information_schema.tables
+       where table_schema = 'public' and table_name = $1
+     ) as exists`,
     [tableName]
   );
   return Boolean(result.rows[0]?.exists);
+}
+
+async function addWatermarkCheck(client, checks, referenceDate, definition) {
+  if (!(await tableExists(client, definition.table))) {
+    checks.push({
+      name: definition.name,
+      status: definition.critical ? 'missing' : 'warn',
+      critical: definition.critical,
+      message: 'table not found',
+    });
+    return;
+  }
+  const result = await client.query(definition.sql);
+  const row = result.rows[0] || {};
+  const latestDate = toShanghaiDate(row.latest_data_date);
+  const lag = lagDays(latestDate, referenceDate);
+  const status = lag === null ? (definition.critical ? 'missing' : 'warn') : lag <= definition.maxLag ? 'pass' : 'warn';
+  checks.push({
+    name: definition.name,
+    status,
+    critical: definition.critical,
+    latest_data_date: latestDate,
+    latest_at: toIso(row.latest_at),
+    reference_data_date: referenceDate,
+    lag_days: lag,
+    max_lag_days: definition.maxLag,
+    latest_count: Number(row.latest_count || 0),
+    scope: definition.scope,
+  });
+}
+
+async function addScheduleChecks(client, checks) {
+  if (!(await tableExists(client, 'scheduled_tasks'))) {
+    checks.push({ name: 'scheduler_contract', status: 'missing', critical: true });
+    return;
+  }
+  const result = await client.query(`
+    select type, cron_expression, is_active
+      from scheduled_tasks
+     where type in ('REALTIME_QUOTE_SYNC', 'GLOBAL_MARKET_DAILY_SYNC')
+     order by type
+  `);
+  const rows = new Map(result.rows.map(row => [row.type, row]));
+  const expected = [
+    ['REALTIME_QUOTE_SYNC', '*/5 9-11,13-14 * * 1-5'],
+    ['GLOBAL_MARKET_DAILY_SYNC', '0 9 * * 1-5'],
+  ];
+  for (const [type, cron] of expected) {
+    const row = rows.get(type);
+    const valid = Boolean(row?.is_active) && row?.cron_expression === cron;
+    checks.push({
+      name: `schedule:${type}`,
+      status: valid ? 'pass' : 'missing',
+      critical: true,
+      expected_cron: cron,
+      actual_cron: row?.cron_expression || null,
+      is_active: Boolean(row?.is_active),
+    });
+  }
 }
 
 async function main() {
@@ -80,89 +135,124 @@ async function main() {
     database: process.env.DB_NAME || 'stock_backtest',
     user: process.env.DB_USER || 'postgres',
     password: process.env.DB_PASSWORD || 'postgres',
-    ssl:
-      process.env.DB_SSL === 'true'
-        ? {
-            rejectUnauthorized: false,
-          }
-        : undefined,
+    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
   });
-
   const checks = [];
   await client.connect();
   try {
-    if (await tableExists(client, 'realtime_quotes')) {
-      const latestQuote = await client.query(
-        `select max(quote_time) as latest_quote_time,
-                count(*) filter (where trade_date = current_date) as today_count,
-                count(distinct symbol) filter (where trade_date = current_date) as today_symbol_count
-         from realtime_quotes`
-      );
-      const row = latestQuote.rows[0] || {};
-      const age = ageMinutes(row.latest_quote_time);
-      checks.push({
-        name: 'realtime_quotes',
-        status: statusForAge(age, quoteMaxAgeMinutes),
-        latest_at: toIso(row.latest_quote_time),
-        age_minutes: age,
-        max_age_minutes: quoteMaxAgeMinutes,
-        today_count: Number(row.today_count || 0),
-        today_symbol_count: Number(row.today_symbol_count || 0),
-      });
-    } else {
-      checks.push({ name: 'realtime_quotes', status: 'missing', message: 'table not found' });
+    const referenceResult = await client.query('select max(time)::date as latest from daily_bars');
+    const referenceDate =
+      process.env.EXPECTED_DATA_DATE || toShanghaiDate(referenceResult.rows[0]?.latest);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(referenceDate || '')) {
+      throw new Error('cannot determine reference data date');
     }
 
-    if (await tableExists(client, 'quant_signals')) {
-      const latestSignal = await client.query(
-        `select max(trade_date) as latest_trade_date,
-                count(*) filter (where trade_date = (select max(trade_date) from quant_signals)) as latest_count
-         from quant_signals`
-      );
-      const row = latestSignal.rows[0] || {};
-      const age = ageDaysFromDateOnly(row.latest_trade_date);
-      checks.push({
-        name: 'quant_signals',
-        status: statusForAge(age, signalMaxAgeDays),
-        latest_trade_date: row.latest_trade_date ? String(row.latest_trade_date).slice(0, 10) : null,
-        age_days: age,
-        max_age_days: signalMaxAgeDays,
-        latest_count: Number(row.latest_count || 0),
-      });
-    } else {
-      checks.push({ name: 'quant_signals', status: 'missing', message: 'table not found' });
-    }
+    const definitions = [
+      {
+        name: 'a_share_daily_bars', table: 'daily_bars', maxLag: 0, critical: true,
+        scope: 'A股行情',
+        sql: `select max(time)::date latest_data_date, max(updated_at) latest_at,
+                     count(*) filter (where time::date=(select max(time)::date from daily_bars)) latest_count
+                from daily_bars`,
+      },
+      {
+        name: 'a_share_factor_scores', table: 'factor_scores', maxLag: 0, critical: true,
+        scope: 'A股因子',
+        sql: `select max(trade_date) latest_data_date, max(updated_at) latest_at,
+                     count(*) filter (where trade_date=(select max(trade_date) from factor_scores)) latest_count
+                from factor_scores`,
+      },
+      {
+        name: 'a_share_realtime_quotes', table: 'realtime_quotes', maxLag: 0, critical: true,
+        scope: 'A股盘中行情',
+        sql: `select max(trade_date) latest_data_date, max(quote_time) latest_at,
+                     count(distinct symbol) filter (where trade_date=(select max(trade_date) from realtime_quotes)) latest_count
+                from realtime_quotes`,
+      },
+      {
+        name: 'a_share_limit_up', table: 'limit_up_stocks', maxLag: 0, critical: true,
+        scope: 'A股情绪',
+        sql: `select max(trade_date) latest_data_date, max(updated_at) latest_at,
+                     count(*) filter (where trade_date=(select max(trade_date) from limit_up_stocks)) latest_count
+                from limit_up_stocks`,
+      },
+      {
+        name: 'a_share_announcements', table: 'announcement_summaries', maxLag: 1, critical: true,
+        scope: 'A股公告',
+        sql: `select max(announce_date) latest_data_date, max(updated_at) latest_at,
+                     count(*) filter (where announce_date=(select max(announce_date) from announcement_summaries)) latest_count
+                from announcement_summaries`,
+      },
+      {
+        name: 'daily_report_cn_a', table: 'ai_recommendation_snapshot', maxLag: 0, critical: true,
+        scope: 'A股日报',
+        sql: `select max(trading_day) latest_data_date, max(created_at) latest_at,
+                     count(*) filter (where trading_day=(select max(trading_day) from ai_recommendation_snapshot where profile='us_preferred' and market_scope='cn_a')) latest_count
+                from ai_recommendation_snapshot where profile='us_preferred' and market_scope='cn_a'`,
+      },
+      {
+        name: 'us_catalyst_snapshot', table: 'ai_recommendation_snapshot', maxLag: 1, critical: true,
+        scope: '美股催化',
+        sql: `select max(trading_day) latest_data_date, max(created_at) latest_at,
+                     count(*) filter (where trading_day=(select max(trading_day) from ai_recommendation_snapshot where profile='us_preferred' and market_scope='us')) latest_count
+                from ai_recommendation_snapshot where profile='us_preferred' and market_scope='us'`,
+      },
+      {
+        name: 'jp_catalyst_snapshot', table: 'ai_recommendation_snapshot', maxLag: 1, critical: true,
+        scope: '日本催化',
+        sql: `select max(trading_day) latest_data_date, max(created_at) latest_at,
+                     count(*) filter (where trading_day=(select max(trading_day) from ai_recommendation_snapshot where profile='japan_blue_chip' and market_scope='jp')) latest_count
+                from ai_recommendation_snapshot where profile='japan_blue_chip' and market_scope='jp'`,
+      },
+      {
+        name: 'jpkr_market', table: 'jpkr_daily_kline', maxLag: 1, critical: true,
+        scope: '日韩大势',
+        sql: `select max(trading_day) latest_data_date, max(available_at_utc) latest_at,
+                     count(*) filter (where trading_day=(select max(trading_day) from jpkr_daily_kline)) latest_count
+                from jpkr_daily_kline`,
+      },
+      {
+        name: 'multibagger_snapshot', table: 'multibagger_candidate_snapshot', maxLag: 0, critical: true,
+        scope: '高倍潜力',
+        sql: `select max(as_of_utc)::date latest_data_date, max(as_of_utc) latest_at,
+                     count(*) filter (where as_of_utc::date=(select max(as_of_utc)::date from multibagger_candidate_snapshot)) latest_count
+                from multibagger_candidate_snapshot`,
+      },
+      {
+        name: 'backtest_pit_snapshot', table: 'backtest_pit_snapshot', maxLag: 5, critical: false,
+        scope: '回测证据',
+        sql: `select max(snapshot_day) latest_data_date, max(created_at) latest_at,
+                     count(*) filter (where snapshot_day=(select max(snapshot_day) from backtest_pit_snapshot)) latest_count
+                from backtest_pit_snapshot`,
+      },
+      {
+        name: 'quant_signals', table: 'quant_signals', maxLag: 5, critical: false,
+        scope: '旧量化信号链',
+        sql: `select max(trade_date) latest_data_date, max(updated_at) latest_at,
+                     count(*) filter (where trade_date=(select max(trade_date) from quant_signals)) latest_count
+                from quant_signals`,
+      },
+      {
+        name: 'quant_fusion_audits', table: 'quant_fusion_audits',
+        maxLag: Number(process.env.FRESHNESS_FUSION_MAX_AGE_DAYS || 10),
+        critical: strictFusion, scope: '旧融合审计链',
+        sql: `select max(signal_date) latest_data_date, max(updated_at) latest_at,
+                     count(*) filter (where signal_date=(select max(signal_date) from quant_fusion_audits)) latest_count
+                from quant_fusion_audits`,
+      },
+    ];
 
-    if (await tableExists(client, 'quant_fusion_audits')) {
-      const latestFusion = await client.query(
-        `select max(signal_date) as latest_signal_date,
-                count(*) filter (where signal_date = (select max(signal_date) from quant_fusion_audits)) as latest_count
-         from quant_fusion_audits`
-      );
-      const row = latestFusion.rows[0] || {};
-      const age = ageDaysFromDateOnly(row.latest_signal_date);
-      checks.push({
-        name: 'quant_fusion_audits',
-        status: statusForAge(age, fusionMaxAgeDays, strictFusion ? 'missing' : 'warn'),
-        latest_signal_date: row.latest_signal_date ? String(row.latest_signal_date).slice(0, 10) : null,
-        age_days: age,
-        max_age_days: fusionMaxAgeDays,
-        latest_count: Number(row.latest_count || 0),
-        strict: strictFusion,
-      });
-    } else {
-      checks.push({
-        name: 'quant_fusion_audits',
-        status: strictFusion ? 'missing' : 'warn',
-        message: 'table not found',
-        strict: strictFusion,
-      });
+    for (const definition of definitions) {
+      await addWatermarkCheck(client, checks, referenceDate, definition);
     }
+    await addScheduleChecks(client, checks);
   } finally {
     await client.end();
   }
 
-  const criticalFailed = checks.filter(item => item.status === 'missing').length;
+  const criticalFailed = checks.filter(
+    item => item.critical && (item.status === 'missing' || item.status === 'warn')
+  ).length;
   const warned = checks.filter(item => item.status === 'warn').length;
   const summary = {
     success: criticalFailed === 0,
@@ -171,18 +261,15 @@ async function main() {
     warned,
     checks,
   };
-
   if (jsonOut) {
     fs.mkdirSync(path.dirname(jsonOut), { recursive: true });
     fs.writeFileSync(jsonOut, JSON.stringify(summary, null, 2));
   }
-
   for (const check of checks) {
     const label = check.status === 'pass' ? 'PASS' : check.status === 'warn' ? 'WARN' : 'FAIL';
     console.log(`[${label}] ${check.name}: ${JSON.stringify(check)}`);
   }
-  console.log(JSON.stringify({ success: summary.success, warned }, null, 2));
-
+  console.log(JSON.stringify({ success: summary.success, critical_failed: criticalFailed, warned }, null, 2));
   if (!summary.success) process.exit(1);
 }
 

@@ -931,6 +931,56 @@ export class DataUpdateWorker {
     const limit = Math.min(Math.max(Number(options.batch_limit || 200), 1), 6000);
     const lagDaysThreshold = Math.max(Number(options.lag_days_threshold || 0), 0);
     const targetDate = moment.tz(options.end_date, 'Asia/Shanghai').endOf('day').toDate();
+    // 仅按 MAX(time) 会漏掉“最新日齐全、前几天大面积缺口”的系统性空洞。
+    // 生产曾出现最新交易日 5664 只齐全，但此前 3 天仅约 1650 只；旧选择器会
+    // 因每只股票 MAX(time) 已是最新日而返回 0，空洞永久留存。先识别近 20 天
+    // 覆盖率低于 70% 的已有交易日，再优先选出这些日期缺 bar 的 listed 标的。
+    let systemicGapSymbols: string[] = [];
+    try {
+      const database = DailyBar.sequelize;
+      if (!database) throw new Error('DailyBar sequelize connection is unavailable');
+      const [gapRows] = (await database.query(
+        `WITH listed AS (
+           SELECT COUNT(*)::numeric AS total FROM stocks WHERE is_listed = TRUE
+         ), recent_days AS (
+           SELECT time::date AS trade_date,
+                  COUNT(DISTINCT stock_id)::numeric AS covered
+             FROM daily_bars
+            WHERE time >= CAST(:target_date AS date) - INTERVAL '20 days'
+              AND time < CAST(:target_date AS date) + INTERVAL '1 day'
+            GROUP BY time::date
+         ), gap_days AS (
+           SELECT trade_date
+             FROM recent_days, listed
+            WHERE covered < listed.total * 0.70
+         )
+         SELECT s.symbol
+           FROM stocks s
+          WHERE s.is_listed = TRUE
+            AND EXISTS (
+              SELECT 1
+                FROM gap_days g
+               WHERE NOT EXISTS (
+                 SELECT 1 FROM daily_bars b
+                  WHERE b.stock_id = s.id AND b.time::date = g.trade_date
+               )
+            )
+          ORDER BY s.id
+          LIMIT :limit`,
+        {
+          replacements: {
+            target_date: moment(targetDate).tz('Asia/Shanghai').format('YYYY-MM-DD'),
+            limit,
+          },
+        }
+      )) as [Array<{ symbol: string }>, unknown];
+      systemicGapSymbols = gapRows.map(row => row.symbol).filter(Boolean);
+      if (systemicGapSymbols.length > 0) {
+        logger.warn(`历史同步发现系统性日线空洞，优先补齐 ${systemicGapSymbols.length} 只标的`);
+      }
+    } catch (error: any) {
+      logger.warn(`历史同步系统性缺口检测失败，降级为 MAX(time) 选择: ${error?.message}`);
+    }
     const rows = (await Stock.findAll({
       where: { is_listed: true },
       attributes: [
@@ -980,7 +1030,7 @@ export class DataUpdateWorker {
       logger.info(`历史同步检测到行情库覆盖率较低，自动纳入未入库股票: ${noDataRows}/${totalRows}`);
     }
 
-    return rows
+    const staleSymbols = rows
       .filter(row => {
         if (!row.latest_time) return shouldIncludeNoData;
         const latest = new Date(row.latest_time);
@@ -989,6 +1039,7 @@ export class DataUpdateWorker {
       })
       .slice(0, limit)
       .map(row => row.symbol);
+    return Array.from(new Set([...systemicGapSymbols, ...staleSymbols])).slice(0, limit);
   }
 
   /**

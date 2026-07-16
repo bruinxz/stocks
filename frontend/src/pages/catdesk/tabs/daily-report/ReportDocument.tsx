@@ -15,7 +15,7 @@ export function ReportDocument({ report }: { report: DailyReportDocument }) {
     <article className="report-document">
       <header className="report-document__header">
         <div>
-          <span className="report-eyebrow">推荐快照 · 版本 0.3.1</span>
+          <span className="report-eyebrow">A 股深度主报告 · 推荐快照 0.3.1</span>
           <h2>{report.title}</h2>
         </div>
         <div className="report-document__pins" aria-label="报告版本锚点">
@@ -40,7 +40,7 @@ export function ReportDocument({ report }: { report: DailyReportDocument }) {
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{report.markdown}</ReactMarkdown>
       </div>
 
-      <section className="recommendation-ledger" aria-label="推荐证据清单">
+      <section className="recommendation-ledger" aria-label="A 股个股推荐证据清单">
         {report.snapshot.items.map(item => {
           const recommendation = item.recommendation;
           return (

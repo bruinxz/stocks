@@ -21,6 +21,7 @@ const dataController = new DataController();
 const authController = new AuthController();
 
 router.get('/health-status', authController.authenticate, dataController.getHealthStatus);
+router.get('/page-freshness', authController.authenticate, dataController.getPageFreshness);
 router.get('/system-topology', authController.authenticate, dataController.getSystemTopology);
 router.get('/quality-deep-check', authController.authenticate, dataController.getQualityDeepCheck);
 router.get('/dragon-tiger', authController.authenticate, dataController.listDragonTiger);

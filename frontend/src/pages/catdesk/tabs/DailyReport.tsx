@@ -21,7 +21,7 @@ export interface DailyReportProps {
 const DEFAULT_STATE: DailyReportViewState = {
   kind: 'empty',
   profile: 'us_preferred',
-  market_scope: 'us',
+  market_scope: 'cn_a',
 };
 
 export function DailyReport({
@@ -34,8 +34,8 @@ export function DailyReport({
   if (state.kind === 'loading')
     return (
       <LoadingState
-        title="正在翻阅每日研究来信"
-        description="汇总快照、证据引用和风险披露…"
+        title="正在铺开 A 股每日研究来信"
+        description="先整理 A 股板块与个股证据，再叠加海外大势…"
         mood="hopeful"
       />
     );
@@ -53,7 +53,7 @@ export function DailyReport({
         <TabKpiStrip slots={buildDailyReportKpi()} />
         <div className="report-toolbar">
           <div>
-            <span className="report-eyebrow">每日日报 · 数据契约预览</span>
+            <span className="report-eyebrow">A 股每日日报 · 详细主报告</span>
             <h2>每日日报</h2>
           </div>
           <div>
@@ -74,7 +74,7 @@ export function DailyReport({
       <TabKpiStrip slots={buildDailyReportKpi(state.report, state.generation)} />
       <div className="report-toolbar">
         <div>
-          <span className="report-eyebrow">每日日报 · 证据账本</span>
+          <span className="report-eyebrow">A 股每日日报 · 板块、个股与证据账本</span>
           <h2>每日日报</h2>
         </div>
         <Tag color={state.generation.status === 'completed' ? 'green' : 'blue'}>

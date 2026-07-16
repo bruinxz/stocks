@@ -61,6 +61,10 @@ import { Op } from 'sequelize';
 import { recordSchedulerTaskRun } from '../metrics/PrometheusRegistry';
 import { skipRetiredScheduledTask } from './scheduler/retiredScheduledTask';
 
+// Persisted rows from releases that predate structural task retirement. These
+// are deliberately not part of CRON_REGISTRY and can only self-deactivate.
+const RETIRED_LEGACY_TASK_TYPES = new Set(['BLACK_SWAN_DETECT']);
+
 // ⚠️ DEPRECATED STUB — 以下"服务"是 批3/批8 精简量化 pipeline 时已删除的 service
 // 的占位替身,仅为让依赖它们的历史调度路径继续编译。所有方法恒返回空结果 (no-op),
 // 即对应能力已永久下线、优雅降级。请勿基于此扩展逻辑;应改接真实实现或移除调用方。
@@ -899,14 +903,20 @@ class SchedulerService {
     const executionLog = await this.createExecutionLog(task, timestamp, isManual);
 
     try {
-      if (task.type === 'PAPER_TRADING_RESTRICTED_SHARE_CHECK') {
-        // RestrictedShareWatchdog was removed with its model/table. A persisted
-        // legacy row must retire itself before calendar guards can report a false
-        // SUCCESS, and before any removed implementation can be invoked.
+      if (
+        task.type === 'PAPER_TRADING_RESTRICTED_SHARE_CHECK' ||
+        RETIRED_LEGACY_TASK_TYPES.has(task.type)
+      ) {
+        // Retired handlers can remain in old databases after the implementation
+        // disappears. Deactivate those rows before calendar guards or dispatch,
+        // otherwise they wake forever and flood production logs.
+        const reason = RETIRED_LEGACY_TASK_TYPES.has(task.type)
+          ? 'BLACK_SWAN_DETECT has been retired; BlackSwanEvent is supplied by external writers'
+          : 'RestrictedShareWatchdog and its persistence model have been retired';
         return await skipRetiredScheduledTask({
           task,
           execution_log: executionLog,
-          reason: 'RestrictedShareWatchdog and its persistence model have been retired',
+          reason,
           metric_started_at_ms: _metricStart,
           record_metric: recordSchedulerTaskRun,
           deactivate_in_memory: () => {
@@ -966,6 +976,32 @@ class SchedulerService {
             (Date.now() - _metricStart) / 1000
           );
           return { success: true, message: `skipped: ${reason}` };
+        }
+      }
+
+      if (!isManual && task.type === 'REALTIME_QUOTE_SYNC') {
+        const { checkAShareTradingHours } = await import('../utils/tradingCalendar');
+        const tradingWindow = checkAShareTradingHours(timestamp);
+        if (!tradingWindow.allowed) {
+          await this.safeUpdateExecutionLog(executionLog, {
+            status: 'COMPLETED',
+            total_items: 0,
+            completed_items: 0,
+            failed_items: 0,
+            completed_at: new Date(),
+            result_summary: {
+              skipped: true,
+              reason: tradingWindow.reason,
+              scenario: 'outside_a_share_continuous_session',
+            },
+          });
+          await this.markTaskFinished(task, 'SUCCESS');
+          recordSchedulerTaskRun(
+            String(task.type || 'unknown'),
+            'skipped',
+            (Date.now() - _metricStart) / 1000
+          );
+          return { success: true, message: `skipped: ${tradingWindow.reason}` };
         }
       }
 
@@ -5566,6 +5602,59 @@ class SchedulerService {
             `themes=${r.themes_actionable} created=${r.created} updated=${r.updated} ` +
             `skip_phase=${r.skipped_phase} skip_nocodes=${r.skipped_no_codes}`
         );
+      } else if (task.type === 'GLOBAL_MARKET_DAILY_SYNC') {
+        const repoRoot = path.resolve(__dirname, '../../..');
+        const script = path.join(repoRoot, 'scripts/ops/sync_global_markets_daily.py');
+        const python = process.env.PYTHON_PATH || process.env.PYTHON_BIN || 'python3';
+        const envFile =
+          typeof parameters.env_file === 'string' && parameters.env_file.trim()
+            ? parameters.env_file.trim()
+            : path.join(repoRoot, 'backend/.env');
+        const args = [
+          script,
+          '--env-file',
+          envFile,
+          '--limit',
+          String(this.toPositiveInt(parameters.limit, 8, 20)),
+        ];
+        if (parameters.dry_run === true) args.push('--dry-run');
+        const timeoutMs = this.toPositiveInt(parameters.timeout_minutes, 30, 60) * 60_000;
+        const result = await this.runScriptAsync(python, args, { cwd: repoRoot, timeoutMs });
+        let summary: any = null;
+        const lastLine = result.stdout.trim().split('\n').filter(Boolean).pop();
+        if (lastLine) {
+          try {
+            summary = JSON.parse(lastLine);
+          } catch {
+            summary = null;
+          }
+        }
+        const failedSteps = Array.isArray(summary?.failed_steps) ? summary.failed_steps : [];
+        const failed = result.code !== 0 || summary?.success === false;
+        await this.safeUpdateExecutionLog(executionLog, {
+          total_items: Array.isArray(summary?.steps) ? summary.steps.length : 1,
+          completed_items: Array.isArray(summary?.steps)
+            ? summary.steps.filter((step: any) => step?.ok === true).length
+            : failed
+            ? 0
+            : 1,
+          failed_items: failedSteps.length || (failed ? 1 : 0),
+          status: failed ? 'FAILED' : 'COMPLETED',
+          completed_at: new Date(),
+          error_message: failed
+            ? `全球市场同步失败: ${failedSteps.join(', ') || result.stderr.slice(-500)}`
+            : null,
+          result_summary: {
+            scenario: 'global_market_daily_sync',
+            schedule: '09:00 Asia/Shanghai',
+            failed_steps: failedSteps,
+            generated_at: summary?.generated_at || new Date().toISOString(),
+          },
+        });
+        if (failed) {
+          throw new Error(`全球市场同步失败: ${failedSteps.join(', ') || 'script failed'}`);
+        }
+        logger.info('[GLOBAL_MARKET_DAILY_SYNC] A 股日报与海外催化数据刷新完成');
       } else if (task.type === 'RSS_NEWS_SYNC') {
         // 批6d (§6.1) — 合规 RSS 财经新闻入库. 拉新浪/财联社等 RSS 源, 关键词题材兜底
         // 打 industry 标签, 落 market_news (findOrCreate 幂等 + 30 天保留期清理). 主线数据
@@ -5846,6 +5935,7 @@ class SchedulerService {
       'INDUSTRY_FLOW_SYNC',
       'LIMIT_UP_SYNC',
       'NORTHBOUND_SYNC',
+      'GLOBAL_MARKET_DAILY_SYNC',
       // Batch AH review (2026-06-18): 把 factor 计算也加入 catch-up,
       // 这样 deploy 重启或者 17:30 错过都会自动补跑. compute 比较重 (~30min),
       // 但 deploy 重启发生频率低; 加 60min 最小间隔避免短时间内反复触发.
@@ -6018,17 +6108,32 @@ class SchedulerService {
       {
         name: '实时行情快照刷新',
         type: 'REALTIME_QUOTE_SYNC',
-        cron_expression: '5,25 9,10,13,14 * * 1-5',
+        cron_expression: '*/5 9-11,13-14 * * 1-5',
         is_active: true,
         parameters: {
           universe: 'market',
           // Batch AR (2026-06-21): 360 → 5000, 全 A 股 universe.
           limit: 5000,
-          source: 'auto',
-          batch_size: 300,
+          source: 'tencent',
+          batch_size: 500,
           report_to_feishu: false,
           notify_to_feishu_bot: false,
           record_type: '实时行情快照刷新',
+        },
+      },
+      {
+        name: '全球市场与日报每日同步',
+        type: 'GLOBAL_MARKET_DAILY_SYNC',
+        cron_expression: '0 9 * * 1-5',
+        is_active: true,
+        parameters: {
+          env_file:
+            process.env.BACKEND_ENV_FILE ||
+            (process.env.NODE_ENV === 'production'
+              ? '/opt/stocks/shared/backend.env'
+              : path.resolve(process.cwd(), '.env')),
+          limit: 8,
+          timeout_minutes: 30,
         },
       },
       {
@@ -6989,6 +7094,10 @@ class SchedulerService {
       if (taskData.type === 'REALTIME_QUOTE_SYNC') {
         const params = patch.parameters || task.parameters || {};
         const nextParams = { ...taskData.parameters, ...params };
+        patch.cron_expression = taskData.cron_expression;
+        nextParams.limit = 5000;
+        nextParams.source = 'tencent';
+        nextParams.batch_size = 500;
         for (const key of [
           'universe',
           'limit',

@@ -122,8 +122,8 @@
 
 #### 身份认证 ( Authentication )
 *   认证中间件位于 [backend/src/middlewares/auth.ts](backend/src/middlewares/auth.ts)，最终调用 `AuthController.authenticate` ([backend/src/api/controllers/AuthController.ts](backend/src/api/controllers/AuthController.ts))。
-*   所有的受保护路由（如 `/api/market/favorites`、`/api/backtests` 等）必须显式在路由层引入并调用 `authController.authenticate`。
-*   移除了开发环境中的“无感后门”，当前环境必须携带合法的 `Bearer Token` 才能访问。
+*   所有受保护路由仍必须显式调用 `authController.authenticate`；前端在打开 `/catdesk` 时通过 `authService.defaultLogin()` 自动取得合法令牌，因此用户无需手工经过登录页。
+*   自动登录是受控的默认管理员浏览会话，不是绕过后端鉴权的匿名后门。生产凭据只能来自环境配置，禁止提交真实密码、令牌或 `.env`。
 
 ### 6.4 下一步开发/排查建议
 *   如果遇到数据库相关报错（如表不存在、字段不存在），可以尝试在后端执行 `DROP DATABASE stock_backtest; CREATE DATABASE stock_backtest;` 后重启后端触发 `alter: true` 同步。
