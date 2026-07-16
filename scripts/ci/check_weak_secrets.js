@@ -60,6 +60,10 @@ function addFinding(findings, file, text, offset, rule) {
   findings.push({ file, line: lineNumber(text, offset), rule });
 }
 
+function isTestFile(file) {
+  return /(^|\/)(?:tests?|__tests__)\//.test(file);
+}
+
 function scanFile(file, fingerprints, findings) {
   const absolutePath = path.join(ROOT, file);
   let bytes;
@@ -82,7 +86,7 @@ function scanFile(file, fingerprints, findings) {
   // Test suites intentionally exercise DSN parsing with synthetic credentials.
   // Known leaked values are still caught by the fingerprint scan above, while
   // generic embedded credentials remain forbidden everywhere else.
-  if (!/(^|\/)tests?\//.test(file)) {
+  if (!isTestFile(file)) {
     for (const match of text.matchAll(/postgres(?:ql)?:\/\/[^\s:/@]+:[^\s/@]+@/gi)) {
       addFinding(findings, file, text, match.index, 'credential-in-database-url');
     }
@@ -102,7 +106,7 @@ function scanFile(file, fingerprints, findings) {
   ];
 
   for (const rule of rules) {
-    if (rule.skipTests && /(^|\/)tests?\//.test(file)) continue;
+    if (rule.skipTests && isTestFile(file)) continue;
     for (const match of text.matchAll(rule.pattern)) {
       addFinding(findings, file, text, match.index, rule.id);
     }
