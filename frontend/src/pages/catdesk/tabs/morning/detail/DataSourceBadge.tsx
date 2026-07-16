@@ -29,8 +29,10 @@ export function DataSourceBadge({ sources = [] }: DataSourceBadgeProps) {
             当前快照未提供来源引用
           </span>
         )}
-        {sources.map((s) => (
-          <Tag key={s} color="default">{s}</Tag>
+        {sources.map(s => (
+          <Tag key={s} color="default">
+            {s}
+          </Tag>
         ))}
       </div>
     </div>

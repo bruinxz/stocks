@@ -11,6 +11,8 @@ import { MorningKpiSlots } from './morning/MorningKpiSlots';
 import { buildMorningSections } from './morning/detail/buildMorningSections';
 import { DetailSidebar } from 'shared/components/DetailSidebar';
 import type { CandidateListEntry, CatalystKind } from './c1Types';
+import { DataListToolbar } from '../shared/DataListToolbar';
+import { useStockNameHydration } from '../shared/useStockNameHydration';
 import { CONVICTION_MED_MIN } from '../types';
 import {
   loadRecommendationCandidateFeed,
@@ -33,8 +35,7 @@ function extractSectors(rows: CandidateListEntry[]): string[] {
   const set = new Set<string>();
   rows.forEach(r => {
     const cat = r.latest_catalyst as
-      | { kind: CatalystKind; title: string; occurred_at: string; sector?: string }
-      | undefined;
+      { kind: CatalystKind; title: string; occurred_at: string; sector?: string } | undefined;
     if (cat?.sector) set.add(cat.sector);
   });
   return Array.from(set).sort();
@@ -43,6 +44,7 @@ function extractSectors(rows: CandidateListEntry[]): string[] {
 export default function AShareMorningBrief() {
   const [filters, setFilters] = useState<MorningFilters>(DEFAULT_FILTERS);
   const [selectedRow, setSelectedRow] = useState<CandidateListEntry | null>(null);
+  const [search, setSearch] = useState('');
 
   const {
     data: loadResult,
@@ -53,10 +55,18 @@ export default function AShareMorningBrief() {
     []
   );
   const data = loadResult?.kind === 'ready' ? loadResult.feed : null;
+  const namedCandidates = useStockNameHydration(data?.candidates ?? []);
 
   const filtered = useMemo(() => {
-    if (!data?.candidates) return [];
-    let rows = data.candidates;
+    let rows = namedCandidates;
+    const keyword = search.trim().toLocaleLowerCase('zh-CN');
+    if (keyword) {
+      rows = rows.filter(row =>
+        [row.symbol, row.name, row.latest_catalyst?.title]
+          .filter(Boolean)
+          .some(value => String(value).toLocaleLowerCase('zh-CN').includes(keyword))
+      );
+    }
     if (filters.sector) {
       const sec = filters.sector;
       rows = rows.filter(r => {
@@ -71,9 +81,9 @@ export default function AShareMorningBrief() {
       rows = rows.filter(r => (r.conviction?.final ?? 0) >= CONVICTION_MED_MIN);
     }
     return rows;
-  }, [data?.candidates, filters]);
+  }, [filters, namedCandidates, search]);
 
-  const sectors = useMemo(() => extractSectors(data?.candidates ?? []), [data?.candidates]);
+  const sectors = useMemo(() => extractSectors(namedCandidates), [namedCandidates]);
 
   const handleRowSelect = useCallback((row: CandidateListEntry) => {
     setSelectedRow(prev => (prev?.symbol === row.symbol ? null : row));
@@ -84,7 +94,14 @@ export default function AShareMorningBrief() {
     [selectedRow]
   );
 
-  if (loading) return <LoadingState />;
+  if (loading)
+    return (
+      <LoadingState
+        title="正在整理 A 股早报"
+        description="核对今日催化、评分与风险门禁…"
+        mood="working"
+      />
+    );
   if (error) return <ErrorState message="数据加载失败" />;
   if (loadResult?.kind === 'not_generated')
     return <EmptyState title="当前尚未生成 A 股推荐快照" variant="simple" />;
@@ -117,6 +134,13 @@ export default function AShareMorningBrief() {
           setFilters(f => ({ ...f, convictionMinMed: v === 'med' || v === 'high' }))
         }
         sectors={sectors}
+      />
+      <DataListToolbar
+        value={search}
+        onChange={setSearch}
+        total={filtered.length}
+        label="条候选"
+        placeholder="搜索股票代码、名称或催化线索"
       />
       <MorningBriefTable
         data={filtered}

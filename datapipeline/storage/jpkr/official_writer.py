@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Iterable, Sequence, Tuple
 
 from datapipeline.contracts import (
@@ -106,6 +107,14 @@ WHERE market_scope=$1 AND ticker=$2
 
 class OfficialFactConflict(RuntimeError):
     """One physical identity was observed with two fact hashes."""
+
+
+def _decimal_or_none(value):
+    return None if value is None else Decimal(str(value))
+
+
+def _integer_or_none(value):
+    return None if value is None else int(Decimal(str(value)))
 
 
 @dataclass(frozen=True)
@@ -222,19 +231,19 @@ class JpKrOfficialWriter:
                 row.ticker_name_local,
                 row.ticker_name_en,
                 row.trading_day,
-                row.open,
-                row.high,
-                row.low,
-                row.close,
-                row.adjusted_close,
+                _decimal_or_none(row.open),
+                _decimal_or_none(row.high),
+                _decimal_or_none(row.low),
+                _decimal_or_none(row.close),
+                _decimal_or_none(row.adjusted_close),
                 row.corporate_action_version,
-                row.volume,
-                row.turnover,
+                _integer_or_none(row.volume),
+                _decimal_or_none(row.turnover),
                 row.currency,
-                row.dividend_amount,
-                row.split_ratio,
-                row.market_cap_local,
-                row.turnover_rate,
+                _decimal_or_none(row.dividend_amount),
+                _decimal_or_none(row.split_ratio),
+                _decimal_or_none(row.market_cap_local),
+                _decimal_or_none(row.turnover_rate),
                 row.is_halted,
                 row.halt_reason_code,
                 row.source_kind,

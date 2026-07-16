@@ -138,7 +138,8 @@ function GenerationHarness({
     profile: 'us_preferred',
     marketScope: 'us',
     tradingDay,
-    setTimer: ((callback: (...args: any[]) => void) => setTimeout(callback, 0)) as typeof setTimeout,
+    setTimer: ((callback: (...args: any[]) => void) =>
+      setTimeout(callback, 0)) as typeof setTimeout,
   });
   React.useEffect(() => {
     onRuntime(runtime);
@@ -183,12 +184,7 @@ describeLive('Tab6/7 total live disposable-PG E2E', () => {
     const initialLatest = await api.latest('us_preferred', 'us', signal);
     expect(initialLatest.snapshot.snapshot_id).toBe(live.latest.source_snapshot_id);
     expect(initialLatest.trading_day).toBe(live.latest.trading_day);
-    const initialByDate = await api.daily(
-      live.by_date.trading_day,
-      'us_preferred',
-      'us',
-      signal
-    );
+    const initialByDate = await api.daily(live.by_date.trading_day, 'us_preferred', 'us', signal);
     expect(initialByDate.snapshot.snapshot_id).toBe(live.by_date.source_snapshot_id);
     const initialHistory = await api.history(
       { profile: 'us_preferred', market_scope: 'us', page: 1, page_size: 20 },
@@ -238,9 +234,9 @@ describeLive('Tab6/7 total live disposable-PG E2E', () => {
     const generatedJob = generated.generation as Extract<GenerationJob, { status: 'completed' }>;
     expect(generated.report.snapshot.snapshot_id).toBe(generatedJob.snapshot_id);
     expect(networkCalls.some(call => call === 'POST /api/v1/ai/recommendations/replay')).toBe(true);
-    expect(networkCalls.some(call => call.startsWith('GET /api/v1/ai/recommendations/status?'))).toBe(
-      true
-    );
+    expect(
+      networkCalls.some(call => call.startsWith('GET /api/v1/ai/recommendations/status?'))
+    ).toBe(true);
     await unmount(generationRoot, generationContainer);
 
     // Real DailyReportContainer renders the third generation via the same API/hook stack.
@@ -268,16 +264,14 @@ describeLive('Tab6/7 total live disposable-PG E2E', () => {
     await act(async () => {
       historyRoot.render(
         <MemoryRouter
-          initialEntries={[
-            '/catdesk?profile=us_preferred&market_scope=us&page=1&page_size=20',
-          ]}
+          initialEntries={['/catdesk?profile=us_preferred&market_scope=us&page=1&page_size=20']}
         >
           <ReportHistoryContainer api={api} />
         </MemoryRouter>
       );
     });
     await eventually(() => {
-      expect(historyContainer.textContent).toContain('3 reports');
+      expect(historyContainer.textContent).toContain('3 份报告');
       expect(historyContainer.querySelectorAll('tbody tr')).toHaveLength(3);
     });
     const newestRow = historyContainer.querySelector('tbody tr') as HTMLTableRowElement;

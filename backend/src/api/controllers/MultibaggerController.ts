@@ -148,7 +148,10 @@ export class MultibaggerController {
                 candidate.classification_reason_codes
          FROM latest_candidates candidate
          LEFT JOIN LATERAL (
-           SELECT source.fundamental_snapshot->>'name' AS name
+           SELECT COALESCE(
+                    source.fundamental_snapshot->>'name',
+                    source.features->>'name'
+                  ) AS name
            FROM multibagger_universe source
            WHERE source.market_scope = candidate.market_scope
              AND source.exchange = candidate.exchange
@@ -257,7 +260,10 @@ export class MultibaggerController {
                 candidate.classification_reason_codes
          FROM latest_candidates candidate
          LEFT JOIN LATERAL (
-           SELECT source.fundamental_snapshot->>'name' AS name
+           SELECT COALESCE(
+                    source.fundamental_snapshot->>'name',
+                    source.features->>'name'
+                  ) AS name
            FROM multibagger_universe source
            WHERE source.market_scope = candidate.market_scope
              AND source.exchange = candidate.exchange

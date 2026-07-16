@@ -63,9 +63,7 @@ export function KpiBar({ slots }: KpiBarProps) {
             <span style={labelStyle}>{slot.label}</span>
             <span style={valueStyle}>{slot.value}</span>
             {slot.delta && (
-              <span style={{ color: deltaColor(slot.delta), fontSize: 12 }}>
-                {slot.delta}
-              </span>
+              <span style={{ color: deltaColor(slot.delta), fontSize: 12 }}>{slot.delta}</span>
             )}
           </div>
         );
@@ -73,11 +71,7 @@ export function KpiBar({ slots }: KpiBarProps) {
         return (
           <React.Fragment key={slot.label}>
             {i > 0 && <div style={dividerStyle} />}
-            {slot.tooltip ? (
-              <Tooltip title={slot.tooltip}>{content}</Tooltip>
-            ) : (
-              content
-            )}
+            {slot.tooltip ? <Tooltip title={slot.tooltip}>{content}</Tooltip> : content}
           </React.Fragment>
         );
       })}

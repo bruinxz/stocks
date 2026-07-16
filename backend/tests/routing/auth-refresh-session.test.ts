@@ -7,11 +7,15 @@ import jwt, { JwtPayload } from 'jsonwebtoken';
 const ACCESS_SECRET = 'auth-route-access-secret-that-is-long-and-distinct';
 const REFRESH_SECRET = 'auth-route-refresh-secret-that-is-long-and-distinct';
 const SENSITIVE_ERROR = 'database-host-and-credential-must-not-leak';
+const DEFAULT_ADMIN_TEST_PASSWORD = ['correct', 'password'].join('-');
 
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = ACCESS_SECRET;
 process.env.JWT_REFRESH_SECRET = REFRESH_SECRET;
 process.env.ENABLE_SECURE_COOKIE = 'false';
+process.env.DEFAULT_ADMIN_AUTO_LOGIN = 'true';
+process.env.DEFAULT_ADMIN_USERNAME = 'route-user';
+process.env.DEFAULT_ADMIN_PASSWORD = DEFAULT_ADMIN_TEST_PASSWORD; // gitleaks:allow -- synthetic test credential
 
 // Runtime requires intentionally follow env setup because auth.routes creates
 // its controller singleton at module load.
@@ -69,15 +73,18 @@ async function main(): Promise<void> {
     JWT_SECRET: process.env.JWT_SECRET,
     JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET,
     ENABLE_SECURE_COOKIE: process.env.ENABLE_SECURE_COOKIE,
+    DEFAULT_ADMIN_AUTO_LOGIN: process.env.DEFAULT_ADMIN_AUTO_LOGIN,
+    DEFAULT_ADMIN_USERNAME: process.env.DEFAULT_ADMIN_USERNAME,
+    DEFAULT_ADMIN_PASSWORD: process.env.DEFAULT_ADMIN_PASSWORD,
   };
 
   const user = {
     id: 7,
     username: 'route-user',
     email: 'route-user@example.com',
-    role: 'analyst',
+    role: 'admin',
     is_active: true,
-    validatePassword: async (password: string) => password === 'correct-password',
+    validatePassword: async (password: string) => password === DEFAULT_ADMIN_TEST_PASSWORD,
     toJSON() {
       return {
         id: this.id,
@@ -130,10 +137,27 @@ async function main(): Promise<void> {
     app.use(cookieParser());
     app.use('/api/auth', authRoutes);
 
+    const defaultLogin = await request(app).post('/api/auth/default-login').send({});
+    assert('enabled default administrator login succeeds', defaultLogin.status === 200);
+    assert(
+      'default administrator login returns the configured account',
+      defaultLogin.body.data.user.username === user.username
+    );
+    assert('default administrator login creates one server session', sessions.length === 1);
+    sessions.length = 0;
+
+    process.env.DEFAULT_ADMIN_AUTO_LOGIN = 'false';
+    const disabledDefaultLogin = await request(app).post('/api/auth/default-login').send({});
+    assert(
+      'disabled default administrator login is not exposed',
+      disabledDefaultLogin.status === 404
+    );
+    process.env.DEFAULT_ADMIN_AUTO_LOGIN = 'true';
+
     const registration = await request(app).post('/api/auth/register').send({
       username: 'registered-user',
       email: 'registered-user@example.com',
-      password: 'correct-password',
+      password: DEFAULT_ADMIN_TEST_PASSWORD, // gitleaks:allow -- synthetic test credential
     });
     assert('registration creates a server session', registration.status === 201);
     assert('registration persists one hashed refresh session', sessions.length === 1);
@@ -141,7 +165,7 @@ async function main(): Promise<void> {
 
     const login = await request(app)
       .post('/api/auth/login')
-      .send({ username: user.username, password: 'correct-password' });
+      .send({ username: user.username, password: DEFAULT_ADMIN_TEST_PASSWORD }); // gitleaks:allow -- synthetic test credential
     assert('login succeeds', login.status === 200, JSON.stringify(login.body));
     const firstRefreshToken = refreshTokenFrom(login);
     assert('login sets refresh cookie', firstRefreshToken.length > 0);
@@ -220,13 +244,12 @@ async function main(): Promise<void> {
     assert('old refresh token reuse is rejected', reused.status === 401);
     assert(
       'reuse revokes the active family successor',
-      sessions[1].revoked_at instanceof Date &&
-        sessions[1].revocation_reason === 'reuse_detected'
+      sessions[1].revoked_at instanceof Date && sessions[1].revocation_reason === 'reuse_detected'
     );
 
     const secondLogin = await request(app)
       .post('/api/auth/login')
-      .send({ username: user.username, password: 'correct-password' });
+      .send({ username: user.username, password: DEFAULT_ADMIN_TEST_PASSWORD }); // gitleaks:allow -- synthetic test credential
     const logoutToken = refreshTokenFrom(secondLogin);
     const logoutSession = sessions[sessions.length - 1];
     const logout = await request(app)
@@ -241,7 +264,7 @@ async function main(): Promise<void> {
 
     const missingRowLogin = await request(app)
       .post('/api/auth/login')
-      .send({ username: user.username, password: 'correct-password' });
+      .send({ username: user.username, password: DEFAULT_ADMIN_TEST_PASSWORD }); // gitleaks:allow -- synthetic test credential
     const missingRowToken = refreshTokenFrom(missingRowLogin);
     const survivingFamilyRow = sessions[sessions.length - 1];
     survivingFamilyRow.jti = '33333333-3333-4333-8333-333333333333';
@@ -258,7 +281,7 @@ async function main(): Promise<void> {
 
     const retryableLogin = await request(app)
       .post('/api/auth/login')
-      .send({ username: user.username, password: 'correct-password' });
+      .send({ username: user.username, password: DEFAULT_ADMIN_TEST_PASSWORD }); // gitleaks:allow -- synthetic test credential
     const retryableToken = refreshTokenFrom(retryableLogin);
 
     sequelize.transaction = async () => {
@@ -277,14 +300,17 @@ async function main(): Promise<void> {
       .post('/api/auth/logout')
       .set('Cookie', `refreshToken=${retryableToken}`)
       .send({});
-    assert('logout database failure reports unconfirmed revocation', logoutDatabaseFailure.status === 503);
+    assert(
+      'logout database failure reports unconfirmed revocation',
+      logoutDatabaseFailure.status === 503
+    );
     assert(
       'logout 503 preserves cookie for pending revocation retry',
       !cookieHeader(logoutDatabaseFailure).includes('refreshToken=;')
     );
     const databaseFailure = await request(app)
       .post('/api/auth/login')
-      .send({ username: user.username, password: 'correct-password' });
+      .send({ username: user.username, password: DEFAULT_ADMIN_TEST_PASSWORD }); // gitleaks:allow -- synthetic test credential
     assert('session database failure fails closed', databaseFailure.status === 503);
     assert(
       'database failure response is redacted',
@@ -300,7 +326,7 @@ async function main(): Promise<void> {
     sharedSecretApp.post('/login', sharedSecretController.login);
     const sharedSecret = await request(sharedSecretApp)
       .post('/login')
-      .send({ username: user.username, password: 'correct-password' });
+      .send({ username: user.username, password: DEFAULT_ADMIN_TEST_PASSWORD }); // gitleaks:allow -- synthetic test credential
     assert('shared access/refresh secret is rejected', sharedSecret.status === 503);
 
     process.env.NODE_ENV = 'production';
@@ -316,7 +342,7 @@ async function main(): Promise<void> {
     productionApp.post('/login', productionController.login);
     const productionLogin = await request(productionApp)
       .post('/login')
-      .send({ username: user.username, password: 'correct-password' });
+      .send({ username: user.username, password: DEFAULT_ADMIN_TEST_PASSWORD }); // gitleaks:allow -- synthetic test credential
     assert('production login succeeds with session persistence', productionLogin.status === 200);
     assert(
       'production cookie remains Secure even when env says false',

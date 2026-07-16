@@ -11,19 +11,20 @@ import { USKpiSlots } from './us/USKpiSlots';
 import { buildUSSections } from './us/detail/buildUSSections';
 import { DetailSidebar } from 'shared/components/DetailSidebar';
 import type { CandidateListEntry } from './c1Types';
+import { DataListToolbar } from '../shared/DataListToolbar';
 import {
   loadRecommendationCandidateFeed,
   type RecommendationCandidateLoadResult,
 } from './recommendationCandidates';
 
 interface USFilters {
-  sector: string | null;
   ratingMin: string | null;
 }
 
 export default function USStockPicks() {
-  const [filters, setFilters] = useState<USFilters>({ sector: null, ratingMin: null });
+  const [filters, setFilters] = useState<USFilters>({ ratingMin: null });
   const [selectedRow, setSelectedRow] = useState<CandidateListEntry | null>(null);
+  const [search, setSearch] = useState('');
 
   const {
     data: loadResult,
@@ -38,12 +39,13 @@ export default function USStockPicks() {
   const filtered = useMemo(() => {
     if (!data?.candidates) return [];
     let rows = data.candidates;
-    if (filters.sector) {
-      const sec = filters.sector;
-      rows = rows.filter(r => {
-        const cat = r.latest_catalyst as { kind: string; sector?: string } | undefined;
-        return cat?.sector === sec;
-      });
+    const keyword = search.trim().toLocaleLowerCase('zh-CN');
+    if (keyword) {
+      rows = rows.filter(row =>
+        [row.symbol, row.name, row.latest_catalyst?.title]
+          .filter(Boolean)
+          .some(value => String(value).toLocaleLowerCase('zh-CN').includes(keyword))
+      );
     }
     if (filters.ratingMin) {
       const minOrder: Record<string, number> = { A: 0, B: 1, C: 2, D: 3, F: 4 };
@@ -51,7 +53,7 @@ export default function USStockPicks() {
       rows = rows.filter(r => (minOrder[r.rating_band ?? 'F'] ?? 4) <= threshold);
     }
     return rows;
-  }, [data?.candidates, filters]);
+  }, [data?.candidates, filters, search]);
 
   const handleRowSelect = useCallback((row: CandidateListEntry) => {
     setSelectedRow(prev => (prev?.symbol === row.symbol ? null : row));
@@ -62,7 +64,14 @@ export default function USStockPicks() {
     [selectedRow]
   );
 
-  if (loading) return <LoadingState />;
+  if (loading)
+    return (
+      <LoadingState
+        title="正在扫描美股线索"
+        description="同步隔夜催化、评分与入场区间…"
+        mood="curious"
+      />
+    );
   if (error) return <ErrorState message="数据加载失败" />;
   if (loadResult?.kind === 'not_generated')
     return <EmptyState title="当前尚未生成美股推荐快照" variant="simple" />;
@@ -80,10 +89,15 @@ export default function USStockPicks() {
         updatedAt={data.kpi.updated_at}
       />
       <USFilterBar
-        sector={filters.sector}
         ratingMin={filters.ratingMin}
-        onSectorChange={v => setFilters(f => ({ ...f, sector: v }))}
         onRatingChange={v => setFilters(f => ({ ...f, ratingMin: v }))}
+      />
+      <DataListToolbar
+        value={search}
+        onChange={setSearch}
+        total={filtered.length}
+        label="条候选"
+        placeholder="搜索美股代码、名称或催化线索"
       />
       <USTable
         data={filtered}

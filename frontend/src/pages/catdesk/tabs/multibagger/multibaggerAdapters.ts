@@ -512,14 +512,7 @@ function parseCandidate(value: unknown, path: string): MultibaggerRow {
       : (() => {
           const item = assertExactObject(
             raw.latest_catalyst,
-            [
-              'kind',
-              'title',
-              'occurred_at',
-              'available_at_utc',
-              'source_ref',
-              'fact_hash',
-            ],
+            ['kind', 'title', 'occurred_at', 'available_at_utc', 'source_ref', 'fact_hash'],
             [],
             `${path}.latest_catalyst`
           );
@@ -537,10 +530,7 @@ function parseCandidate(value: unknown, path: string): MultibaggerRow {
           ) {
             throw new ContractSchemaError(`${path}.latest_catalyst is not PIT-visible`);
           }
-          const sourceRef = strictString(
-            item.source_ref,
-            `${path}.latest_catalyst.source_ref`
-          );
+          const sourceRef = strictString(item.source_ref, `${path}.latest_catalyst.source_ref`);
           const catalystFactHash = strictSha256(
             item.fact_hash,
             `${path}.latest_catalyst.fact_hash`

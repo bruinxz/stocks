@@ -76,6 +76,15 @@ class MultibaggerIdempotencyConflict(RuntimeError):
     """One logical source identity has more than one immutable fact hash."""
 
 
+def _fact_hash_from_row(row: object) -> str:
+    if isinstance(row, Mapping):
+        return str(row["fact_hash"])
+    try:
+        return str(row["fact_hash"])  # type: ignore[index]
+    except (KeyError, IndexError, TypeError):
+        return str(row.fact_hash)  # type: ignore[attr-defined]
+
+
 @dataclass(frozen=True)
 class MultibaggerWriteResult:
     attempted: int
@@ -499,14 +508,7 @@ class MultibaggerSourceWriter:
                     identity = _logical_identity(row)
                     await connection.fetchval(LOCK_SQL, _advisory_key(identity))
                     hashes = await connection.fetch(SELECT_HASHES_SQL, *identity)
-                    stored_hashes = {
-                        str(
-                            item["fact_hash"]
-                            if isinstance(item, Mapping)
-                            else item.fact_hash
-                        )
-                        for item in hashes
-                    }
+                    stored_hashes = {_fact_hash_from_row(item) for item in hashes}
                     if stored_hashes:
                         if stored_hashes != {row.fact_hash}:
                             raise MultibaggerIdempotencyConflict(
@@ -520,14 +522,7 @@ class MultibaggerSourceWriter:
                     )
                     if returned is None:
                         raced = await connection.fetch(SELECT_HASHES_SQL, *identity)
-                        raced_hashes = {
-                            str(
-                                item["fact_hash"]
-                                if isinstance(item, Mapping)
-                                else item.fact_hash
-                            )
-                            for item in raced
-                        }
+                        raced_hashes = {_fact_hash_from_row(item) for item in raced}
                         if raced_hashes == {row.fact_hash}:
                             deduplicated += 1
                             continue

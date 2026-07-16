@@ -7,7 +7,12 @@ interface MorningKpiSlotsProps {
   updatedAt: string;
 }
 
-export function MorningKpiSlots({ total, highConviction, avgScore, updatedAt }: MorningKpiSlotsProps) {
+export function MorningKpiSlots({
+  total,
+  highConviction,
+  avgScore,
+  updatedAt,
+}: MorningKpiSlotsProps) {
   const slots: KpiSlot[] = [
     { label: '今日推荐', value: String(total), tooltip: '催化匹配标的总数' },
     { label: '高确信', value: String(highConviction), tooltip: '确信度 >= 75 的标的' },

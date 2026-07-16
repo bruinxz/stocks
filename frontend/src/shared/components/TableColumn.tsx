@@ -2,6 +2,11 @@ import React from 'react';
 import { Table, Tag, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { Band, Conviction, RiskGate, Score } from '../types/catdesk';
+import {
+  CONVICTION_LABELS,
+  RATING_LABELS,
+  RISK_GATE_LABELS,
+} from '../../pages/catdesk/shared/uiLabels';
 
 export type TableColumnDef<Row> = {
   key: string;
@@ -9,7 +14,7 @@ export type TableColumnDef<Row> = {
   ariaLabel: string;
   width?: number | string;
   align?: 'left' | 'center' | 'right';
-  sortable?: boolean;
+  sortable?: boolean | ((left: Row, right: Row) => number);
   render?: (value: unknown, row: Row, index: number) => React.ReactNode;
 };
 
@@ -24,6 +29,7 @@ export type TableColumnProps<Row> = {
   errorText?: React.ReactNode;
   size?: 'small' | 'middle';
   className?: string;
+  pagination?: false | { pageSize?: number };
 };
 
 const BAND_COLOR: Record<Band, string> = {
@@ -46,10 +52,21 @@ const RISK_COLOR: Record<string, string> = {
   RED: '#cf1322',
 };
 
+function compareTableValues(left: unknown, right: unknown): number {
+  if (left == null && right == null) return 0;
+  if (left == null) return -1;
+  if (right == null) return 1;
+  if (typeof left === 'number' && typeof right === 'number') return left - right;
+  const leftNumber = Number(left);
+  const rightNumber = Number(right);
+  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) return leftNumber - rightNumber;
+  return String(left).localeCompare(String(right), 'zh-CN', { numeric: true });
+}
+
 export function ScoreCell(score: Score, ariaLabel: string): JSX.Element {
   return (
     <span aria-label={ariaLabel}>
-      <Tag color={BAND_COLOR[score.rating]}>{score.rating}</Tag>
+      <Tag color={BAND_COLOR[score.rating]}>{RATING_LABELS[score.rating] ?? score.rating}</Tag>
       <span style={{ fontSize: 12 }}>{score.total}</span>
     </span>
   );
@@ -58,16 +75,16 @@ export function ScoreCell(score: Score, ariaLabel: string): JSX.Element {
 export function ConvictionPill(c: Conviction, ariaLabel: string): JSX.Element {
   return (
     <Tag color={CONVICTION_COLOR[c.level]} aria-label={ariaLabel}>
-      {c.level} {c.final}
+      {CONVICTION_LABELS[c.level] ?? c.level} {c.final}
     </Tag>
   );
 }
 
 export function RiskGateChip(r: RiskGate, ariaLabel: string): JSX.Element {
   return (
-    <Tooltip title={r.triggers.map(t => `${t.code} (${t.severity})`).join(', ') || 'No triggers'}>
+    <Tooltip title={r.triggers.length ? `发现 ${r.triggers.length} 项风险提示` : '未发现风险提示'}>
       <Tag color={RISK_COLOR[r.gate]} aria-label={ariaLabel}>
-        {r.gate}
+        {RISK_GATE_LABELS[r.gate] ?? r.gate}
         {r.triggers.length > 0 && ` (${r.triggers.length})`}
       </Tag>
     </Tooltip>
@@ -85,6 +102,7 @@ export function TableColumn<Row extends object>({
   errorText,
   size = 'small',
   className,
+  pagination,
 }: TableColumnProps<Row>) {
   if (errorText) {
     return <div role="alert">{errorText}</div>;
@@ -96,9 +114,18 @@ export function TableColumn<Row extends object>({
     dataIndex: col.key,
     width: col.width,
     align: col.align,
-    sorter: col.sortable ? true : undefined,
+    sorter:
+      typeof col.sortable === 'function'
+        ? col.sortable
+        : col.sortable
+          ? (left: Row, right: Row) =>
+              compareTableValues(
+                (left as Record<string, unknown>)[col.key],
+                (right as Record<string, unknown>)[col.key]
+              )
+          : undefined,
     render: col.render
-      ? (_val: unknown, record: Row, index: number) => col.render!(_val, record, index)
+      ? (_val: unknown, record: Row, index: number) => col.render?.(_val, record, index)
       : undefined,
     onHeaderCell: () => ({ 'aria-label': col.ariaLabel }) as React.HTMLAttributes<HTMLElement>,
   }));
@@ -113,7 +140,16 @@ export function TableColumn<Row extends object>({
       size={size}
       className={className}
       locale={{ emptyText: emptyText ?? '暂无数据' }}
-      pagination={false}
+      pagination={
+        pagination === false
+          ? false
+          : {
+              pageSize: pagination?.pageSize ?? 10,
+              showSizeChanger: true,
+              pageSizeOptions: [10, 20, 50],
+              showTotal: total => `共 ${total} 条`,
+            }
+      }
       onRow={
         onRowClick
           ? record => ({

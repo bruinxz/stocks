@@ -39,20 +39,22 @@ const DUAL_GATE_COLORS = { pass: 'green', fail: 'red', warn: 'orange' } as const
 export function AIRecommendationCard({ gates = [], dualGate }: AIRecommendationCardProps) {
   return (
     <div style={cardStyle}>
-      <div style={titleStyle}>AI 推荐门控</div>
+      <div style={titleStyle}>智能推荐门控</div>
       {gates.length === 0 && (
         <div style={{ color: 'var(--cd-text-secondary)', fontSize: 12 }}>
           当前快照未提供推荐门控证据
         </div>
       )}
-      {gates.map((g) => (
+      {gates.map(g => (
         <div key={g.label} style={gateRow}>
           {g.passed ? (
             <CheckCircleOutlined style={{ color: 'var(--cd-up)' }} />
           ) : (
             <CloseCircleOutlined style={{ color: 'var(--cd-down)' }} />
           )}
-          <span style={{ color: g.passed ? 'var(--cd-text-primary)' : 'var(--cd-text-secondary)' }}>{g.label}</span>
+          <span style={{ color: g.passed ? 'var(--cd-text-primary)' : 'var(--cd-text-secondary)' }}>
+            {g.label}
+          </span>
         </div>
       ))}
       {dualGate && (

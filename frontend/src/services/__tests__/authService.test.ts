@@ -112,3 +112,25 @@ describe.each(['login', 'register'] as const)('authService.%s', operation => {
     expect(localStorage.getItem(AUTH_LOGOUT_PENDING_KEY)).toBe('1');
   });
 });
+
+describe('authService.defaultLogin', () => {
+  test('requests the server-side default session without browser credentials', async () => {
+    const accessToken = ['default-admin', 'token'].join('-');
+    const response = {
+      data: {
+        success: true,
+        data: {
+          user: { id: 9, username: 'stocks', email: 'stocks@example.com', role: 'admin' },
+          tokens: { accessToken },
+        },
+      },
+    };
+    const post = jest.spyOn(api, 'post').mockResolvedValueOnce(response as never);
+
+    await expect(authService.defaultLogin()).resolves.toEqual(response.data);
+
+    expect(post).toHaveBeenCalledWith('/auth/default-login');
+    expect(localStorage.getItem('token')).toBe(accessToken);
+    expect(localStorage.getItem('username')).toBe('stocks');
+  });
+});

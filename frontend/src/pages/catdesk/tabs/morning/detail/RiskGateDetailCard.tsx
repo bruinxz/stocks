@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Tag } from 'antd';
 import { DownOutlined, RightOutlined } from '@ant-design/icons';
+import { RISK_GATE_LABELS } from '../../../shared/uiLabels';
 
 type Severity = 'info' | 'warn' | 'block';
 
@@ -21,6 +22,12 @@ const SEVERITY_COLORS: Record<Severity, string> = {
   info: 'blue',
   warn: 'gold',
   block: 'red',
+};
+
+const SEVERITY_LABELS: Record<Severity, string> = {
+  info: '信息',
+  warn: '警告',
+  block: '阻断',
 };
 
 const cardStyle: React.CSSProperties = {
@@ -52,11 +59,7 @@ const detailStyle: React.CSSProperties = {
   color: 'var(--cd-text-secondary)',
 };
 
-export function RiskGateDetailCard({
-  triggers = [],
-  gate,
-  okToEnter,
-}: RiskGateDetailCardProps) {
+export function RiskGateDetailCard({ triggers = [], gate, okToEnter }: RiskGateDetailCardProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const toggle = (id: string) => {
@@ -75,7 +78,7 @@ export function RiskGateDetailCard({
         <div style={{ ...rowStyle, cursor: 'default', marginBottom: 8 }}>
           <span style={{ color: 'var(--cd-text-secondary)' }}>门禁结论</span>
           <Tag color={gate === 'GREEN' ? 'green' : gate === 'YELLOW' ? 'gold' : 'red'}>
-            {gate} · {okToEnter ? '可入场' : '不可入场'}
+            {RISK_GATE_LABELS[gate] ?? gate} · {okToEnter ? '可入场' : '不可入场'}
           </Tag>
         </div>
       ) : null}
@@ -91,7 +94,7 @@ export function RiskGateDetailCard({
               <RightOutlined style={{ fontSize: 10 }} />
             )}
             <span style={{ color: 'var(--cd-text-primary)', flex: 1 }}>{t.label}</span>
-            <Tag color={SEVERITY_COLORS[t.severity]}>{t.severity}</Tag>
+            <Tag color={SEVERITY_COLORS[t.severity]}>{SEVERITY_LABELS[t.severity]}</Tag>
           </div>
           {expanded.has(t.id) && t.detail && <div style={detailStyle}>{t.detail}</div>}
         </div>

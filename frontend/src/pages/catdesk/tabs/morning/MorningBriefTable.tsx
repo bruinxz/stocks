@@ -1,6 +1,7 @@
 import { Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { CandidateListEntry, CatalystKind } from '../c1Types';
+import { CATALYST_LABELS, RATING_LABELS } from '../../shared/uiLabels';
 
 const CATALYST_KIND_COLOR: Record<CatalystKind, string> = {
   earnings: 'blue',
@@ -47,7 +48,7 @@ export function MorningBriefTable({ data, loading, onRowClick, selectedSymbol }:
         return (
           <span style={{ fontFamily: 'var(--cd-font-mono)', fontWeight: 600 }}>
             {r.score ? r.score.total.toFixed(1) : '--'}
-            {band ? ` ${band}` : ''}
+            {band ? ` · ${RATING_LABELS[band] ?? band}` : ''}
           </span>
         );
       },
@@ -65,7 +66,9 @@ export function MorningBriefTable({ data, loading, onRowClick, selectedSymbol }:
       width: 100,
       render: (_, r) => {
         const kind = r.latest_catalyst?.kind ?? 'unclassified';
-        return <Tag color={CATALYST_KIND_COLOR[kind] ?? 'default'}>{kind}</Tag>;
+        return (
+          <Tag color={CATALYST_KIND_COLOR[kind] ?? 'default'}>{CATALYST_LABELS[kind] ?? kind}</Tag>
+        );
       },
     },
     {
@@ -120,7 +123,12 @@ export function MorningBriefTable({ data, loading, onRowClick, selectedSymbol }:
       rowKey="symbol"
       loading={loading}
       size="small"
-      pagination={false}
+      pagination={{
+        pageSize: 10,
+        showSizeChanger: true,
+        pageSizeOptions: [10, 20, 50],
+        showTotal: total => `共 ${total} 条`,
+      }}
       onRow={record => ({
         onClick: () => onRowClick(record),
         style: {

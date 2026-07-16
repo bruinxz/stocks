@@ -26,11 +26,7 @@ function Harness({
   clearTimer = noClearTimer,
 }: {
   api: Tab67Api;
-  onState(
-    state: DailyReportViewState,
-    generate: () => Promise<void>,
-    retry: () => void
-  ): void;
+  onState(state: DailyReportViewState, generate: () => Promise<void>, retry: () => void): void;
   now?: () => number;
   profile?: 'us_preferred' | 'multibagger';
   marketScope?: 'us';

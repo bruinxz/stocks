@@ -27,7 +27,7 @@ export function BacktestChart({ snapshots }: BacktestChartProps) {
   if (!chartData.length) {
     return (
       <div className="backtest-empty-chart" role="status">
-        <span className="backtest-empty-chart__eyebrow">PIT DATA</span>
+        <span className="backtest-empty-chart__eyebrow">历史时点数据</span>
         <strong>快照已就绪，净值指标尚未入库</strong>
         <span>等待 metrics.net_value 与 metrics.drawdown 后自动绘图。</span>
       </div>

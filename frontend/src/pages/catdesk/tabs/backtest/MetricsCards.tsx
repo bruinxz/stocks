@@ -11,14 +11,10 @@ export function MetricsCards({ kpiSlots }: MetricsCardsProps) {
 
   return (
     <div className="metrics-cards">
-      {kpiSlots.map((slot) => (
+      {kpiSlots.map(slot => (
         <Tooltip key={slot.label} title={slot.tooltip}>
           <Card size="small" className="metric-card">
-            <Statistic
-              title={slot.label}
-              value={slot.value}
-              suffix={slot.delta}
-            />
+            <Statistic title={slot.label} value={slot.value} suffix={slot.delta} />
           </Card>
         </Tooltip>
       ))}

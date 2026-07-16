@@ -36,7 +36,7 @@ export function FilterChip<V extends string | number>({
     }
     const idx = value.indexOf(optValue);
     if (idx >= 0) {
-      onChange(value.filter((v) => v !== optValue));
+      onChange(value.filter(v => v !== optValue));
     } else {
       onChange([...value, optValue]);
     }
@@ -44,18 +44,19 @@ export function FilterChip<V extends string | number>({
 
   return (
     <div role="group" aria-label={ariaLabel} className={className}>
-      {options.map((opt) => {
+      {options.map(opt => {
         const selected = value.includes(opt.value);
         return (
           <Button
             key={String(opt.value)}
-            type={selected ? 'primary' : 'default'}
+            type="default"
             size="small"
             disabled={disabled || opt.disabled}
             onClick={() => handleClick(opt.value)}
             role="checkbox"
             aria-checked={selected}
             aria-label={opt.ariaLabel}
+            className={selected ? 'catdesk-filter-chip is-selected' : 'catdesk-filter-chip'}
             style={{ marginRight: 4, marginBottom: 4 }}
           >
             {opt.label}

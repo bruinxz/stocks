@@ -4,10 +4,18 @@ import { TableColumn } from 'shared/components/TableColumn';
 import type { TableColumnDef } from 'shared/components/TableColumn';
 import type { JpKrMarketRow } from './types';
 
+const MARKET_LABEL: Record<string, string> = { JP: '日本', KR: '韩国' };
+const CURRENCY_LABEL: Record<string, string> = { JPY: '日元', KRW: '韩元', USD: '美元' };
+
 function formatChangePct(pct: number): React.ReactNode {
   const color = pct > 0 ? '#cf1322' : pct < 0 ? '#389e0d' : undefined;
   const prefix = pct > 0 ? '+' : '';
-  return <span style={{ color }}>{prefix}{pct.toFixed(2)}%</span>;
+  return (
+    <span style={{ color }}>
+      {prefix}
+      {pct.toFixed(2)}%
+    </span>
+  );
 }
 
 function getColumns(): TableColumnDef<JpKrMarketRow>[] {
@@ -17,12 +25,14 @@ function getColumns(): TableColumnDef<JpKrMarketRow>[] {
       title: '代码',
       ariaLabel: '股票代码',
       width: 90,
-      sortable: true,
+      sortable: (a, b) => a.symbol.localeCompare(b.symbol, 'zh-CN', { numeric: true }),
       render: (_, row) => (
         <span>
           {row.symbol}
           {row.is_halted && (
-            <Tag color="red" style={{ marginLeft: 4 }}>停</Tag>
+            <Tag color="red" style={{ marginLeft: 4 }}>
+              停
+            </Tag>
           )}
         </span>
       ),
@@ -32,6 +42,7 @@ function getColumns(): TableColumnDef<JpKrMarketRow>[] {
       title: '名称',
       ariaLabel: '公司名称',
       width: 160,
+      sortable: (a, b) => a.name_local.localeCompare(b.name_local, 'zh-CN'),
       render: (_, row) => (
         <Tooltip title={row.name_en}>
           <span>{row.name_local}</span>
@@ -43,8 +54,11 @@ function getColumns(): TableColumnDef<JpKrMarketRow>[] {
       title: '市场',
       ariaLabel: '交易所',
       width: 60,
+      sortable: (a, b) => a.market.localeCompare(b.market),
       render: (_, row) => (
-        <Tag color={row.market === 'JP' ? 'blue' : 'green'}>{row.market}</Tag>
+        <Tag color={row.market === 'JP' ? 'blue' : 'green'}>
+          {MARKET_LABEL[row.market] ?? row.market}
+        </Tag>
       ),
     },
     {
@@ -53,10 +67,10 @@ function getColumns(): TableColumnDef<JpKrMarketRow>[] {
       ariaLabel: '最新收盘价',
       width: 120,
       align: 'right',
-      sortable: true,
+      sortable: (a, b) => a.close - b.close,
       render: (_, row) => (
         <span>
-          {row.close.toLocaleString()} {row.currency}
+          {row.close.toLocaleString()} {CURRENCY_LABEL[row.currency] ?? row.currency}
           <br />
           {formatChangePct(row.change_pct)}
         </span>
@@ -93,11 +107,11 @@ function getColumns(): TableColumnDef<JpKrMarketRow>[] {
         if (!top) return <span style={{ color: '#999' }}>—</span>;
         return (
           <Tooltip
-            title={row.revenue_by_region
-              .map((r) => `${r.region}: ${r.pct.toFixed(1)}%`)
-              .join(' · ')}
+            title={row.revenue_by_region.map(r => `${r.region}: ${r.pct.toFixed(1)}%`).join(' · ')}
           >
-            <span>{top.region} {top.pct.toFixed(1)}%</span>
+            <span>
+              {top.region} {top.pct.toFixed(1)}%
+            </span>
           </Tooltip>
         );
       },
@@ -105,16 +119,17 @@ function getColumns(): TableColumnDef<JpKrMarketRow>[] {
     {
       key: 'fx_sensitivity',
       title: '汇率敏感度',
-      ariaLabel: '汇率 beta 系数',
+      ariaLabel: '汇率敏感系数',
       width: 100,
       align: 'right',
-      sortable: true,
+      sortable: (a, b) => a.fx_beta - b.fx_beta,
       render: (_, row) => {
         const abs = Math.abs(row.fx_beta);
         const color = abs > 0.5 ? '#cf1322' : abs > 0.2 ? '#faad14' : '#389e0d';
         return (
           <span style={{ color }}>
-            {row.fx_beta > 0 ? '+' : ''}{row.fx_beta.toFixed(2)}
+            {row.fx_beta > 0 ? '+' : ''}
+            {row.fx_beta.toFixed(2)}
           </span>
         );
       },
@@ -122,12 +137,15 @@ function getColumns(): TableColumnDef<JpKrMarketRow>[] {
     {
       key: 'score_hint',
       title: '评分',
-      ariaLabel: 'Strategy 综合评分',
+      ariaLabel: '策略综合评分',
       width: 80,
       align: 'center',
+      sortable: (a, b) =>
+        (a.recommendation?.score?.total ?? -Infinity) -
+        (b.recommendation?.score?.total ?? -Infinity),
       render: (_, row) =>
         row.recommendation?.score ? (
-          <Tooltip title={`snapshot ${row.recommendation.provenance?.snapshot_id ?? '—'}`}>
+          <Tooltip title={`推荐快照 ${row.recommendation.provenance?.snapshot_id ?? '—'}`}>
             <Tag color={row.recommendation.risk_gate?.gate === 'GREEN' ? 'green' : 'orange'}>
               {row.recommendation.score.total.toFixed(1)} · {row.recommendation.rating_band}
             </Tag>
@@ -143,11 +161,7 @@ function getColumns(): TableColumnDef<JpKrMarketRow>[] {
       width: 60,
       align: 'center',
       render: (_, row) =>
-        row.is_halted ? (
-          <Tag color="red">停牌</Tag>
-        ) : (
-          <Tag color="green">正常</Tag>
-        ),
+        row.is_halted ? <Tag color="red">停牌</Tag> : <Tag color="green">正常</Tag>,
     },
   ];
 }

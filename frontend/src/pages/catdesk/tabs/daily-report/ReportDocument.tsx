@@ -3,18 +3,26 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { EvidenceText } from './EvidenceText';
 import type { DailyReportDocument } from './types';
+import {
+  MARKET_SCOPE_LABELS,
+  PROFILE_LABELS,
+  RISK_GATE_LABELS,
+  SIZE_HINT_LABELS,
+} from '../../shared/uiLabels';
 
 export function ReportDocument({ report }: { report: DailyReportDocument }) {
   return (
     <article className="report-document">
       <header className="report-document__header">
         <div>
-          <span className="report-eyebrow">RECOMMENDATION SNAPSHOT / V0.3.1</span>
+          <span className="report-eyebrow">推荐快照 · 版本 0.3.1</span>
           <h2>{report.title}</h2>
         </div>
         <div className="report-document__pins" aria-label="报告版本锚点">
-          <code>{report.snapshot.profile}</code>
-          <code>{report.snapshot.market_scope}</code>
+          <code>{PROFILE_LABELS[report.snapshot.profile] ?? report.snapshot.profile}</code>
+          <code>
+            {MARKET_SCOPE_LABELS[report.snapshot.market_scope] ?? report.snapshot.market_scope}
+          </code>
           <code>{report.snapshot.meta.contract_version}</code>
         </div>
       </header>
@@ -50,10 +58,18 @@ export function ReportDocument({ report }: { report: DailyReportDocument }) {
                   />
                 </p>
                 <div className="recommendation-card__meta">
-                  <code>score {recommendation.score.total}</code>
-                  <code>conviction {recommendation.conviction.final}</code>
-                  <code>risk {recommendation.risk_gate.gate}</code>
-                  <code>size {recommendation.entry_plan.size_hint.tier}</code>
+                  <code>评分 {recommendation.score.total}</code>
+                  <code>确信度 {recommendation.conviction.final}</code>
+                  <code>
+                    风险{' '}
+                    {RISK_GATE_LABELS[recommendation.risk_gate.gate] ??
+                      recommendation.risk_gate.gate}
+                  </code>
+                  <code>
+                    仓位{' '}
+                    {SIZE_HINT_LABELS[recommendation.entry_plan.size_hint.tier] ??
+                      recommendation.entry_plan.size_hint.tier}
+                  </code>
                 </div>
               </div>
             </article>

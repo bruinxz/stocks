@@ -7,6 +7,7 @@ import { ReportDocument } from './daily-report/ReportDocument';
 import { TabKpiStrip } from './daily-report/TabKpiStrip';
 import { buildDailyReportKpi } from './daily-report/slots';
 import type { DailyReportViewState } from './daily-report/types';
+import { GENERATION_STATUS_LABELS, MARKET_SCOPE_LABELS, PROFILE_LABELS } from '../shared/uiLabels';
 import './daily-report/report.css';
 
 export interface DailyReportProps {
@@ -30,7 +31,14 @@ export function DailyReport({
   generateAvailable = false,
   generateUnavailableReason = '回放生成待运行时接入',
 }: DailyReportProps) {
-  if (state.kind === 'loading') return <LoadingState />;
+  if (state.kind === 'loading')
+    return (
+      <LoadingState
+        title="正在翻阅每日研究来信"
+        description="汇总快照、证据引用和风险披露…"
+        mood="hopeful"
+      />
+    );
   if (state.kind === 'error') {
     return (
       <div className="report-state-shell">
@@ -45,12 +53,12 @@ export function DailyReport({
         <TabKpiStrip slots={buildDailyReportKpi()} />
         <div className="report-toolbar">
           <div>
-            <span className="report-eyebrow">DAILY REPORT / CONTRACT PREVIEW</span>
+            <span className="report-eyebrow">每日日报 · 数据契约预览</span>
             <h2>每日日报</h2>
           </div>
           <div>
-            <Tag>{state.profile}</Tag>
-            <Tag>{state.market_scope}</Tag>
+            <Tag>{PROFILE_LABELS[state.profile] ?? state.profile}</Tag>
+            <Tag>{MARKET_SCOPE_LABELS[state.market_scope] ?? state.market_scope}</Tag>
           </div>
         </div>
         <EmptyState title="当前范围暂无已归档日报" />
@@ -66,11 +74,11 @@ export function DailyReport({
       <TabKpiStrip slots={buildDailyReportKpi(state.report, state.generation)} />
       <div className="report-toolbar">
         <div>
-          <span className="report-eyebrow">DAILY REPORT / EVIDENCE LEDGER</span>
+          <span className="report-eyebrow">每日日报 · 证据账本</span>
           <h2>每日日报</h2>
         </div>
         <Tag color={state.generation.status === 'completed' ? 'green' : 'blue'}>
-          {state.generation.status}
+          {GENERATION_STATUS_LABELS[state.generation.status] ?? state.generation.status}
         </Tag>
       </div>
       <ReportDocument report={state.report} />

@@ -220,6 +220,14 @@ def _validate_observation(observation: FxObservation, as_of_utc: datetime) -> No
 def _row_value(row: object, field: str) -> object:
     if isinstance(row, Mapping):
         return row[field]
+    # asyncpg.Record intentionally implements subscription without
+    # registering as collections.abc.Mapping.  The production writer must
+    # therefore support its native row shape instead of relying on the
+    # attribute-only fake used by some unit tests.
+    try:
+        return row[field]  # type: ignore[index]
+    except (KeyError, IndexError, TypeError):
+        pass
     return getattr(row, field)
 
 

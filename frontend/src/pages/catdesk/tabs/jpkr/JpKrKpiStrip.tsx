@@ -9,11 +9,11 @@ type KpiDefinition = {
 };
 
 const KPI_DEFINITIONS: readonly KpiDefinition[] = [
-  { key: 'nikkei225', label: '日经 225', source: 'PIT 指数快照', kind: 'index' },
-  { key: 'topix', label: 'TOPIX', source: 'PIT 指数快照', kind: 'index' },
-  { key: 'kospi', label: 'KOSPI', source: 'PIT 指数快照', kind: 'index' },
-  { key: 'usdjpy', label: 'USD/JPY', source: 'BOJ', kind: 'fx' },
-  { key: 'usdkrw', label: 'USD/KRW', source: 'BOK', kind: 'fx' },
+  { key: 'nikkei225', label: '日经 225', source: '时点指数快照', kind: 'index' },
+  { key: 'topix', label: '东证指数', source: '时点指数快照', kind: 'index' },
+  { key: 'kospi', label: '韩国综合指数', source: '时点指数快照', kind: 'index' },
+  { key: 'usdjpy', label: '美元兑日元', source: '日本央行', kind: 'fx' },
+  { key: 'usdkrw', label: '美元兑韩元', source: '韩国央行', kind: 'fx' },
 ];
 
 function formatValue(snapshot: JpKrIndexKpiSnapshot | JpKrFxKpiSnapshot): string {
@@ -39,13 +39,13 @@ export function JpKrKpiStrip({ kpi }: { kpi: JpKrKpi }) {
               className="jpkr-kpi-card jpkr-kpi-card--unavailable"
               data-state="unavailable"
               key={definition.key}
-              aria-label={`${definition.label} unavailable`}
+              aria-label={`${definition.label} 暂无数据`}
             >
               <div className="jpkr-kpi-card__heading">
                 <span>{definition.label}</span>
                 <small>{definition.source}</small>
               </div>
-              <strong>Unavailable</strong>
+              <strong>暂无数据</strong>
               <span className="jpkr-kpi-card__as-of">当前数据链未提供</span>
             </article>
           );

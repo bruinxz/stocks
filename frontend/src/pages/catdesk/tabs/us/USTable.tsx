@@ -1,6 +1,7 @@
 import { Table, Tag, Progress, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { CandidateListEntry, Band } from '../c1Types';
+import { CATALYST_LABELS, RATING_LABELS } from '../../shared/uiLabels';
 
 const BAND_COLOR: Record<Band, string> = {
   A: '#22c55e',
@@ -20,15 +21,15 @@ interface USTableProps {
 export function USTable({ data, loading, onRowClick, selectedSymbol }: USTableProps) {
   const columns: ColumnsType<CandidateListEntry> = [
     {
-      title: 'Symbol',
+      title: '代码',
       dataIndex: 'symbol',
       key: 'symbol',
       width: 90,
       render: (v: string) => <span style={{ fontFamily: 'var(--cd-font-mono)' }}>{v}</span>,
     },
-    { title: 'Name', dataIndex: 'name', key: 'name', width: 140 },
+    { title: '名称', dataIndex: 'name', key: 'name', width: 140 },
     {
-      title: 'Score',
+      title: '评分',
       key: 'score',
       width: 80,
       sorter: (a, b) => (a.score?.total ?? 0) - (b.score?.total ?? 0),
@@ -39,23 +40,26 @@ export function USTable({ data, loading, onRowClick, selectedSymbol }: USTablePr
       ),
     },
     {
-      title: 'Rating',
+      title: '评级',
       key: 'rating_band',
       width: 70,
       render: (_, r) => {
         const band = r.score?.rating ?? r.rating_band;
         if (!band) return '--';
-        return <Tag color={BAND_COLOR[band] ?? 'default'}>{band}</Tag>;
+        return <Tag color={BAND_COLOR[band] ?? 'default'}>{RATING_LABELS[band] ?? band}</Tag>;
       },
     },
     {
-      title: 'Catalyst',
+      title: '催化类型',
       key: 'catalyst',
       width: 100,
-      render: (_, r) => <Tag>{r.latest_catalyst?.kind ?? 'unclassified'}</Tag>,
+      render: (_, r) => {
+        const kind = r.latest_catalyst?.kind ?? 'unclassified';
+        return <Tag>{CATALYST_LABELS[kind] ?? kind}</Tag>;
+      },
     },
     {
-      title: 'Conviction',
+      title: '确信度',
       key: 'conviction',
       width: 80,
       render: (_, r) => {
@@ -66,7 +70,7 @@ export function USTable({ data, loading, onRowClick, selectedSymbol }: USTablePr
       },
     },
     {
-      title: 'Size Hint',
+      title: '参考仓位',
       key: 'sizeHint',
       width: 120,
       render: (_, r) => {
@@ -75,7 +79,7 @@ export function USTable({ data, loading, onRowClick, selectedSymbol }: USTablePr
           return <span style={{ color: 'var(--cd-text-secondary)' }}>--</span>;
         const pct = sh.pct;
         return (
-          <Tooltip title="仅参考·非下单 binding · 不构成投资建议">
+          <Tooltip title="仅供参考，不是下单指令，不构成投资建议">
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <Progress
                 percent={pct * 20}
@@ -86,7 +90,14 @@ export function USTable({ data, loading, onRowClick, selectedSymbol }: USTablePr
                 style={{ width: 60 }}
               />
               <span style={{ fontFamily: 'var(--cd-font-mono)', fontSize: 11 }}>
-                {sh.tier} {pct}%
+                {sh.tier === 'TIER_5'
+                  ? '最高档'
+                  : sh.tier === 'TIER_3'
+                    ? '较高档'
+                    : sh.tier === 'TIER_2'
+                      ? '中档'
+                      : '观察档'}{' '}
+                {pct}%
               </span>
             </div>
           </Tooltip>
@@ -94,7 +105,7 @@ export function USTable({ data, loading, onRowClick, selectedSymbol }: USTablePr
       },
     },
     {
-      title: 'Entry',
+      title: '入场区间',
       key: 'entry',
       width: 100,
       render: (_, r) => {
@@ -116,7 +127,12 @@ export function USTable({ data, loading, onRowClick, selectedSymbol }: USTablePr
       rowKey="symbol"
       loading={loading}
       size="small"
-      pagination={{ pageSize: 20, showSizeChanger: false }}
+      pagination={{
+        pageSize: 10,
+        showSizeChanger: true,
+        pageSizeOptions: [10, 20, 50],
+        showTotal: total => `共 ${total} 条`,
+      }}
       onRow={record => ({
         onClick: () => onRowClick?.(record),
         onKeyDown: event => {

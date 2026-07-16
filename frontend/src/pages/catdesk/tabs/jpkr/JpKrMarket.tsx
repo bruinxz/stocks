@@ -11,6 +11,7 @@ import { JpKrTable } from './JpKrTable';
 import { buildJpKrSections } from './JpKrSidebarSections';
 import { JpKrKpiStrip } from './JpKrKpiStrip';
 import './jpkr.css';
+import { DataListToolbar } from '../../shared/DataListToolbar';
 
 const MARKET_OPTIONS = [
   { value: 'JP' as const, label: '日本', ariaLabel: '日本市场' },
@@ -30,7 +31,12 @@ const SECTOR_OPTIONS: Array<{ value: JpKrSector; label: string; ariaLabel: strin
 ];
 
 function getTodayDate(): string {
-  return new Date().toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
 }
 
 export type JpKrMarketProps = {
@@ -42,6 +48,7 @@ export default function JpKrMarket({ tradingDay }: JpKrMarketProps = {}) {
   const [sectorFilter, setSectorFilter] = useState<JpKrSector[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [search, setSearch] = useState('');
 
   const date = tradingDay ?? getTodayDate();
   const { data, loading, error } = useJpKrMarketData(date, market);
@@ -49,9 +56,20 @@ export default function JpKrMarket({ tradingDay }: JpKrMarketProps = {}) {
 
   const filteredRows = useMemo(() => {
     if (!data?.rows) return [];
-    if (sectorFilter.length === 0) return data.rows;
-    return data.rows.filter(r => sectorFilter.includes(r.sector));
-  }, [data?.rows, sectorFilter]);
+    let rows =
+      sectorFilter.length === 0
+        ? data.rows
+        : data.rows.filter(r => sectorFilter.includes(r.sector));
+    const keyword = search.trim().toLocaleLowerCase('zh-CN');
+    if (keyword) {
+      rows = rows.filter(row =>
+        [row.symbol, row.name_local, row.name_en]
+          .filter(Boolean)
+          .some(value => String(value).toLocaleLowerCase('zh-CN').includes(keyword))
+      );
+    }
+    return rows;
+  }, [data?.rows, search, sectorFilter]);
 
   const handleMarketChange = useCallback((next: JpKrMarketType[]) => {
     if (next.length > 0) {
@@ -71,20 +89,23 @@ export default function JpKrMarket({ tradingDay }: JpKrMarketProps = {}) {
     setSelectedSymbol(null);
   }, []);
 
-  const selectedRow = useMemo(
-    () => {
-      const listed = data?.rows.find(r => r.symbol === selectedSymbol);
-      if (!detailData) return listed ?? null;
-      return {
-        ...detailData,
-        ...(listed?.recommendation ? { recommendation: listed.recommendation } : {}),
-      };
-    },
-    [detailData, data?.rows, selectedSymbol]
-  );
+  const selectedRow = useMemo(() => {
+    const listed = data?.rows.find(r => r.symbol === selectedSymbol);
+    if (!detailData) return listed ?? null;
+    return {
+      ...detailData,
+      ...(listed?.recommendation ? { recommendation: listed.recommendation } : {}),
+    };
+  }, [detailData, data?.rows, selectedSymbol]);
 
   if (loading && !data) {
-    return <LoadingState />;
+    return (
+      <LoadingState
+        title="正在查看日韩盘面"
+        description="核对东京与首尔的行情、板块和披露事件…"
+        mood="surprised"
+      />
+    );
   }
 
   if (error && !data) {
@@ -106,8 +127,8 @@ export default function JpKrMarket({ tradingDay }: JpKrMarketProps = {}) {
           }}
         >
           {data?.recommendation_status?.kind === 'unavailable'
-            ? 'Strategy 推荐服务当前不可用；行情、披露与汇率数据仍可查看。'
-            : '当前交易日尚未生成该市场的 Strategy 推荐快照。'}
+            ? '策略推荐服务当前不可用；行情、披露与汇率数据仍可查看。'
+            : '当前交易日尚未生成该市场的策略推荐快照。'}
         </div>
       )}
 
@@ -128,8 +149,22 @@ export default function JpKrMarket({ tradingDay }: JpKrMarketProps = {}) {
         />
       </div>
 
+      <DataListToolbar
+        value={search}
+        onChange={setSearch}
+        total={filteredRows.length}
+        label="条股票"
+        placeholder="搜索股票代码或公司名称"
+      />
+
       {filteredRows.length === 0 && !loading ? (
-        <EmptyState title="当日无披露事件 / 交易日历休市" />
+        <EmptyState
+          title={
+            sectorFilter.length
+              ? '当前市场的所选板块暂无行情，可切换日本/韩国市场'
+              : '当日暂无可用行情 / 交易日历休市'
+          }
+        />
       ) : (
         <JpKrTable
           rows={filteredRows}

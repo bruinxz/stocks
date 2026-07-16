@@ -47,7 +47,7 @@ export function RelevanceBreakdownCard({ components = [] }: RelevanceBreakdownCa
           当前快照未提供 catalyst_relevance
         </div>
       )}
-      {components.map((c) => (
+      {components.map(c => (
         <div key={c.label} style={rowStyle}>
           <span style={labelStyle}>{c.label}</span>
           <Progress
@@ -56,7 +56,7 @@ export function RelevanceBreakdownCard({ components = [] }: RelevanceBreakdownCa
             trailColor="var(--cd-border)"
             size="small"
             style={{ flex: 1 }}
-            format={(p) => `${p}%`}
+            format={p => `${p}%`}
           />
         </div>
       ))}

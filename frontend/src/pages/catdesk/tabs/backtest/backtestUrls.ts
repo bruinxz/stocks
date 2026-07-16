@@ -12,10 +12,7 @@ export interface BacktestListQuery {
   limit: number;
 }
 
-function assertCompatibleScope(
-  strategy: BacktestStrategy,
-  marketScope: BacktestMarketScope
-): void {
+function assertCompatibleScope(strategy: BacktestStrategy, marketScope: BacktestMarketScope): void {
   if (!isBacktestStrategyScopeCompatible(strategy, marketScope)) {
     throw new Error(`market_scope "${marketScope}" is incompatible with strategy "${strategy}"`);
   }

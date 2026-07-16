@@ -80,6 +80,7 @@ export class AuthController {
     // 绑定方法以确保正确的this上下文
     this.register = this.register.bind(this);
     this.login = this.login.bind(this);
+    this.defaultAdminLogin = this.defaultAdminLogin.bind(this);
     this.refreshToken = this.refreshToken.bind(this);
     this.logout = this.logout.bind(this);
     this.getProfile = this.getProfile.bind(this);
@@ -285,6 +286,41 @@ export class AuthController {
       AuthController.logInfrastructureFailure('login', error);
       return this.serviceUnavailable(res);
     }
+  }
+
+  /**
+   * Owner-approved kiosk mode: issue the configured default administrator
+   * session without sending its password to the browser bundle.
+   *
+   * The endpoint is fail-closed unless all three deployment-only variables
+   * are present. Normal installations therefore keep the login page.
+   */
+  async defaultAdminLogin(req: Request, res: Response, next: NextFunction) {
+    if (String(process.env.DEFAULT_ADMIN_AUTO_LOGIN || '').toLowerCase() !== 'true') {
+      return res.status(404).json({ success: false, message: '默认管理员登录未启用' });
+    }
+
+    const username = String(process.env.DEFAULT_ADMIN_USERNAME || '').trim();
+    const password = String(process.env.DEFAULT_ADMIN_PASSWORD || '');
+    if (!username || !password) {
+      return res.status(503).json({ success: false, message: '默认管理员登录配置不完整' });
+    }
+
+    try {
+      const admin = await User.findOne({
+        where: { username, role: 'admin', is_active: true },
+        attributes: ['id'],
+      });
+      if (!admin) {
+        return res.status(503).json({ success: false, message: '默认管理员账号不可用' });
+      }
+    } catch (error) {
+      AuthController.logInfrastructureFailure('defaultAdminLogin', error);
+      return this.serviceUnavailable(res);
+    }
+
+    req.body = { username, password };
+    return this.login(req, res, next);
   }
 
   /**

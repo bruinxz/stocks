@@ -17,15 +17,15 @@ export function PitTimeline({ snapshots, selectedId, onSelect }: PitTimelineProp
   if (!timeline.length) return null;
 
   return (
-    <section className="pit-timeline-shell" aria-label="PIT 快照时间线">
+    <section className="pit-timeline-shell" aria-label="历史时点快照时间线">
       <header className="pit-timeline-shell__header">
         <div>
-          <span>PIT LEDGER</span>
+          <span>历史时点账本</span>
           <strong>证据时间线</strong>
         </div>
         <small>选择快照，核对当时可见持仓与数据版本</small>
       </header>
-      <div className="pit-timeline" role="listbox" aria-label="PIT 快照列表">
+      <div className="pit-timeline" role="listbox" aria-label="历史时点快照列表">
         <div className="pit-timeline__rail" aria-hidden="true" />
         {timeline.map((snapshot, index) => {
           const selected = snapshot.snapshot_id === selectedId;

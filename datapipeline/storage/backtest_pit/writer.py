@@ -423,8 +423,8 @@ class PitSnapshotWriter:
                         item.position_order,
                         item.market_scope,
                         item.ticker,
-                        str(item.weight),
-                        str(item.return_since_entry),
+                        item.weight,
+                        item.return_since_entry,
                         item.is_stale,
                         item.source_kind,
                         item.source_document_id,
@@ -470,6 +470,10 @@ def _advisory_key(strategy: str, market_scope: str, as_of_utc: datetime) -> int:
 def _row(row: object, field: str) -> object:
     if isinstance(row, Mapping):
         return row[field]
+    try:
+        return row[field]  # type: ignore[index]
+    except (KeyError, IndexError, TypeError):
+        pass
     return getattr(row, field)
 
 

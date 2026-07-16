@@ -131,10 +131,7 @@ function parseSnapshot(
       `snapshots[${index}].strategy "${strategy}" does not match request "${requestedStrategy}"`
     );
   }
-  const marketScope = parseMarketScope(
-    raw.market_scope,
-    `snapshots[${index}].market_scope`
-  );
+  const marketScope = parseMarketScope(raw.market_scope, `snapshots[${index}].market_scope`);
   assertCompatibleScope(strategy, marketScope, `snapshots[${index}]`);
   if (marketScope !== requestedMarketScope) {
     throw new BacktestContractError(

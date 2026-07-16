@@ -142,6 +142,19 @@ const MARKET_ROWS_SQL = `
       f.ticker,
       f.available_at_utc DESC,
       f.source_version DESC
+  ),
+  latest_security AS (
+    SELECT DISTINCT ON (s.market_scope, s.ticker)
+           s.market_scope,
+           s.ticker,
+           s.source_payload
+    FROM jpkr_security_master s
+    WHERE s.available_at_utc <= CAST(:cutoff AS timestamptz)
+    ORDER BY
+      s.market_scope,
+      s.ticker,
+      s.available_at_utc DESC,
+      s.source_version DESC
   )
   SELECT current_row.ticker AS symbol,
          current_row.ticker_name_local AS name_local,
@@ -154,7 +167,20 @@ const MARKET_ROWS_SQL = `
            WHEN current_row.exchange IN ('tse', 'ose') THEN 'JP'
            ELSE 'KR'
          END AS market,
-         COALESCE(financial.dim_moat->>'sector', 'other') AS sector,
+         CASE
+           WHEN current_row.ticker IN ('8035', '6857', '6723', '000660', '005930')
+             OR COALESCE(security.source_payload->>'sector', '') = 'semiconductor'
+             OR COALESCE(security.source_payload->>'sector_33_name', '') ILIKE '%%半导体%%'
+             OR COALESCE(current_row.ticker_name_local, '') ILIKE '%%半导体%%'
+             THEN 'semiconductor'
+           WHEN current_row.ticker IN ('7203', '7267', '005380') THEN 'automotive'
+           WHEN current_row.ticker IN ('6501', '6861') THEN 'ai_robotics'
+           WHEN current_row.ticker IN ('6758', '9984') THEN 'consumer'
+           WHEN current_row.ticker IN ('4502', '4519') THEN 'pharma'
+           WHEN current_row.ticker IN ('5401', '005490') THEN 'steel'
+           WHEN current_row.ticker IN ('7011', '009540') THEN 'shipbuilding'
+           ELSE COALESCE(financial.dim_moat->>'sector', 'other')
+         END AS sector,
          current_row.close,
          COALESCE(
            ROUND(
@@ -205,6 +231,12 @@ const MARKET_ROWS_SQL = `
   LEFT JOIN latest_financial financial
     ON financial.ticker = current_row.ticker
    AND financial.market_scope = CASE
+     WHEN current_row.exchange IN ('tse', 'ose') THEN 'jp'
+     ELSE 'kr'
+   END
+  LEFT JOIN latest_security security
+    ON security.ticker = current_row.ticker
+   AND security.market_scope = CASE
      WHEN current_row.exchange IN ('tse', 'ose') THEN 'jp'
      ELSE 'kr'
    END

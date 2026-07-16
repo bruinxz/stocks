@@ -150,11 +150,10 @@ function installFetch(
   marketBody: unknown,
   recommendation: { status: number; body?: unknown } = { status: 404 }
 ) {
-  const fetchMock = jest.fn(
-    async (input: RequestInfo | URL, _init?: RequestInit) =>
-      String(input).includes('/api/v1/ai/recommendations/latest?')
-        ? response(recommendation.status, recommendation.body)
-        : response(200, marketBody)
+  const fetchMock = jest.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
+    String(input).includes('/api/v1/ai/recommendations/latest?')
+      ? response(recommendation.status, recommendation.body)
+      : response(200, marketBody)
   );
   globalThis.fetch = fetchMock as unknown as typeof fetch;
   return fetchMock;
@@ -213,10 +212,10 @@ describe('JpKrMarket real container', () => {
     );
     expect(container.textContent).toContain('41,000.50');
     expect(container.textContent).toContain('150.25');
-    expect(container.textContent).toContain('BOJ');
+    expect(container.textContent).toContain('日本央行');
     expect(container.querySelectorAll('[data-state="available"]')).toHaveLength(3);
     expect(container.querySelectorAll('[data-state="unavailable"]')).toHaveLength(2);
-    expect(container.textContent?.match(/Unavailable/g)).toHaveLength(2);
+    expect(container.textContent?.match(/暂无数据/g)).toHaveLength(2);
     expect(container.textContent).toContain('7203');
     expect(container.textContent).toContain('尚未生成该市场');
   });
@@ -283,10 +282,10 @@ describe('JpKrMarket real container', () => {
     });
 
     expect(container.querySelectorAll('[data-state="unavailable"]')).toHaveLength(5);
-    expect(container.textContent?.match(/Unavailable/g)).toHaveLength(5);
+    expect(container.textContent?.match(/暂无数据/g)).toHaveLength(5);
     expect(container.textContent).not.toContain('0.00');
     expect(container.querySelector('[data-testid="empty-state"]')?.textContent).toContain(
-      '当日无披露事件'
+      '当日暂无可用行情'
     );
   });
 

@@ -34,6 +34,21 @@ export interface AuthResponse {
 }
 
 export const AUTH_LOGOUT_PENDING_KEY = 'auth_logout_pending_v1';
+let defaultLoginInFlight: Promise<AuthResponse> | null = null;
+
+function persistAuthResponse(response: AuthResponse): AuthResponse {
+  const data = response.data;
+  if (response.success && data) {
+    if (data.tokens) {
+      localStorage.setItem('token', data.tokens.accessToken);
+    } else if (data.token) {
+      localStorage.setItem('token', data.token);
+    }
+    localStorage.setItem('user', JSON.stringify(data.user));
+    localStorage.setItem('username', data.user.username);
+  }
+  return response;
+}
 
 async function retryPendingLogoutRequest(): Promise<boolean> {
   if (localStorage.getItem(AUTH_LOGOUT_PENDING_KEY) !== '1') return true;
@@ -53,34 +68,29 @@ async function requirePendingLogoutResolved(): Promise<void> {
 }
 
 export const authService = {
+  async defaultLogin(): Promise<AuthResponse> {
+    if (!defaultLoginInFlight) {
+      defaultLoginInFlight = (async () => {
+        await requirePendingLogoutResolved();
+        const response = await api.post<AuthResponse>('/auth/default-login');
+        return persistAuthResponse(response.data);
+      })().finally(() => {
+        defaultLoginInFlight = null;
+      });
+    }
+    return defaultLoginInFlight;
+  },
+
   async login(credentials: LoginRequest): Promise<AuthResponse> {
     await requirePendingLogoutResolved();
     const response = await api.post<AuthResponse>('/auth/login', credentials);
-    const data = response.data.data;
-    if (response.data.success && data) {
-      if (data.tokens) {
-        localStorage.setItem('token', data.tokens.accessToken);
-      } else if (data.token) {
-        localStorage.setItem('token', data.token);
-      }
-      localStorage.setItem('user', JSON.stringify(data.user));
-    }
-    return response.data;
+    return persistAuthResponse(response.data);
   },
 
   async register(userData: RegisterRequest): Promise<AuthResponse> {
     await requirePendingLogoutResolved();
     const response = await api.post<AuthResponse>('/auth/register', userData);
-    const data = response.data.data;
-    if (response.data.success && data) {
-      if (data.tokens) {
-        localStorage.setItem('token', data.tokens.accessToken);
-      } else if (data.token) {
-        localStorage.setItem('token', data.token);
-      }
-      localStorage.setItem('user', JSON.stringify(data.user));
-    }
-    return response.data;
+    return persistAuthResponse(response.data);
   },
 
   async logout(): Promise<void> {
