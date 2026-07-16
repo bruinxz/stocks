@@ -22,6 +22,10 @@ const pgHarness = fs.readFileSync(
   'utf8'
 );
 const indexSource = fs.readFileSync(path.join(ROOT, 'src/index.ts'), 'utf8');
+const schemaGuard = fs.readFileSync(
+  path.join(ROOT, 'src/auth/AuthRefreshSessionSchema.ts'),
+  'utf8'
+);
 const deployScript = fs.readFileSync(
   path.join(ROOT, '../scripts/deployment/deploy_remote_build.sh'),
   'utf8'
@@ -60,6 +64,10 @@ for (const field of [
 assert('model never declares a raw token field', !/declare\s+(refresh_)?token\b/.test(model));
 assert('database registers model', /models:\s*\[[\s\S]*\bAuthRefreshSession\b/.test(registry));
 assert('model index exports model', /export\s+\{\s*AuthRefreshSession\s*\}/.test(modelIndex));
+assert(
+  'schema probe normalizes PostgreSQL name[] to text[]',
+  /array_agg\(a\.attname::TEXT ORDER BY a\.attnum\)/.test(schemaGuard)
+);
 
 assert('forward migration is transactional', /\bBEGIN;[\s\S]*\bCOMMIT;/.test(up));
 assert('rollback migration is transactional', /\bBEGIN;[\s\S]*\bCOMMIT;/.test(down));

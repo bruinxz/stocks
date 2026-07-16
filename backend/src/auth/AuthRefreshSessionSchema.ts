@@ -49,7 +49,7 @@ export async function assertAuthRefreshSessionSchema(sequelize: Sequelize): Prom
         to_regclass('public.${TABLE}') IS NOT NULL AS table_exists,
         obj_description(to_regclass('public.${TABLE}'), 'pg_class') AS marker,
         (
-          SELECT array_agg(a.attname ORDER BY a.attnum)
+          SELECT array_agg(a.attname::TEXT ORDER BY a.attnum)
           FROM pg_attribute a
           WHERE a.attrelid = to_regclass('public.${TABLE}')
             AND a.attnum > 0
