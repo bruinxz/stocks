@@ -1,0 +1,23 @@
+frontend/src/__tests__/appPublicRoutes.test.tsx
+  s_26d7f43d00eb19::t_205ab767babcac 5,93-96
+frontend/src/pages/catdesk/shared/__tests__/useStockNameHydration.test.tsx
+  s_26d7f43d00eb19::t_2502a7a24a4cb5 3-11,15,17,20,66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "383ca051546bb1b8913fdea4150fd2bd7d0095e0",
+  "prompts": {},
+  "sessions": {
+    "s_26d7f43d00eb19": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f68e6-5066-71f1-99c3-8e7f1950f283",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
