@@ -5,7 +5,7 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import request from 'supertest';
 import { QueryTypes } from 'sequelize';
-import { Sequelize } from 'sequelize-typescript';
+import type { Sequelize } from 'sequelize-typescript';
 import { buildRecommendationReplayRoutes } from '../../src/api/routes/recommendationReplay.routes';
 import { buildRecommendationSnapshotRoutes } from '../../src/api/routes/recommendationSnapshot.routes';
 import { buildDailyReportProjectionRoutes } from '../../src/api/routes/dailyReportProjection.routes';
@@ -18,6 +18,7 @@ import { ReplayCliClient } from '../../src/replay/ReplayCliClient';
 import type { ReplayJob } from '../../src/replay/ReplayContract';
 import { ReplayJobSupervisor } from '../../src/replay/ReplayJobSupervisor';
 import { SequelizeReplayPinsReadAdapter } from '../../src/replay/ReplayPinsReadPort';
+import { connectDisposablePostgres } from './disposablePostgres';
 
 type ReplayRequest = {
   trading_day: string;
@@ -166,7 +167,7 @@ async function main(): Promise<void> {
     idempotent_capture: true,
   });
 
-  const sequelize = new Sequelize(databaseUrl, { logging: false });
+  const sequelize = connectDisposablePostgres(databaseUrl);
   let server: http.Server | undefined;
   try {
     const authUser = await User.findByPk(AUTH_USER_ID);

@@ -2,7 +2,7 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import request from 'supertest';
 import { QueryTypes } from 'sequelize';
-import { Sequelize } from 'sequelize-typescript';
+import type { Sequelize } from 'sequelize-typescript';
 import { buildRecommendationReplayRoutes } from '../../src/api/routes/recommendationReplay.routes';
 import { buildRecommendationSnapshotRoutes } from '../../src/api/routes/recommendationSnapshot.routes';
 import { SequelizeRecommendationSnapshotReadAdapter } from '../../src/recommendations/SequelizeRecommendationSnapshotReadAdapter';
@@ -11,6 +11,7 @@ import type { ReplayJob } from '../../src/replay/ReplayContract';
 import { ReplayJobSupervisor } from '../../src/replay/ReplayJobSupervisor';
 import { SequelizeReplayPinsReadAdapter } from '../../src/replay/ReplayPinsReadPort';
 import { User } from '../../src/models/User';
+import { connectDisposablePostgres } from './disposablePostgres';
 
 const REQUEST = {
   trading_day: '2026-07-10',
@@ -92,7 +93,7 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const sequelize = new Sequelize(databaseUrl, { logging: false });
+  const sequelize = connectDisposablePostgres(databaseUrl);
   const originalFindByPk = User.findByPk;
   const activeUser = {
     id: 7,

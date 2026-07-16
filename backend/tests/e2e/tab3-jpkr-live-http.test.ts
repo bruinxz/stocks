@@ -6,7 +6,7 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import request from 'supertest';
 import { QueryTypes } from 'sequelize';
-import { Sequelize } from 'sequelize-typescript';
+import type { Sequelize } from 'sequelize-typescript';
 import jpkrMarketRoutes from '../../src/api/routes/jpkrMarket.routes';
 import { buildRecommendationReplayRoutes } from '../../src/api/routes/recommendationReplay.routes';
 import { buildRecommendationSnapshotRoutes } from '../../src/api/routes/recommendationSnapshot.routes';
@@ -22,6 +22,7 @@ import { ReplayCliClient } from '../../src/replay/ReplayCliClient';
 import type { ReplayJob } from '../../src/replay/ReplayContract';
 import { ReplayJobSupervisor } from '../../src/replay/ReplayJobSupervisor';
 import { SequelizeReplayPinsReadAdapter } from '../../src/replay/ReplayPinsReadPort';
+import { connectDisposablePostgres } from './disposablePostgres';
 
 type JsonObject = Record<string, any>;
 
@@ -255,7 +256,7 @@ async function main(): Promise<void> {
   assert.equal(manifest.capture.request.market_scope, 'jp');
   assert.equal(manifest.capture.ticker, manifest.facts.kline.ticker);
 
-  const database = new Sequelize(databaseUrl, { logging: false });
+  const database = connectDisposablePostgres(databaseUrl);
   let server: http.Server | undefined;
   let marketQueries = 0;
   const queryHook = () => {
