@@ -171,8 +171,8 @@ export async function authenticatedFetch(
     return await request(headers);
   } catch (error) {
     if (init.signal?.aborted) throw error;
+    redirectToLogin();
     if (refreshCredentialWasRejected(error)) {
-      redirectToLogin();
       return response;
     }
     throw error;
@@ -233,7 +233,7 @@ api.interceptors.response.use(
       if ((original.signal as AbortSignal | undefined)?.aborted) {
         return Promise.reject(refreshError);
       }
-      if (refreshCredentialWasRejected(refreshError)) redirectToLogin();
+      redirectToLogin();
       return Promise.reject(error);
     }
   }
