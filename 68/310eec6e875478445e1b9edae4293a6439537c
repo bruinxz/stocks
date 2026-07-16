@@ -1,0 +1,117 @@
+frontend/src/__tests__/appPublicRoutes.test.tsx
+  s_26d7f43d00eb19::t_ebfe03b899e687 43-46,73,180
+frontend/src/pages/catdesk/CatDeskLayout.tsx
+  s_26d7f43d00eb19::t_25f2fd75a6098a 13,28,42-46,48,53,58,63,68,73,78,85,155-157,159
+frontend/src/pages/catdesk/catdesk.css
+  s_26d7f43d00eb19::t_35803e1859d3b3 785-818,862-872,1019-1042,1065,1113,1151-1154
+frontend/src/pages/catdesk/shared/CowMascot.tsx
+  s_26d7f43d00eb19::t_89249535800cee 47
+frontend/src/pages/catdesk/shared/DataListToolbar.tsx
+  s_26d7f43d00eb19::t_ba7d3cadc5a748 1-35
+frontend/src/pages/catdesk/shared/DisclaimerFooter.tsx
+  s_26d7f43d00eb19::t_1cc60ee39dbf64 5
+frontend/src/pages/catdesk/shared/EmptyState.tsx
+  s_26d7f43d00eb19::t_ee5de010659d10 19
+frontend/src/pages/catdesk/shared/KpiBar.tsx
+  s_26d7f43d00eb19::t_17be8ceabe3d2f 66,74
+frontend/src/pages/catdesk/shared/TabNav.tsx
+  s_26d7f43d00eb19::t_26f1e04d9bc566 9,21,38,41
+frontend/src/pages/catdesk/shared/useStockNameHydration.ts
+  s_26d7f43d00eb19::t_8d0d639d2771ef 1-94
+frontend/src/pages/catdesk/tabs/AShareMorningBrief.tsx
+  s_26d7f43d00eb19::t_d9163cb102a1bb 14-15,38,47,58,61-69,84,86,131-137
+frontend/src/pages/catdesk/tabs/DisclaimerPage.tsx
+  s_26d7f43d00eb19::t_b22a1392d8c4a4 72,75,78,81,84
+frontend/src/pages/catdesk/tabs/USStockPicks.tsx
+  s_26d7f43d00eb19::t_ec490ad9b2d85e 14,25,27,42-48,56,88-94
+frontend/src/pages/catdesk/tabs/a-share-market/AShareMarket.tsx
+  s_26d7f43d00eb19::t_46984bd6cad2c0 1-463
+frontend/src/pages/catdesk/tabs/a-share-market/a-share-market.css
+  s_26d7f43d00eb19::t_c8fea9a5e4da24 1-245
+frontend/src/pages/catdesk/tabs/backtest/BacktestChart.tsx
+  s_26d7f43d00eb19::t_902c73a34e6f1f 30
+frontend/src/pages/catdesk/tabs/backtest/BacktestEvidence.tsx
+  s_26d7f43d00eb19::t_0824d4e8cfcfd0 2-3,47,65-74,76-77,92,148-149,157,159,166,170,184,209-217,227
+frontend/src/pages/catdesk/tabs/backtest/HoldingsTable.tsx
+  s_26d7f43d00eb19::t_9f0035b4b945d8 18,25,35
+frontend/src/pages/catdesk/tabs/backtest/MetricsCards.tsx
+  s_26d7f43d00eb19::t_e08dd0d1a16549 14,17
+frontend/src/pages/catdesk/tabs/backtest/PitTimeline.tsx
+  s_26d7f43d00eb19::t_626800a552b255 20,23,28
+frontend/src/pages/catdesk/tabs/backtest/SnapshotTable.tsx
+  s_26d7f43d00eb19::t_b7d1b886d5f67e 4,22,25-35,42,71,79
+frontend/src/pages/catdesk/tabs/backtest/__tests__/backtestUrls.test.ts
+  s_26d7f43d00eb19::t_42eefd92d4e4ce 46
+frontend/src/pages/catdesk/tabs/backtest/backtest.css
+  s_26d7f43d00eb19::t_add54e12c7d172 21-24,107
+frontend/src/pages/catdesk/tabs/backtest/backtestAdapters.ts
+  s_26d7f43d00eb19::t_37a6c7cedf42e4 134
+frontend/src/pages/catdesk/tabs/backtest/backtestUrls.ts
+  s_26d7f43d00eb19::t_2577857ccb9327 15
+frontend/src/pages/catdesk/tabs/daily-report/__tests__/runtime.test.tsx
+  s_26d7f43d00eb19::t_b6878ba14c2059 29
+frontend/src/pages/catdesk/tabs/jpkr/JpKrKpiStrip.tsx
+  s_26d7f43d00eb19::t_6ef96dee43bed5 12-16,42,48
+frontend/src/pages/catdesk/tabs/jpkr/JpKrMarket.tsx
+  s_26d7f43d00eb19::t_e02abbdf40753d 14,46,54-67,87-94,119-120,141-148
+frontend/src/pages/catdesk/tabs/jpkr/JpKrSidebarSections.tsx
+  s_26d7f43d00eb19::t_abeb881bd5e081 15-16,34,59
+frontend/src/pages/catdesk/tabs/jpkr/JpKrTable.tsx
+  s_26d7f43d00eb19::t_54b8a96087e0f0 7-9,13-18,33-35,57-59,71,108,110-112,120,129-130,138,143,159
+frontend/src/pages/catdesk/tabs/jpkr/__tests__/container.test.tsx
+  s_26d7f43d00eb19::t_860b477fad5f26 153-156,215,218,285
+frontend/src/pages/catdesk/tabs/morning/MorningBriefTable.tsx
+  s_26d7f43d00eb19::t_4254fa872e9226 4,51,69-71,126-131
+frontend/src/pages/catdesk/tabs/morning/MorningFilterBar.tsx
+  s_26d7f43d00eb19::t_9b7eba6e1b3aa0 2,5-13,41-44,70-78,84-99,104-119,124-130
+frontend/src/pages/catdesk/tabs/morning/MorningKpiSlots.tsx
+  s_26d7f43d00eb19::t_ea8f3a51c44ca2 10-15
+frontend/src/pages/catdesk/tabs/morning/detail/AIRecommendationCard.tsx
+  s_26d7f43d00eb19::t_152b2cbc5cbe83 42,48,55-57
+frontend/src/pages/catdesk/tabs/morning/detail/ConvictionBreakdownCard.tsx
+  s_26d7f43d00eb19::t_bdba3c3b7b111e 47-51,61,74-80
+frontend/src/pages/catdesk/tabs/morning/detail/DataSourceBadge.tsx
+  s_26d7f43d00eb19::t_13ca3b76aab217 32-35
+frontend/src/pages/catdesk/tabs/morning/detail/RelevanceBreakdownCard.tsx
+  s_26d7f43d00eb19::t_fc4d0dcde9e8ba 50,59
+frontend/src/pages/catdesk/tabs/morning/detail/buildMorningSections.tsx
+  s_26d7f43d00eb19::t_adddc4e41f8c9b 15,17,21-22,24,32,35-36,38,44,56,61-62,68,81,99,111,120,139,160,163-167,179
+frontend/src/pages/catdesk/tabs/multibagger/HighMultipotential.tsx
+  s_26d7f43d00eb19::t_b5bc8b3a45a8f1 8-13,17-18,28-37,50-53,58,63-75,79,100-104,141-149,153,167
+frontend/src/pages/catdesk/tabs/multibagger/MultibaggerTable.tsx
+  s_26d7f43d00eb19::t_ec462ad7a7b8f3 7,26-29,75,113-114,125-129,143,169
+frontend/src/pages/catdesk/tabs/multibagger/multibaggerAdapters.ts
+  s_26d7f43d00eb19::t_f356406651fb66 515,533
+frontend/src/pages/catdesk/tabs/multibagger/types.ts
+  s_26d7f43d00eb19::t_ef54ea979a66d0 17
+frontend/src/pages/catdesk/tabs/us/USFilterBar.tsx
+  s_26d7f43d00eb19::t_f5debe163db9c5 25-28,31,35-36
+frontend/src/pages/catdesk/tabs/us/USKpiSlots.tsx
+  s_26d7f43d00eb19::t_109b01ab3f2b61 12-15
+frontend/src/pages/catdesk/tabs/us/USTable.tsx
+  s_26d7f43d00eb19::t_d6f712bd2ad15f 4,24,30,32,43,49,53,56-59,62,73,82,93-100,108,130-135
+frontend/src/pages/catdesk/tabs/us/detail/buildUSSections.tsx
+  s_26d7f43d00eb19::t_0d55407917b0dd 15,30,45,67,77,96,116,124,127-131
+frontend/src/pages/catdesk/useTabState.ts
+  s_26d7f43d00eb19::t_1407f12ae2a4d9 5,17,22,28
+frontend/src/shared/components/FilterChip.tsx
+  s_26d7f43d00eb19::t_8de2ba49a83c17 39,47,52,59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "68310eec6e875478445e1b9edae4293a6439537c",
+  "prompts": {},
+  "sessions": {
+    "s_26d7f43d00eb19": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f68e6-5066-71f1-99c3-8e7f1950f283",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
