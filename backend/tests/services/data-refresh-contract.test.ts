@@ -148,6 +148,11 @@ assert.match(
   /for market_scope in \("cn_a", "us", "jp"\)/,
   'global refresh must generate A-share, US and JP snapshots'
 );
+assert.match(
+  globalSync,
+  /_rebase_pending_fx[\s\S]{0,1800}previous_by_pair=stored_latest/,
+  'global refresh must rebase new FX rows onto the persisted predecessor lineage'
+);
 assert.match(routes, /'\/page-freshness'.*authenticate/, 'page freshness route must be protected');
 assert.match(
   dailyReport,
@@ -205,4 +210,4 @@ assert.match(
   'A-share report history must support PIT-bounded historical materialization'
 );
 
-console.log('data refresh contract: 30 assertions passed');
+console.log('data refresh contract: 31 assertions passed');
