@@ -1,0 +1,23 @@
+backend/src/data/services/StockFactorService.ts
+  s_a736f797991a75::t_39118509a7d416 978-988,991-992,1017
+backend/src/services/SchedulerService.ts
+  s_a736f797991a75::t_7f0264893eb334 3874-3878,3887-3889
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5e8e8b5745ac5010d8d6440f57b0e82e02a04347",
+  "prompts": {},
+  "sessions": {
+    "s_a736f797991a75": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6df4-4774-7632-9fb3-5b238d295067",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
