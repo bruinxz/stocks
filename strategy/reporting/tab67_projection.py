@@ -998,11 +998,17 @@ def _render_markdown(report: Mapping[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def project_daily_report(envelope: Any) -> DailyReportDto:
+def project_daily_report(
+    envelope: Any, trading_day: Optional[str] = None
+) -> DailyReportDto:
     """Project one validated RecommendationList into the Tab 6 DTO."""
 
     source = validate_recommendation_list(envelope)
-    trading_day = source["as_of"][:10]
+    trading_day = (
+        source["as_of"][:10]
+        if trading_day is None
+        else _require_day(trading_day, "daily_report.trading_day")
+    )
     entries = deepcopy(source["items"])
     rating_counts = _rating_counts(entries)
     summary = {
@@ -1066,14 +1072,20 @@ def project_daily_report(envelope: Any) -> DailyReportDto:
 
 def _select_daily_sources(
     envelopes: Iterable[Any],
+    trading_days: Optional[Mapping[str, str]] = None,
 ) -> List[Mapping[str, Any]]:
     """Select latest as-of per canonical report identity deterministically."""
 
+    day_by_snapshot = {} if trading_days is None else dict(trading_days)
     selected = {}
     for raw in envelopes:
         source = validate_recommendation_list(raw)
+        trading_day = _require_day(
+            day_by_snapshot.get(source["snapshot_id"], source["as_of"][:10]),
+            "history.trading_days.{}".format(source["snapshot_id"]),
+        )
         identity = (
-            source["as_of"][:10],
+            trading_day,
             source["profile"],
             source["market_scope"],
         )
@@ -1113,6 +1125,7 @@ def project_report_history(
     market_scope: Optional[str] = None,
     from_day: Optional[str] = None,
     to_day: Optional[str] = None,
+    trading_days: Optional[Mapping[str, str]] = None,
 ) -> ReportHistoryDto:
     """Project deterministic Tab 7 history with exact filters and search."""
 
@@ -1129,9 +1142,18 @@ def project_report_history(
     if from_day is not None and to_day is not None and from_day > to_day:
         _fail("history", "from_day must be <= to_day")
     normalized_query = "" if query is None else query.strip().casefold()
+    if trading_days is not None and not isinstance(trading_days, Mapping):
+        _fail("history.trading_days", "must be an object keyed by snapshot_id")
+    day_by_snapshot = {} if trading_days is None else dict(trading_days)
 
     reports = [
-        project_daily_report(source) for source in _select_daily_sources(envelopes)
+        project_daily_report(
+            source,
+            trading_day=day_by_snapshot.get(
+                source["snapshot_id"], source["as_of"][:10]
+            ),
+        )
+        for source in _select_daily_sources(envelopes, day_by_snapshot)
     ]
     reports = [
         report

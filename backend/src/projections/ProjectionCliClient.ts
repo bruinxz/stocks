@@ -32,7 +32,11 @@ export interface ProjectionHistoryFilters {
 
 export interface ProjectionCliPort {
   projectDaily(envelope: JsonObject): Promise<JsonObject>;
-  projectHistory(envelopes: JsonObject[], filters?: ProjectionHistoryFilters): Promise<JsonObject>;
+  projectHistory(
+    envelopes: JsonObject[],
+    filters?: ProjectionHistoryFilters,
+    tradingDays?: Record<string, string>
+  ): Promise<JsonObject>;
 }
 
 export interface ProjectionCliClientOptions {
@@ -359,7 +363,8 @@ export class ProjectionCliClient implements ProjectionCliPort {
 
   async projectHistory(
     envelopes: JsonObject[],
-    filters: ProjectionHistoryFilters = {}
+    filters: ProjectionHistoryFilters = {},
+    tradingDays: Record<string, string> = {}
   ): Promise<JsonObject> {
     const request: JsonObject = {
       protocol_version: PROJECTION_CLI_PROTOCOL_VERSION,
@@ -370,6 +375,7 @@ export class ProjectionCliClient implements ProjectionCliPort {
       const value = filters[key];
       if (value !== undefined) request[key] = value;
     }
+    if (Object.keys(tradingDays).length > 0) request.trading_days = tradingDays;
     return this.execute(request);
   }
 
