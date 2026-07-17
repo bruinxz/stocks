@@ -1,0 +1,37 @@
+backend/src/projections/DailyReportProjectionService.ts
+  s_a736f797991a75::t_895acd8eec93ac 104-114
+backend/src/projections/ProjectionCliClient.ts
+  s_a736f797991a75::t_5ad92d748f5828 35-39,366-367,378
+backend/src/recommendations/RecommendationSnapshotReadPort.ts
+  s_a736f797991a75::t_20731d3acd4c9e 65
+backend/src/recommendations/SequelizeRecommendationSnapshotReadAdapter.ts
+  s_a736f797991a75::t_9162e7cf6a160c 351
+backend/tests/projections/daily-report-projection-service.test.ts
+  s_a736f797991a75::t_755d606d239620 13,99-101,165,176-179
+backend/tests/projections/projection-cli-client.test.ts
+  s_a736f797991a75::t_ec52df25d4929b 97-107,122,126-129
+strategy/reporting/cli.py
+  s_a736f797991a75::t_23370a8dc078f0 29,104
+strategy/reporting/tab67_projection.py
+  s_a736f797991a75::t_0f40d7d873aee4 1001-1003,1007-1011,1075,1079,1083-1086,1088,1128,1145-1147,1150-1156
+strategy/tests/test_tab67_projection.py
+  s_a736f797991a75::t_0db5d710d7b424 111-133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "783775e8cf23eef3deab84c6c68ac25650e7fe8a",
+  "prompts": {},
+  "sessions": {
+    "s_a736f797991a75": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6df4-4774-7632-9fb3-5b238d295067",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
