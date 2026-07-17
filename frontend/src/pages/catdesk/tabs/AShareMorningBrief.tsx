@@ -14,6 +14,7 @@ import type { CandidateListEntry, CatalystKind } from './c1Types';
 import { DataListToolbar } from '../shared/DataListToolbar';
 import { useStockNameHydration } from '../shared/useStockNameHydration';
 import { CONVICTION_MED_MIN } from '../types';
+import { matchesMorningCatalyst } from './morning/morningFilters';
 import {
   loadRecommendationCandidateFeed,
   type RecommendationCandidateLoadResult,
@@ -74,8 +75,9 @@ export default function AShareMorningBrief() {
         return cat?.sector === sec;
       });
     }
-    if (filters.catalystKind) {
-      rows = rows.filter(r => r.latest_catalyst?.kind === filters.catalystKind);
+    const catalystKind = filters.catalystKind;
+    if (catalystKind) {
+      rows = rows.filter(r => matchesMorningCatalyst(r, catalystKind));
     }
     if (filters.convictionMinMed) {
       rows = rows.filter(r => (r.conviction?.final ?? 0) >= CONVICTION_MED_MIN);
