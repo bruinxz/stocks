@@ -1,0 +1,29 @@
+README.md
+  s_a736f797991a75::t_cda2404f989cd5 86
+backend/tests/services/data-refresh-contract.test.ts
+  s_a736f797991a75::t_e260bd51d06090 60-63,125-129,222
+docs/DATA_FRESHNESS_AND_SCHEDULING.md
+  s_a736f797991a75::t_a2a6bb908719e2 7,46,49-51
+docs/USER_GUIDE.md
+  s_a736f797991a75::t_519350f3edcd8b 113,116-117
+scripts/tests/quant_data_freshness_check.js
+  s_a736f797991a75::t_fedb367b8788c8 13-15,36-105,318,323-330
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9c418f22b717e4026811826fc06e6cd52c44e9c9",
+  "prompts": {},
+  "sessions": {
+    "s_a736f797991a75": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6df4-4774-7632-9fb3-5b238d295067",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
