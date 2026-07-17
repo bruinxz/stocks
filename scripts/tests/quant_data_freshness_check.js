@@ -10,7 +10,9 @@
 const path = require('path');
 const fs = require('fs');
 
-const repoRoot = path.resolve(__dirname, '..', '..');
+const repoRoot = path.resolve(
+  process.env.STOCKS_REPO_ROOT || path.resolve(__dirname, '..', '..')
+);
 const backendDir = path.join(repoRoot, 'backend');
 const backendNodeModules = path.join(backendDir, 'node_modules');
 if (fs.existsSync(backendNodeModules)) {
@@ -30,6 +32,76 @@ try {
 const { Client } = require('pg');
 const jsonOut = process.env.FRESHNESS_JSON_OUT || '';
 const strictFusion = String(process.env.FRESHNESS_STRICT_FUSION || '').toLowerCase() === 'true';
+
+function loadTradingCalendar() {
+  const compiledCalendar = path.join(backendDir, 'dist', 'utils', 'tradingCalendar.js');
+  if (!fs.existsSync(compiledCalendar)) return null;
+  try {
+    return require(compiledCalendar);
+  } catch (_) {
+    return null;
+  }
+}
+
+async function resolveExpectedCompletedTradeDate(client) {
+  if (process.env.EXPECTED_DATA_DATE) {
+    return {
+      referenceDate: process.env.EXPECTED_DATA_DATE,
+      referenceSource: 'EXPECTED_DATA_DATE',
+    };
+  }
+
+  // Keep the CLI aligned with PageFreshnessService: before the 17:00 close-of-day
+  // pipeline, today's partial bars are useful intraday data but are not a completed
+  // daily-bar watermark. Reuse the compiled holiday-aware calendar in production.
+  const calendar = loadTradingCalendar();
+  if (
+    calendar?.getShanghaiDate &&
+    calendar?.isAShareTradeDay &&
+    calendar?.latestTradeDateOnOrBefore
+  ) {
+    const now = new Date();
+    const today = calendar.getShanghaiDate(now);
+    const hour = Number(
+      new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Shanghai',
+        hour: '2-digit',
+        hour12: false,
+      })
+        .formatToParts(now)
+        .find(part => part.type === 'hour')?.value || 0
+    );
+    if (calendar.isAShareTradeDay(today) && hour >= 17) {
+      return { referenceDate: today, referenceSource: 'completed-trading-calendar' };
+    }
+    const yesterday = new Date(`${today}T00:00:00+08:00`);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    return {
+      referenceDate: calendar.latestTradeDateOnOrBefore(yesterday),
+      referenceSource: 'completed-trading-calendar',
+    };
+  }
+
+  // Source-only checkouts may not have backend/dist. Fall back to the newest day
+  // whose bars cover at least 95% of the listed universe instead of MAX(time), which
+  // is frequently a partial current-day snapshot during market hours.
+  const result = await client.query(`
+    WITH listed AS (
+      SELECT COUNT(*)::numeric AS total FROM stocks WHERE is_listed = TRUE
+    ), coverage AS (
+      SELECT time::date AS trade_date, COUNT(DISTINCT stock_id)::numeric AS covered
+        FROM daily_bars
+       GROUP BY time::date
+    )
+    SELECT MAX(trade_date) AS latest
+      FROM coverage CROSS JOIN listed
+     WHERE covered / NULLIF(listed.total, 0) >= 0.95
+  `);
+  return {
+    referenceDate: toShanghaiDate(result.rows[0]?.latest),
+    referenceSource: 'daily-bars-95pct-fallback',
+  };
+}
 
 function toIso(value) {
   if (!value) return null;
@@ -243,12 +315,18 @@ async function main() {
   const checks = [];
   await client.connect();
   try {
-    const referenceResult = await client.query('select max(time)::date as latest from daily_bars');
-    const referenceDate =
-      process.env.EXPECTED_DATA_DATE || toShanghaiDate(referenceResult.rows[0]?.latest);
+    const { referenceDate, referenceSource } = await resolveExpectedCompletedTradeDate(client);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(referenceDate || '')) {
       throw new Error('cannot determine reference data date');
     }
+
+    checks.push({
+      name: 'a_share_completed_reference_date',
+      status: 'pass',
+      critical: true,
+      reference_data_date: referenceDate,
+      source: referenceSource,
+    });
 
     const definitions = [
       {
