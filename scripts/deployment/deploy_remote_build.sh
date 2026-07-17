@@ -21,6 +21,9 @@
 #   SKIP_HEALTH_GATE=true   skip the post-deploy health gate
 #   SKIP_DB_BACKUP=true     skip db backup for target=main (default: backup)
 #   GIT_REPO_URL            override repo URL (default: https://github.com/bruinxz/stocks.git)
+#   RELEASE_RUN_SMOKE       run authenticated read-only smoke checks (default: true)
+#   RELEASE_SMOKE_USERNAME  smoke account (default: stocks)
+#   RELEASE_SMOKE_PASSWORD  required when RELEASE_RUN_SMOKE is enabled
 
 set -euo pipefail
 
@@ -59,6 +62,21 @@ SSH_PORT="${SSH_PORT:-14126}"
 [[ -z "$OPS_PASSWORD" ]] && { echo "OPS_PASSWORD required" >&2; exit 1; }
 
 GIT_REPO_URL="${GIT_REPO_URL:-https://github.com/bruinxz/stocks.git}"
+RELEASE_RUN_SMOKE="${RELEASE_RUN_SMOKE:-true}"
+RELEASE_SMOKE_USERNAME="${RELEASE_SMOKE_USERNAME:-stocks}"
+RELEASE_SMOKE_PASSWORD="${RELEASE_SMOKE_PASSWORD:-}"
+
+if [[ "${SKIP_HEALTH_GATE:-false}" != "true" ]]; then
+  case "${RELEASE_RUN_SMOKE,,}" in
+    0|false|no|n|off) ;;
+    *)
+      [[ -n "$RELEASE_SMOKE_PASSWORD" ]] || {
+        echo "RELEASE_SMOKE_PASSWORD is required when RELEASE_RUN_SMOKE is enabled" >&2
+        exit 1
+      }
+      ;;
+  esac
+fi
 
 # Target → /opt/stocks + service name (Sprint 37: 仅 main)
 case "$TARGET" in
@@ -361,7 +379,17 @@ fi
 if [[ "${SKIP_HEALTH_GATE:-false}" != "true" ]]; then
   echo ""
   echo "▶ [9/9] Run health gate..."
-  ssh_deploy "
+  printf -v RELEASE_RUN_SMOKE_Q '%q' "$RELEASE_RUN_SMOKE"
+  printf -v RELEASE_SMOKE_USERNAME_Q '%q' "$RELEASE_SMOKE_USERNAME"
+  printf -v RELEASE_SMOKE_PASSWORD_Q '%q' "$RELEASE_SMOKE_PASSWORD"
+  # The gate restarts services and may roll back the current symlink, so it
+  # must run through the privileged ops channel. Feeding sudo on stdin keeps
+  # OPS_PASSWORD out of the remote command line and logs.
+  printf '%s\n' "$OPS_PASSWORD" | ssh_ops "sudo -S env \
+    RELEASE_RUN_SMOKE=$RELEASE_RUN_SMOKE_Q \
+    RELEASE_SMOKE_USERNAME=$RELEASE_SMOKE_USERNAME_Q \
+    RELEASE_SMOKE_PASSWORD=$RELEASE_SMOKE_PASSWORD_Q \
+    bash -lc '
     if [ -f $CURRENT/scripts/deployment/release_health_gate.js ]; then
       cd $CURRENT && node scripts/deployment/release_health_gate.js 2>&1 | tail -30
     else
@@ -371,7 +399,7 @@ if [[ "${SKIP_HEALTH_GATE:-false}" != "true" ]]; then
       esac
       curl -fsS http://127.0.0.1:\$PORT/health
     fi
-  "
+  '"
 else
   echo ""
   echo "▶ [9/9] Skipped health gate (SKIP_HEALTH_GATE=true)"

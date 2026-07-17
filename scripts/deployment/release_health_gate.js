@@ -98,8 +98,8 @@ function healthCheck(target) {
 
   const smoke = readBool(process.env.RELEASE_RUN_SMOKE, true);
   if (smoke) {
-    // Sprint 37: lym/xz sandbox 已关停, 仅 main 的 stock 用户做 smoke 登录测试
-    const defaultSmokeUser = 'stock';
+    // Sprint 37: lym/xz sandbox 已关停, 仅 main 的 stocks 用户做 smoke 登录测试
+    const defaultSmokeUser = 'stocks';
     const username =
       process.env.RELEASE_SMOKE_USERNAME || process.env.SMOKE_USERNAME || defaultSmokeUser;
     // P0 launch-helper：禁止 '666' 默认密码

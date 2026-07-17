@@ -97,6 +97,22 @@ assert(
     deployScript
   )
 );
+assert(
+  'release health gate runs through privileged ops channel',
+  /printf '%s\\n' "\$OPS_PASSWORD" \| ssh_ops "sudo -S env/.test(deployScript)
+);
+assert(
+  'release smoke password is required before deployment mutates production',
+  deployScript.indexOf('RELEASE_SMOKE_PASSWORD is required') > 0 &&
+    deployScript.indexOf('RELEASE_SMOKE_PASSWORD is required') <
+      deployScript.indexOf("Confirm branch '$BRANCH'")
+);
+assert(
+  'release gate defaults to the stocks account',
+  /const defaultSmokeUser = 'stocks'/.test(
+    fs.readFileSync(path.join(ROOT, '../scripts/deployment/release_health_gate.js'), 'utf8')
+  )
+);
 
 assert(
   'PG harness is destructive-test guarded',
