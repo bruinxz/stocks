@@ -94,13 +94,17 @@ async function main(): Promise<void> {
       JSON.stringify(['envelope', 'op', 'protocol_version'])
   );
 
-  const history = await success.projectHistory([{ snapshot_id: 'fixture' }], {
-    query: 'AAPL',
-    profile: 'us_preferred',
-    market_scope: 'us',
-    from_day: '2026-07-12',
-    to_day: '2026-07-12',
-  });
+  const history = await success.projectHistory(
+    [{ snapshot_id: 'fixture' }],
+    {
+      query: 'AAPL',
+      profile: 'us_preferred',
+      market_scope: 'us',
+      from_day: '2026-07-12',
+      to_day: '2026-07-12',
+    },
+    { fixture: '2026-07-12' }
+  );
   assert('history sends exact operation', history.op === 'history');
   assert(
     'history sends exact frozen optional keys',
@@ -115,8 +119,13 @@ async function main(): Promise<void> {
           'protocol_version',
           'query',
           'to_day',
+          'trading_days',
         ].sort()
       )
+  );
+  assert(
+    'history keeps persisted trading days outside signed envelopes',
+    history.trading_days.fixture === '2026-07-12'
   );
 
   const rejection = await rejectsAs(

@@ -62,6 +62,7 @@ export interface RecommendationSnapshotSummary {
 
 export interface RecommendationSnapshotDetail {
   snapshot_id: string;
+  trading_day: string;
   as_of: string;
   profile: RecommendationProfile;
   market_scope: RecommendationMarketScope;

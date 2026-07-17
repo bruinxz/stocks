@@ -108,6 +108,29 @@ class Tab67ProjectionTests(unittest.TestCase):
             self.source["snapshot_id"],
         )
 
+    def test_history_uses_persisted_trading_days_for_backfilled_snapshots(self):
+        prior = copy.deepcopy(self.source)
+        prior["snapshot_id"] = "44444444-4444-4444-8444-444444444444"
+        prior["items"] = []
+        reseal(prior)
+        trading_days = {
+            prior["snapshot_id"]: "2026-07-11",
+            self.source["snapshot_id"]: "2026-07-12",
+        }
+
+        history = project_report_history(
+            [prior, self.source], trading_days=trading_days
+        )
+
+        self.assertEqual(history["total"], 2)
+        self.assertEqual(
+            [entry["trading_day"] for entry in history["entries"]],
+            ["2026-07-12", "2026-07-11"],
+        )
+        self.assertEqual(
+            history["entries"][1]["source_as_of"], prior["as_of"]
+        )
+
     def test_history_order_filters_search_and_date_bounds(self):
         prior = copy.deepcopy(self.source)
         prior["snapshot_id"] = "55555555-5555-4555-8555-555555555555"

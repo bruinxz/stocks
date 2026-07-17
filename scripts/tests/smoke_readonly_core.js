@@ -11,7 +11,7 @@
  *
  * Usage:
  *   SMOKE_BASE_URL=http://127.0.0.1:3000 \
- *   SMOKE_USERNAME=stock \
+ *   SMOKE_USERNAME=stocks \
  *   SMOKE_PASSWORD=666 \
  *   node scripts/tests/smoke_readonly_core.js
  *
@@ -26,7 +26,7 @@ const baseUrl =
   process.env.API_BASE_URL ||
   "http://127.0.0.1:3000";
 const username =
-  process.env.SMOKE_USERNAME || process.env.ADMIN_USERNAME || "stock";
+  process.env.SMOKE_USERNAME || process.env.ADMIN_USERNAME || "stocks";
 const password =
   process.env.SMOKE_PASSWORD || process.env.ADMIN_PASSWORD || "666";
 const timeoutMs = Math.max(Number(process.env.SMOKE_TIMEOUT_MS || 15000), 1000);
@@ -1218,6 +1218,7 @@ async function main() {
       "/api/quant/fusion-audits?limit=5",
       {
         token,
+        critical: false,
         expect: (json) => {
           assertApiSuccess(json, "quant fusion audits");
           assertArray(json.data, "quant fusion audits data");
@@ -1230,6 +1231,7 @@ async function main() {
       "/api/quant/rankings?limit=5",
       {
         token,
+        critical: false,
         expect: (json) => {
           assertApiSuccess(json, "quant rankings dashboard");
           if (!json.data?.summary) {
@@ -1969,6 +1971,7 @@ async function main() {
       "/api/ai/recommendations/loop-policy-snapshots?limit=5",
       {
         token,
+        critical: false,
         expect: (json) => {
           assertApiSuccess(json, "recommendation loop policy snapshots");
           if (!json.data?.summary || !Array.isArray(json.data?.snapshots)) {

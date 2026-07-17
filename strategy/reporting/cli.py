@@ -26,6 +26,7 @@ REQUEST_KEYS = {
             "market_scope",
             "from_day",
             "to_day",
+            "trading_days",
         )
     ),
 }
@@ -100,6 +101,7 @@ def dispatch(request: Any) -> Dict[str, Any]:
             market_scope=request.get("market_scope"),
             from_day=request.get("from_day"),
             to_day=request.get("to_day"),
+            trading_days=request.get("trading_days"),
         ),
     }
 

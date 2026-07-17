@@ -10,6 +10,7 @@ import {
 
 const SNAPSHOT: RecommendationSnapshotDetail = {
   snapshot_id: '11111111-1111-4111-8111-111111111111',
+  trading_day: '2026-07-12',
   as_of: '2026-07-12T09:30:00Z',
   profile: 'us_preferred',
   market_scope: 'us',
@@ -95,9 +96,9 @@ function ports(
         calls.push({ operation: 'projectDaily', value: envelope });
         return { kind: 'daily', envelope };
       },
-      async projectHistory(envelopes, filters) {
-        calls.push({ operation: 'projectHistory', value: { envelopes, filters } });
-        return { kind: 'history', envelopes, filters };
+      async projectHistory(envelopes, filters, tradingDays) {
+        calls.push({ operation: 'projectHistory', value: { envelopes, filters, tradingDays } });
+        return { kind: 'history', envelopes, filters, tradingDays };
       },
     },
   };
@@ -161,6 +162,7 @@ async function main(): Promise<void> {
   const historyProjection = calls[1]?.value as {
     envelopes: Record<string, unknown>[];
     filters: Record<string, unknown>;
+    tradingDays: Record<string, string>;
   };
   assert('history uses configured bounded source limit', historyRead.limit === 77);
   assert(
@@ -170,6 +172,10 @@ async function main(): Promise<void> {
   assert(
     'history reconstructs exact envelopes',
     !('fingerprint_preimage_jcs' in historyProjection.envelopes[0])
+  );
+  assert(
+    'history preserves the persisted trading day outside the signed envelope',
+    historyProjection.tradingDays[SNAPSHOT.snapshot_id] === SNAPSHOT.trading_day
   );
   assert('history delegates formula to Python port', history.kind === 'history');
 

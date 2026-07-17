@@ -348,6 +348,7 @@ function normalizeDetail(
 
   return {
     snapshot_id: summary.snapshot_id,
+    trading_day: summary.trading_day,
     as_of: summary.as_of,
     profile: summary.profile,
     market_scope: summary.market_scope,

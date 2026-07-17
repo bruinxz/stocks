@@ -101,12 +101,16 @@ export class DailyReportProjectionService implements DailyReportProjectionPort {
       to_day: query.to_day,
       limit: this.historyLimit,
     });
-    return this.projection.projectHistory(snapshots.map(toProjectionEnvelope), {
-      query: query.query,
-      profile: query.profile,
-      market_scope: query.market_scope,
-      from_day: query.from_day,
-      to_day: query.to_day,
-    });
+    return this.projection.projectHistory(
+      snapshots.map(toProjectionEnvelope),
+      {
+        query: query.query,
+        profile: query.profile,
+        market_scope: query.market_scope,
+        from_day: query.from_day,
+        to_day: query.to_day,
+      },
+      Object.fromEntries(snapshots.map(snapshot => [snapshot.snapshot_id, snapshot.trading_day]))
+    );
   }
 }
