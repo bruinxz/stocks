@@ -1,0 +1,43 @@
+backend/src/api/routes/market.routes.ts
+  s_a736f797991a75::t_81e87e80c29a2a 31-44
+backend/tests/services/daily-market-brief-contract.test.ts
+  s_a736f797991a75::t_b7af201f6f45ef 1-56
+docs/openapi.json
+  s_a736f797991a75::t_0f065ed575911f 7123-7150
+frontend/src/pages/catdesk/tabs/DailyReport.tsx
+  s_a736f797991a75::t_d9e623a6a53d7d 19-20,35-36,88-92
+frontend/src/pages/catdesk/tabs/daily-report/AShareEditorialSummary.tsx
+  s_a736f797991a75::t_2ee58f2064845c 1-134
+frontend/src/pages/catdesk/tabs/daily-report/DailyReportContainer.tsx
+  s_a736f797991a75::t_da33671c13d01c 6,31,33-40
+frontend/src/pages/catdesk/tabs/daily-report/GlobalCatalystSummary.tsx
+  s_a736f797991a75::t_39574f2d156e34 107-108,110
+frontend/src/pages/catdesk/tabs/daily-report/ReportDocument.tsx
+  s_a736f797991a75::t_ca013abcc69dd2 5,14-20,26,28-30,34,37-43,46-49,52-55,58-62,71-72,76-77,81,89-104
+frontend/src/pages/catdesk/tabs/daily-report/__tests__/behavior.test.tsx
+  s_a736f797991a75::t_8534829a64c27b 127-128,141-142
+frontend/src/pages/catdesk/tabs/daily-report/__tests__/editorial.test.ts
+  s_a736f797991a75::t_2ba63a4e8f615e 1-102
+frontend/src/pages/catdesk/tabs/daily-report/editorial.ts
+  s_a736f797991a75::t_a21f2eb7f0c77e 1-144
+frontend/src/pages/catdesk/tabs/daily-report/report.css
+  s_a736f797991a75::t_7f98e5e969783b 2-7,22,24-25,30-31,41-42,48,61-62,68-72,76-77,79-80,82-89,92-99,102-111,115-130,133-300,303-309,311-318,320,323-372,377-396,401-404,409-427,432,434,437-468,473,475-496,498,501-503,505,508-544,546-595,597,600-602,604-627,652,663,668,678-704,714-715,720-738,742-763
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b99399371513585768d43527545de4f21249c89c",
+  "prompts": {},
+  "sessions": {
+    "s_a736f797991a75": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6df4-4774-7632-9fb3-5b238d295067",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
