@@ -1,0 +1,25 @@
+backend/tests/services/data-refresh-contract.test.ts
+  s_a736f797991a75::t_b642ed3915dee5 151-155,213
+datapipeline/tests/test_sync_global_markets_daily.py
+  s_a736f797991a75::t_01882a1cee892c 1-79
+scripts/ops/sync_global_markets_daily.py
+  s_a736f797991a75::t_155c680a9557d0 14,21,38-42,98-147,171-173,180-184,186-187,189-190,193-199,278-282
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "162b35725eb92d3512b24d811c6ee9def8ee09cb",
+  "prompts": {},
+  "sessions": {
+    "s_a736f797991a75": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6df4-4774-7632-9fb3-5b238d295067",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
