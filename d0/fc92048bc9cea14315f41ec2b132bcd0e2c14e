@@ -1,0 +1,55 @@
+backend/src/constants/cronRegistry.ts
+  s_a736f797991a75::t_44577f0c28d20f 96,98
+backend/src/quant/engine/internal/QuantDataService.ts
+  s_a736f797991a75::t_346afba0f7c675 82-86,94-96,114-120,122
+backend/src/services/SchedulerService.ts
+  s_a736f797991a75::t_53d58f5371f020 305-306,445-447,464-489,1166,1169-1170,1178,6056,6069,6147-6148,6159,6162,7037-7038,7056-7077,7155
+docker-compose.yml
+  s_acb0d0b72519fe::t_7ef180473587d2 19,50
+docs/DEPLOY_ENVIRONMENTS.md
+  s_acb0d0b72519fe::t_37366d874ef37b 22-25,28-29
+docs/DEVELOPER_GUIDE.md
+  s_a736f797991a75::t_d645bb152d3b35 42-46,49-50,55,58-63,96-98,100-104,108-109,130,132-133,135-139,141,144-145,154,166-170,174,176-177,226-227,233-234,251-256,339-340,342-343,349-350,357-358
+docs/USER_GUIDE.md
+  s_acb0d0b72519fe::t_59ea3eeee36632 44-45,48,50,61-64
+frontend/src/pages/catdesk/tabs/ReportHistory.tsx
+  s_a736f797991a75::t_2cab1ea67e6a80 74-75
+frontend/src/pages/catdesk/tabs/a-share-market/AShareMarket.tsx
+  s_acb0d0b72519fe::t_8966b83dcd098b 7-11,20,48-56,138,141-143,227-235,434
+frontend/src/pages/catdesk/tabs/a-share-market/__tests__/securityCatalog.test.ts
+  s_acb0d0b72519fe::t_7d7692facb62c7 1-41
+frontend/src/pages/catdesk/tabs/report-history/__tests__/queryState.test.ts
+  s_a736f797991a75::t_13f11c4cae28ea 5,13,31-35
+frontend/src/pages/catdesk/tabs/report-history/__tests__/runtime.test.tsx
+  s_a736f797991a75::t_70fa4a504d7ed6 119,151
+frontend/src/pages/catdesk/tabs/report-history/queryState.ts
+  s_a736f797991a75::t_899da415e19df6 7-9
+scripts/ops/requirements-global-markets.txt
+  s_acb0d0b72519fe::t_1f43a9e81d0c13 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d0fc92048bc9cea14315f41ec2b132bcd0e2c14e",
+  "prompts": {},
+  "sessions": {
+    "s_a736f797991a75": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6df4-4774-7632-9fb3-5b238d295067",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    },
+    "s_acb0d0b72519fe": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6df5-7856-7601-a4a4-71898403a250",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
