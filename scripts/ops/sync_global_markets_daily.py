@@ -11,12 +11,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from typing import Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 
@@ -33,6 +35,11 @@ from datapipeline.collectors.jpkr_deep.official_fixture_parser import (
     parse_boj_capture_fixture,
     parse_jpx_kline_fixture,
 )
+from datapipeline.collectors.jpkr_deep.fx_rate_fetcher import (
+    FxSourceRow,
+    normalize_fx_rows,
+)
+from datapipeline.contracts import FxObservation
 from datapipeline.storage.jpkr import FxObservationWriter, JpKrOfficialWriter
 
 
@@ -88,6 +95,56 @@ def _run(name: str, args: list[str], timeout: int) -> dict:
     return result
 
 
+def _stored_fx_observation(row: Mapping[str, object]) -> FxObservation:
+    return FxObservation(
+        pair=str(row["pair"]),
+        observation_day=row["observation_day"],
+        available_at_utc=row["available_at_utc"],
+        local_per_usd=Decimal(str(row["local_per_usd"])),
+        usd_per_local=Decimal(str(row["usd_per_local"])),
+        change_pct=(
+            None if row["change_pct"] is None else Decimal(str(row["change_pct"]))
+        ),
+        source_kind=str(row["source_kind"]),
+        source_document_id=str(row["source_document_id"]),
+        source_version=str(row["source_version"]),
+        fact_hash=str(row["fact_hash"]),
+        previous_observation_day=row["previous_observation_day"],
+        previous_source_kind=row["previous_source_kind"],
+        previous_source_version=row["previous_source_version"],
+        previous_fact_hash=row["previous_fact_hash"],
+    )
+
+
+def _rebase_pending_fx(
+    captured: Sequence[FxObservation],
+    stored_latest: Mapping[str, FxObservation],
+    *,
+    as_of_utc: datetime,
+) -> tuple[FxObservation, ...]:
+    """Rebuild only-new rows against the authoritative persisted predecessor."""
+
+    pending_rows = tuple(
+        FxSourceRow(
+            pair=observation.pair,
+            observation_day=observation.observation_day,
+            available_at_utc=observation.available_at_utc,
+            local_per_usd=observation.local_per_usd,
+            source_kind=observation.source_kind,
+            source_document_id=observation.source_document_id,
+            source_version=observation.source_version,
+        )
+        for observation in captured
+        if stored_latest.get(observation.pair) is None
+        or observation.observation_day > stored_latest[observation.pair].observation_day
+    )
+    return normalize_fx_rows(
+        pending_rows,
+        as_of_utc=as_of_utc,
+        previous_by_pair=stored_latest,
+    )
+
+
 async def _persist_official(
     env: dict[str, str], jpx_files: list[Path], boj_file: Path
 ) -> dict[str, object]:
@@ -111,30 +168,35 @@ async def _persist_official(
         klines = tuple(
             record
             for path in jpx_files
-            for record in parse_jpx_kline_fixture(json.loads(path.read_text(encoding="utf-8")))
+            for record in parse_jpx_kline_fixture(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
         )
         as_of = datetime.now(timezone.utc).replace(microsecond=0)
         fx = parse_boj_capture_fixture(
             json.loads(boj_file.read_text(encoding="utf-8")), as_of_utc=as_of
         )
         latest_fx_rows = await pool.fetch(
-            "SELECT pair, MAX(observation_day) AS latest_day "
+            "SELECT DISTINCT ON (pair) pair, observation_day, available_at_utc, "
+            "local_per_usd, usd_per_local, change_pct, source_kind, "
+            "source_document_id, source_version, fact_hash, "
+            "previous_observation_day, previous_source_kind, "
+            "previous_source_version, previous_fact_hash "
             "FROM jpkr_fx_observation WHERE source_kind IN ('BOJ', 'BOK') "
-            "GROUP BY pair"
+            "ORDER BY pair, observation_day DESC, available_at_utc DESC, "
+            "source_version DESC, created_at DESC"
         )
-        latest_fx_days = {
-            str(row["pair"]): row["latest_day"] for row in latest_fx_rows
+        latest_fx = {
+            str(row["pair"]): _stored_fx_observation(row) for row in latest_fx_rows
         }
         # Captures intentionally overlap recent days. FxObservationWriter verifies
-        # predecessor lineage before idempotency, so replaying the capture's first
-        # lineage-free row against an existing history is invalid. Only send rows
-        # newer than the persisted watermark; the first new row then cites the
-        # authoritative predecessor already stored in PostgreSQL.
-        pending_fx = tuple(
-            observation
-            for observation in fx
-            if latest_fx_days.get(observation.pair) is None
-            or observation.observation_day > latest_fx_days[observation.pair]
+        # exact predecessor version/hash. Re-normalize the new suffix so its first
+        # row cites PostgreSQL's authoritative watermark instead of the overlapping
+        # capture's same-day row from a newer capture version.
+        pending_fx = _rebase_pending_fx(
+            fx,
+            latest_fx,
+            as_of_utc=as_of,
         )
         kline_result = await JpKrOfficialWriter(pool).write_klines(klines)
         fx_result = await FxObservationWriter(pool).write_batch(
@@ -213,7 +275,11 @@ def main() -> int:
                 results.append({"name": "persist_jp_official", **persisted})
             except Exception as error:
                 results.append(
-                    {"name": "persist_jp_official", "ok": False, "error": str(error)[:500]}
+                    {
+                        "name": "persist_jp_official",
+                        "ok": False,
+                        "error": str(error)[:500],
+                    }
                 )
 
         kr_args = [
