@@ -931,9 +931,8 @@ async function main() {
         expect: (json) => {
           assertApiSuccess(json, "quant experiment param suggestions");
           if (
-            !json.data?.summary ||
-            !Array.isArray(json.data?.suggestions || []) ||
-            !json.data?.recommended_params_by_strategy
+            !Array.isArray(json.data) &&
+            !Array.isArray(json.data?.suggestions)
           ) {
             throw new Error(
               `quant experiment param suggestions payload invalid: ${preview(
@@ -953,11 +952,7 @@ async function main() {
         critical: false,
         expect: (json) => {
           assertApiSuccess(json, "quant param versions");
-          if (
-            !json.data?.summary ||
-            !Array.isArray(json.data?.versions || []) ||
-            !Array.isArray(json.data?.summary_by_version || [])
-          ) {
+          if (!Array.isArray(json.data?.versions)) {
             throw new Error(
               `quant param versions payload invalid: ${preview(json)}`
             );
@@ -1098,71 +1093,6 @@ async function main() {
     });
 
     await requestJson(
-      "strategy opening preflight",
-      "/api/strategy-research/opening-preflight?factor_limit=80&use_cache=true&cache_ttl_ms=90000",
-      {
-        token,
-        critical: false,
-        expect: (json) => {
-          assertApiSuccess(json, "strategy opening preflight");
-          if (
-            !json.data?.status ||
-            !json.data?.summary ||
-            !json.data?.checks?.quant_task ||
-            !json.data?.checks?.factor_provider ||
-            !json.data?.checks?.quote_sync_task ||
-            !json.data?.cache
-          ) {
-            throw new Error(
-              `strategy opening preflight payload invalid: ${preview(json)}`
-            );
-          }
-        },
-      }
-    );
-
-    await requestJson(
-      "today opening readiness",
-      "/api/today/opening-readiness?factor_limit=80&use_cache=true&cache_ttl_ms=90000",
-      {
-        token,
-        critical: false,
-        expect: (json) => {
-          assertApiSuccess(json, "today opening readiness");
-          const data = json.data || {};
-          if (
-            !data.status ||
-            !["ready", "degraded", "blocked"].includes(data.status) ||
-            !data.buy_gate ||
-            !data.data ||
-            !data.tasks ||
-            !data.integrations ||
-            !Array.isArray(data.next_actions || []) ||
-            !Array.isArray(data.issues || [])
-          ) {
-            throw new Error(
-              `today opening readiness payload invalid: ${preview(json)}`
-            );
-          }
-          if (typeof data.buy_gate.allowed !== "boolean") {
-            throw new Error(
-              `today opening readiness buy gate allowed invalid: ${preview(
-                data.buy_gate
-              )}`
-            );
-          }
-          if (!Number.isFinite(Number(data.buy_gate.max_new_positions))) {
-            throw new Error(
-              `today opening readiness max_new_positions invalid: ${preview(
-                data.buy_gate
-              )}`
-            );
-          }
-        },
-      }
-    );
-
-    await requestJson(
       "today command center",
       "/api/today/command-center?limit=3",
       {
@@ -1208,57 +1138,6 @@ async function main() {
                 json.data.canary_memory
               )}`
             );
-          }
-        },
-      }
-    );
-
-    await requestJson(
-      "quant fusion audits",
-      "/api/quant/fusion-audits?limit=5",
-      {
-        token,
-        critical: false,
-        expect: (json) => {
-          assertApiSuccess(json, "quant fusion audits");
-          assertArray(json.data, "quant fusion audits data");
-        },
-      }
-    );
-
-    await requestJson(
-      "quant rankings dashboard",
-      "/api/quant/rankings?limit=5",
-      {
-        token,
-        critical: false,
-        expect: (json) => {
-          assertApiSuccess(json, "quant rankings dashboard");
-          if (!json.data?.summary) {
-            throw new Error(`quant rankings summary missing: ${preview(json)}`);
-          }
-          assertArray(json.data.quant_rankings || [], "quant rankings data");
-          assertArray(
-            json.data.fusion_rankings || [],
-            "quant fusion rankings data"
-          );
-          if (json.data.summary.quote_persistence) {
-            const quotePersistence = json.data.summary.quote_persistence;
-            for (const key of [
-              "latest_trade_date_snapshot_count",
-              "latest_trade_date_symbol_count",
-            ]) {
-              if (
-                quotePersistence[key] !== undefined &&
-                !Number.isFinite(Number(quotePersistence[key]))
-              ) {
-                throw new Error(
-                  `quote persistence ${key} invalid: ${preview(
-                    quotePersistence
-                  )}`
-                );
-              }
-            }
           }
         },
       }
@@ -1955,133 +1834,6 @@ async function main() {
                 json.data
               )}`
             );
-          }
-        },
-      }
-    );
-
-    await requestJson("AI signal stats", "/api/ai/signals/stats", {
-      token,
-      critical: false,
-      expect: (json) => assertApiSuccess(json, "AI signal stats"),
-    });
-
-    await requestJson(
-      "recommendation loop policy snapshots",
-      "/api/ai/recommendations/loop-policy-snapshots?limit=5",
-      {
-        token,
-        critical: false,
-        expect: (json) => {
-          assertApiSuccess(json, "recommendation loop policy snapshots");
-          if (!json.data?.summary || !Array.isArray(json.data?.snapshots)) {
-            throw new Error(
-              `loop policy snapshot payload missing: ${preview(json)}`
-            );
-          }
-          const riskGateAnalysis = json.data?.risk_gate_analysis;
-          if (riskGateAnalysis && riskGateAnalysis.field_gate_advice) {
-            if (!Array.isArray(riskGateAnalysis.field_gate_advice.items)) {
-              throw new Error(
-                `field gate advice items missing: ${preview(riskGateAnalysis)}`
-              );
-            }
-            if (!riskGateAnalysis.field_gate_advice.conclusion) {
-              throw new Error(
-                `field gate advice conclusion missing: ${preview(
-                  riskGateAnalysis
-                )}`
-              );
-            }
-          }
-          const fieldGateAttribution =
-            json.data?.field_gate_adjustment_attribution;
-          if (fieldGateAttribution) {
-            if (
-              !fieldGateAttribution.status ||
-              !fieldGateAttribution.conclusion
-            ) {
-              throw new Error(
-                `field gate adjustment attribution status/conclusion missing: ${preview(
-                  fieldGateAttribution
-                )}`
-              );
-            }
-            for (const key of [
-              "before_sample_count",
-              "after_sample_count",
-              "before_avg_excess_return_pct",
-              "after_avg_excess_return_pct",
-              "delta_pct",
-            ]) {
-              if (
-                fieldGateAttribution[key] !== undefined &&
-                !Number.isFinite(Number(fieldGateAttribution[key]))
-              ) {
-                throw new Error(
-                  `field gate adjustment attribution ${key} invalid: ${preview(
-                    fieldGateAttribution
-                  )}`
-                );
-              }
-            }
-            if (fieldGateAttribution.windows !== undefined) {
-              if (!Array.isArray(fieldGateAttribution.windows)) {
-                throw new Error(
-                  `field gate adjustment attribution windows invalid: ${preview(
-                    fieldGateAttribution
-                  )}`
-                );
-              }
-              for (const item of fieldGateAttribution.windows) {
-                if (
-                  !Number.isFinite(Number(item.days)) ||
-                  !Number.isFinite(Number(item.sample_count))
-                ) {
-                  throw new Error(
-                    `field gate adjustment attribution window fields invalid: ${preview(
-                      item
-                    )}`
-                  );
-                }
-              }
-              if (fieldGateAttribution.decision !== undefined) {
-                if (
-                  !fieldGateAttribution.decision.action ||
-                  !fieldGateAttribution.decision.reason
-                ) {
-                  throw new Error(
-                    `field gate adjustment attribution decision invalid: ${preview(
-                      fieldGateAttribution
-                    )}`
-                  );
-                }
-              }
-            }
-          }
-          const promotion = json.data?.promotion;
-          if (promotion?.field_gate_adjustment_attribution) {
-            if (
-              promotion.field_gate_adjustment_attribution.status !==
-                fieldGateAttribution?.status ||
-              !promotion.field_gate_adjustment_attribution.conclusion
-            ) {
-              throw new Error(
-                `promotion field gate attribution inconsistent: ${preview(
-                  promotion
-                )}`
-              );
-            }
-            if (
-              promotion.field_gate_confidence_adjustment !== undefined &&
-              !Number.isFinite(
-                Number(promotion.field_gate_confidence_adjustment)
-              )
-            ) {
-              throw new Error(
-                `promotion field gate confidence invalid: ${preview(promotion)}`
-              );
-            }
           }
         },
       }

@@ -122,10 +122,9 @@ for (const retiredPath of [
   '/api/quant/rankings?limit=5',
   '/api/ai/recommendations/loop-policy-snapshots?limit=5',
 ]) {
-  const probeOffset = smokeScript.indexOf(retiredPath);
   assert(
-    `retired smoke probe is non-critical: ${retiredPath}`,
-    probeOffset > 0 && smokeScript.slice(probeOffset, probeOffset + 180).includes('critical: false')
+    `retired smoke probe is removed: ${retiredPath}`,
+    !smokeScript.includes(retiredPath)
   );
 }
 

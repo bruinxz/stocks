@@ -61,6 +61,18 @@ const freshnessAudit = fs.readFileSync(
   path.join(root, 'scripts/tests/quant_data_freshness_check.js'),
   'utf8'
 );
+const stockFactorService = fs.readFileSync(
+  path.join(root, 'backend/src/data/services/StockFactorService.ts'),
+  'utf8'
+);
+const readonlySmoke = fs.readFileSync(
+  path.join(root, 'scripts/tests/smoke_readonly_core.js'),
+  'utf8'
+);
+const retiredBaostockFactorTask = fs.readFileSync(
+  path.join(root, 'backend/scripts/migrations/2026-07-17-retire-legacy-baostock-factor-sync.sql'),
+  'utf8'
+);
 
 assert.match(
   scheduler,
@@ -126,6 +138,45 @@ assert.match(
   freshnessAudit,
   /resolveExpectedCompletedTradeDate[\s\S]{0,1800}isAShareTradeDay[\s\S]{0,900}hour >= 17[\s\S]{0,900}latestTradeDateOnOrBefore/,
   'production freshness audit must not treat partial intraday bars as a completed trade date'
+);
+assert.match(
+  stockFactorService,
+  /targetFactorDate = String\(options\.as_of \|\| coverage\.latest_trade_date[\s\S]{0,700}factorCoverageIsCurrent[\s\S]{0,350}targetFactorDate &&[\s\S]{0,120}factorCoverageIsCurrent/,
+  'derived-factor coverage may skip only when a factor watermark reaches the target trade date'
+);
+assert.match(
+  scheduler,
+  /task\.type === 'DERIVED_FACTOR_SYNC'[\s\S]{0,2600}status: ok \? 'COMPLETED' : 'FAILED'[\s\S]{0,700}throw new Error\(`派生因子同步失败/,
+  'derived-factor scheduler runs must finish their execution log and propagate script failures'
+);
+assert.match(
+  retiredBaostockFactorTask,
+  /type = 'DERIVED_FACTOR_SYNC'[\s\S]{0,120}name = '每日派生因子同步 \(baostock\)'[\s\S]{0,120}is_active = true/,
+  'the duplicate legacy Baostock factor task must be retired without touching custom tasks'
+);
+for (const retiredRoute of [
+  '/api/strategy-research/opening-preflight',
+  '/api/today/opening-readiness',
+  '/api/quant/fusion-audits',
+  '/api/quant/rankings',
+  '/api/ai/signals/stats',
+  '/api/ai/recommendations/loop-policy-snapshots',
+]) {
+  assert.doesNotMatch(
+    readonlySmoke,
+    new RegExp(retiredRoute.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    `read-only smoke must not probe retired route ${retiredRoute}`
+  );
+}
+assert.match(
+  readonlySmoke,
+  /!Array\.isArray\(json\.data\)[\s\S]{0,120}&&[\s\S]{0,120}!Array\.isArray\(json\.data\?\.suggestions\)/,
+  'empty experiment-suggestion arrays are a valid API response'
+);
+assert.match(
+  readonlySmoke,
+  /!Array\.isArray\(json\.data\?\.versions\)/,
+  'empty parameter-version collections are a valid API response'
 );
 assert.match(
   scheduler,
@@ -219,4 +270,4 @@ assert.match(
   'A-share report history must support PIT-bounded historical materialization'
 );
 
-console.log('data refresh contract: 32 assertions passed');
+console.log('data refresh contract: 43 assertions passed');
