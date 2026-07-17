@@ -1,0 +1,25 @@
+backend/tests/models/auth-refresh-session.test.ts
+  s_a736f797991a75::t_df9c743cf4888f 100-115
+scripts/deployment/deploy_remote_build.sh
+  s_a736f797991a75::t_e53cd58509db63 24-26,65-79,382-392,402
+scripts/deployment/release_health_gate.js
+  s_a736f797991a75::t_0179189143a30c 101-102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "c598395cebcada8b5659ee2ede2abdc1f2a2c75e",
+  "prompts": {},
+  "sessions": {
+    "s_a736f797991a75": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6df4-4774-7632-9fb3-5b238d295067",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
