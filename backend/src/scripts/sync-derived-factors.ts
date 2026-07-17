@@ -18,7 +18,7 @@
  *   provider=auto — Tushare(若配置 token) → eastmoney → local_derived 依次兜底。
  *
  * Usage:
- *   npm run sync:derived-factors                          # provider=eastmoney, 全市场
+ *   npm run sync:derived-factors                          # provider=auto, 全市场
  *   npm run sync:derived-factors -- --provider=auto
  *   npm run sync:derived-factors -- --limit=6000
  *   npm run sync:derived-factors -- --as-of=2026-07-03
@@ -48,8 +48,8 @@ const program = new Command();
 
 program
   .name('sync-derived-factors')
-  .description('派生因子(估值/质量/资金流)入库 — 默认东方财富免费源')
-  .option('--provider <name>', '数据源: eastmoney|baostock|tushare|local_derived|auto', 'eastmoney')
+  .description('派生因子(估值/质量/资金流)入库 — 默认自动多源并以本地日线兜底')
+  .option('--provider <name>', '数据源: eastmoney|baostock|tushare|local_derived|auto', 'auto')
   .option('--scope <scope>', '范围: market|favorites|custom', 'market')
   .option('--symbols <codes>', '逗号分隔股票代码 (自定义股票池)')
   .option('--limit <n>', '全市场落盘上限', '6000')
@@ -66,7 +66,7 @@ program
       }
 
       const symbols = parseList(opts.symbols);
-      const provider = String(opts.provider || 'eastmoney') as any;
+      const provider = String(opts.provider || 'auto') as any;
       const scope = symbols.length ? 'custom' : (String(opts.scope || 'market') as any);
 
       const result = await stockFactorService.syncDerivedFactors({
@@ -82,6 +82,34 @@ program
           opts.skipIfRealProviderGte !== undefined ? Number(opts.skipIfRealProviderGte) : undefined,
       });
 
+      const summary = {
+        scenario: 'derived_factor_sync',
+        ok: true,
+        provider,
+        scope,
+        skipped: Boolean((result as any).skipped),
+        requested_stock_count: Number((result as any).requested_stock_count || 0),
+        processed_stock_count: Number((result as any).processed_stock_count || 0),
+        upserts: (result as any).upserts || {},
+        provider_results: (result as any).provider_results || {},
+        duration_ms: Number((result as any).duration_ms || 0),
+      };
+      const totalUpserts = Object.values(summary.upserts).reduce<number>(
+        (sum: number, value: any) => sum + Number(value || 0),
+        0
+      );
+      if (!summary.skipped && summary.requested_stock_count > 0 && totalUpserts <= 0) {
+        const providerErrors = Object.entries(summary.provider_results).flatMap(
+          ([name, providerResult]: [string, any]) =>
+            (providerResult?.errors || []).map((error: unknown) => `${name}: ${String(error)}`)
+        );
+        throw new Error(
+          `因子同步零落盘，拒绝记录假成功${
+            providerErrors.length ? `：${providerErrors.slice(0, 5).join(' | ')}` : ''
+          }`
+        );
+      }
+
       if ((result as any).skipped) {
         logger.info(
           `[sync-derived-factors] SKIPPED — ${(result as any).skip_reason || '覆盖率已达标'}`
@@ -96,6 +124,7 @@ program
             `fundamental=${u.fundamental || 0} duration=${(result as any).duration_ms}ms`
         );
       }
+      process.stdout.write(`${JSON.stringify(summary)}\n`);
       process.exit(0);
     } catch (error) {
       logger.error(`sync-derived-factors failed: ${(error as Error).message}`);

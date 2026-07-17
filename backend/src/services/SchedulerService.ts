@@ -3839,12 +3839,12 @@ class SchedulerService {
         // Plan A (2026-07, 主线命脉): 每日盘后落 stock_valuation_factors /
         // stock_fundamental_factors / stock_money_flow_factors 三张因子表 —
         // ETF 因子轮动 (Core 70%) 打分的唯一数据源。空表 → data_incomplete 硬门
-        // → Core 腿空仓。默认 provider=eastmoney (纯 HTTP, 无需 Python/token)。
+        // → Core 腿空仓。默认 provider=auto: 真实源不可达时由当日日线派生兜底。
         // cron 必须早于 FACTOR_SCORE_COMPUTE (17:30), 排在 17:00。
         // 走 compiled .js (与 FACTOR_SCORE_COMPUTE 同款 prod 约定; ts-node 是 dev dep)。
         const compiledScript = path.resolve(__dirname, '..', 'scripts', 'sync-derived-factors.js');
         const provider: string =
-          typeof parameters.provider === 'string' ? parameters.provider : 'eastmoney';
+          typeof parameters.provider === 'string' ? parameters.provider : 'auto';
         const limit = this.toPositiveInt(parameters.limit, 6000, 6000);
         const args = [compiledScript, `--provider=${provider}`, `--limit=${limit}`];
         if (typeof parameters.as_of === 'string') args.push(`--as-of=${parameters.as_of}`);
@@ -3857,7 +3857,24 @@ class SchedulerService {
           timeoutMs: 20 * 60_000, // 全 A 股 ~5500 票批量快照, 给 20 min 上限
         });
         const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-        const ok = r.code === 0;
+        const syncSummary = (r.stdout || '')
+          .trim()
+          .split('\n')
+          .reverse()
+          .map(line => {
+            try {
+              return JSON.parse(line);
+            } catch {
+              return null;
+            }
+          })
+          .find(item => item?.scenario === 'derived_factor_sync');
+        const upsertTotal = Object.values(syncSummary?.upserts || {}).reduce<number>(
+          (sum: number, value: any) => sum + Number(value || 0),
+          0
+        );
+        const ok =
+          r.code === 0 && Boolean(syncSummary) && (syncSummary.skipped === true || upsertTotal > 0);
         if (ok) {
           logger.info(
             `[DERIVED_FACTOR_SYNC] done in ${elapsed}s provider=${provider} limit=${limit}`
@@ -3881,6 +3898,7 @@ class SchedulerService {
             provider,
             limit,
             elapsed_seconds: Number(elapsed),
+            sync_summary: syncSummary || null,
             ok,
           },
         });
@@ -6529,13 +6547,13 @@ class SchedulerService {
       {
         // Plan A (2026-07, 主线命脉): 每日盘后 17:00 落三张派生因子表
         // (估值/质量/资金流) — ETF 因子轮动 (Core 70%) 打分的唯一数据源.
-        // 必须早于 FACTOR_SCORE_COMPUTE (17:30). provider=eastmoney 纯 HTTP 免费源.
-        name: '每日派生因子同步 (东方财富)',
+        // 必须早于 FACTOR_SCORE_COMPUTE (17:30). auto 会在真实源不可达时落本地派生兜底.
+        name: '每日派生因子同步 (自动多源)',
         type: 'DERIVED_FACTOR_SYNC',
         cron_expression: '0 17 * * 1-5',
         is_active: true,
         parameters: {
-          provider: 'eastmoney',
+          provider: 'auto',
           limit: 6000,
           // 覆盖率已达 95% 且当日已落则跳过重复落盘, 缩短耗时
           skip_if_coverage_gte: 95,

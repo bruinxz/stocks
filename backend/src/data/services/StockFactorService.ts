@@ -16,8 +16,18 @@ type FactorScope = 'favorites' | 'market' | 'custom';
 type FactorProviderName = 'auto' | 'local_derived' | 'tushare' | 'eastmoney' | 'baostock';
 
 function dateOnly(value: Date | string): string {
-  if (typeof value === 'string') return value.slice(0, 10);
-  return value.toISOString().slice(0, 10);
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.slice(0, 10))) {
+    return value.slice(0, 10);
+  }
+  const date = typeof value === 'string' ? new Date(value) : value;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const byType = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${byType.year}-${byType.month}-${byType.day}`;
 }
 
 function toNumber(value: any, fallback = 0): number {
@@ -1028,32 +1038,44 @@ export class StockFactorService {
       }
     }
     const providerResults: Record<string, any> = {};
-    if (providerPlan.providers.includes('tushare')) {
-      providerResults.tushare = await this.syncTushareFactors(stocks, options);
-    }
-    if (providerPlan.providers.includes('eastmoney')) {
-      providerResults.eastmoney = await this.syncEastMoneyFactors(stocks, options);
-    }
     let processed = 0;
     let skipped = 0;
     let valuationUpserts = 0;
     let moneyFlowUpserts = 0;
     let fundamentalUpserts = 0;
 
+    const recordProviderResult = (name: string, result: any) => {
+      providerResults[name] = result;
+      processed = Math.max(processed, Number(result?.processed || 0));
+      skipped = Math.max(skipped, Number(result?.skipped || 0));
+      valuationUpserts += Number(result?.upserts?.valuation || 0);
+      moneyFlowUpserts += Number(result?.upserts?.money_flow || 0);
+      fundamentalUpserts += Number(result?.upserts?.fundamental || 0);
+    };
+
+    if (providerPlan.providers.includes('tushare')) {
+      recordProviderResult('tushare', await this.syncTushareFactors(stocks, options));
+    }
+    if (providerPlan.providers.includes('eastmoney')) {
+      recordProviderResult('eastmoney', await this.syncEastMoneyFactors(stocks, options));
+    }
+
     if (providerPlan.providers.includes('baostock')) {
       const baostockResult = await this.syncBaostockFactors(stocks, options);
-      providerResults.baostock = baostockResult;
-      // baostock 真实估值/ROE 计入顶层 upserts, 让 CLI/调度日志反映真实落盘量。
-      valuationUpserts += baostockResult.upserts.valuation;
-      fundamentalUpserts += baostockResult.upserts.fundamental;
+      recordProviderResult('baostock', baostockResult);
     }
 
     if (providerPlan.providers.includes('local_derived')) {
       const barsByStock = await this.getBarsByStock(stocks, options.as_of);
+      let localProcessed = 0;
+      let localSkipped = 0;
+      let localValuationUpserts = 0;
+      let localMoneyFlowUpserts = 0;
+      let localFundamentalUpserts = 0;
       for (const stock of stocks) {
         const bars = barsByStock.get(stock.id) || [];
         if (!bars.length) {
-          skipped++;
+          localSkipped++;
           continue;
         }
         const latest = bars[bars.length - 1];
@@ -1099,7 +1121,7 @@ export class StockFactorService {
           source: 'local_derived',
           raw_payload: rawPayload,
         } as any);
-        valuationUpserts++;
+        localValuationUpserts++;
 
         await StockMoneyFlowFactor.upsert({
           stock_id: stock.id,
@@ -1117,7 +1139,7 @@ export class StockFactorService {
           source: 'local_derived',
           raw_payload: rawPayload,
         } as any);
-        moneyFlowUpserts++;
+        localMoneyFlowUpserts++;
 
         await StockFundamentalFactor.upsert({
           stock_id: stock.id,
@@ -1136,19 +1158,19 @@ export class StockFactorService {
           source: 'local_derived',
           raw_payload: rawPayload,
         } as any);
-        fundamentalUpserts++;
-        processed++;
+        localFundamentalUpserts++;
+        localProcessed++;
       }
-      providerResults.local_derived = {
+      recordProviderResult('local_derived', {
         requested: stocks.length,
-        processed,
-        skipped,
+        processed: localProcessed,
+        skipped: localSkipped,
         upserts: {
-          valuation: valuationUpserts,
-          money_flow: moneyFlowUpserts,
-          fundamental: fundamentalUpserts,
+          valuation: localValuationUpserts,
+          money_flow: localMoneyFlowUpserts,
+          fundamental: localFundamentalUpserts,
         },
-      };
+      });
     }
 
     const durationMs = Date.now() - startedAt;
