@@ -65,6 +65,10 @@ const stockFactorService = fs.readFileSync(
   path.join(root, 'backend/src/data/services/StockFactorService.ts'),
   'utf8'
 );
+const derivedFactorCli = fs.readFileSync(
+  path.join(root, 'backend/src/scripts/sync-derived-factors.ts'),
+  'utf8'
+);
 const readonlySmoke = fs.readFileSync(
   path.join(root, 'scripts/tests/smoke_readonly_core.js'),
   'utf8'
@@ -146,13 +150,38 @@ assert.match(
 );
 assert.match(
   scheduler,
-  /task\.type === 'DERIVED_FACTOR_SYNC'[\s\S]{0,2600}status: ok \? 'COMPLETED' : 'FAILED'[\s\S]{0,700}throw new Error\(`派生因子同步失败/,
+  /task\.type === 'DERIVED_FACTOR_SYNC'[\s\S]{0,4200}status: ok \? 'COMPLETED' : 'FAILED'[\s\S]{0,900}throw new Error\(`派生因子同步失败/,
   'derived-factor scheduler runs must finish their execution log and propagate script failures'
 );
 assert.match(
   retiredBaostockFactorTask,
   /type = 'DERIVED_FACTOR_SYNC'[\s\S]{0,120}name = '每日派生因子同步 \(baostock\)'[\s\S]{0,120}is_active = true/,
   'the duplicate legacy Baostock factor task must be retired without touching custom tasks'
+);
+assert.match(
+  retiredBaostockFactorTask,
+  /name = '每日派生因子同步 \(自动多源\)'[\s\S]{0,220}jsonb_set[\s\S]{0,220}'"auto"'::jsonb[\s\S]{0,300}name = '每日派生因子同步 \(东方财富\)'/,
+  'the authoritative factor task must migrate from the blocked provider to the automatic fallback plan'
+);
+assert.match(
+  derivedFactorCli,
+  /opts\.provider \|\| 'auto'[\s\S]{0,1800}totalUpserts <= 0[\s\S]{0,500}因子同步零落盘，拒绝记录假成功/,
+  'the derived-factor CLI must default to auto and reject zero-upsert false successes'
+);
+assert.match(
+  scheduler,
+  /syncSummary[\s\S]{0,900}scenario === 'derived_factor_sync'[\s\S]{0,700}syncSummary\.skipped === true \|\| upsertTotal > 0/,
+  'the scheduler must require a structured successful factor-sync summary'
+);
+assert.match(
+  stockFactorService,
+  /recordProviderResult[\s\S]{0,600}upserts\?\.valuation[\s\S]{0,900}recordProviderResult\('eastmoney'/,
+  'top-level factor-sync counts must include real-provider writes'
+);
+assert.match(
+  stockFactorService,
+  /Intl\.DateTimeFormat\('en-US',[\s\S]{0,160}timeZone: 'Asia\/Shanghai'[\s\S]{0,350}byType\.year/,
+  'derived-factor dates must use the A-share timezone instead of UTC truncation'
 );
 for (const retiredRoute of [
   '/api/strategy-research/opening-preflight',
@@ -270,4 +299,4 @@ assert.match(
   'A-share report history must support PIT-bounded historical materialization'
 );
 
-console.log('data refresh contract: 43 assertions passed');
+console.log('data refresh contract: 48 assertions passed');
