@@ -124,6 +124,8 @@ describe('Tab 6/7 contract-first behavior', () => {
   test('renders successful report, evidence links, disclaimer, KPI, history and compare', () => {
     const daily = renderToStaticMarkup(
       <DailyReport
+        aShareOverview={<div>A 股收盘主稿</div>}
+        globalSummary={<div>海外三句话</div>}
         state={{
           kind: 'ready',
           report,
@@ -136,6 +138,8 @@ describe('Tab 6/7 contract-first behavior', () => {
       />
     );
     expect(daily).toContain('A 股深度主报告 · 推荐快照 0.3.1');
+    expect(daily).toContain('A 股收盘主稿');
+    expect(daily).toContain('海外三句话');
     expect(daily).toContain('href="sec-edgar://');
     expect(daily).toContain('投资有风险');
     expect(daily).toContain('高确信度');

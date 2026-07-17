@@ -16,6 +16,8 @@ export interface DailyReportProps {
   onRetry?: () => void;
   generateAvailable?: boolean;
   generateUnavailableReason?: string;
+  aShareOverview?: React.ReactNode;
+  globalSummary?: React.ReactNode;
 }
 
 const DEFAULT_STATE: DailyReportViewState = {
@@ -30,6 +32,8 @@ export function DailyReport({
   onRetry,
   generateAvailable = false,
   generateUnavailableReason = '回放生成待运行时接入',
+  aShareOverview,
+  globalSummary,
 }: DailyReportProps) {
   if (state.kind === 'loading')
     return (
@@ -81,7 +85,11 @@ export function DailyReport({
           {GENERATION_STATUS_LABELS[state.generation.status] ?? state.generation.status}
         </Tag>
       </div>
-      <ReportDocument report={state.report} />
+      <ReportDocument
+        report={state.report}
+        aShareOverview={aShareOverview}
+        globalSummary={globalSummary}
+      />
     </section>
   );
 }

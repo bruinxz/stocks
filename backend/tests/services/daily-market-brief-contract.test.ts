@@ -1,0 +1,56 @@
+import assert from 'assert';
+import fs from 'fs';
+import path from 'path';
+
+const root = path.resolve(__dirname, '../../..');
+const controller = fs.readFileSync(
+  path.join(root, 'backend/src/api/controllers/MarketController.ts'),
+  'utf8'
+);
+const routes = fs.readFileSync(path.join(root, 'backend/src/api/routes/market.routes.ts'), 'utf8');
+const report = fs.readFileSync(
+  path.join(root, 'frontend/src/pages/catdesk/tabs/daily-report/ReportDocument.tsx'),
+  'utf8'
+);
+const container = fs.readFileSync(
+  path.join(root, 'frontend/src/pages/catdesk/tabs/daily-report/DailyReportContainer.tsx'),
+  'utf8'
+);
+const editorial = fs.readFileSync(
+  path.join(root, 'frontend/src/pages/catdesk/tabs/daily-report/AShareEditorialSummary.tsx'),
+  'utf8'
+);
+const overseas = fs.readFileSync(
+  path.join(root, 'frontend/src/pages/catdesk/tabs/daily-report/GlobalCatalystSummary.tsx'),
+  'utf8'
+);
+
+assert.match(
+  controller,
+  /getDailyBrief[\s\S]{0,2600}covered \/ NULLIF\(listed\.total, 0\) >= 0\.95/,
+  'daily brief must select a full-coverage trading day'
+);
+assert.match(
+  controller,
+  /advancing_count[\s\S]{0,220}declining_count[\s\S]{0,260}flat_count/,
+  'daily brief must expose market breadth'
+);
+assert.match(
+  controller,
+  /leaders: normalizedSectors\.slice\(0, 5\)[\s\S]{0,120}laggards:/,
+  'daily brief must expose both leading and lagging industries'
+);
+assert.match(
+  routes,
+  /router\.get\('\/daily-brief', authController\.authenticate, marketController\.getDailyBrief\)/,
+  'daily brief route must remain authenticated and read-only'
+);
+assert.match(editorial, /A 股收盘主稿/, 'daily report must lead with the A-share close article');
+assert.match(report, /个股观察/, 'daily report must retain an A-share stock evidence section');
+assert.match(overseas, /海外三句话/, 'US, Japan and Korea must be reduced to a brief aside');
+assert.ok(
+  container.indexOf('aShareOverview=') < container.indexOf('globalSummary='),
+  'A-share editorial content must precede the overseas aside'
+);
+
+console.log('daily market brief contract: 8 assertions passed');

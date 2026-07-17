@@ -2,6 +2,7 @@ import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { EvidenceText } from './EvidenceText';
+import { recommendationDisplayName } from './editorial';
 import type { DailyReportDocument } from './types';
 import {
   MARKET_SCOPE_LABELS,
@@ -10,46 +11,55 @@ import {
   SIZE_HINT_LABELS,
 } from '../../shared/uiLabels';
 
-export function ReportDocument({ report }: { report: DailyReportDocument }) {
+export interface ReportDocumentProps {
+  report: DailyReportDocument;
+  aShareOverview?: React.ReactNode;
+  globalSummary?: React.ReactNode;
+}
+
+export function ReportDocument({ report, aShareOverview, globalSummary }: ReportDocumentProps) {
   return (
     <article className="report-document">
       <header className="report-document__header">
         <div>
           <span className="report-eyebrow">A 股深度主报告 · 推荐快照 0.3.1</span>
-          <h2>{report.title}</h2>
+          <h2>A 股每日研究手记</h2>
         </div>
-        <div className="report-document__pins" aria-label="报告版本锚点">
-          <code>{PROFILE_LABELS[report.snapshot.profile] ?? report.snapshot.profile}</code>
-          <code>
-            {MARKET_SCOPE_LABELS[report.snapshot.market_scope] ?? report.snapshot.market_scope}
-          </code>
-          <code>{report.snapshot.meta.contract_version}</code>
+        <div className="report-document__edition">
+          <span>{report.trading_day}</span>
+          <small>第 {report.report_id.slice(0, 6).toUpperCase()} 号</small>
         </div>
       </header>
 
-      <nav className="report-toc" aria-label="报告目录">
-        {report.sections.map((section, index) => (
-          <a href={`#report-${section.key}`} key={section.key}>
-            <span>{String(index + 1).padStart(2, '0')}</span>
-            {section.title}
-          </a>
-        ))}
-      </nav>
-
-      <div className="report-markdown">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{report.markdown}</ReactMarkdown>
-      </div>
+      {aShareOverview}
 
       <section className="recommendation-ledger" aria-label="A 股个股推荐证据清单">
+        <header className="recommendation-ledger__header">
+          <div>
+            <span className="editorial-section-number">02</span>
+            <h2>个股观察</h2>
+          </div>
+          <p>按综合评分排序；保留证据，但不把观察名单写成买入指令。</p>
+        </header>
         {report.snapshot.items.map(item => {
           const recommendation = item.recommendation;
+          const companyName = recommendationDisplayName(item);
+          const topDims = [...recommendation.score.dims]
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 3);
           return (
             <article className="recommendation-card" key={recommendation.id}>
-              <div className="recommendation-card__rank">{item.rating_band}</div>
+              <div className="recommendation-card__rank">
+                <span>{item.rating_band}</span>
+                <small>{recommendation.score.total.toFixed(1)}</small>
+              </div>
               <div>
                 <div className="recommendation-card__title">
-                  <strong>{recommendation.ticker}</strong>
-                  <span>{recommendation.explanation.headline}</span>
+                  <strong>{companyName}</strong>
+                  <code>{recommendation.ticker}</code>
+                  <span>
+                    {topDims.map(dimension => `${dimension.key} ${dimension.score}`).join(' · ')}
+                  </span>
                 </div>
                 <p>
                   <EvidenceText
@@ -58,18 +68,17 @@ export function ReportDocument({ report }: { report: DailyReportDocument }) {
                   />
                 </p>
                 <div className="recommendation-card__meta">
-                  <code>评分 {recommendation.score.total}</code>
-                  <code>确信度 {recommendation.conviction.final}</code>
-                  <code>
+                  <span>确信度 {recommendation.conviction.final}</span>
+                  <span>
                     风险{' '}
                     {RISK_GATE_LABELS[recommendation.risk_gate.gate] ??
                       recommendation.risk_gate.gate}
-                  </code>
-                  <code>
+                  </span>
+                  <span>
                     仓位{' '}
                     {SIZE_HINT_LABELS[recommendation.entry_plan.size_hint.tier] ??
                       recommendation.entry_plan.size_hint.tier}
-                  </code>
+                  </span>
                 </div>
               </div>
             </article>
@@ -77,12 +86,22 @@ export function ReportDocument({ report }: { report: DailyReportDocument }) {
         })}
       </section>
 
-      {report.sections.map(section => (
-        <section id={`report-${section.key}`} className="report-section" key={section.key}>
-          <h3>{section.title}</h3>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{section.markdown}</ReactMarkdown>
-        </section>
-      ))}
+      {globalSummary}
+
+      <details className="report-methodology">
+        <summary>查看证据账本与版本锚点</summary>
+        <div className="report-document__pins" aria-label="报告版本锚点">
+          <code>{PROFILE_LABELS[report.snapshot.profile] ?? report.snapshot.profile}</code>
+          <code>
+            {MARKET_SCOPE_LABELS[report.snapshot.market_scope] ?? report.snapshot.market_scope}
+          </code>
+          <code>{report.snapshot.meta.contract_version}</code>
+          <code>{report.snapshot.snapshot_id}</code>
+        </div>
+        <div className="report-markdown">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{report.markdown}</ReactMarkdown>
+        </div>
+      </details>
 
       <footer className="report-disclaimer" data-version={report.snapshot.disclaimer.version}>
         <strong>风险披露</strong>

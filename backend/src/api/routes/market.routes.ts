@@ -30,6 +30,20 @@ router.get('/overview', authController.authenticate, marketController.getMarketO
 
 /**
  * @openapi
+ * /api/market/daily-brief:
+ *   get:
+ *     tags: [Market]
+ *     summary: 获取日报使用的 A 股完整交易日收盘简报
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: query, name: date, schema: { type: string, format: date } }
+ *     responses:
+ *       200: { description: A 股指数、涨跌家数、行业与个股涨跌两端 }
+ */
+router.get('/daily-brief', authController.authenticate, marketController.getDailyBrief);
+
+/**
+ * @openapi
  * /api/market/realtime-indexes:
  *   get:
  *     tags: [Market]
