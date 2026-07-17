@@ -30,6 +30,10 @@ const deployScript = fs.readFileSync(
   path.join(ROOT, '../scripts/deployment/deploy_remote_build.sh'),
   'utf8'
 );
+const smokeScript = fs.readFileSync(
+  path.join(ROOT, '../scripts/tests/smoke_readonly_core.js'),
+  'utf8'
+);
 
 let passed = 0;
 let failed = 0;
@@ -113,6 +117,17 @@ assert(
     fs.readFileSync(path.join(ROOT, '../scripts/deployment/release_health_gate.js'), 'utf8')
   )
 );
+for (const retiredPath of [
+  '/api/quant/fusion-audits?limit=5',
+  '/api/quant/rankings?limit=5',
+  '/api/ai/recommendations/loop-policy-snapshots?limit=5',
+]) {
+  const probeOffset = smokeScript.indexOf(retiredPath);
+  assert(
+    `retired smoke probe is non-critical: ${retiredPath}`,
+    probeOffset > 0 && smokeScript.slice(probeOffset, probeOffset + 180).includes('critical: false')
+  );
+}
 
 assert(
   'PG harness is destructive-test guarded',
