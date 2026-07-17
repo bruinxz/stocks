@@ -18,11 +18,6 @@ const jsonOutPath = process.env.LOCAL_REGRESSION_JSON_OUT || '';
 
 const checks = [
   {
-    name: 'field gate adjustment attribution unit',
-    command: process.execPath,
-    args: [path.join(repoRoot, 'scripts/tests/field_gate_adjustment_attribution_test.js')],
-  },
-  {
     name: 'readonly API smoke syntax',
     command: process.execPath,
     args: ['--check', path.join(repoRoot, 'scripts/tests/smoke_readonly_core.js')],

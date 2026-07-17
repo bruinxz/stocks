@@ -57,6 +57,10 @@ const realtimeDedupMigration = fs.readFileSync(
   path.join(root, 'backend/scripts/migrations/2026-07-17-realtime-quote-dedup.sql'),
   'utf8'
 );
+const freshnessAudit = fs.readFileSync(
+  path.join(root, 'scripts/tests/quant_data_freshness_check.js'),
+  'utf8'
+);
 
 assert.match(
   scheduler,
@@ -117,6 +121,11 @@ assert.match(
   pageFreshness,
   /expectedCompletedTradeDate[\s\S]{0,700}latestTradeDateOnOrBefore/,
   'page freshness must compare against an expected completed A-share trade date'
+);
+assert.match(
+  freshnessAudit,
+  /resolveExpectedCompletedTradeDate[\s\S]{0,1800}isAShareTradeDay[\s\S]{0,900}hour >= 17[\s\S]{0,900}latestTradeDateOnOrBefore/,
+  'production freshness audit must not treat partial intraday bars as a completed trade date'
 );
 assert.match(
   scheduler,
@@ -210,4 +219,4 @@ assert.match(
   'A-share report history must support PIT-bounded historical materialization'
 );
 
-console.log('data refresh contract: 31 assertions passed');
+console.log('data refresh contract: 32 assertions passed');

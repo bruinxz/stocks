@@ -110,10 +110,11 @@ npm run sync:announcements
 ### 2.3 只读完整性检查
 
 ```bash
-EXPECTED_DATA_DATE=2026-07-16 node scripts/tests/quant_data_freshness_check.js
+node scripts/tests/quant_data_freshness_check.js
 ```
 
-该命令不会触发同步或交易。详细口径见 `docs/DATA_FRESHNESS_AND_SCHEDULING.md`。
+该命令不会触发同步或交易，并会自动选择最近已完成的 A 股交易日；历史截面复核可显式设置
+`EXPECTED_DATA_DATE=YYYY-MM-DD`。详细口径见 `docs/DATA_FRESHNESS_AND_SCHEDULING.md`。
 
 ---
 

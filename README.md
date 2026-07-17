@@ -83,7 +83,7 @@ cd backend
 npm run data:status
 
 cd ..
-EXPECTED_DATA_DATE=2026-07-16 node scripts/tests/quant_data_freshness_check.js
+node scripts/tests/quant_data_freshness_check.js
 ```
 
 详细口径与运维处理见 [数据水位与定时同步](docs/DATA_FRESHNESS_AND_SCHEDULING.md)。
