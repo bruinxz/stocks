@@ -24,6 +24,10 @@ const overseas = fs.readFileSync(
   path.join(root, 'frontend/src/pages/catdesk/tabs/daily-report/GlobalCatalystSummary.tsx'),
   'utf8'
 );
+const reportStyles = fs.readFileSync(
+  path.join(root, 'frontend/src/pages/catdesk/tabs/daily-report/report.css'),
+  'utf8'
+);
 
 assert.match(
   controller,
@@ -52,5 +56,15 @@ assert.ok(
   container.indexOf('aShareOverview=') < container.indexOf('globalSummary='),
   'A-share editorial content must precede the overseas aside'
 );
+assert.match(
+  reportStyles,
+  /\.report-document\s*\{[\s\S]{0,320}grid-template-columns:\s*minmax\(0,\s*1fr\)/,
+  'the report grid must shrink to a narrow viewport instead of clipping its article'
+);
+assert.match(
+  reportStyles,
+  /\.index-tape__scroll\s*\{[\s\S]{0,180}overflow-x:\s*auto/,
+  'the index tape must own horizontal overflow on narrow screens'
+);
 
-console.log('daily market brief contract: 8 assertions passed');
+console.log('daily market brief contract: 10 assertions passed');

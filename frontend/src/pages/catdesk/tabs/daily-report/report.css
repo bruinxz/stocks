@@ -76,6 +76,7 @@
   position: relative;
   isolation: isolate;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0;
   overflow: hidden;
   border: 1px solid var(--report-line);
@@ -195,6 +196,8 @@
 }
 
 .index-tape__scroll {
+  width: 100%;
+  max-width: 100%;
   overflow-x: auto;
   background: #1f2220;
   box-shadow: 6px 7px 0 rgba(52, 42, 36, 0.11);
@@ -595,6 +598,14 @@
   color: #a45149;
   font-family: var(--cd-font-mono);
   font-size: 9px;
+}
+
+.report-methodology code,
+.report-disclaimer code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  word-break: break-all;
 }
 
 .report-markdown {
