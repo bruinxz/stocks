@@ -13,7 +13,7 @@ import { dataUpdateQueue } from '../../jobs/dataUpdateQueue';
 import { dataUpdateWorker } from '../../jobs/dataUpdateWorker';
 import { redisLock, LockKeys } from '../../utils/redisLock';
 import { logger } from '../../utils/logger';
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import { sequelize } from '../../config/database';
 
 interface SearchStocksQuery {
@@ -129,6 +129,246 @@ export class MarketController {
       });
     } catch (error: any) {
       logger.error('获取大盘概览失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  /**
+   * 日报专用 A 股收盘简报。
+   *
+   * 仅选择覆盖率 >= 95% 的最近完整交易日，避免盘中少量落盘被误写成收盘结论。
+   * 返回指数、涨跌家数、行业与个股涨跌两端，供前端组织成编辑部式正文。
+   */
+  getDailyBrief = async (req: Request, res: Response) => {
+    try {
+      const requestedDate =
+        typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+          ? req.query.date
+          : null;
+      const [dateRow] = await sequelize.query<{ trade_date: string | null }>(
+        `
+          WITH listed AS (
+            SELECT COUNT(*)::numeric AS total
+            FROM stocks
+            WHERE is_listed = TRUE AND COALESCE(type, 'stock') = 'stock'
+          ), coverage AS (
+            SELECT bar.time::date AS trade_date, COUNT(DISTINCT bar.stock_id)::numeric AS covered
+            FROM daily_bars bar
+            JOIN stocks stock ON stock.id = bar.stock_id
+            WHERE stock.is_listed = TRUE
+              AND COALESCE(stock.type, 'stock') = 'stock'
+              AND (:requested_date::date IS NULL OR bar.time::date <= :requested_date::date)
+            GROUP BY bar.time::date
+          )
+          SELECT MAX(coverage.trade_date)::text AS trade_date
+          FROM coverage CROSS JOIN listed
+          WHERE coverage.covered / NULLIF(listed.total, 0) >= 0.95
+        `,
+        {
+          replacements: { requested_date: requestedDate },
+          type: QueryTypes.SELECT,
+        }
+      );
+      const tradeDate = dateRow?.trade_date;
+      if (!tradeDate) {
+        res.status(404).json({ success: false, message: '暂无完整 A 股交易日数据' });
+        return;
+      }
+
+      const [indices, breadthRows, sectorRows, moverRows] = await Promise.all([
+        sequelize.query<{
+          symbol: string;
+          name: string;
+          current_price: number | string;
+          change: number | string;
+          change_percent: number | string;
+          five_day_change_percent: number | string | null;
+        }>(
+          `
+            WITH ranked AS (
+              SELECT stock.symbol, stock.name, bar.close,
+                     ROW_NUMBER() OVER (PARTITION BY stock.id ORDER BY bar.time DESC) AS recency
+              FROM daily_bars bar
+              JOIN stocks stock ON stock.id = bar.stock_id
+              WHERE stock.symbol IN ('sh.000001', 'sh.000300', 'sz.399001', 'sz.399006')
+                AND bar.time::date <= :trade_date::date
+                AND bar.is_trading_day = TRUE
+            ), rolled AS (
+              SELECT symbol, name,
+                     MAX(close) FILTER (WHERE recency = 1) AS current_price,
+                     MAX(close) FILTER (WHERE recency = 2) AS previous_close,
+                     MAX(close) FILTER (WHERE recency = 6) AS five_day_close
+              FROM ranked
+              WHERE recency <= 6
+              GROUP BY symbol, name
+            )
+            SELECT symbol, name, current_price,
+                   ROUND((current_price - previous_close)::numeric, 4) AS change,
+                   ROUND(((current_price / NULLIF(previous_close, 0)) - 1)::numeric * 100, 4)
+                     AS change_percent,
+                   ROUND(((current_price / NULLIF(five_day_close, 0)) - 1)::numeric * 100, 4)
+                     AS five_day_change_percent
+            FROM rolled
+            WHERE current_price IS NOT NULL
+            ORDER BY CASE symbol
+              WHEN 'sh.000001' THEN 1 WHEN 'sh.000300' THEN 2
+              WHEN 'sz.399001' THEN 3 WHEN 'sz.399006' THEN 4 ELSE 9 END
+          `,
+          { replacements: { trade_date: tradeDate }, type: QueryTypes.SELECT }
+        ),
+        sequelize.query<{
+          total_count: number | string;
+          advancing_count: number | string;
+          declining_count: number | string;
+          flat_count: number | string;
+        }>(
+          `
+            WITH latest AS (
+              SELECT bar.change_percent
+              FROM daily_bars bar
+              JOIN stocks stock ON stock.id = bar.stock_id
+              WHERE bar.time::date = :trade_date::date
+                AND stock.is_listed = TRUE
+                AND COALESCE(stock.type, 'stock') = 'stock'
+            )
+            SELECT COUNT(*)::int AS total_count,
+                   COUNT(*) FILTER (WHERE change_percent > 0)::int AS advancing_count,
+                   COUNT(*) FILTER (WHERE change_percent < 0)::int AS declining_count,
+                   COUNT(*) FILTER (WHERE change_percent = 0 OR change_percent IS NULL)::int
+                     AS flat_count
+            FROM latest
+          `,
+          { replacements: { trade_date: tradeDate }, type: QueryTypes.SELECT }
+        ),
+        sequelize.query<{
+          industry: string;
+          average_change_percent: number | string;
+          advancing_count: number | string;
+          declining_count: number | string;
+          stock_count: number | string;
+          leading_stock_name: string;
+          leading_stock_change_percent: number | string;
+        }>(
+          `
+            WITH latest AS (
+              SELECT stock.industry, stock.name, COALESCE(bar.change_percent, 0) AS change_percent
+              FROM daily_bars bar
+              JOIN stocks stock ON stock.id = bar.stock_id
+              WHERE bar.time::date = :trade_date::date
+                AND stock.is_listed = TRUE
+                AND COALESCE(stock.type, 'stock') = 'stock'
+                AND NULLIF(BTRIM(stock.industry), '') IS NOT NULL
+            )
+            SELECT industry,
+                   ROUND(AVG(change_percent)::numeric, 4) AS average_change_percent,
+                   COUNT(*) FILTER (WHERE change_percent > 0)::int AS advancing_count,
+                   COUNT(*) FILTER (WHERE change_percent < 0)::int AS declining_count,
+                   COUNT(*)::int AS stock_count,
+                   (ARRAY_AGG(name ORDER BY change_percent DESC, name ASC))[1]
+                     AS leading_stock_name,
+                   ROUND(MAX(change_percent)::numeric, 4) AS leading_stock_change_percent
+            FROM latest
+            GROUP BY industry
+            HAVING COUNT(*) >= 3
+            ORDER BY average_change_percent DESC, industry ASC
+          `,
+          { replacements: { trade_date: tradeDate }, type: QueryTypes.SELECT }
+        ),
+        sequelize.query<{
+          symbol: string;
+          name: string;
+          industry: string | null;
+          change_percent: number | string;
+        }>(
+          `
+            WITH ranked AS (
+              SELECT stock.symbol, stock.name, stock.industry,
+                     COALESCE(bar.change_percent, 0) AS change_percent,
+                     ROW_NUMBER() OVER (
+                       ORDER BY COALESCE(bar.change_percent, 0) DESC, stock.symbol ASC
+                     ) AS gain_rank,
+                     ROW_NUMBER() OVER (
+                       ORDER BY COALESCE(bar.change_percent, 0) ASC, stock.symbol ASC
+                     ) AS loss_rank
+              FROM daily_bars bar
+              JOIN stocks stock ON stock.id = bar.stock_id
+              WHERE bar.time::date = :trade_date::date
+                AND stock.is_listed = TRUE
+                AND COALESCE(stock.type, 'stock') = 'stock'
+            )
+            SELECT symbol, name, industry, ROUND(change_percent::numeric, 4) AS change_percent
+            FROM ranked
+            WHERE gain_rank <= 5 OR loss_rank <= 5
+          `,
+          { replacements: { trade_date: tradeDate }, type: QueryTypes.SELECT }
+        ),
+      ]);
+
+      const numberValue = (value: unknown) => {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : 0;
+      };
+      const breadth = breadthRows[0] || {
+        total_count: 0,
+        advancing_count: 0,
+        declining_count: 0,
+        flat_count: 0,
+      };
+      const normalizedSectors = sectorRows.map(row => ({
+        industry: row.industry,
+        average_change_percent: numberValue(row.average_change_percent),
+        advancing_count: numberValue(row.advancing_count),
+        declining_count: numberValue(row.declining_count),
+        stock_count: numberValue(row.stock_count),
+        leading_stock_name: row.leading_stock_name,
+        leading_stock_change_percent: numberValue(row.leading_stock_change_percent),
+      }));
+      const normalizedMovers = moverRows.map(row => ({
+        symbol: row.symbol,
+        name: row.name,
+        industry: row.industry,
+        change_percent: numberValue(row.change_percent),
+      }));
+
+      res.json({
+        success: true,
+        data: {
+          trade_date: tradeDate,
+          generated_at: new Date().toISOString(),
+          indices: indices.map(row => ({
+            ...row,
+            current_price: numberValue(row.current_price),
+            change: numberValue(row.change),
+            change_percent: numberValue(row.change_percent),
+            five_day_change_percent:
+              row.five_day_change_percent === null
+                ? null
+                : numberValue(row.five_day_change_percent),
+          })),
+          breadth: {
+            total_count: numberValue(breadth.total_count),
+            advancing_count: numberValue(breadth.advancing_count),
+            declining_count: numberValue(breadth.declining_count),
+            flat_count: numberValue(breadth.flat_count),
+          },
+          sectors: {
+            leaders: normalizedSectors.slice(0, 5),
+            laggards: normalizedSectors.slice(-5).reverse(),
+          },
+          movers: {
+            gainers: normalizedMovers
+              .filter(row => row.change_percent > 0)
+              .sort((a, b) => b.change_percent - a.change_percent)
+              .slice(0, 5),
+            laggards: normalizedMovers
+              .filter(row => row.change_percent < 0)
+              .sort((a, b) => a.change_percent - b.change_percent)
+              .slice(0, 5),
+          },
+        },
+      });
+    } catch (error: any) {
+      logger.error('获取 A 股日报收盘简报失败:', error);
       res.status(500).json({ success: false, message: error.message });
     }
   };

@@ -104,10 +104,10 @@ export function GlobalCatalystSummary() {
     <section className="global-catalyst" aria-label="海外市场对 A 股的侧面催化">
       <header>
         <div>
-          <span className="report-eyebrow">海外只看大势</span>
-          <h2>给 A 股的三封远方来信</h2>
+          <span className="editorial-section-number">03</span>
+          <h2>海外三句话</h2>
         </div>
-        <p>不逐只点评海外股票，只保留能映射到 A 股板块的趋势。</p>
+        <p>日韩与美股只作简要旁注，主稿仍然聚焦 A 股。</p>
       </header>
       <div className="global-catalyst__grid">
         {(data?.cards ?? []).map(card => (
