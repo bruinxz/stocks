@@ -19,8 +19,13 @@
 ## 发布
 
 ```bash
-bash scripts/ops/deploy_main_release.sh
+export SSH_HOST='<production-host>'
+export DEPLOY_PASSWORD='<deploy-user-password>'
+export OPS_PASSWORD='<ops-user-password>'
+bash scripts/deployment/deploy_remote_build.sh main main
 ```
+
+该脚本会在远端拉取已推送的 `main`、安装 Node/Python 依赖、构建前后端、创建不可变 release、切换 `current`、重启 `stocks-backend.service` 并执行健康门禁。`scripts/ops/deploy_main_release.sh` 是服务器侧旧制品解包脚本，不是当前发布入口。
 
 发布完成必须验证：后端 health、前端静态资源、数据库 schema、scheduler active count、默认自动浏览会话以及核心只读 smoke。
 

@@ -41,11 +41,13 @@
 ```bash
 git clone <your-repo-url>
 cd stocks
-docker-compose up -d
+export POSTGRES_PASSWORD='<choose-a-local-dev-password>'
+docker compose up -d
 
 cd backend
-npm install
+npm ci
 cp .env.example .env
+# 将 .env 的 DB_PASSWORD 改成与 POSTGRES_PASSWORD 相同
 npm run check-env
 npm run dev
 ```
@@ -56,8 +58,10 @@ npm run dev
 
 ```bash
 cd frontend
-npm install --legacy-peer-deps
-cp .env.example .env
+npm ci --legacy-peer-deps
+cat > .env.development.local <<'EOF'
+REACT_APP_API_BASE_URL=http://localhost:3000/api
+EOF
 PORT=3001 npm start
 ```
 

@@ -37,11 +37,13 @@
 要求 Node.js 18+、Python 3.9+、PostgreSQL 14+、Redis。
 
 ```bash
+export POSTGRES_PASSWORD='<choose-a-local-dev-password>'
 docker compose up -d
 
 cd backend
 npm ci
 cp .env.example .env
+# 将 backend/.env 的 DB_PASSWORD 改成与上面的 POSTGRES_PASSWORD 相同
 npm run check-env
 npm run dev
 ```
@@ -69,7 +71,7 @@ REACT_APP_API_BASE_URL=http://localhost:3000/api
 | 时段 | 任务 |
 |---|---|
 | A 股连续竞价 | 每 5 分钟刷新一次全市场实时行情；集合竞价与午休由处理器跳过 |
-| 工作日 09:00 | 更新 A 股日报快照、日/韩市场水位及美股、日本催化摘要 |
+| 每日 09:00 | 更新 A 股日报快照、日/韩市场水位及美股、日本催化摘要；不受 A 股节假日门禁影响 |
 | 工作日盘后 | 日 K、因子、公告、涨停、行业资金流、报告与归因增量同步 |
 | 每日 18:30 | 全链路数据陈旧度检查 |
 | 每日 23:00 | 数据质量深度扫描 |
@@ -109,10 +111,13 @@ bash scripts/ci/check_weak_secrets.sh
 
 ## 生产发布
 
-生产只保留 `main` 环境，目录为 `/opt/stocks`，后端由 `stocks-backend.service` 管理。发布必须走不可变 release + `current` 软链切换，并在健康检查通过后才算完成：
+生产只保留 `main` 环境，目录为 `/opt/stocks`，后端由 `stocks-backend.service` 管理。发布必须走远端构建、不可变 release、`current` 软链切换和健康门禁。主机与密码只通过环境变量传入：
 
 ```bash
-bash scripts/ops/deploy_main_release.sh
+export SSH_HOST='<production-host>'
+export DEPLOY_PASSWORD='<deploy-user-password>'
+export OPS_PASSWORD='<ops-user-password>'
+bash scripts/deployment/deploy_remote_build.sh main main
 ```
 
 不要手工覆盖 `current` 内文件，也不要在生产服务器提交 `.env`、密钥或数据库导出。

@@ -4,8 +4,8 @@
 # Unlike the legacy local-build flow (deploy_release_package.js), this script
 # does NOT compile anything locally. It only:
 #   1. Confirms the target branch is pushed to GitHub
-#   2. SSH'es to deploy@<legacy-prod-host> to clone+build+release+activate remotely
-#   3. SSH'es to ops@<legacy-prod-host> to restart systemd + run health gate
+#   2. SSH'es to deploy@$SSH_HOST to clone+build+release+activate remotely
+#   3. SSH'es to ops@$SSH_HOST to restart systemd + run health gate
 #
 # Usage:
 #   bash scripts/deployment/deploy_remote_build.sh main [branch]
@@ -13,8 +13,9 @@
 #     branch: git branch/tag/sha (default: current local branch)
 #
 # Required env:
-#   DEPLOY_PASSWORD  password for deploy@<legacy-prod-host>:14126
-#   OPS_PASSWORD     password for ops@<legacy-prod-host>:14126
+#   SSH_HOST         production hostname or IP (never commit the real value)
+#   DEPLOY_PASSWORD  password for deploy@$SSH_HOST:$SSH_PORT
+#   OPS_PASSWORD     password for ops@$SSH_HOST:$SSH_PORT
 #
 # Optional env:
 #   SKIP_HEALTH_GATE=true   skip the post-deploy health gate
@@ -51,11 +52,12 @@ fi
 
 DEPLOY_PASSWORD="${DEPLOY_PASSWORD:-}"
 OPS_PASSWORD="${OPS_PASSWORD:-}"
+SSH_HOST="${SSH_HOST:-${DEPLOY_HOST:-}}"
+SSH_PORT="${SSH_PORT:-14126}"
+[[ -z "$SSH_HOST" ]] && { echo "SSH_HOST (or DEPLOY_HOST) required" >&2; exit 1; }
 [[ -z "$DEPLOY_PASSWORD" ]] && { echo "DEPLOY_PASSWORD required" >&2; exit 1; }
 [[ -z "$OPS_PASSWORD" ]] && { echo "OPS_PASSWORD required" >&2; exit 1; }
 
-SSH_HOST="<legacy-prod-host>"
-SSH_PORT="14126"
 GIT_REPO_URL="${GIT_REPO_URL:-https://github.com/bruinxz/stocks.git}"
 
 # Target → /opt/stocks + service name (Sprint 37: 仅 main)
@@ -287,6 +289,16 @@ cd "\$CURRENT/backend"
 test -f .env
 APPLY_AUTH_REFRESH_SESSION_MIGRATION=1 NODE_ENV=production \
   node dist/scripts/apply-auth-refresh-session-migration.js
+EOF
+
+echo "▶ [6/9] Deduplicate realtime quotes and enforce their natural key..."
+ssh_deploy "bash -s" <<EOF
+set -euo pipefail
+CURRENT='$CURRENT'
+cd "\$CURRENT/backend"
+test -f .env
+APPLY_REALTIME_QUOTE_DEDUP_MIGRATION=1 NODE_ENV=production \
+  node dist/scripts/apply-realtime-quote-dedup-migration.js
 EOF
 
 # ---------------------------------------------------------------------------

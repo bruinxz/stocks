@@ -80,17 +80,20 @@ export class QuantDataService {
     symbols?: string[];
     limit?: number;
     /**
+     * 行情目录/实时水位需要覆盖 stocks 表内全部在市证券（股票、指数、ETF/基金）。
+     * 量化选股默认仍只使用普通股票，避免指数和基金误入策略 universe。
+     */
+    include_all_instruments?: boolean;
+    /**
      * audit S-7 修复: 历史回测的时点日; 不传 → 默认 today, 行为等价旧 `is_listed=true`。
      * 传入回测的 trade_date 可以正确包含"当时上市但今天已退市"的标的, 避免
      * 生存者偏差。
      */
     as_of_date?: string;
   }): Promise<Stock[]> {
-    // Batch AR (2026-06-21): cap raised from 1000 → 5000 for full-universe
-    // realtime quote sync (REALTIME_QUOTE_SYNC). A 股 listed ≈ 5500, the cap
-    // was leaving ~4000 stocks without intraday quotes (audited 2026-06-21:
-    // only 807 distinct symbols in realtime_quotes 7d window).
-    const limit = Math.min(Number(options.limit || 120), 5000);
+    // A 股普通股票已超过 5500 只，再加指数与 ETF 后约 5700 只；实时行情同步
+    // 使用 6000 上限可一次覆盖完整证券目录。策略调用方默认仍可传更小 limit。
+    const limit = Math.min(Number(options.limit || 120), 6000);
     const listedSurvivalWhere = this.buildListedSurvivalWhere(options.as_of_date);
     if (options.symbols?.length) {
       const symbols = options.symbols.map(normalizeSymbol).filter(Boolean);
@@ -108,12 +111,15 @@ export class QuantDataService {
       const stocks = favorites.map(item => item.stock).filter(Boolean) as Stock[];
       if (stocks.length) return stocks;
     }
+    const instrumentWhere = options.include_all_instruments
+      ? listedSurvivalWhere
+      : {
+          ...listedSurvivalWhere,
+          [Op.or]: [{ type: 'stock' }, { type: null }],
+          name: { [Op.and]: [{ [Op.notILike]: '%ST%' }, { [Op.notILike]: '%退%' }] },
+        };
     return Stock.findAll({
-      where: {
-        ...listedSurvivalWhere,
-        [Op.or]: [{ type: 'stock' }, { type: null }],
-        name: { [Op.and]: [{ [Op.notILike]: '%ST%' }, { [Op.notILike]: '%退%' }] },
-      },
+      where: instrumentWhere,
       order: this.buildMarketOrder(),
       limit,
     });

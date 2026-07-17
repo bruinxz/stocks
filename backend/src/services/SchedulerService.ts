@@ -302,6 +302,8 @@ class SchedulerService {
    * = 数量翻倍卖. node-cron 没有 noOverlap 原生支持, 自实现一个 task.id Set.
    */
   private inFlightTaskIds: Set<number> = new Set();
+  /** GLOBAL_MARKET_DAILY_SYNC 失败后在进程内最多重试两次，避免只能等重启/次日。 */
+  private globalMarketRetryTimers: Map<number, ReturnType<typeof setTimeout>> = new Map();
   /**
    * Batch O (2026-06-17, C-S5): 周期性 reconcile stale RUNNING task 的 timer.
    * 旧实现只在 boot 跑一次 → IN_PROGRESS 永挂. 现在每 10 分钟扫一次.
@@ -440,6 +442,9 @@ class SchedulerService {
             await this._executeTaskLogic(task, false);
           } catch (error) {
             logger.error(`Scheduled task ${task.id} (${task.name}) execution failed:`, error);
+            if (task.type === 'GLOBAL_MARKET_DAILY_SYNC') {
+              this.scheduleGlobalMarketRetry(task.id, 1);
+            }
           } finally {
             this.inFlightTaskIds.delete(task.id);
           }
@@ -454,6 +459,32 @@ class SchedulerService {
     logger.info(
       `Scheduled task ${task.id} (${task.name}) registered with cron: ${task.cron_expression}`
     );
+  }
+
+  private scheduleGlobalMarketRetry(taskId: number, attempt: number): void {
+    if (attempt > 2 || this.globalMarketRetryTimers.has(taskId)) return;
+    const delayMs = 10 * 60 * 1000;
+    const timer = setTimeout(async () => {
+      this.globalMarketRetryTimers.delete(taskId);
+      if (this.inFlightTaskIds.has(taskId)) {
+        this.scheduleGlobalMarketRetry(taskId, attempt);
+        return;
+      }
+      const task = await ScheduledTask.findByPk(taskId).catch(() => null);
+      if (!task || !task.is_active || task.type !== 'GLOBAL_MARKET_DAILY_SYNC') return;
+      this.inFlightTaskIds.add(taskId);
+      try {
+        logger.warn(`[GLOBAL_MARKET_DAILY_SYNC] retry attempt ${attempt}/2`);
+        await this._executeTaskLogic(task, false);
+      } catch (error) {
+        logger.error(`[GLOBAL_MARKET_DAILY_SYNC] retry ${attempt}/2 failed:`, error);
+        this.scheduleGlobalMarketRetry(taskId, attempt + 1);
+      } finally {
+        this.inFlightTaskIds.delete(taskId);
+      }
+    }, delayMs);
+    timer.unref();
+    this.globalMarketRetryTimers.set(taskId, timer);
   }
 
   /**
@@ -1132,11 +1163,11 @@ class SchedulerService {
           universe = 'manual';
           batchSize = this.toPositiveInt(parameters.batch_size || parameters.batchSize, 300, 500);
         } else {
-          // 老路径: universe='market'|'favorites', limit 默认 5000 全 A 股扫.
+          // universe='market'|'favorites'；market 默认覆盖股票、指数与 ETF 全目录。
           const limit = this.toPositiveInt(
             parameters.limit || parameters.quote_sync_limit || parameters.max_stocks,
-            5000,
-            5000
+            6000,
+            6000
           );
           universe = parameters.universe === 'favorites' ? 'favorites' : 'market';
           batchSize = this.toPositiveInt(parameters.batch_size || parameters.batchSize, 300, 500);
@@ -1144,6 +1175,7 @@ class SchedulerService {
             universe: universe as 'market' | 'favorites',
             user_id: parameters.user_id,
             limit,
+            include_all_instruments: universe === 'market',
           });
           targetSymbols = stocks.map(stock => stock.symbol);
         }
@@ -6021,7 +6053,7 @@ class SchedulerService {
           // 缺 daily_bars 的新股每天只能补 ~300 只, 排到第二天又被更新更晚的票
           // 挤掉, 形成永远轮不到的死循环. 2000 让 3 个交易日全市场覆盖一次,
           // 实测 5 并发 ≈ 单股 200ms × 2000 = ~7 分钟跑完, 不堵塞盘后任务.
-          max_stocks: 2000,
+          max_stocks: 6000,
         },
       },
       {
@@ -6034,7 +6066,7 @@ class SchedulerService {
           lookback_days: 10,
           dataSource: 'tencent_only',
           concurrency: 5,
-          batch_limit: 300,
+          batch_limit: 6000,
           lag_days_threshold: 0,
           stale_first: true,
         },
@@ -6112,8 +6144,8 @@ class SchedulerService {
         is_active: true,
         parameters: {
           universe: 'market',
-          // Batch AR (2026-06-21): 360 → 5000, 全 A 股 universe.
-          limit: 5000,
+          // 股票 + 指数 + ETF 全量在市证券一次覆盖。
+          limit: 6000,
           source: 'tencent',
           batch_size: 500,
           report_to_feishu: false,
@@ -6124,9 +6156,10 @@ class SchedulerService {
       {
         name: '全球市场与日报每日同步',
         type: 'GLOBAL_MARKET_DAILY_SYNC',
-        cron_expression: '0 9 * * 1-5',
+        cron_expression: '0 9 * * *',
         is_active: true,
         parameters: {
+          require_trading_day: false,
           env_file:
             process.env.BACKEND_ENV_FILE ||
             (process.env.NODE_ENV === 'production'
@@ -7001,6 +7034,8 @@ class SchedulerService {
         if (!hasExplicitScope) {
           nextParams.syncAllStocks = true;
         }
+        // 默认生产任务必须一次覆盖完整证券目录；旧库里的 300 上限不能继续继承。
+        if (!hasExplicitScope) nextParams.batch_limit = 6000;
         for (const key of [
           'batch_limit',
           'lag_days_threshold',
@@ -7013,6 +7048,28 @@ class SchedulerService {
             nextParams[key] = (taskData.parameters as any)[key];
           }
         }
+        if (JSON.stringify(nextParams) !== JSON.stringify(params)) {
+          patch.parameters = nextParams;
+        }
+      }
+
+      if (taskData.type === 'DAILY_UPDATE') {
+        const params = patch.parameters || task.parameters || {};
+        const nextParams = { ...taskData.parameters, ...params, max_stocks: 6000 };
+        patch.cron_expression = taskData.cron_expression;
+        if (JSON.stringify(nextParams) !== JSON.stringify(params)) {
+          patch.parameters = nextParams;
+        }
+      }
+
+      if (taskData.type === 'GLOBAL_MARKET_DAILY_SYNC') {
+        const params = patch.parameters || task.parameters || {};
+        patch.cron_expression = taskData.cron_expression;
+        const nextParams = {
+          ...taskData.parameters,
+          ...params,
+          require_trading_day: false,
+        };
         if (JSON.stringify(nextParams) !== JSON.stringify(params)) {
           patch.parameters = nextParams;
         }
@@ -7095,7 +7152,7 @@ class SchedulerService {
         const params = patch.parameters || task.parameters || {};
         const nextParams = { ...taskData.parameters, ...params };
         patch.cron_expression = taskData.cron_expression;
-        nextParams.limit = 5000;
+        nextParams.limit = 6000;
         nextParams.source = 'tencent';
         nextParams.batch_size = 500;
         for (const key of [

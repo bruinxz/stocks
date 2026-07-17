@@ -14,7 +14,7 @@
 │  - Redis（可选；任务队列用）                                 │
 │  - Nginx（HTTPS / 反向代理）                                │
 │  - systemd → stocks-backend.service                        │
-│  - pm2 / serve → frontend                                  │
+│  - Nginx :3001 → frontend/build（SPA 静态站）                │
 │                                                            │
 │  跑：所有 /api/* + LiveTrading 前端 + DB + 风控 + 命令派发    │
 └────────────────────────────────────────────────────────────┘
@@ -78,13 +78,13 @@
    sudo -u postgres psql -c "CREATE DATABASE stock_backtest OWNER stock_admin;"
    ```
 
-3. **拉代码 / 构建** —— 走 `node scripts/deployment/deploy_release_package.js`（已修，不再硬编码 macOS 路径）。
+3. **拉代码 / 构建** —— 在运维机设置 `SSH_HOST`、`DEPLOY_PASSWORD`、`OPS_PASSWORD`，执行 `bash scripts/deployment/deploy_remote_build.sh main main`；脚本在服务器拉取已推送主分支并构建不可变 release。
 
 4. **写 `.env`** —— 复制 `backend/.env.example.production` 到 `/opt/stocks/shared/backend.env`，填全 `[MUST]` 项。
 
 5. **DB 预检** —— 跑 `node scripts/preflight/db_unique_dup_check.js` 全 ✅。
 
-6. **admin bootstrap** —— `node scripts/ops/admin_bootstrap.js --username lym --apply`（密码走 stdin 隐藏输入）。
+6. **默认浏览会话** —— 在 `/opt/stocks/shared/backend.env` 配置 `DEFAULT_ADMIN_AUTO_LOGIN=true` 与服务器侧管理员用户名/密码；凭据不得进入 Git 或前端包。发布后实测 `/api/auth/default-login`。
 
 7. **systemd** —— 拷贝 `scripts/deployment/samples/stocks-backend.service` 到 `/etc/systemd/system/`，改 ExecStart 里的 node 路径（apt 装就是 `/usr/bin/node`），`sudo systemctl daemon-reload && systemctl enable --now stocks-backend`。
 
@@ -132,7 +132,7 @@ python -m qmt_bridge.main --config config.yaml
 | 坑 | 解决 |
 | - | - |
 | `sudo systemctl start stocks-backend` 报 `Failed to execute /usr/bin/node` | `which node` 查实际路径，改 unit ExecStart |
-| `npm install` 在 server 上很慢 / 失败 | 不要在 server 上 install；用 `deploy_release_package.js` 在本地构建好 tgz 推过去 |
+| `npm install` 在 server 上很慢 / 失败 | `deploy_remote_build.sh` 会复用 current 依赖并按 lock 文件校正；检查服务器网络、磁盘与 Node 版本后重跑，不要手工覆盖 current |
 | `pg_hba.conf` 默认禁外网连接 | 改 `pg_hba.conf` + `postgresql.conf` `listen_addresses='localhost'`（推荐 PG 只听本地，backend 也在同机） |
 | Nginx 502 但 backend 正常 | nginx user 没权限连 backend 的 socket / port；用 127.0.0.1:3000 而不是 unix socket |
 | systemd 限制 file descriptor | unit 已设 `LimitNOFILE=65535`；bridge 长轮询要靠它 |

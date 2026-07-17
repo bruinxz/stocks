@@ -116,7 +116,7 @@ describe('live ReportHistory runtime', () => {
       page_size: 10,
       query: {
         profile: 'us_preferred',
-        market_scope: 'us',
+        market_scope: 'cn_a',
         search: 'aapl',
         page: 2,
         page_size: 10,
@@ -148,7 +148,7 @@ describe('live ReportHistory runtime', () => {
     expect(api.history).toHaveBeenCalledWith(
       expect.objectContaining({
         profile: 'us_preferred',
-        market_scope: 'us',
+        market_scope: 'cn_a',
         search: 'aapl',
         page: 2,
         page_size: 10,

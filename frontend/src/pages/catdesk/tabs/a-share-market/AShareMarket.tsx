@@ -4,6 +4,11 @@ import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
 import { ReloadOutlined, SearchOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
 import api from '../../../../services/api';
+import {
+  buildSecurityListParams,
+  securityTypeLabel,
+  type SecurityTypeLabel,
+} from './securityCatalog';
 import './a-share-market.css';
 
 interface StockRow {
@@ -12,6 +17,7 @@ interface StockRow {
   name: string;
   market?: string;
   industry?: string | null;
+  type?: string | null;
   price?: number | string | null;
   change_percent?: number | string | null;
   total_market_cap?: number | string | null;
@@ -38,6 +44,15 @@ const MARKET_OPTIONS = [
   { value: 'SZ', label: '深市' },
   { value: 'BJ', label: '北交所' },
 ];
+
+const SECURITY_TYPE_COLORS: Record<SecurityTypeLabel, string> = {
+  股票: 'blue',
+  指数: 'purple',
+  ETF: 'green',
+  基金: 'cyan',
+  债券: 'gold',
+  未分类: 'default',
+};
 
 const FAVORITES_KEY = 'catdesk_a_share_favorites';
 
@@ -120,13 +135,12 @@ export default function AShareMarket() {
       try {
         const response = await api.get('/stocks', {
           signal,
-          params: {
+          params: buildSecurityListParams({
             page,
             limit: pageSize,
-            listedOnly: 'true',
-            ...(market ? { market } : {}),
-            ...(search ? { search } : {}),
-          },
+            market,
+            search,
+          }),
         });
         const payload = response.data?.data ?? {};
         const nextRows: StockRow[] = payload.stocks ?? [];
@@ -209,6 +223,15 @@ export default function AShareMarket() {
         width: 78,
         sorter: (a, b) => String(a.market ?? '').localeCompare(String(b.market ?? '')),
         render: value => <Tag>{marketLabel(String(value || ''))}</Tag>,
+      },
+      {
+        title: '类型',
+        key: 'type',
+        width: 76,
+        render: (_, row) => {
+          const label = securityTypeLabel(row);
+          return <Tag color={SECURITY_TYPE_COLORS[label]}>{label}</Tag>;
+        },
       },
       {
         title: '现价',
@@ -408,7 +431,7 @@ export default function AShareMarket() {
             loading={{ spinning: loading, tip: '正在核对最新 A 股行情' }}
             size="small"
             pagination={pagination}
-            scroll={{ x: 880, y: 540 }}
+            scroll={{ x: 960, y: 540 }}
             locale={{ emptyText: '没有找到匹配的证券' }}
             onRow={row => ({
               onClick: () => setSelected(row),

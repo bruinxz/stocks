@@ -16,7 +16,7 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./scripts/setup_and_db/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - stock_network
     healthcheck:

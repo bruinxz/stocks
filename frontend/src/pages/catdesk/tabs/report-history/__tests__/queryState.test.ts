@@ -2,7 +2,7 @@ import { describe, expect, test } from '@jest/globals';
 import { mergeHistoryQuery, parseHistoryQuery } from '../queryState';
 
 describe('report history query state', () => {
-  test('parses explicit date/profile/scope/search and bounded pagination', () => {
+  test('keeps report history on the detailed A-share scope', () => {
     expect(
       parseHistoryQuery(
         '?date=2026-07-10&profile=us_preferred&market_scope=us&search=AAPL&page=2&page_size=500'
@@ -10,7 +10,7 @@ describe('report history query state', () => {
     ).toEqual({
       date: '2026-07-10',
       profile: 'us_preferred',
-      market_scope: 'us',
+      market_scope: 'cn_a',
       search: 'AAPL',
       page: 2,
       page_size: 100,
@@ -28,9 +28,10 @@ describe('report history query state', () => {
     ).toBe('?tab=history&portfolio=core&profile=japan_blue_chip&market_scope=jp&page=1');
   });
 
-  test('rejects incompatible profile/scope pairs', () => {
-    expect(() => parseHistoryQuery('?profile=japan_blue_chip&market_scope=us&page=1')).toThrow(
-      /incompatible/
-    );
+  test('ignores overseas deep-link scopes instead of rendering per-stock overseas reports', () => {
+    expect(parseHistoryQuery('?profile=japan_blue_chip&market_scope=jp&page=1')).toMatchObject({
+      profile: 'us_preferred',
+      market_scope: 'cn_a',
+    });
   });
 });

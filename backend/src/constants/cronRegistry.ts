@@ -93,9 +93,9 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     type: 'GLOBAL_MARKET_DAILY_SYNC',
     category: 'data_sync',
     owner: 'data',
-    recommendedCron: '0 9 * * 1-5',
+    recommendedCron: '0 9 * * *',
     description:
-      '工作日 09:00 刷新 A 股日报快照、JP/KR 市场水位与美股/日本催化摘要，海外市场仅作 A 股侧面催化',
+      '每日 09:00 刷新 A 股日报快照、JP/KR 市场水位与美股/日本催化摘要，海外市场仅作 A 股侧面催化',
   },
   {
     type: 'BENCHMARK_INDEX_SYNC',

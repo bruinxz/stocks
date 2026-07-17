@@ -1,5 +1,11 @@
 import { QueryTypes } from 'sequelize';
 import { sequelize } from '../config/database';
+import {
+  countTradingDaysBetween,
+  getShanghaiDate,
+  isAShareTradeDay,
+  latestTradeDateOnOrBefore,
+} from '../utils/tradingCalendar';
 
 export type PageFreshnessKey =
   | 'market'
@@ -57,12 +63,24 @@ function iso(value: unknown): string | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
-function calendarLag(latest: string | null, reference: string | null): number | null {
+function tradingLag(latest: string | null, reference: string | null): number | null {
   if (!latest || !reference) return null;
-  const from = new Date(`${latest}T00:00:00+08:00`).getTime();
-  const to = new Date(`${reference}T00:00:00+08:00`).getTime();
-  if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
-  return Math.max(0, Math.round((to - from) / 86_400_000));
+  return countTradingDaysBetween(latest, reference);
+}
+
+function expectedCompletedTradeDate(now = new Date()): string {
+  const today = getShanghaiDate(now);
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Shanghai',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(now);
+  const hour = Number(parts.find(part => part.type === 'hour')?.value || 0);
+  if (isAShareTradeDay(today) && hour >= 17) return today;
+  const yesterday = new Date(`${today}T00:00:00+08:00`);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  return latestTradeDateOnOrBefore(yesterday);
 }
 
 function statusFor(page: PageFreshnessKey, lag: number | null): PageFreshnessStatus {
@@ -77,15 +95,9 @@ const PAGE_FRESHNESS_SQL = `
   ), watermarks AS (
     SELECT 'market'::text AS page,
            'A 股行情'::text AS label,
-           GREATEST(
-             (SELECT MAX(time) FROM daily_bars),
-             (SELECT MAX(quote_time) FROM realtime_quotes)
-           ) AS latest_data_at,
-           GREATEST(
-             (SELECT MAX(time)::date FROM daily_bars),
-             (SELECT MAX(trade_date) FROM realtime_quotes)
-           ) AS latest_data_date,
-           'daily_bars + realtime_quotes'::text AS source
+           (SELECT MAX(updated_at) FROM daily_bars) AS latest_data_at,
+           (SELECT MAX(time)::date FROM daily_bars) AS latest_data_date,
+           'daily_bars'::text AS source
     UNION ALL
     SELECT 'morning', 'A 股早报', MAX(created_at), MAX(trading_day),
            'ai_recommendation_snapshot/cn_a'
@@ -97,9 +109,14 @@ const PAGE_FRESHNESS_SQL = `
       FROM ai_recommendation_snapshot
      WHERE profile = 'us_preferred' AND market_scope = 'us'
     UNION ALL
-    SELECT 'jpkr', '日韩市场', MAX(available_at_utc), MAX(trading_day),
-           'jpkr_daily_kline'
-      FROM jpkr_daily_kline
+    SELECT 'jpkr', '日韩市场', MIN(latest_at), MIN(latest_day),
+           'jpkr_daily_kline (JP + KR slower watermark)'
+      FROM (
+        SELECT market_scope, MAX(available_at_utc) AS latest_at, MAX(trading_day) AS latest_day
+          FROM jpkr_daily_kline
+         WHERE market_scope IN ('jp', 'kr')
+         GROUP BY market_scope
+      ) jpkr_watermarks
     UNION ALL
     SELECT 'multi', '高倍潜力', MAX(as_of_utc), MAX(as_of_utc)::date,
            'multibagger_candidate_snapshot'
@@ -128,11 +145,13 @@ export class PageFreshnessService {
     const rows = await sequelize.query<
       FreshnessRow & { reference_trade_date: Date | string | null }
     >(PAGE_FRESHNESS_SQL, { type: QueryTypes.SELECT });
-    const reference = dateOnly(rows[0]?.reference_trade_date);
+    // 不以 daily_bars 自身 MAX 作为唯一基准，否则整条 A 股链停更时仍会“自我对齐”。
+    // 17:00 前以最近一个已完成交易日为基准，17:00 后要求当日数据。
+    const reference = expectedCompletedTradeDate();
     const pages = {} as Record<PageFreshnessKey, PageFreshnessItem>;
     for (const row of rows) {
       const latestDate = dateOnly(row.latest_data_date);
-      const lag = calendarLag(latestDate, reference);
+      const lag = tradingLag(latestDate, reference);
       pages[row.page] = {
         page: row.page,
         label: row.label,
