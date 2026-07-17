@@ -36,7 +36,7 @@ from ai.snapshot.writer import SnapshotWriter
 
 CN_CANDIDATE_SQL = """
 WITH latest_factor_day AS (
-  SELECT MAX(trade_date) AS trading_day FROM factor_scores
+  SELECT COALESCE(%s::date, MAX(trade_date)) AS trading_day FROM factor_scores
 ), factor_matrix AS (
   SELECT
     fs.stock_code,
@@ -72,7 +72,9 @@ WITH latest_factor_day AS (
     turnover,
     updated_at AS bar_available_at
   FROM daily_bars
+  CROSS JOIN latest_factor_day day
   WHERE is_trading_day = TRUE AND is_suspended = FALSE
+    AND time::date <= day.trading_day
   ORDER BY stock_id, time DESC
 ), ranked AS (
   SELECT
@@ -291,13 +293,15 @@ def _balance_dimensions(dimensions: list[dict], total: float) -> None:
     balancing["band"] = _band(float(balancing["score"]))
 
 
-def _read_candidates(database_url: str, limit: int) -> list[dict]:
+def _read_candidates(
+    database_url: str, limit: int, trading_day: str | None = None
+) -> list[dict]:
     import psycopg
     from psycopg.rows import dict_row
 
     with psycopg.connect(database_url, row_factory=dict_row) as connection:
         with connection.cursor() as cursor:
-            cursor.execute(CN_CANDIDATE_SQL, (limit,))
+            cursor.execute(CN_CANDIDATE_SQL, (trading_day, limit))
             return list(cursor.fetchall())
 
 
@@ -902,14 +906,25 @@ def main() -> int:
     parser.add_argument(
         "--market-scope", choices=("cn_a", "us", "jp"), default="cn_a"
     )
+    parser.add_argument(
+        "--trading-day",
+        help="A-share historical report day (YYYY-MM-DD); bars and factors are PIT-bounded",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     if args.limit < 1 or args.limit > 20:
         raise SystemExit("--limit must be between 1 and 20")
+    if args.trading_day:
+        try:
+            datetime.strptime(args.trading_day, "%Y-%m-%d")
+        except ValueError as error:
+            raise SystemExit("--trading-day must be YYYY-MM-DD") from error
+        if args.market_scope != "cn_a":
+            raise SystemExit("--trading-day is supported only for cn_a history")
 
     database_url = _database_url(_load_env(args.env_file))
     if args.market_scope == "cn_a":
-        rows = _read_candidates(database_url, args.limit)
+        rows = _read_candidates(database_url, args.limit, args.trading_day)
     elif args.market_scope == "us":
         rows = _read_us_candidates(args.limit)
     else:

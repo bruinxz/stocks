@@ -39,21 +39,28 @@
 ### 1.2 本地启动
 
 ```bash
-# 1. 复制 env
-cp backend/.env.example backend/.env  # 填写 DB_HOST / DB_PORT / DB_NAME / DB_USER / PGPASSWORD
+# 1. 启动数据库与 Redis；Compose 密码必须与后端 DB_PASSWORD 一致
+export POSTGRES_PASSWORD='<choose-a-local-dev-password>'
+docker compose up -d
+cp backend/.env.example backend/.env
+# 编辑 backend/.env：填写 DB_HOST / DB_PORT / DB_NAME / DB_USER / DB_PASSWORD
 
 # 2. 安装依赖
-cd backend && npm install
-cd ../frontend && npm install
+cd backend && npm ci
+cd ../frontend && npm ci --legacy-peer-deps
 
 # 3. 迁移数据库
 cd backend && npm run db:migrate
 
-# 4. 启动后端（port 3001）
+# 4. 启动后端（port 3000）
 npm run dev
 
-# 5. 启动前端（port 3000）
-cd ../frontend && npm run dev
+# 5. 另开终端启动前端（port 3001）
+cd frontend
+cat > .env.development.local <<'EOF'
+REACT_APP_API_BASE_URL=http://localhost:3000/api
+EOF
+PORT=3001 npm start
 ```
 
 ### 1.3 编译健康基线
@@ -86,18 +93,20 @@ backend/src/
 │   │   ├── types.ts           ← Factor / FactorContext 契约
 │   │   ├── FactorRegistry.ts  ← 全局单例
 │   │   ├── FactorPipeline.ts  ← 横截面 winsorize→zscore→percentile
-│   │   └── etf/               ← ETF 四因子实现（Value/Quality/LowVol/Momentum）
-│   └── satellites/            ← 卫星 Detector（EV gate 接入）
+│   │   └── library/           ← A 股横截面因子库
+│   ├── etf/                   ← ETF 四因子计算、成分展开与排名
+│   └── strategies/            ← ETF 轮动等策略入口
 ├── services/
-│   ├── ETFRotationService.ts  ← Core bucket 月度换仓计算
-│   ├── ThemeEventFanoutService.ts ← Satellite bucket 信号分发
-│   └── CashAllocationService.ts  ← Cash bucket 管理
-└── scripts/                   ← CLI 入口（sync-* / compute-etf-factors）
+│   ├── etf/ETFRotationService.ts     ← Core bucket 月度换仓计算
+│   ├── theme/ThemeEventFanoutService.ts ← Satellite bucket 信号分发
+│   ├── cash/CashAllocationService.ts ← Cash bucket 管理
+│   └── calibration/ConfidenceCalibrationService.ts ← Wilson 置信度校准
+└── scripts/                   ← CLI 入口（sync-* / compute:factors 等）
 
 frontend/src/
 ├── App.tsx                    ← 路由单一事实源
-├── pages/HomeWorkspace.tsx
-├── pages/workspace/           ← 各 Workspace 主文件 + sub-tab helpers
+├── pages/catdesk/             ← 牛牛研究台与八个业务页
+├── pages/workspace/           ← 旧工作区及管理页
 ├── components/layout/WorkspaceLayout.tsx
 └── services/                  ← API client（unwrap {success,data} envelope）
 ```
@@ -118,36 +127,22 @@ ETF 四因子当前为 Value / Quality / LowVol / Momentum（Shadow）。如需�
 
 > 先记录，后写代码。没有文档的权重变更视为无效。
 
-### 3.2 后端：实现 FactorCalculator
+### 3.2 后端：扩展 ETF 因子服务
+
+ETF 因子不走 A 股横截面的 `FactorRegistry`。当前单一实现位于
+`backend/src/quant/etf/ETFFactorService.ts`。新增因子时必须在同一批修改：
+
+1. `ETFFactorWeights` 与 `ETFFactorScore` 类型；
+2. `ETFFactorDataSource` 的输入契约和默认实现；
+3. `computeForUniverse()` 的横截面标准化与缺失值处理；
+4. 综合分公式及 `reasons`；
+5. `ETFRotationStrategy`、`ETFRankingService` 和对应测试。
+
+### 3.3 加入权重配置
 
 ```typescript
-// backend/src/quant/factors/etf/DividendFactor.ts
-import { ETFFactorCalculator } from "../types";
-
-export class DividendFactor implements ETFFactorCalculator {
-  readonly key = "dividend";
-  readonly category = "yield";
-
-  async compute(etfCode: string, context: ETFFactorContext): Promise<number | null> {
-    // 展开成分股 → 加权平均股息率
-    // 返回 null 表示数据不足，该 ETF 当月被剔除
-    return weightedAvgDividendYield(etfCode, context.components);
-  }
-}
-```
-
-### 3.3 注册到 FactorRegistry
-
-```typescript
-// backend/src/quant/factors/FactorRegistry.ts — 在 registerAll() 里追加
-this.register(new DividendFactor());
-```
-
-### 3.4 加入权重配置
-
-```typescript
-// backend/src/config/factorWeights.ts
-export const ETF_FACTOR_WEIGHTS = {
+// backend/src/quant/etf/ETFFactorService.ts
+export const ETF_FACTOR_WEIGHTS_V0 = {
   value: 0.35,
   quality: 0.25,
   lowvol: 0.25,
@@ -156,7 +151,7 @@ export const ETF_FACTOR_WEIGHTS = {
 };
 ```
 
-### 3.5 更新前端显示
+### 3.4 更新前端显示
 
 在 `frontend/src/pages/workspace/FactorWorkspace.tsx` 的 `CATEGORY_DISPLAY` 对象中追加：
 
@@ -168,39 +163,18 @@ dividend: { label: '股息', color: 'green' },
 
 ## 4. 新增卫星 Detector
 
-卫星 Detector 是产生题材/事件机会信号的模块。每个 Detector 对应一个 `source_type`（如 `earnings_surprise`、`sector_rotation_theme`）。
-
-### 4.1 实现 SatelliteDetector 接口
-
-```typescript
-// backend/src/quant/satellites/EarningsSurpriseDetector.ts
-import { SatelliteDetector, SatelliteSignal } from "./types";
-
-export class EarningsSurpriseDetector implements SatelliteDetector {
-  readonly sourceType = "earnings_surprise";
-
-  async detect(context: DetectorContext): Promise<SatelliteSignal[]> {
-    // 1. 从 DB 拿近期财报超预期股票
-    // 2. 计算 EV = wilsonLowerBound(winRate, n) * payoffRatio - cost
-    // 3. 只返回 ev > 0 的信号
-    return signals.filter(s => s.ev > 0);
-  }
-}
-```
-
-### 4.2 注册到 ThemeEventFanoutService
-
-```typescript
-// backend/src/services/ThemeEventFanoutService.ts
-this.detectors.push(new EarningsSurpriseDetector());
-```
+卫星信号由 `backend/src/services/BullishEventDetectorService.ts`、
+`backend/src/services/ThemeFermentationDetector.ts` 等检测器产生，再由
+`backend/src/services/theme/ThemeEventFanoutService.ts` 扇出。新增来源时要定义稳定的
+`source_type`，接入相应 detector/fan-out，并在 `SchedulerService` 与
+`constants/cronRegistry.ts` 同时登记任务。
 
 ### 4.3 EV gate 规则（不可绕过）
 
-- Wilson 下界置信度：按 `source_type` 分组，用真实历史平仓胜率校准（见 `backend/src/jobs/evCalibrationJob.ts`）
+- Wilson 下界置信度：按 `source_type` 分组，用真实历史平仓胜率校准（见 `backend/src/services/calibration/ConfidenceCalibrationService.ts`）
 - EV = wilsonLower(winRate, n, z=1.645) × payoffRatio - tradingCost
-- 只有 EV > 0 的信号才能进入 satellite bucket
-- 新 Detector 前 20 次信号自动降权（样本量保护）
+- EV 决策见 `backend/src/services/meta-v2/EVDecisionService.ts`；实际下单门禁在 `PaperTradingAutomationService` 执行
+- 冷启动或样本不足时保持纸面模式，不得伪装成已通过 EV gate
 
 ### 4.4 退出规则继承
 
@@ -249,13 +223,15 @@ export class DividendClient {
 # "sync:dividend": "ts-node src/scripts/sync-dividend.ts"
 ```
 
-把定时任务加入 `backend/src/jobs/` 对应文件，并在 `FUNCTION_GUIDE_AND_OPERATION_MANUAL.md` §11 更新任务表。
+把定时任务 dispatch 加入 `backend/src/services/SchedulerService.ts`，同时在
+`backend/src/constants/cronRegistry.ts` 和 `ensureDefaultTasks()` 登记，并更新相关运维文档。
 
 ---
 
 ## 6. 编写测试
 
-项目单测采用 **IIFE + process.exit** 模式（不依赖 jest，无需 test runner 配置）：
+后端既有自定义 TypeScript 测试入口，也有 Jest 用例；前端使用 React Scripts/Jest。
+优先通过仓库脚本运行全量测试，定位单文件时再用 `ts-node`：
 
 ```typescript
 // backend/tests/etf/dividend-factor.test.ts
@@ -272,7 +248,12 @@ export class DividendClient {
 ```
 
 ```bash
-ts-node backend/tests/etf/dividend-factor.test.ts
+cd backend
+npm test
+npx ts-node --transpile-only tests/etf/dividend-factor.test.ts
+
+cd ../frontend
+CI=true npm test -- --runInBand --watch=false
 ```
 
 ### Mock 约定
@@ -355,26 +336,26 @@ docs(批7m): DEVELOPER_GUIDE 重写为 ETF Core-Satellite 主线
 ### 9.1 ETF 因子计算调试
 
 ```bash
-# 手动触发当月因子计算，输出详细日志
-cd backend && npm run compute:etf-factors -- --verbose
+# 更新 A 股横截面因子底座
+cd backend && npm run compute:factors -- --date=YYYY-MM-DD
 
-# 查看某只 ETF 的因子分解
-curl http://localhost:3001/api/factors/etf-picks | jq '.data[] | select(.code == "159919")`
+# ETF 因子轮动没有独立的 compute:etf-factors 脚本；
+# 在调度任务页手动执行 ETF_FACTOR_ROTATION_REBALANCE，并检查 task_execution_logs。
 ```
 
 ### 9.2 卫星 EV 校准调试
 
 ```bash
-# 查看各 source_type 当前胜率/盈亏比/EV
-curl http://localhost:3001/api/signals/ev-calibration | jq .
+# 相关实现与日志入口
+rg -n "ConfidenceCalibration|EV gate" backend/src/services backend/src/portfolio
 ```
 
 ### 9.3 常见问题速查
 
 | 现象 | 排查步骤 |
 |---|---|
-| ETF 排名表空 | 检查 `etf_factor_scores` 表是否有当月数据；跑 `compute:etf-factors` |
-| 卫星信号全部 EV < 0 | 检查 `ev_calibration` 表胜率数据；样本量 < 20 时 Wilson 下界会很低 |
+| ETF 排名表空 | 检查日 K、成分股、估值和财务数据水位；手动执行 `ETF_FACTOR_ROTATION_REBALANCE` 并查看任务日志 |
+| 卫星信号未进入实盘 | 检查 `ConfidenceCalibrationService` 输出、样本量和 `PaperTradingAutomationService` 的 EV gate 日志 |
 | 后端 500 / DB 连接失败 | 检查 `.env` 的 DB 连接配置；用 `psql` 验证连通性 |
 | 前端编译错误增加 | 用 `npx tsc --noEmit 2>&1 | grep error` 定位具体文件 |
 | 定时任务不触发 | 检查 Redis 连通性（Bull queue 依赖 Redis）；查 `workspace/data → 调度任务` tab |

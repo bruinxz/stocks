@@ -28,13 +28,13 @@
 | 类型 | Cron | 说明 |
 |---|---|---|
 | `REALTIME_QUOTE_SYNC` | `*/5 9-11,13-14 * * 1-5` | 处理器只在 09:30-11:30、13:00-15:00 真正取数 |
-| `GLOBAL_MARKET_DAILY_SYNC` | `0 9 * * 1-5` | A 股日报、JP/KR 市场、美股/日本催化快照 |
+| `GLOBAL_MARKET_DAILY_SYNC` | `0 9 * * *` | 每日 A 股日报、JP/KR 市场、美股/日本催化快照；不受 A 股节假日门禁影响 |
 | `DAILY_UPDATE` | `10 17 * * 1-5` | A 股日级增量 |
 | `SYNC_HISTORY` | `0 18 * * 1-5` | 全市场历史 K 线补洞 |
 | `DATA_FRESHNESS_CHECK` | `30 18 * * 1-5` | 陈旧度告警 |
 | `DATA_QUALITY_SCAN` | `0 23 * * *` | 空表、旧数据、漂移深扫 |
 
-所有工作日任务还会经过 A 股交易日历 guard。服务器重启错过 09:00 后，`GLOBAL_MARKET_DAILY_SYNC` 在 catch-up 白名单内自动补跑。
+A 股工作日任务还会经过交易日历 guard；`GLOBAL_MARKET_DAILY_SYNC` 明确绕过该 guard。服务器重启错过 09:00 后会 catch-up；单次失败还会在进程内每 10 分钟重试，最多两次。
 
 JPX 官方日报是 PDF 数据源。部署流程会将
 `scripts/ops/requirements-global-markets.txt` 安装到后端 `PYTHON_PATH` 指向的共享
@@ -46,7 +46,7 @@ Python 运行时；该运行时必须对 `stocks_app` 服务用户可读、可�
 EXPECTED_DATA_DATE=2026-07-16 node scripts/tests/quant_data_freshness_check.js
 ```
 
-检查范围包括：A 股日 K、因子、实时行情、涨停、公告、A 股日报快照、美股/日本快照、日韩行情、高倍潜力、回测 PIT、旧量化信号以及两条关键 cron 配置。
+检查范围包括：A 股日 K、近 10 个交易日覆盖率、股票/指数/ETF 分类覆盖、全市场实时行情覆盖、因子、涨停、公告、A 股日报快照、美股/日本快照、日韩行情、高倍潜力、回测 PIT、旧量化信号以及两条关键 cron 配置。
 
 脚本只读。退出码非 0 表示至少一个关键链路缺失或落后；警告项也会保留在 JSON 输出中，不允许静默忽略。
 
@@ -65,7 +65,7 @@ EXPECTED_DATA_DATE=2026-07-16 node scripts/tests/quant_data_freshness_check.js
 
 - 任务 `SUCCESS` 但 watermark 不动：检查 `result_summary`、源站空响应和写入覆盖数。
 - 实时行情延迟：确认 task cron 为 5 分钟、`is_active=true`、最近运行没有 overlap skip。
-- 全球 09:00 任务失败：分别查看 `failed_steps`，修复单个来源后手动补跑该 task。
+- 全球 09:00 任务失败：先查看 `failed_steps` 与两次自动重试结果；修复单个来源后可手动补跑该 task。
 - 服务重启后任务未注册：`/health/detail` 的 scheduler active count 必须与数据库 active task 数一致。
 - 数据补齐后必须重跑只读审计，并在页面头部确认日期变化。
 

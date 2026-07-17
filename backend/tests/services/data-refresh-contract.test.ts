@@ -7,10 +7,7 @@ const scheduler = fs.readFileSync(
   path.join(root, 'backend/src/services/SchedulerService.ts'),
   'utf8'
 );
-const registry = fs.readFileSync(
-  path.join(root, 'backend/src/constants/cronRegistry.ts'),
-  'utf8'
-);
+const registry = fs.readFileSync(path.join(root, 'backend/src/constants/cronRegistry.ts'), 'utf8');
 const routes = fs.readFileSync(path.join(root, 'backend/src/api/routes/data.routes.ts'), 'utf8');
 const globalSync = fs.readFileSync(
   path.join(root, 'scripts/ops/sync_global_markets_daily.py'),
@@ -44,6 +41,22 @@ const liveRecommendations = fs.readFileSync(
   path.join(root, 'scripts/ops/populate_live_recommendations.py'),
   'utf8'
 );
+const quantDataService = fs.readFileSync(
+  path.join(root, 'backend/src/quant/engine/internal/QuantDataService.ts'),
+  'utf8'
+);
+const dataUpdateWorker = fs.readFileSync(
+  path.join(root, 'backend/src/jobs/dataUpdateWorker.ts'),
+  'utf8'
+);
+const pageFreshness = fs.readFileSync(
+  path.join(root, 'backend/src/services/PageFreshnessService.ts'),
+  'utf8'
+);
+const realtimeDedupMigration = fs.readFileSync(
+  path.join(root, 'backend/scripts/migrations/2026-07-17-realtime-quote-dedup.sql'),
+  'utf8'
+);
 
 assert.match(
   scheduler,
@@ -52,13 +65,78 @@ assert.match(
 );
 assert.match(
   scheduler,
+  /taskData\.type === 'DAILY_UPDATE'[\s\S]{0,260}max_stocks:\s*6000/,
+  'existing daily-update tasks must be upgraded to full-market coverage'
+);
+assert.match(
+  scheduler,
+  /taskData\.name === '全量股票日线同步'[\s\S]{0,700}batch_limit = 6000/,
+  'history repair must not inherit the legacy 300-symbol ceiling'
+);
+assert.match(
+  scheduler,
+  /task\.type === 'REALTIME_QUOTE_SYNC'[\s\S]{0,3500}include_all_instruments:\s*universe === 'market'/,
+  'realtime market refresh must include stocks, indexes and ETFs'
+);
+assert.match(
+  quantDataService,
+  /include_all_instruments\?: boolean[\s\S]{0,1000}Math\.min\(Number\(options\.limit \|\| 120\), 6000\)/,
+  'market data service must allow the complete listed-instrument universe'
+);
+assert.match(
+  dataUpdateWorker,
+  /max_stocks = 6000/,
+  'daily update worker fallback must cover the complete listed universe'
+);
+assert.match(
+  dataUpdateWorker,
+  /status: dailyFailCount > 0 \? UpdateStatus\.FAILED : UpdateStatus\.COMPLETED[\s\S]{0,500}任务拒绝标记完成/,
+  'partial daily-update failures must not be recorded as completed'
+);
+assert.match(
+  dataUpdateWorker,
+  /status: failedSyncs > 0 \? UpdateStatus\.FAILED : UpdateStatus\.COMPLETED[\s\S]{0,500}历史行情回补存在/,
+  'partial history-repair failures must not be recorded as completed'
+);
+assert.match(
+  pageFreshness,
+  /'market'::text[\s\S]{0,420}'daily_bars'::text AS source/,
+  'A-share page timestamp must follow the daily-bars source actually rendered by the page'
+);
+assert.match(
+  realtimeDedupMigration,
+  /LOCK TABLE realtime_quotes[\s\S]{0,700}PARTITION BY symbol, quote_time[\s\S]{0,700}CREATE UNIQUE INDEX uniq_realtime_quote_symbol_time/,
+  'realtime quote cleanup must deduplicate under a lock before enforcing the natural key'
+);
+assert.match(
+  pageFreshness,
+  /'jpkr'[\s\S]{0,180}MIN\(latest_day\)[\s\S]{0,280}market_scope IN \('jp', 'kr'\)/,
+  'JP/KR page timestamp must expose the slower market watermark'
+);
+assert.match(
+  pageFreshness,
+  /expectedCompletedTradeDate[\s\S]{0,700}latestTradeDateOnOrBefore/,
+  'page freshness must compare against an expected completed A-share trade date'
+);
+assert.match(
+  scheduler,
   /task\.type === 'REALTIME_QUOTE_SYNC'[\s\S]{0,240}checkAShareTradingHours/,
   'five-minute cron must retain a continuous-session guard'
 );
 assert.match(
   registry,
-  /type:\s*'GLOBAL_MARKET_DAILY_SYNC'[\s\S]{0,180}recommendedCron:\s*'0 9 \* \* 1-5'/,
+  /type:\s*'GLOBAL_MARKET_DAILY_SYNC'[\s\S]{0,180}recommendedCron:\s*'0 9 \* \* \*'/,
   'global catalyst refresh must be registered at 09:00 Asia/Shanghai'
+);
+assert.match(
+  scheduler,
+  /type:\s*'GLOBAL_MARKET_DAILY_SYNC'[\s\S]{0,260}cron_expression:\s*'0 9 \* \* \*'[\s\S]{0,180}require_trading_day:\s*false/,
+  'global catalyst refresh must run daily without the A-share holiday guard'
+);
+assert.match(
+  scheduler,
+  /scheduleGlobalMarketRetry\(taskId: number, attempt: number\)[\s\S]{0,1500}attempt \+ 1/,
+  'global catalyst refresh must retry failures in-process'
 );
 assert.match(
   scheduler,
@@ -121,5 +199,10 @@ assert.match(
   /"snapshot-v4"[\s\S]{0,180}as_of[\s\S]{0,1000}_prune_superseded_snapshots/,
   'daily recommendation reruns must use unique identities and prune only after success'
 );
+assert.match(
+  liveRecommendations,
+  /--trading-day[\s\S]{0,900}_read_candidates\(database_url, args\.limit, args\.trading_day\)/,
+  'A-share report history must support PIT-bounded historical materialization'
+);
 
-console.log('data refresh contract: 16 assertions passed');
+console.log('data refresh contract: 30 assertions passed');

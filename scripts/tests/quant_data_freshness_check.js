@@ -98,6 +98,109 @@ async function addWatermarkCheck(client, checks, referenceDate, definition) {
   });
 }
 
+async function addAShareCoverageChecks(client, checks, referenceDate) {
+  const instrumentRows = await client.query(
+    `SELECT COALESCE(s.type, 'unknown') AS instrument_type,
+            COUNT(*) FILTER (WHERE s.is_listed)::int AS listed_count,
+            COUNT(DISTINCT b.stock_id)::int AS covered_count
+       FROM stocks s
+       LEFT JOIN daily_bars b
+         ON b.stock_id = s.id AND b.time::date = $1::date
+      GROUP BY COALESCE(s.type, 'unknown')
+      ORDER BY instrument_type`,
+    [referenceDate]
+  );
+  const requiredTypes = new Set(['stock', 'index', 'fund']);
+  for (const row of instrumentRows.rows) {
+    const listed = Number(row.listed_count || 0);
+    const covered = Number(row.covered_count || 0);
+    const coverage = listed > 0 ? covered / listed : 0;
+    const required = requiredTypes.has(row.instrument_type);
+    checks.push({
+      name: `a_share_instrument_coverage:${row.instrument_type}`,
+      status: !required || (listed > 0 && coverage >= 0.99) ? 'pass' : 'missing',
+      critical: required,
+      reference_data_date: referenceDate,
+      listed_count: listed,
+      covered_count: covered,
+      coverage_percent: Number((coverage * 100).toFixed(2)),
+    });
+    requiredTypes.delete(row.instrument_type);
+  }
+  for (const missingType of requiredTypes) {
+    checks.push({
+      name: `a_share_instrument_coverage:${missingType}`,
+      status: 'missing',
+      critical: true,
+      message: 'required instrument type not found',
+    });
+  }
+
+  const recentCoverage = await client.query(
+    `WITH listed AS (
+       SELECT COUNT(*)::numeric AS total FROM stocks WHERE is_listed = TRUE
+     ), recent_days AS (
+       SELECT time::date AS trade_date
+         FROM daily_bars
+        WHERE time::date <= $1::date
+        GROUP BY time::date
+        ORDER BY time::date DESC
+        LIMIT 10
+     ), coverage AS (
+       SELECT d.trade_date, COUNT(DISTINCT b.stock_id)::numeric AS covered
+         FROM recent_days d
+         LEFT JOIN daily_bars b ON b.time::date = d.trade_date
+        GROUP BY d.trade_date
+     )
+     SELECT MIN(covered / NULLIF(listed.total, 0)) AS min_coverage,
+            MIN(trade_date)::text AS window_start,
+            MAX(trade_date)::text AS window_end,
+            COUNT(*)::int AS observed_trade_days
+       FROM coverage CROSS JOIN listed`,
+    [referenceDate]
+  );
+  const coverageRow = recentCoverage.rows[0] || {};
+  const minimumCoverage = Number(coverageRow.min_coverage || 0);
+  checks.push({
+    name: 'a_share_recent_daily_bar_coverage',
+    status: minimumCoverage >= 0.95 && Number(coverageRow.observed_trade_days) >= 10 ? 'pass' : 'missing',
+    critical: true,
+    window_start: coverageRow.window_start || null,
+    window_end: coverageRow.window_end || null,
+    observed_trade_days: Number(coverageRow.observed_trade_days || 0),
+    minimum_coverage_percent: Number((minimumCoverage * 100).toFixed(2)),
+    required_coverage_percent: 95,
+  });
+
+  const realtimeCoverage = await client.query(
+    `WITH latest AS (SELECT MAX(trade_date) AS trade_date FROM realtime_quotes),
+          listed AS (SELECT COUNT(*)::numeric AS total FROM stocks WHERE is_listed = TRUE)
+     SELECT latest.trade_date::text AS latest_data_date,
+            COUNT(DISTINCT q.symbol)::numeric AS covered,
+            listed.total
+       FROM latest CROSS JOIN listed
+       LEFT JOIN realtime_quotes q ON q.trade_date = latest.trade_date
+      GROUP BY latest.trade_date, listed.total`
+  );
+  const realtimeRow = realtimeCoverage.rows[0] || {};
+  const realtimeTotal = Number(realtimeRow.total || 0);
+  const realtimeCovered = Number(realtimeRow.covered || 0);
+  const realtimePercent = realtimeTotal > 0 ? realtimeCovered / realtimeTotal : 0;
+  const realtimeDate = toShanghaiDate(realtimeRow.latest_data_date);
+  checks.push({
+    name: 'a_share_realtime_full_market_coverage',
+    status:
+      lagDays(realtimeDate, referenceDate) === 0 && realtimePercent >= 0.95 ? 'pass' : 'missing',
+    critical: true,
+    latest_data_date: realtimeDate,
+    reference_data_date: referenceDate,
+    listed_count: realtimeTotal,
+    covered_count: realtimeCovered,
+    coverage_percent: Number((realtimePercent * 100).toFixed(2)),
+    required_coverage_percent: 95,
+  });
+}
+
 async function addScheduleChecks(client, checks) {
   if (!(await tableExists(client, 'scheduled_tasks'))) {
     checks.push({ name: 'scheduler_contract', status: 'missing', critical: true });
@@ -112,7 +215,7 @@ async function addScheduleChecks(client, checks) {
   const rows = new Map(result.rows.map(row => [row.type, row]));
   const expected = [
     ['REALTIME_QUOTE_SYNC', '*/5 9-11,13-14 * * 1-5'],
-    ['GLOBAL_MARKET_DAILY_SYNC', '0 9 * * 1-5'],
+    ['GLOBAL_MARKET_DAILY_SYNC', '0 9 * * *'],
   ];
   for (const [type, cron] of expected) {
     const row = rows.get(type);
@@ -245,6 +348,7 @@ async function main() {
     for (const definition of definitions) {
       await addWatermarkCheck(client, checks, referenceDate, definition);
     }
+    await addAShareCoverageChecks(client, checks, referenceDate);
     await addScheduleChecks(client, checks);
   } finally {
     await client.end();

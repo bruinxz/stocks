@@ -90,10 +90,11 @@ export class DataUpdateWorker {
     // PR-N (2026-06-29): default 300 → 2000 — 全 A 股 ≈ 5500, 老 default
     // 让 sh.688 / sz.001 / sz.301 板块新股永远轮不到日更. 与
     // SchedulerService ensureDefaultTasks + caller 上限同步.
-    const { date, forceUpdate = false, max_stocks = 2000 } = job.data;
+    const { date, forceUpdate = false, max_stocks = 6000 } = job.data;
     const lockKey = LockKeys.DAILY_UPDATE(date);
     let lockValue: string | null = null;
     let renewTimer: NodeJS.Timeout | null = null;
+    let updateLog: DataUpdateLog | null = null;
 
     try {
       // 报告进度
@@ -147,7 +148,7 @@ export class DataUpdateWorker {
       await job.progress(15);
 
       // 创建更新记录
-      const updateLog = await DataUpdateLog.create({
+      updateLog = await DataUpdateLog.create({
         type: UpdateType.DAILY_UPDATE,
         status: UpdateStatus.IN_PROGRESS,
         date,
@@ -252,19 +253,24 @@ export class DataUpdateWorker {
         totalAffectedStocks += newStocksCount;
       } catch (error) {
         logger.error('更新股票基本信息失败:', error);
-        // 不中断整个更新流程
+        throw error;
       }
 
       await job.progress(95);
 
       // 3. 更新更新记录状态
       await updateLog.update({
-        status: UpdateStatus.COMPLETED,
+        status: dailyFailCount > 0 ? UpdateStatus.FAILED : UpdateStatus.COMPLETED,
         completed_at: new Date(),
         affected_stocks: totalAffectedStocks,
         inserted_records: totalInsertedRecords,
+        error: dailyFailCount > 0 ? `${dailyFailCount} 个证券同步失败` : null,
         result: resultDetails,
       });
+
+      if (dailyFailCount > 0) {
+        throw new Error(`每日行情增量同步存在 ${dailyFailCount} 个失败证券，任务拒绝标记完成`);
+      }
 
       logger.info(
         `每日数据更新完成。影响股票: ${totalAffectedStocks}, 插入记录: ${totalInsertedRecords}`
@@ -297,15 +303,23 @@ export class DataUpdateWorker {
         };
       }
 
-      // 更新失败记录
-      await DataUpdateLog.create({
-        type: UpdateType.DAILY_UPDATE,
-        status: UpdateStatus.FAILED,
-        date,
-        error: error.message,
-        started_at: new Date(),
-        completed_at: new Date(),
-      });
+      // 更新同一条运行记录，避免失败路径再制造一条重复日志。
+      if (updateLog) {
+        await updateLog.update({
+          status: UpdateStatus.FAILED,
+          error: error.message,
+          completed_at: new Date(),
+        });
+      } else {
+        await DataUpdateLog.create({
+          type: UpdateType.DAILY_UPDATE,
+          status: UpdateStatus.FAILED,
+          date,
+          error: error.message,
+          started_at: new Date(),
+          completed_at: new Date(),
+        });
+      }
 
       throw error;
     } finally {
@@ -855,10 +869,11 @@ export class DataUpdateWorker {
 
       // 更新日志记录
       await updateLog.update({
-        status: UpdateStatus.COMPLETED,
+        status: failedSyncs > 0 ? UpdateStatus.FAILED : UpdateStatus.COMPLETED,
         completed_at: new Date(),
         affected_stocks: stocksToSync.length + processedStocksSet.size,
         inserted_records: currentTotalInserted,
+        error: failedSyncs > 0 ? `${failedSyncs} 个证券历史同步失败` : null,
         result: {
           ...updateLog.result,
           successfulSyncs,
@@ -867,6 +882,10 @@ export class DataUpdateWorker {
           totalRecordsInserted: currentTotalInserted,
         },
       });
+
+      if (failedSyncs > 0) {
+        throw new Error(`历史行情回补存在 ${failedSyncs} 个失败证券，任务拒绝标记完成`);
+      }
 
       await job.progress(100);
 

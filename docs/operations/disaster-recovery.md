@@ -38,10 +38,13 @@
 ```bash
 # 假设是 Ubuntu 22.04+ 的新机
 sudo apt update
-sudo apt install -y docker.io docker-compose-plugin postgresql-client git
+sudo apt install -y docker.io docker-compose-plugin postgresql-client git python3-venv nginx
 sudo systemctl enable docker
 sudo usermod -aG docker $USER
 newgrp docker
+
+# 安装 Node.js 18+ 后确认版本
+node --version
 ```
 
 ### Step 2: 准备目录 + 用户 (3 min)
@@ -84,10 +87,11 @@ sudo chmod 640 /opt/stocks/shared/backend.env
 ```bash
 cd /opt/stocks/current
 # 注意: 只启数据库容器, 不启 backend (灌完数据后再启)
-docker compose -f docker-compose.yml up -d stocks-postgres stocks-redis
+export POSTGRES_PASSWORD='<从密钥备份恢复的 PostgreSQL 管理员密码>'
+docker compose -f docker-compose.yml up -d postgres redis
 docker compose ps
 sleep 15  # 等 health
-docker exec stocks-postgres pg_isready -U postgres
+docker exec stock_postgres pg_isready -U postgres
 ```
 
 ### Step 5: 灌数据 (15-20 min)
@@ -97,39 +101,65 @@ cd /backup/stocks/restore
 sha256sum -c 最新.dump.sha256 || { echo "DUMP CORRUPT, 用其他日期重来"; exit 1; }
 
 # 创建空库 + 灌入
-docker exec -e PGPASSWORD=postgres stocks-postgres \
+docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" stock_postgres \
   psql -U postgres -c "CREATE DATABASE stock_backtest" 2>/dev/null || true
 
-docker exec -e PGPASSWORD=postgres -i stocks-postgres \
+docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" -i stock_postgres \
   pg_restore -U postgres -d stock_backtest --clean --if-exists --no-owner --no-privileges \
   < /backup/stocks/restore/最新.dump
 
 # 验证 row count (跟你脑子里的近似比, 1.6GB 库通常 1000w+ rows)
-docker exec stocks-postgres psql -U postgres -d stock_backtest -c \
+docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" stock_postgres \
+  psql -U postgres -d stock_backtest -c \
   "SELECT schemaname, relname, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC LIMIT 10"
 ```
 
 ### Step 6: 恢复 Redis (1 min)
 ```bash
-# 停 redis, 解压 RDB, 起 redis
-docker compose -f /opt/stocks/current/docker-compose.yml stop stocks-redis
-sudo tar -xzf /backup/stocks/restore/最新.tgz -C /data/stocks/
-sudo chown -R 999:999 /data/stocks/redis  # redis 容器 uid
-docker compose -f /opt/stocks/current/docker-compose.yml start stocks-redis
-docker exec stocks-redis redis-cli DBSIZE
+# 停 Redis，把备份内容写回当前 Compose 的 /data volume，再启动
+docker compose -f /opt/stocks/current/docker-compose.yml stop redis
+sudo rm -rf /tmp/stocks-redis-restore
+sudo mkdir -p /tmp/stocks-redis-restore
+sudo tar -xzf /backup/stocks/restore/最新.tgz -C /tmp/stocks-redis-restore
+docker run --rm --volumes-from stock_redis \
+  -v /tmp/stocks-redis-restore/redis:/restore:ro redis:7-alpine \
+  sh -c 'rm -rf /data/* && cp -a /restore/. /data/'
+docker compose -f /opt/stocks/current/docker-compose.yml start redis
+docker exec stock_redis redis-cli DBSIZE
 ```
 
-### Step 7: 启 backend + 验证 (10 min)
+### Step 7: 构建并启动 backend/frontend (10 min)
 ```bash
 cd /opt/stocks/current
-docker compose -f docker-compose.yml up -d
-docker compose ps
-sleep 10
-curl http://localhost:8080/api/health
-curl http://localhost:8080/api/system/status
 
-# Smoke: 跑一次简单 query
-curl http://localhost:8080/api/portfolios
+# 构建不可变 release 内的产物
+sudo -u stocks_app -H bash -lc 'cd /opt/stocks/current/backend && npm ci && npm run build'
+sudo -u stocks_app -H bash -lc \
+  'cd /opt/stocks/current/frontend && npm ci --legacy-peer-deps && CI=false npm run build'
+
+# 全球市场任务的共享 Python 运行时
+sudo -u stocks_app -H python3 -m venv /opt/stocks/shared/venv
+sudo -u stocks_app -H /opt/stocks/shared/venv/bin/pip install \
+  -r /opt/stocks/current/scripts/ops/requirements-global-markets.txt
+
+# 后端由 systemd 管理，监听 3000
+sudo cp scripts/deployment/samples/stocks-backend.service /etc/systemd/system/stocks-backend.service
+sudo sed -i 's/^User=.*/User=stocks_app/; s/^Group=.*/Group=stocks/' \
+  /etc/systemd/system/stocks-backend.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now stocks-backend.service
+
+# 前端由 Nginx 直接从 current/frontend/build 提供，监听 3001；
+# 复制仓库样例后按恢复域名/证书调整 server_name。
+sudo cp scripts/deployment/samples/nginx-stocks.conf /etc/nginx/sites-available/stocks
+sudo ln -sfn /etc/nginx/sites-available/stocks /etc/nginx/sites-enabled/stocks
+sudo nginx -t
+sudo systemctl enable --now nginx
+sudo systemctl reload nginx
+
+sleep 10
+curl -fsS http://127.0.0.1:3000/health
+curl -I http://127.0.0.1:3001/catdesk
 ```
 
 ### Step 8: 恢复 cron (3 min)
@@ -153,7 +183,7 @@ EOF
 - Nginx upstream / Cloudflare origin 切换
 
 ### Step 10: 验证业务 (5 min)
-- 登录 web ui, 检查 portfolio / signals 数据是否完整
+- 打开 web UI，确认默认管理员浏览会话建立，并检查 portfolio / signals 数据是否完整
 - 跑一次手动 backtest 验证计算正确
 - 检查 paper trading 是否能正常下单 (kill-switch 状态需重新确认, 见 `scripts/ops/kill_switch_*.sh`)
 

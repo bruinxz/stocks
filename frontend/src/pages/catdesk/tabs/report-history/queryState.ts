@@ -1,33 +1,12 @@
-import {
-  RECOMMENDATION_MARKET_SCOPES,
-  RECOMMENDATION_PROFILES,
-  RECOMMENDATION_PROFILE_SCOPES,
-  type RecommendationMarketScope,
-  type RecommendationProfile,
-} from '../daily-report/types';
 import type { ReportHistoryQuery } from './types';
 
 export function parseHistoryQuery(search: string): ReportHistoryQuery {
   const params = new URLSearchParams(search);
-  const profile = params.get('profile');
-  const scope = params.get('market_scope');
-  const parsedProfile = RECOMMENDATION_PROFILES.includes(profile as RecommendationProfile)
-    ? (profile as RecommendationProfile)
-    : undefined;
-  const parsedScope = RECOMMENDATION_MARKET_SCOPES.includes(scope as RecommendationMarketScope)
-    ? (scope as RecommendationMarketScope)
-    : undefined;
-  if (
-    parsedProfile &&
-    parsedScope &&
-    !RECOMMENDATION_PROFILE_SCOPES[parsedProfile].includes(parsedScope)
-  ) {
-    throw new Error('History profile/market_scope is incompatible');
-  }
   return {
     date: params.get('date') || undefined,
-    profile: parsedProfile ?? 'us_preferred',
-    market_scope: parsedScope ?? 'cn_a',
+    // 报告历史固定为详细 A 股主报告；海外只在日报的板块催化摘要中出现。
+    profile: 'us_preferred',
+    market_scope: 'cn_a',
     search: params.get('search') || undefined,
     page: Math.max(1, Number(params.get('page')) || 1),
     page_size: Math.min(100, Math.max(1, Number(params.get('page_size')) || 20)),
