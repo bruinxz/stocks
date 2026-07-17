@@ -498,9 +498,8 @@ function parseHistoryEntry(value: unknown, index: number): B5HistoryEntryWire {
     throw new RecommendationContractError(`${path} semantic preimage mismatch`);
   }
   const tradingDay = strictDay(raw.trading_day, `${path}.trading_day`);
-  if (sourceAsOf.slice(0, 10) !== tradingDay) {
-    throw new RecommendationContractError(`${path}.trading_day does not match source_as_of`);
-  }
+  // Backfilled reports keep the signed snapshot timestamp immutable while the
+  // persisted business date is supplied independently by the history store.
   return {
     report_id: strictString(raw.report_id, `${path}.report_id`),
     trading_day: tradingDay,

@@ -16,9 +16,10 @@ describe('B5 canonical projection → B6 view adapter', () => {
 
   test('maps canonical unpaged history wire into a client page without inventing detail', () => {
     const report = reportFixture();
+    const persistedTradingDay = '2026-07-09';
     const entry = {
       report_id: report.wire.report_id,
-      trading_day: report.wire.trading_day,
+      trading_day: persistedTradingDay,
       profile: report.wire.profile,
       market_scope: report.wire.market_scope,
       source_snapshot_id: report.wire.source_snapshot_id,
@@ -42,8 +43,8 @@ describe('B5 canonical projection → B6 view adapter', () => {
         query: 'aapl',
         profile: 'us_preferred',
         market_scope: 'us',
-        from_day: '2026-07-10',
-        to_day: '2026-07-10',
+        from_day: persistedTradingDay,
+        to_day: persistedTradingDay,
       },
       entries: [entry],
       total: 1,
@@ -53,9 +54,11 @@ describe('B5 canonical projection → B6 view adapter', () => {
     expect(page.page).toBe(1);
     expect(page.page_size).toBe(20);
     expect(page.entries[0]).toMatchObject({
+      trading_day: persistedTradingDay,
       snapshot_id: report.snapshot.snapshot_id,
       output_fingerprint: report.snapshot.output_fingerprint,
       top_rating: 'A',
+      generated_at: report.wire.source_as_of,
     });
     expect(page).not.toHaveProperty('selected_report');
     expect(page).not.toHaveProperty('comparison');
