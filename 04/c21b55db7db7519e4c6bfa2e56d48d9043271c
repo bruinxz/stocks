@@ -1,0 +1,23 @@
+backend/tests/models/auth-refresh-session.test.ts
+  s_a736f797991a75::t_cb1530ac924030 33-36,120-130
+scripts/tests/smoke_readonly_core.js
+  s_a736f797991a75::t_965e7744d07dab 14,29,1221,1234,1974
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "04c21b55db7db7519e4c6bfa2e56d48d9043271c",
+  "prompts": {},
+  "sessions": {
+    "s_a736f797991a75": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f6df4-4774-7632-9fb3-5b238d295067",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
