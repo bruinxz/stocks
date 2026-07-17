@@ -975,16 +975,21 @@ export class StockFactorService {
       const requiresRealProvider = providerPlan.providers.some(provider =>
         ['tushare', 'eastmoney', 'baostock'].includes(provider)
       );
+      const targetFactorDate = String(options.as_of || coverage.latest_trade_date || '').slice(
+        0,
+        10
+      );
+      const factorCoverageIsCurrent = [
+        coverage.latest_factor_date,
+        coverage.latest_landed_factor_date,
+        coverage.effective_factor_date,
+      ]
+        .filter(Boolean)
+        .some(date => String(date).slice(0, 10) >= targetFactorDate);
       const shouldSkip =
         coverage.latest_trade_date &&
-        (!options.as_of ||
-          [
-            coverage.latest_factor_date,
-            coverage.latest_landed_factor_date,
-            coverage.effective_factor_date,
-          ]
-            .filter(Boolean)
-            .some(date => String(date).slice(0, 10) >= String(options.as_of).slice(0, 10))) &&
+        targetFactorDate &&
+        factorCoverageIsCurrent &&
         minCoverageRate >= skipThreshold &&
         (!requiresRealProvider ||
           skipRealProviderThreshold <= 0 ||
@@ -1009,6 +1014,7 @@ export class StockFactorService {
           upserts: { valuation: 0, money_flow: 0, fundamental: 0 },
           duration_ms: Date.now() - startedAt,
           coverage_snapshot: {
+            target_factor_date: targetFactorDate,
             latest_trade_date: coverage.latest_trade_date,
             latest_factor_date: coverage.latest_factor_date,
             latest_landed_factor_date: coverage.latest_landed_factor_date,

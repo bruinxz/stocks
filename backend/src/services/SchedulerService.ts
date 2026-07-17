@@ -3871,8 +3871,11 @@ class SchedulerService {
         }
         await this.safeUpdateExecutionLog(executionLog, {
           total_items: 1,
-          success_count: ok ? 1 : 0,
-          failed_count: ok ? 0 : 1,
+          completed_items: ok ? 1 : 0,
+          failed_items: ok ? 0 : 1,
+          status: ok ? 'COMPLETED' : 'FAILED',
+          completed_at: new Date(),
+          error_message: ok ? null : `派生因子同步失败: ${(r.stderr || '').slice(-500)}`,
           result_summary: {
             scenario: 'derived_factor_sync',
             provider,
@@ -3881,6 +3884,9 @@ class SchedulerService {
             ok,
           },
         });
+        if (!ok) {
+          throw new Error(`派生因子同步失败: provider=${provider}, code=${r.code}`);
+        }
       } else if (task.type === 'INDEX_COMPONENT_SYNC') {
         // Plan A (2026-07): 同步宽基指数成份股 → index_components 表, 供
         // ETFConstituentExpander 把 ETF 展开成成份股做因子横截面。走 AKShare
