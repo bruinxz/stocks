@@ -8,6 +8,8 @@ export const RUNTIME_SCHEMA_TABLES = [
   'data_update_logs',
   'scheduled_tasks',
   'task_execution_logs',
+  'feishu_notification_outbox',
+  'notification_incident_states',
   'daily_screeners',
   'paper_trading_portfolios',
   'paper_trading_positions',
@@ -45,6 +47,8 @@ export const RUNTIME_SCHEMA_TABLES = [
 export const CRITICAL_RUNTIME_SCHEMA_TABLES = [
   'scheduled_tasks',
   'task_execution_logs',
+  'feishu_notification_outbox',
+  'notification_incident_states',
   'ai_investment_signals',
   'recommendation_trade_outcomes',
   'recommendation_loop_policy_snapshots',
@@ -146,6 +150,34 @@ export const RUNTIME_SCHEMA_REQUIRED_COLUMNS: Record<
       'completed_items',
       'failed_items',
       'result_summary',
+    ],
+  },
+  risk_alerts: {
+    critical: true,
+    columns: ['user_id', 'symbol', 'level', 'message', 'rule_id', 'is_read', 'metadata'],
+  },
+  feishu_notification_outbox: {
+    critical: true,
+    columns: [
+      'idempotency_key',
+      'topic_key',
+      'audience',
+      'status',
+      'attempts',
+      'max_attempts',
+      'next_attempt_at',
+      'payload',
+    ],
+  },
+  notification_incident_states: {
+    critical: true,
+    columns: [
+      'source_key',
+      'status',
+      'generation',
+      'occurrence_count',
+      'opened_notification_generation',
+      'recovered_notification_generation',
     ],
   },
   stock_fundamental_factors: {

@@ -38,15 +38,13 @@ import { User } from './User';
  *   - **drawdown / weekly_return / max_industry_pct 全 nullable** — 数据不足
  *     （新账户 snapshot 历史 < 7 日 / 0 持仓时无行业聚合）时落 null 而非 0，
  *     与 US-049/US-052 风控信号"数据缺失 → 信号 null → 安全 HOLD"范式一致；
- *   - **dispatch_status 三态** — `pending`（已计算未推送）/ `sent`（已经飞书/邮件）/
- *     `failed`（推送过但失败）。US-080 推送通道落地前一律落 'pending'；US-080 上线后
- *     更新此字段。**与"通知是否发出"无关的纯计算结果记录 + 通知交付状态分离**；
+ *   - 通知交付状态统一由 `feishu_notification_outbox` 管理，本表只保存体检业务快照；
  *   - **timestamps 'underscored'** — 与 US-040+ models 一致（避免 createdAt/updatedAt
  *     camelCase 与 Sequelize 默认 snake_case 不匹配产生 'column "createdAt" does not exist' 报错）。
  *
  * **消费方**：
  *   - GET /api/risk/morning-checkup/today — UI 早盘开盘前展示"今日体检"；
- *   - 未来 US-080 NotificationService 读 latest where dispatch_status='pending' 推送；
+ *   - `FeishuNotificationService` 以 user/date 幂等键投递体检摘要；
  *   - 未来 US-082 周报 / 月报 服务可拉历史 checkups 做趋势可视化。
  */
 @Table({
@@ -57,7 +55,6 @@ import { User } from './User';
     { fields: ['user_id'] },
     { fields: ['user_id', 'date'], unique: true, name: 'morning_risk_checkups_user_date_uniq' },
     { fields: ['date'] },
-    { fields: ['dispatch_status'] },
   ],
 })
 export class MorningRiskCheckup extends Model {
@@ -177,15 +174,6 @@ export class MorningRiskCheckup extends Model {
     comment: '未读 RiskAlert 数（is_read=false 全 level）',
   })
   declare unresolved_alerts_count: number;
-
-  @Column({
-    type: DataType.STRING(20),
-    allowNull: false,
-    defaultValue: 'pending',
-    field: 'dispatch_status',
-    comment: '推送状态：pending（已算未推） / sent（已推） / failed（推送失败）',
-  })
-  declare dispatch_status: 'pending' | 'sent' | 'failed';
 
   @Column({
     type: DataType.JSONB,

@@ -20,7 +20,6 @@ import { quantOpenWatchdogService } from '../quant/health/internal/QuantOpenWatc
 import { quantDataService } from '../quant/engine/internal/QuantDataService';
 import { realtimeQuoteService } from '../data/services/RealtimeQuoteService';
 import { aiInvestmentSignalService } from './AIInvestmentSignalService';
-import { feishuTaskReportService } from './FeishuTaskReportService';
 import { paperTradingAutomationService } from '../portfolio/internal/PaperTradingAutomationService';
 import { paperTradingAttributionService } from '../portfolio/internal/PaperTradingAttributionService';
 import { paperTradingPlanService } from '../portfolio/internal/PaperTradingPlanService';
@@ -60,10 +59,16 @@ import { Op } from 'sequelize';
 // label cardinality 爆炸); 只按 CRON_REGISTRY 的 task_type 维度统计.
 import { recordSchedulerTaskRun } from '../metrics/PrometheusRegistry';
 import { skipRetiredScheduledTask } from './scheduler/retiredScheduledTask';
+import { cronNotificationLifecycleService } from './CronNotificationLifecycleService';
+import { feishuNotificationService } from './FeishuNotificationService';
 
 // Persisted rows from releases that predate structural task retirement. These
 // are deliberately not part of CRON_REGISTRY and can only self-deactivate.
-const RETIRED_LEGACY_TASK_TYPES = new Set(['BLACK_SWAN_DETECT']);
+const RETIRED_LEGACY_TASK_TYPES = new Set([
+  'BLACK_SWAN_DETECT',
+  'SNOWBALL_HOT_KEYWORD_SYNC',
+  'WEBHOOK_FALLBACK_RETRY',
+]);
 
 // ⚠️ DEPRECATED STUB — 以下"服务"是 批3/批8 精简量化 pipeline 时已删除的 service
 // 的占位替身,仅为让依赖它们的历史调度路径继续编译。所有方法恒返回空结果 (no-op),
@@ -95,22 +100,6 @@ const StrategyTcaMultiplier = { upsert: async (_?: any): Promise<any> => undefin
 
 type TaskRunStatus = 'SUCCESS' | 'FAILED' | 'RUNNING';
 type TaskExecutionLogLike = TaskExecutionLog | null;
-
-/**
- * Batch BF-2 (2026-06-23): 抽前 N 行 stack — cron 失败推 Lark 用.
- * 兼容 Error 实例 / 普通 object / string. 完全 stack 太长 (lark card 2k 限制),
- * 取前 5 行通常足够定位.
- */
-function errorStackPreview(err: any, maxLines: number): string {
-  if (!err) return '';
-  const stack = typeof err === 'object' && err && err.stack ? String(err.stack) : '';
-  if (!stack) return '';
-  return stack
-    .split('\n')
-    .slice(0, Math.max(1, maxLines))
-    .map(line => line.replace(/^\s+/, ''))
-    .join('\n');
-}
 
 function compactRuntimeHealth(runtimeHealth: any) {
   if (!runtimeHealth) return null;
@@ -422,6 +411,21 @@ class SchedulerService {
     const scheduledJob = cron.schedule(
       task.cron_expression,
       async () => {
+        const persistedTask = await ScheduledTask.findByPk(task.id).catch(() => null);
+        if (!persistedTask) {
+          logger.warn(
+            `[scheduler] 无法读取 task ${task.id} (${task.name}) 最新状态，跳过本次 tick`
+          );
+          return;
+        }
+        if (!persistedTask.is_active) {
+          const inactiveJob = this.activeTasks.get(task.id);
+          inactiveJob?.stop();
+          (inactiveJob as any)?.destroy?.();
+          this.activeTasks.delete(task.id);
+          logger.warn(`[scheduler] task ${task.id} (${task.name}) 已停用，移除内存 cron`);
+          return;
+        }
         // Batch O (2026-06-17, C-S1 fix): in-flight lock 防 overlap. 上一次 task 还在
         // 跑下一次 tick 触发 → 同 task_id 同时跑两实例 → 配合 Batch J guard sell
         // executor 真卖路径 = 数量翻倍卖. 现在 skip + warn.
@@ -439,7 +443,7 @@ class SchedulerService {
         await runWithLoggingContext({ trace_id: ctxTraceId, module: 'scheduler' }, async () => {
           logger.info(`Executing scheduled task: ${task.name} (${task.type})`);
           try {
-            await this._executeTaskLogic(task, false);
+            await this._executeTaskLogic(persistedTask, false);
           } catch (error) {
             logger.error(`Scheduled task ${task.id} (${task.name}) execution failed:`, error);
             if (task.type === 'GLOBAL_MARKET_DAILY_SYNC') {
@@ -754,25 +758,30 @@ class SchedulerService {
     // 防告警淹没 + 防 task 一直 fail 仍 retry 浪费资源.
     const FAILURE_KILL_THRESHOLD = Number(process.env.SCHEDULER_FAILURE_KILL_THRESHOLD || 5);
     const updates: any = { last_run_status: status };
+    let failureCount = Number(task.consecutive_failure_count || 0);
+    let killed = false;
     if (status === 'SUCCESS') {
       if ((task.consecutive_failure_count || 0) > 0) {
         updates.consecutive_failure_count = 0;
       }
     } else if (status === 'FAILED') {
       const newCount = (task.consecutive_failure_count || 0) + 1;
+      failureCount = newCount;
       updates.consecutive_failure_count = newCount;
       if (newCount >= FAILURE_KILL_THRESHOLD && task.is_active) {
+        killed = true;
         updates.is_active = false;
         logger.error(
           `[scheduler] task ${task.id} (${task.name}) 连续失败 ${newCount} 次 ≥ ${FAILURE_KILL_THRESHOLD}, 自动 is_active=false. 修复后运维需手动重置 consecutive_failure_count=0 + is_active=true.`
         );
-        // 写 RiskAlert HIGH 让运维 dashboard 第一时间看到
+        // 仅写站内告警。飞书升级卡由 CronNotificationLifecycleService 唯一负责，
+        // 避免 RiskAlert.afterCreate 与 cron lifecycle 同时推送两张 HIGH 卡。
         try {
           // eslint-disable-next-line @typescript-eslint/no-var-requires
           const { RiskAlert } = require('../models/RiskAlert');
           await RiskAlert.create({
             user_id: 1, // task 是系统级, 挂 admin 看; 后续如要按 owner 分发再扩
-            level: 'HIGH',
+            level: 'MEDIUM',
             symbol: `SYSTEM:SCHEDULER_TASK_KILLED`,
             name: `定时任务 ${task.name} 自动熔断`,
             message:
@@ -801,65 +810,35 @@ class SchedulerService {
     }
     await task.update(updates);
 
-    if (!executionLog) return;
+    if (executionLog) {
+      const patch: any = {
+        status: status === 'SUCCESS' ? 'COMPLETED' : status === 'FAILED' ? 'FAILED' : 'IN_PROGRESS',
+      };
 
-    const patch: any = {
-      status: status === 'SUCCESS' ? 'COMPLETED' : status === 'FAILED' ? 'FAILED' : 'IN_PROGRESS',
-    };
-
-    if (status !== 'RUNNING') {
-      patch.completed_at = new Date();
-    }
-    if (error_message) {
-      patch.error_message = error_message;
+      if (status !== 'RUNNING') patch.completed_at = new Date();
+      if (error_message) patch.error_message = error_message;
+      await executionLog.update(patch);
     }
 
-    await executionLog.update(patch);
-
-    const parameters = task.parameters || {};
-    const shouldReportToFeishu =
-      parameters.report_to_feishu !== false && parameters.reportToFeishu !== false;
-    if (status !== 'RUNNING' && shouldReportToFeishu) {
-      await feishuTaskReportService.reportTaskExecutionLog(executionLog, {
-        record_type: status === 'FAILED' ? '定时任务失败' : '定时任务完成',
-        error,
-      });
-    }
-
-    // Batch BF-2 (2026-06-23): cron 失败推 Lark + admin email — fire-and-forget,
-    // 1h dedup (同 task.type 1h 内最多 1 次). 用户原话 "凌晨出问题没人知道",
-    // 之前 markTaskFinished FAILED 只 logger.warn (error.log 沉默淹没); 现在系统级
-    // admin 路径 (env FEISHU_RECOMMENDATION_BOT_WEBHOOK / ADMIN_ALERT_EMAILS) 推一条.
-    // 不推 SUCCESS (太多噪声 — 每日数千次 success). 不推 RUNNING (中间态).
+    // 任务和执行日志先落库，再进入跨进程持久化的事故生命周期。一个故障代次只发
+    // 首次失败、自动停用升级、恢复三类通知；投递失败由 outbox 重试。
     if (status === 'FAILED') {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const sysMod = require('./SystemAdminAlertPusher');
-        const stackPreview = errorStackPreview(error, 5);
-        sysMod.pushSystemAdminAlertFireAndForget({
-          dedup_key: `cron:${task.type}`,
-          // cron 一直失败超过 FAILURE_KILL_THRESHOLD 已经写 RiskAlert HIGH (走 BF-1
-          // 推 admin), 这里日常失败用 WARN 区分 (避免 OPS 群被 5 次连败前的每次失败刷屏).
-          level: 'WARN',
-          title: `[CRON FAIL] ${task.name} (${task.type})`,
-          body_markdown:
-            `**task_id**: ${task.id}\n` +
-            `**task.type**: ${task.type}\n` +
-            `**task.name**: ${task.name}\n` +
-            `**连续失败次数**: ${(task.consecutive_failure_count || 0) + 1}\n` +
-            `**失败时间**: ${new Date().toISOString()}\n` +
-            `**错误**:\n\`\`\`\n${error_message || '未知错误'}\n\`\`\`\n` +
-            (stackPreview ? `\n**Stack (前 5 行)**:\n\`\`\`\n${stackPreview}\n\`\`\`` : ''),
-          triggered_at: new Date().toISOString(),
-          trace_id: executionLog?.id ? `task_execution_log_id=${executionLog.id}` : undefined,
-        });
-      } catch (sysErr: any) {
-        logger.warn(
-          `[scheduler] markTaskFinished cron-failed pusher 异常 (吞错): ${
-            sysErr?.message || sysErr
-          }`
-        );
-      }
+      await cronNotificationLifecycleService.recordFailure({
+        task_id: task.id,
+        task_type: task.type,
+        task_name: task.name,
+        failure_count: failureCount,
+        error_message,
+        execution_log_id: executionLog?.id,
+        killed,
+      });
+    } else if (status === 'SUCCESS') {
+      await cronNotificationLifecycleService.recordRecovery({
+        task_id: task.id,
+        task_type: task.type,
+        task_name: task.name,
+        execution_log_id: executionLog?.id,
+      });
     }
   }
 
@@ -941,9 +920,17 @@ class SchedulerService {
         // Retired handlers can remain in old databases after the implementation
         // disappears. Deactivate those rows before calendar guards or dispatch,
         // otherwise they wake forever and flood production logs.
-        const reason = RETIRED_LEGACY_TASK_TYPES.has(task.type)
-          ? 'BLACK_SWAN_DETECT has been retired; BlackSwanEvent is supplied by external writers'
-          : 'RestrictedShareWatchdog and its persistence model have been retired';
+        const retiredReasons: Record<string, string> = {
+          BLACK_SWAN_DETECT:
+            'BLACK_SWAN_DETECT has been retired; BlackSwanEvent is supplied by external writers',
+          SNOWBALL_HOT_KEYWORD_SYNC:
+            'SNOWBALL_HOT_KEYWORD_SYNC has been retired with the Snowball keyword collector',
+          WEBHOOK_FALLBACK_RETRY:
+            'WEBHOOK_FALLBACK_RETRY has been replaced by FEISHU_NOTIFICATION_DISPATCH',
+        };
+        const reason =
+          retiredReasons[task.type] ||
+          'RestrictedShareWatchdog and its persistence model have been retired';
         return await skipRetiredScheduledTask({
           task,
           execution_log: executionLog,
@@ -1037,7 +1024,7 @@ class SchedulerService {
       }
 
       if (task.type === 'DAILY_UPDATE') {
-        await this.enqueueDataUpdateJob(
+        const job = await this.enqueueDataUpdateJob(
           task,
           executionLog,
           'daily_update',
@@ -1059,8 +1046,14 @@ class SchedulerService {
           'dailyUpdate',
           isManual
         );
+        recordSchedulerTaskRun(
+          String(task.type || 'unknown'),
+          'success',
+          (Date.now() - _metricStart) / 1000
+        );
+        return { success: true, queued: true, job_id: job.id };
       } else if (task.type === 'SYNC_ALL_STOCKS') {
-        await this.enqueueDataUpdateJob(
+        const job = await this.enqueueDataUpdateJob(
           task,
           executionLog,
           'new_stocks_sync',
@@ -1073,6 +1066,12 @@ class SchedulerService {
           'syncAllStocks',
           isManual
         );
+        recordSchedulerTaskRun(
+          String(task.type || 'unknown'),
+          'success',
+          (Date.now() - _metricStart) / 1000
+        );
+        return { success: true, queued: true, job_id: job.id };
       } else if (task.type === 'SYNC_HISTORY') {
         const symbols = Array.isArray(parameters.symbols) ? parameters.symbols : undefined;
         const marketFilters = Array.isArray(parameters.marketFilters)
@@ -1087,7 +1086,7 @@ class SchedulerService {
             ? Boolean(parameters.sync_all_stocks)
             : !symbols?.length && !marketFilters?.length;
 
-        await this.enqueueDataUpdateJob(
+        const job = await this.enqueueDataUpdateJob(
           task,
           executionLog,
           'bulk_sync_custom',
@@ -1128,8 +1127,14 @@ class SchedulerService {
           'syncHistory',
           isManual
         );
+        recordSchedulerTaskRun(
+          String(task.type || 'unknown'),
+          'success',
+          (Date.now() - _metricStart) / 1000
+        );
+        return { success: true, queued: true, job_id: job.id };
       } else if (task.type === 'DATA_QUALITY_SCAN') {
-        await this.enqueueDataUpdateJob(
+        const job = await this.enqueueDataUpdateJob(
           task,
           executionLog,
           'data_quality_scan',
@@ -1145,6 +1150,12 @@ class SchedulerService {
           'dataQualityScan',
           isManual
         );
+        recordSchedulerTaskRun(
+          String(task.type || 'unknown'),
+          'success',
+          (Date.now() - _metricStart) / 1000
+        );
+        return { success: true, queued: true, job_id: job.id };
       } else if (task.type === 'REALTIME_QUOTE_SYNC') {
         const rawSymbols = Array.isArray(parameters.symbols)
           ? parameters.symbols
@@ -1381,14 +1392,6 @@ class SchedulerService {
           result_summary: resultSummary,
         });
 
-        if (parameters.report_to_feishu !== false && parameters.reportToFeishu !== false) {
-          await feishuTaskReportService.reportTaskExecutionLog(executionLog, {
-            record_type: parameters.record_type || parameters.recordType || '量化参数后验维护',
-            task_type: 'QUANT_PARAM_MAINTENANCE',
-            result: resultSummary,
-          });
-        }
-
         logger.info(
           `量化参数后验维护完成。新增 ${create.created}，更新 ${create.updated}，完成收益 ${refresh.completed}，生命周期应用 ${lifecycle.applied}`
         );
@@ -1437,13 +1440,6 @@ class SchedulerService {
               : null,
         });
 
-        if (parameters.report_to_feishu !== false && parameters.reportToFeishu !== false) {
-          await feishuTaskReportService.reportQuantOpenWatchdog(result, {
-            record_type: parameters.record_type || parameters.recordType || task.name,
-            task_type: 'QUANT_OPEN_WATCHDOG',
-          });
-        }
-
         if (result.status === 'critical') {
           logger.error(`量化开盘链路看门狗发现关键异常: ${result.conclusion}`, {
             issues: result.issues,
@@ -1484,21 +1480,6 @@ class SchedulerService {
           error_message: failed > 0 ? `${failed} 个基准指数同步失败，详见结果摘要` : null,
         });
 
-        if (parameters.report_to_feishu !== false && parameters.reportToFeishu !== false) {
-          await feishuTaskReportService.reportTaskExecutionLog(executionLog, {
-            record_type: '基准指数行情同步',
-            task_type: 'BENCHMARK_INDEX_SYNC',
-            result: {
-              sync_window: { start_date: startDate, end_date: endDate },
-              data_source: parameters.data_source || parameters.dataSource || 'tencent_only',
-              inserted_records: inserted,
-              total: entries.length,
-              failed,
-              details: result,
-            },
-          });
-        }
-
         logger.info(
           `基准指数行情同步完成。指数 ${entries.length}，失败 ${failed}，写入/尝试 ${inserted} 条`
         );
@@ -1534,14 +1515,6 @@ class SchedulerService {
           error_message: null,
           result_summary: resultSummary,
         });
-
-        if (parameters.report_to_feishu !== false && parameters.reportToFeishu !== false) {
-          await feishuTaskReportService.reportTaskExecutionLog(executionLog, {
-            record_type: parameters.record_type || parameters.recordType || '无人影子执行收益闭环',
-            task_type: 'LIVE_SHADOW_AUTOPILOT',
-            result: resultSummary,
-          });
-        }
 
         logger.info(
           `无人影子执行定时任务完成。影子成交 ${
@@ -1629,14 +1602,6 @@ class SchedulerService {
           result_summary: resultSummary,
         });
 
-        if (parameters.report_to_feishu !== false && parameters.reportToFeishu !== false) {
-          await feishuTaskReportService.reportTaskExecutionLog(executionLog, {
-            record_type: parameters.record_type || parameters.recordType || '影子执行周度复盘',
-            task_type: 'LIVE_SHADOW_WEEKLY_REVIEW',
-            result: resultSummary,
-          });
-        }
-
         logger.info(
           `影子执行周度复盘完成。样本 ${outcomes.summary?.shadow_trade_count || 0}，已评估 ${
             outcomes.summary?.evaluated_count || 0
@@ -1663,23 +1628,10 @@ class SchedulerService {
             lookback_days: this.toPositiveInt(parameters.lookback_days, 15, 3650),
             sync_concurrency: this.toPositiveInt(parameters.sync_concurrency, 2, 5),
           });
-          if (parameters.report_repair_to_feishu !== false) {
-            await feishuTaskReportService.reportSignalVerificationRepair(repairResult, {
-              record_type: `${
-                parameters.record_type || parameters.recordType || '推荐绩效'
-              }数据修复`,
-            });
-          }
         }
 
         const result = await aiInvestmentSignalService.refreshPerformance({
           ...commonPerformanceParams,
-          report_to_feishu:
-            parameters.report_to_feishu !== undefined
-              ? Boolean(parameters.report_to_feishu)
-              : parameters.reportToFeishu !== undefined
-              ? Boolean(parameters.reportToFeishu)
-              : true,
         });
         (result as any).repair = repairResult;
 
@@ -1730,12 +1682,6 @@ class SchedulerService {
               ? Boolean(parameters.verify_before_report)
               : parameters.verifyBeforeReport !== undefined
               ? Boolean(parameters.verifyBeforeReport)
-              : true,
-          report_to_feishu:
-            parameters.report_to_feishu !== undefined
-              ? Boolean(parameters.report_to_feishu)
-              : parameters.reportToFeishu !== undefined
-              ? Boolean(parameters.reportToFeishu)
               : true,
           record_type: parameters.record_type || parameters.recordType || '信号质量日报',
         });
@@ -1799,12 +1745,7 @@ class SchedulerService {
               : parameters.dryRun !== undefined
               ? Boolean(parameters.dryRun)
               : false,
-          report_to_feishu:
-            parameters.report_to_feishu !== undefined
-              ? Boolean(parameters.report_to_feishu)
-              : parameters.reportToFeishu !== undefined
-              ? Boolean(parameters.reportToFeishu)
-              : true,
+          notify_business_summary: parameters.notify_business_summary === true,
           refresh_recommendations:
             parameters.refresh_recommendations !== undefined
               ? Boolean(parameters.refresh_recommendations)
@@ -1975,12 +1916,7 @@ class SchedulerService {
               : parameters.dryRun !== undefined
               ? Boolean(parameters.dryRun)
               : false,
-          report_to_feishu:
-            parameters.report_to_feishu !== undefined
-              ? Boolean(parameters.report_to_feishu)
-              : parameters.reportToFeishu !== undefined
-              ? Boolean(parameters.reportToFeishu)
-              : true,
+          notify_business_summary: parameters.notify_business_summary === true,
           limit: this.toPositiveInt(parameters.limit, 20, 100),
           enable_stop_loss:
             parameters.enable_stop_loss !== undefined
@@ -2766,12 +2702,6 @@ class SchedulerService {
           start_date: parameters.start_date || parameters.startDate,
           end_date: parameters.end_date || parameters.endDate,
           limit: this.toPositiveInt(parameters.limit, 2000, 10000),
-          report_to_feishu:
-            parameters.report_to_feishu !== undefined
-              ? Boolean(parameters.report_to_feishu)
-              : parameters.reportToFeishu !== undefined
-              ? Boolean(parameters.reportToFeishu)
-              : true,
         });
 
         await this.safeUpdateExecutionLog(executionLog, {
@@ -2812,12 +2742,6 @@ class SchedulerService {
           source_type: parameters.source_type || parameters.sourceType,
           agent_session: parameters.agent_session || parameters.agentSession,
           limit: this.toPositiveInt(parameters.limit, 2000, 10000),
-          report_to_feishu:
-            parameters.report_to_feishu !== undefined
-              ? Boolean(parameters.report_to_feishu)
-              : parameters.reportToFeishu !== undefined
-              ? Boolean(parameters.reportToFeishu)
-              : true,
         });
 
         await this.safeUpdateExecutionLog(executionLog, {
@@ -2857,12 +2781,6 @@ class SchedulerService {
               ? Boolean(parameters.include_monitor)
               : parameters.includeMonitor !== undefined
               ? Boolean(parameters.includeMonitor)
-              : true,
-          report_to_feishu:
-            parameters.report_to_feishu !== undefined
-              ? Boolean(parameters.report_to_feishu)
-              : parameters.reportToFeishu !== undefined
-              ? Boolean(parameters.reportToFeishu)
               : true,
           source_type: parameters.source_type || parameters.sourceType,
           limit: this.toPositiveInt(parameters.limit, 30, 100),
@@ -3681,56 +3599,27 @@ class SchedulerService {
             `total_cascade=${cleanupResult.total_cascade_count} ` +
             `whitelist_skipped=${cleanupResult.whitelist_skipped_total} errors=${cleanupResult.errors.length}`
         );
-      } else if (task.type === 'WEBHOOK_FALLBACK_RETRY') {
-        // US-095 OPS-006 — 每 5min 扫 webhook_fallback_log status='pending' AND
-        // next_retry_at <= NOW(), 透传 sender 重投递; 成功 → status='sent', 失败
-        // attempts+=1 + 指数 backoff; attempts >= max_attempts → status='dead'.
-        // dispatchers 把 row.scenario (sendDailyDigestCard / sendRiskAlertCard / etc)
-        // 映射到真实 sender. 主流程 (FeishuBotWebhookService) 已 fail-OPEN, 本 cron
-        // 是"为了不丢消息"的第二道防线; retryPendingFallbacks 自身永不 throw.
-        /* eslint-disable @typescript-eslint/no-var-requires */
-        const { retryPendingFallbacks } = require('./webhookFailOpen');
-        const { feishuBotWebhookService } = require('./FeishuBotWebhookService');
-        /* eslint-enable @typescript-eslint/no-var-requires */
-        const limitWebhook = Number.isFinite(Number(parameters.limit))
-          ? Number(parameters.limit)
-          : undefined;
-        // dispatchers — 按 scenario 名映射到真实 sender. payload 即首次失败时
-        // INSERT 的 args (含 webhookUrl / body / options 等); webhook_url 仍走 row
-        // (env 改了不影响在飞历史告警).
-        const webhookDispatchers: Record<string, any> = {
-          sendDailyDigestCard: async (payload: Record<string, unknown>, row: any) =>
-            feishuBotWebhookService.sendDailyDigestCard(
-              payload?.payload,
-              String(row.webhook_url || ''),
-              { buildCard: () => payload?.cardBody }
-            ),
-        };
-        const webhookSummary = await retryPendingFallbacks({
-          dispatchers: webhookDispatchers,
-          limit: limitWebhook,
-          now: new Date(),
-        });
+      } else if (task.type === 'FEISHU_NOTIFICATION_DISPATCH') {
+        const dispatchLimit = Number.isFinite(Number(parameters.limit))
+          ? Math.max(1, Math.min(200, Number(parameters.limit)))
+          : 50;
+        const webhookSummary = await feishuNotificationService.dispatchPending(dispatchLimit);
         await this.safeUpdateExecutionLog(executionLog, {
-          total_items: webhookSummary.total,
-          completed_items: webhookSummary.sent_count,
-          failed_items: webhookSummary.retry_failed_count + webhookSummary.dead_count,
+          total_items: webhookSummary.scanned,
+          completed_items: webhookSummary.sent + webhookSummary.suppressed,
+          failed_items: webhookSummary.retry + webhookSummary.dead,
           status: 'COMPLETED',
           completed_at: new Date(),
           error_message: null,
           result_summary: {
-            scenario: 'webhook_fallback_retry',
-            total: webhookSummary.total,
-            sent_count: webhookSummary.sent_count,
-            retry_failed_count: webhookSummary.retry_failed_count,
-            dead_count: webhookSummary.dead_count,
-            skipped_unknown_scenario_count: webhookSummary.skipped_unknown_scenario_count,
+            scenario: 'feishu_notification_dispatch',
+            ...webhookSummary,
           },
         });
         logger.info(
-          `[WEBHOOK_FALLBACK_RETRY] total=${webhookSummary.total} sent=${webhookSummary.sent_count} ` +
-            `retry_failed=${webhookSummary.retry_failed_count} dead=${webhookSummary.dead_count} ` +
-            `skipped_unknown=${webhookSummary.skipped_unknown_scenario_count}`
+          `[FEISHU_NOTIFICATION_DISPATCH] scanned=${webhookSummary.scanned} sent=${webhookSummary.sent} ` +
+            `retry=${webhookSummary.retry} dead=${webhookSummary.dead} ` +
+            `suppressed=${webhookSummary.suppressed} skipped=${webhookSummary.skipped}`
         );
       } else if (task.type === 'DB_BACKUP') {
         // US-096 OPS-007 — 每日 02:00 跑 scripts/backup-db.sh: pg_dump → gzip →
@@ -5119,11 +5008,14 @@ class SchedulerService {
           } catch (e: any) {
             logger.warn(`[DATA_FRESHNESS_CHECK] write RiskAlert failed: ${e?.message ?? e}`);
           }
-          // 推 Lark (1h dedup)
+          // 推 Lark（按 trade_date 精确幂等）
           try {
             const md = buildFreshnessReportMarkdown(report);
             await pushSystemAdminAlert({
               dedup_key: `data_freshness:${report.trade_date}`,
+              idempotency_key: `data-freshness:${report.trade_date}`,
+              audience: 'ops',
+              kind: 'data_freshness_report',
               level: hasFail ? 'HIGH' : 'WARN',
               title: `📊 数据陈旧度告警 - ${report.fail_count} fail / ${report.warn_count} warn`,
               body_markdown: md.substring(0, 1900),
@@ -5151,7 +5043,7 @@ class SchedulerService {
           `[DATA_FRESHNESS_CHECK] ok=${report.ok_count} warn=${report.warn_count} fail=${report.fail_count}`
         );
       } else if (task.type === 'DAILY_HEALTH_REPORT') {
-        // BF-4 (2026-06-23): 工作日 21:00 7 段健康指标 → Lark OPS 群 + admin 邮箱
+        // BF-4 (2026-06-23): 工作日 21:00 7 段健康指标 → Lark OPS 群
         // fail-OPEN: generateAndPushDailyHealthReport per-section + push 都 try/catch, 整体不抛.
         /* eslint-disable @typescript-eslint/no-var-requires */
         const { generateAndPushDailyHealthReport } = require('./DailyHealthReportService');
@@ -5185,11 +5077,17 @@ class SchedulerService {
           },
         });
         logger.info(
-          `[DAILY_HEALTH_REPORT] date=${r.trade_date} live=${r.live_order.total}/${(
-            r.live_order.success_rate * 100
-          ).toFixed(1)}% paper=${r.paper_trading.buy_count}/${r.paper_trading.sell_count} ` +
+          `[DAILY_HEALTH_REPORT] date=${r.trade_date} live=${r.live_order.total}/${
+            r.live_order.success_rate == null
+              ? 'N/A'
+              : `${(r.live_order.success_rate * 100).toFixed(1)}%`
+          } paper=${r.paper_trading.buy_count}/${r.paper_trading.sell_count} ` +
             `cron_fail=${r.cron_failures.length} alerts=${r.risk_alerts_high.length} ` +
-            `ai=${r.ai_engine.total}/${(r.ai_engine.fallback_rate * 100).toFixed(1)}%fb ` +
+            `ai=${r.ai_engine.total}/${
+              r.ai_engine.fallback_rate == null
+                ? 'N/A'
+                : `${(r.ai_engine.fallback_rate * 100).toFixed(1)}%fb`
+            } ` +
             `std0=${r.factor_std_zero.length} push=${out.push_attempted}`
         );
       } else if (task.type === 'ANALYST_FORECAST_SYNC') {
@@ -6104,7 +6002,6 @@ class SchedulerService {
           lookback_days: 180,
           data_source: 'tencent_only',
           concurrency: 2,
-          report_to_feishu: true,
         },
       },
       {
@@ -6123,8 +6020,6 @@ class SchedulerService {
           factor_limit: 220,
           cache_ttl_ms: 90_000,
           dry_run: false,
-          report_to_feishu: true,
-          notify_to_feishu_bot: false,
           record_type: '实盘影子执行闭环',
         },
       },
@@ -6137,8 +6032,6 @@ class SchedulerService {
           username: 'stock',
           outcome_limit: 80,
           horizons: [1, 3, 5],
-          report_to_feishu: true,
-          notify_to_feishu_bot: false,
           record_type: '影子执行周度复盘',
         },
       },
@@ -6156,8 +6049,6 @@ class SchedulerService {
           lifecycle_limit: 5000,
           auto_sync_benchmark: false,
           dry_run_lifecycle: false,
-          report_to_feishu: true,
-          notify_to_feishu_bot: false,
           record_type: '量化参数后验维护',
         },
       },
@@ -6172,8 +6063,6 @@ class SchedulerService {
           limit: 6000,
           source: 'tencent',
           batch_size: 500,
-          report_to_feishu: false,
-          notify_to_feishu_bot: false,
           record_type: '实时行情快照刷新',
         },
       },
@@ -6209,8 +6098,6 @@ class SchedulerService {
           min_archived_signals: 1,
           require_fresh_quote: true,
           freshness_max_minutes: 75,
-          report_to_feishu: true,
-          notify_to_feishu_bot: true,
           record_type: '量化开盘链路看门狗',
         },
       },
@@ -6221,7 +6108,6 @@ class SchedulerService {
         is_active: true,
         parameters: {
           limit: 500,
-          report_to_feishu: true,
         },
       },
       {
@@ -6239,7 +6125,6 @@ class SchedulerService {
           data_source: 'tencent_only',
           lookback_days: 15,
           sync_concurrency: 2,
-          report_to_feishu: true,
         },
       },
       {
@@ -6257,7 +6142,6 @@ class SchedulerService {
           repair_lookback_days: 30,
           sync_concurrency: 2,
           verify_before_report: true,
-          report_to_feishu: true,
           record_type: '信号质量日报',
         },
       },
@@ -6296,7 +6180,7 @@ class SchedulerService {
           outcome_feedback_lookback_days: 365,
           outcome_feedback_limit: 2000,
           dry_run: false,
-          report_to_feishu: true,
+          notify_business_summary: false,
         },
       },
       {
@@ -6326,7 +6210,7 @@ class SchedulerService {
           min_sell_signal_score: 60,
           sell_signal_source_type: 'all',
           dry_run: false,
-          report_to_feishu: true,
+          notify_business_summary: false,
         },
       },
       {
@@ -6341,7 +6225,6 @@ class SchedulerService {
           initial_capital: DEFAULT_AUTONOMOUS_INITIAL_CAPITAL,
           include_open: true,
           limit: 2000,
-          report_to_feishu: true,
         },
       },
       {
@@ -6357,7 +6240,6 @@ class SchedulerService {
           include_open: true,
           lookback_days: 180,
           limit: 2000,
-          report_to_feishu: true,
         },
       },
       {
@@ -6410,7 +6292,6 @@ class SchedulerService {
           max_hold_days: 20,
           min_sell_signal_score: 60,
           sell_signal_source_type: 'all',
-          report_to_feishu: true,
           capture_canary_snapshot: true,
         },
       },
@@ -6529,7 +6410,6 @@ class SchedulerService {
           alert_retention_days: 30,
           whitelist_strategies: [],
           dry_run: false,
-          report_to_feishu: true,
         },
       },
       {
@@ -6896,13 +6776,12 @@ class SchedulerService {
         parameters: {},
       },
       {
-        // Webhook fallback retry — 每 5 分钟扫 webhook_fallback_log pending 行重投递.
-        // 飞书 fail-OPEN 后的第二道防线, 必须高频跑.
-        name: 'Webhook fallback retry (Batch AJ)',
-        type: 'WEBHOOK_FALLBACK_RETRY',
+        // 飞书统一 outbox 投递 — 每 5 分钟补投 due/retry/stale-lock 行。
+        name: '飞书通知 outbox 投递',
+        type: 'FEISHU_NOTIFICATION_DISPATCH',
         cron_expression: '*/5 * * * *',
         is_active: true,
-        parameters: {},
+        parameters: { limit: 50, require_trading_day: false },
       },
       {
         // 全库 pg_dump 备份 — 每日 02:00 跑 backups/YYYY-MM-DD.sql.gz, 保留 30 天.
@@ -7019,7 +6898,7 @@ class SchedulerService {
         parameters: {},
       },
       {
-        // BF-4: 工作日 21:00 聚合 7 段健康指标 → Lark OPS 群 + admin 邮箱 (INFO 级).
+        // BF-4: 工作日 21:00 聚合 7 段健康指标 → Lark OPS 群。
         name: '每日健康日报 (批9补漏)',
         type: 'DAILY_HEALTH_REPORT',
         cron_expression: '0 21 * * 1-5',
@@ -7134,8 +7013,6 @@ class SchedulerService {
           'repair_lookback_days',
           'sync_concurrency',
           'verify_before_report',
-          'report_to_feishu',
-          'notify_to_feishu_bot',
           'record_type',
         ]) {
           if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
@@ -7159,8 +7036,6 @@ class SchedulerService {
           'lifecycle_limit',
           'auto_sync_benchmark',
           'dry_run_lifecycle',
-          'report_to_feishu',
-          'notify_to_feishu_bot',
           'record_type',
         ]) {
           if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
@@ -7179,15 +7054,7 @@ class SchedulerService {
         nextParams.limit = 6000;
         nextParams.source = 'tencent';
         nextParams.batch_size = 500;
-        for (const key of [
-          'universe',
-          'limit',
-          'source',
-          'batch_size',
-          'report_to_feishu',
-          'notify_to_feishu_bot',
-          'record_type',
-        ]) {
+        for (const key of ['universe', 'limit', 'source', 'batch_size', 'record_type']) {
           if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
             nextParams[key] = (taskData.parameters as any)[key];
           }
@@ -7211,8 +7078,6 @@ class SchedulerService {
           'factor_limit',
           'cache_ttl_ms',
           'dry_run',
-          'report_to_feishu',
-          'notify_to_feishu_bot',
           'record_type',
         ]) {
           if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
@@ -7227,14 +7092,7 @@ class SchedulerService {
       if (taskData.type === 'LIVE_SHADOW_WEEKLY_REVIEW') {
         const params = patch.parameters || task.parameters || {};
         const nextParams = { ...taskData.parameters, ...params };
-        for (const key of [
-          'username',
-          'outcome_limit',
-          'horizons',
-          'report_to_feishu',
-          'notify_to_feishu_bot',
-          'record_type',
-        ]) {
+        for (const key of ['username', 'outcome_limit', 'horizons', 'record_type']) {
           if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
             nextParams[key] = (taskData.parameters as any)[key];
           }
@@ -7255,8 +7113,6 @@ class SchedulerService {
           'min_archived_signals',
           'require_fresh_quote',
           'freshness_max_minutes',
-          'report_to_feishu',
-          'notify_to_feishu_bot',
           'record_type',
         ]) {
           if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
@@ -7310,7 +7166,6 @@ class SchedulerService {
           'include_open',
           'lookback_days',
           'limit',
-          'report_to_feishu',
         ]) {
           if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
             nextParams[key] = (taskData.parameters as any)[key];
@@ -7346,7 +7201,6 @@ class SchedulerService {
           'min_sell_signal_score',
           'sell_signal_source_type',
           'dry_run',
-          'report_to_feishu',
         ]) {
           if (nextParams[key] === undefined && (taskData.parameters as any)[key] !== undefined) {
             nextParams[key] = (taskData.parameters as any)[key];
@@ -7355,6 +7209,50 @@ class SchedulerService {
         if (JSON.stringify(nextParams) !== JSON.stringify(params)) {
           patch.parameters = nextParams;
         }
+      }
+
+      // 通用 report_to_feishu 曾指向已删除的 Bitable stub。启动时清除遗留字段；
+      // 仅保留两个真实业务摘要场景，并迁移成语义明确的开关。
+      const normalizedNotificationParams = {
+        ...((patch.parameters || task.parameters || {}) as Record<string, any>),
+      };
+      const hasLegacyNotificationFlag = [
+        'report_to_feishu',
+        'reportToFeishu',
+        'notify_to_feishu_bot',
+        'notifyToFeishuBot',
+      ].some(key => normalizedNotificationParams[key] !== undefined);
+      if (hasLegacyNotificationFlag) {
+        const enabled = (value: any, fallback: boolean) => {
+          if (value === undefined || value === null) return fallback;
+          return ['true', '1', 'yes', 'on'].includes(String(value).toLowerCase());
+        };
+        const report = enabled(
+          normalizedNotificationParams.report_to_feishu ??
+            normalizedNotificationParams.reportToFeishu,
+          false
+        );
+        const bot = enabled(
+          normalizedNotificationParams.notify_to_feishu_bot ??
+            normalizedNotificationParams.notifyToFeishuBot,
+          taskData.type === 'PAPER_TRADING_AUTO_SYNC'
+        );
+        for (const key of [
+          'report_to_feishu',
+          'reportToFeishu',
+          'notify_to_feishu_bot',
+          'notifyToFeishuBot',
+        ]) {
+          delete normalizedNotificationParams[key];
+        }
+        if (
+          (task.parameters || {}).notify_business_summary === undefined &&
+          (taskData.type === 'PAPER_TRADING_AUTO_SYNC' ||
+            taskData.type === 'PAPER_TRADING_RISK_CHECK')
+        ) {
+          normalizedNotificationParams.notify_business_summary = report && bot;
+        }
+        patch.parameters = normalizedNotificationParams;
       }
 
       if (Object.keys(patch).length > 0) {

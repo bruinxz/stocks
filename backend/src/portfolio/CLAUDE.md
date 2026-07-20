@@ -664,7 +664,7 @@ runs *every morning 8:30* (cron) and **folds the current portfolio panorama
 into a single readable markdown line** for the user to consume *before the
 open*. It is **not a new alert** — it is a daily aggregation of *existing*
 risk alerts + positional exposure + drawdown that ships to feishu / email
-via US-080 NotificationService.
+via the durable Feishu notification outbox and the configured email channel.
 
 Six dimensions per AC, persisted to `morning_risk_checkups` (`(user_id, date)`
 UNIQUE — UPSERT semantics):
@@ -746,11 +746,10 @@ weekly recap, US-091 monthly review, ...) should follow:
   config route would NOT have caught `/today` (no param), but adding a
   `:date` route later would silently shadow `/today` if not careful. The
   jsdoc on the route file says so explicitly.
-- **No SchedulerService hook in US-054** (matches US-052/US-053 batch — the
-  task type registration is deferred until US-080 NotificationService lands,
-  at which point cron + push are wired together). Production deployment of
-  US-054 thus requires either US-080 *or* a manual ops cron task with `type =
-  'PAPER_TRADING_MORNING_CHECKUP'` calling `morningRiskCheckupService.runMorningCheckup()`.
+- **Scheduler integration**: `PAPER_TRADING_MORNING_CHECKUP` runs the checkup,
+  persists the snapshot, and enqueues the user/date-idempotent Feishu summary.
+  Delivery, retry, suppression, and dead-letter recovery are handled by the
+  shared notification outbox instead of the risk job itself.
 - **HTTP surfaces**:
   - `GET /api/risk/morning-checkup/today` — UI fetches today's row (or latest
     fallback) for the "今日体检" dashboard widget.
@@ -1173,4 +1172,3 @@ call + throw EXECUTION_FEASIBILITY_BLOCKED + 不再 inline 调
 `bypass_feasibility`; LiveTradingService.ts 必须 import + call + audit
 ORDER_BLOCKED_BY_FEASIBILITY/WARN; auditEvents.ts 含两个事件常量.
 任一 refactor 破坏其中一条 → CI 立刻挂.
-

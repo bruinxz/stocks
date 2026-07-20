@@ -18,6 +18,7 @@
 
 import {
   determineFeishuStatus,
+  determineFeishuChannels,
   withTimeout,
   assembleDetail,
   collectSystemHealthDetail,
@@ -140,11 +141,32 @@ function testDetermineFeishuStatus(): void {
   );
 
   assertEqual(
-    'FEISHU_DAILY_DIGEST_WEBHOOK 单独有 → ok',
-    determineFeishuStatus({
-      FEISHU_DAILY_DIGEST_WEBHOOK: 'https://z',
-    } as NodeJS.ProcessEnv),
+    'OPS_ALERT_FEISHU_WEBHOOK 单独有 → ok',
+    determineFeishuStatus({ OPS_ALERT_FEISHU_WEBHOOK: 'https://ops' } as NodeJS.ProcessEnv),
     'ok' as DependencyStatus
+  );
+  assertEqual(
+    'LIVE_ALERT_FEISHU_WEBHOOK 单独有 → ok',
+    determineFeishuStatus({ LIVE_ALERT_FEISHU_WEBHOOK: 'https://live' } as NodeJS.ProcessEnv),
+    'ok' as DependencyStatus
+  );
+  assertEqual(
+    '全局禁用时即使配置 webhook 也不报 ok',
+    determineFeishuStatus({
+      FEISHU_BOT_WEBHOOK: 'https://business',
+      DISABLE_FEISHU_BOT_WEBHOOK: 'true',
+    } as NodeJS.ProcessEnv),
+    'not_configured' as DependencyStatus
+  );
+  assertEqual(
+    'channel configuration 分离 business/ops/live',
+    determineFeishuChannels({
+      FEISHU_BOT_WEBHOOK: 'https://business',
+      OPS_ALERT_FEISHU_WEBHOOK: 'https://ops',
+      LIVE_ALERT_FEISHU_WEBHOOK: '',
+      DISABLE_FEISHU_BOT_WEBHOOK: 'true',
+    } as NodeJS.ProcessEnv),
+    { disabled: true, business: true, ops: true, live: false }
   );
 
   // 混合：一个填一个空 → ok (任意一个有就算)
@@ -349,6 +371,7 @@ async function testBuildDefaultProbeFns(): Promise<void> {
       akshare: 'ok',
       feishu: 'ok',
       uptime_seconds: 12,
+      feishu_channels: { disabled: false, business: true, ops: false, live: false },
     });
   }
 

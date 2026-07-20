@@ -56,7 +56,8 @@ import { ErrorPatternReport } from '../models/ErrorPatternReport';
 import { ImprovementSuggestion } from '../models/ImprovementSuggestion';
 import { BlackSwanEvent } from '../models/BlackSwanEvent';
 import { BlackSwanPostmortemReport } from '../models/BlackSwanPostmortemReport';
-import { WebhookFallbackLog } from '../models/WebhookFallbackLog';
+import { FeishuNotificationOutbox } from '../models/FeishuNotificationOutbox';
+import { NotificationIncidentState } from '../models/NotificationIncidentState';
 import { MorningRiskCheckup } from '../models/MorningRiskCheckup';
 import { AIStockAnalysisReport } from '../models/AIStockAnalysisReport';
 import { MarketSentimentIndex } from '../models/MarketSentimentIndex';
@@ -194,7 +195,8 @@ const sequelize = new Sequelize({
     ImprovementSuggestion,
     BlackSwanEvent,
     BlackSwanPostmortemReport,
-    WebhookFallbackLog,
+    FeishuNotificationOutbox,
+    NotificationIncidentState,
     MorningRiskCheckup,
     AIStockAnalysisReport,
     MarketSentimentIndex,

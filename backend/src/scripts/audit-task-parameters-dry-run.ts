@@ -34,6 +34,8 @@
 
 import { ScheduledTask } from '../models/ScheduledTask';
 import { logger } from '../utils/logger';
+import { createHash } from 'crypto';
+import { feishuNotificationService } from '../services/FeishuNotificationService';
 
 /** 需要巡检的"应该真跑"的 task type 白名单。未来要扩展只在此 array 加。 */
 export const SHOULD_BE_LIVE_TASK_TYPES: ReadonlyArray<string> = ['STRATEGY_KILL_SWITCH_CHECK'];
@@ -184,21 +186,22 @@ async function defaultRiskAlertCreator(row: any): Promise<any> {
 }
 
 async function defaultFeishuWebhookPoster(
-  url: string,
+  _url: string,
   body: any
 ): Promise<{ success: boolean; message?: string }> {
-  // 复用 LiveAuditAlertService 同款轻量 axios POST + fail-OPEN 风格.
-  // 不复用 FeishuBotWebhookService（那是 interactive card 通道，依赖 buildCard
-  // 注入）；ops dry_run audit 走最简单的 text msg 即可。
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const axios = require('axios');
   try {
-    await axios.post(url, body, {
-      timeout: Number(process.env.OPS_ALERT_FEISHU_TIMEOUT_MS || 5000),
-      maxRedirects: 0,
-      validateStatus: (s: number) => s >= 200 && s < 300,
+    const text = String(body?.content?.text || '');
+    const digest = createHash('sha256').update(text).digest('hex').slice(0, 32);
+    const result = await feishuNotificationService.enqueueAndDeliver({
+      idempotency_key: `task-parameter-audit:${digest}`,
+      topic_key: 'task-parameter-audit',
+      audience: 'ops',
+      kind: 'task_parameter_audit',
+      severity: 'WARN',
+      title: '定时任务 dry_run 参数巡检',
+      payload: body,
     });
-    return { success: true };
+    return { success: result.success, message: result.message };
   } catch (err: any) {
     return { success: false, message: err?.message || String(err) };
   }

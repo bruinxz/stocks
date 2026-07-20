@@ -1298,6 +1298,9 @@ export class BullishEventDetectorService {
       const { pushSystemAdminAlertFireAndForget } = require('./SystemAdminAlertPusher');
       pushSystemAdminAlertFireAndForget({
         dedup_key: dedupForPusher,
+        idempotency_key: dedupForPusher,
+        audience: 'business',
+        kind: 'bullish_event',
         level: 'INFO',
         title,
         body_markdown: body,

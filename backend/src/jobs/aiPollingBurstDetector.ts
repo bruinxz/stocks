@@ -1,7 +1,7 @@
 /**
  * aiPollingBurstDetector — Phase 10 缺漏 P0-2 (2026-06-28)
  *
- * 单 job 失败照样静默 (feishuTaskReportService.reportAiPollingFailure 是 stub no-op).
+ * 单 job 失败只进日志；达到 burst 阈值后由统一飞书 outbox 发 OPS 告警。
  * 100 个 job 集体失败 admin 不知道. 用一个 5min sliding window 检测 burst:
  * 窗口内 ≥ 10 次失败 → 推一次 HIGH 告警 (dedup_key='ai_polling_burst', 1h dedup
  * 由 SystemAdminAlertPusher 兜底防 burst 内多次推).

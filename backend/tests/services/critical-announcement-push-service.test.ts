@@ -112,7 +112,11 @@ function makeFakeDataSource(opts: {
   holdings?: Record<string, number[]>;
   findThrows?: Record<string, string>;
   createThrowsForUserIds?: number[];
-}): { dataSource: CriticalAnnouncementPushDataSource; created: CreatedAlert[]; findCalls: string[] } {
+}): {
+  dataSource: CriticalAnnouncementPushDataSource;
+  created: CreatedAlert[];
+  findCalls: string[];
+} {
   const created: CreatedAlert[] = [];
   const findCalls: string[] = [];
   const dataSource: CriticalAnnouncementPushDataSource = {
@@ -141,18 +145,23 @@ function noopDS(): CriticalAnnouncementPushDataSource {
 // ---------------------------------------------------------------------------
 
 function testConstants(): void {
-  assertEqual('CRITICAL_ANNOUNCEMENT_PRIORITY = critical', CRITICAL_ANNOUNCEMENT_PRIORITY, 'critical');
+  assertEqual(
+    'CRITICAL_ANNOUNCEMENT_PRIORITY = critical',
+    CRITICAL_ANNOUNCEMENT_PRIORITY,
+    'critical'
+  );
   assert(
     'CRITICAL_ANNOUNCEMENT_MAX_PUSH_PER_BATCH is positive int',
     typeof CRITICAL_ANNOUNCEMENT_MAX_PUSH_PER_BATCH === 'number' &&
       CRITICAL_ANNOUNCEMENT_MAX_PUSH_PER_BATCH > 0 &&
       Number.isInteger(CRITICAL_ANNOUNCEMENT_MAX_PUSH_PER_BATCH)
   );
-  assert(
-    'CRITICAL_ANNOUNCEMENT_MAX_TEXT_LEN > 200',
-    CRITICAL_ANNOUNCEMENT_MAX_TEXT_LEN > 200
+  assert('CRITICAL_ANNOUNCEMENT_MAX_TEXT_LEN > 200', CRITICAL_ANNOUNCEMENT_MAX_TEXT_LEN > 200);
+  assertEqual(
+    'CRITICAL_ANNOUNCEMENT_RULE_ID',
+    CRITICAL_ANNOUNCEMENT_RULE_ID,
+    'announcement_critical'
   );
-  assertEqual('CRITICAL_ANNOUNCEMENT_RULE_ID', CRITICAL_ANNOUNCEMENT_RULE_ID, 'announcement_critical');
   assert(
     'CRITICAL_ANNOUNCEMENT_USER_ALERT_MAX_MSG_LEN > 200',
     CRITICAL_ANNOUNCEMENT_USER_ALERT_MAX_MSG_LEN > 200
@@ -162,7 +171,10 @@ function testConstants(): void {
 function testShouldPushRecord(): void {
   assert('critical + persisted → true', shouldPushRecord(makeRecord()) === true);
   assert('high + persisted → false', shouldPushRecord(makeRecord({ priority: 'high' })) === false);
-  assert('medium + persisted → false', shouldPushRecord(makeRecord({ priority: 'medium' })) === false);
+  assert(
+    'medium + persisted → false',
+    shouldPushRecord(makeRecord({ priority: 'medium' })) === false
+  );
   assert('low + persisted → false', shouldPushRecord(makeRecord({ priority: 'low' })) === false);
   assert(
     'critical + persisted=false → false',
@@ -255,19 +267,27 @@ function testBuildUserAlertMessage(): void {
 function testBuildUserAlertDedupKey(): void {
   const key = buildUserAlertDedupKey(makeRecord());
   assert('dedup key prefix + code + date', /^announcement_critical:600519:2026-06-19:/.test(key));
-  assertEqual('dedup key stable', buildUserAlertDedupKey(makeRecord()), buildUserAlertDedupKey(makeRecord()));
+  assertEqual(
+    'dedup key stable',
+    buildUserAlertDedupKey(makeRecord()),
+    buildUserAlertDedupKey(makeRecord())
+  );
   assert(
     'different stock_code → different key',
-    buildUserAlertDedupKey(makeRecord()) !== buildUserAlertDedupKey(makeRecord({ stock_code: '000001' }))
+    buildUserAlertDedupKey(makeRecord()) !==
+      buildUserAlertDedupKey(makeRecord({ stock_code: '000001' }))
   );
 }
 
 function testResolveWebhookUrl(): void {
   assertEqual(
     'options.webhook_url 优先',
-    resolveWebhookUrl({ webhook_url: 'https://opt.example/' }, {
-      OPS_ALERT_FEISHU_WEBHOOK: 'https://env.example/',
-    }),
+    resolveWebhookUrl(
+      { webhook_url: 'https://opt.example/' },
+      {
+        OPS_ALERT_FEISHU_WEBHOOK: 'https://env.example/',
+      }
+    ),
     'https://opt.example/'
   );
   assertEqual(
@@ -292,7 +312,11 @@ function testResolveWebhookUrl(): void {
 async function testPushBatchEmpty(): Promise<void> {
   const { poster, calls } = makeFakePoster({ ok: true });
   const svc = new CriticalAnnouncementPushService(poster);
-  const res = await svc.pushBatch([], { data_source: noopDS() }, { OPS_ALERT_FEISHU_WEBHOOK: 'https://x' });
+  const res = await svc.pushBatch(
+    [],
+    { data_source: noopDS() },
+    { OPS_ALERT_FEISHU_WEBHOOK: 'https://x' }
+  );
   assertEqual('empty: skipped_reason', res.skipped_reason, 'no_records');
   assertEqual('empty: scanned', res.scanned, 0);
   assertEqual('empty: matched', res.matched, 0);
@@ -347,9 +371,13 @@ async function testPushBatchDryRun(): Promise<void> {
 async function testPushBatchSingleCriticalAC(): Promise<void> {
   const { poster, calls } = makeFakePoster({ ok: true });
   const svc = new CriticalAnnouncementPushService(poster);
-  const res = await svc.pushBatch([makeRecord()], { data_source: noopDS() }, {
-    OPS_ALERT_FEISHU_WEBHOOK: 'https://hook.example/abc',
-  });
+  const res = await svc.pushBatch(
+    [makeRecord()],
+    { data_source: noopDS() },
+    {
+      OPS_ALERT_FEISHU_WEBHOOK: 'https://hook.example/abc',
+    }
+  );
   assertEqual('AC: matched 1', res.matched, 1);
   assertEqual('AC: succeeded 1', res.succeeded, 1);
   assertEqual('AC: poster called exactly once', calls.length, 1);
@@ -381,7 +409,10 @@ async function testPushBatchMultipleCriticalMixed(): Promise<void> {
   assertEqual('mixed: failed 2', res.failed, 2);
   assertEqual('mixed: poster called 3 times', calls.length, 3);
   assertEqual('mixed: items[1].error', res.items[1].error, 'feishu 4xx');
-  assert('mixed: items[2].error includes throw', String(res.items[2].error || '').includes('network DOWN'));
+  assert(
+    'mixed: items[2].error includes throw',
+    String(res.items[2].error || '').includes('network DOWN')
+  );
 }
 
 async function testPushBatchTruncatedByCap(): Promise<void> {
@@ -391,11 +422,23 @@ async function testPushBatchTruncatedByCap(): Promise<void> {
   for (let i = 0; i < 25; i++) {
     records.push(makeRecord({ stock_code: String(100000 + i) }));
   }
-  const res = await svc.pushBatch(records, { data_source: noopDS() }, { OPS_ALERT_FEISHU_WEBHOOK: 'https://hook' });
+  const res = await svc.pushBatch(
+    records,
+    { data_source: noopDS() },
+    { OPS_ALERT_FEISHU_WEBHOOK: 'https://hook' }
+  );
   assertEqual('truncated: attempted=cap', res.attempted, CRITICAL_ANNOUNCEMENT_MAX_PUSH_PER_BATCH);
-  assertEqual('truncated: poster cap calls', calls.length, CRITICAL_ANNOUNCEMENT_MAX_PUSH_PER_BATCH);
+  assertEqual(
+    'truncated: poster cap calls',
+    calls.length,
+    CRITICAL_ANNOUNCEMENT_MAX_PUSH_PER_BATCH
+  );
   const truncated = res.items.filter(i => i.skip_reason === 'truncated_batch');
-  assertEqual('truncated: tail count', truncated.length, 25 - CRITICAL_ANNOUNCEMENT_MAX_PUSH_PER_BATCH);
+  assertEqual(
+    'truncated: tail count',
+    truncated.length,
+    25 - CRITICAL_ANNOUNCEMENT_MAX_PUSH_PER_BATCH
+  );
 }
 
 async function testPushBatchTopLevelCatch(): Promise<void> {
@@ -403,9 +446,15 @@ async function testPushBatchTopLevelCatch(): Promise<void> {
   const svc = new CriticalAnnouncementPushService(poster);
   const badRecord: any = {};
   Object.defineProperty(badRecord, 'priority', {
-    get() { throw new Error('boom getter'); },
+    get() {
+      throw new Error('boom getter');
+    },
   });
-  const res = await svc.pushBatch([badRecord], { data_source: noopDS() }, { OPS_ALERT_FEISHU_WEBHOOK: 'https://x' });
+  const res = await svc.pushBatch(
+    [badRecord],
+    { data_source: noopDS() },
+    { OPS_ALERT_FEISHU_WEBHOOK: 'https://x' }
+  );
   assertEqual('top-level: skipped_reason', res.skipped_reason, 'top_level_error');
   assert('top-level: error contains boom', String(res.error || '').includes('boom'));
   assertEqual('top-level: user_alerts 0', res.user_alerts, 0);
@@ -456,13 +505,6 @@ async function testProductionSingleton(): Promise<void> {
     'criticalAnnouncementPushService 是 service 实例',
     criticalAnnouncementPushService instanceof CriticalAnnouncementPushService
   );
-  const res = await criticalAnnouncementPushService.pushBatch(
-    [makeRecord()],
-    { data_source: noopDS() },
-    {}
-  );
-  assertEqual('singleton no-webhook skipped_reason', res.skipped_reason, 'no_webhook');
-  assertEqual('singleton user_alerts 0 (noop ds)', res.user_alerts, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -475,9 +517,13 @@ async function testUserAlertsHoldingRelated(): Promise<void> {
   const { dataSource, created, findCalls } = makeFakeDataSource({
     holdings: { '600519': [101, 202] },
   });
-  const res = await svc.pushBatch([makeRecord()], { data_source: dataSource }, {
-    OPS_ALERT_FEISHU_WEBHOOK: 'https://hook',
-  });
+  const res = await svc.pushBatch(
+    [makeRecord()],
+    { data_source: dataSource },
+    {
+      OPS_ALERT_FEISHU_WEBHOOK: 'https://hook',
+    }
+  );
   assertEqual('user_alerts: matched 1', res.matched, 1);
   assertEqual('user_alerts: 写 2 条 (2 持仓用户)', res.user_alerts, 2);
   assertEqual('user_alerts: findCalls.length', findCalls.length, 1);
@@ -496,9 +542,13 @@ async function testUserAlertsNoHolders(): Promise<void> {
   const { poster, calls } = makeFakePoster({ ok: true });
   const svc = new CriticalAnnouncementPushService(poster);
   const { dataSource, created, findCalls } = makeFakeDataSource({ holdings: {} });
-  const res = await svc.pushBatch([makeRecord()], { data_source: dataSource }, {
-    OPS_ALERT_FEISHU_WEBHOOK: 'https://hook',
-  });
+  const res = await svc.pushBatch(
+    [makeRecord()],
+    { data_source: dataSource },
+    {
+      OPS_ALERT_FEISHU_WEBHOOK: 'https://hook',
+    }
+  );
   assertEqual('no-holders: user_alerts 0', res.user_alerts, 0);
   assertEqual('no-holders: created.length 0', created.length, 0);
   assertEqual('no-holders: findCalls 1', findCalls.length, 1);
@@ -550,9 +600,13 @@ async function testUserAlertsCreateThrowFailOpen(): Promise<void> {
     holdings: { '600519': [101, 202, 303] },
     createThrowsForUserIds: [202],
   });
-  const res = await svc.pushBatch([makeRecord()], { data_source: dataSource }, {
-    OPS_ALERT_FEISHU_WEBHOOK: 'https://hook',
-  });
+  const res = await svc.pushBatch(
+    [makeRecord()],
+    { data_source: dataSource },
+    {
+      OPS_ALERT_FEISHU_WEBHOOK: 'https://hook',
+    }
+  );
   assertEqual('create-throw: user_alerts 2 (1 fail-OPEN)', res.user_alerts, 2);
   assertEqual('create-throw: created 2', created.length, 2);
   assertEqual('create-throw: OPS succeeded 1', res.succeeded, 1);
@@ -658,9 +712,13 @@ async function testEmergencyConfGateBlocksOpsPush(): Promise<void> {
   const svc = new CriticalAnnouncementPushService(poster);
   const { dataSource } = makeFakeDataSource({ holdings: {} });
   const recHigh = { ...makeRecord({ stock_code: '600519' }), confidence_score: 80 } as any;
-  const res = await svc.pushBatch([recHigh], { data_source: dataSource }, {
-    OPS_ALERT_FEISHU_WEBHOOK: 'https://hook',
-  });
+  const res = await svc.pushBatch(
+    [recHigh],
+    { data_source: dataSource },
+    {
+      OPS_ALERT_FEISHU_WEBHOOK: 'https://hook',
+    }
+  );
   assertEqual('PR-W: matched 1', res.matched, 1);
   assertEqual('PR-W: attempted 1', res.attempted, 1);
   assertEqual('PR-W: gate=false succeeded=1 (推送通过)', res.succeeded, 1);
@@ -671,9 +729,13 @@ async function testEmergencyConfGateBlocksOpsPush(): Promise<void> {
   const { poster: poster2, calls: calls2 } = makeFakePoster({ ok: true });
   const svc2 = new CriticalAnnouncementPushService(poster2);
   const recLow = { ...makeRecord({ stock_code: '600520' }), confidence_score: 60 } as any;
-  const res2 = await svc2.pushBatch([recLow], { data_source: dataSource }, {
-    OPS_ALERT_FEISHU_WEBHOOK: 'https://hook',
-  });
+  const res2 = await svc2.pushBatch(
+    [recLow],
+    { data_source: dataSource },
+    {
+      OPS_ALERT_FEISHU_WEBHOOK: 'https://hook',
+    }
+  );
   assertEqual('PR-L: conf=60 不拦截 succeeded=1', res2.succeeded, 1);
   assertEqual('PR-L: conf=60 poster 调 1 次', calls2.length, 1);
 }
@@ -686,9 +748,13 @@ async function testEmergencyConfGateInboxStillWritten(): Promise<void> {
     holdings: { '600519': [101, 202] },
   });
   const recHigh = { ...makeRecord({ stock_code: '600519' }), confidence_score: 90 } as any;
-  const res = await svc.pushBatch([recHigh], { data_source: dataSource }, {
-    OPS_ALERT_FEISHU_WEBHOOK: 'https://hook',
-  });
+  const res = await svc.pushBatch(
+    [recHigh],
+    { data_source: dataSource },
+    {
+      OPS_ALERT_FEISHU_WEBHOOK: 'https://hook',
+    }
+  );
   assertEqual('PR-W inbox: poster 调 1 次 (gate=false 不拦截)', calls.length, 1);
   assertEqual('PR-L inbox: user_alerts=2 (101+202)', res.user_alerts, 2);
   assertEqual('PR-L inbox: RiskAlert created=2', created.length, 2);
@@ -704,7 +770,7 @@ function testSyncDateWiringMetaGuard(): void {
   const path = join(__dirname, '..', '..', 'src', 'services', 'AnnouncementNLPService.ts');
   const src = readFileSync(path, 'utf-8');
   assert(
-    "AnnouncementNLPService imports CriticalAnnouncementPushService (lazy require)",
+    'AnnouncementNLPService imports CriticalAnnouncementPushService (lazy require)',
     /require\(['"]\.\/CriticalAnnouncementPushService['"]\)/.test(src)
   );
   assert(
@@ -712,10 +778,15 @@ function testSyncDateWiringMetaGuard(): void {
     /criticalAnnouncementPushService\.pushBatch\(\s*records/.test(src)
   );
   assert('SyncDateResult exposes critical_push? field', /critical_push\?:/.test(src));
-  assert('pushBatch 传 dry_run 透传 syncDate options', /dry_run:\s*options\.dry_run\s*===\s*true/.test(src));
+  assert(
+    'pushBatch 传 dry_run 透传 syncDate options',
+    /dry_run:\s*options\.dry_run\s*===\s*true/.test(src)
+  );
   assert(
     'push 调用包在 try/catch + logger.warn fail-OPEN',
-    /try\s*\{[\s\S]{0,300}criticalAnnouncementPushService\.pushBatch[\s\S]{0,500}\}\s*catch[\s\S]{0,400}fail-OPEN/.test(src)
+    /try\s*\{[\s\S]{0,300}criticalAnnouncementPushService\.pushBatch[\s\S]{0,500}\}\s*catch[\s\S]{0,400}fail-OPEN/.test(
+      src
+    )
   );
 }
 
@@ -744,8 +815,6 @@ async function main(): Promise<void> {
   await testPushBatchTruncatedByCap();
   await testPushBatchTopLevelCatch();
   await testProductionSingleton();
-  await testMetaAlertOnFailures();
-  await testMetaAlertNotCalledWhenAllSucceed();
 
   // PR-E (2026-06-29)
   await testUserAlertsHoldingRelated();

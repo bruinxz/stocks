@@ -55,6 +55,58 @@ router.get(
 
 /**
  * @openapi
+ * /api/tasks/notification-deliveries/health:
+ *   get:
+ *     tags: [任务 Tasks]
+ *     summary: 获取飞书通知 outbox 健康状态（管理员）
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: outbox 状态计数、积压与死信 }
+ */
+router.get(
+  '/notification-deliveries/health',
+  authController.authenticate,
+  requireRole('admin'),
+  taskController.getFeishuNotificationHealth
+);
+/**
+ * @openapi
+ * /api/tasks/notification-deliveries:
+ *   get:
+ *     tags: [任务 Tasks]
+ *     summary: 查询飞书通知投递明细（管理员）
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: 最近投递明细 }
+ */
+router.get(
+  '/notification-deliveries',
+  authController.authenticate,
+  requireRole('admin'),
+  taskController.getFeishuNotificationDeliveries
+);
+/**
+ * @openapi
+ * /api/tasks/notification-deliveries/{id}/retry:
+ *   post:
+ *     tags: [任务 Tasks]
+ *     summary: 重投 dead/suppressed 飞书通知（管理员）
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: id, required: true, schema: { type: integer } }
+ *     responses:
+ *       200: { description: 重投结果 }
+ *       404: { description: outbox 记录不存在 }
+ */
+router.post(
+  '/notification-deliveries/:id/retry',
+  authController.authenticate,
+  requireRole('admin'),
+  taskController.retryFeishuNotification
+);
+
+/**
+ * @openapi
  * /api/tasks/parameter-audits:
  *   get:
  *     tags: [任务 Tasks]

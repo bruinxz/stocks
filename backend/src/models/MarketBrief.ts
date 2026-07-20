@@ -27,7 +27,7 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
  *
  * **消费方**：
  *   - GET /api/ai/market-brief/today —— TodayWorkspace 顶部 AI 大盘速读卡片；
- *   - 未来 US-080 NotificationService 早盘前推送可消费（飞书/邮件）。
+ *   - 早盘前推送若启用，必须通过 FeishuNotificationService 统一 outbox 投递。
  */
 @Table({
   tableName: 'market_briefs',

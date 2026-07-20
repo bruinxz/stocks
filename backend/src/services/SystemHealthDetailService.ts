@@ -8,7 +8,7 @@
  *   2. redis       — redisLock.healthCheck() 调底层 `PING` (1500ms 超时)
  *   3. tradingAgents — GET ${TRADING_AGENTS_URL}/health (3000ms 超时)
  *   4. akshare     — python3 -c "import akshare; print(akshare.__version__)" (5000ms 超时)
- *   5. feishu      — 检查 FEISHU_BOT_WEBHOOK / FEISHU_RECOMMENDATION_BOT_WEBHOOK 是否配置；
+ *   5. feishu      — 检查业务 / OPS / 实盘三类 webhook 是否至少一类配置；
  *                    若未配 → 'not_configured'；配了 → 不实际发请求避免噪音 → 'ok' (配置存在)。
  *                    说明：Feishu webhook 不能用空载 GET 探活，发送会推真实消息 → noise。
  *                    "配了就算 ok" 是接受度内的简化：缺地址才是 ops 真正关心的状态。
@@ -48,6 +48,7 @@ export interface SystemHealthDetail {
   tradingAgents: DependencyStatus;
   akshare: DependencyStatus;
   feishu: DependencyStatus;
+  feishu_channels?: FeishuChannelConfiguration;
   uptime_seconds: number;
   /**
    * Batch M (2026-06-17): scheduler 健康度. 由 caller 在 collect 之后塞入
@@ -55,6 +56,13 @@ export interface SystemHealthDetail {
    * 运维 alert 触发. undefined = caller 未启用 scheduler.
    */
   scheduler_active_tasks?: number;
+}
+
+export interface FeishuChannelConfiguration {
+  disabled: boolean;
+  business: boolean;
+  ops: boolean;
+  live: boolean;
 }
 
 /**
@@ -69,6 +77,7 @@ export interface HealthProbeFns {
   probeTradingAgents: () => Promise<DependencyStatus>;
   probeAkshare: () => Promise<DependencyStatus>;
   probeFeishu: () => Promise<DependencyStatus>;
+  getFeishuChannels?: () => FeishuChannelConfiguration;
   getUptimeSeconds: () => number;
 }
 
@@ -121,13 +130,28 @@ export async function withTimeout<T>(
  *       让 caller / ops 在发送时段才发现真问题。理由见文件头。
  */
 export function determineFeishuStatus(env: NodeJS.ProcessEnv): DependencyStatus {
+  if (String(env.DISABLE_FEISHU_BOT_WEBHOOK || '').toLowerCase() === 'true') {
+    return 'not_configured';
+  }
   const candidates = [
     env.FEISHU_BOT_WEBHOOK,
     env.FEISHU_RECOMMENDATION_BOT_WEBHOOK,
-    env.FEISHU_DAILY_DIGEST_WEBHOOK,
+    env.OPS_ALERT_FEISHU_WEBHOOK,
+    env.LIVE_ALERT_FEISHU_WEBHOOK,
   ];
   const hasAny = candidates.some(v => typeof v === 'string' && v.trim().length > 0);
   return hasAny ? 'ok' : 'not_configured';
+}
+
+export function determineFeishuChannels(env: NodeJS.ProcessEnv): FeishuChannelConfiguration {
+  const configured = (...values: Array<string | undefined>) =>
+    values.some(value => typeof value === 'string' && value.trim().length > 0);
+  return {
+    disabled: String(env.DISABLE_FEISHU_BOT_WEBHOOK || '').toLowerCase() === 'true',
+    business: configured(env.FEISHU_RECOMMENDATION_BOT_WEBHOOK, env.FEISHU_BOT_WEBHOOK),
+    ops: configured(env.OPS_ALERT_FEISHU_WEBHOOK),
+    live: configured(env.LIVE_ALERT_FEISHU_WEBHOOK),
+  };
 }
 
 /**
@@ -174,7 +198,9 @@ export async function collectSystemHealthDetail(
     probes.probeAkshare(),
     probes.probeFeishu(),
   ]);
-  return assembleDetail(settled, probes.getUptimeSeconds());
+  const detail = assembleDetail(settled, probes.getUptimeSeconds());
+  if (probes.getFeishuChannels) detail.feishu_channels = probes.getFeishuChannels();
+  return detail;
 }
 
 // ---------------------------------------------------------------------------
@@ -247,6 +273,8 @@ export function buildDefaultProbeFns(deps: DefaultProbeDeps): HealthProbeFns {
         : probeAkshareViaPythonCached(akshareTimeout),
 
     probeFeishu: async () => determineFeishuStatus(env),
+
+    getFeishuChannels: () => determineFeishuChannels(env),
 
     getUptimeSeconds: deps.uptimeFn || (() => Math.floor(process.uptime())),
   };

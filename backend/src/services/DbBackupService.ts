@@ -10,7 +10,7 @@
  * 设计点
  * ============================================================================
  *
- * 1. **DataSource 注入式** (与 [[webhookFailOpen]] / [[CleanupOldDataService]] 同款):
+ * 1. **DataSource 注入式** (与 [[CleanupOldDataService]] 同款):
  *    `BackupRunner` 接口抽出 (a) spawn 子进程跑 backup-db.sh, (b) fs 扫备份目录
  *    列文件 + size + mtime. 单测注入 fake runner 完整覆盖 happy / non-zero exit /
  *    spawn throw / fs missing 4 路径, 无需真正 fork pg_dump.
@@ -22,7 +22,7 @@
  *
  * 3. **fail-OPEN** — 任一备份失败 (spawn 非 0 exit / fs 扫挂) 都不 throw,
  *    返 `{success:false, error}` 让 SchedulerService 仅 logger.warn + 写
- *    failed_items=1 而不让整个 cron tick 崩. 与 [[webhookFailOpen]] 同思想
+ *    failed_items=1 而不让整个 cron tick 崩.
  *    (运维链路绝不传染主流程).
  *
  * 4. **dry_run=true** — 仅扫现有备份返报告, 不 spawn shell. 供 ops 在跑生产

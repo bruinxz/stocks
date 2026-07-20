@@ -2,7 +2,7 @@
  * DailyHealthReportService — Batch BF-4 (2026-06-23)
  *
  * Cron 触发 DAILY_HEALTH_REPORT (推荐 21:00 工作日, 盘后 + 当日 ETF/归因/AI 均已落库).
- * 把当日 7 个维度的健康指标聚合成一张卡片, 推到 Lark OPS 群 + 系统管理邮箱.
+ * 把当日 7 个维度的健康指标聚合成一张卡片，通过统一 outbox 推到 Lark OPS 群。
  *
  * 用户原话: "收盘后让 admin 一眼看到当天系统怎么样" — 与 DATA_FRESHNESS_CHECK
  * (18:30, "数据有没有到位") + RiskAlert HIGH push (实时, "出事了") 互补:
@@ -18,7 +18,7 @@
  *   (7) factor std=0 异常 — factor_scores 最近 7 天 stddev(z_score) = 0 GROUP BY factor_name
  *
  * 路由 (复用 SystemAdminAlertPusher.pushSystemAdminAlert):
- *   - dedup_key = `daily-health:${trade_date}` — 同日只推 1 次 (1h dedup 内重启重复跑也不重推)
+ *   - idempotency_key = `daily-health:${trade_date}` — 同日严格只投递 1 次
  *   - level = 'INFO' (即便有 fail/warn 也是 INFO; 真出事走 RiskAlert HIGH push)
  *   - title = `📅 ${trade_date} 系统日报 — 实盘N单/AI N调用/Alert NHigh`
  *
@@ -30,6 +30,8 @@
  */
 
 import { logger } from '../utils/logger';
+import { CRON_REGISTRY } from '../constants/cronRegistry';
+import { formatEast8Readable } from '../utils/timezone';
 
 // ---------------------------------------------------------------------------
 // 类型
@@ -42,7 +44,7 @@ export interface LiveOrderSummary {
   succeeded: number;
   /** rejected + cancelled + error */
   failed: number;
-  success_rate: number; // 0..1
+  success_rate: number | null; // 0..1；无终态样本时 null
 }
 
 export interface RejectionReasonRow {
@@ -82,7 +84,7 @@ export interface AIEngineSummary {
   partial: number;
   failed: number;
   avg_latency_ms: number | null;
-  fallback_rate: number; // partial+failed / total
+  fallback_rate: number | null; // partial+failed / total；无调用时 null
 }
 
 export interface FactorStdZeroRow {
@@ -184,13 +186,13 @@ export function summarizeLiveOrders(by_status: Record<string, number>): LiveOrde
     else if (isLiveOrderStatusFailed(k)) failed += n;
   }
   const decided = succeeded + failed;
-  const success_rate = decided > 0 ? succeeded / decided : 0;
+  const success_rate = decided > 0 ? succeeded / decided : null;
   return {
     total,
     by_status: safeStatus,
     succeeded,
     failed,
-    success_rate: Math.round(success_rate * 10000) / 10000, // 4 位小数
+    success_rate: success_rate == null ? null : Math.round(success_rate * 10000) / 10000,
   };
 }
 
@@ -216,7 +218,7 @@ export function summarizeAiEngine(raw: {
   const partial = Math.max(0, Number(raw.partial) || 0);
   const failed = Math.max(0, Number(raw.failed) || 0);
   const fallback = partial + failed;
-  const fallback_rate = total > 0 ? fallback / total : 0;
+  const fallback_rate = total > 0 ? fallback / total : null;
   return {
     total,
     completed,
@@ -225,7 +227,7 @@ export function summarizeAiEngine(raw: {
     avg_latency_ms: Number.isFinite(raw.avg_latency_ms as number)
       ? Math.round(Number(raw.avg_latency_ms))
       : null,
-    fallback_rate: Math.round(fallback_rate * 10000) / 10000,
+    fallback_rate: fallback_rate == null ? null : Math.round(fallback_rate * 10000) / 10000,
   };
 }
 
@@ -241,9 +243,9 @@ export function buildOneLinerSummary(report: DailyHealthReport): string {
   return parts.join(' | ');
 }
 
-function formatPct(rate: number): string {
+function formatPct(rate: number | null): string {
   const n = Number(rate);
-  if (!Number.isFinite(n)) return 'NA';
+  if (rate == null || !Number.isFinite(n)) return 'N/A';
   return `${(n * 100).toFixed(1)}%`;
 }
 
@@ -595,24 +597,34 @@ class DefaultDailyHealthReportDataSource implements DailyHealthReportDataSource 
     const { ScheduledTask } = require('../models/ScheduledTask');
     const sequelize = ScheduledTask.sequelize;
     if (!sequelize) return [];
-    // LEFT JOIN task_execution_logs 最新一行拿 error_message (scheduled_tasks 自己没 last_error 列)
+    const registeredTypes = CRON_REGISTRY.filter(item => item.retired !== true).map(
+      item => item.type
+    );
+    if (registeredTypes.length === 0) return [];
+    // 以当日 execution log 为事实源：任务后来恢复、被熔断停用，也仍应出现在当日日报。
+    // 仅保留代码 registry 中仍有效的任务，历史僵尸行不会污染日报。
     const [rows]: any = await sequelize.query(
-      `SELECT s.id, s.type, s.name, s.consecutive_failure_count, s.last_run_at,
-              (SELECT l.error_message FROM task_execution_logs l
-                 WHERE l.task_id = s.id AND l.status = 'FAILED'
-                 ORDER BY l.completed_at DESC NULLS LAST, l.started_at DESC NULLS LAST
-                 LIMIT 1) AS last_error
-       FROM scheduled_tasks s
-       WHERE s.is_active = true
-         AND s.last_run_status = 'FAILED'
-         AND s.last_run_at AT TIME ZONE 'Asia/Shanghai' >= :since
-         AND s.last_run_at AT TIME ZONE 'Asia/Shanghai' < :until
-       ORDER BY s.consecutive_failure_count DESC, s.last_run_at DESC
+      `SELECT DISTINCT ON (s.id)
+              s.id, s.type, s.name,
+              COUNT(*) OVER (PARTITION BY s.id) AS failures_today,
+              l.completed_at AS last_run_at,
+              l.error_message AS last_error
+       FROM task_execution_logs l
+       JOIN scheduled_tasks s ON s.id = l.task_id
+       WHERE l.status = 'FAILED'
+         AND COALESCE(l.completed_at, l.started_at, l.created_at)
+               AT TIME ZONE 'Asia/Shanghai' >= :since
+         AND COALESCE(l.completed_at, l.started_at, l.created_at)
+               AT TIME ZONE 'Asia/Shanghai' < :until
+         AND s.type IN (:registered_types)
+       ORDER BY s.id,
+                COALESCE(l.completed_at, l.started_at, l.created_at) DESC
        LIMIT 20`,
       {
         replacements: {
           since: `${trade_date} 00:00:00`,
           until: `${trade_date} 23:59:59`,
+          registered_types: registeredTypes,
         },
       }
     );
@@ -620,7 +632,7 @@ class DefaultDailyHealthReportDataSource implements DailyHealthReportDataSource 
       id: Number(r.id),
       type: String(r.type || ''),
       name: String(r.name || ''),
-      consecutive_failure_count: Number(r.consecutive_failure_count || 0),
+      consecutive_failure_count: Number(r.failures_today || 0),
       last_run_at:
         r.last_run_at instanceof Date ? r.last_run_at.toISOString() : String(r.last_run_at || ''),
       last_error: r.last_error ? String(r.last_error).slice(0, 200) : null,
@@ -771,8 +783,8 @@ export async function generateAndPushDailyHealthReport(
     report = {
       trade_date: shanghaiYmd(now),
       is_trading_day: isTradingDay(now),
-      generated_at: now.toISOString(),
-      live_order: { total: 0, by_status: {}, succeeded: 0, failed: 0, success_rate: 0 },
+      generated_at: formatEast8Readable(now),
+      live_order: { total: 0, by_status: {}, succeeded: 0, failed: 0, success_rate: null },
       draft_rejection_top: [],
       paper_trading: { buy_count: 0, sell_count: 0, avg_realized_pnl: null, total_realized_pnl: 0 },
       cron_failures: [],
@@ -783,7 +795,7 @@ export async function generateAndPushDailyHealthReport(
         partial: 0,
         failed: 0,
         avg_latency_ms: null,
-        fallback_rate: 0,
+        fallback_rate: null,
       },
       factor_std_zero: [],
       errors: { generate: err?.message || String(err) },
@@ -794,10 +806,11 @@ export async function generateAndPushDailyHealthReport(
     return { report, push_attempted: false };
   }
 
-  // 推 Lark + email via SystemAdminAlertPusher (1h dedup by daily-health:date)
+  // 精确日期幂等；日报内容存在失败时提升卡片颜色，正常日保持蓝色。
   const md = buildHealthReportMarkdown(report);
   const summary = buildOneLinerSummary(report);
   const title = `📅 ${report.trade_date} 系统日报 — ${summary.slice(0, 80)}`;
+  const severity = resolveDailyHealthSeverity(report);
   let pushResult: any;
   let pushError: string | undefined;
   try {
@@ -806,10 +819,13 @@ export async function generateAndPushDailyHealthReport(
     /* eslint-enable @typescript-eslint/no-var-requires */
     pushResult = await pusher({
       dedup_key: `daily-health:${report.trade_date}`,
-      level: 'INFO',
+      idempotency_key: `daily-health:${report.trade_date}`,
+      audience: 'ops',
+      kind: 'daily_health_report',
+      level: severity,
       title,
       body_markdown: md.slice(0, 1900),
-      triggered_at: report.generated_at,
+      triggered_at: formatEast8Readable(now),
     });
   } catch (err: any) {
     pushError = err?.message || String(err);
@@ -821,4 +837,17 @@ export async function generateAndPushDailyHealthReport(
     push_result: pushResult,
     push_error: pushError,
   };
+}
+
+export function resolveDailyHealthSeverity(report: DailyHealthReport): 'INFO' | 'WARN' | 'HIGH' {
+  if (
+    report.cron_failures.length > 0 ||
+    report.live_order.failed > 0 ||
+    report.ai_engine.failed > 0 ||
+    Object.keys(report.errors || {}).length > 0
+  ) {
+    return 'HIGH';
+  }
+  if (report.risk_alerts_high.length > 0 || report.factor_std_zero.length > 0) return 'WARN';
+  return 'INFO';
 }

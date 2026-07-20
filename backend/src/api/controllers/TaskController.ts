@@ -7,6 +7,11 @@ import { aiPollingQueue } from '../../jobs/aiPollingQueue';
 import { taskAutomationHealthService } from '../../services/TaskAutomationHealthService';
 import { taskParameterAuditService } from '../../services/TaskParameterAuditService';
 import { runtimeSchemaHealthService } from '../../services/RuntimeSchemaHealthService';
+import {
+  FeishuAudience,
+  FeishuOutboxStatus,
+  feishuNotificationService,
+} from '../../services/FeishuNotificationService';
 
 type QueueJobSummary = {
   id: string | number;
@@ -25,6 +30,24 @@ type QueueJobSummary = {
 
 const QUEUE_JOB_STATES = ['waiting', 'active', 'delayed', 'completed', 'failed', 'paused'];
 const QUEUE_JOB_LOOKUP_LIMIT = 300;
+const FEISHU_OUTBOX_STATUSES = new Set<FeishuOutboxStatus>([
+  'pending',
+  'sending',
+  'retry',
+  'sent',
+  'dead',
+  'suppressed',
+]);
+const FEISHU_AUDIENCES = new Set<FeishuAudience>(['ops', 'business', 'live', 'user']);
+
+const parseCsvQuery = <T extends string>(value: unknown, allowed: Set<T>): T[] | undefined => {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const parsed = value
+    .split(',')
+    .map(item => item.trim() as T)
+    .filter(item => allowed.has(item));
+  return parsed.length > 0 ? [...new Set(parsed)] : undefined;
+};
 
 const extractExecutionLogIdFromJob = (job: any): number | undefined => {
   const jobIdMatch = String(job?.id || '').match(/(?:^|-)log-(\d+)(?:-|$)/);
@@ -150,6 +173,54 @@ export class TaskController {
     } catch (error: any) {
       logger.error('获取数据库运行时 schema 健康状态失败:', error);
       res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async getFeishuNotificationHealth(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const health = await feishuNotificationService.getHealth();
+      res.json({ success: true, data: health });
+    } catch (error: any) {
+      logger.error('获取飞书通知 outbox 健康状态失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async getFeishuNotificationDeliveries(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const deliveries = await feishuNotificationService.listDeliveries({
+        statuses: parseCsvQuery(req.query.status, FEISHU_OUTBOX_STATUSES),
+        audiences: parseCsvQuery(req.query.audience, FEISHU_AUDIENCES),
+        kind: typeof req.query.kind === 'string' ? req.query.kind.trim() || undefined : undefined,
+        topic_key:
+          typeof req.query.topic_key === 'string'
+            ? req.query.topic_key.trim() || undefined
+            : undefined,
+        limit: req.query.limit ? Number(req.query.limit) : 50,
+      });
+      res.json({ success: true, data: deliveries });
+    } catch (error: any) {
+      logger.error('获取飞书通知 outbox 明细失败:', error);
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  async retryFeishuNotification(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ success: false, message: '无效的通知 outbox_id' });
+      }
+      const result = await feishuNotificationService.retryTerminal(id);
+      res.json({
+        success: result.success,
+        data: result,
+        message: result.success ? '飞书通知重投成功' : result.message || '飞书通知已进入重投队列',
+      });
+    } catch (error: any) {
+      logger.error('重投飞书通知失败:', error);
+      const notFound = /不存在/.test(String(error?.message || ''));
+      res.status(notFound ? 404 : 500).json({ success: false, message: error.message });
     }
   }
 

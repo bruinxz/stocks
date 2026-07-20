@@ -39,6 +39,8 @@
  */
 
 import { logger } from '../utils/logger';
+import { createHash } from 'crypto';
+import { feishuNotificationService } from './FeishuNotificationService';
 import { AnnouncementNLPRecord, AnnouncementPriority } from './AnnouncementNLPService';
 
 // ---------------------------------------------------------------------------
@@ -137,13 +139,6 @@ export interface CriticalAnnouncementPushOptions {
   webhook_url?: string;
   dry_run?: boolean;
   max_per_batch?: number;
-  meta_alert_push?: (input: {
-    dedup_key: string;
-    level: 'WARN';
-    title: string;
-    body_markdown: string;
-    triggered_at: string;
-  }) => void;
   /**
    * PR-E (2026-06-29): DataSource DI seam — 注入 fake 完全脱离 DB.
    */
@@ -313,18 +308,21 @@ export type FeishuWebhookPoster = (
 ) => Promise<{ success: boolean; message?: string }>;
 
 export async function defaultCriticalAnnouncementFeishuPoster(
-  url: string,
+  _url: string,
   body: { msg_type: 'text'; content: { text: string } }
 ): Promise<{ success: boolean; message?: string }> {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const axios = require('axios');
   try {
-    await axios.post(url, body, {
-      timeout: Number(process.env.OPS_ALERT_FEISHU_TIMEOUT_MS || 5000),
-      maxRedirects: 0,
-      validateStatus: (s: number) => s >= 200 && s < 300,
+    const digest = createHash('sha256').update(body.content.text).digest('hex').slice(0, 32);
+    const result = await feishuNotificationService.enqueueAndDeliver({
+      idempotency_key: `critical-announcement:${digest}`,
+      topic_key: 'critical-announcement',
+      audience: 'ops',
+      kind: 'critical_announcement',
+      severity: 'CRITICAL',
+      title: body.content.text.split('\n')[0] || 'CRITICAL 公告',
+      payload: body,
     });
-    return { success: true };
+    return { success: result.success, message: result.message };
   } catch (err: any) {
     return { success: false, message: err?.message || String(err) };
   }
@@ -336,9 +334,11 @@ export async function defaultCriticalAnnouncementFeishuPoster(
 
 export class CriticalAnnouncementPushService {
   private readonly poster: FeishuWebhookPoster;
+  private readonly usesOutbox: boolean;
 
   constructor(poster: FeishuWebhookPoster = defaultCriticalAnnouncementFeishuPoster) {
     this.poster = poster;
+    this.usesOutbox = poster === defaultCriticalAnnouncementFeishuPoster;
   }
 
   async pushBatch(
@@ -381,7 +381,7 @@ export class CriticalAnnouncementPushService {
       const userAlerts = await this.writeUserInboxAlerts(candidates, options, dataSource);
 
       const webhook = resolveWebhookUrl(options, env);
-      if (!webhook && options.dry_run !== true) {
+      if (!webhook && !this.usesOutbox && options.dry_run !== true) {
         logger.info(
           `[CriticalAnnouncementPush] OPS_ALERT_FEISHU_WEBHOOK 未配置, skip ${candidates.length} critical 公告 OPS push (user_alerts 仍写=${userAlerts}).`
         );
@@ -440,7 +440,7 @@ export class CriticalAnnouncementPushService {
           continue;
         }
         try {
-          const r = await this.poster(webhook as string, { msg_type: 'text', content: { text } });
+          const r = await this.poster(webhook || '', { msg_type: 'text', content: { text } });
           if (r.success) {
             succeeded += 1;
             items.push({
@@ -501,38 +501,6 @@ export class CriticalAnnouncementPushService {
           `attempted=${toPush.length} succeeded=${succeeded} failed=${failed} ` +
           `user_alerts=${userAlerts} dry_run=${options.dry_run === true}`
       );
-
-      if (failed > 0) {
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const sysMod = require('./SystemAdminAlertPusher');
-          const pushFn =
-            options.meta_alert_push ||
-            (sysMod && typeof sysMod.pushSystemAdminAlertFireAndForget === 'function'
-              ? sysMod.pushSystemAdminAlertFireAndForget
-              : null);
-          if (pushFn) {
-            pushFn({
-              dedup_key: 'critical_announcement_push_fail',
-              level: 'WARN',
-              title: `[WARN] critical 公告推送失败 ${failed}/${toPush.length}`,
-              body_markdown:
-                `**触发原因**: 本次 critical 公告推送有 ${failed} 条失败 ` +
-                `(succeeded=${succeeded}, attempted=${toPush.length})\n` +
-                `**dedup**: 1h 内本元告警只推 1 次\n` +
-                `**排查方向**: OPS_ALERT_FEISHU_WEBHOOK URL / 飞书 rate limit / ` +
-                `webhookFailOpen retry pending`,
-              triggered_at: new Date().toISOString(),
-            });
-          }
-        } catch (metaErr: any) {
-          logger.warn(
-            `[CriticalAnnouncementPush] meta-alert push 异常 (吞错保护): ${
-              metaErr?.message || metaErr
-            }`
-          );
-        }
-      }
 
       return {
         scanned,

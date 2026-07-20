@@ -326,17 +326,6 @@ function buildExecutionDiscipline(tasks: ScheduledTask[]) {
       addIssue('warn', 'agent_fusion_disabled', `${taskName} 未开启 Agent 融合分析。`, task);
     }
     if (
-      !boolParam(params.report_to_feishu, true) ||
-      !boolParam(params.notify_to_feishu_bot, true)
-    ) {
-      addIssue(
-        'warn',
-        'feishu_notification_incomplete',
-        `${taskName} 飞书报告或机器人通知未完整开启。`,
-        task
-      );
-    }
-    if (
       toNumber(params.factor_sync_limit, 0) < Math.min(toNumber(params.candidate_limit, 220), 180)
     ) {
       addIssue('warn', 'factor_sync_limit_low', `${taskName} 因子同步范围小于候选池主样本。`, task);
@@ -412,17 +401,6 @@ function buildExecutionDiscipline(tasks: ScheduledTask[]) {
     }
     if (toNumber(params.min_quant_signals, 0) < 1 || toNumber(params.min_archived_signals, 0) < 1) {
       addIssue('warn', 'watchdog_min_signal_low', `${task.name} 信号/归档最低检查阈值过低。`, task);
-    }
-    if (
-      !boolParam(params.report_to_feishu, true) ||
-      !boolParam(params.notify_to_feishu_bot, true)
-    ) {
-      addIssue(
-        'warn',
-        'watchdog_feishu_disabled',
-        `${task.name} 飞书报告或机器人通知未完整开启。`,
-        task
-      );
     }
   }
 

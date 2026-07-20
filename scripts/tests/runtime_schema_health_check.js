@@ -24,6 +24,8 @@ const RUNTIME_SCHEMA_TABLES = [
   'data_update_logs',
   'scheduled_tasks',
   'task_execution_logs',
+  'feishu_notification_outbox',
+  'notification_incident_states',
   'daily_screeners',
   'paper_trading_portfolios',
   'paper_trading_positions',
@@ -52,6 +54,8 @@ const RUNTIME_SCHEMA_TABLES = [
 const CRITICAL_RUNTIME_SCHEMA_TABLES = [
   'scheduled_tasks',
   'task_execution_logs',
+  'feishu_notification_outbox',
+  'notification_incident_states',
   'ai_investment_signals',
   'recommendation_trade_outcomes',
   'recommendation_loop_policy_snapshots',

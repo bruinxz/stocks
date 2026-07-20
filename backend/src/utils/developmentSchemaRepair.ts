@@ -11,6 +11,8 @@ import { TradingJournal } from '../models/TradingJournal';
 import { FavoriteStock } from '../models/FavoriteStock';
 import { AIInvestmentSignal } from '../models/AIInvestmentSignal';
 import { RecommendationTradeOutcome } from '../models/RecommendationTradeOutcome';
+import { FeishuNotificationOutbox } from '../models/FeishuNotificationOutbox';
+import { NotificationIncidentState } from '../models/NotificationIncidentState';
 
 type ColumnRename = {
   table: string;
@@ -155,6 +157,8 @@ const TABLES_WITH_TIMESTAMPS = [
   'task_execution_logs',
   'daily_screeners',
   'data_update_logs',
+  'feishu_notification_outbox',
+  'notification_incident_states',
 ];
 
 async function tableExists(tableName: string): Promise<boolean> {
@@ -255,6 +259,8 @@ export async function repairLegacyDevelopmentSchema(): Promise<void> {
       TradingJournal.sync(),
       AIInvestmentSignal.sync(),
       RecommendationTradeOutcome.sync(),
+      FeishuNotificationOutbox.sync(),
+      NotificationIncidentState.sync(),
     ]);
 
     for (const rename of LEGACY_COLUMN_RENAMES) {

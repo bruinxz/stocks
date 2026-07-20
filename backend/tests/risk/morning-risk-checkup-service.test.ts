@@ -623,6 +623,43 @@ async function testEvaluateHappyPath() {
   );
 }
 
+async function testNotificationOutboxClosedLoop() {
+  const state = emptyState({
+    userIds: [42],
+    portfolioHeaders: { 42: { id: 1042, total_value: 100000 } },
+    positionsByUser: { 42: [] },
+    snapshotsByPortfolio: {},
+    alertCountByUser: { 42: 0 },
+  });
+  const queued: any[] = [];
+  const notifications = {
+    async enqueueAndDeliver(input: any) {
+      queued.push(input);
+      return { success: true, status: 'sent', outbox_id: 88, attempts: 1 };
+    },
+  };
+  const svc = new MorningRiskCheckupService(makeFakeSource(state), notifications as any);
+  const result = await svc.runMorningCheckup({
+    asOfDate: new Date('2026-06-08T00:30:00.000Z'),
+  });
+  assertEqual('morning checkup enqueues one notification', queued.length, 1);
+  assertEqual(
+    'morning checkup exact-date idempotency',
+    queued[0].idempotency_key,
+    'morning-risk-checkup:42:2026-06-08'
+  );
+  assertEqual('morning checkup routes to user audience', queued[0].audience, 'user');
+  assertEqual('morning checkup carries recipient user', queued[0].recipient_user_id, 42);
+  assertEqual('morning checkup result exposes outbox status', result.per_user[0].notification_status, 'sent');
+  assertEqual('morning checkup result exposes outbox id', result.per_user[0].notification_outbox_id, 88);
+
+  await svc.runMorningCheckup({
+    asOfDate: new Date('2026-06-09T00:30:00.000Z'),
+    dry_run: true,
+  });
+  assertEqual('morning checkup dry_run does not enqueue', queued.length, 1);
+}
+
 async function testEvaluateEmptyPortfolio() {
   const state = emptyState({
     userIds: [7],
@@ -901,6 +938,7 @@ async function main() {
   await testBuildTopIndustries();
 
   await testEvaluateHappyPath();
+  await testNotificationOutboxClosedLoop();
   await testEvaluateEmptyPortfolio();
   await testEvaluateNewAccountWithinWeek();
   await testEvaluateDryRun();

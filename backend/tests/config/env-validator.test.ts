@@ -49,7 +49,6 @@ import {
   formatWarningReport,
   shouldExitOnFailure,
   PLACEHOLDER_VALUES,
-  FEISHU_REQUIRED_GROUP,
   SMTP_REQUIRED_GROUP,
   WECHAT_REQUIRED_GROUP,
   ALIYUN_SMS_REQUIRED_GROUP,
@@ -144,7 +143,6 @@ function makeValidEnv(overrides: Record<string, string | undefined> = {}): NodeJ
 
 console.log('[1] 常量冻结...');
 assert('PLACEHOLDER_VALUES frozen', Object.isFrozen(PLACEHOLDER_VALUES));
-assert('FEISHU_REQUIRED_GROUP frozen', Object.isFrozen(FEISHU_REQUIRED_GROUP));
 assert('SMTP_REQUIRED_GROUP frozen', Object.isFrozen(SMTP_REQUIRED_GROUP));
 assert('WECHAT_REQUIRED_GROUP frozen', Object.isFrozen(WECHAT_REQUIRED_GROUP));
 assert('ALIYUN_SMS_REQUIRED_GROUP frozen', Object.isFrozen(ALIYUN_SMS_REQUIRED_GROUP));
@@ -486,18 +484,18 @@ assert(
   r10.errors.some(e => e.message.includes('部分'))
 );
 
-console.log('\n[11] FEISHU 部分填写...');
+console.log('\n[11] 废弃 Feishu Open Platform 配置剥离...');
 const r11 = validateEnv(
   makeValidEnv({
     FEISHU_APP_ID: 'cli_xxx',
-    // FEISHU_APP_SECRET 缺
+    FEISHU_APP_SECRET: 'legacy_secret',
+    FEISHU_BITABLE_APP_TOKEN: 'legacy_token',
   })
 );
-assertEqual('FEISHU 部分填写 → ok=false', r11.ok, false);
-assert(
-  'errors 提及 FEISHU_APP_SECRET',
-  r11.errors.some(e => e.field.includes('FEISHU_APP_SECRET'))
-);
+assertEqual('废弃 Feishu 配置不再触发部分填写错误', r11.ok, true);
+assert('FEISHU_APP_ID 从 validated 剥离', !('FEISHU_APP_ID' in r11.validated));
+assert('FEISHU_APP_SECRET 从 validated 剥离', !('FEISHU_APP_SECRET' in r11.validated));
+assert('FEISHU_BITABLE_APP_TOKEN 从 validated 剥离', !('FEISHU_BITABLE_APP_TOKEN' in r11.validated));
 
 console.log('\n[12] WECHAT 部分填写...');
 const r12 = validateEnv(
@@ -576,7 +574,11 @@ const r19 = validateEnv(
 assertEqual('PORT 默认 3000', r19.validated.PORT, 3000);
 assertEqual('DB_PORT 默认 5432', r19.validated.DB_PORT, 5432);
 assertEqual('REDIS_PORT 默认 6379', r19.validated.REDIS_PORT, 6379);
-assertEqual('FEISHU_MESSAGE_MAX_LENGTH 默认 12000', r19.validated.FEISHU_MESSAGE_MAX_LENGTH, 12000);
+assertEqual(
+  'FEISHU_BOT_WEBHOOK_TIMEOUT_MS 默认 10000',
+  r19.validated.FEISHU_BOT_WEBHOOK_TIMEOUT_MS,
+  10000
+);
 assertEqual('SMTP_PORT 默认 587', r19.validated.SMTP_PORT, 587);
 assertEqual('PYTHON_PATH 默认 python3', r19.validated.PYTHON_PATH, 'python3');
 assertEqual('NODE_ENV 默认 development', r19.validated.NODE_ENV, 'development');
@@ -668,13 +670,12 @@ console.log('\n[26] 多 channel 同时部分填写 → 多 errors...');
 const r26 = validateEnv(
   makeValidEnv({
     SMTP_HOST: 'h',
-    FEISHU_APP_ID: 'cli_xxx',
     WECHAT_APP_ID: 'wx_xxx',
     ALIYUN_SMS_ACCESS_KEY_ID: 'AK_XXX',
   })
 );
 assertEqual('多 channel 部分填 ok=false', r26.ok, false);
-assert('errors 总数 >= 4', r26.errors.length >= 4);
+assert('errors 总数 >= 3', r26.errors.length >= 3);
 
 console.log('\n[27] validated 在 ok=false 时为空对象...');
 const r27 = validateEnv(makeValidEnv({ DB_HOST: undefined }));

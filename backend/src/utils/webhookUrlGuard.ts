@@ -2,8 +2,7 @@
  * webhookUrlGuard — Batch X (2026-06-17)
  *
  * SSRF / phishing 防护. 用户可在 SettingsController 提交 webhook_url, 之前
- * NotificationService / RealtimeAlertDispatcher / DailyTradingDigestService 直接
- * axios.post 出去, 攻击者可填:
+ * 统一 FeishuNotificationService 在真正投递前调用本守卫；攻击者若可填入:
  *   http://169.254.169.254/latest/meta-data/iam/security-credentials/  → AWS 元数据泄露
  *   http://10.0.0.1:6379/  → 内网 Redis 无认证 POST 触发命令
  *   http://attacker.com/x  → 把告警卡片 (含用户信息) 推给攻击者
@@ -115,7 +114,7 @@ export function validateWebhookUrl(rawUrl: string): WebhookValidationResult {
 }
 
 /**
- * 同步抛错版, 给 SettingsController / NotificationService update 入口直接用.
+ * 同步抛错版，供设置入口与统一 outbox sender 使用。
  */
 export function assertWebhookUrlAllowed(rawUrl: string, fieldLabel = 'webhook_url'): void {
   const result = validateWebhookUrl(rawUrl);

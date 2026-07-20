@@ -471,7 +471,7 @@ PY
 }
 
 run_daily_pipeline() {
-  log "run quant daily pipeline smoke, reporting disabled"
+  log "run quant daily pipeline smoke"
   local strategy_json payload response
   strategy_json="$(json_array_from_csv "${STRATEGY_KEYS}")"
   payload="$(python3 - "${strategy_json}" <<PY
@@ -484,8 +484,6 @@ payload={
   "candidate_limit": int(os.environ.get("PIPELINE_CANDIDATE_LIMIT", "${PIPELINE_CANDIDATE_LIMIT}")),
   "top_n": 10,
   "strategy_keys": json.loads(sys.argv[1]),
-  "report_to_feishu": False,
-  "notify_to_feishu_bot": False,
   "sync_factors_before_scan": False,
   "refresh_realtime_quotes": False,
   "submit_agent_analysis": False,

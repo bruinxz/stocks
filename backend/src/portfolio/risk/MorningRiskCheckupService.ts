@@ -3,8 +3,7 @@
  *
  * **每日开盘前风险体检报告** — 每天 8:30 触发，输出 6 维度持仓体检快照
  * （持仓数 / 单股最大占比 / 行业最大占比 / 当前回撤 / 本周净值变化 /
- * 未触发告警数）→ 持久化到 MorningRiskCheckup 表 + 推送（依赖 US-080
- * 真发飞书/邮件；本 service 仅落 `dispatch_status='pending'`）。
+ * 未触发告警数）→ 持久化到 MorningRiskCheckup 表，并通过统一飞书 outbox 推送。
  *
  * 与 US-047/US-048/US-049/US-050/US-051/US-052/US-053 互补的**第 8 类风控形态** ——
  *   - 前 7 类都是 *触发型* 风控（pre-trade / 持有期 / 收盘后 / event-driven 实时扫描），
@@ -48,8 +47,8 @@
  *   - **fail-OPEN**：单用户计算失败 → 写一行 error=msg 不阻塞 batch（同 US-052/US-053
  *     per-user try/catch isolate 模式）；
  *   - **dry_run=true** 跳过 DB 写入但仍返回完整 checkup 结构（UI dashboard 预演用）；
- *   - **dispatch_status='pending' 写入** — US-080 NotificationService 上线后会更新
- *     该字段为 'sent' / 'failed'，本 service 不直接调推送（解耦计算与通知）；
+ *   - 通知以 `morning-risk-checkup:<user_id>:<date>` 为幂等键写统一 outbox；
+ *     业务快照表不再复制交付状态；
  *   - **as_of_date 默认本地交易日** — 不依赖 trade-calendar，简单用 ISO date string，
  *     8:30 触发时 toISOString().slice(0, 10) 已是当日；
  *   - **行业 / 单股占比阈值** — *不在本 service 配置*：是否"超标"由 US-052 alert_pct 决定；
@@ -74,6 +73,10 @@ import {
   UNKNOWN_INDUSTRY_SENTINEL,
 } from './IndustryConcentrationGuard';
 import { computePeakValue, computeDrawdownPct } from './DrawdownCircuitBreaker';
+import {
+  FeishuNotificationService,
+  feishuNotificationService,
+} from '../../services/FeishuNotificationService';
 
 // ---------------------------------------------------------------------------
 //  Config
@@ -145,6 +148,8 @@ export interface MorningRiskCheckupResult {
   persisted: boolean;
   /** Error message when calc threw (null when success). */
   error?: string;
+  notification_status?: string;
+  notification_outbox_id?: number;
 }
 
 /**
@@ -429,8 +434,7 @@ export interface MorningRiskCheckupDataSource {
   loadSystemHealthSnapshot(user_id: number): Promise<SystemHealthSnapshot | null>;
   /**
    * Persist one MorningRiskCheckup row (UPSERT on (user_id, date)).
-   * `dispatch_status` defaults to 'pending' — US-080 NotificationService updates to
-   * 'sent' / 'failed' after actually pushing to feishu / email.
+   * 通知交付状态不写本表，由 feishu_notification_outbox 单独维护。
    */
   upsertCheckup(input: {
     user_id: number;
@@ -674,7 +678,6 @@ export class DefaultMorningRiskCheckupDataSource implements MorningRiskCheckupDa
       existing.breakdown = input.breakdown;
       existing.message = input.message;
       existing.error = input.error;
-      // dispatch_status stays as-is on update — US-080 owns its lifecycle.
       await existing.save();
       return;
     }
@@ -695,7 +698,6 @@ export class DefaultMorningRiskCheckupDataSource implements MorningRiskCheckupDa
       breakdown: input.breakdown,
       message: input.message,
       error: input.error,
-      dispatch_status: 'pending',
     } as any);
   }
 
@@ -729,9 +731,19 @@ export interface RunMorningCheckupOptions {
 
 export class MorningRiskCheckupService {
   private source: MorningRiskCheckupDataSource;
+  private notifications: Pick<FeishuNotificationService, 'enqueueAndDeliver'> | null;
 
-  constructor(source: MorningRiskCheckupDataSource = PRODUCTION_MORNING_RISK_CHECKUP_DATA_SOURCE) {
+  constructor(
+    source: MorningRiskCheckupDataSource = PRODUCTION_MORNING_RISK_CHECKUP_DATA_SOURCE,
+    notifications?: Pick<FeishuNotificationService, 'enqueueAndDeliver'> | null
+  ) {
     this.source = source;
+    this.notifications =
+      notifications === undefined
+        ? source === PRODUCTION_MORNING_RISK_CHECKUP_DATA_SOURCE
+          ? feishuNotificationService
+          : null
+        : notifications;
   }
 
   /**
@@ -740,7 +752,7 @@ export class MorningRiskCheckupService {
    * - 单 user 失败 try/catch 隔离（同 US-047/US-048/US-049/US-051/US-052/US-053）；
    * - disabled 用户跳过整个评估（returns enabled=false 不写体检表）；
    * - dry_run=true 跳过 DB 写入但仍返回完整 checkup 结构（UI 预演用）；
-   * - dispatch_status='pending' 在写入时设置 — US-080 推送通道上线后更新该字段；
+   * - 持久化成功后写统一飞书 outbox；dry_run 不产生通知；
    *
    * SchedulerService 用 task type 'PAPER_TRADING_MORNING_CHECKUP' cron 调用本方法。
    */
@@ -940,6 +952,34 @@ export class MorningRiskCheckupService {
           error: null,
         });
         checkup.persisted = true;
+        if (this.notifications) {
+          try {
+            const delivery = await this.notifications.enqueueAndDeliver({
+              idempotency_key: `morning-risk-checkup:${user_id}:${date}`,
+              topic_key: `morning-risk-checkup:${user_id}`,
+              audience: 'user',
+              recipient_user_id: user_id,
+              kind: 'morning_risk_checkup',
+              severity: 'INFO',
+              title: `🌅 ${date} 开盘前风险体检`,
+              payload: {
+                msg_type: 'text',
+                content: { text: message },
+              },
+              correlation_id: `morning_risk_checkup:${user_id}:${date}`,
+              metadata: { user_id, portfolio_id: header.id, date },
+            });
+            checkup.notification_status = delivery.status;
+            checkup.notification_outbox_id = delivery.outbox_id;
+          } catch (notificationError: any) {
+            checkup.notification_status = 'enqueue_failed';
+            logger.warn(
+              `MorningRiskCheckupService notification user=${user_id}: ${
+                notificationError?.message || notificationError
+              }`
+            );
+          }
+        }
       } catch (err) {
         // Persistence failure is logged but does NOT mask the in-memory result —
         // caller still receives a complete checkup (parity with US-052 writeAlert

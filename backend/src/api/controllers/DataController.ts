@@ -213,11 +213,51 @@ export class DataController {
         `SELECT symbol, name, direction, created_at FROM paper_trading_trades WHERE portfolio_id IN (SELECT id FROM paper_trading_portfolios WHERE user_id=${callerUserId}) ORDER BY created_at DESC LIMIT 1`
       );
 
-      // 8. 通知
-      const webhookOk = !!(
-        process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK
-      );
+      // 8. 通知：配置只说明“有目的地”，outbox 才是投递闭环的真实状态。
+      const notificationChannels = {
+        business: Boolean(
+          process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK
+        ),
+        ops: Boolean(process.env.OPS_ALERT_FEISHU_WEBHOOK),
+        live: Boolean(process.env.LIVE_ALERT_FEISHU_WEBHOOK),
+      };
       const webhookDisabled = String(process.env.DISABLE_FEISHU_BOT_WEBHOOK) === 'true';
+      let notificationStats = {
+        backlog: 0,
+        retry: 0,
+        dead: 0,
+        sent_24h: 0,
+        available: false,
+      };
+      try {
+        const row = await q(
+          `SELECT
+             COUNT(*) FILTER (WHERE status IN ('pending','sending','retry'))::int AS backlog,
+             COUNT(*) FILTER (WHERE status = 'retry')::int AS retry,
+             COUNT(*) FILTER (WHERE status = 'dead')::int AS dead,
+             COUNT(*) FILTER (WHERE status = 'sent' AND sent_at > NOW() - INTERVAL '24 hours')::int AS sent_24h
+           FROM feishu_notification_outbox`
+        );
+        notificationStats = {
+          backlog: Number(row.backlog || 0),
+          retry: Number(row.retry || 0),
+          dead: Number(row.dead || 0),
+          sent_24h: Number(row.sent_24h || 0),
+          available: true,
+        };
+      } catch (_e) {
+        // 发布迁移尚未落地时保持拓扑页可用，但明确标为不可观测。
+      }
+      const hasConfiguredFeishu = Object.values(notificationChannels).some(Boolean);
+      const notificationStatus: 'green' | 'yellow' | 'red' | 'gray' = webhookDisabled
+        ? 'gray'
+        : !notificationStats.available || notificationStats.dead > 0
+        ? 'red'
+        : notificationStats.backlog > 0
+        ? 'yellow'
+        : hasConfiguredFeishu
+        ? 'green'
+        : 'red';
 
       // 9. (Phase 2+) Sizing 决策审计 — 最近 7 天的 sizing_decision_audits + 主流方法
       let sizingStats: any = { recent_count: 0, hard_count: 0, methods: '—', last_run: null };
@@ -908,9 +948,21 @@ export class DataController {
           id: 'notification',
           label: '通知推送',
           category: 'L8_reflection',
-          status: webhookOk && !webhookDisabled ? 'green' : webhookDisabled ? 'gray' : 'red',
-          stats: { feishu: webhookOk, disabled: webhookDisabled },
-          lastAction: webhookOk ? (webhookDisabled ? '已禁用' : '飞书 webhook 就绪') : '未配置',
+          status: notificationStatus,
+          stats: {
+            channels: notificationChannels,
+            disabled: webhookDisabled,
+            ...notificationStats,
+          },
+          lastAction: webhookDisabled
+            ? '已禁用'
+            : notificationStats.dead > 0
+            ? `${notificationStats.dead} 条死信待处理`
+            : notificationStats.backlog > 0
+            ? `${notificationStats.backlog} 条通知待投递`
+            : notificationStats.available && hasConfiguredFeishu
+            ? `近 24h 已发送 ${notificationStats.sent_24h} 条`
+            : 'outbox 或 webhook 未就绪',
         },
         // Batch AQ NEW (2026-06-21): L8 — 每日归因 / AI 日记 / 改进建议闭环 / 黑天鹅复盘
         {
