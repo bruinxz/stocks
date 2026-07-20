@@ -19443,6 +19443,67 @@ a {
   margin: 0 auto;
   padding-top: 8px;
 }
+
+.ai-analysis-capabilities {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin-bottom: 26px;
+  overflow: hidden;
+  border: 1px solid rgba(48, 42, 34, 0.14);
+  border-radius: 3px 16px 3px 16px;
+  background: rgba(48, 42, 34, 0.14);
+  box-shadow: 0 18px 36px -34px rgba(38, 30, 20, 0.75);
+}
+
+.ai-analysis-capabilities > div {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  min-height: 96px;
+  align-content: center;
+  padding: 16px;
+  background: #fbf7ed;
+  color: #2e281f;
+}
+
+.ai-analysis-capabilities .anticon {
+  grid-row: 1 / span 2;
+  color: #a94322;
+  font-size: 18px;
+}
+
+.ai-analysis-capabilities span {
+  font-family: 'Songti SC', STSong, Georgia, serif;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.ai-analysis-capabilities small {
+  margin-top: 5px;
+  color: rgba(46, 40, 31, 0.6);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ai-analysis-context {
+  padding: 12px;
+  border: 1px solid var(--border-subtle, #ece7dd);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-elevated, #fff) 92%, #c56a42 8%);
+}
+
+.ai-analysis-context__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.ai-analysis-context__head .ant-typography:last-child {
+  font-size: 11px;
+}
+
 .ai-analysis-launch__label {
   display: flex;
   align-items: center;
@@ -19487,6 +19548,22 @@ a {
   border-color: var(--brand) !important;
   box-shadow: 0 4px 12px -8px rgba(99, 91, 255, 0.5) !important;
   transform: translateY(-1px);
+}
+
+@media (max-width: 720px) {
+  .ai-analysis-capabilities {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-analysis-capabilities > div {
+    min-height: 78px;
+  }
+
+  .ai-analysis-context__head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
 }
 
 /* === End Phase 23 === */
@@ -19624,4 +19701,3 @@ a {
   padding-bottom: 4px;
 }
 /* === End Journal Markdown === */
-

@@ -3,9 +3,11 @@ import {
   Alert,
   Button,
   Checkbox,
+  InputNumber,
   Modal,
   Row,
   Col,
+  Segmented,
   Space,
   Spin,
   Tag,
@@ -22,6 +24,8 @@ import {
 } from '@ant-design/icons';
 import {
   ALL_ANALYSIS_DIMENSIONS,
+  AIPriceDecisionPositionState,
+  AIPriceDecisionResult,
   AnalysisDimension,
   AnalyzeSingleStockResult,
   DIMENSION_LABELS,
@@ -40,6 +44,7 @@ import {
 } from './aiStockAnalysisModalV2Components';
 import TradeReasonCell from './TradeReasonCell';
 import type { TradeReasonPayload } from '../../services/portfolioWorkspaceService';
+import AIPriceDecisionCard from './AIPriceDecisionCard';
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -106,8 +111,11 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
       : [...ALL_ANALYSIS_DIMENSIONS]
   );
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<AnalyzeSingleStockResult | null>(null);
+  const [result, setResult] = useState<AIPriceDecisionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [positionState, setPositionState] = useState<AIPriceDecisionPositionState>('watching');
+  const [plannedCapital, setPlannedCapital] = useState<number | null>(null);
+  const [holdingCost, setHoldingCost] = useState<number | null>(null);
 
   const runAnalysis = useCallback(async () => {
     if (!stockCode) {
@@ -122,11 +130,15 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
     setError(null);
     setResult(null);
     try {
-      const data = await aiStockAnalysisService.analyzeSingleStock({
+      const data = await aiStockAnalysisService.analyzePriceDecision({
         stock_code: stockCode,
         dimensions: selectedDims,
         task_label: taskLabel,
         stock_name: stockName || undefined,
+        position_state: positionState,
+        planned_capital: plannedCapital || undefined,
+        holding_cost: positionState === 'holding' ? holdingCost || undefined : undefined,
+        refresh_quote: true,
       });
       setResult(data);
       if (data.status === 'failed') {
@@ -145,12 +157,15 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [stockCode, stockName, selectedDims, taskLabel]);
+  }, [holdingCost, plannedCapital, positionState, selectedDims, stockCode, stockName, taskLabel]);
 
   const handleClose = useCallback(() => {
     if (loading) return; // 防止用户在请求未完成时关闭丢失结果
     setResult(null);
     setError(null);
+    setPositionState('watching');
+    setPlannedCapital(null);
+    setHoldingCost(null);
     setSelectedDims(
       initialDimensions && initialDimensions.length > 0
         ? initialDimensions
@@ -218,6 +233,57 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
             </div>
           </div>
 
+          <div className="ai-analysis-context">
+            <div className="ai-analysis-context__head">
+              <Text strong>你的决策场景</Text>
+              <Text type="secondary">可选信息只用于仓位与浮盈亏测算，不会自动下单</Text>
+            </div>
+            <Row gutter={[12, 10]} align="middle">
+              <Col xs={24} sm={10}>
+                <Segmented
+                  block
+                  value={positionState}
+                  options={[
+                    { label: '准备买入', value: 'watching' },
+                    { label: '已经持有', value: 'holding' },
+                  ]}
+                  onChange={value => setPositionState(value as AIPriceDecisionPositionState)}
+                  disabled={loading}
+                />
+              </Col>
+              <Col xs={24} sm={7}>
+                <InputNumber
+                  value={plannedCapital}
+                  onChange={value => setPlannedCapital(value)}
+                  min={1000}
+                  max={1_000_000_000}
+                  step={10_000}
+                  precision={0}
+                  controls={false}
+                  placeholder="计划资金（可选）"
+                  prefix="¥"
+                  style={{ width: '100%' }}
+                  disabled={loading}
+                />
+              </Col>
+              <Col xs={24} sm={7}>
+                <InputNumber
+                  value={holdingCost}
+                  onChange={value => setHoldingCost(value)}
+                  min={0.01}
+                  max={1_000_000}
+                  step={0.01}
+                  precision={2}
+                  controls={false}
+                  placeholder="持仓成本（可选）"
+                  prefix="¥"
+                  style={{ width: '100%' }}
+                  disabled={loading || positionState !== 'holding'}
+                />
+              </Col>
+            </Row>
+          </div>
+
           {error && (
             <Alert
               type="error"
@@ -225,6 +291,19 @@ const AIStockAnalysisModal: React.FC<AIStockAnalysisModalProps> = ({
               message="AI 请求失败"
               description={error}
               icon={<CloseCircleOutlined />}
+            />
+          )}
+
+          {result?.market_snapshot && result.price_decision && (
+            <AIPriceDecisionCard market={result.market_snapshot} plan={result.price_decision} />
+          )}
+
+          {result && !result.price_decision && (
+            <Alert
+              type="warning"
+              showIcon
+              message="已生成 TradingAgents 研究报告，但当前行情不足，未生成价格测算"
+              description="请确认实时行情服务与历史 K 线已同步后重新分析。"
             />
           )}
 
@@ -402,8 +481,10 @@ const V2Layout: React.FC<{
       {/* DataMissingBanner — US-077 子组件接入 (关键字段缺失或 critical 等级时显示) */}
       <DataMissingBanner dataQuality={data_quality} />
 
-      {/* ActionPlanCard — US-077 子组件接入 (买入区间 / 仓位 / 止损 / 止盈 + 风险提示) */}
-      <ActionPlanCard actionPlan={action_plan} />
+      {/* 新价格决策卡已在 modal 顶层展示；历史 v2 报告无 price_decision 时保留旧卡片。 */}
+      {!(result as AIPriceDecisionResult).price_decision && (
+        <ActionPlanCard actionPlan={action_plan} />
+      )}
 
       {/* AL-3 (2026-06-21): 用户原话 "买入卖出的时候需要额外补充上原因".
           这里在 action plan 旁边展示"如果按此建议下单, 写入 trade_reason 的预览",

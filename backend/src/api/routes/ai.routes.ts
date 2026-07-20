@@ -28,6 +28,42 @@ router.post('/analyze', authController.authenticate, aiAdvisorController.analyze
 router.post('/analyze-stock', authController.authenticate, aiAdvisorController.analyzeSingleStock);
 
 /**
+ * @openapi
+ * /api/ai/price-decision:
+ *   post:
+ *     tags: [AI 智能分析]
+ *     summary: 基于 TradingAgents 与当前价格生成买卖测算
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [stock_code]
+ *             properties:
+ *               stock_code: { type: string, example: sh.600519 }
+ *               stock_name: { type: string }
+ *               dimensions:
+ *                 type: array
+ *                 items: { type: string, enum: [fundamental, technical, capital, news, sentiment] }
+ *               position_state: { type: string, enum: [watching, holding], default: watching }
+ *               planned_capital: { type: number, description: 计划资金，用于估算 A 股整手数量 }
+ *               holding_cost: { type: number, description: 已持仓成本，用于测算浮动盈亏 }
+ *               refresh_quote: { type: boolean, default: true }
+ *     responses:
+ *       200: { description: TradingAgents 报告、行情快照与价格计划 }
+ *       400: { description: 参数错误 }
+ *       401: { description: 未授权 }
+ *       404: { description: 股票不存在 }
+ */
+router.post(
+  '/price-decision',
+  authController.authenticate,
+  aiAdvisorController.analyzePriceDecision
+);
+
+/**
  * @route GET /api/ai/analyze-stock/stream
  * @desc US-055 单股深度分析 SSE 流式返回
  * @access Public（EventSource 无法方便传 Bearer Header）

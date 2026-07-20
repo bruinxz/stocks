@@ -19,9 +19,41 @@ import {
 } from '../../services/TechnicalAnalysisService';
 import { marketBriefService } from '../../services/MarketBriefService';
 import { TRADING_AGENTS_BASE_URL } from '../../config/externalServices';
+import {
+  AIPriceDecisionPositionState,
+  aiPriceDecisionService,
+} from '../../services/AIPriceDecisionService';
 
 // audit L-19: 集中常量, 不再硬编码 IP.
 const TRADING_AGENTS_URL = TRADING_AGENTS_BASE_URL;
+
+/**
+ * 归档报告使用数据库字段 `key_points_json`，即时分析使用领域字段 `key_points`。
+ * 对外 DTO 同时保留旧数据库字段并恢复即时结果字段；价格测算则从 metadata 提升
+ * 到顶层，确保历史报告与刚生成的报告可以复用同一套前端渲染逻辑。
+ */
+export function serializeAIStockAnalysisReport(row: any): Record<string, unknown> {
+  const plain =
+    row && typeof row.get === 'function' ? row.get({ plain: true }) : { ...(row || {}) };
+  const metadata =
+    plain.metadata && typeof plain.metadata === 'object' && !Array.isArray(plain.metadata)
+      ? plain.metadata
+      : {};
+  const key_points =
+    plain.key_points_json &&
+    typeof plain.key_points_json === 'object' &&
+    !Array.isArray(plain.key_points_json)
+      ? plain.key_points_json
+      : {};
+
+  return {
+    ...plain,
+    key_points,
+    market_snapshot: metadata.market_snapshot ?? null,
+    price_decision: metadata.price_decision ?? null,
+    persisted: true,
+  };
+}
 
 export class AIAdvisorController {
   constructor() {
@@ -31,6 +63,7 @@ export class AIAdvisorController {
     this.getHealth = this.getHealth.bind(this);
     this.resolveTicker = this.resolveTicker.bind(this);
     this.analyzeSingleStock = this.analyzeSingleStock.bind(this);
+    this.analyzePriceDecision = this.analyzePriceDecision.bind(this);
     this.streamSingleStockAnalysis = this.streamSingleStockAnalysis.bind(this);
     this.getReportById = this.getReportById.bind(this);
     this.listReports = this.listReports.bind(this);
@@ -330,6 +363,68 @@ export class AIAdvisorController {
   }
 
   /**
+   * POST /api/ai/price-decision — TradingAgents 方向 + 当前价交易测算。
+   *
+   * TradingAgents 负责研究结论；本地使用最新报价和近 60 日 K 线生成可审计的
+   * 买入区间、卖出区间、止损、止盈、仓位上限与风险收益比。行情过期时仍返回
+   * 研究报告，但 price_decision.execution_ready=false，避免把旧价格包装成实时建议。
+   */
+  async analyzePriceDecision(req: Request, res: Response, _next: NextFunction) {
+    try {
+      const body = req.body || {};
+      const stockCodeInput = typeof body.stock_code === 'string' ? body.stock_code.trim() : '';
+      if (!stockCodeInput) {
+        return res
+          .status(400)
+          .json({ success: false, message: 'stock_code 不能为空（股票代码或名称）' });
+      }
+      const resolvedTicker = await this.resolveTicker(stockCodeInput);
+      if (!resolvedTicker) {
+        return res.status(404).json({ success: false, message: `无法识别股票: ${stockCodeInput}` });
+      }
+
+      const dimensions = normalizeAnalysisDimensions(body.dimensions);
+      const positionState: AIPriceDecisionPositionState =
+        body.position_state === 'holding' ? 'holding' : 'watching';
+      const plannedCapital = Number(body.planned_capital);
+      const holdingCost = Number(body.holding_cost);
+      const userId = (req as any).user?.id;
+      const result = await aiPriceDecisionService.analyze(resolvedTicker, {
+        dimensions,
+        target_date: typeof body.target_date === 'string' ? body.target_date : undefined,
+        user_id: typeof userId === 'number' ? userId : undefined,
+        stock_name: typeof body.stock_name === 'string' ? body.stock_name : undefined,
+        task_label: typeof body.task_label === 'string' ? body.task_label : 'ai_price_decision',
+        dry_run: body.dry_run === true,
+        refresh_quote: body.refresh_quote !== false,
+        position_state: positionState,
+        planned_capital:
+          Number.isFinite(plannedCapital) && plannedCapital > 0 && plannedCapital <= 1_000_000_000
+            ? plannedCapital
+            : undefined,
+        holding_cost:
+          Number.isFinite(holdingCost) && holdingCost > 0 && holdingCost <= 1_000_000
+            ? holdingCost
+            : undefined,
+      });
+
+      const analysisReady = result.status === 'completed' || result.status === 'partial';
+      return res.json({
+        success: analysisReady,
+        data: result,
+        message: result.price_decision
+          ? undefined
+          : result.status === 'failed'
+          ? result.error || 'TradingAgents 分析失败，未生成价格计划'
+          : '缺少可用行情，未生成价格计划',
+      });
+    } catch (error: any) {
+      logger.error('analyzePriceDecision 失败:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
    * GET /api/ai/analyze-stock/stream — 单股深度分析（SSE 流式返回）。
    *
    * Query params:
@@ -491,7 +586,7 @@ export class AIAdvisorController {
           .status(404)
           .json({ success: false, message: `未找到 report_id=${reportId} 的分析报告` });
       }
-      return res.json({ success: true, data: row });
+      return res.json({ success: true, data: serializeAIStockAnalysisReport(row) });
     } catch (error: any) {
       logger.error('getReportById 失败:', error);
       return res.status(500).json({ success: false, message: error.message });
@@ -522,7 +617,10 @@ export class AIAdvisorController {
         limit,
         offset,
       });
-      return res.json({ success: true, data: rows });
+      return res.json({
+        success: true,
+        data: rows.map(serializeAIStockAnalysisReport),
+      });
     } catch (error: any) {
       logger.error('listReports 失败:', error);
       return res.status(500).json({ success: false, message: error.message });

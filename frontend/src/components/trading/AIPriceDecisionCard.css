@@ -1,0 +1,239 @@
+.ai-price-ticket {
+  --ticket-accent: #a94322;
+  position: relative;
+  overflow: hidden;
+  padding: 20px;
+  border: 1px solid rgba(45, 38, 30, 0.18);
+  border-radius: 4px 18px 4px 18px;
+  background:
+    linear-gradient(90deg, rgba(169, 67, 34, 0.045) 1px, transparent 1px) 0 0 / 24px 24px,
+    linear-gradient(rgba(169, 67, 34, 0.035) 1px, transparent 1px) 0 0 / 24px 24px,
+    #fbf6e9;
+  box-shadow: 0 18px 44px -34px rgba(43, 31, 19, 0.7);
+  color: #2d261e;
+}
+
+.ai-price-ticket--sell {
+  --ticket-accent: #316c4b;
+}
+
+.ai-price-ticket--wait {
+  --ticket-accent: #695d47;
+}
+
+.ai-price-ticket::after {
+  content: 'AI';
+  position: absolute;
+  right: -8px;
+  bottom: -28px;
+  color: rgba(75, 58, 40, 0.045);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 120px;
+  font-weight: 800;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.ai-price-ticket__header {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid #2d261e;
+}
+
+.ai-price-ticket__eyebrow {
+  margin-bottom: 6px;
+  color: var(--ticket-accent);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+
+.ai-price-ticket__quote-line {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.ai-price-ticket__price {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: clamp(34px, 5vw, 48px);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.035em;
+}
+
+.ai-price-ticket__change {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.ai-price-ticket__change--up,
+.ai-price-ticket__metrics .is-up {
+  color: #b3291d;
+}
+
+.ai-price-ticket__change--down,
+.ai-price-ticket__metrics .is-down {
+  color: #18764c;
+}
+
+.ai-price-ticket__timestamp {
+  margin-top: 8px;
+  color: rgba(45, 38, 30, 0.62);
+  font-size: 11px;
+}
+
+.ai-price-ticket__verdict {
+  display: flex;
+  max-width: 250px;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-price-ticket__verdict > span:first-child {
+  color: var(--ticket-accent);
+  font-family: 'Songti SC', STSong, Georgia, serif;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.ai-price-ticket__verdict .ant-tag {
+  margin-inline-end: 0;
+}
+
+.ai-price-ticket__grid {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-right: 1px solid rgba(45, 38, 30, 0.16);
+  border-bottom: 1px solid rgba(45, 38, 30, 0.16);
+}
+
+.ai-price-level {
+  min-height: 106px;
+  padding: 15px 16px;
+  border-top: 1px solid rgba(45, 38, 30, 0.16);
+  border-left: 1px solid rgba(45, 38, 30, 0.16);
+  background: rgba(255, 253, 246, 0.68);
+}
+
+.ai-price-level > span,
+.ai-price-level > small {
+  display: block;
+}
+
+.ai-price-level > span {
+  margin-bottom: 7px;
+  color: rgba(45, 38, 30, 0.58);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.ai-price-level > strong {
+  display: block;
+  color: #2d261e;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 20px;
+}
+
+.ai-price-level > small {
+  margin-top: 6px;
+  color: rgba(45, 38, 30, 0.6);
+  font-size: 11px;
+}
+
+.ai-price-level--entry {
+  box-shadow: inset 3px 0 0 #a94322;
+}
+
+.ai-price-level--exit {
+  box-shadow: inset 3px 0 0 #316c4b;
+}
+
+.ai-price-ticket__metrics {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 12px 2px;
+  border-bottom: 1px dashed rgba(45, 38, 30, 0.32);
+  color: rgba(45, 38, 30, 0.72);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-price-ticket__basis {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 12px;
+  padding: 14px 2px 10px;
+  font-size: 12px;
+}
+
+.ai-price-ticket__basis > div {
+  color: var(--ticket-accent);
+  font-weight: 700;
+}
+
+.ai-price-ticket__basis ul,
+.ai-price-ticket__notice ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.ai-price-ticket__notice {
+  position: relative;
+  z-index: 1;
+  border-radius: 2px 10px 2px 10px;
+}
+
+.ai-price-ticket__notice li + li {
+  margin-top: 3px;
+}
+
+.ai-price-ticket__footer {
+  position: relative;
+  z-index: 1;
+  margin-top: 10px;
+  text-align: right;
+}
+
+.ai-price-ticket__footer .ant-typography {
+  font-size: 10px;
+}
+
+@media (max-width: 640px) {
+  .ai-price-ticket {
+    padding: 15px;
+  }
+
+  .ai-price-ticket__header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .ai-price-ticket__verdict {
+    max-width: none;
+    align-items: flex-start;
+  }
+
+  .ai-price-ticket__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-price-ticket__basis {
+    grid-template-columns: 1fr;
+  }
+}
