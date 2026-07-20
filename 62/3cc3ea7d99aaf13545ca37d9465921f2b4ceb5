@@ -1,0 +1,45 @@
+backend/src/api/controllers/AIAdvisorController.ts
+  s_8c8f590e54d48d::t_7fc4f74878fd58 22-25,30-57,66,365-426,589,620-623
+backend/src/api/routes/ai.routes.ts
+  s_8c8f590e54d48d::t_2ba6bac8c6d904 30-65
+backend/src/services/AIPriceDecisionService.ts
+  s_8c8f590e54d48d::t_04ba5794d497ab 1-656
+backend/tests/services/ai-price-decision-contract.test.ts
+  s_8c8f590e54d48d::t_d289ea24f63262 1-51
+backend/tests/services/ai-price-decision-controller.test.ts
+  s_8c8f590e54d48d::t_f2a04ca8ce9bf2 1-209
+backend/tests/services/ai-price-decision-service.test.ts
+  s_8c8f590e54d48d::t_0b04ae9e81f5bc 1-374
+docs/openapi.json
+  s_8c8f590e54d48d::t_235d2d00eff730 10653-10734
+frontend/src/components/trading/AIPriceDecisionCard.css
+  s_8c8f590e54d48d::t_136f16109c6aae 1-239
+frontend/src/components/trading/AIPriceDecisionCard.tsx
+  s_8c8f590e54d48d::t_3e04464ae87d5a 1-177
+frontend/src/components/trading/AIStockAnalysisModal.tsx
+  s_8c8f590e54d48d::t_8557f0b51c16cc 6,10,27-28,47,114,116-118,133,138-141,160,166-168,236-286,297-309,484-487
+frontend/src/index.css
+  s_8c8f590e54d48d::t_d016ac6d95d04c 19446-19506,19553-19568
+frontend/src/pages/workspace/AIAnalysisWorkspace.tsx
+  s_8c8f590e54d48d::t_6f2dbf9bb45668 3-9,156-157,172-173,178-194
+frontend/src/services/aiStockAnalysisService.ts
+  s_8c8f590e54d48d::t_57b5b054fef415 79-80,88-166,227
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "623cc3ea7d99aaf13545ca37d9465921f2b4ceb5",
+  "prompts": {},
+  "sessions": {
+    "s_8c8f590e54d48d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f79ab-afb0-7d50-99c3-4867aae9d767",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
