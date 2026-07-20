@@ -76,6 +76,8 @@ export interface AnalyzeSingleStockResult {
   confidence_score: number | null;
   risk_level: string | null;
   key_points: Record<string, string[]>;
+  /** 归档接口保留的数据库字段；新代码统一读取 key_points。 */
+  key_points_json?: Record<string, string[]>;
   status: 'completed' | 'partial' | 'failed' | 'pending';
   task_id: string | null;
   target_date: string | null;
@@ -83,6 +85,85 @@ export interface AnalyzeSingleStockResult {
   generated_at: string;
   metadata: Record<string, unknown>;
   persisted: boolean;
+  /** 价格测算报告归档后会从 metadata 恢复到这两个顶层字段。 */
+  market_snapshot?: AIPriceMarketSnapshot | null;
+  price_decision?: AIPriceDecisionPlan | null;
+}
+
+export type AIPriceDecisionPositionState = 'watching' | 'holding';
+export type AIPriceFreshness = 'live' | 'same_day' | 'previous_close' | 'stale';
+
+export interface AIPriceMarketSnapshot {
+  stock_code: string;
+  stock_name: string | null;
+  current_price: number;
+  change_percent: number | null;
+  previous_close: number | null;
+  day_open: number | null;
+  day_high: number | null;
+  day_low: number | null;
+  quote_time: string;
+  quote_source: string;
+  quote_age_minutes: number;
+  freshness: AIPriceFreshness;
+  refresh_error: string | null;
+}
+
+export interface AIPriceDecisionPlan {
+  action: RecommendationKey | string;
+  action_label: string;
+  position_action: 'open' | 'maintain' | 'close' | 'avoid';
+  position_action_label: string;
+  current_price: number;
+  entry_zone: [number, number] | null;
+  sell_zone: [number, number];
+  stop_loss: number | null;
+  take_profit: number | null;
+  suggested_position_pct: number | null;
+  planned_capital: number | null;
+  planned_position_value: number | null;
+  suggested_shares: number | null;
+  holding_cost: number | null;
+  holding_pnl_pct: number | null;
+  risk_reward_ratio: number | null;
+  support_level: number | null;
+  resistance_level: number | null;
+  atr_14: number;
+  volatility_20: number | null;
+  execution_ready: boolean;
+  execution_note: string;
+  decision_basis: string[];
+  risk_warnings: string[];
+  model: 'tradingagents_price_v1';
+}
+
+export interface AIPriceDecisionResult extends AnalyzeSingleStockResult {
+  market_snapshot: AIPriceMarketSnapshot | null;
+  price_decision: AIPriceDecisionPlan | null;
+}
+
+export interface AIPriceDecisionRequest extends SingleStockAnalysisRequest {
+  position_state?: AIPriceDecisionPositionState;
+  planned_capital?: number;
+  holding_cost?: number;
+  refresh_quote?: boolean;
+}
+
+/**
+ * 当前价格交易测算：TradingAgents 给方向，后端用实时行情与 ATR/支撑压力生成价位。
+ */
+export async function analyzePriceDecision(
+  request: AIPriceDecisionRequest
+): Promise<AIPriceDecisionResult> {
+  const response = await api.post<{
+    success: boolean;
+    data?: AIPriceDecisionResult;
+    message?: string;
+  }>('/ai/price-decision', request);
+  if (!response.data?.success || !response.data.data) {
+    throw new Error(response.data?.message || 'AI 买卖测算请求失败');
+  }
+  return response.data.data;
 }
 
 /**
@@ -143,6 +224,7 @@ export async function listReports(
 
 export const aiStockAnalysisService = {
   analyzeSingleStock,
+  analyzePriceDecision,
   getReportById,
   listReports,
 };

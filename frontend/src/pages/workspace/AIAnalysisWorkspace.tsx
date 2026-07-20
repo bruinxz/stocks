@@ -1,6 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AutoComplete, Button, Empty, Input, Space, Tag, Typography } from 'antd';
-import { RobotOutlined, SearchOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import {
+  LineChartOutlined,
+  RobotOutlined,
+  SafetyCertificateOutlined,
+  SearchOutlined,
+  ThunderboltOutlined,
+} from '@ant-design/icons';
 import WorkspaceLayout from '../../components/layout/WorkspaceLayout';
 import WorkspaceHero from '../../components/layout/WorkspaceHero';
 import AIStockAnalysisModal from '../../components/trading/AIStockAnalysisModal';
@@ -147,8 +153,8 @@ const AIAnalysisWorkspace: React.FC = () => {
     () => (
       <WorkspaceHero
         eyebrow="AI · 智能解读"
-        title="AI 分析"
-        subtitle="输入任意 A 股代码或名称，一键获取 TradingAgents 多维度二次意见"
+        title="AI 决策测算"
+        subtitle="给一只股票：TradingAgents 做研究，当前行情把结论落到买点、卖点与风险线"
         variant="violet"
         rightSlot={
           <div className="ai-analysis-hero-icon" aria-hidden>
@@ -163,12 +169,29 @@ const AIAnalysisWorkspace: React.FC = () => {
   return (
     <>
       <WorkspaceLayout
-        title="AI 分析"
-        subtitle="基本面 / 技术面 / 资金面 / 新闻面 / 情绪面 —— 多维度 AI 二次意见。"
+        title="AI 决策测算"
+        subtitle="研究结论与价格计划分层呈现；不会自动下单，也不承诺收益。"
         hero={hero}
         themed
       >
         <div className="ai-analysis-launch">
+          <div className="ai-analysis-capabilities" aria-label="分析能力">
+            <div>
+              <RobotOutlined />
+              <span>多智能体会审</span>
+              <small>基本面、技术面、新闻与情绪交叉验证</small>
+            </div>
+            <div>
+              <LineChartOutlined />
+              <span>当前价测算</span>
+              <small>ATR、支撑压力、买卖区间与整手数量</small>
+            </div>
+            <div>
+              <SafetyCertificateOutlined />
+              <span>风险先行</span>
+              <small>行情过期自动降级，明确止损和仓位上限</small>
+            </div>
+          </div>
           <div className="ai-analysis-launch__label">
             <SearchOutlined /> 选择要分析的股票
           </div>
