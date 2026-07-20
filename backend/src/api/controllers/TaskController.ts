@@ -176,7 +176,7 @@ export class TaskController {
     }
   }
 
-  async getFeishuNotificationHealth(req: Request, res: Response, next: NextFunction) {
+  async getFeishuNotificationHealth(req: Request, res: Response, _next: NextFunction) {
     try {
       const health = await feishuNotificationService.getHealth();
       res.json({ success: true, data: health });
@@ -186,7 +186,7 @@ export class TaskController {
     }
   }
 
-  async getFeishuNotificationDeliveries(req: Request, res: Response, next: NextFunction) {
+  async getFeishuNotificationDeliveries(req: Request, res: Response, _next: NextFunction) {
     try {
       const deliveries = await feishuNotificationService.listDeliveries({
         statuses: parseCsvQuery(req.query.status, FEISHU_OUTBOX_STATUSES),
@@ -205,7 +205,7 @@ export class TaskController {
     }
   }
 
-  async retryFeishuNotification(req: Request, res: Response, next: NextFunction) {
+  async retryFeishuNotification(req: Request, res: Response, _next: NextFunction) {
     try {
       const id = Number(req.params.id);
       if (!Number.isInteger(id) || id <= 0) {
