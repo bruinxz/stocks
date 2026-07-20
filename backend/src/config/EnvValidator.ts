@@ -158,12 +158,6 @@ function isReplayDisclaimerConfiguration(value: unknown): boolean {
   });
 }
 
-/** Feishu channel 任一关键 env 提供时即视为"开启"，缺其它字段升级 error */
-export const FEISHU_REQUIRED_GROUP: readonly string[] = Object.freeze([
-  'FEISHU_APP_ID',
-  'FEISHU_APP_SECRET',
-]);
-
 /** SMTP channel 任一关键 env 提供时即视为"开启"，缺其它字段升级 error */
 export const SMTP_REQUIRED_GROUP: readonly string[] = Object.freeze([
   'SMTP_HOST',
@@ -284,19 +278,22 @@ function buildBaseSchema(): Joi.ObjectSchema {
       .default(REPLAY_OPERATIONAL_LIMIT_BOUNDS.rate_max_users.fallback),
 
     // ----------- 可选: Feishu Bot -----------
-    FEISHU_APP_ID: Joi.string().allow('').optional(),
-    FEISHU_APP_SECRET: Joi.string().allow('').optional(),
-    // 多维表格 (Bitable) 已弃用 — 改走 webhook 卡片统一推送
+    // Open Platform / Bitable 旧配置已弃用；兼容读取但从 validated env 剥离。
+    FEISHU_APP_ID: Joi.string().allow('').optional().strip(),
+    FEISHU_APP_SECRET: Joi.string().allow('').optional().strip(),
     FEISHU_BITABLE_APP_TOKEN: Joi.string().allow('').optional().strip(),
     FEISHU_BITABLE_TABLE_ID: Joi.string().allow('').optional().strip(),
     FEISHU_BITABLE_URL: Joi.string().allow('').optional().strip(),
-    FEISHU_MESSAGE_MAX_LENGTH: Joi.number().integer().min(100).max(50000).default(12000),
     FEISHU_RECOMMENDATION_BOT_WEBHOOK: Joi.string().uri().allow('').optional(),
     FEISHU_BOT_WEBHOOK: Joi.string().uri().allow('').optional(),
+    FEISHU_BOT_WEBHOOK_TIMEOUT_MS: Joi.number().integer().min(500).max(60000).default(10000),
     // US-003 [OPS-003]: dry_run 巡检 / 其他 ops 系统告警的飞书 text-msg 通道.
     // 与 FEISHU_BOT_WEBHOOK (业务推送 card) 分离，避免淹没在日常推送里。
     OPS_ALERT_FEISHU_WEBHOOK: Joi.string().uri().allow('').optional(),
-    OPS_ALERT_FEISHU_TIMEOUT_MS: Joi.number().integer().min(500).max(60000).default(5000),
+    // 实盘审计专群；严格禁止回退到业务/OPS 群。
+    LIVE_ALERT_FEISHU_WEBHOOK: Joi.string().uri().allow('').optional(),
+    DISABLE_LIVE_ALERT: Joi.string().optional(),
+    LIVE_ALERT_INCLUDE_WARNING: Joi.string().optional(),
 
     // ----------- 可选: Email SMTP (US-065) -----------
     SMTP_HOST: Joi.string().allow('').optional(),
@@ -477,8 +474,6 @@ export function validateEnv(
   const PLACEHOLDER_FIELDS = [
     'JWT_SECRET',
     'JWT_REFRESH_SECRET',
-    'FEISHU_APP_ID',
-    'FEISHU_APP_SECRET',
     'TUSHARE_TOKEN',
     'STOCKS_REPLAY_TEMPLATE_HASH',
   ];
@@ -503,7 +498,6 @@ export function validateEnv(
 
   // 3. 部分填写的 channel group（任一字段有值则全部必填）
   const channelGroups: Array<{ name: string; fields: readonly string[] }> = [
-    { name: 'Feishu Open Platform', fields: FEISHU_REQUIRED_GROUP },
     { name: 'Email SMTP', fields: SMTP_REQUIRED_GROUP },
     { name: 'WeChat OA', fields: WECHAT_REQUIRED_GROUP },
     { name: 'Aliyun SMS', fields: ALIYUN_SMS_REQUIRED_GROUP },

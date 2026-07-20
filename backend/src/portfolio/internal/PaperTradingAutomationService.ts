@@ -18,10 +18,10 @@ import { User } from '../../models/User';
 import { RecommendationTradeOutcome } from '../../models/RecommendationTradeOutcome';
 import { SizingDecisionAudit } from '../../models/SizingDecisionAudit';
 import { aiInvestmentSignalService } from '../../services/AIInvestmentSignalService';
-import { feishuTaskReportService } from '../../services/FeishuTaskReportService';
 import { marketEnvironmentService } from '../../services/MarketEnvironmentService';
 import { paperTradingRiskProfileService } from './PaperTradingRiskProfileService';
 import { feishuBotWebhookService } from '../../services/FeishuBotWebhookService';
+import { feishuNotificationService } from '../../services/FeishuNotificationService';
 import { normalizeSymbol, quantizeBuyQuantity } from '../../utils/stockSymbol';
 import { logger } from '../../utils/logger';
 import { checkAShareTradingHours } from '../../utils/tradingCalendar';
@@ -226,8 +226,8 @@ export interface PaperTradingAutoOptions {
    * QuantStrategyModel.lifecycle_policy.dry_run === true.
    */
   dry_run_strategy_keys?: string[] | string;
-  report_to_feishu?: boolean;
-  notify_to_feishu_bot?: boolean;
+  /** 有实质成交/风控结论时，额外发一张业务群摘要；默认 false。 */
+  notify_business_summary?: boolean;
   signal_date_start?: string;
   signal_date_end?: string;
   signal_ids?: number[];
@@ -590,8 +590,8 @@ export interface PaperTradingRiskCheckOptions {
   initial_capital?: number;
   force_new_portfolio?: boolean;
   dry_run?: boolean;
-  report_to_feishu?: boolean;
-  notify_to_feishu_bot?: boolean;
+  /** 有实质风控退出时，额外发一张业务群摘要；默认 false。 */
+  notify_business_summary?: boolean;
   limit?: number;
   enable_stop_loss?: boolean;
   enable_take_profit?: boolean;
@@ -1258,7 +1258,6 @@ class PaperTradingAutomationService {
     // order_intent (status='planned') and leaving the QuantSignal row untouched.
     // dry_run (request-level) wins if true; otherwise per-signal check runs in-loop.
     const dryRunStrategyKeys = normalizeStringArray(options.dry_run_strategy_keys);
-    const report_to_feishu = toBoolean(options.report_to_feishu, true);
     const limit = toPositiveInt(options.limit, 5, 20);
     const scan_limit = toPositiveInt(options.scan_limit, Math.max(limit * 8, 40), 300);
     let min_score = toNumber(options.min_score, 72);
@@ -3171,74 +3170,76 @@ class PaperTradingAutomationService {
           // ========== 即时飞书推送：自主买入卡片 ==========
           // Sprint 35: interactive 富文本卡片 (绿色 header), 替代之前的 text/错误模板.
           try {
-            const webhookUrl =
-              process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK;
-            if (webhookUrl && String(process.env.DISABLE_FEISHU_BOT_WEBHOOK) !== 'true') {
-              const stockName = signal.name || quote.name || symbol;
-              const positionPct = (
-                (total_cost / toNumber(portfolio.total_value, 200000)) *
-                100
-              ).toFixed(1);
-              const score = toNumber(signal.confidence_score, 0).toFixed(0);
-              const card = {
-                msg_type: 'interactive',
-                card: {
-                  config: { wide_screen_mode: true },
-                  header: {
-                    title: { tag: 'plain_text', content: `🟢 自主买入 · ${stockName}` },
-                    template: 'green',
-                  },
-                  elements: [
-                    {
-                      tag: 'div',
-                      fields: [
-                        {
-                          is_short: true,
-                          text: { tag: 'lark_md', content: `**代码**\n${symbol}` },
-                        },
-                        { is_short: true, text: { tag: 'lark_md', content: `**得分**\n${score}` } },
-                        {
-                          is_short: true,
-                          text: {
-                            tag: 'lark_md',
-                            content: `**成交价**\n¥${execute_price.toFixed(2)}`,
-                          },
-                        },
-                        {
-                          is_short: true,
-                          text: { tag: 'lark_md', content: `**数量**\n${quantity} 股` },
-                        },
-                        {
-                          is_short: true,
-                          text: { tag: 'lark_md', content: `**总成本**\n¥${amount.toFixed(0)}` },
-                        },
-                        {
-                          is_short: true,
-                          text: { tag: 'lark_md', content: `**仓位**\n${positionPct}%` },
-                        },
-                      ],
-                    },
-                    { tag: 'hr' },
-                    {
-                      tag: 'note',
-                      elements: [
-                        {
-                          tag: 'plain_text',
-                          content: `${moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm')} · ${
-                            portfolio.name || 'paper trading'
-                          }`,
-                        },
-                      ],
-                    },
-                  ],
+            const stockName = signal.name || quote.name || symbol;
+            const positionPct = (
+              (total_cost / toNumber(portfolio.total_value, 200000)) *
+              100
+            ).toFixed(1);
+            const score = toNumber(signal.confidence_score, 0).toFixed(0);
+            const card = {
+              msg_type: 'interactive',
+              card: {
+                config: { wide_screen_mode: true },
+                header: {
+                  title: { tag: 'plain_text', content: `🟢 自主买入 · ${stockName}` },
+                  template: 'green',
                 },
-              };
-              // eslint-disable-next-line @typescript-eslint/no-var-requires
-              const axios = require('axios');
-              axios.post(webhookUrl, card, { timeout: 5000 }).catch(() => {
-                /* 静默 — fail-OPEN, 推送失败不阻塞下单主流程 */
-              });
-            }
+                elements: [
+                  {
+                    tag: 'div',
+                    fields: [
+                      {
+                        is_short: true,
+                        text: { tag: 'lark_md', content: `**代码**\n${symbol}` },
+                      },
+                      { is_short: true, text: { tag: 'lark_md', content: `**得分**\n${score}` } },
+                      {
+                        is_short: true,
+                        text: {
+                          tag: 'lark_md',
+                          content: `**成交价**\n¥${execute_price.toFixed(2)}`,
+                        },
+                      },
+                      {
+                        is_short: true,
+                        text: { tag: 'lark_md', content: `**数量**\n${quantity} 股` },
+                      },
+                      {
+                        is_short: true,
+                        text: { tag: 'lark_md', content: `**总成本**\n¥${amount.toFixed(0)}` },
+                      },
+                      {
+                        is_short: true,
+                        text: { tag: 'lark_md', content: `**仓位**\n${positionPct}%` },
+                      },
+                    ],
+                  },
+                  { tag: 'hr' },
+                  {
+                    tag: 'note',
+                    elements: [
+                      {
+                        tag: 'plain_text',
+                        content: `${moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm')} · ${
+                          portfolio.name || 'paper trading'
+                        }`,
+                      },
+                    ],
+                  },
+                ],
+              },
+            };
+            await feishuNotificationService.enqueueAndDeliver({
+              idempotency_key: `paper-trade:${trade.id}:executed`,
+              topic_key: `paper-trade:${portfolio.id}`,
+              audience: 'business',
+              kind: 'paper_trade_executed',
+              severity: 'INFO',
+              title: `🟢 自主买入 · ${stockName}`,
+              payload: card,
+              correlation_id: `paper_trade_id=${trade.id}`,
+              metadata: { portfolio_id: portfolio.id, symbol, direction: 'BUY' },
+            });
           } catch {
             /* 静默 */
           }
@@ -3469,12 +3470,6 @@ class PaperTradingAutomationService {
         : undefined,
     };
 
-    if (report_to_feishu) {
-      await feishuTaskReportService.reportPaperTradingAutomation(result, {
-        record_type: dry_run ? '模拟盘跟单预演' : '模拟盘自动跟单',
-      });
-    }
-
     return result;
   }
 
@@ -3626,7 +3621,7 @@ class PaperTradingAutomationService {
     };
 
     // 自动跟单结果默认不推 webhook 摘要（用户已从 DailyTradingDigest 收到当日成交）
-    // 仅当 caller 显式 report_to_feishu=true 才推
+    // 仅当 caller 显式 notify_business_summary=true 才推
     //
     // Sprint 35 fix: skip 空摘要 — 当本轮 trades / planned 都=0 且没新增任何买入时,
     // 推 "本轮推荐 N 只, 模拟盘未新增买入" 这种纯流水汇报对用户毫无价值, 反成噪声.
@@ -3638,8 +3633,7 @@ class PaperTradingAutomationService {
       (syncResult as any).risk_profile_gate?.action === 'pause' ||
       (syncResult as any).risk_profile_gate?.action === 'restrict';
     if (
-      toBoolean(options.report_to_feishu, false) &&
-      options.notify_to_feishu_bot !== false &&
+      options.notify_business_summary === true &&
       (refreshRecommendations || Array.isArray((syncResult as any).generated?.recommendations)) &&
       (hasActualOrder || hasRiskWarning) // Sprint 35: 仅在有实质内容时推
     ) {
@@ -3716,7 +3710,6 @@ class PaperTradingAutomationService {
     }
 
     const dry_run = toBoolean(options.dry_run, false);
-    const report_to_feishu = toBoolean(options.report_to_feishu, true);
     const limit = toPositiveInt(options.limit, 20, 100);
     const enableStopLoss = toBoolean(options.enable_stop_loss, true);
     const enableTakeProfit = toBoolean(options.enable_take_profit, true);
@@ -4123,89 +4116,91 @@ class PaperTradingAutomationService {
           // ========== 即时飞书推送：自主卖出卡片 ==========
           // Sprint 35: 盈利/亏损用不同 header template (green/red), 卖出原因显示
           try {
-            const webhookUrl =
-              process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK || process.env.FEISHU_BOT_WEBHOOK;
-            if (webhookUrl && String(process.env.DISABLE_FEISHU_BOT_WEBHOOK) !== 'true') {
-              const stockName = exitItem.name || symbol;
-              const pnlSign = realized_pnl >= 0 ? '+' : '';
-              const reasonText = riskReasonLabel(exitReason);
-              const icon = realized_pnl >= 0 ? '🟢' : '🔴';
-              const pnlEmoji = realized_pnl >= 0 ? '💰' : '📉';
-              const headerTemplate = realized_pnl >= 0 ? 'green' : 'red';
-              const card = {
-                msg_type: 'interactive',
-                card: {
-                  config: { wide_screen_mode: true },
-                  header: {
-                    title: { tag: 'plain_text', content: `${icon} 自主卖出 · ${stockName}` },
-                    template: headerTemplate,
-                  },
-                  elements: [
-                    {
-                      tag: 'div',
-                      text: {
-                        tag: 'lark_md',
-                        content: `**卖出原因**: ${reasonText}`,
-                      },
-                    },
-                    {
-                      tag: 'div',
-                      fields: [
-                        {
-                          is_short: true,
-                          text: { tag: 'lark_md', content: `**代码**\n${symbol}` },
-                        },
-                        {
-                          is_short: true,
-                          text: {
-                            tag: 'lark_md',
-                            content: `**${pnlEmoji} 实现盈亏**\n${pnlSign}¥${realized_pnl.toFixed(
-                              2
-                            )}`,
-                          },
-                        },
-                        {
-                          is_short: true,
-                          text: {
-                            tag: 'lark_md',
-                            content: `**成交价**\n¥${execute_price.toFixed(2)}`,
-                          },
-                        },
-                        {
-                          is_short: true,
-                          text: { tag: 'lark_md', content: `**数量**\n${quantity} 股` },
-                        },
-                        {
-                          is_short: true,
-                          text: { tag: 'lark_md', content: `**总金额**\n¥${amount.toFixed(0)}` },
-                        },
-                        {
-                          is_short: true,
-                          text: { tag: 'lark_md', content: `**持有天数**\n${holdingDays} 天` },
-                        },
-                      ],
-                    },
-                    { tag: 'hr' },
-                    {
-                      tag: 'note',
-                      elements: [
-                        {
-                          tag: 'plain_text',
-                          content: `${moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm')} · ${
-                            portfolio.name || 'paper trading'
-                          }`,
-                        },
-                      ],
-                    },
-                  ],
+            const stockName = exitItem.name || symbol;
+            const pnlSign = realized_pnl >= 0 ? '+' : '';
+            const reasonText = riskReasonLabel(exitReason);
+            const icon = realized_pnl >= 0 ? '🟢' : '🔴';
+            const pnlEmoji = realized_pnl >= 0 ? '💰' : '📉';
+            const headerTemplate = realized_pnl >= 0 ? 'green' : 'red';
+            const card = {
+              msg_type: 'interactive',
+              card: {
+                config: { wide_screen_mode: true },
+                header: {
+                  title: { tag: 'plain_text', content: `${icon} 自主卖出 · ${stockName}` },
+                  template: headerTemplate,
                 },
-              };
-              // eslint-disable-next-line @typescript-eslint/no-var-requires
-              const axios = require('axios');
-              axios.post(webhookUrl, card, { timeout: 5000 }).catch(() => {
-                /* 静默 */
-              });
-            }
+                elements: [
+                  {
+                    tag: 'div',
+                    text: {
+                      tag: 'lark_md',
+                      content: `**卖出原因**: ${reasonText}`,
+                    },
+                  },
+                  {
+                    tag: 'div',
+                    fields: [
+                      {
+                        is_short: true,
+                        text: { tag: 'lark_md', content: `**代码**\n${symbol}` },
+                      },
+                      {
+                        is_short: true,
+                        text: {
+                          tag: 'lark_md',
+                          content: `**${pnlEmoji} 实现盈亏**\n${pnlSign}¥${realized_pnl.toFixed(
+                            2
+                          )}`,
+                        },
+                      },
+                      {
+                        is_short: true,
+                        text: {
+                          tag: 'lark_md',
+                          content: `**成交价**\n¥${execute_price.toFixed(2)}`,
+                        },
+                      },
+                      {
+                        is_short: true,
+                        text: { tag: 'lark_md', content: `**数量**\n${quantity} 股` },
+                      },
+                      {
+                        is_short: true,
+                        text: { tag: 'lark_md', content: `**总金额**\n¥${amount.toFixed(0)}` },
+                      },
+                      {
+                        is_short: true,
+                        text: { tag: 'lark_md', content: `**持有天数**\n${holdingDays} 天` },
+                      },
+                    ],
+                  },
+                  { tag: 'hr' },
+                  {
+                    tag: 'note',
+                    elements: [
+                      {
+                        tag: 'plain_text',
+                        content: `${moment().tz('Asia/Shanghai').format('YYYY-MM-DD HH:mm')} · ${
+                          portfolio.name || 'paper trading'
+                        }`,
+                      },
+                    ],
+                  },
+                ],
+              },
+            };
+            await feishuNotificationService.enqueueAndDeliver({
+              idempotency_key: `paper-trade:${trade.id}:executed`,
+              topic_key: `paper-trade:${portfolio.id}`,
+              audience: 'business',
+              kind: 'paper_trade_executed',
+              severity: realized_pnl < 0 ? 'WARN' : 'INFO',
+              title: `${icon} 自主卖出 · ${stockName}`,
+              payload: card,
+              correlation_id: `paper_trade_id=${trade.id}`,
+              metadata: { portfolio_id: portfolio.id, symbol, direction: 'SELL' },
+            });
           } catch {
             /* 静默 */
           }
@@ -4341,20 +4336,13 @@ class PaperTradingAutomationService {
       risk_profile: riskProfile,
     };
 
-    if (report_to_feishu) {
-      await feishuTaskReportService.reportPaperTradingRiskCheck(result, {
+    // 风控退出摘要默认不推；只有调用方明确要求才进入业务飞书 outbox。
+    if (options.notify_business_summary === true) {
+      await feishuBotWebhookService.sendRecommendationSummary({
+        scenario: 'paper_trading_risk_check',
         record_type: dry_run ? '模拟盘风控预演' : '模拟盘风控退出',
+        result,
       });
-
-      // 风控退出摘要：默认不推（风控触发本身已经通过 RiskAlert HIGH webhook 推过了）
-      // 仅当 caller 显式 notify_to_feishu_bot=true 才发整体汇总
-      if (options.notify_to_feishu_bot === true) {
-        await feishuBotWebhookService.sendRecommendationSummary({
-          scenario: 'paper_trading_risk_check',
-          record_type: dry_run ? '模拟盘风控预演' : '模拟盘风控退出',
-          result,
-        });
-      }
     }
 
     return result;
@@ -4757,7 +4745,6 @@ class PaperTradingAutomationService {
         trade_status: 'closed',
         lookback_days: options.lookback_days,
         limit: 2000,
-        report_to_feishu: false,
       });
       const summary: any = dashboard.summary || {};
       const closedSamples = Number(summary.closed_count || 0);
@@ -4910,7 +4897,6 @@ class PaperTradingAutomationService {
         initial_capital: options.initial_capital,
         force_new_portfolio: options.force_new_portfolio,
         include_open: false,
-        report_to_feishu: false,
       });
       const feedback: any = attribution.feedback || {};
       const closedSamples = attribution.summary?.closed_count || 0;
@@ -5118,7 +5104,6 @@ class PaperTradingAutomationService {
         agent_session: options.agent_session,
         lookback_days: options.lookback_days,
         limit: options.limit,
-        report_to_feishu: false,
       });
       const summary: any = dashboard.summary || {};
       const feedback: any = dashboard.feedback || {};

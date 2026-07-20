@@ -1,8 +1,8 @@
 import Bull from 'bull';
 import { logger } from '../utils/logger';
-import { feishuTaskReportService } from '../services/FeishuTaskReportService';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { ScheduledTask } from '../models/ScheduledTask';
+import { cronNotificationLifecycleService } from '../services/CronNotificationLifecycleService';
 
 export interface DataUpdateJobData {
   type:
@@ -65,6 +65,52 @@ const dataUpdateQueue = new Bull<DataUpdateJobData>('data-update', {
   },
 });
 
+export async function finalizeQueuedScheduledTask(input: {
+  scheduled_task_id: number;
+  execution_log_id?: number;
+  status: 'SUCCESS' | 'FAILED';
+  error_message?: string;
+}): Promise<void> {
+  const task = await ScheduledTask.findByPk(input.scheduled_task_id);
+  if (!task) return;
+
+  if (input.status === 'SUCCESS') {
+    await task.update({
+      last_run_status: 'SUCCESS',
+      consecutive_failure_count: 0,
+    });
+    await cronNotificationLifecycleService.recordRecovery({
+      task_id: task.id,
+      task_type: task.type,
+      task_name: task.name,
+      execution_log_id: input.execution_log_id,
+    });
+    return;
+  }
+
+  const failureCount = Number(task.consecutive_failure_count || 0) + 1;
+  const configuredThreshold = Number(process.env.SCHEDULER_FAILURE_KILL_THRESHOLD || 5);
+  const threshold =
+    Number.isFinite(configuredThreshold) && configuredThreshold > 0
+      ? Math.floor(configuredThreshold)
+      : 5;
+  const killed = task.is_active && failureCount >= threshold;
+  await task.update({
+    last_run_status: 'FAILED',
+    consecutive_failure_count: failureCount,
+    ...(killed ? { is_active: false } : {}),
+  });
+  await cronNotificationLifecycleService.recordFailure({
+    task_id: task.id,
+    task_type: task.type,
+    task_name: task.name,
+    failure_count: failureCount,
+    error_message: input.error_message,
+    execution_log_id: input.execution_log_id,
+    killed,
+  });
+}
+
 // 队列事件监听
 dataUpdateQueue.on('error', error => {
   logger.error('数据更新队列错误:', error);
@@ -88,7 +134,7 @@ dataUpdateQueue.on('completed', (job, result) => {
     result,
   });
 
-  if (job.data.execution_log_id) {
+  if (job.data.execution_log_id || job.data.scheduled_task_id) {
     (async () => {
       const totalItems = Number(
         result?.totalStocks ?? result?.affected_stocks ?? result?.affectedStocks ?? 1
@@ -103,7 +149,9 @@ dataUpdateQueue.on('completed', (job, result) => {
         ? Math.max(totalItems - failedItems, 0)
         : totalItems;
 
-      const log = await TaskExecutionLog.findByPk(job.data.execution_log_id);
+      const log = job.data.execution_log_id
+        ? await TaskExecutionLog.findByPk(job.data.execution_log_id)
+        : null;
       if (log) {
         const finalStatus =
           failedItems >= totalItems && totalItems > 0 && !isSkipped ? 'FAILED' : 'COMPLETED';
@@ -122,16 +170,14 @@ dataUpdateQueue.on('completed', (job, result) => {
       }
 
       if (job.data.scheduled_task_id) {
-        await ScheduledTask.update(
-          {
-            last_run_status:
-              failedItems >= totalItems && totalItems > 0 && !isSkipped ? 'FAILED' : 'SUCCESS',
-          },
-          { where: { id: job.data.scheduled_task_id } }
-        );
+        const failed = failedItems >= totalItems && totalItems > 0 && !isSkipped;
+        await finalizeQueuedScheduledTask({
+          scheduled_task_id: job.data.scheduled_task_id,
+          execution_log_id: job.data.execution_log_id,
+          status: failed ? 'FAILED' : 'SUCCESS',
+          error_message: failed ? `数据更新队列全部失败：${failedItems}/${totalItems}` : undefined,
+        });
       }
-
-      await feishuTaskReportService.reportQueueJobCompletion('data-update', job, result);
     })().catch(error => logger.error('更新/上报数据更新队列完成状态失败:', error));
   }
 });
@@ -144,9 +190,14 @@ dataUpdateQueue.on('failed', (job, error) => {
   });
 
   const maxAttempts = Number(job?.opts?.attempts || 1);
-  if (job?.data?.execution_log_id && job.attemptsMade >= maxAttempts) {
+  if (
+    (job?.data?.execution_log_id || job?.data?.scheduled_task_id) &&
+    job.attemptsMade >= maxAttempts
+  ) {
     (async () => {
-      const log = await TaskExecutionLog.findByPk(job.data.execution_log_id);
+      const log = job.data.execution_log_id
+        ? await TaskExecutionLog.findByPk(job.data.execution_log_id)
+        : null;
       if (log) {
         await log.update({
           status: 'FAILED',
@@ -157,14 +208,14 @@ dataUpdateQueue.on('failed', (job, error) => {
       }
 
       if (job.data.scheduled_task_id) {
-        await ScheduledTask.update(
-          { last_run_status: 'FAILED' },
-          { where: { id: job.data.scheduled_task_id } }
-        );
+        await finalizeQueuedScheduledTask({
+          scheduled_task_id: job.data.scheduled_task_id,
+          execution_log_id: job.data.execution_log_id,
+          status: 'FAILED',
+          error_message: error.message,
+        });
       }
-
-      await feishuTaskReportService.reportQueueJobCompletion('data-update', job, undefined, error);
-    })().catch(reportError => logger.error('飞书上报数据更新队列失败失败:', reportError));
+    })().catch(reportError => logger.error('更新数据队列失败状态失败:', reportError));
   }
 });
 

@@ -118,6 +118,19 @@ function shellQuote(value) {
 }
 
 function renderBackendEnv(env) {
+  const retiredFeishuKeys = new Set([
+    'FEISHU_APP_ID',
+    'FEISHU_APP_SECRET',
+    'FEISHU_BASE_APP_TOKEN',
+    'FEISHU_BASE_TABLE_ID',
+    'FEISHU_BITABLE_APP_TOKEN',
+    'FEISHU_BITABLE_TABLE_ID',
+    'FEISHU_BITABLE_URL',
+    'FEISHU_DAILY_DIGEST_WEBHOOK',
+    'FEISHU_MESSAGE_MAX_LENGTH',
+    'OPS_ALERT_FEISHU_TIMEOUT_MS',
+    'LIVE_ALERT_WEBHOOK_TIMEOUT_MS',
+  ]);
   const preferredKeys = [
     'DB_HOST',
     'DB_PORT',
@@ -135,15 +148,19 @@ function renderBackendEnv(env) {
     'PORT',
     'INTERNAL_API_KEY',
     'TRADING_AGENTS_URL',
-    'FEISHU_APP_ID',
-    'FEISHU_APP_SECRET',
-    'FEISHU_BASE_APP_TOKEN',
-    'FEISHU_BASE_TABLE_ID',
+    'FEISHU_RECOMMENDATION_BOT_WEBHOOK',
+    'FEISHU_BOT_WEBHOOK',
+    'OPS_ALERT_FEISHU_WEBHOOK',
+    'LIVE_ALERT_FEISHU_WEBHOOK',
+    'FEISHU_BOT_WEBHOOK_TIMEOUT_MS',
     'FRONTEND_BASE_URL',
   ];
   const keys = [...new Set([...preferredKeys, ...Object.keys(env || {})])];
   return `${keys
-    .filter(key => env[key] !== undefined && env[key] !== null)
+    .filter(
+      key =>
+        !retiredFeishuKeys.has(key) && env[key] !== undefined && env[key] !== null
+    )
     .map(key => `${key}=${shellQuote(env[key])}`)
     .join('\n')}\n`;
 }

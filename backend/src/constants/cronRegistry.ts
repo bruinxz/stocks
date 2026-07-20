@@ -697,16 +697,13 @@ export const CRON_REGISTRY: ReadonlyArray<CronTaskDefinition> = Object.freeze([
     description:
       '每季首日 09:05 把上一季全量 BlackSwanEvent 聚合 (event_type/severity/scope/top_symbols/critical+high 高亮) → HTML 邮件发给 ops 收件人列表',
   },
-  // US-095 OPS-006 — 每 5min 扫 webhook_fallback_log status='pending' AND
-  // next_retry_at <= NOW(), 透传 sender 重投递; 成功 → 'sent', 失败 attempts+=1
-  // + 指数 backoff; attempts >= max_attempts → 'dead'. 主流程 (FeishuBotWebhookService)
-  // 已 fail-OPEN, 本 cron 是"为了不丢消息"的第二道防线.
+  // 飞书统一通知 outbox worker。业务路径先落库；即时投递失败后由这里持久化补投。
   {
-    type: 'WEBHOOK_FALLBACK_RETRY',
+    type: 'FEISHU_NOTIFICATION_DISPATCH',
     category: 'cleanup',
     owner: 'ops',
     recommendedCron: '*/5 * * * *',
-    description: '每 5min 扫 webhook_fallback_log pending 行重投递',
+    description: '每 5min 扫 feishu_notification_outbox 的 due/retry/stale-lock 通知并投递',
   },
   // US-096 OPS-007 — 每日 02:00 跑 scripts/backup-db.sh: pg_dump → gzip →
   // backups/YYYY-MM-DD.sql.gz + 自动清 30 天前旧备份. shell 自己有 retention

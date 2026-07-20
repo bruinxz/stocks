@@ -81,6 +81,14 @@ export class RiskAlert extends Model {
   })
   declare is_read: boolean;
 
+  @Column({
+    type: DataType.JSONB,
+    allowNull: false,
+    defaultValue: {},
+    comment: '告警路由、toast 与通知生产者审计信息',
+  })
+  declare metadata: Record<string, unknown>;
+
   @CreatedAt
   @Column({ field: 'created_at' })
   declare created_at: Date;
@@ -132,6 +140,10 @@ export class RiskAlert extends Model {
         );
       }
 
+      if ((instance.metadata as any)?.external_dispatch_owner === 'risk_alert_service') {
+        return;
+      }
+
       // 既有 US-067 RealtimeAlertDispatcher (飞书/邮件/短信), HIGH + CRITICAL 触发
       // Batch BF-1 (2026-06-23): 加 CRITICAL — 之前只 HIGH 触发, 类似 MarketRegimeAlertService
       // 用的 level='CRITICAL' 一条都不推, 用户原话"凌晨出问题没人知道". 推送通道复用
@@ -139,34 +151,32 @@ export class RiskAlert extends Model {
       // 1h (REALTIME_ALERT_DEDUP_WINDOW_MS = 60min) 防告警风暴.
       const lvl = String(instance.level || '').toUpperCase();
       if (lvl !== 'HIGH' && lvl !== 'CRITICAL') return;
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { realtimeAlertDispatcher } = require('../services/RealtimeAlertDispatcher');
-      realtimeAlertDispatcher.fireAndForget({
-        alert_id: instance.id,
-        user_id: instance.user_id,
-        symbol: instance.symbol,
-        name: instance.name,
-        level: instance.level,
-        message: instance.message,
-        rule_id: instance.rule_id || undefined,
-        // Batch CC (2026-06-25): 时区修复 — 之前用 toISOString() 输出 UTC Z 后缀
-        // (如 "2026-06-25T08:09:00.597Z"), 用户读 "08:09" 以为系统时间错了.
-        // 改用 formatEast8Readable 输出 "2026-06-25 16:09:00 (UTC+8)" 显式标注时区.
-        triggered_at: formatEast8Readable(instance.created_at || new Date()),
-      });
+      const isSystemIncident = String(instance.symbol || '').startsWith('SYSTEM:');
+      if (!isSystemIncident) {
+        // 股票/组合告警只走用户通道；没有再镜像到 OPS 群，避免业务提醒淹没系统事故。
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { realtimeAlertDispatcher } = require('../services/RealtimeAlertDispatcher');
+        realtimeAlertDispatcher.fireAndForget({
+          alert_id: instance.id,
+          user_id: instance.user_id,
+          symbol: instance.symbol,
+          name: instance.name,
+          level: instance.level,
+          message: instance.message,
+          rule_id: instance.rule_id || undefined,
+          triggered_at: formatEast8Readable(instance.created_at || new Date()),
+        });
+        return;
+      }
 
-      // Batch BF-1 (2026-06-23): 额外触发 system-level admin 推送 (Lark OPS 群 +
-      // admin email) — RealtimeAlertDispatcher 走 per-user notification config,
-      // 但 prod 多数 user `feishu.enabled=false` → 仍然 0 条推送. SystemAdminAlertPusher
-      // 走 env 配置 (OPS_ALERT_FEISHU_WEBHOOK / ADMIN_ALERT_EMAILS) 兜底, 凌晨出
-      // 真问题时运维群一定收得到. 1h dedup 防告警风暴.
+      // SYSTEM:* 事故只走 OPS 专群，不再额外触发用户/业务 webhook。
       try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const sysMod = require('../services/SystemAdminAlertPusher');
         // Batch CC (2026-06-25): 同 RealtimeAlertDispatcher 同款时区修复.
         const triggered = formatEast8Readable(instance.created_at || new Date());
         const frontend = process.env.FRONTEND_BASE_URL || 'http://localhost:3000';
-        const dedupKey = `risk:${instance.symbol}:${lvl}`;
+        const dedupKey = `risk:${instance.symbol}:${instance.rule_id || 'unknown'}`;
         const truncatedMsg = String(instance.message || '').slice(0, 1500);
         sysMod.pushSystemAdminAlertFireAndForget({
           dedup_key: dedupKey,
@@ -183,6 +193,9 @@ export class RiskAlert extends Model {
           // Phase 10 冗余 P1-2 (2026-06-28): 传 alertId 让 pusher 看到 dispatcher 已对
           // 同 URL 推送过 (user webhook == OPS env URL 时) 就 skip 避免双推.
           caller_alert_id: instance.id,
+          idempotency_key: `risk-alert:${instance.id}:ops`,
+          audience: 'ops',
+          kind: 'system_risk_alert',
         });
       } catch (sysErr: any) {
         logger.warn(

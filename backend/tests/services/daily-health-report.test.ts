@@ -138,7 +138,11 @@ async function main() {
   assertEqual('Sat not工作日', isTradingDay(new Date('2026-06-20T03:00:00Z')), false);
   assertEqual('shanghaiYmd UTC03', shanghaiYmd(new Date('2026-06-23T03:00:00Z')), '2026-06-23');
   // 跨日: UTC 23:00 = 上海 07:00 次日
-  assertEqual('shanghaiYmd UTC23 → 次日', shanghaiYmd(new Date('2026-06-22T23:00:00Z')), '2026-06-23');
+  assertEqual(
+    'shanghaiYmd UTC23 → 次日',
+    shanghaiYmd(new Date('2026-06-22T23:00:00Z')),
+    '2026-06-23'
+  );
   assertEqual(
     'shanghaiYmdMinusDays 7',
     shanghaiYmdMinusDays(new Date('2026-06-23T03:00:00Z'), 7),
@@ -146,7 +150,11 @@ async function main() {
   );
 
   assertEqual('isLiveOrderStatusSuccess submitted', isLiveOrderStatusSuccess('submitted'), true);
-  assertEqual('isLiveOrderStatusSuccess SUBMITTED case', isLiveOrderStatusSuccess('SUBMITTED'), true);
+  assertEqual(
+    'isLiveOrderStatusSuccess SUBMITTED case',
+    isLiveOrderStatusSuccess('SUBMITTED'),
+    true
+  );
   assertEqual('isLiveOrderStatusSuccess filled', isLiveOrderStatusSuccess('filled'), true);
   assertEqual(
     'isLiveOrderStatusSuccess partial',
@@ -164,8 +172,14 @@ async function main() {
   console.log('\n[2] summarizeLiveOrders...');
   const empty = summarizeLiveOrders({});
   assertEqual('空 total=0', empty.total, 0);
-  assertEqual('空 success_rate=0', empty.success_rate, 0);
-  const ok = summarizeLiveOrders({ submitted: 5, filled: 3, rejected: 1, cancelled: 1, created: 2 });
+  assertEqual('空 success_rate=N/A(null)', empty.success_rate, null);
+  const ok = summarizeLiveOrders({
+    submitted: 5,
+    filled: 3,
+    rejected: 1,
+    cancelled: 1,
+    created: 2,
+  });
   assertEqual('total=12', ok.total, 12);
   assertEqual('succeeded=8 (submitted+filled)', ok.succeeded, 8);
   assertEqual('failed=2 (rejected+cancelled)', ok.failed, 2);
@@ -193,15 +207,27 @@ async function main() {
   assertEqual('top1 = concentration', tr[0].reason, 'concentration');
   assertEqual('top2 = price_too_low(5)', tr[1].reason, 'price_too_low');
   // 空 reason 被过滤
-  const tr2 = topRejections([{ reason: '', count: 999 }, { reason: 'a', count: 1 }], 5);
+  const tr2 = topRejections(
+    [
+      { reason: '', count: 999 },
+      { reason: 'a', count: 1 },
+    ],
+    5
+  );
   assertEqual('空 reason 过滤', tr2.length, 1);
   // limit 0
   assertEqual('limit 0 → 空', topRejections([{ reason: 'x', count: 1 }], 0).length, 0);
 
   // ===========================================================================
   console.log('\n[4] summarizeAiEngine...');
-  const ai0 = summarizeAiEngine({ total: 0, completed: 0, partial: 0, failed: 0, avg_latency_ms: null });
-  assertEqual('全 0 fallback_rate=0', ai0.fallback_rate, 0);
+  const ai0 = summarizeAiEngine({
+    total: 0,
+    completed: 0,
+    partial: 0,
+    failed: 0,
+    avg_latency_ms: null,
+  });
+  assertEqual('全 0 fallback_rate=N/A(null)', ai0.fallback_rate, null);
   assertEqual('全 0 latency=null', ai0.avg_latency_ms, null);
   const ai1 = summarizeAiEngine({
     total: 100,
@@ -233,7 +259,14 @@ async function main() {
     paper_trading: { buy_count: 0, sell_count: 0, avg_realized_pnl: null, total_realized_pnl: 0 },
     cron_failures: [],
     risk_alerts_high: [],
-    ai_engine: { total: 0, completed: 0, partial: 0, failed: 0, avg_latency_ms: null, fallback_rate: 0 },
+    ai_engine: {
+      total: 0,
+      completed: 0,
+      partial: 0,
+      failed: 0,
+      avg_latency_ms: null,
+      fallback_rate: 0,
+    },
     factor_std_zero: [],
     errors: {},
   };
@@ -245,7 +278,15 @@ async function main() {
   console.log('\n[6] buildHealthReportMarkdown...');
   const md0 = buildHealthReportMarkdown(emptyReport);
   assert('md 含日期', md0.includes('2026-06-23'));
-  assert('md 含 7 段 header', md0.includes('实盘下单') && md0.includes('模拟盘') && md0.includes('Cron 失败') && md0.includes('RiskAlert') && md0.includes('AI 引擎') && md0.includes('Factor'));
+  assert(
+    'md 含 7 段 header',
+    md0.includes('实盘下单') &&
+      md0.includes('模拟盘') &&
+      md0.includes('Cron 失败') &&
+      md0.includes('RiskAlert') &&
+      md0.includes('AI 引擎') &&
+      md0.includes('Factor')
+  );
   assert('md 空告警提示', md0.includes('无 HIGH/CRITICAL 告警'));
   // 满 case
   const fullReport: DailyHealthReport = {
@@ -261,7 +302,12 @@ async function main() {
       { reason: 'price_too_low', count: 5 },
       { reason: 'risk_block', count: 3 },
     ],
-    paper_trading: { buy_count: 3, sell_count: 2, avg_realized_pnl: 123.45, total_realized_pnl: 246.9 },
+    paper_trading: {
+      buy_count: 3,
+      sell_count: 2,
+      avg_realized_pnl: 123.45,
+      total_realized_pnl: 246.9,
+    },
     cron_failures: [
       {
         id: 1,
@@ -283,7 +329,14 @@ async function main() {
         message: '当前回撤已超 15% 阈值',
       },
     ],
-    ai_engine: { total: 50, completed: 40, partial: 5, failed: 5, avg_latency_ms: 2300, fallback_rate: 0.2 },
+    ai_engine: {
+      total: 50,
+      completed: 40,
+      partial: 5,
+      failed: 5,
+      avg_latency_ms: 2300,
+      fallback_rate: 0.2,
+    },
     factor_std_zero: [{ factor_name: 'northbound', observation_count: 100 }],
     errors: {},
   };
@@ -343,7 +396,10 @@ async function main() {
   const dsBad = new FakeDataSource({ throwOn: 'live' });
   const rep2 = await generateDailyHealthReport(dsBad, new Date('2026-06-23T13:00:00Z'));
   assert('live throw → live=0 not throw', rep2.live_order.total === 0);
-  assert('live throw 记 errors', rep2.errors.live_order && rep2.errors.live_order.includes('live down'));
+  assert(
+    'live throw 记 errors',
+    rep2.errors.live_order && rep2.errors.live_order.includes('live down')
+  );
   // 其他段仍正常
   assert('其他段未受影响', rep2.cron_failures.length === 0 && rep2.risk_alerts_high.length === 0);
 
@@ -375,10 +431,18 @@ async function main() {
     pusher: fakePusher,
   });
   assert('push_attempted=true', pushRes.push_attempted === true);
-  assert('pushed.dedup_key = daily-health:2026-06-23', pushedInput?.dedup_key === 'daily-health:2026-06-23');
-  assert('pushed.level = INFO', pushedInput?.level === 'INFO');
+  assert(
+    'pushed.dedup_key = daily-health:2026-06-23',
+    pushedInput?.dedup_key === 'daily-health:2026-06-23'
+  );
+  assert('有 cron/高风险项时 pushed.level = HIGH', pushedInput?.level === 'HIGH');
+  assert('日报使用精确日期幂等键', pushedInput?.idempotency_key === 'daily-health:2026-06-23');
+  assert('日报时间显式 UTC+8', String(pushedInput?.triggered_at || '').includes('UTC+8'));
   assert('pushed.title 含日期', String(pushedInput?.title || '').includes('2026-06-23'));
-  assert('pushed.body_markdown 含 实盘', String(pushedInput?.body_markdown || '').includes('实盘下单'));
+  assert(
+    'pushed.body_markdown 含 实盘',
+    String(pushedInput?.body_markdown || '').includes('实盘下单')
+  );
 
   // pusher 抛错 → push_error 记录但 push_attempted=true
   const throwingPusher = async () => {
@@ -389,19 +453,36 @@ async function main() {
     now: new Date('2026-06-23T13:00:00Z'),
     pusher: throwingPusher,
   });
-  assert('push throw → push_error 记录', pushRes2.push_error?.includes('lark webhook 500') === true);
+  assert(
+    'push throw → push_error 记录',
+    pushRes2.push_error?.includes('lark webhook 500') === true
+  );
 
   // ===========================================================================
   console.log('\n[11] edge — 全部段都 throw 时 fail-OPEN 全 placeholder...');
   // 给 ds 同时 throw on multiple — JS class 不支持; 用 wrapper
   class AllThrowDS implements DailyHealthReportDataSource {
-    async getLiveOrderStatusBreakdown(): Promise<Record<string, number>> { throw new Error('1'); }
-    async getDraftRejectionTopReasons() { throw new Error('2'); }
-    async getPaperTradingSummary() { throw new Error('3'); }
-    async getFailedCronsToday() { throw new Error('4'); }
-    async getRiskAlertsHighToday() { throw new Error('5'); }
-    async getAiEngineSummary() { throw new Error('6'); }
-    async getFactorStdZero() { throw new Error('7'); }
+    async getLiveOrderStatusBreakdown(): Promise<Record<string, number>> {
+      throw new Error('1');
+    }
+    async getDraftRejectionTopReasons() {
+      throw new Error('2');
+    }
+    async getPaperTradingSummary() {
+      throw new Error('3');
+    }
+    async getFailedCronsToday() {
+      throw new Error('4');
+    }
+    async getRiskAlertsHighToday() {
+      throw new Error('5');
+    }
+    async getAiEngineSummary() {
+      throw new Error('6');
+    }
+    async getFactorStdZero() {
+      throw new Error('7');
+    }
   }
   const rep4 = await generateDailyHealthReport(new AllThrowDS(), new Date('2026-06-23T13:00:00Z'));
   assertEqual('全失败 errors 6 entries', Object.keys(rep4.errors).length, 7);
@@ -426,7 +507,12 @@ async function main() {
   // 负数 pnl
   const rep6 = await generateDailyHealthReport(
     new FakeDataSource({
-      paperTrading: { buy_count: 2, sell_count: 3, avg_realized_pnl: -150.75, total_realized_pnl: -452.25 },
+      paperTrading: {
+        buy_count: 2,
+        sell_count: 3,
+        avg_realized_pnl: -150.75,
+        total_realized_pnl: -452.25,
+      },
     }),
     new Date('2026-06-23T13:00:00Z')
   );

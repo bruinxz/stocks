@@ -458,7 +458,7 @@ COMMENT ON COLUMN public.daily_bars.is_suspended IS '是否停牌';
 CREATE TABLE public.daily_screeners (
     id integer NOT NULL,
     date date NOT NULL,
-    symbol character varying(20) NOT NULL,
+    symbol character varying(64) NOT NULL,
     name character varying(100) NOT NULL,
     decision character varying(50) NOT NULL,
     rationale text,
@@ -1023,7 +1023,9 @@ CREATE TABLE public.risk_alerts (
     name character varying(100) NOT NULL,
     level character varying(50) NOT NULL,
     message text NOT NULL,
+    rule_id character varying(64),
     is_read boolean DEFAULT false,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL
 );

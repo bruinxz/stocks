@@ -2064,7 +2064,6 @@ export class PaperTradingFacade {
       return recommendationTradeOutcomeService.getDashboard({
         ...(options.body || {}),
         user_id,
-        report_to_feishu: true,
       });
     }
 
@@ -2159,7 +2158,7 @@ export class PaperTradingFacade {
             use_entry_risk_guard: true,
             use_profit_gate: true,
             use_outcome_feedback: true,
-            report_to_feishu: true,
+            notify_business_summary: true,
             dry_run_strategy_keys: dryRunStrategyKeys,
             ...body,
             user_id,
@@ -2179,7 +2178,7 @@ export class PaperTradingFacade {
         const execution = await paperTradingAutomationService.runRiskCheck(
           withAutonomousPortfolio({
             dry_run: false,
-            report_to_feishu: true,
+            notify_business_summary: true,
             enable_stop_loss: true,
             enable_take_profit: true,
             enable_trailing_take_profit: true,
@@ -2219,7 +2218,6 @@ export class PaperTradingFacade {
         return paperTradingPlanService.generatePlan({
           ...body,
           user_id,
-          report_to_feishu: true,
         });
 
       case 'tuning_apply':

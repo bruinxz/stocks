@@ -45,8 +45,7 @@ import { Table, Column, Model, DataType, CreatedAt, UpdatedAt } from 'sequelize-
  * **消费方**：
  *   - GET /api/sentiment/index?days=30 —— 前端时序图 (TodayWorkspace 顶 KPI 卡片
  *     + 单股详情页 "市场温度" 副信号)；
- *   - 未来 US-080 NotificationService 当 index_value > 80 / < 20 时推送 (极端
- *     情绪告警)；
+ *   - 若恢复极端情绪告警，必须通过 FeishuNotificationService 统一 outbox 投递；
  *   - 未来 US-049 DrawdownCircuitBreaker 可消费此指数作为"市场背景信号"叠加 LEVEL_3
  *     额外暂停。
  */

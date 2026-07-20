@@ -86,7 +86,7 @@ async function requestJson(path, options = {}) {
 
   const refreshResponse = await requestJson('/ai/signals/performance/refresh', {
     method: 'POST',
-    body: JSON.stringify({ limit: 20, report_to_feishu: false }),
+    body: JSON.stringify({ limit: 20 }),
   });
   assert.ok(refreshResponse.data?.verification, 'refresh verification missing');
   assert.ok(refreshResponse.data?.dashboard?.overview, 'refresh dashboard overview missing');

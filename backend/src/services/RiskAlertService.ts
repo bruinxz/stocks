@@ -54,6 +54,8 @@
  */
 
 import { logger } from '../utils/logger';
+import { createHash } from 'crypto';
+import { feishuNotificationService } from './FeishuNotificationService';
 
 // ---------------------------------------------------------------------------
 // Constants & types
@@ -253,6 +255,8 @@ export interface RiskAlertCreatePayload {
 }
 
 export interface RiskAlertServiceDataSource {
+  /** 生产实现先写统一 outbox；用于区分测试 fake 的传统 URL 前置校验。 */
+  uses_durable_feishu_outbox?: boolean;
   /** 写 DB RiskAlert 行；返回 id（写失败时抛错由 caller 兜） */
   createRiskAlert(payload: RiskAlertCreatePayload): Promise<{ id: number }>;
   /** 取 user.email 作 IM 地址（user 不存在返回 null） */
@@ -268,16 +272,6 @@ export interface RiskAlertServiceDataSource {
     subject: string,
     body: string
   ): Promise<{ success: boolean; message?: string; ref_id?: string }>;
-  /** Fire-and-forget 触发用户个性化 RealtimeAlertDispatcher（仅当 alert_id 已知） */
-  fireRealtimeDispatcher(input: {
-    alert_id: number;
-    user_id: number;
-    symbol: string;
-    name: string;
-    level: 'HIGH';
-    message: string;
-    rule_id?: string;
-  }): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -285,6 +279,7 @@ export interface RiskAlertServiceDataSource {
 // ---------------------------------------------------------------------------
 
 class DefaultRiskAlertServiceDataSource implements RiskAlertServiceDataSource {
+  readonly uses_durable_feishu_outbox = true;
   async createRiskAlert(payload: RiskAlertCreatePayload): Promise<{ id: number }> {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { RiskAlert } = require('../models/RiskAlert');
@@ -320,19 +315,21 @@ class DefaultRiskAlertServiceDataSource implements RiskAlertServiceDataSource {
   }
 
   async postFeishuOps(
-    url: string,
+    _url: string,
     body: { msg_type: 'text'; content: { text: string } }
   ): Promise<{ success: boolean; message?: string }> {
-    // 复用 LiveAuditAlertService / audit-task-parameters-dry-run 同款轻量 axios POST
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const axios = require('axios');
     try {
-      await axios.post(url, body, {
-        timeout: Number(process.env.OPS_ALERT_FEISHU_TIMEOUT_MS || 5000),
-        maxRedirects: 0,
-        validateStatus: (s: number) => s >= 200 && s < 300,
+      const digest = createHash('sha256').update(body.content.text).digest('hex').slice(0, 32);
+      const result = await feishuNotificationService.enqueueAndDeliver({
+        idempotency_key: `risk-alert-text:${digest}`,
+        topic_key: 'risk-alert-text',
+        audience: 'ops',
+        kind: 'risk_alert_text',
+        severity: 'HIGH',
+        title: body.content.text.split('\n')[0] || '风控告警',
+        payload: body,
       });
-      return { success: true };
+      return { success: result.success, message: result.message };
     } catch (err: any) {
       return { success: false, message: err?.message || String(err) };
     }
@@ -369,33 +366,6 @@ class DefaultRiskAlertServiceDataSource implements RiskAlertServiceDataSource {
       return { success: false, message: (r as any)?.message };
     } catch (err: any) {
       return { success: false, message: err?.message || String(err) };
-    }
-  }
-
-  fireRealtimeDispatcher(input: {
-    alert_id: number;
-    user_id: number;
-    symbol: string;
-    name: string;
-    level: 'HIGH';
-    message: string;
-    rule_id?: string;
-  }): void {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { realtimeAlertDispatcher } = require('./RealtimeAlertDispatcher');
-      realtimeAlertDispatcher.fireAndForget({
-        alert_id: input.alert_id,
-        user_id: input.user_id,
-        symbol: input.symbol,
-        name: input.name,
-        level: input.level,
-        message: input.message,
-        rule_id: input.rule_id,
-        triggered_at: new Date().toISOString(),
-      });
-    } catch (err: any) {
-      logger.warn(`[RiskAlertService] fireRealtimeDispatcher failed: ${err?.message || err}`);
     }
   }
 }
@@ -464,6 +434,9 @@ export class RiskAlertService {
       ...(input.metadata || {}),
       ...(wantToast ? { toast: true } : {}),
       severity,
+      // 本 service 已同步持久化外部通知；model hook 只保留 WebSocket 广播，
+      // 不再为同一 RiskAlert 额外生产第二条飞书消息。
+      external_dispatch_owner: 'risk_alert_service',
     };
 
     if (plannedChannels.includes('inbox')) {
@@ -507,28 +480,7 @@ export class RiskAlertService {
     const fanoutPromises: Array<Promise<RiskAlertChannelResult>> = [];
 
     if (plannedChannels.includes('feishu')) {
-      // Phase 10 通知审计 (2026-06-28): 当 inbox 写入成功 (alertId 已知) 时,
-      // RiskAlert.afterCreate hook 会通过 SystemAdminAlertPusher 推一张更完整的
-      // interactive card 到同一个 OPS_ALERT_FEISHU_WEBHOOK; 这里再发一条 text msg
-      // 会让 OPS 群几秒内收到两条覆盖率 ~90% 重叠的内容. 当 alertId 存在 ->
-      // 跳过本路径, 让 hook 的 card 成为唯一 ops 推送源.
-      //
-      // 兼容路径: caller 显式 override_channels=['feishu'] 不走 inbox (alertId
-      // 仍是 undefined) 的旧场景, 仍发 text msg, 行为不变.
-      // 也兼容: caller 显式 options.force_feishu_text=true (供 audit-task-
-      // parameters-dry-run.ts 等需要文本格式的场景强发 text).
-      if (typeof alertId !== 'number' || options.force_feishu_text === true) {
-        fanoutPromises.push(this.runFeishu(input, options));
-      } else {
-        channels.push({
-          channel: 'feishu',
-          attempted: false,
-          success: false,
-          skipped: true,
-          message:
-            'inbox 写入成功后由 afterCreate hook 接管 ops 推送, skip duplicate text (Phase 10)',
-        });
-      }
+      fanoutPromises.push(this.runFeishu(input, options));
     }
     if (plannedChannels.includes('im')) {
       fanoutPromises.push(this.runIm(input, options));
@@ -566,27 +518,6 @@ export class RiskAlertService {
       }
     }
 
-    // ---- (5) realtime dispatcher hook — 仅 critical / high 且 alert 已写入 ----
-    if (
-      (severity === RISK_ALERT_SEVERITY.CRITICAL || severity === RISK_ALERT_SEVERITY.HIGH) &&
-      typeof alertId === 'number'
-    ) {
-      try {
-        this.dataSource.fireRealtimeDispatcher({
-          alert_id: alertId,
-          user_id: input.user_id,
-          symbol: input.symbol,
-          name: input.name,
-          level: 'HIGH', // RealtimeAlertDispatcher 只识 'HIGH'
-          message: input.message,
-          rule_id: input.rule_id,
-        });
-      } catch (err: any) {
-        // fireAndForget 自身已吞错；这里再兜一层
-        logger.warn(`[RiskAlertService.write] fireRealtimeDispatcher 异常: ${err?.message || err}`);
-      }
-    }
-
     return {
       severity,
       planned_channels: plannedChannels,
@@ -606,7 +537,7 @@ export class RiskAlertService {
     const url =
       String(options.feishu_webhook_url || '').trim() ||
       String(process.env.OPS_ALERT_FEISHU_WEBHOOK || '').trim();
-    if (!url) {
+    if (!url && !this.dataSource.uses_durable_feishu_outbox) {
       return {
         channel: 'feishu',
         attempted: false,

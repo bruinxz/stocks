@@ -12,7 +12,6 @@ import { User } from '../models/User';
 import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { benchmarkIndexService } from './BenchmarkIndexService';
 import { paperTradingAutomationService } from '../portfolio/internal/PaperTradingAutomationService';
-import { feishuTaskReportService } from './FeishuTaskReportService';
 import { buildTradePolicyExplain } from './TradePolicyExplainService';
 import { normalizeSymbol, extractMarket } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
@@ -48,7 +47,6 @@ export interface RecommendationTradeOutcomeRefreshOptions {
   agent_session?: string;
   signal_id?: number;
   limit?: number;
-  report_to_feishu?: boolean;
   /**
    * 当 true 时, refreshPortfolioOutcomes 自动遍历所有 is_active=true PaperTradingPortfolio,
    * 对每个 portfolio 各调一次 refreshPortfolioOutcomes 并聚合结果. portfolio_name 被忽略.
@@ -763,10 +761,7 @@ function agentSessionLabel(value?: string): string {
 }
 
 export class RecommendationTradeOutcomeService {
-  async refreshOutcomeBySignal(
-    signal_id: number,
-    options: { report_to_feishu?: boolean } = {}
-  ): Promise<RecommendationTradeOutcome | null> {
+  async refreshOutcomeBySignal(signal_id: number): Promise<RecommendationTradeOutcome | null> {
     const signal = await AIInvestmentSignal.findByPk(signal_id);
     if (!signal) return null;
 
@@ -790,13 +785,6 @@ export class RecommendationTradeOutcomeService {
           `refreshOutcomeBySignal: portfolio ${entry.portfolio_id} 失败: ${err?.message || err}`
         );
       }
-    }
-
-    if (latestOutcome && options.report_to_feishu) {
-      await feishuTaskReportService.reportRecommendationTradeOutcomes(
-        await this.getDashboard({ portfolio_id: latestOutcome.portfolio_id, include_open: true }),
-        { record_type: '推荐交易收益闭环刷新' }
-      );
     }
 
     return latestOutcome;
@@ -858,7 +846,6 @@ export class RecommendationTradeOutcomeService {
             portfolio_name: undefined,
             force_new_portfolio: false,
             // 关闭逐 portfolio 飞书通知, 避免 N 个 portfolio 一次推 N 条
-            report_to_feishu: false,
           });
           aggregated.refreshed += single.refreshed;
           aggregated.created_or_updated += single.created_or_updated;
@@ -950,7 +937,6 @@ export class RecommendationTradeOutcomeService {
       ...options,
       portfolio_id: portfolio.id,
       include_open: includeOpen,
-      report_to_feishu: false,
     });
 
     const result = {
@@ -963,12 +949,6 @@ export class RecommendationTradeOutcomeService {
       outcomes,
       dashboard,
     };
-
-    if (toBoolean(options.report_to_feishu, false)) {
-      await feishuTaskReportService.reportRecommendationTradeOutcomes(dashboard, {
-        record_type: '推荐交易收益闭环刷新',
-      });
-    }
 
     const loopRunIds = Array.from(
       new Set(
@@ -1431,12 +1411,6 @@ export class RecommendationTradeOutcomeService {
       feedback: this.buildFeedback(summary, groups),
     };
 
-    if (toBoolean(options.report_to_feishu, false)) {
-      await feishuTaskReportService.reportRecommendationTradeOutcomes(dashboard, {
-        record_type: '推荐交易收益闭环看板',
-      });
-    }
-
     return dashboard;
   }
 
@@ -1450,7 +1424,6 @@ export class RecommendationTradeOutcomeService {
       include_open: true,
       lookback_days: lookbackDays,
       limit: toPositiveInt(options.limit, 2000, 10000),
-      report_to_feishu: false,
     });
 
     const outcomes = outcomeDashboard.outcomes.map(item => modelToPlain<any>(item));

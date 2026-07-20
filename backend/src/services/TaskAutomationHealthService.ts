@@ -152,13 +152,6 @@ const CHAIN_CONFIGS: HealthChainConfig[] = [
       },
       {
         task_name: '全市场荐股闭环',
-        key: 'report_to_feishu',
-        camel_key: 'reportToFeishu',
-        expected: true,
-        label: '飞书结果写入',
-      },
-      {
-        task_name: '全市场荐股闭环',
         key: 'use_strategy_experiment_feedback',
         camel_key: 'useStrategyExperimentFeedback',
         expected: true,
@@ -196,14 +189,6 @@ const CHAIN_CONFIGS: HealthChainConfig[] = [
         label: '参数生命周期真实应用',
         level: 'warning',
       },
-      {
-        task_name: '量化参数后验维护',
-        key: 'report_to_feishu',
-        camel_key: 'reportToFeishu',
-        expected: true,
-        label: '参数后验飞书摘要',
-        level: 'warning',
-      },
     ],
   },
   {
@@ -220,13 +205,6 @@ const CHAIN_CONFIGS: HealthChainConfig[] = [
         camel_key: 'dryRun',
         expected: false,
         label: '推荐跟单真实记录',
-      },
-      {
-        task_name: '推荐信号模拟盘跟单',
-        key: 'report_to_feishu',
-        camel_key: 'reportToFeishu',
-        expected: true,
-        label: '推荐跟单飞书上报',
       },
       {
         task_name: '模拟盘风控退出检查',
@@ -352,7 +330,7 @@ function summarizeParameters(task: any): Record<string, any> {
     'candidate_pool_limit',
     'run_paper_trading',
     'dry_run',
-    'report_to_feishu',
+    'notify_business_summary',
     'use_profit_gate',
     'use_entry_risk_guard',
     'use_strategy_experiment_feedback',

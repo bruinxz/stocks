@@ -190,11 +190,12 @@ loggerModule.logger.error = () => undefined;
 
   // =========================================================================
   console.log('\n[3] buildChannelPlan...');
-  assertEqual(
-    'critical 默认 plan',
-    buildChannelPlan(RISK_ALERT_SEVERITY.CRITICAL),
-    ['inbox', 'feishu', 'im', 'toast']
-  );
+  assertEqual('critical 默认 plan', buildChannelPlan(RISK_ALERT_SEVERITY.CRITICAL), [
+    'inbox',
+    'feishu',
+    'im',
+    'toast',
+  ]);
   assertEqual('high 默认 plan', buildChannelPlan(RISK_ALERT_SEVERITY.HIGH), ['inbox', 'feishu']);
   assertEqual('medium 默认 plan', buildChannelPlan(RISK_ALERT_SEVERITY.MEDIUM), ['inbox']);
   assertEqual(
@@ -303,14 +304,17 @@ loggerModule.logger.error = () => undefined;
     assertEqual('critical: im 被调用 1 次', ds.imCalls.length, 1);
     const im = r.channels.find(c => c.channel === 'im')!;
     assert('critical: im success', im.success === true);
-    assertEqual('critical: im subject', ds.imCalls[0].subject, '【CRITICAL 风控告警】600519 贵州茅台');
+    assertEqual(
+      'critical: im subject',
+      ds.imCalls[0].subject,
+      '【CRITICAL 风控告警】600519 贵州茅台'
+    );
     // toast 标记
     const toast = r.channels.find(c => c.channel === 'toast')!;
     assert('critical: toast success', toast.success === true);
     assertEqual('critical: toast ref_id = alert_id', toast.ref_id, r.alert_id);
-    // realtime dispatcher 触发
-    assertEqual('critical: realtime dispatch 1 次', ds.realtimeCalls.length, 1);
-    assertEqual('critical: realtime alert_id 透传', ds.realtimeCalls[0].alert_id, r.alert_id);
+    // 用户分发由 RiskAlert.afterCreate 唯一负责，service 不再重复触发。
+    assertEqual('critical: service 不重复 realtime dispatch', ds.realtimeCalls.length, 0);
     delete process.env.OPS_ALERT_FEISHU_WEBHOOK;
   }
 
@@ -327,7 +331,7 @@ loggerModule.logger.error = () => undefined;
     assertEqual('high: channels.length=2', r.channels.length, 2);
     assertEqual('high: feishu 调 1 次', ds.feishuCalls.length, 1);
     assertEqual('high: im 不调', ds.imCalls.length, 0);
-    assertEqual('high: realtime dispatch 1 次', ds.realtimeCalls.length, 1);
+    assertEqual('high: service 不重复 realtime dispatch', ds.realtimeCalls.length, 0);
     assertEqual('high: inbox level=HIGH', ds.createCalls[0].level, 'HIGH');
     // toast 不在 plan → metadata.toast 不会注入
     assert('high: metadata.toast 不注入', (ds.createCalls[0] as any).metadata?.toast !== true);
@@ -413,8 +417,14 @@ loggerModule.logger.error = () => undefined;
     assert('feishu fail: success=false', feishu.success === false);
     assert('feishu fail: error 含 fake', String(feishu.error || '').includes('fake feishu fail'));
     // inbox / im 不受污染
-    assert('feishu fail: inbox 仍 success', r.channels.find(c => c.channel === 'inbox')!.success === true);
-    assert('feishu fail: im 仍 success', r.channels.find(c => c.channel === 'im')!.success === true);
+    assert(
+      'feishu fail: inbox 仍 success',
+      r.channels.find(c => c.channel === 'inbox')!.success === true
+    );
+    assert(
+      'feishu fail: im 仍 success',
+      r.channels.find(c => c.channel === 'im')!.success === true
+    );
     delete process.env.OPS_ALERT_FEISHU_WEBHOOK;
   }
 
@@ -459,7 +469,10 @@ loggerModule.logger.error = () => undefined;
       String(im.error || '').includes('loadUserImAddress')
     );
     // inbox 仍成功
-    assert('im loadIm throw: inbox 仍 success', r.channels.find(c => c.channel === 'inbox')!.success === true);
+    assert(
+      'im loadIm throw: inbox 仍 success',
+      r.channels.find(c => c.channel === 'inbox')!.success === true
+    );
   }
 
   // IM sendIm fail → channel failed
@@ -532,22 +545,20 @@ loggerModule.logger.error = () => undefined;
   }
 
   // =========================================================================
-  console.log('\n[8] realtime dispatcher hook 路由...');
-  // critical 触发
+  console.log('\n[8] realtime dispatcher 去重...');
+  // RiskAlert model hook 是唯一用户 dispatcher；service 不再补发第二次。
   {
     const ds = new FakeDataSource();
     const svc = new RiskAlertService(ds);
     await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.CRITICAL }));
-    assertEqual('critical: realtime called', ds.realtimeCalls.length, 1);
-    assertEqual('critical: realtime level=HIGH', ds.realtimeCalls[0].level, 'HIGH');
-    assertEqual('critical: realtime rule_id 透传', ds.realtimeCalls[0].rule_id, 'position_limit');
+    assertEqual('critical: service realtime not called', ds.realtimeCalls.length, 0);
   }
   // high 触发
   {
     const ds = new FakeDataSource();
     const svc = new RiskAlertService(ds);
     await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.HIGH }));
-    assertEqual('high: realtime called', ds.realtimeCalls.length, 1);
+    assertEqual('high: service realtime not called', ds.realtimeCalls.length, 0);
   }
   // medium 不触发
   {
@@ -588,6 +599,11 @@ loggerModule.logger.error = () => undefined;
     assertEqual('metadata.custom_key 透传', md?.custom_key, 'val');
     assertEqual('metadata.toast 强制 true（覆盖 user false）', md?.toast, true);
     assertEqual('metadata.severity 注入', md?.severity, 'critical');
+    assertEqual(
+      'metadata 标记 RiskAlertService 为唯一外部通知生产者',
+      md?.external_dispatch_owner,
+      'risk_alert_service'
+    );
   }
   // rule_id 缺省 → DB payload 传 undefined（model 自己处理 null）
   {
@@ -600,7 +616,11 @@ loggerModule.logger.error = () => undefined;
       severity: RISK_ALERT_SEVERITY.MEDIUM,
       message: 'test',
     });
-    assertEqual('rule_id 缺省时 DB payload rule_id=undefined', ds.createCalls[0].rule_id, undefined);
+    assertEqual(
+      'rule_id 缺省时 DB payload rule_id=undefined',
+      ds.createCalls[0].rule_id,
+      undefined
+    );
   }
 
   // =========================================================================
@@ -627,26 +647,22 @@ loggerModule.logger.error = () => undefined;
   }
 
   // =========================================================================
-  console.log('\n[11] Phase 10 通知审计 — runFeishu 与 afterCreate hook 去重...');
-  // 默认 (force_feishu_text 未传): inbox 成功后 feishu channel skip
-  // (RiskAlert.afterCreate hook 会推 interactive card 兜底, 避免双推)
+  console.log('\n[11] OPS 通知由 RiskAlertService 单一路径发送...');
   {
     process.env.OPS_ALERT_FEISHU_WEBHOOK = 'https://feishu.test/webhook/p10';
     const ds = new FakeDataSource();
     const svc = new RiskAlertService(ds);
     const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.HIGH }));
     const feishu = r.channels.find(c => c.channel === 'feishu')!;
-    assert('phase 10 default: feishu skipped=true', feishu.skipped === true);
-    assert('phase 10 default: feishu attempted=false', feishu.attempted === false);
-    assert(
-      'phase 10 default: feishu message 含 hook 接管说明',
-      String(feishu.message || '').includes('hook')
-    );
-    assertEqual('phase 10 default: DataSource.postFeishuOps 0 次', ds.feishuCalls.length, 0);
+    assert('default: feishu success=true', feishu.success === true);
+    assert('default: feishu attempted=true', feishu.attempted === true);
+    assertEqual('default: DataSource.postFeishuOps 1 次', ds.feishuCalls.length, 1);
     // inbox 仍写入
-    assert('phase 10 default: inbox success', r.channels.find(c => c.channel === 'inbox')!.success === true);
-    // realtime dispatcher 仍触发
-    assertEqual('phase 10 default: realtime dispatch 1 次', ds.realtimeCalls.length, 1);
+    assert(
+      'phase 10 default: inbox success',
+      r.channels.find(c => c.channel === 'inbox')!.success === true
+    );
+    assertEqual('default: service 不重复 realtime dispatch', ds.realtimeCalls.length, 0);
     delete process.env.OPS_ALERT_FEISHU_WEBHOOK;
   }
   // force_feishu_text=true: runFeishu 真发 text (兼容 audit-task-parameters-dry-run.ts 等老 caller)
@@ -670,13 +686,9 @@ loggerModule.logger.error = () => undefined;
     const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.HIGH }), {
       override_channels: ['feishu'], // 内部会 prepend inbox, 但 caller 显式不要 inbox 的语义需走 override
     });
-    // override_channels=['feishu'] 会 prepend inbox -> alertId 写入 -> 默认仍 skip;
-    // 这里只验"显式 override 也不破坏 dedup 行为"
     const feishu = r.channels.find(c => c.channel === 'feishu')!;
-    assert(
-      'phase 10 override: 仍走 dedup 路径 (skip)',
-      feishu.skipped === true
-    );
+    assert('override: feishu 仍通过单一路径发送', feishu.success === true);
+    assertEqual('override: postFeishuOps 1 次', ds.feishuCalls.length, 1);
     delete process.env.OPS_ALERT_FEISHU_WEBHOOK;
   }
   // override_channels=['feishu'] + createReturnsBadId: alertId undefined -> feishu 仍发
@@ -693,12 +705,7 @@ loggerModule.logger.error = () => undefined;
   }
 
   // =========================================================================
-  console.log('\n[12] Phase 10 验证 (audit 验收) — critical 路径 OPS 群只收 1 条 (card from hook)...');
-  // 用户原话: "把没做的继续做完", item 5 = "验证冗余 #1 修复后无回归".
-  // AC: RiskAlertService.write({severity: 'critical'}) → OPS 群只收 1 条 (card from
-  // hook), 不再收 text + card 两条 (Phase 10 P0-1 修复). 本 case 显式验证 RiskAlertService
-  // 默认 (force_feishu_text 未传) 路径 postFeishuOps=0 次 + realtime dispatcher 仍触发
-  // (hook 在 prod 会通过 SystemAdminAlertPusher 把唯一一张 interactive card 推到 OPS).
+  console.log('\n[12] critical 路径 OPS 群只有一个生产者...');
   {
     process.env.OPS_ALERT_FEISHU_WEBHOOK = 'https://feishu.test/webhook/p10-verify';
     const ds = new FakeDataSource();
@@ -706,17 +713,14 @@ loggerModule.logger.error = () => undefined;
     const r = await svc.write(makeInput({ severity: RISK_ALERT_SEVERITY.CRITICAL }));
     // critical → planned channels = [inbox, feishu, im, toast]
     assertEqual('p10 verify: planned 4 通道', r.planned_channels.length, 4);
-    // 但 feishu 通道 skip (P0-1 修复: hook 兜底)
     const feishu = r.channels.find(c => c.channel === 'feishu')!;
-    assert('p10 verify: feishu skipped=true', feishu.skipped === true);
-    assertEqual('p10 verify: postFeishuOps 调 0 次 (避免双推)', ds.feishuCalls.length, 0);
+    assert('verify: feishu success=true', feishu.success === true);
+    assertEqual('verify: postFeishuOps 仅 1 次', ds.feishuCalls.length, 1);
     // inbox 仍写入
     const inbox = r.channels.find(c => c.channel === 'inbox')!;
     assert('p10 verify: inbox success', inbox.success === true);
     assert('p10 verify: alert_id 存在', typeof r.alert_id === 'number');
-    // realtime dispatcher 仍触发 — prod 在 hook 内由 SystemAdminAlertPusher 推一张 card 到 OPS
-    assertEqual('p10 verify: realtime dispatcher 1 次 (hook 兜底路径)', ds.realtimeCalls.length, 1);
-    assertEqual('p10 verify: realtime alert_id 透传', ds.realtimeCalls[0].alert_id, r.alert_id);
+    assertEqual('verify: service realtime dispatcher 0 次', ds.realtimeCalls.length, 0);
     // im 仍发 (与 feishu 不同的通道, 不触发去重)
     assertEqual('p10 verify: im 调 1 次 (邮件路径不去重)', ds.imCalls.length, 1);
     delete process.env.OPS_ALERT_FEISHU_WEBHOOK;

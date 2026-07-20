@@ -250,8 +250,8 @@ assert.match(
 );
 assert.match(
   scheduler,
-  /RETIRED_LEGACY_TASK_TYPES = new Set\(\['BLACK_SWAN_DETECT'\]\)/,
-  'obsolete black-swan type must remain outside the active cron registry'
+  /RETIRED_LEGACY_TASK_TYPES = new Set\(\[[\s\S]{0,240}'BLACK_SWAN_DETECT'[\s\S]{0,240}'SNOWBALL_HOT_KEYWORD_SYNC'/,
+  'obsolete black-swan and Snowball types must remain outside the active cron registry'
 );
 assert.match(
   scheduler,

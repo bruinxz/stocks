@@ -7,7 +7,6 @@ import { PaperTradingTrade } from '../../models/PaperTradingTrade';
 import { User } from '../../models/User';
 import { normalizeSymbol } from '../../utils/stockSymbol';
 import { paperTradingAutomationService } from './PaperTradingAutomationService';
-import { feishuTaskReportService } from '../../services/FeishuTaskReportService';
 import { buildTradePolicyExplain } from '../../services/TradePolicyExplainService';
 
 export interface PaperTradingAttributionOptions {
@@ -22,7 +21,6 @@ export interface PaperTradingAttributionOptions {
   start_date?: string;
   end_date?: string;
   limit?: number;
-  report_to_feishu?: boolean;
 }
 
 export interface PaperTradingClosedAttributionItem {
@@ -482,12 +480,6 @@ export class PaperTradingAttributionService {
       executed_signals: signals.length,
     });
 
-    if (toBoolean(options.report_to_feishu, false)) {
-      await feishuTaskReportService.reportPaperTradingAttribution(result, {
-        record_type: '模拟盘收益归因',
-      });
-    }
-
     return result;
   }
 
@@ -495,7 +487,6 @@ export class PaperTradingAttributionService {
     return this.getAttribution({
       ...options,
       include_open: options.include_open ?? true,
-      report_to_feishu: true,
     });
   }
 

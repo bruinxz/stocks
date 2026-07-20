@@ -1,6 +1,11 @@
-import axios, { AxiosInstance } from 'axios';
 import moment from 'moment-timezone';
 import { logger } from '../utils/logger';
+import {
+  FeishuAudience,
+  FeishuNotificationService,
+  buildWindowedFeishuIdempotencyKey,
+  feishuNotificationService,
+} from './FeishuNotificationService';
 
 export type FeishuRecommendationScenario =
   | 'quant_daily_pipeline'
@@ -93,44 +98,12 @@ function toBoolean(value: any, fallback = false): boolean {
  * 飞书自定义机器人 webhook 客户端。
  *
  * 只负责“短消息通知”：
- * - 多维表格仍由 FeishuTaskReportService 负责沉淀完整记录；
- * - 这里发送给用户决策用的简洁摘要，失败不影响主流程。
+ * - 所有卡片先写统一 outbox，再即时投递；失败由 worker 持久化重试。
  */
-class FeishuBotWebhookService {
-  private readonly http: AxiosInstance;
-
-  constructor() {
-    this.http = axios.create({
-      timeout: Number(process.env.FEISHU_BOT_WEBHOOK_TIMEOUT_MS || 10000),
-      // Batch X (2026-06-17): SSRF guard 第二道防线 — maxRedirects: 0 防 302 跳
-      // 内网 + validateStatus 只接受 2xx 避免 redirect 体被当成功.
-      maxRedirects: 0,
-      validateStatus: status => status >= 200 && status < 300,
-    });
-  }
-
-  /**
-   * Batch X (2026-06-17): safePost — 任何 webhook POST 前 validateWebhookUrl,
-   * 拒绝内网 / 非白名单 / 非 https URL. 失败 throw err.code='WEBHOOK_URL_INVALID'
-   * caller try/catch 转 {success:false, message}.
-   *
-   * Batch BF (2026-06-23): 修复 infinite recursion — 原版本 body 写成
-   * `return this.safePost(url, body)` 自己调自己 → stack overflow.
-   * 已上 prod (5174f49 / Batch AI 引入此 bug), 导致 4 处 caller (sendDailyDigestCard /
-   * sendEarningsForecastCard / sendRiskAlertCard / sendRecommendationSummary)
-   * 全部 throw → fail-OPEN 进 catch 走 warn "推送异常" → 用户一条飞书消息都收不到.
-   */
-  private async safePost(url: string, body: any) {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { assertWebhookUrlAllowed } = require('../utils/webhookUrlGuard');
-    assertWebhookUrlAllowed(url, 'feishu webhook_url');
-    return this.http.post(url, body);
-  }
-
-  isEnabled(): boolean {
-    if (toBoolean(process.env.DISABLE_FEISHU_BOT_WEBHOOK, false)) return false;
-    return Boolean(this.getWebhookUrl());
-  }
+export class FeishuBotWebhookService {
+  constructor(
+    private readonly notifications: FeishuNotificationService = feishuNotificationService
+  ) {}
 
   /**
    * US-063 — 发送当日交易日报 interactive card。
@@ -148,24 +121,11 @@ class FeishuBotWebhookService {
    */
   async sendDailyDigestCard(
     payload: any,
-    webhookUrl?: string,
+    _webhookUrl?: string,
     options?: { buildCard?: (payload: any) => any }
   ): Promise<FeishuBotWebhookSendResult> {
-    const targetUrl = firstText(webhookUrl, this.getWebhookUrl());
-    if (toBoolean(process.env.DISABLE_FEISHU_BOT_WEBHOOK, false)) {
-      return {
-        success: false,
-        skipped: true,
-        message: '飞书机器人 webhook 已通过环境变量禁用',
-      };
-    }
-    if (!targetUrl) {
-      return {
-        success: false,
-        skipped: true,
-        message: '飞书机器人 webhook 未配置，已跳过日报推送',
-      };
-    }
+    // URL 只用于旧调用签名兼容，不写入 outbox，避免持久化 webhook secret。
+    // 实际目标在投递时按 audience + user_id 从最新配置解析。
     if (!payload || typeof payload !== 'object') {
       return {
         success: false,
@@ -187,25 +147,17 @@ class FeishuBotWebhookService {
       return { success: false, message: `buildCard 异常: ${err?.message || err}` };
     }
 
-    try {
-      const response = await this.safePost(targetUrl, cardBody);
-      const body = response.data || {};
-      const rawCode = body.code ?? body.StatusCode ?? body.status_code ?? 0;
-      const code = Number(rawCode);
-      if (Number.isFinite(code) && code !== 0) {
-        const message = body.msg || body.message || body.StatusMessage || '飞书机器人返回失败';
-        logger.warn(`飞书日报推送失败: code=${code}, message=${message}`);
-        return { success: false, message, data: body };
-      }
-      logger.info(
-        `飞书日报已推送 (user=${payload.user_id ?? '?'}, trade_date=${payload.trade_date ?? '?'})`
-      );
-      return { success: true, data: body };
-    } catch (error: any) {
-      const message = error?.response?.data?.msg || error?.message || '飞书日报推送异常';
-      logger.warn(`飞书日报推送异常: ${message}`);
-      return { success: false, message };
-    }
+    return this.enqueueCard({
+      audience: payload.user_id ? 'user' : 'business',
+      recipient_user_id: payload.user_id,
+      kind: 'daily_trading_digest',
+      topic_key: `daily-trading-digest:${payload.user_id || 'shared'}`,
+      idempotency_key: `daily-trading-digest:${payload.user_id || 'shared'}:${
+        payload.trade_date || moment().tz('Asia/Shanghai').format('YYYY-MM-DD')
+      }`,
+      title: `📊 ${payload.trade_date || ''} 当日交易日报`,
+      payload: cardBody,
+    });
   }
 
   /**
@@ -226,24 +178,9 @@ class FeishuBotWebhookService {
    */
   async sendEarningsForecastCard(
     payload: any,
-    webhookUrl?: string,
+    _webhookUrl?: string,
     options?: { buildCard?: (payload: any) => any }
   ): Promise<FeishuBotWebhookSendResult> {
-    const targetUrl = firstText(webhookUrl, this.getWebhookUrl());
-    if (toBoolean(process.env.DISABLE_FEISHU_BOT_WEBHOOK, false)) {
-      return {
-        success: false,
-        skipped: true,
-        message: '飞书机器人 webhook 已通过环境变量禁用',
-      };
-    }
-    if (!targetUrl) {
-      return {
-        success: false,
-        skipped: true,
-        message: '飞书机器人 webhook 未配置，已跳过业绩预告推送',
-      };
-    }
     if (!payload || typeof payload !== 'object') {
       return {
         success: false,
@@ -265,25 +202,19 @@ class FeishuBotWebhookService {
       return { success: false, message: `buildCard 异常: ${err?.message || err}` };
     }
 
-    try {
-      const response = await this.safePost(targetUrl, cardBody);
-      const body = response.data || {};
-      const rawCode = body.code ?? body.StatusCode ?? body.status_code ?? 0;
-      const code = Number(rawCode);
-      if (Number.isFinite(code) && code !== 0) {
-        const message = body.msg || body.message || body.StatusMessage || '飞书机器人返回失败';
-        logger.warn(`飞书业绩预告推送失败: code=${code}, message=${message}`);
-        return { success: false, message, data: body };
-      }
-      const sym = payload.symbol ?? payload.event_id ?? '?';
-      const uid = payload.user_id ?? '?';
-      logger.info(`飞书业绩预告已推送 (user=${uid}, event=${sym})`);
-      return { success: true, data: body };
-    } catch (error: any) {
-      const message = error?.response?.data?.msg || error?.message || '飞书业绩预告推送异常';
-      logger.warn(`飞书业绩预告推送异常: ${message}`);
-      return { success: false, message };
-    }
+    const eventKey =
+      payload.event_id ||
+      payload.id ||
+      `${payload.symbol || 'unknown'}:${payload.trade_date || payload.date || 'latest'}`;
+    return this.enqueueCard({
+      audience: payload.user_id ? 'user' : 'business',
+      recipient_user_id: payload.user_id,
+      kind: 'earnings_forecast_alert',
+      topic_key: `earnings-forecast:${payload.user_id || 'shared'}:${payload.symbol || eventKey}`,
+      idempotency_key: `earnings-forecast:${payload.user_id || 'shared'}:${eventKey}`,
+      title: `业绩预告 · ${payload.symbol || eventKey}`,
+      payload: cardBody,
+    });
   }
 
   /**
@@ -304,24 +235,9 @@ class FeishuBotWebhookService {
    */
   async sendRiskAlertCard(
     payload: any,
-    webhookUrl?: string,
+    _webhookUrl?: string,
     options?: { buildCard?: (payload: any) => any }
   ): Promise<FeishuBotWebhookSendResult> {
-    const targetUrl = firstText(webhookUrl, this.getWebhookUrl());
-    if (toBoolean(process.env.DISABLE_FEISHU_BOT_WEBHOOK, false)) {
-      return {
-        success: false,
-        skipped: true,
-        message: '飞书机器人 webhook 已通过环境变量禁用',
-      };
-    }
-    if (!targetUrl) {
-      return {
-        success: false,
-        skipped: true,
-        message: '飞书机器人 webhook 未配置，已跳过风控告警推送',
-      };
-    }
     if (!payload || typeof payload !== 'object') {
       return {
         success: false,
@@ -343,39 +259,28 @@ class FeishuBotWebhookService {
       return { success: false, message: `buildCard 异常: ${err?.message || err}` };
     }
 
-    try {
-      const response = await this.safePost(targetUrl, cardBody);
-      const body = response.data || {};
-      const rawCode = body.code ?? body.StatusCode ?? body.status_code ?? 0;
-      const code = Number(rawCode);
-      if (Number.isFinite(code) && code !== 0) {
-        const message = body.msg || body.message || body.StatusMessage || '飞书机器人返回失败';
-        logger.warn(`飞书风控告警推送失败: code=${code}, message=${message}`);
-        return { success: false, message, data: body };
-      }
-      const sym = payload.symbol ?? payload.alert_id ?? '?';
-      const uid = payload.user_id ?? '?';
-      logger.info(`飞书风控告警已推送 (user=${uid}, alert=${sym})`);
-      return { success: true, data: body };
-    } catch (error: any) {
-      const message = error?.response?.data?.msg || error?.message || '飞书风控告警推送异常';
-      logger.warn(`飞书风控告警推送异常: ${message}`);
-      return { success: false, message };
-    }
+    const alertKey =
+      payload.alert_id ||
+      payload.alert_id_dispatch ||
+      `${payload.rule_id || 'risk'}:${payload.symbol || 'unknown'}:${
+        payload.triggered_at || 'latest'
+      }`;
+    return this.enqueueCard({
+      audience: payload.user_id ? 'user' : 'ops',
+      recipient_user_id: payload.user_id,
+      kind: 'risk_alert',
+      topic_key: `risk-alert:${payload.user_id || 'ops'}:${payload.rule_id || 'unknown'}:${
+        payload.symbol || 'unknown'
+      }`,
+      idempotency_key: `risk-alert:${payload.user_id || 'ops'}:${alertKey}`,
+      title: `[${payload.level || 'HIGH'}] ${payload.symbol || ''} ${payload.name || ''} 风控告警`,
+      payload: cardBody,
+    });
   }
 
   async sendRecommendationSummary(
     payload: FeishuRecommendationSummaryPayload
   ): Promise<FeishuBotWebhookSendResult> {
-    const webhook = this.getWebhookUrl();
-    if (!this.isEnabled() || !webhook) {
-      return {
-        success: false,
-        skipped: true,
-        message: '飞书机器人 webhook 未配置，已跳过荐股摘要推送',
-      };
-    }
-
     // Sprint 35: 优先 interactive 卡片 (富文本视觉好); buildRecommendationCard
     // 内部判 recommendations 是否为空, 空时返回 null 让 caller skip 推送.
     const card = this.buildRecommendationCard(payload);
@@ -387,32 +292,54 @@ class FeishuBotWebhookService {
       };
     }
 
-    try {
-      const response = await this.safePost(webhook, card);
-      const body = response.data || {};
-      const rawCode = body.code ?? body.StatusCode ?? body.status_code ?? 0;
-      const code = Number(rawCode);
-      if (Number.isFinite(code) && code !== 0) {
-        const message = body.msg || body.message || body.StatusMessage || '飞书机器人返回失败';
-        logger.warn(`飞书机器人荐股摘要推送失败: code=${code}, message=${message}`);
-        return { success: false, message, data: body };
-      }
-
-      logger.info(
-        `飞书机器人荐股摘要已推送 (card): ${
-          (card as any).card?.header?.title?.content || 'untitled'
-        }`
+    const result = payload.result || {};
+    const stableRunKey =
+      result.loop_run_id ||
+      result.run_id ||
+      result.report_id ||
+      result.trade_date ||
+      result.date ||
+      buildWindowedFeishuIdempotencyKey(
+        `recommendation-summary:${payload.scenario}`,
+        Date.now(),
+        60 * 60 * 1000
       );
-      return { success: true, data: body };
-    } catch (error: any) {
-      const message = error?.response?.data?.msg || error?.message || '飞书机器人推送异常';
-      logger.warn(`飞书机器人荐股摘要推送异常: ${message}`);
-      return { success: false, message };
-    }
+    return this.enqueueCard({
+      audience: 'business',
+      kind: 'recommendation_summary',
+      topic_key: `recommendation-summary:${payload.scenario}`,
+      idempotency_key: `recommendation-summary:${payload.scenario}:${stableRunKey}`,
+      title: (card as any).card?.header?.title?.content || '荐股摘要',
+      payload: card,
+    });
   }
 
-  private getWebhookUrl(): string {
-    return firstText(process.env.FEISHU_RECOMMENDATION_BOT_WEBHOOK, process.env.FEISHU_BOT_WEBHOOK);
+  private async enqueueCard(input: {
+    audience: FeishuAudience;
+    recipient_user_id?: number;
+    kind: string;
+    topic_key: string;
+    idempotency_key: string;
+    title: string;
+    payload: Record<string, unknown>;
+  }): Promise<FeishuBotWebhookSendResult> {
+    try {
+      const result = await this.notifications.enqueueAndDeliver({
+        ...input,
+        severity: input.kind === 'risk_alert' ? 'HIGH' : 'INFO',
+      });
+      return {
+        success: result.success,
+        skipped: result.skipped,
+        message: result.message,
+        data: { outbox_id: result.outbox_id, status: result.status, ...(result.data || {}) },
+      };
+    } catch (error: any) {
+      logger.warn(
+        `[FeishuBotWebhookService] enqueue ${input.kind} failed: ${error?.message || error}`
+      );
+      return { success: false, message: error?.message || String(error) };
+    }
   }
 
   private buildRecommendationPost(payload: FeishuRecommendationSummaryPayload): {

@@ -36,6 +36,7 @@ import { PaperTradingTrade } from '../models/PaperTradingTrade';
 import { PaperTradingSnapshot } from '../models/PaperTradingSnapshot';
 import { Stock } from '../models/Stock';
 import { feishuBotWebhookService, FeishuBotWebhookSendResult } from './FeishuBotWebhookService';
+import { AUTONOMOUS_PORTFOLIO_NAME } from '../portfolio/internal/PaperTradingPortfolioFamilies';
 
 // ---------------------------------------------------------------------------
 // 类型常量
@@ -186,6 +187,8 @@ export interface DigestPnLSummary {
 export interface DigestPayload {
   user_id: number;
   username: string;
+  portfolio_id: number;
+  portfolio_name: string;
   trade_date: string;
   pnl: DigestPnLSummary;
   trades_today_buy: DigestTradeRow[];
@@ -517,6 +520,13 @@ export function buildDigestCard(payload: DigestPayload): {
     payload.pnl.pnl_today > 0 ? 'red' : payload.pnl.pnl_today < 0 ? 'green' : 'blue';
 
   const elements: any[] = [];
+  elements.push({
+    tag: 'div',
+    text: {
+      tag: 'lark_md',
+      content: `**模拟盘**：${safeText(payload.portfolio_name, 80)}（#${payload.portfolio_id}）`,
+    },
+  });
   // Section 1: PnL
   elements.push({
     tag: 'div',
@@ -651,7 +661,7 @@ export function buildDigestCard(payload: DigestPayload): {
     elements: [
       {
         tag: 'plain_text',
-        content: `${payload.trade_date} · ${payload.username} · 推送时间 ${ts}`,
+        content: `${payload.trade_date} · ${payload.username} · ${payload.portfolio_name} · 推送时间 ${ts}`,
       },
     ],
   });
@@ -779,7 +789,22 @@ export class DefaultDailyTradingDigestDataSource implements DailyTradingDigestDa
   }
 
   async loadPortfolioSummary(user_id: number) {
-    const portfolio = await PaperTradingPortfolio.findOne({ where: { user_id } });
+    const preferredName =
+      safeString(process.env.DAILY_TRADING_DIGEST_PORTFOLIO_NAME) || AUTONOMOUS_PORTFOLIO_NAME;
+    let portfolio = await PaperTradingPortfolio.findOne({
+      where: { user_id, is_active: true, name: preferredName },
+      order: [['id', 'ASC']],
+    });
+    if (!portfolio) {
+      portfolio = await PaperTradingPortfolio.findOne({
+        where: { user_id, is_active: true },
+        // 没有配置/默认盘时，自动跟单盘优先，其次固定取最早创建的 active 盘。
+        order: [
+          ['auto_trade_enabled', 'DESC'],
+          ['id', 'ASC'],
+        ],
+      });
+    }
     if (!portfolio) return null;
     const positions = await PaperTradingPosition.findAll({
       where: { portfolio_id: portfolio.id },
@@ -1140,6 +1165,9 @@ export class DailyTradingDigestService {
     const payload: DigestPayload = {
       user_id,
       username,
+      portfolio_id: Number(summary.portfolio.id),
+      portfolio_name:
+        safeString(summary.portfolio.name) || `模拟盘 #${Number(summary.portfolio.id)}`,
       trade_date,
       pnl,
       trades_today_buy: buys,

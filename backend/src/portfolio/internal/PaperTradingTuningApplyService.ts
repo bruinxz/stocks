@@ -292,7 +292,6 @@ export class PaperTradingTuningApplyService {
     const plan = await paperTradingPlanService.generatePlan({
       user_id: options.user_id,
       username: options.username,
-      report_to_feishu: false,
       include_entries: true,
       include_exits: true,
       include_monitor: true,
@@ -515,7 +514,6 @@ export class PaperTradingTuningApplyService {
       include_open: true,
       start_date: startDate,
       limit: 500,
-      report_to_feishu: false,
     });
 
     const closedCount = dashboard.summary.closed_count || 0;
@@ -688,7 +686,6 @@ export class PaperTradingTuningApplyService {
     const plan = await paperTradingPlanService.generatePlan({
       user_id: options.user_id,
       username: options.username,
-      report_to_feishu: false,
       include_entries: true,
       include_exits: true,
       include_monitor: true,

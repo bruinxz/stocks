@@ -53,7 +53,8 @@ function extractSeededTasks(src: string): Array<{ type: string; cron: string }> 
   // ensureDefaultTasks 的入口在 5644 行附近; 我们扫整个文件,
   // 但只保留 isRegisteredCronType 的 type (排除小写 task_type 嵌入字符串).
   const out: Array<{ type: string; cron: string }> = [];
-  const re = /\{\s*(?:[^{}]*?\n)?\s*name:\s*['"][^'"]+['"],\s*type:\s*'([A-Z][A-Z0-9_]+)',\s*cron_expression:\s*'([^']+)'/g;
+  const re =
+    /\{\s*(?:[^{}]*?\n)?\s*name:\s*['"][^'"]+['"],\s*type:\s*'([A-Z][A-Z0-9_]+)',\s*cron_expression:\s*'([^']+)'/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(src)) !== null) {
     out.push({ type: m[1], cron: m[2] });
@@ -85,7 +86,7 @@ const MISSING_12 = [
   'LIVE_RECONCILIATION_GUARD',
   'RESEARCH_INTEGRITY_BATCH_AUDIT',
   'SYNC_ALL_STOCKS',
-  'WEBHOOK_FALLBACK_RETRY',
+  'FEISHU_NOTIFICATION_DISPATCH',
 ];
 
 const NEW_3 = [
@@ -118,7 +119,9 @@ for (const type of ALL_CHECK) {
   if (def.recommendedCron) {
     const match = rows.some(r => r.cron === def.recommendedCron);
     assert(
-      `[3.${type}] seed cron='${rows.map(r => r.cron).join('|')}' 含 registry recommended='${def.recommendedCron}'`,
+      `[3.${type}] seed cron='${rows.map(r => r.cron).join('|')}' 含 registry recommended='${
+        def.recommendedCron
+      }'`,
       match
     );
   }
@@ -169,9 +172,7 @@ const allRegistryTypes = CRON_REGISTRY.map(d => d.type);
 const seededTypes = new Set(seededByType.keys());
 const stillUnseeded = allRegistryTypes.filter(t => !seededTypes.has(t)).sort();
 if (stillUnseeded.length > 0) {
-  console.log(
-    `[6.info] 仍未 seed 的 type (${stillUnseeded.length}): ${stillUnseeded.join(', ')}`
-  );
+  console.log(`[6.info] 仍未 seed 的 type (${stillUnseeded.length}): ${stillUnseeded.join(', ')}`);
   console.log('         (本批仅承诺补 17 个; 其它历史 type 维持原样, runtime warn 已加)');
 }
 assertEqual(

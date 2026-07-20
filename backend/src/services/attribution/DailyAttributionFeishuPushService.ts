@@ -37,7 +37,9 @@
  */
 
 import { logger } from '../../utils/logger';
+import { createHash } from 'crypto';
 import { DailyAttributionReport } from './DailyAttributionService';
+import { feishuNotificationService } from '../FeishuNotificationService';
 
 // ---------------------------------------------------------------------------
 // Constants & types
@@ -198,21 +200,24 @@ export type FeishuWebhookPoster = (
  * 生产飞书 webhook poster — 与 [[defaultCriticalAnnouncementFeishuPoster]] /
  * audit-task-parameters-dry-run.ts 同款轻量 axios POST + fail-OPEN.
  *
- * 复用 OPS_ALERT_FEISHU_TIMEOUT_MS 与其他 ops 通道保持一致的超时配置.
+ * 真正发送由统一 outbox sender 使用 FEISHU_BOT_WEBHOOK_TIMEOUT_MS 控制超时。
  */
 export async function defaultDailyAttributionFeishuPoster(
-  url: string,
+  _url: string,
   body: { msg_type: 'text'; content: { text: string } }
 ): Promise<{ success: boolean; message?: string }> {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const axios = require('axios');
   try {
-    await axios.post(url, body, {
-      timeout: Number(process.env.OPS_ALERT_FEISHU_TIMEOUT_MS || 5000),
-      maxRedirects: 0,
-      validateStatus: (s: number) => s >= 200 && s < 300,
+    const digest = createHash('sha256').update(body.content.text).digest('hex').slice(0, 32);
+    const result = await feishuNotificationService.enqueueAndDeliver({
+      idempotency_key: `daily-attribution:${digest}`,
+      topic_key: 'daily-attribution',
+      audience: 'ops',
+      kind: 'daily_attribution',
+      severity: 'INFO',
+      title: body.content.text.split('\n')[0] || '盘后归因',
+      payload: body,
     });
-    return { success: true };
+    return { success: result.success, message: result.message };
   } catch (err: unknown) {
     const e = err as { message?: string };
     return { success: false, message: e?.message || String(err) };
@@ -225,9 +230,11 @@ export async function defaultDailyAttributionFeishuPoster(
 
 export class DailyAttributionFeishuPushService {
   private readonly poster: FeishuWebhookPoster;
+  private readonly usesOutbox: boolean;
 
   constructor(poster: FeishuWebhookPoster = defaultDailyAttributionFeishuPoster) {
     this.poster = poster;
+    this.usesOutbox = poster === defaultDailyAttributionFeishuPoster;
   }
 
   /**
@@ -267,7 +274,7 @@ export class DailyAttributionFeishuPushService {
       }
 
       const webhook = resolveWebhookUrl(options, env);
-      if (!webhook && options.dry_run !== true) {
+      if (!webhook && !this.usesOutbox && options.dry_run !== true) {
         logger.info(
           `[DailyAttributionPush] OPS_ALERT_FEISHU_WEBHOOK 未配置, skip ${candidates.length} portfolio push.`
         );
@@ -306,7 +313,7 @@ export class DailyAttributionFeishuPushService {
           continue;
         }
         try {
-          const r = await this.poster(webhook as string, {
+          const r = await this.poster(webhook || '', {
             msg_type: 'text',
             content: { text },
           });

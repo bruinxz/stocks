@@ -5,10 +5,10 @@ import { paperTradingRiskProfileService } from '../portfolio/internal/PaperTradi
 import { taskAutomationHealthService } from './TaskAutomationHealthService';
 import { realtimeQuoteService } from '../data/services/RealtimeQuoteService';
 import { AIInvestmentSignal } from '../models/AIInvestmentSignal';
-import { TaskExecutionLog } from '../models/TaskExecutionLog';
 import { normalizeSymbol } from '../utils/stockSymbol';
 import { logger } from '../utils/logger';
 import { paperTradingTuningApplyService } from '../portfolio/internal/PaperTradingTuningApplyService';
+import { feishuNotificationService } from './FeishuNotificationService';
 
 // ⚠️ DEPRECATED STUB — 以下"服务"是 批3/批8 精简量化 pipeline 时已删除的 service
 // 的占位替身,仅为让依赖它们的历史代码路径继续编译。方法恒返回空结果 (no-op),
@@ -105,7 +105,7 @@ class TodayCommandCenterService {
       automationHealth,
       rankings,
       quotePersistence,
-      latestFeishuLog,
+      feishuHealth,
       tuningCandidates,
       canarySnapshots,
     ] = await Promise.all([
@@ -141,8 +141,8 @@ class TodayCommandCenterService {
         logger.warn(`今日作战台读取实时行情落盘状态失败: ${error?.message || error}`);
         return null;
       }),
-      this.getLatestFeishuRecommendationLog().catch(error => {
-        logger.warn(`今日作战台读取飞书任务日志失败: ${error?.message || error}`);
+      this.getFeishuNotificationHealth().catch(error => {
+        logger.warn(`今日作战台读取飞书 outbox 健康失败: ${error?.message || error}`);
         return null;
       }),
       paperTradingTuningApplyService
@@ -195,14 +195,14 @@ class TodayCommandCenterService {
       positions,
       sellCandidates,
       quotePersistence,
-      latestFeishuLog,
+      feishuHealth,
     });
     const readiness = this.buildReadiness({
       automationHealth,
       candidates,
       riskProfile,
       quotePersistence,
-      latestFeishuLog,
+      feishuHealth,
       summary,
     });
     const discipline = this.buildDiscipline({
@@ -242,7 +242,7 @@ class TodayCommandCenterService {
           }
         : null,
       quote_persistence: quotePersistence,
-      latest_feishu: latestFeishuLog,
+      latest_feishu: feishuHealth,
       tuning_radar: tuningCandidates
         ? {
             generated_at: tuningCandidates.generated_at,
@@ -515,7 +515,7 @@ class TodayCommandCenterService {
     positions: any[];
     sellCandidates: any[];
     quotePersistence: any;
-    latestFeishuLog: any;
+    feishuHealth: any;
   }) {
     const dashboardSummary = payload.dashboard?.summary || {};
     const familySummary = payload.dashboard?.portfolio_family_summary?.summary || {};
@@ -546,7 +546,7 @@ class TodayCommandCenterService {
       sell_candidate_count: payload.sellCandidates.length,
       automation_status: payload.automationHealth?.status || 'warning',
       quote_status: payload.quotePersistence?.freshness_status || 'missing',
-      feishu_last_status: payload.latestFeishuLog?.status || null,
+      feishu_last_status: payload.feishuHealth?.status || null,
     };
   }
 
@@ -555,7 +555,7 @@ class TodayCommandCenterService {
     candidates: any[];
     riskProfile: any;
     quotePersistence: any;
-    latestFeishuLog: any;
+    feishuHealth: any;
     summary: any;
   }) {
     const automationStatus = payload.automationHealth?.status || 'warning';
@@ -609,12 +609,19 @@ class TodayCommandCenterService {
       },
       {
         key: 'feishu',
-        label: '飞书摘要链路',
-        status: payload.latestFeishuLog?.status === 'FAILED' ? 'warn' : 'ok',
-        ok: payload.latestFeishuLog?.status !== 'FAILED',
-        detail: payload.latestFeishuLog
-          ? `${payload.latestFeishuLog.task_name} · ${payload.latestFeishuLog.status}`
-          : '等待最近荐股飞书任务',
+        label: '飞书通知闭环',
+        status:
+          payload.feishuHealth?.status === 'critical'
+            ? 'danger'
+            : payload.feishuHealth?.status === 'degraded'
+            ? 'warn'
+            : 'ok',
+        ok: payload.feishuHealth?.status === 'healthy',
+        detail: payload.feishuHealth
+          ? `待投 ${payload.feishuHealth.backlog || 0} · 死信 ${
+              payload.feishuHealth.dead || 0
+            } · 最近 ${payload.feishuHealth.latest?.status || '无记录'}`
+          : '飞书 outbox 状态暂不可用',
       },
     ];
   }
@@ -776,32 +783,8 @@ class TodayCommandCenterService {
     return actionBonus + sourceBonus + toNumber(params.score, 0);
   }
 
-  private async getLatestFeishuRecommendationLog() {
-    const logs = await TaskExecutionLog.findAll({
-      where: {
-        task_name: {
-          [Op.or]: [
-            { [Op.iLike]: '%量化策略%' },
-            { [Op.iLike]: '%全市场荐股%' },
-            { [Op.iLike]: '%推荐信号模拟盘%' },
-          ],
-        },
-      },
-      order: [['started_at', 'DESC']],
-      limit: 1,
-      raw: true,
-    });
-    const log: any = logs[0];
-    if (!log) return null;
-    return {
-      id: log.id,
-      task_id: log.task_id,
-      task_name: log.task_name,
-      status: log.status,
-      started_at: log.started_at,
-      completed_at: log.completed_at,
-      error_message: safeText(log.error_message, 120),
-    };
+  private async getFeishuNotificationHealth() {
+    return feishuNotificationService.getHealth();
   }
 }
 

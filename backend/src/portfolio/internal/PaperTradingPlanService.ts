@@ -9,7 +9,6 @@ import {
   paperTradingAttributionService,
 } from './PaperTradingAttributionService';
 import { paperTradingOrderIntentService } from './PaperTradingOrderIntentService';
-import { feishuTaskReportService } from '../../services/FeishuTaskReportService';
 
 export type TradingPlanActionType = 'exit' | 'entry' | 'monitor' | 'review';
 export type TradingPlanPriority = 'critical' | 'high' | 'medium' | 'low';
@@ -24,7 +23,6 @@ export interface PaperTradingPlanOptions {
   include_entries?: boolean;
   include_exits?: boolean;
   include_monitor?: boolean;
-  report_to_feishu?: boolean;
   source_type?: string;
   limit?: number;
   entry_limit?: number;
@@ -174,7 +172,6 @@ class PaperTradingPlanService {
     const includeEntries = toBoolean(options.include_entries, true);
     const includeExits = toBoolean(options.include_exits, true);
     const includeMonitor = toBoolean(options.include_monitor, true);
-    const reportToFeishu = toBoolean(options.report_to_feishu, false);
     const entryLimit = toPositiveInt(options.entry_limit || options.limit, 3, 20);
     const maxPositions = toPositiveInt(options.max_positions, 8, 30);
 
@@ -187,7 +184,6 @@ class PaperTradingPlanService {
       force_new_portfolio: options.force_new_portfolio,
       include_open: true,
       source_type: options.source_type,
-      report_to_feishu: false,
     });
 
     let riskCheck: PaperTradingRiskCheckResult | undefined;
@@ -199,7 +195,6 @@ class PaperTradingPlanService {
         initial_capital: options.initial_capital,
         force_new_portfolio: options.force_new_portfolio,
         dry_run: true,
-        report_to_feishu: false,
         limit: toPositiveInt(options.limit, 30, 100),
         enable_stop_loss: options.enable_stop_loss,
         enable_take_profit: options.enable_take_profit,
@@ -237,7 +232,6 @@ class PaperTradingPlanService {
         min_trade_amount: options.min_trade_amount,
         allowed_risk_levels: options.allowed_risk_levels,
         dry_run: true,
-        report_to_feishu: false,
         use_attribution_feedback: options.use_attribution_feedback,
         use_profit_gate: options.use_profit_gate,
         profit_gate_horizon: options.profit_gate_horizon,
@@ -582,12 +576,6 @@ class PaperTradingPlanService {
       risk_check: riskCheck,
       entry_preview: entryPreview,
     };
-
-    if (reportToFeishu) {
-      await feishuTaskReportService.reportPaperTradingPlan(result, {
-        record_type: '模拟盘交易计划',
-      });
-    }
 
     return result;
   }

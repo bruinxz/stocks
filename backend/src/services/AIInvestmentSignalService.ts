@@ -50,7 +50,6 @@ export interface AgentTailAlphaLedgerOptions extends SignalPerformanceOptions {
 
 export interface SignalQualityReportOptions extends SignalPerformanceOptions {
   lookback_days?: number;
-  report_to_feishu?: boolean;
   record_type?: string;
   verify_before_report?: boolean;
   auto_repair_missing_data?: boolean;
@@ -1860,7 +1859,6 @@ export class AIInvestmentSignalService {
     const verification = await this.verifySignals({
       ...options,
       horizons,
-      report_to_feishu: false,
     });
     const finalDiagnosis = await this.diagnoseSignalVerification({ ...options, horizons });
 
@@ -1882,7 +1880,6 @@ export class AIInvestmentSignalService {
     options: {
       limit?: number;
       horizons?: number[];
-      report_to_feishu?: boolean;
     } & SignalQueryOptions = {}
   ): Promise<{
     total: number;
@@ -1922,25 +1919,6 @@ export class AIInvestmentSignalService {
     }
 
     const result = { total: signals.length, verified, pending, no_data };
-
-    if (options.report_to_feishu) {
-      const stats = await this.getSignalStats({
-        symbol: options.symbol,
-        decision: options.decision,
-        source_type: options.source_type,
-        agent_session: options.agent_session,
-        task_label: options.task_label,
-        start_date: options.start_date,
-        end_date: options.end_date,
-      });
-      const { feishuTaskReportService } = await import('./FeishuTaskReportService');
-      await feishuTaskReportService.reportRecommendationPerformance({
-        record_type: '推荐绩效刷新',
-        source_type: options.source_type,
-        result,
-        stats,
-      });
-    }
 
     return result;
   }
@@ -2545,7 +2523,6 @@ export class AIInvestmentSignalService {
       limit?: number;
       horizons?: number[];
       horizon?: string;
-      report_to_feishu?: boolean;
       record_type?: string;
     } & SignalQueryOptions = {}
   ) {
@@ -2556,7 +2533,6 @@ export class AIInvestmentSignalService {
     });
     const verification = await this.verifySignals({
       ...options,
-      report_to_feishu: false,
     });
     const dashboard = await this.getPerformanceDashboard({
       symbol: options.symbol,
@@ -2570,17 +2546,6 @@ export class AIInvestmentSignalService {
       horizon: options.horizon,
       limit: options.limit || 1000,
     });
-
-    if (options.report_to_feishu) {
-      const { feishuTaskReportService } = await import('./FeishuTaskReportService');
-      await feishuTaskReportService.reportRecommendationPerformance({
-        record_type: options.record_type || '推荐绩效刷新',
-        source_type: options.source_type,
-        agent_session: options.agent_session,
-        result: verification,
-        dashboard,
-      });
-    }
 
     return { verification, dashboard, metadata_backfill: metadataBackfill };
   }
@@ -2638,7 +2603,6 @@ export class AIInvestmentSignalService {
         start_date: startDate,
         end_date: endDate,
         limit,
-        report_to_feishu: false,
       });
       diagnosis = await this.diagnoseSignalVerification(diagnosisOptions);
     }
@@ -2876,13 +2840,6 @@ export class AIInvestmentSignalService {
       horizon_summary: horizonSummary,
       action_items: actionItems,
     };
-
-    if (options.report_to_feishu) {
-      const { feishuTaskReportService } = await import('./FeishuTaskReportService');
-      await feishuTaskReportService.reportSignalQualityDaily(report, {
-        record_type: options.record_type || '信号质量日报',
-      });
-    }
 
     return report;
   }

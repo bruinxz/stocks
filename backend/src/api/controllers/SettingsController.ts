@@ -678,6 +678,8 @@ export class SettingsController {
           payload: {
             user_id,
             username: 'test',
+            portfolio_id: 0,
+            portfolio_name: '测试模拟盘',
             trade_date: new Date().toISOString().slice(0, 10),
             pnl: {
               total_value: 100000,
