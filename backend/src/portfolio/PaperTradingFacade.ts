@@ -1272,6 +1272,7 @@ export class PaperTradingFacade {
       const buyGateResult = await _preTradeGuardsBuy.checkAllPreTradeGates({
         side: 'BUY',
         user_id,
+        portfolio_id: portfolio.id,
         symbol,
         proposed_value: cost,
         caller_label: 'facade.placeOrder',

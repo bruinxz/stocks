@@ -68,7 +68,7 @@ function tradingLag(latest: string | null, reference: string | null): number | n
   return countTradingDaysBetween(latest, reference);
 }
 
-function expectedCompletedTradeDate(now = new Date()): string {
+export function expectedCompletedTradeDate(now = new Date()): string {
   const today = getShanghaiDate(now);
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Asia/Shanghai',

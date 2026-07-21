@@ -347,6 +347,7 @@ export interface PerStockStopLossDataSource {
   /** Write a single RiskAlert row (level='HIGH'). */
   writeAlert(input: {
     user_id: number;
+    portfolio_id?: number;
     symbol: string;
     name: string;
     message: string;
@@ -445,6 +446,7 @@ export class DefaultPerStockStopLossDataSource implements PerStockStopLossDataSo
 
   async writeAlert(input: {
     user_id: number;
+    portfolio_id?: number;
     symbol: string;
     name: string;
     message: string;
@@ -458,6 +460,10 @@ export class DefaultPerStockStopLossDataSource implements PerStockStopLossDataSo
       // US-067 — 给 RealtimeAlertDispatcher dedup signature 用。
       rule_id: 'per_stock_stop_loss',
       is_read: false,
+      metadata: {
+        portfolio_id: input.portfolio_id,
+        origin: 'per_stock_stop_loss_guard',
+      },
     } as any);
   }
 }
@@ -669,6 +675,7 @@ export class PerStockStopLossGuard {
         try {
           await this.source.writeAlert({
             user_id,
+            portfolio_id: pos.portfolio_id,
             symbol: pos.symbol,
             name: `每股止损 - ${pos.name || pos.symbol}`,
             message,
@@ -683,34 +690,52 @@ export class PerStockStopLossGuard {
     }
 
     const triggered_count = triggers.length;
-    const isMass = evaluateMassTrigger(
-      triggered_count,
-      open_positions_count,
-      config.mass_threshold_ratio
-    );
-
-    let mass_message: string | undefined;
-    if (isMass) {
-      mass_message = buildMassTriggerMessage({
-        triggered_count,
-        open_count: open_positions_count,
+    const positionsByPortfolio = new Map<number, PositionSnapshot[]>();
+    for (const position of positions.filter(item => item.quantity > 0)) {
+      positionsByPortfolio.set(position.portfolio_id, [
+        ...(positionsByPortfolio.get(position.portfolio_id) || []),
+        position,
+      ]);
+    }
+    const massMessages: string[] = [];
+    for (const [massPortfolioId, portfolioPositions] of positionsByPortfolio) {
+      const portfolioTriggeredCount = triggers.filter(
+        trigger => trigger.portfolio_id === massPortfolioId
+      ).length;
+      if (
+        !evaluateMassTrigger(
+          portfolioTriggeredCount,
+          portfolioPositions.length,
+          config.mass_threshold_ratio
+        )
+      ) {
+        continue;
+      }
+      const message = buildMassTriggerMessage({
+        triggered_count: portfolioTriggeredCount,
+        open_count: portfolioPositions.length,
         threshold_ratio: config.mass_threshold_ratio,
       });
+      massMessages.push(message);
       if (!dryRun) {
         try {
           await this.source.writeAlert({
             user_id,
+            portfolio_id: massPortfolioId,
             symbol: PER_STOCK_STOP_LOSS_MASS_SYMBOL,
             name: '组合级 LEVEL_2 群体止损',
-            message: mass_message,
+            message,
           });
         } catch (err) {
           logger.warn(
-            `PerStockStopLossGuard.writeMassAlert user=${user_id}: ` + `${(err as Error).message}`
+            `PerStockStopLossGuard.writeMassAlert user=${user_id} portfolio=${massPortfolioId}: ` +
+              `${(err as Error).message}`
           );
         }
       }
     }
+    const isMass = massMessages.length > 0;
+    const mass_message = massMessages.length ? massMessages.join('\n') : undefined;
 
     const level: PerStockStopLossUserResult['level'] = isMass
       ? 'MASS'

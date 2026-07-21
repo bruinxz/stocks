@@ -92,7 +92,13 @@ interface FakeState {
   /** Map<symbol, { close, date }> — fake returns this for loadLatestClose. */
   bars: Record<string, { close: number; date: Date } | null>;
   /** RiskAlerts written via writeAlert. */
-  alerts: Array<{ user_id: number; symbol: string; name: string; message: string }>;
+  alerts: Array<{
+    user_id: number;
+    portfolio_id?: number;
+    symbol: string;
+    name: string;
+    message: string;
+  }>;
   /** If set, loadOpenPositions on the matching user throws. */
   loadPositionsShouldThrowForUser?: number;
   /** If true, writeAlert throws. */
@@ -332,16 +338,8 @@ async function testNormalize() {
     normalizePerStockStopLossConfig({ pct: NaN }).pct,
     DEFAULT_PER_STOCK_STOP_LOSS_CONFIG.pct
   );
-  assertEqual(
-    'normalize: pct 0 honored',
-    normalizePerStockStopLossConfig({ pct: 0 }).pct,
-    0
-  );
-  assertEqual(
-    'normalize: pct 1 honored',
-    normalizePerStockStopLossConfig({ pct: 1 }).pct,
-    1
-  );
+  assertEqual('normalize: pct 0 honored', normalizePerStockStopLossConfig({ pct: 0 }).pct, 0);
+  assertEqual('normalize: pct 1 honored', normalizePerStockStopLossConfig({ pct: 1 }).pct, 1);
   assertEqual(
     'normalize: pct string "0.05" coerced',
     normalizePerStockStopLossConfig({ pct: '0.05' }).pct,
@@ -492,6 +490,35 @@ async function testMassTriggerThreeStocks() {
   const massAlert = state.alerts.find(a => a.symbol === PER_STOCK_STOP_LOSS_MASS_SYMBOL);
   assert('mass3: mass alert exists', massAlert !== undefined);
   assert('mass3: mass alert message has LEVEL_2', massAlert?.message.includes('LEVEL_2') ?? false);
+}
+
+async function testMassTriggerIsScopedPerPortfolio() {
+  const state = emptyState({
+    userIds: [1],
+    configs: { 1: { enabled: true, pct: 0.07, mass_threshold_ratio: 0.5 } },
+    positionsByUser: {
+      1: [
+        makePosition({ id: 1, portfolio_id: 100, symbol: 'A.SH', avg_cost: 100 }),
+        makePosition({ id: 2, portfolio_id: 100, symbol: 'B.SH', avg_cost: 100 }),
+        makePosition({ id: 3, portfolio_id: 200, symbol: 'C.SH', avg_cost: 100 }),
+        makePosition({ id: 4, portfolio_id: 200, symbol: 'D.SH', avg_cost: 100 }),
+        makePosition({ id: 5, portfolio_id: 200, symbol: 'E.SH', avg_cost: 100 }),
+      ],
+    },
+    bars: {
+      'A.SH': { close: 90, date: new Date('2026-06-07') },
+      'B.SH': { close: 100, date: new Date('2026-06-07') },
+      'C.SH': { close: 90, date: new Date('2026-06-07') },
+      'D.SH': { close: 100, date: new Date('2026-06-07') },
+      'E.SH': { close: 100, date: new Date('2026-06-07') },
+    },
+  });
+  const guard = new PerStockStopLossGuard(makeFakeSource(state));
+  const result = await guard.evaluateAfterClose({ user_id: 1 });
+  const massAlerts = state.alerts.filter(alert => alert.symbol === PER_STOCK_STOP_LOSS_MASS_SYMBOL);
+  assertEqual('per-portfolio mass: overall result reports mass', result.per_user[0].level, 'MASS');
+  assertEqual('per-portfolio mass: only one portfolio crosses threshold', massAlerts.length, 1);
+  assertEqual('per-portfolio mass: alert linked to portfolio 100', massAlerts[0].portfolio_id, 100);
 }
 
 async function testBoundaryTrigger() {
@@ -826,6 +853,7 @@ async function main() {
   await testHappyPathSingleTrigger();
   await testIndividualButNotMass();
   await testMassTriggerThreeStocks();
+  await testMassTriggerIsScopedPerPortfolio();
   await testBoundaryTrigger();
   await testPerPositionPctOverrideTighter();
   await testPerPositionPctOverrideLooser();

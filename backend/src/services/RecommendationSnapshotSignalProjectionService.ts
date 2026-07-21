@@ -7,6 +7,9 @@ import { AiRecommendationItem } from '../models/AiRecommendationItem';
 import { AiRecommendationSnapshot } from '../models/AiRecommendationSnapshot';
 import { getEast8DateString } from '../utils/timezone';
 import { normalizeSymbol } from '../utils/stockSymbol';
+import { Op } from 'sequelize';
+import { countTradingDaysBetween } from '../utils/tradingCalendar';
+import { expectedCompletedTradeDate } from './PageFreshnessService';
 
 export interface RecommendationProjectionItem {
   item_id: string;
@@ -30,7 +33,10 @@ export interface RecommendationProjectionSnapshot {
 }
 
 export interface RecommendationSignalProjectionRepository {
-  loadSnapshot(trading_day: string): Promise<RecommendationProjectionSnapshot | null>;
+  loadLatestEligibleSnapshot(
+    expected_research_day: string,
+    available_at: Date
+  ): Promise<RecommendationProjectionSnapshot | null>;
   upsertSignal(payload: Record<string, any>): Promise<'created' | 'updated'>;
 }
 
@@ -72,7 +78,8 @@ function midpoint(value: unknown): number | null {
 export function buildRecommendationSignalPayload(
   snapshot: RecommendationProjectionSnapshot,
   item: RecommendationProjectionItem,
-  expires_at: string
+  expires_at: string,
+  execution_day = snapshot.trading_day
 ): Record<string, any> {
   const recommendation = objectValue(item.recommendation);
   const explanation = objectValue(recommendation.explanation);
@@ -96,7 +103,7 @@ export function buildRecommendationSignalPayload(
     symbol,
     name:
       recommendation.name || recommendation.security_name || recommendation.company_name || symbol,
-    signal_date: snapshot.trading_day,
+    signal_date: execution_day,
     decision: strong ? 'A股早报高确信推荐' : 'A股早报推荐',
     normalized_decision: strong ? AISignalDecision.STRONG_BUY : AISignalDecision.BUY,
     confidence_score: Math.min(Math.max(conviction, 0), 100),
@@ -124,7 +131,10 @@ export function buildRecommendationSignalPayload(
       item_id: item.item_id,
       profile: snapshot.profile,
       market_scope: snapshot.market_scope,
-      trading_day: snapshot.trading_day,
+      trading_day: execution_day,
+      execution_day,
+      research_trading_day: snapshot.trading_day,
+      research_as_of: snapshot.as_of.toISOString(),
       rank: item.rank,
       rating_band: item.rating_band,
       conviction_final: conviction,
@@ -144,10 +154,21 @@ export function buildRecommendationSignalPayload(
 export class SequelizeRecommendationSignalProjectionRepository
   implements RecommendationSignalProjectionRepository
 {
-  async loadSnapshot(trading_day: string): Promise<RecommendationProjectionSnapshot | null> {
+  async loadLatestEligibleSnapshot(
+    expected_research_day: string,
+    available_at: Date
+  ): Promise<RecommendationProjectionSnapshot | null> {
     const snapshot = await AiRecommendationSnapshot.findOne({
-      where: { tradingDay: trading_day, profile: 'us_preferred', marketScope: 'cn_a' },
-      order: [['asOfUtc', 'DESC']],
+      where: {
+        tradingDay: { [Op.lte]: expected_research_day },
+        asOfUtc: { [Op.lte]: available_at },
+        profile: 'us_preferred',
+        marketScope: 'cn_a',
+      },
+      order: [
+        ['tradingDay', 'DESC'],
+        ['asOfUtc', 'DESC'],
+      ],
     });
     if (!snapshot) return null;
     const items = await AiRecommendationItem.findAll({
@@ -212,10 +233,12 @@ export class RecommendationSnapshotSignalProjectionService {
         reason: 'not_today',
       };
     }
-    const snapshot = await this.repository.loadSnapshot(trading_day);
+    const expectedResearchDay = expectedCompletedTradeDate(now);
+    const snapshot = await this.repository.loadLatestEligibleSnapshot(expectedResearchDay, now);
     if (!snapshot) {
       return {
         trading_day,
+        expected_research_day: expectedResearchDay,
         snapshot_id: null,
         scanned: 0,
         projected: 0,
@@ -223,10 +246,27 @@ export class RecommendationSnapshotSignalProjectionService {
         reason: 'snapshot_missing',
       };
     }
+    const researchLag = countTradingDaysBetween(snapshot.trading_day, expectedResearchDay);
+    if (snapshot.trading_day > expectedResearchDay || researchLag > 0) {
+      return {
+        trading_day,
+        expected_research_day: expectedResearchDay,
+        research_trading_day: snapshot.trading_day,
+        research_lag_days: researchLag,
+        snapshot_id: snapshot.snapshot_id,
+        scanned: snapshot.items.length,
+        projected: 0,
+        skipped: snapshot.items.length,
+        reason: 'snapshot_stale',
+      };
+    }
     const expiresAt = new Date(`${trading_day}T15:30:00+08:00`);
     if (now.getTime() >= expiresAt.getTime()) {
       return {
         trading_day,
+        expected_research_day: expectedResearchDay,
+        research_trading_day: snapshot.trading_day,
+        research_lag_days: researchLag,
         snapshot_id: snapshot.snapshot_id,
         scanned: snapshot.items.length,
         projected: 0,
@@ -243,7 +283,12 @@ export class RecommendationSnapshotSignalProjectionService {
         skipped += 1;
         continue;
       }
-      const payload = buildRecommendationSignalPayload(snapshot, item, expiresAt.toISOString());
+      const payload = buildRecommendationSignalPayload(
+        snapshot,
+        item,
+        expiresAt.toISOString(),
+        trading_day
+      );
       if (!payload.symbol) {
         skipped += 1;
         continue;
@@ -254,6 +299,9 @@ export class RecommendationSnapshotSignalProjectionService {
     }
     return {
       trading_day,
+      expected_research_day: expectedResearchDay,
+      research_trading_day: snapshot.trading_day,
+      research_lag_days: researchLag,
       snapshot_id: snapshot.snapshot_id,
       scanned: snapshot.items.length,
       projected: created + updated,

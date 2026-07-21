@@ -254,9 +254,9 @@ export function pickSingleViolation(
 
 export interface PositionLimitDataSource {
   /** Load the user's portfolio (current_cash + total_value) or null. */
-  loadPortfolio(user_id: number): Promise<{ total_value: number } | null>;
+  loadPortfolio(user_id: number, portfolio_id?: number): Promise<{ total_value: number } | null>;
   /** Load all PaperTradingPosition rows for the user (already-held holdings). */
-  loadPositions(user_id: number): Promise<HeldPositionSnapshot[]>;
+  loadPositions(user_id: number, portfolio_id?: number): Promise<HeldPositionSnapshot[]>;
   /** Look up the industry classification for `symbol`. */
   loadIndustryForSymbol(symbol: string): Promise<string | null>;
   /** Load this user's persisted config; falls back to defaults if absent. */
@@ -266,6 +266,7 @@ export interface PositionLimitDataSource {
   /** Write a single RiskAlert row. */
   writeAlert(input: {
     user_id: number;
+    portfolio_id?: number;
     symbol: string;
     name: string;
     message: string;
@@ -277,8 +278,14 @@ export interface PositionLimitDataSource {
  * here; the guard methods only see the snapshot data.
  */
 export class DefaultPositionLimitDataSource implements PositionLimitDataSource {
-  async loadPortfolio(user_id: number) {
-    // 修复 (2026-06-16, HIGH H2): 跨所有 active portfolio 聚合 total_value
+  async loadPortfolio(user_id: number, portfolio_id?: number) {
+    if (portfolio_id) {
+      const portfolio = await PaperTradingPortfolio.findOne({
+        where: { id: portfolio_id, user_id, is_active: true },
+        attributes: ['total_value'],
+      });
+      return portfolio ? { total_value: Number(portfolio.total_value || 0) } : null;
+    }
     const portfolios = await PaperTradingPortfolio.findAll({
       where: { user_id, is_active: true },
       attributes: ['total_value'],
@@ -288,10 +295,13 @@ export class DefaultPositionLimitDataSource implements PositionLimitDataSource {
     return { total_value: totalValue };
   }
 
-  async loadPositions(user_id: number) {
-    // 修复 (HIGH H2): 跨所有 active portfolio 拉持仓
+  async loadPositions(user_id: number, portfolio_id?: number) {
     const portfolios = await PaperTradingPortfolio.findAll({
-      where: { user_id, is_active: true },
+      where: {
+        user_id,
+        is_active: true,
+        ...(portfolio_id ? { id: portfolio_id } : {}),
+      },
       attributes: ['id'],
     });
     if (portfolios.length === 0) return [];
@@ -344,7 +354,13 @@ export class DefaultPositionLimitDataSource implements PositionLimitDataSource {
     return { ...config };
   }
 
-  async writeAlert(input: { user_id: number; symbol: string; name: string; message: string }) {
+  async writeAlert(input: {
+    user_id: number;
+    portfolio_id?: number;
+    symbol: string;
+    name: string;
+    message: string;
+  }) {
     // 拿 stock_name 拼到 RiskAlert.name，让飞书卡片/UI 显示"贵州茅台 仓位限制告警 - single_industry_cap"
     // 而不只是"600519 仓位限制告警 - single_industry_cap"
     let stockName = '';
@@ -370,6 +386,10 @@ export class DefaultPositionLimitDataSource implements PositionLimitDataSource {
       // 规则的 HIGH 告警被 unknown::symbol::HIGH 同 signature dedup 互相吃掉。
       rule_id: 'position_limit',
       is_read: false,
+      metadata: {
+        portfolio_id: input.portfolio_id,
+        origin: 'position_limit_guard',
+      },
     } as any);
   }
 }
@@ -419,6 +439,7 @@ export function normalizePositionLimitsConfig(raw: any): PositionLimitsConfig {
 
 export interface CheckOrderInput {
   user_id: number;
+  portfolio_id?: number;
   symbol: string;
   proposed_value: number;
 }
@@ -456,14 +477,14 @@ export class PositionLimitGuard {
       'position_limit',
       async () => {
         const config = await this.source.loadConfig(input.user_id);
-        const portfolio = await this.source.loadPortfolio(input.user_id);
+        const portfolio = await this.source.loadPortfolio(input.user_id, input.portfolio_id);
         if (!portfolio || portfolio.total_value <= 0) {
           // Without a portfolio (or zero total value) we cannot evaluate
           // percentages.  Pass through — the upstream `placeOrder` already
           // rejects orders without a portfolio.
           return { ok: true, config };
         }
-        const positions = await this.source.loadPositions(input.user_id);
+        const positions = await this.source.loadPositions(input.user_id, input.portfolio_id);
         const industry = await this.source.loadIndustryForSymbol(input.symbol);
 
         const ctx: OrderContext = {
@@ -497,6 +518,7 @@ export class PositionLimitGuard {
         try {
           await this.source.writeAlert({
             user_id: input.user_id,
+            portfolio_id: input.portfolio_id,
             symbol: input.symbol,
             name: `仓位限制告警 - ${violation.rule}`,
             message: violation.message,

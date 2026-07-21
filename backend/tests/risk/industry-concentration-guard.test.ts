@@ -94,7 +94,13 @@ interface FakeState {
   configs: Record<number, IndustryConcentrationConfig>;
   portfolioIds: Record<number, number | null>;
   positionsByUser: Record<number, IndustryPositionSnapshot[]>;
-  alerts: Array<{ user_id: number; symbol: string; name: string; message: string }>;
+  alerts: Array<{
+    user_id: number;
+    portfolio_id?: number;
+    symbol: string;
+    name: string;
+    message: string;
+  }>;
   /** Map<symbol, execution> — what executeFullClose returns. */
   closeReturns: Record<string, FakeCloseExecution>;
   /** Map<symbol, true> — those throw when executeFullClose is called. */
@@ -668,6 +674,7 @@ async function testEvaluateSingleIndustryAlert() {
     state.alerts[0].symbol,
     'SYSTEM:INDUSTRY_CONCENTRATION:白酒'
   );
+  assertEqual('eval: RiskAlert linked to portfolio', state.alerts[0].portfolio_id, 1001);
 }
 
 async function testEvaluateBalancedNoAlert() {
