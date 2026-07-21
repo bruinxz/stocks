@@ -20,6 +20,7 @@
 # Optional env:
 #   SKIP_HEALTH_GATE=true   skip the post-deploy health gate
 #   SKIP_DB_BACKUP=true     skip db backup for target=main (default: backup)
+#   FRONTEND_BUILD_MAX_OLD_SPACE_MB  frontend build heap cap (default: 3072)
 #   GIT_REPO_URL            override repo URL (default: https://github.com/bruinxz/stocks.git)
 #   RELEASE_RUN_SMOKE       run authenticated read-only smoke checks (default: true)
 #   RELEASE_SMOKE_USERNAME  smoke account (default: stocks)
@@ -65,6 +66,12 @@ GIT_REPO_URL="${GIT_REPO_URL:-https://github.com/bruinxz/stocks.git}"
 RELEASE_RUN_SMOKE="${RELEASE_RUN_SMOKE:-true}"
 RELEASE_SMOKE_USERNAME="${RELEASE_SMOKE_USERNAME:-stocks}"
 RELEASE_SMOKE_PASSWORD="${RELEASE_SMOKE_PASSWORD:-}"
+FRONTEND_BUILD_MAX_OLD_SPACE_MB="${FRONTEND_BUILD_MAX_OLD_SPACE_MB:-3072}"
+
+if [[ ! "$FRONTEND_BUILD_MAX_OLD_SPACE_MB" =~ ^[1-9][0-9]*$ ]]; then
+  echo "FRONTEND_BUILD_MAX_OLD_SPACE_MB must be a positive integer" >&2
+  exit 1
+fi
 
 if [[ "${SKIP_HEALTH_GATE:-false}" != "true" ]]; then
   case "$RELEASE_RUN_SMOKE" in
@@ -236,7 +243,7 @@ if [ "${SKIP_FRONTEND_BUILD:-false}" = "true" ]; then
   echo "▶ react-scripts build (frontend) — SKIPPED (SKIP_FRONTEND_BUILD=true)"
 else
   echo "▶ react-scripts build (frontend)..."
-  CI=false NODE_OPTIONS=--max-old-space-size=4096 ./node_modules/.bin/react-scripts build 2>&1 | tail -20
+  CI=false NODE_OPTIONS=--max-old-space-size=${FRONTEND_BUILD_MAX_OLD_SPACE_MB} ./node_modules/.bin/react-scripts build 2>&1 | tail -20
 fi
 EOF
 
@@ -415,22 +422,18 @@ if [[ "${SKIP_HEALTH_GATE:-false}" != "true" ]]; then
   printf -v RELEASE_SMOKE_PASSWORD_Q '%q' "$RELEASE_SMOKE_PASSWORD"
   # The gate restarts services and may roll back the current symlink, so it
   # must run through the privileged ops channel. Feeding sudo on stdin keeps
-  # OPS_PASSWORD out of the remote command line and logs.
-  printf '%s\n' "$OPS_PASSWORD" | ssh_ops "sudo -S env \
-    RELEASE_RUN_SMOKE=$RELEASE_RUN_SMOKE_Q \
-    RELEASE_SMOKE_USERNAME=$RELEASE_SMOKE_USERNAME_Q \
-    RELEASE_SMOKE_PASSWORD=$RELEASE_SMOKE_PASSWORD_Q \
-    bash -lc '
-    if [ -f $CURRENT/scripts/deployment/release_health_gate.js ]; then
-      cd $CURRENT && node scripts/deployment/release_health_gate.js 2>&1 | tail -30
-    else
-      echo '  no health gate script; doing minimal health check'
-      case '$TARGET' in
-        main) PORT=3000 ;;
-      esac
-      curl -fsS http://127.0.0.1:\$PORT/health
-    fi
-  '"
+  # OPS_PASSWORD out of the remote command line and logs. Keep the fallback
+  # outside the sudo command to avoid nested shell quoting around bash -lc.
+  if ssh_ops "test -f '$CURRENT/scripts/deployment/release_health_gate.js'"; then
+    printf '%s\n' "$OPS_PASSWORD" | ssh_ops "sudo -S env \
+      RELEASE_RUN_SMOKE=$RELEASE_RUN_SMOKE_Q \
+      RELEASE_SMOKE_USERNAME=$RELEASE_SMOKE_USERNAME_Q \
+      RELEASE_SMOKE_PASSWORD=$RELEASE_SMOKE_PASSWORD_Q \
+      node '$CURRENT/scripts/deployment/release_health_gate.js'"
+  else
+    echo "  no health gate script; doing minimal health check"
+    ssh_ops "curl -fsS http://127.0.0.1:3000/health"
+  fi
 else
   echo ""
   echo "▶ [9/9] Skipped health gate (SKIP_HEALTH_GATE=true)"
