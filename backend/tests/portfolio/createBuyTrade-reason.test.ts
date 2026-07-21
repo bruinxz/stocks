@@ -39,16 +39,17 @@ function readSrc(rel: string): string {
 function test_facade_buy_sell_wired() {
   const src = readSrc('src/portfolio/PaperTradingFacade.ts');
   // BUY create 块
-  const buyBlock = src.match(/direction:\s*'BUY'[\s\S]{0,500}trade_reason:\s*facadeResolveTradeReason/);
+  const buyBlock = src.match(
+    /direction:\s*'BUY'[\s\S]{0,500}trade_reason:\s*facadeResolveTradeReason/
+  );
   assert('facade.BUY_has_trade_reason', !!buyBlock);
   // SELL create 块
-  const sellBlock = src.match(/direction:\s*'SELL'[\s\S]{0,500}trade_reason:\s*facadeResolveTradeReason/);
+  const sellBlock = src.match(
+    /direction:\s*'SELL'[\s\S]{0,500}trade_reason:\s*facadeResolveTradeReason/
+  );
   assert('facade.SELL_has_trade_reason', !!sellBlock);
   // facadeResolveTradeReason 函数定义存在
-  assert(
-    'facade.has_resolve_helper',
-    /function facadeResolveTradeReason\(/.test(src)
-  );
+  assert('facade.has_resolve_helper', /function facadeResolveTradeReason\(/.test(src));
   // closePosition 透传 trade_reason
   assert(
     'facade.closePosition_passes_reason',
@@ -86,18 +87,12 @@ function test_automation_buy_sell_wired() {
 // =====================================================
 function test_guard_sell_executor_wired() {
   const src = readSrc('src/portfolio/risk/GuardSellExecutor.ts');
-  assert(
-    'gse.imports_builder',
-    /from '\.\.\/internal\/tradeReasonBuilder'/.test(src)
-  );
+  assert('gse.imports_builder', /from '\.\.\/internal\/tradeReasonBuilder'/.test(src));
   assert(
     'gse.placeOrder_has_reason',
     /placeOrder\(\{[\s\S]{0,500}trade_reason:\s*reason/.test(src)
   );
-  assert(
-    'gse.builds_from_guard',
-    /buildTradeReasonFromRiskGuard\(trig\.trigger_kind/.test(src)
-  );
+  assert('gse.builds_from_guard', /buildTradeReasonFromRiskGuard\(trig\.trigger_kind/.test(src));
 }
 
 // =====================================================
@@ -124,10 +119,7 @@ function test_rebalance_engine_wired() {
     'reb.placeOrder_has_reason',
     /placeOrder\(\{[\s\S]{0,400}trade_reason:\s*reason/.test(src)
   );
-  assert(
-    'reb.uses_rebalance_source',
-    /buildTradeReasonFromRiskGuard\(['"]rebalance['"]/.test(src)
-  );
+  assert('reb.uses_rebalance_source', /buildTradeReasonFromRiskGuard\(['"]rebalance['"]/.test(src));
 }
 
 // =====================================================
@@ -139,10 +131,7 @@ function test_today_signals_wired() {
     'today.placeOrder_has_reason',
     /placeOrder\(\{[\s\S]{0,400}trade_reason:\s*reason/.test(src)
   );
-  assert(
-    'today.uses_builder',
-    /buildTradeReasonFromSignal\(\{/.test(src)
-  );
+  assert('today.uses_builder', /buildTradeReasonFromSignal\(\{/.test(src));
 }
 
 // =====================================================
@@ -151,14 +140,8 @@ function test_today_signals_wired() {
 function test_model_fields() {
   const src = readSrc('src/models/PaperTradingTrade.ts');
   assert('model.has_trade_reason_jsonb', /declare trade_reason:\s*Record<string,\s*any>/.test(src));
-  assert(
-    'model.has_summary_text',
-    /declare trade_reason_summary:\s*string \| null/.test(src)
-  );
-  assert(
-    'model.jsonb_decorator',
-    /DataType\.JSONB[\s\S]{0,200}field:\s*'trade_reason'/.test(src)
-  );
+  assert('model.has_summary_text', /declare trade_reason_summary:\s*string \| null/.test(src));
+  assert('model.jsonb_decorator', /DataType\.JSONB[\s\S]{0,200}field:\s*'trade_reason'/.test(src));
 }
 
 // =====================================================
@@ -166,17 +149,17 @@ function test_model_fields() {
 // =====================================================
 function test_migration_present() {
   const up = readSrc('scripts/migrations/2026-06-21-paper-trading-trade-reason.sql');
+  assert('mig.up_has_jsonb', /ADD COLUMN IF NOT EXISTS trade_reason JSONB/.test(up));
+  assert('mig.up_has_summary', /ADD COLUMN IF NOT EXISTS trade_reason_summary TEXT/.test(up));
   assert(
-    'mig.up_has_jsonb',
-    /ADD COLUMN IF NOT EXISTS trade_reason JSONB/.test(up)
+    'mig.up_has_index',
+    /CREATE INDEX IF NOT EXISTS idx_paper_trading_trades_reason_source/.test(up)
   );
-  assert(
-    'mig.up_has_summary',
-    /ADD COLUMN IF NOT EXISTS trade_reason_summary TEXT/.test(up)
-  );
-  assert('mig.up_has_index', /CREATE INDEX IF NOT EXISTS idx_paper_trading_trades_reason_source/.test(up));
   const down = readSrc('scripts/migrations/2026-06-21-paper-trading-trade-reason-rollback.sql');
-  assert('mig.down_drops_index', /DROP INDEX IF EXISTS idx_paper_trading_trades_reason_source/.test(down));
+  assert(
+    'mig.down_drops_index',
+    /DROP INDEX IF EXISTS idx_paper_trading_trades_reason_source/.test(down)
+  );
   assert('mig.down_drops_summary', /DROP COLUMN IF EXISTS trade_reason_summary/.test(down));
   assert('mig.down_drops_reason', /DROP COLUMN IF EXISTS trade_reason/.test(down));
 }
@@ -186,15 +169,13 @@ function test_migration_present() {
 // =====================================================
 function test_full_chain_smoke() {
   // BUY 链路
-  const buyReason = buildTradeReasonFromSignal(
-    {
-      id: 100,
-      strategy_key: 'etf_factor_rotation',
-      confidence_score: 80,
-      reasons: ['北向 +2.3 亿', 'PE 12.3 低估', 'MA20 突破'],
-      market_environment: { market_regime: 'up' },
-    } as any
-  );
+  const buyReason = buildTradeReasonFromSignal({
+    id: 100,
+    strategy_key: 'etf_factor_rotation',
+    confidence_score: 80,
+    reasons: ['北向 +2.3 亿', 'PE 12.3 低估', 'MA20 突破'],
+    market_environment: { market_regime: 'up' },
+  } as any);
   assert('smoke.buy.source', buyReason.source === 'auto_buy_from_signals');
   assert('smoke.buy.reasons_3plus', buyReason.key_reasons.length >= 3);
   const buySummary = summarizeTradeReason(buyReason);
@@ -223,12 +204,12 @@ function test_full_chain_smoke() {
 // [10] 前端类型 + 组件存在
 // =====================================================
 function test_frontend_artifacts() {
-  const svcSrc = fs.readFileSync(
-    path.resolve(ROOT, '../frontend/src/services/portfolioWorkspaceService.ts'),
+  const typeSrc = fs.readFileSync(
+    path.resolve(ROOT, '../frontend/src/types/tradeReason.ts'),
     'utf8'
   );
-  assert('fe.svc_has_TradeReasonPayload', /export interface TradeReasonPayload/.test(svcSrc));
-  assert('fe.svc_TradeRow_has_reason', /trade_reason\?:\s*TradeReasonPayload/.test(svcSrc));
+  assert('fe.type_has_TradeReasonPayload', /export interface TradeReasonPayload/.test(typeSrc));
+  assert('fe.type_has_TradeReasonSource', /export type TradeReasonSource/.test(typeSrc));
 
   const cellSrc = fs.readFileSync(
     path.resolve(ROOT, '../frontend/src/components/trading/TradeReasonCell.tsx'),
@@ -236,6 +217,10 @@ function test_frontend_artifacts() {
   );
   assert('fe.cell_exists', cellSrc.length > 100);
   assert('fe.cell_default_export', /export default TradeReasonCell/.test(cellSrc));
+  assert(
+    'fe.cell_imports_canonical_type',
+    /from ['"]\.\.\/\.\.\/types\/tradeReason['"]/.test(cellSrc)
+  );
 
   const modalSrc = fs.readFileSync(
     path.resolve(ROOT, '../frontend/src/components/trading/AIStockAnalysisModal.tsx'),

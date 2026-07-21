@@ -7,7 +7,7 @@
  *     才能继续 — 与 Bell Badge (US-070) / AlertsPanel (US-071) 的"被动展示" 形成
  *     对偶 (推 vs 拉, 强制 vs 浏览).
  *   - 真正决定"哪些告警值得强制弹窗"的判定全部在本 helper 内, JSX 与 hook 都只
- *     消费 view-model, 与 [[alertsBellHelpers]] / [[alertsPanelHelpers]] / [[shadowRunHelpers]]
+ *     消费 view-model, 与 [[alertsBellHelpers]] / [[shadowRunHelpers]]
  *     "前端 pure helper 范式"一脉相承.
  *
  * Critical 判定背景 (US-005 RiskAlertService 落库语义):

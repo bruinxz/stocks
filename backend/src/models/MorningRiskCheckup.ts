@@ -53,7 +53,11 @@ import { User } from './User';
   underscored: true,
   indexes: [
     { fields: ['user_id'] },
-    { fields: ['user_id', 'date'], unique: true, name: 'morning_risk_checkups_user_date_uniq' },
+    {
+      fields: ['user_id', 'portfolio_id', 'date'],
+      unique: true,
+      name: 'morning_risk_checkups_user_portfolio_date_uniq',
+    },
     { fields: ['date'] },
   ],
 })

@@ -79,14 +79,8 @@ assert('[2.5] -3 → 0 (负数兜底)', normalizeUnreadCount(-3) === 0);
 assert('[2.6] 0 → 0', normalizeUnreadCount(0) === 0);
 assert('[2.7] 5 → 5', normalizeUnreadCount(5) === 5);
 assert('[2.8] 5.7 → 5 (floor)', normalizeUnreadCount(5.7) === 5);
-assert(
-  '[2.9] Infinity → MAX_BADGE_COUNT',
-  normalizeUnreadCount(Infinity) === MAX_BADGE_COUNT
-);
-assert(
-  '[2.10] -Infinity → 0',
-  normalizeUnreadCount(-Infinity) === 0
-);
+assert('[2.9] Infinity → MAX_BADGE_COUNT', normalizeUnreadCount(Infinity) === MAX_BADGE_COUNT);
+assert('[2.10] -Infinity → 0', normalizeUnreadCount(-Infinity) === 0);
 assert('[2.11] 99 → 99', normalizeUnreadCount(99) === 99);
 assert('[2.12] 200 → 200 (保留, format 才截断)', normalizeUnreadCount(200) === 200);
 
@@ -106,10 +100,7 @@ assert(
 assert('[3.5] 50 → critical', classifyAlertsBellSeverity(50) === 'critical');
 assert('[3.6] -5 → none (兜底)', classifyAlertsBellSeverity(-5) === 'none');
 assert('[3.7] NaN → none', classifyAlertsBellSeverity(NaN) === 'none');
-assert(
-  '[3.8] Infinity → critical',
-  classifyAlertsBellSeverity(Infinity) === 'critical'
-);
+assert('[3.8] Infinity → critical', classifyAlertsBellSeverity(Infinity) === 'critical');
 
 // ============================================================
 // [4] formatBadgeText
@@ -140,10 +131,7 @@ assert(
 
   const t10 = buildBellTooltip(CRITICAL_UNREAD_THRESHOLD);
   assert('[5.5] CRITICAL → 含 "高频告警"', t10.includes('高频'));
-  assert(
-    '[5.6] CRITICAL → 含数字',
-    t10.includes(String(CRITICAL_UNREAD_THRESHOLD))
-  );
+  assert('[5.6] CRITICAL → 含数字', t10.includes(String(CRITICAL_UNREAD_THRESHOLD)));
 
   const tNeg = buildBellTooltip(-5);
   assert('[5.7] 负数 → 安全 fallback 到无未读', tNeg.includes('无未读'));
@@ -152,32 +140,14 @@ assert(
 // ============================================================
 // [6] clampPollInterval
 // ============================================================
-assert(
-  '[6.1] undefined → DEFAULT',
-  clampPollInterval(undefined) === DEFAULT_POLL_INTERVAL_MS
-);
+assert('[6.1] undefined → DEFAULT', clampPollInterval(undefined) === DEFAULT_POLL_INTERVAL_MS);
 assert('[6.2] null → DEFAULT', clampPollInterval(null) === DEFAULT_POLL_INTERVAL_MS);
 assert('[6.3] NaN → DEFAULT', clampPollInterval(NaN) === DEFAULT_POLL_INTERVAL_MS);
-assert(
-  '[6.4] Infinity → DEFAULT',
-  clampPollInterval(Infinity) === DEFAULT_POLL_INTERVAL_MS
-);
-assert(
-  '[6.5] 1000 (< MIN) → MIN',
-  clampPollInterval(1000) === MIN_POLL_INTERVAL_MS
-);
-assert(
-  '[6.6] 999999 (> MAX) → MAX',
-  clampPollInterval(999999) === MAX_POLL_INTERVAL_MS
-);
-assert(
-  '[6.7] 合法 60000 → 60000',
-  clampPollInterval(60000) === 60000
-);
-assert(
-  '[6.8] 60000.7 → 60000 (floor)',
-  clampPollInterval(60000.7) === 60000
-);
+assert('[6.4] Infinity → DEFAULT', clampPollInterval(Infinity) === DEFAULT_POLL_INTERVAL_MS);
+assert('[6.5] 1000 (< MIN) → MIN', clampPollInterval(1000) === MIN_POLL_INTERVAL_MS);
+assert('[6.6] 999999 (> MAX) → MAX', clampPollInterval(999999) === MAX_POLL_INTERVAL_MS);
+assert('[6.7] 合法 60000 → 60000', clampPollInterval(60000) === 60000);
+assert('[6.8] 60000.7 → 60000 (floor)', clampPollInterval(60000.7) === 60000);
 assert('[6.9] -1000 → MIN', clampPollInterval(-1000) === MIN_POLL_INTERVAL_MS);
 
 // ============================================================
@@ -211,10 +181,7 @@ assert('[6.9] -1000 → MIN', clampPollInterval(-1000) === MIN_POLL_INTERVAL_MS)
     '[7b.4] undefined → 当前主入口',
     helpers.buildAlertsBellHrefForRole(undefined) === userHref
   );
-  assert(
-    '[7b.5] null → 当前主入口',
-    helpers.buildAlertsBellHrefForRole(null) === userHref
-  );
+  assert('[7b.5] null → 当前主入口', helpers.buildAlertsBellHrefForRole(null) === userHref);
   assert(
     '[7b.6] USER_TARGET_PATH 与当前主入口一致',
     helpers.ALERTS_BELL_USER_TARGET_PATH === '/catdesk'
@@ -255,15 +222,12 @@ function readFile(rel: string): string {
   }
 }
 
-// 8.2 — AlertsBell.tsx 接入 helper + 调 useAlertsRealtime + navigate
+// 8.2 — AlertsBell.tsx 接入 helper + 调 useAlertsRealtime + 打开真实收件箱 Drawer
 // US-073 [FE-034] 已把 listRiskAlerts/setInterval 移到 useAlertsRealtime hook 内部,
 // 这里只守 "Bell 仍走 hook + helper 渲染 Badge/Tooltip" 形态, 不再直接守 listRiskAlerts.
 {
   const bellSrc = readFile('components/layout/AlertsBell.tsx');
-  assert(
-    '[8.2a] AlertsBell import alertsBellHelpers',
-    bellSrc.includes('alertsBellHelpers')
-  );
+  assert('[8.2a] AlertsBell import alertsBellHelpers', bellSrc.includes('alertsBellHelpers'));
   assert(
     '[8.2b] AlertsBell 用 useAlertsRealtime hook (US-073)',
     bellSrc.includes('useAlertsRealtime')
@@ -281,17 +245,14 @@ function readFile(rel: string): string {
     bellSrc.includes('data-mode')
   );
   assert(
-    '[8.2f] AlertsBell 用 useNavigate + buildAlertsBellHref',
-    bellSrc.includes('useNavigate') && bellSrc.includes('buildAlertsBellHref')
+    '[8.2f] AlertsBell 打开 AlertsDrawer 而非只导航主页',
+    bellSrc.includes('AlertsDrawer') && bellSrc.includes('setDrawerOpen(true)')
   );
   assert(
     '[8.2g] AlertsBell 含 data-testid="alerts-bell"',
     bellSrc.includes('data-testid="alerts-bell"')
   );
-  assert(
-    '[8.2h] AlertsBell 用 BellOutlined icon',
-    bellSrc.includes('BellOutlined')
-  );
+  assert('[8.2h] AlertsBell 用 BellOutlined icon', bellSrc.includes('BellOutlined'));
   assert('[8.2i] AlertsBell 用 antd Badge', bellSrc.includes('Badge'));
   assert(
     '[8.2j] AlertsBell 用 Tooltip 显示 buildBellTooltip',
@@ -305,6 +266,12 @@ function readFile(rel: string): string {
   // 提及 US-070 让未来 grep / 跨 sprint 追溯能找到
   assert('[8.2l] AlertsBell 提到 US-070', bellSrc.includes('US-070'));
   assert('[8.2m] AlertsBell 提到 US-073 (实时升级标识)', bellSrc.includes('US-073'));
+  const drawerSrc = readFile('components/layout/AlertsDrawer.tsx');
+  assert('[8.2n] Drawer 读取告警列表', drawerSrc.includes('listRiskAlerts'));
+  assert(
+    '[8.2o] Drawer 支持单条和全部已读',
+    drawerSrc.includes('markSingleRiskAlertRead') && drawerSrc.includes('markAllRiskAlertsRead')
+  );
 }
 
 // 8.3 — App.tsx 已 import + 在 Header 渲染 AlertsBell
@@ -314,10 +281,7 @@ function readFile(rel: string): string {
     '[8.3a] App import AlertsBell',
     /import\s+AlertsBell\s+from\s+['"][^'"]*AlertsBell['"]/.test(appSrc)
   );
-  assert(
-    '[8.3b] App 在 JSX 里渲染 <AlertsBell',
-    appSrc.includes('<AlertsBell')
-  );
+  assert('[8.3b] App 在 JSX 里渲染 <AlertsBell', appSrc.includes('<AlertsBell'));
   // Bell 应该在 Header 的 token-guarded 块里, 与 GlobalPortfolioSelector 同 div
   assert(
     '[8.3c] AlertsBell 跟 GlobalPortfolioSelector 一起在 Header 块',

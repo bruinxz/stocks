@@ -44,7 +44,7 @@ import {
   EvidenceList,
 } from './aiStockAnalysisModalV2Components';
 import TradeReasonCell from './TradeReasonCell';
-import type { TradeReasonPayload } from '../../services/portfolioWorkspaceService';
+import type { TradeReasonPayload } from '../../types/tradeReason';
 import AIPriceDecisionCard from './AIPriceDecisionCard';
 
 const { Paragraph, Text, Title } = Typography;

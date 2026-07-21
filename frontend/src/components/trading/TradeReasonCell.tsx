@@ -17,10 +17,7 @@
 import React from 'react';
 import { Popover, Tag, Typography, Space, Divider, Empty } from 'antd';
 import { InfoCircleOutlined } from '@ant-design/icons';
-import type {
-  TradeReasonPayload,
-  TradeReasonSource,
-} from '../../services/portfolioWorkspaceService';
+import type { TradeReasonPayload, TradeReasonSource } from '../../types/tradeReason';
 
 const { Text, Paragraph } = Typography;
 

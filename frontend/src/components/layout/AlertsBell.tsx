@@ -13,7 +13,7 @@
  *   - 未读 ≥ CRITICAL_UNREAD_THRESHOLD → 红色 Badge + 数字 (status='error').
  *   - 未读 ≥ 100 → 显示 "99+".
  *   - hover → Tooltip 文案见 buildBellTooltip() + mode 后缀 (ws/polling).
- *   - click → navigate(buildAlertsBellHrefForRole) 落到当前 CatDesk 主入口.
+ *   - click → 打开 AlertsDrawer 告警收件箱，支持查看和标记已读.
  * 错误兜底 (fail-OPEN):
  *   - useAlertsRealtime 内部全 try/catch — 任何 fetch 失败保留上一次 unread count
  *     (不清零, 防"网络抖动一秒红 Badge 跳没了" 假阴性). 与 backend
@@ -32,20 +32,17 @@
  *   - alertsBellHelpers.ts + alertsRealtimeClient.ts 全单测; META-GUARD 守本 .tsx 调到了关键 export.
  */
 
-import React, { useCallback } from 'react';
+import React, { useState } from 'react';
 import { Badge, Tooltip } from 'antd';
 import { BellOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
-import { useSelector } from 'react-redux';
-import type { RootState } from '../../store/rootReducer';
 import {
-  buildAlertsBellHrefForRole,
   buildBellTooltip,
   classifyAlertsBellSeverity,
   formatBadgeText,
   MAX_BADGE_COUNT,
 } from '../../pages/workspace/alertsBellHelpers';
 import { useAlertsRealtime } from '../../services/alertsRealtimeClient';
+import AlertsDrawer from './AlertsDrawer';
 
 export interface AlertsBellProps {
   /**
@@ -60,15 +57,9 @@ export interface AlertsBellProps {
 }
 
 const AlertsBell: React.FC<AlertsBellProps> = ({ enableWebSocket = true }) => {
-  const navigate = useNavigate();
-  const { unreadCount, mode } = useAlertsRealtime({ enableWebSocket });
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const { unreadCount, mode, refresh } = useAlertsRealtime({ enableWebSocket });
   const errored = mode === 'error';
-  // buildAlertsBellHrefForRole 内部调 buildAlertsBellHref, META-GUARD substring 仍命中.
-  const isAdmin = useSelector((s: RootState) => s.auth.user?.role === 'admin');
-
-  const handleClick = useCallback(() => {
-    navigate(buildAlertsBellHrefForRole(isAdmin));
-  }, [navigate, isAdmin]);
 
   const severity = classifyAlertsBellSeverity(unreadCount);
   const badgeText = formatBadgeText(unreadCount);
@@ -82,7 +73,7 @@ const AlertsBell: React.FC<AlertsBellProps> = ({ enableWebSocket = true }) => {
           ? ' (拉取失败)'
           : '';
   const tooltipText = errored
-    ? '拉取告警失败 — 网络异常, 已保留上次未读数; 点击仍可返回主页'
+    ? '拉取告警失败 — 网络异常, 已保留上次未读数; 点击打开告警收件箱'
     : `${buildBellTooltip(unreadCount)}${modeSuffix}`;
 
   // antd Badge: color='red' 让 critical Badge 显红 (与项目主题 colorError 同色);
@@ -91,55 +82,61 @@ const AlertsBell: React.FC<AlertsBellProps> = ({ enableWebSocket = true }) => {
   const badgeColor = severity === 'critical' ? '#c94b4b' : '#1f3a5f';
 
   return (
-    <Tooltip title={tooltipText} placement="bottomRight">
-      <span
-        role="button"
-        tabIndex={0}
-        data-testid="alerts-bell"
-        data-severity={severity}
-        data-unread={String(unreadCount)}
-        data-mode={mode}
-        data-role={isAdmin ? 'admin' : 'user'}
-        onClick={handleClick}
-        onKeyDown={e => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            handleClick();
-          }
-        }}
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          cursor: 'pointer',
-          padding: '4px 8px',
-          borderRadius: 8,
-          color: errored ? '#c94b4b' : undefined,
-          // 让 hover 有视觉反馈, 与 header-user-dropdown 同思想.
-          transition: 'background-color 0.18s ease',
-        }}
-        onMouseEnter={e => {
-          (e.currentTarget as HTMLSpanElement).style.backgroundColor = 'rgba(0,0,0,0.04)';
-        }}
-        onMouseLeave={e => {
-          (e.currentTarget as HTMLSpanElement).style.backgroundColor = 'transparent';
-        }}
-      >
-        {showBadge ? (
-          <Badge
-            count={badgeText}
-            color={badgeColor}
-            overflowCount={MAX_BADGE_COUNT}
-            offset={[0, 0]}
-            data-testid="alerts-bell-badge"
-          >
+    <>
+      <Tooltip title={tooltipText} placement="bottomRight">
+        <span
+          role="button"
+          tabIndex={0}
+          data-testid="alerts-bell"
+          data-severity={severity}
+          data-unread={String(unreadCount)}
+          data-mode={mode}
+          onClick={() => setDrawerOpen(true)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              setDrawerOpen(true);
+            }
+          }}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            padding: '4px 8px',
+            borderRadius: 8,
+            color: errored ? '#c94b4b' : undefined,
+            // 让 hover 有视觉反馈, 与 header-user-dropdown 同思想.
+            transition: 'background-color 0.18s ease',
+          }}
+          onMouseEnter={e => {
+            (e.currentTarget as HTMLSpanElement).style.backgroundColor = 'rgba(0,0,0,0.04)';
+          }}
+          onMouseLeave={e => {
+            (e.currentTarget as HTMLSpanElement).style.backgroundColor = 'transparent';
+          }}
+        >
+          {showBadge ? (
+            <Badge
+              count={badgeText}
+              color={badgeColor}
+              overflowCount={MAX_BADGE_COUNT}
+              offset={[0, 0]}
+              data-testid="alerts-bell-badge"
+            >
+              <BellOutlined style={{ fontSize: 18 }} />
+            </Badge>
+          ) : (
             <BellOutlined style={{ fontSize: 18 }} />
-          </Badge>
-        ) : (
-          <BellOutlined style={{ fontSize: 18 }} />
-        )}
-      </span>
-    </Tooltip>
+          )}
+        </span>
+      </Tooltip>
+      <AlertsDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        onUnreadChange={refresh}
+      />
+    </>
   );
 };
 

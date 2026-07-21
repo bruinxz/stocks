@@ -9,7 +9,7 @@
  * 别数; '调度任务' / '个股趋势' / '数据健康' 各自维度).
  *
  * 同款思路: [[前端 pure helper 模板]] (US-049 / US-051 / US-052 / US-054 /
- * US-055 / US-057 / US-058 / US-059 / [[industryConcentrationKpiHelpers]]).
+ * US-055 / US-057 / US-058 / US-059).
  *
  * 设计原则:
  *   - 任何 tab 的 view model 全部由同一份 `DataHealthStatusResponse | null`

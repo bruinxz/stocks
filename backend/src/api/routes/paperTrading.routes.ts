@@ -141,6 +141,11 @@ router.get(
   authController.authenticate,
   paperTradingController.getPortfolioDetail
 );
+router.get(
+  '/portfolios/:id/ledger',
+  authController.authenticate,
+  paperTradingController.getPortfolioLedger
+);
 router.put('/portfolios/:id', authController.authenticate, paperTradingController.updatePortfolio);
 router.delete(
   '/portfolios/:id',
