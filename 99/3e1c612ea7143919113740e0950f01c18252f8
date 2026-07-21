@@ -1,0 +1,57 @@
+backend/src/api/controllers/AIAdvisorController.ts
+  s_4c5b09a99b8e55::t_992d2094b748a9 67-68,429-499
+backend/src/api/routes/ai.routes.ts
+  s_4c5b09a99b8e55::t_3e781ab87a79ce 66-130
+backend/src/services/AIPriceDecisionService.ts
+  s_4c5b09a99b8e55::t_5ae1e90d305e79 13-14,100-104,111-112,558-609,628,715-882
+backend/tests/services/ai-price-decision-contract.test.ts
+  s_4c5b09a99b8e55::t_0ef5dc00e82861 22-26,39-48,50-53,59-72
+backend/tests/services/ai-price-decision-controller.test.ts
+  s_4c5b09a99b8e55::t_0d8618f23d986e 86-87,200-251,254-255
+backend/tests/services/ai-price-decision-service.test.ts
+  s_4c5b09a99b8e55::t_1e8bdfc07f7dc8 327-332,364-434,444
+docs/openapi.json
+  s_4c5b09a99b8e55::t_3722fddb4709f4 10735-10848
+frontend/src/App.tsx
+  s_4c5b09a99b8e55::t_8dd9bce042344e 34,715-717,822-827
+frontend/src/components/trading/AIAnalysisLauncher.tsx
+  s_4c5b09a99b8e55::t_8c58076dad2ed3 11,13,41,46,139,174,182,189,205-209,227,230-231
+frontend/src/components/trading/AIAnalysisWorkspaceResult.tsx
+  s_4c5b09a99b8e55::t_301435470c5287 1-180
+frontend/src/components/trading/AIStockAnalysisModal.tsx
+  s_4c5b09a99b8e55::t_c14c6f2f1c4bdc 28,73,77,100-101,111,134-148,153,171-181,215
+frontend/src/components/trading/__tests__/aiAnalysisAsyncWorkspace.test.tsx
+  s_4c5b09a99b8e55::t_6e7fa96a14af62 1-237
+frontend/src/components/trading/__tests__/aiStockAnalysisModalAsync.test.tsx
+  s_4c5b09a99b8e55::t_ce59d9627be810 1-81
+frontend/src/contexts/AIAnalysisContext.tsx
+  s_4c5b09a99b8e55::t_8aee7ff86129e1 1-288
+frontend/src/index.css
+  s_4c5b09a99b8e55::t_cf8d7ffd9c2cad 19447-19452,19559-19779,19794-19817
+frontend/src/pages/catdesk/catdesk.css
+  s_4c5b09a99b8e55::t_d3d32bf322cf50 1496-1505
+frontend/src/pages/catdesk/tabs/__tests__/portfolioAndAIEntry.test.tsx
+  s_4c5b09a99b8e55::t_c2ea2a1db8cb87 33,137-141
+frontend/src/services/aiStockAnalysisService.ts
+  s_4c5b09a99b8e55::t_32aad259c63033 145-149,174-201,261-262
+frontend/src/utils/sessionCleanup.ts
+  s_4c5b09a99b8e55::t_38a82d2e0b523c 28-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "993e1c612ea7143919113740e0950f01c18252f8",
+  "prompts": {},
+  "sessions": {
+    "s_4c5b09a99b8e55": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8292-9b9c-7d72-96bc-4c77b91fe777",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
