@@ -67,8 +67,8 @@ RELEASE_SMOKE_USERNAME="${RELEASE_SMOKE_USERNAME:-stocks}"
 RELEASE_SMOKE_PASSWORD="${RELEASE_SMOKE_PASSWORD:-}"
 
 if [[ "${SKIP_HEALTH_GATE:-false}" != "true" ]]; then
-  case "${RELEASE_RUN_SMOKE,,}" in
-    0|false|no|n|off) ;;
+  case "$RELEASE_RUN_SMOKE" in
+    0|false|FALSE|False|no|NO|No|n|N|off|OFF|Off) ;;
     *)
       [[ -n "$RELEASE_SMOKE_PASSWORD" ]] || {
         echo "RELEASE_SMOKE_PASSWORD is required when RELEASE_RUN_SMOKE is enabled" >&2
