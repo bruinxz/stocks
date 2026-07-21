@@ -3,6 +3,30 @@ import { QueryTypes } from 'sequelize';
 import { logger } from '../../utils/logger';
 import { sequelize } from '../../config/database';
 
+const KR_TECH_REPRESENTATIVES = new Set([
+  '005930',
+  '000660',
+  '042700',
+  '035420',
+  '035720',
+  '373220',
+  '006400',
+  '277810',
+]);
+
+const SECTOR_LABELS: Record<string, string> = {
+  semiconductor: '半导体',
+  internet_platform: '互联网平台',
+  battery: '电池科技',
+  ai_robotics: 'AI 与机器人',
+  automotive: '汽车',
+  consumer: '消费科技',
+  pharma: '医药',
+  steel: '钢铁',
+  shipbuilding: '造船',
+  other: '其他',
+};
+
 const KPI_SQL = `
   WITH index_symbols(ticker, response_key) AS (
     VALUES ('NI225', 'nikkei225'), ('TOPX', 'topix'), ('KOSPI', 'kospi')
@@ -173,14 +197,17 @@ const MARKET_ROWS_SQL = `
              OR COALESCE(security.source_payload->>'sector_33_name', '') ILIKE '%%半导体%%'
              OR COALESCE(current_row.ticker_name_local, '') ILIKE '%%半导体%%'
              THEN 'semiconductor'
+           WHEN current_row.ticker IN ('035420', '035720') THEN 'internet_platform'
+           WHEN current_row.ticker IN ('373220', '006400') THEN 'battery'
+           WHEN current_row.ticker IN ('6501', '6861', '277810') THEN 'ai_robotics'
            WHEN current_row.ticker IN ('7203', '7267', '005380') THEN 'automotive'
-           WHEN current_row.ticker IN ('6501', '6861') THEN 'ai_robotics'
            WHEN current_row.ticker IN ('6758', '9984') THEN 'consumer'
            WHEN current_row.ticker IN ('4502', '4519') THEN 'pharma'
            WHEN current_row.ticker IN ('5401', '005490') THEN 'steel'
            WHEN current_row.ticker IN ('7011', '009540') THEN 'shipbuilding'
            ELSE COALESCE(financial.dim_moat->>'sector', 'other')
          END AS sector,
+         current_row.trading_day AS as_of,
          current_row.close,
          COALESCE(
            ROUND(
@@ -295,6 +322,33 @@ function normalizeRow(row: any): any {
   };
 }
 
+function buildSectorPerformance(rows: any[]): any[] {
+  const buckets = new Map<string, any[]>();
+  rows.forEach(row => {
+    const bucket = buckets.get(row.sector) ?? [];
+    bucket.push(row);
+    buckets.set(row.sector, bucket);
+  });
+  return Array.from(buckets.entries())
+    .map(([sector, members]) => ({
+      sector,
+      sector_label: SECTOR_LABELS[sector] || sector,
+      change_pct:
+        Math.round(
+          (members.reduce((sum, member) => sum + member.change_pct, 0) / members.length) * 10000
+        ) / 10000,
+      representative_count: members.length,
+      representative_symbols: members.map(member => member.symbol),
+      calculation_basis: 'representative_equal_weight',
+      as_of: members.reduce<string | null>(
+        (latest, member) =>
+          !latest || String(member.as_of) > latest ? String(member.as_of) : latest,
+        null
+      ),
+    }))
+    .sort((a, b) => b.change_pct - a.change_pct);
+}
+
 export class JpKrMarketController {
   constructor() {
     this.getByDate = this.getByDate.bind(this);
@@ -324,8 +378,35 @@ export class JpKrMarketController {
         replacements: { date, cutoff, market, symbol: null, limit: 200 },
         type: QueryTypes.SELECT,
       });
+      const normalizedRows = rows.map(normalizeRow);
+      const focusedRows =
+        market === 'KR'
+          ? normalizedRows.filter(row => KR_TECH_REPRESENTATIVES.has(row.symbol))
+          : normalizedRows;
+      const sector_performance = buildSectorPerformance(focusedRows);
+      const sectorRank = new Map(sector_performance.map((sector, index) => [sector.sector, index]));
+      focusedRows.sort((a, b) => {
+        const sectorDelta =
+          (sectorRank.get(a.sector) ?? Number.MAX_SAFE_INTEGER) -
+          (sectorRank.get(b.sector) ?? Number.MAX_SAFE_INTEGER);
+        return sectorDelta || b.change_pct - a.change_pct;
+      });
+      const leader = sector_performance[0] ?? null;
 
-      res.json({ kpi, rows: rows.map(normalizeRow), date });
+      res.json({
+        kpi,
+        rows: focusedRows,
+        sector_performance,
+        market_summary: {
+          focus: market === 'KR' ? 'technology_representatives' : 'market_representatives',
+          leader_sector: leader?.sector ?? null,
+          leader_sector_label: leader?.sector_label ?? null,
+          leader_change_pct: leader?.change_pct ?? null,
+          advancing_sectors: sector_performance.filter(sector => sector.change_pct > 0).length,
+          sector_count: sector_performance.length,
+        },
+        date,
+      });
     } catch (error: any) {
       logger.error(`[JpKrMarketController.getByDate] ${error?.message || error}`);
       res.status(500).json({ error: 'Failed to fetch JPKR market data' });

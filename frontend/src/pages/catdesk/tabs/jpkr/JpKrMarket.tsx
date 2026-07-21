@@ -14,20 +14,8 @@ import './jpkr.css';
 import { DataListToolbar } from '../../shared/DataListToolbar';
 
 const MARKET_OPTIONS = [
-  { value: 'JP' as const, label: '日本', ariaLabel: '日本市场' },
-  { value: 'KR' as const, label: '韩国', ariaLabel: '韩国市场' },
-];
-
-const SECTOR_OPTIONS: Array<{ value: JpKrSector; label: string; ariaLabel: string }> = [
-  { value: 'semiconductor', label: '半导体', ariaLabel: '半导体板块' },
-  { value: 'automotive', label: '汽车', ariaLabel: '汽车板块' },
-  { value: 'battery', label: '电池', ariaLabel: '电池板块' },
-  { value: 'ai_robotics', label: 'AI/机器人', ariaLabel: 'AI 机器人板块' },
-  { value: 'pharma', label: '医药', ariaLabel: '医药板块' },
-  { value: 'steel', label: '钢铁', ariaLabel: '钢铁板块' },
-  { value: 'shipbuilding', label: '造船', ariaLabel: '造船板块' },
-  { value: 'consumer', label: '消费', ariaLabel: '消费板块' },
-  { value: 'other', label: '其他', ariaLabel: '其他板块' },
+  { value: 'KR' as const, label: '韩国科技', ariaLabel: '韩国科技市场' },
+  { value: 'JP' as const, label: '日本参考', ariaLabel: '日本参考市场' },
 ];
 
 function getTodayDate(): string {
@@ -39,13 +27,23 @@ function getTodayDate(): string {
   }).format(new Date());
 }
 
+function delta(value: number | null): string {
+  if (value == null) return '—';
+  return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
+}
+
+function deltaDirection(value: number | null): 'up' | 'down' | 'flat' {
+  if (value == null || value === 0) return 'flat';
+  return value > 0 ? 'up' : 'down';
+}
+
 export type JpKrMarketProps = {
   tradingDay?: string;
 };
 
 export default function JpKrMarket({ tradingDay }: JpKrMarketProps = {}) {
-  const [market, setMarket] = useState<JpKrMarketType>('JP');
-  const [sectorFilter, setSectorFilter] = useState<JpKrSector[]>([]);
+  const [market, setMarket] = useState<JpKrMarketType>('KR');
+  const [sectorFilter, setSectorFilter] = useState<JpKrSector | null>(null);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -56,10 +54,7 @@ export default function JpKrMarket({ tradingDay }: JpKrMarketProps = {}) {
 
   const filteredRows = useMemo(() => {
     if (!data?.rows) return [];
-    let rows =
-      sectorFilter.length === 0
-        ? data.rows
-        : data.rows.filter(r => sectorFilter.includes(r.sector));
+    let rows = sectorFilter ? data.rows.filter(row => row.sector === sectorFilter) : data.rows;
     const keyword = search.trim().toLocaleLowerCase('zh-CN');
     if (keyword) {
       rows = rows.filter(row =>
@@ -74,6 +69,7 @@ export default function JpKrMarket({ tradingDay }: JpKrMarketProps = {}) {
   const handleMarketChange = useCallback((next: JpKrMarketType[]) => {
     if (next.length > 0) {
       setMarket(next[0]);
+      setSectorFilter(null);
       setSelectedSymbol(null);
       setSidebarOpen(false);
     }
@@ -89,50 +85,37 @@ export default function JpKrMarket({ tradingDay }: JpKrMarketProps = {}) {
     setSelectedSymbol(null);
   }, []);
 
-  const selectedRow = useMemo(() => {
-    const listed = data?.rows.find(r => r.symbol === selectedSymbol);
-    if (!detailData) return listed ?? null;
-    return {
-      ...detailData,
-      ...(listed?.recommendation ? { recommendation: listed.recommendation } : {}),
-    };
-  }, [detailData, data?.rows, selectedSymbol]);
+  const selectedRow = useMemo(
+    () => detailData ?? data?.rows.find(row => row.symbol === selectedSymbol) ?? null,
+    [detailData, data?.rows, selectedSymbol]
+  );
 
   if (loading && !data) {
     return (
       <LoadingState
-        title="正在查看日韩盘面"
-        description="核对东京与首尔的行情、板块和披露事件…"
+        title="正在整理韩国科技盘面"
+        description="按科技板块与少量代表股归档最新行情…"
         mood="surprised"
       />
     );
   }
 
   if (error && !data) {
-    return <ErrorState message="日韩市场数据暂时不可用，请检查数据源或返回契约" />;
+    return <ErrorState message="日韩科技行情暂时不可用，请检查数据源或返回契约" />;
   }
 
   return (
     <div className="jpkr-market">
-      {data && <JpKrKpiStrip kpi={data.kpi} />}
-
-      {data?.recommendation_status?.kind !== 'ready' && (
-        <div
-          role="status"
-          style={{
-            border: '1px solid var(--cd-border)',
-            borderRadius: 8,
-            padding: '8px 12px',
-            color: 'var(--cd-text-secondary)',
-          }}
-        >
-          {data?.recommendation_status?.kind === 'unavailable'
-            ? '策略推荐服务当前不可用；行情、披露与汇率数据仍可查看。'
-            : '当前交易日尚未生成该市场的策略推荐快照。'}
+      <header className="jpkr-focus-header">
+        <div>
+          <span>ASIA TECHNOLOGY DESK · {date}</span>
+          <h2>{market === 'KR' ? '韩国科技板块观察' : '日本市场参考'}</h2>
+          <p>
+            {market === 'KR'
+              ? '只保留少量科技代表股，板块涨幅采用代表股等权平均。'
+              : '日本市场保留为次级参考视图，不影响韩国科技主观察池。'}
+          </p>
         </div>
-      )}
-
-      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
         <FilterChip<JpKrMarketType>
           options={MARKET_OPTIONS}
           value={[market]}
@@ -140,39 +123,71 @@ export default function JpKrMarket({ tradingDay }: JpKrMarketProps = {}) {
           mode="single"
           ariaLabel="市场切换"
         />
-        <FilterChip<JpKrSector>
-          options={SECTOR_OPTIONS}
-          value={sectorFilter}
-          onChange={setSectorFilter}
-          mode="multi"
-          ariaLabel="板块过滤"
-        />
-      </div>
+      </header>
 
-      <DataListToolbar
-        value={search}
-        onChange={setSearch}
-        total={filteredRows.length}
-        label="条股票"
-        placeholder="搜索股票代码或公司名称"
-      />
-
-      {filteredRows.length === 0 && !loading ? (
-        <EmptyState
-          title={
-            sectorFilter.length
-              ? '当前市场的所选板块暂无行情，可切换日本/韩国市场'
-              : '当日暂无可用行情 / 交易日历休市'
-          }
-        />
-      ) : (
-        <JpKrTable
-          rows={filteredRows}
-          loading={loading}
-          error={error}
-          onRowClick={handleRowClick}
-        />
+      {data && data.sector_performance.length > 0 && (
+        <section className="jpkr-sector-section" aria-labelledby="jpkr-sector-title">
+          <div className="jpkr-section-heading">
+            <div>
+              <span>01 / SECTOR FIRST</span>
+              <h3 id="jpkr-sector-title">板块涨幅</h3>
+            </div>
+            <p>代表股等权口径 · 点击可筛选</p>
+          </div>
+          <div className="jpkr-sector-board">
+            {data.sector_performance.map((sector, index) => (
+              <button
+                className="jpkr-sector-card"
+                data-active={sectorFilter === sector.sector}
+                type="button"
+                key={sector.sector}
+                onClick={() =>
+                  setSectorFilter(current => (current === sector.sector ? null : sector.sector))
+                }
+              >
+                <span>{String(index + 1).padStart(2, '0')}</span>
+                <span>
+                  <strong>{sector.sector_label}</strong>
+                  <small>{sector.representative_count} 只代表股</small>
+                </span>
+                <strong data-delta={deltaDirection(sector.change_pct)}>
+                  {delta(sector.change_pct)}
+                </strong>
+              </button>
+            ))}
+          </div>
+        </section>
       )}
+
+      {data && <JpKrKpiStrip kpi={data.kpi} market={market} />}
+
+      <section className="jpkr-representatives" aria-labelledby="jpkr-stock-title">
+        <div className="jpkr-section-heading">
+          <div>
+            <span>02 / REPRESENTATIVES</span>
+            <h3 id="jpkr-stock-title">{market === 'KR' ? '韩国科技代表股' : '日本市场代表股'}</h3>
+          </div>
+          <p>{sectorFilter ? '已按板块筛选' : '随板块强弱排序'}</p>
+        </div>
+        <DataListToolbar
+          value={search}
+          onChange={setSearch}
+          total={filteredRows.length}
+          label="只代表股"
+          placeholder="搜索股票代码或公司名称"
+        />
+
+        {filteredRows.length === 0 && !loading ? (
+          <EmptyState title="当前交易日暂无可用代表股行情" />
+        ) : (
+          <JpKrTable
+            rows={filteredRows}
+            loading={loading}
+            error={error}
+            onRowClick={handleRowClick}
+          />
+        )}
+      </section>
 
       <DetailSidebar
         open={sidebarOpen}

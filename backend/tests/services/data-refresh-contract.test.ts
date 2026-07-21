@@ -13,6 +13,10 @@ const globalSync = fs.readFileSync(
   path.join(root, 'scripts/ops/sync_global_markets_daily.py'),
   'utf8'
 );
+const usTechSync = fs.readFileSync(
+  path.join(root, 'scripts/ops/populate_live_us_tech_market.py'),
+  'utf8'
+);
 const dailyReport = fs.readFileSync(
   path.join(root, 'frontend/src/pages/catdesk/tabs/daily-report/DailyReportContainer.tsx'),
   'utf8'
@@ -55,6 +59,10 @@ const pageFreshness = fs.readFileSync(
 );
 const realtimeDedupMigration = fs.readFileSync(
   path.join(root, 'backend/scripts/migrations/2026-07-17-realtime-quote-dedup.sql'),
+  'utf8'
+);
+const deployRemoteBuild = fs.readFileSync(
+  path.join(root, 'scripts/deployment/deploy_remote_build.sh'),
   'utf8'
 );
 const freshnessAudit = fs.readFileSync(
@@ -130,8 +138,8 @@ assert.match(
 );
 assert.match(
   pageFreshness,
-  /'jpkr'[\s\S]{0,180}MIN\(latest_day\)[\s\S]{0,280}market_scope IN \('jp', 'kr'\)/,
-  'JP/KR page timestamp must expose the slower market watermark'
+  /SELECT 'jpkr', '韩股科技'[\s\S]{0,260}market_scope = 'kr'/,
+  'Korean technology page timestamp must follow the primary KR representative view'
 );
 assert.match(
   pageFreshness,
@@ -239,10 +247,40 @@ assert.match(
 );
 assert.match(
   globalSync,
+  /populate_live_us_tech_market\.py[\s\S]{0,260}refresh_us_tech_market/,
+  'global refresh must persist the US technology market before recommendation snapshots'
+);
+assert.match(
+  usTechSync,
+  /"SMH"[\s\S]{0,180}"semiconductor"[\s\S]{0,500}"IGV"[\s\S]{0,180}"software_cloud"/,
+  'US technology refresh must keep explicit sector ETF proxies'
+);
+assert.match(
+  deployRemoteBuild,
+  /APPLY_GLOBAL_TECH_DAILY_QUOTE_MIGRATION=1[\s\S]{0,120}apply-global-tech-daily-quotes-migration\.js/,
+  'production deployment must apply and verify the US technology quote schema before restart'
+);
+assert.match(
+  usTechSync,
+  /US technology capture incomplete/,
+  'US technology refresh must fail closed before persistence when any curated instrument is missing'
+);
+assert.match(
+  globalSync,
   /_rebase_pending_fx[\s\S]{0,1800}previous_by_pair=stored_latest/,
   'global refresh must rebase new FX rows onto the persisted predecessor lineage'
 );
 assert.match(routes, /'\/page-freshness'.*authenticate/, 'page freshness route must be protected');
+assert.match(
+  pageFreshness,
+  /SELECT 'us', '美股科技'[\s\S]{0,220}global_tech_daily_quote/,
+  'US page freshness must follow the technology quote table shown by the page'
+);
+assert.match(
+  pageFreshness,
+  /SELECT 'jpkr', '韩股科技'[\s\S]{0,260}market_scope = 'kr'/,
+  'Korean technology freshness must not be held back by the secondary Japan view'
+);
 assert.match(
   dailyReport,
   /profile:\s*'us_preferred'[\s\S]{0,80}marketScope:\s*'cn_a'/,

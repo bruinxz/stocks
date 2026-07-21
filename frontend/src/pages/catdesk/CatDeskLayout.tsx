@@ -58,14 +58,14 @@ const TAB_META: Record<TabKey, { eyebrow: string; title: string; description: st
     description: '把昨夜的催化线索，折成今天值得观察的一页。',
   },
   us: {
-    eyebrow: '全球催化雷达',
-    title: '美股优选',
-    description: '追踪全球信号，不错过真正有分量的变化。',
+    eyebrow: '美国科技盘面',
+    title: '美股科技',
+    description: '先看科技板块强弱，再看代表股与高关注科技 ETF。',
   },
   jpkr: {
-    eyebrow: '亚洲市场窗口',
-    title: '日韩市场',
-    description: '从东京到首尔，捕捉亚洲盘面的微妙呼吸。',
+    eyebrow: '韩国科技窗口',
+    title: '韩股科技',
+    description: '聚焦少量韩国科技代表股，日本市场仅作次级参考。',
   },
   multi: {
     eyebrow: '长期潜力研究室',
@@ -102,8 +102,8 @@ const TAB_META: Record<TabKey, { eyebrow: string; title: string; description: st
 const TAB_COW: Record<TabKey, { mood: CowMood; note: string }> = {
   market: { mood: 'curious', note: '五千多项证券，慢慢挑。' },
   morning: { mood: 'confident', note: '早盘线索，交给我。' },
-  us: { mood: 'curious', note: '隔夜市场有点意思。' },
-  jpkr: { mood: 'surprised', note: '亚洲盘面，牛惊一下。' },
+  us: { mood: 'curious', note: '科技板块，先看强弱。' },
+  jpkr: { mood: 'surprised', note: '韩国科技，少而精。' },
   multi: { mood: 'thinking', note: '慢慢找，才找得到好公司。' },
   portfolio: { mood: 'working', note: '每一笔仓位都要对得上账。' },
   ai: { mood: 'curious', note: '多问一层，再做判断。' },

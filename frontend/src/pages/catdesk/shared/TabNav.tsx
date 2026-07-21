@@ -22,8 +22,8 @@ interface TabNavProps {
 const TAB_ITEMS: { key: TabKey; label: string; hint: string; icon: React.ReactNode }[] = [
   { key: 'market', label: 'A股市场', hint: '全市场行情', icon: <StockOutlined /> },
   { key: 'morning', label: 'A股早报', hint: '今日线索', icon: <AimOutlined /> },
-  { key: 'us', label: '美股优选', hint: '全球催化', icon: <GlobalOutlined /> },
-  { key: 'jpkr', label: '日韩市场', hint: '亚洲窗口', icon: <LineChartOutlined /> },
+  { key: 'us', label: '美股科技', hint: '板块与 ETF', icon: <GlobalOutlined /> },
+  { key: 'jpkr', label: '韩股科技', hint: '代表股观察', icon: <LineChartOutlined /> },
   { key: 'multi', label: '高倍潜力', hint: '长线发现', icon: <ThunderboltOutlined /> },
   { key: 'portfolio', label: '我的持仓', hint: '账户仓位', icon: <PieChartOutlined /> },
   { key: 'ai', label: 'AI分析', hint: '多智能体会审', icon: <RobotOutlined /> },

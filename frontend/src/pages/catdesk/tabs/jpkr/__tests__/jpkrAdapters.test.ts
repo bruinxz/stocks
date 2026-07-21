@@ -14,6 +14,7 @@ function marketRow(overrides: Record<string, unknown> = {}) {
     name_en: 'Toyota Motor',
     market: 'JP',
     sector: 'automotive',
+    as_of: DATE,
     close: 3125.5,
     change_pct: 1.25,
     currency: 'JPY',
@@ -48,6 +49,25 @@ function response(overrides: Record<string, unknown> = {}) {
       usdkrw: { rate: 1380.5, change_pct: -0.1, as_of: DATE },
     },
     rows: [marketRow()],
+    sector_performance: [
+      {
+        sector: 'automotive',
+        sector_label: '汽车',
+        change_pct: 1.25,
+        representative_count: 1,
+        representative_symbols: ['7203'],
+        calculation_basis: 'representative_equal_weight',
+        as_of: DATE,
+      },
+    ],
+    market_summary: {
+      focus: 'market_representatives',
+      leader_sector: 'automotive',
+      leader_sector_label: '汽车',
+      leader_change_pct: 1.25,
+      advancing_sectors: 1,
+      sector_count: 1,
+    },
     ...overrides,
   };
 }
@@ -64,6 +84,10 @@ describe('JPKR strict frontend adapter', () => {
       market: 'JP',
       currency: 'JPY',
       disclosure_events: [{ source: 'jpx-edinet' }],
+    });
+    expect(parsed.sector_performance[0]).toMatchObject({
+      sector: 'automotive',
+      calculation_basis: 'representative_equal_weight',
     });
   });
 

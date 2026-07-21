@@ -293,6 +293,17 @@ def main() -> int:
             kr_args.append("--dry-run")
         results.append(_run("refresh_kr_market", kr_args, 240))
 
+        us_args = [
+            "scripts/ops/populate_live_us_tech_market.py",
+            "--env-file",
+            str(args.env_file),
+            "--days",
+            "14",
+        ]
+        if args.dry_run:
+            us_args.append("--dry-run")
+        results.append(_run("refresh_us_tech_market", us_args, 360))
+
         for market_scope in ("cn_a", "us", "jp"):
             command = [
                 "scripts/ops/populate_live_recommendations.py",

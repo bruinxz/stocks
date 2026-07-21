@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persist a bounded Korean semiconductor watchlist from Naver public quotes."""
+"""Persist a bounded Korean technology representative watchlist from Naver quotes."""
 
 from __future__ import annotations
 
@@ -13,12 +13,14 @@ from urllib.request import Request, urlopen
 
 
 UNIVERSE = {
-    "005930": "Samsung Electronics",
-    "000660": "SK Hynix",
-    "042700": "Hanmi Semiconductor",
-    "403870": "HPSP",
-    "058470": "Leeno Industrial",
-    "240810": "Wonik IPS",
+    "005930": {"name_en": "Samsung Electronics", "sector": "semiconductor"},
+    "000660": {"name_en": "SK Hynix", "sector": "semiconductor"},
+    "042700": {"name_en": "Hanmi Semiconductor", "sector": "semiconductor"},
+    "035420": {"name_en": "NAVER", "sector": "internet_platform"},
+    "035720": {"name_en": "Kakao", "sector": "internet_platform"},
+    "373220": {"name_en": "LG Energy Solution", "sector": "battery"},
+    "006400": {"name_en": "Samsung SDI", "sector": "battery"},
+    "277810": {"name_en": "Rainbow Robotics", "sector": "ai_robotics"},
 }
 SOURCE_KIND = "naver-public"
 SOURCE_VERSION = "naver-mobile-v1"
@@ -126,7 +128,9 @@ def main() -> int:
     available_at = datetime.now(timezone.utc).replace(microsecond=0)
     securities: list[dict] = []
     klines: list[dict] = []
-    for ticker, name_en in UNIVERSE.items():
+    for ticker, metadata in UNIVERSE.items():
+        name_en = metadata["name_en"]
+        sector = metadata["sector"]
         basic = _json(f"{ticker}/basic")
         prices = _json(f"{ticker}/price?pageSize={args.days}&page=1")
         if not isinstance(basic, dict) or not isinstance(prices, list):
@@ -138,7 +142,7 @@ def main() -> int:
             "name_local": name_local,
             "name_en": name_en,
             "exchange": exchange,
-            "sector": "semiconductor",
+            "sector": sector,
             "source_url": f"{API_ROOT}/{ticker}/basic",
         }
         securities.append(

@@ -424,9 +424,9 @@ app.get('/api/v1/version', versionHandler);
 
 import morningBriefRoutes from './api/routes/morningBrief.routes';
 import catalystRoutes from './api/routes/catalyst.routes';
-import usSelectRoutes from './api/routes/usSelect.routes';
 import backtestPitRoutes from './api/routes/backtestPit.routes';
 import jpkrMarketRoutes from './api/routes/jpkrMarket.routes';
+import usTechMarketRoutes from './api/routes/usTechMarket.routes';
 import multibaggerRoutes from './api/routes/multibagger.routes';
 import { buildDailyReportProjectionRoutes } from './api/routes/dailyReportProjection.routes';
 import { buildRecommendationReplayRoutes } from './api/routes/recommendationReplay.routes';
@@ -441,9 +441,9 @@ import { logger } from './utils/logger';
 import { assertAuthRefreshSessionSchema } from './auth/AuthRefreshSessionSchema';
 app.use('/api/v1/morning-brief', morningBriefRoutes);
 app.use('/api/v1/catalyst', catalystRoutes);
-app.use('/api/v1/us-select', usSelectRoutes);
 app.use('/api/v1/backtest-pit', backtestPitRoutes);
 app.use('/api/v1/jpkr-market', jpkrMarketRoutes);
+app.use('/api/v1/us-tech-market', usTechMarketRoutes);
 app.use('/api/v1/multibagger', multibaggerRoutes);
 const recommendationSnapshotReadAdapter = new SequelizeRecommendationSnapshotReadAdapter(sequelize);
 const replayJobSupervisor = new ReplayJobSupervisor(new ReplayCliClient(), {

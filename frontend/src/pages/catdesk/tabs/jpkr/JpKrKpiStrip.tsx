@@ -1,5 +1,5 @@
 import React from 'react';
-import type { JpKrFxKpiSnapshot, JpKrIndexKpiSnapshot, JpKrKpi } from './types';
+import type { JpKrFxKpiSnapshot, JpKrIndexKpiSnapshot, JpKrKpi, JpKrMarket } from './types';
 
 type KpiDefinition = {
   key: keyof JpKrKpi;
@@ -28,10 +28,18 @@ function formatDelta(value: number): string {
   return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
 }
 
-export function JpKrKpiStrip({ kpi }: { kpi: JpKrKpi }) {
+export function JpKrKpiStrip({ kpi, market }: { kpi: JpKrKpi; market: JpKrMarket }) {
+  const definitions = KPI_DEFINITIONS.filter(definition =>
+    market === 'KR'
+      ? definition.key === 'kospi' || definition.key === 'usdkrw'
+      : definition.key === 'nikkei225' || definition.key === 'topix' || definition.key === 'usdjpy'
+  );
   return (
-    <section className="jpkr-kpi-strip" aria-label="日韩市场关键指标">
-      {KPI_DEFINITIONS.map(definition => {
+    <section
+      className={`jpkr-kpi-strip jpkr-kpi-strip--${market.toLowerCase()}`}
+      aria-label={`${market === 'KR' ? '韩国' : '日本'}市场关键指标`}
+    >
+      {definitions.map(definition => {
         const snapshot = kpi[definition.key];
         if (!snapshot) {
           return (

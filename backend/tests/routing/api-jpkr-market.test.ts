@@ -82,6 +82,7 @@ const MARKET_ROW = {
   name_en: 'Toyota Motor',
   market: 'JP',
   sector: 'automotive',
+  as_of: DATE,
   close: '3125.50',
   change_pct: '1.25',
   currency: 'JPY',
@@ -161,6 +162,14 @@ async function main(): Promise<void> {
     assert('list returns 200 with Authorization', list.status === 200, `status=${list.status}`);
     assert('list has deterministic row', list.body.rows?.[0]?.symbol === SYMBOL);
     assert('numeric row fields are normalized', list.body.rows?.[0]?.close === 3125.5);
+    assert(
+      'sector performance uses explicit representative basis',
+      list.body.sector_performance?.[0]?.calculation_basis === 'representative_equal_weight'
+    );
+    assert(
+      'market summary exposes the leading sector',
+      list.body.market_summary?.leader_sector === 'automotive'
+    );
     assert('canonical Score passes through', list.body.rows?.[0]?.score?.total === 84);
     assert('canonical Score rating passes through', list.body.rows?.[0]?.score?.rating === 'B');
     assert('canonical RiskGate passes through', list.body.rows?.[0]?.risk_gate?.gate === 'YELLOW');

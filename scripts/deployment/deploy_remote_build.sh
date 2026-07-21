@@ -335,6 +335,16 @@ APPLY_REALTIME_QUOTE_DEDUP_MIGRATION=1 NODE_ENV=production \
   node dist/scripts/apply-realtime-quote-dedup-migration.js
 EOF
 
+echo "▶ [6/9] Apply and verify global technology daily-quote migration..."
+ssh_deploy "bash -s" <<EOF
+set -euo pipefail
+CURRENT='$CURRENT'
+cd "\$CURRENT/backend"
+test -f .env
+APPLY_GLOBAL_TECH_DAILY_QUOTE_MIGRATION=1 NODE_ENV=production \
+  node dist/scripts/apply-global-tech-daily-quotes-migration.js
+EOF
+
 # ---------------------------------------------------------------------------
 # Restart systemd
 # ---------------------------------------------------------------------------
