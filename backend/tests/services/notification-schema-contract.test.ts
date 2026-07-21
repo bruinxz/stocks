@@ -176,7 +176,33 @@ function main() {
   assert(
     'morning risk checkup is connected to unified outbox',
     morningCheckup.includes("kind: 'morning_risk_checkup'") &&
-      morningCheckup.includes('notifications.enqueueAndDeliver')
+      morningCheckup.includes('notifications.enqueueAndDeliver') &&
+      morningCheckup.includes("ledger_scope: 'portfolio'")
+  );
+
+  const paperAutomation = read('backend/src/portfolio/internal/PaperTradingAutomationService.ts');
+  assert(
+    'paper trade notifications carry explicit ledger scope',
+    (paperAutomation.match(/ledger_scope: 'portfolio'/g) || []).length >= 2
+  );
+
+  const ledgerScopeMigration = read(
+    'backend/scripts/migrations/2026-07-21-portfolio-ledger-explicit-scope.sql'
+  );
+  assert(
+    'false sale and false morning notifications are explicitly invalidated',
+    ledgerScopeMigration.includes("'paper-trade:447:executed'") &&
+      ledgerScopeMigration.includes("'morning-risk-checkup:4:2026-07-21'") &&
+      (ledgerScopeMigration.match(/'invalidated', TRUE/g) || []).length >= 2
+  );
+  assert(
+    'correction notifications link to the invalidated notification key',
+    (ledgerScopeMigration.match(/corrects_idempotency_key/g) || []).length >= 2
+  );
+  assert(
+    'known rebalance BUY summary correction is audit recorded',
+    ledgerScopeMigration.includes('paper_trade_443_rebalance_summary_direction') &&
+      ledgerScopeMigration.includes("trade_reason_summary = '买入: 再平衡 | 组合再平衡'")
   );
 
   for (const removed of [
@@ -206,7 +232,7 @@ function main() {
     );
   }
 
-  console.log(`[notification-schema-contract] ${35 - failed} passed, ${failed} failed`);
+  console.log(`[notification-schema-contract] ${39 - failed} passed, ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);
 }
 

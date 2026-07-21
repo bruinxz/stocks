@@ -406,8 +406,7 @@ export class PortfolioController {
    * 30%）或挑光 max_sell_count。
    *
    * Body 字段：
-   *   - portfolio_id?: number  — 兼容字段，目前一个 user 一个 portfolio，
-   *     guard 通过 user_id 自动定位；传与不传都行（兼容 AC 描述）。
+   *   - portfolio_id: number   — 必填；决定唯一允许变更的模拟盘。
    *   - dry_run?: boolean      — true = 仅返回 plan 不下单（默认 false）；
    *
    * 走 IndustryConcentrationGuard.rebalanceIndustry — 内部调
@@ -421,13 +420,12 @@ export class PortfolioController {
         return res.status(401).json({ success: false, message: '未登录' });
       }
       const dryRun = req.body?.dry_run === true;
-      const requestedPortfolioId = req.body?.portfolio_id;
-      const portfolio_id =
-        requestedPortfolioId === undefined || requestedPortfolioId === null
-          ? undefined
-          : Number(requestedPortfolioId);
-      if (portfolio_id !== undefined && (!Number.isInteger(portfolio_id) || portfolio_id <= 0)) {
-        return res.status(400).json({ success: false, message: 'portfolio_id 必须为正整数' });
+      const portfolio_id = Number(req.body?.portfolio_id);
+      if (!Number.isInteger(portfolio_id) || portfolio_id <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'portfolio_id 必须为正整数，禁止自动选择其他模拟盘',
+        });
       }
       const result = await industryConcentrationGuard.rebalanceIndustry({
         user_id,

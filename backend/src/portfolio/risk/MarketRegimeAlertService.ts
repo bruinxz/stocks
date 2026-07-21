@@ -755,6 +755,10 @@ export class DefaultMarketRegimeAlertDataSource implements MarketRegimeAlertData
       // US-067 — 给 RealtimeAlertDispatcher dedup signature 用。
       rule_id: 'market_regime_alert',
       is_read: false,
+      metadata: {
+        ledger_scope: 'account_risk',
+        origin: 'market_regime_alert_service',
+      },
     } as any);
   }
 }

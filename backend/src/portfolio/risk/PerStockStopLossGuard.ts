@@ -462,6 +462,7 @@ export class DefaultPerStockStopLossDataSource implements PerStockStopLossDataSo
       is_read: false,
       metadata: {
         portfolio_id: input.portfolio_id,
+        ledger_scope: 'portfolio',
         origin: 'per_stock_stop_loss_guard',
       },
     } as any);

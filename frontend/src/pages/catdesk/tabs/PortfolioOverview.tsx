@@ -112,6 +112,8 @@ function PositionDetail({ row }: { row: PortfolioLedgerPosition }) {
             <p>
               信号 #{row.investment_signal.id} ·{' '}
               {SOURCE_LABEL[row.investment_signal.source_type] || row.investment_signal.source_type}
+              {' · '}信号日 {row.investment_signal.signal_date}
+              {' · '}源记录 {row.investment_signal.source_id}
               {row.investment_signal.rationale ? ` · ${row.investment_signal.rationale}` : ''}
             </p>
           ) : row.trade_origin ? (
@@ -134,7 +136,7 @@ function PositionDetail({ row }: { row: PortfolioLedgerPosition }) {
               : row.morning_brief.matched
                 ? `${row.morning_brief.trading_day} · 第 ${Number(row.morning_brief.rank) + 1} 位 · ${
                     row.morning_brief.rating
-                  } 级`
+                  } 级 · 快照 ${row.morning_brief.snapshot_id?.slice(0, 8)}`
                 : `${row.morning_brief.trading_day} · 未入选`}
           </p>
           <p>
@@ -146,7 +148,7 @@ function PositionDetail({ row }: { row: PortfolioLedgerPosition }) {
                 : row.multibagger.matched
                   ? `${row.multibagger.stage} · ${row.multibagger.conclusion} · ${
                       row.multibagger.rating || '未评级'
-                    }`
+                    } · 候选 ${row.multibagger.snapshot_id?.slice(0, 8)}`
                   : `${dateTime(row.multibagger.as_of)} · 未入选`}
           </p>
         </article>
@@ -159,7 +161,9 @@ function PositionDetail({ row }: { row: PortfolioLedgerPosition }) {
           <p>
             {row.notifications.length} 条通知，{row.corrections.length} 条账务更正
           </p>
-          {row.notifications.some(item => item.corrected) ? (
+          {row.notifications.some(item => item.invalidated) ? (
+            <p className="is-invalidated">已有错误通知作废，请以更正记录为准</p>
+          ) : row.notifications.some(item => item.corrected) ? (
             <p className="is-corrected">已有通知被后续更正，请以更正记录为准</p>
           ) : null}
         </article>
@@ -168,7 +172,12 @@ function PositionDetail({ row }: { row: PortfolioLedgerPosition }) {
       <ol className="catdesk-ledger-timeline" aria-label={`${row.position.name} 对账时间线`}>
         {row.timeline.length ? (
           row.timeline.map(item => (
-            <li key={item.id} className={item.corrected ? 'is-corrected' : ''}>
+            <li
+              key={item.id}
+              className={
+                item.invalidated ? 'is-invalidated' : item.corrected ? 'is-corrected' : ''
+              }
+            >
               <i>{TIMELINE_ICON[item.type]}</i>
               <div>
                 <strong>{item.title}</strong>
@@ -293,30 +302,25 @@ export default function PortfolioOverview() {
               {data.latest_correction_notification?.title || '账户存在已应用的数据更正'}
             </strong>
             <span>
-              {data.portfolio_corrections.length}{' '}
-              条数据更正已纳入当前持仓与收益，请以本页重算结果为准
+              {data.portfolio_corrections.length + data.account_correction_notifications.length}{' '}
+              条更正已纳入当前账户，请以本页重算结果和更正通知为准
             </span>
           </div>
         </div>
       ) : null}
 
-      {data.account_alerts.length || data.account_notifications.length ? (
+      {data.latest_morning_notification ? (
         <div className="catdesk-ledger__notice">
           <BellOutlined />
           <div>
-            <strong>账户级告警与通知</strong>
+            <strong>{data.latest_morning_notification.title}</strong>
             <span>
-              {data.account_alerts.length} 条组合告警 · {data.account_notifications.length}{' '}
-              条账户通知
-              {data.latest_morning_notification
-                ? ` · 最近晨检：${data.latest_morning_notification.title}${
-                    data.latest_morning_notification.invalidated
-                      ? '（已作废）'
-                      : data.latest_morning_notification.corrected
-                        ? '（已更正）'
-                        : ''
-                  }`
-                : ' · 暂无晨检通知'}
+              最近晨检通知
+              {data.latest_morning_notification.invalidated
+                ? '已作废，请以更正通知为准'
+                : data.latest_morning_notification.corrected
+                  ? '已更正'
+                  : `状态：${data.latest_morning_notification.status}`}
             </span>
           </div>
         </div>
@@ -356,6 +360,7 @@ export default function PortfolioOverview() {
             : data.latest_morning_brief.freshness === 'delayed'
               ? `数据停在 ${data.latest_morning_brief.trading_day} · 已过期`
               : '暂无规范快照'}
+          <a href="/catdesk?tab=morning">打开同源早报</a>
         </span>
         <span>
           <b>高倍潜力</b>
@@ -364,6 +369,7 @@ export default function PortfolioOverview() {
             : data.latest_multibagger
               ? `${dateTime(data.latest_multibagger.as_of)} · 研究已过期`
               : '暂无研究快照'}
+          <a href="/catdesk?tab=multi">打开同源高倍研究</a>
         </span>
       </div>
 

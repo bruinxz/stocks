@@ -33,6 +33,17 @@ function sendError(res: Response, error: any, fallbackMessage: string) {
   return res.status(status).json({ success: false, message: error?.message || fallbackMessage });
 }
 
+function requiredPortfolioId(value: unknown): number {
+  const portfolio_id = Number(value);
+  if (!Number.isInteger(portfolio_id) || portfolio_id <= 0) {
+    const error: any = new Error('portfolio_id 必须为正整数，禁止自动选择其他模拟盘');
+    error.statusCode = 400;
+    error.code = 'PORTFOLIO_SCOPE_REQUIRED';
+    throw error;
+  }
+  return portfolio_id;
+}
+
 export class PaperTradingController {
   /**
    * 修复 HIGH #16 (2026-06-16): 客户端可能在 body 里传 bypass_trading_hours /
@@ -267,16 +278,12 @@ export class PaperTradingController {
   getPortfolio = async (req: Request, res: Response, _next: NextFunction) => {
     try {
       const user = (req as any).user;
-      // 修复 (2026-06-17): 透传 query.portfolio_id 给 facade 防 UI 串盘.
-      // 前端从 /api/paper-trading?portfolio_id=36 这样传; 不传则 facade fallback
-      // 到 user 名下 active id ASC 第一个 (稳定但仍是单盘).
-      const portfolioIdRaw = req.query?.portfolio_id;
-      const portfolio_id = portfolioIdRaw ? Number(portfolioIdRaw) : undefined;
+      const portfolio_id = requiredPortfolioId(req.query?.portfolio_id);
       const data = await paperTradingFacade.getPortfolio({
         view: 'basic',
         user_id: user.id,
         username: user.nickname || user.username,
-        portfolio_id: Number.isFinite(portfolio_id as number) ? portfolio_id : undefined,
+        portfolio_id,
       });
       res.json({ success: true, data });
     } catch (error: any) {
@@ -292,15 +299,12 @@ export class PaperTradingController {
       // 之前 UI 点"一键平仓" body 只传 symbol/direction/quantity, controller 不读
       // portfolio_id → facade fallback 到 user 名下 active id ASC 第一个 (portfolio 33),
       // 实际卖 portfolio 33 → 如该盘没该股 throw 持仓不足; 更糟卖到错盘是真金白银事故.
-      const { symbol, direction: rawDirection, quantity, portfolio_id, action } = req.body;
-      // Batch H (H1+H2, 2026-06-17): 兼容 (a) controller 真用的 direction; (b) OpenAPI 文档写
-      // action='buy/sell'. 任一字段大写小写都接, 统一变 'BUY' / 'SELL'. 之前 'buy' 走到 facade
-      // 因 !== 'BUY' 抛 generic Error → sendError 500. 现在 400 + 明确 message.
-      const directionInput = String(rawDirection || action || '').toUpperCase();
+      const { symbol, direction: rawDirection, quantity, portfolio_id } = req.body;
+      const directionInput = String(rawDirection || '').toUpperCase();
       if (directionInput !== 'BUY' && directionInput !== 'SELL') {
         return res.status(400).json({
           success: false,
-          message: '交易方向 direction 必须为 BUY 或 SELL (兼容 action=buy/sell)',
+          message: '交易方向 direction 必须为 BUY 或 SELL',
         });
       }
       const parsedQuantity = Number(quantity);
@@ -309,11 +313,10 @@ export class PaperTradingController {
           .status(400)
           .json({ success: false, message: 'quantity 必须是正数 (建议 100 整数倍)' });
       }
-      const parsedPortfolioId =
-        portfolio_id !== undefined && portfolio_id !== null ? Number(portfolio_id) : undefined;
+      const parsedPortfolioId = requiredPortfolioId(portfolio_id);
       const result = await paperTradingFacade.placeOrder({
         user_id: user.id,
-        portfolio_id: Number.isFinite(parsedPortfolioId as number) ? parsedPortfolioId : undefined,
+        portfolio_id: parsedPortfolioId,
         symbol,
         direction: directionInput as 'BUY' | 'SELL',
         quantity: parsedQuantity,
@@ -328,14 +331,11 @@ export class PaperTradingController {
   getTradeHistory = async (req: Request, res: Response, _next: NextFunction) => {
     try {
       const user = (req as any).user;
-      // 修复 (2026-06-17 串盘 续): controller 之前没透传 req.query.portfolio_id 给 facade,
-      // 即使前端传了 ?portfolio_id=X 后端仍走 facade fallback 路径返回任意盘的 trades.
-      const portfolioIdRaw = req.query?.portfolio_id;
-      const portfolio_id = portfolioIdRaw ? Number(portfolioIdRaw) : undefined;
+      const portfolio_id = requiredPortfolioId(req.query?.portfolio_id);
       const data = await paperTradingFacade.getDailySnapshot({
         action: 'trades',
         user_id: user.id,
-        portfolio_id: Number.isFinite(portfolio_id as number) ? portfolio_id : undefined,
+        portfolio_id,
       });
       res.json({ success: true, data });
     } catch (error: any) {
@@ -347,13 +347,11 @@ export class PaperTradingController {
   getSnapshots = async (req: Request, res: Response, _next: NextFunction) => {
     try {
       const user = (req as any).user;
-      // 修复 (2026-06-17 串盘 续): 同款透传
-      const portfolioIdRaw = req.query?.portfolio_id;
-      const portfolio_id = portfolioIdRaw ? Number(portfolioIdRaw) : undefined;
+      const portfolio_id = requiredPortfolioId(req.query?.portfolio_id);
       const data = await paperTradingFacade.getDailySnapshot({
         action: 'list',
         user_id: user.id,
-        portfolio_id: Number.isFinite(portfolio_id as number) ? portfolio_id : undefined,
+        portfolio_id,
       });
       res.json({ success: true, data });
     } catch (error: any) {
@@ -413,12 +411,11 @@ export class PaperTradingController {
   refreshSnapshot = async (req: Request, res: Response, _next: NextFunction) => {
     try {
       const user = (req as any).user;
-      const portfolioIdRaw = req.query?.portfolio_id;
-      const portfolio_id = portfolioIdRaw ? Number(portfolioIdRaw) : undefined;
+      const portfolio_id = requiredPortfolioId(req.query?.portfolio_id);
       const snapshot = await paperTradingFacade.getDailySnapshot({
         action: 'refresh',
         user_id: user.id,
-        portfolio_id: Number.isFinite(portfolio_id as number) ? portfolio_id : undefined,
+        portfolio_id,
       });
       res.json({ success: true, data: snapshot, message: '模拟盘快照已刷新' });
     } catch (error: any) {
@@ -926,12 +923,15 @@ export class PaperTradingController {
     try {
       const user = (req as any).user;
       const positionId = Number(req.params.id);
-      const { stop_loss_price } = req.body as { stop_loss_price: number | null };
+      const { portfolio_id, stop_loss_price } = req.body as {
+        portfolio_id: number;
+        stop_loss_price: number | null;
+      };
       const result: any = await paperTradingFacade.applyAutomation({
         action: 'set_stop_loss',
         user_id: user.id,
         username: user.username || user.nickname,
-        body: { position_id: positionId, stop_loss_price },
+        body: { position_id: positionId, portfolio_id: requiredPortfolioId(portfolio_id), stop_loss_price },
       });
       res.json({
         success: true,
@@ -951,12 +951,19 @@ export class PaperTradingController {
     try {
       const user = (req as any).user;
       const positionId = Number(req.params.id);
-      const { take_profit_price } = req.body as { take_profit_price: number | null };
+      const { portfolio_id, take_profit_price } = req.body as {
+        portfolio_id: number;
+        take_profit_price: number | null;
+      };
       const result: any = await paperTradingFacade.applyAutomation({
         action: 'set_take_profit',
         user_id: user.id,
         username: user.username || user.nickname,
-        body: { position_id: positionId, take_profit_price },
+        body: {
+          position_id: positionId,
+          portfolio_id: requiredPortfolioId(portfolio_id),
+          take_profit_price,
+        },
       });
       res.json({
         success: true,

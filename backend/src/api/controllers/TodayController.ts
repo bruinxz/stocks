@@ -43,13 +43,20 @@ class TodayController {
    */
   async getTodaySignals(req: AuthenticatedRequest, res: Response) {
     try {
+      const portfolio_id = optionalInt(req.query.portfolio_id);
+      if (!portfolio_id || portfolio_id <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'portfolio_id 必须为正整数，禁止自动选择其他模拟盘',
+        });
+      }
       const data = await todaySignalsService.getTodaySignals({
         user_id: req.user?.id,
         username: req.user?.username,
         trade_date: req.query.trade_date as string | undefined,
         alerts_limit: optionalInt(req.query.alerts_limit),
         // 修复 (2026-06-17 串盘): 透传 portfolio_id 决定 KPI / 轮动增量基线用哪个盘
-        portfolio_id: optionalInt(req.query.portfolio_id),
+        portfolio_id,
       });
       res.json({ success: true, data });
     } catch (error: any) {
@@ -73,6 +80,13 @@ class TodayController {
         return;
       }
       const body = (req.body ?? {}) as Record<string, unknown>;
+      const portfolio_id = optionalInt(body.portfolio_id);
+      if (!portfolio_id || portfolio_id <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'portfolio_id 必须为正整数，禁止自动选择其他模拟盘',
+        });
+      }
       const data = await todaySignalsService.applySignals({
         user_id: req.user.id,
         username: req.user.username,
@@ -80,7 +94,7 @@ class TodayController {
         per_order_amount: optionalInt(body.per_order_amount),
         max_orders: optionalInt(body.max_orders),
         // 修复 (2026-06-17 串盘): 决定下单到哪个 portfolio
-        portfolio_id: optionalInt(body.portfolio_id),
+        portfolio_id,
       });
       res.json({ success: true, data });
     } catch (error: any) {

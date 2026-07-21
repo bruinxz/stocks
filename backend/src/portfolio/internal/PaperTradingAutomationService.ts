@@ -1101,6 +1101,30 @@ export interface PaperRiskQuoteGuardResult {
   message: string;
 }
 
+export function isUsableRealtimeQuote(input: {
+  now?: Date;
+  quote_time?: Date | string | null;
+  trade_date?: string | null;
+  max_age_minutes?: number;
+}): boolean {
+  if (!input.quote_time) return false;
+  const now = moment(input.now || new Date()).tz('Asia/Shanghai');
+  const quoteTime = moment(input.quote_time).tz('Asia/Shanghai');
+  if (!quoteTime.isValid()) return false;
+  const ageMinutes = Math.max(0, now.diff(quoteTime, 'minutes'));
+  if (ageMinutes <= Math.max(1, Number(input.max_age_minutes || 30))) return true;
+
+  const tradeDate = String(input.trade_date || '').slice(0, 10);
+  const nowMinutes = now.hour() * 60 + now.minute();
+  const quoteMinutes = quoteTime.hour() * 60 + quoteTime.minute();
+  return (
+    tradeDate === now.format('YYYY-MM-DD') &&
+    quoteTime.format('YYYY-MM-DD') === tradeDate &&
+    nowMinutes > 15 * 60 &&
+    quoteMinutes >= 14 * 60 + 45
+  );
+}
+
 /**
  * 模拟盘风控只能在有“当日可成交行情”的窗口执行。
  *
@@ -1287,20 +1311,13 @@ class PaperTradingAutomationService {
       });
     }
 
-    // 显式传入 name 时，调用方通常希望隔离到指定模拟盘（例如 20W 自主荐股盘）。
-    // 如果命名盘不存在，直接创建该命名盘；不要回退到用户当前 active 模拟盘，避免收益闭环串盘。
     if (!portfolio && !options.name && !options.force_new) {
-      portfolio = await PaperTradingPortfolio.findOne({
-        where: { user_id, is_active: true },
-        order: [['id', 'ASC']],
-      });
-
-      if (!portfolio) {
-        portfolio = await PaperTradingPortfolio.findOne({
-          where: { user_id },
-          order: [['id', 'ASC']],
-        });
-      }
+      const error: any = new Error(
+        'ensurePortfolio: portfolio_id 或显式 portfolio name 必须提供，禁止自动选择第一个模拟盘'
+      );
+      error.statusCode = 400;
+      error.code = 'PORTFOLIO_SCOPE_REQUIRED';
+      throw error;
     }
 
     if (!portfolio) {
@@ -3425,7 +3442,12 @@ class PaperTradingAutomationService {
               title: `🟢 自主买入 · ${stockName}`,
               payload: card,
               correlation_id: `paper_trade_id=${trade.id}`,
-              metadata: { portfolio_id: portfolio.id, symbol, direction: 'BUY' },
+              metadata: {
+                ledger_scope: 'portfolio',
+                portfolio_id: portfolio.id,
+                symbol,
+                direction: 'BUY',
+              },
             });
           } catch {
             /* 静默 */
@@ -3838,12 +3860,12 @@ class PaperTradingAutomationService {
       };
       for (const port of allPortfolios) {
         try {
-          // 递归调用但 all_portfolios=false + 显式 user_id+portfolio_name 锁定到这个 portfolio
+          // 递归调用必须带 portfolio_id；名字不是账户边界，重复名称不能参与路由。
           const single = await this.runRiskCheck({
             ...options,
             all_portfolios: false,
             user_id: port.user_id,
-            portfolio_name: port.name,
+            portfolio_id: port.id,
             force_new_portfolio: false,
           });
           aggregated.checked += single.checked;
@@ -4384,7 +4406,12 @@ class PaperTradingAutomationService {
               title: `${icon} 自主卖出 · ${stockName}`,
               payload: card,
               correlation_id: `paper_trade_id=${trade.id}`,
-              metadata: { portfolio_id: portfolio.id, symbol, direction: 'SELL' },
+              metadata: {
+                ledger_scope: 'portfolio',
+                portfolio_id: portfolio.id,
+                symbol,
+                direction: 'SELL',
+              },
             });
           } catch {
             /* 静默 */
@@ -4634,11 +4661,11 @@ class PaperTradingAutomationService {
     // 修复 (2026-06-16, HIGH H4): 之前没有 staleness check, 8h 前的 quote 也照用作成交价.
     // 阈值: 30 分钟. 超过 = 视为不可信, 走 DailyBar fallback. 交易时段外 cron 跑时
     // 自然落到 DailyBar 也合理 (15:30 收盘后 quote 不再变, 用收盘价).
-    const REALTIME_QUOTE_MAX_AGE_MS = 30 * 60 * 1000;
-    const quoteAgeMs = latestRealtime?.quote_time
-      ? Date.now() - new Date(latestRealtime.quote_time).getTime()
-      : Infinity;
-    const realtimeFresh = quoteAgeMs <= REALTIME_QUOTE_MAX_AGE_MS;
+    const realtimeFresh = isUsableRealtimeQuote({
+      quote_time: latestRealtime?.quote_time,
+      trade_date: latestRealtime?.trade_date,
+      max_age_minutes: 30,
+    });
     if (
       latestRealtime?.current_price &&
       toNumber(latestRealtime.current_price, 0) > 0 &&
@@ -7152,7 +7179,8 @@ class PaperTradingAutomationService {
             // signal 缺字段时 builder fail-safe (返回最小占位 reason).
             trade_reason: buildTradeReasonFromSignal(params.signal as any),
             trade_reason_summary: summarizeTradeReason(
-              buildTradeReasonFromSignal(params.signal as any)
+              buildTradeReasonFromSignal(params.signal as any),
+              'BUY'
             ),
           },
           { transaction: t }
@@ -7322,7 +7350,8 @@ class PaperTradingAutomationService {
                   current_price: execute_price,
                 },
                 detail: params.exit_context,
-              })
+              }),
+              'SELL'
             ),
           },
           { transaction: t }

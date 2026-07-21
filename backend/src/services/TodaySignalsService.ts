@@ -111,7 +111,7 @@ export interface ApplySignalsOptions {
   /** 总下单数上限; 默认 20 */
   max_orders?: number;
   /** 显式 portfolio_id (决定下到哪个盘) */
-  portfolio_id?: number;
+  portfolio_id: number;
 }
 
 export interface ApplySignalsResult {
@@ -163,15 +163,24 @@ export class TodaySignalsService {
 
     const userId = options.user_id;
     let portfolio: PaperTradingPortfolio | null = null;
-    if (options.portfolio_id) {
+    if (userId) {
+      if (!Number.isInteger(options.portfolio_id) || Number(options.portfolio_id) <= 0) {
+        const error: any = new Error(
+          'today-signals: portfolio_id 必须为正整数，禁止自动选择其他模拟盘'
+        );
+        error.statusCode = 400;
+        error.code = 'PORTFOLIO_SCOPE_REQUIRED';
+        throw error;
+      }
       portfolio = await PaperTradingPortfolio.findOne({
-        where: { id: options.portfolio_id, ...(userId ? { user_id: userId } : {}) },
+        where: { id: options.portfolio_id, user_id: userId },
       });
-    } else if (userId) {
-      portfolio = await PaperTradingPortfolio.findOne({
-        where: { user_id: userId, is_active: true },
-        order: [['id', 'ASC']],
-      });
+      if (!portfolio) {
+        const error: any = new Error('today-signals: portfolio not found or forbidden');
+        error.statusCode = 404;
+        error.code = 'PORTFOLIO_NOT_FOUND_OR_FORBIDDEN';
+        throw error;
+      }
     }
     const positions = portfolio
       ? await PaperTradingPosition.findAll({ where: { portfolio_id: portfolio.id } })
@@ -238,6 +247,12 @@ export class TodaySignalsService {
     if (!options.user_id) {
       throw new Error('apply-signals: user_id is required');
     }
+    if (!Number.isInteger(options.portfolio_id) || Number(options.portfolio_id) <= 0) {
+      const error: any = new Error('apply-signals: portfolio_id is required');
+      error.statusCode = 400;
+      error.code = 'PORTFOLIO_SCOPE_REQUIRED';
+      throw error;
+    }
     const perOrderAmount = clampInt(options.per_order_amount, 5000, 1000, 1_000_000);
     const maxOrders = clampInt(options.max_orders, 20, 1, 200);
 
@@ -249,17 +264,10 @@ export class TodaySignalsService {
     });
 
     // 决定下单目标盘 + 账户净值 (目标权重换算金额)
-    let portfolio: PaperTradingPortfolio | null;
-    if (options.portfolio_id) {
-      portfolio = await PaperTradingPortfolio.findOne({
-        where: { id: options.portfolio_id, user_id: options.user_id },
-      });
-    } else {
-      portfolio = await PaperTradingPortfolio.findOne({
-        where: { user_id: options.user_id, is_active: true },
-        order: [['id', 'ASC']],
-      });
-    }
+    const portfolio = await PaperTradingPortfolio.findOne({
+      where: { id: options.portfolio_id, user_id: options.user_id },
+    });
+    if (!portfolio) throw new Error('apply-signals: portfolio not found or forbidden');
     const totalValue = portfolio ? Number(portfolio.total_value ?? 0) : 0;
 
     const heldSymbols = new Set<string>();
@@ -360,12 +368,12 @@ export class TodaySignalsService {
         });
         const result = await paperTradingFacade.placeOrder({
           user_id: options.user_id,
-          portfolio_id: portfolio?.id,
+          portfolio_id: portfolio.id,
           symbol: c.symbol,
           direction: 'BUY',
           quantity,
           trade_reason: reason,
-          trade_reason_summary: summarizeTradeReason(reason),
+          trade_reason_summary: summarizeTradeReason(reason, 'BUY'),
         });
         placed += 1;
         orders.push({

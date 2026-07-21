@@ -126,11 +126,12 @@ router.get('/recommended-config', portfolioController.getRecommendedConfig);
  *     summary: 行业集中度一键再平衡 (US-052)
  *     security: [{ bearerAuth: [] }]
  *     requestBody:
- *       required: false
+ *       required: true
  *       content:
  *         application/json:
  *           schema:
  *             type: object
+ *             required: [portfolio_id]
  *             properties:
  *               portfolio_id: { type: integer, minimum: 1 }
  *               dry_run: { type: boolean }
@@ -142,7 +143,7 @@ router.get('/recommended-config', portfolioController.getRecommendedConfig);
 router.post(
   '/rebalance-industry',
   authController.authenticate,
-  [body('portfolio_id').optional().isInt({ min: 1 }), body('dry_run').optional().isBoolean()],
+  [body('portfolio_id').isInt({ min: 1 }), body('dry_run').optional().isBoolean()],
   validateRequest,
   portfolioController.rebalanceIndustry
 );

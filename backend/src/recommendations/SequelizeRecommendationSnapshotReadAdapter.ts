@@ -414,6 +414,7 @@ export class SequelizeRecommendationSnapshotReadAdapter implements Recommendatio
        FROM ai_recommendation_snapshot
        WHERE profile = :profile
          AND market_scope = :market_scope
+         AND as_of_utc <= NOW()
        ORDER BY as_of_utc DESC, created_at DESC, snapshot_id DESC
        LIMIT 2`,
       {

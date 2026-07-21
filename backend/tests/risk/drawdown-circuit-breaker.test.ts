@@ -90,7 +90,13 @@ interface FakeState {
   snapshotsByPortfolio: Record<number, PortfolioSnapshotRow[]>;
   positionsByUser: Record<number, DrawdownPositionSnapshot[]>;
   pausedUntilByUser: Record<number, string | null>;
-  alerts: Array<{ user_id: number; symbol: string; name: string; message: string }>;
+  alerts: Array<{
+    user_id: number;
+    portfolio_ids: number[];
+    symbol: string;
+    name: string;
+    message: string;
+  }>;
   savedPausedUntil: Array<{ user_id: number; paused_until: string | null }>;
   /** Force loadConfig on this user to throw. */
   loadConfigShouldThrowForUser?: number;

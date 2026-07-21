@@ -1569,11 +1569,19 @@
 
 .catdesk-ledger__research-strip span {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 12px;
   padding: 12px 16px;
   color: var(--cd-text-secondary);
   font-size: 13px;
+}
+
+.catdesk-ledger__research-strip a {
+  color: var(--cd-accent);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .catdesk-ledger__research-strip span + span {
@@ -1658,6 +1666,11 @@
   color: #a45725;
 }
 
+.catdesk-ledger-detail .is-invalidated {
+  color: #9d2f24;
+  font-weight: 700;
+}
+
 .catdesk-ledger-timeline {
   position: relative;
   display: grid;
@@ -1701,6 +1714,16 @@
 .catdesk-ledger-timeline li.is-corrected > i {
   color: #a45725;
   border-color: #a45725;
+}
+
+.catdesk-ledger-timeline li.is-invalidated > i {
+  color: #9d2f24;
+  border-color: #9d2f24;
+}
+
+.catdesk-ledger-timeline li.is-invalidated strong {
+  color: #9d2f24;
+  text-decoration: line-through;
 }
 
 .catdesk-ledger-timeline strong,

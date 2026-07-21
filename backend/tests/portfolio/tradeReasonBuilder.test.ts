@@ -242,7 +242,7 @@ function test_summary_buy() {
     confidence_score: 80,
     reasons: ['r1', 'r2'],
   } as any);
-  const s = summarizeTradeReason(r);
+  const s = summarizeTradeReason(r, 'BUY');
   assert('sum_buy.starts_with_买入', /^买入: /.test(s), `got ${s}`);
   assert('sum_buy.has_strategy', s.includes('策略 X'));
   assert('sum_buy.has_confidence', s.includes('置信 80'));
@@ -255,7 +255,7 @@ function test_summary_sell_trailing() {
     actual: 8.2,
     indicator: 'drawdown_pct',
   });
-  const s = summarizeTradeReason(r);
+  const s = summarizeTradeReason(r, 'SELL');
   assert('sum_sell.starts_卖出', /^卖出: 动态止损/.test(s), `got ${s}`);
   assert('sum_sell.has_threshold', s.includes('阈 7'));
 }
@@ -264,19 +264,19 @@ function test_summary_truncate() {
   const long = 'x'.repeat(500);
   const r = buildTradeReasonFromRiskGuard('trailing_stop', {});
   r.key_reasons = [long];
-  const s = summarizeTradeReason(r);
+  const s = summarizeTradeReason(r, 'SELL');
   assert('sum_trunc.length', s.length <= 200);
   assert('sum_trunc.ends_ellipsis', s.endsWith('…'));
 }
 
 function test_summary_empty() {
-  assert('sum_empty', summarizeTradeReason(null) === '');
-  assert('sum_undef', summarizeTradeReason(undefined) === '');
+  assert('sum_empty', summarizeTradeReason(null, 'BUY') === '');
+  assert('sum_undef', summarizeTradeReason(undefined, 'SELL') === '');
 }
 
 function test_packReason() {
   const r = buildTradeReasonForManualOrder({ reason: 'foo' });
-  const p = packReason(r);
+  const p = packReason(r, 'BUY');
   assert('pack.has_reason', p.trade_reason === r);
   assert('pack.has_summary', typeof p.trade_reason_summary === 'string' && p.trade_reason_summary.length > 0);
 }

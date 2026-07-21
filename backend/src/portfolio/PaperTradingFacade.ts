@@ -92,21 +92,16 @@ export interface GetPortfolioOptions {
   user_id?: number;
   username?: string;
   query?: Record<string, any>;
-  /** 显式 portfolio_id, 多账户多盘场景必须传 (修复 2026-06-17 串盘 bug). */
+  /** basic view 必须显式传；其他聚合 view 不使用该字段。 */
   portfolio_id?: number;
 }
 
 export interface PlaceOrderOptions {
+  portfolio_id: number;
   user_id: number;
   symbol: string;
   direction: 'BUY' | 'SELL';
   quantity: number;
-  /**
-   * 显式 portfolio_id (强烈建议传). 不传时 facade fallback 到 user 名下第一个 active portfolio,
-   * 多账户多盘场景会串盘. 修复 (2026-06-16): user_id=4 有 9 个 portfolio, 不传 portfolio_id
-   * 会路由到 portfolio 24 系统观测盘(空仓) → 错卖错买.
-   */
-  portfolio_id?: number;
   /** 跳过交易时段 guard (测试/回填用) */
   bypass_trading_hours?: boolean;
   /** 跳过 T+1 拦截 (测试用) */
@@ -175,10 +170,9 @@ export interface PreTradeComplianceContext {
 }
 
 export interface ClosePositionOptions {
+  portfolio_id: number;
   user_id: number;
   symbol: string;
-  /** 同 PlaceOrderOptions: 强烈建议显式传 portfolio_id 避免多账户串盘. */
-  portfolio_id?: number;
   bypass_trading_hours?: boolean;
   bypass_t_plus_1?: boolean;
   bypass_compliance?: boolean;
@@ -197,8 +191,7 @@ export type GetDailySnapshotAction = 'list' | 'trades' | 'refresh';
 export interface GetDailySnapshotOptions {
   action?: GetDailySnapshotAction;
   user_id: number;
-  /** 显式 portfolio_id, 多账户多盘场景必须传 */
-  portfolio_id?: number;
+  portfolio_id: number;
 }
 
 export type AttributePnlAction =
@@ -294,7 +287,7 @@ function facadeResolveTradeReasonSummary(
     return options.trade_reason_summary;
   }
   const reason = facadeResolveTradeReason(options, side);
-  return summarizeTradeReason(reason);
+  return summarizeTradeReason(reason, side);
 }
 
 // US-058 [FE-019] — ATR% 计算抽到 ./internal/positionAtrHelpers.ts 让 ts-node
@@ -900,40 +893,20 @@ export class PaperTradingFacade {
       throw new Error('getPortfolio: user_id is required for basic view');
     }
 
-    // 修复 (2026-06-17): UI 串盘 bug. 之前 findOne({user_id}) 不带 order, user 4 有 9 个
-    // portfolio, Sequelize 任意返回 1 行 → 每次刷新展示不同的盘 (持仓数 / 浮盈一直变).
-    // 优先 portfolio_id; 缺则按 (user_id, is_active=true, id ASC) 取第一个并记 warn.
-    // Batch G (2026-06-17): 传了 portfolio_id 但不属于 user, 必须 404,
-    // 不能 fallback 到 create —— 否则攻击者循环 ?portfolio_id=随机大数 DoS
-    // 创建空 portfolio (C2 修复).
-    let portfolio: PaperTradingPortfolio | null;
-    if (options.portfolio_id) {
-      portfolio = await PaperTradingPortfolio.findOne({
-        where: { id: options.portfolio_id, user_id },
-      });
-      if (!portfolio) {
-        const err: any = new Error('未找到模拟盘或无权访问');
-        err.statusCode = 404;
-        err.code = 'PORTFOLIO_NOT_FOUND_OR_FORBIDDEN';
-        throw err;
-      }
-    } else {
-      portfolio = await PaperTradingPortfolio.findOne({
-        where: { user_id, is_active: true },
-        order: [['id', 'ASC']],
-      });
-      if (portfolio) {
-        logger.warn(
-          `[facade.getPortfolio] user_id=${user_id} 未传 portfolio_id, 默认取 portfolio ${portfolio.id} (${portfolio.name}). 前端应该通过 ?portfolio_id=X 显式指定.`
-        );
-      }
+    if (!Number.isInteger(options.portfolio_id) || Number(options.portfolio_id) <= 0) {
+      const err: any = new Error('portfolio_id 必须为正整数，禁止自动选择其他模拟盘');
+      err.statusCode = 400;
+      err.code = 'PORTFOLIO_SCOPE_REQUIRED';
+      throw err;
     }
+    const portfolio = await PaperTradingPortfolio.findOne({
+      where: { id: options.portfolio_id, user_id },
+    });
     if (!portfolio) {
-      // GET 必须只读。新建模拟盘只能走显式 POST /portfolios。
-      const error: any = new Error('当前用户没有可用模拟盘');
-      error.statusCode = 404;
-      error.code = 'PORTFOLIO_NOT_FOUND';
-      throw error;
+      const err: any = new Error('未找到模拟盘或无权访问');
+      err.statusCode = 404;
+      err.code = 'PORTFOLIO_NOT_FOUND_OR_FORBIDDEN';
+      throw err;
     }
 
     const positions = await PaperTradingPosition.findAll({
@@ -1119,28 +1092,9 @@ export class PaperTradingFacade {
     }
 
     // ============= portfolio 路由 =============
-    // 修复 (2026-06-16, CRITICAL C2): facade 之前 PaperTradingPortfolio.findOne({where:{user_id}})
-    // 不带 order, Sequelize 任意返回第一行. user_id=4 有 9 个 portfolio (24/33-40),
-    // 导致 IndustryConcentrationGuard.rebalanceIndustry(user_id=4) 实际平掉 portfolio 24
-    // (系统观测盘空仓) 而不是当事策略 portfolio. 强制 caller 显式传 portfolio_id, 不传 fallback
-    // 到 (user_id, id ASC) 第一个 — 即"系统观测盘" 路径保留兼容, 但日志告警.
-    let portfolio: PaperTradingPortfolio | null;
-    if (options.portfolio_id) {
-      portfolio = await PaperTradingPortfolio.findOne({
-        where: { id: options.portfolio_id, user_id },
-      });
-    } else {
-      portfolio = await PaperTradingPortfolio.findOne({
-        where: { user_id },
-        order: [['id', 'ASC']],
-      });
-      if (portfolio) {
-        logger.warn(
-          `[facade.placeOrder] user_id=${user_id} 未显式传 portfolio_id, 默认取 portfolio ${portfolio.id} (${portfolio.name}); ` +
-            `多账户多盘场景建议 caller 显式传 portfolio_id 避免串盘`
-        );
-      }
-    }
+    const portfolio = await PaperTradingPortfolio.findOne({
+      where: { id: options.portfolio_id, user_id },
+    });
     if (!portfolio) {
       const err: any = new Error('未找到模拟盘，请先刷新页面');
       err.statusCode = 404;
@@ -1853,23 +1807,9 @@ export class PaperTradingFacade {
    * price.  Convenience wrapper around `placeOrder({ direction: 'SELL', quantity: full })`.
    */
   async closePosition(options: ClosePositionOptions) {
-    // 修复 (2026-06-16, CRITICAL C2): 同 placeOrder, 优先 portfolio_id, 缺则 user_id 第一个.
-    let portfolio: PaperTradingPortfolio | null;
-    if (options.portfolio_id) {
-      portfolio = await PaperTradingPortfolio.findOne({
-        where: { id: options.portfolio_id, user_id: options.user_id },
-      });
-    } else {
-      portfolio = await PaperTradingPortfolio.findOne({
-        where: { user_id: options.user_id },
-        order: [['id', 'ASC']],
-      });
-      if (portfolio) {
-        logger.warn(
-          `[facade.closePosition] user_id=${options.user_id} 未传 portfolio_id, 默认 portfolio ${portfolio.id} (${portfolio.name})`
-        );
-      }
-    }
+    const portfolio = await PaperTradingPortfolio.findOne({
+      where: { id: options.portfolio_id, user_id: options.user_id },
+    });
     if (!portfolio) {
       const err: any = new Error('未找到模拟盘');
       err.statusCode = 404;
@@ -1925,26 +1865,13 @@ export class PaperTradingFacade {
     const action = options.action || 'list';
     const user_id = options.user_id;
 
-    // 修复 (2026-06-17): 同 getPortfolio, 防 UI 串盘
-    let portfolio: PaperTradingPortfolio | null;
-    if (options.portfolio_id) {
-      portfolio = await PaperTradingPortfolio.findOne({
-        where: { id: options.portfolio_id, user_id },
-      });
-    } else {
-      portfolio = await PaperTradingPortfolio.findOne({
-        where: { user_id, is_active: true },
-        order: [['id', 'ASC']],
-      });
-      if (portfolio) {
-        logger.warn(
-          `[facade.getDailySnapshot] user_id=${user_id} 未传 portfolio_id, 默认取 portfolio ${portfolio.id} (${portfolio.name})`
-        );
-      }
-    }
+    const portfolio = await PaperTradingPortfolio.findOne({
+      where: { id: options.portfolio_id, user_id },
+    });
     if (!portfolio) {
-      const err: any = new Error('未找到模拟盘');
+      const err: any = new Error('未找到模拟盘或无权访问');
       err.statusCode = 404;
+      err.code = 'PORTFOLIO_NOT_FOUND_OR_FORBIDDEN';
       throw err;
     }
 
@@ -2026,10 +1953,7 @@ export class PaperTradingFacade {
     }
 
     if (action === 'recommendation_outcomes') {
-      // 修复 (2026-06-17 串盘续): 之前硬注 portfolio_name: QUANT_ONLY_PORTFOLIO_NAME 把所有
-      // 用户都锁到 portfolio 33, 8 盘只看到 1 盘的 outcome. 现在 caller (controller) 应该
-      // 把 query.portfolio_id 传进来; 缺时 service.resolvePortfolio 走 user 名下 active
-      // id ASC 第一个 fallback. 不再硬锁 portfolio 名.
+      // 查询必须显式携带 portfolio_id；service 不再挑选第一个 active 组合。
       return recommendationTradeOutcomeService.getDashboard({
         ...(options.query || {}),
         user_id,
@@ -2258,26 +2182,20 @@ export class PaperTradingFacade {
           err.statusCode = 400;
           throw err;
         }
-        // 修复 (2026-06-17): 串盘 — 优先 body.portfolio_id, 缺则 active id ASC + warn
-        let portfolio: PaperTradingPortfolio | null;
-        if (body?.portfolio_id) {
-          portfolio = await PaperTradingPortfolio.findOne({
-            where: { id: Number(body.portfolio_id), user_id },
-          });
-        } else {
-          portfolio = await PaperTradingPortfolio.findOne({
-            where: { user_id, is_active: true },
-            order: [['id', 'ASC']],
-          });
-          if (portfolio) {
-            logger.warn(
-              `[facade.applyAutomation] set_*_price user_id=${user_id} 未传 portfolio_id, 默认 portfolio ${portfolio.id}`
-            );
-          }
+        const portfolioId = Number(body.portfolio_id);
+        if (!Number.isInteger(portfolioId) || portfolioId <= 0) {
+          const err: any = new Error('portfolio_id 必须为正整数，禁止自动选择其他模拟盘');
+          err.statusCode = 400;
+          err.code = 'PORTFOLIO_SCOPE_REQUIRED';
+          throw err;
         }
+        const portfolio = await PaperTradingPortfolio.findOne({
+          where: { id: portfolioId, user_id },
+        });
         if (!portfolio) {
-          const err: any = new Error('未找到模拟盘');
+          const err: any = new Error('未找到模拟盘或无权访问');
           err.statusCode = 404;
+          err.code = 'PORTFOLIO_NOT_FOUND_OR_FORBIDDEN';
           throw err;
         }
         const position = await PaperTradingPosition.findOne({
@@ -2320,26 +2238,20 @@ export class PaperTradingFacade {
           err.statusCode = 400;
           throw err;
         }
-        // 修复 (2026-06-17): 串盘 — 优先 body.portfolio_id, 缺则 active id ASC + warn
-        let portfolio: PaperTradingPortfolio | null;
-        if (body?.portfolio_id) {
-          portfolio = await PaperTradingPortfolio.findOne({
-            where: { id: Number(body.portfolio_id), user_id },
-          });
-        } else {
-          portfolio = await PaperTradingPortfolio.findOne({
-            where: { user_id, is_active: true },
-            order: [['id', 'ASC']],
-          });
-          if (portfolio) {
-            logger.warn(
-              `[facade.applyAutomation] set_*_price user_id=${user_id} 未传 portfolio_id, 默认 portfolio ${portfolio.id}`
-            );
-          }
+        const portfolioId = Number(body.portfolio_id);
+        if (!Number.isInteger(portfolioId) || portfolioId <= 0) {
+          const err: any = new Error('portfolio_id 必须为正整数，禁止自动选择其他模拟盘');
+          err.statusCode = 400;
+          err.code = 'PORTFOLIO_SCOPE_REQUIRED';
+          throw err;
         }
+        const portfolio = await PaperTradingPortfolio.findOne({
+          where: { id: portfolioId, user_id },
+        });
         if (!portfolio) {
-          const err: any = new Error('未找到模拟盘');
+          const err: any = new Error('未找到模拟盘或无权访问');
           err.statusCode = 404;
+          err.code = 'PORTFOLIO_NOT_FOUND_OR_FORBIDDEN';
           throw err;
         }
         const position = await PaperTradingPosition.findOne({

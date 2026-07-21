@@ -2,6 +2,7 @@ import assert from 'assert';
 import {
   calculatePaperSellFinancials,
   evaluatePaperRiskQuoteGuard,
+  isUsableRealtimeQuote,
   quantizePaperExecutionPrice,
 } from '../../src/portfolio/internal/PaperTradingAutomationService';
 
@@ -63,6 +64,25 @@ const closeSnapshot = evaluatePaperRiskQuoteGuard({
 });
 assert.equal(closeSnapshot.allowed, true);
 assert.equal(closeSnapshot.session, 'post_close');
+
+assert.equal(
+  isUsableRealtimeQuote({
+    now: chinaTime(15, 50),
+    quote_time: '2026-07-21T06:55:00.000Z',
+    trade_date: '2026-07-21',
+  }),
+  true,
+  'same-day closing quote remains usable for the 15:50 risk run'
+);
+assert.equal(
+  isUsableRealtimeQuote({
+    now: chinaTime(15, 50),
+    quote_time: '2026-07-21T06:30:00.000Z',
+    trade_date: '2026-07-21',
+  }),
+  false,
+  'an early intraday quote cannot masquerade as the close'
+);
 
 assert.equal(quantizePaperExecutionPrice(10.7 * (1 - 0.001)), 10.69);
 assert.equal(quantizePaperExecutionPrice(10.42 * (1 + 0.001)), 10.43);

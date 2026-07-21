@@ -1010,7 +1010,13 @@ export class MorningRiskCheckupService {
                 content: { text: message },
               },
               correlation_id: `morning_risk_checkup:${user_id}:${header.id}:${date}`,
-              metadata: { user_id, portfolio_id: header.id, portfolio_name: header.name, date },
+              metadata: {
+                ledger_scope: 'portfolio',
+                user_id,
+                portfolio_id: header.id,
+                portfolio_name: header.name,
+                date,
+              },
             });
             checkup.notification_status = delivery.status;
             checkup.notification_outbox_id = delivery.outbox_id;

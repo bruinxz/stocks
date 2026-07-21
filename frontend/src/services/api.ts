@@ -252,11 +252,8 @@ export const addFavorite = (symbol: string, data: any) =>
   api.post(`/market/favorites/${symbol}`, data);
 export const removeFavorite = (symbol: string) => api.delete(`/market/favorites/${symbol}`);
 export const checkFavorite = (symbol: string) => api.get(`/market/favorites/${symbol}`);
-// Batch L (2026-06-17, CRITICAL): 资金曲线串盘根因 — 之前无参数, 后端 facade
-// fallback 到 user.active id ASC 第一个盘. user 4 有 9 个盘 → 顶部 KPI 是
-// portfolio A 但资金曲线显示 portfolio B 的历史.
-export const getPaperTradingSnapshots = (portfolio_id?: number) =>
-  api.get('/paper-trading/snapshots', { params: portfolio_id ? { portfolio_id } : undefined });
+export const getPaperTradingSnapshots = (portfolio_id: number) =>
+  api.get('/paper-trading/snapshots', { params: { portfolio_id } });
 export const updateFavorite = (symbol: string, data: any) =>
   api.patch(`/market/favorites/${symbol}`, data);
 

@@ -106,6 +106,7 @@ export class MultibaggerController {
                   )
                   snapshot.*
            FROM multibagger_candidate_snapshot snapshot
+           WHERE snapshot.available_at_utc <= NOW()
            ORDER BY
              snapshot.market_scope,
              snapshot.exchange,
@@ -218,6 +219,7 @@ export class MultibaggerController {
                   snapshot.*
            FROM multibagger_candidate_snapshot snapshot
            WHERE snapshot.ticker = :symbol
+             AND snapshot.available_at_utc <= NOW()
            ORDER BY
              snapshot.market_scope,
              snapshot.exchange,

@@ -119,6 +119,9 @@ export interface PortfolioSnapshotRow {
 
 /** Current portfolio header used in drawdown calc. */
 export interface PortfolioHeader {
+  /** Active portfolios included in this account-level aggregate. */
+  portfolio_ids?: number[];
+  /** Legacy single-id seam used only by injected tests without user aggregation. */
   id: number;
   total_value: number;
 }
@@ -159,7 +162,9 @@ export interface DrawdownSellTrigger {
 /** Result of one user's drawdown evaluation (returned by `evaluateAfterClose`). */
 export interface DrawdownEvaluationResult {
   user_id: number;
+  /** Drawdown is account-scoped; never claim one portfolio owns the aggregate alert. */
   portfolio_id: number | null;
+  portfolio_ids: number[];
   level: DrawdownLevel;
   peak_value: number;
   current_value: number;
@@ -402,6 +407,7 @@ export interface DrawdownBreakerDataSource {
   /** Write a single RiskAlert row (level='HIGH'). */
   writeAlert(input: {
     user_id: number;
+    portfolio_ids: number[];
     symbol: string;
     name: string;
     message: string;
@@ -457,10 +463,11 @@ export class DefaultDrawdownBreakerDataSource implements DrawdownBreakerDataSour
     });
     if (portfolios.length === 0) return null;
     const totalValue = portfolios.reduce((s, p) => s + Number(p.total_value || 0), 0);
-    // id 用第一个 portfolio (向下兼容; 内部 loadRecentSnapshots 需要 portfolio_id 拉 snapshot,
-    // 但这里 portfolio_id 实际不再决定语义, snapshot 也按 user 级聚合更合理). 暂保持单 portfolio
-    // snapshot 路径, 后续优化为 multi-portfolio snapshot 聚合.
-    return { id: portfolios[0].id, total_value: totalValue };
+    return {
+      id: portfolios[0].id,
+      portfolio_ids: portfolios.map(portfolio => portfolio.id).sort((a, b) => a - b),
+      total_value: totalValue,
+    };
   }
 
   async loadRecentSnapshots(
@@ -588,6 +595,7 @@ export class DefaultDrawdownBreakerDataSource implements DrawdownBreakerDataSour
 
   async writeAlert(input: {
     user_id: number;
+    portfolio_ids: number[];
     symbol: string;
     name: string;
     message: string;
@@ -601,6 +609,11 @@ export class DefaultDrawdownBreakerDataSource implements DrawdownBreakerDataSour
       // US-067 — 给 RealtimeAlertDispatcher dedup signature 用。
       rule_id: 'drawdown_breaker',
       is_read: false,
+      metadata: {
+        ledger_scope: 'account_risk',
+        portfolio_ids: input.portfolio_ids,
+        origin: 'drawdown_circuit_breaker',
+      },
     } as any);
   }
 }
@@ -696,6 +709,7 @@ export class DrawdownCircuitBreaker {
         result.per_user.push({
           user_id,
           portfolio_id: null,
+          portfolio_ids: [],
           level: 'NONE',
           peak_value: 0,
           current_value: 0,
@@ -722,6 +736,7 @@ export class DrawdownCircuitBreaker {
       return {
         user_id,
         portfolio_id: null,
+        portfolio_ids: [],
         level: 'NONE',
         peak_value: 0,
         current_value: 0,
@@ -729,10 +744,14 @@ export class DrawdownCircuitBreaker {
         triggers: [],
       };
     }
+    const portfolioIds = [...new Set(portfolio.portfolio_ids || [portfolio.id])].sort(
+      (a, b) => a - b
+    );
     if (!config.enabled) {
       return {
         user_id,
-        portfolio_id: portfolio.id,
+        portfolio_id: null,
+        portfolio_ids: portfolioIds,
         level: 'NONE',
         peak_value: portfolio.total_value,
         current_value: portfolio.total_value,
@@ -755,7 +774,8 @@ export class DrawdownCircuitBreaker {
     if (level === 'NONE') {
       return {
         user_id,
-        portfolio_id: portfolio.id,
+        portfolio_id: null,
+        portfolio_ids: portfolioIds,
         level: 'NONE',
         peak_value,
         current_value: portfolio.total_value,
@@ -820,6 +840,7 @@ export class DrawdownCircuitBreaker {
       try {
         await this.source.writeAlert({
           user_id,
+          portfolio_ids: portfolioIds,
           symbol: `SYSTEM:DRAWDOWN_${level}`,
           name: `组合回撤熔断 - ${level}`,
           message,
@@ -834,7 +855,8 @@ export class DrawdownCircuitBreaker {
 
     return {
       user_id,
-      portfolio_id: portfolio.id,
+      portfolio_id: null,
+      portfolio_ids: portfolioIds,
       level,
       peak_value,
       current_value: portfolio.total_value,

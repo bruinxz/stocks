@@ -115,20 +115,7 @@ describe('CatDesk portfolio and AI entries', () => {
       latest_multibagger: null,
       unread_alerts_count: 0,
       portfolio_alerts: [],
-      account_alerts: [
-        {
-          id: 5144,
-          symbol: 'SYSTEM:INDUSTRY_CONCENTRATION:电力',
-          level: 'MEDIUM',
-          rule_id: 'industry_concentration',
-          message: '行业集中度偏高',
-          is_read: false,
-          metadata: {},
-          created_at: '2026-07-21T00:30:00Z',
-        },
-      ],
-      portfolio_notifications: [],
-      account_notifications: [
+      portfolio_notifications: [
         {
           id: 5,
           title: '模拟盘晨间体检',
@@ -141,6 +128,21 @@ describe('CatDesk portfolio and AI entries', () => {
           metadata: { portfolio_id: 65 },
           created_at: '2026-07-21T01:15:00Z',
           sent_at: '2026-07-21T01:16:00Z',
+        },
+      ],
+      account_correction_notifications: [
+        {
+          id: 46,
+          title: '更正 · 开盘前体检收益率无效',
+          kind: 'morning_risk_checkup_correction',
+          severity: 'HIGH',
+          status: 'sent',
+          corrected: true,
+          invalidated: false,
+          correction_id: null,
+          metadata: {},
+          created_at: '2026-07-21T02:00:00Z',
+          sent_at: '2026-07-21T02:01:00Z',
         },
       ],
       portfolio_corrections: [
@@ -240,7 +242,18 @@ describe('CatDesk portfolio and AI entries', () => {
           alerts: [],
           notifications: [],
           corrections: [],
-          timeline: [],
+          timeline: [
+            {
+              id: 'notification:6',
+              type: 'notification',
+              title: '已作废 · 自主卖出 · 福能股份',
+              detail: 'paper_trade',
+              occurred_at: '2026-07-21T01:15:00Z',
+              status: 'invalidated',
+              corrected: false,
+              invalidated: true,
+            },
+          ],
         },
       ],
     });
@@ -258,7 +271,10 @@ describe('CatDesk portfolio and AI entries', () => {
     expect(container.textContent).toContain('组合再平衡');
     expect(container.textContent).toContain('研究已过期');
     expect(container.textContent).toContain('更正 · 福能股份误卖已撤销');
-    expect(container.textContent).toContain('模拟盘晨间体检（已作废）');
+    expect(container.textContent).toContain('模拟盘晨间体检');
+    expect(container.textContent).toContain('已作废，请以更正通知为准');
+    expect(container.textContent).toContain('已作废 · 自主卖出 · 福能股份');
+    expect(container.textContent).not.toContain('账户级告警与通知');
 
     const button = Array.from(container.querySelectorAll('button')).find(node =>
       node.textContent?.includes('AI 解读')

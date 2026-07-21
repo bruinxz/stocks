@@ -27,6 +27,7 @@ export interface LedgerTimelineItem {
   occurred_at: string;
   status: string | null;
   corrected: boolean;
+  invalidated: boolean;
 }
 
 export interface PortfolioLedgerPosition {
@@ -203,9 +204,8 @@ export interface PortfolioLedger {
   } | null;
   unread_alerts_count: number;
   portfolio_alerts: PortfolioLedgerPosition['alerts'];
-  account_alerts: PortfolioLedgerPosition['alerts'];
   portfolio_notifications: PortfolioLedgerPosition['notifications'];
-  account_notifications: PortfolioLedgerPosition['notifications'];
+  account_correction_notifications: PortfolioLedgerPosition['notifications'];
   portfolio_corrections: PortfolioLedgerPosition['corrections'];
   latest_morning_notification: PortfolioLedgerPosition['notifications'][number] | null;
   latest_correction_notification: PortfolioLedgerPosition['notifications'][number] | null;

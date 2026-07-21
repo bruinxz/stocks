@@ -383,13 +383,12 @@ export function buildTradeReasonForManualOrder(
 /**
  * 把 TradeReason 压成一句话总结. ≤ 200 字符. UI 列表 / 周报 / 飞书消息直接用.
  */
-export function summarizeTradeReason(reason: TradeReason | null | undefined): string {
+export function summarizeTradeReason(
+  reason: TradeReason | null | undefined,
+  direction: 'BUY' | 'SELL'
+): string {
   if (!reason || typeof reason !== 'object') return '';
-  const isBuy =
-    !/(stop|drawdown|industry|black_swan|restricted|kill|rebalance|close|sell_signal|technical)/.test(
-      reason.source
-    );
-  const verb = isBuy ? '买入' : '卖出';
+  const verb = direction === 'BUY' ? '买入' : '卖出';
 
   const labelMap: Record<TradeReasonSource, string> = {
     manual: '手动',
@@ -447,11 +446,14 @@ export function summarizeTradeReason(reason: TradeReason | null | undefined): st
 }
 
 /** convenience — pack reason + summary in one call (use this at every write site). */
-export function packReason(reason: TradeReason): {
+export function packReason(
+  reason: TradeReason,
+  direction: 'BUY' | 'SELL'
+): {
   trade_reason: TradeReason;
   trade_reason_summary: string;
 } {
-  return { trade_reason: reason, trade_reason_summary: summarizeTradeReason(reason) };
+  return { trade_reason: reason, trade_reason_summary: summarizeTradeReason(reason, direction) };
 }
 
 /** 兜底: 任何 caller throw / 缺数据 → safe empty reason, 不破写入链路. */

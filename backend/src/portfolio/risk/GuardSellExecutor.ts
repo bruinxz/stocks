@@ -133,7 +133,7 @@ export async function executeGuardSells(
         bypass_trading_hours: true, // EOD cron 在开盘前/收盘后执行, 模拟盘按 daily close 撮合
         bypass_t_plus_1: true, // EOD trigger 持仓必然是 prior day, T+1 自然满足
         trade_reason: reason,
-        trade_reason_summary: summarizeTradeReason(reason),
+        trade_reason_summary: summarizeTradeReason(reason, 'SELL'),
       });
       result.succeeded++;
       result.executions.push({

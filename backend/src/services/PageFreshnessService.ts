@@ -121,6 +121,7 @@ const PAGE_FRESHNESS_SQL = `
     SELECT 'multi', '高倍潜力', MAX(as_of_utc), MAX(as_of_utc)::date,
            'multibagger_candidate_snapshot'
       FROM multibagger_candidate_snapshot
+     WHERE available_at_utc <= NOW()
     UNION ALL
     SELECT 'backtest', '回测证据', MAX(created_at), MAX(snapshot_day),
            'backtest_pit_snapshot'
