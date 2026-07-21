@@ -249,6 +249,96 @@ export function normalizeRecommendation(raw: any): string {
   return 'unknown';
 }
 
+const RATIONALE_DIMENSION_PATTERNS: Record<AnalysisDimension, RegExp[]> = {
+  fundamental: [
+    /基本面/i,
+    /财报|业绩|营收|净利|利润|毛利|估值|市盈率|市净率|\b(?:pe|pb|roe)\b/i,
+    /订单|产能|业务|竞争对手|行业需求|公司/i,
+  ],
+  technical: [
+    /技术面|技术信号|技术指标/i,
+    /均线|\b(?:sma|ema|macd|rsi|kdj|atr)\b|布林/i,
+    /支撑位|压力位|金叉|死叉|超买|超卖|趋势|回撤|波动率|跌破|站稳/i,
+  ],
+  capital: [
+    /资金面|资金净|资金流|主力|北向/i,
+    /龙虎榜|机构(?:进场|接盘|买入|卖出)|净流入|净流出|融资余额/i,
+    /放量|缩量|成交量/i,
+  ],
+  news: [
+    /新闻面|消息面|公告|披露|预告|研报/i,
+    /备案|政策|催化|招标|终端销量|出货量/i,
+    /中报|年报|季报/i,
+  ],
+  sentiment: [
+    /情绪面|市场情绪|风险偏好|舆情|热度/i,
+    /游资|炒作|恐慌|乐观|悲观|抛压|追高|抄底|接飞刀/i,
+    /涨停|跌停|看多|看空/i,
+  ],
+};
+
+function cleanRationalePoint(raw: string): string {
+  return raw
+    .replace(/^\s*#{1,6}\s*/, '')
+    .replace(/^\s*[-*+]\s*/, '')
+    .replace(/^\s*\d+[.)、]\s*/, '')
+    .replace(/^\s*[（(]\d+[）)]\s*/, '')
+    .replace(/\*\*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^[:：\s]+|[:：\s]+$/g, '');
+}
+
+/**
+ * TradingAgents 的 vendored runtime 当前常返回 `detail: {}` + 长篇 markdown
+ * `rationale`。把 rationale 按句切开并基于可审计关键词归入五个业务维度，避免
+ * 明明有完整论证却被写成五个空数组。这里只做摘录与归类，不生成原文没有的事实。
+ */
+export function buildKeyPointsFromRationale(
+  rationale: string,
+  dimensions: AnalysisDimension[]
+): Record<string, string[]> {
+  const result = Object.fromEntries(dimensions.map(d => [d, []])) as Record<string, string[]>;
+  const cleaned = String(rationale || '')
+    .replace(/\r/g, '')
+    .trim();
+  if (!cleaned) return result;
+
+  const sentences = cleaned
+    .split(/\n+/)
+    .flatMap(line => line.match(/[^。！？；]+[。！？；]?/g) || [])
+    .map(cleanRationalePoint)
+    .filter(
+      point =>
+        point.length >= 8 && !/^(?:rating|executive summary|investment thesis)\b/i.test(point)
+    );
+
+  for (const dimension of dimensions) {
+    const ranked = sentences
+      .map((point, index) => ({
+        point,
+        index,
+        score: RATIONALE_DIMENSION_PATTERNS[dimension].reduce(
+          (total, pattern) => total + (pattern.test(point) ? 1 : 0),
+          0
+        ),
+      }))
+      .filter(candidate => candidate.score > 0)
+      .sort((a, b) => b.score - a.score || a.index - b.index);
+
+    const seen = new Set<string>();
+    for (const candidate of ranked) {
+      const normalized = candidate.point.replace(/[\s，。；：、“”'"（）()]/g, '');
+      if (seen.has(normalized)) continue;
+      seen.add(normalized);
+      result[dimension].push(candidate.point.slice(0, 240));
+      if (result[dimension].length >= 3) break;
+    }
+  }
+
+  return result;
+}
+
 /**
  * 从 TradingAgents detail 字段抽取 per-dimension 核心要点。
  *
@@ -266,21 +356,31 @@ export function buildKeyPoints(
 
   if (!detail) return out;
 
+  const sources: Record<string, any>[] = [];
+  if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+    if (detail.detail && typeof detail.detail === 'object' && !Array.isArray(detail.detail)) {
+      sources.push(detail.detail);
+    }
+    sources.push(detail);
+  }
+
   // 优先采用 TradingAgents 已结构化的 key_points
-  if (
-    detail.key_points &&
-    typeof detail.key_points === 'object' &&
-    !Array.isArray(detail.key_points)
-  ) {
-    for (const d of dimensions) {
-      const v = detail.key_points[d];
-      if (Array.isArray(v)) {
-        out[d] = v.map((x: any) => String(x)).filter(s => s.trim().length > 0);
-      } else if (typeof v === 'string' && v.trim().length > 0) {
-        out[d] = [v.trim()];
+  for (const source of sources) {
+    if (
+      source.key_points &&
+      typeof source.key_points === 'object' &&
+      !Array.isArray(source.key_points)
+    ) {
+      for (const d of dimensions) {
+        const v = source.key_points[d];
+        if (Array.isArray(v)) {
+          const points = v.map((x: any) => String(x)).filter(s => s.trim().length > 0);
+          if (points.length > 0 || out[d].length === 0) out[d] = points;
+        } else if (typeof v === 'string' && v.trim().length > 0) {
+          out[d] = [v.trim()];
+        }
       }
     }
-    return out;
   }
 
   // 智能映射子字段（fundamental_summary / technical_summary 等）
@@ -291,22 +391,32 @@ export function buildKeyPoints(
     news: ['news_summary', 'news', 'announcements'],
     sentiment: ['sentiment_summary', 'sentiment', 'mood', 'kol_summary'],
   };
-  let hitAny = false;
-  for (const d of dimensions) {
-    for (const key of subfieldMap[d]) {
-      const v = detail[key];
-      if (Array.isArray(v)) {
-        out[d] = v.map((x: any) => String(x)).filter(s => s.trim().length > 0);
-        hitAny = true;
-        break;
-      } else if (typeof v === 'string' && v.trim().length > 0) {
-        out[d] = [v.trim()];
-        hitAny = true;
-        break;
+  for (const source of sources) {
+    for (const d of dimensions) {
+      if (out[d].length > 0) continue;
+      for (const key of subfieldMap[d]) {
+        const v = source[key];
+        if (Array.isArray(v)) {
+          out[d] = v.map((x: any) => String(x)).filter(s => s.trim().length > 0);
+          break;
+        } else if (typeof v === 'string' && v.trim().length > 0) {
+          out[d] = [v.trim()];
+          break;
+        }
       }
     }
   }
-  if (hitAny) return out;
+
+  const rationale =
+    typeof detail === 'string'
+      ? detail
+      : sources.find(source => typeof source.rationale === 'string')?.rationale;
+  if (typeof rationale === 'string' && rationale.trim()) {
+    const inferred = buildKeyPointsFromRationale(rationale, dimensions);
+    for (const d of dimensions) {
+      if (out[d].length === 0) out[d] = inferred[d] || [];
+    }
+  }
 
   // 兜底：detail 整体是 string → 当 fundamental
   if (
@@ -314,7 +424,7 @@ export function buildKeyPoints(
     detail.trim().length > 0 &&
     dimensions.includes('fundamental')
   ) {
-    out.fundamental = [detail.trim()];
+    out.fundamental = out.fundamental.length > 0 ? out.fundamental : [detail.trim()];
   }
 
   return out;
@@ -479,7 +589,7 @@ export function buildResultFromPayload(
   // 成功 payload
   const data = payload.data;
   const recommendation = normalizeRecommendation(data.decision);
-  const keyPoints = buildKeyPoints(data.detail || data, ctx.dimensions);
+  const keyPoints = buildKeyPoints(data, ctx.dimensions);
   const filledDims = ctx.dimensions.filter(d => (keyPoints[d] || []).length > 0).length;
   const status: 'completed' | 'partial' =
     filledDims === ctx.dimensions.length ? 'completed' : 'partial';
@@ -500,6 +610,8 @@ export function buildResultFromPayload(
     keyPoints
   );
 
+  const sourceRationale = typeof data.rationale === 'string' ? data.rationale.trim() : '';
+
   return {
     report_id: ctx.report_id,
     stock_code: ctx.stock_code,
@@ -515,7 +627,11 @@ export function buildResultFromPayload(
     target_date: ctx.target_date,
     error: status === 'partial' ? '部分维度缺失关键要点（key_points 不完整）' : null,
     generated_at: ctx.now.toISOString(),
-    metadata: { ...ctx.metadata, raw_status: statusRaw || 'COMPLETED' },
+    metadata: {
+      ...ctx.metadata,
+      raw_status: statusRaw || 'COMPLETED',
+      ...(sourceRationale ? { tradingagents_rationale: sourceRationale } : {}),
+    },
     persisted: false,
   };
 }
