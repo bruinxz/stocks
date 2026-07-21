@@ -127,11 +127,13 @@ echo "  ✓ branch reachable"
 if [[ "$TARGET" == "main" && "${SKIP_DB_BACKUP:-false}" != "true" ]]; then
   echo ""
   echo "▶ [2/9] Backing up production DB before main deploy..."
+  printf '%s\n' "$OPS_PASSWORD" | ssh_ops "sudo -S sh -c '
+    mkdir -p /var/backups/stocks
+    chown ops:ops /var/backups/stocks
+  '"
   ssh_ops "bash -c '
     set -e
     BACKUP_DIR=/var/backups/stocks
-    sudo mkdir -p \$BACKUP_DIR
-    sudo chown ops:ops \$BACKUP_DIR
     OUT=\$BACKUP_DIR/predeploy-\$(date +%Y%m%d%H%M%S).sql.gz
     echo \"backing up to \$OUT...\"
     if [ -x $CURRENT/scripts/backup-db.sh ]; then
