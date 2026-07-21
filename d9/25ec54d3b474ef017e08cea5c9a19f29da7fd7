@@ -1,0 +1,21 @@
+docs/audits/2026-07-22-catdesk-module-review.md
+  s_4c5b09a99b8e55::t_a34612bd3299da 1,3,5,7,9-12,14-18,20-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d925ec54d3b474ef017e08cea5c9a19f29da7fd7",
+  "prompts": {},
+  "sessions": {
+    "s_4c5b09a99b8e55": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8292-9b9c-7d72-96bc-4c77b91fe777",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
