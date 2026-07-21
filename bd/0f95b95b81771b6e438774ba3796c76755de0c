@@ -1,0 +1,25 @@
+backend/scripts/migrations/2026-07-22-backfill-ai-rationale-key-points-rollback.sql
+  s_4c5b09a99b8e55::t_09029b8dc6c8b5 1-35
+backend/scripts/migrations/2026-07-22-backfill-ai-rationale-key-points.sql
+  s_4c5b09a99b8e55::t_b0a96ec176d2a6 1-114
+backend/tests/services/ai-advisor-service.test.ts
+  s_4c5b09a99b8e55::t_5e209f1492be74 365-393,632-658
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "bd0f95b95b81771b6e438774ba3796c76755de0c",
+  "prompts": {},
+  "sessions": {
+    "s_4c5b09a99b8e55": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8292-9b9c-7d72-96bc-4c77b91fe777",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
