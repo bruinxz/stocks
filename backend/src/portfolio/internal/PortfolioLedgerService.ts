@@ -38,11 +38,6 @@ function iso(value: unknown): string | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
-function plain<T extends { get?: (options?: any) => any }>(row: T | null | undefined): any {
-  if (!row) return null;
-  return typeof row.get === 'function' ? row.get({ plain: true }) : row;
-}
-
 function objectValue(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, any>)
@@ -189,9 +184,10 @@ export class PortfolioLedgerService {
       : [];
     const signalById = new Map(signalRows.map(row => [row.id, row]));
 
-    const quoteBySymbol = new Map(
-      quotes.filter(Boolean).map(row => [normalizeSymbol((row as RealtimeQuote).symbol), row!])
-    );
+    const quoteBySymbol = new Map<string, RealtimeQuote>();
+    for (const quote of quotes) {
+      if (quote) quoteBySymbol.set(normalizeSymbol(quote.symbol), quote);
+    }
     const tradesBySymbol = new Map<string, PaperTradingTrade[]>();
     for (const trade of trades) {
       const symbol = normalizeSymbol(trade.symbol);
