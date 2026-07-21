@@ -393,6 +393,7 @@ export class DefaultTrailingStopDataSource implements TrailingStopDataSource {
       is_read: false,
       metadata: {
         portfolio_id: input.portfolio_id,
+        ledger_scope: 'portfolio',
         origin: 'trailing_stop_guard',
       },
     } as any);

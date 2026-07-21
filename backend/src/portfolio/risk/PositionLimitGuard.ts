@@ -388,6 +388,7 @@ export class DefaultPositionLimitDataSource implements PositionLimitDataSource {
       is_read: false,
       metadata: {
         portfolio_id: input.portfolio_id,
+        ledger_scope: 'portfolio',
         origin: 'position_limit_guard',
       },
     } as any);

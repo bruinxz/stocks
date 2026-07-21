@@ -532,6 +532,7 @@ export interface RebalanceDataSource {
    * pre-trade guards still run).  Throws on failure; caller logs and continues.
    */
   executeOrder(input: {
+    portfolio_id: number;
     user_id: number;
     symbol: string;
     direction: 'BUY' | 'SELL';
@@ -615,6 +616,7 @@ export class DefaultRebalanceDataSource implements RebalanceDataSource {
   }
 
   async executeOrder(input: {
+    portfolio_id: number;
     user_id: number;
     symbol: string;
     direction: 'BUY' | 'SELL';
@@ -636,12 +638,13 @@ export class DefaultRebalanceDataSource implements RebalanceDataSource {
       message: `组合再平衡 ${input.direction} ${input.symbol}`,
     });
     const result = await paperTradingFacade.placeOrder({
+      portfolio_id: input.portfolio_id,
       user_id: input.user_id,
       symbol: input.symbol,
       direction: input.direction,
       quantity: input.quantity,
       trade_reason: reason,
-      trade_reason_summary: summarizeTradeReason(reason),
+      trade_reason_summary: summarizeTradeReason(reason, input.direction),
     });
     // paperTradingFacade returns the legacy controller payload; pluck price/qty if present.
     const executed_price =
@@ -745,6 +748,7 @@ export class RebalanceEngine {
         if (order.side === 'HOLD' || order.quantity === 0) continue;
         try {
           await this.source.executeOrder({
+            portfolio_id,
             user_id: portfolio.user_id,
             symbol: order.symbol,
             direction: order.side,

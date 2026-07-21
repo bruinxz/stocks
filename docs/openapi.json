@@ -5677,11 +5677,14 @@
           }
         ],
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
+                "required": [
+                  "portfolio_id"
+                ],
                 "properties": {
                   "portfolio_id": {
                     "type": "integer",
@@ -5875,6 +5878,17 @@
         "security": [
           {
             "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "portfolio_id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
           }
         ],
         "responses": {
@@ -6228,21 +6242,28 @@
             "application/json": {
               "schema": {
                 "type": "object",
+                "required": [
+                  "portfolio_id",
+                  "symbol",
+                  "direction",
+                  "quantity"
+                ],
                 "properties": {
+                  "portfolio_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
                   "symbol": {
                     "type": "string"
                   },
-                  "action": {
+                  "direction": {
                     "type": "string",
                     "enum": [
-                      "buy",
-                      "sell"
+                      "BUY",
+                      "SELL"
                     ]
                   },
                   "quantity": {
-                    "type": "number"
-                  },
-                  "price": {
                     "type": "number"
                   }
                 }
@@ -6327,6 +6348,17 @@
         "security": [
           {
             "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "portfolio_id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
           }
         ],
         "responses": {
@@ -7035,6 +7067,17 @@
             "bearerAuth": []
           }
         ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "portfolio_id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "交易流水列表"
@@ -7057,6 +7100,17 @@
         "security": [
           {
             "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "portfolio_id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
           }
         ],
         "responses": {
@@ -7099,7 +7153,15 @@
             "application/json": {
               "schema": {
                 "type": "object",
+                "required": [
+                  "portfolio_id",
+                  "stop_loss_price"
+                ],
                 "properties": {
+                  "portfolio_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
                   "stop_loss_price": {
                     "type": "number",
                     "nullable": true
@@ -7152,7 +7214,15 @@
             "application/json": {
               "schema": {
                 "type": "object",
+                "required": [
+                  "portfolio_id",
+                  "take_profit_price"
+                ],
                 "properties": {
+                  "portfolio_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
                   "take_profit_price": {
                     "type": "number",
                     "nullable": true

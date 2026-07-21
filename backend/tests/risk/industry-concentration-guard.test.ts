@@ -940,7 +940,7 @@ async function testRebalanceHappyPath() {
     },
   });
   const guard = new IndustryConcentrationGuard(makeFakeSource(state));
-  const result = await guard.rebalanceIndustry({ user_id: 1 });
+  const result = await guard.rebalanceIndustry({ user_id: 1, portfolio_id: 1001 });
   assertEqual('rebal: from_industry 白酒', result.from_industry, '白酒');
   assertClose('rebal: before 0.6', result.before_pct, 0.6);
   assertEqual('rebal: 2 sold', result.sold_positions.length, 2);
@@ -975,7 +975,7 @@ async function testRebalanceDryRun() {
     },
   });
   const guard = new IndustryConcentrationGuard(makeFakeSource(state));
-  const result = await guard.rebalanceIndustry({ user_id: 1, dry_run: true });
+  const result = await guard.rebalanceIndustry({ user_id: 1, portfolio_id: 1001, dry_run: true });
   // 银行 60% 超过 白酒 40%，rebalance focus = 银行
   assertEqual('rebalDry: from_industry 银行', result.from_industry, '银行');
   assertEqual('rebalDry: 1 in plan', result.plan.length, 1);
@@ -999,7 +999,7 @@ async function testRebalanceNoOverAlert() {
     },
   });
   const guard = new IndustryConcentrationGuard(makeFakeSource(state));
-  const result = await guard.rebalanceIndustry({ user_id: 1 });
+  const result = await guard.rebalanceIndustry({ user_id: 1, portfolio_id: 1001 });
   assertEqual('rebalNoOver: from_industry null', result.from_industry, null);
   assertEqual('rebalNoOver: 0 sold', result.sold_positions.length, 0);
   assertEqual('rebalNoOver: 0 plan', result.plan.length, 0);
@@ -1047,7 +1047,7 @@ async function testRebalanceCloseFailureContinues() {
     },
   });
   const guard = new IndustryConcentrationGuard(makeFakeSource(state));
-  const result = await guard.rebalanceIndustry({ user_id: 1 });
+  const result = await guard.rebalanceIndustry({ user_id: 1, portfolio_id: 1001 });
   // 仍卖了 2 只 — 1 失败 + 1 成功
   assertEqual('rebalFail: 2 sells in plan', result.plan.length, 2);
   assertEqual('rebalFail: 2 sold_positions', result.sold_positions.length, 2);
@@ -1065,7 +1065,7 @@ async function testRebalanceNoPortfolio() {
     positionsByUser: { 1: [] },
   });
   const guard = new IndustryConcentrationGuard(makeFakeSource(state));
-  const result = await guard.rebalanceIndustry({ user_id: 1 });
+  const result = await guard.rebalanceIndustry({ user_id: 1, portfolio_id: 1001 });
   assertEqual('rebalNoPort: from_industry null', result.from_industry, null);
   assertEqual('rebalNoPort: 0 sold', result.sold_positions.length, 0);
   assert('rebalNoPort: message says no portfolio', result.message.includes('未找到'));
@@ -1099,7 +1099,7 @@ async function testRebalanceCustomConfig() {
     closeReturns: { 'A.SH': { executed_quantity: 50, executed_price: 100 } },
   });
   const guard = new IndustryConcentrationGuard(makeFakeSource(state));
-  const result = await guard.rebalanceIndustry({ user_id: 1 });
+  const result = await guard.rebalanceIndustry({ user_id: 1, portfolio_id: 1001 });
   assertClose('rebalCustom: before 0.5', result.before_pct, 0.5);
   // 卖 A (5000) → 0/5000 = 0% < 35%
   assertEqual('rebalCustom: 1 sold (max=1)', result.sold_positions.length, 1);
@@ -1157,7 +1157,7 @@ async function testRebalancePartial() {
     closeReturns: { 'A.SH': { executed_quantity: 20, executed_price: 100 } },
   });
   const guard = new IndustryConcentrationGuard(makeFakeSource(state));
-  const result = await guard.rebalanceIndustry({ user_id: 1 });
+  const result = await guard.rebalanceIndustry({ user_id: 1, portfolio_id: 1001 });
   // 白酒 60% → 卖 A (2000) → 4000/8000 = 50% 仍 > 30%
   // max=1 限制 → partial=true
   assertEqual('rebalPartial: 1 sold', result.sold_positions.length, 1);
@@ -1224,7 +1224,11 @@ async function testGetSummaryEmptyPortfolio() {
   const state = emptyState({ userIds: [1], positionsByUser: { 1: [] } });
   const guard = new IndustryConcentrationGuard(makeFakeSource(state));
   const summary = await guard.getSummary(1);
-  assertEqual('getSummary empty: portfolio_id resolved', summary.portfolio_id !== null, true);
+  assertEqual(
+    'getSummary empty: aggregate scope has no arbitrary portfolio id',
+    summary.portfolio_id,
+    null
+  );
   assertEqual('getSummary empty: max_industry_pct null', summary.max_industry_pct, null);
   assertEqual('getSummary empty: max_industry_name null', summary.max_industry_name, null);
   assertEqual('getSummary empty: over_alert false', summary.over_alert, false);

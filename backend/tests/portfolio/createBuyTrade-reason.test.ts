@@ -178,7 +178,7 @@ function test_full_chain_smoke() {
   } as any);
   assert('smoke.buy.source', buyReason.source === 'auto_buy_from_signals');
   assert('smoke.buy.reasons_3plus', buyReason.key_reasons.length >= 3);
-  const buySummary = summarizeTradeReason(buyReason);
+  const buySummary = summarizeTradeReason(buyReason, 'BUY');
   assert('smoke.buy.summary_starts', buySummary.startsWith('买入:'));
   assert('smoke.buy.summary_has_3_reasons', /北向|PE|MA20/.test(buySummary));
 
@@ -189,7 +189,7 @@ function test_full_chain_smoke() {
     indicator: 'drawdown_pct',
     position: { symbol: '600519', quantity: 100, avg_cost: 1700, current_price: 1560 },
   });
-  const sellSummary = summarizeTradeReason(sellReason);
+  const sellSummary = summarizeTradeReason(sellReason, 'SELL');
   assert('smoke.sell.starts', sellSummary.startsWith('卖出:'));
   assert('smoke.sell.has_threshold', sellSummary.includes('阈 7'));
   // ≥ 3 条理由 (evidence > 3)
@@ -197,7 +197,10 @@ function test_full_chain_smoke() {
 
   // manual 链路
   const manualReason = buildTradeReasonForManualOrder({ reason: '看好低估反弹' });
-  assert('smoke.manual.summary', summarizeTradeReason(manualReason).includes('看好低估反弹'));
+  assert(
+    'smoke.manual.summary',
+    summarizeTradeReason(manualReason, 'BUY').includes('看好低估反弹')
+  );
 }
 
 // =====================================================

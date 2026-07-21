@@ -150,18 +150,18 @@ export interface ApplySignalsRequest {
   per_order_amount?: number;
   max_orders?: number;
   /** 多账户多盘场景必传 (2026-06-17 串盘修复) */
-  portfolio_id?: number;
+  portfolio_id: number;
 }
 
 // ---------- API 调用 ----------
 
-export async function getTodaySignals(params?: {
+export async function getTodaySignals(params: {
   trade_date?: string;
   dragon_head_limit?: number;
   earnings_limit?: number;
   alerts_limit?: number;
   /** 多账户多盘场景必传, 决定 KPI / MFA 差分基线用哪个盘 (2026-06-17 串盘修复) */
-  portfolio_id?: number;
+  portfolio_id: number;
 }): Promise<TodaySignalsData> {
   const res = await api.get('/today/signals', { params });
   if (!res.data?.success) {
@@ -171,7 +171,7 @@ export async function getTodaySignals(params?: {
 }
 
 export async function applyTodaySignals(
-  payload: ApplySignalsRequest = {}
+  payload: ApplySignalsRequest
 ): Promise<ApplySignalsData> {
   const res = await api.post('/today/apply-signals', payload);
   if (!res.data?.success) {

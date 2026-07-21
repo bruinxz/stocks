@@ -12,6 +12,11 @@ const authController = new AuthController();
  *     tags: [模拟交易 PaperTrading]
  *     summary: 获取当前用户的模拟盘数据及持仓明细
  *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: portfolio_id
+ *         required: true
+ *         schema: { type: integer, minimum: 1 }
  *     responses:
  *       200: { description: 组合与持仓数据, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
  *       400: { description: 参数错误 }
@@ -225,11 +230,12 @@ router.get(
  *         application/json:
  *           schema:
  *             type: object
+ *             required: [portfolio_id, symbol, direction, quantity]
  *             properties:
+ *               portfolio_id: { type: integer, minimum: 1 }
  *               symbol: { type: string }
- *               action: { type: string, enum: [buy, sell] }
+ *               direction: { type: string, enum: [BUY, SELL] }
  *               quantity: { type: number }
- *               price: { type: number }
  *     responses:
  *       200: { description: 成交结果, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessResponse' } } } }
  *       400: { description: 参数错误 }
@@ -280,6 +286,11 @@ router.post(
  *     tags: [模拟交易 PaperTrading]
  *     summary: 刷新模拟盘最新价格与资金快照
  *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: portfolio_id
+ *         required: true
+ *         schema: { type: integer, minimum: 1 }
  *     responses:
  *       200: { description: 最新快照 }
  *       400: { description: 参数错误 }
@@ -776,6 +787,11 @@ router.post(
  *     tags: [模拟交易 PaperTrading]
  *     summary: 获取模拟盘的交易流水
  *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: portfolio_id
+ *         required: true
+ *         schema: { type: integer, minimum: 1 }
  *     responses:
  *       200: { description: 交易流水列表 }
  *       400: { description: 参数错误 }
@@ -790,6 +806,11 @@ router.get('/history', authController.authenticate, paperTradingController.getTr
  *     tags: [模拟交易 PaperTrading]
  *     summary: 获取模拟盘的资金曲线快照
  *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: portfolio_id
+ *         required: true
+ *         schema: { type: integer, minimum: 1 }
  *     responses:
  *       200: { description: 资金曲线快照 }
  *       400: { description: 参数错误 }
@@ -815,7 +836,9 @@ router.get('/snapshots', authController.authenticate, paperTradingController.get
  *         application/json:
  *           schema:
  *             type: object
+ *             required: [portfolio_id, stop_loss_price]
  *             properties:
+ *               portfolio_id: { type: integer, minimum: 1 }
  *               stop_loss_price: { type: number, nullable: true }
  *     responses:
  *       200: { description: 设置结果 }
@@ -847,7 +870,9 @@ router.put(
  *         application/json:
  *           schema:
  *             type: object
+ *             required: [portfolio_id, take_profit_price]
  *             properties:
+ *               portfolio_id: { type: integer, minimum: 1 }
  *               take_profit_price: { type: number, nullable: true }
  *     responses:
  *       200: { description: 设置结果 }

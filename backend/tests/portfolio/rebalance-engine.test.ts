@@ -115,6 +115,7 @@ interface FakeState {
   positions: PositionSnapshot[];
   prices: Map<string, number>;
   executeCalls: Array<{
+    portfolio_id: number;
     user_id: number;
     symbol: string;
     direction: 'BUY' | 'SELL';
@@ -759,6 +760,7 @@ async function testEngineExecuteMode(): Promise<void> {
   );
   assertEqual('execute: dry_run false', result.dry_run, false);
   assertEqual('execute: 2 orders placed', state.executeCalls.length, 2);
+  assertEqual('execute: requested portfolio kept', state.executeCalls[0].portfolio_id, 1);
   // SELL should be called first
   assertEqual('execute: SELL first', state.executeCalls[0].direction, 'SELL');
   assertEqual('execute: SELL symbol', state.executeCalls[0].symbol, '600519');

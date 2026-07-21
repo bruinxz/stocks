@@ -30,6 +30,7 @@ export interface PortfolioLedgerTimelineItem {
   occurred_at: string;
   status: string | null;
   corrected: boolean;
+  invalidated: boolean;
 }
 
 interface MultibaggerLedgerRow {
@@ -232,9 +233,7 @@ export function sortLedgerTimeline(
 function normalizedPortfolioId(metadata: unknown): number | null {
   const row = objectValue(metadata);
   const direct = numberOrNull(row.portfolio_id);
-  if (direct && direct > 0) return direct;
-  const nested = numberOrNull(objectValue(row.draft).portfolio_id);
-  return nested && nested > 0 ? nested : null;
+  return direct && direct > 0 ? direct : null;
 }
 
 function tradeOrigin(trade: PaperTradingTrade | undefined) {
@@ -305,7 +304,6 @@ export class PortfolioLedgerService {
     const expectedResearchDay = expectedCompletedTradeDate(now);
     const [
       positions,
-      activePortfolios,
       riskAlertRows,
       notificationRows,
       morningSnapshot,
@@ -316,13 +314,11 @@ export class PortfolioLedgerService {
         where: { portfolio_id, quantity: { [Op.gt]: 0 } },
         order: [['id', 'ASC']],
       }),
-      PaperTradingPortfolio.findAll({
-        where: { user_id, is_active: true },
-        attributes: ['id'],
-        order: [['id', 'ASC']],
-      }),
       RiskAlert.findAll({
-        where: { user_id },
+        where: {
+          user_id,
+          metadata: { [Op.contains]: { portfolio_id } },
+        },
         order: [['created_at', 'DESC']],
         limit: 500,
       }),
@@ -331,11 +327,9 @@ export class PortfolioLedgerService {
           [Op.or]: [
             { metadata: { [Op.contains]: { portfolio_id } } },
             {
-              topic_key: {
-                [Op.in]: [`paper-trade:${portfolio_id}`, `paper-portfolio:${portfolio_id}`],
-              },
+              recipient_user_id: user_id,
+              metadata: { [Op.contains]: { ledger_scope: 'account_correction' } },
             },
-            { recipient_user_id: user_id },
           ],
         },
         order: [['created_at', 'DESC']],
@@ -348,8 +342,9 @@ export class PortfolioLedgerService {
           asOfUtc: { [Op.lte]: now },
         },
         order: [
-          ['tradingDay', 'DESC'],
           ['asOfUtc', 'DESC'],
+          ['createdAt', 'DESC'],
+          ['snapshotId', 'DESC'],
         ],
       }).catch(() => null),
       this.loadCorrections(),
@@ -357,17 +352,16 @@ export class PortfolioLedgerService {
     ]);
 
     const symbols = [...new Set(positions.map(row => normalizeSymbol(row.symbol)).filter(Boolean))];
-    const activePortfolioIds = activePortfolios.map(row => row.id);
-    const [trades, allOutcomes, quotes, morningItems, allUserPositions] = await Promise.all([
+    const [trades, outcomes, quotes, morningItems] = await Promise.all([
       symbols.length
         ? PaperTradingTrade.findAll({
             where: { portfolio_id, symbol: { [Op.in]: symbols } },
             order: [['created_at', 'ASC']],
           })
         : [],
-      activePortfolioIds.length
+      symbols.length
         ? RecommendationTradeOutcome.findAll({
-            where: { portfolio_id: { [Op.in]: activePortfolioIds } },
+            where: { portfolio_id, symbol: { [Op.in]: symbols } },
             order: [
               ['updated_at', 'DESC'],
               ['id', 'DESC'],
@@ -385,70 +379,22 @@ export class PortfolioLedgerService {
             order: [['sortRank', 'ASC']],
           })
         : [],
-      activePortfolioIds.length
-        ? PaperTradingPosition.findAll({
-            where: { portfolio_id: { [Op.in]: activePortfolioIds }, quantity: { [Op.gt]: 0 } },
-            attributes: ['portfolio_id', 'symbol'],
-          })
-        : [],
     ]);
 
-    const outcomes = allOutcomes.filter(
-      row => row.portfolio_id === portfolio_id && symbols.includes(normalizeSymbol(row.symbol))
-    );
-    const outcomeById = new Map<number, RecommendationTradeOutcome>(
-      allOutcomes.map(row => [row.id, row] as const)
-    );
-    const portfoliosBySymbol = new Map<string, Set<number>>();
-    for (const row of allUserPositions) {
-      const symbol = normalizeSymbol(row.symbol);
-      const ids = portfoliosBySymbol.get(symbol) || new Set<number>();
-      ids.add(row.portfolio_id);
-      portfoliosBySymbol.set(symbol, ids);
-    }
-
-    const resolveAlertPortfolio = (alert: RiskAlert): number | null => {
-      const metadata = objectValue(alert.metadata);
-      const explicit = normalizedPortfolioId(metadata);
-      if (explicit) return explicit;
-      const outcomeId = numberOrNull(metadata.outcome_id);
-      const linkedOutcome = outcomeId ? outcomeById.get(outcomeId) : null;
-      if (linkedOutcome) return linkedOutcome.portfolio_id;
-      const alertSymbol = normalizeSymbol(alert.symbol);
-      const symbolPortfolios = portfoliosBySymbol.get(alertSymbol);
-      if (symbolPortfolios?.size === 1) return [...symbolPortfolios][0];
-      if (activePortfolioIds.length === 1) return activePortfolioIds[0];
-      return null;
-    };
     const portfolioAlerts = riskAlertRows.filter(
-      row => resolveAlertPortfolio(row) === portfolio_id
+      row => normalizedPortfolioId(row.metadata) === portfolio_id
     );
-
-    const notificationBelongsToPortfolio = (row: FeishuNotificationOutbox): boolean => {
-      const explicit = normalizedPortfolioId(row.metadata);
-      if (explicit) return explicit === portfolio_id;
-      if (
-        [`paper-trade:${portfolio_id}`, `paper-portfolio:${portfolio_id}`].includes(row.topic_key)
-      ) {
-        return true;
-      }
-      return row.recipient_user_id === user_id && activePortfolioIds.length === 1;
-    };
-    const portfolioNotifications = notificationRows.filter(notificationBelongsToPortfolio);
-    const accountNotifications = notificationRows.filter(row => {
-      if (portfolioNotifications.includes(row)) return false;
-      return row.recipient_user_id === user_id && normalizedPortfolioId(row.metadata) === null;
-    });
-    const visibleAccountNotifications = [
-      ...new Map(
-        [
-          ...accountNotifications,
-          ...portfolioNotifications.filter(
-            row => !normalizeSymbol(String(objectValue(row.metadata).symbol || ''))
-          ),
-        ].map(row => [Number(row.id), row])
-      ).values(),
-    ].sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
+    const portfolioNotifications = notificationRows.filter(
+      row => normalizedPortfolioId(row.metadata) === portfolio_id
+    );
+    const accountCorrectionNotifications = notificationRows
+      .filter(
+        row =>
+          row.recipient_user_id === user_id &&
+          normalizedPortfolioId(row.metadata) === null &&
+          objectValue(row.metadata).ledger_scope === 'account_correction'
+      )
+      .sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
     const portfolioCorrections = corrections.filter(row =>
       recordTouchesPortfolio(
         { entity_id: row.entity_id, before_state: row.before_state, after_state: row.after_state },
@@ -566,6 +512,7 @@ export class PortfolioLedgerService {
           occurred_at: iso(trade.created_at) || now.toISOString(),
           status: 'executed',
           corrected: false,
+          invalidated: false,
         });
       }
       if (signal) {
@@ -577,6 +524,7 @@ export class PortfolioLedgerService {
           occurred_at: iso(signal.created_at) || `${signal.signal_date}T00:00:00.000Z`,
           status: signal.normalized_decision,
           corrected: false,
+          invalidated: false,
         });
       }
       for (const alert of alerts) {
@@ -588,18 +536,21 @@ export class PortfolioLedgerService {
           occurred_at: iso(alert.created_at) || now.toISOString(),
           status: alert.is_read ? 'read' : 'unread',
           corrected: Boolean(objectValue(alert.metadata).corrected),
+          invalidated: Boolean(objectValue(alert.metadata).invalidated),
         });
       }
       for (const notification of symbolNotifications) {
         const metadata = objectValue(notification.metadata);
+        const invalidated = Boolean(metadata.invalidated);
         timeline.push({
           id: `notification:${notification.id}`,
           type: 'notification',
-          title: notification.title,
+          title: invalidated ? `已作废 · ${notification.title}` : notification.title,
           detail: notification.kind,
           occurred_at: iso(notification.created_at) || now.toISOString(),
-          status: notification.status,
-          corrected: Boolean(metadata.corrected || metadata.invalidated),
+          status: invalidated ? 'invalidated' : notification.status,
+          corrected: Boolean(metadata.corrected),
+          invalidated,
         });
       }
       for (const correction of symbolCorrections) {
@@ -611,6 +562,7 @@ export class PortfolioLedgerService {
           occurred_at: iso(correction.created_at) || now.toISOString(),
           status: 'applied',
           corrected: true,
+          invalidated: false,
         });
       }
 
@@ -751,20 +703,12 @@ export class PortfolioLedgerService {
       },
       { live: 0, close: 0, delayed: 0, stale: 0, missing: 0 }
     );
-    const accountAlerts = riskAlertRows.filter(row => {
-      const resolved = resolveAlertPortfolio(row);
-      return (
-        resolved === null ||
-        (resolved === portfolio_id && !symbols.includes(normalizeSymbol(row.symbol)))
-      );
-    });
-    const allVisibleAlerts = [
-      ...new Map([...portfolioAlerts, ...accountAlerts].map(row => [row.id, row])).values(),
-    ];
-    const correctionNotifications = portfolioNotifications.filter(
-      row => row.kind.includes('correction') || Boolean(objectValue(row.metadata).correction_id)
-    );
-    const morningNotifications = visibleAccountNotifications.filter(
+    const correctionNotifications = [...portfolioNotifications, ...accountCorrectionNotifications]
+      .filter(
+        row => row.kind.includes('correction') || Boolean(objectValue(row.metadata).correction_id)
+      )
+      .sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
+    const morningNotifications = portfolioNotifications.filter(
       row =>
         row.kind.includes('morning') ||
         String(objectValue(row.metadata).scenario || '').includes('morning_checkup')
@@ -823,11 +767,10 @@ export class PortfolioLedgerService {
             ...multibaggerFreshness,
           }
         : null,
-      unread_alerts_count: allVisibleAlerts.filter(row => !row.is_read).length,
+      unread_alerts_count: portfolioAlerts.filter(row => !row.is_read).length,
       portfolio_alerts: portfolioAlerts.map(mapAlert),
-      account_alerts: accountAlerts.map(mapAlert),
       portfolio_notifications: portfolioNotifications.map(mapNotification),
-      account_notifications: visibleAccountNotifications.map(mapNotification),
+      account_correction_notifications: accountCorrectionNotifications.map(mapNotification),
       portfolio_corrections: portfolioCorrections.map(mapCorrection),
       latest_morning_notification: morningNotifications.length
         ? mapNotification(morningNotifications[0])

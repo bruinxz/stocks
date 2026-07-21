@@ -3381,49 +3381,36 @@ export class RecommendationTradeOutcomeService {
         order: [['id', 'ASC']],
       });
       if (namedPortfolio) return namedPortfolio;
+      const err: any = new Error('未找到模拟盘或无权访问');
+      err.statusCode = 404;
+      err.code = 'PORTFOLIO_NOT_FOUND_OR_FORBIDDEN';
+      throw err;
     }
-
-    let portfolio: PaperTradingPortfolio | null = null;
-    if (!options.portfolio_name) {
-      portfolio = await PaperTradingPortfolio.findOne({
-        where: { user_id: user.id, is_active: true },
-        order: [['id', 'ASC']],
-      });
-    }
-    if (!portfolio) {
-      portfolio = await paperTradingAutomationService.ensurePortfolio({
-        user_id: user.id,
-        username: user.username,
-        name: options.portfolio_name,
-        initial_capital: options.initial_capital,
-        force_new: options.force_new_portfolio,
-      });
-    }
-    return portfolio;
+    const err: any = new Error('portfolio_id 必须为正整数，禁止自动选择其他模拟盘');
+    err.statusCode = 400;
+    err.code = 'PORTFOLIO_SCOPE_REQUIRED';
+    throw err;
   }
 
   private async resolveUser(user_id?: number, username?: string): Promise<User> {
     if (user_id) {
       const user = await User.findByPk(user_id);
       if (user) return user;
+      const err: any = new Error('未找到用户');
+      err.statusCode = 404;
+      throw err;
     }
-
-    const preferredUsername = username || process.env.PAPER_TRADING_DEFAULT_USERNAME || 'stock';
-    let user = await User.findOne({ where: { username: preferredUsername } });
-    if (!user && preferredUsername !== 'stock') {
-      user = await User.findOne({ where: { username: 'stock' } });
+    if (username) {
+      const user = await User.findOne({ where: { username } });
+      if (user) return user;
+      const err: any = new Error('未找到用户');
+      err.statusCode = 404;
+      throw err;
     }
-    if (!user) {
-      user = await User.findOne({
-        where: { role: 'admin', is_active: true },
-        order: [['id', 'ASC']],
-      });
-    }
-    if (!user) {
-      user = await User.findOne({ where: { is_active: true }, order: [['id', 'ASC']] });
-    }
-    if (!user) throw new Error('未找到可用于推荐交易收益闭环的用户');
-    return user;
+    const err: any = new Error('user_id 或 username 必须显式提供');
+    err.statusCode = 400;
+    err.code = 'USER_SCOPE_REQUIRED';
+    throw err;
   }
 
   private buildOutcomeWhere(

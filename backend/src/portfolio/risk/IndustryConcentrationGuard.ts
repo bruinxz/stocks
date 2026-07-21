@@ -679,6 +679,7 @@ export class DefaultIndustryConcentrationDataSource implements IndustryConcentra
       is_read: false,
       metadata: {
         portfolio_id: input.portfolio_id,
+        ledger_scope: 'portfolio',
         origin: 'industry_concentration_guard',
       },
     } as any);
@@ -708,7 +709,7 @@ export class DefaultIndustryConcentrationDataSource implements IndustryConcentra
       portfolio_id: input.portfolio_id, // 修复 C2: 必传 — 否则 facade fallback 到 first portfolio 错卖
       symbol: input.symbol,
       trade_reason: reason,
-      trade_reason_summary: summarizeTradeReason(reason),
+      trade_reason_summary: summarizeTradeReason(reason, 'SELL'),
     });
     return {
       executed_quantity: Number(result.quantity) || 0,
@@ -733,7 +734,7 @@ export interface EvaluateAfterCloseOptions {
 
 export interface RebalanceIndustryOptions {
   user_id: number;
-  portfolio_id?: number;
+  portfolio_id: number;
   /** If true, generate the plan but don't actually call closePosition. */
   dry_run?: boolean;
 }
@@ -824,7 +825,7 @@ export class IndustryConcentrationGuard {
     if (!config.enabled) {
       return {
         user_id,
-        portfolio_id,
+        portfolio_id: null,
         enabled: false,
         open_positions_count,
         total_position_value,
@@ -888,7 +889,7 @@ export class IndustryConcentrationGuard {
 
     return {
       user_id,
-      portfolio_id,
+      portfolio_id: null,
       enabled: true,
       open_positions_count,
       total_position_value,
@@ -911,6 +912,12 @@ export class IndustryConcentrationGuard {
     const { user_id } = options;
     const dryRun = Boolean(options.dry_run);
     const config = await this.source.loadConfig(user_id);
+    if (!Number.isInteger(options.portfolio_id) || options.portfolio_id <= 0) {
+      const error: any = new Error('portfolio_id 必须为正整数，禁止自动选择其他模拟盘');
+      error.statusCode = 400;
+      error.code = 'PORTFOLIO_SCOPE_REQUIRED';
+      throw error;
+    }
     const portfolio_id = await this.source.loadPortfolioId(user_id, options.portfolio_id);
     if (portfolio_id === null) {
       return {
@@ -1108,7 +1115,7 @@ export class IndustryConcentrationGuard {
       config.enabled && max_pct !== null ? isIndustryOverAlert(max_pct, config.alert_pct) : false;
     return {
       user_id,
-      portfolio_id,
+      portfolio_id: null,
       enabled: config.enabled,
       alert_pct: config.alert_pct,
       rebalance_target_pct: config.rebalance_target_pct,

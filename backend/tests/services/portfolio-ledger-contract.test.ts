@@ -93,6 +93,7 @@ const timeline = sortLedgerTimeline([
     occurred_at: '2026-07-21T02:00:00Z',
     status: null,
     corrected: false,
+    invalidated: false,
   },
   {
     id: 'a',
@@ -102,6 +103,7 @@ const timeline = sortLedgerTimeline([
     occurred_at: '2026-07-21T01:00:00Z',
     status: null,
     corrected: false,
+    invalidated: false,
   },
 ]);
 assert('timeline is chronological', timeline.map(item => item.id).join(',') === 'a,b');
@@ -114,6 +116,26 @@ const ledger = readFileSync(
   resolve(__dirname, '../../src/portfolio/internal/PortfolioLedgerService.ts'),
   'utf8'
 );
+const facade = readFileSync(
+  resolve(__dirname, '../../src/portfolio/PaperTradingFacade.ts'),
+  'utf8'
+);
+const rebalance = readFileSync(
+  resolve(__dirname, '../../src/portfolio/RebalanceEngine.ts'),
+  'utf8'
+);
+const recommendationRead = readFileSync(
+  resolve(__dirname, '../../src/recommendations/SequelizeRecommendationSnapshotReadAdapter.ts'),
+  'utf8'
+);
+const multibaggerController = readFileSync(
+  resolve(__dirname, '../../src/api/controllers/MultibaggerController.ts'),
+  'utf8'
+);
+const drawdownBreaker = readFileSync(
+  resolve(__dirname, '../../src/portfolio/risk/DrawdownCircuitBreaker.ts'),
+  'utf8'
+);
 assert(
   'ledger route passes authenticated user id',
   controller.includes('getForUser(user.id, portfolio_id)')
@@ -123,8 +145,11 @@ assert(
   ledger.includes('where: { id: portfolio_id, user_id }')
 );
 assert(
-  'account-level alerts are preserved instead of discarded by symbol matching',
-  ledger.includes('account_alerts: accountAlerts.map(mapAlert)')
+  'ledger accepts only explicitly scoped portfolio alerts and notifications',
+  ledger.includes('metadata: { [Op.contains]: { portfolio_id } }') &&
+    !ledger.includes('account_alerts:') &&
+    !ledger.includes('activePortfolioIds.length === 1') &&
+    !ledger.includes('portfoliosBySymbol')
 );
 assert(
   'multibagger matching selects the latest eligible row per ticker',
@@ -136,9 +161,47 @@ assert(
   ledger.includes('row.id === outcome.entry_trade_id')
 );
 assert(
+  'manual order mutation requires explicit portfolio scope',
+  controller.includes('portfolio_id 必须为正整数，禁止自动选择其他模拟盘') &&
+    !facade.includes('[facade.placeOrder] user_id=')
+);
+assert(
+  'legacy portfolio and snapshot readers cannot choose the first portfolio',
+  !facade.includes('[facade.getPortfolio] user_id=') &&
+    !facade.includes('[facade.getDailySnapshot] user_id=') &&
+    facade.includes("err.code = 'PORTFOLIO_SCOPE_REQUIRED'")
+);
+assert(
+  'stop loss and take profit writes carry explicit portfolio scope',
+  controller.includes('portfolio_id: requiredPortfolioId(portfolio_id)') &&
+    !facade.includes('[facade.applyAutomation] set_*_price')
+);
+assert(
+  'account-wide drawdown alerts declare account scope instead of one portfolio',
+  drawdownBreaker.includes("ledger_scope: 'account_risk'") &&
+    drawdownBreaker.includes('portfolio_ids: input.portfolio_ids') &&
+    drawdownBreaker.includes('portfolio_id: null')
+);
+assert(
+  'rebalance execution carries the requested portfolio id into every order',
+  rebalance.includes('portfolio_id: input.portfolio_id') &&
+    rebalance.includes('portfolio_id,\n            user_id: portfolio.user_id')
+);
+assert(
+  'public morning feed rejects future snapshots and uses the same latest ordering',
+  recommendationRead.includes('AND as_of_utc <= NOW()') &&
+    ledger.includes("['asOfUtc', 'DESC']") &&
+    ledger.includes("['createdAt', 'DESC']")
+);
+assert(
+  'public multibagger feed and ledger both enforce candidate availability',
+  (multibaggerController.match(/available_at_utc <= NOW\(\)/g) || []).length === 2 &&
+    ledger.includes('available_at_utc <= :now')
+);
+assert(
   'ledger implementation has no model writes',
   !/\.save\(|\.update\(|\.create\(|\.destroy\(/.test(ledger)
 );
 
-console.log(`${17 - failed} ok, ${failed} failed`);
+console.log(`${24 - failed} ok, ${failed} failed`);
 if (failed) process.exitCode = 1;
