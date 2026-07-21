@@ -1,0 +1,21 @@
+scripts/deployment/deploy_remote_build.sh
+  s_4c5b09a99b8e55::t_136b0eb7c102ff 130-133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "24b933aa6fca53a70d104f2e0fac70fe0d89fbe5",
+  "prompts": {},
+  "sessions": {
+    "s_4c5b09a99b8e55": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8292-9b9c-7d72-96bc-4c77b91fe777",
+        "model": "unknown"
+      },
+      "human_author": "claude <claude@example.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
